@@ -1,0 +1,247 @@
+package agentadaptor
+
+type Option func(*sdkImpl) error
+
+func WithDefaultAgent(binding AgentBinding) Option {
+	return func(s *sdkImpl) error {
+		if binding == nil {
+			return ErrDefaultAgentMissing
+		}
+		if s.defaultBinding != nil {
+			return ErrDefaultAgentAlreadyConfigured
+		}
+		if err := validateAgentBinding(binding); err != nil {
+			return err
+		}
+		s.defaultBinding = binding
+		return nil
+	}
+}
+
+func WithAgent(name string, binding AgentBinding) Option {
+	return func(s *sdkImpl) error {
+		if name == "" {
+			return ErrAgentNameRequired
+		}
+		if name == defaultAgentName {
+			return ErrReservedAgentName
+		}
+		if binding == nil {
+			return ErrAgentBindingRequired
+		}
+		if s.namedBindings == nil {
+			s.namedBindings = map[string]AgentBinding{}
+		}
+		if _, exists := s.namedBindings[name]; exists {
+			return &DuplicateAgentError{Name: name}
+		}
+		if err := validateAgentBinding(binding); err != nil {
+			return err
+		}
+		s.namedBindings[name] = binding
+		return nil
+	}
+}
+
+func WithSessionStore(store SessionStore) Option {
+	return func(s *sdkImpl) error {
+		s.sessionStore = store
+		return nil
+	}
+}
+
+func WithWorkspaceManager(manager WorkspaceManager) Option {
+	return func(s *sdkImpl) error {
+		s.workspaceManager = manager
+		return nil
+	}
+}
+
+func WithSkillCatalog(catalog SkillCatalog) Option {
+	return func(s *sdkImpl) error {
+		s.skillCatalog = catalog
+		return nil
+	}
+}
+
+func WithSkillAssembler(assembler SkillAssembler) Option {
+	return func(s *sdkImpl) error {
+		s.skillAssembler = assembler
+		return nil
+	}
+}
+
+func WithRuntimeServiceManager(manager RuntimeServiceManager) Option {
+	return func(s *sdkImpl) error {
+		s.runtimeManager = manager
+		return nil
+	}
+}
+
+type AgentOption func(*AgentDefaults)
+
+func WithDefaultIdentity(identity AgentIdentity) AgentOption {
+	return func(defaults *AgentDefaults) {
+		defaults.Agent = identity
+	}
+}
+
+func WithDefaultWorkspace(spec WorkspaceSpec) AgentOption {
+	return func(defaults *AgentDefaults) {
+		defaults.Workspace = spec
+	}
+}
+
+func WithDefaultSkills(keys ...string) AgentOption {
+	return func(defaults *AgentDefaults) {
+		defaults.Skills = append([]string(nil), keys...)
+	}
+}
+
+// WithDefaultRuntimeServices attaches default runtime-service requirements to
+// an agent binding. Per-run WithRuntimeServices(...) overrides these defaults.
+func WithDefaultRuntimeServices(services ...RuntimeServiceSpec) AgentOption {
+	return func(defaults *AgentDefaults) {
+		if len(services) == 0 {
+			defaults.Runtime = nil
+			return
+		}
+		defaults.Runtime = &WorkspaceRuntimeConfig{Services: cloneRuntimeServiceSpecs(services)}
+	}
+}
+
+func WithDefaultPermissions(profile PermissionProfile) AgentOption {
+	return func(defaults *AgentDefaults) {
+		copyProfile := profile
+		defaults.Permissions = &copyProfile
+	}
+}
+
+func WithDefaultInstructions(ref *InstructionsBundleRef) AgentOption {
+	return func(defaults *AgentDefaults) {
+		if ref == nil {
+			defaults.Instructions = nil
+			return
+		}
+		copyRef := *ref
+		defaults.Instructions = &copyRef
+	}
+}
+
+func WithDefaultMetadata(key, value string) AgentOption {
+	return func(defaults *AgentDefaults) {
+		if defaults.Metadata == nil {
+			defaults.Metadata = map[string]string{}
+		}
+		defaults.Metadata[key] = value
+	}
+}
+
+type RunOption func(*runOptions)
+
+type runOptions struct {
+	session      *SessionRequest
+	workspace    WorkspaceSpec
+	runtime      *WorkspaceRuntimeConfig
+	skills       []string
+	permissions  *PermissionProfile
+	instructions *InstructionsBundleRef
+	metadata     map[string]string
+	agent        *AgentIdentity
+}
+
+func WithSession(req SessionRequest) RunOption {
+	return func(ro *runOptions) {
+		copyReq := req
+		ro.session = &copyReq
+	}
+}
+
+func WithSessionKey(namespace, key string) RunOption {
+	return WithSession(SessionRequest{
+		Namespace: namespace,
+		Key:       key,
+		Mode:      SessionContinueOrStart,
+	})
+}
+
+func WithContinueSession(id string) RunOption {
+	return WithSession(SessionRequest{
+		ID:   id,
+		Mode: SessionContinueOnly,
+	})
+}
+
+func WithNewSession(namespace, key string) RunOption {
+	return WithSession(SessionRequest{
+		Namespace: namespace,
+		Key:       key,
+		Mode:      SessionStartNew,
+	})
+}
+
+func WithForkSession(fromID, namespace, key string) RunOption {
+	return WithSession(SessionRequest{
+		Namespace: namespace,
+		Key:       key,
+		Mode:      SessionFork,
+		ForkFrom:  fromID,
+	})
+}
+
+func WithWorkspace(spec WorkspaceSpec) RunOption {
+	return func(ro *runOptions) {
+		ro.workspace = spec
+	}
+}
+
+// WithRuntimeServices overrides the runtime services for a single run.
+func WithRuntimeServices(services ...RuntimeServiceSpec) RunOption {
+	return func(ro *runOptions) {
+		if len(services) == 0 {
+			ro.runtime = nil
+			return
+		}
+		ro.runtime = &WorkspaceRuntimeConfig{Services: cloneRuntimeServiceSpecs(services)}
+	}
+}
+
+func WithSkills(keys ...string) RunOption {
+	return func(ro *runOptions) {
+		ro.skills = append([]string(nil), keys...)
+	}
+}
+
+func WithPermissions(profile PermissionProfile) RunOption {
+	return func(ro *runOptions) {
+		copyProfile := profile
+		ro.permissions = &copyProfile
+	}
+}
+
+func WithInstructions(ref *InstructionsBundleRef) RunOption {
+	return func(ro *runOptions) {
+		if ref == nil {
+			ro.instructions = nil
+			return
+		}
+		copyRef := *ref
+		ro.instructions = &copyRef
+	}
+}
+
+func WithMetadata(key, value string) RunOption {
+	return func(ro *runOptions) {
+		if ro.metadata == nil {
+			ro.metadata = map[string]string{}
+		}
+		ro.metadata[key] = value
+	}
+}
+
+func WithAgentIdentity(identity AgentIdentity) RunOption {
+	return func(ro *runOptions) {
+		copyIdentity := identity
+		ro.agent = &copyIdentity
+	}
+}

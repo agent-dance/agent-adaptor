@@ -1,0 +1,100 @@
+package codex
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"testing"
+
+	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/internal/skillruntime"
+)
+
+type eventSink struct {
+	events []agentadaptor.RunEvent
+}
+
+func (s *eventSink) Emit(event agentadaptor.RunEvent) error {
+	s.events = append(s.events, event)
+	return nil
+}
+
+func createSkillDir(t *testing.T, root, name string) string {
+	t.Helper()
+	skillDir := filepath.Join(root, name)
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatalf("mkdir skill dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: "+name+"\n---\n"), 0o644); err != nil {
+		t.Fatalf("write skill: %v", err)
+	}
+	return skillDir
+}
+
+func TestInjectCodexSkillsRepairsManagedSymlink(t *testing.T) {
+	testRoot := filepath.Join(skillruntime.ManagedSkillCacheRoot(), "codex-test", t.Name())
+	t.Cleanup(func() { _ = os.RemoveAll(filepath.Join(skillruntime.ManagedSkillCacheRoot(), "codex-test")) })
+	oldSource := createSkillDir(t, testRoot, "paperclip-old")
+	currentSource := createSkillDir(t, testRoot, "paperclip-current")
+	codexHome := t.TempDir()
+	skillsHome := filepath.Join(codexHome, "skills")
+	if err := os.MkdirAll(skillsHome, 0o755); err != nil {
+		t.Fatalf("mkdir skills home: %v", err)
+	}
+	if err := os.Symlink(oldSource, filepath.Join(skillsHome, "paperclip")); err != nil {
+		t.Fatalf("seed symlink: %v", err)
+	}
+
+	payload := agentadaptor.SkillPayload{
+		Requested: []string{"team/paperclip"},
+		RuntimeEntries: []agentadaptor.SkillRuntimeEntry{
+			{Key: "team/paperclip", RuntimeName: "paperclip", SourcePath: currentSource},
+		},
+	}
+	sink := &eventSink{}
+	if err := injectCodexSkills(context.Background(), payload, codexHome, sink); err != nil {
+		t.Fatalf("inject: %v", err)
+	}
+
+	resolved, err := filepath.EvalSymlinks(filepath.Join(skillsHome, "paperclip"))
+	if err != nil {
+		t.Fatalf("resolve symlink: %v", err)
+	}
+	if filepath.Clean(resolved) != filepath.Clean(currentSource) {
+		t.Fatalf("expected repaired symlink to %s, got %s", currentSource, resolved)
+	}
+}
+
+func TestInjectCodexSkillsPreservesExternalSymlink(t *testing.T) {
+	testRoot := filepath.Join(skillruntime.ManagedSkillCacheRoot(), "codex-test", t.Name())
+	t.Cleanup(func() { _ = os.RemoveAll(filepath.Join(skillruntime.ManagedSkillCacheRoot(), "codex-test")) })
+	currentSource := createSkillDir(t, testRoot, "paperclip-current")
+	externalRoot := t.TempDir()
+	externalSource := createSkillDir(t, externalRoot, "paperclip-custom")
+	codexHome := t.TempDir()
+	skillsHome := filepath.Join(codexHome, "skills")
+	if err := os.MkdirAll(skillsHome, 0o755); err != nil {
+		t.Fatalf("mkdir skills home: %v", err)
+	}
+	if err := os.Symlink(externalSource, filepath.Join(skillsHome, "paperclip")); err != nil {
+		t.Fatalf("seed external symlink: %v", err)
+	}
+
+	payload := agentadaptor.SkillPayload{
+		Requested: []string{"team/paperclip"},
+		RuntimeEntries: []agentadaptor.SkillRuntimeEntry{
+			{Key: "team/paperclip", RuntimeName: "paperclip", SourcePath: currentSource},
+		},
+	}
+	if err := injectCodexSkills(context.Background(), payload, codexHome, &eventSink{}); err != nil {
+		t.Fatalf("inject: %v", err)
+	}
+
+	resolved, err := filepath.EvalSymlinks(filepath.Join(skillsHome, "paperclip"))
+	if err != nil {
+		t.Fatalf("resolve external symlink: %v", err)
+	}
+	if filepath.Clean(resolved) != filepath.Clean(externalSource) {
+		t.Fatalf("expected external symlink to be preserved, got %s", resolved)
+	}
+}
