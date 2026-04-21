@@ -22,21 +22,57 @@ func (r *runnerImpl) Run(ctx context.Context, prompt string, opts ...RunOption) 
 
 func (r *runnerImpl) Start(ctx context.Context, prompt string, opts ...RunOption) (RunHandle, error) {
 	runCtx, cancel := context.WithCancel(ctx)
-	eventSink := newChannelEventSink()
+
+	// Snapshot the sink settings from the SDK so per-run changes cannot race
+	// with config mutation on the SDK struct.
+	streaming := r.resolveStreamingForStart(opts...)
+	runBuf, streamBuf, policy := r.sdk.eventSinkSettings()
+	sink := newDualSink(streaming, runBuf, streamBuf, policy)
+
+	runID := newRunID(r.binding.Adapter().Descriptor().Type)
 	handle := &asyncRunHandle{
-		events: eventSink.events,
+		runID:  runID,
+		events: sink.runEvents,
+		stream: sink.stream,
 		cancel: cancel,
 		done:   make(chan asyncRunResult, 1),
 	}
 
+	// Pre-bind runID so the caller has access to it before Wait() completes.
+	boundOpts := append([]RunOption{withPresetRunID(runID)}, opts...)
+
 	go func() {
-		result, err := r.run(runCtx, prompt, wrapWithSeq(eventSink), opts...)
-		eventSink.close()
+		result, err := r.run(runCtx, prompt, wrapWithSeq(sink), boundOpts...)
+		sink.close()
 		handle.done <- asyncRunResult{result: result, err: err}
 		close(handle.done)
 	}()
 
 	return handle, nil
+}
+
+// resolveStreamingForStart is a lightweight pre-check used by Start() to size
+// the sink. resolveInvocation computes the authoritative streaming flag
+// (including binding defaults); this method mirrors that logic but only uses
+// information available before the full resolution runs.
+func (r *runnerImpl) resolveStreamingForStart(opts ...RunOption) bool {
+	var ro runOptions
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&ro)
+		}
+	}
+	if ro.streaming != nil {
+		return *ro.streaming
+	}
+	if r.binding == nil {
+		return false
+	}
+	defaults := r.binding.Defaults()
+	if defaults.Streaming != nil {
+		return *defaults.Streaming
+	}
+	return false
 }
 
 func (r *runnerImpl) run(ctx context.Context, prompt string, sink EventSink, opts ...RunOption) (RunResult, error) {
@@ -134,6 +170,15 @@ func (r *runnerImpl) resolveInvocation(ctx context.Context, prompt string, opts 
 	config := r.binding.Config()
 	common := extractCommonConfig(config)
 
+	// Resolve streaming tri-state: per-call > per-binding > default off.
+	streaming := false
+	if defaults.Streaming != nil {
+		streaming = *defaults.Streaming
+	}
+	if resolvedOpts.streaming != nil {
+		streaming = *resolvedOpts.streaming
+	}
+
 	workspace, err := r.sdk.workspaceManager.Resolve(ctx, WorkspaceRequest{
 		BaseCWD: common.CWD,
 		Spec:    workspaceSpec,
@@ -146,7 +191,10 @@ func (r *runnerImpl) resolveInvocation(ctx context.Context, prompt string, opts 
 		return resolvedInvocation{}, nil, err
 	}
 
-	runID := newRunID(r.binding.Adapter().Descriptor().Type)
+	runID := resolvedOpts.runIDPreset
+	if runID == "" {
+		runID = newRunID(r.binding.Adapter().Descriptor().Type)
+	}
 
 	runtimePayload, err := r.sdk.prepareRuntime(ctx, runID, r.binding, identity, workspace, metadata, runtimeOverride)
 	if err != nil {
@@ -196,6 +244,7 @@ func (r *runnerImpl) resolveInvocation(ctx context.Context, prompt string, opts 
 		session:      sessionReq,
 		metadata:     cloneStringMap(metadata),
 		fingerprint:  fingerprint,
+		streaming:    streaming,
 	}, cleanup, nil
 }
 
@@ -234,6 +283,7 @@ func (r *runnerImpl) executeWithSessionPlan(
 		Permissions:  invocation.permissions,
 		Instructions: invocation.instructions,
 		Metadata:     cloneStringMap(invocation.metadata),
+		Streaming:    invocation.streaming,
 	}
 	if plan != nil {
 		var state *DriverSessionState
@@ -289,11 +339,14 @@ func (r *runnerImpl) executeWithSessionPlan(
 	}, runResult.Checkpoint, nil
 }
 
-// seqSink wraps an EventSink and assigns a monotonically increasing Seq to
-// every emitted event for the enclosing run.
+// seqSink wraps an EventSink and assigns monotonically increasing sequence
+// numbers for the enclosing run. RunEvent.Seq and StreamPayload.Sequence use
+// independent counters so bridges that only consume StreamEvents see a
+// contiguous sequence regardless of RunEvent traffic.
 type seqSink struct {
-	inner   EventSink
-	counter uint64
+	inner         EventSink
+	eventCounter  atomic.Uint64
+	streamCounter atomic.Uint64
 }
 
 func wrapWithSeq(inner EventSink) EventSink {
@@ -301,73 +354,211 @@ func wrapWithSeq(inner EventSink) EventSink {
 }
 
 func (s *seqSink) Emit(event RunEvent) error {
-	event.Seq = atomic.AddUint64(&s.counter, 1)
+	event.Seq = s.eventCounter.Add(1)
 	if event.Timestamp.IsZero() {
 		event.Timestamp = time.Now().UTC()
 	}
 	return s.inner.Emit(event)
 }
 
+func (s *seqSink) EmitStream(payload StreamPayload) error {
+	payload.Sequence = s.streamCounter.Add(1)
+	if payload.Timestamp.IsZero() {
+		payload.Timestamp = time.Now().UTC()
+	}
+	return s.inner.EmitStream(payload)
+}
+
 type noopEventSink struct{}
 
-func (noopEventSink) Emit(RunEvent) error { return nil }
+func (noopEventSink) Emit(RunEvent) error             { return nil }
+func (noopEventSink) EmitStream(StreamPayload) error  { return nil }
 
-type channelEventSink struct {
-	events  chan RunEvent
-	once    sync.Once
-	mu      sync.Mutex
-	dropped int
-	closed  bool
+// EventBackpressure selects how the SDK reacts when a host cannot keep up with
+// StreamPayload delivery. RunEvent delivery always falls back to the legacy
+// drop-with-marker behaviour and is not affected by this setting.
+type EventBackpressure int
+
+const (
+	// BackpressureDropStream drops StreamPayloads when the stream channel is
+	// full and emits a single StreamDropped marker (carrying the lost count)
+	// as soon as capacity returns. This is the default and guarantees that
+	// adapter sub-processes never block on a slow host.
+	BackpressureDropStream EventBackpressure = iota
+	// BackpressureBlock blocks the adapter goroutine until the host consumes
+	// a StreamPayload. Use this when the host cannot tolerate any gaps (for
+	// example a strict AG-UI conformance client).
+	BackpressureBlock
+)
+
+// dualSink is the canonical runtime event sink used by Start(). It carries
+// two independent channels: one for operational RunEvents and one for
+// structured StreamPayloads. The stream channel is pre-closed when streaming
+// is disabled so hosts can `for range handle.StreamEvents()` unconditionally.
+//
+// The sink is fed by a single adapter goroutine (see the run() loop) and
+// drained by at most two host goroutines. close() is called by the run
+// goroutine exactly once after adapter.Run returns, so close races with
+// in-flight Emit/EmitStream calls only when an adapter violates the
+// DriverAdapter contract (i.e. leaves background goroutines alive after
+// Run returns). Block mode defends against that violation via the `done`
+// channel; Drop mode is naturally safe because of its default branch.
+type dualSink struct {
+	runEvents chan RunEvent
+	stream    chan StreamPayload
+	streaming bool
+	policy    EventBackpressure
+
+	done chan struct{}
+	// activeStream tracks in-flight EmitStream calls. close() waits for it
+	// to drain before closing the stream channel, eliminating the race
+	// between a blocking sender and channel closure.
+	activeStream sync.WaitGroup
+
+	once       sync.Once
+	mu         sync.Mutex
+	closed     bool
+	droppedRun int
+	droppedStm int
 }
 
-func newChannelEventSink() *channelEventSink {
-	return &channelEventSink{
-		events: make(chan RunEvent, 64),
+func newDualSink(streaming bool, runBuf, streamBuf int, policy EventBackpressure) *dualSink {
+	if runBuf <= 0 {
+		runBuf = defaultRunEventBuffer
 	}
+	if streamBuf <= 0 {
+		streamBuf = defaultStreamEventBuffer
+	}
+	s := &dualSink{
+		runEvents: make(chan RunEvent, runBuf),
+		stream:    make(chan StreamPayload, streamBuf),
+		streaming: streaming,
+		policy:    policy,
+		done:      make(chan struct{}),
+	}
+	if !streaming {
+		// Pre-close so consumers can range over StreamEvents() immediately.
+		close(s.stream)
+	}
+	return s
 }
 
-func (s *channelEventSink) Emit(event RunEvent) error {
+func (s *dualSink) Emit(event RunEvent) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
 	if s.closed {
 		return nil
 	}
-	s.flushDroppedLocked()
+	s.flushDroppedRunLocked()
 	select {
-	case s.events <- event:
+	case s.runEvents <- event:
 		return nil
 	default:
-		s.dropped++
+		s.droppedRun++
 		return nil
 	}
 }
 
-func (s *channelEventSink) close() {
+func (s *dualSink) EmitStream(payload StreamPayload) error {
+	if !s.streaming {
+		return nil
+	}
+	// Register as an active sender before doing anything else so close()
+	// will wait for us to finish.
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return nil
+	}
+	s.activeStream.Add(1)
+	s.mu.Unlock()
+	defer s.activeStream.Done()
+
+	if s.policy == BackpressureBlock {
+		return s.emitStreamBlocking(payload)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return nil
+	}
+	s.flushDroppedStreamLocked()
+	select {
+	case s.stream <- payload:
+		return nil
+	default:
+		s.droppedStm++
+		return nil
+	}
+}
+
+func (s *dualSink) emitStreamBlocking(payload StreamPayload) error {
+	// Invariant: caller has already incremented activeStream and will
+	// decrement it on return. The select below races against done (closed
+	// by close()) so a pending close can unblock this goroutine.
+	select {
+	case <-s.done:
+		return nil
+	case s.stream <- payload:
+		return nil
+	}
+}
+
+func (s *dualSink) close() {
 	s.once.Do(func() {
+		// Flip closed before signalling done so no new EmitStream registers
+		// after this point.
+		s.mu.Lock()
+		s.closed = true
+		close(s.done)
+		s.mu.Unlock()
+
+		// Wait for in-flight senders to return (done unblocks them). After
+		// Wait returns, no goroutine holds a reference to the stream channel
+		// for sending, so closing it is safe.
+		s.activeStream.Wait()
+
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		if s.closed {
-			return
+		s.flushDroppedRunLocked()
+		s.flushDroppedStreamLocked()
+		close(s.runEvents)
+		if s.streaming {
+			close(s.stream)
 		}
-		s.flushDroppedLocked()
-		s.closed = true
-		close(s.events)
 	})
 }
 
-func (s *channelEventSink) flushDroppedLocked() {
-	if s.dropped == 0 {
+func (s *dualSink) flushDroppedRunLocked() {
+	if s.droppedRun == 0 {
 		return
 	}
-	summary := newEvent(RunEventLifecycle, fmt.Sprintf("dropped %d events because consumer was slow", s.dropped))
+	summary := newEvent(RunEventLifecycle, fmt.Sprintf("dropped %d events because consumer was slow", s.droppedRun))
 	summary.Metadata = map[string]string{
 		"reason":        "overflow",
-		"dropped_count": fmt.Sprintf("%d", s.dropped),
+		"dropped_count": fmt.Sprintf("%d", s.droppedRun),
 	}
 	select {
-	case s.events <- summary:
-		s.dropped = 0
+	case s.runEvents <- summary:
+		s.droppedRun = 0
+	default:
+	}
+}
+
+func (s *dualSink) flushDroppedStreamLocked() {
+	if s.droppedStm == 0 || !s.streaming {
+		return
+	}
+	marker := StreamPayload{
+		Kind:      StreamDropped,
+		Timestamp: time.Now().UTC(),
+		Raw: map[string]any{
+			"dropped_count": s.droppedStm,
+		},
+	}
+	select {
+	case s.stream <- marker:
+		s.droppedStm = 0
 	default:
 	}
 }
@@ -378,13 +569,23 @@ type asyncRunResult struct {
 }
 
 type asyncRunHandle struct {
+	runID  string
 	events <-chan RunEvent
+	stream <-chan StreamPayload
 	cancel context.CancelFunc
 	done   chan asyncRunResult
 }
 
 func (h *asyncRunHandle) Events() <-chan RunEvent {
 	return h.events
+}
+
+func (h *asyncRunHandle) StreamEvents() <-chan StreamPayload {
+	return h.stream
+}
+
+func (h *asyncRunHandle) RunID() string {
+	return h.runID
 }
 
 func (h *asyncRunHandle) Wait(ctx context.Context) (RunResult, error) {

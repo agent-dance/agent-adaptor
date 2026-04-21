@@ -178,6 +178,19 @@ type DriverRunRequest struct {
 	Instructions *InstructionsBundleRef
 	Session      *DriverSessionContext
 	Metadata     map[string]string
+
+	// Streaming is a hint from the host that the caller wants structured
+	// stream events (StreamPayload) emitted via EventSink.EmitStream in
+	// addition to the regular RunEvent channel. Adapters that implement
+	// StreamAwareDriver should switch their underlying transport to the
+	// richest token-level channel available (for codex this means
+	// `codex app-server`; for claude this means `--include-partial-messages`;
+	// for cursor this means `--stream-partial-output`).
+	//
+	// Adapters that do not implement StreamAwareDriver are free to ignore
+	// this field. Hosts consuming StreamEvents() on such adapters will see
+	// an immediately-closed channel.
+	Streaming bool
 }
 
 // DriverRunResult is the adapter-facing execution result.
@@ -286,4 +299,91 @@ type resolvedInvocation struct {
 	session      SessionRequest
 	metadata     map[string]string
 	fingerprint  string
+	streaming    bool
+}
+
+// StreamKind enumerates the protocol-agnostic streaming events adapters emit
+// via EventSink.EmitStream when streaming is enabled. Bridges (pkg/bridges/*)
+// translate these into host-facing protocols such as AG-UI without having to
+// know the concrete adapter.
+//
+// The full list is the union of what codex / claude / cursor can expose.
+// Adapters may emit a subset; bridges that require a specific kind should
+// degrade gracefully when it is absent.
+type StreamKind string
+
+const (
+	// Lifecycle.
+	StreamRunStarted   StreamKind = "run.started"
+	StreamRunFinished  StreamKind = "run.finished"
+	StreamRunError     StreamKind = "run.error"
+	StreamStepStarted  StreamKind = "step.started"
+	StreamStepFinished StreamKind = "step.finished"
+
+	// Text message.
+	StreamTextStart   StreamKind = "text.start"
+	StreamTextContent StreamKind = "text.content"
+	StreamTextEnd     StreamKind = "text.end"
+
+	// Tool call.
+	StreamToolCallStart  StreamKind = "tool_call.start"
+	StreamToolCallArgs   StreamKind = "tool_call.args"
+	StreamToolCallEnd    StreamKind = "tool_call.end"
+	StreamToolCallResult StreamKind = "tool_call.result"
+
+	// Reasoning / thinking.
+	StreamReasoningStart   StreamKind = "reasoning.start"
+	StreamReasoningContent StreamKind = "reasoning.content"
+	StreamReasoningEnd     StreamKind = "reasoning.end"
+
+	// HITL (audit-only in v1; no response channel is wired yet).
+	StreamHITLRequested StreamKind = "hitl.requested"
+	StreamHITLResolved  StreamKind = "hitl.resolved"
+
+	// Backpressure marker emitted by the SDK when StreamPayloads were dropped
+	// because the host was slow. Raw["dropped_count"] reports how many.
+	StreamDropped StreamKind = "stream.dropped"
+)
+
+// StreamPayload is a single structured streaming event emitted by a
+// stream-aware adapter. It is intentionally a superset capable of carrying
+// text deltas, tool-call lifecycles, reasoning, lifecycle markers, and opaque
+// provider payloads.
+//
+// Field usage by Kind:
+//   - run.started / run.finished / run.error: RunID, ThreadID, Usage (on
+//     finished), Error (on error). MessageID / ToolCallID empty.
+//   - step.started / step.finished: Name required.
+//   - text.start / text.end: MessageID required.
+//   - text.content: MessageID required; Delta non-empty.
+//   - tool_call.start: ToolCallID and Name required; Args optional
+//     (complete initial snapshot when the adapter does not stream args).
+//   - tool_call.args: ToolCallID required; Delta non-empty (incremental
+//     argument chunk, usually JSON fragment).
+//   - tool_call.end / tool_call.result: ToolCallID required; Result optional.
+//   - reasoning.*: MessageID required; Delta for reasoning.content.
+//   - hitl.requested / hitl.resolved: Name identifies the approval type;
+//     Raw carries adapter-specific payload (audit-only in v1).
+//   - stream.dropped: Raw["dropped_count"] reports the count.
+//
+// Sequence is assigned monotonically by the SDK in EmitStream; adapters must
+// not set it themselves. Timestamp is similarly backfilled when zero.
+type StreamPayload struct {
+	Kind       StreamKind
+	Sequence   uint64
+	RunID      string
+	ThreadID   string
+	TurnID     string
+	MessageID  string
+	ToolCallID string
+	Name       string
+	Delta      string
+	Args       map[string]any
+	Result     map[string]any
+	Usage      *Usage
+	Error      *RunFailure
+	Timestamp  time.Time
+	// Raw carries provider-specific structured data that does not fit the
+	// normalized fields. Bridges may pass it through opaquely.
+	Raw map[string]any
 }

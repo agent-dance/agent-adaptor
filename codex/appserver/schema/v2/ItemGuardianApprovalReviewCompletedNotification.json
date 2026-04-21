@@ -1,0 +1,305 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ItemGuardianApprovalReviewCompletedNotification",
+  "description": "[UNSTABLE] Temporary notification payload for guardian automatic approval review. This shape is expected to change soon.",
+  "type": "object",
+  "required": [
+    "action",
+    "decisionSource",
+    "review",
+    "reviewId",
+    "threadId",
+    "turnId"
+  ],
+  "properties": {
+    "action": {
+      "$ref": "#/definitions/GuardianApprovalReviewAction"
+    },
+    "decisionSource": {
+      "$ref": "#/definitions/AutoReviewDecisionSource"
+    },
+    "review": {
+      "$ref": "#/definitions/GuardianApprovalReview"
+    },
+    "reviewId": {
+      "description": "Stable identifier for this review.",
+      "type": "string"
+    },
+    "targetItemId": {
+      "description": "Identifier for the reviewed item or tool call when one exists.\n\nIn most cases, one review maps to one target item. The exceptions are - execve reviews, where a single command may contain multiple execve calls to review (only possible when using the shell_zsh_fork feature) - network policy reviews, where there is no target item\n\nA network call is triggered by a CommandExecution item, so having a target_item_id set to the CommandExecution item would be misleading because the review is about the network call, not the command execution. Therefore, target_item_id is set to None for network policy reviews.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "threadId": {
+      "type": "string"
+    },
+    "turnId": {
+      "type": "string"
+    }
+  },
+  "definitions": {
+    "AutoReviewDecisionSource": {
+      "description": "[UNSTABLE] Source that produced a terminal guardian approval review decision.",
+      "type": "string",
+      "enum": [
+        "agent"
+      ]
+    },
+    "GuardianApprovalReview": {
+      "description": "[UNSTABLE] Temporary guardian approval review payload used by `item/autoApprovalReview/*` notifications. This shape is expected to change soon.",
+      "type": "object",
+      "required": [
+        "status"
+      ],
+      "properties": {
+        "rationale": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "riskLevel": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/GuardianRiskLevel"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "$ref": "#/definitions/GuardianApprovalReviewStatus"
+        },
+        "userAuthorization": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/GuardianUserAuthorization"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "GuardianApprovalReviewAction": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "command",
+            "cwd",
+            "source",
+            "type"
+          ],
+          "properties": {
+            "command": {
+              "type": "string"
+            },
+            "cwd": {
+              "type": "string"
+            },
+            "source": {
+              "$ref": "#/definitions/GuardianCommandSource"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "command"
+              ],
+              "title": "CommandGuardianApprovalReviewActionType"
+            }
+          },
+          "title": "CommandGuardianApprovalReviewAction"
+        },
+        {
+          "type": "object",
+          "required": [
+            "argv",
+            "cwd",
+            "program",
+            "source",
+            "type"
+          ],
+          "properties": {
+            "argv": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "cwd": {
+              "type": "string"
+            },
+            "program": {
+              "type": "string"
+            },
+            "source": {
+              "$ref": "#/definitions/GuardianCommandSource"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "execve"
+              ],
+              "title": "ExecveGuardianApprovalReviewActionType"
+            }
+          },
+          "title": "ExecveGuardianApprovalReviewAction"
+        },
+        {
+          "type": "object",
+          "required": [
+            "cwd",
+            "files",
+            "type"
+          ],
+          "properties": {
+            "cwd": {
+              "type": "string"
+            },
+            "files": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "applyPatch"
+              ],
+              "title": "ApplyPatchGuardianApprovalReviewActionType"
+            }
+          },
+          "title": "ApplyPatchGuardianApprovalReviewAction"
+        },
+        {
+          "type": "object",
+          "required": [
+            "host",
+            "port",
+            "protocol",
+            "target",
+            "type"
+          ],
+          "properties": {
+            "host": {
+              "type": "string"
+            },
+            "port": {
+              "type": "integer",
+              "format": "uint16",
+              "minimum": 0.0
+            },
+            "protocol": {
+              "$ref": "#/definitions/NetworkApprovalProtocol"
+            },
+            "target": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "networkAccess"
+              ],
+              "title": "NetworkAccessGuardianApprovalReviewActionType"
+            }
+          },
+          "title": "NetworkAccessGuardianApprovalReviewAction"
+        },
+        {
+          "type": "object",
+          "required": [
+            "server",
+            "toolName",
+            "type"
+          ],
+          "properties": {
+            "connectorId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "connectorName": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "server": {
+              "type": "string"
+            },
+            "toolName": {
+              "type": "string"
+            },
+            "toolTitle": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "mcpToolCall"
+              ],
+              "title": "McpToolCallGuardianApprovalReviewActionType"
+            }
+          },
+          "title": "McpToolCallGuardianApprovalReviewAction"
+        }
+      ]
+    },
+    "GuardianApprovalReviewStatus": {
+      "description": "[UNSTABLE] Lifecycle state for a guardian approval review.",
+      "type": "string",
+      "enum": [
+        "inProgress",
+        "approved",
+        "denied",
+        "aborted"
+      ]
+    },
+    "GuardianCommandSource": {
+      "type": "string",
+      "enum": [
+        "shell",
+        "unifiedExec"
+      ]
+    },
+    "GuardianRiskLevel": {
+      "description": "[UNSTABLE] Risk level assigned by guardian approval review.",
+      "type": "string",
+      "enum": [
+        "low",
+        "medium",
+        "high",
+        "critical"
+      ]
+    },
+    "GuardianUserAuthorization": {
+      "description": "[UNSTABLE] Authorization level assigned by guardian approval review.",
+      "type": "string",
+      "enum": [
+        "unknown",
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "NetworkApprovalProtocol": {
+      "type": "string",
+      "enum": [
+        "http",
+        "https",
+        "socks5Tcp",
+        "socks5Udp"
+      ]
+    }
+  }
+}

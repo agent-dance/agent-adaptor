@@ -112,4 +112,5 @@ func capitalize(value string) string {
 
 type noopCursorSink struct{}
 
-func (noopCursorSink) Emit(agentadaptor.RunEvent) error { return nil }
+func (noopCursorSink) Emit(agentadaptor.RunEvent) error            { return nil }
+func (noopCursorSink) EmitStream(agentadaptor.StreamPayload) error { return nil }

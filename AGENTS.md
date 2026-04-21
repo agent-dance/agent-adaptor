@@ -352,3 +352,18 @@ result, err := sdk.Run(
 - 不允许再把原始 stdout/stderr 混塞进 `Output`
 - 不允许把宿主服务能力直接塞回 core SDK
 - 文档必须和代码的当前公共语义保持一致，不能保留已删除 API 的示例
+- 不允许手工编辑 `codex/appserver/generated.go` 或 `codex/appserver/schema/` 下的 JSON；协议同步必须走 `codex app-server generate-json-schema` + `go generate`
+
+## 10. Streaming 是第二条可选通道
+
+`RunHandle` 在原有 `Events()` 之外提供了 `StreamEvents() <-chan StreamPayload`。这条通道的职责边界是硬的：
+
+- `Run / Start` 语义不变；未开 `WithStreaming()` 时 SDK 行为与历史完全一致
+- streaming 不是第二条 Run 入口；所有执行仍然走同一份 `Runner.Run/Start` + `adapter.Run(ctx, req, sink)`
+- 结构化业务事件只通过 `sink.EmitStream(StreamPayload)` 发射；不得混进 `RunEvent.Data`
+- `clihelper` 不感知 streaming；streaming-aware adapter 自行选择协议通路（codex 切 `codex app-server`，claude / cursor 追加各自 CLI flag）
+- `pkg/bridges/agui` 和 `pkg/bridges/sse` 是主 module 下的可选子包；它们只读 `StreamEvents()`，不得调用 adapter 内部、不得重新进入 Run 路径、不得污染 core
+- `StreamPayload.Sequence / Timestamp` 由 SDK 在 `EmitStream` 时统一赋值，adapter 不自己写
+- HITL 在 v1 是 audit-only：adapter 自动 deny 并通过 `StreamHITLRequested` 透传，不阻塞
+
+与 streaming 相关的完整规划：`docs/workstream-streaming-chat.md`；adapter 实施规则：`docs/streaming-adapter-contract.md`；宿主集成指南：`docs/streaming.md`。

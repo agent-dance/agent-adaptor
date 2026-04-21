@@ -1,0 +1,136 @@
+package codex
+
+import (
+	"context"
+	"fmt"
+	"strings"
+
+	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/codex/appserver"
+	"github.com/agent-dance/agent-adaptor/internal/adapterutil"
+)
+
+// runAppServer handles the req.Streaming=true code path. It spawns the
+// codex app-server JSON-RPC subprocess, performs the handshake, and drives
+// one turn while translating server notifications into StreamPayloads on
+// the supplied sink.
+//
+// The function mirrors the existing exec --json path for session resume
+// validation (CWD / workspace-id consistency) and checkpoint construction so
+// the two transports are interchangeable from the SDK's point of view.
+func runAppServer(
+	ctx context.Context,
+	req agentadaptor.DriverRunRequest,
+	sink agentadaptor.EventSink,
+	cfg agentadaptor.CodexConfig,
+	command string,
+	effectiveBindings []agentadaptor.EnvBinding,
+) (agentadaptor.DriverRunResult, error) {
+	effectiveCWD := chooseCWD(cfg.CommonConfig, req.Workspace)
+
+	if req.Session != nil && req.Session.State != nil {
+		if req.Session.State.Data[agentadaptor.SessionParamCWD] != "" && req.Session.State.Data[agentadaptor.SessionParamCWD] != effectiveCWD {
+			return agentadaptor.DriverRunResult{}, &agentadaptor.ResumeRejectedError{Reason: "session working directory changed"}
+		}
+		if req.Session.State.Data[agentadaptor.SessionParamWorkspaceID] != "" && req.Session.State.Data[agentadaptor.SessionParamWorkspaceID] != req.Workspace.ID {
+			return agentadaptor.DriverRunResult{}, &agentadaptor.ResumeRejectedError{Reason: "session workspace changed"}
+		}
+	}
+
+	prompt := req.Prompt
+	if runtimePrefix := adapterutil.RuntimePromptPrefix(req.Runtime); runtimePrefix != "" {
+		prompt = runtimePrefix + "\n\n" + prompt
+	}
+	if req.Instructions != nil && req.Instructions.Path != "" {
+		prompt = "Instructions bundle: " + req.Instructions.Path + "\n\n" + prompt
+	}
+
+	approval := mapApprovalPolicy(cfg, req.Permissions)
+	sandbox := mapSandbox(cfg, req.Permissions)
+
+	resumeID := ""
+	if req.Session != nil && req.Session.State != nil {
+		resumeID = req.Session.State.ResumeID
+	}
+
+	opts := appserver.Options{
+		Command:        command,
+		CWD:            effectiveCWD,
+		Env:            effectiveBindings,
+		ClientName:     "agent-adaptor",
+		ClientVersion:  "v0",
+		Prompt:         prompt,
+		ResumeThreadID: resumeID,
+		// app-server ephemeral flag only applies when we create a new
+		// thread; resumed threads persist on disk server-side regardless.
+		Ephemeral: resumeID == "",
+		Sandbox:   sandbox,
+		Approval:  approval,
+		Model:     strings.TrimSpace(cfg.Model),
+		RunID:     req.RunID,
+	}
+
+	result, err := appserver.Run(ctx, opts, sink)
+	if err != nil {
+		return agentadaptor.DriverRunResult{}, err
+	}
+
+	// Stamp CWD + workspace id onto the checkpoint so resume validation
+	// works the same way as in the exec --json path.
+	if result.Checkpoint != nil && result.Checkpoint.State != nil {
+		if result.Checkpoint.State.Data == nil {
+			result.Checkpoint.State.Data = map[string]string{}
+		}
+		result.Checkpoint.State.Data[agentadaptor.SessionParamCWD] = effectiveCWD
+		result.Checkpoint.State.Data[agentadaptor.SessionParamWorkspaceID] = req.Workspace.ID
+	}
+
+	// Attach runtime-service reports: these are produced by the SDK
+	// upstream rather than the app-server, but the codex adapter advertises
+	// ReportsServices = true and so must surface them here as well.
+	result.RuntimeServices = adapterutil.RuntimeReportsFromRefs(req.Runtime.Ensured, req.Agent)
+	if result.Metadata == nil {
+		result.Metadata = map[string]string{}
+	}
+	result.Metadata["transport"] = "app-server"
+	return result, nil
+}
+
+func mapApprovalPolicy(cfg agentadaptor.CodexConfig, profile agentadaptor.PermissionProfile) string {
+	if cfg.BypassApprovalsAndSandbox || profile.SandboxMode == agentadaptor.SandboxDisabled {
+		return "never"
+	}
+	switch profile.ApprovalMode {
+	case agentadaptor.ApprovalNever:
+		return "never"
+	case agentadaptor.ApprovalAsk:
+		return "on-request"
+	case agentadaptor.ApprovalAuto:
+		return "on-request"
+	case agentadaptor.ApprovalUnset:
+		return ""
+	default:
+		return ""
+	}
+}
+
+func mapSandbox(cfg agentadaptor.CodexConfig, profile agentadaptor.PermissionProfile) string {
+	if cfg.BypassApprovalsAndSandbox || profile.SandboxMode == agentadaptor.SandboxDisabled {
+		return "danger-full-access"
+	}
+	switch profile.SandboxMode {
+	case agentadaptor.SandboxReadOnly:
+		return "read-only"
+	case agentadaptor.SandboxWorkspaceWrite:
+		return "workspace-write"
+	case agentadaptor.SandboxUnset:
+		// Default to workspace-write when a model is requested with no
+		// explicit policy so app-server can at least run basic commands.
+		return "workspace-write"
+	default:
+		return "workspace-write"
+	}
+}
+
+// Ensure fmt import stays used so future adjustments can reference it.
+var _ = fmt.Sprintf

@@ -19,6 +19,8 @@ func (s *eventSink) Emit(event agentadaptor.RunEvent) error {
 	return nil
 }
 
+func (s *eventSink) EmitStream(agentadaptor.StreamPayload) error { return nil }
+
 func createSkillDir(t *testing.T, root, name string) string {
 	t.Helper()
 	skillDir := filepath.Join(root, name)

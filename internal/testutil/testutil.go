@@ -30,8 +30,9 @@ func WriteCommand(t testing.TB, dir, name, posixBody, windowsBody string) string
 }
 
 type EventRecorder struct {
-	mu     sync.Mutex
-	events []agentadaptor.RunEvent
+	mu      sync.Mutex
+	events  []agentadaptor.RunEvent
+	streams []agentadaptor.StreamPayload
 }
 
 func (r *EventRecorder) Emit(event agentadaptor.RunEvent) error {
@@ -41,10 +42,27 @@ func (r *EventRecorder) Emit(event agentadaptor.RunEvent) error {
 	return nil
 }
 
+func (r *EventRecorder) EmitStream(payload agentadaptor.StreamPayload) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.streams = append(r.streams, payload)
+	return nil
+}
+
 func (r *EventRecorder) Snapshot() []agentadaptor.RunEvent {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	out := make([]agentadaptor.RunEvent, len(r.events))
 	copy(out, r.events)
+	return out
+}
+
+// StreamSnapshot returns a copy of every StreamPayload recorded so far.
+// Useful for asserting adapter stream output in tests.
+func (r *EventRecorder) StreamSnapshot() []agentadaptor.StreamPayload {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]agentadaptor.StreamPayload, len(r.streams))
+	copy(out, r.streams)
 	return out
 }

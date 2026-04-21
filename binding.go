@@ -42,6 +42,7 @@ func bindWithDefaults(adapter DriverAdapter, cfg any, opts ...AgentOption) *stat
 			Skills:       cloneStrings(defaults.Skills),
 			Instructions: cloneInstructions(defaults.Instructions),
 			Metadata:     cloneStringMap(defaults.Metadata),
+			Streaming:    cloneBool(defaults.Streaming),
 		},
 	}
 }
@@ -80,7 +81,16 @@ func (b *staticAgentBinding) Defaults() AgentDefaults {
 		Skills:       cloneStrings(b.defaults.Skills),
 		Instructions: cloneInstructions(b.defaults.Instructions),
 		Metadata:     cloneStringMap(b.defaults.Metadata),
+		Streaming:    cloneBool(b.defaults.Streaming),
 	}
+}
+
+func cloneBool(b *bool) *bool {
+	if b == nil {
+		return nil
+	}
+	v := *b
+	return &v
 }
 
 func cloneInstructions(ref *InstructionsBundleRef) *InstructionsBundleRef {

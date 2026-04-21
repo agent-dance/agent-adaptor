@@ -202,6 +202,20 @@ func (adapter) SyncSkills(_ context.Context, _ any, payload agentadaptor.SkillPa
 	return syncCodexSkills(payload), nil
 }
 
+// StreamCapability advertises the codex adapter's streaming fidelity. When
+// the caller opts into streaming, codex switches from `codex exec --json` to
+// `codex app-server`, which natively emits token-level deltas, reasoning
+// deltas, and tool-call lifecycle events.
+func (adapter) StreamCapability() agentadaptor.StreamCapability {
+	return agentadaptor.StreamCapability{
+		Native:       true,
+		TokenLevel:   true,
+		Reasoning:    true,
+		ToolCallArgs: true,
+		HITL:         false, // HITL is audit-only in v1; see workstream doc §15.
+	}
+}
+
 func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink agentadaptor.EventSink) (agentadaptor.DriverRunResult, error) {
 	cfg := readConfig(req.Config)
 	command := cfg.Command
@@ -224,6 +238,13 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 	effectiveBindings, err := adapterutil.RuntimeEnvBindings(effectiveBindings, req.Runtime)
 	if err != nil {
 		return agentadaptor.DriverRunResult{}, err
+	}
+
+	// Streaming runs switch the transport to `codex app-server`. The
+	// exec --json path remains the default for batch / scripted usage; see
+	// docs/workstream-streaming-chat.md §§5–8.
+	if req.Streaming {
+		return runAppServer(ctx, req, sink, cfg, command, effectiveBindings)
 	}
 
 	args := []string{"exec", "--json"}

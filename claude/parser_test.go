@@ -27,6 +27,8 @@ func (r *recordingSink) Emit(event agentadaptor.RunEvent) error {
 	return nil
 }
 
+func (r *recordingSink) EmitStream(agentadaptor.StreamPayload) error { return nil }
+
 func loadFixture(t *testing.T, name string) []byte {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join("testdata", name))

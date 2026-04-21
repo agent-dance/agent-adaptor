@@ -27,6 +27,8 @@ func (r *recordingSink) Emit(event agentadaptor.RunEvent) error {
 	return nil
 }
 
+func (r *recordingSink) EmitStream(agentadaptor.StreamPayload) error { return nil }
+
 func (r *recordingSink) Snapshot() []agentadaptor.TranscriptItem {
 	r.mu.Lock()
 	defer r.mu.Unlock()

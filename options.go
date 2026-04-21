@@ -78,6 +78,29 @@ func WithRuntimeServiceManager(manager RuntimeServiceManager) Option {
 	}
 }
 
+// WithEventBuffer configures the per-run event-sink capacity and backpressure
+// policy. runBuf sizes the RunEvent channel (default 64); streamBuf sizes the
+// StreamPayload channel (default 1024). Values <= 0 fall back to the defaults.
+//
+// Policy controls how the SDK reacts when the StreamPayload channel is full:
+//   - BackpressureDropStream (default): drop payloads and emit a single
+//     StreamDropped marker carrying the lost count as soon as capacity
+//     returns; the adapter sub-process never blocks.
+//   - BackpressureBlock: block the adapter goroutine until the host consumes
+//     a payload; use this when strict AG-UI ordering without gaps is
+//     required.
+//
+// RunEvent backpressure is always drop-with-marker and is unaffected by this
+// option.
+func WithEventBuffer(runBuf, streamBuf int, policy EventBackpressure) Option {
+	return func(s *sdkImpl) error {
+		s.eventRunBuf = runBuf
+		s.eventStreamBuf = streamBuf
+		s.eventPolicy = policy
+		return nil
+	}
+}
+
 type AgentOption func(*AgentDefaults)
 
 func WithDefaultIdentity(identity AgentIdentity) AgentOption {
@@ -137,6 +160,15 @@ func WithDefaultMetadata(key, value string) AgentOption {
 	}
 }
 
+// WithDefaultStreaming marks the bound agent as streaming-by-default. Per-call
+// WithStreaming / WithoutStreaming still override this default.
+func WithDefaultStreaming() AgentOption {
+	return func(defaults *AgentDefaults) {
+		t := true
+		defaults.Streaming = &t
+	}
+}
+
 type RunOption func(*runOptions)
 
 type runOptions struct {
@@ -148,6 +180,21 @@ type runOptions struct {
 	instructions *InstructionsBundleRef
 	metadata     map[string]string
 	agent        *AgentIdentity
+	// streaming is tri-state: nil means "inherit from binding defaults",
+	// non-nil wins over the binding default.
+	streaming *bool
+	// runIDPreset is an internal option set by Start() so the resolved run
+	// shares the same ID that the RunHandle exposes before Wait() returns.
+	runIDPreset string
+}
+
+// withPresetRunID is an internal RunOption used by Start() to propagate the
+// pre-allocated run identifier into resolveInvocation. It is not part of the
+// public API.
+func withPresetRunID(runID string) RunOption {
+	return func(ro *runOptions) {
+		ro.runIDPreset = runID
+	}
 }
 
 func WithSession(req SessionRequest) RunOption {
@@ -243,5 +290,30 @@ func WithAgentIdentity(identity AgentIdentity) RunOption {
 	return func(ro *runOptions) {
 		copyIdentity := identity
 		ro.agent = &copyIdentity
+	}
+}
+
+// WithStreaming requests that the adapter emit normalized StreamPayload
+// events for this run. When the adapter implements StreamAwareDriver it will
+// switch to its richest token-level transport (e.g. codex app-server,
+// claude --include-partial-messages, cursor --stream-partial-output).
+//
+// Adapters without streaming support will simply produce an empty
+// StreamEvents channel; the run still completes normally with standard
+// RunEvents and RunResult.
+func WithStreaming() RunOption {
+	return func(ro *runOptions) {
+		t := true
+		ro.streaming = &t
+	}
+}
+
+// WithoutStreaming disables streaming for this run even when the bound agent
+// set WithDefaultStreaming. It is the explicit opt-out for batch / scripted
+// invocations on a streaming-default binding.
+func WithoutStreaming() RunOption {
+	return func(ro *runOptions) {
+		f := false
+		ro.streaming = &f
 	}
 }

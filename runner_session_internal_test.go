@@ -237,11 +237,11 @@ func (a *blockingTestAdapter) Run(ctx context.Context, req DriverRunRequest, _ E
 	}, nil
 }
 
-func TestChannelEventSinkEmitDoesNotBlockWhenBufferFull(t *testing.T) {
-	sink := newChannelEventSink()
+func TestDualSinkEmitDoesNotBlockWhenBufferFull(t *testing.T) {
+	sink := newDualSink(false, 4, 4, BackpressureDropStream)
 	defer sink.close()
 
-	for i := 0; i < cap(sink.events); i++ {
+	for i := 0; i < cap(sink.runEvents); i++ {
 		if err := sink.Emit(newEvent(RunEventLifecycle, fmt.Sprintf("event-%d", i))); err != nil {
 			t.Fatalf("fill buffer: %v", err)
 		}
@@ -256,12 +256,12 @@ func TestChannelEventSinkEmitDoesNotBlockWhenBufferFull(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(100 * time.Millisecond):
-		<-sink.events
+		<-sink.runEvents
 		<-done
 		t.Fatal("Emit blocked on a full events channel")
 	}
 
-	<-sink.events
+	<-sink.runEvents
 	if err := sink.Emit(newEvent(RunEventLifecycle, "after-overflow")); err != nil {
 		t.Fatalf("emit after drain: %v", err)
 	}
@@ -270,7 +270,7 @@ func TestChannelEventSinkEmitDoesNotBlockWhenBufferFull(t *testing.T) {
 	timeout := time.After(500 * time.Millisecond)
 	for !summaryFound {
 		select {
-		case event := <-sink.events:
+		case event := <-sink.runEvents:
 			if event.Type == RunEventLifecycle && event.Metadata["reason"] == "overflow" {
 				summaryFound = true
 				if event.Metadata["dropped_count"] != "1" {
@@ -283,8 +283,8 @@ func TestChannelEventSinkEmitDoesNotBlockWhenBufferFull(t *testing.T) {
 	}
 }
 
-func TestChannelEventSinkEmitAfterCloseDoesNotPanic(t *testing.T) {
-	sink := newChannelEventSink()
+func TestDualSinkEmitAfterCloseDoesNotPanic(t *testing.T) {
+	sink := newDualSink(false, 4, 4, BackpressureDropStream)
 	sink.close()
 
 	panicCh := make(chan any, 1)

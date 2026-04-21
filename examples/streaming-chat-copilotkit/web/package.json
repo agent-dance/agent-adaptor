@@ -1,0 +1,30 @@
+{
+  "name": "streaming-chat-copilotkit-web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Next.js + CopilotKit frontend that connects to the agent-adaptor AG-UI backend.",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "@ag-ui/client": "^0.0.52",
+    "@copilotkit/react-core": "^1.56.2",
+    "@copilotkit/react-ui": "^1.56.2",
+    "@copilotkit/runtime": "^1.56.2",
+    "next": "^16.2.4",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "@types/react": "^18",
+    "@types/react-dom": "^18",
+    "typescript": "^5.6.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

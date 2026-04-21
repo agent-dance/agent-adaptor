@@ -5,7 +5,15 @@ import (
 	"sync"
 )
 
-const defaultAgentName = "default"
+const (
+	defaultAgentName = "default"
+
+	// defaultRunEventBuffer matches the legacy channelEventSink capacity.
+	defaultRunEventBuffer = 64
+	// defaultStreamEventBuffer is sized for interactive chat loads with
+	// typical token cadence of 50–100 events per second.
+	defaultStreamEventBuffer = 1024
+)
 
 type sdkImpl struct {
 	defaultBinding   AgentBinding
@@ -17,6 +25,10 @@ type sdkImpl struct {
 	runtimeManager   RuntimeServiceManager
 	mu               sync.RWMutex
 	skillSelections  map[string][]string
+
+	eventRunBuf    int
+	eventStreamBuf int
+	eventPolicy    EventBackpressure
 }
 
 // Build constructs an SDK and returns configuration errors to the caller.
@@ -29,6 +41,9 @@ func Build(opts ...Option) (SDK, error) {
 		skillAssembler:   defaultSkillAssembler{},
 		runtimeManager:   noopRuntimeManager{},
 		skillSelections:  map[string][]string{},
+		eventRunBuf:      defaultRunEventBuffer,
+		eventStreamBuf:   defaultStreamEventBuffer,
+		eventPolicy:      BackpressureDropStream,
 	}
 	for _, opt := range opts {
 		if opt == nil {
@@ -42,6 +57,22 @@ func Build(opts ...Option) (SDK, error) {
 		return nil, ErrDefaultAgentMissing
 	}
 	return s, nil
+}
+
+// eventSinkSettings returns a snapshot of the runtime sink configuration used
+// by Start() when building a dualSink. Values <= 0 fall back to the SDK
+// defaults.
+func (s *sdkImpl) eventSinkSettings() (runBuf, streamBuf int, policy EventBackpressure) {
+	runBuf = s.eventRunBuf
+	if runBuf <= 0 {
+		runBuf = defaultRunEventBuffer
+	}
+	streamBuf = s.eventStreamBuf
+	if streamBuf <= 0 {
+		streamBuf = defaultStreamEventBuffer
+	}
+	policy = s.eventPolicy
+	return
 }
 
 // New is the panic-on-invalid-config convenience constructor for applications

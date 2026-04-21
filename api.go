@@ -18,7 +18,16 @@ type Runner interface {
 }
 
 type RunHandle interface {
+	// Events streams operational RunEvents (chunks, lifecycle, spawn, etc.).
 	Events() <-chan RunEvent
+	// StreamEvents streams normalized StreamPayloads produced by
+	// stream-aware adapters. When streaming was not enabled for the run (or
+	// the adapter does not emit them) the returned channel is closed and
+	// empty; consumers can `for range` it safely.
+	StreamEvents() <-chan StreamPayload
+	// RunID returns the stable run identifier assigned by the SDK. It is
+	// available as soon as Start() returns, before Wait() completes.
+	RunID() string
 	Wait(ctx context.Context) (RunResult, error)
 	Cancel(ctx context.Context) error
 }
@@ -93,7 +102,44 @@ type SkillAwareDriver interface {
 }
 
 type EventSink interface {
+	// Emit publishes a RunEvent on the run-scoped event channel.
 	Emit(event RunEvent) error
+	// EmitStream publishes a structured StreamPayload on the run-scoped
+	// stream channel. When streaming is disabled for the enclosing run the
+	// sink silently discards the payload; adapters may call EmitStream
+	// unconditionally. Sequence and Timestamp are backfilled by the SDK.
+	EmitStream(payload StreamPayload) error
+}
+
+// StreamAwareDriver is the optional contract implemented by adapters that can
+// produce normalized StreamPayload events. Hosts can advertise the adapter's
+// streaming capabilities (e.g. whether it supports token-level text deltas)
+// through Admin introspection without changing the execution contract.
+type StreamAwareDriver interface {
+	StreamCapability() StreamCapability
+}
+
+// StreamCapability describes what kinds of streaming fidelity an adapter can
+// deliver. Every field is additive: bridges should degrade gracefully when a
+// capability is false (e.g. synthesize a single TOOL_CALL_START when
+// ToolCallArgs is false).
+type StreamCapability struct {
+	// Native reports whether the adapter speaks a natively event-based
+	// protocol with the underlying CLI or service (as opposed to parsing
+	// free-form stdout).
+	Native bool
+	// TokenLevel reports whether text deltas arrive at character granularity
+	// or finer (i.e. multiple deltas per assistant message).
+	TokenLevel bool
+	// Reasoning reports whether reasoning / thinking deltas are exposed.
+	Reasoning bool
+	// ToolCallArgs reports whether tool-call argument streaming is exposed
+	// (StreamToolCallArgs events). When false, StreamToolCallStart carries a
+	// complete Args snapshot instead.
+	ToolCallArgs bool
+	// HITL reports whether human-in-the-loop approval / user-input events
+	// are exposed. In v1 these are audit-only (see StreamHITLRequested).
+	HITL bool
 }
 
 type AgentBinding interface {
@@ -115,6 +161,11 @@ type AgentDefaults struct {
 	Skills       []string
 	Instructions *InstructionsBundleRef
 	Metadata     map[string]string
+	// Streaming marks the binding as streaming-by-default when non-nil and
+	// true. Per-call WithStreaming / WithoutStreaming still wins. Using a
+	// pointer keeps the three states (nil / true / false) distinct so that
+	// clones do not accidentally downgrade an opt-out to a default.
+	Streaming *bool
 }
 
 type AgentInfo struct {
