@@ -61,9 +61,18 @@ func runAppServer(
 		ClientVersion:  "v0",
 		Prompt:         prompt,
 		ResumeThreadID: resumeID,
-		// app-server ephemeral flag only applies when we create a new
-		// thread; resumed threads persist on disk server-side regardless.
-		Ephemeral: resumeID == "",
+		// ephemeral=true tells codex app-server "do not persist this
+		// thread to disk". Because we rely on SessionStore to resume
+		// across process restarts, every run must leave a persistent
+		// thread behind. Otherwise the threadId we stash in the
+		// checkpoint is invalid the moment this subprocess exits, and
+		// the next call with the same sessionKey silently starts a
+		// brand new conversation (the 2026-04-21 regression).
+		//
+		// If a host ever wants truly stateless runs they can omit
+		// WithSessionStore on the SDK, which takes us through the
+		// non-streaming code path without a session binding.
+		Ephemeral: false,
 		Sandbox:   sandbox,
 		Approval:  approval,
 		Model:     strings.TrimSpace(cfg.Model),
