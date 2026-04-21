@@ -99,7 +99,8 @@ func (d *RecordingDriver) Run(ctx context.Context, req agentadaptor.DriverRunReq
 	}
 	cfg := readConfig(req.Config)
 	return agentadaptor.DriverRunResult{
-		Output:          string(raw),
+		Output:          "mock recording completed",
+		RawStreams:      &agentadaptor.RawStreams{Stdout: string(raw)},
 		ExitCode:        0,
 		Model:           cfg.Label,
 		Summary:         "mock recording completed",

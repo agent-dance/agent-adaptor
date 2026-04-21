@@ -133,14 +133,45 @@ func cloneTranscriptItems(values []TranscriptItem) []TranscriptItem {
 	}
 	out := make([]TranscriptItem, 0, len(values))
 	for _, value := range values {
-		out = append(out, TranscriptItem{
-			Type:     value.Type,
-			Text:     value.Text,
-			Metadata: cloneStringMap(value.Metadata),
-			Data:     cloneAnyMap(value.Data),
-		})
+		out = append(out, cloneTranscriptItem(value))
 	}
 	return out
+}
+
+func cloneTranscriptItem(value TranscriptItem) TranscriptItem {
+	return TranscriptItem{
+		Kind:      value.Kind,
+		Text:      value.Text,
+		Delta:     value.Delta,
+		ToolUseID: value.ToolUseID,
+		ToolName:  value.ToolName,
+		Input:     value.Input,
+		IsError:   value.IsError,
+		Model:     value.Model,
+		SessionID: value.SessionID,
+		Usage:     cloneUsagePointer(value.Usage),
+		CostUSD:   cloneFloat64Pointer(value.CostUSD),
+		Subtype:   value.Subtype,
+		Errors:    cloneStrings(value.Errors),
+		Metadata:  cloneStringMap(value.Metadata),
+		Data:      cloneAnyMap(value.Data),
+	}
+}
+
+func cloneUsagePointer(value *Usage) *Usage {
+	if value == nil {
+		return nil
+	}
+	copy := *value
+	return &copy
+}
+
+func cloneRawStreams(value *RawStreams) *RawStreams {
+	if value == nil {
+		return nil
+	}
+	copy := *value
+	return &copy
 }
 
 func cloneRunQuestion(question *RunQuestion) *RunQuestion {

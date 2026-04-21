@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -16,7 +17,7 @@ type runnerImpl struct {
 }
 
 func (r *runnerImpl) Run(ctx context.Context, prompt string, opts ...RunOption) (RunResult, error) {
-	return r.run(ctx, prompt, noopEventSink{}, opts...)
+	return r.run(ctx, prompt, wrapWithSeq(noopEventSink{}), opts...)
 }
 
 func (r *runnerImpl) Start(ctx context.Context, prompt string, opts ...RunOption) (RunHandle, error) {
@@ -29,7 +30,7 @@ func (r *runnerImpl) Start(ctx context.Context, prompt string, opts ...RunOption
 	}
 
 	go func() {
-		result, err := r.run(runCtx, prompt, eventSink, opts...)
+		result, err := r.run(runCtx, prompt, wrapWithSeq(eventSink), opts...)
 		eventSink.close()
 		handle.done <- asyncRunResult{result: result, err: err}
 		close(handle.done)
@@ -268,11 +269,12 @@ func (r *runnerImpl) executeWithSessionPlan(
 		RunID:           invocation.runID,
 		DriverType:      invocation.adapter.Descriptor().Type,
 		Output:          runResult.Output,
+		RawStreams:      cloneRawStreams(runResult.RawStreams),
 		Transcript:      cloneTranscriptItems(runResult.Transcript),
 		ExitCode:        runResult.ExitCode,
 		Signal:          runResult.Signal,
 		TimedOut:        runResult.TimedOut,
-		Usage:           runResult.Usage,
+		Usage:           cloneUsagePointer(runResult.Usage),
 		Metadata:        cloneStringMap(runResult.Metadata),
 		Provider:        runResult.Provider,
 		Biller:          runResult.Biller,
@@ -285,6 +287,25 @@ func (r *runnerImpl) executeWithSessionPlan(
 		Question:        cloneRunQuestion(runResult.Question),
 		Failure:         cloneRunFailure(runResult.Failure),
 	}, runResult.Checkpoint, nil
+}
+
+// seqSink wraps an EventSink and assigns a monotonically increasing Seq to
+// every emitted event for the enclosing run.
+type seqSink struct {
+	inner   EventSink
+	counter uint64
+}
+
+func wrapWithSeq(inner EventSink) EventSink {
+	return &seqSink{inner: inner}
+}
+
+func (s *seqSink) Emit(event RunEvent) error {
+	event.Seq = atomic.AddUint64(&s.counter, 1)
+	if event.Timestamp.IsZero() {
+		event.Timestamp = time.Now().UTC()
+	}
+	return s.inner.Emit(event)
 }
 
 type noopEventSink struct{}
@@ -413,5 +434,14 @@ func newEvent(kind RunEventType, text string) RunEvent {
 		Type:      kind,
 		Text:      text,
 		Timestamp: time.Now().UTC(),
+	}
+}
+
+func newItemEvent(item TranscriptItem) RunEvent {
+	clone := cloneTranscriptItem(item)
+	return RunEvent{
+		Type:      RunEventItem,
+		Timestamp: time.Now().UTC(),
+		Item:      &clone,
 	}
 }

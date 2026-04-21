@@ -1,0 +1,2 @@
+{"type":"session","session_id":"cursor-fail"}
+{"type":"run.failed","session_id":"cursor-fail","message":"network unreachable"}

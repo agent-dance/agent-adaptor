@@ -336,34 +336,54 @@
 
 `paperclip` 类宿主系统真正需要的不只是 raw stdout/stderr，而是足够稳定的结构化执行信号。
 
-现在 event stream 已经 richer 了，但仍然偏“过程事件”，还不够表达 transcript 语义。
+现在的输出合同有两个明显问题：
+
+- `Output` 在不同宿主眼里语义冲突，有时被当最终文本，有时被当 raw stdout
+- shared helper 会对 stdout/stderr 做保守 JSON 猜测，这和 adapter 自己识别正式协议的边界不够一致
+
+所以下一步不是“继续在旧事件上补字段”，而是把输出合同重整为一套清晰的单轨结构。
 
 ### 服务的用户场景
 
 - 宿主想统一渲染 agent 输出
 - 宿主想区分 assistant、thinking、tool、result summary
-- 宿主想做运行分析和 UI 展示，但不想每个 adapter 自己写 parser
+- 宿主想做运行分析和 UI 展示，但不想自己重复实现各家 adapter parser
+- 宿主即使只走 `Run()`，也仍然需要拿到原始 stdout/stderr 做审计与调试
 
 ### 计划内容
 
-- 定义可选的 normalized transcript contract
-- 允许 adapter 渐进式实现，而不是一次性强制全部迁移
+- 重整 `RunResult` / `DriverRunResult` / `RunEvent` 的输出合同
+- 明确分离：
+  - `Output`：最终 assistant 文本
+  - `RawStreams`：原始 stdout / stderr
+  - `Transcript`：标准化语义条目
+  - `Summary`：简短摘要
+  - `Result`：terminal result 原始 JSON
+- 让 shared helper 只负责进程 IO 与原始 chunk 分发，不再猜协议
+- 让 built-in adapters 自己做正式协议解析，并从同一次解析同时产出 transcript、summary、checkpoint、result
+- 允许 public API break，不保留旧 event / transcript enum 的兼容层
+- 不在代码命名里引入 `V2` / `v2` 后缀
 
 ### 交付物
 
-- transcript type / event guidance
-- built-in adapter 的最低实现
-- 宿主渲染建议
+- transcript / event contract 文档
+- built-in `codex` / `claude` / `cursor` 的 streaming parser
+- examples 与 tests 的输出合同迁移
+- 宿主消费建议
 
 ### 验收标准
 
 - 宿主可以在不依赖 provider-specific JSON 的情况下消费核心 transcript 语义
-- 保持与当前 event stream 向后兼容
+- `Run()` 与 `Start().Wait()` 都能拿到完整原始 stdout/stderr
+- `Output` 在 built-in adapters 上都等于最终 assistant 文本
+- `RunResult.Transcript` 与按顺序收集到的 transcript item 事件完全一致
+- shared helper 不再感知 provider 协议
 
 ### 不做什么
 
 - 不做 UI framework
 - 不把所有 provider-specific token 流抽象得过度复杂
+- 不为了 transcript conformance 引入测试专用 public SPI
 
 ## 6. 上层包 / 示例规划
 

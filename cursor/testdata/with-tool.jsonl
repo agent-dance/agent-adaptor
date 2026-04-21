@@ -1,0 +1,5 @@
+{"type":"session","session_id":"cursor-tool"}
+{"type":"tool_call","id":"call-1","name":"search","input":{"query":"foo"}}
+{"type":"tool_result","id":"call-1","text":"3 matches"}
+{"type":"assistant","text":"Done searching."}
+{"type":"run.completed","session_id":"cursor-tool","result":"Done searching."}

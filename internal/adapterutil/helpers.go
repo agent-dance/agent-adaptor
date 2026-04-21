@@ -1,8 +1,6 @@
 package adapterutil
 
 import (
-	"bufio"
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -219,95 +217,6 @@ func RuntimeReportsFromRefs(refs []agentadaptor.RuntimeServiceRef, owner agentad
 		})
 	}
 	return out
-}
-
-func TranscriptFromOutput(stdout, stderr, summary string, question *agentadaptor.RunQuestion, failure *agentadaptor.RunFailure) []agentadaptor.TranscriptItem {
-	items := make([]agentadaptor.TranscriptItem, 0)
-	items = append(items, transcriptItemsFromStream(agentadaptor.RunEventStdout, stdout)...)
-	items = append(items, transcriptItemsFromStream(agentadaptor.RunEventStderr, stderr)...)
-	if strings.TrimSpace(summary) != "" {
-		items = append(items, agentadaptor.TranscriptItem{
-			Type: agentadaptor.TranscriptSummary,
-			Text: strings.TrimSpace(summary),
-		})
-	}
-	if question != nil {
-		choices := make([]map[string]string, 0, len(question.Choices))
-		for _, choice := range question.Choices {
-			choices = append(choices, map[string]string{
-				"key":         choice.Key,
-				"label":       choice.Label,
-				"description": choice.Description,
-			})
-		}
-		items = append(items, agentadaptor.TranscriptItem{
-			Type: agentadaptor.TranscriptQuestion,
-			Text: strings.TrimSpace(question.Prompt),
-			Data: map[string]any{
-				"choices": choices,
-			},
-		})
-	}
-	if failure != nil {
-		item := agentadaptor.TranscriptItem{
-			Type: agentadaptor.TranscriptFailure,
-			Text: strings.TrimSpace(failure.Message),
-			Metadata: map[string]string{
-				"code": failure.Code,
-			},
-		}
-		if len(failure.Metadata) > 0 {
-			item.Data = map[string]any{
-				"metadata": cloneStringMap(failure.Metadata),
-			}
-		}
-		items = append(items, item)
-	}
-	return items
-}
-
-func transcriptItemsFromStream(eventType agentadaptor.RunEventType, content string) []agentadaptor.TranscriptItem {
-	if strings.TrimSpace(content) == "" {
-		return nil
-	}
-	scanner := bufio.NewScanner(bytes.NewBufferString(content))
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	out := make([]agentadaptor.TranscriptItem, 0)
-	for scanner.Scan() {
-		out = append(out, transcriptItemForLine(eventType, scanner.Text()))
-	}
-	return out
-}
-
-func transcriptItemForLine(eventType agentadaptor.RunEventType, line string) agentadaptor.TranscriptItem {
-	text := strings.TrimSpace(line)
-	item := agentadaptor.TranscriptItem{
-		Text: text,
-	}
-	switch eventType {
-	case agentadaptor.RunEventStderr:
-		item.Type = agentadaptor.TranscriptDiagnostic
-	default:
-		item.Type = agentadaptor.TranscriptOutput
-	}
-	if text == "" {
-		return item
-	}
-	if !strings.HasPrefix(text, "{") && !strings.HasPrefix(text, "[") {
-		return item
-	}
-	var payload any
-	if err := json.Unmarshal([]byte(text), &payload); err != nil {
-		return item
-	}
-	item.Type = agentadaptor.TranscriptStructured
-	item.Metadata = map[string]string{
-		"stream": string(eventType),
-	}
-	item.Data = map[string]any{
-		"payload": payload,
-	}
-	return item
 }
 
 func cloneStringMap(values map[string]string) map[string]string {

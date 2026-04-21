@@ -94,7 +94,11 @@ func TestInjectCodexSkillsPreservesExternalSymlink(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve external symlink: %v", err)
 	}
-	if filepath.Clean(resolved) != filepath.Clean(externalSource) {
+	expected, err := filepath.EvalSymlinks(externalSource)
+	if err != nil {
+		t.Fatalf("resolve expected source: %v", err)
+	}
+	if filepath.Clean(resolved) != filepath.Clean(expected) {
 		t.Fatalf("expected external symlink to be preserved, got %s", resolved)
 	}
 }

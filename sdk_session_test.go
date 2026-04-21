@@ -104,7 +104,7 @@ func (d *fakeDriver) Run(ctx context.Context, req agentadaptor.DriverRunRequest,
 		if d.rejectResume {
 			return agentadaptor.DriverRunResult{}, &agentadaptor.ResumeRejectedError{Reason: "resume rejected for test"}
 		}
-		_ = sink.Emit(agentadaptor.RunEvent{Type: agentadaptor.RunEventSystem, Text: "reused"})
+		_ = sink.Emit(agentadaptor.RunEvent{Type: agentadaptor.RunEventLifecycle, Text: "reused"})
 		return agentadaptor.DriverRunResult{
 			Output:   cfg.Label + ":reused:" + req.Session.State.ResumeID,
 			ExitCode: 0,

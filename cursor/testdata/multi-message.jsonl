@@ -1,0 +1,4 @@
+{"type":"session","session_id":"cursor-multi","model":"gpt-5"}
+{"type":"assistant","session_id":"cursor-multi","text":"First paragraph from Cursor."}
+{"type":"assistant","session_id":"cursor-multi","text":"Second paragraph closing it."}
+{"type":"run.completed","session_id":"cursor-multi","result":"wrapped multi-message reply"}

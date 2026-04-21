@@ -84,9 +84,10 @@ func main() {
 	exampleutil.Check(request.Metadata["winner"] == "override", "expected per-call metadata to override binding metadata, got %#v", request.Metadata)
 	exampleutil.Check(request.Metadata["request-id"] == "mock-playground", "expected request-id metadata to be set, got %#v", request.Metadata)
 
+	exampleutil.Check(result.RawStreams != nil, "expected RawStreams to be populated")
 	var outputRequest agentadaptor.DriverRunRequest
-	err = json.Unmarshal([]byte(result.Output), &outputRequest)
-	exampleutil.Must(err, "decode mock driver output")
+	err = json.Unmarshal([]byte(result.RawStreams.Stdout), &outputRequest)
+	exampleutil.Must(err, "decode mock driver raw stdout")
 
 	exampleutil.PrintJSON(map[string]any{
 		"example":      "mock-adapter-playground",

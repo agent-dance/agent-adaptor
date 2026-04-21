@@ -2,7 +2,6 @@ package cursor
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -245,33 +244,47 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 		prompt = "Instructions bundle: " + req.Instructions.Path + "\n\n" + prompt
 	}
 
+	parser := newCursorParser(sink)
 	result, err := clihelper.Run(ctx, clihelper.CommandRequest{
 		Command: command,
 		Args:    args,
 		CWD:     effectiveCWD,
 		Env:     effectiveEnv,
 		Prompt:  prompt,
+		Observe: parser.onChunk,
 	}, sink)
 	if err != nil {
 		return agentadaptor.DriverRunResult{}, err
 	}
-	checkpoint := parseCheckpoint(result.Stdout, result.ExitCode)
+	parser.finalize()
+	raw := agentadaptor.RawStreams{Stdout: result.RawStreams.Stdout, Stderr: result.RawStreams.Stderr}
+	checkpoint := parser.checkpoint(result.ExitCode)
 	if checkpoint != nil && checkpoint.State != nil {
 		checkpoint.State.Data = map[string]string{
 			agentadaptor.SessionParamCWD:         effectiveCWD,
 			agentadaptor.SessionParamWorkspaceID: req.Workspace.ID,
 		}
 	}
+	var failure *agentadaptor.RunFailure
+	if strings.TrimSpace(parser.errorMessage) != "" {
+		failure = &agentadaptor.RunFailure{Message: parser.errorMessage}
+	}
 
 	return agentadaptor.DriverRunResult{
-		Output:          result.Stdout,
-		Transcript:      adapterutil.TranscriptFromOutput(result.Stdout, result.Stderr, "", nil, nil),
+		Output:          parser.buildOutput(),
+		RawStreams:      &raw,
+		Transcript:      parser.transcript,
 		ExitCode:        result.ExitCode,
+		Signal:          result.Signal,
+		TimedOut:        result.TimedOut,
+		Usage:           parser.usage,
 		Checkpoint:      checkpoint,
-		Metadata:        map[string]string{"stderr": result.Stderr},
 		Provider:        "cursor",
 		Model:           cfg.Model,
+		Summary:         parser.finalSummary(),
+		Result:          parser.resultFinal,
 		RuntimeServices: adapterutil.RuntimeReportsFromRefs(req.Runtime.Ensured, req.Agent),
+		Failure:         failure,
 	}, nil
 }
 
@@ -294,96 +307,3 @@ func readConfig(cfg any) agentadaptor.CursorConfig {
 	return agentadaptor.CursorConfig{}
 }
 
-func parseCheckpoint(stdout string, exitCode int) *agentadaptor.DriverCheckpoint {
-	if exitCode != 0 {
-		return nil
-	}
-	var checkpoint *agentadaptor.DriverCheckpoint
-	for _, line := range strings.Split(stdout, "\n") {
-		if parsed := parseCheckpointLine(line, cursorCheckpointEvents); parsed != nil {
-			checkpoint = parsed
-		}
-	}
-	return checkpoint
-}
-
-func topLevelString(payload map[string]any, keys ...string) string {
-	for _, key := range keys {
-		raw, ok := payload[key]
-		if !ok {
-			continue
-		}
-		value, ok := raw.(string)
-		if ok && strings.TrimSpace(value) != "" {
-			return strings.TrimSpace(value)
-		}
-	}
-	return ""
-}
-
-var cursorCheckpointEvents = map[string]struct{}{
-	"result":          {},
-	"run.completed":   {},
-	"session":         {},
-	"session.updated": {},
-}
-
-func parseCheckpointLine(line string, allowedEvents map[string]struct{}) *agentadaptor.DriverCheckpoint {
-	line = strings.TrimSpace(line)
-	if !strings.HasPrefix(line, "{") {
-		return nil
-	}
-
-	var payload map[string]any
-	if err := json.Unmarshal([]byte(line), &payload); err != nil {
-		return nil
-	}
-
-	sessionID := topLevelString(payload, "session_id", "sessionId", "sessionID")
-	if sessionID == "" {
-		return nil
-	}
-
-	eventKind := checkpointEventKind(payload)
-	if eventKind != "" {
-		if _, ok := allowedEvents[eventKind]; !ok {
-			return nil
-		}
-	} else if !isCheckpointPayload(payload) {
-		return nil
-	}
-
-	displayID := topLevelString(payload, "display_id", "displayId")
-	if displayID == "" {
-		displayID = sessionID
-	}
-
-	return &agentadaptor.DriverCheckpoint{
-		State: &agentadaptor.DriverSessionState{
-			ResumeID:  sessionID,
-			DisplayID: displayID,
-		},
-		Valid: true,
-	}
-}
-
-func checkpointEventKind(payload map[string]any) string {
-	return strings.ToLower(topLevelString(payload, "event", "type", "kind"))
-}
-
-func isCheckpointPayload(payload map[string]any) bool {
-	for key, value := range payload {
-		switch value.(type) {
-		case nil, string, bool, float64:
-		default:
-			return false
-		}
-
-		switch key {
-		case "session_id", "sessionId", "sessionID", "display_id", "displayId", "event", "type", "kind", "timestamp", "ts", "created_at", "createdAt":
-		default:
-			return false
-		}
-	}
-	return true
-}

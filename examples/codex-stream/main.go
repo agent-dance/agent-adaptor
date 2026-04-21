@@ -54,7 +54,16 @@ func main() {
 	go func() {
 		defer close(eventsDone)
 		for event := range handle.Events() {
-			fmt.Printf("[%s] %s\n", event.Type, event.Text)
+			switch event.Type {
+			case agentadaptor.RunEventChunk:
+				fmt.Printf("[chunk %s] %d bytes\n", event.Stream, len(event.Bytes))
+			case agentadaptor.RunEventItem:
+				if event.Item != nil {
+					fmt.Printf("[item %s] %s\n", event.Item.Kind, event.Item.Text)
+				}
+			default:
+				fmt.Printf("[%s] %s\n", event.Type, event.Text)
+			}
 			mu.Lock()
 			totalEvents++
 			counts[string(event.Type)]++

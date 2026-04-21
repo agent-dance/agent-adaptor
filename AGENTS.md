@@ -95,7 +95,24 @@ type RunHandle interface {
 }
 ```
 
-### 3.4 `AdminAPI`
+### 3.4 输出合同
+
+`RunResult` / `DriverRunResult` 的输出层必须分层表达，不能再混在一个字段里：
+
+- `Output`：最终 assistant-facing 文本输出；没有 assistant 文本时允许为空
+- `RawStreams.Stdout` / `RawStreams.Stderr`：本次运行的原始 stdout / stderr 完整内容
+- `Transcript`：标准化语义条目，用于统一渲染 assistant / thinking / tool / result
+- `Summary`：适合列表、日志、issue comment 的简短摘要
+- `Result`：adapter 识别出的终局 result 事件原始 JSON；用于 provider-specific 细节与审计
+
+硬约束：
+
+- `Output` 不允许再承载原始 stdout dump
+- `Output` 不允许自动拼接 `Summary` 或终局 `Result`
+- `Run()` 与 `Start().Wait()` 都必须返回同样可用的 `RawStreams`
+- `Transcript` 必须来自 adapter 对正式协议的解析，不能来自 shared helper 的 JSON 猜测
+
+### 3.5 `AdminAPI`
 
 ```go
 type AdminAPI interface {
@@ -291,12 +308,16 @@ result, err := sdk.Run(
 - 启进程
 - 传 stdin
 - 收 stdout / stderr
-- 发送原始事件
+- 聚合原始 stdout / stderr
+- 发送原始 chunk 事件
+- 把原始 chunk tee 给 adapter parser callback
 
 ### 7.2 shared helper 不负责什么
 
 它不负责：
 
+- 解析 provider/CLI 协议
+- 把 stdout/stderr 解释成 assistant / tool / result 语义
 - 递归扫描 JSON 猜 `session_id`
 - 判断哪个字段是正式 checkpoint
 - 推断失败后 session 是否仍可恢复
@@ -305,6 +326,8 @@ result, err := sdk.Run(
 
 每个内置 adapter 都必须：
 
+- 解析自己的 stdout/stderr 正式协议事件
+- 从同一次解析同时产出 `Transcript`、`Output`、`Summary`、`Result`
 - 只识别自己的正式协议事件
 - 只接受顶层、明确的 checkpoint 字段
 - 自己决定 `DriverCheckpoint.Valid`
@@ -326,5 +349,6 @@ result, err := sdk.Run(
 - 不允许复活 `WithDriver(...)`、`sdk.Codex(...)`、`sdk.Driver(...)`、`Registry`
 - 不允许再引入第二套执行入口
 - 不允许让 shared helper 偷吃 adapter 的协议职责
+- 不允许再把原始 stdout/stderr 混塞进 `Output`
 - 不允许把宿主服务能力直接塞回 core SDK
 - 文档必须和代码的当前公共语义保持一致，不能保留已删除 API 的示例

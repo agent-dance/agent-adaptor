@@ -2,7 +2,6 @@ package codex
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -267,56 +266,59 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 		prompt = "Instructions bundle: " + req.Instructions.Path + "\n\n" + prompt
 	}
 
+	parser := newCodexParser(sink)
 	result, err := clihelper.Run(ctx, clihelper.CommandRequest{
 		Command: command,
 		Args:    args,
 		CWD:     effectiveCWD,
 		Env:     effectiveBindings,
 		Prompt:  prompt,
+		Observe: parser.onChunk,
 	}, sink)
 	if err != nil {
 		return agentadaptor.DriverRunResult{}, err
 	}
-	parsed := parseCodexJSONL(result.Stdout)
+	parser.finalize()
+	raw := agentadaptor.RawStreams{Stdout: result.RawStreams.Stdout, Stderr: result.RawStreams.Stderr}
 	if req.Session != nil && req.Session.State != nil && req.Session.State.ResumeID != "" &&
-		result.ExitCode != 0 && isCodexUnknownSessionError(result.Stdout, result.Stderr) {
-		reason := parsed.errorMessage
+		result.ExitCode != 0 && isCodexUnknownSessionError(raw.Stdout, raw.Stderr) {
+		reason := parser.errorMessage
 		if strings.TrimSpace(reason) == "" {
 			reason = fmt.Sprintf("codex resume session %q is unavailable", req.Session.State.ResumeID)
 		}
 		return agentadaptor.DriverRunResult{}, &agentadaptor.ResumeRejectedError{Reason: reason}
 	}
-	checkpoint := checkpointFromParsedCodexRun(parsed, result.ExitCode)
+	checkpoint := parser.checkpoint(result.ExitCode)
 	if checkpoint != nil && checkpoint.State != nil {
 		checkpoint.State.Data = map[string]string{
 			agentadaptor.SessionParamCWD:         effectiveCWD,
 			agentadaptor.SessionParamWorkspaceID: req.Workspace.ID,
 		}
 	}
-	var usage *agentadaptor.Usage
-	if parsed.hasUsage {
-		usage = &agentadaptor.Usage{
-			InputTokens:       parsed.usage.InputTokens,
-			OutputTokens:      parsed.usage.OutputTokens,
-			CachedInputTokens: parsed.usage.CachedInputTokens,
-		}
-	}
 	provider := ""
 	if cfg.Model != "" {
 		provider = "openai"
 	}
+	var failure *agentadaptor.RunFailure
+	if strings.TrimSpace(parser.errorMessage) != "" {
+		failure = &agentadaptor.RunFailure{Message: parser.errorMessage}
+	}
 
 	return agentadaptor.DriverRunResult{
-		Output:          result.Stdout,
-		Transcript:      adapterutil.TranscriptFromOutput(result.Stdout, result.Stderr, "", nil, nil),
+		Output:          parser.buildOutput(),
+		RawStreams:      &raw,
+		Transcript:      parser.transcript,
 		ExitCode:        result.ExitCode,
-		Usage:           usage,
+		Signal:          result.Signal,
+		TimedOut:        result.TimedOut,
+		Usage:           parser.usage,
 		Checkpoint:      checkpoint,
-		Metadata:        map[string]string{"stderr": result.Stderr},
 		Provider:        provider,
 		Model:           cfg.Model,
-		Summary:         parsed.summary,
+		Summary:         parser.finalSummary(),
+		Result:          parser.resultFinal,
 		RuntimeServices: adapterutil.RuntimeReportsFromRefs(req.Runtime.Ensured, req.Agent),
+		Failure:         failure,
 	}, nil
 }
 
@@ -337,189 +339,6 @@ func readConfig(cfg any) agentadaptor.CodexConfig {
 		}
 	}
 	return agentadaptor.CodexConfig{}
-}
-
-func topLevelString(payload map[string]any, keys ...string) string {
-	for _, key := range keys {
-		raw, ok := payload[key]
-		if !ok {
-			continue
-		}
-		value, ok := raw.(string)
-		if ok && strings.TrimSpace(value) != "" {
-			return strings.TrimSpace(value)
-		}
-	}
-	return ""
-}
-
-type codexParsedRun struct {
-	sessionID    string
-	displayID    string
-	summary      string
-	usage        agentadaptor.Usage
-	hasUsage     bool
-	errorMessage string
-}
-
-func parseCheckpoint(stdout string, exitCode int) *agentadaptor.DriverCheckpoint {
-	return checkpointFromParsedCodexRun(parseCodexJSONL(stdout), exitCode)
-}
-
-func checkpointFromParsedCodexRun(parsed codexParsedRun, exitCode int) *agentadaptor.DriverCheckpoint {
-	if exitCode != 0 || parsed.sessionID == "" {
-		return nil
-	}
-
-	displayID := parsed.displayID
-	if displayID == "" {
-		displayID = parsed.sessionID
-	}
-	return &agentadaptor.DriverCheckpoint{
-		State: &agentadaptor.DriverSessionState{
-			ResumeID:  parsed.sessionID,
-			DisplayID: displayID,
-		},
-		Valid: true,
-	}
-}
-
-func parseCodexJSONL(stdout string) codexParsedRun {
-	var parsed codexParsedRun
-	for _, rawLine := range strings.Split(stdout, "\n") {
-		line := strings.TrimSpace(rawLine)
-		if !strings.HasPrefix(line, "{") {
-			continue
-		}
-		payload, ok := parseCodexJSONLine(line)
-		if !ok {
-			continue
-		}
-		switch checkpointEventKind(payload) {
-		case "thread.started":
-			if threadID := topLevelString(payload, "thread_id", "threadId"); threadID != "" {
-				parsed.sessionID = threadID
-				parsed.displayID = threadID
-			}
-		case "item.completed":
-			item := topLevelObject(payload, "item")
-			if checkpointEventKind(item) != "agent_message" {
-				continue
-			}
-			if text := topLevelString(item, "text"); text != "" {
-				parsed.summary = text
-			}
-		case "turn.completed":
-			usage := topLevelObject(payload, "usage")
-			input, okInput := topLevelInt(usage, "input_tokens")
-			cached, okCached := topLevelInt(usage, "cached_input_tokens")
-			output, okOutput := topLevelInt(usage, "output_tokens")
-			if okInput || okCached || okOutput {
-				parsed.hasUsage = true
-			}
-			if okInput {
-				parsed.usage.InputTokens = input
-			}
-			if okCached {
-				parsed.usage.CachedInputTokens = cached
-			}
-			if okOutput {
-				parsed.usage.OutputTokens = output
-			}
-		case "turn.failed":
-			errPayload := topLevelObject(payload, "error")
-			if message := topLevelString(errPayload, "message"); message != "" {
-				parsed.errorMessage = message
-			}
-		case "error":
-			if message := topLevelString(payload, "message"); message != "" {
-				parsed.errorMessage = message
-			}
-		case "session", "session.updated":
-			if sessionID := topLevelString(payload, "session_id", "sessionId", "sessionID"); sessionID != "" {
-				parsed.sessionID = sessionID
-				if displayID := topLevelString(payload, "display_id", "displayId"); displayID != "" {
-					parsed.displayID = displayID
-				} else {
-					parsed.displayID = sessionID
-				}
-			}
-		default:
-			if !isCheckpointPayload(payload) {
-				continue
-			}
-			sessionID := topLevelString(payload, "session_id", "sessionId", "sessionID", "thread_id", "threadId")
-			if sessionID == "" {
-				continue
-			}
-			parsed.sessionID = sessionID
-			if displayID := topLevelString(payload, "display_id", "displayId"); displayID != "" {
-				parsed.displayID = displayID
-			} else {
-				parsed.displayID = sessionID
-			}
-		}
-	}
-	return parsed
-}
-
-func checkpointEventKind(payload map[string]any) string {
-	return strings.ToLower(topLevelString(payload, "event", "type", "kind"))
-}
-
-func isCheckpointPayload(payload map[string]any) bool {
-	for key, value := range payload {
-		switch value.(type) {
-		case nil, string, bool, float64:
-		default:
-			return false
-		}
-
-		switch key {
-		case "session_id", "sessionId", "sessionID", "thread_id", "threadId", "display_id", "displayId", "event", "type", "kind", "timestamp", "ts", "created_at", "createdAt":
-		default:
-			return false
-		}
-	}
-	return true
-}
-
-func parseCodexJSONLine(line string) (map[string]any, bool) {
-	var payload map[string]any
-	if err := json.Unmarshal([]byte(line), &payload); err != nil {
-		return nil, false
-	}
-	return payload, true
-}
-
-func topLevelObject(payload map[string]any, key string) map[string]any {
-	raw, ok := payload[key]
-	if !ok {
-		return nil
-	}
-	value, ok := raw.(map[string]any)
-	if !ok {
-		return nil
-	}
-	return value
-}
-
-func topLevelInt(payload map[string]any, keys ...string) (int, bool) {
-	for _, key := range keys {
-		raw, ok := payload[key]
-		if !ok {
-			continue
-		}
-		switch value := raw.(type) {
-		case float64:
-			return int(value), true
-		case int:
-			return value, true
-		case int64:
-			return int(value), true
-		}
-	}
-	return 0, false
 }
 
 var codexUnknownSessionErrorRE = regexp.MustCompile(`(?i)unknown (session|thread)|session .* not found|thread .* not found|conversation .* not found|missing rollout path for thread|state db missing rollout path|no rollout found for thread id`)

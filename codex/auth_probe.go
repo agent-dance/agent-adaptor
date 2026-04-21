@@ -103,7 +103,7 @@ func readCodexAuthInfo(bindings []agentadaptor.EnvBinding) (*codexAuthInfo, erro
 
 	accessToken := nestedString(payload, "tokens", "access_token")
 	if accessToken == "" {
-		accessToken = topLevelString(payload, "accessToken")
+		accessToken = codexTopLevelString(payload, "accessToken")
 	}
 	if accessToken == "" {
 		return nil, nil
@@ -115,10 +115,10 @@ func readCodexAuthInfo(bindings []agentadaptor.EnvBinding) (*codexAuthInfo, erro
 	return &codexAuthInfo{
 		AccessToken: accessToken,
 		Path:        authPath,
-		AccountID:   firstNonEmpty(nestedString(payload, "tokens", "account_id"), topLevelString(payload, "accountId")),
+		AccountID:   firstNonEmpty(nestedString(payload, "tokens", "account_id"), codexTopLevelString(payload, "accountId")),
 		Email:       email,
 		PlanType:    planType,
-		LastRefresh: topLevelString(payload, "last_refresh"),
+		LastRefresh: codexTopLevelString(payload, "last_refresh"),
 	}, nil
 }
 
@@ -129,7 +129,7 @@ func parseCodexTokenHints(tokens ...string) (string, string) {
 			continue
 		}
 		email := firstNonEmpty(
-			topLevelString(payload, "email"),
+			codexTopLevelString(payload, "email"),
 			nestedString(payload, "https://api.openai.com/profile", "email"),
 			nestedString(payload, "https://api.openai.com/auth", "chatgpt_user_email"),
 		)

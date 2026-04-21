@@ -1,0 +1,2 @@
+{"type":"thread.started","thread_id":"thread-fail"}
+{"type":"turn.failed","error":{"message":"model overloaded"}}

@@ -1,0 +1,3 @@
+{"type":"session","session_id":"cursor-happy","model":"gpt-5"}
+{"type":"assistant","session_id":"cursor-happy","text":"Cursor says hi."}
+{"type":"run.completed","session_id":"cursor-happy","result":"Cursor says hi.","usage":{"input_tokens":3,"output_tokens":2}}

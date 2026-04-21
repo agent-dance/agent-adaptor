@@ -242,14 +242,14 @@ func TestChannelEventSinkEmitDoesNotBlockWhenBufferFull(t *testing.T) {
 	defer sink.close()
 
 	for i := 0; i < cap(sink.events); i++ {
-		if err := sink.Emit(newEvent(RunEventStdout, fmt.Sprintf("event-%d", i))); err != nil {
+		if err := sink.Emit(newEvent(RunEventLifecycle, fmt.Sprintf("event-%d", i))); err != nil {
 			t.Fatalf("fill buffer: %v", err)
 		}
 	}
 
 	done := make(chan struct{})
 	go func() {
-		_ = sink.Emit(newEvent(RunEventStdout, "overflow"))
+		_ = sink.Emit(newEvent(RunEventLifecycle, "overflow"))
 		close(done)
 	}()
 
@@ -262,7 +262,7 @@ func TestChannelEventSinkEmitDoesNotBlockWhenBufferFull(t *testing.T) {
 	}
 
 	<-sink.events
-	if err := sink.Emit(newEvent(RunEventStdout, "after-overflow")); err != nil {
+	if err := sink.Emit(newEvent(RunEventLifecycle, "after-overflow")); err != nil {
 		t.Fatalf("emit after drain: %v", err)
 	}
 
@@ -296,7 +296,7 @@ func TestChannelEventSinkEmitAfterCloseDoesNotPanic(t *testing.T) {
 				panicCh <- recovered
 			}
 		}()
-		_ = sink.Emit(newEvent(RunEventStdout, "late-event"))
+		_ = sink.Emit(newEvent(RunEventLifecycle, "late-event"))
 	}()
 
 	select {

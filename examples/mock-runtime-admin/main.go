@@ -46,7 +46,8 @@ func main() {
 			return agentadaptor.DriverRunResult{}, err
 		}
 		return agentadaptor.DriverRunResult{
-			Output:      string(raw),
+			Output:      "runtime-aware mock run completed",
+			RawStreams:  &agentadaptor.RawStreams{Stdout: string(raw)},
 			ExitCode:    0,
 			Provider:    "mock-provider",
 			Biller:      "mock-biller",
@@ -107,8 +108,9 @@ func main() {
 	env, err := admin.CheckEnvironment(ctx)
 	exampleutil.Must(err, "check environment")
 
+	exampleutil.Check(result.RawStreams != nil, "expected RawStreams to be populated")
 	var request agentadaptor.DriverRunRequest
-	err = json.Unmarshal([]byte(result.Output), &request)
+	err = json.Unmarshal([]byte(result.RawStreams.Stdout), &request)
 	exampleutil.Must(err, "decode driver request")
 
 	exampleutil.PrintJSON(map[string]any{

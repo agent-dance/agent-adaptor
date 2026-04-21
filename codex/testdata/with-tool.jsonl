@@ -1,0 +1,5 @@
+{"type":"thread.started","thread_id":"thread-tool"}
+{"type":"item.completed","item":{"type":"command_execution","id":"call-1","name":"bash","input":{"cmd":"ls"}}}
+{"type":"item.completed","item":{"type":"command_output","id":"call-1","output":"file-a\nfile-b"}}
+{"type":"item.completed","item":{"type":"agent_message","text":"Listed two files."}}
+{"type":"turn.completed","session_id":"thread-tool"}

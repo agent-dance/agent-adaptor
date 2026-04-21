@@ -25,7 +25,7 @@ func TestParseCheckpointRequiresRecognizedCodexEvent(t *testing.T) {
 	stdout := `{"type":"tool.result","thread_id":"ignore-me"}
 {"type":"thread.started","thread_id":"codex-thread"}`
 
-	checkpoint := parseCheckpoint(stdout, 0)
+	checkpoint := snapshotCodexStdout(stdout).checkpoint(0)
 	if checkpoint == nil || checkpoint.State == nil {
 		t.Fatal("expected checkpoint")
 	}
@@ -35,7 +35,7 @@ func TestParseCheckpointRequiresRecognizedCodexEvent(t *testing.T) {
 }
 
 func TestParseCheckpointAcceptsSessionOnlyPayload(t *testing.T) {
-	checkpoint := parseCheckpoint(`{"thread_id":"codex-thread"}`, 0)
+	checkpoint := snapshotCodexStdout(`{"thread_id":"codex-thread"}`).checkpoint(0)
 	if checkpoint == nil || checkpoint.State == nil || checkpoint.State.ResumeID != "codex-thread" {
 		t.Fatalf("unexpected checkpoint: %#v", checkpoint)
 	}
@@ -47,15 +47,18 @@ func TestParseCodexJSONLUsesThreadStartedSummaryAndUsage(t *testing.T) {
 {"type":"item.completed","item":{"type":"agent_message","text":"Final answer"}}
 {"type":"turn.completed","usage":{"input_tokens":12,"cached_input_tokens":4,"output_tokens":7}}`
 
-	parsed := parseCodexJSONL(stdout)
+	parsed := snapshotCodexStdout(stdout)
 	if parsed.sessionID != "thread-123" || parsed.displayID != "thread-123" {
-		t.Fatalf("unexpected parsed session: %#v", parsed)
+		t.Fatalf("unexpected parsed session id=%q display=%q", parsed.sessionID, parsed.displayID)
 	}
 	if parsed.summary != "Final answer" {
-		t.Fatalf("expected last agent message summary, got %#v", parsed)
+		t.Fatalf("expected last agent message summary, got %q", parsed.summary)
 	}
-	if !parsed.hasUsage || parsed.usage.InputTokens != 12 || parsed.usage.CachedInputTokens != 4 || parsed.usage.OutputTokens != 7 {
-		t.Fatalf("unexpected usage parsing: %#v", parsed)
+	if parsed.buildOutput() != "First update\n\nFinal answer" {
+		t.Fatalf("unexpected assistant output: %q", parsed.buildOutput())
+	}
+	if parsed.usage == nil || parsed.usage.InputTokens != 12 || parsed.usage.CachedInputTokens != 4 || parsed.usage.OutputTokens != 7 {
+		t.Fatalf("unexpected usage parsing: %#v", parsed.usage)
 	}
 }
 

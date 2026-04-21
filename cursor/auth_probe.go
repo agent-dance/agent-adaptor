@@ -159,8 +159,8 @@ func readCursorAuthInfo(bindings []agentadaptor.EnvBinding) (*cursorAuthInfo, er
 	}
 	info := &cursorAuthInfo{
 		Path:        configPath,
-		Email:       topLevelString(authInfo, "email"),
-		DisplayName: topLevelString(authInfo, "displayName"),
+		Email:       cursorTopLevelString(authInfo, "email"),
+		DisplayName: cursorTopLevelString(authInfo, "displayName"),
 	}
 	if userID, ok := authInfo["userId"].(float64); ok {
 		info.UserID = int(userID)

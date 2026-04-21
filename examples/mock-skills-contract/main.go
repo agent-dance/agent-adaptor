@@ -70,12 +70,14 @@ func main() {
 	exampleutil.Check(overrideRequest.Skills.Resolved[1].Runtime == "runtime/extra-check", "expected runtime prefix for extra-check, got %#v", overrideRequest.Skills.Resolved[1])
 	exampleutil.Check(overrideRequest.Skills.Fingerprint != "", "expected override skills fingerprint to be populated")
 
+	exampleutil.Check(defaultResult.RawStreams != nil, "expected default RawStreams to be populated")
+	exampleutil.Check(overrideResult.RawStreams != nil, "expected override RawStreams to be populated")
 	var defaultOutput agentadaptor.DriverRunRequest
-	err = json.Unmarshal([]byte(defaultResult.Output), &defaultOutput)
-	exampleutil.Must(err, "decode default skills output request")
+	err = json.Unmarshal([]byte(defaultResult.RawStreams.Stdout), &defaultOutput)
+	exampleutil.Must(err, "decode default skills raw stdout")
 	var overrideOutput agentadaptor.DriverRunRequest
-	err = json.Unmarshal([]byte(overrideResult.Output), &overrideOutput)
-	exampleutil.Must(err, "decode override skills output request")
+	err = json.Unmarshal([]byte(overrideResult.RawStreams.Stdout), &overrideOutput)
+	exampleutil.Must(err, "decode override skills raw stdout")
 
 	exampleutil.PrintJSON(map[string]any{
 		"example": "mock-skills-contract",

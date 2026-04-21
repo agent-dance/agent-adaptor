@@ -64,10 +64,15 @@ func run() error {
 
 	lines := []map[string]any{
 		{
-			"type":       "assistant",
-			"message":    "mock codex verifier created the requested proof file",
-			"session_id": sessionID,
-			"display_id": sessionID,
+			"type":      "thread.started",
+			"thread_id": sessionID,
+		},
+		{
+			"type": "item.completed",
+			"item": map[string]any{
+				"type": "agent_message",
+				"text": "mock codex verifier created the requested proof file",
+			},
 		},
 		{
 			"type":       "session.updated",
@@ -75,9 +80,14 @@ func run() error {
 			"display_id": sessionID,
 		},
 		{
-			"type":       "exec.completed",
+			"type":       "turn.completed",
 			"session_id": sessionID,
 			"display_id": sessionID,
+			"usage": map[string]any{
+				"input_tokens":        1,
+				"output_tokens":       1,
+				"cached_input_tokens": 0,
+			},
 		},
 	}
 	for _, line := range lines {

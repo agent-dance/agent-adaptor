@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	agentadaptor "github.com/agent-dance/agent-adaptor"
@@ -75,8 +76,11 @@ func TestClaudeRunPreservesAndGuardsSessionState(t *testing.T) {
 	if first.Checkpoint.State.Data[agentadaptor.SessionParamPromptBundleKey] != "bundle-a" {
 		t.Fatalf("expected prompt bundle guard, got %#v", first.Checkpoint.State.Data)
 	}
-	if len(first.Transcript) == 0 || first.Transcript[0].Type != agentadaptor.TranscriptStructured {
+	if len(first.Transcript) == 0 {
 		t.Fatalf("expected transcript items, got %#v", first.Transcript)
+	}
+	if first.RawStreams == nil || !strings.Contains(first.RawStreams.Stdout, "turn.completed") {
+		t.Fatalf("expected raw stdout to be captured, got %#v", first.RawStreams)
 	}
 	assertHasInvocationAndSpawn(t, events.Snapshot())
 
@@ -206,20 +210,22 @@ func assertHasInvocationAndSpawn(t *testing.T, events []agentadaptor.RunEvent) {
 
 	hasInvocation := false
 	hasSpawn := false
-	hasTranscript := false
+	hasChunk := false
+	hasItem := false
 	for _, event := range events {
-		if event.Type == agentadaptor.RunEventInvocation {
+		switch event.Type {
+		case agentadaptor.RunEventInvocation:
 			hasInvocation = true
-		}
-		if event.Type == agentadaptor.RunEventSpawn {
+		case agentadaptor.RunEventSpawn:
 			hasSpawn = true
-		}
-		if (event.Type == agentadaptor.RunEventStdout || event.Type == agentadaptor.RunEventStderr) && event.Data["transcript"] != nil {
-			hasTranscript = true
+		case agentadaptor.RunEventChunk:
+			hasChunk = true
+		case agentadaptor.RunEventItem:
+			hasItem = true
 		}
 	}
-	if !hasInvocation || !hasSpawn || !hasTranscript {
-		t.Fatalf("expected invocation and spawn events, got %#v", events)
+	if !hasInvocation || !hasSpawn || !hasChunk || !hasItem {
+		t.Fatalf("expected invocation/spawn/chunk/item events, got %#v", events)
 	}
 }
 

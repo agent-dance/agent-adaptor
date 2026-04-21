@@ -12,15 +12,37 @@ type AgentIdentity struct {
 	Name      string
 }
 
+// RawStreams captures the complete raw stdout and stderr emitted during one
+// run. It is the stable surface hosts should rely on for auditing, replay,
+// debugging, or archival.
+//
+// Contract:
+//   - Stdout / Stderr hold the full untruncated bytes the child process wrote.
+//   - No redaction, no semantic parsing, no line-wise transformation is applied.
+//   - Both Run() and Start().Wait() must return the same RawStreams payload.
+type RawStreams struct {
+	Stdout string
+	Stderr string
+}
+
 // RunResult is the normalized outcome returned by Runner.Run or RunHandle.Wait.
 //
-// It keeps the existing "output + exit code + optional session" surface while
-// also exposing provider metadata, runtime service reports, structured result
-// payloads, and interactive follow-up questions when an adapter supports them.
+// Output layering rules (see docs/workstream-transcript-contract.md):
+//   - Output: final assistant-facing text only; empty is valid when the
+//     adapter never produced assistant text.
+//   - RawStreams: raw stdout/stderr for auditing and debugging.
+//   - Transcript: structured semantic entries produced by the adapter from its
+//     protocol events. Must equal the sequence of RunEventItem items collected
+//     by Seq order.
+//   - Summary: short host-facing label; never equals Output and must come from
+//     a terminal result event (or adapter-generated short text).
+//   - Result: raw JSON payload of the terminal result event when the adapter
+//     protocol defines one. May be nil.
 type RunResult struct {
 	RunID           string
 	DriverType      string
 	Output          string
+	RawStreams      *RawStreams
 	Transcript      []TranscriptItem
 	ExitCode        int
 	Signal          string
@@ -47,53 +69,101 @@ type Usage struct {
 	EstimatedCostMilli int64
 }
 
+// RunEventType describes the category of a streamed RunEvent.
+//
+// There are two primary signals:
+//   - RunEventChunk: raw stdout/stderr bytes. Chunks may not align to lines.
+//   - RunEventItem: structured transcript entry emitted by the adapter after
+//     parsing its own protocol.
+//
+// The remaining types carry operational or lifecycle metadata.
 type RunEventType string
 
 const (
-	RunEventStdout     RunEventType = "stdout"
-	RunEventStderr     RunEventType = "stderr"
-	RunEventSystem     RunEventType = "system"
-	RunEventAssistant  RunEventType = "assistant"
-	RunEventLifecycle  RunEventType = "lifecycle"
+	RunEventChunk      RunEventType = "chunk"
+	RunEventItem       RunEventType = "item"
 	RunEventInvocation RunEventType = "invocation"
 	RunEventSpawn      RunEventType = "spawn"
 	RunEventRuntime    RunEventType = "runtime"
+	RunEventLifecycle  RunEventType = "lifecycle"
 )
 
-// RunEvent is the best-effort realtime event envelope produced by Start().
+// RunEvent is the streamed event envelope exposed through RunHandle.Events().
 //
-// Text remains the human-readable summary, Metadata is for simple string tags,
-// and Data carries richer structured payloads such as invocation metadata or
-// spawn details.
+// Field usage by Type:
+//   - chunk: Stream ("stdout"|"stderr"), Bytes (raw chunk bytes, may be partial).
+//   - item:  Item (*TranscriptItem).
+//   - invocation/spawn/runtime/lifecycle: Text, Metadata, Data.
+//
+// Seq is assigned monotonically by the SDK per-run. Hosts that collect
+// RunEventItem events in Seq order will observe the exact same sequence that
+// RunResult.Transcript reflects.
 type RunEvent struct {
 	Type      RunEventType
-	Text      string
+	Seq       uint64
 	Timestamp time.Time
-	Metadata  map[string]string
-	Data      map[string]any
+
+	Stream string
+	Bytes  []byte
+
+	Item *TranscriptItem
+
+	Text     string
+	Metadata map[string]string
+	Data     map[string]any
 }
 
-type TranscriptItemType string
+// TranscriptKind identifies the semantic category of a transcript item.
+type TranscriptKind string
 
 const (
-	TranscriptOutput     TranscriptItemType = "output"
-	TranscriptDiagnostic TranscriptItemType = "diagnostic"
-	TranscriptStructured TranscriptItemType = "structured"
-	TranscriptSummary    TranscriptItemType = "summary"
-	TranscriptQuestion   TranscriptItemType = "question"
-	TranscriptFailure    TranscriptItemType = "failure"
+	TranscriptAssistant  TranscriptKind = "assistant"
+	TranscriptThinking   TranscriptKind = "thinking"
+	TranscriptUser       TranscriptKind = "user"
+	TranscriptToolCall   TranscriptKind = "tool_call"
+	TranscriptToolResult TranscriptKind = "tool_result"
+	TranscriptInit       TranscriptKind = "init"
+	TranscriptResult     TranscriptKind = "result"
+	TranscriptStdout     TranscriptKind = "stdout"
+	TranscriptStderr     TranscriptKind = "stderr"
+	TranscriptSystem     TranscriptKind = "system"
+	TranscriptSummary    TranscriptKind = "summary"
+	TranscriptQuestion   TranscriptKind = "question"
+	TranscriptFailure    TranscriptKind = "failure"
 )
 
 // TranscriptItem is the host-facing normalized transcript unit.
 //
-// The SDK intentionally keeps this contract conservative. It does not guess
-// provider-private semantics it cannot verify. Built-in adapters currently
-// emit output, diagnostic, structured, summary, question, and failure items.
+// Kind field rules (see docs/workstream-output-transcript-impl-spec.md §1.5):
+//   - assistant / thinking / user: Text required. Delta allowed for assistant
+//     and thinking only.
+//   - tool_call: ToolName required, ToolUseID recommended, Input optional.
+//   - tool_result: ToolUseID required, Text recommended, IsError optional.
+//   - init: Model and SessionID recommended.
+//   - result: Text/Usage/CostUSD/Subtype/IsError/Errors optional.
+//   - stdout/stderr/system: Text required (parser fallback).
+//   - summary/question/failure: Text required; Data["choices"] for question,
+//     Metadata["code"] for failure.
+//
+// Metadata carries short string tags; Data carries provider-specific
+// structured extensions. A field already captured by a struct member must not
+// be duplicated into Metadata or Data.
 type TranscriptItem struct {
-	Type     TranscriptItemType
-	Text     string
-	Metadata map[string]string
-	Data     map[string]any
+	Kind      TranscriptKind
+	Text      string
+	Delta     bool
+	ToolUseID string
+	ToolName  string
+	Input     any
+	IsError   bool
+	Model     string
+	SessionID string
+	Usage     *Usage
+	CostUSD   *float64
+	Subtype   string
+	Errors    []string
+	Metadata  map[string]string
+	Data      map[string]any
 }
 
 type DriverRunRequest struct {
@@ -112,12 +182,12 @@ type DriverRunRequest struct {
 
 // DriverRunResult is the adapter-facing execution result.
 //
-// Adapters can keep returning the minimal output/exit-code tuple, but richer
-// fields let them surface provider cost, structured payloads, runtime service
-// reports, and non-fatal interactive questions without introducing another
-// execution entrypoint.
+// Built-in adapters must fill Output / RawStreams / Transcript / Summary /
+// Result / Checkpoint from the same pass that parses the CLI protocol; none of
+// these fields may be recomputed by downstream helpers.
 type DriverRunResult struct {
 	Output          string
+	RawStreams      *RawStreams
 	Transcript      []TranscriptItem
 	ExitCode        int
 	Signal          string

@@ -1,0 +1,4 @@
+{"type":"session","session_id":"cursor-think"}
+{"type":"thinking","text":"Cursor is reasoning."}
+{"type":"assistant","text":"Answer ready."}
+{"type":"run.completed","session_id":"cursor-think","result":"Answer ready."}

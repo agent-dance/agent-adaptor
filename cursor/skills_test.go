@@ -93,7 +93,11 @@ func TestSyncCursorSkillsPreservesExternalConflict(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve external symlink: %v", err)
 	}
-	if filepath.Clean(resolved) != filepath.Clean(externalSource) {
+	expected, err := filepath.EvalSymlinks(externalSource)
+	if err != nil {
+		t.Fatalf("resolve expected source: %v", err)
+	}
+	if filepath.Clean(resolved) != filepath.Clean(expected) {
 		t.Fatalf("expected external symlink to remain, got %s", resolved)
 	}
 	if len(snapshot.Entries) != 1 || snapshot.Entries[0].State != agentadaptor.SkillStateExternal {

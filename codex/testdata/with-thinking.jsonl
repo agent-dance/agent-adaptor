@@ -1,0 +1,4 @@
+{"type":"thread.started","thread_id":"thread-think"}
+{"type":"item.completed","item":{"type":"reasoning","text":"Inspect the request."}}
+{"type":"item.completed","item":{"type":"agent_message","text":"All set."}}
+{"type":"turn.completed","session_id":"thread-think"}

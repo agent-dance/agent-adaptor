@@ -1,0 +1,2 @@
+{"type":"system","subtype":"init","session_id":"claude-fail"}
+{"type":"result","subtype":"error_during_execution","session_id":"claude-fail","message":"upstream error"}
