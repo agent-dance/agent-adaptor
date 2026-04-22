@@ -320,7 +320,7 @@ func (s *runState) onNotification(method string, params json.RawMessage) {
 			Code:    "codex.turn_failed",
 		}
 		if len(body.Turn.Error) > 0 {
-			s.turnFailure.Metadata = map[string]string{"error": string(body.Turn.Error)}
+			s.turnFailure.Metadata = map[string]any{"error": string(body.Turn.Error)}
 		}
 		s.mu.Unlock()
 		s.signalDone()

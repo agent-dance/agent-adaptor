@@ -1,3 +1,4 @@
 .gocache/
 .gocache-test/
 .omx/
+*.tsbuildinfo

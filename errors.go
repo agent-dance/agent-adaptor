@@ -17,6 +17,12 @@ var (
 	ErrSessionLeaseLost              = errors.New("agentadaptor: session lease lost")
 	ErrSessionNotFound               = errors.New("agentadaptor: session not found")
 	ErrSessionStoreRequired          = errors.New("agentadaptor: session store required")
+
+	// HITL v2 (see docs/workstream-hitl-v2.md).
+	ErrHumanDecisionModeUnsupported = errors.New("agentadaptor: human decision mode unsupported by adapter")
+	ErrDecisionRequestExpired       = errors.New("agentadaptor: decision request expired or already resolved")
+	ErrDecisionResultKindMismatch   = errors.New("agentadaptor: decision result is incompatible with request kind")
+	ErrRunEnded                     = errors.New("agentadaptor: run already ended")
 )
 
 type DuplicateAgentError struct {

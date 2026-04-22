@@ -193,10 +193,36 @@ func cloneRunFailure(failure *RunFailure) *RunFailure {
 		return nil
 	}
 	return &RunFailure{
-		Message:  failure.Message,
-		Code:     failure.Code,
-		Metadata: cloneStringMap(failure.Metadata),
+		Message:       failure.Message,
+		Code:          failure.Code,
+		Metadata:      cloneAnyMap(failure.Metadata),
+		HumanDecision: cloneHumanDecisionFailure(failure.HumanDecision),
 	}
+}
+
+func cloneHumanDecisionFailure(f *HumanDecisionFailure) *HumanDecisionFailure {
+	if f == nil {
+		return nil
+	}
+	return &HumanDecisionFailure{
+		Kind:     f.Kind,
+		Source:   f.Source,
+		Decision: f.Decision,
+		Request:  cloneDecisionRequest(f.Request),
+		Attempts: f.Attempts,
+	}
+}
+
+func cloneDecisionRequest(req *DecisionRequest) *DecisionRequest {
+	if req == nil {
+		return nil
+	}
+	out := *req
+	out.Payload = cloneAnyMap(req.Payload)
+	if len(req.Choices) > 0 {
+		out.Choices = append([]DecisionChoice(nil), req.Choices...)
+	}
+	return &out
 }
 
 func cloneFloat64Pointer(value *float64) *float64 {

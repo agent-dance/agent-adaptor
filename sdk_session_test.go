@@ -21,6 +21,7 @@ type fakeDriver struct {
 	counter           int
 	rejectResume      bool
 	omitCheckpoint    bool
+	humanRejectNoCP   bool
 	blockPrompt       string
 	blockCh           chan struct{}
 	startedCh         chan struct{}
@@ -99,6 +100,22 @@ func (d *fakeDriver) Run(ctx context.Context, req agentadaptor.DriverRunRequest,
 	}
 
 	cfg := readFakeConfig(req.Config)
+
+	if d.humanRejectNoCP {
+		return agentadaptor.DriverRunResult{
+			Output:   cfg.Label + ":human-reject",
+			ExitCode: 1,
+			Failure: &agentadaptor.RunFailure{
+				Code:    agentadaptor.FailureReject,
+				Message: "user rejected the plan",
+				HumanDecision: &agentadaptor.HumanDecisionFailure{
+					Kind:     agentadaptor.HumanDecisionPlanReview,
+					Source:   "fake.plan_review",
+					Decision: agentadaptor.DecisionRejected,
+				},
+			},
+		}, nil
+	}
 
 	if req.Session != nil && req.Session.State != nil && req.Session.State.ResumeID != "" {
 		if d.rejectResume {
@@ -395,6 +412,41 @@ func TestStatefulRunRequiresValidCheckpoint(t *testing.T) {
 	_, err := sdk.Run(context.Background(), "hello", agentadaptor.WithSessionKey("company", "issue-1"))
 	if !errors.Is(err, agentadaptor.ErrSessionCheckpointMissing) {
 		t.Fatalf("expected ErrSessionCheckpointMissing, got %v", err)
+	}
+}
+
+func TestHumanDecisionFailureWithoutCheckpointDoesNotPersistSession(t *testing.T) {
+	store := memory.NewSessionStore()
+	driver := &fakeDriver{}
+	sdk := newSDK(store, fakeBinding("default", driver), nil)
+
+	first, err := sdk.Run(context.Background(), "hello", agentadaptor.WithSessionKey("company", "issue-1"))
+	if err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+	if first.Session == nil || first.Session.ID == "" {
+		t.Fatalf("first session missing: %#v", first.Session)
+	}
+
+	driver.humanRejectNoCP = true
+	second, err := sdk.Run(context.Background(), "reject", agentadaptor.WithSessionKey("company", "issue-1"))
+	if err != nil {
+		t.Fatalf("human reject run should not surface checkpoint error: %v", err)
+	}
+	if second.Failure == nil || !second.Failure.IsHumanDecision() || !second.Failure.IsRejected() {
+		t.Fatalf("expected structured human decision failure, got %+v", second.Failure)
+	}
+	if second.Session != nil {
+		t.Fatalf("failed run without checkpoint must not persist a new session, got %#v", second.Session)
+	}
+
+	driver.humanRejectNoCP = false
+	third, err := sdk.Run(context.Background(), "again", agentadaptor.WithSessionKey("company", "issue-1"))
+	if err != nil {
+		t.Fatalf("third run: %v", err)
+	}
+	if third.Session == nil || !third.Session.Reused || third.Session.ID != first.Session.ID {
+		t.Fatalf("expected original healthy session %s to remain active, got %#v", first.Session.ID, third.Session)
 	}
 }
 

@@ -2,6 +2,7 @@ package claude
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -14,6 +15,14 @@ import (
 	"github.com/agent-dance/agent-adaptor/internal/configprobe"
 	"github.com/agent-dance/agent-adaptor/internal/skillruntime"
 )
+
+// jsonMarshalInteractive is a pin-point JSON encoder used only for the few
+// NDJSON frames the driver injects into the CLI's stdin. A plain
+// encoding/json.Marshal produces the right shape; this thin wrapper exists
+// so tests can mock out the encoding path if needed later.
+func jsonMarshalInteractive(v any) ([]byte, error) {
+	return json.Marshal(v)
+}
 
 const DriverType = "claude"
 
@@ -59,8 +68,23 @@ func (adapter) Descriptor() agentadaptor.DriverDescriptor {
 		Skills:       agentadaptor.SkillCapability{Supported: true, Mode: agentadaptor.SkillSyncEphemeral},
 		Instructions: agentadaptor.InstructionsCapability{Supported: true},
 		Workspace:    agentadaptor.WorkspaceCapability{Supported: true},
-		RunPolicyCaps: agentadaptor.RunPolicyCapabilities{Approvals: true, Isolation: false, WebSearch: false, Browser: true, Trust: false},
-		Runtime:      agentadaptor.RuntimeCapability{ReportsServices: true},
+		RunPolicyCaps: agentadaptor.RunPolicyCapabilities{
+			Isolation: false, WebSearch: false, Browser: true,
+			// Phase 3 interactive mode uses stdio permission prompting
+			// (`--permission-prompt-tool stdio`) so Claude emits native
+			// can_use_tool control_request frames. We still keep
+			// Permission.Ask disabled until the dedicated host UX and
+			// end-to-end coverage are expanded beyond PlanReview/Question.
+			Permission: agentadaptor.HumanDecisionSupport{Ask: false, AutoApprove: true, AutoReject: true, Retry: false},
+			// PlanReview + Question are fully supported in Phase 3 via
+			// can_use_tool control_request / control_response over stdio.
+			// Retry stays false: CLI cannot
+			// "re-ask the same tool_use_id"; retry would need to push the
+			// model to emit a new tool_use, which is not automatic.
+			PlanReview: agentadaptor.HumanDecisionSupport{Ask: true, AutoApprove: true, AutoReject: true, Retry: false},
+			Question:   agentadaptor.QuestionSupport{Ask: true, AutoReject: true, Retry: false},
+		},
+		Runtime: agentadaptor.RuntimeCapability{ReportsServices: true},
 	}
 }
 
@@ -213,28 +237,69 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 		}
 	}
 
-	args := buildClaudeExecArgs(cfg, req, bundleRoot)
+	interactive := wantsInteractiveClaude(req.Policy.HumanDecision)
+	if interactive {
+		if err := validateInteractivePolicy(req.Policy.HumanDecision); err != nil {
+			return agentadaptor.DriverRunResult{}, err
+		}
+	}
 
-	prompt := req.Prompt
+	args := buildClaudeExecArgs(cfg, req, bundleRoot, interactive)
+
+	rawPrompt := req.Prompt
 	if runtimePrefix := adapterutil.RuntimePromptPrefix(req.Runtime); runtimePrefix != "" {
-		prompt = runtimePrefix + "\n\n" + prompt
+		rawPrompt = runtimePrefix + "\n\n" + rawPrompt
 	}
 	if req.Instructions != nil && req.Instructions.Path != "" {
-		prompt = "Instructions bundle: " + req.Instructions.Path + "\n\n" + prompt
+		rawPrompt = "Instructions bundle: " + req.Instructions.Path + "\n\n" + rawPrompt
 	}
 
 	parser := newClaudeParser(sink)
-	if req.Streaming {
+	parser.setHITLContext(req.RunID, req.Policy.HumanDecision)
+	if req.Streaming || interactive {
+		// Interactive mode always streams (we need the partial_json deltas
+		// to reconstruct tool_use inputs), regardless of the caller's
+		// Streaming flag. Hosts that invoke Start without streaming but
+		// want HITL nevertheless get the StreamHITLRequested/Resolved
+		// pair for audit — the stream channel is closed on the outer
+		// handle so those events are dropped by the dualSink, but the
+		// parser's RequestDecision flow still works through the runner's
+		// typed-handler dispatch.
 		parser.enableStreaming(req.RunID)
 	}
-	result, err := clihelper.Run(ctx, clihelper.CommandRequest{
+
+	runReq := clihelper.CommandRequest{
 		Command: command,
 		Args:    args,
 		CWD:     effectiveCWD,
 		Env:     effectiveEnv,
-		Prompt:  prompt,
 		Observe: parser.onChunk,
-	}, sink)
+	}
+
+	if interactive {
+		// Encode the initial user message as an NDJSON user frame rather
+		// than a raw text prompt: --input-format stream-json expects a
+		// protocol envelope.
+		initial, err := encodeInteractiveUserFrame(rawPrompt)
+		if err != nil {
+			return agentadaptor.DriverRunResult{}, err
+		}
+		runReq.Prompt = initial
+		runReq.Stdin = clihelper.NewStdinController()
+
+		// Bind the parser to the interactive sink and stdin so tool_use
+		// frames route through sink.RequestDecision and the response is
+		// injected back via stdin.Write.
+		ic, ok := sink.(agentadaptor.DecisionCapableSink)
+		if !ok {
+			return agentadaptor.DriverRunResult{}, errClaudeInteractiveSinkRequired
+		}
+		parser.enableInteractive(ctx, ic, runReq.Stdin)
+	} else {
+		runReq.Prompt = rawPrompt
+	}
+
+	result, err := clihelper.Run(ctx, runReq, sink)
 	if err != nil {
 		return agentadaptor.DriverRunResult{}, err
 	}
@@ -249,8 +314,13 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 		}
 	}
 	var failure *agentadaptor.RunFailure
-	if strings.TrimSpace(parser.errorMessage) != "" {
-		failure = &agentadaptor.RunFailure{Message: parser.errorMessage}
+	if parser.pendingFailure != nil {
+		failure = parser.pendingFailure
+	} else if strings.TrimSpace(parser.errorMessage) != "" {
+		failure = &agentadaptor.RunFailure{
+			Code:    agentadaptor.FailureAgentError,
+			Message: parser.errorMessage,
+		}
 	}
 
 	meta := parser.outputMetadata()
@@ -274,16 +344,47 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 	}, nil
 }
 
-func buildClaudeExecArgs(cfg agentadaptor.ClaudeConfig, req agentadaptor.DriverRunRequest, bundleRoot string) []string {
-	args := []string{"--print", "-", "--output-format", "stream-json", "--verbose"}
-	if req.Streaming {
-		args = append(args, "--include-partial-messages")
+func buildClaudeExecArgs(cfg agentadaptor.ClaudeConfig, req agentadaptor.DriverRunRequest, bundleRoot string, interactive bool) []string {
+	// Common core. `--print` + `stream-json` output are always needed by
+	// the parser.
+	args := []string{"--print", "--output-format", "stream-json", "--verbose"}
+
+	if interactive {
+		// Phase 3 bidirectional:
+		//   - --input-format stream-json: read NDJSON user frames from stdin
+		//     at any time during the turn
+		//   - --include-partial-messages: ensure input_json_delta frames
+		//     arrive so the parser can reconstruct tool_use args
+		//   - --replay-user-messages: CLI echoes every user frame it
+		//     consumed (isReplay:true) as an ack. The parser uses these
+		//     purely for ack; see handlePayload.
+		//   - --permission-prompt-tool stdio: route permission prompts
+		//     (including AskUserQuestion / ExitPlanMode) back to the host
+		//     as control_request frames.
+		args = append(args,
+			"--input-format", "stream-json",
+			"--include-partial-messages",
+			"--replay-user-messages",
+			"--permission-prompt-tool", "stdio",
+		)
+	} else {
+		// Phase 1 one-shot: read the prompt as plain text from stdin.
+		args = append(args, "-")
+		if req.Streaming {
+			args = append(args, "--include-partial-messages")
+		}
 	}
+
 	modelFlag := claudeRequestedModelFlag(cfg)
 	if req.Session != nil && req.Session.State != nil && req.Session.State.ResumeID != "" {
 		args = append(args, "--resume", req.Session.State.ResumeID)
 	}
-	if req.Policy.Approvals == agentadaptor.ApprovalOff {
+	if !interactive && req.Policy.HumanDecision.Permission == agentadaptor.HumanDecisionAutoApprove {
+		// --dangerously-skip-permissions is only meaningful in Phase 1
+		// mode where the CLI itself enforces permissions. In interactive
+		// mode the CLI routes permission prompts back through stdio
+		// control_request frames, so the flag would bypass the host's
+		// decision path and muddy the audit trail.
 		args = append(args, "--dangerously-skip-permissions")
 	}
 	if req.Policy.Browser == agentadaptor.FeatureAllow {
@@ -305,6 +406,62 @@ func buildClaudeExecArgs(cfg agentadaptor.ClaudeConfig, req agentadaptor.DriverR
 	return args
 }
 
+// wantsInteractiveClaude reports whether the policy explicitly asks for
+// Phase 3 stream-json bidirectional mode. We deliberately look at the raw
+// policy fields (not EffectiveHumanDecisionPolicy) so that a zero-value
+// policy stays in Phase 1 observational mode — otherwise the default
+// (PlanReview=Ask + Permission=Ask) would silently promote every claude
+// run into interactive mode AND then fail validateInteractivePolicy.
+//
+// Interactive mode engages when the host explicitly sets PlanReview=Ask or
+// Question=Ask. AutoReject stays in Phase 1 because it's deterministic and
+// the observational flow is sufficient.
+func wantsInteractiveClaude(p agentadaptor.HumanDecisionPolicy) bool {
+	return p.PlanReview == agentadaptor.HumanDecisionAsk ||
+		p.Question == agentadaptor.QuestionAsk
+}
+
+// validateInteractivePolicy rejects policy shapes Phase 3 cannot honour.
+// The main one: Permission=Ask has no Phase 3 implementation (Phase 3.5
+// is needed for host-side tool execution). Callers get a clear policy
+// error before the CLI starts.
+//
+// This inspects raw fields — identical to wantsInteractiveClaude — rather
+// than effective defaults, so users who never touched Permission are not
+// penalised for the SDK default (Ask). Phase 3 only rejects when the host
+// *explicitly* requested Permission=Ask.
+func validateInteractivePolicy(p agentadaptor.HumanDecisionPolicy) error {
+	if p.Permission == agentadaptor.HumanDecisionAsk {
+		return errors.New("claude Phase 3: HumanDecision.Permission=Ask is not yet supported (needs host-side tool executor in Phase 3.5). " +
+			"Use Permission=AutoApprove to run Bash/Write/Edit, or leave Permission unset and only set PlanReview/Question.")
+	}
+	return nil
+}
+
+// encodeInteractiveUserFrame wraps the raw prompt in the NDJSON envelope the
+// CLI expects when --input-format stream-json is set. Trailing newline lets
+// the CLI's line-oriented parser commit the frame immediately.
+func encodeInteractiveUserFrame(prompt string) (string, error) {
+	frame := map[string]any{
+		"type": "user",
+		"message": map[string]any{
+			"role":    "user",
+			"content": prompt,
+		},
+	}
+	raw, err := jsonMarshalInteractive(frame)
+	if err != nil {
+		return "", err
+	}
+	return string(raw) + "\n", nil
+}
+
+// errClaudeInteractiveSinkRequired is returned when the policy demands
+// interactive HITL but the supplied EventSink does not implement
+// DecisionCapableSink (this should never happen for runs started through
+// the runner, which always passes a dualSink).
+var errClaudeInteractiveSinkRequired = errors.New("claude Phase 3 interactive mode requires a DecisionCapableSink; the runner's dualSink provides this automatically — this error usually means the driver was invoked outside the SDK")
+
 func chooseCWD(cfg agentadaptor.CommonConfig, workspace agentadaptor.WorkspaceLease) string {
 	if workspace.CWD != "" {
 		return workspace.CWD
@@ -323,4 +480,3 @@ func readConfig(cfg any) agentadaptor.ClaudeConfig {
 	}
 	return agentadaptor.ClaudeConfig{}
 }
-

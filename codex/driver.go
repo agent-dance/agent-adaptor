@@ -48,7 +48,12 @@ func (adapter) Descriptor() agentadaptor.DriverDescriptor {
 		Skills:       agentadaptor.SkillCapability{Supported: true, Mode: agentadaptor.SkillSyncEphemeral},
 		Instructions: agentadaptor.InstructionsCapability{Supported: true},
 		Workspace:    agentadaptor.WorkspaceCapability{Supported: true},
-		RunPolicyCaps: agentadaptor.RunPolicyCapabilities{Approvals: true, Isolation: true, WebSearch: true, Browser: false, Trust: false},
+		RunPolicyCaps: agentadaptor.RunPolicyCapabilities{
+			Isolation: true, WebSearch: true, Browser: false,
+			Permission: agentadaptor.HumanDecisionSupport{Ask: true, AutoApprove: true, AutoReject: true, Retry: true},
+			PlanReview: agentadaptor.HumanDecisionSupport{Ask: false, AutoApprove: true, AutoReject: false, Retry: false},
+			Question:   agentadaptor.QuestionSupport{Ask: false, AutoReject: false, Retry: false},
+		},
 		Runtime:      agentadaptor.RuntimeCapability{ReportsServices: true},
 	}
 }
@@ -320,7 +325,10 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 	}
 	var failure *agentadaptor.RunFailure
 	if strings.TrimSpace(parser.errorMessage) != "" {
-		failure = &agentadaptor.RunFailure{Message: parser.errorMessage}
+		failure = &agentadaptor.RunFailure{
+			Code:    agentadaptor.FailureAgentError,
+			Message: parser.errorMessage,
+		}
 	}
 
 	return agentadaptor.DriverRunResult{

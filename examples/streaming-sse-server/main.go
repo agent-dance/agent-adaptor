@@ -109,8 +109,12 @@ func main() {
 		CORSAllowedOrigin: "*",
 		RunOptions: []agentadaptor.RunOption{
 			agentadaptor.WithRunPolicy(agentadaptor.RunPolicy{
-				Approvals: agentadaptor.ApprovalOff,
 				Isolation: agentadaptor.IsolationReadOnly,
+				HumanDecision: agentadaptor.HumanDecisionPolicy{
+					Permission: agentadaptor.HumanDecisionAutoApprove,
+					PlanReview: agentadaptor.HumanDecisionAutoApprove,
+					Question:   agentadaptor.QuestionAutoReject,
+				},
 			}),
 		},
 	}))

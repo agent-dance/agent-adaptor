@@ -171,7 +171,11 @@ func (s *streamingState) handleStreamEvent(rawLine string, outer map[string]any)
 	case "message_delta":
 		s.handleMessageDelta(eventObj)
 	case "message_stop":
-		// Authoritative lifecycle ends on assistant / result frames.
+		// See onAssistantMessageStop: close interactive stdin after a
+		// terminal model turn so the CLI can exit and unblock the host.
+		if s.parser != nil {
+			s.parser.onAssistantMessageStop(s.stopReason)
+		}
 	default:
 		cp := cloneMapShallow(outer)
 		cp["_stream_raw_line"] = rawLine
@@ -180,6 +184,7 @@ func (s *streamingState) handleStreamEvent(rawLine string, outer map[string]any)
 }
 
 func (s *streamingState) handleMessageStart(event map[string]any) {
+	s.stopReason = ""
 	msg := claudeTopLevelObject(event, "message")
 	id := claudeTopLevelString(msg, "id")
 	if id != "" {
@@ -215,6 +220,12 @@ func (s *streamingState) handleContentBlockStart(event map[string]any) {
 			pl.Args = map[string]any{"input": input}
 		}
 		s.emitStream(pl)
+		// Interactive mode: register this tool_use with the parent parser
+		// so handleContentBlockDelta can accumulate input_json_delta and
+		// handleContentBlockStop can drive the HITL flow.
+		if s.parser != nil {
+			s.parser.interactiveOnToolUseStart(idx, name, id)
+		}
 	case "thinking":
 		thID := fmt.Sprintf("thinking-%d", idx)
 		s.thinkingID[idx] = thID
@@ -270,6 +281,11 @@ func (s *streamingState) handleContentBlockDelta(event map[string]any) {
 		pl.ToolCallID = tid
 		pl.Delta = raw
 		s.emitStream(pl)
+		// Interactive mode: feed the partial_json into the accumulator so
+		// we have the complete tool_use input once content_block_stop hits.
+		if s.parser != nil {
+			s.parser.interactiveOnToolUseDelta(idx, raw)
+		}
 
 	case "thinking_delta":
 		thinking := claudeExactString(delta, "thinking")
@@ -316,6 +332,12 @@ func (s *streamingState) handleContentBlockStop(event map[string]any) {
 			pl.Kind = agentadaptor.StreamToolCallEnd
 			pl.ToolCallID = tid
 			s.emitStream(pl)
+		}
+		// Interactive mode: tool_use input is now complete. Hand off to
+		// the parser so it can trigger RequestDecision + inject a user
+		// tool_result via stdin.
+		if s.parser != nil {
+			s.parser.interactiveOnToolUseStop(idx)
 		}
 	case "thinking":
 		thID := s.thinkingID[idx]
@@ -442,7 +464,7 @@ func (s *streamingState) handleErrorTerminal(payload map[string]any) {
 		Kind: agentadaptor.StreamRunError,
 		Error: &agentadaptor.RunFailure{
 			Message: msg,
-			Code:    code,
+			Code:    agentadaptor.FailureCode(code),
 		},
 		Raw: payload,
 	})

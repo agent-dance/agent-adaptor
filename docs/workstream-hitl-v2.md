@@ -32,6 +32,7 @@
 | 能力声明（Permission / PlanReview） | `HumanDecisionSupport{ Ask, AutoApprove, AutoReject, Retry bool }` | Descriptor 用 |
 | 能力声明（Question） | `QuestionSupport{ Ask, AutoReject, Retry bool }` | 无 `AutoApprove` 字段——对应 `QuestionMode` 没有这个值 |
 | 失败归因上下文 | `HumanDecisionFailure` | `RunResult.Failure.HumanDecision` 的结构化内容 |
+| 失败便利辨别 | `(*RunFailure).IsHumanDecision()` / `.IsRejected()` / `.IsTimedOut()` | nil-safe 粗粒度 helper，避免 `f != nil && f.Code == ...` 的 boilerplate |
 | **决策层（`Decision*`）** | | 描述"一次决策的事件、处理、结果" |
 | 决策请求（SDK → 宿主） | `DecisionRequest` | 携带 `Kind` / `Source` / `Payload` / `Choices` / `CreatedAt` / `Deadline` / `RetryAttempt` |
 | 决策响应（宿主 → SDK） | `DecisionResponse` | 字段：`RequestID` / `Result` / `Choice` / `Answer` / `Text` |
@@ -149,6 +150,17 @@ const (
 
 // QuestionMode 表示宿主对 Question 类决策的意图。值集合是 HumanDecisionMode 的真子集
 // ——不含 AutoApprove（见上面 HumanDecisionMode 的 godoc）。
+//
+// 适用前提：QuestionMode 只在支持 **Type A（tool-call 式 ASK）** 的 adapter 上有实际
+// 效果——即 agent 通过专门的工具调用（带 schema/choices）显式停下等结构化答案，
+// SDK 可在协议层识别。claude 的 AskUserQuestion 属于 Type A。
+//
+// codex / cursor 等只做 **Type B（对话式 ASK）** 的 adapter 不在协议层标记"这是一次
+// ask"——模型在 assistant text 里用自然语言问完就结束当前 turn，SDK **无法**
+// 从普通 assistant 消息里拦出来。这类 adapter 的 QuestionSupport 三字段全为 false
+// （见 §3.8 能力矩阵）；宿主写任何非 QuestionUnset 的值都会在 Start 前 warn 并被
+// 视作 QuestionUnset。想在它们上面抑制"问人"只能靠 prompt 工程（见 §5 adapter
+// 接入矩阵的"Question 治理指南"）。
 type QuestionMode string
 
 const (
@@ -393,6 +405,32 @@ type RunFailure struct {
     // 其余失败码为 nil。宿主可据此做结构化 switch。
     HumanDecision *HumanDecisionFailure
 }
+
+// RunFailure 上的便利辨别方法（粗粒度）。
+// 宿主要细粒度区分（例如按 Kind 区分 PermissionReject vs PlanReviewReject）
+// 仍走 f.Code 的 switch + f.HumanDecision.Kind——这些 helper 只是常见粗粒度
+// 判断的语法糖，避免每个调用点都写 `f != nil && f.Code == ...`。
+// 所有方法都接受 nil 接收者，宿主可安全链式调用。
+
+// IsHumanDecision 报告本次失败是否源自人类决策（被拒或超时）。
+// 等价于 f != nil && f.HumanDecision != nil。
+func (f *RunFailure) IsHumanDecision() bool {
+    return f != nil && f.HumanDecision != nil
+}
+
+// IsRejected 报告本次失败是否是"人类显性拒绝"（含 AutoReject 合成）。
+// 等价于 f != nil && f.Code == FailureReject。
+func (f *RunFailure) IsRejected() bool {
+    return f != nil && f.Code == FailureReject
+}
+
+// IsTimedOut 报告本次失败是否是"人类决策超时"（Deadline 到期 + OnTimeout=FailureAbort）。
+// 等价于 f != nil && f.Code == FailureTimeout。
+// 注意与 context.DeadlineExceeded 区分：后者是**外层 ctx 超时**，走 Wait() 的 err
+// 返回；本方法对应的是 Policy.Timeout 触发的**决策内部超时**。
+func (f *RunFailure) IsTimedOut() bool {
+    return f != nil && f.Code == FailureTimeout
+}
 ```
 
 ### 3.3 `RunPolicy` 新形状
@@ -505,7 +543,30 @@ type RunHandle interface {
     Events() <-chan RunEvent
     StreamEvents() <-chan StreamPayload
     RunID() string
+
+    // Wait 阻塞直到 run 终止或 ctx 被取消。
+    //
+    // 错误模型分两层（对应宿主的两种处理路径）：
+    //
+    //   - 返回的 `error`（第二返回值）= **基础设施层错误**：
+    //     agent 压根没跑完。典型触发：
+    //       * ctx.Cancel() / 外层 ctx.Deadline 到期（宿主主动中断）
+    //       * adapter 执行错：CLI 不存在 / JSON 协议破损 / 子进程崩溃
+    //       * SDK 内部 panic recovery / 资源分配失败
+    //     此时 RunResult 的其他字段（Transcript / Usage / Summary）可能**不完整**。
+    //     宿主应**先**检查这个 err——通常意味着需要 log + alert。
+    //
+    //   - 返回的 `RunResult.Failure`（第一返回值内的字段）= **业务层失败**：
+    //     agent 跑完了终点但结果是失败。典型触发：
+    //       * HITL 决策被拒 / 超时 + OnReject/OnTimeout=FailureAbort
+    //       * agent 声明的错误（CLI 非 0 退出、工具协议错）
+    //       * Policy 合并校验失败
+    //     此时 RunResult 其他字段**完整**（Summary / Transcript 都有意义，供观测）。
+    //     宿主按 Failure.Code 分支处理（见 §4.1 / §4.3 示例）。
+    //
+    // 处理顺序（宿主正确的姿势）：**err → Failure → success**。
     Wait(ctx context.Context) (RunResult, error)
+
     Cancel(ctx context.Context) error
 
     // 新增：
@@ -618,11 +679,18 @@ type QuestionSupport struct {
 
 本期三家 adapter 自填：
 
-| adapter | `Permission` (`HumanDecisionSupport`) | `PlanReview` (`HumanDecisionSupport`) | `Question` (`QuestionSupport`) |
-|---|---|---|---|
-| claude | `{Ask:true, AutoApprove:true, AutoReject:true, Retry:false}` | `{Ask:true, AutoApprove:true, AutoReject:true, Retry:false}` | `{Ask:true, AutoReject:true, Retry:false}` |
-| codex  | `{Ask:true, AutoApprove:true, AutoReject:true, Retry:true}` | `{Ask:false, AutoApprove:true, AutoReject:false, Retry:false}` | `{Ask:false, AutoReject:false, Retry:false}` |
-| cursor | `{Ask:false, AutoApprove:true, AutoReject:false, Retry:false}` | `{Ask:false, AutoApprove:true, AutoReject:false, Retry:false}` | `{Ask:false, AutoReject:false, Retry:false}` |
+| adapter | `Permission` (`HumanDecisionSupport`) | `PlanReview` (`HumanDecisionSupport`) | `Question` (`QuestionSupport`) | Question 机制 |
+|---|---|---|---|---|
+| claude | `{Ask:true, AutoApprove:true, AutoReject:true, Retry:false}` | `{Ask:true, AutoApprove:true, AutoReject:true, Retry:false}` | `{Ask:true, AutoReject:true, Retry:false}` | **Type A**：`AskUserQuestion` tool call（带 schema / choices），SDK 白名单识别 |
+| codex  | `{Ask:true, AutoApprove:true, AutoReject:true, Retry:true}` | `{Ask:false, AutoApprove:true, AutoReject:false, Retry:false}` | `{Ask:false, AutoReject:false, Retry:false}` | **无 Type A**；对话式（Type B）问答藏在 assistant text 里，SDK 层**不可拦** |
+| cursor | `{Ask:false, AutoApprove:true, AutoReject:false, Retry:false}` | `{Ask:false, AutoApprove:true, AutoReject:false, Retry:false}` | `{Ask:false, AutoReject:false, Retry:false}` | 同 codex，SDK 层**不可拦** |
+
+> **Type A vs Type B**：
+>
+> - **Type A（tool-call 式 ASK）**：agent 通过一个专门的工具显式停下，等结构化答案；工具名可被白名单识别、流内阻塞；只有 claude 支持
+> - **Type B（对话式 ASK）**：agent 在 assistant text 里用自然语言问完就结束当前 turn，SDK 层和"普通结束"不可区分；所有模型默认行为都如此
+>
+> 因此 `QuestionMode` / `QuestionSupport` 是 **Type A 的 API**。codex / cursor 上宿主想抑制"问人"只能靠 prompt 工程，详见 §5 的 **Question 治理指南**。
 
 规则：
 - `Ask:true` 的字段才允许宿主写对应的 `Ask`（`HumanDecisionAsk` / `QuestionAsk`）；`AutoReject:true` 的字段才允许对应的 `AutoReject`；`AutoApprove` 几乎总是 true（所有 adapter 都有 bypass / auto 路径），Question 类没有这个值。
@@ -711,6 +779,301 @@ HITL 在 SDK 里走**两条独立的通道**，各自的职责、消费者数量
 - 本期不内置 broadcast helper；如果反馈强烈，可在 `pkg/bridges/` 下加一个通用 `Fanout[T]`，不列入 §8 Phase 1。
 - `StreamHITLRequested/Resolved` 常量名**不改**（避免 churn）；它们与 `HumanDecisionKind` 的对应关系在 godoc 里点明即可。
 
+### 3.11 Runner 内部分发与生命周期（实施者规范）
+
+本节是给 runner 实施者的**行为契约**——宿主不用看，但实施者必须严格按此实现。所有行为分派最终收敛在 `runner.go::dualSink.RequestDecision` 这一个入口。
+
+#### 3.11.1 `RequestDecision` 主流程（伪代码）
+
+```go
+// dualSink 是 runner 给 adapter 的实现；实现 DecisionCapableSink。
+//
+// 入参 req 来自 adapter，req.Kind 已由 adapter 填好；
+// req.RequestID / CreatedAt / Deadline / RetryAttempt 由 runner 分配/覆盖。
+func (s *dualSink) RequestDecision(ctx context.Context, req DecisionRequest) (DecisionResponse, error) {
+    // ---- 1. 请求规范化（单点分配标识 + 时间锚）----
+    req = s.normalizeRequest(req)
+        // runID = s.runID
+        // RequestID = fmt.Sprintf("%s-dec-%d", s.runID, atomic.AddUint64(&s.decSeq, 1))
+        // CreatedAt = time.Now()
+        // Deadline  = CreatedAt + effectiveTimeout(Policy)    // 0 → 30s 默认 / -1 → 永不超时
+        // RetryAttempt 零值保持 0
+
+    // ---- 2. 知情权广播（不失败）----
+    s.EmitStream(StreamPayload{
+        Kind: StreamHITLRequested,
+        // Seq 由 EmitStream 单点分配
+        HITLRequested: &HITLRequestedPayload{/* 见 §3.12 */},
+    })
+
+    // ---- 3. 决策权分派 ----
+    for attempt := req.RetryAttempt; ; attempt++ {
+        req.RetryAttempt = attempt
+
+        resp, decision, failureReason := s.dispatchOnce(ctx, req)
+        // dispatchOnce 内部按 Kind 选 handler 或 channel，带 Deadline 超时
+
+        // ---- 4. 知情权广播（不失败）----
+        s.EmitStream(StreamPayload{
+            Kind: StreamHITLResolved,
+            HITLResolved: &HITLResolvedPayload{/* 见 §3.12 */},
+        })
+
+        // ---- 5. 根据 decision 和 policy 决定是否 Retry/Abort/Continue ----
+        switch decision {
+        case DecisionApproved, DecisionAnswered:
+            return resp, nil // 成功直接返回
+
+        case DecisionRejected:
+            switch s.policy.HumanDecision.OnReject {
+            case FailureRetry:
+                if attempt+1 < effectiveMaxRetries(s.policy) {
+                    // 新一轮 RequestID（attempt 共享 Source/ToolCallID，不改 Kind）
+                    req = s.renewForRetry(req)
+                    continue
+                }
+                return s.abortWith(FailureReject, req, failureReason), errFailureAbort
+            case FailureContinue:
+                return s.continueWithReject(req), nil // agent 会收到 reject-tool_result
+            default: // FailureAbort（零值 / 默认）
+                return s.abortWith(FailureReject, req, failureReason), errFailureAbort
+            }
+
+        case DecisionTimedOut:
+            switch s.policy.HumanDecision.OnTimeout {
+            case FailureRetry: /* 同 DecisionRejected 分支 */
+            case FailureContinue: /* 同上 */
+            default: // FailureAbort
+                return s.abortWith(FailureTimeout, req, failureReason), errFailureAbort
+            }
+
+        case DecisionAborted:
+            // handler 返回 error 或 ctx 被取消 → 不经 OnReject/OnTimeout，直接按取消结束
+            return s.abortWith(FailureCancelled, req, failureReason), ctx.Err()
+        }
+    }
+}
+```
+
+#### 3.11.2 `dispatchOnce`：per-Kind 分派
+
+```go
+func (s *dualSink) dispatchOnce(ctx context.Context, req DecisionRequest) (DecisionResponse, DecisionResult, failureReason) {
+    // 为 handler 和 channel 共用的 deadline
+    dispatchCtx, cancel := withEffectiveDeadline(ctx, req.Deadline)
+    defer cancel()
+
+    switch req.Kind {
+    case HumanDecisionPermission:
+        if h := s.resolveHandler().Permission; h != nil {
+            return s.runPermissionHandler(dispatchCtx, h, req)
+        }
+    case HumanDecisionPlanReview:
+        if h := s.resolveHandler().PlanReview; h != nil {
+            return s.runPlanReviewHandler(dispatchCtx, h, req)
+        }
+    case HumanDecisionQuestion:
+        if h := s.resolveHandler().Question; h != nil {
+            return s.runQuestionHandler(dispatchCtx, h, req)
+        }
+    }
+
+    // 没挂对应 typed handler → 走 channel
+    return s.runChannelDispatch(dispatchCtx, req)
+}
+```
+
+**Handler 优先级** `resolveHandler()`：RunOption（单次）> AgentOption（绑定级）> nil（降级到 channel）。
+
+**Handler 执行**（以 Permission 为例，其他两类同构）：
+
+```go
+func (s *dualSink) runPermissionHandler(
+    ctx context.Context, h PermissionHandler, req DecisionRequest,
+) (DecisionResponse, DecisionResult, failureReason) {
+    typed := toPermissionRequest(req) // 统一 → typed（见 §3.11.3 映射规则）
+
+    respCh := make(chan handlerOutcome, 1)
+    go func() {
+        defer func() {
+            if r := recover(); r != nil {
+                // panic 记入 FailureAgentError，不当 Abort
+                respCh <- handlerOutcome{err: fmt.Errorf("handler panic: %v", r), kind: panicOutcome}
+            }
+        }()
+        resp, err := h(ctx, typed)
+        respCh <- handlerOutcome{typedResp: resp, err: err}
+    }()
+
+    select {
+    case out := <-respCh:
+        if out.kind == panicOutcome {
+            return emptyResp, "", failureReason{code: FailureAgentError, err: out.err}
+        }
+        if out.err != nil {
+            return emptyResp, DecisionAborted, failureReason{err: out.err}
+        }
+        unified := fromPermissionResponse(out.typedResp, req) // typed → 统一（§3.11.3）
+        return unified, DecisionResult(unified.Result), failureReason{}
+
+    case <-ctx.Done():
+        // Deadline 到期或外层取消
+        if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+            return emptyResp, DecisionTimedOut, failureReason{}
+        }
+        return emptyResp, DecisionAborted, failureReason{err: ctx.Err()}
+    }
+}
+```
+
+**Channel dispatch**（所有 Kind 共用）：
+
+```go
+func (s *dualSink) runChannelDispatch(
+    ctx context.Context, req DecisionRequest,
+) (DecisionResponse, DecisionResult, failureReason) {
+    // 1. 登记 pending
+    waiter := s.pendingDecisions.register(req.RequestID)
+    defer s.pendingDecisions.clear(req.RequestID)
+
+    // 2. push 到 handle.DecisionRequests() 通道（无消费者 → 阻塞 ≤ Deadline）
+    select {
+    case s.decisionCh <- req:
+    case <-ctx.Done():
+        return emptyResp, timeoutOrAbort(ctx), failureReason{}
+    }
+
+    // 3. 等待 ResolveDecision 回填
+    select {
+    case resp := <-waiter.done:
+        return resp, DecisionResult(resp.Result), failureReason{}
+    case <-ctx.Done():
+        return emptyResp, timeoutOrAbort(ctx), failureReason{}
+    }
+}
+```
+
+`ResolveDecision` 则：
+
+```go
+func (h *asyncRunHandle) ResolveDecision(requestID string, resp DecisionResponse) error {
+    waiter, ok := h.sink.pendingDecisions.take(requestID)
+    if !ok {
+        return ErrDecisionRequestExpired // requestID 不存在或已消费
+    }
+    if err := validateResultKind(waiter.kind, resp.Result); err != nil {
+        return err // Kind 不兼容
+    }
+    waiter.done <- resp
+    return nil
+}
+```
+
+#### 3.11.3 typed Response ↔ `DecisionResponse` 映射表
+
+runner 内部双向转换，**映射规则全集**（宿主不接触此映射——它只影响 adapter 侧看到的统一 `DecisionResponse`）：
+
+**统一 `DecisionRequest` → typed `*Request`**（handler 调用前）：
+
+| 源字段（`DecisionRequest`） | `PermissionRequest` | `PlanReviewRequest` | `QuestionRequest` |
+|---|---|---|---|
+| 共用 base（RequestID / RunID / ThreadID / Source / ToolCallID / CreatedAt / Deadline / RetryAttempt） | 嵌入 `decisionRequestBase` | 嵌入 `decisionRequestBase` | 嵌入 `decisionRequestBase` |
+| `Payload["tool"]` | `.Tool` | — | — |
+| `Payload` 全部（未被提升） | `.Args` | `.Extra` | 整体放到 `.Schema` + `.Choices`（见下） |
+| `Prompt` | `.Prompt` | `.Prompt` | `.Prompt` |
+| `Payload["plan"]` | — | `.Plan` | — |
+| `Payload["schema"]` | — | — | `.Schema` |
+| `Choices` | — | — | `.Choices` |
+
+**typed `*Response` → 统一 `DecisionResponse`**（adapter 收到前）：
+
+| typed Response 字段 | 统一 `DecisionResponse` 字段 |
+|---|---|
+| `PermissionResponse.Result = ApprovalApproved` | `.Result = DecisionApproved` |
+| `PermissionResponse.Result = ApprovalRejected` | `.Result = DecisionRejected` |
+| `PlanReviewResponse.Result = ApprovalApproved` | `.Result = DecisionApproved` |
+| `PlanReviewResponse.Result = ApprovalRejected` | `.Result = DecisionRejected` |
+| `QuestionResponse.Result = QuestionAnswered` | `.Result = DecisionAnswered` |
+| `QuestionResponse.Result = QuestionRejected` | `.Result = DecisionRejected` |
+| `.RequestID` | `.RequestID`（透传） |
+| `PermissionResponse.Text` / `PlanReviewResponse.Text` / `QuestionResponse.Text` | `.Text`（透传） |
+| `QuestionResponse.Choice` | `.Choice`（透传；Permission/PlanReview 的 Choice 字段保持空串） |
+| `QuestionResponse.Answer` | `.Answer`（透传；Permission/PlanReview 的 Answer 字段保持 nil） |
+
+**注意**：`DecisionTimedOut` / `DecisionAborted` **不出现在 typed Response 里**——它们是 runner 内部合成的结果，不是 handler 能返回的合法值（handler 返回 error 被映射成 Aborted，超时由 `ctx.Done()` 合成 TimedOut）。
+
+#### 3.11.4 Handler 错误与异常的处理契约
+
+| Handler 行为 | runner 映射结果 | 走 OnReject/OnTimeout？ | 最终 `Failure.Code` |
+|---|---|---|---|
+| 返回 `(resp, nil)` + `resp.Result = Approved/Answered` | `DecisionApproved` / `DecisionAnswered` | 否 | —（run 成功） |
+| 返回 `(resp, nil)` + `resp.Result = Rejected` | `DecisionRejected` | 走 OnReject | `FailureReject`（若 Abort） |
+| 返回 `(_, err)` | `DecisionAborted` | **否**，直接按取消路径 | `FailureCancelled`（err 进 `Failure.Message`） |
+| 返回 `(_, _)` 但未命中 `select` 前 ctx 被外层取消 | `DecisionAborted` | 否 | `FailureCancelled` |
+| 未在 `Deadline` 前返回 | `DecisionTimedOut` | 走 OnTimeout | `FailureTimeout`（若 Abort） |
+| `panic` | **特殊**：`FailureAgentError`（不是 Abort，因为这是 bug 不是用户意图） | 否 | `FailureAgentError`（panic 信息进 `Failure.Message`） |
+
+**关键约束**：
+
+- handler panic 必须 `recover`，**不能**让 runner goroutine 崩掉（否则整个 run 死锁）
+- handler 返回 `nil response + nil error` 是**非法**——runner 按 `FailureAgentError{Message: "handler returned nil response without error"}` 处理
+- handler 忽略 `ctx.Done()` 超出 `Deadline` 仍在跑：SDK 会 `select` 赢得 TimedOut 结果，handler 的 goroutine 继续跑（变成孤儿）——宿主应在 handler 内部尊重 ctx
+- `ResolveDecision` 被同一 RequestID 重复调用：第二次返回 `ErrDecisionRequestExpired`（和"已超时"同码，见 §9 第 3 条决议）
+- `ResolveDecision` 的 `resp.Result` 与 RequestID 对应 Kind 不兼容（如 Question 收到 `DecisionApproved`）：返回 `ErrDecisionResultKindMismatch`，runner 视作未回填继续等（直到超时或宿主重新发合法 resolve）
+
+#### 3.11.5 并发语义
+
+- **同一 run 内**：runner 保证 `RequestDecision` 调用串行（一次只处理一个 HITL 请求，直到 resp 返回 / 超时 / abort）。adapter 可放心顺序 emit 多次 HITL
+- **不同 run 间**：完全独立，每个 `asyncRunHandle` 有自己的 `pendingDecisions` map
+- **`EmitStream` 与 `RequestDecision` 的时序**：同一 run 内 `EmitStream` 是非阻塞 + 加锁保证顺序。`Seq` 在锁内分配，保证严格单调
+- **Typed handler 的 goroutine**：每次调用独立 goroutine，panic 不影响 runner 主循环（recover 兜底）
+
+### 3.12 `StreamHITLRequested` / `StreamHITLResolved` 事件 schema
+
+两个 stream 常量虽然保留旧名（§0），但 payload 形状随 HITL v2 更新。以下是规范字段（放在 `StreamPayload` 的 `HITLRequested *HITLRequestedPayload` / `HITLResolved *HITLResolvedPayload` 字段里）：
+
+```go
+type HITLRequestedPayload struct {
+    RequestID    string            // 同 DecisionRequest.RequestID
+    Kind         HumanDecisionKind // permission / plan_review / question
+    Source       string            // adapter 起因标签
+    ToolCallID   string            // 若有关联 tool_use_id
+    Prompt       string            // 人类可读摘要
+    Payload      map[string]any    // adapter 原始 payload（plan 文本 / command / schema 等）
+    Choices      []DecisionChoice  // 若有预设选项
+    CreatedAt    time.Time
+    Deadline     time.Time
+    RetryAttempt int               // 第 N 次重试（0 = 首次）
+}
+
+type HITLResolvedPayload struct {
+    RequestID    string
+    Kind         HumanDecisionKind
+    Source       string
+    RetryAttempt int                // 对应的尝试序号
+    Result       DecisionResult     // DecisionApproved / Rejected / Answered / TimedOut / Aborted
+    Choice       string             // 若 DecisionAnswered 且用了 Choices
+    Answer       map[string]any     // 若 DecisionAnswered
+    ResolvedAt   time.Time          // resp 到达 runner 的时刻
+    Latency      time.Duration      // = ResolvedAt - CreatedAt
+}
+```
+
+**Retry 时的 emit 语义**（对应 §3.11.1 的循环）：
+
+- 首次发起：`StreamHITLRequested{RetryAttempt=0}` → 回填 → `StreamHITLResolved{RetryAttempt=0, Result=Rejected}`
+- `OnReject=FailureRetry` 触发第一次 retry：`StreamHITLRequested{RetryAttempt=1}` → ... → `StreamHITLResolved{RetryAttempt=1, ...}`
+- 直到 `MaxRetries` 耗尽或得到 Approved/Answered
+- **每次 attempt 都 emit 一对 Requested/Resolved**——不合并、不去重。宿主审计层想看到完整决策链
+
+**Seq 分配规则**：
+
+- `StreamHITLRequested` 在 `RequestDecision` 进入时先于 handler 调用 emit，`Seq = N`
+- `StreamHITLResolved` 在 handler 返回后 emit，`Seq = N+M`（M ≥ 1，因为期间可能有 agent 其他事件挤在 stream）
+- 宿主做审计持久化时，**按 `(RunID, RequestID, RetryAttempt)` 三元组关联**一对 Requested/Resolved
+
+**跨类的外观**：三个 Kind 共用同一对常量，通过 `payload.Kind` 字段区分；bridge 层（§6）按 Kind 做下游映射。
+
 ## 4. 宿主使用手册（三种模式）
 
 三种模式**互斥**，宿主按场景选一种。每种都可独立通过 `Run` 或 `Start` 使用。
@@ -772,52 +1135,47 @@ Handler / 宿主 UI 拿到 `RetryAttempt > 0` 时可以据此调整提示文案�
 
 #### 4.0.4 结构化失败对象
 
-`RunResult.Failure` 是类型化的，不是裸字符串 map：
+`RunResult.Failure` 是类型化的，不是裸字符串 map。规范定义见 **§3.2**（`FailureCode` 常量 + `RunFailure` struct + `HumanDecisionFailure` struct + `(*RunFailure).IsHumanDecision/IsRejected/IsTimedOut` 便利方法），本节仅从宿主契约视角补充使用说明：
+
+- `Failure.Code ∈ {FailureReject, FailureTimeout}` 时 `Failure.HumanDecision != nil`；其余失败码（`FailureAgentError` / `FailureCancelled` / `FailurePolicyError`）时 `Failure.HumanDecision == nil`
+- `Failure.HumanDecision.Request` 是触发失败那次请求的**完整快照**（含 Payload）——宿主可据此重构 UI 显示"拒绝的是什么"
+- `Failure.HumanDecision.Attempts` 包含所有 `FailureRetry` 消耗的重试次数；单次 Abort 场景下 `Attempts == 1`
+- `Failure.Metadata` 承载 vendor-specific 的补充上下文（例如 CLI 的 stderr 片段、exit code），不属于 HITL 规范但对运维有用
+
+#### 4.0.5 宿主处理模板：err → Failure → success
+
+宿主处理 `handle.Wait(ctx)` 返回值的**标准三段式**（顺序很重要）。`err` 和 `result.Failure` 的语义分层见 §3.5 `Wait()` godoc：
 
 ```go
-type FailureCode string
+result, err := handle.Wait(ctx)
 
-const (
-    FailureReject      FailureCode = "decision_rejected" // OnReject=FailureAbort + Decision=DecisionRejected
-    FailureTimeout     FailureCode = "decision_timeout"  // OnTimeout=FailureAbort + Decision=DecisionTimedOut
-    FailureAgentError  FailureCode = "agent_error"
-    FailureCancelled   FailureCode = "cancelled"
-    FailurePolicyError FailureCode = "policy_error"
-)
-
-type RunFailure struct {
-    Code     FailureCode
-    Message  string
-    Metadata map[string]any
-
-    // HumanDecision 在 Code ∈ {FailureReject, FailureTimeout} 时非 nil。
-    HumanDecision *HumanDecisionFailure
+// 1. 基础设施层错误：agent 压根没跑完
+if err != nil {
+    switch {
+    case errors.Is(err, context.Canceled):
+        // 宿主主动 Cancel，不算异常
+        log.Info("run canceled")
+    case errors.Is(err, context.DeadlineExceeded):
+        // 外层 ctx 超时（区别于 HumanDecisionPolicy.Timeout——那个走 Failure）
+        alerting.PageOncall("run ctx 超时", "run_id", handle.RunID())
+    default:
+        alerting.PageOncall("SDK / adapter 层错误", err)
+    }
+    return
 }
 
-type HumanDecisionFailure struct {
-    Kind     HumanDecisionKind   // 哪一类决策失败（permission/plan_review/question）
-    Source   string              // adapter 起因标签（"claude.exit_plan_mode" 等）
-    Decision DecisionResult      // DecisionRejected 或 DecisionTimedOut
-    Request  *DecisionRequest // 触发失败的请求快照（含 Payload）
-    Attempts int                 // 总共尝试了几次（含 FailureRetry 消耗的重试）
-}
-```
-
-宿主 switch 语义（`FailureReject` 和 `FailureTimeout` 平行分支，不再有 `Denied`）：
-
-```go
+// 2. 业务层失败：agent 跑完终点但结果是失败
 if f := result.Failure; f != nil {
     switch f.Code {
     case agentadaptor.FailureReject:
+        // 用户显性拒绝（含 AutoReject 合成）
         log.Warn("HITL 被用户拒绝",
             "kind", f.HumanDecision.Kind,
             "source", f.HumanDecision.Source,
             "attempts", f.HumanDecision.Attempts)
     case agentadaptor.FailureTimeout:
-        alert.Page("HITL 超时",
-            "kind", f.HumanDecision.Kind,
-            "source", f.HumanDecision.Source,
-            "attempts", f.HumanDecision.Attempts)
+        // HITL 决策 Deadline 到期 + OnTimeout=FailureAbort（不是外层 ctx 超时！）
+        alerting.Escalate(userIDOf(handle), f.HumanDecision)
     case agentadaptor.FailureAgentError:
         log.Error("agent 执行失败", "msg", f.Message)
     case agentadaptor.FailureCancelled:
@@ -825,8 +1183,20 @@ if f := result.Failure; f != nil {
     default:
         log.Error("未分类失败", "code", f.Code, "msg", f.Message)
     }
+    return
 }
+
+// 3. 成功
+useResult(result)
 ```
+
+**粗粒度辨别**：不关心具体失败 code、只想知道"是不是人类决策失败了"的宿主，可用 §3.2 的便利方法：
+
+```go
+if result.Failure.IsHumanDecision() { ... } // IsRejected / IsTimedOut 同理
+```
+
+`nil` 接收者安全（`(*RunFailure)(nil).IsHumanDecision() == false`），可直接链式调用。
 
 > 说明：§4.0 引入的新公共符号（`FailureAction`、`FailureCode`、`HumanDecisionFailure`、`RunFailure.HumanDecision` 字段、`HumanDecisionPolicy.OnTimeout` / `OnReject` / `MaxRetries`）的规范定义见 §3.2。本节从宿主视角敲定契约。
 
@@ -873,9 +1243,15 @@ func main() {
     }
 
     ctx := context.Background()
-    result, _ := sdk.Run(ctx, "把 AGENTS.md 里 X 节挪到 docs",
+    result, err := sdk.Run(ctx, "把 AGENTS.md 里 X 节挪到 docs",
         agentadaptor.WithRunPolicy(policy))
 
+    // 1. 基础设施错误：agent 压根没跑完（ctx 取消 / CLI 不存在 / JSON 协议破损 …）
+    if err != nil {
+        log.Fatalf("SDK/adapter 层错误：%v", err)
+    }
+
+    // 2. 业务层失败：agent 跑完但结果是失败
     if f := result.Failure; f != nil {
         switch f.Code {
         case agentadaptor.FailureReject:
@@ -894,6 +1270,7 @@ func main() {
         return
     }
 
+    // 3. 成功
     log.Printf("完成：%s", result.Summary)
 }
 ```
@@ -990,10 +1367,19 @@ result, err := sdk.Run(ctx, prompt,
     // 不写 WithPermissionHandler / WithQuestionHandler——那两类走 policy 默认
 )
 
-if f := result.Failure; f != nil && f.Code == agentadaptor.FailureReject {
-    fmt.Printf("用户拒绝了 %s（共尝试 %d 次后放弃）\n",
-        f.HumanDecision.Kind, f.HumanDecision.Attempts)
+// 1. 基础设施错误优先处理
+if err != nil {
+    log.Fatalf("run 未能跑完：%v", err)
 }
+// 2. 业务失败：这里只关心"用户 N 次都拒了 plan"——用粗粒度 helper（§3.2）
+if result.Failure.IsRejected() {
+    fmt.Printf("用户拒绝了 %s（共尝试 %d 次后放弃）\n",
+        result.Failure.HumanDecision.Kind,
+        result.Failure.HumanDecision.Attempts)
+    return
+}
+// 3. 成功
+fmt.Println(result.Summary)
 ```
 
 **示例：挂三类都接**（桌面 / TUI，全程人工审）：
@@ -1146,14 +1532,30 @@ http.HandleFunc("/decision/pending", func(w http.ResponseWriter, r *http.Request
     _ = json.NewEncoder(w).Encode(out)
 })
 
-result, _ := handle.Wait(ctx)
+result, err := handle.Wait(ctx)
 
-// ===== 结构化失败处理：服务化场景里按 FailureCode 决定 escalation =====
+// ===== 三段式处理：err → Failure → success（见 §3.5 Wait godoc）=====
+
+// 1. 基础设施错误：agent 压根没跑完（ctx 取消 / CLI 不存在 / JSON 协议破损 …）
+if err != nil {
+    switch {
+    case errors.Is(err, context.Canceled):
+        log.Info("run 被主动取消", "run_id", handle.RunID())
+    case errors.Is(err, context.DeadlineExceeded):
+        // 外层 ctx 超时（区别于 HumanDecisionPolicy.Timeout——那个走 FailureTimeout）
+        alerting.PageOncall("run ctx 超时", "run_id", handle.RunID())
+    default:
+        alerting.PageOncall("SDK / adapter 层错误", err)
+    }
+    return
+}
+
+// 2. 业务失败：按 FailureCode 决定 escalation
 if f := result.Failure; f != nil {
     switch f.Code {
     case agentadaptor.FailureTimeout:
+        // HITL 决策 Deadline 到期 + OnTimeout=FailureAbort
         // 用户没在规定时间内回应 → 通知服务升级告警（email / IM / SMS）
-        // f.HumanDecision.Kind 告知是 plan/permission/question 哪一类
         alerting.Escalate(userIDOf(handle), f.HumanDecision)
 
     case agentadaptor.FailureReject:
@@ -1169,7 +1571,11 @@ if f := result.Failure; f != nil {
     default:
         alerting.PageOncall("unknown failure", f.Code, f.Message)
     }
+    return
 }
+
+// 3. 成功
+deliverResultToUser(userIDOf(handle), result)
 ```
 
 **关键点**：
@@ -1272,43 +1678,238 @@ http.HandleFunc("/session/events", func(w http.ResponseWriter, r *http.Request) 
 
 ### 5.1 Claude（本期实施 Phase 1，Phase 3 补双向回填）
 
-**`HumanDecision.Permission` → CLI flag**：
+#### 5.1.1 `HumanDecision.Permission` → CLI flag
 
-| Mode | 行为 |
-|---|---|
-| `HumanDecisionAutoApprove` | 传 `--dangerously-skip-permissions`（vendor bypass）|
-| `HumanDecisionAsk` | 不传；通过 `permission_request` 上浮到 `DecisionRequest`，Phase 3 双向回填 |
-| `HumanDecisionAutoReject` | 不传；识别到 permission_request 后 SDK 预制 reject，adapter 把 reject 作为 tool_result 回给 CLI（Phase 3） |
-| `HumanDecisionUnset` | 等价 `HumanDecisionAsk`（§3.7 默认） |
+翻译点在 `claude/driver.go::buildClaudeExecArgs`（或等价的 CLI 构造函数）：
 
-**`HumanDecision.PlanReview` → 工具识别**：
+| Mode | 行为 | 对应 CLI flag |
+|---|---|---|
+| `HumanDecisionAutoApprove` | vendor bypass | `--dangerously-skip-permissions` |
+| `HumanDecisionAsk` | 不传（Phase 3 走双向回填） | — |
+| `HumanDecisionAutoReject` | 不传；识别到 permission_request 后 SDK 预制 reject（Phase 3 生效） | — |
+| `HumanDecisionUnset` | 等价 `HumanDecisionAsk`（§3.7 默认） | — |
 
-在 `claude/streaming_parser.go::handleContentBlockStart` 的 `tool_use` 分支上，按白名单识别：
+Phase 1 只需落第一条和最后一条——`HumanDecisionAsk`/`AutoReject` 在 Phase 1 等价地不传（CLI 层仍本地合成 reject），Phase 3 才真正兑现。
+
+#### 5.1.2 白名单 + 工具识别（新文件 `claude/decision_types.go`）
 
 ```go
-var claudeInteractiveTools = map[string]HumanDecisionKind{
-    "ExitPlanMode":    HumanDecisionPlanReview,
-    "AskUserQuestion": HumanDecisionQuestion,
-    // EnterPlanMode 不上浮：只是进入 plan 模式的标记，真正的审批在 ExitPlanMode
+// claude/decision_types.go（新文件，放在 claude 包根目录）
+package claude
+
+import agentadaptor "github.com/agent-dance/agent-adaptor"
+
+// claudeInteractiveTools 白名单：把特定的 Claude 内部工具识别为 HITL 决策。
+// EnterPlanMode 不上浮——只是"进入 plan 模式"的标记，真正的审批在 ExitPlanMode。
+var claudeInteractiveTools = map[string]agentadaptor.HumanDecisionKind{
+    "ExitPlanMode":    agentadaptor.HumanDecisionPlanReview,
+    "AskUserQuestion": agentadaptor.HumanDecisionQuestion,
+}
+
+// sourceForTool 生成规范的 Source 标签（用于 DecisionRequest.Source 和
+// StreamHITLRequested/Resolved 的 source 字段，以及 AG-UI 的 tool_call_name）
+func sourceForTool(toolName string) string {
+    return "claude." + toSnakeCase(toolName) // "ExitPlanMode" → "claude.exit_plan_mode"
 }
 ```
 
-**Phase 1 行为（本期落地）**：
-- 看到 `ExitPlanMode` tool_use 帧 → 暂存 `input.plan`
-- 看到对应 `tool_result`：
-  - `is_error: false` 且 content ≈ "User approved the plan." → emit `StreamHITLResolved{Decision: approved}`，继续
-  - `is_error: true`（当前 CLI 在 `--dangerously-skip-permissions` 下默认走这条）→ emit:
-    - `StreamHITLRequested{Kind: plan_review, Source: "claude.exit_plan_mode", Raw: {plan}}`
-    - `StreamHITLResolved{Decision: rejected}`
-    - 若 `OnReject=FailureAbort`（默认）：`RunResult.Failure = &RunFailure{Code: FailureReject, Message: "Claude Plan Mode was not approved; no file changes applied.", HumanDecision: &HumanDecisionFailure{Kind: HumanDecisionPlanReview, Source: "claude.exit_plan_mode", Decision: DecisionRejected, Request: …, Attempts: 1}}`
-    - 若 `OnReject=FailureContinue`：不 emit Failure，run 继续（agent 拿到 "plan rejected" 作为 tool_result）
-- `DriverCheckpoint.Valid` 仍然有效（session 可 resume）；`RunResult.Summary = "Plan rejected"`
+#### 5.1.3 识别入口：`streaming_parser.go::handleContentBlockStart`
 
-**Phase 1 不做**：
-- 不做"调用 sink.RequestDecision 真实阻塞" —— CLI 层已经合成 reject 了，阻塞没意义
-- Phase 1 对 claude 是**观测层显性化**，Phase 3 才会通过 stdin stream-json 或 MCP permission prompt 真正拦截 + 回填
+在 `tool_use` 分支入口的改造（伪代码层面的 before/after）：
 
-**Descriptor**（见 §3.8）：Permission / PlanReview 各填 `HumanDecisionSupport{Ask:true, AutoApprove:true, AutoReject:true, Retry:false}`，Question 填 `QuestionSupport{Ask:true, AutoReject:true, Retry:false}`；本期 Phase 1 的 `Ask`/`AutoReject` 只在观测意义下成立，Phase 3 才有真正的执行效力；`Retry:false` 源于 CLI 已本地合成 reject 无法原地重新询问，Phase 3 双向通道打通后可改为 `true`。
+```go
+// claude/streaming_parser.go::handleContentBlockStart (tool_use 分支)
+func (p *streamingParser) handleContentBlockStart(block *contentBlockStartEvent) error {
+    switch block.ContentBlock.Type {
+    case "tool_use":
+        toolName := block.ContentBlock.Name
+        toolUseID := block.ContentBlock.ID
+
+        // ---- 新增：HITL 识别 ----
+        if kind, interactive := claudeInteractiveTools[toolName]; interactive {
+            // 暂存这次 tool_use，等对应 tool_result 帧到达时对齐（见 5.1.4）
+            p.pendingHITL[toolUseID] = &pendingHITL{
+                Kind:       kind,
+                Source:     sourceForTool(toolName),
+                ToolUseID:  toolUseID,
+                StartedAt:  time.Now(),
+            }
+            // 继续让 tool_use 走通用路径（emit ToolCallStart stream），
+            // HITL 专属 emit 推迟到 tool_result 时
+        }
+        // ---- 既有逻辑不变 ----
+        return p.emitToolCallStart(block)
+
+    // 其他分支...
+    }
+}
+```
+
+`pendingHITL` 是 parser-local state（per parser instance，单 run 内单进程）：
+
+```go
+type pendingHITL struct {
+    Kind      agentadaptor.HumanDecisionKind
+    Source    string
+    ToolUseID string
+    StartedAt time.Time
+
+    // 在 input_json_delta 事件到齐前缓存 input 字段
+    Plan    string         // ExitPlanMode 用
+    Prompt  string         // AskUserQuestion 用
+    Schema  map[string]any // AskUserQuestion 用
+    Choices []any          // AskUserQuestion 用
+}
+```
+
+随后在 `handleContentBlockDelta`（`input_json_delta` 事件）里把 `plan` / `prompt` / `schema` / `choices` 字段 decode 进 `pendingHITL`——这部分是对现有 `tool_use.input` 组装逻辑的扩展，不是重写。
+
+#### 5.1.4 `tool_result` 配对：`parser.go::handleUserMessage` 或等价入口
+
+Claude CLI 的 `tool_result` 放在后续的 `user` message 里（role=user, content type=tool_result）。这是 HITL 事件的**配对点**：
+
+```go
+// claude/parser.go（或 streaming_parser.go 对应入口）
+func (p *streamingParser) handleToolResult(tr toolResultBlock) error {
+    pending, ok := p.pendingHITL[tr.ToolUseID]
+    if !ok {
+        // 不是 HITL 工具，走普通 tool_result 路径
+        return p.emitToolCallResult(tr)
+    }
+    defer delete(p.pendingHITL, tr.ToolUseID)
+
+    requestID := p.allocDecisionRequestID() // "run-<id>-dec-<seq>"
+
+    // 1. emit StreamHITLRequested（Phase 1 观测层；事件内容见 §3.12）
+    p.sink.EmitStream(StreamPayload{
+        Kind: StreamHITLRequested,
+        HITLRequested: &HITLRequestedPayload{
+            RequestID:    requestID,
+            Kind:         pending.Kind,
+            Source:       pending.Source,
+            ToolCallID:   pending.ToolUseID,
+            Prompt:       pending.Prompt,             // AskUserQuestion 才非空
+            Payload:      pending.payloadAsMap(),     // 包含 plan / schema
+            Choices:      pending.choicesAsSlice(),
+            CreatedAt:    pending.StartedAt,
+            Deadline:     pending.StartedAt.Add(effectiveTimeout(p.policy)),
+            RetryAttempt: 0,
+        },
+    })
+
+    // 2. 解读 tool_result 内容判断 approved/rejected
+    decision := interpretClaudeToolResult(tr)
+    // 见 5.1.5 规则表
+
+    // 3. emit StreamHITLResolved
+    p.sink.EmitStream(StreamPayload{
+        Kind: StreamHITLResolved,
+        HITLResolved: &HITLResolvedPayload{
+            RequestID:    requestID,
+            Kind:         pending.Kind,
+            Source:       pending.Source,
+            RetryAttempt: 0,
+            Result:       decision,
+            ResolvedAt:   time.Now(),
+            Latency:      time.Since(pending.StartedAt),
+        },
+    })
+
+    // 4. 若 decision = Rejected 且 OnReject=FailureAbort：准备 RunFailure
+    //    由 runner 在 run 结束时读取 parser 上的 "pendingFailure" 字段并填到 RunResult.Failure
+    if decision == DecisionRejected && shouldAbort(p.policy.HumanDecision.OnReject) {
+        p.setPendingFailure(&RunFailure{
+            Code:    FailureReject,
+            Message: "Claude Plan Mode was not approved; no file changes applied.",
+            HumanDecision: &HumanDecisionFailure{
+                Kind:     pending.Kind,
+                Source:   pending.Source,
+                Decision: decision,
+                Request:  /* snapshot 自 pending */,
+                Attempts: 1,
+            },
+        })
+    }
+
+    // 5. 仍然 emit 普通 tool_result（保持既有 stream 完整性）
+    return p.emitToolCallResult(tr)
+}
+```
+
+#### 5.1.5 `interpretClaudeToolResult` 规则表
+
+签名：`(content string, isError bool) (DecisionResult, bool)`。第二返回值 `ok=false` 表示**这不是一次 HITL 决策**，parser 必须跳过所有 `StreamHITLRequested/Resolved` 发射与 `pendingFailure` 记账。
+
+| `is_error` | `content` 形状 | 结果 | 理由 |
+|---|---|---|---|
+| `true` | 以 `<tool_use_error>` 开头 或含 `InputValidationError` / `ToolUseError` | `("", false)` — **非决策** | CLI 的 schema 自校验失败（e.g. `AskUserQuestion` 给了 >4 个 option）。UI 尚未展示给用户，归因到"用户拒绝"会污染审计链 |
+| `true` | 其他文本 | `(DecisionRejected, true)` | 用户显性拒绝（"User rejected the plan" / "User did not answer" / 等） |
+| `false` | 以 `"User approved the plan"` / `"User approved"` 开头；或含 `"plan approved"` | `(DecisionApproved, true)` | — |
+| `false` | 其他文本（未来 CLI 新格式） | `(DecisionApproved, true)` + log.Warn | 保守默认：无错误信号视作通过，调用方应记录未识别 content 供未来跟进 |
+| — | AskUserQuestion 的 tool_result 是 Claude-native 文本摘要（如 `"question"="answer"`，可带 annotations） | Phase 1 不解析；Phase 3 生成时遵循该格式 | 历史文档里写成 JSON payload 是误记，和原版 Claude 源码不符 |
+
+**关键不变式**：`tool_use_error` 情形 *仍然*走 `StreamToolCallResult` 广播（普通 tool_call 卡片会显示错误），只是**不**二次发一遍 HITL 事件。Phase 1 只需覆盖前四行；AskUserQuestion 的 observability 侧逆向解析仍延后，但 Phase 3 回注必须按上面的原生摘要格式生成。
+
+#### 5.1.6 Descriptor 快照（before / after）
+
+`claude/driver.go::Descriptor()` 里 `RunPolicyCaps` 字段：
+
+**Before**（v1，current）：
+
+```go
+RunPolicyCaps: agentadaptor.RunPolicyCapabilities{
+    Approvals: true, Isolation: true, WebSearch: true, Browser: true, Trust: false,
+},
+```
+
+**After**（v2，Phase 1）：
+
+```go
+RunPolicyCaps: agentadaptor.RunPolicyCapabilities{
+    Isolation: true,
+    WebSearch: true,
+    Browser:   true,
+    Permission: agentadaptor.HumanDecisionSupport{Ask: true, AutoApprove: true, AutoReject: true, Retry: false},
+    PlanReview: agentadaptor.HumanDecisionSupport{Ask: true, AutoApprove: true, AutoReject: true, Retry: false},
+    Question:   agentadaptor.QuestionSupport{Ask: true, AutoReject: true, Retry: false},
+},
+```
+
+Phase 1 的 `Ask` / `AutoReject` 只在观测意义下成立——CLI 仍本地合成 reject；`Retry:false` 源于 CLI 不支持原地重新发起同一 tool_use。Phase 3 双向通道打通后可改为 `true`。
+
+#### 5.1.7 Testdata fixture 覆盖
+
+放到 `claude/testdata/streaming-*.jsonl`（已有目录），最少需要：
+
+- `streaming-plan-approved.jsonl` —— `ExitPlanMode` tool_use + `is_error:false, content:"User approved..."` tool_result
+- `streaming-plan-rejected-abort.jsonl` —— 同上但 `is_error:true` + 验证 `RunFailure{Code: FailureReject}` 生成
+- `streaming-plan-rejected-continue.jsonl` —— 同上但 policy 配 `OnReject=FailureContinue` + 验证 run 继续
+- `streaming-ask-user-question.jsonl`（可选，标注 "未识别路径 / 未来 Phase 3"）—— Phase 1 暂不解析 answer，但确认 emit 了 StreamHITLRequested 事件
+- `streaming-enter-plan-mode-only.jsonl` —— 验证 `EnterPlanMode` 不触发 HITL 识别（白名单对照）
+
+每个 fixture 对应一个 `claude/streaming_parser_test.go` 里的单测，断言 emit 的 StreamPayload 序列匹配预期。
+
+#### 5.1.8 Phase 3（已实施，2026-04-22）
+
+> **状态**：Phase 3 已落地。详细实施记录与设计在
+> [`docs/workstream-hitl-claude-phase3.md`](./workstream-hitl-claude-phase3.md)。
+
+本节的"Phase 1 不做"清单已全部由 Phase 3 兑现（或显式放弃）：
+
+| 原"Phase 1 不做"项 | Phase 3 状态 |
+|---|---|
+| 真正的 `sink.RequestDecision` 阻塞 | ✅ 已实现。`HumanDecisionPolicy.PlanReview=Ask` 或 `Question=Ask` 时 adapter 切到 `--input-format stream-json` 双向模式，parser 在 tool_use 的 `content_block_stop` 上真正阻塞 |
+| `HumanDecisionAsk` 对 PlanReview / Question 的执行效力 | ✅ 已实现 |
+| `AskUserQuestion` 的 answer 解析 | ✅ 已实现（`renderInteractiveToolResult` 按 Kind 生成 tool_result） |
+| `HumanDecisionAsk` 对 Permission 的执行效力 | ❌ **Phase 3 不做**，留给 Phase 3.5——stream-json 模式下 CLI 把**所有**工具执行下放给宿主，Phase 3 没有 host-side tool executor；`validateInteractivePolicy` 在启动前拒绝 `Permission=Ask` |
+| `RunPolicyCaps.Retry=true` | ❌ **Phase 3 不做**——CLI 无法对同一 `tool_use_id` 重开决策窗口；要实现 FailureRetry 的语义需要"让模型重新生成 tool_use"，工程量另议 |
+
+Phase 3 的模式选择规则（raw policy 字段，不看 effective 默认）：
+
+- `p.PlanReview == Ask` 或 `p.Question == Ask` → **Phase 3 交互模式**（stream-json 双向）
+- 其他所有组合 → Phase 1 观测模式（`--print -` 一次性 prompt）
+
+这样零值 `HumanDecisionPolicy{}` 默认保留 Phase 1 行为，宿主必须**显式** opt-in 才会触发 stream-json 通路。
 
 ### 5.2 Codex（只设计，不实施）
 
@@ -1341,6 +1942,56 @@ var claudeInteractiveTools = map[string]HumanDecisionKind{
 
 PlanReview 同样填 `HumanDecisionSupport{Ask:false, AutoApprove:true, AutoReject:false, Retry:false}`；Question 填 `QuestionSupport{Ask:false, AutoReject:false, Retry:false}`（cursor 不产生 Question 事件）。若将来 cursor CLI 暴露流式 approval，再参考 codex 路径接入。
 
+### 5.4 Question 治理指南（无 UI / 脚本化场景）
+
+"无 UI、希望 agent 自主决策不要问人"是高频诉求。但由于三家 adapter 的 Question 机制不同（见 §3.8 能力矩阵），抑制手段也不同——宿主必须按 adapter 选 recipe。
+
+#### 5.4.1 Claude（有 Type A，SDK 有抓手）
+
+三条路径，按**可靠度递增**：
+
+| 手段 | 原理 | 可靠度 | 备注 |
+|---|---|---|---|
+| **Prompt 工程** | system prompt 里显式劝退："Never call AskUserQuestion. Make reasonable assumptions and proceed." | 中——模型多数情况会遵守，但仍可能违反 | 任何场景都应该加这段；是底线 |
+| **`Question: QuestionAutoReject`** | agent 调用 `AskUserQuestion` 时 SDK 合成 rejected tool_result → agent 拿到"被拒"走自家 fallback | 较高——拦截是协议层行为，不依赖模型遵守 | 推荐兜底。`QuestionAutoReject` 同时是 §3.7 的默认值，零值即生效 |
+| **CLI 工具黑名单** | 通过 Claude CLI 的工具准入 flag（如 `--disallowedTools AskUserQuestion` 或等价机制，实施时按当前 CLI 版本核验）剥夺工具调用能力；agent 在协议层即无法 invoke | 最高——连 tool_use 帧都不会出现 | Phase 1 是否暴露这个 knob 到 `RunPolicy` 待定；宿主当前可通过 `ClaudeConfig.ExtraArgs` 自行传；见 §9 未决 9.5 |
+
+**最佳实践**：prompt 劝退 + `QuestionAutoReject` 兜底。对高确定性要求的场景（CI / 生产无人值守）再叠加 CLI 工具黑名单。
+
+#### 5.4.2 Codex / Cursor（只有 Type B，SDK 无抓手）
+
+**只能走 prompt 工程**。SDK 层完全无法拦截——两家的"问用户"就是 assistant text 里的问号句，和正常汇报同一协议形状。
+
+推荐 prompt 片段：
+
+```text
+Work autonomously. Do not ask the user clarifying questions.
+When context is incomplete, state your assumption explicitly,
+then proceed. If the assumption proves wrong, continue with
+the best-effort alternative rather than stopping.
+```
+
+**重要提醒**：
+
+- `RunPolicy.HumanDecision.Question` 在 codex / cursor 上设置任何值都是 **no-op**（`QuestionSupport` 全 false，SDK 启动前 warn 并视作 `QuestionUnset`）——不要写了以为生效
+- 如果 agent 还是问了，run 会"正常结束"（无 `Failure`），但任务实际没完成——与 `workstream-hitl.md` 里的"磁盘零变更但 UI 显示已完成"同类症状换了 trigger；宿主的任务判定逻辑应该结合 `RunResult.Summary` / 实际产物（文件变更 / commit）去辨别，而不是只看 `Failure == nil`
+
+#### 5.4.3 跨 adapter 可移植的"安全默认"
+
+宿主不想为每家 adapter 写 recipe，想有一条适配三家的默认配置：
+
+```go
+agentadaptor.RunPolicy{
+    HumanDecision: agentadaptor.HumanDecisionPolicy{
+        Permission: agentadaptor.HumanDecisionAutoApprove,  // 三家 adapter 都翻译成 bypass / auto flag
+        PlanReview: agentadaptor.HumanDecisionAutoApprove,  // claude 自动批 plan；codex/cursor 无 plan mode，字段无效
+        Question:   agentadaptor.QuestionAutoReject,         // claude 拦 AskUserQuestion；codex/cursor no-op
+    },
+}
+```
+
+这条 policy 等价于 `PolicyAutonomous` 预设（见 §3.9）——**再配上** system prompt 里的"Don't ask clarifying questions"——就是跨 adapter 无 UI 场景的推荐基线。
+
 ## 6. Bridge 层改造
 
 ### 6.1 AG-UI bridge
@@ -1349,17 +2000,148 @@ PlanReview 同样填 `HumanDecisionSupport{Ask:false, AutoApprove:true, AutoReje
 
 **现状**（`StreamHITLRequested → CustomEvent`，CopilotKit 默认忽略）：保留作为 legacy audit，但**不是**默认。
 
-**升级**（Phase 1 一并做）：
-- `StreamHITLRequested` 映射成 AG-UI `ToolCallStart` + `name = "dec." + kind + "." + source`（例如 `"dec.plan_review.claude.exit_plan_mode"`）
-- `ToolCallArgs` 承载 `DecisionRequest.Payload` + `Choices`
-- 宿主前端用 CopilotKit 的 `useCopilotAction({name: "dec.plan_review.claude.exit_plan_mode", handler: ...})` 直接接住；handler 返回值作为 `ResolveDecision` 的输入
-- bridge 侧暴露 `bridge.ResolveDecision(runID, requestID, resp)` 便捷函数，内部持有 `runID → handle` 映射
+**升级**（Phase 1 一并做）：把 `StreamHITLRequested` / `StreamHITLResolved` 翻译成 AG-UI 的 `ToolCallStart` / `ToolCallEnd`（+ 可选 `ToolCallArgs`）三元组，让 CopilotKit 前端用 `useCopilotAction` 的标准机制接住。
 
-**向后兼容**：新增 `agui.WithDecisionMode(agui.DecisionAsToolCall)`（新默认）/ `agui.DecisionAsCustom`（旧行为）。
+**`StreamHITLRequested → ToolCallStart + ToolCallArgs`**：
+
+| AG-UI 字段 | 值 | 来源 |
+|---|---|---|
+| `ToolCallStart.ToolCallID` | `"dec-" + RequestID` | `HITLRequestedPayload.RequestID` 加前缀避免和 agent 自己的 tool_call_id 撞 |
+| `ToolCallStart.ToolCallName` | `"dec." + Kind + "." + Source` | 例：`"dec.plan_review.claude.exit_plan_mode"` |
+| `ToolCallStart.ParentMessageID` | 同当前 assistant message id（如 bridge 已跟踪） | 可选 |
+| `ToolCallArgs.ToolCallID` | 同上 | |
+| `ToolCallArgs.Delta` | 单次增量推送完整 JSON（见下 schema） | `HITLRequestedPayload` → JSON |
+
+`ToolCallArgs.Delta` 的 **JSON schema**（一次发完，不切片；后续 retry 走新的 ToolCallID）：
+
+```json
+{
+  "kind": "plan_review",
+  "source": "claude.exit_plan_mode",
+  "prompt": "<人类可读摘要>",
+  "payload": { "plan": "...", "command": "...", "schema": {...} },
+  "choices": [
+    {"key": "approve", "label": "Approve", "description": "Let the plan proceed"},
+    {"key": "revise",  "label": "Ask to revise", "description": "Reject with hint"}
+  ],
+  "tool_call_id": "<原始 ToolCallID（若有）>",
+  "deadline":      "2026-04-22T12:34:56Z",
+  "retry_attempt": 0
+}
+```
+
+**`StreamHITLResolved → ToolCallEnd + ToolCallResult`**：
+
+| AG-UI 字段 | 值 | 来源 |
+|---|---|---|
+| `ToolCallEnd.ToolCallID` | 同 Requested 侧的 `"dec-" + RequestID` | |
+| `ToolCallResult.ToolCallID` | 同上 | |
+| `ToolCallResult.MessageID` | bridge 生成 | |
+| `ToolCallResult.Role` | `"tool"` | |
+| `ToolCallResult.Content` | `HITLResolvedPayload` 的 JSON（见下） | |
+
+`ToolCallResult.Content` 的 **JSON schema**：
+
+```json
+{
+  "result":        "approved",        // DecisionResult 字符串值
+  "choice":        "approve",
+  "answer":        { "... structured answer ..." },
+  "retry_attempt": 0,
+  "latency_ms":    4217
+}
+```
+
+**前端 CopilotKit 接入范式**：
+
+```ts
+useCopilotAction({
+  name: "dec.plan_review.claude.exit_plan_mode",
+  parameters: [/* 来自 ToolCallArgs.Delta 的 schema */],
+  handler: async (args) => {
+    const decision = await showPlanApprovalDialog(args.prompt, args.payload.plan);
+    // decision = { result: "approved" | "rejected", text?, choice? }
+    return decision; // CopilotKit 会 POST 回来，bridge 转 ResolveDecision
+  },
+});
+```
+
+**bridge 侧回填入口**：
+
+```go
+// pkg/bridges/agui.ResolveDecision 便捷函数，由 bridge 持有 runID → handle 映射
+func (b *Bridge) ResolveDecision(runID, requestID string, resp DecisionResponse) error
+```
+
+bridge 内部调 `handle.ResolveDecision(requestID, resp)`；`requestID` 从 AG-UI 回传的 `"dec-..."` 前缀剥离得到。
+
+**Retry 的前端行为**：第二次询问走**新的 ToolCallID**（`"dec-<新 RequestID>"`），前端会看到"新的 tool call 请求"——CopilotKit 自然会再次弹审批 UI。`retry_attempt` 字段告知前端"这是第 N 次"，可调文案。
+
+**向后兼容**：新增 `agui.WithDecisionMode(agui.DecisionAsToolCall)`（新默认）/ `agui.DecisionAsCustom`（旧行为，保留原 `CustomEvent` 映射）。
 
 ### 6.2 SSE bridge（`pkg/bridges/sse`）
 
-SSE 是单向流，回填必须走一条额外的 HTTP 路由。bridge 推送时把 `DecisionRequest` 序列化为 SSE 事件 `event: decision.request`；宿主自己注册 `POST /decision/resolve` 并调 `handle.ResolveDecision`。不替宿主做路由。
+SSE 是单向流，回填必须走一条额外的 HTTP 路由。bridge 推送时把 `StreamHITLRequested` / `StreamHITLResolved` 序列化为 SSE 事件；宿主自己注册 `POST /decision/resolve` 并调 `handle.ResolveDecision`。bridge 不替宿主做路由。
+
+**SSE 事件集合**：
+
+| SSE `event:` | 触发源 | `data:` JSON schema |
+|---|---|---|
+| `decision.request` | `StreamHITLRequested` | `HITLRequestedPayload` 全字段（见 §3.12） |
+| `decision.resolved` | `StreamHITLResolved` | `HITLResolvedPayload` 全字段（见 §3.12） |
+
+每条 SSE message 写 `id: <StreamPayload.Seq>`，`EventSource` 断线重连时自动带 `Last-Event-ID`（见 §4.3.1 重连协议）。
+
+**示例**（`decision.request` 事件）：
+
+```
+event: decision.request
+id: 128
+data: {"request_id":"run-abc-dec-3","kind":"plan_review","source":"claude.exit_plan_mode","prompt":"Edit AGENTS.md to move section X","payload":{"plan":"..."},"choices":[...],"created_at":"2026-04-22T12:00:00Z","deadline":"2026-04-22T12:10:00Z","retry_attempt":0}
+```
+
+**宿主 HTTP 回填路由**（bridge 不内置，由宿主注册）：
+
+```go
+// POST /decision/resolve
+// body: { "request_id": "...", "result": "...", "choice": "...", "answer": {...}, "text": "..." }
+http.HandleFunc("/decision/resolve", func(w http.ResponseWriter, r *http.Request) {
+    var body DecisionResolveRequest // bridge 提供的 DTO
+    _ = json.NewDecoder(r.Body).Decode(&body)
+    if err := bridge.ResolveDecision(body.RunID, body.RequestID, body.ToDecisionResponse()); err != nil {
+        // errors.Is(err, ErrDecisionRequestExpired)  → 410 Gone
+        // errors.Is(err, ErrDecisionResultKindMismatch) → 400 Bad Request
+        // errors.Is(err, ErrRunEnded)               → 409 Conflict
+        ...
+    }
+    w.WriteHeader(http.StatusNoContent)
+})
+```
+
+bridge 暴露 helper type `DecisionResolveRequest` + `ToDecisionResponse()`，宿主不用手搓字段映射。
+
+**`DecisionResolveRequest` schema**：
+
+```go
+type DecisionResolveRequest struct {
+    RunID     string         `json:"run_id"`
+    RequestID string         `json:"request_id"`
+    Result    string         `json:"result"`          // "approved"/"rejected"/"answered"
+    Choice    string         `json:"choice,omitempty"`
+    Answer    map[string]any `json:"answer,omitempty"`
+    Text      string         `json:"text,omitempty"`
+}
+
+func (r DecisionResolveRequest) ToDecisionResponse() DecisionResponse {
+    return DecisionResponse{
+        RequestID: r.RequestID,
+        Result:    DecisionResult(r.Result),
+        Choice:    r.Choice,
+        Answer:    r.Answer,
+        Text:      r.Text,
+    }
+}
+```
 
 ### 6.3 没升级到 v2 的 bridge
 
@@ -1409,6 +2191,7 @@ agentadaptor.RunPolicyCapabilities.Trust           // 字段
   - `FailureAction` + `FailureActionUnset` / `FailureAbort` / `FailureContinue` / `FailureRetry`
   - `FailureCode` + `FailureReject` / `FailureTimeout` / `FailureAgentError` / `FailureCancelled` / `FailurePolicyError`
   - `RunFailure.HumanDecision *HumanDecisionFailure` 字段（在 `run_types.go` 既有 `RunFailure` 上扩展）
+  - `RunFailure` 上的便利辨别方法：`IsHumanDecision()` / `IsRejected()` / `IsTimedOut()`（nil-safe，减少 boilerplate，见 §3.2）
 - **RunHandle 方法**：`DecisionRequests()` / `ResolveDecision()`（仅 channel 模式使用）
 - **EventSink 方法**：`RequestDecision()`
 - **Options（per-Kind）**：
@@ -1435,7 +2218,8 @@ agentadaptor.RunPolicyCapabilities.Trust           // 字段
 
 **代码**：
 - `run_policy.go` — 全面重写
-- `api.go` — `RunHandle` / `RunPolicyCapabilities`
+- `api.go` — `RunHandle` / `RunPolicyCapabilities`；`RunHandle.Wait` godoc 补写 `err` vs `RunResult.Failure` 的两层错误模型说明
+- `run_types.go` — `RunFailure` 加字段 `HumanDecision *HumanDecisionFailure`；加三个 nil-safe 便利方法 `IsHumanDecision()` / `IsRejected()` / `IsTimedOut()`；`FailureCode` 从 `string` 改为 `type FailureCode string`（公共枚举）
 - `options.go` — 增六个 per-Kind option（`WithPermissionHandler` / `WithPlanReviewHandler` / `WithQuestionHandler` + 三个 `WithDefault*`）；`runOptions.permissionHandler` / `planReviewHandler` / `questionHandler`；`AgentDefaults` 三个对应字段
 - `runner.go` — `dualSink` 实现 `DecisionCapableSink`，`RequestDecision` 按 `req.Kind` 分派到 typed handler 或 `asyncRunHandle.decisionRequests` channel；handler 返回 typed response 由 runner 转成统一 `DecisionResponse` 回给 adapter；`EmitStream` 入口处单点分配 `StreamPayload.Seq`（run 内部单调计数器）
 - `claude/driver.go` — `buildClaudeExecArgs` 读 `HumanDecision.Permission`；`Descriptor.RunPolicyCaps` 换新形状
@@ -1466,12 +2250,17 @@ agentadaptor.RunPolicyCapabilities.Trust           // 字段
 
 ## 8. 实施路线
 
-| Phase | 内容 | 工作量（估） | 触发条件 |
-|---|---|---|---|
-| **Phase 1**（本期） | SDK 合同全改（`HumanDecision*` + `Decision*` + `Failure*` 类型 + sink + handle + policy + handler）；claude Phase 1 识别 + 显性失败；agui bridge 升级；迁移 examples / tests | ~1100 行 + 全面文档 | 本 workstream |
-| Phase 2 | codex `requestApproval` 双向回填 | ~150 行 | codex 下一轮迭代 |
-| Phase 3 | claude 双向回填（stdin stream-json 或 MCP permission prompt） | 取决于 CLI 方案 | CLI 方案验证后 |
-| Phase 4 | cursor 视 CLI 演进决定 | — | cursor CLI 支持流式 approval 后 |
+Phase 2-4 之间**无硬依赖**，SDK 合同（Phase 1）对三家 adapter 已经全部就绪，编号只表示**估算成本排序**，不是"必须按序实施"。
+
+| Phase | 内容 | 工作量（估） | 触发条件 | 依赖 |
+|---|---|---|---|---|
+| **Phase 1**（已完成） | SDK 合同全改（`HumanDecision*` + `Decision*` + `Failure*` 类型 + sink + handle + policy + handler）；claude Phase 1 观测层识别 + 显性失败；agui bridge 升级；迁移 examples / tests | ~1100 行 + 全面文档 | 本 workstream | — |
+| Phase 2 | codex `requestApproval` 双向回填 | ~150 行 | codex 下一轮迭代 | 仅依赖 Phase 1 |
+| Phase 3 | claude 双向回填（stdin `stream-json` 双向；CLI 方案已实证，见 [`workstream-hitl-claude-phase3.md`](./workstream-hitl-claude-phase3.md)） | ~635 行 | 立项即可 | 仅依赖 Phase 1 |
+| Phase 3.5 | claude Permission 类拦截（Bash/Write/Edit/...），需宿主 tool executor | 待估 | Phase 3 后 | Phase 3 |
+| Phase 4 | cursor 视 CLI 演进决定 | — | cursor CLI 支持流式 approval 后 | 仅依赖 Phase 1 |
+
+**跳过 / 乱序实施是支持的**。例如"Phase 3 先于 Phase 2"在 claude 为主力 driver 的宿主（如内置 `AskUserQuestion` / `ExitPlanMode` 审批 UX 的产品）是合理的优先级选择，用户感知度 > 工作量节省。
 
 Phase 1 比上一稿增加约 500 行，主要来自：
 - 删除 `ApprovalLevel` / `TrustLevel` 全链路（负 ~100 行）
@@ -1506,12 +2295,129 @@ Phase 1 比上一稿增加约 500 行，主要来自：
 
 **触发条件**：宿主有明确需求（单 pod 部署 + 不愿自己搭持久化 + 愿意接受 vendor 格式 coupling）时立项。在此之前，§4.3.1 的"宿主自持久化"规范是唯一受支持的历史恢复路径。
 
+### 8.4 Phase 1 Definition of Done（验收清单）
+
+Phase 1 认定"完成"必须满足以下全部 test 通过。按模块组织——review 时逐条勾选；**任何一项缺失不算完成**。
+
+#### 8.4.1 类型与枚举（`run_policy_test.go` / 新 `decision_types_test.go`）
+
+- [ ] `HumanDecisionUnset == ""` / `QuestionUnset == ""` / `FailureActionUnset == ""` 零值语义正确
+- [ ] `HumanDecisionMode` / `QuestionMode` / `FailureAction` / `FailureCode` 常量值稳定（字符串字面量快照测试，防未来误改）
+- [ ] `DecisionResult` 全部 5 个常量存在 + 字符串值稳定
+- [ ] `ApprovalResult` 仅含 `Approved` / `Rejected`；`QuestionResult` 仅含 `Answered` / `Rejected`（编译期已堵，加一个快照测试文档化）
+- [ ] 编译测试：`Question: HumanDecisionAutoApprove` 在 `HumanDecisionPolicy` literal 里**编译不过**（go vet 或 `go build` 验证）
+
+#### 8.4.2 `HumanDecisionPolicy` 合并 / 默认值（`run_policy_test.go`）
+
+- [ ] 全零值 `HumanDecisionPolicy{}` 合并后默认为：Permission/PlanReview `Ask`，Question `QuestionAutoReject`，Timeout 30s，OnTimeout/OnReject `FailureAbort`，MaxRetries 3
+- [ ] Adapter 不支持 `Ask` 的字段配了 `Ask` → `Start` 返回 `ErrHumanDecisionModeUnsupported`（per-Kind 三类各一个 case）
+- [ ] Adapter `Retry:false` 字段配了 `OnReject=FailureRetry` / `OnTimeout=FailureRetry` → warn + 自动降级为 `FailureAbort`（not fatal）
+- [ ] `MaxRetries < 0` → policy 合并报错
+
+#### 8.4.3 per-Kind handler 分派（`runner_decision_test.go` 新建）
+
+- [ ] 挂 `WithPermissionHandler` → Permission 类请求走 handler，PlanReview / Question 走 policy 默认或 channel（3 组合 × 每个 Kind）
+- [ ] 挂 `WithPlanReviewHandler` + `WithQuestionHandler`，不挂 Permission → Permission 走 channel，其余走 handler
+- [ ] `WithDefault*Handler`（agent-level）被 `With*Handler`（run-level）覆盖
+- [ ] Handler 返回 `ApprovalApproved` → `DecisionResponse.Result == DecisionApproved`（映射表 §3.11.3 全部 6 条）
+- [ ] Handler 返回 `error` → 合成 `DecisionAborted` → `Failure.Code == FailureCancelled`
+- [ ] Handler `panic` → recover + 合成 `FailureAgentError`（panic message 进 `Failure.Message`）
+- [ ] Handler 返回 `(nil, nil)` → `FailureAgentError{Message: "handler returned nil response without error"}`
+- [ ] 处理中 `ctx.Cancel()` → 合成 `DecisionAborted` → `FailureCancelled`
+
+#### 8.4.4 channel 分派（`runner_decision_test.go`）
+
+- [ ] 不挂 handler + 未消费 `DecisionRequests()` + `Timeout=50ms` → 50ms 后合成 `DecisionTimedOut` → 走 `OnTimeout`
+- [ ] 消费 channel + `ResolveDecision` 正常回填 → handler 路径等价结果
+- [ ] `ResolveDecision` 不存在的 RequestID → `ErrDecisionRequestExpired`
+- [ ] `ResolveDecision` 同一 RequestID 调两次 → 第二次 `ErrDecisionRequestExpired`
+- [ ] `ResolveDecision` 的 `resp.Result` 与 Kind 不兼容（Question 收到 `DecisionApproved`）→ `ErrDecisionResultKindMismatch`，runner 不消费该 resolve，仍等待合法 resolve 或超时
+
+#### 8.4.5 `OnReject` / `OnTimeout` / `FailureAction` 行为
+
+- [ ] `OnReject=FailureAbort` + handler 返回 `ApprovalRejected` → `Failure{Code: FailureReject, HumanDecision: {Attempts:1}}`
+- [ ] `OnReject=FailureContinue` + handler 返回 `ApprovalRejected` → run 继续，`Failure == nil`（adapter 层收到 tool_result=rejected）
+- [ ] `OnReject=FailureRetry, MaxRetries=2` + handler 三次都 Reject → 第三次后合成 Abort，`Failure.HumanDecision.Attempts == 3`
+- [ ] `OnReject=FailureRetry` 在 adapter `Retry:false` 上 → warn + 降级 Abort，`Attempts == 1`
+- [ ] `OnTimeout=FailureAbort` + 无 handler + 超时 → `Failure{Code: FailureTimeout}`
+- [ ] `OnTimeout=FailureContinue` + 超时 → run 继续
+- [ ] Handler 返回 `ApprovalApproved` → `OnReject` 不触发（分支路径测试）
+
+#### 8.4.6 `StreamPayload.Seq` 单调性（`runner_stream_test.go` 新建或 append）
+
+- [ ] 单 run 内 N 条 emit：Seq 严格单调递增（0, 1, 2, ..., N-1），无跳号无重复
+- [ ] `FailureRetry` 跨 attempt：Seq 持续递增，不重置
+- [ ] 并发 emit（模拟 adapter 多 goroutine）：加锁后 Seq 仍严格单调
+- [ ] 不同 run 的 Seq 互不干扰（各自从 0 开始）
+- [ ] Adapter 传入带 Seq 的 StreamPayload：runner 覆盖之（快照断言）
+
+#### 8.4.7 `StreamHITLRequested` / `StreamHITLResolved` 配对（`claude/streaming_parser_test.go`）
+
+- [ ] Claude `ExitPlanMode` approved fixture → emit `Requested{RetryAttempt:0, Kind:PlanReview}` + `Resolved{RetryAttempt:0, Result:DecisionApproved}`
+- [ ] Claude `ExitPlanMode` rejected fixture → 同上但 `Resolved.Result == DecisionRejected`
+- [ ] `Resolved.Latency` 字段 ≥ 0 且 ≤ 合理上限（fixture 跑完时间）
+- [ ] Retry 场景（通过 mock sink 触发）：emit 2 次 Requested+Resolved 对，`RetryAttempt` 分别为 0/1
+- [ ] `Requested.Payload["plan"]` 内容匹配 fixture 里的 plan 文本
+
+#### 8.4.8 `RunResult.Failure` 结构化字段（`runner_failure_test.go`）
+
+- [ ] `Failure.Code == FailureReject` 时 `Failure.HumanDecision != nil`，各字段（Kind / Source / Decision / Request / Attempts）非空
+- [ ] `Failure.Code == FailureTimeout` 时 `Failure.HumanDecision != nil`，`Decision == DecisionTimedOut`
+- [ ] `Failure.Code == FailureAgentError` 时 `Failure.HumanDecision == nil`
+- [ ] `(*RunFailure)(nil).IsHumanDecision() == false`（nil-safe）
+- [ ] `(*RunFailure)(nil).IsRejected() == false` / `IsTimedOut() == false`
+- [ ] `Failure{Code: FailureReject}.IsRejected() == true` + `.IsTimedOut() == false`
+
+#### 8.4.9 AG-UI bridge 映射（`pkg/bridges/agui/bridge_test.go`）
+
+- [ ] `StreamHITLRequested` → `ToolCallStart{Name:"dec.plan_review.claude.exit_plan_mode"}` + `ToolCallArgs{Delta: <JSON>}`（快照匹配 §6.1 JSON schema）
+- [ ] `ToolCallArgs.Delta` 可 `JSON.Unmarshal` 到 §6.1 定义的 schema（deserialization 验证）
+- [ ] `StreamHITLResolved` → `ToolCallEnd` + `ToolCallResult{Content: <JSON>}`
+- [ ] Retry 场景（两次 Requested + 两次 Resolved）→ 前端看到两个不同 `ToolCallID`（`"dec-<RequestID1>"` 和 `"dec-<RequestID2>"`）
+- [ ] `bridge.ResolveDecision(runID, requestID, resp)` 剥离 `"dec-"` 前缀后正确调 `handle.ResolveDecision`
+- [ ] `DecisionAsCustom` 模式保留旧行为（CustomEvent，legacy）
+
+#### 8.4.10 SSE bridge 映射（`pkg/bridges/sse/handler_test.go` 新建）
+
+- [ ] `StreamHITLRequested` → SSE `event: decision.request` + `data: <JSON>` + `id: <Seq>`
+- [ ] `data` 字段可反序列化到 `HITLRequestedPayload`
+- [ ] `StreamHITLResolved` → `event: decision.resolved`
+- [ ] `DecisionResolveRequest.ToDecisionResponse()` 正确映射
+- [ ] bridge.ResolveDecision 错误翻译：`ErrDecisionRequestExpired` → `410 Gone` 常量暴露
+
+#### 8.4.11 示例迁移（编译 + 启动冒烟）
+
+- [ ] `examples/mock-adapter-playground` 覆盖三种模式（A/B/C）+ per-Kind handler 的 happy path，`go run` 跑通
+- [ ] `examples/streaming-chat-copilotkit` 更新 `useCopilotAction("dec.*")`，`start.sh` 启动后浏览器能看到决策 UI
+- [ ] `examples/streaming-sse-server` README 更新 + `/decision/resolve` / `/decision/pending` 路由示例，`start.sh` 启动冒烟
+- [ ] `examples/internal/exampleutil/agui_sdk.go` 改用 `PolicyHostReview`
+
+#### 8.4.12 已有 adapter 回归（无代码改动也要跑）
+
+- [ ] `codex/driver.go` / `run_streaming.go` 的 `mapApprovalPolicy` 改读 `HumanDecision.Permission` 后，现有 codex live tests（`codex/appserver/run_live_test.go`）全部通过
+- [ ] `cursor/driver.go` 的 `--yolo` 改读 `HumanDecision.Permission == HumanDecisionAutoApprove` 后，cursor smoke test 通过
+- [ ] `Descriptor.RunPolicyCaps` 新形状的 golden file 快照测试（三家 adapter 各一个）
+
+#### 8.4.13 文档产物
+
+- [ ] `docs/run-policy.md` 重写对齐新 API
+- [ ] `docs/streaming-adapter-contract.md` §2.5 替换为 v2 合同
+- [ ] `docs/streaming.md` / `docs/usage-guide.md` 补三种模式示例链接
+- [ ] `AGENTS.md` 添加一行 HITL v2 原则（可在 Phase 1 合并后追加）
+
+---
+
+**验收方式**：reviewer 按 8.4.1 - 8.4.13 逐组检查对应 test 文件存在且全绿；任何一组无 test 或 test 未覆盖 bullet → Phase 1 不通过。
+
 ## 9. 未决问题（review 期间定）
 
 1. `HumanDecisionPolicy.Timeout = 0` 的含义。**倾向**：= 30s 默认；想"禁用超时"用 `-1`。
 2. `RunHandle.DecisionRequests()` 在 `HumanDecision` 全部字段都不是 `Ask`（`HumanDecisionAsk` / `QuestionAsk`）时是否返回 nil / 立即关闭的 channel？**倾向**：立即关闭的 channel，`for range` 零迭代，调用方无需分支判断。
 3. `ResolveDecision` 是否允许对同一 ID 调用多次？**倾向**：不允许，第二次返回错误。状态中间态由宿主自管。
 4. `FailureReject` 是否按 `Kind` 再分（`FailurePermissionReject` / `FailurePlanReject` / `FailureQuestionReject`）？**倾向**：不分——`Failure.HumanDecision.Kind` 已能区分，拆出 N 个常量只增加宿主 switch 分支数，对观测不加信息。
+5. 是否把 Claude 的 **CLI 工具黑名单** 作为一等 knob 暴露到 `RunPolicy`（例如 `RunPolicy.DisallowTools []string`）？**倾向**：Phase 1 不暴露——宿主可通过 `ClaudeConfig.ExtraArgs` 自行传当前 CLI 支持的 flag（实施期按 CLI 版本核验确切 flag 名）。若后续多家 adapter 都有工具准入语义再抽公共 knob。属于 §5.4.1 "Question 治理"的第三条路径，与 HITL 合同正交。
+6. Codex / Cursor 的 **Type B（对话式 ASK）** 治理完全靠 prompt 工程；SDK 层**不在本期范围**——能识别"模型在问话而非收尾"需要判别模型意图，超出 adapter 协议层能力。未来若 vendor 协议扩充"end_of_turn reason"之类元信息再议。
+7. 是否把 `ctx.Canceled` / `ctx.DeadlineExceeded` 也合成为 `RunResult.Failure` 里的 `FailureCode`（把所有失败统一到 `Failure` 一个通道）？**倾向**：**不合并**——ctx 取消/超时是**宿主对 run 的外部干预**（agent 压根没跑完），和"agent 跑完后业务失败"语义不同。强行合并会让 `Wait()` 的 `err` 字段永远是 nil，反而丢失"run 是否完整跑完"这个信号；示例的三段式（err → Failure → success）明确表达两层意图，见 §3.5 / §4.0.5。
 
 ## 10. 与 `workstream-hitl.md` 的问答映射
 
@@ -1543,6 +2449,9 @@ Phase 1 比上一稿增加约 500 行，主要来自：
 - [ ] 接受 typed handler 分拆：`PermissionHandler` / `PlanReviewHandler` / `QuestionHandler` 三个 per-Kind 签名（取代旧的胖 `DecisionHandler`）；异步 `DecisionRequests()` channel 保留统一形状；`ErrDecisionHandlerAndChannelConflict` 删除
 - [ ] 接受 `StreamPayload.Seq` 作为基础设施字段（§3.4.2），以及 §4.3.1 规定的"宿主自持久化 → history → pending → subscribe"三步重连协议
 - [ ] 认可 vendor session replay 独立立项（§8.3），不在本期实施——本期只铺 `Seq` 基础设施
+- [ ] 接受"Question 是 claude 专有 Type A"的事实：`QuestionMode` / `QuestionSupport` 仅对支持 tool-call 式 ASK 的 adapter 生效，codex / cursor 上是 no-op；对它们的 Type B 对话式问答只能靠 prompt 工程（§5.4）
+- [ ] 接受 `Wait()` 的**两层错误模型**：`err` = 基础设施错误（agent 没跑完），`RunResult.Failure` = 业务失败（agent 跑完但结果是失败）；两者分离不合并，宿主按"err → Failure → success"三段式处理（§3.5 / §4.0.5）
+- [ ] 接受 `RunFailure` 上的三个 nil-safe 便利方法 `IsHumanDecision()` / `IsRejected()` / `IsTimedOut()` 作为粗粒度辨别的语法糖（细粒度仍走 `switch f.Code`）
 - [ ] 接受 `OnTimeout` / `OnReject` 拆成**两个独立** `FailureAction` 旋钮（不合并为 `OnDenial`）
 - [ ] 接受 `OnTimeout` 的值类型是 `FailureAction` 而非 `HumanDecisionMode`——从源头堵死"超时自动放行"反模式
 - [ ] 接受预设重命名（`RunPolicyInteractive → PolicyHostReview` 等）

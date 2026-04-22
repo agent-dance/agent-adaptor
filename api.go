@@ -28,8 +28,36 @@ type RunHandle interface {
 	// RunID returns the stable run identifier assigned by the SDK. It is
 	// available as soon as Start() returns, before Wait() completes.
 	RunID() string
+
+	// Wait blocks until the run terminates or ctx is cancelled.
+	//
+	// The error model is two-layered (see docs/workstream-hitl-v2.md §3.5):
+	//
+	//   - The returned error is an infrastructure-layer error — the agent
+	//     did not finish (ctx cancel, adapter crash, protocol break, SDK
+	//     panic recovery). RunResult fields may be incomplete.
+	//   - RunResult.Failure is the business-layer failure — the agent ran
+	//     to completion but the result is a failure (HITL reject / timeout,
+	//     adapter-declared error, policy validation). RunResult fields are
+	//     complete.
+	//
+	// Hosts should check err first, then Failure, then success.
 	Wait(ctx context.Context) (RunResult, error)
 	Cancel(ctx context.Context) error
+
+	// DecisionRequests returns the channel of HITL DecisionRequest envelopes
+	// destined for host-side resolution. It only carries requests whose Kind
+	// does not have a typed handler mounted (see WithPermissionHandler /
+	// WithPlanReviewHandler / WithQuestionHandler). Consumers can `for range`
+	// it safely; the channel is closed when the run ends.
+	DecisionRequests() <-chan DecisionRequest
+
+	// ResolveDecision resolves a DecisionRequest delivered through
+	// DecisionRequests(). Returns ErrDecisionRequestExpired if the request is
+	// unknown or already consumed; ErrDecisionResultKindMismatch if Result is
+	// incompatible with the request Kind; ErrRunEnded when the run has
+	// already terminated.
+	ResolveDecision(requestID string, resp DecisionResponse) error
 }
 
 type AdminAPI interface {
@@ -166,6 +194,13 @@ type AgentDefaults struct {
 	// pointer keeps the three states (nil / true / false) distinct so that
 	// clones do not accidentally downgrade an opt-out to a default.
 	Streaming *bool
+
+	// per-Kind typed HITL handlers bound at agent level. Per-call
+	// WithPermissionHandler / WithPlanReviewHandler / WithQuestionHandler
+	// override these.
+	PermissionHandler PermissionHandler
+	PlanReviewHandler PlanReviewHandler
+	QuestionHandler   QuestionHandler
 }
 
 type AgentInfo struct {

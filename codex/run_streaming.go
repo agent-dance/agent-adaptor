@@ -109,14 +109,14 @@ func mapApprovalPolicy(p agentadaptor.RunPolicy) string {
 	if p.Isolation == agentadaptor.IsolationUnrestricted {
 		return "never"
 	}
-	switch p.Approvals {
-	case agentadaptor.ApprovalOff:
+	switch p.HumanDecision.Permission {
+	case agentadaptor.HumanDecisionAutoApprove:
 		return "never"
-	case agentadaptor.ApprovalAsk:
+	case agentadaptor.HumanDecisionAsk:
 		return "on-request"
-	case agentadaptor.ApprovalAuto:
+	case agentadaptor.HumanDecisionAutoReject:
 		return "on-request"
-	case agentadaptor.ApprovalInherit:
+	case agentadaptor.HumanDecisionUnset:
 		return ""
 	default:
 		return ""

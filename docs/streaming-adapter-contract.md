@@ -95,19 +95,44 @@ bridges 会把 `Kind == ""` 的 payload 映射成 AG-UI `CUSTOM` 事件。
 - 结构化事件**只**走 `sink.EmitStream`，不得也塞到 `sink.Emit(RunEvent)`
 - `Emit` 继续承担生命周期元事件（spawn、runtime、stderr chunk）
 
-### 2.5 HITL（v1 暂不实现）
+### 2.5 HITL v2 契约
 
-- 如果底层协议有 server-initiated request（如 codex 的 `item/commandExecution/requestApproval`），adapter 在 v1 内**自动 deny** 并发射：
+HITL v2（[`docs/workstream-hitl-v2.md`](./workstream-hitl-v2.md)）要求 adapter 用**两条腿**同时发事件：
+
+1. **知情权（广播）**：`sink.EmitStream(StreamHITLRequested)` + `sink.EmitStream(StreamHITLResolved)`，填充 `HITLRequested` / `HITLResolved` 结构化 payload；失败时也必发，供审计/通知/metrics 消费。
+2. **决策权（可选、阻塞）**：若 `sink` 实现 `DecisionCapableSink`，adapter 调用 `sink.RequestDecision(ctx, DecisionRequest{...})` 并按返回的 `DecisionResponse.Result` 推进协议。SDK 内部负责：
+   - 分配 `RequestID` / `CreatedAt` / `Deadline` / `RetryAttempt`
+   - 把请求按 `Kind` 路由到 typed handler（模式 B）或 `handle.DecisionRequests()` 通道（模式 C）
+   - 按 `HumanDecisionPolicy.OnReject` / `OnTimeout` 施加 `FailureAbort` / `FailureContinue` / `FailureRetry`
+   - 失败时通过 `pendingFailure` 归档结构化 `RunFailure{Code, HumanDecision}`，runner 在结果上暴露
+
+**adapter 范式**（伪代码）：
 
 ```go
-sink.EmitStream(agentadaptor.StreamPayload{
-	Kind: agentadaptor.StreamHITLRequested,
-	Name: approvalKind,
-	Raw:  requestPayloadMap,
-})
+if ic, ok := sink.(agentadaptor.DecisionCapableSink); ok {
+    resp, err := ic.RequestDecision(ctx, agentadaptor.DecisionRequest{
+        Kind:   agentadaptor.HumanDecisionPermission,
+        Source: "myadapter.bash_exec",
+        Prompt: "Run: " + cmd,
+        Payload: map[string]any{"tool": "bash", "command": cmd},
+    })
+    if err != nil {
+        // 决策被 abort：adapter 应立刻停止 turn，runner 已经在 pendingFailure 里记好失败码
+        return driverResultFromAbort(err)
+    }
+    switch resp.Result {
+    case agentadaptor.DecisionApproved: /* 继续 */
+    case agentadaptor.DecisionRejected: /* 按 Continue 路径把 reject 作为 tool_result 回给模型 */
+    }
+}
 ```
 
-- 不得阻塞等待宿主的响应（v2 另行设计 `HITLRequestHandler`）
+adapter 必须：
+
+- 把 `HITLRequested` / `HITLResolved` 视为审计通道，哪怕没有 `DecisionCapableSink` 也要发
+- 不要自己持久化 RequestID → 续读 callback 映射；SDK 负责所有分派
+- 合理填充 `DecisionRequest.Payload`：key 名要和宿主 UI 约定（如 `plan` / `command` / `schema`），详见 §3.11.3 映射表
+- 在 `Descriptor.RunPolicyCaps` 里如实填 `Permission` / `PlanReview` / `Question` 的 `HumanDecisionSupport` / `QuestionSupport`（不支持 `Ask` 的 adapter 让 SDK 在 Start 前报 `ErrHumanDecisionModeUnsupported`）
 
 ## 3. 背压与背后语义
 

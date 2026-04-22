@@ -1,0 +1,5 @@
+{"type":"system","subtype":"init","session_id":"sess-plan-approved","model":"claude-fixture"}
+{"type":"assistant","session_id":"sess-plan-approved","message":{"model":"claude-fixture","content":[{"type":"tool_use","id":"toolu_plan_1","name":"ExitPlanMode","input":{"plan":"1. Edit AGENTS.md\n2. Run tests"}}]}}
+{"type":"user","session_id":"sess-plan-approved","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_plan_1","content":"User approved the plan","is_error":false}]}}
+{"type":"assistant","session_id":"sess-plan-approved","message":{"model":"claude-fixture","content":[{"type":"text","text":"Done with the plan."}]}}
+{"type":"result","subtype":"success","session_id":"sess-plan-approved","result":"Done with the plan.","usage":{"input_tokens":12,"output_tokens":4}}

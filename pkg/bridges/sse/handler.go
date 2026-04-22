@@ -258,6 +258,9 @@ func streamEvents(ctx context.Context, writer *aguisse.SSEWriter, w io.Writer, h
 }
 
 // streamRaw forwards StreamPayload JSON directly without mapping to AG-UI.
+// HITL events are renamed to decision.request / decision.resolved and their
+// body is the corresponding structured payload (HITLRequestedPayload /
+// HITLResolvedPayload) — see docs/workstream-hitl-v2.md §6.2.
 func streamRaw(ctx context.Context, w io.Writer, handle agentadaptor.RunHandle) error {
 	flusher, _ := w.(http.Flusher)
 	done := make(chan agentadaptor.RunResult, 1)
@@ -274,11 +277,21 @@ func streamRaw(ctx context.Context, w io.Writer, handle agentadaptor.RunHandle) 
 				<-done
 				return nil
 			}
-			payload, err := json.Marshal(p)
-			if err != nil {
-				return fmt.Errorf("sse: marshal StreamPayload: %w", err)
+			name, body := rawFrameFor(p)
+			if body == nil {
+				continue
 			}
-			if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", escapeEventName(string(p.Kind)), payload); err != nil {
+			payload, err := json.Marshal(body)
+			if err != nil {
+				return fmt.Errorf("sse: marshal payload: %w", err)
+			}
+			// Prefer Seq (run-local zero-based) over legacy Sequence for
+			// SSE id so EventSource Last-Event-ID works with §4.3.1 protocol.
+			id := p.Seq
+			if id == 0 {
+				id = p.Sequence
+			}
+			if _, err := fmt.Fprintf(w, "event: %s\nid: %d\ndata: %s\n\n", escapeEventName(name), id, payload); err != nil {
 				return fmt.Errorf("sse: write: %w", err)
 			}
 			if flusher != nil {
@@ -286,6 +299,24 @@ func streamRaw(ctx context.Context, w io.Writer, handle agentadaptor.RunHandle) 
 			}
 		}
 	}
+}
+
+// rawFrameFor picks the event name + body for an SSE frame. Returns a nil
+// body to drop the payload (should not happen for known kinds).
+func rawFrameFor(p agentadaptor.StreamPayload) (string, any) {
+	switch p.Kind {
+	case agentadaptor.StreamHITLRequested:
+		if p.HITLRequested != nil {
+			return "decision.request", p.HITLRequested
+		}
+		return "decision.request", p
+	case agentadaptor.StreamHITLResolved:
+		if p.HITLResolved != nil {
+			return "decision.resolved", p.HITLResolved
+		}
+		return "decision.resolved", p
+	}
+	return string(p.Kind), p
 }
 
 func runKeepAlive(ctx context.Context, w io.Writer, flusher http.Flusher, interval time.Duration) {

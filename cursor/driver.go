@@ -44,7 +44,12 @@ func (adapter) Descriptor() agentadaptor.DriverDescriptor {
 		Skills:       agentadaptor.SkillCapability{Supported: true, Mode: agentadaptor.SkillSyncPersistent},
 		Instructions: agentadaptor.InstructionsCapability{Supported: true},
 		Workspace:    agentadaptor.WorkspaceCapability{Supported: true},
-		RunPolicyCaps: agentadaptor.RunPolicyCapabilities{Approvals: true, Isolation: false, WebSearch: true, Browser: false, Trust: true},
+		RunPolicyCaps: agentadaptor.RunPolicyCapabilities{
+			Isolation: false, WebSearch: true, Browser: false,
+			Permission: agentadaptor.HumanDecisionSupport{Ask: false, AutoApprove: true, AutoReject: false, Retry: false},
+			PlanReview: agentadaptor.HumanDecisionSupport{Ask: false, AutoApprove: true, AutoReject: false, Retry: false},
+			Question:   agentadaptor.QuestionSupport{Ask: false, AutoReject: false, Retry: false},
+		},
 		Runtime:      agentadaptor.RuntimeCapability{ReportsServices: true},
 	}
 }
@@ -230,7 +235,7 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 	if cfg.Mode != "" {
 		args = append(args, "--mode", string(cfg.Mode))
 	}
-	if req.Policy.Trust == agentadaptor.TrustAuto {
+	if req.Policy.HumanDecision.Permission == agentadaptor.HumanDecisionAutoApprove {
 		args = append(args, "--yolo")
 	}
 	args = append(args, cfg.ExtraArgs...)
@@ -266,7 +271,10 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 	}
 	var failure *agentadaptor.RunFailure
 	if strings.TrimSpace(parser.errorMessage) != "" {
-		failure = &agentadaptor.RunFailure{Message: parser.errorMessage}
+		failure = &agentadaptor.RunFailure{
+			Code:    agentadaptor.FailureAgentError,
+			Message: parser.errorMessage,
+		}
 	}
 
 	return agentadaptor.DriverRunResult{

@@ -313,3 +313,21 @@ sdk := agentadaptor.New(
 - streaming 不是第二条 Run 入口；所有执行仍然走同一份 `Runner.Run/Start` + `adapter.Run(ctx, req, sink)`
 
 完整实施规则、adapter 合同、宿主集成指南见：[`docs/workstream-streaming-chat.md`](./docs/workstream-streaming-chat.md) / [`docs/streaming-adapter-contract.md`](./docs/streaming-adapter-contract.md) / [`docs/streaming.md`](./docs/streaming.md)。
+
+## 11. HITL 是第三条可选通道（host-intent 单维度合同）
+
+`RunHandle` 在 `Events()` / `StreamEvents()` 之外提供了两个 HITL 相关方法：
+
+- `DecisionRequests() <-chan DecisionRequest`——异步模式下宿主消费决策请求
+- `ResolveDecision(requestID, resp)`——异步模式下宿主回填决策
+
+`RunPolicy.HumanDecision` 是唯一的宿主意图合同（`HumanDecisionPolicy{Permission, PlanReview, Question, Timeout, OnTimeout, OnReject, MaxRetries}`），三类决策共享。Adapter 端通过 `DecisionCapableSink.RequestDecision(ctx, DecisionRequest)` 阻塞获取决策，SDK 负责按 Kind 分派到 typed handler（同步模式）或 `DecisionRequests()` channel（异步模式）。
+
+核心约束：
+
+- `Run / Start` 语义不变；`HumanDecisionPolicy{}` 零值直接跑 = 保守默认（Permission/PlanReview `Ask`，Question `AutoReject`，Timeout 30s，OnTimeout/OnReject `Abort`）
+- HITL 不是第四条 Run 入口；三类事件（Permission / PlanReview / Question）共享统一的 `DecisionRequest/Response`、`StreamHITLRequested/Resolved` 协议形状
+- 失败归因结构化（`RunResult.Failure.HumanDecision`），`(*RunFailure).IsHumanDecision()` / `IsRejected()` / `IsTimedOut()` 为粗粒度辨别的 nil-safe 语法糖
+- Adapter 必须在 `Descriptor.RunPolicyCaps.Permission/PlanReview/Question` 上如实声明 `{Ask, AutoApprove, AutoReject, Retry}` 能力矩阵；宿主写不支持的 `Ask` 时 SDK 在 Start 前返回 `ErrHumanDecisionModeUnsupported`
+
+完整设计、分派规则、宿主三种接入模式（声明式 / 同步 handler / 异步 channel）、bridge 层映射见 [`docs/workstream-hitl-v2.md`](./docs/workstream-hitl-v2.md) 与 [`docs/run-policy.md`](./docs/run-policy.md)。

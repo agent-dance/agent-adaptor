@@ -419,26 +419,52 @@ func TestTranslatorStepAndHitlAndDroppedCustomEvents(t *testing.T) {
 		{Kind: agentadaptor.StreamRunStarted, ThreadID: "t", RunID: "r"},
 		{Kind: agentadaptor.StreamStepStarted, Name: "planning"},
 		{Kind: agentadaptor.StreamStepFinished, Name: "planning"},
-		{Kind: agentadaptor.StreamHITLRequested, Name: "approval", RunID: "r", ThreadID: "t", Raw: map[string]any{"kind": "read_file"}},
+		{Kind: agentadaptor.StreamHITLRequested, Name: "approval", RunID: "r", ThreadID: "t",
+			HITLRequested: &agentadaptor.HITLRequestedPayload{
+				RequestID: "req-1",
+				Kind:      agentadaptor.HumanDecisionPlanReview,
+				Source:    "claude.exit_plan_mode",
+				Prompt:    "Approve the plan?",
+			}},
+		{Kind: agentadaptor.StreamHITLResolved, RunID: "r", ThreadID: "t",
+			HITLResolved: &agentadaptor.HITLResolvedPayload{
+				RequestID: "req-1",
+				Kind:      agentadaptor.HumanDecisionPlanReview,
+				Source:    "claude.exit_plan_mode",
+				Result:    agentadaptor.DecisionApproved,
+			}},
 		{Kind: agentadaptor.StreamDropped, Raw: map[string]any{"dropped_count": 2.0}, RunID: "r", ThreadID: "t"},
 		{Kind: agentadaptor.StreamTextContent, MessageID: "m1", Delta: "x"},
 		{Kind: agentadaptor.StreamRunFinished, ThreadID: "t", RunID: "r"},
 	})
-	seenHITL, seenDropped := false, false
+	// HITL is now mapped onto TOOL_CALL_* events; the CUSTOM fallback is
+	// only used for StreamDropped.
+	seenToolStart, seenToolResult, seenDropped := false, false, false
 	for _, ev := range events {
-		if ev.Type() == aguievents.EventTypeCustom {
-			if ce, ok := ev.(*aguievents.CustomEvent); ok {
-				if ce.Name == string(agentadaptor.StreamHITLRequested) {
-					seenHITL = true
+		switch ev.Type() {
+		case aguievents.EventTypeToolCallStart:
+			if tc, ok := ev.(*aguievents.ToolCallStartEvent); ok {
+				if tc.ToolCallID == "dec-req-1" {
+					seenToolStart = true
 				}
-				if ce.Name == string(agentadaptor.StreamDropped) {
-					seenDropped = true
+			}
+		case aguievents.EventTypeToolCallResult:
+			if tr, ok := ev.(*aguievents.ToolCallResultEvent); ok {
+				if tr.ToolCallID == "dec-req-1" {
+					seenToolResult = true
 				}
+			}
+		case aguievents.EventTypeCustom:
+			if ce, ok := ev.(*aguievents.CustomEvent); ok && ce.Name == string(agentadaptor.StreamDropped) {
+				seenDropped = true
 			}
 		}
 	}
-	if !seenHITL {
-		t.Fatal("expected CUSTOM for StreamHITLRequested")
+	if !seenToolStart {
+		t.Fatal("expected TOOL_CALL_START for StreamHITLRequested")
+	}
+	if !seenToolResult {
+		t.Fatal("expected TOOL_CALL_RESULT for StreamHITLResolved")
 	}
 	if !seenDropped {
 		t.Fatal("expected CUSTOM for StreamDropped")
@@ -487,6 +513,14 @@ func (f *fakeHandle) Events() <-chan agentadaptor.RunEvent            { return f
 func (f *fakeHandle) StreamEvents() <-chan agentadaptor.StreamPayload { return f.stream }
 func (f *fakeHandle) RunID() string                                   { return f.runID }
 func (f *fakeHandle) Cancel(context.Context) error                    { return nil }
+func (f *fakeHandle) DecisionRequests() <-chan agentadaptor.DecisionRequest {
+	ch := make(chan agentadaptor.DecisionRequest)
+	close(ch)
+	return ch
+}
+func (f *fakeHandle) ResolveDecision(string, agentadaptor.DecisionResponse) error {
+	return agentadaptor.ErrRunEnded
+}
 func (f *fakeHandle) Wait(ctx context.Context) (agentadaptor.RunResult, error) {
 	select {
 	case <-ctx.Done():

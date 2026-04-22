@@ -1,0 +1,4 @@
+{"type":"system","subtype":"init","session_id":"sess-ask-validation","model":"claude-fixture"}
+{"type":"assistant","session_id":"sess-ask-validation","message":{"model":"claude-fixture","content":[{"type":"tool_use","id":"toolu_ask_bad","name":"AskUserQuestion","input":{"questions":[{"question":"Pick one","options":["a","b","c","d","e"]}]}}]}}
+{"type":"user","session_id":"sess-ask-validation","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_ask_bad","content":"<tool_use_error>InputValidationError: [ { \"origin\": \"array\", \"code\": \"too_big\", \"maximum\": 4, \"inclusive\": true, \"path\": [ \"questions\", 0, \"options\" ], \"message\": \"Too big: expected array to have <=4 items\" } ]</tool_use_error>","is_error":true}]}}
+{"type":"result","subtype":"success","session_id":"sess-ask-validation","result":"retrying"}

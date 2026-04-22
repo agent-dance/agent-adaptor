@@ -1,0 +1,4 @@
+{"type":"system","subtype":"init","session_id":"sess-ask-user","model":"claude-fixture"}
+{"type":"assistant","session_id":"sess-ask-user","message":{"model":"claude-fixture","content":[{"type":"tool_use","id":"toolu_ask_1","name":"AskUserQuestion","input":{"prompt":"Which directory should I scan?","choices":[{"key":"src","label":"src/","description":"Source directory"},{"key":"tests","label":"tests/"}]}}]}}
+{"type":"user","session_id":"sess-ask-user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_ask_1","content":"User did not answer","is_error":true}]}}
+{"type":"result","subtype":"success","session_id":"sess-ask-user","result":"No answer provided."}

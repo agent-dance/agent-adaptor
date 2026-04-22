@@ -24,9 +24,11 @@ func main() {
 		}),
 		agentadaptor.WithDefaultWorkspace(agentadaptor.SharedWorkspace{}),
 		agentadaptor.WithDefaultRunPolicy(agentadaptor.RunPolicy{
-			Approvals: agentadaptor.ApprovalAsk,
 			Isolation: agentadaptor.IsolationReadOnly,
 			WebSearch: agentadaptor.FeatureDeny,
+			HumanDecision: agentadaptor.HumanDecisionPolicy{
+				Permission: agentadaptor.HumanDecisionAsk,
+			},
 		}),
 		agentadaptor.WithDefaultInstructions(&agentadaptor.InstructionsBundleRef{
 			ID:   "instructions-default",
@@ -55,9 +57,11 @@ func main() {
 			BranchTemplate: "example/{task}",
 		}),
 		agentadaptor.WithRunPolicy(agentadaptor.RunPolicy{
-			Approvals: agentadaptor.ApprovalOff,
 			Isolation: agentadaptor.IsolationWorkspaceWrite,
 			WebSearch: agentadaptor.FeatureAllow,
+			HumanDecision: agentadaptor.HumanDecisionPolicy{
+				Permission: agentadaptor.HumanDecisionAutoApprove,
+			},
 		}),
 		agentadaptor.WithInstructions(&agentadaptor.InstructionsBundleRef{
 			ID:   "instructions-override",
@@ -76,7 +80,7 @@ func main() {
 	exampleutil.Check(request.Workspace.StrategyType == agentadaptor.WorkspaceStrategyGitWorktree, "expected git_worktree strategy, got %q", request.Workspace.StrategyType)
 	exampleutil.Check(request.Workspace.Metadata["base_ref"] == "main", "expected base_ref metadata to be main, got %#v", request.Workspace.Metadata)
 	exampleutil.Check(request.Workspace.Metadata["workspace_manager"] == "mockkit", "expected workspace manager metadata to be mockkit, got %#v", request.Workspace.Metadata)
-	exampleutil.Check(request.Policy.Approvals == agentadaptor.ApprovalOff, "expected approval override to win, got %q", request.Policy.Approvals)
+	exampleutil.Check(request.Policy.HumanDecision.Permission == agentadaptor.HumanDecisionAutoApprove, "expected permission override to win, got %q", request.Policy.HumanDecision.Permission)
 	exampleutil.Check(request.Policy.Isolation == agentadaptor.IsolationWorkspaceWrite, "expected isolation override to win, got %q", request.Policy.Isolation)
 	exampleutil.Check(request.Policy.WebSearch == agentadaptor.FeatureAllow, "expected websearch override to win, got %q", request.Policy.WebSearch)
 	exampleutil.Check(request.Instructions != nil && request.Instructions.Path == "/overrides/instructions.md", "expected instructions override to win, got %#v", request.Instructions)

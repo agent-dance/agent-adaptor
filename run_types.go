@@ -255,12 +255,36 @@ type RunChoice struct {
 	Description string
 }
 
-// RunFailure carries structured error information when an adapter can classify
-// a failure more precisely than a plain stderr string.
+// RunFailure carries structured error information when the SDK or an
+// adapter classifies a failure more precisely than a plain stderr string.
+//
+// HumanDecision is non-nil exactly when Code is FailureReject or
+// FailureTimeout; hosts can rely on that invariant when rendering attribution
+// (see docs/workstream-hitl-v2.md §3.2).
 type RunFailure struct {
-	Message  string
-	Code     string
-	Metadata map[string]string
+	Message       string
+	Code          FailureCode
+	Metadata      map[string]any
+	HumanDecision *HumanDecisionFailure
+}
+
+// IsHumanDecision reports whether the failure originated from a HITL
+// decision (rejected or timed out). nil-safe.
+func (f *RunFailure) IsHumanDecision() bool {
+	return f != nil && f.HumanDecision != nil
+}
+
+// IsRejected reports whether the failure is a user-visible rejection
+// (includes AutoReject synthesis). nil-safe.
+func (f *RunFailure) IsRejected() bool {
+	return f != nil && f.Code == FailureReject
+}
+
+// IsTimedOut reports whether the failure is a HITL decision timeout
+// (OnTimeout=FailureAbort path). Distinct from context.DeadlineExceeded on
+// the outer ctx, which is surfaced as the Wait() error instead. nil-safe.
+func (f *RunFailure) IsTimedOut() bool {
+	return f != nil && f.Code == FailureTimeout
 }
 
 type WorkspaceManager interface {
@@ -295,6 +319,7 @@ type resolvedInvocation struct {
 	runtime      RuntimePayload
 	skills       SkillPayload
 	policy       RunPolicy
+	handlers     decisionHandlers
 	instructions *InstructionsBundleRef
 	session      SessionRequest
 	metadata     map[string]string
@@ -368,9 +393,15 @@ const (
 //
 // Sequence is assigned monotonically by the SDK in EmitStream; adapters must
 // not set it themselves. Timestamp is similarly backfilled when zero.
+//
+// Seq mirrors Sequence as the canonical per-run monotonic cursor exposed by
+// the HITL v2 contract (see docs/workstream-hitl-v2.md §3.4.2). It is always
+// equal to Sequence; Sequence is retained as the legacy field so downstream
+// bridges and tests that already referenced it keep compiling.
 type StreamPayload struct {
 	Kind       StreamKind
 	Sequence   uint64
+	Seq        uint64
 	RunID      string
 	ThreadID   string
 	TurnID     string
@@ -383,6 +414,12 @@ type StreamPayload struct {
 	Usage      *Usage
 	Error      *RunFailure
 	Timestamp  time.Time
+
+	// HITLRequested is populated when Kind == StreamHITLRequested.
+	HITLRequested *HITLRequestedPayload
+	// HITLResolved is populated when Kind == StreamHITLResolved.
+	HITLResolved *HITLResolvedPayload
+
 	// Raw carries provider-specific structured data that does not fit the
 	// normalized fields. Bridges may pass it through opaquely.
 	Raw map[string]any

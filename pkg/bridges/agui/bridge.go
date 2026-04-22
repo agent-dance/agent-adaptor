@@ -25,13 +25,32 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 
 	aguievents "github.com/ag-ui-protocol/ag-ui/sdks/community/go/pkg/core/events"
 
 	agentadaptor "github.com/agent-dance/agent-adaptor"
 )
+
+// DecisionMode selects how the bridge translates HITL events
+// (StreamHITLRequested / StreamHITLResolved). DecisionAsToolCall is the new
+// default: HITL events are mapped onto AG-UI tool-call lifecycles so
+// CopilotKit-style clients can use `useCopilotAction` to render approval UI.
+// DecisionAsCustom preserves the legacy behaviour that sent them as
+// CustomEvent payloads and is retained for backward compatibility.
+type DecisionMode int
+
+const (
+	DecisionAsToolCall DecisionMode = iota
+	DecisionAsCustom
+)
+
+// decisionToolPrefix is prepended to DecisionRequest.RequestID to avoid
+// collisions with agent-native ToolCallID values on the wire.
+const decisionToolPrefix = "dec-"
 
 // All AG-UI literal string values consumed by this file are defined in
 // literals.go and shared with tests and future callers.
@@ -48,28 +67,39 @@ type Translator struct {
 	runFinish bool // RUN_FINISHED or RUN_ERROR already emitted
 
 	// pending buffers events produced before the first RUN_STARTED arrives.
-	// AG-UI requires RUN_STARTED to be the very first event on the wire
-	// (CopilotKit enforces this and raises an INCOMPLETE_STREAM error
-	// otherwise). Adapters such as codex emit setup notifications (mcp
-	// startup, thread/status/changed) before the turn actually begins, and
-	// those are translated to CUSTOM events; buffering them here keeps the
-	// translator's downstream output protocol-compliant without asking
-	// adapters to reorder their own notifications.
 	pending []aguievents.Event
 
 	// Active message lifecycles for idempotent START / CONTENT / END handling.
 	activeText      map[string]bool
 	activeReason    map[string]bool
 	activeToolStart map[string]bool
+
+	// decisionMode selects HITL event translation. Default: DecisionAsToolCall.
+	decisionMode DecisionMode
 }
 
-// NewTranslator returns a fresh translator.
-func NewTranslator() *Translator {
-	return &Translator{
+// NewTranslator returns a fresh translator with the default DecisionAsToolCall
+// HITL mapping.
+func NewTranslator(opts ...TranslatorOption) *Translator {
+	t := &Translator{
 		activeText:      map[string]bool{},
 		activeReason:    map[string]bool{},
 		activeToolStart: map[string]bool{},
+		decisionMode:    DecisionAsToolCall,
 	}
+	for _, o := range opts {
+		o(t)
+	}
+	return t
+}
+
+// TranslatorOption configures a Translator / Wrap call.
+type TranslatorOption func(*Translator)
+
+// WithDecisionMode selects the HITL mapping strategy. DecisionAsToolCall is
+// the default; DecisionAsCustom retains the legacy CustomEvent mapping.
+func WithDecisionMode(mode DecisionMode) TranslatorOption {
+	return func(t *Translator) { t.decisionMode = mode }
 }
 
 // Translate maps one StreamPayload to zero or more AG-UI events. It is
@@ -278,8 +308,17 @@ func (t *Translator) translateNonTerminalLocked(p agentadaptor.StreamPayload) []
 		}
 		return []aguievents.Event{aguievents.NewToolCallResultEvent(msgID, p.ToolCallID, content)}
 
-	case agentadaptor.StreamHITLRequested, agentadaptor.StreamHITLResolved,
-		agentadaptor.StreamDropped:
+	case agentadaptor.StreamHITLRequested:
+		if t.decisionMode == DecisionAsCustom {
+			return []aguievents.Event{customFromPayload(string(p.Kind), p)}
+		}
+		return t.hitlRequestedAsToolCall(p)
+	case agentadaptor.StreamHITLResolved:
+		if t.decisionMode == DecisionAsCustom {
+			return []aguievents.Event{customFromPayload(string(p.Kind), p)}
+		}
+		return t.hitlResolvedAsToolCall(p)
+	case agentadaptor.StreamDropped:
 		return []aguievents.Event{customFromPayload(string(p.Kind), p)}
 
 	case "":
@@ -460,7 +499,7 @@ func defaultString(v, fallback string) string {
 func errorDetails(p agentadaptor.StreamPayload) (msg, code string) {
 	if p.Error != nil {
 		msg = p.Error.Message
-		code = p.Error.Code
+		code = string(p.Error.Code)
 	}
 	if msg == "" {
 		msg = "stream run error"
@@ -518,4 +557,125 @@ func resultThreadID(r agentadaptor.RunResult) string {
 		return ""
 	}
 	return r.Session.ID
+}
+
+// hitlRequestedAsToolCall converts a StreamHITLRequested into
+// ToolCallStart + ToolCallArgs (§6.1 schema). The tool_call_id receives a
+// "dec-" prefix to prevent collisions with agent-native tool_call_ids.
+func (t *Translator) hitlRequestedAsToolCall(p agentadaptor.StreamPayload) []aguievents.Event {
+	req := p.HITLRequested
+	if req == nil || req.RequestID == "" {
+		return nil
+	}
+	toolCallID := decisionToolPrefix + req.RequestID
+	toolName := hitlToolName(req.Kind, req.Source)
+
+	if t.activeToolStart[toolCallID] {
+		return nil
+	}
+	t.activeToolStart[toolCallID] = true
+
+	payload := map[string]any{
+		"request_id":    req.RequestID,
+		"kind":          string(req.Kind),
+		"source":        req.Source,
+		"prompt":        req.Prompt,
+		"payload":       req.Payload,
+		"choices":       choicesToJSON(req.Choices),
+		"tool_call_id":  req.ToolCallID,
+		"deadline":      req.Deadline,
+		"retry_attempt": req.RetryAttempt,
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil
+	}
+	return []aguievents.Event{
+		aguievents.NewToolCallStartEvent(toolCallID, toolName),
+		aguievents.NewToolCallArgsEvent(toolCallID, string(body)),
+	}
+}
+
+// hitlResolvedAsToolCall converts a StreamHITLResolved into ToolCallEnd +
+// ToolCallResult.
+func (t *Translator) hitlResolvedAsToolCall(p agentadaptor.StreamPayload) []aguievents.Event {
+	res := p.HITLResolved
+	if res == nil || res.RequestID == "" {
+		return nil
+	}
+	toolCallID := decisionToolPrefix + res.RequestID
+	if !t.activeToolStart[toolCallID] {
+		// Out-of-order resolved — still emit for observers but do not pair.
+		// Creating a synthetic start before the end keeps the AG-UI stream
+		// well-formed.
+		toolName := hitlToolName(res.Kind, res.Source)
+		t.activeToolStart[toolCallID] = true
+		events := []aguievents.Event{aguievents.NewToolCallStartEvent(toolCallID, toolName)}
+		delete(t.activeToolStart, toolCallID)
+		return append(events, hitlResolvedTail(toolCallID, res)...)
+	}
+	delete(t.activeToolStart, toolCallID)
+	return hitlResolvedTail(toolCallID, res)
+}
+
+func hitlResolvedTail(toolCallID string, res *agentadaptor.HITLResolvedPayload) []aguievents.Event {
+	payload := map[string]any{
+		"result":        string(res.Result),
+		"choice":        res.Choice,
+		"answer":        res.Answer,
+		"retry_attempt": res.RetryAttempt,
+		"latency_ms":    res.Latency.Milliseconds(),
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		body = []byte("{}")
+	}
+	msgID := toolCallID + ":result"
+	return []aguievents.Event{
+		aguievents.NewToolCallEndEvent(toolCallID),
+		aguievents.NewToolCallResultEvent(msgID, toolCallID, string(body)),
+	}
+}
+
+// hitlToolName composes the canonical "dec.<kind>.<source>" name.
+func hitlToolName(kind agentadaptor.HumanDecisionKind, source string) string {
+	parts := []string{"dec", string(kind)}
+	if src := strings.TrimSpace(source); src != "" {
+		parts = append(parts, src)
+	}
+	return strings.Join(parts, ".")
+}
+
+func choicesToJSON(choices []agentadaptor.DecisionChoice) []map[string]string {
+	if len(choices) == 0 {
+		return nil
+	}
+	out := make([]map[string]string, 0, len(choices))
+	for _, c := range choices {
+		out = append(out, map[string]string{
+			"key":         c.Key,
+			"label":       c.Label,
+			"description": c.Description,
+		})
+	}
+	return out
+}
+
+// ResolveDecision routes a host-supplied AG-UI-style decision response into
+// the underlying RunHandle. It strips the decisionToolPrefix from the
+// AG-UI-visible tool_call_id before forwarding to handle.ResolveDecision, so
+// callers can pass the ToolCallID they see on the wire.
+//
+// Errors from handle.ResolveDecision (ErrDecisionRequestExpired,
+// ErrDecisionResultKindMismatch, ErrRunEnded) are propagated verbatim.
+func ResolveDecision(handle agentadaptor.RunHandle, toolCallID string, resp agentadaptor.DecisionResponse) error {
+	if handle == nil {
+		return agentadaptor.ErrRunEnded
+	}
+	requestID := strings.TrimPrefix(toolCallID, decisionToolPrefix)
+	if requestID == "" {
+		return fmt.Errorf("agui: empty tool_call_id")
+	}
+	resp.RequestID = requestID
+	return handle.ResolveDecision(requestID, resp)
 }

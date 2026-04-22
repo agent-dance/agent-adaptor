@@ -16,33 +16,89 @@ type runnerImpl struct {
 	binding   AgentBinding
 }
 
+// decisionHandlers carries the per-Kind typed handlers resolved for one run
+// (RunOption-level beats AgentOption-level; see resolveInvocation).
+type decisionHandlers struct {
+	Permission PermissionHandler
+	PlanReview PlanReviewHandler
+	Question   QuestionHandler
+}
+
 func (r *runnerImpl) Run(ctx context.Context, prompt string, opts ...RunOption) (RunResult, error) {
-	return r.run(ctx, prompt, wrapWithSeq(noopEventSink{}), opts...)
+	// Even Run() needs a DecisionCapableSink so typed HITL handlers (mode B)
+	// work in the blocking invocation style. Streaming is disabled so
+	// StreamPayloads are discarded; the decision dispatcher still routes
+	// per-Kind handlers and channel dispatch the same way Start() does.
+	runBuf, streamBuf, policy := r.sdk.eventSinkSettings()
+	sink := newDualSink("", false, runBuf, streamBuf, policy)
+	// Drain the RunEvent channel in the background so Emit() never blocks.
+	drainer := make(chan struct{})
+	go func() {
+		defer close(drainer)
+		for range sink.runEvents {
+		}
+	}()
+	// Drain DecisionRequests when unconsumed so channel dispatch (for Kinds
+	// without a handler) unblocks via timeout rather than deadlocking on the
+	// buffered send.
+	go func() {
+		for range sink.decisionRequests {
+		}
+	}()
+
+	result, err := r.run(ctx, prompt, wrapWithSeq(sink), sink, opts...)
+	sink.close()
+	<-drainer
+
+	if errors.Is(err, ErrSessionCheckpointMissing) {
+		if f := sink.pendingFailure(); f != nil {
+			if result.Failure == nil || (result.Failure.HumanDecision == nil && f.HumanDecision != nil) {
+				result.Failure = cloneRunFailure(f)
+			}
+		}
+		if shouldSkipSessionPersistOnFailure(result) {
+			err = nil
+		}
+	}
+
+	// Surface any HITL failure the runner stashed but the adapter did not
+	// overlay onto its DriverRunResult.Failure. The same two-layer overlay
+	// lives in asyncRunHandle.Wait so Run() and Start() produce identical
+	// RunResult.Failure shapes.
+	if f := sink.pendingFailure(); f != nil {
+		if result.Failure == nil || (result.Failure.HumanDecision == nil && f.HumanDecision != nil) {
+			result.Failure = cloneRunFailure(f)
+		}
+	}
+	pendingFailuresByRunMu.Lock()
+	delete(pendingFailuresByRun, sink)
+	pendingFailuresByRunMu.Unlock()
+	return result, err
 }
 
 func (r *runnerImpl) Start(ctx context.Context, prompt string, opts ...RunOption) (RunHandle, error) {
 	runCtx, cancel := context.WithCancel(ctx)
 
-	// Snapshot the sink settings from the SDK so per-run changes cannot race
-	// with config mutation on the SDK struct.
 	streaming := r.resolveStreamingForStart(opts...)
 	runBuf, streamBuf, policy := r.sdk.eventSinkSettings()
-	sink := newDualSink(streaming, runBuf, streamBuf, policy)
 
 	runID := newRunID(r.binding.Adapter().Descriptor().Type)
+
+	sink := newDualSink(runID, streaming, runBuf, streamBuf, policy)
 	handle := &asyncRunHandle{
-		runID:  runID,
-		events: sink.runEvents,
-		stream: sink.stream,
-		cancel: cancel,
-		done:   make(chan asyncRunResult, 1),
+		runID:          runID,
+		events:         sink.runEvents,
+		stream:         sink.stream,
+		decisionReqsCh: sink.decisionRequests,
+		sink:           sink,
+		cancel:         cancel,
+		done:           make(chan asyncRunResult, 1),
 	}
 
-	// Pre-bind runID so the caller has access to it before Wait() completes.
 	boundOpts := append([]RunOption{withPresetRunID(runID)}, opts...)
 
 	go func() {
-		result, err := r.run(runCtx, prompt, wrapWithSeq(sink), boundOpts...)
+		result, err := r.run(runCtx, prompt, wrapWithSeq(sink), sink, boundOpts...)
 		sink.close()
 		handle.done <- asyncRunResult{result: result, err: err}
 		close(handle.done)
@@ -51,10 +107,6 @@ func (r *runnerImpl) Start(ctx context.Context, prompt string, opts ...RunOption
 	return handle, nil
 }
 
-// resolveStreamingForStart is a lightweight pre-check used by Start() to size
-// the sink. resolveInvocation computes the authoritative streaming flag
-// (including binding defaults); this method mirrors that logic but only uses
-// information available before the full resolution runs.
 func (r *runnerImpl) resolveStreamingForStart(opts ...RunOption) bool {
 	var ro runOptions
 	for _, opt := range opts {
@@ -75,12 +127,24 @@ func (r *runnerImpl) resolveStreamingForStart(opts ...RunOption) bool {
 	return false
 }
 
-func (r *runnerImpl) run(ctx context.Context, prompt string, sink EventSink, opts ...RunOption) (RunResult, error) {
+// run is the single execution entry point used by both Run and Start. If
+// decisionSink is non-nil the runner installs resolved typed handlers on it
+// so adapter-side RequestDecision calls route through the correct typed
+// handler.
+func (r *runnerImpl) run(ctx context.Context, prompt string, sink EventSink, decisionSink *dualSink, opts ...RunOption) (RunResult, error) {
 	invocation, cleanup, err := r.resolveInvocation(ctx, prompt, opts...)
 	if cleanup != nil {
 		defer cleanup()
 	}
 	if err != nil {
+		return RunResult{}, err
+	}
+
+	if decisionSink != nil {
+		decisionSink.bindRun(invocation.runID, invocation.policy.HumanDecision, invocation.handlers)
+	}
+
+	if err := r.validateDecisionCapabilities(invocation); err != nil {
 		return RunResult{}, err
 	}
 
@@ -118,10 +182,103 @@ func (r *runnerImpl) run(ctx context.Context, prompt string, sink EventSink, opt
 		checkpoint,
 	)
 	if err != nil {
+		if errors.Is(err, ErrSessionCheckpointMissing) {
+			if result.Failure == nil {
+				if f := pendingFailureFromSink(sink); f != nil {
+					result.Failure = cloneRunFailure(f)
+				}
+			}
+			if shouldSkipSessionPersistOnFailure(result) {
+				return result, nil
+			}
+		}
 		return RunResult{}, err
 	}
 	result.Session = sessionRef
 	return result, nil
+}
+
+func shouldSkipSessionPersistOnFailure(result RunResult) bool {
+	if result.Failure == nil {
+		return false
+	}
+	// A human decision reject/timeout may intentionally abort the run before
+	// the provider emits a new resumable checkpoint. Per the session contract,
+	// failed runs must not persist unhealthy state; treating the missing
+	// checkpoint as a hard SDK error would misclassify an expected business
+	// outcome as infrastructure failure.
+	if result.Failure.IsHumanDecision() {
+		return true
+	}
+	return false
+}
+
+func pendingFailureFromSink(sink EventSink) *RunFailure {
+	switch typed := sink.(type) {
+	case *dualSink:
+		return typed.pendingFailure()
+	case *seqSink:
+		return pendingFailureFromSink(typed.inner)
+	default:
+		return nil
+	}
+}
+
+// validateDecisionCapabilities cross-checks the resolved policy against the
+// adapter's declared HumanDecision / Question support matrix. Unsupported
+// Ask modes are hard errors; unsupported Retry modes degrade to Abort with a
+// warning emitted on the RunEvent channel.
+func (r *runnerImpl) validateDecisionCapabilities(inv resolvedInvocation) error {
+	caps := inv.adapter.Descriptor().RunPolicyCaps
+	p := inv.policy.HumanDecision
+
+	checkMode := func(kind HumanDecisionKind, mode string, support HumanDecisionSupport, modeAsk, modeAutoApprove, modeAutoReject string) error {
+		switch mode {
+		case modeAsk:
+			if !support.Ask {
+				return fmt.Errorf("%w: adapter=%s kind=%s mode=%s", ErrHumanDecisionModeUnsupported, caps.adapterLabel(), kind, mode)
+			}
+		case modeAutoApprove:
+			if !support.AutoApprove {
+				return fmt.Errorf("%w: adapter=%s kind=%s mode=%s", ErrHumanDecisionModeUnsupported, caps.adapterLabel(), kind, mode)
+			}
+		case modeAutoReject:
+			if !support.AutoReject {
+				return fmt.Errorf("%w: adapter=%s kind=%s mode=%s", ErrHumanDecisionModeUnsupported, caps.adapterLabel(), kind, mode)
+			}
+		}
+		return nil
+	}
+
+	if err := checkMode(HumanDecisionPermission, string(p.Permission), caps.Permission,
+		string(HumanDecisionAsk), string(HumanDecisionAutoApprove), string(HumanDecisionAutoReject)); err != nil {
+		return err
+	}
+	if err := checkMode(HumanDecisionPlanReview, string(p.PlanReview), caps.PlanReview,
+		string(HumanDecisionAsk), string(HumanDecisionAutoApprove), string(HumanDecisionAutoReject)); err != nil {
+		return err
+	}
+
+	// Question uses its own support type (no AutoApprove).
+	switch p.Question {
+	case QuestionAsk:
+		if !caps.Question.Ask {
+			return fmt.Errorf("%w: adapter=%s kind=%s mode=%s", ErrHumanDecisionModeUnsupported, caps.adapterLabel(), HumanDecisionQuestion, p.Question)
+		}
+	case QuestionAutoReject:
+		if !caps.Question.AutoReject {
+			// Spec §3.8: when the adapter does not model Question at all
+			// (all QuestionSupport fields false), QuestionAutoReject is a
+			// no-op — treat it as Unset to avoid breaking the portable
+			// safe-default policy (see §5.4.3).
+			if !caps.Question.Ask && !caps.Question.Retry {
+				break
+			}
+			return fmt.Errorf("%w: adapter=%s kind=%s mode=%s", ErrHumanDecisionModeUnsupported, caps.adapterLabel(), HumanDecisionQuestion, p.Question)
+		}
+	}
+
+	return nil
 }
 
 func (r *runnerImpl) resolveInvocation(ctx context.Context, prompt string, opts ...RunOption) (resolvedInvocation, func(), error) {
@@ -153,7 +310,25 @@ func (r *runnerImpl) resolveInvocation(ctx context.Context, prompt string, opts 
 		skillRefs = cloneStrings(resolvedOpts.skills)
 	}
 
-	policy := mergeRunPolicy(defaults.RunPolicy, resolvedOpts.runPolicy)
+	policy, err := mergeRunPolicy(defaults.RunPolicy, resolvedOpts.runPolicy)
+	if err != nil {
+		return resolvedInvocation{}, nil, err
+	}
+
+	handlers := decisionHandlers{
+		Permission: defaults.PermissionHandler,
+		PlanReview: defaults.PlanReviewHandler,
+		Question:   defaults.QuestionHandler,
+	}
+	if resolvedOpts.permissionHandler != nil {
+		handlers.Permission = resolvedOpts.permissionHandler
+	}
+	if resolvedOpts.planReviewHandler != nil {
+		handlers.PlanReview = resolvedOpts.planReviewHandler
+	}
+	if resolvedOpts.questionHandler != nil {
+		handlers.Question = resolvedOpts.questionHandler
+	}
 
 	instructions := cloneInstructions(defaults.Instructions)
 	if resolvedOpts.instructions != nil {
@@ -164,7 +339,6 @@ func (r *runnerImpl) resolveInvocation(ctx context.Context, prompt string, opts 
 	config := r.binding.Config()
 	common := extractCommonConfig(config)
 
-	// Resolve streaming tri-state: per-call > per-binding > default off.
 	streaming := false
 	if defaults.Streaming != nil {
 		streaming = *defaults.Streaming
@@ -234,6 +408,7 @@ func (r *runnerImpl) resolveInvocation(ctx context.Context, prompt string, opts 
 		runtime:      runtimePayload,
 		skills:       skillPayload,
 		policy:       policy,
+		handlers:     handlers,
 		instructions: instructions,
 		session:      sessionReq,
 		metadata:     cloneStringMap(metadata),
@@ -333,14 +508,28 @@ func (r *runnerImpl) executeWithSessionPlan(
 	}, runResult.Checkpoint, nil
 }
 
+// adapterLabel returns a best-effort diagnostic label for error messages.
+// RunPolicyCapabilities is a value type without an adapter name, so callers
+// fall back to a generic label.
+func (RunPolicyCapabilities) adapterLabel() string { return "adapter" }
+
+// -----------------------------------------------------------------------------
+// EventSink wrappers.
+// -----------------------------------------------------------------------------
+
 // seqSink wraps an EventSink and assigns monotonically increasing sequence
-// numbers for the enclosing run. RunEvent.Seq and StreamPayload.Sequence use
-// independent counters so bridges that only consume StreamEvents see a
-// contiguous sequence regardless of RunEvent traffic.
+// numbers for the enclosing run. RunEvent.Seq uses its own counter; Stream
+// events delegate to the underlying sink which owns the shared stream
+// counter (see dualSink.streamCounter) so dualSink-internal emission
+// (HITL requested/resolved) and adapter-side emission share one run-local
+// monotonic cursor.
+//
+// When the wrapped sink also implements DecisionCapableSink, the wrapper
+// forwards RequestDecision so adapters can block through it.
 type seqSink struct {
 	inner         EventSink
 	eventCounter  atomic.Uint64
-	streamCounter atomic.Uint64
+	streamCounter atomic.Uint64 // only used for non-dualSink inner (tests / custom sinks)
 }
 
 func wrapWithSeq(inner EventSink) EventSink {
@@ -356,21 +545,40 @@ func (s *seqSink) Emit(event RunEvent) error {
 }
 
 func (s *seqSink) EmitStream(payload StreamPayload) error {
-	payload.Sequence = s.streamCounter.Add(1)
 	if payload.Timestamp.IsZero() {
 		payload.Timestamp = time.Now().UTC()
+	}
+	// When the underlying sink is dualSink, let it own the stream counter so
+	// runner-internal HITL emissions share the same sequence. For any other
+	// sink (tests, custom implementations), assign Sequence here so callers
+	// still see monotonic numbering.
+	if _, ok := s.inner.(*dualSink); !ok && payload.Sequence == 0 {
+		n := s.streamCounter.Add(1)
+		payload.Sequence = n
+		payload.Seq = n - 1
 	}
 	return s.inner.EmitStream(payload)
 }
 
+// RequestDecision forwards to the wrapped sink when it implements
+// DecisionCapableSink. Otherwise the call returns a DecisionTimedOut result
+// synthesized synchronously — this matches the "no channel available"
+// behaviour described in §3.4.
+func (s *seqSink) RequestDecision(ctx context.Context, req DecisionRequest) (DecisionResponse, error) {
+	if ic, ok := s.inner.(DecisionCapableSink); ok {
+		return ic.RequestDecision(ctx, req)
+	}
+	return DecisionResponse{RequestID: req.RequestID, Result: DecisionTimedOut}, nil
+}
+
 type noopEventSink struct{}
 
-func (noopEventSink) Emit(RunEvent) error             { return nil }
-func (noopEventSink) EmitStream(StreamPayload) error  { return nil }
+func (noopEventSink) Emit(RunEvent) error            { return nil }
+func (noopEventSink) EmitStream(StreamPayload) error { return nil }
 
-// EventBackpressure selects how the SDK reacts when a host cannot keep up with
-// StreamPayload delivery. RunEvent delivery always falls back to the legacy
-// drop-with-marker behaviour and is not affected by this setting.
+// EventBackpressure selects how the SDK reacts when a host cannot keep up
+// with StreamPayload delivery. RunEvent delivery always falls back to the
+// legacy drop-with-marker behaviour and is not affected by this setting.
 type EventBackpressure int
 
 const (
@@ -385,28 +593,25 @@ const (
 	BackpressureBlock
 )
 
-// dualSink is the canonical runtime event sink used by Start(). It carries
-// two independent channels: one for operational RunEvents and one for
-// structured StreamPayloads. The stream channel is pre-closed when streaming
-// is disabled so hosts can `for range handle.StreamEvents()` unconditionally.
-//
-// The sink is fed by a single adapter goroutine (see the run() loop) and
-// drained by at most two host goroutines. close() is called by the run
-// goroutine exactly once after adapter.Run returns, so close races with
-// in-flight Emit/EmitStream calls only when an adapter violates the
-// DriverAdapter contract (i.e. leaves background goroutines alive after
-// Run returns). Block mode defends against that violation via the `done`
-// channel; Drop mode is naturally safe because of its default branch.
-type dualSink struct {
-	runEvents chan RunEvent
-	stream    chan StreamPayload
-	streaming bool
-	policy    EventBackpressure
+// -----------------------------------------------------------------------------
+// dualSink: concrete sink used by Start(). Implements DecisionCapableSink.
+// -----------------------------------------------------------------------------
 
-	done chan struct{}
-	// activeStream tracks in-flight EmitStream calls. close() waits for it
-	// to drain before closing the stream channel, eliminating the race
-	// between a blocking sender and channel closure.
+// dualSink carries the operational RunEvent channel, the structured
+// StreamPayload channel, and the HITL DecisionRequest channel. Consumers may
+// leave any of these unread — the sink applies backpressure / drop markers on
+// the stream channel, forwards DecisionRequests by timeout when unread, and
+// accepts ResolveDecision calls to unblock adapters.
+//
+// See docs/workstream-hitl-v2.md §3.10–§3.11 for the authoritative contract.
+type dualSink struct {
+	runEvents        chan RunEvent
+	stream           chan StreamPayload
+	decisionRequests chan DecisionRequest
+	streaming        bool
+	policy           EventBackpressure
+
+	done         chan struct{}
 	activeStream sync.WaitGroup
 
 	once       sync.Once
@@ -414,9 +619,29 @@ type dualSink struct {
 	closed     bool
 	droppedRun int
 	droppedStm int
+
+	// Run-scoped state populated by bindRun before adapter.Run starts.
+	runID         string
+	threadID      string
+	policyHD      HumanDecisionPolicy
+	handlers      decisionHandlers
+	decSeq        atomic.Uint64
+	streamCounter atomic.Uint64 // shared by adapter-side and runner-side stream emissions
+	pending       map[string]*pendingDecision
+	pendingMu     sync.Mutex
+	// decisionSerial guards the "one HITL at a time per run" invariant so
+	// adapters that emit concurrent tool_use frames still see serialized
+	// RequestDecision returns.
+	decisionSerial sync.Mutex
 }
 
-func newDualSink(streaming bool, runBuf, streamBuf int, policy EventBackpressure) *dualSink {
+type pendingDecision struct {
+	req  DecisionRequest
+	kind HumanDecisionKind
+	done chan DecisionResponse
+}
+
+func newDualSink(runID string, streaming bool, runBuf, streamBuf int, policy EventBackpressure) *dualSink {
 	if runBuf <= 0 {
 		runBuf = defaultRunEventBuffer
 	}
@@ -424,17 +649,31 @@ func newDualSink(streaming bool, runBuf, streamBuf int, policy EventBackpressure
 		streamBuf = defaultStreamEventBuffer
 	}
 	s := &dualSink{
-		runEvents: make(chan RunEvent, runBuf),
-		stream:    make(chan StreamPayload, streamBuf),
-		streaming: streaming,
-		policy:    policy,
-		done:      make(chan struct{}),
+		runEvents:        make(chan RunEvent, runBuf),
+		stream:           make(chan StreamPayload, streamBuf),
+		decisionRequests: make(chan DecisionRequest, 16),
+		streaming:        streaming,
+		policy:           policy,
+		done:             make(chan struct{}),
+		runID:            runID,
+		pending:          map[string]*pendingDecision{},
 	}
 	if !streaming {
-		// Pre-close so consumers can range over StreamEvents() immediately.
 		close(s.stream)
 	}
 	return s
+}
+
+// bindRun is called once resolveInvocation has produced a policy and the
+// typed handler set so the sink can route RequestDecision correctly.
+func (s *dualSink) bindRun(runID string, policy HumanDecisionPolicy, handlers decisionHandlers) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if runID != "" {
+		s.runID = runID
+	}
+	s.policyHD = EffectiveHumanDecisionPolicy(policy)
+	s.handlers = handlers
 }
 
 func (s *dualSink) Emit(event RunEvent) error {
@@ -457,8 +696,16 @@ func (s *dualSink) EmitStream(payload StreamPayload) error {
 	if !s.streaming {
 		return nil
 	}
-	// Register as an active sender before doing anything else so close()
-	// will wait for us to finish.
+	// Assign the shared run-local stream cursor. §3.4.2 mandates Seq is
+	// zero-based and monotonic — both adapter-side emissions (through
+	// seqSink) and runner-side emissions (HITL lifecycle) share this counter.
+	n := s.streamCounter.Add(1)
+	payload.Sequence = n
+	payload.Seq = n - 1
+	if payload.Timestamp.IsZero() {
+		payload.Timestamp = time.Now().UTC()
+	}
+
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
@@ -487,9 +734,6 @@ func (s *dualSink) EmitStream(payload StreamPayload) error {
 }
 
 func (s *dualSink) emitStreamBlocking(payload StreamPayload) error {
-	// Invariant: caller has already incremented activeStream and will
-	// decrement it on return. The select below races against done (closed
-	// by close()) so a pending close can unblock this goroutine.
 	select {
 	case <-s.done:
 		return nil
@@ -500,17 +744,25 @@ func (s *dualSink) emitStreamBlocking(payload StreamPayload) error {
 
 func (s *dualSink) close() {
 	s.once.Do(func() {
-		// Flip closed before signalling done so no new EmitStream registers
-		// after this point.
 		s.mu.Lock()
 		s.closed = true
 		close(s.done)
 		s.mu.Unlock()
 
-		// Wait for in-flight senders to return (done unblocks them). After
-		// Wait returns, no goroutine holds a reference to the stream channel
-		// for sending, so closing it is safe.
 		s.activeStream.Wait()
+
+		// Fail any pending decision waiters with DecisionAborted so the
+		// adapter goroutine can unwind.
+		s.pendingMu.Lock()
+		for _, p := range s.pending {
+			select {
+			case p.done <- DecisionResponse{RequestID: p.req.RequestID, Result: DecisionAborted}:
+			default:
+			}
+			close(p.done)
+		}
+		s.pending = map[string]*pendingDecision{}
+		s.pendingMu.Unlock()
 
 		s.mu.Lock()
 		defer s.mu.Unlock()
@@ -520,6 +772,7 @@ func (s *dualSink) close() {
 		if s.streaming {
 			close(s.stream)
 		}
+		close(s.decisionRequests)
 	})
 }
 
@@ -557,29 +810,590 @@ func (s *dualSink) flushDroppedStreamLocked() {
 	}
 }
 
+// -----------------------------------------------------------------------------
+// DecisionCapableSink implementation (main HITL v2 dispatcher).
+// -----------------------------------------------------------------------------
+
+// RequestDecision is the single entry point adapters use to block on a HITL
+// decision. The runner normalizes the request, emits StreamHITLRequested,
+// dispatches to typed handler or host channel, emits StreamHITLResolved,
+// and applies OnReject / OnTimeout retry / continue / abort policy before
+// returning.
+//
+// Return contract:
+//   - (resp, nil) — adapter proceeds using resp.Result (approved / rejected /
+//     answered). resp.Result may be DecisionRejected when OnReject=Continue.
+//   - (_, abortErr) — run must end; the runner has already stashed the
+//     failure context on the sink via setPendingFailure. The adapter should
+//     stop its protocol loop and return a DriverRunResult whose Failure is
+//     the previously recorded one.
+func (s *dualSink) RequestDecision(ctx context.Context, req DecisionRequest) (DecisionResponse, error) {
+	s.decisionSerial.Lock()
+	defer s.decisionSerial.Unlock()
+
+	req = s.normalizeRequest(req)
+	kind := req.Kind
+
+	// Policy-level short-circuit: AutoApprove / AutoReject / QuestionAutoReject
+	// resolve without reaching a handler or host channel.
+	if resp, decided := s.tryAutoResolve(req); decided {
+		s.emitRequested(req)
+		s.emitResolved(req, resp, time.Now().UTC())
+		return s.applyReject(ctx, req, resp, 1)
+	}
+
+	// Otherwise: Ask path (handler / channel / timeout).
+	var attempts int
+	for {
+		attempts++
+		req.RetryAttempt = attempts - 1
+
+		s.emitRequested(req)
+
+		decisionCtx, cancel := s.withDeadline(ctx, req.Deadline)
+		resp, decision, runErr := s.dispatchOnce(decisionCtx, req)
+		cancel()
+
+		s.emitResolved(req, resp, time.Now().UTC())
+
+		switch decision {
+		case DecisionApproved, DecisionAnswered:
+			return resp, nil
+
+		case DecisionRejected:
+			resolved, abortErr := s.applyRejectWithRetry(ctx, req, resp, attempts, kind)
+			if abortErr == nil && resolved.retry {
+				req = resolved.next
+				continue
+			}
+			return resolved.resp, abortErr
+
+		case DecisionTimedOut:
+			resolved, abortErr := s.applyTimeoutWithRetry(ctx, req, attempts, kind)
+			if abortErr == nil && resolved.retry {
+				req = resolved.next
+				continue
+			}
+			return resolved.resp, abortErr
+
+		case DecisionAborted:
+			// Handler returned error, panicked, or ctx cancelled → treat as
+			// abort. Preserve any more specific failure recorded by the
+			// inner handler stage (panic → FailureAgentError, nil resp →
+			// FailureAgentError) so the caller sees the root cause.
+			if s.pendingFailure() == nil {
+				s.setPendingFailure(&RunFailure{
+					Code:    FailureCancelled,
+					Message: decisionCancelMessage(runErr),
+					HumanDecision: &HumanDecisionFailure{
+						Kind:     kind,
+						Source:   req.Source,
+						Decision: DecisionAborted,
+						Request:  cloneDecisionRequest(&req),
+						Attempts: attempts,
+					},
+				})
+			}
+			return resp, runErr
+		}
+
+		// Unknown DecisionResult — defensive return.
+		return resp, nil
+	}
+}
+
+// tryAutoResolve synthesizes an Approved / Rejected response for modes that
+// do not require a human. Returns (resp, true) when the mode applies.
+func (s *dualSink) tryAutoResolve(req DecisionRequest) (DecisionResponse, bool) {
+	switch req.Kind {
+	case HumanDecisionPermission:
+		switch s.policyHD.Permission {
+		case HumanDecisionAutoApprove:
+			return DecisionResponse{RequestID: req.RequestID, Result: DecisionApproved}, true
+		case HumanDecisionAutoReject:
+			return DecisionResponse{RequestID: req.RequestID, Result: DecisionRejected}, true
+		}
+	case HumanDecisionPlanReview:
+		switch s.policyHD.PlanReview {
+		case HumanDecisionAutoApprove:
+			return DecisionResponse{RequestID: req.RequestID, Result: DecisionApproved}, true
+		case HumanDecisionAutoReject:
+			return DecisionResponse{RequestID: req.RequestID, Result: DecisionRejected}, true
+		}
+	case HumanDecisionQuestion:
+		if s.policyHD.Question == QuestionAutoReject {
+			return DecisionResponse{RequestID: req.RequestID, Result: DecisionRejected}, true
+		}
+	}
+	return DecisionResponse{}, false
+}
+
+// dispatchOnce routes req to the typed handler when one is installed,
+// otherwise to the host channel.
+func (s *dualSink) dispatchOnce(ctx context.Context, req DecisionRequest) (DecisionResponse, DecisionResult, error) {
+	switch req.Kind {
+	case HumanDecisionPermission:
+		if s.handlers.Permission != nil {
+			return s.runPermissionHandler(ctx, req)
+		}
+	case HumanDecisionPlanReview:
+		if s.handlers.PlanReview != nil {
+			return s.runPlanReviewHandler(ctx, req)
+		}
+	case HumanDecisionQuestion:
+		if s.handlers.Question != nil {
+			return s.runQuestionHandler(ctx, req)
+		}
+	}
+	return s.runChannelDispatch(ctx, req)
+}
+
+type handlerOutcome struct {
+	approvalResult ApprovalResult
+	questionResult QuestionResult
+	resp           DecisionResponse
+	err            error
+	panicked       bool
+	panicMessage   string
+}
+
+func (s *dualSink) runPermissionHandler(ctx context.Context, req DecisionRequest) (DecisionResponse, DecisionResult, error) {
+	typed := PermissionRequest{
+		decisionRequestBase: req.toBase(),
+		Tool:                stringFrom(req.Payload, "tool"),
+		Prompt:              req.Prompt,
+		Args:                req.Payload,
+	}
+
+	ch := make(chan handlerOutcome, 1)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				ch <- handlerOutcome{panicked: true, panicMessage: fmt.Sprintf("%v", r)}
+			}
+		}()
+		resp, err := s.handlers.Permission(ctx, typed)
+		ch <- handlerOutcome{approvalResult: resp.Result, resp: DecisionResponse{RequestID: resp.RequestID, Result: approvalToDecision(resp.Result), Text: resp.Text}, err: err}
+	}()
+	return s.waitHandlerOutcome(ctx, req, ch, approvalWantKinds)
+}
+
+func (s *dualSink) runPlanReviewHandler(ctx context.Context, req DecisionRequest) (DecisionResponse, DecisionResult, error) {
+	typed := PlanReviewRequest{
+		decisionRequestBase: req.toBase(),
+		Prompt:              req.Prompt,
+		Plan:                stringFrom(req.Payload, "plan"),
+		Extra:               req.Payload,
+	}
+
+	ch := make(chan handlerOutcome, 1)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				ch <- handlerOutcome{panicked: true, panicMessage: fmt.Sprintf("%v", r)}
+			}
+		}()
+		resp, err := s.handlers.PlanReview(ctx, typed)
+		ch <- handlerOutcome{approvalResult: resp.Result, resp: DecisionResponse{RequestID: resp.RequestID, Result: approvalToDecision(resp.Result), Text: resp.Text}, err: err}
+	}()
+	return s.waitHandlerOutcome(ctx, req, ch, approvalWantKinds)
+}
+
+func (s *dualSink) runQuestionHandler(ctx context.Context, req DecisionRequest) (DecisionResponse, DecisionResult, error) {
+	typed := QuestionRequest{
+		decisionRequestBase: req.toBase(),
+		Prompt:              req.Prompt,
+		Schema:              mapFrom(req.Payload, "schema"),
+		Choices:             req.Choices,
+	}
+
+	ch := make(chan handlerOutcome, 1)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				ch <- handlerOutcome{panicked: true, panicMessage: fmt.Sprintf("%v", r)}
+			}
+		}()
+		resp, err := s.handlers.Question(ctx, typed)
+		ch <- handlerOutcome{
+			questionResult: resp.Result,
+			resp: DecisionResponse{
+				RequestID: resp.RequestID,
+				Result:    questionToDecision(resp.Result),
+				Choice:    resp.Choice,
+				Answer:    resp.Answer,
+				Text:      resp.Text,
+			},
+			err: err,
+		}
+	}()
+	return s.waitHandlerOutcome(ctx, req, ch, questionWantKinds)
+}
+
+// approvalWantKinds / questionWantKinds declare which typed Result values
+// each handler family legitimately produces. waitHandlerOutcome uses them
+// to detect "returned nil response without error" and panic cases.
+var (
+	approvalWantKinds = []DecisionResult{DecisionApproved, DecisionRejected}
+	questionWantKinds = []DecisionResult{DecisionAnswered, DecisionRejected}
+)
+
+func (s *dualSink) waitHandlerOutcome(ctx context.Context, req DecisionRequest, ch <-chan handlerOutcome, want []DecisionResult) (DecisionResponse, DecisionResult, error) {
+	select {
+	case out := <-ch:
+		if out.panicked {
+			err := fmt.Errorf("handler panic: %s", out.panicMessage)
+			s.setPendingFailure(&RunFailure{
+				Code:    FailureAgentError,
+				Message: err.Error(),
+			})
+			return DecisionResponse{RequestID: req.RequestID}, DecisionAborted, err
+		}
+		if out.err != nil {
+			return out.resp, DecisionAborted, out.err
+		}
+		// Validate the handler produced a legal Result for its Kind.
+		if !containsDecision(want, out.resp.Result) {
+			err := errors.New("handler returned nil response without error")
+			s.setPendingFailure(&RunFailure{Code: FailureAgentError, Message: err.Error()})
+			return DecisionResponse{RequestID: req.RequestID}, DecisionAborted, err
+		}
+		out.resp.RequestID = req.RequestID
+		return out.resp, out.resp.Result, nil
+	case <-ctx.Done():
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return DecisionResponse{RequestID: req.RequestID, Result: DecisionTimedOut}, DecisionTimedOut, nil
+		}
+		return DecisionResponse{RequestID: req.RequestID}, DecisionAborted, ctx.Err()
+	}
+}
+
+func (s *dualSink) runChannelDispatch(ctx context.Context, req DecisionRequest) (DecisionResponse, DecisionResult, error) {
+	p := &pendingDecision{req: req, kind: req.Kind, done: make(chan DecisionResponse, 1)}
+	s.pendingMu.Lock()
+	s.pending[req.RequestID] = p
+	s.pendingMu.Unlock()
+	defer func() {
+		s.pendingMu.Lock()
+		delete(s.pending, req.RequestID)
+		s.pendingMu.Unlock()
+	}()
+
+	select {
+	case <-s.done:
+		return DecisionResponse{RequestID: req.RequestID}, DecisionAborted, context.Canceled
+	case s.decisionRequests <- req:
+	case <-ctx.Done():
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return DecisionResponse{RequestID: req.RequestID, Result: DecisionTimedOut}, DecisionTimedOut, nil
+		}
+		return DecisionResponse{RequestID: req.RequestID}, DecisionAborted, ctx.Err()
+	}
+
+	select {
+	case resp, ok := <-p.done:
+		if !ok {
+			return DecisionResponse{RequestID: req.RequestID}, DecisionAborted, context.Canceled
+		}
+		resp.RequestID = req.RequestID
+		if resp.Result == DecisionTimedOut {
+			return resp, DecisionTimedOut, nil
+		}
+		if resp.Result == DecisionAborted {
+			return resp, DecisionAborted, context.Canceled
+		}
+		return resp, resp.Result, nil
+	case <-ctx.Done():
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return DecisionResponse{RequestID: req.RequestID, Result: DecisionTimedOut}, DecisionTimedOut, nil
+		}
+		return DecisionResponse{RequestID: req.RequestID}, DecisionAborted, ctx.Err()
+	}
+}
+
+// resolveDecisionFromHandle is called by asyncRunHandle.ResolveDecision.
+func (s *dualSink) resolveDecisionFromHandle(requestID string, resp DecisionResponse) error {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return ErrRunEnded
+	}
+	s.mu.Unlock()
+
+	s.pendingMu.Lock()
+	p, ok := s.pending[requestID]
+	if ok {
+		delete(s.pending, requestID)
+	}
+	s.pendingMu.Unlock()
+
+	if !ok {
+		return ErrDecisionRequestExpired
+	}
+	if !resultCompatibleWithKind(p.kind, resp.Result) {
+		// Per §3.11.4: re-register the pending entry so the runner can keep
+		// waiting for a compatible resolve.
+		s.pendingMu.Lock()
+		s.pending[requestID] = p
+		s.pendingMu.Unlock()
+		return ErrDecisionResultKindMismatch
+	}
+	resp.RequestID = requestID
+	select {
+	case p.done <- resp:
+	default:
+	}
+	return nil
+}
+
+type retryOutcome struct {
+	retry bool
+	next  DecisionRequest
+	resp  DecisionResponse
+}
+
+// applyRejectWithRetry applies OnReject to a DecisionRejected outcome.
+func (s *dualSink) applyRejectWithRetry(ctx context.Context, req DecisionRequest, resp DecisionResponse, attempts int, kind HumanDecisionKind) (retryOutcome, error) {
+	return s.applyFailureAction(ctx, req, resp, attempts, kind, s.policyHD.OnReject, FailureReject, DecisionRejected, true)
+}
+
+// applyTimeoutWithRetry applies OnTimeout to a DecisionTimedOut outcome.
+func (s *dualSink) applyTimeoutWithRetry(ctx context.Context, req DecisionRequest, attempts int, kind HumanDecisionKind) (retryOutcome, error) {
+	resp := DecisionResponse{RequestID: req.RequestID, Result: DecisionTimedOut}
+	return s.applyFailureAction(ctx, req, resp, attempts, kind, s.policyHD.OnTimeout, FailureTimeout, DecisionTimedOut, false)
+}
+
+// applyFailureAction centralises OnReject / OnTimeout handling. retryAllowed
+// gates FailureRetry on adapter support; adapters that cannot retry the same
+// decision are degraded to FailureAbort silently.
+func (s *dualSink) applyFailureAction(ctx context.Context, req DecisionRequest, resp DecisionResponse, attempts int, kind HumanDecisionKind, action FailureAction, code FailureCode, decision DecisionResult, _ bool) (retryOutcome, error) {
+	switch action {
+	case FailureContinue:
+		return retryOutcome{retry: false, resp: resp}, nil
+	case FailureRetry:
+		// Bound by MaxRetries (attempts >= max → abort).
+		if attempts > s.policyHD.MaxRetries {
+			s.setPendingFailure(&RunFailure{
+				Code:    code,
+				Message: fmt.Sprintf("human decision %s exhausted retries (%d attempts)", decision, attempts),
+				HumanDecision: &HumanDecisionFailure{
+					Kind:     kind,
+					Source:   req.Source,
+					Decision: decision,
+					Request:  cloneDecisionRequest(&req),
+					Attempts: attempts,
+				},
+			})
+			return retryOutcome{resp: resp}, errAbortFromFailure(code)
+		}
+		next := s.renewForRetry(req)
+		return retryOutcome{retry: true, next: next}, nil
+	case FailureAbort, FailureActionUnset:
+		fallthrough
+	default:
+		s.setPendingFailure(&RunFailure{
+			Code:    code,
+			Message: decisionFailureMessage(decision, kind, req.Source),
+			HumanDecision: &HumanDecisionFailure{
+				Kind:     kind,
+				Source:   req.Source,
+				Decision: decision,
+				Request:  cloneDecisionRequest(&req),
+				Attempts: attempts,
+			},
+		})
+		return retryOutcome{resp: resp}, errAbortFromFailure(code)
+	}
+}
+
+// applyReject handles auto-resolved (AutoReject / AutoApprove) paths. Approved
+// paths return immediately; Rejected paths route through OnReject.
+func (s *dualSink) applyReject(ctx context.Context, req DecisionRequest, resp DecisionResponse, attempts int) (DecisionResponse, error) {
+	if resp.Result == DecisionApproved {
+		return resp, nil
+	}
+	out, err := s.applyRejectWithRetry(ctx, req, resp, attempts, req.Kind)
+	if err != nil {
+		return out.resp, err
+	}
+	// Auto-resolve is deterministic — retry is a no-op and will just
+	// re-synthesize the same result. The runner degrades to Abort by asking
+	// adapters for Retry support; here we detect and immediately collapse to
+	// the action's terminal outcome.
+	if out.retry {
+		s.setPendingFailure(&RunFailure{
+			Code:    FailureReject,
+			Message: "AutoReject cannot be retried; degrading to abort",
+			HumanDecision: &HumanDecisionFailure{
+				Kind:     req.Kind,
+				Source:   req.Source,
+				Decision: DecisionRejected,
+				Request:  cloneDecisionRequest(&req),
+				Attempts: attempts,
+			},
+		})
+		return out.resp, errAbortFromFailure(FailureReject)
+	}
+	return out.resp, nil
+}
+
+func (s *dualSink) renewForRetry(req DecisionRequest) DecisionRequest {
+	next := req
+	next.RequestID = s.nextDecisionID()
+	next.CreatedAt = time.Now().UTC()
+	next.Deadline = next.CreatedAt.Add(s.effectiveTimeout())
+	next.RetryAttempt = req.RetryAttempt + 1
+	return next
+}
+
+func (s *dualSink) normalizeRequest(req DecisionRequest) DecisionRequest {
+	if req.RequestID == "" {
+		req.RequestID = s.nextDecisionID()
+	}
+	if req.RunID == "" {
+		req.RunID = s.runID
+	}
+	if req.CreatedAt.IsZero() {
+		req.CreatedAt = time.Now().UTC()
+	}
+	if req.Deadline.IsZero() {
+		req.Deadline = req.CreatedAt.Add(s.effectiveTimeout())
+	}
+	return req
+}
+
+func (s *dualSink) effectiveTimeout() time.Duration {
+	d := s.policyHD.Timeout
+	if d < 0 {
+		// Negative means "never time out"; use a far-future deadline.
+		return 100 * 365 * 24 * time.Hour
+	}
+	if d == 0 {
+		return DefaultHumanDecisionTimeout
+	}
+	return d
+}
+
+func (s *dualSink) nextDecisionID() string {
+	n := s.decSeq.Add(1)
+	return fmt.Sprintf("%s-dec-%d", s.runID, n)
+}
+
+func (s *dualSink) withDeadline(ctx context.Context, deadline time.Time) (context.Context, context.CancelFunc) {
+	if deadline.IsZero() {
+		return context.WithCancel(ctx)
+	}
+	return context.WithDeadline(ctx, deadline)
+}
+
+// emitRequested pushes a StreamHITLRequested payload (if streaming enabled).
+func (s *dualSink) emitRequested(req DecisionRequest) {
+	if !s.streaming {
+		return
+	}
+	payload := StreamPayload{
+		Kind:     StreamHITLRequested,
+		RunID:    req.RunID,
+		ThreadID: s.threadID,
+		Name:     req.Source,
+		HITLRequested: &HITLRequestedPayload{
+			RequestID:    req.RequestID,
+			Kind:         req.Kind,
+			Source:       req.Source,
+			ToolCallID:   req.ToolCallID,
+			Prompt:       req.Prompt,
+			Payload:      cloneAnyMap(req.Payload),
+			Choices:      append([]DecisionChoice(nil), req.Choices...),
+			CreatedAt:    req.CreatedAt,
+			Deadline:     req.Deadline,
+			RetryAttempt: req.RetryAttempt,
+		},
+	}
+	_ = s.EmitStream(payload)
+}
+
+// emitResolved pushes a StreamHITLResolved payload (if streaming enabled).
+func (s *dualSink) emitResolved(req DecisionRequest, resp DecisionResponse, at time.Time) {
+	if !s.streaming {
+		return
+	}
+	latency := time.Duration(0)
+	if !req.CreatedAt.IsZero() {
+		latency = at.Sub(req.CreatedAt)
+	}
+	payload := StreamPayload{
+		Kind:     StreamHITLResolved,
+		RunID:    req.RunID,
+		ThreadID: s.threadID,
+		Name:     req.Source,
+		HITLResolved: &HITLResolvedPayload{
+			RequestID:    req.RequestID,
+			Kind:         req.Kind,
+			Source:       req.Source,
+			RetryAttempt: req.RetryAttempt,
+			Result:       resp.Result,
+			Choice:       resp.Choice,
+			Answer:       cloneAnyMap(resp.Answer),
+			ResolvedAt:   at,
+			Latency:      latency,
+		},
+	}
+	_ = s.EmitStream(payload)
+}
+
+// setPendingFailure stashes the failure so the adapter, on its next
+// DriverRunResult return, can surface it via runner propagation. Adapters
+// read this via (*dualSink).pendingFailure().
+var pendingFailuresByRunMu sync.Mutex
+var pendingFailuresByRun = map[*dualSink]*RunFailure{}
+
+func (s *dualSink) setPendingFailure(f *RunFailure) {
+	pendingFailuresByRunMu.Lock()
+	defer pendingFailuresByRunMu.Unlock()
+	pendingFailuresByRun[s] = f
+}
+
+// pendingFailure exposes the recorded failure for runner-side propagation.
+// Used by runner.executeWithSessionPlan to overlay the HITL failure on top
+// of the adapter's own DriverRunResult.Failure when present.
+func (s *dualSink) pendingFailure() *RunFailure {
+	pendingFailuresByRunMu.Lock()
+	defer pendingFailuresByRunMu.Unlock()
+	return pendingFailuresByRun[s]
+}
+
+// -----------------------------------------------------------------------------
+// asyncRunHandle.
+// -----------------------------------------------------------------------------
+
 type asyncRunResult struct {
 	result RunResult
 	err    error
 }
 
 type asyncRunHandle struct {
-	runID  string
-	events <-chan RunEvent
-	stream <-chan StreamPayload
-	cancel context.CancelFunc
-	done   chan asyncRunResult
+	runID          string
+	events         <-chan RunEvent
+	stream         <-chan StreamPayload
+	decisionReqsCh <-chan DecisionRequest
+	sink           *dualSink
+	cancel         context.CancelFunc
+	done           chan asyncRunResult
 }
 
-func (h *asyncRunHandle) Events() <-chan RunEvent {
-	return h.events
-}
+func (h *asyncRunHandle) Events() <-chan RunEvent { return h.events }
 
-func (h *asyncRunHandle) StreamEvents() <-chan StreamPayload {
-	return h.stream
-}
+func (h *asyncRunHandle) StreamEvents() <-chan StreamPayload { return h.stream }
 
-func (h *asyncRunHandle) RunID() string {
-	return h.runID
+func (h *asyncRunHandle) RunID() string { return h.runID }
+
+func (h *asyncRunHandle) DecisionRequests() <-chan DecisionRequest { return h.decisionReqsCh }
+
+func (h *asyncRunHandle) ResolveDecision(requestID string, resp DecisionResponse) error {
+	if h.sink == nil {
+		return ErrRunEnded
+	}
+	return h.sink.resolveDecisionFromHandle(requestID, resp)
 }
 
 func (h *asyncRunHandle) Wait(ctx context.Context) (RunResult, error) {
@@ -589,6 +1403,22 @@ func (h *asyncRunHandle) Wait(ctx context.Context) (RunResult, error) {
 	case result, ok := <-h.done:
 		if !ok {
 			return RunResult{}, context.Canceled
+		}
+		// If the runner accumulated a HITL failure that the adapter did not
+		// already overlay on its DriverRunResult.Failure, promote it here so
+		// hosts always see the structured attribution.
+		if h.sink != nil {
+			if f := h.sink.pendingFailure(); f != nil {
+				if result.result.Failure == nil {
+					result.result.Failure = cloneRunFailure(f)
+				} else if result.result.Failure.HumanDecision == nil && f.HumanDecision != nil {
+					result.result.Failure = cloneRunFailure(f)
+				}
+			}
+			// Drop the pending failure reference to avoid leaking across runs.
+			pendingFailuresByRunMu.Lock()
+			delete(pendingFailuresByRun, h.sink)
+			pendingFailuresByRunMu.Unlock()
 		}
 		return result.result, result.err
 	}
@@ -600,6 +1430,10 @@ func (h *asyncRunHandle) Cancel(_ context.Context) error {
 	}
 	return nil
 }
+
+// -----------------------------------------------------------------------------
+// helpers.
+// -----------------------------------------------------------------------------
 
 func extractDriverFingerprint(cfg any) string {
 	return stableHash(cfg)
@@ -638,5 +1472,112 @@ func newItemEvent(item TranscriptItem) RunEvent {
 		Type:      RunEventItem,
 		Timestamp: time.Now().UTC(),
 		Item:      &clone,
+	}
+}
+
+// (*DecisionRequest).toBase extracts the common fields for typed handler
+// requests.
+func (r DecisionRequest) toBase() decisionRequestBase {
+	return decisionRequestBase{
+		RequestID:    r.RequestID,
+		RunID:        r.RunID,
+		ThreadID:     r.ThreadID,
+		Source:       r.Source,
+		ToolCallID:   r.ToolCallID,
+		CreatedAt:    r.CreatedAt,
+		Deadline:     r.Deadline,
+		RetryAttempt: r.RetryAttempt,
+	}
+}
+
+func approvalToDecision(r ApprovalResult) DecisionResult {
+	switch r {
+	case ApprovalApproved:
+		return DecisionApproved
+	case ApprovalRejected:
+		return DecisionRejected
+	default:
+		// Treated as a protocol violation upstream (waitHandlerOutcome).
+		return ""
+	}
+}
+
+func questionToDecision(r QuestionResult) DecisionResult {
+	switch r {
+	case QuestionAnswered:
+		return DecisionAnswered
+	case QuestionRejected:
+		return DecisionRejected
+	default:
+		return ""
+	}
+}
+
+func containsDecision(list []DecisionResult, r DecisionResult) bool {
+	for _, v := range list {
+		if v == r {
+			return true
+		}
+	}
+	return false
+}
+
+func resultCompatibleWithKind(kind HumanDecisionKind, result DecisionResult) bool {
+	switch kind {
+	case HumanDecisionPermission, HumanDecisionPlanReview:
+		return result == DecisionApproved || result == DecisionRejected || result == DecisionTimedOut || result == DecisionAborted
+	case HumanDecisionQuestion:
+		return result == DecisionAnswered || result == DecisionRejected || result == DecisionTimedOut || result == DecisionAborted
+	}
+	return false
+}
+
+func stringFrom(m map[string]any, key string) string {
+	if m == nil {
+		return ""
+	}
+	if v, ok := m[key].(string); ok {
+		return v
+	}
+	return ""
+}
+
+func mapFrom(m map[string]any, key string) map[string]any {
+	if m == nil {
+		return nil
+	}
+	if v, ok := m[key].(map[string]any); ok {
+		return v
+	}
+	return nil
+}
+
+// errAbortFromFailure returns a stable sentinel used to indicate that an
+// adapter's RequestDecision should unwind due to an abort decision. Adapters
+// propagate it upward; the runner translates it into RunResult.Failure via
+// pendingFailure.
+var errDecisionAbort = errors.New("agentadaptor: human decision aborted")
+
+func errAbortFromFailure(FailureCode) error { return errDecisionAbort }
+
+func decisionCancelMessage(err error) string {
+	if err == nil {
+		return "decision aborted"
+	}
+	return err.Error()
+}
+
+func decisionFailureMessage(decision DecisionResult, kind HumanDecisionKind, source string) string {
+	src := source
+	if src == "" {
+		src = string(kind)
+	}
+	switch decision {
+	case DecisionRejected:
+		return fmt.Sprintf("human decision rejected: kind=%s source=%s", kind, src)
+	case DecisionTimedOut:
+		return fmt.Sprintf("human decision timed out: kind=%s source=%s", kind, src)
+	default:
+		return fmt.Sprintf("human decision failed (%s): kind=%s source=%s", decision, kind, src)
 	}
 }

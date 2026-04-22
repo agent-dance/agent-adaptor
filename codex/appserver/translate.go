@@ -488,7 +488,7 @@ func (t *Translator) handleError(params json.RawMessage) {
 		Code:    "codex.error",
 	}
 	if body.Error.AdditionalDetails != nil && *body.Error.AdditionalDetails != "" {
-		failure.Metadata = map[string]string{"details": *body.Error.AdditionalDetails}
+		failure.Metadata = map[string]any{"details": *body.Error.AdditionalDetails}
 	}
 	payload.Error = failure
 	payload.Raw = rawToMap(params, NotifyError)

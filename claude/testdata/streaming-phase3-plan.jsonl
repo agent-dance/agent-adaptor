@@ -1,0 +1,13 @@
+{"type":"system","subtype":"init","session_id":"sess-phase3-plan","model":"claude-fixture"}
+{"type":"stream_event","event":{"type":"message_start","message":{"id":"msg-phase3-plan"}}}
+{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}}
+{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Reviewing..."}}}
+{"type":"stream_event","event":{"type":"content_block_stop","index":0}}
+{"type":"stream_event","event":{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_plan_phase3","name":"ExitPlanMode","input":{}}}}
+{"type":"stream_event","event":{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"pla"}}}
+{"type":"stream_event","event":{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"n\": \"1. Audit"}}}
+{"type":"stream_event","event":{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":" AGENTS.md\\n2. Migrate checklist\"}"}}}
+{"type":"stream_event","event":{"type":"content_block_stop","index":1}}
+{"type":"stream_event","event":{"type":"message_delta","delta":{"stop_reason":"tool_use"}}}
+{"type":"stream_event","event":{"type":"message_stop"}}
+{"type":"control_request","request_id":"req-plan-phase3","request":{"subtype":"can_use_tool","tool_name":"ExitPlanMode","tool_use_id":"toolu_plan_phase3","input":{"plan":"1. Audit AGENTS.md\n2. Migrate checklist"}}}

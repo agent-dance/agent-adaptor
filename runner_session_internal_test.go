@@ -238,7 +238,7 @@ func (a *blockingTestAdapter) Run(ctx context.Context, req DriverRunRequest, _ E
 }
 
 func TestDualSinkEmitDoesNotBlockWhenBufferFull(t *testing.T) {
-	sink := newDualSink(false, 4, 4, BackpressureDropStream)
+	sink := newDualSink("run-test", false, 4, 4, BackpressureDropStream)
 	defer sink.close()
 
 	for i := 0; i < cap(sink.runEvents); i++ {
@@ -284,7 +284,7 @@ func TestDualSinkEmitDoesNotBlockWhenBufferFull(t *testing.T) {
 }
 
 func TestDualSinkEmitAfterCloseDoesNotPanic(t *testing.T) {
-	sink := newDualSink(false, 4, 4, BackpressureDropStream)
+	sink := newDualSink("run-test2", false, 4, 4, BackpressureDropStream)
 	sink.close()
 
 	panicCh := make(chan any, 1)

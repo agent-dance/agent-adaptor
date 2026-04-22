@@ -136,7 +136,7 @@ func TestSeqSinkIndependentCountersUnderConcurrency(t *testing.T) {
 
 func TestDualSinkDisabledStreamChannelClosedImmediately(t *testing.T) {
 	t.Parallel()
-	sink := newDualSink(false, 4, 4, BackpressureDropStream)
+	sink := newDualSink("run-test", false, 4, 4, BackpressureDropStream)
 	defer sink.close()
 
 	select {
@@ -156,7 +156,7 @@ func TestDualSinkDisabledStreamChannelClosedImmediately(t *testing.T) {
 
 func TestDualSinkDropStreamEmitsMarker(t *testing.T) {
 	t.Parallel()
-	sink := newDualSink(true, 4, 2, BackpressureDropStream)
+	sink := newDualSink("run-test", true, 4, 2, BackpressureDropStream)
 	defer sink.close()
 
 	// Fill the stream buffer. Buffer size is 2.
@@ -216,7 +216,7 @@ func TestDualSinkDropStreamEmitsMarker(t *testing.T) {
 
 func TestDualSinkBlockModeWaitsForConsumer(t *testing.T) {
 	t.Parallel()
-	sink := newDualSink(true, 4, 1, BackpressureBlock)
+	sink := newDualSink("run-test", true, 4, 1, BackpressureBlock)
 	defer sink.close()
 
 	// First emit fills the buffer.
@@ -254,7 +254,7 @@ func TestDualSinkBlockModeWaitsForConsumer(t *testing.T) {
 
 func TestDualSinkBlockModeCloseUnblocks(t *testing.T) {
 	t.Parallel()
-	sink := newDualSink(true, 4, 1, BackpressureBlock)
+	sink := newDualSink("run-test", true, 4, 1, BackpressureBlock)
 
 	_ = sink.EmitStream(StreamPayload{Kind: StreamTextContent})
 
@@ -276,7 +276,7 @@ func TestDualSinkBlockModeCloseUnblocks(t *testing.T) {
 
 func TestDualSinkEmitStreamAfterCloseDoesNotPanic(t *testing.T) {
 	t.Parallel()
-	sink := newDualSink(true, 4, 4, BackpressureDropStream)
+	sink := newDualSink("run-test", true, 4, 4, BackpressureDropStream)
 	sink.close()
 
 	// Should not panic, should not error.

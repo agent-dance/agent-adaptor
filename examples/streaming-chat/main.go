@@ -42,8 +42,12 @@ func main() {
 		agentadaptor.WithStreaming(),
 		agentadaptor.WithSessionKey("examples", "streaming-chat"),
 		agentadaptor.WithRunPolicy(agentadaptor.RunPolicy{
-			Approvals: agentadaptor.ApprovalOff,
 			Isolation: agentadaptor.IsolationReadOnly,
+			HumanDecision: agentadaptor.HumanDecisionPolicy{
+				Permission: agentadaptor.HumanDecisionAutoApprove,
+				PlanReview: agentadaptor.HumanDecisionAutoApprove,
+				Question:   agentadaptor.QuestionAutoReject,
+			},
 		}),
 	)
 	if err != nil {

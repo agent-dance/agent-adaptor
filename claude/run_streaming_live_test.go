@@ -33,7 +33,7 @@ func TestClaudeStreamingHaiku(t *testing.T) {
 			CommonConfig: agentadaptor.CommonConfig{CWD: cwd},
 			Model:        "claude-haiku-4",
 		},
-			agentadaptor.WithDefaultRunPolicy(agentadaptor.RunPolicyTrusted),
+			agentadaptor.WithDefaultRunPolicy(agentadaptor.PolicyAutonomous),
 		)),
 		agentadaptor.WithSessionStore(memory.NewSessionStore()),
 	)
@@ -111,7 +111,7 @@ func TestClaudeStreamingResumeThreadID(t *testing.T) {
 			CommonConfig: agentadaptor.CommonConfig{CWD: cwd},
 			Model:        "claude-haiku-4",
 		},
-			agentadaptor.WithDefaultRunPolicy(agentadaptor.RunPolicyTrusted),
+			agentadaptor.WithDefaultRunPolicy(agentadaptor.PolicyAutonomous),
 		)),
 		agentadaptor.WithSessionStore(memory.NewSessionStore()),
 	)
@@ -188,7 +188,7 @@ func TestClaudeStreamingToolUseRead(t *testing.T) {
 			CommonConfig: agentadaptor.CommonConfig{CWD: cwd},
 			Model:        "claude-haiku-4",
 		},
-			agentadaptor.WithDefaultRunPolicy(agentadaptor.RunPolicyTrusted),
+			agentadaptor.WithDefaultRunPolicy(agentadaptor.PolicyAutonomous),
 		)),
 		agentadaptor.WithSessionStore(memory.NewSessionStore()),
 	)

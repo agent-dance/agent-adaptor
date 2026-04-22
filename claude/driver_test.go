@@ -15,7 +15,7 @@ import (
 func TestBuildClaudeExecArgsIncludesPartialMessagesWhenStreaming(t *testing.T) {
 	cfg := agentadaptor.ClaudeConfig{Model: "claude-sonnet-4"}
 	req := agentadaptor.DriverRunRequest{Streaming: true}
-	args := buildClaudeExecArgs(cfg, req, "")
+	args := buildClaudeExecArgs(cfg, req, "", false)
 	found := false
 	for _, a := range args {
 		if a == "--include-partial-messages" {
@@ -27,10 +27,28 @@ func TestBuildClaudeExecArgsIncludesPartialMessagesWhenStreaming(t *testing.T) {
 		t.Fatalf("expected --include-partial-messages in %#v", args)
 	}
 
-	argsBatch := buildClaudeExecArgs(cfg, agentadaptor.DriverRunRequest{Streaming: false}, "")
+	argsBatch := buildClaudeExecArgs(cfg, agentadaptor.DriverRunRequest{Streaming: false}, "", false)
 	for _, a := range argsBatch {
 		if a == "--include-partial-messages" {
 			t.Fatalf("batch path must not add partial flag: %#v", argsBatch)
+		}
+	}
+}
+
+func TestBuildClaudeExecArgsInteractiveEnablesStdioPermissionPrompt(t *testing.T) {
+	cfg := agentadaptor.ClaudeConfig{Model: "claude-sonnet-4"}
+	args := buildClaudeExecArgs(cfg, agentadaptor.DriverRunRequest{}, "", true)
+	joined := " " + strings.Join(args, " ") + " "
+	for _, want := range []string{
+		" --input-format ",
+		" stream-json ",
+		" --include-partial-messages ",
+		" --replay-user-messages ",
+		" --permission-prompt-tool ",
+		" stdio ",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("interactive args missing %q in %#v", strings.TrimSpace(want), args)
 		}
 	}
 }

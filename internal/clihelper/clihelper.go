@@ -29,6 +29,154 @@ import (
 //   - Returning a non-nil error aborts the run with that error.
 type ChunkObserver func(stream string, chunk []byte, ts time.Time) error
 
+// ErrStdinClosed is returned from StdinController.Write when the subprocess
+// stdin has already been closed (either because the subprocess exited or
+// because an earlier write failed). Callers treat this as an abort signal
+// for any pending HITL flow.
+var ErrStdinClosed = errors.New("clihelper: stdin closed")
+
+// StdinController lets an adapter drive the subprocess stdin throughout the
+// run, instead of the legacy "write Prompt once, close stdin" lifecycle.
+//
+// Intended for HITL-interactive adapters (e.g. claude Phase 3 stream-json
+// bidirectional mode) that need to inject user tool_result frames after the
+// CLI emits a tool_use event.
+//
+// Concurrency:
+//   - Write is safe to call from the parser goroutine (clihelper serialises
+//     writes internally).
+//   - The caller does NOT need to call Close; the helper closes stdin when
+//     the run ends (subprocess exit or ctx cancel). Close is provided for
+//     adapters that want to signal "no more input" earlier than that.
+type StdinController interface {
+	Write(frame []byte) error
+	Close() error
+}
+
+// NewStdinController returns a new StdinController tied to a single
+// subprocess. It is populated by clihelper.Run when the caller sets
+// CommandRequest.Stdin to this value; callers create it up front so they
+// can start a goroutine that writes frames as soon as the subprocess
+// spawns.
+//
+//	ctrl := clihelper.NewStdinController()
+//	go func() {
+//	    ctrl.Write([]byte(`{"type":"user",...}` + "\n"))
+//	    // … react to parser events, write more frames …
+//	}()
+//	clihelper.Run(ctx, CommandRequest{Stdin: ctrl, …}, sink)
+func NewStdinController() StdinController {
+	return newStdinController()
+}
+
+// newStdinController is the internal constructor. It returns the concrete
+// pointer type so helper code (clihelper.Run) can call unexported methods
+// like signalReady / markDone / access .ch directly.
+func newStdinController() *stdinController {
+	return &stdinController{
+		ch:      make(chan []byte, 16),
+		ready:   make(chan struct{}),
+		closing: make(chan struct{}),
+		done:    make(chan struct{}),
+	}
+}
+
+// stdinController is the concrete StdinController. Exported only via its
+// interface — constructor returns the pointer type so callers can keep an
+// unexported reference across their own API boundary.
+type stdinController struct {
+	mu     sync.Mutex
+	closed bool
+
+	// ch is the queue from Write() to the helper's writer goroutine.
+	ch chan []byte
+	// ready is closed once the helper has the subprocess stdin pipe and is
+	// ready to drain ch. Write() blocks on this before enqueuing so early
+	// calls (before cmd.Start()) do not deadlock on a full channel.
+	ready chan struct{}
+	// closing is closed by Close to stop accepting new frames while still
+	// allowing the writer goroutine to drain whatever is already queued.
+	closing chan struct{}
+	// done is closed by the helper once the writer goroutine has finished
+	// draining (or the subprocess exited). After done is closed, every
+	// Write returns ErrStdinClosed.
+	done chan struct{}
+}
+
+// Write enqueues a frame. Helper writes it to the subprocess stdin in FIFO
+// order. Returns ErrStdinClosed if the helper has already drained and closed.
+// Frames SHOULD end with a newline so the CLI's NDJSON parser commits them
+// one at a time; callers are responsible for that convention.
+func (s *stdinController) Write(frame []byte) error {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return ErrStdinClosed
+	}
+	s.mu.Unlock()
+
+	// Wait for the helper to be ready (subprocess spawned). Done channel
+	// covers the case where the subprocess died before we got to write.
+	select {
+	case <-s.ready:
+	case <-s.closing:
+		return ErrStdinClosed
+	case <-s.done:
+		return ErrStdinClosed
+	}
+
+	select {
+	case s.ch <- frame:
+		return nil
+	case <-s.closing:
+		return ErrStdinClosed
+	case <-s.done:
+		return ErrStdinClosed
+	}
+}
+
+// Close signals "no more input". After Close returns, subsequent Writes
+// return ErrStdinClosed. The helper drains any queued frames before the
+// subprocess stdin is closed.
+func (s *stdinController) Close() error {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return nil
+	}
+	s.closed = true
+	s.mu.Unlock()
+	select {
+	case <-s.closing:
+	default:
+		close(s.closing)
+	}
+	return nil
+}
+
+// signalReady is called by the helper once the subprocess is spawned and
+// the stdin pipe is available.
+func (s *stdinController) signalReady() {
+	select {
+	case <-s.ready:
+	default:
+		close(s.ready)
+	}
+}
+
+// markDone is called by the helper once the subprocess exited or the writer
+// goroutine returned. After markDone, writers see ErrStdinClosed.
+func (s *stdinController) markDone() {
+	s.mu.Lock()
+	s.closed = true
+	s.mu.Unlock()
+	select {
+	case <-s.done:
+	default:
+		close(s.done)
+	}
+}
+
 type CommandRequest struct {
 	Command string
 	Args    []string
@@ -40,6 +188,21 @@ type CommandRequest struct {
 	// it reads from stdout/stderr. The helper itself never parses or
 	// interprets the chunk bytes.
 	Observe ChunkObserver
+
+	// Stdin controls how the subprocess stdin is fed.
+	//
+	//   - Stdin == nil (default): legacy behaviour. The helper writes
+	//     Prompt once and closes stdin immediately. Use this for one-shot
+	//     prompt pipelines.
+	//   - Stdin != nil: the helper enables long-lived stdin. Prompt (if
+	//     non-empty) is written as the first frame, then the helper
+	//     forwards every frame arriving via Stdin.Write until either
+	//     Stdin.Close is called, ctx is cancelled, or the subprocess
+	//     exits.
+	//
+	// Helper owns the lifecycle after Run returns: stdin is always closed
+	// on the way out.
+	Stdin StdinController
 }
 
 type CommandResult struct {
@@ -104,11 +267,80 @@ func Run(ctx context.Context, req CommandRequest, sink agentadaptor.EventSink) (
 	})
 
 	writeErr := make(chan error, 1)
-	go func() {
-		_, copyErr := stdinPipe.Write([]byte(req.Prompt))
-		closeErr := stdinPipe.Close()
-		writeErr <- errors.Join(copyErr, closeErr)
-	}()
+	if req.Stdin == nil {
+		// Legacy one-shot prompt path.
+		go func() {
+			_, copyErr := stdinPipe.Write([]byte(req.Prompt))
+			closeErr := stdinPipe.Close()
+			writeErr <- errors.Join(copyErr, closeErr)
+		}()
+	} else {
+		// Long-lived stdin path. The helper writes Prompt (if any) as the
+		// first frame, then forwards frames arriving on req.Stdin.Write
+		// until the controller is closed, the subprocess exits, or ctx
+		// fires.
+		ctrl, ok := req.Stdin.(*stdinController)
+		if !ok {
+			return CommandResult{}, errors.New("clihelper: Stdin must be constructed via NewStdinController()")
+		}
+		go func() {
+			defer func() {
+				_ = stdinPipe.Close()
+				ctrl.markDone()
+			}()
+
+			// Announce readiness before draining so early Write() calls can
+			// proceed instead of blocking on ch forever.
+			ctrl.signalReady()
+
+			// Write the initial Prompt if one was supplied. Adapters using
+			// stream-json bidirectional typically put the initial user
+			// message here (a single NDJSON line) so the CLI starts turn 1.
+			var firstErr error
+			if req.Prompt != "" {
+				if _, err := stdinPipe.Write([]byte(req.Prompt)); err != nil {
+					firstErr = err
+				}
+			}
+
+			// Drain frames until Close(), markDone(), or ctx fires. A non-nil
+			// write error ends the loop — the subprocess likely closed its
+			// stdin or exited.
+			draining := false
+			for firstErr == nil {
+				if draining {
+					select {
+					case frame := <-ctrl.ch:
+						if _, err := stdinPipe.Write(frame); err != nil {
+							firstErr = err
+						}
+					default:
+						writeErr <- nil
+						return
+					}
+					continue
+				}
+				select {
+				case frame := <-ctrl.ch:
+					if _, err := stdinPipe.Write(frame); err != nil {
+						firstErr = err
+					}
+				case <-ctrl.closing:
+					// Caller called Close(); stop accepting new frames but
+					// drain whatever was already queued first.
+					draining = true
+				case <-ctrl.done:
+					writeErr <- nil
+					return
+				case <-ctx.Done():
+					writeErr <- ctx.Err()
+					return
+				}
+			}
+
+			writeErr <- firstErr
+		}()
+	}
 
 	var (
 		stdoutBuf bytes.Buffer
@@ -186,8 +418,22 @@ func Run(ctx context.Context, req CommandRequest, sink agentadaptor.EventSink) (
 	// contract described in os/exec.Cmd.StdoutPipe.
 	wg.Wait()
 	waitErr := cmd.Wait()
+
+	// Long-lived stdin: force the writer goroutine to exit (otherwise it
+	// may block on an empty ctrl.ch indefinitely now that the subprocess
+	// is gone).
+	if ctrl, ok := req.Stdin.(*stdinController); ok {
+		ctrl.markDone()
+	}
+
 	if err := <-writeErr; err != nil {
-		recordErr(err)
+		// ctx.Canceled / ctx.DeadlineExceeded are expected when the caller
+		// aborts; surface them through the normal ctxErr path below but do
+		// not double-report via recordErr (that would mask the real cause
+		// the caller already observes via ctx).
+		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+			recordErr(err)
+		}
 	}
 
 	bufMu.Lock()

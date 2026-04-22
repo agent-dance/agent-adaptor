@@ -35,14 +35,17 @@ func bindWithDefaults(adapter DriverAdapter, cfg any, opts ...AgentOption) *stat
 		adapter: adapter,
 		config:  cfg,
 		defaults: AgentDefaults{
-			Agent:        defaults.Agent,
-			Workspace:    defaults.Workspace,
-			Runtime:      cloneWorkspaceRuntimeConfig(defaults.Runtime),
-			RunPolicy:    cloneRunPolicy(defaults.RunPolicy),
-			Skills:       cloneStrings(defaults.Skills),
-			Instructions: cloneInstructions(defaults.Instructions),
-			Metadata:     cloneStringMap(defaults.Metadata),
-			Streaming:    cloneBool(defaults.Streaming),
+			Agent:             defaults.Agent,
+			Workspace:         defaults.Workspace,
+			Runtime:           cloneWorkspaceRuntimeConfig(defaults.Runtime),
+			RunPolicy:         cloneRunPolicy(defaults.RunPolicy),
+			Skills:            cloneStrings(defaults.Skills),
+			Instructions:      cloneInstructions(defaults.Instructions),
+			Metadata:          cloneStringMap(defaults.Metadata),
+			Streaming:         cloneBool(defaults.Streaming),
+			PermissionHandler: defaults.PermissionHandler,
+			PlanReviewHandler: defaults.PlanReviewHandler,
+			QuestionHandler:   defaults.QuestionHandler,
 		},
 	}
 }
@@ -74,14 +77,17 @@ func (b *staticAgentBinding) Defaults() AgentDefaults {
 		return AgentDefaults{}
 	}
 	return AgentDefaults{
-		Agent:        b.defaults.Agent,
-		Workspace:    b.defaults.Workspace,
-		Runtime:      cloneWorkspaceRuntimeConfig(b.defaults.Runtime),
-		RunPolicy:    cloneRunPolicy(b.defaults.RunPolicy),
-		Skills:       cloneStrings(b.defaults.Skills),
-		Instructions: cloneInstructions(b.defaults.Instructions),
-		Metadata:     cloneStringMap(b.defaults.Metadata),
-		Streaming:    cloneBool(b.defaults.Streaming),
+		Agent:             b.defaults.Agent,
+		Workspace:         b.defaults.Workspace,
+		Runtime:           cloneWorkspaceRuntimeConfig(b.defaults.Runtime),
+		RunPolicy:         cloneRunPolicy(b.defaults.RunPolicy),
+		Skills:            cloneStrings(b.defaults.Skills),
+		Instructions:      cloneInstructions(b.defaults.Instructions),
+		Metadata:          cloneStringMap(b.defaults.Metadata),
+		Streaming:         cloneBool(b.defaults.Streaming),
+		PermissionHandler: b.defaults.PermissionHandler,
+		PlanReviewHandler: b.defaults.PlanReviewHandler,
+		QuestionHandler:   b.defaults.QuestionHandler,
 	}
 }
 

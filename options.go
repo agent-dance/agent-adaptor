@@ -101,6 +101,28 @@ func WithEventBuffer(runBuf, streamBuf int, policy EventBackpressure) Option {
 	}
 }
 
+// WithDefaultPermissionHandler binds a PermissionHandler at the agent level.
+// Per-call WithPermissionHandler still overrides this default.
+func WithDefaultPermissionHandler(h PermissionHandler) AgentOption {
+	return func(defaults *AgentDefaults) {
+		defaults.PermissionHandler = h
+	}
+}
+
+// WithDefaultPlanReviewHandler binds a PlanReviewHandler at the agent level.
+func WithDefaultPlanReviewHandler(h PlanReviewHandler) AgentOption {
+	return func(defaults *AgentDefaults) {
+		defaults.PlanReviewHandler = h
+	}
+}
+
+// WithDefaultQuestionHandler binds a QuestionHandler at the agent level.
+func WithDefaultQuestionHandler(h QuestionHandler) AgentOption {
+	return func(defaults *AgentDefaults) {
+		defaults.QuestionHandler = h
+	}
+}
+
 type AgentOption func(*AgentDefaults)
 
 func WithDefaultIdentity(identity AgentIdentity) AgentOption {
@@ -189,6 +211,35 @@ type runOptions struct {
 	// runIDPreset is an internal option set by Start() so the resolved run
 	// shares the same ID that the RunHandle exposes before Wait() returns.
 	runIDPreset string
+
+	// per-Kind typed HITL handlers (RunOption-level beat AgentOption-level).
+	permissionHandler PermissionHandler
+	planReviewHandler PlanReviewHandler
+	questionHandler   QuestionHandler
+}
+
+// WithPermissionHandler installs a PermissionHandler for this run. Overrides
+// any WithDefaultPermissionHandler set on the binding.
+func WithPermissionHandler(h PermissionHandler) RunOption {
+	return func(ro *runOptions) {
+		ro.permissionHandler = h
+	}
+}
+
+// WithPlanReviewHandler installs a PlanReviewHandler for this run. Overrides
+// any WithDefaultPlanReviewHandler set on the binding.
+func WithPlanReviewHandler(h PlanReviewHandler) RunOption {
+	return func(ro *runOptions) {
+		ro.planReviewHandler = h
+	}
+}
+
+// WithQuestionHandler installs a QuestionHandler for this run. Overrides
+// any WithDefaultQuestionHandler set on the binding.
+func WithQuestionHandler(h QuestionHandler) RunOption {
+	return func(ro *runOptions) {
+		ro.questionHandler = h
+	}
 }
 
 // withPresetRunID is an internal RunOption used by Start() to propagate the

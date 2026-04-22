@@ -258,6 +258,7 @@ Deeper protocol notes, drafts, and workstream docs live under [`docs/`](./docs).
 - [`docs/workstream-adapter-conformance-kit.md`](./docs/workstream-adapter-conformance-kit.md)
 - [`docs/workstream-session-codec.md`](./docs/workstream-session-codec.md)
 - [`docs/workstream-runtime-service-lifecycle-v2.md`](./docs/workstream-runtime-service-lifecycle-v2.md)
+- [`docs/workstream-mcp-profile-materialization.md`](./docs/workstream-mcp-profile-materialization.md)
 - [`docs/workstream-builtin-probes.md`](./docs/workstream-builtin-probes.md)
 - [`docs/workstream-transcript-contract.md`](./docs/workstream-transcript-contract.md)
 - [`docs/workstream-bridges-profiles-host.md`](./docs/workstream-bridges-profiles-host.md)
