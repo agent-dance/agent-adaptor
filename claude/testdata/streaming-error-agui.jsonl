@@ -1,0 +1,2 @@
+{"type":"system","subtype":"init","session_id":"sess-err-agui","model":"claude-fixture"}
+{"type":"error","message":"fixture stream error","code":"E_TEST"}

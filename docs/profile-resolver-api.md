@@ -96,7 +96,7 @@ type Profile struct {
 
 	Identity     agentadaptor.AgentIdentity
 	Workspace    agentadaptor.WorkspaceSpec
-	Permissions  *agentadaptor.PermissionProfile
+	RunPolicy    *agentadaptor.RunPolicy
 	Skills       []string
 	Instructions *agentadaptor.InstructionsBundleRef
 	Metadata     map[string]string

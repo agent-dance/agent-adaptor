@@ -87,8 +87,8 @@ All execution paths go through the same internal flow: first merge defaults and 
 
 Bind-time defaults establish a stable baseline for your application. Per-run options override only what changed for that specific run.
 
-- Bind-time defaults: `WithDefaultIdentity`, `WithDefaultWorkspace`, `WithDefaultSkills`, `WithDefaultPermissions`, `WithDefaultInstructions`, `WithDefaultRuntimeServices`, `WithDefaultMetadata`.
-- Per-run overrides: `WithSession`, `WithSessionKey`, `WithContinueSession`, `WithNewSession`, `WithForkSession`, `WithWorkspace`, `WithSkills`, `WithPermissions`, `WithInstructions`, `WithRuntimeServices`, `WithMetadata`, `WithAgentIdentity`.
+- Bind-time defaults: `WithDefaultIdentity`, `WithDefaultWorkspace`, `WithDefaultSkills`, `WithDefaultRunPolicy`, `WithDefaultInstructions`, `WithDefaultRuntimeServices`, `WithDefaultMetadata`.
+- Per-run overrides: `WithSession`, `WithSessionKey`, `WithContinueSession`, `WithNewSession`, `WithForkSession`, `WithWorkspace`, `WithSkills`, `WithRunPolicy`, `WithInstructions`, `WithRuntimeServices`, `WithMetadata`, `WithAgentIdentity`.
 
 ## Common Flows
 
@@ -252,6 +252,7 @@ If you are writing your own adapter, the reusable test suite lives in [`adaptert
 
 Deeper protocol notes, drafts, and workstream docs live under [`docs/`](./docs).
 
+- [`docs/run-policy.md`](./docs/run-policy.md)（`RunPolicy` 合同与宿主用法）
 - [`docs/profile-resolver-api.md`](./docs/profile-resolver-api.md)
 - [`docs/paperclip-alignment-roadmap.md`](./docs/paperclip-alignment-roadmap.md)
 - [`docs/workstream-adapter-conformance-kit.md`](./docs/workstream-adapter-conformance-kit.md)

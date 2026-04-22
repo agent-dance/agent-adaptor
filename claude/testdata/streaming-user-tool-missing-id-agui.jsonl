@@ -1,0 +1,3 @@
+{"type":"system","subtype":"init","session_id":"sess-tmid","model":"claude-fixture"}
+{"type":"user","message":{"content":[{"type":"tool_result","content":"output-only","is_error":false}]}}
+{"type":"result","subtype":"success","session_id":"sess-tmid","result":"done","usage":{"input_tokens":1,"output_tokens":1}}

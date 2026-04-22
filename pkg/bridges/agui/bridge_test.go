@@ -122,6 +122,92 @@ func TestTranslatorToolCallLifecycle(t *testing.T) {
 	assertVerified(t, events)
 }
 
+func TestTranslatorToolCallArgsSynthesizesMissingStart(t *testing.T) {
+	t.Parallel()
+	tr := agui.NewTranslator()
+	events := translateAll(tr, []agentadaptor.StreamPayload{
+		{Kind: agentadaptor.StreamRunStarted, ThreadID: "t", RunID: "r"},
+		{Kind: agentadaptor.StreamToolCallArgs, ToolCallID: "late", Name: "shell", Delta: "out\n"},
+		{Kind: agentadaptor.StreamToolCallStart, ToolCallID: "late", Name: "shell"},
+		{Kind: agentadaptor.StreamToolCallEnd, ToolCallID: "late"},
+		{Kind: agentadaptor.StreamToolCallResult, ToolCallID: "late", Result: map[string]any{"status": "ok"}},
+		{Kind: agentadaptor.StreamRunFinished, ThreadID: "t", RunID: "r"},
+	})
+	want := []aguievents.EventType{
+		aguievents.EventTypeRunStarted,
+		aguievents.EventTypeToolCallStart,
+		aguievents.EventTypeToolCallArgs,
+		aguievents.EventTypeToolCallEnd,
+		aguievents.EventTypeToolCallResult,
+		aguievents.EventTypeRunFinished,
+	}
+	assertTypesEqual(t, want, typesOf(events))
+	assertVerified(t, events)
+}
+
+func TestTranslatorToolCallResultNilResultUsesEmptyJSONObject(t *testing.T) {
+	t.Parallel()
+	tr := agui.NewTranslator()
+	events := translateAll(tr, []agentadaptor.StreamPayload{
+		{Kind: agentadaptor.StreamRunStarted, ThreadID: "t", RunID: "r"},
+		{Kind: agentadaptor.StreamToolCallStart, ToolCallID: "x", Name: "t"},
+		{Kind: agentadaptor.StreamToolCallEnd, ToolCallID: "x"},
+		{Kind: agentadaptor.StreamToolCallResult, ToolCallID: "x", Result: nil},
+		{Kind: agentadaptor.StreamRunFinished, ThreadID: "t", RunID: "r"},
+	})
+	var content string
+	for _, ev := range events {
+		if r, ok := ev.(*aguievents.ToolCallResultEvent); ok {
+			content = r.Content
+			break
+		}
+	}
+	if content != "{}" {
+		t.Fatalf("expected content %q, got %q", "{}", content)
+	}
+	assertVerified(t, events)
+}
+
+func TestTranslatorToolCallResultUsesClaudeTextField(t *testing.T) {
+	t.Parallel()
+	tr := agui.NewTranslator()
+	events := translateAll(tr, []agentadaptor.StreamPayload{
+		{Kind: agentadaptor.StreamRunStarted, ThreadID: "t", RunID: "r"},
+		{Kind: agentadaptor.StreamToolCallStart, ToolCallID: "tc1", Name: "Bash"},
+		{Kind: agentadaptor.StreamToolCallEnd, ToolCallID: "tc1"},
+		{Kind: agentadaptor.StreamToolCallResult, ToolCallID: "tc1", Result: map[string]any{
+			"text":        "/Users/blurooo/project/agent-adaptor",
+			"is_error":    false,
+			"tool_use_id": "tc1",
+		}},
+		{Kind: agentadaptor.StreamRunFinished, ThreadID: "t", RunID: "r"},
+	})
+
+	want := []aguievents.EventType{
+		aguievents.EventTypeRunStarted,
+		aguievents.EventTypeToolCallStart,
+		aguievents.EventTypeToolCallEnd,
+		aguievents.EventTypeToolCallResult,
+		aguievents.EventTypeRunFinished,
+	}
+	assertTypesEqual(t, want, typesOf(events))
+
+	var result *aguievents.ToolCallResultEvent
+	for _, ev := range events {
+		if typed, ok := ev.(*aguievents.ToolCallResultEvent); ok {
+			result = typed
+			break
+		}
+	}
+	if result == nil {
+		t.Fatal("missing ToolCallResultEvent")
+	}
+	if result.Content != "/Users/blurooo/project/agent-adaptor" {
+		t.Fatalf("tool result content: got %q", result.Content)
+	}
+	assertVerified(t, events)
+}
+
 func TestTranslatorUnknownKindBecomesCustomEventAfterRunStart(t *testing.T) {
 	t.Parallel()
 	tr := agui.NewTranslator()
@@ -193,6 +279,7 @@ func TestTranslatorCodexOrderingRunStartedIsFirst(t *testing.T) {
 		aguievents.EventTypeRunFinished,
 	}
 	assertTypesEqual(t, want, types)
+	assertVerified(t, events)
 }
 
 func TestTranslatorReasoningMessageStartRoleIsReasoning(t *testing.T) {
@@ -223,6 +310,7 @@ func TestTranslatorReasoningMessageStartRoleIsReasoning(t *testing.T) {
 	if startEvent.Role != "reasoning" {
 		t.Fatalf("REASONING_MESSAGE_START.role: want %q got %q", "reasoning", startEvent.Role)
 	}
+	assertVerified(t, events)
 }
 
 func TestTranslatorReasoningContentSynthesizesStartWithCorrectRole(t *testing.T) {
@@ -250,6 +338,7 @@ func TestTranslatorReasoningContentSynthesizesStartWithCorrectRole(t *testing.T)
 	if startEvent.Role != "reasoning" {
 		t.Fatalf("synthesized ReasoningMessageStart.role: want %q got %q", "reasoning", startEvent.Role)
 	}
+	assertVerified(t, events)
 }
 
 func TestTranslatorSynthesizesRunStartedBeforeFinishWhenMissing(t *testing.T) {
@@ -280,6 +369,7 @@ func TestTranslatorSynthesizesRunStartedBeforeFinishWhenMissing(t *testing.T) {
 	if !sawContent {
 		t.Fatalf("buffered TextMessageContent missing in synthesized stream: %v", types)
 	}
+	assertVerified(t, events)
 }
 
 func TestWrapClosesChannelAndSynthesizesRunFinished(t *testing.T) {
@@ -319,6 +409,65 @@ func TestWrapClosesChannelAndSynthesizesRunFinished(t *testing.T) {
 		aguievents.EventTypeRunFinished,
 	}
 	assertTypesEqual(t, want, typesOf(got))
+	assertVerified(t, got)
+}
+
+func TestTranslatorStepAndHitlAndDroppedCustomEvents(t *testing.T) {
+	t.Parallel()
+	tr := agui.NewTranslator()
+	events := translateAll(tr, []agentadaptor.StreamPayload{
+		{Kind: agentadaptor.StreamRunStarted, ThreadID: "t", RunID: "r"},
+		{Kind: agentadaptor.StreamStepStarted, Name: "planning"},
+		{Kind: agentadaptor.StreamStepFinished, Name: "planning"},
+		{Kind: agentadaptor.StreamHITLRequested, Name: "approval", RunID: "r", ThreadID: "t", Raw: map[string]any{"kind": "read_file"}},
+		{Kind: agentadaptor.StreamDropped, Raw: map[string]any{"dropped_count": 2.0}, RunID: "r", ThreadID: "t"},
+		{Kind: agentadaptor.StreamTextContent, MessageID: "m1", Delta: "x"},
+		{Kind: agentadaptor.StreamRunFinished, ThreadID: "t", RunID: "r"},
+	})
+	seenHITL, seenDropped := false, false
+	for _, ev := range events {
+		if ev.Type() == aguievents.EventTypeCustom {
+			if ce, ok := ev.(*aguievents.CustomEvent); ok {
+				if ce.Name == string(agentadaptor.StreamHITLRequested) {
+					seenHITL = true
+				}
+				if ce.Name == string(agentadaptor.StreamDropped) {
+					seenDropped = true
+				}
+			}
+		}
+	}
+	if !seenHITL {
+		t.Fatal("expected CUSTOM for StreamHITLRequested")
+	}
+	if !seenDropped {
+		t.Fatal("expected CUSTOM for StreamDropped")
+	}
+	assertVerified(t, events)
+}
+
+// TestTranslatorUnknownKindBufferedThenFinished verifies a full run that
+// flushes a pre-start CUSTOM, then text, and finishes — must pass
+// assertVerified.
+func TestTranslatorUnknownKindBufferedThenFinished(t *testing.T) {
+	t.Parallel()
+	tr := agui.NewTranslator()
+	events := translateAll(tr, []agentadaptor.StreamPayload{
+		{Kind: "", Name: "thread/prelude", Raw: map[string]any{"n": 1}, ThreadID: "t", RunID: "r"},
+		{Kind: agentadaptor.StreamRunStarted, ThreadID: "t", RunID: "r"},
+		{Kind: agentadaptor.StreamTextContent, MessageID: "m1", Delta: "hi", ThreadID: "t", RunID: "r"},
+		{Kind: agentadaptor.StreamRunFinished, ThreadID: "t", RunID: "r"},
+	})
+	want := []aguievents.EventType{
+		aguievents.EventTypeRunStarted,
+		aguievents.EventTypeCustom, // thread/prelude
+		aguievents.EventTypeTextMessageStart,
+		aguievents.EventTypeTextMessageContent,
+		aguievents.EventTypeTextMessageEnd,
+		aguievents.EventTypeRunFinished,
+	}
+	assertTypesEqual(t, want, typesOf(events))
+	assertVerified(t, events)
 }
 
 // ---------------------------------------------------------------------------
@@ -334,10 +483,10 @@ type fakeHandle struct {
 	runErr    error
 }
 
-func (f *fakeHandle) Events() <-chan agentadaptor.RunEvent             { return f.events }
-func (f *fakeHandle) StreamEvents() <-chan agentadaptor.StreamPayload  { return f.stream }
-func (f *fakeHandle) RunID() string                                    { return f.runID }
-func (f *fakeHandle) Cancel(context.Context) error                     { return nil }
+func (f *fakeHandle) Events() <-chan agentadaptor.RunEvent            { return f.events }
+func (f *fakeHandle) StreamEvents() <-chan agentadaptor.StreamPayload { return f.stream }
+func (f *fakeHandle) RunID() string                                   { return f.runID }
+func (f *fakeHandle) Cancel(context.Context) error                    { return nil }
 func (f *fakeHandle) Wait(ctx context.Context) (agentadaptor.RunResult, error) {
 	select {
 	case <-ctx.Done():

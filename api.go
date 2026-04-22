@@ -157,7 +157,7 @@ type AgentDefaults struct {
 	Agent        AgentIdentity
 	Workspace    WorkspaceSpec
 	Runtime      *WorkspaceRuntimeConfig
-	Permissions  *PermissionProfile
+	RunPolicy    *RunPolicy
 	Skills       []string
 	Instructions *InstructionsBundleRef
 	Metadata     map[string]string
@@ -185,7 +185,7 @@ type DriverDescriptor struct {
 	Skills       SkillCapability
 	Instructions InstructionsCapability
 	Workspace    WorkspaceCapability
-	Permissions  InvocationPermissionCapability
+	RunPolicyCaps RunPolicyCapabilities
 	Runtime      RuntimeCapability
 }
 
@@ -204,13 +204,6 @@ type InstructionsCapability struct {
 
 type WorkspaceCapability struct {
 	Supported bool
-}
-
-type InvocationPermissionCapability struct {
-	Approvals bool
-	Sandbox   bool
-	Search    bool
-	Browser   bool
 }
 
 type RuntimeCapability struct {

@@ -23,10 +23,10 @@ func main() {
 			Name:     "binding-default",
 		}),
 		agentadaptor.WithDefaultWorkspace(agentadaptor.SharedWorkspace{}),
-		agentadaptor.WithDefaultPermissions(agentadaptor.PermissionProfile{
-			ApprovalMode: agentadaptor.ApprovalAsk,
-			SandboxMode:  agentadaptor.SandboxReadOnly,
-			SearchMode:   agentadaptor.FeatureDeny,
+		agentadaptor.WithDefaultRunPolicy(agentadaptor.RunPolicy{
+			Approvals: agentadaptor.ApprovalAsk,
+			Isolation: agentadaptor.IsolationReadOnly,
+			WebSearch: agentadaptor.FeatureDeny,
 		}),
 		agentadaptor.WithDefaultInstructions(&agentadaptor.InstructionsBundleRef{
 			ID:   "instructions-default",
@@ -54,10 +54,10 @@ func main() {
 			BaseRef:        "main",
 			BranchTemplate: "example/{task}",
 		}),
-		agentadaptor.WithPermissions(agentadaptor.PermissionProfile{
-			ApprovalMode: agentadaptor.ApprovalNever,
-			SandboxMode:  agentadaptor.SandboxWorkspaceWrite,
-			SearchMode:   agentadaptor.FeatureAllow,
+		agentadaptor.WithRunPolicy(agentadaptor.RunPolicy{
+			Approvals: agentadaptor.ApprovalOff,
+			Isolation: agentadaptor.IsolationWorkspaceWrite,
+			WebSearch: agentadaptor.FeatureAllow,
 		}),
 		agentadaptor.WithInstructions(&agentadaptor.InstructionsBundleRef{
 			ID:   "instructions-override",
@@ -76,9 +76,9 @@ func main() {
 	exampleutil.Check(request.Workspace.StrategyType == agentadaptor.WorkspaceStrategyGitWorktree, "expected git_worktree strategy, got %q", request.Workspace.StrategyType)
 	exampleutil.Check(request.Workspace.Metadata["base_ref"] == "main", "expected base_ref metadata to be main, got %#v", request.Workspace.Metadata)
 	exampleutil.Check(request.Workspace.Metadata["workspace_manager"] == "mockkit", "expected workspace manager metadata to be mockkit, got %#v", request.Workspace.Metadata)
-	exampleutil.Check(request.Permissions.ApprovalMode == agentadaptor.ApprovalNever, "expected approval override to win, got %q", request.Permissions.ApprovalMode)
-	exampleutil.Check(request.Permissions.SandboxMode == agentadaptor.SandboxWorkspaceWrite, "expected sandbox override to win, got %q", request.Permissions.SandboxMode)
-	exampleutil.Check(request.Permissions.SearchMode == agentadaptor.FeatureAllow, "expected search override to win, got %q", request.Permissions.SearchMode)
+	exampleutil.Check(request.Policy.Approvals == agentadaptor.ApprovalOff, "expected approval override to win, got %q", request.Policy.Approvals)
+	exampleutil.Check(request.Policy.Isolation == agentadaptor.IsolationWorkspaceWrite, "expected isolation override to win, got %q", request.Policy.Isolation)
+	exampleutil.Check(request.Policy.WebSearch == agentadaptor.FeatureAllow, "expected websearch override to win, got %q", request.Policy.WebSearch)
 	exampleutil.Check(request.Instructions != nil && request.Instructions.Path == "/overrides/instructions.md", "expected instructions override to win, got %#v", request.Instructions)
 	exampleutil.Check(request.Metadata["layer"] == "binding", "expected binding metadata to persist, got %#v", request.Metadata)
 	exampleutil.Check(request.Metadata["winner"] == "override", "expected per-call metadata to override binding metadata, got %#v", request.Metadata)

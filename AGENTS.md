@@ -4,7 +4,7 @@
 
 ## 1. 项目定位
 
-`agent-adaptor` 是一个纯粹的 Go SDK。
+`agent-adaptor` 是一个 Go SDK。
 
 它负责：
 
@@ -50,6 +50,30 @@
 
 - 不注入 `SessionStore` 时：默认无状态
 - 注入 `SessionStore` 时：支持 `SessionKey` / `SessionID` 复用与新建
+
+### 2.4 可靠性与可持续维护优先
+
+**"可靠性"和"可持续维护"是本项目最高优的技术目标，高于"零依赖"这类次要洁癖。**
+
+判断是否引入一个外部依赖时，看三件事：
+
+1. **可靠性**：它是否让关键职责（协议解析、IPC、schema、session）更可靠，减少手写 bug、减少协议漂移风险
+2. **可持续维护**：它是否由官方/主流社区维护，版本升级、问题追踪、文档、CVE 响应都更可持续
+3. **可局部化**：它是否能被隔离在明确的职责边界内（adapter 内部、bridges 子包、构建时工具），不会污染 core SDK 的公共 API / 公共语义
+
+三条都占优或显著占优 → **优先采用**，哪怕 `go.sum` 会多出几行。
+
+三条中与手写方案接近 → **倾向手写**，减少依赖噪音与审计面。
+
+硬约束：
+
+- "不引入依赖"从不是独立目标；不得以"零依赖洁癖"为唯一理由拒绝一个在可靠性/可维护性上明显占优的库
+- 依赖必须**局部化**：
+  - provider SDK / CLI 协议客户端 → 仅 adapter 包 import
+  - AG-UI / SSE 等传输协议 → 仅 `pkg/bridges/*` import
+  - 构建时工具（schema 生成器等）→ `//go:generate`，不入 runtime `go.sum`
+- 每次新增顶层 `require` 都要在相关 workstream 文档的"依赖选型"段里写清楚上述三条的评估
+- 已有的合理引入案例：`github.com/sourcegraph/jsonrpc2`（codex app-server，JSON-RPC 2.0 over stdio，FIFO 同步派发）、`github.com/ag-ui-protocol/ag-ui/sdks/community/go`（bridges，AG-UI 协议官方 Go SDK）、`github.com/atombender/go-jsonschema`（构建时，codex schema 生成）
 
 ## 3. 当前公共 API 心智
 
@@ -205,81 +229,7 @@ sdk := agentadaptor.New(
 
 ## 5. 调用方推荐使用方式
 
-### 5.1 单 Agent
-
-```go
-sdk := agentadaptor.New(
-	agentadaptor.WithDefaultAgent(codex.New(agentadaptor.CodexConfig{
-		Model: "gpt-5.4",
-	})),
-)
-
-result, err := sdk.Run(ctx, "fix the failing tests")
-```
-
-### 5.2 多 Agent
-
-```go
-sdk := agentadaptor.New(
-	agentadaptor.WithDefaultAgent(codex.New(agentadaptor.CodexConfig{
-		Model: "gpt-5.4",
-	})),
-	agentadaptor.WithAgent("review", claude.New(agentadaptor.ClaudeConfig{
-		Model: "claude-sonnet-4",
-	})),
-)
-
-review, err := sdk.Agent("review")
-result, err := review.Run(ctx, "review the patch")
-```
-
-### 5.3 session 复用
-
-```go
-sdk := agentadaptor.New(
-	agentadaptor.WithDefaultAgent(codex.New(agentadaptor.CodexConfig{
-		Model: "gpt-5.4",
-	})),
-	agentadaptor.WithSessionStore(store),
-)
-
-result, err := sdk.Run(
-	ctx,
-	"continue issue-123",
-	agentadaptor.WithSessionKey("company-1", "issue-123"),
-)
-```
-
-### 5.4 绑定默认值 + 调用覆盖
-
-绑定时可以设置：
-
-- `WithDefaultIdentity`
-- `WithDefaultWorkspace`
-- `WithDefaultSkills`
-- `WithDefaultPermissions`
-- `WithDefaultInstructions`
-- `WithDefaultMetadata`
-
-调用时可以覆盖：
-
-- `WithSession`
-- `WithSessionKey`
-- `WithContinueSession`
-- `WithNewSession`
-- `WithForkSession`
-- `WithWorkspace`
-- `WithSkills`
-- `WithPermissions`
-- `WithInstructions`
-- `WithMetadata`
-- `WithAgentIdentity`
-
-覆盖顺序固定：
-
-- per-call `RunOption`
-- `AgentBinding` defaults
-- config/internal defaults
+完整使用示例（单 Agent、多 Agent、session 复用、绑定默认值与调用覆盖）见 [`docs/usage-guide.md`](./docs/usage-guide.md)。
 
 ## 6. Session 语义硬约束
 
@@ -353,17 +303,13 @@ result, err := sdk.Run(
 - 不允许把宿主服务能力直接塞回 core SDK
 - 文档必须和代码的当前公共语义保持一致，不能保留已删除 API 的示例
 - 不允许手工编辑 `codex/appserver/generated.go` 或 `codex/appserver/schema/` 下的 JSON；协议同步必须走 `codex app-server generate-json-schema` + `go generate`
+- 不允许以"零依赖"为唯一理由拒绝一个在可靠性或可持续维护上明显占优的外部库；依赖引入按 §2.4 的三条评估，评估结论必须落到 workstream 文档
 
 ## 10. Streaming 是第二条可选通道
 
-`RunHandle` 在原有 `Events()` 之外提供了 `StreamEvents() <-chan StreamPayload`。这条通道的职责边界是硬的：
+`RunHandle` 在原有 `Events()` 之外提供了 `StreamEvents() <-chan StreamPayload`。核心约束：
 
 - `Run / Start` 语义不变；未开 `WithStreaming()` 时 SDK 行为与历史完全一致
 - streaming 不是第二条 Run 入口；所有执行仍然走同一份 `Runner.Run/Start` + `adapter.Run(ctx, req, sink)`
-- 结构化业务事件只通过 `sink.EmitStream(StreamPayload)` 发射；不得混进 `RunEvent.Data`
-- `clihelper` 不感知 streaming；streaming-aware adapter 自行选择协议通路（codex 切 `codex app-server`，claude / cursor 追加各自 CLI flag）
-- `pkg/bridges/agui` 和 `pkg/bridges/sse` 是主 module 下的可选子包；它们只读 `StreamEvents()`，不得调用 adapter 内部、不得重新进入 Run 路径、不得污染 core
-- `StreamPayload.Sequence / Timestamp` 由 SDK 在 `EmitStream` 时统一赋值，adapter 不自己写
-- HITL 在 v1 是 audit-only：adapter 自动 deny 并通过 `StreamHITLRequested` 透传，不阻塞
 
-与 streaming 相关的完整规划：`docs/workstream-streaming-chat.md`；adapter 实施规则：`docs/streaming-adapter-contract.md`；宿主集成指南：`docs/streaming.md`。
+完整实施规则、adapter 合同、宿主集成指南见：[`docs/workstream-streaming-chat.md`](./docs/workstream-streaming-chat.md) / [`docs/streaming-adapter-contract.md`](./docs/streaming-adapter-contract.md) / [`docs/streaming.md`](./docs/streaming.md)。

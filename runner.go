@@ -153,13 +153,7 @@ func (r *runnerImpl) resolveInvocation(ctx context.Context, prompt string, opts 
 		skillRefs = cloneStrings(resolvedOpts.skills)
 	}
 
-	permissions := PermissionProfile{}
-	if defaults.Permissions != nil {
-		permissions = *defaults.Permissions
-	}
-	if resolvedOpts.permissions != nil {
-		permissions = *resolvedOpts.permissions
-	}
+	policy := mergeRunPolicy(defaults.RunPolicy, resolvedOpts.runPolicy)
 
 	instructions := cloneInstructions(defaults.Instructions)
 	if resolvedOpts.instructions != nil {
@@ -239,7 +233,7 @@ func (r *runnerImpl) resolveInvocation(ctx context.Context, prompt string, opts 
 		workspace:    workspace,
 		runtime:      runtimePayload,
 		skills:       skillPayload,
-		permissions:  permissions,
+		policy:       policy,
 		instructions: instructions,
 		session:      sessionReq,
 		metadata:     cloneStringMap(metadata),
@@ -280,7 +274,7 @@ func (r *runnerImpl) executeWithSessionPlan(
 		Workspace:    invocation.workspace,
 		Runtime:      cloneRuntimePayload(invocation.runtime),
 		Skills:       invocation.skills,
-		Permissions:  invocation.permissions,
+		Policy:       invocation.policy,
 		Instructions: invocation.instructions,
 		Metadata:     cloneStringMap(invocation.metadata),
 		Streaming:    invocation.streaming,

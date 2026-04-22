@@ -38,7 +38,7 @@ func bindWithDefaults(adapter DriverAdapter, cfg any, opts ...AgentOption) *stat
 			Agent:        defaults.Agent,
 			Workspace:    defaults.Workspace,
 			Runtime:      cloneWorkspaceRuntimeConfig(defaults.Runtime),
-			Permissions:  clonePermissionProfile(defaults.Permissions),
+			RunPolicy:    cloneRunPolicy(defaults.RunPolicy),
 			Skills:       cloneStrings(defaults.Skills),
 			Instructions: cloneInstructions(defaults.Instructions),
 			Metadata:     cloneStringMap(defaults.Metadata),
@@ -77,7 +77,7 @@ func (b *staticAgentBinding) Defaults() AgentDefaults {
 		Agent:        b.defaults.Agent,
 		Workspace:    b.defaults.Workspace,
 		Runtime:      cloneWorkspaceRuntimeConfig(b.defaults.Runtime),
-		Permissions:  clonePermissionProfile(b.defaults.Permissions),
+		RunPolicy:    cloneRunPolicy(b.defaults.RunPolicy),
 		Skills:       cloneStrings(b.defaults.Skills),
 		Instructions: cloneInstructions(b.defaults.Instructions),
 		Metadata:     cloneStringMap(b.defaults.Metadata),
@@ -99,14 +99,6 @@ func cloneInstructions(ref *InstructionsBundleRef) *InstructionsBundleRef {
 	}
 	copyRef := *ref
 	return &copyRef
-}
-
-func clonePermissionProfile(profile *PermissionProfile) *PermissionProfile {
-	if profile == nil {
-		return nil
-	}
-	copyProfile := *profile
-	return &copyProfile
 }
 
 func validateAgentBinding(binding AgentBinding) error {

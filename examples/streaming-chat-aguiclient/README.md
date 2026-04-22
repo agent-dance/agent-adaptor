@@ -20,9 +20,9 @@ Browser (React + @ag-ui/client HttpAgent)
     ▼
 Go backend (agent-adaptor + pkg/bridges/sse)
     │
-    │  codex app-server --listen stdio://
+    │  codex app-server (默认) 或 Claude Code CLI（见下文 AGUI_AGENT）
     ▼
-codex subprocess (token-level stream)
+本地 agent 子进程（token-level stream）
 ```
 
 `HttpAgent` 是 AG-UI 的**官方浏览器客户端**。它负责：
@@ -37,9 +37,25 @@ codex subprocess (token-level stream)
 
 - Go 1.23+
 - Node.js 20+ 与 npm / pnpm
-- 本机 `codex` CLI 已登录（`codex login`）
+- 任选其一：**Codex**（`codex login`）或 **Claude Code**（`claude auth login` / 官方登录方式）
 
 ## 跑起来
+
+### 一键脚本（仓库根目录相对路径）
+
+```bash
+# 仅 Go backend（默认 Codex）
+./examples/streaming-chat-aguiclient/start.sh
+
+# 使用 Claude Code 作为后端
+./examples/streaming-chat-aguiclient/start.sh claude
+
+# 同一终端：backend + Vite（后台起 Go，前台 npm dev）
+./examples/streaming-chat-aguiclient/start-all.sh
+./examples/streaming-chat-aguiclient/start-all.sh claude
+```
+
+### 手动（两终端）
 
 ```bash
 # Terminal 1 — Go backend，监听 :8090
@@ -50,6 +66,8 @@ cd examples/streaming-chat-aguiclient/web
 npm install
 npm run dev
 ```
+
+后端驱动由环境变量 **`AGUI_AGENT`** 控制：`codex`（默认）或 `claude`。脚本首参 `codex` / `claude` 会写入该变量。
 
 浏览器打开 http://localhost:5173 ，发消息即可看到：
 
@@ -99,8 +117,11 @@ await agent.runAgent();
 ## 环境变量
 
 Backend：
+
+- `AGUI_AGENT`：`codex`（默认）或 `claude`
 - `ADDR`：监听地址，默认 `:8090`
-- `CODEX_MODEL`：codex 模型，默认 `gpt-5.4`
+- `CODEX_MODEL`：选用 codex 时，默认 `gpt-5.4`
+- `CLAUDE_MODEL`：选用 claude 时，默认 `claude-sonnet-4`
 - `CORS_ORIGIN`：允许的前端 origin，默认 `http://localhost:5173`
 
 前端：

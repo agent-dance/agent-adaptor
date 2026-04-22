@@ -25,8 +25,8 @@
 //	Next.js (CopilotRuntime with @ag-ui/client HttpAgent)
 //	    ↓ POST http://localhost:8080/agent  (AG-UI RunAgentInput)
 //	Go backend (pkg/bridges/sse, Protocol=AGUI)
-//	    ↓ exec codex app-server
-//	codex subprocess (token-level stream)
+//	    ↓ Codex app-server or Claude Code CLI (env AGUI_AGENT)
+//	subprocess (token-level stream)
 //
 // The backend mounts a single /agent endpoint using the AG-UI protocol.
 // sse.Handler owns the RunAgentInput decoding, prompt extraction,
@@ -40,8 +40,7 @@ import (
 	"os"
 
 	agentadaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/codex"
-	"github.com/agent-dance/agent-adaptor/memory"
+	"github.com/agent-dance/agent-adaptor/examples/internal/exampleutil"
 	"github.com/agent-dance/agent-adaptor/pkg/bridges/sse"
 )
 
@@ -52,23 +51,14 @@ func main() {
 	}
 	cwd, _ := os.Getwd()
 
-	sdk := agentadaptor.New(
-		agentadaptor.WithDefaultAgent(codex.New(agentadaptor.CodexConfig{
-			CommonConfig: agentadaptor.CommonConfig{CWD: cwd},
-			Model:        envOr("CODEX_MODEL", "gpt-5.4"),
-		})),
-		agentadaptor.WithSessionStore(memory.NewSessionStore()),
-	)
+	sdk, driver := exampleutil.NewAGUIStreamingSDK(cwd)
 
 	mux := http.NewServeMux()
 	mux.Handle("/agent", sse.Handler(sdk, sse.Options{
 		Protocol:          sse.AGUI,
 		CORSAllowedOrigin: envOr("CORS_ORIGIN", "http://localhost:3000"),
 		RunOptions: []agentadaptor.RunOption{
-			agentadaptor.WithPermissions(agentadaptor.PermissionProfile{
-				ApprovalMode: agentadaptor.ApprovalNever,
-				SandboxMode:  agentadaptor.SandboxReadOnly,
-			}),
+			exampleutil.AGUIExampleRunPolicy(),
 		},
 	}))
 
@@ -78,6 +68,7 @@ func main() {
 	})
 
 	slog.Info("agent-adaptor AG-UI backend listening",
+		"agent", driver,
 		"addr", addr,
 		"endpoint", "http://localhost"+addr+"/agent",
 		"ui", "http://localhost:3000")

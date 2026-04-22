@@ -1,6 +1,6 @@
 # streaming-chat-copilotkit
 
-完整的 AG-UI 前端体验 example：**agent-adaptor（Go） + CopilotKit（React） + codex app-server**。
+完整的 AG-UI 前端体验 example：**agent-adaptor（Go） + CopilotKit（React）**，底层默认 **Codex**，也可一键切 **Claude Code**（见 `AGUI_AGENT`）。
 
 这份 example 展示了如何用官方 AG-UI 协议和 CopilotKit 组件库，为 `agent-adaptor` 的 streaming 通路搭一个真正的聊天 UI——带 tool-call 可视化、reasoning 折叠、token 级流式。
 
@@ -20,9 +20,9 @@ Next.js (web/)
 Go backend (main.go)
   └─ pkg/bridges/sse + custom DecodeRequest → agent-adaptor SDK
          │
-         │  codex app-server --listen stdio://
+         │  Codex app-server（默认）或 Claude Code CLI（AGUI_AGENT=claude）
          ▼
-codex subprocess (token-level stream)
+本地 agent（token-level stream）
 ```
 
 Runtime 层复用了我们的 `pkg/bridges/sse` Handler；前端通过标准 AG-UI 协议消费，未写任何协议解析代码。
@@ -31,9 +31,21 @@ Runtime 层复用了我们的 `pkg/bridges/sse` Handler；前端通过标准 AG-
 
 - Go 1.23+（跑 backend）
 - Node.js 20+ 与 npm / pnpm / yarn（跑前端）
-- 本机已安装并登录 `codex` CLI（`codex login`）
+- **Codex** 或 **Claude Code** 其一已安装并完成登录（`codex login` / `claude auth login` 等）
 
 ## 跑起来
+
+### 一键脚本
+
+```bash
+./examples/streaming-chat-copilotkit/start.sh           # 默认 Codex
+./examples/streaming-chat-copilotkit/start.sh claude    # Claude Code
+
+./examples/streaming-chat-copilotkit/start-all.sh           # backend + Next.js 同终端
+./examples/streaming-chat-copilotkit/start-all.sh claude
+```
+
+### 手动（两终端）
 
 ```bash
 # Terminal 1 — 启 Go backend (监听 :8080)
@@ -44,6 +56,8 @@ cd examples/streaming-chat-copilotkit/web
 npm install
 npm run dev
 ```
+
+后端驱动：**`AGUI_AGENT`**=`codex`（默认）或 `claude`；脚本首参会设置该变量。
 
 浏览器打开 http://localhost:3000 ，在聊天框里发消息即可看到 token 级流式响应。
 
@@ -85,8 +99,10 @@ Next.js dev server 在 `localhost:3000`，Go backend 在 `localhost:8080`，`/ap
 
 Backend：
 
+- `AGUI_AGENT`：`codex`（默认）或 `claude`，选择示例绑定的默认 Agent
 - `ADDR`：监听地址，默认 `:8080`
-- `CODEX_MODEL`：codex 模型，默认 `gpt-5.4`
+- `CODEX_MODEL`：选用 codex 时的模型，默认 `gpt-5.4`
+- `CLAUDE_MODEL`：选用 claude 时的模型，默认 `claude-sonnet-4`
 - `CORS_ORIGIN`：允许的前端 Origin，默认 `http://localhost:3000`
 
 前端：

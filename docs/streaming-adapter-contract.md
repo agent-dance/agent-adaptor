@@ -128,6 +128,8 @@ sink.EmitStream(agentadaptor.StreamPayload{
 | provider event | 触发条件 | 映射到 StreamKind | 关键字段 |
 |---|---|---|---|
 
+**脚注（Claude `input_json_delta`）**：`StreamToolCallArgs.Delta` 承载的是协议层原始字符串片段，单片未必合法 JSON；宿主自行累积与解析；完整参数快照以 provider 终局/全量帧为准。
+
 ## 5. 验收
 
 新 adapter 接入 streaming 时必须补上：

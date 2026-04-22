@@ -174,7 +174,7 @@ type DriverRunRequest struct {
 	Workspace    WorkspaceLease
 	Runtime      RuntimePayload
 	Skills       SkillPayload
-	Permissions  PermissionProfile
+	Policy       RunPolicy
 	Instructions *InstructionsBundleRef
 	Session      *DriverSessionContext
 	Metadata     map[string]string
@@ -294,7 +294,7 @@ type resolvedInvocation struct {
 	workspace    WorkspaceLease
 	runtime      RuntimePayload
 	skills       SkillPayload
-	permissions  PermissionProfile
+	policy       RunPolicy
 	instructions *InstructionsBundleRef
 	session      SessionRequest
 	metadata     map[string]string

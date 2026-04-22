@@ -108,9 +108,9 @@ func main() {
 		Protocol:          sse.AGUI,
 		CORSAllowedOrigin: "*",
 		RunOptions: []agentadaptor.RunOption{
-			agentadaptor.WithPermissions(agentadaptor.PermissionProfile{
-				ApprovalMode: agentadaptor.ApprovalNever,
-				SandboxMode:  agentadaptor.SandboxReadOnly,
+			agentadaptor.WithRunPolicy(agentadaptor.RunPolicy{
+				Approvals: agentadaptor.ApprovalOff,
+				Isolation: agentadaptor.IsolationReadOnly,
 			}),
 		},
 	}))

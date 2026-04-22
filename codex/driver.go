@@ -40,9 +40,7 @@ func (adapter) Descriptor() agentadaptor.DriverDescriptor {
 				{Name: "agent_profile_dir", Label: "Agent Profile Dir", Type: "text", Description: "Stable local Codex profile directory used when CODEX_HOME is not already set in CommonConfig.Env.", Hint: "Maps to CODEX_HOME. Explicit CommonConfig.Env CODEX_HOME still wins.", Group: "profile"},
 				{Name: "model", Label: "Model", Type: "select", Description: "Codex model identifier, for example gpt-5.4.", Default: "gpt-5.4", Options: modelOptions(codexModels()), Group: "model"},
 				{Name: "reasoning_effort", Label: "Reasoning Effort", Type: "select", Description: "Optional reasoning effort passed through model_reasoning_effort.", Hint: "Only set this when you want to override Codex defaults.", Options: []agentadaptor.ConfigOption{{Value: "low", Label: "Low"}, {Value: "medium", Label: "Medium"}, {Value: "high", Label: "High"}, {Value: "xhigh", Label: "Extra High"}}, Group: "model"},
-				{Name: "search", Label: "Search", Type: "toggle", Description: "Enable Codex search support by default.", Default: false, Group: "permissions"},
 				{Name: "fast_mode", Label: "Fast Mode", Type: "toggle", Description: "Enable Codex fast service tier defaults.", Default: false, Group: "execution"},
-				{Name: "bypass_approvals_and_sandbox", Label: "Bypass Approvals", Type: "toggle", Description: "Disable approvals and sandboxing.", Hint: "Use only in trusted local environments.", Default: false, Group: "permissions", Meta: map[string]string{"risk": "high"}},
 				{Name: "extra_args", Label: "Extra Args", Type: "textarea", Description: "Additional CLI args appended after SDK-managed flags.", Group: "command"},
 			},
 		},
@@ -50,7 +48,7 @@ func (adapter) Descriptor() agentadaptor.DriverDescriptor {
 		Skills:       agentadaptor.SkillCapability{Supported: true, Mode: agentadaptor.SkillSyncEphemeral},
 		Instructions: agentadaptor.InstructionsCapability{Supported: true},
 		Workspace:    agentadaptor.WorkspaceCapability{Supported: true},
-		Permissions:  agentadaptor.InvocationPermissionCapability{Approvals: true, Sandbox: true, Search: true},
+		RunPolicyCaps: agentadaptor.RunPolicyCapabilities{Approvals: true, Isolation: true, WebSearch: true, Browser: false, Trust: false},
 		Runtime:      agentadaptor.RuntimeCapability{ReportsServices: true},
 	}
 }
@@ -248,10 +246,10 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 	}
 
 	args := []string{"exec", "--json"}
-	if cfg.Search || req.Permissions.SearchMode == agentadaptor.FeatureAllow {
+	if req.Policy.WebSearch == agentadaptor.FeatureAllow {
 		args = append([]string{"--search"}, args...)
 	}
-	if cfg.BypassApprovalsAndSandbox || req.Permissions.SandboxMode == agentadaptor.SandboxDisabled {
+	if req.Policy.Isolation == agentadaptor.IsolationUnrestricted {
 		args = append(args, "--dangerously-bypass-approvals-and-sandbox")
 	}
 	if cfg.Model != "" {

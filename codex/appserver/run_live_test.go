@@ -42,9 +42,9 @@ func TestAppServerHaiku(t *testing.T) {
 	handle, err := sdk.Start(ctx, "Write a haiku about streaming text. Reply with only the haiku.",
 		agentadaptor.WithStreaming(),
 		agentadaptor.WithSessionKey("codex_live_test", "haiku"),
-		agentadaptor.WithPermissions(agentadaptor.PermissionProfile{
-			ApprovalMode: agentadaptor.ApprovalNever,
-			SandboxMode:  agentadaptor.SandboxReadOnly,
+		agentadaptor.WithRunPolicy(agentadaptor.RunPolicy{
+			Approvals: agentadaptor.ApprovalOff,
+			Isolation: agentadaptor.IsolationReadOnly,
 		}),
 	)
 	if err != nil {

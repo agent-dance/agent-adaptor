@@ -23,6 +23,7 @@ package agui
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strconv"
 	"sync"
@@ -243,7 +244,16 @@ func (t *Translator) translateNonTerminalLocked(p agentadaptor.StreamPayload) []
 		if p.ToolCallID == "" || p.Delta == "" {
 			return nil
 		}
-		return []aguievents.Event{aguievents.NewToolCallArgsEvent(p.ToolCallID, p.Delta)}
+		// Some adapters (e.g. codex) may stream output before the item/started
+		// path has emitted StreamToolCallStart. Synthesize TOOL_CALL_START so
+		// the AG-UI sequence remains well-formed.
+		out := []aguievents.Event{}
+		if !t.activeToolStart[p.ToolCallID] {
+			t.activeToolStart[p.ToolCallID] = true
+			out = append(out, aguievents.NewToolCallStartEvent(p.ToolCallID, defaultString(p.Name, "tool")))
+		}
+		out = append(out, aguievents.NewToolCallArgsEvent(p.ToolCallID, p.Delta))
+		return out
 
 	case agentadaptor.StreamToolCallEnd:
 		if p.ToolCallID == "" {
@@ -460,10 +470,17 @@ func errorDetails(p agentadaptor.StreamPayload) (msg, code string) {
 
 func toolResultContent(p agentadaptor.StreamPayload) string {
 	if p.Result == nil {
-		return ""
+		// Avoid emitting TOOL_CALL_RESULT with empty content (AG-UI validation).
+		return "{}"
 	}
 	// Inline the most common payload shapes. Hosts get the full map via
 	// their own StreamEvents subscription when they need the raw fields.
+	if text, ok := p.Result["text"].(string); ok && text != "" {
+		return text
+	}
+	if content, ok := p.Result["content"].(string); ok && content != "" {
+		return content
+	}
 	if out, ok := p.Result["output"].(string); ok && out != "" {
 		if exit, ok := p.Result["exitCode"].(int); ok {
 			return out + "\n[exit=" + strconv.Itoa(exit) + "]"
@@ -472,6 +489,11 @@ func toolResultContent(p agentadaptor.StreamPayload) string {
 	}
 	if status, ok := p.Result["status"].(string); ok && status != "" {
 		return status
+	}
+	// As a last resort, serialize the raw map so we never emit an invalid
+	// empty TOOL_CALL_RESULT event for adapters with provider-specific shapes.
+	if raw, err := json.Marshal(p.Result); err == nil && len(raw) > 0 && string(raw) != "{}" {
+		return string(raw)
 	}
 	return ""
 }

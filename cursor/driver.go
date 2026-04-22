@@ -37,7 +37,6 @@ func (adapter) Descriptor() agentadaptor.DriverDescriptor {
 				{Name: "agent_profile_dir", Label: "Agent Profile Dir", Type: "text", Description: "Stable local Cursor profile directory used when CURSOR_HOME is not already set in CommonConfig.Env.", Hint: "Maps to CURSOR_HOME. Explicit CommonConfig.Env CURSOR_HOME still wins.", Group: "profile"},
 				{Name: "model", Label: "Model", Type: "select", Description: "Cursor model identifier, for example gpt-5.", Default: "gpt-5", Options: modelOptions(cursorModels()), Group: "model"},
 				{Name: "mode", Label: "Mode", Type: "select", Description: "Cursor agent mode passed through --mode.", Options: []agentadaptor.ConfigOption{{Value: "agent", Label: "Agent"}, {Value: "ask", Label: "Ask"}}, Group: "execution"},
-				{Name: "auto_trust", Label: "Auto Trust", Type: "toggle", Description: "Enable --yolo / auto trust by default.", Hint: "Use only in trusted local environments.", Default: false, Group: "permissions", Meta: map[string]string{"risk": "high"}},
 				{Name: "extra_args", Label: "Extra Args", Type: "textarea", Description: "Additional CLI args appended after SDK-managed flags.", Group: "command"},
 			},
 		},
@@ -45,7 +44,7 @@ func (adapter) Descriptor() agentadaptor.DriverDescriptor {
 		Skills:       agentadaptor.SkillCapability{Supported: true, Mode: agentadaptor.SkillSyncPersistent},
 		Instructions: agentadaptor.InstructionsCapability{Supported: true},
 		Workspace:    agentadaptor.WorkspaceCapability{Supported: true},
-		Permissions:  agentadaptor.InvocationPermissionCapability{Approvals: true, Search: true},
+		RunPolicyCaps: agentadaptor.RunPolicyCapabilities{Approvals: true, Isolation: false, WebSearch: true, Browser: false, Trust: true},
 		Runtime:      agentadaptor.RuntimeCapability{ReportsServices: true},
 	}
 }
@@ -231,7 +230,7 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 	if cfg.Mode != "" {
 		args = append(args, "--mode", string(cfg.Mode))
 	}
-	if cfg.AutoTrust || req.Permissions.TrustMode == agentadaptor.TrustAuto {
+	if req.Policy.Trust == agentadaptor.TrustAuto {
 		args = append(args, "--yolo")
 	}
 	args = append(args, cfg.ExtraArgs...)

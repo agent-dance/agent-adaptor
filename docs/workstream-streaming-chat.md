@@ -594,16 +594,11 @@ AG-UI 翻译层依赖该 Sequence 做事件顺序保障（AG-UI 协议无序号�
 
 ### 12.1 Claude
 
-- `claude/driver.go` 实现 `StreamAwareDriver`，返回 `StreamCapability{Native:true, TokenLevel:true, ToolCallArgs:true, Reasoning:true}`
-- 当 `req.Streaming=true`：追加 CLI flag `--include-partial-messages`
-- 新增 `claude/partial_parser.go`：逐行解析 stream-json，识别 `stream_event` 子类型：
-  - `content_block_delta.text_delta` → `StreamTextContent`
-  - `content_block_delta.input_json_delta` → `StreamToolCallArgs`
-  - `message_start` → `StreamTextStart`
-  - `content_block_stop` → `StreamTextEnd` / `StreamToolCallEnd`
-  - `tool_use` content block → `StreamToolCallStart`（随后的 `tool_result` 事件对应 `StreamToolCallResult`）
-  - `message_delta` + `message_stop` → 用于补齐 usage
-- 与 thinking 互斥：`ClaudeConfig` 中若设置了 `extended_thinking`，且 `Streaming=true`，`ValidateConfig` 返回明确错误
+**已完成**，实施说明与映射表见 [`workstream-streaming-claude.md`](./workstream-streaming-claude.md)、[`claude/README-streaming.md`](../claude/README-streaming.md)。
+
+- `claude/driver.go` 实现 `StreamAwareDriver`，`StreamCapability{Native:true, TokenLevel:true, ToolCallArgs:true, Reasoning:true}`
+- `req.Streaming=true` 时追加 `--include-partial-messages`
+- `claude/streaming_parser.go`：解析 `stream_event` → `StreamPayload`；`assistant` 全量帧仍走批量路径，避免双发
 
 ### 12.2 Cursor
 

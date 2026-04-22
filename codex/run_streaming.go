@@ -45,8 +45,8 @@ func runAppServer(
 		prompt = "Instructions bundle: " + req.Instructions.Path + "\n\n" + prompt
 	}
 
-	approval := mapApprovalPolicy(cfg, req.Permissions)
-	sandbox := mapSandbox(cfg, req.Permissions)
+	approval := mapApprovalPolicy(req.Policy)
+	sandbox := mapSandbox(req.Policy)
 
 	resumeID := ""
 	if req.Session != nil && req.Session.State != nil {
@@ -105,36 +105,32 @@ func runAppServer(
 	return result, nil
 }
 
-func mapApprovalPolicy(cfg agentadaptor.CodexConfig, profile agentadaptor.PermissionProfile) string {
-	if cfg.BypassApprovalsAndSandbox || profile.SandboxMode == agentadaptor.SandboxDisabled {
+func mapApprovalPolicy(p agentadaptor.RunPolicy) string {
+	if p.Isolation == agentadaptor.IsolationUnrestricted {
 		return "never"
 	}
-	switch profile.ApprovalMode {
-	case agentadaptor.ApprovalNever:
+	switch p.Approvals {
+	case agentadaptor.ApprovalOff:
 		return "never"
 	case agentadaptor.ApprovalAsk:
 		return "on-request"
 	case agentadaptor.ApprovalAuto:
 		return "on-request"
-	case agentadaptor.ApprovalUnset:
+	case agentadaptor.ApprovalInherit:
 		return ""
 	default:
 		return ""
 	}
 }
 
-func mapSandbox(cfg agentadaptor.CodexConfig, profile agentadaptor.PermissionProfile) string {
-	if cfg.BypassApprovalsAndSandbox || profile.SandboxMode == agentadaptor.SandboxDisabled {
+func mapSandbox(p agentadaptor.RunPolicy) string {
+	if p.Isolation == agentadaptor.IsolationUnrestricted {
 		return "danger-full-access"
 	}
-	switch profile.SandboxMode {
-	case agentadaptor.SandboxReadOnly:
+	switch p.Isolation {
+	case agentadaptor.IsolationReadOnly:
 		return "read-only"
-	case agentadaptor.SandboxWorkspaceWrite:
-		return "workspace-write"
-	case agentadaptor.SandboxUnset:
-		// Default to workspace-write when a model is requested with no
-		// explicit policy so app-server can at least run basic commands.
+	case agentadaptor.IsolationWorkspaceWrite, agentadaptor.IsolationInherit:
 		return "workspace-write"
 	default:
 		return "workspace-write"

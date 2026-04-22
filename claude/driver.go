@@ -27,6 +27,18 @@ func NewAdapter() agentadaptor.DriverAdapter {
 	return adapter{}
 }
 
+// StreamCapability declares Claude Code stream-json capabilities when
+// --include-partial-messages is enabled.
+func (adapter) StreamCapability() agentadaptor.StreamCapability {
+	return agentadaptor.StreamCapability{
+		Native:       true,
+		TokenLevel:   true,
+		Reasoning:    true,
+		ToolCallArgs: true,
+		HITL:         false,
+	}
+}
+
 func (adapter) Descriptor() agentadaptor.DriverDescriptor {
 	return agentadaptor.DriverDescriptor{
 		Type:        DriverType,
@@ -39,8 +51,6 @@ func (adapter) Descriptor() agentadaptor.DriverDescriptor {
 				{Name: "agent_profile_dir", Label: "Agent Profile Dir", Type: "text", Description: "Stable local Claude profile directory used when CLAUDE_CONFIG_DIR is not already set in CommonConfig.Env.", Hint: "Maps to CLAUDE_CONFIG_DIR. Explicit CommonConfig.Env CLAUDE_CONFIG_DIR still wins.", Group: "profile"},
 				{Name: "model", Label: "Model", Type: "select", Description: "Claude model identifier, for example claude-sonnet-4 or a Bedrock-native us.anthropic.* id.", Default: defaultClaudeModel, Options: modelOptions(claudeModels()), Group: "model"},
 				{Name: "effort", Label: "Thinking Effort", Type: "select", Description: "Optional Claude thinking effort.", Options: []agentadaptor.ConfigOption{{Value: "low", Label: "Low"}, {Value: "medium", Label: "Medium"}, {Value: "high", Label: "High"}}, Group: "model"},
-				{Name: "chrome", Label: "Chrome Tools", Type: "toggle", Description: "Enable Chrome/browser tools by default.", Default: false, Group: "permissions"},
-				{Name: "skip_permissions", Label: "Skip Permissions", Type: "toggle", Description: "Skip Claude permission prompts.", Hint: "Use only in trusted local environments.", Default: false, Group: "permissions", Meta: map[string]string{"risk": "high"}},
 				{Name: "max_turns_per_run", Label: "Max Turns", Type: "number", Description: "Optional max-turns guard for one run.", Group: "execution"},
 				{Name: "extra_args", Label: "Extra Args", Type: "textarea", Description: "Additional CLI args appended after SDK-managed flags.", Group: "command"},
 			},
@@ -49,7 +59,7 @@ func (adapter) Descriptor() agentadaptor.DriverDescriptor {
 		Skills:       agentadaptor.SkillCapability{Supported: true, Mode: agentadaptor.SkillSyncEphemeral},
 		Instructions: agentadaptor.InstructionsCapability{Supported: true},
 		Workspace:    agentadaptor.WorkspaceCapability{Supported: true},
-		Permissions:  agentadaptor.InvocationPermissionCapability{Approvals: true, Browser: true},
+		RunPolicyCaps: agentadaptor.RunPolicyCapabilities{Approvals: true, Isolation: false, WebSearch: false, Browser: true, Trust: false},
 		Runtime:      agentadaptor.RuntimeCapability{ReportsServices: true},
 	}
 }
@@ -195,7 +205,6 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 		}
 	}
 
-	args := []string{"--print", "-", "--output-format", "stream-json", "--verbose"}
 	modelFlag := claudeRequestedModelFlag(cfg)
 	reportedModel := modelFlag
 	if reportedModel == "" {
@@ -203,28 +212,8 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 			reportedModel = detected.Model
 		}
 	}
-	if req.Session != nil && req.Session.State != nil && req.Session.State.ResumeID != "" {
-		args = append(args, "--resume", req.Session.State.ResumeID)
-	}
-	if cfg.SkipPermissions || req.Permissions.ApprovalMode == agentadaptor.ApprovalNever {
-		args = append(args, "--dangerously-skip-permissions")
-	}
-	if cfg.Chrome || req.Permissions.BrowserMode == agentadaptor.FeatureAllow {
-		args = append(args, "--chrome")
-	}
-	if modelFlag != "" {
-		args = append(args, "--model", modelFlag)
-	}
-	if cfg.Effort != "" {
-		args = append(args, "--effort", string(cfg.Effort))
-	}
-	if cfg.MaxTurnsPerRun > 0 {
-		args = append(args, "--max-turns", strconv.Itoa(cfg.MaxTurnsPerRun))
-	}
-	if bundleRoot != "" {
-		args = append(args, "--add-dir", bundleRoot)
-	}
-	args = append(args, cfg.ExtraArgs...)
+
+	args := buildClaudeExecArgs(cfg, req, bundleRoot)
 
 	prompt := req.Prompt
 	if runtimePrefix := adapterutil.RuntimePromptPrefix(req.Runtime); runtimePrefix != "" {
@@ -235,6 +224,9 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 	}
 
 	parser := newClaudeParser(sink)
+	if req.Streaming {
+		parser.enableStreaming(req.RunID)
+	}
 	result, err := clihelper.Run(ctx, clihelper.CommandRequest{
 		Command: command,
 		Args:    args,
@@ -261,6 +253,8 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 		failure = &agentadaptor.RunFailure{Message: parser.errorMessage}
 	}
 
+	meta := parser.outputMetadata()
+
 	return agentadaptor.DriverRunResult{
 		Output:          parser.buildOutput(),
 		RawStreams:      &raw,
@@ -270,6 +264,7 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 		TimedOut:        result.TimedOut,
 		Usage:           parser.usage,
 		Checkpoint:      checkpoint,
+		Metadata:        meta,
 		Provider:        "anthropic",
 		Model:           reportedModel,
 		Summary:         parser.finalSummary(),
@@ -277,6 +272,37 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 		RuntimeServices: adapterutil.RuntimeReportsFromRefs(req.Runtime.Ensured, req.Agent),
 		Failure:         failure,
 	}, nil
+}
+
+func buildClaudeExecArgs(cfg agentadaptor.ClaudeConfig, req agentadaptor.DriverRunRequest, bundleRoot string) []string {
+	args := []string{"--print", "-", "--output-format", "stream-json", "--verbose"}
+	if req.Streaming {
+		args = append(args, "--include-partial-messages")
+	}
+	modelFlag := claudeRequestedModelFlag(cfg)
+	if req.Session != nil && req.Session.State != nil && req.Session.State.ResumeID != "" {
+		args = append(args, "--resume", req.Session.State.ResumeID)
+	}
+	if req.Policy.Approvals == agentadaptor.ApprovalOff {
+		args = append(args, "--dangerously-skip-permissions")
+	}
+	if req.Policy.Browser == agentadaptor.FeatureAllow {
+		args = append(args, "--chrome")
+	}
+	if modelFlag != "" {
+		args = append(args, "--model", modelFlag)
+	}
+	if cfg.Effort != "" {
+		args = append(args, "--effort", string(cfg.Effort))
+	}
+	if cfg.MaxTurnsPerRun > 0 {
+		args = append(args, "--max-turns", strconv.Itoa(cfg.MaxTurnsPerRun))
+	}
+	if bundleRoot != "" {
+		args = append(args, "--add-dir", bundleRoot)
+	}
+	args = append(args, cfg.ExtraArgs...)
+	return args
 }
 
 func chooseCWD(cfg agentadaptor.CommonConfig, workspace agentadaptor.WorkspaceLease) string {

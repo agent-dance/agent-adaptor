@@ -41,9 +41,9 @@ func main() {
 	handle, err := sdk.Start(ctx, prompt,
 		agentadaptor.WithStreaming(),
 		agentadaptor.WithSessionKey("examples", "streaming-chat"),
-		agentadaptor.WithPermissions(agentadaptor.PermissionProfile{
-			ApprovalMode: agentadaptor.ApprovalNever,
-			SandboxMode:  agentadaptor.SandboxReadOnly,
+		agentadaptor.WithRunPolicy(agentadaptor.RunPolicy{
+			Approvals: agentadaptor.ApprovalOff,
+			Isolation: agentadaptor.IsolationReadOnly,
 		}),
 	)
 	if err != nil {

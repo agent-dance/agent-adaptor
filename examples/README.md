@@ -144,7 +144,7 @@ Purpose:
 Run (two terminals):
 
 ```bash
-# Terminal 1 — Go backend (port 8080)
+# Terminal 1 — Go backend (port 8080)；Claude：`./examples/streaming-chat-copilotkit/start.sh claude`
 go run ./examples/streaming-chat-copilotkit
 
 # Terminal 2 — Next.js frontend (port 3000)
@@ -167,7 +167,7 @@ Purpose:
 Run (two terminals):
 
 ```bash
-# Terminal 1 — Go backend (port 8090)
+# Terminal 1 — Go backend (port 8090)；Claude：`./examples/streaming-chat-aguiclient/start.sh claude`
 go run ./examples/streaming-chat-aguiclient
 
 # Terminal 2 — Vite dev server (port 5173)

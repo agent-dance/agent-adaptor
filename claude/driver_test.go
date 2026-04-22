@@ -12,6 +12,38 @@ import (
 	agentadaptor "github.com/agent-dance/agent-adaptor"
 )
 
+func TestBuildClaudeExecArgsIncludesPartialMessagesWhenStreaming(t *testing.T) {
+	cfg := agentadaptor.ClaudeConfig{Model: "claude-sonnet-4"}
+	req := agentadaptor.DriverRunRequest{Streaming: true}
+	args := buildClaudeExecArgs(cfg, req, "")
+	found := false
+	for _, a := range args {
+		if a == "--include-partial-messages" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected --include-partial-messages in %#v", args)
+	}
+
+	argsBatch := buildClaudeExecArgs(cfg, agentadaptor.DriverRunRequest{Streaming: false}, "")
+	for _, a := range argsBatch {
+		if a == "--include-partial-messages" {
+			t.Fatalf("batch path must not add partial flag: %#v", argsBatch)
+		}
+	}
+}
+
+func TestStreamCapabilityValues(t *testing.T) {
+	cap := NewAdapter().(interface {
+		StreamCapability() agentadaptor.StreamCapability
+	}).StreamCapability()
+	if !cap.Native || !cap.TokenLevel || !cap.Reasoning || !cap.ToolCallArgs || cap.HITL {
+		t.Fatalf("unexpected capability: %#v", cap)
+	}
+}
+
 func TestNewReturnsTypedBinding(t *testing.T) {
 	binding := New(agentadaptor.ClaudeConfig{Model: "claude-sonnet-4"})
 	if binding.TypedConfig().Model != "claude-sonnet-4" {

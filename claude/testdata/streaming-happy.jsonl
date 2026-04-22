@@ -1,0 +1,11 @@
+{"type":"system","subtype":"init","session_id":"sess-stream-happy","model":"claude-fixture"}
+{"type":"stream_event","session_id":"sess-stream-happy","event":{"type":"message_start","message":{"id":"msg-text-1"}}}
+{"type":"stream_event","session_id":"sess-stream-happy","event":{"type":"content_block_start","index":0,"content_block":{"type":"text"}}}
+{"type":"stream_event","session_id":"sess-stream-happy","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hi"}}}
+{"type":"stream_event","session_id":"sess-stream-happy","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" "}}}
+{"type":"stream_event","session_id":"sess-stream-happy","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"there"}}}
+{"type":"stream_event","session_id":"sess-stream-happy","event":{"type":"content_block_stop","index":0}}
+{"type":"stream_event","session_id":"sess-stream-happy","event":{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}}}
+{"type":"stream_event","session_id":"sess-stream-happy","event":{"type":"message_stop"}}
+{"type":"assistant","session_id":"sess-stream-happy","message":{"model":"claude-fixture","content":[{"type":"text","text":"Hi there"}]}}
+{"type":"result","subtype":"success","session_id":"sess-stream-happy","result":"Hi there","usage":{"input_tokens":10,"output_tokens":5},"total_cost_usd":0.001}

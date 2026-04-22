@@ -133,10 +133,13 @@ func WithDefaultRuntimeServices(services ...RuntimeServiceSpec) AgentOption {
 	}
 }
 
-func WithDefaultPermissions(profile PermissionProfile) AgentOption {
+// WithDefaultRunPolicy sets binding-level defaults. Per-field empty values
+// (…Inherit) mean "no default for that field" until a per-call WithRunPolicy
+// sets it.
+func WithDefaultRunPolicy(p RunPolicy) AgentOption {
 	return func(defaults *AgentDefaults) {
-		copyProfile := profile
-		defaults.Permissions = &copyProfile
+		copyP := p
+		defaults.RunPolicy = &copyP
 	}
 }
 
@@ -176,7 +179,7 @@ type runOptions struct {
 	workspace    WorkspaceSpec
 	runtime      *WorkspaceRuntimeConfig
 	skills       []string
-	permissions  *PermissionProfile
+	runPolicy    *RunPolicy
 	instructions *InstructionsBundleRef
 	metadata     map[string]string
 	agent        *AgentIdentity
@@ -259,10 +262,12 @@ func WithSkills(keys ...string) RunOption {
 	}
 }
 
-func WithPermissions(profile PermissionProfile) RunOption {
+// WithRunPolicy sets per-run policy. Empty fields inherit from the binding
+// default (or stay unset for adapter fallbacks).
+func WithRunPolicy(p RunPolicy) RunOption {
 	return func(ro *runOptions) {
-		copyProfile := profile
-		ro.permissions = &copyProfile
+		copyP := p
+		ro.runPolicy = &copyP
 	}
 }
 

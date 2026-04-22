@@ -1,0 +1,5 @@
+{"type":"system","subtype":"init","session_id":"sess-trunc","model":"claude-fixture"}
+{"type":"stream_event","session_id":"sess-trunc","event":{"type":"message_start","message":{"id":"msg-trun"}}}
+{"type":"stream_event","session_id":"sess-trunc","event":{"type":"content_block_start","index":0,"content_block":{"type":"text"}}}
+{"type":"stream_event","session_id":"sess-trunc","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"h"}}}
+{"type":"stream_event","session_id":"sess-trunc","event":{"type":"content_block_stop","index":0}}

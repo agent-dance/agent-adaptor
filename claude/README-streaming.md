@@ -1,61 +1,74 @@
-# Claude Streaming 落地备忘
+# Claude Streaming
 
-本文件预留 Claude adapter 接入 streaming 的具体映射表与 CLI flag 约定。Claude 尚未在本次 workstream 实际落地；实施者按此清单开工即可，不需要改动 `core SDK` 或 `pkg/bridges/*`。
+Claude adapter 在 `DriverRunRequest.Streaming == true`（宿主 `WithStreaming()`）时在既有 `stream-json` CLI 参数上追加 `--include-partial-messages`，由 `streaming_parser.go` 将 `stream_event` 映射到 `StreamPayload`。不改动 core SDK、`pkg/bridges/*`。
 
-参见：[streaming-adapter-contract.md](../docs/streaming-adapter-contract.md)、[workstream-streaming-chat.md](../docs/workstream-streaming-chat.md) §12.1
+权威设计与依赖评估见：`docs/workstream-streaming-claude.md`。
 
-## 1. CLI flag
+## CLI
 
-当 `DriverRunRequest.Streaming == true` 时，在现有 `--print - --output-format stream-json --verbose` 参数上追加：
+在 `--print - --output-format stream-json --verbose` 基础上追加：
 
 ```
 --include-partial-messages
 ```
 
-flag 与 `extended_thinking` 互斥（AG-UI 调研材料见 workstream doc §17.3）。若 `ClaudeConfig.ExtendedThinking` 被设置且 `Streaming == true`，`ValidateConfig` 返回明确错误。
+与扩展思考（thinking）可同时开启：Sonnet 4.5+ / claude-code 2.1+ 下 `thinking_delta` 可与 partial 共存；`StreamCapability.Reasoning = true`。
 
-## 2. 事件映射
-
-基于 `claude-code` 0.x 的 `stream-json` partial message 事件集：
-
-| Claude event | StreamKind | 关键字段 |
-|---|---|---|
-| `{"type":"system","subtype":"init"}` | `StreamRunStarted` | ThreadID=session_id |
-| `stream_event` / `message_start` | `StreamTextStart` | MessageID=message.id |
-| `stream_event` / `content_block_start(text)` | — | （延迟发 TextStart 到第一个 delta） |
-| `stream_event` / `content_block_delta.text_delta` | `StreamTextContent` | Delta |
-| `stream_event` / `content_block_stop(text)` | `StreamTextEnd` | MessageID |
-| `stream_event` / `content_block_start(tool_use)` | `StreamToolCallStart` | ToolCallID=id, Name=name |
-| `stream_event` / `content_block_delta.input_json_delta` | `StreamToolCallArgs` | Delta |
-| `stream_event` / `content_block_stop(tool_use)` | `StreamToolCallEnd` | ToolCallID |
-| `user.message.content[tool_result]` | `StreamToolCallResult` | ToolCallID, Result |
-| `stream_event` / `message_delta` / `message_stop` | — | 累积 usage，`result` 时合并 |
-| `assistant` (组装后的完整 message) | — | 不单独转发，bridges 已通过 delta 流覆盖 |
-| `rate_limit_event` | `""` (opaque) | 透传 Raw |
-| `system` / `api_retry` | `""` (opaque) | 透传 Raw；`error_status >= 5xx` 且连续失败时转 `StreamRunError` |
-| `result` | `StreamRunFinished` | Usage, CostUSD |
-
-## 3. StreamCapability
+## StreamCapability
 
 ```go
 func (adapter) StreamCapability() agentadaptor.StreamCapability {
 	return agentadaptor.StreamCapability{
 		Native:       true,
 		TokenLevel:   true,
-		Reasoning:    false, // partial + thinking 互斥，open question：细粒度 reasoning 走独立 run
+		Reasoning:    true,
 		ToolCallArgs: true,
 		HITL:         false,
 	}
 }
 ```
 
-## 4. 文件组织建议
+## Wrapper 顶层 `type` → StreamKind
 
-- 现有 `claude/driver.go` 增加 `req.Streaming == true` 分派
-- 新增 `claude/streaming_parser.go` 专门解析 stream-json partial 事件
-- 所有输出都通过 `sink.EmitStream`，不污染 `RunEvent` 通道
+| Wrapper type | 行为 |
+|---|---|
+| `system.init` | `StreamRunStarted`（ThreadID=`session_id`）；与批量路径的 `TranscriptInit` 并存 |
+| `system.api_retry` | 不透明透传（`Kind` 空，`Raw`）；连续 5xx / `willRetry:false` 可升级为 `StreamRunError` |
+| `stream_event` | 见下文 `event.type` |
+| `assistant` | **仅批量路径**：落 `Transcript`/Output；不向 `EmitStream` 二次发送正文（避免两套真相） |
+| `user`（`tool_result`） | `StreamToolCallResult`（与 transcript 同步） |
+| `result` | `StreamRunFinished`（usage / Raw 中带 cost、`stop_reason`） |
+| `error` | `StreamRunError` |
+| `permission_request` | `StreamHITLRequested`（v1 audit-only） |
+| 其它未列顶层类型 | `Kind=""`，`Raw` 透传 |
 
-## 5. 验收（与 codex 对齐）
+## `stream_event.event` 映射
 
-- `go test -tags=claude_live -run TestClaudeStreamingHaiku` 端到端
-- 断言 `StreamRunFinished.Usage.InputTokens > 0`、≥3 条 `StreamTextContent`
+与 Anthropic Messages streaming 形状对齐的部分：
+
+| event.type | delta.type | StreamKind |
+|---|---|---|
+| `message_start` | — | （记录 `message.id`，不发 `StreamTextStart`） |
+| `content_block_start`（text） | — | （记账；首个 `text_delta` 先发 `StreamTextStart`） |
+| `content_block_delta` | `text_delta` | `StreamTextContent` |
+| `content_block_stop`（text） | — | `StreamTextEnd` |
+| `content_block_start`（tool_use） | — | `StreamToolCallStart`（可有 `Args`） |
+| `content_block_delta` | `input_json_delta` | `StreamToolCallArgs`（**原样片段**，adapter 不做 JSON 拼接） |
+| `content_block_stop`（tool_use） | — | `StreamToolCallEnd` |
+| `content_block_start`（thinking） | — | `StreamReasoningStart` |
+| `content_block_delta` | `thinking_delta` | `StreamReasoningContent` |
+| `content_block_delta` | `signature_delta` | 累积审计，不向宿主流式 emit |
+| `content_block_stop`（thinking） | — | `StreamReasoningEnd` |
+| `message_delta` | — | 累积 usage / stop_reason |
+| `message_stop` | — | 不向宿主流式 emit（仍以 `assistant`/`result` 为准） |
+
+## Tool 参数片段
+
+`input_json_delta.partial_json` 单片**不一定合法 JSON**。`StreamToolCallArgs.Delta` 的合同是「原始字符串片段」，宿主按需用 partial-json 库拼接；完整合法 JSON 仍以 `assistant` 全量帧里的 `tool_use.input`（批量路径解析）为准。
+
+## 验收
+
+- `go test ./claude/... -short` — fixture round-trip（`testdata/streaming-*.jsonl`）
+- `go test -tags=claude_live ./claude/...` — 需本机 `claude` 已安装且可登录（端到端冒烟）
+
+Bedrock / Vertex 组合的 streaming **未做全回归**；理论与 API 路由一致，若遇差异以 issue 追踪。

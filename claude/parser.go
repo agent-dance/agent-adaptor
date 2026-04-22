@@ -3,6 +3,7 @@ package claude
 import (
 	"bytes"
 	"encoding/json"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -32,6 +33,9 @@ type claudeParser struct {
 	cost            *float64
 	resultFinal     map[string]any
 	errorMessage    string
+
+	stream       *streamingState
+	deltaBuffers map[string]*strings.Builder // messageID -> streamed text (cancel/crash fallback)
 }
 
 var claudeCheckpointEvents = map[string]struct{}{
@@ -44,6 +48,29 @@ var claudeCheckpointEvents = map[string]struct{}{
 
 func newClaudeParser(sink agentadaptor.EventSink) *claudeParser {
 	return &claudeParser{sink: sink}
+}
+
+func (p *claudeParser) enableStreaming(runID string) {
+	if p.sink == nil {
+		return
+	}
+	p.stream = newStreamingState(p.sink, runID, p)
+}
+
+func (p *claudeParser) appendTextDelta(messageID, delta string) {
+	if messageID == "" || delta == "" {
+		return
+	}
+	if p.deltaBuffers == nil {
+		p.deltaBuffers = make(map[string]*strings.Builder)
+	}
+	buf := p.deltaBuffers[messageID]
+	if buf == nil {
+		var b strings.Builder
+		buf = &b
+		p.deltaBuffers[messageID] = buf
+	}
+	buf.WriteString(delta)
 }
 
 func (p *claudeParser) onChunk(stream string, chunk []byte, ts time.Time) error {
@@ -81,6 +108,9 @@ func (p *claudeParser) finalize() {
 		remaining := append([]byte(nil), p.stderrLine.Bytes()...)
 		p.stderrLine.Reset()
 		p.processLine("stderr", remaining, time.Now().UTC())
+	}
+	if p.stream != nil {
+		p.stream.finalize()
 	}
 }
 
@@ -134,13 +164,27 @@ func (p *claudeParser) handlePayload(raw string, payload map[string]any) {
 				Model:     model,
 				SessionID: session,
 			})
+			if p.stream != nil {
+				p.stream.handleSystemInit(payload)
+			}
 			return
+		}
+		if p.stream != nil && subtype == "api_retry" {
+			p.stream.handleAPIRetry(payload)
 		}
 		p.emit(agentadaptor.TranscriptItem{
 			Kind:    agentadaptor.TranscriptSystem,
 			Text:    raw,
 			Subtype: subtype,
 		})
+	case "stream_event":
+		if p.stream != nil {
+			p.stream.handleStreamEvent(raw, payload)
+			return
+		}
+		// Without --include-partial-messages stream_event frames should not appear;
+		// ignore defensively so batch transcript stays clean.
+		return
 	case "assistant":
 		message := claudeTopLevelObject(payload, "message")
 		p.handleAssistantMessage(message)
@@ -154,10 +198,29 @@ func (p *claudeParser) handlePayload(raw string, payload map[string]any) {
 		if message != "" {
 			p.errorMessage = message
 		}
+		if p.stream != nil {
+			p.stream.handleErrorTerminal(payload)
+		}
 		p.emit(agentadaptor.TranscriptItem{
 			Kind:     agentadaptor.TranscriptFailure,
 			Text:     message,
 			Metadata: map[string]string{"code": "error"},
+		})
+	case "permission_request":
+		if p.stream != nil {
+			_ = p.sink.EmitStream(agentadaptor.StreamPayload{
+				Kind:     agentadaptor.StreamHITLRequested,
+				Name:     "permission_request",
+				RunID:    p.stream.runID,
+				ThreadID: p.sessionID,
+				Raw:      payload,
+			})
+		}
+		p.emit(agentadaptor.TranscriptItem{
+			Kind:    agentadaptor.TranscriptSystem,
+			Text:    raw,
+			Subtype: eventType,
+			Data:    map[string]any{"payload": payload},
 		})
 	default:
 		// Some CLI versions emit terminal events with top-level event/kind
@@ -172,12 +235,33 @@ func (p *claudeParser) handlePayload(raw string, payload map[string]any) {
 				return
 			}
 		}
+		if p.stream != nil {
+			op := cloneUnknownPayload(payload)
+			op["_claude_wrapper_type"] = eventType
+			_ = p.sink.EmitStream(agentadaptor.StreamPayload{
+				RunID:    p.stream.runID,
+				ThreadID: p.sessionID,
+				Name:     eventType,
+				Raw:      op,
+			})
+		}
 		p.emit(agentadaptor.TranscriptItem{
 			Kind: agentadaptor.TranscriptSystem,
 			Text: raw,
 			Data: map[string]any{"payload": payload},
 		})
 	}
+}
+
+func cloneUnknownPayload(payload map[string]any) map[string]any {
+	if payload == nil {
+		return map[string]any{}
+	}
+	out := make(map[string]any, len(payload))
+	for k, v := range payload {
+		out[k] = v
+	}
+	return out
 }
 
 func (p *claudeParser) maybeCaptureSession(payload map[string]any) {
@@ -261,6 +345,9 @@ func (p *claudeParser) handleUserMessage(message map[string]any) {
 			isError := false
 			if v, ok := block["is_error"].(bool); ok {
 				isError = v
+			}
+			if p.stream != nil {
+				p.stream.handleUserToolResult(block)
 			}
 			p.emit(agentadaptor.TranscriptItem{
 				Kind:      agentadaptor.TranscriptToolResult,
@@ -351,6 +438,9 @@ func (p *claudeParser) handleResult(raw string, payload map[string]any, subtype 
 		Text:    claudeTopLevelString(payload, "result"),
 		Data:    map[string]any{"payload": payload},
 	})
+	if p.stream != nil {
+		p.stream.handleResultTerminal(payload)
+	}
 }
 
 func (p *claudeParser) emit(item agentadaptor.TranscriptItem) {
@@ -382,7 +472,53 @@ func (p *claudeParser) buildOutput() string {
 			nonEmpty = append(nonEmpty, text)
 		}
 	}
-	return strings.Join(nonEmpty, "\n\n")
+	if len(nonEmpty) > 0 {
+		return strings.Join(nonEmpty, "\n\n")
+	}
+	if len(p.deltaBuffers) == 0 {
+		return ""
+	}
+	// Prefer stable order by message id for deterministic tests.
+	keys := make([]string, 0, len(p.deltaBuffers))
+	for id := range p.deltaBuffers {
+		keys = append(keys, id)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, id := range keys {
+		if b := p.deltaBuffers[id]; b != nil {
+			s := strings.TrimSpace(b.String())
+			if s != "" {
+				parts = append(parts, s)
+			}
+		}
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+// outputMetadata reports when Output was reconstructed from streamed deltas
+// because no assistant full text blocks were parsed (e.g. ctx cancel).
+func (p *claudeParser) outputMetadata() map[string]string {
+	out := make([]string, 0, len(p.assistantText))
+	for _, text := range p.assistantText {
+		if strings.TrimSpace(text) != "" {
+			out = append(out, text)
+		}
+	}
+	if len(out) > 0 || len(p.deltaBuffers) == 0 {
+		return nil
+	}
+	hasDelta := false
+	for _, b := range p.deltaBuffers {
+		if b != nil && strings.TrimSpace(b.String()) != "" {
+			hasDelta = true
+			break
+		}
+	}
+	if !hasDelta {
+		return nil
+	}
+	return map[string]string{"output_source": "reconstructed_from_deltas"}
 }
 
 // checkpoint honors the historical Claude checkpoint recognition: a valid

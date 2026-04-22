@@ -144,7 +144,7 @@ data: {"type":"RUN_FINISHED",...}
 - `KeepAlivePing`: 非零时发 SSE 注释帧防代理断连
 - `CORSAllowedOrigin`: 浏览器前端必须；空字符串不加 CORS 头
 - `WriteTimeout`: 单帧写超时，默认 30s
-- `RunOptions`: 应用到每次请求的 RunOption 列表（比如 `WithPermissions`）
+- `RunOptions`: 应用到每次请求的 RunOption 列表（例如 `WithRunPolicy`）
 - `DecodeRequest`: 自定义请求体解码
 
 ## 4. 配置
@@ -190,7 +190,7 @@ sdk := agentadaptor.New(
 | adapter | Native | TokenLevel | Reasoning | ToolCallArgs | HITL |
 |---|---|---|---|---|---|
 | codex | ✓ | ✓ | ✓ | ✓ | — (v1 audit-only) |
-| claude | 规划中 | 规划中 | — (与 thinking 互斥) | 规划中 | — |
+| claude | ✓ | ✓ | ✓ | ✓ | — (v1 audit-only) |
 | cursor | 规划中 | 规划中 | — (print 模式被抑制) | — | — |
 
 `pkg/bridges/agui` 会按 capability 做合理降级：
@@ -215,3 +215,9 @@ A: 安全。每个 `Start()` 创建独立 handle / sink / codex app-server 子�
 
 **Q: SSE 断连后 run 还在跑吗？**
 A: 不在。SSE handler 在 client 断连时会调 `handle.Cancel()`，ctx cancellation 穿透到 codex 子进程。
+
+## 7. AG-UI 前后端版本对齐
+
+Go 侧通过 `go.mod` 固定 `github.com/ag-ui-protocol/ag-ui/sdks/community/go`；`examples/streaming-chat-copilotkit/web` 通过 `package-lock.json` 固定 `@ag-ui/core`。两边不是同一个坐标系，升级任一侧时都可能出现 Zod/Go `Validate` 行为漂移。
+
+**回归守门**：`go test ./internal/aguiversion/...` 会检查 `go.mod` 的模块 pin 子串，以及 `package-lock.json` 中 `@ag-ui/core` 的版本号常量。有意的版本升级时，需同步更新 `internal/aguiversion/align_test.go` 里的 `expectedAGUICoreNPM` 与 `expectedGoAGUIModuleSubstr`（并复查 `pkg/bridges/agui` 的 fixture 与 `literals.go`）。
