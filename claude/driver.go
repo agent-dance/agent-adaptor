@@ -66,6 +66,7 @@ func (adapter) Descriptor() agentadaptor.DriverDescriptor {
 		},
 		Sessions:     agentadaptor.SessionCapability{SupportsResume: true},
 		Skills:       agentadaptor.SkillCapability{Supported: true, Mode: agentadaptor.SkillSyncEphemeral},
+		MCP:          agentadaptor.MCPCapability{Supported: true, Stdio: true, HTTP: true, SSE: true},
 		Instructions: agentadaptor.InstructionsCapability{Supported: true},
 		Workspace:    agentadaptor.WorkspaceCapability{Supported: true},
 		RunPolicyCaps: agentadaptor.RunPolicyCapabilities{
@@ -210,6 +211,9 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 	}
 	bundleRoot, bundleKey, err := prepareClaudePromptBundle(req.Agent, req.Skills)
 	if err != nil {
+		return agentadaptor.DriverRunResult{}, err
+	}
+	if err := syncClaudeMCPProfile(cfg.CommonConfig, req.MCP); err != nil {
 		return agentadaptor.DriverRunResult{}, err
 	}
 	effectiveEnv, err := adapterutil.RuntimeEnvBindings(effectiveClaudeBindings(cfg.CommonConfig), req.Runtime)

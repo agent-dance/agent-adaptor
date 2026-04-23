@@ -174,6 +174,7 @@ type DriverRunRequest struct {
 	Workspace    WorkspaceLease
 	Runtime      RuntimePayload
 	Skills       SkillPayload
+	MCP          MCPPayload
 	Policy       RunPolicy
 	Instructions *InstructionsBundleRef
 	Session      *DriverSessionContext
@@ -318,6 +319,7 @@ type resolvedInvocation struct {
 	workspace    WorkspaceLease
 	runtime      RuntimePayload
 	skills       SkillPayload
+	mcp          MCPPayload
 	policy       RunPolicy
 	handlers     decisionHandlers
 	instructions *InstructionsBundleRef

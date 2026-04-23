@@ -187,6 +187,7 @@ type AgentDefaults struct {
 	Runtime      *WorkspaceRuntimeConfig
 	RunPolicy    *RunPolicy
 	Skills       []string
+	MCP          *MCPConfig
 	Instructions *InstructionsBundleRef
 	Metadata     map[string]string
 	// Streaming marks the binding as streaming-by-default when non-nil and
@@ -212,16 +213,17 @@ type AgentInfo struct {
 }
 
 type DriverDescriptor struct {
-	Type         string
-	DisplayName  string
-	Models       []ModelInfo
-	ConfigSchema *ConfigSchema
-	Sessions     SessionCapability
-	Skills       SkillCapability
-	Instructions InstructionsCapability
-	Workspace    WorkspaceCapability
+	Type          string
+	DisplayName   string
+	Models        []ModelInfo
+	ConfigSchema  *ConfigSchema
+	Sessions      SessionCapability
+	Skills        SkillCapability
+	MCP           MCPCapability
+	Instructions  InstructionsCapability
+	Workspace     WorkspaceCapability
 	RunPolicyCaps RunPolicyCapabilities
-	Runtime      RuntimeCapability
+	Runtime       RuntimeCapability
 }
 
 type SessionCapability struct {

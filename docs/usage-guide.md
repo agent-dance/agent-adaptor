@@ -56,6 +56,7 @@ result, err := sdk.Run(
 - `WithDefaultIdentity`
 - `WithDefaultWorkspace`
 - `WithDefaultSkills`
+- `WithDefaultMCP`
 - `WithDefaultRunPolicy`
 - `WithDefaultInstructions`
 - `WithDefaultMetadata`
@@ -69,6 +70,7 @@ result, err := sdk.Run(
 - `WithForkSession`
 - `WithWorkspace`
 - `WithSkills`
+- `WithMCP`
 - `WithRunPolicy`
 - `WithInstructions`
 - `WithMetadata`
@@ -81,3 +83,45 @@ result, err := sdk.Run(
 - adapter 的 `config` 仅表达 CLI/环境级配置，**不再**承载与 `RunPolicy` 重复的权限类 toggle；策略统一由 `RunPolicy` 表达
 
 `RunPolicy` 合同与适配器映射见 [`run-policy.md`](./run-policy.md)。
+
+## 5. MCP 注入
+
+MCP 和 `skills` 一样走统一的 `resolveInvocation -> adapter.Run(...)` 主路径；宿主声明 server spec，SDK 负责合并默认值与 per-run override，adapter 负责在真实生效的 profile 中物化 provider-native 配置。
+
+```go
+sdk := agentadaptor.New(
+	agentadaptor.WithDefaultAgent(codex.New(
+		agentadaptor.CodexConfig{Model: "gpt-5.4"},
+		agentadaptor.WithDefaultMCP(agentadaptor.MCPConfig{
+			Servers: []agentadaptor.MCPServerSpec{
+				{
+					Key:       "docs",
+					Transport: agentadaptor.MCPTransportHTTP,
+					URL:       "https://example.com/mcp",
+				},
+			},
+		}),
+	)),
+)
+
+result, err := sdk.Run(
+	ctx,
+	"use the docs MCP",
+	agentadaptor.WithMCP(agentadaptor.MCPConfig{
+		Servers: []agentadaptor.MCPServerSpec{
+			{
+				Key:       "repo-tools",
+				Transport: agentadaptor.MCPTransportStdio,
+				Command:   "npx",
+				Args:      []string{"repo-mcp"},
+			},
+		},
+	}),
+)
+```
+
+MCP override 规则与 `skills` 一样简单：
+
+- 未显式传 `WithMCP(...)` 时，继承 binding default
+- 显式传 `WithMCP(...)` 时，整组 `Servers` 覆盖 binding default
+- `skills/MCP` 的变化不会自动把当前 session 判为 incompatible；是否继续复用 session 仍由宿主通过 `SessionMode` 决定

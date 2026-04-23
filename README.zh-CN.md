@@ -163,6 +163,7 @@ func main() {
 | Execution | `Run(...)` 用于同步执行，`Start(...)` 用于流式句柄。 |
 | Sessions | 默认无状态；注入 `SessionStore` 后支持 `continue_or_start`、`continue_only`、`start_new` 和 `fork`。 |
 | Skills | 用同一条流程处理 skills 的解析、规范化、组装和同步。 |
+| MCP | 宿主声明统一的 MCP server spec，内置 adapter 会把它物化到各自真实生效的 profile。 |
 | Runtime Services | 在运行前准备好需要的运行时服务，并在清理阶段按 `RunID` 释放。 |
 | Admin API | 提供管理接口，用来做环境检查、模型枚举与探测、配置字段展示、额度查询和 skills 管理。 |
 | Run Results | 返回统一输出、执行记录、provider/model/cost 元数据、运行时服务状态，以及结构化 question/failure。 |
@@ -178,6 +179,8 @@ func main() {
 如果你需要更底层的扩展接口，每个内置包也都提供 `NewAdapter()`。
 
 对于内置适配器，`CommonConfig.AgentProfileDir` 可以让你统一指定本地 agent 的配置目录，而不必每次手动写各家自己的环境变量。
+
+`WithDefaultMCP(...)` / `WithMCP(...)` 也遵循和 `skills` 相同的默认值与调用覆盖规则；`skills/MCP` 变化不会自动打断 session 复用，是否继续沿用 session 仍由宿主通过 `SessionMode` 决定。
 
 ## 管理接口
 

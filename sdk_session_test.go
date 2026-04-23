@@ -19,6 +19,7 @@ type fakeConfig struct {
 type fakeDriver struct {
 	mu                sync.Mutex
 	counter           int
+	runCalls          int
 	rejectResume      bool
 	omitCheckpoint    bool
 	humanRejectNoCP   bool
@@ -26,8 +27,10 @@ type fakeDriver struct {
 	blockCh           chan struct{}
 	startedCh         chan struct{}
 	supportedModels   []agentadaptor.ModelInfo
+	mcpCapability     agentadaptor.MCPCapability
 	lastSkillSyncWant []string
 	lastSkills        agentadaptor.SkillPayload
+	lastMCP           agentadaptor.MCPPayload
 }
 
 func (d *fakeDriver) Descriptor() agentadaptor.DriverDescriptor {
@@ -36,6 +39,7 @@ func (d *fakeDriver) Descriptor() agentadaptor.DriverDescriptor {
 		DisplayName: "Fake",
 		Sessions:    agentadaptor.SessionCapability{SupportsResume: true},
 		Skills:      agentadaptor.SkillCapability{Supported: true, Mode: agentadaptor.SkillSyncEphemeral},
+		MCP:         d.mcpCapability,
 	}
 }
 
@@ -85,6 +89,10 @@ func (d *fakeDriver) SyncSkills(_ context.Context, _ any, payload agentadaptor.S
 
 func (d *fakeDriver) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink agentadaptor.EventSink) (agentadaptor.DriverRunResult, error) {
 	d.lastSkills = req.Skills
+	d.lastMCP = req.MCP
+	d.mu.Lock()
+	d.runCalls++
+	d.mu.Unlock()
 	if d.startedCh != nil {
 		select {
 		case d.startedCh <- struct{}{}:

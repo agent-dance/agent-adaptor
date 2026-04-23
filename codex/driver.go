@@ -46,6 +46,7 @@ func (adapter) Descriptor() agentadaptor.DriverDescriptor {
 		},
 		Sessions:     agentadaptor.SessionCapability{SupportsResume: true},
 		Skills:       agentadaptor.SkillCapability{Supported: true, Mode: agentadaptor.SkillSyncEphemeral},
+		MCP:          agentadaptor.MCPCapability{Supported: true, Stdio: true, HTTP: true},
 		Instructions: agentadaptor.InstructionsCapability{Supported: true},
 		Workspace:    agentadaptor.WorkspaceCapability{Supported: true},
 		RunPolicyCaps: agentadaptor.RunPolicyCapabilities{
@@ -54,7 +55,7 @@ func (adapter) Descriptor() agentadaptor.DriverDescriptor {
 			PlanReview: agentadaptor.HumanDecisionSupport{Ask: false, AutoApprove: true, AutoReject: false, Retry: false},
 			Question:   agentadaptor.QuestionSupport{Ask: false, AutoReject: false, Retry: false},
 		},
-		Runtime:      agentadaptor.RuntimeCapability{ReportsServices: true},
+		Runtime: agentadaptor.RuntimeCapability{ReportsServices: true},
 	}
 }
 
@@ -236,6 +237,9 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 		effectiveBindings = skillruntime.WithBinding(effectiveBindings, "CODEX_HOME", effectiveCodexHome)
 	}
 	if err := injectCodexSkills(ctx, req.Skills, effectiveCodexHome, sink); err != nil {
+		return agentadaptor.DriverRunResult{}, err
+	}
+	if err := syncCodexMCPProfile(cfg.CommonConfig, req.Agent, effectiveCodexHome, req.MCP); err != nil {
 		return agentadaptor.DriverRunResult{}, err
 	}
 	effectiveBindings, err := adapterutil.RuntimeEnvBindings(effectiveBindings, req.Runtime)

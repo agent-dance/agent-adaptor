@@ -17,6 +17,9 @@ var (
 	ErrSessionLeaseLost              = errors.New("agentadaptor: session lease lost")
 	ErrSessionNotFound               = errors.New("agentadaptor: session not found")
 	ErrSessionStoreRequired          = errors.New("agentadaptor: session store required")
+	ErrInvalidMCPConfig              = errors.New("agentadaptor: invalid MCP configuration")
+	ErrMCPUnsupported                = errors.New("agentadaptor: MCP unsupported by adapter")
+	ErrMCPTransportUnsupported       = errors.New("agentadaptor: MCP transport unsupported by adapter")
 
 	// HITL v2 (see docs/workstream-hitl-v2.md).
 	ErrHumanDecisionModeUnsupported = errors.New("agentadaptor: human decision mode unsupported by adapter")

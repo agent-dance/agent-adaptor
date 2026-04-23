@@ -87,8 +87,8 @@ All execution paths go through the same internal flow: first merge defaults and 
 
 Bind-time defaults establish a stable baseline for your application. Per-run options override only what changed for that specific run.
 
-- Bind-time defaults: `WithDefaultIdentity`, `WithDefaultWorkspace`, `WithDefaultSkills`, `WithDefaultRunPolicy`, `WithDefaultInstructions`, `WithDefaultRuntimeServices`, `WithDefaultMetadata`.
-- Per-run overrides: `WithSession`, `WithSessionKey`, `WithContinueSession`, `WithNewSession`, `WithForkSession`, `WithWorkspace`, `WithSkills`, `WithRunPolicy`, `WithInstructions`, `WithRuntimeServices`, `WithMetadata`, `WithAgentIdentity`.
+- Bind-time defaults: `WithDefaultIdentity`, `WithDefaultWorkspace`, `WithDefaultSkills`, `WithDefaultMCP`, `WithDefaultRunPolicy`, `WithDefaultInstructions`, `WithDefaultRuntimeServices`, `WithDefaultMetadata`.
+- Per-run overrides: `WithSession`, `WithSessionKey`, `WithContinueSession`, `WithNewSession`, `WithForkSession`, `WithWorkspace`, `WithSkills`, `WithMCP`, `WithRunPolicy`, `WithInstructions`, `WithRuntimeServices`, `WithMetadata`, `WithAgentIdentity`.
 
 ## Common Flows
 
@@ -170,6 +170,12 @@ func main() {
 }
 ```
 
+Changing `WithSkills(...)` or `WithMCP(...)` does not automatically make an existing session incompatible. Session continuity is still decided by the caller through `SessionMode`.
+
+### MCP Injection
+
+MCP server declarations use the same default/override model as skills: bind a default set with `WithDefaultMCP(...)`, or replace it for one run with `WithMCP(...)`. Built-in adapters materialize the resulting MCP config into the effective provider profile before launching the CLI.
+
 ### Streaming
 
 `Start(...)` returns a `RunHandle` with `Events()`, `Wait(...)`, and `Cancel(...)`. Your application can use the same execution API for streaming output instead of maintaining a separate one.
@@ -181,6 +187,7 @@ func main() {
 | Execution | `Run(...)` for synchronous execution, `Start(...)` for streaming handles. |
 | Sessions | Stateless by default; supports `continue_or_start`, `continue_only`, `start_new`, and `fork` when a `SessionStore` is present. |
 | Skills | Uses one flow for skill resolution, normalization, assembly, and synchronization. |
+| MCP | Lets the host declare MCP server specs once and have built-in adapters materialize them into the effective provider profile. |
 | Runtime Services | Prepares the runtime services a run needs before execution and releases them during cleanup by `RunID`. |
 | Admin API | Provides management APIs for environment checks, model listing and detection, config-field discovery, quota queries, and skill management. |
 | Run Results | Returns normalized output, execution transcripts, provider/model/cost metadata, runtime-service status, and structured questions/failures. |

@@ -143,6 +143,13 @@ func WithDefaultSkills(keys ...string) AgentOption {
 	}
 }
 
+func WithDefaultMCP(cfg MCPConfig) AgentOption {
+	return func(defaults *AgentDefaults) {
+		copyCfg := MCPConfig{Servers: cloneMCPServerSpecs(cfg.Servers)}
+		defaults.MCP = &copyCfg
+	}
+}
+
 // WithDefaultRuntimeServices attaches default runtime-service requirements to
 // an agent binding. Per-run WithRuntimeServices(...) overrides these defaults.
 func WithDefaultRuntimeServices(services ...RuntimeServiceSpec) AgentOption {
@@ -201,6 +208,7 @@ type runOptions struct {
 	workspace    WorkspaceSpec
 	runtime      *WorkspaceRuntimeConfig
 	skills       []string
+	mcp          *MCPConfig
 	runPolicy    *RunPolicy
 	instructions *InstructionsBundleRef
 	metadata     map[string]string
@@ -310,6 +318,13 @@ func WithRuntimeServices(services ...RuntimeServiceSpec) RunOption {
 func WithSkills(keys ...string) RunOption {
 	return func(ro *runOptions) {
 		ro.skills = append([]string(nil), keys...)
+	}
+}
+
+func WithMCP(cfg MCPConfig) RunOption {
+	return func(ro *runOptions) {
+		copyCfg := MCPConfig{Servers: cloneMCPServerSpecs(cfg.Servers)}
+		ro.mcp = &copyCfg
 	}
 }
 

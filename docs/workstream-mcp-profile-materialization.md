@@ -628,7 +628,11 @@ v1 建议在文档中说明：
 
 ### 14.3 决策
 
-若进入实现阶段，建议引入 TOML 库，不要以“零依赖”为唯一理由拒绝。
+实现采用：
+
+- `github.com/pelletier/go-toml/v2`
+
+原因与上面的三条评估一致：它把 Codex `config.toml` 的 MCP section 合并局部化在 `internal/mcpruntime/codex.go`，明显优于手写 TOML 拼接。
 
 Claude / Cursor 的 JSON 配置写入仍可使用标准库。
 

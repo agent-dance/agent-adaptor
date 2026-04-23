@@ -35,6 +35,13 @@ func TestBuildClaudeExecArgsIncludesPartialMessagesWhenStreaming(t *testing.T) {
 	}
 }
 
+func TestDescriptorAdvertisesExpectedMCPCapabilities(t *testing.T) {
+	caps := NewAdapter().Descriptor().MCP
+	if !caps.Supported || !caps.Stdio || !caps.HTTP || !caps.SSE {
+		t.Fatalf("unexpected Claude MCP capability: %#v", caps)
+	}
+}
+
 func TestBuildClaudeExecArgsInteractiveEnablesStdioPermissionPrompt(t *testing.T) {
 	cfg := agentadaptor.ClaudeConfig{Model: "claude-sonnet-4"}
 	args := buildClaudeExecArgs(cfg, agentadaptor.DriverRunRequest{}, "", true)

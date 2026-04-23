@@ -42,6 +42,7 @@ func (adapter) Descriptor() agentadaptor.DriverDescriptor {
 		},
 		Sessions:     agentadaptor.SessionCapability{SupportsResume: true},
 		Skills:       agentadaptor.SkillCapability{Supported: true, Mode: agentadaptor.SkillSyncPersistent},
+		MCP:          agentadaptor.MCPCapability{Supported: true, Stdio: true, HTTP: true, SSE: true},
 		Instructions: agentadaptor.InstructionsCapability{Supported: true},
 		Workspace:    agentadaptor.WorkspaceCapability{Supported: true},
 		RunPolicyCaps: agentadaptor.RunPolicyCapabilities{
@@ -50,7 +51,7 @@ func (adapter) Descriptor() agentadaptor.DriverDescriptor {
 			PlanReview: agentadaptor.HumanDecisionSupport{Ask: false, AutoApprove: true, AutoReject: false, Retry: false},
 			Question:   agentadaptor.QuestionSupport{Ask: false, AutoReject: false, Retry: false},
 		},
-		Runtime:      agentadaptor.RuntimeCapability{ReportsServices: true},
+		Runtime: agentadaptor.RuntimeCapability{ReportsServices: true},
 	}
 }
 
@@ -208,6 +209,9 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 	if command == "" {
 		command = "agent"
 	}
+	if err := syncCursorMCPProfile(cfg.CommonConfig, req.MCP); err != nil {
+		return agentadaptor.DriverRunResult{}, err
+	}
 	effectiveEnv, err := adapterutil.RuntimeEnvBindings(effectiveCursorBindings(cfg.CommonConfig), req.Runtime)
 	if err != nil {
 		return agentadaptor.DriverRunResult{}, err
@@ -313,4 +317,3 @@ func readConfig(cfg any) agentadaptor.CursorConfig {
 	}
 	return agentadaptor.CursorConfig{}
 }
-

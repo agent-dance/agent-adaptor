@@ -21,6 +21,13 @@ func TestNewReturnsTypedBinding(t *testing.T) {
 	}
 }
 
+func TestDescriptorAdvertisesExpectedMCPCapabilities(t *testing.T) {
+	caps := NewAdapter().Descriptor().MCP
+	if !caps.Supported || !caps.Stdio || !caps.HTTP || caps.SSE {
+		t.Fatalf("unexpected Codex MCP capability: %#v", caps)
+	}
+}
+
 func TestParseCheckpointRequiresRecognizedCodexEvent(t *testing.T) {
 	stdout := `{"type":"tool.result","thread_id":"ignore-me"}
 {"type":"thread.started","thread_id":"codex-thread"}`

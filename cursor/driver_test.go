@@ -16,6 +16,13 @@ func TestNewReturnsTypedBinding(t *testing.T) {
 	}
 }
 
+func TestDescriptorAdvertisesExpectedMCPCapabilities(t *testing.T) {
+	caps := NewAdapter().Descriptor().MCP
+	if !caps.Supported || !caps.Stdio || !caps.HTTP || !caps.SSE {
+		t.Fatalf("unexpected Cursor MCP capability: %#v", caps)
+	}
+}
+
 func TestParseCheckpointRequiresRecognizedCursorEvent(t *testing.T) {
 	stdout := `{"kind":"tool.result","session_id":"ignore-me"}
 {"type":"run.completed","session_id":"cursor-session","display_id":"cursor-display"}`

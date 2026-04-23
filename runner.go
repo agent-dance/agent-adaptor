@@ -309,6 +309,10 @@ func (r *runnerImpl) resolveInvocation(ctx context.Context, prompt string, opts 
 	if len(resolvedOpts.skills) > 0 {
 		skillRefs = cloneStrings(resolvedOpts.skills)
 	}
+	mcpPayload, err := resolveMCPPayload(defaults.MCP, resolvedOpts.mcp, r.binding.Adapter().Descriptor().MCP)
+	if err != nil {
+		return resolvedInvocation{}, nil, err
+	}
 
 	policy, err := mergeRunPolicy(defaults.RunPolicy, resolvedOpts.runPolicy)
 	if err != nil {
@@ -395,7 +399,6 @@ func (r *runnerImpl) resolveInvocation(ctx context.Context, prompt string, opts 
 		workspace.Fingerprint,
 		runtimePayload.Fingerprint,
 		instructionFingerprint(instructions),
-		skillPayload.Fingerprint,
 	)
 
 	return resolvedInvocation{
@@ -407,6 +410,7 @@ func (r *runnerImpl) resolveInvocation(ctx context.Context, prompt string, opts 
 		workspace:    workspace,
 		runtime:      runtimePayload,
 		skills:       skillPayload,
+		mcp:          mcpPayload,
 		policy:       policy,
 		handlers:     handlers,
 		instructions: instructions,
@@ -449,6 +453,7 @@ func (r *runnerImpl) executeWithSessionPlan(
 		Workspace:    invocation.workspace,
 		Runtime:      cloneRuntimePayload(invocation.runtime),
 		Skills:       invocation.skills,
+		MCP:          cloneMCPPayload(invocation.mcp),
 		Policy:       invocation.policy,
 		Instructions: invocation.instructions,
 		Metadata:     cloneStringMap(invocation.metadata),
