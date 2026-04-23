@@ -141,7 +141,7 @@ func (r *runnerImpl) run(ctx context.Context, prompt string, sink EventSink, dec
 	}
 
 	if decisionSink != nil {
-		decisionSink.bindRun(invocation.runID, invocation.policy.HumanDecision, invocation.handlers)
+		decisionSink.bindRun(invocation.runID, invocation.policy.HumanDecision, invocation.handlers, invocation.adapter.Descriptor().RunPolicyCaps)
 	}
 
 	if err := r.validateDecisionCapabilities(invocation); err != nil {
@@ -226,8 +226,8 @@ func pendingFailureFromSink(sink EventSink) *RunFailure {
 
 // validateDecisionCapabilities cross-checks the resolved policy against the
 // adapter's declared HumanDecision / Question support matrix. Unsupported
-// Ask modes are hard errors; unsupported Retry modes degrade to Abort with a
-// warning emitted on the RunEvent channel.
+// Ask modes are hard errors. Retry support is enforced later, when a specific
+// Kind actually tries to use FailureRetry.
 func (r *runnerImpl) validateDecisionCapabilities(inv resolvedInvocation) error {
 	caps := inv.adapter.Descriptor().RunPolicyCaps
 	p := inv.policy.HumanDecision
@@ -630,10 +630,12 @@ type dualSink struct {
 	threadID      string
 	policyHD      HumanDecisionPolicy
 	handlers      decisionHandlers
+	caps          RunPolicyCapabilities
 	decSeq        atomic.Uint64
 	streamCounter atomic.Uint64 // shared by adapter-side and runner-side stream emissions
 	pending       map[string]*pendingDecision
 	pendingMu     sync.Mutex
+	retryWarnings map[HumanDecisionKind]struct{}
 	// decisionSerial guards the "one HITL at a time per run" invariant so
 	// adapters that emit concurrent tool_use frames still see serialized
 	// RequestDecision returns.
@@ -662,6 +664,7 @@ func newDualSink(runID string, streaming bool, runBuf, streamBuf int, policy Eve
 		done:             make(chan struct{}),
 		runID:            runID,
 		pending:          map[string]*pendingDecision{},
+		retryWarnings:    map[HumanDecisionKind]struct{}{},
 	}
 	if !streaming {
 		close(s.stream)
@@ -669,9 +672,10 @@ func newDualSink(runID string, streaming bool, runBuf, streamBuf int, policy Eve
 	return s
 }
 
-// bindRun is called once resolveInvocation has produced a policy and the
-// typed handler set so the sink can route RequestDecision correctly.
-func (s *dualSink) bindRun(runID string, policy HumanDecisionPolicy, handlers decisionHandlers) {
+// bindRun is called once resolveInvocation has produced a policy, capability
+// matrix, and typed handler set so the sink can route RequestDecision
+// correctly.
+func (s *dualSink) bindRun(runID string, policy HumanDecisionPolicy, handlers decisionHandlers, caps RunPolicyCapabilities) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if runID != "" {
@@ -679,6 +683,7 @@ func (s *dualSink) bindRun(runID string, policy HumanDecisionPolicy, handlers de
 	}
 	s.policyHD = EffectiveHumanDecisionPolicy(policy)
 	s.handlers = handlers
+	s.caps = caps
 }
 
 func (s *dualSink) Emit(event RunEvent) error {
@@ -1159,23 +1164,38 @@ type retryOutcome struct {
 
 // applyRejectWithRetry applies OnReject to a DecisionRejected outcome.
 func (s *dualSink) applyRejectWithRetry(ctx context.Context, req DecisionRequest, resp DecisionResponse, attempts int, kind HumanDecisionKind) (retryOutcome, error) {
-	return s.applyFailureAction(ctx, req, resp, attempts, kind, s.policyHD.OnReject, FailureReject, DecisionRejected, true)
+	return s.applyFailureAction(ctx, req, resp, attempts, kind, s.policyHD.OnReject, FailureReject, DecisionRejected, s.retrySupported(kind))
 }
 
 // applyTimeoutWithRetry applies OnTimeout to a DecisionTimedOut outcome.
 func (s *dualSink) applyTimeoutWithRetry(ctx context.Context, req DecisionRequest, attempts int, kind HumanDecisionKind) (retryOutcome, error) {
 	resp := DecisionResponse{RequestID: req.RequestID, Result: DecisionTimedOut}
-	return s.applyFailureAction(ctx, req, resp, attempts, kind, s.policyHD.OnTimeout, FailureTimeout, DecisionTimedOut, false)
+	return s.applyFailureAction(ctx, req, resp, attempts, kind, s.policyHD.OnTimeout, FailureTimeout, DecisionTimedOut, s.retrySupported(kind))
 }
 
 // applyFailureAction centralises OnReject / OnTimeout handling. retryAllowed
 // gates FailureRetry on adapter support; adapters that cannot retry the same
-// decision are degraded to FailureAbort silently.
-func (s *dualSink) applyFailureAction(ctx context.Context, req DecisionRequest, resp DecisionResponse, attempts int, kind HumanDecisionKind, action FailureAction, code FailureCode, decision DecisionResult, _ bool) (retryOutcome, error) {
+// decision are degraded to FailureAbort with a lifecycle warning.
+func (s *dualSink) applyFailureAction(_ context.Context, req DecisionRequest, resp DecisionResponse, attempts int, kind HumanDecisionKind, action FailureAction, code FailureCode, decision DecisionResult, retryAllowed bool) (retryOutcome, error) {
 	switch action {
 	case FailureContinue:
 		return retryOutcome{retry: false, resp: resp}, nil
 	case FailureRetry:
+		if !retryAllowed {
+			s.emitRetryUnsupportedWarning(kind, action)
+			s.setPendingFailure(&RunFailure{
+				Code:    code,
+				Message: decisionFailureMessage(decision, kind, req.Source),
+				HumanDecision: &HumanDecisionFailure{
+					Kind:     kind,
+					Source:   req.Source,
+					Decision: decision,
+					Request:  cloneDecisionRequest(&req),
+					Attempts: attempts,
+				},
+			})
+			return retryOutcome{resp: resp}, errAbortFromFailure(code)
+		}
 		// Bound by MaxRetries (attempts >= max → abort).
 		if attempts > s.policyHD.MaxRetries {
 			s.setPendingFailure(&RunFailure{
@@ -1209,6 +1229,40 @@ func (s *dualSink) applyFailureAction(ctx context.Context, req DecisionRequest, 
 		})
 		return retryOutcome{resp: resp}, errAbortFromFailure(code)
 	}
+}
+
+func (s *dualSink) retrySupported(kind HumanDecisionKind) bool {
+	switch kind {
+	case HumanDecisionPermission:
+		return s.caps.Permission.Retry
+	case HumanDecisionPlanReview:
+		return s.caps.PlanReview.Retry
+	case HumanDecisionQuestion:
+		return s.caps.Question.Retry
+	default:
+		return false
+	}
+}
+
+func (s *dualSink) emitRetryUnsupportedWarning(kind HumanDecisionKind, action FailureAction) {
+	s.mu.Lock()
+	if _, exists := s.retryWarnings[kind]; exists {
+		s.mu.Unlock()
+		return
+	}
+	s.retryWarnings[kind] = struct{}{}
+	s.mu.Unlock()
+
+	_ = s.Emit(RunEvent{
+		Type:      RunEventLifecycle,
+		Text:      fmt.Sprintf("human decision %s does not support %s; degrading to abort", kind, action),
+		Timestamp: time.Now().UTC(),
+		Data: map[string]any{
+			"kind":    string(kind),
+			"action":  string(action),
+			"warning": "human_decision_retry_unsupported",
+		},
+	})
 }
 
 // applyReject handles auto-resolved (AutoReject / AutoApprove) paths. Approved

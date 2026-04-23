@@ -11,10 +11,22 @@ import (
 // avoid spawning a full Runner so the state transitions documented in
 // docs/workstream-hitl-v2.md §3.11 can be asserted in isolation.
 
+func fullDecisionCaps() RunPolicyCapabilities {
+	return RunPolicyCapabilities{
+		Permission: HumanDecisionSupport{Ask: true, AutoApprove: true, AutoReject: true, Retry: true},
+		PlanReview: HumanDecisionSupport{Ask: true, AutoApprove: true, AutoReject: true, Retry: true},
+		Question:   QuestionSupport{Ask: true, AutoReject: true, Retry: true},
+	}
+}
+
 func newBoundSink(t *testing.T, policy HumanDecisionPolicy, handlers decisionHandlers) *dualSink {
+	return newBoundSinkWithCaps(t, policy, handlers, fullDecisionCaps())
+}
+
+func newBoundSinkWithCaps(t *testing.T, policy HumanDecisionPolicy, handlers decisionHandlers, caps RunPolicyCapabilities) *dualSink {
 	t.Helper()
 	s := newDualSink("run-test", true, 8, 8, BackpressureDropStream)
-	s.bindRun("run-test", policy, handlers)
+	s.bindRun("run-test", policy, handlers, caps)
 	return s
 }
 
@@ -261,6 +273,44 @@ func TestDualSink_Retry_ExhaustsAndAborts(t *testing.T) {
 	f := s.pendingFailure()
 	if f == nil || f.HumanDecision.Attempts != 3 {
 		t.Fatalf("failure attempts: %+v", f)
+	}
+}
+
+func TestDualSink_RetryUnsupported_DegradesToAbort(t *testing.T) {
+	attempts := 0
+	handler := PlanReviewHandler(func(_ context.Context, _ PlanReviewRequest) (PlanReviewResponse, error) {
+		attempts++
+		return PlanReviewResponse{Result: ApprovalRejected}, nil
+	})
+	caps := fullDecisionCaps()
+	caps.PlanReview.Retry = false
+	s := newBoundSinkWithCaps(t, HumanDecisionPolicy{
+		PlanReview: HumanDecisionAsk,
+		OnReject:   FailureRetry,
+	}, decisionHandlers{PlanReview: handler}, caps)
+	defer s.close()
+
+	_, err := s.RequestDecision(context.Background(), DecisionRequest{Kind: HumanDecisionPlanReview, Source: "test.plan"})
+	if !errors.Is(err, errDecisionAbort) {
+		t.Fatalf("expected abort when retry is unsupported, got %v", err)
+	}
+	if attempts != 1 {
+		t.Fatalf("attempts: got %d want 1", attempts)
+	}
+	f := s.pendingFailure()
+	if f == nil || f.Code != FailureReject || f.HumanDecision == nil || f.HumanDecision.Attempts != 1 {
+		t.Fatalf("failure: %+v", f)
+	}
+	select {
+	case evt := <-s.runEvents:
+		if evt.Type != RunEventLifecycle {
+			t.Fatalf("warning event type: %q", evt.Type)
+		}
+		if evt.Data["warning"] != "human_decision_retry_unsupported" {
+			t.Fatalf("warning payload: %+v", evt.Data)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("expected retry downgrade warning event")
 	}
 }
 

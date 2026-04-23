@@ -32,8 +32,8 @@ func (d *hitlMockDriver) Run(ctx context.Context, req agentadaptor.DriverRunRequ
 				Source: "hitl-mock." + string(d.requestKind),
 				Prompt: "do it?",
 				Payload: map[string]any{
-					"tool": "bash",
-					"plan": "echo hi",
+					"tool":   "bash",
+					"plan":   "echo hi",
 					"schema": map[string]any{"type": "object"},
 				},
 			})
@@ -219,5 +219,38 @@ func TestRunner_PerKindSelectiveHandlerMount(t *testing.T) {
 	}
 	if result.Failure != nil {
 		t.Fatalf("unexpected failure: %+v", result.Failure)
+	}
+}
+
+func TestRunner_RetryUnsupportedDegradesToAbort(t *testing.T) {
+	caps := fullCaps()
+	caps.PlanReview.Retry = false
+	drv := &hitlMockDriver{caps: caps, requestKind: agentadaptor.HumanDecisionPlanReview}
+	sdk := agentadaptor.New(agentadaptor.WithDefaultAgent(agentadaptor.Bind(drv, struct{}{})))
+
+	attempts := 0
+	result, err := sdk.Run(context.Background(), "hi",
+		agentadaptor.WithRunPolicy(agentadaptor.RunPolicy{
+			HumanDecision: agentadaptor.HumanDecisionPolicy{
+				PlanReview: agentadaptor.HumanDecisionAsk,
+				OnReject:   agentadaptor.FailureRetry,
+			},
+		}),
+		agentadaptor.WithPlanReviewHandler(func(_ context.Context, _ agentadaptor.PlanReviewRequest) (agentadaptor.PlanReviewResponse, error) {
+			attempts++
+			return agentadaptor.PlanReviewResponse{Result: agentadaptor.ApprovalRejected}, nil
+		}),
+	)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if attempts != 1 {
+		t.Fatalf("attempts: got %d want 1", attempts)
+	}
+	if result.Failure == nil || result.Failure.Code != agentadaptor.FailureReject {
+		t.Fatalf("expected FailureReject, got %+v", result.Failure)
+	}
+	if result.Failure.HumanDecision == nil || result.Failure.HumanDecision.Attempts != 1 {
+		t.Fatalf("expected single-attempt human decision failure, got %+v", result.Failure)
 	}
 }

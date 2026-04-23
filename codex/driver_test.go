@@ -233,6 +233,7 @@ func TestCheckEnvironmentReportsConfigFileState(t *testing.T) {
 }
 
 func TestCheckEnvironmentReportsCodexAuthMetadata(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "")
 	home := t.TempDir()
 	configDir := filepath.Join(home, ".codex")
 	if err := os.MkdirAll(configDir, 0o755); err != nil {

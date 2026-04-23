@@ -199,6 +199,8 @@ func TestCheckEnvironmentReportsConfigFileState(t *testing.T) {
 }
 
 func TestCheckEnvironmentReportsCursorNativeAuth(t *testing.T) {
+	t.Setenv("CURSOR_API_KEY", "")
+	t.Setenv("OPENAI_API_KEY", "")
 	cursorHome := t.TempDir()
 	if err := os.WriteFile(filepath.Join(cursorHome, "cli-config.json"), []byte(`{"authInfo":{"email":"dev@example.com","displayName":"Dev Operator","userId":42}}`), 0o644); err != nil {
 		t.Fatalf("write auth config: %v", err)
