@@ -204,22 +204,33 @@ func (adapter) GetQuota(ctx context.Context, cfg any, profile *agentadaptor.Prof
 	return claudeQuotaReport(ctx, bindings)
 }
 
-func (adapter) ListSkills(_ context.Context, cfg any, payload agentadaptor.SkillPayload, profile *agentadaptor.ProfileSelection) (agentadaptor.SkillSnapshot, error) {
+func (adapter) ListSkills(_ context.Context, cfg any, payload agentadaptor.ResolvedSkills, selected []string, resolved []agentadaptor.Skill, profile *agentadaptor.ProfileSelection) (agentadaptor.SkillSnapshot, error) {
 	config := readConfig(cfg)
 	bindings, err := effectiveClaudeBindings(config.CommonConfig, profile)
 	if err != nil {
 		return agentadaptor.SkillSnapshot{}, err
 	}
-	return listClaudeSkills(payload, bindings)
+	return listClaudeSkills(payload, selected, resolved, bindings)
 }
 
-func (adapter) SyncSkills(_ context.Context, cfg any, payload agentadaptor.SkillPayload, _ []string, profile *agentadaptor.ProfileSelection) (agentadaptor.SkillSnapshot, error) {
+// InjectSkills is a no-op for Claude. The prompt bundle is keyed off the
+// *effective* AgentIdentity (in particular TenantID) which the SDK only
+// surfaces through DriverRunRequest.Agent inside Run; materialising here
+// with a synthetic empty identity would populate a different cache
+// directory than Run() actually consumes, wasting disk and potentially
+// leaving orphan bundles behind. Run() calls prepareClaudePromptBundle
+// itself so correctness does not depend on this hook.
+func (adapter) InjectSkills(_ context.Context, _ any, _ agentadaptor.ResolvedSkills, _ *agentadaptor.ProfileSelection) error {
+	return nil
+}
+
+func (adapter) SyncSkills(_ context.Context, cfg any, payload agentadaptor.ResolvedSkills, selected []string, resolved []agentadaptor.Skill, profile *agentadaptor.ProfileSelection) (agentadaptor.SkillSnapshot, error) {
 	config := readConfig(cfg)
 	bindings, err := effectiveClaudeBindings(config.CommonConfig, profile)
 	if err != nil {
 		return agentadaptor.SkillSnapshot{}, err
 	}
-	return syncClaudeSkills(payload, bindings)
+	return syncClaudeSkills(payload, selected, resolved, bindings)
 }
 
 func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink agentadaptor.EventSink) (agentadaptor.DriverRunResult, error) {
@@ -299,7 +310,7 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 		Command: command,
 		Args:    args,
 		CWD:     effectiveCWD,
-		Env:     effectiveEnv,
+		Env:     ensureRootSandboxEnv(args, effectiveEnv),
 		Observe: parser.onChunk,
 	}
 
@@ -431,6 +442,56 @@ func buildClaudeExecArgs(cfg agentadaptor.ClaudeConfig, req agentadaptor.DriverR
 	}
 	args = append(args, cfg.ExtraArgs...)
 	return args
+}
+
+// ensureRootSandboxEnv protects Phase 1 runs launched under a UID-0 process
+// (systemd User=root, container root, CI runners, …) from the upstream
+// Claude CLI's built-in guard:
+//
+//	--dangerously-skip-permissions cannot be used with root/sudo privileges
+//	for security reasons
+//
+// The CLI's guard (`claude-code@2.1.x`) skips the abort when either
+// IS_SANDBOX=1 or CLAUDE_CODE_BUBBLEWRAP is truthy in the subprocess
+// environment. Because the driver itself appends --dangerously-skip-permissions
+// for HumanDecisionAutoApprove (see buildClaudeExecArgs), root callers would
+// otherwise get a 1-second subprocess failure with no session_id, surfacing
+// all the way up as ErrSessionCheckpointMissing. We short-circuit that by
+// injecting IS_SANDBOX=1 into the spawned CLI env — never into the parent
+// process env — so codex / cursor drivers stay untouched and hosts that set
+// the variable explicitly (truthy or falsy) keep full control.
+//
+// Skip conditions:
+//   - non-root process (Geteuid() != 0), including Windows where Geteuid
+//     returns -1;
+//   - args do not contain --dangerously-skip-permissions (interactive mode
+//     or HumanDecisionAsk path);
+//   - host already set IS_SANDBOX or CLAUDE_CODE_BUBBLEWRAP (intent wins).
+// geteuid is overridable in tests; production always delegates to os.Geteuid.
+var geteuid = os.Geteuid
+
+func ensureRootSandboxEnv(args []string, env []agentadaptor.EnvBinding) []agentadaptor.EnvBinding {
+	if geteuid() != 0 {
+		return env
+	}
+	needsGuard := false
+	for _, a := range args {
+		if a == "--dangerously-skip-permissions" {
+			needsGuard = true
+			break
+		}
+	}
+	if !needsGuard {
+		return env
+	}
+	for _, b := range env {
+		if b.Name == "IS_SANDBOX" || b.Name == "CLAUDE_CODE_BUBBLEWRAP" {
+			return env
+		}
+	}
+	out := make([]agentadaptor.EnvBinding, len(env), len(env)+1)
+	copy(out, env)
+	return append(out, agentadaptor.EnvBinding{Name: "IS_SANDBOX", Value: "1"})
 }
 
 // wantsInteractiveClaude reports whether the policy explicitly asks for

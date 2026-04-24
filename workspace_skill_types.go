@@ -1,115 +1,5 @@
 package agentadaptor
 
-type Skill struct {
-	Key            string
-	Runtime        string
-	Content        string
-	PathHint       string
-	Metadata       map[string]string
-	Files          []SkillFile
-	Required       bool
-	RequiredReason string
-}
-
-type SkillFile struct {
-	Path    string
-	Kind    SkillFileKind
-	Content string
-}
-
-type SkillFileKind string
-
-const (
-	SkillFilePrimary   SkillFileKind = "skill"
-	SkillFileMarkdown  SkillFileKind = "markdown"
-	SkillFileReference SkillFileKind = "reference"
-	SkillFileScript    SkillFileKind = "script"
-	SkillFileAsset     SkillFileKind = "asset"
-	SkillFileOther     SkillFileKind = "other"
-)
-
-type SkillPayload struct {
-	Mode           SkillSyncMode
-	Requested      []string
-	Resolved       []Skill
-	RuntimeEntries []SkillRuntimeEntry
-	Warnings       []string
-	Fingerprint    string
-}
-
-type SkillSyncMode string
-
-const (
-	SkillSyncUnsupported SkillSyncMode = "unsupported"
-	SkillSyncEphemeral   SkillSyncMode = "ephemeral"
-	SkillSyncPersistent  SkillSyncMode = "persistent"
-)
-
-type SkillSnapshot struct {
-	DriverType string
-	Supported  bool
-	Mode       SkillSyncMode
-	Desired    []string
-	Resolved   []Skill
-	Entries    []SkillEntry
-	Warnings   []string
-}
-
-type SkillAssemblyRequest struct {
-	DriverType string
-	TenantID   string
-	Agent      AgentIdentity
-	Config     any
-	Workspace  WorkspaceLease
-	Requested  []string
-	Available  []Skill
-	Resolved   []Skill
-}
-
-type SkillRuntimeEntry struct {
-	Key            string
-	RuntimeName    string
-	SourcePath     string
-	Required       bool
-	RequiredReason string
-}
-
-type SkillEntry struct {
-	Key            string
-	RuntimeName    string
-	Desired        bool
-	Managed        bool
-	Required       bool
-	RequiredReason string
-	State          SkillState
-	Origin         SkillOrigin
-	OriginLabel    string
-	LocationLabel  string
-	ReadOnly       bool
-	SourcePath     string
-	TargetPath     string
-	Detail         string
-}
-
-type SkillState string
-type SkillOrigin string
-
-const (
-	SkillStateAvailable  SkillState = "available"
-	SkillStateConfigured SkillState = "configured"
-	SkillStateInstalled  SkillState = "installed"
-	SkillStateMissing    SkillState = "missing"
-	SkillStateStale      SkillState = "stale"
-	SkillStateExternal   SkillState = "external"
-)
-
-const (
-	SkillOriginManaged  SkillOrigin = "company_managed"
-	SkillOriginRequired SkillOrigin = "paperclip_required"
-	SkillOriginUser     SkillOrigin = "user_installed"
-	SkillOriginUnknown  SkillOrigin = "external_unknown"
-)
-
 type ModelInfo struct {
 	ID    string
 	Label string
@@ -317,7 +207,7 @@ type RuntimeServiceRef struct {
 	Metadata     map[string]string
 }
 
-// RuntimePayload is the runtime-service equivalent of SkillPayload.
+// RuntimePayload is the runtime-service equivalent of ResolvedSkills.
 //
 // Requested contains the desired runtime services declared by binding defaults,
 // config defaults, or per-run overrides. Ensured contains the concrete service

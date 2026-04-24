@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -45,20 +43,20 @@ func main() {
 	commandPath, commandMode, commandNote, commandCleanup := prepareCodexCommand(*command)
 	defer commandCleanup()
 
-	skillCatalog := mockkit.StaticSkillCatalog{
-		Entries: map[string]agentadaptor.Skill{
-			proofSkillName: {
-				Key:      proofSkillName,
-				Runtime:  proofSkillName,
-				PathHint: skillDir,
-			},
-			"shadow-unused": {
-				Key:      "shadow-unused",
-				Runtime:  "shadow-unused",
-				Content:  "# shadow-unused\nThis skill is intentionally unused in the live example.",
-				PathHint: skillDir,
-			},
+	// Dedicated profile dir must be a real path on the current machine — do
+	// NOT hardcode an absolute path here. Creating it under workspaceDir
+	// keeps the example portable (works on Linux/macOS/Windows), isolated
+	// (no pollution of the user's real CODEX_HOME), and automatically
+	// cleaned up with the rest of the workspace.
+	dedicatedProfileDir := filepath.Join(workspaceDir, "codex-shadow")
+	exampleutil.Must(os.MkdirAll(dedicatedProfileDir, 0o755), "create dedicated codex profile dir")
+
+	skillSet := agentadaptor.SkillSet{
+		proofSkillName: {
+			Key:    proofSkillName,
+			Source: agentadaptor.SkillFromPath{Path: skillDir},
 		},
+		"shadow-unused": mockkit.InlineSkill("shadow-unused", "# shadow-unused\nThis skill is intentionally unused in the live example."),
 	}
 
 	sdk := agentadaptor.New(
@@ -70,16 +68,15 @@ func main() {
 				},
 				Model: *model,
 			},
-			agentadaptor.WithDedicatedProfile("C:\\Users\\buthim\\Documents\\codex-shadow"),
+			agentadaptor.WithDedicatedProfile(dedicatedProfileDir),
 			agentadaptor.WithDefaultIdentity(agentadaptor.AgentIdentity{
 				ID:       "skills-agent",
 				TenantID: "examples",
 				Name:     "skills-live",
 			}),
-			agentadaptor.WithDefaultSkills(proofSkillName, "shadow-unused"),
+			agentadaptor.WithDefaultSkills(agentadaptor.Key(proofSkillName), agentadaptor.Key("shadow-unused")),
 		)),
-		agentadaptor.WithSkillCatalog(skillCatalog),
-		agentadaptor.WithSkillAssembler(liveSkillAssembler{}),
+		agentadaptor.WithSkillSet(skillSet),
 	)
 
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
@@ -89,15 +86,15 @@ func main() {
 	listedSkills, err := defaultAdmin.ListSkills(ctx)
 	exampleutil.Must(err, "list default skills")
 	exampleutil.Check(listedSkills.Supported, "expected listed skills to be supported")
-	exampleutil.Check(len(listedSkills.Desired) == 2, "expected two default desired skills, got %d", len(listedSkills.Desired))
+	exampleutil.Check(len(listedSkills.Selected) == 2, "expected two default selected skills, got %d", len(listedSkills.Selected))
 
-	syncedSkills, err := defaultAdmin.SyncSkills(ctx, []string{proofSkillName})
-	exampleutil.Must(err, "sync default skills")
-	exampleutil.Check(len(syncedSkills.Desired) == 1 && syncedSkills.Desired[0] == proofSkillName, "expected synced skills to contain only %q, got %#v", proofSkillName, syncedSkills.Desired)
+	syncedSkills, err := defaultAdmin.SetSelectedSkills(ctx, []string{proofSkillName})
+	exampleutil.Must(err, "set selected default skills")
+	exampleutil.Check(len(syncedSkills.Selected) == 1 && syncedSkills.Selected[0] == proofSkillName, "expected selected skills to contain only %q, got %#v", proofSkillName, syncedSkills.Selected)
 
 	prompt := "Use the write-proof skill. Create the file at " + filepath.ToSlash(proofPath) +
 		" with exactly this content: " + proofExpectedText + ". Do not modify any other files."
-	result, err := sdk.Run(ctx, prompt, agentadaptor.WithSkills(proofSkillName))
+	result, err := sdk.Run(ctx, prompt, agentadaptor.WithSkills(agentadaptor.Key(proofSkillName)))
 	exampleutil.Must(err, "run codex skills-live example")
 	exampleutil.Check(result.DriverType == codex.DriverType, "expected driver type %q, got %q", codex.DriverType, result.DriverType)
 	exampleutil.Check(result.ExitCode == 0, "expected exit code 0, got %d", result.ExitCode)
@@ -107,9 +104,10 @@ func main() {
 	exampleutil.Check(strings.TrimSpace(string(content)) == proofExpectedText, "expected proof file content %q, got %q", proofExpectedText, strings.TrimSpace(string(content)))
 
 	exampleutil.PrintJSON(map[string]any{
-		"example":      "codex-skills-live",
-		"verification": "Confirmed runtime skill injection by running the Codex adapter against a codex-compatible verifier that requires CODEX_HOME/skills/write-proof to exist before it will create the proof file.",
-		"workspace":    workspaceDir,
+		"example":           "codex-skills-live",
+		"verification":      "Confirmed runtime skill injection by running the Codex adapter against a codex-compatible verifier that requires CODEX_HOME/skills/write-proof to exist before it will create the proof file.",
+		"workspace":         workspaceDir,
+		"dedicated_profile": dedicatedProfileDir,
 		"command": map[string]any{
 			"path": commandPath,
 			"mode": commandMode,
@@ -178,46 +176,4 @@ func ensureGoBuildEnv(base []string, fallbackCache string) []string {
 	return append(base, fmt.Sprintf("GOCACHE=%s", cacheRoot))
 }
 
-type liveSkillAssembler struct{}
-
-func (liveSkillAssembler) Prepare(_ context.Context, req agentadaptor.SkillAssemblyRequest) (agentadaptor.SkillPayload, error) {
-	runtimeEntries := make([]agentadaptor.SkillRuntimeEntry, 0, len(req.Resolved))
-	for _, skill := range req.Resolved {
-		runtimeName := strings.TrimSpace(skill.Runtime)
-		if runtimeName == "" {
-			runtimeName = skill.Key
-		}
-		runtimeEntries = append(runtimeEntries, agentadaptor.SkillRuntimeEntry{
-			Key:            skill.Key,
-			RuntimeName:    runtimeName,
-			SourcePath:     skill.PathHint,
-			Required:       skill.Required,
-			RequiredReason: skill.RequiredReason,
-		})
-	}
-
-	payload := agentadaptor.SkillPayload{
-		Mode:           agentadaptor.SkillSyncEphemeral,
-		Requested:      append([]string(nil), req.Requested...),
-		Resolved:       cloneLiveSkills(req.Resolved),
-		RuntimeEntries: runtimeEntries,
-	}
-	payload.Fingerprint = liveSkillFingerprint(payload)
-	return payload, nil
-}
-
-func cloneLiveSkills(skills []agentadaptor.Skill) []agentadaptor.Skill {
-	if len(skills) == 0 {
-		return nil
-	}
-	out := make([]agentadaptor.Skill, len(skills))
-	copy(out, skills)
-	return out
-}
-
-func liveSkillFingerprint(payload agentadaptor.SkillPayload) string {
-	raw, err := json.Marshal(payload)
-	exampleutil.Must(err, "marshal live skill payload fingerprint input")
-	sum := sha256.Sum256(raw)
-	return fmt.Sprintf("%x", sum[:8])
-}
+var _ = context.TODO // keep context import stable for future extensions

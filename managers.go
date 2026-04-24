@@ -3,7 +3,6 @@ package agentadaptor
 import (
 	"context"
 	"fmt"
-	"strings"
 )
 
 type passthroughWorkspaceManager struct{}
@@ -36,28 +35,13 @@ func (passthroughWorkspaceManager) Release(_ context.Context, _ WorkspaceLease, 
 	return nil
 }
 
-type passthroughSkillCatalog struct{}
+// emptySkillProvider is the default SkillProvider installed when the host
+// does not call WithSkillProvider. It reports an empty catalogue, which in
+// turn makes per-run WithSkills the only source of skills for the SDK.
+type emptySkillProvider struct{}
 
-func (passthroughSkillCatalog) Resolve(_ context.Context, _ string, refs []string) ([]Skill, error) {
-	out := make([]Skill, 0, len(refs))
-	for _, ref := range refs {
-		trimmed := strings.TrimSpace(ref)
-		if trimmed == "" {
-			continue
-		}
-		skill := Skill{Key: trimmed}
-		if looksLikePathReference(trimmed) {
-			skill.PathHint = trimmed
-		}
-		out = append(out, skill)
-	}
-	return out, nil
-}
-
-type defaultSkillAssembler struct{}
-
-func (defaultSkillAssembler) Prepare(_ context.Context, req SkillAssemblyRequest) (SkillPayload, error) {
-	return prepareSkillPayload(req), nil
+func (emptySkillProvider) List(_ context.Context, _ string) ([]Skill, error) {
+	return nil, nil
 }
 
 type noopRuntimeManager struct{}
@@ -70,34 +54,43 @@ func (noopRuntimeManager) ReleaseByRun(_ context.Context, _ string) error {
 	return nil
 }
 
-func buildSkillSnapshot(driver DriverAdapter, config any, payload SkillPayload, desired []string, profile *ProfileSelection) (SkillSnapshot, error) {
+// buildSkillSnapshot routes a resolved payload to the adapter's ListSkills
+// when available, or synthesises an "unsupported" snapshot otherwise. The
+// incoming ctx is propagated so adapters can respect cancellation of the
+// Admin.ListSkills / Run call that triggered the snapshot.
+func buildSkillSnapshot(ctx context.Context, driver DriverAdapter, config any, payload ResolvedSkills, selected []string, resolved []Skill, profile *ProfileSelection) (SkillSnapshot, error) {
 	skillDriver, ok := driver.(SkillAwareDriver)
 	if !ok {
 		return SkillSnapshot{
-			DriverType: driver.Descriptor().Type,
-			Supported:  false,
-			Mode:       SkillSyncUnsupported,
-			Desired:    cloneStrings(payload.Requested),
-			Resolved:   cloneSkills(payload.Resolved),
-			Warnings:   cloneStrings(payload.Warnings),
+			DriverType:  driver.Descriptor().Type,
+			Supported:   false,
+			Mode:        SkillSyncUnsupported,
+			Selected:    cloneStrings(selected),
+			Resolved:    cloneSkills(resolved),
+			Warnings:    cloneStrings(payload.Warnings),
+			Fingerprint: payload.Fingerprint,
 		}, nil
 	}
-	return skillDriver.ListSkills(context.Background(), config, payload, profile)
+	return skillDriver.ListSkills(ctx, config, payload, selected, resolved, profile)
 }
 
-func syncSkillSnapshot(driver DriverAdapter, config any, payload SkillPayload, desired []string, profile *ProfileSelection) (SkillSnapshot, error) {
+// syncSkillSnapshot routes a resolved payload to the adapter's SyncSkills
+// when available. ctx is propagated so cancellation / deadlines set by
+// Admin.SetSelectedSkills flow through to the adapter's sync work.
+func syncSkillSnapshot(ctx context.Context, driver DriverAdapter, config any, payload ResolvedSkills, selected []string, resolved []Skill, profile *ProfileSelection) (SkillSnapshot, error) {
 	skillDriver, ok := driver.(SkillAwareDriver)
 	if !ok {
 		return SkillSnapshot{
-			DriverType: driver.Descriptor().Type,
-			Supported:  false,
-			Mode:       SkillSyncUnsupported,
-			Desired:    cloneStrings(payload.Requested),
-			Resolved:   cloneSkills(payload.Resolved),
-			Warnings:   cloneStrings(payload.Warnings),
+			DriverType:  driver.Descriptor().Type,
+			Supported:   false,
+			Mode:        SkillSyncUnsupported,
+			Selected:    cloneStrings(selected),
+			Resolved:    cloneSkills(resolved),
+			Warnings:    cloneStrings(payload.Warnings),
+			Fingerprint: payload.Fingerprint,
 		}, nil
 	}
-	return skillDriver.SyncSkills(context.Background(), config, payload, desired, profile)
+	return skillDriver.SyncSkills(ctx, config, payload, selected, resolved, profile)
 }
 
 func validateAdapterConfig(driver DriverAdapter, cfg any) error {

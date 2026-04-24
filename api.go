@@ -75,7 +75,12 @@ type AgentAdmin interface {
 	ConfigSchema(ctx context.Context) (*ConfigSchema, error)
 	GetQuota(ctx context.Context) (QuotaReport, error)
 	ListSkills(ctx context.Context) (SkillSnapshot, error)
-	SyncSkills(ctx context.Context, desired []string) (SkillSnapshot, error)
+	// SetSelectedSkills overrides the process-local default selection for
+	// this agent. The override replaces the binding's WithDefaultSkills
+	// values for subsequent Run / Start calls on this agent; Required
+	// skills from the SkillProvider continue to appear regardless. The
+	// override is not persisted across process restarts.
+	SetSelectedSkills(ctx context.Context, keys []string) (SkillSnapshot, error)
 }
 
 type DriverAdapter interface {
@@ -124,9 +129,46 @@ type QuotaAwareDriver interface {
 	GetQuota(ctx context.Context, cfg any, profile *ProfileSelection) (QuotaReport, error)
 }
 
+// SkillAwareDriver is the optional adapter contract for skill-capable
+// drivers. Adapters that do not implement it simply ignore skills; the SDK
+// still reports an unsupported snapshot through the Admin surface.
+//
+// The design splits concerns across three methods:
+//   - ListSkills reports the Admin-layer snapshot. selected is the SDK's
+//     final selection set (Required ∪ WithDefaultSkills ∪ WithSkills) and
+//     matches payload.Keys(); resolved is the full merged catalogue
+//     (provider + binding-only candidates + selected skills). Adapters
+//     should pass resolved through to SkillSnapshot.Resolved so the
+//     Admin API can render the "available but unselected" view without
+//     re-enumerating the provider.
+//   - InjectSkills is invoked exactly once per Run() invocation before the
+//     adapter starts; the adapter should use it to materialise prompt
+//     bundles, on-disk layouts, or any adapter-side caches needed for the
+//     skills in payload. Implementations MAY treat this as a no-op when
+//     the effective on-disk layout depends on state only known at Run()
+//     time (e.g. the effective profile's CODEX_HOME).
+//   - SyncSkills is invoked by AgentAdmin.SetSelectedSkills to reconcile
+//     the persistent / ephemeral host-side layout with the newly-chosen
+//     set. It receives both the selected keys and the full resolved
+//     catalogue for the same reason as ListSkills.
+//
+// Invariants the SDK guarantees to adapters:
+//
+//   - selected == payload.Keys() for both ListSkills and SyncSkills.
+//     Adapters MAY rely on this equality when building snapshots.
+//   - resolved is always a superset of payload.Entries (by Key): every
+//     materialised entry has a Skill in resolved, but resolved may
+//     additionally contain unselected candidates.
+//
+// Invariants adapters MUST preserve:
+//
+//   - The Resolved slice returned in SkillSnapshot MUST describe the full
+//     merged catalogue the SDK passed in. Adapters are free to clone or
+//     reorder it; they MUST NOT silently drop entries.
 type SkillAwareDriver interface {
-	ListSkills(ctx context.Context, cfg any, payload SkillPayload, profile *ProfileSelection) (SkillSnapshot, error)
-	SyncSkills(ctx context.Context, cfg any, payload SkillPayload, desired []string, profile *ProfileSelection) (SkillSnapshot, error)
+	ListSkills(ctx context.Context, cfg any, payload ResolvedSkills, selected []string, resolved []Skill, profile *ProfileSelection) (SkillSnapshot, error)
+	InjectSkills(ctx context.Context, cfg any, payload ResolvedSkills, profile *ProfileSelection) error
+	SyncSkills(ctx context.Context, cfg any, payload ResolvedSkills, selected []string, resolved []Skill, profile *ProfileSelection) (SkillSnapshot, error)
 }
 
 type EventSink interface {
@@ -186,7 +228,7 @@ type AgentDefaults struct {
 	Workspace    WorkspaceSpec
 	Runtime      *WorkspaceRuntimeConfig
 	RunPolicy    *RunPolicy
-	Skills       []string
+	Skills       []SkillRef
 	MCP          *MCPConfig
 	Profile      *ProfileSelection
 	Instructions *InstructionsBundleRef

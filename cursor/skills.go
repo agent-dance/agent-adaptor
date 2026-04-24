@@ -22,7 +22,7 @@ func cursorSkillsLocationLabel(bindings []agentadaptor.EnvBinding) string {
 	return "~/.cursor/skills"
 }
 
-func listCursorSkills(payload agentadaptor.SkillPayload, bindings []agentadaptor.EnvBinding) (agentadaptor.SkillSnapshot, error) {
+func listCursorSkills(payload agentadaptor.ResolvedSkills, selected []string, resolved []agentadaptor.Skill, bindings []agentadaptor.EnvBinding) (agentadaptor.SkillSnapshot, error) {
 	skillsHome := resolveCursorSkillsHome(bindings)
 	installed, err := skillruntime.ReadInstalledSkillTargets(skillsHome)
 	if err != nil {
@@ -31,6 +31,8 @@ func listCursorSkills(payload agentadaptor.SkillPayload, bindings []agentadaptor
 	return skillruntime.BuildPersistentSnapshot(skillruntime.PersistentSnapshotOptions{
 		DriverType:             DriverType,
 		Payload:                payload,
+		Selected:               selected,
+		Resolved:               resolved,
 		Installed:              installed,
 		SkillsHome:             skillsHome,
 		LocationLabel:          cursorSkillsLocationLabel(bindings),
@@ -41,25 +43,63 @@ func listCursorSkills(payload agentadaptor.SkillPayload, bindings []agentadaptor
 	}), nil
 }
 
-func syncCursorSkills(_ context.Context, payload agentadaptor.SkillPayload, bindings []agentadaptor.EnvBinding, sink agentadaptor.EventSink) (agentadaptor.SkillSnapshot, error) {
+func syncCursorSkills(_ context.Context, payload agentadaptor.ResolvedSkills, selected []string, resolved []agentadaptor.Skill, bindings []agentadaptor.EnvBinding, sink agentadaptor.EventSink) (agentadaptor.SkillSnapshot, error) {
 	skillsHome := resolveCursorSkillsHome(bindings)
 	if err := os.MkdirAll(skillsHome, 0o755); err != nil {
 		return agentadaptor.SkillSnapshot{}, err
 	}
-	selected := skillruntime.SelectedRuntimeEntries(payload)
 	installed, err := skillruntime.ReadInstalledSkillTargets(skillsHome)
 	if err != nil {
 		return agentadaptor.SkillSnapshot{}, err
 	}
-	availableByRuntime := map[string]agentadaptor.SkillRuntimeEntry{}
 	desiredKeys := map[string]struct{}{}
-	for _, key := range payload.Requested {
+	for _, key := range selected {
 		desiredKeys[key] = struct{}{}
 	}
-	for _, entry := range payload.RuntimeEntries {
+	cacheRoots := []string{skillruntime.ManagedSkillCacheRoot()}
+
+	// Compute the allowed runtime-name set: only entries whose Key is
+	// still desired stay on disk. We use payload.Entries (the subset
+	// that successfully materialised) to derive the Key → RuntimeName
+	// mapping; entries that failed to materialise fall through to the
+	// "selected but missing" branch of listCursorSkills below.
+	allowedRuntimeNames := make([]string, 0, len(payload.Entries))
+	availableByRuntime := make(map[string]agentadaptor.ResolvedSkill, len(payload.Entries))
+	for _, entry := range payload.Entries {
 		availableByRuntime[entry.RuntimeName] = entry
+		if _, desired := desiredKeys[entry.Key]; !desired {
+			continue
+		}
+		allowedRuntimeNames = append(allowedRuntimeNames, entry.RuntimeName)
+	}
+
+	// Step A: remove every cache-root managed entry (symlink into the
+	// SDK cache, or marker-tagged directory with a cache-root target)
+	// that is no longer on the allow-list. This covers both
+	// "deselected skill still in catalog" and "skill dropped from
+	// catalog entirely" provided the managed target lives in the
+	// materialiser's cache root.
+	removed, err := skillruntime.RemoveManagedSkillTargets(skillsHome, allowedRuntimeNames, cacheRoots)
+	if err != nil {
+		return agentadaptor.SkillSnapshot{}, err
+	}
+
+	// Step B: handle entries whose underlying source is host-supplied
+	// (SkillFromPath) and therefore lives outside the SDK cache root.
+	// We only touch them when the current catalog still knows the
+	// runtime name AND its source matches the installed symlink target
+	// — i.e. we are sure we created this link in an earlier sync and
+	// the host has now deselected the skill. Symlinks pointing to
+	// arbitrary user paths we never recorded are intentionally left
+	// alone.
+	removedSet := map[string]struct{}{}
+	for _, name := range removed {
+		removedSet[name] = struct{}{}
 	}
 	for name, installedEntry := range installed {
+		if _, already := removedSet[name]; already {
+			continue
+		}
 		available, ok := availableByRuntime[name]
 		if !ok {
 			continue
@@ -73,34 +113,40 @@ func syncCursorSkills(_ context.Context, payload agentadaptor.SkillPayload, bind
 		if err := os.RemoveAll(filepath.Join(skillsHome, name)); err != nil {
 			return agentadaptor.SkillSnapshot{}, err
 		}
-		_ = sink.Emit(agentadaptor.RunEvent{
-			Type: agentadaptor.RunEventLifecycle,
-			Text: fmt.Sprintf("removed stale Cursor skill %q from %s", name, skillsHome),
-		})
+		removed = append(removed, name)
 	}
-	managedRoots := []string{skillruntime.ManagedSkillCacheRoot()}
-	for _, entry := range selected {
-		result, err := skillruntime.EnsureSkillTarget(entry.SourcePath, filepath.Join(skillsHome, entry.RuntimeName), managedRoots)
+
+	for _, name := range removed {
+		if sink != nil {
+			_ = sink.Emit(agentadaptor.RunEvent{
+				Type: agentadaptor.RunEventLifecycle,
+				Text: fmt.Sprintf("removed stale Cursor skill %q from %s", name, skillsHome),
+			})
+		}
+	}
+
+	for _, entry := range payload.Entries {
+		if _, desired := desiredKeys[entry.Key]; !desired {
+			continue
+		}
+		if strings.TrimSpace(entry.SourcePath) == "" {
+			continue
+		}
+		result, err := skillruntime.EnsureSkillTarget(entry.SourcePath, filepath.Join(skillsHome, entry.RuntimeName), cacheRoots)
 		if err != nil {
 			return agentadaptor.SkillSnapshot{}, err
 		}
 		if result == "skipped" {
 			continue
 		}
-		_ = sink.Emit(agentadaptor.RunEvent{
-			Type: agentadaptor.RunEventLifecycle,
-			Text: fmt.Sprintf("%s Cursor skill %q into %s", capitalize(result), entry.RuntimeName, skillsHome),
-		})
+		if sink != nil {
+			_ = sink.Emit(agentadaptor.RunEvent{
+				Type: agentadaptor.RunEventLifecycle,
+				Text: fmt.Sprintf("%s Cursor skill %q into %s", capitalize(result), entry.RuntimeName, skillsHome),
+			})
+		}
 	}
-	return listCursorSkills(payload, bindings)
-}
-
-func runtimeNames(entries []agentadaptor.SkillRuntimeEntry) []string {
-	out := make([]string, 0, len(entries))
-	for _, entry := range entries {
-		out = append(out, entry.RuntimeName)
-	}
-	return out
+	return listCursorSkills(payload, selected, resolved, bindings)
 }
 
 func capitalize(value string) string {

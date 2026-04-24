@@ -173,7 +173,7 @@ type DriverRunRequest struct {
 	Agent        AgentIdentity
 	Workspace    WorkspaceLease
 	Runtime      RuntimePayload
-	Skills       SkillPayload
+	Skills       ResolvedSkills
 	MCP          MCPPayload
 	Profile      *ProfileSelection
 	Policy       RunPolicy
@@ -294,18 +294,6 @@ type WorkspaceManager interface {
 	Release(ctx context.Context, lease WorkspaceLease, mode WorkspaceReleaseMode) error
 }
 
-type SkillCatalog interface {
-	Resolve(ctx context.Context, tenantID string, refs []string) ([]Skill, error)
-}
-
-type SkillCatalogInventory interface {
-	List(ctx context.Context, tenantID string) ([]Skill, error)
-}
-
-type SkillAssembler interface {
-	Prepare(ctx context.Context, req SkillAssemblyRequest) (SkillPayload, error)
-}
-
 type RuntimeServiceManager interface {
 	Ensure(ctx context.Context, req RuntimeServiceRequest) ([]RuntimeServiceRef, error)
 	ReleaseByRun(ctx context.Context, runID string) error
@@ -319,7 +307,7 @@ type resolvedInvocation struct {
 	agent        AgentIdentity
 	workspace    WorkspaceLease
 	runtime      RuntimePayload
-	skills       SkillPayload
+	skills       ResolvedSkills
 	mcp          MCPPayload
 	profile      *ProfileSelection
 	policy       RunPolicy

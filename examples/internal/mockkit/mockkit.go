@@ -217,32 +217,32 @@ func (ObservingWorkspaceManager) Release(_ context.Context, _ agentadaptor.Works
 	return nil
 }
 
-type StaticSkillCatalog struct {
-	Entries map[string]agentadaptor.Skill
-}
-
-func (c StaticSkillCatalog) Resolve(_ context.Context, _ string, refs []string) ([]agentadaptor.Skill, error) {
-	out := make([]agentadaptor.Skill, 0, len(refs))
-	for _, ref := range refs {
-		if ref == "" {
-			continue
+// NewSkillSet builds an agentadaptor.SkillSet seeded with inline skills that
+// have their runtime name defaulted to the skill key. It is the new replacement
+// for the legacy StaticSkillCatalog/StaticSkillAssembler pair.
+func NewSkillSet(entries map[string]agentadaptor.Skill) agentadaptor.SkillSet {
+	out := agentadaptor.SkillSet{}
+	for mapKey, skill := range entries {
+		s := cloneSkill(skill)
+		if s.Key == "" {
+			s.Key = mapKey
 		}
-		if skill, ok := c.Entries[ref]; ok {
-			out = append(out, cloneSkill(skill))
-			continue
+		if s.Source == nil {
+			s.Source = agentadaptor.SkillFromInline{SkillMD: "# " + s.Key}
 		}
-		out = append(out, agentadaptor.Skill{
-			Key:     ref,
-			Runtime: ref,
-			Content: "# " + ref,
-		})
+		out[s.Key] = s
 	}
-	return out, nil
+	return out
 }
 
-type StaticSkillAssembler struct {
-	Mode          agentadaptor.SkillSyncMode
-	RuntimePrefix string
+// InlineSkill returns a convenience Skill backed by an inline SKILL.md string
+// with a deterministic _runtime_name metadata entry (equal to the key).
+func InlineSkill(key, body string) agentadaptor.Skill {
+	return agentadaptor.Skill{
+		Key:      key,
+		Source:   agentadaptor.SkillFromInline{SkillMD: body},
+		Metadata: map[string]string{agentadaptor.SkillMetadataRuntimeName: key},
+	}
 }
 
 type ObservingRuntimeManager struct {
@@ -261,38 +261,6 @@ func (m *ObservingRuntimeManager) ReleaseByRun(_ context.Context, runID string) 
 	return nil
 }
 
-func (a StaticSkillAssembler) Prepare(_ context.Context, req agentadaptor.SkillAssemblyRequest) (agentadaptor.SkillPayload, error) {
-	resolved := make([]agentadaptor.Skill, 0, len(req.Resolved))
-	for _, skill := range req.Resolved {
-		copySkill := cloneSkill(skill)
-		if a.RuntimePrefix != "" {
-			copySkill.Runtime = a.RuntimePrefix + copySkill.Key
-		} else if copySkill.Runtime == "" {
-			copySkill.Runtime = copySkill.Key
-		}
-		resolved = append(resolved, copySkill)
-	}
-
-	mode := a.Mode
-	if mode == "" {
-		mode = agentadaptor.SkillSyncEphemeral
-	}
-
-	fingerprintPayload := map[string]any{
-		"driver_type": req.DriverType,
-		"tenant_id":   req.TenantID,
-		"requested":   append([]string(nil), req.Requested...),
-		"resolved":    resolved,
-		"mode":        mode,
-	}
-	return agentadaptor.SkillPayload{
-		Mode:        mode,
-		Requested:   append([]string(nil), req.Requested...),
-		Resolved:    resolved,
-		Fingerprint: stableDigest("skills", fingerprintPayload),
-	}, nil
-}
-
 func cloneRunRequest(req agentadaptor.DriverRunRequest) agentadaptor.DriverRunRequest {
 	out := req
 	out.RunID = req.RunID
@@ -300,44 +268,43 @@ func cloneRunRequest(req agentadaptor.DriverRunRequest) agentadaptor.DriverRunRe
 	out.Workspace = req.Workspace
 	out.Workspace.Metadata = cloneStringMap(req.Workspace.Metadata)
 	out.Runtime = cloneRuntimePayload(req.Runtime)
-	out.Skills = cloneSkillPayload(req.Skills)
+	out.Skills = cloneResolvedSkills(req.Skills)
 	out.Instructions = cloneInstructions(req.Instructions)
 	out.Session = cloneSessionContext(req.Session)
 	return out
 }
 
-func cloneSkillPayload(payload agentadaptor.SkillPayload) agentadaptor.SkillPayload {
-	return agentadaptor.SkillPayload{
-		Mode:           payload.Mode,
-		Requested:      append([]string(nil), payload.Requested...),
-		Resolved:       cloneSkills(payload.Resolved),
-		RuntimeEntries: append([]agentadaptor.SkillRuntimeEntry(nil), payload.RuntimeEntries...),
-		Warnings:       append([]string(nil), payload.Warnings...),
-		Fingerprint:    payload.Fingerprint,
+func cloneResolvedSkills(payload agentadaptor.ResolvedSkills) agentadaptor.ResolvedSkills {
+	out := agentadaptor.ResolvedSkills{
+		Mode:        payload.Mode,
+		Fingerprint: payload.Fingerprint,
 	}
-}
-
-func cloneSkills(skills []agentadaptor.Skill) []agentadaptor.Skill {
-	if len(skills) == 0 {
-		return nil
+	if len(payload.Entries) > 0 {
+		out.Entries = make([]agentadaptor.ResolvedSkill, 0, len(payload.Entries))
+		for _, entry := range payload.Entries {
+			out.Entries = append(out.Entries, agentadaptor.ResolvedSkill{
+				Key:         entry.Key,
+				RuntimeName: entry.RuntimeName,
+				SourcePath:  entry.SourcePath,
+				Required:    entry.Required,
+				Reason:      entry.Reason,
+				Metadata:    cloneStringMap(entry.Metadata),
+			})
+		}
 	}
-	out := make([]agentadaptor.Skill, 0, len(skills))
-	for _, skill := range skills {
-		out = append(out, cloneSkill(skill))
+	if len(payload.Warnings) > 0 {
+		out.Warnings = append([]string(nil), payload.Warnings...)
 	}
 	return out
 }
 
 func cloneSkill(skill agentadaptor.Skill) agentadaptor.Skill {
 	return agentadaptor.Skill{
-		Key:            skill.Key,
-		Runtime:        skill.Runtime,
-		Content:        skill.Content,
-		PathHint:       skill.PathHint,
-		Metadata:       cloneStringMap(skill.Metadata),
-		Files:          append([]agentadaptor.SkillFile(nil), skill.Files...),
-		Required:       skill.Required,
-		RequiredReason: skill.RequiredReason,
+		Key:      skill.Key,
+		Source:   skill.Source,
+		Required: skill.Required,
+		Reason:   skill.Reason,
+		Metadata: cloneStringMap(skill.Metadata),
 	}
 }
 

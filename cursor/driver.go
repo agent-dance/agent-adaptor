@@ -199,22 +199,31 @@ func (adapter) GetQuota(_ context.Context, _ any, _ *agentadaptor.ProfileSelecti
 	}, nil
 }
 
-func (adapter) ListSkills(_ context.Context, cfg any, payload agentadaptor.SkillPayload, profile *agentadaptor.ProfileSelection) (agentadaptor.SkillSnapshot, error) {
+func (adapter) ListSkills(_ context.Context, cfg any, payload agentadaptor.ResolvedSkills, selected []string, resolved []agentadaptor.Skill, profile *agentadaptor.ProfileSelection) (agentadaptor.SkillSnapshot, error) {
 	config := readConfig(cfg)
 	bindings, err := effectiveCursorBindings(config.CommonConfig, profile)
 	if err != nil {
 		return agentadaptor.SkillSnapshot{}, err
 	}
-	return listCursorSkills(payload, bindings)
+	return listCursorSkills(payload, selected, resolved, bindings)
 }
 
-func (adapter) SyncSkills(ctx context.Context, cfg any, payload agentadaptor.SkillPayload, _ []string, profile *agentadaptor.ProfileSelection) (agentadaptor.SkillSnapshot, error) {
+// InjectSkills is the pre-run hook the SDK invokes before calling Run. For
+// Cursor we must use the profile-aware CURSOR_HOME that only becomes
+// available once Run produces the effective bindings, so the heavy lifting
+// is performed in Run itself. Implementing the interface here keeps the
+// adapter spec explicit.
+func (adapter) InjectSkills(_ context.Context, _ any, _ agentadaptor.ResolvedSkills, _ *agentadaptor.ProfileSelection) error {
+	return nil
+}
+
+func (adapter) SyncSkills(ctx context.Context, cfg any, payload agentadaptor.ResolvedSkills, selected []string, resolved []agentadaptor.Skill, profile *agentadaptor.ProfileSelection) (agentadaptor.SkillSnapshot, error) {
 	config := readConfig(cfg)
 	bindings, err := effectiveCursorBindings(config.CommonConfig, profile)
 	if err != nil {
 		return agentadaptor.SkillSnapshot{}, err
 	}
-	return syncCursorSkills(ctx, payload, bindings, noopCursorSink{})
+	return syncCursorSkills(ctx, payload, selected, resolved, bindings, noopCursorSink{})
 }
 
 func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink agentadaptor.EventSink) (agentadaptor.DriverRunResult, error) {
@@ -234,7 +243,7 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 	if err != nil {
 		return agentadaptor.DriverRunResult{}, err
 	}
-	if _, err := syncCursorSkills(ctx, req.Skills, effectiveEnv, sink); err != nil {
+	if _, err := syncCursorSkills(ctx, req.Skills, req.Skills.Keys(), nil, effectiveEnv, sink); err != nil {
 		return agentadaptor.DriverRunResult{}, err
 	}
 	effectiveCWD := chooseCWD(cfg.CommonConfig, req.Workspace)

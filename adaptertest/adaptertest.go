@@ -24,8 +24,11 @@ type Subject struct {
 	SessionState        *agentadaptor.DriverSessionState
 	RequiredSessionKeys []string
 
-	SkillPayload          agentadaptor.SkillPayload
-	DesiredSkills         []string
+	// Skills is the ResolvedSkills payload the conformance suite will feed
+	// into the adapter's ListSkills / SyncSkills hooks. Selected narrows the
+	// synced set; when empty the suite defaults to every entry in Skills.
+	Skills                agentadaptor.ResolvedSkills
+	Selected              []string
 	RequiredConfigFields  []string
 	ExpectedDetectedModel string
 }
@@ -260,34 +263,67 @@ func checkSkills(t *testing.T, subject Subject, descriptor agentadaptor.DriverDe
 	if !ok {
 		t.Fatalf("%s: skills are supported but adapter does not implement SkillAwareDriver", subject.Name)
 	}
-	payload := subject.SkillPayload
+	payload := subject.Skills
 	if payload.Mode == "" {
 		payload.Mode = descriptor.Skills.Mode
 	}
-	listed, err := driver.ListSkills(context.Background(), subject.Config, payload, nil)
+	// The SDK always passes selected (== payload.Keys()) and a resolved
+	// catalogue to the adapter. We synthesise both here so the
+	// conformance suite exercises the same contract.
+	listedSelected := append([]string(nil), payload.Keys()...)
+	listedResolved := resolvedFromPayload(payload)
+	listed, err := driver.ListSkills(context.Background(), subject.Config, payload, listedSelected, listedResolved, nil)
 	if err != nil {
 		t.Fatalf("%s: list skills: %v", subject.Name, err)
 	}
 	if listed.DriverType != descriptor.Type || !listed.Supported || listed.Mode != descriptor.Skills.Mode {
 		t.Fatalf("%s: invalid list skills snapshot %#v", subject.Name, listed)
 	}
-	if !reflect.DeepEqual(listed.Desired, payload.Requested) {
-		t.Fatalf("%s: list skills desired mismatch, want %#v got %#v", subject.Name, payload.Requested, listed.Desired)
+	if !stringSlicesEqual(listed.Selected, listedSelected) {
+		t.Fatalf("%s: list skills selected mismatch, want %#v got %#v", subject.Name, listedSelected, listed.Selected)
 	}
-	desired := append([]string(nil), subject.DesiredSkills...)
-	if len(desired) == 0 {
-		desired = append([]string(nil), payload.Requested...)
+	if len(listedResolved) != len(listed.Resolved) {
+		t.Fatalf("%s: list skills resolved length mismatch, want %d got %d", subject.Name, len(listedResolved), len(listed.Resolved))
 	}
-	synced, err := driver.SyncSkills(context.Background(), subject.Config, payload, desired, nil)
+	selected := append([]string(nil), subject.Selected...)
+	if len(selected) == 0 {
+		selected = append([]string(nil), payload.Keys()...)
+	}
+	synced, err := driver.SyncSkills(context.Background(), subject.Config, payload, selected, listedResolved, nil)
 	if err != nil {
 		t.Fatalf("%s: sync skills: %v", subject.Name, err)
 	}
 	if synced.DriverType != descriptor.Type || !synced.Supported || synced.Mode != descriptor.Skills.Mode {
 		t.Fatalf("%s: invalid sync skills snapshot %#v", subject.Name, synced)
 	}
-	if !reflect.DeepEqual(synced.Desired, desired) {
-		t.Fatalf("%s: sync skills desired mismatch, want %#v got %#v", subject.Name, desired, synced.Desired)
+	if !stringSlicesEqual(synced.Selected, selected) {
+		t.Fatalf("%s: sync skills selected mismatch, want %#v got %#v", subject.Name, selected, synced.Selected)
 	}
+	if len(listedResolved) != len(synced.Resolved) {
+		t.Fatalf("%s: sync skills resolved length mismatch, want %d got %d", subject.Name, len(listedResolved), len(synced.Resolved))
+	}
+}
+
+// resolvedFromPayload synthesises a plausible resolved catalogue for
+// conformance tests that only supply a ResolvedSkills payload. Each
+// payload entry is projected back to a Skill value with a deterministic
+// inline source so adapters can safely clone / compare / echo the list
+// through SkillSnapshot.Resolved.
+func resolvedFromPayload(payload agentadaptor.ResolvedSkills) []agentadaptor.Skill {
+	if len(payload.Entries) == 0 {
+		return nil
+	}
+	out := make([]agentadaptor.Skill, 0, len(payload.Entries))
+	for _, entry := range payload.Entries {
+		out = append(out, agentadaptor.Skill{
+			Key:      entry.Key,
+			Source:   agentadaptor.SkillFromInline{SkillMD: "# " + entry.Key + "\n"},
+			Required: entry.Required,
+			Reason:   entry.Reason,
+			Metadata: entry.Metadata,
+		})
+	}
+	return out
 }
 
 func checkSessionCodec(t *testing.T, subject Subject, descriptor agentadaptor.DriverDescriptor) {
@@ -333,4 +369,20 @@ func checkSessionCodec(t *testing.T, subject Subject, descriptor agentadaptor.Dr
 	if firstGuard == "" || firstGuard != secondGuard {
 		t.Fatalf("%s: session guard fingerprint must be stable, got %q and %q", subject.Name, firstGuard, secondGuard)
 	}
+}
+
+// stringSlicesEqual compares two string slices while treating a nil slice and
+// an empty slice as equivalent. This matches the contract of ResolvedSkills
+// and SkillSnapshot.Selected where adapters are free to return either nil or
+// an empty slice when no skills are selected.
+func stringSlicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

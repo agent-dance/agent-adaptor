@@ -119,25 +119,45 @@ func (a *agentAdminImpl) GetQuota(ctx context.Context) (QuotaReport, error) {
 
 func (a *agentAdminImpl) ListSkills(ctx context.Context) (SkillSnapshot, error) {
 	defaults := a.binding.Defaults()
-	desired := a.sdk.desiredSkillsFor(a.name, defaults.Skills)
-	payload, err := a.sdk.prepareSkills(ctx, a.binding, defaults.Agent, WorkspaceLease{}, desired)
+	defaultRefs := a.sdk.selectedRefsFor(a.name, defaults.Skills)
+	// Expose the binding's inline Skill values as non-selected candidates so
+	// they participate in the merged catalogue alongside the provider, even
+	// when an Admin override is active.
+	payload, selected, resolved, err := a.sdk.resolveSkills(ctx, defaults.Agent.TenantID, defaultRefs, nil, defaults.Skills)
 	if err != nil {
 		return SkillSnapshot{}, err
 	}
-	return buildSkillSnapshot(a.binding.Adapter(), a.binding.Config(), payload, desired, defaults.Profile)
+	return buildSkillSnapshot(ctx, a.binding.Adapter(), a.binding.Config(), payload, selected, resolved, defaults.Profile)
 }
 
-func (a *agentAdminImpl) SyncSkills(ctx context.Context, desired []string) (SkillSnapshot, error) {
+// SetSelectedSkills records a process-local selection override for this
+// agent. The keys must reference skills visible through the SkillProvider
+// (bare SkillKey refs); inline Skill values can only be supplied through
+// WithDefaultSkills or WithSkills because SetSelectedSkills is explicitly a
+// "select from the catalogue" operation.
+func (a *agentAdminImpl) SetSelectedSkills(ctx context.Context, keys []string) (SkillSnapshot, error) {
 	defaults := a.binding.Defaults()
-	payload, err := a.sdk.prepareSkills(ctx, a.binding, defaults.Agent, WorkspaceLease{}, desired)
+	refs := make([]SkillRef, 0, len(keys))
+	normalized := make([]string, 0, len(keys))
+	for _, key := range keys {
+		trimmed := normalizeSkillKey(key)
+		if trimmed == "" {
+			continue
+		}
+		refs = append(refs, SkillKey(trimmed))
+		normalized = append(normalized, trimmed)
+	}
+	// Binding default inline Skill values are re-introduced as non-selected
+	// candidates so that SetSelectedSkills can target them by key.
+	payload, selected, resolved, err := a.sdk.resolveSkills(ctx, defaults.Agent.TenantID, refs, nil, defaults.Skills)
 	if err != nil {
 		return SkillSnapshot{}, err
 	}
-	snapshot, err := syncSkillSnapshot(a.binding.Adapter(), a.binding.Config(), payload, desired, defaults.Profile)
+	snapshot, err := syncSkillSnapshot(ctx, a.binding.Adapter(), a.binding.Config(), payload, selected, resolved, defaults.Profile)
 	if err != nil {
 		return SkillSnapshot{}, err
 	}
-	a.sdk.setDesiredSkillsFor(a.name, snapshot.Desired)
+	a.sdk.setSelectedSkillsFor(a.name, normalized)
 	return snapshot, nil
 }
 

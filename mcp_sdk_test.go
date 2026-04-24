@@ -63,7 +63,7 @@ func TestSessionCompatibilityIgnoresSkillAndMCPChanges(t *testing.T) {
 		mcpCapability: agentadaptor.MCPCapability{Supported: true, Stdio: true, HTTP: true, SSE: true},
 	}
 	sdk := newSDK(memory.NewSessionStore(), fakeBinding("default", driver,
-		agentadaptor.WithDefaultSkills("team/default"),
+		agentadaptor.WithDefaultSkills(agentadaptor.InlineSkill("team/default", "# default")),
 		agentadaptor.WithDefaultMCP(agentadaptor.MCPConfig{
 			Servers: []agentadaptor.MCPServerSpec{
 				{
@@ -85,7 +85,7 @@ func TestSessionCompatibilityIgnoresSkillAndMCPChanges(t *testing.T) {
 		context.Background(),
 		"again",
 		agentadaptor.WithSessionKey("company", "issue-1"),
-		agentadaptor.WithSkills("team/override"),
+		agentadaptor.WithSkills(agentadaptor.InlineSkill("team/override", "# override")),
 		agentadaptor.WithMCP(agentadaptor.MCPConfig{
 			Servers: []agentadaptor.MCPServerSpec{
 				{

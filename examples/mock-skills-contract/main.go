@@ -16,18 +16,10 @@ func main() {
 	flag.Parse()
 
 	driver := mockkit.NewRecordingDriver("Mock Skills Contract")
-	catalog := mockkit.StaticSkillCatalog{
-		Entries: map[string]agentadaptor.Skill{
-			"write-proof": {
-				Key:      "write-proof",
-				Runtime:  "write-proof",
-				PathHint: "/virtual/skills/write-proof",
-			},
-		},
-	}
-	assembler := mockkit.StaticSkillAssembler{
-		Mode:          agentadaptor.SkillSyncPersistent,
-		RuntimePrefix: "runtime/",
+	skillSet := agentadaptor.SkillSet{
+		"write-proof":    mockkit.InlineSkill("write-proof", "# write-proof"),
+		"default-unused": mockkit.InlineSkill("default-unused", "# default-unused"),
+		"extra-check":    mockkit.InlineSkill("extra-check", "# extra-check"),
 	}
 
 	sdk := agentadaptor.New(
@@ -37,10 +29,9 @@ func main() {
 				TenantID: "examples",
 				Name:     "skills-contract",
 			}),
-			agentadaptor.WithDefaultSkills("write-proof", "default-unused"),
+			agentadaptor.WithDefaultSkills(agentadaptor.Key("write-proof"), agentadaptor.Key("default-unused")),
 		)),
-		agentadaptor.WithSkillCatalog(catalog),
-		agentadaptor.WithSkillAssembler(assembler),
+		agentadaptor.WithSkillSet(skillSet),
 	)
 
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
@@ -50,24 +41,24 @@ func main() {
 	exampleutil.Must(err, "run mock skills contract with default skills")
 	exampleutil.Check(defaultResult.ExitCode == 0, "expected default skills exit code 0, got %d", defaultResult.ExitCode)
 	defaultRequest := driver.LastRequest()
-	exampleutil.Check(len(defaultRequest.Skills.Requested) == 2, "expected 2 default requested skills, got %d", len(defaultRequest.Skills.Requested))
-	exampleutil.Check(defaultRequest.Skills.Requested[0] == "write-proof", "expected first default skill to be write-proof, got %q", defaultRequest.Skills.Requested[0])
-	exampleutil.Check(defaultRequest.Skills.Mode == agentadaptor.SkillSyncPersistent, "expected persistent default skills mode, got %q", defaultRequest.Skills.Mode)
-	exampleutil.Check(len(defaultRequest.Skills.Resolved) == 2, "expected 2 default resolved skills, got %d", len(defaultRequest.Skills.Resolved))
-	exampleutil.Check(defaultRequest.Skills.Resolved[0].Runtime == "runtime/write-proof", "expected resolved runtime prefix for write-proof, got %#v", defaultRequest.Skills.Resolved[0])
+	exampleutil.Check(len(defaultRequest.Skills.Entries) == 2, "expected 2 default entries, got %d", len(defaultRequest.Skills.Entries))
+	exampleutil.Check(defaultRequest.Skills.Entries[0].Key == "default-unused", "expected first default entry default-unused, got %q", defaultRequest.Skills.Entries[0].Key)
+	exampleutil.Check(defaultRequest.Skills.Entries[1].Key == "write-proof", "expected second default entry write-proof, got %q", defaultRequest.Skills.Entries[1].Key)
 	exampleutil.Check(defaultRequest.Skills.Fingerprint != "", "expected default skills fingerprint to be populated")
 
+	// Additive override: WithSkills merges into defaults; "write-proof"
+	// already appears in the binding defaults so the final selection adds
+	// only "extra-check".
 	overrideResult, err := sdk.Run(ctx, "Capture the overridden skills payload for this example.",
-		agentadaptor.WithSkills("write-proof", "extra-check"),
+		agentadaptor.WithSkills(agentadaptor.Key("write-proof"), agentadaptor.Key("extra-check")),
 	)
 	exampleutil.Must(err, "run mock skills contract with overridden skills")
 	exampleutil.Check(overrideResult.ExitCode == 0, "expected overridden skills exit code 0, got %d", overrideResult.ExitCode)
 	overrideRequest := driver.LastRequest()
-	exampleutil.Check(len(overrideRequest.Skills.Requested) == 2, "expected 2 overridden requested skills, got %d", len(overrideRequest.Skills.Requested))
-	exampleutil.Check(overrideRequest.Skills.Requested[0] == "write-proof" && overrideRequest.Skills.Requested[1] == "extra-check", "expected overridden requested skills [write-proof extra-check], got %#v", overrideRequest.Skills.Requested)
-	exampleutil.Check(len(overrideRequest.Skills.Resolved) == 2, "expected 2 overridden resolved skills, got %d", len(overrideRequest.Skills.Resolved))
-	exampleutil.Check(overrideRequest.Skills.Resolved[0].Runtime == "runtime/write-proof", "expected runtime prefix for write-proof, got %#v", overrideRequest.Skills.Resolved[0])
-	exampleutil.Check(overrideRequest.Skills.Resolved[1].Runtime == "runtime/extra-check", "expected runtime prefix for extra-check, got %#v", overrideRequest.Skills.Resolved[1])
+	exampleutil.Check(len(overrideRequest.Skills.Entries) == 3, "expected 3 overridden entries, got %d", len(overrideRequest.Skills.Entries))
+	exampleutil.Check(overrideRequest.Skills.Entries[0].Key == "default-unused", "expected first overridden entry default-unused, got %q", overrideRequest.Skills.Entries[0].Key)
+	exampleutil.Check(overrideRequest.Skills.Entries[1].Key == "extra-check", "expected second overridden entry extra-check, got %q", overrideRequest.Skills.Entries[1].Key)
+	exampleutil.Check(overrideRequest.Skills.Entries[2].Key == "write-proof", "expected third overridden entry write-proof, got %q", overrideRequest.Skills.Entries[2].Key)
 	exampleutil.Check(overrideRequest.Skills.Fingerprint != "", "expected override skills fingerprint to be populated")
 
 	exampleutil.Check(defaultResult.RawStreams != nil, "expected default RawStreams to be populated")

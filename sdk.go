@@ -2,6 +2,7 @@ package agentadaptor
 
 import (
 	"context"
+	"strings"
 	"sync"
 )
 
@@ -16,15 +17,18 @@ const (
 )
 
 type sdkImpl struct {
-	defaultBinding   AgentBinding
-	namedBindings    map[string]AgentBinding
-	sessionStore     SessionStore
-	workspaceManager WorkspaceManager
-	skillCatalog     SkillCatalog
-	skillAssembler   SkillAssembler
-	runtimeManager   RuntimeServiceManager
-	mu               sync.RWMutex
-	skillSelections  map[string][]string
+	defaultBinding    AgentBinding
+	namedBindings     map[string]AgentBinding
+	sessionStore      SessionStore
+	workspaceManager  WorkspaceManager
+	skillProvider     SkillProvider
+	skillMaterializer SkillMaterializer
+	runtimeManager    RuntimeServiceManager
+	mu                sync.RWMutex
+	// skillSelections tracks process-local SetSelectedSkills overrides per
+	// agent name. The value is the list of keys the admin picked; Required
+	// skills from the SkillProvider are unioned in at Run time.
+	skillSelections map[string][]string
 
 	eventRunBuf    int
 	eventStreamBuf int
@@ -35,15 +39,15 @@ type sdkImpl struct {
 // Prefer it when the SDK is embedded into a larger application or service.
 func Build(opts ...Option) (SDK, error) {
 	s := &sdkImpl{
-		namedBindings:    map[string]AgentBinding{},
-		workspaceManager: passthroughWorkspaceManager{},
-		skillCatalog:     passthroughSkillCatalog{},
-		skillAssembler:   defaultSkillAssembler{},
-		runtimeManager:   noopRuntimeManager{},
-		skillSelections:  map[string][]string{},
-		eventRunBuf:      defaultRunEventBuffer,
-		eventStreamBuf:   defaultStreamEventBuffer,
-		eventPolicy:      BackpressureDropStream,
+		namedBindings:     map[string]AgentBinding{},
+		workspaceManager:  passthroughWorkspaceManager{},
+		skillProvider:     emptySkillProvider{},
+		skillMaterializer: newDefaultSkillMaterializer(),
+		runtimeManager:    noopRuntimeManager{},
+		skillSelections:   map[string][]string{},
+		eventRunBuf:       defaultRunEventBuffer,
+		eventStreamBuf:    defaultStreamEventBuffer,
+		eventPolicy:       BackpressureDropStream,
 	}
 	for _, opt := range opts {
 		if opt == nil {
@@ -124,18 +128,34 @@ func (s *sdkImpl) runnerFor(name string, binding AgentBinding, isDefault bool) R
 	}
 }
 
-func (s *sdkImpl) desiredSkillsFor(name string, defaults []string) []string {
+// selectedRefsFor returns the effective default SkillRef list for agent name.
+// If SetSelectedSkills has installed a process-local override, the override
+// keys are returned as SkillKey refs (the admin picks by key, not by full
+// Skill value). Otherwise the binding's WithDefaultSkills values are cloned
+// and returned.
+func (s *sdkImpl) selectedRefsFor(name string, bindingDefaults []SkillRef) []SkillRef {
 	s.mu.RLock()
 	override, ok := s.skillSelections[name]
 	s.mu.RUnlock()
 	if ok {
-		return cloneStrings(override)
+		out := make([]SkillRef, 0, len(override))
+		for _, key := range override {
+			key = strings.TrimSpace(key)
+			if key == "" {
+				continue
+			}
+			out = append(out, SkillKey(key))
+		}
+		return out
 	}
-	return cloneStrings(defaults)
+	return cloneSkillRefs(bindingDefaults)
 }
 
-func (s *sdkImpl) setDesiredSkillsFor(name string, desired []string) {
+// setSelectedSkillsFor installs a process-local selection override for the
+// given agent name. Callers must have already validated that each key
+// exists in the SkillProvider.
+func (s *sdkImpl) setSelectedSkillsFor(name string, selected []string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.skillSelections[name] = cloneStrings(desired)
+	s.skillSelections[name] = cloneStrings(selected)
 }

@@ -27,6 +27,15 @@ type SessionParams struct {
 // The codec does not introduce a second session model. Instead it gives hosts,
 // tests, and adapters a stable way to normalize DriverSessionState and inspect
 // adapter-specific parameters without guessing map keys.
+//
+// Skill-aware adapters typically hash the ResolvedSkills.Fingerprint into the
+// session params (via SessionParamPromptBundleKey or an adapter-specific key)
+// so that GuardFingerprint changes whenever the selected skills change. A Run
+// invocation that supplies a resume ID whose GuardFingerprint no longer
+// matches the current skill selection SHOULD be rejected by the adapter with
+// a dedicated error (see docs/skill-api-design.md §5.10). This keeps prompt
+// bundles and on-disk caches consistent with the session they were captured
+// for.
 type SessionCodec interface {
 	Name() string
 	ToParams(state *DriverSessionState) SessionParams

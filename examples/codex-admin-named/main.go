@@ -10,7 +10,6 @@ import (
 	agentadaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/codex"
 	"github.com/agent-dance/agent-adaptor/examples/internal/exampleutil"
-	"github.com/agent-dance/agent-adaptor/examples/internal/mockkit"
 )
 
 const (
@@ -26,18 +25,14 @@ func main() {
 	flag.Parse()
 
 	commandPath, commandNote := exampleutil.RequireHealthyCodexCommand(*command)
-	skillCatalog := mockkit.StaticSkillCatalog{
-		Entries: map[string]agentadaptor.Skill{
-			defaultSkillName: {
-				Key:      defaultSkillName,
-				Runtime:  defaultSkillName,
-				PathHint: locateExampleSkill(defaultSkillName),
-			},
-			reviewSkillName: {
-				Key:      reviewSkillName,
-				Runtime:  reviewSkillName,
-				PathHint: locateExampleSkill(reviewSkillName),
-			},
+	skillSet := agentadaptor.SkillSet{
+		defaultSkillName: {
+			Key:    defaultSkillName,
+			Source: agentadaptor.SkillFromPath{Path: locateExampleSkill(defaultSkillName)},
+		},
+		reviewSkillName: {
+			Key:    reviewSkillName,
+			Source: agentadaptor.SkillFromPath{Path: locateExampleSkill(reviewSkillName)},
 		},
 	}
 
@@ -54,7 +49,7 @@ func main() {
 				TenantID: "examples",
 				Name:     "default",
 			}),
-			agentadaptor.WithDefaultSkills(defaultSkillName, reviewSkillName),
+			agentadaptor.WithDefaultSkills(agentadaptor.Key(defaultSkillName), agentadaptor.Key(reviewSkillName)),
 		)),
 		agentadaptor.WithAgent("review", codex.New(
 			agentadaptor.CodexConfig{
@@ -68,9 +63,9 @@ func main() {
 				TenantID: "examples",
 				Name:     "review",
 			}),
-			agentadaptor.WithDefaultSkills(reviewSkillName),
+			agentadaptor.WithDefaultSkills(agentadaptor.Key(reviewSkillName)),
 		)),
-		agentadaptor.WithSkillCatalog(skillCatalog),
+		agentadaptor.WithSkillSet(skillSet),
 	)
 
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
@@ -121,17 +116,17 @@ func main() {
 	defaultSkills, err := defaultAdmin.ListSkills(ctx)
 	exampleutil.Must(err, "list default agent skills")
 	exampleutil.Check(defaultSkills.Supported, "expected default agent skills to be supported")
-	exampleutil.Check(len(defaultSkills.Desired) == 2, "expected default agent desired skills length 2, got %d", len(defaultSkills.Desired))
+	exampleutil.Check(len(defaultSkills.Selected) == 2, "expected default agent selected skills length 2, got %d", len(defaultSkills.Selected))
 	exampleutil.Check(len(defaultSkills.Warnings) == 0, "expected default skills warnings to be empty, got %#v", defaultSkills.Warnings)
 	exampleutil.Check(!snapshotHasState(defaultSkills, agentadaptor.SkillStateMissing), "expected default skills to avoid missing entries, got %#v", defaultSkills.Entries)
 
-	syncedSkills, err := reviewAdmin.SyncSkills(ctx, []string{defaultSkillName})
-	exampleutil.Must(err, "sync review agent skills")
-	exampleutil.Check(syncedSkills.Supported, "expected synced skills to be supported")
-	exampleutil.Check(len(syncedSkills.Desired) == 1, "expected synced desired skills length 1, got %d", len(syncedSkills.Desired))
-	exampleutil.Check(syncedSkills.Desired[0] == defaultSkillName, "expected synced skill to be %q, got %q", defaultSkillName, syncedSkills.Desired[0])
-	exampleutil.Check(len(syncedSkills.Warnings) == 0, "expected synced skills warnings to be empty, got %#v", syncedSkills.Warnings)
-	exampleutil.Check(!snapshotHasState(syncedSkills, agentadaptor.SkillStateMissing), "expected synced skills to avoid missing entries, got %#v", syncedSkills.Entries)
+	syncedSkills, err := reviewAdmin.SetSelectedSkills(ctx, []string{defaultSkillName})
+	exampleutil.Must(err, "set selected skills for review agent")
+	exampleutil.Check(syncedSkills.Supported, "expected selected skills snapshot to be supported")
+	exampleutil.Check(len(syncedSkills.Selected) == 1, "expected selected skills length 1, got %d", len(syncedSkills.Selected))
+	exampleutil.Check(syncedSkills.Selected[0] == defaultSkillName, "expected selected skill to be %q, got %q", defaultSkillName, syncedSkills.Selected[0])
+	exampleutil.Check(len(syncedSkills.Warnings) == 0, "expected selected skills warnings to be empty, got %#v", syncedSkills.Warnings)
+	exampleutil.Check(!snapshotHasState(syncedSkills, agentadaptor.SkillStateMissing), "expected selected skills to avoid missing entries, got %#v", syncedSkills.Entries)
 
 	exampleutil.PrintJSON(map[string]any{
 		"example": "codex-admin-named",

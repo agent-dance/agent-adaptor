@@ -207,12 +207,21 @@ func (adapter) GetQuota(ctx context.Context, cfg any, profile *agentadaptor.Prof
 	return codexQuotaReport(ctx, bindings)
 }
 
-func (adapter) ListSkills(_ context.Context, _ any, payload agentadaptor.SkillPayload, _ *agentadaptor.ProfileSelection) (agentadaptor.SkillSnapshot, error) {
-	return listCodexSkills(payload), nil
+func (adapter) ListSkills(_ context.Context, _ any, payload agentadaptor.ResolvedSkills, selected []string, resolved []agentadaptor.Skill, _ *agentadaptor.ProfileSelection) (agentadaptor.SkillSnapshot, error) {
+	return listCodexSkills(payload, selected, resolved), nil
 }
 
-func (adapter) SyncSkills(_ context.Context, _ any, payload agentadaptor.SkillPayload, _ []string, _ *agentadaptor.ProfileSelection) (agentadaptor.SkillSnapshot, error) {
-	return syncCodexSkills(payload), nil
+// InjectSkills is a no-op for Codex. Injection requires the resolved
+// CODEX_HOME which is only known once Run() produces the effective
+// bindings for this particular invocation (profile-aware). Run() performs
+// the filesystem work itself; implementing the interface here simply
+// keeps the adapter spec explicit.
+func (adapter) InjectSkills(_ context.Context, _ any, _ agentadaptor.ResolvedSkills, _ *agentadaptor.ProfileSelection) error {
+	return nil
+}
+
+func (adapter) SyncSkills(_ context.Context, _ any, payload agentadaptor.ResolvedSkills, selected []string, resolved []agentadaptor.Skill, _ *agentadaptor.ProfileSelection) (agentadaptor.SkillSnapshot, error) {
+	return syncCodexSkills(payload, selected, resolved), nil
 }
 
 // StreamCapability advertises the codex adapter's streaming fidelity. When

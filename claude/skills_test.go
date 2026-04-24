@@ -25,14 +25,14 @@ func TestListClaudeSkillsIncludesExternalInstalls(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", "")
 	home := t.TempDir()
 	externalSkill := createClaudeSkillDir(t, filepath.Join(home, ".claude", "skills"), "external-checks")
-	payload := agentadaptor.SkillPayload{
-		Requested: []string{"team/main"},
-		RuntimeEntries: []agentadaptor.SkillRuntimeEntry{
+	payload := agentadaptor.ResolvedSkills{
+		Entries: []agentadaptor.ResolvedSkill{
 			{Key: "team/main", RuntimeName: "main", SourcePath: createClaudeSkillDir(t, t.TempDir(), "main")},
 		},
 	}
+	selected := []string{"team/main"}
 
-	snapshot, err := listClaudeSkills(payload, []agentadaptor.EnvBinding{{Name: "HOME", Value: home}})
+	snapshot, err := listClaudeSkills(payload, selected, nil, []agentadaptor.EnvBinding{{Name: "HOME", Value: home}})
 	if err != nil {
 		t.Fatalf("list skills: %v", err)
 	}
@@ -61,14 +61,14 @@ func TestListClaudeSkillsIncludesExternalInstalls(t *testing.T) {
 func TestListClaudeSkillsUsesClaudeConfigDirWhenProvided(t *testing.T) {
 	configDir := t.TempDir()
 	externalSkill := createClaudeSkillDir(t, filepath.Join(configDir, "skills"), "external-checks")
-	payload := agentadaptor.SkillPayload{
-		Requested: []string{"team/main"},
-		RuntimeEntries: []agentadaptor.SkillRuntimeEntry{
+	payload := agentadaptor.ResolvedSkills{
+		Entries: []agentadaptor.ResolvedSkill{
 			{Key: "team/main", RuntimeName: "main", SourcePath: createClaudeSkillDir(t, t.TempDir(), "main")},
 		},
 	}
+	selected := []string{"team/main"}
 
-	snapshot, err := listClaudeSkills(payload, []agentadaptor.EnvBinding{{Name: "CLAUDE_CONFIG_DIR", Value: configDir}})
+	snapshot, err := listClaudeSkills(payload, selected, nil, []agentadaptor.EnvBinding{{Name: "CLAUDE_CONFIG_DIR", Value: configDir}})
 	if err != nil {
 		t.Fatalf("list skills: %v", err)
 	}
@@ -91,17 +91,17 @@ func TestListClaudeSkillsUsesClaudeConfigDirWhenProvided(t *testing.T) {
 	}
 }
 
-func TestPrepareClaudePromptBundleMaterializesDesiredSkillsOnly(t *testing.T) {
+func TestPrepareClaudePromptBundleMaterializesSelectedSkillsOnly(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", "")
 	t.Setenv("HOME", t.TempDir())
 	root := t.TempDir()
 	desired := createClaudeSkillDir(t, root, "main")
-	other := createClaudeSkillDir(t, root, "other")
-	payload := agentadaptor.SkillPayload{
-		Requested: []string{"team/main"},
-		RuntimeEntries: []agentadaptor.SkillRuntimeEntry{
+	// The prompt bundle only materialises whatever lands in
+	// ResolvedSkills.Entries; the SDK is responsible for filtering that list
+	// down to the Selected set before the adapter sees it.
+	payload := agentadaptor.ResolvedSkills{
+		Entries: []agentadaptor.ResolvedSkill{
 			{Key: "team/main", RuntimeName: "main", SourcePath: desired},
-			{Key: "team/other", RuntimeName: "other", SourcePath: other},
 		},
 	}
 
@@ -125,13 +125,18 @@ func TestListClaudeSkillsUsesProfileSelection(t *testing.T) {
 	dedicated := t.TempDir()
 	_ = createClaudeSkillDir(t, filepath.Join(nativeHome, ".claude", "skills"), "native-only")
 	dedicatedSkill := createClaudeSkillDir(t, filepath.Join(dedicated, "skills"), "dedicated-only")
-	payload := agentadaptor.SkillPayload{}
+	payload := agentadaptor.ResolvedSkills{}
 
-	snapshot, err := NewAdapter().(interface {
-		ListSkills(context.Context, any, agentadaptor.SkillPayload, *agentadaptor.ProfileSelection) (agentadaptor.SkillSnapshot, error)
-	}).ListSkills(context.Background(), agentadaptor.ClaudeConfig{
-		CommonConfig: agentadaptor.CommonConfig{Env: []agentadaptor.EnvBinding{{Name: "HOME", Value: nativeHome}}},
-	}, payload, &agentadaptor.ProfileSelection{Mode: agentadaptor.ProfileModeDedicated, Dir: dedicated})
+	snapshot, err := NewAdapter().(agentadaptor.SkillAwareDriver).ListSkills(
+		context.Background(),
+		agentadaptor.ClaudeConfig{
+			CommonConfig: agentadaptor.CommonConfig{Env: []agentadaptor.EnvBinding{{Name: "HOME", Value: nativeHome}}},
+		},
+		payload,
+		nil,
+		nil,
+		&agentadaptor.ProfileSelection{Mode: agentadaptor.ProfileModeDedicated, Dir: dedicated},
+	)
 	if err != nil {
 		t.Fatalf("list skills: %v", err)
 	}

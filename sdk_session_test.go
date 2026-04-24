@@ -29,7 +29,7 @@ type fakeDriver struct {
 	supportedModels   []agentadaptor.ModelInfo
 	mcpCapability     agentadaptor.MCPCapability
 	lastSkillSyncWant []string
-	lastSkills        agentadaptor.SkillPayload
+	lastSkills        agentadaptor.ResolvedSkills
 	lastMCP           agentadaptor.MCPPayload
 }
 
@@ -66,31 +66,37 @@ func (d *fakeDriver) ListModels(_ context.Context, _ any) ([]agentadaptor.ModelI
 	return append([]agentadaptor.ModelInfo(nil), d.supportedModels...), nil
 }
 
-func (d *fakeDriver) ListSkills(_ context.Context, _ any, payload agentadaptor.SkillPayload, _ *agentadaptor.ProfileSelection) (agentadaptor.SkillSnapshot, error) {
+func (d *fakeDriver) ListSkills(_ context.Context, _ any, payload agentadaptor.ResolvedSkills, selected []string, resolved []agentadaptor.Skill, _ *agentadaptor.ProfileSelection) (agentadaptor.SkillSnapshot, error) {
 	return agentadaptor.SkillSnapshot{
 		DriverType: d.Descriptor().Type,
 		Supported:  true,
 		Mode:       agentadaptor.SkillSyncEphemeral,
-		Desired:    append([]string(nil), payload.Requested...),
-		Resolved:   append([]agentadaptor.Skill(nil), payload.Resolved...),
+		Selected:   append([]string(nil), selected...),
+		Resolved:   append([]agentadaptor.Skill(nil), resolved...),
+		Warnings:   append([]string(nil), payload.Warnings...),
 	}, nil
 }
 
-func (d *fakeDriver) SyncSkills(_ context.Context, _ any, payload agentadaptor.SkillPayload, desired []string, _ *agentadaptor.ProfileSelection) (agentadaptor.SkillSnapshot, error) {
+func (d *fakeDriver) InjectSkills(_ context.Context, _ any, _ agentadaptor.ResolvedSkills, _ *agentadaptor.ProfileSelection) error {
+	return nil
+}
+
+func (d *fakeDriver) SyncSkills(_ context.Context, _ any, payload agentadaptor.ResolvedSkills, desired []string, resolved []agentadaptor.Skill, _ *agentadaptor.ProfileSelection) (agentadaptor.SkillSnapshot, error) {
 	d.lastSkillSyncWant = append([]string(nil), desired...)
 	return agentadaptor.SkillSnapshot{
 		DriverType: d.Descriptor().Type,
 		Supported:  true,
 		Mode:       agentadaptor.SkillSyncEphemeral,
-		Desired:    append([]string(nil), desired...),
-		Resolved:   append([]agentadaptor.Skill(nil), payload.Resolved...),
+		Selected:   append([]string(nil), desired...),
+		Resolved:   append([]agentadaptor.Skill(nil), resolved...),
+		Warnings:   append([]string(nil), payload.Warnings...),
 	}, nil
 }
 
 func (d *fakeDriver) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink agentadaptor.EventSink) (agentadaptor.DriverRunResult, error) {
+	d.mu.Lock()
 	d.lastSkills = req.Skills
 	d.lastMCP = req.MCP
-	d.mu.Lock()
 	d.runCalls++
 	d.mu.Unlock()
 	if d.startedCh != nil {
@@ -465,12 +471,19 @@ func TestAdminExposesBoundAgents(t *testing.T) {
 			{ID: "fake-b", Label: "fake-b"},
 		},
 	}
-	sdk := newSDK(
-		nil,
-		fakeBinding("default", driver, agentadaptor.WithDefaultSkills("core/default")),
-		map[string]agentadaptor.AgentBinding{
-			"review": fakeBinding("review", &fakeDriver{}, agentadaptor.WithDefaultSkills("core/review")),
-		},
+	reviewSkill := agentadaptor.InlineSkill("core/review", "# review")
+	defaultSkill := agentadaptor.InlineSkill("core/default", "# default")
+	extraSkill := agentadaptor.InlineSkill("extra/checks", "# extra")
+	sdk := agentadaptor.New(
+		agentadaptor.WithDefaultAgent(fakeBinding("default", driver,
+			agentadaptor.WithDefaultSkills(defaultSkill),
+		)),
+		agentadaptor.WithAgent("review", fakeBinding("review", &fakeDriver{},
+			agentadaptor.WithDefaultSkills(reviewSkill),
+		)),
+		agentadaptor.WithSkillSet(agentadaptor.SkillSet{
+			"extra/checks": extraSkill,
+		}),
 	)
 
 	admin := sdk.Admin()
@@ -497,12 +510,12 @@ func TestAdminExposesBoundAgents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("review admin: %v", err)
 	}
-	snapshot, err := reviewAdmin.SyncSkills(context.Background(), []string{"core/review", "extra/checks"})
+	snapshot, err := reviewAdmin.SetSelectedSkills(context.Background(), []string{"core/review", "extra/checks"})
 	if err != nil {
-		t.Fatalf("sync skills: %v", err)
+		t.Fatalf("set selected skills: %v", err)
 	}
-	if len(snapshot.Desired) != 2 || snapshot.Desired[1] != "extra/checks" {
-		t.Fatalf("unexpected desired skills: %#v", snapshot.Desired)
+	if len(snapshot.Selected) != 2 || snapshot.Selected[1] != "extra/checks" {
+		t.Fatalf("unexpected selected skills: %#v", snapshot.Selected)
 	}
 }
 

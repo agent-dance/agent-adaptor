@@ -14,17 +14,19 @@ import (
 var codexCopiedSharedFiles = []string{"config.json", "config.toml", "instructions.md"}
 var codexSymlinkedSharedFiles = []string{"auth.json"}
 
-func listCodexSkills(payload agentadaptor.SkillPayload) agentadaptor.SkillSnapshot {
+func listCodexSkills(payload agentadaptor.ResolvedSkills, selected []string, resolved []agentadaptor.Skill) agentadaptor.SkillSnapshot {
 	return skillruntime.BuildEphemeralSnapshot(skillruntime.EphemeralSnapshotOptions{
 		DriverType:       DriverType,
 		Payload:          payload,
+		Selected:         selected,
+		Resolved:         resolved,
 		ConfiguredDetail: "Will be linked into the effective CODEX_HOME/skills directory on the next run.",
 		MissingDetail:    "agent-adaptor cannot find this skill in the runtime skill catalog.",
 	})
 }
 
-func syncCodexSkills(payload agentadaptor.SkillPayload) agentadaptor.SkillSnapshot {
-	return listCodexSkills(payload)
+func syncCodexSkills(payload agentadaptor.ResolvedSkills, selected []string, resolved []agentadaptor.Skill) agentadaptor.SkillSnapshot {
+	return listCodexSkills(payload, selected, resolved)
 }
 
 func effectiveCodexBindings(config agentadaptor.CommonConfig, selection *agentadaptor.ProfileSelection, agent agentadaptor.AgentIdentity) ([]agentadaptor.EnvBinding, error) {
@@ -189,9 +191,9 @@ func copyFile(source, target string) error {
 	return os.WriteFile(target, data, 0o644)
 }
 
-func injectCodexSkills(_ context.Context, skills agentadaptor.SkillPayload, codexHome string, sink agentadaptor.EventSink) error {
-	selected := skillruntime.SelectedRuntimeEntries(skills)
-	if len(selected) == 0 {
+func injectCodexSkills(_ context.Context, skills agentadaptor.ResolvedSkills, codexHome string, sink agentadaptor.EventSink) error {
+	entries := skills.Entries
+	if len(entries) == 0 {
 		return nil
 	}
 	skillsHome := filepath.Join(codexHome, "skills")
@@ -199,34 +201,43 @@ func injectCodexSkills(_ context.Context, skills agentadaptor.SkillPayload, code
 		return err
 	}
 	managedRoots := []string{skillruntime.ManagedSkillCacheRoot()}
-	allowedRuntimeNames := make([]string, 0, len(selected))
-	for _, entry := range selected {
+	allowedRuntimeNames := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if strings.TrimSpace(entry.SourcePath) == "" {
+			continue
+		}
 		result, err := skillruntime.EnsureSkillTarget(entry.SourcePath, filepath.Join(skillsHome, entry.RuntimeName), managedRoots)
 		if err != nil {
-			_ = sink.Emit(agentadaptor.RunEvent{
-				Type: agentadaptor.RunEventLifecycle,
-				Text: fmt.Sprintf("failed to inject Codex skill %q: %v", entry.Key, err),
-			})
+			if sink != nil {
+				_ = sink.Emit(agentadaptor.RunEvent{
+					Type: agentadaptor.RunEventLifecycle,
+					Text: fmt.Sprintf("failed to inject Codex skill %q: %v", entry.Key, err),
+				})
+			}
 			continue
 		}
 		allowedRuntimeNames = append(allowedRuntimeNames, entry.RuntimeName)
 		if result == "skipped" {
 			continue
 		}
-		_ = sink.Emit(agentadaptor.RunEvent{
-			Type: agentadaptor.RunEventLifecycle,
-			Text: fmt.Sprintf("%s Codex skill %q into %s", capitalize(result), entry.RuntimeName, skillsHome),
-		})
+		if sink != nil {
+			_ = sink.Emit(agentadaptor.RunEvent{
+				Type: agentadaptor.RunEventLifecycle,
+				Text: fmt.Sprintf("%s Codex skill %q into %s", capitalize(result), entry.RuntimeName, skillsHome),
+			})
+		}
 	}
 	removed, err := skillruntime.PruneBrokenManagedSkillTargets(skillsHome, allowedRuntimeNames, managedRoots)
 	if err != nil {
 		return err
 	}
 	for _, name := range removed {
-		_ = sink.Emit(agentadaptor.RunEvent{
-			Type: agentadaptor.RunEventLifecycle,
-			Text: fmt.Sprintf("removed stale Codex skill %q from %s", name, skillsHome),
-		})
+		if sink != nil {
+			_ = sink.Emit(agentadaptor.RunEvent{
+				Type: agentadaptor.RunEventLifecycle,
+				Text: fmt.Sprintf("removed stale Codex skill %q from %s", name, skillsHome),
+			})
+		}
 	}
 	return nil
 }

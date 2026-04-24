@@ -21,7 +21,7 @@ func claudeSkillsLocationLabel(bindings []agentadaptor.EnvBinding) string {
 	return "~/.claude/skills"
 }
 
-func listClaudeSkills(payload agentadaptor.SkillPayload, bindings []agentadaptor.EnvBinding) (agentadaptor.SkillSnapshot, error) {
+func listClaudeSkills(payload agentadaptor.ResolvedSkills, selected []string, resolved []agentadaptor.Skill, bindings []agentadaptor.EnvBinding) (agentadaptor.SkillSnapshot, error) {
 	externals, err := skillruntime.ReadInstalledSkillTargets(resolveClaudeSkillsHome(bindings))
 	if err != nil {
 		return agentadaptor.SkillSnapshot{}, err
@@ -29,6 +29,8 @@ func listClaudeSkills(payload agentadaptor.SkillPayload, bindings []agentadaptor
 	return skillruntime.BuildEphemeralSnapshot(skillruntime.EphemeralSnapshotOptions{
 		DriverType:       DriverType,
 		Payload:          payload,
+		Selected:         selected,
+		Resolved:         resolved,
 		ConfiguredDetail: "Will be materialized into the stable agent-adaptor Claude prompt bundle on the next run.",
 		MissingDetail:    "agent-adaptor cannot find this skill in the runtime skill catalog.",
 		Externals:        externals,
@@ -37,36 +39,36 @@ func listClaudeSkills(payload agentadaptor.SkillPayload, bindings []agentadaptor
 	}), nil
 }
 
-func syncClaudeSkills(payload agentadaptor.SkillPayload, bindings []agentadaptor.EnvBinding) (agentadaptor.SkillSnapshot, error) {
-	return listClaudeSkills(payload, bindings)
+func syncClaudeSkills(payload agentadaptor.ResolvedSkills, selected []string, resolved []agentadaptor.Skill, bindings []agentadaptor.EnvBinding) (agentadaptor.SkillSnapshot, error) {
+	return listClaudeSkills(payload, selected, resolved, bindings)
 }
 
-func prepareClaudePromptBundle(agent agentadaptor.AgentIdentity, payload agentadaptor.SkillPayload) (string, string, error) {
-	selected := skillruntime.SelectedRuntimeEntries(payload)
-	if len(selected) == 0 {
+// prepareClaudePromptBundle materializes the Selected skills into a per-run
+// prompt bundle layout that Claude's CLI can discover via --add-dir.
+func prepareClaudePromptBundle(agent agentadaptor.AgentIdentity, payload agentadaptor.ResolvedSkills) (string, string, error) {
+	if len(payload.Entries) == 0 {
 		return "", "", nil
 	}
 	root, err := os.UserConfigDir()
 	if err != nil || strings.TrimSpace(root) == "" {
 		root = skillruntime.ResolveHome(nil)
 	}
-	bundleKey := stableBundleKey(payload)
+	bundleKey := payload.Fingerprint
 	bundleRoot := filepath.Join(root, "agent-adaptor", "claude-prompt-cache", safeNamespace(agent.TenantID), bundleKey)
 	skillsHome := filepath.Join(bundleRoot, ".claude", "skills")
 	if err := os.MkdirAll(skillsHome, 0o755); err != nil {
 		return "", "", err
 	}
 	managedRoots := []string{skillruntime.ManagedSkillCacheRoot()}
-	for _, entry := range selected {
+	for _, entry := range payload.Entries {
+		if strings.TrimSpace(entry.SourcePath) == "" {
+			continue
+		}
 		if _, err := skillruntime.EnsureSkillTarget(entry.SourcePath, filepath.Join(skillsHome, entry.RuntimeName), managedRoots); err != nil {
 			return "", "", fmt.Errorf("materialize Claude skill %q: %w", entry.Key, err)
 		}
 	}
 	return bundleRoot, bundleKey, nil
-}
-
-func stableBundleKey(payload agentadaptor.SkillPayload) string {
-	return payload.Fingerprint
 }
 
 func safeNamespace(value string) string {

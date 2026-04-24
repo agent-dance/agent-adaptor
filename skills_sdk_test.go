@@ -5,94 +5,63 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"testing/fstest"
 
 	agentadaptor "github.com/agent-dance/agent-adaptor"
 )
 
-type staticSkillCatalog struct {
-	skills map[string]agentadaptor.Skill
-	order  []agentadaptor.Skill
-}
-
-func (c *staticSkillCatalog) Resolve(_ context.Context, _ string, refs []string) ([]agentadaptor.Skill, error) {
-	out := make([]agentadaptor.Skill, 0, len(refs))
-	for _, ref := range refs {
-		if skill, ok := c.skills[ref]; ok {
-			out = append(out, skill)
-		}
+// fsWithRules builds an fstest.MapFS with a SKILL.md and references/rules.md
+// under root "main/". The returned fstest.MapFS is used by tests to validate
+// that FSSkill sources are materialised correctly by the SDK.
+func fsWithRules() fstest.MapFS {
+	return fstest.MapFS{
+		"main/SKILL.md":             &fstest.MapFile{Data: []byte("---\nname: main\n---\n")},
+		"main/references/rules.md":  &fstest.MapFile{Data: []byte("rules")},
 	}
-	return out, nil
 }
 
-func (c *staticSkillCatalog) List(_ context.Context, _ string) ([]agentadaptor.Skill, error) {
-	out := make([]agentadaptor.Skill, len(c.order))
-	copy(out, c.order)
-	return out, nil
-}
-
-func TestSDKRunMaterializesInlineSkillsAndCanonicalizesDesiredRefs(t *testing.T) {
+func TestSDKRunMaterializesFSSkillsAndCanonicalizesSelectedRefs(t *testing.T) {
 	driver := &fakeDriver{}
-	catalog := &staticSkillCatalog{
-		skills: map[string]agentadaptor.Skill{
-			"team/main": {
-				Key:     "team/main",
-				Content: "---\nname: main\n---\n",
-				Files: []agentadaptor.SkillFile{
-					{Path: "references/rules.md", Kind: agentadaptor.SkillFileReference, Content: "rules"},
-				},
-			},
-			"system/core": {
-				Key:            "system/core",
-				Content:        "---\nname: core\n---\n",
-				Required:       true,
-				RequiredReason: "Required by the runtime catalog.",
-			},
-		},
-		order: []agentadaptor.Skill{
-			{
-				Key:     "team/main",
-				Content: "---\nname: main\n---\n",
-				Files: []agentadaptor.SkillFile{
-					{Path: "references/rules.md", Kind: agentadaptor.SkillFileReference, Content: "rules"},
-				},
-			},
-			{
-				Key:            "system/core",
-				Content:        "---\nname: core\n---\n",
-				Required:       true,
-				RequiredReason: "Required by the runtime catalog.",
-			},
-		},
+	mainSkill := agentadaptor.Skill{
+		Key:    "team/main",
+		Source: agentadaptor.SkillFromFS{FS: fsWithRules(), Root: "main"},
 	}
+	coreSkill := agentadaptor.Require(
+		agentadaptor.InlineSkill("system/core", "---\nname: core\n---\n"),
+		"Required by the runtime catalog.",
+	)
 
 	sdk := agentadaptor.New(
-		agentadaptor.WithDefaultAgent(fakeBinding("default", driver, agentadaptor.WithDefaultSkills("main"))),
-		agentadaptor.WithSkillCatalog(catalog),
+		agentadaptor.WithDefaultAgent(fakeBinding("default", driver,
+			agentadaptor.WithDefaultSkills(agentadaptor.Key("team/main")),
+		)),
+		agentadaptor.WithSkillSet(agentadaptor.SkillSet{
+			"team/main":   mainSkill,
+			"system/core": coreSkill,
+		}),
 	)
 
 	if _, err := sdk.Run(context.Background(), "hello"); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
-	if len(driver.lastSkills.Requested) != 2 {
-		t.Fatalf("expected desired skills to include canonical + required, got %#v", driver.lastSkills.Requested)
+	keys := driver.lastSkills.Keys()
+	if len(keys) != 2 {
+		t.Fatalf("expected selected keys to include binding default + required provider skill, got %#v", keys)
 	}
-	if driver.lastSkills.Requested[0] != "team/main" || driver.lastSkills.Requested[1] != "system/core" {
-		t.Fatalf("unexpected desired skills: %#v", driver.lastSkills.Requested)
-	}
-	if len(driver.lastSkills.RuntimeEntries) != 2 {
-		t.Fatalf("expected runtime entries for available catalog skills, got %#v", driver.lastSkills.RuntimeEntries)
+	if keys[0] != "system/core" || keys[1] != "team/main" {
+		t.Fatalf("unexpected selected keys (want sorted system/core,team/main): %#v", keys)
 	}
 
 	var mainSource string
-	for _, entry := range driver.lastSkills.RuntimeEntries {
+	for _, entry := range driver.lastSkills.Entries {
 		if entry.Key == "team/main" {
 			mainSource = entry.SourcePath
 			break
 		}
 	}
 	if mainSource == "" {
-		t.Fatalf("missing runtime entry for team/main: %#v", driver.lastSkills.RuntimeEntries)
+		t.Fatalf("missing ResolvedSkill entry for team/main: %#v", driver.lastSkills.Entries)
 	}
 	if _, err := os.Stat(filepath.Join(mainSource, "SKILL.md")); err != nil {
 		t.Fatalf("expected materialized SKILL.md: %v", err)
@@ -102,44 +71,42 @@ func TestSDKRunMaterializesInlineSkillsAndCanonicalizesDesiredRefs(t *testing.T)
 	}
 }
 
-func TestAdminSyncSkillsUpdatesProcessLocalDesiredSelection(t *testing.T) {
+func TestAdminSetSelectedSkillsUpdatesProcessLocalSelection(t *testing.T) {
 	driver := &fakeDriver{}
-	catalog := &staticSkillCatalog{
-		skills: map[string]agentadaptor.Skill{
-			"team/default": {Key: "team/default", Content: "---\nname: default\n---\n"},
-			"team/review":  {Key: "team/review", Content: "---\nname: review\n---\n"},
-		},
-		order: []agentadaptor.Skill{
-			{Key: "team/default", Content: "---\nname: default\n---\n"},
-			{Key: "team/review", Content: "---\nname: review\n---\n"},
-		},
-	}
+	defaultSkill := agentadaptor.InlineSkill("team/default", "---\nname: default\n---\n")
+	reviewSkill := agentadaptor.InlineSkill("team/review", "---\nname: review\n---\n")
 
 	sdk := agentadaptor.New(
-		agentadaptor.WithDefaultAgent(fakeBinding("default", driver, agentadaptor.WithDefaultSkills("team/default"))),
-		agentadaptor.WithSkillCatalog(catalog),
+		agentadaptor.WithDefaultAgent(fakeBinding("default", driver,
+			agentadaptor.WithDefaultSkills(defaultSkill),
+		)),
+		agentadaptor.WithSkillSet(agentadaptor.SkillSet{
+			"team/default": defaultSkill,
+			"team/review":  reviewSkill,
+		}),
 	)
 
-	snapshot, err := sdk.Admin().Default().SyncSkills(context.Background(), []string{"team/review"})
+	snapshot, err := sdk.Admin().Default().SetSelectedSkills(context.Background(), []string{"team/review"})
 	if err != nil {
-		t.Fatalf("sync skills: %v", err)
+		t.Fatalf("set selected skills: %v", err)
 	}
-	if len(snapshot.Desired) != 1 || snapshot.Desired[0] != "team/review" {
-		t.Fatalf("unexpected synced desired skills: %#v", snapshot.Desired)
+	if len(snapshot.Selected) != 1 || snapshot.Selected[0] != "team/review" {
+		t.Fatalf("unexpected selected skills: %#v", snapshot.Selected)
 	}
 
 	if _, err := sdk.Run(context.Background(), "hello"); err != nil {
 		t.Fatalf("run after sync: %v", err)
 	}
-	if len(driver.lastSkills.Requested) != 1 || driver.lastSkills.Requested[0] != "team/review" {
-		t.Fatalf("expected run to use synced desired skills, got %#v", driver.lastSkills.Requested)
+	keys := driver.lastSkills.Keys()
+	if len(keys) != 1 || keys[0] != "team/review" {
+		t.Fatalf("expected run to use the process-local selection, got %#v", keys)
 	}
 
 	listed, err := sdk.Admin().Default().ListSkills(context.Background())
 	if err != nil {
 		t.Fatalf("list skills: %v", err)
 	}
-	if len(listed.Desired) != 1 || listed.Desired[0] != "team/review" {
-		t.Fatalf("expected list to reflect synced desired skills, got %#v", listed.Desired)
+	if len(listed.Selected) != 1 || listed.Selected[0] != "team/review" {
+		t.Fatalf("expected list to reflect selection override, got %#v", listed.Selected)
 	}
 }

@@ -26,6 +26,13 @@ var (
 	ErrDecisionRequestExpired       = errors.New("agentadaptor: decision request expired or already resolved")
 	ErrDecisionResultKindMismatch   = errors.New("agentadaptor: decision result is incompatible with request kind")
 	ErrRunEnded                     = errors.New("agentadaptor: run already ended")
+
+	// Skill-layer sentinels (see docs/skill-api-design.md).
+	ErrSkillKeyConflict    = errors.New("agentadaptor: skill key defined with conflicting sources")
+	ErrSkillsNotEnumerable = errors.New("agentadaptor: skill provider cannot enumerate the catalogue")
+	ErrSkillSourceMissing  = errors.New("agentadaptor: skill source is required")
+	ErrSkillKeyMissing     = errors.New("agentadaptor: skill key is required")
+	ErrSkillNotFound       = errors.New("agentadaptor: skill not found in provider")
 )
 
 type DuplicateAgentError struct {

@@ -46,9 +46,8 @@ func TestInjectCodexSkillsRepairsManagedSymlink(t *testing.T) {
 		t.Fatalf("seed symlink: %v", err)
 	}
 
-	payload := agentadaptor.SkillPayload{
-		Requested: []string{"team/paperclip"},
-		RuntimeEntries: []agentadaptor.SkillRuntimeEntry{
+	payload := agentadaptor.ResolvedSkills{
+		Entries: []agentadaptor.ResolvedSkill{
 			{Key: "team/paperclip", RuntimeName: "paperclip", SourcePath: currentSource},
 		},
 	}
@@ -85,9 +84,8 @@ func TestInjectCodexSkillsPreservesExternalSymlink(t *testing.T) {
 		t.Fatalf("seed external symlink: %v", err)
 	}
 
-	payload := agentadaptor.SkillPayload{
-		Requested: []string{"team/paperclip"},
-		RuntimeEntries: []agentadaptor.SkillRuntimeEntry{
+	payload := agentadaptor.ResolvedSkills{
+		Entries: []agentadaptor.ResolvedSkill{
 			{Key: "team/paperclip", RuntimeName: "paperclip", SourcePath: currentSource},
 		},
 	}

@@ -57,16 +57,31 @@ func WithWorkspaceManager(manager WorkspaceManager) Option {
 	}
 }
 
-func WithSkillCatalog(catalog SkillCatalog) Option {
+// WithSkillProvider installs a dynamic skill catalogue source. The provider
+// is consulted on every Run for the authoritative list of skills visible to
+// the current tenant, including any entries the provider marks Required=true.
+// Hosts without a dynamic catalogue can pass a SkillSet via WithSkillSet
+// instead.
+func WithSkillProvider(provider SkillProvider) Option {
 	return func(s *sdkImpl) error {
-		s.skillCatalog = catalog
+		s.skillProvider = provider
 		return nil
 	}
 }
 
-func WithSkillAssembler(assembler SkillAssembler) Option {
+// WithSkillSet is syntactic sugar around WithSkillProvider for hosts whose
+// catalogue is fully known at SDK construction time.
+func WithSkillSet(set SkillSet) Option {
+	return WithSkillProvider(set)
+}
+
+// WithSkillMaterializer overrides how SkillFromFS / SkillFromInline sources
+// are written to disk before an adapter consumes them. When unset, the SDK
+// uses the built-in cache-root materializer documented in
+// docs/skill-api-design.md §5.7.
+func WithSkillMaterializer(materializer SkillMaterializer) Option {
 	return func(s *sdkImpl) error {
-		s.skillAssembler = assembler
+		s.skillMaterializer = materializer
 		return nil
 	}
 }
@@ -137,9 +152,14 @@ func WithDefaultWorkspace(spec WorkspaceSpec) AgentOption {
 	}
 }
 
-func WithDefaultSkills(keys ...string) AgentOption {
+// WithDefaultSkills installs per-agent default skill references. Each SkillRef
+// is either a SkillKey (resolved against the SkillProvider) or an inline
+// Skill value. Multiple calls are additive: later SkillRef values are appended
+// to the previously-declared set. Duplicate keys must be structurally equal
+// (see ErrSkillKeyConflict).
+func WithDefaultSkills(refs ...SkillRef) AgentOption {
 	return func(defaults *AgentDefaults) {
-		defaults.Skills = append([]string(nil), keys...)
+		defaults.Skills = append(defaults.Skills, cloneSkillRefs(refs)...)
 	}
 }
 
@@ -207,7 +227,7 @@ type runOptions struct {
 	session      *SessionRequest
 	workspace    WorkspaceSpec
 	runtime      *WorkspaceRuntimeConfig
-	skills       []string
+	skills       []SkillRef
 	mcp          *MCPConfig
 	runPolicy    *RunPolicy
 	instructions *InstructionsBundleRef
@@ -315,9 +335,14 @@ func WithRuntimeServices(services ...RuntimeServiceSpec) RunOption {
 	}
 }
 
-func WithSkills(keys ...string) RunOption {
+// WithSkills adds skill references to the current run's Selected set. It is
+// additive: per-run WithSkills values are unioned with the binding's
+// WithDefaultSkills and the SkillProvider's Required entries. Duplicate keys
+// must be structurally equal; conflicting duplicates return an error via
+// ErrSkillKeyConflict before the adapter is invoked.
+func WithSkills(refs ...SkillRef) RunOption {
 	return func(ro *runOptions) {
-		ro.skills = append([]string(nil), keys...)
+		ro.skills = append(ro.skills, cloneSkillRefs(refs)...)
 	}
 }
 

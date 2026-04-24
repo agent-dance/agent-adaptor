@@ -305,10 +305,8 @@ func (r *runnerImpl) resolveInvocation(ctx context.Context, prompt string, opts 
 	}
 	runtimeOverride := resolvedOpts.runtime
 
-	skillRefs := r.sdk.desiredSkillsFor(r.name, defaults.Skills)
-	if len(resolvedOpts.skills) > 0 {
-		skillRefs = cloneStrings(resolvedOpts.skills)
-	}
+	defaultRefs := r.sdk.selectedRefsFor(r.name, defaults.Skills)
+	runRefs := cloneSkillRefs(resolvedOpts.skills)
 	mcpPayload, err := resolveMCPPayload(defaults.MCP, resolvedOpts.mcp, r.binding.Adapter().Descriptor().MCP)
 	if err != nil {
 		return resolvedInvocation{}, nil, err
@@ -370,21 +368,36 @@ func (r *runnerImpl) resolveInvocation(ctx context.Context, prompt string, opts 
 
 	runtimePayload, err := r.sdk.prepareRuntime(ctx, runID, r.binding, identity, workspace, metadata, runtimeOverride)
 	if err != nil {
-		_ = r.sdk.workspaceManager.Release(context.Background(), workspace, WorkspaceReleaseKeep)
+		// Use a detached ctx so a cancelled parent still allows the
+		// release to finish (otherwise we can leak workspaces when a
+		// user cancels Run early). Values propagate so tracing / tenant
+		// bindings are preserved.
+		_ = r.sdk.workspaceManager.Release(context.WithoutCancel(ctx), workspace, WorkspaceReleaseKeep)
 		return resolvedInvocation{}, nil, err
 	}
 
 	cleanup := func() {
+		releaseCtx := context.WithoutCancel(ctx)
 		if runID != "" {
-			_ = r.sdk.runtimeManager.ReleaseByRun(context.Background(), runID)
+			_ = r.sdk.runtimeManager.ReleaseByRun(releaseCtx, runID)
 		}
-		_ = r.sdk.workspaceManager.Release(context.Background(), workspace, WorkspaceReleaseKeep)
+		_ = r.sdk.workspaceManager.Release(releaseCtx, workspace, WorkspaceReleaseKeep)
 	}
 
-	skillPayload, err := r.sdk.prepareSkills(ctx, r.binding, identity, workspace, skillRefs)
+	skillPayload, _, _, err := r.sdk.resolveSkills(ctx, identity.TenantID, defaultRefs, runRefs, defaults.Skills)
 	if err != nil {
 		cleanup()
 		return resolvedInvocation{}, nil, err
+	}
+
+	// Give the adapter a chance to materialise prompt bundles / sync
+	// adapter-local caches before the actual Run begins. Adapters that do
+	// not care can simply not implement SkillAwareDriver.
+	if injector, ok := r.binding.Adapter().(SkillAwareDriver); ok {
+		if err := injector.InjectSkills(ctx, r.binding.Config(), skillPayload, cloneProfileSelection(defaults.Profile)); err != nil {
+			cleanup()
+			return resolvedInvocation{}, nil, err
+		}
 	}
 
 	sessionReq := SessionRequest{}
@@ -453,7 +466,7 @@ func (r *runnerImpl) executeWithSessionPlan(
 		Agent:        invocation.agent,
 		Workspace:    invocation.workspace,
 		Runtime:      cloneRuntimePayload(invocation.runtime),
-		Skills:       invocation.skills,
+		Skills:       cloneResolvedSkills(invocation.skills),
 		MCP:          cloneMCPPayload(invocation.mcp),
 		Profile:      cloneProfileSelection(invocation.profile),
 		Policy:       invocation.policy,
@@ -1475,6 +1488,18 @@ func (h *asyncRunHandle) Wait(ctx context.Context) (RunResult, error) {
 				} else if result.result.Failure.HumanDecision == nil && f.HumanDecision != nil {
 					result.result.Failure = cloneRunFailure(f)
 				}
+			}
+			// Mirror Run()'s ErrSessionCheckpointMissing tolerance so Start()
+			// and Run() collapse to the same RunResult shape. The run()-
+			// internal check already handles the common case; this second
+			// pass catches the race where pendingFailure (HITL attribution)
+			// was committed AFTER run() observed sink.pendingFailure() but
+			// BEFORE Wait drained it here. Without this branch, Start()
+			// callers would see ErrSessionCheckpointMissing as infrastructure
+			// failure for a run that should surface as a structured HITL
+			// RunFailure, contradicting the documented Run/Start symmetry.
+			if errors.Is(result.err, ErrSessionCheckpointMissing) && shouldSkipSessionPersistOnFailure(result.result) {
+				result.err = nil
 			}
 			// Drop the pending failure reference to avoid leaking across runs.
 			pendingFailuresByRunMu.Lock()

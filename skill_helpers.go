@@ -1,23 +1,30 @@
 package agentadaptor
 
 import (
+	"context"
 	"errors"
 	"fmt"
-	"math/rand"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
-	"time"
 )
 
-func cloneSkillFiles(values []SkillFile) []SkillFile {
-	if len(values) == 0 {
-		return nil
+// --- clone helpers --------------------------------------------------------
+
+// cloneSkill produces a deep copy of a Skill value. Metadata is cloned but
+// the Source interface is reused by value; SkillSource implementations are
+// intentionally immutable so sharing them is safe.
+func cloneSkill(s Skill) Skill {
+	return Skill{
+		Key:      s.Key,
+		Source:   s.Source,
+		Required: s.Required,
+		Reason:   s.Reason,
+		Metadata: cloneStringMap(s.Metadata),
 	}
-	out := make([]SkillFile, len(values))
-	copy(out, values)
-	return out
 }
 
 func cloneSkills(values []Skill) []Skill {
@@ -25,49 +32,76 @@ func cloneSkills(values []Skill) []Skill {
 		return nil
 	}
 	out := make([]Skill, len(values))
-	for index, value := range values {
-		out[index] = Skill{
-			Key:            value.Key,
-			Runtime:        value.Runtime,
-			Content:        value.Content,
-			PathHint:       value.PathHint,
-			Metadata:       cloneStringMap(value.Metadata),
-			Files:          cloneSkillFiles(value.Files),
-			Required:       value.Required,
-			RequiredReason: value.RequiredReason,
+	for i, v := range values {
+		out[i] = cloneSkill(v)
+	}
+	return out
+}
+
+func cloneSkillRefs(values []SkillRef) []SkillRef {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make([]SkillRef, 0, len(values))
+	for _, v := range values {
+		switch ref := v.(type) {
+		case nil:
+			continue
+		case SkillKey:
+			out = append(out, ref)
+		case Skill:
+			out = append(out, cloneSkill(ref))
+		default:
+			// The SkillRef sum-type is closed; we never expect to see an
+			// out-of-family implementation in the SDK, but the defensive
+			// branch keeps cloning total.
+			out = append(out, v)
 		}
 	}
 	return out
 }
 
-func cloneRuntimeEntries(values []SkillRuntimeEntry) []SkillRuntimeEntry {
+func cloneResolvedSkill(e ResolvedSkill) ResolvedSkill {
+	return ResolvedSkill{
+		Key:         e.Key,
+		RuntimeName: e.RuntimeName,
+		SourcePath:  e.SourcePath,
+		Required:    e.Required,
+		Reason:      e.Reason,
+		Metadata:    cloneStringMap(e.Metadata),
+	}
+}
+
+func cloneResolvedSkills(r ResolvedSkills) ResolvedSkills {
+	entries := make([]ResolvedSkill, len(r.Entries))
+	for i, entry := range r.Entries {
+		entries[i] = cloneResolvedSkill(entry)
+	}
+	return ResolvedSkills{
+		Mode:        r.Mode,
+		Entries:     entries,
+		Warnings:    cloneStrings(r.Warnings),
+		Fingerprint: r.Fingerprint,
+	}
+}
+
+func cloneSnapshotEntries(values []SnapshotEntry) []SnapshotEntry {
 	if len(values) == 0 {
 		return nil
 	}
-	out := make([]SkillRuntimeEntry, len(values))
+	out := make([]SnapshotEntry, len(values))
 	copy(out, values)
 	return out
 }
 
-func cloneSkillEntries(values []SkillEntry) []SkillEntry {
-	if len(values) == 0 {
-		return nil
-	}
-	out := make([]SkillEntry, len(values))
-	copy(out, values)
-	return out
-}
+// --- key / slug helpers ---------------------------------------------------
 
-func normalizeSkillRef(value string) string {
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" {
-		return ""
-	}
-	return strings.ToLower(trimmed)
+func normalizeSkillKey(value string) string {
+	return strings.TrimSpace(value)
 }
 
 func skillSlug(value string) string {
-	trimmed := normalizeSkillRef(value)
+	trimmed := strings.TrimSpace(strings.ToLower(value))
 	if trimmed == "" {
 		return ""
 	}
@@ -76,177 +110,305 @@ func skillSlug(value string) string {
 	return parts[len(parts)-1]
 }
 
-func defaultSkillRuntimeName(key string) string {
-	slug := skillSlug(key)
+// defaultSkillRuntimeName derives the runtime directory name used when the
+// materializer writes a skill to disk. It prefers the Metadata override
+// (SkillMetadataRuntimeName), falls back to the slugged Key, and finally to
+// "skill" when the Key is empty.
+func defaultSkillRuntimeName(s Skill) string {
+	if override := strings.TrimSpace(s.Metadata[SkillMetadataRuntimeName]); override != "" {
+		return override
+	}
+	slug := skillSlug(s.Key)
 	if slug == "" {
 		slug = "skill"
 	}
-	if normalizeSkillRef(key) == slug {
+	if strings.ToLower(strings.TrimSpace(s.Key)) == slug {
 		return slug
 	}
-	return slug + "--" + stableHash(key)[:10]
+	// The slug differs from the original Key (e.g. "team/retention" vs
+	// "retention"). Preserve uniqueness by suffixing a short content hash.
+	return slug + "--" + stableHash(s.Key)[:10]
 }
 
-func canonicalSkillRef(reference string, available []Skill) string {
-	normalized := normalizeSkillRef(reference)
-	if normalized == "" {
-		return ""
-	}
-	for _, skill := range available {
-		if normalizeSkillRef(skill.Key) == normalized {
-			return skill.Key
-		}
-	}
-	var runtimeMatches []Skill
-	for _, skill := range available {
-		if normalizeSkillRef(skillRuntimeName(skill)) == normalized {
-			runtimeMatches = append(runtimeMatches, skill)
-		}
-	}
-	if len(runtimeMatches) == 1 {
-		return runtimeMatches[0].Key
-	}
-	var slugMatches []Skill
-	for _, skill := range available {
-		if skillSlug(skill.Key) == normalized {
-			slugMatches = append(slugMatches, skill)
-		}
-	}
-	if len(slugMatches) == 1 {
-		return slugMatches[0].Key
-	}
-	return normalized
-}
+// --- skill equivalence -----------------------------------------------------
 
-func mergeUniqueStrings(parts ...[]string) []string {
-	if len(parts) == 0 {
-		return nil
-	}
-	seen := map[string]struct{}{}
-	out := make([]string, 0)
-	for _, part := range parts {
-		for _, value := range part {
-			trimmed := strings.TrimSpace(value)
-			if trimmed == "" {
-				continue
-			}
-			if _, exists := seen[trimmed]; exists {
-				continue
-			}
-			seen[trimmed] = struct{}{}
-			out = append(out, trimmed)
-		}
-	}
-	return out
-}
-
-func mergeUniqueSkills(parts ...[]Skill) []Skill {
-	seen := map[string]struct{}{}
-	out := make([]Skill, 0)
-	for _, part := range parts {
-		for _, skill := range part {
-			key := strings.TrimSpace(skill.Key)
-			if key == "" {
-				key = skillRuntimeName(skill)
-			}
-			if key == "" {
-				continue
-			}
-			if _, exists := seen[key]; exists {
-				continue
-			}
-			seen[key] = struct{}{}
-			out = append(out, skill)
-		}
-	}
-	return out
-}
-
-func requiredSkills(skills []Skill) []Skill {
-	out := make([]Skill, 0)
-	for _, skill := range skills {
-		if skill.Required {
-			out = append(out, skill)
-		}
-	}
-	return out
-}
-
-func skillKeys(skills []Skill) []string {
-	out := make([]string, 0, len(skills))
-	for _, skill := range skills {
-		if trimmed := strings.TrimSpace(skill.Key); trimmed != "" {
-			out = append(out, trimmed)
-		}
-	}
-	return out
-}
-
-func skillRuntimeName(skill Skill) string {
-	if trimmed := strings.TrimSpace(skill.Runtime); trimmed != "" {
-		return trimmed
-	}
-	return defaultSkillRuntimeName(skill.Key)
-}
-
-func looksLikePathReference(ref string) bool {
-	trimmed := strings.TrimSpace(ref)
-	if trimmed == "" {
+// skillsEquivalent reports whether two Skill values describe the same
+// content (Key, Source, Required, Reason, Metadata). This is the invariant
+// enforced by ErrSkillKeyConflict during additive merging.
+func skillsEquivalent(a, b Skill) bool {
+	if normalizeSkillKey(a.Key) != normalizeSkillKey(b.Key) {
 		return false
 	}
-	if filepath.IsAbs(trimmed) {
+	if a.Required != b.Required {
+		return false
+	}
+	if strings.TrimSpace(a.Reason) != strings.TrimSpace(b.Reason) {
+		return false
+	}
+	if !stringMapsEqual(a.Metadata, b.Metadata) {
+		return false
+	}
+	return skillSourcesEquivalent(a.Source, b.Source)
+}
+
+func skillSourcesEquivalent(a, b SkillSource) bool {
+	if a == nil && b == nil {
 		return true
 	}
-	if strings.HasPrefix(trimmed, ".") {
-		return true
+	if a == nil || b == nil {
+		return false
 	}
-	if strings.Contains(trimmed, `\`) || strings.Contains(trimmed, "/") {
-		return true
-	}
-	if strings.HasSuffix(strings.ToLower(trimmed), ".md") {
-		return true
+	switch left := a.(type) {
+	case SkillFromPath:
+		right, ok := b.(SkillFromPath)
+		if !ok {
+			return false
+		}
+		return cleanSkillPath(left.Path) == cleanSkillPath(right.Path)
+	case SkillFromFS:
+		right, ok := b.(SkillFromFS)
+		if !ok {
+			return false
+		}
+		if left.Root != right.Root {
+			return false
+		}
+		// fs.FS identity is the most reliable comparison we can make without
+		// recursive enumeration. Hosts that want content-level equivalence
+		// should wrap their FS in a stable value type.
+		return fsIdentityEqual(left.FS, right.FS)
+	case SkillFromInline:
+		right, ok := b.(SkillFromInline)
+		if !ok {
+			return false
+		}
+		return left.SkillMD == right.SkillMD
 	}
 	return false
 }
 
-func resolveSkillPathHint(pathHint string, workspace WorkspaceLease) string {
-	trimmed := strings.TrimSpace(pathHint)
+func stringMapsEqual(a, b map[string]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for key, value := range a {
+		if other, ok := b[key]; !ok || other != value {
+			return false
+		}
+	}
+	return true
+}
+
+// fsIdentityEqual reports whether two fs.FS values can be treated as the
+// same logical filesystem for the purpose of skill equivalence.
+//
+// The check is deliberately conservative:
+//
+//   - Both nil → equal.
+//   - One nil → not equal.
+//   - Different dynamic types → not equal.
+//   - Same dynamic type that is comparable → use Go's `==` on the
+//     interface values. This covers the common cases (pointer identity
+//     for *fstest.MapFS, embed.FS values, small named structs used as
+//     fs.FS adapters) without the cost or surprise of reflect.DeepEqual.
+//   - Same dynamic type that is NOT comparable but has an addressable
+//     data pointer (map, slice, chan, func, pointer) → compare the
+//     underlying data pointer. Two references to the same map / slice
+//     header are logically the same FS; two independent allocations are
+//     not. This keeps fstest.MapFS and similar test helpers usable as
+//     skill sources without forcing hosts to wrap them.
+//   - Anything else (e.g. a non-comparable struct value) → not equal.
+//     Hosts that need content equivalence should hand the SDK the same
+//     FS instance twice, or wrap their FS in a comparable named type.
+func fsIdentityEqual(a, b fs.FS) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	ta := reflect.TypeOf(a)
+	tb := reflect.TypeOf(b)
+	if ta != tb {
+		return false
+	}
+	if ta == nil {
+		return false
+	}
+	if ta.Comparable() {
+		return a == b
+	}
+	switch ta.Kind() {
+	case reflect.Map, reflect.Slice, reflect.Chan, reflect.Func, reflect.Pointer, reflect.UnsafePointer:
+		return reflect.ValueOf(a).Pointer() == reflect.ValueOf(b).Pointer()
+	default:
+		return false
+	}
+}
+
+func cleanSkillPath(p string) string {
+	trimmed := strings.TrimSpace(p)
 	if trimmed == "" {
 		return ""
 	}
 	if filepath.IsAbs(trimmed) {
 		return filepath.Clean(trimmed)
 	}
-	base := workspace.CWD
-	if strings.TrimSpace(base) == "" {
-		base = ensureBaseCWD("")
-	}
-	return filepath.Clean(filepath.Join(base, trimmed))
-}
-
-func resolveExistingSkillSource(pathHint string, workspace WorkspaceLease) string {
-	resolved := resolveSkillPathHint(pathHint, workspace)
-	if resolved == "" {
-		return ""
-	}
-	info, err := os.Stat(resolved)
+	abs, err := filepath.Abs(trimmed)
 	if err != nil {
-		return ""
+		return filepath.Clean(trimmed)
 	}
-	if info.IsDir() {
-		skillPath := filepath.Join(resolved, "SKILL.md")
-		if stat, err := os.Stat(skillPath); err == nil && !stat.IsDir() {
-			return resolved
-		}
-		return ""
-	}
-	if strings.EqualFold(filepath.Base(resolved), "SKILL.md") {
-		return filepath.Dir(resolved)
-	}
-	return ""
+	return filepath.Clean(abs)
 }
 
-func managedSkillCacheRoot() string {
+// --- materializer ---------------------------------------------------------
+
+// defaultSkillMaterializer implements SkillMaterializer using the
+// XDG-ish cache root described in docs/skill-api-design.md §5.7.
+type defaultSkillMaterializer struct {
+	root string
+}
+
+func newDefaultSkillMaterializer() SkillMaterializer {
+	return &defaultSkillMaterializer{root: managedSkillCacheRoot("")}
+}
+
+// SkillCacheRootEnv is the environment variable that overrides the default
+// materializer's cache root. Adapters inspect the same variable (indirectly
+// through internal/skillruntime.ManagedSkillCacheRoot) to identify the
+// paths they are allowed to manage, so exposing it here keeps both sides of
+// the contract in sync.
+const SkillCacheRootEnv = "AGENT_ADAPTOR_SKILL_CACHE_ROOT"
+
+// Materialize implements SkillMaterializer.
+func (m *defaultSkillMaterializer) Materialize(_ context.Context, s Skill) (string, error) {
+	if s.Source == nil {
+		return "", fmt.Errorf("%w: skill %q", ErrSkillSourceMissing, s.Key)
+	}
+	switch src := s.Source.(type) {
+	case SkillFromPath:
+		cleaned := cleanSkillPath(src.Path)
+		if cleaned == "" {
+			return "", fmt.Errorf("agentadaptor: skill %q has empty SkillFromPath.Path", s.Key)
+		}
+		info, err := os.Stat(cleaned)
+		if err != nil {
+			return "", fmt.Errorf("agentadaptor: skill %q path %q unavailable: %w", s.Key, cleaned, err)
+		}
+		if info.IsDir() {
+			skillFile := filepath.Join(cleaned, "SKILL.md")
+			if stat, err := os.Stat(skillFile); err != nil || stat.IsDir() {
+				return "", fmt.Errorf("agentadaptor: skill %q path %q does not contain SKILL.md", s.Key, cleaned)
+			}
+			return cleaned, nil
+		}
+		if strings.EqualFold(filepath.Base(cleaned), "SKILL.md") {
+			return filepath.Dir(cleaned), nil
+		}
+		return "", fmt.Errorf("agentadaptor: skill %q path %q is not a SKILL.md file or directory", s.Key, cleaned)
+
+	case SkillFromFS:
+		return m.writeFromFS(s, src)
+	case SkillFromInline:
+		return m.writeFromInline(s, src)
+	default:
+		return "", fmt.Errorf("agentadaptor: skill %q has unsupported source type %T", s.Key, s.Source)
+	}
+}
+
+func (m *defaultSkillMaterializer) writeFromFS(s Skill, src SkillFromFS) (string, error) {
+	files, err := collectFSFiles(src.FS, strings.TrimSpace(src.Root))
+	if err != nil {
+		return "", fmt.Errorf("agentadaptor: skill %q fs.FS walk failed: %w", s.Key, err)
+	}
+	if _, ok := files["SKILL.md"]; !ok {
+		return "", fmt.Errorf("agentadaptor: skill %q fs.FS tree missing SKILL.md", s.Key)
+	}
+	return m.writeFiles(s, files)
+}
+
+func (m *defaultSkillMaterializer) writeFromInline(s Skill, src SkillFromInline) (string, error) {
+	trimmed := strings.TrimSpace(src.SkillMD)
+	if trimmed == "" {
+		return "", fmt.Errorf("agentadaptor: skill %q SkillFromInline.SkillMD is empty", s.Key)
+	}
+	return m.writeFiles(s, map[string][]byte{"SKILL.md": []byte(src.SkillMD)})
+}
+
+// writeFiles performs the atomic staging-then-rename dance common to all
+// non-path sources. Concurrency-safe: the staging directory is created via
+// os.MkdirTemp, which guarantees a unique path per goroutine/process; any
+// failure path (including the rename-race fallback) removes the staging
+// directory before returning.
+func (m *defaultSkillMaterializer) writeFiles(s Skill, files map[string][]byte) (string, error) {
+	runtimeName := defaultSkillRuntimeName(s)
+	hashInput := make(map[string]string, len(files))
+	for name, content := range files {
+		hashInput[name] = stableHash(content)
+	}
+	fingerprint := stableHash(s.Key, runtimeName, s.Required, s.Reason, s.Metadata, hashInput)
+	targetDir := filepath.Join(m.root, runtimeName+"--"+fingerprint[:12])
+	readyMarker := filepath.Join(targetDir, ".agent-adaptor-ready")
+	if _, err := os.Stat(readyMarker); err == nil {
+		return targetDir, nil
+	}
+	parent := filepath.Dir(targetDir)
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		return "", err
+	}
+	tmpDir, err := os.MkdirTemp(parent, runtimeName+".tmp-")
+	if err != nil {
+		return "", err
+	}
+	cleanupTmp := true
+	defer func() {
+		if cleanupTmp {
+			_ = os.RemoveAll(tmpDir)
+		}
+	}()
+	for rel, content := range files {
+		dest := filepath.Join(tmpDir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+			return "", err
+		}
+		if err := os.WriteFile(dest, content, 0o644); err != nil {
+			return "", err
+		}
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, ".agent-adaptor-ready"), []byte(fingerprint), 0o644); err != nil {
+		return "", err
+	}
+	if err := os.Rename(tmpDir, targetDir); err != nil {
+		// A concurrent writer may have already promoted its own staging
+		// directory to targetDir. If the ready marker is present the
+		// content is identical (same fingerprint), so fall through to a
+		// success return AFTER cleaning up our own tmpDir.
+		if _, statErr := os.Stat(readyMarker); statErr == nil {
+			return targetDir, nil
+		}
+		return "", err
+	}
+	cleanupTmp = false
+	return targetDir, nil
+}
+
+// managedSkillCacheRoot returns the filesystem root under which the default
+// SkillMaterializer writes materialized skills. Resolution order:
+//
+//  1. Explicit override (when non-empty).
+//  2. SkillCacheRootEnv (AGENT_ADAPTOR_SKILL_CACHE_ROOT). Adapters rely on
+//     this value for "is this path managed by us" checks, so the SDK MUST
+//     honour it to avoid misclassifying managed symlinks as unmanaged.
+//  3. os.UserCacheDir()/agent-adaptor/skill-cache.
+//  4. os.TempDir()/agent-adaptor/skill-cache as a last-resort fallback.
+//
+// This function is deliberately kept in lock-step with
+// internal/skillruntime.ManagedSkillCacheRoot, which surfaces the same
+// resolution to adapter-side code.
+func managedSkillCacheRoot(override string) string {
+	if trimmed := strings.TrimSpace(override); trimmed != "" {
+		return filepath.Clean(trimmed)
+	}
+	if envOverride := strings.TrimSpace(os.Getenv(SkillCacheRootEnv)); envOverride != "" {
+		return filepath.Clean(envOverride)
+	}
 	root, err := os.UserCacheDir()
 	if err != nil || strings.TrimSpace(root) == "" {
 		root = os.TempDir()
@@ -254,166 +416,175 @@ func managedSkillCacheRoot() string {
 	return filepath.Join(root, "agent-adaptor", "skill-cache")
 }
 
-func inlineSkillFileMap(skill Skill) map[string]string {
-	files := map[string]string{}
-	for _, file := range skill.Files {
-		normalized := normalizePortablePath(file.Path)
-		if normalized == "" {
-			continue
+// collectFSFiles enumerates every file under root in fsys and returns their
+// content keyed by forward-slashed relative path. An empty root is treated
+// as ".".
+func collectFSFiles(fsys fs.FS, root string) (map[string][]byte, error) {
+	if fsys == nil {
+		return nil, errors.New("fs is nil")
+	}
+	if root == "" {
+		root = "."
+	}
+	out := map[string][]byte{}
+	err := fs.WalkDir(fsys, root, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
 		}
-		files[normalized] = file.Content
-	}
-	if _, exists := files["SKILL.md"]; !exists && strings.TrimSpace(skill.Content) != "" {
-		files["SKILL.md"] = skill.Content
-	}
-	return files
-}
-
-func normalizePortablePath(input string) string {
-	trimmed := strings.TrimSpace(strings.ReplaceAll(input, "\\", "/"))
-	if trimmed == "" {
-		return ""
-	}
-	trimmed = strings.TrimPrefix(trimmed, "./")
-	trimmed = strings.TrimPrefix(trimmed, "/")
-	parts := make([]string, 0)
-	for _, part := range strings.Split(trimmed, "/") {
-		switch part {
-		case "", ".":
-			continue
-		case "..":
-			if len(parts) > 0 {
-				parts = parts[:len(parts)-1]
-			}
-		default:
-			parts = append(parts, part)
+		if d.IsDir() {
+			return nil
 		}
-	}
-	if len(parts) == 0 {
-		return ""
-	}
-	return filepath.ToSlash(filepath.Clean(strings.Join(parts, "/")))
-}
-
-func materializeSkillSource(skill Skill, workspace WorkspaceLease) (string, error) {
-	if source := resolveExistingSkillSource(skill.PathHint, workspace); source != "" {
-		return source, nil
-	}
-
-	files := inlineSkillFileMap(skill)
-	if len(files) == 0 {
-		return "", errors.New("skill does not resolve to an existing source directory and does not provide inline content")
-	}
-	if _, ok := files["SKILL.md"]; !ok {
-		return "", errors.New("skill bundle is missing SKILL.md")
-	}
-
-	runtimeName := skillRuntimeName(skill)
-	cacheKey := stableHash(skill.Key, runtimeName, skill.Required, skill.RequiredReason, files, skill.Metadata)
-	targetDir := filepath.Join(managedSkillCacheRoot(), runtimeName+"--"+cacheKey[:12])
-	readyMarker := filepath.Join(targetDir, ".agent-adaptor-ready")
-	if _, err := os.Stat(readyMarker); err == nil {
-		return targetDir, nil
-	}
-
-	if err := os.MkdirAll(filepath.Dir(targetDir), 0o755); err != nil {
-		return "", err
-	}
-	tmpDir := fmt.Sprintf("%s.tmp-%d-%d", targetDir, os.Getpid(), rand.New(rand.NewSource(time.Now().UnixNano())).Int63())
-	if err := os.RemoveAll(tmpDir); err != nil {
-		return "", err
-	}
-	if err := os.MkdirAll(tmpDir, 0o755); err != nil {
-		return "", err
-	}
-	success := false
-	defer func() {
-		if !success {
-			_ = os.RemoveAll(tmpDir)
+		rel := path
+		if root != "." {
+			rel = strings.TrimPrefix(path, root)
+			rel = strings.TrimPrefix(rel, "/")
 		}
-	}()
-
-	for relativePath, content := range files {
-		targetPath := filepath.Join(tmpDir, filepath.FromSlash(relativePath))
-		if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
-			return "", err
+		if rel == "" {
+			return nil
 		}
-		if err := os.WriteFile(targetPath, []byte(content), 0o644); err != nil {
-			return "", err
-		}
-	}
-	if err := os.WriteFile(readyMarkerFor(tmpDir), []byte(cacheKey), 0o644); err != nil {
-		return "", err
-	}
-
-	if err := os.Rename(tmpDir, targetDir); err != nil {
-		if _, statErr := os.Stat(readyMarker); statErr == nil {
-			success = true
-			return targetDir, nil
-		}
-		return "", err
-	}
-	success = true
-	return targetDir, nil
-}
-
-func readyMarkerFor(root string) string {
-	return filepath.Join(root, ".agent-adaptor-ready")
-}
-
-func prepareSkillPayload(req SkillAssemblyRequest) SkillPayload {
-	available := cloneSkills(req.Available)
-	if len(available) == 0 {
-		available = cloneSkills(req.Resolved)
-	}
-	canonicalRequested := make([]string, 0, len(req.Requested))
-	for _, ref := range req.Requested {
-		if normalized := canonicalSkillRef(ref, available); normalized != "" {
-			canonicalRequested = append(canonicalRequested, normalized)
-		}
-	}
-	for _, skill := range requiredSkills(available) {
-		canonicalRequested = append(canonicalRequested, skill.Key)
-	}
-	canonicalRequested = mergeUniqueStrings(canonicalRequested)
-
-	resolved := mergeUniqueSkills(req.Resolved, requiredSkills(available))
-	runtimeCatalog := cloneSkills(available)
-	if len(runtimeCatalog) == 0 {
-		runtimeCatalog = cloneSkills(resolved)
-	}
-	runtimeEntries := make([]SkillRuntimeEntry, 0, len(runtimeCatalog))
-	warnings := make([]string, 0)
-	for _, skill := range runtimeCatalog {
-		sourcePath, err := materializeSkillSource(skill, req.Workspace)
+		content, err := fs.ReadFile(fsys, path)
 		if err != nil {
-			warnings = append(warnings, fmt.Sprintf("skill %q is unavailable: %v", skill.Key, err))
-			continue
+			return err
 		}
-		runtimeEntries = append(runtimeEntries, SkillRuntimeEntry{
-			Key:            skill.Key,
-			RuntimeName:    skillRuntimeName(skill),
-			SourcePath:     sourcePath,
-			Required:       skill.Required,
-			RequiredReason: strings.TrimSpace(skill.RequiredReason),
-		})
-	}
-	sort.Slice(runtimeEntries, func(left, right int) bool {
-		return runtimeEntries[left].Key < runtimeEntries[right].Key
+		out[filepath.ToSlash(rel)] = content
+		return nil
 	})
-	warnings = mergeUniqueStrings(warnings)
-
-	mode := SkillSyncEphemeral
-	if len(runtimeEntries) == 0 && len(canonicalRequested) == 0 {
-		mode = SkillSyncUnsupported
+	if err != nil {
+		return nil, err
 	}
+	return out, nil
+}
 
-	return SkillPayload{
-		Mode:           mode,
-		Requested:      canonicalRequested,
-		Resolved:       cloneSkills(resolved),
-		RuntimeEntries: cloneRuntimeEntries(runtimeEntries),
-		Warnings:       cloneStrings(warnings),
-		Fingerprint:    stableHash(req.DriverType, req.TenantID, canonicalRequested, resolved, runtimeEntries, warnings),
+// --- conflict-aware merging -----------------------------------------------
+
+type sourceLabel string
+
+const (
+	sourceLabelProvider  sourceLabel = "provider"
+	sourceLabelCandidate sourceLabel = "binding:candidate"
+	sourceLabelDefault   sourceLabel = "binding:default"
+	sourceLabelRun       sourceLabel = "run:per-call"
+)
+
+type skillBucket struct {
+	skill   Skill
+	sources map[sourceLabel]struct{}
+}
+
+// skillMerger accumulates Skill candidates from multiple sources and
+// enforces the "same key, same value" invariant.
+type skillMerger struct {
+	entries map[string]*skillBucket
+	order   []string
+}
+
+func newSkillMerger() *skillMerger {
+	return &skillMerger{entries: map[string]*skillBucket{}}
+}
+
+// add inserts a skill under the given sourceLabel. If a different skill has
+// previously been recorded under the same key, a *SkillKeyConflictError is
+// returned.
+func (m *skillMerger) add(label sourceLabel, s Skill) error {
+	key := normalizeSkillKey(s.Key)
+	if key == "" {
+		return fmt.Errorf("%w: source %q", ErrSkillKeyMissing, label)
 	}
+	if s.Source == nil {
+		return fmt.Errorf("%w: skill %q from source %q", ErrSkillSourceMissing, key, label)
+	}
+	existing, ok := m.entries[key]
+	if !ok {
+		m.entries[key] = &skillBucket{skill: cloneSkill(s), sources: map[sourceLabel]struct{}{label: {}}}
+		m.order = append(m.order, key)
+		return nil
+	}
+	if !skillsEquivalent(existing.skill, s) {
+		labels := []string{string(label)}
+		for existingLabel := range existing.sources {
+			labels = append(labels, string(existingLabel))
+		}
+		return &SkillKeyConflictError{
+			Key:     key,
+			Sources: labels,
+			Detail:  skillDiffDetail(existing.skill, s),
+		}
+	}
+	existing.sources[label] = struct{}{}
+	return nil
+}
+
+// addKey records a bare SkillKey reference. It requires that the key is
+// already present in the merger (via the provider enumeration). Missing keys
+// produce ErrSkillNotFound, which surfaces as a user-facing "you passed a
+// key that the provider does not recognise" message.
+func (m *skillMerger) addKey(label sourceLabel, key string) error {
+	key = normalizeSkillKey(key)
+	if key == "" {
+		return fmt.Errorf("%w: source %q", ErrSkillKeyMissing, label)
+	}
+	existing, ok := m.entries[key]
+	if !ok {
+		return fmt.Errorf("%w: key %q referenced by %s", ErrSkillNotFound, key, label)
+	}
+	existing.sources[label] = struct{}{}
+	return nil
+}
+
+// selected returns the union of source labels for a given key. Used to tell
+// downstream code whether the skill was explicitly selected (default or
+// per-run) or merely visible via the provider.
+func (m *skillMerger) selected(key string) bool {
+	bucket, ok := m.entries[key]
+	if !ok {
+		return false
+	}
+	if _, defaulted := bucket.sources[sourceLabelDefault]; defaulted {
+		return true
+	}
+	if _, perRun := bucket.sources[sourceLabelRun]; perRun {
+		return true
+	}
+	return false
+}
+
+// has reports whether a key is known to the merger.
+func (m *skillMerger) has(key string) bool {
+	_, ok := m.entries[normalizeSkillKey(key)]
+	return ok
+}
+
+// skills returns the merged skills in insertion order.
+func (m *skillMerger) skills() []Skill {
+	out := make([]Skill, 0, len(m.order))
+	for _, key := range m.order {
+		out = append(out, cloneSkill(m.entries[key].skill))
+	}
+	return out
+}
+
+// skillDiffDetail renders a short human-readable diff between two Skills.
+func skillDiffDetail(a, b Skill) string {
+	diffs := make([]string, 0, 4)
+	if a.Required != b.Required {
+		diffs = append(diffs, fmt.Sprintf("Required %v vs %v", a.Required, b.Required))
+	}
+	if strings.TrimSpace(a.Reason) != strings.TrimSpace(b.Reason) {
+		diffs = append(diffs, fmt.Sprintf("Reason %q vs %q", a.Reason, b.Reason))
+	}
+	if !stringMapsEqual(a.Metadata, b.Metadata) {
+		diffs = append(diffs, "Metadata differs")
+	}
+	if !skillSourcesEquivalent(a.Source, b.Source) {
+		diffs = append(diffs, fmt.Sprintf("Source %T vs %T", a.Source, b.Source))
+	}
+	return strings.Join(diffs, "; ")
+}
+
+// sortSkills returns a copy of skills sorted by Key for deterministic
+// reporting / hashing.
+func sortSkills(skills []Skill) []Skill {
+	out := cloneSkills(skills)
+	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
+	return out
 }

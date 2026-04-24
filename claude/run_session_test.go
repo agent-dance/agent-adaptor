@@ -43,18 +43,16 @@ func TestClaudeRunPreservesAndGuardsSessionState(t *testing.T) {
 		},
 		Model: "claude-sonnet-4",
 	}
-	payloadA := agentadaptor.SkillPayload{
-		Mode:      agentadaptor.SkillSyncEphemeral,
-		Requested: []string{"analysis"},
-		RuntimeEntries: []agentadaptor.SkillRuntimeEntry{
+	payloadA := agentadaptor.ResolvedSkills{
+		Mode: agentadaptor.SkillSyncEphemeral,
+		Entries: []agentadaptor.ResolvedSkill{
 			{Key: "analysis", RuntimeName: "analysis", SourcePath: skillDir},
 		},
 		Fingerprint: "bundle-a",
 	}
-	payloadB := agentadaptor.SkillPayload{
-		Mode:      agentadaptor.SkillSyncEphemeral,
-		Requested: []string{"analysis"},
-		RuntimeEntries: []agentadaptor.SkillRuntimeEntry{
+	payloadB := agentadaptor.ResolvedSkills{
+		Mode: agentadaptor.SkillSyncEphemeral,
+		Entries: []agentadaptor.ResolvedSkill{
 			{Key: "analysis", RuntimeName: "analysis", SourcePath: skillDir},
 		},
 		Fingerprint: "bundle-b",

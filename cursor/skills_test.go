@@ -35,15 +35,15 @@ func TestSyncCursorSkillsInstallsDesiredAndRemovesStaleManaged(t *testing.T) {
 		t.Fatalf("seed stale symlink: %v", err)
 	}
 
-	payload := agentadaptor.SkillPayload{
-		Requested: []string{"team/main"},
-		RuntimeEntries: []agentadaptor.SkillRuntimeEntry{
+	payload := agentadaptor.ResolvedSkills{
+		Entries: []agentadaptor.ResolvedSkill{
 			{Key: "team/main", RuntimeName: "main", SourcePath: mainSource},
 			{Key: "team/old", RuntimeName: "old", SourcePath: oldSource},
 		},
 	}
+	selected := []string{"team/main"}
 
-	snapshot, err := syncCursorSkills(context.Background(), payload, []agentadaptor.EnvBinding{{Name: "HOME", Value: home}}, noopCursorSink{})
+	snapshot, err := syncCursorSkills(context.Background(), payload, selected, nil, []agentadaptor.EnvBinding{{Name: "HOME", Value: home}}, noopCursorSink{})
 	if err != nil {
 		t.Fatalf("sync skills: %v", err)
 	}
@@ -78,14 +78,14 @@ func TestSyncCursorSkillsPreservesExternalConflict(t *testing.T) {
 		t.Fatalf("seed external symlink: %v", err)
 	}
 
-	payload := agentadaptor.SkillPayload{
-		Requested: []string{"team/main"},
-		RuntimeEntries: []agentadaptor.SkillRuntimeEntry{
+	payload := agentadaptor.ResolvedSkills{
+		Entries: []agentadaptor.ResolvedSkill{
 			{Key: "team/main", RuntimeName: "main", SourcePath: managedSource},
 		},
 	}
+	selected := []string{"team/main"}
 
-	snapshot, err := syncCursorSkills(context.Background(), payload, []agentadaptor.EnvBinding{{Name: "HOME", Value: home}}, noopCursorSink{})
+	snapshot, err := syncCursorSkills(context.Background(), payload, selected, nil, []agentadaptor.EnvBinding{{Name: "HOME", Value: home}}, noopCursorSink{})
 	if err != nil {
 		t.Fatalf("sync skills: %v", err)
 	}
@@ -109,14 +109,14 @@ func TestSyncCursorSkillsUsesCursorHomeWhenProvided(t *testing.T) {
 	cursorHome := t.TempDir()
 	sourceRoot := t.TempDir()
 	mainSource := createCursorSkillDir(t, sourceRoot, "main")
-	payload := agentadaptor.SkillPayload{
-		Requested: []string{"team/main"},
-		RuntimeEntries: []agentadaptor.SkillRuntimeEntry{
+	payload := agentadaptor.ResolvedSkills{
+		Entries: []agentadaptor.ResolvedSkill{
 			{Key: "team/main", RuntimeName: "main", SourcePath: mainSource},
 		},
 	}
+	selected := []string{"team/main"}
 
-	snapshot, err := syncCursorSkills(context.Background(), payload, []agentadaptor.EnvBinding{{Name: "CURSOR_HOME", Value: cursorHome}}, noopCursorSink{})
+	snapshot, err := syncCursorSkills(context.Background(), payload, selected, nil, []agentadaptor.EnvBinding{{Name: "CURSOR_HOME", Value: cursorHome}}, noopCursorSink{})
 	if err != nil {
 		t.Fatalf("sync skills: %v", err)
 	}
@@ -132,16 +132,20 @@ func TestSyncCursorSkillsUsesProfileSelection(t *testing.T) {
 	nativeHome := t.TempDir()
 	dedicated := t.TempDir()
 	source := createCursorSkillDir(t, t.TempDir(), "review")
-	payload := agentadaptor.SkillPayload{
-		Requested:      []string{"team/review"},
-		RuntimeEntries: []agentadaptor.SkillRuntimeEntry{{Key: "team/review", RuntimeName: "review", SourcePath: source}},
+	payload := agentadaptor.ResolvedSkills{
+		Entries: []agentadaptor.ResolvedSkill{{Key: "team/review", RuntimeName: "review", SourcePath: source}},
 	}
 
-	_, err := NewAdapter().(interface {
-		SyncSkills(context.Context, any, agentadaptor.SkillPayload, []string, *agentadaptor.ProfileSelection) (agentadaptor.SkillSnapshot, error)
-	}).SyncSkills(context.Background(), agentadaptor.CursorConfig{
-		CommonConfig: agentadaptor.CommonConfig{Env: []agentadaptor.EnvBinding{{Name: "HOME", Value: nativeHome}}},
-	}, payload, []string{"team/review"}, &agentadaptor.ProfileSelection{Mode: agentadaptor.ProfileModeDedicated, Dir: dedicated})
+	_, err := NewAdapter().(agentadaptor.SkillAwareDriver).SyncSkills(
+		context.Background(),
+		agentadaptor.CursorConfig{
+			CommonConfig: agentadaptor.CommonConfig{Env: []agentadaptor.EnvBinding{{Name: "HOME", Value: nativeHome}}},
+		},
+		payload,
+		[]string{"team/review"},
+		nil,
+		&agentadaptor.ProfileSelection{Mode: agentadaptor.ProfileModeDedicated, Dir: dedicated},
+	)
 	if err != nil {
 		t.Fatalf("sync skills: %v", err)
 	}
