@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -92,6 +93,7 @@ func TestListClaudeSkillsUsesClaudeConfigDirWhenProvided(t *testing.T) {
 
 func TestPrepareClaudePromptBundleMaterializesDesiredSkillsOnly(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	t.Setenv("HOME", t.TempDir())
 	root := t.TempDir()
 	desired := createClaudeSkillDir(t, root, "main")
 	other := createClaudeSkillDir(t, root, "other")
@@ -115,5 +117,34 @@ func TestPrepareClaudePromptBundleMaterializesDesiredSkillsOnly(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(bundleRoot, ".claude", "skills", "other")); !os.IsNotExist(err) {
 		t.Fatalf("expected undesired skill to be excluded, got err=%v", err)
+	}
+}
+
+func TestListClaudeSkillsUsesProfileSelection(t *testing.T) {
+	nativeHome := t.TempDir()
+	dedicated := t.TempDir()
+	_ = createClaudeSkillDir(t, filepath.Join(nativeHome, ".claude", "skills"), "native-only")
+	dedicatedSkill := createClaudeSkillDir(t, filepath.Join(dedicated, "skills"), "dedicated-only")
+	payload := agentadaptor.SkillPayload{}
+
+	snapshot, err := NewAdapter().(interface {
+		ListSkills(context.Context, any, agentadaptor.SkillPayload, *agentadaptor.ProfileSelection) (agentadaptor.SkillSnapshot, error)
+	}).ListSkills(context.Background(), agentadaptor.ClaudeConfig{
+		CommonConfig: agentadaptor.CommonConfig{Env: []agentadaptor.EnvBinding{{Name: "HOME", Value: nativeHome}}},
+	}, payload, &agentadaptor.ProfileSelection{Mode: agentadaptor.ProfileModeDedicated, Dir: dedicated})
+	if err != nil {
+		t.Fatalf("list skills: %v", err)
+	}
+	var foundDedicated, foundNative bool
+	for _, entry := range snapshot.Entries {
+		if entry.Key == "dedicated-only" && filepath.Clean(entry.TargetPath) == filepath.Clean(dedicatedSkill) {
+			foundDedicated = true
+		}
+		if entry.Key == "native-only" {
+			foundNative = true
+		}
+	}
+	if !foundDedicated || foundNative {
+		t.Fatalf("expected dedicated profile skills only, foundDedicated=%v foundNative=%v entries=%#v", foundDedicated, foundNative, snapshot.Entries)
 	}
 }

@@ -129,7 +129,7 @@ func (d *RecordingDriver) DetectModel(_ context.Context, _ any) (*agentadaptor.D
 	return &copyModel, nil
 }
 
-func (d *RecordingDriver) GetProfile(_ context.Context, _ any, _ agentadaptor.AgentIdentity) (agentadaptor.AgentProfile, error) {
+func (d *RecordingDriver) GetProfile(_ context.Context, _ any, _ agentadaptor.AgentIdentity, _ *agentadaptor.ProfileSelection) (agentadaptor.AgentProfile, error) {
 	if d.Profile == nil {
 		return agentadaptor.AgentProfile{
 			DriverType: "mock",

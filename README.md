@@ -202,7 +202,7 @@ The built-in packages return configured `AgentBinding`s, not low-level adapters.
 
 If you need lower-level extension hooks, each built-in package also exposes `NewAdapter()`.
 
-For built-in adapters, `CommonConfig.AgentProfileDir` lets you point to a local agent config directory in one place instead of setting each provider-specific environment variable manually.
+For built-in adapters, profile options such as `WithNativeProfile()`, `WithDedicatedProfile(dir)`, `WithCloneProfile(dir, opts)`, and `WithCloneProfileFrom(src, dst, opts)` select or initialize the effective provider profile directory without hand-writing provider-specific environment variables.
 
 ## Management API
 
@@ -266,6 +266,7 @@ Deeper protocol notes, drafts, and workstream docs live under [`docs/`](./docs).
 - [`docs/workstream-session-codec.md`](./docs/workstream-session-codec.md)
 - [`docs/workstream-runtime-service-lifecycle-v2.md`](./docs/workstream-runtime-service-lifecycle-v2.md)
 - [`docs/workstream-mcp-profile-materialization.md`](./docs/workstream-mcp-profile-materialization.md)
+- [`docs/workstream-profile-user-experience.md`](./docs/workstream-profile-user-experience.md)
 - [`docs/workstream-builtin-probes.md`](./docs/workstream-builtin-probes.md)
 - [`docs/workstream-transcript-contract.md`](./docs/workstream-transcript-contract.md)
 - [`docs/workstream-bridges-profiles-host.md`](./docs/workstream-bridges-profiles-host.md)

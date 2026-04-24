@@ -92,6 +92,9 @@ func ResolveHome(bindings []agentadaptor.EnvBinding) string {
 }
 
 func ManagedSkillCacheRoot() string {
+	if override := strings.TrimSpace(os.Getenv("AGENT_ADAPTOR_SKILL_CACHE_ROOT")); override != "" {
+		return filepath.Clean(override)
+	}
 	root, err := os.UserCacheDir()
 	if err != nil || strings.TrimSpace(root) == "" {
 		root = os.TempDir()

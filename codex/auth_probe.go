@@ -46,7 +46,7 @@ func codexAuthChecks(bindings []agentadaptor.EnvBinding) []agentadaptor.Environm
 			Code:    "codex_auth_missing",
 			Level:   "warn",
 			Message: "No Codex auth.json or OPENAI_API_KEY was found.",
-			Hint:    "Run `codex login`, set OPENAI_API_KEY in CommonConfig.Env, or point AgentProfileDir / CODEX_HOME at an existing Codex profile.",
+			Hint:    "Run `codex login`, set OPENAI_API_KEY in CommonConfig.Env, or use a profile option or point CODEX_HOME at an existing Codex profile.",
 		}}
 	}
 

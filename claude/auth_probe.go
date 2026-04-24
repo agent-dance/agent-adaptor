@@ -16,8 +16,12 @@ type claudeCredentialInfo struct {
 	Path        string
 }
 
-func effectiveClaudeBindings(config agentadaptor.CommonConfig) []agentadaptor.EnvBinding {
-	return skillruntime.ApplyProfileBinding(config.Env, config.AgentProfileDir, "CLAUDE_CONFIG_DIR")
+func effectiveClaudeBindings(config agentadaptor.CommonConfig, selection *agentadaptor.ProfileSelection) ([]agentadaptor.EnvBinding, error) {
+	profile, err := resolveClaudeProfile(config, selection)
+	if err != nil {
+		return nil, err
+	}
+	return skillruntime.WithBinding(config.Env, "CLAUDE_CONFIG_DIR", profile.Dir), nil
 }
 
 func resolveClaudeConfigDir(bindings []agentadaptor.EnvBinding) string {
@@ -30,41 +34,33 @@ func resolveClaudeConfigDir(bindings []agentadaptor.EnvBinding) string {
 	return filepath.Join(skillruntime.ResolveHome(bindings), ".claude")
 }
 
-func claudeProfile(config agentadaptor.CommonConfig) agentadaptor.AgentProfile {
-	if configured := skillruntime.ResolveBinding(config.Env, "CLAUDE_CONFIG_DIR"); configured != "" {
-		return agentadaptor.AgentProfile{
-			DriverType: DriverType,
-			Supported:  true,
-			Dir:        filepath.Clean(configured),
-			EnvVar:     "CLAUDE_CONFIG_DIR",
-			Source:     agentadaptor.AgentProfileSourceBindingEnv,
-		}
+func resolveClaudeProfile(config agentadaptor.CommonConfig, selection *agentadaptor.ProfileSelection) (agentadaptor.AgentProfile, error) {
+	resolution, err := skillruntime.ResolveProfile(skillruntime.ProfileResolveOptions{
+		Bindings:         config.Env,
+		Selection:        selection,
+		EnvVar:           "CLAUDE_CONFIG_DIR",
+		DefaultDir:       filepath.Join(skillruntime.ResolveHome(config.Env), ".claude"),
+		NativeSharedDir:  filepath.Join(skillruntime.ResolveHome(config.Env), ".claude"),
+		DedicatedSubdirs: []string{"skills"},
+		SettingsFiles:    []string{"settings.json", "config.json", ".claude.json"},
+		MCPFiles:         []string{"settings.json", "config.json"},
+		SkillsDirs:       []string{"skills"},
+		AuthFiles:        []string{".credentials.json", "credentials.json"},
+	})
+	if err != nil {
+		return agentadaptor.AgentProfile{}, err
 	}
-	if strings.TrimSpace(config.AgentProfileDir) != "" {
-		return agentadaptor.AgentProfile{
-			DriverType: DriverType,
-			Supported:  true,
-			Dir:        filepath.Clean(config.AgentProfileDir),
-			EnvVar:     "CLAUDE_CONFIG_DIR",
-			Source:     agentadaptor.AgentProfileSourceAgentProfileDir,
-		}
+	profile := resolution.Profile
+	profile.DriverType = DriverType
+	return profile, nil
+}
+
+func claudeProfile(config agentadaptor.CommonConfig, selection *agentadaptor.ProfileSelection) agentadaptor.AgentProfile {
+	profile, err := resolveClaudeProfile(config, selection)
+	if err != nil {
+		return agentadaptor.AgentProfile{DriverType: DriverType, Supported: true, EnvVar: "CLAUDE_CONFIG_DIR", Error: err.Error()}
 	}
-	if configured := strings.TrimSpace(os.Getenv("CLAUDE_CONFIG_DIR")); configured != "" {
-		return agentadaptor.AgentProfile{
-			DriverType: DriverType,
-			Supported:  true,
-			Dir:        filepath.Clean(configured),
-			EnvVar:     "CLAUDE_CONFIG_DIR",
-			Source:     agentadaptor.AgentProfileSourceProcessEnv,
-		}
-	}
-	return agentadaptor.AgentProfile{
-		DriverType: DriverType,
-		Supported:  true,
-		Dir:        filepath.Join(skillruntime.ResolveHome(effectiveClaudeBindings(config)), ".claude"),
-		EnvVar:     "CLAUDE_CONFIG_DIR",
-		Source:     agentadaptor.AgentProfileSourceDefault,
-	}
+	return profile
 }
 
 func claudeCredentialCandidates(bindings []agentadaptor.EnvBinding) []string {
@@ -141,7 +137,7 @@ func claudeAuthChecks(bindings []agentadaptor.EnvBinding) []agentadaptor.Environ
 			Code:    "claude_credentials_missing",
 			Level:   "warn",
 			Message: "No Claude credentials file, Bedrock config, or ANTHROPIC_API_KEY was found.",
-			Hint:    "Run `claude auth login`, configure Bedrock env, set ANTHROPIC_API_KEY in CommonConfig.Env, or point AgentProfileDir / CLAUDE_CONFIG_DIR at an existing Claude profile.",
+			Hint:    "Run `claude auth login`, configure Bedrock env, set ANTHROPIC_API_KEY in CommonConfig.Env, or use a profile option or point CLAUDE_CONFIG_DIR at an existing Claude profile.",
 		}}
 	}
 	return checks

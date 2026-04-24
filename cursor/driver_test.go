@@ -55,12 +55,12 @@ func TestDetectModelFallsBackToCursorConfigFile(t *testing.T) {
 	}
 
 	detected, err := NewAdapter().(interface {
-		DetectModel(context.Context, any) (*agentadaptor.DetectedModel, error)
+		DetectModel(context.Context, any, *agentadaptor.ProfileSelection) (*agentadaptor.DetectedModel, error)
 	}).DetectModel(context.Background(), agentadaptor.CursorConfig{
 		CommonConfig: agentadaptor.CommonConfig{
 			Env: []agentadaptor.EnvBinding{{Name: "HOME", Value: home}},
 		},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("detect model: %v", err)
 	}
@@ -69,19 +69,19 @@ func TestDetectModelFallsBackToCursorConfigFile(t *testing.T) {
 	}
 }
 
-func TestDetectModelUsesAgentProfileDirAsCursorHome(t *testing.T) {
+func TestDetectModelUsesExplicitProfileOptionAsCursorHome(t *testing.T) {
 	profileDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(profileDir, "config.json"), []byte("{\"model\":\"gpt-5\"}\n"), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 
 	detected, err := NewAdapter().(interface {
-		DetectModel(context.Context, any) (*agentadaptor.DetectedModel, error)
+		DetectModel(context.Context, any, *agentadaptor.ProfileSelection) (*agentadaptor.DetectedModel, error)
 	}).DetectModel(context.Background(), agentadaptor.CursorConfig{
 		CommonConfig: agentadaptor.CommonConfig{
-			AgentProfileDir: profileDir,
+			Env: []agentadaptor.EnvBinding{{Name: "CURSOR_HOME", Value: profileDir}},
 		},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("detect model: %v", err)
 	}
@@ -90,26 +90,21 @@ func TestDetectModelUsesAgentProfileDirAsCursorHome(t *testing.T) {
 	}
 }
 
-func TestDetectModelPrefersExplicitCursorHomeOverAgentProfileDir(t *testing.T) {
-	profileDir := t.TempDir()
+func TestDetectModelPrefersExplicitCursorHomeOverProfileOption(t *testing.T) {
 	overrideDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(profileDir, "config.json"), []byte("{\"model\":\"gpt-5\"}\n"), 0o644); err != nil {
-		t.Fatalf("write profile config: %v", err)
-	}
 	if err := os.WriteFile(filepath.Join(overrideDir, "config.json"), []byte("{\"model\":\"claude-sonnet-4\"}\n"), 0o644); err != nil {
 		t.Fatalf("write override config: %v", err)
 	}
 
 	detected, err := NewAdapter().(interface {
-		DetectModel(context.Context, any) (*agentadaptor.DetectedModel, error)
+		DetectModel(context.Context, any, *agentadaptor.ProfileSelection) (*agentadaptor.DetectedModel, error)
 	}).DetectModel(context.Background(), agentadaptor.CursorConfig{
 		CommonConfig: agentadaptor.CommonConfig{
-			AgentProfileDir: profileDir,
 			Env: []agentadaptor.EnvBinding{
 				{Name: "CURSOR_HOME", Value: overrideDir},
 			},
 		},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("detect model: %v", err)
 	}
@@ -118,19 +113,17 @@ func TestDetectModelPrefersExplicitCursorHomeOverAgentProfileDir(t *testing.T) {
 	}
 }
 
-func TestGetProfilePrefersExplicitCursorHomeOverAgentProfileDir(t *testing.T) {
-	profileDir := t.TempDir()
+func TestGetProfilePrefersExplicitCursorHomeOverProfileOption(t *testing.T) {
 	overrideDir := t.TempDir()
 	profile, err := NewAdapter().(interface {
-		GetProfile(context.Context, any, agentadaptor.AgentIdentity) (agentadaptor.AgentProfile, error)
+		GetProfile(context.Context, any, agentadaptor.AgentIdentity, *agentadaptor.ProfileSelection) (agentadaptor.AgentProfile, error)
 	}).GetProfile(context.Background(), agentadaptor.CursorConfig{
 		CommonConfig: agentadaptor.CommonConfig{
-			AgentProfileDir: profileDir,
 			Env: []agentadaptor.EnvBinding{
 				{Name: "CURSOR_HOME", Value: overrideDir},
 			},
 		},
-	}, agentadaptor.AgentIdentity{})
+	}, agentadaptor.AgentIdentity{}, nil)
 	if err != nil {
 		t.Fatalf("get profile: %v", err)
 	}
@@ -144,8 +137,8 @@ func TestGetProfileUsesProcessEnvForCursorWhenUnset(t *testing.T) {
 	t.Setenv("CURSOR_HOME", profileDir)
 
 	profile, err := NewAdapter().(interface {
-		GetProfile(context.Context, any, agentadaptor.AgentIdentity) (agentadaptor.AgentProfile, error)
-	}).GetProfile(context.Background(), agentadaptor.CursorConfig{}, agentadaptor.AgentIdentity{})
+		GetProfile(context.Context, any, agentadaptor.AgentIdentity, *agentadaptor.ProfileSelection) (agentadaptor.AgentProfile, error)
+	}).GetProfile(context.Background(), agentadaptor.CursorConfig{}, agentadaptor.AgentIdentity{}, nil)
 	if err != nil {
 		t.Fatalf("get profile: %v", err)
 	}
@@ -166,10 +159,6 @@ func TestConfigSchemaIncludesGroupsDefaultsAndOptions(t *testing.T) {
 	commandField := schemaFieldByName(t, schema, "command")
 	if commandField.Name != "command" || commandField.Group != "command" || commandField.Default != "agent" {
 		t.Fatalf("unexpected command field: %#v", commandField)
-	}
-	profileField := schemaFieldByName(t, schema, "agent_profile_dir")
-	if profileField.Group != "profile" {
-		t.Fatalf("unexpected profile field: %#v", profileField)
 	}
 }
 

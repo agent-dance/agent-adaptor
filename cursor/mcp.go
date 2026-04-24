@@ -12,8 +12,8 @@ func canonicalSharedCursorHome(bindings []agentadaptor.EnvBinding) string {
 	return filepath.Join(skillruntime.ResolveHome(bindings), ".cursor")
 }
 
-func syncCursorMCPProfile(config agentadaptor.CommonConfig, payload agentadaptor.MCPPayload) error {
-	profile := cursorProfile(config)
+func syncCursorMCPProfile(config agentadaptor.CommonConfig, selection *agentadaptor.ProfileSelection, payload agentadaptor.MCPPayload) error {
+	profile := cursorProfile(config, selection)
 	kind := mcpruntime.ClassifyProfile(profile, canonicalSharedCursorHome(config.Env))
 	return mcpruntime.SyncCursorProfile(profile.Dir, kind, payload)
 }

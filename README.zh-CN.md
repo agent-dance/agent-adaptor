@@ -178,7 +178,7 @@ func main() {
 
 如果你需要更底层的扩展接口，每个内置包也都提供 `NewAdapter()`。
 
-对于内置适配器，`CommonConfig.AgentProfileDir` 可以让你统一指定本地 agent 的配置目录，而不必每次手动写各家自己的环境变量。
+对于内置适配器，profile API 使用 `WithNativeProfile()`、`WithDedicatedProfile(dir)`、`WithCloneProfile(dir, opts)`、`WithCloneProfileFrom(src, dst, opts)` 统一选择或初始化本地 agent profile，而不必每次手动写各家自己的环境变量。
 
 `WithDefaultMCP(...)` / `WithMCP(...)` 也遵循和 `skills` 相同的默认值与调用覆盖规则；`skills/MCP` 变化不会自动打断 session 复用，是否继续沿用 session 仍由宿主通过 `SessionMode` 决定。
 

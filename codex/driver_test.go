@@ -79,6 +79,7 @@ func TestIsCodexUnknownSessionErrorMatchesPaperclipPatterns(t *testing.T) {
 }
 
 func TestDetectModelFallsBackToCodexConfigFile(t *testing.T) {
+	t.Setenv("CODEX_HOME", "")
 	home := t.TempDir()
 	configDir := filepath.Join(home, ".codex")
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
@@ -89,12 +90,12 @@ func TestDetectModelFallsBackToCodexConfigFile(t *testing.T) {
 	}
 
 	detected, err := NewAdapter().(interface {
-		DetectModel(context.Context, any) (*agentadaptor.DetectedModel, error)
+		DetectModel(context.Context, any, *agentadaptor.ProfileSelection) (*agentadaptor.DetectedModel, error)
 	}).DetectModel(context.Background(), agentadaptor.CodexConfig{
 		CommonConfig: agentadaptor.CommonConfig{
 			Env: []agentadaptor.EnvBinding{{Name: "HOME", Value: home}},
 		},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("detect model: %v", err)
 	}
@@ -103,19 +104,19 @@ func TestDetectModelFallsBackToCodexConfigFile(t *testing.T) {
 	}
 }
 
-func TestDetectModelUsesAgentProfileDirAsCodexHome(t *testing.T) {
+func TestDetectModelUsesExplicitProfileOptionAsCodexHome(t *testing.T) {
 	profileDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(profileDir, "config.toml"), []byte("model = \"gpt-5.4\"\n"), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 
 	detected, err := NewAdapter().(interface {
-		DetectModel(context.Context, any) (*agentadaptor.DetectedModel, error)
+		DetectModel(context.Context, any, *agentadaptor.ProfileSelection) (*agentadaptor.DetectedModel, error)
 	}).DetectModel(context.Background(), agentadaptor.CodexConfig{
 		CommonConfig: agentadaptor.CommonConfig{
-			AgentProfileDir: profileDir,
+			Env: []agentadaptor.EnvBinding{{Name: "CODEX_HOME", Value: profileDir}},
 		},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("detect model: %v", err)
 	}
@@ -124,26 +125,21 @@ func TestDetectModelUsesAgentProfileDirAsCodexHome(t *testing.T) {
 	}
 }
 
-func TestDetectModelPrefersExplicitCodexHomeOverAgentProfileDir(t *testing.T) {
-	profileDir := t.TempDir()
+func TestDetectModelPrefersExplicitCodexHomeOverProfileOption(t *testing.T) {
 	overrideDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(profileDir, "config.toml"), []byte("model = \"gpt-5.4\"\n"), 0o644); err != nil {
-		t.Fatalf("write profile config: %v", err)
-	}
 	if err := os.WriteFile(filepath.Join(overrideDir, "config.toml"), []byte("model = \"gpt-5.3-codex\"\n"), 0o644); err != nil {
 		t.Fatalf("write override config: %v", err)
 	}
 
 	detected, err := NewAdapter().(interface {
-		DetectModel(context.Context, any) (*agentadaptor.DetectedModel, error)
+		DetectModel(context.Context, any, *agentadaptor.ProfileSelection) (*agentadaptor.DetectedModel, error)
 	}).DetectModel(context.Background(), agentadaptor.CodexConfig{
 		CommonConfig: agentadaptor.CommonConfig{
-			AgentProfileDir: profileDir,
 			Env: []agentadaptor.EnvBinding{
 				{Name: "CODEX_HOME", Value: overrideDir},
 			},
 		},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("detect model: %v", err)
 	}
@@ -154,8 +150,8 @@ func TestDetectModelPrefersExplicitCodexHomeOverAgentProfileDir(t *testing.T) {
 
 func TestGetProfileReturnsManagedCodexHomeWhenUnset(t *testing.T) {
 	profile, err := NewAdapter().(interface {
-		GetProfile(context.Context, any, agentadaptor.AgentIdentity) (agentadaptor.AgentProfile, error)
-	}).GetProfile(context.Background(), agentadaptor.CodexConfig{}, agentadaptor.AgentIdentity{TenantID: "examples"})
+		GetProfile(context.Context, any, agentadaptor.AgentIdentity, *agentadaptor.ProfileSelection) (agentadaptor.AgentProfile, error)
+	}).GetProfile(context.Background(), agentadaptor.CodexConfig{}, agentadaptor.AgentIdentity{TenantID: "examples"}, nil)
 	if err != nil {
 		t.Fatalf("get profile: %v", err)
 	}
@@ -167,19 +163,17 @@ func TestGetProfileReturnsManagedCodexHomeWhenUnset(t *testing.T) {
 	}
 }
 
-func TestGetProfileUsesExplicitCodexHomeOverAgentProfileDir(t *testing.T) {
-	profileDir := t.TempDir()
+func TestGetProfileUsesExplicitCodexHomeOverProfileOption(t *testing.T) {
 	overrideDir := t.TempDir()
 	profile, err := NewAdapter().(interface {
-		GetProfile(context.Context, any, agentadaptor.AgentIdentity) (agentadaptor.AgentProfile, error)
+		GetProfile(context.Context, any, agentadaptor.AgentIdentity, *agentadaptor.ProfileSelection) (agentadaptor.AgentProfile, error)
 	}).GetProfile(context.Background(), agentadaptor.CodexConfig{
 		CommonConfig: agentadaptor.CommonConfig{
-			AgentProfileDir: profileDir,
 			Env: []agentadaptor.EnvBinding{
 				{Name: "CODEX_HOME", Value: overrideDir},
 			},
 		},
-	}, agentadaptor.AgentIdentity{})
+	}, agentadaptor.AgentIdentity{}, nil)
 	if err != nil {
 		t.Fatalf("get profile: %v", err)
 	}
@@ -201,13 +195,10 @@ func TestConfigSchemaIncludesGroupsDefaultsAndOptions(t *testing.T) {
 	if commandField.Name != "command" || commandField.Group != "command" || commandField.Default != "codex" {
 		t.Fatalf("unexpected command field: %#v", commandField)
 	}
-	profileField := schemaFieldByName(t, schema, "agent_profile_dir")
-	if profileField.Group != "profile" {
-		t.Fatalf("unexpected profile field: %#v", profileField)
-	}
 }
 
 func TestCheckEnvironmentReportsConfigFileState(t *testing.T) {
+	t.Setenv("CODEX_HOME", "")
 	home := t.TempDir()
 	configDir := filepath.Join(home, ".codex")
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
@@ -268,6 +259,7 @@ func TestCheckEnvironmentReportsCodexAuthMetadata(t *testing.T) {
 }
 
 func TestGetQuotaReadsCodexWHAMUsage(t *testing.T) {
+	t.Setenv("CODEX_HOME", "")
 	home := t.TempDir()
 	configDir := filepath.Join(home, ".codex")
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
@@ -299,12 +291,12 @@ func TestGetQuotaReadsCodexWHAMUsage(t *testing.T) {
 	defer func() { codexQuotaUsageURL = previous }()
 
 	report, err := NewAdapter().(interface {
-		GetQuota(context.Context, any) (agentadaptor.QuotaReport, error)
+		GetQuota(context.Context, any, *agentadaptor.ProfileSelection) (agentadaptor.QuotaReport, error)
 	}).GetQuota(context.Background(), agentadaptor.CodexConfig{
 		CommonConfig: agentadaptor.CommonConfig{
 			Env: []agentadaptor.EnvBinding{{Name: "HOME", Value: home}},
 		},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("get quota: %v", err)
 	}
@@ -366,4 +358,20 @@ func schemaFieldByName(t *testing.T, schema *agentadaptor.ConfigSchema, name str
 	}
 	t.Fatalf("missing schema field %q in %#v", name, schema.Fields)
 	return agentadaptor.ConfigField{}
+}
+
+func TestGetQuotaUsesProfileSelection(t *testing.T) {
+	profileDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(profileDir, "auth.json"), []byte(`{"tokens":{"access_token":"token"}}`), 0o644); err != nil {
+		t.Fatalf("write auth: %v", err)
+	}
+	report, err := NewAdapter().(interface {
+		GetQuota(context.Context, any, *agentadaptor.ProfileSelection) (agentadaptor.QuotaReport, error)
+	}).GetQuota(context.Background(), agentadaptor.CodexConfig{}, &agentadaptor.ProfileSelection{Mode: agentadaptor.ProfileModeDedicated, Dir: profileDir})
+	if err != nil {
+		t.Fatalf("get quota: %v", err)
+	}
+	if report.Error == "no local Codex auth token found in auth.json" {
+		t.Fatalf("quota probe ignored selected profile: %#v", report)
+	}
 }

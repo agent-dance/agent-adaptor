@@ -63,7 +63,7 @@ func (d *runtimeAdminDriver) CheckEnvironment(_ context.Context, _ any) (agentad
 	}, nil
 }
 
-func (d *runtimeAdminDriver) DetectModel(_ context.Context, _ any) (*agentadaptor.DetectedModel, error) {
+func (d *runtimeAdminDriver) DetectModel(_ context.Context, _ any, _ *agentadaptor.ProfileSelection) (*agentadaptor.DetectedModel, error) {
 	return &agentadaptor.DetectedModel{
 		Model:      "example-model",
 		Provider:   "example-provider",
@@ -72,7 +72,7 @@ func (d *runtimeAdminDriver) DetectModel(_ context.Context, _ any) (*agentadapto
 	}, nil
 }
 
-func (d *runtimeAdminDriver) GetProfile(_ context.Context, _ any, _ agentadaptor.AgentIdentity) (agentadaptor.AgentProfile, error) {
+func (d *runtimeAdminDriver) GetProfile(_ context.Context, _ any, _ agentadaptor.AgentIdentity, _ *agentadaptor.ProfileSelection) (agentadaptor.AgentProfile, error) {
 	return agentadaptor.AgentProfile{
 		DriverType: "runtime-admin",
 		Supported:  true,
@@ -86,7 +86,7 @@ func (d *runtimeAdminDriver) ConfigSchema(_ context.Context, _ any) (*agentadapt
 	return d.Descriptor().ConfigSchema, nil
 }
 
-func (d *runtimeAdminDriver) GetQuota(_ context.Context, _ any) (agentadaptor.QuotaReport, error) {
+func (d *runtimeAdminDriver) GetQuota(_ context.Context, _ any, _ *agentadaptor.ProfileSelection) (agentadaptor.QuotaReport, error) {
 	used := 80
 	return agentadaptor.QuotaReport{
 		DriverType: "runtime-admin",

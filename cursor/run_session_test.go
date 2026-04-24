@@ -75,7 +75,7 @@ func TestCursorRunPreservesAndGuardsSessionState(t *testing.T) {
 	}
 }
 
-func TestCursorRunMapsAgentProfileDirToCursorHome(t *testing.T) {
+func TestCursorRunMapsDedicatedProfileOptionToCursorHome(t *testing.T) {
 	profileDir := t.TempDir()
 	workspace := filepath.Join(profileDir, "workspace")
 	if err := os.MkdirAll(workspace, 0o755); err != nil {
@@ -88,9 +88,8 @@ func TestCursorRunMapsAgentProfileDirToCursorHome(t *testing.T) {
 
 	cfg := agentadaptor.CursorConfig{
 		CommonConfig: agentadaptor.CommonConfig{
-			Command:         command,
-			CWD:             workspace,
-			AgentProfileDir: profileDir,
+			Command: command,
+			CWD:     workspace,
 		},
 		Model: "gpt-5",
 	}
@@ -99,6 +98,7 @@ func TestCursorRunMapsAgentProfileDirToCursorHome(t *testing.T) {
 	_, err := NewAdapter().Run(context.Background(), agentadaptor.DriverRunRequest{
 		Prompt:    "hello from cursor",
 		Config:    cfg,
+		Profile:   (&agentadaptor.ProfileSelection{Mode: agentadaptor.ProfileModeDedicated, Dir: profileDir}),
 		Workspace: agentadaptor.WorkspaceLease{ID: "workspace-a", CWD: workspace},
 	}, events)
 	if err != nil {

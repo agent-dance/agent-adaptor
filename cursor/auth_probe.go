@@ -19,8 +19,12 @@ type cursorAuthInfo struct {
 	UserID      int
 }
 
-func effectiveCursorBindings(config agentadaptor.CommonConfig) []agentadaptor.EnvBinding {
-	return skillruntime.ApplyProfileBinding(config.Env, config.AgentProfileDir, "CURSOR_HOME")
+func effectiveCursorBindings(config agentadaptor.CommonConfig, selection *agentadaptor.ProfileSelection) ([]agentadaptor.EnvBinding, error) {
+	profile, err := resolveCursorProfile(config, selection)
+	if err != nil {
+		return nil, err
+	}
+	return skillruntime.WithBinding(config.Env, "CURSOR_HOME", profile.Dir), nil
 }
 
 func resolveCursorHome(bindings []agentadaptor.EnvBinding) string {
@@ -33,41 +37,33 @@ func resolveCursorHome(bindings []agentadaptor.EnvBinding) string {
 	return filepath.Join(skillruntime.ResolveHome(bindings), ".cursor")
 }
 
-func cursorProfile(config agentadaptor.CommonConfig) agentadaptor.AgentProfile {
-	if configured := skillruntime.ResolveBinding(config.Env, "CURSOR_HOME"); configured != "" {
-		return agentadaptor.AgentProfile{
-			DriverType: DriverType,
-			Supported:  true,
-			Dir:        filepath.Clean(configured),
-			EnvVar:     "CURSOR_HOME",
-			Source:     agentadaptor.AgentProfileSourceBindingEnv,
-		}
+func resolveCursorProfile(config agentadaptor.CommonConfig, selection *agentadaptor.ProfileSelection) (agentadaptor.AgentProfile, error) {
+	resolution, err := skillruntime.ResolveProfile(skillruntime.ProfileResolveOptions{
+		Bindings:         config.Env,
+		Selection:        selection,
+		EnvVar:           "CURSOR_HOME",
+		DefaultDir:       filepath.Join(skillruntime.ResolveHome(config.Env), ".cursor"),
+		NativeSharedDir:  filepath.Join(skillruntime.ResolveHome(config.Env), ".cursor"),
+		DedicatedSubdirs: []string{"skills"},
+		SettingsFiles:    []string{"config.json", "settings.json"},
+		MCPFiles:         []string{"mcp.json"},
+		SkillsDirs:       []string{"skills"},
+		AuthFiles:        []string{"auth.json", "credentials.json"},
+	})
+	if err != nil {
+		return agentadaptor.AgentProfile{}, err
 	}
-	if strings.TrimSpace(config.AgentProfileDir) != "" {
-		return agentadaptor.AgentProfile{
-			DriverType: DriverType,
-			Supported:  true,
-			Dir:        filepath.Clean(config.AgentProfileDir),
-			EnvVar:     "CURSOR_HOME",
-			Source:     agentadaptor.AgentProfileSourceAgentProfileDir,
-		}
+	profile := resolution.Profile
+	profile.DriverType = DriverType
+	return profile, nil
+}
+
+func cursorProfile(config agentadaptor.CommonConfig, selection *agentadaptor.ProfileSelection) agentadaptor.AgentProfile {
+	profile, err := resolveCursorProfile(config, selection)
+	if err != nil {
+		return agentadaptor.AgentProfile{DriverType: DriverType, Supported: true, EnvVar: "CURSOR_HOME", Error: err.Error()}
 	}
-	if configured := strings.TrimSpace(os.Getenv("CURSOR_HOME")); configured != "" {
-		return agentadaptor.AgentProfile{
-			DriverType: DriverType,
-			Supported:  true,
-			Dir:        filepath.Clean(configured),
-			EnvVar:     "CURSOR_HOME",
-			Source:     agentadaptor.AgentProfileSourceProcessEnv,
-		}
-	}
-	return agentadaptor.AgentProfile{
-		DriverType: DriverType,
-		Supported:  true,
-		Dir:        filepath.Join(skillruntime.ResolveHome(effectiveCursorBindings(config)), ".cursor"),
-		EnvVar:     "CURSOR_HOME",
-		Source:     agentadaptor.AgentProfileSourceDefault,
-	}
+	return profile
 }
 
 func cursorAuthChecks(bindings []agentadaptor.EnvBinding) []agentadaptor.EnvironmentCheck {
@@ -107,7 +103,7 @@ func cursorAuthChecks(bindings []agentadaptor.EnvBinding) []agentadaptor.Environ
 			Code:    "cursor_auth_missing",
 			Level:   "warn",
 			Message: "No Cursor CLI auth state, CURSOR_API_KEY, or OPENAI_API_KEY was found.",
-			Hint:    "Run `agent login`, set CURSOR_API_KEY / OPENAI_API_KEY in CommonConfig.Env, or point AgentProfileDir / CURSOR_HOME at an existing Cursor profile.",
+			Hint:    "Run `agent login`, set CURSOR_API_KEY / OPENAI_API_KEY in CommonConfig.Env, or use a profile option or point CURSOR_HOME at an existing Cursor profile.",
 		}}
 	}
 

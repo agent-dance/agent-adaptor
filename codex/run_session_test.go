@@ -30,6 +30,7 @@ func TestCodexRunPreservesAndGuardsSessionState(t *testing.T) {
 			Env: []agentadaptor.EnvBinding{
 				{Name: "HOME", Value: home},
 				{Name: "USERPROFILE", Value: home},
+				{Name: "CODEX_HOME", Value: filepath.Join(home, ".codex")},
 			},
 		},
 		Model: "gpt-5.4",
@@ -77,7 +78,7 @@ func TestCodexRunPreservesAndGuardsSessionState(t *testing.T) {
 	}
 }
 
-func TestCodexRunMapsAgentProfileDirToCodexHome(t *testing.T) {
+func TestCodexRunMapsDedicatedProfileOptionToCodexHome(t *testing.T) {
 	profileDir := t.TempDir()
 	workspace := filepath.Join(profileDir, "workspace")
 	if err := os.MkdirAll(workspace, 0o755); err != nil {
@@ -90,9 +91,8 @@ func TestCodexRunMapsAgentProfileDirToCodexHome(t *testing.T) {
 
 	cfg := agentadaptor.CodexConfig{
 		CommonConfig: agentadaptor.CommonConfig{
-			Command:         command,
-			CWD:             workspace,
-			AgentProfileDir: profileDir,
+			Command: command,
+			CWD:     workspace,
 		},
 		Model: "gpt-5.4",
 	}
@@ -101,6 +101,7 @@ func TestCodexRunMapsAgentProfileDirToCodexHome(t *testing.T) {
 	_, err := NewAdapter().Run(context.Background(), agentadaptor.DriverRunRequest{
 		Prompt:    "hello from codex",
 		Config:    cfg,
+		Profile:   (&agentadaptor.ProfileSelection{Mode: agentadaptor.ProfileModeDedicated, Dir: profileDir}),
 		Workspace: agentadaptor.WorkspaceLease{ID: "workspace-a", CWD: workspace},
 	}, events)
 	if err != nil {

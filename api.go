@@ -93,7 +93,7 @@ type ModelAwareDriver interface {
 }
 
 type ModelDetectorDriver interface {
-	DetectModel(ctx context.Context, cfg any) (*DetectedModel, error)
+	DetectModel(ctx context.Context, cfg any, profile *ProfileSelection) (*DetectedModel, error)
 }
 
 // ProfileAwareDriver lets adapters expose the effective local profile
@@ -103,7 +103,7 @@ type ModelDetectorDriver interface {
 // CLAUDE_CONFIG_DIR, or CURSOR_HOME resolution, including managed homes when
 // the SDK synthesizes one.
 type ProfileAwareDriver interface {
-	GetProfile(ctx context.Context, cfg any, agent AgentIdentity) (AgentProfile, error)
+	GetProfile(ctx context.Context, cfg any, agent AgentIdentity, profile *ProfileSelection) (AgentProfile, error)
 }
 
 // SessionCodecAwareDriver lets resume-capable adapters expose a stable session
@@ -121,12 +121,12 @@ type ConfigSchemaAwareDriver interface {
 // QuotaAwareDriver lets adapters expose provider quota or credit windows when
 // the underlying CLI or local auth files support that probe.
 type QuotaAwareDriver interface {
-	GetQuota(ctx context.Context, cfg any) (QuotaReport, error)
+	GetQuota(ctx context.Context, cfg any, profile *ProfileSelection) (QuotaReport, error)
 }
 
 type SkillAwareDriver interface {
-	ListSkills(ctx context.Context, cfg any, payload SkillPayload) (SkillSnapshot, error)
-	SyncSkills(ctx context.Context, cfg any, payload SkillPayload, desired []string) (SkillSnapshot, error)
+	ListSkills(ctx context.Context, cfg any, payload SkillPayload, profile *ProfileSelection) (SkillSnapshot, error)
+	SyncSkills(ctx context.Context, cfg any, payload SkillPayload, desired []string, profile *ProfileSelection) (SkillSnapshot, error)
 }
 
 type EventSink interface {
@@ -188,6 +188,7 @@ type AgentDefaults struct {
 	RunPolicy    *RunPolicy
 	Skills       []string
 	MCP          *MCPConfig
+	Profile      *ProfileSelection
 	Instructions *InstructionsBundleRef
 	Metadata     map[string]string
 	// Streaming marks the binding as streaming-by-default when non-nil and

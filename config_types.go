@@ -3,13 +3,9 @@ package agentadaptor
 import "time"
 
 type CommonConfig struct {
-	Command string
-	CWD     string
-	Env     []EnvBinding
-	// AgentProfileDir maps to the adapter's native local profile location when
-	// no adapter-specific profile env override is present. Built-in adapters map
-	// it to CODEX_HOME, CLAUDE_CONFIG_DIR, or CURSOR_HOME respectively.
-	AgentProfileDir         string
+	Command                 string
+	CWD                     string
+	Env                     []EnvBinding
 	Instructions            *InstructionsBundleRef
 	PromptTemplate          string
 	BootstrapPromptTemplate string
@@ -35,7 +31,7 @@ type CodexConfig struct {
 	CommonConfig
 	Model           string
 	ReasoningEffort ReasoningEffort
-	FastMode          bool
+	FastMode        bool
 }
 
 type ClaudeConfig struct {

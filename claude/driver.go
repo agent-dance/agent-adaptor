@@ -57,7 +57,6 @@ func (adapter) Descriptor() agentadaptor.DriverDescriptor {
 			Fields: []agentadaptor.ConfigField{
 				{Name: "command", Label: "Command", Type: "text", Description: "Override the Claude CLI executable.", Hint: "Defaults to `claude` when unset.", Default: "claude", Group: "command"},
 				{Name: "cwd", Label: "Working Directory", Type: "text", Description: "Default working directory when the workspace manager does not override it.", Hint: "Leave empty to let the workspace manager resolve the cwd.", Group: "command"},
-				{Name: "agent_profile_dir", Label: "Agent Profile Dir", Type: "text", Description: "Stable local Claude profile directory used when CLAUDE_CONFIG_DIR is not already set in CommonConfig.Env.", Hint: "Maps to CLAUDE_CONFIG_DIR. Explicit CommonConfig.Env CLAUDE_CONFIG_DIR still wins.", Group: "profile"},
 				{Name: "model", Label: "Model", Type: "select", Description: "Claude model identifier, for example claude-sonnet-4 or a Bedrock-native us.anthropic.* id.", Default: defaultClaudeModel, Options: modelOptions(claudeModels()), Group: "model"},
 				{Name: "effort", Label: "Thinking Effort", Type: "select", Description: "Optional Claude thinking effort.", Options: []agentadaptor.ConfigOption{{Value: "low", Label: "Low"}, {Value: "medium", Label: "Medium"}, {Value: "high", Label: "High"}}, Group: "model"},
 				{Name: "max_turns_per_run", Label: "Max Turns", Type: "number", Description: "Optional max-turns guard for one run.", Group: "execution"},
@@ -100,12 +99,16 @@ func (adapter) ValidateConfig(cfg any) error {
 
 func (adapter) CheckEnvironment(_ context.Context, cfg any) (agentadaptor.EnvironmentReport, error) {
 	config := readConfig(cfg)
-	bindings := effectiveClaudeBindings(config.CommonConfig)
 	command := config.Command
 	if command == "" {
 		command = "claude"
 	}
 	checks := append(adapterutil.CommandEnvironmentChecks(command), adapterutil.CWDEnvironmentChecks(config.CommonConfig.CWD)...)
+	bindings, err := effectiveClaudeBindings(config.CommonConfig, nil)
+	if err != nil {
+		checks = append(checks, agentadaptor.EnvironmentCheck{Code: "claude_profile_error", Level: "fail", Message: "Claude profile resolution failed.", Detail: err.Error()})
+		return adapterutil.SummarizeEnvironment(DriverType, checks), nil
+	}
 	checks = append(checks, claudeAuthChecks(bindings)...)
 	checks = append(checks, claudeModelCompatibilityChecks(config)...)
 	checks = append(checks, claudeConfigChecks(bindings)...)
@@ -114,15 +117,19 @@ func (adapter) CheckEnvironment(_ context.Context, cfg any) (agentadaptor.Enviro
 
 func (adapter) ListModels(_ context.Context, cfg any) ([]agentadaptor.ModelInfo, error) {
 	config := readConfig(cfg)
-	return claudeModelsForBindings(effectiveClaudeBindings(config.CommonConfig)), nil
+	bindings, err := effectiveClaudeBindings(config.CommonConfig, nil)
+	if err != nil {
+		return nil, err
+	}
+	return claudeModelsForBindings(bindings), nil
 }
 
-func (adapter) DetectModel(_ context.Context, cfg any) (*agentadaptor.DetectedModel, error) {
-	return detectClaudeEffectiveModel(readConfig(cfg))
+func (adapter) DetectModel(_ context.Context, cfg any, profile *agentadaptor.ProfileSelection) (*agentadaptor.DetectedModel, error) {
+	return detectClaudeEffectiveModel(readConfig(cfg), profile)
 }
 
-func (adapter) GetProfile(_ context.Context, cfg any, _ agentadaptor.AgentIdentity) (agentadaptor.AgentProfile, error) {
-	return claudeProfile(readConfig(cfg).CommonConfig), nil
+func (adapter) GetProfile(_ context.Context, cfg any, _ agentadaptor.AgentIdentity, profile *agentadaptor.ProfileSelection) (agentadaptor.AgentProfile, error) {
+	return claudeProfile(readConfig(cfg).CommonConfig, profile), nil
 }
 
 func claudeConfigCandidates(bindings []agentadaptor.EnvBinding) []string {
@@ -188,19 +195,31 @@ func (adapter) ConfigSchema(_ context.Context, cfg any) (*agentadaptor.ConfigSch
 	return hydrateClaudeConfigSchema(readConfig(cfg)), nil
 }
 
-func (adapter) GetQuota(ctx context.Context, cfg any) (agentadaptor.QuotaReport, error) {
+func (adapter) GetQuota(ctx context.Context, cfg any, profile *agentadaptor.ProfileSelection) (agentadaptor.QuotaReport, error) {
 	config := readConfig(cfg)
-	return claudeQuotaReport(ctx, effectiveClaudeBindings(config.CommonConfig))
+	bindings, err := effectiveClaudeBindings(config.CommonConfig, profile)
+	if err != nil {
+		return agentadaptor.QuotaReport{}, err
+	}
+	return claudeQuotaReport(ctx, bindings)
 }
 
-func (adapter) ListSkills(_ context.Context, cfg any, payload agentadaptor.SkillPayload) (agentadaptor.SkillSnapshot, error) {
+func (adapter) ListSkills(_ context.Context, cfg any, payload agentadaptor.SkillPayload, profile *agentadaptor.ProfileSelection) (agentadaptor.SkillSnapshot, error) {
 	config := readConfig(cfg)
-	return listClaudeSkills(payload, effectiveClaudeBindings(config.CommonConfig))
+	bindings, err := effectiveClaudeBindings(config.CommonConfig, profile)
+	if err != nil {
+		return agentadaptor.SkillSnapshot{}, err
+	}
+	return listClaudeSkills(payload, bindings)
 }
 
-func (adapter) SyncSkills(_ context.Context, cfg any, payload agentadaptor.SkillPayload, _ []string) (agentadaptor.SkillSnapshot, error) {
+func (adapter) SyncSkills(_ context.Context, cfg any, payload agentadaptor.SkillPayload, _ []string, profile *agentadaptor.ProfileSelection) (agentadaptor.SkillSnapshot, error) {
 	config := readConfig(cfg)
-	return syncClaudeSkills(payload, effectiveClaudeBindings(config.CommonConfig))
+	bindings, err := effectiveClaudeBindings(config.CommonConfig, profile)
+	if err != nil {
+		return agentadaptor.SkillSnapshot{}, err
+	}
+	return syncClaudeSkills(payload, bindings)
 }
 
 func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink agentadaptor.EventSink) (agentadaptor.DriverRunResult, error) {
@@ -213,10 +232,14 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 	if err != nil {
 		return agentadaptor.DriverRunResult{}, err
 	}
-	if err := syncClaudeMCPProfile(cfg.CommonConfig, req.MCP); err != nil {
+	if err := syncClaudeMCPProfile(cfg.CommonConfig, req.Profile, req.MCP); err != nil {
 		return agentadaptor.DriverRunResult{}, err
 	}
-	effectiveEnv, err := adapterutil.RuntimeEnvBindings(effectiveClaudeBindings(cfg.CommonConfig), req.Runtime)
+	bindings, err := effectiveClaudeBindings(cfg.CommonConfig, req.Profile)
+	if err != nil {
+		return agentadaptor.DriverRunResult{}, err
+	}
+	effectiveEnv, err := adapterutil.RuntimeEnvBindings(bindings, req.Runtime)
 	if err != nil {
 		return agentadaptor.DriverRunResult{}, err
 	}
@@ -236,7 +259,7 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 	modelFlag := claudeRequestedModelFlag(cfg)
 	reportedModel := modelFlag
 	if reportedModel == "" {
-		if detected, err := detectClaudeEffectiveModel(cfg); err == nil && detected != nil {
+		if detected, err := detectClaudeEffectiveModel(cfg, req.Profile); err == nil && detected != nil {
 			reportedModel = detected.Model
 		}
 	}

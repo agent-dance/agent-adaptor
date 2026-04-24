@@ -13,6 +13,8 @@
 
 本方案不再为 MCP 额外引入一套 `source_profile/derived_profile` 或 `ephemeral/persistent` 的 profile 规则。
 
+Profile 路径、初始化、诊断、共享/专用目录用户体验的完整落地计划见 [`workstream-profile-user-experience.md`](./workstream-profile-user-experience.md)。
+
 ## 2. 核心规则
 
 本 workstream 最终收敛到一条简单规则：
@@ -31,7 +33,7 @@
 ## 3. 价值
 
 - 宿主不必分别适配 `codex mcp add`、`claude mcp add`、`cursor-agent mcp` / `mcp.json`
-- `AgentProfileDir` 继续作为统一入口，宿主不必自己处理 `CODEX_HOME` / `CLAUDE_CONFIG_DIR` / `CURSOR_HOME`
+- profile option 作为统一入口，宿主不必自己处理 `CODEX_HOME` / `CLAUDE_CONFIG_DIR` / `CURSOR_HOME`
 - 不需要把 provider-specific CLI 命令流程泄漏到 core 公共 API
 - `skills/MCP` 的变化不自动决定 session 是否切换，session 生命周期继续由宿主控制
 - 能与现有 `skills` / `runtime` 一样，走同一条 `resolveInvocation -> adapter.Run(...)` 主路径
@@ -48,12 +50,12 @@
 
 当前 core 已经有两块关键基础：
 
-- `CommonConfig.AgentProfileDir` 是 built-in adapter 的统一 profile 目录入口
+- profile option 是 built-in adapter 的统一 profile 目录入口
 - adapter 已经能够基于 profile/home 做 skills / auth / config 物化
 
 当前已存在的相关能力：
 
-- `AgentProfileDir` 会映射到：
+- profile option 会映射到：
   - `codex` -> `CODEX_HOME`
   - `claude` -> `CLAUDE_CONFIG_DIR`
   - `cursor` -> `CURSOR_HOME`
@@ -357,7 +359,7 @@ MCP v1 不引入额外的 MCP-specific profile 语义。
 仍沿用 built-in adapter 当前优先级：
 
 1. `CommonConfig.Env` 中显式声明的 adapter-specific env
-2. `CommonConfig.AgentProfileDir`
+2. profile option
 3. 进程环境与 adapter 默认路径
 4. adapter managed fallback
 
@@ -402,7 +404,7 @@ MCP v1 不引入额外的 MCP-specific profile 语义。
 
 `宿主专用 profile` 指宿主明确交给 SDK 使用的目录，或 adapter 自己已经合成出来的隔离目录，例如：
 
-- `AgentProfileDir`
+- profile option
 - binding env 显式指定的自定义 profile
 - `codex` 当前已有的 managed `CODEX_HOME`
 
@@ -646,7 +648,7 @@ Claude / Cursor 的 JSON 配置写入仍可使用标准库。
 
 ### 15.2 profile 行为测试
 
-- `AgentProfileDir` 优先级保持不变
+- profile option 优先级为 `CommonConfig.Env` > profile option > process env > default
 - 原生共享 profile 不自动 prune 旧 MCP
 - 宿主专用 profile 允许完整同步与清理
 - `codex` managed fallback 继续可完整同步

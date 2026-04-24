@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	agentadaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/internal/skillruntime"
 )
 
 type eventSink struct {
@@ -34,8 +33,8 @@ func createSkillDir(t *testing.T, root, name string) string {
 }
 
 func TestInjectCodexSkillsRepairsManagedSymlink(t *testing.T) {
-	testRoot := filepath.Join(skillruntime.ManagedSkillCacheRoot(), "codex-test", t.Name())
-	t.Cleanup(func() { _ = os.RemoveAll(filepath.Join(skillruntime.ManagedSkillCacheRoot(), "codex-test")) })
+	testRoot := filepath.Join(t.TempDir(), "codex-test", t.Name())
+	t.Setenv("AGENT_ADAPTOR_SKILL_CACHE_ROOT", filepath.Dir(filepath.Dir(testRoot)))
 	oldSource := createSkillDir(t, testRoot, "paperclip-old")
 	currentSource := createSkillDir(t, testRoot, "paperclip-current")
 	codexHome := t.TempDir()
@@ -62,14 +61,18 @@ func TestInjectCodexSkillsRepairsManagedSymlink(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve symlink: %v", err)
 	}
-	if filepath.Clean(resolved) != filepath.Clean(currentSource) {
-		t.Fatalf("expected repaired symlink to %s, got %s", currentSource, resolved)
+	expected, err := filepath.EvalSymlinks(currentSource)
+	if err != nil {
+		t.Fatalf("resolve expected source: %v", err)
+	}
+	if filepath.Clean(resolved) != filepath.Clean(expected) {
+		t.Fatalf("expected repaired symlink to %s, got %s", expected, resolved)
 	}
 }
 
 func TestInjectCodexSkillsPreservesExternalSymlink(t *testing.T) {
-	testRoot := filepath.Join(skillruntime.ManagedSkillCacheRoot(), "codex-test", t.Name())
-	t.Cleanup(func() { _ = os.RemoveAll(filepath.Join(skillruntime.ManagedSkillCacheRoot(), "codex-test")) })
+	testRoot := filepath.Join(t.TempDir(), "codex-test", t.Name())
+	t.Setenv("AGENT_ADAPTOR_SKILL_CACHE_ROOT", filepath.Dir(filepath.Dir(testRoot)))
 	currentSource := createSkillDir(t, testRoot, "paperclip-current")
 	externalRoot := t.TempDir()
 	externalSource := createSkillDir(t, externalRoot, "paperclip-custom")

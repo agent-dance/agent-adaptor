@@ -70,7 +70,7 @@ func (noopRuntimeManager) ReleaseByRun(_ context.Context, _ string) error {
 	return nil
 }
 
-func buildSkillSnapshot(driver DriverAdapter, config any, payload SkillPayload, desired []string) (SkillSnapshot, error) {
+func buildSkillSnapshot(driver DriverAdapter, config any, payload SkillPayload, desired []string, profile *ProfileSelection) (SkillSnapshot, error) {
 	skillDriver, ok := driver.(SkillAwareDriver)
 	if !ok {
 		return SkillSnapshot{
@@ -82,10 +82,10 @@ func buildSkillSnapshot(driver DriverAdapter, config any, payload SkillPayload, 
 			Warnings:   cloneStrings(payload.Warnings),
 		}, nil
 	}
-	return skillDriver.ListSkills(context.Background(), config, payload)
+	return skillDriver.ListSkills(context.Background(), config, payload, profile)
 }
 
-func syncSkillSnapshot(driver DriverAdapter, config any, payload SkillPayload, desired []string) (SkillSnapshot, error) {
+func syncSkillSnapshot(driver DriverAdapter, config any, payload SkillPayload, desired []string, profile *ProfileSelection) (SkillSnapshot, error) {
 	skillDriver, ok := driver.(SkillAwareDriver)
 	if !ok {
 		return SkillSnapshot{
@@ -97,7 +97,7 @@ func syncSkillSnapshot(driver DriverAdapter, config any, payload SkillPayload, d
 			Warnings:   cloneStrings(payload.Warnings),
 		}, nil
 	}
-	return skillDriver.SyncSkills(context.Background(), config, payload, desired)
+	return skillDriver.SyncSkills(context.Background(), config, payload, desired, profile)
 }
 
 func validateAdapterConfig(driver DriverAdapter, cfg any) error {

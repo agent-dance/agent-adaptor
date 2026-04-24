@@ -82,14 +82,14 @@ func (a *agentAdminImpl) ListModels(ctx context.Context) ([]ModelInfo, error) {
 
 func (a *agentAdminImpl) DetectModel(ctx context.Context) (*DetectedModel, error) {
 	if detector, ok := a.binding.Adapter().(ModelDetectorDriver); ok {
-		return detector.DetectModel(ctx, a.binding.Config())
+		return detector.DetectModel(ctx, a.binding.Config(), a.binding.Defaults().Profile)
 	}
 	return nil, nil
 }
 
 func (a *agentAdminImpl) GetProfile(ctx context.Context) (AgentProfile, error) {
 	if provider, ok := a.binding.Adapter().(ProfileAwareDriver); ok {
-		return provider.GetProfile(ctx, a.binding.Config(), a.binding.Defaults().Agent)
+		return provider.GetProfile(ctx, a.binding.Config(), a.binding.Defaults().Agent, a.binding.Defaults().Profile)
 	}
 	return AgentProfile{
 		DriverType: a.binding.Adapter().Descriptor().Type,
@@ -108,7 +108,7 @@ func (a *agentAdminImpl) ConfigSchema(ctx context.Context) (*ConfigSchema, error
 
 func (a *agentAdminImpl) GetQuota(ctx context.Context) (QuotaReport, error) {
 	if provider, ok := a.binding.Adapter().(QuotaAwareDriver); ok {
-		return provider.GetQuota(ctx, a.binding.Config())
+		return provider.GetQuota(ctx, a.binding.Config(), a.binding.Defaults().Profile)
 	}
 	return QuotaReport{
 		DriverType: a.binding.Adapter().Descriptor().Type,
@@ -124,7 +124,7 @@ func (a *agentAdminImpl) ListSkills(ctx context.Context) (SkillSnapshot, error) 
 	if err != nil {
 		return SkillSnapshot{}, err
 	}
-	return buildSkillSnapshot(a.binding.Adapter(), a.binding.Config(), payload, desired)
+	return buildSkillSnapshot(a.binding.Adapter(), a.binding.Config(), payload, desired, defaults.Profile)
 }
 
 func (a *agentAdminImpl) SyncSkills(ctx context.Context, desired []string) (SkillSnapshot, error) {
@@ -133,7 +133,7 @@ func (a *agentAdminImpl) SyncSkills(ctx context.Context, desired []string) (Skil
 	if err != nil {
 		return SkillSnapshot{}, err
 	}
-	snapshot, err := syncSkillSnapshot(a.binding.Adapter(), a.binding.Config(), payload, desired)
+	snapshot, err := syncSkillSnapshot(a.binding.Adapter(), a.binding.Config(), payload, desired, defaults.Profile)
 	if err != nil {
 		return SkillSnapshot{}, err
 	}

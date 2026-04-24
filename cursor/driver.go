@@ -34,7 +34,6 @@ func (adapter) Descriptor() agentadaptor.DriverDescriptor {
 			Fields: []agentadaptor.ConfigField{
 				{Name: "command", Label: "Command", Type: "text", Description: "Override the Cursor Agent CLI executable.", Hint: "Defaults to `agent` when unset.", Default: "agent", Group: "command"},
 				{Name: "cwd", Label: "Working Directory", Type: "text", Description: "Default working directory when the workspace manager does not override it.", Hint: "Leave empty to let the workspace manager resolve the cwd.", Group: "command"},
-				{Name: "agent_profile_dir", Label: "Agent Profile Dir", Type: "text", Description: "Stable local Cursor profile directory used when CURSOR_HOME is not already set in CommonConfig.Env.", Hint: "Maps to CURSOR_HOME. Explicit CommonConfig.Env CURSOR_HOME still wins.", Group: "profile"},
 				{Name: "model", Label: "Model", Type: "select", Description: "Cursor model identifier, for example gpt-5.", Default: "gpt-5", Options: modelOptions(cursorModels()), Group: "model"},
 				{Name: "mode", Label: "Mode", Type: "select", Description: "Cursor agent mode passed through --mode.", Options: []agentadaptor.ConfigOption{{Value: "agent", Label: "Agent"}, {Value: "ask", Label: "Ask"}}, Group: "execution"},
 				{Name: "extra_args", Label: "Extra Args", Type: "textarea", Description: "Additional CLI args appended after SDK-managed flags.", Group: "command"},
@@ -73,12 +72,16 @@ func (adapter) ValidateConfig(cfg any) error {
 
 func (adapter) CheckEnvironment(_ context.Context, cfg any) (agentadaptor.EnvironmentReport, error) {
 	config := readConfig(cfg)
-	bindings := effectiveCursorBindings(config.CommonConfig)
 	command := config.Command
 	if command == "" {
 		command = "agent"
 	}
 	checks := append(adapterutil.CommandEnvironmentChecks(command), adapterutil.CWDEnvironmentChecks(config.CommonConfig.CWD)...)
+	bindings, err := effectiveCursorBindings(config.CommonConfig, nil)
+	if err != nil {
+		checks = append(checks, agentadaptor.EnvironmentCheck{Code: "cursor_profile_error", Level: "fail", Message: "Cursor profile resolution failed.", Detail: err.Error()})
+		return adapterutil.SummarizeEnvironment(DriverType, checks), nil
+	}
 	cursorHome := resolveCursorHome(bindings)
 	if _, err := os.Stat(cursorHome); err == nil {
 		checks = append(checks, agentadaptor.EnvironmentCheck{
@@ -93,7 +96,7 @@ func (adapter) CheckEnvironment(_ context.Context, cfg any) (agentadaptor.Enviro
 			Level:   "warn",
 			Message: "Cursor home directory was not found yet.",
 			Detail:  cursorHome,
-			Hint:    "Run Cursor Agent once or point AgentProfileDir / CURSOR_HOME at the target operator profile.",
+			Hint:    "Run Cursor Agent once, use a profile option, or point CURSOR_HOME at the target operator profile.",
 		})
 	}
 	checks = append(checks, cursorAuthChecks(bindings)...)
@@ -105,9 +108,12 @@ func (adapter) ListModels(_ context.Context, _ any) ([]agentadaptor.ModelInfo, e
 	return adapter{}.Descriptor().Models, nil
 }
 
-func (adapter) DetectModel(_ context.Context, cfg any) (*agentadaptor.DetectedModel, error) {
+func (adapter) DetectModel(_ context.Context, cfg any, profile *agentadaptor.ProfileSelection) (*agentadaptor.DetectedModel, error) {
 	config := readConfig(cfg)
-	bindings := effectiveCursorBindings(config.CommonConfig)
+	bindings, err := effectiveCursorBindings(config.CommonConfig, profile)
+	if err != nil {
+		return nil, err
+	}
 	if strings.TrimSpace(config.Model) == "" {
 		for _, candidate := range cursorConfigCandidates(bindings) {
 			if model, ok, err := configprobe.ReadTopLevelJSONString(candidate, "model"); err == nil && ok {
@@ -129,8 +135,8 @@ func (adapter) DetectModel(_ context.Context, cfg any) (*agentadaptor.DetectedMo
 	}, nil
 }
 
-func (adapter) GetProfile(_ context.Context, cfg any, _ agentadaptor.AgentIdentity) (agentadaptor.AgentProfile, error) {
-	return cursorProfile(readConfig(cfg).CommonConfig), nil
+func (adapter) GetProfile(_ context.Context, cfg any, _ agentadaptor.AgentIdentity, profile *agentadaptor.ProfileSelection) (agentadaptor.AgentProfile, error) {
+	return cursorProfile(readConfig(cfg).CommonConfig, profile), nil
 }
 
 func cursorConfigCandidates(bindings []agentadaptor.EnvBinding) []string {
@@ -184,7 +190,7 @@ func (adapter) ConfigSchema(_ context.Context, _ any) (*agentadaptor.ConfigSchem
 	return adapter{}.Descriptor().ConfigSchema, nil
 }
 
-func (adapter) GetQuota(_ context.Context, _ any) (agentadaptor.QuotaReport, error) {
+func (adapter) GetQuota(_ context.Context, _ any, _ *agentadaptor.ProfileSelection) (agentadaptor.QuotaReport, error) {
 	return agentadaptor.QuotaReport{
 		DriverType: DriverType,
 		Provider:   "cursor",
@@ -193,14 +199,22 @@ func (adapter) GetQuota(_ context.Context, _ any) (agentadaptor.QuotaReport, err
 	}, nil
 }
 
-func (adapter) ListSkills(_ context.Context, cfg any, payload agentadaptor.SkillPayload) (agentadaptor.SkillSnapshot, error) {
+func (adapter) ListSkills(_ context.Context, cfg any, payload agentadaptor.SkillPayload, profile *agentadaptor.ProfileSelection) (agentadaptor.SkillSnapshot, error) {
 	config := readConfig(cfg)
-	return listCursorSkills(payload, effectiveCursorBindings(config.CommonConfig))
+	bindings, err := effectiveCursorBindings(config.CommonConfig, profile)
+	if err != nil {
+		return agentadaptor.SkillSnapshot{}, err
+	}
+	return listCursorSkills(payload, bindings)
 }
 
-func (adapter) SyncSkills(ctx context.Context, cfg any, payload agentadaptor.SkillPayload, _ []string) (agentadaptor.SkillSnapshot, error) {
+func (adapter) SyncSkills(ctx context.Context, cfg any, payload agentadaptor.SkillPayload, _ []string, profile *agentadaptor.ProfileSelection) (agentadaptor.SkillSnapshot, error) {
 	config := readConfig(cfg)
-	return syncCursorSkills(ctx, payload, effectiveCursorBindings(config.CommonConfig), noopCursorSink{})
+	bindings, err := effectiveCursorBindings(config.CommonConfig, profile)
+	if err != nil {
+		return agentadaptor.SkillSnapshot{}, err
+	}
+	return syncCursorSkills(ctx, payload, bindings, noopCursorSink{})
 }
 
 func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink agentadaptor.EventSink) (agentadaptor.DriverRunResult, error) {
@@ -209,10 +223,14 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 	if command == "" {
 		command = "agent"
 	}
-	if err := syncCursorMCPProfile(cfg.CommonConfig, req.MCP); err != nil {
+	if err := syncCursorMCPProfile(cfg.CommonConfig, req.Profile, req.MCP); err != nil {
 		return agentadaptor.DriverRunResult{}, err
 	}
-	effectiveEnv, err := adapterutil.RuntimeEnvBindings(effectiveCursorBindings(cfg.CommonConfig), req.Runtime)
+	bindings, err := effectiveCursorBindings(cfg.CommonConfig, req.Profile)
+	if err != nil {
+		return agentadaptor.DriverRunResult{}, err
+	}
+	effectiveEnv, err := adapterutil.RuntimeEnvBindings(bindings, req.Runtime)
 	if err != nil {
 		return agentadaptor.DriverRunResult{}, err
 	}

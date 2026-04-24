@@ -175,6 +175,7 @@ type DriverRunRequest struct {
 	Runtime      RuntimePayload
 	Skills       SkillPayload
 	MCP          MCPPayload
+	Profile      *ProfileSelection
 	Policy       RunPolicy
 	Instructions *InstructionsBundleRef
 	Session      *DriverSessionContext
@@ -320,6 +321,7 @@ type resolvedInvocation struct {
 	runtime      RuntimePayload
 	skills       SkillPayload
 	mcp          MCPPayload
+	profile      *ProfileSelection
 	policy       RunPolicy
 	handlers     decisionHandlers
 	instructions *InstructionsBundleRef

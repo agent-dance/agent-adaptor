@@ -91,7 +91,7 @@ func claudeConfigFileModel(bindings []agentadaptor.EnvBinding) (string, bool, er
 	return "", false, nil
 }
 
-func detectClaudeEffectiveModel(config agentadaptor.ClaudeConfig) (*agentadaptor.DetectedModel, error) {
+func detectClaudeEffectiveModel(config agentadaptor.ClaudeConfig, profile *agentadaptor.ProfileSelection) (*agentadaptor.DetectedModel, error) {
 	if model := claudeRequestedModelFlag(config); model != "" {
 		return &agentadaptor.DetectedModel{
 			Model:      model,
@@ -102,7 +102,11 @@ func detectClaudeEffectiveModel(config agentadaptor.ClaudeConfig) (*agentadaptor
 	}
 	// When a binding model is intentionally ignored in Bedrock mode, fall back
 	// to the operator's local Claude config so admin surfaces stay truthful.
-	model, ok, err := claudeConfigFileModel(effectiveClaudeBindings(config.CommonConfig))
+	bindings, err := effectiveClaudeBindings(config.CommonConfig, profile)
+	if err != nil {
+		return nil, err
+	}
+	model, ok, err := claudeConfigFileModel(bindings)
 	if err != nil || !ok {
 		return nil, err
 	}
@@ -119,7 +123,10 @@ func hydrateClaudeConfigSchema(config agentadaptor.ClaudeConfig) *agentadaptor.C
 	if schema == nil {
 		return nil
 	}
-	bindings := effectiveClaudeBindings(config.CommonConfig)
+	bindings, err := effectiveClaudeBindings(config.CommonConfig, nil)
+	if err != nil {
+		return schema
+	}
 	models := claudeModelsForBindings(bindings)
 	for i := range schema.Fields {
 		if schema.Fields[i].Name != "model" {

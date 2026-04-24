@@ -86,7 +86,7 @@ Browser
 | `/decision/resolve` | POST | `{ run_id, request_id, result, choice?, answer?, text? }` |
 | `/health` | GET | 就绪检查 |
 
-所有端点带 CORS，允许 `CORS_ORIGIN`（默认 `http://localhost:3000`）跨域直连。
+所有端点带 CORS，允许 `CORS_ORIGIN`（默认 `*`）跨域直连。
 
 ## 前端关键文件
 
@@ -121,7 +121,7 @@ Backend：
 | `ADDR` | `:8080` | backend 监听地址 |
 | `CODEX_MODEL` | `gpt-5.4` | codex 模式模型 |
 | `CLAUDE_CODE_MODEL` | `claude-sonnet-4-6` | claude 模式模型 |
-| `CORS_ORIGIN` | `http://localhost:3000` | 允许的前端 Origin |
+| `CORS_ORIGIN` | `*` | 允许的前端 Origin |
 
 前端：
 

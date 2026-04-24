@@ -14,6 +14,7 @@ import (
 
 func TestClaudeRunPreservesAndGuardsSessionState(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	t.Setenv("HOME", t.TempDir())
 	home := t.TempDir()
 	workspace := filepath.Join(home, "workspace")
 	skillDir := filepath.Join(home, "skills", "analysis")
@@ -99,7 +100,7 @@ func TestClaudeRunPreservesAndGuardsSessionState(t *testing.T) {
 	}
 }
 
-func TestClaudeRunMapsAgentProfileDirToClaudeConfigDir(t *testing.T) {
+func TestClaudeRunMapsDedicatedProfileOptionToClaudeConfigDir(t *testing.T) {
 	profileDir := t.TempDir()
 	workspace := filepath.Join(profileDir, "workspace")
 	if err := os.MkdirAll(workspace, 0o755); err != nil {
@@ -111,9 +112,8 @@ func TestClaudeRunMapsAgentProfileDirToClaudeConfigDir(t *testing.T) {
 	)
 	cfg := agentadaptor.ClaudeConfig{
 		CommonConfig: agentadaptor.CommonConfig{
-			Command:         command,
-			CWD:             workspace,
-			AgentProfileDir: profileDir,
+			Command: command,
+			CWD:     workspace,
 		},
 		Model: "claude-sonnet-4",
 	}
@@ -122,6 +122,7 @@ func TestClaudeRunMapsAgentProfileDirToClaudeConfigDir(t *testing.T) {
 	_, err := NewAdapter().Run(context.Background(), agentadaptor.DriverRunRequest{
 		Prompt:    "hello from claude",
 		Config:    cfg,
+		Profile:   (&agentadaptor.ProfileSelection{Mode: agentadaptor.ProfileModeDedicated, Dir: profileDir}),
 		Workspace: agentadaptor.WorkspaceLease{ID: "workspace-a", CWD: workspace},
 	}, events)
 	if err != nil {

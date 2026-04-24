@@ -45,7 +45,7 @@ import (
 
 func main() {
 	addr := envOr("ADDR", ":8080")
-	cors := envOr("CORS_ORIGIN", "http://localhost:3000")
+	cors := envOr("CORS_ORIGIN", "*")
 	cwd, _ := os.Getwd()
 
 	sdk, driver := exampleutil.NewAGUIStreamingSDK(cwd)

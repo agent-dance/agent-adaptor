@@ -12,8 +12,8 @@ func canonicalSharedClaudeConfigDir(bindings []agentadaptor.EnvBinding) string {
 	return filepath.Join(skillruntime.ResolveHome(bindings), ".claude")
 }
 
-func syncClaudeMCPProfile(config agentadaptor.CommonConfig, payload agentadaptor.MCPPayload) error {
-	profile := claudeProfile(config)
+func syncClaudeMCPProfile(config agentadaptor.CommonConfig, selection *agentadaptor.ProfileSelection, payload agentadaptor.MCPPayload) error {
+	profile := claudeProfile(config, selection)
 	kind := mcpruntime.ClassifyProfile(profile, canonicalSharedClaudeConfigDir(config.Env))
 	return mcpruntime.SyncClaudeProfile(profile.Dir, kind, payload)
 }

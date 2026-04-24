@@ -13,7 +13,6 @@ import (
 	"github.com/agent-dance/agent-adaptor/internal/adapterutil"
 	"github.com/agent-dance/agent-adaptor/internal/clihelper"
 	"github.com/agent-dance/agent-adaptor/internal/configprobe"
-	"github.com/agent-dance/agent-adaptor/internal/skillruntime"
 )
 
 const DriverType = "codex"
@@ -37,7 +36,6 @@ func (adapter) Descriptor() agentadaptor.DriverDescriptor {
 			Fields: []agentadaptor.ConfigField{
 				{Name: "command", Label: "Command", Type: "text", Description: "Override the Codex CLI executable.", Hint: "Defaults to `codex` when unset.", Default: "codex", Group: "command"},
 				{Name: "cwd", Label: "Working Directory", Type: "text", Description: "Default working directory when the workspace manager does not override it.", Hint: "Leave empty to let the workspace manager resolve the cwd.", Group: "command"},
-				{Name: "agent_profile_dir", Label: "Agent Profile Dir", Type: "text", Description: "Stable local Codex profile directory used when CODEX_HOME is not already set in CommonConfig.Env.", Hint: "Maps to CODEX_HOME. Explicit CommonConfig.Env CODEX_HOME still wins.", Group: "profile"},
 				{Name: "model", Label: "Model", Type: "select", Description: "Codex model identifier, for example gpt-5.4.", Default: "gpt-5.4", Options: modelOptions(codexModels()), Group: "model"},
 				{Name: "reasoning_effort", Label: "Reasoning Effort", Type: "select", Description: "Optional reasoning effort passed through model_reasoning_effort.", Hint: "Only set this when you want to override Codex defaults.", Options: []agentadaptor.ConfigOption{{Value: "low", Label: "Low"}, {Value: "medium", Label: "Medium"}, {Value: "high", Label: "High"}, {Value: "xhigh", Label: "Extra High"}}, Group: "model"},
 				{Name: "fast_mode", Label: "Fast Mode", Type: "toggle", Description: "Enable Codex fast service tier defaults.", Default: false, Group: "execution"},
@@ -78,12 +76,16 @@ func (adapter) ValidateConfig(cfg any) error {
 
 func (adapter) CheckEnvironment(_ context.Context, cfg any) (agentadaptor.EnvironmentReport, error) {
 	config := readConfig(cfg)
-	bindings := effectiveCodexBindings(config.CommonConfig)
 	command := config.Command
 	if command == "" {
 		command = "codex"
 	}
 	checks := append(adapterutil.CommandEnvironmentChecks(command), adapterutil.CWDEnvironmentChecks(config.CommonConfig.CWD)...)
+	bindings, err := effectiveCodexBindings(config.CommonConfig, nil, agentadaptor.AgentIdentity{})
+	if err != nil {
+		checks = append(checks, agentadaptor.EnvironmentCheck{Code: "codex_profile_error", Level: "fail", Message: "Codex profile resolution failed.", Detail: err.Error()})
+		return adapterutil.SummarizeEnvironment(DriverType, checks), nil
+	}
 	checks = append(checks, codexAuthChecks(bindings)...)
 	checks = append(checks, codexConfigChecks(bindings)...)
 	return adapterutil.SummarizeEnvironment(DriverType, checks), nil
@@ -93,9 +95,12 @@ func (adapter) ListModels(_ context.Context, _ any) ([]agentadaptor.ModelInfo, e
 	return adapter{}.Descriptor().Models, nil
 }
 
-func (adapter) DetectModel(_ context.Context, cfg any) (*agentadaptor.DetectedModel, error) {
+func (adapter) DetectModel(_ context.Context, cfg any, profile *agentadaptor.ProfileSelection) (*agentadaptor.DetectedModel, error) {
 	config := readConfig(cfg)
-	bindings := effectiveCodexBindings(config.CommonConfig)
+	bindings, err := effectiveCodexBindings(config.CommonConfig, profile, agentadaptor.AgentIdentity{})
+	if err != nil {
+		return nil, err
+	}
 	if strings.TrimSpace(config.Model) == "" {
 		for _, candidate := range codexConfigCandidates(bindings) {
 			if model, ok, err := readCodexConfiguredModel(candidate); err == nil && ok {
@@ -117,8 +122,8 @@ func (adapter) DetectModel(_ context.Context, cfg any) (*agentadaptor.DetectedMo
 	}, nil
 }
 
-func (adapter) GetProfile(_ context.Context, cfg any, agent agentadaptor.AgentIdentity) (agentadaptor.AgentProfile, error) {
-	return codexProfile(readConfig(cfg).CommonConfig, agent), nil
+func (adapter) GetProfile(_ context.Context, cfg any, agent agentadaptor.AgentIdentity, profile *agentadaptor.ProfileSelection) (agentadaptor.AgentProfile, error) {
+	return codexProfile(readConfig(cfg).CommonConfig, profile, agent), nil
 }
 
 func codexConfigCandidates(bindings []agentadaptor.EnvBinding) []string {
@@ -193,16 +198,20 @@ func (adapter) ConfigSchema(_ context.Context, _ any) (*agentadaptor.ConfigSchem
 	return adapter{}.Descriptor().ConfigSchema, nil
 }
 
-func (adapter) GetQuota(ctx context.Context, cfg any) (agentadaptor.QuotaReport, error) {
+func (adapter) GetQuota(ctx context.Context, cfg any, profile *agentadaptor.ProfileSelection) (agentadaptor.QuotaReport, error) {
 	config := readConfig(cfg)
-	return codexQuotaReport(ctx, effectiveCodexBindings(config.CommonConfig))
+	bindings, err := effectiveCodexBindings(config.CommonConfig, profile, agentadaptor.AgentIdentity{})
+	if err != nil {
+		return agentadaptor.QuotaReport{}, err
+	}
+	return codexQuotaReport(ctx, bindings)
 }
 
-func (adapter) ListSkills(_ context.Context, _ any, payload agentadaptor.SkillPayload) (agentadaptor.SkillSnapshot, error) {
+func (adapter) ListSkills(_ context.Context, _ any, payload agentadaptor.SkillPayload, _ *agentadaptor.ProfileSelection) (agentadaptor.SkillSnapshot, error) {
 	return listCodexSkills(payload), nil
 }
 
-func (adapter) SyncSkills(_ context.Context, _ any, payload agentadaptor.SkillPayload, _ []string) (agentadaptor.SkillSnapshot, error) {
+func (adapter) SyncSkills(_ context.Context, _ any, payload agentadaptor.SkillPayload, _ []string, _ *agentadaptor.ProfileSelection) (agentadaptor.SkillSnapshot, error) {
 	return syncCodexSkills(payload), nil
 }
 
@@ -226,23 +235,24 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 	if command == "" {
 		command = "codex"
 	}
-	effectiveBindings := effectiveCodexBindings(cfg.CommonConfig)
-	effectiveCodexHome := skillruntime.ResolveBinding(effectiveBindings, "CODEX_HOME")
-	if strings.TrimSpace(effectiveCodexHome) == "" {
-		managedHome, err := prepareManagedCodexHome(effectiveBindings, req.Agent)
-		if err != nil {
-			return agentadaptor.DriverRunResult{}, err
+	effectiveBindings, err := effectiveCodexBindings(cfg.CommonConfig, req.Profile, req.Agent)
+	if err != nil {
+		return agentadaptor.DriverRunResult{}, err
+	}
+	effectiveCodexHome := ""
+	for _, binding := range effectiveBindings {
+		if strings.EqualFold(strings.TrimSpace(binding.Name), "CODEX_HOME") {
+			effectiveCodexHome = strings.TrimSpace(binding.Value)
+			break
 		}
-		effectiveCodexHome = managedHome
-		effectiveBindings = skillruntime.WithBinding(effectiveBindings, "CODEX_HOME", effectiveCodexHome)
 	}
 	if err := injectCodexSkills(ctx, req.Skills, effectiveCodexHome, sink); err != nil {
 		return agentadaptor.DriverRunResult{}, err
 	}
-	if err := syncCodexMCPProfile(cfg.CommonConfig, req.Agent, effectiveCodexHome, req.MCP); err != nil {
+	if err := syncCodexMCPProfile(cfg.CommonConfig, req.Profile, req.Agent, effectiveCodexHome, req.MCP); err != nil {
 		return agentadaptor.DriverRunResult{}, err
 	}
-	effectiveBindings, err := adapterutil.RuntimeEnvBindings(effectiveBindings, req.Runtime)
+	effectiveBindings, err = adapterutil.RuntimeEnvBindings(effectiveBindings, req.Runtime)
 	if err != nil {
 		return agentadaptor.DriverRunResult{}, err
 	}

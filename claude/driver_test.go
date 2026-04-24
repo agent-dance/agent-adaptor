@@ -108,12 +108,12 @@ func TestDetectModelFallsBackToClaudeSettingsFile(t *testing.T) {
 	}
 
 	detected, err := NewAdapter().(interface {
-		DetectModel(context.Context, any) (*agentadaptor.DetectedModel, error)
+		DetectModel(context.Context, any, *agentadaptor.ProfileSelection) (*agentadaptor.DetectedModel, error)
 	}).DetectModel(context.Background(), agentadaptor.ClaudeConfig{
 		CommonConfig: agentadaptor.CommonConfig{
 			Env: []agentadaptor.EnvBinding{{Name: "HOME", Value: home}},
 		},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("detect model: %v", err)
 	}
@@ -122,19 +122,19 @@ func TestDetectModelFallsBackToClaudeSettingsFile(t *testing.T) {
 	}
 }
 
-func TestDetectModelUsesAgentProfileDirAsClaudeConfigDir(t *testing.T) {
+func TestDetectModelUsesExplicitProfileOptionAsClaudeConfigDir(t *testing.T) {
 	profileDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(profileDir, "settings.json"), []byte("{\"model\":\"claude-sonnet-4\"}\n"), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 
 	detected, err := NewAdapter().(interface {
-		DetectModel(context.Context, any) (*agentadaptor.DetectedModel, error)
+		DetectModel(context.Context, any, *agentadaptor.ProfileSelection) (*agentadaptor.DetectedModel, error)
 	}).DetectModel(context.Background(), agentadaptor.ClaudeConfig{
 		CommonConfig: agentadaptor.CommonConfig{
-			AgentProfileDir: profileDir,
+			Env: []agentadaptor.EnvBinding{{Name: "CLAUDE_CONFIG_DIR", Value: profileDir}},
 		},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("detect model: %v", err)
 	}
@@ -143,7 +143,7 @@ func TestDetectModelUsesAgentProfileDirAsClaudeConfigDir(t *testing.T) {
 	}
 }
 
-func TestDetectModelPrefersExplicitClaudeConfigDirOverAgentProfileDir(t *testing.T) {
+func TestDetectModelPrefersExplicitClaudeConfigDirOverProfileOption(t *testing.T) {
 	profileDir := t.TempDir()
 	overrideDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(profileDir, "settings.json"), []byte("{\"model\":\"claude-opus-4\"}\n"), 0o644); err != nil {
@@ -154,15 +154,14 @@ func TestDetectModelPrefersExplicitClaudeConfigDirOverAgentProfileDir(t *testing
 	}
 
 	detected, err := NewAdapter().(interface {
-		DetectModel(context.Context, any) (*agentadaptor.DetectedModel, error)
+		DetectModel(context.Context, any, *agentadaptor.ProfileSelection) (*agentadaptor.DetectedModel, error)
 	}).DetectModel(context.Background(), agentadaptor.ClaudeConfig{
 		CommonConfig: agentadaptor.CommonConfig{
-			AgentProfileDir: profileDir,
 			Env: []agentadaptor.EnvBinding{
 				{Name: "CLAUDE_CONFIG_DIR", Value: overrideDir},
 			},
 		},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("detect model: %v", err)
 	}
@@ -171,19 +170,19 @@ func TestDetectModelPrefersExplicitClaudeConfigDirOverAgentProfileDir(t *testing
 	}
 }
 
-func TestGetProfileUsesAgentProfileDirForClaude(t *testing.T) {
+func TestGetProfileUsesDedicatedProfileOptionForClaude(t *testing.T) {
 	profileDir := t.TempDir()
 	profile, err := NewAdapter().(interface {
-		GetProfile(context.Context, any, agentadaptor.AgentIdentity) (agentadaptor.AgentProfile, error)
+		GetProfile(context.Context, any, agentadaptor.AgentIdentity, *agentadaptor.ProfileSelection) (agentadaptor.AgentProfile, error)
 	}).GetProfile(context.Background(), agentadaptor.ClaudeConfig{
 		CommonConfig: agentadaptor.CommonConfig{
-			AgentProfileDir: profileDir,
+			Env: []agentadaptor.EnvBinding{{Name: "CLAUDE_CONFIG_DIR", Value: profileDir}},
 		},
-	}, agentadaptor.AgentIdentity{})
+	}, agentadaptor.AgentIdentity{}, nil)
 	if err != nil {
 		t.Fatalf("get profile: %v", err)
 	}
-	if !profile.Supported || profile.Dir != profileDir || profile.Source != agentadaptor.AgentProfileSourceAgentProfileDir || profile.EnvVar != "CLAUDE_CONFIG_DIR" {
+	if !profile.Supported || profile.Dir != profileDir || profile.Source != agentadaptor.AgentProfileSourceBindingEnv || profile.EnvVar != "CLAUDE_CONFIG_DIR" {
 		t.Fatalf("unexpected profile: %#v", profile)
 	}
 }
@@ -193,8 +192,8 @@ func TestGetProfileUsesProcessEnvForClaudeWhenUnset(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", profileDir)
 
 	profile, err := NewAdapter().(interface {
-		GetProfile(context.Context, any, agentadaptor.AgentIdentity) (agentadaptor.AgentProfile, error)
-	}).GetProfile(context.Background(), agentadaptor.ClaudeConfig{}, agentadaptor.AgentIdentity{})
+		GetProfile(context.Context, any, agentadaptor.AgentIdentity, *agentadaptor.ProfileSelection) (agentadaptor.AgentProfile, error)
+	}).GetProfile(context.Background(), agentadaptor.ClaudeConfig{}, agentadaptor.AgentIdentity{}, nil)
 	if err != nil {
 		t.Fatalf("get profile: %v", err)
 	}
@@ -215,10 +214,6 @@ func TestConfigSchemaIncludesGroupsDefaultsAndOptions(t *testing.T) {
 	commandField := schemaFieldByName(t, schema, "command")
 	if commandField.Name != "command" || commandField.Group != "command" || commandField.Default != "claude" {
 		t.Fatalf("unexpected command field: %#v", commandField)
-	}
-	profileField := schemaFieldByName(t, schema, "agent_profile_dir")
-	if profileField.Group != "profile" {
-		t.Fatalf("unexpected profile field: %#v", profileField)
 	}
 }
 
@@ -354,7 +349,7 @@ func TestDetectModelIgnoresIncompatibleBedrockBindingModel(t *testing.T) {
 	}
 
 	detected, err := NewAdapter().(interface {
-		DetectModel(context.Context, any) (*agentadaptor.DetectedModel, error)
+		DetectModel(context.Context, any, *agentadaptor.ProfileSelection) (*agentadaptor.DetectedModel, error)
 	}).DetectModel(context.Background(), agentadaptor.ClaudeConfig{
 		CommonConfig: agentadaptor.CommonConfig{
 			Env: []agentadaptor.EnvBinding{
@@ -363,7 +358,7 @@ func TestDetectModelIgnoresIncompatibleBedrockBindingModel(t *testing.T) {
 			},
 		},
 		Model: "claude-sonnet-4",
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("detect model: %v", err)
 	}
@@ -399,12 +394,12 @@ func TestGetQuotaReadsClaudeOAuthUsage(t *testing.T) {
 	defer func() { claudeQuotaUsageURL = previous }()
 
 	report, err := NewAdapter().(interface {
-		GetQuota(context.Context, any) (agentadaptor.QuotaReport, error)
+		GetQuota(context.Context, any, *agentadaptor.ProfileSelection) (agentadaptor.QuotaReport, error)
 	}).GetQuota(context.Background(), agentadaptor.ClaudeConfig{
 		CommonConfig: agentadaptor.CommonConfig{
 			Env: []agentadaptor.EnvBinding{{Name: "CLAUDE_CONFIG_DIR", Value: configDir}},
 		},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("get quota: %v", err)
 	}

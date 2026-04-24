@@ -12,8 +12,8 @@ func canonicalSharedCodexHome(bindings []agentadaptor.EnvBinding) string {
 	return filepath.Join(skillruntime.ResolveHome(bindings), ".codex")
 }
 
-func syncCodexMCPProfile(config agentadaptor.CommonConfig, agent agentadaptor.AgentIdentity, codexHome string, payload agentadaptor.MCPPayload) error {
-	profile := codexProfile(config, agent)
+func syncCodexMCPProfile(config agentadaptor.CommonConfig, selection *agentadaptor.ProfileSelection, agent agentadaptor.AgentIdentity, codexHome string, payload agentadaptor.MCPPayload) error {
+	profile := codexProfile(config, selection, agent)
 	kind := mcpruntime.ClassifyProfile(profile, canonicalSharedCodexHome(config.Env))
 	return mcpruntime.SyncCodexProfile(codexHome, kind, payload)
 }

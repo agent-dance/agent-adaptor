@@ -127,3 +127,28 @@ func TestSyncCursorSkillsUsesCursorHomeWhenProvided(t *testing.T) {
 		t.Fatalf("unexpected snapshot: %#v", snapshot.Entries)
 	}
 }
+
+func TestSyncCursorSkillsUsesProfileSelection(t *testing.T) {
+	nativeHome := t.TempDir()
+	dedicated := t.TempDir()
+	source := createCursorSkillDir(t, t.TempDir(), "review")
+	payload := agentadaptor.SkillPayload{
+		Requested:      []string{"team/review"},
+		RuntimeEntries: []agentadaptor.SkillRuntimeEntry{{Key: "team/review", RuntimeName: "review", SourcePath: source}},
+	}
+
+	_, err := NewAdapter().(interface {
+		SyncSkills(context.Context, any, agentadaptor.SkillPayload, []string, *agentadaptor.ProfileSelection) (agentadaptor.SkillSnapshot, error)
+	}).SyncSkills(context.Background(), agentadaptor.CursorConfig{
+		CommonConfig: agentadaptor.CommonConfig{Env: []agentadaptor.EnvBinding{{Name: "HOME", Value: nativeHome}}},
+	}, payload, []string{"team/review"}, &agentadaptor.ProfileSelection{Mode: agentadaptor.ProfileModeDedicated, Dir: dedicated})
+	if err != nil {
+		t.Fatalf("sync skills: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dedicated, "skills", "review")); err != nil {
+		t.Fatalf("expected skill in dedicated profile: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(nativeHome, ".cursor", "skills", "review")); !os.IsNotExist(err) {
+		t.Fatalf("expected native profile untouched, err=%v", err)
+	}
+}

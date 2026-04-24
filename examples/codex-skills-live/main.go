@@ -65,12 +65,12 @@ func main() {
 		agentadaptor.WithDefaultAgent(codex.New(
 			agentadaptor.CodexConfig{
 				CommonConfig: agentadaptor.CommonConfig{
-					CWD:             workspaceDir,
-					AgentProfileDir: "C:\\Users\\buthim\\Documents\\codex-shadow",
-					Command:         commandPath,
+					CWD:     workspaceDir,
+					Command: commandPath,
 				},
 				Model: *model,
 			},
+			agentadaptor.WithDedicatedProfile("C:\\Users\\buthim\\Documents\\codex-shadow"),
 			agentadaptor.WithDefaultIdentity(agentadaptor.AgentIdentity{
 				ID:       "skills-agent",
 				TenantID: "examples",

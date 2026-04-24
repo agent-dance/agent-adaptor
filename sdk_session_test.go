@@ -66,7 +66,7 @@ func (d *fakeDriver) ListModels(_ context.Context, _ any) ([]agentadaptor.ModelI
 	return append([]agentadaptor.ModelInfo(nil), d.supportedModels...), nil
 }
 
-func (d *fakeDriver) ListSkills(_ context.Context, _ any, payload agentadaptor.SkillPayload) (agentadaptor.SkillSnapshot, error) {
+func (d *fakeDriver) ListSkills(_ context.Context, _ any, payload agentadaptor.SkillPayload, _ *agentadaptor.ProfileSelection) (agentadaptor.SkillSnapshot, error) {
 	return agentadaptor.SkillSnapshot{
 		DriverType: d.Descriptor().Type,
 		Supported:  true,
@@ -76,7 +76,7 @@ func (d *fakeDriver) ListSkills(_ context.Context, _ any, payload agentadaptor.S
 	}, nil
 }
 
-func (d *fakeDriver) SyncSkills(_ context.Context, _ any, payload agentadaptor.SkillPayload, desired []string) (agentadaptor.SkillSnapshot, error) {
+func (d *fakeDriver) SyncSkills(_ context.Context, _ any, payload agentadaptor.SkillPayload, desired []string, _ *agentadaptor.ProfileSelection) (agentadaptor.SkillSnapshot, error) {
 	d.lastSkillSyncWant = append([]string(nil), desired...)
 	return agentadaptor.SkillSnapshot{
 		DriverType: d.Descriptor().Type,

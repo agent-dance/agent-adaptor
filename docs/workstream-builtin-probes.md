@@ -41,11 +41,12 @@
   - `codex`: `CODEX_HOME`
   - `claude`: `CLAUDE_CONFIG_DIR`
   - `cursor`: `CURSOR_HOME`
-- 宿主现在可以统一使用 `CommonConfig.AgentProfileDir` 作为高层配置入口：
-  - `codex` 自动映射到 `CODEX_HOME`
-  - `claude` 自动映射到 `CLAUDE_CONFIG_DIR`
-  - `cursor` 自动映射到 `CURSOR_HOME`
-  - 显式写在 `CommonConfig.Env` 里的 adapter-specific env 仍然优先于 `AgentProfileDir`
+- 宿主使用 profile option 作为高层配置入口：
+  - `WithNativeProfile()` 复用原生共享 profile
+  - `WithDedicatedProfile(dir)` 使用宿主专用 profile
+  - `WithCloneProfile(dir, opts)` 从 native profile 派生专用 profile
+  - `WithCloneProfileFrom(src, dst, opts)` 从指定源 profile 派生专用 profile
+  - 显式写在 `CommonConfig.Env` 里的 adapter-specific env 仍然优先于 profile option
 - built-in 本地 CLI 凭证接管规则已经和 `paperclip` 对齐：
   - `codex`: `OPENAI_API_KEY` 优先，否则接管本地 `auth.json`
   - `claude`: `ANTHROPIC_API_KEY` / Claude OAuth / Bedrock env；Bedrock 模式下只接受 Bedrock-native model id
@@ -71,7 +72,6 @@
 - 使用 `Default` 做初始值提示
 - 使用 `Options` 渲染下拉框
 - 使用 `Meta` 读取 adapter-specific 风险或展示提示
-- 当字段名是 `agent_profile_dir` 时，把它当成 built-in adapter 的统一本地 profile 目录入口
 
 ### `CheckEnvironment()`
 
@@ -85,12 +85,12 @@
 
 ### `GetProfile()`
 
-- 返回 built-in adapter 的真实生效 profile 目录，而不是只回显 `CommonConfig.AgentProfileDir`
+- 返回 built-in adapter 的真实生效 profile 目录，而不是只回显原始配置输入
 - `codex` 在未显式设置时会返回 SDK-managed `CODEX_HOME`
 - `claude` / `cursor` 会返回最终生效的 `CLAUDE_CONFIG_DIR` / `CURSOR_HOME`
 - `Source` 会区分：
   - `binding_env`
-  - `agent_profile_dir`
+  - `profile_option`
   - `process_env`
   - `default`
   - `managed`
@@ -98,11 +98,14 @@
 
 这让宿主可以直接缓存、展示或调试“这次到底会用哪个本地 profile”，而不必复刻各 adapter 的优先级判断。
 
-### `AgentProfileDir`
+### Profile Options
 
-宿主现在可以优先提供：
+宿主优先提供：
 
-- `CommonConfig.AgentProfileDir`
+- `WithNativeProfile()`
+- `WithDedicatedProfile(dir)`
+- `WithCloneProfile(dir, opts)`
+- `WithCloneProfileFrom(src, dst, opts)`
 
 而不是强制自己拼：
 
@@ -113,7 +116,7 @@
 固定优先级是：
 
 1. `CommonConfig.Env` 中显式声明的 adapter-specific env
-2. `CommonConfig.AgentProfileDir`
+2. profile option
 3. 进程环境与 adapter 本地默认路径
 4. adapter 自己的 fallback，例如 `codex` 的 managed `CODEX_HOME`
 

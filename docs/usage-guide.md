@@ -125,3 +125,29 @@ MCP override 规则与 `skills` 一样简单：
 - 未显式传 `WithMCP(...)` 时，继承 binding default
 - 显式传 `WithMCP(...)` 时，整组 `Servers` 覆盖 binding default
 - `skills/MCP` 的变化不会自动把当前 session 判为 incompatible；是否继续复用 session 仍由宿主通过 `SessionMode` 决定
+
+
+## 6. 本地 profile 目录
+
+计划中的 built-in adapter profile API 通过 profile option 指定 provider-native profile 目录：
+
+- `WithNativeProfile()`：复用 provider 原生共享 profile。
+- `WithDedicatedProfile(dir)`：使用宿主专用 profile 目录，并在需要时安全初始化基础目录。
+- `WithCloneProfile(dir, opts)`：使用宿主专用 profile 目录，首次初始化时从 native profile 按白名单复制配置。
+
+这些 option 将映射到 provider-native profile env：
+
+- `codex` -> `CODEX_HOME`
+- `claude` -> `CLAUDE_CONFIG_DIR`
+- `cursor` -> `CURSOR_HOME`
+
+`WithDedicatedProfile(dir)` 将只选择并初始化专用目录，不会自动把 `~/.codex`、`~/.claude`、`~/.cursor` 里的历史 settings、认证、cache 或 session 全量复制到新目录。需要派生配置时使用 `WithCloneProfile(dir, opts)`，复制认证必须显式 opt-in。
+
+优先级固定为：
+
+1. `CommonConfig.Env` 中的 provider-specific env
+2. profile option
+3. 进程环境中的 provider-specific env
+4. adapter 默认 profile
+
+当前设计改进计划见 [`workstream-profile-user-experience.md`](./workstream-profile-user-experience.md)。

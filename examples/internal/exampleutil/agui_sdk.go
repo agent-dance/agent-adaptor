@@ -40,10 +40,20 @@ func NewAGUIStreamingSDK(cwd string) (agentadaptor.SDK, string) {
 	switch a := ResolveAGUIAgent(); a {
 	case "claude":
 		return agentadaptor.New(
-			agentadaptor.WithDefaultAgent(claude.New(agentadaptor.ClaudeConfig{
-				CommonConfig: agentadaptor.CommonConfig{CWD: cwd, Command: "trpc-claudecode"},
-				Model:        envOrString("CLAUDE_CODE_MODEL", "claude-sonnet-4-6"),
-			})),
+			agentadaptor.WithDefaultAgent(claude.New(
+				agentadaptor.ClaudeConfig{
+					CommonConfig: agentadaptor.CommonConfig{
+						CWD: cwd, Command: "trpc-claudecode",
+					},
+					Model: envOrString("CLAUDE_CODE_MODEL", "claude-sonnet-4-6"),
+				},
+				agentadaptor.WithCloneProfile("~/.claudeme", agentadaptor.CloneProfileOptions{
+					IncludeSettings: true,
+					IncludeMCP:      true,
+					IncludeSkills:   true,
+					IncludeAuth:     true,
+				}),
+			)),
 			agentadaptor.WithSessionStore(memory.NewSessionStore()),
 		), a
 	case "mock":
@@ -79,14 +89,14 @@ func envOrString(name, fallback string) string {
 // AG-UI agent driver:
 //
 //   - mock:   enable Ask for all three HITL kinds so the UI can demonstrate
-//             the full request / pending / resolve loop.
+//     the full request / pending / resolve loop.
 //   - claude: enable Phase 3 interactive PlanReview + Question.
-//             Permission stays AutoApprove because Phase 3 has no host-side
-//             tool executor; the CLI would hang on Bash/Edit/Write waiting
-//             for our tool_result otherwise. See
-//             docs/workstream-hitl-claude-phase3.md §3.5.
+//     Permission stays AutoApprove because Phase 3 has no host-side
+//     tool executor; the CLI would hang on Bash/Edit/Write waiting
+//     for our tool_result otherwise. See
+//     docs/workstream-hitl-claude-phase3.md §3.5.
 //   - codex:  skip approvals & questions by default so the demo can run
-//             end-to-end without vendor-side HITL (Phase 2 adds that).
+//     end-to-end without vendor-side HITL (Phase 2 adds that).
 func AGUIExampleRunPolicy() agentadaptor.RunOption {
 	switch ResolveAGUIAgent() {
 	case "mock":

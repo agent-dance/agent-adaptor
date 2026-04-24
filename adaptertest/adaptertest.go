@@ -177,7 +177,7 @@ func checkDetectedModel(t *testing.T, subject Subject) {
 	if !ok {
 		return
 	}
-	detected, err := detector.DetectModel(context.Background(), subject.Config)
+	detected, err := detector.DetectModel(context.Background(), subject.Config, nil)
 	if err != nil {
 		t.Fatalf("%s: detect model: %v", subject.Name, err)
 	}
@@ -202,7 +202,7 @@ func checkProfile(t *testing.T, subject Subject, descriptor agentadaptor.DriverD
 	if !ok {
 		return
 	}
-	profile, err := aware.GetProfile(context.Background(), subject.Config, agentadaptor.AgentIdentity{})
+	profile, err := aware.GetProfile(context.Background(), subject.Config, agentadaptor.AgentIdentity{}, nil)
 	if err != nil {
 		t.Fatalf("%s: get profile: %v", subject.Name, err)
 	}
@@ -220,7 +220,7 @@ func checkProfile(t *testing.T, subject Subject, descriptor agentadaptor.DriverD
 	}
 	switch profile.Source {
 	case agentadaptor.AgentProfileSourceBindingEnv,
-		agentadaptor.AgentProfileSourceAgentProfileDir,
+		agentadaptor.AgentProfileSourceProfileOption,
 		agentadaptor.AgentProfileSourceProcessEnv,
 		agentadaptor.AgentProfileSourceDefault,
 		agentadaptor.AgentProfileSourceManaged:
@@ -236,7 +236,7 @@ func checkQuota(t *testing.T, subject Subject, descriptor agentadaptor.DriverDes
 	if !ok {
 		return
 	}
-	report, err := aware.GetQuota(context.Background(), subject.Config)
+	report, err := aware.GetQuota(context.Background(), subject.Config, nil)
 	if err != nil {
 		t.Fatalf("%s: get quota: %v", subject.Name, err)
 	}
@@ -264,7 +264,7 @@ func checkSkills(t *testing.T, subject Subject, descriptor agentadaptor.DriverDe
 	if payload.Mode == "" {
 		payload.Mode = descriptor.Skills.Mode
 	}
-	listed, err := driver.ListSkills(context.Background(), subject.Config, payload)
+	listed, err := driver.ListSkills(context.Background(), subject.Config, payload, nil)
 	if err != nil {
 		t.Fatalf("%s: list skills: %v", subject.Name, err)
 	}
@@ -278,7 +278,7 @@ func checkSkills(t *testing.T, subject Subject, descriptor agentadaptor.DriverDe
 	if len(desired) == 0 {
 		desired = append([]string(nil), payload.Requested...)
 	}
-	synced, err := driver.SyncSkills(context.Background(), subject.Config, payload, desired)
+	synced, err := driver.SyncSkills(context.Background(), subject.Config, payload, desired, nil)
 	if err != nil {
 		t.Fatalf("%s: sync skills: %v", subject.Name, err)
 	}

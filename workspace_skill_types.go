@@ -126,7 +126,7 @@ type AgentProfileSource string
 
 const (
 	AgentProfileSourceBindingEnv      AgentProfileSource = "binding_env"
-	AgentProfileSourceAgentProfileDir AgentProfileSource = "agent_profile_dir"
+	AgentProfileSourceProfileOption   AgentProfileSource = "profile_option"
 	AgentProfileSourceProcessEnv      AgentProfileSource = "process_env"
 	AgentProfileSourceDefault         AgentProfileSource = "default"
 	AgentProfileSourceManaged         AgentProfileSource = "managed"
@@ -138,7 +138,7 @@ const (
 //
 // Dir is the effective directory the built-in adapter will inspect or use for
 // local profile semantics. Source tells whether that directory came from an
-// explicit CommonConfig.Env override, CommonConfig.AgentProfileDir, process
+// explicit CommonConfig.Env override, profile option, process
 // environment fallback, an adapter-native default path, or an adapter-managed
 // home. Managed is true only when the adapter actively synthesizes an isolated
 // profile directory, such as Codex's managed CODEX_HOME.
