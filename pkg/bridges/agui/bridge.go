@@ -187,6 +187,45 @@ func (t *Translator) Translate(p agentadaptor.StreamPayload) []aguievents.Event 
 	return translated
 }
 
+// CloseRun emits the terminal event for the run as a single operation based
+// on waitErr. It is intended to replace the common host idiom of calling
+// Translate(StreamRunFinished) and then conditionally Translate(StreamRunError)
+// — which silently drops the error because the first call latches
+// runFinish=true (see Translate).
+//
+// Semantics:
+//   - waitErr == nil emits RUN_FINISHED.
+//   - errors.Is(waitErr, context.Canceled) emits RUN_ERROR with
+//     FailureCancelled.
+//   - any other error emits RUN_ERROR with FailureAgentError.
+//
+// CloseRun is idempotent: subsequent calls (and any subsequent
+// Translate(StreamRunFinished|StreamRunError)) return nil, matching the
+// translator's terminal-latch invariant.
+//
+// Preferred pattern:
+//
+//	err := handle.Wait()
+//	if evts := translator.CloseRun(err); len(evts) > 0 {
+//	    writer.Write(evts...)
+//	}
+func (t *Translator) CloseRun(waitErr error) []aguievents.Event {
+	if waitErr == nil {
+		return t.Translate(agentadaptor.StreamPayload{Kind: agentadaptor.StreamRunFinished})
+	}
+	code := agentadaptor.FailureAgentError
+	if errors.Is(waitErr, context.Canceled) {
+		code = agentadaptor.FailureCancelled
+	}
+	return t.Translate(agentadaptor.StreamPayload{
+		Kind: agentadaptor.StreamRunError,
+		Error: &agentadaptor.RunFailure{
+			Code:    code,
+			Message: waitErr.Error(),
+		},
+	})
+}
+
 // translateNonTerminalLocked handles every payload kind except the run
 // lifecycle markers (started / finished / error). The caller holds t.mu.
 func (t *Translator) translateNonTerminalLocked(p agentadaptor.StreamPayload) []aguievents.Event {
