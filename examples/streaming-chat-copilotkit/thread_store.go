@@ -1,34 +1,94 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"os"
 	"sync"
 
 	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/pkg/hosttools/sessionrecorder"
 )
 
-// threadStore is the example's host-owned recovery state. It persists the raw
-// StreamPayload history and unresolved decisions per browser thread, so a page
-// refresh can reconstruct the session without replay support from the SDK.
+// threadStore is the example's host-owned recovery state. It persists the
+// raw StreamPayload history and unresolved decisions per browser thread,
+// so a page refresh can reconstruct the session without replay support
+// from the SDK.
+//
+// History storage is delegated to sessionrecorder.Recorder, which assigns
+// a session-scoped monotonic HostSeq to every payload. That cursor is
+// what /session/events' `last_seq` and `after` parameters refer to —
+// StreamPayload.Seq is per-run and restarts at zero on every new run, so
+// it cannot carry cross-run recovery on its own. See
+// docs/workstream-session-recorder.md for the full rationale.
+//
+// pending decisions and live run handles are kept in-process only; they
+// evaporate when the RunHandle goes away, which is the intended lifetime.
 type threadStore struct {
-	mu      sync.RWMutex
-	threads map[string]*threadState
+	recorder sessionrecorder.Recorder
+
+	mu      sync.Mutex
+	threads map[string]*threadRuntime
 }
 
-type threadState struct {
-	history []agentadaptor.StreamPayload // append-only; last 500 entries kept
+// threadRuntime carries the per-session state that is meaningful only
+// while a run handle is alive. It is not persisted.
+type threadRuntime struct {
 	pending map[string]agentadaptor.DecisionRequest
 	runs    map[agentadaptor.RunHandle]struct{}
 }
 
-const historyCap = 500
-
+// newThreadStore returns a threadStore backed by either a JSONL
+// directory (when THREAD_STORE_DIR is set) or an in-memory backend
+// (when it isn't — useful for demos and tests). The JSONL backend is
+// the one to trust in "does refresh actually recover?" smoke tests.
 func newThreadStore() *threadStore {
-	return &threadStore{threads: map[string]*threadState{}}
+	return &threadStore{
+		recorder: newRecorder(),
+		threads:  map[string]*threadRuntime{},
+	}
 }
+
+func newRecorder() sessionrecorder.Recorder {
+	if dir := os.Getenv("THREAD_STORE_DIR"); dir != "" {
+		be, err := sessionrecorder.NewJSONLBackend(dir)
+		if err != nil {
+			slog.Error("thread_store: jsonl backend init, falling back to memory", "err", err, "dir", dir)
+			return sessionrecorder.New(sessionrecorder.NewMemoryBackend())
+		}
+		slog.Info("thread_store: jsonl backend", "dir", dir)
+		return sessionrecorder.New(be)
+	}
+	return sessionrecorder.New(sessionrecorder.NewMemoryBackend())
+}
+
+// ---- history (delegated to sessionrecorder) ----
+
+// appendHistory persists one payload under threadID. It is called on the
+// hot path of StreamPayload forwarding, so it intentionally does not
+// block the caller on backend errors: hosts that need fail-hard
+// persistence should replace this with a wrapper that surfaces errors.
+func (s *threadStore) appendHistory(threadID string, p agentadaptor.StreamPayload) {
+	if _, err := s.recorder.Record(context.Background(), threadID, p); err != nil {
+		slog.Error("thread_store: record payload", "err", err, "thread_id", threadID)
+	}
+}
+
+// historyAfter returns the records with HostSeq strictly greater than
+// afterHostSeq. afterHostSeq == 0 means "give me everything you have".
+func (s *threadStore) historyAfter(threadID string, afterHostSeq uint64) []sessionrecorder.Record {
+	recs, err := s.recorder.Since(context.Background(), threadID, afterHostSeq)
+	if err != nil {
+		slog.Error("thread_store: read history", "err", err, "thread_id", threadID)
+		return nil
+	}
+	return recs
+}
+
+// ---- pending decisions and run handles (in-memory only) ----
 
 func (s *threadStore) registerRun(threadID string, h agentadaptor.RunHandle) {
 	s.mu.Lock()
@@ -42,8 +102,8 @@ func (s *threadStore) unregisterRun(threadID string, h agentadaptor.RunHandle) {
 
 	st := s.thread(threadID)
 	delete(st.runs, h)
-	// Best-effort: once the handle is gone, any unresolved request owned by
-	// that run can no longer be answered.
+	// Best-effort: once the handle is gone, any unresolved request owned
+	// by that run can no longer be answered.
 	for id, req := range st.pending {
 		if req.RunID == h.RunID() {
 			delete(st.pending, id)
@@ -52,39 +112,10 @@ func (s *threadStore) unregisterRun(threadID string, h agentadaptor.RunHandle) {
 }
 
 func (s *threadStore) hasActiveRun(threadID string) bool {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	st, ok := s.threads[threadID]
-	return ok && len(st.runs) > 0
-}
-
-func (s *threadStore) appendHistory(threadID string, payload agentadaptor.StreamPayload) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
-	st := s.thread(threadID)
-	st.history = append(st.history, payload)
-	if len(st.history) > historyCap {
-		st.history = st.history[len(st.history)-historyCap:]
-	}
-}
-
-func (s *threadStore) historyAfter(threadID string, afterSeq uint64) []agentadaptor.StreamPayload {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
 	st, ok := s.threads[threadID]
-	if !ok {
-		return nil
-	}
-	out := make([]agentadaptor.StreamPayload, 0, len(st.history))
-	for _, ev := range st.history {
-		if ev.Seq <= afterSeq {
-			continue
-		}
-		out = append(out, ev)
-	}
-	return out
+	return ok && len(st.runs) > 0
 }
 
 func (s *threadStore) addPending(threadID string, req agentadaptor.DecisionRequest) {
@@ -102,8 +133,8 @@ func (s *threadStore) removePending(threadID, requestID string) {
 }
 
 func (s *threadStore) pendingRequests(threadID string) []agentadaptor.DecisionRequest {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	st, ok := s.threads[threadID]
 	if !ok {
@@ -148,10 +179,10 @@ func (s *threadStore) resolveDecision(threadID, requestID string, resp agentadap
 	return agentadaptor.ErrDecisionRequestExpired
 }
 
-func (s *threadStore) thread(threadID string) *threadState {
+func (s *threadStore) thread(threadID string) *threadRuntime {
 	st := s.threads[threadID]
 	if st == nil {
-		st = &threadState{
+		st = &threadRuntime{
 			pending: map[string]agentadaptor.DecisionRequest{},
 			runs:    map[agentadaptor.RunHandle]struct{}{},
 		}
@@ -159,6 +190,8 @@ func (s *threadStore) thread(threadID string) *threadState {
 	}
 	return st
 }
+
+// ---- misc helpers used by server.go ----
 
 func corsMiddleware(allowOrigin string, next http.Handler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -185,9 +218,12 @@ func writeJSON(w http.ResponseWriter, code int, body any) {
 	_ = json.NewEncoder(w).Encode(body)
 }
 
-func lastSeq(events []agentadaptor.StreamPayload) uint64 {
-	if n := len(events); n > 0 {
-		return events[n-1].Seq
+// lastHostSeq returns the HostSeq of the last record, or 0 if records is
+// empty. Callers send it back as the `last_seq` field so the browser can
+// pass it as `after` on the next pull for incremental recovery.
+func lastHostSeq(records []sessionrecorder.Record) uint64 {
+	if n := len(records); n > 0 {
+		return records[n-1].HostSeq
 	}
 	return 0
 }

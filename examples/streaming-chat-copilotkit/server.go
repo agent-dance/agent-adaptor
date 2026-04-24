@@ -79,13 +79,18 @@ func (s *appServer) handleSessionEvents(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "thread_id required", http.StatusBadRequest)
 		return
 	}
-	afterSeq, _ := strconv.ParseUint(r.URL.Query().Get("after"), 10, 64)
-	events := s.store.historyAfter(threadID, afterSeq)
+	// `after` is a host-scoped cursor (sessionrecorder.HostSeq), NOT
+	// StreamPayload.Seq. HostSeq is monotonic across runs that share a
+	// thread_id; StreamPayload.Seq restarts at zero on every new run and
+	// would corrupt incremental recovery. See
+	// docs/workstream-session-recorder.md.
+	afterHostSeq, _ := strconv.ParseUint(r.URL.Query().Get("after"), 10, 64)
+	records := s.store.historyAfter(threadID, afterHostSeq)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"thread_id":  threadID,
-		"after":      afterSeq,
-		"events":     events,
-		"last_seq":   lastSeq(events),
+		"after":      afterHostSeq,
+		"events":     records,
+		"last_seq":   lastHostSeq(records),
 		"run_active": s.store.hasActiveRun(threadID),
 	})
 }

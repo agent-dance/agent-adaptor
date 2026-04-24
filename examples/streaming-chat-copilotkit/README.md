@@ -4,7 +4,7 @@
 
 1. **Streaming**：文本、thinking、tool_call 全部 token 级流式
 2. **HITL v2**（[`docs/workstream-hitl-v2.md`](../../docs/workstream-hitl-v2.md)）：`dec.plan_review.*` / `dec.question.*` / `dec.permission.*` 在 UI 里渲染成可点击卡片，宿主通过 `POST /decision/resolve` 回填
-3. **Recovery**（§4.3.1）：每个浏览器有稳定 `thread_id`，右侧面板实时拉取 `/session/events` + `/decision/pending`，刷新页面后历史 & 未决决策都能恢复
+3. **Recovery**（§4.3.1 + [`pkg/hosttools/sessionrecorder`](../../pkg/hosttools/sessionrecorder/)）：每个浏览器有稳定 `thread_id`，右侧面板实时拉取 `/session/events` + `/decision/pending`，刷新页面后历史 & 未决决策都能恢复。历史持久化走 [`docs/workstream-session-recorder.md`](../../docs/workstream-session-recorder.md)，可选 JSONL 目录 `THREAD_STORE_DIR=/some/dir`
 
 后端支持三种 driver：
 
@@ -71,10 +71,42 @@ Browser
 
 右侧 **Session 面板** 实时显示：
 
-- 当前线程的全部 `StreamPayload` 历史（按 `Seq` 升序）
+- 当前线程的全部 `StreamPayload` 历史（按 `HostSeq` 升序——跨 run 单调的 host-scoped cursor，避免朴素 `StreamPayload.Seq`-based 恢复在第二次 run 时错乱）
 - 未解决的 `DecisionRequest`（刷新页面后仍能看到）
 
 刷一下页面 → localStorage 里的 `thread_id` 仍在 → 右侧面板从 `/session/events` 拉到完整历史，从 `/decision/pending` 拉到等你处理的决策，直接点卡片就能继续。
+
+### Session 面板的刷新策略
+
+`SessionPanel` 不做定时全量轮询，而是事件驱动 + 增量 cursor：
+
+- **首次 mount**：`GET /session/events?after=0` 全量
+- **浏览器生命周期事件**：`visibilitychange`（切回前台）、`focus`（窗口聚焦）、`online`（网络恢复）时触发增量拉取 `after=lastHostSeq`
+- **30s backstop**：仅在前台跑的兜底 interval，覆盖"用户盯着 panel 看 + 长 run 缓慢产生事件"的边缘场景
+- **手动 ↻**：右上角按钮强制 full reload
+
+`host_seq` 是单调递增的 host-scoped cursor（来自 `sessionrecorder.Record`），React key 和去重都用它；`StreamPayload.Seq` 仍然在 payload 里但只作为调试 hover tooltip 显示，**不参与恢复逻辑**。详见 [`docs/workstream-session-recorder.md`](../../docs/workstream-session-recorder.md) §7。
+
+### 主聊天流的刷新（已知 gap / follow-up）
+
+上面这套机制保证 **SessionPanel** 刷新后能恢复，但**左侧 CopilotChat 消息流本体**刷新后目前还是空的——CopilotKit 内部 thread state 不消费 `/session/events`。要让主聊天流也丝滑 replay，需要把 history records 聚合回 `<CopilotChat initialMessages={...}>`，算法大意：
+
+- 按 `message_id` 聚合 `text.content.delta` 到完整 assistant message
+- 按 `tool_call_id` 聚合 `tool_call.start/args/result` 到 tool_call 对象
+- 未 resolve 的 HITL 决策保留成 pending `tool_call`，让用户能继续点卡片
+
+这是一个单独的 workstream，本 example 暂不实现，见 `docs/workstream-session-recorder.md` §7「L3」。在此之前，用户要恢复决策可以用右侧 panel 里的等价卡片（功能完整、只是位置不同）。
+
+### 为什么前端每次还在发全量 `messages[]`？
+
+抓一下 `POST /agent` 的请求体会发现 CopilotKit 把**从第一条消息到最新这一轮的所有 messages** 都打包上传了。这是 **AG-UI 协议的客户端权威模型**（详见 [AG-UI RunAgentInput](https://docs.ag-ui.com/sdk/js/core/types#runagentinput)），不是 CopilotKit 的实现缺陷。
+
+但 agent-adaptor 的 AG-UI bridge（[`pkg/bridges/agui/input.go`](../../pkg/bridges/agui/input.go)）**只消费最后一条 role=user 的文本**（`LastUserText()`）。会话上下文连续性实际上由两条独立机制提供，都**不依赖前端送来的 messages 数组**：
+
+1. SDK 的 `WithSessionKey("agui", threadID)` —— 把多次 run 关联到同一 session 记录
+2. driver 自身的 resume 能力 —— Claude driver 带 `--resume <ResumeID>`，codex driver 同理
+
+因此"前端带全量历史"**是协议合规性冗余，不是功能必须**。长会话若有实际带宽压力，可以在 CopilotRuntime 路由（`web/app/api/copilotkit/route.ts`）裁剪 messages 到只留最后一条 user——完整理由、限制条件和参考实现见 [`docs/workstream-session-recorder.md`](../../docs/workstream-session-recorder.md) §7 L0（「前置合同」），本 example 刻意**不**默认启用该裁剪。
 
 ## 后端 HTTP 端点
 
@@ -122,6 +154,7 @@ Backend：
 | `CODEX_MODEL` | `gpt-5.4` | codex 模式模型 |
 | `CLAUDE_CODE_MODEL` | `claude-sonnet-4-6` | claude 模式模型 |
 | `CORS_ORIGIN` | `*` | 允许的前端 Origin |
+| `THREAD_STORE_DIR` | *unset* | 设为某个目录可启用 JSONL 持久化（[`pkg/hosttools/sessionrecorder`](../../pkg/hosttools/sessionrecorder/) 的 JSONLBackend）；未设则退回内存 |
 
 前端：
 
@@ -134,14 +167,15 @@ Backend：
 
 这份 example 为了易读简化了很多实现，上线前至少要关注：
 
-- **持久化**：当前 `threadStore` 是内存 map，重启即丢。生产用 Redis / Postgres 替换 `threadStore`，`(run_id, seq)` 作主键做去重
+- **持久化**：默认 `threadStore` 走 [`sessionrecorder`](../../pkg/hosttools/sessionrecorder/)，未设 `THREAD_STORE_DIR` 时是内存 backend，重启即丢。上生产至少设置 `THREAD_STORE_DIR=/some/volume` 让 JSONLBackend 挂到持久化卷；更大规模部署请换成自己的 `sessionrecorder.Backend` 实现（Redis/Postgres），主键用 `(session_key, host_seq)` 而不是 `(run_id, seq)`——后者在浏览器 `thread_id` 跨多次 run 时会错乱，参见 [`docs/workstream-session-recorder.md`](../../docs/workstream-session-recorder.md) §1
 - **sticky routing**：handle 不能跨进程。多 pod 部署时 `/decision/resolve` 必须 sticky-by-thread_id 到拥有该 handle 的 pod
 - **认证**：所有端点当前对 `CORS_ORIGIN` 全开放；生产加 bearer / cookie
 - **decision audit**：Session 面板只做 UX；审计链路应把所有 `StreamHITLRequested` / `StreamHITLResolved` 双写到审计存储（或单独起一个 `StreamEvents()` 消费者）
 
 ## 相关文档
 
-- [`docs/workstream-hitl-v2.md`](../../docs/workstream-hitl-v2.md) — HITL v2 设计全集
+- [`docs/workstream-hitl-v2.md`](../../docs/workstream-hitl-v2.md) — HITL v2 设计全集（§4.3.1 宿主自持久化协议）
+- [`docs/workstream-session-recorder.md`](../../docs/workstream-session-recorder.md) — `pkg/hosttools/sessionrecorder` 参考实现（跨 run 恢复）
 - [`docs/run-policy.md`](../../docs/run-policy.md) — RunPolicy / HumanDecisionPolicy 合同
 - [`docs/streaming-adapter-contract.md`](../../docs/streaming-adapter-contract.md) — adapter 实施契约
 - CopilotKit: https://docs.copilotkit.ai

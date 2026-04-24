@@ -8,26 +8,48 @@ import (
 	agentadaptor "github.com/agent-dance/agent-adaptor"
 )
 
-func TestThreadStoreHistoryAfterUsesExclusiveCursorAndCap(t *testing.T) {
+// TestThreadStoreHistoryAfterUsesHostSeqCursor checks the fix for the
+// cross-run recovery bug: StreamPayload.Seq is per-run monotonic and
+// restarts at zero on every new run, so a naive `ev.Seq > afterSeq`
+// filter would either drop or replay events when a thread spans two
+// runs. The store MUST assign a host-scoped cursor that stays monotonic
+// across that boundary.
+func TestThreadStoreHistoryAfterUsesHostSeqCursor(t *testing.T) {
 	store := newThreadStore()
-	for i := 1; i <= historyCap+5; i++ {
-		store.appendHistory("thread-1", agentadaptor.StreamPayload{Seq: uint64(i)})
+
+	// Run A: the adapter hands us Seq 1..5.
+	for i := 1; i <= 5; i++ {
+		store.appendHistory("thread-1", agentadaptor.StreamPayload{RunID: "runA", Seq: uint64(i)})
+	}
+	// Run B for the same thread: Seq resets to 0..3.
+	for i := 0; i <= 3; i++ {
+		store.appendHistory("thread-1", agentadaptor.StreamPayload{RunID: "runB", Seq: uint64(i)})
 	}
 
 	all := store.historyAfter("thread-1", 0)
-	if got := len(all); got != historyCap {
-		t.Fatalf("history len = %d, want %d", got, historyCap)
+	if got := len(all); got != 9 {
+		t.Fatalf("history len = %d, want 9", got)
 	}
-	if all[0].Seq != 6 || all[len(all)-1].Seq != 505 {
-		t.Fatalf("history window = [%d..%d], want [6..505]", all[0].Seq, all[len(all)-1].Seq)
+	// HostSeq must be 1..9 regardless of the adapter's per-run Seq.
+	for i, r := range all {
+		if r.HostSeq != uint64(i+1) {
+			t.Fatalf("record[%d].HostSeq = %d, want %d", i, r.HostSeq, i+1)
+		}
 	}
 
-	incremental := store.historyAfter("thread-1", 500)
-	if got := len(incremental); got != 5 {
-		t.Fatalf("incremental len = %d, want 5", got)
+	// Cursor at HostSeq=5 after run A — run B's 4 records come back,
+	// with no leakage of run A events that happen to have Payload.Seq > 5.
+	incremental := store.historyAfter("thread-1", 5)
+	if got := len(incremental); got != 4 {
+		t.Fatalf("incremental len = %d, want 4 (run B only)", got)
 	}
-	if incremental[0].Seq != 501 || incremental[len(incremental)-1].Seq != 505 {
-		t.Fatalf("incremental window = [%d..%d], want [501..505]", incremental[0].Seq, incremental[len(incremental)-1].Seq)
+	for i, r := range incremental {
+		if r.Payload.RunID != "runB" {
+			t.Fatalf("incremental[%d].RunID = %q, want runB", i, r.Payload.RunID)
+		}
+		if r.HostSeq != uint64(6+i) {
+			t.Fatalf("incremental[%d].HostSeq = %d, want %d", i, r.HostSeq, 6+i)
+		}
 	}
 }
 

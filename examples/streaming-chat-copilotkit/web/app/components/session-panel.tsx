@@ -1,53 +1,133 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   fetchPendingDecisions,
   fetchSessionEvents,
   type PendingDecision,
+  type SessionRecord,
   type StreamEvent,
 } from "../lib/backend";
 import { renderDecisionCard } from "./cards";
 
 // SessionPanel renders the host-side persistence view:
-//   1. Pending decisions (click-to-resolve cards, backed by /decision/resolve)
-//   2. History replay (flat list of past StreamPayloads for this thread_id)
 //
-// Recovery protocol (docs/workstream-hitl-v2.md §4.3.1):
-//   - On mount, fetch /session/events?after=0 + /decision/pending
-//   - Poll every 3s for new entries while the run is active so the panel
-//     reflects the live backend state even when CopilotChat is busy
+//   1. Pending decisions  (click-to-resolve cards, backed by /decision/resolve)
+//   2. History replay     (flat list of past StreamPayloads for this thread_id)
+//
+// # Refresh strategy
+//
+// The panel pulls with an *incremental cursor* (sessionrecorder.HostSeq) and
+// reacts to user-visible lifecycle events rather than polling on a fixed
+// interval:
+//
+//   - On mount: full snapshot (after=0) + pending list.
+//   - On `visibilitychange` when the tab returns to foreground: incremental
+//     `after=lastHostSeq` pull plus a fresh pending list.
+//   - On `window.focus` and `online`: same incremental pull — catches the
+//     "laptop resumed from sleep / wifi reconnected" cases.
+//   - A 30s keep-alive interval runs only while the tab is visible, to
+//     cover the edge case of a long-running run emitting events while the
+//     user is reading this very panel. It's a backstop, not the primary
+//     refresh path.
+//
+// # Why not SSE here?
+//
+// The main chat stream (CopilotChat / CopilotRuntime) already consumes live
+// AG-UI events over SSE. This panel is the host-side audit/recovery view —
+// not the live chat surface — so a second long-lived connection would be
+// overkill for demo purposes. See docs/workstream-session-recorder.md §
+// "前端接入建议" for the tradeoff.
 export function SessionPanel({ threadId }: { threadId: string }) {
-  const [events, setEvents] = useState<StreamEvent[]>([]);
+  const [records, setRecords] = useState<SessionRecord[]>([]);
   const [pending, setPending] = useState<PendingDecision[]>([]);
-  const [lastSeq, setLastSeq] = useState<number>(0);
+  const [lastHostSeq, setLastHostSeq] = useState<number>(0);
   const [runActive, setRunActive] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [hidden, setHidden] = useState(false);
+  const [syncing, setSyncing] = useState(false);
 
-  const refresh = useCallback(async () => {
-    try {
-      const [snapshot, pendingList] = await Promise.all([
-        fetchSessionEvents(threadId, 0),
-        fetchPendingDecisions(threadId),
-      ]);
-      setEvents(snapshot.events ?? []);
-      setLastSeq(snapshot.last_seq ?? 0);
-      setRunActive(!!snapshot.run_active);
-      setPending(pendingList ?? []);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  }, [threadId]);
-
+  // Keep the latest cursor in a ref so refresh() (memoised on threadId) can
+  // read it without invalidating its identity on every pull. This avoids
+  // tearing down and re-registering the window listeners below every frame.
+  const lastHostSeqRef = useRef(0);
   useEffect(() => {
-    refresh();
+    lastHostSeqRef.current = lastHostSeq;
+  }, [lastHostSeq]);
+
+  const refresh = useCallback(
+    async (mode: "full" | "incremental" = "incremental") => {
+      setSyncing(true);
+      try {
+        const after = mode === "full" ? 0 : lastHostSeqRef.current;
+        const [snapshot, pendingList] = await Promise.all([
+          fetchSessionEvents(threadId, after),
+          fetchPendingDecisions(threadId),
+        ]);
+        setRunActive(!!snapshot.run_active);
+        setPending(pendingList ?? []);
+        const incoming = snapshot.events ?? [];
+        if (mode === "full") {
+          setRecords(incoming);
+        } else if (incoming.length > 0) {
+          // Append delta — `after=lastHostSeq` already filters by cursor,
+          // but guard against out-of-order responses just in case.
+          setRecords((prev) => {
+            const seen = new Set(prev.map((r) => r.host_seq));
+            const merged = prev.slice();
+            for (const rec of incoming) {
+              if (!seen.has(rec.host_seq)) merged.push(rec);
+            }
+            merged.sort((a, b) => a.host_seq - b.host_seq);
+            return merged;
+          });
+        }
+        if (snapshot.last_seq && snapshot.last_seq > lastHostSeqRef.current) {
+          setLastHostSeq(snapshot.last_seq);
+        }
+        setError(null);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setSyncing(false);
+      }
+    },
+    [threadId],
+  );
+
+  // Initial full fetch; also re-fetches when the user switches thread.
+  useEffect(() => {
+    setRecords([]);
+    setLastHostSeq(0);
+    lastHostSeqRef.current = 0;
+    void refresh("full");
   }, [refresh]);
 
+  // Event-driven incremental refresh: visibility, focus, online.
   useEffect(() => {
-    const interval = setInterval(refresh, 3000);
-    return () => clearInterval(interval);
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") void refresh("incremental");
+    };
+    const onFocus = () => void refresh("incremental");
+    const onOnline = () => void refresh("incremental");
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("focus", onFocus);
+    window.addEventListener("online", onOnline);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("online", onOnline);
+    };
+  }, [refresh]);
+
+  // Backstop keep-alive: 30s incremental pull while the tab is visible.
+  // Cheap now that we only send delta (`after=lastHostSeq`).
+  useEffect(() => {
+    const tick = () => {
+      if (document.visibilityState === "visible") void refresh("incremental");
+    };
+    const id = setInterval(tick, 30_000);
+    return () => clearInterval(id);
   }, [refresh]);
 
   const pendingCards = pending.map((p) => {
@@ -64,10 +144,12 @@ export function SessionPanel({ threadId }: { threadId: string }) {
         tool_call_id: p.ToolCallID,
         retry_attempt: p.RetryAttempt,
       },
-      onResolved: () => refresh(),
+      onResolved: () => void refresh("incremental"),
     });
     return <div key={p.RequestID}>{card}</div>;
   });
+
+  const historyCount = records.length;
 
   return (
     <aside
@@ -124,17 +206,19 @@ export function SessionPanel({ threadId }: { threadId: string }) {
           </span>
           <button
             type="button"
-            onClick={refresh}
+            onClick={() => void refresh("full")}
+            disabled={syncing}
+            title="Force full reload"
             style={{
               padding: "0.2rem 0.5rem",
               border: "1px solid #d1d5db",
-              background: "#f9fafb",
+              background: syncing ? "#f3f4f6" : "#f9fafb",
               borderRadius: 6,
-              cursor: "pointer",
+              cursor: syncing ? "default" : "pointer",
               fontSize: "0.7rem",
             }}
           >
-            ↻
+            {syncing ? "…" : "↻"}
           </button>
         </div>
       </header>
@@ -191,7 +275,7 @@ export function SessionPanel({ threadId }: { threadId: string }) {
               letterSpacing: "0.04em",
             }}
           >
-            History ({events.length}, last seq = {lastSeq})
+            History ({historyCount}, host_seq ≤ {lastHostSeq})
           </h3>
           <button
             type="button"
@@ -208,49 +292,66 @@ export function SessionPanel({ threadId }: { threadId: string }) {
             {hidden ? "show" : "hide"}
           </button>
         </header>
-        {!hidden && (
-          <ul
-            style={{
-              listStyle: "none",
-              padding: 0,
-              margin: 0,
-              display: "grid",
-              gap: "0.35rem",
-              fontSize: "0.78rem",
-              color: "#374151",
-            }}
-          >
-            {events.map((ev) => (
-              <li
-                key={`${ev.RunID}-${ev.Seq}`}
-                style={{
-                  padding: "0.35rem 0.5rem",
-                  background: "#f9fafb",
-                  borderRadius: 6,
-                  display: "grid",
-                  gap: "0.15rem",
-                }}
-              >
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    gap: "0.5rem",
-                  }}
-                >
-                  <code style={{ color: "#1e3a8a" }}>{ev.Kind}</code>
-                  <span style={{ color: "#9ca3af" }}>#{ev.Seq}</span>
-                </div>
-                {renderEventSummary(ev)}
-              </li>
-            ))}
-            {events.length === 0 && (
-              <li style={{ color: "#9ca3af" }}>No events yet.</li>
-            )}
-          </ul>
-        )}
+        {!hidden && <HistoryList records={records} />}
       </section>
     </aside>
+  );
+}
+
+// ---- History rendering (memoised) ----
+
+function HistoryList({ records }: { records: SessionRecord[] }) {
+  const items = useMemo(
+    () =>
+      records.map((r) => (
+        <li
+          key={r.host_seq}
+          style={{
+            padding: "0.35rem 0.5rem",
+            background: "#f9fafb",
+            borderRadius: 6,
+            display: "grid",
+            gap: "0.15rem",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              gap: "0.5rem",
+            }}
+          >
+            <code style={{ color: "#1e3a8a" }}>{r.payload.Kind}</code>
+            <span
+              style={{ color: "#9ca3af" }}
+              title={`run ${r.payload.RunID} / seq ${r.payload.Seq}`}
+            >
+              #{r.host_seq}
+            </span>
+          </div>
+          {renderEventSummary(r.payload)}
+        </li>
+      )),
+    [records],
+  );
+
+  return (
+    <ul
+      style={{
+        listStyle: "none",
+        padding: 0,
+        margin: 0,
+        display: "grid",
+        gap: "0.35rem",
+        fontSize: "0.78rem",
+        color: "#374151",
+      }}
+    >
+      {items}
+      {records.length === 0 && (
+        <li style={{ color: "#9ca3af" }}>No events yet.</li>
+      )}
+    </ul>
   );
 }
 

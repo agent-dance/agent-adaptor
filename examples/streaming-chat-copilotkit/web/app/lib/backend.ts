@@ -5,7 +5,7 @@
 
 const DEFAULT_BACKEND =
   process.env.NEXT_PUBLIC_AGENT_BACKEND_BASE ??
-  "http://localhost:8080";
+  "http://30.22.151.25:8080";
 
 function base(): string {
   // Allow runtime override via window attribute for simpler Cypress / dev setups.
@@ -82,21 +82,35 @@ export type StreamEvent = {
   Timestamp?: string;
 };
 
+// SessionRecord is one entry the backend's sessionrecorder (see
+// docs/workstream-session-recorder.md) handed back. host_seq is the
+// host-scoped monotonic cursor: unlike StreamEvent.Seq it does NOT
+// reset across runs sharing the same thread_id, so it's the field to
+// carry in `after=` on the next /session/events call.
+export type SessionRecord = {
+  host_seq: number;
+  recorded_at: string;
+  payload: StreamEvent;
+};
+
 export type SessionSnapshot = {
   thread_id: string;
   after: number;
-  events: StreamEvent[];
+  events: SessionRecord[];
   last_seq: number;
   run_active: boolean;
 };
 
 // ---------- API ----------
 
+// fetchSessionEvents returns the records with host_seq strictly greater
+// than afterHostSeq. Pass 0 for a full snapshot (first mount); afterwards
+// pass the last host_seq you've seen to pull only the delta.
 export async function fetchSessionEvents(
   threadId: string,
-  afterSeq = 0,
+  afterHostSeq = 0,
 ): Promise<SessionSnapshot> {
-  const url = `${base()}/session/events?thread_id=${encodeURIComponent(threadId)}&after=${afterSeq}`;
+  const url = `${base()}/session/events?thread_id=${encodeURIComponent(threadId)}&after=${afterHostSeq}`;
   const res = await fetch(url, { cache: "no-store" });
   if (!res.ok) {
     throw new Error(`fetchSessionEvents ${res.status}: ${await res.text()}`);
