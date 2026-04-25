@@ -57,11 +57,24 @@ func WithWorkspaceManager(manager WorkspaceManager) Option {
 	}
 }
 
-// WithSkillProvider installs a dynamic skill catalogue source. The provider
-// is consulted on every Run for the authoritative list of skills visible to
-// the current tenant, including any entries the provider marks Required=true.
-// Hosts without a dynamic catalogue can pass a SkillSet via WithSkillSet
-// instead.
+// WithSkillProvider installs the host-side SkillProvider that backs
+// WithSkills / WithDefaultSkills. The provider's GetSkills is invoked
+// on every Run to translate the user-referenced SkillKey set into
+// concrete Skill descriptions (and to inject any tenant-mandatory
+// "required" skills the provider chooses to include).
+//
+// Providers that can also enumerate their full visible catalogue
+// (small, in-memory or cached) should additionally implement
+// [SkillCatalog]. SDK detects the extension via type assertion and
+// uses Catalogue() exclusively for Admin.ListSkills; Run-time
+// resolution always goes through GetSkills regardless. Providers
+// that cannot enumerate (remote stores, etc.) implement only
+// SkillProvider — Admin.ListSkills then reports
+// SkillSyncMode = SkillSyncUnsupported.
+//
+// AgentIdentity (tenant / profile / name) is propagated to the
+// provider through ctx; providers that need scoping read it via
+// [CallerIdentityFromContext].
 func WithSkillProvider(provider SkillProvider) Option {
 	return func(s *sdkImpl) error {
 		s.skillProvider = provider
@@ -69,8 +82,13 @@ func WithSkillProvider(provider SkillProvider) Option {
 	}
 }
 
-// WithSkillSet is syntactic sugar around WithSkillProvider for hosts whose
-// catalogue is fully known at SDK construction time.
+// WithSkillSet is sugar for WithSkillProvider when the catalogue is
+// fully known at SDK construction time. The supplied SkillSet
+// implements both SkillProvider (per-key fetch) and SkillCatalog
+// (full enumeration), so Admin.ListSkills works automatically.
+//
+// Hosts with a remote skill store should implement SkillProvider
+// directly instead of constructing a SkillSet.
 func WithSkillSet(set SkillSet) Option {
 	return WithSkillProvider(set)
 }

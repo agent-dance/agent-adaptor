@@ -261,13 +261,15 @@ func cleanSkillPath(p string) string {
 // --- materializer ---------------------------------------------------------
 
 // defaultSkillMaterializer implements SkillMaterializer using the
-// XDG-ish cache root described in docs/skill-api-design.md §5.7.
+// XDG-ish cache root described in docs/skill-api-design.md §5.7. The
+// archive-handling subset is configurable via DefaultMaterializerOption
+// (see archive_materializer.go).
 type defaultSkillMaterializer struct {
-	root string
+	cfg materializerConfig
 }
 
 func newDefaultSkillMaterializer() SkillMaterializer {
-	return &defaultSkillMaterializer{root: managedSkillCacheRoot("")}
+	return &defaultSkillMaterializer{cfg: defaultMaterializerConfig()}
 }
 
 // SkillCacheRootEnv is the environment variable that overrides the default
@@ -278,7 +280,7 @@ func newDefaultSkillMaterializer() SkillMaterializer {
 const SkillCacheRootEnv = "AGENT_ADAPTOR_SKILL_CACHE_ROOT"
 
 // Materialize implements SkillMaterializer.
-func (m *defaultSkillMaterializer) Materialize(_ context.Context, s Skill) (string, error) {
+func (m *defaultSkillMaterializer) Materialize(ctx context.Context, s Skill) (string, error) {
 	if s.Source == nil {
 		return "", fmt.Errorf("%w: skill %q", ErrSkillSourceMissing, s.Key)
 	}
@@ -308,9 +310,44 @@ func (m *defaultSkillMaterializer) Materialize(_ context.Context, s Skill) (stri
 		return m.writeFromFS(s, src)
 	case SkillFromInline:
 		return m.writeFromInline(s, src)
+	case SkillFromArchive:
+		return m.writeFromArchive(ctx, s, src)
 	default:
 		return "", fmt.Errorf("agentadaptor: skill %q has unsupported source type %T", s.Key, s.Source)
 	}
+}
+
+// writeFromArchive reads, validates, and extracts a SkillFromArchive
+// source. The implementation lives in archive_materializer.go but the
+// dispatch happens here so the materializer's "if a known source, do
+// this; otherwise unsupported" pattern stays in one place.
+func (m *defaultSkillMaterializer) writeFromArchive(ctx context.Context, s Skill, src SkillFromArchive) (string, error) {
+	if src.Archive == nil {
+		return "", fmt.Errorf("agentadaptor: skill %q SkillFromArchive.Archive is nil", s.Key)
+	}
+	rc, err := src.Archive(ctx)
+	if err != nil {
+		return "", fmt.Errorf("agentadaptor: skill %q archive open: %w", s.Key, err)
+	}
+	raw, err := readArchiveBytes(ctx, rc, m.cfg.maxArchiveBytes)
+	if err != nil {
+		return "", fmt.Errorf("agentadaptor: skill %q: %w", s.Key, err)
+	}
+	extraction, err := extractArchive(raw, src.Format, src.Subpath, m.cfg)
+	if err != nil {
+		return "", fmt.Errorf("agentadaptor: skill %q: %w", s.Key, err)
+	}
+	if _, ok := extraction.Files["SKILL.md"]; !ok {
+		return "", fmt.Errorf("agentadaptor: skill %q archive missing SKILL.md (subpath=%q)", s.Key, src.Subpath)
+	}
+	// writeFiles computes its own content-addressed fingerprint from
+	// the per-file hashes; identical archive bytes automatically yield
+	// identical file maps and therefore the same cache hit. The
+	// host-supplied src.Fingerprint is currently advisory (carried in
+	// SkillFromArchive's doc as the cache key hint) and not consulted
+	// here so the cache remains a function of materialised content;
+	// see docs/v0.5.0-host-integration-plan.md §A2.4 for the trade-off.
+	return m.writeFiles(s, extraction.Files)
 }
 
 func (m *defaultSkillMaterializer) writeFromFS(s Skill, src SkillFromFS) (string, error) {
@@ -344,7 +381,7 @@ func (m *defaultSkillMaterializer) writeFiles(s Skill, files map[string][]byte) 
 		hashInput[name] = stableHash(content)
 	}
 	fingerprint := stableHash(s.Key, runtimeName, s.Required, s.Reason, s.Metadata, hashInput)
-	targetDir := filepath.Join(m.root, runtimeName+"--"+fingerprint[:12])
+	targetDir := filepath.Join(m.cfg.cacheRoot, runtimeName+"--"+fingerprint[:12])
 	readyMarker := filepath.Join(targetDir, ".agent-adaptor-ready")
 	if _, err := os.Stat(readyMarker); err == nil {
 		return targetDir, nil
@@ -552,6 +589,20 @@ func (m *skillMerger) selected(key string) bool {
 func (m *skillMerger) has(key string) bool {
 	_, ok := m.entries[normalizeSkillKey(key)]
 	return ok
+}
+
+// hasSource reports whether the given source label has contributed to
+// the bucket for key. Used by the resolution layer to decide which
+// merged entries belong to the run's selected set (anything from
+// provider / default / run is selected; candidate-only entries are
+// registered for SetSelectedSkills lookups but not auto-selected).
+func (m *skillMerger) hasSource(key string, label sourceLabel) bool {
+	bucket, ok := m.entries[normalizeSkillKey(key)]
+	if !ok {
+		return false
+	}
+	_, present := bucket.sources[label]
+	return present
 }
 
 // skills returns the merged skills in insertion order.

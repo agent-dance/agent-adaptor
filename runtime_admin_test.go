@@ -123,6 +123,10 @@ func (m *observingRuntimeManager) ReleaseByRun(_ context.Context, runID string) 
 	return nil
 }
 
+func (m *observingRuntimeManager) ReleaseByLabels(_ context.Context, _ map[string]string) error {
+	return nil
+}
+
 func TestRuntimeServicesFlowThroughSingleExecutionPath(t *testing.T) {
 	driver := &runtimeAdminDriver{}
 	runtimeManager := &observingRuntimeManager{}

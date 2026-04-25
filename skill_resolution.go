@@ -2,9 +2,9 @@ package agentadaptor
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sort"
+	"strings"
 )
 
 // resolveSkills merges all skill candidates for one Run / Admin call,
@@ -12,89 +12,122 @@ import (
 // returns the adapter-facing ResolvedSkills together with the selected
 // keys and the full merged catalogue.
 //
-// Sources are combined additively:
-//   - Provider.List(ctx, tenantID): authoritative catalogue + Required skills.
-//   - candidateRefs:                binding-only candidates that are registered
-//     as available (so bare keys can resolve) but NOT selected. Used by
-//     Admin.SetSelectedSkills to expose inline Skill values coming from
-//     WithDefaultSkills without forcing them into the selection.
-//   - defaultRefs:                  binding WithDefaultSkills (or the admin
-//     SetSelectedSkills override rewritten into SkillKey refs).
-//   - runRefs:                      per-run WithSkills.
+// Sources are combined additively (v0.5 SkillProvider model):
+//   - inline Skill values from defaultRefs / runRefs / candidateRefs
+//     are taken at face value.
+//   - all bare SkillKey refs are batched into a single call to
+//     SkillProvider.GetSkills(ctx, keys). The returned map provides
+//     the Skill description for each key. Keys absent from the
+//     returned map surface as ErrSkillNotFound.
+//   - the provider MAY also return Skill values whose key is not in
+//     the supplied keys list — these are tenant-mandatory ("required")
+//     entries that the SDK adds to the selected set automatically.
 //
-// Duplicate keys must be structurally equal; conflicting duplicates return
-// *SkillKeyConflictError (wrapping ErrSkillKeyConflict).
+// Duplicate keys must be structurally equal; conflicting duplicates
+// return *SkillKeyConflictError (wrapping ErrSkillKeyConflict).
+//
+// AgentIdentity is propagated to the provider through ctx via
+// CallerIdentityFromContext so multi-tenant providers can scope their
+// lookup without forcing every caller to carry tenant in the public
+// signature.
 func (s *sdkImpl) resolveSkills(
 	ctx context.Context,
-	tenantID string,
+	identity AgentIdentity,
 	defaultRefs []SkillRef,
 	runRefs []SkillRef,
 	candidateRefs []SkillRef,
 ) (payload ResolvedSkills, selected []string, resolved []Skill, err error) {
-	providerSkills, providerOK, providerErr := s.enumerateProvider(ctx, tenantID)
-	if providerErr != nil {
-		return ResolvedSkills{}, nil, nil, providerErr
-	}
+	state := newResolutionState()
 
-	merger := newSkillMerger()
-
-	// 1. Provider-supplied skills are the authoritative catalogue. Only
-	//    Required entries become implicit additions to the Selected set; all
-	//    other provider entries remain in the candidate pool so that
-	//    SkillKey references from WithDefaultSkills / WithSkills can resolve.
-	for _, skill := range providerSkills {
-		if err := merger.add(sourceLabelProvider, skill); err != nil {
-			return ResolvedSkills{}, nil, nil, err
-		}
-	}
-
-	// 2. Register binding-only candidates. These become visible in the
-	//    merger so bare SkillKey refs from defaultRefs / runRefs can resolve
-	//    against them, but they do not contribute to the Selected set by
-	//    themselves. Inline Skill values participate directly; bare keys in
-	//    this slot are ignored because they only make sense for selection.
+	// 1. Inline candidates registered through binding-only candidates
+	//    (used by Admin.SetSelectedSkills to expose inline Skill values
+	//    coming from WithDefaultSkills without forcing them into
+	//    selection by themselves).
 	for _, ref := range candidateRefs {
 		if skill, ok := ref.(Skill); ok {
-			if err := merger.add(sourceLabelCandidate, skill); err != nil {
+			if err := state.merger.add(sourceLabelCandidate, skill); err != nil {
 				return ResolvedSkills{}, nil, nil, err
 			}
 		}
 	}
 
-	// 3. Apply binding defaults / admin override.
-	if err := s.applyRefs(merger, sourceLabelDefault, defaultRefs, providerOK); err != nil {
+	// 2. Inline Skill values go directly into the merger; bare
+	//    SkillKey refs are collected so we can (a) batch them into a
+	//    single provider call below and (b) replay them as merger
+	//    source labels after the provider has populated the entries
+	//    (so user selection — even by bare key — is reflected in the
+	//    final Selected set).
+	if err := state.absorbRefs(sourceLabelDefault, defaultRefs); err != nil {
+		return ResolvedSkills{}, nil, nil, err
+	}
+	if err := state.absorbRefs(sourceLabelRun, runRefs); err != nil {
 		return ResolvedSkills{}, nil, nil, err
 	}
 
-	// 4. Apply per-run refs.
-	if err := s.applyRefs(merger, sourceLabelRun, runRefs, providerOK); err != nil {
+	// 3. Ask the provider for the Skill descriptions of every bare
+	//    SkillKey referenced. The provider may also return tenant-
+	//    mandatory skills not in the keys list; we treat them as
+	//    additional members of the selected set.
+	providerKeys := state.requestedKeys.values()
+	providerSkills, err := s.fetchSkillsFromProvider(ctx, identity, providerKeys)
+	if err != nil {
 		return ResolvedSkills{}, nil, nil, err
 	}
 
-	// 5. Determine the final Selected set: provider Required skills + all
-	//    skills whose key was explicitly selected via default / run.
-	//
-	//    NOTE: the Selected list is intentionally decoupled from the
-	//    Entries list (step 6). A skill can legitimately appear in
-	//    Selected without producing a payload entry when materialisation
-	//    fails; adapters surface that as SkillStateMissing in the
-	//    snapshot. Keeping both lists lets the Admin snapshot distinguish
-	//    "user asked for X" from "X is ready on disk".
+	// 3a. Inject every Skill the provider returned into the merger.
+	//     Conflicts with inline values surface as ErrSkillKeyConflict.
+	for _, skill := range providerSkills {
+		if strings.TrimSpace(skill.Key) == "" {
+			continue
+		}
+		if err := state.merger.add(sourceLabelProvider, skill); err != nil {
+			return ResolvedSkills{}, nil, nil, err
+		}
+	}
+
+	// 3b. Validate that every user-requested key was either provided
+	//     inline (already in the merger before the provider call) or
+	//     returned by the provider.
+	for _, key := range providerKeys {
+		if !state.merger.has(key) {
+			return ResolvedSkills{}, nil, nil, fmt.Errorf("%w: key %q was requested via WithDefaultSkills/WithSkills but the configured SkillProvider did not return it", ErrSkillNotFound, key)
+		}
+	}
+
+	// 3c. Replay bare SkillKey references against the now-populated
+	//     merger so the originating sourceLabel (default / run) is
+	//     attached to the entry. Without this, a SkillKey ref that
+	//     resolved against a candidate-only entry would never count as
+	//     selected even though the user explicitly asked for it.
+	for _, ref := range state.keyRefs {
+		if err := state.merger.addKey(ref.label, ref.key); err != nil {
+			return ResolvedSkills{}, nil, nil, err
+		}
+	}
+
+	// 4. Build the final Selected list and materialise in a single
+	//    pass. Selected = provider ∪ default ∪ run; candidate-only
+	//    entries are intentionally skipped (they are registered for
+	//    Admin.SetSelectedSkills lookups, not auto-selection).
 	selectedSet := map[string]struct{}{}
 	selectedList := make([]string, 0)
-	for _, skill := range merger.skills() {
-		if skill.Required || merger.selected(skill.Key) {
-			if _, ok := selectedSet[skill.Key]; ok {
-				continue
+	mergedByKey := map[string]Skill{}
+	mergedSkills := state.merger.skills()
+	for _, skill := range mergedSkills {
+		mergedByKey[skill.Key] = skill
+		if state.merger.hasSource(skill.Key, sourceLabelProvider) ||
+			state.merger.hasSource(skill.Key, sourceLabelDefault) ||
+			state.merger.hasSource(skill.Key, sourceLabelRun) {
+			if _, dup := selectedSet[skill.Key]; !dup && skill.Key != "" {
+				selectedSet[skill.Key] = struct{}{}
+				selectedList = append(selectedList, skill.Key)
 			}
-			selectedSet[skill.Key] = struct{}{}
-			selectedList = append(selectedList, skill.Key)
 		}
 	}
 	sort.Strings(selectedList)
 
-	// 6. Materialise each Selected skill. Failures degrade gracefully to
-	//    a warning so the rest of the run / snapshot can proceed; the
+	// 5. Materialise each Selected skill. Failures degrade to a
+	//    warning so the rest of the run / snapshot can proceed; the
 	//    adapter is responsible for rendering the missing state.
 	materializer := s.skillMaterializer
 	if materializer == nil {
@@ -102,10 +135,6 @@ func (s *sdkImpl) resolveSkills(
 	}
 	entries := make([]ResolvedSkill, 0, len(selectedList))
 	warnings := make([]string, 0)
-	mergedByKey := map[string]Skill{}
-	for _, skill := range merger.skills() {
-		mergedByKey[skill.Key] = skill
-	}
 	for _, key := range selectedList {
 		skill := mergedByKey[key]
 		sourcePath, matErr := materializer.Materialize(ctx, skill)
@@ -133,23 +162,39 @@ func (s *sdkImpl) resolveSkills(
 		Mode:        mode,
 		Entries:     entries,
 		Warnings:    warnings,
-		Fingerprint: stableHash(tenantID, selectedList, entries, warnings),
+		Fingerprint: stableHash(identity.TenantID, identity.ProfileID, selectedList, entries, warnings),
 	}
-	return payload, selectedList, merger.skills(), nil
+	return payload, selectedList, mergedSkills, nil
 }
 
-// applyRefs records each SkillRef in refs into merger under the given
-// source label. Inline Skill values are inserted directly. Bare SkillKey
-// refs must already exist in the merger; otherwise the error is tailored
-// to the provider's state:
-//
-//   - providerOK=false (provider exists but refused enumeration): the SDK
-//     has no way to verify the key, so we return ErrSkillsNotEnumerable
-//     with a hint to pass a full Skill value instead.
-//   - providerOK=true  (no provider, or provider returned an empty list,
-//     or candidate Skills did not cover the key): the key truly cannot be
-//     resolved anywhere, so we return ErrSkillNotFound.
-func (s *sdkImpl) applyRefs(merger *skillMerger, label sourceLabel, refs []SkillRef, providerOK bool) error {
+// refLabel records a (SkillKey, sourceLabel) pair that the resolution
+// layer replays against the merger after the provider has populated
+// every entry. See step 3c in resolveSkills.
+type refLabel struct {
+	key   string
+	label sourceLabel
+}
+
+// resolutionState is the per-call working set the resolveSkills loop
+// passes around. Keeping merger / requestedKeys / keyRefs in one
+// struct keeps the helper signatures narrow (one in/out parameter)
+// and makes "what the loop accumulates" explicit.
+type resolutionState struct {
+	merger        *skillMerger
+	requestedKeys orderedKeySet
+	keyRefs       []refLabel
+}
+
+func newResolutionState() *resolutionState {
+	return &resolutionState{merger: newSkillMerger()}
+}
+
+// absorbRefs adds every inline Skill in refs to state.merger and
+// records every SkillKey in state.requestedKeys (plus appends to
+// state.keyRefs so step 3c can replay the reference once the
+// provider has populated entries). Unsupported ref types return an
+// error.
+func (st *resolutionState) absorbRefs(label sourceLabel, refs []SkillRef) error {
 	for _, ref := range refs {
 		switch value := ref.(type) {
 		case nil:
@@ -159,17 +204,10 @@ func (s *sdkImpl) applyRefs(merger *skillMerger, label sourceLabel, refs []Skill
 			if key == "" {
 				continue
 			}
-			if !merger.has(key) {
-				if !providerOK {
-					return fmt.Errorf("%w: cannot resolve bare key %q because the SkillProvider is not enumerable; pass a full Skill value instead", ErrSkillsNotEnumerable, key)
-				}
-				return fmt.Errorf("%w: key %q referenced by %s is not available from any configured SkillProvider, WithDefaultSkills, or WithSkills value", ErrSkillNotFound, key, label)
-			}
-			if err := merger.addKey(label, key); err != nil {
-				return err
-			}
+			st.requestedKeys.add(key)
+			st.keyRefs = append(st.keyRefs, refLabel{key: key, label: label})
 		case Skill:
-			if err := merger.add(label, value); err != nil {
+			if err := st.merger.add(label, value); err != nil {
 				return err
 			}
 		default:
@@ -179,22 +217,77 @@ func (s *sdkImpl) applyRefs(merger *skillMerger, label sourceLabel, refs []Skill
 	return nil
 }
 
-// enumerateProvider calls s.skillProvider.List and returns the skills plus a
-// flag indicating whether enumeration succeeded. ErrSkillsNotEnumerable is
-// treated as a graceful degradation: the caller can still construct a
-// ResolvedSkills payload from inline Skill values alone.
-func (s *sdkImpl) enumerateProvider(ctx context.Context, tenantID string) ([]Skill, bool, error) {
+// fetchSkillsFromProvider invokes the configured SkillProvider with
+// the requested keys, propagating the AgentIdentity through ctx so
+// providers that need scoping can read it via CallerIdentityFromContext.
+//
+// A nil / unset provider returns nil; the resolution layer then falls
+// back to inline Skill values exclusively.
+func (s *sdkImpl) fetchSkillsFromProvider(ctx context.Context, identity AgentIdentity, keys []string) (map[string]Skill, error) {
 	provider := s.skillProvider
 	if provider == nil {
-		return nil, true, nil
+		return nil, nil
 	}
-	skills, err := provider.List(ctx, tenantID)
+	scoped := WithCallerIdentity(ctx, identity)
+	skills, err := provider.GetSkills(scoped, keys)
 	if err != nil {
-		if errors.Is(err, ErrSkillsNotEnumerable) {
-			return nil, false, nil
-		}
-		return nil, false, err
+		return nil, err
 	}
-	return skills, true, nil
+	return skills, nil
 }
 
+// collectAdminCandidates returns the candidate pool admin paths
+// (ListSkills / SetSelectedSkills) feed into resolveSkills as the
+// non-selected catalogue.
+//
+// Pool composition:
+//
+//   - binding-inline skills (defaults.Skills) — visible candidates
+//     even when the operator is overriding the selection
+//   - upstream SkillCatalog.Catalogue() entries when the configured
+//     SkillProvider implements SkillCatalog — these expose the full
+//     enumerable catalogue so admin can render "available but off"
+//     rows. Providers that don't implement SkillCatalog (e.g. remote
+//     stores) contribute nothing here, which leaves the snapshot in
+//     the SkillSyncUnsupported mode the host UI should detect and
+//     route to the store's own discovery surface.
+//
+// Errors from Catalogue propagate verbatim. The returned slice is
+// safe to append to without disturbing defaults.
+func (s *sdkImpl) collectAdminCandidates(ctx context.Context, defaults AgentDefaults) ([]SkillRef, error) {
+	candidates := append([]SkillRef(nil), defaults.Skills...)
+	if cat, ok := s.skillProvider.(SkillCatalog); ok {
+		scoped := WithCallerIdentity(ctx, defaults.Agent)
+		catalogue, err := cat.Catalogue(scoped)
+		if err != nil {
+			return nil, err
+		}
+		for _, skill := range catalogue {
+			candidates = append(candidates, skill)
+		}
+	}
+	return candidates, nil
+}
+
+// orderedKeySet is a small insertion-ordered set of normalised
+// SkillKey strings. Insertion order matters because user-facing error
+// messages report the first missing key.
+type orderedKeySet struct {
+	seen  map[string]struct{}
+	order []string
+}
+
+func (o *orderedKeySet) add(key string) {
+	if o.seen == nil {
+		o.seen = map[string]struct{}{}
+	}
+	if _, ok := o.seen[key]; ok {
+		return
+	}
+	o.seen[key] = struct{}{}
+	o.order = append(o.order, key)
+}
+
+func (o *orderedKeySet) values() []string {
+	return o.order
+}

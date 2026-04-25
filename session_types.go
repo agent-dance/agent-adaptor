@@ -93,11 +93,38 @@ type SessionFinalizeRequest struct {
 	RebindActive bool
 }
 
-// SessionStore is an optional service-facing control-plane hook.
+// SessionStore persists SDK-level session state for resume-capable adapters.
 //
-// Implementations are expected to validate lease ownership during Finalize and
-// make the record save/archive/rebind sequence atomic relative to their own
-// storage backend.
+// "Session" here is the SDK's session ontology (see AGENTS.md §6):
+//
+//   - resume tokens, compatibility fingerprints, lease coordination
+//   - mode-driven lifecycle (continue_or_start / start_new / fork / ...)
+//   - indexed by SessionID; (Namespace, Key) is a secondary index
+//
+// SessionStore is NOT the right place for:
+//
+//   - host-facing chat / thread / conversation history payloads
+//     → use pkg/hosttools/sessionrecorder with sessionKey = ThreadID
+//     (or sessionKey = RunID for audit-style recording)
+//   - HITL pending requests
+//     → derive on demand via sessionrecorder.PendingDecisions(records);
+//     do NOT persist a separate pending dimension (double-write risk
+//     between history and pending; see docs/v0.5.0-host-integration-plan.md §B1)
+//   - "the conversation a user sees in a chat UI"
+//     → host concern; the SDK exposes no equivalent abstraction
+//
+// Hosts that need any of the above should compose
+// pkg/hosttools/sessionrecorder (and their own task store), NOT extend
+// SessionStore. Adding a SaveHistory/LoadHistory method on a SessionStore
+// implementation is a no-op as far as the SDK is concerned — those
+// methods will never be invoked.
+//
+// See docs/usage-guide.md "宿主集成 — 命名陷阱" for the four
+// canonical mistakes hosts make at this boundary.
+//
+// Implementations are expected to validate lease ownership during
+// Finalize and make the record save/archive/rebind sequence atomic
+// relative to their own storage backend.
 type SessionStore interface {
 	Resolve(ctx context.Context, q SessionQuery) (*SessionRecord, error)
 	Finalize(ctx context.Context, req SessionFinalizeRequest) error

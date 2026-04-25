@@ -35,17 +35,54 @@
 //
 // works across arbitrary run boundaries.
 //
+// # Choosing a sessionKey
+//
+// sessionKey is intentionally a neutral aggregation key. There are two
+// canonical patterns; pick one and keep it stable per logical thread
+// you want to read back:
+//
+//  1. Audit style (recommended starting point): sessionKey = RunID
+//     - one record stream per run, immutable after the run ends
+//     - multi-pod hosts: routing-agnostic; any pod can append
+//     - downside: cannot accumulate cross-run history of the same
+//       logical conversation; the host correlates RunIDs externally
+//
+//  2. Conversation style: sessionKey = ThreadID (or any host-stable
+//     "logical thread" identifier)
+//     - history accumulates across multiple SDK SessionIDs (forks /
+//       continues) under the same UI thread
+//     - downside: multi-pod hosts MUST route stickily by sessionKey,
+//       otherwise HostSeq across pods will collide and the cursor
+//       protocol breaks
+//
+// Single-process / single-pod hosts can pick either. Multi-pod hosts
+// should default to (1) and only graduate to (2) once they have a
+// sticky-routing layer (or plug a coordinator-aware Backend such as
+// one using Redis INCR).
+//
 // # Scope
 //
-// The package only handles "append a payload, read payloads back by
-// cursor". It does not own:
+// The package handles "append a payload, read payloads back by cursor",
+// plus a small set of derivers that operate on records:
 //
-//   - pending DecisionRequest tracking — that's per-run runtime state
-//     that evaporates when the RunHandle goes away; see the example
-//     under examples/streaming-chat-copilotkit for the pattern.
+//   - PendingDecisions(records): one-shot snapshot of pending HITL
+//     requests, suitable for admin dumps and REST handlers (O(n)).
+//   - PendingTracker: incremental Apply/Snapshot type for long-running
+//     session loops where re-deriving on every event would degrade to
+//     O(n²); thread-safe, O(1) per Apply.
+//
+// The package does NOT own:
+//
+//   - persistent HITL pending state — derive it on demand from the
+//     existing history. The recorder remains the single source of
+//     truth; introducing a separate pending dimension creates
+//     double-write inconsistency risk.
 //   - HTTP / SSE transport — that's pkg/bridges/* and the host's HTTP
 //     router's job.
 //   - routing / sticky-by-thread dispatch across pods — the package is
 //     single-process by design. Multi-pod hosts should plug a shared
 //     Backend (e.g. Redis, Postgres) below the Recorder.
+//   - fan-out (stream → SSE + Recorder + metrics) — that's a few lines
+//     of host-owned for loop; see examples/streaming-chat-copilotkit
+//     for the canonical pattern.
 package sessionrecorder

@@ -20,13 +20,37 @@ import (
 	agentadaptor "github.com/agent-dance/agent-adaptor"
 )
 
-// notEnumerableProvider models an upstream SkillProvider that cannot
-// enumerate its catalogue. It is used to verify the ErrSkillsNotEnumerable
-// path in both the Run and Admin flows.
-type notEnumerableProvider struct{}
+// emptyResolveProvider models a v0.5 SkillProvider whose GetSkills
+// always returns an empty map — for example a remote store that
+// cannot find the requested keys. Used to verify that an unresolvable
+// bare SkillKey surfaces as ErrSkillNotFound.
+type emptyResolveProvider struct{}
 
-func (notEnumerableProvider) List(_ context.Context, _ string) ([]agentadaptor.Skill, error) {
-	return nil, agentadaptor.ErrSkillsNotEnumerable
+func (emptyResolveProvider) GetSkills(_ context.Context, _ []string) (map[string]agentadaptor.Skill, error) {
+	return map[string]agentadaptor.Skill{}, nil
+}
+
+// erroringCatalogProvider implements both SkillProvider and
+// SkillCatalog but Catalogue always returns the supplied error.
+// Lets us verify Admin.ListSkills propagates Catalogue errors
+// rather than swallowing them.
+type erroringCatalogProvider struct {
+	getSkillsResult map[string]agentadaptor.Skill
+	catalogueErr    error
+}
+
+func (e *erroringCatalogProvider) GetSkills(_ context.Context, keys []string) (map[string]agentadaptor.Skill, error) {
+	out := make(map[string]agentadaptor.Skill, len(keys))
+	for _, k := range keys {
+		if s, ok := e.getSkillsResult[k]; ok {
+			out[k] = s
+		}
+	}
+	return out, nil
+}
+
+func (e *erroringCatalogProvider) Catalogue(_ context.Context) ([]agentadaptor.Skill, error) {
+	return nil, e.catalogueErr
 }
 
 // TestSkillsAdditiveMerging verifies that WithDefaultSkills, WithSkills and
@@ -120,6 +144,14 @@ func TestSkillsSameKeySameValueMerges(t *testing.T) {
 // TestSkillsSameKeyDifferentValueConflicts verifies that the "same key,
 // same value" invariant is enforced: two different Skill values under the
 // same key must surface ErrSkillKeyConflict without ever being merged.
+//
+// Note (v0.5 semantics): the conflict is only triggered when the
+// user actually engages the disputed key (either via WithSkills as a
+// SkillKey reference, or by Admin.ListSkills which pulls the full
+// SkillCatalog). The v0.4 "any provider entry was visible to the
+// merger" path is gone — providers now produce only the keys the
+// caller asks for plus their tenant-mandatory injections, so a key
+// the user never references cannot generate a silent conflict.
 func TestSkillsSameKeyDifferentValueConflicts(t *testing.T) {
 	driver := &fakeDriver{}
 	providerSkill := agentadaptor.InlineSkill("team/shared", "---\nprovider\n---\n")
@@ -129,10 +161,14 @@ func TestSkillsSameKeyDifferentValueConflicts(t *testing.T) {
 		agentadaptor.WithDefaultAgent(fakeBinding("default", driver,
 			agentadaptor.WithDefaultSkills(bindingSkill),
 		)),
-		agentadaptor.WithSkillSet(agentadaptor.SkillSet{"team/shared": providerSkill}),
+		agentadaptor.WithSkillProvider(agentadaptor.SkillSet{"team/shared": providerSkill}),
 	)
 
-	_, err := sdk.Run(context.Background(), "hello")
+	// User explicitly references the key so the provider's entry is
+	// pulled into the merger; this is where v0.5 detects the conflict.
+	_, err := sdk.Run(context.Background(), "hello",
+		agentadaptor.WithSkills(agentadaptor.Key("team/shared")),
+	)
 	if err == nil {
 		t.Fatalf("expected ErrSkillKeyConflict for same-key / different-value, got nil")
 	}
@@ -145,6 +181,31 @@ func TestSkillsSameKeyDifferentValueConflicts(t *testing.T) {
 	}
 	if conflict.Key != "team/shared" {
 		t.Fatalf("conflict key mismatch, want team/shared got %q", conflict.Key)
+	}
+}
+
+// TestSkillsSameKeyDifferentValueConflictsViaAdmin verifies the v0.5
+// promise that Admin paths still surface latent provider/inline
+// conflicts even when the user has not engaged the key — Admin pulls
+// the full SkillCatalog into the merger via collectAdminCandidates.
+func TestSkillsSameKeyDifferentValueConflictsViaAdmin(t *testing.T) {
+	driver := &fakeDriver{}
+	providerSkill := agentadaptor.InlineSkill("team/shared", "---\nprovider\n---\n")
+	bindingSkill := agentadaptor.InlineSkill("team/shared", "---\nbinding\n---\n")
+
+	sdk := agentadaptor.New(
+		agentadaptor.WithDefaultAgent(fakeBinding("default", driver,
+			agentadaptor.WithDefaultSkills(bindingSkill),
+		)),
+		agentadaptor.WithSkillProvider(agentadaptor.SkillSet{"team/shared": providerSkill}),
+	)
+
+	_, err := sdk.Admin().Default().ListSkills(context.Background())
+	if err == nil {
+		t.Fatalf("expected admin path to surface ErrSkillKeyConflict, got nil")
+	}
+	if !errors.Is(err, agentadaptor.ErrSkillKeyConflict) {
+		t.Fatalf("expected ErrSkillKeyConflict, got %v", err)
 	}
 }
 
@@ -167,21 +228,25 @@ func TestSkillsBareKeyWithoutProviderReturnsNotFound(t *testing.T) {
 	}
 }
 
-// TestSkillsBareKeyWithNonEnumerableProviderReturnsNotEnumerable verifies
-// that a bare SkillKey combined with a provider that refuses to enumerate
-// surfaces ErrSkillsNotEnumerable (so hosts can tell the two failure modes
-// apart when rendering the error).
-func TestSkillsBareKeyWithNonEnumerableProviderReturnsNotEnumerable(t *testing.T) {
+// TestSkillsBareKeyUnresolvedByProviderReturnsNotFound verifies the
+// v0.5 contract: when a bare SkillKey reference cannot be resolved
+// (the provider does not return it from GetSkills), the SDK surfaces
+// ErrSkillNotFound rather than the v0.4-era ErrSkillsNotEnumerable.
+//
+// Hosts whose catalogue is non-enumerable simply do not implement
+// SkillCatalog; admin still works in unsupported mode and Run-time
+// resolution falls back to inline Skill values + this not-found error.
+func TestSkillsBareKeyUnresolvedByProviderReturnsNotFound(t *testing.T) {
 	driver := &fakeDriver{}
 	sdk := agentadaptor.New(
 		agentadaptor.WithDefaultAgent(fakeBinding("default", driver,
 			agentadaptor.WithDefaultSkills(agentadaptor.Key("team/opaque")),
 		)),
-		agentadaptor.WithSkillProvider(notEnumerableProvider{}),
+		agentadaptor.WithSkillProvider(emptyResolveProvider{}),
 	)
 	_, err := sdk.Run(context.Background(), "hello")
-	if !errors.Is(err, agentadaptor.ErrSkillsNotEnumerable) {
-		t.Fatalf("expected ErrSkillsNotEnumerable, got %v", err)
+	if !errors.Is(err, agentadaptor.ErrSkillNotFound) {
+		t.Fatalf("expected ErrSkillNotFound, got %v", err)
 	}
 }
 
@@ -494,6 +559,146 @@ func TestSnapshotResolvedIncludesUnselectedCandidates(t *testing.T) {
 	if !equalUnordered(resolvedKeys, []string{"team/on", "team/off"}) {
 		t.Fatalf("expected both skills in Resolved, got %#v", resolvedKeys)
 	}
+}
+
+// TestAdminListSkillsPropagatesCatalogueError verifies that when a
+// SkillProvider implements SkillCatalog and Catalogue() returns an
+// error, Admin.ListSkills surfaces that error to the caller rather
+// than silently dropping the catalogue contribution.
+//
+// Hosts rely on this so a misbehaving cache / store doesn't manifest
+// as a snapshot quietly missing entries.
+func TestAdminListSkillsPropagatesCatalogueError(t *testing.T) {
+	t.Parallel()
+	driver := &fakeDriver{}
+	sentinel := errors.New("catalog backend offline")
+	provider := &erroringCatalogProvider{catalogueErr: sentinel}
+
+	sdk := agentadaptor.New(
+		agentadaptor.WithDefaultAgent(fakeBinding("default", driver)),
+		agentadaptor.WithSkillProvider(provider),
+	)
+
+	_, err := sdk.Admin().Default().ListSkills(context.Background())
+	if err == nil {
+		t.Fatal("expected ListSkills to propagate Catalogue() error, got nil")
+	}
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("expected error to wrap %v, got %v", sentinel, err)
+	}
+}
+
+// TestAdminListSkillsWithoutCatalogContributesNothing verifies that
+// when the SkillProvider does NOT implement SkillCatalog (e.g. a
+// remote store), Admin.ListSkills receives no candidate entries from
+// the provider — Resolved should only reflect inline binding defaults
+// (here: empty).
+//
+// This is the contract that lets store-backed hosts safely skip
+// SDK admin enumeration and route discovery to their own UI.
+//
+// (We assert on Resolved rather than SkillSnapshot.Mode because the
+// fakeDriver test fixture in sdk_session_test.go hardcodes Mode in
+// its ListSkills response; the SDK's own SkillSyncUnsupported value
+// is set on the payload before the adapter sees it, but the adapter
+// fixture overrides it. Adapters in production correctly propagate
+// payload.Mode — see codex / claude / cursor ListSkills.)
+func TestAdminListSkillsWithoutCatalogContributesNothing(t *testing.T) {
+	t.Parallel()
+	driver := &fakeDriver{}
+	sdk := agentadaptor.New(
+		agentadaptor.WithDefaultAgent(fakeBinding("default", driver)),
+		agentadaptor.WithSkillProvider(emptyResolveProvider{}), // no SkillCatalog
+	)
+	snap, err := sdk.Admin().Default().ListSkills(context.Background())
+	if err != nil {
+		t.Fatalf("ListSkills: %v", err)
+	}
+	if len(snap.Resolved) != 0 {
+		keys := make([]string, 0, len(snap.Resolved))
+		for _, s := range snap.Resolved {
+			keys = append(keys, s.Key)
+		}
+		t.Errorf("provider without SkillCatalog must not contribute Resolved entries; got %v", keys)
+	}
+	if len(snap.Selected) != 0 {
+		t.Errorf("no inline / no catalog must yield empty Selected; got %v", snap.Selected)
+	}
+}
+
+// TestAdminListSkillsCatalogContributesToCandidates verifies that
+// Catalogue entries reach SkillSnapshot.Resolved as candidates even
+// when they are NOT user-selected — this is the visibility surface
+// admin UIs render as "available but off".
+func TestAdminListSkillsCatalogContributesToCandidates(t *testing.T) {
+	t.Parallel()
+	driver := &fakeDriver{}
+	stash := agentadaptor.InlineSkill("store/on-shelf", "# on")
+	provider := &erroringCatalogProvider{
+		// no GetSkills hits expected — bind nothing user-referenced
+		getSkillsResult: nil,
+	}
+	provider.catalogueErr = nil
+	// Override Catalogue via a small wrapper since our fixture's
+	// Catalogue field returns the supplied error; build a fresh
+	// provider type here for clarity.
+	cat := &catalogueOnlyProvider{skills: []agentadaptor.Skill{stash}}
+
+	sdk := agentadaptor.New(
+		agentadaptor.WithDefaultAgent(fakeBinding("default", driver)),
+		agentadaptor.WithSkillProvider(cat),
+	)
+	snap, err := sdk.Admin().Default().ListSkills(context.Background())
+	if err != nil {
+		t.Fatalf("ListSkills: %v", err)
+	}
+	resolvedKeys := make([]string, 0, len(snap.Resolved))
+	for _, s := range snap.Resolved {
+		resolvedKeys = append(resolvedKeys, s.Key)
+	}
+	if !sliceContains(resolvedKeys, "store/on-shelf") {
+		t.Errorf("Catalogue entry should appear in Resolved as candidate, got %v", resolvedKeys)
+	}
+	// And it must NOT be Selected (user did not pick it).
+	if sliceContains(snap.Selected, "store/on-shelf") {
+		t.Errorf("Catalogue-only entry must not be auto-selected, got Selected=%v", snap.Selected)
+	}
+}
+
+// catalogueOnlyProvider is a SkillCatalog whose GetSkills returns
+// only what the user actually requests (no required injections).
+// Used by TestAdminListSkillsCatalogContributesToCandidates.
+type catalogueOnlyProvider struct {
+	skills []agentadaptor.Skill
+}
+
+func (c *catalogueOnlyProvider) GetSkills(_ context.Context, keys []string) (map[string]agentadaptor.Skill, error) {
+	want := make(map[string]struct{}, len(keys))
+	for _, k := range keys {
+		want[k] = struct{}{}
+	}
+	out := make(map[string]agentadaptor.Skill, len(c.skills))
+	for _, s := range c.skills {
+		if _, ok := want[s.Key]; ok {
+			out[s.Key] = s
+		}
+	}
+	return out, nil
+}
+
+func (c *catalogueOnlyProvider) Catalogue(_ context.Context) ([]agentadaptor.Skill, error) {
+	out := make([]agentadaptor.Skill, len(c.skills))
+	copy(out, c.skills)
+	return out, nil
+}
+
+func sliceContains(haystack []string, needle string) bool {
+	for _, s := range haystack {
+		if s == needle {
+			return true
+		}
+	}
+	return false
 }
 
 func equalUnordered(a, b []string) bool {

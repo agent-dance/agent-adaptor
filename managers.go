@@ -36,11 +36,16 @@ func (passthroughWorkspaceManager) Release(_ context.Context, _ WorkspaceLease, 
 }
 
 // emptySkillProvider is the default SkillProvider installed when the host
-// does not call WithSkillProvider. It reports an empty catalogue, which in
-// turn makes per-run WithSkills the only source of skills for the SDK.
+// does not call WithSkillProvider. GetSkills returns an empty map for
+// every key set, which makes per-run WithSkills (with inline Skill
+// values) the only source of skills for the SDK.
+//
+// emptySkillProvider does NOT implement SkillCatalog, so
+// Admin.ListSkills correctly reports SkillSyncUnsupported when no
+// real provider is wired up.
 type emptySkillProvider struct{}
 
-func (emptySkillProvider) List(_ context.Context, _ string) ([]Skill, error) {
+func (emptySkillProvider) GetSkills(_ context.Context, _ []string) (map[string]Skill, error) {
 	return nil, nil
 }
 
@@ -51,6 +56,10 @@ func (noopRuntimeManager) Ensure(_ context.Context, _ RuntimeServiceRequest) ([]
 }
 
 func (noopRuntimeManager) ReleaseByRun(_ context.Context, _ string) error {
+	return nil
+}
+
+func (noopRuntimeManager) ReleaseByLabels(_ context.Context, _ map[string]string) error {
 	return nil
 }
 

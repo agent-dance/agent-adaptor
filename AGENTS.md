@@ -249,6 +249,46 @@ sdk := agentadaptor.New(
 - 只有有效 checkpoint 才允许持久化新 session 状态
 - 非零退出默认不产生有效 checkpoint
 
+### 6.1 维度对齐
+
+宿主在 SDK + AG-UI bridge + 自己业务三层之间反复踩 ID 命名混乱。下图把四层 ID 在同一坐标里对齐：
+
+```
+            Web IDE / Workflow
+                   │
+                   ▼
+   ┌────────── ThreadID ──────────┐   ① 业务/UI 层
+   │   AG-UI 协议字段              │
+   │   "task-req-12345"           │
+   └──────────────┬───────────────┘
+                  │ agui bridge: ("agui", ThreadID)
+                  ▼
+   ┌──────── SessionKey ──────────┐   ② SDK API 入参
+   │   (Namespace, Key) 二元组术语 │
+   │   ("agui", "task-req-12345") │
+   │   注：SDK 没有 SessionKey 类型 │
+   └──────────────┬───────────────┘
+                  │ SessionStore.Resolve()
+                  ▼
+   ┌──────── SessionID ───────────┐   ③ SDK driver 句柄
+   │   "claude-9c22b132-7f3a4e..."│
+   └──────────────┬───────────────┘
+                  │ 多次 sdk.Start(...)
+                  ▼
+   ┌─────────── RunID ────────────┐   ④ 执行实例
+   │   "run-2026-04-26-xx"        │
+   └──────────────────────────────┘
+```
+
+| 层 | ID | 来源 | 容易混淆点 |
+|---|---|---|---|
+| ① 业务/UI 层 | `ThreadID` | 业务方 / Web IDE / Workflow 下发 | AG-UI 协议字段；SDK core 不认识它，只 `pkg/bridges/agui` 知道 |
+| ② SDK API 入参 | `SessionKey = (Namespace, Key)` | 宿主，或 agui bridge 自动派生 `("agui", ThreadID)` | **是个二元组术语，不是单一字段名 — SDK 公共 API 里不存在 `SessionKey` 类型**；它在 `SessionRequest` 里以 `(Namespace, Key)` 二元组形式出现 |
+| ③ SDK driver 句柄 | `SessionID` | SDK 自己（fingerprint based） | adapter 用它做 resume；同一 SessionKey 在不同时间点可对应不同 SessionID |
+| ④ 执行实例 | `RunID` | SDK 在 `Start()` 内分配 | 一个 SessionID 上跑 N 个 RunID |
+
+完整 fork / continue 流转示例与命名陷阱速查见 [`docs/usage-guide.md`](./docs/usage-guide.md) "宿主集成 — 维度对齐" 与 "命名陷阱" 段。
+
 ## 7. adapter 与 helper 的职责边界
 
 ### 7.1 shared helper 负责什么

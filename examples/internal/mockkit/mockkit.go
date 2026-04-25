@@ -246,9 +246,10 @@ func InlineSkill(key, body string) agentadaptor.Skill {
 }
 
 type ObservingRuntimeManager struct {
-	Refs         []agentadaptor.RuntimeServiceRef
-	LastRequest  agentadaptor.RuntimeServiceRequest
-	ReleasedRuns []string
+	Refs           []agentadaptor.RuntimeServiceRef
+	LastRequest    agentadaptor.RuntimeServiceRequest
+	ReleasedRuns   []string
+	ReleasedLabels []map[string]string
 }
 
 func (m *ObservingRuntimeManager) Ensure(_ context.Context, req agentadaptor.RuntimeServiceRequest) ([]agentadaptor.RuntimeServiceRef, error) {
@@ -258,6 +259,18 @@ func (m *ObservingRuntimeManager) Ensure(_ context.Context, req agentadaptor.Run
 
 func (m *ObservingRuntimeManager) ReleaseByRun(_ context.Context, runID string) error {
 	m.ReleasedRuns = append(m.ReleasedRuns, runID)
+	return nil
+}
+
+// ReleaseByLabels records the call so tests can assert which label
+// sets the host issued. Empty maps are recorded verbatim so tests
+// can verify the "noop on empty" guard at the SDK boundary.
+func (m *ObservingRuntimeManager) ReleaseByLabels(_ context.Context, labels map[string]string) error {
+	out := make(map[string]string, len(labels))
+	for k, v := range labels {
+		out[k] = v
+	}
+	m.ReleasedLabels = append(m.ReleasedLabels, out)
 	return nil
 }
 

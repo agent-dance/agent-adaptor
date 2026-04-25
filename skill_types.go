@@ -51,10 +51,22 @@ const (
 // isSkillRef is the marker that makes Skill a SkillRef value.
 func (Skill) isSkillRef() {}
 
-// SkillSource is the sum type describing a Skill's origin. Implementations
-// are defined in this file: SkillFromPath, SkillFromFS, SkillFromInline.
+// SkillSource is the open marker for a Skill's origin. Built-in
+// implementations are SkillFromPath, SkillFromFS, SkillFromInline,
+// SkillFromArchive (see archive_source.go). Hosts MAY define custom
+// source types as long as a matching SkillMaterializer is installed
+// via WithSkillMaterializer.
+//
+// SDK never branches on host-defined source types itself; it only
+// routes them to the configured materializer. This keeps the SDK
+// closed against host ontology while letting hosts own their fetch /
+// unpack / cache strategy. See docs/v0.5.0-host-integration-plan.md
+// §A1.2.4 for the rationale.
 type SkillSource interface {
-	isSkillSource()
+	// SkillSource is the marker method. It MUST be a no-op; its only
+	// purpose is to constrain types that can be assigned to a Source
+	// field. Custom types implement it as `func (T) SkillSource() {}`.
+	SkillSource()
 }
 
 // SkillFromPath sources a skill from an existing local directory that
@@ -63,7 +75,8 @@ type SkillFromPath struct {
 	Path string
 }
 
-func (SkillFromPath) isSkillSource() {}
+// SkillSource implements [SkillSource].
+func (SkillFromPath) SkillSource() {}
 
 // SkillFromFS sources a skill from an io/fs.FS tree rooted at Root. The root
 // entry must contain SKILL.md. Root == "" or "." is equivalent.
@@ -72,7 +85,8 @@ type SkillFromFS struct {
 	Root string
 }
 
-func (SkillFromFS) isSkillSource() {}
+// SkillSource implements [SkillSource].
+func (SkillFromFS) SkillSource() {}
 
 // SkillFromInline carries a single SKILL.md string. Callers that need
 // auxiliary reference files should use SkillFromFS instead.
@@ -80,7 +94,8 @@ type SkillFromInline struct {
 	SkillMD string
 }
 
-func (SkillFromInline) isSkillSource() {}
+// SkillSource implements [SkillSource].
+func (SkillFromInline) SkillSource() {}
 
 // SkillRef is accepted by WithDefaultSkills and WithSkills. It is either
 // a string key (SkillKey) or a fully-defined Skill value.
@@ -126,23 +141,101 @@ func Require(s Skill, reason string) Skill {
 	return s
 }
 
-// SkillProvider is the single host-facing skill hook. Implementations return
-// the full catalogue of skills visible to tenantID, including any entries
-// the provider itself marks Required=true.
+// SkillProvider is the host-side hook that backs WithSkills /
+// WithDefaultSkills. The SDK consolidates and deduplicates the
+// SkillKeys referenced by one Run, then asks the provider to produce
+// a Skill description for each key.
 //
-// Providers that genuinely cannot enumerate their catalogue must return
-// ErrSkillsNotEnumerable. The SDK then reports the Admin surface as
-// unsupported and skips provider-driven injection for runs.
+// Implementations MAY return additional Skill values not in keys (for
+// example tenant-mandatory skills); SDK adds every returned Skill to
+// the run's selected set, treating provider-injected additions
+// equivalently to user-referenced keys. Keys absent from the returned
+// map surface as ErrSkillNotFound.
+//
+// SDK invokes GetSkills on every Run regardless of whether the caller
+// referenced any keys, so provider-injected mandatory skills work
+// even when the user passed neither WithSkills nor WithDefaultSkills.
+//
+// Caller scoping (tenant / profile) is propagated through the ctx;
+// providers extract it with [CallerIdentityFromContext]. This keeps
+// the interface signature minimal even when a host's catalogue is
+// partitioned by deployment-specific dimensions.
+//
+// Hosts whose catalogue can be enumerated in full (admin UIs) should
+// also implement [SkillCatalog]; SDK detects the extension via type
+// assertion. Hosts whose catalogue is too large to enumerate (remote
+// stores, etc.) implement only SkillProvider.
 type SkillProvider interface {
-	List(ctx context.Context, tenantID string) ([]Skill, error)
+	GetSkills(ctx context.Context, keys []string) (map[string]Skill, error)
 }
 
-// SkillSet is a static map-based SkillProvider convenient for hosts whose
-// skill catalogue is known at construction time.
+// SkillCatalog extends SkillProvider with the ability to enumerate
+// the full visible catalogue. SDK uses Catalogue() only for
+// Admin.ListSkills; Run-time selection still goes through GetSkills
+// regardless.
+//
+// Hosts whose catalogue is too large to enumerate (e.g. remote skill
+// stores with thousands of entries) implement only SkillProvider and
+// skip SkillCatalog. SDK reports SkillSyncMode = SkillSyncUnsupported
+// on Admin.ListSkills in that case, leaving admin discovery to the
+// host's own UI (which the store typically already provides).
+type SkillCatalog interface {
+	SkillProvider
+	Catalogue(ctx context.Context) ([]Skill, error)
+}
+
+// SkillSet is a static map-based SkillCatalog convenient for hosts
+// whose skill catalogue is known at construction time. It satisfies
+// both SkillProvider (GetSkills) and SkillCatalog (Catalogue), so
+// passing one to WithSkillProvider also enables Admin.ListSkills.
+//
+// Skills with the empty Key are normalised to the map key on access,
+// which lets hosts write
+//
+//	sdk.SkillSet{"foo": {Source: ...}}
+//
+// without repeating "foo" inside the value.
 type SkillSet map[string]Skill
 
-// List satisfies SkillProvider.
-func (s SkillSet) List(_ context.Context, _ string) ([]Skill, error) {
+// GetSkills satisfies SkillProvider.
+//
+// Returned map keys are the canonical Skill.Key for each entry. Skills
+// flagged Required are always included (regardless of whether they
+// appear in keys). User-referenced keys absent from the catalogue do
+// NOT generate an error here — the SDK reports them as ErrSkillNotFound
+// in the resolution layer after merging all sources.
+func (s SkillSet) GetSkills(_ context.Context, keys []string) (map[string]Skill, error) {
+	out := make(map[string]Skill, len(keys))
+	requested := make(map[string]struct{}, len(keys))
+	for _, k := range keys {
+		k = strings.TrimSpace(k)
+		if k == "" {
+			continue
+		}
+		requested[k] = struct{}{}
+		if skill, ok := s.lookup(k); ok {
+			out[skill.Key] = skill
+		}
+	}
+	// Required entries are always part of the run's skill set.
+	for mapKey, skill := range s {
+		if !skill.Required {
+			continue
+		}
+		canonical := s.canonicalKey(mapKey, skill)
+		if _, already := out[canonical]; already {
+			continue
+		}
+		if strings.TrimSpace(skill.Key) == "" {
+			skill.Key = canonical
+		}
+		out[canonical] = skill
+	}
+	return out, nil
+}
+
+// Catalogue satisfies SkillCatalog.
+func (s SkillSet) Catalogue(_ context.Context) ([]Skill, error) {
 	out := make([]Skill, 0, len(s))
 	for mapKey, skill := range s {
 		if strings.TrimSpace(skill.Key) == "" {
@@ -152,6 +245,28 @@ func (s SkillSet) List(_ context.Context, _ string) ([]Skill, error) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
 	return out, nil
+}
+
+// lookup resolves an explicit key against the SkillSet, returning the
+// associated Skill (with Key normalised when the value left it empty).
+func (s SkillSet) lookup(key string) (Skill, bool) {
+	skill, ok := s[key]
+	if !ok {
+		return Skill{}, false
+	}
+	if strings.TrimSpace(skill.Key) == "" {
+		skill.Key = key
+	}
+	return skill, true
+}
+
+// canonicalKey returns the Key SDK uses for the given (mapKey, skill)
+// pair: the explicit Skill.Key if non-empty, the map key otherwise.
+func (s SkillSet) canonicalKey(mapKey string, skill Skill) string {
+	if k := strings.TrimSpace(skill.Key); k != "" {
+		return k
+	}
+	return mapKey
 }
 
 // SkillMaterializer lets hosts customise how SkillFromFS / SkillFromInline

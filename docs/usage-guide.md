@@ -151,3 +151,127 @@ MCP override 规则与 `skills` 一样简单：
 4. adapter 默认 profile
 
 当前设计改进计划见 [`workstream-profile-user-experience.md`](./workstream-profile-user-experience.md)。
+
+## 7. 宿主集成 — 维度对齐
+
+宿主集成 SDK 时常踩的第一个坑：**ID 命名层级混淆**。SDK 自己有 SessionKey / SessionID / RunID 三层；AG-UI 协议引入 ThreadID 第四层。下表把四层对齐给出一个权威坐标，避免宿主用错：
+
+| 层 | ID | 来源 | 值示例 | 跨层关系 |
+|---|---|---|---|---|
+| ① 业务/UI | `ThreadID` | Web IDE / Workflow / 业务方下发 | `"task-req-12345"` | 一个 Thread 可对应 N 个 SessionID（fork / start_new 触发新 SessionID） |
+| ② SDK API 入参 | `SessionKey = (Namespace, Key)` | 宿主，或 agui bridge 自动派生 `("agui", ThreadID)` | `("agui", "task-req-12345")` | 1 ThreadID : 1 SessionKey（命名空间隔离）|
+| ③ SDK driver 句柄 | `SessionID` | SDK 自身（fingerprint based） | `"claude-9c22b132-..."` | 1 SessionKey : N SessionID（fingerprint 漂移会 mint 新 ID）|
+| ④ 执行实例 | `RunID` | SDK 在 `Start()` 内分配 | `"run-2026-04-26-xx"` | 1 SessionID : N RunID |
+
+> **重要**：`SessionKey` 是**术语概念**，SDK 公共 API 里**不存在 `SessionKey` 类型**。它在 `SessionRequest{Namespace, Key, ...}` 里以二元组形式出现。新人 grep `SessionKey` 找不到对应类型不是 bug，是术语 / 类型分层。完整图示见 [`AGENTS.md`](../AGENTS.md) §6.1。
+
+### Fork 场景流转示例
+
+用户在同一个 chat 里点了"重新生成"按钮，AG-UI bridge 把这个动作翻译成 `SessionFork`：
+
+```
+Run 1 (initial):
+  ThreadID    = "thread-A"
+  SessionKey  = ("agui", "thread-A")
+  SessionID   = "sess-001"  # 首次创建
+  RunID       = "run-001"
+
+Run 2 (continue):
+  ThreadID    = "thread-A"  # 不变
+  SessionKey  = ("agui", "thread-A")  # 不变
+  SessionID   = "sess-001"  # 复用
+  RunID       = "run-002"
+
+Run 3 (fork from run-001's checkpoint):
+  ThreadID    = "thread-A"  # 不变
+  SessionKey  = ("agui", "thread-A")  # 不变
+  SessionID   = "sess-002"  # NEW！fork 切出新 driver session
+  RunID       = "run-003"
+```
+
+宿主侧的 `sessionrecorder` 如果用 `sessionKey = ThreadID` 风格，Run 1/2/3 的 stream history 全部累积在同一个 `sessionrecorder` 文件下；如果用 `sessionKey = SessionID` 风格，Run 3 会单独起一份。两种都合法，按你的 UI 模型选。
+
+## 8. 宿主集成 — 命名陷阱
+
+下面 5 种是真实生产宿主反复踩过的命名错误，每条给出"应该怎么写"的修正示例：
+
+### 陷阱 1：把宿主自己的 `ThreadHistoryStore` 叫 `SessionStore`
+
+```go
+// 错：与 SDK 撞名，且语义完全不同
+type SessionStore interface {
+    SaveHistory(threadID string, payloads []StreamPayload) error
+    LoadHistory(threadID string) ([]StreamPayload, error)
+}
+
+// 对：用语义清晰的名字，与 SDK 的 SessionStore 区分
+type ThreadHistoryStore interface {
+    SaveHistory(threadID string, payloads []StreamPayload) error
+    LoadHistory(threadID string) ([]StreamPayload, error)
+}
+```
+
+SDK 的 `SessionStore` 索引的是 driver-level resume tokens / lease / fingerprint（按 SessionID 索引），跟用户面 thread history 是两个 ontology 维度。撞名会让 review 时所有人都误以为它实现了 `agentadaptor.SessionStore` 接口。
+
+### 陷阱 2：把 `RunID` 当 `SessionID` 使用
+
+```go
+// 错：把 RunID 灌进 SessionStore 的 SessionID 槽位
+sdk.WithContinueSession(handle.RunID())  // 永远找不到对应 SessionRecord
+
+// 对：从 RunResult.Session 取 SessionID
+result, _ := handle.Wait(ctx)
+sdk.WithContinueSession(result.Session.ID)
+```
+
+RunID 的生命周期是单次 Run；SessionID 跨多次 Run。混用会让 fork / continue 立刻 `ErrSessionNotFound`。
+
+### 陷阱 3：把 `sessionrecorder` 的 `sessionKey` 当 `SessionID` 使用
+
+```go
+// 错：用 SessionID 当 sessionKey
+recorder.Record(ctx, result.Session.ID, payload)
+// fork 之后 SessionID 换了，新 Run 写入新文件，无法跨 fork 累积同 thread 历史
+
+// 对：用 ThreadID（或一个跨 fork 稳定的业务键）
+recorder.Record(ctx, threadID, payload)
+```
+
+`sessionrecorder.sessionKey` 是**宿主 ontology 中立聚合键**，与 SDK 的 SessionID 是两层。详见 [`pkg/hosttools/sessionrecorder/doc.go`](../pkg/hosttools/sessionrecorder/doc.go)。
+
+### 陷阱 4：在 outbound API 里把 `task_id` 和 `thread_id` 混用
+
+```go
+// 错：业务侧 1 个 task 在 UI 上可重试 3 次，每次 1 个 thread
+// task_id 和 thread_id 是 1:N 关系，但代码里当成同一个字段
+type Response struct { TaskID string `json:"thread_id"` }
+
+// 对：明确两者是不同维度
+type Response struct {
+    TaskID   string `json:"task_id"`
+    ThreadID string `json:"thread_id"`
+}
+```
+
+混用会让"重试"语义全错（task 维度的状态被 thread 状态覆盖）。
+
+### 陷阱 5：给 `SessionStore` 加 `SaveHistory / LoadHistory` 方法
+
+```go
+// 错：违反 SessionStore 的 ontology 边界
+type MySessionStore struct { ... }
+func (s *MySessionStore) Resolve(...)
+func (s *MySessionStore) Finalize(...)
+func (s *MySessionStore) SaveHistory(...) // ← 不在 SessionStore 接口里
+func (s *MySessionStore) LoadHistory(...) // ← 不在 SessionStore 接口里
+
+// 对：独立组合 sessionrecorder
+type MyHostState struct {
+    SessionStore agentadaptor.SessionStore         // SDK 的；只管 driver resume
+    History      sessionrecorder.Recorder           // hosttools 的；只管 thread history
+    Tasks        *MyTaskStore                       // 你的；只管业务 task
+}
+```
+
+SDK 不会在 `SessionStore` 接口上加任何 history 相关方法；如果你的 `MySessionStore` 实现了它们，是死方法，永远不会被 SDK 调用。详见 [`session_types.go`](../session_types.go) 上 `SessionStore` 的 doc comment。
+

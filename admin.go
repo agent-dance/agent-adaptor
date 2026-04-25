@@ -120,10 +120,18 @@ func (a *agentAdminImpl) GetQuota(ctx context.Context) (QuotaReport, error) {
 func (a *agentAdminImpl) ListSkills(ctx context.Context) (SkillSnapshot, error) {
 	defaults := a.binding.Defaults()
 	defaultRefs := a.sdk.selectedRefsFor(a.name, defaults.Skills)
-	// Expose the binding's inline Skill values as non-selected candidates so
-	// they participate in the merged catalogue alongside the provider, even
-	// when an Admin override is active.
-	payload, selected, resolved, err := a.sdk.resolveSkills(ctx, defaults.Agent.TenantID, defaultRefs, nil, defaults.Skills)
+	// Expose the binding's inline Skill values + the upstream
+	// SkillCatalog (when available) as non-selected candidates so the
+	// merged catalogue participates in the snapshot's Resolved set
+	// even when an Admin override is active. When the provider does
+	// NOT implement SkillCatalog, only inline candidates participate;
+	// SkillSyncMode propagates as Unsupported and the host UI is
+	// expected to fall back to the store's own discovery surface.
+	candidates, err := a.sdk.collectAdminCandidates(ctx, defaults)
+	if err != nil {
+		return SkillSnapshot{}, err
+	}
+	payload, selected, resolved, err := a.sdk.resolveSkills(ctx, defaults.Agent, defaultRefs, nil, candidates)
 	if err != nil {
 		return SkillSnapshot{}, err
 	}
@@ -147,9 +155,15 @@ func (a *agentAdminImpl) SetSelectedSkills(ctx context.Context, keys []string) (
 		refs = append(refs, SkillKey(trimmed))
 		normalized = append(normalized, trimmed)
 	}
-	// Binding default inline Skill values are re-introduced as non-selected
-	// candidates so that SetSelectedSkills can target them by key.
-	payload, selected, resolved, err := a.sdk.resolveSkills(ctx, defaults.Agent.TenantID, refs, nil, defaults.Skills)
+	// Binding default inline Skill values + the upstream SkillCatalog
+	// are re-introduced as non-selected candidates so that
+	// SetSelectedSkills can target them by key. (User-supplied keys
+	// that don't appear in either pool are reported as ErrSkillNotFound.)
+	candidates, err := a.sdk.collectAdminCandidates(ctx, defaults)
+	if err != nil {
+		return SkillSnapshot{}, err
+	}
+	payload, selected, resolved, err := a.sdk.resolveSkills(ctx, defaults.Agent, refs, nil, candidates)
 	if err != nil {
 		return SkillSnapshot{}, err
 	}

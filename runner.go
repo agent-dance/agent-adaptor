@@ -384,7 +384,7 @@ func (r *runnerImpl) resolveInvocation(ctx context.Context, prompt string, opts 
 		_ = r.sdk.workspaceManager.Release(releaseCtx, workspace, WorkspaceReleaseKeep)
 	}
 
-	skillPayload, _, _, err := r.sdk.resolveSkills(ctx, identity.TenantID, defaultRefs, runRefs, defaults.Skills)
+	skillPayload, _, _, err := r.sdk.resolveSkills(ctx, identity, defaultRefs, runRefs, defaults.Skills)
 	if err != nil {
 		cleanup()
 		return resolvedInvocation{}, nil, err

@@ -297,6 +297,30 @@ type WorkspaceManager interface {
 type RuntimeServiceManager interface {
 	Ensure(ctx context.Context, req RuntimeServiceRequest) ([]RuntimeServiceRef, error)
 	ReleaseByRun(ctx context.Context, runID string) error
+
+	// ReleaseByLabels releases every service whose Metadata contains
+	// every key-value pair in labels. The semantics match a logical
+	// AND across the labels map, NOT individual matches.
+	//
+	// An empty labels map releases nothing — callers must explicitly
+	// opt-in to broad releases by passing at least one key-value
+	// pair. This is a deliberate guard against accidental "release
+	// everything you have" calls (compare ReleaseByRun, which always
+	// scopes to one runID).
+	//
+	// Implementations should not error when no service matches; the
+	// invariant after a successful call is "no service whose
+	// Metadata covers labels remains running", which is trivially
+	// satisfied by an empty match. Backend errors (Docker daemon
+	// down, permission denied, etc.) propagate as-is.
+	//
+	// This method exists primarily to support host-side cleanup by
+	// task / tenant / workspace label after a process restart, when
+	// the runID-scoped index from a previous incarnation has been
+	// lost. See docs/v0.5.0-host-integration-plan.md §A3 for the
+	// design rationale and why a host-driven Reconcile(aliveRunIDs)
+	// was deliberately NOT added.
+	ReleaseByLabels(ctx context.Context, labels map[string]string) error
 }
 
 type resolvedInvocation struct {
