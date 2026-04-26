@@ -66,11 +66,11 @@ type ThreadStartParams struct {
 // ThreadRef is the minimal surface of the server's Thread object exposed
 // through thread/start and thread/started.
 type ThreadRef struct {
-	ID         string          `json:"id"`
-	Ephemeral  bool            `json:"ephemeral,omitempty"`
-	CreatedAt  int64           `json:"createdAt,omitempty"`
-	UpdatedAt  int64           `json:"updatedAt,omitempty"`
-	Extras     json.RawMessage `json:"-"`
+	ID        string          `json:"id"`
+	Ephemeral bool            `json:"ephemeral,omitempty"`
+	CreatedAt int64           `json:"createdAt,omitempty"`
+	UpdatedAt int64           `json:"updatedAt,omitempty"`
+	Extras    json.RawMessage `json:"-"`
 }
 
 // ThreadStartResponse is the reply to thread/start.
@@ -199,11 +199,16 @@ type ItemCompletedNotificationBody struct {
 type UserInputKind string
 
 const (
-	UserInputKindText       UserInputKind = "text"
-	UserInputKindImage      UserInputKind = "image"
+	// UserInputKindText carries plain text input.
+	UserInputKindText UserInputKind = "text"
+	// UserInputKindImage carries remote image input.
+	UserInputKindImage UserInputKind = "image"
+	// UserInputKindLocalImage carries local image input.
 	UserInputKindLocalImage UserInputKind = "localImage"
-	UserInputKindSkill      UserInputKind = "skill"
-	UserInputKindMention    UserInputKind = "mention"
+	// UserInputKindSkill carries a skill reference input.
+	UserInputKindSkill UserInputKind = "skill"
+	// UserInputKindMention carries a structured mention input.
+	UserInputKindMention UserInputKind = "mention"
 )
 
 // UserInput is the tagged union carried by TurnStartParams.Input.
@@ -228,9 +233,13 @@ func TextInput(text string) UserInput { return UserInput{Type: UserInputKindText
 type SandboxPolicyKind string
 
 const (
-	SandboxPolicyKindDangerFull     SandboxPolicyKind = "dangerFullAccess"
-	SandboxPolicyKindReadOnly       SandboxPolicyKind = "readOnly"
-	SandboxPolicyKindExternal       SandboxPolicyKind = "externalSandbox"
+	// SandboxPolicyKindDangerFull requests unrestricted local execution.
+	SandboxPolicyKindDangerFull SandboxPolicyKind = "dangerFullAccess"
+	// SandboxPolicyKindReadOnly requests read-only sandboxing.
+	SandboxPolicyKindReadOnly SandboxPolicyKind = "readOnly"
+	// SandboxPolicyKindExternal delegates sandboxing outside codex.
+	SandboxPolicyKindExternal SandboxPolicyKind = "externalSandbox"
+	// SandboxPolicyKindWorkspaceWrite allows writes inside the workspace.
 	SandboxPolicyKindWorkspaceWrite SandboxPolicyKind = "workspaceWrite"
 )
 
@@ -254,19 +263,32 @@ type SandboxPolicy struct {
 type ThreadItemKind string
 
 const (
-	ThreadItemAgentMessage      ThreadItemKind = "agentMessage"
-	ThreadItemReasoning         ThreadItemKind = "reasoning"
-	ThreadItemCommandExecution  ThreadItemKind = "commandExecution"
-	ThreadItemFileChange        ThreadItemKind = "fileChange"
-	ThreadItemMcpToolCall       ThreadItemKind = "mcpToolCall"
-	ThreadItemWebSearch         ThreadItemKind = "webSearch"
-	ThreadItemDynamicToolCall   ThreadItemKind = "dynamicToolCall"
-	ThreadItemPlan              ThreadItemKind = "plan"
-	ThreadItemUserMessage       ThreadItemKind = "userMessage"
-	ThreadItemImageView         ThreadItemKind = "imageView"
-	ThreadItemImageGeneration   ThreadItemKind = "imageGeneration"
+	// ThreadItemAgentMessage is assistant text.
+	ThreadItemAgentMessage ThreadItemKind = "agentMessage"
+	// ThreadItemReasoning is model reasoning/thinking content.
+	ThreadItemReasoning ThreadItemKind = "reasoning"
+	// ThreadItemCommandExecution is a shell command execution item.
+	ThreadItemCommandExecution ThreadItemKind = "commandExecution"
+	// ThreadItemFileChange is a file-change item.
+	ThreadItemFileChange ThreadItemKind = "fileChange"
+	// ThreadItemMcpToolCall is an MCP tool-call item.
+	ThreadItemMcpToolCall ThreadItemKind = "mcpToolCall"
+	// ThreadItemWebSearch is a web-search item.
+	ThreadItemWebSearch ThreadItemKind = "webSearch"
+	// ThreadItemDynamicToolCall is a dynamic tool-call item.
+	ThreadItemDynamicToolCall ThreadItemKind = "dynamicToolCall"
+	// ThreadItemPlan is a plan update item.
+	ThreadItemPlan ThreadItemKind = "plan"
+	// ThreadItemUserMessage is a user message item.
+	ThreadItemUserMessage ThreadItemKind = "userMessage"
+	// ThreadItemImageView is an image-view item.
+	ThreadItemImageView ThreadItemKind = "imageView"
+	// ThreadItemImageGeneration is an image-generation item.
+	ThreadItemImageGeneration ThreadItemKind = "imageGeneration"
+	// ThreadItemContextCompaction is a context-compaction item.
 	ThreadItemContextCompaction ThreadItemKind = "contextCompaction"
-	ThreadItemUnknown           ThreadItemKind = ""
+	// ThreadItemUnknown preserves unknown variants through the Raw path.
+	ThreadItemUnknown ThreadItemKind = ""
 )
 
 // ThreadItem is the discriminated union payload observed on item/started and

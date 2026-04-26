@@ -120,13 +120,13 @@ func main() {
 	exampleutil.Check(len(defaultSkills.Warnings) == 0, "expected default skills warnings to be empty, got %#v", defaultSkills.Warnings)
 	exampleutil.Check(!snapshotHasState(defaultSkills, agentadaptor.SkillStateMissing), "expected default skills to avoid missing entries, got %#v", defaultSkills.Entries)
 
-	syncedSkills, err := reviewAdmin.SetSelectedSkills(ctx, []string{defaultSkillName})
+	selectedSkills, err := reviewAdmin.SetSelectedSkills(ctx, []string{defaultSkillName})
 	exampleutil.Must(err, "set selected skills for review agent")
-	exampleutil.Check(syncedSkills.Supported, "expected selected skills snapshot to be supported")
-	exampleutil.Check(len(syncedSkills.Selected) == 1, "expected selected skills length 1, got %d", len(syncedSkills.Selected))
-	exampleutil.Check(syncedSkills.Selected[0] == defaultSkillName, "expected selected skill to be %q, got %q", defaultSkillName, syncedSkills.Selected[0])
-	exampleutil.Check(len(syncedSkills.Warnings) == 0, "expected selected skills warnings to be empty, got %#v", syncedSkills.Warnings)
-	exampleutil.Check(!snapshotHasState(syncedSkills, agentadaptor.SkillStateMissing), "expected selected skills to avoid missing entries, got %#v", syncedSkills.Entries)
+	exampleutil.Check(selectedSkills.Supported, "expected selected skills snapshot to be supported")
+	exampleutil.Check(len(selectedSkills.Selected) == 1, "expected selected skills length 1, got %d", len(selectedSkills.Selected))
+	exampleutil.Check(selectedSkills.Selected[0] == defaultSkillName, "expected selected skill to be %q, got %q", defaultSkillName, selectedSkills.Selected[0])
+	exampleutil.Check(len(selectedSkills.Warnings) == 0, "expected selected skills warnings to be empty, got %#v", selectedSkills.Warnings)
+	exampleutil.Check(!snapshotHasState(selectedSkills, agentadaptor.SkillStateMissing), "expected selected skills to avoid missing entries, got %#v", selectedSkills.Entries)
 
 	exampleutil.PrintJSON(map[string]any{
 		"example": "codex-admin-named",
@@ -141,14 +141,14 @@ func main() {
 			"skills": defaultSkills,
 		},
 		"review": map[string]any{
-			"result":           reviewResult,
-			"info":             reviewInfo,
-			"environment":      envReport,
-			"profile":          profile,
-			"model_count":      len(models),
-			"config_schema":    schema,
-			"quota":            quota,
-			"synced_skill_set": syncedSkills,
+			"result":          reviewResult,
+			"info":            reviewInfo,
+			"environment":     envReport,
+			"profile":         profile,
+			"model_count":     len(models),
+			"config_schema":   schema,
+			"quota":           quota,
+			"selected_skills": selectedSkills,
 		},
 	})
 }

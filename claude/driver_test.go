@@ -64,7 +64,7 @@ func TestStreamCapabilityValues(t *testing.T) {
 	cap := NewAdapter().(interface {
 		StreamCapability() agentadaptor.StreamCapability
 	}).StreamCapability()
-	if !cap.Native || !cap.TokenLevel || !cap.Reasoning || !cap.ToolCallArgs || cap.HITL {
+	if !cap.Native || !cap.TokenLevel || !cap.Reasoning || !cap.ToolCallArgs || !cap.HITL {
 		t.Fatalf("unexpected capability: %#v", cap)
 	}
 }

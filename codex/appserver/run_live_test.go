@@ -43,8 +43,10 @@ func TestAppServerHaiku(t *testing.T) {
 		agentadaptor.WithStreaming(),
 		agentadaptor.WithSessionKey("codex_live_test", "haiku"),
 		agentadaptor.WithRunPolicy(agentadaptor.RunPolicy{
-			Approvals: agentadaptor.ApprovalOff,
 			Isolation: agentadaptor.IsolationReadOnly,
+			HumanDecision: agentadaptor.HumanDecisionPolicy{
+				Permission: agentadaptor.HumanDecisionAutoApprove,
+			},
 		}),
 	)
 	if err != nil {

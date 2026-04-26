@@ -71,6 +71,11 @@ func main() {
 - [`examples/mock-runtime-admin`](./examples/mock-runtime-admin)：运行时服务与管理信息输出。
 - [`examples/session-codec-inspect`](./examples/session-codec-inspect)：安全检查适配器 session 参数。
 - [`examples/mock-adapter-playground`](./examples/mock-adapter-playground)：自定义适配器 playground。
+- [`examples/mock-skills-contract`](./examples/mock-skills-contract)：确定性 skills 请求组装。
+- [`examples/streaming-chat`](./examples/streaming-chat)：Go channel token streaming。
+- [`examples/streaming-sse-server`](./examples/streaming-sse-server)：最小 HTTP SSE chat 端点。
+- [`examples/streaming-chat-copilotkit`](./examples/streaming-chat-copilotkit)：AG-UI + CopilotKit + HITL 卡片 demo。
+- [`examples/streaming-chat-aguiclient`](./examples/streaming-chat-aguiclient)：Vite + React + `@ag-ui/client` 直连 AG-UI demo。
 
 ## 常见调用方式
 
@@ -154,7 +159,7 @@ func main() {
 
 ### 流式执行
 
-`Start(...)` 会返回 `RunHandle`，里面有 `Events()`、`Wait(...)` 和 `Cancel(...)`；你的应用可以用同一套执行接口处理流式输出，而不用再维护第二套 API。
+`Start(...)` 会返回 `RunHandle`，里面有 `Events()`、`StreamEvents()`、`DecisionRequests()`、`RunID()`、`Wait(...)`、`Cancel(...)` 和 `ResolveDecision(...)`；你的应用可以用同一套执行接口处理运行事件、token 级流式输出和 HITL 回填，而不用再维护第二套 API。
 
 ## 能力面
 
@@ -166,7 +171,7 @@ func main() {
 | MCP | 宿主声明统一的 MCP server spec，内置 adapter 会把它物化到各自真实生效的 profile。 |
 | Runtime Services | 在运行前准备好需要的运行时服务，并在清理阶段按 `RunID` 释放。 |
 | Admin API | 提供管理接口，用来做环境检查、模型枚举与探测、配置字段展示、额度查询和 skills 管理。 |
-| Run Results | 返回统一输出、执行记录、provider/model/cost 元数据、运行时服务状态，以及结构化 question/failure。 |
+| Run Results | 分层返回 assistant 文本 `Output`、原始 stdout/stderr `RawStreams`、语义记录 `Transcript`、短摘要 `Summary`、provider 终局 JSON `Result`、provider/model/cost 元数据、运行时服务状态，以及结构化 question/failure。 |
 
 ## 内置包
 
@@ -192,7 +197,7 @@ func main() {
 - `ListModels(...)` 与 `DetectModel(...)` 用于模型可见性和探测。
 - `ConfigSchema(...)` 用于生成配置界面需要的字段信息。
 - `GetQuota(...)` 用于在支持时返回真实额度或 credit 窗口。
-- `ListSkills(...)` 与 `SyncSkills(...)` 用于 skill 清单与期望 skill 同步。
+- `ListSkills(...)` 与 `SetSelectedSkills(...)` 用于 skill 清单与进程内 selected-skill 覆盖。
 
 ## 适配器扩展
 
@@ -224,14 +229,11 @@ sdk := agentadaptor.New(agentadaptor.WithDefaultAgent(binding))
 
 ## 深入阅读
 
-更深入的协议说明、草案和工作流文档放在 [`docs/`](./docs) 下。
+先看当前仍作为使用入口的文档：
 
-- [`docs/profile-resolver-api.md`](./docs/profile-resolver-api.md)
-- [`docs/paperclip-alignment-roadmap.md`](./docs/paperclip-alignment-roadmap.md)
-- [`docs/workstream-adapter-conformance-kit.md`](./docs/workstream-adapter-conformance-kit.md)
-- [`docs/workstream-session-codec.md`](./docs/workstream-session-codec.md)
-- [`docs/workstream-runtime-service-lifecycle-v2.md`](./docs/workstream-runtime-service-lifecycle-v2.md)
-- [`docs/workstream-mcp-profile-materialization.md`](./docs/workstream-mcp-profile-materialization.md)
-- [`docs/workstream-builtin-probes.md`](./docs/workstream-builtin-probes.md)
-- [`docs/workstream-transcript-contract.md`](./docs/workstream-transcript-contract.md)
-- [`docs/workstream-bridges-profiles-host.md`](./docs/workstream-bridges-profiles-host.md)
+- [`docs/README.md`](./docs/README.md)：当前文档地图与历史 workstream 索引。
+- [`docs/api-reference.md`](./docs/api-reference.md)：公共 API 面与职责归属。
+- [`docs/usage-guide.md`](./docs/usage-guide.md)：常见宿主集成方式。
+- [`docs/run-policy.md`](./docs/run-policy.md)：`RunPolicy` 与 HITL 合同。
+- [`docs/streaming.md`](./docs/streaming.md)：token streaming、AG-UI 与 SSE 用法。
+- [`docs/public-errors.md`](./docs/public-errors.md)：公开错误清单。

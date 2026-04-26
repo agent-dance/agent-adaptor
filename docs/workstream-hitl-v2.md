@@ -1,5 +1,7 @@
 # Workstream: HITL v2 设计（破坏性重构 · host-intent policy）
 
+> 状态：详细设计记录。当前宿主集成入口见 [`run-policy.md`](./run-policy.md)，当前 streaming / bridge 行为见 [`streaming.md`](./streaming.md)。本文保留旧 `Approvals` / `Trust` 背景和迁移材料，只在当前入口文档一致时作为实现细节参考。
+
 本文件是 [`docs/workstream-hitl.md`](./workstream-hitl.md) 的配对设计文档。那份是一手调查资料（现状、证据、根因），本文件只做两件事：
 
 1. 在 **SDK 职责边界内**，给"人在回路"定义一份 host-intent 的单一维度合同（去 vendor 化）

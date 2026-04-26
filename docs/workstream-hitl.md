@@ -1,12 +1,14 @@
 # Workstream: HITL（Human-In-The-Loop）问题记录与设计输入
 
-本文件是 HITL 设计的**一手调查资料**。它不预先给结论，只负责把"当前 v1 audit-only 方案在真实交互中暴露了什么"固化下来，作为后续 HITL v2 合同/协议/UI 桥接层设计的输入。设计文档将另开一篇。
+> 状态：历史调查资料。当前 HITL 公共合同见 [`run-policy.md`](./run-policy.md)，当前 bridge 行为见 [`streaming.md`](./streaming.md)。本文中的 `Approvals` / `Trust` / audit-only 描述保留为问题背景，不代表当前 API。
 
-范围锚点：
+本文件是 HITL 设计的**一手调查资料**。它不预先给结论，只负责把"当时 v1 audit-only 方案在真实交互中暴露了什么"固化下来，作为后续 HITL v2 合同/协议/UI 桥接层设计的输入。
+
+当时范围锚点：
 - `docs/streaming-adapter-contract.md` §2.5（HITL v1：audit-only，auto-deny）
 - `run_types.go` `StreamHITLRequested` / `StreamHITLResolved`（v1 仅审计通道）
-- `run_policy.go` `Approvals ∈ {ask, auto, off}`（目前是唯一的审批旋钮）
-- `pkg/bridges/agui/bridge.go`（`StreamHITLRequested` 当前映射到 AG-UI `CustomEvent`，CopilotKit 默认不渲染）
+- `run_policy.go` `Approvals ∈ {ask, auto, off}`（当时唯一的审批旋钮）
+- `pkg/bridges/agui/bridge.go`（当时 `StreamHITLRequested` 映射到 AG-UI `CustomEvent`，CopilotKit 默认不渲染）
 
 ## 0. TL;DR（一句话）
 
@@ -238,8 +240,8 @@ HITL 设计必须首先承认"审批"不是一种均质事件。至少应区分�
 
 - 会话 jsonl：`~/.trpc-claudecode/projects/-Users-blurooo-project-agent-adaptor/96809d62-abc5-4ebb-b0d6-e0031b63e1d5.jsonl`
 - 决定性帧：`ExitPlanMode` tool_use（14:24:16.449）+ 1ms 后的 tool_result `"Exit plan mode?"`/`is_error:true`（14:24:16.450）
-- 现有 HITL v1 合同：`docs/streaming-adapter-contract.md` §2.5
-- 现有 Policy 合同：`docs/run-policy.md`、`run_policy.go`
-- 现有 bridge 映射：`pkg/bridges/agui/bridge.go`（`StreamHITLRequested → CustomEvent`）
-- Claude driver 现状：`claude/driver.go`（`HITL: false`）、`claude/parser.go`（`permission_request → StreamHITLRequested`，未覆盖 `ExitPlanMode` 等）
+- 当时 HITL v1 合同：`docs/streaming-adapter-contract.md` §2.5
+- 当时 Policy 合同：`docs/run-policy.md`、`run_policy.go`
+- 当时 bridge 映射：`pkg/bridges/agui/bridge.go`（`StreamHITLRequested → CustomEvent`）
+- 当时 Claude driver 现状：`claude/driver.go`（`HITL: false`）、`claude/parser.go`（`permission_request → StreamHITLRequested`，未覆盖 `ExitPlanMode` 等）
 - 参考示例：`examples/streaming-chat-copilotkit/main.go` + `examples/internal/exampleutil/agui_sdk.go`

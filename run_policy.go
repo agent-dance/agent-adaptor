@@ -11,7 +11,7 @@ import (
 // run".
 //
 // The HITL dimension (Approvals / Trust in the legacy API) is now expressed
-// through HumanDecision. See docs/workstream-hitl-v2.md for the full contract.
+// through HumanDecision. See docs/run-policy.md for the public contract.
 type RunPolicy struct {
 	Isolation     IsolationLevel
 	WebSearch     FeatureLevel
@@ -23,8 +23,11 @@ type RunPolicy struct {
 type IsolationLevel string
 
 const (
-	IsolationInherit        IsolationLevel = ""
-	IsolationReadOnly       IsolationLevel = "read_only"
+	// IsolationInherit leaves isolation to binding defaults or adapter fallback.
+	IsolationInherit IsolationLevel = ""
+	// IsolationReadOnly requests a read-only workspace.
+	IsolationReadOnly IsolationLevel = "read_only"
+	// IsolationWorkspaceWrite allows writes inside the resolved workspace.
 	IsolationWorkspaceWrite IsolationLevel = "workspace_write"
 	// IsolationUnrestricted maps to each agent's "full access" / danger
 	// sandbox (or the closest available behavior).
@@ -35,15 +38,22 @@ const (
 type FeatureLevel string
 
 const (
+	// FeatureInherit leaves the capability to binding defaults or adapter fallback.
 	FeatureInherit FeatureLevel = ""
-	FeatureAllow   FeatureLevel = "allow"
-	FeatureDeny    FeatureLevel = "deny"
+	// FeatureAllow explicitly enables the optional capability when supported.
+	FeatureAllow FeatureLevel = "allow"
+	// FeatureDeny explicitly disables the optional capability.
+	FeatureDeny FeatureLevel = "deny"
 )
 
-// Defaults declared in docs/workstream-hitl-v2.md §3.7. Exposed as package
+// Defaults declared in docs/run-policy.md §1.3. Exposed as package
 // constants so runner and adapter tests can reference them without drift.
 const (
-	DefaultHumanDecisionTimeout    = 30 * time.Second
+	// DefaultHumanDecisionTimeout is the timeout used for Ask decisions when
+	// the host does not set HumanDecisionPolicy.Timeout.
+	DefaultHumanDecisionTimeout = 30 * time.Second
+	// DefaultHumanDecisionMaxRetries is the retry cap used when the host
+	// requests FailureRetry without setting MaxRetries.
 	DefaultHumanDecisionMaxRetries = 3
 )
 

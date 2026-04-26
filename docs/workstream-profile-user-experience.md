@@ -1,5 +1,7 @@
 # Workstream: Profile User Experience
 
+> 状态：历史设计记录。`AgentProfileDir` 已移除，当前 profile 公共入口是 `WithNativeProfile` / `WithDedicatedProfile` / `WithCloneProfile` / `WithCloneProfileFrom`，当前用法见 [`usage-guide.md`](./usage-guide.md) §6。
+
 本文档把 `AgentProfileDir` 当前暴露出的用户体验问题，整理成一份移除旧字段、改用自然 profile option 的落地计划。
 
 核心目标不是把 profile / resolver 做进 core，也不是让 SDK 自动替宿主迁移所有本地状态，而是让 built-in adapter 的本地 profile 体验从“隐式 env 映射”升级为“可理解、可诊断、可初始化、可选择复用或隔离”的产品语义。

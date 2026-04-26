@@ -6,13 +6,16 @@ import (
 )
 
 // HumanDecisionKind labels the semantic category of a human-in-the-loop (HITL)
-// decision event. See docs/workstream-hitl-v2.md §3.1 for the taxonomy.
+// decision event. See docs/run-policy.md for the public taxonomy.
 type HumanDecisionKind string
 
 const (
+	// HumanDecisionPermission covers tool, command, file, or permission gates.
 	HumanDecisionPermission HumanDecisionKind = "permission"
+	// HumanDecisionPlanReview covers plan-mode approval before execution.
 	HumanDecisionPlanReview HumanDecisionKind = "plan_review"
-	HumanDecisionQuestion   HumanDecisionKind = "question"
+	// HumanDecisionQuestion covers structured clarification questions.
+	HumanDecisionQuestion HumanDecisionKind = "question"
 )
 
 // HumanDecisionMode expresses the host's intent for a Permission / PlanReview
@@ -22,7 +25,7 @@ const (
 //   - Ask         → route the request to a HITL channel (handler or channel).
 //   - AutoApprove → defer to the agent / CLI bypass / auto path.
 //   - AutoReject  → synthesize a rejection locally and emit a Failure.
-//   - Unset ("")  → fall back to the SDK default (see docs/workstream-hitl-v2.md §3.7).
+//   - Unset ("")  → fall back to the SDK default (see docs/run-policy.md §1.3).
 //
 // Question uses the narrower QuestionMode because the values are not
 // interchangeable: a Question result is structured (Answered), so "auto
@@ -30,10 +33,15 @@ const (
 type HumanDecisionMode string
 
 const (
-	HumanDecisionUnset       HumanDecisionMode = ""
-	HumanDecisionAsk         HumanDecisionMode = "ask"
+	// HumanDecisionUnset inherits the SDK/binding default.
+	HumanDecisionUnset HumanDecisionMode = ""
+	// HumanDecisionAsk routes the decision to a host handler or async channel.
+	HumanDecisionAsk HumanDecisionMode = "ask"
+	// HumanDecisionAutoApprove lets the adapter take its provider-specific
+	// automatic/bypass path for the decision class.
 	HumanDecisionAutoApprove HumanDecisionMode = "auto_approve"
-	HumanDecisionAutoReject  HumanDecisionMode = "auto_reject"
+	// HumanDecisionAutoReject synthesizes a rejection locally.
+	HumanDecisionAutoReject HumanDecisionMode = "auto_reject"
 )
 
 // QuestionMode expresses the host's intent for the Question class. It is a
@@ -41,8 +49,11 @@ const (
 type QuestionMode string
 
 const (
-	QuestionUnset      QuestionMode = ""
-	QuestionAsk        QuestionMode = "ask"
+	// QuestionUnset inherits the SDK/binding default.
+	QuestionUnset QuestionMode = ""
+	// QuestionAsk routes the question to a host handler or async channel.
+	QuestionAsk QuestionMode = "ask"
+	// QuestionAutoReject rejects questions without asking the host.
 	QuestionAutoReject QuestionMode = "auto_reject"
 )
 
@@ -52,6 +63,7 @@ const (
 type FailureAction string
 
 const (
+	// FailureActionUnset inherits the SDK default action.
 	FailureActionUnset FailureAction = ""
 	// FailureAbort terminates the run and emits RunResult.Failure with the
 	// matching code (FailureReject or FailureTimeout). This is the default.
@@ -87,7 +99,7 @@ const (
 
 // HumanDecisionPolicy is the RunPolicy-facing sub-struct that carries all
 // HITL knobs. Zero-valued fields inherit the SDK defaults declared in
-// docs/workstream-hitl-v2.md §3.7.
+// docs/run-policy.md §1.3.
 type HumanDecisionPolicy struct {
 	Permission HumanDecisionMode
 	PlanReview HumanDecisionMode
@@ -140,22 +152,27 @@ type DecisionChoice struct {
 type DecisionResult string
 
 const (
+	// DecisionApproved is the normalized positive result for binary decisions.
 	DecisionApproved DecisionResult = "approved"
+	// DecisionRejected is the normalized negative result for binary decisions.
 	DecisionRejected DecisionResult = "rejected"
+	// DecisionAnswered carries a structured answer for Question decisions.
 	DecisionAnswered DecisionResult = "answered"
+	// DecisionTimedOut records that no host answer arrived before Deadline.
 	DecisionTimedOut DecisionResult = "timed_out"
-	DecisionAborted  DecisionResult = "aborted"
+	// DecisionAborted records cancellation or another adapter-visible abort.
+	DecisionAborted DecisionResult = "aborted"
 )
 
 // DecisionRequest is the cross-class request envelope adapters hand to the
 // SDK. The SDK normalizes RequestID / CreatedAt / Deadline / RetryAttempt
 // before routing and before emitting StreamHITLRequested.
 type DecisionRequest struct {
-	RequestID string
-	RunID     string
-	ThreadID  string
-	Kind      HumanDecisionKind
-	Source    string
+	RequestID  string
+	RunID      string
+	ThreadID   string
+	Kind       HumanDecisionKind
+	Source     string
 	ToolCallID string
 
 	Prompt  string
@@ -225,7 +242,9 @@ type QuestionRequest struct {
 type ApprovalResult string
 
 const (
+	// ApprovalApproved is returned by Permission/PlanReview handlers to approve.
 	ApprovalApproved ApprovalResult = "approved"
+	// ApprovalRejected is returned by Permission/PlanReview handlers to reject.
 	ApprovalRejected ApprovalResult = "rejected"
 )
 
@@ -234,7 +253,9 @@ const (
 type QuestionResult string
 
 const (
+	// QuestionAnswered means the handler supplied an Answer/Choice payload.
 	QuestionAnswered QuestionResult = "answered"
+	// QuestionRejected means the handler declined to answer the question.
 	QuestionRejected QuestionResult = "rejected"
 )
 

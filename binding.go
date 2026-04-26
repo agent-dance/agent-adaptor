@@ -6,6 +6,11 @@ type staticAgentBinding struct {
 	defaults AgentDefaults
 }
 
+// Bind creates a generic AgentBinding for a custom adapter/config pair.
+//
+// Built-in packages expose typed constructors such as codex.New; Bind is the
+// lower-level helper for hosts implementing their own DriverAdapter. The SDK
+// validates the binding during WithDefaultAgent/WithAgent, not here.
 func Bind(adapter DriverAdapter, cfg any, opts ...AgentOption) AgentBinding {
 	return bindWithDefaults(adapter, cfg, opts...)
 }
@@ -52,6 +57,7 @@ func bindWithDefaults(adapter DriverAdapter, cfg any, opts ...AgentOption) *stat
 	}
 }
 
+// TypedConfig returns the concrete config value captured by BindTyped.
 func (b *typedAgentBinding[T]) TypedConfig() T {
 	var zero T
 	if b == nil {
@@ -60,6 +66,7 @@ func (b *typedAgentBinding[T]) TypedConfig() T {
 	return b.typedConfig
 }
 
+// Adapter returns the bound adapter implementation.
 func (b *staticAgentBinding) Adapter() DriverAdapter {
 	if b == nil {
 		return nil
@@ -67,6 +74,7 @@ func (b *staticAgentBinding) Adapter() DriverAdapter {
 	return b.adapter
 }
 
+// Config returns the adapter config captured at binding time.
 func (b *staticAgentBinding) Config() any {
 	if b == nil {
 		return nil
@@ -74,6 +82,7 @@ func (b *staticAgentBinding) Config() any {
 	return b.config
 }
 
+// Defaults returns a defensive copy of the binding-level defaults.
 func (b *staticAgentBinding) Defaults() AgentDefaults {
 	if b == nil {
 		return AgentDefaults{}

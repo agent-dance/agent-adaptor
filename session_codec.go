@@ -5,8 +5,12 @@ package agentadaptor
 // Hosts should prefer SessionCodec over direct map access, but these constants
 // define the stable meanings for the SDK's built-in adapters and examples.
 const (
-	SessionParamCWD             = "cwd"
-	SessionParamWorkspaceID     = "workspace_id"
+	// SessionParamCWD records the workspace directory captured in a session.
+	SessionParamCWD = "cwd"
+	// SessionParamWorkspaceID records the SDK workspace lease identifier.
+	SessionParamWorkspaceID = "workspace_id"
+	// SessionParamPromptBundleKey records the prompt/skill bundle fingerprint
+	// used as a resume guard by skill-aware adapters.
 	SessionParamPromptBundleKey = "prompt_bundle_key"
 )
 
@@ -33,9 +37,8 @@ type SessionParams struct {
 // so that GuardFingerprint changes whenever the selected skills change. A Run
 // invocation that supplies a resume ID whose GuardFingerprint no longer
 // matches the current skill selection SHOULD be rejected by the adapter with
-// a dedicated error (see docs/skill-api-design.md §5.10). This keeps prompt
-// bundles and on-disk caches consistent with the session they were captured
-// for.
+// a dedicated error. This keeps prompt bundles and on-disk caches consistent
+// with the session they were captured for.
 type SessionCodec interface {
 	Name() string
 	ToParams(state *DriverSessionState) SessionParams

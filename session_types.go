@@ -5,16 +5,31 @@ import (
 	"time"
 )
 
+// SessionMode controls how the SDK coordinates a run with SessionStore.
+// Without a SessionStore, runs are stateless and session-aware modes return an
+// error rather than silently pretending to resume.
 type SessionMode string
 
 const (
+	// SessionContinueOrStart resolves (Namespace, Key) and resumes when an
+	// active mapping exists; otherwise it starts a new session.
 	SessionContinueOrStart SessionMode = "continue_or_start"
-	SessionContinueOnly    SessionMode = "continue_only"
-	SessionStartNew        SessionMode = "start_new"
-	SessionFork            SessionMode = "fork"
-	SessionStateless       SessionMode = "stateless"
+	// SessionContinueOnly requires an existing concrete SessionID or key
+	// mapping and fails when no compatible session exists.
+	SessionContinueOnly SessionMode = "continue_only"
+	// SessionStartNew starts fresh and rebinds (Namespace, Key) only after a
+	// valid checkpoint is produced.
+	SessionStartNew SessionMode = "start_new"
+	// SessionFork starts from ForkFrom but persists the result as a distinct
+	// session mapping.
+	SessionFork SessionMode = "fork"
+	// SessionStateless forces no session resolution or persistence for this run.
+	SessionStateless SessionMode = "stateless"
 )
 
+// SessionRequest is the host-facing session instruction for one run. Namespace
+// and Key form the stable business key; ID/ForkFrom refer to concrete SDK
+// session handles.
 type SessionRequest struct {
 	ID        string
 	Namespace string
@@ -23,14 +38,23 @@ type SessionRequest struct {
 	ForkFrom  string
 }
 
+// SessionCompatibilityStatus classifies whether a stored checkpoint can be
+// reused with the current resolved invocation.
 type SessionCompatibilityStatus string
 
 const (
-	SessionCompatibilityNew          SessionCompatibilityStatus = "new"
-	SessionCompatibilityCompatible   SessionCompatibilityStatus = "compatible"
+	// SessionCompatibilityNew means no previous checkpoint was reused.
+	SessionCompatibilityNew SessionCompatibilityStatus = "new"
+	// SessionCompatibilityCompatible means the stored checkpoint matched the
+	// current invocation fingerprint and was safe to resume.
+	SessionCompatibilityCompatible SessionCompatibilityStatus = "compatible"
+	// SessionCompatibilityIncompatible means a stored checkpoint existed but
+	// resume was rejected because important context changed.
 	SessionCompatibilityIncompatible SessionCompatibilityStatus = "incompatible"
 )
 
+// SessionCompatibility explains why a stored session did or did not match the
+// current invocation fingerprint.
 type SessionCompatibility struct {
 	Status              SessionCompatibilityStatus
 	Reason              string
@@ -38,6 +62,9 @@ type SessionCompatibility struct {
 	ActualFingerprint   string
 }
 
+// SessionRef is returned in RunResult when a session was reused, created, or
+// rebound. ID is the concrete SDK session handle; Namespace/Key are the stable
+// host-facing lookup tuple.
 type SessionRef struct {
 	ID            string
 	Namespace     string
@@ -49,6 +76,7 @@ type SessionRef struct {
 	Compatibility SessionCompatibility
 }
 
+// SessionQuery is the lookup shape passed to SessionStore.Resolve.
 type SessionQuery struct {
 	ID              string
 	Namespace       string
@@ -56,13 +84,19 @@ type SessionQuery struct {
 	IncludeArchived bool
 }
 
+// SessionStatus is the storage lifecycle state of a SessionRecord.
 type SessionStatus string
 
 const (
-	SessionStatusActive   SessionStatus = "active"
+	// SessionStatusActive marks the current record for a SessionKey.
+	SessionStatusActive SessionStatus = "active"
+	// SessionStatusArchived marks a previous record retained for audit/forking.
 	SessionStatusArchived SessionStatus = "archived"
 )
 
+// SessionRecord is the durable SDK session record stored by SessionStore.
+// DriverState is adapter-owned checkpoint data; Fingerprint fields are used to
+// reject unsafe resumes when workspace/skills/MCP/policy context changes.
 type SessionRecord struct {
 	ID                       string
 	Namespace                string
@@ -77,12 +111,18 @@ type SessionRecord struct {
 	UpdatedAt                time.Time
 }
 
+// SessionLease is the optimistic/concurrent-use guard returned by
+// SessionStore.AcquireLease. Stores should validate Token ownership during
+// Finalize and ReleaseLease.
 type SessionLease struct {
 	Target string
 	Owner  string
 	Token  string
 }
 
+// SessionFinalizeRequest tells a SessionStore how to persist the post-run
+// session state. It includes the new record, any old active mapping, held
+// leases, and whether the store should archive/rebind atomically.
 type SessionFinalizeRequest struct {
 	Record       SessionRecord
 	PreviousID   string

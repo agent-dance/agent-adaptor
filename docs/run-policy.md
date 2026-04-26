@@ -54,6 +54,8 @@ SDK 默认值（字段为零时生效）：
 - **`PolicyReadOnlyReview`**：`Isolation=read_only` + 三类 HITL 全部 `Ask`——审阅模式。
 - **`PolicyAutonomous`**：`Isolation=unrestricted`，`Permission`/`PlanReview` = `AutoApprove`，`Question` = `AutoReject`（Question 类没有 AutoApprove，见 §1.3）。等价于旧 `RunPolicyTrusted`。
 
+预设表达的是宿主意图，不保证每个 adapter 都支持。SDK 会在 `Start` 前用 `DriverDescriptor.RunPolicyCaps` 校验显式请求；不支持的 mode 返回 `ErrHumanDecisionModeUnsupported`。
+
 ## 2. 合并规则
 
 1. 从 `AgentBinding.Defaults().RunPolicy` 得到绑定默认。
@@ -76,10 +78,10 @@ SDK 默认值（字段为零时生效）：
 
 | 维度 | Codex | Claude | Cursor |
 |------|-------|--------|--------|
-| Permission=AutoApprove | `app-server`：`mapApprovalPolicy`=`never`；`exec`：`--dangerously-bypass-...` 当 `Isolation=unrestricted` | `--dangerously-skip-permissions` | `--yolo` |
-| Permission=Ask | `app-server`：`on-request`（Phase 2 双向回填） | Phase 1 仅观测层识别（`ExitPlanMode` / `AskUserQuestion`），Phase 3 才真正拦截 | 不支持（`Ask:false`，Start 前报错） |
-| PlanReview | — | Phase 1 观测层 + 显性失败（识别 `ExitPlanMode` tool_result） | 不支持 |
-| Question | — | Phase 1 观测层；Phase 3 答复回填 | 不支持 |
+| Permission | `AutoApprove`；`Ask` / `AutoReject` 当前不声明支持（app-server server request 尚未接入 `DecisionCapableSink`） | `AutoApprove` / `AutoReject`；`Ask` 当前不支持（Permission 需要宿主 tool executor） | `AutoApprove`；`Ask` / `AutoReject` 不支持 |
+| PlanReview | `AutoApprove`；`Ask` / `AutoReject` 不支持 | `Ask` / `AutoApprove` / `AutoReject` | `AutoApprove`；`Ask` / `AutoReject` 不支持 |
+| Question | 不支持；portable `QuestionAutoReject` 对未建模 adapter 视为 no-op | `Ask` / `AutoReject` | 不支持；portable `QuestionAutoReject` 对未建模 adapter 视为 no-op |
+| Retry | Codex / Claude / Cursor 当前 built-in adapter 都不声明 retry 支持 | — | — |
 
 `DriverDescriptor.RunPolicyCaps` 里 `Permission` / `PlanReview` 使用 `HumanDecisionSupport{Ask, AutoApprove, AutoReject, Retry}`；`Question` 使用 `QuestionSupport{Ask, AutoReject, Retry}`（无 AutoApprove）。宿主写一个 adapter 不支持的 `Ask` 值时，`Start` 前返回 `ErrHumanDecisionModeUnsupported`。
 

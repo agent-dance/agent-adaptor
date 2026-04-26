@@ -6,14 +6,24 @@ import (
 	"strings"
 )
 
+// MCPTransport identifies how a model-context-protocol server is reached.
+// Built-in adapters translate these values into provider-specific profile or
+// CLI configuration only when their descriptor advertises support.
 type MCPTransport string
 
 const (
+	// MCPTransportStdio starts a local command and speaks MCP over stdio.
 	MCPTransportStdio MCPTransport = "stdio"
-	MCPTransportHTTP  MCPTransport = "http"
-	MCPTransportSSE   MCPTransport = "sse"
+	// MCPTransportHTTP connects to an HTTP MCP endpoint.
+	MCPTransportHTTP MCPTransport = "http"
+	// MCPTransportSSE connects to an SSE-based MCP endpoint.
+	MCPTransportSSE MCPTransport = "sse"
 )
 
+// MCPServerSpec is one host-declared MCP server. For stdio servers, Command
+// and Args describe the process to launch. For HTTP/SSE servers, URL, Headers,
+// and BearerTokenEnvVar describe the remote endpoint. Required marks servers
+// the host expects to be present for the run.
 type MCPServerSpec struct {
 	Key               string
 	Transport         MCPTransport
@@ -27,16 +37,22 @@ type MCPServerSpec struct {
 	RequiredReason    string
 }
 
+// MCPConfig is the binding-level or per-run collection of MCP servers. Per-run
+// WithMCP replaces the full effective config rather than appending to defaults.
 type MCPConfig struct {
 	Servers []MCPServerSpec
 }
 
+// MCPPayload is the normalized adapter-facing MCP configuration after
+// validation, capability checks, sorting, and fingerprinting.
 type MCPPayload struct {
 	Servers     []MCPServerSpec
 	Fingerprint string
 	Warnings    []string
 }
 
+// MCPCapability describes which MCP transports an adapter supports. The SDK
+// validates host-provided MCPConfig against this before invoking the adapter.
 type MCPCapability struct {
 	Supported bool
 	Stdio     bool

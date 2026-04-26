@@ -11,7 +11,7 @@ import (
 
 // Skill is the canonical description of one skill: who it is (Key), where it
 // comes from (Source), and whether it must participate in every run that sees
-// it (Required). See docs/skill-api-design.md §5.1 for the full contract.
+// it (Required). See docs/skill-api-design.md §1 for the full contract.
 //
 // Skill also acts as a SkillRef so callers can pass a Skill value directly to
 // WithDefaultSkills / WithSkills without first registering it in a provider.
@@ -34,7 +34,7 @@ type Skill struct {
 	Reason string
 	// Metadata carries optional extension fields. Keys with an underscore
 	// prefix are reserved for SDK-level interpretation (see the reserved
-	// keys documented in docs/skill-api-design.md §5.1).
+	// keys documented in docs/skill-api-design.md §1).
 	Metadata map[string]string
 }
 
@@ -60,8 +60,8 @@ func (Skill) isSkillRef() {}
 // SDK never branches on host-defined source types itself; it only
 // routes them to the configured materializer. This keeps the SDK
 // closed against host ontology while letting hosts own their fetch /
-// unpack / cache strategy. See docs/v0.5.0-host-integration-plan.md
-// §A1.2.4 for the rationale.
+// unpack / cache strategy. See docs/skill-api-design.md §3 for the
+// materializer contract.
 type SkillSource interface {
 	// SkillSource is the marker method. It MUST be a no-op; its only
 	// purpose is to constrain types that can be assigned to a Source
@@ -275,7 +275,7 @@ func (s SkillSet) canonicalKey(mapKey string, skill Skill) string {
 //
 // Implementations are responsible for caching, atomic writes, and any
 // host-specific isolation (for example multi-tenant cache roots). The SDK
-// default implementation is documented in docs/skill-api-design.md §5.7.
+// default implementation is documented in docs/skill-api-design.md §3.
 type SkillMaterializer interface {
 	Materialize(ctx context.Context, s Skill) (sourcePath string, err error)
 }
@@ -330,13 +330,19 @@ func (r ResolvedSkills) Keys() []string {
 type SkillSyncMode string
 
 const (
+	// SkillSyncUnsupported means the adapter ignores SDK-resolved skills or
+	// cannot report skill state through Admin.
 	SkillSyncUnsupported SkillSyncMode = "unsupported"
-	SkillSyncEphemeral   SkillSyncMode = "ephemeral"
-	SkillSyncPersistent  SkillSyncMode = "persistent"
+	// SkillSyncEphemeral means skills are materialized for the current run or
+	// managed profile and do not represent durable user configuration.
+	SkillSyncEphemeral SkillSyncMode = "ephemeral"
+	// SkillSyncPersistent means the adapter exposes or updates a durable
+	// provider-side skill installation.
+	SkillSyncPersistent SkillSyncMode = "persistent"
 )
 
 // SkillSnapshot is the Admin-layer report for ListSkills / SetSelectedSkills.
-// See docs/skill-api-design.md §5.8.
+// See docs/skill-api-design.md §5.
 type SkillSnapshot struct {
 	DriverType  string
 	Supported   bool
@@ -368,25 +374,37 @@ type SnapshotEntry struct {
 	Detail         string
 }
 
-// SkillState / SkillOrigin describe adapter-layer classification. The values
-// are unchanged from the previous API.
+// SkillState describes adapter-layer status for one skill snapshot entry.
 type SkillState string
+
+// SkillOrigin describes who owns or installed one skill snapshot entry.
 type SkillOrigin string
 
 const (
-	SkillStateAvailable  SkillState = "available"
+	// SkillStateAvailable means the skill is known to the catalogue but not selected.
+	SkillStateAvailable SkillState = "available"
+	// SkillStateConfigured means the adapter/profile has the skill configured.
 	SkillStateConfigured SkillState = "configured"
-	SkillStateInstalled  SkillState = "installed"
-	SkillStateMissing    SkillState = "missing"
-	SkillStateStale      SkillState = "stale"
-	SkillStateExternal   SkillState = "external"
+	// SkillStateInstalled means the required files are present in the adapter runtime.
+	SkillStateInstalled SkillState = "installed"
+	// SkillStateMissing means a selected skill could not be found where expected.
+	SkillStateMissing SkillState = "missing"
+	// SkillStateStale means a persistent skill exists but differs from the SDK input.
+	SkillStateStale SkillState = "stale"
+	// SkillStateExternal means the adapter found a skill outside SDK management.
+	SkillStateExternal SkillState = "external"
 )
 
 const (
-	SkillOriginManaged  SkillOrigin = "company_managed"
+	// SkillOriginManaged marks SDK/host-managed skills.
+	SkillOriginManaged SkillOrigin = "company_managed"
+	// SkillOriginRequired marks skills selected because the provider declared
+	// them Required.
 	SkillOriginRequired SkillOrigin = "paperclip_required"
-	SkillOriginUser     SkillOrigin = "user_installed"
-	SkillOriginUnknown  SkillOrigin = "external_unknown"
+	// SkillOriginUser marks skills installed by the operator/user.
+	SkillOriginUser SkillOrigin = "user_installed"
+	// SkillOriginUnknown marks externally discovered skills whose owner is unknown.
+	SkillOriginUnknown SkillOrigin = "external_unknown"
 )
 
 // SkillKeyConflictError is returned (wrapped by ErrSkillKeyConflict) when

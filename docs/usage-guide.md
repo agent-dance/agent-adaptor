@@ -59,7 +59,13 @@ result, err := sdk.Run(
 - `WithDefaultMCP`
 - `WithDefaultRunPolicy`
 - `WithDefaultInstructions`
+- `WithDefaultRuntimeServices`
+- `WithDefaultStreaming`
 - `WithDefaultMetadata`
+- `WithDefaultPermissionHandler`
+- `WithDefaultPlanReviewHandler`
+- `WithDefaultQuestionHandler`
+- `WithNativeProfile` / `WithDedicatedProfile` / `WithCloneProfile` / `WithCloneProfileFrom`
 
 调用时可以覆盖：
 
@@ -73,8 +79,13 @@ result, err := sdk.Run(
 - `WithMCP`
 - `WithRunPolicy`
 - `WithInstructions`
+- `WithRuntimeServices`
+- `WithStreaming` / `WithoutStreaming`
 - `WithMetadata`
 - `WithAgentIdentity`
+- `WithPermissionHandler`
+- `WithPlanReviewHandler`
+- `WithQuestionHandler`
 
 合并顺序固定（与 `resolveInvocation` 一致）：
 
@@ -120,20 +131,22 @@ result, err := sdk.Run(
 )
 ```
 
-MCP override 规则与 `skills` 一样简单：
+MCP override 规则与 `skills` 的默认值 / 调用覆盖规则相似，但有一个关键区别：
 
 - 未显式传 `WithMCP(...)` 时，继承 binding default
 - 显式传 `WithMCP(...)` 时，整组 `Servers` 覆盖 binding default
+- `WithSkills(...)` 是追加合并：binding defaults、per-run refs、provider required skills 取并集
 - `skills/MCP` 的变化不会自动把当前 session 判为 incompatible；是否继续复用 session 仍由宿主通过 `SessionMode` 决定
 
 
 ## 6. 本地 profile 目录
 
-计划中的 built-in adapter profile API 通过 profile option 指定 provider-native profile 目录：
+当前 built-in adapter profile API 通过 profile option 指定 provider-native profile 目录：
 
 - `WithNativeProfile()`：复用 provider 原生共享 profile。
 - `WithDedicatedProfile(dir)`：使用宿主专用 profile 目录，并在需要时安全初始化基础目录。
 - `WithCloneProfile(dir, opts)`：使用宿主专用 profile 目录，首次初始化时从 native profile 按白名单复制配置。
+- `WithCloneProfileFrom(src, dst, opts)`：高级场景下从指定源 profile 派生到指定目标目录。
 
 这些 option 将映射到 provider-native profile env：
 
@@ -150,7 +163,24 @@ MCP override 规则与 `skills` 一样简单：
 3. 进程环境中的 provider-specific env
 4. adapter 默认 profile
 
-当前设计改进计划见 [`workstream-profile-user-experience.md`](./workstream-profile-user-experience.md)。
+profile option 的设计背景见 [`workstream-profile-user-experience.md`](./workstream-profile-user-experience.md)；该文档是历史 workstream 记录，不是新的 API 入口。
+
+## 6.1 Skills 当前合同
+
+最小用法是直接把本地目录 / inline skill 作为 `SkillRef` 传给 binding 或 run：
+
+```go
+sdk := agentadaptor.New(
+	agentadaptor.WithDefaultAgent(codex.New(
+		agentadaptor.CodexConfig{Model: "gpt-5.4"},
+		agentadaptor.WithDefaultSkills(agentadaptor.LocalSkill("./skills/write-proof")),
+	)),
+)
+```
+
+如果 skill 来自宿主自己的 store，注入 `WithSkillProvider(provider)`；如果 store 也能枚举完整清单，则同时实现 `SkillCatalog`，这样 `Admin().Default().ListSkills(ctx)` 能展示 catalogue。静态表可以直接用 `WithSkillSet(agentadaptor.SkillSet{...})`。
+
+Admin 里的 `SetSelectedSkills(ctx, keys)` 只是**进程内 selection override**，不会替宿主持久化用户偏好。需要长期保存勾选状态时，宿主应该写入自己的数据库，并在构造 binding 或调用时通过 `WithDefaultSkills` / `WithSkills` 重新声明。
 
 ## 7. 宿主集成 — 维度对齐
 
@@ -274,4 +304,3 @@ type MyHostState struct {
 ```
 
 SDK 不会在 `SessionStore` 接口上加任何 history 相关方法；如果你的 `MySessionStore` 实现了它们，是死方法，永远不会被 SDK 调用。详见 [`session_types.go`](../session_types.go) 上 `SessionStore` 的 doc comment。
-

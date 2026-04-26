@@ -13,14 +13,20 @@ import (
 	"github.com/agent-dance/agent-adaptor/internal/configprobe"
 )
 
+// DriverType is the stable descriptor type for the built-in Cursor adapter.
 const DriverType = "cursor"
 
 type adapter struct{}
 
+// New returns a configured Cursor AgentBinding. Hosts should pass the result
+// to agentadaptor.WithDefaultAgent or agentadaptor.WithAgent; direct adapter
+// use is reserved for lower-level tests and custom plumbing.
 func New(cfg agentadaptor.CursorConfig, opts ...agentadaptor.AgentOption) agentadaptor.TypedAgentBinding[agentadaptor.CursorConfig] {
 	return agentadaptor.BindTyped(NewAdapter(), cfg, opts...)
 }
 
+// NewAdapter returns the low-level Cursor DriverAdapter. Most hosts should use
+// New so config and binding defaults travel together.
 func NewAdapter() agentadaptor.DriverAdapter {
 	return adapter{}
 }

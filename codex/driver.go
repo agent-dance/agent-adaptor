@@ -15,14 +15,20 @@ import (
 	"github.com/agent-dance/agent-adaptor/internal/configprobe"
 )
 
+// DriverType is the stable descriptor type for the built-in Codex adapter.
 const DriverType = "codex"
 
 type adapter struct{}
 
+// New returns a configured Codex AgentBinding. Hosts should pass the result to
+// agentadaptor.WithDefaultAgent or agentadaptor.WithAgent; direct adapter use
+// is reserved for lower-level tests and custom plumbing.
 func New(cfg agentadaptor.CodexConfig, opts ...agentadaptor.AgentOption) agentadaptor.TypedAgentBinding[agentadaptor.CodexConfig] {
 	return agentadaptor.BindTyped(NewAdapter(), cfg, opts...)
 }
 
+// NewAdapter returns the low-level Codex DriverAdapter. Most hosts should use
+// New so config and binding defaults travel together.
 func NewAdapter() agentadaptor.DriverAdapter {
 	return adapter{}
 }
@@ -49,7 +55,7 @@ func (adapter) Descriptor() agentadaptor.DriverDescriptor {
 		Workspace:    agentadaptor.WorkspaceCapability{Supported: true},
 		RunPolicyCaps: agentadaptor.RunPolicyCapabilities{
 			Isolation: true, WebSearch: true, Browser: false,
-			Permission: agentadaptor.HumanDecisionSupport{Ask: true, AutoApprove: true, AutoReject: true, Retry: true},
+			Permission: agentadaptor.HumanDecisionSupport{Ask: false, AutoApprove: true, AutoReject: false, Retry: false},
 			PlanReview: agentadaptor.HumanDecisionSupport{Ask: false, AutoApprove: true, AutoReject: false, Retry: false},
 			Question:   agentadaptor.QuestionSupport{Ask: false, AutoReject: false, Retry: false},
 		},
@@ -234,7 +240,7 @@ func (adapter) StreamCapability() agentadaptor.StreamCapability {
 		TokenLevel:   true,
 		Reasoning:    true,
 		ToolCallArgs: true,
-		HITL:         false, // HITL is audit-only in v1; see workstream doc §15.
+		HITL:         false, // app-server HITL requests are not yet wired into the SDK decision path.
 	}
 }
 

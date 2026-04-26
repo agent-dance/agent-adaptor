@@ -16,30 +16,53 @@ import (
 // the subscriber map as raw payloads so translate.go can forward them
 // through StreamPayload.Raw.
 const (
-	MethodInitialize    = "initialize"
-	MethodInitialized   = "initialized"
-	MethodThreadStart   = "thread/start"
-	MethodThreadResume  = "thread/resume"
-	MethodTurnStart     = "turn/start"
+	// MethodInitialize performs the JSON-RPC initialize handshake.
+	MethodInitialize = "initialize"
+	// MethodInitialized notifies the server that the client is ready.
+	MethodInitialized = "initialized"
+	// MethodThreadStart starts a new codex thread.
+	MethodThreadStart = "thread/start"
+	// MethodThreadResume resumes an existing codex thread.
+	MethodThreadResume = "thread/resume"
+	// MethodTurnStart starts one turn inside a thread.
+	MethodTurnStart = "turn/start"
+	// MethodTurnInterrupt interrupts an in-flight turn.
 	MethodTurnInterrupt = "turn/interrupt"
 
-	NotifyThreadStarted                   = "thread/started"
-	NotifyThreadStatusChanged             = "thread/status/changed"
-	NotifyThreadTokenUsageUpdated         = "thread/tokenUsage/updated"
-	NotifyTurnStarted                     = "turn/started"
-	NotifyTurnCompleted                   = "turn/completed"
-	NotifyTurnFailed                      = "turn/failed"
-	NotifyItemStarted                     = "item/started"
-	NotifyItemCompleted                   = "item/completed"
-	NotifyItemAgentMessageDelta           = "item/agentMessage/delta"
-	NotifyItemReasoningTextDelta          = "item/reasoning/textDelta"
-	NotifyItemReasoningSummaryTextDelta   = "item/reasoning/summaryTextDelta"
-	NotifyItemReasoningSummaryPartAdded   = "item/reasoning/summaryPartAdded"
+	// NotifyThreadStarted reports that a thread was created/resumed.
+	NotifyThreadStarted = "thread/started"
+	// NotifyThreadStatusChanged reports thread status transitions.
+	NotifyThreadStatusChanged = "thread/status/changed"
+	// NotifyThreadTokenUsageUpdated reports cumulative token usage.
+	NotifyThreadTokenUsageUpdated = "thread/tokenUsage/updated"
+	// NotifyTurnStarted reports that a turn began.
+	NotifyTurnStarted = "turn/started"
+	// NotifyTurnCompleted reports normal turn completion.
+	NotifyTurnCompleted = "turn/completed"
+	// NotifyTurnFailed reports turn failure.
+	NotifyTurnFailed = "turn/failed"
+	// NotifyItemStarted reports the start of a thread item lifecycle.
+	NotifyItemStarted = "item/started"
+	// NotifyItemCompleted reports the end of a thread item lifecycle.
+	NotifyItemCompleted = "item/completed"
+	// NotifyItemAgentMessageDelta carries assistant text deltas.
+	NotifyItemAgentMessageDelta = "item/agentMessage/delta"
+	// NotifyItemReasoningTextDelta carries reasoning text deltas.
+	NotifyItemReasoningTextDelta = "item/reasoning/textDelta"
+	// NotifyItemReasoningSummaryTextDelta carries reasoning-summary deltas.
+	NotifyItemReasoningSummaryTextDelta = "item/reasoning/summaryTextDelta"
+	// NotifyItemReasoningSummaryPartAdded reports a new reasoning-summary part.
+	NotifyItemReasoningSummaryPartAdded = "item/reasoning/summaryPartAdded"
+	// NotifyItemCommandExecutionOutputDelta carries command output deltas.
 	NotifyItemCommandExecutionOutputDelta = "item/commandExecution/outputDelta"
-	NotifyCommandExecOutputDelta          = "command/exec/outputDelta"
-	NotifyItemFileChangeOutputDelta       = "item/fileChange/outputDelta"
-	NotifyItemPlanDelta                   = "item/plan/delta"
-	NotifyError                           = "error"
+	// NotifyCommandExecOutputDelta carries legacy command output deltas.
+	NotifyCommandExecOutputDelta = "command/exec/outputDelta"
+	// NotifyItemFileChangeOutputDelta carries file-change output deltas.
+	NotifyItemFileChangeOutputDelta = "item/fileChange/outputDelta"
+	// NotifyItemPlanDelta carries plan text deltas.
+	NotifyItemPlanDelta = "item/plan/delta"
+	// NotifyError carries a server-side error notification.
+	NotifyError = "error"
 )
 
 // NotificationHandler receives one decoded server notification. The raw

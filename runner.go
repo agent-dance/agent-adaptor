@@ -623,7 +623,8 @@ const (
 // the stream channel, forwards DecisionRequests by timeout when unread, and
 // accepts ResolveDecision calls to unblock adapters.
 //
-// See docs/workstream-hitl-v2.md §3.10–§3.11 for the authoritative contract.
+// See docs/run-policy.md for the public contract; workstream-hitl-v2.md keeps
+// the detailed dispatcher rationale.
 type dualSink struct {
 	runEvents        chan RunEvent
 	stream           chan StreamPayload

@@ -39,7 +39,7 @@ Run:
 
 ```powershell
 go run ./examples/codex-stream
-go run ./examples/codex-stream -- -cancel-after=2s
+go run ./examples/codex-stream -cancel-after=2s
 ```
 
 Passes when:
@@ -77,7 +77,7 @@ go run ./examples/codex-admin-named
 Passes when:
 - The default and named `review` agents both execute successfully
 - `Admin().Agents()` reports both bindings
-- `CheckEnvironment`, `ListModels`, `ListSkills`, and `SyncSkills` all return expected shapes
+- `CheckEnvironment`, `ListModels`, `ListSkills`, and `SetSelectedSkills` all return expected shapes
 
 ### `codex-skills-live`
 
@@ -95,14 +95,14 @@ Passes when:
 - The Codex adapter injects `write-proof` into the effective `CODEX_HOME/skills`
 - A proof file is created in the temporary workspace
 - The file content matches the expected sentinel text
-- `ListSkills` and `SyncSkills` return the expected control-plane state
+- `ListSkills` and `SetSelectedSkills` return the expected control-plane state
 
 Important:
 - By default this example first probes the discovered `codex.ps1` command from `PATH`.
 - If that external Codex command is healthy, the example uses it.
 - If that probe fails, the example falls back to a bundled codex-compatible verifier command.
 - The verifier still exercises the real Codex adapter path, including runtime skill materialization and `CODEX_HOME/skills` injection.
-- If you want to target an external Codex binary instead, pass `-- -command=/absolute/path/to/codex.exe`.
+- If you want to target an external Codex binary instead, pass `-command=/absolute/path/to/codex.exe`.
 
 ### `streaming-chat`
 
@@ -213,7 +213,7 @@ go run ./examples/mock-skills-contract
 Passes when:
 - Binding default skills appear in the first captured `DriverRunRequest.Skills`
 - Per-call `WithSkills(...)` overrides appear in the second captured payload
-- `Requested`, `Resolved`, `Mode`, and `Fingerprint` all match expectations
+- `Entries`, `Selected`, `Mode`, and `Fingerprint` all match expectations
 
 ## Smoke Runner
 

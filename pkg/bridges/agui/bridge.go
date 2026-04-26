@@ -44,7 +44,11 @@ import (
 type DecisionMode int
 
 const (
+	// DecisionAsToolCall maps HITL request/resolve events onto AG-UI tool-call
+	// lifecycles so frontends can render them with standard action handlers.
 	DecisionAsToolCall DecisionMode = iota
+	// DecisionAsCustom preserves the legacy mapping to AG-UI CustomEvent
+	// payloads for hosts that already built their own decision renderer.
 	DecisionAsCustom
 )
 

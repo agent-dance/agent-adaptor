@@ -114,8 +114,12 @@ type Runner interface {
 ```go
 type RunHandle interface {
 	Events() <-chan RunEvent
+	StreamEvents() <-chan StreamPayload
+	RunID() string
 	Wait(ctx context.Context) (RunResult, error)
 	Cancel(ctx context.Context) error
+	DecisionRequests() <-chan DecisionRequest
+	ResolveDecision(requestID string, resp DecisionResponse) error
 }
 ```
 
@@ -152,8 +156,11 @@ type AgentAdmin interface {
 	CheckEnvironment(ctx context.Context) (EnvironmentReport, error)
 	ListModels(ctx context.Context) ([]ModelInfo, error)
 	DetectModel(ctx context.Context) (*DetectedModel, error)
+	GetProfile(ctx context.Context) (AgentProfile, error)
+	ConfigSchema(ctx context.Context) (*ConfigSchema, error)
+	GetQuota(ctx context.Context) (QuotaReport, error)
 	ListSkills(ctx context.Context) (SkillSnapshot, error)
-	SyncSkills(ctx context.Context, desired []string) (SkillSnapshot, error)
+	SetSelectedSkills(ctx context.Context, keys []string) (SkillSnapshot, error)
 }
 ```
 
@@ -217,15 +224,35 @@ sdk := agentadaptor.New(
 - `WithAgent(name, binding)`
 - `WithSessionStore(store)`
 - `WithWorkspaceManager(manager)`
-- `WithSkillCatalog(catalog)`
-- `WithSkillAssembler(assembler)`
+- `WithSkillProvider(provider)`
+- `WithSkillSet(set)`
+- `WithSkillMaterializer(materializer)`
 - `WithRuntimeServiceManager(manager)`
+- `WithEventBuffer(runBuf, streamBuf, policy)`
 
 约束：
 
 - 默认 Agent 必须显式通过 `WithDefaultAgent(...)` 提供
 - `"default"` 是保留名，不能作为 `WithAgent(name, ...)` 的名称
 - `New(opts...)` 保持单返回值，构造失败直接 panic
+
+### 4.5 绑定级默认值与调用级覆盖
+
+绑定级 `AgentOption` 当前包括：
+
+- 身份 / 工作区 / profile：`WithDefaultIdentity`、`WithDefaultWorkspace`、`WithNativeProfile`、`WithDedicatedProfile`、`WithCloneProfile`、`WithCloneProfileFrom`
+- 能力注入：`WithDefaultSkills`、`WithDefaultMCP`、`WithDefaultInstructions`、`WithDefaultRuntimeServices`
+- 策略与流式：`WithDefaultRunPolicy`、`WithDefaultStreaming`
+- HITL handler：`WithDefaultPermissionHandler`、`WithDefaultPlanReviewHandler`、`WithDefaultQuestionHandler`
+- 其它元数据：`WithDefaultMetadata`
+
+调用级 `RunOption` 当前包括：
+
+- session：`WithSession`、`WithSessionKey`、`WithContinueSession`、`WithNewSession`、`WithForkSession`
+- 运行上下文：`WithWorkspace`、`WithRuntimeServices`、`WithSkills`、`WithMCP`、`WithInstructions`
+- 策略与流式：`WithRunPolicy`、`WithStreaming`、`WithoutStreaming`
+- HITL handler：`WithPermissionHandler`、`WithPlanReviewHandler`、`WithQuestionHandler`
+- 其它元数据：`WithMetadata`、`WithAgentIdentity`
 
 ## 5. 调用方推荐使用方式
 

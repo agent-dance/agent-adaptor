@@ -1,7 +1,14 @@
 package agentadaptor
 
+// Option configures SDK construction. Options install the default agent,
+// named agents, and host-provided managers used by every run. Use Build when
+// you want option errors returned; New panics on invalid construction.
 type Option func(*sdkImpl) error
 
+// WithDefaultAgent binds the agent used by SDK.Run, SDK.Start, and
+// SDK.Default. It is required exactly once; hosts that want to choose between
+// agents dynamically should do that before calling the SDK, then use
+// WithAgent(name, binding) for explicit named alternatives.
 func WithDefaultAgent(binding AgentBinding) Option {
 	return func(s *sdkImpl) error {
 		if binding == nil {
@@ -18,6 +25,9 @@ func WithDefaultAgent(binding AgentBinding) Option {
 	}
 }
 
+// WithAgent registers an additional named agent binding. The name "default"
+// is reserved for WithDefaultAgent. Named agents are reached with SDK.Agent or
+// Admin().Agent and follow the same execution semantics as the default agent.
 func WithAgent(name string, binding AgentBinding) Option {
 	return func(s *sdkImpl) error {
 		if name == "" {
@@ -43,6 +53,9 @@ func WithAgent(name string, binding AgentBinding) Option {
 	}
 }
 
+// WithSessionStore enables stateful session modes. Without it the SDK is
+// stateless by default; session-aware options such as WithSessionKey,
+// WithContinueSession, and WithForkSession require a store.
 func WithSessionStore(store SessionStore) Option {
 	return func(s *sdkImpl) error {
 		s.sessionStore = store
@@ -50,6 +63,9 @@ func WithSessionStore(store SessionStore) Option {
 	}
 }
 
+// WithWorkspaceManager installs the host component that resolves workspace
+// specs into concrete working directories. If unset, the SDK uses a
+// passthrough shared-workspace manager.
 func WithWorkspaceManager(manager WorkspaceManager) Option {
 	return func(s *sdkImpl) error {
 		s.workspaceManager = manager
@@ -96,7 +112,7 @@ func WithSkillSet(set SkillSet) Option {
 // WithSkillMaterializer overrides how SkillFromFS / SkillFromInline sources
 // are written to disk before an adapter consumes them. When unset, the SDK
 // uses the built-in cache-root materializer documented in
-// docs/skill-api-design.md §5.7.
+// docs/skill-api-design.md §3.
 func WithSkillMaterializer(materializer SkillMaterializer) Option {
 	return func(s *sdkImpl) error {
 		s.skillMaterializer = materializer
@@ -104,6 +120,9 @@ func WithSkillMaterializer(materializer SkillMaterializer) Option {
 	}
 }
 
+// WithRuntimeServiceManager installs the host component that starts, finds,
+// and releases runtime services requested by bindings or individual runs. If
+// unset, runtime service requests resolve to an empty set.
 func WithRuntimeServiceManager(manager RuntimeServiceManager) Option {
 	return func(s *sdkImpl) error {
 		s.runtimeManager = manager
@@ -156,14 +175,21 @@ func WithDefaultQuestionHandler(h QuestionHandler) AgentOption {
 	}
 }
 
+// AgentOption configures a single AgentBinding. These defaults are merged into
+// every run on that binding before per-call RunOptions are applied.
 type AgentOption func(*AgentDefaults)
 
+// WithDefaultIdentity sets the binding-level identity visible to host hooks
+// such as SkillProvider and RuntimeServiceManager. Per-call WithAgentIdentity
+// overrides it for one run.
 func WithDefaultIdentity(identity AgentIdentity) AgentOption {
 	return func(defaults *AgentDefaults) {
 		defaults.Agent = identity
 	}
 }
 
+// WithDefaultWorkspace sets the binding-level workspace request. Per-call
+// WithWorkspace overrides it for one run.
 func WithDefaultWorkspace(spec WorkspaceSpec) AgentOption {
 	return func(defaults *AgentDefaults) {
 		defaults.Workspace = spec
@@ -181,6 +207,8 @@ func WithDefaultSkills(refs ...SkillRef) AgentOption {
 	}
 }
 
+// WithDefaultMCP sets the binding-level MCP server configuration. Per-call
+// WithMCP replaces the full MCP config for one run; it is not additive.
 func WithDefaultMCP(cfg MCPConfig) AgentOption {
 	return func(defaults *AgentDefaults) {
 		copyCfg := MCPConfig{Servers: cloneMCPServerSpecs(cfg.Servers)}
@@ -210,6 +238,8 @@ func WithDefaultRunPolicy(p RunPolicy) AgentOption {
 	}
 }
 
+// WithDefaultInstructions sets the binding-level instruction bundle. Passing
+// nil clears the default. Per-call WithInstructions overrides it for one run.
 func WithDefaultInstructions(ref *InstructionsBundleRef) AgentOption {
 	return func(defaults *AgentDefaults) {
 		if ref == nil {
@@ -221,6 +251,9 @@ func WithDefaultInstructions(ref *InstructionsBundleRef) AgentOption {
 	}
 }
 
+// WithDefaultMetadata attaches binding-level metadata copied into every
+// DriverRunRequest. Hosts commonly use it for audit tags or workflow labels;
+// adapters should treat it as opaque.
 func WithDefaultMetadata(key, value string) AgentOption {
 	return func(defaults *AgentDefaults) {
 		if defaults.Metadata == nil {
@@ -239,6 +272,8 @@ func WithDefaultStreaming() AgentOption {
 	}
 }
 
+// RunOption configures one Run or Start invocation. RunOptions are resolved
+// after binding defaults and affect only the current call.
 type RunOption func(*runOptions)
 
 type runOptions struct {
@@ -297,6 +332,9 @@ func withPresetRunID(runID string) RunOption {
 	}
 }
 
+// WithSession supplies the complete session request for one run. Most hosts
+// should prefer the helper options WithSessionKey, WithContinueSession,
+// WithNewSession, or WithForkSession unless they need exact mode control.
 func WithSession(req SessionRequest) RunOption {
 	return func(ro *runOptions) {
 		copyReq := req
@@ -304,6 +342,9 @@ func WithSession(req SessionRequest) RunOption {
 	}
 }
 
+// WithSessionKey requests continue_or_start semantics for the stable
+// host-facing (namespace, key) pair. The store resolves that pair to the
+// current concrete SessionID, creating a new session when none exists.
 func WithSessionKey(namespace, key string) RunOption {
 	return WithSession(SessionRequest{
 		Namespace: namespace,
@@ -312,6 +353,9 @@ func WithSessionKey(namespace, key string) RunOption {
 	})
 }
 
+// WithContinueSession resumes one exact SessionID and fails if it cannot be
+// found or is incompatible. Use this when the host is holding a concrete
+// session handle rather than a stable business key.
 func WithContinueSession(id string) RunOption {
 	return WithSession(SessionRequest{
 		ID:   id,
@@ -319,6 +363,9 @@ func WithContinueSession(id string) RunOption {
 	})
 }
 
+// WithNewSession starts a fresh session and binds it to the supplied
+// (namespace, key), replacing the active mapping only after a valid checkpoint
+// is produced.
 func WithNewSession(namespace, key string) RunOption {
 	return WithSession(SessionRequest{
 		Namespace: namespace,
@@ -327,6 +374,8 @@ func WithNewSession(namespace, key string) RunOption {
 	})
 }
 
+// WithForkSession starts a new session from an existing concrete SessionID and
+// binds the fork to the supplied (namespace, key).
 func WithForkSession(fromID, namespace, key string) RunOption {
 	return WithSession(SessionRequest{
 		Namespace: namespace,
@@ -336,6 +385,7 @@ func WithForkSession(fromID, namespace, key string) RunOption {
 	})
 }
 
+// WithWorkspace overrides the binding-level workspace request for one run.
 func WithWorkspace(spec WorkspaceSpec) RunOption {
 	return func(ro *runOptions) {
 		ro.workspace = spec
@@ -364,6 +414,8 @@ func WithSkills(refs ...SkillRef) RunOption {
 	}
 }
 
+// WithMCP replaces the effective MCP server configuration for one run. Use it
+// for request-scoped tool access; use WithDefaultMCP for binding-level tools.
 func WithMCP(cfg MCPConfig) RunOption {
 	return func(ro *runOptions) {
 		copyCfg := MCPConfig{Servers: cloneMCPServerSpecs(cfg.Servers)}
@@ -380,6 +432,8 @@ func WithRunPolicy(p RunPolicy) RunOption {
 	}
 }
 
+// WithInstructions overrides the binding-level instruction bundle for one
+// run. Passing nil clears the effective instructions for that run.
 func WithInstructions(ref *InstructionsBundleRef) RunOption {
 	return func(ro *runOptions) {
 		if ref == nil {
@@ -391,6 +445,8 @@ func WithInstructions(ref *InstructionsBundleRef) RunOption {
 	}
 }
 
+// WithMetadata attaches request-scoped metadata to DriverRunRequest. It is
+// opaque to the SDK and intended for adapters, audit logs, and host hooks.
 func WithMetadata(key, value string) RunOption {
 	return func(ro *runOptions) {
 		if ro.metadata == nil {
@@ -400,6 +456,9 @@ func WithMetadata(key, value string) RunOption {
 	}
 }
 
+// WithAgentIdentity overrides the binding-level identity for one run. This is
+// useful when one SDK instance serves multiple tenants or profiles but the
+// host has already chosen the concrete agent binding.
 func WithAgentIdentity(identity AgentIdentity) RunOption {
 	return func(ro *runOptions) {
 		copyIdentity := identity

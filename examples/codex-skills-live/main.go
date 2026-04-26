@@ -88,9 +88,9 @@ func main() {
 	exampleutil.Check(listedSkills.Supported, "expected listed skills to be supported")
 	exampleutil.Check(len(listedSkills.Selected) == 2, "expected two default selected skills, got %d", len(listedSkills.Selected))
 
-	syncedSkills, err := defaultAdmin.SetSelectedSkills(ctx, []string{proofSkillName})
+	selectedSkills, err := defaultAdmin.SetSelectedSkills(ctx, []string{proofSkillName})
 	exampleutil.Must(err, "set selected default skills")
-	exampleutil.Check(len(syncedSkills.Selected) == 1 && syncedSkills.Selected[0] == proofSkillName, "expected selected skills to contain only %q, got %#v", proofSkillName, syncedSkills.Selected)
+	exampleutil.Check(len(selectedSkills.Selected) == 1 && selectedSkills.Selected[0] == proofSkillName, "expected selected skills to contain only %q, got %#v", proofSkillName, selectedSkills.Selected)
 
 	prompt := "Use the write-proof skill. Create the file at " + filepath.ToSlash(proofPath) +
 		" with exactly this content: " + proofExpectedText + ". Do not modify any other files."
@@ -117,9 +117,9 @@ func main() {
 			"path":     proofPath,
 			"contents": strings.TrimSpace(string(content)),
 		},
-		"list_skills": listedSkills,
-		"sync_skills": syncedSkills,
-		"run_result":  result,
+		"list_skills":         listedSkills,
+		"set_selected_skills": selectedSkills,
+		"run_result":          result,
 	})
 }
 

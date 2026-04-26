@@ -261,7 +261,7 @@ func cleanSkillPath(p string) string {
 // --- materializer ---------------------------------------------------------
 
 // defaultSkillMaterializer implements SkillMaterializer using the
-// XDG-ish cache root described in docs/skill-api-design.md §5.7. The
+// XDG-ish cache root described in docs/skill-api-design.md §3. The
 // archive-handling subset is configurable via DefaultMaterializerOption
 // (see archive_materializer.go).
 type defaultSkillMaterializer struct {
@@ -345,8 +345,7 @@ func (m *defaultSkillMaterializer) writeFromArchive(ctx context.Context, s Skill
 	// identical file maps and therefore the same cache hit. The
 	// host-supplied src.Fingerprint is currently advisory (carried in
 	// SkillFromArchive's doc as the cache key hint) and not consulted
-	// here so the cache remains a function of materialised content;
-	// see docs/v0.5.0-host-integration-plan.md §A2.4 for the trade-off.
+	// here so the cache remains a function of materialised content.
 	return m.writeFiles(s, extraction.Files)
 }
 

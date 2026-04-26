@@ -24,14 +24,20 @@ func jsonMarshalInteractive(v any) ([]byte, error) {
 	return json.Marshal(v)
 }
 
+// DriverType is the stable descriptor type for the built-in Claude adapter.
 const DriverType = "claude"
 
 type adapter struct{}
 
+// New returns a configured Claude AgentBinding. Hosts should pass the result
+// to agentadaptor.WithDefaultAgent or agentadaptor.WithAgent; direct adapter
+// use is reserved for lower-level tests and custom plumbing.
 func New(cfg agentadaptor.ClaudeConfig, opts ...agentadaptor.AgentOption) agentadaptor.TypedAgentBinding[agentadaptor.ClaudeConfig] {
 	return agentadaptor.BindTyped(NewAdapter(), cfg, opts...)
 }
 
+// NewAdapter returns the low-level Claude DriverAdapter. Most hosts should use
+// New so config and binding defaults travel together.
 func NewAdapter() agentadaptor.DriverAdapter {
 	return adapter{}
 }
@@ -44,7 +50,7 @@ func (adapter) StreamCapability() agentadaptor.StreamCapability {
 		TokenLevel:   true,
 		Reasoning:    true,
 		ToolCallArgs: true,
-		HITL:         false,
+		HITL:         true,
 	}
 }
 
@@ -467,6 +473,7 @@ func buildClaudeExecArgs(cfg agentadaptor.ClaudeConfig, req agentadaptor.DriverR
 //   - args do not contain --dangerously-skip-permissions (interactive mode
 //     or HumanDecisionAsk path);
 //   - host already set IS_SANDBOX or CLAUDE_CODE_BUBBLEWRAP (intent wins).
+//
 // geteuid is overridable in tests; production always delegates to os.Geteuid.
 var geteuid = os.Geteuid
 

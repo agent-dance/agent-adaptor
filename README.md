@@ -87,8 +87,8 @@ All execution paths go through the same internal flow: first merge defaults and 
 
 Bind-time defaults establish a stable baseline for your application. Per-run options override only what changed for that specific run.
 
-- Bind-time defaults: `WithDefaultIdentity`, `WithDefaultWorkspace`, `WithDefaultSkills`, `WithDefaultMCP`, `WithDefaultRunPolicy`, `WithDefaultInstructions`, `WithDefaultRuntimeServices`, `WithDefaultMetadata`.
-- Per-run overrides: `WithSession`, `WithSessionKey`, `WithContinueSession`, `WithNewSession`, `WithForkSession`, `WithWorkspace`, `WithSkills`, `WithMCP`, `WithRunPolicy`, `WithInstructions`, `WithRuntimeServices`, `WithMetadata`, `WithAgentIdentity`.
+- Bind-time defaults: `WithDefaultIdentity`, `WithDefaultWorkspace`, `WithDefaultSkills`, `WithDefaultMCP`, `WithDefaultRunPolicy`, `WithDefaultInstructions`, `WithDefaultRuntimeServices`, `WithDefaultStreaming`, `WithDefaultMetadata`, profile options such as `WithDedicatedProfile`, and optional default HITL handlers.
+- Per-run overrides: `WithSession`, `WithSessionKey`, `WithContinueSession`, `WithNewSession`, `WithForkSession`, `WithWorkspace`, `WithSkills`, `WithMCP`, `WithRunPolicy`, `WithInstructions`, `WithRuntimeServices`, `WithStreaming`, `WithoutStreaming`, `WithMetadata`, `WithAgentIdentity`, and per-run HITL handlers.
 
 ## Common Flows
 
@@ -178,7 +178,7 @@ MCP server declarations use the same default/override model as skills: bind a de
 
 ### Streaming
 
-`Start(...)` returns a `RunHandle` with `Events()`, `Wait(...)`, and `Cancel(...)`. Your application can use the same execution API for streaming output instead of maintaining a separate one.
+`Start(...)` returns a `RunHandle` with `Events()`, `StreamEvents()`, `DecisionRequests()`, `RunID()`, `Wait(...)`, `Cancel(...)`, and `ResolveDecision(...)`. Your application can use the same execution API for operational events, token-level streaming, and HITL callbacks instead of maintaining separate run paths.
 
 ## Capability Surface
 
@@ -190,7 +190,7 @@ MCP server declarations use the same default/override model as skills: bind a de
 | MCP | Lets the host declare MCP server specs once and have built-in adapters materialize them into the effective provider profile. |
 | Runtime Services | Prepares the runtime services a run needs before execution and releases them during cleanup by `RunID`. |
 | Admin API | Provides management APIs for environment checks, model listing and detection, config-field discovery, quota queries, and skill management. |
-| Run Results | Returns normalized output, execution transcripts, provider/model/cost metadata, runtime-service status, and structured questions/failures. |
+| Run Results | Separates assistant text (`Output`), raw stdout/stderr (`RawStreams`), semantic entries (`Transcript`), short labels (`Summary`), provider terminal JSON (`Result`), provider/model/cost metadata, runtime-service status, and structured questions/failures. |
 
 ## Built-In Packages
 
@@ -214,7 +214,7 @@ Use it when your application needs to inspect a bound agent before or around exe
 - `ListModels(...)` and `DetectModel(...)` for model visibility and detection.
 - `ConfigSchema(...)` for the field data needed to build settings UIs.
 - `GetQuota(...)` for truthful quota or credit windows when supported.
-- `ListSkills(...)` and `SyncSkills(...)` for skill inventory and desired-skill synchronization.
+- `ListSkills(...)` and `SetSelectedSkills(...)` for skill inventory and process-local selected-skill overrides.
 
 ## Adapter Extensions
 
@@ -239,6 +239,11 @@ If you are writing your own adapter, the reusable test suite lives in [`adaptert
 - [`examples/mock-runtime-admin`](./examples/mock-runtime-admin): runtime services and management output.
 - [`examples/session-codec-inspect`](./examples/session-codec-inspect): inspect adapter session parameters safely.
 - [`examples/mock-adapter-playground`](./examples/mock-adapter-playground): custom adapter playground.
+- [`examples/mock-skills-contract`](./examples/mock-skills-contract): deterministic skills request assembly.
+- [`examples/streaming-chat`](./examples/streaming-chat): Go-channel token streaming.
+- [`examples/streaming-sse-server`](./examples/streaming-sse-server): minimal HTTP SSE chat endpoint.
+- [`examples/streaming-chat-copilotkit`](./examples/streaming-chat-copilotkit): AG-UI + CopilotKit demo with HITL cards.
+- [`examples/streaming-chat-aguiclient`](./examples/streaming-chat-aguiclient): Vite + React + `@ag-ui/client` direct AG-UI demo.
 
 ## Current Guarantees
 
@@ -257,16 +262,11 @@ If you are writing your own adapter, the reusable test suite lives in [`adaptert
 
 ## Further Reading
 
-Deeper protocol notes, drafts, and workstream docs live under [`docs/`](./docs).
+Start with the current, user-facing docs:
 
-- [`docs/run-policy.md`](./docs/run-policy.md)（`RunPolicy` 合同与宿主用法）
-- [`docs/profile-resolver-api.md`](./docs/profile-resolver-api.md)
-- [`docs/paperclip-alignment-roadmap.md`](./docs/paperclip-alignment-roadmap.md)
-- [`docs/workstream-adapter-conformance-kit.md`](./docs/workstream-adapter-conformance-kit.md)
-- [`docs/workstream-session-codec.md`](./docs/workstream-session-codec.md)
-- [`docs/workstream-runtime-service-lifecycle-v2.md`](./docs/workstream-runtime-service-lifecycle-v2.md)
-- [`docs/workstream-mcp-profile-materialization.md`](./docs/workstream-mcp-profile-materialization.md)
-- [`docs/workstream-profile-user-experience.md`](./docs/workstream-profile-user-experience.md)
-- [`docs/workstream-builtin-probes.md`](./docs/workstream-builtin-probes.md)
-- [`docs/workstream-transcript-contract.md`](./docs/workstream-transcript-contract.md)
-- [`docs/workstream-bridges-profiles-host.md`](./docs/workstream-bridges-profiles-host.md)
+- [`docs/README.md`](./docs/README.md): current docs map and historical-workstream index.
+- [`docs/api-reference.md`](./docs/api-reference.md): public API surface and which package owns each concept.
+- [`docs/usage-guide.md`](./docs/usage-guide.md): common host integration patterns.
+- [`docs/run-policy.md`](./docs/run-policy.md): `RunPolicy` and HITL contract.
+- [`docs/streaming.md`](./docs/streaming.md): token streaming, AG-UI, and SSE usage.
+- [`docs/public-errors.md`](./docs/public-errors.md): public error catalogue.

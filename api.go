@@ -2,6 +2,13 @@ package agentadaptor
 
 import "context"
 
+// SDK is the host-facing entry point for executing bound local agents.
+//
+// The SDK is intentionally default-agent-first: Run and Start always target
+// the binding supplied by WithDefaultAgent, while Agent(name) returns a Runner
+// for an explicitly registered named binding. Hosts should keep routing,
+// tenancy, HTTP/RPC concerns, and "which agent should handle this request"
+// decisions above this interface.
 type SDK interface {
 	Run(ctx context.Context, prompt string, opts ...RunOption) (RunResult, error)
 	Start(ctx context.Context, prompt string, opts ...RunOption) (RunHandle, error)
@@ -12,11 +19,20 @@ type SDK interface {
 	Admin() AdminAPI
 }
 
+// Runner is the execution contract shared by the default binding and every
+// named binding. It lets workflow code accept "the chosen agent" without
+// needing access to SDK construction, Admin APIs, or the named-agent registry.
 type Runner interface {
 	Run(ctx context.Context, prompt string, opts ...RunOption) (RunResult, error)
 	Start(ctx context.Context, prompt string, opts ...RunOption) (RunHandle, error)
 }
 
+// RunHandle represents one asynchronous execution returned by Start.
+//
+// Hosts use Events for operational status, StreamEvents for token/tool/HITL
+// streaming when enabled, DecisionRequests/ResolveDecision for async HITL
+// channel mode, and Wait for the final RunResult. All channels are closed by
+// the SDK when the run ends, so consumers may range over them safely.
 type RunHandle interface {
 	// Events streams operational RunEvents (chunks, lifecycle, spawn, etc.).
 	Events() <-chan RunEvent
@@ -31,7 +47,7 @@ type RunHandle interface {
 
 	// Wait blocks until the run terminates or ctx is cancelled.
 	//
-	// The error model is two-layered (see docs/workstream-hitl-v2.md §3.5):
+	// The error model is two-layered (see docs/run-policy.md §5):
 	//
 	//   - The returned error is an infrastructure-layer error — the agent
 	//     did not finish (ctx cancel, adapter crash, protocol break, SDK
@@ -60,12 +76,18 @@ type RunHandle interface {
 	ResolveDecision(requestID string, resp DecisionResponse) error
 }
 
+// AdminAPI is the control-plane view over the same default/named agent model
+// used for execution. It never executes prompts; it is for diagnostics,
+// settings UIs, skill inventory, profile introspection, and capability probes.
 type AdminAPI interface {
 	Default() AgentAdmin
 	Agent(name string) (AgentAdmin, error)
 	Agents() []AgentInfo
 }
 
+// AgentAdmin exposes management probes for one bound agent. Implementations
+// are backed by adapter capability interfaces, so unsupported probes return
+// truthful fallback reports instead of inventing data.
 type AgentAdmin interface {
 	Info() AgentInfo
 	CheckEnvironment(ctx context.Context) (EnvironmentReport, error)
@@ -83,20 +105,33 @@ type AgentAdmin interface {
 	SetSelectedSkills(ctx context.Context, keys []string) (SkillSnapshot, error)
 }
 
+// DriverAdapter is the adapter SPI implemented by built-in and third-party
+// agent integrations. The SDK owns default merging, session coordination,
+// workspace/runtime/skill resolution, and result archiving; adapters own
+// provider-specific validation, process/protocol execution, transcript
+// parsing, and checkpoint extraction.
 type DriverAdapter interface {
 	Descriptor() DriverDescriptor
 	ValidateConfig(cfg any) error
 	Run(ctx context.Context, req DriverRunRequest, sink EventSink) (DriverRunResult, error)
 }
 
+// EnvironmentAwareDriver is implemented by adapters that can perform
+// preflight checks against local CLIs, auth files, profile directories, or
+// other dependencies. Admin.CheckEnvironment uses it when present.
 type EnvironmentAwareDriver interface {
 	CheckEnvironment(ctx context.Context, cfg any) (EnvironmentReport, error)
 }
 
+// ModelAwareDriver is implemented by adapters that can list visible model
+// choices. Adapters may return static descriptor models or inspect local
+// provider state when a live list is available.
 type ModelAwareDriver interface {
 	ListModels(ctx context.Context, cfg any) ([]ModelInfo, error)
 }
 
+// ModelDetectorDriver is implemented by adapters that can infer the effective
+// model from config files, CLI defaults, profile state, or the supplied config.
 type ModelDetectorDriver interface {
 	DetectModel(ctx context.Context, cfg any, profile *ProfileSelection) (*DetectedModel, error)
 }
@@ -171,6 +206,10 @@ type SkillAwareDriver interface {
 	SyncSkills(ctx context.Context, cfg any, payload ResolvedSkills, selected []string, resolved []Skill, profile *ProfileSelection) (SkillSnapshot, error)
 }
 
+// EventSink is the per-run event surface adapters write into while executing.
+// Emit carries operational RunEvent data; EmitStream carries normalized
+// token/tool/reasoning/HITL payloads when streaming is enabled. Adapters should
+// not retain the sink after Run returns.
 type EventSink interface {
 	// Emit publishes a RunEvent on the run-scoped event channel.
 	Emit(event RunEvent) error
@@ -208,21 +247,33 @@ type StreamCapability struct {
 	// complete Args snapshot instead.
 	ToolCallArgs bool
 	// HITL reports whether human-in-the-loop approval / user-input events
-	// are exposed. In v1 these are audit-only (see StreamHITLRequested).
+	// are exposed on StreamEvents(). The stream event is the broadcast
+	// channel; the decision path, when supported, still goes through
+	// DecisionCapableSink and RunHandle.DecisionRequests / ResolveDecision.
 	HITL bool
 }
 
+// AgentBinding couples one DriverAdapter with its validated config and
+// binding-level defaults. Built-in packages return AgentBinding values from
+// New(cfg, opts...), and custom adapters can use Bind or BindTyped.
 type AgentBinding interface {
 	Adapter() DriverAdapter
 	Config() any
 	Defaults() AgentDefaults
 }
 
+// TypedAgentBinding is an AgentBinding that also exposes the concrete config
+// type. It is useful in tests, admin tooling, or custom adapter plumbing that
+// wants to inspect strongly-typed configuration after binding.
 type TypedAgentBinding[T any] interface {
 	AgentBinding
 	TypedConfig() T
 }
 
+// AgentDefaults are binding-level defaults merged into every Run/Start call
+// before per-call RunOptions are applied. They are copied on binding
+// construction and when returned from AgentBinding.Defaults, so callers may
+// inspect the value without mutating live SDK state.
 type AgentDefaults struct {
 	Agent        AgentIdentity
 	Workspace    WorkspaceSpec
@@ -247,6 +298,8 @@ type AgentDefaults struct {
 	QuestionHandler   QuestionHandler
 }
 
+// AgentInfo is the admin/listing view of a bound agent. Hosts commonly use it
+// to render settings screens, capability badges, and named-agent pickers.
 type AgentInfo struct {
 	Name        string
 	Default     bool
@@ -255,6 +308,9 @@ type AgentInfo struct {
 	Descriptor  DriverDescriptor
 }
 
+// DriverDescriptor is the adapter's static capability declaration. The SDK
+// uses it to validate host requests before launching an adapter; hosts can use
+// it to disable unsupported UI controls instead of discovering failures late.
 type DriverDescriptor struct {
 	Type          string
 	DisplayName   string
@@ -269,23 +325,32 @@ type DriverDescriptor struct {
 	Runtime       RuntimeCapability
 }
 
+// SessionCapability declares whether an adapter can resume provider sessions.
 type SessionCapability struct {
 	SupportsResume bool
 }
 
+// SkillCapability declares whether an adapter consumes resolved skills and
+// whether its skill state is ephemeral per run or persistent in the profile.
 type SkillCapability struct {
 	Supported bool
 	Mode      SkillSyncMode
 }
 
+// InstructionsCapability declares whether the adapter accepts explicit
+// instruction bundles in addition to the prompt.
 type InstructionsCapability struct {
 	Supported bool
 }
 
+// WorkspaceCapability declares whether an adapter can honor SDK-resolved
+// workspace leases.
 type WorkspaceCapability struct {
 	Supported bool
 }
 
+// RuntimeCapability declares whether an adapter reports runtime-service state
+// back in RunResult.RuntimeServices.
 type RuntimeCapability struct {
 	ReportsServices bool
 }

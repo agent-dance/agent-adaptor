@@ -16,6 +16,10 @@ type leaseRecord struct {
 	Token string
 }
 
+// SessionStore is an in-memory implementation of agentadaptor.SessionStore.
+// It is useful for tests, local CLIs, demos, and single-process hosts that do
+// not need session state to survive process restarts. Production services that
+// run multiple processes should provide a durable/centralized store instead.
 type SessionStore struct {
 	mu       sync.Mutex
 	records  map[string]agentadaptor.SessionRecord
@@ -23,6 +27,7 @@ type SessionStore struct {
 	leases   map[string]leaseRecord
 }
 
+// NewSessionStore constructs an empty in-memory SessionStore.
 func NewSessionStore() *SessionStore {
 	return &SessionStore{
 		records:  map[string]agentadaptor.SessionRecord{},
@@ -31,6 +36,8 @@ func NewSessionStore() *SessionStore {
 	}
 }
 
+// Resolve looks up a session by concrete ID or by the stable (Namespace, Key)
+// pair used by WithSessionKey.
 func (s *SessionStore) Resolve(_ context.Context, q agentadaptor.SessionQuery) (*agentadaptor.SessionRecord, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -65,6 +72,8 @@ func (s *SessionStore) Resolve(_ context.Context, q agentadaptor.SessionQuery) (
 	return &copyRecord, nil
 }
 
+// Finalize persists the post-run session record and performs archive/rebind
+// operations after validating all held leases.
 func (s *SessionStore) Finalize(_ context.Context, req agentadaptor.SessionFinalizeRequest) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -95,6 +104,8 @@ func (s *SessionStore) Finalize(_ context.Context, req agentadaptor.SessionFinal
 	return nil
 }
 
+// AcquireLease obtains or renews exclusive use of a session for owner until
+// ttl elapses.
 func (s *SessionStore) AcquireLease(_ context.Context, sessionID, owner string, ttl time.Duration) (agentadaptor.SessionLease, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -119,6 +130,7 @@ func (s *SessionStore) AcquireLease(_ context.Context, sessionID, owner string, 
 	}, nil
 }
 
+// RenewLease extends a lease if the caller still owns the matching token.
 func (s *SessionStore) RenewLease(_ context.Context, lease agentadaptor.SessionLease, ttl time.Duration) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -131,6 +143,8 @@ func (s *SessionStore) RenewLease(_ context.Context, lease agentadaptor.SessionL
 	return nil
 }
 
+// ReleaseLease releases a lease when the caller owns the matching token. Lost
+// or already-expired leases are ignored to keep cleanup idempotent.
 func (s *SessionStore) ReleaseLease(_ context.Context, lease agentadaptor.SessionLease) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

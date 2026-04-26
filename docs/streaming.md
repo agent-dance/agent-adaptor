@@ -189,15 +189,15 @@ sdk := agentadaptor.New(
 
 | adapter | Native | TokenLevel | Reasoning | ToolCallArgs | HITL |
 |---|---|---|---|---|---|
-| codex | ✓ | ✓ | ✓ | ✓ | — (v1 audit-only) |
-| claude | ✓ | ✓ | ✓ | ✓ | — (v1 audit-only) |
-| cursor | 规划中 | 规划中 | — (print 模式被抑制) | — | — |
+| codex | ✓ | ✓ | ✓ | ✓ | — |
+| claude | ✓ | ✓ | ✓ | ✓ | ✓（PlanReview / Question） |
+| cursor | — | — | — | — | — |
 
 `pkg/bridges/agui` 会按 capability 做合理降级：
 
 - `ToolCallArgs=false` → `StreamToolCallStart` 带完整 `Args`，不发 `StreamToolCallArgs`
 - `Reasoning=false` → 不发 `REASONING_*`
-- `HITL=false` → `StreamHITLRequested` 透传为 AG-UI `CUSTOM` 事件，不阻塞 run
+- HITL 事件默认映射成 AG-UI tool-call lifecycle，便于 CopilotKit 这类客户端渲染审批卡片；需要旧行为时使用 `agui.WithDecisionMode(agui.DecisionAsCustom)`
 
 ## 6. 常见问题
 

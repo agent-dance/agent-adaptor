@@ -24,7 +24,7 @@
 - config 校验
 - environment / model / config schema / quota 控制面输出形状
 - `SessionCodec` round-trip 与 guard fingerprint 稳定性
-- `ListSkills` / `SyncSkills` 快照 truthfulness
+- `SkillAwareDriver.ListSkills` / `SkillAwareDriver.SyncSkills` 与 `AgentAdmin.SetSelectedSkills` 快照 truthfulness
 
 当前阶段不放进 test kit 的内容：
 

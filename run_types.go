@@ -5,6 +5,12 @@ import (
 	"time"
 )
 
+// AgentIdentity is host-supplied caller identity propagated into SDK hooks.
+//
+// The SDK does not use these fields for routing. They exist so host-provided
+// components such as SkillProvider, WorkspaceManager, and RuntimeServiceManager
+// can scope lookups by tenant, user/profile, or logical agent name without
+// inventing their own context keys.
 type AgentIdentity struct {
 	ID        string
 	TenantID  string
@@ -39,29 +45,46 @@ type RawStreams struct {
 //   - Result: raw JSON payload of the terminal result event when the adapter
 //     protocol defines one. May be nil.
 type RunResult struct {
-	RunID           string
-	DriverType      string
-	Output          string
-	RawStreams      *RawStreams
-	Transcript      []TranscriptItem
-	ExitCode        int
-	Signal          string
-	TimedOut        bool
-	Usage           *Usage
-	Session         *SessionRef
-	Metadata        map[string]string
-	Provider        string
-	Biller          string
-	Model           string
-	BillingType     string
-	CostUSD         *float64
-	Summary         string
+	RunID      string
+	DriverType string
+	// Output is final assistant-facing text only. It must not contain raw
+	// stdout/stderr dumps, Summary text, or provider terminal JSON.
+	Output string
+	// RawStreams carries complete raw stdout/stderr for audit and debugging.
+	RawStreams *RawStreams
+	// Transcript is the normalized semantic item stream parsed by the adapter.
+	Transcript []TranscriptItem
+	ExitCode   int
+	Signal     string
+	TimedOut   bool
+	Usage      *Usage
+	// Session is populated when a valid checkpoint was produced and persisted
+	// (or when a stateless/no-store run can still report the provider handle).
+	Session  *SessionRef
+	Metadata map[string]string
+	Provider string
+	Biller   string
+	Model    string
+	// BillingType and CostUSD are best-effort adapter metadata for hosts that
+	// want to render cost/audit summaries; absence does not imply free usage.
+	BillingType string
+	CostUSD     *float64
+	// Summary is a short host-facing label suitable for lists, logs, or issue
+	// comments. It is deliberately separate from Output.
+	Summary string
+	// Result is the adapter-recognized terminal result event payload. Hosts
+	// should treat it as provider-specific audit data, not portable text.
 	Result          map[string]any
 	RuntimeServices []RuntimeServiceReport
 	Question        *RunQuestion
-	Failure         *RunFailure
+	// Failure is a structured business-level failure from a completed run.
+	// Check Wait's returned error first, then Failure, then success.
+	Failure *RunFailure
 }
 
+// Usage is normalized token/cost accounting reported by adapters when the
+// provider protocol exposes it. Values may be zero when an adapter cannot
+// observe the metric.
 type Usage struct {
 	InputTokens        int
 	OutputTokens       int
@@ -80,12 +103,18 @@ type Usage struct {
 type RunEventType string
 
 const (
-	RunEventChunk      RunEventType = "chunk"
-	RunEventItem       RunEventType = "item"
+	// RunEventChunk carries raw stdout/stderr bytes.
+	RunEventChunk RunEventType = "chunk"
+	// RunEventItem carries a parsed TranscriptItem.
+	RunEventItem RunEventType = "item"
+	// RunEventInvocation describes the resolved invocation metadata.
 	RunEventInvocation RunEventType = "invocation"
-	RunEventSpawn      RunEventType = "spawn"
-	RunEventRuntime    RunEventType = "runtime"
-	RunEventLifecycle  RunEventType = "lifecycle"
+	// RunEventSpawn reports child-process launch details.
+	RunEventSpawn RunEventType = "spawn"
+	// RunEventRuntime reports runtime-service preparation or cleanup.
+	RunEventRuntime RunEventType = "runtime"
+	// RunEventLifecycle reports high-level run lifecycle markers.
+	RunEventLifecycle RunEventType = "lifecycle"
 )
 
 // RunEvent is the streamed event envelope exposed through RunHandle.Events().
@@ -117,19 +146,32 @@ type RunEvent struct {
 type TranscriptKind string
 
 const (
-	TranscriptAssistant  TranscriptKind = "assistant"
-	TranscriptThinking   TranscriptKind = "thinking"
-	TranscriptUser       TranscriptKind = "user"
-	TranscriptToolCall   TranscriptKind = "tool_call"
+	// TranscriptAssistant is assistant-facing text.
+	TranscriptAssistant TranscriptKind = "assistant"
+	// TranscriptThinking is reasoning/thinking text.
+	TranscriptThinking TranscriptKind = "thinking"
+	// TranscriptUser is user text captured from the provider transcript.
+	TranscriptUser TranscriptKind = "user"
+	// TranscriptToolCall is a normalized tool invocation.
+	TranscriptToolCall TranscriptKind = "tool_call"
+	// TranscriptToolResult is a normalized tool result.
 	TranscriptToolResult TranscriptKind = "tool_result"
-	TranscriptInit       TranscriptKind = "init"
-	TranscriptResult     TranscriptKind = "result"
-	TranscriptStdout     TranscriptKind = "stdout"
-	TranscriptStderr     TranscriptKind = "stderr"
-	TranscriptSystem     TranscriptKind = "system"
-	TranscriptSummary    TranscriptKind = "summary"
-	TranscriptQuestion   TranscriptKind = "question"
-	TranscriptFailure    TranscriptKind = "failure"
+	// TranscriptInit records provider/model/session initialization metadata.
+	TranscriptInit TranscriptKind = "init"
+	// TranscriptResult records a terminal provider result event.
+	TranscriptResult TranscriptKind = "result"
+	// TranscriptStdout is parser fallback text from stdout.
+	TranscriptStdout TranscriptKind = "stdout"
+	// TranscriptStderr is parser fallback text from stderr.
+	TranscriptStderr TranscriptKind = "stderr"
+	// TranscriptSystem is adapter/system text.
+	TranscriptSystem TranscriptKind = "system"
+	// TranscriptSummary is a short terminal summary item.
+	TranscriptSummary TranscriptKind = "summary"
+	// TranscriptQuestion is a provider follow-up question.
+	TranscriptQuestion TranscriptKind = "question"
+	// TranscriptFailure is a structured failure item.
+	TranscriptFailure TranscriptKind = "failure"
 )
 
 // TranscriptItem is the host-facing normalized transcript unit.
@@ -166,6 +208,11 @@ type TranscriptItem struct {
 	Data      map[string]any
 }
 
+// DriverRunRequest is the fully resolved invocation the SDK passes to an
+// adapter. By the time an adapter sees this value, binding defaults and
+// per-call RunOptions have been merged, sessions have been coordinated,
+// workspace/runtime/skill/MCP payloads have been resolved, and policy has been
+// validated against the descriptor.
 type DriverRunRequest struct {
 	RunID        string
 	Prompt       string
@@ -201,8 +248,11 @@ type DriverRunRequest struct {
 // Result / Checkpoint from the same pass that parses the CLI protocol; none of
 // these fields may be recomputed by downstream helpers.
 type DriverRunResult struct {
-	Output          string
-	RawStreams      *RawStreams
+	// Output follows the same contract as RunResult.Output.
+	Output string
+	// RawStreams follows the same contract as RunResult.RawStreams.
+	RawStreams *RawStreams
+	// Transcript follows the same contract as RunResult.Transcript.
 	Transcript      []TranscriptItem
 	ExitCode        int
 	Signal          string
@@ -222,6 +272,10 @@ type DriverRunResult struct {
 	Failure         *RunFailure
 }
 
+// DriverSessionContext is the session state a resume-capable adapter receives
+// for one run. EngineSessionID is the provider handle to continue; State holds
+// the full adapter checkpoint; Mode tells the adapter whether this is a fresh,
+// continued, forked, or stateless invocation.
 type DriverSessionContext struct {
 	EngineSessionID string
 	Mode            SessionMode
@@ -229,6 +283,9 @@ type DriverSessionContext struct {
 	PreviousID      string
 }
 
+// DriverSessionState is the adapter-owned checkpoint payload persisted by the
+// SessionStore after a successful run. ResumeID is the provider session handle;
+// Data contains adapter-specific guards such as cwd or prompt-bundle hashes.
 type DriverSessionState struct {
 	ResumeID  string
 	DisplayID string
@@ -238,6 +295,9 @@ type DriverSessionState struct {
 	Data map[string]string
 }
 
+// DriverCheckpoint is returned by adapters when the run produced a session
+// state that is safe to persist. Valid must be false for failed/non-resumable
+// runs so the SDK does not contaminate a healthy session mapping.
 type DriverCheckpoint struct {
 	State *DriverSessionState
 	Valid bool
@@ -262,7 +322,7 @@ type RunChoice struct {
 //
 // HumanDecision is non-nil exactly when Code is FailureReject or
 // FailureTimeout; hosts can rely on that invariant when rendering attribution
-// (see docs/workstream-hitl-v2.md §3.2).
+// (see docs/run-policy.md §5).
 type RunFailure struct {
 	Message       string
 	Code          FailureCode
@@ -289,13 +349,25 @@ func (f *RunFailure) IsTimedOut() bool {
 	return f != nil && f.Code == FailureTimeout
 }
 
+// WorkspaceManager is the host hook that turns a WorkspaceSpec into a concrete
+// working directory lease. Implementations may return the project directory
+// unchanged, create git worktrees, provision sandboxes, or delegate to an
+// external workspace service. The SDK releases the lease after the run using
+// the requested WorkspaceReleaseMode.
 type WorkspaceManager interface {
 	Resolve(ctx context.Context, req WorkspaceRequest) (WorkspaceLease, error)
 	Release(ctx context.Context, lease WorkspaceLease, mode WorkspaceReleaseMode) error
 }
 
+// RuntimeServiceManager is the host hook for preparing services a run depends
+// on, such as local dev servers, databases, or tool sidecars. The SDK only
+// coordinates lifecycle; the host owns process/container orchestration.
 type RuntimeServiceManager interface {
+	// Ensure starts or locates the runtime services needed for one run and
+	// returns concrete refs the adapter can inject into the prompt/profile.
 	Ensure(ctx context.Context, req RuntimeServiceRequest) ([]RuntimeServiceRef, error)
+	// ReleaseByRun releases services scoped to one SDK RunID. The SDK calls it
+	// during normal cleanup for run-scoped services.
 	ReleaseByRun(ctx context.Context, runID string) error
 
 	// ReleaseByLabels releases every service whose Metadata contains
@@ -354,35 +426,47 @@ type resolvedInvocation struct {
 type StreamKind string
 
 const (
-	// Lifecycle.
-	StreamRunStarted   StreamKind = "run.started"
-	StreamRunFinished  StreamKind = "run.finished"
-	StreamRunError     StreamKind = "run.error"
-	StreamStepStarted  StreamKind = "step.started"
+	// StreamRunStarted marks the beginning of a streamed run.
+	StreamRunStarted StreamKind = "run.started"
+	// StreamRunFinished marks normal completion of a streamed run.
+	StreamRunFinished StreamKind = "run.finished"
+	// StreamRunError marks terminal failure of a streamed run.
+	StreamRunError StreamKind = "run.error"
+	// StreamStepStarted marks a provider-defined work step beginning.
+	StreamStepStarted StreamKind = "step.started"
+	// StreamStepFinished marks a provider-defined work step ending.
 	StreamStepFinished StreamKind = "step.finished"
 
-	// Text message.
-	StreamTextStart   StreamKind = "text.start"
+	// StreamTextStart opens an assistant text message lifecycle.
+	StreamTextStart StreamKind = "text.start"
+	// StreamTextContent carries one assistant text delta.
 	StreamTextContent StreamKind = "text.content"
-	StreamTextEnd     StreamKind = "text.end"
+	// StreamTextEnd closes an assistant text message lifecycle.
+	StreamTextEnd StreamKind = "text.end"
 
-	// Tool call.
-	StreamToolCallStart  StreamKind = "tool_call.start"
-	StreamToolCallArgs   StreamKind = "tool_call.args"
-	StreamToolCallEnd    StreamKind = "tool_call.end"
+	// StreamToolCallStart opens a tool-call lifecycle.
+	StreamToolCallStart StreamKind = "tool_call.start"
+	// StreamToolCallArgs carries streamed tool arguments or command output.
+	StreamToolCallArgs StreamKind = "tool_call.args"
+	// StreamToolCallEnd closes a tool-call lifecycle.
+	StreamToolCallEnd StreamKind = "tool_call.end"
+	// StreamToolCallResult carries a completed tool result.
 	StreamToolCallResult StreamKind = "tool_call.result"
 
-	// Reasoning / thinking.
-	StreamReasoningStart   StreamKind = "reasoning.start"
+	// StreamReasoningStart opens a reasoning/thinking lifecycle.
+	StreamReasoningStart StreamKind = "reasoning.start"
+	// StreamReasoningContent carries one reasoning/thinking delta.
 	StreamReasoningContent StreamKind = "reasoning.content"
-	StreamReasoningEnd     StreamKind = "reasoning.end"
+	// StreamReasoningEnd closes a reasoning/thinking lifecycle.
+	StreamReasoningEnd StreamKind = "reasoning.end"
 
-	// HITL (audit-only in v1; no response channel is wired yet).
+	// StreamHITLRequested broadcasts a human-decision request.
 	StreamHITLRequested StreamKind = "hitl.requested"
-	StreamHITLResolved  StreamKind = "hitl.resolved"
+	// StreamHITLResolved broadcasts the final human-decision result.
+	StreamHITLResolved StreamKind = "hitl.resolved"
 
-	// Backpressure marker emitted by the SDK when StreamPayloads were dropped
-	// because the host was slow. Raw["dropped_count"] reports how many.
+	// StreamDropped reports StreamPayloads dropped because the host was slow.
+	// Raw["dropped_count"] reports how many.
 	StreamDropped StreamKind = "stream.dropped"
 )
 
@@ -403,15 +487,15 @@ const (
 //     argument chunk, usually JSON fragment).
 //   - tool_call.end / tool_call.result: ToolCallID required; Result optional.
 //   - reasoning.*: MessageID required; Delta for reasoning.content.
-//   - hitl.requested / hitl.resolved: Name identifies the approval type;
-//     Raw carries adapter-specific payload (audit-only in v1).
+//   - hitl.requested / hitl.resolved: HITLRequested / HITLResolved carry the
+//     normalized decision envelope; Raw may carry adapter-specific payload.
 //   - stream.dropped: Raw["dropped_count"] reports the count.
 //
 // Sequence is assigned monotonically by the SDK in EmitStream; adapters must
 // not set it themselves. Timestamp is similarly backfilled when zero.
 //
 // Seq mirrors Sequence as the canonical per-run monotonic cursor exposed by
-// the HITL v2 contract (see docs/workstream-hitl-v2.md §3.4.2). It is always
+// the streaming/HITL contract (see docs/run-policy.md §6). It is always
 // equal to Sequence; Sequence is retained as the legacy field so downstream
 // bridges and tests that already referenced it keep compiling.
 type StreamPayload struct {

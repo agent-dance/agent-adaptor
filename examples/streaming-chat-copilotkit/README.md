@@ -11,7 +11,7 @@
 | `AGUI_AGENT` | 行为 |
 |---|---|
 | `mock` | 内置的 `hitlmock` adapter，**真正** 阻塞在 `sink.RequestDecision` 上，能完整演示 HITL 决策闭环（无需本地 CLI，推荐上手用） |
-| `codex` | 调本地 `codex app-server`；Phase 2 未实施，所有 HITL 走 `AutoApprove` 观测路径 |
+| `codex` | 调本地 `codex app-server`；当前不声明 `Permission=Ask` / `Question=Ask`，示例 policy 使用 `Permission/PlanReview=AutoApprove` + `Question=AutoReject` 跑通流式聊天 |
 | `claude` | 调本地 `trpc-claudecode`。**Phase 3 已实施**：`ExitPlanMode` / `AskUserQuestion` 会真正暂停 CLI 等用户点卡片，点 Approve 后 claude 继续推进 (见 [`docs/workstream-hitl-claude-phase3.md`](../../docs/workstream-hitl-claude-phase3.md))。注意：其它工具 (Bash/Edit/Write) 走 Phase 1 观测路径——`Permission=AutoApprove` 让 CLI 自己执行 |
 
 ## 架构

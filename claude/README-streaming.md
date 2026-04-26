@@ -23,7 +23,7 @@ func (adapter) StreamCapability() agentadaptor.StreamCapability {
 		TokenLevel:   true,
 		Reasoning:    true,
 		ToolCallArgs: true,
-		HITL:         false,
+		HITL:         true,
 	}
 }
 ```
@@ -39,7 +39,7 @@ func (adapter) StreamCapability() agentadaptor.StreamCapability {
 | `user`（`tool_result`） | `StreamToolCallResult`（与 transcript 同步） |
 | `result` | `StreamRunFinished`（usage / Raw 中带 cost、`stop_reason`） |
 | `error` | `StreamRunError` |
-| `permission_request` | `StreamHITLRequested`（v1 audit-only） |
+| `permission_request` | `StreamHITLRequested`（广播事件；Permission=Ask 仍未声明支持，PlanReview / Question 的双向回填走 Phase 3 control_request） |
 | 其它未列顶层类型 | `Kind=""`，`Raw` 透传 |
 
 ## `stream_event.event` 映射

@@ -1,5 +1,7 @@
 # Workstream: Claude Code Streaming
 
+> 状态：历史实施计划。Claude token-level streaming 与 Phase 3 PlanReview / Question HITL 已落地；当前 adapter 映射见 [`../claude/README-streaming.md`](../claude/README-streaming.md)，宿主用法见 [`streaming.md`](./streaming.md) 与 [`run-policy.md`](./run-policy.md)。
+
 本文件是 `docs/workstream-streaming-chat.md` §12.1 的落地实施计划，按 `docs/streaming-adapter-contract.md` 的硬合同组织。目标是把 Claude adapter 从"批量 stream-json"升级到"token-level partial streaming"，不改动 core SDK、不改动 `pkg/bridges/*`。
 
 依赖引入按 `AGENTS.md` §2.4（可靠性与可持续维护优先）三条原则评估；本期的候选库清单与评估结论见 §5。结论不是"禁止引入"，是"按三条评估后，本期候选库在局部化收益不显著，倾向手写"——未来 Claude 协议复杂度上升、或 anthropic-sdk-go 出现稳定的 types-only 子模块时应重新评估。

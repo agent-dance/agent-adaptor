@@ -2,7 +2,7 @@
 
 本文档定义把 streaming 能力加到一个 `DriverAdapter` 时必须满足的硬合同。符合此合同的 adapter 能与 `pkg/bridges/agui` 和 `pkg/bridges/sse` 无缝协作，无需为每种 bridge 单独写适配层。
 
-本文档是 `docs/workstream-streaming-chat.md` §12 的可执行补充。该 workstream 完成的是 core SDK 骨架 + codex 的 streaming 落地；Claude / Cursor 后续跟进时按本文件组织改动。
+本文档是 `docs/workstream-streaming-chat.md` §12 的可执行补充。当前 built-in `codex` 与 `claude` 已接入 streaming；后续 adapter 或 `cursor` streaming 接入时按本文件组织改动。
 
 ## 0. 结论先行
 
@@ -23,7 +23,7 @@ func (a adapter) StreamCapability() agentadaptor.StreamCapability {
 		TokenLevel:   true,  // 字符级文本 delta
 		Reasoning:    true,  // 思考/推理 delta
 		ToolCallArgs: true,  // 工具调用参数 delta
-		HITL:         false, // v1 不实现审批回路
+		HITL:         true,  // 是否会发 StreamHITLRequested/Resolved
 	}
 }
 ```

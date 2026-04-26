@@ -1,5 +1,7 @@
 # Workstream: Streaming Chat / AG-UI Bridge
 
+> 状态：历史设计记录。当前宿主用法见 [`streaming.md`](./streaming.md)，当前 adapter 合同见 [`streaming-adapter-contract.md`](./streaming-adapter-contract.md)。本文中早期 “本期不做 HITL / audit-only” 的段落是当时的设计背景，不代表当前 HITL v2 行为。
+
 ## 0. 先把结论写死
 
 - 核心增量：`RunHandle.StreamEvents() <-chan StreamPayload` 作为第二条出事件通道
@@ -853,4 +855,3 @@ wall:            6.72s（包含模型首 token 延迟）
 在补齐之前，**不允许**在 `agui/input.go` 外暗地读 `RunAgentInput` 的
 `Tools` / `State` / `Context` / `ForwardedProps` 字段——避免形成"有的
 路径读、有的路径不读"的碎片状态。所有扩展必须走 §18.2 的统一入口。
-

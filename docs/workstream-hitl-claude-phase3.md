@@ -1,5 +1,7 @@
 # Workstream: HITL v2 Phase 3 — Claude 双向回填
 
+> 状态：Claude adapter 实施记录。当前公共 HITL 合同见 [`run-policy.md`](./run-policy.md)，当前 bridge 映射见 [`streaming.md`](./streaming.md)。
+
 配对设计文档：[`docs/workstream-hitl-v2.md`](./workstream-hitl-v2.md)。本文档把 Phase 3 的 CLI 方案从"TODO"转成"可立项"，基于 2026-04-22 跑在 `trpc-claudecode 2.1.112` 上的 PoC 实证。
 
 > **Status: 实施完成 (2026-04-22)**。核心代码位于：
