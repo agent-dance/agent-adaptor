@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/internal/skillruntime"
 )
 
 func createClaudeSkillDir(t *testing.T, root, name string) string {
@@ -91,6 +92,44 @@ func TestListClaudeSkillsUsesClaudeConfigDirWhenProvided(t *testing.T) {
 	}
 }
 
+func TestSyncClaudeSkillsRepairsManagedTargetWhenSourcePathChanges(t *testing.T) {
+	cacheRoot := t.TempDir()
+	t.Setenv("AGENT_ADAPTOR_SKILL_CACHE_ROOT", cacheRoot)
+	configDir := t.TempDir()
+	skillsHome := filepath.Join(configDir, "skills")
+	sourceA := createClaudeSkillDir(t, cacheRoot, "hashA")
+	sourceB := createClaudeSkillDir(t, cacheRoot, "hashB")
+	target := filepath.Join(skillsHome, "analysis")
+	if _, err := skillruntime.EnsureSkillTarget(sourceA, target, []string{cacheRoot}); err != nil {
+		t.Fatalf("seed managed skill target: %v", err)
+	}
+
+	payload := agentadaptor.ResolvedSkills{
+		Entries: []agentadaptor.ResolvedSkill{
+			{Key: "team/analysis", RuntimeName: "analysis", SourcePath: sourceB},
+		},
+	}
+	snapshot, err := syncClaudeSkills(
+		payload,
+		[]string{"team/analysis"},
+		nil,
+		[]agentadaptor.EnvBinding{{Name: "CLAUDE_CONFIG_DIR", Value: configDir}},
+		agentadaptor.ProfileKindHostManaged,
+	)
+	if err != nil {
+		t.Fatalf("sync skills: %v", err)
+	}
+
+	installed, err := skillruntime.ReadInstalledSkillTargets(skillsHome)
+	if err != nil {
+		t.Fatalf("read installed targets: %v", err)
+	}
+	if got := filepath.Clean(installed["analysis"].TargetPath); got != filepath.Clean(sourceB) {
+		t.Fatalf("expected managed target repaired to %q, got %q", sourceB, got)
+	}
+	assertClaudeSkillEntry(t, snapshot, "team/analysis", agentadaptor.SkillStateInstalled)
+}
+
 func TestPrepareClaudePromptBundleMaterializesSelectedSkillsOnly(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", "")
 	t.Setenv("HOME", t.TempDir())
@@ -152,4 +191,18 @@ func TestListClaudeSkillsUsesProfileSelection(t *testing.T) {
 	if !foundDedicated || foundNative {
 		t.Fatalf("expected dedicated profile skills only, foundDedicated=%v foundNative=%v entries=%#v", foundDedicated, foundNative, snapshot.Entries)
 	}
+}
+
+func assertClaudeSkillEntry(t *testing.T, snapshot agentadaptor.SkillSnapshot, key string, state agentadaptor.SkillState) {
+	t.Helper()
+	for _, entry := range snapshot.Entries {
+		if entry.Key != key {
+			continue
+		}
+		if entry.State != state {
+			t.Fatalf("expected skill %q state %q, got %#v", key, state, entry)
+		}
+		return
+	}
+	t.Fatalf("expected skill %q in snapshot, got %#v", key, snapshot.Entries)
 }

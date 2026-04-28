@@ -11,14 +11,20 @@ const (
 	SessionParamWorkspaceID = "workspace_id"
 	// SessionParamPromptBundleKey records the prompt/skill bundle fingerprint
 	// used as a resume guard by skill-aware adapters.
+	//
+	// Deprecated: built-in adapters now use SessionParamProfileFingerprint so
+	// MCP, skills, agents, hooks, instructions, and config share one guard.
 	SessionParamPromptBundleKey = "prompt_bundle_key"
+	// SessionParamProfileFingerprint records the provider-visible effective
+	// profile resource fingerprint captured by a resumable session.
+	SessionParamProfileFingerprint = "profile_fingerprint"
 )
 
 // SessionParams is the structured host-facing view of one adapter session.
 //
 // ResumeID is the engine-owned token needed to continue the session. DisplayID
 // is the user-facing label. Values stores adapter-specific session parameters
-// such as cwd or prompt bundle fingerprints used for resume guards.
+// such as cwd or profile fingerprints used for resume guards.
 type SessionParams struct {
 	ResumeID  string
 	DisplayID string
@@ -32,13 +38,13 @@ type SessionParams struct {
 // tests, and adapters a stable way to normalize DriverSessionState and inspect
 // adapter-specific parameters without guessing map keys.
 //
-// Skill-aware adapters typically hash the ResolvedSkills.Fingerprint into the
-// session params (via SessionParamPromptBundleKey or an adapter-specific key)
-// so that GuardFingerprint changes whenever the selected skills change. A Run
-// invocation that supplies a resume ID whose GuardFingerprint no longer
-// matches the current skill selection SHOULD be rejected by the adapter with
-// a dedicated error. This keeps prompt bundles and on-disk caches consistent
-// with the session they were captured for.
+// Built-in adapters hash the ProfilePayload.Fingerprint into the session
+// params via SessionParamProfileFingerprint so that GuardFingerprint changes
+// whenever MCP, skills, agents, hooks, instructions, or structured config
+// changes. A Run invocation that supplies a resume ID whose GuardFingerprint no
+// longer matches the current profile payload SHOULD be rejected by the adapter
+// with a dedicated error. This keeps provider-visible profile resources
+// consistent with the session they were captured for.
 type SessionCodec interface {
 	Name() string
 	ToParams(state *DriverSessionState) SessionParams

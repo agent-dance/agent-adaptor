@@ -94,6 +94,8 @@ type AgentAdmin interface {
 	ListModels(ctx context.Context) ([]ModelInfo, error)
 	DetectModel(ctx context.Context) (*DetectedModel, error)
 	GetProfile(ctx context.Context) (AgentProfile, error)
+	ProfileSnapshot(ctx context.Context) (ProfileSnapshot, error)
+	SyncProfile(ctx context.Context) (ProfileSnapshot, error)
 	ConfigSchema(ctx context.Context) (*ConfigSchema, error)
 	GetQuota(ctx context.Context) (QuotaReport, error)
 	ListSkills(ctx context.Context) (SkillSnapshot, error)
@@ -176,12 +178,13 @@ type QuotaAwareDriver interface {
 //     should pass resolved through to SkillSnapshot.Resolved so the
 //     Admin API can render the "available but unselected" view without
 //     re-enumerating the provider.
-//   - InjectSkills is invoked exactly once per Run() invocation before the
-//     adapter starts; the adapter should use it to materialise prompt
-//     bundles, on-disk layouts, or any adapter-side caches needed for the
-//     skills in payload. Implementations MAY treat this as a no-op when
-//     the effective on-disk layout depends on state only known at Run()
-//     time (e.g. the effective profile's CODEX_HOME).
+//   - InjectSkills is invoked exactly once per Run() invocation after skill
+//     resolution and before the adapter starts. It is a compatibility hook
+//     for third-party adapters and should stay non-destructive unless the
+//     adapter can prove the run cannot later be rejected. Built-in adapters
+//     treat it as a no-op and reconcile profile-local resources inside Run()
+//     after resume guards pass, because the effective profile directory is
+//     only known there.
 //   - SyncSkills is invoked by AgentAdmin.SetSelectedSkills to reconcile
 //     the persistent / ephemeral host-side layout with the newly-chosen
 //     set. It receives both the selected keys and the full resolved
@@ -275,15 +278,18 @@ type TypedAgentBinding[T any] interface {
 // construction and when returned from AgentBinding.Defaults, so callers may
 // inspect the value without mutating live SDK state.
 type AgentDefaults struct {
-	Agent        AgentIdentity
-	Workspace    WorkspaceSpec
-	Runtime      *WorkspaceRuntimeConfig
-	RunPolicy    *RunPolicy
-	Skills       []SkillRef
-	MCP          *MCPConfig
-	Profile      *ProfileSelection
-	Instructions *InstructionsBundleRef
-	Metadata     map[string]string
+	Agent         AgentIdentity
+	Workspace     WorkspaceSpec
+	Runtime       *WorkspaceRuntimeConfig
+	RunPolicy     *RunPolicy
+	Skills        []SkillRef
+	MCP           *MCPConfig
+	Agents        []AgentSpec
+	Hooks         []HookSpec
+	ProfileConfig []ProfileConfigPatch
+	Profile       *ProfileSelection
+	Instructions  *InstructionsBundleRef
+	Metadata      map[string]string
 	// Streaming marks the binding as streaming-by-default when non-nil and
 	// true. Per-call WithStreaming / WithoutStreaming still wins. Using a
 	// pointer keeps the three states (nil / true / false) distinct so that

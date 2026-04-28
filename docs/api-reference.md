@@ -69,6 +69,11 @@ Context and injection:
 - `WithMetadata(key, value)`
 - `WithAgentIdentity(identity)`
 
+Selected skill materialization is strict: invalid archives, missing
+`SKILL.md`, unavailable paths, or custom materializer failures surface as a
+`Run` / `Wait` error matching `ErrSkillMaterializationFailed` before the
+adapter starts.
+
 Policy, streaming, HITL:
 
 - `WithRunPolicy(policy)`
@@ -122,6 +127,8 @@ Provider-specific env in `CommonConfig.Env` still wins over profile options.
 - `Default()` / `Agent(name)` mirror the execution binding model.
 - `Agents()` returns default + named binding metadata.
 - `Info()`, `CheckEnvironment()`, `ListModels()`, `DetectModel()`, `GetProfile()`, `ConfigSchema()`, `GetQuota()` expose adapter diagnostics.
+- `ProfileSnapshot(ctx)` reports the effective profile resource view.
+- `SyncProfile(ctx)` materializes supported profile resources for the binding defaults without starting a run; unsupported resource families must be reported as warnings/errors rather than managed.
 - `ListSkills()` reports the effective catalogue / selected set.
 - `SetSelectedSkills(ctx, keys)` installs a process-local selected-key override for that bound agent. It is not persistent storage.
 
@@ -137,4 +144,4 @@ type DriverAdapter interface {
 }
 ```
 
-Optional extension interfaces include environment/model/profile/quota/config-schema probes, `SkillAwareDriver`, `StreamAwareDriver`, and `SessionCodecAwareDriver`. Adapter capability declarations must match the behavior actually implemented, especially `DriverDescriptor.RunPolicyCaps`.
+Optional extension interfaces include environment/model/profile/quota/config-schema probes, `SkillAwareDriver`, `StreamAwareDriver`, and `SessionCodecAwareDriver`. `SkillAwareDriver.InjectSkills` remains a public SPI hook: the SDK invokes it once per run after skill resolution and before adapter `Run`; built-in adapters keep it non-destructive and do profile-local materialization inside `Run` after resume guards pass. Adapter capability declarations must match the behavior actually implemented, especially `DriverDescriptor.RunPolicyCaps`.

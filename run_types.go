@@ -214,19 +214,20 @@ type TranscriptItem struct {
 // workspace/runtime/skill/MCP payloads have been resolved, and policy has been
 // validated against the descriptor.
 type DriverRunRequest struct {
-	RunID        string
-	Prompt       string
-	Config       any
-	Agent        AgentIdentity
-	Workspace    WorkspaceLease
-	Runtime      RuntimePayload
-	Skills       ResolvedSkills
-	MCP          MCPPayload
-	Profile      *ProfileSelection
-	Policy       RunPolicy
-	Instructions *InstructionsBundleRef
-	Session      *DriverSessionContext
-	Metadata     map[string]string
+	RunID          string
+	Prompt         string
+	Config         any
+	Agent          AgentIdentity
+	Workspace      WorkspaceLease
+	Runtime        RuntimePayload
+	Skills         ResolvedSkills
+	MCP            MCPPayload
+	ProfilePayload ProfilePayload
+	Profile        *ProfileSelection
+	Policy         RunPolicy
+	Instructions   *InstructionsBundleRef
+	Session        *DriverSessionContext
+	Metadata       map[string]string
 
 	// Streaming is a hint from the host that the caller wants structured
 	// stream events (StreamPayload) emitted via EventSink.EmitStream in
@@ -396,23 +397,24 @@ type RuntimeServiceManager interface {
 }
 
 type resolvedInvocation struct {
-	runID        string
-	prompt       string
-	adapter      DriverAdapter
-	config       any
-	agent        AgentIdentity
-	workspace    WorkspaceLease
-	runtime      RuntimePayload
-	skills       ResolvedSkills
-	mcp          MCPPayload
-	profile      *ProfileSelection
-	policy       RunPolicy
-	handlers     decisionHandlers
-	instructions *InstructionsBundleRef
-	session      SessionRequest
-	metadata     map[string]string
-	fingerprint  string
-	streaming    bool
+	runID          string
+	prompt         string
+	adapter        DriverAdapter
+	config         any
+	agent          AgentIdentity
+	workspace      WorkspaceLease
+	runtime        RuntimePayload
+	skills         ResolvedSkills
+	mcp            MCPPayload
+	profilePayload ProfilePayload
+	profile        *ProfileSelection
+	policy         RunPolicy
+	handlers       decisionHandlers
+	instructions   *InstructionsBundleRef
+	session        SessionRequest
+	metadata       map[string]string
+	fingerprint    string
+	streaming      bool
 }
 
 // StreamKind enumerates the protocol-agnostic streaming events adapters emit

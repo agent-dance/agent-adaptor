@@ -267,49 +267,71 @@ func TestSkillsMissingSourceRejected(t *testing.T) {
 	}
 }
 
-// TestMaterializerFailureDegradesToWarning verifies that a materialization
-// failure does NOT fail the Run: the offending key stays in Selected, the
-// payload carries a warning, and the adapter receives the rest of the
-// entries intact.
-func TestMaterializerFailureDegradesToWarning(t *testing.T) {
+// TestMaterializerFailureFailsRunBeforeAdapter verifies that a selected
+// skill materialization failure is a pre-adapter error visible to hosts.
+func TestMaterializerFailureFailsRunBeforeAdapter(t *testing.T) {
 	driver := &fakeDriver{}
 	good := agentadaptor.InlineSkill("team/good", "---\nname: good\n---\n")
+	bad := agentadaptor.Skill{
+		Key: "team/bad",
+		Source: agentadaptor.SkillFromArchive{
+			Archive: agentadaptor.ArchiveFromBytes([]byte("not a zip archive")),
+			Format:  agentadaptor.SkillArchiveZip,
+		},
+	}
+	sdk := agentadaptor.New(
+		agentadaptor.WithDefaultAgent(fakeBinding("default", driver,
+			agentadaptor.WithDefaultSkills(good),
+		)),
+	)
+
+	_, err := sdk.Run(context.Background(), "hello", agentadaptor.WithSkills(bad))
+	assertSkillMaterializationError(t, err, "team/bad")
+	if driver.runCalls != 0 {
+		t.Fatalf("adapter should not run after skill materialization failure, got %d calls", driver.runCalls)
+	}
+}
+
+func TestMaterializerFailureSurfacesFromStartWait(t *testing.T) {
+	driver := &fakeDriver{}
 	bad := agentadaptor.Skill{
 		Key:    "team/bad",
 		Source: agentadaptor.SkillFromPath{Path: "/definitely/does/not/exist/ever"},
 	}
 	sdk := agentadaptor.New(
 		agentadaptor.WithDefaultAgent(fakeBinding("default", driver,
-			agentadaptor.WithDefaultSkills(good, bad),
+			agentadaptor.WithDefaultSkills(bad),
 		)),
 	)
 
-	if _, err := sdk.Run(context.Background(), "hello"); err != nil {
-		t.Fatalf("run should tolerate missing source and surface a warning, got %v", err)
+	handle, err := sdk.Start(context.Background(), "hello")
+	if err != nil {
+		t.Fatalf("start should return a handle; resolution errors surface from Wait: %v", err)
 	}
+	_, err = handle.Wait(context.Background())
+	assertSkillMaterializationError(t, err, "team/bad")
+	if driver.runCalls != 0 {
+		t.Fatalf("adapter should not run after skill materialization failure, got %d calls", driver.runCalls)
+	}
+}
 
-	entryKeys := make([]string, 0, len(driver.lastSkills.Entries))
-	for _, entry := range driver.lastSkills.Entries {
-		entryKeys = append(entryKeys, entry.Key)
+func assertSkillMaterializationError(t *testing.T, err error, key string) {
+	t.Helper()
+	if !errors.Is(err, agentadaptor.ErrSkillMaterializationFailed) {
+		t.Fatalf("expected ErrSkillMaterializationFailed, got %v", err)
 	}
-	if !equalUnordered(entryKeys, []string{"team/good"}) {
-		t.Fatalf("expected only team/good in Entries, got %#v", entryKeys)
+	var materializationErr *agentadaptor.SkillMaterializationError
+	if !errors.As(err, &materializationErr) {
+		t.Fatalf("expected *SkillMaterializationError, got %T: %v", err, err)
 	}
-	if len(driver.lastSkills.Warnings) == 0 {
-		t.Fatalf("expected materialization warning, got none")
+	if materializationErr.Key != key {
+		t.Fatalf("expected skill key %q, got %#v", key, materializationErr)
 	}
-	sawWarning := false
-	for _, w := range driver.lastSkills.Warnings {
-		if strings.Contains(w, "team/bad") && strings.Contains(w, "materialization") {
-			sawWarning = true
-			break
-		}
+	if materializationErr.RuntimeName == "" {
+		t.Fatalf("expected runtime name in materialization error, got %#v", materializationErr)
 	}
-	if !sawWarning {
-		t.Fatalf("expected warning to mention team/bad materialization, got %#v", driver.lastSkills.Warnings)
-	}
-	if len(driver.lastSkills.Fingerprint) == 0 {
-		t.Fatalf("expected a non-empty fingerprint even when some entries failed")
+	if materializationErr.Cause == nil {
+		t.Fatalf("expected underlying cause in materialization error, got %#v", materializationErr)
 	}
 }
 

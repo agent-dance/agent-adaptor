@@ -390,15 +390,50 @@ func (r *runnerImpl) resolveInvocation(ctx context.Context, prompt string, opts 
 		return resolvedInvocation{}, nil, err
 	}
 
-	// Give the adapter a chance to materialise prompt bundles / sync
-	// adapter-local caches before the actual Run begins. Adapters that do
-	// not care can simply not implement SkillAwareDriver.
 	if injector, ok := r.binding.Adapter().(SkillAwareDriver); ok {
-		if err := injector.InjectSkills(ctx, r.binding.Config(), skillPayload, cloneProfileSelection(defaults.Profile)); err != nil {
+		if err := injector.InjectSkills(ctx, r.binding.Config(), cloneResolvedSkills(skillPayload), cloneProfileSelection(defaults.Profile)); err != nil {
 			cleanup()
 			return resolvedInvocation{}, nil, err
 		}
 	}
+
+	agentPayload, err := prepareAgentPayload(defaults.Agents)
+	if err != nil {
+		cleanup()
+		return resolvedInvocation{}, nil, err
+	}
+	if resolvedOpts.agents != nil {
+		agentPayload, err = prepareAgentPayload(resolvedOpts.agents.Agents)
+		if err != nil {
+			cleanup()
+			return resolvedInvocation{}, nil, err
+		}
+	}
+	hookPayload, err := prepareHookPayload(defaults.Hooks)
+	if err != nil {
+		cleanup()
+		return resolvedInvocation{}, nil, err
+	}
+	if resolvedOpts.hooks != nil {
+		hookPayload, err = prepareHookPayload(resolvedOpts.hooks.Hooks)
+		if err != nil {
+			cleanup()
+			return resolvedInvocation{}, nil, err
+		}
+	}
+	configPayload, err := prepareProfileConfigPayload(defaults.ProfileConfig)
+	if err != nil {
+		cleanup()
+		return resolvedInvocation{}, nil, err
+	}
+	if resolvedOpts.profileConfig != nil {
+		configPayload, err = prepareProfileConfigPayload(resolvedOpts.profileConfig.Patches)
+		if err != nil {
+			cleanup()
+			return resolvedInvocation{}, nil, err
+		}
+	}
+	profilePayload := buildProfilePayload(skillPayload, mcpPayload, agentPayload, hookPayload, instructions, configPayload)
 
 	sessionReq := SessionRequest{}
 	if resolvedOpts.session != nil {
@@ -411,27 +446,28 @@ func (r *runnerImpl) resolveInvocation(ctx context.Context, prompt string, opts 
 		extractDriverFingerprint(config),
 		workspace.Fingerprint,
 		runtimePayload.Fingerprint,
-		instructionFingerprint(instructions),
+		profilePayload.Fingerprint,
 	)
 
 	return resolvedInvocation{
-		runID:        runID,
-		prompt:       prompt,
-		adapter:      r.binding.Adapter(),
-		config:       config,
-		agent:        identity,
-		workspace:    workspace,
-		runtime:      runtimePayload,
-		skills:       skillPayload,
-		mcp:          mcpPayload,
-		profile:      cloneProfileSelection(defaults.Profile),
-		policy:       policy,
-		handlers:     handlers,
-		instructions: instructions,
-		session:      sessionReq,
-		metadata:     cloneStringMap(metadata),
-		fingerprint:  fingerprint,
-		streaming:    streaming,
+		runID:          runID,
+		prompt:         prompt,
+		adapter:        r.binding.Adapter(),
+		config:         config,
+		agent:          identity,
+		workspace:      workspace,
+		runtime:        runtimePayload,
+		skills:         skillPayload,
+		mcp:            mcpPayload,
+		profilePayload: profilePayload,
+		profile:        cloneProfileSelection(defaults.Profile),
+		policy:         policy,
+		handlers:       handlers,
+		instructions:   instructions,
+		session:        sessionReq,
+		metadata:       cloneStringMap(metadata),
+		fingerprint:    fingerprint,
+		streaming:      streaming,
 	}, cleanup, nil
 }
 
@@ -460,23 +496,24 @@ func (r *runnerImpl) executeWithSessionPlan(
 	}
 
 	driverReq := DriverRunRequest{
-		RunID:        invocation.runID,
-		Prompt:       invocation.prompt,
-		Config:       invocation.config,
-		Agent:        invocation.agent,
-		Workspace:    invocation.workspace,
-		Runtime:      cloneRuntimePayload(invocation.runtime),
-		Skills:       cloneResolvedSkills(invocation.skills),
-		MCP:          cloneMCPPayload(invocation.mcp),
-		Profile:      cloneProfileSelection(invocation.profile),
-		Policy:       invocation.policy,
-		Instructions: invocation.instructions,
-		Metadata:     cloneStringMap(invocation.metadata),
-		Streaming:    invocation.streaming,
+		RunID:          invocation.runID,
+		Prompt:         invocation.prompt,
+		Config:         invocation.config,
+		Agent:          invocation.agent,
+		Workspace:      invocation.workspace,
+		Runtime:        cloneRuntimePayload(invocation.runtime),
+		Skills:         cloneResolvedSkills(invocation.skills),
+		MCP:            cloneMCPPayload(invocation.mcp),
+		ProfilePayload: cloneProfilePayload(invocation.profilePayload),
+		Profile:        cloneProfileSelection(invocation.profile),
+		Policy:         invocation.policy,
+		Instructions:   invocation.instructions,
+		Metadata:       cloneStringMap(invocation.metadata),
+		Streaming:      invocation.streaming,
 	}
 	if plan != nil {
 		var state *DriverSessionState
-		if plan.record != nil {
+		if plan.record != nil && (plan.reused || plan.request.Mode == SessionFork) {
 			state = normalizeSessionState(invocation.adapter, plan.record.DriverState)
 		}
 		driverReq.Session = &DriverSessionContext{

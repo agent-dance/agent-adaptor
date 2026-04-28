@@ -286,16 +286,15 @@ type SkillMaterializer interface {
 //
 // Contract between SDK and adapter:
 //
-//   - Entries is the subset of the selected set that successfully
-//     materialized. Entries are listed in the order they were selected and
-//     the order is stable across runs with equivalent inputs.
+//   - Entries contains every selected skill after successful materialization.
+//     A selected skill that cannot be materialized fails resolution with
+//     ErrSkillMaterializationFailed before the adapter is invoked.
 //   - For the ListSkills / SyncSkills paths, the SDK additionally passes a
 //     parallel selected []string whose contents are exactly ResolvedSkills.
 //     Keys(). Adapters MAY rely on that equivalence; hosts MUST NOT observe
 //     divergence through the ResolvedSkills value alone.
-//   - Warnings carries non-fatal messages (for example "skill X failed to
-//     materialize, dropped from Entries"). Adapters should forward these
-//     to the caller via SkillSnapshot.Warnings.
+//   - Warnings carries non-fatal messages. Materialization failures are fatal
+//     and are not represented as warnings.
 //   - Fingerprint is a deterministic digest of Entries and Warnings. Two
 //     runs whose ResolvedSkills produce the same Fingerprint are guaranteed
 //     to have identical skill-visible state.
@@ -437,6 +436,44 @@ func (e *SkillKeyConflictError) Error() string {
 
 // Unwrap lets callers detect the error kind with errors.Is(err, ErrSkillKeyConflict).
 func (e *SkillKeyConflictError) Unwrap() error { return ErrSkillKeyConflict }
+
+// SkillMaterializationError is returned (matching
+// ErrSkillMaterializationFailed) when a selected skill is known to the SDK but
+// cannot be materialized into a local SKILL.md directory before adapter.Run.
+type SkillMaterializationError struct {
+	Key         string
+	RuntimeName string
+	Cause       error
+}
+
+func (e *SkillMaterializationError) Error() string {
+	if e == nil {
+		return ErrSkillMaterializationFailed.Error()
+	}
+	msg := fmt.Sprintf("agentadaptor: skill %q materialization failed", e.Key)
+	if strings.TrimSpace(e.RuntimeName) != "" && e.RuntimeName != e.Key {
+		msg += fmt.Sprintf(" (runtime name %q)", e.RuntimeName)
+	}
+	if e.Cause != nil {
+		msg += ": " + e.Cause.Error()
+	}
+	return msg
+}
+
+// Unwrap exposes the underlying materializer error, so hosts can still match
+// lower-level causes such as ErrSkillSourceMissing where appropriate.
+func (e *SkillMaterializationError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Cause
+}
+
+// Is lets errors.Is match ErrSkillMaterializationFailed while Unwrap still
+// exposes Cause for lower-level checks.
+func (e *SkillMaterializationError) Is(target error) bool {
+	return target == ErrSkillMaterializationFailed
+}
 
 // keyFromPath returns the slug-ish basename of a path-like string. The
 // rules intentionally mirror the filesystem basename of a skill directory so

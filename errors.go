@@ -14,40 +14,42 @@
 // inline comments mirror the same matrix so the godoc surface and the
 // markdown reference stay in sync.
 //
-//   Group     | Sentinel                          | Suggested HTTP | Log  | Alert
-//   ----------+-----------------------------------+----------------+------+------
-//   binding   | ErrAgentBindingRequired           | 400            | warn | no
-//             | ErrAgentNameRequired              | 400            | warn | no
-//             | ErrAgentNotFound                  | 404            | info | no
-//             | ErrDefaultAgentAlreadyConfigured  | (panic at New) |  -   | -
-//             | ErrDefaultAgentMissing            | (panic at New) |  -   | -
-//             | ErrInvalidDriverConfig            | 400            | warn | no
-//             | ErrReservedAgentName              | 400            | warn | no
-//   session   | ErrResumeRejected                 | 409            | warn | no
-//             | ErrSessionBusy                    | 409            | info | no
-//             | ErrSessionCheckpointMissing       | 404            | info | no
-//             | ErrSessionIncompatible            | 409            | warn | no
-//             | ErrSessionLeaseLost               | 409            | warn | yes
-//             | ErrSessionNotFound                | 404            | info | no
-//             | ErrSessionStoreRequired           | 500            | err  | yes
-//   mcp       | ErrInvalidMCPConfig               | 400            | warn | no
-//             | ErrMCPUnsupported                 | 400            | info | no
-//             | ErrMCPTransportUnsupported        | 400            | info | no
-//   hitl      | ErrHumanDecisionModeUnsupported   | 400            | warn | no
-//             | ErrDecisionRequestExpired         | 409            | info | no
-//             | ErrDecisionResultKindMismatch     | 400            | warn | no
-//             | ErrRunEnded                       | 409            | info | no
-//   skill     | ErrSkillKeyConflict               | 500            | err  | yes
-//             | ErrSkillSourceMissing             | 500            | err  | no
-//             | ErrSkillKeyMissing                | 500            | err  | no
-//             | ErrSkillNotFound                  | 404            | info | no
+//	Group     | Sentinel                          | Suggested HTTP | Log  | Alert
+//	----------+-----------------------------------+----------------+------+------
+//	binding   | ErrAgentBindingRequired           | 400            | warn | no
+//	          | ErrAgentNameRequired              | 400            | warn | no
+//	          | ErrAgentNotFound                  | 404            | info | no
+//	          | ErrDefaultAgentAlreadyConfigured  | (panic at New) |  -   | -
+//	          | ErrDefaultAgentMissing            | (panic at New) |  -   | -
+//	          | ErrInvalidDriverConfig            | 400            | warn | no
+//	          | ErrReservedAgentName              | 400            | warn | no
+//	session   | ErrResumeRejected                 | 409            | warn | no
+//	          | ErrSessionBusy                    | 409            | info | no
+//	          | ErrSessionCheckpointMissing       | 404            | info | no
+//	          | ErrSessionIncompatible            | 409            | warn | no
+//	          | ErrSessionLeaseLost               | 409            | warn | yes
+//	          | ErrSessionNotFound                | 404            | info | no
+//	          | ErrSessionStoreRequired           | 500            | err  | yes
+//	mcp       | ErrInvalidMCPConfig               | 400            | warn | no
+//	          | ErrMCPUnsupported                 | 400            | info | no
+//	          | ErrMCPTransportUnsupported        | 400            | info | no
+//	hitl      | ErrHumanDecisionModeUnsupported   | 400            | warn | no
+//	          | ErrDecisionRequestExpired         | 409            | info | no
+//	          | ErrDecisionResultKindMismatch     | 400            | warn | no
+//	          | ErrRunEnded                       | 409            | info | no
+//	skill     | ErrSkillKeyConflict               | 500            | err  | yes
+//	          | ErrSkillMaterializationFailed     | 500            | err  | no
+//	          | ErrSkillSourceMissing             | 500            | err  | no
+//	          | ErrSkillKeyMissing                | 500            | err  | no
+//	          | ErrSkillNotFound                  | 404            | info | no
 //
 // # Predicates
 //
-// Five typed-error predicates are exported when hosts have a real branch
+// Six typed-error predicates are exported when hosts have a real branch
 // on a single sentinel/typed-error pair: IsRunEnded, IsDecisionExpired,
-// IsSessionBusy, IsSessionIncompatible, IsSkillKeyConflict. All other
-// errors should be inspected with errors.Is(err, ErrXxx) directly. The
+// IsSessionBusy, IsSessionIncompatible, IsSkillKeyConflict, and
+// IsSkillMaterializationFailed. All other errors should be inspected with
+// errors.Is(err, ErrXxx) directly. The
 // SDK intentionally does NOT export aggregate predicates such as
 // IsExpired or IsConflict because compressing multiple sentinels into
 // one boolean is irreversible: any future split (e.g. ErrRunEnded ->
@@ -266,6 +268,11 @@ var (
 	// skill_types.go carries the conflicting sources slice.
 	ErrSkillKeyConflict = errors.New("agentadaptor: skill key defined with conflicting sources")
 
+	// ErrSkillMaterializationFailed is returned when a selected skill was
+	// resolved but could not be materialized into a local SKILL.md directory.
+	// SkillMaterializationError carries the skill key and underlying cause.
+	ErrSkillMaterializationFailed = errors.New("agentadaptor: skill materialization failed")
+
 	// (v0.4 ErrSkillsNotEnumerable removed in v0.5 PR4: non-enumerable
 	// providers now simply do not implement SkillCatalog. Hosts that
 	// previously matched on this sentinel should switch to checking
@@ -325,3 +332,11 @@ func IsSessionIncompatible(err error) bool { return errors.Is(err, ErrSessionInc
 // use this to detect catalogue drift between binding-default skills,
 // per-call skills, and provider skills.
 func IsSkillKeyConflict(err error) bool { return errors.Is(err, ErrSkillKeyConflict) }
+
+// IsSkillMaterializationFailed reports whether err is or wraps
+// ErrSkillMaterializationFailed (matches both the bare sentinel and
+// *SkillMaterializationError). Hosts use this to fail tasks before the
+// adapter starts when a selected skill archive/path/cache entry is invalid.
+func IsSkillMaterializationFailed(err error) bool {
+	return errors.Is(err, ErrSkillMaterializationFailed)
+}

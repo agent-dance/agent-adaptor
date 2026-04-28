@@ -136,7 +136,7 @@ MCP override 规则与 `skills` 的默认值 / 调用覆盖规则相似，但有
 - 未显式传 `WithMCP(...)` 时，继承 binding default
 - 显式传 `WithMCP(...)` 时，整组 `Servers` 覆盖 binding default
 - `WithSkills(...)` 是追加合并：binding defaults、per-run refs、provider required skills 取并集
-- `skills/MCP` 的变化不会自动把当前 session 判为 incompatible；是否继续复用 session 仍由宿主通过 `SessionMode` 决定
+- built-in adapters 会把 skills / MCP / instructions / agents / hooks / config 合成 `ProfilePayload.Fingerprint` 并写入 checkpoint；resume 时 profile fingerprint 变化会返回 `ErrResumeRejected`，`continue_or_start` 可自动 fresh start
 
 
 ## 6. 本地 profile 目录
@@ -179,6 +179,18 @@ sdk := agentadaptor.New(
 ```
 
 如果 skill 来自宿主自己的 store，注入 `WithSkillProvider(provider)`；如果 store 也能枚举完整清单，则同时实现 `SkillCatalog`，这样 `Admin().Default().ListSkills(ctx)` 能展示 catalogue。静态表可以直接用 `WithSkillSet(agentadaptor.SkillSet{...})`。
+
+Claude / Codex / Cursor 都把 selected skills 物化到本次 effective profile 的 skills home：
+
+- Claude: `<CLAUDE_CONFIG_DIR>/skills`
+- Codex: `<CODEX_HOME>/skills`
+- Cursor: `<CURSOR_HOME>/skills`
+
+Claude 不再因为 selected skills 自动追加 prompt-bundle `--add-dir`；旧 checkpoint 只有 `prompt_bundle_key` 时仍按 legacy guard 处理。
+
+Selected skill 物化失败是启动前错误，而不是 best-effort warning：坏 zip、缺少 `SKILL.md`、本地路径不可用或自定义 materializer 报错时，`Run` / `Start().Wait()` 会返回匹配 `ErrSkillMaterializationFailed` 的错误，adapter 不会启动。
+
+`Admin().Default().ProfileSnapshot(ctx)` 报告 desired / observed profile resource 状态；`SyncProfile(ctx)` 会同步 built-in adapters 已支持的 skills 和 MCP。Agents、hooks、instructions、profile config 尚未实现 provider-native 落盘时，会以 resource warning / error 暴露，不会把 desired keys 假装成已 managed。
 
 Admin 里的 `SetSelectedSkills(ctx, keys)` 只是**进程内 selection override**，不会替宿主持久化用户偏好。需要长期保存勾选状态时，宿主应该写入自己的数据库，并在构造 binding 或调用时通过 `WithDefaultSkills` / `WithSkills` 重新声明。
 

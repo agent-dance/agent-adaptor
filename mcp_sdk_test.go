@@ -58,7 +58,7 @@ func TestSDKRunMergesDefaultMCPAndPerRunOverride(t *testing.T) {
 	}
 }
 
-func TestSessionCompatibilityIgnoresSkillAndMCPChanges(t *testing.T) {
+func TestSessionCompatibilitySeparatesProfileResourceChanges(t *testing.T) {
 	driver := &fakeDriver{
 		mcpCapability: agentadaptor.MCPCapability{Supported: true, Stdio: true, HTTP: true, SSE: true},
 	}
@@ -103,11 +103,11 @@ func TestSessionCompatibilityIgnoresSkillAndMCPChanges(t *testing.T) {
 	if first.Session == nil || second.Session == nil {
 		t.Fatalf("expected sessions on both runs, first=%#v second=%#v", first.Session, second.Session)
 	}
-	if first.Session.ID != second.Session.ID {
-		t.Fatalf("expected changed skills/MCP to keep the same session, got %q and %q", first.Session.ID, second.Session.ID)
+	if first.Session.ID == second.Session.ID {
+		t.Fatalf("expected changed skills/MCP to start a fresh compatible session, got %q twice", first.Session.ID)
 	}
-	if got := second.Output; got != "default:reused:default-driver-session-1" {
-		t.Fatalf("expected second run to reuse the original session, got %q", got)
+	if got := second.Output; got != "default:created:default-driver-session-2" {
+		t.Fatalf("expected second run to start a fresh provider session, got %q", got)
 	}
 }
 

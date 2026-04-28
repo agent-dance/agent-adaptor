@@ -216,6 +216,50 @@ func WithDefaultMCP(cfg MCPConfig) AgentOption {
 	}
 }
 
+// WithDefaultProfileResources installs a binding-level profile desired state.
+// Skills are additive with WithDefaultSkills; MCP, instructions, agents, hooks,
+// and config replace the corresponding binding defaults for their resource
+// kind.
+func WithDefaultProfileResources(resources ProfileResources) AgentOption {
+	return func(defaults *AgentDefaults) {
+		copyResources := cloneProfileResources(resources)
+		if len(copyResources.Skills) > 0 {
+			defaults.Skills = append(defaults.Skills, copyResources.Skills...)
+		}
+		if copyResources.MCP != nil {
+			defaults.MCP = copyResources.MCP
+		}
+		defaults.Agents = copyResources.Agents
+		defaults.Hooks = copyResources.Hooks
+		defaults.ProfileConfig = copyResources.Config
+		if copyResources.Instructions != nil {
+			defaults.Instructions = copyResources.Instructions
+		}
+	}
+}
+
+// WithDefaultAgents sets the binding-level desired sub-agent resources.
+func WithDefaultAgents(specs ...AgentSpec) AgentOption {
+	return func(defaults *AgentDefaults) {
+		defaults.Agents = cloneAgentSpecs(specs)
+	}
+}
+
+// WithDefaultHooks sets the binding-level desired hook resources.
+func WithDefaultHooks(specs ...HookSpec) AgentOption {
+	return func(defaults *AgentDefaults) {
+		defaults.Hooks = cloneHookSpecs(specs)
+	}
+}
+
+// WithDefaultProfileConfig sets the binding-level structured profile config
+// patches.
+func WithDefaultProfileConfig(patches ...ProfileConfigPatch) AgentOption {
+	return func(defaults *AgentDefaults) {
+		defaults.ProfileConfig = cloneProfileConfigPatches(patches)
+	}
+}
+
 // WithDefaultRuntimeServices attaches default runtime-service requirements to
 // an agent binding. Per-run WithRuntimeServices(...) overrides these defaults.
 func WithDefaultRuntimeServices(services ...RuntimeServiceSpec) AgentOption {
@@ -277,15 +321,18 @@ func WithDefaultStreaming() AgentOption {
 type RunOption func(*runOptions)
 
 type runOptions struct {
-	session      *SessionRequest
-	workspace    WorkspaceSpec
-	runtime      *WorkspaceRuntimeConfig
-	skills       []SkillRef
-	mcp          *MCPConfig
-	runPolicy    *RunPolicy
-	instructions *InstructionsBundleRef
-	metadata     map[string]string
-	agent        *AgentIdentity
+	session       *SessionRequest
+	workspace     WorkspaceSpec
+	runtime       *WorkspaceRuntimeConfig
+	skills        []SkillRef
+	mcp           *MCPConfig
+	agents        *AgentPayload
+	hooks         *HookPayload
+	profileConfig *ProfileConfigPayload
+	runPolicy     *RunPolicy
+	instructions  *InstructionsBundleRef
+	metadata      map[string]string
+	agent         *AgentIdentity
 	// streaming is tri-state: nil means "inherit from binding defaults",
 	// non-nil wins over the binding default.
 	streaming *bool
@@ -420,6 +467,49 @@ func WithMCP(cfg MCPConfig) RunOption {
 	return func(ro *runOptions) {
 		copyCfg := MCPConfig{Servers: cloneMCPServerSpecs(cfg.Servers)}
 		ro.mcp = &copyCfg
+	}
+}
+
+// WithProfileResources installs a per-run profile desired state. Skills are
+// additive; MCP, instructions, agents, hooks, and config replace the effective
+// desired state for their resource kind on this run.
+func WithProfileResources(resources ProfileResources) RunOption {
+	return func(ro *runOptions) {
+		copyResources := cloneProfileResources(resources)
+		if len(copyResources.Skills) > 0 {
+			ro.skills = append(ro.skills, copyResources.Skills...)
+		}
+		if copyResources.MCP != nil {
+			ro.mcp = copyResources.MCP
+		}
+		ro.agents = &AgentPayload{Agents: copyResources.Agents}
+		ro.hooks = &HookPayload{Hooks: copyResources.Hooks}
+		ro.profileConfig = &ProfileConfigPayload{Patches: copyResources.Config}
+		if copyResources.Instructions != nil {
+			ro.instructions = copyResources.Instructions
+		}
+	}
+}
+
+// WithAgents replaces the effective desired agent resources for this run.
+func WithAgents(specs ...AgentSpec) RunOption {
+	return func(ro *runOptions) {
+		ro.agents = &AgentPayload{Agents: cloneAgentSpecs(specs)}
+	}
+}
+
+// WithHooks replaces the effective desired hook resources for this run.
+func WithHooks(specs ...HookSpec) RunOption {
+	return func(ro *runOptions) {
+		ro.hooks = &HookPayload{Hooks: cloneHookSpecs(specs)}
+	}
+}
+
+// WithProfileConfig replaces the effective desired structured config patches
+// for this run.
+func WithProfileConfig(patches ...ProfileConfigPatch) RunOption {
+	return func(ro *runOptions) {
+		ro.profileConfig = &ProfileConfigPayload{Patches: cloneProfileConfigPatches(patches)}
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"github.com/agent-dance/agent-adaptor/internal/adapterutil"
 	"github.com/agent-dance/agent-adaptor/internal/clihelper"
 	"github.com/agent-dance/agent-adaptor/internal/configprobe"
+	"github.com/agent-dance/agent-adaptor/internal/profilesnapshot"
 )
 
 // DriverType is the stable descriptor type for the built-in Cursor adapter.
@@ -232,16 +233,53 @@ func (adapter) SyncSkills(ctx context.Context, cfg any, payload agentadaptor.Res
 	return syncCursorSkills(ctx, payload, selected, resolved, bindings, noopCursorSink{})
 }
 
+func (adapter) SnapshotProfileResources(_ context.Context, cfg any, _ agentadaptor.AgentIdentity, profile *agentadaptor.ProfileSelection, payload agentadaptor.ProfilePayload, selected []string, resolved []agentadaptor.Skill) (agentadaptor.ProfileSnapshot, error) {
+	config := readConfig(cfg)
+	bindings, err := effectiveCursorBindings(config.CommonConfig, profile)
+	if err != nil {
+		return agentadaptor.ProfileSnapshot{}, err
+	}
+	skills, err := listCursorSkills(payload.Skills, selected, resolved, bindings)
+	if err != nil {
+		return agentadaptor.ProfileSnapshot{}, err
+	}
+	effectiveProfile, kind := cursorProfileAndKind(config.CommonConfig, profile)
+	return profilesnapshot.Build(DriverType, effectiveProfile, kind, payload, skills, false), nil
+}
+
+func (adapter) SyncProfileResources(ctx context.Context, cfg any, _ agentadaptor.AgentIdentity, profile *agentadaptor.ProfileSelection, payload agentadaptor.ProfilePayload, selected []string, resolved []agentadaptor.Skill) (agentadaptor.ProfileSnapshot, error) {
+	config := readConfig(cfg)
+	bindings, err := effectiveCursorBindings(config.CommonConfig, profile)
+	if err != nil {
+		return agentadaptor.ProfileSnapshot{}, err
+	}
+	skills, err := syncCursorSkills(ctx, payload.Skills, selected, resolved, bindings, noopCursorSink{})
+	if err != nil {
+		return agentadaptor.ProfileSnapshot{}, err
+	}
+	if err := syncCursorMCPProfile(config.CommonConfig, profile, payload.MCP); err != nil {
+		return agentadaptor.ProfileSnapshot{}, err
+	}
+	effectiveProfile, kind := cursorProfileAndKind(config.CommonConfig, profile)
+	return profilesnapshot.Build(DriverType, effectiveProfile, kind, payload, skills, true), nil
+}
+
 func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink agentadaptor.EventSink) (agentadaptor.DriverRunResult, error) {
 	cfg := readConfig(req.Config)
 	command := cfg.Command
 	if command == "" {
 		command = "agent"
 	}
-	if err := syncCursorMCPProfile(cfg.CommonConfig, req.Profile, req.MCP); err != nil {
+	profileFingerprint := req.ProfilePayload.Fingerprint
+	bindings, err := effectiveCursorBindingsNoInitialize(cfg.CommonConfig, req.Profile)
+	if err != nil {
 		return agentadaptor.DriverRunResult{}, err
 	}
-	bindings, err := effectiveCursorBindings(cfg.CommonConfig, req.Profile)
+	effectiveCWD := chooseCWD(cfg.CommonConfig, req.Workspace)
+	if err := validateCursorSessionGuard(req, effectiveCWD, profileFingerprint); err != nil {
+		return agentadaptor.DriverRunResult{}, err
+	}
+	bindings, err = effectiveCursorBindings(cfg.CommonConfig, req.Profile)
 	if err != nil {
 		return agentadaptor.DriverRunResult{}, err
 	}
@@ -249,20 +287,14 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 	if err != nil {
 		return agentadaptor.DriverRunResult{}, err
 	}
+	if err := syncCursorMCPProfile(cfg.CommonConfig, req.Profile, req.MCP); err != nil {
+		return agentadaptor.DriverRunResult{}, err
+	}
 	if _, err := syncCursorSkills(ctx, req.Skills, req.Skills.Keys(), nil, effectiveEnv, sink); err != nil {
 		return agentadaptor.DriverRunResult{}, err
 	}
-	effectiveCWD := chooseCWD(cfg.CommonConfig, req.Workspace)
 
 	args := []string{"-p", "--output-format", "stream-json", "--workspace", effectiveCWD}
-	if req.Session != nil && req.Session.State != nil {
-		if req.Session.State.Data[agentadaptor.SessionParamCWD] != "" && req.Session.State.Data[agentadaptor.SessionParamCWD] != effectiveCWD {
-			return agentadaptor.DriverRunResult{}, &agentadaptor.ResumeRejectedError{Reason: "session working directory changed"}
-		}
-		if req.Session.State.Data[agentadaptor.SessionParamWorkspaceID] != "" && req.Session.State.Data[agentadaptor.SessionParamWorkspaceID] != req.Workspace.ID {
-			return agentadaptor.DriverRunResult{}, &agentadaptor.ResumeRejectedError{Reason: "session workspace changed"}
-		}
-	}
 	if req.Session != nil && req.Session.State != nil && req.Session.State.ResumeID != "" {
 		args = append(args, "--resume", req.Session.State.ResumeID)
 	}
@@ -302,8 +334,9 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 	checkpoint := parser.checkpoint(result.ExitCode)
 	if checkpoint != nil && checkpoint.State != nil {
 		checkpoint.State.Data = map[string]string{
-			agentadaptor.SessionParamCWD:         effectiveCWD,
-			agentadaptor.SessionParamWorkspaceID: req.Workspace.ID,
+			agentadaptor.SessionParamCWD:                effectiveCWD,
+			agentadaptor.SessionParamWorkspaceID:        req.Workspace.ID,
+			agentadaptor.SessionParamProfileFingerprint: profileFingerprint,
 		}
 	}
 	var failure *agentadaptor.RunFailure
@@ -330,6 +363,22 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 		RuntimeServices: adapterutil.RuntimeReportsFromRefs(req.Runtime.Ensured, req.Agent),
 		Failure:         failure,
 	}, nil
+}
+
+func validateCursorSessionGuard(req agentadaptor.DriverRunRequest, effectiveCWD, profileFingerprint string) error {
+	if req.Session == nil || req.Session.State == nil {
+		return nil
+	}
+	if req.Session.State.Data[agentadaptor.SessionParamCWD] != "" && req.Session.State.Data[agentadaptor.SessionParamCWD] != effectiveCWD {
+		return &agentadaptor.ResumeRejectedError{Reason: "session working directory changed"}
+	}
+	if req.Session.State.Data[agentadaptor.SessionParamWorkspaceID] != "" && req.Session.State.Data[agentadaptor.SessionParamWorkspaceID] != req.Workspace.ID {
+		return &agentadaptor.ResumeRejectedError{Reason: "session workspace changed"}
+	}
+	if req.Session.State.Data[agentadaptor.SessionParamProfileFingerprint] != "" && req.Session.State.Data[agentadaptor.SessionParamProfileFingerprint] != profileFingerprint {
+		return &agentadaptor.ResumeRejectedError{Reason: "profile resources changed"}
+	}
+	return nil
 }
 
 func chooseCWD(cfg agentadaptor.CommonConfig, workspace agentadaptor.WorkspaceLease) string {

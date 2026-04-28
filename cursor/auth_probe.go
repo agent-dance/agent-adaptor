@@ -20,7 +20,15 @@ type cursorAuthInfo struct {
 }
 
 func effectiveCursorBindings(config agentadaptor.CommonConfig, selection *agentadaptor.ProfileSelection) ([]agentadaptor.EnvBinding, error) {
-	profile, err := resolveCursorProfile(config, selection)
+	profile, err := resolveCursorProfileWithOptions(config, selection, false)
+	if err != nil {
+		return nil, err
+	}
+	return skillruntime.WithBinding(config.Env, "CURSOR_HOME", profile.Dir), nil
+}
+
+func effectiveCursorBindingsNoInitialize(config agentadaptor.CommonConfig, selection *agentadaptor.ProfileSelection) ([]agentadaptor.EnvBinding, error) {
+	profile, err := resolveCursorProfileWithOptions(config, selection, true)
 	if err != nil {
 		return nil, err
 	}
@@ -38,6 +46,10 @@ func resolveCursorHome(bindings []agentadaptor.EnvBinding) string {
 }
 
 func resolveCursorProfile(config agentadaptor.CommonConfig, selection *agentadaptor.ProfileSelection) (agentadaptor.AgentProfile, error) {
+	return resolveCursorProfileWithOptions(config, selection, false)
+}
+
+func resolveCursorProfileWithOptions(config agentadaptor.CommonConfig, selection *agentadaptor.ProfileSelection, skipInitialize bool) (agentadaptor.AgentProfile, error) {
 	resolution, err := skillruntime.ResolveProfile(skillruntime.ProfileResolveOptions{
 		Bindings:         config.Env,
 		Selection:        selection,
@@ -49,6 +61,7 @@ func resolveCursorProfile(config agentadaptor.CommonConfig, selection *agentadap
 		MCPFiles:         []string{"mcp.json"},
 		SkillsDirs:       []string{"skills"},
 		AuthFiles:        []string{"auth.json", "credentials.json"},
+		SkipInitialize:   skipInitialize,
 	})
 	if err != nil {
 		return agentadaptor.AgentProfile{}, err

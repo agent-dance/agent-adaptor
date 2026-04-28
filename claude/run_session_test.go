@@ -58,10 +58,11 @@ func TestClaudeRunPreservesAndGuardsSessionState(t *testing.T) {
 		Fingerprint: "bundle-b",
 	}
 	req := agentadaptor.DriverRunRequest{
-		Prompt:    "hello from claude",
-		Config:    cfg,
-		Workspace: agentadaptor.WorkspaceLease{ID: "workspace-a", CWD: workspace},
-		Skills:    payloadA,
+		Prompt:         "hello from claude",
+		Config:         cfg,
+		Workspace:      agentadaptor.WorkspaceLease{ID: "workspace-a", CWD: workspace},
+		Skills:         payloadA,
+		ProfilePayload: agentadaptor.ProfilePayload{Fingerprint: "profile-a"},
 	}
 
 	events := &testutil.EventRecorder{}
@@ -72,8 +73,14 @@ func TestClaudeRunPreservesAndGuardsSessionState(t *testing.T) {
 	if first.Checkpoint == nil || first.Checkpoint.State == nil || !first.Checkpoint.Valid {
 		t.Fatalf("expected valid checkpoint, got %#v", first.Checkpoint)
 	}
-	if first.Checkpoint.State.Data[agentadaptor.SessionParamPromptBundleKey] != "bundle-a" {
-		t.Fatalf("expected prompt bundle guard, got %#v", first.Checkpoint.State.Data)
+	if first.Checkpoint.State.Data[agentadaptor.SessionParamProfileFingerprint] != "profile-a" {
+		t.Fatalf("expected profile guard, got %#v", first.Checkpoint.State.Data)
+	}
+	if first.Checkpoint.State.Data[agentadaptor.SessionParamPromptBundleKey] != "" {
+		t.Fatalf("expected new checkpoints not to use prompt bundle guard, got %#v", first.Checkpoint.State.Data)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".claude", "skills", "analysis")); err != nil {
+		t.Fatalf("expected selected skill in Claude profile-local skills home: %v", err)
 	}
 	if len(first.Transcript) == 0 {
 		t.Fatalf("expected transcript items, got %#v", first.Transcript)
@@ -82,6 +89,7 @@ func TestClaudeRunPreservesAndGuardsSessionState(t *testing.T) {
 		t.Fatalf("expected raw stdout to be captured, got %#v", first.RawStreams)
 	}
 	assertHasInvocationAndSpawn(t, events.Snapshot())
+	assertInvocationArgsDoNotContain(t, events.Snapshot(), "--add-dir")
 
 	continueReq := req
 	continueReq.Session = &agentadaptor.DriverSessionContext{State: first.Checkpoint.State}
@@ -91,10 +99,25 @@ func TestClaudeRunPreservesAndGuardsSessionState(t *testing.T) {
 
 	rejectReq := req
 	rejectReq.Skills = payloadB
+	rejectReq.ProfilePayload = agentadaptor.ProfilePayload{Fingerprint: "profile-b"}
 	rejectReq.Session = &agentadaptor.DriverSessionContext{State: first.Checkpoint.State}
 	_, err = NewAdapter().Run(context.Background(), rejectReq, &testutil.EventRecorder{})
 	if !errors.Is(err, agentadaptor.ErrResumeRejected) {
 		t.Fatalf("expected ErrResumeRejected, got %v", err)
+	}
+
+	legacyReq := req
+	legacyReq.Skills = payloadB
+	legacyReq.ProfilePayload = agentadaptor.ProfilePayload{}
+	legacyReq.Session = &agentadaptor.DriverSessionContext{State: &agentadaptor.DriverSessionState{
+		ResumeID: "claude-session",
+		Data: map[string]string{
+			agentadaptor.SessionParamPromptBundleKey: "bundle-a",
+		},
+	}}
+	_, err = NewAdapter().Run(context.Background(), legacyReq, &testutil.EventRecorder{})
+	if !errors.Is(err, agentadaptor.ErrResumeRejected) {
+		t.Fatalf("expected legacy ErrResumeRejected, got %v", err)
 	}
 }
 
@@ -127,6 +150,53 @@ func TestClaudeRunMapsDedicatedProfileOptionToClaudeConfigDir(t *testing.T) {
 		t.Fatalf("run: %v", err)
 	}
 	assertInvocationEnvKeysContain(t, events.Snapshot(), "CLAUDE_CONFIG_DIR")
+}
+
+func TestClaudeResumeProfileMismatchDoesNotWriteProfileResources(t *testing.T) {
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	home := t.TempDir()
+	workspace := filepath.Join(home, "workspace")
+	configDir := filepath.Join(home, ".claude")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatalf("mkdir workspace: %v", err)
+	}
+	skillDir := createClaudeSkillDir(t, filepath.Join(home, "source"), "analysis")
+	command := testutil.WriteCommand(t, home, "fake-claude-no-write",
+		"#!/bin/sh\nset -eu\ncat >/dev/null\nprintf '{\"event\":\"turn.completed\",\"session_id\":\"claude-session\"}\\n'\n",
+		"@echo off\r\nsetlocal\r\nset /p PROMPT=\r\necho {\"event\":\"turn.completed\",\"session_id\":\"claude-session\"}\r\n",
+	)
+	req := agentadaptor.DriverRunRequest{
+		Prompt:    "hello",
+		Config:    agentadaptor.ClaudeConfig{CommonConfig: agentadaptor.CommonConfig{Command: command, CWD: workspace, Env: []agentadaptor.EnvBinding{{Name: "HOME", Value: home}, {Name: "USERPROFILE", Value: home}, {Name: "CLAUDE_CONFIG_DIR", Value: configDir}}}},
+		Workspace: agentadaptor.WorkspaceLease{ID: "workspace-a", CWD: workspace},
+		Skills: agentadaptor.ResolvedSkills{Entries: []agentadaptor.ResolvedSkill{
+			{Key: "analysis", RuntimeName: "analysis", SourcePath: skillDir},
+		}},
+		MCP: agentadaptor.MCPPayload{Servers: []agentadaptor.MCPServerSpec{{
+			Key:       "local",
+			Transport: agentadaptor.MCPTransportStdio,
+			Command:   "echo",
+		}}},
+		ProfilePayload: agentadaptor.ProfilePayload{Fingerprint: "new-profile"},
+		Session: &agentadaptor.DriverSessionContext{State: &agentadaptor.DriverSessionState{
+			ResumeID: "claude-session",
+			Data: map[string]string{
+				agentadaptor.SessionParamCWD:                workspace,
+				agentadaptor.SessionParamWorkspaceID:        "workspace-a",
+				agentadaptor.SessionParamProfileFingerprint: "old-profile",
+			},
+		}},
+	}
+	_, err := NewAdapter().Run(context.Background(), req, &testutil.EventRecorder{})
+	if !errors.Is(err, agentadaptor.ErrResumeRejected) {
+		t.Fatalf("expected ErrResumeRejected, got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(configDir, "skills")); !os.IsNotExist(err) {
+		t.Fatalf("expected CLAUDE_CONFIG_DIR/skills not to be written, err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(configDir, ".claude.json")); !os.IsNotExist(err) {
+		t.Fatalf("expected Claude MCP config not to be written, err=%v", err)
+	}
 }
 
 func TestClaudeRunOmitsAnthropicModelFlagInBedrockMode(t *testing.T) {

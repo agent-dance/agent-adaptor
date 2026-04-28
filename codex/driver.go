@@ -13,6 +13,7 @@ import (
 	"github.com/agent-dance/agent-adaptor/internal/adapterutil"
 	"github.com/agent-dance/agent-adaptor/internal/clihelper"
 	"github.com/agent-dance/agent-adaptor/internal/configprobe"
+	"github.com/agent-dance/agent-adaptor/internal/profilesnapshot"
 )
 
 // DriverType is the stable descriptor type for the built-in Codex adapter.
@@ -49,7 +50,7 @@ func (adapter) Descriptor() agentadaptor.DriverDescriptor {
 			},
 		},
 		Sessions:     agentadaptor.SessionCapability{SupportsResume: true},
-		Skills:       agentadaptor.SkillCapability{Supported: true, Mode: agentadaptor.SkillSyncEphemeral},
+		Skills:       agentadaptor.SkillCapability{Supported: true, Mode: agentadaptor.SkillSyncPersistent},
 		MCP:          agentadaptor.MCPCapability{Supported: true, Stdio: true, HTTP: true},
 		Instructions: agentadaptor.InstructionsCapability{Supported: true},
 		Workspace:    agentadaptor.WorkspaceCapability{Supported: true},
@@ -213,8 +214,13 @@ func (adapter) GetQuota(ctx context.Context, cfg any, profile *agentadaptor.Prof
 	return codexQuotaReport(ctx, bindings)
 }
 
-func (adapter) ListSkills(_ context.Context, _ any, payload agentadaptor.ResolvedSkills, selected []string, resolved []agentadaptor.Skill, _ *agentadaptor.ProfileSelection) (agentadaptor.SkillSnapshot, error) {
-	return listCodexSkills(payload, selected, resolved), nil
+func (adapter) ListSkills(_ context.Context, cfg any, payload agentadaptor.ResolvedSkills, selected []string, resolved []agentadaptor.Skill, profile *agentadaptor.ProfileSelection) (agentadaptor.SkillSnapshot, error) {
+	config := readConfig(cfg)
+	bindings, err := effectiveCodexBindings(config.CommonConfig, profile, agentadaptor.AgentIdentity{})
+	if err != nil {
+		return agentadaptor.SkillSnapshot{}, err
+	}
+	return listCodexSkills(payload, selected, resolved, codexHomeFromBindings(bindings))
 }
 
 // InjectSkills is a no-op for Codex. Injection requires the resolved
@@ -226,8 +232,45 @@ func (adapter) InjectSkills(_ context.Context, _ any, _ agentadaptor.ResolvedSki
 	return nil
 }
 
-func (adapter) SyncSkills(_ context.Context, _ any, payload agentadaptor.ResolvedSkills, selected []string, resolved []agentadaptor.Skill, _ *agentadaptor.ProfileSelection) (agentadaptor.SkillSnapshot, error) {
-	return syncCodexSkills(payload, selected, resolved), nil
+func (adapter) SyncSkills(ctx context.Context, cfg any, payload agentadaptor.ResolvedSkills, selected []string, resolved []agentadaptor.Skill, profile *agentadaptor.ProfileSelection) (agentadaptor.SkillSnapshot, error) {
+	config := readConfig(cfg)
+	bindings, err := effectiveCodexBindings(config.CommonConfig, profile, agentadaptor.AgentIdentity{})
+	if err != nil {
+		return agentadaptor.SkillSnapshot{}, err
+	}
+	return syncCodexSkills(ctx, payload, selected, resolved, codexHomeFromBindings(bindings), nil)
+}
+
+func (adapter) SnapshotProfileResources(_ context.Context, cfg any, agent agentadaptor.AgentIdentity, profile *agentadaptor.ProfileSelection, payload agentadaptor.ProfilePayload, selected []string, resolved []agentadaptor.Skill) (agentadaptor.ProfileSnapshot, error) {
+	config := readConfig(cfg)
+	bindings, err := effectiveCodexBindings(config.CommonConfig, profile, agent)
+	if err != nil {
+		return agentadaptor.ProfileSnapshot{}, err
+	}
+	skills, err := listCodexSkills(payload.Skills, selected, resolved, codexHomeFromBindings(bindings))
+	if err != nil {
+		return agentadaptor.ProfileSnapshot{}, err
+	}
+	effectiveProfile, kind := codexProfileAndKind(config.CommonConfig, profile, agent)
+	return profilesnapshot.Build(DriverType, effectiveProfile, kind, payload, skills, false), nil
+}
+
+func (adapter) SyncProfileResources(ctx context.Context, cfg any, agent agentadaptor.AgentIdentity, profile *agentadaptor.ProfileSelection, payload agentadaptor.ProfilePayload, selected []string, resolved []agentadaptor.Skill) (agentadaptor.ProfileSnapshot, error) {
+	config := readConfig(cfg)
+	bindings, err := effectiveCodexBindings(config.CommonConfig, profile, agent)
+	if err != nil {
+		return agentadaptor.ProfileSnapshot{}, err
+	}
+	codexHome := codexHomeFromBindings(bindings)
+	skills, err := syncCodexSkills(ctx, payload.Skills, selected, resolved, codexHome, nil)
+	if err != nil {
+		return agentadaptor.ProfileSnapshot{}, err
+	}
+	if err := syncCodexMCPProfile(config.CommonConfig, profile, agent, codexHome, payload.MCP); err != nil {
+		return agentadaptor.ProfileSnapshot{}, err
+	}
+	effectiveProfile, kind := codexProfileAndKind(config.CommonConfig, profile, agent)
+	return profilesnapshot.Build(DriverType, effectiveProfile, kind, payload, skills, true), nil
 }
 
 // StreamCapability advertises the codex adapter's streaming fidelity. When
@@ -250,17 +293,25 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 	if command == "" {
 		command = "codex"
 	}
-	effectiveBindings, err := effectiveCodexBindings(cfg.CommonConfig, req.Profile, req.Agent)
+	profileFingerprint := req.ProfilePayload.Fingerprint
+	effectiveBindings, err := effectiveCodexBindingsNoInitialize(cfg.CommonConfig, req.Profile, req.Agent)
 	if err != nil {
 		return agentadaptor.DriverRunResult{}, err
 	}
-	effectiveCodexHome := ""
-	for _, binding := range effectiveBindings {
-		if strings.EqualFold(strings.TrimSpace(binding.Name), "CODEX_HOME") {
-			effectiveCodexHome = strings.TrimSpace(binding.Value)
-			break
-		}
+	effectiveCodexHome := codexHomeFromBindings(effectiveBindings)
+	effectiveCWD := chooseCWD(cfg.CommonConfig, req.Workspace)
+	if err := validateCodexSessionGuard(req, effectiveCWD, profileFingerprint); err != nil {
+		return agentadaptor.DriverRunResult{}, err
 	}
+
+	// Streaming runs switch the transport to `codex app-server`. The
+	// exec --json path remains the default for batch / scripted usage; see
+	// docs/workstream-streaming-chat.md §§5–8.
+	effectiveBindings, err = effectiveCodexBindings(cfg.CommonConfig, req.Profile, req.Agent)
+	if err != nil {
+		return agentadaptor.DriverRunResult{}, err
+	}
+	effectiveCodexHome = codexHomeFromBindings(effectiveBindings)
 	if err := injectCodexSkills(ctx, req.Skills, effectiveCodexHome, sink); err != nil {
 		return agentadaptor.DriverRunResult{}, err
 	}
@@ -271,10 +322,6 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 	if err != nil {
 		return agentadaptor.DriverRunResult{}, err
 	}
-
-	// Streaming runs switch the transport to `codex app-server`. The
-	// exec --json path remains the default for batch / scripted usage; see
-	// docs/workstream-streaming-chat.md §§5–8.
 	if req.Streaming {
 		return runAppServer(ctx, req, sink, cfg, command, effectiveBindings)
 	}
@@ -296,15 +343,6 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 		args = append(args, "-c", `service_tier="fast"`, "-c", "features.fast_mode=true")
 	}
 	args = append(args, cfg.ExtraArgs...)
-	effectiveCWD := chooseCWD(cfg.CommonConfig, req.Workspace)
-	if req.Session != nil && req.Session.State != nil {
-		if req.Session.State.Data[agentadaptor.SessionParamCWD] != "" && req.Session.State.Data[agentadaptor.SessionParamCWD] != effectiveCWD {
-			return agentadaptor.DriverRunResult{}, &agentadaptor.ResumeRejectedError{Reason: "session working directory changed"}
-		}
-		if req.Session.State.Data[agentadaptor.SessionParamWorkspaceID] != "" && req.Session.State.Data[agentadaptor.SessionParamWorkspaceID] != req.Workspace.ID {
-			return agentadaptor.DriverRunResult{}, &agentadaptor.ResumeRejectedError{Reason: "session workspace changed"}
-		}
-	}
 	if req.Session != nil && req.Session.State != nil && req.Session.State.ResumeID != "" {
 		args = append(args, "resume", req.Session.State.ResumeID, "-")
 	} else {
@@ -344,8 +382,9 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 	checkpoint := parser.checkpoint(result.ExitCode)
 	if checkpoint != nil && checkpoint.State != nil {
 		checkpoint.State.Data = map[string]string{
-			agentadaptor.SessionParamCWD:         effectiveCWD,
-			agentadaptor.SessionParamWorkspaceID: req.Workspace.ID,
+			agentadaptor.SessionParamCWD:                effectiveCWD,
+			agentadaptor.SessionParamWorkspaceID:        req.Workspace.ID,
+			agentadaptor.SessionParamProfileFingerprint: profileFingerprint,
 		}
 	}
 	provider := ""
@@ -376,6 +415,31 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 		RuntimeServices: adapterutil.RuntimeReportsFromRefs(req.Runtime.Ensured, req.Agent),
 		Failure:         failure,
 	}, nil
+}
+
+func validateCodexSessionGuard(req agentadaptor.DriverRunRequest, effectiveCWD, profileFingerprint string) error {
+	if req.Session == nil || req.Session.State == nil {
+		return nil
+	}
+	if req.Session.State.Data[agentadaptor.SessionParamCWD] != "" && req.Session.State.Data[agentadaptor.SessionParamCWD] != effectiveCWD {
+		return &agentadaptor.ResumeRejectedError{Reason: "session working directory changed"}
+	}
+	if req.Session.State.Data[agentadaptor.SessionParamWorkspaceID] != "" && req.Session.State.Data[agentadaptor.SessionParamWorkspaceID] != req.Workspace.ID {
+		return &agentadaptor.ResumeRejectedError{Reason: "session workspace changed"}
+	}
+	if req.Session.State.Data[agentadaptor.SessionParamProfileFingerprint] != "" && req.Session.State.Data[agentadaptor.SessionParamProfileFingerprint] != profileFingerprint {
+		return &agentadaptor.ResumeRejectedError{Reason: "profile resources changed"}
+	}
+	return nil
+}
+
+func codexHomeFromBindings(bindings []agentadaptor.EnvBinding) string {
+	for _, binding := range bindings {
+		if strings.EqualFold(strings.TrimSpace(binding.Name), "CODEX_HOME") {
+			return strings.TrimSpace(binding.Value)
+		}
+	}
+	return ""
 }
 
 func chooseCWD(cfg agentadaptor.CommonConfig, workspace agentadaptor.WorkspaceLease) string {

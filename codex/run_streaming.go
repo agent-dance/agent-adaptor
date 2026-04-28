@@ -28,13 +28,8 @@ func runAppServer(
 ) (agentadaptor.DriverRunResult, error) {
 	effectiveCWD := chooseCWD(cfg.CommonConfig, req.Workspace)
 
-	if req.Session != nil && req.Session.State != nil {
-		if req.Session.State.Data[agentadaptor.SessionParamCWD] != "" && req.Session.State.Data[agentadaptor.SessionParamCWD] != effectiveCWD {
-			return agentadaptor.DriverRunResult{}, &agentadaptor.ResumeRejectedError{Reason: "session working directory changed"}
-		}
-		if req.Session.State.Data[agentadaptor.SessionParamWorkspaceID] != "" && req.Session.State.Data[agentadaptor.SessionParamWorkspaceID] != req.Workspace.ID {
-			return agentadaptor.DriverRunResult{}, &agentadaptor.ResumeRejectedError{Reason: "session workspace changed"}
-		}
+	if err := validateCodexSessionGuard(req, effectiveCWD, req.ProfilePayload.Fingerprint); err != nil {
+		return agentadaptor.DriverRunResult{}, err
 	}
 
 	prompt := req.Prompt
@@ -92,6 +87,7 @@ func runAppServer(
 		}
 		result.Checkpoint.State.Data[agentadaptor.SessionParamCWD] = effectiveCWD
 		result.Checkpoint.State.Data[agentadaptor.SessionParamWorkspaceID] = req.Workspace.ID
+		result.Checkpoint.State.Data[agentadaptor.SessionParamProfileFingerprint] = req.ProfilePayload.Fingerprint
 	}
 
 	// Attach runtime-service reports: these are produced by the SDK

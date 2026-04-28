@@ -89,7 +89,7 @@ sdk := agentadaptor.New(
 - `Require(skill, reason)`
 - `ArchiveFromBytes`, `ArchiveFromPath`, `ArchiveFromURL`
 
-`SkillFromFS`、`SkillFromInline`、`SkillFromArchive` 会在 run 前被 materializer 写成一个含 `SKILL.md` 的目录。默认 materializer 使用 SDK cache root；宿主需要多租户隔离、审计卷或自定义缓存策略时，用：
+`SkillFromFS`、`SkillFromInline`、`SkillFromArchive` 会在 run 前被 materializer 写成一个含 `SKILL.md` 的目录。selected skill 物化失败会让本次 run 在 adapter 启动前失败，`Run` 或 `Start().Wait()` 返回匹配 `ErrSkillMaterializationFailed` 的 `*SkillMaterializationError`。默认 materializer 使用 SDK cache root；宿主需要多租户隔离、审计卷或自定义缓存策略时，用：
 
 ```go
 agentadaptor.WithSkillMaterializer(myMaterializer)
@@ -112,6 +112,7 @@ agentadaptor.WithSkillMaterializer(myMaterializer)
 - 同 key 且结构一致：去重。
 - 同 key 但结构不同：返回 `ErrSkillKeyConflict`。
 - bare key 未被 provider 解析到：返回 `ErrSkillNotFound`。
+- selected skill 物化失败：返回 `ErrSkillMaterializationFailed`，可用 `errors.As` 取 `*SkillMaterializationError`。
 - `Skill.Source == nil`：返回 `ErrSkillSourceMissing`。
 - `Skill.Key == ""` 且无法从 map key / path 推导：返回 `ErrSkillKeyMissing`。
 
@@ -144,6 +145,8 @@ type ResolvedSkills struct {
 	Fingerprint string
 }
 ```
+
+当 `ResolvedSkills` 传到 adapter 时，`Entries` 已包含所有 selected skills；缺失或损坏的 archive/path 不会被降级成 warning 继续执行。
 
 `SkillAwareDriver` 的三个方法分别用于：
 

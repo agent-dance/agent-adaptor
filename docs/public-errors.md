@@ -75,13 +75,14 @@ fingerprinting. See `AGENTS.md §6` for the session ontology.
 | Sentinel | Typed? | HTTP | Log | Alert | Predicate | Trigger |
 |---|---|---|---|---|---|---|
 | `ErrSkillKeyConflict` | yes (`*SkillKeyConflictError`) | 500 | err | **yes** | `IsSkillKeyConflict` | Two skill candidates share Key but differ structurally; usually means the catalogue source is out of sync |
+| `ErrSkillMaterializationFailed` | yes (`*SkillMaterializationError`) | 500 | err | no | `IsSkillMaterializationFailed` | A selected skill was resolved but could not be materialized into a local `SKILL.md` directory before the adapter started |
 | `ErrSkillSourceMissing` | — | 500 | err | no | `errors.Is` | A `Skill` value reached resolution without a `Source` |
 | `ErrSkillKeyMissing` | — | 500 | err | no | `errors.Is` | A `Skill` value was constructed with empty Key |
 | `ErrSkillNotFound` | — | 404 | info | no | `errors.Is` | A bare `SkillKey` referenced via `WithSkills` / `WithDefaultSkills` cannot be resolved against any configured source |
 
 ## Why no aggregate predicates
 
-The SDK exports five typed-error predicates and that is by design. We
+The SDK exports six typed-error predicates and that is by design. We
 do **not** export aggregate predicates such as `IsExpired(err)` (would
 match `ErrDecisionRequestExpired` + `ErrRunEnded`) or `IsConflict(err)`
 (would match `ErrSkillKeyConflict` + `*DuplicateAgentError` + ...).
@@ -109,8 +110,8 @@ expect the SDK to add one upstream.
 
 ## Error chains and `errors.Is` / `errors.As`
 
-All typed errors implement `Unwrap()` returning the corresponding
-sentinel:
+Typed errors either unwrap to their corresponding sentinel or implement
+`Is` for that sentinel while unwrapping a lower-level cause:
 
 ```go
 var typedErr *agentadaptor.SessionBusyError
@@ -132,6 +133,17 @@ err := &ResumeRejectedError{Reason: "auth", Cause: io.ErrUnexpectedEOF}
 
 errors.Is(err, ErrResumeRejected)        // true
 errors.Is(err, io.ErrUnexpectedEOF)      // true (joined branch)
+```
+
+`*SkillMaterializationError` matches `ErrSkillMaterializationFailed`
+through `Is` and unwraps the underlying materializer cause. This lets hosts
+branch on the SDK-level failure while still preserving lower-level matches:
+
+```go
+var matErr *agentadaptor.SkillMaterializationError
+if errors.As(runErr, &matErr) {
+    log.Printf("skill %q failed to materialize: %v", matErr.Key, matErr.Cause)
+}
 ```
 
 ## See also

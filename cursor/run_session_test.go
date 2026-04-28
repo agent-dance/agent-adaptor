@@ -107,6 +107,53 @@ func TestCursorRunMapsDedicatedProfileOptionToCursorHome(t *testing.T) {
 	assertInvocationEnvKeysContain(t, events.Snapshot(), "CURSOR_HOME")
 }
 
+func TestCursorResumeProfileMismatchDoesNotWriteProfileResources(t *testing.T) {
+	t.Setenv("CURSOR_HOME", "")
+	home := t.TempDir()
+	workspace := filepath.Join(home, "workspace")
+	cursorHome := filepath.Join(home, ".cursor")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatalf("mkdir workspace: %v", err)
+	}
+	skillDir := createCursorSkillDir(t, filepath.Join(home, "source"), "analysis")
+	command := testutil.WriteCommand(t, home, "fake-cursor-no-write",
+		"#!/bin/sh\nset -eu\ncat >/dev/null\nprintf '{\"type\":\"run.completed\",\"session_id\":\"cursor-session\"}\\n'\n",
+		"@echo off\r\nsetlocal\r\nset /p PROMPT=\r\necho {\"type\":\"run.completed\",\"session_id\":\"cursor-session\"}\r\n",
+	)
+	req := agentadaptor.DriverRunRequest{
+		Prompt:    "hello",
+		Config:    agentadaptor.CursorConfig{CommonConfig: agentadaptor.CommonConfig{Command: command, CWD: workspace, Env: []agentadaptor.EnvBinding{{Name: "HOME", Value: home}, {Name: "USERPROFILE", Value: home}, {Name: "CURSOR_HOME", Value: cursorHome}}}},
+		Workspace: agentadaptor.WorkspaceLease{ID: "workspace-a", CWD: workspace},
+		Skills: agentadaptor.ResolvedSkills{Entries: []agentadaptor.ResolvedSkill{
+			{Key: "analysis", RuntimeName: "analysis", SourcePath: skillDir},
+		}},
+		MCP: agentadaptor.MCPPayload{Servers: []agentadaptor.MCPServerSpec{{
+			Key:       "local",
+			Transport: agentadaptor.MCPTransportStdio,
+			Command:   "echo",
+		}}},
+		ProfilePayload: agentadaptor.ProfilePayload{Fingerprint: "new-profile"},
+		Session: &agentadaptor.DriverSessionContext{State: &agentadaptor.DriverSessionState{
+			ResumeID: "cursor-session",
+			Data: map[string]string{
+				agentadaptor.SessionParamCWD:                workspace,
+				agentadaptor.SessionParamWorkspaceID:        "workspace-a",
+				agentadaptor.SessionParamProfileFingerprint: "old-profile",
+			},
+		}},
+	}
+	_, err := NewAdapter().Run(context.Background(), req, &testutil.EventRecorder{})
+	if !errors.Is(err, agentadaptor.ErrResumeRejected) {
+		t.Fatalf("expected ErrResumeRejected, got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(cursorHome, "skills")); !os.IsNotExist(err) {
+		t.Fatalf("expected CURSOR_HOME/skills not to be written, err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(cursorHome, "mcp.json")); !os.IsNotExist(err) {
+		t.Fatalf("expected CURSOR_HOME/mcp.json not to be written, err=%v", err)
+	}
+}
+
 func assertHasInvocationAndSpawn(t *testing.T, events []agentadaptor.RunEvent) {
 	t.Helper()
 

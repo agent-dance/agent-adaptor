@@ -13,6 +13,7 @@ import (
 	"github.com/agent-dance/agent-adaptor/internal/adapterutil"
 	"github.com/agent-dance/agent-adaptor/internal/clihelper"
 	"github.com/agent-dance/agent-adaptor/internal/configprobe"
+	"github.com/agent-dance/agent-adaptor/internal/profilesnapshot"
 	"github.com/agent-dance/agent-adaptor/internal/skillruntime"
 )
 
@@ -70,7 +71,7 @@ func (adapter) Descriptor() agentadaptor.DriverDescriptor {
 			},
 		},
 		Sessions:     agentadaptor.SessionCapability{SupportsResume: true},
-		Skills:       agentadaptor.SkillCapability{Supported: true, Mode: agentadaptor.SkillSyncEphemeral},
+		Skills:       agentadaptor.SkillCapability{Supported: true, Mode: agentadaptor.SkillSyncPersistent},
 		MCP:          agentadaptor.MCPCapability{Supported: true, Stdio: true, HTTP: true, SSE: true},
 		Instructions: agentadaptor.InstructionsCapability{Supported: true},
 		Workspace:    agentadaptor.WorkspaceCapability{Supported: true},
@@ -219,13 +220,10 @@ func (adapter) ListSkills(_ context.Context, cfg any, payload agentadaptor.Resol
 	return listClaudeSkills(payload, selected, resolved, bindings)
 }
 
-// InjectSkills is a no-op for Claude. The prompt bundle is keyed off the
-// *effective* AgentIdentity (in particular TenantID) which the SDK only
-// surfaces through DriverRunRequest.Agent inside Run; materialising here
-// with a synthetic empty identity would populate a different cache
-// directory than Run() actually consumes, wasting disk and potentially
-// leaving orphan bundles behind. Run() calls prepareClaudePromptBundle
-// itself so correctness does not depend on this hook.
+// InjectSkills is the pre-run hook the SDK invokes before calling Run. Claude
+// needs the Run-scoped effective profile bindings before it can reconcile the
+// profile-local skills home, so the built-in adapter keeps this hook as a
+// no-op and performs materialization after the resume guard inside Run.
 func (adapter) InjectSkills(_ context.Context, _ any, _ agentadaptor.ResolvedSkills, _ *agentadaptor.ProfileSelection) error {
 	return nil
 }
@@ -236,7 +234,39 @@ func (adapter) SyncSkills(_ context.Context, cfg any, payload agentadaptor.Resol
 	if err != nil {
 		return agentadaptor.SkillSnapshot{}, err
 	}
-	return syncClaudeSkills(payload, selected, resolved, bindings)
+	_, kind := claudeProfileAndKind(config.CommonConfig, profile)
+	return syncClaudeSkills(payload, selected, resolved, bindings, kind)
+}
+
+func (adapter) SnapshotProfileResources(_ context.Context, cfg any, _ agentadaptor.AgentIdentity, profile *agentadaptor.ProfileSelection, payload agentadaptor.ProfilePayload, selected []string, resolved []agentadaptor.Skill) (agentadaptor.ProfileSnapshot, error) {
+	config := readConfig(cfg)
+	bindings, err := effectiveClaudeBindings(config.CommonConfig, profile)
+	if err != nil {
+		return agentadaptor.ProfileSnapshot{}, err
+	}
+	skills, err := listClaudeSkills(payload.Skills, selected, resolved, bindings)
+	if err != nil {
+		return agentadaptor.ProfileSnapshot{}, err
+	}
+	effectiveProfile, kind := claudeProfileAndKind(config.CommonConfig, profile)
+	return profilesnapshot.Build(DriverType, effectiveProfile, kind, payload, skills, false), nil
+}
+
+func (adapter) SyncProfileResources(_ context.Context, cfg any, _ agentadaptor.AgentIdentity, profile *agentadaptor.ProfileSelection, payload agentadaptor.ProfilePayload, selected []string, resolved []agentadaptor.Skill) (agentadaptor.ProfileSnapshot, error) {
+	config := readConfig(cfg)
+	bindings, err := effectiveClaudeBindings(config.CommonConfig, profile)
+	if err != nil {
+		return agentadaptor.ProfileSnapshot{}, err
+	}
+	effectiveProfile, kind := claudeProfileAndKind(config.CommonConfig, profile)
+	skills, err := syncClaudeSkills(payload.Skills, selected, resolved, bindings, kind)
+	if err != nil {
+		return agentadaptor.ProfileSnapshot{}, err
+	}
+	if err := syncClaudeMCPProfile(config.CommonConfig, profile, payload.MCP); err != nil {
+		return agentadaptor.ProfileSnapshot{}, err
+	}
+	return profilesnapshot.Build(DriverType, effectiveProfile, kind, payload, skills, true), nil
 }
 
 func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink agentadaptor.EventSink) (agentadaptor.DriverRunResult, error) {
@@ -245,32 +275,30 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 	if command == "" {
 		command = "claude"
 	}
-	bundleRoot, bundleKey, err := prepareClaudePromptBundle(req.Agent, req.Skills)
+	profileFingerprint := req.ProfilePayload.Fingerprint
+	bindings, err := effectiveClaudeBindingsNoInitialize(cfg.CommonConfig, req.Profile)
 	if err != nil {
+		return agentadaptor.DriverRunResult{}, err
+	}
+	effectiveCWD := chooseCWD(cfg.CommonConfig, req.Workspace)
+	legacyBundleKey := req.Skills.Fingerprint
+	if err := validateClaudeSessionGuard(req, effectiveCWD, profileFingerprint, legacyBundleKey); err != nil {
+		return agentadaptor.DriverRunResult{}, err
+	}
+	bindings, err = effectiveClaudeBindings(cfg.CommonConfig, req.Profile)
+	if err != nil {
+		return agentadaptor.DriverRunResult{}, err
+	}
+	_, profileKind := claudeProfileAndKind(cfg.CommonConfig, req.Profile)
+	if _, err := syncClaudeSkills(req.Skills, req.Skills.Keys(), nil, bindings, profileKind); err != nil {
 		return agentadaptor.DriverRunResult{}, err
 	}
 	if err := syncClaudeMCPProfile(cfg.CommonConfig, req.Profile, req.MCP); err != nil {
 		return agentadaptor.DriverRunResult{}, err
 	}
-	bindings, err := effectiveClaudeBindings(cfg.CommonConfig, req.Profile)
-	if err != nil {
-		return agentadaptor.DriverRunResult{}, err
-	}
 	effectiveEnv, err := adapterutil.RuntimeEnvBindings(bindings, req.Runtime)
 	if err != nil {
 		return agentadaptor.DriverRunResult{}, err
-	}
-	effectiveCWD := chooseCWD(cfg.CommonConfig, req.Workspace)
-	if req.Session != nil && req.Session.State != nil {
-		if req.Session.State.Data[agentadaptor.SessionParamCWD] != "" && req.Session.State.Data[agentadaptor.SessionParamCWD] != effectiveCWD {
-			return agentadaptor.DriverRunResult{}, &agentadaptor.ResumeRejectedError{Reason: "session working directory changed"}
-		}
-		if req.Session.State.Data[agentadaptor.SessionParamWorkspaceID] != "" && req.Session.State.Data[agentadaptor.SessionParamWorkspaceID] != req.Workspace.ID {
-			return agentadaptor.DriverRunResult{}, &agentadaptor.ResumeRejectedError{Reason: "session workspace changed"}
-		}
-		if req.Session.State.Data[agentadaptor.SessionParamPromptBundleKey] != "" && req.Session.State.Data[agentadaptor.SessionParamPromptBundleKey] != bundleKey {
-			return agentadaptor.DriverRunResult{}, &agentadaptor.ResumeRejectedError{Reason: "prompt bundle changed"}
-		}
 	}
 
 	modelFlag := claudeRequestedModelFlag(cfg)
@@ -288,7 +316,7 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 		}
 	}
 
-	args := buildClaudeExecArgs(cfg, req, bundleRoot, interactive)
+	args := buildClaudeExecArgs(cfg, req, "", interactive)
 
 	rawPrompt := req.Prompt
 	if runtimePrefix := adapterutil.RuntimePromptPrefix(req.Runtime); runtimePrefix != "" {
@@ -352,9 +380,9 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 	checkpoint := parser.checkpoint(result.ExitCode)
 	if checkpoint != nil && checkpoint.State != nil {
 		checkpoint.State.Data = map[string]string{
-			agentadaptor.SessionParamCWD:             effectiveCWD,
-			agentadaptor.SessionParamWorkspaceID:     req.Workspace.ID,
-			agentadaptor.SessionParamPromptBundleKey: bundleKey,
+			agentadaptor.SessionParamCWD:                effectiveCWD,
+			agentadaptor.SessionParamWorkspaceID:        req.Workspace.ID,
+			agentadaptor.SessionParamProfileFingerprint: profileFingerprint,
 		}
 	}
 	var failure *agentadaptor.RunFailure
@@ -386,6 +414,27 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 		RuntimeServices: adapterutil.RuntimeReportsFromRefs(req.Runtime.Ensured, req.Agent),
 		Failure:         failure,
 	}, nil
+}
+
+func validateClaudeSessionGuard(req agentadaptor.DriverRunRequest, effectiveCWD, profileFingerprint, legacyBundleKey string) error {
+	if req.Session == nil || req.Session.State == nil {
+		return nil
+	}
+	if req.Session.State.Data[agentadaptor.SessionParamCWD] != "" && req.Session.State.Data[agentadaptor.SessionParamCWD] != effectiveCWD {
+		return &agentadaptor.ResumeRejectedError{Reason: "session working directory changed"}
+	}
+	if req.Session.State.Data[agentadaptor.SessionParamWorkspaceID] != "" && req.Session.State.Data[agentadaptor.SessionParamWorkspaceID] != req.Workspace.ID {
+		return &agentadaptor.ResumeRejectedError{Reason: "session workspace changed"}
+	}
+	if req.Session.State.Data[agentadaptor.SessionParamProfileFingerprint] != "" && req.Session.State.Data[agentadaptor.SessionParamProfileFingerprint] != profileFingerprint {
+		return &agentadaptor.ResumeRejectedError{Reason: "profile resources changed"}
+	}
+	if req.Session.State.Data[agentadaptor.SessionParamProfileFingerprint] == "" &&
+		req.Session.State.Data[agentadaptor.SessionParamPromptBundleKey] != "" &&
+		req.Session.State.Data[agentadaptor.SessionParamPromptBundleKey] != legacyBundleKey {
+		return &agentadaptor.ResumeRejectedError{Reason: "profile resources changed"}
+	}
+	return nil
 }
 
 func buildClaudeExecArgs(cfg agentadaptor.ClaudeConfig, req agentadaptor.DriverRunRequest, bundleRoot string, interactive bool) []string {

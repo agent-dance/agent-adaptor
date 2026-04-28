@@ -30,7 +30,12 @@ type fakeDriver struct {
 	mcpCapability     agentadaptor.MCPCapability
 	lastSkillSyncWant []string
 	lastSkills        agentadaptor.ResolvedSkills
+	injectCalls       int
+	injectErr         error
+	injectedSkills    agentadaptor.ResolvedSkills
+	injectedProfile   *agentadaptor.ProfileSelection
 	lastMCP           agentadaptor.MCPPayload
+	lastProfile       agentadaptor.ProfilePayload
 }
 
 func (d *fakeDriver) Descriptor() agentadaptor.DriverDescriptor {
@@ -77,8 +82,14 @@ func (d *fakeDriver) ListSkills(_ context.Context, _ any, payload agentadaptor.R
 	}, nil
 }
 
-func (d *fakeDriver) InjectSkills(_ context.Context, _ any, _ agentadaptor.ResolvedSkills, _ *agentadaptor.ProfileSelection) error {
-	return nil
+func (d *fakeDriver) InjectSkills(_ context.Context, _ any, payload agentadaptor.ResolvedSkills, profile *agentadaptor.ProfileSelection) error {
+	d.mu.Lock()
+	d.injectCalls++
+	d.injectedSkills = payload
+	d.injectedProfile = profile
+	err := d.injectErr
+	d.mu.Unlock()
+	return err
 }
 
 func (d *fakeDriver) SyncSkills(_ context.Context, _ any, payload agentadaptor.ResolvedSkills, desired []string, resolved []agentadaptor.Skill, _ *agentadaptor.ProfileSelection) (agentadaptor.SkillSnapshot, error) {
@@ -97,6 +108,7 @@ func (d *fakeDriver) Run(ctx context.Context, req agentadaptor.DriverRunRequest,
 	d.mu.Lock()
 	d.lastSkills = req.Skills
 	d.lastMCP = req.MCP
+	d.lastProfile = req.ProfilePayload
 	d.runCalls++
 	d.mu.Unlock()
 	if d.startedCh != nil {
@@ -233,6 +245,63 @@ func TestSDKRunUsesDefaultAgentBinding(t *testing.T) {
 	}
 	if result.Output != "default:created:default-driver-session-1" {
 		t.Fatalf("unexpected output: %q", result.Output)
+	}
+}
+
+func TestRunInvokesSkillAwareInjectSkillsBeforeAdapterRun(t *testing.T) {
+	driver := &fakeDriver{}
+	profileDir := t.TempDir()
+	sdk := newSDK(nil, fakeBinding("default", driver,
+		agentadaptor.WithDedicatedProfile(profileDir),
+		agentadaptor.WithDefaultSkills(agentadaptor.InlineSkill("analysis", "# Analysis")),
+	), nil)
+
+	if _, err := sdk.Run(context.Background(), "hello"); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	driver.mu.Lock()
+	defer driver.mu.Unlock()
+	if driver.injectCalls != 1 {
+		t.Fatalf("expected one InjectSkills call, got %d", driver.injectCalls)
+	}
+	if len(driver.injectedSkills.Entries) != 1 || driver.injectedSkills.Entries[0].Key != "analysis" {
+		t.Fatalf("expected resolved skill payload in InjectSkills, got %#v", driver.injectedSkills)
+	}
+	if driver.injectedProfile == nil || driver.injectedProfile.Mode != agentadaptor.ProfileModeDedicated || driver.injectedProfile.Dir != profileDir {
+		t.Fatalf("expected binding profile selection in InjectSkills, got %#v", driver.injectedProfile)
+	}
+	if driver.runCalls != 1 {
+		t.Fatalf("expected adapter run after InjectSkills, got %d calls", driver.runCalls)
+	}
+}
+
+func TestInjectSkillsErrorStopsRunAndCleansRuntime(t *testing.T) {
+	driver := &fakeDriver{injectErr: errors.New("inject failed")}
+	runtimeManager := &observingRuntimeManager{}
+	sdk := agentadaptor.New(
+		agentadaptor.WithDefaultAgent(fakeBinding("default", driver,
+			agentadaptor.WithDefaultSkills(agentadaptor.InlineSkill("analysis", "# Analysis")),
+			agentadaptor.WithDefaultRuntimeServices(agentadaptor.RuntimeServiceSpec{Name: "db"}),
+		)),
+		agentadaptor.WithRuntimeServiceManager(runtimeManager),
+	)
+
+	_, err := sdk.Run(context.Background(), "hello")
+	if err == nil || err.Error() != "inject failed" {
+		t.Fatalf("expected inject error, got %v", err)
+	}
+	driver.mu.Lock()
+	runCalls := driver.runCalls
+	injectCalls := driver.injectCalls
+	driver.mu.Unlock()
+	if injectCalls != 1 {
+		t.Fatalf("expected one InjectSkills call, got %d", injectCalls)
+	}
+	if runCalls != 0 {
+		t.Fatalf("expected adapter run not to start, got %d calls", runCalls)
+	}
+	if len(runtimeManager.released) != 1 {
+		t.Fatalf("expected runtime cleanup after inject error, got %#v", runtimeManager.released)
 	}
 }
 

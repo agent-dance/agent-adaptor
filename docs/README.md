@@ -37,6 +37,7 @@
 | [`workstream-streaming-claude.md`](./workstream-streaming-claude.md) | Claude streaming workstream 记录。 |
 | [`workstream-runtime-service-lifecycle-v2.md`](./workstream-runtime-service-lifecycle-v2.md) | runtime service lifecycle 设计记录。 |
 | [`workstream-mcp-profile-materialization.md`](./workstream-mcp-profile-materialization.md) | MCP profile materialization 设计记录。 |
+| [`workstream-skills-profile-materialization.md`](./workstream-skills-profile-materialization.md) | skills dedicated profile materialization 提案；面向 `SkillProvider + WithDefaultSkills + WithDedicatedProfile` 的 host 模式。 |
 | [`workstream-profile-user-experience.md`](./workstream-profile-user-experience.md) | profile option 设计背景。 |
 | [`workstream-bridges-profiles-host.md`](./workstream-bridges-profiles-host.md) | bridge/profile/host 集成背景。 |
 | [`profile-resolver-api.md`](./profile-resolver-api.md) | core SDK 之上的 profile resolver 草案；不是 core API。 |

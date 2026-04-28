@@ -14,23 +14,36 @@ import (
 var codexCopiedSharedFiles = []string{"config.json", "config.toml", "instructions.md"}
 var codexSymlinkedSharedFiles = []string{"auth.json"}
 
-func listCodexSkills(payload agentadaptor.ResolvedSkills, selected []string, resolved []agentadaptor.Skill) agentadaptor.SkillSnapshot {
-	return skillruntime.BuildEphemeralSnapshot(skillruntime.EphemeralSnapshotOptions{
-		DriverType:       DriverType,
-		Payload:          payload,
-		Selected:         selected,
-		Resolved:         resolved,
-		ConfiguredDetail: "Will be linked into the effective CODEX_HOME/skills directory on the next run.",
-		MissingDetail:    "agent-adaptor cannot find this skill in the runtime skill catalog.",
-	})
+func listCodexSkills(payload agentadaptor.ResolvedSkills, selected []string, resolved []agentadaptor.Skill, codexHome string) (agentadaptor.SkillSnapshot, error) {
+	skillsHome := filepath.Join(codexHome, "skills")
+	installed, err := skillruntime.ReadInstalledSkillTargets(skillsHome)
+	if err != nil {
+		return agentadaptor.SkillSnapshot{}, err
+	}
+	return skillruntime.BuildPersistentSnapshot(skillruntime.PersistentSnapshotOptions{
+		DriverType:             DriverType,
+		Payload:                payload,
+		Selected:               selected,
+		Resolved:               resolved,
+		Installed:              installed,
+		SkillsHome:             skillsHome,
+		LocationLabel:          skillsHome,
+		InstalledDetail:        "Installed by agent-adaptor in the effective CODEX_HOME skills directory.",
+		MissingDetail:          "Configured but not currently linked into the effective CODEX_HOME skills directory.",
+		ExternalConflictDetail: "Skill name is occupied by an external installation.",
+		ExternalDetail:         "Installed outside agent-adaptor management.",
+	}), nil
 }
 
-func syncCodexSkills(payload agentadaptor.ResolvedSkills, selected []string, resolved []agentadaptor.Skill) agentadaptor.SkillSnapshot {
-	return listCodexSkills(payload, selected, resolved)
+func syncCodexSkills(ctx context.Context, payload agentadaptor.ResolvedSkills, selected []string, resolved []agentadaptor.Skill, codexHome string, sink agentadaptor.EventSink) (agentadaptor.SkillSnapshot, error) {
+	if err := injectCodexSkills(ctx, payload, codexHome, sink); err != nil {
+		return agentadaptor.SkillSnapshot{}, err
+	}
+	return listCodexSkills(payload, selected, resolved, codexHome)
 }
 
 func effectiveCodexBindings(config agentadaptor.CommonConfig, selection *agentadaptor.ProfileSelection, agent agentadaptor.AgentIdentity) ([]agentadaptor.EnvBinding, error) {
-	profile, err := resolveCodexProfile(config, selection, agent)
+	profile, err := resolveCodexProfileWithOptions(config, selection, agent, false)
 	if err != nil {
 		return nil, err
 	}
@@ -38,6 +51,18 @@ func effectiveCodexBindings(config agentadaptor.CommonConfig, selection *agentad
 }
 
 func resolveCodexProfile(config agentadaptor.CommonConfig, selection *agentadaptor.ProfileSelection, agent agentadaptor.AgentIdentity) (agentadaptor.AgentProfile, error) {
+	return resolveCodexProfileWithOptions(config, selection, agent, false)
+}
+
+func effectiveCodexBindingsNoInitialize(config agentadaptor.CommonConfig, selection *agentadaptor.ProfileSelection, agent agentadaptor.AgentIdentity) ([]agentadaptor.EnvBinding, error) {
+	profile, err := resolveCodexProfileWithOptions(config, selection, agent, true)
+	if err != nil {
+		return nil, err
+	}
+	return skillruntime.WithBinding(config.Env, "CODEX_HOME", profile.Dir), nil
+}
+
+func resolveCodexProfileWithOptions(config agentadaptor.CommonConfig, selection *agentadaptor.ProfileSelection, agent agentadaptor.AgentIdentity, skipInitialize bool) (agentadaptor.AgentProfile, error) {
 	if selection == nil && skillruntime.ResolveBinding(config.Env, "CODEX_HOME") == "" && strings.TrimSpace(os.Getenv("CODEX_HOME")) == "" {
 		bindings := config.Env
 		if home := skillruntime.ResolveBinding(bindings, "HOME"); strings.TrimSpace(home) != "" {
@@ -60,6 +85,7 @@ func resolveCodexProfile(config agentadaptor.CommonConfig, selection *agentadapt
 		MCPFiles:         []string{"config.json", "config.toml"},
 		SkillsDirs:       []string{"skills"},
 		AuthFiles:        []string{"auth.json"},
+		SkipInitialize:   skipInitialize,
 	})
 	if err != nil {
 		return agentadaptor.AgentProfile{}, err

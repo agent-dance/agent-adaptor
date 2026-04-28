@@ -17,7 +17,15 @@ type claudeCredentialInfo struct {
 }
 
 func effectiveClaudeBindings(config agentadaptor.CommonConfig, selection *agentadaptor.ProfileSelection) ([]agentadaptor.EnvBinding, error) {
-	profile, err := resolveClaudeProfile(config, selection)
+	profile, err := resolveClaudeProfileWithOptions(config, selection, false)
+	if err != nil {
+		return nil, err
+	}
+	return skillruntime.WithBinding(config.Env, "CLAUDE_CONFIG_DIR", profile.Dir), nil
+}
+
+func effectiveClaudeBindingsNoInitialize(config agentadaptor.CommonConfig, selection *agentadaptor.ProfileSelection) ([]agentadaptor.EnvBinding, error) {
+	profile, err := resolveClaudeProfileWithOptions(config, selection, true)
 	if err != nil {
 		return nil, err
 	}
@@ -35,6 +43,10 @@ func resolveClaudeConfigDir(bindings []agentadaptor.EnvBinding) string {
 }
 
 func resolveClaudeProfile(config agentadaptor.CommonConfig, selection *agentadaptor.ProfileSelection) (agentadaptor.AgentProfile, error) {
+	return resolveClaudeProfileWithOptions(config, selection, false)
+}
+
+func resolveClaudeProfileWithOptions(config agentadaptor.CommonConfig, selection *agentadaptor.ProfileSelection, skipInitialize bool) (agentadaptor.AgentProfile, error) {
 	resolution, err := skillruntime.ResolveProfile(skillruntime.ProfileResolveOptions{
 		Bindings:         config.Env,
 		Selection:        selection,
@@ -46,6 +58,7 @@ func resolveClaudeProfile(config agentadaptor.CommonConfig, selection *agentadap
 		MCPFiles:         []string{"settings.json", "config.json"},
 		SkillsDirs:       []string{"skills"},
 		AuthFiles:        []string{".credentials.json", "credentials.json"},
+		SkipInitialize:   skipInitialize,
 	})
 	if err != nil {
 		return agentadaptor.AgentProfile{}, err

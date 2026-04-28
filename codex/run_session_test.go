@@ -110,6 +110,94 @@ func TestCodexRunMapsDedicatedProfileOptionToCodexHome(t *testing.T) {
 	assertInvocationEnvKeysContain(t, events.Snapshot(), "CODEX_HOME")
 }
 
+func TestCodexResumeProfileMismatchDoesNotWriteProfileResources(t *testing.T) {
+	for _, streaming := range []bool{false, true} {
+		t.Run(map[bool]string{false: "exec", true: "streaming"}[streaming], func(t *testing.T) {
+			home := t.TempDir()
+			workspace := filepath.Join(home, "workspace")
+			codexHome := filepath.Join(home, ".codex")
+			if err := os.MkdirAll(workspace, 0o755); err != nil {
+				t.Fatalf("mkdir workspace: %v", err)
+			}
+			skillDir := createSkillDir(t, filepath.Join(home, "source"), "analysis")
+			command := testutil.WriteCommand(t, home, "fake-codex-no-write",
+				"#!/bin/sh\nset -eu\ncat >/dev/null\nprintf '{\"type\":\"session.updated\",\"session_id\":\"codex-session\"}\\n'\n",
+				"@echo off\r\nsetlocal\r\nset /p PROMPT=\r\necho {\"type\":\"session.updated\",\"session_id\":\"codex-session\"}\r\n",
+			)
+			req := agentadaptor.DriverRunRequest{
+				Prompt:    "hello",
+				Config:    agentadaptor.CodexConfig{CommonConfig: agentadaptor.CommonConfig{Command: command, CWD: workspace, Env: []agentadaptor.EnvBinding{{Name: "HOME", Value: home}, {Name: "USERPROFILE", Value: home}, {Name: "CODEX_HOME", Value: codexHome}}}},
+				Workspace: agentadaptor.WorkspaceLease{ID: "workspace-a", CWD: workspace},
+				Skills: agentadaptor.ResolvedSkills{Entries: []agentadaptor.ResolvedSkill{
+					{Key: "analysis", RuntimeName: "analysis", SourcePath: skillDir},
+				}},
+				MCP: agentadaptor.MCPPayload{Servers: []agentadaptor.MCPServerSpec{{
+					Key:       "local",
+					Transport: agentadaptor.MCPTransportStdio,
+					Command:   "echo",
+				}}},
+				ProfilePayload: agentadaptor.ProfilePayload{Fingerprint: "new-profile"},
+				Session: &agentadaptor.DriverSessionContext{State: &agentadaptor.DriverSessionState{
+					ResumeID: "codex-session",
+					Data: map[string]string{
+						agentadaptor.SessionParamCWD:                workspace,
+						agentadaptor.SessionParamWorkspaceID:        "workspace-a",
+						agentadaptor.SessionParamProfileFingerprint: "old-profile",
+					},
+				}},
+				Streaming: streaming,
+			}
+			_, err := NewAdapter().Run(context.Background(), req, &testutil.EventRecorder{})
+			if !errors.Is(err, agentadaptor.ErrResumeRejected) {
+				t.Fatalf("expected ErrResumeRejected, got %v", err)
+			}
+			if _, err := os.Stat(filepath.Join(codexHome, "skills")); !os.IsNotExist(err) {
+				t.Fatalf("expected CODEX_HOME/skills not to be written, err=%v", err)
+			}
+			if _, err := os.Stat(filepath.Join(codexHome, "config.toml")); !os.IsNotExist(err) {
+				t.Fatalf("expected CODEX_HOME/config.toml not to be written, err=%v", err)
+			}
+		})
+	}
+}
+
+func TestCodexResumeProfileMismatchDoesNotInitializeDedicatedProfile(t *testing.T) {
+	home := t.TempDir()
+	workspace := filepath.Join(home, "workspace")
+	profileDir := filepath.Join(home, "dedicated-codex")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatalf("mkdir workspace: %v", err)
+	}
+	command := testutil.WriteCommand(t, home, "fake-codex-dedicated-no-init",
+		"#!/bin/sh\nset -eu\ncat >/dev/null\nprintf '{\"type\":\"session.updated\",\"session_id\":\"codex-session\"}\\n'\n",
+		"@echo off\r\nsetlocal\r\nset /p PROMPT=\r\necho {\"type\":\"session.updated\",\"session_id\":\"codex-session\"}\r\n",
+	)
+	req := agentadaptor.DriverRunRequest{
+		Prompt:    "hello",
+		Config:    agentadaptor.CodexConfig{CommonConfig: agentadaptor.CommonConfig{Command: command, CWD: workspace, Env: []agentadaptor.EnvBinding{{Name: "HOME", Value: home}, {Name: "USERPROFILE", Value: home}}}},
+		Profile:   &agentadaptor.ProfileSelection{Mode: agentadaptor.ProfileModeDedicated, Dir: profileDir},
+		Workspace: agentadaptor.WorkspaceLease{ID: "workspace-a", CWD: workspace},
+		ProfilePayload: agentadaptor.ProfilePayload{
+			Fingerprint: "new-profile",
+		},
+		Session: &agentadaptor.DriverSessionContext{State: &agentadaptor.DriverSessionState{
+			ResumeID: "codex-session",
+			Data: map[string]string{
+				agentadaptor.SessionParamCWD:                workspace,
+				agentadaptor.SessionParamWorkspaceID:        "workspace-a",
+				agentadaptor.SessionParamProfileFingerprint: "old-profile",
+			},
+		}},
+	}
+	_, err := NewAdapter().Run(context.Background(), req, &testutil.EventRecorder{})
+	if !errors.Is(err, agentadaptor.ErrResumeRejected) {
+		t.Fatalf("expected ErrResumeRejected, got %v", err)
+	}
+	if _, err := os.Stat(profileDir); !os.IsNotExist(err) {
+		t.Fatalf("expected dedicated profile not to be initialized, err=%v", err)
+	}
+}
+
 func assertHasInvocationAndSpawn(t *testing.T, events []agentadaptor.RunEvent) {
 	t.Helper()
 

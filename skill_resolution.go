@@ -126,25 +126,29 @@ func (s *sdkImpl) resolveSkills(
 	}
 	sort.Strings(selectedList)
 
-	// 5. Materialise each Selected skill. Failures degrade to a
-	//    warning so the rest of the run / snapshot can proceed; the
-	//    adapter is responsible for rendering the missing state.
+	// 5. Materialise each Selected skill. A selected skill is part of the
+	//    run contract, so materialization failure is fatal and must surface
+	//    before the adapter starts.
 	materializer := s.skillMaterializer
 	if materializer == nil {
 		materializer = newDefaultSkillMaterializer()
 	}
 	entries := make([]ResolvedSkill, 0, len(selectedList))
-	warnings := make([]string, 0)
+	var warnings []string
 	for _, key := range selectedList {
 		skill := mergedByKey[key]
+		runtimeName := defaultSkillRuntimeName(skill)
 		sourcePath, matErr := materializer.Materialize(ctx, skill)
 		if matErr != nil {
-			warnings = append(warnings, fmt.Sprintf("skill %q materialization failed: %v", key, matErr))
-			continue
+			return ResolvedSkills{}, selectedList, mergedSkills, &SkillMaterializationError{
+				Key:         key,
+				RuntimeName: runtimeName,
+				Cause:       matErr,
+			}
 		}
 		entries = append(entries, ResolvedSkill{
 			Key:         skill.Key,
-			RuntimeName: defaultSkillRuntimeName(skill),
+			RuntimeName: runtimeName,
 			SourcePath:  sourcePath,
 			Required:    skill.Required,
 			Reason:      skill.Reason,

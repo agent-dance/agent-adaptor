@@ -46,7 +46,7 @@ func (sessionCodec) GuardFingerprint(params agentadaptor.SessionParams) string {
 	return guardHash(params.Values,
 		agentadaptor.SessionParamCWD,
 		agentadaptor.SessionParamWorkspaceID,
-		agentadaptor.SessionParamPromptBundleKey,
+		agentadaptor.SessionParamProfileFingerprint,
 	)
 }
 

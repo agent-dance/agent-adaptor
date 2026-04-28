@@ -20,6 +20,7 @@ type ProfileResolveOptions struct {
 	MCPFiles         []string
 	SkillsDirs       []string
 	AuthFiles        []string
+	SkipInitialize   bool
 }
 
 type ProfileResolution struct {
@@ -51,8 +52,10 @@ func ResolveProfile(opts ProfileResolveOptions) (ProfileResolution, error) {
 			if err != nil {
 				return ProfileResolution{}, err
 			}
-			if err := ensureDedicatedProfile(dir, opts.DedicatedSubdirs); err != nil {
-				return ProfileResolution{}, err
+			if !opts.SkipInitialize {
+				if err := ensureDedicatedProfile(dir, opts.DedicatedSubdirs); err != nil {
+					return ProfileResolution{}, err
+				}
 			}
 			return ProfileResolution{Bindings: WithBinding(bindings, opts.EnvVar, dir), Profile: agentadaptor.AgentProfile{Supported: true, Dir: dir, EnvVar: opts.EnvVar, Source: agentadaptor.AgentProfileSourceProfileOption}}, nil
 		case agentadaptor.ProfileModeClone:
@@ -64,12 +67,14 @@ func ResolveProfile(opts ProfileResolveOptions) (ProfileResolution, error) {
 			if err != nil {
 				return ProfileResolution{}, err
 			}
-			cloneOpts := agentadaptor.CloneProfileOptions{}
-			if selection.Clone != nil {
-				cloneOpts = *selection.Clone
-			}
-			if err := cloneProfileIfMissing(from, dir, opts, cloneOpts); err != nil {
-				return ProfileResolution{}, err
+			if !opts.SkipInitialize {
+				cloneOpts := agentadaptor.CloneProfileOptions{}
+				if selection.Clone != nil {
+					cloneOpts = *selection.Clone
+				}
+				if err := cloneProfileIfMissing(from, dir, opts, cloneOpts); err != nil {
+					return ProfileResolution{}, err
+				}
 			}
 			return ProfileResolution{Bindings: WithBinding(bindings, opts.EnvVar, dir), Profile: agentadaptor.AgentProfile{Supported: true, Dir: dir, EnvVar: opts.EnvVar, Source: agentadaptor.AgentProfileSourceProfileOption}}, nil
 		case agentadaptor.ProfileModeUnset:
