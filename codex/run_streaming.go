@@ -8,6 +8,7 @@ import (
 	agentadaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/codex/appserver"
 	"github.com/agent-dance/agent-adaptor/internal/adapterutil"
+	"github.com/agent-dance/agent-adaptor/internal/profileinstructions"
 )
 
 // runAppServer handles the req.Streaming=true code path. It spawns the
@@ -25,6 +26,7 @@ func runAppServer(
 	cfg agentadaptor.CodexConfig,
 	command string,
 	effectiveBindings []agentadaptor.EnvBinding,
+	preparedInstructions profileinstructions.Prepared,
 ) (agentadaptor.DriverRunResult, error) {
 	effectiveCWD := chooseCWD(cfg.CommonConfig, req.Workspace)
 
@@ -36,8 +38,8 @@ func runAppServer(
 	if runtimePrefix := adapterutil.RuntimePromptPrefix(req.Runtime); runtimePrefix != "" {
 		prompt = runtimePrefix + "\n\n" + prompt
 	}
-	if req.Instructions != nil && req.Instructions.Path != "" {
-		prompt = "Instructions bundle: " + req.Instructions.Path + "\n\n" + prompt
+	if prefix := profileinstructions.PromptPrefix(preparedInstructions, profileinstructions.Mode(req.Instructions)); prefix != "" {
+		prompt = prefix + "\n\n" + prompt
 	}
 
 	approval := mapApprovalPolicy(req.Policy)

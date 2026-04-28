@@ -1,55 +1,19 @@
 package mcpruntime
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 
 	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/internal/profilestate"
 	toml "github.com/pelletier/go-toml/v2"
 )
 
 func SyncCodexProfile(codexHome string, kind ProfileKind, payload agentadaptor.MCPPayload) error {
-	configPath := filepath.Join(codexHome, "config.toml")
-	root, err := readTOMLObject(configPath)
-	if err != nil {
-		return fmt.Errorf("read Codex MCP config: %w", err)
-	}
-
-	existing := mapFromAny(root["mcp_servers"])
-	desired := map[string]any{}
-	for _, server := range payload.Servers {
-		entry, err := codexServerConfig(server)
-		if err != nil {
-			return err
-		}
-		desired[server.Key] = entry
-	}
-
-	switch {
-	case kind == ProfileKindShared && len(desired) == 0:
-		return nil
-	case kind == ProfileKindShared:
-		if existing == nil {
-			existing = map[string]any{}
-		}
-		for key, value := range desired {
-			existing[key] = value
-		}
-		root["mcp_servers"] = existing
-	case len(desired) == 0:
-		delete(root, "mcp_servers")
-	default:
-		root["mcp_servers"] = desired
-	}
-
-	if len(root) == 0 {
-		if err := os.Remove(configPath); err != nil && !os.IsNotExist(err) {
-			return err
-		}
-		return nil
-	}
-	return writeTOMLObject(configPath, root)
+	_, err := SyncResource(context.Background(), "codex", codexHome, kind, payload)
+	return err
 }
 
 func codexServerConfig(server agentadaptor.MCPServerSpec) (map[string]any, error) {
@@ -107,5 +71,6 @@ func writeTOMLObject(path string, root map[string]any) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, raw, 0o644)
+	raw = append(raw, '\n')
+	return profilestate.AtomicWriteFile(path, raw, 0o644)
 }

@@ -229,11 +229,21 @@ func WithDefaultProfileResources(resources ProfileResources) AgentOption {
 		if copyResources.MCP != nil {
 			defaults.MCP = copyResources.MCP
 		}
-		defaults.Agents = copyResources.Agents
-		defaults.Hooks = copyResources.Hooks
-		defaults.ProfileConfig = copyResources.Config
+		if resources.Agents != nil {
+			defaults.Agents = copyResources.Agents
+			defaults.profileDeclared.Agents = true
+		}
+		if resources.Hooks != nil {
+			defaults.Hooks = copyResources.Hooks
+			defaults.profileDeclared.Hooks = true
+		}
+		if resources.Config != nil {
+			defaults.ProfileConfig = copyResources.Config
+			defaults.profileDeclared.Config = true
+		}
 		if copyResources.Instructions != nil {
 			defaults.Instructions = copyResources.Instructions
+			defaults.profileDeclared.Instructions = true
 		}
 	}
 }
@@ -242,6 +252,7 @@ func WithDefaultProfileResources(resources ProfileResources) AgentOption {
 func WithDefaultAgents(specs ...AgentSpec) AgentOption {
 	return func(defaults *AgentDefaults) {
 		defaults.Agents = cloneAgentSpecs(specs)
+		defaults.profileDeclared.Agents = true
 	}
 }
 
@@ -249,6 +260,7 @@ func WithDefaultAgents(specs ...AgentSpec) AgentOption {
 func WithDefaultHooks(specs ...HookSpec) AgentOption {
 	return func(defaults *AgentDefaults) {
 		defaults.Hooks = cloneHookSpecs(specs)
+		defaults.profileDeclared.Hooks = true
 	}
 }
 
@@ -257,6 +269,7 @@ func WithDefaultHooks(specs ...HookSpec) AgentOption {
 func WithDefaultProfileConfig(patches ...ProfileConfigPatch) AgentOption {
 	return func(defaults *AgentDefaults) {
 		defaults.ProfileConfig = cloneProfileConfigPatches(patches)
+		defaults.profileDeclared.Config = true
 	}
 }
 
@@ -286,12 +299,8 @@ func WithDefaultRunPolicy(p RunPolicy) AgentOption {
 // nil clears the default. Per-call WithInstructions overrides it for one run.
 func WithDefaultInstructions(ref *InstructionsBundleRef) AgentOption {
 	return func(defaults *AgentDefaults) {
-		if ref == nil {
-			defaults.Instructions = nil
-			return
-		}
-		copyRef := *ref
-		defaults.Instructions = &copyRef
+		defaults.Instructions = cloneInstructions(ref)
+		defaults.profileDeclared.Instructions = true
 	}
 }
 
@@ -321,18 +330,19 @@ func WithDefaultStreaming() AgentOption {
 type RunOption func(*runOptions)
 
 type runOptions struct {
-	session       *SessionRequest
-	workspace     WorkspaceSpec
-	runtime       *WorkspaceRuntimeConfig
-	skills        []SkillRef
-	mcp           *MCPConfig
-	agents        *AgentPayload
-	hooks         *HookPayload
-	profileConfig *ProfileConfigPayload
-	runPolicy     *RunPolicy
-	instructions  *InstructionsBundleRef
-	metadata      map[string]string
-	agent         *AgentIdentity
+	session         *SessionRequest
+	workspace       WorkspaceSpec
+	runtime         *WorkspaceRuntimeConfig
+	skills          []SkillRef
+	mcp             *MCPConfig
+	agents          *AgentPayload
+	hooks           *HookPayload
+	profileConfig   *ProfileConfigPayload
+	runPolicy       *RunPolicy
+	instructions    *InstructionsBundleRef
+	instructionsSet bool
+	metadata        map[string]string
+	agent           *AgentIdentity
 	// streaming is tri-state: nil means "inherit from binding defaults",
 	// non-nil wins over the binding default.
 	streaming *bool
@@ -482,11 +492,18 @@ func WithProfileResources(resources ProfileResources) RunOption {
 		if copyResources.MCP != nil {
 			ro.mcp = copyResources.MCP
 		}
-		ro.agents = &AgentPayload{Agents: copyResources.Agents}
-		ro.hooks = &HookPayload{Hooks: copyResources.Hooks}
-		ro.profileConfig = &ProfileConfigPayload{Patches: copyResources.Config}
+		if resources.Agents != nil {
+			ro.agents = &AgentPayload{Agents: copyResources.Agents}
+		}
+		if resources.Hooks != nil {
+			ro.hooks = &HookPayload{Hooks: copyResources.Hooks}
+		}
+		if resources.Config != nil {
+			ro.profileConfig = &ProfileConfigPayload{Patches: copyResources.Config}
+		}
 		if copyResources.Instructions != nil {
 			ro.instructions = copyResources.Instructions
+			ro.instructionsSet = true
 		}
 	}
 }
@@ -526,12 +543,8 @@ func WithRunPolicy(p RunPolicy) RunOption {
 // run. Passing nil clears the effective instructions for that run.
 func WithInstructions(ref *InstructionsBundleRef) RunOption {
 	return func(ro *runOptions) {
-		if ref == nil {
-			ro.instructions = nil
-			return
-		}
-		copyRef := *ref
-		ro.instructions = &copyRef
+		ro.instructions = cloneInstructions(ref)
+		ro.instructionsSet = true
 	}
 }
 

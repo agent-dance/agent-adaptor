@@ -36,8 +36,11 @@
 | [`workstream-streaming-chat.md`](./workstream-streaming-chat.md) | streaming chat 设计记录，当前用法见 [`streaming.md`](./streaming.md)。 |
 | [`workstream-streaming-claude.md`](./workstream-streaming-claude.md) | Claude streaming workstream 记录。 |
 | [`workstream-runtime-service-lifecycle-v2.md`](./workstream-runtime-service-lifecycle-v2.md) | runtime service lifecycle 设计记录。 |
+| [`workstream-effective-profile-materialization-plan.md`](./workstream-effective-profile-materialization-plan.md) | profile resources 总计划，覆盖 skills / MCP / agents / hooks / instructions / config。 |
 | [`workstream-mcp-profile-materialization.md`](./workstream-mcp-profile-materialization.md) | MCP profile materialization 设计记录。 |
 | [`workstream-skills-profile-materialization.md`](./workstream-skills-profile-materialization.md) | skills dedicated profile materialization 提案；面向 `SkillProvider + WithDefaultSkills + WithDedicatedProfile` 的 host 模式。 |
+| [`workstream-profile-resources-agents-hooks-instructions-config.md`](./workstream-profile-resources-agents-hooks-instructions-config.md) | agents / hooks / instructions / config 四类 profile resources 的当前实现记录、smoke evidence 和 remaining gaps。 |
+| [`profile-resource-provider-matrix.md`](./profile-resource-provider-matrix.md) | profile resources 在 Codex / Claude Code / Cursor 上的 maximum-capability research baseline；包含 portable core、extended、fallback、native escape，以及 repeatable smoke evidence。 |
 | [`workstream-profile-user-experience.md`](./workstream-profile-user-experience.md) | profile option 设计背景。 |
 | [`workstream-bridges-profiles-host.md`](./workstream-bridges-profiles-host.md) | bridge/profile/host 集成背景。 |
 | [`profile-resolver-api.md`](./profile-resolver-api.md) | core SDK 之上的 profile resolver 草案；不是 core API。 |

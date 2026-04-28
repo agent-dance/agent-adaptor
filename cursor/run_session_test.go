@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -72,6 +73,46 @@ func TestCursorRunPreservesAndGuardsSessionState(t *testing.T) {
 	_, err = NewAdapter().Run(context.Background(), rejectReq, &testutil.EventRecorder{})
 	if !errors.Is(err, agentadaptor.ErrResumeRejected) {
 		t.Fatalf("expected ErrResumeRejected, got %v", err)
+	}
+}
+
+func TestCursorRunUsesCurrentForceFlagForAutoApprove(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell argv capture in this test is POSIX-only")
+	}
+	t.Setenv("CURSOR_HOME", "")
+	home := t.TempDir()
+	workspace := filepath.Join(home, "workspace")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatalf("mkdir workspace: %v", err)
+	}
+	argsPath := filepath.Join(home, "args.txt")
+	command := testutil.WriteCommand(t, home, "fake-cursor-args",
+		"#!/bin/sh\nset -eu\nprintf '%s\\n' \"$@\" >"+argsPath+"\ncat >/dev/null\nprintf '{\"type\":\"run.completed\",\"session_id\":\"cursor-session\"}\\n'\n",
+		"@echo off\r\nsetlocal\r\nset /p PROMPT=\r\necho {\"type\":\"run.completed\",\"session_id\":\"cursor-session\"}\r\n",
+	)
+
+	_, err := NewAdapter().Run(context.Background(), agentadaptor.DriverRunRequest{
+		Prompt:    "hello from cursor",
+		Config:    agentadaptor.CursorConfig{CommonConfig: agentadaptor.CommonConfig{Command: command, CWD: workspace, Env: []agentadaptor.EnvBinding{{Name: "HOME", Value: home}, {Name: "USERPROFILE", Value: home}}}},
+		Workspace: agentadaptor.WorkspaceLease{ID: "workspace-a", CWD: workspace},
+		Policy: agentadaptor.RunPolicy{HumanDecision: agentadaptor.HumanDecisionPolicy{
+			Permission: agentadaptor.HumanDecisionAutoApprove,
+		}},
+	}, &testutil.EventRecorder{})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	rawArgs, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatalf("read args: %v", err)
+	}
+	args := strings.Split(strings.TrimSpace(string(rawArgs)), "\n")
+	if !containsString(args, "--force") {
+		t.Fatalf("expected --force in cursor args, got %#v", args)
+	}
+	if containsString(args, "--yolo") {
+		t.Fatalf("did not expect deprecated --yolo in cursor args, got %#v", args)
 	}
 }
 
@@ -152,6 +193,15 @@ func TestCursorResumeProfileMismatchDoesNotWriteProfileResources(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(cursorHome, "mcp.json")); !os.IsNotExist(err) {
 		t.Fatalf("expected CURSOR_HOME/mcp.json not to be written, err=%v", err)
 	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func assertHasInvocationAndSpawn(t *testing.T, events []agentadaptor.RunEvent) {

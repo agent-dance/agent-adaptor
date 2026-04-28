@@ -1,7 +1,6 @@
 package exampleutil
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -9,7 +8,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"time"
 )
 
 func Fatalf(format string, args ...any) {
@@ -99,45 +97,6 @@ func EnsureWindowsProcessEnv(base []string) []string {
 	return out
 }
 
-func DiscoverHealthyCodexCommand(override string) (string, string, bool) {
-	if strings.TrimSpace(override) != "" {
-		if ProbeCodexCommand(override) {
-			return override, "Using the explicitly requested Codex-compatible command.", true
-		}
-		return "", "", false
-	}
-
-	for _, candidate := range codexCommandCandidates() {
-		if ProbeCodexCommand(candidate) {
-			return candidate, fmt.Sprintf("Using healthy external Codex command %q.", candidate), true
-		}
-	}
-	return "", "", false
-}
-
-func RequireHealthyCodexCommand(override string) (string, string) {
-	command, note, ok := DiscoverHealthyCodexCommand(override)
-	if ok {
-		return command, note
-	}
-	Fatalf("no healthy external Codex command found; expected the npm-installed codex shim to be runnable from this shell")
-	return "", ""
-}
-
-func ProbeCodexCommand(command string) bool {
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
-
-	execPath, args := WrapCommandForPlatform(command, []string{"--help"})
-	cmd := exec.CommandContext(ctx, execPath, args...)
-	cmd.Env = EnsureWindowsProcessEnv(os.Environ())
-	if output, err := cmd.CombinedOutput(); err != nil {
-		_ = output
-		return false
-	}
-	return cmd.ProcessState != nil && cmd.ProcessState.ExitCode() == 0
-}
-
 func WrapCommandForPlatform(command string, args []string) (string, []string) {
 	if runtime.GOOS != "windows" {
 		return command, args
@@ -156,16 +115,6 @@ func WrapCommandForPlatform(command string, args []string) (string, []string) {
 	default:
 		return command, args
 	}
-}
-
-func codexCommandCandidates() []string {
-	candidates := make([]string, 0, 3)
-	for _, name := range []string{"codex.ps1", "codex.cmd", "codex"} {
-		if path, err := exec.LookPath(name); err == nil {
-			candidates = append(candidates, path)
-		}
-	}
-	return dedupePaths(candidates)
 }
 
 func dedupePaths(values []string) []string {

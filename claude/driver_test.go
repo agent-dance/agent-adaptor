@@ -202,6 +202,58 @@ func TestGetProfileUsesProcessEnvForClaudeWhenUnset(t *testing.T) {
 	}
 }
 
+func TestGetProfileCloneCanShareNativeClaudeAuth(t *testing.T) {
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	home := t.TempDir()
+	nativeProfile := filepath.Join(home, ".claude")
+	if err := os.MkdirAll(nativeProfile, 0o755); err != nil {
+		t.Fatalf("mkdir native profile: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(nativeProfile, "settings.json"), []byte("{\"model\":\"claude-sonnet-4\"}\n"), 0o644); err != nil {
+		t.Fatalf("write native settings: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(nativeProfile, ".credentials.json"), []byte(`{"claudeAiOauth":{"accessToken":"native"}}`), 0o600); err != nil {
+		t.Fatalf("write native credentials: %v", err)
+	}
+	target := filepath.Join(t.TempDir(), "isolated")
+
+	profile, err := NewAdapter().(interface {
+		GetProfile(context.Context, any, agentadaptor.AgentIdentity, *agentadaptor.ProfileSelection) (agentadaptor.AgentProfile, error)
+	}).GetProfile(context.Background(), agentadaptor.ClaudeConfig{
+		CommonConfig: agentadaptor.CommonConfig{
+			Env: []agentadaptor.EnvBinding{{Name: "HOME", Value: home}, {Name: "USERPROFILE", Value: home}},
+		},
+	}, agentadaptor.AgentIdentity{}, &agentadaptor.ProfileSelection{
+		Mode: agentadaptor.ProfileModeClone,
+		Dir:  target,
+		Clone: &agentadaptor.CloneProfileOptions{
+			IncludeSettings: true,
+			AuthMode:        agentadaptor.CloneProfileAuthLink,
+		},
+	})
+	if err != nil {
+		t.Fatalf("get profile: %v", err)
+	}
+	if profile.Dir != target || profile.Source != agentadaptor.AgentProfileSourceProfileOption {
+		t.Fatalf("unexpected profile: %#v", profile)
+	}
+	rawSettings, err := os.ReadFile(filepath.Join(target, "settings.json"))
+	if err != nil {
+		t.Fatalf("read cloned settings: %v", err)
+	}
+	if !strings.Contains(string(rawSettings), "claude-sonnet-4") {
+		t.Fatalf("expected cloned Claude settings, got %s", string(rawSettings))
+	}
+	sourceInfo, sourceErr := os.Stat(filepath.Join(nativeProfile, ".credentials.json"))
+	targetInfo, targetErr := os.Stat(filepath.Join(target, ".credentials.json"))
+	if sourceErr != nil || targetErr != nil {
+		t.Fatalf("stat auth files: source=%v target=%v", sourceErr, targetErr)
+	}
+	if !os.SameFile(sourceInfo, targetInfo) {
+		t.Fatalf("expected cloned profile .credentials.json to share native Claude credentials")
+	}
+}
+
 func TestConfigSchemaIncludesGroupsDefaultsAndOptions(t *testing.T) {
 	schema := NewAdapter().Descriptor().ConfigSchema
 	if schema == nil || len(schema.Fields) == 0 {

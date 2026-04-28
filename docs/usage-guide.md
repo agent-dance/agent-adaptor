@@ -145,7 +145,7 @@ MCP override 规则与 `skills` 的默认值 / 调用覆盖规则相似，但有
 
 - `WithNativeProfile()`：复用 provider 原生共享 profile。
 - `WithDedicatedProfile(dir)`：使用宿主专用 profile 目录，并在需要时安全初始化基础目录。
-- `WithCloneProfile(dir, opts)`：使用宿主专用 profile 目录，首次初始化时从 native profile 按白名单复制配置。
+- `WithCloneProfile(dir, opts)`：使用宿主专用 profile 目录，从 native profile 按白名单补齐缺失的 settings/MCP/skills，并可按 `AuthMode` 共享或复制认证文件。
 - `WithCloneProfileFrom(src, dst, opts)`：高级场景下从指定源 profile 派生到指定目标目录。
 
 这些 option 将映射到 provider-native profile env：
@@ -154,7 +154,7 @@ MCP override 规则与 `skills` 的默认值 / 调用覆盖规则相似，但有
 - `claude` -> `CLAUDE_CONFIG_DIR`
 - `cursor` -> `CURSOR_HOME`
 
-`WithDedicatedProfile(dir)` 将只选择并初始化专用目录，不会自动把 `~/.codex`、`~/.claude`、`~/.cursor` 里的历史 settings、认证、cache 或 session 全量复制到新目录。需要派生配置时使用 `WithCloneProfile(dir, opts)`，复制认证必须显式 opt-in。
+`WithDedicatedProfile(dir)` 将只选择并初始化专用目录，不会自动把 `~/.codex`、`~/.claude`、`~/.cursor` 里的历史 settings、认证、cache 或 session 全量复制到新目录。需要派生配置时使用 `WithCloneProfile(dir, opts)`；认证必须显式 opt-in，OAuth CLI 优先用 `CloneProfileAuthLink` 共享本机登录态，只有确实需要静态副本时才用 `IncludeAuth` / `CloneProfileAuthCopy`。
 
 优先级固定为：
 
@@ -190,7 +190,9 @@ Claude 不再因为 selected skills 自动追加 prompt-bundle `--add-dir`；旧
 
 Selected skill 物化失败是启动前错误，而不是 best-effort warning：坏 zip、缺少 `SKILL.md`、本地路径不可用或自定义 materializer 报错时，`Run` / `Start().Wait()` 会返回匹配 `ErrSkillMaterializationFailed` 的错误，adapter 不会启动。
 
-`Admin().Default().ProfileSnapshot(ctx)` 报告 desired / observed profile resource 状态；`SyncProfile(ctx)` 会同步 built-in adapters 已支持的 skills 和 MCP。Agents、hooks、instructions、profile config 尚未实现 provider-native 落盘时，会以 resource warning / error 暴露，不会把 desired keys 假装成已 managed。
+`Admin().Default().ProfileSnapshot(ctx)` 报告 desired / observed profile resource 状态；`SyncProfile(ctx)` 现在覆盖 skills、MCP、agents、hooks、instructions 和 config capability patches。未支持的字段仍会以 warning / error 暴露，不会被伪装成 managed。
+
+`examples/profile-resources` 是当前最直接的 profile-resources smoke：Codex 在本机已验证通过；Claude 目前停在登录门槛（`Not logged in`）；Cursor 目前停在本机 CLI 健康检查（`no healthy local cursor CLI command found`）。后两项是环境缺口，不是 agents / hooks / instructions / config 未实现。
 
 Admin 里的 `SetSelectedSkills(ctx, keys)` 只是**进程内 selection override**，不会替宿主持久化用户偏好。需要长期保存勾选状态时，宿主应该写入自己的数据库，并在构造 binding 或调用时通过 `WithDefaultSkills` / `WithSkills` 重新声明。
 

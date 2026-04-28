@@ -52,6 +52,7 @@ func bindWithDefaults(adapter DriverAdapter, cfg any, opts ...AgentOption) *stat
 			Profile:           cloneProfileSelection(defaults.Profile),
 			Instructions:      cloneInstructions(defaults.Instructions),
 			Metadata:          cloneStringMap(defaults.Metadata),
+			profileDeclared:   defaults.profileDeclared,
 			Streaming:         cloneBool(defaults.Streaming),
 			PermissionHandler: defaults.PermissionHandler,
 			PlanReviewHandler: defaults.PlanReviewHandler,
@@ -103,6 +104,7 @@ func (b *staticAgentBinding) Defaults() AgentDefaults {
 		Profile:           cloneProfileSelection(b.defaults.Profile),
 		Instructions:      cloneInstructions(b.defaults.Instructions),
 		Metadata:          cloneStringMap(b.defaults.Metadata),
+		profileDeclared:   b.defaults.profileDeclared,
 		Streaming:         cloneBool(b.defaults.Streaming),
 		PermissionHandler: b.defaults.PermissionHandler,
 		PlanReviewHandler: b.defaults.PlanReviewHandler,
@@ -123,6 +125,7 @@ func cloneInstructions(ref *InstructionsBundleRef) *InstructionsBundleRef {
 		return nil
 	}
 	copyRef := *ref
+	copyRef.Native = cloneAnyMap(ref.Native)
 	return &copyRef
 }
 

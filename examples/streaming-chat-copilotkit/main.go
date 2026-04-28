@@ -21,18 +21,13 @@
 //	├── server.go               # HTTP host wiring
 //	├── agui_run_session.go     # AG-UI stream forwarder + tee
 //	├── thread_store.go         # in-memory recovery store
-//	├── hitlmock/               # interactive HITL mock adapter
 //	└── web/                    # Next.js + CopilotKit frontend, port 3000
 //
 // Run:
 //
-//	./examples/streaming-chat-copilotkit/start-all.sh mock       # recommended
-//	./examples/streaming-chat-copilotkit/start-all.sh codex      # real codex backend
-//	./examples/streaming-chat-copilotkit/start-all.sh claude     # real claude backend
-//
-// The `mock` backend triggers real sink.RequestDecision calls so you can
-// click through PlanReview / Question / Permission cards end to end without
-// relying on Phase 3 vendor HITL support.
+//	./examples/streaming-chat-copilotkit/start-all.sh codex
+//	./examples/streaming-chat-copilotkit/start-all.sh claude
+//	./examples/streaming-chat-copilotkit/start-all.sh cursor
 package main
 
 import (

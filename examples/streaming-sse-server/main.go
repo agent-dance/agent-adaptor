@@ -11,17 +11,19 @@
 //
 // Or open http://localhost:8080/ in a browser for a tiny JS chat page.
 //
-// The server requires a locally authenticated `codex` CLI in PATH.
+// The server requires the selected local CLI in PATH and existing
+// authentication.
 package main
 
 import (
+	"flag"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 
 	agentadaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/codex"
+	"github.com/agent-dance/agent-adaptor/examples/internal/exampleutil"
 	"github.com/agent-dance/agent-adaptor/memory"
 	"github.com/agent-dance/agent-adaptor/pkg/bridges/sse"
 )
@@ -89,17 +91,25 @@ const indexHTML = `<!doctype html>
 </html>`
 
 func main() {
-	addr := ":8080"
+	agent := flag.String("agent", "", "Local CLI agent to use: "+exampleutil.SupportedAgents()+" (default codex, or AGENT_ADAPTOR_EXAMPLE_AGENT)")
+	model := flag.String("model", "", "Model to use. Defaults by agent or CODEX_MODEL/CLAUDE_MODEL/CURSOR_MODEL.")
+	command := flag.String("command", "", "Optional explicit local CLI command. Defaults by agent or CODEX_COMMAND/CLAUDE_COMMAND/CURSOR_COMMAND/PATH.")
+	addrFlag := flag.String("addr", ":8080", "HTTP listen address")
+	flag.Parse()
+
+	addr := *addrFlag
 	if a := os.Getenv("ADDR"); a != "" {
 		addr = a
 	}
-	cwd, _ := os.Getwd()
+	cwd, err := os.Getwd()
+	if err != nil {
+		slog.Error("cwd", "err", err)
+		os.Exit(1)
+	}
+	agentCfg := exampleutil.ResolveLiveAgentConfig(*agent, *model, *command, cwd)
 
 	sdk := agentadaptor.New(
-		agentadaptor.WithDefaultAgent(codex.New(agentadaptor.CodexConfig{
-			CommonConfig: agentadaptor.CommonConfig{CWD: cwd},
-			Model:        "gpt-5.4",
-		})),
+		agentadaptor.WithDefaultAgent(exampleutil.NewLiveAgentBinding(agentCfg)),
 		agentadaptor.WithSessionStore(memory.NewSessionStore()),
 	)
 
@@ -108,14 +118,7 @@ func main() {
 		Protocol:          sse.AGUI,
 		CORSAllowedOrigin: "*",
 		RunOptions: []agentadaptor.RunOption{
-			agentadaptor.WithRunPolicy(agentadaptor.RunPolicy{
-				Isolation: agentadaptor.IsolationReadOnly,
-				HumanDecision: agentadaptor.HumanDecisionPolicy{
-					Permission: agentadaptor.HumanDecisionAutoApprove,
-					PlanReview: agentadaptor.HumanDecisionAutoApprove,
-					Question:   agentadaptor.QuestionAutoReject,
-				},
-			}),
+			exampleutil.NonInteractiveRunOption(agentadaptor.IsolationReadOnly),
 		},
 	}))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -127,7 +130,7 @@ func main() {
 		fmt.Fprint(w, indexHTML)
 	})
 
-	slog.Info("listening", "addr", addr, "docs", "http://localhost"+addr+"/")
+	slog.Info("listening", "addr", addr, "docs", "http://localhost"+addr+"/", "agent", agentCfg.Agent, "model", agentCfg.Model)
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		slog.Error("listen", "err", err)
 		os.Exit(1)

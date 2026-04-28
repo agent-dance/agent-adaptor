@@ -1,3 +1,8 @@
+param(
+    [string]$Agent = "",
+    [string]$Command = ""
+)
+
 $ErrorActionPreference = "Stop"
 
 if (-not $env:SystemRoot) {
@@ -22,6 +27,59 @@ if (-not $env:TMP) {
     $env:TMP = $env:TEMP
 }
 
+function Assert-AgentName {
+    param([string]$Name)
+    if ($Name -notin @("codex", "claude", "cursor")) {
+        throw "Agent must be codex, claude, or cursor; got '$Name'"
+    }
+}
+
+function Default-AgentCommands {
+	param([string]$Name)
+	switch ($Name) {
+		"claude" { return @("claude", "trpc-claudecode") }
+		"cursor" { return @("agent", "cursor-agent") }
+		default { return @("codex") }
+	}
+}
+
+function Agent-CommandEnv {
+    param([string]$Name)
+    switch ($Name) {
+        "claude" { return $env:CLAUDE_COMMAND }
+        "cursor" { return $env:CURSOR_COMMAND }
+        default { return $env:CODEX_COMMAND }
+    }
+}
+
+function Resolve-AgentCommand {
+	param([string]$Name, [string]$Override)
+	if ($Override) {
+		return $Override
+	}
+	$fromEnv = Agent-CommandEnv -Name $Name
+	if ($fromEnv) {
+		return $fromEnv
+	}
+	$candidates = @(Default-AgentCommands -Name $Name)
+	foreach ($candidate in $candidates) {
+		if (Test-AgentHealthy -CommandPath $candidate) {
+			return $candidate
+		}
+	}
+	return $candidates[0]
+}
+
+function Test-AgentHealthy {
+    param([string]$CommandPath)
+    try {
+        & $CommandPath --help *> $null
+        return ($LASTEXITCODE -eq 0)
+    } catch {
+        return $false
+    }
+}
+
 function Run-Example {
     param(
         [Parameter(Mandatory = $true)][string]$Name,
@@ -37,37 +95,29 @@ function Run-Example {
     Write-Host "PASS: $Name" -ForegroundColor Green
 }
 
-function Have-Codex {
-    try {
-        $null = Get-Command codex -ErrorAction Stop
-        return $true
-    } catch {
-        return $false
+if (-not $Agent) {
+    if ($env:AGENT_ADAPTOR_EXAMPLE_AGENT) {
+        $Agent = $env:AGENT_ADAPTOR_EXAMPLE_AGENT
+    } else {
+        $Agent = "codex"
     }
 }
 
-function Test-CodexHealthy {
-    & codex --help *> $null
-    return ($LASTEXITCODE -eq 0)
-}
+Assert-AgentName -Name $Agent
+$resolvedCommand = Resolve-AgentCommand -Name $Agent -Override $Command
 
-Run-Example -Name "mock-adapter-playground" -Arguments @("./examples/mock-adapter-playground")
-Run-Example -Name "mock-skills-contract" -Arguments @("./examples/mock-skills-contract")
-Run-Example -Name "codex-skills-live" -Arguments @("./examples/codex-skills-live")
-
-if (-not (Have-Codex)) {
+if (-not (Test-AgentHealthy -CommandPath $resolvedCommand)) {
     Write-Host ""
-    Write-Host "SKIP: real Codex examples because 'codex' is not available on PATH" -ForegroundColor Yellow
+    Write-Host "SKIP: selected local CLI '$Agent' is not healthy via command '$resolvedCommand --help'" -ForegroundColor Yellow
     exit 0
 }
 
-if (-not (Test-CodexHealthy)) {
-    Write-Host ""
-    Write-Host "SKIP: real Codex examples because 'codex --help' failed in the current shell environment" -ForegroundColor Yellow
-    exit 0
-}
+$common = @("-agent=$Agent")
+$common += "-command=$resolvedCommand"
 
-Run-Example -Name "codex-basic" -Arguments @("./examples/codex-basic")
-Run-Example -Name "codex-stream" -Arguments @("./examples/codex-stream")
-Run-Example -Name "codex-sessions" -Arguments @("./examples/codex-sessions")
-Run-Example -Name "codex-admin-named" -Arguments @("./examples/codex-admin-named")
+Run-Example -Name "basic" -Arguments (@("./examples/codex-basic") + $common)
+Run-Example -Name "stream" -Arguments (@("./examples/codex-stream") + $common)
+Run-Example -Name "sessions" -Arguments (@("./examples/codex-sessions") + $common)
+Run-Example -Name "admin-named" -Arguments (@("./examples/codex-admin-named") + $common)
+Run-Example -Name "skills-live" -Arguments (@("./examples/codex-skills-live") + $common)
+Run-Example -Name "profile-resources" -Arguments (@("./examples/profile-resources") + $common)

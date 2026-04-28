@@ -4,11 +4,11 @@
 # Usage:
 #   ./start.sh           # Codex (default)
 #   ./start.sh claude    # Claude Code
-#   ./start.sh mock      # Interactive HITL mock adapter (recommended for the demo)
-#   AGUI_AGENT=mock ./start.sh
+#   ./start.sh cursor    # Cursor Agent
+#   AGUI_AGENT=cursor ./start.sh
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-if [[ "${1:-}" == "codex" || "${1:-}" == "claude" || "${1:-}" == "mock" ]]; then
+if [[ "${1:-}" == "codex" || "${1:-}" == "claude" || "${1:-}" == "cursor" ]]; then
 	export AGUI_AGENT="$1"
 	shift || true
 fi

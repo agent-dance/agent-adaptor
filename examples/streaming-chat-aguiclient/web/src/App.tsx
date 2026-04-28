@@ -221,7 +221,7 @@ export default function App() {
   return (
     <div className="chat">
       <header>
-        <h1>agent-adaptor · @ag-ui/client · codex</h1>
+        <h1>agent-adaptor · @ag-ui/client · local CLI</h1>
         <p className="meta">
           Browser speaks AG-UI directly to{" "}
           <code>{__AGENT_BACKEND_URL__}</code>. No CopilotKit, no Next.js.

@@ -183,7 +183,7 @@ func main() {
 
 如果你需要更底层的扩展接口，每个内置包也都提供 `NewAdapter()`。
 
-对于内置适配器，profile API 使用 `WithNativeProfile()`、`WithDedicatedProfile(dir)`、`WithCloneProfile(dir, opts)`、`WithCloneProfileFrom(src, dst, opts)` 统一选择或初始化本地 agent profile，而不必每次手动写各家自己的环境变量。
+对于内置适配器，profile API 使用 `WithNativeProfile()`、`WithDedicatedProfile(dir)`、`WithCloneProfile(dir, opts)`、`WithCloneProfileFrom(src, dst, opts)` 统一选择或初始化本地 agent profile，而不必每次手动写各家自己的环境变量。`CloneProfileOptions.AuthMode` 可以用 `CloneProfileAuthLink` 把隔离 clone 和本机 CLI 登录态共享起来，避免复制 OAuth refresh token 文件。
 
 `WithDefaultMCP(...)` / `WithMCP(...)` 也遵循和 `skills` 相同的默认值与调用覆盖规则；`skills/MCP` 变化不会自动打断 session 复用，是否继续沿用 session 仍由宿主通过 `SessionMode` 决定。
 

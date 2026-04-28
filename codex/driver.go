@@ -13,6 +13,11 @@ import (
 	"github.com/agent-dance/agent-adaptor/internal/adapterutil"
 	"github.com/agent-dance/agent-adaptor/internal/clihelper"
 	"github.com/agent-dance/agent-adaptor/internal/configprobe"
+	"github.com/agent-dance/agent-adaptor/internal/mcpruntime"
+	"github.com/agent-dance/agent-adaptor/internal/profileagents"
+	"github.com/agent-dance/agent-adaptor/internal/profileconfig"
+	"github.com/agent-dance/agent-adaptor/internal/profilehooks"
+	"github.com/agent-dance/agent-adaptor/internal/profileinstructions"
 	"github.com/agent-dance/agent-adaptor/internal/profilesnapshot"
 )
 
@@ -35,20 +40,20 @@ func NewAdapter() agentadaptor.DriverAdapter {
 }
 
 func (adapter) Descriptor() agentadaptor.DriverDescriptor {
+	fields := []agentadaptor.ConfigField{
+		{Name: "command", Label: "Command", Type: "text", Description: "Override the Codex CLI executable.", Hint: "Defaults to `codex` when unset.", Default: "codex", Group: "command"},
+		{Name: "cwd", Label: "Working Directory", Type: "text", Description: "Default working directory when the workspace manager does not override it.", Hint: "Leave empty to let the workspace manager resolve the cwd.", Group: "command"},
+		{Name: "model", Label: "Model", Type: "select", Description: "Codex model identifier, for example gpt-5.4.", Default: "gpt-5.4", Options: modelOptions(codexModels()), Group: "model"},
+		{Name: "reasoning_effort", Label: "Reasoning Effort", Type: "select", Description: "Optional reasoning effort passed through model_reasoning_effort.", Hint: "Only set this when you want to override Codex defaults.", Options: []agentadaptor.ConfigOption{{Value: "low", Label: "Low"}, {Value: "medium", Label: "Medium"}, {Value: "high", Label: "High"}, {Value: "xhigh", Label: "Extra High"}}, Group: "model"},
+		{Name: "fast_mode", Label: "Fast Mode", Type: "toggle", Description: "Enable Codex fast service tier defaults.", Default: false, Group: "execution"},
+		{Name: "extra_args", Label: "Extra Args", Type: "textarea", Description: "Additional CLI args appended after SDK-managed flags.", Group: "command"},
+	}
+	fields = append(fields, profileconfig.CapabilityFields(DriverType)...)
 	return agentadaptor.DriverDescriptor{
-		Type:        DriverType,
-		DisplayName: "Codex",
-		Models:      codexModels(),
-		ConfigSchema: &agentadaptor.ConfigSchema{
-			Fields: []agentadaptor.ConfigField{
-				{Name: "command", Label: "Command", Type: "text", Description: "Override the Codex CLI executable.", Hint: "Defaults to `codex` when unset.", Default: "codex", Group: "command"},
-				{Name: "cwd", Label: "Working Directory", Type: "text", Description: "Default working directory when the workspace manager does not override it.", Hint: "Leave empty to let the workspace manager resolve the cwd.", Group: "command"},
-				{Name: "model", Label: "Model", Type: "select", Description: "Codex model identifier, for example gpt-5.4.", Default: "gpt-5.4", Options: modelOptions(codexModels()), Group: "model"},
-				{Name: "reasoning_effort", Label: "Reasoning Effort", Type: "select", Description: "Optional reasoning effort passed through model_reasoning_effort.", Hint: "Only set this when you want to override Codex defaults.", Options: []agentadaptor.ConfigOption{{Value: "low", Label: "Low"}, {Value: "medium", Label: "Medium"}, {Value: "high", Label: "High"}, {Value: "xhigh", Label: "Extra High"}}, Group: "model"},
-				{Name: "fast_mode", Label: "Fast Mode", Type: "toggle", Description: "Enable Codex fast service tier defaults.", Default: false, Group: "execution"},
-				{Name: "extra_args", Label: "Extra Args", Type: "textarea", Description: "Additional CLI args appended after SDK-managed flags.", Group: "command"},
-			},
-		},
+		Type:         DriverType,
+		DisplayName:  "Codex",
+		Models:       codexModels(),
+		ConfigSchema: &agentadaptor.ConfigSchema{Fields: fields},
 		Sessions:     agentadaptor.SessionCapability{SupportsResume: true},
 		Skills:       agentadaptor.SkillCapability{Supported: true, Mode: agentadaptor.SkillSyncPersistent},
 		MCP:          agentadaptor.MCPCapability{Supported: true, Stdio: true, HTTP: true},
@@ -252,7 +257,25 @@ func (adapter) SnapshotProfileResources(_ context.Context, cfg any, agent agenta
 		return agentadaptor.ProfileSnapshot{}, err
 	}
 	effectiveProfile, kind := codexProfileAndKind(config.CommonConfig, profile, agent)
-	return profilesnapshot.Build(DriverType, effectiveProfile, kind, payload, skills, false), nil
+	snapshot := profilesnapshot.Build(DriverType, effectiveProfile, kind, payload, skills, false)
+	mcpSnapshot, err := mcpruntime.SnapshotResource(DriverType, codexHomeFromBindings(bindings), payload.MCP, false)
+	if err != nil {
+		return agentadaptor.ProfileSnapshot{}, err
+	}
+	snapshot = profileconfig.WithSnapshotResource(snapshot, mcpSnapshot)
+	if payload.Declared.Config {
+		snapshot = profileconfig.WithSnapshotResource(snapshot, profileconfig.Snapshot(DriverType, effectiveProfile.Dir, payload.Config, false))
+	}
+	if payload.Declared.Instructions {
+		snapshot = profileconfig.WithSnapshotResource(snapshot, profileinstructions.Snapshot(DriverType, effectiveProfile.Dir, payload.Instructions, false))
+	}
+	if payload.Declared.Agents {
+		snapshot = profileconfig.WithSnapshotResource(snapshot, profileagents.Snapshot(DriverType, effectiveProfile.Dir, payload.Agents, false))
+	}
+	if payload.Declared.Hooks {
+		snapshot = profileconfig.WithSnapshotResource(snapshot, profilehooks.Snapshot(DriverType, effectiveProfile.Dir, payload.Hooks, false))
+	}
+	return snapshot, nil
 }
 
 func (adapter) SyncProfileResources(ctx context.Context, cfg any, agent agentadaptor.AgentIdentity, profile *agentadaptor.ProfileSelection, payload agentadaptor.ProfilePayload, selected []string, resolved []agentadaptor.Skill) (agentadaptor.ProfileSnapshot, error) {
@@ -266,11 +289,42 @@ func (adapter) SyncProfileResources(ctx context.Context, cfg any, agent agentada
 	if err != nil {
 		return agentadaptor.ProfileSnapshot{}, err
 	}
-	if err := syncCodexMCPProfile(config.CommonConfig, profile, agent, codexHome, payload.MCP); err != nil {
+	effectiveProfile, kind := codexProfileAndKind(config.CommonConfig, profile, agent)
+	mcpSnapshot, err := mcpruntime.SyncResource(ctx, DriverType, codexHome, kind, payload.MCP)
+	if err != nil {
 		return agentadaptor.ProfileSnapshot{}, err
 	}
-	effectiveProfile, kind := codexProfileAndKind(config.CommonConfig, profile, agent)
-	return profilesnapshot.Build(DriverType, effectiveProfile, kind, payload, skills, true), nil
+	snapshot := profilesnapshot.Build(DriverType, effectiveProfile, kind, payload, skills, true)
+	snapshot = profileconfig.WithSnapshotResource(snapshot, mcpSnapshot)
+	if payload.Declared.Config {
+		configSnapshot, err := profileconfig.SyncNativePatches(ctx, DriverType, codexHome, payload.Config)
+		if err != nil {
+			return agentadaptor.ProfileSnapshot{}, err
+		}
+		snapshot = profileconfig.WithSnapshotResource(snapshot, configSnapshot)
+	}
+	if payload.Declared.Instructions {
+		instructionsSnapshot, _, err := profileinstructions.Sync(ctx, DriverType, codexHome, payload.Instructions)
+		if err != nil {
+			return agentadaptor.ProfileSnapshot{}, err
+		}
+		snapshot = profileconfig.WithSnapshotResource(snapshot, instructionsSnapshot)
+	}
+	if payload.Declared.Agents {
+		agentsSnapshot, err := profileagents.Sync(ctx, DriverType, codexHome, payload.Agents)
+		if err != nil {
+			return agentadaptor.ProfileSnapshot{}, err
+		}
+		snapshot = profileconfig.WithSnapshotResource(snapshot, agentsSnapshot)
+	}
+	if payload.Declared.Hooks {
+		hooksSnapshot, err := profilehooks.Sync(ctx, DriverType, codexHome, payload.Hooks)
+		if err != nil {
+			return agentadaptor.ProfileSnapshot{}, err
+		}
+		snapshot = profileconfig.WithSnapshotResource(snapshot, hooksSnapshot)
+	}
+	return snapshot, nil
 }
 
 // StreamCapability advertises the codex adapter's streaming fidelity. When
@@ -312,18 +366,41 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 		return agentadaptor.DriverRunResult{}, err
 	}
 	effectiveCodexHome = codexHomeFromBindings(effectiveBindings)
+	_, profileKind := codexProfileAndKind(cfg.CommonConfig, req.Profile, req.Agent)
 	if err := injectCodexSkills(ctx, req.Skills, effectiveCodexHome, sink); err != nil {
 		return agentadaptor.DriverRunResult{}, err
 	}
-	if err := syncCodexMCPProfile(cfg.CommonConfig, req.Profile, req.Agent, effectiveCodexHome, req.MCP); err != nil {
+	if _, err := mcpruntime.SyncResource(ctx, DriverType, effectiveCodexHome, profileKind, req.MCP); err != nil {
 		return agentadaptor.DriverRunResult{}, err
+	}
+	if req.ProfilePayload.Declared.Config {
+		if _, err := profileconfig.SyncNativePatches(ctx, DriverType, effectiveCodexHome, req.ProfilePayload.Config); err != nil {
+			return agentadaptor.DriverRunResult{}, err
+		}
+	}
+	var preparedInstructions profileinstructions.Prepared
+	if req.ProfilePayload.Declared.Instructions {
+		preparedInstructions, err = profileinstructions.PrepareForRun(ctx, DriverType, effectiveCodexHome, effectiveCWD, req.Instructions)
+		if err != nil {
+			return agentadaptor.DriverRunResult{}, err
+		}
+	}
+	if req.ProfilePayload.Declared.Agents {
+		if _, err := profileagents.Sync(ctx, DriverType, effectiveCodexHome, req.ProfilePayload.Agents); err != nil {
+			return agentadaptor.DriverRunResult{}, err
+		}
+	}
+	if req.ProfilePayload.Declared.Hooks {
+		if _, err := profilehooks.Sync(ctx, DriverType, effectiveCodexHome, req.ProfilePayload.Hooks); err != nil {
+			return agentadaptor.DriverRunResult{}, err
+		}
 	}
 	effectiveBindings, err = adapterutil.RuntimeEnvBindings(effectiveBindings, req.Runtime)
 	if err != nil {
 		return agentadaptor.DriverRunResult{}, err
 	}
 	if req.Streaming {
-		return runAppServer(ctx, req, sink, cfg, command, effectiveBindings)
+		return runAppServer(ctx, req, sink, cfg, command, effectiveBindings, preparedInstructions)
 	}
 
 	args := []string{"exec", "--json"}
@@ -353,8 +430,8 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 	if runtimePrefix := adapterutil.RuntimePromptPrefix(req.Runtime); runtimePrefix != "" {
 		prompt = runtimePrefix + "\n\n" + prompt
 	}
-	if req.Instructions != nil && req.Instructions.Path != "" {
-		prompt = "Instructions bundle: " + req.Instructions.Path + "\n\n" + prompt
+	if prefix := profileinstructions.PromptPrefix(preparedInstructions, profileinstructions.Mode(req.Instructions)); prefix != "" {
+		prompt = prefix + "\n\n" + prompt
 	}
 
 	parser := newCodexParser(sink)

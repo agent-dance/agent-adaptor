@@ -220,7 +220,11 @@ func (a *agentAdminImpl) defaultProfilePayloadWithSkills(defaults AgentDefaults,
 	if err != nil {
 		return ProfilePayload{}, err
 	}
-	return buildProfilePayload(skills, mcp, agents, hooks, defaults.Instructions, config), nil
+	instructions, err := prepareInstructionsBundle(defaults.Instructions)
+	if err != nil {
+		return ProfilePayload{}, err
+	}
+	return buildProfilePayload(skills, mcp, agents, hooks, instructions, config, profileDeclarationsFromDefaults(defaults)), nil
 }
 
 func snapshotFromPayload(driverType string, profile AgentProfile, defaults AgentDefaults, payload ProfilePayload, synced bool) ProfileSnapshot {
@@ -232,7 +236,7 @@ func snapshotFromPayload(driverType string, profile AgentProfile, defaults Agent
 		Fingerprint: payload.Fingerprint,
 		Warnings:    cloneStrings(payload.Warnings),
 		Resources: []ResourceSnapshot{
-			{Kind: ProfileResourceSkills, Fingerprint: payload.Skills.Fingerprint, Managed: payload.Skills.Keys(), Warnings: cloneStrings(payload.Skills.Warnings)},
+			{Kind: ProfileResourceSkills, Fingerprint: payload.Skills.Fingerprint, Managed: payload.Skills.Keys(), Support: ProfileResourceSupportPortableCore, Materialization: ProfileResourceMaterializationFileManaged, Warnings: cloneStrings(payload.Skills.Warnings)},
 			unsupportedResourceSnapshot(ProfileResourceMCP, payload.MCP.Fingerprint, mcpKeys(payload.MCP), cloneStrings(payload.MCP.Warnings), synced),
 			unsupportedResourceSnapshot(ProfileResourceAgents, payload.Agents.Fingerprint, agentKeys(payload.Agents), nil, synced),
 			unsupportedResourceSnapshot(ProfileResourceHooks, payload.Hooks.Fingerprint, hookKeys(payload.Hooks), nil, synced),
@@ -259,9 +263,15 @@ func profileKindForSnapshot(profile AgentProfile, defaults AgentDefaults) Profil
 }
 
 func unsupportedResourceSnapshot(kind ProfileResourceKind, fingerprint string, desired []string, warnings []string, synced bool) ResourceSnapshot {
-	out := ResourceSnapshot{Kind: kind, Fingerprint: fingerprint, Warnings: cloneStrings(warnings)}
+	out := ResourceSnapshot{Kind: kind, Fingerprint: fingerprint, Support: ProfileResourceSupportUnsupported, Materialization: ProfileResourceMaterializationNotMaterialized, Warnings: cloneStrings(warnings)}
 	if len(desired) == 0 {
+		if kind == ProfileResourceMCP {
+			out.Support = ProfileResourceSupportPortableCore
+		}
 		return out
+	}
+	if kind == ProfileResourceMCP {
+		out.Support = ProfileResourceSupportPortableCore
 	}
 	if !synced {
 		out.Warnings = append(out.Warnings, fmt.Sprintf("%s resources are desired but not observed by ProfileSnapshot", kind))

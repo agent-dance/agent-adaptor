@@ -3,7 +3,7 @@
 //	Browser (React + @ag-ui/client HttpAgent)
 //	    ↓ POST /agent
 //	Go backend (pkg/bridges/sse, Protocol=AGUI)
-//	    ↓ Codex app-server or Claude Code CLI (env AGUI_AGENT)
+//	    ↓ local codex / claude / cursor CLI (env AGUI_AGENT)
 //	subprocess (token-level stream)
 //
 // Compared with examples/streaming-chat-copilotkit this example omits the

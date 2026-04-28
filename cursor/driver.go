@@ -11,6 +11,11 @@ import (
 	"github.com/agent-dance/agent-adaptor/internal/adapterutil"
 	"github.com/agent-dance/agent-adaptor/internal/clihelper"
 	"github.com/agent-dance/agent-adaptor/internal/configprobe"
+	"github.com/agent-dance/agent-adaptor/internal/mcpruntime"
+	"github.com/agent-dance/agent-adaptor/internal/profileagents"
+	"github.com/agent-dance/agent-adaptor/internal/profileconfig"
+	"github.com/agent-dance/agent-adaptor/internal/profilehooks"
+	"github.com/agent-dance/agent-adaptor/internal/profileinstructions"
 	"github.com/agent-dance/agent-adaptor/internal/profilesnapshot"
 )
 
@@ -33,19 +38,19 @@ func NewAdapter() agentadaptor.DriverAdapter {
 }
 
 func (adapter) Descriptor() agentadaptor.DriverDescriptor {
+	fields := []agentadaptor.ConfigField{
+		{Name: "command", Label: "Command", Type: "text", Description: "Override the Cursor Agent CLI executable.", Hint: "Defaults to `agent` when unset.", Default: "agent", Group: "command"},
+		{Name: "cwd", Label: "Working Directory", Type: "text", Description: "Default working directory when the workspace manager does not override it.", Hint: "Leave empty to let the workspace manager resolve the cwd.", Group: "command"},
+		{Name: "model", Label: "Model", Type: "select", Description: "Cursor model identifier, for example gpt-5.", Default: "gpt-5", Options: modelOptions(cursorModels()), Group: "model"},
+		{Name: "mode", Label: "Mode", Type: "select", Description: "Cursor agent mode passed through --mode.", Options: []agentadaptor.ConfigOption{{Value: "agent", Label: "Agent"}, {Value: "ask", Label: "Ask"}}, Group: "execution"},
+		{Name: "extra_args", Label: "Extra Args", Type: "textarea", Description: "Additional CLI args appended after SDK-managed flags.", Group: "command"},
+	}
+	fields = append(fields, profileconfig.CapabilityFields(DriverType)...)
 	return agentadaptor.DriverDescriptor{
-		Type:        DriverType,
-		DisplayName: "Cursor Agent",
-		Models:      cursorModels(),
-		ConfigSchema: &agentadaptor.ConfigSchema{
-			Fields: []agentadaptor.ConfigField{
-				{Name: "command", Label: "Command", Type: "text", Description: "Override the Cursor Agent CLI executable.", Hint: "Defaults to `agent` when unset.", Default: "agent", Group: "command"},
-				{Name: "cwd", Label: "Working Directory", Type: "text", Description: "Default working directory when the workspace manager does not override it.", Hint: "Leave empty to let the workspace manager resolve the cwd.", Group: "command"},
-				{Name: "model", Label: "Model", Type: "select", Description: "Cursor model identifier, for example gpt-5.", Default: "gpt-5", Options: modelOptions(cursorModels()), Group: "model"},
-				{Name: "mode", Label: "Mode", Type: "select", Description: "Cursor agent mode passed through --mode.", Options: []agentadaptor.ConfigOption{{Value: "agent", Label: "Agent"}, {Value: "ask", Label: "Ask"}}, Group: "execution"},
-				{Name: "extra_args", Label: "Extra Args", Type: "textarea", Description: "Additional CLI args appended after SDK-managed flags.", Group: "command"},
-			},
-		},
+		Type:         DriverType,
+		DisplayName:  "Cursor Agent",
+		Models:       cursorModels(),
+		ConfigSchema: &agentadaptor.ConfigSchema{Fields: fields},
 		Sessions:     agentadaptor.SessionCapability{SupportsResume: true},
 		Skills:       agentadaptor.SkillCapability{Supported: true, Mode: agentadaptor.SkillSyncPersistent},
 		MCP:          agentadaptor.MCPCapability{Supported: true, Stdio: true, HTTP: true, SSE: true},
@@ -244,7 +249,25 @@ func (adapter) SnapshotProfileResources(_ context.Context, cfg any, _ agentadapt
 		return agentadaptor.ProfileSnapshot{}, err
 	}
 	effectiveProfile, kind := cursorProfileAndKind(config.CommonConfig, profile)
-	return profilesnapshot.Build(DriverType, effectiveProfile, kind, payload, skills, false), nil
+	snapshot := profilesnapshot.Build(DriverType, effectiveProfile, kind, payload, skills, false)
+	mcpSnapshot, err := mcpruntime.SnapshotResource(DriverType, effectiveProfile.Dir, payload.MCP, false)
+	if err != nil {
+		return agentadaptor.ProfileSnapshot{}, err
+	}
+	snapshot = profileconfig.WithSnapshotResource(snapshot, mcpSnapshot)
+	if payload.Declared.Config {
+		snapshot = profileconfig.WithSnapshotResource(snapshot, profileconfig.Snapshot(DriverType, effectiveProfile.Dir, payload.Config, false))
+	}
+	if payload.Declared.Instructions {
+		snapshot = profileconfig.WithSnapshotResource(snapshot, profileinstructions.Snapshot(DriverType, effectiveProfile.Dir, payload.Instructions, false))
+	}
+	if payload.Declared.Agents {
+		snapshot = profileconfig.WithSnapshotResource(snapshot, profileagents.Snapshot(DriverType, effectiveProfile.Dir, payload.Agents, false))
+	}
+	if payload.Declared.Hooks {
+		snapshot = profileconfig.WithSnapshotResource(snapshot, profilehooks.Snapshot(DriverType, effectiveProfile.Dir, payload.Hooks, false))
+	}
+	return snapshot, nil
 }
 
 func (adapter) SyncProfileResources(ctx context.Context, cfg any, _ agentadaptor.AgentIdentity, profile *agentadaptor.ProfileSelection, payload agentadaptor.ProfilePayload, selected []string, resolved []agentadaptor.Skill) (agentadaptor.ProfileSnapshot, error) {
@@ -257,11 +280,42 @@ func (adapter) SyncProfileResources(ctx context.Context, cfg any, _ agentadaptor
 	if err != nil {
 		return agentadaptor.ProfileSnapshot{}, err
 	}
-	if err := syncCursorMCPProfile(config.CommonConfig, profile, payload.MCP); err != nil {
+	effectiveProfile, kind := cursorProfileAndKind(config.CommonConfig, profile)
+	mcpSnapshot, err := mcpruntime.SyncResource(ctx, DriverType, effectiveProfile.Dir, kind, payload.MCP)
+	if err != nil {
 		return agentadaptor.ProfileSnapshot{}, err
 	}
-	effectiveProfile, kind := cursorProfileAndKind(config.CommonConfig, profile)
-	return profilesnapshot.Build(DriverType, effectiveProfile, kind, payload, skills, true), nil
+	snapshot := profilesnapshot.Build(DriverType, effectiveProfile, kind, payload, skills, true)
+	snapshot = profileconfig.WithSnapshotResource(snapshot, mcpSnapshot)
+	if payload.Declared.Config {
+		configSnapshot, err := profileconfig.SyncNativePatches(ctx, DriverType, effectiveProfile.Dir, payload.Config)
+		if err != nil {
+			return agentadaptor.ProfileSnapshot{}, err
+		}
+		snapshot = profileconfig.WithSnapshotResource(snapshot, configSnapshot)
+	}
+	if payload.Declared.Instructions {
+		instructionsSnapshot, _, err := profileinstructions.Sync(ctx, DriverType, effectiveProfile.Dir, payload.Instructions)
+		if err != nil {
+			return agentadaptor.ProfileSnapshot{}, err
+		}
+		snapshot = profileconfig.WithSnapshotResource(snapshot, instructionsSnapshot)
+	}
+	if payload.Declared.Agents {
+		agentsSnapshot, err := profileagents.Sync(ctx, DriverType, effectiveProfile.Dir, payload.Agents)
+		if err != nil {
+			return agentadaptor.ProfileSnapshot{}, err
+		}
+		snapshot = profileconfig.WithSnapshotResource(snapshot, agentsSnapshot)
+	}
+	if payload.Declared.Hooks {
+		hooksSnapshot, err := profilehooks.Sync(ctx, DriverType, effectiveProfile.Dir, payload.Hooks)
+		if err != nil {
+			return agentadaptor.ProfileSnapshot{}, err
+		}
+		snapshot = profileconfig.WithSnapshotResource(snapshot, hooksSnapshot)
+	}
+	return snapshot, nil
 }
 
 func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink agentadaptor.EventSink) (agentadaptor.DriverRunResult, error) {
@@ -287,8 +341,31 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 	if err != nil {
 		return agentadaptor.DriverRunResult{}, err
 	}
-	if err := syncCursorMCPProfile(cfg.CommonConfig, req.Profile, req.MCP); err != nil {
+	effectiveProfile, profileKind := cursorProfileAndKind(cfg.CommonConfig, req.Profile)
+	if _, err := mcpruntime.SyncResource(ctx, DriverType, effectiveProfile.Dir, profileKind, req.MCP); err != nil {
 		return agentadaptor.DriverRunResult{}, err
+	}
+	if req.ProfilePayload.Declared.Config {
+		if _, err := profileconfig.SyncNativePatches(ctx, DriverType, effectiveProfile.Dir, req.ProfilePayload.Config); err != nil {
+			return agentadaptor.DriverRunResult{}, err
+		}
+	}
+	var preparedInstructions profileinstructions.Prepared
+	if req.ProfilePayload.Declared.Instructions {
+		preparedInstructions, err = profileinstructions.PrepareForRun(ctx, DriverType, effectiveProfile.Dir, effectiveCWD, req.Instructions)
+		if err != nil {
+			return agentadaptor.DriverRunResult{}, err
+		}
+	}
+	if req.ProfilePayload.Declared.Agents {
+		if _, err := profileagents.Sync(ctx, DriverType, effectiveProfile.Dir, req.ProfilePayload.Agents); err != nil {
+			return agentadaptor.DriverRunResult{}, err
+		}
+	}
+	if req.ProfilePayload.Declared.Hooks {
+		if _, err := profilehooks.Sync(ctx, DriverType, effectiveProfile.Dir, req.ProfilePayload.Hooks); err != nil {
+			return agentadaptor.DriverRunResult{}, err
+		}
 	}
 	if _, err := syncCursorSkills(ctx, req.Skills, req.Skills.Keys(), nil, effectiveEnv, sink); err != nil {
 		return agentadaptor.DriverRunResult{}, err
@@ -305,7 +382,7 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 		args = append(args, "--mode", string(cfg.Mode))
 	}
 	if req.Policy.HumanDecision.Permission == agentadaptor.HumanDecisionAutoApprove {
-		args = append(args, "--yolo")
+		args = append(args, "--force")
 	}
 	args = append(args, cfg.ExtraArgs...)
 
@@ -313,8 +390,8 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 	if runtimePrefix := adapterutil.RuntimePromptPrefix(req.Runtime); runtimePrefix != "" {
 		prompt = runtimePrefix + "\n\n" + prompt
 	}
-	if req.Instructions != nil && req.Instructions.Path != "" {
-		prompt = "Instructions bundle: " + req.Instructions.Path + "\n\n" + prompt
+	if prefix := profileinstructions.PromptPrefix(preparedInstructions, profileinstructions.Mode(req.Instructions)); prefix != "" {
+		prompt = prefix + "\n\n" + prompt
 	}
 
 	parser := newCursorParser(sink)

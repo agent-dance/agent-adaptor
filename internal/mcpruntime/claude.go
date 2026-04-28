@@ -1,19 +1,15 @@
 package mcpruntime
 
 import (
+	"context"
 	"fmt"
-	"path/filepath"
 
 	agentadaptor "github.com/agent-dance/agent-adaptor"
 )
 
 func SyncClaudeProfile(configDir string, kind ProfileKind, payload agentadaptor.MCPPayload) error {
-	path := filepath.Join(configDir, ".claude.json")
-	root, err := readJSONObject(path)
-	if err != nil {
-		return fmt.Errorf("read Claude MCP config: %w", err)
-	}
-	return syncJSONServers(path, root, "mcpServers", kind, payload.Servers, claudeServerConfig)
+	_, err := SyncResource(context.Background(), "claude", configDir, kind, payload)
+	return err
 }
 
 func claudeServerConfig(server agentadaptor.MCPServerSpec) (map[string]any, error) {

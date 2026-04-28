@@ -5,19 +5,20 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
 
 	agentadaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/codex"
 	"github.com/agent-dance/agent-adaptor/examples/internal/exampleutil"
 )
 
 func main() {
-	model := flag.String("model", "gpt-5.4", "Codex model to use")
-	command := flag.String("command", "", "Optional explicit Codex-compatible command. Defaults to the healthy external Codex command discovered from PATH.")
-	prompt := flag.String("prompt", "Reply in three short lines for the codex-stream example.", "Prompt to send to Codex")
+	agent := flag.String("agent", "", "Local CLI agent to use: "+exampleutil.SupportedAgents()+" (default codex, or AGENT_ADAPTOR_EXAMPLE_AGENT)")
+	model := flag.String("model", "", "Model to use. Defaults by agent or CODEX_MODEL/CLAUDE_MODEL/CURSOR_MODEL.")
+	command := flag.String("command", "", "Optional explicit local CLI command. Defaults by agent or CODEX_COMMAND/CLAUDE_COMMAND/CURSOR_COMMAND/PATH.")
+	prompt := flag.String("prompt", "Reply in three short lines for the stream example.", "Prompt to send to the selected agent")
 	timeout := flag.Duration("timeout", 3*time.Minute, "Maximum time to wait for the run")
 	cancelAfter := flag.Duration("cancel-after", 0, "If greater than zero, cancel the run after this duration")
 	flag.Parse()
@@ -25,15 +26,12 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
 
-	commandPath, commandNote := exampleutil.RequireHealthyCodexCommand(*command)
+	cwd, err := os.Getwd()
+	exampleutil.Must(err, "resolve current working directory")
+	agentCfg := exampleutil.ResolveLiveAgentConfig(*agent, *model, *command, cwd)
 
 	sdk := agentadaptor.New(
-		agentadaptor.WithDefaultAgent(codex.New(agentadaptor.CodexConfig{
-			CommonConfig: agentadaptor.CommonConfig{
-				Command: commandPath,
-			},
-			Model: *model,
-		})),
+		agentadaptor.WithDefaultAgent(exampleutil.NewLiveAgentBinding(agentCfg)),
 	)
 
 	handle, err := sdk.Start(ctx, *prompt)
@@ -86,36 +84,30 @@ func main() {
 		exampleutil.Check(err != nil, "expected a cancellation error when -cancel-after is set")
 		exampleutil.Check(isCancellation(err), "expected cancellation-like error, got %v", err)
 		exampleutil.PrintJSON(map[string]any{
-			"example":       "codex-stream",
+			"example":       "stream",
+			"agent":         exampleutil.LiveAgentSummary(agentCfg),
 			"cancelled":     true,
 			"event_count":   eventCount,
 			"event_counts":  snapshot,
 			"cancel_after":  cancelAfter.String(),
 			"error_message": err.Error(),
-			"command": map[string]any{
-				"path": commandPath,
-				"note": commandNote,
-			},
 		})
 		return
 	}
 
-	exampleutil.Must(err, "wait for codex-stream example")
-	exampleutil.Check(result.DriverType == codex.DriverType, "expected driver type %q, got %q", codex.DriverType, result.DriverType)
+	exampleutil.Must(err, "wait for stream example")
+	exampleutil.Check(result.DriverType == agentCfg.DriverType, "expected driver type %q, got %q", agentCfg.DriverType, result.DriverType)
 	exampleutil.Check(result.ExitCode == 0, "expected exit code 0, got %d", result.ExitCode)
 	exampleutil.Check(eventCount > 0, "expected to receive at least one event")
-	exampleutil.Check(strings.TrimSpace(result.Output) != "", "expected non-empty output from Codex")
+	exampleutil.Check(strings.TrimSpace(result.Output) != "", "expected non-empty output from %s", agentCfg.Agent)
 
 	exampleutil.PrintJSON(map[string]any{
-		"example":      "codex-stream",
+		"example":      "stream",
+		"agent":        exampleutil.LiveAgentSummary(agentCfg),
 		"driver_type":  result.DriverType,
 		"exit_code":    result.ExitCode,
 		"event_count":  eventCount,
 		"event_counts": snapshot,
-		"command": map[string]any{
-			"path": commandPath,
-			"note": commandNote,
-		},
 	})
 }
 

@@ -11,9 +11,6 @@ import (
 	"github.com/agent-dance/agent-adaptor/internal/skillruntime"
 )
 
-var codexCopiedSharedFiles = []string{"config.json", "config.toml", "instructions.md"}
-var codexSymlinkedSharedFiles = []string{"auth.json"}
-
 func listCodexSkills(payload agentadaptor.ResolvedSkills, selected []string, resolved []agentadaptor.Skill, codexHome string) (agentadaptor.SkillSnapshot, error) {
 	skillsHome := filepath.Join(codexHome, "skills")
 	installed, err := skillruntime.ReadInstalledSkillTargets(skillsHome)
@@ -36,7 +33,7 @@ func listCodexSkills(payload agentadaptor.ResolvedSkills, selected []string, res
 }
 
 func syncCodexSkills(ctx context.Context, payload agentadaptor.ResolvedSkills, selected []string, resolved []agentadaptor.Skill, codexHome string, sink agentadaptor.EventSink) (agentadaptor.SkillSnapshot, error) {
-	if err := injectCodexSkills(ctx, payload, codexHome, sink); err != nil {
+	if err := injectCodexSkillsSelected(ctx, payload, selected, codexHome, sink); err != nil {
 		return agentadaptor.SkillSnapshot{}, err
 	}
 	return listCodexSkills(payload, selected, resolved, codexHome)
@@ -140,128 +137,41 @@ func safeNamespace(value string) string {
 	return strings.Trim(builder.String(), "-")
 }
 
-func prepareManagedCodexHome(bindings []agentadaptor.EnvBinding, agent agentadaptor.AgentIdentity) (string, error) {
-	targetHome := resolveManagedCodexHome(agent)
-	sourceHome := resolveSharedCodexHome(bindings)
-	if filepath.Clean(sourceHome) == filepath.Clean(targetHome) {
-		return targetHome, nil
-	}
-	if err := os.MkdirAll(targetHome, 0o755); err != nil {
-		return "", err
-	}
-	for _, name := range codexSymlinkedSharedFiles {
-		source := filepath.Join(sourceHome, name)
-		if _, err := os.Stat(source); err != nil {
-			continue
-		}
-		if err := ensureCodexSymlink(source, filepath.Join(targetHome, name)); err != nil {
-			return "", err
-		}
-	}
-	for _, name := range codexCopiedSharedFiles {
-		source := filepath.Join(sourceHome, name)
-		if _, err := os.Stat(source); err != nil {
-			continue
-		}
-		target := filepath.Join(targetHome, name)
-		if _, err := os.Stat(target); err == nil {
-			continue
-		}
-		if err := copyFile(source, target); err != nil {
-			return "", err
-		}
-	}
-	return targetHome, nil
+func injectCodexSkills(ctx context.Context, skills agentadaptor.ResolvedSkills, codexHome string, sink agentadaptor.EventSink) error {
+	return injectCodexSkillsSelected(ctx, skills, nil, codexHome, sink)
 }
 
-func ensureCodexSymlink(source, target string) error {
-	info, err := os.Lstat(target)
-	if err == nil {
-		if info.Mode()&os.ModeSymlink != 0 {
-			linkedPath, readErr := os.Readlink(target)
-			if readErr == nil {
-				resolved := linkedPath
-				if !filepath.IsAbs(resolved) {
-					resolved = filepath.Join(filepath.Dir(target), resolved)
-				}
-				if filepath.Clean(resolved) == filepath.Clean(source) {
-					return nil
-				}
-			}
-			if err := os.Remove(target); err != nil {
-				return err
-			}
-		} else {
-			return nil
-		}
-	} else if !os.IsNotExist(err) {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-		return err
-	}
-	if err := os.Symlink(source, target); err == nil {
-		return nil
-	}
-	return copyFile(source, target)
-}
-
-func copyFile(source, target string) error {
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-		return err
-	}
-	data, err := os.ReadFile(source)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(target, data, 0o644)
-}
-
-func injectCodexSkills(_ context.Context, skills agentadaptor.ResolvedSkills, codexHome string, sink agentadaptor.EventSink) error {
-	entries := skills.Entries
-	if len(entries) == 0 {
+func injectCodexSkillsSelected(ctx context.Context, skills agentadaptor.ResolvedSkills, selected []string, codexHome string, sink agentadaptor.EventSink) error {
+	if len(skills.Entries) == 0 {
 		return nil
 	}
 	skillsHome := filepath.Join(codexHome, "skills")
-	if err := os.MkdirAll(skillsHome, 0o755); err != nil {
-		return err
-	}
-	managedRoots := []string{skillruntime.ManagedSkillCacheRoot()}
-	allowedRuntimeNames := make([]string, 0, len(entries))
-	for _, entry := range entries {
-		if strings.TrimSpace(entry.SourcePath) == "" {
-			continue
-		}
-		result, err := skillruntime.EnsureSkillTarget(entry.SourcePath, filepath.Join(skillsHome, entry.RuntimeName), managedRoots)
-		if err != nil {
-			if sink != nil {
-				_ = sink.Emit(agentadaptor.RunEvent{
-					Type: agentadaptor.RunEventLifecycle,
-					Text: fmt.Sprintf("failed to inject Codex skill %q: %v", entry.Key, err),
-				})
-			}
-			continue
-		}
-		allowedRuntimeNames = append(allowedRuntimeNames, entry.RuntimeName)
-		if result == "skipped" {
-			continue
-		}
-		if sink != nil {
-			_ = sink.Emit(agentadaptor.RunEvent{
-				Type: agentadaptor.RunEventLifecycle,
-				Text: fmt.Sprintf("%s Codex skill %q into %s", capitalize(result), entry.RuntimeName, skillsHome),
-			})
-		}
-	}
-	removed, err := skillruntime.PruneBrokenManagedSkillTargets(skillsHome, allowedRuntimeNames, managedRoots)
+	result, err := skillruntime.ReconcileProfileSkills(ctx, skillruntime.ProfileSkillReconcileOptions{
+		ProfileDir:   codexHome,
+		SkillsHome:   skillsHome,
+		Payload:      skills,
+		Selected:     selected,
+		ManagedRoots: []string{skillruntime.ManagedSkillCacheRoot()},
+		ConflictMode: skillruntime.ProfileSkillConflictPreserve,
+		PruneMode:    skillruntime.ProfileSkillPruneBrokenManaged,
+	})
 	if err != nil {
 		return err
 	}
-	for _, name := range removed {
-		if sink != nil {
+	for _, change := range result.Changes {
+		if sink == nil {
+			continue
+		}
+		switch change.Action {
+		case "removed":
 			_ = sink.Emit(agentadaptor.RunEvent{
 				Type: agentadaptor.RunEventLifecycle,
-				Text: fmt.Sprintf("removed stale Codex skill %q from %s", name, skillsHome),
+				Text: fmt.Sprintf("removed stale Codex skill %q from %s", change.RuntimeName, skillsHome),
+			})
+		case "created", "repaired":
+			_ = sink.Emit(agentadaptor.RunEvent{
+				Type: agentadaptor.RunEventLifecycle,
+				Text: fmt.Sprintf("%s Codex skill %q into %s", capitalize(change.Action), change.RuntimeName, skillsHome),
 			})
 		}
 	}

@@ -327,6 +327,7 @@ type CloneProfileOptions struct {
 	IncludeMCP      bool
 	IncludeSkills   bool
 	IncludeAuth     bool
+	AuthMode        CloneProfileAuthMode
 }
 ```
 
@@ -337,7 +338,7 @@ type CloneProfileOptions struct {
 - 绝大多数用户不需要关心 `FromDir` / `ToDir`
 - `WithCloneProfileFrom(src, dst, opts)` 作为高级入口提供，但普通宿主优先使用 native -> dedicated 的 `WithCloneProfile(dir, opts)`
 - dry-run 更适合通过 `CheckEnvironment` / 诊断模式表达，避免运行配置里混入“只预览不执行”的控制语义
-- `IncludeAuth` 默认 `false`，复制认证必须显式 opt-in
+- `IncludeAuth` 默认 `false`，复制认证必须显式 opt-in；OAuth CLI 推荐用 `AuthMode: CloneProfileAuthLink` 共享本机登录态，避免复制 refresh token 文件
 
 验收标准：
 

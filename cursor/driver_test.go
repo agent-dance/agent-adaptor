@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	agentadaptor "github.com/agent-dance/agent-adaptor"
@@ -144,6 +145,58 @@ func TestGetProfileUsesProcessEnvForCursorWhenUnset(t *testing.T) {
 	}
 	if !profile.Supported || profile.Dir != profileDir || profile.Source != agentadaptor.AgentProfileSourceProcessEnv {
 		t.Fatalf("unexpected profile: %#v", profile)
+	}
+}
+
+func TestGetProfileCloneCanShareNativeCursorAuth(t *testing.T) {
+	t.Setenv("CURSOR_HOME", "")
+	home := t.TempDir()
+	nativeProfile := filepath.Join(home, ".cursor")
+	if err := os.MkdirAll(nativeProfile, 0o755); err != nil {
+		t.Fatalf("mkdir native profile: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(nativeProfile, "config.json"), []byte("{\"model\":\"gpt-5\"}\n"), 0o644); err != nil {
+		t.Fatalf("write native config: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(nativeProfile, "cli-config.json"), []byte(`{"authInfo":{"email":"dev@example.com"}}`), 0o600); err != nil {
+		t.Fatalf("write native cli config: %v", err)
+	}
+	target := filepath.Join(t.TempDir(), "isolated")
+
+	profile, err := NewAdapter().(interface {
+		GetProfile(context.Context, any, agentadaptor.AgentIdentity, *agentadaptor.ProfileSelection) (agentadaptor.AgentProfile, error)
+	}).GetProfile(context.Background(), agentadaptor.CursorConfig{
+		CommonConfig: agentadaptor.CommonConfig{
+			Env: []agentadaptor.EnvBinding{{Name: "HOME", Value: home}, {Name: "USERPROFILE", Value: home}},
+		},
+	}, agentadaptor.AgentIdentity{}, &agentadaptor.ProfileSelection{
+		Mode: agentadaptor.ProfileModeClone,
+		Dir:  target,
+		Clone: &agentadaptor.CloneProfileOptions{
+			IncludeSettings: true,
+			AuthMode:        agentadaptor.CloneProfileAuthLink,
+		},
+	})
+	if err != nil {
+		t.Fatalf("get profile: %v", err)
+	}
+	if profile.Dir != target || profile.Source != agentadaptor.AgentProfileSourceProfileOption {
+		t.Fatalf("unexpected profile: %#v", profile)
+	}
+	rawConfig, err := os.ReadFile(filepath.Join(target, "config.json"))
+	if err != nil {
+		t.Fatalf("read cloned config: %v", err)
+	}
+	if !strings.Contains(string(rawConfig), "gpt-5") {
+		t.Fatalf("expected cloned Cursor config, got %s", string(rawConfig))
+	}
+	sourceInfo, sourceErr := os.Stat(filepath.Join(nativeProfile, "cli-config.json"))
+	targetInfo, targetErr := os.Stat(filepath.Join(target, "cli-config.json"))
+	if sourceErr != nil || targetErr != nil {
+		t.Fatalf("stat auth files: source=%v target=%v", sourceErr, targetErr)
+	}
+	if !os.SameFile(sourceInfo, targetInfo) {
+		t.Fatalf("expected cloned profile cli-config.json to share native Cursor auth")
 	}
 }
 

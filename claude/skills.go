@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -42,66 +43,24 @@ func listClaudeSkills(payload agentadaptor.ResolvedSkills, selected []string, re
 	}), nil
 }
 
-func syncClaudeSkills(payload agentadaptor.ResolvedSkills, selected []string, resolved []agentadaptor.Skill, bindings []agentadaptor.EnvBinding, kind agentadaptor.ProfileKind) (agentadaptor.SkillSnapshot, error) {
+func syncClaudeSkills(ctx context.Context, payload agentadaptor.ResolvedSkills, selected []string, resolved []agentadaptor.Skill, bindings []agentadaptor.EnvBinding, kind agentadaptor.ProfileKind) (agentadaptor.SkillSnapshot, error) {
 	skillsHome := resolveClaudeSkillsHome(bindings)
-	if err := os.MkdirAll(skillsHome, 0o755); err != nil {
-		return agentadaptor.SkillSnapshot{}, err
-	}
-	installed, err := skillruntime.ReadInstalledSkillTargets(skillsHome)
-	if err != nil {
-		return agentadaptor.SkillSnapshot{}, err
-	}
-	desiredKeys := map[string]struct{}{}
-	for _, key := range selected {
-		desiredKeys[key] = struct{}{}
-	}
-	cacheRoots := []string{skillruntime.ManagedSkillCacheRoot()}
-	allowedRuntimeNames := make([]string, 0, len(payload.Entries))
-	for _, entry := range payload.Entries {
-		if _, desired := desiredKeys[entry.Key]; !desired {
-			continue
-		}
-		allowedRuntimeNames = append(allowedRuntimeNames, entry.RuntimeName)
-		if strings.TrimSpace(entry.SourcePath) == "" {
-			continue
-		}
-		if existing, ok := installed[entry.RuntimeName]; ok && filepath.Clean(existing.TargetPath) != filepath.Clean(entry.SourcePath) && !installedSkillTargetWithinRoots(existing, cacheRoots) {
-			return agentadaptor.SkillSnapshot{}, fmt.Errorf("materialize Claude skill %q: runtime name %q is occupied by external installation %q", entry.Key, entry.RuntimeName, existing.TargetPath)
-		}
-		if _, err := skillruntime.EnsureSkillTarget(entry.SourcePath, filepath.Join(skillsHome, entry.RuntimeName), cacheRoots); err != nil {
-			return agentadaptor.SkillSnapshot{}, fmt.Errorf("materialize Claude skill %q: %w", entry.Key, err)
-		}
-	}
-	var removed []string
+	pruneMode := skillruntime.ProfileSkillPruneBrokenManaged
 	if kind == agentadaptor.ProfileKindHostManaged {
-		removed, err = skillruntime.RemoveManagedSkillTargets(skillsHome, allowedRuntimeNames, cacheRoots)
-	} else {
-		removed, err = skillruntime.PruneBrokenManagedSkillTargets(skillsHome, allowedRuntimeNames, cacheRoots)
+		pruneMode = skillruntime.ProfileSkillPruneManaged
 	}
-	if err != nil {
+	if _, err := skillruntime.ReconcileProfileSkills(ctx, skillruntime.ProfileSkillReconcileOptions{
+		ProfileDir:   resolveClaudeConfigDir(bindings),
+		SkillsHome:   skillsHome,
+		Payload:      payload,
+		Selected:     selected,
+		ManagedRoots: []string{skillruntime.ManagedSkillCacheRoot()},
+		ConflictMode: skillruntime.ProfileSkillConflictError,
+		PruneMode:    pruneMode,
+	}); err != nil {
 		return agentadaptor.SkillSnapshot{}, err
 	}
-	_ = removed
 	return listClaudeSkills(payload, selected, resolved, bindings)
-}
-
-func installedSkillTargetWithinRoots(target skillruntime.InstalledSkillTarget, roots []string) bool {
-	targetPath := strings.TrimSpace(target.TargetPath)
-	if targetPath == "" {
-		return false
-	}
-	targetPath = filepath.Clean(targetPath)
-	for _, root := range roots {
-		root = strings.TrimSpace(root)
-		if root == "" {
-			continue
-		}
-		root = filepath.Clean(root)
-		if targetPath == root || strings.HasPrefix(targetPath, root+string(filepath.Separator)) {
-			return true
-		}
-	}
-	return false
 }
 
 // prepareClaudePromptBundle materializes the Selected skills into a per-run

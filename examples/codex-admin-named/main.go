@@ -3,12 +3,12 @@ package main
 import (
 	"context"
 	"flag"
+	"os"
 	"path/filepath"
 	"runtime"
 	"time"
 
 	agentadaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/codex"
 	"github.com/agent-dance/agent-adaptor/examples/internal/exampleutil"
 )
 
@@ -18,13 +18,26 @@ const (
 )
 
 func main() {
-	defaultModel := flag.String("default-model", "gpt-5.4", "Codex model for the default agent")
-	reviewModel := flag.String("review-model", "gpt-5.4", "Codex model for the named review agent")
-	command := flag.String("command", "", "Optional explicit Codex-compatible command. Defaults to the healthy external Codex command discovered from PATH.")
+	agent := flag.String("agent", "", "Local CLI agent to use: "+exampleutil.SupportedAgents()+" (default codex, or AGENT_ADAPTOR_EXAMPLE_AGENT)")
+	defaultModel := flag.String("default-model", "", "Model for the default agent. Defaults by agent or CODEX_MODEL/CLAUDE_MODEL/CURSOR_MODEL.")
+	reviewModel := flag.String("review-model", "", "Model for the named review agent. Defaults by agent or CODEX_MODEL/CLAUDE_MODEL/CURSOR_MODEL.")
+	command := flag.String("command", "", "Optional explicit local CLI command. Defaults by agent or CODEX_COMMAND/CLAUDE_COMMAND/CURSOR_COMMAND/PATH.")
 	timeout := flag.Duration("timeout", 5*time.Minute, "Maximum time to wait for each run")
+	keepProfiles := flag.Bool("keep-profiles", false, "Keep the temporary cloned profiles after the example finishes")
 	flag.Parse()
 
-	commandPath, commandNote := exampleutil.RequireHealthyCodexCommand(*command)
+	cwd, err := os.Getwd()
+	exampleutil.Must(err, "resolve current working directory")
+	defaultCfg := exampleutil.ResolveLiveAgentConfig(*agent, *defaultModel, *command, cwd)
+	reviewCfg := defaultCfg
+	reviewCfg.Model = exampleutil.ResolveAgentModel(defaultCfg.Agent, *reviewModel)
+
+	profileRoot, err := os.MkdirTemp("", "agent-adaptor-admin-named-*")
+	exampleutil.Must(err, "create temporary profile root")
+	if !*keepProfiles {
+		defer func() { _ = os.RemoveAll(profileRoot) }()
+	}
+
 	skillSet := agentadaptor.SkillSet{
 		defaultSkillName: {
 			Key:    defaultSkillName,
@@ -37,13 +50,14 @@ func main() {
 	}
 
 	sdk := agentadaptor.New(
-		agentadaptor.WithDefaultAgent(codex.New(
-			agentadaptor.CodexConfig{
-				CommonConfig: agentadaptor.CommonConfig{
-					Command: commandPath,
-				},
-				Model: *defaultModel,
-			},
+		agentadaptor.WithDefaultAgent(exampleutil.NewLiveAgentBinding(
+			defaultCfg,
+			agentadaptor.WithCloneProfile(filepath.Join(profileRoot, "default"), agentadaptor.CloneProfileOptions{
+				IncludeSettings: true,
+				IncludeMCP:      true,
+				IncludeSkills:   true,
+				AuthMode:        agentadaptor.CloneProfileAuthLink,
+			}),
 			agentadaptor.WithDefaultIdentity(agentadaptor.AgentIdentity{
 				ID:       "default-agent",
 				TenantID: "examples",
@@ -51,13 +65,14 @@ func main() {
 			}),
 			agentadaptor.WithDefaultSkills(agentadaptor.Key(defaultSkillName), agentadaptor.Key(reviewSkillName)),
 		)),
-		agentadaptor.WithAgent("review", codex.New(
-			agentadaptor.CodexConfig{
-				CommonConfig: agentadaptor.CommonConfig{
-					Command: commandPath,
-				},
-				Model: *reviewModel,
-			},
+		agentadaptor.WithAgent("review", exampleutil.NewLiveAgentBinding(
+			reviewCfg,
+			agentadaptor.WithCloneProfile(filepath.Join(profileRoot, "review"), agentadaptor.CloneProfileOptions{
+				IncludeSettings: true,
+				IncludeMCP:      true,
+				IncludeSkills:   true,
+				AuthMode:        agentadaptor.CloneProfileAuthLink,
+			}),
 			agentadaptor.WithDefaultIdentity(agentadaptor.AgentIdentity{
 				ID:       "review-agent",
 				TenantID: "examples",
@@ -71,16 +86,18 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
 
-	defaultResult, err := sdk.Run(ctx, "Reply with 'default agent ok' and one short sentence.")
-	exampleutil.Must(err, "run default codex agent")
-	exampleutil.Check(defaultResult.DriverType == codex.DriverType, "expected default driver type %q, got %q", codex.DriverType, defaultResult.DriverType)
+	defaultResult, err := sdk.Run(ctx, "Reply with 'default agent ok' and one short sentence.",
+		exampleutil.NonInteractiveRunOption(agentadaptor.IsolationWorkspaceWrite))
+	exampleutil.Must(err, "run default agent")
+	exampleutil.Check(defaultResult.DriverType == defaultCfg.DriverType, "expected default driver type %q, got %q", defaultCfg.DriverType, defaultResult.DriverType)
 	exampleutil.Check(defaultResult.ExitCode == 0, "expected default exit code 0, got %d", defaultResult.ExitCode)
 
 	reviewRunner, err := sdk.Agent("review")
 	exampleutil.Must(err, "lookup review agent")
-	reviewResult, err := reviewRunner.Run(ctx, "Reply with 'review agent ok' and one short sentence.")
-	exampleutil.Must(err, "run review codex agent")
-	exampleutil.Check(reviewResult.DriverType == codex.DriverType, "expected review driver type %q, got %q", codex.DriverType, reviewResult.DriverType)
+	reviewResult, err := reviewRunner.Run(ctx, "Reply with 'review agent ok' and one short sentence.",
+		exampleutil.NonInteractiveRunOption(agentadaptor.IsolationWorkspaceWrite))
+	exampleutil.Must(err, "run review agent")
+	exampleutil.Check(reviewResult.DriverType == reviewCfg.DriverType, "expected review driver type %q, got %q", reviewCfg.DriverType, reviewResult.DriverType)
 	exampleutil.Check(reviewResult.ExitCode == 0, "expected review exit code 0, got %d", reviewResult.ExitCode)
 
 	admin := sdk.Admin()
@@ -91,7 +108,7 @@ func main() {
 	defaultInfo := defaultAdmin.Info()
 	exampleutil.Check(defaultInfo.Default, "expected default agent info to be marked as default")
 	exampleutil.Check(defaultInfo.Name == "default", "expected default agent name to be default, got %q", defaultInfo.Name)
-	exampleutil.Check(defaultInfo.DriverType == codex.DriverType, "expected default admin driver type %q, got %q", codex.DriverType, defaultInfo.DriverType)
+	exampleutil.Check(defaultInfo.DriverType == defaultCfg.DriverType, "expected default admin driver type %q, got %q", defaultCfg.DriverType, defaultInfo.DriverType)
 
 	reviewAdmin, err := admin.Agent("review")
 	exampleutil.Must(err, "lookup review agent admin")
@@ -129,12 +146,10 @@ func main() {
 	exampleutil.Check(!snapshotHasState(selectedSkills, agentadaptor.SkillStateMissing), "expected selected skills to avoid missing entries, got %#v", selectedSkills.Entries)
 
 	exampleutil.PrintJSON(map[string]any{
-		"example": "codex-admin-named",
-		"command": map[string]any{
-			"path": commandPath,
-			"note": commandNote,
-		},
-		"agents": agents,
+		"example":      "admin-named",
+		"agent":        exampleutil.LiveAgentSummary(defaultCfg),
+		"profile_root": profileRoot,
+		"agents":       agents,
 		"default": map[string]any{
 			"result": defaultResult,
 			"info":   defaultInfo,

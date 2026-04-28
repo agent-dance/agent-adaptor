@@ -14,6 +14,7 @@ import (
 	"time"
 
 	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/internal/processx"
 )
 
 // ChunkObserver is the adapter-supplied callback invoked once per raw chunk
@@ -212,6 +213,8 @@ type CommandResult struct {
 	TimedOut   bool
 }
 
+const interruptedExitCode = -1
+
 // Run executes the requested command and streams raw stdout/stderr chunks to
 // sink and (optionally) the Observe callback. The returned CommandResult
 // always contains the full captured RawStreams, regardless of exit status.
@@ -222,6 +225,7 @@ func Run(ctx context.Context, req CommandRequest, sink agentadaptor.EventSink) (
 	}
 
 	cmd := exec.CommandContext(ctx, command, args...)
+	processx.ConfigureCancellation(cmd)
 	if req.CWD != "" {
 		cmd.Dir = req.CWD
 	}
@@ -445,33 +449,49 @@ func Run(ctx context.Context, req CommandRequest, sink agentadaptor.EventSink) (
 	}
 	bufMu.Unlock()
 
-	if ctxErr := ctx.Err(); ctxErr != nil {
+	errMu.Lock()
+	fe := firstErr
+	errMu.Unlock()
+	return finalizeCommandResult(result, waitErr, fe, ctx.Err())
+}
+
+func finalizeCommandResult(result CommandResult, waitErr, firstErr, ctxErr error) (CommandResult, error) {
+	if ctxErr != nil {
 		result.TimedOut = errors.Is(ctxErr, context.DeadlineExceeded)
 	}
 
 	if waitErr == nil {
-		errMu.Lock()
-		fe := firstErr
-		errMu.Unlock()
-		if fe != nil {
-			return result, fe
+		if firstErr != nil {
+			return result, firstErr
 		}
 		return result, nil
 	}
+
 	var exitErr *exec.ExitError
 	if errors.As(waitErr, &exitErr) {
 		result.ExitCode = exitErr.ExitCode()
 		if state := exitErr.ProcessState; state != nil && !state.Exited() {
 			result.Signal = state.String()
 		}
-		errMu.Lock()
-		fe := firstErr
-		errMu.Unlock()
-		if fe != nil {
-			return result, fe
+		if firstErr != nil {
+			return result, firstErr
 		}
 		return result, nil
 	}
+
+	if ctxErr != nil {
+		if result.ExitCode == 0 {
+			result.ExitCode = interruptedExitCode
+		}
+		if result.Signal == "" {
+			result.Signal = ctxErr.Error()
+		}
+		if firstErr != nil {
+			return result, firstErr
+		}
+		return result, nil
+	}
+
 	return result, waitErr
 }
 

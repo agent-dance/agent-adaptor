@@ -86,6 +86,10 @@ func TestAdminSyncProfileMaterializesSupportedResourcesHonestly(t *testing.T) {
 
 	home := t.TempDir()
 	profileDir := t.TempDir()
+	instructionsPath := filepath.Join(home, "AGENTS.md")
+	if err := os.WriteFile(instructionsPath, []byte("# Team instructions\n"), 0o644); err != nil {
+		t.Fatalf("write instructions source: %v", err)
+	}
 	sdk := agentadaptor.New(agentadaptor.WithDefaultAgent(codex.New(
 		agentadaptor.CodexConfig{CommonConfig: agentadaptor.CommonConfig{
 			Env: []agentadaptor.EnvBinding{{Name: "HOME", Value: home}, {Name: "USERPROFILE", Value: home}},
@@ -99,8 +103,12 @@ func TestAdminSyncProfileMaterializesSupportedResourcesHonestly(t *testing.T) {
 		}}}),
 		agentadaptor.WithDefaultAgents(agentadaptor.AgentSpec{Key: "reviewer", Content: "review things"}),
 		agentadaptor.WithDefaultHooks(agentadaptor.HookSpec{Key: "pre", Event: "PreToolUse", Command: "echo"}),
-		agentadaptor.WithDefaultInstructions(&agentadaptor.InstructionsBundleRef{ID: "team-instructions", Path: filepath.Join(home, "AGENTS.md")}),
-		agentadaptor.WithDefaultProfileConfig(agentadaptor.ProfileConfigPatch{Key: "sandbox", FileKind: agentadaptor.ProfileConfigFileTOML, Path: "config.toml"}),
+		agentadaptor.WithDefaultInstructions(&agentadaptor.InstructionsBundleRef{ID: "team-instructions", Path: instructionsPath}),
+		agentadaptor.WithDefaultProfileConfig(agentadaptor.ProfileConfigPatch{
+			Key:        "sandbox",
+			Capability: "sandbox",
+			Values:     map[string]any{"mode": "workspace-write"},
+		}),
 	)))
 
 	snapshot, err := sdk.Admin().Default().SyncProfile(context.Background())
@@ -117,18 +125,85 @@ func TestAdminSyncProfileMaterializesSupportedResourcesHonestly(t *testing.T) {
 	if !strings.Contains(string(rawConfig), "local") {
 		t.Fatalf("expected MCP server in config.toml, got %s", string(rawConfig))
 	}
+	if !strings.Contains(string(rawConfig), "sandbox_mode = 'workspace-write'") {
+		t.Fatalf("expected capability config patch in config.toml, got %s", string(rawConfig))
+	}
+	if _, err := os.Stat(filepath.Join(profileDir, "AGENTS.md")); err != nil {
+		t.Fatalf("expected Codex native instructions materialized in profile: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(profileDir, "agents", "reviewer.toml")); err != nil {
+		t.Fatalf("expected agent materialized in profile: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(profileDir, "hooks.json")); err != nil {
+		t.Fatalf("expected hooks materialized in profile: %v", err)
+	}
 
 	assertResourceManaged(t, snapshot, agentadaptor.ProfileResourceSkills, "main")
 	assertResourceManaged(t, snapshot, agentadaptor.ProfileResourceMCP, "local")
-	assertResourceUnsupported(t, snapshot, agentadaptor.ProfileResourceAgents)
-	assertResourceUnsupported(t, snapshot, agentadaptor.ProfileResourceHooks)
-	assertResourceUnsupported(t, snapshot, agentadaptor.ProfileResourceInstructions)
-	assertResourceUnsupported(t, snapshot, agentadaptor.ProfileResourceConfig)
+	assertResourceManaged(t, snapshot, agentadaptor.ProfileResourceAgents, "reviewer")
+	assertResourceManaged(t, snapshot, agentadaptor.ProfileResourceHooks, "pre")
+	assertResourceManaged(t, snapshot, agentadaptor.ProfileResourceInstructions, "team-instructions")
+	assertResourceManaged(t, snapshot, agentadaptor.ProfileResourceConfig, "sandbox")
+}
+
+func TestAdminConfigSchemaExposesProfileConfigCapabilities(t *testing.T) {
+	cases := []struct {
+		name       string
+		binding    agentadaptor.AgentBinding
+		fieldNames []string
+	}{
+		{
+			name:       "codex",
+			binding:    codex.New(agentadaptor.CodexConfig{}),
+			fieldNames: []string{"profile_config.model", "profile_config.reasoning_effort", "profile_config.sandbox", "profile_config.approval"},
+		},
+		{
+			name:       "claude",
+			binding:    claude.New(agentadaptor.ClaudeConfig{}),
+			fieldNames: []string{"profile_config.model", "profile_config.effort", "profile_config.permission", "profile_config.env"},
+		},
+		{
+			name:       "cursor",
+			binding:    cursor.New(agentadaptor.CursorConfig{}),
+			fieldNames: []string{"profile_config.sandbox", "profile_config.approval", "profile_config.permissions", "profile_config.display"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sdk := agentadaptor.New(agentadaptor.WithDefaultAgent(tc.binding))
+			schema, err := sdk.Admin().Default().ConfigSchema(context.Background())
+			if err != nil {
+				t.Fatalf("config schema: %v", err)
+			}
+			for _, name := range tc.fieldNames {
+				field := findConfigField(t, schema, name)
+				if field.Group != "profile_config" || field.Meta["profile_resource"] != "config" || field.Meta["capability"] == "" {
+					t.Fatalf("profile config field %q missing capability metadata: %#v", name, field)
+				}
+			}
+		})
+	}
 }
 
 func assertResourceManaged(t *testing.T, snapshot agentadaptor.ProfileSnapshot, kind agentadaptor.ProfileResourceKind, key string) {
 	t.Helper()
 	resource := findResource(t, snapshot, kind)
+	wantSupport := agentadaptor.ProfileResourceSupportPortableCore
+	switch kind {
+	case agentadaptor.ProfileResourceConfig:
+		if resource.Support == agentadaptor.ProfileResourceSupportNativeEscape ||
+			resource.Support == agentadaptor.ProfileResourceSupportPortableExtended {
+			wantSupport = resource.Support
+		} else {
+			wantSupport = agentadaptor.ProfileResourceSupportPortableExtended
+		}
+	}
+	if resource.Support != wantSupport {
+		t.Fatalf("expected %s resource to report %s support, got %#v", kind, wantSupport, resource)
+	}
+	if resource.Materialization == agentadaptor.ProfileResourceMaterializationNotMaterialized {
+		t.Fatalf("expected %s resource to report materialization, got %#v", kind, resource)
+	}
 	for _, managed := range resource.Managed {
 		if managed == key {
 			return
@@ -137,9 +212,29 @@ func assertResourceManaged(t *testing.T, snapshot agentadaptor.ProfileSnapshot, 
 	t.Fatalf("expected %s resource to manage %q, got %#v", kind, key, resource)
 }
 
+func findConfigField(t *testing.T, schema *agentadaptor.ConfigSchema, name string) agentadaptor.ConfigField {
+	t.Helper()
+	if schema == nil {
+		t.Fatalf("nil config schema")
+	}
+	for _, field := range schema.Fields {
+		if field.Name == name {
+			return field
+		}
+	}
+	t.Fatalf("missing config field %q in %#v", name, schema.Fields)
+	return agentadaptor.ConfigField{}
+}
+
 func assertResourceUnsupported(t *testing.T, snapshot agentadaptor.ProfileSnapshot, kind agentadaptor.ProfileResourceKind) {
 	t.Helper()
 	resource := findResource(t, snapshot, kind)
+	if resource.Support != agentadaptor.ProfileResourceSupportUnsupported {
+		t.Fatalf("expected %s resource to report unsupported support status, got %#v", kind, resource)
+	}
+	if resource.Materialization != agentadaptor.ProfileResourceMaterializationNotMaterialized {
+		t.Fatalf("expected %s resource to report no materialization, got %#v", kind, resource)
+	}
 	if len(resource.Managed) != 0 {
 		t.Fatalf("expected %s resource not to report managed keys, got %#v", kind, resource)
 	}

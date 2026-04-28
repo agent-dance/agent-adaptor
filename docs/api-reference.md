@@ -65,6 +65,10 @@ Context and injection:
 - `WithRuntimeServices(services...)`
 - `WithSkills(refs...)`
 - `WithMCP(cfg)`
+- `WithProfileResources(resources)` — per-run profile desired state bundle.
+- `WithAgents(specs...)`
+- `WithHooks(specs...)`
+- `WithProfileConfig(patches...)`
 - `WithInstructions(ref)`
 - `WithMetadata(key, value)`
 - `WithAgentIdentity(identity)`
@@ -73,6 +77,53 @@ Selected skill materialization is strict: invalid archives, missing
 `SKILL.md`, unavailable paths, or custom materializer failures surface as a
 `Run` / `Wait` error matching `ErrSkillMaterializationFailed` before the
 adapter starts.
+
+Profile resource status: skills, MCP, agents, hooks, instructions, and explicit
+native config patches all have materialization paths in the built-in adapters.
+`ProfileSnapshot` and `SyncProfile` report the actual materialization state,
+including warning/error paths for unsupported or fallback fields. The target
+design remains a maximum-capability envelope: portable core fields, typed
+extended fields, explicit fallback/unsupported reporting, and provider-native
+escape hatches.
+
+Current public resource envelope:
+
+- `AgentSpec`: portable core `Key`, `RuntimeName`, `Description`,
+  `Instructions` / legacy `Content`, and `SourcePath`; extended fields include
+  model, reasoning effort, tool policy, permission/sandbox mode, MCP servers,
+  skills, nested hooks, and `Native`. Built-in adapters materialize portable
+  core agents to provider-native agent directories. Codex writes TOML custom
+  agents; Claude Code and Cursor write Markdown/YAML agents. Unsupported
+  extended fields are reported in `ResourceSnapshot.Warnings`.
+- `HookSpec`: canonical `HookEvent`, `MatcherSpec`, `HookHandler`, timeout,
+  fail policy, status message, disabled flag, plus legacy command-hook
+  `Matcher` / `Command` / `Args` / `Env`. Built-in adapters materialize
+  command-hook core to provider-native hook config. Claude Code additionally
+  accepts prompt/http/mcp_tool/agent handlers; Cursor accepts prompt handlers;
+  Codex accepts command handlers. Unsupported events/handlers fail sync/run
+  instead of silently succeeding.
+- `InstructionsBundleRef`: `ID`, `Path`, `Content`, `Fingerprint`, `Scope`,
+  `Mode`, and `Native`. Codex materializes profile instructions to
+  `AGENTS.md` / `AGENTS.override.md` under the effective `CODEX_HOME`; Claude
+  Code materializes them to `CLAUDE.md` under the effective
+  `CLAUDE_CONFIG_DIR`. Cursor has no stable profile-level rules file in the
+  public CLI config, so profile sync uses an SDK-managed fallback file; during
+  `Run`, project/local scoped Cursor instructions are materialized as
+  `.cursor/rules/<id>.mdc` in the effective workspace. Run-scoped or otherwise
+  unmapped bundles are prompt-injected and reported as fallback.
+- `ProfileConfigPatch`: preferred `Capability + Values`, with
+  `NativeConfigPatch` and legacy `FileKind` / `Path` / `Section` for explicit
+  provider-native patches. Built-in adapters materialize explicit
+  provider-native JSON/TOML patches guarded to the effective profile root and
+  an allowlisted set of capability patches: Codex `model`,
+  `reasoning_effort`, `sandbox`, `approval`; Claude Code `model`, `effort`,
+  `permission`, `env`; Cursor `sandbox`, `approval`, `permissions`, `display`.
+  The same allowlist is exposed from `AgentAdmin.ConfigSchema()` as
+  `profile_config.*` fields with capability metadata. Unsupported capabilities
+  remain desired-state and are reported in snapshot warnings/errors.
+- `ResourceSnapshot`: every resource kind reports both `Support` and
+  `Materialization`, so hosts can distinguish native managed, file managed,
+  prompt-injected fallback, and unsupported desired state.
 
 Policy, streaming, HITL:
 
@@ -90,6 +141,10 @@ Policy, streaming, HITL:
 - `WithDefaultWorkspace`
 - `WithDefaultSkills`
 - `WithDefaultMCP`
+- `WithDefaultProfileResources`
+- `WithDefaultAgents`
+- `WithDefaultHooks`
+- `WithDefaultProfileConfig`
 - `WithDefaultRuntimeServices`
 - `WithDefaultRunPolicy`
 - `WithDefaultInstructions`
@@ -107,6 +162,9 @@ Profile options are binding defaults too:
 - `WithCloneProfileFrom(src, dst, opts)`
 
 Provider-specific env in `CommonConfig.Env` still wins over profile options.
+`CloneProfileOptions.IncludeAuth` keeps the legacy copy behavior; for local
+OAuth-backed CLIs use `CloneProfileOptions{AuthMode: CloneProfileAuthLink}` to
+share the native auth file with an isolated clone.
 
 ## Result Contract
 
@@ -128,7 +186,7 @@ Provider-specific env in `CommonConfig.Env` still wins over profile options.
 - `Agents()` returns default + named binding metadata.
 - `Info()`, `CheckEnvironment()`, `ListModels()`, `DetectModel()`, `GetProfile()`, `ConfigSchema()`, `GetQuota()` expose adapter diagnostics.
 - `ProfileSnapshot(ctx)` reports the effective profile resource view.
-- `SyncProfile(ctx)` materializes supported profile resources for the binding defaults without starting a run; unsupported resource families must be reported as warnings/errors rather than managed.
+- `SyncProfile(ctx)` materializes supported profile resources for the binding defaults without starting a run; current built-in coverage includes skills, MCP, agents, hooks, instructions, and config capability patches. Unsupported resource families must be reported as warnings/errors rather than managed.
 - `ListSkills()` reports the effective catalogue / selected set.
 - `SetSelectedSkills(ctx, keys)` installs a process-local selected-key override for that bound agent. It is not persistent storage.
 

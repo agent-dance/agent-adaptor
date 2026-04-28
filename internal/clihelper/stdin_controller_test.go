@@ -183,3 +183,45 @@ func TestRun_LegacyPromptPathUnchanged(t *testing.T) {
 		t.Errorf("stdout: %q", result.RawStreams.Stdout)
 	}
 }
+
+func TestFinalizeCommandResultContextCancelMasksCancelFailure(t *testing.T) {
+	result, err := finalizeCommandResult(
+		CommandResult{},
+		errors.New("exec: canceling Cmd: TerminateProcess: Access is denied."),
+		nil,
+		context.DeadlineExceeded,
+	)
+	if err != nil {
+		t.Fatalf("finalizeCommandResult: %v", err)
+	}
+	if !result.TimedOut {
+		t.Fatal("expected TimedOut for context deadline")
+	}
+	if result.ExitCode != interruptedExitCode {
+		t.Fatalf("exit code = %d, want %d", result.ExitCode, interruptedExitCode)
+	}
+	if result.Signal != context.DeadlineExceeded.Error() {
+		t.Fatalf("signal = %q, want %q", result.Signal, context.DeadlineExceeded.Error())
+	}
+}
+
+func TestFinalizeCommandResultPreservesNonContextWaitError(t *testing.T) {
+	waitErr := errors.New("wait failed")
+	_, err := finalizeCommandResult(CommandResult{}, waitErr, nil, nil)
+	if !errors.Is(err, waitErr) {
+		t.Fatalf("err = %v, want %v", err, waitErr)
+	}
+}
+
+func TestFinalizeCommandResultPreservesFirstError(t *testing.T) {
+	firstErr := errors.New("parser failed")
+	_, err := finalizeCommandResult(
+		CommandResult{},
+		errors.New("exec: canceling Cmd: TerminateProcess: Access is denied."),
+		firstErr,
+		context.Canceled,
+	)
+	if !errors.Is(err, firstErr) {
+		t.Fatalf("err = %v, want %v", err, firstErr)
+	}
+}

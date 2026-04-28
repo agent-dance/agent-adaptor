@@ -110,6 +110,7 @@ func TestSyncClaudeSkillsRepairsManagedTargetWhenSourcePathChanges(t *testing.T)
 		},
 	}
 	snapshot, err := syncClaudeSkills(
+		context.Background(),
 		payload,
 		[]string{"team/analysis"},
 		nil,

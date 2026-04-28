@@ -1,19 +1,15 @@
 package mcpruntime
 
 import (
+	"context"
 	"fmt"
-	"path/filepath"
 
 	agentadaptor "github.com/agent-dance/agent-adaptor"
 )
 
 func SyncCursorProfile(cursorHome string, kind ProfileKind, payload agentadaptor.MCPPayload) error {
-	path := filepath.Join(cursorHome, "mcp.json")
-	root, err := readJSONObject(path)
-	if err != nil {
-		return fmt.Errorf("read Cursor MCP config: %w", err)
-	}
-	return syncJSONServers(path, root, "mcpServers", kind, payload.Servers, cursorServerConfig)
+	_, err := SyncResource(context.Background(), "cursor", cursorHome, kind, payload)
+	return err
 }
 
 func cursorServerConfig(server agentadaptor.MCPServerSpec) (map[string]any, error) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 
 	agentadaptor "github.com/agent-dance/agent-adaptor"
@@ -31,6 +32,30 @@ type Subject struct {
 	Selected              []string
 	RequiredConfigFields  []string
 	ExpectedDetectedModel string
+
+	ProfileResources         agentadaptor.ProfileResources
+	ExpectedProfileResources []ExpectedProfileResource
+	ProfileResourceCases     []ProfileResourceCase
+}
+
+type ExpectedProfileResource struct {
+	Kind            agentadaptor.ProfileResourceKind
+	Managed         []string
+	External        []string
+	Support         agentadaptor.ProfileResourceSupport
+	Materialization agentadaptor.ProfileResourceMaterialization
+	Warnings        []string
+	ErrorContains   string
+}
+
+type ProfileResourceCase struct {
+	Name string
+
+	ProfileResources agentadaptor.ProfileResources
+
+	ExpectedSnapshotResources []ExpectedProfileResource
+	ExpectedSyncResources     []ExpectedProfileResource
+	ExpectedSyncErrorContains string
 }
 
 // Run executes the reusable adapter conformance checks for the supplied
@@ -64,6 +89,7 @@ func Run(t *testing.T, subject Subject) {
 	checkProfile(t, subject, descriptor)
 	checkQuota(t, subject, descriptor)
 	checkSkills(t, subject, descriptor)
+	checkProfileResources(t, subject)
 	checkSessionCodec(t, subject, descriptor)
 }
 
@@ -302,6 +328,110 @@ func checkSkills(t *testing.T, subject Subject, descriptor agentadaptor.DriverDe
 	if len(listedResolved) != len(synced.Resolved) {
 		t.Fatalf("%s: sync skills resolved length mismatch, want %d got %d", subject.Name, len(listedResolved), len(synced.Resolved))
 	}
+}
+
+func checkProfileResources(t *testing.T, subject Subject) {
+	t.Helper()
+
+	if len(subject.ExpectedProfileResources) == 0 && len(subject.ProfileResourceCases) == 0 {
+		return
+	}
+	cases := make([]ProfileResourceCase, 0, len(subject.ProfileResourceCases)+1)
+	if len(subject.ExpectedProfileResources) > 0 {
+		cases = append(cases, ProfileResourceCase{
+			Name:                  "default",
+			ProfileResources:      subject.ProfileResources,
+			ExpectedSyncResources: subject.ExpectedProfileResources,
+		})
+	}
+	cases = append(cases, subject.ProfileResourceCases...)
+	for _, tc := range cases {
+		tc := tc
+		t.Run("profile_resources/"+tc.Name, func(t *testing.T) {
+			binding := agentadaptor.Bind(subject.Adapter, subject.Config, agentadaptor.WithDefaultProfileResources(tc.ProfileResources))
+			sdk := agentadaptor.New(agentadaptor.WithDefaultAgent(binding))
+			if len(tc.ExpectedSnapshotResources) > 0 {
+				snapshot, err := sdk.Admin().Default().ProfileSnapshot(context.Background())
+				if err != nil {
+					t.Fatalf("%s: snapshot profile resources: %v", subject.Name, err)
+				}
+				assertProfileSnapshot(t, subject, snapshot, tc.ExpectedSnapshotResources)
+			}
+			snapshot, err := sdk.Admin().Default().SyncProfile(context.Background())
+			if tc.ExpectedSyncErrorContains != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.ExpectedSyncErrorContains) {
+					t.Fatalf("%s: expected sync profile resources error containing %q, got %v", subject.Name, tc.ExpectedSyncErrorContains, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("%s: sync profile resources: %v", subject.Name, err)
+			}
+			assertProfileSnapshot(t, subject, snapshot, tc.ExpectedSyncResources)
+		})
+	}
+}
+
+func profileResource(snapshot agentadaptor.ProfileSnapshot, kind agentadaptor.ProfileResourceKind) (agentadaptor.ResourceSnapshot, bool) {
+	for _, resource := range snapshot.Resources {
+		if resource.Kind == kind {
+			return resource, true
+		}
+	}
+	return agentadaptor.ResourceSnapshot{}, false
+}
+
+func assertProfileSnapshot(t *testing.T, subject Subject, snapshot agentadaptor.ProfileSnapshot, expectedResources []ExpectedProfileResource) {
+	t.Helper()
+
+	if snapshot.DriverType != subject.Adapter.Descriptor().Type {
+		t.Fatalf("%s: unexpected profile resource driver type %q", subject.Name, snapshot.DriverType)
+	}
+	for _, expected := range expectedResources {
+		resource, ok := profileResource(snapshot, expected.Kind)
+		if !ok {
+			t.Fatalf("%s: missing profile resource %q in %#v", subject.Name, expected.Kind, snapshot.Resources)
+		}
+		assertExpectedProfileResource(t, subject, resource, expected)
+	}
+}
+
+func assertExpectedProfileResource(t *testing.T, subject Subject, resource agentadaptor.ResourceSnapshot, expected ExpectedProfileResource) {
+	t.Helper()
+
+	if expected.Support != "" && resource.Support != expected.Support {
+		t.Fatalf("%s: profile resource %q support mismatch, want %q got %#v", subject.Name, expected.Kind, expected.Support, resource)
+	}
+	if expected.Materialization != "" && resource.Materialization != expected.Materialization {
+		t.Fatalf("%s: profile resource %q materialization mismatch, want %q got %#v", subject.Name, expected.Kind, expected.Materialization, resource)
+	}
+	for _, key := range expected.Managed {
+		if !slices.Contains(resource.Managed, key) {
+			t.Fatalf("%s: profile resource %q missing managed key %q in %#v", subject.Name, expected.Kind, key, resource)
+		}
+	}
+	for _, key := range expected.External {
+		if !slices.Contains(resource.External, key) {
+			t.Fatalf("%s: profile resource %q missing external key %q in %#v", subject.Name, expected.Kind, key, resource)
+		}
+	}
+	for _, warning := range expected.Warnings {
+		if !sliceContainsSubstring(resource.Warnings, warning) {
+			t.Fatalf("%s: profile resource %q missing warning containing %q in %#v", subject.Name, expected.Kind, warning, resource)
+		}
+	}
+	if expected.ErrorContains != "" && !strings.Contains(resource.Error, expected.ErrorContains) {
+		t.Fatalf("%s: profile resource %q error mismatch, want substring %q got %#v", subject.Name, expected.Kind, expected.ErrorContains, resource)
+	}
+}
+
+func sliceContainsSubstring(values []string, want string) bool {
+	for _, value := range values {
+		if strings.Contains(value, want) {
+			return true
+		}
+	}
+	return false
 }
 
 // resolvedFromPayload synthesises a plausible resolved catalogue for

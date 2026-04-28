@@ -12,6 +12,7 @@ import (
 	"time"
 
 	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/internal/processx"
 )
 
 // Options bundles the driver-provided inputs for a single run of the codex
@@ -67,6 +68,7 @@ func Run(ctx context.Context, opts Options, sink agentadaptor.EventSink) (agenta
 	args := append([]string{"app-server", "--listen", "stdio://"}, opts.ExtraArgs...)
 
 	cmd := exec.CommandContext(ctx, command, args...)
+	processx.ConfigureCancellation(cmd)
 	if opts.CWD != "" {
 		cmd.Dir = opts.CWD
 	}

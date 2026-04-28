@@ -1,15 +1,17 @@
 package mcpruntime
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/internal/profilestate"
 )
 
-func TestSyncClaudeProfileDedicatedReplacesMCPServersAndInterpolatesBearerEnv(t *testing.T) {
+func TestSyncClaudeProfileDedicatedPreservesExternalServersAndInterpolatesBearerEnv(t *testing.T) {
 	configDir := t.TempDir()
 	path := filepath.Join(configDir, ".claude.json")
 	if err := os.WriteFile(path, []byte(`{
@@ -45,8 +47,8 @@ func TestSyncClaudeProfileDedicatedReplacesMCPServersAndInterpolatesBearerEnv(t 
 		t.Fatalf("read claude config: %v", err)
 	}
 	text := string(raw)
-	if strings.Contains(text, `"old"`) {
-		t.Fatalf("expected dedicated Claude sync to prune stale server, got:\n%s", text)
+	if !strings.Contains(text, `"old"`) {
+		t.Fatalf("expected dedicated Claude sync to preserve external server, got:\n%s", text)
 	}
 	for _, want := range []string{
 		`"firstStartTime": "2026-04-23T13:03:25.725Z"`,
@@ -68,7 +70,8 @@ func TestSyncClaudeProfileSharedPreservesExistingServers(t *testing.T) {
 		t.Fatalf("write claude config: %v", err)
 	}
 
-	if err := SyncClaudeProfile(configDir, ProfileKindShared, agentadaptor.MCPPayload{
+	snapshot, err := SyncResource(context.Background(), "claude", configDir, ProfileKindShared, agentadaptor.MCPPayload{
+		Fingerprint: "mcp-fp",
 		Servers: []agentadaptor.MCPServerSpec{
 			{
 				Key:       "stdio-demo",
@@ -76,8 +79,12 @@ func TestSyncClaudeProfileSharedPreservesExistingServers(t *testing.T) {
 				Command:   "npx",
 			},
 		},
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("sync shared claude profile: %v", err)
+	}
+	if !sameStrings(snapshot.Managed, []string{"stdio-demo"}) || !sameStrings(snapshot.External, []string{"old"}) {
+		t.Fatalf("unexpected shared snapshot: %#v", snapshot)
 	}
 
 	raw, err := os.ReadFile(path)
@@ -87,5 +94,13 @@ func TestSyncClaudeProfileSharedPreservesExistingServers(t *testing.T) {
 	text := string(raw)
 	if !strings.Contains(text, `"old"`) || !strings.Contains(text, `"stdio-demo"`) {
 		t.Fatalf("expected shared Claude sync to preserve old server and add new one, got:\n%s", text)
+	}
+	manifest, err := profilestate.LoadManifest(configDir)
+	if err != nil {
+		t.Fatalf("load manifest: %v", err)
+	}
+	entry, ok := manifest.Entry(resourceKind, "stdio-demo")
+	if !ok || filepath.Clean(entry.Path) != filepath.Clean(path) {
+		t.Fatalf("expected manifest entry for stdio-demo, got %#v", manifest.KindEntries(resourceKind))
 	}
 }

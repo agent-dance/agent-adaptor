@@ -60,7 +60,7 @@ func resolveCursorProfileWithOptions(config agentadaptor.CommonConfig, selection
 		SettingsFiles:    []string{"config.json", "settings.json"},
 		MCPFiles:         []string{"mcp.json"},
 		SkillsDirs:       []string{"skills"},
-		AuthFiles:        []string{"auth.json", "credentials.json"},
+		AuthFiles:        []string{"cli-config.json", "auth.json", "credentials.json"},
 		SkipInitialize:   skipInitialize,
 	})
 	if err != nil {

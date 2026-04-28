@@ -72,7 +72,7 @@ func ResolveProfile(opts ProfileResolveOptions) (ProfileResolution, error) {
 				if selection.Clone != nil {
 					cloneOpts = *selection.Clone
 				}
-				if err := cloneProfileIfMissing(from, dir, opts, cloneOpts); err != nil {
+				if err := reconcileCloneProfile(from, dir, opts, cloneOpts); err != nil {
 					return ProfileResolution{}, err
 				}
 			}
@@ -142,39 +142,55 @@ func ensureDedicatedProfile(dir string, subdirs []string) error {
 	return nil
 }
 
-func cloneProfileIfMissing(source, target string, opts ProfileResolveOptions, cloneOpts agentadaptor.CloneProfileOptions) error {
-	if _, err := os.Stat(target); err == nil {
-		return ensureDedicatedProfile(target, opts.DedicatedSubdirs)
-	} else if !os.IsNotExist(err) {
+func reconcileCloneProfile(source, target string, opts ProfileResolveOptions, cloneOpts agentadaptor.CloneProfileOptions) error {
+	if _, err := os.Stat(target); err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	if err := ensureDedicatedProfile(target, opts.DedicatedSubdirs); err != nil {
 		return err
 	}
 	if cloneOpts.IncludeSettings {
-		if err := copyNamedEntries(source, target, opts.SettingsFiles); err != nil {
+		if err := copyNamedEntriesIfMissing(source, target, opts.SettingsFiles); err != nil {
 			return err
 		}
 	}
 	if cloneOpts.IncludeMCP {
-		if err := copyNamedEntries(source, target, opts.MCPFiles); err != nil {
+		if err := copyNamedEntriesIfMissing(source, target, opts.MCPFiles); err != nil {
 			return err
 		}
 	}
 	if cloneOpts.IncludeSkills {
-		if err := copyNamedEntries(source, target, opts.SkillsDirs); err != nil {
+		if err := copyNamedEntriesIfMissing(source, target, opts.SkillsDirs); err != nil {
 			return err
 		}
 	}
-	if cloneOpts.IncludeAuth {
-		if err := copyNamedEntries(source, target, opts.AuthFiles); err != nil {
+	switch cloneAuthMode(cloneOpts) {
+	case agentadaptor.CloneProfileAuthNone:
+	case agentadaptor.CloneProfileAuthCopy:
+		if err := copyNamedEntriesIfMissing(source, target, opts.AuthFiles); err != nil {
 			return err
 		}
+	case agentadaptor.CloneProfileAuthLink:
+		if err := linkNamedEntries(source, target, opts.AuthFiles); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("unsupported clone auth mode %q", cloneOpts.AuthMode)
 	}
 	return nil
 }
 
-func copyNamedEntries(sourceRoot, targetRoot string, names []string) error {
+func cloneAuthMode(opts agentadaptor.CloneProfileOptions) agentadaptor.CloneProfileAuthMode {
+	if opts.AuthMode != "" {
+		return opts.AuthMode
+	}
+	if opts.IncludeAuth {
+		return agentadaptor.CloneProfileAuthCopy
+	}
+	return agentadaptor.CloneProfileAuthNone
+}
+
+func copyNamedEntriesIfMissing(sourceRoot, targetRoot string, names []string) error {
 	for _, name := range names {
 		if strings.TrimSpace(name) == "" {
 			continue
@@ -186,14 +202,14 @@ func copyNamedEntries(sourceRoot, targetRoot string, names []string) error {
 			}
 			return err
 		}
-		if err := copyPath(source, filepath.Join(targetRoot, name)); err != nil {
+		if err := copyPathIfMissing(source, filepath.Join(targetRoot, name)); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func copyPath(source, target string) error {
+func copyPathIfMissing(source, target string) error {
 	info, err := os.Stat(source)
 	if err != nil {
 		return err
@@ -207,11 +223,16 @@ func copyPath(source, target string) error {
 			return err
 		}
 		for _, entry := range entries {
-			if err := copyPath(filepath.Join(source, entry.Name()), filepath.Join(target, entry.Name())); err != nil {
+			if err := copyPathIfMissing(filepath.Join(source, entry.Name()), filepath.Join(target, entry.Name())); err != nil {
 				return err
 			}
 		}
 		return nil
+	}
+	if _, err := os.Lstat(target); err == nil {
+		return nil
+	} else if !os.IsNotExist(err) {
+		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return err
@@ -221,4 +242,67 @@ func copyPath(source, target string) error {
 		return err
 	}
 	return os.WriteFile(target, data, info.Mode().Perm())
+}
+
+func linkNamedEntries(sourceRoot, targetRoot string, names []string) error {
+	for _, name := range names {
+		if strings.TrimSpace(name) == "" {
+			continue
+		}
+		source := filepath.Join(sourceRoot, name)
+		info, err := os.Stat(source)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return err
+		}
+		if info.IsDir() {
+			return fmt.Errorf("clone auth link requires file auth entry %q", source)
+		}
+		if err := ensureSharedFileLink(source, filepath.Join(targetRoot, name)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func ensureSharedFileLink(source, target string) error {
+	source = filepath.Clean(source)
+	target = filepath.Clean(target)
+	if sameFile(source, target) {
+		return nil
+	}
+
+	info, err := os.Lstat(target)
+	if err == nil {
+		if info.IsDir() {
+			return fmt.Errorf("auth target %q is a directory", target)
+		}
+		if err := os.Remove(target); err != nil {
+			return err
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		return err
+	}
+	if err := os.Symlink(source, target); err == nil {
+		return nil
+	} else {
+		symlinkErr := err
+		if err := os.Link(source, target); err == nil {
+			return nil
+		} else {
+			return fmt.Errorf("share auth file %q with %q: symlink failed: %v; hardlink failed: %w", source, target, symlinkErr, err)
+		}
+	}
+}
+
+func sameFile(left, right string) bool {
+	leftInfo, leftErr := os.Stat(left)
+	rightInfo, rightErr := os.Stat(right)
+	return leftErr == nil && rightErr == nil && os.SameFile(leftInfo, rightInfo)
 }

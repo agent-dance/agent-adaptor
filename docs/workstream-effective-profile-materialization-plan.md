@@ -1,6 +1,8 @@
 # Workstream: Effective Profile Materialization Plan
 
 > 状态：负责人计划。本文不局限于 skills，也不局限于宿主原提案；它重新定义 SDK 如何管理 Claude / Codex / Cursor 的 effective profile 中的 MCP、skills、agents、hooks、instructions、provider config 等资源。由于 SDK 尚未正式对外发布，本文允许必要的内部 breaking changes；但 profile 公共入口保持现有 API，不做重命名。
+>
+> agents / hooks / instructions / config 四类资源的细化落地计划见 [`workstream-profile-resources-agents-hooks-instructions-config.md`](./workstream-profile-resources-agents-hooks-instructions-config.md)。
 
 ## 1. 目标
 
@@ -225,6 +227,8 @@ type ProfilePayload struct {
 - config patch fingerprint
 
 ### 5.2 新资源类型
+
+本节是早期占位形状。`agents`、`hooks`、`instructions`、`config` 的目标公共能力不再按最小交集收缩，而按 maximum-capability envelope 推进：portable core、portable extended、native escape、fallback、unsupported。字段级目标 Spec 和 Codex / Claude Code / Cursor 调研结论以 [`workstream-profile-resources-agents-hooks-instructions-config.md`](./workstream-profile-resources-agents-hooks-instructions-config.md) 与 [`profile-resource-provider-matrix.md`](./profile-resource-provider-matrix.md) 为准。
 
 现有：
 
@@ -696,10 +700,10 @@ func WithProfileTakeoverApproval(handler ProfileTakeoverHandler) ProfileSyncOpti
 第一期 runtime 依赖拍板：
 
 - `github.com/pelletier/go-toml/v2`：保留并作为 direct dependency；当前代码已在 `internal/mcpruntime` 使用，后续迁移到 `internal/profilereconcile` / `internal/profilelayout/codex`。
-- `github.com/gofrs/flock`：新增 direct dependency；仅用于 `internal/profilestate` 的 profile-local exclusive lock。
 
 第一期不引入：
 
+- file-lock 第三方库：当前先用 `internal/profilestate` 的 stdlib lock-file wrapper；跨平台强 advisory lock 需要实测后再决定是否引入。
 - atomic write 第三方库：不新增。
 - JSON patch / diff 库：不新增。
 - YAML 库：不新增。
@@ -737,35 +741,24 @@ func WithProfileTakeoverApproval(handler ProfileTakeoverHandler) ProfileSyncOpti
 - 采用。
 - `go.mod` 中应从 indirect 调整为 direct require。
 
-### 15.3 `github.com/gofrs/flock`
+### 15.3 File Lock 暂不新增依赖
 
 用途：
 
-- 对 `<profile>/.agent-adaptor/lock` 做 profile-local exclusive lock。
+- 对 `<profile>/.agent-adaptor-profile.lock` 做 profile-local exclusive lock。
 - 串行化同一 profile 下的 manifest、directory resource、JSON/TOML config 写入。
 
-可靠性：
+候选调研：
 
 - profile materialization 可能由多个 SDK 实例、宿主进程、Admin sync、run 前 reconcile 并发触发；只用进程内 mutex 不够。
-- Go 标准库没有跨平台 file lock API。手写 Unix `flock` / Windows `LockFileEx` 会把平台细节带进 SDK。
-- `gofrs/flock` 提供 `Lock` / `TryLock` / `TryLockContext` / `Unlock`，并有 Unix 和 Windows 实现。
-
-可持续维护：
-
-- `gofrs/flock` 由 Gofrs 维护，项目历史清楚，release 到 `v0.13.0`，发布时间为 2025-10-09。
-- 依赖面小，主要引入 `golang.org/x/sys`；这是 Go 生态处理平台 syscall 的主流依赖。
-- 它仍是 `v0`，因此 SDK 内部必须做一层极薄 wrapper，避免未来 API 变化扩散。
-
-可局部化：
-
-- 只允许 `internal/profilestate` import。
-- 对外暴露 SDK 自己的 lock error，例如 `ErrProfileLocked` / `ErrProfileLockTimeout`，不暴露 `flock` 类型。
-- 只使用 exclusive lock，不使用 shared lock，避免跨平台 shared/exclusive 升降级语义差异。
+- Go 标准库没有跨平台 advisory file lock API。`gofrs/flock` 提供 `Lock` / `TryLock` / `TryLockContext` / `Unlock`，并有 Unix 和 Windows 实现，依赖面小。
+- 但本阶段还没有把 lock 接入所有 adapter 的 destructive reconcile 路径；先引入 runtime dependency 会超过当前落地面。
+- 当前实现采用 `os.OpenFile(... O_CREATE|O_EXCL ...)` lock file + context retry + stale lock cleanup，局部化在 `internal/profilestate`，并用 exclusivity test 覆盖。
 
 结论：
 
-- 采用。
-- 建议版本：`v0.13.0`。
+- 本阶段暂不新增。
+- 当 Phase 2+ 把 lock 接入 Codex / Claude / Cursor 的实际 profile writes 后，如果需要跨进程 advisory-lock 的更强平台语义，再按 AGENTS §2.4 重新评估 `github.com/gofrs/flock`。
 
 ### 15.4 Atomic Writer 不新增依赖
 
@@ -816,7 +809,7 @@ func WithProfileTakeoverApproval(handler ProfileTakeoverHandler) ProfileSyncOpti
 ### 15.7 实施约束
 
 - 每个新增 direct dependency 必须在 `go.mod` 中保持 direct require，不允许因为间接依赖存在就留作 `// indirect`。
-- `go mod tidy` 后若 `github.com/gofrs/flock` 带来新的 indirect 依赖，只能由 `internal/profilestate` 的 direct import 触发。
+- 若后续采用 `github.com/gofrs/flock`，`go mod tidy` 后新增 indirect 依赖只能由 `internal/profilestate` 的 direct import 触发。
 - 若后续第二期需要 diff / audit 依赖，必须另开依赖选型，不沿用本节结论。
 
 ### 15.8 调研来源

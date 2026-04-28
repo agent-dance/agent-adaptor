@@ -7,9 +7,10 @@ import (
 	"testing"
 
 	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/internal/profilestate"
 )
 
-func TestSyncCursorProfileDedicatedReplacesMCPServersButPreservesApprovalState(t *testing.T) {
+func TestSyncCursorProfileDedicatedPreservesExternalServersAndApprovalState(t *testing.T) {
 	cursorHome := t.TempDir()
 	path := filepath.Join(cursorHome, "mcp.json")
 	if err := os.WriteFile(path, []byte(`{
@@ -46,8 +47,8 @@ func TestSyncCursorProfileDedicatedReplacesMCPServersButPreservesApprovalState(t
 		t.Fatalf("read cursor config: %v", err)
 	}
 	text := string(raw)
-	if strings.Contains(text, `"old"`) {
-		t.Fatalf("expected dedicated Cursor sync to prune stale server, got:\n%s", text)
+	if !strings.Contains(text, `"old"`) {
+		t.Fatalf("expected dedicated Cursor sync to preserve external server, got:\n%s", text)
 	}
 	for _, want := range []string{
 		`"approvalState": {`,
@@ -91,4 +92,41 @@ func TestSyncCursorProfileSharedPreservesExistingServers(t *testing.T) {
 	if !strings.Contains(text, `"old"`) || !strings.Contains(text, `"remote-demo"`) {
 		t.Fatalf("expected shared Cursor sync to preserve old server and add new one, got:\n%s", text)
 	}
+}
+
+func TestSnapshotResourceReportsManagedAndExternalCursorServers(t *testing.T) {
+	cursorHome := t.TempDir()
+	path := filepath.Join(cursorHome, "mcp.json")
+	if err := os.WriteFile(path, []byte(`{"mcpServers":{"external":{"type":"stdio","command":"old"},"managed":{"type":"stdio","command":"npx"}}}`), 0o644); err != nil {
+		t.Fatalf("write cursor config: %v", err)
+	}
+	manifest := profilestate.Manifest{}
+	manifest.Set(profilestate.ManifestEntry{
+		Kind: resourceKind,
+		Key:  "managed",
+		Path: path,
+	})
+	if err := profilestate.SaveManifest(cursorHome, manifest); err != nil {
+		t.Fatalf("save manifest: %v", err)
+	}
+
+	snapshot, err := SnapshotResource("cursor", cursorHome, agentadaptor.MCPPayload{Fingerprint: "mcp-fp"}, true)
+	if err != nil {
+		t.Fatalf("snapshot resource: %v", err)
+	}
+	if !sameStrings(snapshot.Managed, []string{"managed"}) || !sameStrings(snapshot.External, []string{"external"}) {
+		t.Fatalf("unexpected snapshot: %#v", snapshot)
+	}
+}
+
+func sameStrings(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
 }
