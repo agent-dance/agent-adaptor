@@ -27,13 +27,34 @@ type EnvBinding struct {
 }
 
 // InstructionsBundleRef points at host-supplied instruction material. The SDK
-// treats it as opaque metadata; adapters decide how to inject Path/ID into the
-// provider profile or prompt.
+// treats it as desired state; adapters decide whether to materialize it as a
+// provider-native file/rule or inject it into the prompt as a fallback.
 type InstructionsBundleRef struct {
 	ID          string
 	Path        string
+	Content     string
 	Fingerprint string
+	Scope       InstructionScope
+	Mode        InstructionMode
+	Native      map[string]any
 }
+
+type InstructionScope string
+
+const (
+	InstructionScopeDefault InstructionScope = ""
+	InstructionScopeUser    InstructionScope = "user"
+	InstructionScopeProject InstructionScope = "project"
+	InstructionScopeLocal   InstructionScope = "local"
+	InstructionScopeRun     InstructionScope = "run"
+)
+
+type InstructionMode string
+
+const (
+	InstructionModeAdditive InstructionMode = ""
+	InstructionModeReplace  InstructionMode = "replace"
+)
 
 // CodexConfig configures the built-in codex adapter. CommonConfig controls
 // process/profile/workspace defaults; Model and ReasoningEffort map to Codex

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -333,8 +334,14 @@ func (r *runnerImpl) resolveInvocation(ctx context.Context, prompt string, opts 
 	}
 
 	instructions := cloneInstructions(defaults.Instructions)
-	if resolvedOpts.instructions != nil {
+	declared := profileDeclarationsFromDefaults(defaults)
+	if resolvedOpts.instructionsSet {
 		instructions = cloneInstructions(resolvedOpts.instructions)
+		declared.Instructions = true
+	}
+	instructions, err = prepareInstructionsBundle(instructions)
+	if err != nil {
+		return resolvedInvocation{}, nil, err
 	}
 
 	metadata := mergeStringMaps(defaults.Metadata, resolvedOpts.metadata)
@@ -403,6 +410,7 @@ func (r *runnerImpl) resolveInvocation(ctx context.Context, prompt string, opts 
 		return resolvedInvocation{}, nil, err
 	}
 	if resolvedOpts.agents != nil {
+		declared.Agents = true
 		agentPayload, err = prepareAgentPayload(resolvedOpts.agents.Agents)
 		if err != nil {
 			cleanup()
@@ -415,6 +423,7 @@ func (r *runnerImpl) resolveInvocation(ctx context.Context, prompt string, opts 
 		return resolvedInvocation{}, nil, err
 	}
 	if resolvedOpts.hooks != nil {
+		declared.Hooks = true
 		hookPayload, err = prepareHookPayload(resolvedOpts.hooks.Hooks)
 		if err != nil {
 			cleanup()
@@ -427,13 +436,14 @@ func (r *runnerImpl) resolveInvocation(ctx context.Context, prompt string, opts 
 		return resolvedInvocation{}, nil, err
 	}
 	if resolvedOpts.profileConfig != nil {
+		declared.Config = true
 		configPayload, err = prepareProfileConfigPayload(resolvedOpts.profileConfig.Patches)
 		if err != nil {
 			cleanup()
 			return resolvedInvocation{}, nil, err
 		}
 	}
-	profilePayload := buildProfilePayload(skillPayload, mcpPayload, agentPayload, hookPayload, instructions, configPayload)
+	profilePayload := buildProfilePayload(skillPayload, mcpPayload, agentPayload, hookPayload, instructions, configPayload, declared)
 
 	sessionReq := SessionRequest{}
 	if resolvedOpts.session != nil {
@@ -1570,7 +1580,13 @@ func instructionFingerprint(ref *InstructionsBundleRef) string {
 	if ref.Fingerprint != "" {
 		return ref.Fingerprint
 	}
-	return stableHash(ref.ID, ref.Path)
+	content := ref.Content
+	if ref.Path != "" && content == "" {
+		if raw, err := os.ReadFile(ref.Path); err == nil {
+			content = string(raw)
+		}
+	}
+	return stableHash("instructions", ref.ID, ref.Path, content, ref.Scope, ref.Mode, ref.Native)
 }
 
 func commonConfigMetadata(cfg CommonConfig) map[string]string {

@@ -7,8 +7,8 @@ import {
 import type { NextRequest } from "next/server";
 
 // The agent-adaptor Go backend exposes a single AG-UI endpoint at /agent. We
-// register it under the name "codex" so the frontend can select it via the
-// <CopilotKit agent="codex"/> prop.
+// Register the backend under the stable frontend name "codex". The Go
+// backend still chooses the real local CLI via AGUI_AGENT.
 const runtime = new CopilotRuntime({
   agents: {
     codex: new HttpAgent({

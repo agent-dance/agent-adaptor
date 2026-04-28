@@ -39,5 +39,32 @@ func TestClaudeAdapterConformance(t *testing.T) {
 		},
 		RequiredConfigFields:  []string{"command", "cwd", "model"},
 		ExpectedDetectedModel: "claude-sonnet-4",
+		ProfileResources: agentadaptor.ProfileResources{
+			Agents: []agentadaptor.AgentSpec{{
+				Key:          "reviewer",
+				Description:  "Reviews risky changes.",
+				Instructions: "Check correctness and tests.",
+			}},
+			Hooks: []agentadaptor.HookSpec{{
+				Key:     "pre",
+				Event:   agentadaptor.HookEventPreTool,
+				Command: "true",
+			}},
+			Instructions: &agentadaptor.InstructionsBundleRef{
+				ID:      "team",
+				Content: "Prefer concise, evidence-backed answers.",
+			},
+			Config: []agentadaptor.ProfileConfigPatch{{
+				Key:        "permission",
+				Capability: "permission",
+				Values:     map[string]any{"mode": "acceptEdits"},
+			}},
+		},
+		ExpectedProfileResources: []adaptertest.ExpectedProfileResource{
+			{Kind: agentadaptor.ProfileResourceAgents, Managed: []string{"reviewer"}, Support: agentadaptor.ProfileResourceSupportPortableCore, Materialization: agentadaptor.ProfileResourceMaterializationNativeManaged},
+			{Kind: agentadaptor.ProfileResourceHooks, Managed: []string{"pre"}, Support: agentadaptor.ProfileResourceSupportPortableCore, Materialization: agentadaptor.ProfileResourceMaterializationNativeManaged},
+			{Kind: agentadaptor.ProfileResourceInstructions, Managed: []string{"team"}, Support: agentadaptor.ProfileResourceSupportPortableCore, Materialization: agentadaptor.ProfileResourceMaterializationNativeManaged},
+			{Kind: agentadaptor.ProfileResourceConfig, Managed: []string{"permission"}, Support: agentadaptor.ProfileResourceSupportPortableExtended, Materialization: agentadaptor.ProfileResourceMaterializationNativeManaged},
+		},
 	})
 }

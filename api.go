@@ -278,18 +278,19 @@ type TypedAgentBinding[T any] interface {
 // construction and when returned from AgentBinding.Defaults, so callers may
 // inspect the value without mutating live SDK state.
 type AgentDefaults struct {
-	Agent         AgentIdentity
-	Workspace     WorkspaceSpec
-	Runtime       *WorkspaceRuntimeConfig
-	RunPolicy     *RunPolicy
-	Skills        []SkillRef
-	MCP           *MCPConfig
-	Agents        []AgentSpec
-	Hooks         []HookSpec
-	ProfileConfig []ProfileConfigPatch
-	Profile       *ProfileSelection
-	Instructions  *InstructionsBundleRef
-	Metadata      map[string]string
+	Agent           AgentIdentity
+	Workspace       WorkspaceSpec
+	Runtime         *WorkspaceRuntimeConfig
+	RunPolicy       *RunPolicy
+	Skills          []SkillRef
+	MCP             *MCPConfig
+	Agents          []AgentSpec
+	Hooks           []HookSpec
+	ProfileConfig   []ProfileConfigPatch
+	Profile         *ProfileSelection
+	Instructions    *InstructionsBundleRef
+	Metadata        map[string]string
+	profileDeclared ProfileResourceDeclarations
 	// Streaming marks the binding as streaming-by-default when non-nil and
 	// true. Per-call WithStreaming / WithoutStreaming still wins. Using a
 	// pointer keeps the three states (nil / true / false) distinct so that

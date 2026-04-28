@@ -169,7 +169,7 @@ function DecisionCardFromAction(props: {
 
   // The AG-UI bridge embeds RequestID inside the ToolCallID via
   // "dec-<RequestID>". The useCopilotAction layer surfaces the tool name
-  // (e.g. "dec.plan_review.hitlmock.exit_plan_mode") but not the raw
+  // (e.g. "dec.plan_review.exit_plan_mode") but not the raw
   // ToolCallID; we accept request_id from args when present, falling back
   // to the ToolCallID extracted via CopilotKit's internal message store is
   // an overkill for the demo, so we require the backend to include

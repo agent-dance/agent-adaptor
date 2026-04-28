@@ -13,6 +13,10 @@ import (
 	"github.com/agent-dance/agent-adaptor/internal/adapterutil"
 	"github.com/agent-dance/agent-adaptor/internal/clihelper"
 	"github.com/agent-dance/agent-adaptor/internal/configprobe"
+	"github.com/agent-dance/agent-adaptor/internal/profileagents"
+	"github.com/agent-dance/agent-adaptor/internal/profileconfig"
+	"github.com/agent-dance/agent-adaptor/internal/profilehooks"
+	"github.com/agent-dance/agent-adaptor/internal/profileinstructions"
 	"github.com/agent-dance/agent-adaptor/internal/profilesnapshot"
 	"github.com/agent-dance/agent-adaptor/internal/skillruntime"
 )
@@ -56,20 +60,20 @@ func (adapter) StreamCapability() agentadaptor.StreamCapability {
 }
 
 func (adapter) Descriptor() agentadaptor.DriverDescriptor {
+	fields := []agentadaptor.ConfigField{
+		{Name: "command", Label: "Command", Type: "text", Description: "Override the Claude CLI executable.", Hint: "Defaults to `claude` when unset.", Default: "claude", Group: "command"},
+		{Name: "cwd", Label: "Working Directory", Type: "text", Description: "Default working directory when the workspace manager does not override it.", Hint: "Leave empty to let the workspace manager resolve the cwd.", Group: "command"},
+		{Name: "model", Label: "Model", Type: "select", Description: "Claude model identifier, for example claude-sonnet-4 or a Bedrock-native us.anthropic.* id.", Default: defaultClaudeModel, Options: modelOptions(claudeModels()), Group: "model"},
+		{Name: "effort", Label: "Thinking Effort", Type: "select", Description: "Optional Claude thinking effort.", Options: []agentadaptor.ConfigOption{{Value: "low", Label: "Low"}, {Value: "medium", Label: "Medium"}, {Value: "high", Label: "High"}}, Group: "model"},
+		{Name: "max_turns_per_run", Label: "Max Turns", Type: "number", Description: "Optional max-turns guard for one run.", Group: "execution"},
+		{Name: "extra_args", Label: "Extra Args", Type: "textarea", Description: "Additional CLI args appended after SDK-managed flags.", Group: "command"},
+	}
+	fields = append(fields, profileconfig.CapabilityFields(DriverType)...)
 	return agentadaptor.DriverDescriptor{
-		Type:        DriverType,
-		DisplayName: "Claude Code",
-		Models:      claudeModels(),
-		ConfigSchema: &agentadaptor.ConfigSchema{
-			Fields: []agentadaptor.ConfigField{
-				{Name: "command", Label: "Command", Type: "text", Description: "Override the Claude CLI executable.", Hint: "Defaults to `claude` when unset.", Default: "claude", Group: "command"},
-				{Name: "cwd", Label: "Working Directory", Type: "text", Description: "Default working directory when the workspace manager does not override it.", Hint: "Leave empty to let the workspace manager resolve the cwd.", Group: "command"},
-				{Name: "model", Label: "Model", Type: "select", Description: "Claude model identifier, for example claude-sonnet-4 or a Bedrock-native us.anthropic.* id.", Default: defaultClaudeModel, Options: modelOptions(claudeModels()), Group: "model"},
-				{Name: "effort", Label: "Thinking Effort", Type: "select", Description: "Optional Claude thinking effort.", Options: []agentadaptor.ConfigOption{{Value: "low", Label: "Low"}, {Value: "medium", Label: "Medium"}, {Value: "high", Label: "High"}}, Group: "model"},
-				{Name: "max_turns_per_run", Label: "Max Turns", Type: "number", Description: "Optional max-turns guard for one run.", Group: "execution"},
-				{Name: "extra_args", Label: "Extra Args", Type: "textarea", Description: "Additional CLI args appended after SDK-managed flags.", Group: "command"},
-			},
-		},
+		Type:         DriverType,
+		DisplayName:  "Claude Code",
+		Models:       claudeModels(),
+		ConfigSchema: &agentadaptor.ConfigSchema{Fields: fields},
 		Sessions:     agentadaptor.SessionCapability{SupportsResume: true},
 		Skills:       agentadaptor.SkillCapability{Supported: true, Mode: agentadaptor.SkillSyncPersistent},
 		MCP:          agentadaptor.MCPCapability{Supported: true, Stdio: true, HTTP: true, SSE: true},
@@ -249,10 +253,23 @@ func (adapter) SnapshotProfileResources(_ context.Context, cfg any, _ agentadapt
 		return agentadaptor.ProfileSnapshot{}, err
 	}
 	effectiveProfile, kind := claudeProfileAndKind(config.CommonConfig, profile)
-	return profilesnapshot.Build(DriverType, effectiveProfile, kind, payload, skills, false), nil
+	snapshot := profilesnapshot.Build(DriverType, effectiveProfile, kind, payload, skills, false)
+	if payload.Declared.Config {
+		snapshot = profileconfig.WithSnapshotResource(snapshot, profileconfig.Snapshot(DriverType, effectiveProfile.Dir, payload.Config, false))
+	}
+	if payload.Declared.Instructions {
+		snapshot = profileconfig.WithSnapshotResource(snapshot, profileinstructions.Snapshot(DriverType, effectiveProfile.Dir, payload.Instructions, false))
+	}
+	if payload.Declared.Agents {
+		snapshot = profileconfig.WithSnapshotResource(snapshot, profileagents.Snapshot(DriverType, effectiveProfile.Dir, payload.Agents, false))
+	}
+	if payload.Declared.Hooks {
+		snapshot = profileconfig.WithSnapshotResource(snapshot, profilehooks.Snapshot(DriverType, effectiveProfile.Dir, payload.Hooks, false))
+	}
+	return snapshot, nil
 }
 
-func (adapter) SyncProfileResources(_ context.Context, cfg any, _ agentadaptor.AgentIdentity, profile *agentadaptor.ProfileSelection, payload agentadaptor.ProfilePayload, selected []string, resolved []agentadaptor.Skill) (agentadaptor.ProfileSnapshot, error) {
+func (adapter) SyncProfileResources(ctx context.Context, cfg any, _ agentadaptor.AgentIdentity, profile *agentadaptor.ProfileSelection, payload agentadaptor.ProfilePayload, selected []string, resolved []agentadaptor.Skill) (agentadaptor.ProfileSnapshot, error) {
 	config := readConfig(cfg)
 	bindings, err := effectiveClaudeBindings(config.CommonConfig, profile)
 	if err != nil {
@@ -266,7 +283,36 @@ func (adapter) SyncProfileResources(_ context.Context, cfg any, _ agentadaptor.A
 	if err := syncClaudeMCPProfile(config.CommonConfig, profile, payload.MCP); err != nil {
 		return agentadaptor.ProfileSnapshot{}, err
 	}
-	return profilesnapshot.Build(DriverType, effectiveProfile, kind, payload, skills, true), nil
+	snapshot := profilesnapshot.Build(DriverType, effectiveProfile, kind, payload, skills, true)
+	if payload.Declared.Config {
+		configSnapshot, err := profileconfig.SyncNativePatches(ctx, DriverType, effectiveProfile.Dir, payload.Config)
+		if err != nil {
+			return agentadaptor.ProfileSnapshot{}, err
+		}
+		snapshot = profileconfig.WithSnapshotResource(snapshot, configSnapshot)
+	}
+	if payload.Declared.Instructions {
+		instructionsSnapshot, _, err := profileinstructions.Sync(ctx, DriverType, effectiveProfile.Dir, payload.Instructions)
+		if err != nil {
+			return agentadaptor.ProfileSnapshot{}, err
+		}
+		snapshot = profileconfig.WithSnapshotResource(snapshot, instructionsSnapshot)
+	}
+	if payload.Declared.Agents {
+		agentsSnapshot, err := profileagents.Sync(ctx, DriverType, effectiveProfile.Dir, payload.Agents)
+		if err != nil {
+			return agentadaptor.ProfileSnapshot{}, err
+		}
+		snapshot = profileconfig.WithSnapshotResource(snapshot, agentsSnapshot)
+	}
+	if payload.Declared.Hooks {
+		hooksSnapshot, err := profilehooks.Sync(ctx, DriverType, effectiveProfile.Dir, payload.Hooks)
+		if err != nil {
+			return agentadaptor.ProfileSnapshot{}, err
+		}
+		snapshot = profileconfig.WithSnapshotResource(snapshot, hooksSnapshot)
+	}
+	return snapshot, nil
 }
 
 func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink agentadaptor.EventSink) (agentadaptor.DriverRunResult, error) {
@@ -296,6 +342,29 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 	if err := syncClaudeMCPProfile(cfg.CommonConfig, req.Profile, req.MCP); err != nil {
 		return agentadaptor.DriverRunResult{}, err
 	}
+	effectiveProfile, _ := claudeProfileAndKind(cfg.CommonConfig, req.Profile)
+	if req.ProfilePayload.Declared.Config {
+		if _, err := profileconfig.SyncNativePatches(ctx, DriverType, effectiveProfile.Dir, req.ProfilePayload.Config); err != nil {
+			return agentadaptor.DriverRunResult{}, err
+		}
+	}
+	var preparedInstructions profileinstructions.Prepared
+	if req.ProfilePayload.Declared.Instructions {
+		preparedInstructions, err = profileinstructions.PrepareForRun(ctx, DriverType, effectiveProfile.Dir, effectiveCWD, req.Instructions)
+		if err != nil {
+			return agentadaptor.DriverRunResult{}, err
+		}
+	}
+	if req.ProfilePayload.Declared.Agents {
+		if _, err := profileagents.Sync(ctx, DriverType, effectiveProfile.Dir, req.ProfilePayload.Agents); err != nil {
+			return agentadaptor.DriverRunResult{}, err
+		}
+	}
+	if req.ProfilePayload.Declared.Hooks {
+		if _, err := profilehooks.Sync(ctx, DriverType, effectiveProfile.Dir, req.ProfilePayload.Hooks); err != nil {
+			return agentadaptor.DriverRunResult{}, err
+		}
+	}
 	effectiveEnv, err := adapterutil.RuntimeEnvBindings(bindings, req.Runtime)
 	if err != nil {
 		return agentadaptor.DriverRunResult{}, err
@@ -322,8 +391,8 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 	if runtimePrefix := adapterutil.RuntimePromptPrefix(req.Runtime); runtimePrefix != "" {
 		rawPrompt = runtimePrefix + "\n\n" + rawPrompt
 	}
-	if req.Instructions != nil && req.Instructions.Path != "" {
-		rawPrompt = "Instructions bundle: " + req.Instructions.Path + "\n\n" + rawPrompt
+	if prefix := profileinstructions.PromptPrefix(preparedInstructions, profileinstructions.Mode(req.Instructions)); prefix != "" {
+		rawPrompt = prefix + "\n\n" + rawPrompt
 	}
 
 	parser := newClaudeParser(sink)

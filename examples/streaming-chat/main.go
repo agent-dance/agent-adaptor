@@ -3,52 +3,49 @@
 //
 // Usage:
 //
-//	go run ./examples/streaming-chat "Write a haiku about streaming"
+//	go run ./examples/streaming-chat -agent=claude -prompt="Write a haiku about streaming"
 //
-// The example requires a local `codex` CLI in PATH and existing
-// authentication (run `codex login` once up front).
+// The example requires the selected local CLI in PATH and existing
+// authentication.
 package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	agentadaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/codex"
+	"github.com/agent-dance/agent-adaptor/examples/internal/exampleutil"
 	"github.com/agent-dance/agent-adaptor/memory"
 )
 
 func main() {
-	prompt := "Write a haiku about streaming text. Reply with only the haiku."
-	if len(os.Args) > 1 {
-		prompt = os.Args[1]
-	}
+	agent := flag.String("agent", "", "Local CLI agent to use: "+exampleutil.SupportedAgents()+" (default codex, or AGENT_ADAPTOR_EXAMPLE_AGENT)")
+	model := flag.String("model", "", "Model to use. Defaults by agent or CODEX_MODEL/CLAUDE_MODEL/CURSOR_MODEL.")
+	command := flag.String("command", "", "Optional explicit local CLI command. Defaults by agent or CODEX_COMMAND/CLAUDE_COMMAND/CURSOR_COMMAND/PATH.")
+	prompt := flag.String("prompt", "Write a haiku about streaming text. Reply with only the haiku.", "Prompt to stream")
+	timeout := flag.Duration("timeout", 5*time.Minute, "Maximum time to wait for the run")
+	flag.Parse()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	ctx, cancel := context.WithTimeout(ctx, *timeout)
+	defer cancel()
 
+	agentCfg := exampleutil.ResolveLiveAgentConfig(*agent, *model, *command, mustCwd())
 	sdk := agentadaptor.New(
-		agentadaptor.WithDefaultAgent(codex.New(agentadaptor.CodexConfig{
-			CommonConfig: agentadaptor.CommonConfig{CWD: mustCwd()},
-			Model:        "gpt-5.4",
-		})),
+		agentadaptor.WithDefaultAgent(exampleutil.NewLiveAgentBinding(agentCfg)),
 		agentadaptor.WithSessionStore(memory.NewSessionStore()),
 	)
 
-	handle, err := sdk.Start(ctx, prompt,
+	handle, err := sdk.Start(ctx, *prompt,
 		agentadaptor.WithStreaming(),
 		agentadaptor.WithSessionKey("examples", "streaming-chat"),
-		agentadaptor.WithRunPolicy(agentadaptor.RunPolicy{
-			Isolation: agentadaptor.IsolationReadOnly,
-			HumanDecision: agentadaptor.HumanDecisionPolicy{
-				Permission: agentadaptor.HumanDecisionAutoApprove,
-				PlanReview: agentadaptor.HumanDecisionAutoApprove,
-				Question:   agentadaptor.QuestionAutoReject,
-			},
-		}),
+		exampleutil.NonInteractiveRunOption(agentadaptor.IsolationReadOnly),
 	)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "start:", err)

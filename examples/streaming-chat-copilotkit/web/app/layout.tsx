@@ -4,7 +4,7 @@ import "@copilotkit/react-ui/styles.css";
 
 export const metadata = {
   title: "agent-adaptor × CopilotKit",
-  description: "Streaming chat demo over AG-UI (codex backend).",
+  description: "Streaming chat demo over AG-UI (local CLI backend).",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

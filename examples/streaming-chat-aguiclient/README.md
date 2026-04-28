@@ -20,7 +20,7 @@ Browser (React + @ag-ui/client HttpAgent)
     ▼
 Go backend (agent-adaptor + pkg/bridges/sse)
     │
-    │  codex app-server (默认) 或 Claude Code CLI（见下文 AGUI_AGENT）
+    │  本机 codex / claude / cursor CLI（见下文 AGUI_AGENT）
     ▼
 本地 agent 子进程（token-level stream）
 ```
@@ -37,7 +37,7 @@ Go backend (agent-adaptor + pkg/bridges/sse)
 
 - Go 1.23+
 - Node.js 20+ 与 npm / pnpm
-- 任选其一：**Codex**（`codex login`）或 **Claude Code**（`claude auth login` / 官方登录方式）
+- 任选其一：**Codex**、**Claude Code**、**Cursor Agent** 本机 CLI，且已登录
 
 ## 跑起来
 
@@ -50,9 +50,13 @@ Go backend (agent-adaptor + pkg/bridges/sse)
 # 使用 Claude Code 作为后端
 ./examples/streaming-chat-aguiclient/start.sh claude
 
+# 使用 Cursor Agent 作为后端
+./examples/streaming-chat-aguiclient/start.sh cursor
+
 # 同一终端：backend + Vite（后台起 Go，前台 npm dev）
 ./examples/streaming-chat-aguiclient/start-all.sh
 ./examples/streaming-chat-aguiclient/start-all.sh claude
+./examples/streaming-chat-aguiclient/start-all.sh cursor
 ```
 
 ### 手动（两终端）
@@ -67,7 +71,7 @@ npm install
 npm run dev
 ```
 
-后端驱动由环境变量 **`AGUI_AGENT`** 控制：`codex`（默认）或 `claude`。脚本首参 `codex` / `claude` 会写入该变量。
+后端驱动由环境变量 **`AGUI_AGENT`** 控制：`codex`（默认）、`claude` 或 `cursor`。脚本首参 `codex` / `claude` / `cursor` 会写入该变量。
 
 浏览器打开 http://localhost:5173 ，发消息即可看到：
 
@@ -118,10 +122,13 @@ await agent.runAgent();
 
 Backend：
 
-- `AGUI_AGENT`：`codex`（默认）或 `claude`
+- `AGUI_AGENT`：`codex`（默认）、`claude` 或 `cursor`
+- `AGUI_MODEL`：覆盖 AG-UI 后端模型
 - `ADDR`：监听地址，默认 `:8090`
 - `CODEX_MODEL`：选用 codex 时，默认 `gpt-5.4`
 - `CLAUDE_MODEL`：选用 claude 时，默认 `claude-sonnet-4`
+- `CURSOR_MODEL`：选用 cursor 时，默认 `gpt-5`
+- `CODEX_COMMAND` / `CLAUDE_COMMAND` / `CURSOR_COMMAND`：覆盖本机 CLI 命令
 - `CORS_ORIGIN`：允许的前端 origin，默认 `http://localhost:5173`
 
 前端：

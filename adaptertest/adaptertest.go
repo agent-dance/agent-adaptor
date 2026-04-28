@@ -31,6 +31,16 @@ type Subject struct {
 	Selected              []string
 	RequiredConfigFields  []string
 	ExpectedDetectedModel string
+
+	ProfileResources         agentadaptor.ProfileResources
+	ExpectedProfileResources []ExpectedProfileResource
+}
+
+type ExpectedProfileResource struct {
+	Kind            agentadaptor.ProfileResourceKind
+	Managed         []string
+	Support         agentadaptor.ProfileResourceSupport
+	Materialization agentadaptor.ProfileResourceMaterialization
 }
 
 // Run executes the reusable adapter conformance checks for the supplied
@@ -64,6 +74,7 @@ func Run(t *testing.T, subject Subject) {
 	checkProfile(t, subject, descriptor)
 	checkQuota(t, subject, descriptor)
 	checkSkills(t, subject, descriptor)
+	checkProfileResources(t, subject)
 	checkSessionCodec(t, subject, descriptor)
 }
 
@@ -302,6 +313,49 @@ func checkSkills(t *testing.T, subject Subject, descriptor agentadaptor.DriverDe
 	if len(listedResolved) != len(synced.Resolved) {
 		t.Fatalf("%s: sync skills resolved length mismatch, want %d got %d", subject.Name, len(listedResolved), len(synced.Resolved))
 	}
+}
+
+func checkProfileResources(t *testing.T, subject Subject) {
+	t.Helper()
+
+	if len(subject.ExpectedProfileResources) == 0 {
+		return
+	}
+	binding := agentadaptor.Bind(subject.Adapter, subject.Config, agentadaptor.WithDefaultProfileResources(subject.ProfileResources))
+	sdk := agentadaptor.New(agentadaptor.WithDefaultAgent(binding))
+	snapshot, err := sdk.Admin().Default().SyncProfile(context.Background())
+	if err != nil {
+		t.Fatalf("%s: sync profile resources: %v", subject.Name, err)
+	}
+	if snapshot.DriverType != subject.Adapter.Descriptor().Type {
+		t.Fatalf("%s: unexpected profile resource driver type %q", subject.Name, snapshot.DriverType)
+	}
+	for _, expected := range subject.ExpectedProfileResources {
+		resource, ok := profileResource(snapshot, expected.Kind)
+		if !ok {
+			t.Fatalf("%s: missing profile resource %q in %#v", subject.Name, expected.Kind, snapshot.Resources)
+		}
+		if expected.Support != "" && resource.Support != expected.Support {
+			t.Fatalf("%s: profile resource %q support mismatch, want %q got %#v", subject.Name, expected.Kind, expected.Support, resource)
+		}
+		if expected.Materialization != "" && resource.Materialization != expected.Materialization {
+			t.Fatalf("%s: profile resource %q materialization mismatch, want %q got %#v", subject.Name, expected.Kind, expected.Materialization, resource)
+		}
+		for _, key := range expected.Managed {
+			if !slices.Contains(resource.Managed, key) {
+				t.Fatalf("%s: profile resource %q missing managed key %q in %#v", subject.Name, expected.Kind, key, resource)
+			}
+		}
+	}
+}
+
+func profileResource(snapshot agentadaptor.ProfileSnapshot, kind agentadaptor.ProfileResourceKind) (agentadaptor.ResourceSnapshot, bool) {
+	for _, resource := range snapshot.Resources {
+		if resource.Kind == kind {
+			return resource, true
+		}
+	}
+	return agentadaptor.ResourceSnapshot{}, false
 }
 
 // resolvedFromPayload synthesises a plausible resolved catalogue for

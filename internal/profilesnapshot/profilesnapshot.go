@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 
@@ -31,9 +32,11 @@ func Build(driverType string, profile agentadaptor.AgentProfile, kind agentadapt
 
 func skillResource(fingerprint string, snapshot agentadaptor.SkillSnapshot) agentadaptor.ResourceSnapshot {
 	out := agentadaptor.ResourceSnapshot{
-		Kind:        agentadaptor.ProfileResourceSkills,
-		Fingerprint: fingerprint,
-		Warnings:    cloneStrings(snapshot.Warnings),
+		Kind:            agentadaptor.ProfileResourceSkills,
+		Fingerprint:     fingerprint,
+		Support:         agentadaptor.ProfileResourceSupportPortableCore,
+		Materialization: agentadaptor.ProfileResourceMaterializationFileManaged,
+		Warnings:        cloneStrings(snapshot.Warnings),
 	}
 	for _, entry := range snapshot.Entries {
 		switch {
@@ -51,15 +54,18 @@ func skillResource(fingerprint string, snapshot agentadaptor.SkillSnapshot) agen
 func mcpResource(payload agentadaptor.MCPPayload, synced bool) agentadaptor.ResourceSnapshot {
 	keys := mcpKeys(payload)
 	out := agentadaptor.ResourceSnapshot{
-		Kind:        agentadaptor.ProfileResourceMCP,
-		Fingerprint: payload.Fingerprint,
-		Warnings:    cloneStrings(payload.Warnings),
+		Kind:            agentadaptor.ProfileResourceMCP,
+		Fingerprint:     payload.Fingerprint,
+		Support:         agentadaptor.ProfileResourceSupportPortableCore,
+		Materialization: agentadaptor.ProfileResourceMaterializationNotMaterialized,
+		Warnings:        cloneStrings(payload.Warnings),
 	}
 	if len(keys) == 0 {
 		return out
 	}
 	if synced {
 		out.Managed = keys
+		out.Materialization = agentadaptor.ProfileResourceMaterializationNativeManaged
 		return out
 	}
 	out.Warnings = append(out.Warnings, "mcp resources are desired but not observed by ProfileSnapshot; call SyncProfile to materialize them")
@@ -67,7 +73,13 @@ func mcpResource(payload agentadaptor.MCPPayload, synced bool) agentadaptor.Reso
 }
 
 func unsupportedResource(kind agentadaptor.ProfileResourceKind, fingerprint string, desired []string, warnings []string, synced bool) agentadaptor.ResourceSnapshot {
-	out := agentadaptor.ResourceSnapshot{Kind: kind, Fingerprint: fingerprint, Warnings: cloneStrings(warnings)}
+	out := agentadaptor.ResourceSnapshot{
+		Kind:            kind,
+		Fingerprint:     fingerprint,
+		Support:         agentadaptor.ProfileResourceSupportUnsupported,
+		Materialization: agentadaptor.ProfileResourceMaterializationNotMaterialized,
+		Warnings:        cloneStrings(warnings),
+	}
 	if len(desired) == 0 {
 		return out
 	}
@@ -128,6 +140,9 @@ func instructionKeys(ref *agentadaptor.InstructionsBundleRef) []string {
 	if strings.TrimSpace(ref.Fingerprint) != "" {
 		return []string{strings.TrimSpace(ref.Fingerprint)}
 	}
+	if strings.TrimSpace(ref.Content) != "" {
+		return []string{"inline-instructions"}
+	}
 	return []string{"instructions"}
 }
 
@@ -135,7 +150,16 @@ func instructionFingerprint(ref *agentadaptor.InstructionsBundleRef) string {
 	if ref == nil {
 		return ""
 	}
-	return stableHash("instructions", ref.ID, ref.Path, ref.Fingerprint)
+	if ref.Fingerprint != "" {
+		return ref.Fingerprint
+	}
+	content := ref.Content
+	if strings.TrimSpace(ref.Path) != "" && strings.TrimSpace(content) == "" {
+		if raw, err := os.ReadFile(strings.TrimSpace(ref.Path)); err == nil {
+			content = string(raw)
+		}
+	}
+	return stableHash("instructions", ref.ID, ref.Path, content, ref.Scope, ref.Mode, ref.Native)
 }
 
 func stableHash(parts ...any) string {
