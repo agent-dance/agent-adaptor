@@ -49,6 +49,10 @@ result, err := sdk.Run(
 )
 ```
 
+`SessionStore` 注入后，5 种 `SessionMode` 都可用：`continue_or_start`（默认）、`continue_only`、`start_new`、`fork`、`stateless`。语义合同见 [`AGENTS.md`](../AGENTS.md) §6；常见命名陷阱见本文 §7 / §8。
+
+> 对应 example：[`examples/web-chat-stream`](../examples/web-chat-stream) `-mode=cli` 用同一个 `sessionKey` 跑两轮 prompt，第二轮 stderr 显式打印 `[session reused: ... · turns 2 · age <Δ>]` —— 这就是 sessionKey 续聊的物理证据。详见 [`examples/web-chat-stream/walkthrough.md`](../examples/web-chat-stream/walkthrough.md) §3.1 / §3.3。
+
 ## 4. 绑定默认值与调用覆盖
 
 绑定时可以设置：

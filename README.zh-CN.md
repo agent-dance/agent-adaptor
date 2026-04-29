@@ -63,19 +63,20 @@ func main() {
 
 ## 完整示例
 
-- [`examples/codex-basic`](./examples/codex-basic)：最小默认 Agent 执行。
-- [`examples/codex-stream`](./examples/codex-stream)：`Start(...)` 与事件流。
-- [`examples/codex-sessions`](./examples/codex-sessions)：服务化 session 复用。
-- [`examples/codex-admin-named`](./examples/codex-admin-named)：命名 Agent 与管理接口。
-- [`examples/codex-skills-live`](./examples/codex-skills-live)：skills 实时注入与同步。
-- [`examples/mock-runtime-admin`](./examples/mock-runtime-admin)：运行时服务与管理信息输出。
-- [`examples/session-codec-inspect`](./examples/session-codec-inspect)：安全检查适配器 session 参数。
-- [`examples/mock-adapter-playground`](./examples/mock-adapter-playground)：自定义适配器 playground。
-- [`examples/mock-skills-contract`](./examples/mock-skills-contract)：确定性 skills 请求组装。
-- [`examples/streaming-chat`](./examples/streaming-chat)：Go channel token streaming。
-- [`examples/streaming-sse-server`](./examples/streaming-sse-server)：最小 HTTP SSE chat 端点。
+5 个 spotlight 示例，每个回答一个宿主集成决策问题。详细矩阵与走查见 [`examples/README.md`](./examples/README.md)。
+
+- [`examples/quickstart-cli`](./examples/quickstart-cli)：绑定一个默认 agent 跑通；最小四联屏 CLI 面板。
+- [`examples/web-chat-stream`](./examples/web-chat-stream)：token 级流式输出，同时支持 CLI 打字效果（`-mode=cli`）与 HTTP SSE chat 端点（`-mode=server`）。
+- [`examples/multi-agent-platform`](./examples/multi-agent-platform)：默认 agent + 命名 agent（`review`、`autopilot`）配合 Admin 控制面。
+- [`examples/human-in-the-loop`](./examples/human-in-the-loop)：permission / plan-review / question 三类决策，三幕话剧 + capability matrix。
+- [`examples/task-recipes`](./examples/task-recipes)：基于 profile resources（skills / agents / hooks / instructions / config）+ `SyncProfile` 的宿主任务剧本。
+
+延伸阅读（前端集成，不属于 spotlight）：
+
 - [`examples/streaming-chat-copilotkit`](./examples/streaming-chat-copilotkit)：AG-UI + CopilotKit + HITL 卡片 demo。
 - [`examples/streaming-chat-aguiclient`](./examples/streaming-chat-aguiclient)：Vite + React + `@ag-ui/client` 直连 AG-UI demo。
+
+`examples/internal/` 下是 SDK 自身回归用例，不面向宿主。
 
 ## 常见调用方式
 

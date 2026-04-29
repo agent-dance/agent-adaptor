@@ -231,19 +231,20 @@ If you are writing your own adapter, the reusable test suite lives in [`adaptert
 
 ## Examples
 
-- [`examples/codex-basic`](./examples/codex-basic): minimal default-agent run.
-- [`examples/codex-stream`](./examples/codex-stream): `Start(...)` and event streaming.
-- [`examples/codex-sessions`](./examples/codex-sessions): service-style session reuse.
-- [`examples/codex-admin-named`](./examples/codex-admin-named): named agents and management APIs.
-- [`examples/codex-skills-live`](./examples/codex-skills-live): live skill injection and synchronization.
-- [`examples/mock-runtime-admin`](./examples/mock-runtime-admin): runtime services and management output.
-- [`examples/session-codec-inspect`](./examples/session-codec-inspect): inspect adapter session parameters safely.
-- [`examples/mock-adapter-playground`](./examples/mock-adapter-playground): custom adapter playground.
-- [`examples/mock-skills-contract`](./examples/mock-skills-contract): deterministic skills request assembly.
-- [`examples/streaming-chat`](./examples/streaming-chat): Go-channel token streaming.
-- [`examples/streaming-sse-server`](./examples/streaming-sse-server): minimal HTTP SSE chat endpoint.
+Five spotlight examples, each answering one host-integration question. See [`examples/README.md`](./examples/README.md) for the full matrix and walkthroughs.
+
+- [`examples/quickstart-cli`](./examples/quickstart-cli): bind one default agent and run once; minimal four-pane CLI surface.
+- [`examples/web-chat-stream`](./examples/web-chat-stream): token-level streaming for both a CLI typing effect (`-mode=cli`) and an HTTP SSE chat endpoint (`-mode=server`).
+- [`examples/multi-agent-platform`](./examples/multi-agent-platform): default + named agents (`review`, `autopilot`) plus the Admin control plane.
+- [`examples/human-in-the-loop`](./examples/human-in-the-loop): permission / plan-review / question decisions handled in three acts with a capability matrix.
+- [`examples/task-recipes`](./examples/task-recipes): host-side task recipes built on profile resources (skills / agents / hooks / instructions / config) and `SyncProfile`.
+
+Extension reading (frontend integration, not spotlights):
+
 - [`examples/streaming-chat-copilotkit`](./examples/streaming-chat-copilotkit): AG-UI + CopilotKit demo with HITL cards.
 - [`examples/streaming-chat-aguiclient`](./examples/streaming-chat-aguiclient): Vite + React + `@ag-ui/client` direct AG-UI demo.
+
+`examples/internal/` holds SDK self-regression utilities; they are not host-facing.
 
 ## Current Guarantees
 

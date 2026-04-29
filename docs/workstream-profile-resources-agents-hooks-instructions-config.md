@@ -627,7 +627,7 @@ resume 规则：
 当前完整性验收记录：
 
 - `go test ./...` 已覆盖 root、Codex、Claude Code、Cursor、profile state/reconcile/config/instructions/agents/hooks 包和 examples 编译。
-- `examples/task-recipes`（前 `examples/profile-resources`）已改为真实本机 CLI agent switching（`-agent codex|claude|cursor`），并避免 mock；Codex smoke 已在本机认证环境通过，Claude/Cursor 在本机 auth 缺失时能真实到达 CLI 并暴露认证错误。
+- `examples/task-recipes` 已改为真实本机 CLI agent switching（`-agent codex|claude|cursor`），并避免 mock；Codex smoke 已在本机认证环境通过，Claude/Cursor 在本机 auth 缺失时能真实到达 CLI 并暴露认证错误。重命名前的迁移路径见 [`examples/README.md`](../examples/README.md) 的 Changelog 段。
 - `ProfileSnapshot.Resources` 现在对 skills / MCP / agents / hooks / instructions / config 都报告 `Support` 与 `Materialization`。
 - instructions 当前 materialization：Codex `native_managed` -> `AGENTS.md` / `AGENTS.override.md`；Claude Code `native_managed` -> `CLAUDE.md`；Cursor `SyncProfile` fallback，`Run` project/local scope -> workspace `.cursor/rules/*.mdc`。
 - `adaptertest` conformance 已覆盖三家 adapter 的 profile resources 基础 managed path：agents、hooks、instructions、config。
