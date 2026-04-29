@@ -125,3 +125,4 @@ Run-Example -Name "human-in-the-loop" -Arguments (@("./examples/human-in-the-loo
 Run-Example -Name "task-recipes" -Arguments (@("./examples/task-recipes") + $common)
 Run-Example -Name "quickstart-cli" -Arguments (@("./examples/quickstart-cli") + $common)
 Run-Example -Name "web-chat-stream" -Arguments (@("./examples/web-chat-stream", "-mode=cli") + $common)
+Run-Example -Name "multi-agent-platform" -Arguments (@("./examples/multi-agent-platform") + $common)
