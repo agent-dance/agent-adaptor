@@ -218,7 +218,7 @@ HITL 设计必须首先承认"审批"不是一种均质事件。至少应区分�
 
 1. AG-UI 是否需要**一条新的 event type**（例如 `HITL_REQUESTED` / `HITL_RESOLVED`），而不是降级成 `CustomEvent`？（CopilotKit 目前的 `useCopilotAction` 约定是否可以直接承载？）
 2. 宿主如何把 UI 侧的 approve 回填到 adapter 的 `ResolveHITL`？需要一个跨进程/跨 SSE 连接的**关联 ID 机制**（`requestID` 必须在 bridge 里被保留并可寻址）。
-3. 如果 UI 没接入 HITL 通道（例如 `examples/streaming-sse-server` 这类最小示例），默认行为是什么？**现在的"静默 reject"是最坏默认**，应当改为更显性的失败或至少一条 banner 级别的 `RunError` / `RunFinished.Reason` 字段。
+3. 如果 UI 没接入 HITL 通道（例如 `examples/web-chat-stream -mode=server` 这类最小示例），默认行为是什么？**现在的"静默 reject"是最坏默认**，应当改为更显性的失败或至少一条 banner 级别的 `RunError` / `RunFinished.Reason` 字段。
 
 ### 9.4 adapter 专属（Claude）
 

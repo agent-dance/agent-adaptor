@@ -115,14 +115,8 @@ if (-not (Test-AgentHealthy -CommandPath $resolvedCommand)) {
 $common = @("-agent=$Agent")
 $common += "-command=$resolvedCommand"
 
-Run-Example -Name "basic" -Arguments (@("./examples/codex-basic") + $common)
-Run-Example -Name "stream" -Arguments (@("./examples/codex-stream") + $common)
-Run-Example -Name "sessions" -Arguments (@("./examples/codex-sessions") + $common)
-Run-Example -Name "admin-named" -Arguments (@("./examples/codex-admin-named") + $common)
-Run-Example -Name "skills-live" -Arguments (@("./examples/codex-skills-live") + $common)
-Run-Example -Name "profile-resources" -Arguments (@("./examples/profile-resources") + $common)
-Run-Example -Name "human-in-the-loop" -Arguments (@("./examples/human-in-the-loop") + $common)
-Run-Example -Name "task-recipes" -Arguments (@("./examples/task-recipes") + $common)
 Run-Example -Name "quickstart-cli" -Arguments (@("./examples/quickstart-cli") + $common)
 Run-Example -Name "web-chat-stream" -Arguments (@("./examples/web-chat-stream", "-mode=cli") + $common)
 Run-Example -Name "multi-agent-platform" -Arguments (@("./examples/multi-agent-platform") + $common)
+Run-Example -Name "human-in-the-loop" -Arguments (@("./examples/human-in-the-loop") + $common)
+Run-Example -Name "task-recipes" -Arguments (@("./examples/task-recipes") + $common)

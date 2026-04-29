@@ -66,7 +66,7 @@ func main() {
 - `RunHandle.Events()` 保持不变，仍然承担 spawn / stderr / lifecycle 元事件
 - Run 结束时两个 channel 都 close
 
-完整示例：[`examples/streaming-chat/main.go`](../examples/streaming-chat/main.go)
+完整示例：[`examples/web-chat-stream/main.go`](../examples/web-chat-stream/main.go)（CLI 模式：`-mode=cli`）
 
 ## 2. 场景 B：AG-UI channel — 标准化事件
 
@@ -136,7 +136,7 @@ event: RUN_FINISHED
 data: {"type":"RUN_FINISHED",...}
 ```
 
-完整示例（含极简 HTML 前端）：[`examples/streaming-sse-server/main.go`](../examples/streaming-sse-server/main.go)
+完整示例（含极简 HTML 前端）：[`examples/web-chat-stream/main.go`](../examples/web-chat-stream/main.go)（server 模式：`-mode=server`）
 
 ### Options
 
