@@ -124,3 +124,4 @@ Run-Example -Name "profile-resources" -Arguments (@("./examples/profile-resource
 Run-Example -Name "human-in-the-loop" -Arguments (@("./examples/human-in-the-loop") + $common)
 Run-Example -Name "task-recipes" -Arguments (@("./examples/task-recipes") + $common)
 Run-Example -Name "quickstart-cli" -Arguments (@("./examples/quickstart-cli") + $common)
+Run-Example -Name "web-chat-stream" -Arguments (@("./examples/web-chat-stream", "-mode=cli") + $common)
