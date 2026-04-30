@@ -1,18 +1,20 @@
 # streaming-chat-copilotkit
 
-完整的 **AG-UI + CopilotKit** 前端 example，演示 `agent-adaptor` 的三条纵向通路：
+[简体中文 / Chinese Version](./README.zh-CN.md)
 
-1. **Streaming**：文本、thinking、tool_call 全部 token 级流式
-2. **HITL v2**：`dec.plan_review.*` / `dec.question.*` / `dec.permission.*` 在 UI 里渲染成可点击卡片，宿主通过 `POST /decision/resolve` 回填
-3. **Recovery**：每个浏览器有稳定 `thread_id`，右侧面板通过 `/session/events` + `/decision/pending` 恢复历史与未决决策
+A complete **AG-UI + CopilotKit** frontend example, demonstrating the three vertical paths through `agent-adaptor`:
 
-后端只调用真实本机 CLI：
+1. **Streaming**: text, thinking, and tool_call all stream at the token level
+2. **HITL v2**: `dec.plan_review.*` / `dec.question.*` / `dec.permission.*` are rendered as clickable cards in the UI; the host fills the answer back via `POST /decision/resolve`
+3. **Recovery**: each browser has a stable `thread_id`; the right-side panel restores history and pending decisions via `/session/events` + `/decision/pending`
 
-| `AGUI_AGENT` | 行为 |
+The backend only invokes real local CLIs:
+
+| `AGUI_AGENT` | Behavior |
 | --- | --- |
-| `codex` | 本地 `codex`，streaming 走 codex app-server |
-| `claude` | 本地 `claude` / `trpc-claudecode`，PlanReview / Question 可进入 HITL 交互 |
-| `cursor` | 本地 Cursor Agent CLI（默认命令 `agent`，也会尝试 `cursor-agent`） |
+| `codex` | Local `codex`, streaming via the codex app-server |
+| `claude` | Local `claude` / `trpc-claudecode`, with PlanReview / Question entering HITL interaction |
+| `cursor` | Local Cursor Agent CLI (defaults to the `agent` command, also tries `cursor-agent`) |
 
 ## Quick Start
 
@@ -22,15 +24,15 @@
 ./examples/streaming-chat-copilotkit/start-all.sh cursor
 ```
 
-打开 http://localhost:3000 。
+Open http://localhost:3000.
 
-也可以只起后端：
+You can also start the backend only:
 
 ```bash
 ./examples/streaming-chat-copilotkit/start.sh claude
 ```
 
-## 架构
+## Architecture
 
 ```
 Browser
@@ -45,48 +47,48 @@ Browser
   │     ├─ handle.StreamEvents()  →  AG-UI Translator  →  SSE
   │     └─ handle.DecisionRequests()  →  pending store
   │
-  └─ 直接 fetch (旁路) —— 用于 HITL & 恢复
+  └─ Direct fetch (side-channel) — used for HITL & recovery
          GET  /session/events?thread_id=T&after=N
          GET  /decision/pending?thread_id=T
          POST /decision/resolve
 ```
 
-## 前置条件
+## Prerequisites
 
 - Go 1.23+
 - Node.js 20+ + npm
-- 选用的 `codex` / `claude` / `cursor` CLI 已安装、已登录，并且 `--help` 可运行
+- The chosen `codex` / `claude` / `cursor` CLI is installed, logged in, and `--help` runs successfully
 
-## 后端 HTTP 端点
+## Backend HTTP endpoints
 
-| 路径 | 方法 | 用途 |
+| Path | Method | Purpose |
 | --- | --- | --- |
-| `/agent` | POST | AG-UI RunAgentInput -> SSE 流 |
-| `/session/events` | GET | 历史事件重放 |
-| `/decision/pending` | GET | 未解决的决策请求 |
-| `/decision/resolve` | POST | 宿主回填 HITL 决策 |
-| `/health` | GET | 就绪检查 |
+| `/agent` | POST | AG-UI RunAgentInput -> SSE stream |
+| `/session/events` | GET | History event replay |
+| `/decision/pending` | GET | Outstanding decision requests |
+| `/decision/resolve` | POST | Host fills back the HITL decision |
+| `/health` | GET | Readiness probe |
 
-## 环境变量
+## Environment variables
 
-| 名称 | 默认 | 说明 |
+| Name | Default | Description |
 | --- | --- | --- |
 | `AGUI_AGENT` | `codex` | `codex` / `claude` / `cursor` |
-| `AGUI_MODEL` | agent 默认模型 | 覆盖 AG-UI 后端模型 |
-| `CODEX_COMMAND` / `CLAUDE_COMMAND` / `CURSOR_COMMAND` | 自动探测 | 覆盖本机 CLI 命令 |
-| `CODEX_MODEL` / `CLAUDE_MODEL` / `CURSOR_MODEL` | agent 默认模型 | 覆盖对应 agent 模型 |
-| `ADDR` | `:8080` | backend 监听地址 |
-| `CORS_ORIGIN` | `*` | 允许的前端 Origin |
-| `THREAD_STORE_DIR` | unset | 设置后使用 JSONL 持久化 session recorder |
+| `AGUI_MODEL` | agent default model | Override the AG-UI backend model |
+| `CODEX_COMMAND` / `CLAUDE_COMMAND` / `CURSOR_COMMAND` | auto-detected | Override the local CLI command |
+| `CODEX_MODEL` / `CLAUDE_MODEL` / `CURSOR_MODEL` | agent default model | Override the model for the corresponding agent |
+| `ADDR` | `:8080` | Backend listen address |
+| `CORS_ORIGIN` | `*` | Allowed frontend Origin |
+| `THREAD_STORE_DIR` | unset | Once set, uses JSONL persistence for the session recorder |
 
-前端：
+Frontend:
 
-| 名称 | 默认 | 说明 |
+| Name | Default | Description |
 | --- | --- | --- |
-| `AGENT_BACKEND_URL` | `http://localhost:8080/agent` | CopilotRuntime 转发的 AG-UI 端点 |
-| `NEXT_PUBLIC_AGENT_BACKEND_BASE` | `http://localhost:8080` | 浏览器旁路请求 base URL |
+| `AGENT_BACKEND_URL` | `http://localhost:8080/agent` | The AG-UI endpoint that CopilotRuntime forwards to |
+| `NEXT_PUBLIC_AGENT_BACKEND_BASE` | `http://localhost:8080` | Base URL for the browser side-channel requests |
 
-## 相关文档
+## Related docs
 
 - [`docs/workstream-hitl-v2.md`](../../docs/workstream-hitl-v2.md)
 - [`docs/workstream-session-recorder.md`](../../docs/workstream-session-recorder.md)

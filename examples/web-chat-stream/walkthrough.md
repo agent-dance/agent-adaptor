@@ -1,47 +1,49 @@
 # web-chat-stream · walkthrough
 
-> 这一份是**静态走查**（标准应该长什么样）。每次跑 spotlight 还会生成
-> `.spotlight/web-chat-stream/last-run.md` 作为**动态事实**（这次实际看到了什么）。
-> PR review 看本文件；事后排错对开两份对照。
+[简体中文 / Chinese Version](./walkthrough.zh-CN.md)
 
-## 1. 对位场景
+> This file is the **static walkthrough** (what it should look like). Every spotlight run also produces
+> `.spotlight/web-chat-stream/last-run.md` as the **dynamic factual mirror** (what was actually seen this time).
+> Read this file during PR review; pair both side by side for after-the-fact troubleshooting.
 
-凡是浏览器里要看见 token 一个一个吐、要支持取消、要支持"接着上次那条"的产品：
+## 1. Host scenarios
 
-- **Web IDE / Cursor-like 聊天面板**：右侧 chat 抽屉，token 边到达边渲染，prompt 之间共享上下文
-- **CopilotKit 接入**：前端组件直接消费 `text/event-stream`，AG-UI 协议帧零改造
-- **客服坐席助手**：每个对话窗口一个 `sessionKey`，agent 在多轮里记住客户身份与历史问题
-- **内部 review 助手**：reviewer 一边读，agent 一边出建议；中途取消、重启、续聊都不丢上下文
-- **任意"打字机效果 + 多轮续聊"的 SaaS 后台**：1 行 `sse.Handler(sdk, ...)` 把 SDK 直接喂给前端
+Any product where the browser must visibly stream tokens one by one, must support cancellation, and must support "continue from where the last one left off":
 
-本 spotlight 一次性回答两个独立问题：**前端打字效果是真的吗？后端把 SDK 暴露成 SSE 端点要写多少代码？**
+- **Web IDE / Cursor-like chat panel**: a chat drawer on the right, tokens render as they arrive, context is shared between prompts
+- **CopilotKit integration**: frontend components consume `text/event-stream` directly, AG-UI protocol frames need zero rework
+- **Customer-support seat assistant**: every conversation window has a `sessionKey`, the agent remembers the customer identity and prior questions across turns
+- **Internal review assistant**: while the reviewer reads, the agent emits suggestions; cancel mid-flight, restart, continue — none of it loses the context
+- **Any "typewriter effect + multi-turn continuation" SaaS backend**: a single line of `sse.Handler(sdk, ...)` wires the SDK straight into the frontend
 
-## 2. 一条命令
+This spotlight answers two independent questions in one shot: **is the frontend typing effect real? How much code does it take to expose the SDK as an SSE endpoint on the backend?**
 
-CLI 模式（两轮 prompt 共享 sessionKey · 推荐先跑这个）：
+## 2. One-liner
+
+CLI mode (two prompts share the same sessionKey · run this first):
 
 ```bash
 go run ./examples/web-chat-stream -agent=codex -mode=cli -timeout=2m
 ```
 
-切到 `-agent=claude` / `-agent=cursor` 也能跑。当本机 CLI 未认证或不支持流式时，example 会**优雅降级**——把真实失败模式写进 transcript / stderr 而非 panic。
+Switching to `-agent=claude` / `-agent=cursor` also runs. When the native CLI is unauthenticated or doesn't support streaming, the example **gracefully degrades** — the real failure mode is written into transcript / stderr instead of panicking.
 
-Server 模式（HTTP SSE 网关 · 浏览器演示用）：
+Server mode (HTTP SSE gateway · for browser demos):
 
 ```bash
 go run ./examples/web-chat-stream -agent=codex -mode=server -addr=:8080
-# 然后浏览器打开 http://localhost:8080/，连续发两条 prompt
+# then open http://localhost:8080/ in the browser and send two prompts in a row
 ```
 
-可选：`-cancel-after=2s` 在 CLI 模式下演示取消行为（仅 Round 1 生效，Round 2 仍按正常流程跑，验证"取消不污染 sessionKey"）。
+Optional: `-cancel-after=2s` demonstrates cancellation behavior in CLI mode (only takes effect on Round 1; Round 2 still runs the normal flow, verifying that "cancellation does not pollute the sessionKey").
 
-## 3. 终端产物 + 浏览器交互
+## 3. Terminal artifacts + browser interaction
 
-CLI 模式跑完终端按这个顺序输出三块独立的可截图区域。
+After the CLI mode run, the terminal prints, in this order, three independent screenshot-friendly regions.
 
-### 3.1 打字效果 + Round 2 [session reused] 证据（stdout + stderr 交错）
+### 3.1 Typing effect + Round 2 [session reused] evidence (interleaved stdout + stderr)
 
-**stderr（场景骨架）**：
+**stderr (scenario skeleton)**:
 
 ```
 [mode=cli · agent=codex · model=gpt-5.4 · capture=.spotlight/web-chat-stream/sse-capture.ndjson]
@@ -55,7 +57,7 @@ CLI 模式跑完终端按这个顺序输出三块独立的可截图区域。
 [session reused: a7feb790ca6b3de90810228a54e5eef283c567b8a836070404b87b2d23ad25b0 · turns 2 · age 6.113s]
 ```
 
-**stdout（用户面前的"打字效果"）**：
+**stdout (the "typing effect" the user sees)**:
 
 ```
 Agents turn intent into action.
@@ -64,15 +66,15 @@ Useful agent systems optimize reliability before autonomy.
 Agents work by turning intent into bounded, reliable action.
 ```
 
-读法：
+How to read it:
 
-- 终端肉眼可辨**逐 token 到达**（不是整段一次 print）。本次 codex 跑出 frames=40 / 25 个 text 增量 / 145 chars，平均每个 delta 约 5 字符
-- 前 3 行属于 Round 1（prompt = `"Write three short lines about agents."`）
-- 最后 1 行属于 Round 2（prompt = `"Now add a fourth line that summarizes the three you just wrote."`），**显式引用了 Round 1 的"three"** —— 这就是 sessionKey 续聊的物理证据
-- stderr 末尾 `[session reused: <id> · turns 2 · age <Δ>]` 是宿主 grep 的锚点，只要这一行出现，session 复用故事就成立
-- 失败兜底：当本机 CLI 未认证（claude/cursor 常见），example 不 panic，而是在 transcript 段把 `wait_error = agentadaptor: session checkpoint missing` 直接打出来
+- The terminal visibly shows **token-by-token arrival** (not the entire chunk printed in one go). This codex run produced frames=40 / 25 text deltas / 145 chars, averaging about 5 characters per delta
+- The first 3 lines belong to Round 1 (prompt = `"Write three short lines about agents."`)
+- The last line belongs to Round 2 (prompt = `"Now add a fourth line that summarizes the three you just wrote."`), and it **explicitly references the "three" from Round 1** — that is the physical evidence of sessionKey continuation
+- The trailing `[session reused: <id> · turns 2 · age <Δ>]` on stderr is the anchor the host greps for; once that line appears, the session-reuse story holds
+- Failure fallback: when the native CLI is unauthenticated (common with claude/cursor), the example does not panic; it prints `wait_error = agentadaptor: session checkpoint missing` directly into the transcript section
 
-### 3.2 Two-round transcript（事后回看每轮真实形状）
+### 3.2 Two-round transcript (replay each round's real shape after the fact)
 
 ```
 Two-round transcript
@@ -84,9 +86,9 @@ Two-round transcript
   output_head  = Agents work by turning intent into bounded, reliable action.
 ```
 
-每轮一行 `frames` / `text deltas` / `reasoning` / `tools` 计数 + `output_head`：宿主对照"是否真的流"（`frames > 0` 且 `text deltas > 1`）、"session 是否真的续"（Round 2 `reused=true` 且 session id 与 Round 1 相同）。
+One line per round with `frames` / `text deltas` / `reasoning` / `tools` counts plus `output_head`: the host cross-checks "did it really stream" (`frames > 0` and `text deltas > 1`) and "did the session really continue" (Round 2 `reused=true` with the same session id as Round 1).
 
-### 3.3 Session continuation evidence（控制面真值）
+### 3.3 Session continuation evidence (control-plane truth)
 
 ```
 Session continuation evidence
@@ -96,7 +98,7 @@ Session continuation evidence
   verdict          = continuation OK · same session · turns 2 · age 6.113s
 ```
 
-三段 banner 收尾：
+Three-banner footer:
 
 ```
 ━━━ Story ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -113,9 +115,9 @@ Two prompts share one sessionKey: tokens stream live and round 2 picks up where 
 $ go run ./examples/web-chat-stream -mode=server -agent=codex
 ```
 
-### 3.4 SSE 报文样本（Round 1 · `cat | jq` 直接验证）
+### 3.4 SSE wire-sample (Round 1 · `cat | jq` it directly)
 
-`-capture-sse` 默认把 Round 1 的所有 `StreamPayload` dump 进 ndjson，**一行一帧**。可直接 `cat | jq` 给后端工程师验证"我家网关能不能直接转发"。
+`-capture-sse` by default dumps every Round 1 `StreamPayload` into ndjson, **one frame per line**. Pipe it through `cat | jq` and hand it to the backend engineer to verify "can our gateway forward this as is".
 
 ```bash
 $ head -n 3 .spotlight/web-chat-stream/sse-capture.ndjson | jq -c '{kind: .Kind, name: .Name, runId: .RunID[:12], hasRaw: (.Raw != null)}'
@@ -124,17 +126,17 @@ $ head -n 3 .spotlight/web-chat-stream/sse-capture.ndjson | jq -c '{kind: .Kind,
 {"kind":"run.started","name":"","runId":"cbe982b8c48b","hasRaw":false}
 ```
 
-读法：
+How to read it:
 
-- 前 2 帧是 codex app-server 自带的启动元事件（`mcpServer/startupStatus/updated` / `thread/status/changed`）。bridge 把它们透传成 `Raw` 字段，宿主 SSE 网关大概率会直接 forward
-- 第 3 帧是 SDK 标准事件 `run.started`（spotlight #2 真正承诺"流"的起点）
-- 完整 40 帧里包含 `text.content`（25 个 deltas）+ `tool_call.start`（0 个，本 prompt 不调工具）+ `run.finished`（带 `Usage` 计数）
+- The first 2 frames are codex app-server's own startup meta-events (`mcpServer/startupStatus/updated` / `thread/status/changed`). The bridge passes them through as the `Raw` field, and a host SSE gateway will most likely forward them straight through
+- The 3rd frame is the standard SDK event `run.started` (the actual starting point of the "stream" promise that spotlight #2 makes)
+- The full 40 frames include `text.content` (25 deltas) + `tool_call.start` (0; this prompt does not call tools) + `run.finished` (with `Usage` counts)
 
-字段语义参见 `docs/streaming.md` §1（Go channel 直接消费形状）和 §3（HTTP SSE 网关形状）。
+Field semantics: see `docs/streaming.md` §1 (the shape consumed directly via Go channel) and §3 (the HTTP SSE gateway shape).
 
-### 3.5 浏览器三连测试（server 模式 · 截图占位）
+### 3.5 Browser triple test (server mode · screenshot placeholders)
 
-启动 server 后浏览器打开 `http://localhost:8080/`，按下面 3 步操作即可对外 demo：
+After starting the server, open `http://localhost:8080/` in the browser and follow these 3 steps for an external demo:
 
 ```
 [Test 1 · 第一条 prompt 看到打字效果]
@@ -167,37 +169,37 @@ sessionKey 仍是 demo/web；如果 server 进程未重启（内存 SessionStore
 如果 server 进程也重启了，因为是 memory store，session 会从头开始（属生产场景应换 Redis/SQL store）。
 ```
 
-> 真实操作时把上面三块 ASCII 框替换成 PNG 截图。本 spotlight 不在 git 里附二进制截图，只描述应该看到什么。
+> In a real demo, replace the three ASCII frames above with PNG screenshots. This spotlight does not commit binary screenshots into git; it only describes what should be seen.
 
-## 4. 文件系统产物
+## 4. Filesystem artifacts
 
 ```
 examples/web-chat-stream/
-├── main.go              # CLI + server 双模式实现（index.html 内联在常量里）
-└── walkthrough.md       # 静态走查（本文件）
+├── main.go              # CLI + server dual-mode implementation (index.html inlined as a constant)
+└── walkthrough.md       # static walkthrough (this file)
 
 .spotlight/web-chat-stream/
-├── sse-capture.ndjson   # Round 1 的所有 StreamPayload，一行一帧；cat | jq 直接验证
-└── last-run.md          # 本次 run 的真实快照（动态，不入 git，5 段对应 walkthrough）
+├── sse-capture.ndjson   # every Round 1 StreamPayload, one frame per line; cat | jq it directly
+└── last-run.md          # this run's actual snapshot (dynamic, not committed to git, 5 sections paralleling walkthrough)
 ```
 
-`main.go` 把两件事合并：CLI 模式直接消费 `RunHandle.StreamEvents()`（`docs/streaming.md` §1 的最薄路径），server 模式挂 `pkg/bridges/sse.Handler(sdk, sse.Options{Protocol: sse.AGUI})`（同文件 §3 的 HTTP SSE 路径）。两段加起来 ≤ 350 行 Go + ≤ 80 行内联 HTML。
+`main.go` merges two things: the CLI mode consumes `RunHandle.StreamEvents()` directly (the thinnest path in `docs/streaming.md` §1), the server mode mounts `pkg/bridges/sse.Handler(sdk, sse.Options{Protocol: sse.AGUI})` (the HTTP SSE path in §3 of the same file). Both halves together total ≤ 350 lines of Go + ≤ 80 lines of inline HTML.
 
-`sse-capture.ndjson` 的字段直接来自 `agentadaptor.StreamPayload` 公开类型。后端宿主拿到这个文件就可以反算"我家 SSE 网关如果只识别 `Kind` 等于 `text.content` / `tool_call.start` / `run.finished`，能不能复刻 95% 的体验"。
+The fields in `sse-capture.ndjson` come straight from the public `agentadaptor.StreamPayload` type. With this file in hand, a backend host can reverse-engineer "if our SSE gateway only recognizes `Kind` equal to `text.content` / `tool_call.start` / `run.finished`, can we reproduce 95% of the experience".
 
-## 5. 落到我家产品的哪里
+## 5. Where this lands in your product
 
-| 这边的物件 | 对应你家产品的什么 surface |
+| Artifact here | Which surface of your product it maps to |
 | --- | --- |
-| **stdout 打字效果**（`fmt.Print(ev.Delta)`） | React 前端的 `<ChatMessage>` 实时 append：`useEffect` 里订阅 SSE，`text/event-stream` 解析后把 delta 直接 push 进 message buffer |
-| **stderr Round 2 `[session reused: ...]`** | 你家 chat 面板上的"对话连续性指示器"：sessionKey 命中时显示绿点 + age；命中失败显示红点 + 引导 reviewer 排查 |
-| **`Two-round transcript` 段** | 后台 conversation analytics：每个 conversation 一行 `frames / text_deltas / reasoning / tools`，可对一段时间内的对话质量做监控 |
-| **`Session continuation evidence` 段** | QA 自动化：CI 跑 `web-chat-stream -mode=cli` 后 grep `verdict = continuation OK`，作为"sessionKey 集成回归"门 |
-| **`sse-capture.ndjson`** | 后端网关验证：把这份文件喂给你家网关的 SSE 转发逻辑，用静态 fixture 验证字段映射 / CORS / keep-alive 行为 |
-| **`pkg/bridges/sse.Handler(sdk, ...)`** | 你家 Go HTTP server 的一行集成：`mux.Handle("/v1/chat", sse.Handler(sdk, sse.Options{Protocol: sse.AGUI, CORSAllowedOrigin: "*"}))`，30 行内上线 |
-| **inline `index.html`** | 你家 React/Vue/CopilotKit 工程的最小可运行参考：把 `<script>` 段落复制到自家 `ChatPage.tsx` 即跑通 |
+| **stdout typing effect** (`fmt.Print(ev.Delta)`) | Live append in the React frontend's `<ChatMessage>`: subscribe to SSE in a `useEffect`, parse `text/event-stream`, and push deltas straight into the message buffer |
+| **stderr Round 2 `[session reused: ...]`** | The "conversation continuity indicator" in your chat panel: when the sessionKey hits, show a green dot + age; when it misses, show a red dot and guide the reviewer to investigate |
+| **`Two-round transcript` section** | Backend conversation analytics: one line per conversation with `frames / text_deltas / reasoning / tools`, lets you monitor conversation quality over a window of time |
+| **`Session continuation evidence` section** | QA automation: after CI runs `web-chat-stream -mode=cli`, grep for `verdict = continuation OK` as the gate for "sessionKey integration regression" |
+| **`sse-capture.ndjson`** | Backend gateway verification: feed this file into your gateway's SSE forwarding logic and use a static fixture to verify field mapping / CORS / keep-alive behavior |
+| **`pkg/bridges/sse.Handler(sdk, ...)`** | A single-line integration into your Go HTTP server: `mux.Handle("/v1/chat", sse.Handler(sdk, sse.Options{Protocol: sse.AGUI, CORSAllowedOrigin: "*"}))`, live in under 30 lines |
+| **inline `index.html`** | The minimum runnable reference for your React/Vue/CopilotKit project: copy the `<script>` section into your own `ChatPage.tsx` and it just works |
 
-集成模板（前端 React，30 行内打字效果）：
+Integration template (frontend React, typing effect in under 30 lines):
 
 ```tsx
 async function streamChat(prompt: string, sessionKey: string, onDelta: (s: string) => void) {
@@ -226,26 +228,26 @@ async function streamChat(prompt: string, sessionKey: string, onDelta: (s: strin
 }
 ```
 
-集成模板（后端 Go，3 行 SDK 集成）：
+Integration template (backend Go, 3-line SDK integration):
 
 ```go
 sdk := agentadaptor.New(
     agentadaptor.WithDefaultAgent(codex.New(agentadaptor.CodexConfig{Model: "gpt-5.4"})),
-    agentadaptor.WithSessionStore(memory.NewSessionStore()), // 生产换 Redis/SQL store
+    agentadaptor.WithSessionStore(memory.NewSessionStore()), // swap for Redis/SQL store in production
 )
 mux.Handle("/v1/chat", sse.Handler(sdk, sse.Options{Protocol: sse.AGUI, CORSAllowedOrigin: "*"}))
 http.ListenAndServe(":8080", mux)
 ```
 
-剩下的 token 渲染、续聊、CORS、断流取消，全在 SDK + bridge 里搞定。
+The remaining token rendering, continuation, CORS, and stream cancellation are all handled inside the SDK + bridge.
 
 ---
 
-## 附录 · 不展示什么
+## Appendix · What this spotlight does not show
 
-为了把"流式 + 续聊"故事讲清楚，spotlight #2 故意**不**演这些（去对应 spotlight 看）：
+To keep the "streaming + continuation" story clean, spotlight #2 deliberately **does not** demo the following (head to the matching spotlight):
 
-- 危险操作审批 / HITL 决策审计 → [`../human-in-the-loop`](../human-in-the-loop)
-- 任务剧本 / profile resources / skills 注入 → [`../task-recipes`](../task-recipes)
-- 多 driver 路由 / 多租户身份 / Admin 控制面 → [`../multi-agent-platform`](../multi-agent-platform)（即将上线）
-- 30 秒最短路径 / 输出分层四联屏 → [`../quickstart-cli`](../quickstart-cli)（即将上线）
+- dangerous-operation approval / HITL decision audit → [`../human-in-the-loop`](../human-in-the-loop)
+- task recipes / profile resources / skills injection → [`../task-recipes`](../task-recipes)
+- multi-driver routing / multi-tenant identity / Admin control plane → [`../multi-agent-platform`](../multi-agent-platform) (coming soon)
+- 30-second shortest path / four-panel output layering → [`../quickstart-cli`](../quickstart-cli) (coming soon)

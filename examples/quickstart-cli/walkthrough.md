@@ -1,40 +1,42 @@
 # quickstart-cli · walkthrough
 
-> 这一份是**静态走查**（标准应该长什么样）。每次跑 spotlight 还会生成
-> `.spotlight/quickstart-cli/last-run.md` 作为**动态事实**（这次实际看到了什么）。
-> PR review 看本文件；事后排错对开两份对照。
+[简体中文 / Chinese Version](./walkthrough.zh-CN.md)
 
-## 1. 对位场景
+> This file is the **static walkthrough** (what it should look like). Every spotlight run also produces
+> `.spotlight/quickstart-cli/last-run.md` as the **dynamic factual mirror** (what was actually seen this time).
+> Read this file during PR review; pair both side by side for after-the-fact troubleshooting.
 
-凡是"喂一个 prompt 拿一个文本结果就走"的脚本类产品 —— SDK 表面只用到 `New(WithDefaultAgent(...))` + `sdk.Run(ctx, prompt)`：
+## 1. Host scenarios
 
-- **deploy-bot**：CI 把 build 失败堆栈喂给 agent，回一段 root-cause 摘要贴回 PR
-- **CI step**：lint 之后跑一遍 agent，让它给出 fix-suggestions 写到 job log
-- **postcommit hook**：每次 commit 后让 agent 写一段 changelog 候选词
-- **`git ai-fix`**：开发者拿单条命令解决一个不要紧的 lint warning
-- **release-notes-generator**：cron 拉 git log diff，喂给 agent，吐 release notes draft
+Any script-style product that "feeds a prompt, takes a chunk of text, and leaves" — the SDK surface only uses `New(WithDefaultAgent(...))` + `sdk.Run(ctx, prompt)`:
 
-这些产品共同点：**不需要流式 / 不需要会话 / 不需要审批 / 不需要多 agent 路由**。一条 prompt 进，一段 `Output` 出。
+- **deploy-bot**: CI feeds a build-failure stack to the agent, gets back a root-cause summary, and pastes it into the PR
+- **CI step**: after lint, run the agent once and let it write fix-suggestions into the job log
+- **postcommit hook**: after each commit let the agent draft a candidate changelog line
+- **`git ai-fix`**: a developer resolves an unimportant lint warning with a single command
+- **release-notes-generator**: cron pulls the git log diff, feeds it to the agent, gets a release-notes draft
 
-## 2. 一条命令
+What these products share: **no streaming / no sessions / no approvals / no multi-agent routing**. One prompt in, one chunk of `Output` out.
+
+## 2. One-liner
 
 ```bash
 go run ./examples/quickstart-cli -agent=codex
 ```
 
-切到 `-agent=claude` 或 `-agent=cursor` 同一份代码完整通跑。其他 flags：
+Switching to `-agent=claude` or `-agent=cursor` runs the same code path end to end. Other flags:
 
-| flag | 默认 | 作用 |
+| flag | default | purpose |
 | --- | --- | --- |
-| `-prompt` | `"Reply with a short acknowledgement for the quickstart example."` | 单条 prompt |
-| `-model` | 各 driver 默认（codex=gpt-5.4 / claude=sonnet-4 / cursor=gpt-5）| 模型覆盖 |
-| `-timeout` | `3m` | 整个 run 的硬超时 |
+| `-prompt` | `"Reply with a short acknowledgement for the quickstart example."` | single prompt |
+| `-model` | per-driver default (codex=gpt-5.4 / claude=sonnet-4 / cursor=gpt-5) | model override |
+| `-timeout` | `3m` | hard timeout for the entire run |
 
-## 3. 终端产物
+## 3. Terminal artifacts
 
-跑完后终端按这个顺序输出四块独立的可截图区域 + 三段统一收尾 banner。
+After the run the terminal prints, in this order, four independent screenshot-friendly regions plus a unified three-banner footer.
 
-### 3.1 四联屏（Output / Summary / RawStreams / Transcript 同一次 run 的四个层次）
+### 3.1 Four-panel display (Output / Summary / RawStreams / Transcript — the four layers of one run)
 
 ```
 ┌─ Output ─ what your end-user sees ──────────────────────────────────
@@ -61,16 +63,16 @@ go run ./examples/quickstart-cli -agent=codex
 └─
 ```
 
-读法（这就是 §3.4 输出合同的可视化）：
+How to read it (this is the §3.4 output contract visualized):
 
-| 面板 | 字段 | 含义 |
+| Panel | Field | Meaning |
 | --- | --- | --- |
-| **Output** | `result.Output` | 最终 assistant-facing 文本，没有 stdout dump、没有摘要拼接、没有 result JSON。等同你家产品要给终端用户看的那段 |
-| **Summary** | `result.Summary` | 短摘要，适合列表 / 通知 / issue comment。它**故意与 Output 分开**；本次 run 中 codex 给两者写了同一段，但合同允许它们不同 |
-| **RawStreams.Stdout** | `result.RawStreams.Stdout` | adapter 收到的完整原始 stdout 字节（head 3 行 + 总字节数）。审计、replay、协议调试都靠它 |
-| **Transcript** | `result.Transcript` 的 Kind 直方图 | adapter 解析出的语义条目（assistant / init / result / stderr / system 等）。timeline / message-list UI 直接消费它 |
+| **Output** | `result.Output` | The final assistant-facing text — no stdout dump, no summary concatenation, no result JSON. The exact chunk you would show your end user |
+| **Summary** | `result.Summary` | Short summary, suitable for lists / notifications / issue comments. It is **deliberately separated from Output**; in this run codex wrote the same content into both, but the contract allows them to differ |
+| **RawStreams.Stdout** | `result.RawStreams.Stdout` | The complete raw stdout bytes the adapter received (head 3 lines + total byte count). Audit, replay, and protocol debugging all rely on it |
+| **Transcript** | The Kind histogram from `result.Transcript` | The semantic items the adapter parsed (assistant / init / result / stderr / system, etc.). timeline / message-list UI consume this directly |
 
-### 3.2 三段 banner（统一收尾）
+### 3.2 Three-banner footer (unified close)
 
 ```
 ━━━ Story ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -87,20 +89,20 @@ Your deploy-bot just got a one-shot answer; pick the layer your product needs to
 $ go run ./examples/web-chat-stream -mode=cli -agent=codex
 ```
 
-## 4. 文件系统产物
+## 4. Filesystem artifacts
 
 ```
 examples/quickstart-cli/
-├── main.go               # ≤ 250 行；渲染 + 写盘 + 三段 banner
-├── 30-second-recipe.md   # 12 行 main.go 复制走的最小集成
-└── walkthrough.md        # 静态走查（本文件）
+├── main.go               # ≤ 250 lines; rendering + disk writes + three-banner footer
+├── 30-second-recipe.md   # 12-line main.go that copy-and-go integrators take away
+└── walkthrough.md        # static walkthrough (this file)
 
 .spotlight/quickstart-cli/
-├── quickstart-cli.json   # 6 字段稳定 schema：output / summary / raw_stdout_bytes / transcript_kinds / driver_type / exit_code
-└── last-run.md           # 本次 run 的真实快照（动态，不入 git）
+├── quickstart-cli.json   # 6-field stable schema: output / summary / raw_stdout_bytes / transcript_kinds / driver_type / exit_code
+└── last-run.md           # this run's actual snapshot (dynamic, not committed to git)
 ```
 
-`quickstart-cli.json` 样本：
+`quickstart-cli.json` sample:
 
 ```json
 {
@@ -119,41 +121,41 @@ examples/quickstart-cli/
 }
 ```
 
-字段稳定，可直接 `jq` / 入仓库 / 喂下游脚本。
+The fields are stable — pipe straight into `jq` / commit to a repo / feed downstream scripts.
 
-## 5. 落到我家产品的哪里
+## 5. Where this lands in your product
 
-| 这边的物件 | 对应你家产品的什么 panel |
+| Artifact here | Which panel of your product it maps to |
 | --- | --- |
-| **Output 面板** | 用户面：聊天气泡 / 弹窗 / IDE 侧边栏的 assistant 消息体 |
-| **Summary 面板** | 通知面：Slack 卡片标题、邮件 subject、issue comment 一行摘要 |
-| **RawStreams.Stdout 面板** | 审计面：原始字节落 ELK / S3 / 合规库；replay & 协议调试都靠它 |
-| **Transcript 面板** | 渲染面：timeline / message-list / 多步骤展示；按 Kind 路由到不同 UI 组件 |
-| **`quickstart-cli.json`** | 下游 ETL：smoke runner / 监控管道 / 周报机器消费的稳定 schema |
-| **`30-second-recipe.md`** | onboarding：复制走的 12 行 main.go，新员工 5 分钟跑通，0 SDK 内部知识 |
+| **Output panel** | User-facing surface: the assistant message body in the chat bubble / popup / IDE side panel |
+| **Summary panel** | Notification surface: Slack card title, email subject, one-line issue comment summary |
+| **RawStreams.Stdout panel** | Audit surface: raw bytes shipped to ELK / S3 / a compliance vault; replay & protocol debugging both depend on it |
+| **Transcript panel** | Rendering surface: timeline / message-list / multi-step displays; route by Kind into different UI components |
+| **`quickstart-cli.json`** | Downstream ETL: the stable schema consumed by smoke runners / monitoring pipelines / weekly-report bots |
+| **`30-second-recipe.md`** | Onboarding: the 12-line `main.go` for copy-and-go; a new hire gets it running in 5 minutes with zero SDK internals |
 
-集成模板（伪代码）：
+Integration template (pseudo-code):
 
 ```go
 sdk := agentadaptor.New(agentadaptor.WithDefaultAgent(codex.New(agentadaptor.CodexConfig{Model: "gpt-5.4"})))
 result, err := sdk.Run(ctx, prompt)
-if err != nil { /* 你家错误处理 */ }
+if err != nil { /* your error handling */ }
 
-renderToChat(result.Output)            // 用户面
-notifySlack(result.Summary)            // 通知面
-audit.Append(result.RawStreams.Stdout) // 审计面
-ui.RenderTimeline(result.Transcript)   // 渲染面
+renderToChat(result.Output)            // user-facing surface
+notifySlack(result.Summary)            // notification surface
+audit.Append(result.RawStreams.Stdout) // audit surface
+ui.RenderTimeline(result.Transcript)   // rendering surface
 ```
 
-四条调用，对应自家产品的四个 panel。这就是 §3.4 输出分层在工程上的全部意义。
+Four calls, mapping to four panels in your product. That is the full engineering meaning of the §3.4 output layering.
 
 ---
 
-## 附录 · 不展示什么
+## Appendix · What this spotlight does not show
 
-为了把"30 秒最短路径"的故事讲清楚，spotlight #1 故意**不**演这些（去对应 spotlight 看）：
+To keep the "30-second shortest path" story clean, spotlight #1 deliberately **does not** demo the following (head to the matching spotlight):
 
-- 流式 token / SSE 网关 / AG-UI 前端集成 → `examples/web-chat-stream`
-- 多 driver 路由 / 多租户身份 / Admin 控制面 → `examples/multi-agent-platform`（即将上线）
-- 危险操作审批 / 同步 reject / 异步 approve / 超时 abort → `examples/human-in-the-loop`
-- 任务剧本 / profile resources / skills × instructions × hooks 叠加 → `examples/task-recipes`
+- streaming tokens / SSE gateway / AG-UI frontend integration → `examples/web-chat-stream`
+- multi-driver routing / multi-tenant identity / Admin control plane → `examples/multi-agent-platform` (coming soon)
+- dangerous-operation approval / sync reject / async approve / timeout abort → `examples/human-in-the-loop`
+- task recipes / profile resources / skills × instructions × hooks layering → `examples/task-recipes`

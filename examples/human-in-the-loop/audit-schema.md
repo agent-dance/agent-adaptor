@@ -1,69 +1,71 @@
 # audit ndjson schema
 
-`.spotlight/human-in-the-loop/audit/session.ndjson` 是一个 **append-only newline-delimited JSON** 文件。每行 = 一个被宿主真正分派出去的 HITL 决策的物理记录。设计目标：
+[简体中文 / Chinese Version](./audit-schema.zh-CN.md)
 
-- **不依赖 SDK 内部结构**：每个字段都是基础 JSON 类型，schema 稳定，不随 SDK refactor 漂移
-- **ETL 友好**：可直接 `tail -F` 进 Splunk / ELK / Datadog / Loki，可 `jq` 过滤
-- **合规可对账**：与 `RunResult.RunID` 一一对应，可与宿主自家请求 ID 串起来
+`.spotlight/human-in-the-loop/audit/session.ndjson` is an **append-only newline-delimited JSON** file. Each line = one physical record of a HITL decision the host actually dispatched. Design goals:
 
-> 这份文档面向**审计 / 合规 / 运维接入工程师**，不是 SDK 用户。读完即可在不看 Go 源码的情况下集成。
+- **No dependency on SDK internals**: every field is a primitive JSON type; the schema is stable and does not drift with SDK refactors
+- **ETL-friendly**: pipe straight via `tail -F` into Splunk / ELK / Datadog / Loki; filter with `jq`
+- **Reconcilable for compliance**: one-to-one with `RunResult.RunID`; can be correlated with the host's own request IDs
 
-## 一行样本
+> This doc is written for **audit / compliance / ops-integration engineers**, not SDK users. Once you've read it, you can integrate without touching the Go source.
+
+## Single-line sample
 
 ```json
 {"ts":"2026-04-29T13:24:53.313272Z","run_id":"8e8dc91327...","kind":"question","decision":"approve","resolved_by":"async-channel","latency_ms":13166,"note":"Scene 2 · Async Approve"}
 ```
 
-## 字段表
+## Field reference
 
-| 字段 | 类型 | 必填 | 取值范围 | 含义 |
+| Field | Type | Required | Value range | Meaning |
 | --- | --- | --- | --- | --- |
-| `ts` | string (RFC3339Nano, UTC) | ✅ | `2026-04-29T13:24:53.313272Z` | 决策**完成**的时间戳；不是 request 发起时间 |
-| `run_id` | string | ✅ | adapter-specific (≤64 chars) | SDK 分配的 RunID；与 `RunResult.RunID` 一致，可与宿主请求 ID 串联 |
-| `kind` | string | ✅ | `permission` / `plan_review` / `question` | 决策类型，与 `HumanDecisionKind` 同语义 |
-| `tool` | string | ⬜ | adapter-specific (e.g. `bash`, `Edit`) | Permission kind 时的工具名；其他 kind 留空 |
-| `payload` | string | ⬜ | adapter-specific (≤256 chars) | 原始请求载荷的简短摘要（命令、文件路径等）；不含敏感细节 |
-| `decision` | string | ✅ | `approve` / `reject` / `timeout` | 决策的最终结果（**已通过 OnTimeout / OnReject 解析后**的物理结局，不是 raw `DecisionResult`） |
-| `resolved_by` | string | ✅ | `sync-handler` / `async-channel` / `policy` / `auto-reject` | 是谁/哪条路径解决了这次决策 |
-| `latency_ms` | int64 | ✅ | ≥ 0 | 从 spotlight 起 run 到决策完结的总壁钟毫秒数；包含 agent 启动 + 模型推理 |
-| `note` | string | ⬜ | free text | 调试 / 关联用的可读标签（spotlight 用来标 Scene 名）；ETL 上忽略也行 |
+| `ts` | string (RFC3339Nano, UTC) | ✅ | `2026-04-29T13:24:53.313272Z` | Timestamp when the decision **completed**, not when the request was raised |
+| `run_id` | string | ✅ | adapter-specific (≤64 chars) | RunID assigned by the SDK; matches `RunResult.RunID`, correlate with host request IDs |
+| `kind` | string | ✅ | `permission` / `plan_review` / `question` | Decision type; same semantics as `HumanDecisionKind` |
+| `tool` | string | ⬜ | adapter-specific (e.g. `bash`, `Edit`) | Tool name when kind is Permission; left empty for other kinds |
+| `payload` | string | ⬜ | adapter-specific (≤256 chars) | Short summary of the original request payload (command, file path, etc.); no sensitive details |
+| `decision` | string | ✅ | `approve` / `reject` / `timeout` | Final outcome of the decision (physical result **after OnTimeout / OnReject have been applied**, not the raw `DecisionResult`) |
+| `resolved_by` | string | ✅ | `sync-handler` / `async-channel` / `policy` / `auto-reject` | Who / which path resolved this decision |
+| `latency_ms` | int64 | ✅ | ≥ 0 | Total wall-clock milliseconds from spotlight run-start to decision completion; includes agent startup + model inference |
+| `note` | string | ⬜ | free text | Human-readable label for debugging / correlation (the spotlight uses it to tag scene names); safe to ignore in ETL |
 
-`decision` 与 `resolved_by` 的合法组合：
+Legal combinations of `decision` and `resolved_by`:
 
-| `decision` | `resolved_by` 可能值 |
+| `decision` | possible `resolved_by` values |
 | --- | --- |
-| `approve` | `async-channel` (channel mode) / 暂未支持 sync 路径下的 approve |
-| `reject` | `sync-handler` / `async-channel` / `auto-reject` (policy 合成) |
-| `timeout` | `policy` (OnTimeout=Abort 触发) |
+| `approve` | `async-channel` (channel mode) / approve via the sync path is not yet supported |
+| `reject` | `sync-handler` / `async-channel` / `auto-reject` (synthesised by policy) |
+| `timeout` | `policy` (triggered by OnTimeout=Abort) |
 
-## jq 食谱
+## jq recipes
 
 ```bash
-# 总条数
+# Total count
 wc -l .spotlight/human-in-the-loop/audit/session.ndjson
 
-# 三类 decision 各几条
+# Count by decision type
 jq -s 'group_by(.decision) | map({(.[0].decision): length}) | add' \
     .spotlight/human-in-the-loop/audit/session.ndjson
 
-# 平均 / 中位 latency（毫秒）
+# Average / median latency (ms)
 jq -s '[.[].latency_ms] | { avg: (add/length), median: (sort | .[length/2 | floor]) }' \
     .spotlight/human-in-the-loop/audit/session.ndjson
 
-# 按 run_id 分组（一次 run 内所有决策）
+# Group by run_id (all decisions within one run)
 jq -s 'group_by(.run_id) | map({run_id: .[0].run_id, decisions: length})' \
     .spotlight/human-in-the-loop/audit/session.ndjson
 
-# 仅看 sync-handler 拒绝
+# Sync-handler rejects only
 jq 'select(.resolved_by == "sync-handler" and .decision == "reject")' \
     .spotlight/human-in-the-loop/audit/session.ndjson
 
-# 找超时（>= 10s）的决策
+# Decisions that took ≥ 10s
 jq 'select(.latency_ms >= 10000)' \
     .spotlight/human-in-the-loop/audit/session.ndjson
 ```
 
-## ETL 接入姿势
+## ETL integration
 
 ### Splunk
 
@@ -120,13 +122,13 @@ logs:
         resolved_by:
 ```
 
-## 不在 schema 中的故意省略
+## Deliberately omitted from the schema
 
-下面这些字段**不会**出现在 ndjson 里（避免 schema drift / 减少 ETL 接入面）：
+The following fields **do not** appear in the ndjson (to avoid schema drift / reduce the ETL surface):
 
-- 决策 prompt / payload 的完整内容（payload 字段只放摘要）
-- agent 输出的全部文本（合规审计若需要原文，请用 `RunResult.RawStreams.Stdout` 落另一份 sink）
-- 任何 SDK 内部 struct 的字段名 / 内部错误码（仅暴露 `decision` / `resolved_by` 两个稳定枚举）
-- 多 retry 的中间结果（每次决策只在最终结局时写一行）
+- The full content of decision prompts / payloads (the payload field carries only a summary)
+- The full text of the agent output (if compliance audit needs the original, drop `RunResult.RawStreams.Stdout` into a separate sink)
+- Any SDK-internal struct field names / internal error codes (only the two stable enums `decision` / `resolved_by` are exposed)
+- Intermediate results from multiple retries (each decision writes exactly one line, at its final outcome)
 
-如果你的合规要求需要"原始 prompt + 完整 transcript"，建议把它们落到独立的 `transcripts/` 目录（一份单独 sink），与 audit ndjson 解耦。
+If your compliance requirements need the "original prompt + full transcript", the recommendation is to land them in a separate `transcripts/` directory (its own dedicated sink), decoupled from the audit ndjson.

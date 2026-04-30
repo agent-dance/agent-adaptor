@@ -1,17 +1,19 @@
 # streaming-chat-aguiclient
 
-**最小中间层**的 AG-UI 前端 example：Vite + React + `@ag-ui/client` 的 `HttpAgent` 直连 Go backend，**不经过** Next.js、**不使用** CopilotKit。
+[简体中文 / Chinese Version](./README.zh-CN.md)
 
-和 `streaming-chat-copilotkit/` 的关系：
+A **minimal-middle-layer** AG-UI frontend example: Vite + React + `@ag-ui/client`'s `HttpAgent` wired straight to the Go backend, **without** Next.js, **without** CopilotKit.
+
+Relationship to `streaming-chat-copilotkit/`:
 
 | | streaming-chat-copilotkit | **streaming-chat-aguiclient** |
 |---|---|---|
-| 前端栈 | Next.js + CopilotKit | Vite + React + `@ag-ui/client` |
-| 中间层 | Next.js API route + CopilotRuntime | 无 |
-| 依赖规模 | 900+ npm packages | 80+ npm packages |
-| 适合 | 希望获得 CopilotKit 完整 UI 组件和生态 | 希望最少中间层、直接对齐 AG-UI 协议 |
+| Frontend stack | Next.js + CopilotKit | Vite + React + `@ag-ui/client` |
+| Middle layer | Next.js API route + CopilotRuntime | none |
+| Dependency footprint | 900+ npm packages | 80+ npm packages |
+| Suited for | Hosts that want CopilotKit's full UI components and ecosystem | Hosts that want the smallest middle layer and a direct AG-UI protocol alignment |
 
-## 架构
+## Architecture
 
 ```
 Browser (React + @ag-ui/client HttpAgent)
@@ -20,136 +22,136 @@ Browser (React + @ag-ui/client HttpAgent)
     ▼
 Go backend (agent-adaptor + pkg/bridges/sse)
     │
-    │  本机 codex / claude / cursor CLI（见下文 AGUI_AGENT）
+    │  Local codex / claude / cursor CLI (see AGUI_AGENT below)
     ▼
-本地 agent 子进程（token-level stream）
+Local agent subprocess (token-level stream)
 ```
 
-`HttpAgent` 是 AG-UI 的**官方浏览器客户端**。它负责：
+`HttpAgent` is AG-UI's **official browser client**. Its responsibilities:
 
-- 构造 `RunAgentInput` 请求体（`threadId` / `runId` / `messages` / `state` / `tools` 等）
-- 解析 AG-UI SSE 响应（通过官方 Zod schema 层 + 内置 verifier）
-- 提供 `subscribe(...)` 事件订阅接口供 UI 消费
+- Build the `RunAgentInput` request body (`threadId` / `runId` / `messages` / `state` / `tools` etc.)
+- Parse the AG-UI SSE response (via the official Zod schema layer + the built-in verifier)
+- Expose a `subscribe(...)` event subscription interface for the UI to consume
 
-换句话说：**浏览器和 Go backend 之间走的是 AG-UI 协议原生链路**，没有任何协议转换代理。AG-UI 客户端侧的校验规则（首事件必须 `RUN_STARTED`、`role: "reasoning"` 字面量、生命周期配对等）都会在 HttpAgent 层被执行；Go backend 的 `pkg/bridges/agui` 负责保证输出流合规。
+In other words: **the browser and Go backend speak AG-UI natively**, with no protocol-translating proxy. AG-UI client-side validation rules (the first event must be `RUN_STARTED`, the literal `role: "reasoning"`, lifecycle pairing, etc.) are enforced inside `HttpAgent`; the Go backend's `pkg/bridges/agui` is responsible for keeping the output stream compliant.
 
-## 先决条件
+## Prerequisites
 
 - Go 1.23+
-- Node.js 20+ 与 npm / pnpm
-- 任选其一：**Codex**、**Claude Code**、**Cursor Agent** 本机 CLI，且已登录
+- Node.js 20+ with npm / pnpm
+- One of: **Codex**, **Claude Code**, or **Cursor Agent** local CLI, logged in
 
-## 跑起来
+## Running it
 
-### 一键脚本（仓库根目录相对路径）
+### One-liner scripts (paths relative to the repo root)
 
 ```bash
-# 仅 Go backend（默认 Codex）
+# Go backend only (Codex by default)
 ./examples/streaming-chat-aguiclient/start.sh
 
-# 使用 Claude Code 作为后端
+# Use Claude Code as the backend
 ./examples/streaming-chat-aguiclient/start.sh claude
 
-# 使用 Cursor Agent 作为后端
+# Use Cursor Agent as the backend
 ./examples/streaming-chat-aguiclient/start.sh cursor
 
-# 同一终端：backend + Vite（后台起 Go，前台 npm dev）
+# Same terminal: backend + Vite (Go in the background, npm dev in the foreground)
 ./examples/streaming-chat-aguiclient/start-all.sh
 ./examples/streaming-chat-aguiclient/start-all.sh claude
 ./examples/streaming-chat-aguiclient/start-all.sh cursor
 ```
 
-### 手动（两终端）
+### Manual (two terminals)
 
 ```bash
-# Terminal 1 — Go backend，监听 :8090
+# Terminal 1 — Go backend, listening on :8090
 go run ./examples/streaming-chat-aguiclient
 
-# Terminal 2 — Vite dev server，监听 :5173
+# Terminal 2 — Vite dev server, listening on :5173
 cd examples/streaming-chat-aguiclient/web
 npm install
 npm run dev
 ```
 
-后端驱动由环境变量 **`AGUI_AGENT`** 控制：`codex`（默认）、`claude` 或 `cursor`。脚本首参 `codex` / `claude` / `cursor` 会写入该变量。
+The backend driver is controlled by the **`AGUI_AGENT`** environment variable: `codex` (default), `claude`, or `cursor`. The first script argument `codex` / `claude` / `cursor` writes that variable.
 
-浏览器打开 http://localhost:5173 ，发消息即可看到：
+Open http://localhost:5173 and send a message. You will see:
 
-- **User / Assistant / Reasoning / Tool** 四种消息卡片分色渲染
-- Token 级增量流
-- Reasoning（codex 思考过程）独立折叠
-- Tool call 以 args / result 卡片呈现
+- Four kinds of message cards rendered in distinct colors: **User / Assistant / Reasoning / Tool**
+- Token-level incremental streaming
+- Reasoning (codex's thinking trace) collapsed independently
+- Tool calls rendered as args / result cards
 
-## 代码地图
+## Code map
 
 ```
-main.go                      # Go backend：pkg/bridges/sse + 自定义 RunAgentInput decoder
+main.go                      # Go backend: pkg/bridges/sse + custom RunAgentInput decoder
 web/
-├── package.json             # vite + react + @ag-ui/client（核心仅 3 个包）
-├── vite.config.ts           # AGENT_BACKEND_URL 环境变量注入
+├── package.json             # vite + react + @ag-ui/client (only 3 core packages)
+├── vite.config.ts           # AGENT_BACKEND_URL env var injection
 ├── index.html
 └── src/
-    ├── main.tsx             # React 入口
-    ├── App.tsx              # HttpAgent + subscribe + 自写 chat UI（~200 行）
+    ├── main.tsx             # React entry
+    ├── App.tsx              # HttpAgent + subscribe + handwritten chat UI (~200 lines)
     ├── index.css
     └── env.d.ts
 ```
 
-关键代码在 `src/App.tsx`：
+The key code lives in `src/App.tsx`:
 
 ```tsx
 import { HttpAgent } from "@ag-ui/client";
 
 const agent = new HttpAgent({ url: __AGENT_BACKEND_URL__ });
 
-// 订阅任何 AG-UI 事件
+// Subscribe to any AG-UI event
 const sub = agent.subscribe({
-  onTextMessageContentEvent({ event }) { /* token 流到 UI */ },
-  onReasoningMessageContentEvent({ event }) { /* 思考过程 */ },
-  onToolCallStartEvent({ event }) { /* 工具卡片 */ },
-  onToolCallResultEvent({ event }) { /* 工具结果 */ },
+  onTextMessageContentEvent({ event }) { /* token stream to UI */ },
+  onReasoningMessageContentEvent({ event }) { /* thinking trace */ },
+  onToolCallStartEvent({ event }) { /* tool card */ },
+  onToolCallResultEvent({ event }) { /* tool result */ },
   onRunFinishedEvent() { /* done */ },
 });
 
-// 触发 agent run
+// Trigger an agent run
 agent.addMessage({ id, role: "user", content: text });
 await agent.runAgent();
 ```
 
-`HttpAgent` 内部处理了 AG-UI 的所有标准行为（SSE 解析、事件排序、历史消息维护、断线重连）。宿主只需订阅感兴趣的事件并渲染。
+`HttpAgent` internally handles all standard AG-UI behaviors (SSE parsing, event ordering, history maintenance, reconnection). The host just subscribes to the events it cares about and renders.
 
-## 环境变量
+## Environment variables
 
-Backend：
+Backend:
 
-- `AGUI_AGENT`：`codex`（默认）、`claude` 或 `cursor`
-- `AGUI_MODEL`：覆盖 AG-UI 后端模型
-- `ADDR`：监听地址，默认 `:8090`
-- `CODEX_MODEL`：选用 codex 时，默认 `gpt-5.4`
-- `CLAUDE_MODEL`：选用 claude 时，默认 `claude-sonnet-4`
-- `CURSOR_MODEL`：选用 cursor 时，默认 `gpt-5`
-- `CODEX_COMMAND` / `CLAUDE_COMMAND` / `CURSOR_COMMAND`：覆盖本机 CLI 命令
-- `CORS_ORIGIN`：允许的前端 origin，默认 `http://localhost:5173`
+- `AGUI_AGENT`: `codex` (default), `claude`, or `cursor`
+- `AGUI_MODEL`: override the AG-UI backend model
+- `ADDR`: listen address, default `:8090`
+- `CODEX_MODEL`: when using codex, default `gpt-5.4`
+- `CLAUDE_MODEL`: when using claude, default `claude-sonnet-4`
+- `CURSOR_MODEL`: when using cursor, default `gpt-5`
+- `CODEX_COMMAND` / `CLAUDE_COMMAND` / `CURSOR_COMMAND`: override the local CLI command
+- `CORS_ORIGIN`: allowed frontend origin, default `http://localhost:5173`
 
-前端：
-- `AGENT_BACKEND_URL`：backend 端点，默认 `http://localhost:8090/agent`
+Frontend:
+- `AGENT_BACKEND_URL`: backend endpoint, default `http://localhost:8090/agent`
 
-## 为什么要有这个 example（设计意图）
+## Why this example exists (design intent)
 
-`streaming-chat-copilotkit` 是"完整 AG-UI 前端体验"的标准样板。但它依赖 Next.js + CopilotKit 套件（900+ npm 包 + CopilotRuntime 中间层）。
+`streaming-chat-copilotkit` is the canonical "complete AG-UI frontend experience". But it depends on the Next.js + CopilotKit suite (900+ npm packages + a CopilotRuntime middle layer).
 
-本 example 对应的使用场景：
+This example targets the following use cases:
 
-1. **嵌入现有 React 应用**：只想加一个聊天组件，不想引入整个 Next.js 工程
-2. **最小依赖验证 agent-adaptor 合规性**：中间层越少越能看出 `pkg/bridges/agui` 的输出是否真的符合 AG-UI 规范
-3. **移动 / 嵌入式前端**：Vite 输出的 bundle 容易 port 到 React Native / Electron / Tauri
-4. **学习 AG-UI 协议**：直连视图最能展示官方 client 是如何消费 AG-UI 流的
+1. **Embedding into an existing React app**: you only want to add a chat component, not adopt a full Next.js project
+2. **Validating agent-adaptor compliance with minimum dependencies**: the fewer middle layers there are, the easier it is to see whether `pkg/bridges/agui`'s output truly conforms to AG-UI
+3. **Mobile / embedded frontend**: Vite's bundle output is easy to port to React Native / Electron / Tauri
+4. **Learning the AG-UI protocol**: the direct-wire view shows most clearly how the official client consumes the AG-UI stream
 
-两个 example 都长期维护。选哪个取决于宿主的具体生态。
+Both examples are maintained long-term. Which one to pick depends on the host's specific ecosystem.
 
-## 相关文档
+## Related docs
 
 - [`docs/streaming.md`](../../docs/streaming.md)
 - [`docs/workstream-streaming-chat.md`](../../docs/workstream-streaming-chat.md)
-- AG-UI 协议：https://docs.ag-ui.com
-- `@ag-ui/client`：https://docs.ag-ui.com/sdk/js/client/overview
+- AG-UI protocol: https://docs.ag-ui.com
+- `@ag-ui/client`: https://docs.ag-ui.com/sdk/js/client/overview

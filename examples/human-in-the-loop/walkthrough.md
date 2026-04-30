@@ -1,33 +1,35 @@
 # human-in-the-loop · walkthrough
 
-> 这一份是**静态走查**（标准应该长什么样）。每次跑 spotlight 还会生成
-> `.spotlight/human-in-the-loop/last-run.md` 作为**动态事实**（这次实际看到了什么）。
-> PR review 看本文件；事后排错对开两份对照。
+[简体中文 / Chinese Version](./walkthrough.zh-CN.md)
 
-## 1. 对位场景
+> This is the **static walkthrough** (what the standard should look like). Every spotlight run also produces
+> `.spotlight/human-in-the-loop/last-run.md` as the **dynamic factual mirror** (what was actually observed this time).
+> Use this file for PR review; pull both up side-by-side when troubleshooting after the fact.
 
-凡是"agent 想跑 shell / 想调外部 API / 想写文件，必须先问真人"的产品：
+## 1. Host scenarios
 
-- 金融 / 医疗 / 合规系统里的危险操作审批
-- 内部生产环境写操作（部署、回滚、数据迁移）
-- PR auto-fix bot：自动 fix 提案要 reviewer 批准
-- IT 自动化：开账号、给权限、改 DNS、动 firewall
-- 任何"超过保险阈值的操作必须留审计记录"的系统
+Any product where "the agent wants to run a shell / call an external API / write a file, and must ask a real human first":
 
-## 2. 一条命令
+- Risky-operation approvals in finance / healthcare / compliance systems
+- Internal production write operations (deploys, rollbacks, data migrations)
+- PR auto-fix bot: an automatic fix proposal needs reviewer approval
+- IT automation: opening accounts, granting permissions, changing DNS, touching the firewall
+- Any system where "operations above the safety threshold must leave an audit trail"
+
+## 2. One-liner
 
 ```bash
 go run ./examples/human-in-the-loop -agent=claude \
     -decision-timeout=6s -fake-front-end-delay=2s
 ```
 
-切到 `-agent=codex` 或 `-agent=cursor` 也能跑（capability matrix 仍然出，三幕变成 SKIP，理由清楚指向 driver 真值）。
+Switching to `-agent=codex` or `-agent=cursor` also runs (the capability matrix still prints, the three acts turn into SKIP, and the reason points cleanly at the driver truth).
 
-## 3. 终端产物
+## 3. Terminal artifacts
 
-跑完后终端按这个顺序输出三块独立的可截图区域：
+After the run, the terminal prints these three independent screenshot-ready blocks in order:
 
-### 3.1 Capability matrix（三家 driver 真值表）
+### 3.1 Capability matrix (driver truth across the three families)
 
 ```
 Capability matrix (driver-truth, not docs)
@@ -42,16 +44,16 @@ Ask=adapter raises real decision request · Auto=adapter resolves silently · Re
 ● = current -agent (claude)
 ```
 
-读法：
+How to read it:
 
-- **Ask** = adapter 会把决策真发给宿主（spotlight 三幕需要这一列至少一个为 true 才能演出）
-- **Auto** = adapter 自己默默处理（合规无审计意义，不展示在话剧里）
-- **AutoR** = adapter 支持本地合成 reject（宿主不部署 handler 时的兜底）
-- **Retry** = adapter 支持 reject 后重新发起同一决策
+- **Ask** = the adapter actually fires a real decision to the host (the spotlight's three acts need at least one of these to be true to be playable)
+- **Auto** = the adapter handles it silently itself (no compliance-meaningful audit; not staged in the play)
+- **AutoR** = the adapter supports synthesising a local reject (the fallback when the host doesn't deploy a handler)
+- **Retry** = the adapter supports re-issuing the same decision after a reject
 
-> v1 的现实：**只有 claude 的 PlanReview 与 Question 真有 Ask 通道**。codex / cursor 当前都没有 Ask；要 HITL 治理就得挂 claude。这不是 SDK 的 bug，是各家 CLI 的能力现状。
+> v1 reality: **only claude's PlanReview and Question expose a real Ask channel**. codex / cursor have no Ask today; if you want HITL governance you have to mount claude. This is not an SDK bug — it's the current capability of the underlying CLIs.
 
-### 3.2 三幕话剧（按 RunPolicy 物理结果分类）
+### 3.2 Three-act play (classified by RunPolicy physical outcome)
 
 ```
 ━━━ Scene 1 · Sync Reject ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -73,18 +75,18 @@ Ask=adapter raises real decision request · Auto=adapter resolves silently · Re
   output   = Of course! Here's my clarifying question:
 ```
 
-每幕的 status 取自下面的真值集合：
+Each scene's status is drawn from the truth set below:
 
-| status | 含义 | 何时出现 |
+| status | Meaning | When it appears |
 | --- | --- | --- |
-| `rejected` | 决策被宿主拒绝（`IsRejected()=true`） | sync handler 返回 `ApprovalRejected` 或 channel 用 `DecisionRejected` resolve |
-| `approved` | 决策被宿主批准 | channel 用 `DecisionApproved` / `DecisionAnswered` resolve（视 kind 而定） |
-| `timed-out` | `RunPolicy.HumanDecision.Timeout` 到期且 `OnTimeout=Abort`（`IsTimedOut()=true`） | handler 阻塞 / channel 没有消费者 |
-| `untriggered` | agent 没发起 decision request | prompt / driver / model 因素，`OutputHead` 显示 agent 直接回答了什么 |
-| `skipped` | driver `Descriptor.RunPolicyCaps` 在所选 kind 上不支持 Ask | 当前 -agent 没有任意 Ask 能力 |
-| `error` | Wait 返回非取消的 error | 环境问题（CLI 未认证 / 网络等） |
+| `rejected` | The host rejected the decision (`IsRejected()=true`) | Sync handler returned `ApprovalRejected`, or the channel resolved with `DecisionRejected` |
+| `approved` | The host approved the decision | The channel resolved with `DecisionApproved` / `DecisionAnswered` (depending on kind) |
+| `timed-out` | `RunPolicy.HumanDecision.Timeout` expired with `OnTimeout=Abort` (`IsTimedOut()=true`) | Handler is blocked / no consumer on the channel |
+| `untriggered` | The agent did not raise a decision request | Prompt / driver / model factors; `OutputHead` shows what the agent answered directly |
+| `skipped` | The driver's `Descriptor.RunPolicyCaps` does not support Ask for the chosen kind | The current -agent has no Ask capability whatsoever |
+| `error` | Wait returned a non-cancel error | Environment issue (CLI not authenticated / network etc.) |
 
-### 3.3 三段 banner
+### 3.3 Three-banner footer
 
 ```
 ━━━ Story ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -101,16 +103,16 @@ Three short plays show how your compliance / risk gates land at the SDK boundary
 $ go run ./examples/task-recipes -agent=claude
 ```
 
-## 4. 文件系统产物
+## 4. Filesystem artifacts
 
 ```
 .spotlight/human-in-the-loop/
 ├── audit/
-│   └── session.ndjson          # 每次决策一行；schema 见 audit-schema.md
-└── last-run.md                 # 本次 run 的真实快照（动态，不入 git）
+│   └── session.ndjson          # One line per decision; schema in audit-schema.md
+└── last-run.md                 # Real snapshot of this run (dynamic, gitignored)
 ```
 
-**audit ndjson 样本**（5 字段）：
+**Audit ndjson sample** (5 fields):
 
 ```json
 {"ts":"2026-04-29T13:24:40.146453Z","run_id":"9f99b3d7d8...","kind":"question","decision":"reject","resolved_by":"sync-handler","latency_ms":10919,"note":"Scene 1 · Sync Reject"}
@@ -118,25 +120,25 @@ $ go run ./examples/task-recipes -agent=claude
 {"ts":"2026-04-29T13:25:08.015253Z","run_id":"e3b0d83c9d...","kind":"question","decision":"timeout","resolved_by":"policy","latency_ms":14701,"note":"Scene 3 · Timeout Abort"}
 ```
 
-字段含义、jq 食谱、ETL 接入策略详见 [`audit-schema.md`](./audit-schema.md)。
+For field meanings, jq recipes, and ETL integration strategies see [`audit-schema.md`](./audit-schema.md).
 
-## 5. 落到我家产品的哪里
+## 5. Where this lands in your product
 
-| 这边的物件 | 对应你家产品的什么 panel |
+| Artifact here | Panel in your product |
 | --- | --- |
-| **capability matrix 表** | 后台"AI 集成能力"页：哪些 driver 支持哪类审批通道，决定下单时绑哪个 driver |
-| **Scene 1 · Sync Reject** | 同步审批弹窗：reviewer 在 IDE / 工单系统里点 Reject，agent 立刻终止，运行结果带 `IsRejected()=true` |
-| **Scene 2 · Async Approve** | 浏览器消息推送：决策请求落到通知中心，reviewer 异步点 Approve；前端通过 `DecisionRequests()` channel + `ResolveDecision()` 回填 |
-| **Scene 3 · Timeout Abort** | 兜底策略：reviewer 长时间不回应自动 abort（防止 agent 永久 hang），失败带 `IsTimedOut()=true` |
-| **audit ndjson** | 合规审计 ETL：直接 `tail -F` 进 Splunk / ELK / Datadog，字段稳定，`run_id` 关联宿主 RunResult |
-| **`audit-schema.md`** | 给审计接入工程师看的 schema 文档：他们不需要读 Go 源码就能集成 |
+| **The capability matrix table** | Backend "AI integration capabilities" page: which drivers support which approval channels — used to decide which driver each task type binds to |
+| **Scene 1 · Sync Reject** | Synchronous approval modal: the reviewer hits Reject in the IDE / ticketing system, the agent terminates immediately, and the run result carries `IsRejected()=true` |
+| **Scene 2 · Async Approve** | Browser push notifications: the decision request lands in the notification centre, the reviewer asynchronously hits Approve; the frontend resolves through the `DecisionRequests()` channel + `ResolveDecision()` |
+| **Scene 3 · Timeout Abort** | Fallback policy: if the reviewer doesn't respond in time, abort automatically (preventing a permanently hung agent); the failure carries `IsTimedOut()=true` |
+| **audit ndjson** | Compliance audit ETL: `tail -F` it straight into Splunk / ELK / Datadog — fields are stable, `run_id` ties back to the host's RunResult |
+| **`audit-schema.md`** | Schema doc for the audit-integration engineer: they can integrate without reading any Go source |
 
-集成模板（伪代码）：
+Integration template (pseudocode):
 
 ```go
 sdk := agentadaptor.New(
     agentadaptor.WithDefaultAgent(claude.New(cfg,
-        // 不给 binding-level handler，让决策走 channel
+        // No binding-level handler — let decisions flow through the channel
     )),
 )
 
@@ -149,29 +151,29 @@ handle, _ := sdk.Start(ctx, prompt, agentadaptor.WithRunPolicy(agentadaptor.RunP
     },
 }))
 
-// 你家前端从 DecisionRequests() 拿请求，渲染审批卡片，等 reviewer 点击后回填
+// Your frontend pulls from DecisionRequests(), renders approval cards, and resolves once the reviewer clicks
 go func() {
     for req := range handle.DecisionRequests() {
-        decision := waitForReviewer(req)             // 你家逻辑
+        decision := waitForReviewer(req)             // your own logic
         _ = handle.ResolveDecision(req.RequestID, decision)
     }
 }()
 
 result, _ := handle.Wait(ctx)
 switch {
-case result.Failure.IsRejected(): /* 给 reviewer 反馈 */
-case result.Failure.IsTimedOut(): /* 给 reviewer 提醒 */
-default:                          /* 正常完成 */
+case result.Failure.IsRejected(): /* feed back to the reviewer */
+case result.Failure.IsTimedOut(): /* nudge the reviewer */
+default:                          /* normal completion */
 }
 ```
 
 ---
 
-## 附录 · 不展示什么
+## Appendix · What this spotlight does not show
 
-为了把故事讲清楚，spotlight #4 故意**不**演这些（去对应 spotlight 看）：
+To keep the story clear, spotlight #4 deliberately **does not** demonstrate these (see the matching spotlight):
 
-- profile resources / skills / instructions 剧本化 → `examples/task-recipes`
-- 流式 token / SSE 网关 / AG-UI 前端集成 → `examples/web-chat-stream`
-- 多 driver 路由 / 多租户身份 / Admin 控制面 → `examples/multi-agent-platform`
-- 30 秒最短路径 → `examples/quickstart-cli`
+- profile resources / skills / instructions recipes → `examples/task-recipes`
+- token streaming / SSE gateway / AG-UI frontend integration → `examples/web-chat-stream`
+- multi-driver routing / multi-tenant identity / Admin control plane → `examples/multi-agent-platform`
+- the 30-second shortest path → `examples/quickstart-cli`

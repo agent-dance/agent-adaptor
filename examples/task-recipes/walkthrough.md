@@ -1,34 +1,36 @@
 # task-recipes · walkthrough
 
-> 这一份是**静态走查**（标准应该长什么样）。每次跑 spotlight 还会生成
-> `.spotlight/task-recipes/last-run.md` 作为**动态事实**（这次实际看到了什么）。
-> PR review 看本文件；事后排错对开两份对照。
+[简体中文 / Chinese Version](./walkthrough.zh-CN.md)
 
-## 1. 对位场景
+> This is the **static walkthrough** (what the output should look like). Each spotlight
+> run additionally writes `.spotlight/task-recipes/last-run.md` as the **dynamic factual mirror**
+> (what was actually observed this run). Use this file for PR review; diff the two for post-mortems.
 
-凡是"产品里有 N 个固化任务，每个任务对应一组 instructions + skills + agents + hooks + config，宿主只下发 task_kind"的形态：
+## 1. Host scenarios
 
-- incident hotfix bot：值班响应任务自动激活 incident-diagnostics + 严格审批
-- scheduled review：定期 PR / 文档 review 自动配 reviewer agent + 项目级指令
-- data migration：数据迁移任务挂 schema-validator + dry-run hooks + 严沙箱
-- nightly scan / security scan：夜间安全扫描挂 security-reviewer + 只读隔离
-- customer triage：客服分流任务挂 customer-context skill + 答复模板指令
+Any shape where "the product has N fixed task kinds, each binding a set of instructions + skills + agents + hooks + config, and the host only routes a `task_kind`":
 
-每个固化任务在你家产品里其实就是一张"剧本卡"。本 spotlight 演示如何把卡声明出来 → SyncProfile 落到磁盘 → 用 binding-level + per-run 两种方式触发。
+- incident hotfix bot: on-call response tasks auto-activate incident-diagnostics + strict approval
+- scheduled review: recurring PR / docs review auto-binds the reviewer agent + project-level instructions
+- data migration: schema-validator + dry-run hooks + a tight sandbox for migration tasks
+- nightly scan / security scan: nightly security audits binding security-reviewer + read-only isolation
+- customer triage: customer-context skill + reply-template instructions for triage tasks
 
-## 2. 一条命令
+In your product, every fixed task is essentially a "recipe card". This spotlight demonstrates how to declare that card → land it on disk via `SyncProfile` → trigger it through binding-level + per-run paths.
+
+## 2. One-liner
 
 ```bash
 go run ./examples/task-recipes -agent=codex -keep-workspace
 ```
 
-`-agent=claude` / `-agent=cursor` 也能跑。`-keep-workspace` 让临时 clone profile 不被清掉（方便手动 inspect）。
+`-agent=claude` / `-agent=cursor` work too. `-keep-workspace` keeps the temporary clone profile around (handy for manual inspection).
 
-## 3. 终端产物
+## 3. Terminal artifacts
 
-跑完后终端按这个顺序输出四块独立的可截图区域：
+After a successful run, the terminal prints four independently-screenshotable blocks in this order:
 
-### 3.1 剧本卡片（`+` / `↻` 标记区分 additive vs replace）
+### 3.1 Recipe cards (`+` / `↻` markers distinguish additive vs replace)
 
 ```
 ┌─ Recipe · base-coding ─────────────────────────────────────────────
@@ -52,13 +54,13 @@ go run ./examples/task-recipes -agent=codex -keep-workspace
 └─
 ```
 
-读法：
+How to read it:
 
-- `+` 在 binding-level 默认剧本上 = 这条 resource 由本剧本声明（additive）
-- `↻` 在 per-run override 上 = 这条 resource 在当次 run 中**取代**了同位 binding 默认（replace 语义，对应 §4.5）
-- 6 行字段对齐宿主自家"任务定义表"：description / skills / agents / hooks / instructions / config / trigger
+- `+` on the binding-level default recipe = this resource is declared by the recipe (additive)
+- `↻` on a per-run override = this resource **replaces** the binding default for the current run (replace semantics, see §4.5)
+- The 6 fields line up with the host's own "task definition table": description / skills / agents / hooks / instructions / config / trigger
 
-### 3.2 ProfileSnapshot diff（控制面真值）
+### 3.2 ProfileSnapshot diff (control-plane truth)
 
 ```
 ProfileSnapshot diff (after SyncProfile)
@@ -76,9 +78,9 @@ skills/
   + write-proof
 ```
 
-每个 resource kind 一个块，`+` 表示 SyncProfile 落进 desired state 的条目。空块（如 `mcp/`）说明该 kind 在这条剧本中无声明，不报告漂移。
+One block per resource kind; `+` marks entries `SyncProfile` wrote into the desired state. An empty block (e.g. `mcp/`) means this kind has no declarations in the recipe and no drift is reported.
 
-### 3.3 Profile 目录树（diff 视角；clone profile 真磁盘）
+### 3.3 Profile directory tree (diff view; clone profile, real disk)
 
 ```
 before SyncProfile (root level only):
@@ -94,15 +96,15 @@ after SyncProfile (+ = added by recipe):
   · [31 pre-existing subdirectories collapsed]
 ```
 
-读法：
+How to read it:
 
-- `+ ...` = 由 recipe 触发新增的目录或汇总（带"new files"计数）
-- 没有 `+` 前缀的行 = 已存在、SyncProfile 未改动
-- `· [N pre-existing subdirectories collapsed]` = 一行折叠掉用户已有的不相关 skill 子目录（避免淹没 spotlight 信号）
+- `+ ...` = directory or summary added by the recipe (with a "new files" count)
+- Lines without a `+` prefix = pre-existing, untouched by `SyncProfile`
+- `· [N pre-existing subdirectories collapsed]` = a single line collapsing the user's pre-existing, unrelated skill subdirectories (so they don't drown out the spotlight signal)
 
-这是**磁盘真值视图**：宿主能直接 `cd` 进 clone profile 目录里 `ls -la`，看到 reviewer.toml、AGENTS.md、hooks.json 等真实物件。
+This is the **on-disk truth view**: the host can `cd` into the clone profile directory and `ls -la` to see real artifacts like reviewer.toml, AGENTS.md, hooks.json.
 
-### 3.4 Run outcomes（同 prompt × 两条剧本）
+### 3.4 Run outcomes (same prompt × two recipes)
 
 ```
 Run outcomes
@@ -116,45 +118,45 @@ Run outcomes
   output      = I'm loading the scoped instructions and the incident-hotfix profile file now ...
 ```
 
-每条剧本一行 driver_type / exit_code / output 头：宿主可观察"剧本切换在 agent 行为上的可见差异"。
+One driver_type / exit_code / output header per recipe: the host can observe "the visible behavioral diff caused by switching recipes".
 
-### 3.5 三段 banner（统一收尾）
+### 3.5 Three-banner footer (unified closing)
 
 ```
 ━━━ Story / Artifacts / Try next ━━━
-（同其它 spotlight 一致，省略；见 last-run.md）
+(same as the other spotlights; omitted, see last-run.md)
 ```
 
-## 4. 文件系统产物
+## 4. Filesystem artifacts
 
 ```
 examples/task-recipes/
-├── main.go                # 渲染 + 编排
-├── recipes.go             # ★ 复制走的剧本字典
-├── walkthrough.md         # 静态走查（本文件）
-└── recipes-cookbook.md    # 6 条剧本范式
+├── main.go                # Rendering + orchestration
+├── recipes.go             # ★ Recipe dictionary, copy-and-take
+├── walkthrough.md         # Static walkthrough (this file)
+└── recipes-cookbook.md    # 6 recipe patterns
 
 .spotlight/task-recipes/
-└── last-run.md            # 本次 run 的真实快照（动态，不入 git）
+└── last-run.md            # This run's actual snapshot (dynamic, gitignored)
 ```
 
-`recipes.go` 是宿主**直接复制走**的资产：≤ 120 行，仅 import `agentadaptor` 公开包，零 SDK 内部依赖。新增一条剧本只需要在 `Recipes(...)` map 里加一行 + 一个 ~30 行函数。
+`recipes.go` is a **copy-and-take** asset for the host: ≤ 120 lines, importing only the public `agentadaptor` package, zero SDK-internal dependencies. Adding a new recipe takes a single entry in the `Recipes(...)` map plus a ~30-line function.
 
-## 5. 落到我家产品的哪里
+## 5. Where this lands in your product
 
-| 这边的物件 | 对应你家产品的什么 panel |
+| What's here | The matching panel in your product |
 | --- | --- |
-| **剧本卡片** | 内部 wiki / 团队 README："我们家定义了这 N 个任务，每个对应一组 resources" 的视觉表达 |
-| **ProfileSnapshot diff** | 后台"Profile 同步报告"页：本次 push 让 desired state 改了哪些 resources |
-| **clone profile 目录树（diff 视角）** | 运维 / 合规：剧本不是空概念，它真的在磁盘上落了文件，ETL / backup / audit 都能直接消费 |
-| **Run outcomes** | 任务执行 dashboard：同一个 agent 在不同剧本下行为差异的对比 |
-| **`recipes.go`** | 你家代码库里的 `recipes.go`，每个剧本对应一行 + 一个函数；新增任务只要 PR ~30 行 |
-| **`recipes-cookbook.md`** | onboarding 文档："想加一条新剧本？看这 6 条范式选最像的复制改名" |
+| **Recipe cards** | Internal wiki / team README: a visual presentation of "here are the N tasks we define, each bound to a set of resources" |
+| **ProfileSnapshot diff** | Backend "Profile sync report" page: which resources this push changed in the desired state |
+| **Clone profile directory tree (diff view)** | Ops / compliance: a recipe is not an abstraction — it really lands files on disk that ETL / backup / audit can consume directly |
+| **Run outcomes** | Task execution dashboard: the behavioral diff of the same agent under different recipes |
+| **`recipes.go`** | The `recipes.go` in your codebase: each recipe is one map entry + one function; adding a task is a ~30-line PR |
+| **`recipes-cookbook.md`** | Onboarding doc: "want to add a new recipe? Pick the closest of these 6 patterns and copy-rename" |
 
-集成模板（伪代码）：
+Integration template (pseudocode):
 
 ```go
-// 你家代码：把 Recipes 字典做成 task_kind 路由
+// Your code: turn the Recipes dictionary into a task_kind router
 recipes := myproduct.Recipes()
 
 sdk := agentadaptor.New(
@@ -165,7 +167,7 @@ sdk := agentadaptor.New(
     agentadaptor.WithSkillSet(myproduct.SkillSet()),
 )
 
-// 收到一个 task_kind=incident-hotfix 的请求
+// On a request with task_kind=incident-hotfix
 recipe := recipes[req.TaskKind]
 result, _ := sdk.Run(ctx, req.Prompt,
     agentadaptor.WithProfileResources(recipe.Resources),
@@ -174,13 +176,13 @@ result, _ := sdk.Run(ctx, req.Prompt,
 )
 ```
 
-剧本切换 = 1 行代码 + 1 行字典查找。其它都被 SDK 接管。
+Recipe switching = 1 line of code + 1 dictionary lookup. Everything else is handled by the SDK.
 
 ---
 
-## 附录 · 不展示什么
+## Appendix · What this spotlight does not show
 
-- HITL 决策审批流 → `examples/human-in-the-loop`
-- 多 driver 路由 / 多租户身份 / Admin 控制面 → `examples/multi-agent-platform`
-- 流式 token / SSE 网关 / AG-UI 前端集成 → `examples/web-chat-stream`
-- 30 秒最短路径 → `examples/quickstart-cli`
+- HITL decision approval flow → `examples/human-in-the-loop`
+- Multi-driver routing / multi-tenant identity / Admin control plane → `examples/multi-agent-platform`
+- Token streaming / SSE gateway / AG-UI frontend integration → `examples/web-chat-stream`
+- 30-second shortest path → `examples/quickstart-cli`

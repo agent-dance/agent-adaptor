@@ -1,16 +1,16 @@
 # Task recipes · cookbook
 
-[简体中文 / Chinese Version](./recipes-cookbook.zh-CN.md)
+[English Version](./recipes-cookbook.md)
 
-6 common "recipe patterns", each with 5–8 lines of core field definitions. Pick the one closest to your fixed task, copy → rename → tweak fields, and you can ship a new recipe in 10 minutes.
+6 条常见"剧本范式"，每条 5–8 行核心字段定义。把你家固化任务对照最相近的一条，复制 → 改名 → 改字段，10 分钟内就能上线一条新剧本。
 
-> All patterns assume you already have a `Recipes(cfg, instructionsDir) map[string]Recipe` dictionary (see `recipes.go`). Each recipe function returns a `Recipe{ Name, Description, Trigger, Resources, Prompt }` of five fields.
+> 所有范式都假设你已经有一份 `Recipes(cfg, instructionsDir) map[string]Recipe` 字典（参考 `recipes.go`）。每个 recipe 函数返回 `Recipe{ Name, Description, Trigger, Resources, Prompt }` 五字段。
 
 ---
 
-## 1. `incident-hotfix` — on-call response task
+## 1. `incident-hotfix` — 值班响应任务
 
-Use case: on-call receives an alert → an agent auto-runs diagnostics / proposes a hotfix → strict approval → writes a post-mortem.
+适用：on-call 收到告警 → 自动起 agent 跑诊断 / 提 hotfix → 严格审批 → 写复盘。
 
 ```go
 return Recipe{
@@ -29,9 +29,9 @@ return Recipe{
 
 ---
 
-## 2. `scheduled-review` — recurring PR / docs review
+## 2. `scheduled-review` — 定期 PR / 文档 review
 
-Use case: a cron job runs review every day / hour, always binding the same reviewer + project-level instructions.
+适用：cron job 每天 / 每小时跑一次 review，固定挂同一组 reviewer + 项目级指令。
 
 ```go
 return Recipe{
@@ -48,9 +48,9 @@ return Recipe{
 
 ---
 
-## 3. `data-migration` — data migration task
+## 3. `data-migration` — 数据迁移任务
 
-Use case: DB schema upgrades, batch data moves. Requires dry-run hooks + tight sandbox + full transcript audit.
+适用：DB schema 升级、批数据搬运。要求 dry-run hooks + 严沙箱 + 全 transcript 审计。
 
 ```go
 return Recipe{
@@ -69,9 +69,9 @@ return Recipe{
 
 ---
 
-## 4. `security-scan` — security scan
+## 4. `security-scan` — 安全扫描
 
-Use case: nightly / periodic security audit, read-only isolation, opens issues on findings.
+适用：夜间 / 周期性安全审计，只读隔离，发现告警生成 issue。
 
 ```go
 return Recipe{
@@ -89,9 +89,9 @@ return Recipe{
 
 ---
 
-## 5. `customer-triage` — customer triage
+## 5. `customer-triage` — 客服分流
 
-Use case: customer-support agent assistant; inbound messages get triaged → reply template chosen → confirmed reply sent.
+适用：客服坐席助手；客户消息进来先分流 → 找答案模板 → 确认后回复。
 
 ```go
 return Recipe{
@@ -108,9 +108,9 @@ return Recipe{
 
 ---
 
-## 6. `nightly-report` — nightly digest
+## 6. `nightly-report` — 夜间汇总
 
-Use case: produce a digest report after a batch of runs (team standup material, KPI dashboard data).
+适用：批量任务跑完后产出总结报告（团队站会素材、KPI dashboard 数据）。
 
 ```go
 return Recipe{
@@ -127,12 +127,12 @@ return Recipe{
 
 ---
 
-## General advice
+## 通用建议
 
-- **Adding a recipe touches `recipes.go` only**: the core fields all live in the `Recipe` struct; `main.go` does not need to change
-- **`Trigger` is a convention**: `"default (binding-level)"` vs `"per-run via WithProfileResources"`, controlling the `+` / `↻` markers when rendered
-- **`InstructionScope`**: `Project` (project-wide) / `Run` (one-shot) / `User` (per-user). Most per-run recipes use `Run`
-- **`Disabled: true` hooks**: declared but not actually enabled, useful for staging → production gradual rollout
-- **`Native` / `SourceFingerprint`** are the escape hatch: when declarative fields can't express what you need, attach raw provider config directly (see the docs for `agentadaptor.AgentSpec` / `HookHandler`)
+- **新增剧本只动 `recipes.go`**：核心字段都在 `Recipe` struct 里；`main.go` 不需要改动
+- **`Trigger` 用作约定**：`"default (binding-level)"` vs `"per-run via WithProfileResources"`，影响渲染时的 `+` / `↻` 标记
+- **`InstructionScope`**：`Project`（项目通用）/ `Run`（一次性）/ `User`（用户级）。多数 per-run 剧本用 `Run`
+- **`Disabled: true` 的 hook**：声明但不真启用，便于 staging → production 灰度上线
+- **`Native` / `SourceFingerprint`** 用于 escape hatch：当声明式字段无法表达时，把原生 provider config 直接挂上去（详见 `agentadaptor.AgentSpec` / `HookHandler` 文档）
 
-When you reach 6+ recipes, consider splitting `Recipes(...)` into sub-files (`recipes_review.go` / `recipes_ops.go`) or extracting a sub-package, so PR diffs stay small.
+加 6 条以上的剧本时，考虑把 `Recipes(...)` 拆到子文件（`recipes_review.go` / `recipes_ops.go`）或抽成 sub-package，让 PR diff 保持小颗粒。
