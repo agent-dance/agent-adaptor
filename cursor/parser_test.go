@@ -189,7 +189,80 @@ func TestCursorParserFailureFixtureSurfacesErrorMessage(t *testing.T) {
 	if p.errorMessage != "network unreachable" {
 		t.Fatalf("errorMessage: got %q", p.errorMessage)
 	}
-	if p.checkpoint(1) != nil {
-		t.Fatalf("failed run must not produce a checkpoint")
+	// The CLI exited abnormally, but it still emitted a session event with a
+	// real session_id before the failing terminal result. The session is
+	// resumable server-side, so the checkpoint must be preserved.
+	checkpoint := p.checkpoint(1)
+	if checkpoint == nil || checkpoint.State == nil {
+		t.Fatalf("abnormal exit with captured session_id must still produce a checkpoint, got %#v", checkpoint)
+	}
+	if checkpoint.State.ResumeID != "cursor-fail" {
+		t.Fatalf("checkpoint ResumeID: got %q want %q", checkpoint.State.ResumeID, "cursor-fail")
+	}
+	if !checkpoint.Valid {
+		t.Fatalf("checkpoint Valid must be true when session_id is captured")
+	}
+}
+
+func TestCheckpoint_AbnormalExitWithSessionID(t *testing.T) {
+	stdout := strings.Join([]string{
+		`{"type":"session","session_id":"cursor-abnormal","model":"gpt-4"}`,
+		`{"type":"assistant","session_id":"cursor-abnormal","message":{"content":[{"type":"text","text":"partial reply before crash"}]}}`,
+		"",
+	}, "\n")
+
+	p := newCursorParser(nil)
+	if err := p.onChunk("stdout", []byte(stdout), time.Now().UTC()); err != nil {
+		t.Fatalf("feed stdout: %v", err)
+	}
+	p.finalize()
+
+	// Simulate a non-zero exit (max_turns, upstream API error, etc.).
+	checkpoint := p.checkpoint(1)
+	if checkpoint == nil {
+		t.Fatal("expected non-nil checkpoint when session_id was captured before abnormal exit")
+	}
+	if checkpoint.State == nil || checkpoint.State.ResumeID != "cursor-abnormal" {
+		t.Fatalf("checkpoint ResumeID: got %#v", checkpoint.State)
+	}
+	if checkpoint.State.DisplayID != "cursor-abnormal" {
+		t.Fatalf("checkpoint DisplayID should fall back to session id, got %q", checkpoint.State.DisplayID)
+	}
+	if !checkpoint.Valid {
+		t.Fatalf("checkpoint Valid must be true; session is resumable server-side")
+	}
+}
+
+func TestCheckpoint_AbnormalExitWithoutSessionID(t *testing.T) {
+	// Defensive: if no session_id was ever observed, an abnormal exit
+	// must still yield no checkpoint — there is nothing to resume.
+	p := newCursorParser(nil)
+	_ = p.onChunk("stdout", []byte("not json\n"), time.Now().UTC())
+	p.finalize()
+
+	if cp := p.checkpoint(1); cp != nil {
+		t.Fatalf("expected nil checkpoint when session_id is absent, got %#v", cp)
+	}
+}
+
+func TestParseCheckpoint_AbnormalExitWithSessionID(t *testing.T) {
+	stdout := strings.Join([]string{
+		`{"type":"session","session_id":"cursor-legacy"}`,
+		`{"event":"run.completed","session_id":"cursor-legacy","display_id":"cursor-legacy-display"}`,
+		"",
+	}, "\n")
+
+	checkpoint := parseCheckpoint(stdout, 1)
+	if checkpoint == nil {
+		t.Fatal("expected non-nil checkpoint for abnormal exit when session_id is present")
+	}
+	if checkpoint.State == nil || checkpoint.State.ResumeID != "cursor-legacy" {
+		t.Fatalf("checkpoint ResumeID: got %#v", checkpoint.State)
+	}
+	if checkpoint.State.DisplayID != "cursor-legacy-display" {
+		t.Fatalf("checkpoint DisplayID: got %q", checkpoint.State.DisplayID)
+	}
+	if !checkpoint.Valid {
+		t.Fatalf("checkpoint Valid must be true")
 	}
 }

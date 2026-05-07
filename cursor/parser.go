@@ -380,8 +380,15 @@ func (p *cursorParser) buildOutput() string {
 	return strings.Join(nonEmpty, "\n\n")
 }
 
+// checkpoint promotes a captured Cursor session id into a persistable
+// DriverCheckpoint. The session id is minted server-side on the first event,
+// so it remains resumable independent of how the local subprocess terminated.
+// We gate solely on a non-empty session_id; abnormal CLI exits do not by
+// themselves invalidate the session — if the session is unusable the upstream
+// API will surface an actionable error on the next resume attempt.
 func (p *cursorParser) checkpoint(exitCode int) *agentadaptor.DriverCheckpoint {
-	if exitCode != 0 || p.sessionID == "" {
+	_ = exitCode // retained in the signature for call-site symmetry; see GoDoc.
+	if p.sessionID == "" {
 		return nil
 	}
 	display := p.displayID
@@ -407,10 +414,13 @@ func snapshotCursorStdout(stdout string) *cursorParser {
 // parseCheckpoint preserves the historical snapshot semantics for legacy unit
 // tests: only recognized terminal events or scalar-only session payloads may
 // promote the session id into a checkpoint.
+//
+// Like (*cursorParser).checkpoint, this function no longer gates on
+// exitCode: a recognized session_id remains resumable even if the CLI
+// exited abnormally. exitCode is kept in the signature for call-site
+// symmetry with the streaming path.
 func parseCheckpoint(stdout string, exitCode int) *agentadaptor.DriverCheckpoint {
-	if exitCode != 0 {
-		return nil
-	}
+	_ = exitCode
 	var last *agentadaptor.DriverCheckpoint
 	for _, line := range strings.Split(stdout, "\n") {
 		trimmed := strings.TrimSpace(line)
