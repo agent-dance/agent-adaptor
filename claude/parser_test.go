@@ -175,8 +175,83 @@ func TestClaudeParserFailureFixtureSurfacesErrorMessage(t *testing.T) {
 	if p.errorMessage != "upstream error" {
 		t.Fatalf("errorMessage: got %q", p.errorMessage)
 	}
-	if p.checkpoint(1) != nil {
-		t.Fatalf("failed run must not produce a checkpoint")
+	// The CLI exited abnormally, but it still emitted a system.init with a
+	// real session_id before the failing terminal result. The session is
+	// resumable server-side, so the checkpoint must be preserved; the
+	// downstream error surfaces through errorMessage / RunResult.Failure,
+	// not by silently dropping the captured session.
+	checkpoint := p.checkpoint(1)
+	if checkpoint == nil || checkpoint.State == nil {
+		t.Fatalf("abnormal exit with captured session_id must still produce a checkpoint, got %#v", checkpoint)
+	}
+	if checkpoint.State.ResumeID != "claude-fail" {
+		t.Fatalf("checkpoint ResumeID: got %q want %q", checkpoint.State.ResumeID, "claude-fail")
+	}
+	if !checkpoint.Valid {
+		t.Fatalf("checkpoint Valid must be true when session_id is captured")
+	}
+}
+
+func TestCheckpoint_AbnormalExitWithSessionID(t *testing.T) {
+	stdout := strings.Join([]string{
+		`{"type":"system","subtype":"init","session_id":"claude-abnormal","model":"claude-3-5-sonnet"}`,
+		`{"type":"assistant","session_id":"claude-abnormal","message":{"content":[{"type":"text","text":"partial reply before crash"}]}}`,
+		"",
+	}, "\n")
+
+	p := newClaudeParser(nil)
+	if err := p.onChunk("stdout", []byte(stdout), time.Now().UTC()); err != nil {
+		t.Fatalf("feed stdout: %v", err)
+	}
+	p.finalize()
+
+	// Simulate a non-zero exit (max_turns, upstream API 400, etc.).
+	checkpoint := p.checkpoint(1)
+	if checkpoint == nil {
+		t.Fatal("expected non-nil checkpoint when session_id was captured before abnormal exit")
+	}
+	if checkpoint.State == nil || checkpoint.State.ResumeID != "claude-abnormal" {
+		t.Fatalf("checkpoint ResumeID: got %#v", checkpoint.State)
+	}
+	if checkpoint.State.DisplayID != "claude-abnormal" {
+		t.Fatalf("checkpoint DisplayID should fall back to session id, got %q", checkpoint.State.DisplayID)
+	}
+	if !checkpoint.Valid {
+		t.Fatalf("checkpoint Valid must be true; session is resumable server-side")
+	}
+}
+
+func TestCheckpoint_AbnormalExitWithoutSessionID(t *testing.T) {
+	// Defensive: if no session_id was ever observed, an abnormal exit
+	// must still yield no checkpoint — there is nothing to resume.
+	p := newClaudeParser(nil)
+	_ = p.onChunk("stdout", []byte("not json\n"), time.Now().UTC())
+	p.finalize()
+
+	if cp := p.checkpoint(1); cp != nil {
+		t.Fatalf("expected nil checkpoint when session_id is absent, got %#v", cp)
+	}
+}
+
+func TestParseCheckpoint_AbnormalExitWithSessionID(t *testing.T) {
+	stdout := strings.Join([]string{
+		`{"type":"system","subtype":"init","session_id":"claude-legacy"}`,
+		`{"event":"turn.completed","session_id":"claude-legacy","display_id":"claude-legacy-display"}`,
+		"",
+	}, "\n")
+
+	checkpoint := parseCheckpoint(stdout, 1)
+	if checkpoint == nil {
+		t.Fatal("expected non-nil checkpoint for abnormal exit when session_id is present")
+	}
+	if checkpoint.State == nil || checkpoint.State.ResumeID != "claude-legacy" {
+		t.Fatalf("checkpoint ResumeID: got %#v", checkpoint.State)
+	}
+	if checkpoint.State.DisplayID != "claude-legacy-display" {
+		t.Fatalf("checkpoint DisplayID: got %q", checkpoint.State.DisplayID)
+	}
+	if !checkpoint.Valid {
+		t.Fatalf("checkpoint Valid must be true")
 	}
 }
 

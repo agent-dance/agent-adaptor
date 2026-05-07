@@ -297,8 +297,19 @@ type DriverSessionState struct {
 }
 
 // DriverCheckpoint is returned by adapters when the run produced a session
-// state that is safe to persist. Valid must be false for failed/non-resumable
+// state that is safe to persist. Valid must be false for non-resumable
 // runs so the SDK does not contaminate a healthy session mapping.
+//
+// "Non-resumable" refers to the session itself — e.g. the upstream provider
+// never issued a session id, or the adapter knows the session was rejected
+// or revoked server-side. A non-zero exit code from the local CLI subprocess
+// (max_turns reached, upstream model provider API error, network blip, OOM,
+// signal, ...) does not by itself imply the session is non-resumable: the
+// session id is already minted on the provider when the first event arrives,
+// and a subsequent resume will either succeed or surface a clean upstream
+// error. Adapters SHOULD therefore preserve the captured session in the
+// checkpoint whenever one is available, and only set Valid=false when they
+// have positive evidence that resuming will not work.
 type DriverCheckpoint struct {
 	State *DriverSessionState
 	Valid bool

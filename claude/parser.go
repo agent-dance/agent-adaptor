@@ -634,11 +634,22 @@ func (p *claudeParser) outputMetadata() map[string]string {
 	return map[string]string{"output_source": "reconstructed_from_deltas"}
 }
 
-// checkpoint honors the historical Claude checkpoint recognition: a valid
-// session id can come from a recognized terminal event or from a bare
-// session-only payload with only simple scalar fields.
+// checkpoint promotes a captured Claude session id into a persistable
+// DriverCheckpoint. The CLI announces session_id in its very first
+// system.init frame (see maybeCaptureSession / handlePayload), which means
+// by the time we reach this call the session is already established
+// server-side and is resumable independent of how the local subprocess
+// terminated. We therefore gate solely on a non-empty session_id; abnormal
+// CLI exits (max_turns reached, upstream model provider 4xx/5xx, network
+// blip, OOM, signal, ...) do not by themselves invalidate the session.
+//
+// If the session turns out to be unusable on the next resume attempt the
+// upstream API surfaces an actionable error there, which is a strictly
+// better signal than conflating every transient infrastructure failure
+// with a missing checkpoint.
 func (p *claudeParser) checkpoint(exitCode int) *agentadaptor.DriverCheckpoint {
-	if exitCode != 0 || p.sessionID == "" {
+	_ = exitCode // retained in the signature for call-site symmetry; see GoDoc.
+	if p.sessionID == "" {
 		return nil
 	}
 	display := p.displayID
@@ -665,10 +676,13 @@ func snapshotClaudeStdout(stdout string) *claudeParser {
 // legacy unit tests. It now runs the same streaming parser on the full stdout
 // buffer and enforces the "event must be recognized, else require scalar-only
 // session payload" rule before promoting the session id into a checkpoint.
+//
+// Like (*claudeParser).checkpoint, this function no longer gates on
+// exitCode: a recognized session_id remains resumable even if the CLI
+// exited abnormally. exitCode is kept in the signature for call-site
+// symmetry with the streaming path.
 func parseCheckpoint(stdout string, exitCode int) *agentadaptor.DriverCheckpoint {
-	if exitCode != 0 {
-		return nil
-	}
+	_ = exitCode
 	var last *agentadaptor.DriverCheckpoint
 	for _, line := range strings.Split(stdout, "\n") {
 		trimmed := strings.TrimSpace(line)
