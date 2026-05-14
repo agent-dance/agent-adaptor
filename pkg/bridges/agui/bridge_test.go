@@ -675,3 +675,119 @@ func TestTranslatorPostFinishIsSuppressed(t *testing.T) {
 	}
 	assertVerified(t, events)
 }
+
+// TestTranslatorTextRoleAssistantDefault proves the wire shape of an
+// assistant text triple keeps a non-nil role="assistant" tag now that
+// Translator always populates WithRole explicitly. Hosts and AG-UI
+// clients can rely on the field being present on every TextMessageStart.
+func TestTranslatorTextRoleAssistantDefault(t *testing.T) {
+	t.Parallel()
+	tr := agui.NewTranslator()
+	events := translateAll(tr, []agentadaptor.StreamPayload{
+		{Kind: agentadaptor.StreamRunStarted, ThreadID: "t", RunID: "r"},
+		{Kind: agentadaptor.StreamTextStart, MessageID: "m1"},
+		{Kind: agentadaptor.StreamTextContent, MessageID: "m1", Delta: "hi"},
+		{Kind: agentadaptor.StreamTextEnd, MessageID: "m1"},
+		{Kind: agentadaptor.StreamRunFinished, ThreadID: "t", RunID: "r"},
+	})
+
+	start := firstTextStart(t, events)
+	if start.Role == nil {
+		t.Fatalf("expected non-nil role on TEXT_MESSAGE_START")
+	}
+	if *start.Role != "assistant" {
+		t.Fatalf("expected role=assistant on zero-Role payload, got %q", *start.Role)
+	}
+	assertVerified(t, events)
+}
+
+// TestTranslatorTextRoleUser proves that Role=RoleUser on text lifecycle
+// payloads is forwarded as AG-UI role="user", so user-side messages that
+// hosts synthesize via UserTurnPayloads land in the AG-UI stream with the
+// same wire shape as assistant messages modulo the role tag.
+func TestTranslatorTextRoleUser(t *testing.T) {
+	t.Parallel()
+	tr := agui.NewTranslator()
+	events := translateAll(tr, []agentadaptor.StreamPayload{
+		{Kind: agentadaptor.StreamRunStarted, ThreadID: "t", RunID: "r"},
+		{Kind: agentadaptor.StreamTextStart, MessageID: "u1", Role: agentadaptor.RoleUser},
+		{Kind: agentadaptor.StreamTextContent, MessageID: "u1", Role: agentadaptor.RoleUser, Delta: "hello"},
+		{Kind: agentadaptor.StreamTextEnd, MessageID: "u1", Role: agentadaptor.RoleUser},
+		{Kind: agentadaptor.StreamTextStart, MessageID: "a1"},
+		{Kind: agentadaptor.StreamTextContent, MessageID: "a1", Delta: "hi"},
+		{Kind: agentadaptor.StreamTextEnd, MessageID: "a1"},
+		{Kind: agentadaptor.StreamRunFinished, ThreadID: "t", RunID: "r"},
+	})
+
+	want := []aguievents.EventType{
+		aguievents.EventTypeRunStarted,
+		aguievents.EventTypeTextMessageStart,
+		aguievents.EventTypeTextMessageContent,
+		aguievents.EventTypeTextMessageEnd,
+		aguievents.EventTypeTextMessageStart,
+		aguievents.EventTypeTextMessageContent,
+		aguievents.EventTypeTextMessageEnd,
+		aguievents.EventTypeRunFinished,
+	}
+	assertTypesEqual(t, want, typesOf(events))
+
+	starts := allTextStarts(events)
+	if len(starts) != 2 {
+		t.Fatalf("expected 2 TEXT_MESSAGE_START, got %d", len(starts))
+	}
+	if starts[0].MessageID != "u1" || starts[0].Role == nil || *starts[0].Role != "user" {
+		t.Fatalf("first start: want id=u1 role=user, got id=%q role=%v", starts[0].MessageID, ptrStr(starts[0].Role))
+	}
+	if starts[1].MessageID != "a1" || starts[1].Role == nil || *starts[1].Role != "assistant" {
+		t.Fatalf("second start: want id=a1 role=assistant, got id=%q role=%v", starts[1].MessageID, ptrStr(starts[1].Role))
+	}
+	assertVerified(t, events)
+}
+
+// TestTranslatorSynthesizedStartCarriesRole proves that when the host
+// emits text.content with Role=RoleUser without a prior text.start, the
+// translator synthesizes a start event that carries the same role.
+func TestTranslatorSynthesizedStartCarriesRole(t *testing.T) {
+	t.Parallel()
+	tr := agui.NewTranslator()
+	events := translateAll(tr, []agentadaptor.StreamPayload{
+		{Kind: agentadaptor.StreamRunStarted, ThreadID: "t", RunID: "r"},
+		{Kind: agentadaptor.StreamTextContent, MessageID: "u1", Role: agentadaptor.RoleUser, Delta: "yo"},
+		{Kind: agentadaptor.StreamTextEnd, MessageID: "u1", Role: agentadaptor.RoleUser},
+		{Kind: agentadaptor.StreamRunFinished, ThreadID: "t", RunID: "r"},
+	})
+
+	start := firstTextStart(t, events)
+	if start.Role == nil || *start.Role != "user" {
+		t.Fatalf("synthesized start lost role: got %v", ptrStr(start.Role))
+	}
+	assertVerified(t, events)
+}
+
+func firstTextStart(t *testing.T, events []aguievents.Event) *aguievents.TextMessageStartEvent {
+	t.Helper()
+	for _, e := range events {
+		if s, ok := e.(*aguievents.TextMessageStartEvent); ok {
+			return s
+		}
+	}
+	t.Fatal("no TEXT_MESSAGE_START in event list")
+	return nil
+}
+
+func allTextStarts(events []aguievents.Event) []*aguievents.TextMessageStartEvent {
+	var out []*aguievents.TextMessageStartEvent
+	for _, e := range events {
+		if s, ok := e.(*aguievents.TextMessageStartEvent); ok {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+func ptrStr(p *string) string {
+	if p == nil {
+		return "<nil>"
+	}
+	return *p
+}

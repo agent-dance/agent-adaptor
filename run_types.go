@@ -483,6 +483,31 @@ const (
 	StreamDropped StreamKind = "stream.dropped"
 )
 
+// Role identifies the speaker for text-bearing StreamPayloads.
+//
+// The zero value is RoleAssistant: every adapter today emits text.start /
+// text.content / text.end as assistant output, so leaving Role unset
+// preserves the historical wire shape exactly.
+//
+// Role only carries semantics on text-lifecycle kinds (text.start /
+// text.content / text.end). On every other Kind it MUST be left at the
+// zero value; bridges treat non-zero Role on non-text kinds as a
+// programming error and may ignore it.
+//
+// RoleUser is exclusively produced by bridges or hosts that want the
+// human turn to appear in the recorded / replayed StreamPayload stream
+// (see pkg/bridges/agui.RunAgentInput.UserTurnPayloads). Adapters MUST
+// NOT emit RoleUser themselves.
+type Role string
+
+const (
+	// RoleAssistant is the default; emitted by every adapter today.
+	RoleAssistant Role = ""
+	// RoleUser marks a text lifecycle synthesized above the driver
+	// layer to represent the human turn that triggered the run.
+	RoleUser Role = "user"
+)
+
 // StreamPayload is a single structured streaming event emitted by a
 // stream-aware adapter. It is intentionally a superset capable of carrying
 // text deltas, tool-call lifecycles, reasoning, lifecycle markers, and opaque
@@ -492,8 +517,12 @@ const (
 //   - run.started / run.finished / run.error: RunID, ThreadID, Usage (on
 //     finished), Error (on error). MessageID / ToolCallID empty.
 //   - step.started / step.finished: Name required.
-//   - text.start / text.end: MessageID required.
-//   - text.content: MessageID required; Delta non-empty.
+//   - text.start / text.end: MessageID required. Role optional; zero value
+//     is treated as RoleAssistant. RoleUser MUST be paired with a
+//     non-empty MessageID that stays stable across the start/content/end
+//     triple of a single user turn.
+//   - text.content: MessageID required; Delta non-empty. Role optional
+//     (see text.start).
 //   - tool_call.start: ToolCallID and Name required; Args optional
 //     (complete initial snapshot when the adapter does not stream args).
 //   - tool_call.args: ToolCallID required; Delta non-empty (incremental
@@ -532,6 +561,11 @@ type StreamPayload struct {
 	HITLRequested *HITLRequestedPayload
 	// HITLResolved is populated when Kind == StreamHITLResolved.
 	HITLResolved *HITLResolvedPayload
+
+	// Role identifies the speaker for text.* kinds. Zero value =
+	// RoleAssistant for backward compatibility; see Role docs. Adapters
+	// MUST leave Role at zero on every Kind they emit.
+	Role Role
 
 	// Raw carries provider-specific structured data that does not fit the
 	// normalized fields. Bridges may pass it through opaquely.

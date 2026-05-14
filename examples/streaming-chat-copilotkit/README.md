@@ -1,10 +1,11 @@
 # streaming-chat-copilotkit
 
-完整的 **AG-UI + CopilotKit** 前端 example，演示 `agent-adaptor` 的三条纵向通路：
+完整的 **AG-UI + CopilotKit** 前端 example，演示 `agent-adaptor` 的四条纵向通路：
 
 1. **Streaming**：文本、thinking、tool_call 全部 token 级流式
 2. **HITL v2**：`dec.plan_review.*` / `dec.question.*` / `dec.permission.*` 在 UI 里渲染成可点击卡片，宿主通过 `POST /decision/resolve` 回填
 3. **Recovery**：每个浏览器有稳定 `thread_id`，右侧面板通过 `/session/events` + `/decision/pending` 恢复历史与未决决策
+4. **User-prompt persistence**：`sdk.Start` 拿到的 user prompt 不会自动进任何 SDK 持久层（`SessionStore` 只存 resume 元数据；adapter 永远 emit assistant 侧）。本 example 演示了 canonical 做法——`handleAgent` 用 `input.UserTurnPayloads(handle.RunID())` 把 user turn 构造成 `text.*{Role:RoleUser}` 三段，让它穿过和 driver 事件**完全相同**的 fan-out（`appendHistory` + `Translator` + SSE）。刷新页面拉 `/session/events` 即可拿回完整 transcript，含 user 气泡。<br>实现入口：`server.go::handleAgent` + `agui_run_session.go::recordUserTurn`；验证用例：`agui_run_session_test.go::TestAGUIRunSessionRecordsUserTurnBeforeAssistant`。详细原理与边界见 [`docs/workstream-user-message-event.md`](../../docs/workstream-user-message-event.md)。
 
 后端只调用真实本机 CLI：
 
@@ -88,6 +89,7 @@ Browser
 
 ## 相关文档
 
+- [`docs/workstream-user-message-event.md`](../../docs/workstream-user-message-event.md)
 - [`docs/workstream-hitl-v2.md`](../../docs/workstream-hitl-v2.md)
 - [`docs/workstream-session-recorder.md`](../../docs/workstream-session-recorder.md)
 - [`docs/run-policy.md`](../../docs/run-policy.md)

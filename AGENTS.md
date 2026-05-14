@@ -378,8 +378,9 @@ sdk := agentadaptor.New(
 
 - `Run / Start` 语义不变；未开 `WithStreaming()` 时 SDK 行为与历史完全一致
 - streaming 不是第二条 Run 入口；所有执行仍然走同一份 `Runner.Run/Start` + `adapter.Run(ctx, req, sink)`
+- `StreamPayload.Role` 是可选的方向维度，零值（`RoleAssistant`）= v0.8 行为完全一致。**adapter 必须保持 Role 零值**；`RoleUser` 是 bridge / 宿主合成 user-side text 事件的专属标记（见 [`docs/workstream-user-message-event.md`](./docs/workstream-user-message-event.md)）
 
-完整实施规则、adapter 合同、宿主集成指南见：[`docs/workstream-streaming-chat.md`](./docs/workstream-streaming-chat.md) / [`docs/streaming-adapter-contract.md`](./docs/streaming-adapter-contract.md) / [`docs/streaming.md`](./docs/streaming.md)。
+完整实施规则、adapter 合同、宿主集成指南见：[`docs/workstream-streaming-chat.md`](./docs/workstream-streaming-chat.md) / [`docs/streaming-adapter-contract.md`](./docs/streaming-adapter-contract.md) / [`docs/streaming.md`](./docs/streaming.md) / [`docs/workstream-user-message-event.md`](./docs/workstream-user-message-event.md)。
 
 ## 11. HITL 是第三条可选通道（host-intent 单维度合同）
 

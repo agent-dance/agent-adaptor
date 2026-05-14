@@ -117,21 +117,29 @@ type fakeRunHandle struct {
 	resolveCalls  int
 	lastRequestID string
 	lastResponse  agentadaptor.DecisionResponse
+
+	// streamCh / decisionCh / waitErr are optional. When set, the fake
+	// behaves like a real RunHandle: tests push scripted payloads onto
+	// streamCh, close it to signal "adapter done", and Wait blocks until
+	// then.
+	streamCh   chan agentadaptor.StreamPayload
+	decisionCh chan agentadaptor.DecisionRequest
+	waitErr    error
 }
 
 func (f *fakeRunHandle) Events() <-chan agentadaptor.RunEvent { return nil }
 
-func (f *fakeRunHandle) StreamEvents() <-chan agentadaptor.StreamPayload { return nil }
+func (f *fakeRunHandle) StreamEvents() <-chan agentadaptor.StreamPayload { return f.streamCh }
 
 func (f *fakeRunHandle) RunID() string { return f.runID }
 
-func (f *fakeRunHandle) Wait(context.Context) (agentadaptor.RunResult, error) {
-	return agentadaptor.RunResult{}, nil
+func (f *fakeRunHandle) Wait(_ context.Context) (agentadaptor.RunResult, error) {
+	return agentadaptor.RunResult{}, f.waitErr
 }
 
 func (f *fakeRunHandle) Cancel(context.Context) error { return nil }
 
-func (f *fakeRunHandle) DecisionRequests() <-chan agentadaptor.DecisionRequest { return nil }
+func (f *fakeRunHandle) DecisionRequests() <-chan agentadaptor.DecisionRequest { return f.decisionCh }
 
 func (f *fakeRunHandle) ResolveDecision(requestID string, resp agentadaptor.DecisionResponse) error {
 	f.resolveCalls++

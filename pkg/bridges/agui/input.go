@@ -32,6 +32,9 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
+
+	agentadaptor "github.com/agent-dance/agent-adaptor"
 )
 
 // RunAgentInput is the canonical HTTP body an AG-UI client (CopilotKit
@@ -127,6 +130,88 @@ func (in *RunAgentInput) LastUserText() string {
 		}
 	}
 	return ""
+}
+
+// UserTurnPayloads converts the latest user-role message in this AG-UI
+// input into a well-formed text.start / text.content / text.end triple
+// of StreamPayloads. The triple uses RoleUser so downstream Translator
+// and Recorder treat it symmetrically to assistant text.
+//
+// The caller owns where these payloads go:
+//
+//   - to a sessionrecorder.Recorder so the user turn appears in
+//     recorder-backed transcript views;
+//   - to an SSE writer (via agui.NewTranslator().Translate(p)) so other
+//     tabs subscribed to the same thread observe the turn in real time;
+//   - or simply discarded if the host does not need cross-client replay.
+//
+// runID is opaque to the SDK; passing the AG-UI RunAgentInput.RunID is
+// the canonical choice for correlation.
+//
+// The MessageID reuses the AG-UI Message.ID when present; when absent
+// the helper synthesises a "user-<runID>-<index>" identifier so the
+// start/content/end triple remains internally consistent.
+//
+// Returns nil when the input has no user-role message with non-empty
+// text content. Safe to call on a nil receiver.
+func (in *RunAgentInput) UserTurnPayloads(runID string) []agentadaptor.StreamPayload {
+	if in == nil {
+		return nil
+	}
+	idx, msgID, text := lastUserMessageWithID(in)
+	if text == "" {
+		return nil
+	}
+	if msgID == "" {
+		msgID = synthesizeUserMessageID(runID, idx)
+	}
+	now := time.Now()
+	common := agentadaptor.StreamPayload{
+		Role:      agentadaptor.RoleUser,
+		MessageID: msgID,
+		RunID:     runID,
+		ThreadID:  in.ThreadID,
+		Timestamp: now,
+	}
+	start := common
+	start.Kind = agentadaptor.StreamTextStart
+	content := common
+	content.Kind = agentadaptor.StreamTextContent
+	content.Delta = text
+	end := common
+	end.Kind = agentadaptor.StreamTextEnd
+	return []agentadaptor.StreamPayload{start, content, end}
+}
+
+// lastUserMessageWithID is the ID-aware variant of LastUserText. It
+// returns the index, ID and flattened text of the most recent user
+// message with non-empty text content; if none is found it returns
+// (-1, "", "").
+func lastUserMessageWithID(in *RunAgentInput) (int, string, string) {
+	if in == nil {
+		return -1, "", ""
+	}
+	for i := len(in.Messages) - 1; i >= 0; i-- {
+		m := in.Messages[i]
+		if m.Role != "user" {
+			continue
+		}
+		if text := contentAsString(m.Content); text != "" {
+			return i, m.ID, text
+		}
+	}
+	return -1, "", ""
+}
+
+// synthesizeUserMessageID builds a stable fallback MessageID when the
+// AG-UI client did not supply Message.ID. The shape is
+// "user-<runID>-<index>" so the same input deterministically yields the
+// same id within one request.
+func synthesizeUserMessageID(runID string, idx int) string {
+	if runID == "" {
+		return fmt.Sprintf("user-msg-%d", idx)
+	}
+	return fmt.Sprintf("user-%s-%d", runID, idx)
 }
 
 // SessionKey derives the SDK SessionKey (namespace, key) pair for this

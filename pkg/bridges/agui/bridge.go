@@ -247,7 +247,7 @@ func (t *Translator) translateNonTerminalLocked(p agentadaptor.StreamPayload) []
 			return nil
 		}
 		t.activeText[p.MessageID] = true
-		return []aguievents.Event{aguievents.NewTextMessageStartEvent(p.MessageID)}
+		return []aguievents.Event{aguievents.NewTextMessageStartEvent(p.MessageID, textRoleOpt(p.Role))}
 
 	case agentadaptor.StreamTextContent:
 		if p.MessageID == "" || p.Delta == "" {
@@ -256,7 +256,7 @@ func (t *Translator) translateNonTerminalLocked(p agentadaptor.StreamPayload) []
 		out := []aguievents.Event{}
 		if !t.activeText[p.MessageID] {
 			t.activeText[p.MessageID] = true
-			out = append(out, aguievents.NewTextMessageStartEvent(p.MessageID))
+			out = append(out, aguievents.NewTextMessageStartEvent(p.MessageID, textRoleOpt(p.Role)))
 		}
 		out = append(out, aguievents.NewTextMessageContentEvent(p.MessageID, p.Delta))
 		return out
@@ -530,6 +530,19 @@ func (t *Translator) runOrDefault() string {
 		return t.runID
 	}
 	return fallbackRunID
+}
+
+// textRoleOpt maps a StreamPayload Role onto the AG-UI WithRole option
+// used by NewTextMessageStartEvent. Zero value (RoleAssistant) emits the
+// AG-UI "assistant" role explicitly so user-role and assistant-role
+// events have schema-identical shapes on the wire.
+func textRoleOpt(r agentadaptor.Role) aguievents.TextMessageStartOption {
+	switch r {
+	case agentadaptor.RoleUser:
+		return aguievents.WithRole("user")
+	default:
+		return aguievents.WithRole("assistant")
+	}
 }
 
 func defaultString(v, fallback string) string {

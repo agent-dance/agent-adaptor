@@ -97,6 +97,7 @@ type StreamPayload struct {
     Usage      *Usage
     Error      *RunFailure
     Timestamp  time.Time
+    Role       Role           // 仅 text.* 有意义；零值 = RoleAssistant
     Raw        map[string]any // provider-specific opaque passthrough
 }
 ```
@@ -107,6 +108,11 @@ type StreamPayload struct {
 - `Delta` 可以是 1 字符也可以是 N 字符，但必须非空
 - `Raw` 用来透传 adapter 不想 model 化的私有字段，宿主选择性消费
 - 未来新增 `StreamKind` 不破坏现有消费者；宿主遇到未知 kind 应忽略
+- `Role` 只在 `text.start / text.content / text.end` 上有意义；零值 =
+  `RoleAssistant`，保持向后兼容。**adapter 必须保持 Role 零值**——
+  `RoleUser` 是 bridge / 宿主侧合成 user-side 事件时才使用的标记（见
+  `pkg/bridges/agui.RunAgentInput.UserTurnPayloads` 与
+  `docs/workstream-user-message-event.md`）。
 
 ### 4.2 `StreamAwareDriver`（新）
 

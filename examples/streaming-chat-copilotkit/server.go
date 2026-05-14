@@ -63,7 +63,11 @@ func (s *appServer) handleAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	defer handle.Cancel(r.Context())
 
-	session := newAGUIRunSession(r.Context(), handle, s.store, invocation.threadID, w)
+	// Synthesize the user turn as a text.* triple tagged RoleUser so it
+	// flows through the same fan-out (recorder + Translator + SSE) as
+	// assistant text. See docs/workstream-user-message-event.md.
+	userTurn := input.UserTurnPayloads(handle.RunID())
+	session := newAGUIRunSession(r.Context(), handle, s.store, invocation.threadID, userTurn, w)
 	if err := session.Serve(); err != nil && !errors.Is(err, r.Context().Err()) {
 		slog.Warn("agui stream ended with error", "err", err, "thread_id", invocation.threadID)
 	}

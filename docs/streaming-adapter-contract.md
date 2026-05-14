@@ -71,6 +71,17 @@ sink.EmitStream(agentadaptor.StreamPayload{
 
 bridges 会把 `Kind == ""` 的 payload 映射成 AG-UI `CUSTOM` 事件。
 
+#### 1.3.1 `Role` 字段约束
+
+`StreamPayload.Role`（`RoleAssistant` 零值 / `RoleUser`）只对
+`text.start / text.content / text.end` 有语义。**adapter 必须保持
+`Role` 为零值**——assistant text 是 adapter 的唯一合法输出形态。
+
+`RoleUser` 是 bridge / 宿主合成 user-side 事件的专属标记，由
+`pkg/bridges/agui.RunAgentInput.UserTurnPayloads` 等 helper 产生，
+**不允许**任何 adapter 自行 emit。Reviewer 在 PR 评审时拒绝 adapter
+设置 `Role` 字段的改动。
+
 ## 2. 硬约束
 
 ### 2.1 进程与 goroutine 生命周期
