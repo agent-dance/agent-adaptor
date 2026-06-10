@@ -26,8 +26,12 @@ const defaultWaitDelay = 5 * time.Second
 //   - terminate (on cancel) signals the entire group/tree, not just the leader,
 //     so inherited pipes are closed and the drain unblocks.
 //
-// WaitDelay is kept as a backstop for the rare case a descendant escapes the
-// group (e.g. it called setsid itself).
+// WaitDelay only bounds the window inside cmd.Wait; it is NOT a backstop for a
+// descendant that escapes the group (e.g. by calling setsid) while still
+// holding an inherited stdout/stderr pipe. In that case clihelper's drain
+// (wg.Wait) blocks before cmd.Wait is ever reached, so WaitDelay never fires
+// and the run still hangs. That escape is a known residual risk; the group kill
+// above is what covers the common case.
 func ConfigureCancellation(cmd *exec.Cmd) {
 	if cmd == nil {
 		return
