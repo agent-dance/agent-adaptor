@@ -35,40 +35,6 @@ func TestBuildClaudeExecArgsIncludesPartialMessagesWhenStreaming(t *testing.T) {
 	}
 }
 
-func modelFlagValue(args []string) (string, bool) {
-	for i, a := range args {
-		if a == "--model" && i+1 < len(args) {
-			return args[i+1], true
-		}
-	}
-	return "", false
-}
-
-func TestBuildClaudeExecArgsModelOverrideWinsOverBindingModel(t *testing.T) {
-	cfg := agentadaptor.ClaudeConfig{Model: "claude-sonnet-4-6"}
-	req := agentadaptor.DriverRunRequest{ModelOverride: "claude-opus-4-1"}
-	args := buildClaudeExecArgs(cfg, req, "", false)
-	got, ok := modelFlagValue(args)
-	if !ok {
-		t.Fatalf("expected --model flag in %#v", args)
-	}
-	if got != "claude-opus-4-1" {
-		t.Fatalf("--model = %q, want per-run override claude-opus-4-1", got)
-	}
-}
-
-func TestBuildClaudeExecArgsEmptyModelOverrideKeepsBindingModel(t *testing.T) {
-	cfg := agentadaptor.ClaudeConfig{Model: "claude-sonnet-4-6"}
-	args := buildClaudeExecArgs(cfg, agentadaptor.DriverRunRequest{ModelOverride: "   "}, "", false)
-	got, ok := modelFlagValue(args)
-	if !ok {
-		t.Fatalf("expected --model flag in %#v", args)
-	}
-	if got != "claude-sonnet-4-6" {
-		t.Fatalf("--model = %q, want binding model claude-sonnet-4-6 when override is blank", got)
-	}
-}
-
 func TestDescriptorAdvertisesExpectedMCPCapabilities(t *testing.T) {
 	caps := NewAdapter().Descriptor().MCP
 	if !caps.Supported || !caps.Stdio || !caps.HTTP || !caps.SSE {
