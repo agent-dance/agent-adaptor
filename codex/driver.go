@@ -343,6 +343,10 @@ func (adapter) StreamCapability() agentadaptor.StreamCapability {
 
 func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink agentadaptor.EventSink) (agentadaptor.DriverRunResult, error) {
 	cfg := readConfig(req.Config)
+	// per-run WithModel overrides the binding model for this invocation only.
+	if m := strings.TrimSpace(req.ModelOverride); m != "" {
+		cfg.Model = m
+	}
 	command := cfg.Command
 	if command == "" {
 		command = "codex"

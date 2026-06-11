@@ -338,6 +338,7 @@ type runOptions struct {
 	agents          *AgentPayload
 	hooks           *HookPayload
 	profileConfig   *ProfileConfigPayload
+	model           string
 	runPolicy       *RunPolicy
 	instructions    *InstructionsBundleRef
 	instructionsSet bool
@@ -527,6 +528,23 @@ func WithHooks(specs ...HookSpec) RunOption {
 func WithProfileConfig(patches ...ProfileConfigPatch) RunOption {
 	return func(ro *runOptions) {
 		ro.profileConfig = &ProfileConfigPayload{Patches: cloneProfileConfigPatches(patches)}
+	}
+}
+
+// WithModel overrides the bound agent's model for one run. It is the per-run
+// counterpart to the binding-level model carried by CodexConfig.Model /
+// ClaudeConfig.Model / CursorConfig.Model: the value is forwarded to the
+// adapter's native model selection (the `--model` flag for the built-in
+// codex / claude / cursor adapters) and takes precedence over the binding
+// model for this invocation only.
+//
+// Unlike WithProfileConfig, it does not persist anything to the agent profile
+// on disk and works uniformly across drivers regardless of whether the driver
+// exposes a "model" profile-config capability. An empty or whitespace-only
+// value is ignored, leaving the binding model in effect.
+func WithModel(model string) RunOption {
+	return func(ro *runOptions) {
+		ro.model = model
 	}
 }
 

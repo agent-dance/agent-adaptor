@@ -545,6 +545,11 @@ func buildClaudeExecArgs(cfg agentadaptor.ClaudeConfig, req agentadaptor.DriverR
 		}
 	}
 
+	// per-run WithModel overrides the binding model for this invocation only;
+	// Bedrock identifier filtering still applies to the overridden value.
+	if m := strings.TrimSpace(req.ModelOverride); m != "" {
+		cfg.Model = m
+	}
 	modelFlag := claudeRequestedModelFlag(cfg)
 	if req.Session != nil && req.Session.State != nil && req.Session.State.ResumeID != "" {
 		args = append(args, "--resume", req.Session.State.ResumeID)
