@@ -249,7 +249,7 @@ sdk := agentadaptor.New(
 调用级 `RunOption` 当前包括：
 
 - session：`WithSession`、`WithSessionKey`、`WithContinueSession`、`WithNewSession`、`WithForkSession`
-- 运行上下文：`WithWorkspace`、`WithRuntimeServices`、`WithSkills`、`WithMCP`、`WithInstructions`
+- 运行上下文：`WithWorkspace`、`WithRuntimeServices`、`WithSkills`、`WithModel`、`WithMCP`、`WithInstructions`
 - 策略与流式：`WithRunPolicy`、`WithStreaming`、`WithoutStreaming`
 - HITL handler：`WithPermissionHandler`、`WithPlanReviewHandler`、`WithQuestionHandler`
 - 其它元数据：`WithMetadata`、`WithAgentIdentity`
