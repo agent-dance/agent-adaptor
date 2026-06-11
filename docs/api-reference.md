@@ -69,6 +69,13 @@ Context and injection:
 - `WithAgents(specs...)`
 - `WithHooks(specs...)`
 - `WithProfileConfig(patches...)`
+- `WithModel(model)` — per-run model override. Forwarded to the adapter as
+  `DriverRunRequest.ModelOverride` and supersedes the binding model
+  (`CodexConfig.Model` / `ClaudeConfig.Model` / `CursorConfig.Model`) for the
+  built-in `--model` flag on this run only. Unlike `WithProfileConfig` it does
+  not persist anything to the profile on disk and applies uniformly across
+  drivers regardless of any `model` profile-config capability. Blank values are
+  ignored (binding model stays in effect).
 - `WithInstructions(ref)`
 - `WithMetadata(key, value)`
 - `WithAgentIdentity(identity)`

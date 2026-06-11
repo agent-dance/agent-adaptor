@@ -76,6 +76,7 @@ result, err := sdk.Run(
 - `WithForkSession`
 - `WithWorkspace`
 - `WithSkills`
+- `WithModel`（per-run 覆盖 binding 模型，喂给内置 driver 的 `--model`，不落盘、对三种 driver 一致）
 - `WithMCP`
 - `WithRunPolicy`
 - `WithInstructions`

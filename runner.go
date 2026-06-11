@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -454,6 +455,7 @@ func (r *runnerImpl) resolveInvocation(ctx context.Context, prompt string, opts 
 		r.binding.Adapter().Descriptor().Type,
 		identity,
 		extractDriverFingerprint(config),
+		strings.TrimSpace(resolvedOpts.model),
 		workspace.Fingerprint,
 		runtimePayload.Fingerprint,
 		profilePayload.Fingerprint,
@@ -478,6 +480,7 @@ func (r *runnerImpl) resolveInvocation(ctx context.Context, prompt string, opts 
 		metadata:       cloneStringMap(metadata),
 		fingerprint:    fingerprint,
 		streaming:      streaming,
+		model:          strings.TrimSpace(resolvedOpts.model),
 	}, cleanup, nil
 }
 
@@ -509,6 +512,7 @@ func (r *runnerImpl) executeWithSessionPlan(
 		RunID:          invocation.runID,
 		Prompt:         invocation.prompt,
 		Config:         invocation.config,
+		ModelOverride:  invocation.model,
 		Agent:          invocation.agent,
 		Workspace:      invocation.workspace,
 		Runtime:        cloneRuntimePayload(invocation.runtime),
