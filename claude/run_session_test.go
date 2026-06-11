@@ -199,6 +199,52 @@ func TestClaudeResumeProfileMismatchDoesNotWriteProfileResources(t *testing.T) {
 	}
 }
 
+func TestClaudeRunModelOverrideReflectedInReportedModel(t *testing.T) {
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	home := t.TempDir()
+	workspace := filepath.Join(home, "workspace")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatalf("mkdir workspace: %v", err)
+	}
+	command := testutil.WriteCommand(t, home, "fake-claude-model",
+		"#!/bin/sh\nset -eu\ncat >/dev/null\nprintf '{\"event\":\"turn.completed\",\"session_id\":\"claude-session\"}\\n'\n",
+		"@echo off\r\nsetlocal\r\nset /p PROMPT=\r\necho {\"event\":\"turn.completed\",\"session_id\":\"claude-session\"}\r\n",
+	)
+	newReq := func(override string) agentadaptor.DriverRunRequest {
+		return agentadaptor.DriverRunRequest{
+			Prompt: "hello",
+			Config: agentadaptor.ClaudeConfig{
+				CommonConfig: agentadaptor.CommonConfig{
+					Command: command,
+					CWD:     workspace,
+					Env:     []agentadaptor.EnvBinding{{Name: "HOME", Value: home}, {Name: "USERPROFILE", Value: home}},
+				},
+				Model: "claude-sonnet-4-6",
+			},
+			Workspace:     agentadaptor.WorkspaceLease{ID: "workspace-a", CWD: workspace},
+			ModelOverride: override,
+		}
+	}
+
+	// per-run override must drive both the --model flag and the reported model.
+	overridden, err := NewAdapter().Run(context.Background(), newReq("claude-opus-4-1"), &testutil.EventRecorder{})
+	if err != nil {
+		t.Fatalf("run with override: %v", err)
+	}
+	if overridden.Model != "claude-opus-4-1" {
+		t.Fatalf("reported Model = %q, want per-run override claude-opus-4-1", overridden.Model)
+	}
+
+	// blank override falls back to the binding model.
+	fallback, err := NewAdapter().Run(context.Background(), newReq("   "), &testutil.EventRecorder{})
+	if err != nil {
+		t.Fatalf("run without override: %v", err)
+	}
+	if fallback.Model != "claude-sonnet-4-6" {
+		t.Fatalf("reported Model = %q, want binding model claude-sonnet-4-6 when override is blank", fallback.Model)
+	}
+}
+
 func TestClaudeRunOmitsAnthropicModelFlagInBedrockMode(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", "")
 	home := t.TempDir()

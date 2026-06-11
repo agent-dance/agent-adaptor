@@ -229,6 +229,13 @@ type DriverRunRequest struct {
 	Session        *DriverSessionContext
 	Metadata       map[string]string
 
+	// ModelOverride is the per-run model selected via WithModel. When
+	// non-empty it supersedes the binding model carried by Config for this
+	// invocation; adapters must prefer it over their Config model when
+	// resolving the provider-native model selection. Empty means "no
+	// override" and the adapter falls back to the binding model.
+	ModelOverride string
+
 	// Streaming is a hint from the host that the caller wants structured
 	// stream events (StreamPayload) emitted via EventSink.EmitStream in
 	// addition to the regular RunEvent channel. Adapters that implement
@@ -426,6 +433,7 @@ type resolvedInvocation struct {
 	metadata       map[string]string
 	fingerprint    string
 	streaming      bool
+	model          string
 }
 
 // StreamKind enumerates the protocol-agnostic streaming events adapters emit
