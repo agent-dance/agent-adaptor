@@ -14,6 +14,7 @@
 | [`run-policy.md`](./run-policy.md) | `RunPolicy`、HITL mode、adapter capability 矩阵。 |
 | [`streaming.md`](./streaming.md) | `WithStreaming`、`RunHandle.StreamEvents`、AG-UI / SSE bridge 用法。 |
 | [`streaming-adapter-contract.md`](./streaming-adapter-contract.md) | 新 adapter 接入 streaming 时必须满足的合同。 |
+| [`a2a.md`](./a2a.md) | A2A bridge / client 的当前集成方式与边界。 |
 | [`skill-api-design.md`](./skill-api-design.md) | 当前 skills API 合同与迁移说明。 |
 | [`public-errors.md`](./public-errors.md) | 公开错误清单与宿主建议映射。 |
 | [`workstream-transcript-contract.md`](./workstream-transcript-contract.md) | 输出 / transcript / raw stream 分层合同。 |
