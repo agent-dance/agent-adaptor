@@ -2,6 +2,7 @@ package a2a
 
 import (
 	"fmt"
+	"sort"
 
 	a2aproto "github.com/a2aproject/a2a-go/v2/a2a"
 )
@@ -26,7 +27,7 @@ func buildAgentCard(in AgentCard) (*a2aproto.AgentCard, error) {
 		DefaultInputModes:  defaultModes(in.DefaultInputModes),
 		DefaultOutputModes: defaultModes(in.DefaultOutputModes),
 		Capabilities: a2aproto.AgentCapabilities{
-			Streaming:         trueOrDefault(in.Capabilities.Streaming, true),
+			Streaming:         in.Capabilities.Streaming.enabledByDefault(true),
 			PushNotifications: in.Capabilities.PushNotifications,
 			ExtendedAgentCard: in.Capabilities.ExtendedAgentCard,
 		},
@@ -127,6 +128,59 @@ func convertSecurityRequirements(in []SecurityRequirement) a2aproto.SecurityRequ
 	return out
 }
 
+func publicSecuritySchemes(in a2aproto.NamedSecuritySchemes) []SecurityScheme {
+	if len(in) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(in))
+	for name := range in {
+		names = append(names, string(name))
+	}
+	sort.Strings(names)
+
+	out := make([]SecurityScheme, 0, len(names))
+	for _, name := range names {
+		scheme := in[a2aproto.SecuritySchemeName(name)]
+		pub := SecurityScheme{Name: name}
+		switch s := scheme.(type) {
+		case a2aproto.APIKeySecurityScheme:
+			pub.Type = SecurityAPIKey
+			pub.Description = s.Description
+			pub.In = string(s.Location)
+			pub.ParamName = s.Name
+		case a2aproto.HTTPAuthSecurityScheme:
+			pub.Type = SecurityHTTP
+			pub.Description = s.Description
+			pub.Scheme = s.Scheme
+			pub.BearerFormat = s.BearerFormat
+		case a2aproto.MutualTLSSecurityScheme:
+			pub.Type = SecurityMutualTLS
+			pub.Description = s.Description
+		default:
+			continue
+		}
+		out = append(out, pub)
+	}
+	return out
+}
+
+func publicSecurityRequirements(in a2aproto.SecurityRequirementsOptions) []SecurityRequirement {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]SecurityRequirement, 0, len(in))
+	for _, req := range in {
+		pub := SecurityRequirement{Schemes: map[string][]string{}}
+		for name, scopes := range req {
+			pub.Schemes[string(name)] = append([]string(nil), scopes...)
+		}
+		if len(pub.Schemes) > 0 {
+			out = append(out, pub)
+		}
+	}
+	return out
+}
+
 func defaultModes(modes []string) []string {
 	if len(modes) == 0 {
 		return []string{"text/plain"}
@@ -134,9 +188,13 @@ func defaultModes(modes []string) []string {
 	return append([]string(nil), modes...)
 }
 
-func trueOrDefault(v bool, fallback bool) bool {
-	if v {
+func (m CapabilityMode) enabledByDefault(fallback bool) bool {
+	switch m {
+	case CapabilityEnabled:
 		return true
+	case CapabilityDisabled:
+		return false
+	default:
+		return fallback
 	}
-	return fallback
 }

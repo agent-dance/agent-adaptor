@@ -27,6 +27,12 @@ The bridge maps A2A task execution onto the single SDK execution path:
 4. The bridge calls `Runner.Start(..., WithStreaming())`.
 5. `StreamEvents`, `Wait`, and `Cancel` are translated to A2A status, artifact, and terminal events.
 
+Bridge capability advertisement is strict:
+
+- `AgentCard.Capabilities.Streaming` is a tri-state. The zero value keeps A2A streaming enabled; use `a2a.CapabilityDisabled` to publish `streaming=false`.
+- `PushNotifications` is not exposed unless `AgentCard.Capabilities.PushNotifications=true` and `ServerOptions.PushNotifications` provides both an A2A push `ConfigStore` and `Sender`.
+- `ExtendedAgentCard` is not exposed unless `AgentCard.Capabilities.ExtendedAgentCard=true` and `ServerOptions.ExtendedAgentCard` provides either a static card or a provider.
+
 ```go
 runner := sdk.Default()
 
@@ -44,6 +50,12 @@ server := a2a.NewServer(runner, a2a.ServerOptions{
 		}},
 	},
 	Session: a2a.SessionByContextID("a2a"),
+	TaskLifecycle: a2a.TaskLifecycleOptions{
+		Ephemeral: &a2a.EphemeralTaskStoreOptions{
+			MaxTasks: 512,
+			TTL:      2 * time.Hour,
+		},
+	},
 })
 
 mux := http.NewServeMux()
@@ -51,7 +63,9 @@ mux.Handle("/.well-known/agent-card.json", server.AgentCardHandler())
 mux.Handle("/a2a", server.Handler())
 ```
 
-The terminal result is emitted as a structured artifact named `agent-adaptor-result`. Assistant-facing output remains in the final A2A status message; `raw_streams`, `transcript`, `summary`, `result`, `usage`, and metadata remain separate fields inside the artifact.
+The terminal result is emitted as a structured artifact named `agent-adaptor-result`. Assistant-facing output remains in the final A2A status message. The default artifact contains only the safe summary; diagnostics such as metadata, usage, provider result payloads, transcript, raw streams, reasoning, tool-call internals, and HITL payloads require explicit `ExposurePolicy` opt-in and are sanitized before they cross the A2A boundary.
+
+Task retention is explicit. `NewServer` no longer hides the upstream unbounded in-memory task store. If `ServerOptions.TaskLifecycle.Store` is nil, the bridge uses a bounded ephemeral store with a default `MaxTasks=256` and `TTL=1h`. Hosts that need durable retention, custom paging/auth behavior, or cross-process lifecycle ownership must inject their own `a2asrv/taskstore.Store`.
 
 Hosts own serving concerns: route layout, authentication, authorization, TLS, tenancy, durability, task retention, and observability.
 
@@ -87,8 +101,10 @@ if err != nil {
 _ = task
 ```
 
-`SendStream` and `Subscribe` return ordered protocol events. If a stream fails before a terminal event and the task ID is known, the client attempts one `GetTask` recovery; a terminal recovered task is returned with `RecoveredState=true`.
+`SendStream` and `Subscribe` return ordered protocol events. The client uses the same execution-final semantics as the official server stack: a `Message`, a terminal task/status, or `TASK_STATE_INPUT_REQUIRED` ends the stream. Duplicate or late events after the first final event are ignored. If a stream fails before a final event and the task ID is known, the client attempts one `GetTask` recovery; a final recovered task is returned with `RecoveredState=true`.
+
+Bearer credentials are origin-pinned. With `Auth` configured, the client only sends credentials to the Agent Card origin by default. Agent Card interface URLs on another origin require explicit `TrustedAuthOrigins`, and redirects to untrusted origins have authorization headers stripped. `SubscribeRequest.Since` is rejected when set because A2A 1.0 `SubscribeToTask` has no cursor replay field.
 
 ## Non-Goals
 
-Visual subagent delegation, A2A-to-local adapter routing, push notification storage, and durable task persistence are outside this slice. Issue #5 tracks the visual subagent flow above these protocol primitives.
+Visual subagent delegation, A2A-to-local adapter routing, bridge-managed durable task persistence, and default push delivery infrastructure are outside this slice. Issue #5 tracks the visual subagent flow above these protocol primitives.

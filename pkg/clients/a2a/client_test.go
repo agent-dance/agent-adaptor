@@ -268,8 +268,440 @@ func TestStreamCloseCancelsUpstreamRequest(t *testing.T) {
 	}
 }
 
+func TestSendStreamTreatsMessageAsExecutionFinal(t *testing.T) {
+	t.Parallel()
+
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/agent-card.json":
+			_, _ = fmt.Fprintf(w, `{
+				"name":"Remote Agent",
+				"description":"test",
+				"version":"1.0.0",
+				"supportedInterfaces":[{"url":%q,"protocolBinding":"JSONRPC","protocolVersion":"1.0"}],
+				"capabilities":{"streaming":true},
+				"defaultInputModes":["text/plain"],
+				"defaultOutputModes":["text/plain"],
+				"skills":[{"id":"chat","name":"Chat","description":"chat","tags":["chat"]}]
+			}`, srv.URL+"/a2a")
+		case "/a2a":
+			if method := readRPCMethod(t, r); method != "SendStreamingMessage" {
+				t.Fatalf("method = %q, want SendStreamingMessage", method)
+			}
+			writeSSE(t, w,
+				rpcResult(`{"message":`+messageJSON("final answer")+`}`),
+				rpcResult(statusUpdateJSON("TASK_STATE_WORKING")),
+				rpcResult(`{"task":`+taskJSON("TASK_STATE_COMPLETED")+`}`),
+			)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	client := New(Options{AgentCardURL: srv.URL})
+	stream, err := client.SendStream(context.Background(), SendRequest{Message: UserText("stream")})
+	if err != nil {
+		t.Fatalf("SendStream() error = %v", err)
+	}
+	defer stream.Close()
+
+	events := collectStreamEvents(t, stream)
+	if len(events) != 1 {
+		t.Fatalf("event count = %d, want 1", len(events))
+	}
+	if events[0].Kind != EventTerminal || events[0].Message == nil || events[0].Message.ID != "msg-agent" {
+		t.Fatalf("message final event = %+v", events[0])
+	}
+}
+
+func TestSendStreamTreatsInputRequiredAsExecutionFinal(t *testing.T) {
+	t.Parallel()
+
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/agent-card.json":
+			_, _ = fmt.Fprintf(w, `{
+				"name":"Remote Agent",
+				"description":"test",
+				"version":"1.0.0",
+				"supportedInterfaces":[{"url":%q,"protocolBinding":"JSONRPC","protocolVersion":"1.0"}],
+				"capabilities":{"streaming":true},
+				"defaultInputModes":["text/plain"],
+				"defaultOutputModes":["text/plain"],
+				"skills":[{"id":"chat","name":"Chat","description":"chat","tags":["chat"]}]
+			}`, srv.URL+"/a2a")
+		case "/a2a":
+			if method := readRPCMethod(t, r); method != "SendStreamingMessage" {
+				t.Fatalf("method = %q, want SendStreamingMessage", method)
+			}
+			writeSSE(t, w,
+				rpcResult(statusUpdateJSON("TASK_STATE_WORKING")),
+				rpcResult(statusUpdateJSON("TASK_STATE_INPUT_REQUIRED")),
+				rpcResult(`{"task":`+taskJSON("TASK_STATE_COMPLETED")+`}`),
+			)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	client := New(Options{AgentCardURL: srv.URL})
+	stream, err := client.SendStream(context.Background(), SendRequest{Message: UserText("stream")})
+	if err != nil {
+		t.Fatalf("SendStream() error = %v", err)
+	}
+	defer stream.Close()
+
+	events := collectStreamEvents(t, stream)
+	if len(events) != 2 {
+		t.Fatalf("event count = %d, want 2", len(events))
+	}
+	if gotKinds := []EventKind{events[0].Kind, events[1].Kind}; fmt.Sprint(gotKinds) != "[status terminal]" {
+		t.Fatalf("stream kinds = %v", gotKinds)
+	}
+	if events[1].Status == nil || events[1].Status.State != TaskStateInputRequired {
+		t.Fatalf("input-required final event = %+v", events[1])
+	}
+}
+
+func TestSendStreamIgnoresLateTerminalAfterFirstFinal(t *testing.T) {
+	t.Parallel()
+
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/agent-card.json":
+			_, _ = fmt.Fprintf(w, `{
+				"name":"Remote Agent",
+				"description":"test",
+				"version":"1.0.0",
+				"supportedInterfaces":[{"url":%q,"protocolBinding":"JSONRPC","protocolVersion":"1.0"}],
+				"capabilities":{"streaming":true},
+				"defaultInputModes":["text/plain"],
+				"defaultOutputModes":["text/plain"],
+				"skills":[{"id":"chat","name":"Chat","description":"chat","tags":["chat"]}]
+			}`, srv.URL+"/a2a")
+		case "/a2a":
+			if method := readRPCMethod(t, r); method != "SendStreamingMessage" {
+				t.Fatalf("method = %q, want SendStreamingMessage", method)
+			}
+			writeSSE(t, w,
+				rpcResult(`{"task":`+taskJSON("TASK_STATE_COMPLETED")+`}`),
+				rpcResult(statusUpdateJSON("TASK_STATE_FAILED")),
+			)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	client := New(Options{AgentCardURL: srv.URL})
+	stream, err := client.SendStream(context.Background(), SendRequest{Message: UserText("stream")})
+	if err != nil {
+		t.Fatalf("SendStream() error = %v", err)
+	}
+	defer stream.Close()
+
+	events := collectStreamEvents(t, stream)
+	if len(events) != 1 {
+		t.Fatalf("event count = %d, want 1", len(events))
+	}
+	if events[0].Kind != EventTerminal || events[0].Task == nil || events[0].Task.Status.State != TaskStateCompleted {
+		t.Fatalf("terminal event = %+v", events[0])
+	}
+}
+
+func TestSendStreamRecoversExecutionFinalTask(t *testing.T) {
+	t.Parallel()
+
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/agent-card.json":
+			_, _ = fmt.Fprintf(w, `{
+				"name":"Remote Agent",
+				"description":"test",
+				"version":"1.0.0",
+				"supportedInterfaces":[{"url":%q,"protocolBinding":"JSONRPC","protocolVersion":"1.0"}],
+				"capabilities":{"streaming":true},
+				"defaultInputModes":["text/plain"],
+				"defaultOutputModes":["text/plain"],
+				"skills":[{"id":"chat","name":"Chat","description":"chat","tags":["chat"]}]
+			}`, srv.URL+"/a2a")
+		case "/a2a":
+			switch method := readRPCMethod(t, r); method {
+			case "SendStreamingMessage":
+				writeBrokenSSE(t, w,
+					rpcResult(statusUpdateJSON("TASK_STATE_WORKING")),
+					`{"jsonrpc":"2.0","id":"1","result":`,
+				)
+			case "GetTask":
+				writeRPCResult(t, w, taskJSON("TASK_STATE_INPUT_REQUIRED"))
+			default:
+				t.Fatalf("unexpected method %q", method)
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	client := New(Options{AgentCardURL: srv.URL})
+	stream, err := client.SendStream(context.Background(), SendRequest{Message: UserText("stream")})
+	if err != nil {
+		t.Fatalf("SendStream() error = %v", err)
+	}
+	defer stream.Close()
+
+	events := collectStreamEvents(t, stream)
+	if len(events) != 2 {
+		t.Fatalf("event count = %d, want 2", len(events))
+	}
+	if events[1].Kind != EventTerminal || events[1].Task == nil || !events[1].RecoveredState {
+		t.Fatalf("recovered terminal event = %+v", events[1])
+	}
+	if events[1].Task.Status.State != TaskStateInputRequired {
+		t.Fatalf("recovered state = %q, want %q", events[1].Task.Status.State, TaskStateInputRequired)
+	}
+}
+
+func TestSendStreamRecoveryFailsForNonFinalTask(t *testing.T) {
+	t.Parallel()
+
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/agent-card.json":
+			_, _ = fmt.Fprintf(w, `{
+				"name":"Remote Agent",
+				"description":"test",
+				"version":"1.0.0",
+				"supportedInterfaces":[{"url":%q,"protocolBinding":"JSONRPC","protocolVersion":"1.0"}],
+				"capabilities":{"streaming":true},
+				"defaultInputModes":["text/plain"],
+				"defaultOutputModes":["text/plain"],
+				"skills":[{"id":"chat","name":"Chat","description":"chat","tags":["chat"]}]
+			}`, srv.URL+"/a2a")
+		case "/a2a":
+			switch method := readRPCMethod(t, r); method {
+			case "SendStreamingMessage":
+				writeBrokenSSE(t, w,
+					rpcResult(statusUpdateJSON("TASK_STATE_WORKING")),
+					`{"jsonrpc":"2.0","id":"1","result":`,
+				)
+			case "GetTask":
+				writeRPCResult(t, w, taskJSON("TASK_STATE_WORKING"))
+			default:
+				t.Fatalf("unexpected method %q", method)
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	client := New(Options{AgentCardURL: srv.URL})
+	stream, err := client.SendStream(context.Background(), SendRequest{Message: UserText("stream")})
+	if err != nil {
+		t.Fatalf("SendStream() error = %v", err)
+	}
+	defer stream.Close()
+
+	first, err := stream.Recv()
+	if err != nil {
+		t.Fatalf("first Recv() error = %v", err)
+	}
+	if first.Kind != EventStatus || first.Status == nil || first.Status.State != TaskStateWorking {
+		t.Fatalf("first event = %+v", first)
+	}
+	_, err = stream.Recv()
+	var recoveryErr *StreamRecoveryError
+	if !errors.As(err, &recoveryErr) {
+		t.Fatalf("Recv() error = %v, want *StreamRecoveryError", err)
+	}
+}
+
+func TestSubscribeRejectsUnsupportedSinceCursor(t *testing.T) {
+	t.Parallel()
+
+	client := New(Options{AgentCardURL: "https://remote.example/.well-known/agent-card.json"})
+	_, err := client.Subscribe(context.Background(), SubscribeRequest{TaskID: "task-1", Since: "cursor-1"})
+	if !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("Subscribe() error = %v, want ErrUnsupported", err)
+	}
+}
+
+func TestClientRejectsCrossOriginBearerByDefault(t *testing.T) {
+	t.Parallel()
+
+	type hit struct {
+		auth string
+	}
+	hits := make(chan hit, 1)
+
+	var protocol *httptest.Server
+	protocol = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits <- hit{auth: r.Header.Get("Authorization")}
+		t.Fatalf("unexpected request to untrusted protocol endpoint")
+	}))
+	defer protocol.Close()
+
+	var card *httptest.Server
+	card = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/agent-card.json":
+			_, _ = fmt.Fprintf(w, `{
+				"name":"Remote Agent",
+				"description":"test",
+				"version":"1.0.0",
+				"supportedInterfaces":[{"url":%q,"protocolBinding":"JSONRPC","protocolVersion":"1.0"}],
+				"capabilities":{},
+				"defaultInputModes":["text/plain"],
+				"defaultOutputModes":["text/plain"],
+				"skills":[{"id":"chat","name":"Chat","description":"chat","tags":["chat"]}]
+			}`, protocol.URL+"/a2a")
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer card.Close()
+
+	client := New(Options{AgentCardURL: card.URL, Auth: BearerToken("secret")})
+	_, err := client.Send(context.Background(), SendRequest{Message: UserText("review this")})
+	if !errors.Is(err, ErrUntrustedOrigin) {
+		t.Fatalf("Send() error = %v, want ErrUntrustedOrigin", err)
+	}
+	select {
+	case got := <-hits:
+		t.Fatalf("unexpected request to untrusted endpoint with auth %q", got.auth)
+	default:
+	}
+}
+
+func TestClientAllowsTrustedCrossOriginBearerWithOptIn(t *testing.T) {
+	t.Parallel()
+
+	authHeaders := make(chan string, 1)
+
+	var protocol *httptest.Server
+	protocol = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authHeaders <- r.Header.Get("Authorization")
+		if method := readRPCMethod(t, r); method != "SendMessage" {
+			t.Fatalf("method = %q, want SendMessage", method)
+		}
+		writeRPCResult(t, w, `{"task":`+taskJSON("TASK_STATE_COMPLETED")+`}`)
+	}))
+	defer protocol.Close()
+
+	var card *httptest.Server
+	card = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/agent-card.json":
+			_, _ = fmt.Fprintf(w, `{
+				"name":"Remote Agent",
+				"description":"test",
+				"version":"1.0.0",
+				"supportedInterfaces":[{"url":%q,"protocolBinding":"JSONRPC","protocolVersion":"1.0"}],
+				"capabilities":{},
+				"defaultInputModes":["text/plain"],
+				"defaultOutputModes":["text/plain"],
+				"skills":[{"id":"chat","name":"Chat","description":"chat","tags":["chat"]}]
+			}`, protocol.URL+"/a2a")
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer card.Close()
+
+	client := New(Options{
+		AgentCardURL:       card.URL,
+		Auth:               BearerToken("secret"),
+		TrustedAuthOrigins: []string{protocol.URL},
+	})
+	if _, err := client.Send(context.Background(), SendRequest{Message: UserText("review this")}); err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+	select {
+	case got := <-authHeaders:
+		if got != "Bearer secret" {
+			t.Fatalf("Authorization = %q, want %q", got, "Bearer secret")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("trusted protocol request did not arrive")
+	}
+}
+
+func TestClientDoesNotLeakBearerOnCrossOriginRedirect(t *testing.T) {
+	t.Parallel()
+
+	redirectedAuth := make(chan string, 1)
+
+	var redirected *httptest.Server
+	redirected = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		redirectedAuth <- r.Header.Get("Authorization")
+		if method := readRPCMethod(t, r); method != "SendMessage" {
+			t.Fatalf("redirected method = %q, want SendMessage", method)
+		}
+		writeRPCResult(t, w, `{"task":`+taskJSON("TASK_STATE_COMPLETED")+`}`)
+	}))
+	defer redirected.Close()
+
+	var card *httptest.Server
+	card = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/agent-card.json":
+			_, _ = fmt.Fprintf(w, `{
+				"name":"Remote Agent",
+				"description":"test",
+				"version":"1.0.0",
+				"supportedInterfaces":[{"url":%q,"protocolBinding":"JSONRPC","protocolVersion":"1.0"}],
+				"capabilities":{},
+				"defaultInputModes":["text/plain"],
+				"defaultOutputModes":["text/plain"],
+				"skills":[{"id":"chat","name":"Chat","description":"chat","tags":["chat"]}]
+			}`, card.URL+"/a2a")
+		case "/a2a":
+			http.Redirect(w, r, redirected.URL+"/a2a", http.StatusTemporaryRedirect)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer card.Close()
+
+	client := New(Options{AgentCardURL: card.URL, Auth: BearerToken("secret")})
+	if _, err := client.Send(context.Background(), SendRequest{Message: UserText("review this")}); err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+	select {
+	case got := <-redirectedAuth:
+		if got != "" {
+			t.Fatalf("redirected Authorization = %q, want empty", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("redirected protocol request did not arrive")
+	}
+}
+
 func UserText(text string) Message {
 	return Message{Role: "user", Parts: []Part{{Kind: PartText, Text: text, MediaType: "text/plain"}}}
+}
+
+func collectStreamEvents(t *testing.T, stream *Stream) []Event {
+	t.Helper()
+	var events []Event
+	for {
+		ev, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			return events
+		}
+		if err != nil {
+			t.Fatalf("Recv() error = %v", err)
+		}
+		events = append(events, ev)
+	}
 }
 
 func taskJSON(state string) string {
@@ -283,6 +715,29 @@ func taskJSON(state string) string {
 		"history":[{"messageId":"msg-user","role":"ROLE_USER","taskId":"task-1","contextId":"ctx-1","parts":[{"text":"hi"}]}],
 		"artifacts":[{"artifactId":"artifact-1","name":"report","parts":[{"text":"body"}]}],
 		"metadata":{"remote":"yes"}
+	}`
+}
+
+func messageJSON(text string) string {
+	return `{
+		"messageId":"msg-agent",
+		"role":"ROLE_AGENT",
+		"taskId":"task-1",
+		"contextId":"ctx-1",
+		"parts":[{"text":"` + text + `"}]
+	}`
+}
+
+func statusUpdateJSON(state string) string {
+	return `{
+		"statusUpdate":{
+			"taskId":"task-1",
+			"contextId":"ctx-1",
+			"status":{
+				"state":"` + state + `",
+				"message":{"messageId":"msg-agent","role":"ROLE_AGENT","taskId":"task-1","contextId":"ctx-1","parts":[{"text":"state"}]}
+			}
+		}
 	}`
 }
 
@@ -314,6 +769,25 @@ func writeSSE(t *testing.T, w http.ResponseWriter, payloads ...string) {
 		var compact bytes.Buffer
 		if err := json.Compact(&compact, []byte(payload)); err != nil {
 			t.Fatalf("compact SSE payload: %v\n%s", err, payload)
+		}
+		_, _ = fmt.Fprintf(w, "data: %s\n\n", compact.String())
+	}
+}
+
+func writeBrokenSSE(t *testing.T, w http.ResponseWriter, payloads ...string) {
+	t.Helper()
+	w.Header().Set("Content-Type", "text/event-stream")
+	if flusher, ok := w.(http.Flusher); ok {
+		defer flusher.Flush()
+	}
+	for i, payload := range payloads {
+		if i == len(payloads)-1 {
+			_, _ = fmt.Fprintf(w, "data: %s\n\n", payload)
+			return
+		}
+		var compact bytes.Buffer
+		if err := json.Compact(&compact, []byte(payload)); err != nil {
+			t.Fatalf("compact broken SSE payload: %v\n%s", err, payload)
 		}
 		_, _ = fmt.Fprintf(w, "data: %s\n\n", compact.String())
 	}

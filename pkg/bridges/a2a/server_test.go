@@ -15,6 +15,8 @@ import (
 	"testing"
 	"time"
 
+	a2aproto "github.com/a2aproject/a2a-go/v2/a2a"
+	a2ataskstore "github.com/a2aproject/a2a-go/v2/a2asrv/taskstore"
 	agentadaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/pkg/bridges/a2a"
 )
@@ -56,6 +58,156 @@ func TestAgentCardHandlerReturnsConfiguredCard(t *testing.T) {
 	}
 }
 
+func TestAgentCardIntrospectionPreservesConfiguredDetails(t *testing.T) {
+	t.Parallel()
+
+	server := a2a.NewServer(fakeRunner{}, a2a.ServerOptions{
+		AgentCard: a2a.AgentCard{
+			Name:        "Bridge Agent",
+			Description: "test",
+			Version:     "1.0.0",
+			URL:         "https://example.com/a2a",
+			Provider:    &a2a.Provider{Organization: "Agent Dance", URL: "https://example.com"},
+			Capabilities: a2a.Capabilities{
+				Streaming: a2a.CapabilityEnabled,
+				Extensions: []a2a.Extension{{
+					URI: "https://example.com/ext", Description: "extension", Required: true,
+					Params: map[string]any{"mode": "strict"},
+				}},
+			},
+			Skills: []a2a.Skill{{
+				ID: "chat", Name: "Chat", Description: "chat",
+				Tags: []string{"coding"}, Examples: []string{"review this"},
+				InputModes: []string{"text/plain"}, OutputModes: []string{"text/plain"},
+			}},
+			SecuritySchemes: []a2a.SecurityScheme{{
+				Name: "bearer", Type: a2a.SecurityHTTP, Scheme: "Bearer", BearerFormat: "JWT",
+			}},
+			Security: []a2a.SecurityRequirement{{Schemes: map[string][]string{"bearer": {"task.write"}}}},
+		},
+	})
+
+	card := server.AgentCard()
+	if card.Provider == nil || card.Provider.Organization != "Agent Dance" {
+		t.Fatalf("provider not preserved: %+v", card.Provider)
+	}
+	if card.Capabilities.Streaming != a2a.CapabilityEnabled || len(card.Capabilities.Extensions) != 1 {
+		t.Fatalf("capabilities not preserved: %+v", card.Capabilities)
+	}
+	if len(card.Skills) != 1 || len(card.Skills[0].Tags) != 1 || len(card.Skills[0].Examples) != 1 || len(card.Skills[0].InputModes) != 1 {
+		t.Fatalf("skill details not preserved: %+v", card.Skills)
+	}
+	if len(card.SecuritySchemes) != 1 || card.SecuritySchemes[0].Name != "bearer" || card.SecuritySchemes[0].BearerFormat != "JWT" {
+		t.Fatalf("security schemes not preserved: %+v", card.SecuritySchemes)
+	}
+	if len(card.Security) != 1 || fmt.Sprint(card.Security[0].Schemes["bearer"]) != "[task.write]" {
+		t.Fatalf("security requirements not preserved: %+v", card.Security)
+	}
+}
+
+func TestAgentCardHandlerSupportsStreamingFalse(t *testing.T) {
+	t.Parallel()
+
+	server := a2a.NewServer(fakeRunner{}, a2a.ServerOptions{
+		AgentCard: a2a.AgentCard{
+			Name: "Bridge Agent", Description: "test", Version: "1.0.0", URL: "https://example.com/a2a",
+			Capabilities: a2a.Capabilities{Streaming: a2a.CapabilityDisabled},
+			Skills:       []a2a.Skill{{ID: "chat", Name: "Chat", Description: "chat"}},
+		},
+	})
+
+	rec := httptest.NewRecorder()
+	server.AgentCardHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/.well-known/agent-card.json", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	var card struct {
+		Capabilities struct {
+			Streaming bool `json:"streaming"`
+		} `json:"capabilities"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&card); err != nil {
+		t.Fatalf("decode card: %v", err)
+	}
+	if card.Capabilities.Streaming {
+		t.Fatalf("streaming capability = true, want false")
+	}
+}
+
+func TestNewServerRejectsMisconfiguredCapabilities(t *testing.T) {
+	t.Parallel()
+
+	baseCard := a2a.AgentCard{
+		Name: "Bridge Agent", Description: "test", Version: "1.0.0", URL: "https://example.com/a2a",
+		Skills: []a2a.Skill{{ID: "chat", Name: "Chat", Description: "chat"}},
+	}
+
+	tests := []struct {
+		name string
+		opts a2a.ServerOptions
+		want string
+	}{
+		{
+			name: "push capability without collaborators",
+			opts: a2a.ServerOptions{
+				AgentCard: func() a2a.AgentCard {
+					card := baseCard
+					card.Capabilities.PushNotifications = true
+					return card
+				}(),
+			},
+			want: "push notifications capability requires explicit PushNotifications support",
+		},
+		{
+			name: "extended capability without collaborators",
+			opts: a2a.ServerOptions{
+				AgentCard: func() a2a.AgentCard {
+					card := baseCard
+					card.Capabilities.ExtendedAgentCard = true
+					return card
+				}(),
+			},
+			want: "extended agent card capability requires explicit ExtendedAgentCard support",
+		},
+		{
+			name: "push collaborators without capability",
+			opts: a2a.ServerOptions{
+				AgentCard: baseCard,
+				PushNotifications: &a2a.PushNotificationSupport{
+					Store:  new(noopPushConfigStore),
+					Sender: noopPushSender{},
+				},
+			},
+			want: "push notifications support requires AgentCard.Capabilities.PushNotifications=true",
+		},
+		{
+			name: "extended collaborators without capability",
+			opts: a2a.ServerOptions{
+				AgentCard: baseCard,
+				ExtendedAgentCard: &a2a.ExtendedAgentCardSupport{
+					Static: &baseCard,
+				},
+			},
+			want: "extended agent card support requires AgentCard.Capabilities.ExtendedAgentCard=true",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			defer func() {
+				r := recover()
+				if r == nil {
+					t.Fatalf("expected panic containing %q", tc.want)
+				}
+				if !strings.Contains(fmt.Sprint(r), tc.want) {
+					t.Fatalf("panic = %v, want substring %q", r, tc.want)
+				}
+			}()
+			_ = a2a.NewServer(fakeRunner{}, tc.opts)
+		})
+	}
+}
+
 func TestSendMessageMapsRunnerToA2ATask(t *testing.T) {
 	t.Parallel()
 
@@ -88,13 +240,7 @@ func TestSendMessageMapsRunnerToA2ATask(t *testing.T) {
 				Status struct {
 					State string `json:"state"`
 				} `json:"status"`
-				Artifacts []struct {
-					Name  string `json:"name"`
-					Parts []struct {
-						Text string         `json:"text"`
-						Data map[string]any `json:"data"`
-					} `json:"parts"`
-				} `json:"artifacts"`
+				Artifacts []taskArtifact `json:"artifacts"`
 			} `json:"task"`
 		} `json:"result"`
 	}
@@ -112,6 +258,189 @@ func TestSendMessageMapsRunnerToA2ATask(t *testing.T) {
 	}
 }
 
+func TestInvalidPromptRequestDoesNotStartRunner(t *testing.T) {
+	t.Parallel()
+
+	var starts atomic.Int32
+	server := a2a.NewServer(scriptedRunner{start: func(context.Context, string, ...agentadaptor.RunOption) (agentadaptor.RunHandle, error) {
+		starts.Add(1)
+		return nil, errors.New("runner should not start")
+	}}, testOptions())
+
+	resp := postRPC(t, server.Handler(), `{"jsonrpc":"2.0","id":"bad","method":"SendMessage","params":{"message":{"messageId":"m1","role":"ROLE_USER","parts":[{"data":{"x":1}}]}}}`)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	var envelope struct {
+		Error *struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if starts.Load() != 0 {
+		t.Fatalf("Start calls = %d, want 0", starts.Load())
+	}
+	if envelope.Error == nil || !strings.Contains(envelope.Error.Message, "no user text part") {
+		t.Fatalf("unexpected error envelope: %+v", envelope.Error)
+	}
+}
+
+func TestSendMessageDefaultExposureOmitsDiagnostics(t *testing.T) {
+	t.Parallel()
+
+	server := a2a.NewServer(scriptedRunner{start: func(ctx context.Context, prompt string, opts ...agentadaptor.RunOption) (agentadaptor.RunHandle, error) {
+		h := newScriptedHandle("run-privacy")
+		go func() {
+			h.finish(agentadaptor.RunResult{
+				RunID: "run-privacy", DriverType: "fake", Output: "hello", Summary: "safe summary",
+				Metadata: map[string]string{"authorization": "Bearer super-secret"},
+				Usage:    &agentadaptor.Usage{InputTokens: 12, OutputTokens: 34},
+				Result:   map[string]any{"token": "secret-token"},
+				Transcript: []agentadaptor.TranscriptItem{{
+					Kind: agentadaptor.TranscriptAssistant, Text: "hidden transcript",
+				}},
+				RawStreams: &agentadaptor.RawStreams{Stdout: "Authorization: Bearer hidden"},
+			}, nil)
+		}()
+		return h, nil
+	}}, testOptions())
+
+	resp := postRPC(t, server.Handler(), `{"jsonrpc":"2.0","id":"1","method":"SendMessage","params":{"message":{"messageId":"m1","role":"ROLE_USER","parts":[{"text":"hello bridge"}]}}}`)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	var envelope struct {
+		Result struct {
+			Task *struct {
+				Artifacts []taskArtifact `json:"artifacts"`
+			} `json:"task"`
+		} `json:"result"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	artifact := findTaskArtifact(t, envelope.Result.Task.Artifacts, "agent-adaptor-result")
+	data := artifact.Parts[0].Data
+	if got := data["summary"]; got != "safe summary" {
+		t.Fatalf("summary = %#v", got)
+	}
+	for _, forbidden := range []string{"metadata", "usage", "result", "transcript", "raw_streams", "run_id", "driver_type"} {
+		if _, ok := data[forbidden]; ok {
+			t.Fatalf("unexpected diagnostic field %q in %+v", forbidden, data)
+		}
+	}
+}
+
+func TestSendMessageExposurePolicyRedactsDiagnostics(t *testing.T) {
+	t.Parallel()
+
+	server := a2a.NewServer(scriptedRunner{start: func(ctx context.Context, prompt string, opts ...agentadaptor.RunOption) (agentadaptor.RunHandle, error) {
+		h := newScriptedHandle("run-redacted")
+		go func() {
+			h.finish(agentadaptor.RunResult{
+				Output:  "hello",
+				Summary: "safe summary",
+				Metadata: map[string]string{
+					"authorization": "Bearer super-secret",
+					"trace_id":      "trace-123",
+				},
+				Usage: &agentadaptor.Usage{InputTokens: 12, OutputTokens: 34},
+				Result: map[string]any{
+					"headers": map[string]any{
+						"Authorization": "Bearer sk-live-123",
+						"X-Trace":       "trace-456",
+					},
+					"access_token": "opaque-token",
+				},
+				Transcript: []agentadaptor.TranscriptItem{{
+					Kind: agentadaptor.TranscriptToolResult,
+					Text: `Authorization: Bearer sk-protocol-456`,
+					Data: map[string]any{"refresh_token": "refresh-secret"},
+				}},
+				RawStreams: &agentadaptor.RawStreams{
+					Stdout: `{"authorization":"Bearer stdout-secret"}`,
+					Stderr: "Bearer stderr-secret",
+				},
+			}, nil)
+		}()
+		return h, nil
+	}}, a2a.ServerOptions{
+		AgentCard: testOptions().AgentCard,
+		Exposure: a2a.ExposurePolicy{
+			Diagnostics: a2a.DiagnosticsPolicy{
+				IncludeMetadata:       true,
+				IncludeUsage:          true,
+				IncludeProviderResult: true,
+				IncludeTranscript:     true,
+				IncludeRawStreams:     true,
+			},
+		},
+	})
+
+	resp := postRPC(t, server.Handler(), `{"jsonrpc":"2.0","id":"1","method":"SendMessage","params":{"message":{"messageId":"m1","role":"ROLE_USER","parts":[{"text":"hello bridge"}]}}}`)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	var envelope struct {
+		Result struct {
+			Task *struct {
+				Artifacts []taskArtifact `json:"artifacts"`
+			} `json:"task"`
+		} `json:"result"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	artifact := findTaskArtifact(t, envelope.Result.Task.Artifacts, "agent-adaptor-result")
+	data := artifact.Parts[0].Data
+
+	metadata := nestedMap(t, data["metadata"], "metadata")
+	if metadata["authorization"] != "[REDACTED]" {
+		t.Fatalf("metadata.authorization = %#v", metadata["authorization"])
+	}
+	if metadata["trace_id"] != "trace-123" {
+		t.Fatalf("metadata.trace_id = %#v", metadata["trace_id"])
+	}
+
+	result := nestedMap(t, data["result"], "result")
+	if result["access_token"] != "[REDACTED]" {
+		t.Fatalf("result.access_token = %#v", result["access_token"])
+	}
+	headers := nestedMap(t, result["headers"], "result.headers")
+	if headers["Authorization"] != "[REDACTED]" {
+		t.Fatalf("result.headers.Authorization = %#v", headers["Authorization"])
+	}
+	if headers["X-Trace"] != "trace-456" {
+		t.Fatalf("result.headers.X-Trace = %#v", headers["X-Trace"])
+	}
+
+	rawStreams := nestedMap(t, data["raw_streams"], "raw_streams")
+	if rawStreams["stdout"] != `{"authorization":"[REDACTED]"}` {
+		t.Fatalf("raw_streams.stdout = %#v", rawStreams["stdout"])
+	}
+	if rawStreams["stderr"] != "Bearer [REDACTED]" {
+		t.Fatalf("raw_streams.stderr = %#v", rawStreams["stderr"])
+	}
+
+	transcript, ok := data["transcript"].([]any)
+	if !ok || len(transcript) != 1 {
+		t.Fatalf("transcript = %#v", data["transcript"])
+	}
+	item := nestedMap(t, transcript[0], "transcript[0]")
+	if item["Text"] != "Authorization: [REDACTED]" {
+		t.Fatalf("transcript[0].Text = %#v", item["Text"])
+	}
+	itemData := nestedMap(t, item["Data"], "transcript[0].Data")
+	if itemData["refresh_token"] != "[REDACTED]" {
+		t.Fatalf("transcript[0].Data.refresh_token = %#v", itemData["refresh_token"])
+	}
+}
+
 func TestSendStreamingMessageEmitsOrderedUpdates(t *testing.T) {
 	t.Parallel()
 
@@ -121,6 +450,7 @@ func TestSendStreamingMessageEmitsOrderedUpdates(t *testing.T) {
 			time.Sleep(20 * time.Millisecond)
 			h.emit(agentadaptor.StreamPayload{Kind: agentadaptor.StreamTextContent, Delta: "hel"})
 			h.emit(agentadaptor.StreamPayload{Kind: agentadaptor.StreamTextContent, Delta: "lo"})
+			h.emit(agentadaptor.StreamPayload{Kind: agentadaptor.StreamTextEnd})
 			h.finish(agentadaptor.RunResult{RunID: "run-stream", Output: "hello", Summary: "done"}, nil)
 		}()
 		return h, nil
@@ -132,8 +462,8 @@ func TestSendStreamingMessageEmitsOrderedUpdates(t *testing.T) {
 		t.Fatalf("status = %d", resp.StatusCode)
 	}
 	frames := readSSEFrames(t, resp.Body, 2*time.Second)
-	if len(frames) < 4 {
-		t.Fatalf("frames = %d, want at least 4: %+v", len(frames), frames)
+	if len(frames) < 6 {
+		t.Fatalf("frames = %d, want at least 6: %+v", len(frames), frames)
 	}
 	if frames[0].Result.Task == nil {
 		t.Fatalf("first frame should be task: %+v", frames[0])
@@ -141,8 +471,17 @@ func TestSendStreamingMessageEmitsOrderedUpdates(t *testing.T) {
 	if frames[1].Result.StatusUpdate == nil || frames[1].Result.StatusUpdate.Status.State != "TASK_STATE_WORKING" {
 		t.Fatalf("second frame should be working: %+v", frames[1])
 	}
-	if frames[2].Result.ArtifactUpdate == nil || frames[2].Result.ArtifactUpdate.Artifact.Parts[0].Text != "hel" {
+	if frames[2].Result.ArtifactUpdate == nil || frames[2].Result.ArtifactUpdate.Artifact.Name != "assistant-output" || frames[2].Result.ArtifactUpdate.Artifact.Parts[0].Text != "hel" || frames[2].Result.ArtifactUpdate.LastChunk {
 		t.Fatalf("third frame should be artifact hel: %+v", frames[2])
+	}
+	if frames[3].Result.ArtifactUpdate == nil || frames[3].Result.ArtifactUpdate.Artifact.Name != "assistant-output" || frames[3].Result.ArtifactUpdate.Artifact.Parts[0].Text != "lo" || frames[3].Result.ArtifactUpdate.LastChunk {
+		t.Fatalf("fourth frame should be artifact lo: %+v", frames[3])
+	}
+	if frames[4].Result.ArtifactUpdate == nil || frames[4].Result.ArtifactUpdate.Artifact.Name != "assistant-output" || !frames[4].Result.ArtifactUpdate.LastChunk {
+		t.Fatalf("fifth frame should close assistant-output: %+v", frames[4])
+	}
+	if frames[5].Result.ArtifactUpdate == nil || frames[5].Result.ArtifactUpdate.Artifact.Name != "agent-adaptor-result" || !frames[5].Result.ArtifactUpdate.LastChunk {
+		t.Fatalf("sixth frame should close agent-adaptor-result: %+v", frames[5])
 	}
 	if frames[len(frames)-1].Result.StatusUpdate == nil || frames[len(frames)-1].Result.StatusUpdate.Status.State != "TASK_STATE_COMPLETED" {
 		t.Fatalf("last frame should be completed: %+v", frames[len(frames)-1])
@@ -206,6 +545,77 @@ func TestCancelTaskCancelsUnderlyingRun(t *testing.T) {
 	}
 	if cancelled.Result.Status.State != "TASK_STATE_CANCELED" {
 		t.Fatalf("cancelled state = %q", cancelled.Result.Status.State)
+	}
+}
+
+func TestNewServerUsesInjectedTaskStore(t *testing.T) {
+	t.Parallel()
+
+	store := &countingTaskStore{Store: a2ataskstore.NewInMemory(nil)}
+	server := a2a.NewServer(scriptedRunner{start: func(ctx context.Context, prompt string, opts ...agentadaptor.RunOption) (agentadaptor.RunHandle, error) {
+		h := newScriptedHandle("run-store")
+		go h.finish(agentadaptor.RunResult{RunID: "run-store", Output: "ok", Summary: "done"}, nil)
+		return h, nil
+	}}, a2a.ServerOptions{
+		AgentCard:     testOptions().AgentCard,
+		TaskLifecycle: a2a.TaskLifecycleOptions{Store: store},
+	})
+
+	resp := postRPC(t, server.Handler(), `{"jsonrpc":"2.0","id":"1","method":"SendMessage","params":{"message":{"messageId":"m1","role":"ROLE_USER","parts":[{"text":"hello bridge"}]}}}`)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	if store.creates.Load() == 0 {
+		t.Fatal("expected injected task store to receive Create")
+	}
+}
+
+func TestCancelTaskCancelsStartupContextBeforeRunnerReturns(t *testing.T) {
+	t.Parallel()
+
+	startEntered := make(chan struct{})
+	startCancelled := make(chan struct{})
+	server := a2a.NewServer(scriptedRunner{start: func(ctx context.Context, prompt string, opts ...agentadaptor.RunOption) (agentadaptor.RunHandle, error) {
+		close(startEntered)
+		<-ctx.Done()
+		close(startCancelled)
+		return nil, ctx.Err()
+	}}, testOptions())
+
+	resp := postRPC(t, server.Handler(), `{"jsonrpc":"2.0","id":"start","method":"SendMessage","params":{"message":{"messageId":"m1","role":"ROLE_USER","parts":[{"text":"cancel startup"}]},"configuration":{"returnImmediately":true}}}`)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("send status = %d", resp.StatusCode)
+	}
+	var started struct {
+		Result struct {
+			Task struct {
+				ID string `json:"id"`
+			} `json:"task"`
+		} `json:"result"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&started); err != nil {
+		t.Fatalf("decode start: %v", err)
+	}
+	if started.Result.Task.ID == "" {
+		t.Fatal("missing task id")
+	}
+	select {
+	case <-startEntered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("runner Start was not invoked")
+	}
+
+	cancel := postRPC(t, server.Handler(), fmt.Sprintf(`{"jsonrpc":"2.0","id":"cancel","method":"CancelTask","params":{"id":%q}}`, started.Result.Task.ID))
+	defer cancel.Body.Close()
+	if cancel.StatusCode != http.StatusOK {
+		t.Fatalf("cancel status = %d", cancel.StatusCode)
+	}
+	select {
+	case <-startCancelled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("runner Start context was not cancelled")
 	}
 }
 
@@ -285,16 +695,13 @@ func (h *scriptedHandle) Wait(ctx context.Context) (agentadaptor.RunResult, erro
 	}
 }
 func (h *scriptedHandle) Cancel(ctx context.Context) error {
-	h.cancelled.Add(1)
-	if _, ok := ctx.Deadline(); ok {
-		h.cancelHadDeadline.Store(1)
-	}
 	h.once.Do(func() {
+		h.cancelled.Add(1)
+		if _, ok := ctx.Deadline(); ok {
+			h.cancelHadDeadline.Store(1)
+		}
 		close(h.stream)
-		h.done <- waitResult{result: agentadaptor.RunResult{
-			RunID:   h.runID,
-			Failure: &agentadaptor.RunFailure{Code: agentadaptor.FailureCancelled, Message: "cancelled"},
-		}}
+		h.done <- waitResult{err: context.Canceled}
 	})
 	return nil
 }
@@ -304,6 +711,36 @@ func (h *scriptedHandle) finish(result agentadaptor.RunResult, err error) {
 		close(h.stream)
 		h.done <- waitResult{result: result, err: err}
 	})
+}
+
+type countingTaskStore struct {
+	a2ataskstore.Store
+	creates atomic.Int32
+}
+
+func (s *countingTaskStore) Create(ctx context.Context, task *a2aproto.Task) (a2ataskstore.TaskVersion, error) {
+	s.creates.Add(1)
+	return s.Store.Create(ctx, task)
+}
+
+type noopPushConfigStore struct{}
+
+func (*noopPushConfigStore) Save(context.Context, a2aproto.TaskID, *a2aproto.PushConfig) (*a2aproto.PushConfig, error) {
+	return nil, nil
+}
+func (*noopPushConfigStore) Get(context.Context, a2aproto.TaskID, string) (*a2aproto.PushConfig, error) {
+	return nil, nil
+}
+func (*noopPushConfigStore) List(context.Context, a2aproto.TaskID) ([]*a2aproto.PushConfig, error) {
+	return nil, nil
+}
+func (*noopPushConfigStore) Delete(context.Context, a2aproto.TaskID, string) error { return nil }
+func (*noopPushConfigStore) DeleteAll(context.Context, a2aproto.TaskID) error      { return nil }
+
+type noopPushSender struct{}
+
+func (noopPushSender) SendPush(context.Context, *a2aproto.PushConfig, a2aproto.Event) error {
+	return nil
 }
 
 func postRPC(t *testing.T, handler http.Handler, body string) *http.Response {
@@ -328,13 +765,28 @@ type sseFrame struct {
 			} `json:"status"`
 		} `json:"statusUpdate"`
 		ArtifactUpdate *struct {
-			Artifact struct {
+			Append    bool `json:"append"`
+			LastChunk bool `json:"lastChunk"`
+			Artifact  struct {
+				ID    string `json:"artifactId"`
+				Name  string `json:"name"`
 				Parts []struct {
-					Text string `json:"text"`
+					Text string         `json:"text"`
+					Data map[string]any `json:"data"`
 				} `json:"parts"`
 			} `json:"artifact"`
 		} `json:"artifactUpdate"`
 	} `json:"result"`
+}
+
+type taskArtifact struct {
+	Name  string             `json:"name"`
+	Parts []taskArtifactPart `json:"parts"`
+}
+
+type taskArtifactPart struct {
+	Text string         `json:"text"`
+	Data map[string]any `json:"data"`
 }
 
 func readSSEFrames(t *testing.T, body io.Reader, timeout time.Duration) []sseFrame {
@@ -363,4 +815,25 @@ func readSSEFrames(t *testing.T, body io.Reader, timeout time.Duration) []sseFra
 		t.Fatal("timed out reading SSE")
 		return nil
 	}
+}
+
+func findTaskArtifact(t *testing.T, artifacts []taskArtifact, name string) taskArtifact {
+	t.Helper()
+	for _, artifact := range artifacts {
+		if artifact.Name == name {
+			return artifact
+		}
+	}
+	t.Fatalf("artifact %q not found in %+v", name, artifacts)
+	var zero taskArtifact
+	return zero
+}
+
+func nestedMap(t *testing.T, value any, path string) map[string]any {
+	t.Helper()
+	out, ok := value.(map[string]any)
+	if !ok {
+		t.Fatalf("%s = %#v", path, value)
+	}
+	return out
 }

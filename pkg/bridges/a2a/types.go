@@ -8,7 +8,10 @@ package a2a
 
 import (
 	"context"
+	"time"
 
+	"github.com/a2aproject/a2a-go/v2/a2asrv/push"
+	"github.com/a2aproject/a2a-go/v2/a2asrv/taskstore"
 	agentadaptor "github.com/agent-dance/agent-adaptor"
 )
 
@@ -34,8 +37,16 @@ type Provider struct {
 	URL          string
 }
 
+type CapabilityMode uint8
+
+const (
+	CapabilityDefault CapabilityMode = iota
+	CapabilityEnabled
+	CapabilityDisabled
+)
+
 type Capabilities struct {
-	Streaming         bool
+	Streaming         CapabilityMode
 	PushNotifications bool
 	ExtendedAgentCard bool
 	Extensions        []Extension
@@ -87,12 +98,83 @@ type SecurityRequirement struct {
 	Schemes map[string][]string
 }
 
+const (
+	DefaultEphemeralTaskLimit = 256
+	DefaultEphemeralTaskTTL   = time.Hour
+)
+
+type EphemeralTaskStoreOptions struct {
+	MaxTasks int
+	TTL      time.Duration
+}
+
+type TaskLifecycleOptions struct {
+	Store     taskstore.Store
+	Ephemeral *EphemeralTaskStoreOptions
+}
+
+type PushNotificationSupport struct {
+	Store  push.ConfigStore
+	Sender push.Sender
+}
+
+type ExtendedAgentCardRequest struct {
+	Tenant string
+}
+
+type ExtendedAgentCardProvider interface {
+	ExtendedCard(ctx context.Context, req ExtendedAgentCardRequest) (AgentCard, error)
+}
+
+type ExtendedAgentCardProviderFunc func(context.Context, ExtendedAgentCardRequest) (AgentCard, error)
+
+func (fn ExtendedAgentCardProviderFunc) ExtendedCard(ctx context.Context, req ExtendedAgentCardRequest) (AgentCard, error) {
+	return fn(ctx, req)
+}
+
+type ExtendedAgentCardSupport struct {
+	Static   *AgentCard
+	Provider ExtendedAgentCardProvider
+}
+
 type ServerOptions struct {
 	AgentCard AgentCard
 	Session   SessionMapper
 	Prompt    PromptBuilder
 
-	RunOptions []agentadaptor.RunOption
+	RunOptions        []agentadaptor.RunOption
+	TaskLifecycle     TaskLifecycleOptions
+	PushNotifications *PushNotificationSupport
+	ExtendedAgentCard *ExtendedAgentCardSupport
+	Exposure          ExposurePolicy
+}
+
+// ExposurePolicy controls which non-user-facing bridge artifacts are exposed
+// to remote A2A callers.
+//
+// The zero value is intentionally conservative:
+//   - assistant-facing Output still flows through the task status message
+//   - terminal summary still flows through the agent-adaptor-result artifact
+//   - reasoning, tool-call internals, HITL events, and diagnostics stay hidden
+type ExposurePolicy struct {
+	IncludeReasoning bool
+	IncludeToolCalls bool
+	IncludeHITL      bool
+
+	Diagnostics DiagnosticsPolicy
+}
+
+// DiagnosticsPolicy controls opt-in exposure of internal execution details.
+//
+// All enabled fields are sanitized before they leave the bridge.
+type DiagnosticsPolicy struct {
+	IncludeMetadata       bool
+	IncludeUsage          bool
+	IncludeProviderResult bool
+	IncludeTranscript     bool
+	IncludeRawStreams     bool
+	IncludeHITLPayloads   bool
+	IncludeHITLRaw        bool
 }
 
 type InboundRequest struct {
