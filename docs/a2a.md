@@ -65,6 +65,15 @@ mux.Handle("/a2a", server.Handler())
 
 The terminal result is emitted as a structured artifact named `agent-adaptor-result`. Assistant-facing output remains in the final A2A status message. The default artifact contains only the safe summary; diagnostics such as metadata, usage, provider result payloads, transcript, raw streams, reasoning, tool-call internals, and HITL payloads require explicit `ExposurePolicy` opt-in and are sanitized before they cross the A2A boundary.
 
+Bridge-owned artifact names are part of the package contract for hosts that
+compose this bridge with higher-level stream overlays:
+
+- `a2a.ArtifactAssistantOutput` (`assistant-output`) carries streamed
+  assistant-facing text deltas and closes with `lastChunk=true`.
+- `a2a.ArtifactAgentAdaptorResult` (`agent-adaptor-result`) carries the
+  terminal summary and any opt-in sanitized diagnostics, and is emitted as a
+  single final chunk.
+
 Task retention is explicit. `NewServer` no longer hides the upstream unbounded in-memory task store. If `ServerOptions.TaskLifecycle.Store` is nil, the bridge uses a bounded ephemeral store with a default `MaxTasks=256` and `TTL=1h`. Hosts that need durable retention, custom paging/auth behavior, or cross-process lifecycle ownership must inject their own `a2asrv/taskstore.Store`.
 
 Hosts own serving concerns: route layout, authentication, authorization, TLS, tenancy, durability, task retention, and observability.
@@ -104,6 +113,27 @@ _ = task
 `SendStream` and `Subscribe` return ordered protocol events. The client uses the same execution-final semantics as the official server stack: a `Message`, a terminal task/status, or `TASK_STATE_INPUT_REQUIRED` ends the stream. Duplicate or late events after the first final event are ignored. If a stream fails before a final event and the task ID is known, the client attempts one `GetTask` recovery; a final recovered task is returned with `RecoveredState=true`.
 
 Bearer credentials are origin-pinned. With `Auth` configured, the client only sends credentials to the Agent Card origin by default. Agent Card interface URLs on another origin require explicit `TrustedAuthOrigins`, and redirects to untrusted origins have authorization headers stripped. `SubscribeRequest.Since` is rejected when set because A2A 1.0 `SubscribeToTask` has no cursor replay field.
+
+Task lookup and cancellation use request DTOs so hosts can pass A2A tenant and
+retention/cancellation metadata without changing the client API later:
+
+```go
+task, err := client.GetTask(ctx, a2a.GetTaskRequest{
+	TaskID: "task-123",
+	Tenant: "tenant-a",
+})
+if err != nil {
+	return err
+}
+
+_, err = client.CancelTask(ctx, a2a.CancelTaskRequest{
+	TaskID: "task-123",
+	Tenant: "tenant-a",
+	Metadata: map[string]any{
+		"reason": "parent_cancelled",
+	},
+})
+```
 
 ## Non-Goals
 

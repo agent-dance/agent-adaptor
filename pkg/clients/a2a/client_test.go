@@ -65,6 +65,8 @@ func TestSendGetCancelAndStreamPreserveStructuredTask(t *testing.T) {
 	t.Parallel()
 
 	var methods []string
+	var gotGetParams map[string]any
+	var gotCancelParams map[string]any
 	var srv *httptest.Server
 	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -81,14 +83,16 @@ func TestSendGetCancelAndStreamPreserveStructuredTask(t *testing.T) {
 				"skills":[{"id":"chat","name":"Chat","description":"chat","tags":["chat"]}]
 			}`, srv.URL+"/a2a")
 		case "/a2a":
-			method := readRPCMethod(t, r)
+			method, params := readRPCRequest(t, r)
 			methods = append(methods, method)
 			switch method {
 			case "SendMessage":
 				writeRPCResult(t, w, `{"task":`+taskJSON("TASK_STATE_COMPLETED")+`}`)
 			case "GetTask":
+				gotGetParams = params
 				writeRPCResult(t, w, taskJSON("TASK_STATE_WORKING"))
 			case "CancelTask":
+				gotCancelParams = params
 				writeRPCResult(t, w, taskJSON("TASK_STATE_CANCELED"))
 			case "SendStreamingMessage":
 				writeSSE(t, w,
@@ -118,20 +122,34 @@ func TestSendGetCancelAndStreamPreserveStructuredTask(t *testing.T) {
 		t.Fatalf("Send() artifacts = %+v", task.Artifacts)
 	}
 
-	got, err := client.GetTask(ctx, "task-1")
+	historyLength := 3
+	got, err := client.GetTask(ctx, GetTaskRequest{TaskID: "task-1", Tenant: "tenant-a", HistoryLength: &historyLength})
 	if err != nil {
 		t.Fatalf("GetTask() error = %v", err)
 	}
 	if got.Status.State != TaskStateWorking {
 		t.Fatalf("GetTask() state = %q", got.Status.State)
 	}
+	if gotGetParams["id"] != "task-1" || gotGetParams["tenant"] != "tenant-a" || gotGetParams["historyLength"] != float64(3) {
+		t.Fatalf("GetTask params = %+v", gotGetParams)
+	}
 
-	cancelled, err := client.CancelTask(ctx, "task-1")
+	cancelled, err := client.CancelTask(ctx, CancelTaskRequest{
+		TaskID: "task-1",
+		Tenant: "tenant-a",
+		Metadata: map[string]any{
+			"reason": "parent_cancelled",
+		},
+	})
 	if err != nil {
 		t.Fatalf("CancelTask() error = %v", err)
 	}
 	if cancelled.Status.State != TaskStateCanceled {
 		t.Fatalf("CancelTask() state = %q", cancelled.Status.State)
+	}
+	cancelMetadata, _ := gotCancelParams["metadata"].(map[string]any)
+	if gotCancelParams["id"] != "task-1" || gotCancelParams["tenant"] != "tenant-a" || cancelMetadata["reason"] != "parent_cancelled" {
+		t.Fatalf("CancelTask params = %+v", gotCancelParams)
 	}
 
 	stream, err := client.SendStream(ctx, SendRequest{Message: UserText("stream")})
@@ -161,6 +179,73 @@ func TestSendGetCancelAndStreamPreserveStructuredTask(t *testing.T) {
 	}
 }
 
+func TestSendReturnImmediatelySupportsGetTaskPollingFallback(t *testing.T) {
+	t.Parallel()
+
+	var sawReturnImmediately bool
+	var sawGetTenant bool
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/agent-card.json":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprintf(w, `{
+				"name":"Legacy Remote Agent",
+				"description":"test",
+				"version":"1.0.0",
+				"supportedInterfaces":[{"url":%q,"protocolBinding":"JSONRPC","protocolVersion":"1.0"}],
+				"capabilities":{"streaming":false},
+				"defaultInputModes":["text/plain"],
+				"defaultOutputModes":["text/plain"],
+				"skills":[{"id":"chat","name":"Chat","description":"chat","tags":["chat"]}]
+			}`, srv.URL+"/a2a")
+		case "/a2a":
+			method, params := readRPCRequest(t, r)
+			switch method {
+			case "SendMessage":
+				config, _ := params["configuration"].(map[string]any)
+				sawReturnImmediately = config["returnImmediately"] == true
+				writeRPCResult(t, w, `{"task":`+taskJSON("TASK_STATE_WORKING")+`}`)
+			case "GetTask":
+				sawGetTenant = params["tenant"] == "tenant-a"
+				writeRPCResult(t, w, taskJSON("TASK_STATE_COMPLETED"))
+			default:
+				t.Fatalf("unexpected method %q", method)
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	client := New(Options{AgentCardURL: srv.URL})
+	started, err := client.Send(context.Background(), SendRequest{
+		Message:           UserText("poll me"),
+		Tenant:            "tenant-a",
+		ReturnImmediately: true,
+	})
+	if err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+	if started.Status.State != TaskStateWorking {
+		t.Fatalf("Send() state = %q", started.Status.State)
+	}
+	if !sawReturnImmediately {
+		t.Fatalf("SendMessage params did not include returnImmediately=true")
+	}
+
+	completed, err := client.GetTask(context.Background(), GetTaskRequest{TaskID: started.ID, Tenant: "tenant-a"})
+	if err != nil {
+		t.Fatalf("GetTask() error = %v", err)
+	}
+	if completed.Status.State != TaskStateCompleted {
+		t.Fatalf("GetTask() state = %q", completed.Status.State)
+	}
+	if !sawGetTenant {
+		t.Fatalf("GetTask params did not preserve tenant")
+	}
+}
+
 func TestClientClassifiesProtocolErrors(t *testing.T) {
 	t.Parallel()
 
@@ -187,7 +272,7 @@ func TestClientClassifiesProtocolErrors(t *testing.T) {
 	defer srv.Close()
 
 	client := New(Options{AgentCardURL: srv.URL})
-	_, err := client.GetTask(context.Background(), "missing")
+	_, err := client.GetTask(context.Background(), GetTaskRequest{TaskID: "missing"})
 	if err == nil {
 		t.Fatal("GetTask() error = nil")
 	}
@@ -743,13 +828,20 @@ func statusUpdateJSON(state string) string {
 
 func readRPCMethod(t *testing.T, r *http.Request) string {
 	t.Helper()
+	method, _ := readRPCRequest(t, r)
+	return method
+}
+
+func readRPCRequest(t *testing.T, r *http.Request) (string, map[string]any) {
+	t.Helper()
 	var req struct {
-		Method string `json:"method"`
+		Method string         `json:"method"`
+		Params map[string]any `json:"params"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		t.Fatalf("decode RPC request: %v", err)
 	}
-	return req.Method
+	return req.Method, req.Params
 }
 
 func writeRPCResult(t *testing.T, w http.ResponseWriter, result string) {
