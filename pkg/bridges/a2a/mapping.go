@@ -26,9 +26,9 @@ func (t *streamTranslator) Translate(p agentadaptor.StreamPayload) []a2aproto.Ev
 		if p.Delta == "" {
 			return nil
 		}
-		return []a2aproto.Event{t.artifact("assistant-output", "assistant-output", p.Delta, true)}
+		return []a2aproto.Event{t.artifact(ArtifactAssistantOutput, ArtifactAssistantOutput, p.Delta, true)}
 	case agentadaptor.StreamTextEnd:
-		return t.closeArtifact("assistant-output", "assistant-output")
+		return t.closeArtifact(ArtifactAssistantOutput, ArtifactAssistantOutput)
 	case agentadaptor.StreamToolCallStart:
 		if !t.exposure.IncludeToolCalls {
 			return nil
@@ -186,11 +186,11 @@ func terminalArtifacts(info a2aproto.TaskInfoProvider, result agentadaptor.RunRe
 			"stderr": redactInlineSecrets(result.RawStreams.Stderr),
 		}
 	}
-	ev := a2aproto.NewArtifactUpdateEvent(info, "agent-adaptor-result", dataPart(details))
+	ev := a2aproto.NewArtifactUpdateEvent(info, ArtifactAgentAdaptorResult, dataPart(details))
 	ev.Append = false
 	ev.LastChunk = true
-	ev.Artifact.ID = "agent-adaptor-result"
-	ev.Artifact.Name = "agent-adaptor-result"
+	ev.Artifact.ID = ArtifactAgentAdaptorResult
+	ev.Artifact.Name = ArtifactAgentAdaptorResult
 	out = append(out, ev)
 	return out
 }

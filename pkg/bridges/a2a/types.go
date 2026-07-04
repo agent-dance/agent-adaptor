@@ -103,6 +103,15 @@ const (
 	DefaultEphemeralTaskTTL   = time.Hour
 )
 
+const (
+	// ArtifactAssistantOutput is the bridge-owned A2A artifact name used for
+	// streamed assistant-facing text deltas.
+	ArtifactAssistantOutput = "assistant-output"
+	// ArtifactAgentAdaptorResult is the bridge-owned A2A artifact name used
+	// for the terminal structured SDK result summary and opt-in diagnostics.
+	ArtifactAgentAdaptorResult = "agent-adaptor-result"
+)
+
 type EphemeralTaskStoreOptions struct {
 	MaxTasks int
 	TTL      time.Duration

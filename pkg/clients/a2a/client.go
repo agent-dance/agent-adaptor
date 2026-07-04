@@ -100,30 +100,38 @@ func (c *Client) Subscribe(ctx context.Context, req SubscribeRequest) (*Stream, 
 	return c.startStream(streamCtx, cancel, req.TaskID, seq), nil
 }
 
-func (c *Client) GetTask(ctx context.Context, taskID string) (Task, error) {
-	if taskID == "" {
+func (c *Client) GetTask(ctx context.Context, req GetTaskRequest) (Task, error) {
+	if req.TaskID == "" {
 		return Task{}, fmt.Errorf("%w: task id is required", ErrProtocol)
 	}
 	up, err := c.ensureClient(ctx)
 	if err != nil {
 		return Task{}, err
 	}
-	task, err := up.GetTask(ctx, &a2aproto.GetTaskRequest{ID: a2aproto.TaskID(taskID)})
+	task, err := up.GetTask(ctx, &a2aproto.GetTaskRequest{
+		ID:            a2aproto.TaskID(req.TaskID),
+		Tenant:        req.Tenant,
+		HistoryLength: req.HistoryLength,
+	})
 	if err != nil {
 		return Task{}, classifyError("GetTask", err)
 	}
 	return convertTask(task), nil
 }
 
-func (c *Client) CancelTask(ctx context.Context, taskID string) (Task, error) {
-	if taskID == "" {
+func (c *Client) CancelTask(ctx context.Context, req CancelTaskRequest) (Task, error) {
+	if req.TaskID == "" {
 		return Task{}, fmt.Errorf("%w: task id is required", ErrProtocol)
 	}
 	up, err := c.ensureClient(ctx)
 	if err != nil {
 		return Task{}, err
 	}
-	task, err := up.CancelTask(ctx, &a2aproto.CancelTaskRequest{ID: a2aproto.TaskID(taskID)})
+	task, err := up.CancelTask(ctx, &a2aproto.CancelTaskRequest{
+		ID:       a2aproto.TaskID(req.TaskID),
+		Tenant:   req.Tenant,
+		Metadata: cloneMap(req.Metadata),
+	})
 	if err != nil {
 		return Task{}, classifyError("CancelTask", err)
 	}
@@ -406,7 +414,7 @@ func (c *Client) tryRecover(ctx context.Context, taskID string) (Event, bool) {
 	if taskID == "" {
 		return Event{}, false
 	}
-	task, err := c.GetTask(ctx, taskID)
+	task, err := c.GetTask(ctx, GetTaskRequest{TaskID: taskID})
 	if err != nil || !executionFinalTask(task) {
 		return Event{}, false
 	}

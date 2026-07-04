@@ -323,7 +323,7 @@ func TestSendMessageDefaultExposureOmitsDiagnostics(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	artifact := findTaskArtifact(t, envelope.Result.Task.Artifacts, "agent-adaptor-result")
+	artifact := findTaskArtifact(t, envelope.Result.Task.Artifacts, a2a.ArtifactAgentAdaptorResult)
 	data := artifact.Parts[0].Data
 	if got := data["summary"]; got != "safe summary" {
 		t.Fatalf("summary = %#v", got)
@@ -396,7 +396,7 @@ func TestSendMessageExposurePolicyRedactsDiagnostics(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	artifact := findTaskArtifact(t, envelope.Result.Task.Artifacts, "agent-adaptor-result")
+	artifact := findTaskArtifact(t, envelope.Result.Task.Artifacts, a2a.ArtifactAgentAdaptorResult)
 	data := artifact.Parts[0].Data
 
 	metadata := nestedMap(t, data["metadata"], "metadata")
@@ -471,16 +471,16 @@ func TestSendStreamingMessageEmitsOrderedUpdates(t *testing.T) {
 	if frames[1].Result.StatusUpdate == nil || frames[1].Result.StatusUpdate.Status.State != "TASK_STATE_WORKING" {
 		t.Fatalf("second frame should be working: %+v", frames[1])
 	}
-	if frames[2].Result.ArtifactUpdate == nil || frames[2].Result.ArtifactUpdate.Artifact.Name != "assistant-output" || frames[2].Result.ArtifactUpdate.Artifact.Parts[0].Text != "hel" || frames[2].Result.ArtifactUpdate.LastChunk {
+	if frames[2].Result.ArtifactUpdate == nil || frames[2].Result.ArtifactUpdate.Artifact.Name != a2a.ArtifactAssistantOutput || frames[2].Result.ArtifactUpdate.Artifact.Parts[0].Text != "hel" || frames[2].Result.ArtifactUpdate.LastChunk {
 		t.Fatalf("third frame should be artifact hel: %+v", frames[2])
 	}
-	if frames[3].Result.ArtifactUpdate == nil || frames[3].Result.ArtifactUpdate.Artifact.Name != "assistant-output" || frames[3].Result.ArtifactUpdate.Artifact.Parts[0].Text != "lo" || frames[3].Result.ArtifactUpdate.LastChunk {
+	if frames[3].Result.ArtifactUpdate == nil || frames[3].Result.ArtifactUpdate.Artifact.Name != a2a.ArtifactAssistantOutput || frames[3].Result.ArtifactUpdate.Artifact.Parts[0].Text != "lo" || frames[3].Result.ArtifactUpdate.LastChunk {
 		t.Fatalf("fourth frame should be artifact lo: %+v", frames[3])
 	}
-	if frames[4].Result.ArtifactUpdate == nil || frames[4].Result.ArtifactUpdate.Artifact.Name != "assistant-output" || !frames[4].Result.ArtifactUpdate.LastChunk {
+	if frames[4].Result.ArtifactUpdate == nil || frames[4].Result.ArtifactUpdate.Artifact.Name != a2a.ArtifactAssistantOutput || !frames[4].Result.ArtifactUpdate.LastChunk {
 		t.Fatalf("fifth frame should close assistant-output: %+v", frames[4])
 	}
-	if frames[5].Result.ArtifactUpdate == nil || frames[5].Result.ArtifactUpdate.Artifact.Name != "agent-adaptor-result" || !frames[5].Result.ArtifactUpdate.LastChunk {
+	if frames[5].Result.ArtifactUpdate == nil || frames[5].Result.ArtifactUpdate.Artifact.Name != a2a.ArtifactAgentAdaptorResult || !frames[5].Result.ArtifactUpdate.LastChunk {
 		t.Fatalf("sixth frame should close agent-adaptor-result: %+v", frames[5])
 	}
 	if frames[len(frames)-1].Result.StatusUpdate == nil || frames[len(frames)-1].Result.StatusUpdate.Status.State != "TASK_STATE_COMPLETED" {

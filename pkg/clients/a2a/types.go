@@ -192,3 +192,15 @@ type SubscribeRequest struct {
 	// supported by the remote protocol.
 	Since string
 }
+
+type GetTaskRequest struct {
+	TaskID        string
+	Tenant        string
+	HistoryLength *int
+}
+
+type CancelTaskRequest struct {
+	TaskID   string
+	Tenant   string
+	Metadata map[string]any
+}
