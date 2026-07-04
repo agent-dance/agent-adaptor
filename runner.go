@@ -294,6 +294,9 @@ func (r *runnerImpl) resolveInvocation(ctx context.Context, prompt string, opts 
 			opt(&resolvedOpts)
 		}
 	}
+	if resolvedOpts.outputSchemaErr != nil {
+		return resolvedInvocation{}, nil, resolvedOpts.outputSchemaErr
+	}
 
 	defaults := r.binding.Defaults()
 	identity := defaults.Agent
@@ -355,6 +358,20 @@ func (r *runnerImpl) resolveInvocation(ctx context.Context, prompt string, opts 
 	}
 	if resolvedOpts.streaming != nil {
 		streaming = *resolvedOpts.streaming
+	}
+
+	outputSchema, err := normalizeOutputSchema(resolvedOpts.outputSchema)
+	if err != nil {
+		return resolvedInvocation{}, nil, err
+	}
+	outputSource, err := resolveStructuredOutputSource(r.binding.Adapter().Descriptor(), outputSchema, streaming, policy)
+	if err != nil {
+		return resolvedInvocation{}, nil, err
+	}
+	if outputSchema != nil && outputSource == StructuredOutputSourcePromptValidate {
+		if instruction := structuredOutputPromptInstruction(outputSchema); instruction != "" {
+			prompt = instruction + "\n\n" + prompt
+		}
 	}
 
 	workspace, err := r.sdk.workspaceManager.Resolve(ctx, WorkspaceRequest{
@@ -478,6 +495,8 @@ func (r *runnerImpl) resolveInvocation(ctx context.Context, prompt string, opts 
 		instructions:   instructions,
 		session:        sessionReq,
 		metadata:       cloneStringMap(metadata),
+		outputSchema:   cloneOutputSchema(outputSchema),
+		outputSource:   outputSource,
 		fingerprint:    fingerprint,
 		streaming:      streaming,
 		model:          strings.TrimSpace(resolvedOpts.model),
@@ -523,6 +542,7 @@ func (r *runnerImpl) executeWithSessionPlan(
 		Policy:         invocation.policy,
 		Instructions:   invocation.instructions,
 		Metadata:       cloneStringMap(invocation.metadata),
+		OutputSchema:   cloneOutputSchema(invocation.outputSchema),
 		Streaming:      invocation.streaming,
 	}
 	if plan != nil {
@@ -554,29 +574,84 @@ func (r *runnerImpl) executeWithSessionPlan(
 	if len(runtimeReports) == 0 {
 		runtimeReports = runtimeReportsFromRefs(invocation.runtime.Ensured, invocation.agent)
 	}
+	structuredOutput, failure := r.finalizeStructuredOutput(invocation, runResult)
 
 	return RunResult{
-		RunID:           invocation.runID,
-		DriverType:      invocation.adapter.Descriptor().Type,
-		Output:          runResult.Output,
-		RawStreams:      cloneRawStreams(runResult.RawStreams),
-		Transcript:      cloneTranscriptItems(runResult.Transcript),
-		ExitCode:        runResult.ExitCode,
-		Signal:          runResult.Signal,
-		TimedOut:        runResult.TimedOut,
-		Usage:           cloneUsagePointer(runResult.Usage),
-		Metadata:        cloneStringMap(runResult.Metadata),
-		Provider:        runResult.Provider,
-		Biller:          runResult.Biller,
-		Model:           runResult.Model,
-		BillingType:     runResult.BillingType,
-		CostUSD:         cloneFloat64Pointer(runResult.CostUSD),
-		Summary:         runResult.Summary,
-		Result:          cloneAnyMap(runResult.Result),
-		RuntimeServices: runtimeReports,
-		Question:        cloneRunQuestion(runResult.Question),
-		Failure:         cloneRunFailure(runResult.Failure),
+		RunID:            invocation.runID,
+		DriverType:       invocation.adapter.Descriptor().Type,
+		Output:           runResult.Output,
+		RawStreams:       cloneRawStreams(runResult.RawStreams),
+		Transcript:       cloneTranscriptItems(runResult.Transcript),
+		ExitCode:         runResult.ExitCode,
+		Signal:           runResult.Signal,
+		TimedOut:         runResult.TimedOut,
+		Usage:            cloneUsagePointer(runResult.Usage),
+		Metadata:         cloneStringMap(runResult.Metadata),
+		Provider:         runResult.Provider,
+		Biller:           runResult.Biller,
+		Model:            runResult.Model,
+		BillingType:      runResult.BillingType,
+		CostUSD:          cloneFloat64Pointer(runResult.CostUSD),
+		Summary:          runResult.Summary,
+		Result:           cloneAnyMap(runResult.Result),
+		StructuredOutput: structuredOutput,
+		RuntimeServices:  runtimeReports,
+		Question:         cloneRunQuestion(runResult.Question),
+		Failure:          failure,
 	}, runResult.Checkpoint, nil
+}
+
+func (r *runnerImpl) finalizeStructuredOutput(invocation resolvedInvocation, runResult DriverRunResult) (*StructuredOutput, *RunFailure) {
+	failure := cloneRunFailure(runResult.Failure)
+	if invocation.outputSchema == nil {
+		return nil, failure
+	}
+
+	structured := cloneStructuredOutput(runResult.StructuredOutput)
+	if structured == nil {
+		if invocation.outputSource == StructuredOutputSourcePromptValidate {
+			structured = validateStructuredOutput(invocation.outputSchema, invocation.outputSource, []byte(runResult.Output))
+		} else {
+			structured = &StructuredOutput{
+				Format:           invocation.outputSchema.Format,
+				Mode:             invocation.outputSchema.Mode,
+				Source:           invocation.outputSource,
+				Valid:            false,
+				ValidationErrors: []string{"adapter did not return native structured output"},
+				SchemaHash:       schemaHash(invocation.outputSchema),
+			}
+		}
+	} else {
+		if structured.Source == "" {
+			structured.Source = invocation.outputSource
+		}
+		if structured.Format == "" {
+			structured.Format = invocation.outputSchema.Format
+		}
+		if structured.Mode == "" {
+			structured.Mode = invocation.outputSchema.Mode
+		}
+		if structured.SchemaHash == "" {
+			structured.SchemaHash = schemaHash(invocation.outputSchema)
+		}
+		if len(structured.RawJSON) > 0 {
+			structured = validateStructuredOutput(invocation.outputSchema, structured.Source, structured.RawJSON)
+		} else if !structured.Valid && len(structured.ValidationErrors) == 0 {
+			structured.ValidationErrors = []string{"structured output RawJSON is empty"}
+		}
+	}
+
+	if structured != nil && !structured.Valid && invocation.outputSchema.OnInvalid == StructuredOutputFailRun && failure == nil {
+		failure = &RunFailure{
+			Code:    FailurePolicyError,
+			Message: "structured output validation failed",
+			Metadata: map[string]any{
+				"validation_errors": append([]string(nil), structured.ValidationErrors...),
+				"schema_hash":       structured.SchemaHash,
+			},
+		}
+	}
+	return structured, failure
 }
 
 // adapterLabel returns a best-effort diagnostic label for error messages.

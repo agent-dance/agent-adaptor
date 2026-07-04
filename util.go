@@ -307,7 +307,9 @@ func canonicalize(v any) (any, error) {
 		return nil, err
 	}
 	var decoded any
-	if err := json.Unmarshal(raw, &decoded); err != nil {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	if err := dec.Decode(&decoded); err != nil {
 		return nil, err
 	}
 	return decoded, nil
@@ -329,6 +331,8 @@ func writeCanonicalJSON(buf *bytes.Buffer, v any) error {
 	case float64:
 		encoded, _ := json.Marshal(value)
 		buf.Write(encoded)
+	case json.Number:
+		buf.WriteString(value.String())
 	case []any:
 		buf.WriteByte('[')
 		for index, item := range value {

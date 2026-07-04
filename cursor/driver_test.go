@@ -2,6 +2,7 @@ package cursor
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,6 +22,29 @@ func TestDescriptorAdvertisesExpectedMCPCapabilities(t *testing.T) {
 	caps := NewAdapter().Descriptor().MCP
 	if !caps.Supported || !caps.Stdio || !caps.HTTP || !caps.SSE {
 		t.Fatalf("unexpected Cursor MCP capability: %#v", caps)
+	}
+}
+
+func TestDescriptorAdvertisesStructuredOutputCapabilities(t *testing.T) {
+	caps := NewAdapter().Descriptor().StructuredOutput
+	if caps.JSONSchemaNative || !caps.JSONSchemaPromptValidate || !caps.WorksWithRun || !caps.WorksWithStart || !caps.WorksWithStreaming {
+		t.Fatalf("unexpected Cursor structured-output capability: %#v", caps)
+	}
+	if caps.WorksWithHITL {
+		t.Fatalf("Cursor structured output should not advertise HITL support: %#v", caps)
+	}
+}
+
+func TestRunRejectsNativeStrictStructuredOutput(t *testing.T) {
+	_, err := NewAdapter().Run(context.Background(), agentadaptor.DriverRunRequest{
+		OutputSchema: &agentadaptor.OutputSchema{
+			Format:     agentadaptor.OutputFormatJSONSchema,
+			Mode:       agentadaptor.StructuredOutputNativeStrict,
+			SchemaJSON: []byte(`{"type":"object"}`),
+		},
+	}, nil)
+	if !errors.Is(err, agentadaptor.ErrStructuredOutputUnsupported) {
+		t.Fatalf("expected ErrStructuredOutputUnsupported, got %v", err)
 	}
 }
 
