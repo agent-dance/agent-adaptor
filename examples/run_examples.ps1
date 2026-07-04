@@ -121,3 +121,4 @@ Run-Example -Name "sessions" -Arguments (@("./examples/codex-sessions") + $commo
 Run-Example -Name "admin-named" -Arguments (@("./examples/codex-admin-named") + $common)
 Run-Example -Name "skills-live" -Arguments (@("./examples/codex-skills-live") + $common)
 Run-Example -Name "profile-resources" -Arguments (@("./examples/profile-resources") + $common)
+Run-Example -Name "a2a-local" -Arguments (@("./examples/a2a-local") + $common)

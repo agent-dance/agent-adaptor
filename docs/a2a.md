@@ -63,6 +63,14 @@ mux.Handle("/.well-known/agent-card.json", server.AgentCardHandler())
 mux.Handle("/a2a", server.Handler())
 ```
 
+See [`examples/a2a-local`](../examples/a2a-local) for a runnable local
+end-to-end demo that starts this bridge around a real local SDK runner, calls
+it with `pkg/clients/a2a`, consumes streaming artifacts, and verifies the final
+task with `GetTask`. The example defaults to an isolated temporary workspace
+and isolated cloned provider profile seeded from native settings so custom API
+key / base URL setups work without writing demo state into a host's active
+local agent profile.
+
 The terminal result is emitted as a structured artifact named `agent-adaptor-result`. Assistant-facing output remains in the final A2A status message. The default artifact contains only the safe summary; diagnostics such as metadata, usage, provider result payloads, transcript, raw streams, reasoning, tool-call internals, and HITL payloads require explicit `ExposurePolicy` opt-in and are sanitized before they cross the A2A boundary.
 
 Bridge-owned artifact names are part of the package contract for hosts that

@@ -179,6 +179,18 @@ Vite + React + `@ag-ui/client`，浏览器直接调用 Go backend，不经过 Co
 
 See [`streaming-chat-aguiclient/README.md`](./streaming-chat-aguiclient/README.md).
 
+### `a2a-local`
+
+本地端到端 A2A demo：启动一个 HTTP A2A server，把选定的真实本机 agent-adaptor Runner 暴露为 A2A JSON-RPC；随后用 `pkg/clients/a2a` 读取 Agent Card、执行 streaming 调用，并用 `GetTask` 轮询最终任务。
+
+```bash
+go run ./examples/a2a-local -agent=codex
+go run ./examples/a2a-local -agent=claude -prompt="Reply with one sentence"
+go run ./examples/a2a-local -serve-only -addr=127.0.0.1:8080
+```
+
+默认使用临时 workspace + 临时 cloned provider profile，并把 native settings 复制到临时 profile 以支持 custom API key / base URL；auth files 通过 `CloneProfileAuthLink` 共享，避免复制 OAuth refresh token。示例不会写入宿主正在使用的 profile，不会复制 native skills/MCP 目录。默认会校验最终输出包含 `A2A demo OK`，避免把未登录提示误判为成功；可用 `-expect=` 关闭该校验。默认输出包含隔离目录、Agent Card fingerprint、streaming 状态、bridge artifact 统计、最终 task state 与 assistant 输出预览。`-serve-only` 只启动 server，方便外部 A2A client 连接 `/.well-known/agent-card.json` 与 `/a2a`。需要排查时加 `-keep-workspace` 保留临时 workspace/profile；该目录可能包含复制出的 provider settings。
+
 ### `session-codec-inspect`
 
 静态 inspection utility，用来查看某个 adapter 的 session codec 参数形状；它不启动本机 CLI。
