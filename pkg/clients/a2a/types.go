@@ -187,7 +187,8 @@ type SendRequest struct {
 type SubscribeRequest struct {
 	TaskID string
 	Tenant string
-	// Since is retained for host recovery cursors. A2A 1.0 SubscribeToTask
-	// has no since parameter, so the value is not sent on the wire.
+	// Since is rejected when set. A2A 1.0 SubscribeToTask has no cursor replay
+	// field, and the client refuses to pretend host-side replay cursors are
+	// supported by the remote protocol.
 	Since string
 }

@@ -234,17 +234,17 @@ func eventFromUpstream(ev a2aproto.Event) (Event, error) {
 	case *a2aproto.Task:
 		t := convertTask(e)
 		kind := EventTask
-		if t.Status.State.Terminal() {
+		if executionFinalTask(t) {
 			kind = EventTerminal
 		}
 		return Event{Kind: kind, Task: &t, TaskID: t.ID, ContextID: t.ContextID, Raw: t.Raw}, nil
 	case *a2aproto.Message:
 		m := convertMessage(e)
-		return Event{Kind: EventMessage, Message: &m, TaskID: m.TaskID, ContextID: m.ContextID, Raw: m.Raw}, nil
+		return Event{Kind: EventTerminal, Message: &m, TaskID: m.TaskID, ContextID: m.ContextID, Raw: m.Raw}, nil
 	case *a2aproto.TaskStatusUpdateEvent:
 		status := convertStatus(e.Status)
 		kind := EventStatus
-		if status.State.Terminal() {
+		if executionFinalState(status.State) {
 			kind = EventTerminal
 		}
 		raw, _ := rawMap(e)

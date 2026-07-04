@@ -19,6 +19,7 @@ type Options struct {
 	AgentCardPath       string
 	Auth                Auth
 	HTTPClient          *http.Client
+	TrustedAuthOrigins  []string
 	AcceptedOutputModes []string
 	PreferredTransports []TransportProtocol
 }
@@ -34,7 +35,7 @@ type Client struct {
 }
 
 func New(opts Options) *Client {
-	return &Client{opts: opts, httpClient: httpClientWithAuth(opts.HTTPClient, opts.Auth)}
+	return &Client{opts: opts, httpClient: cloneHTTPClient(opts.HTTPClient)}
 }
 
 func (c *Client) AgentCard(ctx context.Context) (AgentCard, error) {
@@ -85,6 +86,9 @@ func (c *Client) SendStream(ctx context.Context, req SendRequest) (*Stream, erro
 func (c *Client) Subscribe(ctx context.Context, req SubscribeRequest) (*Stream, error) {
 	if req.TaskID == "" {
 		return nil, fmt.Errorf("%w: task id is required", ErrProtocol)
+	}
+	if req.Since != "" {
+		return nil, fmt.Errorf("%w: SubscribeRequest.Since is not supported by A2A 1.0 SubscribeToTask", ErrUnsupported)
 	}
 	up, err := c.ensureClient(ctx)
 	if err != nil {
@@ -152,15 +156,27 @@ func (c *Client) ensure(ctx context.Context) error {
 	}
 	c.mu.Unlock()
 
-	card, public, err := c.fetchCard(ctx)
+	baseURL, path, err := splitAgentCardURL(c.opts.AgentCardURL, c.opts.AgentCardPath)
 	if err != nil {
+		return err
+	}
+	trustedOrigins, err := newTrustedOriginSet(baseURL, c.opts.TrustedAuthOrigins)
+	if err != nil {
+		return fmt.Errorf("%w: invalid trusted auth origin: %v", ErrProtocol, err)
+	}
+	httpClient := httpClientWithAuth(c.httpClient, c.opts.Auth, trustedOrigins)
+	card, public, err := c.fetchCard(ctx, baseURL, path, httpClient)
+	if err != nil {
+		return err
+	}
+	if err := validateAuthInterfaceOrigins(card, c.opts.Auth, trustedOrigins); err != nil {
 		return err
 	}
 	cfg := upclient.Config{AcceptedOutputModes: append([]string(nil), c.opts.AcceptedOutputModes...)}
 	for _, tr := range c.opts.PreferredTransports {
 		cfg.PreferredTransports = append(cfg.PreferredTransports, a2aproto.TransportProtocol(tr))
 	}
-	up, err := upclient.NewFromCard(ctx, card, upclient.WithJSONRPCTransport(c.httpClient), upclient.WithRESTTransport(c.httpClient), upclient.WithConfig(cfg))
+	up, err := upclient.NewFromCard(ctx, card, upclient.WithJSONRPCTransport(httpClient), upclient.WithRESTTransport(httpClient), upclient.WithConfig(cfg))
 	if err != nil {
 		return classifyError("NewFromCard", err)
 	}
@@ -177,20 +193,9 @@ func (c *Client) ensure(ctx context.Context) error {
 	return nil
 }
 
-func (c *Client) fetchCard(ctx context.Context) (*a2aproto.AgentCard, AgentCard, error) {
-	base, path, err := splitAgentCardURL(c.opts.AgentCardURL, c.opts.AgentCardPath)
-	if err != nil {
-		return nil, AgentCard{}, err
-	}
-	resolver := agentcard.NewResolver(c.httpClient)
-	var resolveOpts []agentcard.ResolveOption
-	if path != "" {
-		resolveOpts = append(resolveOpts, agentcard.WithPath(path))
-	}
-	for k, v := range c.authHeaders() {
-		resolveOpts = append(resolveOpts, agentcard.WithRequestHeader(k, v))
-	}
-	card, err := resolver.Resolve(ctx, base, resolveOpts...)
+func (c *Client) fetchCard(ctx context.Context, base, path string, httpClient *http.Client) (*a2aproto.AgentCard, AgentCard, error) {
+	resolver := agentcard.NewResolver(httpClient)
+	card, err := resolver.Resolve(ctx, base, agentCardResolveOptions(path)...)
 	if err != nil {
 		return nil, AgentCard{}, classifyError("AgentCard", err)
 	}
@@ -204,11 +209,11 @@ func (c *Client) fetchCard(ctx context.Context) (*a2aproto.AgentCard, AgentCard,
 	return card, public, nil
 }
 
-func (c *Client) authHeaders() map[string]string {
-	if c.opts.Auth == nil {
+func agentCardResolveOptions(path string) []agentcard.ResolveOption {
+	if path == "" {
 		return nil
 	}
-	return c.opts.Auth.Headers()
+	return []agentcard.ResolveOption{agentcard.WithPath(path)}
 }
 
 func upstreamSendRequest(req SendRequest) *a2aproto.SendMessageRequest {
@@ -229,17 +234,6 @@ func upstreamSendRequest(req SendRequest) *a2aproto.SendMessageRequest {
 			HistoryLength:       req.HistoryLength,
 		},
 	}
-}
-
-func httpClientWithAuth(base *http.Client, auth Auth) *http.Client {
-	if base == nil {
-		base = http.DefaultClient
-	}
-	copy := *base
-	if auth != nil {
-		copy.Transport = auth.Wrap(base.Transport)
-	}
-	return &copy
 }
 
 func splitAgentCardURL(raw, overridePath string) (base, path string, err error) {
@@ -317,6 +311,26 @@ func protocolErrorRaw(err error) map[string]any {
 	return raw
 }
 
+func validateAuthInterfaceOrigins(card *a2aproto.AgentCard, auth Auth, trusted trustedOriginSet) error {
+	if auth == nil {
+		return nil
+	}
+	for _, iface := range card.SupportedInterfaces {
+		if iface == nil {
+			continue
+		}
+		origin, err := canonicalOrigin(iface.URL)
+		if err != nil {
+			return fmt.Errorf("%w: interface URL %q cannot be authorized: %v", ErrUntrustedOrigin, iface.URL, err)
+		}
+		if trusted.Allows(origin) {
+			continue
+		}
+		return fmt.Errorf("%w: refusing to send credentials to interface origin %q without explicit opt-in via Options.TrustedAuthOrigins", ErrUntrustedOrigin, origin)
+	}
+	return nil
+}
+
 type Stream struct {
 	cancel context.CancelFunc
 	events <-chan streamItem
@@ -349,14 +363,17 @@ func (c *Client) startStream(streamCtx context.Context, cancel context.CancelFun
 	go func() {
 		defer close(out)
 		lastTaskID := taskID
-		terminal := false
+		state := streamState{}
 		seq(func(ev a2aproto.Event, err error) bool {
 			if err != nil {
-				if !terminal {
+				if state.canRecover() {
 					if recovered, ok := c.tryRecover(streamCtx, lastTaskID); ok {
 						out <- streamItem{event: recovered}
 						return false
 					}
+				}
+				if state.shouldIgnoreLateEvent() {
+					return false
 				}
 				out <- streamItem{err: &StreamRecoveryError{TaskID: lastTaskID, Cause: err}}
 				return false
@@ -369,15 +386,16 @@ func (c *Client) startStream(streamCtx context.Context, cancel context.CancelFun
 			if event.TaskID != "" {
 				lastTaskID = event.TaskID
 			}
-			if event.Kind == EventTerminal {
-				terminal = true
+			emit, keepReading := state.accept(event)
+			if !emit {
+				return keepReading
 			}
 			select {
 			case <-streamCtx.Done():
 				out <- streamItem{err: streamCtx.Err()}
 				return false
 			case out <- streamItem{event: event}:
-				return true
+				return keepReading
 			}
 		})
 	}()
@@ -389,8 +407,31 @@ func (c *Client) tryRecover(ctx context.Context, taskID string) (Event, bool) {
 		return Event{}, false
 	}
 	task, err := c.GetTask(ctx, taskID)
-	if err != nil || !task.Status.State.Terminal() {
+	if err != nil || !executionFinalTask(task) {
 		return Event{}, false
 	}
 	return Event{Kind: EventTerminal, Task: &task, TaskID: task.ID, ContextID: task.ContextID, RecoveredState: true, Raw: task.Raw}, true
+}
+
+type streamState struct {
+	finalSeen bool
+}
+
+func (s *streamState) accept(event Event) (emit bool, keepReading bool) {
+	if s.finalSeen {
+		return false, false
+	}
+	if executionFinalEvent(event) {
+		s.finalSeen = true
+		return true, false
+	}
+	return true, true
+}
+
+func (s *streamState) canRecover() bool {
+	return !s.finalSeen
+}
+
+func (s *streamState) shouldIgnoreLateEvent() bool {
+	return s.finalSeen
 }

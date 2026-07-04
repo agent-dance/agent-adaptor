@@ -11,6 +11,7 @@ var (
 	ErrUnauthorized     = errors.New("a2a client: unauthorized")
 	ErrNotFound         = errors.New("a2a client: task not found")
 	ErrUnsupported      = errors.New("a2a client: unsupported operation")
+	ErrUntrustedOrigin  = errors.New("a2a client: untrusted origin")
 )
 
 type ProtocolError struct {
