@@ -63,6 +63,15 @@ func (adapter) Descriptor() agentadaptor.DriverDescriptor {
 			Question:   agentadaptor.QuestionSupport{Ask: false, AutoReject: false, Retry: false},
 		},
 		Runtime: agentadaptor.RuntimeCapability{ReportsServices: true},
+		StructuredOutput: agentadaptor.StructuredOutputCapability{
+			JSONSchemaNative:         false,
+			JSONSchemaPromptValidate: true,
+			WorksWithRun:             true,
+			WorksWithStart:           true,
+			WorksWithStreaming:       true,
+			WorksWithHITL:            false,
+			Notes:                    "Cursor CLI exposes JSON/stream-json envelopes but no native JSON Schema output surface; use explicit prompt validation.",
+		},
 	}
 }
 
@@ -319,6 +328,9 @@ func (adapter) SyncProfileResources(ctx context.Context, cfg any, _ agentadaptor
 }
 
 func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink agentadaptor.EventSink) (agentadaptor.DriverRunResult, error) {
+	if req.OutputSchema != nil && req.OutputSchema.Mode == agentadaptor.StructuredOutputNativeStrict {
+		return agentadaptor.DriverRunResult{}, &agentadaptor.StructuredOutputUnsupportedError{Adapter: DriverType, Mode: req.OutputSchema.Mode, Reason: "Cursor CLI does not expose native JSON Schema output"}
+	}
 	cfg := readConfig(req.Config)
 	// per-run WithModel overrides the binding model for this invocation only.
 	if m := strings.TrimSpace(req.ModelOverride); m != "" {

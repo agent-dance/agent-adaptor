@@ -12,6 +12,7 @@
 | [`api-reference.md`](./api-reference.md) | 当前公开 API 面、构造方式、Run 结果分层。 |
 | [`usage-guide.md`](./usage-guide.md) | 单 Agent、多 Agent、session、skills、MCP、profile 与宿主命名陷阱。 |
 | [`run-policy.md`](./run-policy.md) | `RunPolicy`、HITL mode、adapter capability 矩阵。 |
+| [`structured-output.md`](./structured-output.md) | runtime JSON Schema 结构化输出 API、adapter 能力矩阵与示例。 |
 | [`streaming.md`](./streaming.md) | `WithStreaming`、`RunHandle.StreamEvents`、AG-UI / SSE bridge 用法。 |
 | [`streaming-adapter-contract.md`](./streaming-adapter-contract.md) | 新 adapter 接入 streaming 时必须满足的合同。 |
 | [`a2a.md`](./a2a.md) | A2A bridge / client 的当前集成方式与边界。 |
