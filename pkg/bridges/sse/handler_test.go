@@ -13,6 +13,7 @@ import (
 	agentadaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/memory"
 	"github.com/agent-dance/agent-adaptor/pkg/bridges/sse"
+	"github.com/agent-dance/agent-adaptor/pkg/hosttools/a2adelegation"
 )
 
 // fakeAdapter emits a fixed StreamPayload sequence so we can exercise the
@@ -283,6 +284,102 @@ func TestSSEHandlerRejectsWrongMethod(t *testing.T) {
 	if resp.StatusCode != http.StatusMethodNotAllowed {
 		t.Fatalf("want 405, got %d", resp.StatusCode)
 	}
+}
+
+type blockingAdapter struct{}
+
+func (blockingAdapter) Descriptor() agentadaptor.DriverDescriptor {
+	return agentadaptor.DriverDescriptor{Type: "blocking", DisplayName: "Blocking"}
+}
+func (blockingAdapter) ValidateConfig(any) error { return nil }
+func (blockingAdapter) StreamCapability() agentadaptor.StreamCapability {
+	return agentadaptor.StreamCapability{Native: true, TokenLevel: true}
+}
+func (blockingAdapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink agentadaptor.EventSink) (agentadaptor.DriverRunResult, error) {
+	if err := sink.EmitStream(agentadaptor.StreamPayload{Kind: agentadaptor.StreamRunStarted, ThreadID: "t", RunID: req.RunID}); err != nil {
+		return agentadaptor.DriverRunResult{}, err
+	}
+	select {
+	case <-ctx.Done():
+		return agentadaptor.DriverRunResult{}, ctx.Err()
+	case <-time.After(200 * time.Millisecond):
+	}
+	if err := sink.EmitStream(agentadaptor.StreamPayload{Kind: agentadaptor.StreamRunFinished, ThreadID: "t", RunID: req.RunID}); err != nil {
+		return agentadaptor.DriverRunResult{}, err
+	}
+	return agentadaptor.DriverRunResult{Output: "done", ExitCode: 0}, nil
+}
+
+func newBlockingSDK(t *testing.T) agentadaptor.SDK {
+	t.Helper()
+	return agentadaptor.New(
+		agentadaptor.WithDefaultAgent(agentadaptor.Bind(blockingAdapter{}, nil)),
+		agentadaptor.WithSessionStore(memory.NewSessionStore()),
+	)
+}
+
+func TestSSEHandlerAGUIOverlaysSubagentEvents(t *testing.T) {
+	t.Parallel()
+	sdk := newBlockingSDK(t)
+	bus := scriptedSubagentBus{}
+	srv := httptest.NewServer(sse.Handler(sdk, sse.Options{Protocol: sse.AGUI, SubagentBus: bus}))
+	defer srv.Close()
+
+	body := strings.NewReader(`{
+		"threadId": "t-1",
+		"runId": "r-1",
+		"messages": [{"id":"m-1","role":"user","content":"hi"}]
+	}`)
+	resp, err := http.Post(srv.URL, "application/json", body)
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status: %d", resp.StatusCode)
+	}
+
+	frames := readSSEFrames(t, resp.Body, 2*time.Second)
+	seenSubagent := false
+	for _, f := range frames {
+		if f.data == "" {
+			continue
+		}
+		var payload map[string]any
+		if err := json.Unmarshal([]byte(f.data), &payload); err != nil {
+			t.Fatalf("decode frame data: %v (raw=%q)", err, f.data)
+		}
+		if payload["type"] == "CUSTOM" && payload["name"] == "subagent.started" {
+			seenSubagent = true
+			value, _ := payload["value"].(map[string]any)
+			if value["delegationId"] != "del-1" || value["agentKey"] != "research" {
+				t.Fatalf("unexpected subagent payload: %#v", value)
+			}
+		}
+	}
+	if !seenSubagent {
+		t.Fatalf("subagent custom event not observed in frames: %#v", frames)
+	}
+}
+
+type scriptedSubagentBus struct{}
+
+func (scriptedSubagentBus) SubscribeRun(ctx context.Context, runID string) <-chan a2adelegation.DelegationEvent {
+	out := make(chan a2adelegation.DelegationEvent, 2)
+	go func() {
+		defer close(out)
+		select {
+		case <-ctx.Done():
+			return
+		case out <- a2adelegation.DelegationEvent{RunID: runID, DelegationID: "del-1", AgentKey: "research", Kind: a2adelegation.DelegationStarted}:
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case out <- a2adelegation.DelegationEvent{RunID: runID, DelegationID: "del-1", AgentKey: "research", Kind: a2adelegation.DelegationFinished, Status: "completed"}:
+		}
+	}()
+	return out
 }
 
 // ---------------------------------------------------------------------------

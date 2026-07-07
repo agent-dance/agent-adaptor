@@ -107,7 +107,7 @@ func TestReconcileProfileSkillsPreservesExternalConflict(t *testing.T) {
 	skillsHome := filepath.Join(profileDir, "skills")
 	managedSource := createProfileSkillDir(t, t.TempDir(), "managed-main", "managed")
 	externalSource := createProfileSkillDir(t, t.TempDir(), "external-main", "external")
-	if err := os.MkdirAll(skillsHome, 0o755); err != nil {
+	if err := os.MkdirAll(skillsHome, 0755); err != nil {
 		t.Fatalf("mkdir skills home: %v", err)
 	}
 	if err := os.Symlink(externalSource, filepath.Join(skillsHome, "main")); err != nil {
@@ -129,7 +129,11 @@ func TestReconcileProfileSkillsPreservesExternalConflict(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve external target: %v", err)
 	}
-	if filepath.Clean(resolved) != filepath.Clean(externalSource) {
+	expected, err := filepath.EvalSymlinks(externalSource)
+	if err != nil {
+		t.Fatalf("resolve expected external target: %v", err)
+	}
+	if filepath.Clean(resolved) != filepath.Clean(expected) {
 		t.Fatalf("expected external target preserved, got %s", resolved)
 	}
 	manifest, err := profilestate.LoadManifest(profileDir)
@@ -146,7 +150,7 @@ func TestReconcileProfileSkillsRejectsExternalConflictWhenRequested(t *testing.T
 	skillsHome := filepath.Join(profileDir, "skills")
 	managedSource := createProfileSkillDir(t, t.TempDir(), "managed-review", "managed")
 	externalSource := createProfileSkillDir(t, t.TempDir(), "external-review", "external")
-	if err := os.MkdirAll(skillsHome, 0o755); err != nil {
+	if err := os.MkdirAll(skillsHome, 0755); err != nil {
 		t.Fatalf("mkdir skills home: %v", err)
 	}
 	if err := os.Symlink(externalSource, filepath.Join(skillsHome, "review")); err != nil {
@@ -169,7 +173,11 @@ func TestReconcileProfileSkillsRejectsExternalConflictWhenRequested(t *testing.T
 	if err != nil {
 		t.Fatalf("resolve external target: %v", err)
 	}
-	if filepath.Clean(resolved) != filepath.Clean(externalSource) {
+	expected, err := filepath.EvalSymlinks(externalSource)
+	if err != nil {
+		t.Fatalf("resolve expected external target: %v", err)
+	}
+	if filepath.Clean(resolved) != filepath.Clean(expected) {
 		t.Fatalf("expected external target preserved, got %s", resolved)
 	}
 }
@@ -177,11 +185,11 @@ func TestReconcileProfileSkillsRejectsExternalConflictWhenRequested(t *testing.T
 func createProfileSkillDir(t *testing.T, root, name, body string) string {
 	t.Helper()
 	skillDir := filepath.Join(root, name)
-	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
 		t.Fatalf("mkdir skill dir: %v", err)
 	}
 	content := "---\nname: " + name + "\n---\n" + body + "\n"
-	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(content), 0644); err != nil {
 		t.Fatalf("write skill: %v", err)
 	}
 	return skillDir

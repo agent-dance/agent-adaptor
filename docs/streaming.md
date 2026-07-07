@@ -145,11 +145,43 @@ data: {"type":"RUN_FINISHED",...}
 - `CORSAllowedOrigin`: 浏览器前端必须；空字符串不加 CORS 头
 - `WriteTimeout`: 单帧写超时，默认 30s
 - `RunOptions`: 应用到每次请求的 RunOption 列表（例如 `WithRunPolicy`）
-- `DecodeRequest`: 自定义请求体解码
+- `SubagentBus`: AG-UI 协议下把 host-published visual subagent delegation events 叠加为 `CUSTOM` 事件；Raw 协议不使用该 overlay
 
-## 4. 配置
+## 4. Visual subagent delegation overlay
 
-### 4.1 per-binding 默认开
+Hosts that expose a `delegate_to_agent` MCP tool can keep remote A2A progress out
+of the parent model context while still rendering it live in the same AG-UI/SSE
+stream. The delegation tool publishes `pkg/hosttools/a2adelegation.DelegationEvent`
+values to a run-scoped bus; `pkg/bridges/subagentstream` merges that bus with the
+parent run's AG-UI stream and forwards each remote event as an AG-UI `CUSTOM`
+event such as `subagent.started`, `subagent.text.delta`, `subagent.artifact`, or
+`subagent.finished`.
+
+```go
+bus := a2adelegation.NewEventBus(256)
+
+mux.Handle("/v1/chat", sse.Handler(sdk, sse.Options{
+    Protocol:    sse.AGUI,
+    SubagentBus: bus,
+}))
+
+// The MCP tool server for the same run calls delegator.Delegate(...), which
+// returns only the final structured DelegationResult to the parent model while
+// publishing live progress onto bus.SubscribeRun(ctx, handle.RunID()).
+```
+
+`SubagentBus` is honored by the stock SSE handler only when `Protocol: sse.AGUI`.
+For Raw SSE, hosts that need the same side channel should call
+`subagentstream.Wrap(...)` themselves and choose their own wire shape.
+
+For lower-level hosts, use `subagentstream.WrapAGUI(ctx, handle, opts)` directly
+instead of `agui.WrapWithContext`. Parent AG-UI lifecycle events are preserved;
+remote subagent events remain a UI side channel and are not appended to
+`RunResult.Output`, `RunResult.RawStreams`, or ordinary tool output.
+
+## 5. 配置
+
+### 5.1 per-binding 默认开
 
 ```go
 sdk := agentadaptor.New(
@@ -169,7 +201,7 @@ handle2, _ := sdk.Start(ctx, "batch",
 
 覆盖顺序：per-call `WithStreaming` / `WithoutStreaming` > per-binding `WithDefaultStreaming` > 默认 off。
 
-### 4.2 背压
+### 5.2 背压
 
 ```go
 sdk := agentadaptor.New(
@@ -183,7 +215,7 @@ sdk := agentadaptor.New(
 
 **宿主务必及时 drain `StreamEvents()`**，否则 Block 模式可能挂起，Drop 模式会丢事件。
 
-## 5. 能力与降级
+## 6. 能力与降级
 
 每个 streaming-aware adapter 通过 `StreamAwareDriver.StreamCapability()` 声明自己能提供什么：
 
@@ -199,7 +231,7 @@ sdk := agentadaptor.New(
 - `Reasoning=false` → 不发 `REASONING_*`
 - HITL 事件默认映射成 AG-UI tool-call lifecycle，便于 CopilotKit 这类客户端渲染审批卡片；需要旧行为时使用 `agui.WithDecisionMode(agui.DecisionAsCustom)`
 
-## 6. 常见问题
+## 7. 常见问题
 
 **Q: 开了 `WithStreaming` 但 `StreamEvents()` 一直没有 payload？**
 A: 检查 adapter 是否实现了 `StreamAwareDriver`。未实现的 adapter 会走普通路径，`StreamEvents()` 返回 closed channel。
@@ -216,7 +248,7 @@ A: 安全。每个 `Start()` 创建独立 handle / sink / codex app-server 子�
 **Q: SSE 断连后 run 还在跑吗？**
 A: 不在。SSE handler 在 client 断连时会调 `handle.Cancel()`，ctx cancellation 穿透到 codex 子进程。
 
-## 7. AG-UI 前后端版本对齐
+## 8. AG-UI 前后端版本对齐
 
 Go 侧通过 `go.mod` 固定 `github.com/ag-ui-protocol/ag-ui/sdks/community/go`；`examples/streaming-chat-copilotkit/web` 通过 `package-lock.json` 固定 `@ag-ui/core`。两边不是同一个坐标系，升级任一侧时都可能出现 Zod/Go `Validate` 行为漂移。
 

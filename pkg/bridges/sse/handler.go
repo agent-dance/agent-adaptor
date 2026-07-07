@@ -44,6 +44,7 @@ import (
 
 	agentadaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/pkg/bridges/agui"
+	"github.com/agent-dance/agent-adaptor/pkg/bridges/subagentstream"
 )
 
 // Protocol selects the full on-wire contract (inbound + outbound).
@@ -88,6 +89,12 @@ type Options struct {
 	// They apply before any options derived from the request body, so
 	// the body can still override them (e.g. session binding).
 	RunOptions []agentadaptor.RunOption
+
+	// SubagentBus, when set, overlays host-published visual subagent
+	// delegation events onto the AG-UI response stream as CUSTOM events.
+	// Parent adapter events are left unchanged; the remote stream remains a
+	// host-side UI side channel and is not fed into the parent model context.
+	SubagentBus subagentstream.EventBus
 }
 
 // RawRequest is the canonical Raw-protocol chat request body.
@@ -161,7 +168,7 @@ func Handler(sdk agentadaptor.SDK, opts Options) http.Handler {
 		}
 
 		ctx := r.Context()
-		err = streamEvents(ctx, writer, w, handle, opts.Protocol)
+		err = streamEvents(ctx, writer, w, handle, opts)
 		if err != nil && !errors.Is(err, context.Canceled) {
 			_ = writer.WriteErrorEvent(ctx, w, err, "")
 		}
@@ -235,10 +242,13 @@ func decodeRawRequest(r *http.Request) (*RawRequest, error) {
 // streamEvents drains the handle's streams into SSE frames according to
 // the chosen protocol. It returns when the stream is exhausted or the
 // context is cancelled.
-func streamEvents(ctx context.Context, writer *aguisse.SSEWriter, w io.Writer, handle agentadaptor.RunHandle, protocol Protocol) error {
-	switch protocol {
+func streamEvents(ctx context.Context, writer *aguisse.SSEWriter, w io.Writer, handle agentadaptor.RunHandle, opts Options) error {
+	switch opts.Protocol {
 	case AGUI:
 		out := agui.WrapWithContext(ctx, handle)
+		if opts.SubagentBus != nil {
+			out = subagentstream.WrapAGUI(ctx, handle, subagentstream.MuxOptions{Bus: opts.SubagentBus})
+		}
 		for ev := range out {
 			select {
 			case <-ctx.Done():
@@ -253,7 +263,7 @@ func streamEvents(ctx context.Context, writer *aguisse.SSEWriter, w io.Writer, h
 	case Raw:
 		return streamRaw(ctx, w, handle)
 	default:
-		return fmt.Errorf("sse: unknown protocol %d", protocol)
+		return fmt.Errorf("sse: unknown protocol %d", opts.Protocol)
 	}
 }
 

@@ -87,6 +87,46 @@ Browser
 | `AGENT_BACKEND_URL` | `http://localhost:8080/agent` | CopilotRuntime 转发的 AG-UI 端点 |
 | `NEXT_PUBLIC_AGENT_BACKEND_BASE` | `http://localhost:8080` | 浏览器旁路请求 base URL |
 
+## Visual subagent delegation hook
+
+The backend can render remote A2A delegation progress in the same CopilotKit
+AG-UI stream by wiring `sse.Options.SubagentBus` (or the lower-level
+`subagentstream.WrapAGUI`) to the run session. A host-owned `delegate_to_agent`
+MCP server publishes `a2adelegation.DelegationEvent` values while the tool call
+is blocked on the remote task. CopilotKit receives those updates as AG-UI
+`CUSTOM` events named `subagent.started`, `subagent.text.delta`,
+`subagent.artifact`, `subagent.finished`, etc.; Claude/Codex/Cursor receives only
+the final structured MCP result.
+
+This example's current main path still starts one local parent CLI. To prove the
+visual delegation product path, run a Codex A2A bridge separately (see
+`examples/a2a-local` and `docs/a2a.md`), register its Agent Card in an
+`a2adelegation.Registry`, start an HTTP `a2adelegation.MCPServer` for each parent
+run, and expose that server through runtime-backed MCP metadata:
+
+```text
+agentadaptor.mcp.enabled=true
+agentadaptor.mcp.key=a2a-delegation
+agentadaptor.mcp.transport=http
+agentadaptor.mcp.url=http://127.0.0.1:<port>/mcp
+agentadaptor.mcp.bearer_token_env_var=A2A_DELEGATION_TOKEN
+```
+
+`agentadaptor.mcp.enabled=true` is the promotion switch. Other optional keys
+include `agentadaptor.mcp.headers_json`, `agentadaptor.mcp.args_json`,
+`agentadaptor.mcp.env_json`, `agentadaptor.mcp.required`, and
+`agentadaptor.mcp.required_reason`. The SDK validates these as ordinary MCP
+config; malformed JSON or duplicate MCP keys fail the run before the parent
+adapter starts.
+
+The important boundary for UI authors: render the `subagent.*` custom events as
+a nested visual group, but do not add them to the chat transcript as parent model
+messages. `subagent.*` event values may include `parentToolCallId` when the host
+can correlate the delegation sidecar with a parent provider tool-use ID, but UI
+code should not require it. Use `delegationId` as the stable nested group key,
+with `runId` as the run scope. The parent transcript should contain the normal
+tool call plus the concise final delegation result only.
+
 ## 相关文档
 
 - [`docs/workstream-user-message-event.md`](../../docs/workstream-user-message-event.md)
