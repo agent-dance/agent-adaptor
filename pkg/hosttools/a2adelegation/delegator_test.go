@@ -407,8 +407,9 @@ func TestDelegatorStreamingCancellationCascadesWithEffectiveTenant(t *testing.T)
 	}
 	stream := &fakeA2AStream{events: make(chan streamRecv, 1), closed: make(chan struct{})}
 	stream.events <- streamRecv{event: clienta2a.Event{Kind: clienta2a.EventStatus, TaskID: "task-1", ContextID: "ctx-1", Status: &clienta2a.TaskStatus{State: clienta2a.TaskStateWorking}}}
+	bus := NewEventBus(16)
 	client := &fakeA2AClient{card: card, stream: stream}
-	delegator := NewDelegator(registry, NewEventBus(16))
+	delegator := NewDelegator(registry, bus)
 	delegator.NewClient = func(RemoteAgentSpec) A2AClient { return client }
 	delegator.NewID = func() string { return "del-1" }
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
@@ -427,6 +428,10 @@ func TestDelegatorStreamingCancellationCascadesWithEffectiveTenant(t *testing.T)
 	}
 	if client.cancelCalls != 1 || client.lastCancel.TaskID != "task-1" || client.lastCancel.Tenant != "call-tenant" {
 		t.Fatalf("expected streaming remote cancel with effective tenant, calls=%d req=%#v", client.cancelCalls, client.lastCancel)
+	}
+	replayed := drainBus(t, bus, "run-1", 3)
+	if replayed[len(replayed)-1].Kind != DelegationCancelled {
+		t.Fatalf("expected cancelled terminal, got %#v", replayed)
 	}
 }
 
@@ -463,6 +468,66 @@ func TestDelegatorStreamingRecoveryUsesEffectiveTenant(t *testing.T) {
 	}
 	if client.getCalls != 1 || client.lastGet.TaskID != "task-1" || client.lastGet.Tenant != "call-tenant" {
 		t.Fatalf("expected recovery get with effective tenant, calls=%d req=%#v", client.getCalls, client.lastGet)
+	}
+}
+
+func TestDelegatorStreamingCancelBeforeTaskIDPublishesTerminal(t *testing.T) {
+	t.Parallel()
+	card := clienta2a.AgentCard{Name: "Research", Capabilities: clienta2a.Capabilities{Streaming: true}}
+	registry, err := NewRegistry(RemoteAgentSpec{Key: "research", AgentCard: &card})
+	if err != nil {
+		t.Fatalf("registry: %v", err)
+	}
+	stream := &fakeA2AStream{events: make(chan streamRecv), closed: make(chan struct{})}
+	bus := NewEventBus(16)
+	client := &fakeA2AClient{card: card, stream: stream}
+	delegator := NewDelegator(registry, bus)
+	delegator.NewClient = func(RemoteAgentSpec) A2AClient { return client }
+	delegator.NewID = func() string { return "del-1" }
+	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
+	defer cancel()
+
+	result, err := delegator.Delegate(ctx, DelegationRequest{RunID: "run-1", Agent: "research", Objective: "research this", Stream: true})
+	if err == nil {
+		t.Fatal("expected cancellation before first task id")
+	}
+	if result.Status != "cancelled" || client.cancelCalls != 0 {
+		t.Fatalf("unexpected result=%#v cancelCalls=%d", result, client.cancelCalls)
+	}
+	replayed := drainBus(t, bus, "run-1", 1)
+	if replayed[0].Kind != DelegationCancelled || replayed[0].RemoteTaskID != "" {
+		t.Fatalf("expected cancelled terminal without remote task id, got %#v", replayed)
+	}
+}
+
+func TestDelegatorStreamingRecvContextErrorReportsCancelled(t *testing.T) {
+	t.Parallel()
+	card := clienta2a.AgentCard{Name: "Research", Capabilities: clienta2a.Capabilities{Streaming: true}}
+	registry, err := NewRegistry(RemoteAgentSpec{Key: "research", AgentCard: &card})
+	if err != nil {
+		t.Fatalf("registry: %v", err)
+	}
+	stream := &fakeA2AStream{events: make(chan streamRecv, 1), closed: make(chan struct{})}
+	stream.events <- streamRecv{err: context.DeadlineExceeded}
+	bus := NewEventBus(16)
+	client := &fakeA2AClient{card: card, stream: stream}
+	delegator := NewDelegator(registry, bus)
+	delegator.NewClient = func(RemoteAgentSpec) A2AClient { return client }
+	delegator.NewID = func() string { return "del-1" }
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	result, err := delegator.Delegate(ctx, DelegationRequest{RunID: "run-1", Agent: "research", Objective: "research this", Stream: true})
+	if err == nil {
+		t.Fatal("expected cancelled stream recv error")
+	}
+	var derr *DelegationError
+	if !errors.As(err, &derr) || derr.Code != "cancelled" || result.Status != "cancelled" {
+		t.Fatalf("expected cancelled result/error, result=%#v err=%T %[2]v", result, err)
+	}
+	replayed := drainBus(t, bus, "run-1", 1)
+	if replayed[0].Kind != DelegationCancelled {
+		t.Fatalf("expected cancelled terminal, got %#v", replayed)
 	}
 }
 
