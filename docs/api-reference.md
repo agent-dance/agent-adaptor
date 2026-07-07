@@ -140,6 +140,48 @@ Policy, streaming, HITL:
 - `WithPlanReviewHandler(h)`
 - `WithQuestionHandler(h)`
 
+Structured output:
+
+- `WithJSONSchemaOutputFor[T](opts...)` — preferred Go-host path. The SDK derives a JSON Schema from `T`, deep-copies it into the invocation, and returns the final JSON on `RunResult.StructuredOutput`.
+- `JSONSchemaFor[T](schemaOpts...)` — derive only the schema bytes when the host needs to inspect or cache the schema before a run.
+- `WithJSONSchemaOutput(schemaJSON, opts...)` / `WithJSONSchemaOutputFile(path, opts...)` — low-level escape hatches for dynamic schemas or non-Go hosts.
+- `WithOutputSchema(schema)` — fully specified request for advanced callers.
+- `NativeStrictOutput()` — default; require provider/CLI-native schema enforcement and fail before adapter launch when unsupported.
+- `PreferNativeOutput()` — use native enforcement when available, otherwise explicit prompt+SDK validation when the adapter advertises it.
+- `PromptValidateOutput()` — inject exact-JSON instructions and validate the final adapter `Output`; this is not provider-native constrained decoding.
+- `DecodeStructuredOutput[T](res)` / `RunStructured[T](ctx, runner, prompt, opts...)` — decode the validated final JSON into a Go value.
+
+Adapter support is exposed through `DriverDescriptor.StructuredOutput`. Current built-ins:
+
+| Adapter | Native JSON Schema | Prompt validation | Streaming | Notes |
+|---|---:|---:|---:|---|
+| Codex | yes, batch `codex exec --output-schema` | yes | no native streaming guarantee | app-server schema support is not advertised until verified |
+| Claude Code | yes, print-mode `--output-format json --json-schema` | yes | no native streaming/HITL guarantee | interactive HITL + native schema is rejected |
+| Cursor | no | yes | yes for prompt validation | Cursor CLI has JSON envelopes but no native schema-output surface |
+
+Example:
+
+```go
+type ProjectMetadata struct {
+	ProjectName          string   `json:"project_name"`
+	ProgrammingLanguages []string `json:"programming_languages"`
+}
+
+res, err := sdk.Run(ctx,
+	"Extract project metadata from this repository.",
+	agentadaptor.WithJSONSchemaOutputFor[ProjectMetadata](
+		agentadaptor.NativeStrictOutput(),
+		agentadaptor.StructuredOutputName("project_metadata"),
+	),
+)
+if err != nil {
+	return err
+}
+meta, err := agentadaptor.DecodeStructuredOutput[ProjectMetadata](res)
+```
+
+Use `PromptValidateOutput()` explicitly for Cursor or for other runs where a weaker prompt+local-validation contract is acceptable. Schema names, descriptions, enum values, const values, regex patterns, and examples may be sent to provider CLIs; do not put secrets there. More examples and the built-in adapter matrix are in [`structured-output.md`](./structured-output.md).
+
 ## Binding Defaults
 
 `AgentOption` values on a binding establish defaults for later runs:

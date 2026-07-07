@@ -97,6 +97,15 @@ func (adapter) Descriptor() agentadaptor.DriverDescriptor {
 			Question:   agentadaptor.QuestionSupport{Ask: true, AutoReject: true, Retry: false},
 		},
 		Runtime: agentadaptor.RuntimeCapability{ReportsServices: true},
+		StructuredOutput: agentadaptor.StructuredOutputCapability{
+			JSONSchemaNative:         true,
+			JSONSchemaPromptValidate: true,
+			WorksWithRun:             true,
+			WorksWithStart:           true,
+			WorksWithStreaming:       false,
+			WorksWithHITL:            false,
+			Notes:                    "Native JSON Schema output uses Claude Code print-mode --output-format json --json-schema; stream-json/HITL combinations are not advertised.",
+		},
 	}
 }
 
@@ -396,6 +405,14 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 			return agentadaptor.DriverRunResult{}, err
 		}
 	}
+	if req.OutputSchema != nil && req.OutputSchema.Mode != agentadaptor.StructuredOutputPromptValidate {
+		if interactive {
+			return agentadaptor.DriverRunResult{}, &agentadaptor.StructuredOutputUnsupportedError{Adapter: DriverType, Mode: req.OutputSchema.Mode, Reason: "Claude native structured output is not supported with interactive HITL"}
+		}
+		if hasAnyArg(cfg.ExtraArgs, "--json-schema", "--output-format") {
+			return agentadaptor.DriverRunResult{}, &agentadaptor.InvalidOutputSchemaError{Reason: "Claude ExtraArgs must not include --json-schema or --output-format when SDK structured output is enabled"}
+		}
+	}
 
 	args := buildClaudeExecArgs(cfg, req, "", interactive)
 
@@ -477,23 +494,28 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 	}
 
 	meta := parser.outputMetadata()
+	var structuredOutput *agentadaptor.StructuredOutput
+	if req.OutputSchema != nil && req.OutputSchema.Mode != agentadaptor.StructuredOutputPromptValidate {
+		structuredOutput = parser.structuredOutput
+	}
 
 	return agentadaptor.DriverRunResult{
-		Output:          parser.buildOutput(),
-		RawStreams:      &raw,
-		Transcript:      parser.transcript,
-		ExitCode:        result.ExitCode,
-		Signal:          result.Signal,
-		TimedOut:        result.TimedOut,
-		Usage:           parser.usage,
-		Checkpoint:      checkpoint,
-		Metadata:        meta,
-		Provider:        "anthropic",
-		Model:           reportedModel,
-		Summary:         parser.finalSummary(),
-		Result:          parser.resultFinal,
-		RuntimeServices: adapterutil.RuntimeReportsFromRefs(req.Runtime.Ensured, req.Agent),
-		Failure:         failure,
+		Output:           parser.buildOutput(),
+		RawStreams:       &raw,
+		Transcript:       parser.transcript,
+		ExitCode:         result.ExitCode,
+		Signal:           result.Signal,
+		TimedOut:         result.TimedOut,
+		Usage:            parser.usage,
+		Checkpoint:       checkpoint,
+		Metadata:         meta,
+		Provider:         "anthropic",
+		Model:            reportedModel,
+		Summary:          parser.finalSummary(),
+		Result:           parser.resultFinal,
+		StructuredOutput: structuredOutput,
+		RuntimeServices:  adapterutil.RuntimeReportsFromRefs(req.Runtime.Ensured, req.Agent),
+		Failure:          failure,
 	}, nil
 }
 
@@ -519,9 +541,15 @@ func validateClaudeSessionGuard(req agentadaptor.DriverRunRequest, effectiveCWD,
 }
 
 func buildClaudeExecArgs(cfg agentadaptor.ClaudeConfig, req agentadaptor.DriverRunRequest, bundleRoot string, interactive bool) []string {
-	// Common core. `--print` + `stream-json` output are always needed by
-	// the parser.
-	args := []string{"--print", "--output-format", "stream-json", "--verbose"}
+	// Common core. Native structured output uses Claude's final json result;
+	// normal batch/streaming parsing continues to use stream-json events.
+	nativeStructured := req.OutputSchema != nil && req.OutputSchema.Mode != agentadaptor.StructuredOutputPromptValidate
+	args := []string{"--print"}
+	if nativeStructured {
+		args = append(args, "--output-format", "json", "--json-schema", string(req.OutputSchema.SchemaJSON))
+	} else {
+		args = append(args, "--output-format", "stream-json", "--verbose")
+	}
 
 	if interactive {
 		// Phase 3 bidirectional:
@@ -578,6 +606,17 @@ func buildClaudeExecArgs(cfg agentadaptor.ClaudeConfig, req agentadaptor.DriverR
 	}
 	args = append(args, cfg.ExtraArgs...)
 	return args
+}
+
+func hasAnyArg(args []string, names ...string) bool {
+	for _, arg := range args {
+		for _, name := range names {
+			if arg == name || strings.HasPrefix(arg, name+"=") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // ensureRootSandboxEnv protects Phase 1 runs launched under a UID-0 process

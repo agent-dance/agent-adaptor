@@ -27,14 +27,15 @@ type claudeParser struct {
 	transcript    []agentadaptor.TranscriptItem
 	assistantText []string
 
-	sessionID       string
-	displayID       string
-	summary         string // last assistant text; used only as summary fallback
-	terminalSummary string // authoritative summary from terminal result events
-	usage           *agentadaptor.Usage
-	cost            *float64
-	resultFinal     map[string]any
-	errorMessage    string
+	sessionID        string
+	displayID        string
+	summary          string // last assistant text; used only as summary fallback
+	terminalSummary  string // authoritative summary from terminal result events
+	usage            *agentadaptor.Usage
+	cost             *float64
+	resultFinal      map[string]any
+	structuredOutput *agentadaptor.StructuredOutput
+	errorMessage     string
 
 	stream       *streamingState
 	deltaBuffers map[string]*strings.Builder // messageID -> streamed text (cancel/crash fallback)
@@ -509,6 +510,14 @@ func (p *claudeParser) handleResult(raw string, payload map[string]any, subtype 
 	if resultText := claudeTopLevelString(payload, "result", "summary"); resultText != "" {
 		p.terminalSummary = resultText
 	}
+	if raw, ok := claudeStructuredJSONFromResult(payload); ok {
+		p.structuredOutput = &agentadaptor.StructuredOutput{
+			Format:  agentadaptor.OutputFormatJSONSchema,
+			Source:  agentadaptor.StructuredOutputSourceNative,
+			RawJSON: raw,
+			Valid:   true,
+		}
+	}
 
 	usage := claudeTopLevelObject(payload, "usage")
 	if usage != nil {
@@ -553,6 +562,46 @@ func (p *claudeParser) handleResult(raw string, payload map[string]any, subtype 
 	})
 	if p.stream != nil {
 		p.stream.handleResultTerminal(payload)
+	}
+}
+
+func claudeStructuredJSONFromResult(payload map[string]any) (json.RawMessage, bool) {
+	for _, key := range []string{"structured_output", "structuredOutput"} {
+		raw, ok := payload[key]
+		if !ok {
+			continue
+		}
+		if msg, ok := claudeJSONRawMessageFromValue(raw); ok {
+			return msg, true
+		}
+	}
+	return nil, false
+}
+
+func claudeJSONRawMessageFromValue(raw any) (json.RawMessage, bool) {
+	switch value := raw.(type) {
+	case nil:
+		return nil, false
+	case string:
+		var decoded any
+		if err := json.Unmarshal([]byte(value), &decoded); err != nil {
+			return nil, false
+		}
+		msg, err := json.Marshal(decoded)
+		if err != nil {
+			return nil, false
+		}
+		return msg, true
+	default:
+		msg, err := json.Marshal(value)
+		if err != nil {
+			return nil, false
+		}
+		var decoded any
+		if err := json.Unmarshal(msg, &decoded); err != nil {
+			return nil, false
+		}
+		return msg, true
 	}
 }
 
