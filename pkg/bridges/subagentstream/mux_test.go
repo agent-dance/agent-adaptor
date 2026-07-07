@@ -170,6 +170,43 @@ func TestWrapCancelUsesBestEffortContext(t *testing.T) {
 	}
 }
 
+func TestWrapCancelsSubagentSubscriptionWhenParentTerminates(t *testing.T) {
+	t.Parallel()
+	handle := &fakeHandle{
+		stream:    make(chan agentadaptor.StreamPayload, 1),
+		events:    make(chan agentadaptor.RunEvent),
+		done:      make(chan struct{}),
+		runID:     "run-1",
+		runResult: agentadaptor.RunResult{RunID: "run-1"},
+	}
+	bus := newTrackingBus()
+	out := subagentstream.Wrap(context.Background(), handle, subagentstream.MuxOptions{Bus: bus})
+	handle.stream <- agentadaptor.StreamPayload{Kind: agentadaptor.StreamRunFinished, ThreadID: "thread-1", RunID: "run-1"}
+	close(handle.stream)
+	close(handle.done)
+	for range out {
+	}
+	bus.assertCanceled(t, "run-1")
+}
+
+func TestWrapCancelsSubagentSubscriptionWhenParentStreamCloses(t *testing.T) {
+	t.Parallel()
+	handle := &fakeHandle{
+		stream:    make(chan agentadaptor.StreamPayload),
+		events:    make(chan agentadaptor.RunEvent),
+		done:      make(chan struct{}),
+		runID:     "run-1",
+		runResult: agentadaptor.RunResult{RunID: "run-1"},
+	}
+	bus := newTrackingBus()
+	out := subagentstream.Wrap(context.Background(), handle, subagentstream.MuxOptions{Bus: bus})
+	close(handle.stream)
+	close(handle.done)
+	for range out {
+	}
+	bus.assertCanceled(t, "run-1")
+}
+
 func collectMuxEvents(t *testing.T, ch <-chan subagentstream.Event, want int) []subagentstream.Event {
 	t.Helper()
 	out := make([]subagentstream.Event, 0, want)
@@ -185,6 +222,44 @@ func collectMuxEvents(t *testing.T, ch <-chan subagentstream.Event, want int) []
 		}
 	}
 	return out
+}
+
+type trackingBus struct {
+	mu      sync.Mutex
+	runID   string
+	ctxDone <-chan struct{}
+	events  chan a2adelegation.DelegationEvent
+}
+
+func newTrackingBus() *trackingBus {
+	return &trackingBus{events: make(chan a2adelegation.DelegationEvent)}
+}
+
+func (b *trackingBus) SubscribeRun(ctx context.Context, runID string) <-chan a2adelegation.DelegationEvent {
+	b.mu.Lock()
+	b.runID = runID
+	b.ctxDone = ctx.Done()
+	b.mu.Unlock()
+	return b.events
+}
+
+func (b *trackingBus) assertCanceled(t *testing.T, wantRunID string) {
+	t.Helper()
+	b.mu.Lock()
+	runID := b.runID
+	done := b.ctxDone
+	b.mu.Unlock()
+	if runID != wantRunID {
+		t.Fatalf("subscribed runID: got %q want %q", runID, wantRunID)
+	}
+	if done == nil {
+		t.Fatal("subscription was not created")
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("subagent subscription context was not canceled")
+	}
 }
 
 type fakeHandle struct {

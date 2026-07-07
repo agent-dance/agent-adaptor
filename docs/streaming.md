@@ -167,7 +167,10 @@ mux.Handle("/v1/chat", sse.Handler(sdk, sse.Options{
 
 // The MCP tool server for the same run calls delegator.Delegate(...), which
 // returns only the final structured DelegationResult to the parent model while
-// publishing live progress onto bus.SubscribeRun(ctx, handle.RunID()).
+// publishing live progress onto bus.SubscribeRun(ctx, handle.RunID()). When the
+// run is no longer observable, call bus.ClearRun(handle.RunID()) (or equivalent
+// host lifecycle cleanup) so replay and terminal-dedupe state do not grow without
+// bound in long-lived services.
 ```
 
 `SubagentBus` is honored by the stock SSE handler only when `Protocol: sse.AGUI`.

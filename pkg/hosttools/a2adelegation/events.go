@@ -64,6 +64,20 @@ func (b *EventBus) Publish(ev DelegationEvent) bool {
 	return true
 }
 
+func (b *EventBus) ClearRun(runID string) {
+	if b == nil || runID == "" {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for ch := range b.subscribers[runID] {
+		closeDelegationChannel(ch)
+	}
+	delete(b.subscribers, runID)
+	delete(b.replay, runID)
+	delete(b.terminal, runID)
+}
+
 func (b *EventBus) SubscribeRun(ctx context.Context, runID string) <-chan DelegationEvent {
 	if b == nil || runID == "" {
 		out := make(chan DelegationEvent)
@@ -90,9 +104,14 @@ func (b *EventBus) SubscribeRun(ctx context.Context, runID string) <-chan Delega
 			delete(b.subscribers, runID)
 		}
 		b.mu.Unlock()
-		close(out)
+		closeDelegationChannel(out)
 	}()
 	return out
+}
+
+func closeDelegationChannel(ch chan DelegationEvent) {
+	defer func() { _ = recover() }()
+	close(ch)
 }
 
 func isTerminal(kind DelegationEventKind) bool {

@@ -11,10 +11,15 @@ import (
 	clienta2a "github.com/agent-dance/agent-adaptor/pkg/clients/a2a"
 )
 
+type A2AStream interface {
+	Recv() (clienta2a.Event, error)
+	Close() error
+}
+
 type A2AClient interface {
 	AgentCard(ctx context.Context) (clienta2a.AgentCard, error)
 	Send(ctx context.Context, req clienta2a.SendRequest) (clienta2a.Task, error)
-	SendStream(ctx context.Context, req clienta2a.SendRequest) (*clienta2a.Stream, error)
+	SendStream(ctx context.Context, req clienta2a.SendRequest) (A2AStream, error)
 	GetTask(ctx context.Context, req clienta2a.GetTaskRequest) (clienta2a.Task, error)
 	CancelTask(ctx context.Context, req clienta2a.CancelTaskRequest) (clienta2a.Task, error)
 }
@@ -55,6 +60,13 @@ func (d *Delegator) Delegate(ctx context.Context, req DelegationRequest) (Delega
 	}
 	baseResult := DelegationResult{DelegationID: delegationID, Agent: spec.Key, RemoteProtocol: ProtocolA2A, Status: "running"}
 
+	timeout := clampTimeout(req.Timeout, spec.Policy.MaxTimeout)
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+
 	client := d.clientFor(spec)
 	card, err := client.AgentCard(ctx)
 	if err != nil && spec.AgentCard == nil {
@@ -73,13 +85,6 @@ func (d *Delegator) Delegate(ctx context.Context, req DelegationRequest) (Delega
 		baseResult.Status = "failed"
 		baseResult.Error = derr
 		return baseResult, derr
-	}
-
-	timeout := clampTimeout(req.Timeout, spec.Policy.MaxTimeout)
-	if timeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, timeout)
-		defer cancel()
 	}
 
 	message, err := messageForDelegation(req)
@@ -120,20 +125,58 @@ func (d *Delegator) delegateStreaming(ctx context.Context, client A2AClient, spe
 	defer stream.Close()
 	mapper := newEventMapper(baseEvent)
 	var lastTask clienta2a.Task
+	lastTaskID := ""
+	cancelKnownTask := func(publish bool) {
+		if lastTaskID == "" {
+			return
+		}
+		if publish {
+			d.cancelRemote(context.Background(), client, lastTaskID, send.Tenant, baseEvent)
+			return
+		}
+		d.cancelRemoteTask(context.Background(), client, lastTaskID, send.Tenant, baseEvent)
+	}
 	for {
-		event, err := stream.Recv()
+		select {
+		case <-ctx.Done():
+			cancelKnownTask(true)
+			derr := &DelegationError{Code: "cancelled", Message: ctx.Err().Error(), Retryable: true}
+			baseResult.Status = "cancelled"
+			baseResult.Error = derr
+			return baseResult, derr
+		default:
+		}
+		item := make(chan streamRecv, 1)
+		go func() {
+			event, err := stream.Recv()
+			item <- streamRecv{event: event, err: err}
+		}()
+		var event clienta2a.Event
+		select {
+		case <-ctx.Done():
+			cancelKnownTask(true)
+			_ = stream.Close()
+			derr := &DelegationError{Code: "cancelled", Message: ctx.Err().Error(), Retryable: true}
+			baseResult.Status = "cancelled"
+			baseResult.Error = derr
+			return baseResult, derr
+		case received := <-item:
+			event = received.event
+			err = received.err
+		}
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
-			if lastTask.ID != "" {
-				if recovered, ok := d.recoverTask(ctx, client, spec, lastTask.ID); ok {
+			if lastTaskID != "" {
+				if recovered, ok := d.recoverTask(ctx, client, lastTaskID, send.Tenant); ok {
 					lastTask = recovered
 					for _, ev := range mapper.taskEvents(recovered) {
 						d.publish(ev)
 					}
 					return d.finishTask(baseEvent, baseResult, recovered, spec.Policy, maxArtifacts)
 				}
+				cancelKnownTask(false)
 			}
 			derr := &DelegationError{Code: "stream_interrupted", Message: err.Error(), Retryable: true}
 			d.publish(failedEvent(baseEvent, derr))
@@ -141,17 +184,36 @@ func (d *Delegator) delegateStreaming(ctx context.Context, client A2AClient, spe
 			baseResult.Error = derr
 			return baseResult, derr
 		}
+		if event.TaskID != "" {
+			lastTaskID = event.TaskID
+		}
+		if event.Message != nil && event.Message.TaskID != "" {
+			lastTaskID = event.Message.TaskID
+		}
 		if event.Task != nil {
 			lastTask = *event.Task
+			lastTaskID = event.Task.ID
 		}
 		for _, ev := range mapper.Map(event) {
 			d.publish(ev)
+		}
+		if event.Message != nil && event.Kind == clienta2a.EventTerminal {
+			baseResult.RemoteTaskID = event.TaskID
+			baseResult.RemoteContextID = event.ContextID
+			baseResult.Status = "completed"
+			baseResult.Summary = textFromMessage(*event.Message)
+			if baseResult.Summary != "" {
+				baseResult.Messages = append(baseResult.Messages, DelegationMessage{Role: event.Message.Role, Text: baseResult.Summary})
+			}
+			terminal := mapper.terminalForState(event.TaskID, event.ContextID, clienta2a.TaskStateCompleted, event.Raw)
+			d.publish(terminal)
+			return baseResult, nil
 		}
 		if event.Task != nil && executionFinalState(event.Task.Status.State) {
 			return d.finishTask(baseEvent, baseResult, *event.Task, spec.Policy, maxArtifacts)
 		}
 		if event.Status != nil && executionFinalState(event.Status.State) {
-			task, ok := d.recoverTask(ctx, client, spec, event.TaskID)
+			task, ok := d.recoverTask(ctx, client, event.TaskID, send.Tenant)
 			if ok {
 				return d.finishTask(baseEvent, baseResult, task, spec.Policy, maxArtifacts)
 			}
@@ -164,6 +226,8 @@ func (d *Delegator) delegateStreaming(ctx context.Context, client A2AClient, spe
 				baseResult.Error = derr
 				return baseResult, derr
 			}
+			terminal := mapper.terminalForState(event.TaskID, event.ContextID, event.Status.State, event.Raw)
+			d.publish(terminal)
 			if baseResult.Status != "completed" {
 				baseResult.Error = &DelegationError{Code: errorCodeFromState(event.Status.State), Message: "remote task did not complete successfully", RemoteStatus: string(event.Status.State)}
 			}
@@ -173,11 +237,17 @@ func (d *Delegator) delegateStreaming(ctx context.Context, client A2AClient, spe
 	if lastTask.ID != "" && executionFinalState(lastTask.Status.State) {
 		return d.finishTask(baseEvent, baseResult, lastTask, spec.Policy, maxArtifacts)
 	}
+	cancelKnownTask(false)
 	derr := &DelegationError{Code: "stream_interrupted", Message: "remote stream ended before terminal state", Retryable: true}
 	d.publish(failedEvent(baseEvent, derr))
 	baseResult.Status = "failed"
 	baseResult.Error = derr
 	return baseResult, derr
+}
+
+type streamRecv struct {
+	event clienta2a.Event
+	err   error
 }
 
 func (d *Delegator) delegatePolling(ctx context.Context, client A2AClient, spec RemoteAgentSpec, send clienta2a.SendRequest, baseEvent DelegationEvent, baseResult DelegationResult, maxArtifacts *int) (DelegationResult, error) {
@@ -236,23 +306,27 @@ func (d *Delegator) delegatePolling(ctx context.Context, client A2AClient, spec 
 	return baseResult, derr
 }
 
-func (d *Delegator) recoverTask(ctx context.Context, client A2AClient, spec RemoteAgentSpec, taskID string) (clienta2a.Task, bool) {
+func (d *Delegator) recoverTask(ctx context.Context, client A2AClient, taskID, tenant string) (clienta2a.Task, bool) {
 	if taskID == "" {
 		return clienta2a.Task{}, false
 	}
-	task, err := client.GetTask(ctx, clienta2a.GetTaskRequest{TaskID: taskID, Tenant: spec.Tenant})
+	task, err := client.GetTask(ctx, clienta2a.GetTaskRequest{TaskID: taskID, Tenant: tenant})
 	return task, err == nil && executionFinalState(task.Status.State)
 }
 
 func (d *Delegator) cancelRemote(ctx context.Context, client A2AClient, taskID, tenant string, base DelegationEvent) {
-	if taskID != "" {
-		_, _ = client.CancelTask(ctx, clienta2a.CancelTaskRequest{TaskID: taskID, Tenant: tenant, Metadata: map[string]any{"reason": "parent_cancelled", "delegation_id": base.DelegationID}})
-	}
+	d.cancelRemoteTask(ctx, client, taskID, tenant, base)
 	ev := base
 	ev.Kind = DelegationCancelled
 	ev.RemoteTaskID = taskID
 	ev.Status = "cancelled"
 	d.publish(ev)
+}
+
+func (d *Delegator) cancelRemoteTask(ctx context.Context, client A2AClient, taskID, tenant string, base DelegationEvent) {
+	if taskID != "" {
+		_, _ = client.CancelTask(ctx, clienta2a.CancelTaskRequest{TaskID: taskID, Tenant: tenant, Metadata: map[string]any{"reason": "parent_cancelled", "delegation_id": base.DelegationID}})
+	}
 }
 
 func (d *Delegator) publish(ev DelegationEvent) {
@@ -265,14 +339,22 @@ func (d *Delegator) clientFor(spec RemoteAgentSpec) A2AClient {
 	if d.NewClient != nil {
 		return d.NewClient(spec)
 	}
-	return clienta2a.New(clienta2a.Options{
+	return a2aClientAdapter{Client: clienta2a.New(clienta2a.Options{
 		AgentCardURL:        spec.AgentCardURL,
 		Auth:                spec.Auth,
 		HTTPClient:          spec.HTTPClient,
 		TrustedAuthOrigins:  spec.TrustedAuthOrigins,
 		AcceptedOutputModes: spec.AcceptedOutputModes,
 		PreferredTransports: spec.PreferredTransports,
-	})
+	})}
+}
+
+type a2aClientAdapter struct {
+	*clienta2a.Client
+}
+
+func (c a2aClientAdapter) SendStream(ctx context.Context, req clienta2a.SendRequest) (A2AStream, error) {
+	return c.Client.SendStream(ctx, req)
 }
 
 func (d *Delegator) newID() string {
@@ -352,6 +434,8 @@ func (d *Delegator) finishTask(baseEvent DelegationEvent, baseResult DelegationR
 		result.Error = nil
 	}
 	result.Artifacts = limitArtifacts(result.Artifacts, maxArtifacts)
+	mapper := newEventMapper(baseEvent)
+	d.publish(mapper.terminalForState(task.ID, task.ContextID, task.Status.State, task.Raw))
 	return result, terminalError(task.Status.State, policy)
 }
 
