@@ -70,6 +70,13 @@ fingerprinting. See `AGENTS.md §6` for the session ontology.
 | `ErrDecisionResultKindMismatch` | — | 400 | warn | no | `errors.Is` | `DecisionResponse.Kind` doesn't match `DecisionRequest.Kind` |
 | `ErrRunEnded` | — | 409 | info | no | `IsRunEnded` | Operation invoked on a `RunHandle` whose run already terminated; usually a benign race |
 
+## Structured-output errors (see `docs/structured-output.md`)
+
+| Sentinel | Typed? | HTTP | Log | Alert | Predicate | Trigger |
+|---|---|---|---|---|---|---|
+| `ErrStructuredOutputUnsupported` | yes (`*StructuredOutputUnsupportedError`) | 400 | warn | no | `errors.Is` / `errors.As` | A run requested a structured-output mode the adapter capability matrix cannot honor, for example Cursor with `NativeStrictOutput()` |
+| `ErrInvalidOutputSchema` | yes (`*InvalidOutputSchemaError`) | 400 | warn | no | `errors.Is` / `errors.As` | The JSON Schema document cannot be parsed/compiled, an SDK-owned schema helper cannot derive a safe schema, or adapter `ExtraArgs` conflict with SDK-managed schema flags |
+
 ## Skill errors (see `docs/skill-api-design.md` / `docs/v0.5.0-host-integration-plan.md` §A1)
 
 | Sentinel | Typed? | HTTP | Log | Alert | Predicate | Trigger |

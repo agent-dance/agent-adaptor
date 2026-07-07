@@ -66,6 +66,15 @@ func (adapter) Descriptor() agentadaptor.DriverDescriptor {
 			Question:   agentadaptor.QuestionSupport{Ask: false, AutoReject: false, Retry: false},
 		},
 		Runtime: agentadaptor.RuntimeCapability{ReportsServices: true},
+		StructuredOutput: agentadaptor.StructuredOutputCapability{
+			JSONSchemaNative:         true,
+			JSONSchemaPromptValidate: true,
+			WorksWithRun:             true,
+			WorksWithStart:           true,
+			WorksWithStreaming:       false,
+			WorksWithHITL:            false,
+			Notes:                    "Native JSON Schema output is supported by codex exec --output-schema; codex app-server streaming support is not advertised.",
+		},
 	}
 }
 
@@ -408,6 +417,22 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 	}
 
 	args := []string{"exec", "--json"}
+	var schemaTempDir string
+	if req.OutputSchema != nil && req.OutputSchema.Mode != agentadaptor.StructuredOutputPromptValidate {
+		if hasAnyArg(cfg.ExtraArgs, "--output-schema") {
+			return agentadaptor.DriverRunResult{}, &agentadaptor.InvalidOutputSchemaError{Reason: "Codex ExtraArgs must not include --output-schema when SDK structured output is enabled"}
+		}
+		schemaTempDir, err = os.MkdirTemp("", "agentadaptor-codex-output-schema-*")
+		if err != nil {
+			return agentadaptor.DriverRunResult{}, err
+		}
+		defer os.RemoveAll(schemaTempDir)
+		schemaPath := filepath.Join(schemaTempDir, "schema.json")
+		if err := os.WriteFile(schemaPath, req.OutputSchema.SchemaJSON, 0o600); err != nil {
+			return agentadaptor.DriverRunResult{}, err
+		}
+		args = append(args, "--output-schema", schemaPath)
+	}
 	if req.Policy.WebSearch == agentadaptor.FeatureAllow {
 		args = append([]string{"--search"}, args...)
 	}
@@ -479,23 +504,39 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 			Message: parser.errorMessage,
 		}
 	}
+	var structuredOutput *agentadaptor.StructuredOutput
+	if req.OutputSchema != nil && req.OutputSchema.Mode != agentadaptor.StructuredOutputPromptValidate {
+		structuredOutput = parser.structuredOutput
+	}
 
 	return agentadaptor.DriverRunResult{
-		Output:          parser.buildOutput(),
-		RawStreams:      &raw,
-		Transcript:      parser.transcript,
-		ExitCode:        result.ExitCode,
-		Signal:          result.Signal,
-		TimedOut:        result.TimedOut,
-		Usage:           parser.usage,
-		Checkpoint:      checkpoint,
-		Provider:        provider,
-		Model:           cfg.Model,
-		Summary:         parser.finalSummary(),
-		Result:          parser.resultFinal,
-		RuntimeServices: adapterutil.RuntimeReportsFromRefs(req.Runtime.Ensured, req.Agent),
-		Failure:         failure,
+		Output:           parser.buildOutput(),
+		RawStreams:       &raw,
+		Transcript:       parser.transcript,
+		ExitCode:         result.ExitCode,
+		Signal:           result.Signal,
+		TimedOut:         result.TimedOut,
+		Usage:            parser.usage,
+		Checkpoint:       checkpoint,
+		Provider:         provider,
+		Model:            cfg.Model,
+		Summary:          parser.finalSummary(),
+		Result:           parser.resultFinal,
+		StructuredOutput: structuredOutput,
+		RuntimeServices:  adapterutil.RuntimeReportsFromRefs(req.Runtime.Ensured, req.Agent),
+		Failure:          failure,
 	}, nil
+}
+
+func hasAnyArg(args []string, names ...string) bool {
+	for _, arg := range args {
+		for _, name := range names {
+			if arg == name || strings.HasPrefix(arg, name+"=") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func validateCodexSessionGuard(req agentadaptor.DriverRunRequest, effectiveCWD, profileFingerprint string) error {

@@ -319,17 +319,18 @@ type AgentInfo struct {
 // uses it to validate host requests before launching an adapter; hosts can use
 // it to disable unsupported UI controls instead of discovering failures late.
 type DriverDescriptor struct {
-	Type          string
-	DisplayName   string
-	Models        []ModelInfo
-	ConfigSchema  *ConfigSchema
-	Sessions      SessionCapability
-	Skills        SkillCapability
-	MCP           MCPCapability
-	Instructions  InstructionsCapability
-	Workspace     WorkspaceCapability
-	RunPolicyCaps RunPolicyCapabilities
-	Runtime       RuntimeCapability
+	Type             string
+	DisplayName      string
+	Models           []ModelInfo
+	ConfigSchema     *ConfigSchema
+	Sessions         SessionCapability
+	Skills           SkillCapability
+	MCP              MCPCapability
+	Instructions     InstructionsCapability
+	Workspace        WorkspaceCapability
+	RunPolicyCaps    RunPolicyCapabilities
+	Runtime          RuntimeCapability
+	StructuredOutput StructuredOutputCapability
 }
 
 // SessionCapability declares whether an adapter can resume provider sessions.
@@ -360,6 +361,22 @@ type WorkspaceCapability struct {
 // back in RunResult.RuntimeServices.
 type RuntimeCapability struct {
 	ReportsServices bool
+}
+
+// StructuredOutputCapability declares which runtime structured-output modes
+// the adapter can honor. JSONSchemaNative means a provider/CLI-native schema
+// surface exists; JSONSchemaPromptValidate means the adapter can accept the
+// SDK's explicit prompt+local-validation fallback.
+type StructuredOutputCapability struct {
+	JSONSchemaNative         bool
+	JSONSchemaPromptValidate bool
+
+	WorksWithRun       bool
+	WorksWithStart     bool
+	WorksWithStreaming bool
+	WorksWithHITL      bool
+
+	Notes string
 }
 
 // ConfigSchema describes the host-facing configuration contract for one bound

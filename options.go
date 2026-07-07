@@ -338,6 +338,8 @@ type runOptions struct {
 	agents          *AgentPayload
 	hooks           *HookPayload
 	profileConfig   *ProfileConfigPayload
+	outputSchema    *OutputSchema
+	outputSchemaErr error
 	model           string
 	runPolicy       *RunPolicy
 	instructions    *InstructionsBundleRef

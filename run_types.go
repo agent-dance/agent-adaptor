@@ -2,6 +2,7 @@ package agentadaptor
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 )
 
@@ -74,9 +75,10 @@ type RunResult struct {
 	Summary string
 	// Result is the adapter-recognized terminal result event payload. Hosts
 	// should treat it as provider-specific audit data, not portable text.
-	Result          map[string]any
-	RuntimeServices []RuntimeServiceReport
-	Question        *RunQuestion
+	Result           map[string]any
+	StructuredOutput *StructuredOutput
+	RuntimeServices  []RuntimeServiceReport
+	Question         *RunQuestion
 	// Failure is a structured business-level failure from a completed run.
 	// Check Wait's returned error first, then Failure, then success.
 	Failure *RunFailure
@@ -228,6 +230,7 @@ type DriverRunRequest struct {
 	Instructions   *InstructionsBundleRef
 	Session        *DriverSessionContext
 	Metadata       map[string]string
+	OutputSchema   *OutputSchema
 
 	// ModelOverride is the per-run model selected via WithModel. When
 	// non-empty it supersedes the binding model carried by Config for this
@@ -261,23 +264,24 @@ type DriverRunResult struct {
 	// RawStreams follows the same contract as RunResult.RawStreams.
 	RawStreams *RawStreams
 	// Transcript follows the same contract as RunResult.Transcript.
-	Transcript      []TranscriptItem
-	ExitCode        int
-	Signal          string
-	TimedOut        bool
-	Usage           *Usage
-	Checkpoint      *DriverCheckpoint
-	Metadata        map[string]string
-	Provider        string
-	Biller          string
-	Model           string
-	BillingType     string
-	CostUSD         *float64
-	Summary         string
-	Result          map[string]any
-	RuntimeServices []RuntimeServiceReport
-	Question        *RunQuestion
-	Failure         *RunFailure
+	Transcript       []TranscriptItem
+	ExitCode         int
+	Signal           string
+	TimedOut         bool
+	Usage            *Usage
+	Checkpoint       *DriverCheckpoint
+	Metadata         map[string]string
+	Provider         string
+	Biller           string
+	Model            string
+	BillingType      string
+	CostUSD          *float64
+	Summary          string
+	Result           map[string]any
+	StructuredOutput *StructuredOutput
+	RuntimeServices  []RuntimeServiceReport
+	Question         *RunQuestion
+	Failure          *RunFailure
 }
 
 // DriverSessionContext is the session state a resume-capable adapter receives
@@ -320,6 +324,80 @@ type DriverSessionState struct {
 type DriverCheckpoint struct {
 	State *DriverSessionState
 	Valid bool
+}
+
+// OutputFormat labels the final business-output contract requested by a host.
+// It is distinct from adapter protocol envelopes such as `stream-json`, which
+// only make CLI events machine-readable.
+type OutputFormat string
+
+const (
+	OutputFormatJSONSchema OutputFormat = "json_schema"
+)
+
+// StructuredOutputMode states the enforcement level the host is requesting.
+type StructuredOutputMode string
+
+const (
+	// StructuredOutputNativeStrict requires provider/CLI-native schema
+	// enforcement. The SDK rejects unsupported adapters before launch.
+	StructuredOutputNativeStrict StructuredOutputMode = "native_strict"
+	// StructuredOutputPreferNative uses native enforcement when available,
+	// otherwise the explicit prompt+validation fallback when supported.
+	StructuredOutputPreferNative StructuredOutputMode = "prefer_native"
+	// StructuredOutputPromptValidate injects exact-JSON instructions and
+	// validates the adapter's final Output locally.
+	StructuredOutputPromptValidate StructuredOutputMode = "prompt_validate"
+)
+
+// StructuredOutputInvalidPolicy selects how prompt-validation failures are
+// surfaced after the adapter returns.
+type StructuredOutputInvalidPolicy string
+
+const (
+	// StructuredOutputFailRun marks the run with FailurePolicyError when the
+	// final JSON is absent or fails local validation.
+	StructuredOutputFailRun StructuredOutputInvalidPolicy = "fail_run"
+	// StructuredOutputReturnInvalid returns StructuredOutput.Valid=false but
+	// does not turn the run into a failure.
+	StructuredOutputReturnInvalid StructuredOutputInvalidPolicy = "return_invalid"
+)
+
+// OutputSchema is a per-run request for final structured JSON output.
+// SchemaJSON is the raw JSON Schema document supplied by the host or generated
+// by JSONSchemaFor. Public API intentionally exposes no third-party schema
+// library types.
+type OutputSchema struct {
+	Format      OutputFormat
+	Mode        StructuredOutputMode
+	SchemaJSON  json.RawMessage
+	Name        string
+	Description string
+	OnInvalid   StructuredOutputInvalidPolicy
+}
+
+// StructuredOutputSource reports which mechanism produced the final JSON.
+type StructuredOutputSource string
+
+const (
+	StructuredOutputSourceNative         StructuredOutputSource = "native"
+	StructuredOutputSourcePromptValidate StructuredOutputSource = "prompt_validate"
+)
+
+// StructuredOutput is the portable final business value for structured-output
+// runs. RawJSON is never raw stdout and never a provider terminal wrapper; it
+// is the final assistant JSON value validated against the requested schema.
+type StructuredOutput struct {
+	Format OutputFormat
+	Mode   StructuredOutputMode
+	Source StructuredOutputSource
+
+	RawJSON json.RawMessage
+	Value   any
+
+	Valid            bool
+	ValidationErrors []string
+	SchemaHash       string
 }
 
 // RunQuestion represents an adapter-requested follow-up question that the host
@@ -431,6 +509,8 @@ type resolvedInvocation struct {
 	instructions   *InstructionsBundleRef
 	session        SessionRequest
 	metadata       map[string]string
+	outputSchema   *OutputSchema
+	outputSource   StructuredOutputSource
 	fingerprint    string
 	streaming      bool
 	model          string

@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/internal/testutil"
 )
 
 func TestNewReturnsTypedBinding(t *testing.T) {
@@ -25,6 +26,16 @@ func TestDescriptorAdvertisesExpectedMCPCapabilities(t *testing.T) {
 	caps := NewAdapter().Descriptor().MCP
 	if !caps.Supported || !caps.Stdio || !caps.HTTP || caps.SSE {
 		t.Fatalf("unexpected Codex MCP capability: %#v", caps)
+	}
+}
+
+func TestDescriptorAdvertisesStructuredOutputCapabilities(t *testing.T) {
+	caps := NewAdapter().Descriptor().StructuredOutput
+	if !caps.JSONSchemaNative || !caps.JSONSchemaPromptValidate || !caps.WorksWithRun || !caps.WorksWithStart {
+		t.Fatalf("unexpected Codex structured-output capability: %#v", caps)
+	}
+	if caps.WorksWithStreaming {
+		t.Fatalf("Codex app-server output-schema support is not advertised: %#v", caps)
 	}
 }
 
@@ -66,6 +77,50 @@ func TestParseCodexJSONLUsesThreadStartedSummaryAndUsage(t *testing.T) {
 	}
 	if parsed.usage == nil || parsed.usage.InputTokens != 12 || parsed.usage.CachedInputTokens != 4 || parsed.usage.OutputTokens != 7 {
 		t.Fatalf("unexpected usage parsing: %#v", parsed.usage)
+	}
+}
+
+func TestParseCodexTerminalStructuredOutput(t *testing.T) {
+	parsed := snapshotCodexStdout(`{"type":"result","result":{"project_name":"agent-adaptor"}}`)
+	if parsed.structuredOutput == nil || string(parsed.structuredOutput.RawJSON) != `{"project_name":"agent-adaptor"}` {
+		t.Fatalf("expected structured output, got %#v", parsed.structuredOutput)
+	}
+}
+
+func TestCodexRunAddsOutputSchemaArgAndParsesStructuredResult(t *testing.T) {
+	home := t.TempDir()
+	workspace := filepath.Join(home, "workspace")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatalf("mkdir workspace: %v", err)
+	}
+	argFile := filepath.Join(home, "args.txt")
+	command := testutil.WriteCommand(t, home, "fake-codex-structured",
+		"#!/bin/sh\nset -eu\nprintf '%s\\n' \"$@\" > \"$ARG_FILE\"\nschema=''\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = '--output-schema' ]; then shift; schema=\"$1\"; break; fi\n  shift\ndone\n[ -s \"$schema\" ]\ncat >/dev/null\nprintf '{\"type\":\"thread.started\",\"thread_id\":\"codex-session\"}\\n'\nprintf '{\"type\":\"result\",\"result\":{\"project_name\":\"agent-adaptor\"}}\\n'\n",
+		"@echo off\r\nsetlocal enabledelayedexpansion\r\n> \"%ARG_FILE%\" echo %*\r\nset \"NEXT=\"\r\nset \"SCHEMA=\"\r\nfor %%A in (%*) do (\r\n  if defined NEXT (\r\n    set \"SCHEMA=%%~A\"\r\n    set \"NEXT=\"\r\n  )\r\n  if \"%%~A\"==\"--output-schema\" set \"NEXT=1\"\r\n)\r\nif not exist \"!SCHEMA!\" exit /b 3\r\nfor %%S in (\"!SCHEMA!\") do if %%~zS LEQ 0 exit /b 4\r\necho {\"type\":\"thread.started\",\"thread_id\":\"codex-session\"}\r\necho {\"type\":\"result\",\"result\":{\"project_name\":\"agent-adaptor\"}}\r\n",
+	)
+
+	result, err := NewAdapter().Run(context.Background(), agentadaptor.DriverRunRequest{
+		Prompt:    "extract",
+		Config:    agentadaptor.CodexConfig{CommonConfig: agentadaptor.CommonConfig{Command: command, CWD: workspace, Env: []agentadaptor.EnvBinding{{Name: "HOME", Value: home}, {Name: "USERPROFILE", Value: home}, {Name: "CODEX_HOME", Value: filepath.Join(home, ".codex")}, {Name: "ARG_FILE", Value: argFile}}}},
+		Workspace: agentadaptor.WorkspaceLease{ID: "workspace-a", CWD: workspace},
+		OutputSchema: &agentadaptor.OutputSchema{
+			Format:     agentadaptor.OutputFormatJSONSchema,
+			Mode:       agentadaptor.StructuredOutputNativeStrict,
+			SchemaJSON: []byte(`{"type":"object","properties":{"project_name":{"type":"string"}},"required":["project_name"]}`),
+		},
+	}, &testutil.EventRecorder{})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	rawArgs, err := os.ReadFile(argFile)
+	if err != nil {
+		t.Fatalf("read args: %v", err)
+	}
+	if !strings.Contains(string(rawArgs), "--output-schema") {
+		t.Fatalf("expected --output-schema in args, got %s", string(rawArgs))
+	}
+	if result.StructuredOutput == nil || string(result.StructuredOutput.RawJSON) != `{"project_name":"agent-adaptor"}` {
+		t.Fatalf("expected native structured output, got %#v", result.StructuredOutput)
 	}
 }
 

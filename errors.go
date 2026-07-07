@@ -37,6 +37,8 @@
 //	          | ErrDecisionRequestExpired         | 409            | info | no
 //	          | ErrDecisionResultKindMismatch     | 400            | warn | no
 //	          | ErrRunEnded                       | 409            | info | no
+//	structured | ErrStructuredOutputUnsupported    | 400            | warn | no
+//	          | ErrInvalidOutputSchema            | 400            | warn | no
 //	skill     | ErrSkillKeyConflict               | 500            | err  | yes
 //	          | ErrSkillMaterializationFailed     | 500            | err  | no
 //	          | ErrSkillSourceMissing             | 500            | err  | no
@@ -260,6 +262,70 @@ var (
 	// terminated. Hosts commonly ignore it as a benign race.
 	ErrRunEnded = errors.New("agentadaptor: run already ended")
 )
+
+// --- Structured output --------------------------------------------------
+
+var (
+	// ErrStructuredOutputUnsupported is returned before adapter launch when
+	// the requested structured-output mode cannot be honored by the bound
+	// adapter or selected run mode.
+	ErrStructuredOutputUnsupported = errors.New("agentadaptor: structured output unsupported by adapter")
+
+	// ErrInvalidOutputSchema is returned before adapter launch when the host
+	// supplies malformed JSON, an unsupported output format/mode, or a JSON
+	// Schema document that cannot be compiled for local validation.
+	ErrInvalidOutputSchema = errors.New("agentadaptor: invalid output schema")
+)
+
+// StructuredOutputUnsupportedError carries diagnostic detail while unwrapping
+// to ErrStructuredOutputUnsupported.
+type StructuredOutputUnsupportedError struct {
+	Adapter string
+	Mode    StructuredOutputMode
+	Reason  string
+}
+
+func (e *StructuredOutputUnsupportedError) Error() string {
+	if e == nil {
+		return ErrStructuredOutputUnsupported.Error()
+	}
+	msg := ErrStructuredOutputUnsupported.Error()
+	if e.Adapter != "" {
+		msg += ": adapter=" + e.Adapter
+	}
+	if e.Mode != "" {
+		msg += " mode=" + string(e.Mode)
+	}
+	if e.Reason != "" {
+		msg += " reason=" + e.Reason
+	}
+	return msg
+}
+
+func (e *StructuredOutputUnsupportedError) Unwrap() error {
+	return ErrStructuredOutputUnsupported
+}
+
+// InvalidOutputSchemaError carries diagnostic detail while unwrapping to
+// ErrInvalidOutputSchema.
+type InvalidOutputSchemaError struct {
+	Reason string
+	Cause  error
+}
+
+func (e *InvalidOutputSchemaError) Error() string {
+	if e == nil || e.Reason == "" {
+		return ErrInvalidOutputSchema.Error()
+	}
+	return ErrInvalidOutputSchema.Error() + ": " + e.Reason
+}
+
+func (e *InvalidOutputSchemaError) Unwrap() error {
+	if e == nil || e.Cause == nil {
+		return ErrInvalidOutputSchema
+	}
+	return errors.Join(ErrInvalidOutputSchema, e.Cause)
+}
 
 // --- Skill (see docs/skill-api-design.md) -------------------------------
 

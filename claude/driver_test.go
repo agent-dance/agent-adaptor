@@ -35,10 +35,42 @@ func TestBuildClaudeExecArgsIncludesPartialMessagesWhenStreaming(t *testing.T) {
 	}
 }
 
+func TestBuildClaudeExecArgsUsesJSONSchemaForNativeStructuredOutput(t *testing.T) {
+	schema := []byte(`{"type":"object","properties":{"project_name":{"type":"string"}}}`)
+	args := buildClaudeExecArgs(agentadaptor.ClaudeConfig{Model: "claude-sonnet-4"}, agentadaptor.DriverRunRequest{
+		OutputSchema: &agentadaptor.OutputSchema{
+			Format:     agentadaptor.OutputFormatJSONSchema,
+			Mode:       agentadaptor.StructuredOutputNativeStrict,
+			SchemaJSON: schema,
+		},
+	}, "", false)
+	joined := " " + strings.Join(args, " ") + " "
+	for _, want := range []string{" --output-format ", " json ", " --json-schema ", string(schema)} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("native structured args missing %q in %#v", strings.TrimSpace(want), args)
+		}
+	}
+	for _, forbidden := range []string{" stream-json ", " --verbose "} {
+		if strings.Contains(joined, forbidden) {
+			t.Fatalf("native structured args must not contain %q: %#v", strings.TrimSpace(forbidden), args)
+		}
+	}
+}
+
 func TestDescriptorAdvertisesExpectedMCPCapabilities(t *testing.T) {
 	caps := NewAdapter().Descriptor().MCP
 	if !caps.Supported || !caps.Stdio || !caps.HTTP || !caps.SSE {
 		t.Fatalf("unexpected Claude MCP capability: %#v", caps)
+	}
+}
+
+func TestDescriptorAdvertisesStructuredOutputCapabilities(t *testing.T) {
+	caps := NewAdapter().Descriptor().StructuredOutput
+	if !caps.JSONSchemaNative || !caps.JSONSchemaPromptValidate || !caps.WorksWithRun || !caps.WorksWithStart {
+		t.Fatalf("unexpected Claude structured-output capability: %#v", caps)
+	}
+	if caps.WorksWithStreaming || caps.WorksWithHITL {
+		t.Fatalf("Claude native structured output should not advertise streaming/HITL support: %#v", caps)
 	}
 }
 
@@ -86,6 +118,13 @@ func TestParseCheckpointRequiresRecognizedClaudeEvent(t *testing.T) {
 	}
 	if checkpoint.State.ResumeID != "claude-session" || checkpoint.State.DisplayID != "claude-display" {
 		t.Fatalf("unexpected checkpoint: %#v", checkpoint.State)
+	}
+}
+
+func TestParseClaudeResultStructuredOutput(t *testing.T) {
+	parsed := snapshotClaudeStdout(`{"type":"result","subtype":"success","structured_output":{"project_name":"agent-adaptor"},"result":"ok"}`)
+	if parsed.structuredOutput == nil || string(parsed.structuredOutput.RawJSON) != `{"project_name":"agent-adaptor"}` {
+		t.Fatalf("expected structured output, got %#v", parsed.structuredOutput)
 	}
 }
 
