@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -105,13 +106,8 @@ func TestEventMapperMapsA2ABridgeArtifactsAndTerminal(t *testing.T) {
 		t.Fatalf("unexpected mapped events: %#v", events)
 	}
 
-	terminal := mapper.Map(clienta2a.Event{
-		Kind:      clienta2a.EventTerminal,
-		TaskID:    "task-1",
-		ContextID: "ctx-1",
-		Status:    &clienta2a.TaskStatus{State: clienta2a.TaskStateInputRequired},
-	})
-	if len(terminal) != 1 || terminal[0].Kind != DelegationInputRequired {
+	terminal := mapper.terminalForState("task-1", "ctx-1", clienta2a.TaskStateInputRequired, nil)
+	if terminal.Kind != DelegationInputRequired {
 		t.Fatalf("input-required terminal mapping: %#v", terminal)
 	}
 }
@@ -238,23 +234,24 @@ func TestDelegatorInputRequiredPolicy(t *testing.T) {
 	t.Parallel()
 	card := clienta2a.AgentCard{Name: "Research", Capabilities: clienta2a.Capabilities{Streaming: false}}
 	for _, tc := range []struct {
-		name       string
-		allow      bool
-		wantErr    bool
-		wantStatus string
+		name         string
+		allow        bool
+		wantErr      bool
+		wantStatus   string
+		wantTerminal DelegationEventKind
 	}{
-		{name: "default rejects", allow: false, wantErr: true, wantStatus: "failed"},
-		{name: "policy allows", allow: true, wantErr: false, wantStatus: "input_required"},
+		{name: "default rejects", allow: false, wantErr: true, wantStatus: "failed", wantTerminal: DelegationFailed},
+		{name: "policy allows", allow: true, wantErr: false, wantStatus: "input_required", wantTerminal: DelegationInputRequired},
 	} {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			registry, err := NewRegistry(RemoteAgentSpec{Key: "research", AgentCard: &card, Policy: DelegationPolicy{AllowInputRequired: tc.allow}})
 			if err != nil {
 				t.Fatalf("registry: %v", err)
 			}
+			bus := NewEventBus(16)
 			client := &fakeA2AClient{card: card, sendTask: clienta2a.Task{ID: "task-1", ContextID: "ctx-1", Status: clienta2a.TaskStatus{State: clienta2a.TaskStateInputRequired}}}
-			delegator := NewDelegator(registry, NewEventBus(16))
+			delegator := NewDelegator(registry, bus)
 			delegator.NewClient = func(RemoteAgentSpec) A2AClient { return client }
 			delegator.NewID = func() string { return "del-1" }
 
@@ -271,6 +268,10 @@ func TestDelegatorInputRequiredPolicy(t *testing.T) {
 			if !tc.wantErr && result.Error != nil {
 				t.Fatalf("allowed input-required should not set error: %#v", result.Error)
 			}
+			replayed := drainBus(t, bus, "run-1", 3)
+			if replayed[len(replayed)-1].Kind != tc.wantTerminal {
+				t.Fatalf("terminal: got %#v want %s in %#v", replayed[len(replayed)-1], tc.wantTerminal, replayed)
+			}
 		})
 	}
 }
@@ -282,8 +283,9 @@ func TestDelegatorMaxArtifactBytesPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("registry: %v", err)
 	}
+	bus := NewEventBus(16)
 	client := &fakeA2AClient{card: card, sendTask: clienta2a.Task{ID: "task-1", ContextID: "ctx-1", Status: clienta2a.TaskStatus{State: clienta2a.TaskStateCompleted}, Artifacts: []clienta2a.Artifact{{ID: "large", Name: "large.txt", Parts: []clienta2a.Part{{Kind: clienta2a.PartText, Text: "too large"}}}}}}
-	delegator := NewDelegator(registry, NewEventBus(16))
+	delegator := NewDelegator(registry, bus)
 	delegator.NewClient = func(RemoteAgentSpec) A2AClient { return client }
 	delegator.NewID = func() string { return "del-1" }
 
@@ -297,6 +299,10 @@ func TestDelegatorMaxArtifactBytesPolicy(t *testing.T) {
 	}
 	if result.Status != "failed" {
 		t.Fatalf("expected failed result, got %#v", result)
+	}
+	replayed := drainBus(t, bus, "run-1", 4)
+	if replayed[len(replayed)-1].Kind != DelegationFailed {
+		t.Fatalf("policy failure should publish failed terminal last, got %#v", replayed)
 	}
 }
 
@@ -392,6 +398,132 @@ func TestDelegatorPollingCancellationCascadesToRemoteTask(t *testing.T) {
 	}
 }
 
+func TestDelegatorStreamingCancellationCascadesWithEffectiveTenant(t *testing.T) {
+	t.Parallel()
+	card := clienta2a.AgentCard{Name: "Research", Capabilities: clienta2a.Capabilities{Streaming: true}}
+	registry, err := NewRegistry(RemoteAgentSpec{Key: "research", AgentCard: &card, Tenant: "spec-tenant"})
+	if err != nil {
+		t.Fatalf("registry: %v", err)
+	}
+	stream := &fakeA2AStream{events: make(chan streamRecv, 1), closed: make(chan struct{})}
+	stream.events <- streamRecv{event: clienta2a.Event{Kind: clienta2a.EventStatus, TaskID: "task-1", ContextID: "ctx-1", Status: &clienta2a.TaskStatus{State: clienta2a.TaskStateWorking}}}
+	client := &fakeA2AClient{card: card, stream: stream}
+	delegator := NewDelegator(registry, NewEventBus(16))
+	delegator.NewClient = func(RemoteAgentSpec) A2AClient { return client }
+	delegator.NewID = func() string { return "del-1" }
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+
+	result, err := delegator.Delegate(ctx, DelegationRequest{RunID: "run-1", Agent: "research", Objective: "research this", Stream: true, Tenant: "call-tenant"})
+	if err == nil {
+		t.Fatal("expected streaming cancellation error")
+	}
+	var derr *DelegationError
+	if !errors.As(err, &derr) || derr.Code != "cancelled" {
+		t.Fatalf("expected cancelled error, got %T %[1]v", err)
+	}
+	if result.Status != "cancelled" {
+		t.Fatalf("expected cancelled result, got %#v", result)
+	}
+	if client.cancelCalls != 1 || client.lastCancel.TaskID != "task-1" || client.lastCancel.Tenant != "call-tenant" {
+		t.Fatalf("expected streaming remote cancel with effective tenant, calls=%d req=%#v", client.cancelCalls, client.lastCancel)
+	}
+}
+
+func TestDelegatorStreamingRecoveryUsesEffectiveTenant(t *testing.T) {
+	t.Parallel()
+	card := clienta2a.AgentCard{Name: "Research", Capabilities: clienta2a.Capabilities{Streaming: true}}
+	registry, err := NewRegistry(RemoteAgentSpec{Key: "research", AgentCard: &card, Tenant: "spec-tenant"})
+	if err != nil {
+		t.Fatalf("registry: %v", err)
+	}
+	stream := &fakeA2AStream{events: make(chan streamRecv, 1), closed: make(chan struct{})}
+	stream.events <- streamRecv{event: clienta2a.Event{Kind: clienta2a.EventStatus, TaskID: "task-1", ContextID: "ctx-1", Status: &clienta2a.TaskStatus{State: clienta2a.TaskStateCompleted}}}
+	close(stream.events)
+	client := &fakeA2AClient{
+		card:   card,
+		stream: stream,
+		getTasks: []clienta2a.Task{{
+			ID:        "task-1",
+			ContextID: "ctx-1",
+			Status:    clienta2a.TaskStatus{State: clienta2a.TaskStateCompleted},
+			Messages:  []clienta2a.Message{{Role: "agent", Parts: []clienta2a.Part{{Kind: clienta2a.PartText, Text: "done"}}}},
+		}},
+	}
+	delegator := NewDelegator(registry, NewEventBus(16))
+	delegator.NewClient = func(RemoteAgentSpec) A2AClient { return client }
+	delegator.NewID = func() string { return "del-1" }
+
+	result, err := delegator.Delegate(context.Background(), DelegationRequest{RunID: "run-1", Agent: "research", Objective: "research this", Stream: true, Tenant: "call-tenant"})
+	if err != nil {
+		t.Fatalf("delegate: %v", err)
+	}
+	if result.Status != "completed" || result.Summary != "done" {
+		t.Fatalf("unexpected result: %#v", result)
+	}
+	if client.getCalls != 1 || client.lastGet.TaskID != "task-1" || client.lastGet.Tenant != "call-tenant" {
+		t.Fatalf("expected recovery get with effective tenant, calls=%d req=%#v", client.getCalls, client.lastGet)
+	}
+}
+
+func TestDelegatorStreamingTerminalMessageCompletes(t *testing.T) {
+	t.Parallel()
+	card := clienta2a.AgentCard{Name: "Research", Capabilities: clienta2a.Capabilities{Streaming: true}}
+	registry, err := NewRegistry(RemoteAgentSpec{Key: "research", AgentCard: &card})
+	if err != nil {
+		t.Fatalf("registry: %v", err)
+	}
+	stream := &fakeA2AStream{events: make(chan streamRecv, 1), closed: make(chan struct{})}
+	stream.events <- streamRecv{event: clienta2a.Event{
+		Kind:      clienta2a.EventTerminal,
+		TaskID:    "task-1",
+		ContextID: "ctx-1",
+		Message:   &clienta2a.Message{Role: "agent", TaskID: "task-1", ContextID: "ctx-1", Parts: []clienta2a.Part{{Kind: clienta2a.PartText, Text: "done"}}},
+	}}
+	close(stream.events)
+	bus := NewEventBus(16)
+	client := &fakeA2AClient{card: card, stream: stream}
+	delegator := NewDelegator(registry, bus)
+	delegator.NewClient = func(RemoteAgentSpec) A2AClient { return client }
+	delegator.NewID = func() string { return "del-1" }
+
+	result, err := delegator.Delegate(context.Background(), DelegationRequest{RunID: "run-1", Agent: "research", Objective: "research this", Stream: true})
+	if err != nil {
+		t.Fatalf("delegate: %v", err)
+	}
+	if result.Status != "completed" || result.Summary != "done" || client.cancelCalls != 0 {
+		t.Fatalf("unexpected streaming terminal message result=%#v cancelCalls=%d", result, client.cancelCalls)
+	}
+	replayed := drainBus(t, bus, "run-1", 4)
+	if replayed[len(replayed)-1].Kind != DelegationFinished {
+		t.Fatalf("expected finished terminal, got %#v", replayed)
+	}
+}
+
+func TestDelegatorTimeoutCoversAgentCardDiscovery(t *testing.T) {
+	t.Parallel()
+	registry, err := NewRegistry(RemoteAgentSpec{Key: "research", AgentCardURL: "https://agent.example/card"})
+	if err != nil {
+		t.Fatalf("registry: %v", err)
+	}
+	client := &fakeA2AClient{cardErr: context.DeadlineExceeded}
+	delegator := NewDelegator(registry, NewEventBus(16))
+	delegator.NewClient = func(RemoteAgentSpec) A2AClient { return client }
+	delegator.NewID = func() string { return "del-1" }
+
+	result, err := delegator.Delegate(context.Background(), DelegationRequest{RunID: "run-1", Agent: "research", Objective: "research this", Timeout: time.Millisecond})
+	if err == nil {
+		t.Fatal("expected agent card timeout")
+	}
+	var derr *DelegationError
+	if !errors.As(err, &derr) || derr.Code != "agent_unavailable" {
+		t.Fatalf("expected agent_unavailable timeout, got %T %[1]v", err)
+	}
+	if result.Status != "failed" {
+		t.Fatalf("expected failed result, got %#v", result)
+	}
+}
+
 func TestEventBusDeduplicatesTerminalEventsAndReplays(t *testing.T) {
 	t.Parallel()
 	bus := NewEventBus(8)
@@ -450,6 +582,35 @@ func TestEventBusPublishDoesNotBlockOnFullSubscriber(t *testing.T) {
 	}
 }
 
+func TestEventBusClearRunDropsStateAndClosesSubscribers(t *testing.T) {
+	t.Parallel()
+	bus := NewEventBus(8)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ch := bus.SubscribeRun(ctx, "run-1")
+	bus.Publish(DelegationEvent{RunID: "run-1", DelegationID: "del-1", Kind: DelegationStarted})
+	bus.Publish(DelegationEvent{RunID: "run-1", DelegationID: "del-1", Kind: DelegationFinished})
+	bus.ClearRun("run-1")
+	deadline := time.After(time.Second)
+	for {
+		select {
+		case _, ok := <-ch:
+			if !ok {
+				goto closed
+			}
+		case <-deadline:
+			t.Fatal("subscriber did not close after ClearRun")
+		}
+	}
+closed:
+	if replayed := drainAvailableBus(t, bus, "run-1"); len(replayed) != 0 {
+		t.Fatalf("expected replay to be cleared, got %#v", replayed)
+	}
+	if !bus.Publish(DelegationEvent{RunID: "run-1", DelegationID: "del-1", Kind: DelegationFailed}) {
+		t.Fatal("terminal state should be cleared for run")
+	}
+}
+
 func drainBus(t *testing.T, bus *EventBus, runID string, want int) []DelegationEvent {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -465,6 +626,22 @@ func drainBus(t *testing.T, bus *EventBus, runID string, want int) []DelegationE
 		}
 	}
 	return out
+}
+
+func drainAvailableBus(t *testing.T, bus *EventBus, runID string) []DelegationEvent {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ch := bus.SubscribeRun(ctx, runID)
+	out := []DelegationEvent{}
+	for {
+		select {
+		case ev := <-ch:
+			out = append(out, ev)
+		default:
+			return out
+		}
+	}
 }
 
 func TestMCPServerDelegatesToolCallAndReturnsStructuredResult(t *testing.T) {
@@ -536,22 +713,32 @@ func TestMCPServerRejectsMissingBearerToken(t *testing.T) {
 }
 
 type fakeA2AClient struct {
-	card clienta2a.AgentCard
+	card    clienta2a.AgentCard
+	cardErr error
 
 	sendTask  clienta2a.Task
 	lastSend  clienta2a.SendRequest
 	sendCalls int
 
+	stream      A2AStream
 	streamCalls int
 
 	getTasks []clienta2a.Task
 	getErr   error
+	lastGet  clienta2a.GetTaskRequest
+	getCalls int
 
 	cancelCalls int
 	lastCancel  clienta2a.CancelTaskRequest
 }
 
-func (f *fakeA2AClient) AgentCard(context.Context) (clienta2a.AgentCard, error) { return f.card, nil }
+func (f *fakeA2AClient) AgentCard(ctx context.Context) (clienta2a.AgentCard, error) {
+	if f.cardErr != nil {
+		<-ctx.Done()
+		return clienta2a.AgentCard{}, ctx.Err()
+	}
+	return f.card, nil
+}
 
 func (f *fakeA2AClient) Send(_ context.Context, req clienta2a.SendRequest) (clienta2a.Task, error) {
 	f.sendCalls++
@@ -559,12 +746,17 @@ func (f *fakeA2AClient) Send(_ context.Context, req clienta2a.SendRequest) (clie
 	return f.sendTask, nil
 }
 
-func (f *fakeA2AClient) SendStream(context.Context, clienta2a.SendRequest) (*clienta2a.Stream, error) {
+func (f *fakeA2AClient) SendStream(context.Context, clienta2a.SendRequest) (A2AStream, error) {
 	f.streamCalls++
+	if f.stream != nil {
+		return f.stream, nil
+	}
 	return nil, errors.New("stream unavailable")
 }
 
-func (f *fakeA2AClient) GetTask(context.Context, clienta2a.GetTaskRequest) (clienta2a.Task, error) {
+func (f *fakeA2AClient) GetTask(_ context.Context, req clienta2a.GetTaskRequest) (clienta2a.Task, error) {
+	f.getCalls++
+	f.lastGet = req
 	if f.getErr != nil {
 		return clienta2a.Task{}, f.getErr
 	}
@@ -580,4 +772,26 @@ func (f *fakeA2AClient) CancelTask(_ context.Context, req clienta2a.CancelTaskRe
 	f.cancelCalls++
 	f.lastCancel = req
 	return clienta2a.Task{ID: req.TaskID, Status: clienta2a.TaskStatus{State: clienta2a.TaskStateCanceled}}, nil
+}
+
+type fakeA2AStream struct {
+	events chan streamRecv
+	closed chan struct{}
+}
+
+func (s *fakeA2AStream) Recv() (clienta2a.Event, error) {
+	item, ok := <-s.events
+	if !ok {
+		return clienta2a.Event{}, io.EOF
+	}
+	return item.event, item.err
+}
+
+func (s *fakeA2AStream) Close() error {
+	select {
+	case <-s.closed:
+	default:
+		close(s.closed)
+	}
+	return nil
 }

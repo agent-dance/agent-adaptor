@@ -90,12 +90,24 @@ func Wrap(ctx context.Context, handle agentadaptor.RunHandle, opts MuxOptions) <
 		defer close(out)
 		parent := agui.WrapWithContext(ctx, handle)
 		var subagents <-chan a2adelegation.DelegationEvent
+		var cancelSubagents context.CancelFunc
 		if opts.Bus != nil {
-			subagents = opts.Bus.SubscribeRun(ctx, handle.RunID())
+			subagentCtx, cancel := context.WithCancel(ctx)
+			cancelSubagents = cancel
+			defer cancelSubagents()
+			subagents = opts.Bus.SubscribeRun(subagentCtx, handle.RunID())
+		}
+		stopSubagents := func() {
+			if cancelSubagents != nil {
+				cancelSubagents()
+				cancelSubagents = nil
+			}
+			subagents = nil
 		}
 		for parent != nil || subagents != nil {
 			select {
 			case <-ctx.Done():
+				stopSubagents()
 				cancelHandle(handle)
 				return
 			case ev, ok := <-parent:
@@ -104,7 +116,7 @@ func Wrap(ctx context.Context, handle agentadaptor.RunHandle, opts MuxOptions) <
 					if !drainSubagents(subagents) {
 						return
 					}
-					subagents = nil
+					stopSubagents()
 					continue
 				}
 				if isTerminalAGUI(ev) {
@@ -115,7 +127,7 @@ func Wrap(ctx context.Context, handle agentadaptor.RunHandle, opts MuxOptions) <
 						return
 					}
 					parent = nil
-					subagents = nil
+					stopSubagents()
 					continue
 				}
 				if !sendAGUI(ev) {

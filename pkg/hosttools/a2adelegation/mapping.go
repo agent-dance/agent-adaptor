@@ -50,7 +50,9 @@ func (m *eventMapper) Map(event clienta2a.Event) []DelegationEvent {
 			out = append(out, m.artifactEvent(event.TaskID, event.ContextID, *event.Artifact))
 		}
 	case clienta2a.EventTerminal:
-		out = append(out, m.terminalEvents(event)...)
+		if event.Message != nil {
+			out = append(out, m.messageEvents(*event.Message)...)
+		}
 	}
 	return out
 }
@@ -62,9 +64,6 @@ func (m *eventMapper) taskEvents(task clienta2a.Task) []DelegationEvent {
 	}
 	for _, artifact := range task.Artifacts {
 		out = append(out, m.artifactEvent(task.ID, task.ContextID, artifact))
-	}
-	if executionFinalState(task.Status.State) {
-		out = append(out, m.terminalForState(task.ID, task.ContextID, task.Status.State, task.Raw))
 	}
 	return out
 }
