@@ -2,15 +2,22 @@ package a2adelegation
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	clienta2a "github.com/agent-dance/agent-adaptor/pkg/clients/a2a"
 )
+
+const remoteCancelTimeout = 5 * time.Second
+
+var delegationIDCounter atomic.Uint64
 
 type A2AStream interface {
 	Recv() (clienta2a.Event, error)
@@ -129,7 +136,7 @@ func (d *Delegator) delegateStreaming(ctx context.Context, client A2AClient, spe
 	lastTaskID := ""
 	cancelResult := func() (DelegationResult, error) {
 		if lastTaskID != "" {
-			d.cancelRemote(context.Background(), client, lastTaskID, send.Tenant, baseEvent)
+			d.cancelRemote(ctx, client, lastTaskID, send.Tenant, baseEvent)
 		} else {
 			d.publish(cancelledEvent(baseEvent, ""))
 		}
@@ -140,7 +147,7 @@ func (d *Delegator) delegateStreaming(ctx context.Context, client A2AClient, spe
 	}
 	cancelKnownTask := func() {
 		if lastTaskID != "" {
-			d.cancelRemoteTask(context.Background(), client, lastTaskID, send.Tenant, baseEvent)
+			d.cancelRemoteTask(ctx, client, lastTaskID, send.Tenant, baseEvent)
 		}
 	}
 	for {
@@ -283,7 +290,7 @@ func (d *Delegator) delegatePolling(ctx context.Context, client A2AClient, spec 
 	for i := 0; i < maxPolls; i++ {
 		select {
 		case <-ctx.Done():
-			d.cancelRemote(context.Background(), client, task.ID, send.Tenant, baseEvent)
+			d.cancelRemote(ctx, client, task.ID, send.Tenant, baseEvent)
 			derr := &DelegationError{Code: "cancelled", Message: ctx.Err().Error(), Retryable: true}
 			baseResult.Status = "cancelled"
 			baseResult.Error = derr
@@ -301,7 +308,7 @@ func (d *Delegator) delegatePolling(ctx context.Context, client A2AClient, spec 
 			return d.finishTask(baseEvent, baseResult, task, spec.Policy, maxArtifacts)
 		}
 	}
-	d.cancelRemote(context.Background(), client, task.ID, send.Tenant, baseEvent)
+	d.cancelRemote(ctx, client, task.ID, send.Tenant, baseEvent)
 	derr := &DelegationError{Code: "remote_timeout", Message: "remote task did not finish before timeout", Retryable: true, RemoteStatus: string(task.Status.State)}
 	baseResult.Status = "failed"
 	baseResult.Error = derr
@@ -330,9 +337,12 @@ func cancelledEvent(base DelegationEvent, taskID string) DelegationEvent {
 }
 
 func (d *Delegator) cancelRemoteTask(ctx context.Context, client A2AClient, taskID, tenant string, base DelegationEvent) {
-	if taskID != "" {
-		_, _ = client.CancelTask(ctx, clienta2a.CancelTaskRequest{TaskID: taskID, Tenant: tenant, Metadata: map[string]any{"reason": "parent_cancelled", "delegation_id": base.DelegationID}})
+	if taskID == "" {
+		return
 	}
+	cancelCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), remoteCancelTimeout)
+	defer cancel()
+	_, _ = client.CancelTask(cancelCtx, clienta2a.CancelTaskRequest{TaskID: taskID, Tenant: tenant, Metadata: map[string]any{"reason": "parent_cancelled", "delegation_id": base.DelegationID}})
 }
 
 func (d *Delegator) publish(ev DelegationEvent) {
@@ -367,7 +377,11 @@ func (d *Delegator) newID() string {
 	if d != nil && d.NewID != nil {
 		return d.NewID()
 	}
-	return "del-" + time.Now().UTC().Format("20060102150405.000000000")
+	var random [8]byte
+	if _, err := rand.Read(random[:]); err == nil {
+		return "del-" + hex.EncodeToString(random[:])
+	}
+	return fmt.Sprintf("del-%d", delegationIDCounter.Add(1))
 }
 
 func messageForDelegation(req DelegationRequest) (clienta2a.Message, error) {
