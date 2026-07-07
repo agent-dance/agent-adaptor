@@ -76,6 +76,13 @@ func (d *Delegator) Delegate(ctx context.Context, req DelegationRequest) (Delega
 	}
 
 	client := d.clientFor(spec)
+	if client == nil {
+		derr := &DelegationError{Code: "configuration_error", Message: "remote agent requires AgentCardURL for default A2A execution; configure Delegator.NewClient for static AgentCard-only specs"}
+		d.publish(failedEvent(baseEvent, derr))
+		baseResult.Status = "failed"
+		baseResult.Error = derr
+		return baseResult, derr
+	}
 	card, err := client.AgentCard(ctx)
 	if err != nil && spec.AgentCard == nil {
 		derr := &DelegationError{Code: "agent_unavailable", Message: err.Error(), Retryable: true}
@@ -354,6 +361,9 @@ func (d *Delegator) publish(ev DelegationEvent) {
 func (d *Delegator) clientFor(spec RemoteAgentSpec) A2AClient {
 	if d.NewClient != nil {
 		return d.NewClient(spec)
+	}
+	if strings.TrimSpace(spec.AgentCardURL) == "" {
+		return nil
 	}
 	return a2aClientAdapter{Client: clienta2a.New(clienta2a.Options{
 		AgentCardURL:        spec.AgentCardURL,

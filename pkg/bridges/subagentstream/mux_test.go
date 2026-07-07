@@ -44,6 +44,25 @@ func TestAGUICustomEventMapsDelegationFields(t *testing.T) {
 	}
 }
 
+func TestAGUICustomEventOmitsRawPayload(t *testing.T) {
+	t.Parallel()
+	ev := subagentstream.AGUICustomEvent(a2adelegation.DelegationEvent{
+		RunID:        "run-1",
+		DelegationID: "del-1",
+		AgentKey:     "research",
+		Kind:         a2adelegation.DelegationArtifactCreated,
+		Raw:          map[string]any{"secret": "inline remote payload"},
+	})
+	custom, ok := ev.(*aguievents.CustomEvent)
+	if !ok {
+		t.Fatalf("expected CustomEvent, got %T", ev)
+	}
+	value := custom.Value.(map[string]any)
+	if _, ok := value["raw"]; ok {
+		t.Fatalf("raw payload must not be exposed to AG-UI clients: %#v", value)
+	}
+}
+
 func TestStreamPayloadUsesCustomPassThroughShape(t *testing.T) {
 	t.Parallel()
 	payload := subagentstream.StreamPayload(a2adelegation.DelegationEvent{
