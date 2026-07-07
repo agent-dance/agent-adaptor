@@ -187,9 +187,6 @@ func AGUICustomEvent(ev a2adelegation.DelegationEvent) aguievents.Event {
 	if ev.Error != nil {
 		value["error"] = ev.Error
 	}
-	if ev.Raw != nil {
-		value["raw"] = ev.Raw
-	}
 	for key, val := range value {
 		if val == "" || val == nil {
 			delete(value, key)

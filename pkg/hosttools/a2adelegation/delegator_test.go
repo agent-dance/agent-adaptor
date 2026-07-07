@@ -349,6 +349,29 @@ func TestDelegatorRejectsInputArtifactWithoutURI(t *testing.T) {
 	}
 }
 
+func TestDelegatorStaticAgentCardRequiresCustomClient(t *testing.T) {
+	t.Parallel()
+	card := clienta2a.AgentCard{Name: "Research", Capabilities: clienta2a.Capabilities{Streaming: false}}
+	registry, err := NewRegistry(RemoteAgentSpec{Key: "research", AgentCard: &card})
+	if err != nil {
+		t.Fatalf("registry: %v", err)
+	}
+	delegator := NewDelegator(registry, NewEventBus(16))
+	delegator.NewID = func() string { return "del-1" }
+
+	result, err := delegator.Delegate(context.Background(), DelegationRequest{RunID: "run-1", Agent: "research", Objective: "research this"})
+	if err == nil {
+		t.Fatal("expected static AgentCard-only spec to require custom client")
+	}
+	var derr *DelegationError
+	if !errors.As(err, &derr) || derr.Code != "configuration_error" {
+		t.Fatalf("expected configuration_error, got result=%#v err=%T %[2]v", result, err)
+	}
+	if result.Status != "failed" {
+		t.Fatalf("expected failed result, got %#v", result)
+	}
+}
+
 func TestDelegatorMaxArtifactsLimitsFinalResultOnly(t *testing.T) {
 	t.Parallel()
 	card := clienta2a.AgentCard{Name: "Research", Capabilities: clienta2a.Capabilities{Streaming: false}}

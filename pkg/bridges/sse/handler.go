@@ -38,6 +38,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	aguievents "github.com/ag-ui-protocol/ag-ui/sdks/community/go/pkg/core/events"
@@ -158,20 +159,25 @@ func Handler(sdk agentadaptor.SDK, opts Options) http.Handler {
 		w.WriteHeader(http.StatusOK)
 
 		flusher, _ := w.(http.Flusher)
+		writeMu := &sync.Mutex{}
 		if flusher != nil {
+			writeMu.Lock()
 			flusher.Flush()
+			writeMu.Unlock()
 		}
 
 		pingCtx, cancelPing := context.WithCancel(r.Context())
 		defer cancelPing()
 		if opts.KeepAlivePing > 0 && flusher != nil {
-			go runKeepAlive(pingCtx, w, flusher, opts.KeepAlivePing)
+			go runKeepAlive(pingCtx, writeMu, w, flusher, opts.KeepAlivePing)
 		}
 
 		ctx := r.Context()
-		err = streamEvents(ctx, writer, w, handle, opts)
+		err = streamEvents(ctx, writer, writeMu, w, handle, opts)
 		if err != nil && !errors.Is(err, context.Canceled) {
+			writeMu.Lock()
 			_ = writer.WriteErrorEvent(ctx, w, err, "")
+			writeMu.Unlock()
 		}
 	})
 }
@@ -243,7 +249,7 @@ func decodeRawRequest(r *http.Request) (*RawRequest, error) {
 // streamEvents drains the handle's streams into SSE frames according to
 // the chosen protocol. It returns when the stream is exhausted or the
 // context is cancelled.
-func streamEvents(ctx context.Context, writer *aguisse.SSEWriter, w io.Writer, handle agentadaptor.RunHandle, opts Options) error {
+func streamEvents(ctx context.Context, writer *aguisse.SSEWriter, writeMu *sync.Mutex, w io.Writer, handle agentadaptor.RunHandle, opts Options) error {
 	switch opts.Protocol {
 	case AGUI:
 		var out <-chan aguievents.Event
@@ -258,13 +264,16 @@ func streamEvents(ctx context.Context, writer *aguisse.SSEWriter, w io.Writer, h
 				return ctx.Err()
 			default:
 			}
-			if err := writer.WriteEvent(ctx, w, ev); err != nil {
+			writeMu.Lock()
+			err := writer.WriteEvent(ctx, w, ev)
+			writeMu.Unlock()
+			if err != nil {
 				return err
 			}
 		}
 		return nil
 	case Raw:
-		return streamRaw(ctx, w, handle)
+		return streamRaw(ctx, writeMu, w, handle)
 	default:
 		return fmt.Errorf("sse: unknown protocol %d", opts.Protocol)
 	}
@@ -274,7 +283,7 @@ func streamEvents(ctx context.Context, writer *aguisse.SSEWriter, w io.Writer, h
 // HITL events are renamed to decision.request / decision.resolved and their
 // body is the corresponding structured payload (HITLRequestedPayload /
 // HITLResolvedPayload) — see docs/workstream-hitl-v2.md §6.2.
-func streamRaw(ctx context.Context, w io.Writer, handle agentadaptor.RunHandle) error {
+func streamRaw(ctx context.Context, writeMu *sync.Mutex, w io.Writer, handle agentadaptor.RunHandle) error {
 	flusher, _ := w.(http.Flusher)
 	done := make(chan agentadaptor.RunResult, 1)
 	go func() {
@@ -304,11 +313,14 @@ func streamRaw(ctx context.Context, w io.Writer, handle agentadaptor.RunHandle) 
 			if id == 0 {
 				id = p.Sequence
 			}
-			if _, err := fmt.Fprintf(w, "event: %s\nid: %d\ndata: %s\n\n", escapeEventName(name), id, payload); err != nil {
-				return fmt.Errorf("sse: write: %w", err)
-			}
-			if flusher != nil {
+			writeMu.Lock()
+			_, err = fmt.Fprintf(w, "event: %s\nid: %d\ndata: %s\n\n", escapeEventName(name), id, payload)
+			if err == nil && flusher != nil {
 				flusher.Flush()
+			}
+			writeMu.Unlock()
+			if err != nil {
+				return fmt.Errorf("sse: write: %w", err)
 			}
 		}
 	}
@@ -332,7 +344,7 @@ func rawFrameFor(p agentadaptor.StreamPayload) (string, any) {
 	return string(p.Kind), p
 }
 
-func runKeepAlive(ctx context.Context, w io.Writer, flusher http.Flusher, interval time.Duration) {
+func runKeepAlive(ctx context.Context, writeMu *sync.Mutex, w io.Writer, flusher http.Flusher, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -340,10 +352,15 @@ func runKeepAlive(ctx context.Context, w io.Writer, flusher http.Flusher, interv
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if _, err := io.WriteString(w, ":keep-alive\n\n"); err != nil {
+			writeMu.Lock()
+			_, err := io.WriteString(w, ":keep-alive\n\n")
+			if err == nil {
+				flusher.Flush()
+			}
+			writeMu.Unlock()
+			if err != nil {
 				return
 			}
-			flusher.Flush()
 		}
 	}
 }
