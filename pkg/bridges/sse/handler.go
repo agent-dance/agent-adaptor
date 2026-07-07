@@ -40,6 +40,7 @@ import (
 	"strings"
 	"time"
 
+	aguievents "github.com/ag-ui-protocol/ag-ui/sdks/community/go/pkg/core/events"
 	aguisse "github.com/ag-ui-protocol/ag-ui/sdks/community/go/pkg/encoding/sse"
 
 	agentadaptor "github.com/agent-dance/agent-adaptor"
@@ -245,9 +246,11 @@ func decodeRawRequest(r *http.Request) (*RawRequest, error) {
 func streamEvents(ctx context.Context, writer *aguisse.SSEWriter, w io.Writer, handle agentadaptor.RunHandle, opts Options) error {
 	switch opts.Protocol {
 	case AGUI:
-		out := agui.WrapWithContext(ctx, handle)
+		var out <-chan aguievents.Event
 		if opts.SubagentBus != nil {
 			out = subagentstream.WrapAGUI(ctx, handle, subagentstream.MuxOptions{Bus: opts.SubagentBus})
+		} else {
+			out = agui.WrapWithContext(ctx, handle)
 		}
 		for ev := range out {
 			select {

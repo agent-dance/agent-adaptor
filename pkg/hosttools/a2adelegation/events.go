@@ -56,12 +56,28 @@ func (b *EventBus) Publish(ev DelegationEvent) bool {
 		b.replay[ev.RunID] = buf
 	}
 	for ch := range b.subscribers[ev.RunID] {
-		select {
-		case ch <- ev:
-		default:
-		}
+		deliverSubscriber(ch, ev)
 	}
 	return true
+}
+
+func deliverSubscriber(ch chan DelegationEvent, ev DelegationEvent) {
+	select {
+	case ch <- ev:
+		return
+	default:
+	}
+	if !isTerminal(ev.Kind) {
+		return
+	}
+	select {
+	case <-ch:
+	default:
+	}
+	select {
+	case ch <- ev:
+	default:
+	}
 }
 
 func (b *EventBus) ClearRun(runID string) {

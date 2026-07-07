@@ -435,6 +435,31 @@ func TestDelegatorStreamingCancellationCascadesWithEffectiveTenant(t *testing.T)
 	}
 }
 
+func TestDelegatorStreamingCancellationUsesBoundedRemoteCancelContext(t *testing.T) {
+	t.Parallel()
+	card := clienta2a.AgentCard{Name: "Research", Capabilities: clienta2a.Capabilities{Streaming: true}}
+	registry, err := NewRegistry(RemoteAgentSpec{Key: "research", AgentCard: &card})
+	if err != nil {
+		t.Fatalf("registry: %v", err)
+	}
+	stream := &fakeA2AStream{events: make(chan streamRecv, 1), closed: make(chan struct{})}
+	stream.events <- streamRecv{event: clienta2a.Event{Kind: clienta2a.EventStatus, TaskID: "task-1", ContextID: "ctx-1", Status: &clienta2a.TaskStatus{State: clienta2a.TaskStateWorking}}}
+	client := &fakeA2AClient{card: card, stream: stream}
+	delegator := NewDelegator(registry, NewEventBus(16))
+	delegator.NewClient = func(RemoteAgentSpec) A2AClient { return client }
+	delegator.NewID = func() string { return "del-1" }
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+
+	_, err = delegator.Delegate(ctx, DelegationRequest{RunID: "run-1", Agent: "research", Objective: "research this", Stream: true})
+	if err == nil {
+		t.Fatal("expected streaming cancellation error")
+	}
+	if !client.cancelHadDeadline {
+		t.Fatalf("expected remote cancel to use bounded context, got calls=%d", client.cancelCalls)
+	}
+}
+
 func TestDelegatorStreamingRecoveryUsesEffectiveTenant(t *testing.T) {
 	t.Parallel()
 	card := clienta2a.AgentCard{Name: "Research", Capabilities: clienta2a.Capabilities{Streaming: true}}
@@ -647,6 +672,34 @@ func TestEventBusPublishDoesNotBlockOnFullSubscriber(t *testing.T) {
 	}
 }
 
+func TestEventBusTerminalDeliveryDropsOldestWhenSubscriberFull(t *testing.T) {
+	t.Parallel()
+	bus := NewEventBus(0)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ch := bus.SubscribeRun(ctx, "run-1")
+	for i := 0; i < subscriberBuffer; i++ {
+		bus.Publish(DelegationEvent{RunID: "run-1", DelegationID: "del-1", Kind: DelegationStatus, Status: "working"})
+	}
+	if !bus.Publish(DelegationEvent{RunID: "run-1", DelegationID: "del-1", Kind: DelegationFinished, Status: "completed"}) {
+		t.Fatal("terminal publish should be accepted")
+	}
+	seenTerminal := false
+	for i := 0; i < subscriberBuffer; i++ {
+		select {
+		case ev := <-ch:
+			if ev.Kind == DelegationFinished {
+				seenTerminal = true
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("timeout draining subscriber %d/%d", i, subscriberBuffer)
+		}
+	}
+	if !seenTerminal {
+		t.Fatal("terminal event should be enqueued by dropping an older event")
+	}
+}
+
 func TestEventBusClearRunDropsStateAndClosesSubscribers(t *testing.T) {
 	t.Parallel()
 	bus := NewEventBus(8)
@@ -706,6 +759,22 @@ func drainAvailableBus(t *testing.T, bus *EventBus, runID string) []DelegationEv
 		default:
 			return out
 		}
+	}
+}
+
+func TestDelegatorDefaultIDsAreUnique(t *testing.T) {
+	t.Parallel()
+	delegator := NewDelegator(nil, nil)
+	seen := map[string]struct{}{}
+	for i := 0; i < 256; i++ {
+		id := delegator.newID()
+		if id == "" {
+			t.Fatal("newID returned empty string")
+		}
+		if _, ok := seen[id]; ok {
+			t.Fatalf("duplicate delegation id %q", id)
+		}
+		seen[id] = struct{}{}
 	}
 }
 
@@ -793,8 +862,9 @@ type fakeA2AClient struct {
 	lastGet  clienta2a.GetTaskRequest
 	getCalls int
 
-	cancelCalls int
-	lastCancel  clienta2a.CancelTaskRequest
+	cancelCalls       int
+	lastCancel        clienta2a.CancelTaskRequest
+	cancelHadDeadline bool
 }
 
 func (f *fakeA2AClient) AgentCard(ctx context.Context) (clienta2a.AgentCard, error) {
@@ -833,9 +903,10 @@ func (f *fakeA2AClient) GetTask(_ context.Context, req clienta2a.GetTaskRequest)
 	return task, nil
 }
 
-func (f *fakeA2AClient) CancelTask(_ context.Context, req clienta2a.CancelTaskRequest) (clienta2a.Task, error) {
+func (f *fakeA2AClient) CancelTask(ctx context.Context, req clienta2a.CancelTaskRequest) (clienta2a.Task, error) {
 	f.cancelCalls++
 	f.lastCancel = req
+	_, f.cancelHadDeadline = ctx.Deadline()
 	return clienta2a.Task{ID: req.TaskID, Status: clienta2a.TaskStatus{State: clienta2a.TaskStateCanceled}}, nil
 }
 
