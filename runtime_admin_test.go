@@ -2,6 +2,8 @@ package agentadaptor_test
 
 import (
 	"context"
+	"encoding/json"
+	"strings"
 	"testing"
 
 	agentadaptor "github.com/agent-dance/agent-adaptor"
@@ -192,6 +194,8 @@ func TestRuntimeServicesFlowThroughSingleExecutionPath(t *testing.T) {
 }
 
 func TestRuntimeServiceMetadataInjectsMCPIntoDriverAndProfile(t *testing.T) {
+	const secret = "sk-runtime-secret"
+
 	driver := &runtimeAdminDriver{
 		mcpCapability: agentadaptor.MCPCapability{Supported: true, HTTP: true},
 	}
@@ -201,15 +205,16 @@ func TestRuntimeServiceMetadataInjectsMCPIntoDriverAndProfile(t *testing.T) {
 			Name: "a2a-delegation",
 			URL:  "http://127.0.0.1:43127/mcp",
 			Metadata: map[string]string{
-				"agentadaptor.mcp.enabled":                 "true",
-				"agentadaptor.mcp.key":                     "delegate-a2a",
-				"agentadaptor.mcp.transport":               "http",
-				"agentadaptor.mcp.headers_json":            `{"X-Run-Token":"env:DELEGATION_TOKEN"}`,
-				"agentadaptor.mcp.bearer_token_env_var":    "DELEGATION_TOKEN",
-				"agentadaptor.mcp.required":                "true",
-				"agentadaptor.mcp.required_reason":         "visual A2A subagent delegation",
-				"delegation.secret_should_not_be_promoted": "sk-test-secret",
+				"agentadaptor.mcp.enabled":              "true",
+				"agentadaptor.mcp.key":                  "delegate-a2a",
+				"agentadaptor.mcp.transport":            "http",
+				"agentadaptor.mcp.headers_json":         `{"X-Run-Token":"env:DELEGATION_TOKEN"}`,
+				"agentadaptor.mcp.bearer_token_env_var": "DELEGATION_TOKEN",
+				"agentadaptor.mcp.required":             "true",
+				"agentadaptor.mcp.required_reason":      "visual A2A subagent delegation",
+				"delegation.visibility":                 "public-metadata",
 			},
+			SecretEnv: []agentadaptor.EnvBinding{{Name: "DELEGATION_TOKEN", Value: secret}},
 		},
 	}
 	sdk := agentadaptor.New(
@@ -220,7 +225,8 @@ func TestRuntimeServiceMetadataInjectsMCPIntoDriverAndProfile(t *testing.T) {
 		agentadaptor.WithRuntimeServiceManager(runtimeManager),
 	)
 
-	if _, err := sdk.Run(context.Background(), "use delegation"); err != nil {
+	result, err := sdk.Run(context.Background(), "use delegation")
+	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	if len(driver.lastReq.MCP.Servers) != 2 {
@@ -241,6 +247,16 @@ func TestRuntimeServiceMetadataInjectsMCPIntoDriverAndProfile(t *testing.T) {
 	if injected.Headers["X-Run-Token"] != "env:DELEGATION_TOKEN" || injected.BearerTokenEnvVar != "DELEGATION_TOKEN" {
 		t.Fatalf("expected run-scoped auth references, got %#v", injected)
 	}
+	if !hasEnvBinding(driver.lastReq.Runtime.SecretEnv, "DELEGATION_TOKEN", secret) {
+		t.Fatalf("expected secret env in adapter runtime payload, got %#v", driver.lastReq.Runtime.SecretEnv)
+	}
+	if len(driver.lastReq.Runtime.Ensured) != 1 || len(driver.lastReq.Runtime.Ensured[0].SecretEnv) != 0 {
+		t.Fatalf("expected sanitized ensured runtime refs, got %#v", driver.lastReq.Runtime.Ensured)
+	}
+	assertJSONDoesNotContain(t, "driver runtime ensured refs", driver.lastReq.Runtime.Ensured, secret)
+	assertJSONDoesNotContain(t, "run result runtime services", result.RuntimeServices, secret)
+	assertJSONDoesNotContain(t, "profile payload", driver.lastReq.ProfilePayload, secret)
+	assertJSONDoesNotContain(t, "mcp payload", driver.lastReq.MCP, secret)
 	if !injected.Required || injected.RequiredReason != "visual A2A subagent delegation" {
 		t.Fatalf("expected required runtime MCP server, got %#v", injected)
 	}
@@ -249,6 +265,57 @@ func TestRuntimeServiceMetadataInjectsMCPIntoDriverAndProfile(t *testing.T) {
 	}
 	if driver.lastReq.ProfilePayload.Fingerprint == "" {
 		t.Fatal("expected profile fingerprint to include runtime MCP payload")
+	}
+}
+
+func TestRuntimeServiceSecretEnvDoesNotChangeProfileFingerprint(t *testing.T) {
+	driver := &runtimeAdminDriver{
+		mcpCapability: agentadaptor.MCPCapability{Supported: true, HTTP: true},
+	}
+	runtimeManager := &runtimeMCPManager{
+		ref: runtimeMCPRefWithSecret("sk-first-secret"),
+	}
+	sdk := agentadaptor.New(
+		agentadaptor.WithDefaultAgent(agentadaptor.Bind(driver, fakeConfig{Label: "runtime"},
+			agentadaptor.WithDefaultRuntimeServices(agentadaptor.RuntimeServiceSpec{Name: "a2a-delegation"}),
+		)),
+		agentadaptor.WithRuntimeServiceManager(runtimeManager),
+	)
+
+	if _, err := sdk.Run(context.Background(), "first"); err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+	firstProfile := driver.lastReq.ProfilePayload.Fingerprint
+	firstMCP := driver.lastReq.MCP.Fingerprint
+
+	runtimeManager.ref = runtimeMCPRefWithSecret("sk-second-secret")
+	if _, err := sdk.Run(context.Background(), "second"); err != nil {
+		t.Fatalf("second run: %v", err)
+	}
+	if driver.lastReq.ProfilePayload.Fingerprint != firstProfile {
+		t.Fatalf("secret rotation changed profile fingerprint: %q -> %q", firstProfile, driver.lastReq.ProfilePayload.Fingerprint)
+	}
+	if driver.lastReq.MCP.Fingerprint != firstMCP {
+		t.Fatalf("secret rotation changed MCP fingerprint: %q -> %q", firstMCP, driver.lastReq.MCP.Fingerprint)
+	}
+	if !hasEnvBinding(driver.lastReq.Runtime.SecretEnv, "DELEGATION_TOKEN", "sk-second-secret") {
+		t.Fatalf("expected rotated secret env in runtime payload, got %#v", driver.lastReq.Runtime.SecretEnv)
+	}
+	assertJSONDoesNotContain(t, "profile payload", driver.lastReq.ProfilePayload, "sk-second-secret")
+}
+
+func runtimeMCPRefWithSecret(secret string) agentadaptor.RuntimeServiceRef {
+	return agentadaptor.RuntimeServiceRef{
+		ID:   "svc-delegation",
+		Name: "a2a-delegation",
+		URL:  "http://127.0.0.1:43127/mcp",
+		Metadata: map[string]string{
+			"agentadaptor.mcp.enabled":              "true",
+			"agentadaptor.mcp.key":                  "delegate-a2a",
+			"agentadaptor.mcp.transport":            "http",
+			"agentadaptor.mcp.bearer_token_env_var": "DELEGATION_TOKEN",
+		},
+		SecretEnv: []agentadaptor.EnvBinding{{Name: "DELEGATION_TOKEN", Value: secret}},
 	}
 }
 
@@ -351,6 +418,26 @@ func (m *runtimeMCPManager) Ensure(_ context.Context, _ agentadaptor.RuntimeServ
 func (m *runtimeMCPManager) ReleaseByRun(_ context.Context, _ string) error { return nil }
 
 func (m *runtimeMCPManager) ReleaseByLabels(_ context.Context, _ map[string]string) error { return nil }
+
+func hasEnvBinding(bindings []agentadaptor.EnvBinding, name, value string) bool {
+	for _, binding := range bindings {
+		if binding.Name == name && binding.Value == value {
+			return true
+		}
+	}
+	return false
+}
+
+func assertJSONDoesNotContain(t *testing.T, label string, value any, forbidden string) {
+	t.Helper()
+	raw, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("marshal %s: %v", label, err)
+	}
+	if strings.Contains(string(raw), forbidden) {
+		t.Fatalf("%s leaked %q: %s", label, forbidden, string(raw))
+	}
+}
 
 func TestAdminExposesConfigSchemaQuotaAndDetectedModel(t *testing.T) {
 	driver := &runtimeAdminDriver{}

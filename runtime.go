@@ -56,8 +56,20 @@ func (s *sdkImpl) prepareRuntime(
 	if err != nil {
 		return RuntimePayload{}, err
 	}
+	payload.SecretEnv = collectRuntimeSecretEnv(ensured)
 	payload.Ensured = normalizeRuntimeServiceRefs(payload.Requested, ensured, identity)
 	return payload, nil
+}
+
+func collectRuntimeSecretEnv(refs []RuntimeServiceRef) []EnvBinding {
+	if len(refs) == 0 {
+		return nil
+	}
+	var out []EnvBinding
+	for _, ref := range refs {
+		out = append(out, cloneEnvBindings(ref.SecretEnv)...)
+	}
+	return out
 }
 
 func runtimeReportsFromRefs(refs []RuntimeServiceRef, owner AgentIdentity) []RuntimeServiceReport {

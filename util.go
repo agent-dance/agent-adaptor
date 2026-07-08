@@ -31,6 +31,17 @@ func cloneStringMap(values map[string]string) map[string]string {
 	return out
 }
 
+func cloneEnvBindings(values []EnvBinding) []EnvBinding {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make([]EnvBinding, 0, len(values))
+	for _, value := range values {
+		out = append(out, EnvBinding{Name: value.Name, Value: value.Value})
+	}
+	return out
+}
+
 func cloneAnyMap(values map[string]any) map[string]any {
 	if len(values) == 0 {
 		return nil
@@ -99,6 +110,7 @@ func cloneRuntimePayload(payload RuntimePayload) RuntimePayload {
 	return RuntimePayload{
 		Requested:   cloneRuntimeServiceSpecs(payload.Requested),
 		Ensured:     cloneRuntimeServiceRefs(payload.Ensured),
+		SecretEnv:   cloneEnvBindings(payload.SecretEnv),
 		Fingerprint: payload.Fingerprint,
 	}
 }

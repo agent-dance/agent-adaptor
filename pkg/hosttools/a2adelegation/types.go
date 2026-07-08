@@ -125,6 +125,7 @@ type DelegationRequest struct {
 	Context          string
 	Artifacts        []InputArtifact
 	MaxArtifacts     *int
+	HistoryLength    *int
 	Timeout          time.Duration
 	Stream           bool
 	Tenant           string

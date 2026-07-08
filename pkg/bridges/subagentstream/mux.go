@@ -20,6 +20,8 @@ type MuxOptions struct {
 	Bus EventBus
 }
 
+const terminalFlushTimeout = 250 * time.Millisecond
+
 type Event struct {
 	ID       uint64
 	AGUI     aguievents.Event
@@ -35,10 +37,8 @@ func WrapAGUI(ctx context.Context, handle agentadaptor.RunHandle, opts MuxOption
 			if ev.AGUI == nil {
 				continue
 			}
-			select {
-			case <-ctx.Done():
+			if !sendAGUIWithCancelGrace(ctx, out, ev.AGUI) {
 				return
-			case out <- ev.AGUI:
 			}
 		}
 	}()
@@ -49,6 +49,25 @@ func Wrap(ctx context.Context, handle agentadaptor.RunHandle, opts MuxOptions) <
 	out := make(chan Event, 64)
 	var seq atomic.Uint64
 
+	sendSubagentEvent := func(ev a2adelegation.DelegationEvent, observeContext bool) bool {
+		aguiEvent := AGUICustomEvent(ev)
+		evCopy := ev
+		wrapped := Event{ID: seq.Add(1), AGUI: aguiEvent, Subagent: &evCopy}
+		if observeContext {
+			select {
+			case <-ctx.Done():
+				return false
+			case out <- wrapped:
+				return true
+			}
+		}
+		select {
+		case out <- wrapped:
+			return true
+		case <-time.After(terminalFlushTimeout):
+			return false
+		}
+	}
 	sendAGUI := func(ev aguievents.Event) bool {
 		wrapped := Event{ID: seq.Add(1), AGUI: ev}
 		select {
@@ -59,16 +78,9 @@ func Wrap(ctx context.Context, handle agentadaptor.RunHandle, opts MuxOptions) <
 		}
 	}
 	sendSubagent := func(ev a2adelegation.DelegationEvent) bool {
-		aguiEvent := AGUICustomEvent(ev)
-		evCopy := ev
-		wrapped := Event{ID: seq.Add(1), AGUI: aguiEvent, Subagent: &evCopy}
-		select {
-		case <-ctx.Done():
-			return false
-		case out <- wrapped:
-			return true
-		}
+		return sendSubagentEvent(ev, true)
 	}
+	active := newDelegationTracker()
 	drainSubagents := func(subagents <-chan a2adelegation.DelegationEvent) bool {
 		for subagents != nil {
 			select {
@@ -76,6 +88,7 @@ func Wrap(ctx context.Context, handle agentadaptor.RunHandle, opts MuxOptions) <
 				if !ok {
 					return true
 				}
+				active.Track(ev)
 				if !sendSubagent(ev) {
 					return false
 				}
@@ -107,6 +120,9 @@ func Wrap(ctx context.Context, handle agentadaptor.RunHandle, opts MuxOptions) <
 		for parent != nil || subagents != nil {
 			select {
 			case <-ctx.Done():
+				active.FlushSynthetic(a2adelegation.DelegationCancelled, "cancelled", &a2adelegation.DelegationError{Code: "parent_cancelled", Message: "parent run context cancelled"}, func(ev a2adelegation.DelegationEvent) bool {
+					return sendSubagentEvent(ev, false)
+				})
 				stopSubagents()
 				cancelHandle(handle)
 				return
@@ -116,11 +132,17 @@ func Wrap(ctx context.Context, handle agentadaptor.RunHandle, opts MuxOptions) <
 					if !drainSubagents(subagents) {
 						return
 					}
+					if !active.FlushSynthetic(a2adelegation.DelegationFailed, "failed", parentFinishedError(), sendSubagent) {
+						return
+					}
 					stopSubagents()
 					continue
 				}
 				if isTerminalAGUI(ev) {
 					if !drainSubagents(subagents) {
+						return
+					}
+					if !active.FlushSynthetic(a2adelegation.DelegationFailed, "failed", parentFinishedError(), sendSubagent) {
 						return
 					}
 					if !sendAGUI(ev) {
@@ -138,6 +160,7 @@ func Wrap(ctx context.Context, handle agentadaptor.RunHandle, opts MuxOptions) <
 					subagents = nil
 					continue
 				}
+				active.Track(ev)
 				if !sendSubagent(ev) {
 					return
 				}
@@ -145,6 +168,74 @@ func Wrap(ctx context.Context, handle agentadaptor.RunHandle, opts MuxOptions) <
 		}
 	}()
 	return out
+}
+
+func sendAGUIWithCancelGrace(ctx context.Context, out chan<- aguievents.Event, ev aguievents.Event) bool {
+	select {
+	case out <- ev:
+		return true
+	default:
+	}
+	if ctx.Err() != nil {
+		select {
+		case out <- ev:
+			return true
+		case <-time.After(terminalFlushTimeout):
+			return false
+		}
+	}
+	select {
+	case out <- ev:
+		return true
+	case <-ctx.Done():
+		select {
+		case out <- ev:
+			return true
+		case <-time.After(terminalFlushTimeout):
+			return false
+		}
+	}
+}
+
+type delegationTracker struct {
+	active map[string]a2adelegation.DelegationEvent
+	order  []string
+}
+
+func newDelegationTracker() *delegationTracker {
+	return &delegationTracker{active: map[string]a2adelegation.DelegationEvent{}}
+}
+
+func (t *delegationTracker) Track(ev a2adelegation.DelegationEvent) {
+	if ev.DelegationID == "" {
+		return
+	}
+	if isTerminalDelegation(ev.Kind) {
+		delete(t.active, ev.DelegationID)
+		return
+	}
+	if _, exists := t.active[ev.DelegationID]; !exists {
+		t.order = append(t.order, ev.DelegationID)
+	}
+	t.active[ev.DelegationID] = ev
+}
+
+func (t *delegationTracker) FlushSynthetic(kind a2adelegation.DelegationEventKind, status string, err *a2adelegation.DelegationError, send func(a2adelegation.DelegationEvent) bool) bool {
+	for _, delegationID := range t.order {
+		ev, ok := t.active[delegationID]
+		if !ok {
+			continue
+		}
+		ev.Kind = kind
+		ev.Status = status
+		ev.Error = err
+		ev.Time = time.Now()
+		delete(t.active, delegationID)
+		if !send(ev) {
+			return false
+		}
+	}
+	return true
 }
 
 func cancelHandle(handle agentadaptor.RunHandle) {
@@ -163,6 +254,19 @@ func isTerminalAGUI(ev aguievents.Event) bool {
 	default:
 		return false
 	}
+}
+
+func isTerminalDelegation(kind a2adelegation.DelegationEventKind) bool {
+	switch kind {
+	case a2adelegation.DelegationFinished, a2adelegation.DelegationFailed, a2adelegation.DelegationCancelled, a2adelegation.DelegationInputRequired:
+		return true
+	default:
+		return false
+	}
+}
+
+func parentFinishedError() *a2adelegation.DelegationError {
+	return &a2adelegation.DelegationError{Code: "parent_finished", Message: "parent run finished before subagent terminal event"}
 }
 
 func AGUICustomEvent(ev a2adelegation.DelegationEvent) aguievents.Event {
