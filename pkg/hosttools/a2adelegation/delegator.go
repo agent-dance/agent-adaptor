@@ -114,6 +114,7 @@ func (d *Delegator) Delegate(ctx context.Context, req DelegationRequest) (Delega
 		Message:             message,
 		Tenant:              spec.Tenant,
 		AcceptedOutputModes: spec.AcceptedOutputModes,
+		HistoryLength:       req.HistoryLength,
 		Metadata:            cloneAnyMap(req.Metadata),
 	}
 	if req.Tenant != "" {
@@ -185,7 +186,7 @@ func (d *Delegator) delegateStreaming(ctx context.Context, client A2AClient, spe
 				return cancelResult()
 			}
 			if lastTaskID != "" {
-				if recovered, ok := d.recoverTask(ctx, client, lastTaskID, send.Tenant); ok {
+				if recovered, ok := d.recoverTask(ctx, client, lastTaskID, send.Tenant, send.HistoryLength); ok {
 					lastTask = recovered
 					for _, ev := range mapper.taskEvents(recovered) {
 						d.publish(ev)
@@ -229,7 +230,7 @@ func (d *Delegator) delegateStreaming(ctx context.Context, client A2AClient, spe
 			return d.finishTask(baseEvent, baseResult, *event.Task, spec.Policy, maxArtifacts)
 		}
 		if event.Status != nil && executionFinalState(event.Status.State) {
-			task, ok := d.recoverTask(ctx, client, event.TaskID, send.Tenant)
+			task, ok := d.recoverTask(ctx, client, event.TaskID, send.Tenant, send.HistoryLength)
 			if ok {
 				return d.finishTask(baseEvent, baseResult, task, spec.Policy, maxArtifacts)
 			}
@@ -304,7 +305,7 @@ func (d *Delegator) delegatePolling(ctx context.Context, client A2AClient, spec 
 			return baseResult, derr
 		case <-ticker.C:
 		}
-		task, err = client.GetTask(ctx, clienta2a.GetTaskRequest{TaskID: task.ID, Tenant: send.Tenant})
+		task, err = client.GetTask(ctx, clienta2a.GetTaskRequest{TaskID: task.ID, Tenant: send.Tenant, HistoryLength: send.HistoryLength})
 		if err != nil {
 			continue
 		}
@@ -322,11 +323,11 @@ func (d *Delegator) delegatePolling(ctx context.Context, client A2AClient, spec 
 	return baseResult, derr
 }
 
-func (d *Delegator) recoverTask(ctx context.Context, client A2AClient, taskID, tenant string) (clienta2a.Task, bool) {
+func (d *Delegator) recoverTask(ctx context.Context, client A2AClient, taskID, tenant string, historyLength *int) (clienta2a.Task, bool) {
 	if taskID == "" {
 		return clienta2a.Task{}, false
 	}
-	task, err := client.GetTask(ctx, clienta2a.GetTaskRequest{TaskID: taskID, Tenant: tenant})
+	task, err := client.GetTask(ctx, clienta2a.GetTaskRequest{TaskID: taskID, Tenant: tenant, HistoryLength: historyLength})
 	return task, err == nil && executionFinalState(task.Status.State)
 }
 

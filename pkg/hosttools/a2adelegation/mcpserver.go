@@ -2,13 +2,17 @@ package a2adelegation
 
 import (
 	"bytes"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
 	"time"
 )
+
+const maxToolTimeoutSeconds = int64(1<<63-1) / int64(time.Second)
 
 type ToolInput struct {
 	Agent       string          `json:"agent"`
@@ -24,10 +28,13 @@ type ToolInputBody struct {
 }
 
 type ToolConstraints struct {
-	TimeoutSeconds  int  `json:"timeout_seconds,omitempty"`
-	Stream          bool `json:"stream,omitempty"`
-	MaxArtifacts    int  `json:"max_artifacts,omitempty"`
-	MaxArtifactsSet bool `json:"-"`
+	TimeoutSeconds    int  `json:"timeout_seconds,omitempty"`
+	TimeoutSecondsSet bool `json:"-"`
+	Stream            bool `json:"stream,omitempty"`
+	MaxArtifacts      int  `json:"max_artifacts,omitempty"`
+	MaxArtifactsSet   bool `json:"-"`
+	HistoryLength     int  `json:"history_length,omitempty"`
+	HistoryLengthSet  bool `json:"-"`
 }
 
 func ToolSchema() map[string]any {
@@ -62,6 +69,7 @@ func ToolSchema() map[string]any {
 					"timeout_seconds": map[string]any{"type": "integer", "minimum": 1},
 					"stream":          map[string]any{"type": "boolean"},
 					"max_artifacts":   map[string]any{"type": "integer", "minimum": 0},
+					"history_length":  map[string]any{"type": "integer", "minimum": 0},
 				},
 				"additionalProperties": false,
 			},
@@ -100,13 +108,30 @@ func ParseToolInput(raw []byte) (ToolInput, error) {
 	if rawConstraints, ok := envelope["constraints"]; ok {
 		var constraints map[string]json.RawMessage
 		if err := json.Unmarshal(rawConstraints, &constraints); err == nil {
+			if _, ok := constraints["timeout_seconds"]; ok {
+				input.Constraints.TimeoutSecondsSet = true
+			}
 			if _, ok := constraints["max_artifacts"]; ok {
 				input.Constraints.MaxArtifactsSet = true
 			}
+			if _, ok := constraints["history_length"]; ok {
+				input.Constraints.HistoryLengthSet = true
+			}
+		}
+	}
+	if input.Constraints.TimeoutSecondsSet {
+		if input.Constraints.TimeoutSeconds <= 0 {
+			return ToolInput{}, &DelegationError{Code: "invalid_tool_input", Message: "timeout_seconds must be positive"}
+		}
+		if int64(input.Constraints.TimeoutSeconds) > maxToolTimeoutSeconds {
+			return ToolInput{}, &DelegationError{Code: "invalid_tool_input", Message: "timeout_seconds exceeds maximum duration"}
 		}
 	}
 	if input.Constraints.MaxArtifactsSet && input.Constraints.MaxArtifacts < 0 {
 		return ToolInput{}, &DelegationError{Code: "invalid_tool_input", Message: "max_artifacts must be non-negative"}
+	}
+	if input.Constraints.HistoryLengthSet && input.Constraints.HistoryLength < 0 {
+		return ToolInput{}, &DelegationError{Code: "invalid_tool_input", Message: "history_length must be non-negative"}
 	}
 	return input, nil
 }
@@ -116,6 +141,11 @@ type MCPServerOptions struct {
 	ParentToolCallID string
 	Tenant           string
 	BearerToken      string
+
+	// AllowUnauthenticatedLoopbackForTest permits an otherwise unprotected
+	// loopback-only server for tests and local probes. Production HTTP sidecars
+	// should always use a per-run bearer token.
+	AllowUnauthenticatedLoopbackForTest bool
 }
 
 type MCPServer struct {
@@ -154,15 +184,30 @@ func (s *MCPServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *MCPServer) authorize(r *http.Request) error {
-	if s == nil || s.Options.BearerToken == "" {
-		return nil
+	if s == nil {
+		return errors.New("delegation MCP server is not configured")
+	}
+	if s.Options.BearerToken == "" {
+		if s.Options.AllowUnauthenticatedLoopbackForTest && isLoopbackRequest(r) {
+			return nil
+		}
+		return errors.New("delegation MCP bearer token is required")
 	}
 	got := strings.TrimSpace(r.Header.Get("Authorization"))
 	want := "Bearer " + s.Options.BearerToken
-	if got != want {
+	if subtle.ConstantTimeCompare([]byte(got), []byte(want)) != 1 {
 		return errors.New("unauthorized")
 	}
 	return nil
+}
+
+func isLoopbackRequest(r *http.Request) bool {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func (s *MCPServer) handle(r *http.Request, req rpcRequest) map[string]any {
@@ -206,8 +251,13 @@ func (s *MCPServer) handleToolCall(r *http.Request, req rpcRequest) map[string]a
 	if err != nil {
 		return toolResult(req.ID, DelegationResult{Status: "failed", Error: delegationErr(err)}, true)
 	}
+	runID := strings.TrimSpace(s.Options.RunID)
+	if runID == "" {
+		derr := &DelegationError{Code: "configuration_error", Message: "run context is required for delegation MCP tool"}
+		return toolResult(req.ID, DelegationResult{Agent: input.Agent, RemoteProtocol: ProtocolA2A, Status: "failed", Error: derr}, true)
+	}
 	request := DelegationRequest{
-		RunID:            s.Options.RunID,
+		RunID:            runID,
 		ParentToolCallID: s.Options.ParentToolCallID,
 		Agent:            input.Agent,
 		Objective:        input.Objective,
@@ -220,11 +270,30 @@ func (s *MCPServer) handleToolCall(r *http.Request, req rpcRequest) map[string]a
 	if input.Constraints.MaxArtifactsSet {
 		request.MaxArtifacts = &input.Constraints.MaxArtifacts
 	}
-	if input.Constraints.TimeoutSeconds > 0 {
+	if input.Constraints.HistoryLengthSet {
+		request.HistoryLength = &input.Constraints.HistoryLength
+	}
+	if input.Constraints.TimeoutSecondsSet {
 		request.Timeout = time.Duration(input.Constraints.TimeoutSeconds) * time.Second
 	}
 	out, err := s.Delegator.Delegate(r.Context(), request)
+	if err != nil {
+		out = ensureDelegationError(out, err)
+	}
 	return toolResult(req.ID, out, err != nil)
+}
+
+func ensureDelegationError(out DelegationResult, err error) DelegationResult {
+	if out.Status == "" {
+		out.Status = "failed"
+	}
+	if out.RemoteProtocol == "" {
+		out.RemoteProtocol = ProtocolA2A
+	}
+	if out.Error == nil {
+		out.Error = delegationErr(err)
+	}
+	return out
 }
 
 func delegationErr(err error) *DelegationError {

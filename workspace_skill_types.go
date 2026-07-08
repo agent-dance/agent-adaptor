@@ -264,6 +264,10 @@ type RuntimeServiceRef struct {
 	OwnerAgentID string
 	Health       RuntimeServiceHealth
 	Metadata     map[string]string
+	// SecretEnv is a subprocess-only channel for runtime-issued secrets, such
+	// as per-run MCP bearer tokens. The SDK strips these bindings from public
+	// runtime refs/reports and injects them only into adapter process env.
+	SecretEnv []EnvBinding
 }
 
 // RuntimePayload is the runtime-service equivalent of ResolvedSkills.
@@ -274,6 +278,7 @@ type RuntimeServiceRef struct {
 type RuntimePayload struct {
 	Requested   []RuntimeServiceSpec
 	Ensured     []RuntimeServiceRef
+	SecretEnv   []EnvBinding
 	Fingerprint string
 }
 

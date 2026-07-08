@@ -71,6 +71,34 @@ func TestParseToolInputTracksExplicitMaxArtifacts(t *testing.T) {
 	}
 }
 
+func TestParseToolInputRejectsInvalidTimeouts(t *testing.T) {
+	t.Parallel()
+	cases := []string{
+		`{"agent":"research","objective":"do work","constraints":{"timeout_seconds":0}}`,
+		`{"agent":"research","objective":"do work","constraints":{"timeout_seconds":-1}}`,
+		`{"agent":"research","objective":"do work","constraints":{"timeout_seconds":9223372037}}`,
+	}
+	for _, raw := range cases {
+		if _, err := ParseToolInput([]byte(raw)); err == nil {
+			t.Fatalf("expected invalid timeout to fail for %s", raw)
+		}
+	}
+}
+
+func TestParseToolInputTracksHistoryLength(t *testing.T) {
+	t.Parallel()
+	input, err := ParseToolInput([]byte(`{"agent":"research","objective":"do work","constraints":{"history_length":0}}`))
+	if err != nil {
+		t.Fatalf("parse explicit history_length: %v", err)
+	}
+	if !input.Constraints.HistoryLengthSet || input.Constraints.HistoryLength != 0 {
+		t.Fatalf("expected explicit history_length=0, got %#v", input.Constraints)
+	}
+	if _, err := ParseToolInput([]byte(`{"agent":"research","objective":"do work","constraints":{"history_length":-1}}`)); err == nil {
+		t.Fatal("expected negative history_length to fail")
+	}
+}
+
 func TestToolSchemaAllowsOnlyRegistryKeyObjectiveInputAndConstraints(t *testing.T) {
 	t.Parallel()
 	schema := ToolSchema()
@@ -188,8 +216,9 @@ func TestDelegatorPollingHappyPathEmitsEventsAndStructuredResult(t *testing.T) {
 	delegator := NewDelegator(registry, bus)
 	delegator.NewClient = func(RemoteAgentSpec) A2AClient { return client }
 	delegator.NewID = func() string { return "del-1" }
+	historyLength := 7
 
-	result, err := delegator.Delegate(context.Background(), DelegationRequest{RunID: "run-1", Agent: "research", Objective: "research this"})
+	result, err := delegator.Delegate(context.Background(), DelegationRequest{RunID: "run-1", Agent: "research", Objective: "research this", HistoryLength: &historyLength})
 	if err != nil {
 		t.Fatalf("delegate: %v", err)
 	}
@@ -198,6 +227,12 @@ func TestDelegatorPollingHappyPathEmitsEventsAndStructuredResult(t *testing.T) {
 	}
 	if client.lastSend.Tenant != "tenant-a" || client.lastSend.Message.Parts[0].Text != "research this" {
 		t.Fatalf("unexpected send request: %#v", client.lastSend)
+	}
+	if client.lastSend.HistoryLength == nil || *client.lastSend.HistoryLength != historyLength {
+		t.Fatalf("expected send history length %d, got %#v", historyLength, client.lastSend.HistoryLength)
+	}
+	if client.lastGet.HistoryLength == nil || *client.lastGet.HistoryLength != historyLength {
+		t.Fatalf("expected get history length %d, got %#v", historyLength, client.lastGet.HistoryLength)
 	}
 	replayed := drainBus(t, bus, "run-1", 5)
 	if replayed[0].Kind != DelegationStarted || replayed[len(replayed)-1].Kind != DelegationFinished {
@@ -818,7 +853,7 @@ func TestMCPServerDelegatesToolCallAndReturnsStructuredResult(t *testing.T) {
 
 	server := httptest.NewServer(NewMCPServer(delegator, MCPServerOptions{RunID: "run-1", BearerToken: "token"}).Handler())
 	defer server.Close()
-	rpcBody := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"delegate_to_agent","arguments":{"agent":"research","objective":"research this","constraints":{"stream":false}}}}`
+	rpcBody := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"delegate_to_agent","arguments":{"agent":"research","objective":"research this","constraints":{"stream":false,"history_length":3}}}}`
 	req, err := http.NewRequest(http.MethodPost, server.URL, strings.NewReader(rpcBody))
 	if err != nil {
 		t.Fatalf("request: %v", err)
@@ -853,6 +888,9 @@ func TestMCPServerDelegatesToolCallAndReturnsStructuredResult(t *testing.T) {
 	if result.DelegationID != "del-1" || result.RemoteTaskID != "task-1" || result.Status != "completed" || result.Summary != "done" {
 		t.Fatalf("unexpected delegation result: %#v", result)
 	}
+	if client.lastSend.HistoryLength == nil || *client.lastSend.HistoryLength != 3 {
+		t.Fatalf("expected history_length to flow into send request, got %#v", client.lastSend.HistoryLength)
+	}
 }
 
 func TestMCPServerRejectsMissingBearerToken(t *testing.T) {
@@ -867,6 +905,97 @@ func TestMCPServerRejectsMissingBearerToken(t *testing.T) {
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("expected unauthorized, got %d", resp.StatusCode)
 	}
+}
+
+func TestMCPServerRejectsEmptyBearerTokenByDefault(t *testing.T) {
+	t.Parallel()
+	server := httptest.NewServer(NewMCPServer(NewDelegator(nil, nil), MCPServerOptions{RunID: "run-1"}).Handler())
+	defer server.Close()
+	resp, err := http.Post(server.URL, "application/json", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
+	if err != nil {
+		t.Fatalf("post rpc: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected missing server bearer token to fail closed, got %d", resp.StatusCode)
+	}
+}
+
+func TestMCPServerAllowsUnauthenticatedLoopbackWhenExplicit(t *testing.T) {
+	t.Parallel()
+	server := httptest.NewServer(NewMCPServer(NewDelegator(nil, nil), MCPServerOptions{RunID: "run-1", AllowUnauthenticatedLoopbackForTest: true}).Handler())
+	defer server.Close()
+	resp, err := http.Post(server.URL, "application/json", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
+	if err != nil {
+		t.Fatalf("post rpc: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected explicit loopback test mode to allow request, got %d", resp.StatusCode)
+	}
+}
+
+func TestMCPServerToolCallRequiresRunContext(t *testing.T) {
+	t.Parallel()
+	server := httptest.NewServer(NewMCPServer(NewDelegator(nil, nil), MCPServerOptions{BearerToken: "token"}).Handler())
+	defer server.Close()
+	result, isError := callDelegateTool(t, server.URL, "token", `{"agent":"research","objective":"research this"}`)
+	if !isError {
+		t.Fatalf("expected missing run context to be an MCP tool error: %#v", result)
+	}
+	if result.Error == nil || result.Error.Code != "configuration_error" || !strings.Contains(result.Error.Message, "run context") {
+		t.Fatalf("expected run-context configuration_error, got %#v", result)
+	}
+}
+
+func TestMCPServerPreservesDelegatorErrorDetails(t *testing.T) {
+	t.Parallel()
+	server := httptest.NewServer(NewMCPServer(NewDelegator(nil, nil), MCPServerOptions{RunID: "run-1", BearerToken: "token"}).Handler())
+	defer server.Close()
+	result, isError := callDelegateTool(t, server.URL, "token", `{"agent":"research","objective":"research this"}`)
+	if !isError {
+		t.Fatalf("expected delegator failure to be an MCP tool error: %#v", result)
+	}
+	if result.Status != "failed" || result.Error == nil || result.Error.Code != "configuration_error" {
+		t.Fatalf("expected structured configuration_error to be preserved, got %#v", result)
+	}
+}
+
+func callDelegateTool(t *testing.T, url, token, arguments string) (DelegationResult, bool) {
+	t.Helper()
+	rpcBody := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"delegate_to_agent","arguments":` + arguments + `}}`
+	req, err := http.NewRequest(http.MethodPost, url, strings.NewReader(rpcBody))
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("post rpc: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status: %d", resp.StatusCode)
+	}
+	var envelope struct {
+		Result struct {
+			Content []struct {
+				Text string `json:"text"`
+			} `json:"content"`
+			IsError bool `json:"isError"`
+		} `json:"result"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(envelope.Result.Content) != 1 {
+		t.Fatalf("expected one content item, got %#v", envelope.Result)
+	}
+	var result DelegationResult
+	if err := json.Unmarshal([]byte(envelope.Result.Content[0].Text), &result); err != nil {
+		t.Fatalf("decode delegation result: %v", err)
+	}
+	return result, envelope.Result.IsError
 }
 
 type fakeA2AClient struct {
