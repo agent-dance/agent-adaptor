@@ -143,6 +143,95 @@ _, err = client.CancelTask(ctx, a2a.CancelTaskRequest{
 })
 ```
 
+## Visual Delegation Host Tools
+
+The optional host-owned visual subagent delegation layer sits above the A2A client layer:
+
+- `pkg/hosttools/a2adelegation` exposes a curated registry, `delegate_to_agent`
+  MCP tool server, delegation event bus, A2A event mapper, and `Delegator`.
+- `pkg/bridges/subagentstream` overlays delegation events onto an existing
+  parent AG-UI stream as `CUSTOM` events named `subagent.*`.
+- `pkg/bridges/sse.Options.SubagentBus` enables the overlay in the stock SSE
+  handler for AG-UI callers.
+
+The model-facing tool input accepts registry keys only:
+
+```json
+{
+  "agent": "research",
+  "objective": "Find current A2A streaming behavior.",
+  "input": {
+    "prompt": "Summarize exact APIs and artifact behavior.",
+    "context": "We are implementing visual delegation."
+  },
+  "constraints": {
+    "timeout_seconds": 180,
+    "stream": true,
+    "max_artifacts": 10
+  }
+}
+```
+
+`endpoint_url`, unknown top-level fields, and unknown nested input/constraint
+fields are rejected. Host code owns the registry entry (`RemoteAgentSpec`), auth,
+tenant, timeout policy, artifact limits, accepted output modes, and trusted
+origins. `constraints.max_artifacts`, when supplied, limits only the final
+`DelegationResult.Artifacts` returned to the parent model; live `subagent.*`
+artifact events remain a UI side channel. The parent model receives only the
+final structured `DelegationResult` JSON through the MCP tool result. Live remote
+progress is published to the bus and rendered as AG-UI custom events:
+
+```json
+{
+  "type": "CUSTOM",
+  "name": "subagent.text.delta",
+  "value": {
+    "runId": "run-...",
+    "parentToolCallId": "tool-...",
+    "delegationId": "del-...",
+    "agentKey": "research",
+    "remoteProtocol": "a2a",
+    "remoteTaskId": "task-...",
+    "delta": "Searching official examples..."
+  }
+}
+```
+
+`parentToolCallId` is included only when the host can supply the parent provider
+tool-call ID, for example by setting `a2adelegation.MCPServerOptions.ParentToolCallID`
+or by publishing `DelegationEvent` values with that field. The MCP JSON-RPC
+request ID is not treated as the parent model tool-call ID. UI grouping should
+tolerate this field being absent and fall back to `runId` + `delegationId`.
+
+Runtime-created MCP sidecars can be injected into a run without asking the model
+for run IDs, URLs, or credentials. A `RuntimeServiceManager` returns a
+`RuntimeServiceRef` with metadata keys: `agentadaptor.mcp.enabled=true`,
+`agentadaptor.mcp.key`, `agentadaptor.mcp.transport`, `agentadaptor.mcp.url`,
+`agentadaptor.mcp.command`, `agentadaptor.mcp.args_json`,
+`agentadaptor.mcp.env_json`, `agentadaptor.mcp.headers_json`,
+`agentadaptor.mcp.bearer_token_env_var`, `agentadaptor.mcp.required`, and
+`agentadaptor.mcp.required_reason`. If `agentadaptor.mcp.key` is omitted, the SDK
+falls back to the runtime ref `Name`, then `ID`. If transport is omitted, it
+defaults to `stdio` when a command is present and `http` otherwise. Non-stdio
+servers use `RuntimeServiceRef.URL` when `agentadaptor.mcp.url` is omitted;
+stdio servers use `RuntimeServiceRef.Command` when `agentadaptor.mcp.command` is
+omitted. The SDK appends those servers after runtime ensure, before profile
+materialization, so adapter MCP config and session fingerprints include the
+per-run delegation endpoint.
+
+Security boundary: concrete adapters stay unaware of A2A delegation; remote
+protocol dumps are not appended to `RunResult.RawStreams`; remote artifacts are
+reported as structured references/metadata unless host policy explicitly stores
+and exposes content elsewhere.
+
 ## Non-Goals
 
-Visual subagent delegation, A2A-to-local adapter routing, bridge-managed durable task persistence, and default push delivery infrastructure are outside this slice. Issue #5 tracks the visual subagent flow above these protocol primitives.
+Automatic A2A-to-local adapter routing, bridge-managed durable task persistence,
+default push delivery infrastructure, dynamic remote-agent discovery, built-in
+tenant/auth policy, and production per-run MCP sidecar lifecycle remain outside
+this slice.
+
+Visual subagent delegation is an optional host-owned layer built from
+`pkg/hosttools/a2adelegation`, `pkg/bridges/subagentstream`, and runtime-service
+MCP injection. Core SDK execution remains protocol-agnostic and does not route to
+remote A2A agents automatically.

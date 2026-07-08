@@ -134,16 +134,30 @@ func ResolvedTruthyEnv(bindings []agentadaptor.EnvBinding, name string) (bool, s
 }
 
 func RuntimeEnvBindings(bindings []agentadaptor.EnvBinding, payload agentadaptor.RuntimePayload) ([]agentadaptor.EnvBinding, error) {
-	if len(payload.Ensured) == 0 {
-		return append([]agentadaptor.EnvBinding(nil), bindings...), nil
-	}
-	raw, err := json.Marshal(payload.Ensured)
-	if err != nil {
-		return nil, err
-	}
 	out := append([]agentadaptor.EnvBinding(nil), bindings...)
-	out = append(out, agentadaptor.EnvBinding{Name: "PAPERCLIP_RUNTIME_SERVICES_JSON", Value: string(raw)})
+	out = append(out, payload.SecretEnv...)
+	if len(payload.Ensured) > 0 {
+		raw, err := json.Marshal(runtimeServiceRefsForEnv(payload.Ensured))
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, agentadaptor.EnvBinding{Name: "PAPERCLIP_RUNTIME_SERVICES_JSON", Value: string(raw)})
+	}
 	return out, nil
+}
+
+func runtimeServiceRefsForEnv(refs []agentadaptor.RuntimeServiceRef) []agentadaptor.RuntimeServiceRef {
+	if len(refs) == 0 {
+		return nil
+	}
+	out := make([]agentadaptor.RuntimeServiceRef, 0, len(refs))
+	for _, ref := range refs {
+		clean := ref
+		clean.SecretEnv = nil
+		clean.Metadata = cloneStringMap(ref.Metadata)
+		out = append(out, clean)
+	}
+	return out
 }
 
 func RuntimePromptPrefix(payload agentadaptor.RuntimePayload) string {

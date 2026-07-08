@@ -66,6 +66,23 @@ Context and injection:
 - `WithSkills(refs...)`
 - `WithMCP(cfg)`
 - `WithProfileResources(resources)` — per-run profile desired state bundle.
+
+Runtime service MCP injection: a `RuntimeServiceManager` may append run-scoped MCP
+servers after `RuntimeServiceManager.Ensure` by returning `RuntimeServiceRef`
+values whose metadata includes `agentadaptor.mcp.enabled=true`. This does not
+require an explicit `WithMCP` option. Recognized metadata keys are
+`agentadaptor.mcp.enabled`, `agentadaptor.mcp.key`,
+`agentadaptor.mcp.transport`, `agentadaptor.mcp.url`,
+`agentadaptor.mcp.command`, `agentadaptor.mcp.args_json`,
+`agentadaptor.mcp.env_json`, `agentadaptor.mcp.headers_json`,
+`agentadaptor.mcp.bearer_token_env_var`, `agentadaptor.mcp.required`, and
+`agentadaptor.mcp.required_reason`. The SDK converts enabled refs to
+`MCPServerSpec`s, appends them to the effective MCP config, validates them with
+ordinary MCP capability checks, and includes them in `DriverRunRequest.MCP` plus
+the profile/session fingerprint. Malformed JSON metadata and duplicate MCP keys
+fail the run before adapter start. Other runtime metadata remains runtime-service
+metadata; it is not promoted into MCP server configuration.
+
 - `WithAgents(specs...)`
 - `WithHooks(specs...)`
 - `WithProfileConfig(patches...)`

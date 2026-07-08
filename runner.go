@@ -312,10 +312,6 @@ func (r *runnerImpl) resolveInvocation(ctx context.Context, prompt string, opts 
 
 	defaultRefs := r.sdk.selectedRefsFor(r.name, defaults.Skills)
 	runRefs := cloneSkillRefs(resolvedOpts.skills)
-	mcpPayload, err := resolveMCPPayload(defaults.MCP, resolvedOpts.mcp, r.binding.Adapter().Descriptor().MCP)
-	if err != nil {
-		return resolvedInvocation{}, nil, err
-	}
 
 	policy, err := mergeRunPolicy(defaults.RunPolicy, resolvedOpts.runPolicy)
 	if err != nil {
@@ -407,6 +403,12 @@ func (r *runnerImpl) resolveInvocation(ctx context.Context, prompt string, opts 
 			_ = r.sdk.runtimeManager.ReleaseByRun(releaseCtx, runID)
 		}
 		_ = r.sdk.workspaceManager.Release(releaseCtx, workspace, WorkspaceReleaseKeep)
+	}
+
+	mcpPayload, err := resolveMCPPayloadWithRuntime(defaults.MCP, resolvedOpts.mcp, runtimePayload.Ensured, r.binding.Adapter().Descriptor().MCP)
+	if err != nil {
+		cleanup()
+		return resolvedInvocation{}, nil, err
 	}
 
 	skillPayload, _, _, err := r.sdk.resolveSkills(ctx, identity, defaultRefs, runRefs, defaults.Skills)
