@@ -76,6 +76,11 @@ type projectMetadata struct {
 	ProgrammingLanguages []string `json:"programming_languages,omitempty"`
 }
 
+type nestedProjectMetadata struct {
+	ProjectName string          `json:"project_name"`
+	Artifact    projectMetadata `json:"artifact"`
+}
+
 func TestJSONSchemaForAndDecodeStructuredOutput(t *testing.T) {
 	first, err := agentadaptor.JSONSchemaFor[projectMetadata]()
 	if err != nil {
@@ -106,6 +111,31 @@ func TestJSONSchemaForAndDecodeStructuredOutput(t *testing.T) {
 	}
 	if decoded.ProjectName != "agent-adaptor" || len(decoded.ProgrammingLanguages) != 1 || decoded.ProgrammingLanguages[0] != "go" {
 		t.Fatalf("unexpected decoded value: %#v", decoded)
+	}
+}
+
+func TestWithJSONSchemaOutputForInlinesReferences(t *testing.T) {
+	driver := &structuredTestDriver{
+		caps:   promptStructuredCaps(),
+		output: `{"project_name":"agent-adaptor","artifact":{"project_name":"nested","programming_languages":["go"]}}`,
+	}
+	sdk := agentadaptor.New(agentadaptor.WithDefaultAgent(agentadaptor.Bind(driver, struct{}{})))
+
+	res, err := sdk.Run(context.Background(), "extract nested metadata", agentadaptor.WithJSONSchemaOutputFor[nestedProjectMetadata]())
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if res.StructuredOutput == nil || !res.StructuredOutput.Valid {
+		t.Fatalf("expected valid structured output, got %#v", res.StructuredOutput)
+	}
+	if driver.lastReq.OutputSchema == nil {
+		t.Fatal("expected output schema on driver request")
+	}
+	schema := string(driver.lastReq.OutputSchema.SchemaJSON)
+	for _, forbidden := range []string{`"$defs"`, `"$ref"`, `"$schema"`} {
+		if strings.Contains(schema, forbidden) {
+			t.Fatalf("expected WithJSONSchemaOutputFor to remove %s, got %s", forbidden, schema)
+		}
 	}
 }
 

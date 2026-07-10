@@ -77,7 +77,39 @@ func textPart(text string) *a2aproto.Part {
 }
 
 func dataPart(data any) *a2aproto.Part {
-	return a2aproto.NewDataPart(data)
+	return a2aproto.NewDataPart(protocolDataValue(data))
+}
+
+func outboundParts(parts []Part) []*a2aproto.Part {
+	if len(parts) == 0 {
+		return []*a2aproto.Part{textPart("")}
+	}
+	out := make([]*a2aproto.Part, 0, len(parts))
+	for _, p := range parts {
+		var up *a2aproto.Part
+		switch p.Kind {
+		case PartRaw:
+			up = a2aproto.NewRawPart(p.Raw)
+		case PartData:
+			up = a2aproto.NewDataPart(protocolDataValue(p.Data))
+		case PartURL:
+			up = a2aproto.NewFileURLPart(a2aproto.URL(p.URL), p.MediaType)
+		default:
+			up = a2aproto.NewTextPart(p.Text)
+		}
+		up.MediaType = p.MediaType
+		up.Filename = p.Filename
+		up.Metadata = cloneMap(p.Metadata)
+		out = append(out, up)
+	}
+	return out
+}
+
+func protocolDataValue(data any) any {
+	if normalized, ok := normalizeJSONValue(data); ok {
+		return normalized
+	}
+	return data
 }
 
 func agentMessage(info a2aproto.TaskInfoProvider, text string) *a2aproto.Message {

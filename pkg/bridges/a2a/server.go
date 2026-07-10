@@ -40,16 +40,18 @@ func NewServer(runner agentadaptor.Runner, opts ServerOptions) *Server {
 	if opts.Session == nil {
 		opts.Session = Stateless()
 	}
-	if opts.Prompt == nil {
-		opts.Prompt = PromptBuilderFunc(defaultPrompt)
+	if opts.PromptBuilder == nil {
+		opts.PromptBuilder = PromptBuilderFunc(defaultPrompt)
 	}
 
 	exec := &executor{
-		runner: runner, session: opts.Session, prompt: opts.Prompt,
-		runOptions: append([]agentadaptor.RunOption(nil), opts.RunOptions...),
-		exposure:   opts.Exposure,
-		active:     map[a2aproto.TaskID]agentadaptor.RunHandle{},
-		pending:    map[a2aproto.TaskID]context.CancelFunc{},
+		runner: runner, session: opts.Session, prompt: opts.PromptBuilder,
+		runOptions:    append([]agentadaptor.RunOption(nil), opts.RunOptions...),
+		runStreaming:  opts.RunStreaming,
+		resultBuilder: opts.ResultBuilder,
+		exposure:      opts.Exposure,
+		active:        map[a2aproto.TaskID]agentadaptor.RunHandle{},
+		pending:       map[a2aproto.TaskID]context.CancelFunc{},
 	}
 	handlerOpts := []a2asrv.RequestHandlerOption{a2asrv.WithTaskStore(taskStore)}
 	capabilityOpts, err := requestHandlerCapabilityOptions(card, opts)
@@ -82,11 +84,13 @@ func (s *Server) AgentCard() AgentCard {
 }
 
 type executor struct {
-	runner     agentadaptor.Runner
-	session    SessionMapper
-	prompt     PromptBuilder
-	runOptions []agentadaptor.RunOption
-	exposure   ExposurePolicy
+	runner        agentadaptor.Runner
+	session       SessionMapper
+	prompt        PromptBuilder
+	runOptions    []agentadaptor.RunOption
+	runStreaming  RunStreamingMode
+	resultBuilder ResultBuilder
+	exposure      ExposurePolicy
 
 	mu      sync.Mutex
 	active  map[a2aproto.TaskID]agentadaptor.RunHandle
@@ -113,7 +117,9 @@ func (e *executor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext)
 		runOpts := append([]agentadaptor.RunOption(nil), e.runOptions...)
 		runOpts = append(runOpts, sessionOpts...)
 		runOpts = append(runOpts, promptOpts...)
-		runOpts = append(runOpts, agentadaptor.WithStreaming())
+		if e.runStreaming != RunStreamingDisabled {
+			runOpts = append(runOpts, agentadaptor.WithStreaming())
+		}
 
 		runCtx, cancelRunCtx := context.WithCancel(ctx)
 		e.storePending(execCtx.TaskID, cancelRunCtx)
@@ -195,7 +201,13 @@ func (e *executor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext)
 			yield(a2aproto.NewStatusUpdateEvent(execCtx, state, msg), nil)
 			return
 		}
-		for _, ev := range terminalArtifacts(execCtx, out.result, e.exposure) {
+		built, err := e.buildResult(ctx, req, out.result)
+		if err != nil {
+			msg := failureMessage(execCtx, err.Error(), map[string]any{"layer": "result_builder"})
+			yield(a2aproto.NewStatusUpdateEvent(execCtx, a2aproto.TaskStateFailed, msg), nil)
+			return
+		}
+		for _, ev := range terminalArtifacts(execCtx, out.result, e.exposure, built) {
 			if !yield(ev, nil) {
 				return
 			}
@@ -205,8 +217,15 @@ func (e *executor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext)
 			yield(a2aproto.NewStatusUpdateEvent(execCtx, a2aproto.TaskStateFailed, msg), nil)
 			return
 		}
-		yield(a2aproto.NewStatusUpdateEvent(execCtx, a2aproto.TaskStateCompleted, agentMessage(execCtx, out.result.Output)), nil)
+		yield(a2aproto.NewStatusUpdateEvent(execCtx, a2aproto.TaskStateCompleted, agentMessage(execCtx, completedStatusText(out.result, built))), nil)
 	}
+}
+
+func (e *executor) buildResult(ctx context.Context, req InboundRequest, result agentadaptor.RunResult) (BuiltResult, error) {
+	if e == nil || e.resultBuilder == nil {
+		return BuiltResult{}, nil
+	}
+	return e.resultBuilder.BuildResult(ctx, req, result)
 }
 
 func (e *executor) Cancel(ctx context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2aproto.Event, error] {
@@ -277,6 +296,13 @@ func (e *executor) deletePending(id a2aproto.TaskID) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	delete(e.pending, id)
+}
+
+func completedStatusText(result agentadaptor.RunResult, built BuiltResult) string {
+	if built.StatusText != nil {
+		return *built.StatusText
+	}
+	return result.Output
 }
 
 func canceledStatus(info a2aproto.TaskInfoProvider, cause error) *a2aproto.TaskStatusUpdateEvent {

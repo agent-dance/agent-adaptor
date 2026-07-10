@@ -131,7 +131,7 @@ func upstreamParts(parts []Part) []*a2aproto.Part {
 		case PartRaw:
 			up = a2aproto.NewRawPart(p.Raw)
 		case PartData:
-			up = a2aproto.NewDataPart(p.Data)
+			up = a2aproto.NewDataPart(protocolDataValue(p.Data))
 		case PartURL:
 			up = a2aproto.NewFileURLPart(a2aproto.URL(p.URL), p.MediaType)
 		default:
@@ -143,6 +143,21 @@ func upstreamParts(parts []Part) []*a2aproto.Part {
 		out = append(out, up)
 	}
 	return out
+}
+
+func protocolDataValue(data any) any {
+	if data == nil {
+		return nil
+	}
+	raw, err := json.Marshal(data)
+	if err != nil {
+		return data
+	}
+	var normalized any
+	if err := json.Unmarshal(raw, &normalized); err != nil {
+		return data
+	}
+	return normalized
 }
 
 func convertTask(task *a2aproto.Task) Task {
