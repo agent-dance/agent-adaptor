@@ -161,7 +161,16 @@ func (t *streamTranslator) dataArtifact(id a2aproto.ArtifactID, name string, dat
 	return ev
 }
 
-func terminalArtifacts(info a2aproto.TaskInfoProvider, result agentadaptor.RunResult, exposure ExposurePolicy) []a2aproto.Event {
+func terminalArtifacts(info a2aproto.TaskInfoProvider, result agentadaptor.RunResult, exposure ExposurePolicy, built BuiltResult) []a2aproto.Event {
+	var out []a2aproto.Event
+	if !built.ReplaceDefaultArtifacts {
+		out = append(out, defaultTerminalArtifacts(info, result, exposure)...)
+	}
+	out = append(out, customTerminalArtifacts(info, built.Artifacts)...)
+	return out
+}
+
+func defaultTerminalArtifacts(info a2aproto.TaskInfoProvider, result agentadaptor.RunResult, exposure ExposurePolicy) []a2aproto.Event {
 	var out []a2aproto.Event
 	details := map[string]any{
 		"summary": result.Summary,
@@ -192,6 +201,29 @@ func terminalArtifacts(info a2aproto.TaskInfoProvider, result agentadaptor.RunRe
 	ev.Artifact.ID = ArtifactAgentAdaptorResult
 	ev.Artifact.Name = ArtifactAgentAdaptorResult
 	out = append(out, ev)
+	return out
+}
+
+func customTerminalArtifacts(info a2aproto.TaskInfoProvider, artifacts []ArtifactSpec) []a2aproto.Event {
+	if len(artifacts) == 0 {
+		return nil
+	}
+	out := make([]a2aproto.Event, 0, len(artifacts))
+	for _, spec := range artifacts {
+		id := defaultString(spec.ID, spec.Name)
+		if id == "" {
+			continue
+		}
+		ev := a2aproto.NewArtifactUpdateEvent(info, a2aproto.ArtifactID(id), outboundParts(spec.Parts)...)
+		ev.Append = false
+		ev.LastChunk = true
+		ev.Artifact.ID = a2aproto.ArtifactID(id)
+		ev.Artifact.Name = defaultString(spec.Name, id)
+		ev.Artifact.Description = spec.Description
+		ev.Artifact.Extensions = append([]string(nil), spec.Extensions...)
+		ev.Artifact.Metadata = cloneMap(spec.Metadata)
+		out = append(out, ev)
+	}
 	return out
 }
 

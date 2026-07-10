@@ -1,0 +1,7 @@
+This is a placeholder file for the Team Mode demo.
+
+In the real Team Mode contract, requirement_attachment_path usually points to
+a zip file exported from the requirement system.
+
+For this minimal example, we only need a stable local path so the
+DesignPlanRequest shape matches the document constraint.

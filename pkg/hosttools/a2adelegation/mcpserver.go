@@ -137,10 +137,12 @@ func ParseToolInput(raw []byte) (ToolInput, error) {
 }
 
 type MCPServerOptions struct {
-	RunID            string
-	ParentToolCallID string
-	Tenant           string
-	BearerToken      string
+	RunID              string
+	ParentToolCallID   string
+	Tenant             string
+	BearerToken        string
+	Tools              []ToolSpec
+	DisableDefaultTool bool
 
 	// AllowUnauthenticatedLoopbackForTest permits an otherwise unprotected
 	// loopback-only server for tests and local probes. Production HTTP sidecars
@@ -221,11 +223,7 @@ func (s *MCPServer) handle(r *http.Request, req rpcRequest) map[string]any {
 	case "ping":
 		return result(req.ID, map[string]any{})
 	case "tools/list":
-		return result(req.ID, map[string]any{"tools": []map[string]any{{
-			"name":        DelegateToolName,
-			"description": "Delegate a bounded task to a host-curated remote A2A agent and return a structured final result.",
-			"inputSchema": ToolSchema(),
-		}}})
+		return result(req.ID, map[string]any{"tools": s.listTools()})
 	case "tools/call":
 		return s.handleToolCall(r, req)
 	default:
@@ -243,6 +241,9 @@ func (s *MCPServer) handleToolCall(r *http.Request, req rpcRequest) map[string]a
 	}
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return rpcError(req.ID, -32602, "invalid tools/call params: "+err.Error())
+	}
+	if tool, ok := s.findTool(params.Name); ok {
+		return s.handleCustomToolCall(r, req, tool, params.Arguments)
 	}
 	if params.Name != DelegateToolName {
 		return rpcError(req.ID, -32602, "unknown tool "+params.Name)
@@ -283,6 +284,57 @@ func (s *MCPServer) handleToolCall(r *http.Request, req rpcRequest) map[string]a
 	return toolResult(req.ID, out, err != nil)
 }
 
+func (s *MCPServer) handleCustomToolCall(r *http.Request, req rpcRequest, tool ToolSpec, raw json.RawMessage) map[string]any {
+	if tool.BuildRequest == nil {
+		return rpcError(req.ID, -32602, "tool "+tool.Name+" does not define a request builder")
+	}
+	request, err := tool.BuildRequest(r.Context(), raw, ToolContext{
+		RunID:            strings.TrimSpace(s.Options.RunID),
+		ParentToolCallID: s.Options.ParentToolCallID,
+		Tenant:           s.Options.Tenant,
+	})
+	if err != nil {
+		return jsonToolResult(req.ID, map[string]any{
+			"error": map[string]any{
+				"code":    "tool_request_build_failed",
+				"message": err.Error(),
+			},
+		}, true)
+	}
+	if request.RunID == "" {
+		request.RunID = strings.TrimSpace(s.Options.RunID)
+	}
+	if request.ParentToolCallID == "" {
+		request.ParentToolCallID = s.Options.ParentToolCallID
+	}
+	if request.Tenant == "" {
+		request.Tenant = s.Options.Tenant
+	}
+	if strings.TrimSpace(request.RunID) == "" {
+		derr := &DelegationError{Code: "configuration_error", Message: "run context is required for delegation MCP tool"}
+		return toolResult(req.ID, DelegationResult{Agent: request.Agent, RemoteProtocol: ProtocolA2A, Status: "failed", Error: derr}, true)
+	}
+	out, err := s.Delegator.Delegate(r.Context(), request)
+	if err != nil {
+		out = ensureDelegationError(out, err)
+	}
+	value := any(out)
+	if err == nil && tool.BuildResult != nil {
+		built, buildErr := tool.BuildResult(r.Context(), out)
+		if buildErr != nil {
+			return jsonToolResult(req.ID, map[string]any{
+				"delegation": out,
+				"error": map[string]any{
+					"code":    "tool_result_build_failed",
+					"message": buildErr.Error(),
+				},
+			}, true)
+		}
+		value = built
+	}
+	return jsonToolResult(req.ID, value, err != nil)
+}
+
 func ensureDelegationError(out DelegationResult, err error) DelegationResult {
 	if out.Status == "" {
 		out.Status = "failed"
@@ -312,14 +364,53 @@ type rpcRequest struct {
 }
 
 func toolResult(id json.RawMessage, value DelegationResult, isError bool) map[string]any {
+	return jsonToolResult(id, value, isError)
+}
+
+func jsonToolResult(id json.RawMessage, value any, isError bool) map[string]any {
 	raw, err := json.Marshal(value)
 	if err != nil {
-		return rpcError(id, -32603, "marshal delegation result: "+err.Error())
+		return rpcError(id, -32603, "marshal tool result: "+err.Error())
 	}
 	return result(id, map[string]any{
 		"content": []map[string]any{{"type": "text", "text": string(raw)}},
 		"isError": isError,
 	})
+}
+
+func (s *MCPServer) listTools() []map[string]any {
+	tools := []map[string]any{}
+	if !s.Options.DisableDefaultTool {
+		tools = append(tools, map[string]any{
+			"name":        DelegateToolName,
+			"description": "Delegate a bounded task to a host-curated remote A2A agent and return a structured final result.",
+			"inputSchema": ToolSchema(),
+		})
+	}
+	for _, tool := range s.Options.Tools {
+		if strings.TrimSpace(tool.Name) == "" {
+			continue
+		}
+		schema := tool.InputSchema
+		if schema == nil {
+			schema = map[string]any{"type": "object"}
+		}
+		tools = append(tools, map[string]any{
+			"name":        tool.Name,
+			"description": tool.Description,
+			"inputSchema": schema,
+		})
+	}
+	return tools
+}
+
+func (s *MCPServer) findTool(name string) (ToolSpec, bool) {
+	for _, tool := range s.Options.Tools {
+		if tool.Name == name {
+			return tool, true
+		}
+	}
+	return ToolSpec{}, false
 }
 
 func result(id json.RawMessage, value any) map[string]any {

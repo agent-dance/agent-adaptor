@@ -173,10 +173,39 @@ func JSONSchemaFor[T any](opts ...SchemaOption) (json.RawMessage, error) {
 	return normalizeJSON(raw)
 }
 
+func cleanGeneratedSchemaForStructuredOutput(raw json.RawMessage) (json.RawMessage, error) {
+	var doc any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return nil, &InvalidOutputSchemaError{Reason: "parse generated schema JSON", Cause: err}
+	}
+	root, ok := doc.(map[string]any)
+	if !ok {
+		return raw, nil
+	}
+	delete(root, "$schema")
+	delete(root, "$id")
+	cleaned, err := json.Marshal(root)
+	if err != nil {
+		return nil, &InvalidOutputSchemaError{Reason: "marshal cleaned generated schema", Cause: err}
+	}
+	return normalizeJSON(cleaned)
+}
+
 // WithJSONSchemaOutputFor derives a schema from Go type T and attaches it to
 // one Run or Start invocation.
+//
+// This helper intentionally inlines local references so the generated schema is
+// flatter and works better with provider-native structured-output paths (for
+// example Claude's JSON Schema mode), while JSONSchemaFor[T]() itself keeps its
+// existing default behavior for callers who need the unmodified schema form.
 func WithJSONSchemaOutputFor[T any](opts ...StructuredOutputOption) RunOption {
-	raw, err := JSONSchemaFor[T]()
+	raw, err := JSONSchemaFor[T](SchemaInlineReferences())
+	if err != nil {
+		return func(ro *runOptions) {
+			ro.outputSchemaErr = err
+		}
+	}
+	raw, err = cleanGeneratedSchemaForStructuredOutput(raw)
 	if err != nil {
 		return func(ro *runOptions) {
 			ro.outputSchemaErr = err

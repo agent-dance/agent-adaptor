@@ -181,7 +181,7 @@ func (m *eventMapper) terminalForState(taskID, contextID string, state clienta2a
 	return ev
 }
 
-func resultFromTask(base DelegationResult, task clienta2a.Task) DelegationResult {
+func resultFromTask(base DelegationResult, task clienta2a.Task, includeRemoteArtifacts bool) DelegationResult {
 	base.RemoteTaskID = task.ID
 	base.RemoteContextID = task.ContextID
 	base.Status = statusFromState(task.Status.State)
@@ -195,7 +195,19 @@ func resultFromTask(base DelegationResult, task clienta2a.Task) DelegationResult
 			}
 		}
 	}
+	if task.Status.Message != nil {
+		text := textFromMessage(*task.Status.Message)
+		if text != "" {
+			if !hasDelegationMessage(base.Messages, task.Status.Message.Role, text) {
+				base.Messages = append(base.Messages, DelegationMessage{Role: task.Status.Message.Role, Text: text})
+			}
+			base.Summary = text
+		}
+	}
 	for _, artifact := range task.Artifacts {
+		if includeRemoteArtifacts {
+			base.RemoteArtifacts = append(base.RemoteArtifacts, cloneRemoteArtifact(artifact))
+		}
 		if artifact.Name == bridgea2a.ArtifactAgentAdaptorResult {
 			applyAgentAdaptorResult(&base, artifact)
 			continue
@@ -212,6 +224,40 @@ func resultFromTask(base DelegationResult, task clienta2a.Task) DelegationResult
 		base.Error = &DelegationError{Code: errorCodeFromState(task.Status.State), Message: "remote task did not complete successfully", RemoteStatus: string(task.Status.State)}
 	}
 	return base
+}
+
+func hasDelegationMessage(messages []DelegationMessage, role, text string) bool {
+	for _, msg := range messages {
+		if msg.Role == role && msg.Text == text {
+			return true
+		}
+	}
+	return false
+}
+
+func cloneRemoteArtifact(artifact clienta2a.Artifact) RemoteArtifact {
+	out := RemoteArtifact{
+		ID:          artifact.ID,
+		Name:        artifact.Name,
+		Description: artifact.Description,
+		Extensions:  append([]string(nil), artifact.Extensions...),
+		Metadata:    cloneAnyMap(artifact.Metadata),
+		Raw:         cloneAnyMap(artifact.Raw),
+	}
+	out.Parts = make([]RemotePart, 0, len(artifact.Parts))
+	for _, part := range artifact.Parts {
+		out.Parts = append(out.Parts, RemotePart{
+			Kind:      part.Kind,
+			Text:      part.Text,
+			Raw:       append([]byte(nil), part.Raw...),
+			Data:      part.Data,
+			URL:       part.URL,
+			MediaType: part.MediaType,
+			Filename:  part.Filename,
+			Metadata:  cloneAnyMap(part.Metadata),
+		})
+	}
+	return out
 }
 
 func applyAgentAdaptorResult(result *DelegationResult, artifact clienta2a.Artifact) {
