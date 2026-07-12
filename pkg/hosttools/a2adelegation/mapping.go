@@ -47,7 +47,7 @@ func (m *eventMapper) Map(event clienta2a.Event) []DelegationEvent {
 		}
 	case clienta2a.EventArtifact:
 		if event.Artifact != nil {
-			out = append(out, m.artifactEvent(event.TaskID, event.ContextID, *event.Artifact))
+			out = append(out, m.artifactEvents(event)...)
 		}
 	case clienta2a.EventTerminal:
 		if event.Message != nil {
@@ -63,7 +63,10 @@ func (m *eventMapper) taskEvents(task clienta2a.Task) []DelegationEvent {
 		out = append(out, m.statusEvent(task.ID, task.ContextID, &task.Status))
 	}
 	for _, artifact := range task.Artifacts {
-		out = append(out, m.artifactEvent(task.ID, task.ContextID, artifact))
+		out = append(out, m.artifactEvents(clienta2a.Event{
+			TaskID: task.ID, ContextID: task.ContextID, Artifact: &artifact,
+			LastChunk: executionFinalState(task.Status.State),
+		})...)
 	}
 	return out
 }
@@ -118,21 +121,18 @@ func (m *eventMapper) messageEvents(msg clienta2a.Message) []DelegationEvent {
 	return out
 }
 
-func (m *eventMapper) artifactEvent(taskID, contextID string, artifact clienta2a.Artifact) DelegationEvent {
+func (m *eventMapper) artifactEvents(event clienta2a.Event) []DelegationEvent {
+	artifact := *event.Artifact
 	if artifact.Name == bridgea2a.ArtifactAssistantOutput {
-		ev := m.base
-		ev.Kind = DelegationTextDelta
-		ev.RemoteTaskID = taskID
-		ev.RemoteContextID = contextID
-		ev.RemoteArtifactID = artifact.ID
-		ev.RemoteMessageID = bridgea2a.ArtifactAssistantOutput
-		ev.Delta = textFromParts(artifact.Parts)
-		return ev
+		return m.assistantOutputEvents(event, artifact)
+	}
+	if events := m.toolCallEvents(event, artifact); len(events) > 0 {
+		return events
 	}
 	ev := m.base
 	ev.Kind = DelegationArtifactCreated
-	ev.RemoteTaskID = taskID
-	ev.RemoteContextID = contextID
+	ev.RemoteTaskID = event.TaskID
+	ev.RemoteContextID = event.ContextID
 	ev.RemoteArtifactID = artifact.ID
 	ev.Artifact = &DelegationArtifact{
 		ID:          artifact.ID,
@@ -143,7 +143,118 @@ func (m *eventMapper) artifactEvent(taskID, contextID string, artifact clienta2a
 		Metadata:    cloneAnyMap(artifact.Metadata),
 	}
 	ev.Raw = artifact.Raw
-	return ev
+	return []DelegationEvent{ev}
+}
+
+// toolCallEvents restores the typed tool lifecycle encoded by the A2A bridge
+// as tool-call artifacts. This keeps A2A wire artifacts protocol-native while
+// giving hosts UI-facing events instead of opaque artifacts.
+func (m *eventMapper) toolCallEvents(event clienta2a.Event, artifact clienta2a.Artifact) []DelegationEvent {
+	if data := artifactData(artifact); data != nil {
+		toolID := dataString(data, "id")
+		switch dataString(data, "kind") {
+		case "tool_call.start":
+			ev := m.base
+			ev.Kind = DelegationToolCallStart
+			ev.RemoteTaskID = event.TaskID
+			ev.RemoteContextID = event.ContextID
+			ev.RemoteArtifactID = artifact.ID
+			ev.RemoteToolCallID = toolID
+			ev.ToolName = dataString(data, "name")
+			ev.Args = data["args"]
+			return []DelegationEvent{ev}
+		case "tool_call.result":
+			ev := m.base
+			ev.Kind = DelegationToolCallResult
+			ev.RemoteTaskID = event.TaskID
+			ev.RemoteContextID = event.ContextID
+			ev.RemoteArtifactID = artifact.ID
+			ev.RemoteToolCallID = toolID
+			ev.Result = data["result"]
+			return []DelegationEvent{ev}
+		}
+	}
+	if !strings.HasPrefix(artifact.Name, "tool-call-") {
+		return nil
+	}
+	toolID := strings.TrimPrefix(artifact.Name, "tool-call-")
+	ev := m.base
+	ev.RemoteTaskID = event.TaskID
+	ev.RemoteContextID = event.ContextID
+	ev.RemoteArtifactID = artifact.ID
+	ev.RemoteToolCallID = toolID
+	if event.LastChunk {
+		ev.Kind = DelegationToolCallEnd
+		return []DelegationEvent{ev}
+	}
+	if text := textFromParts(artifact.Parts); text != "" {
+		ev.Kind = DelegationToolCallArgs
+		ev.Delta = text
+		return []DelegationEvent{ev}
+	}
+	return nil
+}
+
+func artifactData(artifact clienta2a.Artifact) map[string]any {
+	for _, part := range artifact.Parts {
+		if data, ok := part.Data.(map[string]any); ok {
+			return data
+		}
+	}
+	return nil
+}
+
+func dataString(data map[string]any, key string) string {
+	value, _ := data[key].(string)
+	return strings.TrimSpace(value)
+}
+
+// assistantOutputEvents 将 A2A 文本 artifact chunk 规范化为完整的文本消息生命周期。
+// A2A 用 append / lastChunk 标识 chunk 边界；下游 AG-UI 客户端则要求 start/content/end
+// 共享同一个 message ID，因此不能只透传 delta。
+func (m *eventMapper) assistantOutputEvents(event clienta2a.Event, artifact clienta2a.Artifact) []DelegationEvent {
+	messageID := artifact.ID
+	if messageID == "" {
+		messageID = bridgea2a.ArtifactAssistantOutput
+	}
+	out := make([]DelegationEvent, 0, 3)
+	if m.openMessage != messageID {
+		if m.openMessage != "" {
+			end := m.base
+			end.Kind = DelegationTextEnd
+			end.RemoteMessageID = m.openMessage
+			out = append(out, end)
+		}
+		start := m.base
+		start.Kind = DelegationTextStart
+		start.RemoteTaskID = event.TaskID
+		start.RemoteContextID = event.ContextID
+		start.RemoteArtifactID = artifact.ID
+		start.RemoteMessageID = messageID
+		out = append(out, start)
+		m.openMessage = messageID
+	}
+	if text := textFromParts(artifact.Parts); text != "" {
+		delta := m.base
+		delta.Kind = DelegationTextDelta
+		delta.RemoteTaskID = event.TaskID
+		delta.RemoteContextID = event.ContextID
+		delta.RemoteArtifactID = artifact.ID
+		delta.RemoteMessageID = messageID
+		delta.Delta = text
+		out = append(out, delta)
+	}
+	if event.LastChunk {
+		end := m.base
+		end.Kind = DelegationTextEnd
+		end.RemoteTaskID = event.TaskID
+		end.RemoteContextID = event.ContextID
+		end.RemoteArtifactID = artifact.ID
+		end.RemoteMessageID = messageID
+		out = append(out, end)
+		m.openMessage = ""
+	}
+	return out
 }
 
 func (m *eventMapper) terminalEvents(event clienta2a.Event) []DelegationEvent {
