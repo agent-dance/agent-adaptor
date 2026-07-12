@@ -127,10 +127,10 @@ func TestEventMapperMapsA2ABridgeArtifactsAndTerminal(t *testing.T) {
 			Parts: []clienta2a.Part{{Kind: clienta2a.PartText, Text: "hello"}},
 		},
 	})
-	if len(events) != 2 {
-		t.Fatalf("expected synthesized start + text delta, got %#v", events)
+	if len(events) != 3 {
+		t.Fatalf("expected delegation + synthesized text start/delta, got %#v", events)
 	}
-	if events[0].Kind != DelegationStarted || events[1].Kind != DelegationTextDelta || events[1].Delta != "hello" {
+	if events[0].Kind != DelegationStarted || events[1].Kind != DelegationTextStart || events[2].Kind != DelegationTextDelta || events[2].Delta != "hello" {
 		t.Fatalf("unexpected mapped events: %#v", events)
 	}
 

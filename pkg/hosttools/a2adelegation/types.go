@@ -28,6 +28,10 @@ const (
 	DelegationTextStart       DelegationEventKind = "subagent.text.start"
 	DelegationTextDelta       DelegationEventKind = "subagent.text.delta"
 	DelegationTextEnd         DelegationEventKind = "subagent.text.end"
+	DelegationToolCallStart   DelegationEventKind = "subagent.tool_call.start"
+	DelegationToolCallArgs    DelegationEventKind = "subagent.tool_call.args"
+	DelegationToolCallResult  DelegationEventKind = "subagent.tool_call.result"
+	DelegationToolCallEnd     DelegationEventKind = "subagent.tool_call.end"
 	DelegationArtifactCreated DelegationEventKind = "subagent.artifact"
 	DelegationInputRequired   DelegationEventKind = "subagent.input_required"
 	DelegationFinished        DelegationEventKind = "subagent.finished"
@@ -192,10 +196,14 @@ type DelegationEvent struct {
 	RemoteContextID  string
 	RemoteMessageID  string
 	RemoteArtifactID string
+	RemoteToolCallID string
 
 	Kind     DelegationEventKind
 	Delta    string
 	Text     string
+	ToolName string
+	Args     any
+	Result   any
 	Artifact *DelegationArtifact
 	Status   string
 	Error    *DelegationError

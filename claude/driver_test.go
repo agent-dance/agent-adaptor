@@ -57,6 +57,29 @@ func TestBuildClaudeExecArgsUsesJSONSchemaForNativeStructuredOutput(t *testing.T
 	}
 }
 
+func TestBuildClaudeExecArgsUsesStreamJSONForStreamingStructuredOutput(t *testing.T) {
+	schema := []byte(`{"type":"object","properties":{"project_name":{"type":"string"}}}`)
+	args := buildClaudeExecArgs(agentadaptor.ClaudeConfig{Model: "claude-sonnet-4"}, agentadaptor.DriverRunRequest{
+		Streaming: true,
+		OutputSchema: &agentadaptor.OutputSchema{
+			Format:     agentadaptor.OutputFormatJSONSchema,
+			Mode:       agentadaptor.StructuredOutputNativeStrict,
+			SchemaJSON: schema,
+		},
+	}, "", false)
+	joined := " " + strings.Join(args, " ") + " "
+	for _, want := range []string{" --output-format ", " stream-json ", " --verbose ", " --json-schema ", string(schema), " --include-partial-messages "} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("streaming structured args missing %q in %#v", strings.TrimSpace(want), args)
+		}
+	}
+	for _, forbidden := range []string{" --output-format json "} {
+		if strings.Contains(joined, forbidden) {
+			t.Fatalf("streaming structured args must not contain %q: %#v", strings.TrimSpace(forbidden), args)
+		}
+	}
+}
+
 func TestDescriptorAdvertisesExpectedMCPCapabilities(t *testing.T) {
 	caps := NewAdapter().Descriptor().MCP
 	if !caps.Supported || !caps.Stdio || !caps.HTTP || !caps.SSE {
@@ -69,8 +92,8 @@ func TestDescriptorAdvertisesStructuredOutputCapabilities(t *testing.T) {
 	if !caps.JSONSchemaNative || !caps.JSONSchemaPromptValidate || !caps.WorksWithRun || !caps.WorksWithStart {
 		t.Fatalf("unexpected Claude structured-output capability: %#v", caps)
 	}
-	if caps.WorksWithStreaming || caps.WorksWithHITL {
-		t.Fatalf("Claude native structured output should not advertise streaming/HITL support: %#v", caps)
+	if !caps.WorksWithStreaming || caps.WorksWithHITL {
+		t.Fatalf("Claude native structured output capability mismatch: %#v", caps)
 	}
 }
 
