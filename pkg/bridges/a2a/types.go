@@ -167,8 +167,12 @@ type ServerOptions struct {
 	// Session maps inbound A2A context/task identity into SDK RunOptions such as
 	// WithSessionKey.
 	Session SessionMapper
+	// Prompt is the legacy prompt builder option.
+	// Deprecated: use PromptBuilder instead.
+	Prompt PromptBuilder
 	// PromptBuilder interprets one inbound A2A request and turns it into the
 	// prompt plus any per-run RunOptions used for the downstream SDK execution.
+	// When both PromptBuilder and Prompt are set, PromptBuilder takes precedence.
 	PromptBuilder PromptBuilder
 
 	// RunOptions are server-wide defaults appended before per-request options
@@ -296,8 +300,9 @@ func (fn ResultBuilderFunc) BuildResult(ctx context.Context, req InboundRequest,
 // BuiltResult is the terminal A2A projection returned by ResultBuilder.
 //
 // When ReplaceDefaultArtifacts is false, Artifacts are appended after the
-// bridge-owned defaults (`agent-adaptor-result`, streamed text artifacts, etc).
-// When true, only Artifacts are emitted.
+// bridge-owned terminal defaults (`agent-adaptor-result`). When true, only the
+// custom terminal Artifacts are emitted. Streamed artifacts may already have
+// been emitted before ResultBuilder runs and are not affected by this setting.
 //
 // StatusText, when non-nil, overrides the final completed status message text.
 // A nil value preserves the bridge's default `RunResult.Output` behavior.

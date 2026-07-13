@@ -1,15 +1,22 @@
 package a2a
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"math"
 	"regexp"
+	"strconv"
 	"strings"
 
 	a2aproto "github.com/a2aproject/a2a-go/v2/a2a"
 )
 
-const redactedMarker = "[REDACTED]"
+const (
+	redactedMarker       = "[REDACTED]"
+	unserializableMarker = "[UNSERIALIZABLE]"
+	maxA2AJSONInteger    = uint64(1<<53 - 1)
+)
 
 var (
 	inlineSecretPatterns = []*regexp.Regexp{
@@ -18,12 +25,15 @@ var (
 	}
 )
 
-func inboundRequest(execCtx taskInfo) InboundRequest {
-	msg := convertMessage(execCtx.Message())
+func inboundRequest(execCtx taskInfo) (InboundRequest, error) {
+	msg, err := convertMessage(execCtx.Message())
+	if err != nil {
+		return InboundRequest{}, err
+	}
 	return InboundRequest{
 		TaskID: execCtx.TaskIDString(), ContextID: execCtx.ContextIDString(),
 		Message: msg, Metadata: cloneMap(execCtx.MetadataMap()),
-	}
+	}, nil
 }
 
 type taskInfo interface {
@@ -33,9 +43,9 @@ type taskInfo interface {
 	MetadataMap() map[string]any
 }
 
-func convertMessage(msg *a2aproto.Message) Message {
+func convertMessage(msg *a2aproto.Message) (Message, error) {
 	if msg == nil {
-		return Message{}
+		return Message{}, nil
 	}
 	out := Message{
 		ID: msg.ID, Role: string(msg.Role), TaskID: string(msg.TaskID), ContextID: msg.ContextID,
@@ -45,14 +55,18 @@ func convertMessage(msg *a2aproto.Message) Message {
 		out.ReferenceTasks = append(out.ReferenceTasks, string(id))
 	}
 	for _, part := range msg.Parts {
-		out.Parts = append(out.Parts, convertPart(part))
+		converted, err := convertPart(part)
+		if err != nil {
+			return Message{}, err
+		}
+		out.Parts = append(out.Parts, converted)
 	}
-	return out
+	return out, nil
 }
 
-func convertPart(p *a2aproto.Part) Part {
+func convertPart(p *a2aproto.Part) (Part, error) {
 	if p == nil {
-		return Part{}
+		return Part{}, nil
 	}
 	out := Part{MediaType: p.MediaType, Filename: p.Filename, Metadata: cloneMap(p.Metadata)}
 	switch v := p.Content.(type) {
@@ -63,13 +77,19 @@ func convertPart(p *a2aproto.Part) Part {
 		out.Kind = PartRaw
 		out.Raw = append([]byte(nil), []byte(v)...)
 	case a2aproto.Data:
+		normalized, ok := normalizeJSONValue(v.Value)
+		if !ok || normalized == nil {
+			return Part{}, fmt.Errorf("inbound data part is null or contains a number outside the interoperable JSON safe range")
+		}
 		out.Kind = PartData
 		out.Data = v.Value
 	case a2aproto.URL:
 		out.Kind = PartURL
 		out.URL = string(v)
+	default:
+		return Part{}, fmt.Errorf("inbound part has unsupported content type %T", p.Content)
 	}
-	return out
+	return out, nil
 }
 
 func textPart(text string) *a2aproto.Part {
@@ -80,36 +100,58 @@ func dataPart(data any) *a2aproto.Part {
 	return a2aproto.NewDataPart(protocolDataValue(data))
 }
 
-func outboundParts(parts []Part) []*a2aproto.Part {
+func outboundParts(parts []Part) ([]*a2aproto.Part, error) {
 	if len(parts) == 0 {
-		return []*a2aproto.Part{textPart("")}
+		return nil, fmt.Errorf("artifact parts are required")
 	}
 	out := make([]*a2aproto.Part, 0, len(parts))
-	for _, p := range parts {
+	for i, p := range parts {
 		var up *a2aproto.Part
 		switch p.Kind {
 		case PartRaw:
+			if p.Raw == nil {
+				return nil, fmt.Errorf("part %d raw content is nil", i)
+			}
 			up = a2aproto.NewRawPart(p.Raw)
 		case PartData:
-			up = a2aproto.NewDataPart(protocolDataValue(p.Data))
+			if p.Data == nil {
+				return nil, fmt.Errorf("part %d data content is nil", i)
+			}
+			normalized, ok := normalizeJSONValue(p.Data)
+			if !ok {
+				return nil, fmt.Errorf("part %d data is not JSON-compatible", i)
+			}
+			if normalized == nil {
+				return nil, fmt.Errorf("part %d data content resolves to null", i)
+			}
+			up = a2aproto.NewDataPart(normalized)
 		case PartURL:
+			if strings.TrimSpace(p.URL) == "" {
+				return nil, fmt.Errorf("part %d URL is empty", i)
+			}
 			up = a2aproto.NewFileURLPart(a2aproto.URL(p.URL), p.MediaType)
-		default:
+		case PartText, "":
 			up = a2aproto.NewTextPart(p.Text)
+		default:
+			return nil, fmt.Errorf("part %d has unsupported kind %q", i, p.Kind)
+		}
+		metadata, err := normalizeJSONMap(p.Metadata)
+		if err != nil {
+			return nil, fmt.Errorf("part %d metadata: %w", i, err)
 		}
 		up.MediaType = p.MediaType
 		up.Filename = p.Filename
-		up.Metadata = cloneMap(p.Metadata)
+		up.Metadata = metadata
 		out = append(out, up)
 	}
-	return out
+	return out, nil
 }
 
 func protocolDataValue(data any) any {
 	if normalized, ok := normalizeJSONValue(data); ok {
 		return normalized
 	}
-	return data
+	return unserializableMarker
 }
 
 func agentMessage(info a2aproto.TaskInfoProvider, text string) *a2aproto.Message {
@@ -136,7 +178,9 @@ func rawMap(v any) map[string]any {
 		return map[string]any{"marshal_error": err.Error()}
 	}
 	var out map[string]any
-	if err := json.Unmarshal(raw, &out); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if err := decoder.Decode(&out); err != nil {
 		return map[string]any{"unmarshal_error": err.Error()}
 	}
 	return out
@@ -186,7 +230,7 @@ func sanitizeRemoteMap(in map[string]any) map[string]any {
 func sanitizeRemoteValue(v any) any {
 	normalized, ok := normalizeJSONValue(v)
 	if !ok {
-		return redactRemoteValue("", v)
+		return unserializableMarker
 	}
 	return redactRemoteValue("", normalized)
 }
@@ -200,10 +244,79 @@ func normalizeJSONValue(v any) (any, bool) {
 		return nil, false
 	}
 	var out any
-	if err := json.Unmarshal(raw, &out); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if err := decoder.Decode(&out); err != nil {
 		return nil, false
 	}
-	return out, true
+	return normalizeDecodedJSONNumbers(out)
+}
+
+func normalizeDecodedJSONNumbers(value any) (any, bool) {
+	switch typed := value.(type) {
+	case json.Number:
+		raw := typed.String()
+		if strings.ContainsAny(raw, ".eE") {
+			number, err := strconv.ParseFloat(raw, 64)
+			if err != nil || math.IsInf(number, 0) || math.IsNaN(number) {
+				return nil, false
+			}
+			if math.Trunc(number) == number && math.Abs(number) > float64(maxA2AJSONInteger) {
+				return nil, false
+			}
+			return number, true
+		}
+		if number, err := strconv.ParseInt(raw, 10, 64); err == nil {
+			if number < -int64(maxA2AJSONInteger) || number > int64(maxA2AJSONInteger) {
+				return nil, false
+			}
+			return number, true
+		}
+		if number, err := strconv.ParseUint(raw, 10, 64); err == nil {
+			if number > maxA2AJSONInteger {
+				return nil, false
+			}
+			return number, true
+		}
+		return nil, false
+	case map[string]any:
+		out := make(map[string]any, len(typed))
+		for key, child := range typed {
+			normalized, ok := normalizeDecodedJSONNumbers(child)
+			if !ok {
+				return nil, false
+			}
+			out[key] = normalized
+		}
+		return out, true
+	case []any:
+		out := make([]any, len(typed))
+		for i, child := range typed {
+			normalized, ok := normalizeDecodedJSONNumbers(child)
+			if !ok {
+				return nil, false
+			}
+			out[i] = normalized
+		}
+		return out, true
+	default:
+		return value, true
+	}
+}
+
+func normalizeJSONMap(in map[string]any) (map[string]any, error) {
+	if len(in) == 0 {
+		return nil, nil
+	}
+	normalized, ok := normalizeJSONValue(in)
+	if !ok {
+		return nil, fmt.Errorf("value is not JSON-compatible")
+	}
+	out, ok := normalized.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("value is not a JSON object")
+	}
+	return out, nil
 }
 
 func redactRemoteValue(key string, v any) any {

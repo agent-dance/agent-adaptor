@@ -67,7 +67,7 @@ func deliverSubscriber(ch chan DelegationEvent, ev DelegationEvent) {
 		return
 	default:
 	}
-	if !isTerminal(ev.Kind) {
+	if !isPriorityEvent(ev.Kind) {
 		return
 	}
 	select {
@@ -78,6 +78,10 @@ func deliverSubscriber(ch chan DelegationEvent, ev DelegationEvent) {
 	case ch <- ev:
 	default:
 	}
+}
+
+func isPriorityEvent(kind DelegationEventKind) bool {
+	return kind == DelegationTextEnd || kind == DelegationToolCallEnd || isTerminal(kind)
 }
 
 func (b *EventBus) ClearRun(runID string) {

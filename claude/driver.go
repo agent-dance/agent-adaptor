@@ -414,7 +414,10 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 		}
 	}
 
-	args := buildClaudeExecArgs(cfg, req, "", interactive)
+	args, err := buildClaudeExecArgs(cfg, req, "", interactive)
+	if err != nil {
+		return agentadaptor.DriverRunResult{}, err
+	}
 
 	rawPrompt := req.Prompt
 	if runtimePrefix := adapterutil.RuntimePromptPrefix(req.Runtime); runtimePrefix != "" {
@@ -540,7 +543,7 @@ func validateClaudeSessionGuard(req agentadaptor.DriverRunRequest, effectiveCWD,
 	return nil
 }
 
-func buildClaudeExecArgs(cfg agentadaptor.ClaudeConfig, req agentadaptor.DriverRunRequest, bundleRoot string, interactive bool) []string {
+func buildClaudeExecArgs(cfg agentadaptor.ClaudeConfig, req agentadaptor.DriverRunRequest, bundleRoot string, interactive bool) ([]string, error) {
 	// Common core. Native structured output supports two modes:
 	//   - non-streaming: final JSON result via --output-format json
 	//   - streaming: stream-json events + final structured_output/result event
@@ -550,10 +553,14 @@ func buildClaudeExecArgs(cfg agentadaptor.ClaudeConfig, req agentadaptor.DriverR
 	nativeStructured := req.OutputSchema != nil && req.OutputSchema.Mode != agentadaptor.StructuredOutputPromptValidate
 	args := []string{"--print"}
 	if nativeStructured {
+		schemaJSON, err := prepareClaudeJSONSchema(req.OutputSchema.SchemaJSON)
+		if err != nil {
+			return nil, err
+		}
 		if req.Streaming {
-			args = append(args, "--output-format", "stream-json", "--verbose", "--json-schema", string(req.OutputSchema.SchemaJSON))
+			args = append(args, "--output-format", "stream-json", "--verbose", "--json-schema", string(schemaJSON))
 		} else {
-			args = append(args, "--output-format", "json", "--json-schema", string(req.OutputSchema.SchemaJSON))
+			args = append(args, "--output-format", "json", "--json-schema", string(schemaJSON))
 		}
 	} else {
 		args = append(args, "--output-format", "stream-json", "--verbose")
@@ -613,7 +620,7 @@ func buildClaudeExecArgs(cfg agentadaptor.ClaudeConfig, req agentadaptor.DriverR
 		args = append(args, "--add-dir", bundleRoot)
 	}
 	args = append(args, cfg.ExtraArgs...)
-	return args
+	return args, nil
 }
 
 func hasAnyArg(args []string, names ...string) bool {

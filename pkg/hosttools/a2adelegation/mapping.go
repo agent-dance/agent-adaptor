@@ -127,8 +127,12 @@ func (m *eventMapper) artifactEvents(event clienta2a.Event) []DelegationEvent {
 		return m.assistantOutputEvents(event, artifact)
 	}
 	if events := m.toolCallEvents(event, artifact); len(events) > 0 {
-		return events
+		return append([]DelegationEvent{m.artifactCreatedEvent(event, artifact)}, events...)
 	}
+	return []DelegationEvent{m.artifactCreatedEvent(event, artifact)}
+}
+
+func (m *eventMapper) artifactCreatedEvent(event clienta2a.Event, artifact clienta2a.Artifact) DelegationEvent {
 	ev := m.base
 	ev.Kind = DelegationArtifactCreated
 	ev.RemoteTaskID = event.TaskID
@@ -143,7 +147,7 @@ func (m *eventMapper) artifactEvents(event clienta2a.Event) []DelegationEvent {
 		Metadata:    cloneAnyMap(artifact.Metadata),
 	}
 	ev.Raw = artifact.Raw
-	return []DelegationEvent{ev}
+	return ev
 }
 
 // toolCallEvents restores the typed tool lifecycle encoded by the A2A bridge
@@ -172,6 +176,14 @@ func (m *eventMapper) toolCallEvents(event clienta2a.Event, artifact clienta2a.A
 			ev.RemoteToolCallID = toolID
 			ev.Result = data["result"]
 			return []DelegationEvent{ev}
+		case "tool_call.end":
+			ev := m.base
+			ev.Kind = DelegationToolCallEnd
+			ev.RemoteTaskID = event.TaskID
+			ev.RemoteContextID = event.ContextID
+			ev.RemoteArtifactID = artifact.ID
+			ev.RemoteToolCallID = toolID
+			return []DelegationEvent{ev}
 		}
 	}
 	if !strings.HasPrefix(artifact.Name, "tool-call-") {
@@ -183,16 +195,19 @@ func (m *eventMapper) toolCallEvents(event clienta2a.Event, artifact clienta2a.A
 	ev.RemoteContextID = event.ContextID
 	ev.RemoteArtifactID = artifact.ID
 	ev.RemoteToolCallID = toolID
-	if event.LastChunk {
-		ev.Kind = DelegationToolCallEnd
-		return []DelegationEvent{ev}
-	}
+	var out []DelegationEvent
 	if text := textFromParts(artifact.Parts); text != "" {
-		ev.Kind = DelegationToolCallArgs
-		ev.Delta = text
-		return []DelegationEvent{ev}
+		args := ev
+		args.Kind = DelegationToolCallArgs
+		args.Delta = text
+		out = append(out, args)
 	}
-	return nil
+	if event.LastChunk {
+		end := ev
+		end.Kind = DelegationToolCallEnd
+		out = append(out, end)
+	}
+	return out
 }
 
 func artifactData(artifact clienta2a.Artifact) map[string]any {
@@ -257,19 +272,37 @@ func (m *eventMapper) assistantOutputEvents(event clienta2a.Event, artifact clie
 	return out
 }
 
+func (m *eventMapper) closeOpen(taskID, contextID string) []DelegationEvent {
+	if m == nil || m.openMessage == "" {
+		return nil
+	}
+	end := m.base
+	end.Kind = DelegationTextEnd
+	end.RemoteTaskID = taskID
+	end.RemoteContextID = contextID
+	end.RemoteMessageID = m.openMessage
+	m.openMessage = ""
+	return []DelegationEvent{end}
+}
+
+func (m *eventMapper) terminalEventsForState(taskID, contextID string, state clienta2a.TaskState, raw map[string]any) []DelegationEvent {
+	out := m.closeOpen(taskID, contextID)
+	return append(out, m.terminalForState(taskID, contextID, state, raw))
+}
+
 func (m *eventMapper) terminalEvents(event clienta2a.Event) []DelegationEvent {
 	if event.Task != nil {
-		return []DelegationEvent{m.terminalForState(event.Task.ID, event.Task.ContextID, event.Task.Status.State, event.Task.Raw)}
+		return m.terminalEventsForState(event.Task.ID, event.Task.ContextID, event.Task.Status.State, event.Task.Raw)
 	}
 	if event.Status != nil {
-		return []DelegationEvent{m.terminalForState(event.TaskID, event.ContextID, event.Status.State, event.Raw)}
+		return m.terminalEventsForState(event.TaskID, event.ContextID, event.Status.State, event.Raw)
 	}
 	if event.Message != nil {
 		out := m.messageEvents(*event.Message)
-		out = append(out, m.terminalForState(event.TaskID, event.ContextID, clienta2a.TaskStateCompleted, event.Raw))
+		out = append(out, m.terminalEventsForState(event.TaskID, event.ContextID, clienta2a.TaskStateCompleted, event.Raw)...)
 		return out
 	}
-	return []DelegationEvent{m.terminalForState(event.TaskID, event.ContextID, clienta2a.TaskStateCompleted, event.Raw)}
+	return m.terminalEventsForState(event.TaskID, event.ContextID, clienta2a.TaskStateCompleted, event.Raw)
 }
 
 func (m *eventMapper) terminalForState(taskID, contextID string, state clienta2a.TaskState, raw map[string]any) DelegationEvent {

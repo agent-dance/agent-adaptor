@@ -48,19 +48,26 @@ func (c *Client) AgentCard(ctx context.Context) (AgentCard, error) {
 }
 
 func (c *Client) Send(ctx context.Context, req SendRequest) (Task, error) {
+	upstreamReq, err := upstreamSendRequest(req)
+	if err != nil {
+		return Task{}, err
+	}
 	up, err := c.ensureClient(ctx)
 	if err != nil {
 		return Task{}, err
 	}
-	result, err := up.SendMessage(ctx, upstreamSendRequest(req))
+	result, err := up.SendMessage(ctx, upstreamReq)
 	if err != nil {
 		return Task{}, classifyError("SendMessage", err)
 	}
 	switch v := result.(type) {
 	case *a2aproto.Task:
-		return convertTask(v), nil
+		return convertTask(v)
 	case *a2aproto.Message:
-		msg := convertMessage(v)
+		msg, err := convertMessage(v)
+		if err != nil {
+			return Task{}, err
+		}
 		return Task{
 			ID: msg.TaskID, ContextID: msg.ContextID,
 			Status:   TaskStatus{State: TaskStateCompleted, Message: &msg},
@@ -73,13 +80,17 @@ func (c *Client) Send(ctx context.Context, req SendRequest) (Task, error) {
 }
 
 func (c *Client) SendStream(ctx context.Context, req SendRequest) (*Stream, error) {
+	upstreamReq, err := upstreamSendRequest(req)
+	if err != nil {
+		return nil, err
+	}
 	up, err := c.ensureClient(ctx)
 	if err != nil {
 		return nil, err
 	}
 	taskID := req.TaskID
 	streamCtx, cancel := context.WithCancel(ctx)
-	seq := up.SendStreamingMessage(streamCtx, upstreamSendRequest(req))
+	seq := up.SendStreamingMessage(streamCtx, upstreamReq)
 	return c.startStream(streamCtx, cancel, taskID, seq), nil
 }
 
@@ -116,7 +127,7 @@ func (c *Client) GetTask(ctx context.Context, req GetTaskRequest) (Task, error) 
 	if err != nil {
 		return Task{}, classifyError("GetTask", err)
 	}
-	return convertTask(task), nil
+	return convertTask(task)
 }
 
 func (c *Client) CancelTask(ctx context.Context, req CancelTaskRequest) (Task, error) {
@@ -135,7 +146,7 @@ func (c *Client) CancelTask(ctx context.Context, req CancelTaskRequest) (Task, e
 	if err != nil {
 		return Task{}, classifyError("CancelTask", err)
 	}
-	return convertTask(task), nil
+	return convertTask(task)
 }
 
 func (c *Client) Close() error {
@@ -224,24 +235,31 @@ func agentCardResolveOptions(path string) []agentcard.ResolveOption {
 	return []agentcard.ResolveOption{agentcard.WithPath(path)}
 }
 
-func upstreamSendRequest(req SendRequest) *a2aproto.SendMessageRequest {
-	msg := upstreamMessage(req.Message)
+func upstreamSendRequest(req SendRequest) (*a2aproto.SendMessageRequest, error) {
+	msg, err := upstreamMessage(req.Message)
+	if err != nil {
+		return nil, err
+	}
 	if req.ContextID != "" {
 		msg.ContextID = req.ContextID
 	}
 	if req.TaskID != "" {
 		msg.TaskID = a2aproto.TaskID(req.TaskID)
 	}
+	metadata, err := normalizeProtocolMap(req.Metadata)
+	if err != nil {
+		return nil, fmt.Errorf("%w: request metadata: %v", ErrProtocol, err)
+	}
 	return &a2aproto.SendMessageRequest{
 		Tenant:   req.Tenant,
 		Message:  msg,
-		Metadata: cloneMap(req.Metadata),
+		Metadata: metadata,
 		Config: &a2aproto.SendMessageConfig{
 			AcceptedOutputModes: append([]string(nil), req.AcceptedOutputModes...),
 			ReturnImmediately:   req.ReturnImmediately,
 			HistoryLength:       req.HistoryLength,
 		},
-	}
+	}, nil
 }
 
 func splitAgentCardURL(raw, overridePath string) (base, path string, err error) {
@@ -355,6 +373,19 @@ func (s *Stream) Recv() (Event, error) {
 		return Event{}, io.EOF
 	}
 	return item.event, item.err
+}
+
+// RecvContext waits for the next stream event or context cancellation.
+func (s *Stream) RecvContext(ctx context.Context) (Event, error) {
+	select {
+	case <-ctx.Done():
+		return Event{}, ctx.Err()
+	case item, ok := <-s.events:
+		if !ok {
+			return Event{}, io.EOF
+		}
+		return item.event, item.err
+	}
 }
 
 func (s *Stream) Close() error {

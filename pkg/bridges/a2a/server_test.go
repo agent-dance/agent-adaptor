@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -445,9 +446,14 @@ func TestSendMessageRunStreamingDisabledSkipsSDKStreaming(t *testing.T) {
 	t.Parallel()
 
 	driver := &streamFlagDriver{}
-	sdk := agentadaptor.New(agentadaptor.WithDefaultAgent(agentadaptor.Bind(driver, struct{}{})))
+	sdk := agentadaptor.New(agentadaptor.WithDefaultAgent(agentadaptor.Bind(
+		driver,
+		struct{}{},
+		agentadaptor.WithDefaultStreaming(),
+	)))
 	server := a2a.NewServer(sdk.Default(), a2a.ServerOptions{
 		AgentCard:    testOptions().AgentCard,
+		RunOptions:   []agentadaptor.RunOption{agentadaptor.WithStreaming()},
 		RunStreaming: a2a.RunStreamingDisabled,
 	})
 
@@ -461,6 +467,30 @@ func TestSendMessageRunStreamingDisabledSkipsSDKStreaming(t *testing.T) {
 	}
 	if driver.streaming.Load() {
 		t.Fatal("expected SDK streaming to be disabled")
+	}
+}
+
+func TestSendMessageSupportsLegacyPromptBuilderOption(t *testing.T) {
+	t.Parallel()
+
+	server := a2a.NewServer(scriptedRunner{start: func(_ context.Context, prompt string, _ ...agentadaptor.RunOption) (agentadaptor.RunHandle, error) {
+		if prompt != "legacy prompt" {
+			t.Fatalf("prompt = %q, want legacy prompt", prompt)
+		}
+		h := newScriptedHandle("run-legacy-prompt")
+		go h.finish(agentadaptor.RunResult{RunID: "run-legacy-prompt", Output: "ok"}, nil)
+		return h, nil
+	}}, a2a.ServerOptions{
+		AgentCard: testOptions().AgentCard,
+		Prompt: a2a.PromptBuilderFunc(func(context.Context, a2a.InboundRequest) (string, []agentadaptor.RunOption, error) {
+			return "legacy prompt", nil, nil
+		}),
+	})
+
+	resp := postRPC(t, server.Handler(), `{"jsonrpc":"2.0","id":"1","method":"SendMessage","params":{"message":{"messageId":"m1","role":"ROLE_USER","parts":[{"text":"ignored"}]}}}`)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
 	}
 }
 
@@ -572,6 +602,101 @@ func TestSendMessageResultBuilderCanReplaceDefaultArtifacts(t *testing.T) {
 	}
 	if len(envelope.Result.Task.Artifacts) != 1 || envelope.Result.Task.Artifacts[0].Name != "only-custom" {
 		t.Fatalf("expected only custom artifact, got %+v", envelope.Result.Task.Artifacts)
+	}
+}
+
+func TestSendMessageFailureSkipsResultBuilderAndPreservesFailure(t *testing.T) {
+	t.Parallel()
+
+	var buildCalls atomic.Int32
+	server := a2a.NewServer(scriptedRunner{start: func(context.Context, string, ...agentadaptor.RunOption) (agentadaptor.RunHandle, error) {
+		h := newScriptedHandle("run-failure")
+		go h.finish(agentadaptor.RunResult{
+			RunID: "run-failure",
+			Failure: &agentadaptor.RunFailure{
+				Code:    agentadaptor.FailurePolicyError,
+				Message: "original policy failure",
+			},
+		}, nil)
+		return h, nil
+	}}, a2a.ServerOptions{
+		AgentCard: testOptions().AgentCard,
+		ResultBuilder: a2a.ResultBuilderFunc(func(context.Context, a2a.InboundRequest, agentadaptor.RunResult) (a2a.BuiltResult, error) {
+			buildCalls.Add(1)
+			return a2a.BuiltResult{}, errors.New("builder should not run")
+		}),
+	})
+
+	resp := postRPC(t, server.Handler(), `{"jsonrpc":"2.0","id":"1","method":"SendMessage","params":{"message":{"messageId":"m1","role":"ROLE_USER","parts":[{"text":"hello bridge"}]}}}`)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	var envelope struct {
+		Result struct {
+			Task *struct {
+				Status struct {
+					State   string `json:"state"`
+					Message *struct {
+						Parts []taskArtifactPart `json:"parts"`
+					} `json:"message"`
+				} `json:"status"`
+			} `json:"task"`
+		} `json:"result"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if buildCalls.Load() != 0 {
+		t.Fatalf("ResultBuilder calls = %d, want 0", buildCalls.Load())
+	}
+	if envelope.Result.Task == nil || envelope.Result.Task.Status.State != "TASK_STATE_FAILED" {
+		t.Fatalf("task = %+v", envelope.Result.Task)
+	}
+	if envelope.Result.Task.Status.Message == nil || len(envelope.Result.Task.Status.Message.Parts) != 1 || envelope.Result.Task.Status.Message.Parts[0].Text != "original policy failure" {
+		t.Fatalf("failure message = %+v", envelope.Result.Task.Status.Message)
+	}
+}
+
+func TestSendMessageResultBuilderRejectsInvalidArtifactData(t *testing.T) {
+	t.Parallel()
+
+	server := a2a.NewServer(scriptedRunner{start: func(context.Context, string, ...agentadaptor.RunOption) (agentadaptor.RunHandle, error) {
+		h := newScriptedHandle("run-invalid-artifact")
+		go h.finish(agentadaptor.RunResult{RunID: "run-invalid-artifact", Output: "ok"}, nil)
+		return h, nil
+	}}, a2a.ServerOptions{
+		AgentCard: testOptions().AgentCard,
+		ResultBuilder: a2a.ResultBuilderFunc(func(context.Context, a2a.InboundRequest, agentadaptor.RunResult) (a2a.BuiltResult, error) {
+			return a2a.BuiltResult{Artifacts: []a2a.ArtifactSpec{{
+				Name:  "invalid-data",
+				Parts: []a2a.Part{{Kind: a2a.PartData, Data: math.NaN()}},
+			}}}, nil
+		}),
+	})
+
+	resp := postRPC(t, server.Handler(), `{"jsonrpc":"2.0","id":"1","method":"SendMessage","params":{"message":{"messageId":"m1","role":"ROLE_USER","parts":[{"text":"hello bridge"}]}}}`)
+	defer resp.Body.Close()
+	var envelope struct {
+		Result struct {
+			Task *struct {
+				Status struct {
+					State   string `json:"state"`
+					Message *struct {
+						Parts []taskArtifactPart `json:"parts"`
+					} `json:"message"`
+				} `json:"status"`
+			} `json:"task"`
+		} `json:"result"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if envelope.Result.Task == nil || envelope.Result.Task.Status.State != "TASK_STATE_FAILED" || envelope.Result.Task.Status.Message == nil {
+		t.Fatalf("task = %#v", envelope.Result.Task)
+	}
+	if got := envelope.Result.Task.Status.Message.Parts[0].Text; !strings.Contains(got, "not JSON-compatible") {
+		t.Fatalf("failure message = %q", got)
 	}
 }
 

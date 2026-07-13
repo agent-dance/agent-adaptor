@@ -9,13 +9,13 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
-const (
-	maxToolTimeoutSeconds       = int64(1<<63-1) / int64(time.Second)
-	defaultSSEKeepAliveInterval = 15 * time.Second
-)
+const maxToolTimeoutSeconds = int64(1<<63-1) / int64(time.Second)
+
+const mcpProgressHeartbeatInterval = 10 * time.Second
 
 type ToolInput struct {
 	Agent       string          `json:"agent"`
@@ -60,6 +60,7 @@ func ToolSchema() map[string]any {
 								"uri":       map[string]any{"type": "string"},
 								"mime_type": map[string]any{"type": "string"},
 							},
+							"required":             []string{"uri"},
 							"additionalProperties": false,
 						},
 					},
@@ -146,9 +147,6 @@ type MCPServerOptions struct {
 	BearerToken        string
 	Tools              []ToolSpec
 	DisableDefaultTool bool
-	// SSEKeepAliveInterval controls the interval between Streamable HTTP
-	// keepalives for long-running tools. Zero uses a conservative default.
-	SSEKeepAliveInterval time.Duration
 
 	// AllowUnauthenticatedLoopbackForTest permits an otherwise unprotected
 	// loopback-only server for tests and local probes. Production HTTP sidecars
@@ -162,6 +160,23 @@ type MCPServer struct {
 }
 
 func NewMCPServer(delegator *Delegator, opts MCPServerOptions) *MCPServer {
+	seen := make(map[string]struct{}, len(opts.Tools))
+	tools := make([]ToolSpec, len(opts.Tools))
+	for i, tool := range opts.Tools {
+		tool.Name = strings.TrimSpace(tool.Name)
+		if tool.Name == "" {
+			panic(fmt.Sprintf("a2a delegation MCP: tool %d name is required", i))
+		}
+		if tool.Name == DelegateToolName && !opts.DisableDefaultTool {
+			panic("a2a delegation MCP: custom tool name conflicts with enabled default tool " + DelegateToolName)
+		}
+		if _, ok := seen[tool.Name]; ok {
+			panic("a2a delegation MCP: duplicate tool name " + tool.Name)
+		}
+		seen[tool.Name] = struct{}{}
+		tools[i] = tool
+	}
+	opts.Tools = tools
 	return &MCPServer{Delegator: delegator, Options: opts}
 }
 
@@ -188,136 +203,137 @@ func (s *MCPServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	if req.Method == "tools/call" && acceptsEventStream(r.Header.Get("Accept")) {
-		writeMCPToolCallEventStream(w, req, s.sseKeepAliveInterval(), func() map[string]any {
-			return s.handle(r, req)
-		})
+	if progressToken, ok := mcpProgressToken(req); ok && acceptsEventStream(r) {
+		s.serveStreamableToolCall(w, r, req, progressToken)
 		return
 	}
-	writeMCPRPCResponse(w, func() map[string]any { return s.handle(r, req) })
+	writeRPC(w, s.handle(r, req))
 }
 
-// writeMCPRPCResponse 写入一次性 MCP JSON-RPC 响应。
-func writeMCPRPCResponse(w http.ResponseWriter, buildPayload func() map[string]any) {
-	writeRPC(w, buildPayload())
+func acceptsEventStream(r *http.Request) bool {
+	return strings.Contains(strings.ToLower(r.Header.Get("Accept")), "text/event-stream")
 }
 
-// writeMCPToolCallEventStream 以 Streamable HTTP 返回长时间工具调用。
-//
-// 客户端通过 Accept: text/event-stream 明确声明支持后，服务端在执行前先发送
-// progress 或 SSE 注释，并在执行期间持续保活。最终 JSON-RPC 响应仍在同一 SSE
-// 流内以 event: message 返回，因此不会改变工具调用的最终结果语义。
-func writeMCPToolCallEventStream(w http.ResponseWriter, req rpcRequest, keepAliveInterval time.Duration, buildPayload func() map[string]any) {
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		writeMCPRPCResponse(w, buildPayload)
-		return
+func mcpProgressToken(req rpcRequest) (json.RawMessage, bool) {
+	if req.Method != "tools/call" {
+		return nil, false
 	}
-	if keepAliveInterval <= 0 {
-		keepAliveInterval = defaultSSEKeepAliveInterval
-	}
-
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("X-Accel-Buffering", "no")
-	w.WriteHeader(http.StatusOK)
-
-	progressToken, hasProgressToken := toolCallProgressToken(req.Params)
-	if !writeMCPStreamStatus(w, flusher, progressToken, hasProgressToken, "delegation accepted") {
-		return
-	}
-
-	payloads := make(chan map[string]any, 1)
-	go func() {
-		payloads <- buildPayload()
-	}()
-
-	ticker := time.NewTicker(keepAliveInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case payload := <-payloads:
-			_ = writeMCPStreamMessage(w, flusher, payload)
-			return
-		case <-ticker.C:
-			if !writeMCPStreamStatus(w, flusher, progressToken, hasProgressToken, "delegation running") {
-				return
-			}
-		}
-	}
-}
-
-func (s *MCPServer) sseKeepAliveInterval() time.Duration {
-	if s != nil && s.Options.SSEKeepAliveInterval > 0 {
-		return s.Options.SSEKeepAliveInterval
-	}
-	return defaultSSEKeepAliveInterval
-}
-
-func acceptsEventStream(accept string) bool {
-	for _, value := range strings.Split(accept, ",") {
-		mediaType := strings.TrimSpace(strings.SplitN(value, ";", 2)[0])
-		if strings.EqualFold(mediaType, "text/event-stream") {
-			return true
-		}
-	}
-	return false
-}
-
-func toolCallProgressToken(params json.RawMessage) (any, bool) {
-	var envelope struct {
+	var params struct {
 		Meta struct {
 			ProgressToken json.RawMessage `json:"progressToken"`
 		} `json:"_meta"`
 	}
-	if err := json.Unmarshal(params, &envelope); err != nil || len(envelope.Meta.ProgressToken) == 0 {
+	if err := json.Unmarshal(req.Params, &params); err != nil || len(params.Meta.ProgressToken) == 0 || string(params.Meta.ProgressToken) == "null" {
 		return nil, false
 	}
-	decoder := json.NewDecoder(bytes.NewReader(envelope.Meta.ProgressToken))
-	decoder.UseNumber()
-	var token any
-	if err := decoder.Decode(&token); err != nil {
-		return nil, false
+	return params.Meta.ProgressToken, true
+}
+
+// serveStreamableToolCall 按 Streamable HTTP MCP 返回首字节、进度和最终工具结果。
+// Claude Code 2.1.112 会取消长时间没有响应头或空闲进度的 HTTP MCP 调用，因此工具执行期间
+// 必须持续写入 notifications/progress。
+func (s *MCPServer) serveStreamableToolCall(w http.ResponseWriter, r *http.Request, req rpcRequest, progressToken json.RawMessage) {
+	writer := newMCPSSEWriter(w)
+	writer.start()
+	writer.progress(progressToken, 0, "delegation accepted")
+
+	startedAt := time.Now().UTC()
+	var events <-chan DelegationEvent
+	if s != nil && s.Delegator != nil && s.Delegator.Bus != nil {
+		events = s.Delegator.Bus.SubscribeRun(r.Context(), s.Options.RunID)
 	}
-	switch token.(type) {
-	case string, json.Number:
-		return token, true
-	default:
-		return nil, false
+	result := make(chan map[string]any, 1)
+	go func() {
+		result <- s.handleToolCall(r, req)
+	}()
+
+	ticker := time.NewTicker(mcpProgressHeartbeatInterval)
+	defer ticker.Stop()
+	progress := 1
+	for {
+		select {
+		case payload := <-result:
+			writer.message(payload)
+			return
+		case event, ok := <-events:
+			if !ok {
+				events = nil
+				continue
+			}
+			if event.Time.Before(startedAt) {
+				continue
+			}
+			writer.progress(progressToken, progress, delegationProgressMessage(event))
+			progress++
+		case <-ticker.C:
+			writer.progress(progressToken, progress, "delegation running")
+			progress++
+		case <-r.Context().Done():
+			return
+		}
 	}
 }
 
-func writeMCPStreamStatus(w http.ResponseWriter, flusher http.Flusher, progressToken any, hasProgressToken bool, message string) bool {
-	if hasProgressToken {
-		return writeMCPStreamMessage(w, flusher, map[string]any{
-			"jsonrpc": "2.0",
-			"method":  "notifications/progress",
-			"params": map[string]any{
-				"progressToken": progressToken,
-				"progress":      0,
-				"total":         1,
-				"message":       message,
-			},
-		})
+func delegationProgressMessage(event DelegationEvent) string {
+	if event.Status != "" {
+		return "delegation " + event.Status
 	}
-	if _, err := fmt.Fprintf(w, ": %s\n\n", message); err != nil {
-		return false
+	if event.ToolName != "" {
+		return "delegation tool: " + event.ToolName
 	}
-	flusher.Flush()
-	return true
+	if event.Kind != "" {
+		return "delegation " + string(event.Kind)
+	}
+	return "delegation running"
 }
 
-func writeMCPStreamMessage(w http.ResponseWriter, flusher http.Flusher, payload map[string]any) bool {
+type mcpSSEWriter struct {
+	mu      sync.Mutex
+	w       http.ResponseWriter
+	flusher http.Flusher
+}
+
+func newMCPSSEWriter(w http.ResponseWriter) *mcpSSEWriter {
+	flusher, _ := w.(http.Flusher)
+	return &mcpSSEWriter{w: w, flusher: flusher}
+}
+
+func (w *mcpSSEWriter) start() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.w.Header().Set("Content-Type", "text/event-stream")
+	w.w.Header().Set("Cache-Control", "no-cache")
+	w.w.Header().Set("Connection", "keep-alive")
+	w.w.Header().Set("X-Accel-Buffering", "no")
+	w.w.WriteHeader(http.StatusOK)
+	if w.flusher != nil {
+		w.flusher.Flush()
+	}
+}
+
+func (w *mcpSSEWriter) progress(token json.RawMessage, progress int, message string) {
+	w.message(map[string]any{
+		"jsonrpc": "2.0",
+		"method":  "notifications/progress",
+		"params": map[string]any{
+			"progressToken": token,
+			"progress":      progress,
+			"message":       message,
+		},
+	})
+}
+
+func (w *mcpSSEWriter) message(payload map[string]any) {
 	raw, err := json.Marshal(payload)
 	if err != nil {
-		return false
+		return
 	}
-	if _, err := fmt.Fprintf(w, "event: message\ndata: %s\n\n", raw); err != nil {
-		return false
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	_, _ = fmt.Fprintf(w.w, "event: message\ndata: %s\n\n", raw)
+	if w.flusher != nil {
+		w.flusher.Flush()
 	}
-	flusher.Flush()
-	return true
 }
 
 func (s *MCPServer) authorize(r *http.Request) error {
@@ -380,7 +396,7 @@ func (s *MCPServer) handleToolCall(r *http.Request, req rpcRequest) map[string]a
 	if tool, ok := s.findTool(params.Name); ok {
 		return s.handleCustomToolCall(r, req, tool, params.Arguments)
 	}
-	if params.Name != DelegateToolName {
+	if params.Name != DelegateToolName || s.Options.DisableDefaultTool {
 		return rpcError(req.ID, -32602, "unknown tool "+params.Name)
 	}
 	input, err := ParseToolInput(params.Arguments)
@@ -562,7 +578,14 @@ func writeRPC(w http.ResponseWriter, payload map[string]any) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	if err := json.NewEncoder(w).Encode(payload); err != nil {
-		http.Error(w, fmt.Sprintf("encode rpc response: %v", err), http.StatusInternalServerError)
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		var id json.RawMessage
+		if responseID, ok := payload["id"].(json.RawMessage); ok {
+			id = responseID
+		}
+		raw, _ = json.Marshal(rpcError(id, -32603, "encode rpc response: "+err.Error()))
 	}
+	raw = append(raw, '\n')
+	_, _ = w.Write(raw)
 }

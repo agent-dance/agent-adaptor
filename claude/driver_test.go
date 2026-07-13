@@ -2,6 +2,7 @@ package claude
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -10,12 +11,16 @@ import (
 	"testing"
 
 	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/internal/testutil"
 )
 
 func TestBuildClaudeExecArgsIncludesPartialMessagesWhenStreaming(t *testing.T) {
 	cfg := agentadaptor.ClaudeConfig{Model: "claude-sonnet-4"}
 	req := agentadaptor.DriverRunRequest{Streaming: true}
-	args := buildClaudeExecArgs(cfg, req, "", false)
+	args, err := buildClaudeExecArgs(cfg, req, "", false)
+	if err != nil {
+		t.Fatalf("build args: %v", err)
+	}
 	found := false
 	for _, a := range args {
 		if a == "--include-partial-messages" {
@@ -27,7 +32,10 @@ func TestBuildClaudeExecArgsIncludesPartialMessagesWhenStreaming(t *testing.T) {
 		t.Fatalf("expected --include-partial-messages in %#v", args)
 	}
 
-	argsBatch := buildClaudeExecArgs(cfg, agentadaptor.DriverRunRequest{Streaming: false}, "", false)
+	argsBatch, err := buildClaudeExecArgs(cfg, agentadaptor.DriverRunRequest{Streaming: false}, "", false)
+	if err != nil {
+		t.Fatalf("build batch args: %v", err)
+	}
 	for _, a := range argsBatch {
 		if a == "--include-partial-messages" {
 			t.Fatalf("batch path must not add partial flag: %#v", argsBatch)
@@ -37,15 +45,18 @@ func TestBuildClaudeExecArgsIncludesPartialMessagesWhenStreaming(t *testing.T) {
 
 func TestBuildClaudeExecArgsUsesJSONSchemaForNativeStructuredOutput(t *testing.T) {
 	schema := []byte(`{"type":"object","properties":{"project_name":{"type":"string"}}}`)
-	args := buildClaudeExecArgs(agentadaptor.ClaudeConfig{Model: "claude-sonnet-4"}, agentadaptor.DriverRunRequest{
+	args, err := buildClaudeExecArgs(agentadaptor.ClaudeConfig{Model: "claude-sonnet-4"}, agentadaptor.DriverRunRequest{
 		OutputSchema: &agentadaptor.OutputSchema{
 			Format:     agentadaptor.OutputFormatJSONSchema,
 			Mode:       agentadaptor.StructuredOutputNativeStrict,
 			SchemaJSON: schema,
 		},
 	}, "", false)
+	if err != nil {
+		t.Fatalf("build args: %v", err)
+	}
 	joined := " " + strings.Join(args, " ") + " "
-	for _, want := range []string{" --output-format ", " json ", " --json-schema ", string(schema)} {
+	for _, want := range []string{" --output-format ", " json ", " --json-schema ", `"project_name"`} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("native structured args missing %q in %#v", strings.TrimSpace(want), args)
 		}
@@ -59,7 +70,7 @@ func TestBuildClaudeExecArgsUsesJSONSchemaForNativeStructuredOutput(t *testing.T
 
 func TestBuildClaudeExecArgsUsesStreamJSONForStreamingStructuredOutput(t *testing.T) {
 	schema := []byte(`{"type":"object","properties":{"project_name":{"type":"string"}}}`)
-	args := buildClaudeExecArgs(agentadaptor.ClaudeConfig{Model: "claude-sonnet-4"}, agentadaptor.DriverRunRequest{
+	args, err := buildClaudeExecArgs(agentadaptor.ClaudeConfig{Model: "claude-sonnet-4"}, agentadaptor.DriverRunRequest{
 		Streaming: true,
 		OutputSchema: &agentadaptor.OutputSchema{
 			Format:     agentadaptor.OutputFormatJSONSchema,
@@ -67,8 +78,11 @@ func TestBuildClaudeExecArgsUsesStreamJSONForStreamingStructuredOutput(t *testin
 			SchemaJSON: schema,
 		},
 	}, "", false)
+	if err != nil {
+		t.Fatalf("build args: %v", err)
+	}
 	joined := " " + strings.Join(args, " ") + " "
-	for _, want := range []string{" --output-format ", " stream-json ", " --verbose ", " --json-schema ", string(schema), " --include-partial-messages "} {
+	for _, want := range []string{" --output-format ", " stream-json ", " --verbose ", " --json-schema ", `"project_name"`, " --include-partial-messages "} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("streaming structured args missing %q in %#v", strings.TrimSpace(want), args)
 		}
@@ -77,6 +91,94 @@ func TestBuildClaudeExecArgsUsesStreamJSONForStreamingStructuredOutput(t *testin
 		if strings.Contains(joined, forbidden) {
 			t.Fatalf("streaming structured args must not contain %q: %#v", strings.TrimSpace(forbidden), args)
 		}
+	}
+}
+
+func TestBuildClaudeExecArgsInlinesReferencesWithoutLosingLargeNumbers(t *testing.T) {
+	schema := []byte(`{"$schema":"https://json-schema.org/draft/2020-12/schema","$defs":{"item":{"type":"object","properties":{"id":{"type":"integer","minimum":9007199254740993}}}},"type":"object","properties":{"item":{"$ref":"#/$defs/item"}}}`)
+	args, err := buildClaudeExecArgs(agentadaptor.ClaudeConfig{}, agentadaptor.DriverRunRequest{
+		OutputSchema: &agentadaptor.OutputSchema{
+			Format:     agentadaptor.OutputFormatJSONSchema,
+			Mode:       agentadaptor.StructuredOutputNativeStrict,
+			SchemaJSON: schema,
+		},
+	}, "", false)
+	if err != nil {
+		t.Fatalf("build args: %v", err)
+	}
+	var prepared string
+	for i := range args {
+		if args[i] == "--json-schema" && i+1 < len(args) {
+			prepared = args[i+1]
+			break
+		}
+	}
+	if prepared == "" {
+		t.Fatalf("missing prepared schema in %#v", args)
+	}
+	for _, forbidden := range []string{`"$schema"`, `"$defs"`, `"$ref"`} {
+		if strings.Contains(prepared, forbidden) {
+			t.Fatalf("prepared schema contains %s: %s", forbidden, prepared)
+		}
+	}
+	if !strings.Contains(prepared, `"minimum":9007199254740993`) {
+		t.Fatalf("large number was not preserved: %s", prepared)
+	}
+}
+
+func TestBuildClaudeExecArgsRejectsRecursiveSchemaReferences(t *testing.T) {
+	schema := []byte(`{"$defs":{"node":{"type":"object","properties":{"children":{"type":"array","items":{"$ref":"#/$defs/node"}}}}},"$ref":"#/$defs/node"}`)
+	_, err := buildClaudeExecArgs(agentadaptor.ClaudeConfig{}, agentadaptor.DriverRunRequest{
+		OutputSchema: &agentadaptor.OutputSchema{
+			Format:     agentadaptor.OutputFormatJSONSchema,
+			Mode:       agentadaptor.StructuredOutputNativeStrict,
+			SchemaJSON: schema,
+		},
+	}, "", false)
+	if !errors.Is(err, agentadaptor.ErrInvalidOutputSchema) || !strings.Contains(err.Error(), "recursive local reference") {
+		t.Fatalf("error = %v, want recursive ErrInvalidOutputSchema", err)
+	}
+}
+
+func TestBuildClaudeExecArgsPreservesDefinitionsProperty(t *testing.T) {
+	schema := []byte(`{"type":"object","properties":{"definitions":{"type":"string"}},"required":["definitions"],"additionalProperties":false}`)
+	args, err := buildClaudeExecArgs(agentadaptor.ClaudeConfig{}, agentadaptor.DriverRunRequest{
+		OutputSchema: &agentadaptor.OutputSchema{Format: agentadaptor.OutputFormatJSONSchema, Mode: agentadaptor.StructuredOutputNativeStrict, SchemaJSON: schema},
+	}, "", false)
+	if err != nil {
+		t.Fatalf("build args: %v", err)
+	}
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, `"definitions":{"type":"string"}`) {
+		t.Fatalf("schema business property was removed: %#v", args)
+	}
+}
+
+func TestBuildClaudeExecArgsResolvesArrayJSONPointer(t *testing.T) {
+	schema := []byte(`{"$defs":{"choice":{"allOf":[{"type":"string"}]}},"type":"object","properties":{"value":{"$ref":"#/$defs/choice/allOf/0"}}}`)
+	args, err := buildClaudeExecArgs(agentadaptor.ClaudeConfig{}, agentadaptor.DriverRunRequest{
+		OutputSchema: &agentadaptor.OutputSchema{Format: agentadaptor.OutputFormatJSONSchema, Mode: agentadaptor.StructuredOutputNativeStrict, SchemaJSON: schema},
+	}, "", false)
+	if err != nil {
+		t.Fatalf("build args: %v", err)
+	}
+	joined := strings.Join(args, " ")
+	if strings.Contains(joined, `"$ref"`) || !strings.Contains(joined, `"value":{"type":"string"}`) {
+		t.Fatalf("schema reference was not resolved: %#v", args)
+	}
+}
+
+func TestBuildClaudeExecArgsDoesNotRewriteConstData(t *testing.T) {
+	schema := []byte(`{"$defs":{"value":{"type":"string"}},"type":"object","const":{"$ref":"#/$defs/value"}}`)
+	args, err := buildClaudeExecArgs(agentadaptor.ClaudeConfig{}, agentadaptor.DriverRunRequest{
+		OutputSchema: &agentadaptor.OutputSchema{Format: agentadaptor.OutputFormatJSONSchema, Mode: agentadaptor.StructuredOutputNativeStrict, SchemaJSON: schema},
+	}, "", false)
+	if err != nil {
+		t.Fatalf("build args: %v", err)
+	}
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, `"const":{"$ref":"#/$defs/value"}`) {
+		t.Fatalf("const data was rewritten: %#v", args)
 	}
 }
 
@@ -99,7 +201,10 @@ func TestDescriptorAdvertisesStructuredOutputCapabilities(t *testing.T) {
 
 func TestBuildClaudeExecArgsInteractiveEnablesStdioPermissionPrompt(t *testing.T) {
 	cfg := agentadaptor.ClaudeConfig{Model: "claude-sonnet-4"}
-	args := buildClaudeExecArgs(cfg, agentadaptor.DriverRunRequest{}, "", true)
+	args, err := buildClaudeExecArgs(cfg, agentadaptor.DriverRunRequest{}, "", true)
+	if err != nil {
+		t.Fatalf("build args: %v", err)
+	}
 	joined := " " + strings.Join(args, " ") + " "
 	for _, want := range []string{
 		" --input-format ",
@@ -148,6 +253,72 @@ func TestParseClaudeResultStructuredOutput(t *testing.T) {
 	parsed := snapshotClaudeStdout(`{"type":"result","subtype":"success","structured_output":{"project_name":"agent-adaptor"},"result":"ok"}`)
 	if parsed.structuredOutput == nil || string(parsed.structuredOutput.RawJSON) != `{"project_name":"agent-adaptor"}` {
 		t.Fatalf("expected structured output, got %#v", parsed.structuredOutput)
+	}
+}
+
+func TestClaudeStreamingStructuredOutputEndToEnd(t *testing.T) {
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	home := t.TempDir()
+	workspace := filepath.Join(home, "workspace")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatalf("mkdir workspace: %v", err)
+	}
+	command := testutil.WriteCommand(t, home, "fake-claude-structured",
+		`#!/bin/sh
+set -eu
+cat >/dev/null
+printf '%s\n' '{"type":"system","subtype":"init","session_id":"sess-structured","model":"claude-fixture"}'
+printf '%s\n' '{"type":"stream_event","session_id":"sess-structured","event":{"type":"message_start","message":{"id":"msg-1"}}}'
+printf '%s\n' '{"type":"stream_event","session_id":"sess-structured","event":{"type":"content_block_start","index":0,"content_block":{"type":"text"}}}'
+printf '%s\n' '{"type":"stream_event","session_id":"sess-structured","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"done"}}}'
+printf '%s\n' '{"type":"stream_event","session_id":"sess-structured","event":{"type":"content_block_stop","index":0}}'
+printf '%s\n' '{"type":"assistant","session_id":"sess-structured","message":{"model":"claude-fixture","content":[{"type":"text","text":"done"}]}}'
+printf '%s\n' '{"type":"result","subtype":"success","session_id":"sess-structured","structured_output":{"project_name":"agent-adaptor"},"result":"done"}'
+`,
+		"@echo off\r\nmore > nul\r\necho {\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"sess-structured\",\"model\":\"claude-fixture\"}\r\necho {\"type\":\"stream_event\",\"session_id\":\"sess-structured\",\"event\":{\"type\":\"message_start\",\"message\":{\"id\":\"msg-1\"}}}\r\necho {\"type\":\"stream_event\",\"session_id\":\"sess-structured\",\"event\":{\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\"}}}\r\necho {\"type\":\"stream_event\",\"session_id\":\"sess-structured\",\"event\":{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"done\"}}}\r\necho {\"type\":\"stream_event\",\"session_id\":\"sess-structured\",\"event\":{\"type\":\"content_block_stop\",\"index\":0}}\r\necho {\"type\":\"assistant\",\"session_id\":\"sess-structured\",\"message\":{\"model\":\"claude-fixture\",\"content\":[{\"type\":\"text\",\"text\":\"done\"}]}}\r\necho {\"type\":\"result\",\"subtype\":\"success\",\"session_id\":\"sess-structured\",\"structured_output\":{\"project_name\":\"agent-adaptor\"},\"result\":\"done\"}\r\n",
+	)
+	sdk := agentadaptor.New(agentadaptor.WithDefaultAgent(New(agentadaptor.ClaudeConfig{
+		CommonConfig: agentadaptor.CommonConfig{
+			Command: command,
+			CWD:     workspace,
+			Env: []agentadaptor.EnvBinding{
+				{Name: "HOME", Value: home},
+				{Name: "USERPROFILE", Value: home},
+			},
+		},
+		Model: "claude-sonnet-4",
+	})))
+	handle, err := sdk.Start(
+		context.Background(),
+		"extract project metadata",
+		agentadaptor.WithStreaming(),
+		agentadaptor.WithJSONSchemaOutput([]byte(`{"type":"object","properties":{"project_name":{"type":"string"}},"required":["project_name"],"additionalProperties":false}`)),
+	)
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	var streams []agentadaptor.StreamPayload
+	for payload := range handle.StreamEvents() {
+		streams = append(streams, payload)
+	}
+	result, err := handle.Wait(context.Background())
+	if err != nil {
+		t.Fatalf("wait: %v", err)
+	}
+	if result.StructuredOutput == nil || !result.StructuredOutput.Valid || string(result.StructuredOutput.RawJSON) != `{"project_name":"agent-adaptor"}` {
+		t.Fatalf("structured output = %#v", result.StructuredOutput)
+	}
+	if result.Output != "done" || result.RawStreams == nil || !strings.Contains(result.RawStreams.Stdout, `"structured_output"`) {
+		t.Fatalf("result = %#v", result)
+	}
+	seenText := false
+	seenFinished := false
+	for _, payload := range streams {
+		seenText = seenText || payload.Kind == agentadaptor.StreamTextContent && payload.Delta == "done"
+		seenFinished = seenFinished || payload.Kind == agentadaptor.StreamRunFinished
+	}
+	if !seenText || !seenFinished {
+		t.Fatalf("stream payloads = %#v", streams)
 	}
 }
 
