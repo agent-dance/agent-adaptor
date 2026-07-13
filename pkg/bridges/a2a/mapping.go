@@ -1,7 +1,9 @@
 package a2a
 
 import (
+	"fmt"
 	"sort"
+	"strings"
 
 	a2aproto "github.com/a2aproject/a2a-go/v2/a2a"
 
@@ -49,8 +51,15 @@ func (t *streamTranslator) Translate(p agentadaptor.StreamPayload) []a2aproto.Ev
 		if !t.exposure.IncludeToolCalls {
 			return nil
 		}
-		id := a2aproto.ArtifactID("tool-call-" + defaultString(p.ToolCallID, "args"))
-		return t.closeArtifact(id, string(id))
+		toolID := defaultString(p.ToolCallID, "unknown")
+		argsID := a2aproto.ArtifactID("tool-call-" + defaultString(p.ToolCallID, "args"))
+		if t.started[argsID] {
+			return t.closeArtifact(argsID, string(argsID))
+		}
+		id := a2aproto.ArtifactID("tool-call-" + toolID + "-end")
+		return []a2aproto.Event{t.dataArtifact(id, string(id), map[string]any{
+			"kind": "tool_call.end", "id": p.ToolCallID,
+		}, true)}
 	case agentadaptor.StreamToolCallResult:
 		if !t.exposure.IncludeToolCalls {
 			return nil
@@ -161,13 +170,17 @@ func (t *streamTranslator) dataArtifact(id a2aproto.ArtifactID, name string, dat
 	return ev
 }
 
-func terminalArtifacts(info a2aproto.TaskInfoProvider, result agentadaptor.RunResult, exposure ExposurePolicy, built BuiltResult) []a2aproto.Event {
+func terminalArtifacts(info a2aproto.TaskInfoProvider, result agentadaptor.RunResult, exposure ExposurePolicy, built BuiltResult) ([]a2aproto.Event, error) {
 	var out []a2aproto.Event
 	if !built.ReplaceDefaultArtifacts {
 		out = append(out, defaultTerminalArtifacts(info, result, exposure)...)
 	}
-	out = append(out, customTerminalArtifacts(info, built.Artifacts)...)
-	return out
+	custom, err := customTerminalArtifacts(info, built.Artifacts, reservedArtifactIDs(exposure, built.ReplaceDefaultArtifacts))
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, custom...)
+	return out, nil
 }
 
 func defaultTerminalArtifacts(info a2aproto.TaskInfoProvider, result agentadaptor.RunResult, exposure ExposurePolicy) []a2aproto.Event {
@@ -204,27 +217,61 @@ func defaultTerminalArtifacts(info a2aproto.TaskInfoProvider, result agentadapto
 	return out
 }
 
-func customTerminalArtifacts(info a2aproto.TaskInfoProvider, artifacts []ArtifactSpec) []a2aproto.Event {
+func customTerminalArtifacts(info a2aproto.TaskInfoProvider, artifacts []ArtifactSpec, reserved map[string]struct{}) ([]a2aproto.Event, error) {
 	if len(artifacts) == 0 {
-		return nil
+		return nil, nil
 	}
 	out := make([]a2aproto.Event, 0, len(artifacts))
-	for _, spec := range artifacts {
-		id := defaultString(spec.ID, spec.Name)
+	seen := make(map[string]struct{}, len(artifacts))
+	for i, spec := range artifacts {
+		id := strings.TrimSpace(defaultString(spec.ID, spec.Name))
 		if id == "" {
-			continue
+			return nil, fmt.Errorf("custom artifact %d requires ID or Name", i)
 		}
-		ev := a2aproto.NewArtifactUpdateEvent(info, a2aproto.ArtifactID(id), outboundParts(spec.Parts)...)
+		if _, ok := reserved[id]; ok || strings.HasPrefix(id, "tool-call-") {
+			return nil, fmt.Errorf("custom artifact id %q is reserved by the bridge", id)
+		}
+		if _, ok := seen[id]; ok {
+			return nil, fmt.Errorf("duplicate custom artifact id %q", id)
+		}
+		seen[id] = struct{}{}
+		parts, err := outboundParts(spec.Parts)
+		if err != nil {
+			return nil, fmt.Errorf("custom artifact %q: %w", id, err)
+		}
+		metadata, err := normalizeJSONMap(spec.Metadata)
+		if err != nil {
+			return nil, fmt.Errorf("custom artifact %q metadata: %w", id, err)
+		}
+		ev := a2aproto.NewArtifactUpdateEvent(info, a2aproto.ArtifactID(id), parts...)
 		ev.Append = false
 		ev.LastChunk = true
 		ev.Artifact.ID = a2aproto.ArtifactID(id)
 		ev.Artifact.Name = defaultString(spec.Name, id)
 		ev.Artifact.Description = spec.Description
 		ev.Artifact.Extensions = append([]string(nil), spec.Extensions...)
-		ev.Artifact.Metadata = cloneMap(spec.Metadata)
+		ev.Artifact.Metadata = metadata
 		out = append(out, ev)
 	}
-	return out
+	return out, nil
+}
+
+func reservedArtifactIDs(exposure ExposurePolicy, replaceDefault bool) map[string]struct{} {
+	reserved := map[string]struct{}{ArtifactAssistantOutput: {}}
+	if !replaceDefault {
+		reserved[ArtifactAgentAdaptorResult] = struct{}{}
+	}
+	if exposure.IncludeReasoning {
+		reserved["reasoning"] = struct{}{}
+	}
+	if exposure.IncludeHITL {
+		reserved["human-decision-request"] = struct{}{}
+		reserved["human-decision-result"] = struct{}{}
+	}
+	if exposure.hasStreamingDiagnostics() {
+		reserved["stream-dropped"] = struct{}{}
+	}
+	return reserved
 }
 
 func failureDetails(f *agentadaptor.RunFailure, exposure ExposurePolicy) map[string]any {

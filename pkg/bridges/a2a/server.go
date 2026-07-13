@@ -40,12 +40,16 @@ func NewServer(runner agentadaptor.Runner, opts ServerOptions) *Server {
 	if opts.Session == nil {
 		opts.Session = Stateless()
 	}
-	if opts.PromptBuilder == nil {
-		opts.PromptBuilder = PromptBuilderFunc(defaultPrompt)
+	promptBuilder := opts.PromptBuilder
+	if promptBuilder == nil {
+		promptBuilder = opts.Prompt
+	}
+	if promptBuilder == nil {
+		promptBuilder = PromptBuilderFunc(defaultPrompt)
 	}
 
 	exec := &executor{
-		runner: runner, session: opts.Session, prompt: opts.PromptBuilder,
+		runner: runner, session: opts.Session, prompt: promptBuilder,
 		runOptions:    append([]agentadaptor.RunOption(nil), opts.RunOptions...),
 		runStreaming:  opts.RunStreaming,
 		resultBuilder: opts.ResultBuilder,
@@ -99,7 +103,12 @@ type executor struct {
 
 func (e *executor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2aproto.Event, error] {
 	return func(yield func(a2aproto.Event, error) bool) {
-		req := inboundFromExecCtx(execCtx)
+		// 1. Resolve the inbound request into the single SDK invocation option list.
+		req, err := inboundFromExecCtx(execCtx)
+		if err != nil {
+			yield(nil, fmt.Errorf("%w: %v", a2aproto.ErrInvalidParams, err))
+			return
+		}
 		prompt, promptOpts, err := e.prompt.BuildPrompt(ctx, req)
 		if err != nil {
 			yield(nil, fmt.Errorf("%w: %v", a2aproto.ErrInvalidParams, err))
@@ -117,10 +126,13 @@ func (e *executor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext)
 		runOpts := append([]agentadaptor.RunOption(nil), e.runOptions...)
 		runOpts = append(runOpts, sessionOpts...)
 		runOpts = append(runOpts, promptOpts...)
-		if e.runStreaming != RunStreamingDisabled {
+		if e.runStreaming == RunStreamingDisabled {
+			runOpts = append(runOpts, agentadaptor.WithoutStreaming())
+		} else {
 			runOpts = append(runOpts, agentadaptor.WithStreaming())
 		}
 
+		// 2. Register cancellation before starting the SDK run.
 		runCtx, cancelRunCtx := context.WithCancel(ctx)
 		e.storePending(execCtx.TaskID, cancelRunCtx)
 		defer func() {
@@ -159,6 +171,7 @@ func (e *executor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext)
 		e.store(execCtx.TaskID, handle)
 		defer e.delete(execCtx.TaskID)
 
+		// 3. Forward stream payloads while Wait collects the terminal SDK result.
 		translator := newStreamTranslator(execCtx, e.exposure)
 		waitCh := make(chan waitResult, 1)
 		go func() {
@@ -186,6 +199,7 @@ func (e *executor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext)
 		}
 
 	drained:
+		// 4. Close open stream artifacts, then project exactly one terminal outcome.
 		out := <-waitCh
 		for _, ev := range translator.CloseOpen() {
 			if !yield(ev, nil) {
@@ -201,21 +215,32 @@ func (e *executor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext)
 			yield(a2aproto.NewStatusUpdateEvent(execCtx, state, msg), nil)
 			return
 		}
+		if out.result.Failure != nil {
+			for _, ev := range defaultTerminalArtifacts(execCtx, out.result, e.exposure) {
+				if !yield(ev, nil) {
+					return
+				}
+			}
+			msg := failureMessage(execCtx, out.result.Failure.Message, failureDetails(out.result.Failure, e.exposure))
+			yield(a2aproto.NewStatusUpdateEvent(execCtx, a2aproto.TaskStateFailed, msg), nil)
+			return
+		}
 		built, err := e.buildResult(ctx, req, out.result)
 		if err != nil {
 			msg := failureMessage(execCtx, err.Error(), map[string]any{"layer": "result_builder"})
 			yield(a2aproto.NewStatusUpdateEvent(execCtx, a2aproto.TaskStateFailed, msg), nil)
 			return
 		}
-		for _, ev := range terminalArtifacts(execCtx, out.result, e.exposure, built) {
+		artifacts, err := terminalArtifacts(execCtx, out.result, e.exposure, built)
+		if err != nil {
+			msg := failureMessage(execCtx, err.Error(), map[string]any{"layer": "result_builder"})
+			yield(a2aproto.NewStatusUpdateEvent(execCtx, a2aproto.TaskStateFailed, msg), nil)
+			return
+		}
+		for _, ev := range artifacts {
 			if !yield(ev, nil) {
 				return
 			}
-		}
-		if out.result.Failure != nil {
-			msg := failureMessage(execCtx, out.result.Failure.Message, failureDetails(out.result.Failure, e.exposure))
-			yield(a2aproto.NewStatusUpdateEvent(execCtx, a2aproto.TaskStateFailed, msg), nil)
-			return
 		}
 		yield(a2aproto.NewStatusUpdateEvent(execCtx, a2aproto.TaskStateCompleted, agentMessage(execCtx, completedStatusText(out.result, built))), nil)
 	}
@@ -317,9 +342,9 @@ type execCtxAdapter struct {
 	*a2asrv.ExecutorContext
 }
 
-func inboundFromExecCtx(ctx *a2asrv.ExecutorContext) InboundRequest {
+func inboundFromExecCtx(ctx *a2asrv.ExecutorContext) (InboundRequest, error) {
 	if ctx == nil {
-		return InboundRequest{}
+		return InboundRequest{}, nil
 	}
 	return inboundRequest(execCtxAdapter{ctx})
 }

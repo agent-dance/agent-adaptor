@@ -112,6 +112,13 @@ func TestToolSchemaAllowsOnlyRegistryKeyObjectiveInputAndConstraints(t *testing.
 	if schema["additionalProperties"] != false {
 		t.Fatalf("expected additionalProperties=false, got %#v", schema["additionalProperties"])
 	}
+	input := props["input"].(map[string]any)
+	artifacts := input["properties"].(map[string]any)["artifacts"].(map[string]any)
+	item := artifacts["items"].(map[string]any)
+	required := item["required"].([]string)
+	if len(required) != 1 || required[0] != "uri" {
+		t.Fatalf("artifact required fields = %#v", required)
+	}
 }
 
 func TestEventMapperMapsA2ABridgeArtifactsAndTerminal(t *testing.T) {
@@ -303,8 +310,8 @@ func TestDelegatorPollingHappyPathEmitsEventsAndStructuredResult(t *testing.T) {
 	if client.lastSend.Tenant != "tenant-a" || client.lastSend.Message.Parts[0].Text != "research this" {
 		t.Fatalf("unexpected send request: %#v", client.lastSend)
 	}
-	if client.lastSend.ContextID != "run-1" {
-		t.Fatalf("expected send context id run-1, got %q", client.lastSend.ContextID)
+	if client.lastSend.ContextID != "" {
+		t.Fatalf("expected remote agent to allocate context id, got %q", client.lastSend.ContextID)
 	}
 	if client.lastSend.HistoryLength == nil || *client.lastSend.HistoryLength != historyLength {
 		t.Fatalf("expected send history length %d, got %#v", historyLength, client.lastSend.HistoryLength)
@@ -574,6 +581,74 @@ func TestDelegatorLifecycleHookReportsAfterExecution(t *testing.T) {
 	}
 }
 
+func TestDelegatorAfterHookFailurePublishesOnlyFailedTerminal(t *testing.T) {
+	t.Parallel()
+	card := clienta2a.AgentCard{Name: "Research", Capabilities: clienta2a.Capabilities{Streaming: false}}
+	registry, err := NewRegistry(RemoteAgentSpec{Key: "research", AgentCard: &card})
+	if err != nil {
+		t.Fatalf("registry: %v", err)
+	}
+	bus := NewEventBus(16)
+	client := &fakeA2AClient{card: card, sendTask: clienta2a.Task{ID: "task-1", ContextID: "ctx-1", Status: clienta2a.TaskStatus{State: clienta2a.TaskStateCompleted}}}
+	delegator := NewDelegator(registry, bus)
+	delegator.NewClient = func(RemoteAgentSpec) A2AClient { return client }
+	delegator.NewID = func() string { return "del-1" }
+	delegator.LifecycleHook = DelegationLifecycleHookFuncs{
+		AfterFunc: func(context.Context, AfterDelegation) error {
+			return errors.New("workflow report failed")
+		},
+	}
+
+	result, err := delegator.Delegate(context.Background(), DelegationRequest{RunID: "run-1", Agent: "research", Objective: "review this"})
+	var derr *DelegationError
+	if !errors.As(err, &derr) || derr.Code != "workflow_after_failed" {
+		t.Fatalf("result=%#v err=%v, want workflow_after_failed", result, err)
+	}
+	if result.Status != "failed" || result.Error == nil || result.Error.Code != "workflow_after_failed" {
+		t.Fatalf("result = %#v", result)
+	}
+	events := drainAvailableBus(t, bus, "run-1")
+	terminalCount := 0
+	for _, event := range events {
+		if !isTerminal(event.Kind) {
+			continue
+		}
+		terminalCount++
+		if event.Kind != DelegationFailed || event.Error == nil || event.Error.Code != "workflow_after_failed" {
+			t.Fatalf("terminal = %#v", event)
+		}
+	}
+	if terminalCount != 1 {
+		t.Fatalf("terminal count = %d, events=%#v", terminalCount, events)
+	}
+}
+
+func TestDelegatorTimeoutCoversBeforeHook(t *testing.T) {
+	t.Parallel()
+	card := clienta2a.AgentCard{Name: "Research", Capabilities: clienta2a.Capabilities{Streaming: false}}
+	registry, err := NewRegistry(RemoteAgentSpec{Key: "research", AgentCard: &card})
+	if err != nil {
+		t.Fatalf("registry: %v", err)
+	}
+	delegator := NewDelegator(registry, NewEventBus(16))
+	delegator.NewID = func() string { return "del-1" }
+	delegator.LifecycleHook = DelegationLifecycleHookFuncs{
+		BeforeFunc: func(ctx context.Context, _ BeforeDelegation) error {
+			<-ctx.Done()
+			return ctx.Err()
+		},
+	}
+
+	result, err := delegator.Delegate(context.Background(), DelegationRequest{RunID: "run-1", Agent: "research", Objective: "review this", Timeout: 10 * time.Millisecond})
+	var derr *DelegationError
+	if !errors.As(err, &derr) || derr.Code != "workflow_before_failed" || !strings.Contains(derr.Message, context.DeadlineExceeded.Error()) {
+		t.Fatalf("result=%#v err=%v, want workflow_before_failed", result, err)
+	}
+	if result.Status != "failed" {
+		t.Fatalf("result = %#v", result)
+	}
+}
+
 func TestDelegatorRejectsInputArtifactWithoutURI(t *testing.T) {
 	t.Parallel()
 	card := clienta2a.AgentCard{Name: "Research", Capabilities: clienta2a.Capabilities{Streaming: false}}
@@ -698,8 +773,8 @@ func TestDelegatorStreamingCancellationCascadesWithEffectiveTenant(t *testing.T)
 	if client.cancelCalls != 1 || client.lastCancel.TaskID != "task-1" || client.lastCancel.Tenant != "call-tenant" {
 		t.Fatalf("expected streaming remote cancel with effective tenant, calls=%d req=%#v", client.cancelCalls, client.lastCancel)
 	}
-	if client.lastSend.ContextID != "run-1" {
-		t.Fatalf("expected streaming send context id run-1, got %q", client.lastSend.ContextID)
+	if client.lastSend.ContextID != "" {
+		t.Fatalf("expected remote agent to allocate streaming context id, got %q", client.lastSend.ContextID)
 	}
 	replayed := drainBus(t, bus, "run-1", 3)
 	if replayed[len(replayed)-1].Kind != DelegationCancelled {
@@ -856,8 +931,8 @@ func TestDelegatorStreamingTerminalMessageCompletes(t *testing.T) {
 	if result.Status != "completed" || result.Summary != "done" || client.cancelCalls != 0 {
 		t.Fatalf("unexpected streaming terminal message result=%#v cancelCalls=%d", result, client.cancelCalls)
 	}
-	replayed := drainBus(t, bus, "run-1", 4)
-	if replayed[len(replayed)-1].Kind != DelegationFinished {
+	replayed := drainBus(t, bus, "run-1", 5)
+	if replayed[len(replayed)-2].Kind != DelegationTextEnd || replayed[len(replayed)-1].Kind != DelegationFinished {
 		t.Fatalf("expected finished terminal, got %#v", replayed)
 	}
 }
@@ -969,6 +1044,77 @@ func TestEventBusTerminalDeliveryDropsOldestWhenSubscriberFull(t *testing.T) {
 	}
 	if !seenTerminal {
 		t.Fatal("terminal event should be enqueued by dropping an older event")
+	}
+}
+
+func TestEventBusPreservesTextEndBeforeTerminalForFullSubscriber(t *testing.T) {
+	t.Parallel()
+	bus := NewEventBus(0)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ch := bus.SubscribeRun(ctx, "run-1")
+	for i := 0; i < subscriberBuffer; i++ {
+		bus.Publish(DelegationEvent{RunID: "run-1", DelegationID: "del-1", Kind: DelegationStatus})
+	}
+	bus.Publish(DelegationEvent{RunID: "run-1", DelegationID: "del-1", Kind: DelegationTextEnd, RemoteMessageID: "msg-1"})
+	bus.Publish(DelegationEvent{RunID: "run-1", DelegationID: "del-1", Kind: DelegationFinished})
+
+	var lifecycle []DelegationEventKind
+	for i := 0; i < subscriberBuffer; i++ {
+		event := <-ch
+		if event.Kind == DelegationTextEnd || event.Kind == DelegationFinished {
+			lifecycle = append(lifecycle, event.Kind)
+		}
+	}
+	if len(lifecycle) != 2 || lifecycle[0] != DelegationTextEnd || lifecycle[1] != DelegationFinished {
+		t.Fatalf("lifecycle = %#v", lifecycle)
+	}
+}
+
+func TestDelegatorPublishesAgentNotFoundTerminal(t *testing.T) {
+	t.Parallel()
+	registry, err := NewRegistry()
+	if err != nil {
+		t.Fatalf("registry: %v", err)
+	}
+	bus := NewEventBus(4)
+	delegator := NewDelegator(registry, bus)
+	delegator.NewID = func() string { return "del-missing" }
+
+	result, err := delegator.Delegate(context.Background(), DelegationRequest{RunID: "run-1", Agent: "missing"})
+	var derr *DelegationError
+	if !errors.As(err, &derr) || derr.Code != "agent_not_found" || result.Status != "failed" {
+		t.Fatalf("result=%#v err=%v", result, err)
+	}
+	events := drainBus(t, bus, "run-1", 1)
+	if events[0].Kind != DelegationFailed || events[0].DelegationID != "del-missing" {
+		t.Fatalf("events = %#v", events)
+	}
+}
+
+func TestDelegatorAfterCancelledErrorKeepsResultAndEventAligned(t *testing.T) {
+	t.Parallel()
+	card := clienta2a.AgentCard{Name: "Research", Capabilities: clienta2a.Capabilities{Streaming: false}}
+	registry, err := NewRegistry(RemoteAgentSpec{Key: "research", AgentCard: &card})
+	if err != nil {
+		t.Fatalf("registry: %v", err)
+	}
+	bus := NewEventBus(8)
+	client := &fakeA2AClient{card: card, sendTask: clienta2a.Task{ID: "task-1", Status: clienta2a.TaskStatus{State: clienta2a.TaskStateCompleted}}}
+	delegator := NewDelegator(registry, bus)
+	delegator.NewClient = func(RemoteAgentSpec) A2AClient { return client }
+	delegator.NewID = func() string { return "del-1" }
+	delegator.LifecycleHook = DelegationLifecycleHookFuncs{AfterFunc: func(context.Context, AfterDelegation) error {
+		return &DelegationError{Code: "cancelled", Message: "workflow cancelled"}
+	}}
+
+	result, err := delegator.Delegate(context.Background(), DelegationRequest{RunID: "run-1", Agent: "research", Objective: "review"})
+	if err == nil || result.Status != "cancelled" {
+		t.Fatalf("result=%#v err=%v", result, err)
+	}
+	events := drainAvailableBus(t, bus, "run-1")
+	if events[len(events)-1].Kind != DelegationCancelled {
+		t.Fatalf("events = %#v", events)
 	}
 }
 
@@ -1393,6 +1539,18 @@ func (s *fakeA2AStream) Recv() (clienta2a.Event, error) {
 		return clienta2a.Event{}, io.EOF
 	}
 	return item.event, item.err
+}
+
+func (s *fakeA2AStream) RecvContext(ctx context.Context) (clienta2a.Event, error) {
+	select {
+	case <-ctx.Done():
+		return clienta2a.Event{}, ctx.Err()
+	case item, ok := <-s.events:
+		if !ok {
+			return clienta2a.Event{}, io.EOF
+		}
+		return item.event, item.err
+	}
 }
 
 func (s *fakeA2AStream) Close() error {
