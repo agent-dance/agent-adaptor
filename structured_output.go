@@ -149,10 +149,14 @@ func JSONSchemaFor[T any](opts ...SchemaOption) (json.RawMessage, error) {
 	if err := validateSchemaType(t, nil); err != nil {
 		return nil, err
 	}
+	recursive := schemaTypeHasCycle(t, nil, nil)
+	if cfg.inlineRefs && recursive {
+		return nil, &InvalidOutputSchemaError{Reason: fmt.Sprintf("cannot inline recursive Go type %s", t)}
+	}
 
 	reflector := &invopopjsonschema.Reflector{
 		Anonymous:                  true,
-		ExpandedStruct:             true,
+		ExpandedStruct:             !recursive,
 		DoNotReference:             cfg.inlineRefs,
 		AllowAdditionalProperties:  cfg.allowAdditionalProperties,
 		RequiredFromJSONSchemaTags: cfg.requireExplicitTags,
@@ -483,15 +487,36 @@ func validateSchemaType(t reflect.Type, stack map[reflect.Type]bool) error {
 	if t == nil {
 		return &InvalidOutputSchemaError{Reason: "nil Go type"}
 	}
+	pointers := map[reflect.Type]bool{}
 	for t.Kind() == reflect.Pointer {
+		if pointers[t] {
+			return &InvalidOutputSchemaError{Reason: fmt.Sprintf("unsupported self-referential pointer type %s", t)}
+		}
+		pointers[t] = true
 		t = t.Elem()
+	}
+	composite := t.Kind() == reflect.Map || t.Kind() == reflect.Array || t.Kind() == reflect.Slice || t.Kind() == reflect.Struct
+	if composite {
+		if stack == nil {
+			stack = map[reflect.Type]bool{}
+		}
+		if stack[t] {
+			return nil
+		}
+		stack[t] = true
+		defer delete(stack, t)
 	}
 	switch t.Kind() {
 	case reflect.Chan, reflect.Func, reflect.UnsafePointer, reflect.Complex64, reflect.Complex128, reflect.Uintptr:
 		return &InvalidOutputSchemaError{Reason: fmt.Sprintf("unsupported Go type %s", t)}
 	case reflect.Map:
 		key := t.Key()
+		keyPointers := map[reflect.Type]bool{}
 		for key.Kind() == reflect.Pointer {
+			if keyPointers[key] {
+				return &InvalidOutputSchemaError{Reason: fmt.Sprintf("unsupported self-referential map key type %s", t.Key())}
+			}
+			keyPointers[key] = true
 			key = key.Elem()
 		}
 		if key.Kind() != reflect.String {
@@ -501,14 +526,6 @@ func validateSchemaType(t reflect.Type, stack map[reflect.Type]bool) error {
 	case reflect.Array, reflect.Slice:
 		return validateSchemaType(t.Elem(), stack)
 	case reflect.Struct:
-		if stack == nil {
-			stack = map[reflect.Type]bool{}
-		}
-		if stack[t] {
-			return nil
-		}
-		stack[t] = true
-		defer delete(stack, t)
 		for i := 0; i < t.NumField(); i++ {
 			field := t.Field(i)
 			if field.PkgPath != "" || field.Tag.Get("json") == "-" {
@@ -520,6 +537,56 @@ func validateSchemaType(t reflect.Type, stack map[reflect.Type]bool) error {
 		}
 	}
 	return nil
+}
+
+func schemaTypeHasCycle(t reflect.Type, active, visited map[reflect.Type]bool) bool {
+	if t == nil {
+		return false
+	}
+	pointers := map[reflect.Type]bool{}
+	for t.Kind() == reflect.Pointer {
+		if pointers[t] {
+			return true
+		}
+		pointers[t] = true
+		t = t.Elem()
+	}
+	composite := t.Kind() == reflect.Map || t.Kind() == reflect.Array || t.Kind() == reflect.Slice || t.Kind() == reflect.Struct
+	if !composite {
+		return false
+	}
+	if active == nil {
+		active = map[reflect.Type]bool{}
+	}
+	if visited == nil {
+		visited = map[reflect.Type]bool{}
+	}
+	if active[t] {
+		return true
+	}
+	if visited[t] {
+		return false
+	}
+	active[t] = true
+	defer delete(active, t)
+	switch t.Kind() {
+	case reflect.Map, reflect.Array, reflect.Slice:
+		if schemaTypeHasCycle(t.Elem(), active, visited) {
+			return true
+		}
+	case reflect.Struct:
+		for i := 0; i < t.NumField(); i++ {
+			field := t.Field(i)
+			if field.PkgPath != "" || field.Tag.Get("json") == "-" {
+				continue
+			}
+			if schemaTypeHasCycle(field.Type, active, visited) {
+				return true
+			}
+		}
+	}
+	visited[t] = true
+	return false
 }
 
 func structuredOutputPromptInstruction(schema *OutputSchema) string {

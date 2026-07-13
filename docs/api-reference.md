@@ -173,7 +173,7 @@ Adapter support is exposed through `DriverDescriptor.StructuredOutput`. Current 
 | Adapter | Native JSON Schema | Prompt validation | Streaming | Notes |
 |---|---:|---:|---:|---|
 | Codex | yes, batch `codex exec --output-schema` | yes | no native streaming guarantee | app-server schema support is not advertised until verified |
-| Claude Code | yes, print-mode `--output-format json --json-schema` | yes | no native streaming/HITL guarantee | interactive HITL + native schema is rejected |
+| Claude Code | yes, print-mode `--json-schema` with `json` or `stream-json` output | yes | yes, native | interactive HITL + native schema is rejected; recursive local references are unsupported in native mode |
 | Cursor | no | yes | yes for prompt validation | Cursor CLI has JSON envelopes but no native schema-output surface |
 
 Example:

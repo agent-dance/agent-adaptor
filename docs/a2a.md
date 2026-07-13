@@ -24,7 +24,9 @@ The bridge maps A2A task execution onto the single SDK execution path:
 1. `SendMessage` / `SendStreamingMessage` decode inbound A2A messages.
 2. The configured `PromptBuilder` produces a prompt and optional `RunOption`s.
 3. The configured `SessionMapper` may bind A2A `contextId` or `taskId` to SDK session options.
-4. The bridge calls `Runner.Start(..., WithStreaming())`.
+4. The bridge calls `Runner.Start(...)` and applies `RunStreaming` as the final
+   per-call streaming override (`WithStreaming` by default,
+   `WithoutStreaming` when disabled).
 5. `StreamEvents`, `Wait`, and `Cancel` are translated to A2A status, artifact, and terminal events.
 
 Bridge capability advertisement is strict:
@@ -32,6 +34,13 @@ Bridge capability advertisement is strict:
 - `AgentCard.Capabilities.Streaming` is a tri-state. The zero value keeps A2A streaming enabled; use `a2a.CapabilityDisabled` to publish `streaming=false`.
 - `PushNotifications` is not exposed unless `AgentCard.Capabilities.PushNotifications=true` and `ServerOptions.PushNotifications` provides both an A2A push `ConfigStore` and `Sender`.
 - `ExtendedAgentCard` is not exposed unless `AgentCard.Capabilities.ExtendedAgentCard=true` and `ServerOptions.ExtendedAgentCard` provides either a static card or a provider.
+- `ServerOptions.PromptBuilder` customizes inbound prompt construction. The
+  legacy `ServerOptions.Prompt` field remains supported for source
+  compatibility, with `PromptBuilder` taking precedence when both are set.
+- `ServerOptions.ResultBuilder` can add or replace terminal artifacts and
+  override completed status text. It runs only after a successful SDK result;
+  streamed artifacts already emitted during the run are not retroactively
+  removed.
 
 ```go
 runner := sdk.Default()
@@ -120,6 +129,14 @@ _ = task
 
 `SendStream` and `Subscribe` return ordered protocol events. The client uses the same execution-final semantics as the official server stack: a `Message`, a terminal task/status, or `TASK_STATE_INPUT_REQUIRED` ends the stream. Duplicate or late events after the first final event are ignored. If a stream fails before a final event and the task ID is known, the client attempts one `GetTask` recovery; a final recovered task is returned with `RecoveredState=true`.
 
+`PartData`, `SendRequest.Metadata`, `Message.Metadata`, and `Part.Metadata` are
+normalized before send. Values must encode as non-null JSON, and
+integer-valued numbers must stay within the interoperable IEEE-754 safe range
+(`-9007199254740991` through `9007199254740991`). Encode larger IDs and counters
+as strings. Invalid outbound values are rejected before send; unsafe `PartData`
+received from a remote agent is returned as a protocol error instead of being
+silently rounded.
+
 Bearer credentials are origin-pinned. With `Auth` configured, the client only sends credentials to the Agent Card origin by default. Agent Card interface URLs on another origin require explicit `TrustedAuthOrigins`, and redirects to untrusted origins have authorization headers stripped. `SubscribeRequest.Since` is rejected when set because A2A 1.0 `SubscribeToTask` has no cursor replay field.
 
 Task lookup and cancellation use request DTOs so hosts can pass A2A tenant and
@@ -197,6 +214,15 @@ progress is published to the bus and rendered as AG-UI custom events:
 }
 ```
 
+Assistant output uses the ordered `subagent.text.start`,
+`subagent.text.delta`, and `subagent.text.end` lifecycle. Bridge-generated tool
+artifacts continue to emit `subagent.artifact` for existing consumers and also
+emit typed `subagent.tool_call.start`, `subagent.tool_call.args`,
+`subagent.tool_call.result`, and `subagent.tool_call.end` events. For typed tool
+events, `StreamPayload.ToolCallID` is the remote tool-call ID; the parent model
+tool-call ID remains available as `parentToolCallId` and
+`Raw["parent_tool_call_id"]`.
+
 `parentToolCallId` is included only when the host can supply the parent provider
 tool-call ID, for example by setting `a2adelegation.MCPServerOptions.ParentToolCallID`
 or by publishing `DelegationEvent` values with that field. The MCP JSON-RPC
@@ -223,6 +249,22 @@ Security boundary: concrete adapters stay unaware of A2A delegation; remote
 protocol dumps are not appended to `RunResult.RawStreams`; remote artifacts are
 reported as structured references/metadata unless host policy explicitly stores
 and exposes content elsewhere.
+
+## Upgrade Notes
+
+- `ServerOptions`, `Delegator`, `DelegationRequest`, `DelegationEvent`,
+  `DelegationResult`, and `MCPServerOptions` gained additive fields. Existing
+  keyed literals and constructor-based setup continue to compile. External code
+  using unkeyed composite literals must migrate to keyed fields.
+- Custom `A2AStream` implementations must make `Close` unblock an in-flight
+  `Recv`. Implementing the optional `RecvContext(context.Context)` method avoids
+  the compatibility goroutine used for legacy streams.
+- `DelegationResult.Summary` prefers the final task status message when one is
+  present, then falls back to result artifacts and task history.
+- Custom MCP tools are configured with `MCPServerOptions.Tools`. Because this is
+  a slice, `MCPServerOptions` and `MCPServer` are no longer comparable; code that
+  previously used either value with `==` or as a map key must use an explicit
+  stable key instead.
 
 ## Non-Goals
 

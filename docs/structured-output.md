@@ -127,7 +127,7 @@ wrappers.
 | Adapter | Native JSON Schema | Prompt validation | Works with streaming | Works with HITL | Mapping |
 |---|---:|---:|---:|---:|---|
 | Codex | yes | yes | prompt-validation only | no | Native batch runs materialize the schema to a per-run temp file and call `codex exec --output-schema <file> --json`. The Codex parser extracts final JSON from official terminal result events. |
-| Claude Code | yes | yes | prompt-validation only | no | Native batch runs call `claude --print --output-format json --json-schema <schema>`. Interactive HITL plus native structured output is rejected before launch. |
+| Claude Code | yes | yes | yes | no | Native batch runs use `--output-format json`; streaming runs use `--output-format stream-json --verbose`. Both pass `--json-schema`, and the parser reads the terminal `structured_output`. Interactive HITL plus native structured output is rejected before launch. |
 | Cursor | no | yes | yes | no | Cursor CLI exposes `json` / `stream-json` protocol envelopes but no native output-schema flag. `NativeStrictOutput()` is rejected; `PromptValidateOutput()` uses SDK prompt injection plus local validation. |
 
 Capability gating is available through `Admin().Agent(name).Info()`:
@@ -171,6 +171,12 @@ JSON that does not validate and the policy is `StructuredOutputFailRun`, the
 run returns a `FailurePolicyError` on `RunResult.Failure`; use
 `ReturnInvalidStructuredOutput()` to receive `StructuredOutput.Valid=false`
 without marking the run failed.
+
+`WithJSONSchemaOutputFor[T]` preserves the generated schema and its stable hash
+for every adapter. Claude prepares a provider-local copy by removing root schema
+metadata and inlining local references. Recursive schemas remain valid for the
+public helper and prompt validation, but Claude native mode rejects recursive
+local references because they cannot be safely inlined for that CLI path.
 
 ## Security Notes
 

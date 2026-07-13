@@ -146,16 +146,57 @@ type ExtendedAgentCardSupport struct {
 	Provider ExtendedAgentCardProvider
 }
 
-type ServerOptions struct {
-	AgentCard AgentCard
-	Session   SessionMapper
-	Prompt    PromptBuilder
+type RunStreamingMode uint8
 
-	RunOptions        []agentadaptor.RunOption
-	TaskLifecycle     TaskLifecycleOptions
+const (
+	// RunStreamingDefault preserves the bridge's historical behavior and
+	// enables SDK stream events for every run.
+	RunStreamingDefault RunStreamingMode = iota
+	// RunStreamingEnabled forces SDK stream events on for every run.
+	RunStreamingEnabled
+	// RunStreamingDisabled disables SDK stream events while keeping the A2A
+	// transport itself available. Useful for adapters whose structured output
+	// cannot run with Streaming=true.
+	RunStreamingDisabled
+)
+
+type ServerOptions struct {
+	// AgentCard is the public discovery document advertised by this local A2A
+	// server.
+	AgentCard AgentCard
+	// Session maps inbound A2A context/task identity into SDK RunOptions such as
+	// WithSessionKey.
+	Session SessionMapper
+	// Prompt is the legacy prompt builder option.
+	// Deprecated: use PromptBuilder instead.
+	Prompt PromptBuilder
+	// PromptBuilder interprets one inbound A2A request and turns it into the
+	// prompt plus any per-run RunOptions used for the downstream SDK execution.
+	// When both PromptBuilder and Prompt are set, PromptBuilder takes precedence.
+	PromptBuilder PromptBuilder
+
+	// RunOptions are server-wide defaults appended before per-request options
+	// returned by Session / PromptBuilder.
+	RunOptions []agentadaptor.RunOption
+	// RunStreaming controls whether the bridge forces SDK StreamEvents on for
+	// each run. Disable this when a provider's structured-output path is
+	// incompatible with Streaming=true.
+	RunStreaming RunStreamingMode
+	// ResultBuilder customizes the terminal A2A projection (status text and
+	// terminal artifacts) produced from one completed SDK run.
+	ResultBuilder ResultBuilder
+	// TaskLifecycle controls task retention for the underlying A2A request
+	// handler store.
+	TaskLifecycle TaskLifecycleOptions
+	// PushNotifications provides the collaborators needed when the advertised
+	// AgentCard enables A2A push notifications.
 	PushNotifications *PushNotificationSupport
+	// ExtendedAgentCard provides the collaborators needed when the advertised
+	// AgentCard enables the extended-card capability.
 	ExtendedAgentCard *ExtendedAgentCardSupport
-	Exposure          ExposurePolicy
+	// Exposure controls which non-user-facing execution details are allowed to
+	// cross the A2A boundary.
+	Exposure ExposurePolicy
 }
 
 // ExposurePolicy controls which non-user-facing bridge artifacts are exposed
@@ -232,6 +273,12 @@ type PromptBuilder interface {
 	BuildPrompt(ctx context.Context, req InboundRequest) (prompt string, opts []agentadaptor.RunOption, err error)
 }
 
+// ResultBuilder lets hosts customize the terminal A2A artifacts and final
+// status text produced from one completed SDK run.
+type ResultBuilder interface {
+	BuildResult(ctx context.Context, req InboundRequest, result agentadaptor.RunResult) (BuiltResult, error)
+}
+
 type SessionMapperFunc func(context.Context, InboundRequest) ([]agentadaptor.RunOption, error)
 
 func (fn SessionMapperFunc) RunOptions(ctx context.Context, req InboundRequest) ([]agentadaptor.RunOption, error) {
@@ -242,6 +289,39 @@ type PromptBuilderFunc func(context.Context, InboundRequest) (string, []agentada
 
 func (fn PromptBuilderFunc) BuildPrompt(ctx context.Context, req InboundRequest) (string, []agentadaptor.RunOption, error) {
 	return fn(ctx, req)
+}
+
+type ResultBuilderFunc func(context.Context, InboundRequest, agentadaptor.RunResult) (BuiltResult, error)
+
+func (fn ResultBuilderFunc) BuildResult(ctx context.Context, req InboundRequest, result agentadaptor.RunResult) (BuiltResult, error) {
+	return fn(ctx, req, result)
+}
+
+// BuiltResult is the terminal A2A projection returned by ResultBuilder.
+//
+// When ReplaceDefaultArtifacts is false, Artifacts are appended after the
+// bridge-owned terminal defaults (`agent-adaptor-result`). When true, only the
+// custom terminal Artifacts are emitted. Streamed artifacts may already have
+// been emitted before ResultBuilder runs and are not affected by this setting.
+//
+// StatusText, when non-nil, overrides the final completed status message text.
+// A nil value preserves the bridge's default `RunResult.Output` behavior.
+type BuiltResult struct {
+	StatusText              *string
+	ReplaceDefaultArtifacts bool
+	Artifacts               []ArtifactSpec
+}
+
+// ArtifactSpec describes one terminal A2A artifact emitted by ResultBuilder.
+// It reuses the bridge's stable Part projection so hosts can define
+// TextPart/DataPart/URLPart payloads without depending on upstream proto types.
+type ArtifactSpec struct {
+	ID          string
+	Name        string
+	Description string
+	Parts       []Part
+	Extensions  []string
+	Metadata    map[string]any
 }
 
 func Stateless() SessionMapper {
