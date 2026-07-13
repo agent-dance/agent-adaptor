@@ -1,13 +1,19 @@
 package a2a
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math"
+	"strconv"
+	"strings"
 
 	a2aproto "github.com/a2aproject/a2a-go/v2/a2a"
 )
+
+const maxA2AJSONInteger = uint64(1<<53 - 1)
 
 func convertAgentCard(card *a2aproto.AgentCard) (AgentCard, error) {
 	if card == nil {
@@ -101,71 +107,194 @@ func validateAgentCard(card *a2aproto.AgentCard) error {
 	return nil
 }
 
-func upstreamMessage(in Message) *a2aproto.Message {
+func upstreamMessage(in Message) (*a2aproto.Message, error) {
 	role := a2aproto.MessageRoleUser
 	if in.Role == "agent" || in.Role == string(a2aproto.MessageRoleAgent) {
 		role = a2aproto.MessageRoleAgent
 	}
-	msg := a2aproto.NewMessage(role, upstreamParts(in.Parts)...)
+	parts, err := upstreamParts(in.Parts)
+	if err != nil {
+		return nil, err
+	}
+	metadata, err := normalizeProtocolMap(in.Metadata)
+	if err != nil {
+		return nil, fmt.Errorf("%w: message metadata: %v", ErrProtocol, err)
+	}
+	msg := a2aproto.NewMessage(role, parts...)
 	if in.ID != "" {
 		msg.ID = in.ID
 	}
 	msg.ContextID = in.ContextID
 	msg.TaskID = a2aproto.TaskID(in.TaskID)
-	msg.Metadata = cloneMap(in.Metadata)
+	msg.Metadata = metadata
 	msg.Extensions = append([]string(nil), in.Extensions...)
 	for _, id := range in.ReferenceTasks {
 		msg.ReferenceTasks = append(msg.ReferenceTasks, a2aproto.TaskID(id))
 	}
-	return msg
+	return msg, nil
 }
 
-func upstreamParts(parts []Part) []*a2aproto.Part {
+func upstreamParts(parts []Part) ([]*a2aproto.Part, error) {
 	if len(parts) == 0 {
-		return []*a2aproto.Part{a2aproto.NewTextPart("")}
+		return []*a2aproto.Part{a2aproto.NewTextPart("")}, nil
 	}
 	out := make([]*a2aproto.Part, 0, len(parts))
-	for _, p := range parts {
+	for i, p := range parts {
 		var up *a2aproto.Part
 		switch p.Kind {
 		case PartRaw:
+			if p.Raw == nil {
+				return nil, fmt.Errorf("%w: part %d raw content is nil", ErrProtocol, i)
+			}
 			up = a2aproto.NewRawPart(p.Raw)
 		case PartData:
-			up = a2aproto.NewDataPart(p.Data)
+			if p.Data == nil {
+				return nil, fmt.Errorf("%w: part %d data content is nil", ErrProtocol, i)
+			}
+			data, err := protocolDataValue(p.Data)
+			if err != nil {
+				return nil, fmt.Errorf("%w: part %d data: %v", ErrProtocol, i, err)
+			}
+			if data == nil {
+				return nil, fmt.Errorf("%w: part %d data content resolves to null", ErrProtocol, i)
+			}
+			up = a2aproto.NewDataPart(data)
 		case PartURL:
+			if p.URL == "" {
+				return nil, fmt.Errorf("%w: part %d URL is empty", ErrProtocol, i)
+			}
 			up = a2aproto.NewFileURLPart(a2aproto.URL(p.URL), p.MediaType)
-		default:
+		case PartText, "":
 			up = a2aproto.NewTextPart(p.Text)
+		default:
+			return nil, fmt.Errorf("%w: part %d has unsupported kind %q", ErrProtocol, i, p.Kind)
+		}
+		metadata, err := normalizeProtocolMap(p.Metadata)
+		if err != nil {
+			return nil, fmt.Errorf("%w: part %d metadata: %v", ErrProtocol, i, err)
 		}
 		up.MediaType = p.MediaType
 		up.Filename = p.Filename
-		up.Metadata = cloneMap(p.Metadata)
+		up.Metadata = metadata
 		out = append(out, up)
 	}
-	return out
+	return out, nil
 }
 
-func convertTask(task *a2aproto.Task) Task {
+func protocolDataValue(data any) (any, error) {
+	raw, err := json.Marshal(data)
+	if err != nil {
+		return nil, err
+	}
+	var normalized any
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if err := decoder.Decode(&normalized); err != nil {
+		return nil, err
+	}
+	return normalizeProtocolNumbers(normalized)
+}
+
+func normalizeProtocolNumbers(value any) (any, error) {
+	switch typed := value.(type) {
+	case json.Number:
+		raw := typed.String()
+		if strings.ContainsAny(raw, ".eE") {
+			number, err := strconv.ParseFloat(raw, 64)
+			if err != nil || math.IsInf(number, 0) || math.IsNaN(number) {
+				return nil, fmt.Errorf("number %q is outside the supported range", raw)
+			}
+			if math.Trunc(number) == number && math.Abs(number) > float64(maxA2AJSONInteger) {
+				return nil, fmt.Errorf("integer %q is outside the interoperable JSON safe range", raw)
+			}
+			return number, nil
+		}
+		if number, err := strconv.ParseInt(raw, 10, 64); err == nil {
+			if number < -int64(maxA2AJSONInteger) || number > int64(maxA2AJSONInteger) {
+				return nil, fmt.Errorf("integer %q is outside the interoperable JSON safe range", raw)
+			}
+			return number, nil
+		}
+		if number, err := strconv.ParseUint(raw, 10, 64); err == nil {
+			if number > maxA2AJSONInteger {
+				return nil, fmt.Errorf("integer %q is outside the interoperable JSON safe range", raw)
+			}
+			return number, nil
+		}
+		return nil, fmt.Errorf("integer %q is outside the supported 64-bit range", raw)
+	case map[string]any:
+		out := make(map[string]any, len(typed))
+		for key, child := range typed {
+			normalized, err := normalizeProtocolNumbers(child)
+			if err != nil {
+				return nil, err
+			}
+			out[key] = normalized
+		}
+		return out, nil
+	case []any:
+		out := make([]any, len(typed))
+		for i, child := range typed {
+			normalized, err := normalizeProtocolNumbers(child)
+			if err != nil {
+				return nil, err
+			}
+			out[i] = normalized
+		}
+		return out, nil
+	default:
+		return value, nil
+	}
+}
+
+func normalizeProtocolMap(in map[string]any) (map[string]any, error) {
+	if len(in) == 0 {
+		return nil, nil
+	}
+	normalized, err := protocolDataValue(in)
+	if err != nil {
+		return nil, err
+	}
+	out, ok := normalized.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("value is not a JSON object")
+	}
+	return out, nil
+}
+
+func convertTask(task *a2aproto.Task) (Task, error) {
 	if task == nil {
-		return Task{}
+		return Task{}, nil
 	}
 	raw, _ := rawMap(task)
+	status, err := convertStatus(task.Status)
+	if err != nil {
+		return Task{}, err
+	}
 	out := Task{
-		ID: string(task.ID), ContextID: task.ContextID, Status: convertStatus(task.Status),
+		ID: string(task.ID), ContextID: task.ContextID, Status: status,
 		Metadata: cloneMap(task.Metadata), Raw: raw,
 	}
 	for _, msg := range task.History {
-		out.Messages = append(out.Messages, convertMessage(msg))
+		converted, err := convertMessage(msg)
+		if err != nil {
+			return Task{}, err
+		}
+		out.Messages = append(out.Messages, converted)
 	}
 	for _, artifact := range task.Artifacts {
-		out.Artifacts = append(out.Artifacts, convertArtifact(artifact))
+		converted, err := convertArtifact(artifact)
+		if err != nil {
+			return Task{}, err
+		}
+		out.Artifacts = append(out.Artifacts, converted)
 	}
-	return out
+	return out, nil
 }
 
-func convertMessage(msg *a2aproto.Message) Message {
+func convertMessage(msg *a2aproto.Message) (Message, error) {
 	if msg == nil {
-		return Message{}
+		return Message{}, nil
 	}
 	raw, _ := rawMap(msg)
 	out := Message{
@@ -175,32 +304,43 @@ func convertMessage(msg *a2aproto.Message) Message {
 	for _, id := range msg.ReferenceTasks {
 		out.ReferenceTasks = append(out.ReferenceTasks, string(id))
 	}
-	out.Parts = convertParts(msg.Parts)
-	return out
+	parts, err := convertParts(msg.Parts)
+	if err != nil {
+		return Message{}, err
+	}
+	out.Parts = parts
+	return out, nil
 }
 
-func convertStatus(status a2aproto.TaskStatus) TaskStatus {
+func convertStatus(status a2aproto.TaskStatus) (TaskStatus, error) {
 	out := TaskStatus{State: TaskState(status.State), Timestamp: status.Timestamp}
 	if status.Message != nil {
-		msg := convertMessage(status.Message)
+		msg, err := convertMessage(status.Message)
+		if err != nil {
+			return TaskStatus{}, err
+		}
 		out.Message = &msg
 	}
-	return out
+	return out, nil
 }
 
-func convertArtifact(a *a2aproto.Artifact) Artifact {
+func convertArtifact(a *a2aproto.Artifact) (Artifact, error) {
 	if a == nil {
-		return Artifact{}
+		return Artifact{}, nil
 	}
 	raw, _ := rawMap(a)
+	parts, err := convertParts(a.Parts)
+	if err != nil {
+		return Artifact{}, err
+	}
 	return Artifact{
 		ID: string(a.ID), Name: a.Name, Description: a.Description,
 		Extensions: append([]string(nil), a.Extensions...), Metadata: cloneMap(a.Metadata),
-		Parts: convertParts(a.Parts), Raw: raw,
-	}
+		Parts: parts, Raw: raw,
+	}, nil
 }
 
-func convertParts(parts []*a2aproto.Part) []Part {
+func convertParts(parts []*a2aproto.Part) ([]Part, error) {
 	out := make([]Part, 0, len(parts))
 	for _, p := range parts {
 		if p == nil {
@@ -215,34 +355,46 @@ func convertParts(parts []*a2aproto.Part) []Part {
 			part.Kind = PartRaw
 			part.Raw = append([]byte(nil), []byte(v)...)
 		case a2aproto.Data:
+			normalized, err := protocolDataValue(v.Value)
+			if err != nil || normalized == nil {
+				return nil, fmt.Errorf("%w: inbound data part is null or contains a number outside the interoperable JSON safe range", ErrProtocol)
+			}
 			part.Kind = PartData
 			part.Data = v.Value
 		case a2aproto.URL:
 			part.Kind = PartURL
 			part.URL = string(v)
 		default:
-			part.Kind = PartData
-			part.Data = v
+			return nil, fmt.Errorf("%w: inbound part has unsupported content type %T", ErrProtocol, p.Content)
 		}
 		out = append(out, part)
 	}
-	return out
+	return out, nil
 }
 
 func eventFromUpstream(ev a2aproto.Event) (Event, error) {
 	switch e := ev.(type) {
 	case *a2aproto.Task:
-		t := convertTask(e)
+		t, err := convertTask(e)
+		if err != nil {
+			return Event{}, err
+		}
 		kind := EventTask
 		if executionFinalTask(t) {
 			kind = EventTerminal
 		}
 		return Event{Kind: kind, Task: &t, TaskID: t.ID, ContextID: t.ContextID, Raw: t.Raw}, nil
 	case *a2aproto.Message:
-		m := convertMessage(e)
+		m, err := convertMessage(e)
+		if err != nil {
+			return Event{}, err
+		}
 		return Event{Kind: EventTerminal, Message: &m, TaskID: m.TaskID, ContextID: m.ContextID, Raw: m.Raw}, nil
 	case *a2aproto.TaskStatusUpdateEvent:
-		status := convertStatus(e.Status)
+		status, err := convertStatus(e.Status)
+		if err != nil {
+			return Event{}, err
+		}
 		kind := EventStatus
 		if executionFinalState(status.State) {
 			kind = EventTerminal
@@ -250,7 +402,10 @@ func eventFromUpstream(ev a2aproto.Event) (Event, error) {
 		raw, _ := rawMap(e)
 		return Event{Kind: kind, Status: &status, TaskID: string(e.TaskID), ContextID: e.ContextID, Raw: raw}, nil
 	case *a2aproto.TaskArtifactUpdateEvent:
-		artifact := convertArtifact(e.Artifact)
+		artifact, err := convertArtifact(e.Artifact)
+		if err != nil {
+			return Event{}, err
+		}
 		raw, _ := rawMap(e)
 		return Event{
 			Kind: EventArtifact, Artifact: &artifact, TaskID: string(e.TaskID), ContextID: e.ContextID,

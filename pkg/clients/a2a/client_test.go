@@ -7,10 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	a2aproto "github.com/a2aproject/a2a-go/v2/a2a"
 )
 
 func TestAgentCardFetchValidateAndCache(t *testing.T) {
@@ -786,6 +789,68 @@ func collectStreamEvents(t *testing.T, stream *Stream) []Event {
 			t.Fatalf("Recv() error = %v", err)
 		}
 		events = append(events, ev)
+	}
+}
+
+func TestUpstreamSendRequestPreservesSafeIntegers(t *testing.T) {
+	req, err := upstreamSendRequest(SendRequest{Message: Message{
+		Role:  "user",
+		Parts: []Part{{Kind: PartData, Data: map[string]any{"id": int64(9007199254740991)}}},
+	}})
+	if err != nil {
+		t.Fatalf("upstreamSendRequest: %v", err)
+	}
+	data, ok := req.Message.Parts[0].Content.(a2aproto.Data)
+	if !ok {
+		t.Fatalf("part content = %T", req.Message.Parts[0].Content)
+	}
+	id, ok := data.Value.(map[string]any)["id"].(int64)
+	if !ok || id != 9007199254740991 {
+		t.Fatalf("data = %#v", data.Value)
+	}
+}
+
+func TestUpstreamSendRequestRejectsInvalidWireValues(t *testing.T) {
+	var typedNil *struct{}
+	tests := []struct {
+		name string
+		part Part
+	}{
+		{name: "nil data", part: Part{Kind: PartData}},
+		{name: "typed nil data", part: Part{Kind: PartData, Data: typedNil}},
+		{name: "JSON null data", part: Part{Kind: PartData, Data: json.RawMessage("null")}},
+		{name: "non finite data", part: Part{Kind: PartData, Data: math.Inf(1)}},
+		{name: "unsafe integer", part: Part{Kind: PartData, Data: int64(9007199254740993)}},
+		{name: "unsafe exponent integer", part: Part{Kind: PartData, Data: json.RawMessage("9.007199254740993e15")}},
+		{name: "nil raw", part: Part{Kind: PartRaw}},
+		{name: "empty URL", part: Part{Kind: PartURL}},
+		{name: "unknown kind", part: Part{Kind: PartKind("unknown")}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := upstreamSendRequest(SendRequest{Message: Message{Role: "user", Parts: []Part{tc.part}}})
+			if !errors.Is(err, ErrProtocol) {
+				t.Fatalf("error = %v, want ErrProtocol", err)
+			}
+		})
+	}
+}
+
+func TestConvertPartsRejectsUnsafeInboundInteger(t *testing.T) {
+	part := a2aproto.NewDataPart(float64(9007199254740992))
+	if _, err := convertParts([]*a2aproto.Part{part}); !errors.Is(err, ErrProtocol) {
+		t.Fatalf("error = %v, want ErrProtocol", err)
+	}
+}
+
+func TestConvertPartsPreservesInboundNumberType(t *testing.T) {
+	part := a2aproto.NewDataPart(float64(1))
+	converted, err := convertParts([]*a2aproto.Part{part})
+	if err != nil {
+		t.Fatalf("convertParts: %v", err)
+	}
+	if _, ok := converted[0].Data.(float64); !ok {
+		t.Fatalf("data type = %T, want float64", converted[0].Data)
 	}
 }
 

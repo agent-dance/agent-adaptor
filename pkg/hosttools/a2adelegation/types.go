@@ -7,6 +7,7 @@
 package a2adelegation
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strings"
@@ -27,6 +28,10 @@ const (
 	DelegationTextStart       DelegationEventKind = "subagent.text.start"
 	DelegationTextDelta       DelegationEventKind = "subagent.text.delta"
 	DelegationTextEnd         DelegationEventKind = "subagent.text.end"
+	DelegationToolCallStart   DelegationEventKind = "subagent.tool_call.start"
+	DelegationToolCallArgs    DelegationEventKind = "subagent.tool_call.args"
+	DelegationToolCallResult  DelegationEventKind = "subagent.tool_call.result"
+	DelegationToolCallEnd     DelegationEventKind = "subagent.tool_call.end"
 	DelegationArtifactCreated DelegationEventKind = "subagent.artifact"
 	DelegationInputRequired   DelegationEventKind = "subagent.input_required"
 	DelegationFinished        DelegationEventKind = "subagent.finished"
@@ -117,25 +122,36 @@ func (r *Registry) Keys() []string {
 }
 
 type DelegationRequest struct {
-	RunID            string
-	ParentToolCallID string
-	Agent            string
-	Objective        string
-	Prompt           string
-	Context          string
-	Artifacts        []InputArtifact
-	MaxArtifacts     *int
-	HistoryLength    *int
-	Timeout          time.Duration
-	Stream           bool
-	Tenant           string
-	Metadata         map[string]any
+	RunID                  string
+	ParentToolCallID       string
+	ContextID              string
+	Agent                  string
+	Objective              string
+	Prompt                 string
+	Context                string
+	Message                *clienta2a.Message
+	Artifacts              []InputArtifact
+	IncludeRemoteArtifacts bool
+	MaxArtifacts           *int
+	HistoryLength          *int
+	Timeout                time.Duration
+	Stream                 bool
+	Tenant                 string
+	Metadata               map[string]any
+	StageContext           DelegationStageContext
 }
 
 type InputArtifact struct {
 	Name      string `json:"name,omitempty"`
 	URI       string `json:"uri,omitempty"`
 	MediaType string `json:"mime_type,omitempty"`
+}
+
+type DelegationStageContext struct {
+	WorkflowRunID string `json:"workflow_run_id,omitempty"`
+	Stage         string `json:"stage,omitempty"`
+	StepID        string `json:"step_id,omitempty"`
+	Attempt       int    `json:"attempt,omitempty"`
 }
 
 type DelegationArtifact struct {
@@ -145,6 +161,27 @@ type DelegationArtifact struct {
 	URI         string         `json:"uri,omitempty"`
 	MediaType   string         `json:"mime_type,omitempty"`
 	Metadata    map[string]any `json:"metadata,omitempty"`
+}
+
+type RemoteArtifact struct {
+	ID          string         `json:"id,omitempty"`
+	Name        string         `json:"name,omitempty"`
+	Description string         `json:"description,omitempty"`
+	Parts       []RemotePart   `json:"parts,omitempty"`
+	Extensions  []string       `json:"extensions,omitempty"`
+	Metadata    map[string]any `json:"metadata,omitempty"`
+	Raw         map[string]any `json:"raw,omitempty"`
+}
+
+type RemotePart struct {
+	Kind      clienta2a.PartKind `json:"kind,omitempty"`
+	Text      string             `json:"text,omitempty"`
+	Raw       []byte             `json:"raw,omitempty"`
+	Data      any                `json:"data,omitempty"`
+	URL       string             `json:"url,omitempty"`
+	MediaType string             `json:"mime_type,omitempty"`
+	Filename  string             `json:"filename,omitempty"`
+	Metadata  map[string]any     `json:"metadata,omitempty"`
 }
 
 type DelegationEvent struct {
@@ -159,10 +196,14 @@ type DelegationEvent struct {
 	RemoteContextID  string
 	RemoteMessageID  string
 	RemoteArtifactID string
+	RemoteToolCallID string
 
 	Kind     DelegationEventKind
 	Delta    string
 	Text     string
+	ToolName string
+	Args     any
+	Result   any
 	Artifact *DelegationArtifact
 	Status   string
 	Error    *DelegationError
@@ -179,6 +220,7 @@ type DelegationResult struct {
 	Status          string                 `json:"status"`
 	Summary         string                 `json:"summary,omitempty"`
 	Artifacts       []DelegationArtifact   `json:"artifacts,omitempty"`
+	RemoteArtifacts []RemoteArtifact       `json:"remote_artifacts,omitempty"`
 	Messages        []DelegationMessage    `json:"messages,omitempty"`
 	Error           *DelegationError       `json:"error,omitempty"`
 	RawTask         map[string]any         `json:"raw_task,omitempty"`
@@ -209,6 +251,44 @@ func (e *DelegationError) Error() string {
 		return e.Code
 	}
 	return "delegation failed"
+}
+
+type DelegationLifecycleHook interface {
+	BeforeDelegate(ctx context.Context, req BeforeDelegation) error
+	AfterDelegate(ctx context.Context, req AfterDelegation) error
+}
+
+type BeforeDelegation struct {
+	DelegationID string
+	AgentSpec    RemoteAgentSpec
+	Request      DelegationRequest
+}
+
+type AfterDelegation struct {
+	DelegationID string
+	AgentSpec    RemoteAgentSpec
+	Request      DelegationRequest
+	Result       DelegationResult
+	Err          error
+}
+
+type DelegationLifecycleHookFuncs struct {
+	BeforeFunc func(context.Context, BeforeDelegation) error
+	AfterFunc  func(context.Context, AfterDelegation) error
+}
+
+func (h DelegationLifecycleHookFuncs) BeforeDelegate(ctx context.Context, req BeforeDelegation) error {
+	if h.BeforeFunc == nil {
+		return nil
+	}
+	return h.BeforeFunc(ctx, req)
+}
+
+func (h DelegationLifecycleHookFuncs) AfterDelegate(ctx context.Context, req AfterDelegation) error {
+	if h.AfterFunc == nil {
+		return nil
+	}
+	return h.AfterFunc(ctx, req)
 }
 
 func cloneRemoteAgentSpec(spec RemoteAgentSpec) RemoteAgentSpec {

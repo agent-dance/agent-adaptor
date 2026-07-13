@@ -281,6 +281,10 @@ func AGUICustomEvent(ev a2adelegation.DelegationEvent) aguievents.Event {
 		"remoteContextId":  ev.RemoteContextID,
 		"messageId":        ev.RemoteMessageID,
 		"artifactId":       ev.RemoteArtifactID,
+		"remoteToolCallId": ev.RemoteToolCallID,
+		"toolName":         ev.ToolName,
+		"args":             ev.Args,
+		"result":           ev.Result,
 		"delta":            ev.Delta,
 		"text":             ev.Text,
 		"status":           ev.Status,
@@ -300,11 +304,15 @@ func AGUICustomEvent(ev a2adelegation.DelegationEvent) aguievents.Event {
 }
 
 func StreamPayload(ev a2adelegation.DelegationEvent) agentadaptor.StreamPayload {
-	return agentadaptor.StreamPayload{
+	toolCallID := ev.ParentToolCallID
+	if ev.RemoteToolCallID != "" {
+		toolCallID = ev.RemoteToolCallID
+	}
+	payload := agentadaptor.StreamPayload{
 		Kind:       "",
 		Name:       string(ev.Kind),
 		RunID:      ev.RunID,
-		ToolCallID: ev.ParentToolCallID,
+		ToolCallID: toolCallID,
 		MessageID:  ev.RemoteMessageID,
 		Delta:      ev.Delta,
 		Raw: map[string]any{
@@ -317,9 +325,20 @@ func StreamPayload(ev a2adelegation.DelegationEvent) agentadaptor.StreamPayload 
 			"remote_context_id":   ev.RemoteContextID,
 			"remote_message_id":   ev.RemoteMessageID,
 			"remote_artifact_id":  ev.RemoteArtifactID,
+			"remote_tool_call_id": ev.RemoteToolCallID,
+			"tool_name":           ev.ToolName,
+			"args":                ev.Args,
+			"result":              ev.Result,
 			"delta":               ev.Delta,
 			"text":                ev.Text,
 			"status":              ev.Status,
 		},
 	}
+	if args, ok := ev.Args.(map[string]any); ok {
+		payload.Args = args
+	}
+	if result, ok := ev.Result.(map[string]any); ok {
+		payload.Result = result
+	}
+	return payload
 }
