@@ -59,6 +59,13 @@ func capabilitySpecs(driverType string) []capabilitySpec {
 			{Name: "permissions", Label: "Profile Permissions", Description: "Persist Cursor CLI allow/deny permission patterns.", Values: `"allow": []string, "deny": []string`, Support: agentadaptor.ProfileResourceSupportPortableExtended},
 			{Name: "display", Label: "Profile Display", Description: "Persist Cursor CLI display preferences.", Values: `"showThinkingBlocks": bool`, Support: agentadaptor.ProfileResourceSupportPortableExtended},
 		}
+	case "codebuddy":
+		return []capabilitySpec{
+			{Name: "model", Label: "Profile Model", Description: "Persist CodeBuddy model in settings.json.", Values: `"model": string`, Support: agentadaptor.ProfileResourceSupportPortableCore},
+			{Name: "effort", Label: "Profile Effort", Description: "Persist CodeBuddy effort in settings.json.", Values: `"effort": "low|medium|high|xhigh|max"`, Support: agentadaptor.ProfileResourceSupportPortableExtended},
+			{Name: "permission", Label: "Profile Permission Mode", Description: "Persist CodeBuddy permission mode in settings.json.", Values: `"mode": string`, Support: agentadaptor.ProfileResourceSupportPortableExtended},
+			{Name: "env", Label: "Profile Environment", Description: "Persist CodeBuddy environment entries under settings.json env.", Values: `"NAME": string`, Support: agentadaptor.ProfileResourceSupportPortableExtended},
+		}
 	default:
 		return nil
 	}

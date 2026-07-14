@@ -154,6 +154,15 @@ func layoutFor(driverType, profileDir string) (providerLayout, error) {
 			format:     "json",
 			render:     cursorServerConfig,
 		}, nil
+	case "codebuddy":
+		return providerLayout{
+			driverType: driverType,
+			profileDir: profileDir,
+			path:       filepath.Join(profileDir, "mcp.json"),
+			field:      "mcpServers",
+			format:     "json",
+			render:     codebuddyServerConfig,
+		}, nil
 	default:
 		return providerLayout{}, fmt.Errorf("mcp profile materialization is unsupported by adapter %q", driverType)
 	}

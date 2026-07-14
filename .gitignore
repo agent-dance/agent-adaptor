@@ -2,3 +2,4 @@
 .gocache-test/
 .omx/
 *.tsbuildinfo
+.venv/

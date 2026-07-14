@@ -198,6 +198,7 @@ type DriverAdapter interface {
 - `codex.New(cfg, opts...)`
 - `claude.New(cfg, opts...)`
 - `cursor.New(cfg, opts...)`
+- `codebuddy.New(cfg, opts...)`（CodeBuddy Code：headless stream-json + `--acp` 交互双引擎）
 
 它们返回的是配置完成的 `AgentBinding`，不是裸 adapter。
 
@@ -206,6 +207,7 @@ type DriverAdapter interface {
 - `codex.NewAdapter()`
 - `claude.NewAdapter()`
 - `cursor.NewAdapter()`
+- `codebuddy.NewAdapter()`
 
 ### 4.4 SDK 构造选项
 
