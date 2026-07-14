@@ -9,7 +9,7 @@ import (
 const defaultModel = "claude-sonnet-5"
 
 // models returns a representative subset of CodeBuddy-hosted models observed on
-// the ACP session/new response. CodeBuddy proxies many providers; this list is
+// the stream-json system.init response. CodeBuddy proxies many providers; this list is
 // used for the config schema select field and admin surfaces. It is not
 // exhaustive and the CLI accepts any id it recognises.
 func models() []agentadaptor.ModelInfo {

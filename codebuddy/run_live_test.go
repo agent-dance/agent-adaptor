@@ -1,3 +1,5 @@
+//go:build codebuddy_live
+
 // Package codebuddy live smoke tests exercise the REAL `codebuddy` CLI
 // end to end through the SDK. They are excluded from the default build and only
 // run when the codebuddy_live tag is set and a logged-in `codebuddy` binary is
@@ -7,7 +9,7 @@
 //
 //	# headless (autonomous) + resume smoke
 //	go test -tags codebuddy_live -run TestCodeBuddyLiveHeadless -v ./codebuddy
-//	# interactive ACP permission loop
+//	# interactive control-transport permission loop
 //	go test -tags codebuddy_live -run TestCodeBuddyLivePermission -v ./codebuddy
 package codebuddy
 
@@ -171,10 +173,10 @@ func newLiveSDK(t *testing.T, cwd string) agentadaptor.SDK {
 	)
 }
 
-// livePolicyHeadless 保持 wantsACP=false，从而真正驱动底层 `codebuddy --print`
-// headless 引擎（clihelper.Run 走 `codebuddy --print`），而非 ACP 传输。
+// livePolicyHeadless 保持 wantsControlTransport=false，从而真正驱动底层
+// `codebuddy --print` batch 引擎，而非 control stream-json 传输。
 // Permission/PlanReview=AutoApprove 会映射到 --permission-mode bypassPermissions；
-// Question 保持 Unset：当前真实 CLI 未暴露对应 ACP 事件，driver 不声明该能力。
+// Question 保持 Unset：该 smoke test 不需要阻塞的 question control request。
 var livePolicyHeadless = agentadaptor.RunPolicy{
 	Isolation: agentadaptor.IsolationUnrestricted,
 	HumanDecision: agentadaptor.HumanDecisionPolicy{
@@ -259,7 +261,7 @@ func TestCodeBuddyLiveHeadlessStreaming(t *testing.T) {
 }
 
 // TestCodeBuddyLiveHeadlessResume checks a second turn continues the same
-// CodeBuddy session (ACP session id / headless --resume) as the first.
+// CodeBuddy session (stream-json session id / --resume) as the first.
 func TestCodeBuddyLiveHeadlessResume(t *testing.T) {
 	requireCodeBuddyCLI(t)
 	cwd := t.TempDir()
@@ -310,8 +312,8 @@ func TestCodeBuddyLiveHeadlessResume(t *testing.T) {
 	}
 }
 
-// TestCodeBuddyLivePermissionApprove drives the interactive ACP engine: a
-// Permission=Ask policy forces the ACP transport, the prompt triggers a real
+// TestCodeBuddyLivePermissionApprove drives the interactive control transport:
+// a Permission=Ask policy selects stream-json control mode, the prompt triggers a real
 // tool that needs permission, and the host approves it. Verifies the handler
 // is invoked and the run completes without a rejection failure.
 func TestCodeBuddyLivePermissionApprove(t *testing.T) {

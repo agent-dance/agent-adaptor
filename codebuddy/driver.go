@@ -87,16 +87,12 @@ func (adapter) Descriptor() agentadaptor.DriverDescriptor {
 			// so the SDK does not model those dimensions. Their availability
 			// is implicit in the user's local CodeBuddy configuration.
 			Isolation: false, WebSearch: false, Browser: false,
-			// Permission / PlanReview Ask are honoured by the ACP engine via
-			// session/request_permission. CodeBuddy 2.119.4 does not expose
-			// AskUserQuestion through this protocol, so Question is not
-			// advertised until a real CLI frame demonstrates support.
-			// AutoApprove uses the headless permission mode; AutoReject uses
-			// the ACP engine to deny faithfully. Retry is not supported (the
-			// CLI cannot re-ask the same decision).
-			Permission: agentadaptor.HumanDecisionSupport{Ask: true, AutoApprove: true, AutoReject: true, Retry: false},
+			// SDK stream-json control requests provide all three blocking
+			// decision classes. Retry is not supported because CodeBuddy does
+			// not reissue the same control request.
+			Permission: agentadaptor.HumanDecisionSupport{Ask: false, AutoApprove: true, AutoReject: true, Retry: false},
 			PlanReview: agentadaptor.HumanDecisionSupport{Ask: true, AutoApprove: true, AutoReject: true, Retry: false},
-			Question:   agentadaptor.QuestionSupport{},
+			Question:   agentadaptor.QuestionSupport{Ask: true, AutoReject: true, Retry: false},
 		},
 		Runtime: agentadaptor.RuntimeCapability{ReportsServices: true},
 		StructuredOutput: agentadaptor.StructuredOutputCapability{
@@ -278,8 +274,15 @@ func (a adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sin
 		return agentadaptor.DriverRunResult{}, err
 	}
 
-	if wantsACP(req.Policy.HumanDecision) {
-		return a.runACP(ctx, cfg, command, req, sink, prep)
+	if wantsControlTransport(req.Policy.HumanDecision) {
+		if req.OutputSchema != nil && req.OutputSchema.Mode != agentadaptor.StructuredOutputPromptValidate {
+			return agentadaptor.DriverRunResult{}, &agentadaptor.StructuredOutputUnsupportedError{
+				Adapter: DriverType,
+				Mode:    req.OutputSchema.Mode,
+				Reason:  "CodeBuddy native structured output is not supported with control HITL",
+			}
+		}
+		return a.runControl(ctx, cfg, command, req, sink, prep)
 	}
 	return a.runHeadless(ctx, cfg, command, req, sink, prep)
 }
@@ -372,7 +375,7 @@ func (adapter) runHeadless(ctx context.Context, cfg agentadaptor.CodeBuddyConfig
 	}
 
 	permMode := headlessPermissionMode(cfg, req.Policy)
-	args := buildExecArgs(cfg, req, permMode)
+	args := buildExecArgs(cfg, req, permMode, false)
 	args = append(args, prep.prompt)
 
 	p := newParser(sink)

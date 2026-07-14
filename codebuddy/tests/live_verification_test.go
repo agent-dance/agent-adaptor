@@ -210,7 +210,31 @@ func TestLiveHostStartPlanReviewIsRoutedToPlanHandler(t *testing.T) {
 		t.Fatalf("plan request has empty prompt: %+v", plans[0])
 	}
 	if strings.TrimSpace(plans[0].Plan) == "" {
-		t.Fatalf("plan request has empty plan content: %+v", plans[0])
+		t.Log("plan review did not have a preceding CodeBuddy plan-file Write; empty plan is preserved without synthesis")
+	}
+}
+
+func TestLiveHostStartQuestionWritesHostAnswer(t *testing.T) {
+	sdk := newLiveSDK(t, t.TempDir())
+	var questions []agentadaptor.QuestionRequest
+	got := startAndObserve(t, sdk,
+		"Use AskUserQuestion to ask a single multiple-choice question with Alpha and Beta options. After receiving the answer, reply with only that answer.",
+		agentadaptor.WithRunPolicy(agentadaptor.RunPolicy{
+			HumanDecision: agentadaptor.HumanDecisionPolicy{Question: agentadaptor.QuestionAsk},
+		}),
+		agentadaptor.WithQuestionHandler(func(_ context.Context, request agentadaptor.QuestionRequest) (agentadaptor.QuestionResponse, error) {
+			questions = append(questions, request)
+			return agentadaptor.QuestionResponse{
+				Result: agentadaptor.QuestionAnswered,
+				Answer: map[string]any{"answer": "Alpha"},
+			}, nil
+		}),
+	)
+	if len(questions) == 0 {
+		t.Fatalf("question handler was not called; output=%q", got.result.Output)
+	}
+	if got.result.Failure != nil {
+		t.Fatalf("question run failure = %+v", got.result.Failure)
 	}
 }
 

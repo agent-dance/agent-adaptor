@@ -11,11 +11,8 @@ import (
 	agentadaptor "github.com/agent-dance/agent-adaptor"
 )
 
-// parser consumes raw stdout/stderr chunks from a CodeBuddy CLI run
-// (headless stream-json mode) and produces the normalized outputs required by
-// the adapter contract. It is a HITL-stripped copy of the Claude stream-json
-// parser: interactive control_request / permission decisioning lives in the
-// ACP engine instead.
+// parser consumes raw stdout/stderr chunks from a CodeBuddy CLI stream-json
+// run and produces the normalized outputs required by the adapter contract.
 type parser struct {
 	mu sync.Mutex
 
@@ -39,6 +36,9 @@ type parser struct {
 
 	stream       *streamingState
 	deltaBuffers map[string]*strings.Builder
+	control      *controlState
+
+	pendingFailure *agentadaptor.RunFailure
 
 	runID string
 }
@@ -146,6 +146,9 @@ func (p *parser) processLine(stream string, line []byte, _ time.Time) {
 }
 
 func (p *parser) handlePayload(raw string, payload map[string]any) {
+	if p.handleControlPayload(payload) {
+		return
+	}
 	eventType := strings.ToLower(topString(payload, "type", "event", "kind"))
 	subtype := strings.ToLower(topString(payload, "subtype"))
 
@@ -256,9 +259,12 @@ func (p *parser) handleAssistantMessage(message map[string]any) {
 			}
 			p.emit(agentadaptor.TranscriptItem{Kind: agentadaptor.TranscriptThinking, Text: text, Model: model})
 		case "tool_use":
+			toolName := topString(block, "name")
+			input, _ := block["input"].(map[string]any)
+			p.captureControlPlan(toolName, input)
 			p.emit(agentadaptor.TranscriptItem{
 				Kind:      agentadaptor.TranscriptToolCall,
-				ToolName:  topString(block, "name"),
+				ToolName:  toolName,
 				ToolUseID: topString(block, "id", "tool_use_id"),
 				Input:     block["input"],
 			})
@@ -316,6 +322,11 @@ func resultText(raw any) string {
 }
 
 func (p *parser) handleResult(raw string, payload map[string]any, subtype string) {
+	if p.control != nil {
+		// Control sessions retain stdin for host responses. Once a terminal
+		// result arrives, closing it lets the CLI terminate cleanly.
+		_ = p.control.stdin.Close()
+	}
 	var decoded map[string]any
 	if err := json.Unmarshal([]byte(raw), &decoded); err == nil {
 		p.resultFinal = decoded

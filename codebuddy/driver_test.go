@@ -45,8 +45,8 @@ func TestDescriptorCapabilities(t *testing.T) {
 	if !caps.PlanReview.Ask || !caps.PlanReview.AutoApprove || !caps.PlanReview.AutoReject {
 		t.Errorf("plan caps = %+v", caps.PlanReview)
 	}
-	if caps.Question.Ask || caps.Question.AutoReject || caps.Question.Retry {
-		t.Errorf("question caps = %+v, want unsupported", caps.Question)
+	if !caps.Question.Ask || !caps.Question.AutoReject || caps.Question.Retry {
+		t.Errorf("question caps = %+v, want Ask+AutoReject", caps.Question)
 	}
 }
 
@@ -137,7 +137,7 @@ func TestHeadlessPermissionMode(t *testing.T) {
 	}
 }
 
-func TestWantsACP(t *testing.T) {
+func TestWantsControlTransportLegacyCases(t *testing.T) {
 	cases := []struct {
 		name string
 		p    agentadaptor.HumanDecisionPolicy
@@ -152,8 +152,8 @@ func TestWantsACP(t *testing.T) {
 		{"question auto reject", agentadaptor.HumanDecisionPolicy{Question: agentadaptor.QuestionAutoReject}, true},
 	}
 	for _, tc := range cases {
-		if got := wantsACP(tc.p); got != tc.want {
-			t.Errorf("%s: wantsACP = %v, want %v", tc.name, got, tc.want)
+		if got := wantsControlTransport(tc.p); got != tc.want {
+			t.Errorf("%s: wantsControlTransport = %v, want %v", tc.name, got, tc.want)
 		}
 	}
 }
@@ -185,55 +185,6 @@ func TestParserHeadlessStreamJSON(t *testing.T) {
 	if cp == nil || cp.State == nil || cp.State.ResumeID != "791ecd9d" {
 		t.Errorf("checkpoint = %+v", cp)
 	}
-}
-
-func TestACPDecisionKind(t *testing.T) {
-	if got := acpDecisionKind(acpToolCall{Title: "AskUserQuestion"}); got != agentadaptor.HumanDecisionQuestion {
-		t.Errorf("askuserquestion -> %v", got)
-	}
-	if got := acpDecisionKind(acpToolCall{Title: "ExitPlanMode"}); got != agentadaptor.HumanDecisionPlanReview {
-		t.Errorf("exitplanmode -> %v", got)
-	}
-	if got := acpDecisionKind(acpToolCall{Title: "Bash", Kind: "execute"}); got != agentadaptor.HumanDecisionPermission {
-		t.Errorf("bash -> %v", got)
-	}
-}
-
-func TestACPOutcome(t *testing.T) {
-	options := []acpPermissionOpt{
-		{OptionID: "a1", Kind: "allow_once"},
-		{OptionID: "a2", Kind: "allow_always"},
-		{OptionID: "r1", Kind: "reject_once"},
-	}
-	approve := acpOutcome(options, agentadaptor.DecisionResponse{Result: agentadaptor.DecisionApproved})
-	if outcomeOptionID(approve) != "a1" {
-		t.Errorf("approve outcome = %v, want a1", approve)
-	}
-	reject := acpOutcome(options, agentadaptor.DecisionResponse{Result: agentadaptor.DecisionRejected})
-	if outcomeOptionID(reject) != "r1" {
-		t.Errorf("reject outcome = %v, want r1", reject)
-	}
-	none := acpOutcome([]acpPermissionOpt{{OptionID: "x", Kind: "allow_once"}}, agentadaptor.DecisionResponse{Result: agentadaptor.DecisionRejected})
-	inner, _ := none["outcome"].(map[string]any)
-	if inner["outcome"] != "cancelled" {
-		t.Errorf("no matching reject option should cancel, got %v", none)
-	}
-}
-
-func TestACPChunkText(t *testing.T) {
-	got := acpChunkText([]byte(`{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"hello"}}`))
-	if got != "hello" {
-		t.Errorf("chunk text = %q, want hello", got)
-	}
-}
-
-func outcomeOptionID(m map[string]any) string {
-	inner, _ := m["outcome"].(map[string]any)
-	if inner == nil {
-		return ""
-	}
-	s, _ := inner["optionId"].(string)
-	return s
 }
 
 func TestParserForwardsUnknownAsRaw(t *testing.T) {

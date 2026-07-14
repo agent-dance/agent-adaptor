@@ -2,18 +2,19 @@ package codebuddy
 
 import agentadaptor "github.com/agent-dance/agent-adaptor"
 
-// wantsACP reports whether the run policy requires the interactive ACP engine.
+// wantsControlTransport reports whether the run policy requires the
+// bidirectional CodeBuddy SDK control transport.
 //
 // Like the Claude driver's interactive gate, this inspects the raw policy
 // fields (not the effective defaults) so a zero-value policy stays on the
-// headless engine. The ACP engine engages whenever the host explicitly asks
+// headless engine. The control transport engages whenever the host explicitly asks
 // for an interactive decision (Ask) or a faithful local rejection
 // (AutoReject) on any of the three decision kinds — headless `-p` mode has no
 // way to surface or reject a specific tool/plan/question decision.
 //
 // AutoApprove alone keeps the run on the headless engine, where the
 // permission mode flag grants the equivalent blanket approval.
-func wantsACP(p agentadaptor.HumanDecisionPolicy) bool {
+func wantsControlTransport(p agentadaptor.HumanDecisionPolicy) bool {
 	switch p.Permission {
 	case agentadaptor.HumanDecisionAsk, agentadaptor.HumanDecisionAutoReject:
 		return true
