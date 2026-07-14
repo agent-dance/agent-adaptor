@@ -3,3 +3,4 @@
 .omx/
 *.tsbuildinfo
 .venv/
+.worktrees/
