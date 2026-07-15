@@ -90,7 +90,7 @@ func (adapter) Descriptor() agentadaptor.DriverDescriptor {
 			// SDK stream-json control requests provide all three blocking
 			// decision classes. Retry is not supported because CodeBuddy does
 			// not reissue the same control request.
-			Permission: agentadaptor.HumanDecisionSupport{Ask: false, AutoApprove: true, AutoReject: true, Retry: false},
+			Permission: agentadaptor.HumanDecisionSupport{Ask: true, AutoApprove: true, AutoReject: true, Retry: false},
 			PlanReview: agentadaptor.HumanDecisionSupport{Ask: true, AutoApprove: true, AutoReject: true, Retry: false},
 			Question:   agentadaptor.QuestionSupport{Ask: true, AutoReject: true, Retry: false},
 		},

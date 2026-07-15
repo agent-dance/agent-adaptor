@@ -20,6 +20,7 @@ type controlState struct {
 	runID       string
 	policy      agentadaptor.HumanDecisionPolicy
 	prompt      string
+	configDir   string
 	userStarted bool
 	plan        string
 }
@@ -59,7 +60,7 @@ func (p *parser) handleControlRequest(payload map[string]any) {
 	toolUseID := topString(request, "tool_use_id", "toolUseId", "id")
 	kind := controlDecisionKind(toolName)
 	decision := p.control.sinkDecision(p, requestID, toolUseID, toolName, input, kind)
-	_ = p.control.stdin.Write(encodeControlResponse(requestID, toolUseID, input, decision))
+	_ = p.control.stdin.Write(encodeControlResponse(requestID, toolUseID, input, decision, p.control.policy))
 }
 
 func (s *controlState) sinkDecision(p *parser, requestID, toolUseID, toolName string, input map[string]any, kind agentadaptor.HumanDecisionKind) agentadaptor.DecisionResponse {
@@ -102,15 +103,27 @@ func (p *parser) captureControlPlan(toolName string, input map[string]any) {
 	}
 	path, _ := input["file_path"].(string)
 	content, _ := input["content"].(string)
-	if content == "" || !isCodeBuddyPlanFile(path) {
+	if content == "" || !isCodeBuddyPlanFile(path, p.control.configDir) {
 		return
 	}
 	p.control.plan = content
 }
 
-func isCodeBuddyPlanFile(path string) bool {
+// isCodeBuddyPlanFile 判断某次 Write 是否写入 CodeBuddy 的计划文件。计划位于
+// <configDir>/plans/*.md；configDir 可被 CODEBUDDY_CONFIG_DIR 覆盖，因此已知时按
+// 该前缀匹配，未知时回退到默认的 ~/.codebuddy/plans/ 布局。
+func isCodeBuddyPlanFile(path, configDir string) bool {
 	clean := filepath.ToSlash(path)
-	return strings.Contains(clean, ".codebuddy/plans/") && strings.HasSuffix(strings.ToLower(clean), ".md")
+	if !strings.HasSuffix(strings.ToLower(clean), ".md") {
+		return false
+	}
+	if dir := strings.TrimSpace(configDir); dir != "" {
+		prefix := strings.TrimSuffix(filepath.ToSlash(dir), "/") + "/plans/"
+		if strings.Contains(clean, prefix) {
+			return true
+		}
+	}
+	return strings.Contains(clean, ".codebuddy/plans/")
 }
 
 func controlDecisionKind(toolName string) agentadaptor.HumanDecisionKind {
@@ -148,7 +161,8 @@ func encodeControlUser(prompt string) []byte {
 	return append(frame, '\n')
 }
 
-func encodeControlResponse(requestID, toolUseID string, input map[string]any, decision agentadaptor.DecisionResponse) []byte {
+func encodeControlResponse(requestID, toolUseID string, input map[string]any, decision agentadaptor.DecisionResponse, 
+	policy agentadaptor.HumanDecisionPolicy) []byte {
 	allowed := decision.Result == agentadaptor.DecisionApproved || decision.Result == agentadaptor.DecisionAnswered
 	response := map[string]any{"allowed": allowed, "tool_use_id": toolUseID}
 	if allowed {
@@ -162,7 +176,9 @@ func encodeControlResponse(requestID, toolUseID string, input map[string]any, de
 		response["updatedInput"] = updated
 	} else {
 		response["reason"] = decision.Text
-		response["interrupt"] = true
+		// interrupt 始终以 bool 输出（对齐 codebuddy SDK 的 control_response 契约），
+		// 是否中止运行按策略门控（对齐 claude decorateInteractiveControlResponse）。
+		response["interrupt"] = controlDenyInterrupts(decision.Result, policy)
 	}
 	frame, _ := json.Marshal(map[string]any{
 		"type": "control_response",
@@ -173,6 +189,22 @@ func encodeControlResponse(requestID, toolUseID string, input map[string]any, de
 		},
 	})
 	return append(frame, '\n')
+}
+
+// controlDenyInterrupts reports whether a denied control decision should carry
+// interrupt=true, i.e. abort the CLI run. Rejected/Aborted honor OnReject and
+// TimedOut honors OnTimeout; both default (Unset) to Abort. Approved/Answered
+// never reach this path. 与 claude 的 interrupt 门控保持一致。
+func controlDenyInterrupts(result agentadaptor.DecisionResult, policy agentadaptor.HumanDecisionPolicy) bool {
+	effective := agentadaptor.EffectiveHumanDecisionPolicy(policy)
+	switch result {
+	case agentadaptor.DecisionTimedOut:
+		return effective.OnTimeout == agentadaptor.FailureAbort
+	case agentadaptor.DecisionRejected, agentadaptor.DecisionAborted:
+		return effective.OnReject == agentadaptor.FailureAbort
+	default:
+		return false
+	}
 }
 
 func (p *parser) recordControlReject(req agentadaptor.DecisionRequest, resp agentadaptor.DecisionResponse, policy agentadaptor.HumanDecisionPolicy) {

@@ -53,7 +53,7 @@ func resolveProfileWithOptions(config agentadaptor.CommonConfig, selection *agen
 		NativeSharedDir:  filepath.Join(skillruntime.ResolveHome(config.Env), ".codebuddy"),
 		DedicatedSubdirs: []string{"skills"},
 		SettingsFiles:    []string{"settings.json"},
-		MCPFiles:         []string{"mcp.json"},
+		MCPFiles:         []string{".mcp.json", "mcp.json"},
 		SkillsDirs:       []string{"skills"},
 		AuthFiles:        []string{".credentials.json", "credentials.json"},
 		SkipInitialize:   skipInitialize,

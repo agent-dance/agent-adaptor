@@ -155,6 +155,57 @@ func TestControlRequestRoutesPlanReviewWithObservedPlan(t *testing.T) {
 	}
 }
 
+func TestIsCodeBuddyPlanFile(t *testing.T) {
+	cases := []struct {
+		name      string
+		path      string
+		configDir string
+		want      bool
+	}{
+		{name: "default home layout", path: "/Users/x/.codebuddy/plans/a.md", configDir: "", want: true},
+		{name: "custom config dir match", path: "/var/folders/tmp/002/plans/a.md", configDir: "/var/folders/tmp/002", want: true},
+		{name: "custom config dir with /private prefix", path: "/private/var/folders/tmp/002/plans/a.md", configDir: "/var/folders/tmp/002", want: true},
+		{name: "custom config dir trailing slash", path: "/cfg/plans/a.md", configDir: "/cfg/", want: true},
+		{name: "custom config dir but default path still matches fallback", path: "/home/.codebuddy/plans/a.md", configDir: "/cfg", want: true},
+		{name: "non-md file rejected", path: "/cfg/plans/a.txt", configDir: "/cfg", want: false},
+		{name: "unrelated plans dir without config match", path: "/repo/docs/plans/a.md", configDir: "/cfg", want: false},
+		{name: "empty config falls back and misses", path: "/var/folders/tmp/002/plans/a.md", configDir: "", want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isCodeBuddyPlanFile(tc.path, tc.configDir); got != tc.want {
+				t.Fatalf("isCodeBuddyPlanFile(%q, %q) = %v, want %v", tc.path, tc.configDir, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestControlRoutesPlanReviewWithCustomConfigDir locks the fix: when
+// CODEBUDDY_CONFIG_DIR points outside ~/.codebuddy, the plan file written under
+// <configDir>/plans/*.md must still be captured and surfaced in Payload["plan"].
+func TestControlRoutesPlanReviewWithCustomConfigDir(t *testing.T) {
+	sink := &controlTestSink{respond: func(req agentadaptor.DecisionRequest) agentadaptor.DecisionResponse {
+		return agentadaptor.DecisionResponse{RequestID: req.RequestID, Result: agentadaptor.DecisionApproved}
+	}}
+	stdin := &controlTestStdin{}
+	p := newParser(sink)
+	p.enableControl(context.Background(), sink, stdin, "run-1", agentadaptor.HumanDecisionPolicy{PlanReview: agentadaptor.HumanDecisionAsk}, "prompt")
+	p.control.configDir = "/var/folders/tmp/002"
+
+	write := []byte(`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Write","id":"tool-write","input":{"file_path":"/var/folders/tmp/002/plans/quantum.md","content":"# Real plan"}}]}}` + "\n")
+	exitPlan := []byte(`{"type":"control_request","request_id":"request-1","request":{"subtype":"can_use_tool","tool_name":"ExitPlanMode","tool_use_id":"tool-plan","input":{}}}` + "\n")
+	if err := p.onChunk("stdout", append(write, exitPlan...), timeNow()); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.requests) != 1 {
+		t.Fatalf("decision calls = %d, want 1", len(sink.requests))
+	}
+	req := sink.requests[0]
+	if req.Kind != agentadaptor.HumanDecisionPlanReview || req.Payload["plan"] != "# Real plan" {
+		t.Fatalf("plan request = %+v", req)
+	}
+}
+
 func TestControlQuestionWritesAnswersToUpdatedInput(t *testing.T) {
 	sink := &controlTestSink{respond: func(req agentadaptor.DecisionRequest) agentadaptor.DecisionResponse {
 		return agentadaptor.DecisionResponse{RequestID: req.RequestID, Result: agentadaptor.DecisionAnswered, Answer: map[string]any{"Choose": "A"}}
@@ -181,6 +232,79 @@ func TestControlQuestionWritesAnswersToUpdatedInput(t *testing.T) {
 	}
 	if answers, ok := frame.Response.Response.UpdatedInput["answers"].(map[string]any); !ok || answers["Choose"] != "A" {
 		t.Fatalf("updated answers = %#v", frame.Response.Response.UpdatedInput)
+	}
+}
+
+func TestControlDenyInterruptHonorsPolicy(t *testing.T) {
+	decodeInner := func(frame []byte) map[string]any {
+		var env struct {
+			Response struct {
+				Response map[string]any `json:"response"`
+			} `json:"response"`
+		}
+		if err := json.Unmarshal(frame, &env); err != nil {
+			t.Fatalf("decode frame: %v", err)
+		}
+		return env.Response.Response
+	}
+	cases := []struct {
+		name          string
+		policy        agentadaptor.HumanDecisionPolicy
+		result        agentadaptor.DecisionResult
+		wantInterrupt bool
+	}{
+		{
+			name:          "reject default aborts",
+			policy:        agentadaptor.HumanDecisionPolicy{Permission: agentadaptor.HumanDecisionAsk},
+			result:        agentadaptor.DecisionRejected,
+			wantInterrupt: true,
+		},
+		{
+			name:          "reject continue keeps run",
+			policy:        agentadaptor.HumanDecisionPolicy{Permission: agentadaptor.HumanDecisionAsk, OnReject: agentadaptor.FailureContinue},
+			result:        agentadaptor.DecisionRejected,
+			wantInterrupt: false,
+		},
+		{
+			name:          "timeout honors on_timeout continue",
+			policy:        agentadaptor.HumanDecisionPolicy{Permission: agentadaptor.HumanDecisionAsk, OnTimeout: agentadaptor.FailureContinue},
+			result:        agentadaptor.DecisionTimedOut,
+			wantInterrupt: false,
+		},
+		{
+			name:          "aborted default aborts",
+			policy:        agentadaptor.HumanDecisionPolicy{Permission: agentadaptor.HumanDecisionAsk},
+			result:        agentadaptor.DecisionAborted,
+			wantInterrupt: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sink := &controlTestSink{respond: func(req agentadaptor.DecisionRequest) agentadaptor.DecisionResponse {
+				return agentadaptor.DecisionResponse{RequestID: req.RequestID, Result: tc.result, Text: "nope"}
+			}}
+			stdin := &controlTestStdin{}
+			p := newParser(sink)
+			p.enableControl(context.Background(), sink, stdin, "run-1", tc.policy, "prompt")
+			line := []byte(`{"type":"control_request","request_id":"perm-1","request":{"subtype":"can_use_tool","tool_name":"Bash","tool_use_id":"tool-bash","input":{"command":"ls"}}}` + "\n")
+			if err := p.onChunk("stdout", line, timeNow()); err != nil {
+				t.Fatal(err)
+			}
+			if len(stdin.frames) != 1 {
+				t.Fatalf("frames = %d, want 1", len(stdin.frames))
+			}
+			resp := decodeInner(stdin.frames[0])
+			if allowed, _ := resp["allowed"].(bool); allowed {
+				t.Fatalf("denied decision must not be allowed, resp=%#v", resp)
+			}
+			interrupt, ok := resp["interrupt"].(bool)
+			if !ok {
+				t.Fatalf("deny response must always carry interrupt bool, resp=%#v", resp)
+			}
+			if interrupt != tc.wantInterrupt {
+				t.Fatalf("interrupt = %v, want %v (resp=%#v)", interrupt, tc.wantInterrupt, resp)
+			}
+		})
 	}
 }
 

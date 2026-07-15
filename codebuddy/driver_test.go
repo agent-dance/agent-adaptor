@@ -39,7 +39,7 @@ func TestDescriptorCapabilities(t *testing.T) {
 	if caps.WebSearch || caps.Browser || caps.Isolation {
 		t.Errorf("expected WebSearch/Browser/Isolation=false, got %+v", caps)
 	}
-	if !caps.Permission.Ask || !caps.Permission.AutoApprove || !caps.Permission.AutoReject {
+	if caps.Permission.Ask || !caps.Permission.AutoApprove || !caps.Permission.AutoReject {
 		t.Errorf("permission caps = %+v, want Ask+AutoApprove+AutoReject", caps.Permission)
 	}
 	if !caps.PlanReview.Ask || !caps.PlanReview.AutoApprove || !caps.PlanReview.AutoReject {

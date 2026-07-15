@@ -12,34 +12,26 @@ func SyncCodeBuddyProfile(configDir string, kind ProfileKind, payload agentadapt
 	return err
 }
 
-// codebuddyServerConfig renders one MCP server into CodeBuddy's mcp.json shape.
-// CodeBuddy 用 transportType 表示远程传输（streamable-http / sse），与
-// claude/cursor 的 type 字段写法不同，因此需要专属 render。
+// codebuddyServerConfig renders one MCP server into CodeBuddy's .mcp.json shape.
+// 按官方文档与 codebuddy_agent_sdk 的字段约定，使用 type（stdio / sse / http），
 func codebuddyServerConfig(server agentadaptor.MCPServerSpec) (map[string]any, error) {
 	headers, err := mergeBearerHeader(server.Headers, server.BearerTokenEnvVar, "${%s}", server.Key)
 	if err != nil {
 		return nil, err
 	}
 
-	entry := map[string]any{}
+	entry := map[string]any{
+		"type": string(server.Transport),
+	}
 	switch server.Transport {
 	case agentadaptor.MCPTransportStdio:
 		entry["command"] = server.Command
 		if len(server.Args) > 0 {
 			entry["args"] = append([]string(nil), server.Args...)
 		}
-		if len(server.Env) > 0 {
-			entry["env"] = cloneStringMapAny(server.Env)
-		}
-	case agentadaptor.MCPTransportHTTP:
+		entry["env"] = cloneStringMapAny(server.Env)
+	case agentadaptor.MCPTransportHTTP, agentadaptor.MCPTransportSSE:
 		entry["url"] = server.URL
-		entry["transportType"] = "streamable-http"
-		if len(headers) > 0 {
-			entry["headers"] = headers
-		}
-	case agentadaptor.MCPTransportSSE:
-		entry["url"] = server.URL
-		entry["transportType"] = "sse"
 		if len(headers) > 0 {
 			entry["headers"] = headers
 		}

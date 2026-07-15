@@ -336,6 +336,7 @@ func TestCodeBuddyLivePermissionApprove(t *testing.T) {
 			HumanDecision: agentadaptor.HumanDecisionPolicy{
 				Permission: agentadaptor.HumanDecisionAsk,
 				PlanReview: agentadaptor.HumanDecisionAutoApprove,
+				Question: agentadaptor.QuestionAutoReject,
 			},
 		}),
 		agentadaptor.WithPermissionHandler(func(_ context.Context, req agentadaptor.PermissionRequest) (agentadaptor.PermissionResponse, error) {
@@ -380,6 +381,162 @@ func TestCodeBuddyLivePermissionApprove(t *testing.T) {
 	}
 }
 
+// newLivePlanSDK builds a live SDK forced into CodeBuddy plan mode. The control
+// transport (selected by PlanReview=Ask) never emits `--permission-mode` on its
+// own, so plan mode is injected via ExtraArgs; controlSafeExtraArgs lets
+// `--permission-mode` through. Without this the model never drafts a plan nor
+// calls ExitPlanMode.
+func newLivePlanSDK(t *testing.T, cwd string) agentadaptor.SDK {
+	t.Helper()
+	return agentadaptor.New(
+		agentadaptor.WithDefaultAgent(New(agentadaptor.CodeBuddyConfig{
+			CommonConfig: agentadaptor.CommonConfig{
+				CWD:     cwd,
+				Command: codebuddyCLIName(),
+				Env: []agentadaptor.EnvBinding{
+					{Name: "CODEBUDDY_CONFIG_DIR", Value: isolatedConfigDir(t)},
+				},
+				ExtraArgs: []string{"--permission-mode", "plan"},
+			},
+			Model: liveModel(),
+		})),
+		agentadaptor.WithSessionStore(memory.NewSessionStore()),
+	)
+}
+
+// TestCodeBuddyLivePlanApprove drives the full plan-review HITL loop against the
+// real CLI: plan mode makes the model draft a plan (written to
+// <configDir>/plans/*.md and captured by the parser) then call ExitPlanMode. The
+// parser routes it as a PlanReview decision, the host approves, and the CLI
+// continues to implement. Verifies the handler is invoked with a non-empty plan,
+// no failure is recorded, and a final output is produced.
+func TestCodeBuddyLivePlanApprove(t *testing.T) {
+	requireCodeBuddyCLI(t)
+	cwd := t.TempDir()
+	sdk := newLivePlanSDK(t, cwd)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	defer cancel()
+
+	var (
+		mu    sync.Mutex
+		calls []agentadaptor.PlanReviewRequest
+	)
+	handle, err := sdk.Start(ctx,
+		"Add a file named hello.py in the current directory that prints 'Hello, plan mode'. "+
+			"First think through the steps, then call ExitPlanMode to submit the plan for approval "+
+			"before implementing. Do not ask questions.",
+		agentadaptor.WithStreaming(),
+		agentadaptor.WithRunPolicy(agentadaptor.RunPolicy{
+			HumanDecision: agentadaptor.HumanDecisionPolicy{
+				Permission: agentadaptor.HumanDecisionAutoApprove,
+				PlanReview: agentadaptor.HumanDecisionAsk,
+				Question:   agentadaptor.QuestionAutoReject,
+			},
+		}),
+		agentadaptor.WithPlanReviewHandler(func(_ context.Context, req agentadaptor.PlanReviewRequest) (agentadaptor.PlanReviewResponse, error) {
+			mu.Lock()
+			calls = append(calls, req)
+			mu.Unlock()
+			t.Logf("[plan-handler] approving prompt=%q plan=%q", req.Prompt, truncateForLog(req.Plan))
+			return agentadaptor.PlanReviewResponse{Result: agentadaptor.ApprovalApproved}, nil
+		}),
+		agentadaptor.WithSessionKey("codebuddy_live_plan", "approve"),
+	)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	wait := logLiveEvents(t, handle)
+	res, err := handle.Wait(ctx)
+	wait()
+	if err != nil {
+		t.Fatalf("Wait: %v", err)
+	}
+
+	mu.Lock()
+	got := append([]agentadaptor.PlanReviewRequest(nil), calls...)
+	mu.Unlock()
+	if len(got) == 0 {
+		t.Fatalf("plan-review handler never invoked; model likely did not call ExitPlanMode — output=%q", res.Output)
+	}
+	if got[0].Prompt != "ExitPlanMode" {
+		t.Errorf("plan-review prompt = %q, want ExitPlanMode", got[0].Prompt)
+	}
+	if strings.TrimSpace(got[0].Plan) == "" {
+		t.Errorf("plan-review request missing captured Plan text: %+v", got[0])
+	}
+	if res.Failure != nil {
+		t.Errorf("approved plan should not fail: %+v", res.Failure)
+	}
+	if strings.TrimSpace(res.Output) == "" {
+		t.Error("final Output missing after plan approval")
+	}
+}
+
+// TestCodeBuddyLivePlanReject verifies the OnReject=FailureAbort path for plan
+// review against the real CLI: the host rejects the plan and the adapter records
+// a structured rejection failure.
+func TestCodeBuddyLivePlanReject(t *testing.T) {
+	requireCodeBuddyCLI(t)
+	cwd := t.TempDir()
+	sdk := newLivePlanSDK(t, cwd)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	defer cancel()
+
+	var (
+		mu    sync.Mutex
+		calls int
+	)
+	handle, err := sdk.Start(ctx,
+		"Add a file named hello.py in the current directory that prints 'Hello, plan mode'. "+
+			"First think through the steps, then call ExitPlanMode to submit the plan for approval "+
+			"before implementing. Do not ask questions.",
+		agentadaptor.WithStreaming(),
+		agentadaptor.WithRunPolicy(agentadaptor.RunPolicy{
+			HumanDecision: agentadaptor.HumanDecisionPolicy{
+				Permission: agentadaptor.HumanDecisionAutoApprove,
+				PlanReview: agentadaptor.HumanDecisionAsk,
+				Question:   agentadaptor.QuestionAutoReject,
+				OnReject:   agentadaptor.FailureAbort,
+			},
+		}),
+		agentadaptor.WithPlanReviewHandler(func(_ context.Context, req agentadaptor.PlanReviewRequest) (agentadaptor.PlanReviewResponse, error) {
+			mu.Lock()
+			calls++
+			mu.Unlock()
+			t.Logf("[plan-handler] rejecting prompt=%q plan=%q", req.Prompt, truncateForLog(req.Plan))
+			return agentadaptor.PlanReviewResponse{Result: agentadaptor.ApprovalRejected}, nil
+		}),
+		agentadaptor.WithSessionKey("codebuddy_live_plan", "reject"),
+	)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	wait := logLiveEvents(t, handle)
+	res, err := handle.Wait(ctx)
+	wait()
+	if err != nil {
+		t.Fatalf("Wait: %v", err)
+	}
+
+	mu.Lock()
+	n := calls
+	mu.Unlock()
+	if n == 0 {
+		t.Fatalf("plan-review handler never invoked; model likely did not call ExitPlanMode — output=%q", res.Output)
+	}
+	if res.Failure == nil {
+		t.Fatalf("rejected plan with OnReject=Abort should record a failure; output=%q", res.Output)
+	}
+	if res.Failure.Code != agentadaptor.FailureReject {
+		t.Errorf("failure code = %q, want %q", res.Failure.Code, agentadaptor.FailureReject)
+	}
+	if _, statErr := os.Stat(filepath.Join(cwd, "hello.py")); statErr == nil {
+		t.Errorf("hello.py should not be created after plan rejection")
+	}
+}
+
 // TestCodeBuddyLivePermissionReject verifies the OnReject=FailureAbort path
 // against the real CLI: the host rejects the tool permission and the adapter
 // records a structured rejection failure.
@@ -397,7 +554,7 @@ func TestCodeBuddyLivePermissionReject(t *testing.T) {
 		agentadaptor.WithStreaming(),
 		agentadaptor.WithRunPolicy(agentadaptor.RunPolicy{
 			HumanDecision: agentadaptor.HumanDecisionPolicy{
-				Permission: agentadaptor.HumanDecisionAsk,
+				Permission: agentadaptor.HumanDecisionAutoApprove,
 				PlanReview: agentadaptor.HumanDecisionAutoApprove,
 				OnReject:   agentadaptor.FailureAbort,
 			},

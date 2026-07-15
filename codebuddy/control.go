@@ -29,6 +29,7 @@ func (adapter) runControl(ctx context.Context, cfg agentadaptor.CodeBuddyConfig,
 	stdin := clihelper.NewStdinController()
 	p := newParser(sink)
 	p.enableControl(ctx, decisionSink, stdin, req.RunID, req.Policy.HumanDecision, prep.prompt)
+	p.control.configDir = resolveConfigDir(cfg.Env)
 	if req.Streaming {
 		p.enableStreaming(req.RunID)
 	}

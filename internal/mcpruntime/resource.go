@@ -158,10 +158,13 @@ func layoutFor(driverType, profileDir string) (providerLayout, error) {
 		return providerLayout{
 			driverType: driverType,
 			profileDir: profileDir,
-			path:       filepath.Join(profileDir, "mcp.json"),
-			field:      "mcpServers",
-			format:     "json",
-			render:     codebuddyServerConfig,
+			// CodeBuddy USER 作用域按优先级读取 .mcp.json > mcp.json（已废弃）>
+			// ~/.codebuddy.json，且不合并同作用域多个文件。写最高优先级的
+			// .mcp.json 可保证始终被 CLI 读到，不被遗留文件遮蔽。
+			path:   filepath.Join(profileDir, ".mcp.json"),
+			field:  "mcpServers",
+			format: "json",
+			render: codebuddyServerConfig,
 		}, nil
 	default:
 		return providerLayout{}, fmt.Errorf("mcp profile materialization is unsupported by adapter %q", driverType)

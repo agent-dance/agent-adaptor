@@ -9,9 +9,9 @@ import (
 	agentadaptor "github.com/agent-dance/agent-adaptor"
 )
 
-func TestSyncCodeBuddyProfileRendersTransportType(t *testing.T) {
+func TestSyncCodeBuddyProfileRendersType(t *testing.T) {
 	configDir := t.TempDir()
-	path := filepath.Join(configDir, "mcp.json")
+	path := filepath.Join(configDir, ".mcp.json")
 
 	if err := SyncCodeBuddyProfile(configDir, ProfileKindDedicated, agentadaptor.MCPPayload{
 		Servers: []agentadaptor.MCPServerSpec{
@@ -46,20 +46,21 @@ func TestSyncCodeBuddyProfileRendersTransportType(t *testing.T) {
 	for _, want := range []string{
 		`"mcpServers"`,
 		`"remote-http"`,
-		`"transportType": "streamable-http"`,
+		`"type": "http"`,
 		`"Authorization": "Bearer ${CB_TOKEN}"`,
 		`"remote-sse"`,
-		`"transportType": "sse"`,
+		`"type": "sse"`,
 		`"local-stdio"`,
+		`"type": "stdio"`,
 		`"command": "npx"`,
 		`"API_KEY": "secret"`,
 	} {
 		if !strings.Contains(text, want) {
-			t.Fatalf("expected codebuddy mcp.json to contain %q, got:\n%s", want, text)
+			t.Fatalf("expected codebuddy .mcp.json to contain %q, got:\n%s", want, text)
 		}
 	}
-	// CodeBuddy stdio servers must NOT carry a "type" field (unlike claude).
-	if strings.Contains(text, `"type": "stdio"`) {
-		t.Fatalf("codebuddy stdio server should not have a type field, got:\n%s", text)
+	// 对齐文档/SDK：使用 type 字段而非历史遗留的 transportType。
+	if strings.Contains(text, "transportType") {
+		t.Fatalf("codebuddy MCP config should not use transportType, got:\n%s", text)
 	}
 }

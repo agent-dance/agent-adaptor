@@ -255,15 +255,15 @@ func TestCodeBuddyHeadlessMaterializesMCPAndSkills(t *testing.T) {
 		t.Fatalf("run: %v", err)
 	}
 
-	mcpPath := filepath.Join(home, ".codebuddy", "mcp.json")
+	mcpPath := filepath.Join(home, ".codebuddy", ".mcp.json")
 	raw, err := os.ReadFile(mcpPath)
 	if err != nil {
-		t.Fatalf("expected mcp.json written to profile dir: %v", err)
+		t.Fatalf("expected .mcp.json written to profile dir: %v", err)
 	}
 	text := string(raw)
-	for _, want := range []string{`"mcpServers"`, `"local"`, `"remote"`, `"transportType": "streamable-http"`} {
+	for _, want := range []string{`"mcpServers"`, `"local"`, `"remote"`, `"type": "http"`} {
 		if !strings.Contains(text, want) {
-			t.Errorf("mcp.json missing %q, got:\n%s", want, text)
+			t.Errorf(".mcp.json missing %q, got:\n%s", want, text)
 		}
 	}
 	if _, err := os.Stat(filepath.Join(home, ".codebuddy", "skills", "analysis")); err != nil {
