@@ -1,0 +1,9 @@
+{"type":"system","subtype":"init","session_id":"sess-mcp-tool","model":"claude-fixture"}
+{"type":"stream_event","session_id":"sess-mcp-tool","event":{"type":"message_start","message":{"id":"msg-mcp-1"}}}
+{"type":"stream_event","session_id":"sess-mcp-tool","event":{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"tool-mcp-1","name":"mcp__docs__search","input":{}}}}
+{"type":"stream_event","session_id":"sess-mcp-tool","event":{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"query\":\"streaming tool arguments\","}}}
+{"type":"stream_event","session_id":"sess-mcp-tool","event":{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\"limit\":5}"}}}
+{"type":"stream_event","session_id":"sess-mcp-tool","event":{"type":"content_block_stop","index":0}}
+{"type":"assistant","session_id":"sess-mcp-tool","message":{"content":[{"type":"tool_use","id":"tool-mcp-1","name":"mcp__docs__search","input":{"query":"streaming tool arguments","limit":5}}]}}
+{"type":"user","session_id":"sess-mcp-tool","message":{"content":[{"type":"tool_result","tool_use_id":"tool-mcp-1","content":"match"}]}}
+{"type":"result","subtype":"success","session_id":"sess-mcp-tool","result":"MCP finished."}

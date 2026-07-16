@@ -77,6 +77,7 @@ type Translator struct {
 	activeText      map[string]bool
 	activeReason    map[string]bool
 	activeToolStart map[string]bool
+	toolStartArgs   map[string]string
 
 	// decisionMode selects HITL event translation. Default: DecisionAsToolCall.
 	decisionMode DecisionMode
@@ -89,6 +90,7 @@ func NewTranslator(opts ...TranslatorOption) *Translator {
 		activeText:      map[string]bool{},
 		activeReason:    map[string]bool{},
 		activeToolStart: map[string]bool{},
+		toolStartArgs:   map[string]string{},
 		decisionMode:    DecisionAsToolCall,
 	}
 	for _, o := range opts {
@@ -311,6 +313,11 @@ func (t *Translator) translateNonTerminalLocked(p agentadaptor.StreamPayload) []
 			return nil
 		}
 		t.activeToolStart[p.ToolCallID] = true
+		if len(p.Args) > 0 {
+			if raw, err := json.Marshal(p.Args); err == nil {
+				t.toolStartArgs[p.ToolCallID] = string(raw)
+			}
+		}
 		return []aguievents.Event{aguievents.NewToolCallStartEvent(p.ToolCallID, defaultString(p.Name, "tool"))}
 
 	case agentadaptor.StreamToolCallArgs:
@@ -325,6 +332,10 @@ func (t *Translator) translateNonTerminalLocked(p agentadaptor.StreamPayload) []
 			t.activeToolStart[p.ToolCallID] = true
 			out = append(out, aguievents.NewToolCallStartEvent(p.ToolCallID, defaultString(p.Name, "tool")))
 		}
+		// StreamToolCallArgs also carries command output for adapters such as
+		// Codex. Preserve that existing delta stream and suppress the complete
+		// start snapshot; concatenating both would produce invalid AG-UI args.
+		delete(t.toolStartArgs, p.ToolCallID)
 		out = append(out, aguievents.NewToolCallArgsEvent(p.ToolCallID, p.Delta))
 		return out
 
@@ -333,10 +344,17 @@ func (t *Translator) translateNonTerminalLocked(p agentadaptor.StreamPayload) []
 			return nil
 		}
 		if !t.activeToolStart[p.ToolCallID] {
+			delete(t.toolStartArgs, p.ToolCallID)
 			return nil
 		}
 		delete(t.activeToolStart, p.ToolCallID)
-		return []aguievents.Event{aguievents.NewToolCallEndEvent(p.ToolCallID)}
+		out := []aguievents.Event{}
+		if args := t.toolStartArgs[p.ToolCallID]; args != "" {
+			out = append(out, aguievents.NewToolCallArgsEvent(p.ToolCallID, args))
+		}
+		delete(t.toolStartArgs, p.ToolCallID)
+		out = append(out, aguievents.NewToolCallEndEvent(p.ToolCallID))
+		return out
 
 	case agentadaptor.StreamToolCallResult:
 		if p.ToolCallID == "" {
@@ -407,9 +425,13 @@ func (t *Translator) closeAllOpenLifecyclesLocked() []aguievents.Event {
 	}
 	t.activeReason = map[string]bool{}
 	for id := range t.activeToolStart {
+		if args := t.toolStartArgs[id]; args != "" {
+			out = append(out, aguievents.NewToolCallArgsEvent(id, args))
+		}
 		out = append(out, aguievents.NewToolCallEndEvent(id))
 	}
 	t.activeToolStart = map[string]bool{}
+	t.toolStartArgs = map[string]string{}
 	return out
 }
 

@@ -2,6 +2,8 @@ package agui_test
 
 import (
 	"context"
+	"encoding/json"
+	"reflect"
 	"testing"
 	"time"
 
@@ -119,6 +121,86 @@ func TestTranslatorToolCallLifecycle(t *testing.T) {
 		aguievents.EventTypeRunFinished,
 	}
 	assertTypesEqual(t, want, typesOf(events))
+	assertVerified(t, events)
+}
+
+func TestTranslatorToolCallStartArgsFallback(t *testing.T) {
+	t.Parallel()
+	tr := agui.NewTranslator()
+	events := translateAll(tr, []agentadaptor.StreamPayload{
+		{Kind: agentadaptor.StreamRunStarted, ThreadID: "t", RunID: "r"},
+		{Kind: agentadaptor.StreamToolCallStart, ToolCallID: "tc-snapshot", Name: "Read", Args: map[string]any{"file_path": "/tmp/x"}},
+		{Kind: agentadaptor.StreamToolCallEnd, ToolCallID: "tc-snapshot"},
+		{Kind: agentadaptor.StreamRunFinished, ThreadID: "t", RunID: "r"},
+	})
+	want := []aguievents.EventType{
+		aguievents.EventTypeRunStarted,
+		aguievents.EventTypeToolCallStart,
+		aguievents.EventTypeToolCallArgs,
+		aguievents.EventTypeToolCallEnd,
+		aguievents.EventTypeRunFinished,
+	}
+	assertTypesEqual(t, want, typesOf(events))
+	for _, event := range events {
+		args, ok := event.(*aguievents.ToolCallArgsEvent)
+		if !ok {
+			continue
+		}
+		var got map[string]any
+		if err := json.Unmarshal([]byte(args.Delta), &got); err != nil {
+			t.Fatalf("decode fallback args: %v", err)
+		}
+		if !reflect.DeepEqual(got, map[string]any{"file_path": "/tmp/x"}) {
+			t.Fatalf("fallback args: %#v", got)
+		}
+	}
+	assertVerified(t, events)
+}
+
+func TestTranslatorToolCallStartArgsFallbackOnRunFinish(t *testing.T) {
+	t.Parallel()
+	tr := agui.NewTranslator()
+	events := translateAll(tr, []agentadaptor.StreamPayload{
+		{Kind: agentadaptor.StreamRunStarted, ThreadID: "t", RunID: "r"},
+		{Kind: agentadaptor.StreamToolCallStart, ToolCallID: "tc-snapshot", Name: "Read", Args: map[string]any{"file_path": "/tmp/x"}},
+		{Kind: agentadaptor.StreamRunFinished, ThreadID: "t", RunID: "r"},
+	})
+	want := []aguievents.EventType{
+		aguievents.EventTypeRunStarted,
+		aguievents.EventTypeToolCallStart,
+		aguievents.EventTypeToolCallArgs,
+		aguievents.EventTypeToolCallEnd,
+		aguievents.EventTypeRunFinished,
+	}
+	assertTypesEqual(t, want, typesOf(events))
+	assertVerified(t, events)
+}
+
+func TestTranslatorToolCallStartArgsDoNotDuplicateStreamedDeltas(t *testing.T) {
+	t.Parallel()
+	tr := agui.NewTranslator()
+	events := translateAll(tr, []agentadaptor.StreamPayload{
+		{Kind: agentadaptor.StreamRunStarted, ThreadID: "t", RunID: "r"},
+		{Kind: agentadaptor.StreamToolCallStart, ToolCallID: "tc-stream", Name: "shell", Args: map[string]any{"command": "pwd"}},
+		{Kind: agentadaptor.StreamToolCallArgs, ToolCallID: "tc-stream", Delta: "/tmp/x\n"},
+		{Kind: agentadaptor.StreamToolCallEnd, ToolCallID: "tc-stream"},
+		{Kind: agentadaptor.StreamRunFinished, ThreadID: "t", RunID: "r"},
+	})
+
+	argsEvents := 0
+	for _, event := range events {
+		args, ok := event.(*aguievents.ToolCallArgsEvent)
+		if !ok {
+			continue
+		}
+		argsEvents++
+		if args.Delta != "/tmp/x\n" {
+			t.Fatalf("streamed delta: got %q", args.Delta)
+		}
+	}
+	if argsEvents != 1 {
+		t.Fatalf("expected one streamed args event, got %d", argsEvents)
+	}
 	assertVerified(t, events)
 }
 
