@@ -76,6 +76,28 @@ type projectMetadata struct {
 	ProgrammingLanguages []string `json:"programming_languages,omitempty"`
 }
 
+type nestedProjectMetadata struct {
+	ProjectName string          `json:"project_name"`
+	Artifact    projectMetadata `json:"artifact"`
+}
+
+type recursiveProjectMetadata struct {
+	ProjectName string                      `json:"project_name"`
+	Children    []*recursiveProjectMetadata `json:"children"`
+}
+
+type recursiveList []recursiveList
+
+type recursiveMap map[string]recursiveMap
+
+type recursivePointer *recursivePointer
+
+type recursivePointerMap map[recursivePointer]string
+
+type largeSchemaNumber struct {
+	ID int64 `json:"id" jsonschema:"minimum=9007199254740993"`
+}
+
 func TestJSONSchemaForAndDecodeStructuredOutput(t *testing.T) {
 	first, err := agentadaptor.JSONSchemaFor[projectMetadata]()
 	if err != nil {
@@ -106,6 +128,123 @@ func TestJSONSchemaForAndDecodeStructuredOutput(t *testing.T) {
 	}
 	if decoded.ProjectName != "agent-adaptor" || len(decoded.ProgrammingLanguages) != 1 || decoded.ProgrammingLanguages[0] != "go" {
 		t.Fatalf("unexpected decoded value: %#v", decoded)
+	}
+}
+
+func TestWithJSONSchemaOutputForPreservesGeneratedSchema(t *testing.T) {
+	driver := &structuredTestDriver{
+		caps:   promptStructuredCaps(),
+		output: `{"project_name":"agent-adaptor","artifact":{"project_name":"nested","programming_languages":["go"]}}`,
+	}
+	sdk := agentadaptor.New(agentadaptor.WithDefaultAgent(agentadaptor.Bind(driver, struct{}{})))
+	want, err := agentadaptor.JSONSchemaFor[nestedProjectMetadata]()
+	if err != nil {
+		t.Fatalf("JSONSchemaFor: %v", err)
+	}
+
+	res, err := sdk.Run(context.Background(), "extract nested metadata", agentadaptor.WithJSONSchemaOutputFor[nestedProjectMetadata]())
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if res.StructuredOutput == nil || !res.StructuredOutput.Valid {
+		t.Fatalf("expected valid structured output, got %#v", res.StructuredOutput)
+	}
+	if driver.lastReq.OutputSchema == nil {
+		t.Fatal("expected output schema on driver request")
+	}
+	if got := string(driver.lastReq.OutputSchema.SchemaJSON); got != string(want) {
+		t.Fatalf("WithJSONSchemaOutputFor changed the generated schema:\ngot  %s\nwant %s", got, want)
+	}
+}
+
+func TestWithJSONSchemaOutputForSupportsRecursiveTypes(t *testing.T) {
+	driver := &structuredTestDriver{
+		caps:   promptStructuredCaps(),
+		output: `{"project_name":"root","children":[]}`,
+	}
+	sdk := agentadaptor.New(agentadaptor.WithDefaultAgent(agentadaptor.Bind(driver, struct{}{})))
+	schema, schemaErr := agentadaptor.JSONSchemaFor[recursiveProjectMetadata]()
+	if schemaErr != nil {
+		t.Fatalf("JSONSchemaFor: %v", schemaErr)
+	}
+
+	res, err := sdk.Run(context.Background(), "extract tree", agentadaptor.WithJSONSchemaOutputFor[recursiveProjectMetadata]())
+	if err != nil {
+		t.Fatalf("run: %v; schema=%s", err, schema)
+	}
+	if res.StructuredOutput == nil || !res.StructuredOutput.Valid {
+		t.Fatalf("expected valid recursive structured output, got %#v", res.StructuredOutput)
+	}
+	if driver.lastReq.OutputSchema == nil || !strings.Contains(string(driver.lastReq.OutputSchema.SchemaJSON), `"$ref"`) {
+		t.Fatalf("expected recursive schema references, got %#v", driver.lastReq.OutputSchema)
+	}
+}
+
+func TestJSONSchemaForRejectsInliningRecursiveTypes(t *testing.T) {
+	_, err := agentadaptor.JSONSchemaFor[recursiveProjectMetadata](agentadaptor.SchemaInlineReferences())
+	if !errors.Is(err, agentadaptor.ErrInvalidOutputSchema) || !strings.Contains(err.Error(), "cannot inline recursive Go type") {
+		t.Fatalf("error = %v, want recursive ErrInvalidOutputSchema", err)
+	}
+}
+
+func TestWithJSONSchemaOutputForSupportsRecursiveCollections(t *testing.T) {
+	tests := []struct {
+		name string
+		run  func(*structuredTestDriver) error
+	}{
+		{
+			name: "slice",
+			run: func(driver *structuredTestDriver) error {
+				driver.output = `[]`
+				sdk := agentadaptor.New(agentadaptor.WithDefaultAgent(agentadaptor.Bind(driver, struct{}{})))
+				_, err := sdk.Run(context.Background(), "extract list", agentadaptor.WithJSONSchemaOutputFor[recursiveList]())
+				return err
+			},
+		},
+		{
+			name: "map",
+			run: func(driver *structuredTestDriver) error {
+				driver.output = `{}`
+				sdk := agentadaptor.New(agentadaptor.WithDefaultAgent(agentadaptor.Bind(driver, struct{}{})))
+				_, err := sdk.Run(context.Background(), "extract map", agentadaptor.WithJSONSchemaOutputFor[recursiveMap]())
+				return err
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			driver := &structuredTestDriver{caps: promptStructuredCaps()}
+			if err := tc.run(driver); err != nil {
+				t.Fatalf("run: %v", err)
+			}
+			if driver.lastReq.OutputSchema == nil || !strings.Contains(string(driver.lastReq.OutputSchema.SchemaJSON), `"$ref"`) {
+				t.Fatalf("schema = %#v", driver.lastReq.OutputSchema)
+			}
+		})
+	}
+}
+
+func TestJSONSchemaForRejectsSelfReferentialPointer(t *testing.T) {
+	_, err := agentadaptor.JSONSchemaFor[recursivePointer]()
+	if !errors.Is(err, agentadaptor.ErrInvalidOutputSchema) || !strings.Contains(err.Error(), "self-referential pointer") {
+		t.Fatalf("error = %v, want self-referential pointer ErrInvalidOutputSchema", err)
+	}
+}
+
+func TestJSONSchemaForRejectsSelfReferentialMapKeyPointer(t *testing.T) {
+	_, err := agentadaptor.JSONSchemaFor[recursivePointerMap]()
+	if !errors.Is(err, agentadaptor.ErrInvalidOutputSchema) || !strings.Contains(err.Error(), "self-referential map key") {
+		t.Fatalf("error = %v, want self-referential map key ErrInvalidOutputSchema", err)
+	}
+}
+
+func TestJSONSchemaForPreservesLargeConstraintNumbers(t *testing.T) {
+	raw, err := agentadaptor.JSONSchemaFor[largeSchemaNumber]()
+	if err != nil {
+		t.Fatalf("JSONSchemaFor: %v", err)
+	}
+	if !strings.Contains(string(raw), `"minimum":9007199254740993`) {
+		t.Fatalf("large schema number was not preserved: %s", raw)
 	}
 }
 

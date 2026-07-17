@@ -102,9 +102,9 @@ func (adapter) Descriptor() agentadaptor.DriverDescriptor {
 			JSONSchemaPromptValidate: true,
 			WorksWithRun:             true,
 			WorksWithStart:           true,
-			WorksWithStreaming:       false,
+			WorksWithStreaming:       true,
 			WorksWithHITL:            false,
-			Notes:                    "Native JSON Schema output uses Claude Code print-mode --output-format json --json-schema; stream-json/HITL combinations are not advertised.",
+			Notes:                    "Native JSON Schema output supports print-mode streaming via --output-format stream-json --json-schema; interactive HITL combinations are still not advertised.",
 		},
 	}
 }
@@ -414,7 +414,10 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 		}
 	}
 
-	args := buildClaudeExecArgs(cfg, req, "", interactive)
+	args, err := buildClaudeExecArgs(cfg, req, "", interactive)
+	if err != nil {
+		return agentadaptor.DriverRunResult{}, err
+	}
 
 	rawPrompt := req.Prompt
 	if runtimePrefix := adapterutil.RuntimePromptPrefix(req.Runtime); runtimePrefix != "" {
@@ -540,13 +543,25 @@ func validateClaudeSessionGuard(req agentadaptor.DriverRunRequest, effectiveCWD,
 	return nil
 }
 
-func buildClaudeExecArgs(cfg agentadaptor.ClaudeConfig, req agentadaptor.DriverRunRequest, bundleRoot string, interactive bool) []string {
-	// Common core. Native structured output uses Claude's final json result;
-	// normal batch/streaming parsing continues to use stream-json events.
+func buildClaudeExecArgs(cfg agentadaptor.ClaudeConfig, req agentadaptor.DriverRunRequest, bundleRoot string, interactive bool) ([]string, error) {
+	// Common core. Native structured output supports two modes:
+	//   - non-streaming: final JSON result via --output-format json
+	//   - streaming: stream-json events + final structured_output/result event
+	//
+	// Prompt-validated structured output and ordinary runs always stay on the
+	// existing stream-json path.
 	nativeStructured := req.OutputSchema != nil && req.OutputSchema.Mode != agentadaptor.StructuredOutputPromptValidate
 	args := []string{"--print"}
 	if nativeStructured {
-		args = append(args, "--output-format", "json", "--json-schema", string(req.OutputSchema.SchemaJSON))
+		schemaJSON, err := prepareClaudeJSONSchema(req.OutputSchema.SchemaJSON)
+		if err != nil {
+			return nil, err
+		}
+		if req.Streaming {
+			args = append(args, "--output-format", "stream-json", "--verbose", "--json-schema", string(schemaJSON))
+		} else {
+			args = append(args, "--output-format", "json", "--json-schema", string(schemaJSON))
+		}
 	} else {
 		args = append(args, "--output-format", "stream-json", "--verbose")
 	}
@@ -605,7 +620,7 @@ func buildClaudeExecArgs(cfg agentadaptor.ClaudeConfig, req agentadaptor.DriverR
 		args = append(args, "--add-dir", bundleRoot)
 	}
 	args = append(args, cfg.ExtraArgs...)
-	return args
+	return args, nil
 }
 
 func hasAnyArg(args []string, names ...string) bool {

@@ -80,6 +80,33 @@ func TestStreamPayloadUsesCustomPassThroughShape(t *testing.T) {
 	}
 }
 
+func TestToolCallFieldsPassThroughSubagentBridge(t *testing.T) {
+	t.Parallel()
+	event := a2adelegation.DelegationEvent{
+		RunID:            "run-1",
+		ParentToolCallID: "parent-tool",
+		DelegationID:     "del-1",
+		AgentKey:         "research",
+		Kind:             a2adelegation.DelegationToolCallStart,
+		RemoteToolCallID: "remote-tool",
+		ToolName:         "Bash",
+		Args:             map[string]any{"command": "go test ./..."},
+		Result:           map[string]any{"exit_code": 0},
+	}
+	custom := subagentstream.AGUICustomEvent(event).(*aguievents.CustomEvent)
+	value := custom.Value.(map[string]any)
+	if value["remoteToolCallId"] != "remote-tool" || value["toolName"] != "Bash" || value["args"] == nil || value["result"] == nil {
+		t.Fatalf("AG-UI tool fields = %#v", value)
+	}
+	payload := subagentstream.StreamPayload(event)
+	if payload.ToolCallID != "remote-tool" || payload.Args["command"] != "go test ./..." || payload.Result["exit_code"] != 0 {
+		t.Fatalf("stream tool fields = %#v", payload)
+	}
+	if payload.Raw["parent_tool_call_id"] != "parent-tool" || payload.Raw["remote_tool_call_id"] != "remote-tool" {
+		t.Fatalf("stream tool IDs = %#v", payload.Raw)
+	}
+}
+
 func TestWrapMergesParentAndDelegationAGUIEvents(t *testing.T) {
 	t.Parallel()
 	handle := &fakeHandle{
