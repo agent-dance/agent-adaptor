@@ -14,7 +14,7 @@ func buildExecArgs(cfg agentadaptor.CodeBuddyConfig, req agentadaptor.DriverRunR
 	nativeStructured := req.OutputSchema != nil && req.OutputSchema.Mode != agentadaptor.StructuredOutputPromptValidate
 	args := make([]string, 0, 16)
 	if control {
-		args = append(args, "--input-format=stream-json", "--output-format=stream-json", "--verbose")
+		args = append(args, "--input-format=stream-json", "--output-format=stream-json", "--verbose", "--include-partial-messages")
 	} else if nativeStructured {
 		args = append(args, "--print")
 		args = append(args, "--output-format", "json", "--json-schema", string(req.OutputSchema.SchemaJSON))

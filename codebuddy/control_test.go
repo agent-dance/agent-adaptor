@@ -91,7 +91,7 @@ func TestBuildExecArgsControl(t *testing.T) {
 		agentadaptor.CodeBuddyPermissionUnset,
 		true,
 	)
-	for _, want := range []string{"--input-format=stream-json", "--output-format=stream-json", "--verbose", "--resume", "session-1"} {
+	for _, want := range []string{"--input-format=stream-json", "--output-format=stream-json", "--verbose", "--include-partial-messages", "--resume", "session-1"} {
 		if !hasArg(args, want) {
 			t.Fatalf("control args missing %q: %v", want, args)
 		}
