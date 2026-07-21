@@ -1047,6 +1047,29 @@ func TestEventBusTerminalDeliveryDropsOldestWhenSubscriberFull(t *testing.T) {
 	}
 }
 
+func TestEventBusReportsBackpressureWhenSubscriberFull(t *testing.T) {
+	t.Parallel()
+	bus := NewEventBus(0)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ch := bus.SubscribeRun(ctx, "run-1")
+	for i := 0; i < subscriberBuffer; i++ {
+		bus.Publish(DelegationEvent{RunID: "run-1", DelegationID: "del-1", Kind: DelegationTextDelta, Sequence: uint64(i + 1)})
+	}
+	bus.Publish(DelegationEvent{RunID: "run-1", DelegationID: "del-1", Kind: DelegationTextDelta, Sequence: subscriberBuffer + 1})
+
+	var dropped *DelegationEvent
+	for i := 0; i < subscriberBuffer; i++ {
+		event := <-ch
+		if event.Kind == DelegationStreamDropped {
+			dropped = &event
+		}
+	}
+	if dropped == nil || dropped.Raw["reason"] != "event_bus_backpressure" || dropped.Raw["dropped_count"] != 2 {
+		t.Fatalf("backpressure event = %#v", dropped)
+	}
+}
+
 func TestEventBusPreservesTextEndBeforeTerminalForFullSubscriber(t *testing.T) {
 	t.Parallel()
 	bus := NewEventBus(0)

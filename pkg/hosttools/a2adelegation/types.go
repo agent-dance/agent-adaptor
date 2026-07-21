@@ -28,11 +28,16 @@ const (
 	DelegationTextStart       DelegationEventKind = "subagent.text.start"
 	DelegationTextDelta       DelegationEventKind = "subagent.text.delta"
 	DelegationTextEnd         DelegationEventKind = "subagent.text.end"
+	DelegationReasoningStart  DelegationEventKind = "subagent.reasoning.start"
+	DelegationReasoningDelta  DelegationEventKind = "subagent.reasoning.delta"
+	DelegationReasoningEnd    DelegationEventKind = "subagent.reasoning.end"
 	DelegationToolCallStart   DelegationEventKind = "subagent.tool_call.start"
 	DelegationToolCallArgs    DelegationEventKind = "subagent.tool_call.args"
 	DelegationToolCallResult  DelegationEventKind = "subagent.tool_call.result"
 	DelegationToolCallEnd     DelegationEventKind = "subagent.tool_call.end"
 	DelegationArtifactCreated DelegationEventKind = "subagent.artifact"
+	DelegationCustom          DelegationEventKind = "subagent.custom"
+	DelegationStreamDropped   DelegationEventKind = "subagent.stream.dropped"
 	DelegationInputRequired   DelegationEventKind = "subagent.input_required"
 	DelegationFinished        DelegationEventKind = "subagent.finished"
 	DelegationFailed          DelegationEventKind = "subagent.failed"
@@ -184,6 +189,28 @@ type RemotePart struct {
 	Metadata  map[string]any     `json:"metadata,omitempty"`
 }
 
+// StatusPartEvent 是业务无关的 Status DataPart 解码结果。
+type StatusPartEvent struct {
+	Kind       DelegationEventKind
+	Sequence   uint64
+	MessageID  string
+	ToolCallID string
+	Name       string
+	Role       string
+	Delta      string
+	Args       any
+	Result     any
+	Raw        map[string]any
+	Time       time.Time
+}
+
+// StatusPartDecoder 把一种 Status DataPart schema 归一化为 DelegationEvent 所需字段。
+// matched=false 表示 data 不属于当前 decoder，允许后续 decoder 继续尝试。
+type StatusPartDecoder interface {
+	Profile() string
+	DecodeStatusPart(data any) (events []StatusPartEvent, matched bool, err error)
+}
+
 type DelegationEvent struct {
 	RunID            string
 	ParentToolCallID string
@@ -197,8 +224,11 @@ type DelegationEvent struct {
 	RemoteMessageID  string
 	RemoteArtifactID string
 	RemoteToolCallID string
+	Sequence         uint64
 
 	Kind     DelegationEventKind
+	Name     string
+	Role     string
 	Delta    string
 	Text     string
 	ToolName string
@@ -206,9 +236,12 @@ type DelegationEvent struct {
 	Result   any
 	Artifact *DelegationArtifact
 	Status   string
-	Error    *DelegationError
-	Raw      map[string]any
-	Time     time.Time
+	// StatusParts preserves the remote A2A status message parts for hosts that
+	// consume structured status data.
+	StatusParts []RemotePart
+	Error       *DelegationError
+	Raw         map[string]any
+	Time        time.Time
 }
 
 type DelegationResult struct {

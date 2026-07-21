@@ -67,11 +67,31 @@ func deliverSubscriber(ch chan DelegationEvent, ev DelegationEvent) {
 		return
 	default:
 	}
-	if !isPriorityEvent(ev.Kind) {
+	if !isPriorityEvent(ev) {
+		var oldest DelegationEvent
+		select {
+		case oldest = <-ch:
+		default:
+			return
+		}
+		dropEvent := backpressureEvent(ev, []DelegationEvent{oldest, ev})
+		select {
+		case ch <- dropEvent:
+		default:
+		}
 		return
 	}
+	dropped := make([]DelegationEvent, 0, 2)
+	for i := 0; i < 2; i++ {
+		select {
+		case oldest := <-ch:
+			dropped = append(dropped, oldest)
+		default:
+		}
+	}
+	dropEvent := backpressureEvent(ev, dropped)
 	select {
-	case <-ch:
+	case ch <- dropEvent:
 	default:
 	}
 	select {
@@ -80,8 +100,33 @@ func deliverSubscriber(ch chan DelegationEvent, ev DelegationEvent) {
 	}
 }
 
-func isPriorityEvent(kind DelegationEventKind) bool {
-	return kind == DelegationTextEnd || kind == DelegationToolCallEnd || isTerminal(kind)
+func backpressureEvent(current DelegationEvent, dropped []DelegationEvent) DelegationEvent {
+	event := current
+	event.Kind = DelegationStreamDropped
+	event.Sequence = 0
+	event.Delta = ""
+	event.Args = nil
+	event.Result = nil
+	event.Artifact = nil
+	event.Raw = map[string]any{
+		"reason":        "event_bus_backpressure",
+		"dropped_count": len(dropped),
+	}
+	details := make([]map[string]any, 0, len(dropped))
+	for _, item := range dropped {
+		details = append(details, map[string]any{
+			"delegation_id": item.DelegationID,
+			"kind":          string(item.Kind),
+			"sequence":      item.Sequence,
+		})
+	}
+	event.Raw["dropped_events"] = details
+	return event
+}
+
+func isPriorityEvent(ev DelegationEvent) bool {
+	return ev.Kind == DelegationTextEnd || ev.Kind == DelegationReasoningEnd ||
+		ev.Kind == DelegationToolCallEnd || ev.Kind == DelegationStreamDropped || isTerminal(ev.Kind)
 }
 
 func (b *EventBus) ClearRun(runID string) {

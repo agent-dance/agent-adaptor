@@ -27,7 +27,7 @@ The bridge maps A2A task execution onto the single SDK execution path:
 4. The bridge calls `Runner.Start(...)` and applies `RunStreaming` as the final
    per-call streaming override (`WithStreaming` by default,
    `WithoutStreaming` when disabled).
-5. `StreamEvents`, `Wait`, and `Cancel` are translated to A2A status, artifact, and terminal events.
+5. `StreamEvents`, `Wait`, and `Cancel` are translated to A2A status, artifact, and terminal events. `ServerOptions.StreamWire` controls the intermediate-event wire profile.
 
 Bridge capability advertisement is strict:
 
@@ -41,6 +41,14 @@ Bridge capability advertisement is strict:
   override completed status text. It runs only after a successful SDK result;
   streamed artifacts already emitted during the run are not retroactively
   removed.
+- `ServerOptions.StreamWire` defaults to `StreamWireLegacyArtifact`. Hosts that
+  set `StreamWireStatusData` send intermediate text, reasoning, tool, HITL, and
+  dropped-stream events as `TaskStatusUpdateEvent` DataParts using the stable
+  `adapter.stream.v1` schema. The server advertises the optional
+  `urn:agent-adaptor:stream:v1` Agent Card extension while each DataPart remains
+  self-describing, so existing clients do not need an extension negotiation
+  header. Terminal result artifacts
+  remain unchanged.
 
 ```go
 runner := sdk.Default()
@@ -59,6 +67,7 @@ server := a2a.NewServer(runner, a2a.ServerOptions{
 		}},
 	},
 	Session: a2a.SessionByContextID("a2a"),
+	StreamWire: a2a.StreamWireStatusData,
 	TaskLifecycle: a2a.TaskLifecycleOptions{
 		Ephemeral: &a2a.EphemeralTaskStoreOptions{
 			MaxTasks: 512,
@@ -82,8 +91,8 @@ local agent profile.
 
 The terminal result is emitted as a structured artifact named `agent-adaptor-result`. Assistant-facing output remains in the final A2A status message. The default artifact contains only the safe summary; diagnostics such as metadata, usage, provider result payloads, transcript, raw streams, reasoning, tool-call internals, and HITL payloads require explicit `ExposurePolicy` opt-in and are sanitized before they cross the A2A boundary.
 
-Bridge-owned artifact names are part of the package contract for hosts that
-compose this bridge with higher-level stream overlays:
+In the default legacy wire mode, bridge-owned artifact names are part of the
+package contract for hosts that compose this bridge with higher-level stream overlays:
 
 - `a2a.ArtifactAssistantOutput` (`assistant-output`) carries streamed
   assistant-facing text deltas and closes with `lastChunk=true`.
@@ -215,13 +224,18 @@ progress is published to the bus and rendered as AG-UI custom events:
 ```
 
 Assistant output uses the ordered `subagent.text.start`,
-`subagent.text.delta`, and `subagent.text.end` lifecycle. Bridge-generated tool
-artifacts continue to emit `subagent.artifact` for existing consumers and also
-emit typed `subagent.tool_call.start`, `subagent.tool_call.args`,
-`subagent.tool_call.result`, and `subagent.tool_call.end` events. For typed tool
-events, `StreamPayload.ToolCallID` is the remote tool-call ID; the parent model
-tool-call ID remains available as `parentToolCallId` and
-`Raw["parent_tool_call_id"]`.
+`subagent.text.delta`, and `subagent.text.end` lifecycle. The mapper accepts both
+legacy bridge artifacts and StatusUpdate DataParts. Hosts using
+`adapter.stream.v1` receive typed `DelegationEvent` values for each supported
+Status DataPart. A host-owned schema can implement `StatusPartDecoder` and pass
+it through `WithStatusPartDecoder`; the mapper locks one stream profile per
+delegation, deduplicates replayed status data, and reports sequence gaps as
+`subagent.stream.dropped`. Legacy tool artifacts continue to emit typed
+`subagent.tool_call.start`, `subagent.tool_call.args`,
+`subagent.tool_call.result`, and `subagent.tool_call.end` events during rolling
+upgrades. For typed tool events, `StreamPayload.ToolCallID` is the remote
+tool-call ID; the parent model tool-call ID remains available as
+`parentToolCallId` and `Raw["parent_tool_call_id"]`.
 
 `parentToolCallId` is included only when the host can supply the parent provider
 tool-call ID, for example by setting `a2adelegation.MCPServerOptions.ParentToolCallID`
