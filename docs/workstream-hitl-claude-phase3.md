@@ -293,7 +293,7 @@ Phase 3 的 Retry 实现：
 | claude streaming_parser：tool_use 挂起 → RequestDecision → 注入 tool_result | ~180 | Phase 1 whitelist 已有 |
 | `Descriptor.RunPolicyCaps.Retry=true` | 5 | — |
 | 3 个 fixture（PlanReview approve / reject / Question answered）+ 对应 driver 级集成测试（用真 CLI） | ~200 | dev 环境有 CLI |
-| `examples/streaming-chat-copilotkit` 加 `AGUI_AGENT=claude-interactive` 或直接让 claude 走交互 | ~50 | — |
+| `examples/showcases/web-copilotkit-hitl` 加 `AGUI_AGENT=claude-interactive` 或直接让 claude 走交互 | ~50 | — |
 | `docs/workstream-hitl-v2.md` §5.1 整节重写 + Phase 1→3 迁移表 | — | — |
 
 总量：**~635 行代码 + 测试 + 文档**。
@@ -311,7 +311,7 @@ Phase 3 的 Retry 实现：
 
 ## 6. 验收（DoD）
 
-- [x] `examples/streaming-chat-copilotkit AGUI_AGENT=claude` 能演示完整"plan request → UI 卡 pending → 用户点 Approve → 模型继续"闭环（`AGUIExampleRunPolicy` 在 claude 分支开启 PlanReview=Ask + Question=Ask）
+- [x] `examples/showcases/web-copilotkit-hitl AGUI_AGENT=claude` 能演示完整"plan request → UI 卡 pending → 用户点 Approve → 模型继续"闭环（`AGUIExampleRunPolicy` 在 claude 分支开启 PlanReview=Ask + Question=Ask）
 - [x] 3 个 fixture 覆盖 plan approve/reject + question answered（`claude/testdata/streaming-phase3-{plan,question,bash}.jsonl` + `claude/phase3_test.go`）
 - [x] 真 CLI 集成测试（`claude/phase3_live_test.go`，`//go:build claude_live`，需本地有 `trpc-claudecode 2.1.112+` 且 CLI 支持 `--replay-user-messages`）
 - [ ] ~~`Descriptor.RunPolicyCaps.PlanReview.Retry = true`、`Question.Retry = true`~~ — **改为 false**。stream-json 模式下 CLI 无法对同一个 tool_use_id 重开决策窗口；FailureRetry 语义需要"让模型重新发新 tool_use"，这在 Phase 3 没实现。保留 `Retry:false`，后续若真需要再评估

@@ -1,239 +1,242 @@
 # agent-adaptor
 
-[English Version](./README.md)
+[English](./README.md)
 
-一个纯 Go SDK，用一套统一方式调用本地 `coding agent`。
+[![CI](https://github.com/agent-dance/agent-adaptor/actions/workflows/go.yml/badge.svg)](https://github.com/agent-dance/agent-adaptor/actions/workflows/go.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/agent-dance/agent-adaptor.svg)](https://pkg.go.dev/github.com/agent-dance/agent-adaptor)
+[![Release](https://img.shields.io/github/v/release/agent-dance/agent-adaptor)](https://github.com/agent-dance/agent-adaptor/releases)
+[![Go version](https://img.shields.io/badge/Go-1.26-00ADD8)](./go.mod)
 
-`agent-adaptor` 适合那些想在 `codex`、`claude` 或 `cursor` 等强大的 Agent 之上构建自己的产品的团队，`agent-adaptor` 提供了抽象的进程启动、session 复用、权限注入、skills 动态注入、运行时服务注入和结果整理等能力，你不再需要考虑如何调用它们，专注于您的产品即可。
+`agent-adaptor` 是一个纯 SDK，它提供了一套通用语义用于控制 Codex、Claude Code 或 Cursor Agent 等不同 Agent 产品。它与 [ACP](https://agentclientprotocol.com/get-started/introduction) 最大的不同是：ACP 更聚焦于调用 Agent，`agent-adaptor` 则更聚焦于控制 Agent。
 
-## 核心场景
+具体体现在 `agent-adaptor` 除了基础的统一调用接口之外，还提供了会话管理、工作区管理、权限和配置集成、Skills/MCP/Subagents/Hooks/Instructions 等能力扩展、AGUI/A2A/SSE 流式对接、人工决策、Multi Agent 协作等核心能力的支持。
 
-- 用最低成本将常用本地 `coding agent` 嵌入你的产品。
-- 支持“Codex 实现、Claude 审查”这类多 Agent 协作场景。
-- 在服务化工作流里复用 session，但不强迫所有调用都变成有状态。
-- 由你的应用自己控制 workspace、skills、permissions 和运行时服务，而不是把这些细节藏在各家 agent 的私有接入代码里。
-- 用同一套方式做环境检查、模型探测、配置字段展示、额度查看和 skills 管理。
+简而言之，`agent-adaptor` 适合于希望在通用 coding agent CLI 之上构建产品的团队，不管是 CLI、桌面应用、HTTP/gRPC 服务、后台 worker 或定时自动化的产品，它都能提供最具价值的支持。
 
-## 安装
+前置条件：Go 1.26+；下面的快速开始还要求 Codex CLI 已安装并配置好了认证。只有
+Claude Code 或 Cursor 的环境可以从 provider-selection recipe 开始。
 
 ```bash
 go get github.com/agent-dance/agent-adaptor
+go run ./examples/recipes/basic-run
+go run ./examples/recipes/provider-selection -agent=claude
+go run ./examples/recipes/provider-selection -agent=cursor
 ```
 
 ## 快速开始
 
-最快的使用方式就是：绑定一个默认 Agent，然后调用 `sdk.Run(...)`。
-
+下面的程序与 [`examples/recipes/basic-run/main.go`](./examples/recipes/basic-run/main.go) 完全一致。它复制本机 codex 的配置和权限认证到一个隔离目录中，并在一个指定的 workspace 中进行交互，运行它不会对本机的 codex 产生任何副作用。
 ```go
 package main
 
 import (
 	"context"
 	"fmt"
+	"log"
+	"os"
+	"path/filepath"
+	"time"
 
 	agentadaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/codex"
 )
 
 func main() {
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func run() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+
+	root, err := os.MkdirTemp("", "agent-adaptor-basic-*")
+	if err != nil {
+		return fmt.Errorf("create isolated environment: %w", err)
+	}
+	defer os.RemoveAll(root)
+	workspace := filepath.Join(root, "workspace")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		return fmt.Errorf("create temporary workspace: %w", err)
+	}
+
 	sdk := agentadaptor.New(
 		agentadaptor.WithDefaultAgent(codex.New(agentadaptor.CodexConfig{
-			Model: "gpt-5.4",
-		})),
+			CommonConfig: agentadaptor.CommonConfig{
+				CWD: workspace,
+			},
+			SkipGitRepoCheck: true,
+		}, agentadaptor.WithCloneProfile(
+			filepath.Join(root, "profile"),
+			agentadaptor.CloneProfileOptions{IncludeSettings: true, AuthMode: agentadaptor.CloneProfileAuthLink},
+		))),
 	)
 
-	result, err := sdk.Run(context.Background(), "fix the failing tests")
+	result, err := sdk.Run(ctx, "Reply in one sentence confirming the SDK call succeeded.")
 	if err != nil {
-		panic(err)
+		return fmt.Errorf("run agent: %w", err)
+	}
+	if result.Failure != nil {
+		return fmt.Errorf("agent run failed: %s", result.Failure.Message)
 	}
 
 	fmt.Println(result.Output)
+	return nil
 }
 ```
 
-`New(...)` 适合应用和测试场景，会在配置错误时直接失败。若你在库或服务中嵌入 SDK，希望自己处理配置错误，请使用 `Build(...)`。
+要更换其他 Agent 可替换为 `claude.New(...)` 或 `cursor.New(...)`。
 
-## 核心使用方式
+如服务需要返回配置错误而不是在启动时 fail fast 时，可使用 `Build(...)` 代替 `New(...)`。
 
-1. 用 `WithDefaultAgent(...)` 绑定默认 Agent。
-2. 默认执行路径使用 `sdk.Run(...)` 或 `sdk.Start(...)`。
-3. 多 Agent 场景用 `WithAgent(name, binding)` 绑定，再通过 `sdk.Agent(name)` 获取。
-4. 调用级 `RunOption` 可以覆盖绑定时的默认值。
-5. 只有在确实需要会话复用时才注入 `SessionStore`。
+## 按产品形态选择集成路径
 
-## 完整示例
+| 产品形态 | 从这里开始 | 下一步 |
+|---|---|---|
+| 批处理自动化或 CI worker | [`basic-run`](./examples/recipes/basic-run) | 用 [`structured-output`](./examples/recipes/structured-output) 获得可校验的机器输出 |
+| 交互式应用 | [`content-streaming`](./examples/recipes/content-streaming) | 加入 [`hitl-channel`](./examples/recipes/hitl-channel) 和持久化 session store |
+| 受控工作站 | [`managed-profile`](./examples/showcases/managed-profile) | 加入 Admin preflight 和组织管理的 profile resources |
+| React 直连 | [`web-agui`](./examples/showcases/web-agui) | 在宿主加入认证、持久化 replay、限流和审计 |
+| 完整聊天和 HITL UI | [`web-copilotkit-hitl`](./examples/showcases/web-copilotkit-hitl) | 由宿主负责决策授权与持久化 |
+| Agent-to-agent 服务 | [`a2a-local`](./examples/showcases/a2a-local) | 加入可信 discovery 和持久化 A2A task store |
+| 混合 provider Agent 团队 | [`team-agent-workflow`](./examples/showcases/team-agent-workflow) | 增加持久化编排状态、返修循环和 tenant-scoped 角色 registry |
 
-- [`examples/codex-basic`](./examples/codex-basic)：最小默认 Agent 执行。
-- [`examples/codex-stream`](./examples/codex-stream)：`Start(...)` 与事件流。
-- [`examples/codex-sessions`](./examples/codex-sessions)：服务化 session 复用。
-- [`examples/codex-admin-named`](./examples/codex-admin-named)：命名 Agent 与管理接口。
-- [`examples/codex-skills-live`](./examples/codex-skills-live)：skills 实时注入与同步。
-- [`examples/mock-runtime-admin`](./examples/mock-runtime-admin)：运行时服务与管理信息输出。
-- [`examples/session-codec-inspect`](./examples/session-codec-inspect)：安全检查适配器 session 参数。
-- [`examples/mock-adapter-playground`](./examples/mock-adapter-playground)：自定义适配器 playground。
-- [`examples/mock-skills-contract`](./examples/mock-skills-contract)：确定性 skills 请求组装。
-- [`examples/streaming-chat`](./examples/streaming-chat)：Go channel token streaming。
-- [`examples/streaming-sse-server`](./examples/streaming-sse-server)：最小 HTTP SSE chat 端点。
-- [`examples/streaming-chat-copilotkit`](./examples/streaming-chat-copilotkit)：AG-UI + CopilotKit + HITL 卡片 demo。
-- [`examples/streaming-chat-aguiclient`](./examples/streaming-chat-aguiclient)：Vite + React + `@ag-ui/client` 直连 AG-UI demo。
+## 核心心智
 
-## 常见调用方式
+- `SDK`：`sdk.Run(...)` 与 `sdk.Start(...)` 永远使用 `WithDefaultAgent(...)`
+  提供的 Agent 进行调用；`sdk.Admin()` 只属于控制面。
+- `Runner`：`sdk.Default()` 返回默认 Agent；`sdk.Agent(name)` 返回命名 Agent。
+- `RunHandle`：提供运行 `Events()`、可选内容 `StreamEvents()`、`RunID()`、
+  `Wait(...)`、`Cancel(...)`，以及异步 HITL 的 `DecisionRequests()` /
+  `ResolveDecision(...)`。
 
-### 多 Agent
+## 能力支持情况
 
-默认 Agent 直接走 `sdk.Run(...)`；命名 Agent 通过 `sdk.Agent(name)` 获取后再执行。
+可移植合同很宽，但不代表 provider 行为完全相同。下表来自当前内置 descriptor
+和测试。
 
-```go
-package main
+| Capability | Codex | Claude | Cursor | 补充说明 |
+|---|---:|---:|---:|---|
+| Skills | ✅ | ✅ | ✅ | 无 |
+| Instructions | ✅ | ✅ | ✅ | Claude 控制 home 目录下的 CLAUDE.md，Codex/Cursor 控制 home 目录下的 AGNETS.md |
+| SubAgent | ✅ | ✅ | ✅ | 无 |
+| Hooks | ✅ | ✅ | ✅ | 无 |
+| Plugins | ✅ | ✅ | ✅ | 无 |
+| MCP | stdio + HTTP | stdio + HTTP + SSE | stdio + HTTP + SSE | Codex 不支持 SSE 协议 |
+| Execution lifecycle | ✅ | ✅ | ✅ | `Run`、`Start`、wait、cancel、timeout、result 和运行事件 |
+| Session 管理（新建、关联、恢复、Fork） | ✅ | ✅ | ✅ | 无 |
+| 流式输出 | ✅ | ✅ | ❌ | Codex/Claude 产生 token/reasoning/tool delta；Cursor 返回 transcript/result |
+| HITL Ask | ❌ | PlanReview + Question | ❌ | 三个内置 adapter 都不支持 Permission `Ask` |
+| 结构化输出 | ✅ | ✅ | ✅ | Cursor 不支持原生 Structured output，SDK 层面实现了 Prompt 注入 + Validate 机制以提供此能力 |
+| Agent 配置目录隔离 | ✅ | ✅ | ✅ | 支持 native、dedicated 和 cloned profile；实际 workspace provisioning 由宿主负责 |
 
-import (
-	"context"
+SDK 通用能力：
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/claude"
-	"github.com/agent-dance/agent-adaptor/codex"
-)
+1. 复制配置和权限认证到隔离目录（允许多实例使用不同 Skills/MCP 等配置）
+2. 协调业务 SessionKey、provider SessionID、兼容指纹、lease、fork 和有效
+   checkpoint 持久化；未注入 `SessionStore` 时默认无状态。
+4. 通过 `WorkspaceManager` 和 `RuntimeServiceManager` 接入 workspace、dev server、
+   数据库或 sidecar 的生命周期，实际 provisioning 和进程/容器编排由宿主负责。
+5. 统一解析和物化 Skills、MCP、Agents、Hooks、Instructions 与 config patches，
+   并通过 profile snapshot 暴露实际生效状态。
+6. 分层保留 assistant output、原始 stdout/stderr、标准化 transcript、终局 provider
+   JSON 和结构化 failure，并提供 JSON Schema 输出校验。
+7. 将运行事件、内容 streaming 和 HITL 保持为同一次 run 的可选通道，支持声明式
+   policy、同步 typed handler 和异步 decision channel。
+8. 通过 Admin 提供环境、模型、profile、schema、quota 和 skills 探测，并用 core
+   之上的 AG-UI、SSE、A2A 包接入不同宿主形态。
 
-func main() {
-	sdk := agentadaptor.New(
-		agentadaptor.WithDefaultAgent(codex.New(agentadaptor.CodexConfig{
-			Model: "gpt-5.4",
-		})),
-		agentadaptor.WithAgent("review", claude.New(agentadaptor.ClaudeConfig{
-			Model: "claude-sonnet-4",
-		})),
-	)
+## Session 与 ID 维度
 
-	_, err := sdk.Run(context.Background(), "implement the fix")
-	if err != nil {
-		panic(err)
-	}
+宿主不注入 `SessionStore` 时，run 默认无状态。Session 模式包括
+`continue_or_start`、`continue_only`、`start_new`、`fork` 和 `stateless`。
+只有有效的 adapter checkpoint 才允许创建或更新 session 状态。
 
-	review, err := sdk.Agent("review")
-	if err != nil {
-		panic(err)
-	}
+| ID | 所有者 | 含义 |
+|---|---|---|
+| `ThreadID` | UI 或 workflow | 业务会话 ID；bridge 知道它，core SDK 不知道 |
+| `SessionKey` | 宿主 | `SessionRequest` 中概念性的 `(namespace, key)` 二元组；没有导出的 `SessionKey` 类型 |
+| `SessionID` | SDK + adapter | 业务 key 背后的具体可恢复会话句柄 |
+| `RunID` | SDK | 一次执行；一个 session 可以对应多次 run |
 
-	_, err = review.Run(context.Background(), "review the patch")
-	if err != nil {
-		panic(err)
-	}
-}
-```
+AG-UI bridge 约定把 `ThreadID` 映射为
+`SessionKey = ("agui", ThreadID)`。失败 run 默认不会覆盖健康 checkpoint。
 
-### Session 复用
+## 结果合同
 
-没有 `WithSessionStore(...)` 时，运行默认无状态。注入 store 之后，你可以用 `SessionKey` 复用稳定业务会话，也可以通过 `continue_only`、`start_new` 和 `fork` 选择更严格的模式。
+始终按 `error -> RunResult.Failure -> success` 处理结果。返回 `error` 表示 run
+没有可靠完成；`Failure` 表示 run 已完成，但终局结果是结构化失败。
 
-```go
-package main
+| 字段 | 可移植语义 |
+|---|---|
+| `Output` | 只包含最终 assistant 文本，绝不混入原始 stream dump |
+| `RawStreams` | 用于审计和调试的完整 stdout/stderr |
+| `Transcript` | adapter 解析出的 assistant、reasoning、tool、result 标准化条目 |
+| `Summary` | 适合列表、日志或评论的简短宿主摘要 |
+| `Result` | 用于审计或深度检查的 provider-specific 终局事件 JSON |
+| `StructuredOutput` | Schema 结果、校验状态、已解码 JSON 和校验细节 |
+| `Failure` | run 完成后的结构化业务、策略或 provider 失败 |
 
-import (
-	"context"
+`Run()` 与 `Start().Wait()` 返回相同的结果分层。
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/codex"
-	"github.com/agent-dance/agent-adaptor/memory"
-)
+## Streaming 与人工决策
 
-func main() {
-	store := memory.NewSessionStore()
+运行 `Events()` 与内容 `StreamEvents()` 面向不同消费者；使用 `Start` 时应同时
+drain 两者。只有在检查 provider capability 后才启用 `WithStreaming()`。
 
-	sdk := agentadaptor.New(
-		agentadaptor.WithDefaultAgent(codex.New(agentadaptor.CodexConfig{
-			Model: "gpt-5.4",
-		})),
-		agentadaptor.WithSessionStore(store),
-	)
+HITL 在同一次 run 上支持三种宿主接入方式：
 
-	_, err := sdk.Run(
-		context.Background(),
-		"continue issue-123",
-		agentadaptor.WithSessionKey("company-1", "issue-123"),
-	)
-	if err != nil {
-		panic(err)
-	}
-}
-```
+1. 在 `RunPolicy.HumanDecision` 中声明自动策略。
+2. 挂载同步 typed permission、plan-review 或 question handler。
+3. 异步消费 `DecisionRequests()`，再由服务或 UI 调用
+   `ResolveDecision(requestID, response)`。
 
-### 流式执行
+不支持的 `Ask` 组合会在 adapter 执行前失败。Timeout、reject 和 retry 行为都由
+policy 显式声明，详见 [`docs/run-policy.md`](./docs/run-policy.md)。
 
-`Start(...)` 会返回 `RunHandle`，里面有 `Events()`、`StreamEvents()`、`DecisionRequests()`、`RunID()`、`Wait(...)`、`Cancel(...)` 和 `ResolveDecision(...)`；你的应用可以用同一套执行接口处理运行事件、token 级流式输出和 HITL 回填，而不用再维护第二套 API。
+## 受控上下文与 Bridge
 
-## 能力面
+Binding 默认值与 per-run override 覆盖 workspace、profile selection、skills、
+MCP、instructions、policy、streaming、metadata 和 runtime services。未传 profile
+option 时，adapter 解析仍可能选择进程环境或默认 native profile。会物化资源的宿主
+应显式选择 dedicated 或 cloned profile；`WithNativeProfile()` 用于明确表达共享
+profile 意图，但并不是 native profile 被选中的唯一途径。
 
-| 能力 | 说明 |
-| --- | --- |
-| Execution | `Run(...)` 用于同步执行，`Start(...)` 用于流式句柄。 |
-| Sessions | 默认无状态；注入 `SessionStore` 后支持 `continue_or_start`、`continue_only`、`start_new` 和 `fork`。 |
-| Skills | 用同一条流程处理 skills 的解析、规范化、组装和同步。 |
-| MCP | 宿主声明统一的 MCP server spec，内置 adapter 会把它物化到各自真实生效的 profile。 |
-| Runtime Services | 在运行前准备好需要的运行时服务，并在清理阶段按 `RunID` 释放。 |
-| Admin API | 提供管理接口，用来做环境检查、模型枚举与探测、配置字段展示、额度查询和 skills 管理。 |
-| Run Results | 分层返回 assistant 文本 `Output`、原始 stdout/stderr `RawStreams`、语义记录 `Transcript`、短摘要 `Summary`、provider 终局 JSON `Result`、provider/model/cost 元数据、运行时服务状态，以及结构化 question/failure。 |
+`WithRuntimeServiceManager(...)` 让宿主按 `RunID` 准备并释放进程或容器；core SDK
+不会变成 scheduler。`pkg/bridges` 下的 AG-UI、SSE、A2A 位于 core 之上，负责
+转换统一 run。HTTP serving、TLS、auth、tenant isolation、queue 和持久化仍由宿主负责。
 
-## 内置包
+## Admin 与自定义 Adapter
 
-内置包返回的是配置完成的 `AgentBinding`，而不是底层适配器。
+用 [`admin-preflight`](./examples/recipes/admin-preflight) 在不执行 prompt 的情况下
+检查环境、模型、effective profile、schema、quota 和 skills。`sdk.Admin()` 永不
+执行 Agent。
 
-- `github.com/agent-dance/agent-adaptor/codex`
-- `github.com/agent-dance/agent-adaptor/claude`
-- `github.com/agent-dance/agent-adaptor/cursor`
+第三方 provider 实现 `DriverAdapter`、声明真实 capability，再用 `BindTyped(...)`
+绑定。先看 [`custom-adapter`](./examples/recipes/custom-adapter)，并用
+[`adaptertest`](./adaptertest) 验证一致性。Provider 协议解析必须留在 adapter；
+shared helper 不能猜测 session ID 或语义事件。
 
-如果你需要更底层的扩展接口，每个内置包也都提供 `NewAdapter()`。
+## Examples 与文档
 
-对于内置适配器，profile API 使用 `WithNativeProfile()`、`WithDedicatedProfile(dir)`、`WithCloneProfile(dir, opts)`、`WithCloneProfileFrom(src, dst, opts)` 统一选择或初始化本地 agent profile，而不必每次手动写各家自己的环境变量。`CloneProfileOptions.AuthMode` 可以用 `CloneProfileAuthLink` 把隔离 clone 和本机 CLI 登录态共享起来，避免复制 OAuth refresh token 文件。
+双语 [examples catalog](./examples/README.zh-CN.md) 为每个条目标记 offline/live、
+前置条件、预期证据和学习路径。当前指南按文档分别使用中英文，因此这里明确标注语言：
 
-`WithDefaultMCP(...)` / `WithMCP(...)` 也遵循和 `skills` 相同的默认值与调用覆盖规则；`skills/MCP` 变化不会自动打断 session 复用，是否继续沿用 session 仍由宿主通过 `SessionMode` 决定。
-
-## 管理接口
-
-`sdk.Admin()` 只负责管理相关能力，不执行 prompt。
-
-当你的应用需要在执行前后检查已绑定 agent 时，可以用它：
-
-- `CheckEnvironment(...)` 用于真实环境检查。
-- `ListModels(...)` 与 `DetectModel(...)` 用于模型可见性和探测。
-- `ConfigSchema(...)` 用于生成配置界面需要的字段信息。
-- `GetQuota(...)` 用于在支持时返回真实额度或 credit 窗口。
-- `ListSkills(...)` 与 `SetSelectedSkills(...)` 用于 skill 清单与进程内 selected-skill 覆盖。
-
-## 适配器扩展
-
-第三方适配器实现 `DriverAdapter` 后，可以接入同一套公共执行面。
-
-```go
-binding := agentadaptor.BindTyped(myAdapter, myConfig)
-sdk := agentadaptor.New(agentadaptor.WithDefaultAgent(binding))
-```
-
-共享 CLI helper 只负责进程 I/O 和原始事件传输。正式的会话快照解析仍由各适配器自己负责，这样各家 CLI 的协议差异不会被塞进共享基础设施里。
-
-如果你正在实现自己的适配器，可复用的测试套件在 [`adaptertest`](./adaptertest)。
-
-## 当前保证
-
-- 对外执行路径只有一套：默认值合并、运行参数整理、session 协调、适配器执行、会话快照持久化、结果归档。
-- 主路径是默认 Agent 优先，而不是每次都先从注册表挑一个 agent。
-- 有状态运行只有在适配器返回有效会话快照时才会持久化 session 状态。
-- 管理接口与执行接口共享同一套默认 Agent 与命名 Agent 心智模型。
-- 内置包通过 `New(...)` 返回带类型的绑定对象，自定义适配器也可以用 `BindTyped(...)` 接入同样的方式。
+- [API reference（英文）](./docs/api-reference.md)
+- [Usage guide（中文）](./docs/usage-guide.md)
+- [Structured output（英文）](./docs/structured-output.md)
+- [Streaming and bridges（中文）](./docs/streaming.md)
+- [A2A integration（英文）](./docs/a2a.md)
+- [Documentation map（中文）](./docs/README.md)
 
 ## 非目标
 
 - 不内置 HTTP/gRPC server。
-- 不内置队列、scheduler、租户框架或编排守护进程。
-- 不自动决定该选哪个 agent。
-- 不允许长出第二套语义不同的执行入口。
+- 不内置 queue、scheduler、tenant system、authentication system 或 daemon。
+- 不做自动 provider routing、broker、planner 或 Agent 选择。
+- 不强制 database、distributed lock 或 stateful default。
+- 不允许出现 session 或默认值合并语义不同的第二套执行入口。
 
-## 深入阅读
-
-先看当前仍作为使用入口的文档：
-
-- [`docs/README.md`](./docs/README.md)：当前文档地图与历史 workstream 索引。
-- [`docs/api-reference.md`](./docs/api-reference.md)：公共 API 面与职责归属。
-- [`docs/usage-guide.md`](./docs/usage-guide.md)：常见宿主集成方式。
-- [`docs/run-policy.md`](./docs/run-policy.md)：`RunPolicy` 与 HITL 合同。
-- [`docs/streaming.md`](./docs/streaming.md)：token streaming、AG-UI 与 SSE 用法。
-- [`docs/public-errors.md`](./docs/public-errors.md)：公开错误清单。
+Core 刻意保持为 library。服务形态 examples 展示宿主如何组合能力，而不是把 SDK
+扩成半个应用框架。

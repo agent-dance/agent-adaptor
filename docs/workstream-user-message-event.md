@@ -431,8 +431,9 @@ Translator 的 default 分支（`case ""` 之外的未知 Kind 返回 nil），�
      可选的方向维度，零值兼容 v0.8"。
 
 5. **Step 5 — example 同步**
-   - 修改：`examples/streaming-chat-copilotkit/server.go` 在 fan-out
-     循环上游加 3 行示意（见 §6），让 example 直接 dogfood。
+   - 修改：`examples/showcases/web-copilotkit-hitl/server.go` 在 driver
+     fan-out 之前写入 user turn（见 §6）；CopilotKit 已乐观渲染 user
+     message，因此该 example 不再向同一 SSE 连接重复回显。
 
 每步均不破坏旧调用方。Step 1 / 2 / 3 / 4 / 5 可拆 5 个 PR，也可合并为
 1 个；推荐分两个：(1+2+4 一组：ontology + translator + 文档)，(3+5
@@ -445,7 +446,7 @@ Translator 的 default 分支（`case ""` 之外的未知 Kind 返回 nil），�
 ### 6.1 标准 fan-out 形态
 
 宿主原先就持有一个 `RunHandle` → `Recorder` + SSE writer 的 fan-out
-循环（见 `examples/streaming-chat-copilotkit`）。变化只是在**起 run 之
+循环（见 `examples/showcases/web-copilotkit-hitl`）。变化只是在**起 run 之
 前**多走一段 user-turn 的构造 + 同样的 fan-out：
 
 ```go
@@ -500,12 +501,12 @@ _ = waitRes
 
 - "先 Record user，再 Start"——保证 `HostSeq(user) < HostSeq(driver
   first event)`，刷新回放时顺序天然正确。
-- user 三段也 echo 给当前 SSE 连接，是为了让"刷新还原"和"实时通道"两
-  条路径产物**完全一致**。AG-UI 客户端在第一次 user 输入时会本地乐
-  观渲染一次气泡——它要么用 MessageID 去重，要么允许 server 端覆盖；
-  CopilotKit 默认行为是后者，没有重复气泡问题。如果某些客户端是前
-  者，可在 helper 输出上加 `Raw["origin"]="agui_input"`，由宿主决定
-  是否过滤——但这是可选项，不进 v0.9 默认实现。
+- 原始 AG-UI client 若不做本地乐观渲染，可以把 user 三段 echo 给当前
+  SSE 连接，让"刷新还原"和"实时通道"产物一致。
+- **CopilotKit 例外：** `CopilotChat` 会先乐观渲染本次提交的 user
+  message。同一连接若再 translate 合成的 `RoleUser` 三段，会把一个气泡
+  追加两次。`examples/showcases/web-copilotkit-hitl` 因此仍在 driver 输出前
+  把 user turn 写入 recorder，但不向当前 CopilotKit 连接回显。
 - 失败语义和现有 fan-out 一致：Recorder 写失败 log warn 不阻断；
   Translator 失败不会发生（纯构造）。
 
@@ -579,7 +580,7 @@ handle, err := sdk.Start(ctx, prompt,
 if err != nil { ... }
 defer handle.Cancel(ctx) // ctx 取消 / handler 提前返回时清理 run
 
-// 1) user turn 落 recorder + 实时 echo（同步、瞬时；3 条 payload）
+// 1) user turn 落 recorder（同步、瞬时；3 条 payload）
 for _, p := range userTurnPayloads(threadID, handle.RunID(), msgID, prompt) {
     if _, err := recorder.Record(ctx, sessionKey, p); err != nil {
         log.Warn("record user turn", err) // 不阻断业务
@@ -615,7 +616,7 @@ _ = waitRes
 
 如果**确实**需要一边消费 stream 一边等 `Wait`（例如想让 ctx 取消能立
 即打断 stream loop），canonical 写法见
-`examples/streaming-chat-copilotkit/agui_run_session.go`：把 `Wait`
+`examples/showcases/web-copilotkit-hitl/agui_run_session.go`：把 `Wait`
 放在独立 goroutine，stream loop 用 `select { case <-stream: ...; case
 <-ctx.Done(): handle.Cancel(); ... }` 处理取消。本节示例不展示该形态
 是因为 `for p := range ch` 已经覆盖 99% 用例。
@@ -664,7 +665,7 @@ turn 2: recorder[sessionKey] = [user("hi"), assistant(...), ...,
 
 | 风险 | 缓解 |
 |---|---|
-| AG-UI 客户端本地已乐观渲染 user 气泡，server echo 后双显 | CopilotKit 当前以 server MessageID 为准，不重复；客户端如果是 append-only，宿主可在 helper 输出 payload 上加 `Raw["origin"]="agui_input"` 自己过滤 |
+| AG-UI 客户端本地已乐观渲染 user 气泡，server echo 后双显 | CopilotKit example 只写 recorder、不向当前连接 echo；其它 client 按是否乐观渲染选择 echo 或去重。 |
 | 未来某个 adapter 误 emit `Role=RoleUser` | `streaming-adapter-contract.md` 明文禁止；可在 PR review 时 lint，必要时在 EmitStream 内 reject |
 | recorder I/O 失败导致 user turn 丢失但 run 已起 | 与现行 forward 失败语义一致：log warn 不阻断 |
 | Translator 现在显式带 role="assistant" 影响既有 wire 解析 | AG-UI 规范该字段一直可选，主流客户端早就处理 role 缺省；CI 跑 `verifyEvents` 单测覆盖 |
@@ -676,7 +677,7 @@ turn 2: recorder[sessionKey] = [user("hi"), assistant(...), ...,
 - [ ] `go test ./...` 全绿。
 - [ ] `pkg/bridges/agui` 的 RoleUser 翻译单测落地。
 - [ ] `RunAgentInput.UserTurnPayloads` 单测覆盖 4 个分支。
-- [ ] `examples/streaming-chat-copilotkit/server.go` 使用新 helper。
+- [ ] `examples/showcases/web-copilotkit-hitl/server.go` 使用新 helper。
 - [ ] `docs/workstream-streaming-chat.md` / `docs/streaming-adapter-contract.md`
       更新。
 - [ ] flowx-agent 团队 dogfood：删除 `StreamHostUserMessage` 私有 Kind，
@@ -691,4 +692,3 @@ turn 2: recorder[sessionKey] = [user("hi"), assistant(...), ...,
 - 原 issue §4.2 设计 B（`Role` 字段）—— **采纳并简化**：只开放
   `RoleAssistant` / `RoleUser` 两个常量；system / tool 等出现真实
   use case 再加。
-

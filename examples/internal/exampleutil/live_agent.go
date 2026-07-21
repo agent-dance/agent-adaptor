@@ -24,15 +24,16 @@ const (
 // examples. Command is always a runnable binary discovered from PATH, a
 // provider-specific env var, or an explicit -command flag.
 type LiveAgentConfig struct {
-	Agent       string
-	DriverType  string
-	Model       string
-	Command     string
-	CommandNote string
-	CWD         string
-	Env         []agentadaptor.EnvBinding
-	ExtraArgs   []string
-	CursorMode  agentadaptor.CursorMode
+	Agent            string
+	DriverType       string
+	Model            string
+	Command          string
+	CommandNote      string
+	CWD              string
+	Env              []agentadaptor.EnvBinding
+	ExtraArgs        []string
+	SkipGitRepoCheck bool
+	CursorMode       agentadaptor.CursorMode
 }
 
 func SupportedAgents() string {
@@ -47,8 +48,28 @@ func ResolveLiveAgent(raw string) string {
 }
 
 func ResolveLiveAgentConfig(rawAgent, rawModel, rawCommand, cwd string) LiveAgentConfig {
-	agent := ResolveLiveAgent(rawAgent)
-	command, note := RequireHealthyAgentCommand(agent, rawCommand)
+	cfg, err := TryResolveLiveAgentConfig(rawAgent, rawModel, rawCommand, cwd)
+	if err != nil {
+		Fatalf("%v", err)
+	}
+	return cfg
+}
+
+func TryResolveLiveAgentConfig(rawAgent, rawModel, rawCommand, cwd string) (LiveAgentConfig, error) {
+	if strings.TrimSpace(rawAgent) == "" {
+		rawAgent = os.Getenv("AGENT_ADAPTOR_EXAMPLE_AGENT")
+	}
+	agent, err := parseAgent(rawAgent, "agent")
+	if err != nil {
+		return LiveAgentConfig{}, err
+	}
+	command, note, ok := DiscoverHealthyAgentCommand(agent, rawCommand)
+	if !ok {
+		return LiveAgentConfig{}, fmt.Errorf(
+			"no healthy local %s CLI command found; install/login the CLI, set %s, or pass -command=/path/to/%s",
+			agent, CommandEnvForAgent(agent), DefaultCommandForAgent(agent),
+		)
+	}
 	return LiveAgentConfig{
 		Agent:       agent,
 		DriverType:  DriverTypeForAgent(agent),
@@ -56,7 +77,7 @@ func ResolveLiveAgentConfig(rawAgent, rawModel, rawCommand, cwd string) LiveAgen
 		Command:     command,
 		CommandNote: note,
 		CWD:         cwd,
-	}
+	}, nil
 }
 
 func DriverTypeForAgent(agent string) string {
@@ -94,8 +115,9 @@ func NewLiveAgentBinding(cfg LiveAgentConfig, opts ...agentadaptor.AgentOption) 
 		}, opts...)
 	default:
 		return codex.New(agentadaptor.CodexConfig{
-			CommonConfig: common,
-			Model:        model,
+			CommonConfig:     common,
+			Model:            model,
+			SkipGitRepoCheck: cfg.SkipGitRepoCheck,
 		}, opts...)
 	}
 }
@@ -238,16 +260,24 @@ func NonInteractiveRunOption(isolation agentadaptor.IsolationLevel) agentadaptor
 }
 
 func normalizeAgent(raw, field string) string {
+	value, err := parseAgent(raw, field)
+	if err != nil {
+		Fatalf("%v", err)
+		panic("unreachable")
+	}
+	return value
+}
+
+func parseAgent(raw, field string) (string, error) {
 	value := strings.ToLower(strings.TrimSpace(raw))
 	if value == "" {
-		return AgentCodex
+		return AgentCodex, nil
 	}
 	switch value {
 	case AgentCodex, AgentClaude, AgentCursor:
-		return value
+		return value, nil
 	default:
-		Fatalf("%s must be one of %s, got %q", field, SupportedAgents(), raw)
-		panic("unreachable")
+		return "", fmt.Errorf("%s must be one of %s, got %q", field, SupportedAgents(), raw)
 	}
 }
 

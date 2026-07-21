@@ -78,7 +78,7 @@ mux.Handle("/.well-known/agent-card.json", server.AgentCardHandler())
 mux.Handle("/a2a", server.Handler())
 ```
 
-See [`examples/a2a-local`](../examples/a2a-local) for a runnable local
+See [`examples/showcases/a2a-local`](../examples/showcases/a2a-local) for a runnable local
 end-to-end demo that starts this bridge around a real local SDK runner, calls
 it with `pkg/clients/a2a`, consumes streaming status updates, and verifies the final
 task with `GetTask`. The example defaults to an isolated temporary workspace
@@ -284,3 +284,8 @@ Visual subagent delegation is an optional host-owned layer built from
 `pkg/hosttools/a2adelegation`, `pkg/bridges/subagentstream`, and runtime-service
 MCP injection. Core SDK execution remains protocol-agnostic and does not route to
 remote A2A agents automatically.
+
+See [`examples/showcases/team-agent-workflow`](../examples/showcases/team-agent-workflow)
+for a runnable composition in which a Claude Code leader receives a per-run
+`delegate_to_agent` MCP server and dispatches `plan` (Codex), `impl` (Claude
+Code), and `review` (Codex) through three host-curated A2A Agent Cards.

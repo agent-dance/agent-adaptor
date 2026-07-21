@@ -7,7 +7,8 @@ on:
     branches: [ "main" ]
 
 jobs:
-  build:
+  go:
+    name: Go contracts
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
@@ -18,17 +19,52 @@ jobs:
         go-version-file: go.mod
         cache: true
 
-    - name: Build
+    - name: Build all packages
       run: go build -v ./...
 
-    - name: Test
-      run: go test -v ./...
+    - name: Test all packages
+      run: go test ./...
 
-    - name: Vet
+    - name: Vet all packages
       run: go vet ./...
+
+    - name: Compile and test examples
+      run: go test ./examples/...
+
+    - name: Validate Markdown links, anchors, parity, and Quick Start
+      run: go test ./internal/doctest
 
     - name: Repeat A2A tests
       run: go test -count=20 ./pkg/clients/a2a ./pkg/bridges/a2a
 
     - name: Race A2A tests
       run: go test -race ./pkg/clients/a2a ./pkg/bridges/a2a
+
+  frontend:
+    name: Frontend - ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: Direct AG-UI
+          path: examples/showcases/web-agui/web
+        - name: CopilotKit HITL
+          path: examples/showcases/web-copilotkit-hitl/web
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: 20
+        cache: npm
+        cache-dependency-path: ${{ matrix.path }}/package-lock.json
+
+    - name: Install locked dependencies
+      run: npm ci
+      working-directory: ${{ matrix.path }}
+
+    - name: Production build
+      run: npm run build
+      working-directory: ${{ matrix.path }}

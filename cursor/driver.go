@@ -492,3 +492,4 @@ func readConfig(cfg any) agentadaptor.CursorConfig {
 	}
 	return agentadaptor.CursorConfig{}
 }
+

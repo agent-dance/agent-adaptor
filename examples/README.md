@@ -1,210 +1,96 @@
 # Examples
 
-本目录里的 runnable examples 都走真实的本机 CLI，不再内置模拟 agent 或替身 verifier。多数示例支持在 `codex` / `claude` / `cursor` 之间切换；`codex-profile-full` 是完整 profile materialization demo，三种 agent 走同一套 SDK binding-level resources；`session-codec-inspect` 是静态 inspection 工具，只切换 adapter，不启动 CLI。
+[简体中文](./README.zh-CN.md)
+
+The examples are organized by how you use them, not by provider:
+
+- `recipes/` are small programs that teach one host contract.
+- `showcases/` are end-to-end integrations with product-shaped setup and cleanup.
+- `tools/` are inspection utilities, not recommended first integrations.
+- `internal/` contains shared live-CLI and deterministic contract support.
 
 ## Prerequisites
 
-- Go toolchain installed
-- 选用的本机 CLI 已安装、已登录，并且 `--help` 能在当前 shell 中成功运行
-- 默认命令：
-  - `codex` -> `codex`
-  - `claude` -> `claude`，找不到时也会尝试 `trpc-claudecode`
-  - `cursor` -> `agent`，找不到时也会尝试 `cursor-agent`
+All examples require the Go toolchain. Entries marked **live CLI** also require the
+selected local agent command to be installed and authenticated:
 
-通用选择方式：
+| Agent | Default command | Optional overrides |
+|---|---|---|
+| Codex | `codex` | `CODEX_COMMAND`, `CODEX_MODEL` |
+| Claude Code | `claude` (then `trpc-claudecode`) | `CLAUDE_COMMAND`, `CLAUDE_MODEL` |
+| Cursor Agent | `agent` (then `cursor-agent`) | `CURSOR_COMMAND`, `CURSOR_MODEL` |
 
-```bash
-go run ./examples/codex-basic -agent=claude
-go run ./examples/codex-basic -agent=cursor -command=/absolute/path/to/agent
+Most multi-provider examples accept `-agent`, `-command`, `-model`, and `-timeout`.
+They use timeouts and temporary workspaces/profiles where they can write files.
 
-AGENT_ADAPTOR_EXAMPLE_AGENT=cursor go run ./examples/codex-stream
-CODEX_MODEL=gpt-5.4 CLAUDE_MODEL=claude-sonnet-4 CURSOR_MODEL=gpt-5 go run ./examples/codex-basic
-```
+## Learning Paths
 
-可用环境变量：
+1. **First run:** `basic-run` -> `result-and-failure` -> `async-events`.
+2. **Automation worker:** `session-continuity` -> `structured-output` -> `runtime-service`.
+3. **Interactive product:** `content-streaming` -> `hitl-channel` -> `web-agui` or `web-copilotkit-hitl`.
+4. **Multi-agent workflow:** `provider-selection` -> `named-agent-review` -> `a2a-local` -> `team-agent-workflow`.
+5. **Managed environment:** `admin-preflight` -> `skill-injection` -> `managed-profile` -> `full-profile`.
+6. **Adapter author:** `custom-adapter` -> `session-codec-inspect` -> [`adaptertest`](../adaptertest).
 
-| Env | Purpose |
-| --- | --- |
-| `AGENT_ADAPTOR_EXAMPLE_AGENT` | 默认 agent：`codex` / `claude` / `cursor` |
-| `CODEX_COMMAND` / `CLAUDE_COMMAND` / `CURSOR_COMMAND` | 覆盖本机 CLI 命令 |
-| `CODEX_MODEL` / `CLAUDE_MODEL` / `CURSOR_MODEL` | 覆盖默认模型 |
-| `AGUI_AGENT` / `AGUI_MODEL` | AG-UI examples 的 agent / model 覆盖 |
+## Recipes
 
-## Example Matrix
+| Example | Runtime | Primary concept | Run | Expected result | Production note |
+|---|---|---|---|---|---|
+| [`recipes/basic-run`](./recipes/basic-run) | live CLI, Codex | Smallest public `sdk.Run` path | `go run ./examples/recipes/basic-run` | Assistant confirmation on stdout | Uses a temporary workspace/cloned profile and avoids internal helpers or explicit model IDs. |
+| [`recipes/provider-selection`](./recipes/provider-selection) | live CLI, multi-provider | Explicit provider binding switch and preflight | `go run ./examples/recipes/provider-selection -agent=claude` | Healthy driver and one response | The host still owns routing; the SDK does not select an agent. |
+| [`recipes/async-events`](./recipes/async-events) | live CLI, multi-provider | `Start`, operational `Events`, `Wait`, and cancellation | `go run ./examples/recipes/async-events -agent=codex` | Lifecycle/event counts and final output | Slightly over 120 lines because it verifies both success and cancellation branches. |
+| [`recipes/content-streaming`](./recipes/content-streaming) | live CLI, capability-dependent | `WithStreaming` and `StreamEvents` | `go run ./examples/recipes/content-streaming -agent=claude` | Text deltas followed by a final result | Drain operational events too; Cursor currently has no token-level stream capability. |
+| [`recipes/session-continuity`](./recipes/session-continuity) | live CLI, multi-provider | continue-or-start, continue-only, start-new, and fork | `go run ./examples/recipes/session-continuity -agent=codex` | Created/reused/forked session IDs | The in-memory store demonstrates semantics, not durable production storage. |
+| [`recipes/named-agent-review`](./recipes/named-agent-review) | live CLI, Codex + Claude | Host-routed implement/review workflow | `go run ./examples/recipes/named-agent-review` | Separate implementer and reviewer output | Requires both CLIs; there is no automatic routing. |
+| [`recipes/admin-preflight`](./recipes/admin-preflight) | local environment | Control-plane discovery without executing a prompt | `go run ./examples/recipes/admin-preflight -agent=cursor` | Environment, models, profile, and schema summary | Unsupported probes report truthful fallback data. |
+| [`recipes/result-and-failure`](./recipes/result-and-failure) | offline | `error -> Failure -> success` and output layers | `go run ./examples/recipes/result-and-failure -fail` | Structured business failure; omit `-fail` for success | Uses the examples-only deterministic contract driver. |
+| [`recipes/structured-output`](./recipes/structured-output) | live CLI, multi-provider | Typed JSON Schema output and decoding | `go run ./examples/recipes/structured-output -agent=codex` | Validated `ProjectMetadata` | Cursor uses the weaker prompt-plus-local-validation fallback. |
+| [`recipes/hitl-handler`](./recipes/hitl-handler) | offline | Synchronous typed plan-review handler | `go run ./examples/recipes/hitl-handler` | Handler sees and approves a plan | Claude is the current built-in adapter with PlanReview/Question Ask support. |
+| [`recipes/hitl-channel`](./recipes/hitl-channel) | offline | Async `DecisionRequests` / `ResolveDecision` | `go run ./examples/recipes/hitl-channel` | Request ID is resolved and the run continues | Long-lived hosts must handle expiry, cancellation, and persistence. |
+| [`recipes/skill-injection`](./recipes/skill-injection) | live CLI, multi-provider | Skill selection and isolated profile materialization | `go run ./examples/recipes/skill-injection -agent=codex` | A temporary proof file containing `WRITE_PROOF_OK` | Slightly over 120 lines because it isolates and verifies profile/workspace writes. |
+| [`recipes/runtime-service`](./recipes/runtime-service) | offline | Ensure, report, and release by `RunID` | `go run ./examples/recipes/runtime-service` | Ensured service report and matching release ID | The host, not core SDK, owns real process/container orchestration. |
+| [`recipes/custom-adapter`](./recipes/custom-adapter) | offline | Minimal `DriverAdapter` + `BindTyped` | `go run ./examples/recipes/custom-adapter` | Echo output through the normal `Runner` path | Use `adaptertest` and declare only capabilities actually implemented. |
 
-### `codex-basic`
+## Showcases
 
-最短路径：构造默认 agent，然后 `sdk.Run(...)`。
+| Example | Runtime | Product shape | Start | Expected evidence | Production note |
+|---|---|---|---|---|---|
+| [`showcases/managed-profile`](./showcases/managed-profile) | live CLI, multi-provider | Binding defaults plus per-run profile resources | `go run ./examples/showcases/managed-profile -agent=codex` | Before/after snapshots and two successful runs | Uses a temporary workspace and cloned profile. |
+| [`showcases/full-profile`](./showcases/full-profile) | live profile probes; optional model run | Skills, MCP, hooks, instructions, agents, and config together | `go run ./examples/showcases/full-profile -agent=codex -run=false` | Materialized files and local probe evidence | Auth is linked into an isolated profile; use `-run=true` only for a model call. |
+| [`showcases/web-sse`](./showcases/web-sse) | live CLI, multi-provider | Host-owned HTTP server with AG-UI SSE | `go run ./examples/showcases/web-sse -agent=codex -addr=:8080` | Browser receives lifecycle and text events | Authentication, TLS, tenancy, and persistence remain host responsibilities. |
+| [`showcases/web-agui`](./showcases/web-agui) | live CLI + Node 20 | React client talking directly to the Go AG-UI backend | `./examples/showcases/web-agui/start-all.sh codex` | Streaming messages and stable ThreadID mapping | See the showcase README for setup, cleanup, and limitations. |
+| [`showcases/web-copilotkit-hitl`](./showcases/web-copilotkit-hitl) | live CLI + Node 20 | CopilotKit, sessions, replay, and HITL cards | `./examples/showcases/web-copilotkit-hitl/start-all.sh claude` | Plan/question cards resolve and the run continues | Claude currently provides the richest built-in HITL path. |
+| [`showcases/a2a-local`](./showcases/a2a-local) | live CLI, multi-provider | Local A2A server plus client and task polling | `go run ./examples/showcases/a2a-local -agent=codex` | Agent Card, streaming artifacts, and final task | Serving, auth, task durability, and routing remain host-owned. |
+| [`showcases/team-agent-workflow`](./showcases/team-agent-workflow) | live CLI, Claude Code + Codex | Claude leader delegates plan/impl/review through MCP to curated A2A roles | `go run ./examples/showcases/team-agent-workflow` | Ordered delegation events, passing workspace checks, and `TEAM_AGENT_WORKFLOW_OK` | Uses four sequential model runs in a temporary repository; production orchestration remains host-owned. |
 
-```bash
-go run ./examples/codex-basic -agent=codex
-go run ./examples/codex-basic -agent=claude
-go run ./examples/codex-basic -agent=cursor
-```
+## Tools
 
-### `codex-stream`
+| Tool | Runtime | Purpose | Run | Output | Caveat |
+|---|---|---|---|---|---|
+| [`tools/session-codec-inspect`](./tools/session-codec-inspect) | offline | Inspect an adapter's public session parameter shape | `go run ./examples/tools/session-codec-inspect -agent=cursor` | Session codec JSON | Diagnostic utility; it does not start an agent CLI. |
+| [`tools/live-smoke`](./tools/live-smoke) | live CLI, multi-provider | Cross-platform authenticated sentinel smoke | `go run ./examples/tools/live-smoke -agent=codex` | One JSON status: `passed`, `skipped`, `environment_failed`, or `run_failed` | Uses an isolated workspace/profile; exit codes are 0, 0, 2, and 3 respectively. |
 
-异步执行、`RunHandle.Events()` 消费，以及可选取消。
+## Verification
 
-```bash
-go run ./examples/codex-stream -agent=claude
-go run ./examples/codex-stream -agent=cursor -cancel-after=2s
-```
-
-### `codex-sessions`
-
-验证 `WithSessionKey` / `WithContinueSession` / `WithNewSession` / `WithForkSession` 的服务宿主语义。
-
-```bash
-go run ./examples/codex-sessions -agent=codex
-```
-
-### `codex-admin-named`
-
-默认 agent + 命名 `review` agent，并跑 Admin 控制面：`Agents`、`CheckEnvironment`、`ListModels`、`GetProfile`、`ConfigSchema`、`GetQuota`、`ListSkills`、`SetSelectedSkills`。
-
-```bash
-go run ./examples/codex-admin-named -agent=claude
-```
-
-示例会 clone 本机 profile 到临时目录，避免把示例技能写进用户真实 profile。
-
-### `codex-skills-live`
-
-真实技能注入体验：把 `examples/internal/skills/write-proof` 注入选定 CLI 的临时 cloned profile，然后要求 agent 在临时 workspace 写出 proof 文件。
+Deterministic validation:
 
 ```bash
-go run ./examples/codex-skills-live -agent=cursor
+go test ./examples/...
+go run ./examples/recipes/result-and-failure
+go run ./examples/recipes/hitl-handler
+go run ./examples/recipes/hitl-channel
+go run ./examples/recipes/runtime-service
+go run ./examples/recipes/custom-adapter
 ```
 
-Pass 条件：真实 CLI 运行成功，`ListSkills` / `SetSelectedSkills` 返回有效状态，并创建内容为 `WRITE_PROOF_OK` 的 proof 文件。
-
-### `profile-resources`
-
-展示宿主视角如何配置 profile-scoped resources：`skills`、`agents`、`hooks`、`instructions`、`config`，并演示 binding-level 默认值与 per-run `WithProfileResources(...)` 覆盖。
+The cross-platform live smoke harness reports `passed`, `skipped`,
+`environment_failed`, or `run_failed` instead of treating a missing login as a pass:
 
 ```bash
-go run ./examples/profile-resources -agent=codex
+go run ./examples/tools/live-smoke -agent=codex
+go run ./examples/tools/live-smoke -agent=claude
+go run ./examples/tools/live-smoke -agent=cursor
 ```
 
-示例会：
-
-- clone 本机 profile 到临时目录
-- 写入 instructions / agent source 文件
-- `Admin().Default().ProfileSnapshot()` 查看默认 desired state
-- `Admin().Default().SyncProfile()` 同步默认 profile
-- 用默认 resources 跑一次真实 CLI
-- 用 per-run resources 覆盖后再跑一次真实 CLI
-
-Smoke checklist：
-
-- 已验证本机 smoke：`go run ./examples/profile-resources -agent=codex -timeout=2m`
-- 预期输出：`before_sync` 里 resources 仍是 desired / not_materialized，`after_sync` 里 resources 变成 managed / native_managed / file_managed，随后两次 `Run` 都成功
-- 当前环境缺口：`go run ./examples/profile-resources -agent=claude -timeout=1m` 停在 `Not logged in`
-- 当前环境缺口：`go run ./examples/profile-resources -agent=cursor -timeout=1m` 停在 `no healthy local cursor CLI command found`
-- 以上两个失败是环境问题，不代表 agents / hooks / instructions / config 这组资源未落地
-
-### `codex-profile-full`
-
-完整 profile demo：只用 binding-level defaults 初始化选定 agent，把 MCP、hooks、instructions、skills、subagent 全部配置进隔离 provider profile，并打印真实落盘证据。默认 `-profile-mode=dedicated` 会通过 `WithCloneProfile(..., CloneProfileOptions{IncludeSettings:true, AuthMode:CloneProfileAuthLink})` 创建隔离 profile，从本机 provider profile 克隆 settings/config，并共享本机登录态；默认 probe 会尽量用 provider CLI 读取该 profile，同时直接验证 MCP server 与 hook command；`-run=true` 时会调用 `sdk.Run(ctx, prompt)`，不传任何 run option。
-
-```bash
-go run ./examples/codex-profile-full -agent=codex -run=false
-go run ./examples/codex-profile-full -agent=codex -run=true -timeout=3m
-go run ./examples/codex-profile-full -agent=claude -run=false -probe=true
-go run ./examples/codex-profile-full -agent=cursor -run=false -probe=true
-```
-
-注意：`CloneProfileAuthLink` 优先创建 symlink；如果平台不允许 symlink，会退到 hardlink；两者都失败时 SDK 会直接报错，避免静默复制 OAuth refresh token 副本。`-run=true` 需要选定的 provider CLI 已安装且本机已登录；否则 sync/probe 可以证明 profile 落地，但真实模型运行会停在 provider 自己的登录或 CLI 可用性错误。
-
-Provider profile 文件布局：
-
-- Codex：`config.toml` 写 MCP，`hooks.json` 写 hook，`AGENTS.md` 写 instructions，`agents/profile-reviewer.toml` 写 subagent
-- Claude Code：`.claude.json` 写 MCP，`settings.json` 写 hook，`CLAUDE.md` 写 instructions，`agents/profile-reviewer.md` 写 subagent
-- Cursor：`mcp.json` 写 MCP，`hooks.json` 写 hook，`agents/profile-reviewer.md` 写 subagent；instructions 先落到 profile fallback `.agent-adaptor/instructions/full-profile-demo.md`，真实 `Run` 时同步到 workspace `.cursor/rules/full-profile-demo.mdc`
-
-Sync-only 输出应能看到：
-
-- provider 对应 MCP config 里的 `profile-demo`
-- provider 对应 hooks config 里的 `SessionStart` hook
-- provider 对应 instructions 文件里的 `AGENT_ADAPTOR_PROFILE_DEMO_INSTRUCTIONS`
-- provider 对应 agents 文件里的 `profile-reviewer` subagent
-- `skills/profile-observer` skill link/copy
-- `materialized_files.auth` 的 redacted shared-auth evidence
-- `.agent-adaptor-profile-manifest.json` 里的 managed ownership
-- `local_profile_probes.provider_mcp_inventory.contains_profile_demo = true`（provider CLI 支持 inventory probe 时）
-- `local_profile_probes.provider_prompt_input.contains_instruction_token = true`（Codex 当前支持 prompt-input probe）
-- `local_profile_probes.mcp_server_rpc.contains_mcp_ok = true`
-- `local_profile_probes.hook_command_probe.log.content` 里的 `PROFILE_HOOK_DEMO_OK`
-- `-run=true` 后的 `runtime_artifacts.mcp_log` / `hook_log` 能证明模型会话实际触发了 MCP 和 hook
-
-### `streaming-chat`
-
-纯 Go 消费 `RunHandle.StreamEvents()`。
-
-```bash
-go run ./examples/streaming-chat -agent=claude -prompt="Write a haiku about streaming"
-```
-
-### `streaming-sse-server`
-
-最小 HTTP SSE server，把 SDK streaming surface 暴露为 AG-UI SSE。
-
-```bash
-go run ./examples/streaming-sse-server -agent=cursor -addr=:8080
-# open http://localhost:8080
-```
-
-### `streaming-chat-copilotkit`
-
-CopilotKit + AG-UI demo。
-
-```bash
-./examples/streaming-chat-copilotkit/start-all.sh codex
-./examples/streaming-chat-copilotkit/start-all.sh claude
-./examples/streaming-chat-copilotkit/start-all.sh cursor
-```
-
-See [`streaming-chat-copilotkit/README.md`](./streaming-chat-copilotkit/README.md).
-
-### `streaming-chat-aguiclient`
-
-Vite + React + `@ag-ui/client`，浏览器直接调用 Go backend，不经过 CopilotKit Runtime。
-
-```bash
-./examples/streaming-chat-aguiclient/start-all.sh codex
-./examples/streaming-chat-aguiclient/start-all.sh claude
-./examples/streaming-chat-aguiclient/start-all.sh cursor
-```
-
-See [`streaming-chat-aguiclient/README.md`](./streaming-chat-aguiclient/README.md).
-
-### `a2a-local`
-
-本地端到端 A2A demo：启动一个 HTTP A2A server，把选定的真实本机 agent-adaptor Runner 暴露为 A2A JSON-RPC；随后用 `pkg/clients/a2a` 读取 Agent Card、执行 streaming 调用，并用 `GetTask` 轮询最终任务。
-
-```bash
-go run ./examples/a2a-local -agent=codex
-go run ./examples/a2a-local -agent=claude -prompt="Reply with one sentence"
-go run ./examples/a2a-local -serve-only -addr=127.0.0.1:8080
-```
-
-默认使用临时 workspace + 临时 cloned provider profile，并把 native settings 复制到临时 profile 以支持 custom API key / base URL；auth files 通过 `CloneProfileAuthLink` 共享，避免复制 OAuth refresh token。示例不会写入宿主正在使用的 profile，不会复制 native skills/MCP 目录。默认会校验最终输出包含 `A2A demo OK`，避免把未登录提示误判为成功；可用 `-expect=` 关闭该校验。默认输出包含隔离目录、Agent Card fingerprint、streaming 状态、bridge artifact 统计、最终 task state 与 assistant 输出预览。`-serve-only` 只启动 server，方便外部 A2A client 连接 `/.well-known/agent-card.json` 与 `/a2a`。需要排查时加 `-keep-workspace` 保留临时 workspace/profile；该目录可能包含复制出的 provider settings。
-
-### `session-codec-inspect`
-
-静态 inspection utility，用来查看某个 adapter 的 session codec 参数形状；它不启动本机 CLI。
-
-```bash
-go run ./examples/session-codec-inspect -agent=cursor
-```
-
-## Smoke Runner
-
-PowerShell runner 会先检查选定 CLI 的 `--help`，不健康就整体 skip；健康时按同一个 agent 跑所有非 server examples。
-
-```powershell
-powershell -File ./examples/run_examples.ps1 -Agent codex
-powershell -File ./examples/run_examples.ps1 -Agent claude
-powershell -File ./examples/run_examples.ps1 -Agent cursor -Command "C:\path\to\agent.exe"
-```
+Use `-skip` only when the caller has explicitly disabled live validation. A
+missing command, login, or quota is `environment_failed`, not `skipped`.

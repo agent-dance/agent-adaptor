@@ -39,9 +39,9 @@ Run these from the repo root:
 | Command | Result on this machine | Meaning |
 |---|---|---|
 | `go test ./...` | pass | repo-wide verification, including examples compile |
-| `go run ./examples/profile-resources -agent=codex -timeout=2m` | pass | verified local smoke for profile resources |
-| `go run ./examples/profile-resources -agent=claude -timeout=1m` | fail: `Not logged in` | environment/auth gap |
-| `go run ./examples/profile-resources -agent=cursor -timeout=1m` | fail: `no healthy local cursor CLI command found` | environment/CLI gap |
+| `go run ./examples/showcases/managed-profile -agent=codex -timeout=2m` | pass | verified local smoke for profile resources |
+| `go run ./examples/showcases/managed-profile -agent=claude -timeout=1m` | fail: `Not logged in` | environment/auth gap |
+| `go run ./examples/showcases/managed-profile -agent=cursor -timeout=1m` | fail: `no healthy local cursor CLI command found` | environment/CLI gap |
 
 The successful smoke should print `before_sync` and `after_sync` snapshots plus two successful `Run` results. If Claude or Cursor fails earlier, record the CLI/auth gap instead of treating the failure as a profile-resource regression.
 

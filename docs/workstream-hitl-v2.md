@@ -1424,7 +1424,7 @@ sdk.Run(ctx, prompt,
 
 ### 4.3 模式 C：异步 channel（远程 UI / SSE · 服务化场景）
 
-**适用**：`examples/streaming-chat-copilotkit` / `examples/streaming-sse-server` 这类"SDK 在服务端、UI 在浏览器、可能有通知服务/审计/IM 机器人等多个旁路"的部署。宿主需要：
+**适用**：`examples/showcases/web-copilotkit-hitl` / `examples/showcases/web-sse` 这类"SDK 在服务端、UI 在浏览器、可能有通知服务/审计/IM 机器人等多个旁路"的部署。宿主需要：
 
 - 通过 SSE/WebSocket 把决策请求推到前端
 - 用户可能不在前端（关了 tab、在另一个设备）→ **同一事件还要触发推送通知 / IM 提醒 / 审计日志**
@@ -2237,9 +2237,9 @@ agentadaptor.RunPolicyCapabilities.Trust           // 字段
 
 **示例**：
 - `examples/internal/exampleutil/agui_sdk.go` `AGUIExampleRunPolicy` — 改用 `PolicyHostReview` 或等价写法
-- `examples/streaming-chat-copilotkit` — 接 `useCopilotAction("dec.*")`
-- `examples/mock-adapter-playground` — HITL 分支验证三模式
-- `examples/streaming-sse-server` — README 加 `POST /decision/resolve`
+- `examples/showcases/web-copilotkit-hitl` — 接 `useCopilotAction("dec.*")`
+- `examples/recipes/hitl-handler` / `examples/recipes/hitl-channel` — HITL 同步与异步接入验证
+- `examples/showcases/web-sse` — README 加 `POST /decision/resolve`
 
 **测试**：
 - `run_policy_test.go` — 合并用例全改
@@ -2389,9 +2389,9 @@ Phase 1 认定"完成"必须满足以下全部 test 通过。按模块组织—�
 
 #### 8.4.11 示例迁移（编译 + 启动冒烟）
 
-- [ ] `examples/mock-adapter-playground` 覆盖三种模式（A/B/C）+ per-Kind handler 的 happy path，`go run` 跑通
-- [ ] `examples/streaming-chat-copilotkit` 更新 `useCopilotAction("dec.*")`，`start.sh` 启动后浏览器能看到决策 UI
-- [ ] `examples/streaming-sse-server` README 更新 + `/decision/resolve` / `/decision/pending` 路由示例，`start.sh` 启动冒烟
+- [ ] `examples/recipes/hitl-handler` 与 `examples/recipes/hitl-channel` 覆盖 typed handler / async channel happy path，`go run` 跑通
+- [ ] `examples/showcases/web-copilotkit-hitl` 更新 `useCopilotAction("dec.*")`，`start.sh` 启动后浏览器能看到决策 UI
+- [ ] `examples/showcases/web-sse` README 更新 + `/decision/resolve` / `/decision/pending` 路由示例，`start.sh` 启动冒烟
 - [ ] `examples/internal/exampleutil/agui_sdk.go` 改用 `PolicyHostReview`
 
 #### 8.4.12 已有 adapter 回归（无代码改动也要跑）

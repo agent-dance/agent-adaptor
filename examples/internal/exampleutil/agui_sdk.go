@@ -1,6 +1,7 @@
 package exampleutil
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"time"
@@ -16,24 +17,33 @@ func ResolveAGUIAgent() string {
 	return normalizeAgent(os.Getenv("AGUI_AGENT"), "AGUI_AGENT")
 }
 
-// NewAGUIStreamingSDK builds the SDK used by streaming-chat-aguiclient and
-// streaming-chat-copilotkit: session store + default local CLI agent. The
+// BuildAGUIStreamingSDK builds the SDK used by web-agui and
+// web-copilotkit-hitl: session store + default local CLI agent. The
 // returned string is the resolved driver name.
-func NewAGUIStreamingSDK(cwd string) (agentadaptor.SDK, string) {
-	agent := ResolveAGUIAgent()
+func BuildAGUIStreamingSDK(cwd string, opts ...agentadaptor.AgentOption) (agentadaptor.SDK, string, error) {
+	agent := strings.TrimSpace(os.Getenv("AGUI_AGENT"))
+	if agent == "" {
+		agent = AgentCodex
+	}
 	model := strings.TrimSpace(os.Getenv("AGUI_MODEL"))
 	if model == "" && agent == AgentClaude {
 		model = strings.TrimSpace(os.Getenv("CLAUDE_CODE_MODEL"))
 	}
-	cfg := ResolveLiveAgentConfig(agent, model, "", cwd)
+	cfg, err := TryResolveLiveAgentConfig(agent, model, "", cwd)
+	if err != nil {
+		return nil, agent, fmt.Errorf("resolve AG-UI agent: %w", err)
+	}
+	if cfg.Agent == AgentCodex {
+		cfg.SkipGitRepoCheck = true
+	}
 	return agentadaptor.New(
-		agentadaptor.WithDefaultAgent(NewLiveAgentBinding(cfg)),
+		agentadaptor.WithDefaultAgent(NewLiveAgentBinding(cfg, opts...)),
 		// The AG-UI frontend always sends threadId, which turns into a
 		// WithSessionKey call; without a SessionStore the runner aborts before
 		// the adapter can emit a single event. An in-memory store is fine for
 		// the demo.
 		agentadaptor.WithSessionStore(memory.NewSessionStore()),
-	), agent
+	), cfg.Agent, nil
 }
 
 // AGUIExampleRunPolicy returns a RunOption appropriate for the resolved

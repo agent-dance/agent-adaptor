@@ -16,7 +16,7 @@
 
 ## 1. 问题陈述
 
-`examples/streaming-chat-copilotkit` + `claude` adapter 在 `AGUIExampleRunPolicy`（`Approvals=off`, `Isolation=workspace_write`）下，与 Claude Code 进行多轮、涉及文件改动的任务时，用户反复感到"中断了"——任务看起来完成了（UI 出现长段 text，`RUN_FINISHED` 正常发出），但**磁盘上什么都没发生**，直到下一轮追问"完成了吗？"才真正执行。
+`examples/showcases/web-copilotkit-hitl` + `claude` adapter 在 `AGUIExampleRunPolicy`（`Approvals=off`, `Isolation=workspace_write`）下，与 Claude Code 进行多轮、涉及文件改动的任务时，用户反复感到"中断了"——任务看起来完成了（UI 出现长段 text，`RUN_FINISHED` 正常发出），但**磁盘上什么都没发生**，直到下一轮追问"完成了吗？"才真正执行。
 
 ### 1.1 用户可感知症状
 
@@ -36,7 +36,7 @@
 - 会话 ID：`96809d62-abc5-4ebb-b0d6-e0031b63e1d5`
 - 产生路径：`~/.trpc-claudecode/projects/-Users-blurooo-project-agent-adaptor/96809d62-abc5-4ebb-b0d6-e0031b63e1d5.jsonl`
 - 时间范围：`2026-04-22 06:19:00Z ~ 06:27:06Z`（北京时间 14:19–14:27）
-- 触发路径：`examples/streaming-chat-copilotkit` 默认启动脚本，前端 CopilotKit 连 `/agent` SSE；Policy = `AGUIExampleRunPolicy()`（见 `examples/internal/exampleutil/agui_sdk.go`）
+- 触发路径：`examples/showcases/web-copilotkit-hitl` 默认启动脚本，前端 CopilotKit 连 `/agent` SSE；Policy = `AGUIExampleRunPolicy()`（见 `examples/internal/exampleutil/agui_sdk.go`）
 - 三条 prompt（同一会话）：
   1. "你能做什么"
   2. "帮我把 AGENTS.md 中可以渐进式披露的部分挪到 docs 下面（如果已经 docs 下已有重复的则合并）"
@@ -218,7 +218,7 @@ HITL 设计必须首先承认"审批"不是一种均质事件。至少应区分�
 
 1. AG-UI 是否需要**一条新的 event type**（例如 `HITL_REQUESTED` / `HITL_RESOLVED`），而不是降级成 `CustomEvent`？（CopilotKit 目前的 `useCopilotAction` 约定是否可以直接承载？）
 2. 宿主如何把 UI 侧的 approve 回填到 adapter 的 `ResolveHITL`？需要一个跨进程/跨 SSE 连接的**关联 ID 机制**（`requestID` 必须在 bridge 里被保留并可寻址）。
-3. 如果 UI 没接入 HITL 通道（例如 `examples/streaming-sse-server` 这类最小示例），默认行为是什么？**现在的"静默 reject"是最坏默认**，应当改为更显性的失败或至少一条 banner 级别的 `RunError` / `RunFinished.Reason` 字段。
+3. 如果 UI 没接入 HITL 通道（例如 `examples/showcases/web-sse` 这类最小示例），默认行为是什么？**现在的"静默 reject"是最坏默认**，应当改为更显性的失败或至少一条 banner 级别的 `RunError` / `RunFinished.Reason` 字段。
 
 ### 9.4 adapter 专属（Claude）
 
@@ -244,4 +244,4 @@ HITL 设计必须首先承认"审批"不是一种均质事件。至少应区分�
 - 当时 Policy 合同：`docs/run-policy.md`、`run_policy.go`
 - 当时 bridge 映射：`pkg/bridges/agui/bridge.go`（`StreamHITLRequested → CustomEvent`）
 - 当时 Claude driver 现状：`claude/driver.go`（`HITL: false`）、`claude/parser.go`（`permission_request → StreamHITLRequested`，未覆盖 `ExitPlanMode` 等）
-- 参考示例：`examples/streaming-chat-copilotkit/main.go` + `examples/internal/exampleutil/agui_sdk.go`
+- 参考示例：`examples/showcases/web-copilotkit-hitl/main.go` + `examples/internal/exampleutil/agui_sdk.go`

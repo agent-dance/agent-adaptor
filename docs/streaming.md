@@ -12,9 +12,13 @@ agent-adaptor 的 `Run / Start` 默认是批处理语义（行级事件 + 最终
 - 工具调用 / reasoning 的实时可视化
 - 审计 / 回放中的 token 粒度
 
-就加上 `agentadaptor.WithStreaming()`。
+先确认所选 adapter 声明了 content streaming capability，再加上
+`agentadaptor.WithStreaming()`。
 
-**默认不开启**。这条路径需要更丰富的 CLI 通路（codex 切到 `codex app-server`，claude/cursor 也要追加 flag），对冷启动 TTFB 和进程资源更敏感。批处理场景保持原路径。
+**默认不开启**。Codex 会切到 `codex app-server`，Claude 会启用其 stream-json
+通路，因此冷启动 TTFB 和进程资源可能增加。Cursor 当前不声明 token-level content
+streaming；它使用的 `stream-json` 是 adapter 解析 transcript/result 的 provider 协议，
+不会因此产生 assistant/reasoning/tool 的 `StreamEvents()` delta。批处理场景保持原路径。
 
 ## 1. 场景 A：最薄 — Go channel 消费
 
@@ -24,6 +28,8 @@ agent-adaptor 的 `Run / Start` 默认是批处理语义（行级事件 + 最终
 import (
     "context"
     "fmt"
+    "log"
+    "time"
 
     agentadaptor "github.com/agent-dance/agent-adaptor"
     "github.com/agent-dance/agent-adaptor/codex"
@@ -31,19 +37,33 @@ import (
 )
 
 func main() {
+    if err := run(); err != nil {
+        log.Fatal(err)
+    }
+}
+
+func run() error {
+    ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+    defer cancel()
+
     sdk := agentadaptor.New(
-        agentadaptor.WithDefaultAgent(codex.New(agentadaptor.CodexConfig{
-            Model: "gpt-5.4",
-        })),
+        agentadaptor.WithDefaultAgent(codex.New(agentadaptor.CodexConfig{})),
         agentadaptor.WithSessionStore(memory.NewSessionStore()),
     )
 
-    handle, err := sdk.Start(context.Background(), "Write a haiku",
+    handle, err := sdk.Start(ctx, "Write a haiku",
         agentadaptor.WithStreaming(),
         agentadaptor.WithSessionKey("my-namespace", "thread-1"),
     )
-    if err != nil { panic(err) }
-    defer handle.Cancel(context.Background())
+    if err != nil {
+        return fmt.Errorf("start agent: %w", err)
+    }
+    defer handle.Cancel(ctx)
+
+    go func() {
+        for range handle.Events() {
+        }
+    }()
 
     for ev := range handle.StreamEvents() {
         switch ev.Kind {
@@ -54,8 +74,15 @@ func main() {
         }
     }
 
-    result, _ := handle.Wait(context.Background())
-    _ = result
+    result, err := handle.Wait(ctx)
+    if err != nil {
+        return fmt.Errorf("wait for agent: %w", err)
+    }
+    if result.Failure != nil {
+        return fmt.Errorf("agent run failed: %s", result.Failure.Message)
+    }
+    fmt.Println("output:", result.Output)
+    return nil
 }
 ```
 
@@ -66,7 +93,7 @@ func main() {
 - `RunHandle.Events()` 保持不变，仍然承担 spawn / stderr / lifecycle 元事件
 - Run 结束时两个 channel 都 close
 
-完整示例：[`examples/streaming-chat/main.go`](../examples/streaming-chat/main.go)
+完整示例：[`examples/recipes/content-streaming/main.go`](../examples/recipes/content-streaming/main.go)
 
 ## 2. 场景 B：AG-UI channel — 标准化事件
 
@@ -136,7 +163,7 @@ event: RUN_FINISHED
 data: {"type":"RUN_FINISHED",...}
 ```
 
-完整示例（含极简 HTML 前端）：[`examples/streaming-sse-server/main.go`](../examples/streaming-sse-server/main.go)
+完整示例（含极简 HTML 前端）：[`examples/showcases/web-sse/main.go`](../examples/showcases/web-sse/main.go)
 
 ### Options
 
@@ -253,6 +280,6 @@ A: 不在。SSE handler 在 client 断连时会调 `handle.Cancel()`，ctx cance
 
 ## 8. AG-UI 前后端版本对齐
 
-Go 侧通过 `go.mod` 固定 `github.com/ag-ui-protocol/ag-ui/sdks/community/go`；`examples/streaming-chat-copilotkit/web` 通过 `package-lock.json` 固定 `@ag-ui/core`。两边不是同一个坐标系，升级任一侧时都可能出现 Zod/Go `Validate` 行为漂移。
+Go 侧通过 `go.mod` 固定 `github.com/ag-ui-protocol/ag-ui/sdks/community/go`；`examples/showcases/web-copilotkit-hitl/web` 通过 `package-lock.json` 固定 `@ag-ui/core`。两边不是同一个坐标系，升级任一侧时都可能出现 Zod/Go `Validate` 行为漂移。
 
 **回归守门**：`go test ./internal/aguiversion/...` 会检查 `go.mod` 的模块 pin 子串，以及 `package-lock.json` 中 `@ag-ui/core` 的版本号常量。有意的版本升级时，需同步更新 `internal/aguiversion/align_test.go` 里的 `expectedAGUICoreNPM` 与 `expectedGoAGUIModuleSubstr`（并复查 `pkg/bridges/agui` 的 fixture 与 `literals.go`）。

@@ -11,7 +11,7 @@
 - 新包 `pkg/hosttools/sessionrecorder`，暴露三样东西：`Recorder`（门面）、`Backend`（存取层抽象）、`Record`（持久化单位）
 - 引入 `HostSeq`（宿主会话内强单调 cursor），区别于 `StreamPayload.Seq`（run 内强单调，跨 run 重置）
 - 默认给两个 `Backend` 实现：`MemoryBackend`（测试/单 CLI）、`JSONLBackend`（单进程生产）；其他后端由宿主按 `Backend` 接口接入
-- 示例 `examples/streaming-chat-copilotkit` 顺带迁移过来，作为"用法正确的脚手架"
+- 示例 `examples/showcases/web-copilotkit-hitl` 顺带迁移过来，作为"用法正确的脚手架"
 
 ## 1. 要解决什么问题
 
@@ -247,7 +247,7 @@ http.HandleFunc("/session/events", func(w http.ResponseWriter, r *http.Request) 
 "持久化 + 跨 run 恢复"在后端就位之后，UI 层还要做几件事才能让"刷新浏览器也不丢 session"落到用户体验上。下面按层次给出建议：
 
 - **L0** 是**架构 invariant**（见下节 L0），定义 AG-UI 输入到 adaptor 之间的消费边界，一旦违反会让 L1-L3 的任何前端优化（尤其 B 路径的带宽裁剪）**静默失灵**，新接 driver / bridge 的作者必须遵守
-- **L1 / L2 / L3** 是**按改动成本 / 收益分层的前端工程建议**，`examples/streaming-chat-copilotkit/web` 已落地 L1+L2，L3 作为 follow-up 标注
+- **L1 / L2 / L3** 是**按改动成本 / 收益分层的前端工程建议**，`examples/showcases/web-copilotkit-hitl/web` 已落地 L1+L2，L3 作为 follow-up 标注
 
 ### L0 —— 前置合同：AG-UI `messages[]` 全量上行是协议冗余，**且必须保持如此**
 
@@ -293,7 +293,7 @@ function lastUserOnly(messages: Message[]): Message[] {
 }
 ```
 
-这条路径是 **opt-in** 的，`examples/streaming-chat-copilotkit/web` **刻意不默认启用**：
+这条路径是 **opt-in** 的，`examples/showcases/web-copilotkit-hitl/web` **刻意不默认启用**：
 - 作为"协议如何工作"的参考实现，保留全量传输让读者通过网络面板观察到 AG-UI 合规流量
 - 避免给读者造成"必须这么裁"的误导——多数部署根本不需要
 - 一旦 §18.2 passthrough 落地并开始消费 `state` / `tools` / `context`，裁剪会变成 breaking（删的不再只是冗余）
@@ -385,7 +385,7 @@ for each SessionRecord in /session/events?after=0:
 
 ## 8. 示例迁移
 
-`examples/streaming-chat-copilotkit` 已顺带迁移：
+`examples/showcases/web-copilotkit-hitl` 已顺带迁移：
 
 - `thread_store.go` 的 `history` 字段（朴素 `[]StreamPayload` + 500 cap）改为 `sessionrecorder.Recorder`
 - `historyCap` 常量删除（SessionRecorder 不截断；如需截断请换 backend）
@@ -393,15 +393,15 @@ for each SessionRecord in /session/events?after=0:
 - `/session/events` 的 `after=` 参数现在按 `HostSeq` 解析——前端无需改动（当前前端永远发 `after=0`）
 - 新增环境变量 `THREAD_STORE_DIR`：指向 JSONL 目录时启用持久化，不设时退回 Memory backend
 
-`examples/streaming-chat-copilotkit/thread_store_test.go` 的断言全部围绕新契约重写：跨 run HostSeq 连续、Since cursor 语义、resolve fallback。
+`examples/showcases/web-copilotkit-hitl/thread_store_test.go` 的断言全部围绕新契约重写：跨 run HostSeq 连续、Since cursor 语义、resolve fallback。
 
 ## 9. 验收清单（DoD）
 
 - [x] 新包 `pkg/hosttools/sessionrecorder` 编译通过；对外 API 只暴露 `Recorder` / `Backend` / `Record` / `SessionInfo` / `Option` / `JSONLOption` / `KeyValidator` + 构造函数
 - [x] 单元测试覆盖：跨 run 单调、per-session 隔离、Since cursor 四类边界、并发 Record 不丢号、backend 失败 HostSeq 回滚、JSONL 重启恢复、JSONL 坏行默认 skip、bad key 拒绝、Clock/Sessions 排序
 - [x] `go build ./...` 全绿
-- [x] `go test ./pkg/hosttools/... ./examples/streaming-chat-copilotkit/...` 全绿
-- [x] `examples/streaming-chat-copilotkit` 迁移到新包；响应契约兼容；README `生产化 checklist` 里把"`(run_id, seq)` 作主键"更正为"`(session_key, host_seq)` 作主键"
+- [x] `go test ./pkg/hosttools/... ./examples/showcases/web-copilotkit-hitl/...` 全绿
+- [x] `examples/showcases/web-copilotkit-hitl` 迁移到新包；响应契约兼容；README `生产化 checklist` 里把"`(run_id, seq)` 作主键"更正为"`(session_key, host_seq)` 作主键"
 - [x] 设计文档落地（本文件）
 
 ## 10. 明确保留的开放问题

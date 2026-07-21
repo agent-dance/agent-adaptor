@@ -83,6 +83,6 @@
 //     single-process by design. Multi-pod hosts should plug a shared
 //     Backend (e.g. Redis, Postgres) below the Recorder.
 //   - fan-out (stream → SSE + Recorder + metrics) — that's a few lines
-//     of host-owned for loop; see examples/streaming-chat-copilotkit
+//     of host-owned for loop; see examples/showcases/web-copilotkit-hitl
 //     for the canonical pattern.
 package sessionrecorder

@@ -193,7 +193,7 @@ Selected skill 物化失败是启动前错误，而不是 best-effort warning：
 
 `Admin().Default().ProfileSnapshot(ctx)` 报告 desired / observed profile resource 状态；`SyncProfile(ctx)` 现在覆盖 skills、MCP、agents、hooks、instructions 和 config capability patches。未支持的字段仍会以 warning / error 暴露，不会被伪装成 managed。
 
-`examples/profile-resources` 是当前最直接的 profile-resources smoke：Codex 在本机已验证通过；Claude 目前停在登录门槛（`Not logged in`）；Cursor 目前停在本机 CLI 健康检查（`no healthy local cursor CLI command found`）。后两项是环境缺口，不是 agents / hooks / instructions / config 未实现。
+`examples/showcases/managed-profile` 是最直接的 profile-resources live smoke。运行前应先执行 `examples/recipes/admin-preflight`；命令缺失或认证失败属于环境门禁，不能当成 profile resource 能力通过，也不能当成实现回归。当前 provider 支持状态见 [`capabilities.md`](./capabilities.md)。
 
 Admin 里的 `SetSelectedSkills(ctx, keys)` 只是**进程内 selection override**，不会替宿主持久化用户偏好。需要长期保存勾选状态时，宿主应该写入自己的数据库，并在构造 binding 或调用时通过 `WithDefaultSkills` / `WithSkills` 重新声明。
 

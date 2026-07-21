@@ -10,6 +10,7 @@
 |---|---|
 | [`../AGENTS.md`](../AGENTS.md) | 已拍板的工程边界与硬约束。 |
 | [`api-reference.md`](./api-reference.md) | 当前公开 API 面、构造方式、Run 结果分层。 |
+| [`capabilities.md`](./capabilities.md) | 三个内置 adapter 当前可用、部分支持和不支持的能力矩阵。 |
 | [`usage-guide.md`](./usage-guide.md) | 单 Agent、多 Agent、session、skills、MCP、profile 与宿主命名陷阱。 |
 | [`run-policy.md`](./run-policy.md) | `RunPolicy`、HITL mode、adapter capability 矩阵。 |
 | [`structured-output.md`](./structured-output.md) | runtime JSON Schema 结构化输出 API、adapter 能力矩阵与示例。 |
@@ -42,7 +43,7 @@
 | [`workstream-mcp-profile-materialization.md`](./workstream-mcp-profile-materialization.md) | MCP profile materialization 设计记录。 |
 | [`workstream-skills-profile-materialization.md`](./workstream-skills-profile-materialization.md) | skills dedicated profile materialization 提案；面向 `SkillProvider + WithDefaultSkills + WithDedicatedProfile` 的 host 模式。 |
 | [`workstream-profile-resources-agents-hooks-instructions-config.md`](./workstream-profile-resources-agents-hooks-instructions-config.md) | agents / hooks / instructions / config 四类 profile resources 的当前实现记录、smoke evidence 和 remaining gaps。 |
-| [`profile-resource-provider-matrix.md`](./profile-resource-provider-matrix.md) | profile resources 在 Codex / Claude Code / Cursor 上的 maximum-capability research baseline；包含 portable core、extended、fallback、native escape，以及 repeatable smoke evidence。 |
+| [`profile-resource-provider-matrix.md`](./profile-resource-provider-matrix.md) | profile resources 的历史 maximum-capability research baseline；当前能力状态见 [`capabilities.md`](./capabilities.md)。 |
 | [`workstream-profile-user-experience.md`](./workstream-profile-user-experience.md) | profile option 设计背景。 |
 | [`workstream-bridges-profiles-host.md`](./workstream-bridges-profiles-host.md) | bridge/profile/host 集成背景。 |
 | [`profile-resolver-api.md`](./profile-resolver-api.md) | core SDK 之上的 profile resolver 草案；不是 core API。 |

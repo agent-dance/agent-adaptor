@@ -46,6 +46,7 @@ func (adapter) Descriptor() agentadaptor.DriverDescriptor {
 		{Name: "model", Label: "Model", Type: "select", Description: "Codex model identifier, for example gpt-5.4.", Default: "gpt-5.4", Options: modelOptions(codexModels()), Group: "model"},
 		{Name: "reasoning_effort", Label: "Reasoning Effort", Type: "select", Description: "Optional reasoning effort passed through model_reasoning_effort.", Hint: "Only set this when you want to override Codex defaults.", Options: []agentadaptor.ConfigOption{{Value: "low", Label: "Low"}, {Value: "medium", Label: "Medium"}, {Value: "high", Label: "High"}, {Value: "xhigh", Label: "Extra High"}}, Group: "model"},
 		{Name: "fast_mode", Label: "Fast Mode", Type: "toggle", Description: "Enable Codex fast service tier defaults.", Default: false, Group: "execution"},
+		{Name: "skip_git_repo_check", Label: "Skip Git Repository Check", Type: "toggle", Description: "Allow codex exec to run outside a Git repository.", Default: false, Group: "execution"},
 		{Name: "extra_args", Label: "Extra Args", Type: "textarea", Description: "Additional CLI args appended after SDK-managed flags.", Group: "command"},
 	}
 	fields = append(fields, profileconfig.CapabilityFields(DriverType)...)
@@ -447,6 +448,9 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 	}
 	if cfg.FastMode {
 		args = append(args, "-c", `service_tier="fast"`, "-c", "features.fast_mode=true")
+	}
+	if cfg.SkipGitRepoCheck && !hasAnyArg(cfg.ExtraArgs, "--skip-git-repo-check") {
+		args = append(args, "--skip-git-repo-check")
 	}
 	args = append(args, cfg.ExtraArgs...)
 	if req.Session != nil && req.Session.State != nil && req.Session.State.ResumeID != "" {

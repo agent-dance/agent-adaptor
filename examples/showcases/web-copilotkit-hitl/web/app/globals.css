@@ -1,0 +1,49 @@
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  min-width: 0;
+}
+
+.agent-app-shell {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  max-width: 1280px;
+  min-height: 100vh;
+  margin: 0 auto;
+  padding: 1.5rem;
+  gap: 1rem;
+}
+
+.agent-workspace-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 360px);
+  gap: 1rem;
+  align-items: stretch;
+  min-width: 0;
+}
+
+.agent-chat-panel {
+  min-width: 0;
+}
+
+.agent-session-panel code {
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 760px) {
+  .agent-app-shell {
+    padding: 1rem;
+  }
+
+  .agent-workspace-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .agent-session-panel {
+    max-height: none !important;
+  }
+
+}

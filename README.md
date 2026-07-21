@@ -1,48 +1,54 @@
 # agent-adaptor
 
-[简体中文说明 / Chinese Version](./README.zh-CN.md)
+[简体中文](./README.zh-CN.md)
 
-A pure Go SDK for calling local coding agents in one consistent way.
+[![CI](https://github.com/agent-dance/agent-adaptor/actions/workflows/go.yml/badge.svg)](https://github.com/agent-dance/agent-adaptor/actions/workflows/go.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/agent-dance/agent-adaptor.svg)](https://pkg.go.dev/github.com/agent-dance/agent-adaptor)
+[![Release](https://img.shields.io/github/v/release/agent-dance/agent-adaptor)](https://github.com/agent-dance/agent-adaptor/releases)
+[![Go version](https://img.shields.io/badge/Go-1.26-00ADD8)](./go.mod)
 
-`agent-adaptor` is for teams that want to plug `codex`, `claude`, or `cursor` into their product. It gives you a shared layer for process launch, session reuse, permission injection, dynamic skill injection, runtime service injection, and result collection.
+Embed Codex, Claude Code, or Cursor Agent behind one stable Go host contract,
+while keeping sessions, workspaces, profiles, streaming, human decisions, and
+provider differences explicit, controllable, and auditable.
 
-## At A Glance
+`agent-adaptor` is a pure SDK for teams building CLIs, desktop applications,
+HTTP/gRPC services, background workers, or scheduled automation on top of local
+coding agent CLIs. It owns the repeatable integration lifecycle; your host still
+owns product routing, authentication, tenant policy, serving, and persistence.
 
-- Use one interface across multiple local agents.
-- Default-agent-first API: bind once, then call `sdk.Run(...)` or `sdk.Start(...)`.
-- Stateless by default; sessions are reused only when you inject a `SessionStore`.
-- The caller controls sessions, workspaces, skills, permissions, instructions, and runtime services.
-- This is a pure SDK, not a server, queue, scheduler, tenant system, or auto-router.
-
-## What It Solves
-
-If you are building a CLI, desktop app, HTTP/gRPC service, or background worker, the hard part usually is not "run one command once." The hard part is keeping agent integration consistent: how defaults are merged, how sessions are reused, how events stream out, how skills are injected, how runtime context is passed in, how results are recorded, and how the environment is checked before a run. `agent-adaptor` folds that into one SDK surface.
-
-The public usage model is intentionally simple: bind a default agent at construction time, call `sdk.Run(...)` or `sdk.Start(...)`, optionally bind more named agents, and inject a `SessionStore` only when you actually need continuity.
-
-## Core Scenarios
-
-- Embed one default local agent into your product with minimal setup.
-- Bind extra named agents for flows like "implement with Codex, review with Claude".
-- Reuse sessions in service-style workflows without making state mandatory for every caller.
-- Let your application control workspaces, skills, permissions, and runtime services instead of hiding those details inside provider-specific integration code.
-- Use the same approach for environment checks, model detection, config-field discovery, quota checks, and skill management.
-
-## When To Use It
-
-Use `agent-adaptor` when you do not want your integration layer tied to one agent, but you still want each agent's real capabilities and limits preserved.
-
-Do not use it if you want a built-in HTTP server, queue, scheduler, tenant framework, or automatic agent routing. Those are explicit non-goals and should live above the SDK.
-
-## Install
+Prerequisites: Go 1.26+ and an installed, authenticated Codex CLI for the Quick
+Start below. Claude Code- or Cursor-only environments can begin with the
+provider-selection recipe instead.
 
 ```bash
 go get github.com/agent-dance/agent-adaptor
+go run ./examples/recipes/basic-run
+go run ./examples/recipes/provider-selection -agent=claude
+go run ./examples/recipes/provider-selection -agent=cursor
 ```
+
+## Why Not Call Each CLI Directly?
+
+Starting a process is easy. Keeping three evolving protocols reliable inside a
+product is the expensive part.
+
+| Integration concern | Direct per-provider code | `agent-adaptor` contract |
+|---|---|---|
+| Invocation | Separate flags, environment, and defaults | One `Run` / `Start` path with binding defaults and per-call overrides |
+| Sessions | Provider IDs and resume rules leak into the host | Optional `SessionStore`, compatibility checks, and valid-checkpoint persistence |
+| Output | Ad hoc stdout parsing | Adapter-owned protocol parsing into result, events, content stream, and HITL |
+| Managed context | Provider-specific workspace/profile mutation | Explicit workspace, profile, skills, MCP, instructions, and runtime-service inputs |
+| Capability gaps | Usually discovered at runtime | Descriptors and preflight expose supported and unsupported modes |
+
+The SDK does not choose an agent for you. The host makes that product decision
+and binds a default agent plus any explicitly named agents.
 
 ## Quick Start
 
-The fastest path is: bind one default agent and call `sdk.Run(...)`.
+This program is exactly [`examples/recipes/basic-run/main.go`](./examples/recipes/basic-run/main.go).
+It uses only public packages, relies on the CLI's configured default model, and
+checks transport errors before structured run failures. The temporary workspace
+and cloned profile are removed when the program exits.
 
 ```go
 package main
@@ -50,223 +56,229 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
+	"os"
+	"path/filepath"
+	"time"
 
 	agentadaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/codex"
 )
 
 func main() {
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func run() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+
+	root, err := os.MkdirTemp("", "agent-adaptor-basic-*")
+	if err != nil {
+		return fmt.Errorf("create isolated environment: %w", err)
+	}
+	defer os.RemoveAll(root)
+	workspace := filepath.Join(root, "workspace")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		return fmt.Errorf("create temporary workspace: %w", err)
+	}
+
 	sdk := agentadaptor.New(
 		agentadaptor.WithDefaultAgent(codex.New(agentadaptor.CodexConfig{
-			Model: "gpt-5.4",
-		})),
+			CommonConfig: agentadaptor.CommonConfig{
+				CWD: workspace,
+			},
+			SkipGitRepoCheck: true,
+		}, agentadaptor.WithCloneProfile(
+			filepath.Join(root, "profile"),
+			agentadaptor.CloneProfileOptions{IncludeSettings: true, AuthMode: agentadaptor.CloneProfileAuthLink},
+		))),
 	)
 
-	result, err := sdk.Run(context.Background(), "fix the failing tests")
+	result, err := sdk.Run(ctx, "Reply in one sentence confirming the SDK call succeeded.")
 	if err != nil {
-		panic(err)
+		return fmt.Errorf("run agent: %w", err)
+	}
+	if result.Failure != nil {
+		return fmt.Errorf("agent run failed: %s", result.Failure.Message)
 	}
 
 	fmt.Println(result.Output)
+	return nil
 }
 ```
 
-`New(...)` fits application and test code and fails fast on invalid config. Use `Build(...)` if you embed the SDK into a library or service and want to handle configuration errors yourself.
+Use `claude.New(...)` or `cursor.New(...)` for another default binding. Use
+`Build(...)` instead of `New(...)` when a service must return configuration
+errors rather than fail fast during startup.
 
-## Core Usage Model
+## Choose An Integration Path
 
-1. Bind a default agent with `WithDefaultAgent(...)`.
-2. Use `sdk.Run(...)` or `sdk.Start(...)` for the default execution path.
-3. For multi-agent flows, bind extra agents with `WithAgent(name, binding)` and fetch them via `sdk.Agent(name)`.
-4. Let per-call `RunOption`s override binding defaults.
-5. Inject `SessionStore` only when you actually need session continuity.
+| Product shape | Start with | Add next |
+|---|---|---|
+| Batch automation or CI worker | [`basic-run`](./examples/recipes/basic-run) | [`structured-output`](./examples/recipes/structured-output) for validated machine-readable results |
+| Interactive application | [`content-streaming`](./examples/recipes/content-streaming) | [`hitl-channel`](./examples/recipes/hitl-channel) and durable session storage |
+| Managed workstation | [`managed-profile`](./examples/showcases/managed-profile) | Admin preflight and organization-owned profile resources |
+| Direct React integration | [`web-agui`](./examples/showcases/web-agui) | Authentication, durable replay, limits, and audit logs in the host |
+| Full chat and HITL UI | [`web-copilotkit-hitl`](./examples/showcases/web-copilotkit-hitl) | Host-owned decision authorization and persistence |
+| Agent-to-agent service | [`a2a-local`](./examples/showcases/a2a-local) | Authenticated discovery and durable A2A task storage |
+| Mixed-provider agent team | [`team-agent-workflow`](./examples/showcases/team-agent-workflow) | Durable orchestration state, repair loops, and tenant-scoped role registries |
 
-All execution paths go through the same internal flow: first merge defaults and per-run arguments, then assemble the full config for this run, then handle sessions, run the adapter, and only persist state when a valid session checkpoint is returned.
+## One Execution Lifecycle
 
-## Defaults And Overrides
+Every default or named runner resolves through the same internal path. Streaming
+and HITL are optional channels on that run, not additional execution APIs.
 
-Bind-time defaults establish a stable baseline for your application. Per-run options override only what changed for that specific run.
-
-- Bind-time defaults: `WithDefaultIdentity`, `WithDefaultWorkspace`, `WithDefaultSkills`, `WithDefaultMCP`, `WithDefaultRunPolicy`, `WithDefaultInstructions`, `WithDefaultRuntimeServices`, `WithDefaultStreaming`, `WithDefaultMetadata`, profile options such as `WithDedicatedProfile`, and optional default HITL handlers.
-- Per-run overrides: `WithSession`, `WithSessionKey`, `WithContinueSession`, `WithNewSession`, `WithForkSession`, `WithWorkspace`, `WithSkills`, `WithMCP`, `WithRunPolicy`, `WithInstructions`, `WithRuntimeServices`, `WithStreaming`, `WithoutStreaming`, `WithMetadata`, `WithAgentIdentity`, and per-run HITL handlers.
-
-## Common Flows
-
-### Multiple Agents
-
-The default agent uses `sdk.Run(...)`. Named agents are fetched with `sdk.Agent(name)` and run separately.
-
-```go
-package main
-
-import (
-	"context"
-
-	agentadaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/claude"
-	"github.com/agent-dance/agent-adaptor/codex"
-)
-
-func main() {
-	sdk := agentadaptor.New(
-		agentadaptor.WithDefaultAgent(codex.New(agentadaptor.CodexConfig{
-			Model: "gpt-5.4",
-		})),
-		agentadaptor.WithAgent("review", claude.New(agentadaptor.ClaudeConfig{
-			Model: "claude-sonnet-4",
-		})),
-	)
-
-	_, err := sdk.Run(context.Background(), "implement the fix")
-	if err != nil {
-		panic(err)
-	}
-
-	review, err := sdk.Agent("review")
-	if err != nil {
-		panic(err)
-	}
-
-	_, err = review.Run(context.Background(), "review the patch")
-	if err != nil {
-		panic(err)
-	}
-}
+```mermaid
+flowchart LR
+    H["Host: prompt + per-call options"] --> M["Merge binding defaults"]
+    M --> R["resolvedInvocation"]
+    S["Optional session / workspace / profile / runtime"] --> R
+    R --> C["Session coordination"]
+    C --> A["Provider adapter"]
+    A --> P["Local agent CLI"]
+    P --> A
+    A --> E["Events / StreamEvents / decision requests"]
+    A --> F["RunResult + valid checkpoint"]
+    F --> C
+    E --> H
+    F --> H
 ```
 
-### Session Reuse
+The shared process helper transports stdin/stdout/stderr only. Each adapter
+parses its official provider protocol and produces `Transcript`, `Output`,
+terminal `Result`, and checkpoint validity from that same parse.
 
-Without `WithSessionStore(...)`, runs are stateless. With a store, you can reuse stable logical sessions with `SessionKey`, or choose stricter modes with `continue_only`, `start_new`, and `fork`.
+## Core Mental Model
 
-```go
-package main
+- `SDK`: `sdk.Run(...)` and `sdk.Start(...)` always target the binding supplied
+  by `WithDefaultAgent(...)`; `sdk.Admin()` is control-plane only.
+- `Runner`: the single execution contract returned by `sdk.Default()` and
+  `sdk.Agent(name)`. Named agents do not create a second execution path.
+- `RunHandle`: exposes operational `Events()`, optional content
+  `StreamEvents()`, `RunID()`, `Wait(...)`, `Cancel(...)`, and asynchronous HITL
+  through `DecisionRequests()` / `ResolveDecision(...)`.
 
-import (
-	"context"
+## Capabilities And Provider Differences
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/codex"
-	"github.com/agent-dance/agent-adaptor/memory"
-)
+The portable contract is broad, but it does not imply identical provider
+behavior. These rows reflect the current built-in descriptors and tests.
 
-func main() {
-	store := memory.NewSessionStore()
+| Capability | Codex | Claude | Cursor | Current constraint |
+|---|---:|---:|---:|---|
+| Execution lifecycle | yes | yes | yes | `Run`, `Start`, wait, cancel, timeout, result, and operational events |
+| Session resume | yes | yes | yes | Resume is guarded by workspace/profile/invocation compatibility |
+| Content streaming | native | native | no | Codex and Claude emit token/reasoning/tool deltas; Cursor returns transcript/result |
+| HITL Ask | no | PlanReview + Question | no | Permission `Ask` is unsupported by all three built-ins |
+| Structured output | native + validate | native + validate | prompt + validate | Codex/Claude do not advertise native schema combined with streaming or HITL |
+| MCP transports | stdio + HTTP | stdio + HTTP + SSE | stdio + HTTP + SSE | The host declares MCP; adapters materialize provider-specific config |
 
-	sdk := agentadaptor.New(
-		agentadaptor.WithDefaultAgent(codex.New(agentadaptor.CodexConfig{
-			Model: "gpt-5.4",
-		})),
-		agentadaptor.WithSessionStore(store),
-	)
+All three support workspaces, persistent skill sync, instructions, profile
+resources, runtime-service reports, named bindings, and Admin discovery. Policy
+features such as sandboxing, web search, browser access, quota, hooks, and config
+patches remain capability-gated. See the
+[built-in capability matrix](./docs/capabilities.md),
+[structured output contract](./docs/structured-output.md), and
+[run policy contract](./docs/run-policy.md).
 
-	_, err := sdk.Run(
-		context.Background(),
-		"continue issue-123",
-		agentadaptor.WithSessionKey("company-1", "issue-123"),
-	)
-	if err != nil {
-		panic(err)
-	}
-}
-```
+## Session And Identity Dimensions
 
-Changing `WithSkills(...)` or `WithMCP(...)` does not automatically make an existing session incompatible. Session continuity is still decided by the caller through `SessionMode`.
+Runs are stateless unless the host injects a `SessionStore`. Session-aware modes
+are `continue_or_start`, `continue_only`, `start_new`, `fork`, and `stateless`.
+Only a valid adapter checkpoint may create or update stored session state.
 
-### MCP Injection
+| ID | Owner | Meaning |
+|---|---|---|
+| `ThreadID` | UI or workflow | Business conversation ID; known to bridges, not core SDK |
+| `SessionKey` | Host | Conceptual `(namespace, key)` tuple in `SessionRequest`; there is no exported `SessionKey` type |
+| `SessionID` | SDK + adapter | Concrete resumable session handle behind the business key |
+| `RunID` | SDK | One execution; many runs may use one session |
 
-MCP server declarations use the same default/override model as skills: bind a default set with `WithDefaultMCP(...)`, or replace it for one run with `WithMCP(...)`. Built-in adapters materialize the resulting MCP config into the effective provider profile before launching the CLI.
+The AG-UI bridge convention maps `ThreadID` to `SessionKey = ("agui", ThreadID)`.
+Failed runs do not replace a healthy checkpoint by default.
 
-### Streaming
+## Result Contract
 
-`Start(...)` returns a `RunHandle` with `Events()`, `StreamEvents()`, `DecisionRequests()`, `RunID()`, `Wait(...)`, `Cancel(...)`, and `ResolveDecision(...)`. Your application can use the same execution API for operational events, token-level streaming, and HITL callbacks instead of maintaining separate run paths.
+Always handle `error -> RunResult.Failure -> success`. A returned error means the
+run did not complete reliably; `Failure` is a structured terminal failure with a
+complete result envelope.
 
-## Capability Surface
+| Field | Portable meaning |
+|---|---|
+| `Output` | Final assistant-facing text only; it never contains raw stream dumps |
+| `RawStreams` | Complete raw stdout and stderr for audit/debugging |
+| `Transcript` | Normalized assistant, reasoning, tool, and result items parsed by the adapter |
+| `Summary` | Short host-facing label for lists, logs, or comments |
+| `Result` | Provider-specific terminal event JSON for audit or advanced inspection |
+| `StructuredOutput` | Schema result, validation status, decoded JSON, and validation details |
+| `Failure` | Structured business/policy/provider failure after a completed run |
 
-| Surface | Description |
-| --- | --- |
-| Execution | `Run(...)` for synchronous execution, `Start(...)` for streaming handles. |
-| Sessions | Stateless by default; supports `continue_or_start`, `continue_only`, `start_new`, and `fork` when a `SessionStore` is present. |
-| Skills | Uses one flow for skill resolution, normalization, assembly, and synchronization. |
-| MCP | Lets the host declare MCP server specs once and have built-in adapters materialize them into the effective provider profile. |
-| Runtime Services | Prepares the runtime services a run needs before execution and releases them during cleanup by `RunID`. |
-| Admin API | Provides management APIs for environment checks, model listing and detection, config-field discovery, quota queries, and skill management. |
-| Run Results | Separates assistant text (`Output`), raw stdout/stderr (`RawStreams`), semantic entries (`Transcript`), short labels (`Summary`), provider terminal JSON (`Result`), provider/model/cost metadata, runtime-service status, and structured questions/failures. |
+`Run()` and `Start().Wait()` return the same result layers.
 
-## Built-In Packages
+## Streaming And Human Decisions
 
-The built-in packages return configured `AgentBinding`s, not low-level adapters.
+Operational `Events()` and content `StreamEvents()` serve different consumers;
+drain both when using `Start`. Enable content flow with `WithStreaming()` only
+after checking provider capability.
 
-- `github.com/agent-dance/agent-adaptor/codex`
-- `github.com/agent-dance/agent-adaptor/claude`
-- `github.com/agent-dance/agent-adaptor/cursor`
+HITL supports three host integration styles on the same run:
 
-If you need lower-level extension hooks, each built-in package also exposes `NewAdapter()`.
+1. Declare automatic behavior in `RunPolicy.HumanDecision`.
+2. Mount synchronous typed permission, plan-review, or question handlers.
+3. Consume `DecisionRequests()` asynchronously and call
+   `ResolveDecision(requestID, response)` from a service or UI.
 
-For built-in adapters, profile options such as `WithNativeProfile()`, `WithDedicatedProfile(dir)`, `WithCloneProfile(dir, opts)`, and `WithCloneProfileFrom(src, dst, opts)` select or initialize the effective provider profile directory without hand-writing provider-specific environment variables. `CloneProfileOptions.AuthMode` can share native CLI login state with an isolated clone through `CloneProfileAuthLink`, avoiding duplicated OAuth refresh-token files.
+Unsupported `Ask` combinations fail before adapter execution. Timeout, rejection,
+and retry behavior is explicit in the policy; see [`docs/run-policy.md`](./docs/run-policy.md).
 
-## Management API
+## Managed Context And Bridges
 
-`sdk.Admin()` is for management tasks only. It does not execute prompts.
+Binding defaults and per-run overrides cover workspace, profile selection,
+skills, MCP, instructions, policy, streaming, metadata, and runtime services.
+With no profile option, adapter resolution may select a process or default native
+profile. Hosts that materialize resources should explicitly choose a dedicated or
+cloned profile. `WithNativeProfile()` records intentional shared-profile use; it
+is not the only path by which a native profile can be selected.
 
-Use it when your application needs to inspect a bound agent before or around execution:
+`WithRuntimeServiceManager(...)` lets the host prepare and release processes or
+containers by `RunID`; core SDK does not become a scheduler. AG-UI, SSE, and A2A
+packages under `pkg/bridges` translate the unified run above core. HTTP serving,
+TLS, auth, tenant isolation, queues, and durable state remain host concerns.
 
-- `CheckEnvironment(...)` for truthful environment checks.
-- `ListModels(...)` and `DetectModel(...)` for model visibility and detection.
-- `ConfigSchema(...)` for the field data needed to build settings UIs.
-- `GetQuota(...)` for truthful quota or credit windows when supported.
-- `ListSkills(...)` and `SetSelectedSkills(...)` for skill inventory and process-local selected-skill overrides.
+## Admin And Custom Adapters
 
-## Adapter Extensions
+Use [`admin-preflight`](./examples/recipes/admin-preflight) to inspect environment,
+models, effective profile, schema, quota, and skills without executing a prompt.
+`sdk.Admin()` never runs an agent.
 
-Third-party adapters implement `DriverAdapter` and plug into the same public execution surface.
+Third-party providers implement `DriverAdapter`, declare truthful capabilities,
+and bind with `BindTyped(...)`. Start with
+[`custom-adapter`](./examples/recipes/custom-adapter) and validate conformance
+with [`adaptertest`](./adaptertest). Provider protocol parsing stays inside the
+adapter; shared helpers must not guess session IDs or semantic events.
 
-```go
-binding := agentadaptor.BindTyped(myAdapter, myConfig)
-sdk := agentadaptor.New(agentadaptor.WithDefaultAgent(binding))
-```
+## Examples And Documentation
 
-The shared CLI helper only handles process I/O and raw event transport. Parsing official session checkpoints stays inside each adapter, so CLI protocol differences do not leak into shared infrastructure.
+The bilingual [examples catalog](./examples/README.md) classifies every entry as
+offline or live, lists prerequisites and expected evidence, and provides learning
+paths. The current guide set is bilingual by document, so language is explicit:
 
-If you are writing your own adapter, the reusable test suite lives in [`adaptertest`](./adaptertest).
-
-## Examples
-
-- [`examples/codex-basic`](./examples/codex-basic): minimal default-agent run.
-- [`examples/codex-stream`](./examples/codex-stream): `Start(...)` and event streaming.
-- [`examples/codex-sessions`](./examples/codex-sessions): service-style session reuse.
-- [`examples/codex-admin-named`](./examples/codex-admin-named): named agents and management APIs.
-- [`examples/codex-skills-live`](./examples/codex-skills-live): live skill injection and synchronization.
-- [`examples/mock-runtime-admin`](./examples/mock-runtime-admin): runtime services and management output.
-- [`examples/session-codec-inspect`](./examples/session-codec-inspect): inspect adapter session parameters safely.
-- [`examples/mock-adapter-playground`](./examples/mock-adapter-playground): custom adapter playground.
-- [`examples/mock-skills-contract`](./examples/mock-skills-contract): deterministic skills request assembly.
-- [`examples/streaming-chat`](./examples/streaming-chat): Go-channel token streaming.
-- [`examples/streaming-sse-server`](./examples/streaming-sse-server): minimal HTTP SSE chat endpoint.
-- [`examples/streaming-chat-copilotkit`](./examples/streaming-chat-copilotkit): AG-UI + CopilotKit demo with HITL cards.
-- [`examples/streaming-chat-aguiclient`](./examples/streaming-chat-aguiclient): Vite + React + `@ag-ui/client` direct AG-UI demo.
-
-## Current Guarantees
-
-- There is only one public execution path: merge defaults, assemble run arguments, coordinate sessions, execute the adapter, persist session checkpoints, and archive the result.
-- The main path is default-agent-first, not "pick an agent from a registry each time."
-- Stateful runs only persist session state when the adapter returns a valid session checkpoint.
-- The management API and execution API share the same default-agent and named-agent model.
-- Built-in packages return typed binding objects through `New(...)`, and custom adapters can follow the same pattern with `BindTyped(...)`.
+- [API reference (English)](./docs/api-reference.md)
+- [Usage guide (Chinese)](./docs/usage-guide.md)
+- [Structured output (English)](./docs/structured-output.md)
+- [Streaming and bridges (Chinese)](./docs/streaming.md)
+- [A2A integration (English)](./docs/a2a.md)
+- [Documentation map (Chinese)](./docs/README.md)
 
 ## Non-Goals
 
 - No built-in HTTP/gRPC server.
-- No built-in queue, scheduler, tenant framework, or orchestration daemon.
-- No automatic agent routing.
-- No second execution entrypoint with different semantics.
+- No built-in queue, scheduler, tenant system, authentication system, or daemon.
+- No automatic provider routing, broker, planner, or agent selection.
+- No mandatory database, distributed lock, or stateful default.
+- No second execution entrypoint with different session or default-merging rules.
 
-## Further Reading
-
-Start with the current, user-facing docs:
-
-- [`docs/README.md`](./docs/README.md): current docs map and historical-workstream index.
-- [`docs/api-reference.md`](./docs/api-reference.md): public API surface and which package owns each concept.
-- [`docs/usage-guide.md`](./docs/usage-guide.md): common host integration patterns.
-- [`docs/run-policy.md`](./docs/run-policy.md): `RunPolicy` and HITL contract.
-- [`docs/streaming.md`](./docs/streaming.md): token streaming, AG-UI, and SSE usage.
-- [`docs/public-errors.md`](./docs/public-errors.md): public error catalogue.
+The core is deliberately a library. Service-shaped examples show how a host can
+compose it without turning the SDK into a partial application framework.

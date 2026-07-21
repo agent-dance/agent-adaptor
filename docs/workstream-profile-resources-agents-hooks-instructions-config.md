@@ -85,9 +85,9 @@
 | Command | Result on this machine | Meaning |
 |---|---|---|
 | `go test ./...` | pass | repo-wide verification, including examples compile |
-| `go run ./examples/profile-resources -agent=codex -timeout=2m` | pass | verified local smoke for profile resources |
-| `go run ./examples/profile-resources -agent=claude -timeout=1m` | fail: `Not logged in` | environment/auth gap |
-| `go run ./examples/profile-resources -agent=cursor -timeout=1m` | fail: `no healthy local cursor CLI command found` | environment/CLI gap |
+| `go run ./examples/showcases/managed-profile -agent=codex -timeout=2m` | pass | verified local smoke for profile resources |
+| `go run ./examples/showcases/managed-profile -agent=claude -timeout=1m` | fail: `Not logged in` | environment/auth gap |
+| `go run ./examples/showcases/managed-profile -agent=cursor -timeout=1m` | fail: `no healthy local cursor CLI command found` | environment/CLI gap |
 
 Repeat the same commands from repo root. A successful run should print `before_sync` and `after_sync` snapshots plus two successful `Run` results. If Claude or Cursor fails earlier, record the CLI/auth gap instead of treating the failure as a profile-resource regression.
 
@@ -638,7 +638,7 @@ resume 规则：
 当前完整性验收记录：
 
 - `go test ./...` 已覆盖 root、Codex、Claude Code、Cursor、profile state/reconcile/config/instructions/agents/hooks 包和 examples 编译。
-- `examples/profile-resources` 已改为真实本机 CLI agent switching（`-agent codex|claude|cursor`），并避免 mock；Codex smoke 已在本机通过，Claude/Cursor 当前分别停在登录门槛和 CLI 健康检查门槛，属于环境缺口。
+- `examples/showcases/managed-profile` 已改为真实本机 CLI agent switching（`-agent codex|claude|cursor`），并避免 mock；Codex smoke 已在本机通过，Claude/Cursor 当前分别停在登录门槛和 CLI 健康检查门槛，属于环境缺口。
 - `ProfileSnapshot.Resources` 现在对 skills / MCP / agents / hooks / instructions / config 都报告 `Support` 与 `Materialization`。
 - instructions 当前 materialization：Codex `native_managed` -> `AGENTS.md` / `AGENTS.override.md`；Claude Code `native_managed` -> `CLAUDE.md`；Cursor `SyncProfile` fallback，`Run` project/local scope -> workspace `.cursor/rules/*.mdc`。
 - `adaptertest` conformance 已覆盖三家 adapter 的 profile resources 基础 managed path，以及 portable_extended、fallback、native_escape、unsupported 的代表性组合。

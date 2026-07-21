@@ -22,6 +22,47 @@ func TestNewReturnsTypedBinding(t *testing.T) {
 	}
 }
 
+func TestCodexRunAddsSkipGitRepoCheckFromTypedConfig(t *testing.T) {
+	home := t.TempDir()
+	workspace := filepath.Join(home, "workspace")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatalf("mkdir workspace: %v", err)
+	}
+	argFile := filepath.Join(home, "args.txt")
+	command := testutil.WriteCommand(t, home, "fake-codex-skip-git-check",
+		"#!/bin/sh\nset -eu\nprintf '%s\\n' \"$@\" > \"$ARG_FILE\"\ncat >/dev/null\nprintf '{\"type\":\"thread.started\",\"thread_id\":\"codex-session\"}\\n'\n",
+		"@echo off\r\n> \"%ARG_FILE%\" echo %*\r\necho {\"type\":\"thread.started\",\"thread_id\":\"codex-session\"}\r\n",
+	)
+
+	_, err := NewAdapter().Run(context.Background(), agentadaptor.DriverRunRequest{
+		Prompt: "test",
+		Config: agentadaptor.CodexConfig{
+			CommonConfig: agentadaptor.CommonConfig{
+				Command: command,
+				CWD:     workspace,
+				Env: []agentadaptor.EnvBinding{
+					{Name: "HOME", Value: home},
+					{Name: "USERPROFILE", Value: home},
+					{Name: "CODEX_HOME", Value: filepath.Join(home, ".codex")},
+					{Name: "ARG_FILE", Value: argFile},
+				},
+			},
+			SkipGitRepoCheck: true,
+		},
+		Workspace: agentadaptor.WorkspaceLease{ID: "workspace-a", CWD: workspace},
+	}, &testutil.EventRecorder{})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	rawArgs, err := os.ReadFile(argFile)
+	if err != nil {
+		t.Fatalf("read args: %v", err)
+	}
+	if count := strings.Count(string(rawArgs), "--skip-git-repo-check"); count != 1 {
+		t.Fatalf("expected one --skip-git-repo-check argument, got %d in %s", count, string(rawArgs))
+	}
+}
+
 func TestDescriptorAdvertisesExpectedMCPCapabilities(t *testing.T) {
 	caps := NewAdapter().Descriptor().MCP
 	if !caps.Supported || !caps.Stdio || !caps.HTTP || caps.SSE {
@@ -301,6 +342,10 @@ func TestConfigSchemaIncludesGroupsDefaultsAndOptions(t *testing.T) {
 	commandField := schemaFieldByName(t, schema, "command")
 	if commandField.Name != "command" || commandField.Group != "command" || commandField.Default != "codex" {
 		t.Fatalf("unexpected command field: %#v", commandField)
+	}
+	skipGitCheckField := schemaFieldByName(t, schema, "skip_git_repo_check")
+	if skipGitCheckField.Type != "toggle" || skipGitCheckField.Group != "execution" || skipGitCheckField.Default != false {
+		t.Fatalf("unexpected skip_git_repo_check field: %#v", skipGitCheckField)
 	}
 }
 

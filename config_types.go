@@ -57,13 +57,14 @@ const (
 )
 
 // CodexConfig configures the built-in codex adapter. CommonConfig controls
-// process/profile/workspace defaults; Model and ReasoningEffort map to Codex
-// model settings.
+// process/profile/workspace defaults; the remaining fields map to Codex CLI
+// settings.
 type CodexConfig struct {
 	CommonConfig
-	Model           string
-	ReasoningEffort ReasoningEffort
-	FastMode        bool
+	Model            string
+	ReasoningEffort  ReasoningEffort
+	FastMode         bool
+	SkipGitRepoCheck bool
 }
 
 // ClaudeConfig configures the built-in claude adapter. MaxTurnsPerRun is a
