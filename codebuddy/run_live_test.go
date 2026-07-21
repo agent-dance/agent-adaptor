@@ -336,7 +336,7 @@ func TestCodeBuddyLivePermissionApprove(t *testing.T) {
 			HumanDecision: agentadaptor.HumanDecisionPolicy{
 				Permission: agentadaptor.HumanDecisionAsk,
 				PlanReview: agentadaptor.HumanDecisionAutoApprove,
-				Question: agentadaptor.QuestionAutoReject,
+				Question:   agentadaptor.QuestionAutoReject,
 			},
 		}),
 		agentadaptor.WithPermissionHandler(func(_ context.Context, req agentadaptor.PermissionRequest) (agentadaptor.PermissionResponse, error) {
@@ -378,6 +378,72 @@ func TestCodeBuddyLivePermissionApprove(t *testing.T) {
 	}
 	if strings.TrimSpace(string(data)) != "hi" {
 		t.Errorf("hello.txt content = %q, want \"hi\"", string(data))
+	}
+}
+
+// TestCodeBuddyLiveQuestionAnswered runs the real CLI through the complete
+// AskUserQuestion path: the host receives the question, supplies an answer,
+// and the CLI continues with that answer.
+func TestCodeBuddyLiveQuestionAnswered(t *testing.T) {
+	requireCodeBuddyCLI(t)
+	cwd := t.TempDir()
+	sdk := newLiveSDK(t, cwd)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	defer cancel()
+
+	var (
+		mu    sync.Mutex
+		calls []agentadaptor.QuestionRequest
+	)
+	handle, err := sdk.Start(ctx,
+		"请使用 AskUserQuestion 工具问我喜欢哪种编程语言。"+
+			"在收到我的回答后，只回复 ANSWER=<回答>，不要使用其他工具。",
+		agentadaptor.WithStreaming(),
+		agentadaptor.WithRunPolicy(agentadaptor.RunPolicy{
+			HumanDecision: agentadaptor.HumanDecisionPolicy{
+				Permission: agentadaptor.HumanDecisionAutoApprove,
+				PlanReview: agentadaptor.HumanDecisionAutoApprove,
+				Question:   agentadaptor.QuestionAsk,
+			},
+		}),
+		agentadaptor.WithQuestionHandler(func(_ context.Context, req agentadaptor.QuestionRequest) (agentadaptor.QuestionResponse, error) {
+			mu.Lock()
+			calls = append(calls, req)
+			mu.Unlock()
+			t.Logf("[question-handler] answering prompt=%q choices=%+v", req.Prompt, req.Choices)
+			return agentadaptor.QuestionResponse{
+				Result: agentadaptor.QuestionAnswered,
+				Choice: "Go",
+				Text:   "Go",
+			}, nil
+		}),
+		agentadaptor.WithSessionKey("codebuddy_live_question", "answered"),
+	)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	wait := logLiveEvents(t, handle)
+	res, err := handle.Wait(ctx)
+	wait()
+	if err != nil {
+		t.Fatalf("Wait: %v", err)
+	}
+
+	mu.Lock()
+	got := append([]agentadaptor.QuestionRequest(nil), calls...)
+	mu.Unlock()
+	if len(got) != 1 {
+		t.Fatalf("question handler calls = %d, want 1; output=%q", len(got), res.Output)
+	}
+	if !strings.Contains(got[0].Prompt, "编程语言") {
+		t.Errorf("question prompt = %q, want programming-language question", got[0].Prompt)
+	}
+	if res.Failure != nil {
+		t.Fatalf("answered question should not fail: %+v", res.Failure)
+	}
+	if !strings.Contains(strings.ToLower(res.Output), "answer=go") {
+		t.Fatalf("final output must contain ANSWER=Go after answer delivery, got %q", res.Output)
 	}
 }
 

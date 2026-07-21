@@ -161,14 +161,14 @@ func encodeControlUser(prompt string) []byte {
 	return append(frame, '\n')
 }
 
-func encodeControlResponse(requestID, toolUseID string, input map[string]any, decision agentadaptor.DecisionResponse, 
+func encodeControlResponse(requestID, toolUseID string, input map[string]any, decision agentadaptor.DecisionResponse,
 	policy agentadaptor.HumanDecisionPolicy) []byte {
 	allowed := decision.Result == agentadaptor.DecisionApproved || decision.Result == agentadaptor.DecisionAnswered
 	response := map[string]any{"allowed": allowed, "tool_use_id": toolUseID}
 	if allowed {
 		updated := cloneMap(input)
 		if decision.Result == agentadaptor.DecisionAnswered {
-			updated["answers"] = decision.Answer
+			updated["answers"] = questionAnswers(input, decision)
 			if decision.Choice != "" {
 				updated["choice"] = decision.Choice
 			}
@@ -176,8 +176,6 @@ func encodeControlResponse(requestID, toolUseID string, input map[string]any, de
 		response["updatedInput"] = updated
 	} else {
 		response["reason"] = decision.Text
-		// interrupt 始终以 bool 输出（对齐 codebuddy SDK 的 control_response 契约），
-		// 是否中止运行按策略门控（对齐 claude decorateInteractiveControlResponse）。
 		response["interrupt"] = controlDenyInterrupts(decision.Result, policy)
 	}
 	frame, _ := json.Marshal(map[string]any{
@@ -232,6 +230,32 @@ func questionPrompt(input map[string]any) string {
 	}
 	question, _ := questions[0].(map[string]any)
 	return topString(question, "question", "header")
+}
+
+// questionAnswers 将宿主的显式 Answer 原样写入 CodeBuddy 控制响应。
+// 未提供 Answer 时，使用 SDK 的 Text 或 Choice 回填首题。
+func questionAnswers(input map[string]any, decision agentadaptor.DecisionResponse) map[string]any {
+	if len(decision.Answer) > 0 {
+		return cloneMap(decision.Answer)
+	}
+	answer := strings.TrimSpace(decision.Text)
+	if answer == "" {
+		answer = strings.TrimSpace(decision.Choice)
+	}
+	question := firstQuestionText(input)
+	if answer == "" || question == "" {
+		return nil
+	}
+	return map[string]any{question: answer}
+}
+
+func firstQuestionText(input map[string]any) string {
+	questions, _ := input["questions"].([]any)
+	if len(questions) == 0 {
+		return ""
+	}
+	question, _ := questions[0].(map[string]any)
+	return topString(question, "question")
 }
 
 func questionChoices(input map[string]any) []agentadaptor.DecisionChoice {

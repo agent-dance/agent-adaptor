@@ -3,6 +3,7 @@ package codebuddy
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"sync"
 	"testing"
 
@@ -235,6 +236,66 @@ func TestControlQuestionWritesAnswersToUpdatedInput(t *testing.T) {
 	}
 }
 
+func TestControlQuestionPassesNestedAnswerThroughUnchanged(t *testing.T) {
+	answers := map[string]any{
+		"第一题": "答案一",
+		"第二题": "答案二",
+		"第三题": "答案三",
+	}
+	want := map[string]any{"answers": answers}
+	sink := &controlTestSink{respond: func(req agentadaptor.DecisionRequest) agentadaptor.DecisionResponse {
+		return agentadaptor.DecisionResponse{
+			RequestID: req.RequestID,
+			Result:    agentadaptor.DecisionAnswered,
+			Answer:    want,
+		}
+	}}
+	stdin := &controlTestStdin{}
+	p := newParser(sink)
+	p.enableControl(context.Background(), sink, stdin, "run-1", agentadaptor.HumanDecisionPolicy{Question: agentadaptor.QuestionAsk}, "prompt")
+	line := []byte(`{"type":"control_request","request_id":"question-1","request":{"subtype":"can_use_tool","tool_name":"AskUserQuestion","tool_use_id":"tool-question","input":{"questions":[{"question":"第一题"},{"question":"第二题"},{"question":"第三题"}]}}}` + "\n")
+	if err := p.onChunk("stdout", line, timeNow()); err != nil {
+		t.Fatal(err)
+	}
+
+	var frame struct {
+		Response struct {
+			Response struct {
+				UpdatedInput map[string]any `json:"updatedInput"`
+			} `json:"response"`
+		} `json:"response"`
+	}
+	if err := json.Unmarshal(stdin.frames[0], &frame); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := frame.Response.Response.UpdatedInput["answers"].(map[string]any)
+	if !ok {
+		t.Fatalf("updated answers type = %T, want map: %#v", frame.Response.Response.UpdatedInput["answers"], frame.Response.Response.UpdatedInput)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("updated answers = %#v, want %#v", got, want)
+	}
+}
+
+func TestQuestionAnswersPreservesDirectMultiQuestionAnswers(t *testing.T) {
+	input := map[string]any{
+		"questions": []any{
+			map[string]any{"question": "第一题"},
+			map[string]any{"question": "第二题"},
+			map[string]any{"question": "第三题"},
+		},
+	}
+	want := map[string]any{
+		"第一题": "答案一",
+		"第二题": "答案二",
+		"第三题": "答案三",
+	}
+	got := questionAnswers(input, agentadaptor.DecisionResponse{Answer: want})
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("question answers = %#v, want %#v", got, want)
+	}
+}
+
 func TestControlDenyInterruptHonorsPolicy(t *testing.T) {
 	decodeInner := func(frame []byte) map[string]any {
 		var env struct {
@@ -305,6 +366,70 @@ func TestControlDenyInterruptHonorsPolicy(t *testing.T) {
 				t.Fatalf("interrupt = %v, want %v (resp=%#v)", interrupt, tc.wantInterrupt, resp)
 			}
 		})
+	}
+}
+
+// TestControlQuestionAnswersFromChoiceWhenAnswerMissing locks the fix for the
+// hang reported when hosts (debug viewer / production web viewer) resolve an
+// AskUserQuestion decision with only Choice set (no Answer) — a form that is
+// explicitly legal per docs/workstream-hitl-v2.md §3.12 and already handled
+// by the claude driver's resolveSingleQuestionAnswer fallback. Previously
+// codebuddy only trusted decision.Answer, so updatedInput.answers stayed nil
+// no matter which choice the host picked, and the CLI never unblocked.
+func TestControlQuestionAnswersFromChoiceWhenAnswerMissing(t *testing.T) {
+	sink := &controlTestSink{respond: func(req agentadaptor.DecisionRequest) agentadaptor.DecisionResponse {
+		return agentadaptor.DecisionResponse{RequestID: req.RequestID, Result: agentadaptor.DecisionAnswered, Choice: "A"}
+	}}
+	stdin := &controlTestStdin{}
+	p := newParser(sink)
+	p.enableControl(context.Background(), sink, stdin, "run-1", agentadaptor.HumanDecisionPolicy{Question: agentadaptor.QuestionAsk}, "prompt")
+	line := []byte(`{"type":"control_request","request_id":"question-1","request":{"subtype":"can_use_tool","tool_name":"AskUserQuestion","tool_use_id":"tool-question","input":{"questions":[{"question":"Choose","options":[{"label":"A"},{"label":"B"}]}]}}}` + "\n")
+	if err := p.onChunk("stdout", line, timeNow()); err != nil {
+		t.Fatal(err)
+	}
+	var frame struct {
+		Response struct {
+			Response struct {
+				UpdatedInput map[string]any `json:"updatedInput"`
+			} `json:"response"`
+		} `json:"response"`
+	}
+	if err := json.Unmarshal(stdin.frames[0], &frame); err != nil {
+		t.Fatal(err)
+	}
+	answers, ok := frame.Response.Response.UpdatedInput["answers"].(map[string]any)
+	if !ok || answers["Choose"] != "A" {
+		t.Fatalf("updated answers = %#v, want {Choose: A}", frame.Response.Response.UpdatedInput)
+	}
+}
+
+// TestControlQuestionAnswersFromChoiceFallsBackToRawValue covers a choice
+// that doesn't match any known option label (defensive path): the raw
+// choice string is still surfaced as the answer instead of null.
+func TestControlQuestionAnswersFromChoiceFallsBackToRawValue(t *testing.T) {
+	sink := &controlTestSink{respond: func(req agentadaptor.DecisionRequest) agentadaptor.DecisionResponse {
+		return agentadaptor.DecisionResponse{RequestID: req.RequestID, Result: agentadaptor.DecisionAnswered, Choice: "custom-value"}
+	}}
+	stdin := &controlTestStdin{}
+	p := newParser(sink)
+	p.enableControl(context.Background(), sink, stdin, "run-1", agentadaptor.HumanDecisionPolicy{Question: agentadaptor.QuestionAsk}, "prompt")
+	line := []byte(`{"type":"control_request","request_id":"question-1","request":{"subtype":"can_use_tool","tool_name":"AskUserQuestion","tool_use_id":"tool-question","input":{"questions":[{"question":"Choose","options":[{"label":"A"}]}]}}}` + "\n")
+	if err := p.onChunk("stdout", line, timeNow()); err != nil {
+		t.Fatal(err)
+	}
+	var frame struct {
+		Response struct {
+			Response struct {
+				UpdatedInput map[string]any `json:"updatedInput"`
+			} `json:"response"`
+		} `json:"response"`
+	}
+	if err := json.Unmarshal(stdin.frames[0], &frame); err != nil {
+		t.Fatal(err)
+	}
+	answers, ok := frame.Response.Response.UpdatedInput["answers"].(map[string]any)
+	if !ok || answers["Choose"] != "custom-value" {
+		t.Fatalf("updated answers = %#v, want {Choose: custom-value}", frame.Response.Response.UpdatedInput)
 	}
 }
 
