@@ -181,8 +181,7 @@ func (m *eventMapper) statusTextEvents(taskID, contextID string, message clienta
 	return []DelegationEvent{start, delta, end}
 }
 
-// completeStatusDelegationEvent fills host-owned delegation and A2A context on
-// a semantic event returned by a StatusPartDecoder.
+// completeStatusDelegationEvent 为 decoder 返回的语义事件补齐当前 delegation 和 A2A 上下文。
 func (m *eventMapper) completeStatusDelegationEvent(
 	taskID, contextID, messageID, profile string,
 	decoded DelegationEvent,
