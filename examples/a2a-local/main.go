@@ -399,18 +399,24 @@ func consumeStream(stream *clienta2a.Stream) (streamSummary, string, error) {
 		case clienta2a.EventStatus:
 			if event.Status != nil {
 				rememberState(&summary, event.Status.State)
+				if event.Status.Message != nil {
+					for _, part := range event.Status.Message.Parts {
+						if part.Kind != clienta2a.PartData {
+							continue
+						}
+						payload, matched, err := bridgea2a.DecodeAdapterStreamStatus(part.Data)
+						if err == nil && matched && payload.Kind == agentadaptor.StreamTextContent {
+							output.WriteString(payload.Delta)
+						}
+					}
+				}
 			}
 		case clienta2a.EventArtifact:
 			summary.ArtifactChunks++
 			if event.Artifact == nil {
 				continue
 			}
-			switch event.Artifact.Name {
-			case bridgea2a.ArtifactAssistantOutput:
-				if !event.LastChunk {
-					output.WriteString(partsText(event.Artifact.Parts))
-				}
-			case bridgea2a.ArtifactAgentAdaptorResult:
+			if event.Artifact.Name == bridgea2a.ArtifactAgentAdaptorResult {
 				summary.ResultArtifactSeen = true
 			}
 		case clienta2a.EventTerminal:

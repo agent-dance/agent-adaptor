@@ -9,104 +9,25 @@ import (
 	clienta2a "github.com/agent-dance/agent-adaptor/pkg/clients/a2a"
 )
 
-// TestEventMapperAssistantOutputChunksFollowTextLifecycle verifies that A2A artifact chunks become an AG-UI-compatible text lifecycle.
-func TestEventMapperAssistantOutputChunksFollowTextLifecycle(t *testing.T) {
-	mapper := newEventMapper(DelegationEvent{RunID: "run-1", DelegationID: "del-1", AgentKey: "research"})
-	first := mapper.Map(clienta2a.Event{
-		Kind:      clienta2a.EventArtifact,
-		TaskID:    "task-1",
-		ContextID: "ctx-1",
-		Artifact: &clienta2a.Artifact{
-			ID: "assistant-output", Name: bridgea2a.ArtifactAssistantOutput,
-			Parts: []clienta2a.Part{{Kind: clienta2a.PartText, Text: "hello"}},
-		},
-	})
-	if len(first) != 3 {
-		t.Fatalf("first chunk events = %#v", first)
-	}
-	if first[0].Kind != DelegationStarted || first[1].Kind != DelegationTextStart || first[2].Kind != DelegationTextDelta {
-		t.Fatalf("first chunk lifecycle = %#v", first)
-	}
-	if first[1].RemoteMessageID != "assistant-output" || first[2].RemoteMessageID != first[1].RemoteMessageID {
-		t.Fatalf("first chunk message IDs = %#v", first)
-	}
-
-	last := mapper.Map(clienta2a.Event{
-		Kind:      clienta2a.EventArtifact,
-		TaskID:    "task-1",
-		ContextID: "ctx-1",
-		Artifact: &clienta2a.Artifact{
-			ID: "assistant-output", Name: bridgea2a.ArtifactAssistantOutput,
-			Parts: []clienta2a.Part{{Kind: clienta2a.PartText, Text: " world"}},
-		},
-		Append: true, LastChunk: true,
-	})
-	if len(last) != 2 || last[0].Kind != DelegationTextDelta || last[1].Kind != DelegationTextEnd {
-		t.Fatalf("last chunk lifecycle = %#v", last)
-	}
-	if last[0].RemoteMessageID != "assistant-output" || last[1].RemoteMessageID != "assistant-output" {
-		t.Fatalf("last chunk message IDs = %#v", last)
-	}
-}
-
-// TestEventMapperToolArtifactsFollowToolLifecycle verifies bridge tool artifacts are restored to typed host events.
-func TestEventMapperToolArtifactsFollowToolLifecycle(t *testing.T) {
-	mapper := newEventMapper(DelegationEvent{RunID: "run-1", DelegationID: "del-1", AgentKey: "implement"})
-	start := mapper.Map(clienta2a.Event{
-		Kind:      clienta2a.EventArtifact,
-		TaskID:    "task-1",
-		ContextID: "ctx-1",
-		Artifact: &clienta2a.Artifact{
-			ID:   "tool-call-bash-1",
-			Name: "tool-call-bash-1",
-			Parts: []clienta2a.Part{{
-				Kind: clienta2a.PartData,
-				Data: map[string]any{"kind": "tool_call.start", "id": "bash-1", "name": "Bash", "args": map[string]any{"command": "go test ./..."}},
-			}},
-		},
-	})
-	if len(start) != 3 || start[1].Kind != DelegationArtifactCreated || start[2].Kind != DelegationToolCallStart || start[2].RemoteToolCallID != "bash-1" || start[2].ToolName != "Bash" {
-		t.Fatalf("start events = %#v", start)
-	}
-
-	args := mapper.Map(clienta2a.Event{
-		Kind: clienta2a.EventArtifact, TaskID: "task-1", ContextID: "ctx-1",
-		Artifact: &clienta2a.Artifact{ID: "tool-call-bash-1", Name: "tool-call-bash-1", Parts: []clienta2a.Part{{Kind: clienta2a.PartText, Text: " --race"}}},
-	})
-	if len(args) != 2 || args[0].Kind != DelegationArtifactCreated || args[1].Kind != DelegationToolCallArgs || args[1].Delta != " --race" || args[1].RemoteToolCallID != "bash-1" {
-		t.Fatalf("args events = %#v", args)
-	}
-
-	end := mapper.Map(clienta2a.Event{
-		Kind: clienta2a.EventArtifact, TaskID: "task-1", ContextID: "ctx-1", LastChunk: true,
-		Artifact: &clienta2a.Artifact{
-			ID:   "tool-call-bash-1-end",
-			Name: "tool-call-bash-1-end",
-			Parts: []clienta2a.Part{{
-				Kind: clienta2a.PartData,
-				Data: map[string]any{"kind": "tool_call.end", "id": "bash-1"},
-			}},
-		},
-	})
-	if len(end) != 2 || end[0].Kind != DelegationArtifactCreated || end[1].Kind != DelegationToolCallEnd || end[1].RemoteToolCallID != "bash-1" {
-		t.Fatalf("end events = %#v", end)
-	}
-
-	result := mapper.Map(clienta2a.Event{
-		Kind:      clienta2a.EventArtifact,
-		TaskID:    "task-1",
-		ContextID: "ctx-1",
-		Artifact: &clienta2a.Artifact{
-			ID:   "tool-call-bash-1-result",
-			Name: "tool-call-bash-1-result",
-			Parts: []clienta2a.Part{{
-				Kind: clienta2a.PartData,
-				Data: map[string]any{"kind": "tool_call.result", "id": "bash-1", "result": "ok"},
-			}},
-		},
-	})
-	if len(result) != 2 || result[0].Kind != DelegationArtifactCreated || result[1].Kind != DelegationToolCallResult || result[1].RemoteToolCallID != "bash-1" || result[1].Result != "ok" {
-		t.Fatalf("result events = %#v", result)
+// TestEventMapperArtifactsNeverCreateProcessEvents verifies ArtifactUpdate is
+// reserved for final artifacts even when an artifact uses a historical process name.
+func TestEventMapperArtifactsNeverCreateProcessEvents(t *testing.T) {
+	for _, name := range []string{"assistant-output", "tool-call-bash-1", "reasoning", "stream-dropped"} {
+		mapper := newEventMapper(DelegationEvent{RunID: "run-1", DelegationID: "del-1", AgentKey: "implement"})
+		events := mapper.Map(clienta2a.Event{
+			Kind:      clienta2a.EventArtifact,
+			TaskID:    "task-1",
+			ContextID: "ctx-1",
+			Artifact: &clienta2a.Artifact{
+				ID:    name,
+				Name:  name,
+				Parts: []clienta2a.Part{{Kind: clienta2a.PartText, Text: "final result"}},
+			},
+			LastChunk: true,
+		})
+		if len(events) != 2 || events[0].Kind != DelegationStarted || events[1].Kind != DelegationArtifactCreated {
+			t.Fatalf("artifact %q events = %#v", name, events)
+		}
 	}
 }
 
@@ -159,25 +80,6 @@ func TestEventMapperTerminalStatusPreservesDataParts(t *testing.T) {
 	}
 	if len(events[1].StatusParts) != 1 {
 		t.Fatalf("terminal status parts = %#v", events[1].StatusParts)
-	}
-}
-
-// TestEventMapperFinalToolArgsEmitsArgsBeforeEnd verifies recovered task snapshots retain complete arguments.
-func TestEventMapperFinalToolArgsEmitsArgsBeforeEnd(t *testing.T) {
-	mapper := newEventMapper(DelegationEvent{RunID: "run-1", DelegationID: "del-1", AgentKey: "implement"})
-	events := mapper.Map(clienta2a.Event{
-		Kind: clienta2a.EventArtifact, TaskID: "task-1", ContextID: "ctx-1", LastChunk: true,
-		Artifact: &clienta2a.Artifact{
-			ID:   "tool-call-bash-1",
-			Name: "tool-call-bash-1",
-			Parts: []clienta2a.Part{{
-				Kind: clienta2a.PartText,
-				Text: `{"command":"go test ./..."}`,
-			}},
-		},
-	})
-	if len(events) != 4 || events[1].Kind != DelegationArtifactCreated || events[2].Kind != DelegationToolCallArgs || events[3].Kind != DelegationToolCallEnd {
-		t.Fatalf("events = %#v", events)
 	}
 }
 
@@ -259,16 +161,16 @@ func TestEventMapperAdapterStreamProfile(t *testing.T) {
 		t.Fatalf("tool args event = %#v", third[2])
 	}
 
-	legacy := mapper.Map(clienta2a.Event{
+	artifact := mapper.Map(clienta2a.Event{
 		Kind: clienta2a.EventArtifact,
 		Artifact: &clienta2a.Artifact{
 			ID:    "assistant-output",
-			Name:  bridgea2a.ArtifactAssistantOutput,
+			Name:  "assistant-output",
 			Parts: []clienta2a.Part{{Kind: clienta2a.PartText, Text: "duplicate"}},
 		},
 	})
-	if len(legacy) != 0 {
-		t.Fatalf("mixed legacy events = %#v", legacy)
+	if len(artifact) != 1 || artifact[0].Kind != DelegationArtifactCreated {
+		t.Fatalf("artifact events = %#v", artifact)
 	}
 }
 
