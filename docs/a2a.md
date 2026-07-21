@@ -27,7 +27,9 @@ The bridge maps A2A task execution onto the single SDK execution path:
 4. The bridge calls `Runner.Start(...)` and applies `RunStreaming` as the final
    per-call streaming override (`WithStreaming` by default,
    `WithoutStreaming` when disabled).
-5. `StreamEvents`, `Wait`, and `Cancel` are translated to A2A status, artifact, and terminal events.
+5. `StreamEvents` are translated to `TaskStatusUpdateEvent` DataParts using the
+   `adapter.stream.v1` schema. `Wait` and `Cancel` produce terminal status and
+   final artifact events.
 
 Bridge capability advertisement is strict:
 
@@ -39,8 +41,12 @@ Bridge capability advertisement is strict:
   compatibility, with `PromptBuilder` taking precedence when both are set.
 - `ServerOptions.ResultBuilder` can add or replace terminal artifacts and
   override completed status text. It runs only after a successful SDK result;
-  streamed artifacts already emitted during the run are not retroactively
-  removed.
+  intermediate status events are not changed retroactively.
+- Intermediate text, reasoning, tool, HITL, and dropped-stream events always
+  use `TaskStatusUpdateEvent` DataParts with the stable `adapter.stream.v1`
+  schema. The server advertises the `urn:agent-adaptor:stream:v1` Agent Card
+  extension while each DataPart remains self-describing. `ArtifactUpdate` is
+  reserved for final result artifacts.
 
 ```go
 runner := sdk.Default()
@@ -74,7 +80,7 @@ mux.Handle("/a2a", server.Handler())
 
 See [`examples/a2a-local`](../examples/a2a-local) for a runnable local
 end-to-end demo that starts this bridge around a real local SDK runner, calls
-it with `pkg/clients/a2a`, consumes streaming artifacts, and verifies the final
+it with `pkg/clients/a2a`, consumes streaming status updates, and verifies the final
 task with `GetTask`. The example defaults to an isolated temporary workspace
 and isolated cloned provider profile seeded from native settings so custom API
 key / base URL setups work without writing demo state into a host's active
@@ -82,14 +88,9 @@ local agent profile.
 
 The terminal result is emitted as a structured artifact named `agent-adaptor-result`. Assistant-facing output remains in the final A2A status message. The default artifact contains only the safe summary; diagnostics such as metadata, usage, provider result payloads, transcript, raw streams, reasoning, tool-call internals, and HITL payloads require explicit `ExposurePolicy` opt-in and are sanitized before they cross the A2A boundary.
 
-Bridge-owned artifact names are part of the package contract for hosts that
-compose this bridge with higher-level stream overlays:
-
-- `a2a.ArtifactAssistantOutput` (`assistant-output`) carries streamed
-  assistant-facing text deltas and closes with `lastChunk=true`.
-- `a2a.ArtifactAgentAdaptorResult` (`agent-adaptor-result`) carries the
-  terminal summary and any opt-in sanitized diagnostics, and is emitted as a
-  single final chunk.
+`a2a.ArtifactAgentAdaptorResult` (`agent-adaptor-result`) carries the terminal
+summary and any opt-in sanitized diagnostics, and is emitted as a single final
+chunk. No bridge-owned artifact name represents an intermediate process event.
 
 Task retention is explicit. `NewServer` no longer hides the upstream unbounded in-memory task store. If `ServerOptions.TaskLifecycle.Store` is nil, the bridge uses a bounded ephemeral store with a default `MaxTasks=256` and `TTL=1h`. Hosts that need durable retention, custom paging/auth behavior, or cross-process lifecycle ownership must inject their own `a2asrv/taskstore.Store`.
 
@@ -215,13 +216,19 @@ progress is published to the bus and rendered as AG-UI custom events:
 ```
 
 Assistant output uses the ordered `subagent.text.start`,
-`subagent.text.delta`, and `subagent.text.end` lifecycle. Bridge-generated tool
-artifacts continue to emit `subagent.artifact` for existing consumers and also
-emit typed `subagent.tool_call.start`, `subagent.tool_call.args`,
-`subagent.tool_call.result`, and `subagent.tool_call.end` events. For typed tool
-events, `StreamPayload.ToolCallID` is the remote tool-call ID; the parent model
-tool-call ID remains available as `parentToolCallId` and
-`Raw["parent_tool_call_id"]`.
+`subagent.text.delta`, and `subagent.text.end` lifecycle. Process events are
+decoded only from StatusUpdate message parts. `ArtifactUpdate` always produces
+a final `subagent.artifact.created` event and is never interpreted as text,
+reasoning, or a tool lifecycle. Hosts using `adapter.stream.v1` receive typed
+`DelegationEvent` values for each supported Status DataPart. A host-owned schema
+can implement `StatusPartDecoder` and pass it through `WithStatusPartDecoder`;
+the decoder directly returns `DelegationEvent` values containing only its event
+meaning, while the mapper fills delegation identity, remote A2A context, profile,
+and default time. The mapper locks one stream profile per delegation,
+deduplicates replayed status data, and reports sequence gaps as
+`subagent.stream.dropped`. For typed tool events, `StreamPayload.ToolCallID` is
+the remote tool-call ID; the parent model tool-call ID remains available as
+`parentToolCallId` and `Raw["parent_tool_call_id"]`.
 
 `parentToolCallId` is included only when the host can supply the parent provider
 tool-call ID, for example by setting `a2adelegation.MCPServerOptions.ParentToolCallID`

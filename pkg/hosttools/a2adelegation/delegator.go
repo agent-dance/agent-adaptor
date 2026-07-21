@@ -41,15 +41,37 @@ type A2AClient interface {
 type ClientFactory func(RemoteAgentSpec) A2AClient
 
 type Delegator struct {
-	Registry      *Registry
-	Bus           *EventBus
-	NewClient     ClientFactory
-	NewID         func() string
-	LifecycleHook DelegationLifecycleHook
+	Registry       *Registry
+	Bus            *EventBus
+	NewClient      ClientFactory
+	NewID          func() string
+	LifecycleHook  DelegationLifecycleHook
+	statusDecoders []StatusPartDecoder
 }
 
-func NewDelegator(registry *Registry, bus *EventBus) *Delegator {
-	return &Delegator{Registry: registry, Bus: bus}
+// DelegatorOption 配置 Delegator 的扩展行为。
+type DelegatorOption func(*Delegator)
+
+// WithStatusPartDecoder 注册一种宿主拥有的 Status DataPart schema decoder。
+func WithStatusPartDecoder(decoder StatusPartDecoder) DelegatorOption {
+	return func(d *Delegator) {
+		if decoder != nil {
+			d.statusDecoders = append(d.statusDecoders, decoder)
+		}
+	}
+}
+
+func NewDelegator(registry *Registry, bus *EventBus, opts ...DelegatorOption) *Delegator {
+	d := &Delegator{
+		Registry: registry,
+		Bus:      bus,
+	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(d)
+		}
+	}
+	return d
 }
 
 type delegationRun struct {
@@ -207,7 +229,7 @@ func (r *delegationRun) delegateStreaming(ctx context.Context, client A2AClient,
 	}
 	defer stream.Close()
 	// 2. Track remote identity and mapper state for recovery and lifecycle closure.
-	mapper := newEventMapper(baseEvent)
+	mapper := newEventMapper(baseEvent, r.statusDecoders...)
 	var lastTask clienta2a.Task
 	lastTaskID := ""
 	cancelResult := func() (DelegationResult, error) {
@@ -355,7 +377,7 @@ func (r *delegationRun) delegatePolling(ctx context.Context, client A2AClient, s
 		baseResult.Error = derr
 		return baseResult, derr
 	}
-	mapper := newEventMapper(baseEvent)
+	mapper := newEventMapper(baseEvent, r.statusDecoders...)
 	r.publish(mapper.Started(task.ID, task.ContextID))
 	for _, ev := range mapper.taskEvents(task) {
 		r.publish(ev)
@@ -585,7 +607,7 @@ func failedEvent(base DelegationEvent, derr *DelegationError) DelegationEvent {
 
 func (r *delegationRun) finishTask(baseEvent DelegationEvent, baseResult DelegationResult, task clienta2a.Task, policy DelegationPolicy, maxArtifacts *int, includeRemoteArtifacts bool, mapper *eventMapper) (DelegationResult, error) {
 	if mapper == nil {
-		mapper = newEventMapper(baseEvent)
+		mapper = newEventMapper(baseEvent, r.statusDecoders...)
 	}
 	if derr := policyErrorForTask(task, policy); derr != nil {
 		r.publishAll(mapper.closeOpen(task.ID, task.ContextID))

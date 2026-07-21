@@ -1,6 +1,8 @@
 package a2adelegation
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"strings"
 
@@ -9,14 +11,26 @@ import (
 )
 
 type eventMapper struct {
-	base        DelegationEvent
-	started     bool
-	openMessage string
+	base           DelegationEvent
+	started        bool
+	openMessage    string
+	statusDecoders []StatusPartDecoder
+	streamProfile  string
+	lastSequence   uint64
+	seenStatusData map[string]struct{}
+	seenStatusText map[string]struct{}
 }
 
-func newEventMapper(base DelegationEvent) *eventMapper {
+func newEventMapper(base DelegationEvent, decoders ...StatusPartDecoder) *eventMapper {
 	base.Protocol = ProtocolA2A
-	return &eventMapper{base: base}
+	statusDecoders := []StatusPartDecoder{adapterStreamStatusDecoder{}}
+	statusDecoders = append(statusDecoders, decoders...)
+	return &eventMapper{
+		base:           base,
+		statusDecoders: statusDecoders,
+		seenStatusData: map[string]struct{}{},
+		seenStatusText: map[string]struct{}{},
+	}
 }
 
 func (m *eventMapper) Started(taskID, contextID string) DelegationEvent {
@@ -36,7 +50,7 @@ func (m *eventMapper) Map(event clienta2a.Event) []DelegationEvent {
 	}
 	switch event.Kind {
 	case clienta2a.EventStatus:
-		out = append(out, m.statusEvent(event.TaskID, event.ContextID, event.Status))
+		out = append(out, m.statusEvents(event.TaskID, event.ContextID, event.Status)...)
 	case clienta2a.EventTask:
 		if event.Task != nil {
 			out = append(out, m.taskEvents(*event.Task)...)
@@ -50,6 +64,11 @@ func (m *eventMapper) Map(event clienta2a.Event) []DelegationEvent {
 			out = append(out, m.artifactEvents(event)...)
 		}
 	case clienta2a.EventTerminal:
+		if event.Status != nil {
+			out = append(out, m.statusEvents(event.TaskID, event.ContextID, event.Status)...)
+		} else if event.Task != nil && event.Task.Status.State != "" {
+			out = append(out, m.statusEvents(event.Task.ID, event.Task.ContextID, &event.Task.Status)...)
+		}
 		if event.Message != nil {
 			out = append(out, m.messageEvents(*event.Message)...)
 		}
@@ -60,7 +79,7 @@ func (m *eventMapper) Map(event clienta2a.Event) []DelegationEvent {
 func (m *eventMapper) taskEvents(task clienta2a.Task) []DelegationEvent {
 	out := []DelegationEvent{}
 	if task.Status.State != "" {
-		out = append(out, m.statusEvent(task.ID, task.ContextID, &task.Status))
+		out = append(out, m.statusEvents(task.ID, task.ContextID, &task.Status)...)
 	}
 	for _, artifact := range task.Artifacts {
 		out = append(out, m.artifactEvents(clienta2a.Event{
@@ -69,6 +88,166 @@ func (m *eventMapper) taskEvents(task clienta2a.Task) []DelegationEvent {
 		})...)
 	}
 	return out
+}
+
+func (m *eventMapper) statusEvents(taskID, contextID string, status *clienta2a.TaskStatus) []DelegationEvent {
+	base := m.statusEvent(taskID, contextID, status)
+	out := []DelegationEvent{base}
+	if status == nil || status.Message == nil {
+		return out
+	}
+	message := *status.Message
+	out = append(out, m.statusPartEvents(taskID, contextID, message)...)
+	if m.streamProfile != bridgea2a.AdapterStreamSchemaV1 {
+		out = append(out, m.statusTextEvents(taskID, contextID, message)...)
+	}
+	return out
+}
+
+func (m *eventMapper) statusPartEvents(taskID, contextID string, message clienta2a.Message) []DelegationEvent {
+	var out []DelegationEvent
+	for _, part := range message.Parts {
+		if part.Kind != clienta2a.PartData {
+			continue
+		}
+		for _, decoder := range m.statusDecoders {
+			if decoder == nil || strings.TrimSpace(decoder.Profile()) == "" {
+				continue
+			}
+			decoded, matched, err := decoder.DecodeStatusPart(part.Data)
+			if !matched {
+				continue
+			}
+			profile := decoder.Profile()
+			if !m.claimStreamProfile(profile) {
+				break
+			}
+			fingerprint := statusDataFingerprint(profile, message.ID, part.Data)
+			if _, seen := m.seenStatusData[fingerprint]; seen {
+				break
+			}
+			m.seenStatusData[fingerprint] = struct{}{}
+			if err != nil {
+				out = append(out, m.droppedEvent(taskID, contextID, profile, 0, map[string]any{"reason": err.Error()}))
+				break
+			}
+			sequence := firstStatusSequence(decoded)
+			if sequence != 0 {
+				if sequence <= m.lastSequence {
+					break
+				}
+				if m.lastSequence != 0 && sequence > m.lastSequence+1 {
+					out = append(out, m.droppedEvent(taskID, contextID, profile, 0, map[string]any{
+						"dropped_count": sequence - m.lastSequence - 1,
+						"first_missing": m.lastSequence + 1,
+						"last_missing":  sequence - 1,
+					}))
+				}
+				m.lastSequence = sequence
+			}
+			for _, event := range decoded {
+				out = append(out, m.completeStatusDelegationEvent(taskID, contextID, message.ID, profile, event))
+			}
+			break
+		}
+	}
+	return out
+}
+
+func (m *eventMapper) statusTextEvents(taskID, contextID string, message clienta2a.Message) []DelegationEvent {
+	text := textFromMessage(message)
+	if strings.TrimSpace(text) == "" {
+		return nil
+	}
+	messageID := strings.TrimSpace(message.ID)
+	if messageID == "" {
+		messageID = m.base.DelegationID + ":status"
+	}
+	fingerprint := messageID + ":" + text
+	if _, seen := m.seenStatusText[fingerprint]; seen {
+		return nil
+	}
+	m.seenStatusText[fingerprint] = struct{}{}
+	start := m.base
+	start.Kind = DelegationTextStart
+	start.RemoteTaskID = taskID
+	start.RemoteContextID = contextID
+	start.RemoteMessageID = messageID
+	delta := start
+	delta.Kind = DelegationTextDelta
+	delta.Delta = text
+	end := start
+	end.Kind = DelegationTextEnd
+	return []DelegationEvent{start, delta, end}
+}
+
+// completeStatusDelegationEvent 为 decoder 返回的语义事件补齐当前 delegation 和 A2A 上下文。
+func (m *eventMapper) completeStatusDelegationEvent(
+	taskID, contextID, messageID, profile string,
+	decoded DelegationEvent,
+) DelegationEvent {
+	ev := decoded
+	ev.RunID = m.base.RunID
+	ev.ParentToolCallID = m.base.ParentToolCallID
+	ev.DelegationID = m.base.DelegationID
+	ev.AgentKey = m.base.AgentKey
+	ev.AgentName = m.base.AgentName
+	ev.Protocol = m.base.Protocol
+	ev.RemoteTaskID = taskID
+	ev.RemoteContextID = contextID
+	if ev.RemoteMessageID == "" {
+		ev.RemoteMessageID = messageID
+	}
+	ev.Raw = cloneAnyMap(decoded.Raw)
+	if ev.Raw == nil {
+		ev.Raw = map[string]any{}
+	}
+	ev.Raw["stream_profile"] = profile
+	if ev.Time.IsZero() {
+		ev.Time = m.base.Time
+	}
+	return ev
+}
+
+func (m *eventMapper) droppedEvent(
+	taskID, contextID, profile string,
+	sequence uint64,
+	raw map[string]any,
+) DelegationEvent {
+	ev := m.base
+	ev.Kind = DelegationStreamDropped
+	ev.RemoteTaskID = taskID
+	ev.RemoteContextID = contextID
+	ev.Sequence = sequence
+	ev.Raw = cloneAnyMap(raw)
+	if ev.Raw == nil {
+		ev.Raw = map[string]any{}
+	}
+	ev.Raw["stream_profile"] = profile
+	return ev
+}
+
+func (m *eventMapper) claimStreamProfile(profile string) bool {
+	if m.streamProfile == "" {
+		m.streamProfile = profile
+		return true
+	}
+	return m.streamProfile == profile
+}
+
+func firstStatusSequence(events []DelegationEvent) uint64 {
+	for _, event := range events {
+		if event.Sequence != 0 {
+			return event.Sequence
+		}
+	}
+	return 0
+}
+
+func statusDataFingerprint(profile, messageID string, data any) string {
+	raw, _ := json.Marshal(data)
+	digest := sha256.Sum256(raw)
+	return profile + ":" + messageID + ":" + hex.EncodeToString(digest[:])
 }
 
 func (m *eventMapper) statusEvent(taskID, contextID string, status *clienta2a.TaskStatus) DelegationEvent {
@@ -80,7 +259,9 @@ func (m *eventMapper) statusEvent(taskID, contextID string, status *clienta2a.Ta
 		ev.Status = string(status.State)
 		ev.Raw = map[string]any{"status": string(status.State)}
 		if status.Message != nil {
+			ev.RemoteMessageID = status.Message.ID
 			ev.Text = textFromMessage(*status.Message)
+			ev.StatusParts = cloneRemoteParts(status.Message.Parts)
 		}
 	}
 	return ev
@@ -123,12 +304,6 @@ func (m *eventMapper) messageEvents(msg clienta2a.Message) []DelegationEvent {
 
 func (m *eventMapper) artifactEvents(event clienta2a.Event) []DelegationEvent {
 	artifact := *event.Artifact
-	if artifact.Name == bridgea2a.ArtifactAssistantOutput {
-		return m.assistantOutputEvents(event, artifact)
-	}
-	if events := m.toolCallEvents(event, artifact); len(events) > 0 {
-		return append([]DelegationEvent{m.artifactCreatedEvent(event, artifact)}, events...)
-	}
 	return []DelegationEvent{m.artifactCreatedEvent(event, artifact)}
 }
 
@@ -148,128 +323,6 @@ func (m *eventMapper) artifactCreatedEvent(event clienta2a.Event, artifact clien
 	}
 	ev.Raw = artifact.Raw
 	return ev
-}
-
-// toolCallEvents restores the typed tool lifecycle encoded by the A2A bridge
-// as tool-call artifacts. This keeps A2A wire artifacts protocol-native while
-// giving hosts UI-facing events instead of opaque artifacts.
-func (m *eventMapper) toolCallEvents(event clienta2a.Event, artifact clienta2a.Artifact) []DelegationEvent {
-	if data := artifactData(artifact); data != nil {
-		toolID := dataString(data, "id")
-		switch dataString(data, "kind") {
-		case "tool_call.start":
-			ev := m.base
-			ev.Kind = DelegationToolCallStart
-			ev.RemoteTaskID = event.TaskID
-			ev.RemoteContextID = event.ContextID
-			ev.RemoteArtifactID = artifact.ID
-			ev.RemoteToolCallID = toolID
-			ev.ToolName = dataString(data, "name")
-			ev.Args = data["args"]
-			return []DelegationEvent{ev}
-		case "tool_call.result":
-			ev := m.base
-			ev.Kind = DelegationToolCallResult
-			ev.RemoteTaskID = event.TaskID
-			ev.RemoteContextID = event.ContextID
-			ev.RemoteArtifactID = artifact.ID
-			ev.RemoteToolCallID = toolID
-			ev.Result = data["result"]
-			return []DelegationEvent{ev}
-		case "tool_call.end":
-			ev := m.base
-			ev.Kind = DelegationToolCallEnd
-			ev.RemoteTaskID = event.TaskID
-			ev.RemoteContextID = event.ContextID
-			ev.RemoteArtifactID = artifact.ID
-			ev.RemoteToolCallID = toolID
-			return []DelegationEvent{ev}
-		}
-	}
-	if !strings.HasPrefix(artifact.Name, "tool-call-") {
-		return nil
-	}
-	toolID := strings.TrimPrefix(artifact.Name, "tool-call-")
-	ev := m.base
-	ev.RemoteTaskID = event.TaskID
-	ev.RemoteContextID = event.ContextID
-	ev.RemoteArtifactID = artifact.ID
-	ev.RemoteToolCallID = toolID
-	var out []DelegationEvent
-	if text := textFromParts(artifact.Parts); text != "" {
-		args := ev
-		args.Kind = DelegationToolCallArgs
-		args.Delta = text
-		out = append(out, args)
-	}
-	if event.LastChunk {
-		end := ev
-		end.Kind = DelegationToolCallEnd
-		out = append(out, end)
-	}
-	return out
-}
-
-func artifactData(artifact clienta2a.Artifact) map[string]any {
-	for _, part := range artifact.Parts {
-		if data, ok := part.Data.(map[string]any); ok {
-			return data
-		}
-	}
-	return nil
-}
-
-func dataString(data map[string]any, key string) string {
-	value, _ := data[key].(string)
-	return strings.TrimSpace(value)
-}
-
-// assistantOutputEvents 将 A2A 文本 artifact chunk 规范化为完整的文本消息生命周期。
-// A2A 用 append / lastChunk 标识 chunk 边界；下游 AG-UI 客户端则要求 start/content/end
-// 共享同一个 message ID，因此不能只透传 delta。
-func (m *eventMapper) assistantOutputEvents(event clienta2a.Event, artifact clienta2a.Artifact) []DelegationEvent {
-	messageID := artifact.ID
-	if messageID == "" {
-		messageID = bridgea2a.ArtifactAssistantOutput
-	}
-	out := make([]DelegationEvent, 0, 3)
-	if m.openMessage != messageID {
-		if m.openMessage != "" {
-			end := m.base
-			end.Kind = DelegationTextEnd
-			end.RemoteMessageID = m.openMessage
-			out = append(out, end)
-		}
-		start := m.base
-		start.Kind = DelegationTextStart
-		start.RemoteTaskID = event.TaskID
-		start.RemoteContextID = event.ContextID
-		start.RemoteArtifactID = artifact.ID
-		start.RemoteMessageID = messageID
-		out = append(out, start)
-		m.openMessage = messageID
-	}
-	if text := textFromParts(artifact.Parts); text != "" {
-		delta := m.base
-		delta.Kind = DelegationTextDelta
-		delta.RemoteTaskID = event.TaskID
-		delta.RemoteContextID = event.ContextID
-		delta.RemoteArtifactID = artifact.ID
-		delta.RemoteMessageID = messageID
-		delta.Delta = text
-		out = append(out, delta)
-	}
-	if event.LastChunk {
-		end := m.base
-		end.Kind = DelegationTextEnd
-		end.RemoteTaskID = event.TaskID
-		end.RemoteContextID = event.ContextID
-		end.RemoteArtifactID = artifact.ID
-		end.RemoteMessageID = messageID
-		out = append(out, end)
-		m.openMessage = ""
-	}
-	return out
 }
 
 func (m *eventMapper) closeOpen(taskID, contextID string) []DelegationEvent {
@@ -356,12 +409,6 @@ func resultFromTask(base DelegationResult, task clienta2a.Task, includeRemoteArt
 			applyAgentAdaptorResult(&base, artifact)
 			continue
 		}
-		if artifact.Name == bridgea2a.ArtifactAssistantOutput {
-			if text := textFromParts(artifact.Parts); text != "" && base.Summary == "" {
-				base.Summary = text
-			}
-			continue
-		}
 		base.Artifacts = append(base.Artifacts, DelegationArtifact{ID: artifact.ID, Name: artifact.Name, Description: artifact.Description, URI: firstURI(artifact.Parts), MediaType: firstMediaType(artifact.Parts), Metadata: cloneAnyMap(artifact.Metadata)})
 	}
 	if base.Status != "completed" && base.Error == nil {
@@ -384,13 +431,21 @@ func cloneRemoteArtifact(artifact clienta2a.Artifact) RemoteArtifact {
 		ID:          artifact.ID,
 		Name:        artifact.Name,
 		Description: artifact.Description,
+		Parts:       cloneRemoteParts(artifact.Parts),
 		Extensions:  append([]string(nil), artifact.Extensions...),
 		Metadata:    cloneAnyMap(artifact.Metadata),
 		Raw:         cloneAnyMap(artifact.Raw),
 	}
-	out.Parts = make([]RemotePart, 0, len(artifact.Parts))
-	for _, part := range artifact.Parts {
-		out.Parts = append(out.Parts, RemotePart{
+	return out
+}
+
+func cloneRemoteParts(parts []clienta2a.Part) []RemotePart {
+	if len(parts) == 0 {
+		return nil
+	}
+	out := make([]RemotePart, 0, len(parts))
+	for _, part := range parts {
+		out = append(out, RemotePart{
 			Kind:      part.Kind,
 			Text:      part.Text,
 			Raw:       append([]byte(nil), part.Raw...),
