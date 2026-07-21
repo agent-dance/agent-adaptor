@@ -29,14 +29,12 @@ func NewServer(runner agentadaptor.Runner, opts ServerOptions) *Server {
 	if runner == nil {
 		panic("a2a bridge: nil runner")
 	}
-	if opts.StreamWire == StreamWireStatusData {
-		opts.AgentCard.Capabilities.Extensions = append(opts.AgentCard.Capabilities.Extensions, Extension{
-			URI:         AdapterStreamExtensionURI,
-			Description: "Streams agent-adaptor intermediate events through TaskStatusUpdateEvent DataParts.",
-			Required:    false,
-			Params:      map[string]any{"schema": AdapterStreamSchemaV1},
-		})
-	}
+	opts.AgentCard.Capabilities.Extensions = append(opts.AgentCard.Capabilities.Extensions, Extension{
+		URI:         AdapterStreamExtensionURI,
+		Description: "Streams agent-adaptor intermediate events through TaskStatusUpdateEvent DataParts.",
+		Required:    false,
+		Params:      map[string]any{"schema": AdapterStreamSchemaV1},
+	})
 	card, err := buildAgentCard(opts.AgentCard)
 	if err != nil {
 		panic(err)
@@ -60,7 +58,6 @@ func NewServer(runner agentadaptor.Runner, opts ServerOptions) *Server {
 		runner: runner, session: opts.Session, prompt: promptBuilder,
 		runOptions:    append([]agentadaptor.RunOption(nil), opts.RunOptions...),
 		runStreaming:  opts.RunStreaming,
-		streamWire:    opts.StreamWire,
 		resultBuilder: opts.ResultBuilder,
 		exposure:      opts.Exposure,
 		active:        map[a2aproto.TaskID]agentadaptor.RunHandle{},
@@ -102,7 +99,6 @@ type executor struct {
 	prompt        PromptBuilder
 	runOptions    []agentadaptor.RunOption
 	runStreaming  RunStreamingMode
-	streamWire    StreamWireMode
 	resultBuilder ResultBuilder
 	exposure      ExposurePolicy
 
@@ -182,7 +178,7 @@ func (e *executor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext)
 		defer e.delete(execCtx.TaskID)
 
 		// 3. Forward stream payloads while Wait collects the terminal SDK result.
-		translator := newStreamTranslator(execCtx, e.exposure, e.streamWire)
+		translator := newStreamTranslator(execCtx, e.exposure)
 		waitCh := make(chan waitResult, 1)
 		go func() {
 			result, err := handle.Wait(runCtx)
@@ -209,13 +205,8 @@ func (e *executor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext)
 		}
 
 	drained:
-		// 4. Close open stream artifacts, then project exactly one terminal outcome.
+		// 4. Project exactly one terminal outcome.
 		out := <-waitCh
-		for _, ev := range translator.CloseOpen() {
-			if !yield(ev, nil) {
-				return
-			}
-		}
 		if out.err != nil {
 			state := a2aproto.TaskStateFailed
 			if errors.Is(out.err, context.Canceled) {

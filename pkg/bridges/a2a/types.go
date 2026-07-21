@@ -104,9 +104,6 @@ const (
 )
 
 const (
-	// ArtifactAssistantOutput is the bridge-owned A2A artifact name used for
-	// streamed assistant-facing text deltas.
-	ArtifactAssistantOutput = "assistant-output"
 	// ArtifactAgentAdaptorResult is the bridge-owned A2A artifact name used
 	// for the terminal structured SDK result summary and opt-in diagnostics.
 	ArtifactAgentAdaptorResult = "agent-adaptor-result"
@@ -160,16 +157,6 @@ const (
 	RunStreamingDisabled
 )
 
-// StreamWireMode 控制 SDK 中间 StreamPayload 在 A2A 边界的编码方式。
-type StreamWireMode uint8
-
-const (
-	// StreamWireLegacyArtifact 保持历史 ArtifactUpdate 编码，作为默认兼容模式。
-	StreamWireLegacyArtifact StreamWireMode = iota
-	// StreamWireStatusData 将中间事件编码为 StatusUpdate DataPart。
-	StreamWireStatusData
-)
-
 type ServerOptions struct {
 	// AgentCard is the public discovery document advertised by this local A2A
 	// server.
@@ -192,9 +179,6 @@ type ServerOptions struct {
 	// each run. Disable this when a provider's structured-output path is
 	// incompatible with Streaming=true.
 	RunStreaming RunStreamingMode
-	// StreamWire controls how intermediate StreamPayload events cross the A2A
-	// boundary. The zero value preserves the historical ArtifactUpdate format.
-	StreamWire StreamWireMode
 	// ResultBuilder customizes the terminal A2A projection (status text and
 	// terminal artifacts) produced from one completed SDK run.
 	ResultBuilder ResultBuilder

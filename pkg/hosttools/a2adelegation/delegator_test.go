@@ -121,7 +121,7 @@ func TestToolSchemaAllowsOnlyRegistryKeyObjectiveInputAndConstraints(t *testing.
 	}
 }
 
-func TestEventMapperMapsA2ABridgeArtifactsAndTerminal(t *testing.T) {
+func TestEventMapperMapsA2AArtifactsAndTerminal(t *testing.T) {
 	t.Parallel()
 	mapper := newEventMapper(DelegationEvent{RunID: "run-1", DelegationID: "del-1", AgentKey: "research"})
 	events := mapper.Map(clienta2a.Event{
@@ -130,14 +130,14 @@ func TestEventMapperMapsA2ABridgeArtifactsAndTerminal(t *testing.T) {
 		ContextID: "ctx-1",
 		Artifact: &clienta2a.Artifact{
 			ID:    "assistant-output",
-			Name:  bridgea2a.ArtifactAssistantOutput,
+			Name:  "assistant-output",
 			Parts: []clienta2a.Part{{Kind: clienta2a.PartText, Text: "hello"}},
 		},
 	})
-	if len(events) != 3 {
-		t.Fatalf("expected delegation + synthesized text start/delta, got %#v", events)
+	if len(events) != 2 {
+		t.Fatalf("expected delegation + final artifact, got %#v", events)
 	}
-	if events[0].Kind != DelegationStarted || events[1].Kind != DelegationTextStart || events[2].Kind != DelegationTextDelta || events[2].Delta != "hello" {
+	if events[0].Kind != DelegationStarted || events[1].Kind != DelegationArtifactCreated {
 		t.Fatalf("unexpected mapped events: %#v", events)
 	}
 

@@ -2,7 +2,6 @@ package a2a
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 
 	a2aproto "github.com/a2aproject/a2a-go/v2/a2a"
@@ -13,113 +12,14 @@ import (
 type streamTranslator struct {
 	info     a2aproto.TaskInfoProvider
 	exposure ExposurePolicy
-	wireMode StreamWireMode
-	started  map[a2aproto.ArtifactID]bool
 }
 
-func newStreamTranslator(info a2aproto.TaskInfoProvider, exposure ExposurePolicy, wireMode ...StreamWireMode) *streamTranslator {
-	mode := StreamWireLegacyArtifact
-	if len(wireMode) > 0 {
-		mode = wireMode[0]
-	}
-	return &streamTranslator{
-		info: info, exposure: exposure, wireMode: mode, started: map[a2aproto.ArtifactID]bool{},
-	}
+func newStreamTranslator(info a2aproto.TaskInfoProvider, exposure ExposurePolicy) *streamTranslator {
+	return &streamTranslator{info: info, exposure: exposure}
 }
 
 func (t *streamTranslator) Translate(p agentadaptor.StreamPayload) []a2aproto.Event {
-	if t.wireMode == StreamWireStatusData {
-		return t.translateStatusData(p)
-	}
-	return t.translateLegacyArtifact(p)
-}
-
-func (t *streamTranslator) translateLegacyArtifact(p agentadaptor.StreamPayload) []a2aproto.Event {
-	switch p.Kind {
-	case agentadaptor.StreamTextContent:
-		if p.Delta == "" {
-			return nil
-		}
-		return []a2aproto.Event{t.artifact(ArtifactAssistantOutput, ArtifactAssistantOutput, p.Delta, true)}
-	case agentadaptor.StreamTextEnd:
-		return t.closeArtifact(ArtifactAssistantOutput, ArtifactAssistantOutput)
-	case agentadaptor.StreamToolCallStart:
-		if !t.exposure.IncludeToolCalls {
-			return nil
-		}
-		data := map[string]any{"kind": "tool_call.start", "id": p.ToolCallID, "name": p.Name}
-		if len(p.Args) > 0 {
-			data["args"] = sanitizeRemoteValue(p.Args)
-		}
-		id := a2aproto.ArtifactID("tool-call-" + defaultString(p.ToolCallID, p.Name))
-		return []a2aproto.Event{t.dataArtifact(id, string(id), data, true)}
-	case agentadaptor.StreamToolCallArgs:
-		if !t.exposure.IncludeToolCalls || p.Delta == "" {
-			return nil
-		}
-		id := a2aproto.ArtifactID("tool-call-" + defaultString(p.ToolCallID, "args"))
-		return []a2aproto.Event{t.artifact(id, string(id), p.Delta, true)}
-	case agentadaptor.StreamToolCallEnd:
-		if !t.exposure.IncludeToolCalls {
-			return nil
-		}
-		toolID := defaultString(p.ToolCallID, "unknown")
-		argsID := a2aproto.ArtifactID("tool-call-" + defaultString(p.ToolCallID, "args"))
-		if t.started[argsID] {
-			return t.closeArtifact(argsID, string(argsID))
-		}
-		id := a2aproto.ArtifactID("tool-call-" + toolID + "-end")
-		return []a2aproto.Event{t.dataArtifact(id, string(id), map[string]any{
-			"kind": "tool_call.end", "id": p.ToolCallID,
-		}, true)}
-	case agentadaptor.StreamToolCallResult:
-		if !t.exposure.IncludeToolCalls {
-			return nil
-		}
-		id := a2aproto.ArtifactID("tool-call-" + defaultString(p.ToolCallID, "result"))
-		return []a2aproto.Event{t.dataArtifact(id, string(id), map[string]any{
-			"kind": "tool_call.result", "id": p.ToolCallID, "result": sanitizeRemoteValue(p.Result),
-		}, true)}
-	case agentadaptor.StreamReasoningContent:
-		if !t.exposure.IncludeReasoning || p.Delta == "" {
-			return nil
-		}
-		ev := t.artifact("reasoning", "reasoning", p.Delta, true)
-		ev.Artifact.Name = "reasoning"
-		return []a2aproto.Event{ev}
-	case agentadaptor.StreamReasoningEnd:
-		if !t.exposure.IncludeReasoning {
-			return nil
-		}
-		return t.closeArtifact("reasoning", "reasoning")
-	case agentadaptor.StreamHITLRequested:
-		if !t.exposure.IncludeHITL {
-			return nil
-		}
-		return []a2aproto.Event{t.dataArtifact("human-decision-request", "human-decision-request", hitlRequestedArtifact(p, t.exposure), true)}
-	case agentadaptor.StreamHITLResolved:
-		if !t.exposure.IncludeHITL {
-			return nil
-		}
-		return []a2aproto.Event{t.dataArtifact("human-decision-result", "human-decision-result", hitlResolvedArtifact(p, t.exposure), true)}
-	case agentadaptor.StreamRunError:
-		msg := "stream run error"
-		if p.Error != nil && p.Error.Message != "" {
-			msg = p.Error.Message
-		}
-		return []a2aproto.Event{a2aproto.NewStatusUpdateEvent(t.info, a2aproto.TaskStateFailed, failureMessage(t.info, msg, streamFailureDetails(p.Error, t.exposure)))}
-	case agentadaptor.StreamDropped:
-		if !t.exposure.hasStreamingDiagnostics() {
-			return nil
-		}
-		data := map[string]any{"kind": string(p.Kind)}
-		if dropped, ok := p.Raw["dropped_count"]; ok {
-			data["dropped_count"] = dropped
-		}
-		return []a2aproto.Event{t.dataArtifact("stream-dropped", "stream-dropped", data, true)}
-	default:
-		return nil
-	}
+	return t.translateStatusData(p)
 }
 
 func (t *streamTranslator) translateStatusData(p agentadaptor.StreamPayload) []a2aproto.Event {
@@ -178,72 +78,12 @@ func encodeAdapterStreamDrop(p agentadaptor.StreamPayload, cause error) map[stri
 	}
 }
 
-func (t *streamTranslator) artifact(id a2aproto.ArtifactID, name, text string, appendChunk bool) *a2aproto.TaskArtifactUpdateEvent {
-	var ev *a2aproto.TaskArtifactUpdateEvent
-	if t.started[id] {
-		ev = a2aproto.NewArtifactUpdateEvent(t.info, id, textPart(text))
-	} else {
-		ev = a2aproto.NewArtifactUpdateEvent(t.info, id, textPart(text))
-		ev.Append = false
-		t.started[id] = true
-	}
-	ev.Artifact.ID = id
-	ev.Artifact.Name = name
-	ev.Append = appendChunk && ev.Append
-	return ev
-}
-
-func (t *streamTranslator) closeArtifact(id a2aproto.ArtifactID, name string) []a2aproto.Event {
-	if !t.started[id] {
-		return nil
-	}
-	ev := a2aproto.NewArtifactUpdateEvent(t.info, id, textPart(""))
-	ev.Artifact.ID = id
-	ev.Artifact.Name = name
-	ev.LastChunk = true
-	t.started[id] = false
-	return []a2aproto.Event{ev}
-}
-
-func (t *streamTranslator) CloseOpen() []a2aproto.Event {
-	if len(t.started) == 0 {
-		return nil
-	}
-	ids := make([]string, 0, len(t.started))
-	for id, started := range t.started {
-		if started {
-			ids = append(ids, string(id))
-		}
-	}
-	sort.Strings(ids)
-	out := make([]a2aproto.Event, 0, len(ids))
-	for _, id := range ids {
-		out = append(out, t.closeArtifact(a2aproto.ArtifactID(id), id)...)
-	}
-	return out
-}
-
-func (t *streamTranslator) dataArtifact(id a2aproto.ArtifactID, name string, data map[string]any, lastChunk bool) *a2aproto.TaskArtifactUpdateEvent {
-	ev := a2aproto.NewArtifactUpdateEvent(t.info, id, dataPart(data))
-	if !t.started[id] {
-		ev.Append = false
-		t.started[id] = true
-	}
-	ev.Artifact.ID = id
-	ev.Artifact.Name = name
-	ev.LastChunk = lastChunk
-	if lastChunk {
-		t.started[id] = false
-	}
-	return ev
-}
-
 func terminalArtifacts(info a2aproto.TaskInfoProvider, result agentadaptor.RunResult, exposure ExposurePolicy, built BuiltResult) ([]a2aproto.Event, error) {
 	var out []a2aproto.Event
 	if !built.ReplaceDefaultArtifacts {
 		out = append(out, defaultTerminalArtifacts(info, result, exposure)...)
 	}
-	custom, err := customTerminalArtifacts(info, built.Artifacts, reservedArtifactIDs(exposure, built.ReplaceDefaultArtifacts))
+	custom, err := customTerminalArtifacts(info, built.Artifacts, reservedArtifactIDs(built.ReplaceDefaultArtifacts))
 	if err != nil {
 		return nil, err
 	}
@@ -296,7 +136,7 @@ func customTerminalArtifacts(info a2aproto.TaskInfoProvider, artifacts []Artifac
 		if id == "" {
 			return nil, fmt.Errorf("custom artifact %d requires ID or Name", i)
 		}
-		if _, ok := reserved[id]; ok || strings.HasPrefix(id, "tool-call-") {
+		if _, ok := reserved[id]; ok {
 			return nil, fmt.Errorf("custom artifact id %q is reserved by the bridge", id)
 		}
 		if _, ok := seen[id]; ok {
@@ -324,20 +164,10 @@ func customTerminalArtifacts(info a2aproto.TaskInfoProvider, artifacts []Artifac
 	return out, nil
 }
 
-func reservedArtifactIDs(exposure ExposurePolicy, replaceDefault bool) map[string]struct{} {
-	reserved := map[string]struct{}{ArtifactAssistantOutput: {}}
+func reservedArtifactIDs(replaceDefault bool) map[string]struct{} {
+	reserved := map[string]struct{}{}
 	if !replaceDefault {
 		reserved[ArtifactAgentAdaptorResult] = struct{}{}
-	}
-	if exposure.IncludeReasoning {
-		reserved["reasoning"] = struct{}{}
-	}
-	if exposure.IncludeHITL {
-		reserved["human-decision-request"] = struct{}{}
-		reserved["human-decision-result"] = struct{}{}
-	}
-	if exposure.hasStreamingDiagnostics() {
-		reserved["stream-dropped"] = struct{}{}
 	}
 	return reserved
 }
