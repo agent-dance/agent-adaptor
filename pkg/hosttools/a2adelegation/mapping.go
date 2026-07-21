@@ -146,7 +146,7 @@ func (m *eventMapper) statusPartEvents(taskID, contextID string, message clienta
 				m.lastSequence = sequence
 			}
 			for _, event := range decoded {
-				out = append(out, m.delegationEventFromStatus(taskID, contextID, message.ID, profile, event))
+				out = append(out, m.completeStatusDelegationEvent(taskID, contextID, message.ID, profile, event))
 			}
 			break
 		}
@@ -181,33 +181,31 @@ func (m *eventMapper) statusTextEvents(taskID, contextID string, message clienta
 	return []DelegationEvent{start, delta, end}
 }
 
-func (m *eventMapper) delegationEventFromStatus(
+// completeStatusDelegationEvent fills host-owned delegation and A2A context on
+// a semantic event returned by a StatusPartDecoder.
+func (m *eventMapper) completeStatusDelegationEvent(
 	taskID, contextID, messageID, profile string,
-	decoded StatusPartEvent,
+	decoded DelegationEvent,
 ) DelegationEvent {
-	ev := m.base
-	ev.Kind = decoded.Kind
+	ev := decoded
+	ev.RunID = m.base.RunID
+	ev.ParentToolCallID = m.base.ParentToolCallID
+	ev.DelegationID = m.base.DelegationID
+	ev.AgentKey = m.base.AgentKey
+	ev.AgentName = m.base.AgentName
+	ev.Protocol = m.base.Protocol
 	ev.RemoteTaskID = taskID
 	ev.RemoteContextID = contextID
-	ev.RemoteMessageID = decoded.MessageID
 	if ev.RemoteMessageID == "" {
 		ev.RemoteMessageID = messageID
 	}
-	ev.RemoteToolCallID = decoded.ToolCallID
-	ev.Sequence = decoded.Sequence
-	ev.Name = decoded.Name
-	ev.ToolName = decoded.Name
-	ev.Role = decoded.Role
-	ev.Delta = decoded.Delta
-	ev.Args = decoded.Args
-	ev.Result = decoded.Result
 	ev.Raw = cloneAnyMap(decoded.Raw)
 	if ev.Raw == nil {
 		ev.Raw = map[string]any{}
 	}
 	ev.Raw["stream_profile"] = profile
-	if !decoded.Time.IsZero() {
-		ev.Time = decoded.Time
+	if ev.Time.IsZero() {
+		ev.Time = m.base.Time
 	}
 	return ev
 }
@@ -238,7 +236,7 @@ func (m *eventMapper) claimStreamProfile(profile string) bool {
 	return m.streamProfile == profile
 }
 
-func firstStatusSequence(events []StatusPartEvent) uint64 {
+func firstStatusSequence(events []DelegationEvent) uint64 {
 	for _, event := range events {
 		if event.Sequence != 0 {
 			return event.Sequence

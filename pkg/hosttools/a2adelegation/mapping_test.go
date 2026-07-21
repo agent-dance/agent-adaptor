@@ -180,12 +180,12 @@ func (testStatusPartDecoder) Profile() string {
 	return "test.status.v1"
 }
 
-func (testStatusPartDecoder) DecodeStatusPart(data any) ([]StatusPartEvent, bool, error) {
+func (testStatusPartDecoder) DecodeStatusPart(data any) ([]DelegationEvent, bool, error) {
 	value, ok := data.(map[string]any)
 	if !ok || value["schema"] != "test.status.v1" {
 		return nil, false, nil
 	}
-	return []StatusPartEvent{{
+	return []DelegationEvent{{
 		Kind:   DelegationCustom,
 		Name:   "todo.update",
 		Result: value["result"],
@@ -222,6 +222,10 @@ func TestEventMapperInjectedStatusDecoder(t *testing.T) {
 	}
 	if events[2].Name != "todo.update" || events[2].Raw["source"] != "test" || events[2].Raw["stream_profile"] != "test.status.v1" {
 		t.Fatalf("custom event = %#v", events[2])
+	}
+	if events[2].RunID != "run-1" || events[2].DelegationID != "del-1" || events[2].AgentKey != "external" ||
+		events[2].RemoteTaskID != "task-1" || events[2].RemoteContextID != "ctx-1" || events[2].RemoteMessageID != "status-1" {
+		t.Fatalf("custom event context = %#v", events[2])
 	}
 	if events[4].Delta != "working" || events[4].RemoteMessageID != "status-1" {
 		t.Fatalf("text event = %#v", events[4])

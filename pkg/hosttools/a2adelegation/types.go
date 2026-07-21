@@ -189,26 +189,12 @@ type RemotePart struct {
 	Metadata  map[string]any     `json:"metadata,omitempty"`
 }
 
-// StatusPartEvent 是业务无关的 Status DataPart 解码结果。
-type StatusPartEvent struct {
-	Kind       DelegationEventKind
-	Sequence   uint64
-	MessageID  string
-	ToolCallID string
-	Name       string
-	Role       string
-	Delta      string
-	Args       any
-	Result     any
-	Raw        map[string]any
-	Time       time.Time
-}
-
-// StatusPartDecoder 把一种 Status DataPart schema 归一化为 DelegationEvent 所需字段。
-// matched=false 表示 data 不属于当前 decoder，允许后续 decoder 继续尝试。
+// StatusPartDecoder 把一种 Status DataPart schema 直接转换为 DelegationEvent。
+// decoder 只填写事件语义字段；当前 delegation 的身份、A2A 上下文和 profile
+// 由 mapper 统一补齐。matched=false 表示 data 不属于当前 decoder，允许后续 decoder 继续尝试。
 type StatusPartDecoder interface {
 	Profile() string
-	DecodeStatusPart(data any) (events []StatusPartEvent, matched bool, err error)
+	DecodeStatusPart(data any) (events []DelegationEvent, matched bool, err error)
 }
 
 type DelegationEvent struct {
