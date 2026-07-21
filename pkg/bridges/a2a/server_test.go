@@ -92,8 +92,12 @@ func TestAgentCardIntrospectionPreservesConfiguredDetails(t *testing.T) {
 	if card.Provider == nil || card.Provider.Organization != "Agent Dance" {
 		t.Fatalf("provider not preserved: %+v", card.Provider)
 	}
-	if card.Capabilities.Streaming != a2a.CapabilityEnabled || len(card.Capabilities.Extensions) != 1 {
+	if card.Capabilities.Streaming != a2a.CapabilityEnabled || len(card.Capabilities.Extensions) != 2 {
 		t.Fatalf("capabilities not preserved: %+v", card.Capabilities)
+	}
+	if card.Capabilities.Extensions[0].URI != "https://example.com/ext" ||
+		card.Capabilities.Extensions[1].URI != a2a.AdapterStreamExtensionURI {
+		t.Fatalf("extensions = %+v", card.Capabilities.Extensions)
 	}
 	if len(card.Skills) != 1 || len(card.Skills[0].Tags) != 1 || len(card.Skills[0].Examples) != 1 || len(card.Skills[0].InputModes) != 1 {
 		t.Fatalf("skill details not preserved: %+v", card.Skills)
@@ -730,20 +734,78 @@ func TestSendStreamingMessageEmitsOrderedUpdates(t *testing.T) {
 	if frames[1].Result.StatusUpdate == nil || frames[1].Result.StatusUpdate.Status.State != "TASK_STATE_WORKING" {
 		t.Fatalf("second frame should be working: %+v", frames[1])
 	}
-	if frames[2].Result.ArtifactUpdate == nil || frames[2].Result.ArtifactUpdate.Artifact.Name != a2a.ArtifactAssistantOutput || frames[2].Result.ArtifactUpdate.Artifact.Parts[0].Text != "hel" || frames[2].Result.ArtifactUpdate.LastChunk {
-		t.Fatalf("third frame should be artifact hel: %+v", frames[2])
-	}
-	if frames[3].Result.ArtifactUpdate == nil || frames[3].Result.ArtifactUpdate.Artifact.Name != a2a.ArtifactAssistantOutput || frames[3].Result.ArtifactUpdate.Artifact.Parts[0].Text != "lo" || frames[3].Result.ArtifactUpdate.LastChunk {
-		t.Fatalf("fourth frame should be artifact lo: %+v", frames[3])
-	}
-	if frames[4].Result.ArtifactUpdate == nil || frames[4].Result.ArtifactUpdate.Artifact.Name != a2a.ArtifactAssistantOutput || !frames[4].Result.ArtifactUpdate.LastChunk {
-		t.Fatalf("fifth frame should close assistant-output: %+v", frames[4])
+	for i, kind := range []string{"text.content", "text.content", "text.end"} {
+		frame := frames[i+2]
+		if frame.Result.StatusUpdate == nil || len(frame.Result.StatusUpdate.Status.Message.Parts) == 0 {
+			t.Fatalf("frame %d should be a status update: %+v", i+2, frame)
+		}
+		part := frame.Result.StatusUpdate.Status.Message.Parts[0]
+		if part.Data["schema"] != a2a.AdapterStreamSchemaV1 {
+			t.Fatalf("frame %d schema = %#v", i+2, part.Data)
+		}
+		event, _ := part.Data["event"].(map[string]any)
+		if fmt.Sprint(event["kind"]) != kind {
+			t.Fatalf("frame %d kind = %#v, want %s", i+2, event["kind"], kind)
+		}
 	}
 	if frames[5].Result.ArtifactUpdate == nil || frames[5].Result.ArtifactUpdate.Artifact.Name != a2a.ArtifactAgentAdaptorResult || !frames[5].Result.ArtifactUpdate.LastChunk {
 		t.Fatalf("sixth frame should close agent-adaptor-result: %+v", frames[5])
 	}
 	if frames[len(frames)-1].Result.StatusUpdate == nil || frames[len(frames)-1].Result.StatusUpdate.Status.State != "TASK_STATE_COMPLETED" {
 		t.Fatalf("last frame should be completed: %+v", frames[len(frames)-1])
+	}
+}
+
+func TestSendStreamingMessageAvoidsIntermediateArtifacts(t *testing.T) {
+	t.Parallel()
+	opts := testOptions()
+	server := a2a.NewServer(scriptedRunner{start: func(ctx context.Context, prompt string, runOpts ...agentadaptor.RunOption) (agentadaptor.RunHandle, error) {
+		h := newScriptedHandle("run-status-data")
+		go func() {
+			time.Sleep(20 * time.Millisecond)
+			h.emit(agentadaptor.StreamPayload{Kind: agentadaptor.StreamTextStart, Sequence: 1, MessageID: "msg-1"})
+			h.emit(agentadaptor.StreamPayload{Kind: agentadaptor.StreamTextContent, Sequence: 2, MessageID: "msg-1", Delta: "hello"})
+			h.emit(agentadaptor.StreamPayload{Kind: agentadaptor.StreamTextEnd, Sequence: 3, MessageID: "msg-1"})
+			h.finish(agentadaptor.RunResult{RunID: "run-status-data", Output: "hello", Summary: "done"}, nil)
+		}()
+		return h, nil
+	}}, opts)
+
+	resp := postRPC(t, server.Handler(), `{"jsonrpc":"2.0","id":"stream","method":"SendStreamingMessage","params":{"message":{"messageId":"m1","role":"ROLE_USER","parts":[{"text":"stream"}]}}}`)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	frames := readSSEFrames(t, resp.Body, 2*time.Second)
+	var streamKinds []string
+	for _, frame := range frames {
+		if frame.Result.ArtifactUpdate != nil && frame.Result.ArtifactUpdate.Artifact.Name != a2a.ArtifactAgentAdaptorResult {
+			t.Fatalf("unexpected intermediate artifact: %+v", frame)
+		}
+		if frame.Result.StatusUpdate == nil {
+			continue
+		}
+		for _, part := range frame.Result.StatusUpdate.Status.Message.Parts {
+			if part.Data["schema"] != a2a.AdapterStreamSchemaV1 {
+				continue
+			}
+			event, _ := part.Data["event"].(map[string]any)
+			streamKinds = append(streamKinds, fmt.Sprint(event["kind"]))
+		}
+	}
+	want := []string{"text.start", "text.content", "text.end"}
+	if fmt.Sprint(streamKinds) != fmt.Sprint(want) {
+		t.Fatalf("stream kinds = %v, want %v, frames=%+v", streamKinds, want, frames)
+	}
+	card := server.AgentCard()
+	foundExtension := false
+	for _, extension := range card.Capabilities.Extensions {
+		if extension.URI == a2a.AdapterStreamExtensionURI {
+			foundExtension = true
+		}
+	}
+	if !foundExtension {
+		t.Fatalf("agent card extensions = %+v", card.Capabilities.Extensions)
 	}
 }
 
@@ -1040,7 +1102,13 @@ type sseFrame struct {
 		} `json:"task"`
 		StatusUpdate *struct {
 			Status struct {
-				State string `json:"state"`
+				State   string `json:"state"`
+				Message struct {
+					Parts []struct {
+						Text string         `json:"text"`
+						Data map[string]any `json:"data"`
+					} `json:"parts"`
+				} `json:"message"`
 			} `json:"status"`
 		} `json:"statusUpdate"`
 		ArtifactUpdate *struct {
