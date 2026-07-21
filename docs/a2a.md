@@ -222,11 +222,13 @@ a final `subagent.artifact.created` event and is never interpreted as text,
 reasoning, or a tool lifecycle. Hosts using `adapter.stream.v1` receive typed
 `DelegationEvent` values for each supported Status DataPart. A host-owned schema
 can implement `StatusPartDecoder` and pass it through `WithStatusPartDecoder`;
-the mapper locks one stream profile per delegation, deduplicates replayed status
-data, and reports sequence gaps as `subagent.stream.dropped`. For typed tool
-events, `StreamPayload.ToolCallID` is the remote tool-call ID; the parent model
-tool-call ID remains available as `parentToolCallId` and
-`Raw["parent_tool_call_id"]`.
+the decoder directly returns `DelegationEvent` values containing only its event
+meaning, while the mapper fills delegation identity, remote A2A context, profile,
+and default time. The mapper locks one stream profile per delegation,
+deduplicates replayed status data, and reports sequence gaps as
+`subagent.stream.dropped`. For typed tool events, `StreamPayload.ToolCallID` is
+the remote tool-call ID; the parent model tool-call ID remains available as
+`parentToolCallId` and `Raw["parent_tool_call_id"]`.
 
 `parentToolCallId` is included only when the host can supply the parent provider
 tool-call ID, for example by setting `a2adelegation.MCPServerOptions.ParentToolCallID`

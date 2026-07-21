@@ -11,22 +11,21 @@ func (adapterStreamStatusDecoder) Profile() string {
 	return bridgea2a.AdapterStreamSchemaV1
 }
 
-func (adapterStreamStatusDecoder) DecodeStatusPart(data any) ([]StatusPartEvent, bool, error) {
+func (adapterStreamStatusDecoder) DecodeStatusPart(data any) ([]DelegationEvent, bool, error) {
 	payload, matched, err := bridgea2a.DecodeAdapterStreamStatus(data)
 	if err != nil || !matched {
 		return nil, matched, err
 	}
-	event := StatusPartEvent{
-		Sequence:   payload.Sequence,
-		MessageID:  payload.MessageID,
-		ToolCallID: payload.ToolCallID,
-		Name:       payload.Name,
-		Role:       string(payload.Role),
-		Delta:      payload.Delta,
-		Args:       payload.Args,
-		Result:     payload.Result,
-		Raw:        cloneAnyMap(payload.Raw),
-		Time:       payload.Timestamp,
+	event := DelegationEvent{
+		Sequence:         payload.Sequence,
+		RemoteMessageID:  payload.MessageID,
+		RemoteToolCallID: payload.ToolCallID,
+		Role:             string(payload.Role),
+		Delta:            payload.Delta,
+		Args:             payload.Args,
+		Result:           payload.Result,
+		Raw:              cloneAnyMap(payload.Raw),
+		Time:             payload.Timestamp,
 	}
 	if event.Raw == nil {
 		event.Raw = map[string]any{}
@@ -55,19 +54,26 @@ func (adapterStreamStatusDecoder) DecodeStatusPart(data any) ([]StatusPartEvent,
 		event.Kind = DelegationReasoningEnd
 	case agentadaptor.StreamToolCallStart:
 		event.Kind = DelegationToolCallStart
+		event.ToolName = payload.Name
 	case agentadaptor.StreamToolCallArgs:
 		event.Kind = DelegationToolCallArgs
+		event.ToolName = payload.Name
 	case agentadaptor.StreamToolCallResult:
 		event.Kind = DelegationToolCallResult
+		event.ToolName = payload.Name
 	case agentadaptor.StreamToolCallEnd:
 		event.Kind = DelegationToolCallEnd
+		event.ToolName = payload.Name
 	case agentadaptor.StreamDropped:
 		event.Kind = DelegationStreamDropped
 	case agentadaptor.StreamHITLRequested, agentadaptor.StreamHITLResolved:
 		event.Kind = DelegationCustom
-		event.Name = string(payload.Kind)
+		event.Name = payload.Name
+		if event.Name == "" {
+			event.Name = string(payload.Kind)
+		}
 	default:
 		return nil, true, nil
 	}
-	return []StatusPartEvent{event}, true, nil
+	return []DelegationEvent{event}, true, nil
 }
