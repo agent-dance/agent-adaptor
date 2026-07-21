@@ -13,16 +13,28 @@ import (
 type streamTranslator struct {
 	info     a2aproto.TaskInfoProvider
 	exposure ExposurePolicy
+	wireMode StreamWireMode
 	started  map[a2aproto.ArtifactID]bool
 }
 
-func newStreamTranslator(info a2aproto.TaskInfoProvider, exposure ExposurePolicy) *streamTranslator {
+func newStreamTranslator(info a2aproto.TaskInfoProvider, exposure ExposurePolicy, wireMode ...StreamWireMode) *streamTranslator {
+	mode := StreamWireLegacyArtifact
+	if len(wireMode) > 0 {
+		mode = wireMode[0]
+	}
 	return &streamTranslator{
-		info: info, exposure: exposure, started: map[a2aproto.ArtifactID]bool{},
+		info: info, exposure: exposure, wireMode: mode, started: map[a2aproto.ArtifactID]bool{},
 	}
 }
 
 func (t *streamTranslator) Translate(p agentadaptor.StreamPayload) []a2aproto.Event {
+	if t.wireMode == StreamWireStatusData {
+		return t.translateStatusData(p)
+	}
+	return t.translateLegacyArtifact(p)
+}
+
+func (t *streamTranslator) translateLegacyArtifact(p agentadaptor.StreamPayload) []a2aproto.Event {
 	switch p.Kind {
 	case agentadaptor.StreamTextContent:
 		if p.Delta == "" {
@@ -107,6 +119,62 @@ func (t *streamTranslator) Translate(p agentadaptor.StreamPayload) []a2aproto.Ev
 		return []a2aproto.Event{t.dataArtifact("stream-dropped", "stream-dropped", data, true)}
 	default:
 		return nil
+	}
+}
+
+func (t *streamTranslator) translateStatusData(p agentadaptor.StreamPayload) []a2aproto.Event {
+	switch p.Kind {
+	case agentadaptor.StreamTextStart, agentadaptor.StreamTextContent, agentadaptor.StreamTextEnd:
+	case agentadaptor.StreamToolCallStart, agentadaptor.StreamToolCallArgs,
+		agentadaptor.StreamToolCallEnd, agentadaptor.StreamToolCallResult:
+		if !t.exposure.IncludeToolCalls {
+			return nil
+		}
+	case agentadaptor.StreamReasoningStart, agentadaptor.StreamReasoningContent, agentadaptor.StreamReasoningEnd:
+		if !t.exposure.IncludeReasoning {
+			return nil
+		}
+	case agentadaptor.StreamHITLRequested, agentadaptor.StreamHITLResolved:
+		if !t.exposure.IncludeHITL {
+			return nil
+		}
+	case agentadaptor.StreamRunError:
+		msg := "stream run error"
+		if p.Error != nil && p.Error.Message != "" {
+			msg = p.Error.Message
+		}
+		return []a2aproto.Event{a2aproto.NewStatusUpdateEvent(t.info, a2aproto.TaskStateFailed, failureMessage(t.info, msg, streamFailureDetails(p.Error, t.exposure)))}
+	case agentadaptor.StreamDropped:
+		if !t.exposure.hasStreamingDiagnostics() {
+			return nil
+		}
+	default:
+		return nil
+	}
+	data, err := encodeAdapterStreamStatus(p, t.exposure)
+	if err != nil {
+		data = encodeAdapterStreamDrop(p, err)
+	}
+	msg := a2aproto.NewMessageForTask(a2aproto.MessageRoleAgent, t.info, dataPart(data))
+	return []a2aproto.Event{a2aproto.NewStatusUpdateEvent(t.info, a2aproto.TaskStateWorking, msg)}
+}
+
+func encodeAdapterStreamDrop(p agentadaptor.StreamPayload, cause error) map[string]any {
+	sequence := p.Sequence
+	if sequence == 0 {
+		sequence = p.Seq
+	}
+	return map[string]any{
+		"schema": AdapterStreamSchemaV1,
+		"event": map[string]any{
+			"kind":     string(agentadaptor.StreamDropped),
+			"sequence": sequence,
+			"raw": map[string]any{
+				"dropped_kind":  string(p.Kind),
+				"dropped_count": 1,
+				"reason":        cause.Error(),
+			},
+		},
 	}
 }
 
