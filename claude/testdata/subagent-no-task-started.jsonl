@@ -1,0 +1,13 @@
+{"type":"system","subtype":"init","session_id":"sess-subagent-noevent","model":"claude-fixture"}
+{"type":"stream_event","session_id":"sess-subagent-noevent","event":{"type":"message_start","message":{"id":"msg-parent-6"}}}
+{"type":"stream_event","session_id":"sess-subagent-noevent","event":{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_agent_006","name":"Agent","input":{}}}}
+{"type":"stream_event","session_id":"sess-subagent-noevent","event":{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"description\":\"Quick task\"}"}}}
+{"type":"stream_event","session_id":"sess-subagent-noevent","event":{"type":"content_block_stop","index":0}}
+{"type":"stream_event","session_id":"sess-subagent-noevent","event":{"type":"message_delta","delta":{"stop_reason":"tool_use"}}}
+{"type":"stream_event","session_id":"sess-subagent-noevent","event":{"type":"message_stop"}}
+{"type":"assistant","session_id":"sess-subagent-noevent","message":{"model":"claude-fixture","content":[{"type":"tool_use","id":"toolu_agent_006","name":"Agent","input":{"description":"Quick task"}}]}}
+{"type":"assistant","session_id":"sess-subagent-noevent","parent_tool_use_id":"toolu_agent_006","message":{"content":[{"type":"tool_use","id":"toolu_child_read_1","name":"Read","input":{"file_path":"/tmp/test.txt"}}]}}
+{"type":"user","session_id":"sess-subagent-noevent","parent_tool_use_id":"toolu_agent_006","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_child_read_1","content":"hello world"}]}}
+{"type":"user","session_id":"sess-subagent-noevent","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_agent_006","content":"Task complete."}]}}
+{"type":"assistant","session_id":"sess-subagent-noevent","message":{"model":"claude-fixture","content":[{"type":"text","text":"No task_started needed."}]}}
+{"type":"result","subtype":"success","session_id":"sess-subagent-noevent","result":"No task_started needed.","usage":{"input_tokens":15,"output_tokens":7}}

@@ -268,9 +268,12 @@ Health check: <a href="/health">/health</a>.</p>
 
 // serveWeb exposes the leader over an AG-UI SSE endpoint so a CopilotKit
 // frontend renders the whole run. The delegation EventBus is overlaid via
-// SubagentBus, so each delegated role's progress (subagent.* events, including
-// their tool calls) streams to the browser as AG-UI CUSTOM events alongside the
-// leader's own text, reasoning, and delegate_to_agent tool calls.
+// SubagentBus, so each delegated role's progress (started, tool calls, status,
+// completion) streams to the browser as AG-UI Activity events
+// (ACTIVITY_SNAPSHOT / ACTIVITY_DELTA, activityType "subagent") alongside the
+// leader's own text, reasoning, and delegate_to_agent TOOL_CALL_* cards. The
+// parent delegate_to_agent TOOL_CALL cards are always present; Activity cards
+// carry the per-role execution detail for the frontend SubagentCard.
 func serveWeb(opts options, sdk agentadaptor.SDK, bus *a2adelegation.EventBus) error {
 	handler := sse.Handler(sdk, sse.Options{
 		Protocol:          sse.AGUI,
@@ -383,6 +386,18 @@ func renderLeaderStream(events <-chan agentadaptor.StreamPayload, wg *sync.WaitG
 			term.Stream("leader (claude) \u00b7 tool args", ev.Delta)
 		case agentadaptor.StreamToolCallResult:
 			term.Logf("[leader] tool_call.result %s", toolLabel(ev.Name, ev.ToolCallID))
+		case agentadaptor.StreamSubagentStart:
+			if ev.Subagent != nil {
+				term.Logf("[leader] subagent.start  %-7s id=%s kind=%s", ev.Subagent.Name, ev.Subagent.ID, ev.Subagent.Kind)
+			}
+		case agentadaptor.StreamSubagentStatus:
+			if ev.Subagent != nil && ev.Delta != "" {
+				term.Stream("  \u21b3 "+ev.Subagent.Name, ev.Delta)
+			}
+		case agentadaptor.StreamSubagentEnd:
+			if ev.Subagent != nil {
+				term.Logf("[leader] subagent.end    %-7s id=%s", ev.Subagent.Name, ev.Subagent.ID)
+			}
 		case agentadaptor.StreamRunError:
 			if ev.Error != nil {
 				term.Logf("[leader] stream error: %s", ev.Error.Message)

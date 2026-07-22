@@ -80,16 +80,27 @@ type Translator struct {
 
 	// decisionMode selects HITL event translation. Default: DecisionAsToolCall.
 	decisionMode DecisionMode
+
+	// subagentMode selects subagent event translation. Default: SubagentAsActivity.
+	subagentMode SubagentMode
+	// subagents tracks per-SubagentID activity state for SubagentAsActivity mode.
+	subagents *subagentTracker
+	// subagentTools tracks synthetic AG-UI tool lifecycles for
+	// SubagentAsToolCall mode.
+	subagentTools *subagentToolCallTracker
 }
 
 // NewTranslator returns a fresh translator with the default DecisionAsToolCall
-// HITL mapping.
+// HITL mapping and SubagentAsActivity subagent mapping.
 func NewTranslator(opts ...TranslatorOption) *Translator {
 	t := &Translator{
 		activeText:      map[string]bool{},
 		activeReason:    map[string]bool{},
 		activeToolStart: map[string]bool{},
 		decisionMode:    DecisionAsToolCall,
+		subagentMode:    SubagentAsActivity,
+		subagents:       newSubagentTracker(),
+		subagentTools:   newSubagentToolCallTracker(),
 	}
 	for _, o := range opts {
 		o(t)
@@ -233,6 +244,18 @@ func (t *Translator) CloseRun(waitErr error) []aguievents.Event {
 // translateNonTerminalLocked handles every payload kind except the run
 // lifecycle markers (started / finished / error). The caller holds t.mu.
 func (t *Translator) translateNonTerminalLocked(p agentadaptor.StreamPayload) []aguievents.Event {
+	// Strongly typed SubagentRef is the canonical scope contract. Raw fallback
+	// is retained only for legacy hosts that emitted pre-contract payloads.
+	if ref := subagentRefFromPayload(p); ref != nil {
+		switch p.Kind {
+		case agentadaptor.StreamTextStart, agentadaptor.StreamTextContent, agentadaptor.StreamTextEnd,
+			agentadaptor.StreamReasoningStart, agentadaptor.StreamReasoningContent, agentadaptor.StreamReasoningEnd,
+			agentadaptor.StreamToolCallStart, agentadaptor.StreamToolCallArgs,
+			agentadaptor.StreamToolCallEnd, agentadaptor.StreamToolCallResult:
+			return t.subagentScopedLocked(ref.ID, p)
+		}
+	}
+
 	switch p.Kind {
 	case agentadaptor.StreamStepStarted:
 		return []aguievents.Event{aguievents.NewStepStartedEvent(p.Name)}
@@ -364,6 +387,14 @@ func (t *Translator) translateNonTerminalLocked(p agentadaptor.StreamPayload) []
 	case agentadaptor.StreamDropped:
 		return []aguievents.Event{customFromPayload(string(p.Kind), p)}
 
+	// Subagent scope lifecycle — produced by Phase 2 native adapters.
+	case agentadaptor.StreamSubagentStart:
+		return t.translateSubagentLifecycleLocked(p)
+	case agentadaptor.StreamSubagentStatus:
+		return t.translateSubagentLifecycleLocked(p)
+	case agentadaptor.StreamSubagentEnd:
+		return t.translateSubagentLifecycleLocked(p)
+
 	case "":
 		// Unclassified pass-through. Codex adapter uses this for e.g.
 		// thread/tokenUsage/updated. Convey it as a CUSTOM event so hosts
@@ -371,6 +402,56 @@ func (t *Translator) translateNonTerminalLocked(p agentadaptor.StreamPayload) []
 		return []aguievents.Event{customFromPayload(p.Name, p)}
 	}
 
+	return nil
+}
+
+func (t *Translator) translateSubagentLifecycleLocked(p agentadaptor.StreamPayload) []aguievents.Event {
+	if subagentRefFromPayload(p) == nil {
+		return nil
+	}
+	switch t.subagentMode {
+	case SubagentAsCustom:
+		return []aguievents.Event{customFromPayload(string(p.Kind), p)}
+	case SubagentAsToolCall:
+		return t.subagentTools.translate(p)
+	default:
+		switch p.Kind {
+		case agentadaptor.StreamSubagentStart:
+			return t.subagents.onStart(p)
+		case agentadaptor.StreamSubagentStatus:
+			return t.subagents.onStatus(p)
+		case agentadaptor.StreamSubagentEnd:
+			return t.subagents.onEnd(p)
+		}
+		return nil
+	}
+}
+
+// subagentScopedLocked handles a text or tool_call event that belongs to a
+// strongly typed SubagentRef scope. Callers must hold t.mu.
+func (t *Translator) subagentScopedLocked(subID string, p agentadaptor.StreamPayload) []aguievents.Event {
+	switch t.subagentMode {
+	case SubagentAsCustom:
+		return []aguievents.Event{customFromPayload(string(p.Kind), p)}
+	case SubagentAsToolCall:
+		return nil
+	}
+	// Activity content is cumulative, so text/reasoning start and end markers
+	// intentionally produce no wire event; only their content deltas are needed.
+	switch p.Kind {
+	case agentadaptor.StreamToolCallStart:
+		return t.subagents.onToolCallStart(subID, p)
+	case agentadaptor.StreamToolCallArgs:
+		return t.subagents.onToolCallArgs(subID, p)
+	case agentadaptor.StreamToolCallEnd:
+		return t.subagents.onToolCallEnd(subID, p)
+	case agentadaptor.StreamToolCallResult:
+		return t.subagents.onToolCallResult(subID, p)
+	case agentadaptor.StreamTextContent:
+		return t.subagents.onTextDelta(subID, p)
+	case agentadaptor.StreamReasoningContent:
+		return t.subagents.onReasoningDelta(subID, p)
+	}
 	return nil
 }
 
@@ -394,8 +475,8 @@ func (t *Translator) ensureRunStartedLocked() []aguievents.Event {
 }
 
 // closeAllOpenLifecyclesLocked emits closing markers for any dangling
-// TEXT_MESSAGE / REASONING_MESSAGE / TOOL_CALL lifecycles so the final
-// stream is well-formed. Callers must hold t.mu.
+// TEXT_MESSAGE / REASONING_MESSAGE / TOOL_CALL lifecycles and synthesises
+// terminal events for open subagent scopes. Callers must hold t.mu.
 func (t *Translator) closeAllOpenLifecyclesLocked() []aguievents.Event {
 	out := []aguievents.Event{}
 	for id := range t.activeText {
@@ -410,6 +491,17 @@ func (t *Translator) closeAllOpenLifecyclesLocked() []aguievents.Event {
 		out = append(out, aguievents.NewToolCallEndEvent(id))
 	}
 	t.activeToolStart = map[string]bool{}
+	// Synthesize terminal Activity events for subagent scopes that are still open.
+	if t.subagentMode == SubagentAsActivity && t.subagents != nil && t.subagents.hasOpen() {
+		errInfo := map[string]any{"code": "parent_finished", "message": "parent run finished before subagent terminal event"}
+		out = append(out, t.subagents.flushSynthetic("failed", errInfo)...)
+	}
+	if t.subagentMode == SubagentAsToolCall && t.subagentTools != nil {
+		out = append(out, t.subagentTools.flushSynthetic("failed", map[string]any{
+			"code":    "parent_finished",
+			"message": "parent run finished before subagent terminal event",
+		})...)
+	}
 	return out
 }
 
@@ -597,6 +689,23 @@ func customFromPayload(name string, p agentadaptor.StreamPayload) aguievents.Eve
 	value := map[string]any{}
 	for k, v := range p.Raw {
 		value[k] = v
+	}
+	if ref := subagentRefFromPayload(p); ref != nil {
+		value["subagentId"] = ref.ID
+		value["parentId"] = ref.ParentID
+		value["agentName"] = ref.Name
+		value["kind"] = ref.Kind
+		value["protocol"] = ref.Protocol
+		value["parentToolCallId"] = ref.ToolCallID
+	}
+	if p.Delta != "" {
+		value["delta"] = p.Delta
+	}
+	if len(p.Result) > 0 {
+		value["result"] = p.Result
+	}
+	if p.Error != nil {
+		value["error"] = runFailureMap(p.Error)
 	}
 	if name == "" {
 		name = "codex.event"

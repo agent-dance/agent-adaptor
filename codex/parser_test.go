@@ -233,3 +233,86 @@ func itoa(n int) string {
 	}
 	return string(digits)
 }
+
+// ---------------------------------------------------------------------------
+// collab_tool_call recognition (exec --json path)
+// ---------------------------------------------------------------------------
+
+func TestCodexParserCollabToolCallProducesTranscript(t *testing.T) {
+	fixture := loadFixture(t, "collab-tool-call.jsonl")
+
+	p := newCodexParser(nil)
+	if err := p.onChunk("stdout", fixture, time.Now().UTC()); err != nil {
+		t.Fatalf("feed fixture: %v", err)
+	}
+	p.finalize()
+
+	kinds := make([]agentadaptor.TranscriptKind, 0, len(p.transcript))
+	for _, item := range p.transcript {
+		kinds = append(kinds, item.Kind)
+	}
+	// Expect: Init, ToolCall(collab:wait), ToolResult(collab:wait), Assistant, Result
+	want := []agentadaptor.TranscriptKind{
+		agentadaptor.TranscriptInit,
+		agentadaptor.TranscriptToolCall,
+		agentadaptor.TranscriptToolResult,
+		agentadaptor.TranscriptAssistant,
+		agentadaptor.TranscriptResult,
+	}
+	if !reflect.DeepEqual(kinds, want) {
+		t.Fatalf("transcript kinds: got %#v\nwant %#v", kinds, want)
+	}
+	// Collab tool call should use "collab:" prefix
+	var toolName string
+	for _, item := range p.transcript {
+		if item.Kind == agentadaptor.TranscriptToolCall {
+			toolName = item.ToolName
+		}
+	}
+	if toolName != "collab:wait" {
+		t.Fatalf("collab tool name: got %q want %q", toolName, "collab:wait")
+	}
+}
+
+func TestCodexParserCollabToolCallNeverWritesChildIDToCheckpoint(t *testing.T) {
+	// collab_tool_call items carry receiver_thread_ids (child thread ids).
+	// These must NOT be written into the checkpoint/sessionID. Only the
+	// parent thread id from thread.started is a valid resume id.
+	fixture := loadFixture(t, "collab-tool-call-spawn.jsonl")
+
+	p := newCodexParser(nil)
+	if err := p.onChunk("stdout", fixture, time.Now().UTC()); err != nil {
+		t.Fatalf("feed fixture: %v", err)
+	}
+	p.finalize()
+
+	checkpoint := p.checkpoint(0)
+	if checkpoint == nil || checkpoint.State == nil {
+		t.Fatalf("expected valid checkpoint, got nil")
+	}
+	if checkpoint.State.ResumeID == "child-thread-42" {
+		t.Fatalf("checkpoint must not contain child thread id %q", "child-thread-42")
+	}
+	if checkpoint.State.ResumeID != "thread-collab-spawn-1" {
+		t.Fatalf("checkpoint should contain parent thread id, got %q", checkpoint.State.ResumeID)
+	}
+}
+
+func TestCodexParserUnknownItemTypeIsSystemNotCollab(t *testing.T) {
+	// A completely unknown item type must not be silently swallowed or
+	// confused with collab items. It should fall through to TranscriptSystem.
+	stdout := `{"type":"item.completed","item":{"id":"x1","type":"totally_unknown_future_type","data":42}}` + "\n"
+
+	p := newCodexParser(nil)
+	_ = p.onChunk("stdout", []byte(stdout), time.Now().UTC())
+	p.finalize()
+
+	// Unknown items should not produce any transcript entry from handleItem
+	// (the function returns early for unknown types without emitting).
+	// This test verifies no panic and the transcript stays clean.
+	for _, item := range p.transcript {
+		if item.Kind == agentadaptor.TranscriptToolCall || item.Kind == agentadaptor.TranscriptToolResult {
+			t.Fatalf("unknown item type must not produce tool transcript entry: %+v", item)
+		}
+	}
+}

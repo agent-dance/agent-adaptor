@@ -92,11 +92,15 @@ type Options struct {
 	// the body can still override them (e.g. session binding).
 	RunOptions []agentadaptor.RunOption
 
-	// SubagentBus, when set, overlays host-published visual subagent
-	// delegation events onto the AG-UI response stream as CUSTOM events.
-	// Parent adapter events are left unchanged; the remote stream remains a
-	// host-side UI side channel and is not fed into the parent model context.
+	// SubagentBus, when set, overlays host-published visual subagent delegation
+	// events onto the AG-UI response stream. Default mode (SubagentAsActivity)
+	// emits ACTIVITY_SNAPSHOT / ACTIVITY_DELTA events per SubagentID. Use
+	// SubagentAsCustom to emit legacy CUSTOM events.
 	SubagentBus subagentstream.EventBus
+
+	// SubagentMode selects how SubagentBus events are translated to AG-UI events.
+	// Default (zero value) is SubagentAsActivity. Ignored when SubagentBus is nil.
+	SubagentMode agui.SubagentMode
 }
 
 // RawRequest is the canonical Raw-protocol chat request body.
@@ -254,7 +258,10 @@ func streamEvents(ctx context.Context, writer *aguisse.SSEWriter, writeMu *sync.
 	case AGUI:
 		var out <-chan aguievents.Event
 		if opts.SubagentBus != nil {
-			out = subagentstream.WrapAGUI(ctx, handle, subagentstream.MuxOptions{Bus: opts.SubagentBus})
+			out = subagentstream.WrapAGUI(ctx, handle, subagentstream.MuxOptions{
+				Bus:          opts.SubagentBus,
+				SubagentMode: opts.SubagentMode,
+			})
 		} else {
 			out = agui.WrapWithContext(ctx, handle)
 		}

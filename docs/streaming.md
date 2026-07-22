@@ -172,7 +172,8 @@ data: {"type":"RUN_FINISHED",...}
 - `CORSAllowedOrigin`: 浏览器前端必须；空字符串不加 CORS 头
 - `WriteTimeout`: 单帧写超时，默认 30s
 - `RunOptions`: 应用到每次请求的 RunOption 列表（例如 `WithRunPolicy`）
-- `SubagentBus`: AG-UI 协议下把 host-published visual subagent delegation events 叠加为 `CUSTOM` 事件；Raw 协议不使用该 overlay
+- `SubagentBus`: AG-UI 协议下把 host-published visual subagent delegation events 叠加为 Subagent Activity；Raw 协议不使用该 overlay
+- `SubagentMode`: 默认 `agui.SubagentAsActivity`；可选 `SubagentAsToolCall`，或用 `SubagentAsCustom` 保留 legacy `CUSTOM subagent.*`
 
 ## 4. Visual subagent delegation overlay
 
@@ -180,9 +181,12 @@ Hosts that expose a `delegate_to_agent` MCP tool can keep remote A2A progress ou
 of the parent model context while still rendering it live in the same AG-UI/SSE
 stream. The delegation tool publishes `pkg/hosttools/a2adelegation.DelegationEvent`
 values to a run-scoped bus; `pkg/bridges/subagentstream` merges that bus with the
-parent run's AG-UI stream and forwards each remote event as an AG-UI `CUSTOM`
-event such as `subagent.started`, `subagent.text.delta`, `subagent.artifact`, or
-`subagent.finished`.
+parent run's AG-UI stream and aggregates each delegation into
+`ACTIVITY_SNAPSHOT` / `ACTIVITY_DELTA` events. Activity messages use
+`messageId=DelegationID` and `activityType="subagent"`; status, text, internal
+tool calls, results, errors, and timestamps live in the activity content.
+The parent `delegate_to_agent` invocation remains a standard `TOOL_CALL_*`
+lifecycle, so old generic tool renderers keep working.
 
 ```go
 bus := a2adelegation.NewEventBus(256)
@@ -203,6 +207,16 @@ mux.Handle("/v1/chat", sse.Handler(sdk, sse.Options{
 `SubagentBus` is honored by the stock SSE handler only when `Protocol: sse.AGUI`.
 For Raw SSE, hosts that need the same side channel should call
 `subagentstream.Wrap(...)` themselves and choose their own wire shape.
+
+Hosts that already consume `CUSTOM subagent.*` must opt in explicitly:
+
+```go
+sse.Handler(sdk, sse.Options{
+    Protocol:     sse.AGUI,
+    SubagentBus:  bus,
+    SubagentMode: agui.SubagentAsCustom,
+})
+```
 
 For lower-level hosts, use `subagentstream.WrapAGUI(ctx, handle, opts)` directly
 instead of `agui.WrapWithContext`. Parent AG-UI lifecycle events are preserved;
@@ -249,11 +263,11 @@ sdk := agentadaptor.New(
 
 每个 streaming-aware adapter 通过 `StreamAwareDriver.StreamCapability()` 声明自己能提供什么：
 
-| adapter | Native | TokenLevel | Reasoning | ToolCallArgs | HITL |
-|---|---|---|---|---|---|
-| codex | ✓ | ✓ | ✓ | ✓ | — |
-| claude | ✓ | ✓ | ✓ | ✓ | ✓（PlanReview / Question） |
-| cursor | — | — | — | — | — |
+| adapter | Native | TokenLevel | Reasoning | ToolCallArgs | HITL | Subagents | SubagentTextDelta |
+|---|---|---|---|---|---|---|---|
+| codex | ✓ | ✓ | ✓ | ✓ | — | ✓（app-server follow-child） | — |
+| claude | ✓ | ✓ | ✓ | ✓ | ✓（PlanReview / Question） | ✓ | — |
+| cursor | ✓ | — | — | — | — | ✓（`taskToolCall` start/end） | — |
 
 `pkg/bridges/agui` 会按 capability 做合理降级：
 

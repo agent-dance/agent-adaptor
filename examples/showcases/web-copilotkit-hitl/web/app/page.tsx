@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { CopilotChat } from "@copilotkit/react-ui";
+import { CopilotChat } from "@copilotkit/react-core/v2";
 import {
   useCopilotAction,
   useCopilotContext,
@@ -120,11 +120,14 @@ export default function HomePage() {
           }}
         >
           <CopilotChat
+            agentId="codex"
+            threadId={threadId}
+            throttleMs={0}
             labels={{
-              title: "agent",
-              initial:
+              modalHeaderTitle: "agent",
+              welcomeMessageText:
                 "Ask anything. Every tool_call, plan-review, and question streams live.",
-              placeholder: "Type a message…",
+              chatInputPlaceholder: "Type a message…",
             }}
           />
         </section>

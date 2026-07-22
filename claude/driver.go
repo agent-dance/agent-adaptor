@@ -57,6 +57,14 @@ func (adapter) StreamCapability() agentadaptor.StreamCapability {
 		Reasoning:    true,
 		ToolCallArgs: true,
 		HITL:         true,
+		// Subagent capabilities (§8.2 Phase 2 — 2026-07-21 live probe):
+		// Claude Code surfaces task_started / task_progress / task_notification
+		// and child tool_use / tool_result with parent_tool_use_id.
+		// No child text token deltas (confirmed no stream_event for child turns).
+		Subagents:           true,
+		SubagentToolLinkage: true,
+		SubagentNesting:     false,
+		SubagentTextDelta:   false,
 	}
 }
 

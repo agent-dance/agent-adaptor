@@ -12,6 +12,7 @@ import (
 
 	agentadaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/memory"
+	"github.com/agent-dance/agent-adaptor/pkg/bridges/agui"
 	"github.com/agent-dance/agent-adaptor/pkg/bridges/sse"
 	"github.com/agent-dance/agent-adaptor/pkg/hosttools/a2adelegation"
 )
@@ -318,11 +319,15 @@ func newBlockingSDK(t *testing.T) agentadaptor.SDK {
 	)
 }
 
-func TestSSEHandlerAGUIOverlaysSubagentEvents(t *testing.T) {
+func TestSSEHandlerAGUIOverlaysSubagentEventsCustomMode(t *testing.T) {
 	t.Parallel()
 	sdk := newBlockingSDK(t)
 	bus := scriptedSubagentBus{}
-	srv := httptest.NewServer(sse.Handler(sdk, sse.Options{Protocol: sse.AGUI, SubagentBus: bus}))
+	srv := httptest.NewServer(sse.Handler(sdk, sse.Options{
+		Protocol:     sse.AGUI,
+		SubagentBus:  bus,
+		SubagentMode: agui.SubagentAsCustom, // explicit legacy mode
+	}))
 	defer srv.Close()
 
 	body := strings.NewReader(`{
@@ -359,6 +364,61 @@ func TestSSEHandlerAGUIOverlaysSubagentEvents(t *testing.T) {
 	}
 	if !seenSubagent {
 		t.Fatalf("subagent custom event not observed in frames: %#v", frames)
+	}
+}
+
+func TestSSEHandlerAGUIOverlaysSubagentEventsActivityMode(t *testing.T) {
+	t.Parallel()
+	sdk := newBlockingSDK(t)
+	bus := scriptedSubagentBus{}
+	// Default SubagentMode = SubagentAsActivity.
+	srv := httptest.NewServer(sse.Handler(sdk, sse.Options{Protocol: sse.AGUI, SubagentBus: bus}))
+	defer srv.Close()
+
+	body := strings.NewReader(`{
+		"threadId": "t-2",
+		"runId": "r-2",
+		"messages": [{"id":"m-2","role":"user","content":"hi"}]
+	}`)
+	resp, err := http.Post(srv.URL, "application/json", body)
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status: %d", resp.StatusCode)
+	}
+
+	frames := readSSEFrames(t, resp.Body, 2*time.Second)
+	seenSnapshot, seenDelta := false, false
+	for _, f := range frames {
+		if f.data == "" {
+			continue
+		}
+		var payload map[string]any
+		if err := json.Unmarshal([]byte(f.data), &payload); err != nil {
+			t.Fatalf("decode frame data: %v (raw=%q)", err, f.data)
+		}
+		switch payload["type"] {
+		case "ACTIVITY_SNAPSHOT":
+			if payload["messageId"] == "del-1" && payload["activityType"] == "subagent" {
+				seenSnapshot = true
+				content, _ := payload["content"].(map[string]any)
+				if content["agentKey"] != "research" {
+					t.Fatalf("snapshot content.agentKey: got %v want \"research\"", content["agentKey"])
+				}
+			}
+		case "ACTIVITY_DELTA":
+			if payload["messageId"] == "del-1" {
+				seenDelta = true
+			}
+		}
+	}
+	if !seenSnapshot {
+		t.Fatalf("ACTIVITY_SNAPSHOT for del-1 not observed; frames=%#v", frames)
+	}
+	if !seenDelta {
+		t.Fatalf("ACTIVITY_DELTA for del-1 not observed; frames=%#v", frames)
 	}
 }
 

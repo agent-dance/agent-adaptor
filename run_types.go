@@ -569,6 +569,16 @@ const (
 	// StreamDropped reports StreamPayloads dropped because the host was slow.
 	// Raw["dropped_count"] reports how many.
 	StreamDropped StreamKind = "stream.dropped"
+
+	// StreamSubagentStart opens a child-agent scope within a parent run.
+	// Subagent must be non-nil with ID, Name, and Kind filled in.
+	StreamSubagentStart StreamKind = "subagent.start"
+	// StreamSubagentStatus carries a progress update within an open child-agent
+	// scope. Subagent must be non-nil with a matching ID.
+	StreamSubagentStatus StreamKind = "subagent.status"
+	// StreamSubagentEnd closes a child-agent scope. Subagent must be non-nil;
+	// Result carries terminal status / summary / error.
+	StreamSubagentEnd StreamKind = "subagent.end"
 )
 
 // Role identifies the speaker for text-bearing StreamPayloads.
@@ -595,6 +605,28 @@ const (
 	// layer to represent the human turn that triggered the run.
 	RoleUser Role = "user"
 )
+
+// SubagentRef associates a StreamPayload with a child-agent scope.
+//
+// nil means the parent/root scope — every pre-existing payload that omits
+// this field remains valid with no behavior change.
+//
+// ID is stable for the duration of the parent RunID; all payloads belonging
+// to the same child scope carry the same ID. ParentID is empty when the child
+// is spawned directly under the root run, and non-empty for nested children.
+//
+// Kind is "native" for provider-native subagents (Claude Agent, Codex collab,
+// Cursor taskToolCall) and "delegated" for A2A host-tool delegation.
+// Protocol is empty for native; "a2a" for A2A delegation.
+// ToolCallID is the parent tool_call that spawned this scope, when known.
+type SubagentRef struct {
+	ID         string // required; stable within the parent RunID
+	ParentID   string // optional; empty = directly under root run
+	Name       string // display name / agent key
+	Kind       string // "native" | "delegated"
+	Protocol   string // "" for native; "a2a" for host delegation
+	ToolCallID string // parent tool_call that spawned this scope, if known
+}
 
 // StreamPayload is a single structured streaming event emitted by a
 // stream-aware adapter. It is intentionally a superset capable of carrying
@@ -658,4 +690,10 @@ type StreamPayload struct {
 	// Raw carries provider-specific structured data that does not fit the
 	// normalized fields. Bridges may pass it through opaquely.
 	Raw map[string]any
+
+	// Subagent is non-nil when this payload belongs to a child-agent scope.
+	// nil means the event belongs to the parent/root scope, preserving full
+	// backward compatibility for all pre-existing payloads.
+	// Adapters MUST leave Subagent nil on parent-scope events.
+	Subagent *SubagentRef
 }

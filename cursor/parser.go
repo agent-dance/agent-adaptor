@@ -3,6 +3,7 @@ package cursor
 import (
 	"bytes"
 	"encoding/json"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -10,13 +11,22 @@ import (
 	agentadaptor "github.com/agent-dance/agent-adaptor"
 )
 
+// cursorPendingSubagent tracks a taskToolCall that has been started but not
+// yet completed. It is keyed by call_id in cursorParser.pendingSubagents.
+type cursorPendingSubagent struct {
+	callID      string
+	argsAgentID string // agentId from args (may differ from result.success.agentId)
+	description string
+}
+
 // cursorParser consumes raw stdout/stderr chunks from a Cursor Agent CLI run
 // (stream-json) and produces the normalized outputs required by the adapter
 // contract.
 type cursorParser struct {
 	mu sync.Mutex
 
-	sink agentadaptor.EventSink
+	sink  agentadaptor.EventSink
+	runID string
 
 	stdoutLine bytes.Buffer
 	stderrLine bytes.Buffer
@@ -37,6 +47,12 @@ type cursorParser struct {
 	cost            *float64
 	resultFinal     map[string]any
 	errorMessage    string
+
+	// pendingSubagents tracks taskToolCall invocations between "started" and
+	// "completed" subtype events. Key is call_id.
+	pendingSubagents   map[string]cursorPendingSubagent
+	closedSubagents    map[string]struct{}
+	runTerminalEmitted bool
 }
 
 var cursorCheckpointEvents = map[string]struct{}{
@@ -47,7 +63,16 @@ var cursorCheckpointEvents = map[string]struct{}{
 }
 
 func newCursorParser(sink agentadaptor.EventSink) *cursorParser {
-	return &cursorParser{sink: sink}
+	return newCursorParserWithRunID(sink, "")
+}
+
+func newCursorParserWithRunID(sink agentadaptor.EventSink, runID string) *cursorParser {
+	return &cursorParser{
+		sink:             sink,
+		runID:            runID,
+		pendingSubagents: make(map[string]cursorPendingSubagent),
+		closedSubagents:  make(map[string]struct{}),
+	}
 }
 
 func (p *cursorParser) onChunk(stream string, chunk []byte, ts time.Time) error {
@@ -87,6 +112,22 @@ func (p *cursorParser) finalize() {
 		p.processLine("stderr", remaining, time.Now().UTC())
 	}
 	p.flushDeltaLocked()
+	p.flushPendingSubagentsLocked()
+}
+
+// finishRun emits a terminal stream event when the CLI exits without a
+// provider terminal frame. finalize must run first so pending subagents close
+// before the parent run terminal.
+func (p *cursorParser) finishRun(exitCode int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.flushPendingSubagentsLocked()
+	if exitCode == 0 {
+		p.emitRunTerminalLocked(agentadaptor.StreamRunFinished)
+		return
+	}
+	p.emitRunTerminalLocked(agentadaptor.StreamRunError)
 }
 
 // flushDeltaLocked promotes any buffered assistant.delta fragments into a
@@ -160,6 +201,14 @@ func (p *cursorParser) handlePayload(raw string, payload map[string]any) {
 			Text: text,
 		})
 	case "tool_call", "tool.call":
+		if nested, ok := payload["tool_call"].(map[string]any); ok && len(nested) > 0 {
+			// Discriminated tool_call with nested union: e.g. {"taskToolCall": {...}}
+			subtype := strings.ToLower(cursorTopLevelString(payload, "subtype"))
+			callID := cursorTopLevelString(payload, "call_id", "id")
+			p.handleDiscriminatedToolCall(subtype, callID, nested)
+			return
+		}
+		// Flat tool_call (legacy/other shapes): name and input at top level.
 		name := cursorTopLevelString(payload, "name", "tool_name")
 		id := cursorTopLevelString(payload, "id", "call_id", "tool_use_id")
 		p.emit(agentadaptor.TranscriptItem{
@@ -186,8 +235,11 @@ func (p *cursorParser) handlePayload(raw string, payload map[string]any) {
 		})
 	case "result", "run.completed", "completion":
 		p.flushDeltaLocked()
+		p.flushPendingSubagentsLocked()
 		p.handleResult(raw, payload, eventType)
+		p.emitRunTerminalLocked(agentadaptor.StreamRunFinished)
 	case "error", "run.failed":
+		p.flushPendingSubagentsLocked()
 		message := cursorTopLevelString(payload, "message", "error")
 		if message != "" {
 			p.errorMessage = message
@@ -197,6 +249,7 @@ func (p *cursorParser) handlePayload(raw string, payload map[string]any) {
 			Text:     message,
 			Metadata: map[string]string{"code": "error"},
 		})
+		p.emitRunTerminalLocked(agentadaptor.StreamRunError)
 	default:
 		if eventType == "" && isCursorScalarOnlyPayload(payload) {
 			// A bare session-only payload: treat as init but do not emit
@@ -359,6 +412,313 @@ func (p *cursorParser) emit(item agentadaptor.TranscriptItem) {
 		Timestamp: time.Now().UTC(),
 		Item:      &clone,
 	})
+}
+
+// handleDiscriminatedToolCall routes nested discriminated tool_call events
+// such as {"taskToolCall": {...}} to their specific handlers. Callers must
+// hold p.mu.
+func (p *cursorParser) handleDiscriminatedToolCall(subtype, callID string, nested map[string]any) {
+	if tc, ok := nested["taskToolCall"].(map[string]any); ok {
+		p.handleTaskToolCall(subtype, callID, tc)
+		return
+	}
+	// Unknown discriminated variant: emit a system transcript entry so the
+	// event is not silently dropped.
+	p.emit(agentadaptor.TranscriptItem{
+		Kind: agentadaptor.TranscriptSystem,
+		Data: map[string]any{"tool_call": nested, "subtype": subtype, "call_id": callID},
+	})
+}
+
+// handleTaskToolCall processes the Cursor-native taskToolCall discriminated
+// tool event (parent stream-json subtype="started" or "completed").
+//
+// Mapping (§8.4.2):
+//   - started  → TranscriptToolCall + StreamToolCallStart + StreamSubagentStart
+//   - completed → TranscriptToolResult + StreamSubagentEnd + StreamToolCallEnd
+//   - StreamToolCallResult
+//
+// Scope-ID stability: args.agentId is used as the SubagentRef.ID anchor for
+// both start and end so that the scope ID never changes mid-lifecycle even when
+// result.success.agentId differs. If args.agentId is absent, call_id serves as
+// the fallback anchor.
+func (p *cursorParser) handleTaskToolCall(subtype, callID string, tc map[string]any) {
+	switch subtype {
+	case "started":
+		p.handleTaskToolCallStarted(callID, tc)
+	case "completed":
+		p.handleTaskToolCallCompleted(callID, tc)
+	default:
+		// Defensive: unknown subtype — record as system event.
+		p.emit(agentadaptor.TranscriptItem{
+			Kind: agentadaptor.TranscriptSystem,
+			Data: map[string]any{"taskToolCall": tc, "subtype": subtype, "call_id": callID},
+		})
+	}
+}
+
+func (p *cursorParser) handleTaskToolCallStarted(callID string, tc map[string]any) {
+	if _, closed := p.closedSubagents[callID]; closed {
+		return
+	}
+	if _, pending := p.pendingSubagents[callID]; pending {
+		return
+	}
+
+	args, _ := tc["args"].(map[string]any)
+	argsAgentID := cursorTopLevelString(args, "agentId")
+	description := cursorTopLevelString(args, "description")
+
+	scopeID := argsAgentID
+	if scopeID == "" {
+		scopeID = callID
+	}
+
+	p.pendingSubagents[callID] = cursorPendingSubagent{
+		callID:      callID,
+		argsAgentID: scopeID,
+		description: description,
+	}
+
+	// Transcript: parent tool call boundary.
+	p.emit(agentadaptor.TranscriptItem{
+		Kind:      agentadaptor.TranscriptToolCall,
+		ToolName:  "Task",
+		ToolUseID: callID,
+		Input:     args,
+	})
+
+	// Streaming: parent tool_call.start + subagent.start.
+	p.emitStream(agentadaptor.StreamPayload{
+		Kind:       agentadaptor.StreamToolCallStart,
+		ToolCallID: callID,
+		Name:       "Task",
+		Args:       cursorAnyToStringMap(args),
+	})
+	p.emitStream(agentadaptor.StreamPayload{
+		Kind: agentadaptor.StreamSubagentStart,
+		Subagent: &agentadaptor.SubagentRef{
+			ID:         scopeID,
+			Name:       description,
+			Kind:       "native",
+			ToolCallID: callID,
+		},
+	})
+}
+
+func (p *cursorParser) handleTaskToolCallCompleted(callID string, tc map[string]any) {
+	if _, closed := p.closedSubagents[callID]; closed {
+		return
+	}
+
+	pending, hasPending := p.pendingSubagents[callID]
+	if hasPending {
+		delete(p.pendingSubagents, callID)
+	}
+
+	args, _ := tc["args"].(map[string]any)
+	result, _ := tc["result"].(map[string]any)
+	success, _ := result["success"].(map[string]any)
+
+	var resultAgentID, durationMs string
+	var isBackground bool
+	var conversationText string
+
+	if success != nil {
+		resultAgentID = cursorTopLevelString(success, "agentId")
+		durationMs = cursorTopLevelString(success, "durationMs")
+		isBackground, _ = success["isBackground"].(bool)
+		conversationText = cursorJoinConversationSteps(success["conversationSteps"])
+	}
+
+	scopeID := ""
+	description := cursorTopLevelString(args, "description")
+	if hasPending {
+		scopeID = pending.argsAgentID
+		description = pending.description
+	} else {
+		scopeID = resultAgentID
+		if scopeID == "" {
+			scopeID = cursorTopLevelString(args, "agentId")
+		}
+	}
+	if scopeID == "" {
+		scopeID = callID
+	}
+	p.closedSubagents[callID] = struct{}{}
+
+	// A completed-only frame is a valid degraded Cursor stream shape. Rebuild
+	// the missing parent/subagent starts before emitting either end so every
+	// observed scope still satisfies start-before-end.
+	if !hasPending && scopeID != "" {
+		p.emit(agentadaptor.TranscriptItem{
+			Kind:      agentadaptor.TranscriptToolCall,
+			ToolName:  "Task",
+			ToolUseID: callID,
+			Input:     args,
+		})
+		p.emitStream(agentadaptor.StreamPayload{
+			Kind:       agentadaptor.StreamToolCallStart,
+			ToolCallID: callID,
+			Name:       "Task",
+			Args:       cursorAnyToStringMap(args),
+		})
+		p.emitStream(agentadaptor.StreamPayload{
+			Kind: agentadaptor.StreamSubagentStart,
+			Subagent: &agentadaptor.SubagentRef{
+				ID:         scopeID,
+				Name:       description,
+				Kind:       "native",
+				ToolCallID: callID,
+			},
+		})
+	}
+
+	// Transcript: parent tool result carrying final subagent text.
+	p.emit(agentadaptor.TranscriptItem{
+		Kind:      agentadaptor.TranscriptToolResult,
+		ToolUseID: callID,
+		Text:      conversationText,
+	})
+
+	// Streaming: subagent.end + parent tool_call.result.
+	raw := map[string]any{
+		"result_agent_id": resultAgentID,
+		"duration_ms":     durationMs,
+		"is_background":   isBackground,
+	}
+	if scopeID != "" {
+		p.emitStream(agentadaptor.StreamPayload{
+			Kind: agentadaptor.StreamSubagentEnd,
+			Subagent: &agentadaptor.SubagentRef{
+				ID:         scopeID,
+				Name:       description,
+				Kind:       "native",
+				ToolCallID: callID,
+			},
+			Result: map[string]any{"text": conversationText, "status": "completed"},
+			Raw:    raw,
+		})
+	}
+	p.emitStream(agentadaptor.StreamPayload{
+		Kind:       agentadaptor.StreamToolCallEnd,
+		ToolCallID: callID,
+	})
+	p.emitStream(agentadaptor.StreamPayload{
+		Kind:       agentadaptor.StreamToolCallResult,
+		ToolCallID: callID,
+		Result:     map[string]any{"text": conversationText},
+	})
+}
+
+// emitStream forwards a StreamPayload through the EventSink. It sets RunID
+// and ThreadID when they are not already populated. Callers must hold p.mu.
+func (p *cursorParser) emitStream(pl agentadaptor.StreamPayload) {
+	if p.sink == nil {
+		return
+	}
+	if pl.RunID == "" {
+		pl.RunID = p.runID
+	}
+	if pl.ThreadID == "" {
+		pl.ThreadID = p.sessionID
+	}
+	_ = p.sink.EmitStream(pl)
+}
+
+// flushPendingSubagentsLocked closes every started taskToolCall that did not
+// receive a completed frame. Deleting before emission makes repeated finalize
+// calls idempotent. Callers must hold p.mu.
+func (p *cursorParser) flushPendingSubagentsLocked() {
+	if len(p.pendingSubagents) == 0 {
+		return
+	}
+
+	callIDs := make([]string, 0, len(p.pendingSubagents))
+	for callID := range p.pendingSubagents {
+		callIDs = append(callIDs, callID)
+	}
+	sort.Strings(callIDs)
+
+	for _, callID := range callIDs {
+		pending := p.pendingSubagents[callID]
+		delete(p.pendingSubagents, callID)
+		p.closedSubagents[callID] = struct{}{}
+		p.emitStream(agentadaptor.StreamPayload{
+			Kind: agentadaptor.StreamSubagentEnd,
+			Subagent: &agentadaptor.SubagentRef{
+				ID:         pending.argsAgentID,
+				Name:       pending.description,
+				Kind:       "native",
+				ToolCallID: callID,
+			},
+			Result: map[string]any{
+				"status":    "failed",
+				"synthetic": true,
+			},
+		})
+	}
+}
+
+// emitRunTerminalLocked emits at most one parent run terminal payload. Pending
+// subagents must be flushed by the caller before invoking this method.
+func (p *cursorParser) emitRunTerminalLocked(kind agentadaptor.StreamKind) {
+	if p.runTerminalEmitted {
+		return
+	}
+	p.runTerminalEmitted = true
+
+	payload := agentadaptor.StreamPayload{
+		Kind:  kind,
+		Usage: p.usage,
+	}
+	if kind == agentadaptor.StreamRunError {
+		message := p.errorMessage
+		if message == "" {
+			message = "cursor agent exited before emitting a terminal result"
+		}
+		payload.Error = &agentadaptor.RunFailure{
+			Code:    agentadaptor.FailureAgentError,
+			Message: message,
+		}
+	}
+	p.emitStream(payload)
+}
+
+// cursorJoinConversationSteps extracts and concatenates assistantMessage.text
+// values from a Cursor conversationSteps array. Non-assistant steps and
+// unknown shapes are skipped.
+func cursorJoinConversationSteps(steps any) string {
+	arr, _ := steps.([]any)
+	if len(arr) == 0 {
+		return ""
+	}
+	texts := make([]string, 0, len(arr))
+	for _, raw := range arr {
+		step, _ := raw.(map[string]any)
+		if step == nil {
+			continue
+		}
+		if msg, _ := step["assistantMessage"].(map[string]any); msg != nil {
+			if text := cursorTopLevelString(msg, "text"); text != "" {
+				texts = append(texts, text)
+			}
+		}
+	}
+	return strings.Join(texts, "\n")
+}
+
+// cursorAnyToStringMap converts a map[string]any to map[string]any safely,
+// returning nil when the input is nil.
+func cursorAnyToStringMap(m map[string]any) map[string]any {
+	if m == nil {
+		return nil
+	}
+	out := make(map[string]any, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
 }
 
 // finalSummary implements the Summary precedence rule: terminal result text

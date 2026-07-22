@@ -13,9 +13,9 @@ import (
 // API-shaped) into StreamPayload. It does not participate in checkpoint
 // construction; session capture stays in the main parser.
 type streamingState struct {
-	sink    agentadaptor.EventSink
-	runID   string
-	parser  *claudeParser
+	sink        agentadaptor.EventSink
+	runID       string
+	parser      *claudeParser
 	messageID   string
 	textStarted map[int]bool
 	blockKind   map[int]string
@@ -24,13 +24,13 @@ type streamingState struct {
 	thinkingID  map[int]string
 	signatures  map[int]string
 
-	runStarted       bool
-	finishedEmitted  bool
-	apiRetryHits     int
-	lastRetryWas5xx  bool
-	streamUsage      *agentadaptor.Usage
-	stopReason       string
-	numTurns         int
+	runStarted      bool
+	finishedEmitted bool
+	apiRetryHits    int
+	lastRetryWas5xx bool
+	streamUsage     *agentadaptor.Usage
+	stopReason      string
+	numTurns        int
 }
 
 func newStreamingState(sink agentadaptor.EventSink, runID string, p *claudeParser) *streamingState {
@@ -113,6 +113,9 @@ func (s *streamingState) handleAPIRetry(payload map[string]any) {
 		msg := claudeTopLevelString(payload, "message", "error", "detail")
 		if msg == "" {
 			msg = "API retry exhausted"
+		}
+		if s.parser != nil {
+			s.parser.flushOpenSubagents()
 		}
 		s.emitStream(agentadaptor.StreamPayload{
 			Kind: agentadaptor.StreamRunError,
@@ -410,8 +413,8 @@ func (s *streamingState) handleUserToolResult(block map[string]any) {
 	pl.Kind = agentadaptor.StreamToolCallResult
 	pl.ToolCallID = id
 	pl.Result = map[string]any{
-		"text":      text,
-		"is_error":  isError,
+		"text":        text,
+		"is_error":    isError,
 		"tool_use_id": id,
 	}
 	s.emitStream(pl)
@@ -422,6 +425,12 @@ func (s *streamingState) handleResultTerminal(payload map[string]any) {
 	s.markRunStarted()
 	if s.finishedEmitted {
 		return
+	}
+	// A terminal parent result can arrive while a child scope is still open
+	// (for example when task_notification was omitted). Close every such scope
+	// before publishing run.finished.
+	if s.parser != nil {
+		s.parser.flushOpenSubagents()
 	}
 	s.finishedEmitted = true
 
@@ -455,6 +464,14 @@ func (s *streamingState) handleResultTerminal(payload map[string]any) {
 }
 
 func (s *streamingState) handleErrorTerminal(payload map[string]any) {
+	if s.finishedEmitted {
+		return
+	}
+	// Preserve the lifecycle invariant that no child event follows a terminal
+	// parent event, including provider error terminals.
+	if s.parser != nil {
+		s.parser.flushOpenSubagents()
+	}
 	msg := claudeTopLevelString(payload, "message", "error")
 	code := claudeTopLevelString(payload, "code")
 	if msg == "" {

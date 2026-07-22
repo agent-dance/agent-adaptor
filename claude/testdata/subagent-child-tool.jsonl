@@ -1,0 +1,16 @@
+{"type":"system","subtype":"init","session_id":"sess-subagent-child-tool","model":"claude-fixture"}
+{"type":"stream_event","session_id":"sess-subagent-child-tool","event":{"type":"message_start","message":{"id":"msg-parent-3"}}}
+{"type":"stream_event","session_id":"sess-subagent-child-tool","event":{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_agent_003","name":"Agent","input":{}}}}
+{"type":"stream_event","session_id":"sess-subagent-child-tool","event":{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"description\":\"Read a file\"}"}}}
+{"type":"stream_event","session_id":"sess-subagent-child-tool","event":{"type":"content_block_stop","index":0}}
+{"type":"stream_event","session_id":"sess-subagent-child-tool","event":{"type":"message_delta","delta":{"stop_reason":"tool_use"}}}
+{"type":"stream_event","session_id":"sess-subagent-child-tool","event":{"type":"message_stop"}}
+{"type":"assistant","session_id":"sess-subagent-child-tool","message":{"model":"claude-fixture","content":[{"type":"tool_use","id":"toolu_agent_003","name":"Agent","input":{"description":"Read a file"}}]}}
+{"type":"system","subtype":"task_started","session_id":"sess-subagent-child-tool","task_id":"task-abc-003","subagent_type":"reader","parent_tool_use_id":"toolu_agent_003"}
+{"type":"system","subtype":"task_progress","session_id":"sess-subagent-child-tool","task_id":"task-abc-003","parent_tool_use_id":"toolu_agent_003","description":"Opening README","last_tool_name":"Read"}
+{"type":"assistant","session_id":"sess-subagent-child-tool","parent_tool_use_id":"toolu_agent_003","message":{"content":[{"type":"tool_use","id":"toolu_read_child_1","name":"Read","input":{"file_path":"/repo/README.md","limit":20}}]}}
+{"type":"user","session_id":"sess-subagent-child-tool","parent_tool_use_id":"toolu_agent_003","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_read_child_1","content":"# Project\nThis is the README."}]}}
+{"type":"system","subtype":"task_notification","session_id":"sess-subagent-child-tool","task_id":"task-abc-003","parent_tool_use_id":"toolu_agent_003","status":"completed","summary":"Read README.md successfully."}
+{"type":"user","session_id":"sess-subagent-child-tool","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_agent_003","content":"Read README.md successfully."}]}}
+{"type":"assistant","session_id":"sess-subagent-child-tool","message":{"model":"claude-fixture","content":[{"type":"text","text":"Done reading."}]}}
+{"type":"result","subtype":"success","session_id":"sess-subagent-child-tool","result":"Done reading.","usage":{"input_tokens":40,"output_tokens":12}}

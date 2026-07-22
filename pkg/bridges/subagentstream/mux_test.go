@@ -2,6 +2,7 @@ package subagentstream_test
 
 import (
 	"context"
+	"encoding/json"
 	"sync"
 	"testing"
 	"time"
@@ -9,6 +10,7 @@ import (
 	aguievents "github.com/ag-ui-protocol/ag-ui/sdks/community/go/pkg/core/events"
 
 	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/pkg/bridges/agui"
 	"github.com/agent-dance/agent-adaptor/pkg/bridges/subagentstream"
 	"github.com/agent-dance/agent-adaptor/pkg/hosttools/a2adelegation"
 )
@@ -63,7 +65,7 @@ func TestAGUICustomEventOmitsRawPayload(t *testing.T) {
 	}
 }
 
-func TestStreamPayloadUsesCustomPassThroughShape(t *testing.T) {
+func TestStreamPayloadUsesStronglyTypedShape(t *testing.T) {
 	t.Parallel()
 	payload := subagentstream.StreamPayload(a2adelegation.DelegationEvent{
 		RunID:        "run-1",
@@ -72,11 +74,15 @@ func TestStreamPayloadUsesCustomPassThroughShape(t *testing.T) {
 		Kind:         a2adelegation.DelegationStatus,
 		Status:       "working",
 	})
-	if payload.Kind != "" || payload.Name != string(a2adelegation.DelegationStatus) {
-		t.Fatalf("expected custom StreamPayload, got %#v", payload)
+	if payload.Kind != agentadaptor.StreamSubagentStatus {
+		t.Fatalf("expected typed StreamSubagentStatus, got %#v", payload)
 	}
-	if payload.Raw["delegation_id"] != "del-1" || payload.Raw["status"] != "working" {
-		t.Fatalf("unexpected raw payload: %#v", payload.Raw)
+	if payload.Subagent == nil || payload.Subagent.ID != "del-1" ||
+		payload.Subagent.Name != "research" || payload.Subagent.Kind != "delegated" {
+		t.Fatalf("unexpected SubagentRef: %#v", payload.Subagent)
+	}
+	if _, exists := payload.Raw["subagent_id"]; exists {
+		t.Fatalf("Raw must not duplicate the typed scope: %#v", payload.Raw)
 	}
 }
 
@@ -107,7 +113,7 @@ func TestToolCallFieldsPassThroughSubagentBridge(t *testing.T) {
 	}
 }
 
-func TestWrapMergesParentAndDelegationAGUIEvents(t *testing.T) {
+func TestWrapMergesParentAndDelegationAGUIEventsCustomMode(t *testing.T) {
 	t.Parallel()
 	handle := &fakeHandle{
 		stream:    make(chan agentadaptor.StreamPayload, 4),
@@ -117,7 +123,7 @@ func TestWrapMergesParentAndDelegationAGUIEvents(t *testing.T) {
 		runResult: agentadaptor.RunResult{RunID: "run-1"},
 	}
 	bus := a2adelegation.NewEventBus(8)
-	out := subagentstream.Wrap(context.Background(), handle, subagentstream.MuxOptions{Bus: bus})
+	out := subagentstream.Wrap(context.Background(), handle, subagentstream.MuxOptions{Bus: bus, SubagentMode: agui.SubagentAsCustom})
 
 	handle.stream <- agentadaptor.StreamPayload{Kind: agentadaptor.StreamRunStarted, ThreadID: "thread-1", RunID: "run-1"}
 	events := collectMuxEvents(t, out, 1)
@@ -137,7 +143,39 @@ func TestWrapMergesParentAndDelegationAGUIEvents(t *testing.T) {
 	}
 }
 
-func TestWrapDrainsBufferedSubagentsBeforeParentTerminal(t *testing.T) {
+func TestWrapMergesParentAndDelegationAGUIEventsActivityMode(t *testing.T) {
+	t.Parallel()
+	handle := &fakeHandle{
+		stream:    make(chan agentadaptor.StreamPayload, 4),
+		events:    make(chan agentadaptor.RunEvent),
+		done:      make(chan struct{}),
+		runID:     "run-1",
+		runResult: agentadaptor.RunResult{RunID: "run-1"},
+	}
+	bus := a2adelegation.NewEventBus(8)
+	// Default mode = SubagentAsActivity.
+	out := subagentstream.Wrap(context.Background(), handle, subagentstream.MuxOptions{Bus: bus})
+
+	handle.stream <- agentadaptor.StreamPayload{Kind: agentadaptor.StreamRunStarted, ThreadID: "thread-1", RunID: "run-1"}
+	events := collectMuxEvents(t, out, 1)
+	bus.Publish(a2adelegation.DelegationEvent{RunID: "run-1", DelegationID: "del-1", AgentKey: "research", Kind: a2adelegation.DelegationStarted})
+	close(handle.stream)
+	close(handle.done)
+	events = append(events, collectMuxEvents(t, out, 1)...)
+
+	if events[0].ID == 0 || events[1].ID <= events[0].ID {
+		t.Fatalf("expected monotonic mux IDs, got %#v", events)
+	}
+	if events[0].AGUI.Type() != aguievents.EventTypeRunStarted {
+		t.Fatalf("first event should be parent RUN_STARTED, got %s", events[0].AGUI.Type())
+	}
+	if events[1].AGUI.Type() != aguievents.EventTypeActivitySnapshot || events[1].Subagent == nil {
+		t.Fatalf("second event should be ACTIVITY_SNAPSHOT for subagent, got type=%s subagent=%v", events[1].AGUI.Type(), events[1].Subagent)
+	}
+	assertActivitySnapshot(t, events[1].AGUI, "del-1", "research", "started")
+}
+
+func TestWrapDrainsBufferedSubagentsBeforeParentTerminalCustomMode(t *testing.T) {
 	t.Parallel()
 	handle := &fakeHandle{
 		stream:    make(chan agentadaptor.StreamPayload, 1),
@@ -148,7 +186,7 @@ func TestWrapDrainsBufferedSubagentsBeforeParentTerminal(t *testing.T) {
 	}
 	bus := a2adelegation.NewEventBus(8)
 	bus.Publish(a2adelegation.DelegationEvent{RunID: "run-1", DelegationID: "del-1", AgentKey: "research", Kind: a2adelegation.DelegationFinished, Status: "completed"})
-	out := subagentstream.Wrap(context.Background(), handle, subagentstream.MuxOptions{Bus: bus})
+	out := subagentstream.Wrap(context.Background(), handle, subagentstream.MuxOptions{Bus: bus, SubagentMode: agui.SubagentAsCustom})
 
 	handle.stream <- agentadaptor.StreamPayload{Kind: agentadaptor.StreamRunFinished, ThreadID: "thread-1", RunID: "run-1"}
 	close(handle.stream)
@@ -168,7 +206,66 @@ func TestWrapDrainsBufferedSubagentsBeforeParentTerminal(t *testing.T) {
 	}
 }
 
-func TestWrapSynthesizesDanglingSubagentFailureBeforeParentRunFinished(t *testing.T) {
+func TestWrapDrainsBufferedSubagentsBeforeParentTerminalActivityMode(t *testing.T) {
+	t.Parallel()
+	handle := &fakeHandle{
+		stream:    make(chan agentadaptor.StreamPayload, 1),
+		events:    make(chan agentadaptor.RunEvent),
+		done:      make(chan struct{}),
+		runID:     "run-1",
+		runResult: agentadaptor.RunResult{RunID: "run-1"},
+	}
+	bus := a2adelegation.NewEventBus(8)
+	// Pre-publish started+finished so they're in the replay buffer.
+	bus.Publish(a2adelegation.DelegationEvent{RunID: "run-1", DelegationID: "del-1", AgentKey: "research", Kind: a2adelegation.DelegationStarted})
+	bus.Publish(a2adelegation.DelegationEvent{RunID: "run-1", DelegationID: "del-1", AgentKey: "research", Kind: a2adelegation.DelegationFinished, Status: "completed"})
+	out := subagentstream.Wrap(context.Background(), handle, subagentstream.MuxOptions{Bus: bus})
+
+	handle.stream <- agentadaptor.StreamPayload{Kind: agentadaptor.StreamRunFinished, ThreadID: "thread-1", RunID: "run-1"}
+	close(handle.stream)
+	close(handle.done)
+	events := collectAllMuxEvents(t, out)
+
+	// Should have ACTIVITY_SNAPSHOT + ACTIVITY_DELTA (terminal) + RUN_FINISHED.
+	assertLastAGUIType(t, events, aguievents.EventTypeRunFinished)
+	seenActivity := false
+	for _, ev := range events[:len(events)-1] {
+		if (ev.AGUI.Type() == aguievents.EventTypeActivitySnapshot || ev.AGUI.Type() == aguievents.EventTypeActivityDelta) && ev.Subagent != nil {
+			seenActivity = true
+		}
+	}
+	if !seenActivity {
+		t.Fatalf("expected Activity event before terminal, got %#v", events)
+	}
+}
+
+func TestWrapSynthesizesDanglingSubagentFailureBeforeParentRunFinishedCustomMode(t *testing.T) {
+	t.Parallel()
+	handle := &fakeHandle{
+		stream:    make(chan agentadaptor.StreamPayload, 1),
+		events:    make(chan agentadaptor.RunEvent),
+		done:      make(chan struct{}),
+		runID:     "run-1",
+		runResult: agentadaptor.RunResult{RunID: "run-1"},
+	}
+	bus := newTrackingBus()
+	out := subagentstream.Wrap(context.Background(), handle, subagentstream.MuxOptions{Bus: bus, SubagentMode: agui.SubagentAsCustom})
+	bus.waitSubscribed(t, "run-1")
+	bus.publish(a2adelegation.DelegationEvent{RunID: "run-1", DelegationID: "active", AgentKey: "research", Kind: a2adelegation.DelegationStarted})
+	bus.publish(a2adelegation.DelegationEvent{RunID: "run-1", DelegationID: "done", AgentKey: "review", Kind: a2adelegation.DelegationStarted})
+	bus.publish(a2adelegation.DelegationEvent{RunID: "run-1", DelegationID: "done", AgentKey: "review", Kind: a2adelegation.DelegationFinished, Status: "completed"})
+
+	handle.stream <- agentadaptor.StreamPayload{Kind: agentadaptor.StreamRunFinished, ThreadID: "thread-1", RunID: "run-1"}
+	close(handle.stream)
+	close(handle.done)
+	events := collectAllMuxEvents(t, out)
+
+	assertLastAGUIType(t, events, aguievents.EventTypeRunFinished)
+	assertSyntheticSubagentTerminalBeforeParent(t, events, "active", a2adelegation.DelegationFailed, "parent_finished")
+	assertNoExtraTerminal(t, events, "done", a2adelegation.DelegationFailed)
+}
+
+func TestWrapSynthesizesDanglingSubagentFailureBeforeParentRunFinishedActivityMode(t *testing.T) {
 	t.Parallel()
 	handle := &fakeHandle{
 		stream:    make(chan agentadaptor.StreamPayload, 1),
@@ -190,11 +287,13 @@ func TestWrapSynthesizesDanglingSubagentFailureBeforeParentRunFinished(t *testin
 	events := collectAllMuxEvents(t, out)
 
 	assertLastAGUIType(t, events, aguievents.EventTypeRunFinished)
-	assertSyntheticSubagentTerminalBeforeParent(t, events, "active", a2adelegation.DelegationFailed, "parent_finished")
-	assertNoExtraTerminal(t, events, "done", a2adelegation.DelegationFailed)
+	// In Activity mode, "active" gets a synthetic ACTIVITY_DELTA(status=failed).
+	assertActivityDeltaBeforeParent(t, events, "active", "failed")
+	// "done" was already terminated → no extra terminal delta for it.
+	assertNoExtraActivityTerminal(t, events, "done")
 }
 
-func TestWrapSynthesizesDanglingSubagentFailureBeforeSynthesizedParentTerminalOnStreamClose(t *testing.T) {
+func TestWrapSynthesizesDanglingSubagentFailureBeforeSynthesizedParentTerminalOnStreamCloseCustomMode(t *testing.T) {
 	t.Parallel()
 	handle := &fakeHandle{
 		stream:    make(chan agentadaptor.StreamPayload),
@@ -204,7 +303,7 @@ func TestWrapSynthesizesDanglingSubagentFailureBeforeSynthesizedParentTerminalOn
 		runResult: agentadaptor.RunResult{RunID: "run-1"},
 	}
 	bus := newTrackingBus()
-	out := subagentstream.Wrap(context.Background(), handle, subagentstream.MuxOptions{Bus: bus})
+	out := subagentstream.Wrap(context.Background(), handle, subagentstream.MuxOptions{Bus: bus, SubagentMode: agui.SubagentAsCustom})
 	bus.waitSubscribed(t, "run-1")
 	bus.publish(a2adelegation.DelegationEvent{RunID: "run-1", DelegationID: "active", AgentKey: "research", Kind: a2adelegation.DelegationStatus, Status: "working"})
 
@@ -216,7 +315,7 @@ func TestWrapSynthesizesDanglingSubagentFailureBeforeSynthesizedParentTerminalOn
 	assertSyntheticSubagentTerminalBeforeParent(t, events, "active", a2adelegation.DelegationFailed, "parent_finished")
 }
 
-func TestWrapSynthesizesDanglingSubagentFailureBeforeParentRunError(t *testing.T) {
+func TestWrapSynthesizesDanglingSubagentFailureBeforeParentRunErrorCustomMode(t *testing.T) {
 	t.Parallel()
 	handle := &fakeHandle{
 		stream:    make(chan agentadaptor.StreamPayload, 1),
@@ -226,7 +325,7 @@ func TestWrapSynthesizesDanglingSubagentFailureBeforeParentRunError(t *testing.T
 		runResult: agentadaptor.RunResult{RunID: "run-1"},
 	}
 	bus := newTrackingBus()
-	out := subagentstream.Wrap(context.Background(), handle, subagentstream.MuxOptions{Bus: bus})
+	out := subagentstream.Wrap(context.Background(), handle, subagentstream.MuxOptions{Bus: bus, SubagentMode: agui.SubagentAsCustom})
 	bus.waitSubscribed(t, "run-1")
 	bus.publish(a2adelegation.DelegationEvent{RunID: "run-1", DelegationID: "active", AgentKey: "research", Kind: a2adelegation.DelegationStarted})
 
@@ -239,7 +338,7 @@ func TestWrapSynthesizesDanglingSubagentFailureBeforeParentRunError(t *testing.T
 	assertSyntheticSubagentTerminalBeforeParent(t, events, "active", a2adelegation.DelegationFailed, "parent_finished")
 }
 
-func TestWrapSynthesizesDanglingSubagentCancelledOnContextCancel(t *testing.T) {
+func TestWrapSynthesizesDanglingSubagentCancelledOnContextCancelCustomMode(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
 	handle := &fakeHandle{
@@ -250,7 +349,7 @@ func TestWrapSynthesizesDanglingSubagentCancelledOnContextCancel(t *testing.T) {
 		runResult: agentadaptor.RunResult{RunID: "run-1"},
 	}
 	bus := newTrackingBus()
-	out := subagentstream.Wrap(ctx, handle, subagentstream.MuxOptions{Bus: bus})
+	out := subagentstream.Wrap(ctx, handle, subagentstream.MuxOptions{Bus: bus, SubagentMode: agui.SubagentAsCustom})
 	bus.waitSubscribed(t, "run-1")
 	bus.publish(a2adelegation.DelegationEvent{RunID: "run-1", DelegationID: "active", AgentKey: "research", Kind: a2adelegation.DelegationStarted})
 
@@ -264,7 +363,7 @@ func TestWrapSynthesizesDanglingSubagentCancelledOnContextCancel(t *testing.T) {
 	}
 }
 
-func TestWrapAGUIForwardsDanglingSubagentCancelledOnContextCancel(t *testing.T) {
+func TestWrapAGUIForwardsDanglingSubagentCancelledOnContextCancelCustomMode(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
 	handle := &fakeHandle{
@@ -275,7 +374,7 @@ func TestWrapAGUIForwardsDanglingSubagentCancelledOnContextCancel(t *testing.T) 
 		runResult: agentadaptor.RunResult{RunID: "run-1"},
 	}
 	bus := newTrackingBus()
-	out := subagentstream.WrapAGUI(ctx, handle, subagentstream.MuxOptions{Bus: bus})
+	out := subagentstream.WrapAGUI(ctx, handle, subagentstream.MuxOptions{Bus: bus, SubagentMode: agui.SubagentAsCustom})
 	bus.waitSubscribed(t, "run-1")
 	bus.publish(a2adelegation.DelegationEvent{RunID: "run-1", DelegationID: "active", AgentKey: "research", Kind: a2adelegation.DelegationStarted})
 
@@ -517,6 +616,396 @@ func assertNoExtraTerminal(t *testing.T, events []subagentstream.Event, delegati
 		if ev.Subagent != nil && ev.Subagent.DelegationID == delegationID && ev.Subagent.Kind == kind {
 			t.Fatalf("delegation %q got duplicate terminal %s in events=%#v", delegationID, kind, events)
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Activity mode helpers
+// ---------------------------------------------------------------------------
+
+func assertActivitySnapshot(t *testing.T, ev aguievents.Event, messageID, agentKey, status string) {
+	t.Helper()
+	snap, ok := ev.(*aguievents.ActivitySnapshotEvent)
+	if !ok {
+		t.Fatalf("expected *ActivitySnapshotEvent, got %T", ev)
+	}
+	if snap.MessageID != messageID {
+		t.Fatalf("snapshot messageId: got %q want %q", snap.MessageID, messageID)
+	}
+	if snap.ActivityType != "subagent" {
+		t.Fatalf("snapshot activityType: got %q want \"subagent\"", snap.ActivityType)
+	}
+	b, _ := json.Marshal(snap.Content)
+	var c map[string]any
+	_ = json.Unmarshal(b, &c)
+	if c["agentKey"] != agentKey {
+		t.Fatalf("snapshot content agentKey: got %q want %q", c["agentKey"], agentKey)
+	}
+	if c["status"] != status {
+		t.Fatalf("snapshot content status: got %q want %q", c["status"], status)
+	}
+}
+
+func assertActivityDeltaBeforeParent(t *testing.T, events []subagentstream.Event, messageID, status string) {
+	t.Helper()
+	parentTerminal := len(events) - 1
+	for i, ev := range events {
+		if ev.AGUI == nil || ev.AGUI.Type() != aguievents.EventTypeActivityDelta {
+			continue
+		}
+		delta, ok := ev.AGUI.(*aguievents.ActivityDeltaEvent)
+		if !ok || delta.MessageID != messageID {
+			continue
+		}
+		for _, op := range delta.Patch {
+			if op.Path == "/status" && op.Value == status {
+				if i >= parentTerminal {
+					t.Fatalf("Activity delta(%q, status=%q) was not before parent terminal: idx=%d parent=%d", messageID, status, i, parentTerminal)
+				}
+				return
+			}
+		}
+	}
+	t.Fatalf("no ACTIVITY_DELTA(%q, status=%q) found before parent terminal; events=%v", messageID, status, summarize(events))
+}
+
+func assertNoExtraActivityTerminal(t *testing.T, events []subagentstream.Event, messageID string) {
+	t.Helper()
+	for _, ev := range events {
+		if ev.AGUI == nil || ev.AGUI.Type() != aguievents.EventTypeActivityDelta {
+			continue
+		}
+		delta, ok := ev.AGUI.(*aguievents.ActivityDeltaEvent)
+		if !ok || delta.MessageID != messageID {
+			continue
+		}
+		for _, op := range delta.Patch {
+			if op.Path == "/status" {
+				if v, _ := op.Value.(string); v == "failed" || v == "cancelled" {
+					t.Fatalf("unexpected terminal Activity delta for %q: %#v", messageID, delta.Patch)
+				}
+			}
+		}
+	}
+}
+
+func summarize(events []subagentstream.Event) []string {
+	out := make([]string, 0, len(events))
+	for _, ev := range events {
+		if ev.AGUI != nil {
+			out = append(out, string(ev.AGUI.Type()))
+		}
+	}
+	return out
+}
+
+// ---------------------------------------------------------------------------
+// Activity mode integration tests
+// ---------------------------------------------------------------------------
+
+func TestActivityAggregatorFullLifecycle(t *testing.T) {
+	t.Parallel()
+	handle := &fakeHandle{
+		stream:    make(chan agentadaptor.StreamPayload, 8),
+		events:    make(chan agentadaptor.RunEvent),
+		done:      make(chan struct{}),
+		runID:     "run-1",
+		runResult: agentadaptor.RunResult{RunID: "run-1"},
+	}
+	bus := newTrackingBus()
+	out := subagentstream.Wrap(context.Background(), handle, subagentstream.MuxOptions{Bus: bus})
+	bus.waitSubscribed(t, "run-1")
+
+	handle.stream <- agentadaptor.StreamPayload{Kind: agentadaptor.StreamRunStarted, ThreadID: "t", RunID: "run-1"}
+
+	// Full lifecycle: started → status → text delta → tool call → finished.
+	bus.publish(a2adelegation.DelegationEvent{
+		RunID: "run-1", DelegationID: "del-1", AgentKey: "research", AgentName: "Research", Protocol: "a2a",
+		Kind: a2adelegation.DelegationStarted,
+	})
+	bus.publish(a2adelegation.DelegationEvent{
+		RunID: "run-1", DelegationID: "del-1", AgentKey: "research",
+		Kind: a2adelegation.DelegationStatus, Delta: "searching...", Status: "TASK_STATE_WORKING",
+	})
+	bus.publish(a2adelegation.DelegationEvent{
+		RunID: "run-1", DelegationID: "del-1", AgentKey: "research",
+		Kind: a2adelegation.DelegationReasoningDelta, Delta: "Choosing search terms.",
+	})
+	bus.publish(a2adelegation.DelegationEvent{
+		RunID: "run-1", DelegationID: "del-1", AgentKey: "research",
+		Kind: a2adelegation.DelegationTextDelta, Delta: "Found result.",
+	})
+	bus.publish(a2adelegation.DelegationEvent{
+		RunID: "run-1", DelegationID: "del-1", AgentKey: "research",
+		Kind: a2adelegation.DelegationToolCallStart, RemoteToolCallID: "tc-1",
+		ToolName: "search", Args: map[string]any{"q": "Go SDK"},
+	})
+	bus.publish(a2adelegation.DelegationEvent{
+		RunID: "run-1", DelegationID: "del-1", AgentKey: "research",
+		Kind: a2adelegation.DelegationToolCallArgs, RemoteToolCallID: "tc-1",
+		Delta: "searching page 1\n",
+	})
+	bus.publish(a2adelegation.DelegationEvent{
+		RunID: "run-1", DelegationID: "del-1", AgentKey: "research",
+		Kind: a2adelegation.DelegationToolCallResult, RemoteToolCallID: "tc-1",
+		ToolName: "search", Result: map[string]any{"count": 5},
+	})
+	bus.publish(a2adelegation.DelegationEvent{
+		RunID: "run-1", DelegationID: "del-1", AgentKey: "research",
+		Kind: a2adelegation.DelegationFinished, Status: "completed", Text: "done",
+	})
+
+	handle.stream <- agentadaptor.StreamPayload{Kind: agentadaptor.StreamRunFinished, ThreadID: "t", RunID: "run-1"}
+	close(handle.stream)
+	close(handle.done)
+
+	events := collectAllMuxEvents(t, out)
+	assertLastAGUIType(t, events, aguievents.EventTypeRunFinished)
+
+	// Verify Activity events.
+	var types []aguievents.EventType
+	for _, ev := range events {
+		if ev.AGUI != nil {
+			types = append(types, ev.AGUI.Type())
+		}
+	}
+	seenSnapshot, seenDelta, seenNormalizedStatus, seenResultAdd, seenReasoning, seenToolDelta := false, false, false, false, false, false
+	for _, ev := range events {
+		if ev.AGUI == nil {
+			continue
+		}
+		switch ev.AGUI.Type() {
+		case aguievents.EventTypeActivitySnapshot:
+			if snap, ok := ev.AGUI.(*aguievents.ActivitySnapshotEvent); ok && snap.MessageID == "del-1" {
+				seenSnapshot = true
+				assertActivitySnapshot(t, ev.AGUI, "del-1", "research", "started")
+			}
+		case aguievents.EventTypeActivityDelta:
+			if delta, ok := ev.AGUI.(*aguievents.ActivityDeltaEvent); ok && delta.MessageID == "del-1" {
+				seenDelta = true
+				for _, operation := range delta.Patch {
+					if operation.Path == "/status" && operation.Value == "running" {
+						seenNormalizedStatus = true
+					}
+					if operation.Path == "/toolCalls/0/result" && operation.Op == "add" {
+						seenResultAdd = true
+					}
+					if operation.Path == "/reasoning" && operation.Op == "add" &&
+						operation.Value == "Choosing search terms." {
+						seenReasoning = true
+					}
+					if operation.Path == "/toolCalls/0/args" && operation.Op == "add" {
+						seenToolDelta = true
+					}
+				}
+			}
+		}
+	}
+	if !seenSnapshot {
+		t.Fatalf("missing ACTIVITY_SNAPSHOT for del-1; event types: %v", types)
+	}
+	if !seenDelta {
+		t.Fatalf("missing ACTIVITY_DELTA for del-1; event types: %v", types)
+	}
+	if !seenNormalizedStatus {
+		t.Fatal("A2A task status was not normalized to the Activity status vocabulary")
+	}
+	if !seenResultAdd {
+		t.Fatal("tool result must use JSON Patch add when the optional result field is absent")
+	}
+	if !seenReasoning {
+		t.Fatal("reasoning delta was not mapped into Activity content")
+	}
+	if !seenToolDelta {
+		t.Fatal("tool args/output delta was not mapped into Activity content")
+	}
+}
+
+func TestActivityAggregatorDuplicateStartIsIdempotent(t *testing.T) {
+	t.Parallel()
+	handle := &fakeHandle{
+		stream:    make(chan agentadaptor.StreamPayload, 1),
+		events:    make(chan agentadaptor.RunEvent),
+		done:      make(chan struct{}),
+		runID:     "run-duplicate",
+		runResult: agentadaptor.RunResult{RunID: "run-duplicate"},
+	}
+	bus := newTrackingBus()
+	out := subagentstream.Wrap(context.Background(), handle, subagentstream.MuxOptions{Bus: bus})
+	bus.waitSubscribed(t, "run-duplicate")
+
+	for _, event := range []a2adelegation.DelegationEvent{
+		{RunID: "run-duplicate", DelegationID: "del-duplicate", AgentKey: "worker", Kind: a2adelegation.DelegationStarted},
+		{RunID: "run-duplicate", DelegationID: "del-duplicate", AgentKey: "worker", Kind: a2adelegation.DelegationTextDelta, Delta: "first"},
+		{
+			RunID: "run-duplicate", DelegationID: "del-duplicate", AgentKey: "worker",
+			Kind: a2adelegation.DelegationToolCallStart, RemoteToolCallID: "inner", ToolName: "Read",
+		},
+		{RunID: "run-duplicate", DelegationID: "del-duplicate", AgentKey: "worker", Kind: a2adelegation.DelegationStarted},
+		{RunID: "run-duplicate", DelegationID: "del-duplicate", AgentKey: "worker", Kind: a2adelegation.DelegationTextDelta, Delta: " second"},
+		{
+			RunID: "run-duplicate", DelegationID: "del-duplicate", AgentKey: "worker",
+			Kind: a2adelegation.DelegationToolCallResult, RemoteToolCallID: "inner", ToolName: "Read",
+			Result: map[string]any{"text": "kept"},
+		},
+		{RunID: "run-duplicate", DelegationID: "del-duplicate", AgentKey: "worker", Kind: a2adelegation.DelegationFinished},
+	} {
+		bus.publish(event)
+	}
+	handle.stream <- agentadaptor.StreamPayload{Kind: agentadaptor.StreamRunFinished, RunID: "run-duplicate"}
+	close(handle.stream)
+	close(handle.done)
+
+	events := collectAllMuxEvents(t, out)
+	var snapshots int
+	var preservedText, preservedTool bool
+	for _, event := range events {
+		switch typed := event.AGUI.(type) {
+		case *aguievents.ActivitySnapshotEvent:
+			if typed.MessageID == "del-duplicate" {
+				snapshots++
+			}
+		case *aguievents.ActivityDeltaEvent:
+			if typed.MessageID != "del-duplicate" {
+				continue
+			}
+			for _, operation := range typed.Patch {
+				if operation.Path == "/text" && operation.Value == "first second" {
+					preservedText = true
+				}
+				if operation.Path == "/toolCalls/0/result" {
+					preservedTool = true
+				}
+			}
+		}
+	}
+	if snapshots != 1 {
+		t.Fatalf("duplicate start emitted %d snapshots, want 1; events=%v", snapshots, summarize(events))
+	}
+	if !preservedText || !preservedTool {
+		t.Fatalf("duplicate start lost accumulated state: text=%v tool=%v", preservedText, preservedTool)
+	}
+}
+
+func TestActivityAggregatorSyntheticTerminalOnContextCancel(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	handle := &fakeHandle{
+		stream:    make(chan agentadaptor.StreamPayload),
+		events:    make(chan agentadaptor.RunEvent),
+		done:      make(chan struct{}),
+		runID:     "run-2",
+		runResult: agentadaptor.RunResult{RunID: "run-2"},
+	}
+	bus := newTrackingBus()
+	out := subagentstream.Wrap(ctx, handle, subagentstream.MuxOptions{Bus: bus})
+	bus.waitSubscribed(t, "run-2")
+	bus.publish(a2adelegation.DelegationEvent{
+		RunID: "run-2", DelegationID: "del-2", AgentKey: "impl",
+		Kind: a2adelegation.DelegationStarted,
+	})
+
+	events := collectMuxEvents(t, out, 1) // wait for snapshot
+	cancel()
+	events = append(events, collectAllMuxEvents(t, out)...)
+
+	// Expect ACTIVITY_DELTA with status=cancelled for del-2.
+	found := false
+	for _, ev := range events {
+		delta, ok := ev.AGUI.(*aguievents.ActivityDeltaEvent)
+		if !ok || delta.MessageID != "del-2" {
+			continue
+		}
+		for _, op := range delta.Patch {
+			if op.Path == "/status" && op.Value == "cancelled" {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("expected ACTIVITY_DELTA(status=cancelled) for del-2; events=%v", summarize(events))
+	}
+}
+
+func TestMapToStreamPayloadProperKinds(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		kind     a2adelegation.DelegationEventKind
+		wantKind agentadaptor.StreamKind
+	}{
+		{a2adelegation.DelegationStarted, agentadaptor.StreamSubagentStart},
+		{a2adelegation.DelegationStatus, agentadaptor.StreamSubagentStatus},
+		{a2adelegation.DelegationTextDelta, agentadaptor.StreamTextContent},
+		{a2adelegation.DelegationReasoningDelta, agentadaptor.StreamReasoningContent},
+		{a2adelegation.DelegationFinished, agentadaptor.StreamSubagentEnd},
+		{a2adelegation.DelegationFailed, agentadaptor.StreamSubagentEnd},
+		{a2adelegation.DelegationCancelled, agentadaptor.StreamSubagentEnd},
+		{a2adelegation.DelegationInputRequired, agentadaptor.StreamSubagentEnd},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(string(tc.kind), func(t *testing.T) {
+			t.Parallel()
+			p := subagentstream.MapToStreamPayload(a2adelegation.DelegationEvent{
+				RunID: "run-1", DelegationID: "del-1", AgentKey: "research",
+				ParentToolCallID: "parent-call", RemoteTaskID: "remote-task",
+				Kind: tc.kind, Status: "running", Delta: "delta text",
+			})
+			if p.Kind != tc.wantKind {
+				t.Fatalf("MapToStreamPayload kind: got %q want %q", p.Kind, tc.wantKind)
+			}
+			if p.Subagent == nil || p.Subagent.ID != "del-1" ||
+				p.Subagent.Name != "research" || p.Subagent.Kind != "delegated" ||
+				p.Subagent.Protocol != "a2a" || p.Subagent.ToolCallID != "parent-call" {
+				t.Fatalf("missing typed SubagentRef for %q: %#v", p.Kind, p.Subagent)
+			}
+			if _, exists := p.Raw["subagent_id"]; exists {
+				t.Fatalf("Raw duplicated scope ID for %q: %#v", p.Kind, p.Raw)
+			}
+			if p.Raw["remote_task_id"] != "remote-task" {
+				t.Fatalf("Raw omitted A2A remote ID for %q: %#v", p.Kind, p.Raw)
+			}
+		})
+	}
+}
+
+func TestMapToStreamPayloadRejectsEmptyDelegationID(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		kind a2adelegation.DelegationEventKind
+	}{
+		{name: "text", kind: a2adelegation.DelegationTextDelta},
+		{name: "status", kind: a2adelegation.DelegationStatus},
+		{name: "tool", kind: a2adelegation.DelegationToolCallStart},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			payload := subagentstream.MapToStreamPayload(a2adelegation.DelegationEvent{
+				RunID:            "run-1",
+				Kind:             test.kind,
+				Delta:            "must not reach parent",
+				RemoteToolCallID: "inner",
+				ToolName:         "Read",
+			})
+			if payload.Kind != "" || payload.Subagent != nil || payload.Delta != "" ||
+				payload.MessageID != "" || payload.ToolCallID != "" || payload.Raw != nil {
+				t.Fatalf("empty DelegationID produced non-zero payload: %#v", payload)
+			}
+		})
+	}
+}
+
+func TestStreamPayloadDelegatesToCanonicalMapping(t *testing.T) {
+	t.Parallel()
+	p := subagentstream.StreamPayload(a2adelegation.DelegationEvent{
+		RunID: "run-1", DelegationID: "del-1", AgentKey: "research",
+		Kind: a2adelegation.DelegationStatus, Status: "working",
+	})
+	if p.Kind != agentadaptor.StreamSubagentStatus || p.Subagent == nil || p.Subagent.ID != "del-1" {
+		t.Fatalf("StreamPayload did not use canonical mapping: %#v", p)
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -236,6 +237,32 @@ func TestDelegationRuntimeInjectsAuthenticatedPerRunMCP(t *testing.T) {
 	if remaining != 0 {
 		t.Fatalf("runtime sidecars remaining = %d", remaining)
 	}
+}
+
+// TestRenderLeaderStreamHandlesSubagentKinds verifies that renderLeaderStream
+// gracefully processes StreamSubagentStart/Status/End events produced when
+// Phase 2 adapters emit native subagent scopes. For the team-agent-workflow
+// these kinds arrive only on native-subagent providers; A2A delegation
+// produces DelegationEvents on the bus (consumed by workflowTrace). The
+// test confirms no panic and that the function drains to completion.
+func TestRenderLeaderStreamHandlesSubagentKinds(t *testing.T) {
+	events := make(chan agentadaptor.StreamPayload, 16)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go renderLeaderStream(events, &wg)
+
+	ref := &agentadaptor.SubagentRef{
+		ID: "sa-plan-1", Name: "plan", Kind: "delegated", Protocol: "a2a",
+	}
+	events <- agentadaptor.StreamPayload{Kind: agentadaptor.StreamSubagentStart, Subagent: ref}
+	events <- agentadaptor.StreamPayload{Kind: agentadaptor.StreamSubagentStatus, Subagent: ref, Delta: "inspecting TASK.md"}
+	events <- agentadaptor.StreamPayload{Kind: agentadaptor.StreamSubagentEnd, Subagent: ref}
+	// nil Subagent must not panic (defensive check)
+	events <- agentadaptor.StreamPayload{Kind: agentadaptor.StreamSubagentStart}
+	events <- agentadaptor.StreamPayload{Kind: agentadaptor.StreamSubagentStatus, Delta: "ignored"}
+	events <- agentadaptor.StreamPayload{Kind: agentadaptor.StreamSubagentEnd}
+	close(events)
+	wg.Wait()
 }
 
 func postMCP(t *testing.T, endpoint, token string, body []byte) (int, string) {

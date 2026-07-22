@@ -62,6 +62,17 @@ func (m *delegationRuntimeManager) Ensure(ctx context.Context, req agentadaptor.
 		return nil, fmt.Errorf("listen for delegation MCP sidecar: %w", err)
 	}
 	delegator := a2adelegation.NewDelegator(m.registry, m.bus)
+	delegator.Observe = func(event a2adelegation.DelegationEvent) {
+		term.Logf(
+			"[a2a-live] time=%s agent=%s kind=%s status=%s delta_bytes=%d tool=%s",
+			event.Time.UTC().Format(time.RFC3339Nano),
+			event.AgentKey,
+			event.Kind,
+			event.Status,
+			len(event.Delta),
+			event.RemoteToolCallID,
+		)
+	}
 	mcp := a2adelegation.NewMCPServer(delegator, a2adelegation.MCPServerOptions{
 		RunID: req.RunID, BearerToken: token, Tenant: req.Agent.TenantID,
 	})

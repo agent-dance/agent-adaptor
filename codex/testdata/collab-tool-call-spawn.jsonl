@@ -1,0 +1,5 @@
+{"type":"thread.started","thread_id":"thread-collab-spawn-1"}
+{"type":"item.started","item":{"id":"spawn-item-1","type":"collab_tool_call","tool":"spawnAgent","status":"in_progress","sender_thread_id":"thread-collab-spawn-1","receiver_thread_ids":["child-thread-42"],"agents_states":{}}}
+{"type":"item.completed","item":{"id":"spawn-item-1","type":"collab_tool_call","tool":"spawnAgent","status":"completed","sender_thread_id":"thread-collab-spawn-1","receiver_thread_ids":["child-thread-42"],"agents_states":{}}}
+{"type":"item.completed","item":{"id":"msg-2","type":"agent_message","text":"Spawned sub-agent and received result."}}
+{"type":"turn.completed","session_id":"thread-collab-spawn-1","summary":"spawned done"}

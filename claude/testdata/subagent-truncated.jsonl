@@ -1,0 +1,10 @@
+{"type":"system","subtype":"init","session_id":"sess-subagent-truncated","model":"claude-fixture"}
+{"type":"stream_event","session_id":"sess-subagent-truncated","event":{"type":"message_start","message":{"id":"msg-parent-5"}}}
+{"type":"stream_event","session_id":"sess-subagent-truncated","event":{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_agent_005","name":"Agent","input":{}}}}
+{"type":"stream_event","session_id":"sess-subagent-truncated","event":{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"description\":\"Truncated task\"}"}}}
+{"type":"stream_event","session_id":"sess-subagent-truncated","event":{"type":"content_block_stop","index":0}}
+{"type":"stream_event","session_id":"sess-subagent-truncated","event":{"type":"message_delta","delta":{"stop_reason":"tool_use"}}}
+{"type":"stream_event","session_id":"sess-subagent-truncated","event":{"type":"message_stop"}}
+{"type":"assistant","session_id":"sess-subagent-truncated","message":{"model":"claude-fixture","content":[{"type":"tool_use","id":"toolu_agent_005","name":"Agent","input":{"description":"Truncated task"}}]}}
+{"type":"system","subtype":"task_started","session_id":"sess-subagent-truncated","task_id":"task-abc-005","subagent_type":"worker","parent_tool_use_id":"toolu_agent_005"}
+{"type":"system","subtype":"task_progress","session_id":"sess-subagent-truncated","task_id":"task-abc-005","parent_tool_use_id":"toolu_agent_005","description":"Working...","last_tool_name":"Bash"}

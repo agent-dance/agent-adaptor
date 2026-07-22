@@ -128,6 +128,12 @@ func Run(ctx context.Context, opts Options, sink agentadaptor.EventSink) (agenta
 	// the DriverRunResult.
 	client.SetNotificationHandler(state.onNotification)
 
+	// Wire follow-child: when the parent translator discovers a stable child
+	// thread id from a collabAgentToolCall item, it calls back into runState
+	// which subscribes to the child thread on the same connection and routes
+	// its events through a child Translator with Subagent set (§8.3.5).
+	state.initFollowChild(ctx, client)
+
 	clientInfo := ClientInfo{
 		Name:    nonEmpty(opts.ClientName, "agent-adaptor"),
 		Version: nonEmpty(opts.ClientVersion, "0.0.0"),
@@ -225,6 +231,11 @@ func Run(ctx context.Context, opts Options, sink agentadaptor.EventSink) (agenta
 type runState struct {
 	translator *Translator
 
+	// childTranslators maps child thread ids to dedicated Translator instances
+	// when follow-child (§8.3.5) is active. Protected by childMu.
+	childMu          sync.RWMutex
+	childTranslators map[string]*Translator
+
 	mu           sync.Mutex
 	textByItemID map[string]*strings.Builder
 	itemOrder    []string
@@ -236,16 +247,101 @@ type runState struct {
 
 func newRunState(runID string, sink agentadaptor.EventSink) *runState {
 	return &runState{
-		translator:   NewTranslator(sink, runID),
-		textByItemID: map[string]*strings.Builder{},
-		done:         make(chan struct{}),
+		translator:       NewTranslator(sink, runID),
+		textByItemID:     map[string]*strings.Builder{},
+		childTranslators: map[string]*Translator{},
+		done:             make(chan struct{}),
 	}
+}
+
+// initFollowChild sets the onChildThread callback on the parent translator
+// so that collabAgentToolCall spawn events trigger child thread subscription.
+// Must be called after the client is created and before notifications arrive.
+func (s *runState) initFollowChild(ctx context.Context, client *Client) {
+	s.translator.mu.Lock()
+	s.translator.onChildThread = func(childThreadID, parentItemID string) {
+		s.subscribeChild(ctx, client, childThreadID, parentItemID)
+	}
+	s.translator.mu.Unlock()
+}
+
+// subscribeChild registers a child translator and asynchronously calls
+// thread/resume on the same app-server connection to begin receiving child
+// thread events. It is called from within the JRPC notification handler, so
+// ThreadResume MUST be called in a goroutine to avoid deadlocking the
+// sequential JRPC dispatcher.
+//
+// Architecture note (§8.3.5): the same single app-server connection supports
+// multiple concurrent thread subscriptions via thread/resume. Once subscribed,
+// the child thread emits the same turn/* + item/* notifications as the parent,
+// distinguished by the threadId field in each notification body.
+func (s *runState) subscribeChild(ctx context.Context, client *Client, childThreadID, parentItemID string) {
+	ref := &agentadaptor.SubagentRef{
+		ID:         childThreadID,
+		Kind:       "native",
+		ToolCallID: parentItemID,
+	}
+	childTr := s.translator.newChildTranslator(ref)
+	childTr.SetThread(childThreadID)
+
+	s.childMu.Lock()
+	s.childTranslators[childThreadID] = childTr
+	s.childMu.Unlock()
+
+	// ThreadResume is called in a goroutine to avoid deadlocking the JRPC
+	// dispatcher: sourcegraph/jsonrpc2 dispatches notifications synchronously
+	// and a Call from inside the handler would wait for the response, which
+	// can only arrive after the handler returns.
+	go func() {
+		if _, err := client.ThreadResume(ctx, ThreadResumeParams{ThreadID: childThreadID}); err != nil {
+			// Subscription failed: remove the child translator so its slot is
+			// cleaned up. The parent's tool_call.* boundary still marks the
+			// delegation; subagent.end will be emitted by handleCollabItemCompleted.
+			s.childMu.Lock()
+			delete(s.childTranslators, childThreadID)
+			s.childMu.Unlock()
+		}
+	}()
+}
+
+// extractThreadIDFromNotification reads the threadId field that every
+// app-server notification body includes. Returns "" on any error.
+func extractThreadIDFromNotification(params json.RawMessage) string {
+	if len(params) == 0 {
+		return ""
+	}
+	var head struct {
+		ThreadID string `json:"threadId"`
+	}
+	_ = json.Unmarshal(params, &head)
+	return head.ThreadID
 }
 
 // onNotification forwards the raw notification into the translator and then
 // extracts run-level state (final text, usage, failure, completion
 // signal).
+//
+// When follow-child is active, notifications whose threadId matches a child
+// thread are routed to the corresponding child Translator instead of the
+// parent. Child turn/completed and turn/failed do NOT signal state.done;
+// only the parent turn completion does.
 func (s *runState) onNotification(method string, params json.RawMessage) {
+	// Route child-thread events to the dedicated child Translator.
+	// extractThreadIDFromNotification is cheap (single json.Unmarshal into
+	// a one-field struct) and runs for every notification.
+	if threadID := extractThreadIDFromNotification(params); threadID != "" {
+		s.childMu.RLock()
+		childTr, isChild := s.childTranslators[threadID]
+		s.childMu.RUnlock()
+		if isChild {
+			// Dispatch to child translator. Child turn/completed emits
+			// StreamSubagentEnd via handleTurnCompleted (subagentRef != nil).
+			// Parent state.done is NOT signalled for child completions.
+			childTr.Dispatch(method, params)
+			return
+		}
+	}
+
 	// Always forward to translator first so bridges see the event before
 	// we signal completion (which may end the consumer loop).
 	s.translator.Dispatch(method, params)

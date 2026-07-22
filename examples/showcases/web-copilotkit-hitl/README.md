@@ -38,9 +38,40 @@ cursors use monotonic host sequence numbers, not per-run stream sequence numbers
 | Content deltas | yes | yes | no |
 | PlanReview / Question `Ask` cards | no | yes | no |
 | Permission `Ask` cards | no | no | no |
+|| Subagent Activity cards (`activityType="subagent"`) | yes (collab) | yes (Agent/Task) | yes (taskToolCall) |
 
 Claude currently demonstrates the richest HITL path. Unsupported `Ask` modes
 are rejected before the provider run starts; the UI must not imply otherwise.
+
+## Subagent Activity Cards (Phase 3)
+
+When the AG-UI backend emits `ACTIVITY_SNAPSHOT` / `ACTIVITY_DELTA` frames with
+`activityType="subagent"`, the frontend renders a `SubagentCard` alongside
+existing tool-call and HITL decision cards.
+
+### What gets rendered
+
+- **Status badge** — `started | running | completed | failed | cancelled | input_required`
+- **Agent name** — `agentName` (falling back to `agentKey`) and kind tag (`native` / `delegated`)
+- **Description** — short task description field
+- **Streaming text** — cumulative `text` with a live cursor while status is not terminal
+- **Internal tool calls** — collapsible list of sub-tools the subagent ran, with expandable args/result
+- **Error** — highlighted error block when `status=failed`
+- **Footer** — elapsed duration and token-usage summary when available
+
+### Frontend wiring
+
+| File | Role |
+|---|---|
+| `web/app/lib/subagent-schema.ts` | Zod v4 schema for `ACTIVITY_SNAPSHOT` content |
+| `web/app/components/subagent-card.tsx` | `SubagentCard` render component |
+| `web/app/components/copilotkit-provider.tsx` | `AppCopilotKitProvider`: client wrapper registering `renderActivityMessages` |
+| `web/app/layout.tsx` | Uses `AppCopilotKitProvider` instead of bare `<CopilotKit>` |
+
+The existing `useCopilotAction({ name: "*" })` in `page.tsx` continues to
+handle all `ToolCallMessage` frames (generic tool-call cards and HITL decision
+cards) without modification — activity and tool-call rendering are orthogonal
+channels.
 
 ## Setup And Run
 
@@ -65,8 +96,10 @@ npm run dev
 
 Backend environment: `AGUI_AGENT`, `AGUI_MODEL`, `ADDR` (default `:8080`),
 `CORS_ORIGIN`, `THREAD_STORE_DIR`, and provider-specific `*_COMMAND` / `*_MODEL`
-overrides. Frontend variables are `AGENT_BACKEND_URL` and
-`NEXT_PUBLIC_AGENT_BACKEND_BASE`.
+overrides. `NEXT_PUBLIC_AGENT_BACKEND_URL` configures the browser-side direct
+AG-UI stream (default `http://localhost:8080/agent`); `AGENT_BACKEND_URL`
+configures the optional Next runtime proxy fallback.
+`NEXT_PUBLIC_AGENT_BACKEND_BASE` configures the session/decision side panel.
 
 ## Expected Evidence
 

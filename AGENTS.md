@@ -401,3 +401,17 @@ sdk := agentadaptor.New(
 - Adapter 必须在 `Descriptor.RunPolicyCaps.Permission/PlanReview/Question` 上如实声明 `{Ask, AutoApprove, AutoReject, Retry}` 能力矩阵；宿主写不支持的 `Ask` 时 SDK 在 Start 前返回 `ErrHumanDecisionModeUnsupported`
 
 完整设计、分派规则、宿主三种接入模式（声明式 / 同步 handler / 异步 channel）、bridge 层映射见 [`docs/workstream-hitl-v2.md`](./docs/workstream-hitl-v2.md) 与 [`docs/run-policy.md`](./docs/run-policy.md)。
+
+## 12. Subagent 是 Streaming 上的第四条可选维度
+
+Subagent 不新增执行入口或公共 channel。Provider 原生 subagent 与宿主 A2A delegation 都收敛到既有 `StreamEvents()`：
+
+- `StreamPayload.Subagent == nil` 表示父/root scope；非 nil 时用 `SubagentRef` 关联 child
+- 生命周期只新增 `subagent.start/status/end`；child 文本、推理和工具继续复用 `text.*` / `reasoning.*` / `tool_call.*`
+- Adapter 必须只解析自己的正式协议，保持 `Role` 零值，并在 `StreamCapability` 诚实声明 Subagents/Nesting/ToolLinkage/TextDelta
+- A2A `DelegationEvent/EventBus` 留在 `pkg/hosttools/a2adelegation`；仅在 `pkg/bridges/subagentstream` 映射到 core 合同
+- Child thread/task/agent ID 不得写入父 `DriverCheckpoint`，不得 rebind 或污染父 SessionStore
+- AG-UI 默认映射为 `ACTIVITY_SNAPSHOT/ACTIVITY_DELTA`（`activityType="subagent"`、`messageId=SubagentID`）；父委派调用仍保留标准 `TOOL_CALL_*`
+- `CUSTOM subagent.*` 只作为显式 legacy 模式保留
+
+完整合同、provider 能力降级、SessionStore 隔离、AG-UI/CopilotKit 接入与测试矩阵见 [`docs/workstream-unified-subagent-streaming.md`](./docs/workstream-unified-subagent-streaming.md)。

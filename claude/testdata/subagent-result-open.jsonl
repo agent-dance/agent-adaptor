@@ -1,0 +1,5 @@
+{"type":"system","subtype":"init","session_id":"sess-subagent-result-open","model":"claude-fixture"}
+{"type":"assistant","session_id":"sess-subagent-result-open","message":{"content":[{"type":"tool_use","id":"toolu_agent_result_open","name":"Agent","input":{"description":"Unreported completion"}}]}}
+{"type":"system","subtype":"task_started","session_id":"sess-subagent-result-open","task_id":"task-result-open","subagent_type":"worker","parent_tool_use_id":"toolu_agent_result_open"}
+{"type":"system","subtype":"task_progress","session_id":"sess-subagent-result-open","task_id":"task-result-open","parent_tool_use_id":"toolu_agent_result_open","description":"Still working","last_tool_name":"Read"}
+{"type":"result","subtype":"success","session_id":"sess-subagent-result-open","result":"Parent completed.","usage":{"input_tokens":12,"output_tokens":4}}

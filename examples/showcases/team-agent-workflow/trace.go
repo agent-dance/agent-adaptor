@@ -35,9 +35,13 @@ func (t *workflowTrace) Collect(events <-chan a2adelegation.DelegationEvent) {
 			term.Logf("[team] %-7s %-22s status=%s task=%s", event.AgentKey, event.Kind, event.Status, event.RemoteTaskID)
 		case a2adelegation.DelegationTextDelta:
 			term.Stream("  \u21b3 "+event.AgentKey, event.Delta)
+		case a2adelegation.DelegationReasoningDelta:
+			term.Stream("  \u21b3 "+event.AgentKey+" · reasoning", event.Delta)
 		case a2adelegation.DelegationToolCallStart:
 			args, _ := event.Args.(map[string]any)
 			term.Logf("[team]   \u21b3 %s tool_call.start %s%s", event.AgentKey, toolLabel(event.ToolName, event.RemoteToolCallID), toolArgsHint(args))
+		case a2adelegation.DelegationToolCallArgs:
+			term.Stream("  \u21b3 "+event.AgentKey+" · tool args", event.Delta)
 		case a2adelegation.DelegationToolCallResult:
 			term.Logf("[team]   \u21b3 %s tool_call.result %s", event.AgentKey, toolLabel(event.ToolName, event.RemoteToolCallID))
 		}

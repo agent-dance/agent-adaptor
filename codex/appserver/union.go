@@ -287,6 +287,18 @@ const (
 	ThreadItemImageGeneration ThreadItemKind = "imageGeneration"
 	// ThreadItemContextCompaction is a context-compaction item.
 	ThreadItemContextCompaction ThreadItemKind = "contextCompaction"
+	// ThreadItemCollabAgentToolCall is the camelCase variant used by the
+	// app-server protocol for collaborative multi-agent tool calls.
+	// Wire shape: {"type":"collabAgentToolCall","tool":"spawnAgent|wait|...","receiverThreadIds":[...]}
+	ThreadItemCollabAgentToolCall ThreadItemKind = "collabAgentToolCall"
+
+	// ThreadItemSubAgentActivity is a forward-compat kind for the v2
+	// multi-agent lifecycle item. The vendored schema may not include it yet;
+	// items of this type are preserved through Raw for future mapping.
+	// Do NOT treat as unknown: preserving the Kind prevents it from colliding
+	// with the opaque Kind=="" notification path.
+	ThreadItemSubAgentActivity ThreadItemKind = "subAgentActivity"
+
 	// ThreadItemUnknown preserves unknown variants through the Raw path.
 	ThreadItemUnknown ThreadItemKind = ""
 )
@@ -300,13 +312,15 @@ type ThreadItem struct {
 	Kind ThreadItemKind `json:"-"`
 
 	// Exactly one of the following pointers is set when Kind matches.
-	AgentMessage     *ThreadItemAgentMessageBody     `json:"-"`
-	Reasoning        *ThreadItemReasoningBody        `json:"-"`
-	CommandExecution *ThreadItemCommandExecutionBody `json:"-"`
-	FileChange       *ThreadItemFileChangeBody       `json:"-"`
-	McpToolCall      *ThreadItemMcpToolCallBody      `json:"-"`
-	WebSearch        *ThreadItemWebSearchBody        `json:"-"`
-	DynamicToolCall  *ThreadItemDynamicToolCallBody  `json:"-"`
+	AgentMessage        *ThreadItemAgentMessageBody        `json:"-"`
+	Reasoning           *ThreadItemReasoningBody           `json:"-"`
+	CommandExecution    *ThreadItemCommandExecutionBody    `json:"-"`
+	FileChange          *ThreadItemFileChangeBody          `json:"-"`
+	McpToolCall         *ThreadItemMcpToolCallBody         `json:"-"`
+	WebSearch           *ThreadItemWebSearchBody           `json:"-"`
+	DynamicToolCall     *ThreadItemDynamicToolCallBody     `json:"-"`
+	CollabAgentToolCall *ThreadItemCollabAgentToolCallBody `json:"-"`
+	SubAgentActivity    *ThreadItemSubAgentActivityBody    `json:"-"`
 
 	// Raw preserves the original JSON representation. It is always non-nil;
 	// use it when Kind is unknown or when a caller needs a field this
@@ -377,6 +391,96 @@ type ThreadItemDynamicToolCallBody struct {
 	DurationMs *int64          `json:"durationMs,omitempty"`
 }
 
+// ThreadItemCollabAgentToolCallBody is the body for "collabAgentToolCall" (app-server
+// camelCase) and "collab_tool_call" (exec --json snake_case). Both wire variants
+// decode into this struct; field access uses the normalized names below.
+type ThreadItemCollabAgentToolCallBody struct {
+	// Tool identifies the collaboration action performed by the item.
+	// Known values: "spawnAgent", "wait", "sendInput", "resumeAgent", "closeAgent".
+	// exec --json only exposes "wait" in current builds.
+	Tool string
+	// Status is the completion status of the item.
+	Status string
+	// SenderThreadID is the thread that initiated this collaboration action.
+	SenderThreadID string
+	// ReceiverThreadIDs holds child thread ids that were spawned or targeted.
+	// When non-empty, ReceiverThreadIDs[0] is the stable child thread id usable
+	// as SubagentRef.ID and as the argument to thread/resume for follow-child.
+	// exec --json typically emits an empty slice; app-server spawnAgent may populate it.
+	ReceiverThreadIDs []string
+	// AgentsStates preserves the raw agents_states / agentsStates map for
+	// bridge / host-level inspection.
+	AgentsStates json.RawMessage
+}
+
+// ThreadItemSubAgentActivityBody is the forward-compatible subset of the
+// multi-agent v2 lifecycle item that is stable enough to correlate.
+type ThreadItemSubAgentActivityBody struct {
+	AgentThreadID string
+	AgentPath     string
+	Kind          string
+	ToolCallID    string
+}
+
+// decodeCollabAgentToolCallBody decodes a raw ThreadItem JSON into a
+// ThreadItemCollabAgentToolCallBody. It handles both the camelCase wire shape
+// used by the app-server protocol and the snake_case wire shape emitted by
+// codex exec --json, normalising them into a single struct.
+func decodeCollabAgentToolCallBody(raw json.RawMessage) (*ThreadItemCollabAgentToolCallBody, error) {
+	// Decode into a map of raw values so we can probe both naming conventions.
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return nil, fmt.Errorf("appserver: decode collabAgentToolCall: %w", err)
+	}
+	b := &ThreadItemCollabAgentToolCallBody{}
+	jsonStringField(m, &b.Tool, "tool")
+	jsonStringField(m, &b.Status, "status")
+	// SenderThreadID: camelCase first, then snake_case fallback.
+	jsonStringField(m, &b.SenderThreadID, "senderThreadId", "sender_thread_id")
+	// ReceiverThreadIDs: camelCase first, then snake_case fallback.
+	if v, ok := m["receiverThreadIds"]; ok {
+		_ = json.Unmarshal(v, &b.ReceiverThreadIDs)
+	} else if v, ok := m["receiver_thread_ids"]; ok {
+		_ = json.Unmarshal(v, &b.ReceiverThreadIDs)
+	}
+	// AgentsStates: camelCase first, then snake_case fallback.
+	if v, ok := m["agentsStates"]; ok {
+		b.AgentsStates = append(json.RawMessage(nil), v...)
+	} else if v, ok := m["agents_states"]; ok {
+		b.AgentsStates = append(json.RawMessage(nil), v...)
+	}
+	return b, nil
+}
+
+func decodeSubAgentActivityBody(raw json.RawMessage) (*ThreadItemSubAgentActivityBody, error) {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return nil, fmt.Errorf("appserver: decode subAgentActivity: %w", err)
+	}
+	b := &ThreadItemSubAgentActivityBody{}
+	jsonStringField(m, &b.AgentThreadID, "agentThreadId", "agent_thread_id")
+	jsonStringField(m, &b.AgentPath, "agentPath", "agent_path")
+	jsonStringField(m, &b.Kind, "kind", "status")
+	jsonStringField(m, &b.ToolCallID, "toolCallId", "tool_call_id", "parentToolCallId", "parent_tool_call_id")
+	return b, nil
+}
+
+// jsonStringField sets *dst from the first non-empty string value found
+// under any of the given keys in m.
+func jsonStringField(m map[string]json.RawMessage, dst *string, keys ...string) {
+	for _, key := range keys {
+		v, ok := m[key]
+		if !ok {
+			continue
+		}
+		var s string
+		if err := json.Unmarshal(v, &s); err == nil && s != "" {
+			*dst = s
+			return
+		}
+	}
+}
+
 // DecodeThreadItem parses a ThreadItem from its raw JSON, dispatching on the
 // "type" discriminator. Unknown types are returned with Kind == ThreadItemUnknown
 // and Raw populated; this lets translate.go emit them as StreamPayload.Raw
@@ -440,6 +544,23 @@ func DecodeThreadItem(raw json.RawMessage) (*ThreadItem, error) {
 			return nil, fmt.Errorf("appserver: decode dynamicToolCall item: %w", err)
 		}
 		item.DynamicToolCall = &body
+	case ThreadItemCollabAgentToolCall, "collab_tool_call":
+		// Both the app-server camelCase "collabAgentToolCall" and the exec --json
+		// snake_case "collab_tool_call" wire variants decode into the same body.
+		// Normalise Kind to ThreadItemCollabAgentToolCall regardless of wire format.
+		body, err := decodeCollabAgentToolCallBody(raw)
+		if err != nil {
+			return nil, fmt.Errorf("appserver: decode collabAgentToolCall item: %w", err)
+		}
+		item.Kind = ThreadItemCollabAgentToolCall
+		item.CollabAgentToolCall = body
+	case ThreadItemSubAgentActivity:
+		body, err := decodeSubAgentActivityBody(raw)
+		if err != nil {
+			return nil, err
+		}
+		item.Kind = ThreadItemSubAgentActivity
+		item.SubAgentActivity = body
 	default:
 		item.Kind = ThreadItemUnknown
 	}

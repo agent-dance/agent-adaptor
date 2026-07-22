@@ -168,7 +168,7 @@ The optional host-owned visual subagent delegation layer sits above the A2A clie
 - `pkg/hosttools/a2adelegation` exposes a curated registry, `delegate_to_agent`
   MCP tool server, delegation event bus, A2A event mapper, and `Delegator`.
 - `pkg/bridges/subagentstream` overlays delegation events onto an existing
-  parent AG-UI stream as `CUSTOM` events named `subagent.*`.
+  parent AG-UI stream as `ACTIVITY_SNAPSHOT` / `ACTIVITY_DELTA` events.
 - `pkg/bridges/sse.Options.SubagentBus` enables the overlay in the stock SSE
   handler for AG-UI callers.
 
@@ -194,26 +194,35 @@ The model-facing tool input accepts registry keys only:
 fields are rejected. Host code owns the registry entry (`RemoteAgentSpec`), auth,
 tenant, timeout policy, artifact limits, accepted output modes, and trusted
 origins. `constraints.max_artifacts`, when supplied, limits only the final
-`DelegationResult.Artifacts` returned to the parent model; live `subagent.*`
+`DelegationResult.Artifacts` returned to the parent model; live subagent
 artifact events remain a UI side channel. The parent model receives only the
 final structured `DelegationResult` JSON through the MCP tool result. Live remote
-progress is published to the bus and rendered as AG-UI custom events:
+progress is published to the bus and rendered as one stable AG-UI Activity:
 
 ```json
 {
-  "type": "CUSTOM",
-  "name": "subagent.text.delta",
-  "value": {
+  "type": "ACTIVITY_SNAPSHOT",
+  "messageId": "del-...",
+  "activityType": "subagent",
+  "replace": true,
+  "content": {
+    "subagentId": "del-...",
     "runId": "run-...",
     "parentToolCallId": "tool-...",
-    "delegationId": "del-...",
     "agentKey": "research",
-    "remoteProtocol": "a2a",
-    "remoteTaskId": "task-...",
-    "delta": "Searching official examples..."
+    "kind": "delegated",
+    "protocol": "a2a",
+    "status": "started",
+    "text": "",
+    "toolCalls": []
   }
 }
 ```
+
+Subsequent status, text, internal tool-call, result, and error updates use RFC
+6902 patches in `ACTIVITY_DELTA` with the same `messageId`. Set
+`sse.Options.SubagentMode = agui.SubagentAsCustom` only when migrating an
+existing frontend that still consumes legacy `CUSTOM subagent.*` events.
 
 Assistant output uses the ordered `subagent.text.start`,
 `subagent.text.delta`, and `subagent.text.end` lifecycle. Process events are

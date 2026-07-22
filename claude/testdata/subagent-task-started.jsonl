@@ -1,0 +1,14 @@
+{"type":"system","subtype":"init","session_id":"sess-subagent-start","model":"claude-fixture"}
+{"type":"stream_event","session_id":"sess-subagent-start","event":{"type":"message_start","message":{"id":"msg-parent-1"}}}
+{"type":"stream_event","session_id":"sess-subagent-start","event":{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_agent_001","name":"Agent","input":{}}}}
+{"type":"stream_event","session_id":"sess-subagent-start","event":{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"description\":"}}}
+{"type":"stream_event","session_id":"sess-subagent-start","event":{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\"Read README\"}"}}}
+{"type":"stream_event","session_id":"sess-subagent-start","event":{"type":"content_block_stop","index":0}}
+{"type":"stream_event","session_id":"sess-subagent-start","event":{"type":"message_delta","delta":{"stop_reason":"tool_use"}}}
+{"type":"stream_event","session_id":"sess-subagent-start","event":{"type":"message_stop"}}
+{"type":"assistant","session_id":"sess-subagent-start","message":{"model":"claude-fixture","content":[{"type":"tool_use","id":"toolu_agent_001","name":"Agent","input":{"description":"Read README"}}]}}
+{"type":"system","subtype":"task_started","session_id":"sess-subagent-start","task_id":"task-abc-001","subagent_type":"subagent","parent_tool_use_id":"toolu_agent_001"}
+{"type":"system","subtype":"task_notification","session_id":"sess-subagent-start","task_id":"task-abc-001","parent_tool_use_id":"toolu_agent_001","status":"completed","summary":"Done."}
+{"type":"user","session_id":"sess-subagent-start","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_agent_001","content":"Done."}]}}
+{"type":"assistant","session_id":"sess-subagent-start","message":{"model":"claude-fixture","content":[{"type":"text","text":"Subagent finished."}]}}
+{"type":"result","subtype":"success","session_id":"sess-subagent-start","result":"Subagent finished.","usage":{"input_tokens":20,"output_tokens":8}}

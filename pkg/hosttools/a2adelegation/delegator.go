@@ -47,6 +47,10 @@ type Delegator struct {
 	NewID          func() string
 	LifecycleHook  DelegationLifecycleHook
 	statusDecoders []StatusPartDecoder
+	// Observe receives each normalized event immediately before it is
+	// published to Bus. Hosts can use it for tracing without consuming a
+	// second subscription or changing delivery semantics.
+	Observe func(DelegationEvent)
 }
 
 // DelegatorOption 配置 Delegator 的扩展行为。
@@ -457,7 +461,16 @@ func (d *Delegator) cancelRemoteTask(ctx context.Context, client A2AClient, task
 }
 
 func (d *Delegator) publish(ev DelegationEvent) {
-	if d != nil && d.Bus != nil {
+	if d == nil {
+		return
+	}
+	if ev.Time.IsZero() {
+		ev.Time = time.Now().UTC()
+	}
+	if d.Observe != nil {
+		d.Observe(ev)
+	}
+	if d.Bus != nil {
 		d.Bus.Publish(ev)
 	}
 }

@@ -12,11 +12,12 @@ import (
 
 	agentadaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/memory"
+	"github.com/agent-dance/agent-adaptor/pkg/bridges/agui"
 	"github.com/agent-dance/agent-adaptor/pkg/bridges/sse"
 	"github.com/agent-dance/agent-adaptor/pkg/hosttools/a2adelegation"
 )
 
-func TestSSEHandlerAGUIRealEventBusSubagentEventsPrecedeParentFinished(t *testing.T) {
+func TestSSEHandlerAGUIRealEventBusSubagentCustomModePrecedeParentFinished(t *testing.T) {
 	t.Parallel()
 
 	adapter := newDelegateBoundaryAdapter()
@@ -25,7 +26,11 @@ func TestSSEHandlerAGUIRealEventBusSubagentEventsPrecedeParentFinished(t *testin
 		agentadaptor.WithSessionStore(memory.NewSessionStore()),
 	)
 	bus := a2adelegation.NewEventBus(8)
-	srv := httptest.NewServer(sse.Handler(sdk, sse.Options{Protocol: sse.AGUI, SubagentBus: bus}))
+	srv := httptest.NewServer(sse.Handler(sdk, sse.Options{
+		Protocol:     sse.AGUI,
+		SubagentBus:  bus,
+		SubagentMode: agui.SubagentAsCustom, // explicit legacy mode
+	}))
 	defer srv.Close()
 
 	body := strings.NewReader(`{
@@ -43,57 +48,11 @@ func TestSSEHandlerAGUIRealEventBusSubagentEventsPrecedeParentFinished(t *testin
 	}
 
 	runID := adapter.waitDelegateToolActive(t)
-	for _, ev := range []a2adelegation.DelegationEvent{
-		{
-			RunID:            runID,
-			ParentToolCallID: "tool-delegate-1",
-			DelegationID:     "del-1",
-			AgentKey:         "research",
-			AgentName:        "Research Agent",
-			Protocol:         a2adelegation.ProtocolA2A,
-			Kind:             a2adelegation.DelegationStarted,
-			Status:           "running",
-		},
-		{
-			RunID:            runID,
-			ParentToolCallID: "tool-delegate-1",
-			DelegationID:     "del-1",
-			AgentKey:         "research",
-			Protocol:         a2adelegation.ProtocolA2A,
-			RemoteMessageID:  "msg-1",
-			Kind:             a2adelegation.DelegationTextDelta,
-			Delta:            "subagent text",
-		},
-		{
-			RunID:            runID,
-			ParentToolCallID: "tool-delegate-1",
-			DelegationID:     "del-1",
-			AgentKey:         "research",
-			Protocol:         a2adelegation.ProtocolA2A,
-			RemoteArtifactID: "artifact-1",
-			Kind:             a2adelegation.DelegationArtifactCreated,
-			Artifact: &a2adelegation.DelegationArtifact{
-				ID:        "artifact-1",
-				Name:      "notes.md",
-				MediaType: "text/markdown",
-			},
-		},
-		{
-			RunID:            runID,
-			ParentToolCallID: "tool-delegate-1",
-			DelegationID:     "del-1",
-			AgentKey:         "research",
-			Protocol:         a2adelegation.ProtocolA2A,
-			Kind:             a2adelegation.DelegationFinished,
-			Status:           "completed",
-			Text:             "done",
-		},
-	} {
+	for _, ev := range delegationSequence(runID) {
 		if !bus.Publish(ev) {
 			t.Fatalf("publish %s returned false", ev.Kind)
 		}
 	}
-
 	adapter.finishParent()
 
 	frames := readSSEFrames(t, resp.Body, 2*time.Second)
@@ -144,6 +103,93 @@ func TestSSEHandlerAGUIRealEventBusSubagentEventsPrecedeParentFinished(t *testin
 	}
 }
 
+func TestSSEHandlerAGUIRealEventBusSubagentActivityModePrecedeParentFinished(t *testing.T) {
+	t.Parallel()
+
+	adapter := newDelegateBoundaryAdapter()
+	sdk := agentadaptor.New(
+		agentadaptor.WithDefaultAgent(agentadaptor.Bind(adapter, nil)),
+		agentadaptor.WithSessionStore(memory.NewSessionStore()),
+	)
+	bus := a2adelegation.NewEventBus(8)
+	// Default SubagentMode = SubagentAsActivity.
+	srv := httptest.NewServer(sse.Handler(sdk, sse.Options{Protocol: sse.AGUI, SubagentBus: bus}))
+	defer srv.Close()
+
+	body := strings.NewReader(`{
+		"threadId": "t-2",
+		"runId": "r-2",
+		"messages": [{"id":"m-2","role":"user","content":"delegate this"}]
+	}`)
+	resp, err := http.Post(srv.URL, "application/json", body)
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status: %d", resp.StatusCode)
+	}
+
+	runID := adapter.waitDelegateToolActive(t)
+	for _, ev := range delegationSequence(runID) {
+		if !bus.Publish(ev) {
+			t.Fatalf("publish %s returned false", ev.Kind)
+		}
+	}
+	adapter.finishParent()
+
+	frames := readSSEFrames(t, resp.Body, 2*time.Second)
+	var types []string
+	activitySnapshotIndex := -1
+	activityDeltaLastIndex := -1
+	runFinishedIndex := -1
+	for _, f := range frames {
+		if f.data == "" {
+			continue
+		}
+		var payload map[string]any
+		if err := json.Unmarshal([]byte(f.data), &payload); err != nil {
+			t.Fatalf("decode frame data: %v (raw=%q)", err, f.data)
+		}
+		typ, _ := payload["type"].(string)
+		if typ == "" {
+			continue
+		}
+		idx := len(types)
+		types = append(types, typ)
+		switch typ {
+		case "RUN_FINISHED":
+			runFinishedIndex = idx
+		case "ACTIVITY_SNAPSHOT":
+			if activitySnapshotIndex < 0 {
+				activitySnapshotIndex = idx
+			}
+			// Verify Activity snapshot has correct fields.
+			assertSubagentActivitySnapshot(t, payload, runID)
+		case "ACTIVITY_DELTA":
+			activityDeltaLastIndex = idx
+		}
+	}
+	if runFinishedIndex < 0 {
+		t.Fatalf("RUN_FINISHED not observed; types=%v", types)
+	}
+	if activitySnapshotIndex < 0 {
+		t.Fatalf("ACTIVITY_SNAPSHOT not observed; types=%v", types)
+	}
+	if activitySnapshotIndex >= runFinishedIndex {
+		t.Fatalf("ACTIVITY_SNAPSHOT index %d must precede RUN_FINISHED index %d; types=%v", activitySnapshotIndex, runFinishedIndex, types)
+	}
+	if activityDeltaLastIndex >= 0 && activityDeltaLastIndex >= runFinishedIndex {
+		t.Fatalf("last ACTIVITY_DELTA index %d must precede RUN_FINISHED index %d; types=%v", activityDeltaLastIndex, runFinishedIndex, types)
+	}
+	// CUSTOM events must NOT appear for the subagent in Activity mode.
+	for _, typ := range types {
+		if typ == "CUSTOM" {
+			t.Fatalf("unexpected CUSTOM event in Activity mode; types=%v", types)
+		}
+	}
+}
+
 func assertSubagentCustomPayload(t *testing.T, payload map[string]any, runID string) {
 	t.Helper()
 	value, _ := payload["value"].(map[string]any)
@@ -153,6 +199,50 @@ func assertSubagentCustomPayload(t *testing.T, payload map[string]any, runID str
 	if value["runId"] != runID || value["parentToolCallId"] != "tool-delegate-1" ||
 		value["delegationId"] != "del-1" || value["agentKey"] != "research" {
 		t.Fatalf("unexpected subagent custom value: %#v", value)
+	}
+}
+
+func assertSubagentActivitySnapshot(t *testing.T, payload map[string]any, _ string) {
+	t.Helper()
+	if payload["messageId"] != "del-1" {
+		t.Fatalf("ACTIVITY_SNAPSHOT messageId: got %v want \"del-1\"", payload["messageId"])
+	}
+	if payload["activityType"] != "subagent" {
+		t.Fatalf("ACTIVITY_SNAPSHOT activityType: got %v want \"subagent\"", payload["activityType"])
+	}
+	content, _ := payload["content"].(map[string]any)
+	if content == nil {
+		t.Fatalf("ACTIVITY_SNAPSHOT content is nil; payload=%#v", payload)
+	}
+	if content["agentKey"] != "research" {
+		t.Fatalf("ACTIVITY_SNAPSHOT content.agentKey: got %v want \"research\"", content["agentKey"])
+	}
+}
+
+// delegationSequence returns a canonical delegation event sequence for testing.
+func delegationSequence(runID string) []a2adelegation.DelegationEvent {
+	return []a2adelegation.DelegationEvent{
+		{
+			RunID: runID, ParentToolCallID: "tool-delegate-1",
+			DelegationID: "del-1", AgentKey: "research", AgentName: "Research Agent",
+			Protocol: a2adelegation.ProtocolA2A, Kind: a2adelegation.DelegationStarted, Status: "running",
+		},
+		{
+			RunID: runID, ParentToolCallID: "tool-delegate-1",
+			DelegationID: "del-1", AgentKey: "research", Protocol: a2adelegation.ProtocolA2A,
+			RemoteMessageID: "msg-1", Kind: a2adelegation.DelegationTextDelta, Delta: "subagent text",
+		},
+		{
+			RunID: runID, ParentToolCallID: "tool-delegate-1",
+			DelegationID: "del-1", AgentKey: "research", Protocol: a2adelegation.ProtocolA2A,
+			RemoteArtifactID: "artifact-1", Kind: a2adelegation.DelegationArtifactCreated,
+			Artifact: &a2adelegation.DelegationArtifact{ID: "artifact-1", Name: "notes.md", MediaType: "text/markdown"},
+		},
+		{
+			RunID: runID, ParentToolCallID: "tool-delegate-1",
+			DelegationID: "del-1", AgentKey: "research", Protocol: a2adelegation.ProtocolA2A,
+			Kind: a2adelegation.DelegationFinished, Status: "completed", Text: "done",
+		},
 	}
 }
 

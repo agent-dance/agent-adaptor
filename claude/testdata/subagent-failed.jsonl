@@ -1,0 +1,13 @@
+{"type":"system","subtype":"init","session_id":"sess-subagent-failed","model":"claude-fixture"}
+{"type":"stream_event","session_id":"sess-subagent-failed","event":{"type":"message_start","message":{"id":"msg-parent-4"}}}
+{"type":"stream_event","session_id":"sess-subagent-failed","event":{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_agent_004","name":"Agent","input":{}}}}
+{"type":"stream_event","session_id":"sess-subagent-failed","event":{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"description\":\"Dangerous task\"}"}}}
+{"type":"stream_event","session_id":"sess-subagent-failed","event":{"type":"content_block_stop","index":0}}
+{"type":"stream_event","session_id":"sess-subagent-failed","event":{"type":"message_delta","delta":{"stop_reason":"tool_use"}}}
+{"type":"stream_event","session_id":"sess-subagent-failed","event":{"type":"message_stop"}}
+{"type":"assistant","session_id":"sess-subagent-failed","message":{"model":"claude-fixture","content":[{"type":"tool_use","id":"toolu_agent_004","name":"Agent","input":{"description":"Dangerous task"}}]}}
+{"type":"system","subtype":"task_started","session_id":"sess-subagent-failed","task_id":"task-abc-004","subagent_type":"executor","parent_tool_use_id":"toolu_agent_004"}
+{"type":"system","subtype":"task_notification","session_id":"sess-subagent-failed","task_id":"task-abc-004","parent_tool_use_id":"toolu_agent_004","status":"failed","summary":"Permission denied."}
+{"type":"user","session_id":"sess-subagent-failed","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_agent_004","content":"Permission denied.","is_error":true}]}}
+{"type":"assistant","session_id":"sess-subagent-failed","message":{"model":"claude-fixture","content":[{"type":"text","text":"Task failed."}]}}
+{"type":"result","subtype":"success","session_id":"sess-subagent-failed","result":"Task failed.","usage":{"input_tokens":25,"output_tokens":6}}

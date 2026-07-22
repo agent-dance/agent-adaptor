@@ -18,6 +18,11 @@ type EventBus interface {
 
 type MuxOptions struct {
 	Bus EventBus
+	// SubagentMode controls how delegation events are translated to AG-UI events.
+	// Default (zero value) is SubagentAsActivity: each SubagentID is aggregated
+	// into ACTIVITY_SNAPSHOT / ACTIVITY_DELTA events.
+	// Use SubagentAsCustom to preserve the legacy CUSTOM event mapping.
+	SubagentMode agui.SubagentMode
 }
 
 const terminalFlushTimeout = 250 * time.Millisecond
@@ -49,25 +54,47 @@ func Wrap(ctx context.Context, handle agentadaptor.RunHandle, opts MuxOptions) <
 	out := make(chan Event, 64)
 	var seq atomic.Uint64
 
-	sendSubagentEvent := func(ev a2adelegation.DelegationEvent, observeContext bool) bool {
-		aguiEvent := AGUICustomEvent(ev)
-		evCopy := ev
-		wrapped := Event{ID: seq.Add(1), AGUI: aguiEvent, Subagent: &evCopy}
-		if observeContext {
-			select {
-			case <-ctx.Done():
-				return false
-			case out <- wrapped:
-				return true
+	// activityAgg is used in SubagentAsActivity mode; active tracker is used in
+	// SubagentAsCustom mode for FlushSynthetic with DelegationEvent callbacks.
+	activityMode := opts.SubagentMode != agui.SubagentAsCustom
+	agg := newActivityAggregator()
+	active := newDelegationTracker() // used in custom mode for lifecycle tracking
+
+	// sendSubagentEvents forwards one or more AG-UI events produced from a
+	// DelegationEvent. observeContext controls whether ctx.Done() is checked.
+	sendSubagentEvents := func(aguiEvents []aguievents.Event, ev a2adelegation.DelegationEvent, observeContext bool) bool {
+		for _, ae := range aguiEvents {
+			if ae == nil {
+				continue
+			}
+			evCopy := ev
+			wrapped := Event{ID: seq.Add(1), AGUI: ae, Subagent: &evCopy}
+			if observeContext {
+				select {
+				case <-ctx.Done():
+					return false
+				case out <- wrapped:
+				}
+			} else {
+				select {
+				case out <- wrapped:
+				case <-time.After(terminalFlushTimeout):
+					return false
+				}
 			}
 		}
-		select {
-		case out <- wrapped:
-			return true
-		case <-time.After(terminalFlushTimeout):
-			return false
-		}
+		return true
 	}
+
+	processDelegation := func(ev a2adelegation.DelegationEvent, observeContext bool) bool {
+		if activityMode {
+			aguiEvents := agg.Process(ev)
+			return sendSubagentEvents(aguiEvents, ev, observeContext)
+		}
+		// Legacy custom mode: single CUSTOM event per delegation event.
+		return sendSubagentEvents([]aguievents.Event{AGUICustomEvent(ev)}, ev, observeContext)
+	}
+
 	sendAGUI := func(ev aguievents.Event) bool {
 		wrapped := Event{ID: seq.Add(1), AGUI: ev}
 		select {
@@ -77,10 +104,11 @@ func Wrap(ctx context.Context, handle agentadaptor.RunHandle, opts MuxOptions) <
 			return true
 		}
 	}
+
 	sendSubagent := func(ev a2adelegation.DelegationEvent) bool {
-		return sendSubagentEvent(ev, true)
+		return processDelegation(ev, true)
 	}
-	active := newDelegationTracker()
+
 	drainSubagents := func(subagents <-chan a2adelegation.DelegationEvent) bool {
 		for subagents != nil {
 			select {
@@ -88,7 +116,9 @@ func Wrap(ctx context.Context, handle agentadaptor.RunHandle, opts MuxOptions) <
 				if !ok {
 					return true
 				}
-				active.Track(ev)
+				if !activityMode {
+					active.Track(ev)
+				}
 				if !sendSubagent(ev) {
 					return false
 				}
@@ -97,6 +127,18 @@ func Wrap(ctx context.Context, handle agentadaptor.RunHandle, opts MuxOptions) <
 			}
 		}
 		return true
+	}
+
+	flushSynthetic := func(kind a2adelegation.DelegationEventKind, status string, err *a2adelegation.DelegationError, observeContext bool) bool {
+		if activityMode {
+			aguiEvents := agg.FlushSynthetic(status, err)
+			// Synthesize a fake DelegationEvent for Subagent field population.
+			syntheticEv := a2adelegation.DelegationEvent{Kind: kind, Status: status, Error: err, Time: time.Now()}
+			return sendSubagentEvents(aguiEvents, syntheticEv, observeContext)
+		}
+		return active.FlushSynthetic(kind, status, err, func(ev a2adelegation.DelegationEvent) bool {
+			return sendSubagentEvents([]aguievents.Event{AGUICustomEvent(ev)}, ev, observeContext)
+		})
 	}
 
 	go func() {
@@ -120,9 +162,7 @@ func Wrap(ctx context.Context, handle agentadaptor.RunHandle, opts MuxOptions) <
 		for parent != nil || subagents != nil {
 			select {
 			case <-ctx.Done():
-				active.FlushSynthetic(a2adelegation.DelegationCancelled, "cancelled", &a2adelegation.DelegationError{Code: "parent_cancelled", Message: "parent run context cancelled"}, func(ev a2adelegation.DelegationEvent) bool {
-					return sendSubagentEvent(ev, false)
-				})
+				flushSynthetic(a2adelegation.DelegationCancelled, "cancelled", &a2adelegation.DelegationError{Code: "parent_cancelled", Message: "parent run context cancelled"}, false)
 				stopSubagents()
 				cancelHandle(handle)
 				return
@@ -132,7 +172,7 @@ func Wrap(ctx context.Context, handle agentadaptor.RunHandle, opts MuxOptions) <
 					if !drainSubagents(subagents) {
 						return
 					}
-					if !active.FlushSynthetic(a2adelegation.DelegationFailed, "failed", parentFinishedError(), sendSubagent) {
+					if !flushSynthetic(a2adelegation.DelegationFailed, "failed", parentFinishedError(), true) {
 						return
 					}
 					stopSubagents()
@@ -142,7 +182,7 @@ func Wrap(ctx context.Context, handle agentadaptor.RunHandle, opts MuxOptions) <
 					if !drainSubagents(subagents) {
 						return
 					}
-					if !active.FlushSynthetic(a2adelegation.DelegationFailed, "failed", parentFinishedError(), sendSubagent) {
+					if !flushSynthetic(a2adelegation.DelegationFailed, "failed", parentFinishedError(), true) {
 						return
 					}
 					if !sendAGUI(ev) {
@@ -160,7 +200,9 @@ func Wrap(ctx context.Context, handle agentadaptor.RunHandle, opts MuxOptions) <
 					subagents = nil
 					continue
 				}
-				active.Track(ev)
+				if !activityMode {
+					active.Track(ev)
+				}
 				if !sendSubagent(ev) {
 					return
 				}
@@ -303,42 +345,154 @@ func AGUICustomEvent(ev a2adelegation.DelegationEvent) aguievents.Event {
 	return aguievents.NewCustomEvent(string(ev.Kind), aguievents.WithValue(value))
 }
 
+// StreamPayload maps a DelegationEvent to the canonical strongly typed stream
+// contract. It is retained as the original public entry point.
 func StreamPayload(ev a2adelegation.DelegationEvent) agentadaptor.StreamPayload {
-	toolCallID := ev.ParentToolCallID
-	if ev.RemoteToolCallID != "" {
-		toolCallID = ev.RemoteToolCallID
+	return MapToStreamPayload(ev)
+}
+
+// MapToStreamPayload maps a DelegationEvent to an agentadaptor.StreamPayload
+// with proper StreamKind constants and a strongly typed SubagentRef. Raw is
+// reserved for A2A-specific remote identifiers, artifacts, and status details.
+//
+// Mapping rules:
+//   - subagent.started  → StreamSubagentStart
+//   - subagent.status   → StreamSubagentStatus
+//   - subagent.text.*   → StreamText*
+//   - subagent.reasoning.* → StreamReasoning*
+//   - subagent.tool_call.* → StreamToolCall*
+//   - terminal events   → StreamSubagentEnd
+//   - subagent.artifact → StreamSubagentStatus
+func MapToStreamPayload(ev a2adelegation.DelegationEvent) agentadaptor.StreamPayload {
+	if ev.DelegationID == "" {
+		return agentadaptor.StreamPayload{}
 	}
-	payload := agentadaptor.StreamPayload{
-		Kind:       "",
-		Name:       string(ev.Kind),
-		RunID:      ev.RunID,
-		ToolCallID: toolCallID,
-		MessageID:  ev.RemoteMessageID,
-		Delta:      ev.Delta,
+	name := defaultStr(ev.AgentName, ev.AgentKey)
+	base := agentadaptor.StreamPayload{
+		RunID: ev.RunID,
+		Name:  name,
+		Delta: ev.Delta,
+		Subagent: &agentadaptor.SubagentRef{
+			ID:         ev.DelegationID,
+			Name:       name,
+			Kind:       "delegated",
+			Protocol:   defaultStr(ev.Protocol, a2adelegation.ProtocolA2A),
+			ToolCallID: ev.ParentToolCallID,
+		},
 		Raw: map[string]any{
-			"delegation_id":       ev.DelegationID,
-			"agent_key":           ev.AgentKey,
-			"agent_name":          ev.AgentName,
-			"parent_tool_call_id": ev.ParentToolCallID,
-			"remote_protocol":     ev.Protocol,
 			"remote_task_id":      ev.RemoteTaskID,
 			"remote_context_id":   ev.RemoteContextID,
 			"remote_message_id":   ev.RemoteMessageID,
 			"remote_artifact_id":  ev.RemoteArtifactID,
 			"remote_tool_call_id": ev.RemoteToolCallID,
-			"tool_name":           ev.ToolName,
-			"args":                ev.Args,
-			"result":              ev.Result,
-			"delta":               ev.Delta,
-			"text":                ev.Text,
-			"status":              ev.Status,
+			"parent_tool_call_id": ev.ParentToolCallID,
 		},
 	}
 	if args, ok := ev.Args.(map[string]any); ok {
-		payload.Args = args
+		base.Args = args
 	}
 	if result, ok := ev.Result.(map[string]any); ok {
-		payload.Result = result
+		base.Result = result
 	}
-	return payload
+	switch ev.Kind {
+	case a2adelegation.DelegationStarted:
+		base.Kind = agentadaptor.StreamSubagentStart
+		base.Raw["status"] = "started"
+	case a2adelegation.DelegationStatus:
+		base.Kind = agentadaptor.StreamSubagentStatus
+		base.Result = map[string]any{"status": ev.Status}
+		base.Raw["status"] = ev.Status
+	case a2adelegation.DelegationTextStart:
+		base.Kind = agentadaptor.StreamTextStart
+		base.MessageID = ev.RemoteMessageID
+	case a2adelegation.DelegationTextDelta:
+		base.Kind = agentadaptor.StreamTextContent
+		base.MessageID = ev.RemoteMessageID
+	case a2adelegation.DelegationTextEnd:
+		base.Kind = agentadaptor.StreamTextEnd
+		base.MessageID = ev.RemoteMessageID
+	case a2adelegation.DelegationReasoningStart:
+		base.Kind = agentadaptor.StreamReasoningStart
+		base.MessageID = firstNonEmpty(ev.RemoteMessageID, ev.RemoteArtifactID)
+	case a2adelegation.DelegationReasoningDelta:
+		base.Kind = agentadaptor.StreamReasoningContent
+		base.MessageID = firstNonEmpty(ev.RemoteMessageID, ev.RemoteArtifactID)
+	case a2adelegation.DelegationReasoningEnd:
+		base.Kind = agentadaptor.StreamReasoningEnd
+		base.MessageID = firstNonEmpty(ev.RemoteMessageID, ev.RemoteArtifactID)
+	case a2adelegation.DelegationToolCallStart:
+		base.Kind = agentadaptor.StreamToolCallStart
+		base.ToolCallID = ev.RemoteToolCallID
+		base.Name = ev.ToolName
+	case a2adelegation.DelegationToolCallArgs:
+		base.Kind = agentadaptor.StreamToolCallArgs
+		base.ToolCallID = ev.RemoteToolCallID
+		base.Name = ev.ToolName
+	case a2adelegation.DelegationToolCallResult:
+		base.Kind = agentadaptor.StreamToolCallResult
+		base.ToolCallID = ev.RemoteToolCallID
+		base.Name = ev.ToolName
+	case a2adelegation.DelegationToolCallEnd:
+		base.Kind = agentadaptor.StreamToolCallEnd
+		base.ToolCallID = ev.RemoteToolCallID
+		base.Name = ev.ToolName
+	case a2adelegation.DelegationArtifactCreated:
+		base.Kind = agentadaptor.StreamSubagentStatus
+		base.Result = map[string]any{"status": ev.Status}
+		base.Raw["status"] = ev.Status
+		if ev.Artifact != nil {
+			base.Raw["artifact"] = ev.Artifact
+		}
+	case a2adelegation.DelegationFinished:
+		base.Kind = agentadaptor.StreamSubagentEnd
+		base.Result = map[string]any{"status": "completed", "text": ev.Text}
+		base.Raw["status"] = "completed"
+	case a2adelegation.DelegationFailed:
+		base.Kind = agentadaptor.StreamSubagentEnd
+		base.Result = map[string]any{"status": "failed", "text": ev.Text}
+		base.Raw["status"] = "failed"
+		if ev.Error != nil {
+			base.Error = &agentadaptor.RunFailure{
+				Code:    agentadaptor.FailureCode(ev.Error.Code),
+				Message: ev.Error.Message,
+			}
+		}
+	case a2adelegation.DelegationCancelled:
+		base.Kind = agentadaptor.StreamSubagentEnd
+		base.Result = map[string]any{"status": "cancelled", "text": ev.Text}
+		base.Raw["status"] = "cancelled"
+		if ev.Error != nil {
+			base.Error = &agentadaptor.RunFailure{
+				Code:    agentadaptor.FailureCode(ev.Error.Code),
+				Message: ev.Error.Message,
+			}
+		}
+	case a2adelegation.DelegationInputRequired:
+		base.Kind = agentadaptor.StreamSubagentEnd
+		base.Result = map[string]any{"status": "input_required", "text": ev.Text}
+		base.Raw["status"] = "input_required"
+	case a2adelegation.DelegationStreamDropped:
+		base.Kind = agentadaptor.StreamDropped
+	default:
+		// Unknown kind: emit as subagent.status rather than empty Kind to avoid
+		// collision with Codex opaque notification handling.
+		base.Kind = agentadaptor.StreamSubagentStatus
+		base.Result = map[string]any{"status": ev.Status}
+		base.Raw["status"] = ev.Status
+	}
+	for key, value := range base.Raw {
+		if value == "" || value == nil {
+			delete(base.Raw, key)
+		}
+	}
+	return base
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }

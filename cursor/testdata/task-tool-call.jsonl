@@ -1,0 +1,6 @@
+{"type":"session","session_id":"cursor-subagent","model":"composer-2.5-fast"}
+{"type":"tool_call","subtype":"started","call_id":"call-abc123","tool_call":{"taskToolCall":{"args":{"description":"Probe README summary","prompt":"Summarize the README file concisely.","subagentType":{"unspecified":{}},"model":"composer-2.5-fast","agentId":"req-7a8b9c0d","mode":"TASK_MODE_UNSPECIFIED","environment":"SUBAGENT_EXECUTION_ENVIRONMENT_UNSPECIFIED"}}}}
+{"type":"thinking","text":"Waiting for the subagent to complete the README probe task."}
+{"type":"tool_call","subtype":"completed","call_id":"call-abc123","tool_call":{"taskToolCall":{"args":{"description":"Probe README summary","prompt":"Summarize the README file concisely.","subagentType":{"unspecified":{}},"model":"composer-2.5-fast","agentId":"req-7a8b9c0d","mode":"TASK_MODE_UNSPECIFIED","environment":"SUBAGENT_EXECUTION_ENVIRONMENT_UNSPECIFIED"},"result":{"success":{"conversationSteps":[{"assistantMessage":{"text":"- The README covers installation steps.\n- It includes usage examples.\n- It documents the API surface."}}],"agentId":"req-7a8b9c0d","isBackground":false,"durationMs":"5857"}}}}}
+{"type":"assistant","text":"The subagent has summarized the README successfully."}
+{"type":"run.completed","session_id":"cursor-subagent","result":"Subagent probe completed."}

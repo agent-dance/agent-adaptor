@@ -254,6 +254,21 @@ type StreamCapability struct {
 	// channel; the decision path, when supported, still goes through
 	// DecisionCapableSink and RunHandle.DecisionRequests / ResolveDecision.
 	HITL bool
+
+	// Subagents reports whether the adapter can expose child-agent scopes
+	// via StreamSubagentStart / StreamSubagentStatus / StreamSubagentEnd.
+	Subagents bool
+	// SubagentNesting reports whether the adapter can fill SubagentRef.ParentID
+	// for multi-level nesting (parent child ↦ child child).
+	SubagentNesting bool
+	// SubagentToolLinkage reports whether the adapter can fill
+	// SubagentRef.ToolCallID (the parent tool_call that spawned the scope).
+	SubagentToolLinkage bool
+	// SubagentTextDelta reports whether child-agent text token deltas are
+	// available (text.* kinds with a non-nil Subagent). Most adapters
+	// cannot expose this today; providers should declare false and upgrade
+	// truthfully when a live golden confirms the capability.
+	SubagentTextDelta bool
 }
 
 // AgentBinding couples one DriverAdapter with its validated config and

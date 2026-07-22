@@ -1,7 +1,8 @@
 import type { ReactNode } from "react";
-import { CopilotKit } from "@copilotkit/react-core";
 import "@copilotkit/react-ui/styles.css";
+import "@copilotkit/react-core/v2/styles.css";
 import "./globals.css";
+import { AppCopilotKitProvider } from "./components/copilotkit-provider";
 
 export const metadata = {
   title: "agent-adaptor × CopilotKit",
@@ -20,14 +21,9 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           minHeight: "100vh",
         }}
       >
-        <CopilotKit
-          runtimeUrl="/api/copilotkit"
-          agent="codex"
-          enableInspector={false}
-          showDevConsole={false}
-        >
+        <AppCopilotKitProvider runtimeUrl="/api/copilotkit" agent="codex">
           {children}
-        </CopilotKit>
+        </AppCopilotKitProvider>
       </body>
     </html>
   );

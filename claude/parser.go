@@ -61,6 +61,17 @@ type claudeParser struct {
 	pendingFailure *agentadaptor.RunFailure
 
 	// -------------------------------------------------------------------
+	// Subagent scope tracking (§8.2 Phase 2).
+	// -------------------------------------------------------------------
+
+	// subagentScopes tracks open child-agent scopes keyed by SubagentID.
+	// Child ids never enter the parent checkpoint (see subagent.go).
+	subagentScopes map[string]*claudeSubagentScope
+	// toolCallToSubagentID maps parent_tool_use_id → SubagentID so child
+	// events arriving with only parent_tool_use_id can find their scope.
+	toolCallToSubagentID map[string]string
+
+	// -------------------------------------------------------------------
 	// Phase 3 interactive mode.
 	// -------------------------------------------------------------------
 	//
@@ -198,6 +209,9 @@ func (p *claudeParser) finalize() {
 		p.stderrLine.Reset()
 		p.processLine("stderr", remaining, time.Now().UTC())
 	}
+	// Close incomplete child scopes before streamingState synthesizes the
+	// parent run.finished event for a truncated stream.
+	p.flushOpenSubagents()
 	if p.stream != nil {
 		p.stream.finalize()
 	}
@@ -270,6 +284,15 @@ func (p *claudeParser) handlePayload(raw string, payload map[string]any) {
 		if p.stream != nil && subtype == "api_retry" {
 			p.stream.handleAPIRetry(payload)
 		}
+		// Subagent lifecycle events (§8.2 Phase 2).
+		switch subtype {
+		case "task_started":
+			p.handleSubagentTaskStarted(payload)
+		case "task_progress":
+			p.handleSubagentTaskProgress(payload)
+		case "task_notification":
+			p.handleSubagentTaskNotification(payload)
+		}
 		p.emit(agentadaptor.TranscriptItem{
 			Kind:    agentadaptor.TranscriptSystem,
 			Text:    raw,
@@ -296,10 +319,12 @@ func (p *claudeParser) handlePayload(raw string, payload map[string]any) {
 		return
 	case "assistant":
 		message := claudeTopLevelObject(payload, "message")
-		p.handleAssistantMessage(message)
+		parentToolUseID := claudeTopLevelString(payload, "parent_tool_use_id", "parentToolUseId")
+		p.handleAssistantMessage(message, parentToolUseID)
 	case "user":
 		message := claudeTopLevelObject(payload, "message")
-		p.handleUserMessage(message)
+		parentToolUseID := claudeTopLevelString(payload, "parent_tool_use_id", "parentToolUseId")
+		p.handleUserMessage(message, parentToolUseID)
 	case "result":
 		p.handleResult(raw, payload, subtype)
 	case "error":
@@ -386,7 +411,7 @@ func (p *claudeParser) maybeCaptureSession(payload map[string]any) {
 	}
 }
 
-func (p *claudeParser) handleAssistantMessage(message map[string]any) {
+func (p *claudeParser) handleAssistantMessage(message map[string]any, parentToolUseID string) {
 	if len(message) == 0 {
 		return
 	}
@@ -407,8 +432,11 @@ func (p *claudeParser) handleAssistantMessage(message map[string]any) {
 			if text == "" {
 				continue
 			}
-			p.assistantText = append(p.assistantText, text)
-			p.summary = text
+			// Child text is not added to parent Output per §7 invariant 8.
+			if parentToolUseID == "" {
+				p.assistantText = append(p.assistantText, text)
+				p.summary = text
+			}
 			p.emit(agentadaptor.TranscriptItem{
 				Kind:  agentadaptor.TranscriptAssistant,
 				Text:  text,
@@ -427,8 +455,11 @@ func (p *claudeParser) handleAssistantMessage(message map[string]any) {
 		case "tool_use":
 			name := claudeTopLevelString(block, "name")
 			id := claudeTopLevelString(block, "id", "tool_use_id")
-			if kind, interactive := claudeInteractiveTools[name]; interactive && id != "" {
-				p.registerPendingHITL(id, name, kind, block["input"])
+			if parentToolUseID == "" {
+				// Parent scope: register HITL candidates.
+				if hitlKind, interactive := claudeInteractiveTools[name]; interactive && id != "" {
+					p.registerPendingHITL(id, name, hitlKind, block["input"])
+				}
 			}
 			p.emit(agentadaptor.TranscriptItem{
 				Kind:      agentadaptor.TranscriptToolCall,
@@ -436,11 +467,35 @@ func (p *claudeParser) handleAssistantMessage(message map[string]any) {
 				ToolUseID: id,
 				Input:     block["input"],
 			})
+			// Emit streaming child tool-call events inside a subagent scope.
+			if parentToolUseID != "" && p.stream != nil {
+				scope := p.lookupSubagentScope("", parentToolUseID)
+				if scope == nil {
+					scope = p.ensureSubagentScope(parentToolUseID, "", "")
+				}
+				if scope != nil && !scope.ended {
+					start := p.stream.basePayload()
+					start.Kind = agentadaptor.StreamToolCallStart
+					start.ToolCallID = id
+					start.Name = name
+					if input, ok := block["input"].(map[string]any); ok && len(input) > 0 {
+						start.Args = cloneMapShallow(input)
+					}
+					start.Subagent = scope.subagentRef()
+					p.stream.emitStream(start)
+
+					end := p.stream.basePayload()
+					end.Kind = agentadaptor.StreamToolCallEnd
+					end.ToolCallID = id
+					end.Subagent = scope.subagentRef()
+					p.stream.emitStream(end)
+				}
+			}
 		}
 	}
 }
 
-func (p *claudeParser) handleUserMessage(message map[string]any) {
+func (p *claudeParser) handleUserMessage(message map[string]any, parentToolUseID string) {
 	content, ok := message["content"].([]any)
 	if !ok {
 		return
@@ -458,11 +513,43 @@ func (p *claudeParser) handleUserMessage(message map[string]any) {
 			if v, ok := block["is_error"].(bool); ok {
 				isError = v
 			}
-			if p.stream != nil {
-				p.stream.handleUserToolResult(block)
+			if parentToolUseID != "" {
+				// Child tool_result: emit with Subagent set; skip HITL path.
+				if p.stream != nil {
+					scope := p.lookupSubagentScope("", parentToolUseID)
+					if scope == nil {
+						scope = p.ensureSubagentScope(parentToolUseID, "", "")
+					}
+					if scope != nil && !scope.ended {
+						pl := p.stream.basePayload()
+						pl.Kind = agentadaptor.StreamToolCallResult
+						pl.ToolCallID = id
+						pl.Result = map[string]any{
+							"text":        text,
+							"is_error":    isError,
+							"tool_use_id": id,
+						}
+						pl.Subagent = scope.subagentRef()
+						p.stream.emitStream(pl)
+					}
+				}
+			} else {
+				// Parent tool_result: check if this closes an Agent subagent scope.
+				if p.stream != nil {
+					if subagentID, ok := p.toolCallToSubagentID[id]; ok {
+						if scope, ok := p.subagentScopes[subagentID]; ok && !scope.ended {
+							result := map[string]any{"status": "completed"}
+							if text != "" {
+								result["text"] = text
+							}
+							p.emitSubagentEnd(scope, result)
+						}
+					}
+					p.stream.handleUserToolResult(block)
+				}
+				// Resolve any pending HITL tool_use_id against this tool_result.
+				p.resolveHITLOnToolResult(id, text, isError)
 			}
-			// Resolve any pending HITL tool_use_id against this tool_result.
-			p.resolveHITLOnToolResult(id, text, isError)
 			p.emit(agentadaptor.TranscriptItem{
 				Kind:      agentadaptor.TranscriptToolResult,
 				ToolUseID: id,

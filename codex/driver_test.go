@@ -80,6 +80,19 @@ func TestDescriptorAdvertisesStructuredOutputCapabilities(t *testing.T) {
 	}
 }
 
+func TestStreamCapabilityAdvertisesAppServerSubagentsHonestly(t *testing.T) {
+	caps := NewAdapter().(agentadaptor.StreamAwareDriver).StreamCapability()
+	if !caps.Subagents || !caps.SubagentToolLinkage {
+		t.Fatalf("expected app-server subagent boundaries and tool linkage: %#v", caps)
+	}
+	if caps.SubagentNesting {
+		t.Fatalf("follow-child is not recursive and must not advertise nesting: %#v", caps)
+	}
+	if caps.SubagentTextDelta {
+		t.Fatalf("child text deltas lack a live golden and must not be advertised: %#v", caps)
+	}
+}
+
 func TestParseCheckpointRequiresRecognizedCodexEvent(t *testing.T) {
 	stdout := `{"type":"tool.result","thread_id":"ignore-me"}
 {"type":"thread.started","thread_id":"codex-thread"}`

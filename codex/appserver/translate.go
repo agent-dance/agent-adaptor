@@ -11,10 +11,30 @@ import (
 // events understood by the SDK and downstream bridges. A translator is
 // per-run and single-goroutine: jrpc2 delivers notifications sequentially so
 // there is no internal locking beyond what tracks per-turn state.
+//
+// When subagentRef is non-nil the translator operates in child-scope mode:
+//   - Every emitted payload carries Subagent = subagentRef.
+//   - turn/started captures the turn id but does NOT emit StreamRunStarted.
+//   - turn/completed emits StreamSubagentEnd instead of StreamRunFinished.
+//   - turn/failed emits StreamSubagentEnd(failed) instead of StreamRunError.
 type Translator struct {
 	sink     agentadaptor.EventSink
 	runID    string
 	threadID string
+
+	// subagentRef, when non-nil, marks this as a child-scope translator.
+	// All emitted payloads carry Subagent = subagentRef.
+	// Adapters MUST NOT set subagentRef on the parent translator.
+	subagentRef *agentadaptor.SubagentRef
+
+	// onChildThread is called when the translator discovers a stable child
+	// thread id from a collabAgentToolCall item (receiverThreadIds[0]).
+	// The caller is responsible for subscribing to the child thread via
+	// thread/resume and routing its notifications to a child translator.
+	// Must not block; if ThreadResume must be called, do it in a goroutine
+	// to avoid deadlocking the JRPC dispatcher.
+	onChildThread func(childThreadID, parentItemID string)
+	lifecycle     *subagentLifecycle
 
 	mu         sync.Mutex
 	turnID     string
@@ -45,7 +65,23 @@ func NewTranslator(sink agentadaptor.EventSink, runID string) *Translator {
 		endedReas:  map[string]bool{},
 		endedTools: map[string]bool{},
 		toolNames:  map[string]string{},
+		lifecycle:  newSubagentLifecycle(),
 	}
+}
+
+// NewTranslatorWithSubagent creates a child-scope translator that annotates
+// every emitted payload with ref. See the Translator docs for child-scope
+// behavioural differences.
+func NewTranslatorWithSubagent(sink agentadaptor.EventSink, runID string, ref *agentadaptor.SubagentRef) *Translator {
+	t := NewTranslator(sink, runID)
+	t.subagentRef = ref
+	return t
+}
+
+func (t *Translator) newChildTranslator(ref *agentadaptor.SubagentRef) *Translator {
+	child := NewTranslatorWithSubagent(t.sink, t.runID, ref)
+	child.lifecycle = t.lifecycle
+	return child
 }
 
 // SetThread records the thread id associated with the active run. Bridges
@@ -161,6 +197,12 @@ func (t *Translator) handleTurnStarted(params json.RawMessage) {
 		}
 		t.mu.Unlock()
 	}
+	if t.subagentRef != nil {
+		// Child thread: subagent.start was already emitted by the parent
+		// translator when the collabAgentToolCall item was processed.
+		// Do not emit StreamRunStarted here.
+		return
+	}
 	payload := t.basePayload()
 	payload.Kind = agentadaptor.StreamRunStarted
 	if !t.runStarted {
@@ -172,6 +214,23 @@ func (t *Translator) handleTurnStarted(params json.RawMessage) {
 func (t *Translator) handleTurnCompleted(params json.RawMessage) {
 	var body TurnCompletedNotificationBody
 	_ = json.Unmarshal(params, &body)
+
+	if t.subagentRef != nil {
+		// Child thread: emit subagent.end instead of run.finished.
+		payload := t.basePayload()
+		payload.Kind = agentadaptor.StreamSubagentEnd
+		payload.Result = map[string]any{"status": "completed"}
+		if body.Turn.Usage != nil {
+			payload.Usage = &agentadaptor.Usage{
+				InputTokens:       body.Turn.Usage.InputTokens,
+				OutputTokens:      body.Turn.Usage.OutputTokens,
+				CachedInputTokens: body.Turn.Usage.CachedInputTokens,
+			}
+		}
+		t.emit(payload)
+		return
+	}
+
 	payload := t.basePayload()
 	payload.Kind = agentadaptor.StreamRunFinished
 	if body.Turn.Usage != nil {
@@ -194,6 +253,23 @@ func (t *Translator) handleTurnCompleted(params json.RawMessage) {
 func (t *Translator) handleTurnFailed(params json.RawMessage) {
 	var body TurnFailedNotificationBody
 	_ = json.Unmarshal(params, &body)
+
+	if t.subagentRef != nil {
+		// Child thread: emit subagent.end(failed) instead of run.error.
+		payload := t.basePayload()
+		payload.Kind = agentadaptor.StreamSubagentEnd
+		payload.Result = map[string]any{"status": "failed"}
+		if len(body.Turn.Error) > 0 {
+			payload.Error = &agentadaptor.RunFailure{
+				Message: "codex child turn failed",
+				Code:    "codex.child_turn_failed",
+			}
+			payload.Raw = map[string]any{"error": string(body.Turn.Error)}
+		}
+		t.emit(payload)
+		return
+	}
+
 	payload := t.basePayload()
 	payload.Kind = agentadaptor.StreamRunError
 	if len(body.Turn.Error) > 0 {
@@ -303,6 +379,10 @@ func (t *Translator) handleItemStarted(params json.RawMessage) {
 			payload.Args = map[string]any{"arguments": string(item.DynamicToolCall.Arguments)}
 		}
 		t.emit(payload)
+	case ThreadItemCollabAgentToolCall:
+		t.handleCollabItemStarted(item)
+	case ThreadItemSubAgentActivity:
+		t.handleSubAgentActivity(item)
 	default:
 		// Unknown or unmodelled item kind. Forward as raw.
 		payload := t.basePayload()
@@ -347,6 +427,10 @@ func (t *Translator) handleItemCompleted(params json.RawMessage) {
 		t.emitToolEnd(item.ID, toolResultFromMcp(item.McpToolCall))
 	case ThreadItemWebSearch, ThreadItemDynamicToolCall:
 		t.emitToolEnd(item.ID, nil)
+	case ThreadItemCollabAgentToolCall:
+		t.handleCollabItemCompleted(item)
+	case ThreadItemSubAgentActivity:
+		t.handleSubAgentActivity(item)
 	default:
 		// Unknown: forward raw so bridges can decide.
 		payload := t.basePayload()
@@ -506,6 +590,7 @@ func (t *Translator) basePayload() agentadaptor.StreamPayload {
 		RunID:    t.runID,
 		ThreadID: t.threadID,
 		TurnID:   t.turnID,
+		Subagent: t.subagentRef,
 	}
 }
 
@@ -529,16 +614,31 @@ func (t *Translator) markReasoningEnded(id string) bool {
 	return true
 }
 
-func (t *Translator) emit(payload agentadaptor.StreamPayload) {
+func (t *Translator) emit(payload agentadaptor.StreamPayload) bool {
 	if t.sink == nil {
-		return
+		return false
 	}
 	if payload.RunID == "" && t.runID != "" {
 		// Defensive: if basePayload was bypassed, backfill the run id so
 		// downstream consumers always see a stable attribution.
 		payload.RunID = t.runID
 	}
+	if payload.Subagent != nil && payload.Subagent.ID != "" {
+		switch payload.Kind {
+		case agentadaptor.StreamSubagentStart:
+			if !t.lifecycle.claimStart(payload.Subagent) {
+				return false
+			}
+		case agentadaptor.StreamSubagentEnd:
+			ref, ok := t.lifecycle.claimEnd(payload.Subagent)
+			if !ok {
+				return false
+			}
+			payload.Subagent = ref
+		}
+	}
 	_ = t.sink.EmitStream(payload)
+	return true
 }
 
 func rawToMap(raw json.RawMessage, name string) map[string]any {
@@ -552,6 +652,216 @@ func rawToMap(raw json.RawMessage, name string) map[string]any {
 	out, ok := generic.(map[string]any)
 	if !ok {
 		return map[string]any{"payload": generic, "notification": name}
+	}
+	return out
+}
+
+func (t *Translator) handleSubAgentActivity(item *ThreadItem) {
+	payload := t.basePayload()
+	payload.Name = "subAgentActivity"
+	payload.Raw = rawToMap(item.Raw, "subAgentActivity")
+
+	body := item.SubAgentActivity
+	if t.subagentRef != nil {
+		// A child translator is bound to exactly one existing scope. An
+		// activity naming another thread describes a nested/peer scope, which
+		// this non-recursive follow-child implementation cannot represent
+		// safely. Ignore it instead of overwriting t.subagentRef.
+		if body == nil || body.AgentThreadID != t.subagentRef.ID {
+			return
+		}
+		payload.Kind = agentadaptor.StreamSubagentStatus
+		payload.Subagent = t.subagentRef
+		if body.Kind != "" {
+			payload.Delta = body.Kind
+			payload.Result = map[string]any{"status": body.Kind}
+		}
+		t.emit(payload)
+		return
+	}
+
+	if body == nil || body.AgentThreadID == "" {
+		// Without a stable child id this item cannot safely open a scope.
+		// Preserve it as an inert raw event for forward compatibility.
+		t.emit(payload)
+		return
+	}
+
+	ref := &agentadaptor.SubagentRef{
+		ID:         body.AgentThreadID,
+		Name:       body.AgentPath,
+		Kind:       "native",
+		ToolCallID: body.ToolCallID,
+	}
+	start := t.basePayload()
+	start.Kind = agentadaptor.StreamSubagentStart
+	start.Subagent = ref
+	start.Raw = payload.Raw
+	t.emit(start) // lifecycle suppresses a duplicate collab-originated start.
+
+	if !t.lifecycle.active(ref.ID) {
+		return
+	}
+	payload.Kind = agentadaptor.StreamSubagentStatus
+	payload.Subagent = ref
+	if body.Kind != "" {
+		payload.Delta = body.Kind
+		payload.Result = map[string]any{"status": body.Kind}
+	}
+	t.emit(payload)
+}
+
+type subagentLifecycle struct {
+	mu      sync.Mutex
+	started map[string]*agentadaptor.SubagentRef
+	ended   map[string]bool
+}
+
+func newSubagentLifecycle() *subagentLifecycle {
+	return &subagentLifecycle{
+		started: map[string]*agentadaptor.SubagentRef{},
+		ended:   map[string]bool{},
+	}
+}
+
+func (l *subagentLifecycle) claimStart(ref *agentadaptor.SubagentRef) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.started[ref.ID] != nil || l.ended[ref.ID] {
+		return false
+	}
+	copyRef := *ref
+	l.started[ref.ID] = &copyRef
+	return true
+}
+
+func (l *subagentLifecycle) claimEnd(ref *agentadaptor.SubagentRef) (*agentadaptor.SubagentRef, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.ended[ref.ID] {
+		return nil, false
+	}
+	l.ended[ref.ID] = true
+	if started := l.started[ref.ID]; started != nil {
+		copyRef := *started
+		return &copyRef, true
+	}
+	copyRef := *ref
+	return &copyRef, true
+}
+
+func (l *subagentLifecycle) active(id string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.started[id] != nil && !l.ended[id]
+}
+
+// handleCollabItemStarted processes a collabAgentToolCall item on item/started:
+// it emits StreamToolCallStart for every collab item, and additionally emits
+// StreamSubagentStart + fires onChildThread when a stable child thread id is
+// available (ReceiverThreadIDs[0]).
+func (t *Translator) handleCollabItemStarted(item *ThreadItem) {
+	toolName := collabToolName(item.CollabAgentToolCall)
+	t.mu.Lock()
+	t.toolNames[item.ID] = toolName
+	t.mu.Unlock()
+
+	// Parent tool_call boundary — always emit; keeps CopilotKit useCopilotAction
+	// generic tool cards working regardless of subagent capability.
+	tcPayload := t.basePayload()
+	tcPayload.Kind = agentadaptor.StreamToolCallStart
+	tcPayload.ToolCallID = item.ID
+	tcPayload.Name = toolName
+	t.emit(tcPayload)
+
+	// Emit subagent.start only when a stable child thread id is available.
+	childID := firstReceiverThreadID(item.CollabAgentToolCall)
+	if childID == "" {
+		// exec --json path: receiverThreadIds is typically empty on current builds.
+		// No subagent lifecycle events; tool_call.* boundary is sufficient.
+		return
+	}
+
+	subPayload := t.basePayload()
+	subPayload.Kind = agentadaptor.StreamSubagentStart
+	subPayload.Subagent = &agentadaptor.SubagentRef{
+		ID:         childID,
+		Name:       toolName,
+		Kind:       "native",
+		ToolCallID: item.ID,
+	}
+	if !t.emit(subPayload) {
+		return
+	}
+
+	// Notify the caller so it can subscribe to the child thread and route its
+	// events through a child Translator (follow-child, §8.3.5).
+	t.mu.Lock()
+	cb := t.onChildThread
+	t.mu.Unlock()
+	if cb != nil {
+		cb(childID, item.ID)
+	}
+}
+
+// handleCollabItemCompleted processes a collabAgentToolCall item on item/completed:
+// it conditionally emits StreamSubagentEnd when ReceiverThreadIDs[0] is
+// available, then closes the parent StreamToolCall lifecycle.
+func (t *Translator) handleCollabItemCompleted(item *ThreadItem) {
+	result := toolResultFromCollab(item.CollabAgentToolCall)
+	childID := firstReceiverThreadID(item.CollabAgentToolCall)
+	if childID != "" {
+		// Emit subagent.end before the parent tool closes. If follow-child is
+		// active, the child translator will already have emitted this event;
+		// the shared lifecycle suppresses this fallback duplicate.
+		endPayload := t.basePayload()
+		endPayload.Kind = agentadaptor.StreamSubagentEnd
+		status := "completed"
+		if item.CollabAgentToolCall != nil && item.CollabAgentToolCall.Status != "" {
+			status = item.CollabAgentToolCall.Status
+		}
+		endPayload.Result = map[string]any{"status": status}
+		endPayload.Subagent = &agentadaptor.SubagentRef{
+			ID:   childID,
+			Kind: "native",
+		}
+		t.emit(endPayload)
+	}
+	t.emitToolEnd(item.ID, result)
+}
+
+// collabToolName derives a display name from a collab tool call body.
+func collabToolName(body *ThreadItemCollabAgentToolCallBody) string {
+	if body != nil && body.Tool != "" {
+		return "collab:" + body.Tool
+	}
+	return "collab:agent"
+}
+
+// firstReceiverThreadID returns the first non-empty receiver thread id, or "".
+func firstReceiverThreadID(body *ThreadItemCollabAgentToolCallBody) string {
+	if body == nil {
+		return ""
+	}
+	for _, id := range body.ReceiverThreadIDs {
+		if id != "" {
+			return id
+		}
+	}
+	return ""
+}
+
+// toolResultFromCollab produces a Result map from a collabAgentToolCall body.
+func toolResultFromCollab(body *ThreadItemCollabAgentToolCallBody) map[string]any {
+	if body == nil {
+		return nil
+	}
+	out := map[string]any{"tool": body.Tool}
+	if body.Status != "" {
+		out["status"] = body.Status
+	}
+	if len(body.ReceiverThreadIDs) > 0 {
+		out["receiverThreadIds"] = body.ReceiverThreadIDs
 	}
 	return out
 }

@@ -246,11 +246,11 @@ func TestTranslatorDispatchCoreFlow(t *testing.T) {
 	}
 
 	expected := map[agentadaptor.StreamKind]int{
-		agentadaptor.StreamRunStarted:   1,
-		agentadaptor.StreamTextStart:    1,
-		agentadaptor.StreamTextContent:  2,
-		agentadaptor.StreamTextEnd:      1,
-		agentadaptor.StreamRunFinished:  1,
+		agentadaptor.StreamRunStarted:  1,
+		agentadaptor.StreamTextStart:   1,
+		agentadaptor.StreamTextContent: 2,
+		agentadaptor.StreamTextEnd:     1,
+		agentadaptor.StreamRunFinished: 1,
 	}
 	for kind, want := range expected {
 		if got := kinds[kind]; got != want {
@@ -309,6 +309,471 @@ func (r *recordingSink) EmitStream(payload agentadaptor.StreamPayload) error {
 	}
 	r.streams = append(r.streams, payload)
 	return nil
+}
+
+// ---------------------------------------------------------------------------
+// collabAgentToolCall / collab_tool_call decoder tests
+// ---------------------------------------------------------------------------
+
+func TestDecodeCollabAgentToolCallCamelCase(t *testing.T) {
+	// camelCase wire shape (app-server protocol)
+	raw := json.RawMessage(`{
+		"id": "c1",
+		"type": "collabAgentToolCall",
+		"tool": "spawnAgent",
+		"status": "completed",
+		"senderThreadId": "parent-t1",
+		"receiverThreadIds": ["child-t2"],
+		"agentsStates": {"child-t2": "running"}
+	}`)
+	it, err := DecodeThreadItem(raw)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if it.Kind != ThreadItemCollabAgentToolCall {
+		t.Fatalf("kind: got %q want %q", it.Kind, ThreadItemCollabAgentToolCall)
+	}
+	if it.CollabAgentToolCall == nil {
+		t.Fatal("CollabAgentToolCall body must not be nil")
+	}
+	b := it.CollabAgentToolCall
+	if b.Tool != "spawnAgent" {
+		t.Fatalf("Tool: %q", b.Tool)
+	}
+	if b.SenderThreadID != "parent-t1" {
+		t.Fatalf("SenderThreadID: %q", b.SenderThreadID)
+	}
+	if len(b.ReceiverThreadIDs) != 1 || b.ReceiverThreadIDs[0] != "child-t2" {
+		t.Fatalf("ReceiverThreadIDs: %v", b.ReceiverThreadIDs)
+	}
+}
+
+func TestDecodeCollabAgentToolCallSnakeCase(t *testing.T) {
+	// snake_case wire shape (exec --json path)
+	raw := json.RawMessage(`{
+		"id": "c2",
+		"type": "collab_tool_call",
+		"tool": "wait",
+		"status": "in_progress",
+		"sender_thread_id": "parent-t1",
+		"receiver_thread_ids": [],
+		"agents_states": {}
+	}`)
+	it, err := DecodeThreadItem(raw)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	// Snake-case wire normalises to the canonical kind.
+	if it.Kind != ThreadItemCollabAgentToolCall {
+		t.Fatalf("kind: got %q want %q", it.Kind, ThreadItemCollabAgentToolCall)
+	}
+	if it.CollabAgentToolCall == nil {
+		t.Fatal("CollabAgentToolCall body must not be nil")
+	}
+	if it.CollabAgentToolCall.Tool != "wait" {
+		t.Fatalf("Tool: %q", it.CollabAgentToolCall.Tool)
+	}
+	if it.CollabAgentToolCall.SenderThreadID != "parent-t1" {
+		t.Fatalf("SenderThreadID: %q", it.CollabAgentToolCall.SenderThreadID)
+	}
+}
+
+func TestDecodeSubAgentActivityForwardCompat(t *testing.T) {
+	// subAgentActivity is a forward-compat v2 item; schema not yet vendored.
+	// Kind must be preserved (not Unknown) to avoid colliding with Kind=="".
+	raw := json.RawMessage(`{"id":"sa1","type":"subAgentActivity","agent_thread_id":"child-t3","agent_path":"/root/worker","kind":"started","tool_call_id":"spawn-3"}`)
+	it, err := DecodeThreadItem(raw)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if it.Kind != ThreadItemSubAgentActivity {
+		t.Fatalf("kind: got %q want %q", it.Kind, ThreadItemSubAgentActivity)
+	}
+	if len(it.Raw) == 0 {
+		t.Fatal("Raw must be preserved for subAgentActivity")
+	}
+	if it.SubAgentActivity == nil {
+		t.Fatal("SubAgentActivity body must be decoded")
+	}
+	if got := it.SubAgentActivity.AgentThreadID; got != "child-t3" {
+		t.Fatalf("AgentThreadID: got %q", got)
+	}
+	if got := it.SubAgentActivity.AgentPath; got != "/root/worker" {
+		t.Fatalf("AgentPath: got %q", got)
+	}
+	if got := it.SubAgentActivity.Kind; got != "started" {
+		t.Fatalf("Kind: got %q", got)
+	}
+	if got := it.SubAgentActivity.ToolCallID; got != "spawn-3" {
+		t.Fatalf("ToolCallID: got %q", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Translator collab item mapping
+// ---------------------------------------------------------------------------
+
+func TestTranslatorCollabWaitItemMapsToToolCallOnly(t *testing.T) {
+	// collab:wait without receiver thread ids → only StreamToolCallStart/End
+	// no subagent.start/end (exec --json degraded path per §8.3.4).
+	t.Parallel()
+	sink := &recordingSink{}
+	tr := NewTranslator(sink, "run-collab")
+
+	tr.Dispatch(NotifyThreadStarted, json.RawMessage(`{"thread":{"id":"t1"}}`))
+	tr.Dispatch(NotifyTurnStarted, json.RawMessage(`{"threadId":"t1","turn":{"id":"turn-1","status":"inProgress"}}`))
+
+	// item/started: collab_tool_call wait, no receiver
+	tr.Dispatch(NotifyItemStarted, json.RawMessage(`{"threadId":"t1","turnId":"turn-1","item":{"id":"ci1","type":"collabAgentToolCall","tool":"wait","status":"in_progress","receiverThreadIds":[]}}`))
+	// item/completed
+	tr.Dispatch(NotifyItemCompleted, json.RawMessage(`{"threadId":"t1","turnId":"turn-1","item":{"id":"ci1","type":"collabAgentToolCall","tool":"wait","status":"completed","receiverThreadIds":[]}}`))
+
+	tr.Dispatch(NotifyTurnCompleted, json.RawMessage(`{"threadId":"t1","turn":{"id":"turn-1","status":"completed"}}`))
+
+	kinds := kindCounts(sink.streams)
+	if kinds[StreamToolCallStart] != 1 {
+		t.Fatalf("want 1 StreamToolCallStart, got %d", kinds[StreamToolCallStart])
+	}
+	if kinds[StreamToolCallEnd] != 1 {
+		t.Fatalf("want 1 StreamToolCallEnd, got %d", kinds[StreamToolCallEnd])
+	}
+	if kinds[StreamSubagentStart] != 0 {
+		t.Fatalf("collab:wait without child id must not emit StreamSubagentStart")
+	}
+	if kinds[StreamSubagentEnd] != 0 {
+		t.Fatalf("collab:wait without child id must not emit StreamSubagentEnd")
+	}
+	// Verify tool name includes "collab:" prefix
+	var toolName string
+	for _, p := range sink.streams {
+		if p.Kind == StreamToolCallStart {
+			toolName = p.Name
+		}
+	}
+	if toolName != "collab:wait" {
+		t.Fatalf("tool name: got %q want %q", toolName, "collab:wait")
+	}
+}
+
+func TestTranslatorCollabSpawnItemEmitsSubagentLifecycle(t *testing.T) {
+	// collab:spawnAgent with receiver thread id → StreamToolCall* + StreamSubagentStart/End
+	// and onChildThread callback is fired.
+	t.Parallel()
+	sink := &recordingSink{}
+	tr := NewTranslator(sink, "run-spawn")
+
+	var gotChildID, gotToolCallID string
+	tr.mu.Lock()
+	tr.onChildThread = func(childID, toolCallID string) {
+		gotChildID = childID
+		gotToolCallID = toolCallID
+	}
+	tr.mu.Unlock()
+
+	tr.Dispatch(NotifyThreadStarted, json.RawMessage(`{"thread":{"id":"t1"}}`))
+	tr.Dispatch(NotifyTurnStarted, json.RawMessage(`{"threadId":"t1","turn":{"id":"turn-1","status":"inProgress"}}`))
+
+	// item/started with child thread id
+	tr.Dispatch(NotifyItemStarted, json.RawMessage(`{"threadId":"t1","turnId":"turn-1","item":{"id":"spawn-1","type":"collabAgentToolCall","tool":"spawnAgent","receiverThreadIds":["child-t2"],"status":"in_progress"}}`))
+	// item/completed
+	tr.Dispatch(NotifyItemCompleted, json.RawMessage(`{"threadId":"t1","turnId":"turn-1","item":{"id":"spawn-1","type":"collabAgentToolCall","tool":"spawnAgent","receiverThreadIds":["child-t2"],"status":"completed"}}`))
+
+	tr.Dispatch(NotifyTurnCompleted, json.RawMessage(`{"threadId":"t1","turn":{"id":"turn-1","status":"completed"}}`))
+
+	kinds := kindCounts(sink.streams)
+	if kinds[StreamToolCallStart] != 1 {
+		t.Fatalf("want 1 StreamToolCallStart, got %d", kinds[StreamToolCallStart])
+	}
+	if kinds[StreamSubagentStart] != 1 {
+		t.Fatalf("want 1 StreamSubagentStart, got %d", kinds[StreamSubagentStart])
+	}
+	if kinds[StreamSubagentEnd] != 1 {
+		t.Fatalf("want 1 StreamSubagentEnd, got %d", kinds[StreamSubagentEnd])
+	}
+	endIndex, toolEndIndex := -1, -1
+	for i, payload := range sink.streams {
+		switch payload.Kind {
+		case StreamSubagentEnd:
+			endIndex = i
+		case StreamToolCallEnd:
+			toolEndIndex = i
+		}
+	}
+	if endIndex < 0 || toolEndIndex < 0 || endIndex > toolEndIndex {
+		t.Fatalf("subagent end must precede parent tool end: subagent=%d tool=%d", endIndex, toolEndIndex)
+	}
+	// Verify onChildThread was called with correct ids
+	if gotChildID != "child-t2" {
+		t.Fatalf("onChildThread childID: got %q want %q", gotChildID, "child-t2")
+	}
+	if gotToolCallID != "spawn-1" {
+		t.Fatalf("onChildThread toolCallID: got %q want %q", gotToolCallID, "spawn-1")
+	}
+	// Subagent payloads must carry a SubagentRef
+	for _, p := range sink.streams {
+		if p.Kind == StreamSubagentStart || p.Kind == StreamSubagentEnd {
+			if p.Subagent == nil {
+				t.Fatalf("subagent payload %q must have non-nil Subagent", p.Kind)
+			}
+			if p.Subagent.ID != "child-t2" {
+				t.Fatalf("Subagent.ID: got %q want %q", p.Subagent.ID, "child-t2")
+			}
+		}
+	}
+}
+
+func TestTranslatorChildScopeEmitsSubagentEnd(t *testing.T) {
+	// A child-scope Translator (subagentRef != nil) must emit StreamSubagentEnd
+	// on turn/completed instead of StreamRunFinished.
+	t.Parallel()
+	sink := &recordingSink{}
+	ref := &agentadaptor.SubagentRef{ID: "child-t9", Kind: "native", ToolCallID: "spawn-1"}
+	childTr := NewTranslatorWithSubagent(sink, "run-child", ref)
+
+	childTr.Dispatch(NotifyTurnStarted, json.RawMessage(`{"threadId":"child-t9","turn":{"id":"child-turn-1","status":"inProgress"}}`))
+	// Simulate some child text
+	childTr.Dispatch(NotifyItemStarted, json.RawMessage(`{"threadId":"child-t9","turnId":"child-turn-1","item":{"id":"cm1","type":"agentMessage","text":""}}`))
+	childTr.Dispatch(NotifyItemAgentMessageDelta, json.RawMessage(`{"delta":"hello","itemId":"cm1","threadId":"child-t9","turnId":"child-turn-1"}`))
+	childTr.Dispatch(NotifyItemCompleted, json.RawMessage(`{"threadId":"child-t9","turnId":"child-turn-1","item":{"id":"cm1","type":"agentMessage","text":"hello"}}`))
+	childTr.Dispatch(NotifyTurnCompleted, json.RawMessage(`{"threadId":"child-t9","turn":{"id":"child-turn-1","status":"completed"}}`))
+
+	kinds := kindCounts(sink.streams)
+
+	// Must emit subagent.end, NOT run.finished
+	if kinds[StreamSubagentEnd] != 1 {
+		t.Fatalf("child turn/completed must emit StreamSubagentEnd, got counts: %v", kinds)
+	}
+	if kinds[StreamRunFinished] != 0 {
+		t.Fatalf("child translator must NOT emit StreamRunFinished, got %d", kinds[StreamRunFinished])
+	}
+	// StreamRunStarted must NOT be emitted for child scope
+	if kinds[StreamRunStarted] != 0 {
+		t.Fatalf("child translator must NOT emit StreamRunStarted, got %d", kinds[StreamRunStarted])
+	}
+	// All payloads from child translator must carry the SubagentRef
+	for _, p := range sink.streams {
+		if p.Subagent == nil {
+			t.Fatalf("child translator payload %q must have non-nil Subagent", p.Kind)
+		}
+		if p.Subagent.ID != "child-t9" {
+			t.Fatalf("child payload %q Subagent.ID: got %q want %q", p.Kind, p.Subagent.ID, "child-t9")
+		}
+	}
+	// subagent.end must have status=completed
+	for _, p := range sink.streams {
+		if p.Kind == StreamSubagentEnd {
+			if p.Result["status"] != "completed" {
+				t.Fatalf("subagent.end Result.status: %v", p.Result)
+			}
+		}
+	}
+}
+
+func TestTranslatorChildScopeEmitsSubagentEndOnFailure(t *testing.T) {
+	// Child-scope translator: turn/failed → StreamSubagentEnd(failed)
+	t.Parallel()
+	sink := &recordingSink{}
+	ref := &agentadaptor.SubagentRef{ID: "child-fail", Kind: "native"}
+	childTr := NewTranslatorWithSubagent(sink, "run-fail", ref)
+
+	childTr.Dispatch(NotifyTurnStarted, json.RawMessage(`{"threadId":"child-fail","turn":{"id":"cf1","status":"inProgress"}}`))
+	childTr.Dispatch(NotifyTurnFailed, json.RawMessage(`{"threadId":"child-fail","turn":{"id":"cf1","status":"failed","error":{"message":"timeout"}}}`))
+
+	kinds := kindCounts(sink.streams)
+	if kinds[StreamSubagentEnd] != 1 {
+		t.Fatalf("child turn/failed must emit StreamSubagentEnd, got %v", kinds)
+	}
+	if kinds[StreamRunError] != 0 {
+		t.Fatalf("child translator must NOT emit StreamRunError, got %d", kinds[StreamRunError])
+	}
+	for _, p := range sink.streams {
+		if p.Kind == StreamSubagentEnd {
+			if p.Result["status"] != "failed" {
+				t.Fatalf("subagent.end on failure Result.status: %v", p.Result)
+			}
+		}
+	}
+}
+
+func TestTranslatorSubAgentActivityFirstEmitsStartBeforeStatus(t *testing.T) {
+	t.Parallel()
+	sink := &recordingSink{}
+	tr := NewTranslator(sink, "run-sa")
+
+	activity := json.RawMessage(`{"threadId":"t1","turnId":"tn1","item":{"id":"sa1","type":"subAgentActivity","agentThreadId":"child-t5","agentPath":"/root/worker","kind":"working","toolCallId":"spawn-5"}}`)
+	tr.Dispatch(NotifyItemCompleted, activity)
+	tr.Dispatch(NotifyItemCompleted, activity)
+
+	if len(sink.streams) != 3 {
+		t.Fatalf("want exactly one start + two statuses, got %d payloads", len(sink.streams))
+	}
+	if got := kindCounts(sink.streams)[StreamSubagentStart]; got != 1 {
+		t.Fatalf("repeated activity emitted %d starts", got)
+	}
+	start := sink.streams[0]
+	if start.Kind != StreamSubagentStart {
+		t.Fatalf("activity-first must open scope before status, got %q", start.Kind)
+	}
+	if start.Subagent == nil || start.Subagent.ID != "child-t5" ||
+		start.Subagent.Name != "/root/worker" || start.Subagent.Kind != "native" ||
+		start.Subagent.ToolCallID != "spawn-5" {
+		t.Fatalf("unexpected activity-originated start ref: %#v", start.Subagent)
+	}
+
+	p := sink.streams[1]
+	if p.Kind != StreamSubagentStatus {
+		t.Fatalf("subAgentActivity must produce StreamSubagentStatus, got %q", p.Kind)
+	}
+	if p.Raw == nil {
+		t.Fatal("Raw must be preserved for subAgentActivity")
+	}
+	if p.Subagent == nil {
+		t.Fatal("stable agentThreadId must produce a correlated SubagentRef")
+	}
+	if p.Subagent.ID != "child-t5" || p.Subagent.Name != "/root/worker" ||
+		p.Subagent.Kind != "native" || p.Subagent.ToolCallID != "spawn-5" {
+		t.Fatalf("unexpected SubagentRef: %#v", p.Subagent)
+	}
+	if p.Result["status"] != "working" || p.Delta != "working" {
+		t.Fatalf("activity status not normalized: delta=%q result=%#v", p.Delta, p.Result)
+	}
+}
+
+func TestTranslatorCollabFirstDeduplicatesActivityStart(t *testing.T) {
+	t.Parallel()
+	sink := &recordingSink{}
+	tr := NewTranslator(sink, "run-collab-first")
+
+	tr.Dispatch(NotifyItemStarted, json.RawMessage(`{"threadId":"t1","turnId":"tn1","item":{"id":"spawn-6","type":"collabAgentToolCall","tool":"spawnAgent","receiverThreadIds":["child-t6"],"status":"in_progress"}}`))
+	tr.Dispatch(NotifyItemCompleted, json.RawMessage(`{"threadId":"t1","turnId":"tn1","item":{"id":"sa6","type":"subAgentActivity","agentThreadId":"child-t6","agentPath":"/root/reviewer","kind":"working","toolCallId":"spawn-6"}}`))
+
+	if got := kindCounts(sink.streams)[StreamSubagentStart]; got != 1 {
+		t.Fatalf("collab-first plus activity emitted %d starts", got)
+	}
+	var startIndex, statusIndex = -1, -1
+	for i, payload := range sink.streams {
+		switch payload.Kind {
+		case StreamSubagentStart:
+			startIndex = i
+		case StreamSubagentStatus:
+			statusIndex = i
+			if payload.Subagent == nil || payload.Subagent.ID != "child-t6" ||
+				payload.Subagent.Name != "/root/reviewer" ||
+				payload.Subagent.ToolCallID != "spawn-6" {
+				t.Fatalf("activity status lost correlation: %#v", payload.Subagent)
+			}
+		}
+	}
+	if startIndex < 0 || statusIndex <= startIndex {
+		t.Fatalf("start-before-status violated: start=%d status=%d", startIndex, statusIndex)
+	}
+}
+
+func TestTranslatorSubAgentActivityWithoutStableIDRemainsRawInert(t *testing.T) {
+	t.Parallel()
+	sink := &recordingSink{}
+	tr := NewTranslator(sink, "run-sa-opaque")
+
+	tr.Dispatch(NotifyItemCompleted, json.RawMessage(`{"threadId":"t1","turnId":"tn1","item":{"id":"sa2","type":"subAgentActivity","agentPath":"/root/worker","kind":"working"}}`))
+
+	if len(sink.streams) != 1 {
+		t.Fatalf("want 1 payload, got %d", len(sink.streams))
+	}
+	p := sink.streams[0]
+	if p.Kind != "" || p.Subagent != nil || p.Raw == nil {
+		t.Fatalf("unstable activity must remain raw and inert: %#v", p)
+	}
+}
+
+func TestChildTranslatorIgnoresActivityForDifferentScope(t *testing.T) {
+	t.Parallel()
+	sink := &recordingSink{}
+	child := NewTranslatorWithSubagent(sink, "run-child-activity", &agentadaptor.SubagentRef{
+		ID:         "bound-child",
+		Name:       "/root/bound",
+		Kind:       "native",
+		ToolCallID: "spawn-bound",
+	})
+
+	child.Dispatch(NotifyItemCompleted, json.RawMessage(`{"threadId":"bound-child","turnId":"ct1","item":{"id":"nested","type":"subAgentActivity","agentThreadId":"different-child","agentPath":"/root/different","kind":"working","toolCallId":"spawn-different"}}`))
+
+	if len(sink.streams) != 0 {
+		t.Fatalf("child translator must ignore activity for another scope: %#v", sink.streams)
+	}
+}
+
+func TestTranslatorDeduplicatesSubagentEndAcrossCollabAndChildTurn(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name       string
+		childFirst bool
+	}{
+		{name: "child turn completes first", childFirst: true},
+		{name: "collab item completes first", childFirst: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sink := &recordingSink{}
+			parent := NewTranslator(sink, "run-dedupe")
+			ref := &agentadaptor.SubagentRef{
+				ID:         "child-dedupe",
+				Name:       "collab:spawnAgent",
+				Kind:       "native",
+				ToolCallID: "spawn-dedupe",
+			}
+			child := parent.newChildTranslator(ref)
+
+			start := json.RawMessage(`{"threadId":"parent","turnId":"pt","item":{"id":"spawn-dedupe","type":"collabAgentToolCall","tool":"spawnAgent","receiverThreadIds":["child-dedupe"],"status":"in_progress"}}`)
+			completed := json.RawMessage(`{"threadId":"parent","turnId":"pt","item":{"id":"spawn-dedupe","type":"collabAgentToolCall","tool":"spawnAgent","receiverThreadIds":["child-dedupe"],"status":"completed"}}`)
+			childCompleted := json.RawMessage(`{"threadId":"child-dedupe","turn":{"id":"ct","status":"completed"}}`)
+
+			parent.Dispatch(NotifyItemStarted, start)
+			if tc.childFirst {
+				child.Dispatch(NotifyTurnCompleted, childCompleted)
+				parent.Dispatch(NotifyItemCompleted, completed)
+			} else {
+				parent.Dispatch(NotifyItemCompleted, completed)
+				child.Dispatch(NotifyTurnCompleted, childCompleted)
+			}
+
+			if got := kindCounts(sink.streams)[StreamSubagentEnd]; got != 1 {
+				t.Fatalf("same Subagent.ID emitted %d terminal events", got)
+			}
+			for _, payload := range sink.streams {
+				if payload.Kind != StreamSubagentEnd {
+					continue
+				}
+				if payload.Subagent == nil || payload.Subagent.ID != "child-dedupe" ||
+					payload.Subagent.ToolCallID != "spawn-dedupe" {
+					t.Fatalf("terminal event lost correlated ref: %#v", payload.Subagent)
+				}
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Helpers used by collab tests
+// ---------------------------------------------------------------------------
+
+// StreamKind aliases for readability in table assertions.
+const (
+	StreamToolCallStart  = agentadaptor.StreamToolCallStart
+	StreamSubagentStart  = agentadaptor.StreamSubagentStart
+	StreamSubagentEnd    = agentadaptor.StreamSubagentEnd
+	StreamSubagentStatus = agentadaptor.StreamSubagentStatus
+	StreamRunStarted     = agentadaptor.StreamRunStarted
+	StreamRunFinished    = agentadaptor.StreamRunFinished
+	StreamRunError       = agentadaptor.StreamRunError
+	StreamToolCallEnd    = agentadaptor.StreamToolCallEnd
+)
+
+func kindCounts(payloads []agentadaptor.StreamPayload) map[agentadaptor.StreamKind]int {
+	counts := map[agentadaptor.StreamKind]int{}
+	for _, p := range payloads {
+		counts[p.Kind]++
+	}
+	return counts
 }
 
 // Ensure fmt stays used when future tests add diagnostic messages.

@@ -225,7 +225,20 @@ func TestStreamCapabilityValues(t *testing.T) {
 		StreamCapability() agentadaptor.StreamCapability
 	}).StreamCapability()
 	if !cap.Native || !cap.TokenLevel || !cap.Reasoning || !cap.ToolCallArgs || !cap.HITL {
-		t.Fatalf("unexpected capability: %#v", cap)
+		t.Fatalf("unexpected base capability: %#v", cap)
+	}
+	// Subagent fields must reflect the live probe (§8.2 Phase 2).
+	if !cap.Subagents {
+		t.Error("StreamCapability.Subagents must be true for Claude native Agent support")
+	}
+	if !cap.SubagentToolLinkage {
+		t.Error("StreamCapability.SubagentToolLinkage must be true (parent_tool_use_id linkage)")
+	}
+	if cap.SubagentNesting {
+		t.Error("StreamCapability.SubagentNesting must be false (Claude does not project nested scopes)")
+	}
+	if cap.SubagentTextDelta {
+		t.Error("StreamCapability.SubagentTextDelta must be false (no child text token delta in stream-json)")
 	}
 }
 

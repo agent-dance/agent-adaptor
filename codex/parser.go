@@ -235,6 +235,34 @@ func (p *codexParser) handleItem(item map[string]any, delta bool) {
 			ToolUseID: id,
 			Input:     item["input"],
 		})
+	case "collab_tool_call", "collabagenttoolcall":
+		// codex exec --json emits snake_case "collab_tool_call";
+		// app-server emits camelCase "collabAgentToolCall" which codexEventKind
+		// lowercases to "collabagenttoolcall". Both are mapped to a standard
+		// TranscriptToolCall/ToolResult boundary so downstream consumers
+		// see tool semantics rather than an opaque TranscriptSystem entry.
+		// Note: exec --json typically only exposes tool=wait; spawn/child
+		// details are not projected into the parent stream (§8.3.1).
+		name := codexTopLevelString(item, "tool")
+		if name == "" {
+			name = "collab_agent"
+		}
+		id := codexTopLevelString(item, "id", "item_id")
+		if delta {
+			p.emit(agentadaptor.TranscriptItem{
+				Kind:      agentadaptor.TranscriptToolCall,
+				ToolName:  "collab:" + name,
+				ToolUseID: id,
+				Input:     item,
+			})
+		} else {
+			status := codexTopLevelString(item, "status")
+			p.emit(agentadaptor.TranscriptItem{
+				Kind:      agentadaptor.TranscriptToolResult,
+				ToolUseID: id,
+				Text:      status,
+			})
+		}
 	case "tool_result", "command_output", "file_change":
 		id := codexTopLevelString(item, "id", "call_id", "tool_use_id")
 		text := codexTopLevelString(item, "text", "output", "message")

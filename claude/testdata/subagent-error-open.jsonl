@@ -1,0 +1,4 @@
+{"type":"system","subtype":"init","session_id":"sess-subagent-error-open","model":"claude-fixture"}
+{"type":"assistant","session_id":"sess-subagent-error-open","message":{"content":[{"type":"tool_use","id":"toolu_agent_error_open","name":"Agent","input":{"description":"Interrupted task"}}]}}
+{"type":"system","subtype":"task_started","session_id":"sess-subagent-error-open","task_id":"task-error-open","subagent_type":"worker","parent_tool_use_id":"toolu_agent_error_open"}
+{"type":"error","session_id":"sess-subagent-error-open","code":"provider_error","message":"Provider disconnected."}

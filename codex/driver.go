@@ -341,13 +341,27 @@ func (adapter) SyncProfileResources(ctx context.Context, cfg any, agent agentada
 // the caller opts into streaming, codex switches from `codex exec --json` to
 // `codex app-server`, which natively emits token-level deltas, reasoning
 // deltas, and tool-call lifecycle events.
+//
+// Subagent capability values reflect the app-server streaming path:
+//   - Subagents=true: collab tool-call boundaries are observable.
+//   - SubagentToolLinkage=true: a stable receiver thread id is linked back to
+//     the collab item id that spawned it.
+//   - SubagentNesting=false: follow-child does not recursively subscribe to
+//     grandchildren or populate SubagentRef.ParentID.
+//   - SubagentTextDelta=false: the implementation can route child
+//     agentMessage deltas after follow-child, but no live app-server golden
+//     currently proves that the server projects those deltas reliably.
 func (adapter) StreamCapability() agentadaptor.StreamCapability {
 	return agentadaptor.StreamCapability{
-		Native:       true,
-		TokenLevel:   true,
-		Reasoning:    true,
-		ToolCallArgs: true,
-		HITL:         false, // app-server HITL requests are not yet wired into the SDK decision path.
+		Native:              true,
+		TokenLevel:          true,
+		Reasoning:           true,
+		ToolCallArgs:        true,
+		HITL:                false, // app-server HITL requests are not yet wired into the SDK decision path.
+		Subagents:           true,
+		SubagentNesting:     false,
+		SubagentToolLinkage: true,
+		SubagentTextDelta:   false,
 	}
 }
 

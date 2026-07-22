@@ -1,0 +1,15 @@
+{"type":"system","subtype":"init","session_id":"sess-subagent-progress","model":"claude-fixture"}
+{"type":"stream_event","session_id":"sess-subagent-progress","event":{"type":"message_start","message":{"id":"msg-parent-2"}}}
+{"type":"stream_event","session_id":"sess-subagent-progress","event":{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_agent_002","name":"Agent","input":{}}}}
+{"type":"stream_event","session_id":"sess-subagent-progress","event":{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"description\":\"Summarise codebase\"}"}}}
+{"type":"stream_event","session_id":"sess-subagent-progress","event":{"type":"content_block_stop","index":0}}
+{"type":"stream_event","session_id":"sess-subagent-progress","event":{"type":"message_delta","delta":{"stop_reason":"tool_use"}}}
+{"type":"stream_event","session_id":"sess-subagent-progress","event":{"type":"message_stop"}}
+{"type":"assistant","session_id":"sess-subagent-progress","message":{"model":"claude-fixture","content":[{"type":"tool_use","id":"toolu_agent_002","name":"Agent","input":{"description":"Summarise codebase"}}]}}
+{"type":"system","subtype":"task_started","session_id":"sess-subagent-progress","task_id":"task-abc-002","subagent_type":"coder","parent_tool_use_id":"toolu_agent_002"}
+{"type":"system","subtype":"task_progress","session_id":"sess-subagent-progress","task_id":"task-abc-002","parent_tool_use_id":"toolu_agent_002","description":"Reading README.md","last_tool_name":"Read"}
+{"type":"system","subtype":"task_progress","session_id":"sess-subagent-progress","task_id":"task-abc-002","parent_tool_use_id":"toolu_agent_002","description":"Analysing source files","last_tool_name":"Glob"}
+{"type":"system","subtype":"task_notification","session_id":"sess-subagent-progress","task_id":"task-abc-002","parent_tool_use_id":"toolu_agent_002","status":"completed","summary":"Found 5 files."}
+{"type":"user","session_id":"sess-subagent-progress","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_agent_002","content":"Found 5 files."}]}}
+{"type":"assistant","session_id":"sess-subagent-progress","message":{"model":"claude-fixture","content":[{"type":"text","text":"Summary complete."}]}}
+{"type":"result","subtype":"success","session_id":"sess-subagent-progress","result":"Summary complete.","usage":{"input_tokens":30,"output_tokens":10}}

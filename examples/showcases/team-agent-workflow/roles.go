@@ -106,6 +106,7 @@ func startRoleHub(cfg roleHubConfig) (*roleHub, []a2adelegation.RemoteAgentSpec,
 			Prompt:  rolePromptBuilder(role, cfg.Fixture),
 			Exposure: bridgea2a.ExposurePolicy{
 				IncludeToolCalls: true,
+				IncludeReasoning: true,
 			},
 			RunOptions: []agentadaptor.RunOption{
 				exampleutil.NonInteractiveRunOption(role.Isolation),

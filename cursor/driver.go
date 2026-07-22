@@ -82,6 +82,27 @@ func cursorModels() []agentadaptor.ModelInfo {
 	}
 }
 
+// StreamCapability declares the Cursor adapter's streaming fidelity.
+//
+// Cursor Agent CLI (stream-json) exposes taskToolCall lifecycle events
+// (started/completed) natively in the headless output, enabling subagent
+// scope tracking. Token-level text deltas and internal subagent tool deltas
+// are not projected into the headless stream-json path (see §8.4.5 of
+// docs/workstream-unified-subagent-streaming.md for the investigation).
+func (adapter) StreamCapability() agentadaptor.StreamCapability {
+	return agentadaptor.StreamCapability{
+		Native:              true,  // stream-json is an event-based protocol
+		TokenLevel:          false, // headless path does not project token deltas
+		Reasoning:           false,
+		ToolCallArgs:        false,
+		HITL:                false,
+		Subagents:           true,
+		SubagentNesting:     false,
+		SubagentToolLinkage: true,
+		SubagentTextDelta:   false,
+	}
+}
+
 func (adapter) ValidateConfig(cfg any) error {
 	switch cfg.(type) {
 	case agentadaptor.CursorConfig, *agentadaptor.CursorConfig:
@@ -410,7 +431,7 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 		prompt = prefix + "\n\n" + prompt
 	}
 
-	parser := newCursorParser(sink)
+	parser := newCursorParserWithRunID(sink, req.RunID)
 	result, err := clihelper.Run(ctx, clihelper.CommandRequest{
 		Command: command,
 		Args:    args,
@@ -423,6 +444,7 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 		return agentadaptor.DriverRunResult{}, err
 	}
 	parser.finalize()
+	parser.finishRun(result.ExitCode)
 	raw := agentadaptor.RawStreams{Stdout: result.RawStreams.Stdout, Stderr: result.RawStreams.Stderr}
 	checkpoint := parser.checkpoint(result.ExitCode)
 	if checkpoint != nil && checkpoint.State != nil {
@@ -492,4 +514,3 @@ func readConfig(cfg any) agentadaptor.CursorConfig {
 	}
 	return agentadaptor.CursorConfig{}
 }
-

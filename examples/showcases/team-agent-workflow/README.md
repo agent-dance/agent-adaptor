@@ -101,8 +101,9 @@ example "Implement the task in TASK.md"); the one-shot workspace validation and
 sentinel checks are skipped.
 
 Reuse the CopilotKit frontend shipped with the [`web-copilotkit-hitl`](../web-copilotkit-hitl)
-showcase — it is a generic AG-UI client whose `AGENT_BACKEND_URL` already defaults to
-`http://localhost:8080/agent`:
+showcase. Its browser-side `HttpAgent` connects directly to
+`http://localhost:8080/agent` by default so Activity deltas are not buffered by
+an intermediate runtime proxy. Override it with `NEXT_PUBLIC_AGENT_BACKEND_URL`.
 
 ```bash
 cd examples/showcases/web-copilotkit-hitl/web
@@ -113,14 +114,30 @@ npm run dev   # http://localhost:3000
 What renders in the browser:
 
 - **Leader chat**: assistant text and reasoning stream live.
-- **Delegation timeline**: each `delegate_to_agent` call renders as a tool-call
-  card showing the target role and delegated prompt (args) and the returned
-  `DelegationResult` (result) — i.e. the plan -> impl -> review sequence.
-- **Subagent detail**: each delegated role's own `subagent.*` progress (including
-  its internal tool calls) is emitted on the AG-UI stream as `CUSTOM` events
-  (`name` prefixed `subagent.`). CopilotKit does not render `CUSTOM` events by
-  default; hosts that want an inline subagent panel register an AG-UI activity /
-  custom-event renderer for those names.
+- **Delegation timeline**: each `delegate_to_agent` call appears as a
+  `TOOL_CALL_START → TOOL_CALL_ARGS → TOOL_CALL_END → TOOL_CALL_RESULT` sequence
+  showing the target role (plan / impl / review) and the delegated prompt as
+  args, and the final `DelegationResult` as the tool result. These TOOL_CALL
+  cards are emitted unconditionally, regardless of subagent rendering mode.
+- **Subagent Activity cards**: each delegated role's execution — started, tool
+  calls, status updates, completion — streams as `ACTIVITY_SNAPSHOT` /
+  `ACTIVITY_DELTA` AG-UI events (`activityType="subagent"`, stable
+  `messageId=DelegationID`). Register a `renderActivityMessages` handler in the
+  CopilotKit provider with `activityType: "subagent"` to display an inline
+  `SubagentCard` per delegation (see
+  [workstream §11](../../../docs/workstream-unified-subagent-streaming.md) for
+  the full content schema and React registration example).
+
+  The stock `SubagentBus` bridge now emits these Activity events by default;
+  hosts that still need the old `CUSTOM subagent.*` wire must opt into
+  `agui.SubagentAsCustom`.
+
+**Live-only / refresh limitation:** this minimal backend does not persist a
+session recorder. On page refresh the Activity history is lost; only fresh live
+events appear. To recover activity snapshots across reconnects a host would
+integrate a `sessionrecorder` and replay the recorded Activity events to the
+reconnecting client (see
+[workstream §11.4](../../../docs/workstream-unified-subagent-streaming.md)).
 
 The frontend's side "Session" panel is the `web-copilotkit-hitl` host-recovery view;
 this minimal team backend serves empty stubs for its `/session/events` and
@@ -202,8 +219,9 @@ the printed temporary root manually.
 - Role task stores and the delegation event bus are process-local.
 - Provider output and tool selection remain probabilistic; host-side validation
   turns deviations into explicit failures.
-- The example has no UI. A CopilotKit host can pass the same event bus through
-  `sse.Options.SubagentBus` to render `subagent.*` progress.
+- In `--web-mode` there is no session recorder, so Activity history is not
+  recoverable on page refresh (live-only). See the live-only note in the
+  Web mode section above.
 
 See the [A2A delegation guide](../../../docs/a2a.md), the standalone
 [`a2a-local`](../a2a-local) bridge example, and the
