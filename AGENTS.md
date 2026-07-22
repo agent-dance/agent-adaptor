@@ -198,7 +198,7 @@ type DriverAdapter interface {
 - `codex.New(cfg, opts...)`
 - `claude.New(cfg, opts...)`
 - `cursor.New(cfg, opts...)`
-- `codebuddy.New(cfg, opts...)`（CodeBuddy Code：batch stream-json + SDK control stream-json 双传输）
+- `codebuddy.New(cfg, opts...)`
 
 它们返回的是配置完成的 `AgentBinding`，不是裸 adapter。
 
