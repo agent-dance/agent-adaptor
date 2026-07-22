@@ -230,6 +230,13 @@ func targetFor(driverType, profileDir string, ref *agentadaptor.InstructionsBund
 			Materialization: agentadaptor.ProfileResourceMaterializationNativeManaged,
 			Native:          true,
 		}
+	case "codebuddy":
+		return target{
+			Path:            filepath.Join(profileDir, "CODEBUDDY.md"),
+			Support:         agentadaptor.ProfileResourceSupportPortableCore,
+			Materialization: agentadaptor.ProfileResourceMaterializationNativeManaged,
+			Native:          true,
+		}
 	default:
 		return out
 	}
