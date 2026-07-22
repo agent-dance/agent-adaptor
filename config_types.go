@@ -82,6 +82,41 @@ type CursorConfig struct {
 	Mode  CursorMode
 }
 
+// CodeBuddyConfig configures the built-in codebuddy adapter. CommonConfig
+// controls process/profile/workspace defaults; Model / Effort map to CodeBuddy
+// session settings. PermissionMode is the CodeBuddy headless permission mode;
+// when empty the driver derives it from the run policy. MaxTurnsPerRun is a
+// guardrail for a single adapter invocation, not a session length.
+type CodeBuddyConfig struct {
+	CommonConfig
+	Model          string
+	Effort         ThinkingEffort
+	PermissionMode CodeBuddyPermissionMode
+	MaxTurnsPerRun int
+}
+
+// CodeBuddyPermissionMode is the CodeBuddy `--permission-mode` flag value.
+type CodeBuddyPermissionMode string
+
+const (
+	// CodeBuddyPermissionUnset lets the driver derive the mode from run policy.
+	CodeBuddyPermissionUnset CodeBuddyPermissionMode = ""
+	// CodeBuddyPermissionDefault prompts on first use of each tool.
+	CodeBuddyPermissionDefault CodeBuddyPermissionMode = "default"
+	// CodeBuddyPermissionAcceptEdits auto-accepts file edit permissions.
+	CodeBuddyPermissionAcceptEdits CodeBuddyPermissionMode = "acceptEdits"
+	// CodeBuddyPermissionPlan restricts the agent to analysis / planning.
+	CodeBuddyPermissionPlan CodeBuddyPermissionMode = "plan"
+	// CodeBuddyPermissionAuto lets an AI classifier auto-approve safe actions.
+	CodeBuddyPermissionAuto CodeBuddyPermissionMode = "auto"
+	// CodeBuddyPermissionDontAsk runs pre-approved actions and denies the rest.
+	CodeBuddyPermissionDontAsk CodeBuddyPermissionMode = "dontAsk"
+	// CodeBuddyPermissionBypass skips all permission prompts.
+	CodeBuddyPermissionBypass CodeBuddyPermissionMode = "bypassPermissions"
+	// CodeBuddyPermissionFullAccess skips ALL permission checks.
+	CodeBuddyPermissionFullAccess CodeBuddyPermissionMode = "fullAccess"
+)
+
 // ReasoningEffort is the Codex reasoning effort flag value.
 type ReasoningEffort string
 

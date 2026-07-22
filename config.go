@@ -10,6 +10,8 @@ func extractCommonConfig(cfg any) CommonConfig {
 		return value.CommonConfig
 	case CursorConfig:
 		return value.CommonConfig
+	case CodeBuddyConfig:
+		return value.CommonConfig
 	case *CodexConfig:
 		if value != nil {
 			return value.CommonConfig
@@ -19,6 +21,10 @@ func extractCommonConfig(cfg any) CommonConfig {
 			return value.CommonConfig
 		}
 	case *CursorConfig:
+		if value != nil {
+			return value.CommonConfig
+		}
+	case *CodeBuddyConfig:
 		if value != nil {
 			return value.CommonConfig
 		}

@@ -2,3 +2,5 @@
 .gocache-test/
 .omx/
 *.tsbuildinfo
+.venv/
+.worktrees/
