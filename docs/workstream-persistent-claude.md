@@ -146,7 +146,50 @@ go test -tags claude_live -run 'TestClaudePersistent' -v ./claude/
 
 基准与探针工具:`scripts/claudebench`(`-phase3` 子探针用于验证「不关 stdin 仍每轮出 result」)。
 
-## 6. 非目标 / 未来工作
+## 6. 决策记录:为什么是 opt-in 开关,而不是默认行为
+
+这一节记录「`PersistentProcess` 为何设计成 opt-in 开关而非默认打开」的完整推演,便于后来者理解取舍,并作为未来「是否默认化」的评审基线。
+
+### 6.1 问题
+
+既然常驻对多轮场景普遍有收益、且失败会透明回退,为什么不直接默认打开、让所有 Claude 绑定开箱即得?
+
+### 6.2 反对「默认打开」的四条理由
+
+1. **adapter 从无状态变有状态**:历史上 Claude adapter 一个 Run 一个进程、随 Run 结束而死;常驻让 adapter 持有 `persistentPool`、进程活过单次 Run ctx。默认打开等于让所有宿主在不知情下多出一批常驻子进程,违背 `AGENTS.md §2.4`(可靠性优先、不静默改变语义)。
+2. **资源足迹静默增长**:每个活跃 session 占一个 Node 进程,并在末轮后保留 `persistentIdleTimeout`(5min)才回收。对「每请求一个短 session」的宿主,默认打开会静默堆积 idle 进程。
+3. **`env` parity 缺口(最硬的一条,属正确性问题)**:复用签名 `sig()` 目前包含 command/model/effort/skipPerms/streaming/interactive/cwd/extraArgs,**不含 `env`**。同一 session 后续轮若改了 env 绑定,复用进程仍用 spawn 时的旧 env,而 spawn 路径每轮重启不会有此问题。
+4. **平台/成熟度**:Windows 当前回退;常驻路径刚过实机验证,宜先在显式 opt-in 宿主里跑一段真实流量。
+
+其中「怕破坏兼容」不算强理由——任何常驻侧失败都透明回退到 spawn,正确性在失败路径被保住;「用户体验」反而是支持默认化的正向论据。
+
+### 6.3 追问:如果给宿主一个「可主动 close 的句柄」,上述理由是否全部不成立?
+
+结论:**不是全都成立不了,最硬的一条不受影响。**
+
+- **理由 1(有状态/生命周期归属)——被化解,甚至加分**:显式 close 把生命周期所有权交还宿主,statefulness 从隐式变显式可控。这是支持默认化的正向论据。
+- **理由 3(`env` parity)——完全不受影响**:这是正确性问题,与生命周期正交。只要进程还活着被复用,后续轮改 env 仍吃旧 env;close 救不了它。**这才是默认化前必须先解决的硬阻挡。**
+- **理由 2(资源静默增长)——只被部分且不对症地缓解**:默认化的目标人群恰是「不知道该特性存在」的宿主,他们不会去调 close;真正给他们兜底的是 idle 超时,而非 close。close 只帮到「已知情、愿主动管理」的宿主,而那批人 opt-in 也能拿到。
+- **作用域陷阱**:`RunHandle` 是 per-Run(每轮一个),而常驻进程是 per-session。close 若挂在 `RunHandle` 上要么语义错配、要么「每轮就关」等于没常驻;要做对必须挂在 **session 维度**(如 SDK 级 `Release(sessionRef)` 或 session 句柄),而当前公共 API 无此层,新增它本身是一次扩面,且离 `AGENTS.md §8`(不把进程/daemon 管理塞进 core)较近,需单独拍板。
+
+### 6.4 决定
+
+- **当前**:保持 opt-in 的 `ClaudeConfig.PersistentProcess`(零值 = 历史逐轮 spawn)。这是本 workstream 已落地的实现。
+- **`env` parity 缺口**:作为已知限制记录(见 §6.5),opt-in 语义下仅影响「同时 opt-in 且逐轮改 env」的宿主;是默认化的前置必修项。
+- **close 句柄**:是独立值得做的能力(把生命周期还给宿主),但不是默认化的充分条件,与 parity 正交;若做须挂在 session 维度。
+
+### 6.5 通往默认化的分步路线(未来工作,非本次范围)
+
+1. 补 `env`(及任何逐轮可变、影响进程状态的字段)进 `sig()`,或证明其不可逐轮变 —— 关闭正确性缺口。
+2. 池的可观测性(活跃进程数、命中率)+ 可配置 idle 超时。
+3. (可选)session 维度的显式 `Release`,把生命周期还给宿主。
+4. 跑过真实流量后,再评估把默认翻为「有 `SessionStore` 时自动常驻」——与「无 `SessionStore` = 无状态」的现有心智天然契合,并保留逃生阀(如 `DisablePersistentProcess`)。
+
+### 6.6 已知限制(opt-in 语义下)
+
+- `sig()` 不含 `env`:同一 session 逐轮变更 env 绑定时,复用进程保留 spawn 时的 env。需要逐轮 env 隔离的宿主暂勿开启 `PersistentProcess`,或每轮用不同 session。
+
+## 7. 非目标 / 未来工作
 
 - 不做常驻 daemon / server / 跨进程共享池(违反 §8)。
 - 不做原生结构化输出的常驻(其 CLI 形态不同,继续走 spawn)。
