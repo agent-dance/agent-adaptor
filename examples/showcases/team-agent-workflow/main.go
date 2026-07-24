@@ -3,6 +3,9 @@
 //
 //	plan (Codex) -> impl (Claude Code) -> review (Codex)
 //
+// The leader runs on a persistent Claude Code process (ClaudeConfig.
+// PersistentProcess), reusing one long-lived CLI across its turns.
+//
 // The example always works in a temporary repository and cloned profiles.
 package main
 
@@ -22,6 +25,7 @@ import (
 	"time"
 
 	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/claude"
 	"github.com/agent-dance/agent-adaptor/examples/internal/exampleutil"
 	"github.com/agent-dance/agent-adaptor/memory"
 	"github.com/agent-dance/agent-adaptor/pkg/bridges/sse"
@@ -139,7 +143,23 @@ func run(opts options) error {
 			Content: leaderPrompt(opts.roleTimeout),
 		}))
 	}
-	leaderBinding := exampleutil.NewLiveAgentBinding(leaderCfg, leaderOpts...)
+	// The leader is always Claude Code. Build its binding directly (rather than
+	// via the generic exampleutil helper) so we can opt into
+	// PersistentProcess: one long-lived `claude` subprocess is reused across the
+	// leader's turns instead of paying cold start + --resume rehydration each
+	// time. This pays off most in --web-mode, where the CopilotKit frontend
+	// drives many turns on one AG-UI thread (session-scoped reuse); in one-shot
+	// CLI mode it is harmless (single turn, reaped on exit).
+	leaderBinding := claude.New(agentadaptor.ClaudeConfig{
+		CommonConfig: agentadaptor.CommonConfig{
+			Command:   leaderCfg.Command,
+			CWD:       leaderCfg.CWD,
+			Env:       leaderCfg.Env,
+			ExtraArgs: leaderCfg.ExtraArgs,
+		},
+		Model:             leaderCfg.Model,
+		PersistentProcess: true,
+	}, leaderOpts...)
 	leaderSDK := newLeaderSDK(leaderBinding, runtimeManager, opts.webMode)
 
 	if opts.webMode {
