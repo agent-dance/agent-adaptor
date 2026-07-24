@@ -33,7 +33,13 @@ func jsonMarshalInteractive(v any) ([]byte, error) {
 // DriverType is the stable descriptor type for the built-in Claude adapter.
 const DriverType = "claude"
 
-type adapter struct{}
+type adapter struct {
+	// persistent holds live claude subprocesses when a binding opts into
+	// ClaudeConfig.PersistentProcess. The pointer is shared across the
+	// value-copied adapter so all Runs on this binding reuse the same pool;
+	// it stays idle (no processes) until a qualifying Run is served.
+	persistent *persistentPool
+}
 
 // New returns a configured Claude AgentBinding. Hosts should pass the result
 // to agentadaptor.WithDefaultAgent or agentadaptor.WithAgent; direct adapter
@@ -45,7 +51,7 @@ func New(cfg agentadaptor.ClaudeConfig, opts ...agentadaptor.AgentOption) agenta
 // NewAdapter returns the low-level Claude DriverAdapter. Most hosts should use
 // New so config and binding defaults travel together.
 func NewAdapter() agentadaptor.DriverAdapter {
-	return adapter{}
+	return adapter{persistent: newPersistentPool()}
 }
 
 // StreamCapability declares Claude Code stream-json capabilities when
@@ -340,7 +346,7 @@ func (adapter) SyncProfileResources(ctx context.Context, cfg any, _ agentadaptor
 	return snapshot, nil
 }
 
-func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink agentadaptor.EventSink) (agentadaptor.DriverRunResult, error) {
+func (a adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink agentadaptor.EventSink) (agentadaptor.DriverRunResult, error) {
 	cfg := readConfig(req.Config)
 	// per-run WithModel overrides the binding model for this invocation only.
 	if m := strings.TrimSpace(req.ModelOverride); m != "" {
@@ -433,6 +439,40 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 	}
 	if prefix := profileinstructions.PromptPrefix(preparedInstructions, profileinstructions.Mode(req.Instructions)); prefix != "" {
 		rawPrompt = prefix + "\n\n" + rawPrompt
+	}
+
+	// Opt-in persistent path: reuse one long-lived `claude --input-format
+	// stream-json` process per session instead of spawning per Run. Batch and
+	// streaming turns both qualify (streaming spawns add
+	// --include-partial-messages); interactive HITL and native structured
+	// output stay on the spawn path. Any live-process failure falls back to the
+	// spawn path below transparently.
+	if a.persistent != nil && cfg.PersistentProcess && persistentEligible(cfg, req, interactive) {
+		pparser := newClaudeParser(sink)
+		pparser.setHITLContext(req.RunID, req.Policy.HumanDecision)
+		if req.Streaming {
+			pparser.enableStreaming(req.RunID)
+		}
+		spec := persistentSpec{
+			command:   command,
+			model:     modelFlag,
+			effort:    string(cfg.Effort),
+			extraArgs: cfg.ExtraArgs,
+			cwd:       effectiveCWD,
+			env:       effectiveEnv,
+			skipPerms: req.Policy.HumanDecision.Permission == agentadaptor.HumanDecisionAutoApprove,
+			streaming: req.Streaming,
+			resumeID:  claudeResumeID(req),
+			prompt:    rawPrompt,
+		}
+		praw, perr := a.persistent.run(ctx, spec, sink, pparser)
+		if perr == nil {
+			return a.buildPersistentResult(req, pparser, praw, reportedModel, effectiveCWD, profileFingerprint), nil
+		}
+		if !errors.Is(perr, errPersistentFallback) {
+			return agentadaptor.DriverRunResult{}, perr
+		}
+		// fall through to the normal spawn path
 	}
 
 	parser := newClaudeParser(sink)
@@ -528,6 +568,72 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 		RuntimeServices:  adapterutil.RuntimeReportsFromRefs(req.Runtime.Ensured, req.Agent),
 		Failure:          failure,
 	}, nil
+}
+
+// persistentEligible reports whether a run qualifies for the long-lived
+// process path. It intentionally excludes every mode whose CLI flags or
+// lifecycle differ from a plain batch turn; those fall back to the spawn path.
+func persistentEligible(cfg agentadaptor.ClaudeConfig, req agentadaptor.DriverRunRequest, interactive bool) bool {
+	if interactive {
+		// Phase 3 HITL uses distinct spawn flags (stdio permission prompting)
+		// and its own long-lived stdin protocol; cross-run persistence there
+		// needs a dedicated design, so it stays on the spawn path.
+		return false
+	}
+	if cfg.MaxTurnsPerRun > 0 {
+		// --max-turns guards a single run; its meaning on a process that
+		// serves many turns is undefined, so stay on the spawn path.
+		return false
+	}
+	if req.OutputSchema != nil && req.OutputSchema.Mode != agentadaptor.StructuredOutputPromptValidate {
+		// Native --json-schema output uses a different --output-format.
+		return false
+	}
+	return true
+}
+
+func claudeResumeID(req agentadaptor.DriverRunRequest) string {
+	if req.Session != nil && req.Session.State != nil {
+		return req.Session.State.ResumeID
+	}
+	return ""
+}
+
+// buildPersistentResult assembles the DriverRunResult from a single persistent
+// turn, mirroring the spawn path's output/checkpoint/failure layering. The
+// process stays alive, so ExitCode is 0 and error attribution comes from the
+// parser's result-frame fields.
+func (adapter) buildPersistentResult(req agentadaptor.DriverRunRequest, parser *claudeParser, raw agentadaptor.RawStreams, reportedModel, effectiveCWD, profileFingerprint string) agentadaptor.DriverRunResult {
+	rawCopy := raw
+	checkpoint := parser.checkpoint(0)
+	if checkpoint != nil && checkpoint.State != nil {
+		checkpoint.State.Data = map[string]string{
+			agentadaptor.SessionParamCWD:                effectiveCWD,
+			agentadaptor.SessionParamWorkspaceID:        req.Workspace.ID,
+			agentadaptor.SessionParamProfileFingerprint: profileFingerprint,
+		}
+	}
+	var failure *agentadaptor.RunFailure
+	if parser.pendingFailure != nil {
+		failure = parser.pendingFailure
+	} else if strings.TrimSpace(parser.errorMessage) != "" {
+		failure = &agentadaptor.RunFailure{Code: agentadaptor.FailureAgentError, Message: parser.errorMessage}
+	}
+	return agentadaptor.DriverRunResult{
+		Output:          parser.buildOutput(),
+		RawStreams:      &rawCopy,
+		Transcript:      parser.transcript,
+		ExitCode:        0,
+		Usage:           parser.usage,
+		Checkpoint:      checkpoint,
+		Metadata:        parser.outputMetadata(),
+		Provider:        "anthropic",
+		Model:           reportedModel,
+		Summary:         parser.finalSummary(),
+		Result:          parser.resultFinal,
+		RuntimeServices: adapterutil.RuntimeReportsFromRefs(req.Runtime.Ensured, req.Agent),
+		Failure:         failure,
+	}
 }
 
 func validateClaudeSessionGuard(req agentadaptor.DriverRunRequest, effectiveCWD, profileFingerprint, legacyBundleKey string) error {

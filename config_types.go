@@ -74,6 +74,16 @@ type ClaudeConfig struct {
 	Model          string
 	Effort         ThinkingEffort
 	MaxTurnsPerRun int
+	// PersistentProcess opts a Claude binding into keeping one long-lived
+	// `claude --input-format stream-json` subprocess alive per session and
+	// feeding subsequent turns to it over stdin, instead of spawning a fresh
+	// CLI (and paying its cold start + --resume rehydration) on every Run.
+	//
+	// Zero value keeps the historical one-process-per-Run behavior. The
+	// persistent path is only taken for plain non-interactive, non-streaming,
+	// non-native-structured-output turns; any run that does not qualify (or
+	// any live-process failure) transparently falls back to the spawn path.
+	PersistentProcess bool
 }
 
 // CursorConfig configures the built-in cursor adapter.
