@@ -4,3 +4,6 @@
 *.tsbuildinfo
 .venv/
 .worktrees/
+
+# compiled benchmark artifact (build with `go build ./scripts/claudebench`)
+/claudebench

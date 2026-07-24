@@ -27,53 +27,78 @@ var errPersistentFallback = errors.New("claude: persistent process unavailable; 
 // this long, so a long-idle session does not hold a claude subprocess forever.
 const persistentIdleTimeout = 5 * time.Minute
 
+// interactiveBinder wires a parser to a live process's stdin for a Phase 3 turn.
+// It is nil for non-interactive turns.
+type interactiveBinder func(stdin InteractiveStdin)
+
+// nonClosingStdin adapts a live process's long-lived stdin pipe to the parser's
+// InteractiveStdin contract WITHOUT letting the parser close it. Phase 3's parser
+// calls Close() at a normal turn end (to make a one-shot CLI flush type:result
+// and exit); in the persistent model the per-turn result frame is the boundary
+// and the pipe must stay open for the next turn, so Close is a no-op. The pool
+// owns the real pipe lifecycle (evict/kill).
+type nonClosingStdin struct{ w io.Writer }
+
+func (s nonClosingStdin) Write(frame []byte) error { _, err := s.w.Write(frame); return err }
+func (s nonClosingStdin) Close() error             { return nil }
+
 // persistentSpec is everything the pool needs to spawn or reuse a live process
 // and run exactly one turn on it. It is derived from a DriverRunRequest by
 // adapter.Run; the pool never reaches back into SDK request types.
 type persistentSpec struct {
-	command   string
-	model     string
-	effort    string
-	extraArgs []string
-	cwd       string
-	env       []agentadaptor.EnvBinding
-	skipPerms bool
-	streaming bool   // spawn with --include-partial-messages for token deltas
-	resumeID  string // non-empty on resume runs; also the pool key
-	prompt    string
+	command     string
+	model       string
+	effort      string
+	extraArgs   []string
+	cwd         string
+	env         []agentadaptor.EnvBinding
+	skipPerms   bool
+	streaming   bool   // spawn with --include-partial-messages for token deltas
+	interactive bool   // Phase 3 HITL: stdio permission/replay flags
+	resumeID    string // non-empty on resume runs; also the pool key
+	prompt      string
 }
 
 // sig is the reuse signature: a live process may only serve a new turn when its
 // spawn signature matches, otherwise config drifted (model/effort/cwd/
-// streaming/...) and the process is evicted and respawned with --resume.
-// streaming is part of the signature because it changes the spawn flags
-// (--include-partial-messages), so a streaming and a non-streaming turn on the
-// same session use distinct live processes rather than one contaminating the
-// other's output shape.
+// streaming/interactive/...) and the process is evicted and respawned with
+// --resume. streaming and interactive are part of the signature because they
+// change the spawn flags, so batch / streaming / interactive turns on the same
+// session use distinct live processes rather than one contaminating another's
+// output shape.
 func (s persistentSpec) sig() string {
 	return strings.Join([]string{
 		s.command, s.model, s.effort,
-		strconv.FormatBool(s.skipPerms), strconv.FormatBool(s.streaming), s.cwd,
+		strconv.FormatBool(s.skipPerms), strconv.FormatBool(s.streaming), strconv.FormatBool(s.interactive), s.cwd,
 		strings.Join(s.extraArgs, "\x00"),
 	}, "|")
 }
 
 // spawnArgs mirrors the stream-json input flags proven by scripts/claudebench:
 // --input-format stream-json keeps the process alive to accept one NDJSON user
-// frame per turn. Streaming turns add --include-partial-messages so the parser
-// receives token deltas; non-streaming turns spawn without it so their output
-// shape is byte-identical to the historical batch path. It omits the HITL
-// permission/replay flags because the persistent path only serves
-// non-interactive turns.
+// frame per turn.
+//
+//   - Streaming (and interactive) turns add --include-partial-messages so the
+//     parser receives token deltas and can reconstruct tool_use inputs.
+//   - Interactive turns additionally add --replay-user-messages and
+//     --permission-prompt-tool stdio so plan/question/permission decisions flow
+//     as control_request/control_response over the same live stdin. They omit
+//     --dangerously-skip-permissions even when skipPerms is set, because the
+//     parser auto-approves permission control_requests per policy instead.
+//   - Plain non-streaming batch turns spawn with neither, so their output shape
+//     is byte-identical to the historical batch path.
 func (s persistentSpec) spawnArgs() []string {
 	args := []string{"--print", "--output-format", "stream-json", "--verbose", "--input-format", "stream-json"}
-	if s.streaming {
+	if s.streaming || s.interactive {
 		args = append(args, "--include-partial-messages")
+	}
+	if s.interactive {
+		args = append(args, "--replay-user-messages", "--permission-prompt-tool", "stdio")
 	}
 	if s.resumeID != "" {
 		args = append(args, "--resume", s.resumeID)
 	}
-	if s.skipPerms {
+	if s.skipPerms && !s.interactive {
 		args = append(args, "--dangerously-skip-permissions")
 	}
 	if s.model != "" {
@@ -103,7 +128,7 @@ func newPersistentPool() *persistentPool {
 // a live process, feeds the prompt, reads one turn's worth of NDJSON into the
 // parser, then arms the idle timer. On any live-process failure it evicts and
 // returns errPersistentFallback so the caller uses the spawn path.
-func (pool *persistentPool) run(ctx context.Context, spec persistentSpec, sink agentadaptor.EventSink, parser *claudeParser) (agentadaptor.RawStreams, error) {
+func (pool *persistentPool) run(ctx context.Context, spec persistentSpec, sink agentadaptor.EventSink, parser *claudeParser, bind interactiveBinder) (agentadaptor.RawStreams, error) {
 	lp, _, err := pool.acquire(ctx, spec, sink)
 	if err != nil {
 		return agentadaptor.RawStreams{}, errPersistentFallback
@@ -113,7 +138,7 @@ func (pool *persistentPool) run(ctx context.Context, spec persistentSpec, sink a
 	defer lp.turnMu.Unlock()
 	lp.stopIdle()
 
-	raw, err := lp.turn(ctx, spec.prompt, parser)
+	raw, err := lp.turn(ctx, spec.prompt, parser, bind)
 	if err != nil {
 		pool.evict(lp)
 		// A reused process that died between turns is expected occasionally;
@@ -257,9 +282,15 @@ type liveProcess struct {
 }
 
 // turn writes one user frame and reads NDJSON until the turn's result frame,
-// feeding the caller-supplied parser. A returned error means the process is
-// unusable and the caller should fall back.
-func (lp *liveProcess) turn(ctx context.Context, prompt string, parser *claudeParser) (agentadaptor.RawStreams, error) {
+// feeding the caller-supplied parser. For interactive turns, bind is non-nil and
+// wires the parser to this process's stdin (via a non-closing wrapper) before
+// the user frame is sent, so mid-turn control_request frames can be answered
+// with control_response on the same live stdin. A returned error means the
+// process is unusable and the caller should fall back.
+func (lp *liveProcess) turn(ctx context.Context, prompt string, parser *claudeParser, bind interactiveBinder) (agentadaptor.RawStreams, error) {
+	if bind != nil {
+		bind(nonClosingStdin{w: lp.stdin})
+	}
 	frame, err := encodeInteractiveUserFrame(prompt)
 	if err != nil {
 		return agentadaptor.RawStreams{}, err

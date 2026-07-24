@@ -47,8 +47,9 @@ func main() {
 		model   = flag.String("model", "", "optional --model value")
 		cwd     = flag.String("cwd", "", "working dir for the CLI (default: a fresh temp dir)")
 		prompt  = flag.String("prompt", "Reply with only the number %d and nothing else.", "per-turn prompt template; %d is the turn index")
-		verbose = flag.Bool("v", false, "print raw NDJSON lines as they arrive")
-		phase3  = flag.Bool("phase3", false, "probe: spawn with Phase 3 interactive flags and check whether type:result arrives per turn WITHOUT closing stdin")
+		verbose  = flag.Bool("v", false, "print raw NDJSON lines as they arrive")
+		phase3   = flag.Bool("phase3", false, "probe: spawn with Phase 3 interactive flags and check whether type:result arrives per turn WITHOUT closing stdin")
+		planMode = flag.Bool("planmode", false, "phase3: add --permission-mode plan to reliably trigger ExitPlanMode control_request")
 	)
 	flag.Parse()
 
@@ -67,7 +68,7 @@ func main() {
 		prompts[i] = fmt.Sprintf(*prompt, i+1)
 	}
 
-	env := &benchEnv{command: *command, model: *model, cwd: workdir, verbose: *verbose}
+	env := &benchEnv{command: *command, model: *model, cwd: workdir, verbose: *verbose, planMode: *planMode}
 
 	if *phase3 {
 		env.probePhase3(prompts)
@@ -91,10 +92,11 @@ func main() {
 }
 
 type benchEnv struct {
-	command string
-	model   string
-	cwd     string
-	verbose bool
+	command  string
+	model    string
+	cwd      string
+	verbose  bool
+	planMode bool
 }
 
 // turnStat captures the wall-time breakdown of a single conversational turn.
@@ -315,22 +317,34 @@ func compare(restart, persistent []turnStat) {
 	}
 }
 
-// probePhase3 answers the make-or-break question for persistent HITL: with the
-// full Phase 3 interactive flag set, does the CLI emit a per-turn type:result
-// WITHOUT closing stdin, and does it stay alive to accept the next user frame?
-// It spawns once, sends each prompt as an NDJSON user frame, and reads until a
-// result frame with a per-turn timeout — never closing stdin between turns.
-func (e *benchEnv) probePhase3(prompts []string) {
+// p3scenario is one persistent-HITL turn: a prompt plus how the probe (acting
+// as the host) answers any can_use_tool control_request the CLI raises.
+type p3scenario struct {
+	name    string
+	prompt  string
+	decide  string // "allow" | "deny" | "deny-interrupt" | "" (no request expected)
+	wantAsk bool   // whether we expect a control_request this turn
+}
+
+// probePhase3 empirically settles every persistent-HITL question against a live
+// claude process with the full Phase 3 flag set, NEVER closing stdin between
+// turns. For each turn it feeds a user frame, answers control_request frames per
+// the scenario's decision, and reports whether type:result arrives (turn
+// boundary) and whether the process survives for the next turn.
+func (e *benchEnv) probePhase3(_ []string) {
 	args := []string{
 		"--print", "--output-format", "stream-json", "--verbose",
 		"--input-format", "stream-json",
 		"--include-partial-messages", "--replay-user-messages",
 		"--permission-prompt-tool", "stdio",
 	}
+	if e.planMode {
+		args = append(args, "--permission-mode", "plan")
+	}
 	if e.model != "" {
 		args = append(args, "--model", e.model)
 	}
-	fmt.Printf("phase3 probe: %s %s\n\n", e.command, strings.Join(args, " "))
+	fmt.Printf("phase3 probe: %s %s\ncwd=%s\n\n", e.command, strings.Join(args, " "), e.cwd)
 
 	cmd := exec.Command(e.command, args...)
 	cmd.Dir = e.cwd
@@ -341,74 +355,130 @@ func (e *benchEnv) probePhase3(prompts []string) {
 	if err := cmd.Start(); err != nil {
 		fatal("phase3: start: %v", err)
 	}
+	// Single long-lived reader goroutine per process (mirrors persistent.go,
+	// which keeps exactly one reader). Turns consume from this shared channel.
 	reader := bufio.NewReaderSize(stdout, 1<<20)
-
-	for i, p := range prompts {
-		frame, err := encodeUserFrame(p)
-		if err != nil {
-			fatal("phase3 turn %d: encode: %v", i+1, err)
+	lines := make(chan map[string]any, 64)
+	go func() {
+		defer close(lines)
+		for {
+			s, err := reader.ReadString('\n')
+			if t := strings.TrimSpace(s); t != "" {
+				var m map[string]any
+				if json.Unmarshal([]byte(t), &m) == nil {
+					if e.verbose {
+						fmt.Printf("  %s\n", t)
+					}
+					lines <- m
+				}
+			}
+			if err != nil {
+				return
+			}
 		}
+	}()
+
+	plan := func(topic string) string {
+		return "Enter plan mode, design a two-step plan for " + topic + " (do not actually edit). " +
+			"Call ExitPlanMode with the plan. Do not use any other tools."
+	}
+	scenarios := []p3scenario{
+		{name: "plan-allow", prompt: plan("refactoring main.go"), decide: "allow", wantAsk: true},
+		{name: "plan-deny-interrupt", prompt: plan("splitting handler.go"), decide: "deny-interrupt", wantAsk: true},
+		{name: "survive-after-interrupt", prompt: "Reply with only: ALIVE", decide: "", wantAsk: false},
+		{name: "plan-deny-soft", prompt: plan("renaming a variable in util.go"), decide: "deny", wantAsk: true},
+	}
+
+	for i, sc := range scenarios {
+		frame, _ := encodeUserFrame(sc.prompt)
 		start := time.Now()
 		if _, err := io.WriteString(stdin, frame); err != nil {
-			fmt.Printf("turn %d: WRITE FAILED (process dead?): %v\n", i+1, err)
+			fmt.Printf("[%s] WRITE FAILED (process dead): %v => process did NOT survive\n", sc.name, err)
 			break
 		}
-
-		// Read until a result frame OR a per-turn timeout. Never close stdin.
-		type res struct {
-			gotResult bool
-			lastType  string
-			stop      string
+		r := e.readPhase3Turn(i+1, sc, lines, stdin, start)
+		status := "no-result"
+		if r.gotResult {
+			status = "GOT result"
 		}
-		ch := make(chan res, 1)
-		go func() {
-			r := res{}
-			for {
-				line, err := reader.ReadString('\n')
-				if t := strings.TrimSpace(line); t != "" {
-					if e.verbose {
-						fmt.Printf("  [t%d] %s\n", i+1, t)
-					}
-					var frame map[string]any
-					if json.Unmarshal([]byte(t), &frame) == nil {
-						ft, _ := frame["type"].(string)
-						if ft != "" {
-							r.lastType = ft
-						}
-						if sr := extractStopReason(frame); sr != "" {
-							r.stop = sr
-						}
-						if ft == "result" {
-							r.gotResult = true
-							ch <- r
-							return
-						}
-					}
-				}
-				if err != nil {
-					ch <- r
-					return
-				}
-			}
-		}()
-
-		select {
-		case r := <-ch:
-			if r.gotResult {
-				fmt.Printf("turn %d: GOT type:result WITHOUT stdin close in %s (last stop_reason=%q) => per-turn result works\n", i+1, ms(time.Since(start)), r.stop)
-			} else {
-				fmt.Printf("turn %d: stream ended without result (lastType=%q) — process likely exited\n", i+1, r.lastType)
-			}
-		case <-time.After(20 * time.Second):
-			fmt.Printf("turn %d: NO result after 20s without stdin close (last stop_reason seen via -v) => result requires stdin close (need message_stop boundary)\n", i+1)
-			_ = stdin.Close()
-			_ = cmd.Wait()
-			return
+		fmt.Printf("[%s] %s in %s | control_request=%v | stop_reason=%q | resultSubtype=%q\n",
+			sc.name, status, ms(time.Since(start)), r.sawAsk, r.stop, r.resultSubtype)
+		if !r.gotResult {
+			fmt.Printf("   => turn did not reach result without stdin close; stopping.\n")
+			break
 		}
 	}
 	_ = stdin.Close()
 	_ = cmd.Wait()
-	fmt.Println("\nphase3 probe done: process accepted all frames on one live stdin.")
+	fmt.Println("\nphase3 probe done.")
+}
+
+type p3result struct {
+	gotResult     bool
+	sawAsk        bool
+	stop          string
+	resultSubtype string
+}
+
+func (e *benchEnv) readPhase3Turn(turn int, sc p3scenario, lines <-chan map[string]any, stdin io.Writer, _ time.Time) p3result {
+	r := p3result{}
+	timeout := time.After(60 * time.Second)
+	for {
+		select {
+		case <-timeout:
+			fmt.Printf("   [t%d] TIMEOUT 60s without result (no stdin close)\n", turn)
+			return r
+		case m, ok := <-lines:
+			if !ok {
+				return r
+			}
+			ft, _ := m["type"].(string)
+			if sr := extractStopReason(m); sr != "" {
+				r.stop = sr
+			}
+			if ft == "control_request" {
+				r.sawAsk = true
+				respondControl(stdin, m, sc.decide)
+				continue
+			}
+			if ft == "result" {
+				r.gotResult = true
+				r.resultSubtype, _ = m["subtype"].(string)
+				return r
+			}
+		}
+	}
+}
+
+// respondControl writes a control_response mirroring the parser's shape
+// (buildInteractiveControlResponse / writeInteractiveControlResponse).
+func respondControl(stdin io.Writer, req map[string]any, decide string) {
+	requestID, _ := req["request_id"].(string)
+	inner, _ := req["request"].(map[string]any)
+	toolUseID, _ := inner["tool_use_id"].(string)
+	input, _ := inner["input"].(map[string]any)
+
+	var resp map[string]any
+	switch decide {
+	case "allow":
+		resp = map[string]any{"behavior": "allow", "updatedInput": input, "toolUseID": toolUseID}
+	case "deny":
+		resp = map[string]any{"behavior": "deny", "message": "Permission denied by probe."}
+	case "deny-interrupt":
+		resp = map[string]any{"behavior": "deny", "message": "Permission denied by probe.", "interrupt": true}
+	default:
+		resp = map[string]any{"behavior": "deny", "message": "unexpected request"}
+	}
+	frame := map[string]any{
+		"type": "control_response",
+		"response": map[string]any{
+			"subtype":    "success",
+			"request_id": requestID,
+			"response":   resp,
+		},
+	}
+	raw, _ := json.Marshal(frame)
+	_, _ = stdin.Write(append(raw, '\n'))
 }
 
 func extractStopReason(frame map[string]any) string {

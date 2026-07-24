@@ -442,30 +442,40 @@ func (a adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sin
 	}
 
 	// Opt-in persistent path: reuse one long-lived `claude --input-format
-	// stream-json` process per session instead of spawning per Run. Batch and
-	// streaming turns both qualify (streaming spawns add
-	// --include-partial-messages); interactive HITL and native structured
-	// output stay on the spawn path. Any live-process failure falls back to the
-	// spawn path below transparently.
-	if a.persistent != nil && cfg.PersistentProcess && persistentEligible(cfg, req, interactive) {
+	// stream-json` process per session instead of spawning per Run. Batch,
+	// streaming, and interactive HITL turns all qualify (each spawns a distinct
+	// process shape keyed by sig); native structured output and MaxTurns stay on
+	// the spawn path. Any live-process failure falls back transparently.
+	if a.persistent != nil && cfg.PersistentProcess && persistentEligible(cfg, req) {
 		pparser := newClaudeParser(sink)
 		pparser.setHITLContext(req.RunID, req.Policy.HumanDecision)
-		if req.Streaming {
+		if req.Streaming || interactive {
+			// Interactive mode needs the streaming state to reconstruct
+			// tool_use inputs from partial_json deltas, same as the spawn path.
 			pparser.enableStreaming(req.RunID)
 		}
-		spec := persistentSpec{
-			command:   command,
-			model:     modelFlag,
-			effort:    string(cfg.Effort),
-			extraArgs: cfg.ExtraArgs,
-			cwd:       effectiveCWD,
-			env:       effectiveEnv,
-			skipPerms: req.Policy.HumanDecision.Permission == agentadaptor.HumanDecisionAutoApprove,
-			streaming: req.Streaming,
-			resumeID:  claudeResumeID(req),
-			prompt:    rawPrompt,
+		var bind interactiveBinder
+		if interactive {
+			ic, ok := sink.(agentadaptor.DecisionCapableSink)
+			if !ok {
+				return agentadaptor.DriverRunResult{}, errClaudeInteractiveSinkRequired
+			}
+			bind = func(stdin InteractiveStdin) { pparser.enableInteractive(ctx, ic, stdin) }
 		}
-		praw, perr := a.persistent.run(ctx, spec, sink, pparser)
+		spec := persistentSpec{
+			command:     command,
+			model:       modelFlag,
+			effort:      string(cfg.Effort),
+			extraArgs:   cfg.ExtraArgs,
+			cwd:         effectiveCWD,
+			env:         effectiveEnv,
+			skipPerms:   req.Policy.HumanDecision.Permission == agentadaptor.HumanDecisionAutoApprove,
+			streaming:   req.Streaming && !interactive,
+			interactive: interactive,
+			resumeID:    claudeResumeID(req),
+			prompt:      rawPrompt,
+		}
+		praw, perr := a.persistent.run(ctx, spec, sink, pparser, bind)
 		if perr == nil {
 			return a.buildPersistentResult(req, pparser, praw, reportedModel, effectiveCWD, profileFingerprint), nil
 		}
@@ -570,16 +580,10 @@ func (a adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sin
 	}, nil
 }
 
-// persistentEligible reports whether a run qualifies for the long-lived
-// process path. It intentionally excludes every mode whose CLI flags or
-// lifecycle differ from a plain batch turn; those fall back to the spawn path.
-func persistentEligible(cfg agentadaptor.ClaudeConfig, req agentadaptor.DriverRunRequest, interactive bool) bool {
-	if interactive {
-		// Phase 3 HITL uses distinct spawn flags (stdio permission prompting)
-		// and its own long-lived stdin protocol; cross-run persistence there
-		// needs a dedicated design, so it stays on the spawn path.
-		return false
-	}
+// persistentEligible reports whether a run qualifies for the long-lived process
+// path. Batch, streaming, and interactive HITL turns all qualify; only modes
+// whose CLI flags/lifecycle cannot be reused across turns fall back to spawn.
+func persistentEligible(cfg agentadaptor.ClaudeConfig, req agentadaptor.DriverRunRequest) bool {
 	if cfg.MaxTurnsPerRun > 0 {
 		// --max-turns guards a single run; its meaning on a process that
 		// serves many turns is undefined, so stay on the spawn path.

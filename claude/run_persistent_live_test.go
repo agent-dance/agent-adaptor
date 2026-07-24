@@ -240,3 +240,125 @@ func TestClaudePersistentStreamingReuse(t *testing.T) {
 		}
 	}
 }
+
+// TestClaudePersistentInteractiveReuse proves the final route-1 dimension:
+// interactive Phase 3 HITL turns also reuse ONE live claude subprocess. Each
+// turn drives the model to call ExitPlanMode, the PlanReview handler approves,
+// and the CLI continues over the SAME long-lived stdin (turn boundary = the
+// per-turn result frame, stdin never closed). We assert turn 1 spawns exactly
+// one persistent process, turn 2 reuses it (zero spawns), and the PlanReview
+// handler fires on both turns — i.e. control_request/control_response survives
+// process reuse.
+//
+// Run with: go test -tags claude_live -run TestClaudePersistentInteractiveReuse -v ./claude/
+func TestClaudePersistentInteractiveReuse(t *testing.T) {
+	requirePhase3CLI(t)
+	cmd := claudeCLIName()
+	cwd := t.TempDir()
+
+	sdk := agentadaptor.New(
+		agentadaptor.WithDefaultAgent(claude.New(agentadaptor.ClaudeConfig{
+			CommonConfig:      agentadaptor.CommonConfig{CWD: cwd, Command: cmd},
+			Model:             envOr("CLAUDE_MODEL_P3", "claude-haiku-4-5"),
+			PersistentProcess: true,
+		})),
+		agentadaptor.WithSessionStore(memory.NewSessionStore()),
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
+	defer cancel()
+
+	plan := func(topic string) string {
+		return "Enter plan mode, design a two-step plan for " + topic + " (do not actually edit). " +
+			"Call ExitPlanMode with the plan. Do not ask any questions. Do not use any other tools."
+	}
+	prompts := []string{
+		plan("refactoring the file `main.go`"),
+		plan("splitting the file `handler.go`"),
+	}
+
+	policy := agentadaptor.WithRunPolicy(agentadaptor.RunPolicy{
+		HumanDecision: agentadaptor.HumanDecisionPolicy{
+			Permission: agentadaptor.HumanDecisionAutoApprove, // Phase 3 requires this
+			PlanReview: agentadaptor.HumanDecisionAsk,
+			Question:   agentadaptor.QuestionAutoReject,
+		},
+	})
+
+	var sess *agentadaptor.SessionRef
+	for i, p := range prompts {
+		var planCallsMu sync.Mutex
+		planCalls := 0
+		handler := agentadaptor.WithPlanReviewHandler(func(_ context.Context, _ agentadaptor.PlanReviewRequest) (agentadaptor.PlanReviewResponse, error) {
+			planCallsMu.Lock()
+			planCalls++
+			planCallsMu.Unlock()
+			return agentadaptor.PlanReviewResponse{Result: agentadaptor.ApprovalApproved}, nil
+		})
+
+		opts := []agentadaptor.RunOption{policy, handler}
+		if sess == nil {
+			opts = append(opts, agentadaptor.WithSessionKey("claude_live_persistent_hitl", "v1"))
+		} else {
+			opts = append(opts, agentadaptor.WithSession(agentadaptor.SessionRequest{
+				Namespace: sess.Namespace,
+				Key:       sess.Key,
+				ID:        sess.ID,
+				Mode:      agentadaptor.SessionContinueOnly,
+			}))
+		}
+
+		h, err := sdk.Start(ctx, p, opts...)
+		if err != nil {
+			t.Fatalf("turn %d Start: %v", i+1, err)
+		}
+
+		var mu sync.Mutex
+		spawns := 0
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			for ev := range h.Events() {
+				if ev.Type == agentadaptor.RunEventSpawn {
+					if persistent, _ := ev.Data["persistent"].(bool); persistent {
+						mu.Lock()
+						spawns++
+						mu.Unlock()
+					}
+				}
+			}
+		}()
+
+		res, err := h.Wait(ctx)
+		if err != nil {
+			t.Fatalf("turn %d Wait: %v", i+1, err)
+		}
+		<-done
+
+		if res.Session == nil || res.Session.ID == "" {
+			t.Fatalf("turn %d missing session ref", i+1)
+		}
+		sess = res.Session
+
+		mu.Lock()
+		s := spawns
+		mu.Unlock()
+		planCallsMu.Lock()
+		pc := planCalls
+		planCallsMu.Unlock()
+		t.Logf("turn %d: spawns=%d planReviewCalls=%d output=%q", i+1, s, pc, res.Output)
+
+		if pc == 0 {
+			t.Fatalf("turn %d: PlanReview handler never invoked; model likely skipped ExitPlanMode — output=%q", i+1, res.Output)
+		}
+		if res.Failure != nil {
+			t.Fatalf("turn %d: approved plan should not fail: %+v", i+1, res.Failure)
+		}
+		if i == 0 && s != 1 {
+			t.Fatalf("turn 1 expected exactly 1 persistent spawn, got %d", s)
+		}
+		if i > 0 && s != 0 {
+			t.Fatalf("turn %d expected 0 spawns (interactive process reuse), got %d", i+1, s)
+		}
+	}
+}
