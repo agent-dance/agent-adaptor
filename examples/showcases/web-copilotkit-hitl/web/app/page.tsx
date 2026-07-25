@@ -1,13 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { CopilotChat } from "@copilotkit/react-core/v2";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { CopilotChat, useAgent } from "@copilotkit/react-core/v2";
 import {
   useCopilotAction,
   useCopilotContext,
   type CatchAllActionRenderProps,
 } from "@copilotkit/react-core";
 import { SessionPanel } from "./components/session-panel";
+import { LiveSubagentPanel } from "./components/live-subagent-panel";
 import { renderDecisionCard, ToolCallCard } from "./components/cards";
 
 // -----------------------------------------------------------------------------
@@ -44,11 +45,67 @@ function useStableThreadId(): string {
 }
 
 // -----------------------------------------------------------------------------
+// Auto-prefill: on first open of a fresh thread, drop NEXT_PUBLIC_DEFAULT_PROMPT
+// into the chat input so the user can just hit send to see the demo. The
+// team-agent-workflow start script sets this to "start"; other hosts leave it
+// unset and get no prefill. CopilotChat's input is controlled internally, so we
+// set the textarea via the native value setter + an "input" event, which drives
+// CopilotChat's onChange (setInputValue). We never clobber an existing thread or
+// text the user already typed, and only fire once per mount.
+// -----------------------------------------------------------------------------
+
+function setNativeTextareaValue(el: HTMLTextAreaElement, value: string) {
+  const setter = Object.getOwnPropertyDescriptor(
+    window.HTMLTextAreaElement.prototype,
+    "value",
+  )?.set;
+  setter?.call(el, value);
+  el.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+function useAutoPrefillPrompt(threadId: string) {
+  const prompt = (process.env.NEXT_PUBLIC_DEFAULT_PROMPT ?? "").trim();
+  const { agent } = useAgent({ agentId: "codex", threadId });
+  const doneRef = useRef(false);
+
+  useEffect(() => {
+    if (!prompt || !threadId || doneRef.current) return;
+    // Existing conversation (reload with history): never prefill.
+    if (agent.messages.length > 0) {
+      doneRef.current = true;
+      return;
+    }
+    // The textarea mounts a tick after the chat; poll briefly for it.
+    let tries = 0;
+    const timer = window.setInterval(() => {
+      if (doneRef.current || agent.messages.length > 0) {
+        doneRef.current = true;
+        window.clearInterval(timer);
+        return;
+      }
+      const textarea = document.querySelector<HTMLTextAreaElement>(
+        'textarea[data-testid="copilot-chat-textarea"]',
+      );
+      if (textarea && textarea.value === "") {
+        setNativeTextareaValue(textarea, prompt);
+        textarea.focus();
+        doneRef.current = true;
+        window.clearInterval(timer);
+      } else if (++tries > 50) {
+        window.clearInterval(timer);
+      }
+    }, 100);
+    return () => window.clearInterval(timer);
+  }, [prompt, threadId, agent]);
+}
+
+// -----------------------------------------------------------------------------
 // HomePage
 // -----------------------------------------------------------------------------
 
 export default function HomePage() {
   const threadId = useStableThreadId();
+  useAutoPrefillPrompt(threadId);
 
   // Wildcard action catches every tool_call that the runtime doesn't already
   // own. For `dec.*` we render our interactive decision cards; for anything
@@ -106,6 +163,8 @@ export default function HomePage() {
         </p>
       </header>
 
+      <DemoBanner />
+
       <div className="agent-workspace-grid">
         <section
           className="agent-chat-panel"
@@ -132,7 +191,17 @@ export default function HomePage() {
           />
         </section>
 
-        <SessionPanel threadId={threadId} />
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: "1rem",
+            minWidth: 0,
+          }}
+        >
+          <LiveSubagentPanel threadId={threadId} />
+          <SessionPanel threadId={threadId} />
+        </div>
       </div>
     </main>
   );
@@ -235,6 +304,69 @@ function deriveOutcome(result: unknown): "approved" | "rejected" | "answered" | 
   const r = typeof p["result"] === "string" ? (p["result"] as string) : undefined;
   if (r === "approved" || r === "rejected" || r === "answered") return r;
   return undefined;
+}
+
+// -----------------------------------------------------------------------------
+// DemoBanner declares, on the page itself, what the currently-opened example is
+// demonstrating. The shared web-copilotkit-hitl frontend is reused by several
+// backends, so the copy is host-provided via NEXT_PUBLIC_DEMO_TITLE /
+// NEXT_PUBLIC_DEMO_DESC (the team-agent-workflow start script sets both). When
+// unset, nothing renders and other hosts see the plain header. DESC lines are
+// separated by "\n" and rendered as bullets.
+// -----------------------------------------------------------------------------
+function DemoBanner() {
+  const title = (process.env.NEXT_PUBLIC_DEMO_TITLE ?? "").trim();
+  const desc = (process.env.NEXT_PUBLIC_DEMO_DESC ?? "").trim();
+  if (!title && !desc) return null;
+  const lines = desc.split("\n").map((l) => l.trim()).filter(Boolean);
+  return (
+    <section
+      role="note"
+      aria-label="demo description"
+      style={{
+        marginTop: "0.75rem",
+        background: "linear-gradient(90deg, #eef2ff 0%, #f5f3ff 100%)",
+        border: "1px solid #c7d2fe",
+        borderRadius: 10,
+        padding: "0.75rem 1rem",
+      }}
+    >
+      {title && (
+        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+          <span
+            style={{
+              fontSize: "0.7rem",
+              fontWeight: 700,
+              letterSpacing: "0.04em",
+              textTransform: "uppercase",
+              color: "#4338ca",
+              background: "#e0e7ff",
+              borderRadius: 999,
+              padding: "0.1rem 0.5rem",
+            }}
+          >
+            demo
+          </span>
+          <strong style={{ fontSize: "0.98rem", color: "#312e81" }}>{title}</strong>
+        </div>
+      )}
+      {lines.length > 0 && (
+        <ul
+          style={{
+            margin: title ? "0.5rem 0 0" : 0,
+            paddingLeft: "1.1rem",
+            color: "#3730a3",
+            fontSize: "0.86rem",
+            lineHeight: 1.55,
+          }}
+        >
+          {lines.map((line, i) => (
+            <li key={i}>{line}</li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
 }
 
 function chooseHint(): string {

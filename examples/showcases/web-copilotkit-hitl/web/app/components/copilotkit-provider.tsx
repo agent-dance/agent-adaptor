@@ -3,18 +3,7 @@
 import { CopilotKit } from "@copilotkit/react-core";
 import { HttpAgent } from "@ag-ui/client";
 import type { ReactNode } from "react";
-import { SubagentActivitySchema } from "../lib/subagent-schema";
-import { SubagentCard } from "./subagent-card";
 
-// Stable module-level definition so the array identity never changes
-// across renders — satisfies CopilotKit's "must be a stable array" invariant.
-const SUBAGENT_RENDERER = {
-  activityType: "subagent",
-  content: SubagentActivitySchema,
-  render: SubagentCard,
-} as const;
-
-const ACTIVITY_RENDERERS = [SUBAGENT_RENDERER];
 const DIRECT_AGENTS = {
   codex: new HttpAgent({
     url:
@@ -32,13 +21,16 @@ interface AppCopilotKitProviderProps {
 /**
  * Client-boundary wrapper around <CopilotKit>.
  *
- * Registers the `activityType="subagent"` renderer so that
- * ACTIVITY_SNAPSHOT / ACTIVITY_DELTA events from the AG-UI backend
- * render as SubagentCard components inside CopilotChat.
+ * Subagent activity (ACTIVITY_SNAPSHOT / ACTIVITY_DELTA) is rendered LIVE by
+ * <LiveSubagentPanel> via useAgent(), NOT through CopilotChat's
+ * renderActivityMessages: CopilotChat's message memo does not fingerprint
+ * activity delta patches, so in-chat activity cards freeze until an unrelated
+ * message changes the memo key. The panel reads the same per-thread agent store
+ * and re-renders on every delta.
  *
- * Existing useCopilotAction({ name: "*" }) for HITL decision cards and
- * generic tool-call cards continues to work unchanged — the activity
- * renderer only intercepts ActivityMessage frames, not ToolCallMessage frames.
+ * useCopilotAction({ name: "*" }) for HITL decision cards and generic
+ * tool-call cards continues to work unchanged — it handles ToolCallMessage
+ * frames, not ActivityMessage frames.
  */
 export function AppCopilotKitProvider({
   children,
@@ -52,7 +44,6 @@ export function AppCopilotKitProvider({
       selfManagedAgents={DIRECT_AGENTS}
       enableInspector={false}
       showDevConsole={false}
-      renderActivityMessages={ACTIVITY_RENDERERS}
     >
       {children}
     </CopilotKit>

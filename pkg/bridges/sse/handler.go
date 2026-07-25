@@ -62,6 +62,17 @@ const (
 	Raw
 )
 
+// Run metadata keys the AGUI protocol sets from the resolved session identity.
+// Host hooks (RuntimeServiceManager / WorkspaceManager) can read these from
+// RuntimeServiceRequest.Metadata / WorkspaceRequest.Metadata to key
+// session-scoped resources, since those request types carry no session field.
+const (
+	// MetadataSessionNamespace is the resolved session namespace (e.g. "agui").
+	MetadataSessionNamespace = "agentadaptor.session.namespace"
+	// MetadataSessionKey is the resolved session key (e.g. the AG-UI threadId).
+	MetadataSessionKey = "agentadaptor.session.key"
+)
+
 // Options configures a Handler. Zero values pick sensible defaults
 // (AG-UI protocol, no keep-alive ping, no CORS header, 30s write
 // timeout).
@@ -206,6 +217,16 @@ func decodeByProtocol(r *http.Request, opts Options) (string, []agentadaptor.Run
 		}
 		if ns, key := input.SessionKey(); ns != "" {
 			runOpts = append(runOpts, agentadaptor.WithSessionKey(ns, key))
+			// Also surface the resolved session identity as run metadata so
+			// host hooks (WorkspaceManager / RuntimeServiceManager) can key
+			// session-scoped resources by it. RuntimeServiceRequest carries no
+			// session field, so a host that needs to reuse one sidecar across a
+			// thread's turns (e.g. a stable MCP delegation endpoint for a
+			// persistent agent process) relies on this metadata.
+			runOpts = append(runOpts,
+				agentadaptor.WithMetadata(MetadataSessionNamespace, ns),
+				agentadaptor.WithMetadata(MetadataSessionKey, key),
+			)
 		}
 		runOpts = append(runOpts, agentadaptor.WithStreaming())
 		return prompt, runOpts, nil

@@ -9,6 +9,35 @@ import (
 	"testing"
 )
 
+func TestMCPServerCurrentRunIDPrefersResolver(t *testing.T) {
+	t.Parallel()
+	// A session-scoped sidecar reuses one server across a session's runs and
+	// repoints attribution via RunIDResolver; the static RunID is only the
+	// fallback for classic per-run sidecars.
+	current := "run-1"
+	server := NewMCPServer(NewDelegator(nil, nil), MCPServerOptions{
+		RunID:         "spawn-run",
+		RunIDResolver: func() string { return current },
+	})
+	if got := server.currentRunID(); got != "run-1" {
+		t.Fatalf("currentRunID() = %q, want the resolver's value run-1", got)
+	}
+	current = "run-2"
+	if got := server.currentRunID(); got != "run-2" {
+		t.Fatalf("currentRunID() = %q, want the updated resolver value run-2", got)
+	}
+	// An empty resolver result falls back to the static RunID.
+	current = "   "
+	if got := server.currentRunID(); got != "spawn-run" {
+		t.Fatalf("currentRunID() = %q, want fallback to static RunID spawn-run", got)
+	}
+	// With no resolver at all, the static RunID is used (trimmed).
+	plain := NewMCPServer(NewDelegator(nil, nil), MCPServerOptions{RunID: " run-9 "})
+	if got := plain.currentRunID(); got != "run-9" {
+		t.Fatalf("currentRunID() = %q, want static run-9", got)
+	}
+}
+
 func TestMCPServerStreamsProgressWhenClientProvidesProgressToken(t *testing.T) {
 	t.Parallel()
 	server := NewMCPServer(NewDelegator(nil, nil), MCPServerOptions{RunID: "run-1", BearerToken: "token"})

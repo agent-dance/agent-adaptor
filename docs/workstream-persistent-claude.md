@@ -80,12 +80,22 @@ if a.persistent != nil && cfg.PersistentProcess && persistentEligible(cfg, req) 
 // 否则:历史 spawn 路径
 ```
 
-`persistentEligible` 仅排除「CLI flags / 生命周期无法跨轮复用」的模式(如 `MaxTurnsPerRun>0`、原生结构化输出);batch / streaming / interactive 全部通过。
+`persistentEligible` 仅排除「CLI flags / 端点无法跨轮复用」的模式;batch / streaming / interactive 全部通过。当前排除项:
+
+- `MaxTurnsPerRun>0`(单发语义)
+- 原生结构化输出(`--json-schema`,CLI 形态不同)
+- **注入了非 `Shared` 生命周期 runtime service 的运行**(`req.Runtime.Requested/Ensured` 中存在 `Lifecycle != shared` 的条目):`Ephemeral`(或未声明)服务每轮新铸 URL + bearer token,复用进程会握着上一轮已失效的端点,因此这类运行回退 spawn。
+
+反过来,**声明 `RuntimeLifecycleShared` 的 runtime service 允许常驻**:`Shared` 表示端点由宿主拥有、在一个会话的多轮之间保持稳定(URL + token 不变),复用进程始终对着活端点。`req.MCP.Servers`(含由 runtime ref 物化出的 MCP server)通过 `mcpruntime.SyncResource` 写进 profile/config、bearer token 通过 `SecretEnv` 注入 env——这两步都发生在常驻分支**之前**,所以常驻进程和 spawn 路径拿到完全一致的物化结果。
+
+作为兜底,`sig()` 还并入了 MCP/runtime 端点指纹(`persistentRuntimeFingerprint`):一旦端点在两轮之间漂移,签名变化,进程池会驱逐旧进程并带 `--resume` 重启到活端点,而不是复用一个指向死端点的进程——即"要么真复用、要么安全重启",不存在 hang。
+
+因此 team-agent-workflow 的 Claude leader 现在**在 web(会话)模式下常驻**:宿主 `delegationRuntimeManager` 按 AG-UI 会话(而非单次 run)持有一个 delegation MCP sidecar,跨轮复用同一 URL + token 并声明 `Shared`;sidecar 的 `RunIDResolver` 每轮把事件归属重指到当前 run。CLI(无状态)模式没有会话,sidecar 退化为 run-scoped/`Ephemeral`,leader 自动回退 per-run spawn。
 
 ### 4.3 进程池(`claude/persistent.go`)
 
-- **`persistentSpec`**:从 `DriverRunRequest` 派生的纯数据(command/model/effort/cwd/env/skipPerms/streaming/interactive/resumeID/prompt)。池永不回看 SDK 请求类型。
-- **`sig()`**:复用签名。`streaming` 与 `interactive` 都进签名——它们改变 spawn flags,所以同一 session 的 batch / streaming / interactive 轮各自使用独立进程,互不污染输出形状。
+- **`persistentSpec`**:从 `DriverRunRequest` 派生的纯数据(command/model/effort/cwd/env/skipPerms/streaming/interactive/resumeID/prompt/runtimeFingerprint)。池永不回看 SDK 请求类型。
+- **`sig()`**:复用签名。`streaming` 与 `interactive` 都进签名——它们改变 spawn flags,所以同一 session 的 batch / streaming / interactive 轮各自使用独立进程,互不污染输出形状。`runtimeFingerprint`(MCP/runtime 端点指纹)也进签名——注入端点在两轮之间漂移时强制带 `--resume` 重启到活端点,而不是复用死端点。
 - **`spawnArgs()`**:
   - 基础:`--print --output-format stream-json --verbose --input-format stream-json`
   - `streaming || interactive`:加 `--include-partial-messages`

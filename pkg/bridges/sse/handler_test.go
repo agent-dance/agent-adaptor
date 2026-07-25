@@ -54,6 +54,64 @@ func (fakeAdapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, s
 	}, nil
 }
 
+// metadataCapturingAdapter records the run metadata the SDK hands the adapter,
+// so a test can assert the AGUI bridge surfaced the resolved session identity.
+type metadataCapturingAdapter struct{ got chan map[string]string }
+
+func (metadataCapturingAdapter) Descriptor() agentadaptor.DriverDescriptor {
+	return agentadaptor.DriverDescriptor{Type: "fake", DisplayName: "Fake"}
+}
+func (metadataCapturingAdapter) ValidateConfig(any) error { return nil }
+func (metadataCapturingAdapter) StreamCapability() agentadaptor.StreamCapability {
+	return agentadaptor.StreamCapability{Native: true, TokenLevel: true}
+}
+func (a metadataCapturingAdapter) Run(_ context.Context, req agentadaptor.DriverRunRequest, sink agentadaptor.EventSink) (agentadaptor.DriverRunResult, error) {
+	select {
+	case a.got <- req.Metadata:
+	default:
+	}
+	_ = sink.EmitStream(agentadaptor.StreamPayload{Kind: agentadaptor.StreamRunStarted, ThreadID: "t", RunID: req.RunID})
+	_ = sink.EmitStream(agentadaptor.StreamPayload{Kind: agentadaptor.StreamRunFinished, ThreadID: "t", RunID: req.RunID})
+	return agentadaptor.DriverRunResult{ExitCode: 0}, nil
+}
+
+// TestSSEHandlerAGUISurfacesSessionMetadata proves the AGUI bridge injects the
+// resolved session namespace/key into run metadata, which host RuntimeService /
+// Workspace managers rely on to key session-scoped resources.
+func TestSSEHandlerAGUISurfacesSessionMetadata(t *testing.T) {
+	t.Parallel()
+	got := make(chan map[string]string, 1)
+	sdk := agentadaptor.New(
+		agentadaptor.WithDefaultAgent(agentadaptor.Bind(metadataCapturingAdapter{got: got}, nil)),
+		agentadaptor.WithSessionStore(memory.NewSessionStore()),
+	)
+	srv := httptest.NewServer(sse.Handler(sdk, sse.Options{Protocol: sse.AGUI}))
+	defer srv.Close()
+
+	body := `{"threadId":"thread-abc","runId":"run-xyz","messages":[{"id":"m","role":"user","content":"hello"}]}`
+	resp, err := http.Post(srv.URL, "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status: %d", resp.StatusCode)
+	}
+	_ = readSSEFrames(t, resp.Body, 2*time.Second)
+
+	select {
+	case md := <-got:
+		if md[sse.MetadataSessionNamespace] != "agui" {
+			t.Fatalf("session namespace = %q, want agui (metadata=%v)", md[sse.MetadataSessionNamespace], md)
+		}
+		if md[sse.MetadataSessionKey] != "thread-abc" {
+			t.Fatalf("session key = %q, want thread-abc (metadata=%v)", md[sse.MetadataSessionKey], md)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("adapter Run was not invoked; decode path broken")
+	}
+}
+
 func newSDK(t *testing.T) agentadaptor.SDK {
 	t.Helper()
 	// The AGUI protocol derives a SessionKey from RunAgentInput.threadId

@@ -141,7 +141,14 @@ func ParseToolInput(raw []byte) (ToolInput, error) {
 }
 
 type MCPServerOptions struct {
-	RunID              string
+	RunID string
+	// RunIDResolver, when set, supplies the RunID for each incoming tool call,
+	// overriding the static RunID. A session-scoped sidecar (one server reused
+	// across a session's runs, e.g. one that lives behind a persistent agent
+	// process) uses this to attribute every call to the host's *current* run
+	// instead of the run that happened to spawn the server. Returning "" falls
+	// back to the static RunID.
+	RunIDResolver      func() string
 	ParentToolCallID   string
 	Tenant             string
 	BearerToken        string
@@ -182,6 +189,18 @@ func NewMCPServer(delegator *Delegator, opts MCPServerOptions) *MCPServer {
 
 func (s *MCPServer) Handler() http.Handler {
 	return http.HandlerFunc(s.ServeHTTP)
+}
+
+// currentRunID resolves the RunID for the in-flight tool call. It prefers the
+// dynamic RunIDResolver (session-scoped sidecar) and falls back to the static
+// RunID (classic per-run sidecar).
+func (s *MCPServer) currentRunID() string {
+	if s != nil && s.Options.RunIDResolver != nil {
+		if id := strings.TrimSpace(s.Options.RunIDResolver()); id != "" {
+			return id
+		}
+	}
+	return strings.TrimSpace(s.Options.RunID)
 }
 
 func (s *MCPServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -240,7 +259,7 @@ func (s *MCPServer) serveStreamableToolCall(w http.ResponseWriter, r *http.Reque
 	startedAt := time.Now().UTC()
 	var events <-chan DelegationEvent
 	if s != nil && s.Delegator != nil && s.Delegator.Bus != nil {
-		events = s.Delegator.Bus.SubscribeRun(r.Context(), s.Options.RunID)
+		events = s.Delegator.Bus.SubscribeRun(r.Context(), s.currentRunID())
 	}
 	result := make(chan map[string]any, 1)
 	go func() {
@@ -403,7 +422,7 @@ func (s *MCPServer) handleToolCall(r *http.Request, req rpcRequest) map[string]a
 	if err != nil {
 		return toolResult(req.ID, DelegationResult{Status: "failed", Error: delegationErr(err)}, true)
 	}
-	runID := strings.TrimSpace(s.Options.RunID)
+	runID := s.currentRunID()
 	if runID == "" {
 		derr := &DelegationError{Code: "configuration_error", Message: "run context is required for delegation MCP tool"}
 		return toolResult(req.ID, DelegationResult{Agent: input.Agent, RemoteProtocol: ProtocolA2A, Status: "failed", Error: derr}, true)
@@ -440,7 +459,7 @@ func (s *MCPServer) handleCustomToolCall(r *http.Request, req rpcRequest, tool T
 		return rpcError(req.ID, -32602, "tool "+tool.Name+" does not define a request builder")
 	}
 	request, err := tool.BuildRequest(r.Context(), raw, ToolContext{
-		RunID:            strings.TrimSpace(s.Options.RunID),
+		RunID:            s.currentRunID(),
 		ParentToolCallID: s.Options.ParentToolCallID,
 		Tenant:           s.Options.Tenant,
 	})
@@ -453,7 +472,7 @@ func (s *MCPServer) handleCustomToolCall(r *http.Request, req rpcRequest, tool T
 		}, true)
 	}
 	if request.RunID == "" {
-		request.RunID = strings.TrimSpace(s.Options.RunID)
+		request.RunID = s.currentRunID()
 	}
 	if request.ParentToolCallID == "" {
 		request.ParentToolCallID = s.Options.ParentToolCallID

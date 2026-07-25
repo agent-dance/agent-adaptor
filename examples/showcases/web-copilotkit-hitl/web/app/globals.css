@@ -19,7 +19,9 @@ body {
 
 .agent-workspace-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(320px, 360px);
+  /* Wider right column so the Subagents panel has room for delegated-role
+     output (reasoning, long paths, tool calls) without cramped wrapping. */
+  grid-template-columns: minmax(0, 1fr) minmax(420px, 520px);
   gap: 1rem;
   align-items: stretch;
   min-width: 0;
@@ -33,7 +35,7 @@ body {
   overflow-wrap: anywhere;
 }
 
-@media (max-width: 760px) {
+@media (max-width: 960px) {
   .agent-app-shell {
     padding: 1rem;
   }

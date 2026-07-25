@@ -1,10 +1,20 @@
 # Claude And Codex Team Workflow
 
-This showcase demonstrates a model-led software team built from the SDK's
-existing host primitives. A Claude Code leader receives one MCP tool,
-`delegate_to_agent`, and uses it to run an ordered workflow:
+This showcase demonstrates two capabilities together:
 
-1. `plan` - Codex inspects the task and returns an implementation plan.
+- **Team-agent pattern over multiple agent bases** — one **Claude Code** leader
+  orchestrates a team whose roles run on **different providers** (**Codex** and
+  **Claude Code**), coordinated through a single MCP delegation tool.
+- **Structured output on the plan stage** — the `plan` role (Codex) must return
+  a schema-validated coding plan (`codingPlan`: `summary`, ordered `steps`, and
+  `acceptance_checks`). The leader carries that plan forward to implementation,
+  and the web frontend renders it as a downloadable **attachment** on the plan
+  subagent card.
+
+A Claude Code leader receives one MCP tool, `delegate_to_agent`, and uses it to
+run an ordered workflow:
+
+1. `plan` - Codex inspects the task and returns a structured `codingPlan`.
 2. `impl` - Claude Code applies that plan in the shared workspace.
 3. `review` - Codex reviews the diff and runs the acceptance checks.
 
@@ -94,11 +104,22 @@ go run ./examples/showcases/team-agent-workflow --web-mode
 # AG-UI server on :8080 (POST /agent). Flags: --web-addr, --web-cors.
 ```
 
+The quickest path is the bundled start scripts, which inject `--web-mode` for you:
+
+```bash
+./examples/showcases/team-agent-workflow/start.sh   # backend :8080 + frontend :3000
+```
+
+`start.sh` builds and runs the backend, then starts the reused CopilotKit
+frontend (below) and `npm ci`s it on first run; Ctrl-C stops both. Extra flags are
+passed through to the backend, e.g. `./start.sh --claude-model <name>`.
+
 The backend mounts `sse.Handler(sdk, sse.Options{Protocol: sse.AGUI, SubagentBus: bus})`
 at `POST /agent`. In this mode the fixed orchestration protocol is delivered to the
 leader as instructions, so the run is driven by whatever you type in the chat (for
-example "Implement the task in TASK.md"); the one-shot workspace validation and
-sentinel checks are skipped.
+example "Implement the task in TASK.md"); the plan role still returns its
+validated `codingPlan` (rendered as an attachment), but the one-shot host
+workspace validation and sentinel checks are skipped.
 
 Reuse the CopilotKit frontend shipped with the [`web-copilotkit-hitl`](../web-copilotkit-hitl)
 showcase. Its browser-side `HttpAgent` connects directly to

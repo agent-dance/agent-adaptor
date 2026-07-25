@@ -14,6 +14,98 @@ import (
 	"github.com/agent-dance/agent-adaptor/internal/testutil"
 )
 
+func TestPersistentEligibleGatesRuntimeByLifecycle(t *testing.T) {
+	cfg := agentadaptor.ClaudeConfig{}
+	// Plain streaming run (no injected services) is eligible.
+	if !persistentEligible(cfg, agentadaptor.DriverRunRequest{Streaming: true}) {
+		t.Fatal("plain streaming run should be persistent-eligible")
+	}
+	// Ephemeral runtime services mint fresh endpoints/tokens each run; a reused
+	// process would keep a dead endpoint, so such runs fall back to spawn —
+	// whether the lifecycle is observed on the requested spec or ensured ref.
+	ephemeralRequested := agentadaptor.DriverRunRequest{
+		Runtime: agentadaptor.RuntimePayload{Requested: []agentadaptor.RuntimeServiceSpec{
+			{Name: "team-delegation", Lifecycle: agentadaptor.RuntimeLifecycleEphemeral},
+		}},
+	}
+	if persistentEligible(cfg, ephemeralRequested) {
+		t.Fatal("run requesting an ephemeral runtime service must fall back to spawn")
+	}
+	ephemeralEnsured := agentadaptor.DriverRunRequest{
+		Runtime: agentadaptor.RuntimePayload{Ensured: []agentadaptor.RuntimeServiceRef{
+			{Name: "team-delegation", Lifecycle: agentadaptor.RuntimeLifecycleEphemeral},
+		}},
+	}
+	if persistentEligible(cfg, ephemeralEnsured) {
+		t.Fatal("run with an ephemeral ensured runtime service must fall back to spawn")
+	}
+	// Unspecified lifecycle is treated conservatively (not Shared) → spawn.
+	unspecified := agentadaptor.DriverRunRequest{
+		Runtime: agentadaptor.RuntimePayload{Requested: []agentadaptor.RuntimeServiceSpec{{Name: "team-delegation"}}},
+	}
+	if persistentEligible(cfg, unspecified) {
+		t.Fatal("run with an unspecified-lifecycle runtime service must fall back to spawn")
+	}
+	// Shared runtime services are host-owned and stable across a session, so a
+	// persistent process keeps talking to a live endpoint: eligible.
+	shared := agentadaptor.DriverRunRequest{
+		Runtime: agentadaptor.RuntimePayload{
+			Requested: []agentadaptor.RuntimeServiceSpec{
+				{Name: "team-delegation", Lifecycle: agentadaptor.RuntimeLifecycleShared},
+			},
+			Ensured: []agentadaptor.RuntimeServiceRef{
+				{Name: "team-delegation", Lifecycle: agentadaptor.RuntimeLifecycleShared},
+			},
+		},
+	}
+	if !persistentEligible(cfg, shared) {
+		t.Fatal("run with a Shared runtime service should be persistent-eligible")
+	}
+}
+
+func TestPersistentRuntimeFingerprintChangesWithEndpoint(t *testing.T) {
+	// No injected services: empty fingerprint, so it never forces a respawn.
+	if fp := persistentRuntimeFingerprint(agentadaptor.DriverRunRequest{}); fp != "" {
+		t.Fatalf("plain run fingerprint = %q, want empty", fp)
+	}
+	// A Shared endpoint that keeps the same URL yields a stable fingerprint
+	// (real reuse across turns), while a changed URL yields a different one
+	// (forces a --resume respawn against the live endpoint).
+	req := func(url string) agentadaptor.DriverRunRequest {
+		return agentadaptor.DriverRunRequest{
+			MCP: agentadaptor.MCPPayload{Fingerprint: "mcp-" + url},
+			Runtime: agentadaptor.RuntimePayload{Ensured: []agentadaptor.RuntimeServiceRef{
+				{ID: "team-delegation", URL: url},
+			}},
+		}
+	}
+	stableA := persistentRuntimeFingerprint(req("http://127.0.0.1:5001/mcp"))
+	stableB := persistentRuntimeFingerprint(req("http://127.0.0.1:5001/mcp"))
+	drifted := persistentRuntimeFingerprint(req("http://127.0.0.1:5999/mcp"))
+	if stableA == "" {
+		t.Fatal("fingerprint for an injected endpoint must be non-empty")
+	}
+	if stableA != stableB {
+		t.Fatalf("same endpoint produced different fingerprints: %q vs %q", stableA, stableB)
+	}
+	if stableA == drifted {
+		t.Fatal("a changed endpoint URL must change the fingerprint so the process respawns")
+	}
+}
+
+func TestPersistentSpecSigFoldsRuntimeFingerprint(t *testing.T) {
+	base := persistentSpec{command: "claude", cwd: "/tmp/ws"}
+	drifted := base
+	drifted.runtimeFingerprint = "mcp-b|team-delegation=http://127.0.0.1:6000/mcp"
+	if base.sig() == drifted.sig() {
+		t.Fatal("sig must change when the runtime fingerprint changes")
+	}
+	same := drifted
+	if same.sig() != drifted.sig() {
+		t.Fatal("sig must be stable for identical specs")
+	}
+}
+
 func TestBuildClaudeExecArgsIncludesPartialMessagesWhenStreaming(t *testing.T) {
 	cfg := agentadaptor.ClaudeConfig{Model: "claude-sonnet-4"}
 	req := agentadaptor.DriverRunRequest{Streaming: true}

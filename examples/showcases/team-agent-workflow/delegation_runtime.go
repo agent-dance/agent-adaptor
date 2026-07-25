@@ -16,6 +16,7 @@ import (
 	"time"
 
 	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/pkg/bridges/sse"
 	"github.com/agent-dance/agent-adaptor/pkg/hosttools/a2adelegation"
 )
 
@@ -29,12 +30,55 @@ type delegationRuntimeManager struct {
 	results  map[string]map[string]a2adelegation.DelegationResult
 }
 
+// delegationSidecar is one MCP delegation endpoint. In web (session) mode it is
+// keyed by the AG-UI session and reused across every turn of that thread, so
+// its URL + bearer token stay stable and a persistent Claude leader process can
+// keep talking to a live endpoint. In CLI (stateless) mode it is keyed by the
+// single run and torn down when that run releases, exactly as before.
 type delegationSidecar struct {
-	runID    string
-	metadata map[string]string
-	server   *http.Server
-	listener net.Listener
-	serveErr chan error
+	scopeKey      string
+	sessionScoped bool
+	url           string
+	token         string
+	metadata      map[string]string
+	server        *http.Server
+	listener      net.Listener
+	serveErr      chan error
+
+	runMu    sync.Mutex
+	curRunID string // the host's current run; drives event attribution
+}
+
+// setCurrentRun repoints event attribution at the run now driving the sidecar.
+// A reused session sidecar serves many runs; each turn updates this so the MCP
+// server's RunIDResolver tags progress/results with the live run.
+func (s *delegationSidecar) setCurrentRun(runID string) {
+	s.runMu.Lock()
+	s.curRunID = runID
+	s.runMu.Unlock()
+}
+
+func (s *delegationSidecar) runID() string {
+	s.runMu.Lock()
+	defer s.runMu.Unlock()
+	return s.curRunID
+}
+
+func (s *delegationSidecar) serviceRef(agent agentadaptor.AgentIdentity) agentadaptor.RuntimeServiceRef {
+	lifecycle := agentadaptor.RuntimeLifecycleEphemeral
+	reuseKey := ""
+	if s.sessionScoped {
+		// Shared tells the SDK the endpoint outlives one run, which lets the
+		// Claude adapter keep a persistent process across the session's turns.
+		lifecycle = agentadaptor.RuntimeLifecycleShared
+		reuseKey = s.scopeKey
+	}
+	return agentadaptor.RuntimeServiceRef{
+		ID: s.scopeKey + ":team-delegation", Name: "team-delegation", URL: s.url,
+		Status: agentadaptor.RuntimeServiceRunning, Lifecycle: lifecycle, ReuseKey: reuseKey,
+		OwnerAgentID: agent.ID, Health: agentadaptor.RuntimeHealthHealthy, Metadata: cloneLabels(s.metadata),
+		SecretEnv: []agentadaptor.EnvBinding{{Name: delegationTokenEnv, Value: s.token}},
+	}
 }
 
 func newDelegationRuntimeManager(registry *a2adelegation.Registry, bus *a2adelegation.EventBus) *delegationRuntimeManager {
@@ -46,6 +90,18 @@ func newDelegationRuntimeManager(registry *a2adelegation.Registry, bus *a2adeleg
 	}
 }
 
+// delegationScopeKey resolves the reuse scope for a run. When the SSE bridge
+// surfaces an AG-UI session (web mode) the sidecar is scoped to that session
+// and reused across its turns; otherwise (CLI mode) it is scoped to the run.
+func delegationScopeKey(req agentadaptor.RuntimeServiceRequest) (key string, sessionScoped bool) {
+	ns := strings.TrimSpace(req.Metadata[sse.MetadataSessionNamespace])
+	sessionKey := strings.TrimSpace(req.Metadata[sse.MetadataSessionKey])
+	if ns != "" || sessionKey != "" {
+		return ns + "/" + sessionKey, true
+	}
+	return req.RunID, false
+}
+
 func (m *delegationRuntimeManager) Ensure(ctx context.Context, req agentadaptor.RuntimeServiceRequest) ([]agentadaptor.RuntimeServiceRef, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -53,6 +109,19 @@ func (m *delegationRuntimeManager) Ensure(ctx context.Context, req agentadaptor.
 	if req.RunID == "" {
 		return nil, errors.New("delegation runtime requires a run ID")
 	}
+	scopeKey, sessionScoped := delegationScopeKey(req)
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Reuse an existing sidecar for this scope (session mode across turns). Its
+	// URL + token are unchanged, so the persistent leader process keeps talking
+	// to a live endpoint; we only repoint attribution at the new run.
+	if existing := m.servers[scopeKey]; existing != nil {
+		existing.setCurrentRun(req.RunID)
+		return []agentadaptor.RuntimeServiceRef{existing.serviceRef(req.Agent)}, nil
+	}
+
 	token, err := randomToken()
 	if err != nil {
 		return nil, fmt.Errorf("create delegation bearer token: %w", err)
@@ -60,6 +129,27 @@ func (m *delegationRuntimeManager) Ensure(ctx context.Context, req agentadaptor.
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, fmt.Errorf("listen for delegation MCP sidecar: %w", err)
+	}
+	sidecar := &delegationSidecar{
+		scopeKey:      scopeKey,
+		sessionScoped: sessionScoped,
+		url:           "http://" + listener.Addr().String() + "/mcp",
+		token:         token,
+		server:        &http.Server{ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second},
+		listener:      listener,
+		serveErr:      make(chan error, 1),
+	}
+	sidecar.setCurrentRun(req.RunID)
+	sidecar.metadata = map[string]string{
+		"example":                               "team-agent-workflow",
+		"delegation_scope":                      scopeKey,
+		"agentadaptor.mcp.enabled":              "true",
+		"agentadaptor.mcp.key":                  "team-delegation",
+		"agentadaptor.mcp.transport":            string(agentadaptor.MCPTransportHTTP),
+		"agentadaptor.mcp.url":                  sidecar.url,
+		"agentadaptor.mcp.bearer_token_env_var": delegationTokenEnv,
+		"agentadaptor.mcp.required":             "true",
+		"agentadaptor.mcp.required_reason":      "The Claude leader must delegate plan, implementation, and review through curated A2A roles.",
 	}
 	delegator := a2adelegation.NewDelegator(m.registry, m.bus)
 	delegator.Observe = func(event a2adelegation.DelegationEvent) {
@@ -73,49 +163,27 @@ func (m *delegationRuntimeManager) Ensure(ctx context.Context, req agentadaptor.
 			event.RemoteToolCallID,
 		)
 	}
+	// RunIDResolver returns the sidecar's current run so a session-scoped
+	// endpoint attributes each turn's delegation to the live run rather than
+	// the run that happened to spawn it.
 	mcp := a2adelegation.NewMCPServer(delegator, a2adelegation.MCPServerOptions{
-		RunID: req.RunID, BearerToken: token, Tenant: req.Agent.TenantID,
+		RunIDResolver: sidecar.runID, BearerToken: token, Tenant: req.Agent.TenantID,
 	})
 	mux := http.NewServeMux()
 	mux.Handle("/mcp", auditMCPCalls(mcp.Handler(), func(agent string, result a2adelegation.DelegationResult) {
-		m.recordResult(req.RunID, agent, result)
+		m.recordResult(sidecar.runID(), agent, result)
 	}))
-	server := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second}
-	metadata := map[string]string{
-		"example":                               "team-agent-workflow",
-		"run_id":                                req.RunID,
-		"agentadaptor.mcp.enabled":              "true",
-		"agentadaptor.mcp.key":                  "team-delegation",
-		"agentadaptor.mcp.transport":            string(agentadaptor.MCPTransportHTTP),
-		"agentadaptor.mcp.url":                  "http://" + listener.Addr().String() + "/mcp",
-		"agentadaptor.mcp.bearer_token_env_var": delegationTokenEnv,
-		"agentadaptor.mcp.required":             "true",
-		"agentadaptor.mcp.required_reason":      "The Claude leader must delegate plan, implementation, and review through curated A2A roles.",
-	}
-	sidecar := &delegationSidecar{
-		runID: req.RunID, metadata: metadata, server: server, listener: listener, serveErr: make(chan error, 1),
-	}
-	m.mu.Lock()
-	if _, exists := m.servers[req.RunID]; exists {
-		m.mu.Unlock()
-		_ = listener.Close()
-		return nil, fmt.Errorf("delegation sidecar already exists for run %s", req.RunID)
-	}
-	m.servers[req.RunID] = sidecar
-	m.mu.Unlock()
+	sidecar.server.Handler = mux
+
+	m.servers[scopeKey] = sidecar
 	go func() {
-		err := server.Serve(listener)
+		err := sidecar.server.Serve(listener)
 		if errors.Is(err, http.ErrServerClosed) {
 			err = nil
 		}
 		sidecar.serveErr <- err
 	}()
-	return []agentadaptor.RuntimeServiceRef{{
-		ID: req.RunID + ":team-delegation", Name: "team-delegation", URL: metadata["agentadaptor.mcp.url"],
-		Status: agentadaptor.RuntimeServiceRunning, Lifecycle: agentadaptor.RuntimeLifecycleEphemeral,
-		OwnerAgentID: req.Agent.ID, Health: agentadaptor.RuntimeHealthHealthy, Metadata: cloneLabels(metadata),
-		SecretEnv: []agentadaptor.EnvBinding{{Name: delegationTokenEnv, Value: token}},
-	}}, nil
+	return []agentadaptor.RuntimeServiceRef{sidecar.serviceRef(req.Agent)}, nil
 }
 
 func auditMCPCalls(next http.Handler, record func(string, a2adelegation.DelegationResult)) http.Handler {
@@ -239,8 +307,25 @@ func delegationResultHasLine(result a2adelegation.DelegationResult, marker strin
 
 func (m *delegationRuntimeManager) ReleaseByRun(_ context.Context, runID string) error {
 	m.mu.Lock()
-	sidecar := m.servers[runID]
-	delete(m.servers, runID)
+	// Session-scoped sidecars are keyed by session, not run, so a per-run
+	// release must not tear them down — they outlive the run and are closed at
+	// manager shutdown (Close) or by label instead. Only run-scoped (CLI)
+	// sidecars, whose key equals the run ID, are released here.
+	if sidecar := m.servers[runID]; sidecar == nil || sidecar.sessionScoped {
+		m.mu.Unlock()
+		return nil
+	}
+	m.mu.Unlock()
+	return m.releaseScope(runID)
+}
+
+// releaseScope unconditionally stops and removes the sidecar for a scope key.
+// The shutdown paths (Close / ReleaseByLabels) use it so session-scoped
+// sidecars, which ReleaseByRun deliberately keeps alive, are still cleaned up.
+func (m *delegationRuntimeManager) releaseScope(key string) error {
+	m.mu.Lock()
+	sidecar := m.servers[key]
+	delete(m.servers, key)
 	m.mu.Unlock()
 	if sidecar == nil {
 		return nil
@@ -248,20 +333,20 @@ func (m *delegationRuntimeManager) ReleaseByRun(_ context.Context, runID string)
 	return sidecar.Close()
 }
 
-func (m *delegationRuntimeManager) ReleaseByLabels(ctx context.Context, labels map[string]string) error {
+func (m *delegationRuntimeManager) ReleaseByLabels(_ context.Context, labels map[string]string) error {
 	if len(labels) == 0 {
 		return nil
 	}
 	m.mu.Lock()
-	var runIDs []string
-	for runID, sidecar := range m.servers {
+	var keys []string
+	for key, sidecar := range m.servers {
 		if covers(sidecar.metadata, labels) {
-			runIDs = append(runIDs, runID)
+			keys = append(keys, key)
 		}
 	}
 	m.mu.Unlock()
-	for _, runID := range runIDs {
-		if err := m.ReleaseByRun(ctx, runID); err != nil {
+	for _, key := range keys {
+		if err := m.releaseScope(key); err != nil {
 			return err
 		}
 	}
@@ -270,13 +355,13 @@ func (m *delegationRuntimeManager) ReleaseByLabels(ctx context.Context, labels m
 
 func (m *delegationRuntimeManager) Close() error {
 	m.mu.Lock()
-	runIDs := make([]string, 0, len(m.servers))
-	for runID := range m.servers {
-		runIDs = append(runIDs, runID)
+	keys := make([]string, 0, len(m.servers))
+	for key := range m.servers {
+		keys = append(keys, key)
 	}
 	m.mu.Unlock()
-	for _, runID := range runIDs {
-		if err := m.ReleaseByRun(context.Background(), runID); err != nil {
+	for _, key := range keys {
+		if err := m.releaseScope(key); err != nil {
 			return err
 		}
 	}

@@ -463,17 +463,18 @@ func (a adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sin
 			bind = func(stdin InteractiveStdin) { pparser.enableInteractive(ctx, ic, stdin) }
 		}
 		spec := persistentSpec{
-			command:     command,
-			model:       modelFlag,
-			effort:      string(cfg.Effort),
-			extraArgs:   cfg.ExtraArgs,
-			cwd:         effectiveCWD,
-			env:         effectiveEnv,
-			skipPerms:   req.Policy.HumanDecision.Permission == agentadaptor.HumanDecisionAutoApprove,
-			streaming:   req.Streaming && !interactive,
-			interactive: interactive,
-			resumeID:    claudeResumeID(req),
-			prompt:      rawPrompt,
+			command:            command,
+			model:              modelFlag,
+			effort:             string(cfg.Effort),
+			extraArgs:          cfg.ExtraArgs,
+			cwd:                effectiveCWD,
+			env:                effectiveEnv,
+			skipPerms:          req.Policy.HumanDecision.Permission == agentadaptor.HumanDecisionAutoApprove,
+			streaming:          req.Streaming && !interactive,
+			interactive:        interactive,
+			resumeID:           claudeResumeID(req),
+			prompt:             rawPrompt,
+			runtimeFingerprint: persistentRuntimeFingerprint(req),
 		}
 		praw, perr := a.persistent.run(ctx, spec, sink, pparser, bind)
 		if perr == nil {
@@ -581,8 +582,19 @@ func (a adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sin
 }
 
 // persistentEligible reports whether a run qualifies for the long-lived process
-// path. Batch, streaming, and interactive HITL turns all qualify; only modes
-// whose CLI flags/lifecycle cannot be reused across turns fall back to spawn.
+// path. Batch, streaming, and interactive HITL turns all qualify; modes whose
+// CLI flags cannot be reused across turns fall back to spawn: --max-turns
+// single-shots and native --json-schema output.
+//
+// Injected runtime services only qualify when the host declares them Shared. A
+// Shared service is host-owned and keeps a stable endpoint + bearer token
+// across a session's turns (e.g. a session-scoped A2A delegation MCP sidecar),
+// so a reused process keeps talking to a live endpoint. Ephemeral (or
+// unspecified) services mint a fresh endpoint/token every run; a reused process
+// would hold a now-dead endpoint, so those runs fall back to spawn. As a
+// belt-and-braces guard the reuse signature also folds the MCP/runtime endpoint
+// fingerprint in (see persistentSpec.sig), so even a Shared service that ever
+// drifts forces a transparent --resume respawn instead of a hang.
 func persistentEligible(cfg agentadaptor.ClaudeConfig, req agentadaptor.DriverRunRequest) bool {
 	if cfg.MaxTurnsPerRun > 0 {
 		// --max-turns guards a single run; its meaning on a process that
@@ -593,7 +605,35 @@ func persistentEligible(cfg agentadaptor.ClaudeConfig, req agentadaptor.DriverRu
 		// Native --json-schema output uses a different --output-format.
 		return false
 	}
+	for _, spec := range req.Runtime.Requested {
+		if spec.Lifecycle != agentadaptor.RuntimeLifecycleShared {
+			return false
+		}
+	}
+	for _, ref := range req.Runtime.Ensured {
+		if ref.Lifecycle != agentadaptor.RuntimeLifecycleShared {
+			return false
+		}
+	}
 	return true
+}
+
+// persistentRuntimeFingerprint captures the injected MCP/runtime endpoints for
+// the reuse signature. The MCP payload fingerprint already hashes server URLs
+// (delegation endpoints are surfaced as MCP servers), and the ensured runtime
+// refs' URLs cover any non-MCP service. If any endpoint drifts between turns
+// the signature changes, so the pool evicts the stale process and respawns it
+// with --resume instead of reusing one that points at a dead endpoint.
+func persistentRuntimeFingerprint(req agentadaptor.DriverRunRequest) string {
+	if req.MCP.Fingerprint == "" && len(req.Runtime.Ensured) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(req.Runtime.Ensured)+1)
+	parts = append(parts, req.MCP.Fingerprint)
+	for _, ref := range req.Runtime.Ensured {
+		parts = append(parts, ref.ID+"="+ref.URL)
+	}
+	return strings.Join(parts, "|")
 }
 
 func claudeResumeID(req agentadaptor.DriverRunRequest) string {

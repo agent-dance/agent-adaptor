@@ -1,10 +1,27 @@
-// team-agent-workflow demonstrates a Claude Code leader coordinating three
-// host-curated A2A roles through one per-run MCP delegation tool:
+// team-agent-workflow demonstrates two capabilities together:
+//
+//  1. The TEAM-AGENT pattern over MULTIPLE agent bases: one Claude Code leader
+//     orchestrates three host-curated A2A roles that run on different providers
+//     (Codex + Claude Code) through a single MCP delegation tool.
+//  2. STRUCTURED OUTPUT on the PLAN stage: the plan role (Codex) is required to
+//     return a schema-validated coding plan (see codingPlan). The leader carries
+//     that plan forward to implementation, and the web frontend renders it as a
+//     downloadable attachment on the plan subagent card.
+//
+// The fixed delegation sequence is:
 //
 //	plan (Codex) -> impl (Claude Code) -> review (Codex)
 //
-// The leader runs on a persistent Claude Code process (ClaudeConfig.
-// PersistentProcess), reusing one long-lived CLI across its turns.
+// The leader runs as a PERSISTENT Claude Code process
+// (ClaudeConfig.PersistentProcess) so the second and later turns of a chat skip
+// the ~2-3s CLI cold start the user feels as time-to-first-token. That is only
+// safe because in web mode the MCP delegation sidecar is SESSION-scoped: one
+// endpoint (stable URL + bearer token) is reused across every turn of a thread
+// and declared RuntimeLifecycleShared, so the reused leader process keeps
+// talking to a live endpoint. The sidecar's RunIDResolver repoints event
+// attribution at each turn's run. In CLI (stateless) mode there is no session,
+// so the sidecar stays run-scoped/Ephemeral and the leader transparently falls
+// back to per-run spawn — the persistent path only engages for Shared runtimes.
 //
 // The example always works in a temporary repository and cloned profiles.
 package main
@@ -36,6 +53,46 @@ const (
 	workflowSentinel       = "TEAM_AGENT_WORKFLOW_OK"
 	reviewApprovalSentinel = "TEAM_REVIEW_APPROVED"
 )
+
+// codingPlan is the plan stage's machine-checkable deliverable. The plan role
+// (Codex) is required to return exactly this JSON via the SDK's structured
+// output support, so the leader (and the frontend attachment) get a validated,
+// well-shaped plan instead of free-form prose. This is the example's concrete
+// demonstration of structured output layered on the multi-base team pattern.
+type codingPlan struct {
+	// Summary is a one-to-two sentence description of the intended change.
+	Summary string `json:"summary"`
+	// Steps is the ordered list of implementation steps.
+	Steps []codingPlanStep `json:"steps"`
+	// AcceptanceChecks lists the concrete checks that must pass for the task to
+	// be considered done (e.g. specific tests or invariants).
+	AcceptanceChecks []string `json:"acceptance_checks"`
+}
+
+// codingPlanStep is one ordered step in a codingPlan.
+type codingPlanStep struct {
+	// Title is a short imperative name for the step.
+	Title string `json:"title"`
+	// Detail explains what the step changes and why.
+	Detail string `json:"detail"`
+}
+
+// codingPlanOutputOption requires the plan role's final answer to be a validated
+// codingPlan. The plan role runs non-streaming (see roles.go: the plan A2A
+// server uses RunStreamingDisabled) because Codex structured output is not
+// supported with SDK token streaming; prefer-native uses the CLI's native JSON
+// Schema enforcement when available and falls back to prompt validation, and
+// ReturnInvalid keeps the demo resilient if a model emits a non-conforming plan.
+func codingPlanOutputOption() agentadaptor.RunOption {
+	return agentadaptor.WithJSONSchemaOutputFor[codingPlan](
+		agentadaptor.PreferNativeOutput(),
+		agentadaptor.ReturnInvalidStructuredOutput(),
+		agentadaptor.StructuredOutputName("coding_plan"),
+		agentadaptor.StructuredOutputDescription(
+			"Ordered implementation plan with acceptance checks for the delegated task.",
+		),
+	)
+}
 
 type options struct {
 	claudeCommand string
@@ -127,9 +184,14 @@ func run(opts options) error {
 		agentadaptor.WithDefaultRuntimeServices(agentadaptor.RuntimeServiceSpec{
 			ID:          "team-delegation-mcp",
 			Name:        "team-delegation",
-			Description: "Per-run MCP tool for curated A2A role delegation",
-			Lifecycle:   agentadaptor.RuntimeLifecycleEphemeral,
-			Metadata:    map[string]string{"example": "team-agent-workflow"},
+			Description: "Session-scoped MCP tool for curated A2A role delegation",
+			// Shared is the intent that unlocks the persistent leader path: the
+			// host (delegationRuntimeManager) keeps one delegation endpoint per
+			// AG-UI session and reuses it across turns. In stateless CLI mode
+			// the manager downgrades the ensured ref to Ephemeral, which keeps
+			// that run on the per-run spawn path.
+			Lifecycle: agentadaptor.RuntimeLifecycleShared,
+			Metadata:  map[string]string{"example": "team-agent-workflow"},
 		}),
 		agentadaptor.WithDefaultMetadata("example", "team-agent-workflow"),
 		agentadaptor.WithDefaultMetadata("workflow_role", "leader"),
@@ -144,12 +206,13 @@ func run(opts options) error {
 		}))
 	}
 	// The leader is always Claude Code. Build its binding directly (rather than
-	// via the generic exampleutil helper) so we can opt into
-	// PersistentProcess: one long-lived `claude` subprocess is reused across the
-	// leader's turns instead of paying cold start + --resume rehydration each
-	// time. This pays off most in --web-mode, where the CopilotKit frontend
-	// drives many turns on one AG-UI thread (session-scoped reuse); in one-shot
-	// CLI mode it is harmless (single turn, reaped on exit).
+	// via the generic exampleutil helper) to keep this note next to the config:
+	// the leader IS persistent. Its delegation endpoint is session-scoped and
+	// declared Shared (see the runtime spec above), so a reused long-lived
+	// process keeps talking to a live endpoint and the second turn of a chat
+	// skips CLI cold start. The Claude adapter only engages the persistent path
+	// when the ensured runtime is Shared, so stateless CLI runs fall back to
+	// per-run spawn automatically.
 	leaderBinding := claude.New(agentadaptor.ClaudeConfig{
 		CommonConfig: agentadaptor.CommonConfig{
 			Command:   leaderCfg.Command,
@@ -375,7 +438,7 @@ func leaderPrompt(roleTimeout time.Duration) string {
 
 Execute exactly this sequence, waiting for each structured result before continuing:
 
-1. Call agent "plan" (Codex). Ask it to inspect TASK.md, the current code, and tests, then return a bounded implementation plan. Use stream=true and timeout_seconds=%d.
+1. Call agent "plan" (Codex). Ask it to inspect TASK.md, the current code, and tests, then return a bounded implementation plan. The plan role returns a structured coding plan (summary, ordered steps, acceptance checks); carry that plan forward verbatim into the impl stage. Use stream=true and timeout_seconds=%d.
 2. Call agent "impl" (Claude Code). Pass the plan result in input.context. Ask it to implement the task in the shared workspace, modify only slug.go, run tests, and not commit. Use stream=true and timeout_seconds=%d.
 3. Call agent "review" (Codex). Pass both prior results in input.context. Ask it to review the current git diff against TASK.md using the host-generated test/diff evidence attached by the role boundary. It must end with a line containing exactly %s only when the implementation is correct; otherwise it must end with TEAM_REVIEW_REJECTED. Use stream=true and timeout_seconds=%d.
 

@@ -57,20 +57,27 @@ type persistentSpec struct {
 	interactive bool   // Phase 3 HITL: stdio permission/replay flags
 	resumeID    string // non-empty on resume runs; also the pool key
 	prompt      string
+	// runtimeFingerprint hashes the injected MCP/runtime endpoints. It is part
+	// of the reuse signature so a live process is respawned (with --resume)
+	// whenever an endpoint drifts, rather than reused against a dead endpoint.
+	runtimeFingerprint string
 }
 
 // sig is the reuse signature: a live process may only serve a new turn when its
 // spawn signature matches, otherwise config drifted (model/effort/cwd/
-// streaming/interactive/...) and the process is evicted and respawned with
-// --resume. streaming and interactive are part of the signature because they
-// change the spawn flags, so batch / streaming / interactive turns on the same
-// session use distinct live processes rather than one contaminating another's
-// output shape.
+// streaming/interactive/runtime endpoint/...) and the process is evicted and
+// respawned with --resume. streaming and interactive are part of the signature
+// because they change the spawn flags, so batch / streaming / interactive turns
+// on the same session use distinct live processes rather than one contaminating
+// another's output shape. runtimeFingerprint is included so an injected MCP /
+// runtime endpoint that changes between turns forces a respawn against the live
+// endpoint instead of reuse against a dead one.
 func (s persistentSpec) sig() string {
 	return strings.Join([]string{
 		s.command, s.model, s.effort,
 		strconv.FormatBool(s.skipPerms), strconv.FormatBool(s.streaming), strconv.FormatBool(s.interactive), s.cwd,
 		strings.Join(s.extraArgs, "\x00"),
+		s.runtimeFingerprint,
 	}, "|")
 }
 

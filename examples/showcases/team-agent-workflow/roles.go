@@ -80,6 +80,18 @@ func startRoleHub(cfg roleHubConfig) (*roleHub, []a2adelegation.RemoteAgentSpec,
 	for _, role := range roles {
 		cardPath := fmt.Sprintf("/agents/%s/.well-known/agent-card.json", role.Key)
 		rpcPath := fmt.Sprintf("/agents/%s/a2a", role.Key)
+		// The plan stage demonstrates structured output: Codex must return a
+		// validated codingPlan. Codex structured output is incompatible with SDK
+		// token streaming, so the plan role runs non-streaming (RunStreamingDisabled
+		// still keeps A2A-level streaming on, so RequireStreaming delegations pass).
+		roleRunOpts := []agentadaptor.RunOption{
+			exampleutil.NonInteractiveRunOption(role.Isolation),
+		}
+		runStreaming := bridgea2a.RunStreamingDefault
+		if role.Key == "plan" {
+			roleRunOpts = append(roleRunOpts, codingPlanOutputOption())
+			runStreaming = bridgea2a.RunStreamingDisabled
+		}
 		binding := exampleutil.NewLiveAgentBinding(
 			role.Config,
 			cfg.Fixture.CloneProfileOption(role.Key+"-"+role.Provider),
@@ -108,9 +120,8 @@ func startRoleHub(cfg roleHubConfig) (*roleHub, []a2adelegation.RemoteAgentSpec,
 				IncludeToolCalls: true,
 				IncludeReasoning: true,
 			},
-			RunOptions: []agentadaptor.RunOption{
-				exampleutil.NonInteractiveRunOption(role.Isolation),
-			},
+			RunStreaming: runStreaming,
+			RunOptions:   roleRunOpts,
 			TaskLifecycle: bridgea2a.TaskLifecycleOptions{
 				Ephemeral: &bridgea2a.EphemeralTaskStoreOptions{MaxTasks: 32, TTL: 30 * time.Minute},
 			},
