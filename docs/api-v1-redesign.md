@@ -91,12 +91,13 @@
 github.com/agent-dance/agent-adaptor          → package adaptor   （应用开发者，~35 个导出名）
 ├── driver/                                    → SPI（适配器作者专属：Driver、RunRequest、EventSink、能力接口）
 ├── codex/  claude/  cursor/  codebuddy/       → 各驱动的 Config + Driver() 构造器（配置回归各自的包）
-├── skill/                                     → skill.Dir / skill.FS / skill.Inline / skill.Key / Provider 接口
+├── skill/                                     → skill.Dir / skill.FS / skill.Archive / skill.Inline / skill.Key / Provider 接口
 ├── mcp/                                       → mcp.HTTP / mcp.Stdio / mcp.Server
 ├── profile/                                   → profile.Native / Dedicated / Clone / 资源声明（子 agent、hooks、config patch）
 ├── threadstore/  memory/                      → Thread 存储接口与内置实现
 ├── bridges/{sse,agui,a2a,subagentstream}/     → 传输桥（现 pkg/bridges 提升一级）
 ├── hosttools/{a2adelegation,sessionrecorder}/ → 宿主可选组件（现 pkg/hosttools）
+├── clients/a2a/                               → A2A 客户端（现 pkg/clients/a2a 提升一级）
 └── adaptertest/                               → 驱动一致性测试套件
 ```
 
@@ -137,7 +138,7 @@ res, err := agent.Run(ctx, prompt,
 )
 ```
 
-实现上 `Option` 是携带作用域标记的接口，编译期拒绝作用域非法的组合（如 `WithThreadStore` 用在 Run 上）。16 对 `WithDefaultX/WithX` 就此消失，语义规则只有一句话：**「近处覆盖远处；skills 追加、其余替换」**（与现状合并语义一致）。
+实现上采用三接口定稿（P0.1 spike 已验证，详见 [p0-option-scope-decision.md](./p0-option-scope-decision.md)）：`Option`（New 接受的全集）、`CallOption`（Run/Stream 接受，**有意不嵌入** Option）、`SharedOption`（双作用域，同时满足两者）。作用域非法的组合双向都是编译错误（如 `WithThreadStore` 用在 Run 上、仅调用处选项用在 New 上），IDE 即时红线，godoc 的返回类型即作用域文档。16 对 `WithDefaultX/WithX` 就此消失，语义规则只有一句话：**「近处覆盖远处；skills 追加、其余替换」**（与现状合并语义一致）。
 
 核心选项词汇（全集，约 24 个）：
 
@@ -148,9 +149,10 @@ res, err := agent.Run(ctx, prompt,
 | 策略 | `WithPolicy(Policy{Sandbox, WebSearch, Browser, Approvals})` | 双 |
 | 审批 | `OnApproval(handler)` | 双 |
 | 服务 | `WithServices(specs...)` | 双 |
-| 标注 | `WithMetadata(k, v)` `WithIdentity(Identity{Tenant, User})` | 双 |
+| 标注 | `WithMetadata(k, v)` `WithIdentity(Identity{...})` | 双 |
 | 资源 | `WithProfileResources(profile.Resources{...})` | 双 |
-| 单次 | `WithModel(m)` `WithTimeout(d)` `WithSchema[T](...)` `WithoutTokenStream()` | 仅 Run/Stream |
+| 模型 | `WithModel(m)` `WithTimeout(d)` | 双 |
+| 单次 | `WithSchema[T](...)` `WithoutTokenStream()` | 仅 Run/Stream |
 | 构造 | `WithThreadStore(s)` `WithProfile(profile.Dedicated(dir))` `WithWorkspaceManager(m)` `WithSkillProvider(p)` `WithSkillMaterializer(m)` `WithServiceManager(m)` `WithEventBuffer(n)` `WithBlockingEvents()` | 仅 New |
 
 `skill` / `mcp` 包提供一行式构造器，消灭嵌套结构体：
@@ -1112,7 +1114,7 @@ func (t *workflowTrace) RequireOrder(want ...string) error {
 | per-role SDK + `observedRoleRunner`（3 拦截点） | ~120 | Agent 变量 + 2 方法装饰器 | startRoleHub / observed |
 | `withMCPToolTimeout` env 侧信道 | ~15 | `delegation.Config.ToolTimeout` | run() 第 2 步 |
 
-关于 `roleDef` 的定位：它是**宿主自己的数据表，不是 SDK 概念**。三个角色恰好只差四个维度所以压成了表；`Options []adaptor.Option` 字段是全量逃生舱——任何角色可携带任意构造选项（技能、MCP、profile 资源、独立 ThreadStore、审批回调……），且排在公共默认之后即可按「近处覆盖远处」规则覆盖公共默认。这种表驱动写法在现状 API 里做不干净：同样的角色差异必须拆进两种类型的切片（`AgentOption` 给 binding、`RunOption` 给 `ServerOptions.RunOptions`），而新 API 单一选项词汇让宿主数据表天然可组合。若某个角色的差异大到表放不下，直接不用表——每个 Agent 本来就是变量，逐个手写也只有十来行。另外 `a2a.ServerOptions` 仍保留调用作用域的 `Options []adaptor.Option`（本例不需要：沙箱已上移为角色构造期属性），供需要按请求维度注入的宿主使用。
+关于 `roleDef` 的定位：它是**宿主自己的数据表，不是 SDK 概念**。三个角色恰好只差四个维度所以压成了表；`Options []adaptor.Option` 字段是全量逃生舱——任何角色可携带任意构造选项（技能、MCP、profile 资源、独立 ThreadStore、审批回调……），且排在公共默认之后即可按「近处覆盖远处」规则覆盖公共默认。这种表驱动写法在现状 API 里做不干净：同样的角色差异必须拆进两种类型的切片（`AgentOption` 给 binding、`RunOption` 给 `ServerOptions.RunOptions`），而新 API 单一选项词汇让宿主数据表天然可组合。若某个角色的差异大到表放不下，直接不用表——每个 Agent 本来就是变量，逐个手写也只有十来行。另外 `a2a.ServerOptions` 仍保留调用作用域的 `Options []adaptor.CallOption`（本例不需要：沙箱已上移为角色构造期属性），供需要按请求维度注入的宿主使用。
 
 #### 9.8 团队抽象内建到哪一层：`delegation.Local`，而不是 roleDef
 
@@ -1154,7 +1156,7 @@ leader := adaptor.New(claude.Driver(cfg), team.Option())
 | Run / Start 单一执行路径 | `Run` / `Stream`（同一内部管线） |
 | 4 种 SessionMode + SessionStore + lease | `Thread` / `NewThread` / `ResumeOnly` / `Fork` + `threadstore.Store`（接口能力等价） |
 | Session codec / 参数检视 | `driver.SessionCodec` 能力接口 + `th.Checkpoint()` |
-| 归档（archive source / materializer） | 保留内部管线，`Result.Raw()` / `Transcript()` 暴露 |
+| skill 归档源（archive source / materializer，zip/tar/tgz 分发技能包） | `skill.Archive(...)` 构造器 + 物化管线随 skill/ 包保留（P0.7 盘点勘误：archive_*.go 是 skill 归档源而非 run 结果归档） |
 | Skills：key/dir/FS/inline、Provider、Catalog、Materializer、Required、冲突检测、严格物化 | `skill` 包 + `WithSkills` / `WithSkillProvider` / `WithSkillMaterializer`（语义不变） |
 | MCP 声明式注入 + profile 物化 + fingerprint | `mcp` 包 + `WithMCP`（替换语义不变） |
 | Runtime services 生命周期 + MCP sidecar 注入 | `WithServices` / `WithServiceManager` + 类型化 `RuntimeServiceRef.MCP` |
