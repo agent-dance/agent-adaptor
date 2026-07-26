@@ -79,18 +79,20 @@
 **门禁**：S3 绿；HITL 三 Kind × 双形态 × 超时兜底矩阵测试；`Dropped` 语义与现状 `BackpressureDropStream` 行为逐项对齐；race 干净。
 **风险**：事件顺序/关闭时序回归 → 以现状合同测试为基线先写「行为快照」再动手。
 
-### P2 · Thread + threadstore
+### P2 · Thread + threadstore ✅ 已完成（提交 b0aea73，15 文件 +2263 行）
 
 **目标**：四层 ID 归两层。`Thread`/`NewThread`/`ResumeOnly`/`Fork`/`Checkpoint`；`threadstore.Store` 承接 SessionStore 全部能力。
 
 | 任务 | 内容 | 触及现状 |
 |---|---|---|
-| P2.1 | `threadstore/` 包：`Store` 接口（resolve/finalize/lease 三能力，语义 = 现状 `SessionStore` 五方法）；`memory/` 适配为双实现（过渡期同时满足新旧接口） | `session_types.go` `memory/` |
-| P2.2 | `Agent.Thread(key, ...)`/`NewThread`/`Fork` → 4 种 SessionMode 的方法化映射；`Thread` 实现 `Runner` | `session.go` `sdk_session_test.go` |
-| P2.3 | `Thread.Checkpoint()` 暴露驱动 resume 句柄（审计用）；session codec 保留为 `driver.SessionCodec` 能力接口 | `session_codec.go` |
-| P2.4 | 合同测试迁移：`sdk_session_test.go` `sdk_start_session_test.go` `runner_session_internal_test.go` `session_codec_internal_test.go`；lease 并发防护测试原样搬 | 同名测试 |
+| P2.1 | ✅ `threadstore/` 包：`Store` 五方法（Resolve/Finalize/AcquireLease/RenewLease/ReleaseLease）+ Record/Query/Lease/FinalizeRequest + ErrBusy/ErrLeaseLost；namespace+key 收敛为单一 thread key；只 import driver。`memory/` 双实现（新增 `memory.Store`/`NewStore()`，旧 `SessionStore` 零 diff） | `session_types.go` `memory/` |
+| P2.2 | ✅ `Thread(key)` → continue_or_start；`Thread(key, ResumeOnly())` → continue_only；`NewThread(key)` → start_new（仅首轮，成功持久化后转 continue，旧会话归档+key 重绑）；`th.Fork(newKey)` → fork（仅首轮，父会话运行时按 key 解析）；`*Thread` 实现 `Runner`；`WithThreadStore` 从 any 收紧为 `threadstore.Store` 并真消费；7 个哨兵错误（ErrThreadStoreRequired/NotFound/Busy/Incompatible/LeaseLost/CheckpointMissing/ErrResumeRejected） | `session.go` `sdk_session_test.go` |
+| P2.3 | ✅ `Thread.Checkpoint()` 返回 `Checkpoint = driver.Checkpoint`，经 driver.SessionCodecProvider 归一化 | `session_codec.go` |
+| P2.4 | ✅ 13 组语义断言全部迁移（mode 矩阵/fingerprint 匹配失配/fork 边界/busy 并发/resume-rejected 回退与保留/无 checkpoint 人审容忍/lease 续期与丢失/codec 快照往返），旧测试零修改仍为基线；lease 测试全 channel 同步零 sleep；S3 升级为带 Thread+Fork 的完整版（原帧/审批断言逐字保留） | 同名测试 |
 
-**门禁**：mode→方法映射矩阵测试（含 fingerprint/fork 边界）；S3 升级为带 Thread 的完整版；lease 竞争测试 race 干净。
+**门禁**：✅ 全仓 35 包 build/vet/test 绿；next/threadstore/memory -count=5 稳定；根包 -count=2 绿（引擎 session.go 重构后旧行为不变）。
+**接缝裁决**：选了首选方案——engine 内 `prepareSession`/`persistSession` 机械抽为 store 参数化自由函数（一处真身），新增 additive 入口 `threadsession.go`（ThreadSessionPlan/PrepareThreadSession）；next/ 经 engineStore 适配器注入固定 namespace "thread"。
+**偏差记录**：NewThread 不收 ThreadOption（无有意义组合）；Fork 父会话延迟到首轮运行时解析（缺失 → ErrThreadNotFound）；租约丢失时 ErrThreadLeaseLost 优先于被连带取消的 run 错误（与引擎语义一致）；memory/session_store.go 在 HEAD 本就 gofmt 不净，按零改动纪律未动。
 
 ### P3 · 词汇包 + 驱动配置回家 + 结构化输出 + Inspect
 
