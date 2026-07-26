@@ -99,11 +99,29 @@ func (r *Result) Transcript() []TranscriptItem {
 	return append([]TranscriptItem(nil), r.transcript...)
 }
 
-// Services returns the runtime-service execution reports for this run.
-// The returned slice is a copy.
+// Services returns the runtime-service execution reports for this run: what the
+// driver reported, or — when the driver reports nothing but the SDK ensured
+// services (WithServices, or a RunServiceProvider attachment) — reports derived
+// from the ensured endpoints. The returned slice is a copy.
 //
-// TODO(P4.5): the consumer-facing shape may gain the typed MCP field when
-// RuntimeServiceRef.MCP lands; until then this echoes the driver report.
+// The report deliberately does not echo the typed ServiceRef.MCP declaration
+// (closing TODO(P4.5)). Three reasons, in order of weight:
+//
+//  1. Direction. ServiceRef.MCP is pre-run *input* the host itself authored
+//     (via WithServices or the provider it installed); ServiceReport is
+//     post-run *observation*. Echoing an input back as an observation invites
+//     hosts to read a declaration as evidence the server was actually reached,
+//     which no driver reports today.
+//  2. Fill honesty. Reports come from the driver (Response.RuntimeServices).
+//     A driver echoing a report cannot know the SDK-side MCP declaration, so
+//     the field would be populated on the SDK fallback path and empty on the
+//     driver path — the exact "sometimes true" shape the SDK avoids.
+//  3. Secrecy. The ref→report projection already drops SecretEnv on purpose.
+//     MCP carries the endpoint URL and BearerTokenEnvVar next to it; putting
+//     that pair into the surface hosts log wholesale works against the same
+//     rule.
+//
+// Hosts that need the declaration have it: it is the value they passed in.
 func (r *Result) Services() []ServiceReport {
 	if r == nil {
 		return nil

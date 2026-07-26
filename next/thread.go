@@ -157,11 +157,23 @@ func (t *Thread) Stream(ctx context.Context, prompt string, opts ...CallOption) 
 
 	go func() {
 		defer st.cancel()
-		res, err := t.execute(runCtx, st.runID, prompt, &eff, st.sink)
+		// Same environment acquisition as Agent.Stream, and for the same
+		// reason: the run's services must exist before resolution assembles
+		// the MCP payload, and their events must be subscribed before the
+		// driver can publish any.
+		rs, acquireErr := t.agent.acquireRun(runCtx, st.runID, &eff, st.sink)
+		if acquireErr != nil {
+			st.err = fmt.Errorf("adaptor: run %s: %w", st.runID, acquireErr)
+			st.sink.close()
+			close(st.done)
+			return
+		}
+		res, err := t.execute(runCtx, st.runID, prompt, &eff, st.sink, rs)
 		// Same close-timing contract as Agent.Stream: outcome first, then
 		// the event channel, done last.
 		st.res, st.err = res, err
-		st.sink.close()
+		backfillRunServices(rs, st.res, st.err)
+		rs.finish(runCtx, st.sink)
 		close(st.done)
 	}()
 	return st
@@ -193,7 +205,7 @@ func (t *Thread) Checkpoint(ctx context.Context) (*Checkpoint, error) {
 // resume context, and persist the new checkpoint. It reuses the engine's
 // session logic verbatim through the ThreadSessionPlan entry, so the
 // semantics match the legacy session path item by item.
-func (t *Thread) execute(ctx context.Context, runID, prompt string, eff *RunSettings, sink *eventSink) (*Result, error) {
+func (t *Thread) execute(ctx context.Context, runID, prompt string, eff *RunSettings, sink *eventSink, rs *runResources) (*Result, error) {
 	store := t.agent.defaults.threadStore
 	if store == nil {
 		return nil, fmt.Errorf("%w (thread %q)", ErrThreadStoreRequired, t.key)
@@ -224,7 +236,7 @@ func (t *Thread) execute(ctx context.Context, runID, prompt string, eff *RunSett
 	// negotiation) precedes session planning, exactly like the legacy
 	// Execute order, because the profile payload fingerprint participates
 	// in the thread compatibility recipe.
-	rr, err := t.agent.resolveRun(ctx, runID, prompt, eff)
+	rr, err := t.agent.resolveRun(ctx, runID, prompt, eff, rs)
 	if err != nil {
 		return nil, fmt.Errorf("adaptor: run %s: %w", runID, err)
 	}

@@ -86,16 +86,28 @@ func (a *Agent) Stream(ctx context.Context, prompt string, opts ...CallOption) S
 
 	go func() {
 		defer st.cancel()
+		// Environment acquisition (workspace lease, runtime services,
+		// run-service provider attachments) happens first: it needs the
+		// run ID, and its endpoints feed the MCP payload resolution
+		// below. An attach failure is a pre-launch failure — the driver
+		// never starts, and everything already acquired is unwound.
+		res, acquireErr := a.acquireRun(runCtx, st.runID, &eff, st.sink)
+		if acquireErr != nil {
+			st.err = fmt.Errorf("adaptor: run %s: %w", st.runID, acquireErr)
+			st.sink.close()
+			close(st.done)
+			return
+		}
 		// Resolution (skills, MCP, profile payload, structured output
 		// negotiation) runs inside the goroutine so Stream returns
 		// immediately even when a provider fetch or materialization is
 		// slow. Failures here are pre-launch: the driver never starts and
 		// the error surfaces through Result() with the engine sentinel
 		// chain intact.
-		rr, resolveErr := a.resolveRun(runCtx, st.runID, prompt, &eff)
+		rr, resolveErr := a.resolveRun(runCtx, st.runID, prompt, &eff, res)
 		if resolveErr != nil {
 			st.err = fmt.Errorf("adaptor: run %s: %w", st.runID, resolveErr)
-			st.sink.close()
+			res.finish(runCtx, st.sink)
 			close(st.done)
 			return
 		}
@@ -111,9 +123,13 @@ func (a *Agent) Stream(ctx context.Context, prompt string, opts ...CallOption) S
 		// Order matters for the close-timing contract: the outcome is
 		// stored before the event channel closes, and done closes last,
 		// so a consumer that drained Events() gets Result() without
-		// further waiting.
+		// further waiting. finish() drains the provider event sources
+		// before closing the channel and detaches them after, so a
+		// terminal SubagentUpdate is never clipped and a returned
+		// Result() implies the run's services are released.
 		st.res, st.err = finalizeRun(st.runID, st.sink, resp, runErr)
-		st.sink.close()
+		backfillRunServices(res, st.res, st.err)
+		res.finish(runCtx, st.sink)
 		close(st.done)
 	}()
 	return st
