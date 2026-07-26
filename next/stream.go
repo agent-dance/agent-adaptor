@@ -7,6 +7,7 @@ import (
 	"maps"
 
 	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/internal/engine"
 )
 
 // Stream is the live view of one running invocation (decision D4: a small
@@ -83,12 +84,30 @@ func (a *Agent) Stream(ctx context.Context, prompt string, opts ...CallOption) S
 		return st
 	}
 
-	req := buildRequest(st.runID, prompt, &eff)
-	req.Streaming = true
-
 	go func() {
 		defer st.cancel()
-		resp, runErr := a.driver.Run(runCtx, req, st.sink)
+		// Resolution (skills, MCP, profile payload, structured output
+		// negotiation) runs inside the goroutine so Stream returns
+		// immediately even when a provider fetch or materialization is
+		// slow. Failures here are pre-launch: the driver never starts and
+		// the error surfaces through Result() with the engine sentinel
+		// chain intact.
+		rr, resolveErr := a.resolveRun(runCtx, st.runID, prompt, &eff)
+		if resolveErr != nil {
+			st.err = fmt.Errorf("adaptor: run %s: %w", st.runID, resolveErr)
+			st.sink.close()
+			close(st.done)
+			return
+		}
+		rr.req.Streaming = true
+		resp, runErr := a.driver.Run(runCtx, rr.req, st.sink)
+		if runErr == nil {
+			// Post-run structured output contract (engine truth):
+			// suppress unrequested output, prompt-validate raw text,
+			// escalate invalid output per OnInvalid.
+			resp.StructuredOutput, resp.Failure = engine.FinalizeStructuredOutput(
+				rr.schema, rr.source, resp.Output, resp.StructuredOutput, resp.Failure)
+		}
 		// Order matters for the close-timing contract: the outcome is
 		// stored before the event channel closes, and done closes last,
 		// so a consumer that drained Events() gets Result() without

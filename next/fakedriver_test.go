@@ -36,6 +36,11 @@ type fakeDriver struct {
 	// caps is advertised through Descriptor().RunPolicyCaps (approval
 	// retry support gating).
 	caps driver.RunPolicyCapabilities
+
+	// descriptor, when non-nil, replaces the default descriptor wholesale.
+	// P3 capability-matrix tests use it to advertise Models, MCP transport
+	// support, and StructuredOutput support.
+	descriptor *driver.Descriptor
 }
 
 var _ driver.Driver = (*fakeDriver)(nil)
@@ -45,6 +50,9 @@ func newFakeDriver() *fakeDriver {
 }
 
 func (f *fakeDriver) Descriptor() driver.Descriptor {
+	if f.descriptor != nil {
+		return *f.descriptor
+	}
 	return driver.Descriptor{Type: "fake", DisplayName: "Fake Driver", RunPolicyCaps: f.caps}
 }
 

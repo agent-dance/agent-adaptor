@@ -219,7 +219,16 @@ func (t *Thread) execute(ctx context.Context, runID, prompt string, eff *RunSett
 	if eff.identity != nil {
 		identity = eff.identity.driverIdentity()
 	}
-	fingerprint := threadFingerprint(driverType, identity, eff)
+
+	// Resolution (skills, MCP, profile payload, structured output
+	// negotiation) precedes session planning, exactly like the legacy
+	// Execute order, because the profile payload fingerprint participates
+	// in the thread compatibility recipe.
+	rr, err := t.agent.resolveRun(ctx, runID, prompt, eff)
+	if err != nil {
+		return nil, fmt.Errorf("adaptor: run %s: %w", runID, err)
+	}
+	fingerprint := threadFingerprint(driverType, identity, eff, rr.payloadFingerprint)
 
 	plan, err := engine.PrepareThreadSession(ctx, es, req, identity, driverType, fingerprint)
 	if err != nil {
@@ -234,7 +243,7 @@ func (t *Thread) execute(ctx context.Context, runID, prompt string, eff *RunSett
 	defer plan.Release()
 	plan.StartLeaseRenewal(runCtx, runCancel)
 
-	dreq := buildRequest(runID, prompt, eff)
+	dreq := rr.req
 	dreq.Streaming = true
 
 	var resp driver.Response
@@ -269,6 +278,15 @@ func (t *Thread) execute(ctx context.Context, runID, prompt string, eff *RunSett
 	plan.StopLeaseRenewal()
 	if renewErr := plan.RenewalError(); renewErr != nil {
 		return nil, t.threadError(renewErr)
+	}
+
+	if runErr == nil {
+		// Post-run structured output contract, applied before persistence
+		// exactly like the legacy path (an escalated FailurePolicyError is
+		// not a human decision, so it does not enable the missing-
+		// checkpoint tolerance below).
+		resp.StructuredOutput, resp.Failure = engine.FinalizeStructuredOutput(
+			rr.schema, rr.source, resp.Output, resp.StructuredOutput, resp.Failure)
 	}
 
 	if runErr == nil {
@@ -315,10 +333,14 @@ func (t *Thread) markEstablished() {
 
 // threadFingerprint computes the compatibility fingerprint guarding thread
 // resumes. Recipe parity with the legacy session fingerprint: identity,
-// driver type, model, workspace, and instructions participate; policy and
-// metadata deliberately do not (tuning them must not orphan conversations).
-func threadFingerprint(driverType string, identity driver.AgentIdentity, eff *RunSettings) string {
-	return engine.StableHash("thread", driverType, identity, eff.model, eff.workspace, eff.instructions)
+// driver type, model, workspace, and the profile payload fingerprint
+// (which folds skills, MCP, agents, hooks, instructions, config, and the
+// declaration flags — replacing the P2 instructions-only term) participate;
+// policy and metadata deliberately do not (tuning them must not orphan
+// conversations). The output schema is deliberately absent, matching the
+// legacy recipe: changing the schema or mode reuses the session.
+func threadFingerprint(driverType string, identity driver.AgentIdentity, eff *RunSettings, payloadFingerprint string) string {
+	return engine.StableHash("thread", driverType, identity, eff.model, eff.workspace, payloadFingerprint)
 }
 
 // ============ Thread error vocabulary ============

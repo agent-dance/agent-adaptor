@@ -3,6 +3,7 @@ package adaptor
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"maps"
 	"strings"
 
@@ -110,18 +111,25 @@ func (r *Result) Services() []ServiceReport {
 	return append([]ServiceReport(nil), r.services...)
 }
 
-// Decode unmarshals the run's structured output into v. When the driver
-// produced a validated structured-output payload, that JSON is used;
-// otherwise Decode falls back to interpreting Text as a JSON document.
+// Decode unmarshals the run's structured output into v.
 //
-// TODO(P3.5): RunAs[T] / WithSchema[T] complete the pipeline (schema
-// derivation, mode negotiation, local validation). P0 provides the basic
-// JSON decode only.
+// When the run requested structured output (WithSchema[T] / RunAs[T]), the
+// validated payload is the only source: invalid output (possible under
+// SchemaReturnInvalid — the default policy fails the run instead) and
+// empty RawJSON are errors, mirroring the legacy DecodeStructuredOutput
+// contract. Runs without a schema fall back to interpreting Text as a JSON
+// document — the schema-less convenience decode.
 func (r *Result) Decode(v any) error {
 	if r == nil {
 		return errors.New("adaptor: Decode called on nil Result")
 	}
-	if r.structured != nil && len(r.structured.RawJSON) > 0 {
+	if r.structured != nil {
+		if !r.structured.Valid {
+			return fmt.Errorf("adaptor: structured output invalid: %s", strings.Join(r.structured.ValidationErrors, "; "))
+		}
+		if len(r.structured.RawJSON) == 0 {
+			return errors.New("adaptor: structured output RawJSON is empty")
+		}
 		return json.Unmarshal(r.structured.RawJSON, v)
 	}
 	text := strings.TrimSpace(r.Text)
