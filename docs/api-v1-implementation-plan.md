@@ -139,7 +139,7 @@
 |---|---|
 | P5.1 | 冻结 v0：main 打 `v0.9.x` tag；`v1` 分支 rebase 收口 |
 | P5.2 | 大挪移：`next/` → 根目录（package `adaptor`，D3 最后确认点）；删除旧 API 54 个根文件中被取代者与旧测试；`pkg/` 转发包删除；旧 metadata key 兼容解析删除；`providers/`（D9）与 `runtimeservice/`（D10，若 P4.5 未删）移除。**检查项**：11 个 import 根包类型的 internal 包 + 四驱动包的引用 repoint 到新家（别名删除前逐包核对，清单见 p0-inventory.md 盲点核查节） |
-| P5.3 | `adaptertest` v1：面向 `driver.Driver` 的一致性套件（能力声明真话性、事件时序、会话 codec、结构化输出矩阵）；四内置驱动 + fake driver 全过 |
+| P5.3 | `adaptertest` v1：面向 `driver.Driver` 的一致性套件（能力声明真话性、事件时序、会话 codec、结构化输出矩阵）；四内置驱动 + fake driver 全过。**✅ 已交（e3d5673）**：`adaptertest/v1/`（编译图仅 driver+stdlib），`TestDriver` 14 子测试 × 51 编号条款（doc.go 全文），自证参考驱动实现全部 10 能力接口零跳过，verify_test 以 30+ 故意违例证明每个校验器按条款号报错；四驱动各一个新增测试接入，live 探针需 CLI 在 PATH **且** `AGENT_ADAPTOR_LIVE_CONFORMANCE=1` 双门（裸 `go test` 永不付费实跑）。**P5 待办**：doc.go 记录了 9 处 `driver/` godoc 合同含糊点（run 生命周期框定无 MUST、SessionCodec nil/零值映射未文档化、Sequence vs Seq 权威归属、SupportsResume⇒SessionCodecProvider 未成文等），v1 冻结前硬化 SPI godoc |
 | P5.4 | 文档重写：`README`（6 名词开篇）、`doc.go`、`docs/api-reference.md`、`usage-guide.md`（删除四层 ID 对照表与防踩坑指南——它们的存在理由已被消除）、`streaming.md`、`a2a.md`、`structured-output.md`；新增 `docs/migrating-to-v1.md`（§4 能力映射表展开成旧→新逐 API 对照）；`workstream-*.md` 移入 `docs/archive/`。**🟡 migrating-to-v1.md 初稿已交（9ac6144，基于 771590a）**：66 旧选项逐一编号映射 + ~90 行非选项对照，在飞面标 🚧 并注明定稿依据，P5 收尾时按落地结果摘 🚧；其余文档待 P5。初稿发现两处设计稿勘误待 P5 处理：① 设计 §3 S8/S9 示例用 `Identity{User: ...}`，与 D11 定稿四字段（ID/Tenant/Profile/Name）不符；② p0-inventory「66 个 With* 全在 options.go」不准（实为横跨 7 文件 48+4+4+3+4+2+1，总数 66 无误） |
 | P5.5 | 发布检查单：godoc 首屏审查（根包导出名 ≤ ~35）、`go vet`/race/fuzz（archive fuzz 随迁）、examples 全绿、CHANGELOG、`v1.0.0` tag |
 
