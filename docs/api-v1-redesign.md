@@ -221,7 +221,8 @@ res, err := stream.Result()                    // 收口：最终结果 + 错误
 ```go
 res, err := agent.Run(ctx, "refactor the auth module",
     adaptor.OnApproval(func(ctx context.Context, req *adaptor.ApprovalRequest) error {
-        if req.Kind == adaptor.ApprovalPermission && req.Risk() < adaptor.RiskHigh {
+        if req.Kind == adaptor.ApprovalPermission {
+            // 注：风险分级 req.Risk() 推迟到驱动 SPI 有真实风险信号源后再加（实施计划 D12）
             return req.Approve(ctx)
         }
         fmt.Printf("[%s] %s\n(y/N): ", req.Kind, req.Title)

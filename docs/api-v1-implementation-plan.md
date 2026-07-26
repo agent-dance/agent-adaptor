@@ -20,6 +20,7 @@
 | D9 | `providers/` 包去留 | **删除**（P0.7 裁决：全仓唯一引用者是自身测试，自述 opt-in sugar；Required 能力在 skill.Provider 合同中保留，宿主 10 行 wrapper 等价）。迁移指南记一行 | P5 前若产品异议，归宿为 `skill.MarkRequired` |
 | D10 | `runtimeservice/` 包去留 | **删除**（P0.7 裁决：v0.5 的宿主兼容 mixin，与 runtime.go / RuntimeServiceRef 零代码关系；v1 `WithServiceManager` 是全新契约，无存量宿主需要垫片） | P4.5 |
 | D11 | `Identity` 归属与字段集 | 归**根包** `adaptor.Identity` + `IdentityFromContext`（消费方横跨 skill/workspace/services 三域，不进 skill 包）；现状四字段（ID/Tenant/Profile/Name）vs 设计稿两字段是能力缩水，**字段集 P0.5 定案**（默认保四字段） | P0.5 |
+| D12 | `ApprovalRequest.Risk()` 风险分级 | **推迟出 v1.0**（P1 裁决）：现状驱动 SPI 无风险信号来源，拍脑袋 API 违背真话原则；设计文档 §2.6 示例已改注。待任一驱动提供真实风险信号后作为 additive API 补入 | v1.x |
 
 ---
 
@@ -63,6 +64,8 @@
 ### P1 · 事件流合一：Stream / Event / ApprovalRequest
 
 **目标**：`Agent.Stream` 返回接口型 `Stream`（D4）；一条事件流承载语义流 + 操作事件 + 审批；HITL 双形态可用。S3 跑通。
+
+> **✅ P1 已完成（2026-07-26，提交 ac94313）**。11 个事件类型（密封接口），18 StreamKind + 6 RunEventType 全映射零丢失；Stream 小接口 + Run=Stream+drain 单一路径；审批双形态（OnApproval 回调 / 事件自应答，exactly-once，重试/超时/兜底对齐 EffectiveHumanDecisionPolicy，ApprovalRequest 豁免丢弃策略）；背压 Dropped 聚合语义对齐现状；40 用例含 3Kind×2形态×兜底矩阵，-count=5 稳定。主要偏差已记录于提交与本表 D12（Risk() 推迟）；Run 恒走流式路径（单一执行路径的既定代价）。
 
 | 任务 | 内容 | 触及现状 |
 |---|---|---|
