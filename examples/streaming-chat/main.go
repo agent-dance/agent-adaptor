@@ -1,5 +1,10 @@
-// streaming-chat is a minimal example showing how to consume
-// RunHandle.StreamEvents() in pure Go to build a character-level chat UI.
+// streaming-chat is a minimal character-level chat UI in pure Go.
+//
+// It is the clearest before/after in the v1 migration. The legacy version had
+// to consume two channels — a mandatory operational RunEvent drain in a
+// goroutine plus the StreamPayload channel — and then call Wait. v1 has one
+// channel and one drain obligation: range over Events(), then read Result().
+// Events you do not handle simply fall through the type switch.
 //
 // Usage:
 //
@@ -11,6 +16,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -18,16 +24,17 @@ import (
 	"syscall"
 	"time"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/examples/internal/exampleutil"
 	"github.com/agent-dance/agent-adaptor/memory"
+	adaptor "github.com/agent-dance/agent-adaptor/next"
 )
 
 func main() {
-	agent := flag.String("agent", "", "Local CLI agent to use: "+exampleutil.SupportedAgents()+" (default codex, or AGENT_ADAPTOR_EXAMPLE_AGENT)")
+	agentName := flag.String("agent", "", "Local CLI agent to use: "+exampleutil.SupportedAgents()+" (default codex, or AGENT_ADAPTOR_EXAMPLE_AGENT)")
 	model := flag.String("model", "", "Model to use. Defaults by agent or CODEX_MODEL/CLAUDE_MODEL/CURSOR_MODEL.")
 	command := flag.String("command", "", "Optional explicit local CLI command. Defaults by agent or CODEX_COMMAND/CLAUDE_COMMAND/CURSOR_COMMAND/PATH.")
 	prompt := flag.String("prompt", "Write a haiku about streaming text. Reply with only the haiku.", "Prompt to stream")
+	threadKey := flag.String("thread", "examples/streaming-chat", "Host-owned thread key")
 	timeout := flag.Duration("timeout", 5*time.Minute, "Maximum time to wait for the run")
 	flag.Parse()
 
@@ -36,65 +43,55 @@ func main() {
 	ctx, cancel := context.WithTimeout(ctx, *timeout)
 	defer cancel()
 
-	agentCfg := exampleutil.ResolveLiveAgentConfig(*agent, *model, *command, mustCwd())
-	sdk := agentadaptor.New(
-		agentadaptor.WithDefaultAgent(exampleutil.NewLiveAgentBinding(agentCfg)),
-		agentadaptor.WithSessionStore(memory.NewSessionStore()),
+	agentCfg := exampleutil.ResolveLiveAgentConfig(*agentName, *model, *command, mustCwd())
+	ai := adaptor.New(
+		exampleutil.NewLiveDriver(agentCfg),
+		adaptor.WithThreadStore(memory.NewStore()),
+		exampleutil.NonInteractive(adaptor.ReadOnly),
 	)
 
-	handle, err := sdk.Start(ctx, *prompt,
-		agentadaptor.WithStreaming(),
-		agentadaptor.WithSessionKey("examples", "streaming-chat"),
-		exampleutil.NonInteractiveRunOption(agentadaptor.IsolationReadOnly),
-	)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "start:", err)
-		os.Exit(1)
-	}
-	defer handle.Cancel(ctx)
+	// A Thread is a Runner too: Run/Stream on it behave identically to the
+	// Agent's, only bound to the conversation under this key.
+	stream := ai.Thread(*threadKey).Stream(ctx, *prompt)
+	defer stream.Cancel()
 
-	fmt.Fprintf(os.Stderr, "[run %s]\n", handle.RunID())
+	fmt.Fprintf(os.Stderr, "[run %s]\n", stream.RunID())
 
-	go drainRunEvents(handle.Events())
-
-	for ev := range handle.StreamEvents() {
-		switch ev.Kind {
-		case agentadaptor.StreamTextContent:
-			fmt.Print(ev.Delta)
-		case agentadaptor.StreamReasoningContent:
-			fmt.Fprint(os.Stderr, ev.Delta)
-		case agentadaptor.StreamToolCallStart:
-			fmt.Fprintf(os.Stderr, "\n[tool:%s]\n", ev.Name)
-		case agentadaptor.StreamRunFinished:
+	for ev := range stream.Events() {
+		switch e := ev.(type) {
+		case adaptor.TextDelta:
+			fmt.Print(e.Text)
+		case adaptor.Thinking:
+			fmt.Fprint(os.Stderr, e.Text)
+		case adaptor.ToolCall:
+			if e.Phase == adaptor.PhaseStart {
+				fmt.Fprintf(os.Stderr, "\n[tool:%s]\n", e.Name)
+			}
+		case adaptor.Dropped:
+			fmt.Fprintf(os.Stderr, "\n[dropped %d events]\n", e.Count)
+		case adaptor.RunFinished:
+			// Informational only: the authoritative outcome is Result().
 			fmt.Println()
-			if ev.Usage != nil {
+			if e.Usage != nil {
 				fmt.Fprintf(os.Stderr, "[usage input=%d output=%d cached=%d]\n",
-					ev.Usage.InputTokens, ev.Usage.OutputTokens, ev.Usage.CachedInputTokens)
+					e.Usage.InputTokens, e.Usage.OutputTokens, e.Usage.CachedInputTokens)
 			}
-		case agentadaptor.StreamRunError:
-			msg := "unknown"
-			if ev.Error != nil {
-				msg = ev.Error.Message
-			}
-			fmt.Fprintln(os.Stderr, "[run error]:", msg)
 		}
 	}
 
-	result, err := handle.Wait(ctx)
+	res, err := stream.Result()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "wait:", err)
+		// One err, one verdict — a business failure is a typed *RunError that
+		// still carries whatever Result was produced.
+		var runErr *adaptor.RunError
+		if errors.As(err, &runErr) {
+			fmt.Fprintf(os.Stderr, "[run error %s]: %s\n", runErr.Reason, runErr.Message)
+			os.Exit(1)
+		}
+		fmt.Fprintln(os.Stderr, "stream:", err)
 		os.Exit(1)
 	}
-	if result.Session != nil {
-		fmt.Fprintf(os.Stderr, "[session %s]\n", result.Session.ID)
-	}
-}
-
-// drainRunEvents silently drains the operational event channel. A real
-// application would surface spawn / stderr / lifecycle entries to its logs.
-func drainRunEvents(events <-chan agentadaptor.RunEvent) {
-	for range events {
-	}
+	fmt.Fprintf(os.Stderr, "[thread %s | model %s]\n", *threadKey, res.Model)
 }
 
 func mustCwd() string {

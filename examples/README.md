@@ -1,6 +1,40 @@
 # Examples
 
-本目录里的 runnable examples 都走真实的本机 CLI，不再内置模拟 agent 或替身 verifier。多数示例支持在 `codex` / `claude` / `cursor` 之间切换；`codex-profile-full` 是完整 profile materialization demo，三种 agent 走同一套 SDK binding-level resources；`session-codec-inspect` 是静态 inspection 工具，只切换 adapter，不启动 CLI。
+本目录里的 runnable examples 都走真实的本机 CLI，不再内置模拟 agent 或替身 verifier。多数示例支持在 `codex` / `claude` / `cursor` / `codebuddy` 之间切换；`codex-profile-full` 是完整 profile materialization demo，四种 agent 走同一套 agent-level resources；`session-codec-inspect` 是静态 inspection 工具，只切换 driver，不启动 CLI。
+
+## v1 API
+
+所有示例都已迁移到 v1 表面（见 `docs/api-v1-redesign.md`、`docs/migrating-to-v1.md`）。六个名词：**Agent / Thread / Stream / Event / Result / Driver**。
+
+```go
+import (
+    adaptor "github.com/agent-dance/agent-adaptor/next"
+    "github.com/agent-dance/agent-adaptor/codex"
+    "github.com/agent-dance/agent-adaptor/skill"
+    "github.com/agent-dance/agent-adaptor/mcp"
+    "github.com/agent-dance/agent-adaptor/profile"
+)
+
+ai := adaptor.New(codex.Driver(codex.Config{Model: "gpt-5.4"}),
+    adaptor.WithSkills(skill.Dir("./skills/write-proof")),
+    adaptor.WithMCP(mcp.HTTP("docs", "https://example.com/mcp")),
+    adaptor.WithProfile(profile.CloneNative(dir, profile.CopySettings(), profile.LinkAuth())),
+)
+
+res, err := ai.Run(ctx, "say hi")                  // 批量：一个 err 一个判决
+stream := ai.Thread("chat/42").Stream(ctx, "...")  // 流式：动词就是开关
+```
+
+迁移速查：
+
+| 旧 | 新 |
+| --- | --- |
+| `agentadaptor.New(WithDefaultAgent(...))` + `sdk.Agent("name")` | 多个 Agent = 多个 Go 变量（命名注册表已删除） |
+| `sdk.Admin()` / `Admin().Agent(name)` | `ai.Inspect()`（只读面板）+ `ai.ProfileState` / `SyncProfile` / `SelectSkills`（变更动词留在 Agent 上） |
+| `WithSessionKey` / `WithContinueSession` / `WithNewSession` / `WithForkSession` | `ai.Thread(key)` / `ai.Thread(key, adaptor.ResumeOnly())` / `ai.NewThread(key)` / `th.Fork(newKey)` |
+| `WithStreaming()` + `handle.Events()` + `handle.StreamEvents()` + `handle.Wait()` | `Stream()` 一条 `Events()` 通道 + `Result()` |
+| `RunResult.Failure` / `ExitCode` | 单一 `err`；业务失败是带完整 `Result` 的 `*adaptor.RunError` |
+| `handle.DecisionRequests()` + `handle.ResolveDecision(id, resp)` | `adaptor.OnApproval(...)` 回调，或流上的 `*adaptor.ApprovalRequest` 事件自带 `Approve` / `Deny` / `Answer` |
 
 ## Prerequisites
 
@@ -25,26 +59,29 @@ CODEX_MODEL=gpt-5.4 CLAUDE_MODEL=claude-sonnet-4 CURSOR_MODEL=gpt-5 go run ./exa
 
 | Env | Purpose |
 | --- | --- |
-| `AGENT_ADAPTOR_EXAMPLE_AGENT` | 默认 agent：`codex` / `claude` / `cursor` |
-| `CODEX_COMMAND` / `CLAUDE_COMMAND` / `CURSOR_COMMAND` | 覆盖本机 CLI 命令 |
-| `CODEX_MODEL` / `CLAUDE_MODEL` / `CURSOR_MODEL` | 覆盖默认模型 |
+| `AGENT_ADAPTOR_EXAMPLE_AGENT` | 默认 agent：`codex` / `claude` / `cursor` / `codebuddy` |
+| `CODEX_COMMAND` / `CLAUDE_COMMAND` / `CURSOR_COMMAND` / `CODEBUDDY_COMMAND` | 覆盖本机 CLI 命令 |
+| `CODEX_MODEL` / `CLAUDE_MODEL` / `CURSOR_MODEL` / `CODEBUDDY_MODEL` | 覆盖默认模型 |
 | `AGUI_AGENT` / `AGUI_MODEL` | AG-UI examples 的 agent / model 覆盖 |
 
 ## Example Matrix
 
 ### `codex-basic`
 
-最短路径：构造默认 agent，然后 `sdk.Run(...)`。
+v1 quickstart：`adaptor.New(driver, ...)` 构造 Agent，`ai.Run(ctx, prompt)` 取一个 `*Result`，业务失败用 `errors.As(err, &runErr)` 拿回带完整 Result 的 `*adaptor.RunError`。整个示例只用到三个名字。
+
+`-structured` 把同一次调用换成它的类型化孪生（设计文档 S5）：`adaptor.RunAs[Ack](ctx, ai, prompt)` 从 Go 结构体推导 schema、协商 driver 支持的最强结构化输出模式、校验并解码——旧的 `WithJSONSchemaOutputFor[T]` + `DecodeStructuredOutput[T]` 两段式塌成一次调用，判决路径不变。`RunAs` 收 `Runner`，所以同一行对 Thread 也成立。
 
 ```bash
 go run ./examples/codex-basic -agent=codex
 go run ./examples/codex-basic -agent=claude
 go run ./examples/codex-basic -agent=cursor
+go run ./examples/codex-basic -agent=codex -structured
 ```
 
 ### `codex-stream`
 
-异步执行、`RunHandle.Events()` 消费，以及可选取消。
+v1 事件模型：每次运行**一条**类型化事件通道，一个 `for range` + type switch 消费，`Result()` 收尾。旧的 operational `RunEvent` 通道与 `StreamPayload` 通道合并成 `adaptor.Event`，不关心的事件直接不写 case（没有 drain 义务）。也演示 `stream.Cancel()`。
 
 ```bash
 go run ./examples/codex-stream -agent=claude
@@ -53,7 +90,7 @@ go run ./examples/codex-stream -agent=cursor -cancel-after=2s
 
 ### `codex-sessions`
 
-验证 `WithSessionKey` / `WithContinueSession` / `WithNewSession` / `WithForkSession` 的服务宿主语义。
+Thread 的四个动作：`ai.Thread(key)`（continue-or-start）、`ai.Thread(key, adaptor.ResumeOnly())`（continue-only，缺失时返回 `ErrThreadNotFound`）、`ai.NewThread(key)`（start-new）、`th.Fork(newKey)`。SessionID 降级为 `th.Checkpoint(ctx)` 里的 resume 元数据。
 
 ```bash
 go run ./examples/codex-sessions -agent=codex
@@ -61,7 +98,7 @@ go run ./examples/codex-sessions -agent=codex
 
 ### `codex-admin-named`
 
-默认 agent + 命名 `review` agent，并跑 Admin 控制面：`Agents`、`CheckEnvironment`、`ListModels`、`GetProfile`、`ConfigSchema`、`GetQuota`、`ListSkills`、`SetSelectedSkills`。
+**已 re-theme（目录名保留）**：v1 删除了命名注册表，"多个 agent" 就是多个 Go 变量；`sdk.Admin()` 变成 `ai.Inspect()`。示例现在构造 writer / reviewer 两个 Agent 变量，各自跑一遍只读面板 `Inspect().Environment / Models / ConfigSchema / Quota / Skills`，再演示留在 Agent 上的变更动词 `SelectSkills` / `ProfileState`。文件头有完整的 re-theme 说明。
 
 ```bash
 go run ./examples/codex-admin-named -agent=claude
@@ -71,17 +108,19 @@ go run ./examples/codex-admin-named -agent=claude
 
 ### `codex-skills-live`
 
-真实技能注入体验：把 `examples/internal/skills/write-proof` 注入选定 CLI 的临时 cloned profile，然后要求 agent 在临时 workspace 写出 proof 文件。
+技能词汇包实战：`skill.Dir(...)` 注入 `examples/internal/skills/write-proof`，`ai.Inspect().Skills(ctx)` 列出、`ai.SelectSkills(ctx, keys)` 选中，再用 call-scope 的 `adaptor.WithSkills(skill.Require(..., reason))` 声明这次运行必须拿到该技能（skills 是唯一 append 而非 replace 的选项），最后要求 agent 在临时 workspace 写出 proof 文件。
+
+同时是 **approval form A** 的示例（决策 D2）：技能要写文件，所以 `Policy.Approvals.Permission = ApprovalAsk`，由 `adaptor.OnApproval(gate.decide)` 装上宿主回调。批量 `Run` 没有流，回调是这里唯一可用的 approval 形态；请求自带 responder，所以整段代码里没有任何 request-ID 记账，也没有 `ResolveDecision` 往返——回调里直接 `req.Approve(ctx)` / `req.Deny(ctx, reason)`。输出的 `approvals` 字段是宿主自己的审计流水。
 
 ```bash
 go run ./examples/codex-skills-live -agent=cursor
 ```
 
-Pass 条件：真实 CLI 运行成功，`ListSkills` / `SetSelectedSkills` 返回有效状态，并创建内容为 `WRITE_PROOF_OK` 的 proof 文件。
+Pass 条件：真实 CLI 运行成功，`Inspect().Skills` / `SelectSkills` 返回有效状态，并创建内容为 `WRITE_PROOF_OK` 的 proof 文件。
 
 ### `profile-resources`
 
-展示宿主视角如何配置 profile-scoped resources：`skills`、`agents`、`hooks`、`instructions`、`config`，并演示 binding-level 默认值与 per-run `WithProfileResources(...)` 覆盖。
+宿主视角配置 profile-scoped resources：一个 `profile.Resources` 值同时声明 `Skills` / `Agents`（`profile.SubAgent`）/ `Hooks`（`profile.Hook`）/ `Instructions`（结构体或 `profile.Text(...)` 一行版）/ `Config`（`profile.ConfigPatch`），并演示 construction-scope 默认值与 per-call `adaptor.WithProfileResources(...)` 覆盖（replace 语义）。
 
 ```bash
 go run ./examples/profile-resources -agent=codex
@@ -89,12 +128,12 @@ go run ./examples/profile-resources -agent=codex
 
 示例会：
 
-- clone 本机 profile 到临时目录
+- `profile.CloneNative(dir, CopySettings(), LinkAuth())` clone 本机 profile 到临时目录
 - 写入 instructions / agent source 文件
-- `Admin().Default().ProfileSnapshot()` 查看默认 desired state
-- `Admin().Default().SyncProfile()` 同步默认 profile
+- `ai.ProfileState(ctx)` 查看默认 desired state（只读）
+- `ai.SyncProfile(ctx)` 同步默认 profile（变更）
 - 用默认 resources 跑一次真实 CLI
-- 用 per-run resources 覆盖后再跑一次真实 CLI
+- 用 per-call resources 覆盖后再跑一次真实 CLI
 
 Smoke checklist：
 
@@ -106,7 +145,7 @@ Smoke checklist：
 
 ### `codex-profile-full`
 
-完整 profile demo：只用 binding-level defaults 初始化选定 agent，把 MCP、hooks、instructions、skills、subagent 全部配置进隔离 provider profile，并打印真实落盘证据。默认 `-profile-mode=dedicated` 会通过 `WithCloneProfile(..., CloneProfileOptions{IncludeSettings:true, AuthMode:CloneProfileAuthLink})` 创建隔离 profile，从本机 provider profile 克隆 settings/config，并共享本机登录态；默认 probe 会尽量用 provider CLI 读取该 profile，同时直接验证 MCP server 与 hook command；`-run=true` 时会调用 `sdk.Run(ctx, prompt)`，不传任何 run option。
+完整 profile demo：只用 construction-scope defaults 初始化选定 agent，把 MCP、hooks、instructions、skills、subagent 全部配置进隔离 provider profile，并打印真实落盘证据。默认 `-profile-mode=dedicated` 会通过 `adaptor.WithProfile(profile.CloneNative(dir, profile.CopySettings(), profile.LinkAuth()))` 创建隔离 profile，从本机 provider profile 克隆 settings/config，并共享本机登录态；`-profile-mode=native` 走 `profile.Native()`。控制面用 `ai.ProfileState(ctx)`（只读）与 `ai.SyncProfile(ctx)`（变更）两个动词。默认 probe 会尽量用 provider CLI 读取该 profile，同时直接验证 MCP server 与 hook command；`-run=true` 时会调用 `ai.Run(ctx, prompt)`，不传任何 CallOption。
 
 ```bash
 go run ./examples/codex-profile-full -agent=codex -run=false
@@ -140,15 +179,16 @@ Sync-only 输出应能看到：
 
 ### `streaming-chat`
 
-纯 Go 消费 `RunHandle.StreamEvents()`。
+纯 Go 的字符级 chat UI，也是 v1 迁移里最直观的 before/after：旧版要在 goroutine 里强制 drain operational `RunEvent` 通道 **再加** `StreamPayload` 通道，最后 `Wait()`；v1 只有 `ai.Thread(key).Stream(ctx, prompt)` 一条 `Events()` 通道 + 一次 `Result()`。不处理的事件直接从 type switch 里漏过去。
 
 ```bash
 go run ./examples/streaming-chat -agent=claude -prompt="Write a haiku about streaming"
+go run ./examples/streaming-chat -agent=codex -thread=examples/streaming-chat
 ```
 
 ### `streaming-sse-server`
 
-最小 HTTP SSE server，把 SDK streaming surface 暴露为 AG-UI SSE。
+最小 HTTP SSE server：`sse.HandlerV1(ai, sse.OptionsV1{Protocol: sse.AGUI, ...})` 一行把 Agent 暴露成 AG-UI SSE。bridge 收的是 `adaptor.Runner`——`*Agent` 和 `*Thread` 都满足：传 Agent 时它按入站 `threadId` 自己绑到 `agent.Thread(...)`，传 Thread 则由宿主钉死会话。`OptionsV1.Options` 是 call scope，会追加到它启动的每一次 `Stream`。附带一个纯 JS 的浏览器页面。
 
 ```bash
 go run ./examples/streaming-sse-server -agent=cursor -addr=:8080
@@ -157,19 +197,21 @@ go run ./examples/streaming-sse-server -agent=cursor -addr=:8080
 
 ### `streaming-chat-copilotkit`
 
-CopilotKit + AG-UI demo。
+CopilotKit + AG-UI demo，也是唯一带 Go 测试的示例。宿主侧演示：一个 `for range stream.Events()` 取代旧的三条 goroutine；approval 走 D2 form B——`*adaptor.ApprovalRequest` 作为事件到达并**自带 responder**，宿主停放它、浏览器点按钮后直接 `req.Approve/Deny/Answer(ctx, ...)`，不再需要"遍历所有活跃 handle 试一遍"的兜底；历史用 `hosttools/sessionrecorder.NewEventRecorder` 按 `HostSeq` 游标重放；AG-UI 翻译用 `agui.NewEventTranslator` + `Translate` / `CloseRun(err)`。
 
 ```bash
 ./examples/streaming-chat-copilotkit/start-all.sh codex
 ./examples/streaming-chat-copilotkit/start-all.sh claude
 ./examples/streaming-chat-copilotkit/start-all.sh cursor
+
+go test ./examples/streaming-chat-copilotkit   # fake Stream + 内存 recorder，不碰真实 CLI
 ```
 
 See [`streaming-chat-copilotkit/README.md`](./streaming-chat-copilotkit/README.md).
 
 ### `streaming-chat-aguiclient`
 
-Vite + React + `@ag-ui/client`，浏览器直接调用 Go backend，不经过 CopilotKit Runtime。
+Vite + React + `@ag-ui/client`，浏览器直接调用 Go backend，不经过 CopilotKit Runtime。后端在 v1 下缩成"一个 Agent 值 + 一次 bridge 调用"，与 `streaming-sse-server` 用的是同一个 `sse.HandlerV1`。
 
 ```bash
 ./examples/streaming-chat-aguiclient/start-all.sh codex
@@ -181,7 +223,7 @@ See [`streaming-chat-aguiclient/README.md`](./streaming-chat-aguiclient/README.m
 
 ### `a2a-local`
 
-本地端到端 A2A demo：启动一个 HTTP A2A server，把选定的真实本机 agent-adaptor Runner 暴露为 A2A JSON-RPC；随后用 `pkg/clients/a2a` 读取 Agent Card、执行 streaming 调用，并用 `GetTask` 轮询最终任务。
+本地端到端 A2A demo：`a2a.NewServerV1(ai, ...)` 把真实本机 Agent 暴露为 A2A JSON-RPC；随后用 `clients/a2a` 读取 Agent Card、执行 streaming 调用，并用 `GetTask` 轮询最终任务。会话映射用 `Session: a2a.ThreadByContextID()`——每个 A2A `contextID` 成为一条自己的会话（`agent.Thread("a2a/<contextID>")`），同 context 的后续消息接着上次继续；一次性 task server 用默认的 `a2a.StatelessV1()`。A2A wire DTO 在 v1 重写中刻意保持不变，远端 peer 看到的仍是 `adapter.stream.v1` envelope。
 
 ```bash
 go run ./examples/a2a-local -agent=codex
@@ -193,7 +235,7 @@ go run ./examples/a2a-local -serve-only -addr=127.0.0.1:8080
 
 ### `session-codec-inspect`
 
-静态 inspection utility，用来查看某个 adapter 的 session codec 参数形状；它不启动本机 CLI。
+v1 里消费者只看得到两层身份：宿主自己选的 thread key，和 SDK 分配的 run ID；provider session id 已经降级成 SDK 自己持久化/回放的实现细节。这个示例是那个"确实需要往下看一眼"的稽核口：`codex.Driver(...)` 等返回的 driver 值会 promote 底层 adapter 的所有可选能力接口，所以一次 `driver.SessionCodecProvider` 类型断言就能拿到 codec，查看它如何把 session 归一成稳定参数、如何推导 resume guard fingerprint。不启动任何 CLI 进程，因此可在任意环境运行（smoke runner 里排第一个）。
 
 ```bash
 go run ./examples/session-codec-inspect -agent=cursor
@@ -201,10 +243,11 @@ go run ./examples/session-codec-inspect -agent=cursor
 
 ## Smoke Runner
 
-PowerShell runner 会先检查选定 CLI 的 `--help`，不健康就整体 skip；健康时按同一个 agent 跑所有非 server examples。
+PowerShell runner 会先检查选定 CLI 的 `--help`，不健康就整体 skip；健康时按同一个 agent 跑所有非 server examples。顺序上先跑不启动 CLI 的 `session-codec-inspect` 作为廉价 wiring smoke，最后的 `codex-profile-full` 用 `-run=false -probe=false` 只做 profile materialization，不触发付费模型调用。
 
 ```powershell
 powershell -File ./examples/run_examples.ps1 -Agent codex
 powershell -File ./examples/run_examples.ps1 -Agent claude
 powershell -File ./examples/run_examples.ps1 -Agent cursor -Command "C:\path\to\agent.exe"
+powershell -File ./examples/run_examples.ps1 -Agent codebuddy
 ```

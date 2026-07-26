@@ -1,5 +1,11 @@
-// streaming-sse-server is a minimal example HTTP server that exposes the
-// agent-adaptor streaming surface through AG-UI over Server-Sent Events.
+// streaming-sse-server exposes an Agent over AG-UI Server-Sent Events with a
+// single bridge call.
+//
+// v1 host shape (design doc §9, scenario S6): the bridge takes an
+// adaptor.Runner — the interface both *Agent and *Thread satisfy — instead of
+// an SDK-with-registry handle. Hand it the Agent and it binds each request to
+// agent.Thread(<key derived from the inbound threadId>); hand it a Thread and
+// the conversation is pinned by the host instead.
 //
 // Usage:
 //
@@ -7,7 +13,7 @@
 //	# In another terminal:
 //	curl -N -X POST http://localhost:8080/v1/chat \
 //	    -H 'Content-Type: application/json' \
-//	    -d '{"prompt":"write a haiku","sessionKey":"demo/user-1"}'
+//	    -d '{"threadId":"demo","messages":[{"id":"1","role":"user","content":"write a haiku"}]}'
 //
 // Or open http://localhost:8080/ in a browser for a tiny JS chat page.
 //
@@ -22,10 +28,10 @@ import (
 	"net/http"
 	"os"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/bridges/sse"
 	"github.com/agent-dance/agent-adaptor/examples/internal/exampleutil"
 	"github.com/agent-dance/agent-adaptor/memory"
-	"github.com/agent-dance/agent-adaptor/pkg/bridges/sse"
+	adaptor "github.com/agent-dance/agent-adaptor/next"
 )
 
 const indexHTML = `<!doctype html>
@@ -43,13 +49,17 @@ const indexHTML = `<!doctype html>
 </head>
 <body>
   <h1>agent-adaptor streaming chat</h1>
-  <p class="meta">POST /v1/chat ⇢ AG-UI events over SSE</p>
+  <p class="meta">POST /v1/chat (AG-UI RunAgentInput) &rArr; AG-UI events over SSE</p>
   <div id="out"></div>
   <textarea id="in" rows="3" placeholder="Ask something..."></textarea>
   <button id="send">Send</button>
   <script>
     const out = document.getElementById('out');
     const input = document.getElementById('in');
+    // threadId is the host-owned conversation key: keep it stable and the
+    // server keeps talking to the same thread.
+    const threadId = 'web-' + Math.random().toString(36).slice(2, 10);
+    let turn = 0;
     document.getElementById('send').addEventListener('click', async () => {
       const prompt = input.value.trim();
       if (!prompt) return;
@@ -58,7 +68,11 @@ const indexHTML = `<!doctype html>
       const resp = await fetch('/v1/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt, sessionKey: 'demo/web' }),
+        body: JSON.stringify({
+          threadId,
+          runId: threadId + '-' + (++turn),
+          messages: [{ id: String(turn), role: 'user', content: prompt }],
+        }),
       });
       const reader = resp.body.getReader();
       const decoder = new TextDecoder();
@@ -91,7 +105,7 @@ const indexHTML = `<!doctype html>
 </html>`
 
 func main() {
-	agent := flag.String("agent", "", "Local CLI agent to use: "+exampleutil.SupportedAgents()+" (default codex, or AGENT_ADAPTOR_EXAMPLE_AGENT)")
+	agentName := flag.String("agent", "", "Local CLI agent to use: "+exampleutil.SupportedAgents()+" (default codex, or AGENT_ADAPTOR_EXAMPLE_AGENT)")
 	model := flag.String("model", "", "Model to use. Defaults by agent or CODEX_MODEL/CLAUDE_MODEL/CURSOR_MODEL.")
 	command := flag.String("command", "", "Optional explicit local CLI command. Defaults by agent or CODEX_COMMAND/CLAUDE_COMMAND/CURSOR_COMMAND/PATH.")
 	addrFlag := flag.String("addr", ":8080", "HTTP listen address")
@@ -106,19 +120,22 @@ func main() {
 		slog.Error("cwd", "err", err)
 		os.Exit(1)
 	}
-	agentCfg := exampleutil.ResolveLiveAgentConfig(*agent, *model, *command, cwd)
+	agentCfg := exampleutil.ResolveLiveAgentConfig(*agentName, *model, *command, cwd)
 
-	sdk := agentadaptor.New(
-		agentadaptor.WithDefaultAgent(exampleutil.NewLiveAgentBinding(agentCfg)),
-		agentadaptor.WithSessionStore(memory.NewSessionStore()),
+	// The thread store is what turns an inbound threadId into a resumable
+	// conversation; without it every request would start fresh.
+	ai := adaptor.New(
+		exampleutil.NewLiveDriver(agentCfg),
+		adaptor.WithThreadStore(memory.NewStore()),
 	)
 
 	mux := http.NewServeMux()
-	mux.Handle("/v1/chat", sse.Handler(sdk, sse.Options{
+	mux.Handle("/v1/chat", sse.HandlerV1(ai, sse.OptionsV1{
 		Protocol:          sse.AGUI,
 		CORSAllowedOrigin: "*",
-		RunOptions: []agentadaptor.RunOption{
-			exampleutil.NonInteractiveRunOption(agentadaptor.IsolationReadOnly),
+		// Options are call scope: appended to every Stream the handler starts.
+		Options: []adaptor.CallOption{
+			exampleutil.NonInteractive(adaptor.ReadOnly),
 		},
 	}))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {

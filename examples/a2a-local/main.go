@@ -1,5 +1,15 @@
-// a2a-local starts an in-process A2A server around a real local
-// agent-adaptor Runner, then calls it through the A2A client.
+// a2a-local starts an in-process A2A server around a real local Agent, then
+// calls it through the A2A client.
+//
+// v1 host shape: the bridge takes an adaptor.Runner. Passing the *Agent plus
+// Session: a2a.ThreadByContextID() makes each distinct A2A contextID a
+// conversation of its own — agent.Thread("a2a/<contextID>") — so follow-up
+// messages in the same context continue where they left off. Swap in
+// a2a.StatelessV1() (the default) for one-shot task servers.
+//
+// The A2A wire DTO is deliberately unchanged by the v1 rewrite: remote peers
+// still see adapter.stream.v1 envelopes, so the client half of this example
+// decodes exactly what it always did.
 //
 // Usage:
 //
@@ -27,11 +37,13 @@ import (
 	"strings"
 	"time"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	bridgea2a "github.com/agent-dance/agent-adaptor/bridges/a2a"
+	clienta2a "github.com/agent-dance/agent-adaptor/clients/a2a"
+	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/examples/internal/exampleutil"
 	"github.com/agent-dance/agent-adaptor/memory"
-	bridgea2a "github.com/agent-dance/agent-adaptor/pkg/bridges/a2a"
-	clienta2a "github.com/agent-dance/agent-adaptor/pkg/clients/a2a"
+	adaptor "github.com/agent-dance/agent-adaptor/next"
+	agentprofile "github.com/agent-dance/agent-adaptor/profile"
 )
 
 const (
@@ -76,27 +88,24 @@ func main() {
 	jsonRPCURL := baseURL + jsonRPCPath
 	agentCardURL := baseURL + agentCardPath
 
-	sdk := agentadaptor.New(
-		agentadaptor.WithDefaultAgent(exampleutil.NewLiveAgentBinding(
-			agentCfg,
-			agentadaptor.WithCloneProfile(isolation.ProfileDir, agentadaptor.CloneProfileOptions{
-				IncludeSettings: true,
-				AuthMode:        agentadaptor.CloneProfileAuthLink,
-			}),
-			agentadaptor.WithDefaultWorkspace(agentadaptor.SharedWorkspace{}),
-			agentadaptor.WithDefaultIdentity(agentadaptor.AgentIdentity{
-				ID:        "a2a-local-demo",
-				TenantID:  "example",
-				ProfileID: "isolated",
-				Name:      "a2a-local",
-			}),
-			agentadaptor.WithDefaultMetadata("example", "a2a-local"),
-			agentadaptor.WithDefaultMetadata("isolation", "temporary-workspace-and-profile"),
-		)),
-		agentadaptor.WithSessionStore(memory.NewSessionStore()),
+	ai := adaptor.New(
+		exampleutil.NewLiveDriver(agentCfg),
+		adaptor.WithProfile(agentprofile.CloneNative(isolation.ProfileDir,
+			agentprofile.CopySettings(), agentprofile.LinkAuth())),
+		adaptor.WithWorkspaceSpec(adaptor.SharedWorkspace{}),
+		adaptor.WithIdentity(adaptor.Identity{
+			ID:      "a2a-local-demo",
+			Tenant:  "example",
+			Profile: "isolated",
+			Name:    "a2a-local",
+		}),
+		adaptor.WithMetadata("example", "a2a-local"),
+		adaptor.WithMetadata("isolation", "temporary-workspace-and-profile"),
+		// The thread store is what lets ThreadByContextID mint threads.
+		adaptor.WithThreadStore(memory.NewStore()),
 	)
 
-	server := bridgea2a.NewServer(sdk.Default(), bridgea2a.ServerOptions{
+	server := bridgea2a.NewServerV1(ai, bridgea2a.ServerOptionsV1{
 		AgentCard: bridgea2a.AgentCard{
 			Name:        "agent-adaptor local A2A demo",
 			Description: "Exposes the selected local agent-adaptor Runner through A2A JSON-RPC.",
@@ -114,9 +123,11 @@ func main() {
 				Examples:    []string{"Reply exactly with: A2A demo OK"},
 			}},
 		},
-		Session: bridgea2a.SessionByContextID("a2a-local"),
-		RunOptions: []agentadaptor.RunOption{
-			exampleutil.NonInteractiveRunOption(agentadaptor.IsolationReadOnly),
+		// Each A2A contextID becomes agent.Thread("a2a/<contextID>").
+		Session: bridgea2a.ThreadByContextID(),
+		// Call scope: appended to every run the bridge starts.
+		Options: []adaptor.CallOption{
+			exampleutil.NonInteractive(adaptor.ReadOnly),
 		},
 		TaskLifecycle: bridgea2a.TaskLifecycleOptions{
 			Ephemeral: &bridgea2a.EphemeralTaskStoreOptions{
@@ -165,7 +176,7 @@ func main() {
 		"isolation": map[string]any{
 			"workspace":         isolation.WorkspaceDir,
 			"profile":           isolation.ProfileDir,
-			"profile_mode":      "WithCloneProfile(IncludeSettings: true, AuthMode: CloneProfileAuthLink)",
+			"profile_mode":      "profile.CloneNative(dir, profile.CopySettings(), profile.LinkAuth())",
 			"cleanup_on_exit":   !isolation.Keep,
 			"native_settings":   "copied into isolated profile",
 			"native_mcp":        "not copied",
@@ -404,8 +415,10 @@ func consumeStream(stream *clienta2a.Stream) (streamSummary, string, error) {
 						if part.Kind != clienta2a.PartData {
 							continue
 						}
+						// The remote peer sees the stable adapter.stream.v1
+						// wire DTO, not the SDK's in-process event types.
 						payload, matched, err := bridgea2a.DecodeAdapterStreamStatus(part.Data)
-						if err == nil && matched && payload.Kind == agentadaptor.StreamTextContent {
+						if err == nil && matched && payload.Kind == driver.StreamTextContent {
 							output.WriteString(payload.Delta)
 						}
 					}
@@ -503,7 +516,7 @@ func defaultString(value, fallback string) string {
 	return value
 }
 
-func newHTTPServer(server *bridgea2a.Server) *http.Server {
+func newHTTPServer(server *bridgea2a.ServerV1) *http.Server {
 	mux := http.NewServeMux()
 	mux.Handle(agentCardPath, server.AgentCardHandler())
 	mux.Handle(jsonRPCPath, server.Handler())

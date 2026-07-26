@@ -1,3 +1,28 @@
+// codex-admin-named is the v1 Inspect panel example.
+//
+// RE-THEME NOTE (v1 API redesign)
+//
+// The directory name is historical. This example used to demonstrate two things
+// that no longer exist in v1:
+//
+//   - The *named agent registry* (agentadaptor.New + WithDefaultAgent /
+//     WithAgent("review") + sdk.Agent("review")). v1 deletes it outright: an
+//     Agent is a plain Go value, so "several agents" is just several variables.
+//     A map[string]*adaptor.Agent is a host concern, not an SDK feature — and it
+//     removes the whole error path where sdk.Agent(name) could fail at run time.
+//   - sdk.Admin(), whose two-level Admin()/Admin().Agent(name) shape only made
+//     sense because of that registry. It is now agent.Inspect(), a read-only
+//     panel hanging off the agent you already hold, plus the three mutating
+//     control-plane verbs that stayed on the Agent itself: ProfileState,
+//     SyncProfile, SelectSkills.
+//
+// The theme is therefore now "two agents, two variables, one Inspect panel
+// each". The directory keeps its name so the example index stays stable across
+// the migration.
+//
+// Usage:
+//
+//	go run ./examples/codex-admin-named -agent=codex
 package main
 
 import (
@@ -8,19 +33,21 @@ import (
 	"runtime"
 	"time"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/examples/internal/exampleutil"
+	adaptor "github.com/agent-dance/agent-adaptor/next"
+	"github.com/agent-dance/agent-adaptor/profile"
+	"github.com/agent-dance/agent-adaptor/skill"
 )
 
 const (
-	defaultSkillName = "write-proof"
-	reviewSkillName  = "review-note"
+	writeSkillName  = "write-proof"
+	reviewSkillName = "review-note"
 )
 
 func main() {
-	agent := flag.String("agent", "", "Local CLI agent to use: "+exampleutil.SupportedAgents()+" (default codex, or AGENT_ADAPTOR_EXAMPLE_AGENT)")
-	defaultModel := flag.String("default-model", "", "Model for the default agent. Defaults by agent or CODEX_MODEL/CLAUDE_MODEL/CURSOR_MODEL.")
-	reviewModel := flag.String("review-model", "", "Model for the named review agent. Defaults by agent or CODEX_MODEL/CLAUDE_MODEL/CURSOR_MODEL.")
+	agentName := flag.String("agent", "", "Local CLI agent to use: "+exampleutil.SupportedAgents()+" (default codex, or AGENT_ADAPTOR_EXAMPLE_AGENT)")
+	writerModel := flag.String("writer-model", "", "Model for the writer agent. Defaults by agent or CODEX_MODEL/CLAUDE_MODEL/CURSOR_MODEL.")
+	reviewModel := flag.String("review-model", "", "Model for the reviewer agent. Defaults by agent or CODEX_MODEL/CLAUDE_MODEL/CURSOR_MODEL.")
 	command := flag.String("command", "", "Optional explicit local CLI command. Defaults by agent or CODEX_COMMAND/CLAUDE_COMMAND/CURSOR_COMMAND/PATH.")
 	timeout := flag.Duration("timeout", 5*time.Minute, "Maximum time to wait for each run")
 	keepProfiles := flag.Bool("keep-profiles", false, "Keep the temporary cloned profiles after the example finishes")
@@ -28,157 +55,116 @@ func main() {
 
 	cwd, err := os.Getwd()
 	exampleutil.Must(err, "resolve current working directory")
-	defaultCfg := exampleutil.ResolveLiveAgentConfig(*agent, *defaultModel, *command, cwd)
-	reviewCfg := defaultCfg
-	reviewCfg.Model = exampleutil.ResolveAgentModel(defaultCfg.Agent, *reviewModel)
+	writerCfg := exampleutil.ResolveLiveAgentConfig(*agentName, *writerModel, *command, cwd)
+	reviewCfg := writerCfg
+	reviewCfg.Model = exampleutil.ResolveAgentModel(writerCfg.Agent, *reviewModel)
 
-	profileRoot, err := os.MkdirTemp("", "agent-adaptor-admin-named-*")
+	profileRoot, err := os.MkdirTemp("", "agent-adaptor-inspect-*")
 	exampleutil.Must(err, "create temporary profile root")
 	if !*keepProfiles {
 		defer func() { _ = os.RemoveAll(profileRoot) }()
 	}
 
-	skillSet := agentadaptor.SkillSet{
-		defaultSkillName: {
-			Key:    defaultSkillName,
-			Source: agentadaptor.SkillFromPath{Path: locateExampleSkill(defaultSkillName)},
-		},
-		reviewSkillName: {
-			Key:    reviewSkillName,
-			Source: agentadaptor.SkillFromPath{Path: locateExampleSkill(reviewSkillName)},
-		},
+	clone := []profile.CloneOption{
+		profile.CopySettings(),
+		profile.CopyMCP(),
+		profile.CopySkills(),
+		// LinkAuth shares the login state without copying token files.
+		profile.LinkAuth(),
 	}
 
-	sdk := agentadaptor.New(
-		agentadaptor.WithDefaultAgent(exampleutil.NewLiveAgentBinding(
-			defaultCfg,
-			agentadaptor.WithCloneProfile(filepath.Join(profileRoot, "default"), agentadaptor.CloneProfileOptions{
-				IncludeSettings: true,
-				IncludeMCP:      true,
-				IncludeSkills:   true,
-				AuthMode:        agentadaptor.CloneProfileAuthLink,
-			}),
-			agentadaptor.WithDefaultIdentity(agentadaptor.AgentIdentity{
-				ID:       "default-agent",
-				TenantID: "examples",
-				Name:     "default",
-			}),
-			agentadaptor.WithDefaultSkills(agentadaptor.Key(defaultSkillName), agentadaptor.Key(reviewSkillName)),
-		)),
-		agentadaptor.WithAgent("review", exampleutil.NewLiveAgentBinding(
-			reviewCfg,
-			agentadaptor.WithCloneProfile(filepath.Join(profileRoot, "review"), agentadaptor.CloneProfileOptions{
-				IncludeSettings: true,
-				IncludeMCP:      true,
-				IncludeSkills:   true,
-				AuthMode:        agentadaptor.CloneProfileAuthLink,
-			}),
-			agentadaptor.WithDefaultIdentity(agentadaptor.AgentIdentity{
-				ID:       "review-agent",
-				TenantID: "examples",
-				Name:     "review",
-			}),
-			agentadaptor.WithDefaultSkills(agentadaptor.Key(reviewSkillName)),
-		)),
-		agentadaptor.WithSkillSet(skillSet),
+	// Two agents = two variables. Each owns its driver value, its cloned
+	// provider profile, its identity, and its default skills. Nothing registers
+	// them anywhere; if a host needs lookup-by-name it owns that map.
+	writer := adaptor.New(
+		exampleutil.NewLiveDriver(writerCfg),
+		adaptor.WithProfile(profile.CloneNative(filepath.Join(profileRoot, "writer"), clone...)),
+		adaptor.WithIdentity(adaptor.Identity{ID: "writer-agent", Tenant: "examples", Name: "writer"}),
+		adaptor.WithSkills(skill.Dir(exampleSkillDir(writeSkillName)), skill.Dir(exampleSkillDir(reviewSkillName))),
+		exampleutil.NonInteractive(adaptor.WorkspaceWrite),
+	)
+
+	reviewer := adaptor.New(
+		exampleutil.NewLiveDriver(reviewCfg),
+		adaptor.WithProfile(profile.CloneNative(filepath.Join(profileRoot, "reviewer"), clone...)),
+		adaptor.WithIdentity(adaptor.Identity{ID: "review-agent", Tenant: "examples", Name: "reviewer"}),
+		adaptor.WithSkills(skill.Dir(exampleSkillDir(reviewSkillName))),
+		exampleutil.NonInteractive(adaptor.WorkspaceWrite),
 	)
 
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
 
-	defaultResult, err := sdk.Run(ctx, "Reply with 'default agent ok' and one short sentence.",
-		exampleutil.NonInteractiveRunOption(agentadaptor.IsolationWorkspaceWrite))
-	exampleutil.Must(err, "run default agent")
-	exampleutil.Check(defaultResult.DriverType == defaultCfg.DriverType, "expected default driver type %q, got %q", defaultCfg.DriverType, defaultResult.DriverType)
-	exampleutil.Check(defaultResult.ExitCode == 0, "expected default exit code 0, got %d", defaultResult.ExitCode)
+	writerRes, err := writer.Run(ctx, "Reply with 'writer agent ok' and one short sentence.")
+	exampleutil.Must(err, "run writer agent")
+	reviewRes, err := reviewer.Run(ctx, "Reply with 'review agent ok' and one short sentence.")
+	exampleutil.Must(err, "run reviewer agent")
 
-	reviewRunner, err := sdk.Agent("review")
-	exampleutil.Must(err, "lookup review agent")
-	reviewResult, err := reviewRunner.Run(ctx, "Reply with 'review agent ok' and one short sentence.",
-		exampleutil.NonInteractiveRunOption(agentadaptor.IsolationWorkspaceWrite))
-	exampleutil.Must(err, "run review agent")
-	exampleutil.Check(reviewResult.DriverType == reviewCfg.DriverType, "expected review driver type %q, got %q", reviewCfg.DriverType, reviewResult.DriverType)
-	exampleutil.Check(reviewResult.ExitCode == 0, "expected review exit code 0, got %d", reviewResult.ExitCode)
+	// Inspect() is the read-only panel: it never mutates and it degrades
+	// honestly — a driver that cannot probe something returns an explicitly
+	// unsupported report instead of a fabricated success.
+	panel := reviewer.Inspect()
 
-	admin := sdk.Admin()
-	agents := admin.Agents()
-	exampleutil.Check(len(agents) == 2, "expected 2 agents, got %d", len(agents))
+	env, err := panel.Environment(ctx)
+	exampleutil.Must(err, "probe reviewer environment")
+	exampleutil.Check(env.Healthy, "expected the reviewer environment to be healthy: %#v", env)
 
-	defaultAdmin := admin.Default()
-	defaultInfo := defaultAdmin.Info()
-	exampleutil.Check(defaultInfo.Default, "expected default agent info to be marked as default")
-	exampleutil.Check(defaultInfo.Name == "default", "expected default agent name to be default, got %q", defaultInfo.Name)
-	exampleutil.Check(defaultInfo.DriverType == defaultCfg.DriverType, "expected default admin driver type %q, got %q", defaultCfg.DriverType, defaultInfo.DriverType)
+	models, err := panel.Models(ctx)
+	exampleutil.Must(err, "list reviewer models")
+	exampleutil.Check(len(models) > 0, "expected a non-empty model list")
 
-	reviewAdmin, err := admin.Agent("review")
-	exampleutil.Must(err, "lookup review agent admin")
-	reviewInfo := reviewAdmin.Info()
-	exampleutil.Check(!reviewInfo.Default, "expected review agent info to not be default")
-	exampleutil.Check(reviewInfo.Name == "review", "expected review agent name to be review, got %q", reviewInfo.Name)
+	schema, err := panel.ConfigSchema(ctx)
+	exampleutil.Must(err, "load reviewer config schema")
+	quota, err := panel.Quota(ctx)
+	exampleutil.Must(err, "load reviewer quota report")
 
-	envReport, err := reviewAdmin.CheckEnvironment(ctx)
-	exampleutil.Must(err, "check review agent environment")
-	exampleutil.Check(envReport.Healthy, "expected review environment to be healthy: %#v", envReport)
+	writerSkills, err := writer.Inspect().Skills(ctx)
+	exampleutil.Must(err, "read writer skills")
+	exampleutil.Check(writerSkills.Supported, "expected the writer driver to support skills")
+	exampleutil.Check(len(writerSkills.Selected) == 2, "expected 2 selected writer skills, got %d", len(writerSkills.Selected))
+	exampleutil.Check(len(writerSkills.Warnings) == 0, "expected no writer skill warnings, got %#v", writerSkills.Warnings)
 
-	models, err := reviewAdmin.ListModels(ctx)
-	exampleutil.Must(err, "list review agent models")
-	exampleutil.Check(len(models) > 0, "expected review agent models to be non-empty")
-	profile, err := reviewAdmin.GetProfile(ctx)
-	exampleutil.Must(err, "load review profile")
-	schema, err := reviewAdmin.ConfigSchema(ctx)
-	exampleutil.Must(err, "load review config schema")
-	quota, err := reviewAdmin.GetQuota(ctx)
-	exampleutil.Must(err, "load review quota report")
+	// SelectSkills is a control-plane *verb* and therefore lives on the Agent,
+	// not on the read-only Inspector. It returns the same snapshot shape.
+	selected, err := reviewer.SelectSkills(ctx, []string{writeSkillName})
+	exampleutil.Must(err, "select reviewer skills")
+	exampleutil.Check(len(selected.Selected) == 1 && selected.Selected[0] == writeSkillName,
+		"expected the reviewer selection to be [%s], got %#v", writeSkillName, selected.Selected)
 
-	defaultSkills, err := defaultAdmin.ListSkills(ctx)
-	exampleutil.Must(err, "list default agent skills")
-	exampleutil.Check(defaultSkills.Supported, "expected default agent skills to be supported")
-	exampleutil.Check(len(defaultSkills.Selected) == 2, "expected default agent selected skills length 2, got %d", len(defaultSkills.Selected))
-	exampleutil.Check(len(defaultSkills.Warnings) == 0, "expected default skills warnings to be empty, got %#v", defaultSkills.Warnings)
-	exampleutil.Check(!snapshotHasState(defaultSkills, agentadaptor.SkillStateMissing), "expected default skills to avoid missing entries, got %#v", defaultSkills.Entries)
-
-	selectedSkills, err := reviewAdmin.SetSelectedSkills(ctx, []string{defaultSkillName})
-	exampleutil.Must(err, "set selected skills for review agent")
-	exampleutil.Check(selectedSkills.Supported, "expected selected skills snapshot to be supported")
-	exampleutil.Check(len(selectedSkills.Selected) == 1, "expected selected skills length 1, got %d", len(selectedSkills.Selected))
-	exampleutil.Check(selectedSkills.Selected[0] == defaultSkillName, "expected selected skill to be %q, got %q", defaultSkillName, selectedSkills.Selected[0])
-	exampleutil.Check(len(selectedSkills.Warnings) == 0, "expected selected skills warnings to be empty, got %#v", selectedSkills.Warnings)
-	exampleutil.Check(!snapshotHasState(selectedSkills, agentadaptor.SkillStateMissing), "expected selected skills to avoid missing entries, got %#v", selectedSkills.Entries)
+	// ProfileState reports desired-vs-observed for the cloned profile; nothing
+	// is written. SyncProfile is the mutating twin.
+	state, err := reviewer.ProfileState(ctx)
+	exampleutil.Must(err, "read reviewer profile state")
 
 	exampleutil.PrintJSON(map[string]any{
-		"example":      "admin-named",
-		"agent":        exampleutil.LiveAgentSummary(defaultCfg),
+		"example":      "inspect-panel",
+		"agent":        exampleutil.LiveAgentSummary(writerCfg),
 		"profile_root": profileRoot,
-		"agents":       agents,
-		"default": map[string]any{
-			"result": defaultResult,
-			"info":   defaultInfo,
-			"skills": defaultSkills,
+		"writer": map[string]any{
+			"run_id": writerRes.RunID,
+			"model":  writerRes.Model,
+			"skills": writerSkills.Selected,
 		},
-		"review": map[string]any{
-			"result":          reviewResult,
-			"info":            reviewInfo,
-			"environment":     envReport,
-			"profile":         profile,
+		"reviewer": map[string]any{
+			"run_id":          reviewRes.RunID,
+			"model":           reviewRes.Model,
+			"environment":     env,
 			"model_count":     len(models),
 			"config_schema":   schema,
 			"quota":           quota,
-			"selected_skills": selectedSkills,
+			"selected_skills": selected.Selected,
+			"profile": map[string]any{
+				"kind":        state.Kind,
+				"fingerprint": state.Fingerprint,
+				"resources":   state.Resources,
+				"warnings":    state.Warnings,
+			},
 		},
 	})
 }
 
-func locateExampleSkill(name string) string {
+func exampleSkillDir(name string) string {
 	_, file, _, ok := runtime.Caller(0)
 	exampleutil.Check(ok, "locate current example source")
 	return filepath.Clean(filepath.Join(filepath.Dir(file), "..", "internal", "skills", name))
-}
-
-func snapshotHasState(snapshot agentadaptor.SkillSnapshot, state agentadaptor.SkillState) bool {
-	for _, entry := range snapshot.Entries {
-		if entry.State == state {
-			return true
-		}
-	}
-	return false
 }

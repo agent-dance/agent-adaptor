@@ -4,15 +4,22 @@
 //
 // What this example shows:
 //
-//  1. Standard AG-UI streaming (text / tool_call / reasoning)
-//  2. HITL v2 cards:
+//  1. Standard AG-UI streaming (text / tool_call / thinking)
+//  2. Approval cards, v1 form B — the request arrives as a
+//     *adaptor.ApprovalRequest event on the same stream and carries its own
+//     responder (decision D2):
 //     - PlanReview → ExitPlanMode approval card
 //     - Question   → structured AskUserQuestion card
 //     - Permission → tool-call gate (bash / write / …)
 //  3. Recovery protocol (docs/workstream-hitl-v2.md §4.3.1):
 //     - GET  /session/events?thread_id=T&after=N → replay history
-//     - GET  /decision/pending?thread_id=T       → unresolved decisions
+//     - GET  /decision/pending?thread_id=T       → unresolved approvals
 //     - POST /decision/resolve                   → host-side resolve
+//
+// v1 shape: one *adaptor.Agent, one Thread per browser threadId, one
+// Stream per request. The three goroutines the legacy backend needed
+// (operational event drain, Wait, DecisionRequests watcher) collapse into a
+// single range over stream.Events() plus one stream.Result() call.
 //
 // Layout:
 //
@@ -43,8 +50,8 @@ func main() {
 	cors := envOr("CORS_ORIGIN", "*")
 	cwd, _ := os.Getwd()
 
-	sdk, driver := exampleutil.NewAGUIStreamingSDK(cwd)
-	server := newAppServer(sdk, driver, cors)
+	ai, driver := exampleutil.NewAGUIStreamingAgent(cwd)
+	server := newAppServer(ai, driver, cors)
 
 	slog.Info("agent-adaptor AG-UI backend listening",
 		"agent", driver,

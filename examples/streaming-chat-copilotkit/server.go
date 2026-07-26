@@ -7,22 +7,22 @@ import (
 	"strconv"
 	"time"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/bridges/agui"
+	"github.com/agent-dance/agent-adaptor/bridges/sse"
 	"github.com/agent-dance/agent-adaptor/examples/internal/exampleutil"
-	"github.com/agent-dance/agent-adaptor/pkg/bridges/agui"
-	ssebridge "github.com/agent-dance/agent-adaptor/pkg/bridges/sse"
+	adaptor "github.com/agent-dance/agent-adaptor/next"
 )
 
 type appServer struct {
-	sdk    agentadaptor.SDK
+	agent  *adaptor.Agent
 	driver string
 	cors   string
 	store  *threadStore
 }
 
-func newAppServer(sdk agentadaptor.SDK, driver, cors string) *appServer {
+func newAppServer(agent *adaptor.Agent, driver, cors string) *appServer {
 	return &appServer{
-		sdk:    sdk,
+		agent:  agent,
 		driver: driver,
 		cors:   cors,
 		store:  newThreadStore(),
@@ -56,18 +56,13 @@ func (s *appServer) handleAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	handle, err := s.sdk.Start(r.Context(), invocation.prompt, invocation.opts...)
-	if err != nil {
-		http.Error(w, "start: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	defer handle.Cancel(r.Context())
+	// The browser's threadId is the host-owned conversation key; Thread turns
+	// it into continue-or-start semantics against the agent's thread store.
+	// Stream is the verb — there is no WithStreaming option to remember.
+	stream := s.agent.Thread(invocation.threadKey).Stream(r.Context(), invocation.prompt, invocation.opts...)
+	defer stream.Cancel()
 
-	// Synthesize the user turn as a text.* triple tagged RoleUser so it
-	// flows through the same fan-out (recorder + Translator + SSE) as
-	// assistant text. See docs/workstream-user-message-event.md.
-	userTurn := input.UserTurnPayloads(handle.RunID())
-	session := newAGUIRunSession(r.Context(), handle, s.store, invocation.threadID, userTurn, w)
+	session := newAGUIRunSession(r.Context(), stream, s.store, invocation.threadID, invocation.userTurn, w)
 	if err := session.Serve(); err != nil && !errors.Is(err, r.Context().Err()) {
 		slog.Warn("agui stream ended with error", "err", err, "thread_id", invocation.threadID)
 	}
@@ -83,11 +78,10 @@ func (s *appServer) handleSessionEvents(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "thread_id required", http.StatusBadRequest)
 		return
 	}
-	// `after` is a host-scoped cursor (sessionrecorder.HostSeq), NOT
-	// StreamPayload.Seq. HostSeq is monotonic across runs that share a
-	// thread_id; StreamPayload.Seq restarts at zero on every new run and
-	// would corrupt incremental recovery. See
-	// docs/workstream-session-recorder.md.
+	// `after` is a host-scoped cursor (sessionrecorder.HostSeq). Unified
+	// events carry no cross-run sequence number of their own, so this cursor
+	// is the only thing that stays monotonic when a thread spans several
+	// runs. See docs/workstream-session-recorder.md.
 	afterHostSeq, _ := strconv.ParseUint(r.URL.Query().Get("after"), 10, 64)
 	records := s.store.historyAfter(threadID, afterHostSeq)
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -124,7 +118,10 @@ func (s *appServer) handleDecisionResolve(w http.ResponseWriter, r *http.Request
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	body, err := ssebridge.DecodeDecisionResolveRequest(r)
+	// The inbound DTO is protocol-level and unchanged across v1, so the
+	// browser code needed no edit when the SDK moved to responder-carrying
+	// approval requests.
+	body, err := sse.DecodeDecisionResolveRequest(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -137,10 +134,8 @@ func (s *appServer) handleDecisionResolve(w http.ResponseWriter, r *http.Request
 		http.Error(w, "thread_id (RunID in body or ?thread_id=) required", http.StatusBadRequest)
 		return
 	}
-	if err := s.store.resolveDecision(threadID, body.RequestID, body.ToDecisionResponse()); err != nil {
-		if ssebridge.WriteDecisionResolveError(w, err) {
-			return
-		}
+	if writeApprovalError(w, s.store.resolveDecision(r.Context(), threadID, *body)) {
+		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -151,9 +146,11 @@ func (s *appServer) handleHealth(w http.ResponseWriter, _ *http.Request) {
 }
 
 type agentInvocation struct {
-	threadID string
-	prompt   string
-	opts     []agentadaptor.RunOption
+	threadID  string
+	threadKey string
+	prompt    string
+	opts      []adaptor.CallOption
+	userTurn  []adaptor.Event
 }
 
 func (s *appServer) buildInvocation(input *agui.RunAgentInput) (agentInvocation, error) {
@@ -167,17 +164,34 @@ func (s *appServer) buildInvocation(input *agui.RunAgentInput) (agentInvocation,
 		threadID = "anon-" + strconv.FormatInt(time.Now().UnixNano(), 36)
 	}
 
-	opts := []agentadaptor.RunOption{
-		agentadaptor.WithStreaming(),
-		exampleutil.AGUIExampleRunPolicy(),
-	}
-	if ns, key := input.SessionKey(); ns != "" {
-		opts = append(opts, agentadaptor.WithSessionKey(ns, key))
+	// Two ID layers only (design doc §2.6): the host-owned thread key and the
+	// SDK-assigned run id. The legacy "session namespace + key" pair collapses
+	// into this one string.
+	namespace, key := input.SessionKey()
+	threadKey := namespace + "/" + key
+	if namespace == "" || key == "" {
+		threadKey = "agui/" + threadID
 	}
 
 	return agentInvocation{
-		threadID: threadID,
-		prompt:   prompt,
-		opts:     opts,
+		threadID:  threadID,
+		threadKey: threadKey,
+		prompt:    prompt,
+		// Call scope: overrides for this invocation only. The agent-level
+		// default policy was already installed by NewAGUIStreamingAgent;
+		// repeating it here shows the "nearer scope wins" merge rule.
+		opts:     []adaptor.CallOption{exampleutil.AGUIExamplePolicy()},
+		userTurn: userTurnEvents(lastUserMessageID(input), prompt),
 	}, nil
+}
+
+// lastUserMessageID returns the AG-UI message id of the latest user-role
+// message so the recorded user turn keeps the browser's own id.
+func lastUserMessageID(input *agui.RunAgentInput) string {
+	for i := len(input.Messages) - 1; i >= 0; i-- {
+		if input.Messages[i].Role == agui.RoleUser {
+			return input.Messages[i].ID
+		}
+	}
+	return ""
 }
