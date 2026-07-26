@@ -58,6 +58,7 @@ type RunSettings struct {
 	metadata     map[string]string
 	identity     *Identity
 	policy       *Policy
+	approval     ApprovalHandler
 
 	// Merge-semantics anchor (P3.2): skills are the single append-merged
 	// option family in the "nearer scope wins; skills append, everything
@@ -102,6 +103,10 @@ func (s *RunSettings) SetIdentity(id Identity) { s.identity = &id }
 // does not merge field-wise).
 func (s *RunSettings) SetPolicy(p Policy) { s.policy = &p }
 
+// SetApprovalHandler replaces the approval callback (form A of approval
+// consumption). A nil handler restores event-form consumption.
+func (s *RunSettings) SetApprovalHandler(h ApprovalHandler) { s.approval = h }
+
 // clone returns a deep copy so per-call overrides never leak back into the
 // agent defaults (and one run never pollutes the next).
 func (s RunSettings) clone() RunSettings {
@@ -130,9 +135,12 @@ type AgentSettings struct {
 	// threadstore.Store and wire it into session coordination.
 	threadStore any
 
-	// eventBuffer is stored in P0 and consumed in P1 by the Stream event
-	// pipeline (backpressure buffer size). TODO(P1): wire into the sink.
+	// eventBuffer sizes the per-run event channel (0 = default 1024).
 	eventBuffer int
+
+	// blockingEvents switches the event pipeline from the default
+	// drop-with-aggregated-marker strategy to blocking delivery.
+	blockingEvents bool
 }
 
 // SetThreadStore injects the thread storage backend (stateful conversations).
@@ -140,6 +148,9 @@ func (s *AgentSettings) SetThreadStore(store any) { s.threadStore = store }
 
 // SetEventBuffer sets the per-run event channel buffer size.
 func (s *AgentSettings) SetEventBuffer(n int) { s.eventBuffer = n }
+
+// SetBlockingEvents switches event delivery to blocking (no-drop) mode.
+func (s *AgentSettings) SetBlockingEvents() { s.blockingEvents = true }
 
 // ============ In-package function adapters (one per scope) ============
 
@@ -211,6 +222,20 @@ func WithPolicy(p Policy) SharedOption {
 	return sharedOptionFunc(func(s *RunSettings) { s.SetPolicy(p) })
 }
 
+// OnApproval installs the approval callback — form A of approval
+// consumption. Every human-in-the-loop request whose policy mode is "ask"
+// invokes the handler with a live *ApprovalRequest; the handler resolves it
+// (Approve / Deny / Answer) and returns nil, or returns an error to abort
+// the run. When no handler is installed the request arrives as a
+// *ApprovalRequest event on the Stream instead (form B); either way an
+// unconsumed request times out into the Policy.Approvals fallback.
+//
+// In New the handler is the agent default; in Run/Stream it overrides this
+// invocation only ("nearer scope wins").
+func OnApproval(h ApprovalHandler) SharedOption {
+	return sharedOptionFunc(func(s *RunSettings) { s.SetApprovalHandler(h) })
+}
+
 // WithThreadStore injects the thread storage backend that enables stateful
 // conversations. Construction scope only; passing it to Run/Stream is a
 // compile error (missing method ApplyRun).
@@ -222,9 +247,17 @@ func WithThreadStore(store any) Option {
 }
 
 // WithEventBuffer sets the per-run event channel buffer size used by the
-// streaming pipeline. Construction scope only.
-//
-// TODO(P1): consumed when Stream/Event land; in P0 the value is stored only.
+// streaming pipeline (default 1024). When the consumer falls behind and the
+// buffer fills, events are dropped and surfaced as one aggregated
+// Dropped{Count} marker. Construction scope only.
 func WithEventBuffer(n int) Option {
 	return newOptionFunc(func(s *AgentSettings) { s.SetEventBuffer(n) })
+}
+
+// WithBlockingEvents switches event delivery from the default
+// drop-with-marker strategy to blocking: EmitStream/Emit wait for the
+// consumer, no event is ever dropped, and a stalled consumer stalls the
+// driver. Construction scope only.
+func WithBlockingEvents() Option {
+	return newOptionFunc(func(s *AgentSettings) { s.SetBlockingEvents() })
 }

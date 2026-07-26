@@ -48,10 +48,14 @@ type Policy struct {
 	// Browser gates the provider's browser tooling.
 	Browser FeatureLevel
 
-	// Approvals (HITL timeout / retry / fallback policy — the legacy
-	// HumanDecisionPolicy semantics) joins in P1.3 together with
-	// ApprovalRequest and the ApprovalsAutoDeny / ApproveAll / DenyAll
-	// presets.
+	// Approvals routes and bounds human-in-the-loop requests: per-kind
+	// modes (ask / auto-approve / auto-deny), the response Timeout, the
+	// OnTimeout / OnReject fallbacks, and MaxRetries. Zero-valued fields
+	// inherit the SDK defaults (Permission/PlanReview ask, Question
+	// auto-deny, 30s timeout, abort on timeout/reject, 3 retries) — the
+	// legacy HumanDecisionPolicy semantics, unchanged. See ApprovalPolicy
+	// and the ApprovalsAutoDeny preset.
+	Approvals ApprovalPolicy
 }
 
 // Presets mapped from the legacy run_policy.go vocabulary. The legacy
@@ -70,9 +74,9 @@ var (
 // driverPolicy maps the consumer Policy onto the driver SPI contract.
 func (p Policy) driverPolicy() driver.RunPolicy {
 	return driver.RunPolicy{
-		Isolation: p.Sandbox,
-		WebSearch: p.WebSearch,
-		Browser:   p.Browser,
-		// HumanDecision: wired in P1.3 via Policy.Approvals.
+		Isolation:     p.Sandbox,
+		WebSearch:     p.WebSearch,
+		Browser:       p.Browser,
+		HumanDecision: p.Approvals,
 	}
 }

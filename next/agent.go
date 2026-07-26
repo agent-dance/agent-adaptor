@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"fmt"
 	"maps"
 
 	"github.com/agent-dance/agent-adaptor/driver"
@@ -19,11 +18,9 @@ type Driver = driver.Driver
 // Runner is the single execution contract shared by Agent and, from P2 on,
 // Thread. Bridges, RunAs[T], and host decorators accept a Runner so both are
 // interchangeable.
-//
-// Stream joins the interface in P1 (decision D4: Stream is a small
-// interface, one event channel, one Result() close-out).
 type Runner interface {
 	Run(ctx context.Context, prompt string, opts ...CallOption) (*Result, error)
+	Stream(ctx context.Context, prompt string, opts ...CallOption) Stream
 }
 
 // Agent is a configured, ready-to-talk agent: one driver plus agent-level
@@ -56,7 +53,12 @@ func New(d driver.Driver, opts ...Option) *Agent {
 	return a
 }
 
-// Run executes one prompt to completion and returns the Result.
+// Run executes one prompt to completion and returns the Result. It is
+// Stream + drain + Result() — there is no separate batch execution path
+// (P1.4): Run consumes the same unified event pipeline and discards the
+// events. Approvals still work through the OnApproval callback (form A);
+// without a handler, an "ask" approval times out into the Policy.Approvals
+// fallback, since Run has no event consumer to answer it.
 //
 // Per-call options override the agent defaults for this invocation only
 // ("nearer scope wins; skills append, everything else replaces"); the agent
@@ -68,52 +70,13 @@ func New(d driver.Driver, opts ...Option) *Agent {
 // process crash, protocol breakage) return plain wrapped errors. Both travel
 // the single err path.
 func (a *Agent) Run(ctx context.Context, prompt string, opts ...CallOption) (*Result, error) {
-	eff := a.defaults.RunSettings.clone()
-	for _, o := range opts {
-		if o == nil {
-			continue
-		}
-		o.ApplyRun(&eff)
+	st := a.Stream(ctx, prompt, opts...)
+	for range st.Events() {
+		// Drain: Run has no event consumer. Default drop-mode
+		// backpressure means an unread buffer never blocks the driver;
+		// draining keeps blocking mode (WithBlockingEvents) live too.
 	}
-
-	// P0 minimal execution path: merge settings → build driver.Request →
-	// drive → translate Response/RunFailure into Result/RunError.
-	// TODO(P1–P3): session coordination, skill materialization, profile &
-	// MCP resolution, and workspace management are taken over by
-	// internal/engine; this thin pipeline must not grow them.
-
-	if eff.timeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, eff.timeout)
-		defer cancel()
-	}
-	if eff.identity != nil {
-		ctx = contextWithIdentity(ctx, *eff.identity)
-	}
-
-	runID, err := newRunID()
-	if err != nil {
-		return nil, fmt.Errorf("adaptor: generate run id: %w", err)
-	}
-
-	resp, err := a.driver.Run(ctx, buildRequest(runID, prompt, &eff), noopSink{})
-	if err != nil {
-		// Infrastructure failure: ctx cancellation/deadline, process
-		// crash, protocol breakage. Wrap and pass through so
-		// errors.Is/As reach the cause.
-		return nil, fmt.Errorf("adaptor: run %s: %w", runID, err)
-	}
-
-	res := resultFromResponse(runID, resp)
-	if resp.Failure != nil {
-		return nil, &RunError{
-			Reason:  failureReason(resp.Failure.Code),
-			Message: resp.Failure.Message,
-			Details: maps.Clone(resp.Failure.Metadata),
-			Result:  res,
-		}
-	}
-	return res, nil
+	return st.Result()
 }
 
 // buildRequest maps the effective settings onto the driver SPI request.
@@ -149,13 +112,6 @@ func buildRequest(runID, prompt string, eff *RunSettings) driver.Request {
 	}
 	return req
 }
-
-// noopSink is the minimal EventSink for the P0 batch path. The typed event
-// pipeline (with WithEventBuffer backpressure) replaces it in P1.
-type noopSink struct{}
-
-func (noopSink) Emit(driver.RunEvent) error            { return nil }
-func (noopSink) EmitStream(driver.StreamPayload) error { return nil }
 
 // newRunID mints the SDK-assigned execution identifier.
 func newRunID() (string, error) {
