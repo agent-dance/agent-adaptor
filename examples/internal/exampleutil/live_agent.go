@@ -8,16 +8,19 @@ import (
 	"strings"
 	"time"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/claude"
+	"github.com/agent-dance/agent-adaptor/codebuddy"
 	"github.com/agent-dance/agent-adaptor/codex"
 	"github.com/agent-dance/agent-adaptor/cursor"
+	"github.com/agent-dance/agent-adaptor/driver"
+	adaptor "github.com/agent-dance/agent-adaptor/next"
 )
 
 const (
-	AgentCodex  = "codex"
-	AgentClaude = "claude"
-	AgentCursor = "cursor"
+	AgentCodex     = "codex"
+	AgentClaude    = "claude"
+	AgentCursor    = "cursor"
+	AgentCodebuddy = "codebuddy"
 )
 
 // LiveAgentConfig is the resolved local-CLI agent configuration shared by the
@@ -30,13 +33,12 @@ type LiveAgentConfig struct {
 	Command     string
 	CommandNote string
 	CWD         string
-	Env         []agentadaptor.EnvBinding
+	Env         []driver.EnvBinding
 	ExtraArgs   []string
-	CursorMode  agentadaptor.CursorMode
 }
 
 func SupportedAgents() string {
-	return "codex, claude, cursor"
+	return "codex, claude, cursor, codebuddy"
 }
 
 func ResolveLiveAgent(raw string) string {
@@ -65,38 +67,47 @@ func DriverTypeForAgent(agent string) string {
 		return claude.DriverType
 	case AgentCursor:
 		return cursor.DriverType
+	case AgentCodebuddy:
+		return codebuddy.DriverType
 	default:
 		return codex.DriverType
 	}
 }
 
-func NewLiveAgentBinding(cfg LiveAgentConfig, opts ...agentadaptor.AgentOption) agentadaptor.AgentBinding {
+// NewLiveDriver builds the v1 driver value for the resolved local CLI. The
+// four built-in packages all expose the same one-line shape —
+// codex.Driver(codex.Config{...}) — so the example helper is just a switch
+// over which Config type to fill.
+//
+// v1 note: a driver is now a plain value handed to adaptor.New; there is no
+// binding wrapper and no named registry. Agent-level defaults (skills,
+// profile, policy, ...) are adaptor.Option values passed to adaptor.New
+// alongside this driver.
+func NewLiveDriver(cfg LiveAgentConfig) driver.Driver {
 	agent := normalizeAgent(cfg.Agent, "agent")
-	common := agentadaptor.CommonConfig{
-		Command:   cfg.Command,
-		CWD:       cfg.CWD,
-		Env:       cfg.Env,
-		ExtraArgs: cfg.ExtraArgs,
-	}
 	model := ResolveAgentModel(agent, cfg.Model)
 
 	switch agent {
 	case AgentClaude:
-		return claude.New(agentadaptor.ClaudeConfig{
-			CommonConfig: common,
-			Model:        model,
-		}, opts...)
+		c := claude.Config{Model: model}
+		c.Command, c.CWD, c.Env, c.ExtraArgs = cfg.Command, cfg.CWD, cfg.Env, cfg.ExtraArgs
+		// PersistentProcess: true — the claude driver's resident-process reuse
+		// lives on the cl/opt_examples branch and is out of v1.0.0 scope
+		// (implementation plan R9). It becomes an additive Config field once
+		// that branch merges; the v1 API shape does not change.
+		return claude.Driver(c)
 	case AgentCursor:
-		return cursor.New(agentadaptor.CursorConfig{
-			CommonConfig: common,
-			Model:        model,
-			Mode:         cfg.CursorMode,
-		}, opts...)
+		c := cursor.Config{Model: model}
+		c.Command, c.CWD, c.Env, c.ExtraArgs = cfg.Command, cfg.CWD, cfg.Env, cfg.ExtraArgs
+		return cursor.Driver(c)
+	case AgentCodebuddy:
+		c := codebuddy.Config{Model: model}
+		c.Command, c.CWD, c.Env, c.ExtraArgs = cfg.Command, cfg.CWD, cfg.Env, cfg.ExtraArgs
+		return codebuddy.Driver(c)
 	default:
-		return codex.New(agentadaptor.CodexConfig{
-			CommonConfig: common,
-			Model:        model,
-		}, opts...)
+		c := codex.Config{Model: model}
+		c.Command, c.CWD, c.Env, c.ExtraArgs = cfg.Command, cfg.CWD, cfg.Env, cfg.ExtraArgs
+		return codex.Driver(c)
 	}
 }
 
@@ -116,6 +127,8 @@ func DefaultModelForAgent(agent string) string {
 		return "claude-sonnet-4"
 	case AgentCursor:
 		return "gpt-5"
+	case AgentCodebuddy:
+		return ""
 	default:
 		return "gpt-5.4"
 	}
@@ -127,6 +140,8 @@ func ModelEnvForAgent(agent string) string {
 		return "CLAUDE_MODEL"
 	case AgentCursor:
 		return "CURSOR_MODEL"
+	case AgentCodebuddy:
+		return "CODEBUDDY_MODEL"
 	default:
 		return "CODEX_MODEL"
 	}
@@ -138,6 +153,8 @@ func CommandEnvForAgent(agent string) string {
 		return "CLAUDE_COMMAND"
 	case AgentCursor:
 		return "CURSOR_COMMAND"
+	case AgentCodebuddy:
+		return "CODEBUDDY_COMMAND"
 	default:
 		return "CODEX_COMMAND"
 	}
@@ -149,6 +166,8 @@ func DefaultCommandForAgent(agent string) string {
 		return "claude"
 	case AgentCursor:
 		return "agent"
+	case AgentCodebuddy:
+		return "codebuddy"
 	default:
 		return "codex"
 	}
@@ -222,19 +241,26 @@ func LiveAgentSummary(cfg LiveAgentConfig) map[string]any {
 	}
 }
 
-func NonInteractivePolicy(isolation agentadaptor.IsolationLevel) agentadaptor.RunPolicy {
-	return agentadaptor.RunPolicy{
-		Isolation: isolation,
-		HumanDecision: agentadaptor.HumanDecisionPolicy{
-			Permission: agentadaptor.HumanDecisionAutoApprove,
-			PlanReview: agentadaptor.HumanDecisionAutoApprove,
-			Question:   agentadaptor.QuestionAutoReject,
+// NonInteractivePolicy is the v1 spelling of the legacy
+// NonInteractivePolicy(RunPolicy): one adaptor.Policy value carrying the
+// sandbox strength plus the approval routing. Permission / PlanReview are
+// auto-approved and Questions auto-denied so the examples never block on a
+// human.
+func NonInteractivePolicy(sandbox adaptor.SandboxLevel) adaptor.Policy {
+	return adaptor.Policy{
+		Sandbox: sandbox,
+		Approvals: adaptor.ApprovalPolicy{
+			Permission: adaptor.ApprovalAutoApprove,
+			PlanReview: adaptor.ApprovalAutoApprove,
+			Question:   adaptor.QuestionAutoDeny,
 		},
 	}
 }
 
-func NonInteractiveRunOption(isolation agentadaptor.IsolationLevel) agentadaptor.RunOption {
-	return agentadaptor.WithRunPolicy(NonInteractivePolicy(isolation))
+// NonInteractive returns the policy as a SharedOption, so the same value works
+// as an adaptor.New default and as a per-call Run/Stream override.
+func NonInteractive(sandbox adaptor.SandboxLevel) adaptor.SharedOption {
+	return adaptor.WithPolicy(NonInteractivePolicy(sandbox))
 }
 
 func normalizeAgent(raw, field string) string {
@@ -243,7 +269,7 @@ func normalizeAgent(raw, field string) string {
 		return AgentCodex
 	}
 	switch value {
-	case AgentCodex, AgentClaude, AgentCursor:
+	case AgentCodex, AgentClaude, AgentCursor, AgentCodebuddy:
 		return value
 	default:
 		Fatalf("%s must be one of %s, got %q", field, SupportedAgents(), raw)
@@ -260,6 +286,8 @@ func commandCandidatesForAgent(agent string) []string {
 		names = []string{"claude.ps1", "claude.cmd", "claude", "trpc-claudecode.ps1", "trpc-claudecode.cmd", "trpc-claudecode"}
 	case AgentCursor:
 		names = []string{"agent.ps1", "agent.cmd", "agent", "cursor-agent.ps1", "cursor-agent.cmd", "cursor-agent"}
+	case AgentCodebuddy:
+		names = []string{"codebuddy.ps1", "codebuddy.cmd", "codebuddy"}
 	}
 
 	candidates := make([]string, 0, len(names))

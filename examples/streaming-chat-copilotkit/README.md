@@ -2,10 +2,10 @@
 
 完整的 **AG-UI + CopilotKit** 前端 example，演示 `agent-adaptor` 的四条纵向通路：
 
-1. **Streaming**：文本、thinking、tool_call 全部 token 级流式
-2. **HITL v2**：`dec.plan_review.*` / `dec.question.*` / `dec.permission.*` 在 UI 里渲染成可点击卡片，宿主通过 `POST /decision/resolve` 回填
-3. **Recovery**：每个浏览器有稳定 `thread_id`，右侧面板通过 `/session/events` + `/decision/pending` 恢复历史与未决决策
-4. **User-prompt persistence**：`sdk.Start` 拿到的 user prompt 不会自动进任何 SDK 持久层（`SessionStore` 只存 resume 元数据；adapter 永远 emit assistant 侧）。本 example 演示了 canonical 做法——`handleAgent` 用 `input.UserTurnPayloads(handle.RunID())` 把 user turn 构造成 `text.*{Role:RoleUser}` 三段，让它穿过和 driver 事件**完全相同**的 fan-out（`appendHistory` + `Translator` + SSE）。刷新页面拉 `/session/events` 即可拿回完整 transcript，含 user 气泡。<br>实现入口：`server.go::handleAgent` + `agui_run_session.go::recordUserTurn`；验证用例：`agui_run_session_test.go::TestAGUIRunSessionRecordsUserTurnBeforeAssistant`。详细原理与边界见 [`docs/workstream-user-message-event.md`](../../docs/workstream-user-message-event.md)。
+1. **Streaming**：文本、thinking、tool_call 全部 token 级流式；v1 里就是一条 `stream.Events()` 通道 + 一次 `stream.Result()`（旧版的三条 goroutine 塌成一个 `for range`）
+2. **HITL（决策 D2 form B）**：没有装 `OnApproval` 回调时，approval 以 `*adaptor.ApprovalRequest` **事件**出现在同一条流上，并且**自带 responder**。宿主只需把它停放进 pending store，浏览器点按钮后直接 `req.Approve(ctx)` / `req.Deny(ctx, reason)` / `req.Answer(ctx, option)`——旧版那个"遍历所有活跃 handle 挨个试一遍"的兜底彻底删掉了。`ErrApprovalResolved` 映射 HTTP 410，`ErrApprovalKindMismatch` 映射 400。SDK 事后发的 `NoticeApprovalResolved` 会自动清掉 pending，宿主不用自己记账。
+3. **Recovery**：每个浏览器有稳定 `thread_id`，右侧面板通过 `/session/events` + `/decision/pending` 恢复历史与未决决策。历史存储是 `hosttools/sessionrecorder.NewEventRecorder(...)`，重放游标是 recorder 分配的 `HostSeq`——unified event 自身不带序号，跨两次 run 的同一 thread 只有它能保持单调。
+4. **User-prompt persistence**：user prompt 不会自动进任何 SDK 持久层（thread store 只存 resume 元数据；driver 永远只 emit assistant 侧）。本 example 演示 canonical 做法——`handleAgent` 用 `userTurnEvents(lastUserMessageID(input), prompt)` 把 user turn 构造成三段 `adaptor.TextDelta{Role: RoleUser, Phase: Start/Content/End}`，让它穿过和 driver 事件**完全相同**的 fan-out（`appendHistory` + `agui.EventTranslator` + SSE）。刷新页面拉 `/session/events` 即可拿回完整 transcript，含 user 气泡。<br>实现入口：`server.go::handleAgent` + `agui_run_session.go::recordUserTurn`；验证用例：`agui_run_session_test.go::TestAGUIRunSessionRecordsUserTurnBeforeAssistant`。详细原理与边界见 [`docs/workstream-user-message-event.md`](../../docs/workstream-user-message-event.md)。
 
 后端只调用真实本机 CLI：
 
@@ -42,9 +42,12 @@ Browser
   │     │  POST /agent  (AG-UI RunAgentInput)
   │     ▼
   │  Go backend
-  │     ├─ sdk.Start(...)  →  agent-adaptor SDK
-  │     ├─ handle.StreamEvents()  →  AG-UI Translator  →  SSE
-  │     └─ handle.DecisionRequests()  →  pending store
+  │     ├─ ai.Thread(key).Stream(ctx, prompt)   →  adaptor.Stream
+  │     └─ for ev := range stream.Events()      →  一条通道，两个去处
+  │            ├─ recorder.Record(...)                    (历史，HostSeq 游标)
+  │            ├─ translator.Translate(ev)  →  SSE        (实时)
+  │            └─ *adaptor.ApprovalRequest  →  pending store (自带 responder)
+  │        stream.Result()  →  translator.CloseRun(err)   (终局判决)
   │
   └─ 直接 fetch (旁路) —— 用于 HITL & 恢复
          GET  /session/events?thread_id=T&after=N
@@ -78,7 +81,7 @@ Browser
 | `CODEX_MODEL` / `CLAUDE_MODEL` / `CURSOR_MODEL` | agent 默认模型 | 覆盖对应 agent 模型 |
 | `ADDR` | `:8080` | backend 监听地址 |
 | `CORS_ORIGIN` | `*` | 允许的前端 Origin |
-| `THREAD_STORE_DIR` | unset | 设置后使用 JSONL 持久化 session recorder |
+| `THREAD_STORE_DIR` | unset | 当前会被忽略并打一条 warn：v1 `sessionrecorder` 还没有 `adaptor.Event` 的 JSONL backend，示例统一走 `NewMemoryEventBackend()` |
 
 前端：
 
@@ -90,8 +93,11 @@ Browser
 ## Visual subagent delegation hook
 
 The backend can render remote A2A delegation progress in the same CopilotKit
-AG-UI stream by wiring `sse.Options.SubagentBus` (or the lower-level
-`subagentstream.WrapAGUI`) to the run session. A host-owned `delegate_to_agent`
+AG-UI stream by wiring a subagent event bus into the run session. Note the v1
+gap: `sse.OptionsV1` does not carry a `SubagentBus` field yet, and
+`subagentstream.WrapAGUI` still takes a legacy run handle, so this path has not
+been ported to the v1 surface — the description below documents the intended
+product shape, not something the v1 example wires today. A host-owned `delegate_to_agent`
 MCP server publishes `a2adelegation.DelegationEvent` values while the tool call
 is blocked on the remote task. CopilotKit receives those updates as AG-UI
 `CUSTOM` events named `subagent.started`, `subagent.text.delta`,

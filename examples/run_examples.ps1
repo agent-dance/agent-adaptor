@@ -29,8 +29,8 @@ if (-not $env:TMP) {
 
 function Assert-AgentName {
     param([string]$Name)
-    if ($Name -notin @("codex", "claude", "cursor")) {
-        throw "Agent must be codex, claude, or cursor; got '$Name'"
+    if ($Name -notin @("codex", "claude", "cursor", "codebuddy")) {
+        throw "Agent must be codex, claude, cursor, or codebuddy; got '$Name'"
     }
 }
 
@@ -39,6 +39,7 @@ function Default-AgentCommands {
 	switch ($Name) {
 		"claude" { return @("claude", "trpc-claudecode") }
 		"cursor" { return @("agent", "cursor-agent") }
+		"codebuddy" { return @("codebuddy") }
 		default { return @("codex") }
 	}
 }
@@ -48,6 +49,7 @@ function Agent-CommandEnv {
     switch ($Name) {
         "claude" { return $env:CLAUDE_COMMAND }
         "cursor" { return $env:CURSOR_COMMAND }
+        "codebuddy" { return $env:CODEBUDDY_COMMAND }
         default { return $env:CODEX_COMMAND }
     }
 }
@@ -115,10 +117,17 @@ if (-not (Test-AgentHealthy -CommandPath $resolvedCommand)) {
 $common = @("-agent=$Agent")
 $common += "-command=$resolvedCommand"
 
+# session-codec-inspect never starts a CLI, so it runs first as a cheap
+# smoke of the driver wiring (it also has no -command flag).
+Run-Example -Name "session-codec-inspect" -Arguments @("./examples/session-codec-inspect", "-agent=$Agent")
+
 Run-Example -Name "basic" -Arguments (@("./examples/codex-basic") + $common)
 Run-Example -Name "stream" -Arguments (@("./examples/codex-stream") + $common)
 Run-Example -Name "sessions" -Arguments (@("./examples/codex-sessions") + $common)
-Run-Example -Name "admin-named" -Arguments (@("./examples/codex-admin-named") + $common)
+Run-Example -Name "inspect-panel" -Arguments (@("./examples/codex-admin-named") + $common)
 Run-Example -Name "skills-live" -Arguments (@("./examples/codex-skills-live") + $common)
 Run-Example -Name "profile-resources" -Arguments (@("./examples/profile-resources") + $common)
+# -run=false keeps this one free: it materializes the profile and reports the
+# on-disk evidence without ever invoking the paid model.
+Run-Example -Name "profile-full (sync only)" -Arguments (@("./examples/codex-profile-full", "-run=false", "-probe=false") + $common)
 Run-Example -Name "a2a-local" -Arguments (@("./examples/a2a-local") + $common)

@@ -1,3 +1,30 @@
+// codex-profile-full materializes a complete provider profile — skills, MCP,
+// hooks, sub-agent, instructions — and then proves on disk that the selected
+// CLI really sees it.
+//
+// v1 shape (design doc §2.9): the profile is declared with two vocabulary
+// packages and read back through two verbs on the Agent.
+//
+//	adaptor.New(driver,
+//	    adaptor.WithProfile(profile.CloneNative(dir, profile.CopySettings(), profile.LinkAuth())),
+//	    adaptor.WithProfileResources(profile.Resources{Agents: ..., Hooks: ..., Instructions: ...}),
+//	    adaptor.WithSkills(skill.Inline(...)),
+//	    adaptor.WithMCP(mcp.Stdio(...)),
+//	)
+//	ai.ProfileState(ctx)  // read-only: where the profile is and what is present
+//	ai.SyncProfile(ctx)   // mutate: materialize the declaration, report the truth
+//
+// ProfileState/SyncProfile replace the legacy Admin().Default().GetProfile /
+// ProfileSnapshot / SyncProfile trio: profile mutation stays on the Agent
+// (it changes what a run does), while Inspect() keeps only read-only panels.
+//
+// Usage:
+//
+//	go run ./examples/codex-profile-full -agent=codex
+//	go run ./examples/codex-profile-full -agent=claude -profile-mode=native -run
+//
+// -run=true is the only mode that calls the paid CLI; everything else is
+// local filesystem and subprocess evidence.
 package main
 
 import (
@@ -13,8 +40,11 @@ import (
 	"strings"
 	"time"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/examples/internal/exampleutil"
+	"github.com/agent-dance/agent-adaptor/mcp"
+	adaptor "github.com/agent-dance/agent-adaptor/next"
+	agentprofile "github.com/agent-dance/agent-adaptor/profile"
+	"github.com/agent-dance/agent-adaptor/skill"
 )
 
 const (
@@ -77,34 +107,36 @@ func main() {
 	repoRoot := filepath.Dir(filepath.Dir(exampleDir))
 	mcpServerPackage := "./examples/codex-profile-full/mcpserver"
 	hookPackage := "./examples/codex-profile-full/hook"
-	resources := profileResources(agentCfg.Agent, repoRoot, mcpServerPackage, hookPackage, hookLog, mcpLog)
+	resources := profileResources(agentCfg.Agent, repoRoot, hookPackage, hookLog)
 
-	sdk := agentadaptor.New(
-		agentadaptor.WithDefaultAgent(exampleutil.NewLiveAgentBinding(
-			agentCfg,
-			profileOption,
-			agentadaptor.WithDefaultProfileResources(resources),
-			agentadaptor.WithDefaultRunPolicy(agentadaptor.PolicyAutonomous),
+	// One agent value, one driver, and the whole profile declaration expressed
+	// as construction-scope options. Skills append across scopes; every other
+	// option replaces, so a per-call WithProfileResources would swap the whole
+	// declaration rather than merge into it.
+	ai := adaptor.New(
+		exampleutil.NewLiveDriver(agentCfg),
+		profileOption,
+		adaptor.WithProfileResources(resources),
+		adaptor.WithSkills(skill.Inline(
+			"profile-observer",
+			"---\nname: profile-observer\ndescription: Inspect the effective agent profile resources before making claims.\n---\n\nWhen active, verify the managed MCP, hooks, instructions, skills, and subagent files before claiming this demo is configured.\n",
 		)),
-		agentadaptor.WithSkillSet(agentadaptor.SkillSet{
-			"profile-observer": agentadaptor.InlineSkill(
-				"profile-observer",
-				"---\nname: profile-observer\ndescription: Inspect the effective agent profile resources before making claims.\n---\n\nWhen active, verify the managed MCP, hooks, instructions, skills, and subagent files before claiming this demo is configured.\n",
-			),
-		}),
+		adaptor.WithMCP(demoMCPServer(repoRoot, mcpServerPackage, mcpLog)),
+		exampleutil.NonInteractive(adaptor.Unrestricted),
 	)
 
-	admin := sdk.Admin().Default()
-	profileInfo, err := admin.GetProfile(ctx)
-	exampleutil.Must(err, "resolve effective profile")
-	effectiveProfile := profileInfo.Dir
+	// ProfileState is the read-only half: it answers "where is the profile and
+	// what is already there" without touching disk.
+	before, err := ai.ProfileState(ctx)
+	exampleutil.Must(err, "read profile state")
+	effectiveProfile := before.Profile.Dir
 	if strings.TrimSpace(effectiveProfile) == "" {
 		effectiveProfile = configuredProfile
 	}
 	layout = withProfileRoot(layout, effectiveProfile)
-	before, err := admin.ProfileSnapshot(ctx)
-	exampleutil.Must(err, "snapshot before sync")
-	after, err := admin.SyncProfile(ctx)
+	// SyncProfile is the mutating half: it materializes the declaration and
+	// reports what actually happened, including per-resource warnings.
+	after, err := ai.SyncProfile(ctx)
 	exampleutil.Must(err, "sync profile resources")
 
 	paths := map[string]string{
@@ -118,7 +150,7 @@ func main() {
 	}
 	output := map[string]any{
 		"demo":              "profile-full",
-		"run_call_contract": "When -run=true this example calls sdk.Run(ctx, prompt) with no RunOption arguments.",
+		"run_call_contract": "When -run=true this example calls ai.Run(ctx, prompt) with no CallOption arguments: everything the run sees comes from the agent-level defaults above.",
 		"profile_mode":      profileDescription,
 		"agent":             exampleutil.LiveAgentSummary(agentCfg),
 		"paths":             paths,
@@ -134,10 +166,24 @@ func main() {
 	}
 
 	if *runAgent {
-		result, runErr := sdk.Run(ctx, *prompt)
-		if runErr != nil {
+		result, runErr := ai.Run(ctx, *prompt)
+		// One err, one verdict. A run that completed but failed at the business
+		// level arrives as a *RunError that still carries the full Result, so
+		// the evidence below is collected on both paths.
+		var failure *adaptor.RunError
+		if errors.As(runErr, &failure) {
+			output["run_failure"] = map[string]any{
+				"reason":  string(failure.Reason),
+				"message": failure.Message,
+				"details": failure.Details,
+			}
+			result, runErr = failure.Result, nil
+		}
+		switch {
+		case runErr != nil:
+			// Infrastructure failure: no Result exists at all.
 			output["run_error"] = runErr.Error()
-		} else {
+		default:
 			output["run_result"] = runResultEvidence(result)
 			output["materialized_files_after_run"] = collectEvidence(layout, effectiveProfile, resolvedWorkspace)
 			output["runtime_artifacts"] = map[string]any{
@@ -150,12 +196,15 @@ func main() {
 	exampleutil.PrintJSON(output)
 }
 
-func profileResources(agent, repoRoot, mcpServerPackage, hookPackage, hookLog, mcpLog string) agentadaptor.ProfileResources {
-	hook := agentadaptor.HookSpec{
+// profileResources is the whole declaration a host writes by hand. Every type
+// here comes from the profile/ vocabulary package, so one import covers
+// sub-agents, hooks, instructions, and their enum families.
+func profileResources(agent, repoRoot, hookPackage, hookLog string) agentprofile.Resources {
+	hook := agentprofile.Hook{
 		Key:   "profile-session-start",
-		Event: agentadaptor.HookEventSessionStart,
-		Handler: agentadaptor.HookHandler{
-			Type:    agentadaptor.HookHandlerCommand,
+		Event: agentprofile.HookEventSessionStart,
+		Handler: agentprofile.HookHandler{
+			Type:    agentprofile.HookHandlerCommand,
 			Command: "go",
 			Args:    []string{"-C", filepath.ToSlash(repoRoot), "run", hookPackage, "--log", filepath.ToSlash(hookLog), "--event", "SessionStart"},
 		},
@@ -164,35 +213,37 @@ func profileResources(agent, repoRoot, mcpServerPackage, hookPackage, hookLog, m
 	if agent == exampleutil.AgentCodex {
 		hook.StatusMessage = "recording profile demo hook"
 	}
-	return agentadaptor.ProfileResources{
-		Skills: []agentadaptor.SkillRef{
-			agentadaptor.Key("profile-observer"),
-		},
-		MCP: &agentadaptor.MCPConfig{Servers: []agentadaptor.MCPServerSpec{{
-			Key:       "profile-demo",
-			Transport: agentadaptor.MCPTransportStdio,
-			Command:   "go",
-			Args:      []string{"-C", filepath.ToSlash(repoRoot), "run", mcpServerPackage},
-			Env: map[string]string{
-				"AGENT_ADAPTOR_PROFILE_DEMO":         "mcp",
-				"AGENT_ADAPTOR_PROFILE_DEMO_MCP_LOG": filepath.ToSlash(mcpLog),
-			},
-			Required: true,
-		}}},
-		Agents: []agentadaptor.AgentSpec{{
+	return agentprofile.Resources{
+		// Skills and MCP are declared with their own vocabulary packages on the
+		// options above (skill.Inline / mcp.Stdio) rather than inline here; the
+		// SDK folds all three into the same materialization pass.
+		Agents: []agentprofile.SubAgent{{
 			Key:          "profile-reviewer",
 			RuntimeName:  "profile-reviewer",
 			Description:  "Review profile resource materialization evidence.",
 			Instructions: "When asked to review this demo, verify instructions, hooks, MCP, skills, and this subagent file in the effective provider profile.",
 		}},
-		Hooks: []agentadaptor.HookSpec{hook},
-		Instructions: &agentadaptor.InstructionsBundleRef{
+		Hooks: []agentprofile.Hook{hook},
+		Instructions: &agentprofile.Instructions{
 			ID:      "full-profile-demo",
 			Content: "Profile instruction proof: mention " + instructionMarker + " if asked what profile instructions are active.",
-			Scope:   agentadaptor.InstructionScopeProject,
-			Mode:    agentadaptor.InstructionModeAdditive,
+			Scope:   agentprofile.InstructionScopeProject,
+			Mode:    agentprofile.InstructionModeAdditive,
 		},
 	}
+}
+
+// demoMCPServer declares the stdio MCP server the demo materializes into the
+// profile. mcp.Stdio fills in the transport and command; the remaining fields
+// are plain struct assignment because the stdio constructor takes no options.
+func demoMCPServer(repoRoot, mcpServerPackage, mcpLog string) mcp.Server {
+	server := mcp.Stdio("profile-demo", "go", "-C", filepath.ToSlash(repoRoot), "run", mcpServerPackage)
+	server.Env = map[string]string{
+		"AGENT_ADAPTOR_PROFILE_DEMO":         "mcp",
+		"AGENT_ADAPTOR_PROFILE_DEMO_MCP_LOG": filepath.ToSlash(mcpLog),
+	}
+	server.Required = true
+	return server
 }
 
 func defaultPrompt() string {
@@ -204,22 +255,27 @@ func defaultPrompt() string {
 	}, " ")
 }
 
-func runResultEvidence(result agentadaptor.RunResult) map[string]any {
+// runResultEvidence reads the v1 Result: high-frequency fields are flat, the
+// audit surfaces (raw streams, transcript, services) sit behind accessors.
+func runResultEvidence(result *adaptor.Result) map[string]any {
+	if result == nil {
+		return nil
+	}
+	raw := result.Raw()
 	return map[string]any{
-		"driver_type": result.DriverType,
-		"exit_code":   result.ExitCode,
-		"timed_out":   result.TimedOut,
-		"failure":     result.Failure,
-		"run_id":      result.RunID,
-		"session":     result.Session,
-		"summary":     result.Summary,
-		"output":      strings.TrimSpace(result.Output),
-		"raw_stdout":  streamSnippet(result.RawStreams, true),
-		"raw_stderr":  streamSnippet(result.RawStreams, false),
+		"run_id":     result.RunID,
+		"model":      result.Model,
+		"provider":   result.Provider,
+		"summary":    result.Summary,
+		"text":       strings.TrimSpace(result.Text),
+		"usage":      map[string]any{"input": result.Usage.InputTokens, "output": result.Usage.OutputTokens},
+		"metadata":   result.Metadata,
+		"raw_stdout": streamSnippet(raw, true),
+		"raw_stderr": streamSnippet(raw, false),
 	}
 }
 
-func summarizeProfile(snapshot agentadaptor.ProfileSnapshot) []map[string]any {
+func summarizeProfile(snapshot adaptor.ProfileSnapshot) []map[string]any {
 	out := make([]map[string]any, 0, len(snapshot.Resources))
 	for _, resource := range snapshot.Resources {
 		out = append(out, map[string]any{
@@ -507,10 +563,7 @@ func replaceRootString(value, oldRoot, newRoot string) string {
 	return filepath.Join(newRoot, rel)
 }
 
-func streamSnippet(streams *agentadaptor.RawStreams, stdout bool) string {
-	if streams == nil {
-		return ""
-	}
+func streamSnippet(streams adaptor.RawStreams, stdout bool) string {
 	value := streams.Stderr
 	if stdout {
 		value = streams.Stdout
@@ -559,15 +612,18 @@ func ensureDir(label, requested, pattern string) string {
 	return abs
 }
 
-func selectProfileOption(agent string, layout providerLayout, mode, requested string) (agentadaptor.AgentOption, string, string, string) {
+// selectProfileOption turns the -profile-mode flag into one adaptor.Option.
+// Both branches produce the same profile.Selection type; only the constructor
+// differs, which is the whole point of the profile/ vocabulary package.
+func selectProfileOption(agent string, layout providerLayout, mode, requested string) (adaptor.Option, string, string, string) {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
 	case "", "dedicated":
 		profile := chooseProfileTarget(agent, requested)
-		return agentadaptor.WithCloneProfile(profile, agentadaptor.CloneProfileOptions{
-				IncludeSettings: true,
-				AuthMode:        agentadaptor.CloneProfileAuthLink,
-			}),
-			fmt.Sprintf("dedicated: WithCloneProfile(..., IncludeSettings:true, AuthMode:CloneProfileAuthLink) creates an isolated %s seeded from native settings and shared native login state.", layout.EnvVar),
+		return adaptor.WithProfile(agentprofile.CloneNative(profile,
+				agentprofile.CopySettings(),
+				agentprofile.LinkAuth(),
+			)),
+			fmt.Sprintf("dedicated: profile.CloneNative(dir, CopySettings(), LinkAuth()) creates an isolated %s seeded from native settings and shared native login state.", layout.EnvVar),
 			profile,
 			""
 	case "native":
@@ -575,8 +631,8 @@ func selectProfileOption(agent string, layout providerLayout, mode, requested st
 			exampleutil.Fatalf("-profile cannot be combined with -profile-mode=native")
 		}
 		artifacts := ensureDir("artifact", "", "agent-adaptor-profile-full-artifacts-*")
-		return agentadaptor.WithNativeProfile(),
-			fmt.Sprintf("native: WithNativeProfile() uses the current %s, so model runs reuse the same auth as the local CLI. This may write managed demo resources to that profile.", layout.ProfileLabel),
+		return adaptor.WithProfile(agentprofile.Native()),
+			fmt.Sprintf("native: profile.Native() uses the current %s, so model runs reuse the same auth as the local CLI. This may write managed demo resources to that profile.", layout.ProfileLabel),
 			nativeProfileHome(agent),
 			artifacts
 	default:

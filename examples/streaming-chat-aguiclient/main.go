@@ -2,7 +2,7 @@
 //
 //	Browser (React + @ag-ui/client HttpAgent)
 //	    ↓ POST /agent
-//	Go backend (pkg/bridges/sse, Protocol=AGUI)
+//	Go backend (bridges/sse, Protocol=AGUI)
 //	    ↓ local codex / claude / cursor CLI (env AGUI_AGENT)
 //	subprocess (token-level stream)
 //
@@ -11,6 +11,11 @@
 // to the Go backend via @ag-ui/client's HttpAgent. Fewer moving parts,
 // zero CopilotKit dependencies, and the event stream is validated by the
 // official AG-UI client code path without any runtime proxy in between.
+//
+// v1 note: the whole backend is now "one Agent value + one bridge call". The
+// bridge accepts adaptor.Runner, and because we hand it an *adaptor.Agent with
+// a thread store it binds each request to agent.Thread("agui/<threadId>") on
+// its own.
 //
 // Run:
 //
@@ -24,7 +29,7 @@
 //	# open http://localhost:5173
 //
 // The backend's wire contract is identical to the CopilotKit example:
-// both mount sse.Handler with Protocol=AGUI, so any AG-UI-compliant
+// both mount sse.HandlerV1 with Protocol=AGUI, so any AG-UI-compliant
 // client works without changes.
 package main
 
@@ -33,9 +38,9 @@ import (
 	"net/http"
 	"os"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/bridges/sse"
 	"github.com/agent-dance/agent-adaptor/examples/internal/exampleutil"
-	"github.com/agent-dance/agent-adaptor/pkg/bridges/sse"
+	adaptor "github.com/agent-dance/agent-adaptor/next"
 )
 
 func main() {
@@ -45,15 +50,14 @@ func main() {
 	}
 	cwd, _ := os.Getwd()
 
-	sdk, driver := exampleutil.NewAGUIStreamingSDK(cwd)
+	ai, agentName := exampleutil.NewAGUIStreamingAgent(cwd)
 
 	mux := http.NewServeMux()
-	mux.Handle("/agent", sse.Handler(sdk, sse.Options{
+	mux.Handle("/agent", sse.HandlerV1(ai, sse.OptionsV1{
 		Protocol:          sse.AGUI,
 		CORSAllowedOrigin: envOr("CORS_ORIGIN", "http://localhost:5173"),
-		RunOptions: []agentadaptor.RunOption{
-			exampleutil.AGUIExampleRunPolicy(),
-		},
+		// Call-scope overrides appended to every Stream the handler starts.
+		Options: []adaptor.CallOption{exampleutil.AGUIExamplePolicy()},
 	}))
 
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
@@ -62,7 +66,7 @@ func main() {
 	})
 
 	slog.Info("agent-adaptor AG-UI direct backend listening",
-		"agent", driver,
+		"agent", agentName,
 		"addr", addr,
 		"endpoint", "http://localhost"+addr+"/agent",
 		"ui", "http://localhost:5173")

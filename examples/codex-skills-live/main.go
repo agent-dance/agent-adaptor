@@ -1,16 +1,45 @@
+// codex-skills-live proves runtime skill injection end-to-end with a real local
+// CLI: the agent is given a write-proof skill and only follows it if the skill
+// actually reached the provider's skill directory.
+//
+// v1 skill vocabulary (design doc §2.7): the skill/ package replaces
+// hand-written SkillSet maps and SkillFromPath structs with one-line
+// constructors that produce values WithSkills accepts directly:
+//
+//	skill.Dir("./skills/write-proof")  // a local directory
+//	skill.Inline("greet", "# ...")     // literal SKILL.md content
+//	skill.Key("code-review")           // resolved by the host SkillProvider
+//	skill.Require(s, "reason")         // mandatory: missing => run fails
+//
+// WithSkills is the one append-merged option: skills passed to Run extend the
+// agent defaults rather than replacing them.
+//
+// It doubles as the form A approval demo (decision D2): the skill wants to
+// write a file, so Permission is routed to Ask and adaptor.OnApproval installs
+// the host gate. Batch Run has no stream, so the callback is the only approval
+// form available here — and the request answers itself, which is why there is
+// no request-ID bookkeeping and no ResolveDecision round-trip anywhere below.
+//
+// Usage:
+//
+//	go run ./examples/codex-skills-live -agent=codex
 package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/examples/internal/exampleutil"
+	adaptor "github.com/agent-dance/agent-adaptor/next"
+	"github.com/agent-dance/agent-adaptor/profile"
+	"github.com/agent-dance/agent-adaptor/skill"
 )
 
 const (
@@ -20,7 +49,7 @@ const (
 )
 
 func main() {
-	agent := flag.String("agent", "", "Local CLI agent to use: "+exampleutil.SupportedAgents()+" (default codex, or AGENT_ADAPTOR_EXAMPLE_AGENT)")
+	agentName := flag.String("agent", "", "Local CLI agent to use: "+exampleutil.SupportedAgents()+" (default codex, or AGENT_ADAPTOR_EXAMPLE_AGENT)")
 	model := flag.String("model", "", "Model to use. Defaults by agent or CODEX_MODEL/CLAUDE_MODEL/CURSOR_MODEL.")
 	command := flag.String("command", "", "Optional explicit local CLI command. Defaults by agent or CODEX_COMMAND/CLAUDE_COMMAND/CURSOR_COMMAND/PATH.")
 	timeout := flag.Duration("timeout", 5*time.Minute, "Maximum time to wait for the skills example")
@@ -29,74 +58,76 @@ func main() {
 
 	workspaceDir, err := os.MkdirTemp("", "agent-adaptor-skills-live-*")
 	exampleutil.Must(err, "create temporary workspace")
-	cleanup := !*keepWorkspace
-	defer func() {
-		if cleanup {
-			_ = os.RemoveAll(workspaceDir)
-		}
-	}()
+	if !*keepWorkspace {
+		defer func() { _ = os.RemoveAll(workspaceDir) }()
+	}
 
-	agentCfg := exampleutil.ResolveLiveAgentConfig(*agent, *model, *command, workspaceDir)
-	skillDir := locateWriteProofSkill()
+	agentCfg := exampleutil.ResolveLiveAgentConfig(*agentName, *model, *command, workspaceDir)
 	proofPath := filepath.Join(workspaceDir, "proof.txt")
 	clonedProfileDir := filepath.Join(workspaceDir, agentCfg.Agent+"-profile")
 
-	skillSet := agentadaptor.SkillSet{
-		proofSkillName: {
-			Key:    proofSkillName,
-			Source: agentadaptor.SkillFromPath{Path: skillDir},
-		},
-		reviewSkillName: {
-			Key:    reviewSkillName,
-			Source: agentadaptor.SkillFromPath{Path: locateExampleSkill(reviewSkillName)},
-		},
-	}
+	gate := &approvalGate{}
 
-	sdk := agentadaptor.New(
-		agentadaptor.WithDefaultAgent(exampleutil.NewLiveAgentBinding(
-			agentCfg,
-			agentadaptor.WithCloneProfile(clonedProfileDir, agentadaptor.CloneProfileOptions{
-				IncludeSettings: true,
-				IncludeMCP:      true,
-				IncludeSkills:   true,
-				AuthMode:        agentadaptor.CloneProfileAuthLink,
-			}),
-			agentadaptor.WithDefaultIdentity(agentadaptor.AgentIdentity{
-				ID:       "skills-agent",
-				TenantID: "examples",
-				Name:     "skills-live",
-			}),
-			agentadaptor.WithDefaultSkills(agentadaptor.Key(proofSkillName), agentadaptor.Key(reviewSkillName)),
-		)),
-		agentadaptor.WithSkillSet(skillSet),
+	ai := adaptor.New(
+		exampleutil.NewLiveDriver(agentCfg),
+		adaptor.WithProfile(profile.CloneNative(clonedProfileDir,
+			profile.CopySettings(), profile.CopyMCP(), profile.CopySkills(), profile.LinkAuth())),
+		adaptor.WithIdentity(adaptor.Identity{ID: "skills-agent", Tenant: "examples", Name: "skills-live"}),
+		// Agent-level default skills. skill.Dir takes the directory at face
+		// value — no catalogue, no provider, no registration step.
+		adaptor.WithSkills(
+			skill.Dir(exampleSkillDir(proofSkillName)),
+			skill.Dir(exampleSkillDir(reviewSkillName)),
+		),
+		// Ask routes every gate to the host instead of letting the driver
+		// resolve it; OnApproval is what turns "ask" into an answer.
+		adaptor.WithPolicy(adaptor.Policy{
+			Sandbox: adaptor.WorkspaceWrite,
+			Approvals: adaptor.ApprovalPolicy{
+				Permission: adaptor.ApprovalAsk,
+				PlanReview: adaptor.ApprovalAsk,
+				Question:   adaptor.QuestionAsk,
+			},
+		}),
+		adaptor.OnApproval(gate.decide),
 	)
 
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
 
-	defaultAdmin := sdk.Admin().Default()
-	listedSkills, err := defaultAdmin.ListSkills(ctx)
-	exampleutil.Must(err, "list default skills")
-	exampleutil.Check(listedSkills.Supported, "expected listed skills to be supported")
-	exampleutil.Check(len(listedSkills.Selected) == 2, "expected two default selected skills, got %d", len(listedSkills.Selected))
+	listed, err := ai.Inspect().Skills(ctx)
+	exampleutil.Must(err, "read the resolved skill set")
+	exampleutil.Check(listed.Supported, "expected the %s driver to support skills", agentCfg.Agent)
+	exampleutil.Check(len(listed.Selected) == 2, "expected two default skills, got %d", len(listed.Selected))
 
-	selectedSkills, err := defaultAdmin.SetSelectedSkills(ctx, []string{proofSkillName})
-	exampleutil.Must(err, "set selected default skills")
-	exampleutil.Check(len(selectedSkills.Selected) == 1 && selectedSkills.Selected[0] == proofSkillName, "expected selected skills to contain only %q, got %#v", proofSkillName, selectedSkills.Selected)
+	// SelectSkills narrows the provider-side selection for subsequent runs.
+	selected, err := ai.SelectSkills(ctx, []string{proofSkillName})
+	exampleutil.Must(err, "narrow the skill selection")
+	exampleutil.Check(len(selected.Selected) == 1 && selected.Selected[0] == proofSkillName,
+		"expected the selection to be [%s], got %#v", proofSkillName, selected.Selected)
 
 	prompt := "Use the write-proof skill. Create the file at " + filepath.ToSlash(proofPath) +
 		" with exactly this content: " + proofExpectedText + ". Do not modify any other files."
-	result, err := sdk.Run(ctx, prompt,
-		agentadaptor.WithSkills(agentadaptor.Key(proofSkillName)),
-		exampleutil.NonInteractiveRunOption(agentadaptor.IsolationWorkspaceWrite),
+
+	// Per-call WithSkills appends to the agent defaults; skill.Require marks
+	// the skill mandatory, so a materialization failure aborts the run with
+	// ErrSkillMaterialization instead of silently producing a skill-less agent.
+	res, err := ai.Run(ctx, prompt,
+		adaptor.WithSkills(skill.Require(skill.Dir(exampleSkillDir(proofSkillName)), "the proof depends on it")),
+		adaptor.WithWorkspace(workspaceDir),
 	)
-	exampleutil.Must(err, "run skills-live example")
-	exampleutil.Check(result.DriverType == agentCfg.DriverType, "expected driver type %q, got %q", agentCfg.DriverType, result.DriverType)
-	exampleutil.Check(result.ExitCode == 0, "expected exit code 0, got %d", result.ExitCode)
+	if err != nil {
+		var runErr *adaptor.RunError
+		if errors.As(err, &runErr) {
+			exampleutil.Fatalf("skills-live run failed (%s): %s", runErr.Reason, runErr.Message)
+		}
+		exampleutil.Fatalf("run skills-live example: %v", err)
+	}
 
 	content, err := os.ReadFile(proofPath)
 	exampleutil.Must(err, "read proof output %q; the selected real CLI must follow the write-proof skill instruction", proofPath)
-	exampleutil.Check(strings.TrimSpace(string(content)) == proofExpectedText, "expected proof file content %q, got %q", proofExpectedText, strings.TrimSpace(string(content)))
+	exampleutil.Check(strings.TrimSpace(string(content)) == proofExpectedText,
+		"expected proof file content %q, got %q", proofExpectedText, strings.TrimSpace(string(content)))
 
 	exampleutil.PrintJSON(map[string]any{
 		"example":        "skills-live",
@@ -108,17 +139,59 @@ func main() {
 			"path":     proofPath,
 			"contents": strings.TrimSpace(string(content)),
 		},
-		"list_skills":         listedSkills,
-		"set_selected_skills": selectedSkills,
-		"run_result":          result,
+		"default_skills":  listed.Selected,
+		"selected_skills": selected.Selected,
+		"approvals":       gate.decisions(),
+		"run": map[string]any{
+			"run_id":  res.RunID,
+			"model":   res.Model,
+			"summary": res.Summary,
+		},
 	})
 }
 
-func locateWriteProofSkill() string {
-	return locateExampleSkill(proofSkillName)
+// approvalGate is the host side of form A. The handler may be invoked from
+// the SDK's goroutine, so the audit trail is guarded; the decision itself is
+// a plain method call on the request.
+type approvalGate struct {
+	mu  sync.Mutex
+	log []map[string]any
 }
 
-func locateExampleSkill(name string) string {
+func (g *approvalGate) decide(ctx context.Context, req *adaptor.ApprovalRequest) error {
+	outcome := "approved"
+	var err error
+	switch req.Kind {
+	case adaptor.ApprovalQuestion:
+		// Answer(ctx, choice) is the Question responder; this example runs
+		// unattended, so there is nobody to pick a choice.
+		outcome = "denied"
+		err = req.Deny(ctx, "codex-skills-live runs unattended")
+	default:
+		// The run is sandboxed to WorkspaceWrite and the workspace is a
+		// throwaway temp dir, so the write the skill needs is safe to grant.
+		err = req.Approve(ctx)
+	}
+
+	g.mu.Lock()
+	g.log = append(g.log, map[string]any{
+		"id":       req.ID,
+		"kind":     string(req.Kind),
+		"title":    req.Title,
+		"source":   req.Source,
+		"decision": outcome,
+	})
+	g.mu.Unlock()
+	return err
+}
+
+func (g *approvalGate) decisions() []map[string]any {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return append([]map[string]any(nil), g.log...)
+}
+
+func exampleSkillDir(name string) string {
 	_, file, _, ok := runtime.Caller(0)
 	exampleutil.Check(ok, "locate current example source")
 	return filepath.Clean(filepath.Join(filepath.Dir(file), "..", "internal", "skills", name))

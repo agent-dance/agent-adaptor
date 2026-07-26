@@ -1,3 +1,15 @@
+// codex-stream shows the v1 event model: ONE typed event channel per run,
+// consumed with a single for-range + type switch, closed out by Result().
+//
+// The legacy split between an operational RunEvent channel and a StreamPayload
+// channel is gone. Process chunks, transcript items, notices, tool calls, and
+// text deltas are all adaptor.Event values on the same channel — a consumer
+// simply omits the cases it does not care about (no drain obligation).
+//
+// Usage:
+//
+//	go run ./examples/codex-stream -agent=codex
+//	go run ./examples/codex-stream -agent=codex -cancel-after=3s
 package main
 
 import (
@@ -7,11 +19,10 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"sync"
 	"time"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/examples/internal/exampleutil"
+	adaptor "github.com/agent-dance/agent-adaptor/next"
 )
 
 func main() {
@@ -30,55 +41,52 @@ func main() {
 	exampleutil.Must(err, "resolve current working directory")
 	agentCfg := exampleutil.ResolveLiveAgentConfig(*agent, *model, *command, cwd)
 
-	sdk := agentadaptor.New(
-		agentadaptor.WithDefaultAgent(exampleutil.NewLiveAgentBinding(agentCfg)),
-	)
+	ai := adaptor.New(exampleutil.NewLiveDriver(agentCfg))
 
-	handle, err := sdk.Start(ctx, *prompt)
-	exampleutil.Must(err, "start codex-stream example")
+	// Stream never returns an error: startup failures close Events() and
+	// surface through Result(). The verb is the switch — Run for batch,
+	// Stream for live.
+	stream := ai.Stream(ctx, *prompt)
+	defer stream.Cancel()
 
 	if *cancelAfter > 0 {
-		time.AfterFunc(*cancelAfter, func() {
-			_ = handle.Cancel(context.Background())
-		})
+		time.AfterFunc(*cancelAfter, stream.Cancel)
 	}
 
-	var (
-		mu          sync.Mutex
-		totalEvents int
-		counts      = map[string]int{}
-	)
-	eventsDone := make(chan struct{})
-	go func() {
-		defer close(eventsDone)
-		for event := range handle.Events() {
-			switch event.Type {
-			case agentadaptor.RunEventChunk:
-				fmt.Printf("[chunk %s] %d bytes\n", event.Stream, len(event.Bytes))
-			case agentadaptor.RunEventItem:
-				if event.Item != nil {
-					fmt.Printf("[item %s] %s\n", event.Item.Kind, event.Item.Text)
-				}
-			default:
-				fmt.Printf("[%s] %s\n", event.Type, event.Text)
+	counts := map[string]int{}
+	total := 0
+	for ev := range stream.Events() {
+		total++
+		switch e := ev.(type) {
+		case adaptor.TextDelta:
+			counts["text"]++
+			fmt.Print(e.Text)
+		case adaptor.Thinking:
+			counts["thinking"]++
+		case adaptor.ToolCall:
+			counts["tool_call"]++
+			if e.Phase == adaptor.PhaseStart {
+				fmt.Printf("\n[tool %s]\n", e.Name)
 			}
-			mu.Lock()
-			totalEvents++
-			counts[string(event.Type)]++
-			mu.Unlock()
+		case adaptor.ProcessInfo:
+			counts["process."+e.Kind]++
+		case adaptor.Notice:
+			counts["notice."+e.Kind]++
+			if e.Kind == adaptor.NoticeTranscriptItem && e.Item != nil {
+				fmt.Printf("\n[item %s] %s\n", e.Item.Kind, e.Item.Text)
+			}
+		case adaptor.Dropped:
+			// Default backpressure is drop-with-marker; WithEventBuffer /
+			// WithBlockingEvents tune it at construction scope.
+			counts["dropped"] += e.Count
+			fmt.Printf("\n[dropped %d events]\n", e.Count)
+		case adaptor.RunFinished:
+			counts["run.finished"]++
 		}
-	}()
-
-	result, err := handle.Wait(ctx)
-	<-eventsDone
-
-	mu.Lock()
-	snapshot := make(map[string]int, len(counts))
-	for key, value := range counts {
-		snapshot[key] = value
 	}
-	eventCount := totalEvents
-	mu.Unlock()
+	fmt.Println()
+
+	res, err := stream.Result()
 
 	if *cancelAfter > 0 {
 		exampleutil.Check(err != nil, "expected a cancellation error when -cancel-after is set")
@@ -86,36 +94,44 @@ func main() {
 		exampleutil.PrintJSON(map[string]any{
 			"example":       "stream",
 			"agent":         exampleutil.LiveAgentSummary(agentCfg),
+			"run_id":        stream.RunID(),
 			"cancelled":     true,
-			"event_count":   eventCount,
-			"event_counts":  snapshot,
+			"event_count":   total,
+			"event_counts":  counts,
 			"cancel_after":  cancelAfter.String(),
 			"error_message": err.Error(),
 		})
 		return
 	}
 
-	exampleutil.Must(err, "wait for stream example")
-	exampleutil.Check(result.DriverType == agentCfg.DriverType, "expected driver type %q, got %q", agentCfg.DriverType, result.DriverType)
-	exampleutil.Check(result.ExitCode == 0, "expected exit code 0, got %d", result.ExitCode)
-	exampleutil.Check(eventCount > 0, "expected to receive at least one event")
-	exampleutil.Check(strings.TrimSpace(result.Output) != "", "expected non-empty output from %s", agentCfg.Agent)
+	if err != nil {
+		var runErr *adaptor.RunError
+		if errors.As(err, &runErr) {
+			exampleutil.Fatalf("stream failed (%s): %s", runErr.Reason, runErr.Message)
+		}
+		exampleutil.Fatalf("stream example: %v", err)
+	}
+	exampleutil.Check(total > 0, "expected to receive at least one event")
+	exampleutil.Check(strings.TrimSpace(res.Text) != "", "expected non-empty text from %s", agentCfg.Agent)
 
 	exampleutil.PrintJSON(map[string]any{
 		"example":      "stream",
 		"agent":        exampleutil.LiveAgentSummary(agentCfg),
-		"driver_type":  result.DriverType,
-		"exit_code":    result.ExitCode,
-		"event_count":  eventCount,
-		"event_counts": snapshot,
+		"run_id":       res.RunID,
+		"event_count":  total,
+		"event_counts": counts,
 	})
 }
 
+// isCancellation keeps the cancel path readable: adaptor.Stream.Cancel aborts
+// via context cancellation, so the terminal error is either a plain
+// context.Canceled (infrastructure) or a *RunError with ReasonCancelled
+// (the driver classified it first).
 func isCancellation(err error) bool {
 	if err == nil {
 		return false
 	}
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, adaptor.ErrRunCancelled) {
 		return true
 	}
 	text := strings.ToLower(err.Error())
