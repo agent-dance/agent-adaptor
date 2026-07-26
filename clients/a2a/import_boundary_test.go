@@ -15,8 +15,8 @@ func TestA2AImportsStayLocalized(t *testing.T) {
 
 	repoRoot := repositoryRoot(t)
 	allowed := []string{
-		filepath.Join("pkg", "clients", "a2a"),
-		filepath.Join("pkg", "bridges", "a2a"),
+		filepath.Join("clients", "a2a"),
+		filepath.Join("bridges", "a2a"),
 	}
 	fset := token.NewFileSet()
 	err := filepath.WalkDir(repoRoot, func(path string, entry os.DirEntry, err error) error {
@@ -61,10 +61,11 @@ func TestA2AImportsStayLocalized(t *testing.T) {
 func TestClientPackageDoesNotImportCoreOrConcreteAdapters(t *testing.T) {
 	t.Parallel()
 
-	root := filepath.Join(repositoryRoot(t), "pkg", "clients", "a2a")
+	root := filepath.Join(repositoryRoot(t), "clients", "a2a")
 	forbidden := []string{
 		"github.com/agent-dance/agent-adaptor",
 		"github.com/agent-dance/agent-adaptor/claude",
+		"github.com/agent-dance/agent-adaptor/codebuddy",
 		"github.com/agent-dance/agent-adaptor/codex",
 		"github.com/agent-dance/agent-adaptor/cursor",
 	}
@@ -99,7 +100,7 @@ func repositoryRoot(t *testing.T) string {
 	if !ok {
 		t.Fatal("runtime.Caller failed")
 	}
-	return filepath.Clean(filepath.Join(filepath.Dir(thisFile), "..", "..", ".."))
+	return filepath.Clean(filepath.Join(filepath.Dir(thisFile), "..", ".."))
 }
 
 func underAny(path string, roots []string) bool {

@@ -19,7 +19,7 @@ import (
 	a2aproto "github.com/a2aproject/a2a-go/v2/a2a"
 	a2ataskstore "github.com/a2aproject/a2a-go/v2/a2asrv/taskstore"
 	agentadaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/pkg/bridges/a2a"
+	"github.com/agent-dance/agent-adaptor/bridges/a2a"
 )
 
 func TestAgentCardHandlerReturnsConfiguredCard(t *testing.T) {

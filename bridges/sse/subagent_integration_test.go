@@ -12,8 +12,8 @@ import (
 
 	agentadaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/memory"
-	"github.com/agent-dance/agent-adaptor/pkg/bridges/sse"
-	"github.com/agent-dance/agent-adaptor/pkg/hosttools/a2adelegation"
+	"github.com/agent-dance/agent-adaptor/bridges/sse"
+	"github.com/agent-dance/agent-adaptor/hosttools/a2adelegation"
 )
 
 func TestSSEHandlerAGUIRealEventBusSubagentEventsPrecedeParentFinished(t *testing.T) {

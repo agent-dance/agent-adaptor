@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	clienta2a "github.com/agent-dance/agent-adaptor/pkg/clients/a2a"
+	clienta2a "github.com/agent-dance/agent-adaptor/clients/a2a"
 )
 
 const ProtocolA2A = "a2a"

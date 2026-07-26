@@ -15,11 +15,12 @@ func TestDelegationPackagesDoNotImportConcreteAdapters(t *testing.T) {
 
 	repoRoot := repositoryRoot(t)
 	packages := []string{
-		filepath.Join(repoRoot, "pkg", "hosttools", "a2adelegation"),
-		filepath.Join(repoRoot, "pkg", "bridges", "subagentstream"),
+		filepath.Join(repoRoot, "hosttools", "a2adelegation"),
+		filepath.Join(repoRoot, "bridges", "subagentstream"),
 	}
 	forbidden := []string{
 		"github.com/agent-dance/agent-adaptor/claude",
+		"github.com/agent-dance/agent-adaptor/codebuddy",
 		"github.com/agent-dance/agent-adaptor/codex",
 		"github.com/agent-dance/agent-adaptor/cursor",
 	}
@@ -57,5 +58,5 @@ func repositoryRoot(t *testing.T) string {
 	if !ok {
 		t.Fatal("runtime.Caller failed")
 	}
-	return filepath.Clean(filepath.Join(filepath.Dir(thisFile), "..", "..", ".."))
+	return filepath.Clean(filepath.Join(filepath.Dir(thisFile), "..", ".."))
 }

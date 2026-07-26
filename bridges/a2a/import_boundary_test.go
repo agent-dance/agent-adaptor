@@ -24,9 +24,10 @@ func TestBridgePackageDoesNotImportConcreteAdaptersOrA2AClient(t *testing.T) {
 	}
 	forbidden := []string{
 		"github.com/agent-dance/agent-adaptor/claude",
+		"github.com/agent-dance/agent-adaptor/codebuddy",
 		"github.com/agent-dance/agent-adaptor/codex",
 		"github.com/agent-dance/agent-adaptor/cursor",
-		"github.com/agent-dance/agent-adaptor/pkg/clients/a2a",
+		"github.com/agent-dance/agent-adaptor/clients/a2a",
 	}
 	fset := token.NewFileSet()
 	for _, entry := range entries {

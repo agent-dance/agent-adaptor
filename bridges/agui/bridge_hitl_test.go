@@ -7,7 +7,7 @@ import (
 	aguievents "github.com/ag-ui-protocol/ag-ui/sdks/community/go/pkg/core/events"
 
 	agentadaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/pkg/bridges/agui"
+	"github.com/agent-dance/agent-adaptor/bridges/agui"
 )
 
 // TestDecisionAsToolCall_HappyPath ensures HITL requested/resolved pairs are
