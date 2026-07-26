@@ -1,4 +1,4 @@
-package agentadaptor
+package engine
 
 // WorkspaceReleaseMode tells a WorkspaceManager what to do after the run.
 type WorkspaceReleaseMode string
