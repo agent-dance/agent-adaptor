@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"maps"
+	"sync"
 
 	"github.com/agent-dance/agent-adaptor/driver"
 )
@@ -29,6 +30,13 @@ type Runner interface {
 type Agent struct {
 	driver   driver.Driver
 	defaults AgentSettings
+
+	// mu guards skillSelection, the process-local skill selection override
+	// installed by SelectSkills (legacy Admin.SetSelectedSkills semantics):
+	// nil means no override, non-nil (possibly empty) substitutes the
+	// default skill refs of every subsequent resolution.
+	mu             sync.Mutex
+	skillSelection []string
 }
 
 var _ Runner = (*Agent)(nil)
@@ -105,9 +113,10 @@ func buildRequest(runID, prompt string, eff *RunSettings) driver.Request {
 			CWD:          eff.workspace,
 		}
 	}
-	if eff.instructions != "" {
-		req.Instructions = &driver.InstructionsBundleRef{Content: eff.instructions}
-	}
+	// Instructions are attached by resolveRun after the merged bundle went
+	// through engine.PrepareInstructionsBundle (trim, exclusivity, file
+	// fingerprint) — not here, so the prepared form is the only form the
+	// driver ever sees.
 	if eff.policy != nil {
 		req.Policy = eff.policy.driverPolicy()
 	}

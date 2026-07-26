@@ -37,6 +37,24 @@ func (s *Core) resolveSkills(
 	runRefs []SkillRef,
 	candidateRefs []SkillRef,
 ) (payload ResolvedSkills, selected []string, resolved []Skill, err error) {
+	return resolveSkillsWith(ctx, s.skillProvider, s.skillMaterializer, identity, defaultRefs, runRefs, candidateRefs)
+}
+
+// resolveSkillsWith is the provider/materializer-parameterised body of
+// (*Core).resolveSkills. The lift is purely mechanical (P3 seam choice:
+// reuse, not replicate): the Core method above delegates here with its own
+// configured provider and materializer, so the legacy path is byte-for-byte
+// unchanged, while the next/ facade reaches the same algorithm through the
+// exported ResolveSkills entry without needing a Core.
+func resolveSkillsWith(
+	ctx context.Context,
+	provider SkillProvider,
+	skillMaterializer SkillMaterializer,
+	identity AgentIdentity,
+	defaultRefs []SkillRef,
+	runRefs []SkillRef,
+	candidateRefs []SkillRef,
+) (payload ResolvedSkills, selected []string, resolved []Skill, err error) {
 	state := newResolutionState()
 
 	// 1. Inline candidates registered through binding-only candidates
@@ -69,7 +87,7 @@ func (s *Core) resolveSkills(
 	//    mandatory skills not in the keys list; we treat them as
 	//    additional members of the selected set.
 	providerKeys := state.requestedKeys.values()
-	providerSkills, err := s.fetchSkillsFromProvider(ctx, identity, providerKeys)
+	providerSkills, err := fetchSkillsFrom(ctx, provider, identity, providerKeys)
 	if err != nil {
 		return ResolvedSkills{}, nil, nil, err
 	}
@@ -129,7 +147,7 @@ func (s *Core) resolveSkills(
 	// 5. Materialise each Selected skill. A selected skill is part of the
 	//    run contract, so materialization failure is fatal and must surface
 	//    before the adapter starts.
-	materializer := s.skillMaterializer
+	materializer := skillMaterializer
 	if materializer == nil {
 		materializer = defaultSkillMaterializer()
 	}
@@ -221,14 +239,15 @@ func (st *resolutionState) absorbRefs(label sourceLabel, refs []SkillRef) error 
 	return nil
 }
 
-// fetchSkillsFromProvider invokes the configured SkillProvider with
-// the requested keys, propagating the AgentIdentity through ctx so
-// providers that need scoping can read it via CallerIdentityFromContext.
+// fetchSkillsFrom invokes the given SkillProvider with the requested keys,
+// propagating the AgentIdentity through ctx so providers that need scoping
+// can read it via CallerIdentityFromContext. (Formerly the Core method
+// fetchSkillsFromProvider; parameterised on provider for the P3 seam — its
+// only caller was resolveSkills, whose body moved into resolveSkillsWith.)
 //
 // A nil / unset provider returns nil; the resolution layer then falls
 // back to inline Skill values exclusively.
-func (s *Core) fetchSkillsFromProvider(ctx context.Context, identity AgentIdentity, keys []string) (map[string]Skill, error) {
-	provider := s.skillProvider
+func fetchSkillsFrom(ctx context.Context, provider SkillProvider, identity AgentIdentity, keys []string) (map[string]Skill, error) {
 	if provider == nil {
 		return nil, nil
 	}
@@ -259,9 +278,18 @@ func (s *Core) fetchSkillsFromProvider(ctx context.Context, identity AgentIdenti
 // Errors from Catalogue propagate verbatim. The returned slice is
 // safe to append to without disturbing defaults.
 func (s *Core) collectAdminCandidates(ctx context.Context, defaults AgentDefaults) ([]SkillRef, error) {
-	candidates := append([]SkillRef(nil), defaults.Skills...)
-	if cat, ok := s.skillProvider.(SkillCatalog); ok {
-		scoped := WithCallerIdentity(ctx, defaults.Agent)
+	return collectSkillCandidatesFrom(ctx, s.skillProvider, defaults.Agent, defaults.Skills)
+}
+
+// collectSkillCandidatesFrom is the provider-parameterised body of
+// (*Core).collectAdminCandidates (P3 seam choice: reuse, not replicate).
+// The Core method delegates here with (s.skillProvider, defaults.Agent,
+// defaults.Skills); the next/ Inspect surface reaches the same pool
+// composition through the exported CollectSkillCandidates entry.
+func collectSkillCandidatesFrom(ctx context.Context, provider SkillProvider, identity AgentIdentity, defaultSkills []SkillRef) ([]SkillRef, error) {
+	candidates := append([]SkillRef(nil), defaultSkills...)
+	if cat, ok := provider.(SkillCatalog); ok {
+		scoped := WithCallerIdentity(ctx, identity)
 		catalogue, err := cat.Catalogue(scoped)
 		if err != nil {
 			return nil, err

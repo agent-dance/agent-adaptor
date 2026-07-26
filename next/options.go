@@ -4,6 +4,10 @@ import (
 	"maps"
 	"time"
 
+	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/internal/engine"
+	"github.com/agent-dance/agent-adaptor/mcp"
+	"github.com/agent-dance/agent-adaptor/profile"
 	"github.com/agent-dance/agent-adaptor/threadstore"
 )
 
@@ -53,24 +57,49 @@ type SharedOption interface {
 // Add* appends). The root package's own options go through the same methods
 // so the extension surface stays self-validating.
 type RunSettings struct {
-	model        string
-	timeout      time.Duration
-	instructions string
-	workspace    string
-	metadata     map[string]string
-	identity     *Identity
-	policy       *Policy
-	approval     ApprovalHandler
+	model     string
+	timeout   time.Duration
+	workspace string
+	metadata  map[string]string
+	identity  *Identity
+	policy    *Policy
+	approval  ApprovalHandler
 
-	// Merge-semantics anchor (P3.2): skills are the single append-merged
-	// option family in the "nearer scope wins; skills append, everything
-	// else replaces" rule. When WithSkills lands, this struct gains
-	//
-	//	skills []skill.Ref
-	//	func (s *RunSettings) AddSkills(refs ...skill.Ref)   // appends
-	//
-	// and clone() must deep-copy the slice so per-call appends never
-	// pollute the agent defaults.
+	// instructions is the extra instruction bundle handed to the driver.
+	// instructionsSet records an explicit write (even a clearing one), which
+	// is what marks the resource as host-declared in the profile payload —
+	// the legacy InstructionsSet semantics.
+	instructions    *driver.InstructionsBundleRef
+	instructionsSet bool
+
+	// skills is the single append-merged option family in the "nearer scope
+	// wins; skills append, everything else replaces" rule. clone() deep-
+	// copies the slice and records defaultSkillBoundary = len(skills), so
+	// entries below the boundary are the agent defaults (legacy
+	// WithDefaultSkills source label) and entries appended by per-call
+	// options are the run refs (legacy WithSkills source label).
+	skills               []driver.SkillRef
+	defaultSkillBoundary int
+
+	// mcp replaces as a whole value: a non-nil config substitutes the agent
+	// default wholesale (legacy WithMCP override semantics); an explicitly
+	// empty config clears the default server set.
+	mcp *engine.MCPConfig
+
+	// agents/hooks/configPatches use pointer-to-slice so "never set" (nil
+	// pointer) is distinguishable from "explicitly declared empty" (non-nil
+	// pointer, empty slice) — the legacy *AgentPayload / *HookPayload /
+	// *ProfileConfigPayload declaration semantics.
+	agents        *[]driver.AgentSpec
+	hooks         *[]driver.HookSpec
+	configPatches *[]driver.ProfileConfigPatch
+
+	// outputSchema is the structured output request for this run;
+	// outputSchemaErr records a schema generation failure at option-build
+	// time, surfaced before the driver launches (legacy outputSchemaErr
+	// short-circuit).
+	outputSchema    *driver.OutputSchema
+	outputSchemaErr error
 }
 
 // SetModel replaces the effective model for the target scope.
@@ -80,8 +109,74 @@ func (s *RunSettings) SetModel(m string) { s.model = m }
 // SDK-imposed deadline.
 func (s *RunSettings) SetTimeout(d time.Duration) { s.timeout = d }
 
-// SetInstructions replaces the extra instruction text handed to the driver.
-func (s *RunSettings) SetInstructions(text string) { s.instructions = text }
+// SetInstructions replaces the extra instruction text handed to the driver
+// and declares the instructions resource as host-managed. Empty text clears
+// the effective instructions (an explicit clear still declares).
+func (s *RunSettings) SetInstructions(text string) {
+	if text == "" {
+		s.instructions = nil
+	} else {
+		s.instructions = &driver.InstructionsBundleRef{Content: text}
+	}
+	s.instructionsSet = true
+}
+
+// SetInstructionsBundle replaces the full instruction bundle (path- or
+// content-based) and declares the instructions resource. A nil ref clears
+// while still declaring — the legacy WithInstructions(nil) semantics.
+func (s *RunSettings) SetInstructionsBundle(ref *driver.InstructionsBundleRef) {
+	s.instructions = engine.CloneInstructions(ref)
+	s.instructionsSet = true
+}
+
+// AddSkills appends skill references for the target scope — the single
+// append-merged option family: call-site refs never displace the agent
+// defaults, they extend them.
+func (s *RunSettings) AddSkills(refs ...driver.SkillRef) {
+	s.skills = append(s.skills, engine.CloneSkillRefs(refs)...)
+}
+
+// SetMCPServers replaces the MCP server set as a whole value. An empty
+// (or nil) slice is an explicit clear: it substitutes the agent default
+// with "no servers" rather than inheriting it.
+func (s *RunSettings) SetMCPServers(servers []driver.MCPServerSpec) {
+	s.mcp = &engine.MCPConfig{Servers: engine.CloneMCPServerSpecs(servers)}
+}
+
+// SetAgents replaces the sub-agent spec set and declares the resource.
+// An empty slice declares "explicitly no sub-agents".
+func (s *RunSettings) SetAgents(specs []driver.AgentSpec) {
+	cp := engine.CloneAgentSpecs(specs)
+	s.agents = &cp
+}
+
+// SetHooks replaces the hook spec set and declares the resource. An empty
+// slice declares "explicitly no hooks".
+func (s *RunSettings) SetHooks(specs []driver.HookSpec) {
+	cp := engine.CloneHookSpecs(specs)
+	s.hooks = &cp
+}
+
+// SetConfigPatches replaces the profile config patch set and declares the
+// resource. An empty slice declares "explicitly no patches".
+func (s *RunSettings) SetConfigPatches(patches []driver.ProfileConfigPatch) {
+	cp := engine.CloneProfileConfigPatches(patches)
+	s.configPatches = &cp
+}
+
+// SetOutputSchema replaces the structured output request for this run.
+func (s *RunSettings) SetOutputSchema(schema driver.OutputSchema) {
+	s.outputSchema = engine.CloneOutputSchema(&schema)
+}
+
+// SetOutputSchemaError records a schema construction failure. The run fails
+// with this error before the driver launches — schema bugs are programmer
+// errors that must not silently degrade into unvalidated output. The error
+// is sticky (legacy outputSchemaErr semantics): a valid schema set later in
+// the option list does not clear it.
+func (s *RunSettings) SetOutputSchemaError(err error) {
+	s.outputSchemaErr = err
+}
 
 // SetWorkspace replaces the working directory for the target scope.
 func (s *RunSettings) SetWorkspace(dir string) { s.workspace = dir }
@@ -110,7 +205,9 @@ func (s *RunSettings) SetPolicy(p Policy) { s.policy = &p }
 func (s *RunSettings) SetApprovalHandler(h ApprovalHandler) { s.approval = h }
 
 // clone returns a deep copy so per-call overrides never leak back into the
-// agent defaults (and one run never pollutes the next).
+// agent defaults (and one run never pollutes the next). It also stamps the
+// default/run skill boundary: everything present at clone time is an agent
+// default; everything a CallOption appends afterwards is a run ref.
 func (s RunSettings) clone() RunSettings {
 	out := s
 	out.metadata = maps.Clone(s.metadata)
@@ -122,6 +219,23 @@ func (s RunSettings) clone() RunSettings {
 		p := *s.policy
 		out.policy = &p
 	}
+	out.instructions = engine.CloneInstructions(s.instructions)
+	out.skills = engine.CloneSkillRefs(s.skills)
+	out.defaultSkillBoundary = len(out.skills)
+	out.mcp = engine.CloneMCPConfig(s.mcp)
+	if s.agents != nil {
+		cp := engine.CloneAgentSpecs(*s.agents)
+		out.agents = &cp
+	}
+	if s.hooks != nil {
+		cp := engine.CloneHookSpecs(*s.hooks)
+		out.hooks = &cp
+	}
+	if s.configPatches != nil {
+		cp := engine.CloneProfileConfigPatches(*s.configPatches)
+		out.configPatches = &cp
+	}
+	out.outputSchema = engine.CloneOutputSchema(s.outputSchema)
 	return out
 }
 
@@ -144,6 +258,21 @@ type AgentSettings struct {
 	// blockingEvents switches the event pipeline from the default
 	// drop-with-aggregated-marker strategy to blocking delivery.
 	blockingEvents bool
+
+	// profile selects the driver-native profile strategy (shared /
+	// dedicated / clone). Construction scope only: the profile identity of
+	// an Agent is part of what the Agent *is*, and it participates in
+	// session fingerprints.
+	profile *driver.ProfileSelection
+
+	// skillProvider resolves bare skill keys to full Skill descriptions
+	// (and, when it implements SkillCatalog, enumerates the admin
+	// catalogue). Nil means inline Skill values are the only source.
+	skillProvider SkillProvider
+
+	// skillMaterializer overrides how non-path skill sources are
+	// materialized to disk. Nil uses the process-default materializer.
+	skillMaterializer SkillMaterializer
 }
 
 // SetThreadStore injects the thread storage backend (stateful conversations).
@@ -154,6 +283,17 @@ func (s *AgentSettings) SetEventBuffer(n int) { s.eventBuffer = n }
 
 // SetBlockingEvents switches event delivery to blocking (no-drop) mode.
 func (s *AgentSettings) SetBlockingEvents() { s.blockingEvents = true }
+
+// SetProfile replaces the driver-native profile selection.
+func (s *AgentSettings) SetProfile(sel driver.ProfileSelection) {
+	s.profile = engine.CloneProfileSelection(&sel)
+}
+
+// SetSkillProvider injects the skill provider used to resolve bare keys.
+func (s *AgentSettings) SetSkillProvider(p SkillProvider) { s.skillProvider = p }
+
+// SetSkillMaterializer overrides the skill materialization strategy.
+func (s *AgentSettings) SetSkillMaterializer(m SkillMaterializer) { s.skillMaterializer = m }
 
 // ============ In-package function adapters (one per scope) ============
 
@@ -168,14 +308,11 @@ type newOptionFunc func(*AgentSettings)
 
 func (f newOptionFunc) ApplyNew(s *AgentSettings) { f(s) }
 
-// callOptionFunc backs call-scope-only options. The P0 subset has none;
-// WithSchema[T] and WithoutTokenStream (P1/P3) will use it.
+// callOptionFunc backs call-scope-only options (WithSchema[T]; later
+// WithoutTokenStream).
 type callOptionFunc func(*RunSettings)
 
 func (f callOptionFunc) ApplyRun(s *RunSettings) { f(s) }
-
-// Keep the adapter referenced until the first call-scope-only option lands.
-var _ CallOption = callOptionFunc(nil)
 
 // ============ P0 option vocabulary ============
 
@@ -264,4 +401,105 @@ func WithEventBuffer(n int) Option {
 // driver. Construction scope only.
 func WithBlockingEvents() Option {
 	return newOptionFunc(func(s *AgentSettings) { s.SetBlockingEvents() })
+}
+
+// ============ P3 option vocabulary: skills / MCP / profile ============
+
+// SkillRef references a skill for WithSkills: either a bare key resolved
+// through the SkillProvider (skill.Key) or a fully described inline skill
+// (skill.Dir / skill.FS / skill.Inline / skill.Require). Alias of the
+// driver SPI type — skill package constructors produce values of exactly
+// this type.
+type SkillRef = driver.SkillRef
+
+// SkillProvider resolves bare skill keys to full skill descriptions.
+// Implementations that also implement engine SkillCatalog (a Catalogue
+// method) additionally power Inspect().Skills enumeration.
+type SkillProvider = engine.SkillProvider
+
+// SkillMaterializer converts non-path skill sources into on-disk skill
+// directories before the driver launches.
+type SkillMaterializer = engine.SkillMaterializer
+
+// WithSkills appends skill references. This is the single append-merged
+// option family: in New the refs are the agent's default skills, in
+// Run/Stream they extend (never displace) the defaults for this invocation
+// only. Bare keys (skill.Key) are resolved through the SkillProvider;
+// inline values (skill.Dir / skill.FS / skill.Inline) are taken at face
+// value. Duplicate keys must be structurally equal — conflicting
+// duplicates fail the run with ErrSkillKeyConflict.
+func WithSkills(refs ...SkillRef) SharedOption {
+	return sharedOptionFunc(func(s *RunSettings) { s.AddSkills(refs...) })
+}
+
+// WithSkillProvider installs the skill provider that resolves bare keys
+// (and, when it implements a Catalogue method, feeds Inspect().Skills).
+// Construction scope only: the provider is part of the Agent's identity,
+// not a per-call knob.
+func WithSkillProvider(p SkillProvider) Option {
+	return newOptionFunc(func(s *AgentSettings) { s.SetSkillProvider(p) })
+}
+
+// WithSkillMaterializer overrides how non-path skill sources are staged to
+// disk. Construction scope only.
+func WithSkillMaterializer(m SkillMaterializer) Option {
+	return newOptionFunc(func(s *AgentSettings) { s.SetSkillMaterializer(m) })
+}
+
+// WithMCP replaces the MCP server set as a whole value ("everything else
+// replaces"): in New it is the agent default, in Run/Stream it substitutes
+// the default for this invocation only. Calling WithMCP() with no servers
+// is an explicit clear — the run sees no MCP servers even when the agent
+// default has some. Server specs are validated against the driver's
+// declared MCP capability before the driver launches; unsupported
+// transports fail the run with ErrMCPTransportUnsupported and the driver
+// is never started.
+func WithMCP(servers ...mcp.Server) SharedOption {
+	return sharedOptionFunc(func(s *RunSettings) { s.SetMCPServers(servers) })
+}
+
+// WithProfile selects the driver-native profile strategy (profile.Native /
+// profile.Dedicated / profile.CloneNative / profile.Default). Construction
+// scope only: the profile is part of what the Agent is, participates in
+// session fingerprints, and cannot be swapped per call.
+func WithProfile(sel profile.Selection) Option {
+	return newOptionFunc(func(s *AgentSettings) { s.SetProfile(sel) })
+}
+
+// WithProfileResources declares the desired profile-shaped resource set in
+// one value. Each resource keeps its own merge rule (the same rules as the
+// dedicated options):
+//
+//   - Skills append (like WithSkills);
+//   - MCP replaces when non-nil (like WithMCP);
+//   - Agents / Hooks / Config replace and declare when the field is
+//     non-nil — an explicitly empty slice declares "none";
+//   - Instructions replace and declare when non-nil.
+//
+// In New the resources are agent defaults; in Run/Stream they override
+// this invocation only. Every declared resource lands in the run's
+// ProfilePayload, and ProfileState reports truthfully whether the adapter
+// actually materialized it.
+func WithProfileResources(res profile.Resources) SharedOption {
+	return sharedOptionFunc(func(s *RunSettings) {
+		cp := engine.CloneProfileResources(res)
+		if len(cp.Skills) > 0 {
+			s.AddSkills(cp.Skills...)
+		}
+		if cp.MCP != nil {
+			s.SetMCPServers(cp.MCP.Servers)
+		}
+		if res.Agents != nil {
+			s.SetAgents(cp.Agents)
+		}
+		if res.Hooks != nil {
+			s.SetHooks(cp.Hooks)
+		}
+		if res.Config != nil {
+			s.SetConfigPatches(cp.Config)
+		}
+		if cp.Instructions != nil {
+			s.SetInstructionsBundle(cp.Instructions)
+		}
+	})
 }
