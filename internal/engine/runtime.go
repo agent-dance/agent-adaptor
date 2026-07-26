@@ -1,4 +1,4 @@
-package agentadaptor
+package engine
 
 import (
 	"context"
@@ -14,7 +14,11 @@ func newRunID(driverType string) string {
 	return stableHash("run", driverType, hex.EncodeToString(suffix[:]))
 }
 
-func (s *sdkImpl) prepareRuntime(
+// NewRunID exposes newRunID for the root package: Start() pre-allocates the
+// run identifier so the RunHandle can report it before Wait() completes.
+func NewRunID(driverType string) string { return newRunID(driverType) }
+
+func (s *Core) prepareRuntime(
 	ctx context.Context,
 	runID string,
 	binding AgentBinding,

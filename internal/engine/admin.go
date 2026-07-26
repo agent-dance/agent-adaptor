@@ -1,4 +1,4 @@
-package agentadaptor
+package engine
 
 import (
 	"context"
@@ -7,12 +7,43 @@ import (
 	"strings"
 )
 
+// AdminAPI is the control-plane view over the same default/named agent model
+// used for execution. It never executes prompts; it is for diagnostics,
+// settings UIs, skill inventory, profile introspection, and capability probes.
+type AdminAPI interface {
+	Default() AgentAdmin
+	Agent(name string) (AgentAdmin, error)
+	Agents() []AgentInfo
+}
+
+// AgentAdmin exposes management probes for one bound agent. Implementations
+// are backed by adapter capability interfaces, so unsupported probes return
+// truthful fallback reports instead of inventing data.
+type AgentAdmin interface {
+	Info() AgentInfo
+	CheckEnvironment(ctx context.Context) (EnvironmentReport, error)
+	ListModels(ctx context.Context) ([]ModelInfo, error)
+	DetectModel(ctx context.Context) (*DetectedModel, error)
+	GetProfile(ctx context.Context) (AgentProfile, error)
+	ProfileSnapshot(ctx context.Context) (ProfileSnapshot, error)
+	SyncProfile(ctx context.Context) (ProfileSnapshot, error)
+	ConfigSchema(ctx context.Context) (*ConfigSchema, error)
+	GetQuota(ctx context.Context) (QuotaReport, error)
+	ListSkills(ctx context.Context) (SkillSnapshot, error)
+	// SetSelectedSkills overrides the process-local default selection for
+	// this agent. The override replaces the binding's WithDefaultSkills
+	// values for subsequent Run / Start calls on this agent; Required
+	// skills from the SkillProvider continue to appear regardless. The
+	// override is not persisted across process restarts.
+	SetSelectedSkills(ctx context.Context, keys []string) (SkillSnapshot, error)
+}
+
 type adminImpl struct {
-	sdk *sdkImpl
+	sdk *Core
 }
 
 type agentAdminImpl struct {
-	sdk       *sdkImpl
+	sdk       *Core
 	name      string
 	isDefault bool
 	binding   AgentBinding
@@ -32,7 +63,7 @@ type defaultProfileState struct {
 func (a *adminImpl) Default() AgentAdmin {
 	return &agentAdminImpl{
 		sdk:       a.sdk,
-		name:      defaultAgentName,
+		name:      DefaultAgentName,
 		isDefault: true,
 		binding:   a.sdk.defaultBinding,
 	}
@@ -42,7 +73,7 @@ func (a *adminImpl) Agent(name string) (AgentAdmin, error) {
 	if name == "" {
 		return nil, ErrAgentNameRequired
 	}
-	if name == defaultAgentName {
+	if name == DefaultAgentName {
 		return a.Default(), nil
 	}
 	binding, ok := a.sdk.namedBindings[name]
@@ -65,7 +96,7 @@ func (a *adminImpl) Agents() []AgentInfo {
 	sort.Strings(names)
 
 	out := make([]AgentInfo, 0, len(names)+1)
-	out = append(out, newAgentInfo(defaultAgentName, a.sdk.defaultBinding, true))
+	out = append(out, newAgentInfo(DefaultAgentName, a.sdk.defaultBinding, true))
 	for _, name := range names {
 		out = append(out, newAgentInfo(name, a.sdk.namedBindings[name], false))
 	}

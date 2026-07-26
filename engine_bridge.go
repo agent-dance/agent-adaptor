@@ -212,25 +212,3 @@ func schemaHash(schema *OutputSchema) string { return engine.SchemaHash(schema) 
 func structuredOutputPromptInstruction(schema *OutputSchema) string {
 	return engine.StructuredOutputPromptInstruction(schema)
 }
-
-// --- transitional: still root-owned, pending batch 3 ------------------------------
-
-// profileDeclarationsFromDefaults reads AgentDefaults.profileDeclared, which
-// is only visible in this package until AgentDefaults moves to engine in
-// batch 3.
-func profileDeclarationsFromDefaults(defaults AgentDefaults) ProfileResourceDeclarations {
-	declared := defaults.profileDeclared
-	if len(defaults.Agents) > 0 {
-		declared.Agents = true
-	}
-	if len(defaults.Hooks) > 0 {
-		declared.Hooks = true
-	}
-	if len(defaults.ProfileConfig) > 0 {
-		declared.Config = true
-	}
-	if defaults.Instructions != nil {
-		declared.Instructions = true
-	}
-	return declared
-}

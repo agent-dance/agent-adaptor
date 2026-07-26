@@ -1,4 +1,4 @@
-package agentadaptor
+package engine
 
 import (
 	"context"
@@ -30,7 +30,7 @@ import (
 // CallerIdentityFromContext so multi-tenant providers can scope their
 // lookup without forcing every caller to carry tenant in the public
 // signature.
-func (s *sdkImpl) resolveSkills(
+func (s *Core) resolveSkills(
 	ctx context.Context,
 	identity AgentIdentity,
 	defaultRefs []SkillRef,
@@ -131,7 +131,7 @@ func (s *sdkImpl) resolveSkills(
 	//    before the adapter starts.
 	materializer := s.skillMaterializer
 	if materializer == nil {
-		materializer = newDefaultSkillMaterializer()
+		materializer = defaultSkillMaterializer()
 	}
 	entries := make([]ResolvedSkill, 0, len(selectedList))
 	var warnings []string
@@ -227,7 +227,7 @@ func (st *resolutionState) absorbRefs(label sourceLabel, refs []SkillRef) error 
 //
 // A nil / unset provider returns nil; the resolution layer then falls
 // back to inline Skill values exclusively.
-func (s *sdkImpl) fetchSkillsFromProvider(ctx context.Context, identity AgentIdentity, keys []string) (map[string]Skill, error) {
+func (s *Core) fetchSkillsFromProvider(ctx context.Context, identity AgentIdentity, keys []string) (map[string]Skill, error) {
 	provider := s.skillProvider
 	if provider == nil {
 		return nil, nil
@@ -258,7 +258,7 @@ func (s *sdkImpl) fetchSkillsFromProvider(ctx context.Context, identity AgentIde
 //
 // Errors from Catalogue propagate verbatim. The returned slice is
 // safe to append to without disturbing defaults.
-func (s *sdkImpl) collectAdminCandidates(ctx context.Context, defaults AgentDefaults) ([]SkillRef, error) {
+func (s *Core) collectAdminCandidates(ctx context.Context, defaults AgentDefaults) ([]SkillRef, error) {
 	candidates := append([]SkillRef(nil), defaults.Skills...)
 	if cat, ok := s.skillProvider.(SkillCatalog); ok {
 		scoped := WithCallerIdentity(ctx, defaults.Agent)
