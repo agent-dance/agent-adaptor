@@ -15,8 +15,11 @@
 | D4 | `Stream` 定义为小接口（`Events`/`Result`/`RunID`/`Cancel`），而非具体结构体 | 采纳（S9 分析反哺） | P1 |
 | D5 | `delegation.Service` 一体化入口 + `delegation.Local/Remote` 双目标 + `SubagentUpdate` 事件入主流 | 采纳（S9/§9.8） | P4 |
 | D6 | 实施策略：**绞杀者路线**（内核抽取 → staging 包并行生长 → 终局大挪移），不做同包新旧共存 | 采纳（本文 §1） | 立即生效 |
-| D7 | Option 双作用域的编译期约束具体类型设计 | **待 spike**（P0 首个任务） | P0 内 |
+| D7 | Option 双作用域的编译期约束具体类型设计 | **已定案（P0.1 spike）**：案 A 三接口 `Option` / `CallOption`（不嵌入 Option）/ `SharedOption`，双向误用编译错；`AgentSettings` 内嵌 `RunSettings`，字段不导出、扩展面为精选导出方法。详见 [p0-option-scope-decision.md](./p0-option-scope-decision.md)。连带定稿：`WithModel`/`WithTimeout` 为双作用域（已回改方案 §2.3）；`a2a.ServerOptions.Options` 类型为 `[]adaptor.CallOption` | 已关闭 |
 | D8 | 结构化输出模式词汇归属（根包常量 vs `schema` 子包） | 待定（默认根包常量 `adaptor.SchemaStrict` 等，少一个包） | P3 |
+| D9 | `providers/` 包去留 | **删除**（P0.7 裁决：全仓唯一引用者是自身测试，自述 opt-in sugar；Required 能力在 skill.Provider 合同中保留，宿主 10 行 wrapper 等价）。迁移指南记一行 | P5 前若产品异议，归宿为 `skill.MarkRequired` |
+| D10 | `runtimeservice/` 包去留 | **删除**（P0.7 裁决：v0.5 的宿主兼容 mixin，与 runtime.go / RuntimeServiceRef 零代码关系；v1 `WithServiceManager` 是全新契约，无存量宿主需要垫片） | P4.5 |
+| D11 | `Identity` 归属与字段集 | 归**根包** `adaptor.Identity` + `IdentityFromContext`（消费方横跨 skill/workspace/services 三域，不进 skill 包）；现状四字段（ID/Tenant/Profile/Name）vs 设计稿两字段是能力缩水，**字段集 P0.5 定案**（默认保四字段） | P0.5 |
 
 ---
 
@@ -45,12 +48,12 @@
 | 任务 | 内容 | 触及现状 |
 |---|---|---|
 | P0.1 | **Option 双作用域 spike**（D7）：原型两案——(a) 双接口（`Option` 含构造+双作用域、call 参数收窄接口）；(b) 单接口 + 构造/调用点运行时校验（报错信息含正确用法）。以「误用是否编译期报错、godoc 呈现、可否由生态包扩展」三条评分定案，结论写入本表 | — |
-| P0.2 | `internal/engine` 抽取：run 管线、选项合并、会话协调、checkpoint、归档 | `runner.go` `sdk.go` `binding.go` `config.go` `session.go` `archive_*.go` `util.go` |
+| P0.2 | `internal/engine` 抽取：run 管线、选项合并、会话协调、checkpoint。**波及面修正（P0.7 盘点）**：engine 不能回 import 根包，管线引用的全部合同类型必须随迁并别名回指，实际波及 ≈ 全部 32 个非测试文件（逐文件路线图见 [p0-inventory.md](./p0-inventory.md)）；`archive_*.go` 是 skill 归档源，**不在本任务**（归 P3.2） | 根包全量（见 p0-inventory.md 映射表） |
 | P0.3 | `driver/` SPI 包：`Driver`/`Descriptor`/`Request`/`Response`/`EventSink` + 10 能力接口；旧根包以类型别名回指（`type DriverAdapter = driver.Driver`），旧 API 编译不变 | `api.go`（SPI 部分） |
 | P0.4 | 四个驱动包（codex/claude/cursor/codebuddy）经 shim 实现 `driver.Driver`；`adaptertest` 内部改走 driver 接口（对外签名暂不动） | `codex/` `claude/` `cursor/` `codebuddy/` `adaptertest/` |
-| P0.5 | `next/`：`New(d driver.Driver, opts ...Option) *Agent`、`Agent.Run`、`Result`（高频平铺 + `Raw()`/`Transcript()`/`Services()`/`Decode()`）、`*RunError` + 哨兵错误、`Runner` 接口、`type Driver = driver.Driver` 别名 | 新增；语义来自 `run_types.go` `errors.go` |
+| P0.5 | `next/`：`New(d driver.Driver, opts ...Option) *Agent`、`Agent.Run`、`Result`（高频平铺 + `Raw()`/`Transcript()`/`Services()`/`Decode()`）、`*RunError` + 哨兵错误、`Runner` 接口、`type Driver = driver.Driver` 别名；**Policy{Sandbox,...} + 预设**（S4 门禁需要，从 run_policy.go 前移，不等 P1）；**`Identity` 四字段定案（D11）**；选项三接口按 D7 骨架落地 | 新增；语义来自 `run_types.go` `errors.go` `run_policy.go` `caller_identity.go` |
 | P0.6 | 场景测试 S1（一次性任务）/S2（多 agent 流水线）/S4（批量 worker 双作用域覆盖），基于 fake driver（`internal/testutil` 扩展） | `internal/testutil` |
-| P0.7 | 盘点归属存疑的根包件并记录去向：`providers/`、`runtimeservice/`、`caller_identity.go`、`run_policy.go` | 清单产出 |
+| P0.7 | ✅ 已完成：[p0-inventory.md](./p0-inventory.md)（54 文件逐一映射 + 四裁决 D9/D10/D11 + `run_policy.go` 四分方案）。注意：`EffectiveHumanDecisionPolicy` 被 claude/codebuddy 4 处调用，须经 driver 包保留等价物 | 清单已产出 |
 
 **门禁**：现有全量测试零修改通过（P0.2–P0.4 的硬指标）；S1/S2/S4 绿；`errors.Is/As` 全路径（业务失败/取消/进程崩溃）有表驱动测试。
 **回退**：engine 抽取是纯机械移动 + 薄包装，任何阶段可整体 revert。
@@ -91,7 +94,7 @@
 | 任务 | 内容 | 触及现状 |
 |---|---|---|
 | P3.1 | 驱动 Config 回家：`codex.Config`/`claude.Config`/`cursor.Config`/`codebuddy.Config` + `Driver()` 构造器；根包 `CodexConfig` 等旧类型保留别名至 P5 | `config_types.go` 四驱动包 |
-| P3.2 | `skill/` 包：`Dir`/`FS`/`Inline`/`Key` + `Provider`/`Materializer` 接口；`WithSkills`/`WithSkillProvider`/`WithSkillMaterializer`；追加合并语义、Required、冲突检测、严格物化全部保留 | `skill_*.go` 5 个文件 + `internal/skillruntime` |
+| P3.2 | `skill/` 包：`Dir`/`FS`/**`Archive`**/`Inline`/`Key` + `Provider`/`Materializer` 接口；`WithSkills`/`WithSkillProvider`/`WithSkillMaterializer`；追加合并语义、Required、冲突检测、严格物化全部保留。**收编 `archive_*.go`**（P0.7 勘误：它们是 skill 归档源 zip/tar/tgz，非 run 归档；`skill.Archive` 构造器补齐能力保全缺口） | `skill_*.go` 5 个文件 + `archive_*.go` + `internal/skillruntime` |
 | P3.3 | `mcp/` 包：`HTTP`/`Stdio`/`Server`；`WithMCP` 替换语义 + profile 物化 + fingerprint 不变 | `mcp_types.go` `internal/mcpruntime` |
 | P3.4 | `profile/` 包：`Native`/`Dedicated`/`CloneNative`/`CloneFrom` + `LinkAuth`；`profile.Resources`（agents/hooks/instructions/config patch）；真话物化汇报 | `profile.go` `profile_resources.go` `internal/profile*` 8 个包 |
 | P3.5 | 结构化输出：`RunAs[T]`（接受任意 `Runner`）+ `WithSchema[T]` + 三模式（D8 定名）；能力矩阵校验、启动前失败语义不变 | `structured_output.go` |
@@ -108,11 +111,11 @@
 
 | 任务 | 内容 | 触及现状 |
 |---|---|---|
-| P4.1 | `pkg/bridges` → `bridges/`、`pkg/hosttools` → `hosttools/`、`pkg/clients` → `clients/`（提升一级，旧路径留转发包至 P5） | 目录移动 |
+| P4.1 | `pkg/bridges` → `bridges/`、`pkg/hosttools` → `hosttools/`、`pkg/clients` → `clients/`（提升一级，旧路径留转发包至 P5）。**连带修订** `pkg/bridges/a2a/import_boundary_test.go`：硬编码的 `pkg/clients/a2a` 路径提级后守门会假绿，且 forbidden 列表漏了 codebuddy 驱动，一并补上 | 目录移动 + 守门测试 |
 | P4.2 | `agui`：`Events(stream)` 基于新事件族重写状态机；capability 降级逻辑保留；`internal/aguiversion` 守门测试随迁 | `pkg/bridges/agui` |
 | P4.3 | `sse.Handler(runner, Options)`：接受 `Runner`（Agent/Thread 同构）；断连取消语义不变 | `pkg/bridges/sse` |
 | P4.4 | `a2a.NewServer(runner, ServerOptions)`：`Session: Stateless()/ThreadByContextID()`；ExposurePolicy 脱敏、TaskLifecycle 不变；`ServerOptions.Options []adaptor.Option`（调用作用域） | `pkg/bridges/a2a` |
-| P4.5 | **`RuntimeServiceRef.MCP` 类型化**（`*mcp.Server`）；迁移期兼容解析旧 `agentadaptor.mcp.*` metadata key（P5 删）| `runtime.go` `runtimeservice/` `internal/mcpruntime` |
+| P4.5 | **`RuntimeServiceRef.MCP` 类型化**（`*mcp.Server`）；迁移期兼容解析旧 `agentadaptor.mcp.*` metadata key（P5 删）；`runtimeservice/` 按 D10 **确认删除**（非改造——它与 RuntimeServiceRef 零代码关系）| `runtime.go` `workspace_skill_types.go` `internal/mcpruntime` |
 | P4.6 | **`delegation.Service`**（D5）：Registry+EventBus+Delegator+per-run MCP sidecar+结果记录一体；`delegation.Local(key, runner, policy)` / `delegation.Remote(key, cardURL, policy)`；`team.Option()`；`team.Result(runID, key)` | `pkg/hosttools/a2adelegation` |
 | P4.7 | **宿主事件注入口**：engine 提供 per-run 的 host-event 注入内部 API，`SubagentUpdate` 汇入主流；`subagentstream` 降级为兼容层。**兜底**：若注入侵入面超预期，退回 `subagentstream.Merge(stream, bus)` 桥接方案，S9 文档同步改写 | `pkg/bridges/subagentstream` + engine |
 | P4.8 | `sessionrecorder` 适配新事件族 | `pkg/hosttools/sessionrecorder` |
@@ -128,7 +131,7 @@
 | 任务 | 内容 |
 |---|---|
 | P5.1 | 冻结 v0：main 打 `v0.9.x` tag；`v1` 分支 rebase 收口 |
-| P5.2 | 大挪移：`next/` → 根目录（package `adaptor`，D3 最后确认点）；删除旧 API 54 个根文件中被取代者与旧测试；`pkg/` 转发包删除；旧 metadata key 兼容解析删除 |
+| P5.2 | 大挪移：`next/` → 根目录（package `adaptor`，D3 最后确认点）；删除旧 API 54 个根文件中被取代者与旧测试；`pkg/` 转发包删除；旧 metadata key 兼容解析删除；`providers/`（D9）与 `runtimeservice/`（D10，若 P4.5 未删）移除。**检查项**：11 个 import 根包类型的 internal 包 + 四驱动包的引用 repoint 到新家（别名删除前逐包核对，清单见 p0-inventory.md 盲点核查节） |
 | P5.3 | `adaptertest` v1：面向 `driver.Driver` 的一致性套件（能力声明真话性、事件时序、会话 codec、结构化输出矩阵）；四内置驱动 + fake driver 全过 |
 | P5.4 | 文档重写：`README`（6 名词开篇）、`doc.go`、`docs/api-reference.md`、`usage-guide.md`（删除四层 ID 对照表与防踩坑指南——它们的存在理由已被消除）、`streaming.md`、`a2a.md`、`structured-output.md`；新增 `docs/migrating-to-v1.md`（§4 能力映射表展开成旧→新逐 API 对照）；`workstream-*.md` 移入 `docs/archive/` |
 | P5.5 | 发布检查单：godoc 首屏审查（根包导出名 ≤ ~35）、`go vet`/race/fuzz（archive fuzz 随迁）、examples 全绿、CHANGELOG、`v1.0.0` tag |
@@ -150,7 +153,7 @@
 | `sdk_session_test.go` `sdk_start_session_test.go` `runner_session_internal_test.go` `session_codec_internal_test.go` | P2 | Thread/threadstore |
 | `skill_contract_test.go` `skills_sdk_test.go` `skill_dirscan_test.go` `mcp_sdk_test.go` `structured_output_test.go` `admin_profile_test.go` `profile_resources_test.go` `caller_identity_test.go` | P3 | 词汇包/Inspect |
 | `runtime_admin_test.go` + bridges/hosttools 各包测试 + `internal/aguiversion` | P4 | 服务/桥 |
-| `archive_fuzz_test.go` `archive_source_test.go` | P0 随 engine | engine |
+| `archive_fuzz_test.go` `archive_source_test.go` | P3 随 skill 归档源（P0.7 勘误：非 engine） | `skill/` |
 
 4. **live 冒烟**：examples 中依赖真实 CLI 的（codex-basic、streaming-chat、team-agent-workflow）保持手动/定期跑，不进 PR 门禁；CI 只保证编译。
 
@@ -184,6 +187,7 @@
 | R5 | `cl/opt_examples` 分支与 `v1` 的合并冲突 | 高/低 | P4.9 直接在 v1 重写该 example，不做机械合并 |
 | R6 | 大挪移 PR 过大不可评审 | 高/中 | P5.2 拆三步：移动（无 diff 语义）→ 删除 → 重命名；分 PR，每步 CI 绿 |
 | R7 | v0 用户升级断崖 | —/中 | migration guide 覆盖 66 选项逐一映射；v0.x tag 冻结可长期 pin |
+| R8 | P0.2 波及面 ≈ 全根包 32 个非测试文件（合同类型必须随 engine 迁移并别名回指，否则依赖成环） | 高/中 | 以 p0-inventory.md 逐文件映射表为施工路线图分批推进；每批保持 build/test 全绿可独立 revert |
 
 ---
 
