@@ -45,6 +45,8 @@
 
 **目标**：地基。engine 独立、SPI 出根包、新 API 的 `Agent/Option/Result/RunError` 四件套可用，S1/S2/S4 场景跑通。
 
+> **✅ P0 已完成（2026-07-26）**。提交序列：93cabb0（driver SPI，四驱动零修改、导出面 381 符号零变化）→ 7f4cf9a（next/ 四件套 + S1/S2/S4 + RunError 三路径表驱动）→ a129602/0d2d293/eac458f/a364d46（engine 四批抽取，engine 仅 import driver 无环，根包降薄壳 19 文件）。全部门禁绿：现有 _test.go 零修改、导出符号 AST 逐符号比对零增删改、全仓 build/vet/test 通过。偏差记录见各批提交与本文档 git 历史。
+
 | 任务 | 内容 | 触及现状 |
 |---|---|---|
 | P0.1 | **Option 双作用域 spike**（D7）：原型两案——(a) 双接口（`Option` 含构造+双作用域、call 参数收窄接口）；(b) 单接口 + 构造/调用点运行时校验（报错信息含正确用法）。以「误用是否编译期报错、godoc 呈现、可否由生态包扩展」三条评分定案，结论写入本表 | — |
