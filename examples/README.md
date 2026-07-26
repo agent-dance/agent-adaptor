@@ -241,6 +241,19 @@ v1 里消费者只看得到两层身份：宿主自己选的 thread key，和 SD
 go run ./examples/session-codec-inspect -agent=cursor
 ```
 
+### `showcases/team-agent-workflow`
+
+**live-only、手动跑、会产生付费模型调用**（一次 leader run + 三次 role run），因此不进 `run_examples.ps1` 冒烟清单、目录下不带任何 `_test.go`、且必须显式给 `-leader=`（没有默认 agent、没有兜底）。
+
+设计文档 §9.7 / §9.8 的团队协作形态：一个 leader Agent 带 plan（read-only）→ impl（workspace-write）→ review（read-only）三个角色，全程只有三处 SDK 构造。`delegation.NewService(...)` 一次配置就是整个委派运行时（registry + event bus + delegator + per-run MCP sidecar + 结果记录）；`delegation.Local(key, runner, policy)` 把进程内的任意 `Runner` 注册成可委派角色，所以每个角色就是一个 `*adaptor.Agent` 值加一层普通 Go decorator，不起 A2A server、不占端口；`team.Option()` 一行把服务挂到 leader 上——sidecar 作为 runtime service 带类型化 MCP 声明、生命周期绑定到本次 run、委派事件并入 leader 自己的 `Events()` 通道成为 `adaptor.SubagentUpdate`。消费端仍然是一个 `for range stream.Events()` + `Result()`，团队进度与 leader 自己的输出在同一条通道上按序到达；跑完用 `team.Result(stream.RunID(), "review")` + `HasLine(...)` 读回 review 角色的裁决。临时 workspace/TASK.md、终端渲染、workspace 阶段审计等宿主逻辑放在 `host.go`。
+
+```bash
+go run ./examples/showcases/team-agent-workflow -leader=claude
+go run ./examples/showcases/team-agent-workflow -leader=claude -plan=codex -review=codex
+go run ./examples/showcases/team-agent-workflow -leader=claude -keep-workspace
+go run ./examples/showcases/team-agent-workflow -leader=claude -web-mode -web-addr=:8080
+```
+
 ## Smoke Runner
 
 PowerShell runner 会先检查选定 CLI 的 `--help`，不健康就整体 skip；健康时按同一个 agent 跑所有非 server examples。顺序上先跑不启动 CLI 的 `session-codec-inspect` 作为廉价 wiring smoke，最后的 `codex-profile-full` 用 `-run=false -probe=false` 只做 profile materialization，不触发付费模型调用。

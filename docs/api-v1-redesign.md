@@ -769,6 +769,8 @@ func (s observedStream) Result() (*adaptor.Result, error) {
 
 > 现状的 main.go(463) + roles.go(326) + delegation_runtime.go(323) 收敛为下面这一个文件（~250 行）。
 > fixture / console / audit / rolePrompt / leaderProtocol 是纯宿主逻辑（临时 git 仓库、终端渲染、工作区阶段快照、给 review 附加 go test 证据、领队编排协议文本），与 SDK API 无关，原样保留，此处只引用。
+>
+> R9 注记：`PersistentProcess` 常驻进程复用不在 v1.0.0 范围内，随 `cl/opt_examples` 合入 main 后以 `claude.Config` additive 字段形态开启（v1 API 形态不因此改变）；在此之前示例中以注释开关保留——见落地版 `examples/showcases/team-agent-workflow/main.go` 与 `examples/internal/exampleutil/live_agent.go`。
 
 ```go
 // Command team-agent-workflow —— v1 API 重构版。
