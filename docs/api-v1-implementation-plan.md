@@ -100,7 +100,7 @@
 |---|---|---|
 | P3.1 | ✅ 已完成（提前并行，提交 275e8a1）：四驱动包各得 `Config`（别名指向根包公开别名）+ `Driver(cfg) driver.Driver`（configuredDriver 嵌入现有 adapter，能力接口经方法提升自动保留；req.Config==nil 时注入构造期 cfg，显式 Config 不覆盖）；现有入口与既有测试零修改；P5 翻转别名真身方向 | `config_types.go` 四驱动包 |
 | P3.2 | `skill/` 包：`Dir`/`FS`/**`Archive`**/`Inline`/`Key` + `Provider`/`Materializer` 接口；`WithSkills`/`WithSkillProvider`/`WithSkillMaterializer`；追加合并语义、Required、冲突检测、严格物化全部保留。**收编 `archive_*.go`**（P0.7 勘误：它们是 skill 归档源 zip/tar/tgz，非 run 归档；`skill.Archive` 构造器补齐能力保全缺口） | `skill_*.go` 5 个文件 + `archive_*.go` + `internal/skillruntime` |
-| P3.3 | `mcp/` 包：`HTTP`/`Stdio`/`Server`；`WithMCP` 替换语义 + profile 物化 + fingerprint 不变 | `mcp_types.go` `internal/mcpruntime` |
+| P3.3 | 🟡 词汇包已完成（提交 66443b4）：`mcp/` 包 `Server = driver.MCPServerSpec`（单服务器形状，兼容 P4.5 `RuntimeServiceRef.MCP *mcp.Server`；别名指向叶子包 driver 避免 P5 后根包 import 环）+ `HTTP`/`SSE`/`Stdio` 构造器（SSE 为现状能力保全补入）+ `WithHeader(s)`/`WithBearerTokenEnv`/`Required` 选项，10 字段零缩水，8 用例全绿。**待办**：`WithMCP` 选项接线（替换语义 + profile 物化 + fingerprint 不变）留给 P3 接线波单一 owner | `mcp_types.go` `internal/mcpruntime` |
 | P3.4 | `profile/` 包：`Native`/`Dedicated`/`CloneNative`/`CloneFrom` + `LinkAuth`；`profile.Resources`（agents/hooks/instructions/config patch）；真话物化汇报 | `profile.go` `profile_resources.go` `internal/profile*` 8 个包 |
 | P3.5 | 结构化输出：`RunAs[T]`（接受任意 `Runner`）+ `WithSchema[T]` + 三模式（D8 定名）；能力矩阵校验、启动前失败语义不变 | `structured_output.go` |
 | P3.6 | `Inspect()` 面板（Environment/Models/Quota/ConfigSchema/Skills）+ `ProfileState`/`SyncProfile`/`SelectSkills` | `admin.go` `admin_helpers.go` |
