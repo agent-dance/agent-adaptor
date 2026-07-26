@@ -113,7 +113,7 @@
 
 | 任务 | 内容 | 触及现状 |
 |---|---|---|
-| P4.1 | `pkg/bridges` → `bridges/`、`pkg/hosttools` → `hosttools/`、`pkg/clients` → `clients/`（提升一级，旧路径留转发包至 P5）。**连带修订** `pkg/bridges/a2a/import_boundary_test.go`：硬编码的 `pkg/clients/a2a` 路径提级后守门会假绿，且 forbidden 列表漏了 codebuddy 驱动，一并补上 | 目录移动 + 守门测试 |
+| P4.1 | ✅ 已完成（提前并行，提交 4deabe7）：7 包提升至顶层，测试随迁新路径全绿；旧路径转发包全集镜像（Err 哨兵用 var 转发保 errors.Is 同一性，Deprecated 标记，P5 删）；三个 import 守门测试路径重锚定 + forbidden 列表全部补齐 codebuddy；CI repeat/race A2A 步骤改指新路径 | 目录移动 + 守门测试 |
 | P4.2 | `agui`：`Events(stream)` 基于新事件族重写状态机；capability 降级逻辑保留；`internal/aguiversion` 守门测试随迁 | `pkg/bridges/agui` |
 | P4.3 | `sse.Handler(runner, Options)`：接受 `Runner`（Agent/Thread 同构）；断连取消语义不变 | `pkg/bridges/sse` |
 | P4.4 | `a2a.NewServer(runner, ServerOptions)`：`Session: Stateless()/ThreadByContextID()`；ExposurePolicy 脱敏、TaskLifecycle 不变；`ServerOptions.Options []adaptor.Option`（调用作用域） | `pkg/bridges/a2a` |
