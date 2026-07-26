@@ -95,7 +95,7 @@
 
 | 任务 | 内容 | 触及现状 |
 |---|---|---|
-| P3.1 | 驱动 Config 回家：`codex.Config`/`claude.Config`/`cursor.Config`/`codebuddy.Config` + `Driver()` 构造器；根包 `CodexConfig` 等旧类型保留别名至 P5 | `config_types.go` 四驱动包 |
+| P3.1 | ✅ 已完成（提前并行，提交 275e8a1）：四驱动包各得 `Config`（别名指向根包公开别名）+ `Driver(cfg) driver.Driver`（configuredDriver 嵌入现有 adapter，能力接口经方法提升自动保留；req.Config==nil 时注入构造期 cfg，显式 Config 不覆盖）；现有入口与既有测试零修改；P5 翻转别名真身方向 | `config_types.go` 四驱动包 |
 | P3.2 | `skill/` 包：`Dir`/`FS`/**`Archive`**/`Inline`/`Key` + `Provider`/`Materializer` 接口；`WithSkills`/`WithSkillProvider`/`WithSkillMaterializer`；追加合并语义、Required、冲突检测、严格物化全部保留。**收编 `archive_*.go`**（P0.7 勘误：它们是 skill 归档源 zip/tar/tgz，非 run 归档；`skill.Archive` 构造器补齐能力保全缺口） | `skill_*.go` 5 个文件 + `archive_*.go` + `internal/skillruntime` |
 | P3.3 | `mcp/` 包：`HTTP`/`Stdio`/`Server`；`WithMCP` 替换语义 + profile 物化 + fingerprint 不变 | `mcp_types.go` `internal/mcpruntime` |
 | P3.4 | `profile/` 包：`Native`/`Dedicated`/`CloneNative`/`CloneFrom` + `LinkAuth`；`profile.Resources`（agents/hooks/instructions/config patch）；真话物化汇报 | `profile.go` `profile_resources.go` `internal/profile*` 8 个包 |
@@ -189,7 +189,8 @@
 | R5 | `cl/opt_examples` 分支与 `v1` 的合并冲突 | 高/低 | P4.9 直接在 v1 重写该 example，不做机械合并 |
 | R6 | 大挪移 PR 过大不可评审 | 高/中 | P5.2 拆三步：移动（无 diff 语义）→ 删除 → 重命名；分 PR，每步 CI 绿 |
 | R7 | v0 用户升级断崖 | —/中 | migration guide 覆盖 66 选项逐一映射；v0.x tag 冻结可长期 pin |
-| R8 | P0.2 波及面 ≈ 全根包 32 个非测试文件（合同类型必须随 engine 迁移并别名回指，否则依赖成环） | 高/中 | 以 p0-inventory.md 逐文件映射表为施工路线图分批推进；每批保持 build/test 全绿可独立 revert |
+| R8 | P0.2 波及面 ≈ 全根包 32 个非测试文件（合同类型必须随 engine 迁移并别名回指，否则依赖成环） | 高/中 | ✅ 已兑现：p0-inventory.md 为路线图分四批推进，两次中断均无损恢复 |
+| R9 | S9/设计文档使用的 `claude.Config{PersistentProcess: true}` 字段（及背后的常驻进程驱动能力）只存在于 `cl/opt_examples` 分支，main 的 ClaudeConfig 上没有（P3.1 实测） | 高/中 | P4.9 重写 team-agent-workflow 前，先把 claude 驱动的 PersistentProcess 能力从 cl/opt_examples 移植/合入 v1 线（或示例改用现有进程模型并回改 §9 文档）；列为 P4 前置检查项 |
 
 ---
 
