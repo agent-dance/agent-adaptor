@@ -5,28 +5,6 @@ import (
 	"time"
 )
 
-// SessionMode controls how the SDK coordinates a run with SessionStore.
-// Without a SessionStore, runs are stateless and session-aware modes return an
-// error rather than silently pretending to resume.
-type SessionMode string
-
-const (
-	// SessionContinueOrStart resolves (Namespace, Key) and resumes when an
-	// active mapping exists; otherwise it starts a new session.
-	SessionContinueOrStart SessionMode = "continue_or_start"
-	// SessionContinueOnly requires an existing concrete SessionID or key
-	// mapping and fails when no compatible session exists.
-	SessionContinueOnly SessionMode = "continue_only"
-	// SessionStartNew starts fresh and rebinds (Namespace, Key) only after a
-	// valid checkpoint is produced.
-	SessionStartNew SessionMode = "start_new"
-	// SessionFork starts from ForkFrom but persists the result as a distinct
-	// session mapping.
-	SessionFork SessionMode = "fork"
-	// SessionStateless forces no session resolution or persistence for this run.
-	SessionStateless SessionMode = "stateless"
-)
-
 // SessionRequest is the host-facing session instruction for one run. Namespace
 // and Key form the stable business key; ID/ForkFrom refer to concrete SDK
 // session handles.

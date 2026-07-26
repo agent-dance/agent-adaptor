@@ -6,64 +6,6 @@ import (
 	"strings"
 )
 
-// ProfileMode describes how a built-in adapter should choose its local
-// provider profile directory for auth, config, MCP, and skill state.
-type ProfileMode string
-
-const (
-	// ProfileModeUnset means "use the adapter default behavior".
-	ProfileModeUnset ProfileMode = ""
-	// ProfileModeNative uses the provider's native profile/home resolution.
-	ProfileModeNative ProfileMode = "native"
-	// ProfileModeDedicated uses Dir as the provider home/profile directory.
-	ProfileModeDedicated ProfileMode = "dedicated"
-	// ProfileModeClone creates or refreshes a managed profile copied from From.
-	ProfileModeClone ProfileMode = "clone"
-)
-
-// CloneProfileOptions controls which parts of a source provider profile are
-// copied when WithCloneProfile or WithCloneProfileFrom is used.
-type CloneProfileOptions struct {
-	IncludeSettings bool
-	IncludeMCP      bool
-	IncludeSkills   bool
-	// IncludeAuth keeps the original clone behavior: auth files are copied
-	// into the target profile when they are missing. Prefer AuthMode for
-	// OAuth-backed CLIs where duplicated refresh-token state is unsafe.
-	IncludeAuth bool
-	// AuthMode controls auth-file handling independently from IncludeAuth.
-	// The zero value keeps auth out of the clone unless IncludeAuth is true.
-	AuthMode CloneProfileAuthMode
-}
-
-// CloneProfileAuthMode controls how WithCloneProfile and WithCloneProfileFrom
-// seed auth files from the source provider profile.
-type CloneProfileAuthMode string
-
-const (
-	// CloneProfileAuthNone leaves auth files out of the cloned profile.
-	CloneProfileAuthNone CloneProfileAuthMode = ""
-	// CloneProfileAuthCopy copies auth files into the cloned profile. This is
-	// suitable for static API-key style auth, but can duplicate OAuth refresh
-	// token state for CLIs that rotate tokens in-place.
-	CloneProfileAuthCopy CloneProfileAuthMode = "copy"
-	// CloneProfileAuthLink shares auth files with the source profile by
-	// symlink, falling back to a hardlink when symlinks are unavailable. It
-	// fails rather than silently copying if neither shared-file strategy works.
-	CloneProfileAuthLink CloneProfileAuthMode = "link"
-)
-
-// ProfileSelection is the normalized binding-level profile request. Hosts
-// usually construct it through WithNativeProfile, WithDedicatedProfile,
-// WithCloneProfile, or WithCloneProfileFrom rather than setting fields
-// directly.
-type ProfileSelection struct {
-	Mode  ProfileMode
-	Dir   string
-	From  string
-	Clone *CloneProfileOptions
-}
-
 func cloneProfileSelection(selection *ProfileSelection) *ProfileSelection {
 	if selection == nil {
 		return nil
