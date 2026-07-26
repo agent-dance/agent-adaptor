@@ -4,11 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/agent-dance/agent-adaptor/internal/engine"
 )
 
 type runnerImpl struct {
@@ -19,12 +20,10 @@ type runnerImpl struct {
 }
 
 // decisionHandlers carries the per-Kind typed handlers resolved for one run
-// (RunOption-level beats AgentOption-level; see resolveInvocation).
-type decisionHandlers struct {
-	Permission PermissionHandler
-	PlanReview PlanReviewHandler
-	Question   QuestionHandler
-}
+// (RunOption-level beats AgentOption-level; see resolveInvocation). It is an
+// alias for the engine declaration so the runner core and the root-package
+// dualSink dispatcher share one type.
+type decisionHandlers = engine.DecisionHandlers
 
 func (r *runnerImpl) Run(ctx context.Context, prompt string, opts ...RunOption) (RunResult, error) {
 	// Even Run() needs a DecisionCapableSink so typed HITL handlers (mode B)
@@ -1114,12 +1113,7 @@ type handlerOutcome struct {
 }
 
 func (s *dualSink) runPermissionHandler(ctx context.Context, req DecisionRequest) (DecisionResponse, DecisionResult, error) {
-	typed := PermissionRequest{
-		decisionRequestBase: decisionRequestToBase(req),
-		Tool:                stringFrom(req.Payload, "tool"),
-		Prompt:              req.Prompt,
-		Args:                req.Payload,
-	}
+	typed := engine.PermissionRequestFrom(req)
 
 	ch := make(chan handlerOutcome, 1)
 	go func() {
@@ -1135,12 +1129,7 @@ func (s *dualSink) runPermissionHandler(ctx context.Context, req DecisionRequest
 }
 
 func (s *dualSink) runPlanReviewHandler(ctx context.Context, req DecisionRequest) (DecisionResponse, DecisionResult, error) {
-	typed := PlanReviewRequest{
-		decisionRequestBase: decisionRequestToBase(req),
-		Prompt:              req.Prompt,
-		Plan:                stringFrom(req.Payload, "plan"),
-		Extra:               req.Payload,
-	}
+	typed := engine.PlanReviewRequestFrom(req)
 
 	ch := make(chan handlerOutcome, 1)
 	go func() {
@@ -1156,12 +1145,7 @@ func (s *dualSink) runPlanReviewHandler(ctx context.Context, req DecisionRequest
 }
 
 func (s *dualSink) runQuestionHandler(ctx context.Context, req DecisionRequest) (DecisionResponse, DecisionResult, error) {
-	typed := QuestionRequest{
-		decisionRequestBase: decisionRequestToBase(req),
-		Prompt:              req.Prompt,
-		Schema:              mapFrom(req.Payload, "schema"),
-		Choices:             req.Choices,
-	}
+	typed := engine.QuestionRequestFrom(req)
 
 	ch := make(chan handlerOutcome, 1)
 	go func() {
@@ -1656,22 +1640,6 @@ func extractDriverFingerprint(cfg any) string {
 	return stableHash(cfg)
 }
 
-func instructionFingerprint(ref *InstructionsBundleRef) string {
-	if ref == nil {
-		return ""
-	}
-	if ref.Fingerprint != "" {
-		return ref.Fingerprint
-	}
-	content := ref.Content
-	if ref.Path != "" && content == "" {
-		if raw, err := os.ReadFile(ref.Path); err == nil {
-			content = string(raw)
-		}
-	}
-	return stableHash("instructions", ref.ID, ref.Path, content, ref.Scope, ref.Mode, ref.Native)
-}
-
 func commonConfigMetadata(cfg CommonConfig) map[string]string {
 	if cfg.CWD == "" {
 		return nil
@@ -1695,22 +1663,6 @@ func newItemEvent(item TranscriptItem) RunEvent {
 		Type:      RunEventItem,
 		Timestamp: time.Now().UTC(),
 		Item:      &clone,
-	}
-}
-
-// decisionRequestToBase extracts the common fields for typed handler
-// requests. (DecisionRequest now lives in the driver package, so this is a
-// free function instead of an unexported method.)
-func decisionRequestToBase(r DecisionRequest) decisionRequestBase {
-	return decisionRequestBase{
-		RequestID:    r.RequestID,
-		RunID:        r.RunID,
-		ThreadID:     r.ThreadID,
-		Source:       r.Source,
-		ToolCallID:   r.ToolCallID,
-		CreatedAt:    r.CreatedAt,
-		Deadline:     r.Deadline,
-		RetryAttempt: r.RetryAttempt,
 	}
 }
 
@@ -1754,26 +1706,6 @@ func resultCompatibleWithKind(kind HumanDecisionKind, result DecisionResult) boo
 		return result == DecisionAnswered || result == DecisionRejected || result == DecisionTimedOut || result == DecisionAborted
 	}
 	return false
-}
-
-func stringFrom(m map[string]any, key string) string {
-	if m == nil {
-		return ""
-	}
-	if v, ok := m[key].(string); ok {
-		return v
-	}
-	return ""
-}
-
-func mapFrom(m map[string]any, key string) map[string]any {
-	if m == nil {
-		return nil
-	}
-	if v, ok := m[key].(map[string]any); ok {
-		return v
-	}
-	return nil
 }
 
 // errAbortFromFailure returns a stable sentinel used to indicate that an
