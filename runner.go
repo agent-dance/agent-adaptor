@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -12,8 +11,13 @@ import (
 	"github.com/agent-dance/agent-adaptor/internal/engine"
 )
 
+// runnerImpl is the public Runner over one bound agent. The execution
+// pipeline itself (option merging, session coordination, skill/runtime
+// resolution, adapter dispatch, checkpoint persistence) lives in
+// internal/engine; this type keeps the event-sink construction and HITL
+// dispatcher wiring that internal tests reach into.
 type runnerImpl struct {
-	sdk       *sdkImpl
+	core      *engine.Core
 	name      string
 	isDefault bool
 	binding   AgentBinding
@@ -25,12 +29,19 @@ type runnerImpl struct {
 // dualSink dispatcher share one type.
 type decisionHandlers = engine.DecisionHandlers
 
+// defaultRunEventBuffer / defaultStreamEventBuffer mirror the engine
+// defaults; newDualSink falls back to them for non-positive sizes.
+const (
+	defaultRunEventBuffer    = engine.DefaultRunEventBuffer
+	defaultStreamEventBuffer = engine.DefaultStreamEventBuffer
+)
+
 func (r *runnerImpl) Run(ctx context.Context, prompt string, opts ...RunOption) (RunResult, error) {
 	// Even Run() needs a DecisionCapableSink so typed HITL handlers (mode B)
 	// work in the blocking invocation style. Streaming is disabled so
 	// StreamPayloads are discarded; the decision dispatcher still routes
 	// per-Kind handlers and channel dispatch the same way Start() does.
-	runBuf, streamBuf, policy := r.sdk.eventSinkSettings()
+	runBuf, streamBuf, policy := r.core.EventSinkSettings()
 	sink := newDualSink("", false, runBuf, streamBuf, policy)
 	// Drain the RunEvent channel in the background so Emit() never blocks.
 	drainer := make(chan struct{})
@@ -47,7 +58,7 @@ func (r *runnerImpl) Run(ctx context.Context, prompt string, opts ...RunOption) 
 		}
 	}()
 
-	result, err := r.run(ctx, prompt, wrapWithSeq(sink), sink, opts...)
+	result, err := r.execute(ctx, prompt, wrapWithSeq(sink), sink, opts...)
 	sink.close()
 	<-drainer
 
@@ -57,7 +68,7 @@ func (r *runnerImpl) Run(ctx context.Context, prompt string, opts ...RunOption) 
 				result.Failure = cloneRunFailure(f)
 			}
 		}
-		if shouldSkipSessionPersistOnFailure(result) {
+		if engine.SkipSessionPersistOnFailure(result) {
 			err = nil
 		}
 	}
@@ -81,9 +92,9 @@ func (r *runnerImpl) Start(ctx context.Context, prompt string, opts ...RunOption
 	runCtx, cancel := context.WithCancel(ctx)
 
 	streaming := r.resolveStreamingForStart(opts...)
-	runBuf, streamBuf, policy := r.sdk.eventSinkSettings()
+	runBuf, streamBuf, policy := r.core.EventSinkSettings()
 
-	runID := newRunID(r.binding.Adapter().Descriptor().Type)
+	runID := engine.NewRunID(r.binding.Adapter().Descriptor().Type)
 
 	sink := newDualSink(runID, streaming, runBuf, streamBuf, policy)
 	handle := &asyncRunHandle{
@@ -99,7 +110,7 @@ func (r *runnerImpl) Start(ctx context.Context, prompt string, opts ...RunOption
 	boundOpts := append([]RunOption{withPresetRunID(runID)}, opts...)
 
 	go func() {
-		result, err := r.run(runCtx, prompt, wrapWithSeq(sink), sink, boundOpts...)
+		result, err := r.execute(runCtx, prompt, wrapWithSeq(sink), sink, boundOpts...)
 		sink.close()
 		handle.done <- asyncRunResult{result: result, err: err}
 		close(handle.done)
@@ -128,539 +139,19 @@ func (r *runnerImpl) resolveStreamingForStart(opts ...RunOption) bool {
 	return false
 }
 
-// run is the single execution entry point used by both Run and Start. If
-// decisionSink is non-nil the runner installs resolved typed handlers on it
-// so adapter-side RequestDecision calls route through the correct typed
-// handler.
-func (r *runnerImpl) run(ctx context.Context, prompt string, sink EventSink, decisionSink *dualSink, opts ...RunOption) (RunResult, error) {
-	invocation, cleanup, err := r.resolveInvocation(ctx, prompt, opts...)
-	if cleanup != nil {
-		defer cleanup()
-	}
-	if err != nil {
-		return RunResult{}, err
-	}
-
+// execute is the single execution entry point used by both Run and Start. It
+// folds the RunOptions into the engine's exported RunParams mirror and hands
+// off to engine.Core.Execute; the engine installs resolved typed handlers on
+// decisionSink (via engine.DecisionSink) so adapter-side RequestDecision
+// calls route through the correct typed handler.
+func (r *runnerImpl) execute(ctx context.Context, prompt string, sink EventSink, decisionSink *dualSink, opts ...RunOption) (RunResult, error) {
+	ro := applyRunOptions(opts)
+	var decision engine.DecisionSink
 	if decisionSink != nil {
-		decisionSink.bindRun(invocation.runID, invocation.policy.HumanDecision, invocation.handlers, invocation.adapter.Descriptor().RunPolicyCaps)
+		decision = decisionSink
 	}
-
-	if err := r.validateDecisionCapabilities(invocation); err != nil {
-		return RunResult{}, err
-	}
-
-	driverType := invocation.adapter.Descriptor().Type
-	sessionPlan, err := r.sdk.prepareSession(ctx, invocation.session, invocation.agent, driverType, invocation.fingerprint)
-	if err != nil {
-		return RunResult{}, err
-	}
-	runCtx := ctx
-	var runCancel context.CancelFunc
-	if sessionPlan != nil {
-		runCtx, runCancel = context.WithCancel(ctx)
-		sessionPlan.startLeaseRenewal(runCtx, r.sdk.sessionStore, runCancel)
-		defer runCancel()
-		defer sessionPlan.release()
-	}
-
-	result, checkpoint, err := r.executeWithSessionPlan(runCtx, sink, invocation, sessionPlan)
-	if sessionPlan != nil {
-		sessionPlan.stopLeaseRenewal()
-		if renewErr := sessionPlan.renewalError(); renewErr != nil {
-			return RunResult{}, renewErr
-		}
-	}
-	if err != nil {
-		return RunResult{}, err
-	}
-
-	sessionRef, err := r.sdk.persistSession(
-		runCtx,
-		sessionPlan,
-		invocation.agent,
-		invocation.adapter,
-		invocation.fingerprint,
-		checkpoint,
-	)
-	if err != nil {
-		if errors.Is(err, ErrSessionCheckpointMissing) {
-			if result.Failure == nil {
-				if f := pendingFailureFromSink(sink); f != nil {
-					result.Failure = cloneRunFailure(f)
-				}
-			}
-			if shouldSkipSessionPersistOnFailure(result) {
-				return result, nil
-			}
-		}
-		return RunResult{}, err
-	}
-	result.Session = sessionRef
-	return result, nil
+	return r.core.Execute(ctx, r.name, r.binding, prompt, ro.params(), sink, decision)
 }
-
-func shouldSkipSessionPersistOnFailure(result RunResult) bool {
-	if result.Failure == nil {
-		return false
-	}
-	// A human decision reject/timeout may intentionally abort the run before
-	// the provider emits a new resumable checkpoint. Per the session contract,
-	// failed runs must not persist unhealthy state; treating the missing
-	// checkpoint as a hard SDK error would misclassify an expected business
-	// outcome as infrastructure failure.
-	if result.Failure.IsHumanDecision() {
-		return true
-	}
-	return false
-}
-
-func pendingFailureFromSink(sink EventSink) *RunFailure {
-	switch typed := sink.(type) {
-	case *dualSink:
-		return typed.pendingFailure()
-	case *seqSink:
-		return pendingFailureFromSink(typed.inner)
-	default:
-		return nil
-	}
-}
-
-// validateDecisionCapabilities cross-checks the resolved policy against the
-// adapter's declared HumanDecision / Question support matrix. Unsupported
-// Ask modes are hard errors. Retry support is enforced later, when a specific
-// Kind actually tries to use FailureRetry.
-func (r *runnerImpl) validateDecisionCapabilities(inv resolvedInvocation) error {
-	caps := inv.adapter.Descriptor().RunPolicyCaps
-	p := inv.policy.HumanDecision
-
-	checkMode := func(kind HumanDecisionKind, mode string, support HumanDecisionSupport, modeAsk, modeAutoApprove, modeAutoReject string) error {
-		switch mode {
-		case modeAsk:
-			if !support.Ask {
-				return fmt.Errorf("%w: adapter=%s kind=%s mode=%s", ErrHumanDecisionModeUnsupported, adapterLabel(caps), kind, mode)
-			}
-		case modeAutoApprove:
-			if !support.AutoApprove {
-				return fmt.Errorf("%w: adapter=%s kind=%s mode=%s", ErrHumanDecisionModeUnsupported, adapterLabel(caps), kind, mode)
-			}
-		case modeAutoReject:
-			if !support.AutoReject {
-				return fmt.Errorf("%w: adapter=%s kind=%s mode=%s", ErrHumanDecisionModeUnsupported, adapterLabel(caps), kind, mode)
-			}
-		}
-		return nil
-	}
-
-	if err := checkMode(HumanDecisionPermission, string(p.Permission), caps.Permission,
-		string(HumanDecisionAsk), string(HumanDecisionAutoApprove), string(HumanDecisionAutoReject)); err != nil {
-		return err
-	}
-	if err := checkMode(HumanDecisionPlanReview, string(p.PlanReview), caps.PlanReview,
-		string(HumanDecisionAsk), string(HumanDecisionAutoApprove), string(HumanDecisionAutoReject)); err != nil {
-		return err
-	}
-
-	// Question uses its own support type (no AutoApprove).
-	switch p.Question {
-	case QuestionAsk:
-		if !caps.Question.Ask {
-			return fmt.Errorf("%w: adapter=%s kind=%s mode=%s", ErrHumanDecisionModeUnsupported, adapterLabel(caps), HumanDecisionQuestion, p.Question)
-		}
-	case QuestionAutoReject:
-		if !caps.Question.AutoReject {
-			// Spec §3.8: when the adapter does not model Question at all
-			// (all QuestionSupport fields false), QuestionAutoReject is a
-			// no-op — treat it as Unset to avoid breaking the portable
-			// safe-default policy (see §5.4.3).
-			if !caps.Question.Ask && !caps.Question.Retry {
-				break
-			}
-			return fmt.Errorf("%w: adapter=%s kind=%s mode=%s", ErrHumanDecisionModeUnsupported, adapterLabel(caps), HumanDecisionQuestion, p.Question)
-		}
-	}
-
-	return nil
-}
-
-func (r *runnerImpl) resolveInvocation(ctx context.Context, prompt string, opts ...RunOption) (resolvedInvocation, func(), error) {
-	if err := validateAgentBinding(r.binding); err != nil {
-		return resolvedInvocation{}, nil, err
-	}
-
-	resolvedOpts := runOptions{}
-	for _, opt := range opts {
-		if opt != nil {
-			opt(&resolvedOpts)
-		}
-	}
-	if resolvedOpts.outputSchemaErr != nil {
-		return resolvedInvocation{}, nil, resolvedOpts.outputSchemaErr
-	}
-
-	defaults := r.binding.Defaults()
-	identity := defaults.Agent
-	if resolvedOpts.agent != nil {
-		identity = *resolvedOpts.agent
-	}
-
-	workspaceSpec := defaults.Workspace
-	if resolvedOpts.workspace != nil {
-		workspaceSpec = resolvedOpts.workspace
-	}
-	runtimeOverride := resolvedOpts.runtime
-
-	defaultRefs := r.sdk.selectedRefsFor(r.name, defaults.Skills)
-	runRefs := cloneSkillRefs(resolvedOpts.skills)
-
-	policy, err := mergeRunPolicy(defaults.RunPolicy, resolvedOpts.runPolicy)
-	if err != nil {
-		return resolvedInvocation{}, nil, err
-	}
-
-	handlers := decisionHandlers{
-		Permission: defaults.PermissionHandler,
-		PlanReview: defaults.PlanReviewHandler,
-		Question:   defaults.QuestionHandler,
-	}
-	if resolvedOpts.permissionHandler != nil {
-		handlers.Permission = resolvedOpts.permissionHandler
-	}
-	if resolvedOpts.planReviewHandler != nil {
-		handlers.PlanReview = resolvedOpts.planReviewHandler
-	}
-	if resolvedOpts.questionHandler != nil {
-		handlers.Question = resolvedOpts.questionHandler
-	}
-
-	instructions := cloneInstructions(defaults.Instructions)
-	declared := profileDeclarationsFromDefaults(defaults)
-	if resolvedOpts.instructionsSet {
-		instructions = cloneInstructions(resolvedOpts.instructions)
-		declared.Instructions = true
-	}
-	instructions, err = prepareInstructionsBundle(instructions)
-	if err != nil {
-		return resolvedInvocation{}, nil, err
-	}
-
-	metadata := mergeStringMaps(defaults.Metadata, resolvedOpts.metadata)
-	config := r.binding.Config()
-	common := extractCommonConfig(config)
-
-	streaming := false
-	if defaults.Streaming != nil {
-		streaming = *defaults.Streaming
-	}
-	if resolvedOpts.streaming != nil {
-		streaming = *resolvedOpts.streaming
-	}
-
-	outputSchema, err := normalizeOutputSchema(resolvedOpts.outputSchema)
-	if err != nil {
-		return resolvedInvocation{}, nil, err
-	}
-	outputSource, err := resolveStructuredOutputSource(r.binding.Adapter().Descriptor(), outputSchema, streaming, policy)
-	if err != nil {
-		return resolvedInvocation{}, nil, err
-	}
-	if outputSchema != nil && outputSource == StructuredOutputSourcePromptValidate {
-		if instruction := structuredOutputPromptInstruction(outputSchema); instruction != "" {
-			prompt = instruction + "\n\n" + prompt
-		}
-	}
-
-	workspace, err := r.sdk.workspaceManager.Resolve(ctx, WorkspaceRequest{
-		BaseCWD: common.CWD,
-		Spec:    workspaceSpec,
-		Metadata: mergeStringMaps(
-			commonConfigMetadata(common),
-			metadata,
-		),
-	})
-	if err != nil {
-		return resolvedInvocation{}, nil, err
-	}
-
-	runID := resolvedOpts.runIDPreset
-	if runID == "" {
-		runID = newRunID(r.binding.Adapter().Descriptor().Type)
-	}
-
-	runtimePayload, err := r.sdk.prepareRuntime(ctx, runID, r.binding, identity, workspace, metadata, runtimeOverride)
-	if err != nil {
-		// Use a detached ctx so a cancelled parent still allows the
-		// release to finish (otherwise we can leak workspaces when a
-		// user cancels Run early). Values propagate so tracing / tenant
-		// bindings are preserved.
-		_ = r.sdk.workspaceManager.Release(context.WithoutCancel(ctx), workspace, WorkspaceReleaseKeep)
-		return resolvedInvocation{}, nil, err
-	}
-
-	cleanup := func() {
-		releaseCtx := context.WithoutCancel(ctx)
-		if runID != "" {
-			_ = r.sdk.runtimeManager.ReleaseByRun(releaseCtx, runID)
-		}
-		_ = r.sdk.workspaceManager.Release(releaseCtx, workspace, WorkspaceReleaseKeep)
-	}
-
-	mcpPayload, err := resolveMCPPayloadWithRuntime(defaults.MCP, resolvedOpts.mcp, runtimePayload.Ensured, r.binding.Adapter().Descriptor().MCP)
-	if err != nil {
-		cleanup()
-		return resolvedInvocation{}, nil, err
-	}
-
-	skillPayload, _, _, err := r.sdk.resolveSkills(ctx, identity, defaultRefs, runRefs, defaults.Skills)
-	if err != nil {
-		cleanup()
-		return resolvedInvocation{}, nil, err
-	}
-
-	if injector, ok := r.binding.Adapter().(SkillAwareDriver); ok {
-		if err := injector.InjectSkills(ctx, r.binding.Config(), cloneResolvedSkills(skillPayload), cloneProfileSelection(defaults.Profile)); err != nil {
-			cleanup()
-			return resolvedInvocation{}, nil, err
-		}
-	}
-
-	agentPayload, err := prepareAgentPayload(defaults.Agents)
-	if err != nil {
-		cleanup()
-		return resolvedInvocation{}, nil, err
-	}
-	if resolvedOpts.agents != nil {
-		declared.Agents = true
-		agentPayload, err = prepareAgentPayload(resolvedOpts.agents.Agents)
-		if err != nil {
-			cleanup()
-			return resolvedInvocation{}, nil, err
-		}
-	}
-	hookPayload, err := prepareHookPayload(defaults.Hooks)
-	if err != nil {
-		cleanup()
-		return resolvedInvocation{}, nil, err
-	}
-	if resolvedOpts.hooks != nil {
-		declared.Hooks = true
-		hookPayload, err = prepareHookPayload(resolvedOpts.hooks.Hooks)
-		if err != nil {
-			cleanup()
-			return resolvedInvocation{}, nil, err
-		}
-	}
-	configPayload, err := prepareProfileConfigPayload(defaults.ProfileConfig)
-	if err != nil {
-		cleanup()
-		return resolvedInvocation{}, nil, err
-	}
-	if resolvedOpts.profileConfig != nil {
-		declared.Config = true
-		configPayload, err = prepareProfileConfigPayload(resolvedOpts.profileConfig.Patches)
-		if err != nil {
-			cleanup()
-			return resolvedInvocation{}, nil, err
-		}
-	}
-	profilePayload := buildProfilePayload(skillPayload, mcpPayload, agentPayload, hookPayload, instructions, configPayload, declared)
-
-	sessionReq := SessionRequest{}
-	if resolvedOpts.session != nil {
-		sessionReq = *resolvedOpts.session
-	}
-
-	fingerprint := stableHash(
-		r.binding.Adapter().Descriptor().Type,
-		identity,
-		extractDriverFingerprint(config),
-		strings.TrimSpace(resolvedOpts.model),
-		workspace.Fingerprint,
-		runtimePayload.Fingerprint,
-		profilePayload.Fingerprint,
-	)
-
-	return resolvedInvocation{
-		runID:          runID,
-		prompt:         prompt,
-		adapter:        r.binding.Adapter(),
-		config:         config,
-		agent:          identity,
-		workspace:      workspace,
-		runtime:        runtimePayload,
-		skills:         skillPayload,
-		mcp:            mcpPayload,
-		profilePayload: profilePayload,
-		profile:        cloneProfileSelection(defaults.Profile),
-		policy:         policy,
-		handlers:       handlers,
-		instructions:   instructions,
-		session:        sessionReq,
-		metadata:       cloneStringMap(metadata),
-		outputSchema:   cloneOutputSchema(outputSchema),
-		outputSource:   outputSource,
-		fingerprint:    fingerprint,
-		streaming:      streaming,
-		model:          strings.TrimSpace(resolvedOpts.model),
-	}, cleanup, nil
-}
-
-func (r *runnerImpl) executeWithSessionPlan(
-	ctx context.Context,
-	sink EventSink,
-	invocation resolvedInvocation,
-	plan *resolvedSessionPlan,
-) (RunResult, *DriverCheckpoint, error) {
-	if len(invocation.runtime.Ensured) > 0 {
-		serviceNames := make([]string, 0, len(invocation.runtime.Ensured))
-		for _, service := range invocation.runtime.Ensured {
-			if service.Name != "" {
-				serviceNames = append(serviceNames, service.Name)
-			}
-		}
-		_ = sink.Emit(RunEvent{
-			Type:      RunEventRuntime,
-			Text:      "runtime services ready",
-			Timestamp: time.Now().UTC(),
-			Data: map[string]any{
-				"services": cloneRuntimeServiceRefs(invocation.runtime.Ensured),
-				"names":    serviceNames,
-			},
-		})
-	}
-
-	driverReq := DriverRunRequest{
-		RunID:          invocation.runID,
-		Prompt:         invocation.prompt,
-		Config:         invocation.config,
-		ModelOverride:  invocation.model,
-		Agent:          invocation.agent,
-		Workspace:      invocation.workspace,
-		Runtime:        cloneRuntimePayload(invocation.runtime),
-		Skills:         cloneResolvedSkills(invocation.skills),
-		MCP:            cloneMCPPayload(invocation.mcp),
-		ProfilePayload: cloneProfilePayload(invocation.profilePayload),
-		Profile:        cloneProfileSelection(invocation.profile),
-		Policy:         invocation.policy,
-		Instructions:   invocation.instructions,
-		Metadata:       cloneStringMap(invocation.metadata),
-		OutputSchema:   cloneOutputSchema(invocation.outputSchema),
-		Streaming:      invocation.streaming,
-	}
-	if plan != nil {
-		var state *DriverSessionState
-		if plan.record != nil && (plan.reused || plan.request.Mode == SessionFork) {
-			state = normalizeSessionState(invocation.adapter, plan.record.DriverState)
-		}
-		driverReq.Session = &DriverSessionContext{
-			EngineSessionID: plan.engineID,
-			Mode:            plan.request.Mode,
-			State:           state,
-			PreviousID:      plan.previousID,
-		}
-	}
-
-	runResult, err := invocation.adapter.Run(ctx, driverReq, sink)
-	if err != nil {
-		var rejected *ResumeRejectedError
-		if errors.As(err, &rejected) && plan != nil && plan.reused && plan.request.Mode == SessionContinueOrStart {
-			if err := plan.prepareFresh(ctx, r.sdk.sessionStore, invocation.adapter.Descriptor().Type, invocation.fingerprint); err != nil {
-				return RunResult{}, nil, err
-			}
-			return r.executeWithSessionPlan(ctx, sink, invocation, plan)
-		}
-		return RunResult{}, nil, err
-	}
-
-	runtimeReports := cloneRuntimeServiceReports(runResult.RuntimeServices)
-	if len(runtimeReports) == 0 {
-		runtimeReports = runtimeReportsFromRefs(invocation.runtime.Ensured, invocation.agent)
-	}
-	structuredOutput, failure := r.finalizeStructuredOutput(invocation, runResult)
-
-	return RunResult{
-		RunID:            invocation.runID,
-		DriverType:       invocation.adapter.Descriptor().Type,
-		Output:           runResult.Output,
-		RawStreams:       cloneRawStreams(runResult.RawStreams),
-		Transcript:       cloneTranscriptItems(runResult.Transcript),
-		ExitCode:         runResult.ExitCode,
-		Signal:           runResult.Signal,
-		TimedOut:         runResult.TimedOut,
-		Usage:            cloneUsagePointer(runResult.Usage),
-		Metadata:         cloneStringMap(runResult.Metadata),
-		Provider:         runResult.Provider,
-		Biller:           runResult.Biller,
-		Model:            runResult.Model,
-		BillingType:      runResult.BillingType,
-		CostUSD:          cloneFloat64Pointer(runResult.CostUSD),
-		Summary:          runResult.Summary,
-		Result:           cloneAnyMap(runResult.Result),
-		StructuredOutput: structuredOutput,
-		RuntimeServices:  runtimeReports,
-		Question:         cloneRunQuestion(runResult.Question),
-		Failure:          failure,
-	}, runResult.Checkpoint, nil
-}
-
-func (r *runnerImpl) finalizeStructuredOutput(invocation resolvedInvocation, runResult DriverRunResult) (*StructuredOutput, *RunFailure) {
-	failure := cloneRunFailure(runResult.Failure)
-	if invocation.outputSchema == nil {
-		return nil, failure
-	}
-
-	structured := cloneStructuredOutput(runResult.StructuredOutput)
-	if structured == nil {
-		if invocation.outputSource == StructuredOutputSourcePromptValidate {
-			structured = validateStructuredOutput(invocation.outputSchema, invocation.outputSource, []byte(runResult.Output))
-		} else {
-			structured = &StructuredOutput{
-				Format:           invocation.outputSchema.Format,
-				Mode:             invocation.outputSchema.Mode,
-				Source:           invocation.outputSource,
-				Valid:            false,
-				ValidationErrors: []string{"adapter did not return native structured output"},
-				SchemaHash:       schemaHash(invocation.outputSchema),
-			}
-		}
-	} else {
-		if structured.Source == "" {
-			structured.Source = invocation.outputSource
-		}
-		if structured.Format == "" {
-			structured.Format = invocation.outputSchema.Format
-		}
-		if structured.Mode == "" {
-			structured.Mode = invocation.outputSchema.Mode
-		}
-		if structured.SchemaHash == "" {
-			structured.SchemaHash = schemaHash(invocation.outputSchema)
-		}
-		if len(structured.RawJSON) > 0 {
-			structured = validateStructuredOutput(invocation.outputSchema, structured.Source, structured.RawJSON)
-		} else if !structured.Valid && len(structured.ValidationErrors) == 0 {
-			structured.ValidationErrors = []string{"structured output RawJSON is empty"}
-		}
-	}
-
-	if structured != nil && !structured.Valid && invocation.outputSchema.OnInvalid == StructuredOutputFailRun && failure == nil {
-		failure = &RunFailure{
-			Code:    FailurePolicyError,
-			Message: "structured output validation failed",
-			Metadata: map[string]any{
-				"validation_errors": append([]string(nil), structured.ValidationErrors...),
-				"schema_hash":       structured.SchemaHash,
-			},
-		}
-	}
-	return structured, failure
-}
-
-// adapterLabel returns a best-effort diagnostic label for error messages.
-// RunPolicyCapabilities is a value type without an adapter name, so callers
-// fall back to a generic label. (RunPolicyCapabilities now lives in the
-// driver package, so this is a free function instead of an unexported
-// method.)
-func adapterLabel(RunPolicyCapabilities) string { return "adapter" }
 
 // -----------------------------------------------------------------------------
 // EventSink wrappers.
@@ -720,6 +211,16 @@ func (s *seqSink) RequestDecision(ctx context.Context, req DecisionRequest) (Dec
 	return DecisionResponse{RequestID: req.RequestID, Result: DecisionTimedOut}, nil
 }
 
+// PendingRunFailure implements engine.PendingFailureSource by delegating to
+// the wrapped sink, preserving the historical pendingFailureFromSink
+// semantics (dualSink direct, seqSink delegating, anything else nil).
+func (s *seqSink) PendingRunFailure() *RunFailure {
+	if src, ok := s.inner.(engine.PendingFailureSource); ok {
+		return src.PendingRunFailure()
+	}
+	return nil
+}
+
 type noopEventSink struct{}
 
 func (noopEventSink) Emit(RunEvent) error            { return nil }
@@ -728,18 +229,19 @@ func (noopEventSink) EmitStream(StreamPayload) error { return nil }
 // EventBackpressure selects how the SDK reacts when a host cannot keep up
 // with StreamPayload delivery. RunEvent delivery always falls back to the
 // legacy drop-with-marker behaviour and is not affected by this setting.
-type EventBackpressure int
+// It is an alias for the engine declaration.
+type EventBackpressure = engine.EventBackpressure
 
 const (
 	// BackpressureDropStream drops StreamPayloads when the stream channel is
 	// full and emits a single StreamDropped marker (carrying the lost count)
 	// as soon as capacity returns. This is the default and guarantees that
 	// adapter sub-processes never block on a slow host.
-	BackpressureDropStream EventBackpressure = iota
+	BackpressureDropStream = engine.BackpressureDropStream
 	// BackpressureBlock blocks the adapter goroutine until the host consumes
 	// a StreamPayload. Use this when the host cannot tolerate any gaps (for
 	// example a strict AG-UI conformance client).
-	BackpressureBlock
+	BackpressureBlock = engine.BackpressureBlock
 )
 
 // -----------------------------------------------------------------------------
@@ -830,6 +332,17 @@ func (s *dualSink) bindRun(runID string, policy HumanDecisionPolicy, handlers de
 	s.handlers = handlers
 	s.caps = caps
 }
+
+// BindRun implements engine.DecisionSink so the engine pipeline can install
+// the resolved policy, typed handlers, and capability matrix on this sink
+// before adapter.Run starts.
+func (s *dualSink) BindRun(runID string, policy HumanDecisionPolicy, handlers decisionHandlers, caps RunPolicyCapabilities) {
+	s.bindRun(runID, policy, handlers, caps)
+}
+
+// PendingRunFailure implements engine.PendingFailureSource for the engine's
+// ErrSessionCheckpointMissing tolerance path.
+func (s *dualSink) PendingRunFailure() *RunFailure { return s.pendingFailure() }
 
 func (s *dualSink) Emit(event RunEvent) error {
 	s.mu.Lock()
@@ -1613,7 +1126,7 @@ func (h *asyncRunHandle) Wait(ctx context.Context) (RunResult, error) {
 			// callers would see ErrSessionCheckpointMissing as infrastructure
 			// failure for a run that should surface as a structured HITL
 			// RunFailure, contradicting the documented Run/Start symmetry.
-			if errors.Is(result.err, ErrSessionCheckpointMissing) && shouldSkipSessionPersistOnFailure(result.result) {
+			if errors.Is(result.err, ErrSessionCheckpointMissing) && engine.SkipSessionPersistOnFailure(result.result) {
 				result.err = nil
 			}
 			// Drop the pending failure reference to avoid leaking across runs.
@@ -1635,19 +1148,6 @@ func (h *asyncRunHandle) Cancel(_ context.Context) error {
 // -----------------------------------------------------------------------------
 // helpers.
 // -----------------------------------------------------------------------------
-
-func extractDriverFingerprint(cfg any) string {
-	return stableHash(cfg)
-}
-
-func commonConfigMetadata(cfg CommonConfig) map[string]string {
-	if cfg.CWD == "" {
-		return nil
-	}
-	return map[string]string{
-		"cwd": cfg.CWD,
-	}
-}
 
 func newEvent(kind RunEventType, text string) RunEvent {
 	return RunEvent{

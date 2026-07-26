@@ -1,4 +1,4 @@
-package agentadaptor
+package engine
 
 func summarizeEnvironment(driverType string, checks []EnvironmentCheck) EnvironmentReport {
 	report := EnvironmentReport{

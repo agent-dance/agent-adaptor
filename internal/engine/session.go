@@ -1,4 +1,4 @@
-package agentadaptor
+package engine
 
 import (
 	"context"
@@ -9,9 +9,15 @@ import (
 	"time"
 )
 
+// LeaseTTL and LeaseRenewInterval report the session lease timing knobs.
+// They are function variables (not plain durations) because the historical
+// package vars defaultLeaseTTL / defaultLeaseRenewInterval stay declared in
+// the root package, where internal tests mutate them; the root package
+// injects closures over those vars at init time so mutations keep flowing
+// into the engine exactly as before.
 var (
-	defaultLeaseTTL           = 5 * time.Minute
-	defaultLeaseRenewInterval = 2 * time.Minute
+	LeaseTTL           = func() time.Duration { return 5 * time.Minute }
+	LeaseRenewInterval = func() time.Duration { return 2 * time.Minute }
 )
 
 type resolvedSessionPlan struct {
@@ -95,7 +101,7 @@ func (p *resolvedSessionPlan) acquireLease(ctx context.Context, store SessionSto
 	if target == "" || store == nil {
 		return nil
 	}
-	lease, err := store.AcquireLease(ctx, target, p.owner, defaultLeaseTTL)
+	lease, err := store.AcquireLease(ctx, target, p.owner, LeaseTTL())
 	if err != nil {
 		return err
 	}
@@ -169,7 +175,7 @@ func (p *resolvedSessionPlan) startLeaseRenewal(ctx context.Context, store Sessi
 				return
 			case <-ticker.C:
 				for _, lease := range p.snapshotLeases() {
-					if err := store.RenewLease(renewCtx, lease, defaultLeaseTTL); err != nil {
+					if err := store.RenewLease(renewCtx, lease, LeaseTTL()); err != nil {
 						p.setRenewalError(err)
 						if cancel != nil {
 							cancel()
@@ -216,9 +222,9 @@ func (p *resolvedSessionPlan) renewalError() error {
 }
 
 func leaseRenewInterval() time.Duration {
-	interval := defaultLeaseRenewInterval
-	if interval <= 0 || interval >= defaultLeaseTTL {
-		interval = defaultLeaseTTL / 2
+	interval := LeaseRenewInterval()
+	if interval <= 0 || interval >= LeaseTTL() {
+		interval = LeaseTTL() / 2
 	}
 	if interval <= 0 {
 		return time.Second
@@ -226,7 +232,7 @@ func leaseRenewInterval() time.Duration {
 	return interval
 }
 
-func (s *sdkImpl) prepareSession(
+func (s *Core) prepareSession(
 	ctx context.Context,
 	req SessionRequest,
 	identity AgentIdentity,
@@ -375,7 +381,7 @@ func (s *sdkImpl) prepareSession(
 	return plan, nil
 }
 
-func (s *sdkImpl) persistSession(
+func (s *Core) persistSession(
 	ctx context.Context,
 	plan *resolvedSessionPlan,
 	identity AgentIdentity,

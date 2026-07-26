@@ -1,76 +1,46 @@
 package agentadaptor
 
+import "github.com/agent-dance/agent-adaptor/internal/engine"
+
 // Option configures SDK construction. Options install the default agent,
 // named agents, and host-provided managers used by every run. Use Build when
 // you want option errors returned; New panics on invalid construction.
-type Option func(*sdkImpl) error
+// It is an alias for the engine declaration (the pipeline core moved to
+// internal/engine in P0.2).
+type Option = engine.Option
+
+// AgentOption configures a single AgentBinding. These defaults are merged into
+// every run on that binding before per-call RunOptions are applied. It is an
+// alias for the engine declaration.
+type AgentOption = engine.AgentOption
 
 // WithDefaultAgent binds the agent used by SDK.Run, SDK.Start, and
 // SDK.Default. It is required exactly once; hosts that want to choose between
 // agents dynamically should do that before calling the SDK, then use
 // WithAgent(name, binding) for explicit named alternatives.
 func WithDefaultAgent(binding AgentBinding) Option {
-	return func(s *sdkImpl) error {
-		if binding == nil {
-			return ErrDefaultAgentMissing
-		}
-		if s.defaultBinding != nil {
-			return ErrDefaultAgentAlreadyConfigured
-		}
-		if err := validateAgentBinding(binding); err != nil {
-			return err
-		}
-		s.defaultBinding = binding
-		return nil
-	}
+	return engine.WithDefaultAgent(binding)
 }
 
 // WithAgent registers an additional named agent binding. The name "default"
 // is reserved for WithDefaultAgent. Named agents are reached with SDK.Agent or
 // Admin().Agent and follow the same execution semantics as the default agent.
 func WithAgent(name string, binding AgentBinding) Option {
-	return func(s *sdkImpl) error {
-		if name == "" {
-			return ErrAgentNameRequired
-		}
-		if name == defaultAgentName {
-			return ErrReservedAgentName
-		}
-		if binding == nil {
-			return ErrAgentBindingRequired
-		}
-		if s.namedBindings == nil {
-			s.namedBindings = map[string]AgentBinding{}
-		}
-		if _, exists := s.namedBindings[name]; exists {
-			return &DuplicateAgentError{Name: name}
-		}
-		if err := validateAgentBinding(binding); err != nil {
-			return err
-		}
-		s.namedBindings[name] = binding
-		return nil
-	}
+	return engine.WithAgent(name, binding)
 }
 
 // WithSessionStore enables stateful session modes. Without it the SDK is
 // stateless by default; session-aware options such as WithSessionKey,
 // WithContinueSession, and WithForkSession require a store.
 func WithSessionStore(store SessionStore) Option {
-	return func(s *sdkImpl) error {
-		s.sessionStore = store
-		return nil
-	}
+	return engine.WithSessionStore(store)
 }
 
 // WithWorkspaceManager installs the host component that resolves workspace
 // specs into concrete working directories. If unset, the SDK uses a
 // passthrough shared-workspace manager.
 func WithWorkspaceManager(manager WorkspaceManager) Option {
-	return func(s *sdkImpl) error {
-		s.workspaceManager = manager
-		return nil
-	}
+	return engine.WithWorkspaceManager(manager)
 }
 
 // WithSkillProvider installs the host-side SkillProvider that backs
@@ -92,10 +62,7 @@ func WithWorkspaceManager(manager WorkspaceManager) Option {
 // provider through ctx; providers that need scoping read it via
 // [CallerIdentityFromContext].
 func WithSkillProvider(provider SkillProvider) Option {
-	return func(s *sdkImpl) error {
-		s.skillProvider = provider
-		return nil
-	}
+	return engine.WithSkillProvider(provider)
 }
 
 // WithSkillSet is sugar for WithSkillProvider when the catalogue is
@@ -106,7 +73,7 @@ func WithSkillProvider(provider SkillProvider) Option {
 // Hosts with a remote skill store should implement SkillProvider
 // directly instead of constructing a SkillSet.
 func WithSkillSet(set SkillSet) Option {
-	return WithSkillProvider(set)
+	return engine.WithSkillSet(set)
 }
 
 // WithSkillMaterializer overrides how SkillFromFS / SkillFromInline sources
@@ -114,20 +81,14 @@ func WithSkillSet(set SkillSet) Option {
 // uses the built-in cache-root materializer documented in
 // docs/skill-api-design.md §3.
 func WithSkillMaterializer(materializer SkillMaterializer) Option {
-	return func(s *sdkImpl) error {
-		s.skillMaterializer = materializer
-		return nil
-	}
+	return engine.WithSkillMaterializer(materializer)
 }
 
 // WithRuntimeServiceManager installs the host component that starts, finds,
 // and releases runtime services requested by bindings or individual runs. If
 // unset, runtime service requests resolve to an empty set.
 func WithRuntimeServiceManager(manager RuntimeServiceManager) Option {
-	return func(s *sdkImpl) error {
-		s.runtimeManager = manager
-		return nil
-	}
+	return engine.WithRuntimeServiceManager(manager)
 }
 
 // WithEventBuffer configures the per-run event-sink capacity and backpressure
@@ -145,55 +106,36 @@ func WithRuntimeServiceManager(manager RuntimeServiceManager) Option {
 // RunEvent backpressure is always drop-with-marker and is unaffected by this
 // option.
 func WithEventBuffer(runBuf, streamBuf int, policy EventBackpressure) Option {
-	return func(s *sdkImpl) error {
-		s.eventRunBuf = runBuf
-		s.eventStreamBuf = streamBuf
-		s.eventPolicy = policy
-		return nil
-	}
+	return engine.WithEventBuffer(runBuf, streamBuf, policy)
 }
 
 // WithDefaultPermissionHandler binds a PermissionHandler at the agent level.
 // Per-call WithPermissionHandler still overrides this default.
 func WithDefaultPermissionHandler(h PermissionHandler) AgentOption {
-	return func(defaults *AgentDefaults) {
-		defaults.PermissionHandler = h
-	}
+	return engine.WithDefaultPermissionHandler(h)
 }
 
 // WithDefaultPlanReviewHandler binds a PlanReviewHandler at the agent level.
 func WithDefaultPlanReviewHandler(h PlanReviewHandler) AgentOption {
-	return func(defaults *AgentDefaults) {
-		defaults.PlanReviewHandler = h
-	}
+	return engine.WithDefaultPlanReviewHandler(h)
 }
 
 // WithDefaultQuestionHandler binds a QuestionHandler at the agent level.
 func WithDefaultQuestionHandler(h QuestionHandler) AgentOption {
-	return func(defaults *AgentDefaults) {
-		defaults.QuestionHandler = h
-	}
+	return engine.WithDefaultQuestionHandler(h)
 }
-
-// AgentOption configures a single AgentBinding. These defaults are merged into
-// every run on that binding before per-call RunOptions are applied.
-type AgentOption func(*AgentDefaults)
 
 // WithDefaultIdentity sets the binding-level identity visible to host hooks
 // such as SkillProvider and RuntimeServiceManager. Per-call WithAgentIdentity
 // overrides it for one run.
 func WithDefaultIdentity(identity AgentIdentity) AgentOption {
-	return func(defaults *AgentDefaults) {
-		defaults.Agent = identity
-	}
+	return engine.WithDefaultIdentity(identity)
 }
 
 // WithDefaultWorkspace sets the binding-level workspace request. Per-call
 // WithWorkspace overrides it for one run.
 func WithDefaultWorkspace(spec WorkspaceSpec) AgentOption {
-	return func(defaults *AgentDefaults) {
-		defaults.Workspace = spec
-	}
+	return engine.WithDefaultWorkspace(spec)
 }
 
 // WithDefaultSkills installs per-agent default skill references. Each SkillRef
@@ -202,18 +144,13 @@ func WithDefaultWorkspace(spec WorkspaceSpec) AgentOption {
 // to the previously-declared set. Duplicate keys must be structurally equal
 // (see ErrSkillKeyConflict).
 func WithDefaultSkills(refs ...SkillRef) AgentOption {
-	return func(defaults *AgentDefaults) {
-		defaults.Skills = append(defaults.Skills, cloneSkillRefs(refs)...)
-	}
+	return engine.WithDefaultSkills(refs...)
 }
 
 // WithDefaultMCP sets the binding-level MCP server configuration. Per-call
 // WithMCP replaces the full MCP config for one run; it is not additive.
 func WithDefaultMCP(cfg MCPConfig) AgentOption {
-	return func(defaults *AgentDefaults) {
-		copyCfg := MCPConfig{Servers: cloneMCPServerSpecs(cfg.Servers)}
-		defaults.MCP = &copyCfg
-	}
+	return engine.WithDefaultMCP(cfg)
 }
 
 // WithDefaultProfileResources installs a binding-level profile desired state.
@@ -221,108 +158,55 @@ func WithDefaultMCP(cfg MCPConfig) AgentOption {
 // and config replace the corresponding binding defaults for their resource
 // kind.
 func WithDefaultProfileResources(resources ProfileResources) AgentOption {
-	return func(defaults *AgentDefaults) {
-		copyResources := cloneProfileResources(resources)
-		if len(copyResources.Skills) > 0 {
-			defaults.Skills = append(defaults.Skills, copyResources.Skills...)
-		}
-		if copyResources.MCP != nil {
-			defaults.MCP = copyResources.MCP
-		}
-		if resources.Agents != nil {
-			defaults.Agents = copyResources.Agents
-			defaults.profileDeclared.Agents = true
-		}
-		if resources.Hooks != nil {
-			defaults.Hooks = copyResources.Hooks
-			defaults.profileDeclared.Hooks = true
-		}
-		if resources.Config != nil {
-			defaults.ProfileConfig = copyResources.Config
-			defaults.profileDeclared.Config = true
-		}
-		if copyResources.Instructions != nil {
-			defaults.Instructions = copyResources.Instructions
-			defaults.profileDeclared.Instructions = true
-		}
-	}
+	return engine.WithDefaultProfileResources(resources)
 }
 
 // WithDefaultAgents sets the binding-level desired sub-agent resources.
 func WithDefaultAgents(specs ...AgentSpec) AgentOption {
-	return func(defaults *AgentDefaults) {
-		defaults.Agents = cloneAgentSpecs(specs)
-		defaults.profileDeclared.Agents = true
-	}
+	return engine.WithDefaultAgents(specs...)
 }
 
 // WithDefaultHooks sets the binding-level desired hook resources.
 func WithDefaultHooks(specs ...HookSpec) AgentOption {
-	return func(defaults *AgentDefaults) {
-		defaults.Hooks = cloneHookSpecs(specs)
-		defaults.profileDeclared.Hooks = true
-	}
+	return engine.WithDefaultHooks(specs...)
 }
 
 // WithDefaultProfileConfig sets the binding-level structured profile config
 // patches.
 func WithDefaultProfileConfig(patches ...ProfileConfigPatch) AgentOption {
-	return func(defaults *AgentDefaults) {
-		defaults.ProfileConfig = cloneProfileConfigPatches(patches)
-		defaults.profileDeclared.Config = true
-	}
+	return engine.WithDefaultProfileConfig(patches...)
 }
 
 // WithDefaultRuntimeServices attaches default runtime-service requirements to
 // an agent binding. Per-run WithRuntimeServices(...) overrides these defaults.
 func WithDefaultRuntimeServices(services ...RuntimeServiceSpec) AgentOption {
-	return func(defaults *AgentDefaults) {
-		if len(services) == 0 {
-			defaults.Runtime = nil
-			return
-		}
-		defaults.Runtime = &WorkspaceRuntimeConfig{Services: cloneRuntimeServiceSpecs(services)}
-	}
+	return engine.WithDefaultRuntimeServices(services...)
 }
 
 // WithDefaultRunPolicy sets binding-level defaults. Per-field empty values
 // (…Inherit) mean "no default for that field" until a per-call WithRunPolicy
 // sets it.
 func WithDefaultRunPolicy(p RunPolicy) AgentOption {
-	return func(defaults *AgentDefaults) {
-		copyP := p
-		defaults.RunPolicy = &copyP
-	}
+	return engine.WithDefaultRunPolicy(p)
 }
 
 // WithDefaultInstructions sets the binding-level instruction bundle. Passing
 // nil clears the default. Per-call WithInstructions overrides it for one run.
 func WithDefaultInstructions(ref *InstructionsBundleRef) AgentOption {
-	return func(defaults *AgentDefaults) {
-		defaults.Instructions = cloneInstructions(ref)
-		defaults.profileDeclared.Instructions = true
-	}
+	return engine.WithDefaultInstructions(ref)
 }
 
 // WithDefaultMetadata attaches binding-level metadata copied into every
 // DriverRunRequest. Hosts commonly use it for audit tags or workflow labels;
 // adapters should treat it as opaque.
 func WithDefaultMetadata(key, value string) AgentOption {
-	return func(defaults *AgentDefaults) {
-		if defaults.Metadata == nil {
-			defaults.Metadata = map[string]string{}
-		}
-		defaults.Metadata[key] = value
-	}
+	return engine.WithDefaultMetadata(key, value)
 }
 
 // WithDefaultStreaming marks the bound agent as streaming-by-default. Per-call
 // WithStreaming / WithoutStreaming still override this default.
 func WithDefaultStreaming() AgentOption {
-	return func(defaults *AgentDefaults) {
-		t := true
-		defaults.Streaming = &t
-	}
+	return engine.WithDefaultStreaming()
 }
 
 // RunOption configures one Run or Start invocation. RunOptions are resolved
@@ -357,6 +241,48 @@ type runOptions struct {
 	permissionHandler PermissionHandler
 	planReviewHandler PlanReviewHandler
 	questionHandler   QuestionHandler
+}
+
+// applyRunOptions folds opts into a fresh runOptions value, skipping nil
+// entries (same semantics the resolver used before the pipeline moved to
+// internal/engine).
+func applyRunOptions(opts []RunOption) runOptions {
+	ro := runOptions{}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&ro)
+		}
+	}
+	return ro
+}
+
+// params converts the applied run options into the engine's exported
+// RunParams mirror. It is a field-by-field copy: pointer/nil semantics are
+// preserved exactly, so engine-side resolution behaves as before.
+func (ro *runOptions) params() engine.RunParams {
+	return engine.RunParams{
+		Session:           ro.session,
+		Workspace:         ro.workspace,
+		Runtime:           ro.runtime,
+		Skills:            ro.skills,
+		MCP:               ro.mcp,
+		Agents:            ro.agents,
+		Hooks:             ro.hooks,
+		ProfileConfig:     ro.profileConfig,
+		OutputSchema:      ro.outputSchema,
+		OutputSchemaErr:   ro.outputSchemaErr,
+		Model:             ro.model,
+		RunPolicy:         ro.runPolicy,
+		Instructions:      ro.instructions,
+		InstructionsSet:   ro.instructionsSet,
+		Metadata:          ro.metadata,
+		Agent:             ro.agent,
+		Streaming:         ro.streaming,
+		RunIDPreset:       ro.runIDPreset,
+		PermissionHandler: ro.permissionHandler,
+		PlanReviewHandler: ro.planReviewHandler,
+		QuestionHandler:   ro.questionHandler,
+	}
 }
 
 // WithPermissionHandler installs a PermissionHandler for this run. Overrides

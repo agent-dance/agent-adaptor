@@ -1,6 +1,10 @@
 package agentadaptor
 
-import "context"
+import (
+	"context"
+
+	"github.com/agent-dance/agent-adaptor/internal/engine"
+)
 
 // SDK is the host-facing entry point for executing bound local agents.
 //
@@ -79,89 +83,36 @@ type RunHandle interface {
 // AdminAPI is the control-plane view over the same default/named agent model
 // used for execution. It never executes prompts; it is for diagnostics,
 // settings UIs, skill inventory, profile introspection, and capability probes.
-type AdminAPI interface {
-	Default() AgentAdmin
-	Agent(name string) (AgentAdmin, error)
-	Agents() []AgentInfo
-}
+// It is an alias for the engine declaration (the implementation moved to
+// internal/engine with the pipeline in P0.2).
+type AdminAPI = engine.AdminAPI
 
 // AgentAdmin exposes management probes for one bound agent. Implementations
 // are backed by adapter capability interfaces, so unsupported probes return
-// truthful fallback reports instead of inventing data.
-type AgentAdmin interface {
-	Info() AgentInfo
-	CheckEnvironment(ctx context.Context) (EnvironmentReport, error)
-	ListModels(ctx context.Context) ([]ModelInfo, error)
-	DetectModel(ctx context.Context) (*DetectedModel, error)
-	GetProfile(ctx context.Context) (AgentProfile, error)
-	ProfileSnapshot(ctx context.Context) (ProfileSnapshot, error)
-	SyncProfile(ctx context.Context) (ProfileSnapshot, error)
-	ConfigSchema(ctx context.Context) (*ConfigSchema, error)
-	GetQuota(ctx context.Context) (QuotaReport, error)
-	ListSkills(ctx context.Context) (SkillSnapshot, error)
-	// SetSelectedSkills overrides the process-local default selection for
-	// this agent. The override replaces the binding's WithDefaultSkills
-	// values for subsequent Run / Start calls on this agent; Required
-	// skills from the SkillProvider continue to appear regardless. The
-	// override is not persisted across process restarts.
-	SetSelectedSkills(ctx context.Context, keys []string) (SkillSnapshot, error)
-}
+// truthful fallback reports instead of inventing data. It is an alias for the
+// engine declaration.
+type AgentAdmin = engine.AgentAdmin
 
 // AgentBinding couples one DriverAdapter with its validated config and
 // binding-level defaults. Built-in packages return AgentBinding values from
-// New(cfg, opts...), and custom adapters can use Bind or BindTyped.
-type AgentBinding interface {
-	Adapter() DriverAdapter
-	Config() any
-	Defaults() AgentDefaults
-}
+// New(cfg, opts...), and custom adapters can use Bind or BindTyped. It is an
+// alias for the engine declaration.
+type AgentBinding = engine.AgentBinding
 
 // TypedAgentBinding is an AgentBinding that also exposes the concrete config
 // type. It is useful in tests, admin tooling, or custom adapter plumbing that
-// wants to inspect strongly-typed configuration after binding.
-type TypedAgentBinding[T any] interface {
-	AgentBinding
-	TypedConfig() T
-}
+// wants to inspect strongly-typed configuration after binding. It is an alias
+// for the engine declaration.
+type TypedAgentBinding[T any] = engine.TypedAgentBinding[T]
 
 // AgentDefaults are binding-level defaults merged into every Run/Start call
 // before per-call RunOptions are applied. They are copied on binding
 // construction and when returned from AgentBinding.Defaults, so callers may
-// inspect the value without mutating live SDK state.
-type AgentDefaults struct {
-	Agent           AgentIdentity
-	Workspace       WorkspaceSpec
-	Runtime         *WorkspaceRuntimeConfig
-	RunPolicy       *RunPolicy
-	Skills          []SkillRef
-	MCP             *MCPConfig
-	Agents          []AgentSpec
-	Hooks           []HookSpec
-	ProfileConfig   []ProfileConfigPatch
-	Profile         *ProfileSelection
-	Instructions    *InstructionsBundleRef
-	Metadata        map[string]string
-	profileDeclared ProfileResourceDeclarations
-	// Streaming marks the binding as streaming-by-default when non-nil and
-	// true. Per-call WithStreaming / WithoutStreaming still wins. Using a
-	// pointer keeps the three states (nil / true / false) distinct so that
-	// clones do not accidentally downgrade an opt-out to a default.
-	Streaming *bool
-
-	// per-Kind typed HITL handlers bound at agent level. Per-call
-	// WithPermissionHandler / WithPlanReviewHandler / WithQuestionHandler
-	// override these.
-	PermissionHandler PermissionHandler
-	PlanReviewHandler PlanReviewHandler
-	QuestionHandler   QuestionHandler
-}
+// inspect the value without mutating live SDK state. It is an alias for the
+// engine declaration.
+type AgentDefaults = engine.AgentDefaults
 
 // AgentInfo is the admin/listing view of a bound agent. Hosts commonly use it
-// to render settings screens, capability badges, and named-agent pickers.
-type AgentInfo struct {
-	Name        string
-	Default     bool
-	DriverType  string
-	DisplayName string
-	Descriptor  DriverDescriptor
-}
+// to render settings screens, capability badges, and named-agent pickers. It
+// is an alias for the engine declaration.
+type AgentInfo = engine.AgentInfo
