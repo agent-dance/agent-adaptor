@@ -119,17 +119,19 @@
 | 任务 | 内容 | 触及现状 |
 |---|---|---|
 | P4.1 | ✅ 已完成（提前并行，提交 4deabe7）：7 包提升至顶层，测试随迁新路径全绿；旧路径转发包全集镜像（Err 哨兵用 var 转发保 errors.Is 同一性，Deprecated 标记，P5 删）；三个 import 守门测试路径重锚定 + forbidden 列表全部补齐 codebuddy；CI repeat/race A2A 步骤改指新路径 | 目录移动 + 守门测试 |
-| P4.2 | `agui`：`Events(stream)` 基于新事件族重写状态机；capability 降级逻辑保留；`internal/aguiversion` 守门测试随迁 | `pkg/bridges/agui` |
-| P4.3 | `sse.Handler(runner, Options)`：接受 `Runner`（Agent/Thread 同构）；断连取消语义不变 | `pkg/bridges/sse` |
-| P4.4 | `a2a.NewServer(runner, ServerOptions)`：`Session: Stateless()/ThreadByContextID()`；ExposurePolicy 脱敏、TaskLifecycle 不变；`ServerOptions.Options []adaptor.Option`（调用作用域） | `pkg/bridges/a2a` |
+| P4.2 | ✅ 已交（80119ef）`agui.Events(stream)`/`NewEventTranslator` 基于新事件族重写状态机；**12 行新旧同语义输入对照表证明 AG-UI 帧逐字节等价**（仅剥时间戳）；capability 降级保留（`human_decision_retry_unsupported` 以 CUSTOM 生命周期帧可见 + DecisionAsCustom 模式） | `pkg/bridges/agui` |
+| P4.3 | ✅ 已交（80119ef）`sse.HandlerV1(runner, OptionsV1)`（V1 后缀，P5 删旧后改回设计名）：Agent/Thread 同构（带 store 的 \*Agent 按请求绑 `agent.Thread(ns/key)`）；断连取消 channel 同步零 sleep 锚定 | `pkg/bridges/sse` |
+| P4.4 | ✅ 已交（80119ef）`a2a.NewServerV1(runner, ServerOptionsV1)` + `StatelessV1()/ThreadByContextID()`；ExposurePolicy 默认脱敏与旧版 forbidden-key 清单逐项等价；业务失败 `*RunError`→TASK_STATE_FAILED 保留消息。**发现**：a2a-go 会替客户端补发 contextID，故 ThreadByContextID 的空 contextID 无状态分支经 SendMessage 实际不可达（有测试记档）；且 engine thread 跑道要求驱动交出可续 checkpoint，ThreadByContextID 仅适配可 resume 驱动 | `pkg/bridges/a2a` |
 | P4.5 | **`RuntimeServiceRef.MCP` 类型化**（`*mcp.Server`）；迁移期兼容解析旧 `agentadaptor.mcp.*` metadata key（P5 删）；`runtimeservice/` 按 D10 **确认删除**（非改造——它与 RuntimeServiceRef 零代码关系）| `runtime.go` `workspace_skill_types.go` `internal/mcpruntime` |
 | P4.6 | **`delegation.Service`**（D5）：Registry+EventBus+Delegator+per-run MCP sidecar+结果记录一体；`delegation.Local(key, runner, policy)` / `delegation.Remote(key, cardURL, policy)`；`team.Option()`；`team.Result(runID, key)`。**🟡 除 team.Option() 外已交（970ec3b）**：新文件落在现有 `hosttools/a2adelegation`（设计稿的 `delegation.` 是 import 别名；team 对象=\*Service 值），吸收示例 delegation_runtime.go 全部 409 行职责，仅剩「把 Sidecar{URL,BearerToken,ToolTimeout} 指给 leader 驱动的 MCP 面」= team.Option() 接缝；Local/Remote 对照测试（门禁项）以归一化事件序列+结果双等价锚定，成功/失败双路径。**team.Option() 接缝清单（P4.7 波实现）**：① next 侧 run-scoped 服务挂载点（AttachRun(runID)→RunAttachment{Sidecar+事件源}，engine 在 RunID 分配后、驱动派发前调用）② engine 请求组装期把 Sidecar 映射进驱动 MCP 载荷（与宿主配置合并非替换）③ sink 注入：SubscribeRun→SubagentEvent 直灌事件流（engine 版 Merge，省一跳 goroutine）④ teardown：sink 关闭后 DetachRun→ReleaseRun（不剪终止事件） | `pkg/hosttools/a2adelegation` |
 | P4.7 | **宿主事件注入口**：engine 提供 per-run 的 host-event 注入内部 API，`SubagentUpdate` 汇入主流；`subagentstream` 降级为兼容层。**兜底**：若注入侵入面超预期，退回 `subagentstream.Merge(stream, bus)` 桥接方案，S9 文档同步改写。**🟡 兜底已先行落地（970ec3b）**：`subagentstream.Merge(ctx, stream, bus)` + `SubagentEvent` 映射器已交（复用 mux.go tracker/终止帮手），engine 直灌路径可原样复用 `SubagentEvent`；S9 CI 版已经由 Merge 路径跑通 | `pkg/bridges/subagentstream` + engine |
-| P4.8 | `sessionrecorder` 适配新事件族 | `pkg/hosttools/sessionrecorder` |
+| P4.8 | ✅ 已交（80119ef）`sessionrecorder.NewEventRecorder(backend, opts...)` 收 `adaptor.Event`，`{host_seq, recorded_at, kind, event}` 稳定 JSON 信封；JSONL v1 后端推迟（内存后端已证序列化） | `pkg/hosttools/sessionrecorder` |
 | P4.9 | examples 全量重写（见 §4 清单）；`examples/showcases/team-agent-workflow` 按设计文档 §9.7 形态落地（**依赖协调**：`cl/opt_examples` 分支先合入 main 或直接在 v1 分支重写，二选一，倾向后者） | `examples/` 14 个 |
-| P4.10 | 场景测试 S6（A2A 发布）/S9（团队协作，fake driver 版做进 CI，live 版留 example）。**🟡 S9 CI 版已交（970ec3b，service_s9_test.go）**：leader + 3 Local 角色过真 HTTP MCP sidecar（bearer 鉴权 tools/call），断言含终止事件观察瞬间的 Result 实时可用性、每角色事件文法、HasLine 哨兵门控；live 版留 example（P4.9）；S6 待桥 agent | — |
+| P4.10 | ✅ 场景测试双双落地：**S9 CI 版**（970ec3b，service_s9_test.go）leader + 3 Local 角色过真 HTTP MCP sidecar，断言终止事件观察瞬间的 Result 实时可用性、每角色事件文法、HasLine 哨兵门控；**S6**（80119ef，scenario_s6_test.go）fake driver + NewServerV1 + ThreadByContextID，两次 SendMessage 共享 contextId 走 continue_or_start，turn-1 checkpoint 成为 turn-2 ResumeID；live 版均留 example（P4.9） | — |
 
 **门禁**：S6/S9 绿；AG-UI 前后端版本守门测试通过；`delegation.Local` 与 `Remote` 的行为对照测试（同一角色两种注册方式，事件序列与结果等价）；每个 example 在 CI 至少编译、fake-driver 类 example 可执行。
+
+**桥适配波交出的 next/ 保真缺口清单**（80119ef 报告，P3.7/P5 复审时定夺加字段还是记入 migration guide 的行为变化）：① 审批 resolved `Notice` 无 answer/source/latency 结构保证、requested `Notice` 无 payload/choices/deadline/tool_call_id（全保真只能走 `*ApprovalRequest` 本体）② `Dropped{Count}` 丢弃 dropped_kind/reason 明细 ③ v1 事件无 Seq/Timestamp/TurnID（桥各自本地计数）④ `Result` 无 provider-result 字段、值类型 `Usage` 失去 nil/零值之分 ⑤ `RunError` 无 HumanDecisionOutcome（a2a 的 human_decision 失败块消失）⑥ 透传 `Notice` 丢 `p.Name`（agui 回落 "codex.event"）⑦ 线上审批失败码 `decision_rejected/decision_timeout` → `approval_denied/approval_timeout`（属 v1 词汇有意变更，migration guide 已可记）。
 
 ### P5 · 大挪移 + 删旧 + 文档 + 发布
 
