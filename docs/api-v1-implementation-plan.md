@@ -123,11 +123,11 @@
 | P4.3 | `sse.Handler(runner, Options)`：接受 `Runner`（Agent/Thread 同构）；断连取消语义不变 | `pkg/bridges/sse` |
 | P4.4 | `a2a.NewServer(runner, ServerOptions)`：`Session: Stateless()/ThreadByContextID()`；ExposurePolicy 脱敏、TaskLifecycle 不变；`ServerOptions.Options []adaptor.Option`（调用作用域） | `pkg/bridges/a2a` |
 | P4.5 | **`RuntimeServiceRef.MCP` 类型化**（`*mcp.Server`）；迁移期兼容解析旧 `agentadaptor.mcp.*` metadata key（P5 删）；`runtimeservice/` 按 D10 **确认删除**（非改造——它与 RuntimeServiceRef 零代码关系）| `runtime.go` `workspace_skill_types.go` `internal/mcpruntime` |
-| P4.6 | **`delegation.Service`**（D5）：Registry+EventBus+Delegator+per-run MCP sidecar+结果记录一体；`delegation.Local(key, runner, policy)` / `delegation.Remote(key, cardURL, policy)`；`team.Option()`；`team.Result(runID, key)` | `pkg/hosttools/a2adelegation` |
-| P4.7 | **宿主事件注入口**：engine 提供 per-run 的 host-event 注入内部 API，`SubagentUpdate` 汇入主流；`subagentstream` 降级为兼容层。**兜底**：若注入侵入面超预期，退回 `subagentstream.Merge(stream, bus)` 桥接方案，S9 文档同步改写 | `pkg/bridges/subagentstream` + engine |
+| P4.6 | **`delegation.Service`**（D5）：Registry+EventBus+Delegator+per-run MCP sidecar+结果记录一体；`delegation.Local(key, runner, policy)` / `delegation.Remote(key, cardURL, policy)`；`team.Option()`；`team.Result(runID, key)`。**🟡 除 team.Option() 外已交（970ec3b）**：新文件落在现有 `hosttools/a2adelegation`（设计稿的 `delegation.` 是 import 别名；team 对象=\*Service 值），吸收示例 delegation_runtime.go 全部 409 行职责，仅剩「把 Sidecar{URL,BearerToken,ToolTimeout} 指给 leader 驱动的 MCP 面」= team.Option() 接缝；Local/Remote 对照测试（门禁项）以归一化事件序列+结果双等价锚定，成功/失败双路径。**team.Option() 接缝清单（P4.7 波实现）**：① next 侧 run-scoped 服务挂载点（AttachRun(runID)→RunAttachment{Sidecar+事件源}，engine 在 RunID 分配后、驱动派发前调用）② engine 请求组装期把 Sidecar 映射进驱动 MCP 载荷（与宿主配置合并非替换）③ sink 注入：SubscribeRun→SubagentEvent 直灌事件流（engine 版 Merge，省一跳 goroutine）④ teardown：sink 关闭后 DetachRun→ReleaseRun（不剪终止事件） | `pkg/hosttools/a2adelegation` |
+| P4.7 | **宿主事件注入口**：engine 提供 per-run 的 host-event 注入内部 API，`SubagentUpdate` 汇入主流；`subagentstream` 降级为兼容层。**兜底**：若注入侵入面超预期，退回 `subagentstream.Merge(stream, bus)` 桥接方案，S9 文档同步改写。**🟡 兜底已先行落地（970ec3b）**：`subagentstream.Merge(ctx, stream, bus)` + `SubagentEvent` 映射器已交（复用 mux.go tracker/终止帮手），engine 直灌路径可原样复用 `SubagentEvent`；S9 CI 版已经由 Merge 路径跑通 | `pkg/bridges/subagentstream` + engine |
 | P4.8 | `sessionrecorder` 适配新事件族 | `pkg/hosttools/sessionrecorder` |
 | P4.9 | examples 全量重写（见 §4 清单）；`examples/showcases/team-agent-workflow` 按设计文档 §9.7 形态落地（**依赖协调**：`cl/opt_examples` 分支先合入 main 或直接在 v1 分支重写，二选一，倾向后者） | `examples/` 14 个 |
-| P4.10 | 场景测试 S6（A2A 发布）/S9（团队协作，fake driver 版做进 CI，live 版留 example） | — |
+| P4.10 | 场景测试 S6（A2A 发布）/S9（团队协作，fake driver 版做进 CI，live 版留 example）。**🟡 S9 CI 版已交（970ec3b，service_s9_test.go）**：leader + 3 Local 角色过真 HTTP MCP sidecar（bearer 鉴权 tools/call），断言含终止事件观察瞬间的 Result 实时可用性、每角色事件文法、HasLine 哨兵门控；live 版留 example（P4.9）；S6 待桥 agent | — |
 
 **门禁**：S6/S9 绿；AG-UI 前后端版本守门测试通过；`delegation.Local` 与 `Remote` 的行为对照测试（同一角色两种注册方式，事件序列与结果等价）；每个 example 在 CI 至少编译、fake-driver 类 example 可执行。
 
