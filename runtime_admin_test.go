@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/mcp"
 )
 
 type runtimeAdminDriver struct {
@@ -265,6 +266,101 @@ func TestRuntimeServiceMetadataInjectsMCPIntoDriverAndProfile(t *testing.T) {
 	}
 	if driver.lastReq.ProfilePayload.Fingerprint == "" {
 		t.Fatal("expected profile fingerprint to include runtime MCP payload")
+	}
+}
+
+func TestRuntimeServiceTypedMCPInjectsIntoDriver(t *testing.T) {
+	driver := &runtimeAdminDriver{
+		mcpCapability: agentadaptor.MCPCapability{Supported: true, HTTP: true},
+	}
+	// URL is intentionally left empty in the declaration: it must default
+	// from the ref's own URL during materialization.
+	server := mcp.HTTP("delegate-a2a", "",
+		mcp.WithHeader("X-Run-Token", "env:DELEGATION_TOKEN"),
+		mcp.WithBearerTokenEnv("DELEGATION_TOKEN"),
+		mcp.Required("visual A2A subagent delegation"),
+	)
+	runtimeManager := &runtimeMCPManager{
+		ref: agentadaptor.RuntimeServiceRef{
+			ID:   "svc-delegation",
+			Name: "a2a-delegation",
+			URL:  "http://127.0.0.1:43127/mcp",
+			MCP:  &server,
+		},
+	}
+	sdk := agentadaptor.New(
+		agentadaptor.WithDefaultAgent(agentadaptor.Bind(driver, fakeConfig{Label: "runtime"},
+			agentadaptor.WithDefaultMCP(agentadaptor.MCPConfig{Servers: []agentadaptor.MCPServerSpec{{Key: "host", Transport: agentadaptor.MCPTransportHTTP, URL: "http://127.0.0.1:1/mcp"}}}),
+			agentadaptor.WithDefaultRuntimeServices(agentadaptor.RuntimeServiceSpec{Name: "a2a-delegation"}),
+		)),
+		agentadaptor.WithRuntimeServiceManager(runtimeManager),
+	)
+
+	if _, err := sdk.Run(context.Background(), "use delegation"); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if len(driver.lastReq.MCP.Servers) != 2 {
+		t.Fatalf("expected host + runtime MCP servers, got %#v", driver.lastReq.MCP.Servers)
+	}
+	var injected agentadaptor.MCPServerSpec
+	for _, candidate := range driver.lastReq.MCP.Servers {
+		if candidate.Key == "delegate-a2a" {
+			injected = candidate
+		}
+	}
+	if injected.Key == "" {
+		t.Fatalf("missing typed runtime MCP server: %#v", driver.lastReq.MCP.Servers)
+	}
+	if injected.Transport != agentadaptor.MCPTransportHTTP || injected.URL != "http://127.0.0.1:43127/mcp" {
+		t.Fatalf("expected URL defaulted from runtime ref, got %#v", injected)
+	}
+	if injected.Headers["X-Run-Token"] != "env:DELEGATION_TOKEN" || injected.BearerTokenEnvVar != "DELEGATION_TOKEN" {
+		t.Fatalf("expected typed auth references, got %#v", injected)
+	}
+	if !injected.Required || injected.RequiredReason != "visual A2A subagent delegation" {
+		t.Fatalf("expected required typed MCP server, got %#v", injected)
+	}
+}
+
+func TestRuntimeServiceTypedMCPWinsOverLegacyMetadata(t *testing.T) {
+	driver := &runtimeAdminDriver{
+		mcpCapability: agentadaptor.MCPCapability{Supported: true, HTTP: true},
+	}
+	// The ref carries both the typed field and legacy metadata keys. The
+	// typed field must win: the run injects a server keyed from the ref's
+	// Name (typed Key left empty), the legacy key never appears, and the
+	// malformed headers_json proves the metadata path is not even parsed.
+	runtimeManager := &runtimeMCPManager{
+		ref: agentadaptor.RuntimeServiceRef{
+			Name: "a2a-delegation",
+			URL:  "http://127.0.0.1:43127/mcp",
+			MCP:  &agentadaptor.MCPServerSpec{Transport: agentadaptor.MCPTransportHTTP},
+			Metadata: map[string]string{
+				"agentadaptor.mcp.enabled":      "true",
+				"agentadaptor.mcp.key":          "delegate-meta",
+				"agentadaptor.mcp.headers_json": `{"Authorization": 123}`,
+			},
+		},
+	}
+	sdk := agentadaptor.New(
+		agentadaptor.WithDefaultAgent(agentadaptor.Bind(driver, fakeConfig{Label: "runtime"},
+			agentadaptor.WithDefaultRuntimeServices(agentadaptor.RuntimeServiceSpec{Name: "a2a-delegation"}),
+		)),
+		agentadaptor.WithRuntimeServiceManager(runtimeManager),
+	)
+
+	if _, err := sdk.Run(context.Background(), "use delegation"); err != nil {
+		t.Fatalf("run with typed MCP and legacy metadata: %v", err)
+	}
+	if len(driver.lastReq.MCP.Servers) != 1 {
+		t.Fatalf("expected exactly one runtime MCP server, got %#v", driver.lastReq.MCP.Servers)
+	}
+	injected := driver.lastReq.MCP.Servers[0]
+	if injected.Key != "a2a-delegation" {
+		t.Fatalf("expected key defaulted from ref name, got %#v", injected)
+	}
+	if injected.URL != "http://127.0.0.1:43127/mcp" {
+		t.Fatalf("expected URL defaulted from runtime ref, got %#v", injected)
 	}
 }
 

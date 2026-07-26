@@ -100,6 +100,7 @@ func cloneRuntimeServiceRefs(values []RuntimeServiceRef) []RuntimeServiceRef {
 			Port:         value.Port,
 			OwnerAgentID: value.OwnerAgentID,
 			Health:       value.Health,
+			MCP:          cloneMCPServerSpecPtr(value.MCP),
 			Metadata:     cloneStringMap(value.Metadata),
 		})
 	}

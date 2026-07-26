@@ -81,7 +81,17 @@ type RuntimeServiceRef struct {
 	Port         int
 	OwnerAgentID string
 	Health       RuntimeServiceHealth
-	Metadata     map[string]string
+	// MCP, when non-nil, declares the MCP server this runtime service exposes
+	// to the run. It is the typed replacement for the legacy
+	// "agentadaptor.mcp.*" Metadata keys: when MCP is set the legacy keys are
+	// ignored entirely; when it is nil the legacy keys are still parsed as a
+	// migration-period fallback (removed in v1.0). MCPServerSpec's
+	// consumer-facing alias is mcp.Server, so hosts typically assign a value
+	// built with the mcp package constructors. An empty Key defaults to the
+	// ref's Name (then ID); an empty URL/Command defaults from the ref's
+	// URL/Command according to the transport.
+	MCP      *MCPServerSpec
+	Metadata map[string]string
 	// SecretEnv is a subprocess-only channel for runtime-issued secrets, such
 	// as per-run MCP bearer tokens. The SDK strips these bindings from public
 	// runtime refs/reports and injects them only into driver process env.
