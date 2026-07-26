@@ -35,7 +35,7 @@ type resolvedRun struct {
 // stream's Result() (or Run's error return) with the engine sentinel chain
 // intact (ErrInvalidOutputSchema, ErrMCPTransportUnsupported,
 // ErrSkillNotFound, ...).
-func (a *Agent) resolveRun(ctx context.Context, runID, prompt string, eff *RunSettings) (resolvedRun, error) {
+func (a *Agent) resolveRun(ctx context.Context, runID, prompt string, eff *RunSettings, res *runResources) (resolvedRun, error) {
 	// 1. Schema construction failures recorded at option-build time fail
 	// the run before anything else (legacy outputSchemaErr short-circuit).
 	if eff.outputSchemaErr != nil {
@@ -79,9 +79,13 @@ func (a *Agent) resolveRun(ctx context.Context, runID, prompt string, eff *RunSe
 
 	// 4. MCP: the merged config replaces as a whole value; validation
 	// (transport support, key uniqueness, per-transport field rules)
-	// happens before the driver launches. next/ has no runtime manager
-	// yet, so the ensured-services slice is empty.
-	mcpPayload, err := engine.ResolveMCPPayloadWithRuntime(eff.mcp, nil, nil, desc.MCP)
+	// happens before the driver launches. The ensured runtime services of
+	// this run — WithServices endpoints and RunServiceProvider attachments
+	// alike — contribute their typed ServiceRef.MCP servers here, appended
+	// to the host's own WithMCP set rather than replacing it. A service
+	// whose MCP key collides with a host server fails the run before launch
+	// (key uniqueness), which is the intended loud failure.
+	mcpPayload, err := engine.ResolveMCPPayloadWithRuntime(eff.mcp, nil, res.runtimeRefs(), desc.MCP)
 	if err != nil {
 		return resolvedRun{}, err
 	}
@@ -143,6 +147,7 @@ func (a *Agent) resolveRun(ctx context.Context, runID, prompt string, eff *RunSe
 	// overlaid. The payloads are single-use values built above, so direct
 	// assignment preserves the legacy defensive-copy guarantees.
 	req := buildRequest(runID, prompt, eff)
+	res.applyRequest(&req)
 	req.Instructions = instructions
 	req.Skills = engine.CloneResolvedSkills(skillPayload)
 	req.MCP = mcpPayload

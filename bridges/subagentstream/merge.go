@@ -157,55 +157,12 @@ func (s *mergedStream) Cancel()       { s.parent.Cancel() }
 // SubagentUpdate kinds (started / delta / finished); the full detail —
 // original kind, status, remote identifiers, tool payloads, errors — is
 // preserved in Data so nothing is lost in the projection.
+//
+// The implementation moved to a2adelegation.SubagentEvent in P4.7, when the
+// engine-level injection path (delegation.Service.Option()) needed the same
+// projection: that package cannot import this one, so the truth lives there
+// and this stays as the bridge's stable name for it. Both paths therefore
+// produce byte-identical SubagentUpdate values.
 func SubagentEvent(ev a2adelegation.DelegationEvent) adaptor.SubagentUpdate {
-	update := adaptor.SubagentUpdate{
-		Agent: ev.AgentKey,
-		Kind:  adaptor.SubagentDelta,
-		Delta: ev.Delta,
-	}
-	switch {
-	case ev.Kind == a2adelegation.DelegationStarted:
-		update.Kind = adaptor.SubagentStarted
-	case isTerminalDelegation(ev.Kind):
-		update.Kind = adaptor.SubagentFinished
-	}
-
-	data := map[string]any{
-		"kind":                string(ev.Kind),
-		"status":              ev.Status,
-		"agent_name":          ev.AgentName,
-		"delegation_id":       ev.DelegationID,
-		"parent_tool_call_id": ev.ParentToolCallID,
-		"remote_protocol":     ev.Protocol,
-		"remote_task_id":      ev.RemoteTaskID,
-		"remote_context_id":   ev.RemoteContextID,
-		"remote_message_id":   ev.RemoteMessageID,
-		"remote_artifact_id":  ev.RemoteArtifactID,
-		"remote_tool_call_id": ev.RemoteToolCallID,
-		"tool_name":           ev.ToolName,
-		"name":                ev.Name,
-		"role":                ev.Role,
-		"text":                ev.Text,
-		"args":                ev.Args,
-		"result":              ev.Result,
-	}
-	if ev.Sequence != 0 {
-		data["sequence"] = ev.Sequence
-	}
-	if ev.Artifact != nil {
-		data["artifact"] = ev.Artifact
-	}
-	if ev.Error != nil {
-		data["error"] = ev.Error
-	}
-	if !ev.Time.IsZero() {
-		data["time"] = ev.Time
-	}
-	for key, val := range data {
-		if val == "" || val == nil {
-			delete(data, key)
-		}
-	}
-	update.Data = data
-	return update
+	return a2adelegation.SubagentEvent(ev)
 }

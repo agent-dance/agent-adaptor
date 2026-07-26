@@ -105,8 +105,10 @@ func buildRequest(runID, prompt string, eff *RunSettings) driver.Request {
 		req.Agent = eff.identity.driverIdentity()
 	}
 	if eff.workspace != "" {
-		// TODO(P1–P3): WorkspaceManager resolution replaces this direct
-		// lease synthesis in internal/engine.
+		// Direct lease synthesis for the plain "run here" case. A host that
+		// installs a WorkspaceManager or names a WorkspaceSpec gets a
+		// managed lease instead, overlaid by runResources.applyRequest
+		// after this — the directory then becomes the manager's base CWD.
 		req.Workspace = driver.WorkspaceLease{
 			Mode:         driver.WorkspaceModeShared,
 			StrategyType: driver.WorkspaceStrategyProjectPrimary,

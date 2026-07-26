@@ -2,6 +2,7 @@ package adaptor
 
 import (
 	"maps"
+	"reflect"
 	"time"
 
 	"github.com/agent-dance/agent-adaptor/driver"
@@ -100,6 +101,26 @@ type RunSettings struct {
 	// short-circuit).
 	outputSchema    *driver.OutputSchema
 	outputSchemaErr error
+
+	// workspaceSpec selects the workspace provisioning strategy. It
+	// replaces as a whole value and, together with WithWorkspaceManager,
+	// switches the run from direct WithWorkspace(dir) lease synthesis to
+	// managed lease resolution.
+	workspaceSpec WorkspaceSpec
+
+	// services is the declared runtime-service set, replaced as a whole
+	// value (an empty declaration clears the agent default). They are
+	// ensured through the installed ServiceManager before the driver
+	// launches.
+	services []driver.RuntimeServiceSpec
+
+	// runServices are the run-scoped service providers attached to every
+	// invocation (delegation.Service.Option() and friends). This family
+	// appends rather than replaces — an ecosystem option must compose with
+	// the agent's other providers, not silently displace them — and
+	// de-duplicates by provider identity so passing the same option in both
+	// New and Run attaches it once.
+	runServices []RunServiceProvider
 }
 
 // SetModel replaces the effective model for the target scope.
@@ -181,6 +202,40 @@ func (s *RunSettings) SetOutputSchemaError(err error) {
 // SetWorkspace replaces the working directory for the target scope.
 func (s *RunSettings) SetWorkspace(dir string) { s.workspace = dir }
 
+// SetWorkspaceSpec replaces the workspace provisioning strategy. A non-nil
+// spec routes the run through the WorkspaceManager (the passthrough manager
+// when none is installed) instead of the direct lease synthesis.
+func (s *RunSettings) SetWorkspaceSpec(spec WorkspaceSpec) { s.workspaceSpec = spec }
+
+// SetServices replaces the declared runtime-service set as a whole value. An
+// empty (or nil) slice is an explicit clear: it substitutes the agent default
+// with "no services" rather than inheriting it.
+func (s *RunSettings) SetServices(specs []driver.RuntimeServiceSpec) {
+	s.services = engine.CloneRuntimeServiceSpecs(specs)
+}
+
+// AddRunServiceProvider appends a run-scoped service provider — the controlled
+// extension surface behind ecosystem options such as
+// delegation.Service.Option(). Providers append rather than replace, and a
+// provider already present is not added twice: the same option value used in
+// both New and Run attaches exactly once, which is what keeps its MCP server
+// key unique (a duplicate would fail the run before launch).
+func (s *RunSettings) AddRunServiceProvider(p RunServiceProvider) {
+	if p == nil {
+		return
+	}
+	if t := reflect.TypeOf(p); t != nil && t.Comparable() {
+		for _, existing := range s.runServices {
+			// Interface comparison short-circuits on differing dynamic
+			// types, so a non-comparable neighbour cannot panic here.
+			if existing == p {
+				return
+			}
+		}
+	}
+	s.runServices = append(s.runServices, p)
+}
+
 // SetMetadata sets one audit metadata key. Keys merge per key: a call-site
 // value overrides the same key from the agent defaults and leaves the other
 // default keys intact.
@@ -236,6 +291,8 @@ func (s RunSettings) clone() RunSettings {
 		out.configPatches = &cp
 	}
 	out.outputSchema = engine.CloneOutputSchema(s.outputSchema)
+	out.services = engine.CloneRuntimeServiceSpecs(s.services)
+	out.runServices = append([]RunServiceProvider(nil), s.runServices...)
 	return out
 }
 
@@ -273,6 +330,16 @@ type AgentSettings struct {
 	// skillMaterializer overrides how non-path skill sources are
 	// materialized to disk. Nil uses the process-default materializer.
 	skillMaterializer SkillMaterializer
+
+	// workspaceManager turns a WorkspaceSpec into a concrete lease. Nil
+	// means the passthrough manager when a spec is set, and no managed
+	// resolution at all when none is.
+	workspaceManager WorkspaceManager
+
+	// serviceManager starts/locates the services declared with
+	// WithServices. Nil means declared services are not ensured — the
+	// legacy noop-manager behavior, which never invents endpoints.
+	serviceManager ServiceManager
 }
 
 // SetThreadStore injects the thread storage backend (stateful conversations).
@@ -294,6 +361,12 @@ func (s *AgentSettings) SetSkillProvider(p SkillProvider) { s.skillProvider = p 
 
 // SetSkillMaterializer overrides the skill materialization strategy.
 func (s *AgentSettings) SetSkillMaterializer(m SkillMaterializer) { s.skillMaterializer = m }
+
+// SetWorkspaceManager injects the workspace provisioning backend.
+func (s *AgentSettings) SetWorkspaceManager(m WorkspaceManager) { s.workspaceManager = m }
+
+// SetServiceManager injects the runtime-service orchestration backend.
+func (s *AgentSettings) SetServiceManager(m ServiceManager) { s.serviceManager = m }
 
 // ============ In-package function adapters (one per scope) ============
 
@@ -500,6 +573,70 @@ func WithProfileResources(res profile.Resources) SharedOption {
 		}
 		if cp.Instructions != nil {
 			s.SetInstructionsBundle(cp.Instructions)
+		}
+	})
+}
+
+// ============ P4.7 option vocabulary: workspace / services ============
+
+// WithWorkspaceSpec selects how the run's workspace is provisioned —
+// adaptor.SharedWorkspace{} to reuse the project directory,
+// adaptor.GitWorktreeWorkspace{...} for an isolated worktree,
+// adaptor.AdapterManagedWorkspace{} to let the driver choose. It replaces as a
+// whole value: in New it is the agent default, in Run/Stream it overrides this
+// invocation only.
+//
+// WithWorkspace(dir) and WithWorkspaceSpec compose: the directory is the base
+// CWD handed to the WorkspaceManager, the spec is the strategy. Setting either
+// a spec or a manager routes the run through managed lease resolution; setting
+// neither keeps the plain "run here" behavior.
+func WithWorkspaceSpec(spec WorkspaceSpec) SharedOption {
+	return sharedOptionFunc(func(s *RunSettings) { s.SetWorkspaceSpec(spec) })
+}
+
+// WithWorkspaceManager installs the backend that turns a WorkspaceSpec into a
+// concrete working-directory lease (git worktrees, sandboxes, an external
+// workspace service). Without one, specs resolve through the SDK's passthrough
+// manager, which leases the base directory unchanged. Construction scope only:
+// the manager is infrastructure the Agent is built on, not a per-call knob.
+func WithWorkspaceManager(m WorkspaceManager) Option {
+	return newOptionFunc(func(s *AgentSettings) { s.SetWorkspaceManager(m) })
+}
+
+// WithServices declares the runtime services a run needs — dev servers,
+// databases, tool sidecars. They are ensured through the installed
+// ServiceManager before the driver launches, and the resulting endpoints reach
+// the driver in the run's runtime payload; a service that publishes a typed
+// ServiceRef.MCP additionally joins the run's MCP server set alongside (never
+// in place of) WithMCP.
+//
+// The declaration replaces as a whole value: calling WithServices() with no
+// specs is an explicit clear. Without a ServiceManager the declaration is
+// inert — the SDK never invents endpoints for services nobody manages.
+func WithServices(specs ...ServiceSpec) SharedOption {
+	return sharedOptionFunc(func(s *RunSettings) { s.SetServices(specs) })
+}
+
+// WithServiceManager installs the backend that starts or locates the services
+// declared with WithServices, and releases the run-scoped ones afterwards.
+// Construction scope only.
+func WithServiceManager(m ServiceManager) Option {
+	return newOptionFunc(func(s *AgentSettings) { s.SetServiceManager(m) })
+}
+
+// WithRunServices attaches run-scoped service providers to every invocation:
+// the generic form of what ecosystem packages ship as their own one-liner
+// option (delegation.Service.Option()). Each provider is attached after the run
+// ID is minted and before the driver is dispatched, contributes its endpoints
+// to the run's runtime/MCP payload, may stream its own events into the run's
+// event channel, and is detached once the run's events are done.
+//
+// Providers append rather than replace, and the same provider is never attached
+// twice — passing one option value in both New and Run is safe.
+func WithRunServices(providers ...RunServiceProvider) SharedOption {
+	return sharedOptionFunc(func(s *RunSettings) {
+		for _, p := range providers {
+			s.AddRunServiceProvider(p)
 		}
 	})
 }

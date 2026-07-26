@@ -135,3 +135,79 @@ func FinalizeStructuredOutput(
 		DriverRunResult{Output: output, StructuredOutput: structured, Failure: failure},
 	)
 }
+
+// ============ P4.7: workspace + runtime-service wiring ============
+
+// ResolveWorkspaceLease runs one WorkspaceManager.Resolve with the legacy
+// default: a nil manager behaves exactly like the Core's unset field, i.e. the
+// passthrough manager (base CWD defaulting to os.Getwd, shared/project-primary
+// request data, "workspace_manager: passthrough" metadata, stableHash lease ID
+// and fingerprint).
+//
+// Rationale: next/ has no Core, but the lease shape (and therefore the resume
+// compatibility fingerprint drivers observe) must be byte-identical to the
+// legacy path's.
+func ResolveWorkspaceLease(ctx context.Context, manager WorkspaceManager, req WorkspaceRequest) (WorkspaceLease, error) {
+	if manager == nil {
+		manager = passthroughWorkspaceManager{}
+	}
+	return manager.Resolve(ctx, req)
+}
+
+// ReleaseWorkspaceLease runs one WorkspaceManager.Release. A nil manager is a
+// no-op (nothing was leased through a manager), matching the legacy cleanup
+// closure's behavior for hosts that never installed one.
+func ReleaseWorkspaceLease(ctx context.Context, manager WorkspaceManager, lease WorkspaceLease, mode WorkspaceReleaseMode) error {
+	if manager == nil {
+		return nil
+	}
+	return manager.Release(ctx, lease, mode)
+}
+
+// PrepareRuntimePayload resolves one run's runtime services: clone the desired
+// specs, fingerprint them, call RuntimeServiceManager.Ensure, collect the
+// subprocess-only SecretEnv, and normalize the returned refs against the
+// requested specs (ID/Name/URL/lifecycle/metadata backfill, status/health
+// defaults, owner attribution).
+//
+// Rationale: the body is the lifted tail of (*Core).prepareRuntime
+// (runtime.go), which now delegates to it — so next/ WithServices and the
+// legacy WithDefaultRuntimeServices path share one implementation. req.Desired
+// is filled by the callee; a nil manager behaves like the legacy noop default,
+// which keeps "declared but unmanaged" services out of the driver payload
+// instead of inventing endpoints.
+func PrepareRuntimePayload(ctx context.Context, manager RuntimeServiceManager, req RuntimeServiceRequest, desired []RuntimeServiceSpec) (RuntimePayload, error) {
+	return prepareRuntimePayload(ctx, manager, req, desired)
+}
+
+// ReleaseRuntimeServicesByRun runs one RuntimeServiceManager.ReleaseByRun.
+// A nil manager is a no-op.
+func ReleaseRuntimeServicesByRun(ctx context.Context, manager RuntimeServiceManager, runID string) error {
+	if manager == nil {
+		return nil
+	}
+	return manager.ReleaseByRun(ctx, runID)
+}
+
+// NormalizeRuntimeServiceRefs backfills and defaults a set of ensured refs
+// against the requested specs, exactly like the Ensure post-processing step.
+// next/ uses it for refs that arrive from a RunServiceProvider attachment
+// rather than from a RuntimeServiceManager, so both sources reach the driver in
+// the same normalized shape.
+func NormalizeRuntimeServiceRefs(requested []RuntimeServiceSpec, ensured []RuntimeServiceRef, owner AgentIdentity) []RuntimeServiceRef {
+	return normalizeRuntimeServiceRefs(requested, ensured, owner)
+}
+
+// CollectRuntimeSecretEnv gathers the subprocess-only secret bindings of a set
+// of refs (per-run MCP bearer tokens and friends) into the payload-level
+// SecretEnv slice adapterutil.RuntimeEnvBindings injects into driver env.
+func CollectRuntimeSecretEnv(refs []RuntimeServiceRef) []EnvBinding {
+	return collectRuntimeSecretEnv(refs)
+}
+
+// RuntimeReportsFromRefs synthesises the truthful runtime-service reports for
+// drivers that ensure services but report none back, exactly like the legacy
+// execute.go fallback (`runtimeReports` empty → derive from Ensured).
+func RuntimeReportsFromRefs(refs []RuntimeServiceRef, owner AgentIdentity) []RuntimeServiceReport {
+	return runtimeReportsFromRefs(refs, owner)
+}

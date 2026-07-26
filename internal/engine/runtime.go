@@ -38,30 +38,53 @@ func (s *Core) prepareRuntime(
 		runtimeCfg = cloneWorkspaceRuntimeConfig(override)
 	}
 
-	payload := RuntimePayload{}
+	var desired []RuntimeServiceSpec
 	if runtimeCfg != nil {
-		payload.Requested = cloneRuntimeServiceSpecs(runtimeCfg.Services)
+		desired = runtimeCfg.Services
 	}
-	payload.Fingerprint = stableHash(binding.Adapter().Descriptor().Type, payload.Requested)
-
-	if len(payload.Requested) == 0 {
-		return payload, nil
-	}
-
-	ensured, err := s.runtimeManager.Ensure(ctx, RuntimeServiceRequest{
+	return prepareRuntimePayload(ctx, s.runtimeManager, RuntimeServiceRequest{
 		RunID:      runID,
 		DriverType: binding.Adapter().Descriptor().Type,
 		Agent:      identity,
 		Config:     binding.Config(),
 		Workspace:  workspace,
-		Desired:    cloneRuntimeServiceSpecs(payload.Requested),
 		Metadata:   cloneStringMap(metadata),
-	})
+	}, desired)
+}
+
+// prepareRuntimePayload is the lifted tail of (*Core).prepareRuntime: given an
+// already-merged desired service set and a partially filled request envelope,
+// it produces the driver-facing RuntimePayload (requested clone, fingerprint,
+// manager Ensure, secret-env collection, ref normalization).
+//
+// It was lifted verbatim so the v1 facade (next/, via the PrepareRuntimePayload
+// entry in nextwiring.go) and the legacy Core path run the identical code — the
+// same "one truth, additive seam" rule the P2/P3 waves used. req.Desired is
+// filled here so callers cannot disagree with payload.Requested; a nil manager
+// behaves like the legacy default (noopRuntimeManager).
+func prepareRuntimePayload(
+	ctx context.Context,
+	manager RuntimeServiceManager,
+	req RuntimeServiceRequest,
+	desired []RuntimeServiceSpec,
+) (RuntimePayload, error) {
+	payload := RuntimePayload{Requested: cloneRuntimeServiceSpecs(desired)}
+	payload.Fingerprint = stableHash(req.DriverType, payload.Requested)
+
+	if len(payload.Requested) == 0 {
+		return payload, nil
+	}
+	if manager == nil {
+		manager = noopRuntimeManager{}
+	}
+
+	req.Desired = cloneRuntimeServiceSpecs(payload.Requested)
+	ensured, err := manager.Ensure(ctx, req)
 	if err != nil {
 		return RuntimePayload{}, err
 	}
 	payload.SecretEnv = collectRuntimeSecretEnv(ensured)
-	payload.Ensured = normalizeRuntimeServiceRefs(payload.Requested, ensured, identity)
+	payload.Ensured = normalizeRuntimeServiceRefs(payload.Requested, ensured, req.Agent)
 	return payload, nil
 }
 
