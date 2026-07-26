@@ -27,20 +27,32 @@ func cloneMCPServerSpecs(values []MCPServerSpec) []MCPServerSpec {
 	}
 	out := make([]MCPServerSpec, 0, len(values))
 	for _, value := range values {
-		out = append(out, MCPServerSpec{
-			Key:               value.Key,
-			Transport:         value.Transport,
-			Command:           value.Command,
-			Args:              cloneStrings(value.Args),
-			Env:               cloneStringMap(value.Env),
-			URL:               value.URL,
-			Headers:           cloneStringMap(value.Headers),
-			BearerTokenEnvVar: value.BearerTokenEnvVar,
-			Required:          value.Required,
-			RequiredReason:    value.RequiredReason,
-		})
+		out = append(out, cloneMCPServerSpec(value))
 	}
 	return out
+}
+
+func cloneMCPServerSpec(value MCPServerSpec) MCPServerSpec {
+	return MCPServerSpec{
+		Key:               value.Key,
+		Transport:         value.Transport,
+		Command:           value.Command,
+		Args:              cloneStrings(value.Args),
+		Env:               cloneStringMap(value.Env),
+		URL:               value.URL,
+		Headers:           cloneStringMap(value.Headers),
+		BearerTokenEnvVar: value.BearerTokenEnvVar,
+		Required:          value.Required,
+		RequiredReason:    value.RequiredReason,
+	}
+}
+
+func cloneMCPServerSpecPtr(value *MCPServerSpec) *MCPServerSpec {
+	if value == nil {
+		return nil
+	}
+	spec := cloneMCPServerSpec(*value)
+	return &spec
 }
 
 func cloneMCPPayload(payload MCPPayload) MCPPayload {
@@ -99,7 +111,15 @@ func mcpServersFromRuntimeRefs(refs []RuntimeServiceRef) ([]MCPServerSpec, error
 	return out, nil
 }
 
+// mcpServerFromRuntimeRef materializes the MCP server a runtime service ref
+// publishes for the run, if any. The typed RuntimeServiceRef.MCP field wins;
+// when it is nil the legacy "agentadaptor.mcp.*" metadata keys are parsed as
+// a migration-period fallback (compat path scheduled for removal in P5).
 func mcpServerFromRuntimeRef(ref RuntimeServiceRef) (MCPServerSpec, bool, error) {
+	if ref.MCP != nil {
+		return mcpServerFromTypedRef(ref), true, nil
+	}
+
 	metadata := ref.Metadata
 	if !runtimeMCPEnabled(metadata) {
 		return MCPServerSpec{}, false, nil
@@ -148,6 +168,35 @@ func mcpServerFromRuntimeRef(ref RuntimeServiceRef) (MCPServerSpec, bool, error)
 	}
 
 	return spec, true, nil
+}
+
+// mcpServerFromTypedRef materializes the typed RuntimeServiceRef.MCP field
+// with the same defaulting rules as the legacy metadata path: an empty Key
+// falls back to the ref's Name then ID, an empty Transport is inferred from
+// Command (stdio) versus URL (http), and empty URL/Command default from the
+// ref's own endpoint fields.
+func mcpServerFromTypedRef(ref RuntimeServiceRef) MCPServerSpec {
+	spec := cloneMCPServerSpec(*ref.MCP)
+	if strings.TrimSpace(spec.Key) == "" {
+		spec.Key = strings.TrimSpace(ref.Name)
+	}
+	if spec.Key == "" {
+		spec.Key = strings.TrimSpace(ref.ID)
+	}
+	if strings.TrimSpace(string(spec.Transport)) == "" {
+		if strings.TrimSpace(spec.Command) != "" {
+			spec.Transport = MCPTransportStdio
+		} else {
+			spec.Transport = MCPTransportHTTP
+		}
+	}
+	if strings.TrimSpace(spec.URL) == "" && spec.Transport != MCPTransportStdio {
+		spec.URL = strings.TrimSpace(ref.URL)
+	}
+	if strings.TrimSpace(spec.Command) == "" && spec.Transport == MCPTransportStdio {
+		spec.Command = strings.TrimSpace(ref.Command)
+	}
+	return spec
 }
 
 func runtimeMCPEnabled(metadata map[string]string) bool {
