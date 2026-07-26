@@ -195,7 +195,7 @@
 | R6 | 大挪移 PR 过大不可评审 | 高/中 | P5.2 拆三步：移动（无 diff 语义）→ 删除 → 重命名；分 PR，每步 CI 绿 |
 | R7 | v0 用户升级断崖 | —/中 | migration guide 覆盖 66 选项逐一映射；v0.x tag 冻结可长期 pin |
 | R8 | P0.2 波及面 ≈ 全根包 32 个非测试文件（合同类型必须随 engine 迁移并别名回指，否则依赖成环） | 高/中 | ✅ 已兑现：p0-inventory.md 为路线图分四批推进，两次中断均无损恢复 |
-| R9 | S9/设计文档使用的 `claude.Config{PersistentProcess: true}` 字段（及背后的常驻进程驱动能力）只存在于 `cl/opt_examples` 分支，main 的 ClaudeConfig 上没有（P3.1 实测） | 高/中 | P4.9 重写 team-agent-workflow 前，先把 claude 驱动的 PersistentProcess 能力从 cl/opt_examples 移植/合入 v1 线（或示例改用现有进程模型并回改 §9 文档）；列为 P4 前置检查项 |
+| R9 | ✅ 已裁决（P4.9 前置检查完成）：`PersistentProcess` 确认只在 `cl/opt_examples`（claude/ 相对 main 分歧 17 文件 +2407 行，是完整的常驻进程复用 feature——batch/streaming/HITL 三路，4ac64f3——非单个开关字段）。**裁决**：不移植，v1.0.0 范围外。P4.9 的 team-agent-workflow 示例按本分支现有进程模型落地，`PersistentProcess: true` 行以注释形态保留（注明"该能力随 cl/opt_examples 合入 main 后可开启"）；§9.7 文档同步加注。理由：该 feature 是 claude 驱动内部优化，日后合入是 Config 结构体 additive 字段，与 v1 API 形状零冲突，不构成发布阻塞 | — |
 
 ---
 
