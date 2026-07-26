@@ -112,23 +112,6 @@ func (b *staticAgentBinding) Defaults() AgentDefaults {
 	}
 }
 
-func cloneBool(b *bool) *bool {
-	if b == nil {
-		return nil
-	}
-	v := *b
-	return &v
-}
-
-func cloneInstructions(ref *InstructionsBundleRef) *InstructionsBundleRef {
-	if ref == nil {
-		return nil
-	}
-	copyRef := *ref
-	copyRef.Native = cloneAnyMap(ref.Native)
-	return &copyRef
-}
-
 func validateAgentBinding(binding AgentBinding) error {
 	if binding == nil {
 		return ErrAgentBindingRequired

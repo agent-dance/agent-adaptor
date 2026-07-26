@@ -1,4 +1,4 @@
-package agentadaptor
+package engine
 
 import (
 	"fmt"
@@ -573,21 +573,42 @@ func buildProfilePayload(skills ResolvedSkills, mcp MCPPayload, agents AgentPayl
 	return ProfilePayload{Skills: cloneResolvedSkills(skills), MCP: cloneMCPPayload(mcp), Agents: cloneAgentPayload(agents), Hooks: cloneHookPayload(hooks), Instructions: cloneInstructions(instructions), Config: cloneProfileConfigPayload(config), Declared: declared, Fingerprint: fingerprint, Warnings: warnings}
 }
 
-func profileDeclarationsFromDefaults(defaults AgentDefaults) ProfileResourceDeclarations {
-	declared := defaults.profileDeclared
-	if len(defaults.Agents) > 0 {
-		declared.Agents = true
+// instructionFingerprint hashes the effective instruction bundle. It moved
+// here from the root runner.go together with buildProfilePayload, which is
+// its primary caller.
+func instructionFingerprint(ref *InstructionsBundleRef) string {
+	if ref == nil {
+		return ""
 	}
-	if len(defaults.Hooks) > 0 {
-		declared.Hooks = true
+	if ref.Fingerprint != "" {
+		return ref.Fingerprint
 	}
-	if len(defaults.ProfileConfig) > 0 {
-		declared.Config = true
+	content := ref.Content
+	if ref.Path != "" && content == "" {
+		if raw, err := os.ReadFile(ref.Path); err == nil {
+			content = string(raw)
+		}
 	}
-	if defaults.Instructions != nil {
-		declared.Instructions = true
+	return stableHash("instructions", ref.ID, ref.Path, content, ref.Scope, ref.Mode, ref.Native)
+}
+
+// cloneInstructions and cloneBool moved here from the root binding.go; the
+// clone helpers for profile payloads below depend on them.
+func cloneInstructions(ref *InstructionsBundleRef) *InstructionsBundleRef {
+	if ref == nil {
+		return nil
 	}
-	return declared
+	copyRef := *ref
+	copyRef.Native = cloneAnyMap(ref.Native)
+	return &copyRef
+}
+
+func cloneBool(b *bool) *bool {
+	if b == nil {
+		return nil
+	}
+	v := *b
+	return &v
 }
 
 func mcpKeys(payload MCPPayload) []string {
