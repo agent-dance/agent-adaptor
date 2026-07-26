@@ -78,7 +78,36 @@ func (s *runStream) Result() (*Result, error) {
 // Stream never returns an error: startup failures surface through the
 // normal contract (closed Events channel + Result() error).
 func (a *Agent) Stream(ctx context.Context, prompt string, opts ...CallOption) Stream {
-	eff := a.defaults.RunSettings.clone()
+	st, eff, runCtx, ok := a.openStream(ctx, opts)
+	if !ok {
+		return st
+	}
+
+	req := buildRequest(st.runID, prompt, &eff)
+	req.Streaming = true
+
+	go func() {
+		defer st.cancel()
+		resp, runErr := a.driver.Run(runCtx, req, st.sink)
+		// Order matters for the close-timing contract: the outcome is
+		// stored before the event channel closes, and done closes last,
+		// so a consumer that drained Events() gets Result() without
+		// further waiting.
+		st.res, st.err = finalizeRun(st.runID, st.sink, resp, runErr)
+		st.sink.close()
+		close(st.done)
+	}()
+	return st
+}
+
+// openStream is the shared Stream prologue for the stateless Agent path and
+// the Thread path: merge per-call options over the agent defaults, apply the
+// timeout and identity to the context, mint the run ID, and prime the sink
+// and runStream. When run-ID minting fails the returned stream is already
+// sealed (closed Events channel, Result() error) and ok is false — callers
+// return it as-is.
+func (a *Agent) openStream(ctx context.Context, opts []CallOption) (st *runStream, eff RunSettings, runCtx context.Context, ok bool) {
+	eff = a.defaults.RunSettings.clone()
 	for _, o := range opts {
 		if o == nil {
 			continue
@@ -111,7 +140,7 @@ func (a *Agent) Stream(ctx context.Context, prompt string, opts ...CallOption) S
 		caps:     a.driver.Descriptor().RunPolicyCaps,
 	})
 
-	st := &runStream{
+	st = &runStream{
 		runID:  runID,
 		sink:   sink,
 		cancel: cancel,
@@ -123,24 +152,9 @@ func (a *Agent) Stream(ctx context.Context, prompt string, opts ...CallOption) S
 		cancel()
 		sink.close()
 		close(st.done)
-		return st
+		return st, eff, ctx, false
 	}
-
-	req := buildRequest(runID, prompt, &eff)
-	req.Streaming = true
-
-	go func() {
-		defer cancel()
-		resp, runErr := a.driver.Run(ctx, req, sink)
-		// Order matters for the close-timing contract: the outcome is
-		// stored before the event channel closes, and done closes last,
-		// so a consumer that drained Events() gets Result() without
-		// further waiting.
-		st.res, st.err = finalizeRun(runID, sink, resp, runErr)
-		sink.close()
-		close(st.done)
-	}()
-	return st
+	return st, eff, ctx, true
 }
 
 // finalizeRun translates the driver outcome into the D1 contract, overlaying

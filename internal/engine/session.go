@@ -239,23 +239,38 @@ func (s *Core) prepareSession(
 	driverType string,
 	fingerprint string,
 ) (*resolvedSessionPlan, error) {
+	return prepareSessionPlan(ctx, s.sessionStore, req, identity, driverType, fingerprint)
+}
+
+// prepareSessionPlan is the store-parameterized session resolution logic.
+// It backs both the legacy Core.Execute path (via Core.prepareSession) and
+// the v1 Thread path (via PrepareThreadSession), so session mode semantics,
+// fingerprint gating, and lease acquisition stay single-sourced.
+func prepareSessionPlan(
+	ctx context.Context,
+	store SessionStore,
+	req SessionRequest,
+	identity AgentIdentity,
+	driverType string,
+	fingerprint string,
+) (*resolvedSessionPlan, error) {
 	req = resolveSessionDefaults(req)
 	if req.Mode == SessionStateless {
 		return nil, nil
 	}
-	if s.sessionStore == nil {
+	if store == nil {
 		return nil, ErrSessionStoreRequired
 	}
 
 	plan := &resolvedSessionPlan{
 		request: req,
 		owner:   newLeaseOwner(identity, driverType, req),
-		store:   s.sessionStore,
+		store:   store,
 	}
 
 	if req.Namespace != "" && req.Key != "" {
 		plan.keyLeaseID = sessionKeyLeaseID(req.Namespace, req.Key)
-		if err := plan.acquireLease(ctx, s.sessionStore, plan.keyLeaseID); err != nil {
+		if err := plan.acquireLease(ctx, store, plan.keyLeaseID); err != nil {
 			plan.release()
 			return nil, &SessionBusyError{Target: req.Namespace + "/" + req.Key}
 		}
@@ -264,7 +279,7 @@ func (s *Core) prepareSession(
 	var current *SessionRecord
 	switch {
 	case req.ID != "":
-		record, err := s.sessionStore.Resolve(ctx, SessionQuery{
+		record, err := store.Resolve(ctx, SessionQuery{
 			ID:              req.ID,
 			IncludeArchived: true,
 		})
@@ -274,7 +289,7 @@ func (s *Core) prepareSession(
 		}
 		current = record
 	case req.Namespace != "" && req.Key != "":
-		record, err := s.sessionStore.Resolve(ctx, SessionQuery{
+		record, err := store.Resolve(ctx, SessionQuery{
 			Namespace: req.Namespace,
 			Key:       req.Key,
 		})
@@ -286,7 +301,7 @@ func (s *Core) prepareSession(
 	}
 
 	if current != nil && current.ID != "" {
-		if err := plan.acquireLease(ctx, s.sessionStore, current.ID); err != nil {
+		if err := plan.acquireLease(ctx, store, current.ID); err != nil {
 			plan.release()
 			return nil, &SessionBusyError{Target: current.ID}
 		}
@@ -315,7 +330,7 @@ func (s *Core) prepareSession(
 	case SessionContinueOrStart:
 		if current == nil {
 			plan.engineID = newEngineSessionID(driverType, fingerprint)
-			if err := plan.acquireLease(ctx, s.sessionStore, plan.engineID); err != nil {
+			if err := plan.acquireLease(ctx, store, plan.engineID); err != nil {
 				plan.release()
 				return nil, &SessionBusyError{Target: plan.engineID}
 			}
@@ -332,7 +347,7 @@ func (s *Core) prepareSession(
 		}
 		plan.previousID = current.ID
 		plan.engineID = newEngineSessionID(driverType, fingerprint)
-		if err := plan.acquireLease(ctx, s.sessionStore, plan.engineID); err != nil {
+		if err := plan.acquireLease(ctx, store, plan.engineID); err != nil {
 			plan.release()
 			return nil, &SessionBusyError{Target: plan.engineID}
 		}
@@ -342,7 +357,7 @@ func (s *Core) prepareSession(
 			plan.previousID = current.ID
 		}
 		plan.engineID = newEngineSessionID(driverType, fingerprint)
-		if err := plan.acquireLease(ctx, s.sessionStore, plan.engineID); err != nil {
+		if err := plan.acquireLease(ctx, store, plan.engineID); err != nil {
 			plan.release()
 			return nil, &SessionBusyError{Target: plan.engineID}
 		}
@@ -353,7 +368,7 @@ func (s *Core) prepareSession(
 			plan.release()
 			return nil, fmt.Errorf("%w: fork_from missing", ErrSessionNotFound)
 		}
-		parent, err := s.sessionStore.Resolve(ctx, SessionQuery{
+		parent, err := store.Resolve(ctx, SessionQuery{
 			ID:              req.ForkFrom,
 			IncludeArchived: true,
 		})
@@ -367,7 +382,7 @@ func (s *Core) prepareSession(
 		}
 		plan.record = parent
 		plan.engineID = newEngineSessionID(driverType, fingerprint)
-		if err := plan.acquireLease(ctx, s.sessionStore, plan.engineID); err != nil {
+		if err := plan.acquireLease(ctx, store, plan.engineID); err != nil {
 			plan.release()
 			return nil, &SessionBusyError{Target: plan.engineID}
 		}
@@ -389,7 +404,22 @@ func (s *Core) persistSession(
 	fingerprint string,
 	checkpoint *DriverCheckpoint,
 ) (*SessionRef, error) {
-	if plan == nil || s.sessionStore == nil || plan.request.Mode == SessionStateless {
+	return persistSessionPlan(ctx, s.sessionStore, plan, identity, driver, fingerprint, checkpoint)
+}
+
+// persistSessionPlan is the store-parameterized post-run persistence logic
+// shared by the legacy Core path and the v1 Thread path (see
+// prepareSessionPlan).
+func persistSessionPlan(
+	ctx context.Context,
+	store SessionStore,
+	plan *resolvedSessionPlan,
+	identity AgentIdentity,
+	driver DriverAdapter,
+	fingerprint string,
+	checkpoint *DriverCheckpoint,
+) (*SessionRef, error) {
+	if plan == nil || store == nil || plan.request.Mode == SessionStateless {
 		return nil, nil
 	}
 
@@ -416,7 +446,7 @@ func (s *Core) persistSession(
 		record.CreatedAt = plan.record.CreatedAt
 	}
 
-	if err := s.sessionStore.Finalize(ctx, SessionFinalizeRequest{
+	if err := store.Finalize(ctx, SessionFinalizeRequest{
 		Record:       record,
 		PreviousID:   plan.previousID,
 		Namespace:    plan.request.Namespace,

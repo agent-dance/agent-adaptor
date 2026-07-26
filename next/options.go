@@ -3,6 +3,8 @@ package adaptor
 import (
 	"maps"
 	"time"
+
+	"github.com/agent-dance/agent-adaptor/threadstore"
 )
 
 // ============ Scope interfaces (decision D7, case A) ============
@@ -130,10 +132,11 @@ func (s RunSettings) clone() RunSettings {
 type AgentSettings struct {
 	RunSettings
 
-	// threadStore is stored as an opaque value in P0 and consumed in P2
-	// when Thread/threadstore.Store land. TODO(P2): type it as
-	// threadstore.Store and wire it into session coordination.
-	threadStore any
+	// threadStore backs Agent.Thread/NewThread (stateful conversations).
+	// Nil is valid: Threads then fail their runs with
+	// ErrThreadStoreRequired while the stateless Agent paths stay
+	// unaffected.
+	threadStore threadstore.Store
 
 	// eventBuffer sizes the per-run event channel (0 = default 1024).
 	eventBuffer int
@@ -144,7 +147,7 @@ type AgentSettings struct {
 }
 
 // SetThreadStore injects the thread storage backend (stateful conversations).
-func (s *AgentSettings) SetThreadStore(store any) { s.threadStore = store }
+func (s *AgentSettings) SetThreadStore(store threadstore.Store) { s.threadStore = store }
 
 // SetEventBuffer sets the per-run event channel buffer size.
 func (s *AgentSettings) SetEventBuffer(n int) { s.eventBuffer = n }
@@ -237,12 +240,13 @@ func OnApproval(h ApprovalHandler) SharedOption {
 }
 
 // WithThreadStore injects the thread storage backend that enables stateful
-// conversations. Construction scope only; passing it to Run/Stream is a
-// compile error (missing method ApplyRun).
-//
-// TODO(P2): the parameter becomes threadstore.Store when the threadstore
-// package lands; in P0 the value is stored but not yet consumed.
-func WithThreadStore(store any) Option {
+// conversations: with it, Agent.Thread / Agent.NewThread persist and resume
+// driver checkpoints across runs and processes (memory.NewStore() for
+// single-process hosts, a durable implementation for services). Without it
+// Threads fail their runs with ErrThreadStoreRequired. Construction scope
+// only; passing it to Run/Stream is a compile error (missing method
+// ApplyRun).
+func WithThreadStore(store threadstore.Store) Option {
 	return newOptionFunc(func(s *AgentSettings) { s.SetThreadStore(store) })
 }
 
