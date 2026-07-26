@@ -6,18 +6,6 @@ import (
 	"strings"
 )
 
-func cloneProfileSelection(selection *ProfileSelection) *ProfileSelection {
-	if selection == nil {
-		return nil
-	}
-	copySelection := *selection
-	if selection.Clone != nil {
-		copyClone := *selection.Clone
-		copySelection.Clone = &copyClone
-	}
-	return &copySelection
-}
-
 // NormalizeProfileDir expands ~, resolves relative paths, and cleans the
 // result. It is exported for hosts that want to validate profile paths before
 // building an SDK.
