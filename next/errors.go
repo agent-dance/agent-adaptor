@@ -1,0 +1,135 @@
+package adaptor
+
+import (
+	"errors"
+
+	"github.com/agent-dance/agent-adaptor/driver"
+)
+
+// Decision D1: business failures are typed errors. A run that completed but
+// failed at the business level returns a *RunError carrying the full Result;
+// infrastructure failures (context cancellation, process crash, protocol
+// breakage) travel the same err path as plain wrapped errors. Hosts have one
+// verdict point:
+//
+//	res, err := agent.Run(ctx, prompt)
+//	if err != nil {
+//	    var runErr *adaptor.RunError
+//	    if errors.As(err, &runErr) {
+//	        // completed-but-failed: runErr.Reason, runErr.Result
+//	    }
+//	    return err // cancellation / crash / breakage: same path
+//	}
+
+// FailureReason classifies a business-level run failure.
+type FailureReason string
+
+const (
+	// ReasonApprovalDenied: a human decision was rejected (including
+	// auto-deny synthesis). Legacy code: decision_rejected.
+	ReasonApprovalDenied FailureReason = "approval_denied"
+	// ReasonApprovalTimeout: a human decision deadline elapsed.
+	// Legacy code: decision_timeout.
+	ReasonApprovalTimeout FailureReason = "approval_timeout"
+	// ReasonAgentError: the driver classified an agent-level failure
+	// (bad protocol, non-zero exit, handler panic, ...).
+	ReasonAgentError FailureReason = "agent_error"
+	// ReasonCancelled: the run was cancelled after producing a classified
+	// business failure (as opposed to a bare context cancellation, which
+	// surfaces as a plain error wrapping ctx.Err()).
+	ReasonCancelled FailureReason = "cancelled"
+	// ReasonPolicyViolation: policy validation failed. Legacy code:
+	// policy_error.
+	ReasonPolicyViolation FailureReason = "policy_violation"
+)
+
+// Sentinels for errors.Is matching. Each RunError unwraps to the sentinel
+// matching its Reason.
+var (
+	// ErrApprovalDenied matches runs that failed because a human decision
+	// was rejected.
+	ErrApprovalDenied = errors.New("adaptor: approval denied")
+	// ErrApprovalTimeout matches runs that failed because a human decision
+	// timed out.
+	ErrApprovalTimeout = errors.New("adaptor: approval timed out")
+	// ErrAgentFailed matches driver-classified agent failures.
+	ErrAgentFailed = errors.New("adaptor: agent failed")
+	// ErrRunCancelled matches driver-classified cancellation failures.
+	ErrRunCancelled = errors.New("adaptor: run cancelled")
+	// ErrPolicyViolation matches policy validation failures.
+	ErrPolicyViolation = errors.New("adaptor: policy violation")
+)
+
+// RunError is the typed error for a run that completed but failed at the
+// business level (approval denied / timed out, policy violation, agent
+// error). It follows the *exec.ExitError convention: the error carries the
+// full execution Result, so partial output, usage, and the transcript stay
+// accessible on the failure path.
+type RunError struct {
+	// Reason classifies the failure.
+	Reason FailureReason
+	// Message is the human-readable failure message from the driver/SDK.
+	Message string
+	// Details carries driver-specific structured failure metadata.
+	Details map[string]any
+	// Result is the full result of the completed-but-failed run. It is
+	// always non-nil when the SDK returns a *RunError.
+	Result *Result
+}
+
+// Error implements the error interface.
+func (e *RunError) Error() string {
+	msg := "adaptor: run failed"
+	if e == nil {
+		return msg
+	}
+	if e.Reason != "" {
+		msg += ": " + string(e.Reason)
+	}
+	if e.Message != "" {
+		msg += ": " + e.Message
+	}
+	return msg
+}
+
+// Unwrap returns the sentinel matching Reason so that
+// errors.Is(err, adaptor.ErrApprovalDenied) and friends hold.
+func (e *RunError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	switch e.Reason {
+	case ReasonApprovalDenied:
+		return ErrApprovalDenied
+	case ReasonApprovalTimeout:
+		return ErrApprovalTimeout
+	case ReasonAgentError:
+		return ErrAgentFailed
+	case ReasonCancelled:
+		return ErrRunCancelled
+	case ReasonPolicyViolation:
+		return ErrPolicyViolation
+	default:
+		return nil
+	}
+}
+
+// failureReason maps the driver SPI failure code onto the consumer
+// vocabulary. Unknown codes pass through verbatim so drivers can extend the
+// space without silently losing information.
+func failureReason(code driver.FailureCode) FailureReason {
+	switch code {
+	case driver.FailureReject:
+		return ReasonApprovalDenied
+	case driver.FailureTimeout:
+		return ReasonApprovalTimeout
+	case driver.FailureAgentError, "":
+		return ReasonAgentError
+	case driver.FailureCancelled:
+		return ReasonCancelled
+	case driver.FailurePolicyError:
+		return ReasonPolicyViolation
+	default:
+		return FailureReason(code)
+	}
+}
