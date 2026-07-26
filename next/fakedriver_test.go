@@ -32,6 +32,10 @@ type fakeDriver struct {
 	// runFunc, when set, fully controls the run (blocking, ctx
 	// inspection, per-call responses, ...).
 	runFunc func(ctx context.Context, req driver.Request, sink driver.EventSink) (driver.Response, error)
+
+	// caps is advertised through Descriptor().RunPolicyCaps (approval
+	// retry support gating).
+	caps driver.RunPolicyCapabilities
 }
 
 var _ driver.Driver = (*fakeDriver)(nil)
@@ -41,7 +45,7 @@ func newFakeDriver() *fakeDriver {
 }
 
 func (f *fakeDriver) Descriptor() driver.Descriptor {
-	return driver.Descriptor{Type: "fake", DisplayName: "Fake Driver"}
+	return driver.Descriptor{Type: "fake", DisplayName: "Fake Driver", RunPolicyCaps: f.caps}
 }
 
 func (f *fakeDriver) ValidateConfig(any) error { return nil }
