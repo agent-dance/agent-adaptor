@@ -13,7 +13,7 @@ import (
 	"time"
 
 	agentadaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/pkg/hosttools/sessionrecorder"
+	"github.com/agent-dance/agent-adaptor/hosttools/sessionrecorder"
 )
 
 // TestHostSeqMonotonicAcrossRunsWithResettingPayloadSeq is the

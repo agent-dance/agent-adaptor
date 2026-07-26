@@ -5,8 +5,8 @@ import (
 	"time"
 
 	agentadaptor "github.com/agent-dance/agent-adaptor"
-	bridgea2a "github.com/agent-dance/agent-adaptor/pkg/bridges/a2a"
-	clienta2a "github.com/agent-dance/agent-adaptor/pkg/clients/a2a"
+	bridgea2a "github.com/agent-dance/agent-adaptor/bridges/a2a"
+	clienta2a "github.com/agent-dance/agent-adaptor/clients/a2a"
 )
 
 // TestEventMapperArtifactsNeverCreateProcessEvents verifies ArtifactUpdate is

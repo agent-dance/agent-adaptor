@@ -12,8 +12,8 @@ import (
 
 	agentadaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/memory"
-	"github.com/agent-dance/agent-adaptor/pkg/bridges/sse"
-	"github.com/agent-dance/agent-adaptor/pkg/hosttools/a2adelegation"
+	"github.com/agent-dance/agent-adaptor/bridges/sse"
+	"github.com/agent-dance/agent-adaptor/hosttools/a2adelegation"
 )
 
 // fakeAdapter emits a fixed StreamPayload sequence so we can exercise the

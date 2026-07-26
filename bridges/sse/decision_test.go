@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	agentadaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/pkg/bridges/sse"
+	"github.com/agent-dance/agent-adaptor/bridges/sse"
 )
 
 func TestDecodeDecisionResolveRequest(t *testing.T) {

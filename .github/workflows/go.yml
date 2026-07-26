@@ -28,7 +28,7 @@ jobs:
       run: go vet ./...
 
     - name: Repeat A2A tests
-      run: go test -count=20 ./pkg/clients/a2a ./pkg/bridges/a2a
+      run: go test -count=20 ./clients/a2a ./bridges/a2a
 
     - name: Race A2A tests
-      run: go test -race ./pkg/clients/a2a ./pkg/bridges/a2a
+      run: go test -race ./clients/a2a ./bridges/a2a

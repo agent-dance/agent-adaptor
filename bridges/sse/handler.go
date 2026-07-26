@@ -45,8 +45,8 @@ import (
 	aguisse "github.com/ag-ui-protocol/ag-ui/sdks/community/go/pkg/encoding/sse"
 
 	agentadaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/pkg/bridges/agui"
-	"github.com/agent-dance/agent-adaptor/pkg/bridges/subagentstream"
+	"github.com/agent-dance/agent-adaptor/bridges/agui"
+	"github.com/agent-dance/agent-adaptor/bridges/subagentstream"
 )
 
 // Protocol selects the full on-wire contract (inbound + outbound).

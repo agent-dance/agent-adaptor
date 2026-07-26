@@ -12,7 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	clienta2a "github.com/agent-dance/agent-adaptor/pkg/clients/a2a"
+	clienta2a "github.com/agent-dance/agent-adaptor/clients/a2a"
 )
 
 const remoteCancelTimeout = 5 * time.Second
