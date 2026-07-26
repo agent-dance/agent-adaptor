@@ -1,4 +1,4 @@
-package agentadaptor
+package engine
 
 func extractCommonConfig(cfg any) CommonConfig {
 	switch value := cfg.(type) {

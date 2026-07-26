@@ -3,6 +3,8 @@ package agentadaptor
 import (
 	"context"
 	"fmt"
+
+	"github.com/agent-dance/agent-adaptor/internal/engine"
 )
 
 type passthroughWorkspaceManager struct{}
@@ -14,7 +16,7 @@ func (passthroughWorkspaceManager) Resolve(_ context.Context, req WorkspaceReque
 		StrategyType: WorkspaceStrategyProjectPrimary,
 	}
 	if req.Spec != nil {
-		data = req.Spec.workspaceRequest()
+		data = engine.SpecWorkspaceRequest(req.Spec)
 	}
 	metadata := cloneStringMap(req.Metadata)
 	if metadata == nil {
