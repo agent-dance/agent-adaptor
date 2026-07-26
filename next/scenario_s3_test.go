@@ -1,10 +1,11 @@
 package adaptor_test
 
-// Scenario S3 · Web chat service: SSE streaming + front-end approval card
-// (docs/api-v1-redesign.md §3 S3).
+// Scenario S3 · Web chat service: SSE streaming + front-end approval card +
+// Thread continuation (docs/api-v1-redesign.md §3 S3).
 //
 // Target shape, verbatim from the design doc:
 //
+//	th := agent.Thread(threadKeyFrom(r))        // 续聊：key 复用 / 自动新建
 //	stream := th.Stream(r.Context(), promptFrom(r))
 //	for ev := range stream.Events() {
 //	    switch e := ev.(type) {
@@ -26,9 +27,10 @@ package adaptor_test
 //	    req.(*adaptor.ApprovalRequest).Answer(r.Context(), optionFrom(r))
 //	}
 //
-// Thread continuation (agent.Thread(threadKeyFrom(r)) / th.Fork) joins in
-// P2 — until then the same consumption shape runs on the stateless Agent
-// below. The sse.Handler(agent) one-liner bridge returns in P4.
+//	// “重新生成” = fork
+//	alt := th.Fork(newThreadKey())
+//
+// The sse.Handler(agent) one-liner bridge returns in P4.
 
 import (
 	"context"
@@ -37,14 +39,27 @@ import (
 	"testing"
 
 	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/memory"
 	adaptor "github.com/agent-dance/agent-adaptor/next"
+	"github.com/agent-dance/agent-adaptor/threadstore"
 )
 
 func TestScenarioS3WebChatApprovalCard(t *testing.T) {
-	// The scripted "claude" driver: streams text, opens a tool call, asks
-	// the release question, and finishes according to the human's answer.
+	// The scripted "claude" driver. First turn: streams text, opens a tool
+	// call, asks the release question, finishes according to the human's
+	// answer, and checkpoints the conversation. Later turns (the thread
+	// carries a resume state) continue in context.
 	fake := newFakeDriver()
 	fake.runFunc = func(ctx context.Context, req driver.Request, sink driver.EventSink) (driver.Response, error) {
+		if req.Session != nil && req.Session.State != nil {
+			resumeID := req.Session.State.ResumeID
+			_ = sink.EmitStream(driver.StreamPayload{Kind: driver.StreamTextContent, MessageID: "m2", Delta: "In the context of this chat: on it."})
+			return driver.Response{
+				Output:     "continued:" + resumeID,
+				Checkpoint: &driver.Checkpoint{State: &driver.SessionState{ResumeID: resumeID}, Valid: true},
+			}, nil
+		}
+
 		ds := sink.(driver.DecisionCapableSink)
 		_ = sink.EmitStream(driver.StreamPayload{Kind: driver.StreamTextContent, MessageID: "m1", Delta: "Deploying the release"})
 		_ = sink.EmitStream(driver.StreamPayload{Kind: driver.StreamToolCallStart, ToolCallID: "c1", Name: "bash", Args: map[string]any{"cmd": "make deploy"}})
@@ -65,10 +80,15 @@ func TestScenarioS3WebChatApprovalCard(t *testing.T) {
 			return driver.Response{Output: "held"}, nil
 		}
 		_ = sink.EmitStream(driver.StreamPayload{Kind: driver.StreamTextContent, MessageID: "m1", Delta: " — approved, shipping."})
-		return driver.Response{Output: "Deployed."}, nil
+		return driver.Response{
+			Output:     "Deployed.",
+			Checkpoint: &driver.Checkpoint{State: &driver.SessionState{ResumeID: "chat-sess-1"}, Valid: true},
+		}, nil
 	}
 
+	store := memory.NewStore()
 	agent := adaptor.New(fake,
+		adaptor.WithThreadStore(store),
 		adaptor.WithPolicy(adaptor.Policy{Approvals: adaptor.ApprovalPolicy{Question: adaptor.QuestionAsk}}),
 	)
 
@@ -91,8 +111,10 @@ func TestScenarioS3WebChatApprovalCard(t *testing.T) {
 		}
 	}()
 
-	// The chat handler, in the doc's exact consumption shape.
-	stream := agent.Stream(context.Background(), "deploy release 1.4")
+	// Request 1 — the chat handler, in the doc's exact consumption shape:
+	// bind the thread from the request, stream, park approval cards.
+	th := agent.Thread("tenant-1/chat-42")
+	stream := th.Stream(context.Background(), "deploy release 1.4")
 	for ev := range stream.Events() {
 		switch e := ev.(type) {
 		case adaptor.TextDelta:
@@ -136,4 +158,45 @@ func TestScenarioS3WebChatApprovalCard(t *testing.T) {
 		t.Errorf("pending approval %v left behind", k)
 		return true
 	})
+
+	// Request 2 — a later HTTP request builds a fresh handle from the same
+	// thread key and continues the conversation (state lives in the store,
+	// not in the handle).
+	res2, err := agent.Thread("tenant-1/chat-42").Run(context.Background(), "and roll the docs site too")
+	if err != nil {
+		t.Fatalf("continuation run: %v", err)
+	}
+	if res2.Text != "continued:chat-sess-1" {
+		t.Fatalf("res2.Text = %q, want the conversation continued from chat-sess-1", res2.Text)
+	}
+	sess := fake.request(t, 1).Session
+	if sess == nil || sess.Mode != driver.SessionContinueOrStart || sess.State == nil || sess.State.ResumeID != "chat-sess-1" {
+		t.Fatalf("continuation session = %+v, want continue_or_start with chat-sess-1", sess)
+	}
+
+	// "Regenerate" — fork the thread; the alternative takes its own key,
+	// the original chat stays intact.
+	res3, err := th.Fork("tenant-1/chat-42/alt-1").Run(context.Background(), "try a bolder wording")
+	if err != nil {
+		t.Fatalf("fork run: %v", err)
+	}
+	if res3.Text != "continued:chat-sess-1" {
+		t.Fatalf("res3.Text = %q, want the fork to branch from chat-sess-1", res3.Text)
+	}
+	sess = fake.request(t, 2).Session
+	if sess == nil || sess.Mode != driver.SessionFork || sess.State == nil || sess.State.ResumeID != "chat-sess-1" {
+		t.Fatalf("fork session = %+v, want fork carrying chat-sess-1", sess)
+	}
+
+	parentRec, err := store.Resolve(context.Background(), threadstore.Query{Key: "tenant-1/chat-42"})
+	if err != nil || parentRec == nil {
+		t.Fatalf("resolve parent thread: rec=%v err=%v", parentRec, err)
+	}
+	altRec, err := store.Resolve(context.Background(), threadstore.Query{Key: "tenant-1/chat-42/alt-1"})
+	if err != nil || altRec == nil {
+		t.Fatalf("resolve fork thread: rec=%v err=%v", altRec, err)
+	}
+	if parentRec.Status != threadstore.StatusActive || altRec.ID == parentRec.ID {
+		t.Fatalf("fork boundary violated: parent=%+v alt=%+v", parentRec, altRec)
+	}
 }

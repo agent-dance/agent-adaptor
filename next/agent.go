@@ -15,9 +15,9 @@ import (
 // the SPI package.
 type Driver = driver.Driver
 
-// Runner is the single execution contract shared by Agent and, from P2 on,
-// Thread. Bridges, RunAs[T], and host decorators accept a Runner so both are
-// interchangeable.
+// Runner is the single execution contract shared by Agent (stateless runs)
+// and Thread (stateful conversations). Bridges, RunAs[T], and host
+// decorators accept a Runner so both are interchangeable.
 type Runner interface {
 	Run(ctx context.Context, prompt string, opts ...CallOption) (*Result, error)
 	Stream(ctx context.Context, prompt string, opts ...CallOption) Stream
@@ -90,7 +90,8 @@ func buildRequest(runID, prompt string, eff *RunSettings) driver.Request {
 		// (codex.Driver(codex.Config{...}) captures it at construction).
 		// TODO(P3.1): drop the field hand-off entirely when driver
 		// configs move home.
-		// Session stays nil in P0 (stateless). TODO(P2): Thread wiring.
+		// Session stays nil here: the Thread path (thread.go) attaches
+		// the per-turn session context; plain Agent runs are stateless.
 	}
 	if eff.identity != nil {
 		req.Agent = eff.identity.driverIdentity()
