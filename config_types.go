@@ -19,43 +19,6 @@ type CommonConfig struct {
 	ExtraArgs               []string
 }
 
-// EnvBinding is one explicit environment variable override passed to an
-// adapter process or used during profile resolution.
-type EnvBinding struct {
-	Name  string
-	Value string
-}
-
-// InstructionsBundleRef points at host-supplied instruction material. The SDK
-// treats it as desired state; adapters decide whether to materialize it as a
-// provider-native file/rule or inject it into the prompt as a fallback.
-type InstructionsBundleRef struct {
-	ID          string
-	Path        string
-	Content     string
-	Fingerprint string
-	Scope       InstructionScope
-	Mode        InstructionMode
-	Native      map[string]any
-}
-
-type InstructionScope string
-
-const (
-	InstructionScopeDefault InstructionScope = ""
-	InstructionScopeUser    InstructionScope = "user"
-	InstructionScopeProject InstructionScope = "project"
-	InstructionScopeLocal   InstructionScope = "local"
-	InstructionScopeRun     InstructionScope = "run"
-)
-
-type InstructionMode string
-
-const (
-	InstructionModeAdditive InstructionMode = ""
-	InstructionModeReplace  InstructionMode = "replace"
-)
-
 // CodexConfig configures the built-in codex adapter. CommonConfig controls
 // process/profile/workspace defaults; Model and ReasoningEffort map to Codex
 // model settings.

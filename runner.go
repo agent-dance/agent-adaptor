@@ -238,15 +238,15 @@ func (r *runnerImpl) validateDecisionCapabilities(inv resolvedInvocation) error 
 		switch mode {
 		case modeAsk:
 			if !support.Ask {
-				return fmt.Errorf("%w: adapter=%s kind=%s mode=%s", ErrHumanDecisionModeUnsupported, caps.adapterLabel(), kind, mode)
+				return fmt.Errorf("%w: adapter=%s kind=%s mode=%s", ErrHumanDecisionModeUnsupported, adapterLabel(caps), kind, mode)
 			}
 		case modeAutoApprove:
 			if !support.AutoApprove {
-				return fmt.Errorf("%w: adapter=%s kind=%s mode=%s", ErrHumanDecisionModeUnsupported, caps.adapterLabel(), kind, mode)
+				return fmt.Errorf("%w: adapter=%s kind=%s mode=%s", ErrHumanDecisionModeUnsupported, adapterLabel(caps), kind, mode)
 			}
 		case modeAutoReject:
 			if !support.AutoReject {
-				return fmt.Errorf("%w: adapter=%s kind=%s mode=%s", ErrHumanDecisionModeUnsupported, caps.adapterLabel(), kind, mode)
+				return fmt.Errorf("%w: adapter=%s kind=%s mode=%s", ErrHumanDecisionModeUnsupported, adapterLabel(caps), kind, mode)
 			}
 		}
 		return nil
@@ -265,7 +265,7 @@ func (r *runnerImpl) validateDecisionCapabilities(inv resolvedInvocation) error 
 	switch p.Question {
 	case QuestionAsk:
 		if !caps.Question.Ask {
-			return fmt.Errorf("%w: adapter=%s kind=%s mode=%s", ErrHumanDecisionModeUnsupported, caps.adapterLabel(), HumanDecisionQuestion, p.Question)
+			return fmt.Errorf("%w: adapter=%s kind=%s mode=%s", ErrHumanDecisionModeUnsupported, adapterLabel(caps), HumanDecisionQuestion, p.Question)
 		}
 	case QuestionAutoReject:
 		if !caps.Question.AutoReject {
@@ -276,7 +276,7 @@ func (r *runnerImpl) validateDecisionCapabilities(inv resolvedInvocation) error 
 			if !caps.Question.Ask && !caps.Question.Retry {
 				break
 			}
-			return fmt.Errorf("%w: adapter=%s kind=%s mode=%s", ErrHumanDecisionModeUnsupported, caps.adapterLabel(), HumanDecisionQuestion, p.Question)
+			return fmt.Errorf("%w: adapter=%s kind=%s mode=%s", ErrHumanDecisionModeUnsupported, adapterLabel(caps), HumanDecisionQuestion, p.Question)
 		}
 	}
 
@@ -658,8 +658,10 @@ func (r *runnerImpl) finalizeStructuredOutput(invocation resolvedInvocation, run
 
 // adapterLabel returns a best-effort diagnostic label for error messages.
 // RunPolicyCapabilities is a value type without an adapter name, so callers
-// fall back to a generic label.
-func (RunPolicyCapabilities) adapterLabel() string { return "adapter" }
+// fall back to a generic label. (RunPolicyCapabilities now lives in the
+// driver package, so this is a free function instead of an unexported
+// method.)
+func adapterLabel(RunPolicyCapabilities) string { return "adapter" }
 
 // -----------------------------------------------------------------------------
 // EventSink wrappers.
@@ -1113,7 +1115,7 @@ type handlerOutcome struct {
 
 func (s *dualSink) runPermissionHandler(ctx context.Context, req DecisionRequest) (DecisionResponse, DecisionResult, error) {
 	typed := PermissionRequest{
-		decisionRequestBase: req.toBase(),
+		decisionRequestBase: decisionRequestToBase(req),
 		Tool:                stringFrom(req.Payload, "tool"),
 		Prompt:              req.Prompt,
 		Args:                req.Payload,
@@ -1134,7 +1136,7 @@ func (s *dualSink) runPermissionHandler(ctx context.Context, req DecisionRequest
 
 func (s *dualSink) runPlanReviewHandler(ctx context.Context, req DecisionRequest) (DecisionResponse, DecisionResult, error) {
 	typed := PlanReviewRequest{
-		decisionRequestBase: req.toBase(),
+		decisionRequestBase: decisionRequestToBase(req),
 		Prompt:              req.Prompt,
 		Plan:                stringFrom(req.Payload, "plan"),
 		Extra:               req.Payload,
@@ -1155,7 +1157,7 @@ func (s *dualSink) runPlanReviewHandler(ctx context.Context, req DecisionRequest
 
 func (s *dualSink) runQuestionHandler(ctx context.Context, req DecisionRequest) (DecisionResponse, DecisionResult, error) {
 	typed := QuestionRequest{
-		decisionRequestBase: req.toBase(),
+		decisionRequestBase: decisionRequestToBase(req),
 		Prompt:              req.Prompt,
 		Schema:              mapFrom(req.Payload, "schema"),
 		Choices:             req.Choices,
@@ -1696,9 +1698,10 @@ func newItemEvent(item TranscriptItem) RunEvent {
 	}
 }
 
-// (*DecisionRequest).toBase extracts the common fields for typed handler
-// requests.
-func (r DecisionRequest) toBase() decisionRequestBase {
+// decisionRequestToBase extracts the common fields for typed handler
+// requests. (DecisionRequest now lives in the driver package, so this is a
+// free function instead of an unexported method.)
+func decisionRequestToBase(r DecisionRequest) decisionRequestBase {
 	return decisionRequestBase{
 		RequestID:    r.RequestID,
 		RunID:        r.RunID,
