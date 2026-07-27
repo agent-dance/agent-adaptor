@@ -1,7 +1,7 @@
 # agent-adaptor v1 实施计划
 
-> 配套设计文档：[api-v1-redesign.md](./api-v1-redesign.md)（"什么/为什么"）。本文是"怎么做/什么顺序/怎么验收"。
-> 基线：main @ bbba7a0；根包 17,522 行 / 54 个 Go 文件；Go 1.26；CI：`.github/workflows/go.yml`。
+> 配套设计文档：[api-v1-redesign.md](./api-v1-redesign.md)（“什么/为什么”）。本文是阶段计划；当前接管状态、阻断项与下一步以 [v1-takeover-audit.md](./v1-takeover-audit.md) 为唯一执行入口。
+> 原始设计基线：main @ `bbba7a0`。接管断点：HEAD `4a66cc3`，v0 冻结基线已推进至 `v0.12.0`；未提交 PRE 工作集的实时状态见 takeover audit。
 
 ---
 
@@ -11,16 +11,17 @@
 |---|---|---|---|
 | D1 | 业务失败并入 error（`*RunError` 携带完整 `Result`），删除 `RunResult.Failure` 双层判定 | **采纳**（方向已确认） | P0 结束前（`Result`/`RunError` 定型后翻案成本陡增） |
 | D2 | 审批请求自带应答器（`ApprovalRequest.Approve/Deny/Answer`），删除 `ResolveDecision` requestID 往返与 3×2 typed handler | **采纳**（方向已确认） | P1 结束前 |
-| D3 | 根包 package name `agentadaptor` → `adaptor`（import path 不变） | **采纳为默认** | P5 大挪移前零成本翻案（纯文本替换） |
+| D3 | 根包 package name `agentadaptor` → `adaptor`（import path 不变） | **最终确认** | 已关闭 |
 | D4 | `Stream` 定义为小接口（`Events`/`Result`/`RunID`/`Cancel`），而非具体结构体 | 采纳（S9 分析反哺） | P1 |
 | D5 | `delegation.Service` 一体化入口 + `delegation.Local/Remote` 双目标 + `SubagentUpdate` 事件入主流 | 采纳（S9/§9.8） | P4 |
 | D6 | 实施策略：**绞杀者路线**（内核抽取 → staging 包并行生长 → 终局大挪移），不做同包新旧共存 | 采纳（本文 §1） | 立即生效 |
 | D7 | Option 双作用域的编译期约束具体类型设计 | **已定案（P0.1 spike）**：案 A 三接口 `Option` / `CallOption`（不嵌入 Option）/ `SharedOption`，双向误用编译错；`AgentSettings` 内嵌 `RunSettings`，字段不导出、扩展面为精选导出方法。详见 [p0-option-scope-decision.md](./p0-option-scope-decision.md)。连带定稿：`WithModel`/`WithTimeout` 为双作用域（已回改方案 §2.3）；`a2a.ServerOptions.Options` 类型为 `[]adaptor.CallOption` | 已关闭 |
-| D8 | 结构化输出模式词汇归属（根包常量 vs `schema` 子包） | 待定（默认根包常量 `adaptor.SchemaStrict` 等，少一个包） | P3 |
+| D8 | 结构化输出模式词汇归属（根包常量 vs `schema` 子包） | **已定案**：根包常量 `SchemaStrict` / `SchemaFlexible` / `SchemaPromptOnly` | 已关闭 |
 | D9 | `providers/` 包去留 | **删除**（P0.7 裁决：全仓唯一引用者是自身测试，自述 opt-in sugar；Required 能力在 skill.Provider 合同中保留，宿主 10 行 wrapper 等价）。迁移指南记一行 | P5 前若产品异议，归宿为 `skill.MarkRequired` |
 | D10 | `runtimeservice/` 包去留 | **删除**（P0.7 裁决：v0.5 的宿主兼容 mixin，与 runtime.go / RuntimeServiceRef 零代码关系；v1 `WithServiceManager` 是全新契约，无存量宿主需要垫片） | P4.5 |
 | D11 | `Identity` 归属与字段集 | 归**根包** `adaptor.Identity` + `IdentityFromContext`（消费方横跨 skill/workspace/services 三域，不进 skill 包）；现状四字段（ID/Tenant/Profile/Name）vs 设计稿两字段是能力缩水，**字段集 P0.5 定案**（默认保四字段） | P0.5 |
 | D12 | `ApprovalRequest.Risk()` 风险分级 | **推迟出 v1.0**（P1 裁决）：现状驱动 SPI 无风险信号来源，拍脑袋 API 违背真话原则；设计文档 §2.6 示例已改注。待任一驱动提供真实风险信号后作为 additive API 补入 | v1.x |
+| D13 | Claude 设计的 v1 API 完全取代旧 `AGENTS.md` 的 SDK/Runner/RunHandle/registry 合同；`Agent · Thread · Stream · Event · Result · Driver` 是唯一北极星，旧 API 仅作为 P5 删除对象存在 | **用户最终裁决（2026-07-27）** | 已关闭 |
 
 ---
 
@@ -28,13 +29,13 @@
 
 同包新旧共存不可行（`Option` 等核心名字直接冲突），一步到位全量重写不可评审。因此分三步走：
 
-1. **内核抽取（P0 前半）**：把根包的执行管线（合并默认值 → 组装 → 会话协调 → 执行 → checkpoint → 归档）原样搬进 `internal/engine`，旧公共 API 降级为薄包装。**零行为变化，全量现有测试零修改通过**——这是整个计划最重要的减险动作：此后新旧两套 API 是同一个内核上的两张脸。
+1. **内核抽取（P0 前半）**：把根包执行职责抽进 `internal/engine`，旧公共 API 降级为薄包装。目标不变式是所有路径最终收敛为“选项解析 → 单一 invocation → thread/session 协调 → driver 执行 → checkpoint/result 归档”。接管审计确认 staging 的 `next/stream.go`、`next/thread.go` 仍存在旁路编排；该不变式尚未兑现，必须在 MOVE 前收敛，详见 takeover audit。
 2. **staging 包并行生长（P0–P4）**：新 API 在 `next/` 目录（package name 即为 `adaptor`）生长，与旧 API 互不干扰；每个阶段以设计文档 §3 的场景测试（S1–S9）为验收锚点。旧 API 与旧测试在此期间**保持绿色不动**，持续兜底。
 3. **大挪移（P5）**：`next/` 内容平移至根目录，删除旧 API 文件与旧测试，文档全量重写，打 `v1.0.0` tag。模块路径 `github.com/agent-dance/agent-adaptor` 不变（当前处于 v0，语义化版本允许直接切 v1，无需 `/v2` 后缀）。
 
 分支与发布节奏：
 
-- 长驻分支 `v1`，每阶段 1–3 个 PR 合入 `v1`；`main` 冻结为 v0.x 维护线，切换前打 `v0.9.0`（或顺延号）冻结 tag。
+- v0 冻结基线已推进到 `v0.12.0`；P5.1 以该版本核对 tag 与维护线，不再创建或引用计划中的 `v0.9.x`。
 - CI 扩展：`go.yml` 增加 `next/...` 与 `driver/...` 的 build+test+vet；保持现有全仓测试矩阵；P1 起对事件流跑 `-race`。
 - 每阶段合入门禁（统一）：① 该阶段场景测试绿；② 旧 API 全量测试仍绿（P5 前）；③ `go vet` / race 干净；④ 设计文档 §4 能力映射表中该阶段负责的行逐条勾验。
 
@@ -65,7 +66,7 @@
 
 **目标**：`Agent.Stream` 返回接口型 `Stream`（D4）；一条事件流承载语义流 + 操作事件 + 审批；HITL 双形态可用。S3 跑通。
 
-> **✅ P1 已完成（2026-07-26，提交 ac94313）**。11 个事件类型（密封接口），18 StreamKind + 6 RunEventType 全映射零丢失；Stream 小接口 + Run=Stream+drain 单一路径；审批双形态（OnApproval 回调 / 事件自应答，exactly-once，重试/超时/兜底对齐 EffectiveHumanDecisionPolicy，ApprovalRequest 豁免丢弃策略）；背压 Dropped 聚合语义对齐现状；40 用例含 3Kind×2形态×兜底矩阵，-count=5 稳定。主要偏差已记录于提交与本表 D12（Risk() 推迟）；Run 恒走流式路径（单一执行路径的既定代价）。
+> **✅ P1 已完成（2026-07-26，提交 ac94313）**。11 个事件类型（密封接口），18 StreamKind + 6 RunEventType 全映射零丢失；Stream 小接口 + Run=Stream+drain 单一路径；审批双形态（OnApproval 回调 / 事件自应答，exactly-once，重试/超时/兜底对齐 EffectiveHumanDecisionPolicy，ApprovalRequest 豁免丢弃策略）；背压 Dropped 聚合语义对齐现状；40 用例含 3Kind×2形态×兜底矩阵，-count=5 稳定。主要偏差已记录于提交与本表 D12（Risk() 推迟）；Run 恒走流式路径。这里的“单一路径”仅指 `Agent.Run = Agent.Stream + drain` 的 P1 表面合同，不代表 [takeover audit G-01](./v1-takeover-audit.md#g-01-唯一执行管线尚未兑现) 所要求的 Agent/Thread 全局编排已经收敛。
 
 | 任务 | 内容 | 触及现状 |
 |---|---|---|
@@ -135,17 +136,19 @@
 
 ### P5 · 大挪移 + 删旧 + 文档 + 发布
 
+> **接管门禁**：P5.2 MOVE 不得开始，直到 [v1-takeover-audit.md](./v1-takeover-audit.md) 中全部阻断级合同缺口关闭、单一执行管线收敛、当前 PRE dirty 工作集完成独立验收并形成可追溯提交。
+
 **目标**：`v1.0.0`。
 
 | 任务 | 内容 |
 |---|---|
-| P5.1 | 冻结 v0：main 打 `v0.9.x` tag；`v1` 分支 rebase 收口 |
-| P5.2 | 大挪移：`next/` → 根目录（package `adaptor`，D3 最后确认点）；删除旧 API 54 个根文件中被取代者与旧测试；`pkg/` 转发包删除；旧 metadata key 兼容解析删除；`providers/`（D9）与 `runtimeservice/`（D10，已核实 P4.5 删净）移除。**🟡 侦察完成**：执行清单与 12 项裁定见 **`docs/p5.2-recon.md`**（只读侦察 agent 全仓核实：根 41 文件逐个分类、61 处 next import、224 个驱动包引用符号拆分、4 个计划外高危点——init 注入接缝/44+ engine 别名无公开新家/边界测试误伤/双 import 同址冲突）。**四波编成**：PRE（下沉解耦：驱动 Config 真结构体化、Profile 资源族下沉 driver/、HITL 族留 engine、EffectiveHumanDecisionPolicy+SessionParam*→driver/、消灭 engine_wiring init 注入、顺修 archive 自冲突 bug）→ MOVE（原子 ~107 文件）→ DELETE（~200 文件）→ RENAME（V1 后缀 8 组 + adaptertest/v1 上提 + examples 改名三合一 + structured-output 新例） |
+| P5.1 | 冻结 v0：以现有 `v0.12.0` 为冻结基线核对 tag/维护分支；`v1` 分支收口。旧 `v0.9.x` 计划作废 |
+| P5.2 | 大挪移：`next/` → 根目录（package `adaptor`）；删除旧 API、旧测试、`pkg/` 转发包、legacy metadata 兼容解析和 `providers/`。迁移清单见 [p5.2-recon.md](./p5.2-recon.md)。**修订波次**：PRE → CORRECTNESS（含 P4/SPI/bridge）→ REHOME/REPOINT（含 D-P5.2-3/4 与全部公共 internal aliases）→ LEGACY EDGE DELETE → ROOT CUTOVER（最终 MOVE，原子）→ RESIDUAL DELETE → RENAME。原“MOVE 约107后 DELETE约200”经机械复核不可编译且漏算大量旧根消费者，已作废；每波按实时依赖图重建清单。 |
 | P5.3 | `adaptertest` v1：面向 `driver.Driver` 的一致性套件（能力声明真话性、事件时序、会话 codec、结构化输出矩阵）；四内置驱动 + fake driver 全过。**✅ 已交（e3d5673）**：`adaptertest/v1/`（编译图仅 driver+stdlib），`TestDriver` 14 子测试 × 51 编号条款（doc.go 全文），自证参考驱动实现全部 10 能力接口零跳过，verify_test 以 30+ 故意违例证明每个校验器按条款号报错；四驱动各一个新增测试接入，live 探针需 CLI 在 PATH **且** `AGENT_ADAPTOR_LIVE_CONFORMANCE=1` 双门（裸 `go test` 永不付费实跑）。**P5 待办**：doc.go 记录了 9 处 `driver/` godoc 合同含糊点（run 生命周期框定无 MUST、SessionCodec nil/零值映射未文档化、Sequence vs Seq 权威归属、SupportsResume⇒SessionCodecProvider 未成文等），v1 冻结前硬化 SPI godoc |
 | P5.4 | 文档重写：`README`（6 名词开篇）、`doc.go`、`docs/api-reference.md`、`usage-guide.md`（删除四层 ID 对照表与防踩坑指南——它们的存在理由已被消除）、`streaming.md`、`a2a.md`、`structured-output.md`；新增 `docs/migrating-to-v1.md`（§4 能力映射表展开成旧→新逐 API 对照）；`workstream-*.md` 移入 `docs/archive/`。**🟡 migrating-to-v1.md 初稿已交（9ac6144，基于 771590a）**：66 旧选项逐一编号映射 + ~90 行非选项对照，在飞面标 🚧 并注明定稿依据，P5 收尾时按落地结果摘 🚧；其余文档待 P5。初稿发现两处设计稿勘误待 P5 处理：① 设计 §3 S8/S9 示例用 `Identity{User: ...}`，与 D11 定稿四字段（ID/Tenant/Profile/Name）不符；② p0-inventory「66 个 With* 全在 options.go」不准（实为横跨 7 文件 48+4+4+3+4+2+1，总数 66 无误） |
 | P5.5 | 发布检查单：godoc 首屏审查（根包导出名 ≤ ~35）、`go vet`/race/fuzz（archive fuzz 随迁）、examples 全绿、CHANGELOG、`v1.0.0` tag |
 
-**门禁**：S1–S9 全绿；`docs/api-v1-redesign.md` §4 能力映射表 100% 勾验；根包导出符号数与选项数达标（选项 ~24、概念 ~13 的量化承诺逐项核对）；migration guide 覆盖全部 66 个旧选项的去向。
+**门禁**：S1–S9 全绿；`docs/api-v1-redesign.md` §4 能力映射表 100% 勾验；根包导出符号数与选项数达标（选项 ~24、概念 ~13 的量化承诺逐项核对）；migration guide 覆盖全部 66 个旧选项的去向；takeover audit 的阻断项为零，且每项均有对应回归测试。
 
 ---
 
@@ -194,10 +197,11 @@
 | R3 | `SubagentUpdate` 注入口对 engine 侵入超预期 | 中/中 | P4.7 自带兜底方案（bridge 层 Merge），S9 文档随之微调 |
 | R4 | 驱动特殊路径回归（claude PersistentProcess、codex app-server、codebuddy 新驱动） | 中/高 | P0.4 shim 期不动驱动内部；adaptertest v1 + live 冒烟清单 |
 | R5 | `cl/opt_examples` 分支与 `v1` 的合并冲突 | 高/低 | P4.9 直接在 v1 重写该 example，不做机械合并 |
-| R6 | 大挪移 PR 过大不可评审 | 高/中 | P5.2 拆三步：移动（无 diff 语义）→ 删除 → 重命名；分 PR，每步 CI 绿 |
+| R6 | 大挪移 PR 过大不可评审 | 高/中 | PRE 独立验收提交；阻断级合同修复与单管线收敛作为 MOVE 前置门禁；之后 MOVE → DELETE → RENAME 每波独立 CI 绿 |
 | R7 | v0 用户升级断崖 | —/中 | migration guide 覆盖 66 选项逐一映射；v0.x tag 冻结可长期 pin |
 | R8 | P0.2 波及面 ≈ 全根包 32 个非测试文件（合同类型必须随 engine 迁移并别名回指，否则依赖成环） | 高/中 | ✅ 已兑现：p0-inventory.md 为路线图分四批推进，两次中断均无损恢复 |
 | R9 | ✅ 已裁决（P4.9 前置检查完成）：`PersistentProcess` 确认只在 `cl/opt_examples`（claude/ 相对 main 分歧 17 文件 +2407 行，是完整的常驻进程复用 feature——batch/streaming/HITL 三路，4ac64f3——非单个开关字段）。**裁决**：不移植，v1.0.0 范围外。P4.9 的 team-agent-workflow 示例按本分支现有进程模型落地，`PersistentProcess: true` 行以注释形态保留（注明"该能力随 cl/opt_examples 合入 main 后可开启"）；§9.7 文档同步加注。理由：该 feature 是 claude 驱动内部优化，日后合入是 Config 结构体 additive 字段，与 v1 API 形状零冲突，不构成发布阻塞 | — |
+| R10 | staging 已形成第二套执行编排，MOVE 会把旁路固化为 v1 根合同 | 高/高 | takeover audit 逐项关闭；以跨 `Run`/`Stream`/`Thread` 的同构结果、checkpoint、取消和背压合同测试证明单管线 |
 
 ---
 
@@ -213,11 +217,12 @@ P0 ──► P1 ──► P2 ──► P5
 
 - 关键路径：P0 → P1 → P4（事件族定型是 bridges 适配的前置）。
 - P2（Thread）与 P3（词汇包）在 P1 后可双线并行。
+- P5.2 MOVE 的直接前置不是“P0–P4 已交”，而是 takeover audit 阻断项关闭 + PRE 验收提交 + 单管线收敛。
 - 规模预估（PR 数）：P0 ×3、P1 ×2、P2 ×1、P3 ×3、P4 ×3、P5 ×3，共约 15 个可独立评审的 PR。
 
 ---
 
-## 7. 启动动作（P0 第一个 PR 的内容）
+## 7. 历史启动动作（P0 已完成，仅作记录）
 
 1. `docs/api-v1-implementation-plan.md`（本文）+ `docs/api-v1-redesign.md` 合入 `v1` 分支；
 2. P0.1 spike：`next/options_scope_test.go` 里两案原型 + 决策注记（半天量级）；
