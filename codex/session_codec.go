@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
 )
 
 type sessionCodec struct{}
@@ -16,18 +17,18 @@ func (adapter) SessionCodec() agentadaptor.SessionCodec {
 
 func (sessionCodec) Name() string { return DriverType }
 
-func (sessionCodec) ToParams(state *agentadaptor.DriverSessionState) agentadaptor.SessionParams {
+func (sessionCodec) ToParams(state *agentadaptor.DriverSessionState) driver.SessionParams {
 	if state == nil {
-		return agentadaptor.SessionParams{}
+		return driver.SessionParams{}
 	}
-	return agentadaptor.SessionParams{
+	return driver.SessionParams{
 		ResumeID:  state.ResumeID,
 		DisplayID: displayID(state),
 		Values:    cloneData(state.Data),
 	}
 }
 
-func (sessionCodec) FromParams(params agentadaptor.SessionParams) *agentadaptor.DriverSessionState {
+func (sessionCodec) FromParams(params driver.SessionParams) *agentadaptor.DriverSessionState {
 	if params.ResumeID == "" && params.DisplayID == "" && len(params.Values) == 0 {
 		return nil
 	}
@@ -42,11 +43,11 @@ func (sessionCodec) FromParams(params agentadaptor.SessionParams) *agentadaptor.
 	}
 }
 
-func (sessionCodec) GuardFingerprint(params agentadaptor.SessionParams) string {
+func (sessionCodec) GuardFingerprint(params driver.SessionParams) string {
 	return guardHash(params.Values,
-		agentadaptor.SessionParamCWD,
-		agentadaptor.SessionParamWorkspaceID,
-		agentadaptor.SessionParamProfileFingerprint,
+		driver.SessionParamCWD,
+		driver.SessionParamWorkspaceID,
+		driver.SessionParamProfileFingerprint,
 	)
 }
 

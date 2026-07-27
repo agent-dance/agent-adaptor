@@ -1,37 +1,16 @@
 package agentadaptor
 
-import (
-	"os"
-	"path/filepath"
-	"strings"
-)
+import "github.com/agent-dance/agent-adaptor/internal/engine"
 
 // NormalizeProfileDir expands ~, resolves relative paths, and cleans the
 // result. It is exported for hosts that want to validate profile paths before
 // building an SDK.
+//
+// The truth moved to internal/engine in P5.2 so the driver-side profile
+// runtime can reach it without importing the facade package; this stays a
+// forwarder so the root surface is unchanged.
 func NormalizeProfileDir(dir string) (string, error) {
-	trimmed := strings.TrimSpace(dir)
-	if trimmed == "" {
-		return "", nil
-	}
-	if trimmed == "~" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", err
-		}
-		trimmed = home
-	} else if strings.HasPrefix(trimmed, "~/") || strings.HasPrefix(trimmed, `~\`) {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", err
-		}
-		trimmed = filepath.Join(home, trimmed[2:])
-	}
-	absolute, err := filepath.Abs(trimmed)
-	if err != nil {
-		return "", err
-	}
-	return filepath.Clean(absolute), nil
+	return engine.NormalizeProfileDir(dir)
 }
 
 // WithNativeProfile tells a built-in adapter to use its normal provider-native

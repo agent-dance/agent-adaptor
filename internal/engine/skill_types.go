@@ -18,6 +18,11 @@ type SkillFromPath struct {
 // SkillSource implements [SkillSource].
 func (SkillFromPath) SkillSource() {}
 
+// SkillPath is the source projection consumed by the materializer. Keeping
+// the projection structural lets public leaf packages own their concrete
+// source types without creating an engine import cycle.
+func (s SkillFromPath) SkillPath() string { return s.Path }
+
 // SkillFromFS sources a skill from an io/fs.FS tree rooted at Root. The root
 // entry must contain SKILL.md. Root == "" or "." is equivalent.
 type SkillFromFS struct {
@@ -28,6 +33,9 @@ type SkillFromFS struct {
 // SkillSource implements [SkillSource].
 func (SkillFromFS) SkillSource() {}
 
+// SkillFS is the source projection consumed by the materializer.
+func (s SkillFromFS) SkillFS() (fs.FS, string) { return s.FS, s.Root }
+
 // SkillFromInline carries a single SKILL.md string. Callers that need
 // auxiliary reference files should use SkillFromFS instead.
 type SkillFromInline struct {
@@ -36,6 +44,9 @@ type SkillFromInline struct {
 
 // SkillSource implements [SkillSource].
 func (SkillFromInline) SkillSource() {}
+
+// InlineSkillMD is the source projection consumed by the materializer.
+func (s SkillFromInline) InlineSkillMD() string { return s.SkillMD }
 
 // Key is the idiomatic constructor for a SkillRef referring to a provider
 // key. It is equivalent to converting the string to SkillKey directly.

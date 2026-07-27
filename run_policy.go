@@ -1,6 +1,9 @@
 package agentadaptor
 
-import "github.com/agent-dance/agent-adaptor/internal/engine"
+import (
+	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/internal/engine"
+)
 
 // Presets: hosts may use these instead of ad-hoc field combinations.
 var (
@@ -51,28 +54,9 @@ func cloneRunPolicy(p *RunPolicy) *RunPolicy { return engine.CloneRunPolicy(p) }
 // a HumanDecisionPolicy. Adapters use it when they need to know the actual
 // Timeout / OnTimeout / OnReject / MaxRetries values that the runner applies
 // so they can surface consistent Deadline timestamps and failure messages.
+// The truth moved to the driver package in P5.2 (it only manipulates
+// driver-owned types); this stays a forwarder so the root surface is
+// unchanged.
 func EffectiveHumanDecisionPolicy(p HumanDecisionPolicy) HumanDecisionPolicy {
-	out := p
-	if out.Permission == HumanDecisionUnset {
-		out.Permission = HumanDecisionAsk
-	}
-	if out.PlanReview == HumanDecisionUnset {
-		out.PlanReview = HumanDecisionAsk
-	}
-	if out.Question == QuestionUnset {
-		out.Question = QuestionAutoReject
-	}
-	if out.Timeout == 0 {
-		out.Timeout = DefaultHumanDecisionTimeout
-	}
-	if out.OnTimeout == FailureActionUnset {
-		out.OnTimeout = FailureAbort
-	}
-	if out.OnReject == FailureActionUnset {
-		out.OnReject = FailureAbort
-	}
-	if out.MaxRetries == 0 {
-		out.MaxRetries = DefaultHumanDecisionMaxRetries
-	}
-	return out
+	return driver.EffectiveHumanDecisionPolicy(p)
 }

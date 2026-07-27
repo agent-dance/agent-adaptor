@@ -1,4 +1,4 @@
-package agentadaptor_test
+package skill_test
 
 import (
 	"os"
@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/skill"
 )
 
 // makeSkillTree builds a small directory hierarchy with a mix of
@@ -24,10 +24,10 @@ func makeSkillTree(t *testing.T) string {
 		{"code-review/SKILL.md", false, "# code-review"},
 		{"code-review/example.md", false, "ex"},
 		{"lint/SKILL.md", false, "# lint"},
-		{"empty-dir/.placeholder", false, ""},      // missing SKILL.md
-		{".hidden/SKILL.md", false, "# hidden"},   // hidden dir; should be skipped
-		{"node_modules/SKILL.md", false, "# nm"},  // ignored by default? no — only via WithDirIgnore
-		{"loose-file.md", false, "stray"},          // top-level file
+		{"empty-dir/.placeholder", false, ""},    // missing SKILL.md
+		{".hidden/SKILL.md", false, "# hidden"},  // hidden dir; should be skipped
+		{"node_modules/SKILL.md", false, "# nm"}, // ignored by default? no — only via WithDirIgnore
+		{"loose-file.md", false, "stray"},        // top-level file
 	}
 	for _, e := range entries {
 		full := filepath.Join(root, e.path)
@@ -47,7 +47,7 @@ func TestLocalSkillsFromDir_Happy(t *testing.T) {
 	t.Parallel()
 	root := makeSkillTree(t)
 
-	skills, err := agentadaptor.LocalSkillsFromDir(root)
+	skills, err := skill.LocalSkillsFromDir(root)
 	if err != nil {
 		t.Fatalf("LocalSkillsFromDir: %v", err)
 	}
@@ -57,7 +57,7 @@ func TestLocalSkillsFromDir_Happy(t *testing.T) {
 		t.Fatalf("keys: got %v, want %v", keys, want)
 	}
 	for _, s := range skills {
-		path, ok := s.Source.(agentadaptor.SkillFromPath)
+		path, ok := s.Source.(skill.PathSource)
 		if !ok {
 			t.Fatalf("skill %q source: want SkillFromPath, got %T", s.Key, s.Source)
 		}
@@ -81,7 +81,7 @@ func TestLocalSkillsFromDir_Prefix(t *testing.T) {
 	t.Parallel()
 	root := makeSkillTree(t)
 
-	skills, err := agentadaptor.LocalSkillsFromDir(root, agentadaptor.WithDirSkillKeyPrefix("team"))
+	skills, err := skill.LocalSkillsFromDir(root, skill.WithDirSkillKeyPrefix("team"))
 	if err != nil {
 		t.Fatalf("LocalSkillsFromDir: %v", err)
 	}
@@ -96,7 +96,7 @@ func TestLocalSkillsFromDir_Ignore(t *testing.T) {
 	t.Parallel()
 	root := makeSkillTree(t)
 
-	skills, err := agentadaptor.LocalSkillsFromDir(root, agentadaptor.WithDirIgnore("node_modules"))
+	skills, err := skill.LocalSkillsFromDir(root, skill.WithDirIgnore("node_modules"))
 	if err != nil {
 		t.Fatalf("LocalSkillsFromDir: %v", err)
 	}
@@ -124,7 +124,7 @@ func TestLocalSkillsFromDir_CustomMarkerFile(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	skills, err := agentadaptor.LocalSkillsFromDir(root, agentadaptor.WithDirSkillFile("AGENT.md"))
+	skills, err := skill.LocalSkillsFromDir(root, skill.WithDirSkillFile("AGENT.md"))
 	if err != nil {
 		t.Fatalf("LocalSkillsFromDir: %v", err)
 	}
@@ -135,7 +135,7 @@ func TestLocalSkillsFromDir_CustomMarkerFile(t *testing.T) {
 
 func TestLocalSkillsFromDir_RootMustExist(t *testing.T) {
 	t.Parallel()
-	_, err := agentadaptor.LocalSkillsFromDir("/this/definitely/does/not/exist")
+	_, err := skill.LocalSkillsFromDir("/this/definitely/does/not/exist")
 	if err == nil {
 		t.Fatal("expected error for non-existent root, got nil")
 	}
@@ -148,7 +148,7 @@ func TestLocalSkillsFromDir_RootMustBeDir(t *testing.T) {
 	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	_, err := agentadaptor.LocalSkillsFromDir(file)
+	_, err := skill.LocalSkillsFromDir(file)
 	if err == nil {
 		t.Fatal("expected error when root is a file, got nil")
 	}
@@ -156,7 +156,7 @@ func TestLocalSkillsFromDir_RootMustBeDir(t *testing.T) {
 
 func TestLocalSkillsFromDir_EmptyRoot(t *testing.T) {
 	t.Parallel()
-	_, err := agentadaptor.LocalSkillsFromDir("")
+	_, err := skill.LocalSkillsFromDir("")
 	if err == nil {
 		t.Fatal("expected error for empty root, got nil")
 	}
@@ -167,16 +167,16 @@ func TestLocalSkillsFromDir_EmptyRoot(t *testing.T) {
 
 func TestSkillsAsRefs_Round(t *testing.T) {
 	t.Parallel()
-	skills := []agentadaptor.Skill{
-		{Key: "a", Source: agentadaptor.SkillFromInline{SkillMD: "# a"}},
-		{Key: "b", Source: agentadaptor.SkillFromInline{SkillMD: "# b"}},
+	skills := []skill.Skill{
+		{Key: "a", Source: skill.InlineSource{SkillMD: "# a"}},
+		{Key: "b", Source: skill.InlineSource{SkillMD: "# b"}},
 	}
-	refs := agentadaptor.SkillsAsRefs(skills)
+	refs := skill.SkillsAsRefs(skills)
 	if len(refs) != 2 {
 		t.Fatalf("want 2 refs, got %d", len(refs))
 	}
 	for i, ref := range refs {
-		s, ok := ref.(agentadaptor.Skill)
+		s, ok := ref.(skill.Skill)
 		if !ok {
 			t.Errorf("ref[%d] should be Skill, got %T", i, ref)
 		} else if s.Key != skills[i].Key {
@@ -187,16 +187,16 @@ func TestSkillsAsRefs_Round(t *testing.T) {
 
 func TestSkillsAsRefs_Empty(t *testing.T) {
 	t.Parallel()
-	if got := agentadaptor.SkillsAsRefs(nil); got != nil {
+	if got := skill.SkillsAsRefs(nil); got != nil {
 		t.Errorf("SkillsAsRefs(nil) = %v, want nil", got)
 	}
-	if got := agentadaptor.SkillsAsRefs([]agentadaptor.Skill{}); got != nil {
+	if got := skill.SkillsAsRefs([]skill.Skill{}); got != nil {
 		t.Errorf("SkillsAsRefs(empty) = %v, want nil", got)
 	}
 }
 
 // keysOfSkills extracts skill keys for assertions.
-func keysOfSkills(skills []agentadaptor.Skill) []string {
+func keysOfSkills(skills []skill.Skill) []string {
 	out := make([]string, 0, len(skills))
 	for _, s := range skills {
 		out = append(out, s.Key)
@@ -222,4 +222,3 @@ func equalUnorderedStrings(a, b []string) bool {
 	}
 	return true
 }
-

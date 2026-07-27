@@ -8,6 +8,7 @@ import (
 	"time"
 
 	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/internal/clihelper"
 )
 
@@ -194,7 +195,7 @@ func encodeControlResponse(requestID, toolUseID string, input map[string]any, de
 // TimedOut honors OnTimeout; both default (Unset) to Abort. Approved/Answered
 // never reach this path. 与 claude 的 interrupt 门控保持一致。
 func controlDenyInterrupts(result agentadaptor.DecisionResult, policy agentadaptor.HumanDecisionPolicy) bool {
-	effective := agentadaptor.EffectiveHumanDecisionPolicy(policy)
+	effective := driver.EffectiveHumanDecisionPolicy(policy)
 	switch result {
 	case agentadaptor.DecisionTimedOut:
 		return effective.OnTimeout == agentadaptor.FailureAbort
@@ -209,7 +210,7 @@ func (p *parser) recordControlReject(req agentadaptor.DecisionRequest, resp agen
 	if resp.Result != agentadaptor.DecisionRejected || p.pendingFailure != nil {
 		return
 	}
-	effective := agentadaptor.EffectiveHumanDecisionPolicy(policy)
+	effective := driver.EffectiveHumanDecisionPolicy(policy)
 	if effective.OnReject != agentadaptor.FailureAbort && effective.OnReject != agentadaptor.FailureActionUnset {
 		return
 	}

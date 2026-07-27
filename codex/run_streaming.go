@@ -7,6 +7,7 @@ import (
 
 	agentadaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/codex/appserver"
+	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/internal/adapterutil"
 	"github.com/agent-dance/agent-adaptor/internal/profileinstructions"
 )
@@ -87,9 +88,9 @@ func runAppServer(
 		if result.Checkpoint.State.Data == nil {
 			result.Checkpoint.State.Data = map[string]string{}
 		}
-		result.Checkpoint.State.Data[agentadaptor.SessionParamCWD] = effectiveCWD
-		result.Checkpoint.State.Data[agentadaptor.SessionParamWorkspaceID] = req.Workspace.ID
-		result.Checkpoint.State.Data[agentadaptor.SessionParamProfileFingerprint] = req.ProfilePayload.Fingerprint
+		result.Checkpoint.State.Data[driver.SessionParamCWD] = effectiveCWD
+		result.Checkpoint.State.Data[driver.SessionParamWorkspaceID] = req.Workspace.ID
+		result.Checkpoint.State.Data[driver.SessionParamProfileFingerprint] = req.ProfilePayload.Fingerprint
 	}
 
 	// Attach runtime-service reports: these are produced by the SDK

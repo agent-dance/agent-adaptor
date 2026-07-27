@@ -82,7 +82,7 @@ Claude 主会话并非因代码或测试失败停止。最后一个 PRE Config �
 
 结论：P0–P4 是“已有大量实现提交”，不是“v1 已完成约 80% 就可以直接 MOVE”。当前最关键的剩余工作不是机械搬文件，而是先修复已经审出的合同错误并收敛为一条执行管线。
 
-## 5. 未提交 PRE 工作集
+## 5. PRE 工作集与验收记录
 
 ### 5.1 实际范围
 
@@ -111,17 +111,19 @@ D-P5.2-3（Profile 资源族）与 D-P5.2-4（HITL typed 族）**没有在当前
 
 会话证据文件：`C:\Users\buthim\.claude\projects\C--Users-buthim-Documents-GitHub-agent-adaptor--claude-worktrees-sdk-api-redesign-64bddf\0bb133c6-9bdd-498c-9a90-9d4d73f8edc7.jsonl`；首个 PRE agent 为 `subagents\agent-a734921096b1f59fa.jsonl`，D2 续做 agent 为 `subagents\agent-a30507ca107bb8502.jsonl`。
 
-### 5.3 最小补验与修复清单
+### 5.3 最小补验与修复清单（已完成）
 
 完成以下事项后，PRE 才能形成独立、可追溯提交：
 
-- [ ] 定向修复 D2：四个公开 Driver `Config`/`CommonConfig` 不再 alias `internal/engine`；字段、零值、转换、Run/Inspect/probe 和 config fingerprint 语义一致
-- [ ] 定向修复 D6 公共边界：`skill` 的公开 Format/Archive/Provider/Catalog/Set/Materializer 等词汇不 alias `internal/*`；解压与物化机器可继续局部化在 engine
-- [ ] 保留 D7 原回归，新增“相同 closure code、不同捕获内容”反例；opener 等价性不再通过函数指针猜内容，Fingerprint/cache/source identity 合同一致
-- [ ] 只运行一次 PRE 综合门禁：限并行 build、全仓 vet/test、skill/engine/next/root 稳定性测试、变更文件格式与 diff/import 边界检查
-- [ ] 独立 reviewer 复核上述定向 diff 和综合合同后形成 PRE 提交
+- [x] 定向修复 D2：四个公开 Driver `Config`/`CommonConfig` 不再 alias `internal/engine`；字段、零值、逐字段转换及 Run/Inspect/probe 捕获语义一致；构造、转换和每次注入均深拷贝可变配置
+- [x] 定向修复 D6 公共边界：`skill` 的公开 Format/Archive/Provider/Catalog/Set/Materializer 等词汇不 alias `internal/*`；解压与物化机器继续局部化在 engine
+- [x] 保留 D7 原回归，新增“相同 closure code、不同捕获内容”反例；opener 等价性不再通过函数指针猜内容，Fingerprint/cache/source identity 合同一致
+- [x] 只运行一次 PRE 综合门禁：`go build -p 4 ./...`、`go vet ./...`、`go test -count=1 -p 4 ./...`、关键包 `-count=5`、skill-only 依赖图和 `git diff --check` 全绿（2026-07-27）
+- [x] 独立 reviewer 两轮复核；首轮发现 Config 浅拷贝和三包 mutation 测试缺失，修复后最终签收无阻断
 
 明确不重复：D5 的 7 个 policy 调用点、4 个 SessionParam 和 NormalizeProfileDir；D6 的 init/factory/lease 基础功能；D7 已有自冲突 mutation 验证；P5.2 侦察清单。
+
+Thread compatibility 的 Driver config fingerprint 属于 G-05/唯一 invocation 的 resolved-state 配方，不在 PRE 另造一套实现。
 
 ## 6. MOVE 前阻断级合同缺口
 

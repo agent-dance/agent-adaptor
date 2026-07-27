@@ -61,8 +61,24 @@ func resolveSkillsWith(
 	//    (used by Admin.SetSelectedSkills to expose inline Skill values
 	//    coming from WithDefaultSkills without forcing them into
 	//    selection by themselves).
+	// collectSkillCandidatesFrom places the binding defaults first. Those
+	// values are registration copies, not independent declarations; consume
+	// one matching candidate for each inline default before conflict-aware
+	// merging. This removes the historical candidate/default self-join
+	// structurally and avoids inventing equality for Go function values.
+	defaultCandidateCopies := make(map[string]int)
+	for _, ref := range defaultRefs {
+		if value, ok := ref.(Skill); ok {
+			defaultCandidateCopies[normalizeSkillKey(value.Key)]++
+		}
+	}
 	for _, ref := range candidateRefs {
 		if skill, ok := ref.(Skill); ok {
+			key := normalizeSkillKey(skill.Key)
+			if defaultCandidateCopies[key] > 0 {
+				defaultCandidateCopies[key]--
+				continue
+			}
 			if err := state.merger.add(sourceLabelCandidate, skill); err != nil {
 				return ResolvedSkills{}, nil, nil, err
 			}
@@ -149,7 +165,7 @@ func resolveSkillsWith(
 	//    before the adapter starts.
 	materializer := skillMaterializer
 	if materializer == nil {
-		materializer = defaultSkillMaterializer()
+		materializer = newDefaultSkillMaterializer()
 	}
 	entries := make([]ResolvedSkill, 0, len(selectedList))
 	var warnings []string
@@ -263,9 +279,9 @@ func fetchSkillsFrom(ctx context.Context, provider SkillProvider, identity Agent
 // (ListSkills / SetSelectedSkills) feed into resolveSkills as the
 // non-selected catalogue.
 //
-// Pool composition:
+// Pool composition (and order, which is part of the internal contract):
 //
-//   - binding-inline skills (defaults.Skills) — visible candidates
+//   - binding-inline skills (defaults.Skills) first — visible candidates
 //     even when the operator is overriding the selection
 //   - upstream SkillCatalog.Catalogue() entries when the configured
 //     SkillProvider implements SkillCatalog — these expose the full
