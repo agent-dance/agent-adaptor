@@ -12,18 +12,15 @@
 //     CloneOption values such as LinkAuth() to share OAuth login state
 //     without copying token files.
 //
-//   - What must exist inside it? Resources declares desired sub-agents,
-//     hooks, instructions, and structured config patches. SubAgent, Hook,
-//     Instructions, and ConfigPatch (plus their enum families) are
-//     re-exported here so a host can write a complete declaration with only
-//     this package imported.
+//   - What must exist inside it? Resources declares desired skills, MCP
+//     servers, sub-agents, hooks, instructions, and structured config
+//     patches. Resource types and enum families are owned here; skill.Ref
+//     and mcp.Server retain the vocabularies of their dedicated leaf packages.
 //
-// Every name in this package is an alias for (or a pure constructor over)
-// the existing public contract types; nothing changes behavior. Skill and
-// MCP entries inside Resources keep their own vocabulary packages (skill/,
-// mcp/) — until those land, the root package aliases (SkillRef, MCPConfig)
-// remain the element types. Option wiring (adaptor.WithProfile /
-// WithProfileResources in the v1 consumer package) arrives in a later wave;
-// the truthful materialization report stays on the agent surface
+// Resource declarations never expose the Driver SPI or internal engine
+// representations. adaptor.WithProfileResources converts and owns a deep
+// copy at the option boundary. Nil resource slices are undeclared; non-nil
+// empty MCP, sub-agent, hook, or config slices explicitly clear SDK-managed
+// entries. The truthful materialization report stays on the Agent surface
 // (ProfileState / SyncProfile).
 package profile

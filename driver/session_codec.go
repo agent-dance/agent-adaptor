@@ -41,6 +41,13 @@ type SessionParams struct {
 // tests, and drivers a stable way to normalize SessionState and inspect
 // driver-specific parameters without guessing map keys.
 //
+// Every implementation MUST define the canonical empty mapping:
+// ToParams(nil) returns the zero SessionParams, FromParams(SessionParams{})
+// returns nil, and GuardFingerprint accepts the zero value without panicking.
+// For non-empty values, ToParams and FromParams MUST round-trip ResumeID,
+// DisplayID and Values losslessly, and GuardFingerprint MUST be deterministic
+// across processes for equivalent canonical parameters.
+//
 // Built-in drivers hash the ProfilePayload.Fingerprint into the session
 // params so that GuardFingerprint changes whenever MCP, skills, agents,
 // hooks, instructions, or structured config changes. A Run invocation that

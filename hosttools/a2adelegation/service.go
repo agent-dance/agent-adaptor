@@ -86,12 +86,16 @@ type Service struct {
 	delegator *Delegator
 	locals    map[string]*localClient
 
-	mu        sync.Mutex
-	closed    bool
-	sidecars  map[string]*runSidecar
-	results   map[string]map[string]DelegationResult
-	observers map[string]context.CancelFunc
-	wg        sync.WaitGroup
+	mu       sync.Mutex
+	closed   bool
+	sidecars map[string]*runSidecar
+	results  map[string]map[string]DelegationResult
+	// delegations preserves the EventBus acceptance order of Started events.
+	// results remains the convenient latest-result-by-agent projection.
+	delegations       map[string][]DelegationResult
+	delegationIndexes map[string]map[string]int
+	observers         map[string]context.CancelFunc
+	wg                sync.WaitGroup
 }
 
 // NewService validates the agent table, registers every ref (local refs get
@@ -103,11 +107,13 @@ func NewService(cfg Config) (*Service, error) {
 		return nil, &DelegationError{Code: "configuration_error", Message: "delegation service requires at least one agent"}
 	}
 	s := &Service{
-		cfg:       cfg,
-		locals:    map[string]*localClient{},
-		sidecars:  map[string]*runSidecar{},
-		results:   map[string]map[string]DelegationResult{},
-		observers: map[string]context.CancelFunc{},
+		cfg:               cfg,
+		locals:            map[string]*localClient{},
+		sidecars:          map[string]*runSidecar{},
+		results:           map[string]map[string]DelegationResult{},
+		delegations:       map[string][]DelegationResult{},
+		delegationIndexes: map[string]map[string]int{},
+		observers:         map[string]context.CancelFunc{},
 	}
 	registry, err := NewRegistry()
 	if err != nil {
@@ -147,6 +153,7 @@ func NewService(cfg Config) (*Service, error) {
 	s.registry = registry
 	s.bus = NewEventBus(replay)
 	s.delegator = NewDelegator(registry, s.bus, opts...)
+	s.delegator.beforePublish = s.recordPublishedEvent
 	s.delegator.LifecycleHook = &serviceHook{service: s}
 	s.delegator.NewClient = s.clientFactory
 	if cfg.NewID != nil {
@@ -261,6 +268,26 @@ func (s *Service) Results(runID string) map[string]DelegationResult {
 	return out
 }
 
+// Delegations returns every delegation accepted for runID in the exact order
+// its DelegationStarted event was accepted by the Service's EventBus. Unlike
+// Results, it preserves repeated delegations to the same agent. An in-flight
+// entry has Status "running" until its final result is recorded. The returned
+// slice and every result in it are defensive copies and remain available after
+// ReleaseRun and Close, matching the existing result-recording lifecycle.
+func (s *Service) Delegations(runID string) []DelegationResult {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	recorded := s.delegations[strings.TrimSpace(runID)]
+	if len(recorded) == 0 {
+		return nil
+	}
+	out := make([]DelegationResult, len(recorded))
+	for i := range recorded {
+		out[i] = cloneDelegationResult(recorded[i])
+	}
+	return out
+}
+
 // Bus exposes the shared EventBus (bridge attachment point:
 // subagentstream.Merge(stream, service.Bus())).
 func (s *Service) Bus() *EventBus { return s.bus }
@@ -342,7 +369,60 @@ func (s *Service) recordResult(runID, key string, result DelegationResult) {
 	if s.results[runID] == nil {
 		s.results[runID] = map[string]DelegationResult{}
 	}
+	result = cloneDelegationResult(result)
+	if indexByID := s.delegationIndexes[runID]; indexByID != nil {
+		if index, ok := indexByID[result.DelegationID]; ok {
+			// Keep identity observed at Started when a failure result omits a
+			// transport-assigned field, while treating the final result as the
+			// authority for all fields it does carry.
+			started := s.delegations[runID][index]
+			if result.Agent == "" {
+				result.Agent = started.Agent
+			}
+			if result.RemoteProtocol == "" {
+				result.RemoteProtocol = started.RemoteProtocol
+			}
+			if result.RemoteTaskID == "" {
+				result.RemoteTaskID = started.RemoteTaskID
+			}
+			if result.RemoteContextID == "" {
+				result.RemoteContextID = started.RemoteContextID
+			}
+			s.delegations[runID][index] = result
+		}
+	}
 	s.results[runID][key] = result
+}
+
+// recordPublishedEvent is called by Delegator while holding its publication
+// mutex and before EventBus.Publish makes an event visible. This gives
+// concurrent delegation producers and readers one authoritative Started
+// order without reconstructing it from a map or a lossy replay buffer.
+func (s *Service) recordPublishedEvent(event DelegationEvent) {
+	if event.Kind != DelegationStarted {
+		return
+	}
+	runID := strings.TrimSpace(event.RunID)
+	if runID == "" || event.DelegationID == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.delegationIndexes[runID] == nil {
+		s.delegationIndexes[runID] = map[string]int{}
+	}
+	if _, exists := s.delegationIndexes[runID][event.DelegationID]; exists {
+		return
+	}
+	s.delegationIndexes[runID][event.DelegationID] = len(s.delegations[runID])
+	s.delegations[runID] = append(s.delegations[runID], DelegationResult{
+		DelegationID:    event.DelegationID,
+		Agent:           event.AgentKey,
+		RemoteProtocol:  event.Protocol,
+		RemoteTaskID:    event.RemoteTaskID,
+		RemoteContextID: event.RemoteContextID,
+		Status:          "running",
+	})
 }
 
 // observeRunLocked starts the Observe forwarder for one run. Caller holds

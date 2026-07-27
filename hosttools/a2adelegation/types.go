@@ -332,7 +332,28 @@ func cloneAnyMap(in map[string]any) map[string]any {
 	}
 	out := make(map[string]any, len(in))
 	for k, v := range in {
-		out[k] = v
+		out[k] = cloneAnyValue(v)
 	}
 	return out
+}
+
+// cloneAnyValue copies the JSON-shaped values carried in public metadata and
+// raw protocol fields. Unknown immutable/scalar values are safe to share;
+// the mutable map, slice, and byte forms produced by encoding/json are copied
+// recursively so accessors cannot mutate Service-owned records.
+func cloneAnyValue(value any) any {
+	switch value := value.(type) {
+	case map[string]any:
+		return cloneAnyMap(value)
+	case []any:
+		out := make([]any, len(value))
+		for i := range value {
+			out[i] = cloneAnyValue(value[i])
+		}
+		return out
+	case []byte:
+		return append([]byte(nil), value...)
+	default:
+		return value
+	}
 }

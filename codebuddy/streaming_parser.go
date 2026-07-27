@@ -53,7 +53,7 @@ func (s *streamingState) basePayload() agentadaptor.StreamPayload {
 }
 
 func (s *streamingState) emitStream(pl agentadaptor.StreamPayload) {
-	if s.sink == nil {
+	if s.sink == nil || s.finishedEmitted {
 		return
 	}
 	if pl.RunID == "" {
@@ -63,6 +63,9 @@ func (s *streamingState) emitStream(pl agentadaptor.StreamPayload) {
 		pl.ThreadID = s.parser.sessionID
 	}
 	_ = s.sink.EmitStream(pl)
+	if pl.Kind == agentadaptor.StreamRunFinished || pl.Kind == agentadaptor.StreamRunError {
+		s.finishedEmitted = true
+	}
 }
 
 func (s *streamingState) markRunStarted() {
@@ -108,11 +111,7 @@ func (s *streamingState) handleAPIRetry(payload map[string]any) {
 		if msg == "" {
 			msg = "API retry exhausted"
 		}
-		s.emitStream(agentadaptor.StreamPayload{
-			Kind:  agentadaptor.StreamRunError,
-			Error: &agentadaptor.RunFailure{Message: msg, Code: "api_retry"},
-			Raw:   payload,
-		})
+		s.emitErrorTerminal(&agentadaptor.RunFailure{Message: msg, Code: "api_retry"}, payload)
 	}
 }
 
@@ -373,7 +372,15 @@ func (s *streamingState) handleResultTerminal(payload map[string]any) {
 	if s.finishedEmitted {
 		return
 	}
-	s.finishedEmitted = true
+	s.closeOpenLifecycles()
+	if !s.parser.terminalSuccess {
+		msg := s.parser.errorMessage
+		if msg == "" {
+			msg = "codebuddy terminal result did not report success"
+		}
+		s.emitErrorTerminal(&agentadaptor.RunFailure{Message: msg, Code: agentadaptor.FailureAgentError}, payload)
+		return
+	}
 
 	pl := s.basePayload()
 	pl.Kind = agentadaptor.StreamRunFinished
@@ -408,18 +415,10 @@ func (s *streamingState) handleErrorTerminal(payload map[string]any) {
 	if msg == "" {
 		msg = "codebuddy stream error"
 	}
-	s.emitStream(agentadaptor.StreamPayload{
-		Kind:  agentadaptor.StreamRunError,
-		Error: &agentadaptor.RunFailure{Message: msg, Code: agentadaptor.FailureCode(code)},
-		Raw:   payload,
-	})
-	s.finishedEmitted = true
+	s.emitErrorTerminal(&agentadaptor.RunFailure{Message: msg, Code: agentadaptor.FailureCode(code)}, payload)
 }
 
-func (s *streamingState) finalize() {
-	if s == nil || s.sink == nil {
-		return
-	}
+func (s *streamingState) closeOpenLifecycles() {
 	pending := make([]int, 0, len(s.blockKind))
 	for idx := range s.blockKind {
 		pending = append(pending, idx)
@@ -455,21 +454,28 @@ func (s *streamingState) finalize() {
 	s.toolName = nil
 	s.thinkingID = nil
 	s.signatures = nil
+}
 
-	if !s.finishedEmitted && s.runStarted {
-		pl := s.basePayload()
-		pl.Kind = agentadaptor.StreamRunFinished
-		if s.parser.usage != nil {
-			u := *s.parser.usage
-			pl.Usage = &u
-		} else if s.streamUsage != nil {
-			u := *s.streamUsage
-			pl.Usage = &u
-		}
-		pl.Raw = map[string]any{"stop_reason": s.stopReason, "ephemeral": true}
-		s.emitStream(pl)
-		s.finishedEmitted = true
+func (s *streamingState) emitErrorTerminal(failure *agentadaptor.RunFailure, raw map[string]any) {
+	if s == nil || s.sink == nil || s.finishedEmitted {
+		return
 	}
+	s.markRunStarted()
+	s.closeOpenLifecycles()
+	s.emitStream(agentadaptor.StreamPayload{Kind: agentadaptor.StreamRunError, Error: failure, Raw: raw})
+}
+
+func (s *streamingState) finalize() {
+	if s == nil || s.sink == nil || s.finishedEmitted {
+		return
+	}
+	s.markRunStarted()
+	s.closeOpenLifecycles()
+
+	s.emitErrorTerminal(&agentadaptor.RunFailure{
+		Code:    agentadaptor.FailureAgentError,
+		Message: "codebuddy protocol ended without a terminal result",
+	}, map[string]any{"reason": "missing_terminal"})
 }
 
 func asString(v any) string {

@@ -234,16 +234,17 @@ func profileResources(agent, repoRoot, hookPackage, hookLog string) agentprofile
 }
 
 // demoMCPServer declares the stdio MCP server the demo materializes into the
-// profile. mcp.Stdio fills in the transport and command; the remaining fields
-// are plain struct assignment because the stdio constructor takes no options.
+// profile. The complete declaration stays immutable and composable in one
+// expression; the option inputs are copied by the mcp package.
 func demoMCPServer(repoRoot, mcpServerPackage, mcpLog string) mcp.Server {
-	server := mcp.Stdio("profile-demo", "go", "-C", filepath.ToSlash(repoRoot), "run", mcpServerPackage)
-	server.Env = map[string]string{
-		"AGENT_ADAPTOR_PROFILE_DEMO":         "mcp",
-		"AGENT_ADAPTOR_PROFILE_DEMO_MCP_LOG": filepath.ToSlash(mcpLog),
-	}
-	server.Required = true
-	return server
+	return mcp.Stdio("profile-demo", "go",
+		mcp.Args("-C", filepath.ToSlash(repoRoot), "run", mcpServerPackage),
+		mcp.Env(map[string]string{
+			"AGENT_ADAPTOR_PROFILE_DEMO":         "mcp",
+			"AGENT_ADAPTOR_PROFILE_DEMO_MCP_LOG": filepath.ToSlash(mcpLog),
+		}),
+		mcp.Required("the profile-effect probe is mandatory"),
+	)
 }
 
 func defaultPrompt() string {

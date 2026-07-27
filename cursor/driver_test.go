@@ -27,7 +27,7 @@ func TestDescriptorAdvertisesExpectedMCPCapabilities(t *testing.T) {
 
 func TestDescriptorAdvertisesStructuredOutputCapabilities(t *testing.T) {
 	caps := NewAdapter().Descriptor().StructuredOutput
-	if caps.JSONSchemaNative || !caps.JSONSchemaPromptValidate || !caps.WorksWithRun || !caps.WorksWithStart || !caps.WorksWithStreaming {
+	if caps.JSONSchemaNative || !caps.JSONSchemaPromptValidate || !caps.WorksWithRun || !caps.WorksWithStreaming {
 		t.Fatalf("unexpected Cursor structured-output capability: %#v", caps)
 	}
 	if caps.WorksWithHITL {
@@ -63,8 +63,8 @@ func TestParseCheckpointRequiresRecognizedCursorEvent(t *testing.T) {
 
 func TestParseCheckpointAcceptsSessionOnlyPayload(t *testing.T) {
 	checkpoint := parseCheckpoint(`{"session_id":"cursor-session"}`, 0)
-	if checkpoint == nil || checkpoint.State == nil || checkpoint.State.ResumeID != "cursor-session" {
-		t.Fatalf("unexpected checkpoint: %#v", checkpoint)
+	if checkpoint != nil {
+		t.Fatalf("session-only payload is not terminal proof: %#v", checkpoint)
 	}
 }
 

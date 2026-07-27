@@ -63,7 +63,7 @@ func (s *Store) recordByIDLocked(id string, includeArchived bool) *threadstore.R
 	if record.Status == threadstore.StatusArchived && !includeArchived {
 		return nil
 	}
-	copyRecord := record
+	copyRecord := cloneThreadRecord(record)
 	return &copyRecord
 }
 
@@ -80,8 +80,13 @@ func (s *Store) Finalize(_ context.Context, req threadstore.FinalizeRequest) err
 			return &threadstore.LeaseLostError{Target: lease.Target}
 		}
 	}
+	if req.RequireKeyAbsent && req.Key != "" {
+		if existingID := s.keyIndex[req.Key]; existingID != "" {
+			return &threadstore.AlreadyExistsError{Key: req.Key}
+		}
+	}
 
-	copyRecord := req.Record
+	copyRecord := cloneThreadRecord(req.Record)
 	s.records[copyRecord.ID] = copyRecord
 
 	if req.ArchiveOld && req.PreviousID != "" {
@@ -97,6 +102,21 @@ func (s *Store) Finalize(_ context.Context, req threadstore.FinalizeRequest) err
 		s.keyIndex[req.Key] = req.Record.ID
 	}
 	return nil
+}
+
+func cloneThreadRecord(record threadstore.Record) threadstore.Record {
+	copyRecord := record
+	if record.State != nil {
+		state := *record.State
+		if record.State.Data != nil {
+			state.Data = make(map[string]string, len(record.State.Data))
+			for key, value := range record.State.Data {
+				state.Data[key] = value
+			}
+		}
+		copyRecord.State = &state
+	}
+	return copyRecord
 }
 
 // AcquireLease obtains or renews exclusive use of target for owner until ttl

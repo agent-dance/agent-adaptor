@@ -4,7 +4,7 @@
 //
 //	adaptor.WithMCP(
 //	    mcp.HTTP("docs", "https://example.com/mcp"),
-//	    mcp.Stdio("repo-tools", "npx", "repo-mcp"),
+//	    mcp.Stdio("repo-tools", "npx", mcp.Args("repo-mcp")),
 //	)
 //
 // The package is a pure declaration facade: Server is the existing

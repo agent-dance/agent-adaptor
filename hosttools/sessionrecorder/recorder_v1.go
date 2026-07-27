@@ -7,13 +7,14 @@ package sessionrecorder
 // additively.
 //
 // Because adaptor.Event is a sealed interface, EventRecord carries its own
-// stable JSON envelope ({host_seq, recorded_at, kind, event}) so durable
+// stable JSON envelope ({host_seq, recorded_at, kind, meta, event}) so durable
 // backends can serialize records without knowing the event vocabulary.
 // *adaptor.ApprovalRequest records serialize their descriptive fields only:
 // a replayed approval request carries no live responder (replay is
 // observational, not interactive).
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -27,8 +28,8 @@ import (
 )
 
 // EventRecord is one persisted unified event together with the HostSeq
-// assigned to it. It marshals to a stable JSON envelope (kind + event
-// payload) and unmarshals back to the typed event.
+// assigned to it. It marshals to a stable JSON envelope (kind + authoritative
+// event metadata + event payload) and unmarshals back to the typed event.
 type EventRecord struct {
 	HostSeq    HostSeq
 	RecordedAt time.Time
@@ -39,10 +40,29 @@ type eventRecordWire struct {
 	HostSeq    HostSeq         `json:"host_seq"`
 	RecordedAt time.Time       `json:"recorded_at"`
 	Kind       string          `json:"kind"`
+	Meta       eventMetaWire   `json:"meta"`
 	Event      json.RawMessage `json:"event"`
 }
 
-// MarshalJSON encodes the record as {host_seq, recorded_at, kind, event}.
+type eventMetaWire struct {
+	RunID     string               `json:"run_id,omitempty"`
+	ThreadKey string               `json:"thread_key,omitempty"`
+	Sequence  uint64               `json:"sequence,omitempty"`
+	Time      time.Time            `json:"time,omitempty"`
+	TurnID    string               `json:"turn_id,omitempty"`
+	Source    *eventSourceMetaWire `json:"source,omitempty"`
+}
+
+type eventSourceMetaWire struct {
+	RunID     string    `json:"run_id,omitempty"`
+	ThreadID  string    `json:"thread_id,omitempty"`
+	TurnID    string    `json:"turn_id,omitempty"`
+	Sequence  uint64    `json:"sequence,omitempty"`
+	Timestamp time.Time `json:"timestamp,omitempty"`
+}
+
+// MarshalJSON encodes the record as
+// {host_seq, recorded_at, kind, meta, event}.
 func (r EventRecord) MarshalJSON() ([]byte, error) {
 	kind, payload, err := encodeEventV1(r.Event)
 	if err != nil {
@@ -52,6 +72,7 @@ func (r EventRecord) MarshalJSON() ([]byte, error) {
 		HostSeq:    r.HostSeq,
 		RecordedAt: r.RecordedAt,
 		Kind:       kind,
+		Meta:       eventMetaToWire(r.Event.Meta()),
 		Event:      payload,
 	})
 }
@@ -68,8 +89,48 @@ func (r *EventRecord) UnmarshalJSON(data []byte) error {
 	}
 	r.HostSeq = wire.HostSeq
 	r.RecordedAt = wire.RecordedAt
-	r.Event = ev
+	r.Event = adaptor.WithEventMeta(ev, wire.Meta.eventMeta())
 	return nil
+}
+
+func eventMetaToWire(meta adaptor.EventMeta) eventMetaWire {
+	wire := eventMetaWire{
+		RunID:     meta.RunID,
+		ThreadKey: meta.ThreadKey,
+		Sequence:  meta.Sequence,
+		Time:      meta.Time,
+		TurnID:    meta.TurnID,
+	}
+	if meta.Source != nil {
+		wire.Source = &eventSourceMetaWire{
+			RunID:     meta.Source.RunID,
+			ThreadID:  meta.Source.ThreadID,
+			TurnID:    meta.Source.TurnID,
+			Sequence:  meta.Source.Sequence,
+			Timestamp: meta.Source.Timestamp,
+		}
+	}
+	return wire
+}
+
+func (wire eventMetaWire) eventMeta() adaptor.EventMeta {
+	meta := adaptor.EventMeta{
+		RunID:     wire.RunID,
+		ThreadKey: wire.ThreadKey,
+		Sequence:  wire.Sequence,
+		Time:      wire.Time,
+		TurnID:    wire.TurnID,
+	}
+	if wire.Source != nil {
+		meta.Source = &adaptor.EventSourceMeta{
+			RunID:     wire.Source.RunID,
+			ThreadID:  wire.Source.ThreadID,
+			TurnID:    wire.Source.TurnID,
+			Sequence:  wire.Source.Sequence,
+			Timestamp: wire.Source.Timestamp,
+		}
+	}
+	return meta
 }
 
 // EventRecorder is the host-facing v1 recording API — Recorder's contract
@@ -99,12 +160,18 @@ type EventBackend interface {
 	// Load returns all known records for sessionKey in HostSeq order.
 	Load(ctx context.Context, sessionKey string) ([]EventRecord, error)
 
-	// Append persists exactly one record for sessionKey.
+	// Append persists exactly one record for sessionKey. It must not return
+	// nil after an encoding failure, a short/partial write, or a storage
+	// error. Backend-specific documentation defines whether nil means the
+	// record reached the operating system or stable storage.
 	Append(ctx context.Context, sessionKey string, r EventRecord) error
 
 	// Sessions enumerates keys the backend has any records for.
 	Sessions(ctx context.Context) ([]SessionInfo, error)
 
+	// Close releases backend resources. Implementations must be safe for
+	// concurrent use and repeated calls; repeated callers observe the same
+	// close result.
 	io.Closer
 }
 
@@ -162,6 +229,9 @@ type eventRecorder struct {
 	sessions map[string]*eventSessionState
 
 	closed bool
+
+	closeOnce sync.Once
+	closeErr  error
 }
 
 type eventSessionState struct {
@@ -255,14 +325,13 @@ func (r *eventRecorder) Sessions(ctx context.Context) ([]SessionInfo, error) {
 }
 
 func (r *eventRecorder) Close() error {
-	r.mu.Lock()
-	if r.closed {
+	r.closeOnce.Do(func() {
+		r.mu.Lock()
+		r.closed = true
 		r.mu.Unlock()
-		return nil
-	}
-	r.closed = true
-	r.mu.Unlock()
-	return r.backend.Close()
+		r.closeErr = r.backend.Close()
+	})
+	return r.closeErr
 }
 
 func (r *eventRecorder) checkKey(sessionKey string) error {
@@ -381,7 +450,7 @@ const (
 
 func encodeEventV1(ev adaptor.Event) (string, json.RawMessage, error) {
 	var kind string
-	switch ev.(type) {
+	switch typed := ev.(type) {
 	case adaptor.TextDelta:
 		kind = eventKindTextDelta
 	case adaptor.Thinking:
@@ -403,6 +472,9 @@ func encodeEventV1(ev adaptor.Event) (string, json.RawMessage, error) {
 	case adaptor.SubagentUpdate:
 		kind = eventKindSubagentUpdate
 	case *adaptor.ApprovalRequest:
+		if typed == nil {
+			return "", nil, errors.New("sessionrecorder: cannot record a nil approval request")
+		}
 		kind = eventKindApprovalRequest
 	case nil:
 		return "", nil, errors.New("sessionrecorder: cannot record a nil event")
@@ -418,10 +490,11 @@ func encodeEventV1(ev adaptor.Event) (string, json.RawMessage, error) {
 
 func decodeEventV1(kind string, payload json.RawMessage) (adaptor.Event, error) {
 	unmarshal := func(v any) error {
-		if len(payload) == 0 {
+		trimmed := bytes.TrimSpace(payload)
+		if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
 			return fmt.Errorf("sessionrecorder: %s record has no event payload", kind)
 		}
-		return json.Unmarshal(payload, v)
+		return json.Unmarshal(trimmed, v)
 	}
 	switch kind {
 	case eventKindTextDelta:

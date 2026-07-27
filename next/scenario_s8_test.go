@@ -7,8 +7,8 @@ package adaptor_test
 // declared on the agent.
 //
 // Documented deviation from the doc sketch: the doc's Resources field
-// SubAgents: is spelled Agents: on the real surface (profile.Resources is
-// the root ProfileResources contract type).
+// SubAgents is currently spelled Agents on the public profile.Resources
+// declaration. The resource types themselves are owned by profile.
 
 import (
 	"context"

@@ -111,3 +111,34 @@ func TestFinalizeArchivesPreviousAndRebindsKey(t *testing.T) {
 		t.Fatalf("expected archived old session, got %#v", archived)
 	}
 }
+
+func TestSessionStoreCompositeKeyIndexHasNoDelimiterCollisions(t *testing.T) {
+	store := NewSessionStore()
+	ctx := context.Background()
+	now := time.Now().UTC()
+	type tuple struct{ namespace, key, id string }
+	tuples := []tuple{
+		{namespace: "a:b", key: "c", id: "first"},
+		{namespace: "a", key: "b:c", id: "second"},
+		{namespace: "\x00", key: "你好", id: "third"},
+		{namespace: "", key: "not-indexed", id: "ignored"},
+	}
+	for _, item := range tuples[:3] {
+		lease, err := store.AcquireLease(ctx, item.id, "owner:"+item.id, time.Minute)
+		if err != nil {
+			t.Fatalf("acquire %s: %v", item.id, err)
+		}
+		if err := store.Finalize(ctx, agentadaptor.SessionFinalizeRequest{
+			Record:    agentadaptor.SessionRecord{ID: item.id, Namespace: item.namespace, Key: item.key, Status: agentadaptor.SessionStatusActive, CreatedAt: now, UpdatedAt: now},
+			Namespace: item.namespace, Key: item.key, HeldLeases: []agentadaptor.SessionLease{lease}, RebindActive: true,
+		}); err != nil {
+			t.Fatalf("finalize %s: %v", item.id, err)
+		}
+	}
+	for _, item := range tuples[:3] {
+		record, err := store.Resolve(ctx, agentadaptor.SessionQuery{Namespace: item.namespace, Key: item.key})
+		if err != nil || record == nil || record.ID != item.id {
+			t.Fatalf("resolve (%q,%q): record=%#v err=%v", item.namespace, item.key, record, err)
+		}
+	}
+}

@@ -24,15 +24,18 @@ type parser struct {
 	transcript    []agentadaptor.TranscriptItem
 	assistantText []string
 
-	sessionID        string
-	displayID        string
-	summary          string
-	terminalSummary  string
-	usage            *agentadaptor.Usage
-	cost             *float64
-	resultFinal      map[string]any
-	structuredOutput *agentadaptor.StructuredOutput
-	errorMessage     string
+	sessionID         string
+	displayID         string
+	summary           string
+	terminalSummary   string
+	usage             *agentadaptor.Usage
+	cost              *float64
+	resultFinal       map[string]any
+	structuredOutput  *agentadaptor.StructuredOutput
+	errorMessage      string
+	terminalSeen      bool
+	terminalSuccess   bool
+	protocolMalformed bool
 
 	stream       *streamingState
 	deltaBuffers map[string]*strings.Builder
@@ -138,6 +141,7 @@ func (p *parser) processLine(stream string, line []byte, _ time.Time) {
 	}
 	var payload map[string]any
 	if err := json.Unmarshal([]byte(trimmed), &payload); err != nil {
+		p.protocolMalformed = true
 		p.emit(agentadaptor.TranscriptItem{Kind: agentadaptor.TranscriptStdout, Text: text})
 		return
 	}
@@ -146,13 +150,19 @@ func (p *parser) processLine(stream string, line []byte, _ time.Time) {
 }
 
 func (p *parser) handlePayload(raw string, payload map[string]any) {
+	if p.terminalSeen {
+		p.protocolMalformed = true
+		return
+	}
 	if p.handleControlPayload(payload) {
 		return
 	}
 	eventType := strings.ToLower(topString(payload, "type", "event", "kind"))
 	subtype := strings.ToLower(topString(payload, "subtype"))
 
-	p.maybeCaptureSession(payload)
+	if codeBuddyFormalEvent(eventType) {
+		p.maybeCaptureSession(payload)
+	}
 
 	switch eventType {
 	case "system":
@@ -181,10 +191,13 @@ func (p *parser) handlePayload(raw string, payload map[string]any) {
 	case "result":
 		p.handleResult(raw, payload, subtype)
 	case "error":
+		p.terminalSeen = true
+		p.terminalSuccess = false
 		message := topString(payload, "message", "error")
-		if message != "" {
-			p.errorMessage = message
+		if message == "" {
+			message = "codebuddy provider error"
 		}
+		p.errorMessage = message
 		if p.stream != nil {
 			p.stream.handleErrorTerminal(payload)
 		}
@@ -322,6 +335,10 @@ func resultText(raw any) string {
 }
 
 func (p *parser) handleResult(raw string, payload map[string]any, subtype string) {
+	p.terminalSeen = true
+	isErrorFlag, _ := payload["is_error"].(bool)
+	p.terminalSuccess = subtype == "success" && !isErrorFlag
+
 	if p.control != nil {
 		// Control sessions retain stdin for host responses. Once a terminal
 		// result arrives, closing it lets the CLI terminate cleanly.
@@ -368,10 +385,12 @@ func (p *parser) handleResult(raw string, payload map[string]any, subtype string
 		p.cost = &c
 	}
 
-	isError := subtype == "error" || subtype == "error_during_execution" || strings.HasPrefix(subtype, "error")
+	isError := !p.terminalSuccess
 	if isError {
 		if message := topString(payload, "message", "result"); message != "" {
 			p.errorMessage = message
+		} else if p.errorMessage == "" {
+			p.errorMessage = "codebuddy terminal result did not report success"
 		}
 	}
 
@@ -386,6 +405,15 @@ func (p *parser) handleResult(raw string, payload map[string]any, subtype string
 	})
 	if p.stream != nil {
 		p.stream.handleResultTerminal(payload)
+	}
+}
+
+func codeBuddyFormalEvent(eventType string) bool {
+	switch eventType {
+	case "system", "stream_event", "assistant", "user", "result", "error":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -498,8 +526,7 @@ func (p *parser) outputMetadata() map[string]string {
 }
 
 func (p *parser) checkpoint(exitCode int) *agentadaptor.DriverCheckpoint {
-	_ = exitCode
-	if p.sessionID == "" {
+	if exitCode != 0 || p.protocolMalformed || !p.terminalSeen || !p.terminalSuccess || p.sessionID == "" {
 		return nil
 	}
 	display := p.displayID
@@ -510,6 +537,13 @@ func (p *parser) checkpoint(exitCode int) *agentadaptor.DriverCheckpoint {
 		State: &agentadaptor.DriverSessionState{ResumeID: p.sessionID, DisplayID: display},
 		Valid: true,
 	}
+}
+
+func (p *parser) checkpointForOutcome(exitCode int, signal string, timedOut bool, failure *agentadaptor.RunFailure) *agentadaptor.DriverCheckpoint {
+	if signal != "" || timedOut || failure != nil {
+		return nil
+	}
+	return p.checkpoint(exitCode)
 }
 
 func topString(payload map[string]any, keys ...string) string {

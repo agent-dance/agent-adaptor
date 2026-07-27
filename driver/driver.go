@@ -53,9 +53,9 @@ type ProfileReporter interface {
 	GetProfile(ctx context.Context, cfg any, agent AgentIdentity, profile *ProfileSelection) (AgentProfile, error)
 }
 
-// SessionCodecProvider lets resume-capable drivers expose a stable session
-// parameter contract instead of requiring hosts to inspect SessionState.Data
-// directly.
+// SessionCodecProvider exposes the stable, deterministic session mapping used
+// for resume compatibility. A Driver MUST implement this interface with a
+// non-nil codec if and only if Descriptor.Sessions.SupportsResume is true.
 //
 // The root package exposes this interface as agentadaptor.SessionCodecAwareDriver.
 type SessionCodecProvider interface {
@@ -126,14 +126,17 @@ type SkillSupport interface {
 // EventSink is the per-run event surface drivers write into while executing.
 // Emit carries operational RunEvent data; EmitStream carries normalized
 // token/tool/reasoning/HITL payloads when streaming is enabled. Drivers should
-// not retain the sink after Run returns.
+// not retain the sink after Run returns. Every RunEventItem emitted through
+// Emit MUST appear in Response.Transcript in the same order, with no hidden or
+// recomputed entries.
 type EventSink interface {
 	// Emit publishes a RunEvent on the run-scoped event channel.
 	Emit(event RunEvent) error
 	// EmitStream publishes a structured StreamPayload on the run-scoped
-	// stream channel. When streaming is disabled for the enclosing run the
-	// sink silently discards the payload; drivers may call EmitStream
-	// unconditionally. Sequence and Timestamp are backfilled by the SDK.
+	// stream channel. When the resolved provider transport is non-streaming the
+	// sink may discard the payload; this is independent of the public Run versus
+	// Stream method. Drivers MUST leave Sequence, Seq, and Timestamp zero; core
+	// assigns all three in receiver order.
 	EmitStream(payload StreamPayload) error
 }
 
@@ -193,6 +196,8 @@ type Descriptor struct {
 }
 
 // SessionCapability declares whether a driver can resume provider sessions.
+// SupportsResume MUST be true if and only if the Driver implements
+// SessionCodecProvider and returns a non-nil stable codec.
 type SessionCapability struct {
 	SupportsResume bool
 }
@@ -224,14 +229,17 @@ type RuntimeCapability struct {
 
 // StructuredOutputCapability declares which runtime structured-output modes
 // the driver can honor. JSONSchemaNative means a provider/CLI-native schema
-// surface exists; JSONSchemaPromptValidate means the driver can accept the
-// SDK's explicit prompt+local-validation fallback.
+// surface exists; JSONSchemaPromptValidate means the driver can accept core's
+// explicit prompt+local-validation fallback. WorksWithRun covers the single
+// v1 execution pipeline used by both consumer Run and Stream. The historical
+// WorksWithStreaming name refers only to compatibility with the provider-native
+// streaming transport selected in Request.Streaming; it does not describe the
+// consumer Stream method.
 type StructuredOutputCapability struct {
 	JSONSchemaNative         bool
 	JSONSchemaPromptValidate bool
 
 	WorksWithRun       bool
-	WorksWithStart     bool
 	WorksWithStreaming bool
 	WorksWithHITL      bool
 

@@ -35,9 +35,10 @@ const (
 //   - item:  Item (*TranscriptItem).
 //   - invocation/spawn/runtime/lifecycle: Text, Metadata, Data.
 //
-// Seq is assigned monotonically by the SDK per-run. Hosts that collect
-// RunEventItem events in Seq order will observe the exact same sequence that
-// the final result's Transcript reflects.
+// Drivers MUST leave Seq zero. Core assigns it monotonically in Event sink
+// receiver order. Collecting every RunEventItem in that order MUST reproduce
+// the final Response.Transcript exactly, including any delta item the driver
+// elects to retain there.
 type RunEvent struct {
 	Type      RunEventType
 	Seq       uint64
@@ -125,8 +126,11 @@ type TranscriptItem struct {
 // know the concrete driver.
 //
 // The full list is the union of what codex / claude / cursor can expose.
-// Drivers may emit a subset; bridges that require a specific kind should
-// degrade gracefully when it is absent.
+// A StreamSupport driver may emit a subset of content kinds, but for every
+// Request with Streaming=true it MUST emit exactly one run.started first and
+// exactly one terminal run.finished or run.error last. All opened text,
+// reasoning, tool and step lifecycles MUST close before that terminal. No
+// payload may follow the terminal frame.
 type StreamKind string
 
 const (
@@ -224,8 +228,9 @@ const (
 //     normalized decision envelope; Raw may carry driver-specific payload.
 //   - stream.dropped: Raw["dropped_count"] reports the count.
 //
-// Sequence is assigned monotonically by the SDK in EmitStream; drivers must
-// not set it themselves. Timestamp is similarly backfilled when zero.
+// Drivers MUST leave Sequence, Seq, and Timestamp at their zero values. Core
+// assigns all three monotonically/in receiver order in EmitStream; they have
+// one authority even when multiple driver goroutines emit concurrently.
 //
 // Seq mirrors Sequence as the canonical per-run monotonic cursor exposed by
 // the streaming/HITL contract (see docs/run-policy.md §6). It is always

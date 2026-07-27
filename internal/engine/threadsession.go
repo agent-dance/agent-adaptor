@@ -45,6 +45,35 @@ func PrepareThreadSession(
 	return &ThreadSessionPlan{plan: plan, store: store}, nil
 }
 
+// PrepareThreadSessionForDriver is the v1 coordinator entry. In addition to
+// normal planning it derives the codec identity from the configured Driver
+// and proves a fork parent's checkpoint can be normalized by that exact
+// codec before returning a runnable plan. Callers must prefer this entry over
+// supplying SessionRequest.SessionCodec themselves.
+func PrepareThreadSessionForDriver(
+	ctx context.Context,
+	store SessionStore,
+	req SessionRequest,
+	identity AgentIdentity,
+	adapter DriverAdapter,
+	fingerprint string,
+) (*ThreadSessionPlan, error) {
+	if adapter == nil {
+		return nil, ErrInvalidDriverConfig
+	}
+	driverType := adapter.Descriptor().Type
+	req.SessionCodec = SessionCodecFor(adapter).Name()
+	plan, err := prepareSessionPlan(ctx, store, req, identity, driverType, fingerprint)
+	if err != nil || plan == nil {
+		return nil, err
+	}
+	if req.Mode == SessionFork && plan.record != nil && normalizeSessionState(adapter, plan.record.DriverState) == nil {
+		plan.release()
+		return nil, &SessionIncompatibleError{Reason: "fork parent checkpoint is invalid for session codec"}
+	}
+	return &ThreadSessionPlan{plan: plan, store: store}, nil
+}
+
 // DriverSession builds the per-run driver session context. It applies the
 // same state-attachment rule as the legacy execute path: driver state is
 // forwarded only when a record exists and the plan either reuses it or
@@ -86,6 +115,15 @@ func (p *ThreadSessionPlan) RenewalError() error {
 // order. It is safe to call after Persist and on every error path.
 func (p *ThreadSessionPlan) Release() {
 	p.plan.release()
+}
+
+// ReleaseContext stops renewal and releases every held lease, returning any
+// store error. The call is bounded by ctx even when a broken Store ignores
+// cancellation. Final coordinators must use this method and surface its error;
+// Release remains a bounded best-effort compatibility helper for legacy call
+// sites that have a primary run error to return.
+func (p *ThreadSessionPlan) ReleaseContext(ctx context.Context) error {
+	return p.plan.releaseContext(ctx)
 }
 
 // Reused reports whether the plan resumes an existing compatible record.

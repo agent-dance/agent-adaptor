@@ -31,3 +31,20 @@ func TestLeaseLostErrorContract(t *testing.T) {
 		t.Fatalf("empty-target Error() = %q, want the bare sentinel text", (&LeaseLostError{}).Error())
 	}
 }
+
+func TestAlreadyExistsErrorContract(t *testing.T) {
+	typed := &AlreadyExistsError{Key: "tenant\x00一/issue"}
+	err := error(typed)
+	if !errors.Is(err, ErrAlreadyExists) {
+		t.Fatal("AlreadyExistsError must unwrap to ErrAlreadyExists")
+	}
+	if got := err.Error(); got != "threadstore: thread already exists: tenant\x00一/issue" {
+		t.Fatalf("Error() = %q", got)
+	}
+	if (&AlreadyExistsError{}).Error() != ErrAlreadyExists.Error() {
+		t.Fatalf("empty-key Error() = %q, want bare sentinel", (&AlreadyExistsError{}).Error())
+	}
+	if !typed.ThreadAlreadyExists() {
+		t.Fatal("AlreadyExistsError must expose the coordinator conflict marker")
+	}
+}

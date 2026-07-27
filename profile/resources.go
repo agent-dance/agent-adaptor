@@ -1,173 +1,246 @@
 package profile
 
 import (
-	"github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/internal/engine"
+	"time"
+
+	"github.com/agent-dance/agent-adaptor/mcp"
+	"github.com/agent-dance/agent-adaptor/skill"
 )
 
 // Resources is the host-facing desired-state bundle for an effective
-// profile: sub-agents, hooks, an instruction bundle, structured config
-// patches, plus skill and MCP entries. It is an alias for the existing
-// public contract type (root ProfileResources), so values flow into
-// WithDefaultProfileResources / WithProfileResources unchanged; declared
-// kinds are reconciled (an empty declared slice clears managed entries,
-// an undeclared kind is left alone) and materialization is truthfully
-// reported through ProfileState / SyncProfile.
+// provider profile. It deliberately owns the consumer vocabulary instead of
+// aliasing the Driver SPI or the internal engine representation.
 //
-// Skills and MCP element types keep their own vocabulary packages; until
-// those land use the root aliases (SkillRef, MCPConfig).
-type Resources = engine.ProfileResources
+// A nil MCP, Agents, Hooks, or Config slice means that resource family was not
+// declared. A non-nil empty slice explicitly declares an empty family and
+// clears SDK-managed entries. Skills are additive; an empty Skills slice is a
+// no-op. Instructions is declared when non-nil.
+type Resources struct {
+	Skills       []skill.Ref
+	MCP          []mcp.Server
+	Agents       []SubAgent
+	Hooks        []Hook
+	Instructions *Instructions
+	Config       []ConfigPatch
+}
 
-// --- Sub-agents -------------------------------------------------------------
+// SubAgent describes one host-declared sub-agent/profile agent entry.
+type SubAgent struct {
+	Key          string
+	RuntimeName  string
+	Description  string
+	Instructions string
 
-// SubAgent describes one host-declared sub-agent/profile agent entry. It is
-// an alias for [driver.AgentSpec] and is the element type of
-// Resources.Agents.
-type SubAgent = driver.AgentSpec
+	// Content is the legacy spelling of Instructions. New declarations should
+	// set Instructions. If both are set, they must contain the same text.
+	Content           string
+	SourcePath        string
+	SourceFingerprint string
+
+	Model           string
+	ReasoningEffort string
+	ToolPolicy      *ToolPolicy
+	PermissionMode  string
+	SandboxMode     string
+	MCPServers      []string
+	Skills          []string
+	Hooks           []Hook
+
+	Native   map[string]any
+	Metadata map[string]string
+}
 
 // ToolPolicy captures provider-neutral tool allow/deny intent for a
-// SubAgent. It is an alias for [driver.AgentToolPolicy].
-type ToolPolicy = driver.AgentToolPolicy
+// SubAgent. Drivers translate this intent to provider-native controls.
+type ToolPolicy struct {
+	Allow []string
+	Deny  []string
+}
 
-// --- Hooks -------------------------------------------------------------------
+// Hook describes one host-declared provider hook.
+type Hook struct {
+	Key         string
+	Event       HookEvent
+	MatcherSpec HookMatcher
+	Handler     HookHandler
 
-// Hook describes one host-declared provider hook. It is an alias for
-// [driver.HookSpec] and is the element type of Resources.Hooks.
-type Hook = driver.HookSpec
+	// Matcher, Command, Args, and Env are migration spellings for command
+	// hooks. New declarations should use MatcherSpec and Handler.
+	Matcher string
+	Command string
+	Args    []string
+	Env     map[string]string
 
-// HookEvent is the SDK-level lifecycle event a Hook fires on. Alias for
-// [driver.HookEvent].
-type HookEvent = driver.HookEvent
+	Timeout       time.Duration
+	FailPolicy    HookFailPolicy
+	StatusMessage string
+	Disabled      bool
 
-const (
-	HookEventSessionStart      = driver.HookEventSessionStart
-	HookEventSessionEnd        = driver.HookEventSessionEnd
-	HookEventPromptSubmit      = driver.HookEventPromptSubmit
-	HookEventPromptExpand      = driver.HookEventPromptExpand
-	HookEventPreTool           = driver.HookEventPreTool
-	HookEventPostTool          = driver.HookEventPostTool
-	HookEventToolFailure       = driver.HookEventToolFailure
-	HookEventPermissionRequest = driver.HookEventPermissionRequest
-	HookEventPreShell          = driver.HookEventPreShell
-	HookEventPostShell         = driver.HookEventPostShell
-	HookEventPreMCP            = driver.HookEventPreMCP
-	HookEventPostMCP           = driver.HookEventPostMCP
-	HookEventPreFileRead       = driver.HookEventPreFileRead
-	HookEventPostFileEdit      = driver.HookEventPostFileEdit
-	HookEventSubagentStart     = driver.HookEventSubagentStart
-	HookEventSubagentStop      = driver.HookEventSubagentStop
-	HookEventPreCompact        = driver.HookEventPreCompact
-	HookEventPostCompact       = driver.HookEventPostCompact
-	HookEventStop              = driver.HookEventStop
-	HookEventStopFailure       = driver.HookEventStopFailure
-)
+	Native   map[string]any
+	Metadata map[string]string
+}
 
-// HookMatcher describes what a Hook filters on and which pattern syntax it
-// uses. Alias for [driver.HookMatcher].
-type HookMatcher = driver.HookMatcher
-
-// HookMatcherSubject is an alias for [driver.HookMatcherSubject].
-type HookMatcherSubject = driver.HookMatcherSubject
+// HookEvent is the SDK-level lifecycle event a Hook fires on.
+type HookEvent string
 
 const (
-	HookMatcherSubjectDefault  = driver.HookMatcherSubjectDefault
-	HookMatcherSubjectTool     = driver.HookMatcherSubjectTool
-	HookMatcherSubjectCommand  = driver.HookMatcherSubjectCommand
-	HookMatcherSubjectMCP      = driver.HookMatcherSubjectMCP
-	HookMatcherSubjectPath     = driver.HookMatcherSubjectPath
-	HookMatcherSubjectPrompt   = driver.HookMatcherSubjectPrompt
-	HookMatcherSubjectSubagent = driver.HookMatcherSubjectSubagent
-	HookMatcherSubjectSource   = driver.HookMatcherSubjectSource
+	HookEventSessionStart      HookEvent = "session_start"
+	HookEventSessionEnd        HookEvent = "session_end"
+	HookEventPromptSubmit      HookEvent = "prompt_submit"
+	HookEventPromptExpand      HookEvent = "prompt_expand"
+	HookEventPreTool           HookEvent = "pre_tool"
+	HookEventPostTool          HookEvent = "post_tool"
+	HookEventToolFailure       HookEvent = "tool_failure"
+	HookEventPermissionRequest HookEvent = "permission_request"
+	HookEventPreShell          HookEvent = "pre_shell"
+	HookEventPostShell         HookEvent = "post_shell"
+	HookEventPreMCP            HookEvent = "pre_mcp"
+	HookEventPostMCP           HookEvent = "post_mcp"
+	HookEventPreFileRead       HookEvent = "pre_file_read"
+	HookEventPostFileEdit      HookEvent = "post_file_edit"
+	HookEventSubagentStart     HookEvent = "subagent_start"
+	HookEventSubagentStop      HookEvent = "subagent_stop"
+	HookEventPreCompact        HookEvent = "pre_compact"
+	HookEventPostCompact       HookEvent = "post_compact"
+	HookEventStop              HookEvent = "stop"
+	HookEventStopFailure       HookEvent = "stop_failure"
 )
 
-// HookMatcherSyntax is an alias for [driver.HookMatcherSyntax].
-type HookMatcherSyntax = driver.HookMatcherSyntax
+// HookMatcher describes what a Hook filters on and which syntax the pattern
+// uses.
+type HookMatcher struct {
+	Subject HookMatcherSubject
+	Syntax  HookMatcherSyntax
+	Pattern string
+}
+
+// HookMatcherSubject identifies the value matched by a HookMatcher.
+type HookMatcherSubject string
 
 const (
-	HookMatcherSyntaxProvider = driver.HookMatcherSyntaxProvider
-	HookMatcherSyntaxExact    = driver.HookMatcherSyntaxExact
-	HookMatcherSyntaxRegex    = driver.HookMatcherSyntaxRegex
-	HookMatcherSyntaxPrefix   = driver.HookMatcherSyntaxPrefix
-	HookMatcherSyntaxContains = driver.HookMatcherSyntaxContains
+	HookMatcherSubjectDefault  HookMatcherSubject = ""
+	HookMatcherSubjectTool     HookMatcherSubject = "tool"
+	HookMatcherSubjectCommand  HookMatcherSubject = "command"
+	HookMatcherSubjectMCP      HookMatcherSubject = "mcp"
+	HookMatcherSubjectPath     HookMatcherSubject = "path"
+	HookMatcherSubjectPrompt   HookMatcherSubject = "prompt"
+	HookMatcherSubjectSubagent HookMatcherSubject = "subagent"
+	HookMatcherSubjectSource   HookMatcherSubject = "source"
 )
 
-// HookHandler describes the action a Hook runs. Alias for
-// [driver.HookHandler].
-type HookHandler = driver.HookHandler
-
-// HookHandlerType is an alias for [driver.HookHandlerType].
-type HookHandlerType = driver.HookHandlerType
+// HookMatcherSyntax identifies how a HookMatcher pattern is interpreted.
+type HookMatcherSyntax string
 
 const (
-	HookHandlerCommand = driver.HookHandlerCommand
-	HookHandlerPrompt  = driver.HookHandlerPrompt
-	HookHandlerHTTP    = driver.HookHandlerHTTP
-	HookHandlerMCPTool = driver.HookHandlerMCPTool
-	HookHandlerAgent   = driver.HookHandlerAgent
+	HookMatcherSyntaxProvider HookMatcherSyntax = ""
+	HookMatcherSyntaxExact    HookMatcherSyntax = "exact"
+	HookMatcherSyntaxRegex    HookMatcherSyntax = "regex"
+	HookMatcherSyntaxPrefix   HookMatcherSyntax = "prefix"
+	HookMatcherSyntaxContains HookMatcherSyntax = "contains"
 )
 
-// HookFailPolicy is an alias for [driver.HookFailPolicy].
-type HookFailPolicy = driver.HookFailPolicy
+// HookHandler describes the action a Hook runs. Command hooks are portable
+// core; other handler types require explicit Driver support.
+type HookHandler struct {
+	Type    HookHandlerType
+	Command string
+	Args    []string
+	Env     map[string]string
+
+	Prompt string
+	URL    string
+	Server string
+	Tool   string
+	Input  map[string]any
+	Agent  string
+}
+
+// HookHandlerType identifies a hook action.
+type HookHandlerType string
 
 const (
-	HookFailPolicyProviderDefault = driver.HookFailPolicyProviderDefault
-	HookFailPolicyOpen            = driver.HookFailPolicyOpen
-	HookFailPolicyClosed          = driver.HookFailPolicyClosed
+	HookHandlerCommand HookHandlerType = "command"
+	HookHandlerPrompt  HookHandlerType = "prompt"
+	HookHandlerHTTP    HookHandlerType = "http"
+	HookHandlerMCPTool HookHandlerType = "mcp_tool"
+	HookHandlerAgent   HookHandlerType = "agent"
 )
 
-// --- Instructions -------------------------------------------------------------
-
-// Instructions points at host-supplied instruction material. It is an alias
-// for [driver.InstructionsBundleRef] and is the type behind
-// Resources.Instructions. Drivers decide whether to materialize it as a
-// provider-native file/rule or inject it into the prompt as a fallback.
-type Instructions = driver.InstructionsBundleRef
-
-// InstructionScope is an alias for [driver.InstructionScope].
-type InstructionScope = driver.InstructionScope
+// HookFailPolicy controls how a failed hook affects the provider operation.
+type HookFailPolicy string
 
 const (
-	InstructionScopeDefault = driver.InstructionScopeDefault
-	InstructionScopeUser    = driver.InstructionScopeUser
-	InstructionScopeProject = driver.InstructionScopeProject
-	InstructionScopeLocal   = driver.InstructionScopeLocal
-	InstructionScopeRun     = driver.InstructionScopeRun
+	HookFailPolicyProviderDefault HookFailPolicy = ""
+	HookFailPolicyOpen            HookFailPolicy = "open"
+	HookFailPolicyClosed          HookFailPolicy = "closed"
 )
 
-// InstructionMode is an alias for [driver.InstructionMode].
-type InstructionMode = driver.InstructionMode
+// Instructions points at host-supplied instruction material. Drivers decide
+// whether to materialize it as a provider-native file/rule or inject it into
+// the prompt as a fallback.
+type Instructions struct {
+	ID          string
+	Path        string
+	Content     string
+	Fingerprint string
+	Scope       InstructionScope
+	Mode        InstructionMode
+	Native      map[string]any
+}
+
+// InstructionScope identifies the provider profile layer for instructions.
+type InstructionScope string
 
 const (
-	InstructionModeAdditive = driver.InstructionModeAdditive
-	InstructionModeReplace  = driver.InstructionModeReplace
+	InstructionScopeDefault InstructionScope = ""
+	InstructionScopeUser    InstructionScope = "user"
+	InstructionScopeProject InstructionScope = "project"
+	InstructionScopeLocal   InstructionScope = "local"
+	InstructionScopeRun     InstructionScope = "run"
 )
 
-// Text builds an inline instruction bundle from literal content. It is the
-// one-line spelling used by Resources declarations:
-//
-//	profile.Resources{Instructions: profile.Text("Follow ACME coding standards.")}
-//
-// For file-backed or scoped bundles construct Instructions directly.
+// InstructionMode controls whether instructions add to or replace the
+// provider's existing instruction set.
+type InstructionMode string
+
+const (
+	InstructionModeAdditive InstructionMode = ""
+	InstructionModeReplace  InstructionMode = "replace"
+)
+
+// Text builds an inline instruction bundle from literal content.
 func Text(content string) *Instructions {
 	return &Instructions{Content: content}
 }
 
-// --- Structured config patches -------------------------------------------------
+// ConfigPatch is one structured profile configuration update.
+type ConfigPatch struct {
+	Key        string
+	Capability string
+	Values     map[string]any
 
-// ConfigPatch is one structured profile config update. It is an alias for
-// [driver.ProfileConfigPatch] and is the element type of Resources.Config.
-type ConfigPatch = driver.ProfileConfigPatch
+	// Native is the explicit provider-native escape hatch. FileKind, Path,
+	// and Section are retained migration spellings and are interpreted as a
+	// native patch when Capability is empty.
+	Native   *NativeConfigPatch
+	FileKind ConfigFileKind
+	Path     string
+	Section  string
+}
 
-// NativeConfigPatch identifies a provider-native structured config patch —
-// the explicit escape hatch inside ConfigPatch. Alias for
-// [driver.NativeConfigPatch].
-type NativeConfigPatch = driver.NativeConfigPatch
+// NativeConfigPatch identifies a provider-native structured config patch.
+type NativeConfigPatch struct {
+	Provider string
+	FileKind ConfigFileKind
+	Path     string
+	Section  string
+	Values   map[string]any
+}
 
-// ConfigFileKind identifies the structured config format a native patch
-// targets. Alias for [driver.ProfileConfigFileKind].
-type ConfigFileKind = driver.ProfileConfigFileKind
+// ConfigFileKind identifies the serialized structured config format.
+type ConfigFileKind string
 
 const (
-	ConfigFileJSON = driver.ProfileConfigFileJSON
-	ConfigFileTOML = driver.ProfileConfigFileTOML
+	ConfigFileJSON ConfigFileKind = "json"
+	ConfigFileTOML ConfigFileKind = "toml"
 )

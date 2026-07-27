@@ -13,7 +13,7 @@ import (
 var (
 	_ driver.MCPServerSpec = mcp.HTTP("docs", "https://example.com/mcp")
 	_ mcp.Server           = driver.MCPServerSpec{}
-	_ driver.MCPPayload    = driver.MCPPayload{Servers: []driver.MCPServerSpec{mcp.Stdio("repo-tools", "npx", "repo-mcp")}}
+	_ driver.MCPPayload    = driver.MCPPayload{Servers: []driver.MCPServerSpec{mcp.Stdio("repo-tools", "npx", mcp.Args("repo-mcp"))}}
 	_ driver.MCPTransport  = mcp.TransportSSE
 )
 
@@ -71,27 +71,23 @@ func TestSSEFullFieldPassthrough(t *testing.T) {
 }
 
 func TestStdioMinimalEqualsHandwrittenSpec(t *testing.T) {
-	got := mcp.Stdio("repo-tools", "npx", "repo-mcp")
+	got := mcp.Stdio("repo-tools", "npx")
 	want := driver.MCPServerSpec{
 		Key:       "repo-tools",
 		Transport: driver.MCPTransportStdio,
 		Command:   "npx",
-		Args:      []string{"repo-mcp"},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Stdio minimal mismatch:\n got %#v\nwant %#v", got, want)
 	}
-
-	if got := mcp.Stdio("bare", "server-bin"); got.Args != nil {
-		t.Fatalf("Stdio without args should leave Args nil, got %#v", got.Args)
-	}
 }
 
-func TestStdioFullFieldPassthroughViaExportedFields(t *testing.T) {
-	got := mcp.Stdio("repo-tools", "npx", "repo-mcp", "--verbose")
-	got.Env = map[string]string{"REPO_TOKEN_FILE": "/run/secrets/repo"}
-	got.Required = true
-	got.RequiredReason = "repo access is mandatory"
+func TestStdioFullFieldPassthroughViaOptions(t *testing.T) {
+	got := mcp.Stdio("repo-tools", "npx",
+		mcp.Args("repo-mcp", "--verbose"),
+		mcp.Env(map[string]string{"REPO_TOKEN_FILE": "/run/secrets/repo"}),
+		mcp.Required("repo access is mandatory"),
+	)
 
 	want := driver.MCPServerSpec{
 		Key:            "repo-tools",
@@ -121,28 +117,104 @@ func TestTransportConstantsMatchDriver(t *testing.T) {
 
 func TestConstructorsCopyCallerInputs(t *testing.T) {
 	args := []string{"repo-mcp", "--verbose"}
-	stdio := mcp.Stdio("repo-tools", "npx", args...)
+	env := map[string]string{"REPO_TOKEN_FILE": "/run/secrets/repo"}
+	headers := map[string]string{"X-Team": "platform"}
+	argsOpt := mcp.Args(args...)
+	envOpt := mcp.Env(env)
+	headerOpt := mcp.WithHeaders(headers)
+
+	// Inputs are snapshotted when an option is created, not delayed until the
+	// constructor eventually applies the option.
 	args[0] = "mutated"
-	if stdio.Args[0] != "repo-mcp" {
-		t.Fatalf("Stdio aliased the caller args slice: %#v", stdio.Args)
+	env["REPO_TOKEN_FILE"] = "mutated"
+	headers["X-Team"] = "mutated"
+
+	stdio1 := mcp.Stdio("repo-tools-1", "npx", argsOpt, envOpt)
+	stdio2 := mcp.Stdio("repo-tools-2", "npx", argsOpt, envOpt)
+	remote1 := mcp.HTTP("docs-1", "https://example.com/mcp", headerOpt)
+	remote2 := mcp.HTTP("docs-2", "https://example.com/mcp", headerOpt)
+
+	if got := stdio1.Args; !reflect.DeepEqual(got, []string{"repo-mcp", "--verbose"}) {
+		t.Fatalf("Args observed caller mutation: %#v", got)
+	}
+	if got := stdio1.Env["REPO_TOKEN_FILE"]; got != "/run/secrets/repo" {
+		t.Fatalf("Env observed caller mutation: %q", got)
+	}
+	if got := remote1.Headers["X-Team"]; got != "platform" {
+		t.Fatalf("WithHeaders observed caller mutation: %q", got)
 	}
 
-	headers := map[string]string{"X-Team": "platform"}
-	remote := mcp.HTTP("docs", "https://example.com/mcp", mcp.WithHeaders(headers))
-	headers["X-Team"] = "mutated"
-	if remote.Headers["X-Team"] != "platform" {
-		t.Fatalf("WithHeaders aliased the caller map: %#v", remote.Headers)
+	// Reusing an option produces independent aggregate values.
+	stdio1.Args[0] = "changed-on-first"
+	stdio1.Env["REPO_TOKEN_FILE"] = "changed-on-first"
+	remote1.Headers["X-Team"] = "changed-on-first"
+	if stdio2.Args[0] != "repo-mcp" {
+		t.Fatalf("Args option reuse aliased servers: %#v", stdio2.Args)
+	}
+	if stdio2.Env["REPO_TOKEN_FILE"] != "/run/secrets/repo" {
+		t.Fatalf("Env option reuse aliased servers: %#v", stdio2.Env)
+	}
+	if remote2.Headers["X-Team"] != "platform" {
+		t.Fatalf("WithHeaders option reuse aliased servers: %#v", remote2.Headers)
+	}
+}
+
+func TestOptionOrdering(t *testing.T) {
+	got := mcp.Stdio("repo-tools", "npx",
+		mcp.Args("first"),
+		mcp.Env(map[string]string{"A": "one", "B": "old"}),
+		mcp.Args("second", "third"),
+		mcp.Env(map[string]string{"B": "new", "C": "three"}),
+	)
+	want := driver.MCPServerSpec{
+		Key:       "repo-tools",
+		Transport: driver.MCPTransportStdio,
+		Command:   "npx",
+		Args:      []string{"second", "third"},
+		Env:       map[string]string{"A": "one", "B": "new", "C": "three"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("option ordering mismatch:\n got %#v\nwant %#v", got, want)
 	}
 }
 
 func TestNilAndEmptyOptionsAreSafe(t *testing.T) {
-	got := mcp.HTTP("docs", "https://example.com/mcp", nil, mcp.WithHeaders(nil))
-	want := driver.MCPServerSpec{
+	var zero mcp.Option
+	stdio := mcp.Stdio("repo-tools", "npx", nil, zero, mcp.Args(), mcp.Env(nil))
+	wantStdio := driver.MCPServerSpec{
+		Key:       "repo-tools",
+		Transport: driver.MCPTransportStdio,
+		Command:   "npx",
+	}
+	if !reflect.DeepEqual(stdio, wantStdio) {
+		t.Fatalf("nil/empty stdio options changed the server:\n got %#v\nwant %#v", stdio, wantStdio)
+	}
+
+	remote := mcp.HTTP("docs", "https://example.com/mcp", nil, mcp.WithHeaders(nil))
+	wantRemote := driver.MCPServerSpec{
 		Key:       "docs",
 		Transport: driver.MCPTransportHTTP,
 		URL:       "https://example.com/mcp",
 	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("nil/empty options changed the server:\n got %#v\nwant %#v", got, want)
+	if !reflect.DeepEqual(remote, wantRemote) {
+		t.Fatalf("nil/empty remote options changed the server:\n got %#v\nwant %#v", remote, wantRemote)
+	}
+}
+
+func TestTransportScopedOptionsAreNotSilentlyIgnored(t *testing.T) {
+	remote := mcp.HTTP("docs", "https://example.com/mcp",
+		mcp.Args("serve"),
+		mcp.Env(map[string]string{"TOKEN": "secret"}),
+	)
+	if !reflect.DeepEqual(remote.Args, []string{"serve"}) || remote.Env["TOKEN"] != "secret" {
+		t.Fatalf("remote constructor silently ignored stdio-only options: %#v", remote)
+	}
+
+	stdio := mcp.Stdio("repo-tools", "npx",
+		mcp.WithHeader("X-Team", "platform"),
+		mcp.WithBearerTokenEnv("TOKEN"),
+	)
+	if stdio.Headers["X-Team"] != "platform" || stdio.BearerTokenEnvVar != "TOKEN" {
+		t.Fatalf("stdio constructor silently ignored remote-only options: %#v", stdio)
 	}
 }

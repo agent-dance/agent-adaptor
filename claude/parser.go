@@ -28,15 +28,18 @@ type claudeParser struct {
 	transcript    []agentadaptor.TranscriptItem
 	assistantText []string
 
-	sessionID        string
-	displayID        string
-	summary          string // last assistant text; used only as summary fallback
-	terminalSummary  string // authoritative summary from terminal result events
-	usage            *agentadaptor.Usage
-	cost             *float64
-	resultFinal      map[string]any
-	structuredOutput *agentadaptor.StructuredOutput
-	errorMessage     string
+	sessionID         string
+	displayID         string
+	summary           string // last assistant text; used only as summary fallback
+	terminalSummary   string // authoritative summary from terminal result events
+	usage             *agentadaptor.Usage
+	cost              *float64
+	resultFinal       map[string]any
+	structuredOutput  *agentadaptor.StructuredOutput
+	errorMessage      string
+	terminalSeen      bool
+	terminalSuccess   bool
+	protocolMalformed bool
 
 	stream       *streamingState
 	deltaBuffers map[string]*strings.Builder // messageID -> streamed text (cancel/crash fallback)
@@ -228,6 +231,7 @@ func (p *claudeParser) processLine(stream string, line []byte, _ time.Time) {
 	}
 	var payload map[string]any
 	if err := json.Unmarshal([]byte(trimmed), &payload); err != nil {
+		p.protocolMalformed = true
 		p.emit(agentadaptor.TranscriptItem{
 			Kind: agentadaptor.TranscriptStdout,
 			Text: text,
@@ -239,6 +243,10 @@ func (p *claudeParser) processLine(stream string, line []byte, _ time.Time) {
 }
 
 func (p *claudeParser) handlePayload(raw string, payload map[string]any) {
+	if p.terminalSeen {
+		p.protocolMalformed = true
+		return
+	}
 	eventType := strings.ToLower(claudeTopLevelString(payload, "type", "event", "kind"))
 	subtype := strings.ToLower(claudeTopLevelString(payload, "subtype"))
 
@@ -251,7 +259,9 @@ func (p *claudeParser) handlePayload(raw string, payload map[string]any) {
 		return
 	}
 
-	p.maybeCaptureSession(payload)
+	if claudeFormalEvent(eventType) {
+		p.maybeCaptureSession(payload)
+	}
 
 	switch eventType {
 	case "system":
@@ -304,10 +314,13 @@ func (p *claudeParser) handlePayload(raw string, payload map[string]any) {
 	case "result":
 		p.handleResult(raw, payload, subtype)
 	case "error":
+		p.terminalSeen = true
+		p.terminalSuccess = false
 		message := claudeTopLevelString(payload, "message", "error")
-		if message != "" {
-			p.errorMessage = message
+		if message == "" {
+			message = "claude provider error"
 		}
+		p.errorMessage = message
 		if p.stream != nil {
 			p.stream.handleErrorTerminal(payload)
 		}
@@ -503,6 +516,10 @@ func claudeResultText(raw any) string {
 }
 
 func (p *claudeParser) handleResult(raw string, payload map[string]any, subtype string) {
+	p.terminalSeen = true
+	isErrorFlag, _ := payload["is_error"].(bool)
+	p.terminalSuccess = subtype == "success" && !isErrorFlag
+
 	var decoded map[string]any
 	if err := json.Unmarshal([]byte(raw), &decoded); err == nil {
 		p.resultFinal = decoded
@@ -545,10 +562,12 @@ func (p *claudeParser) handleResult(raw string, payload map[string]any, subtype 
 		p.cost = &c
 	}
 
-	isError := subtype == "error" || subtype == "error_during_execution" || strings.HasPrefix(subtype, "error")
+	isError := !p.terminalSuccess
 	if isError {
 		if message := claudeTopLevelString(payload, "message", "result"); message != "" {
 			p.errorMessage = message
+		} else if p.errorMessage == "" {
+			p.errorMessage = "claude terminal result did not report success"
 		}
 	}
 
@@ -563,6 +582,15 @@ func (p *claudeParser) handleResult(raw string, payload map[string]any, subtype 
 	})
 	if p.stream != nil {
 		p.stream.handleResultTerminal(payload)
+	}
+}
+
+func claudeFormalEvent(eventType string) bool {
+	switch eventType {
+	case "system", "stream_event", "control_request", "assistant", "user", "result", "error", "permission_request":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -684,22 +712,12 @@ func (p *claudeParser) outputMetadata() map[string]string {
 	return map[string]string{"output_source": "reconstructed_from_deltas"}
 }
 
-// checkpoint promotes a captured Claude session id into a persistable
-// DriverCheckpoint. The CLI announces session_id in its very first
-// system.init frame (see maybeCaptureSession / handlePayload), which means
-// by the time we reach this call the session is already established
-// server-side and is resumable independent of how the local subprocess
-// terminated. We therefore gate solely on a non-empty session_id; abnormal
-// CLI exits (max_turns reached, upstream model provider 4xx/5xx, network
-// blip, OOM, signal, ...) do not by themselves invalidate the session.
-//
-// If the session turns out to be unusable on the next resume attempt the
-// upstream API surfaces an actionable error there, which is a strictly
-// better signal than conflating every transient infrastructure failure
-// with a missing checkpoint.
+// checkpoint promotes a Claude session only after both layers of the
+// checkpoint safety contract are satisfied: the process exited cleanly and
+// the official stream-json protocol delivered a successful terminal result
+// carrying a top-level session_id. An init frame alone is never sufficient.
 func (p *claudeParser) checkpoint(exitCode int) *agentadaptor.DriverCheckpoint {
-	_ = exitCode // retained in the signature for call-site symmetry; see GoDoc.
-	if p.sessionID == "" {
+	if exitCode != 0 || p.protocolMalformed || !p.terminalSeen || !p.terminalSuccess || p.sessionID == "" {
 		return nil
 	}
 	display := p.displayID
@@ -715,6 +733,16 @@ func (p *claudeParser) checkpoint(exitCode int) *agentadaptor.DriverCheckpoint {
 	}
 }
 
+// checkpointForOutcome adds the process signal/timeout and structured
+// provider-failure gates that are only known by the Driver after the process
+// helper returns.
+func (p *claudeParser) checkpointForOutcome(exitCode int, signal string, timedOut bool, failure *agentadaptor.RunFailure) *agentadaptor.DriverCheckpoint {
+	if signal != "" || timedOut || failure != nil {
+		return nil
+	}
+	return p.checkpoint(exitCode)
+}
+
 func snapshotClaudeStdout(stdout string) *claudeParser {
 	p := newClaudeParser(nil)
 	_ = p.onChunk("stdout", []byte(stdout), time.Now().UTC())
@@ -722,69 +750,10 @@ func snapshotClaudeStdout(stdout string) *claudeParser {
 	return p
 }
 
-// parseCheckpoint keeps the historical snapshot-based recognition used by
-// legacy unit tests. It now runs the same streaming parser on the full stdout
-// buffer and enforces the "event must be recognized, else require scalar-only
-// session payload" rule before promoting the session id into a checkpoint.
-//
-// Like (*claudeParser).checkpoint, this function no longer gates on
-// exitCode: a recognized session_id remains resumable even if the CLI
-// exited abnormally. exitCode is kept in the signature for call-site
-// symmetry with the streaming path.
+// parseCheckpoint is the snapshot compatibility entry point. It deliberately
+// delegates to the same formal-protocol parser and safety gate as live runs.
 func parseCheckpoint(stdout string, exitCode int) *agentadaptor.DriverCheckpoint {
-	_ = exitCode
-	var last *agentadaptor.DriverCheckpoint
-	for _, line := range strings.Split(stdout, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if !strings.HasPrefix(trimmed, "{") {
-			continue
-		}
-		var payload map[string]any
-		if err := json.Unmarshal([]byte(trimmed), &payload); err != nil {
-			continue
-		}
-		sessionID := claudeTopLevelString(payload, "session_id", "sessionId", "sessionID")
-		if sessionID == "" {
-			continue
-		}
-		eventKind := strings.ToLower(claudeTopLevelString(payload, "event", "type", "kind"))
-		if eventKind != "" {
-			if _, ok := claudeCheckpointEvents[eventKind]; !ok {
-				continue
-			}
-		} else if !isClaudeScalarOnlyPayload(payload) {
-			continue
-		}
-		display := claudeTopLevelString(payload, "display_id", "displayId")
-		if display == "" {
-			display = sessionID
-		}
-		last = &agentadaptor.DriverCheckpoint{
-			State: &agentadaptor.DriverSessionState{
-				ResumeID:  sessionID,
-				DisplayID: display,
-			},
-			Valid: true,
-		}
-	}
-	return last
-}
-
-func isClaudeScalarOnlyPayload(payload map[string]any) bool {
-	for key, value := range payload {
-		switch value.(type) {
-		case nil, string, bool, float64:
-		default:
-			return false
-		}
-
-		switch key {
-		case "session_id", "sessionId", "sessionID", "display_id", "displayId", "event", "type", "kind", "timestamp", "ts", "created_at", "createdAt":
-		default:
-			return false
-		}
-	}
-	return true
+	return snapshotClaudeStdout(stdout).checkpoint(exitCode)
 }
 
 func claudeTopLevelString(payload map[string]any, keys ...string) string {

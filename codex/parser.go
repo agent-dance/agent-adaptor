@@ -29,16 +29,21 @@ type codexParser struct {
 	transcript    []agentadaptor.TranscriptItem
 	assistantText []string
 
-	sessionID        string
-	displayID        string
-	summary          string // last assistant text; used only as summary fallback
-	terminalSummary  string // authoritative summary from terminal result events
-	usage            *agentadaptor.Usage
-	cost             *float64
-	hasUsage         bool
-	resultFinal      map[string]any
-	structuredOutput *agentadaptor.StructuredOutput
-	errorMessage     string
+	sessionID          string
+	displayID          string
+	summary            string // last assistant text; used only as summary fallback
+	terminalSummary    string // authoritative summary from terminal result events
+	usage              *agentadaptor.Usage
+	cost               *float64
+	hasUsage           bool
+	resultFinal        map[string]any
+	structuredOutput   *agentadaptor.StructuredOutput
+	errorMessage       string
+	checkpointThreadID string
+	threadStarted      bool
+	turnCompleted      bool
+	terminalFailed     bool
+	protocolMalformed  bool
 }
 
 func newCodexParser(sink agentadaptor.EventSink) *codexParser {
@@ -111,6 +116,7 @@ func (p *codexParser) processLine(stream string, line []byte, _ time.Time) {
 
 	var payload map[string]any
 	if err := json.Unmarshal([]byte(trimmed), &payload); err != nil {
+		p.protocolMalformed = true
 		p.emit(agentadaptor.TranscriptItem{
 			Kind: agentadaptor.TranscriptStdout,
 			Text: text,
@@ -122,10 +128,16 @@ func (p *codexParser) processLine(stream string, line []byte, _ time.Time) {
 }
 
 func (p *codexParser) handlePayload(raw string, payload map[string]any) {
+	if p.turnCompleted || p.terminalFailed {
+		p.protocolMalformed = true
+		return
+	}
 	kind := codexEventKind(payload)
 	switch kind {
 	case "thread.started":
 		if threadID := codexTopLevelString(payload, "thread_id", "threadId"); threadID != "" {
+			p.threadStarted = true
+			p.checkpointThreadID = threadID
 			p.sessionID = threadID
 			p.displayID = threadID
 			p.emit(agentadaptor.TranscriptItem{
@@ -139,13 +151,23 @@ func (p *codexParser) handlePayload(raw string, payload map[string]any) {
 	case "item.completed":
 		item := codexTopLevelObject(payload, "item")
 		p.handleItem(item, false)
-	case "turn.completed", "turn.failed", "result":
+	case "turn.completed":
+		p.turnCompleted = true
+		p.handleTerminal(raw, payload, kind)
+	case "turn.failed":
+		p.terminalFailed = true
+		p.handleTerminal(raw, payload, kind)
+	case "result":
+		// Historical provider wrappers used result, but Codex CLI checkpoint
+		// validity is proved only by thread.started + turn.completed.
 		p.handleTerminal(raw, payload, kind)
 	case "error":
+		p.terminalFailed = true
 		message := codexTopLevelString(payload, "message")
-		if message != "" {
-			p.errorMessage = message
+		if message == "" {
+			message = "codex provider error"
 		}
+		p.errorMessage = message
 		p.emit(agentadaptor.TranscriptItem{
 			Kind:     agentadaptor.TranscriptFailure,
 			Text:     message,
@@ -285,6 +307,9 @@ func (p *codexParser) handleTerminal(raw string, payload map[string]any, kind st
 				p.errorMessage = message
 			}
 		}
+		if p.errorMessage == "" {
+			p.errorMessage = "codex terminal event reported failure"
+		}
 	}
 	if summary := codexTopLevelString(payload, "summary", "result", "text"); summary != "" {
 		p.terminalSummary = summary
@@ -383,20 +408,27 @@ func (p *codexParser) buildOutput() string {
 }
 
 func (p *codexParser) checkpoint(exitCode int) *agentadaptor.DriverCheckpoint {
-	if exitCode != 0 || p.sessionID == "" {
+	if exitCode != 0 || p.protocolMalformed || p.terminalFailed || !p.threadStarted || !p.turnCompleted || p.checkpointThreadID == "" {
 		return nil
 	}
 	display := p.displayID
 	if display == "" {
-		display = p.sessionID
+		display = p.checkpointThreadID
 	}
 	return &agentadaptor.DriverCheckpoint{
 		State: &agentadaptor.DriverSessionState{
-			ResumeID:  p.sessionID,
+			ResumeID:  p.checkpointThreadID,
 			DisplayID: display,
 		},
 		Valid: true,
 	}
+}
+
+func (p *codexParser) checkpointForOutcome(exitCode int, signal string, timedOut bool, failure *agentadaptor.RunFailure) *agentadaptor.DriverCheckpoint {
+	if signal != "" || timedOut || failure != nil {
+		return nil
+	}
+	return p.checkpoint(exitCode)
 }
 
 // snapshotCodexStdout feeds a complete stdout string through the parser and

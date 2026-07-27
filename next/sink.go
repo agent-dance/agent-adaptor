@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -29,22 +30,16 @@ var errApprovalAbort = errors.New("adaptor: approval aborted the run")
 // backpressure strategy, and implements driver.DecisionCapableSink so
 // approval requests route through the unified stream / OnApproval callback.
 type eventSink struct {
-	events   chan Event
-	blocking bool
+	events <-chan Event
+	broker *eventBroker
 
 	runID   string
 	policy  ApprovalPolicy // effective (defaults materialized)
 	handler ApprovalHandler
 	caps    driver.RunPolicyCapabilities
 
-	mu      sync.Mutex
-	closed  bool
-	dropped int
-	done    chan struct{}
-	active  sync.WaitGroup
-	once    sync.Once
-
 	// retryWarned dedupes the retry-degradation warning per kind.
+	retryMu     sync.Mutex
 	retryWarned map[driver.HumanDecisionKind]struct{}
 
 	// decisionSerial serializes RequestDecision calls (legacy contract:
@@ -62,12 +57,13 @@ type eventSink struct {
 }
 
 type eventSinkConfig struct {
-	runID    string
-	buffer   int
-	blocking bool
-	policy   ApprovalPolicy
-	handler  ApprovalHandler
-	caps     driver.RunPolicyCapabilities
+	runID     string
+	threadKey string
+	buffer    int
+	blocking  bool
+	policy    ApprovalPolicy
+	handler   ApprovalHandler
+	caps      driver.RunPolicyCapabilities
 }
 
 func newEventSink(cfg eventSinkConfig) *eventSink {
@@ -75,14 +71,14 @@ func newEventSink(cfg eventSinkConfig) *eventSink {
 	if buf <= 0 {
 		buf = defaultEventBuffer
 	}
+	broker := newEventBroker(cfg.runID, cfg.threadKey, buf, cfg.blocking)
 	return &eventSink{
-		events:      make(chan Event, buf),
-		blocking:    cfg.blocking,
+		events:      broker.events,
+		broker:      broker,
 		runID:       cfg.runID,
 		policy:      effectiveApprovalPolicy(cfg.policy),
 		handler:     cfg.handler,
 		caps:        cfg.caps,
-		done:        make(chan struct{}),
 		retryWarned: map[driver.HumanDecisionKind]struct{}{},
 		outstanding: map[string]*ApprovalRequest{},
 	}
@@ -120,12 +116,27 @@ func effectiveApprovalPolicy(p ApprovalPolicy) ApprovalPolicy {
 // ---------------------------------------------------------------------------
 
 func (s *eventSink) Emit(ev driver.RunEvent) error {
-	s.push(eventFromRunEvent(ev))
+	var source *EventSourceMeta
+	if ev.Seq != 0 || !ev.Timestamp.IsZero() {
+		source = &EventSourceMeta{Sequence: ev.Seq, Timestamp: ev.Timestamp}
+	}
+	s.pushWithSource(eventFromRunEvent(ev), source)
 	return nil
 }
 
 func (s *eventSink) EmitStream(p driver.StreamPayload) error {
-	s.push(eventFromStreamPayload(p))
+	sequence := p.Sequence
+	if sequence == 0 {
+		sequence = p.Seq
+	}
+	var source *EventSourceMeta
+	if p.RunID != "" || p.ThreadID != "" || p.TurnID != "" || sequence != 0 || !p.Timestamp.IsZero() {
+		source = &EventSourceMeta{
+			RunID: p.RunID, ThreadID: p.ThreadID, TurnID: p.TurnID,
+			Sequence: sequence, Timestamp: p.Timestamp,
+		}
+	}
+	s.pushWithSource(eventFromStreamPayload(p), source)
 	return nil
 }
 
@@ -140,71 +151,60 @@ func (s *eventSink) EmitStream(p driver.StreamPayload) error {
 // close() releases pending senders. Emitting on a closed sink is a no-op,
 // never a panic.
 func (s *eventSink) push(ev Event) {
-	s.mu.Lock()
-	if s.closed {
-		s.mu.Unlock()
-		return
-	}
-	if s.blocking {
-		s.active.Add(1)
-		s.mu.Unlock()
-		defer s.active.Done()
-		select {
-		case s.events <- ev:
-		case <-s.done:
-		}
-		return
-	}
-	defer s.mu.Unlock()
-	s.flushDroppedLocked()
-	select {
-	case s.events <- ev:
-	default:
-		s.dropped++
-	}
+	s.pushWithSource(ev, sourceMetaFromEvent(ev))
 }
 
-// flushDroppedLocked surfaces the aggregated drop marker as soon as the
-// channel has room. Callers hold s.mu.
-func (s *eventSink) flushDroppedLocked() {
-	if s.dropped == 0 {
+func (s *eventSink) pushWithSource(ev Event, source *EventSourceMeta) {
+	if s == nil || s.broker == nil {
 		return
 	}
-	select {
-	case s.events <- Dropped{Count: s.dropped}:
-		s.dropped = 0
-	default:
-	}
+	s.broker.publish(ev, source)
 }
 
 // close seals the sink: releases blocked senders, expires unanswered
 // approval requests, flushes the final drop marker, and closes the event
 // channel. Idempotent.
 func (s *eventSink) close() {
-	s.once.Do(func() {
-		s.mu.Lock()
-		s.closed = true
-		close(s.done)
-		s.mu.Unlock()
+	if s == nil {
+		return
+	}
+	s.expireOutstanding()
+	s.broker.close()
+}
 
-		// Wait for in-flight blocking sends released by done.
-		s.active.Wait()
+func (s *eventSink) abort() {
+	if s == nil {
+		return
+	}
+	s.expireOutstanding()
+	s.broker.abort()
+}
 
-		// Expire unanswered event-form requests: late Approve / Deny /
-		// Answer calls fail with ErrApprovalResolved after the run ends.
-		s.outstandingMu.Lock()
-		outstanding := s.outstanding
-		s.outstanding = map[string]*ApprovalRequest{}
-		s.outstandingMu.Unlock()
-		for _, r := range outstanding {
-			r.expire()
-		}
+func (s *eventSink) expireOutstanding() {
+	s.outstandingMu.Lock()
+	outstanding := s.outstanding
+	s.outstanding = map[string]*ApprovalRequest{}
+	s.outstandingMu.Unlock()
+	for _, r := range outstanding {
+		r.expire()
+	}
+}
 
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		s.flushDroppedLocked()
-		close(s.events)
-	})
+func sourceMetaFromEvent(ev Event) *EventSourceMeta {
+	if ev == nil {
+		return nil
+	}
+	meta := ev.Meta()
+	if meta.Source != nil {
+		return cloneEventSourceMeta(meta.Source)
+	}
+	if meta.RunID == "" && meta.ThreadKey == "" && meta.TurnID == "" && meta.Sequence == 0 && meta.Time.IsZero() {
+		return nil
+	}
+	return &EventSourceMeta{
+		RunID: meta.RunID, ThreadID: meta.ThreadKey, TurnID: meta.TurnID,
+		Sequence: meta.Sequence, Timestamp: meta.Time,
+	}
 }
 
 func (s *eventSink) setPendingFailure(f *driver.RunFailure) {
@@ -389,6 +389,7 @@ func (s *eventSink) runHandler(ctx context.Context, req driver.DecisionRequest) 
 			resp.RequestID = req.RequestID
 			return resp, resp.Result, nil
 		}
+		ar.expire()
 		rerr := errors.New("approval handler returned without resolving the request")
 		s.setPendingFailure(&driver.RunFailure{Code: driver.FailureAgentError, Message: rerr.Error()})
 		return driver.DecisionResponse{RequestID: req.RequestID, Result: driver.DecisionAborted}, driver.DecisionAborted, rerr
@@ -424,22 +425,7 @@ func (s *eventSink) runEventDispatch(ctx context.Context, req driver.DecisionReq
 		s.outstandingMu.Unlock()
 	}()
 
-	s.mu.Lock()
-	if s.closed {
-		s.mu.Unlock()
-		return driver.DecisionResponse{RequestID: req.RequestID, Result: driver.DecisionAborted}, driver.DecisionAborted, context.Canceled
-	}
-	s.active.Add(1)
-	s.mu.Unlock()
-
-	enqueued := false
-	select {
-	case s.events <- ar:
-		enqueued = true
-	case <-s.done:
-	case <-ctx.Done():
-	}
-	s.active.Done()
+	enqueued := s.broker.publishContext(ctx, ar, nil)
 
 	if !enqueued {
 		if resp, ok := ar.expire(); ok {
@@ -456,10 +442,19 @@ func (s *eventSink) runEventDispatch(ctx context.Context, req driver.DecisionReq
 	}
 
 	select {
-	case resp := <-ar.reply:
-		resp.RequestID = req.RequestID
-		return resp, resp.Result, nil
-	case <-s.done:
+	case <-ar.ready():
+		if resp, ok := ar.takeResponse(); ok {
+			resp.RequestID = req.RequestID
+			return resp, resp.Result, nil
+		}
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return driver.DecisionResponse{RequestID: req.RequestID, Result: driver.DecisionTimedOut}, driver.DecisionTimedOut, nil
+		}
+		if ctx.Err() != nil {
+			return driver.DecisionResponse{RequestID: req.RequestID, Result: driver.DecisionAborted}, driver.DecisionAborted, ctx.Err()
+		}
+		return driver.DecisionResponse{RequestID: req.RequestID, Result: driver.DecisionAborted}, driver.DecisionAborted, context.Canceled
+	case <-s.broker.abortCh:
 		if resp, ok := ar.expire(); ok {
 			resp.RequestID = req.RequestID
 			return resp, resp.Result, nil
@@ -560,13 +555,13 @@ func (s *eventSink) retrySupported(kind driver.HumanDecisionKind) bool {
 // pushRetryUnsupportedWarning emits the retry-degradation warning Notice at
 // most once per kind (legacy lifecycle warning event, same Data contract).
 func (s *eventSink) pushRetryUnsupportedWarning(kind driver.HumanDecisionKind, action driver.FailureAction) {
-	s.mu.Lock()
+	s.retryMu.Lock()
 	if _, dup := s.retryWarned[kind]; dup {
-		s.mu.Unlock()
+		s.retryMu.Unlock()
 		return
 	}
 	s.retryWarned[kind] = struct{}{}
-	s.mu.Unlock()
+	s.retryMu.Unlock()
 
 	s.push(Notice{
 		Kind: NoticeLifecycle,
@@ -637,10 +632,16 @@ func (s *eventSink) pushRequestedNotice(req driver.DecisionRequest) {
 		Kind: NoticeApprovalRequested,
 		Text: req.Prompt,
 		Data: map[string]any{
-			"request_id": req.RequestID,
-			"kind":       string(req.Kind),
-			"source":     req.Source,
-			"attempt":    req.RetryAttempt,
+			"request_id":     req.RequestID,
+			"kind":           string(req.Kind),
+			"source":         req.Source,
+			"tool_call_id":   req.ToolCallID,
+			"payload":        maps.Clone(req.Payload),
+			"choices":        append([]driver.DecisionChoice(nil), req.Choices...),
+			"created_at":     req.CreatedAt,
+			"deadline":       req.Deadline,
+			"default_result": string(req.DefaultDecision),
+			"attempt":        req.RetryAttempt,
 		},
 	})
 }
@@ -654,14 +655,23 @@ func (s *eventSink) pushResolvedNotice(req driver.DecisionRequest, resp driver.D
 	}
 	s.push(Notice{
 		Kind: NoticeApprovalResolved,
+		Text: resp.Text,
 		Data: map[string]any{
-			"request_id": req.RequestID,
-			"kind":       string(req.Kind),
-			"source":     req.Source,
-			"result":     string(resp.Result),
-			"choice":     resp.Choice,
-			"attempt":    req.RetryAttempt,
-			"latency":    latency,
+			"request_id":   req.RequestID,
+			"kind":         string(req.Kind),
+			"source":       req.Source,
+			"tool_call_id": req.ToolCallID,
+			"payload":      maps.Clone(req.Payload),
+			"choices":      append([]driver.DecisionChoice(nil), req.Choices...),
+			"created_at":   req.CreatedAt,
+			"deadline":     req.Deadline,
+			"result":       string(resp.Result),
+			"choice":       resp.Choice,
+			"answer":       maps.Clone(resp.Answer),
+			"text":         resp.Text,
+			"attempt":      req.RetryAttempt,
+			"resolved_at":  at,
+			"latency":      latency,
 		},
 	})
 }

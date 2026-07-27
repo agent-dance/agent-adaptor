@@ -6,30 +6,19 @@ import (
 	"time"
 
 	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/mcp"
 	"github.com/agent-dance/agent-adaptor/profile"
+	"github.com/agent-dance/agent-adaptor/skill"
 )
 
-// Compile-time proof that every profile name is an alias for the existing
-// public contract type, not a parallel declaration.
+// Compile-time proof that profile selection remains assignable to the
+// migration surface. Resources intentionally are not aliases: profile owns
+// the v1 consumer declaration and the engine performs an explicit conversion.
 var (
-	_ agentadaptor.ProfileSelection       = profile.Native()
-	_ agentadaptor.ProfileMode            = profile.ModeClone
-	_ agentadaptor.CloneProfileOptions    = profile.CloneOptions{}
-	_ agentadaptor.CloneProfileAuthMode   = profile.AuthLink
-	_ agentadaptor.ProfileResources       = profile.Resources{}
-	_ agentadaptor.AgentSpec              = profile.SubAgent{}
-	_ agentadaptor.AgentToolPolicy        = profile.ToolPolicy{}
-	_ agentadaptor.HookSpec               = profile.Hook{}
-	_ agentadaptor.HookEvent              = profile.HookEventPreTool
-	_ agentadaptor.HookMatcher            = profile.HookMatcher{}
-	_ agentadaptor.HookHandler            = profile.HookHandler{}
-	_ agentadaptor.HookFailPolicy         = profile.HookFailPolicyClosed
-	_ *agentadaptor.InstructionsBundleRef = profile.Text("x")
-	_ agentadaptor.InstructionScope       = profile.InstructionScopeProject
-	_ agentadaptor.InstructionMode        = profile.InstructionModeReplace
-	_ agentadaptor.ProfileConfigPatch     = profile.ConfigPatch{}
-	_ agentadaptor.NativeConfigPatch      = profile.NativeConfigPatch{}
-	_ agentadaptor.ProfileConfigFileKind  = profile.ConfigFileJSON
+	_ agentadaptor.ProfileSelection     = profile.Native()
+	_ agentadaptor.ProfileMode          = profile.ModeClone
+	_ agentadaptor.CloneProfileOptions  = profile.CloneOptions{}
+	_ agentadaptor.CloneProfileAuthMode = profile.AuthLink
 )
 
 // selectionFromOption applies a legacy binding-level profile option and
@@ -219,42 +208,48 @@ func TestSelectionModeConstantsMatchRoot(t *testing.T) {
 	}
 }
 
-func TestResourceEnumConstantsMatchRoot(t *testing.T) {
-	if profile.HookEventPreTool != agentadaptor.HookEventPreTool ||
-		profile.HookEventStopFailure != agentadaptor.HookEventStopFailure ||
-		profile.HookEventSessionStart != agentadaptor.HookEventSessionStart {
-		t.Fatal("hook event constants diverge from root aliases")
+func TestResourceEnumWireValues(t *testing.T) {
+	values := map[string]string{
+		"hook event":      string(profile.HookEventPreTool),
+		"matcher subject": string(profile.HookMatcherSubjectTool),
+		"matcher syntax":  string(profile.HookMatcherSyntaxRegex),
+		"handler":         string(profile.HookHandlerMCPTool),
+		"fail policy":     string(profile.HookFailPolicyClosed),
+		"scope":           string(profile.InstructionScopeProject),
+		"mode":            string(profile.InstructionModeReplace),
+		"config kind":     string(profile.ConfigFileTOML),
 	}
-	if profile.HookMatcherSubjectTool != agentadaptor.HookMatcherSubjectTool ||
-		profile.HookMatcherSyntaxRegex != agentadaptor.HookMatcherSyntaxRegex {
-		t.Fatal("hook matcher constants diverge from root aliases")
+	want := map[string]string{
+		"hook event":      "pre_tool",
+		"matcher subject": "tool",
+		"matcher syntax":  "regex",
+		"handler":         "mcp_tool",
+		"fail policy":     "closed",
+		"scope":           "project",
+		"mode":            "replace",
+		"config kind":     "toml",
 	}
-	if profile.HookHandlerMCPTool != agentadaptor.HookHandlerMCPTool ||
-		profile.HookFailPolicyClosed != agentadaptor.HookFailPolicyClosed {
-		t.Fatal("hook handler/fail-policy constants diverge from root aliases")
-	}
-	if profile.InstructionScopeProject != agentadaptor.InstructionScopeProject ||
-		profile.InstructionModeReplace != agentadaptor.InstructionModeReplace {
-		t.Fatal("instruction constants diverge from root aliases")
-	}
-	if profile.ConfigFileJSON != agentadaptor.ProfileConfigFileJSON ||
-		profile.ConfigFileTOML != agentadaptor.ProfileConfigFileTOML {
-		t.Fatal("config file kind constants diverge from root aliases")
+	if !reflect.DeepEqual(values, want) {
+		t.Fatalf("resource enum wire values = %#v, want %#v", values, want)
 	}
 }
 
 func TestTextBuildsInlineInstructions(t *testing.T) {
 	got := profile.Text("Follow ACME coding standards.")
-	want := &agentadaptor.InstructionsBundleRef{Content: "Follow ACME coding standards."}
+	want := &profile.Instructions{Content: "Follow ACME coding standards."}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Text() = %+v, want %+v", got, want)
 	}
 }
 
-// declaredResources builds a Resources value exercising every sub-resource
-// family using only profile-package vocabulary.
+// declaredResources exercises every resource family using only public
+// consumer vocabulary packages.
 func declaredResources() profile.Resources {
 	return profile.Resources{
+		Skills: []skill.Ref{skill.Inline("triage", "# triage")},
+		MCP: []mcp.Server{
+			mcp.Stdio("docs", "docs-server", mcp.Args("--stdio")),
+		},
 		Agents: []profile.SubAgent{{
 			Key:             "tester",
 			RuntimeName:     "acme-tester",
@@ -318,40 +313,10 @@ func declaredResources() profile.Resources {
 
 func TestResourcesSubResourceFieldsPassThrough(t *testing.T) {
 	declared := declaredResources()
-
-	// profile.Resources is the root ProfileResources — assignment needs no
-	// conversion and preserves every field.
-	var asRoot agentadaptor.ProfileResources = declared
-	if !reflect.DeepEqual(asRoot, declared) {
-		t.Fatal("assigning profile.Resources to root ProfileResources changed its contents")
+	if len(declared.Skills) != 1 || len(declared.MCP) != 1 || len(declared.Agents) != 1 || len(declared.Hooks) != 1 || len(declared.Config) != 2 {
+		t.Fatalf("complete profile.Resources declaration lost a resource family: %+v", declared)
 	}
-
-	// Feeding it through the existing binding-level option must land each
-	// sub-resource family on AgentDefaults unchanged.
-	var defaults agentadaptor.AgentDefaults
-	agentadaptor.WithDefaultProfileResources(declared)(&defaults)
-
-	if !reflect.DeepEqual(defaults.Agents, declared.Agents) {
-		t.Fatalf("agents not passed through\n got:  %+v\n want: %+v", defaults.Agents, declared.Agents)
-	}
-	if !reflect.DeepEqual(defaults.Hooks, declared.Hooks) {
-		t.Fatalf("hooks not passed through\n got:  %+v\n want: %+v", defaults.Hooks, declared.Hooks)
-	}
-	if !reflect.DeepEqual(defaults.Instructions, declared.Instructions) {
-		t.Fatalf("instructions not passed through\n got:  %+v\n want: %+v", defaults.Instructions, declared.Instructions)
-	}
-	if !reflect.DeepEqual(defaults.ProfileConfig, declared.Config) {
-		t.Fatalf("config patches not passed through\n got:  %+v\n want: %+v", defaults.ProfileConfig, declared.Config)
-	}
-
-	// The option clones inputs, so later host mutation of the declared value
-	// must not leak into the binding defaults.
-	declared.Agents[0].Key = "mutated"
-	declared.Hooks[0].Handler.Env["AUDIT"] = "0"
-	if defaults.Agents[0].Key != "tester" {
-		t.Fatal("binding defaults alias the caller's agent slice")
-	}
-	if defaults.Hooks[0].Handler.Env["AUDIT"] != "1" {
-		t.Fatal("binding defaults alias the caller's hook env map")
+	if declared.MCP[0].Key != "docs" || declared.Instructions.Content == "" {
+		t.Fatalf("public resource vocabulary did not retain values: %+v", declared)
 	}
 }

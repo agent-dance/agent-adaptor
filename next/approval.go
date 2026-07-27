@@ -3,6 +3,8 @@ package adaptor
 import (
 	"context"
 	"errors"
+	"fmt"
+	"maps"
 	"sync"
 	"time"
 
@@ -137,6 +139,14 @@ var (
 	// not fit the request kind: Approve on a Question, or Answer on a
 	// Permission / PlanReview request.
 	ErrApprovalKindMismatch = errors.New("adaptor: response does not match approval kind")
+	// ErrApprovalUnavailable is returned by a nil, zero-valued, or otherwise
+	// unbound request. Such values have no run-owned responder and therefore
+	// can never be answered.
+	ErrApprovalUnavailable = errors.New("adaptor: approval responder unavailable")
+	// ErrApprovalExpired identifies a request whose response window or owning
+	// run ended. It wraps ErrApprovalResolved so callers which only distinguish
+	// first response from subsequent responses remain compatible.
+	ErrApprovalExpired = fmt.Errorf("%w: request expired", ErrApprovalResolved)
 )
 
 // ApprovalRequest is a human-in-the-loop request that carries its own
@@ -146,6 +156,7 @@ var (
 // return ErrApprovalResolved; if nobody responds before Deadline, the
 // ApprovalPolicy timeout fallback applies.
 type ApprovalRequest struct {
+	eventMetaCarrier
 	// ID identifies this request (unique per run, fresh per retry).
 	ID string
 	// RunID is the SDK execution identifier of the owning run.
@@ -176,13 +187,36 @@ type ApprovalRequest struct {
 	// Attempt is the zero-based retry attempt (FallbackRetry re-asks).
 	Attempt int
 
-	mu       sync.Mutex
-	resolved bool
-	reply    chan driver.DecisionResponse
+	responder *approvalResponder
+}
+
+type approvalState uint8
+
+const (
+	approvalPending approvalState = iota
+	approvalResponded
+	approvalExpired
+)
+
+// approvalResponder is the run-owned exactly-once state. ApprovalRequest is
+// intentionally copyable: all value and pointer copies retain this pointer,
+// so a copied request cannot manufacture a second response channel or lock.
+type approvalResponder struct {
+	mu    sync.Mutex
+	state approvalState
+	id    string
+	kind  ApprovalKind
+	resp  driver.DecisionResponse
+	ready chan struct{}
 }
 
 // newApprovalRequest wraps a normalized DecisionRequest with a responder.
 func newApprovalRequest(req driver.DecisionRequest) *ApprovalRequest {
+	responder := &approvalResponder{
+		id:    req.RequestID,
+		kind:  ApprovalKind(req.Kind),
+		ready: make(chan struct{}),
+	}
 	return &ApprovalRequest{
 		ID:         req.RequestID,
 		RunID:      req.RunID,
@@ -191,11 +225,11 @@ func newApprovalRequest(req driver.DecisionRequest) *ApprovalRequest {
 		Source:     req.Source,
 		ToolCallID: req.ToolCallID,
 		Choices:    append([]Choice(nil), req.Choices...),
-		Details:    req.Payload,
+		Details:    maps.Clone(req.Payload),
 		CreatedAt:  req.CreatedAt,
 		Deadline:   req.Deadline,
 		Attempt:    req.RetryAttempt,
-		reply:      make(chan driver.DecisionResponse, 1),
+		responder:  responder,
 	}
 }
 
@@ -203,23 +237,35 @@ func newApprovalRequest(req driver.DecisionRequest) *ApprovalRequest {
 // it on a Question returns ErrApprovalKindMismatch; calling it after the
 // request was resolved returns ErrApprovalResolved.
 func (r *ApprovalRequest) Approve(_ context.Context) error {
-	if r.Kind == ApprovalQuestion {
+	responder, err := r.boundResponder()
+	if err != nil {
+		return err
+	}
+	if responder.kind == ApprovalQuestion {
 		return ErrApprovalKindMismatch
 	}
-	return r.settle(driver.DecisionResponse{Result: driver.DecisionApproved})
+	return responder.settle(driver.DecisionResponse{Result: driver.DecisionApproved})
 }
 
 // Deny resolves any request kind negatively with a reason. What happens
 // next is the ApprovalPolicy OnReject fallback (abort by default).
 func (r *ApprovalRequest) Deny(_ context.Context, reason string) error {
-	return r.settle(driver.DecisionResponse{Result: driver.DecisionRejected, Text: reason})
+	responder, err := r.boundResponder()
+	if err != nil {
+		return err
+	}
+	return responder.settle(driver.DecisionResponse{Result: driver.DecisionRejected, Text: reason})
 }
 
 // Answer resolves a Question request with the chosen option: one of the
 // Choices keys, or free text for open questions. Calling it on a
 // Permission / PlanReview request returns ErrApprovalKindMismatch.
 func (r *ApprovalRequest) Answer(_ context.Context, option string) error {
-	if r.Kind != ApprovalQuestion {
+	responder, err := r.boundResponder()
+	if err != nil {
+		return err
+	}
+	if responder.kind != ApprovalQuestion {
 		return ErrApprovalKindMismatch
 	}
 	resp := driver.DecisionResponse{Result: driver.DecisionAnswered, Text: option}
@@ -229,19 +275,34 @@ func (r *ApprovalRequest) Answer(_ context.Context, option string) error {
 			break
 		}
 	}
-	return r.settle(resp)
+	return responder.settle(resp)
 }
 
-// settle records the consumer response exactly once.
-func (r *ApprovalRequest) settle(resp driver.DecisionResponse) error {
+func (r *ApprovalRequest) boundResponder() (*approvalResponder, error) {
+	if r == nil || r.responder == nil || r.responder.ready == nil {
+		return nil, ErrApprovalUnavailable
+	}
+	return r.responder, nil
+}
+
+// settle records the consumer response exactly once and wakes every waiter
+// by closing a readiness channel. It never sends to a possibly nil channel.
+func (r *approvalResponder) settle(resp driver.DecisionResponse) error {
+	if r == nil || r.ready == nil {
+		return ErrApprovalUnavailable
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.resolved {
+	switch r.state {
+	case approvalResponded:
 		return ErrApprovalResolved
+	case approvalExpired:
+		return ErrApprovalExpired
 	}
-	r.resolved = true
-	resp.RequestID = r.ID
-	r.reply <- resp // buffered(1): never blocks
+	r.state = approvalResponded
+	resp.RequestID = r.id
+	r.resp = resp
+	close(r.ready)
 	return nil
 }
 
@@ -250,32 +311,48 @@ func (r *ApprovalRequest) settle(resp driver.DecisionResponse) error {
 // response won the race under the same lock, expire recovers and returns
 // it so the answer is honored instead of dropped.
 func (r *ApprovalRequest) expire() (driver.DecisionResponse, bool) {
+	responder, err := r.boundResponder()
+	if err != nil {
+		return driver.DecisionResponse{}, false
+	}
+	return responder.expire()
+}
+
+func (r *approvalResponder) expire() (driver.DecisionResponse, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.resolved {
-		select {
-		case resp := <-r.reply:
-			return resp, true
-		default:
-			return driver.DecisionResponse{}, false
-		}
+	if r.state == approvalResponded {
+		return r.resp, true
 	}
-	r.resolved = true
+	if r.state == approvalPending {
+		r.state = approvalExpired
+		close(r.ready)
+	}
 	return driver.DecisionResponse{}, false
 }
 
 // takeResponse retrieves the settled response without blocking (callback
 // form: the handler returned nil, the response must be in the buffer).
 func (r *ApprovalRequest) takeResponse() (driver.DecisionResponse, bool) {
+	responder, err := r.boundResponder()
+	if err != nil {
+		return driver.DecisionResponse{}, false
+	}
+	return responder.takeResponse()
+}
+
+func (r *approvalResponder) takeResponse() (driver.DecisionResponse, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if !r.resolved {
+	if r.state != approvalResponded {
 		return driver.DecisionResponse{}, false
 	}
-	select {
-	case resp := <-r.reply:
-		return resp, true
-	default:
-		return driver.DecisionResponse{}, false
+	return r.resp, true
+}
+
+func (r *ApprovalRequest) ready() <-chan struct{} {
+	if r == nil || r.responder == nil {
+		return nil
 	}
+	return r.responder.ready
 }

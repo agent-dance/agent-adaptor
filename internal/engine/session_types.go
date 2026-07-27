@@ -7,13 +7,17 @@ import (
 
 // SessionRequest is the host-facing session instruction for one run. Namespace
 // and Key form the stable business key; ID/ForkFrom refer to concrete SDK
-// session handles.
+// session handles. ForkFromKey is the structured fork selector used by v1
+// Threads so the engine, rather than a caller-side prelookup, can coordinate
+// both parent and target under leases.
 type SessionRequest struct {
-	ID        string
-	Namespace string
-	Key       string
-	Mode      SessionMode
-	ForkFrom  string
+	ID           string
+	Namespace    string
+	Key          string
+	Mode         SessionMode
+	ForkFrom     string
+	ForkFromKey  string
+	SessionCodec string
 }
 
 // SessionCompatibilityStatus classifies whether a stored checkpoint can be
@@ -84,6 +88,7 @@ type SessionRecord struct {
 	Agent                    AgentIdentity
 	Fingerprint              string
 	CompatibilityFingerprint string
+	SessionCodec             string
 	DriverState              *DriverSessionState
 	CreatedAt                time.Time
 	UpdatedAt                time.Time
@@ -102,13 +107,14 @@ type SessionLease struct {
 // session state. It includes the new record, any old active mapping, held
 // leases, and whether the store should archive/rebind atomically.
 type SessionFinalizeRequest struct {
-	Record       SessionRecord
-	PreviousID   string
-	Namespace    string
-	Key          string
-	HeldLeases   []SessionLease
-	ArchiveOld   bool
-	RebindActive bool
+	Record           SessionRecord
+	PreviousID       string
+	Namespace        string
+	Key              string
+	HeldLeases       []SessionLease
+	ArchiveOld       bool
+	RebindActive     bool
+	RequireKeyAbsent bool
 }
 
 // SessionStore persists SDK-level session state for resume-capable adapters.
