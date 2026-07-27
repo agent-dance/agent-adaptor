@@ -7,7 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	agentadaptor "github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/internal/engine"
 )
 
 func TestSyncMaterializesInlineInstructions(t *testing.T) {
@@ -18,7 +19,7 @@ func TestSyncMaterializesInlineInstructions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sync instructions: %v", err)
 	}
-	if snapshot.Support != agentadaptor.ProfileResourceSupportFallback || snapshot.Materialization != agentadaptor.ProfileResourceMaterializationPromptInjected {
+	if snapshot.Support != engine.ProfileResourceSupportFallback || snapshot.Materialization != engine.ProfileResourceMaterializationPromptInjected {
 		t.Fatalf("unexpected snapshot: %#v", snapshot)
 	}
 	if path == "" || !strings.HasPrefix(path, filepath.Join(profileDir, ".agent-adaptor", "instructions")) {
@@ -72,7 +73,7 @@ func TestSyncMaterializesCodexNativeInstructions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sync codex instructions: %v", err)
 	}
-	if snapshot.Support != agentadaptor.ProfileResourceSupportPortableCore || snapshot.Materialization != agentadaptor.ProfileResourceMaterializationNativeManaged {
+	if snapshot.Support != engine.ProfileResourceSupportPortableCore || snapshot.Materialization != engine.ProfileResourceMaterializationNativeManaged {
 		t.Fatalf("unexpected snapshot: %#v", snapshot)
 	}
 	if path != filepath.Join(profileDir, "AGENTS.md") {
@@ -129,7 +130,7 @@ func TestSyncMaterializesClaudeNativeInstructions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sync claude instructions: %v", err)
 	}
-	if snapshot.Support != agentadaptor.ProfileResourceSupportPortableCore || snapshot.Materialization != agentadaptor.ProfileResourceMaterializationNativeManaged {
+	if snapshot.Support != engine.ProfileResourceSupportPortableCore || snapshot.Materialization != engine.ProfileResourceMaterializationNativeManaged {
 		t.Fatalf("unexpected snapshot: %#v", snapshot)
 	}
 	if path != filepath.Join(profileDir, "CLAUDE.md") {
@@ -150,7 +151,7 @@ func TestPrepareForRunMaterializesCursorProjectRule(t *testing.T) {
 	if prepared.Path != wantPath {
 		t.Fatalf("unexpected cursor rule path: %q", prepared.Path)
 	}
-	if prepared.Snapshot.Support != agentadaptor.ProfileResourceSupportPortableCore || prepared.Snapshot.Materialization != agentadaptor.ProfileResourceMaterializationNativeManaged {
+	if prepared.Snapshot.Support != engine.ProfileResourceSupportPortableCore || prepared.Snapshot.Materialization != engine.ProfileResourceMaterializationNativeManaged {
 		t.Fatalf("unexpected cursor snapshot: %#v", prepared.Snapshot)
 	}
 	raw, err := os.ReadFile(wantPath)

@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/internal/engine"
 )
 
 func prepareClaudeJSONSchema(raw json.RawMessage) (json.RawMessage, error) {
@@ -16,10 +16,10 @@ func prepareClaudeJSONSchema(raw json.RawMessage) (json.RawMessage, error) {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.UseNumber()
 	if err := decoder.Decode(&root); err != nil {
-		return nil, &agentadaptor.InvalidOutputSchemaError{Reason: "parse Claude JSON Schema", Cause: err}
+		return nil, &engine.InvalidOutputSchemaError{Reason: "parse Claude JSON Schema", Cause: err}
 	}
 	if _, ok := root.(map[string]any); !ok {
-		return nil, &agentadaptor.InvalidOutputSchemaError{Reason: "Claude JSON Schema must be an object"}
+		return nil, &engine.InvalidOutputSchemaError{Reason: "Claude JSON Schema must be an object"}
 	}
 
 	// 2. Inline only local references found in schema-bearing keyword positions.
@@ -29,7 +29,7 @@ func prepareClaudeJSONSchema(raw json.RawMessage) (json.RawMessage, error) {
 	}
 	object, ok := prepared.(map[string]any)
 	if !ok {
-		return nil, &agentadaptor.InvalidOutputSchemaError{Reason: "Claude JSON Schema root reference must resolve to an object"}
+		return nil, &engine.InvalidOutputSchemaError{Reason: "Claude JSON Schema root reference must resolve to an object"}
 	}
 	// 3. Remove root metadata and definitions after every reachable local ref is expanded.
 	delete(object, "$schema")
@@ -38,7 +38,7 @@ func prepareClaudeJSONSchema(raw json.RawMessage) (json.RawMessage, error) {
 	delete(object, "definitions")
 	encoded, err := json.Marshal(object)
 	if err != nil {
-		return nil, &agentadaptor.InvalidOutputSchemaError{Reason: "marshal Claude JSON Schema", Cause: err}
+		return nil, &engine.InvalidOutputSchemaError{Reason: "marshal Claude JSON Schema", Cause: err}
 	}
 	return encoded, nil
 }
@@ -48,22 +48,22 @@ func inlineClaudeLocalReferences(value, root any, active map[string]bool, rootLe
 	case map[string]any:
 		if !rootLevel {
 			if _, ok := typed["$id"].(string); ok {
-				return nil, &agentadaptor.InvalidOutputSchemaError{Reason: "Claude native structured output does not support nested $id reference scopes"}
+				return nil, &engine.InvalidOutputSchemaError{Reason: "Claude native structured output does not support nested $id reference scopes"}
 			}
 		}
 		if ref, ok := typed["$ref"].(string); ok && strings.HasPrefix(ref, "#") {
 			if ref == "#" {
-				return nil, &agentadaptor.InvalidOutputSchemaError{Reason: "Claude native structured output does not support recursive local reference #"}
+				return nil, &engine.InvalidOutputSchemaError{Reason: "Claude native structured output does not support recursive local reference #"}
 			}
 			if !strings.HasPrefix(ref, "#/") {
-				return nil, &agentadaptor.InvalidOutputSchemaError{Reason: "Claude native structured output does not support local anchor reference " + ref}
+				return nil, &engine.InvalidOutputSchemaError{Reason: "Claude native structured output does not support local anchor reference " + ref}
 			}
 			if active[ref] {
-				return nil, &agentadaptor.InvalidOutputSchemaError{Reason: "Claude native structured output does not support recursive local reference " + ref}
+				return nil, &engine.InvalidOutputSchemaError{Reason: "Claude native structured output does not support recursive local reference " + ref}
 			}
 			target, ok := resolveClaudeJSONPointer(root, ref)
 			if !ok {
-				return nil, &agentadaptor.InvalidOutputSchemaError{Reason: "resolve Claude JSON Schema reference " + ref}
+				return nil, &engine.InvalidOutputSchemaError{Reason: "resolve Claude JSON Schema reference " + ref}
 			}
 			active[ref] = true
 			expanded, err := inlineClaudeLocalReferences(target, root, active, false)

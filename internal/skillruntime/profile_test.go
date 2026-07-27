@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	agentadaptor "github.com/agent-dance/agent-adaptor/driver"
 )
 
 func TestResolveProfileCloneLinksAuthAndCopiesSettings(t *testing.T) {

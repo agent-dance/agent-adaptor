@@ -35,11 +35,35 @@ type scriptedV1Driver struct {
 	run      func(turn int, req driver.Request, sink driver.EventSink) (driver.Response, error)
 }
 
+type scriptedV1SessionCodec struct{}
+
+func (scriptedV1SessionCodec) Name() string { return "scripted-v1/session" }
+func (scriptedV1SessionCodec) ToParams(state *driver.SessionState) driver.SessionParams {
+	if state == nil {
+		return driver.SessionParams{}
+	}
+	return driver.SessionParams{ResumeID: state.ResumeID, DisplayID: state.DisplayID, Values: state.Data}
+}
+func (scriptedV1SessionCodec) FromParams(params driver.SessionParams) *driver.SessionState {
+	if params.ResumeID == "" && params.DisplayID == "" && len(params.Values) == 0 {
+		return nil
+	}
+	return &driver.SessionState{ResumeID: params.ResumeID, DisplayID: params.DisplayID, Data: params.Values}
+}
+func (scriptedV1SessionCodec) GuardFingerprint(params driver.SessionParams) string {
+	return params.ResumeID
+}
+
 func (d *scriptedV1Driver) Descriptor() driver.Descriptor {
 	return driver.Descriptor{Type: "fake-v1", DisplayName: "Fake V1"}
 }
 
 func (d *scriptedV1Driver) ValidateConfig(any) error { return nil }
+
+func (d *scriptedV1Driver) SessionConfigFingerprint() (string, error) {
+	return "scripted-v1", nil
+}
+func (d *scriptedV1Driver) SessionCodec() driver.SessionCodec { return scriptedV1SessionCodec{} }
 
 func (d *scriptedV1Driver) Run(ctx context.Context, req driver.Request, sink driver.EventSink) (driver.Response, error) {
 	d.mu.Lock()

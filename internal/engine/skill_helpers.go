@@ -1,13 +1,36 @@
 package engine
 
 import (
+	"context"
 	"fmt"
+	"io"
 	"io/fs"
+	"path"
 	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
 )
+
+// Source projections are shared by equivalence and materialization. The
+// default materializer consumes the same structural contracts in its private
+// package; retaining these narrow interfaces here avoids coupling the merge
+// algorithm to concrete public source types.
+type skillPathProjection interface{ SkillPath() string }
+type skillFSProjection interface{ SkillFS() (fs.FS, string) }
+type inlineSkillProjection interface{ InlineSkillMD() string }
+type archiveSkillProjection interface {
+	SkillArchive() (func(context.Context) (io.ReadCloser, error), string, string, string)
+}
+
+func normalizeSubpath(subpath string) string {
+	cleaned := path.Clean("/" + strings.TrimSpace(subpath))
+	cleaned = strings.TrimPrefix(cleaned, "/")
+	if cleaned == "." {
+		return ""
+	}
+	return cleaned
+}
 
 // --- clone helpers --------------------------------------------------------
 

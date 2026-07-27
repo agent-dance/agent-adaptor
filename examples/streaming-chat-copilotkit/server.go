@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/agent-dance/agent-adaptor/bridges/agui"
-	"github.com/agent-dance/agent-adaptor/bridges/sse"
 	"github.com/agent-dance/agent-adaptor/examples/internal/exampleutil"
 	adaptor "github.com/agent-dance/agent-adaptor/next"
 )
@@ -122,10 +121,7 @@ func (s *appServer) handleDecisionResolve(w http.ResponseWriter, r *http.Request
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	// The inbound DTO is protocol-level and unchanged across v1, so the
-	// browser code needed no edit when the SDK moved to responder-carrying
-	// approval requests.
-	body, err := sse.DecodeDecisionResolveRequest(r)
+	body, err := decodeApprovalResolveRequest(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return

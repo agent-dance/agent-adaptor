@@ -263,16 +263,7 @@ func checkDeclarations(t *testing.T, d driver.Driver, desc driver.Descriptor) {
 	} else if desc.Skills.Mode == driver.SkillSyncEphemeral || desc.Skills.Mode == driver.SkillSyncPersistent {
 		t.Errorf("CAP-02: Skills.Supported=false but Mode=%q declares a sync mode", desc.Skills.Mode)
 	}
-	// SO-01: structured-output declaration coherence.
-	so := desc.StructuredOutput
-	declared := so.JSONSchemaNative || so.JSONSchemaPromptValidate
-	anyWorks := so.WorksWithRun || so.WorksWithStreaming || so.WorksWithHITL
-	if !declared && anyWorks {
-		t.Error("SO-01: StructuredOutput declares WorksWith* flags without declaring JSONSchemaNative or JSONSchemaPromptValidate")
-	}
-	if declared && !so.WorksWithRun {
-		t.Error("SO-01: structured-output mechanism declared with WorksWithRun=false; v1 has one execution pipeline for both consumer Run and Stream")
-	}
+	reportViolations(t, VerifyStructuredOutputCapability(desc.StructuredOutput))
 }
 
 func checkEnvironmentProbe(t *testing.T, d driver.Driver, desc driver.Descriptor, c *suiteConfig) {
@@ -615,6 +606,7 @@ func checkLiveRun(t *testing.T, d driver.Driver, c *suiteConfig) {
 		req.Workspace = driver.WorkspaceLease{ID: "adaptertest-ws", CWD: c.workspaceCWD}
 	}
 	resp, err := d.Run(ctx, req, sink)
+	reportViolations(t, VerifyOutcome(&resp, err))
 	if err != nil {
 		t.Fatalf("live run failed: %v\nstderr tail: %s", err, rawStderrTail(&resp))
 	}
@@ -624,25 +616,12 @@ func checkLiveRun(t *testing.T, d driver.Driver, c *suiteConfig) {
 		reportViolations(t, VerifyStreamSequence(sink.Stream()))
 		reportViolations(t, VerifyStreamCapability(support.StreamCapability(), sink.Stream()))
 	}
-	reportViolations(t, VerifyResponse(&resp))
 	reportViolations(t, VerifyTranscriptMirror(sink.Events(), resp.Transcript))
 	if resp.Output == "" {
 		t.Log("note: live run returned an empty Output")
 	}
 
-	// RSP-05: a valid checkpoint must round-trip through the codec.
-	if cp := resp.Checkpoint; cp != nil && cp.Valid && cp.State != nil {
-		if provider, ok := d.(driver.SessionCodecProvider); ok {
-			codec := provider.SessionCodec()
-			params := codec.ToParams(cp.State)
-			if params.ResumeID != cp.State.ResumeID {
-				t.Errorf("RSP-05: codec.ToParams(checkpoint) lost ResumeID: got %q, want %q", params.ResumeID, cp.State.ResumeID)
-			}
-			if codec.GuardFingerprint(params) == "" {
-				t.Error("RSP-05: GuardFingerprint is empty for the live checkpoint")
-			}
-		}
-	}
+	reportViolations(t, VerifyCheckpointCodec(d, &resp))
 }
 
 func checkLiveStructuredOutput(t *testing.T, d driver.Driver, desc driver.Descriptor, c *suiteConfig) {
@@ -680,6 +659,7 @@ func checkLiveStructuredOutput(t *testing.T, d driver.Driver, desc driver.Descri
 		req.Workspace = driver.WorkspaceLease{ID: "adaptertest-ws-structured", CWD: c.workspaceCWD}
 	}
 	resp, err := d.Run(ctx, req, sink)
+	reportViolations(t, VerifyOutcome(&resp, err))
 	if err != nil {
 		t.Fatalf("SO-02: native_strict structured run failed: %v\nstderr tail: %s", err, rawStderrTail(&resp))
 	}
@@ -696,7 +676,6 @@ func checkLiveStructuredOutput(t *testing.T, d driver.Driver, desc driver.Descri
 	if len(result.RawJSON) == 0 || !json.Valid(result.RawJSON) {
 		t.Errorf("SO-02: StructuredOutput.RawJSON is not a valid JSON document: %q", string(result.RawJSON))
 	}
-	reportViolations(t, VerifyResponse(&resp))
 }
 
 func rawStderrTail(resp *driver.Response) string {

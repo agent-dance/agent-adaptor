@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/internal/processx"
 )
 
@@ -182,7 +182,7 @@ type CommandRequest struct {
 	Command string
 	Args    []string
 	CWD     string
-	Env     []agentadaptor.EnvBinding
+	Env     []driver.EnvBinding
 	Prompt  string
 
 	// Observe is optional. When set, the helper calls it for every raw chunk
@@ -207,7 +207,7 @@ type CommandRequest struct {
 }
 
 type CommandResult struct {
-	RawStreams agentadaptor.RawStreams
+	RawStreams driver.RawStreams
 	ExitCode   int
 	Signal     string
 	TimedOut   bool
@@ -218,7 +218,7 @@ const interruptedExitCode = -1
 // Run executes the requested command and streams raw stdout/stderr chunks to
 // sink and (optionally) the Observe callback. The returned CommandResult
 // always contains the full captured RawStreams, regardless of exit status.
-func Run(ctx context.Context, req CommandRequest, sink agentadaptor.EventSink) (CommandResult, error) {
+func Run(ctx context.Context, req CommandRequest, sink driver.EventSink) (CommandResult, error) {
 	command, args, err := prepareCommand(req.Command, req.Args)
 	if err != nil {
 		return CommandResult{}, err
@@ -231,8 +231,8 @@ func Run(ctx context.Context, req CommandRequest, sink agentadaptor.EventSink) (
 	}
 	cmd.Env = mergeEnv(req.Env)
 
-	_ = sink.Emit(agentadaptor.RunEvent{
-		Type:      agentadaptor.RunEventInvocation,
+	_ = sink.Emit(driver.RunEvent{
+		Type:      driver.RunEventInvocation,
 		Text:      "starting command",
 		Timestamp: time.Now().UTC(),
 		Data: map[string]any{
@@ -260,8 +260,8 @@ func Run(ctx context.Context, req CommandRequest, sink agentadaptor.EventSink) (
 		return CommandResult{}, err
 	}
 
-	_ = sink.Emit(agentadaptor.RunEvent{
-		Type:      agentadaptor.RunEventSpawn,
+	_ = sink.Emit(driver.RunEvent{
+		Type:      driver.RunEventSpawn,
 		Text:      "command spawned",
 		Timestamp: time.Now().UTC(),
 		Data: map[string]any{
@@ -379,8 +379,8 @@ func Run(ctx context.Context, req CommandRequest, sink agentadaptor.EventSink) (
 				buf.Write(chunk)
 				bufMu.Unlock()
 
-				_ = sink.Emit(agentadaptor.RunEvent{
-					Type:      agentadaptor.RunEventChunk,
+				_ = sink.Emit(driver.RunEvent{
+					Type:      driver.RunEventChunk,
 					Timestamp: ts,
 					Stream:    stream,
 					Bytes:     append([]byte(nil), chunk...),
@@ -442,7 +442,7 @@ func Run(ctx context.Context, req CommandRequest, sink agentadaptor.EventSink) (
 
 	bufMu.Lock()
 	result := CommandResult{
-		RawStreams: agentadaptor.RawStreams{
+		RawStreams: driver.RawStreams{
 			Stdout: stdoutBuf.String(),
 			Stderr: stderrBuf.String(),
 		},
@@ -529,7 +529,7 @@ func resolvePowerShellCommand() (string, error) {
 	return "", errors.New("could not locate PowerShell to execute .ps1 command")
 }
 
-func mergeEnv(bindings []agentadaptor.EnvBinding) []string {
+func mergeEnv(bindings []driver.EnvBinding) []string {
 	env := map[string]string{}
 	for _, item := range os.Environ() {
 		parts := strings.SplitN(item, "=", 2)
@@ -590,7 +590,7 @@ func setEnvValue(env map[string]string, name, value string) {
 	env[name] = value
 }
 
-func bindingNames(bindings []agentadaptor.EnvBinding) []string {
+func bindingNames(bindings []driver.EnvBinding) []string {
 	if len(bindings) == 0 {
 		return nil
 	}

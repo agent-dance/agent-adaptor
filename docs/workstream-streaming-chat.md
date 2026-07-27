@@ -399,16 +399,16 @@ codex app-server --listen stdio://
 | `item/completed` (tool items) | `StreamToolCallEnd` + `StreamToolCallResult` | Result 带 exitCode / result payload |
 | `item/plan/delta` | — | 透传到 `Raw`，未来可以提升为独立 Kind |
 | `thread/tokenUsage/updated` | — | 暂存到内存；`turn/completed` 时一并带上 |
-| `turn/completed` | `StreamRunFinished` | Usage / cost 填入 |
-| `turn/failed` | `StreamRunError` | Error 填入 |
-| `error` | `StreamRunError` | |
+| `turn/completed` (`status=completed`) | `StreamRunFinished` | Usage / cost 填入 |
+| `turn/completed` (`status=failed/interrupted`) | `StreamRunError` | Error 填入；这是唯一正式终局通知 |
+| `error` | — | 可重试且非终局，以 `StreamKind=""` 的 Raw notice 透传 |
 | ServerRequest (approval / userInput) | `StreamHITLRequested` | audit-only，adapter 自动 deny |
 
 未列出的 notification 降级为 `StreamKind=""` 的 Raw 透传，存进 `StreamPayload.Raw`。
 
 ### 8.4 Checkpoint 处理
 
-`turn/completed` 时用 `threadId` 构造 `DriverCheckpoint`：
+仅在 `turn/completed.status=completed`、进程退出 0、协议完整且没有业务失败时，用 `threadId` 构造 `DriverCheckpoint`：
 
 ```go
 &DriverCheckpoint{

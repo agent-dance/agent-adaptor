@@ -2,22 +2,29 @@ package memory
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"sync"
 	"time"
 
 	"github.com/agent-dance/agent-adaptor/threadstore"
 )
 
-// Store is an in-memory implementation of threadstore.Store — the v1 Thread
-// counterpart of SessionStore. It is useful for tests, local CLIs, demos,
-// and single-process hosts that do not need thread state to survive process
-// restarts. Production services that run multiple processes should provide
-// a durable/centralized store instead.
+type leaseRecord struct {
+	Owner string
+	Until time.Time
+	Token string
+}
+
+// Store is an in-memory implementation of threadstore.Store. It is useful for
+// tests, local CLIs, demos, and single-process hosts that do not need thread
+// state to survive process restarts. Production services that run multiple
+// processes should provide a durable/centralized store instead.
 //
-// The package intentionally ships both implementations side by side: the
-// legacy SessionStore keeps serving the root-package session API unchanged,
-// while Store backs adaptor.WithThreadStore. (One type cannot satisfy both
-// interfaces — the method names collide on different parameter types.)
+// The memory package intentionally depends only on the public threadstore
+// contract. The legacy root-package SessionStore implementation was removed
+// during the v1 cutover so this package cannot pull the old SDK surface back
+// into production dependency graphs.
 type Store struct {
 	mu       sync.Mutex
 	records  map[string]threadstore.Record
@@ -172,4 +179,12 @@ func (s *Store) ReleaseLease(_ context.Context, lease threadstore.Lease) error {
 	}
 	delete(s.leases, lease.Target)
 	return nil
+}
+
+func newLeaseToken() string {
+	var buf [8]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		return hex.EncodeToString([]byte(time.Now().UTC().Format(time.RFC3339Nano)))
+	}
+	return hex.EncodeToString(buf[:])
 }

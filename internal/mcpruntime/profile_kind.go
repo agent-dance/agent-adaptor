@@ -1,21 +1,22 @@
 package mcpruntime
 
 import (
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/internal/engine"
 	"github.com/agent-dance/agent-adaptor/internal/profilekind"
 )
 
-type ProfileKind = agentadaptor.ProfileKind
+type ProfileKind = engine.ProfileKind
 
 const (
-	ProfileKindShared      = agentadaptor.ProfileKindShared
-	ProfileKindHostManaged = agentadaptor.ProfileKindHostManaged
+	ProfileKindShared      = engine.ProfileKindShared
+	ProfileKindHostManaged = engine.ProfileKindHostManaged
 	// ProfileKindDedicated is kept as an internal compatibility alias for MCP
 	// tests/callers that predate the shared vs host-managed terminology.
-	ProfileKindDedicated = agentadaptor.ProfileKindHostManaged
+	ProfileKindDedicated = engine.ProfileKindHostManaged
 )
 
-func ClassifyProfile(profile agentadaptor.AgentProfile, canonicalShared string) ProfileKind {
+func ClassifyProfile(profile driver.AgentProfile, canonicalShared string) ProfileKind {
 	return profilekind.Classify(profile, canonicalShared)
 }
 

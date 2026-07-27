@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/internal/adapterutil"
 )
 
@@ -33,7 +33,7 @@ type claudeQuotaWindow struct {
 	ResetsAt    string   `json:"resets_at"`
 }
 
-func fetchClaudeQuota(ctx context.Context, token string) ([]agentadaptor.QuotaWindow, error) {
+func fetchClaudeQuota(ctx context.Context, token string) ([]driver.QuotaWindow, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, claudeQuotaUsageURL, nil)
 	if err != nil {
 		return nil, err
@@ -52,37 +52,37 @@ func fetchClaudeQuota(ctx context.Context, token string) ([]agentadaptor.QuotaWi
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
 		return nil, err
 	}
-	windows := make([]agentadaptor.QuotaWindow, 0, 5)
+	windows := make([]driver.QuotaWindow, 0, 5)
 	if payload.FiveHour != nil {
-		windows = append(windows, agentadaptor.QuotaWindow{
+		windows = append(windows, driver.QuotaWindow{
 			Label:       "Current session",
 			UsedPercent: normalizeClaudePercent(payload.FiveHour.Utilization),
 			ResetsAt:    payload.FiveHour.ResetsAt,
 		})
 	}
 	if payload.SevenDay != nil {
-		windows = append(windows, agentadaptor.QuotaWindow{
+		windows = append(windows, driver.QuotaWindow{
 			Label:       "Current week (all models)",
 			UsedPercent: normalizeClaudePercent(payload.SevenDay.Utilization),
 			ResetsAt:    payload.SevenDay.ResetsAt,
 		})
 	}
 	if payload.SevenDaySonnet != nil {
-		windows = append(windows, agentadaptor.QuotaWindow{
+		windows = append(windows, driver.QuotaWindow{
 			Label:       "Current week (Sonnet only)",
 			UsedPercent: normalizeClaudePercent(payload.SevenDaySonnet.Utilization),
 			ResetsAt:    payload.SevenDaySonnet.ResetsAt,
 		})
 	}
 	if payload.SevenDayOpus != nil {
-		windows = append(windows, agentadaptor.QuotaWindow{
+		windows = append(windows, driver.QuotaWindow{
 			Label:       "Current week (Opus only)",
 			UsedPercent: normalizeClaudePercent(payload.SevenDayOpus.Utilization),
 			ResetsAt:    payload.SevenDayOpus.ResetsAt,
 		})
 	}
 	if payload.ExtraUsage != nil {
-		window := agentadaptor.QuotaWindow{
+		window := driver.QuotaWindow{
 			Label:  "Extra usage",
 			Detail: "Monthly extra usage pool",
 		}
@@ -100,8 +100,8 @@ func fetchClaudeQuota(ctx context.Context, token string) ([]agentadaptor.QuotaWi
 	return windows, nil
 }
 
-func claudeQuotaReport(ctx context.Context, bindings []agentadaptor.EnvBinding) (agentadaptor.QuotaReport, error) {
-	report := agentadaptor.QuotaReport{
+func claudeQuotaReport(ctx context.Context, bindings []driver.EnvBinding) (driver.QuotaReport, error) {
+	report := driver.QuotaReport{
 		DriverType: DriverType,
 		Provider:   "anthropic",
 		Source:     "anthropic_oauth_usage",

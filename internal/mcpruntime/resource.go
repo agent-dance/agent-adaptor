@@ -12,11 +12,12 @@ import (
 	"strings"
 	"time"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/internal/engine"
 	"github.com/agent-dance/agent-adaptor/internal/profilestate"
 )
 
-const resourceKind = string(agentadaptor.ProfileResourceMCP)
+const resourceKind = string(engine.ProfileResourceMCP)
 
 type providerLayout struct {
 	driverType string
@@ -24,15 +25,15 @@ type providerLayout struct {
 	path       string
 	field      string
 	format     string
-	render     func(agentadaptor.MCPServerSpec) (map[string]any, error)
+	render     func(driver.MCPServerSpec) (map[string]any, error)
 }
 
-func SnapshotResource(driverType, profileDir string, payload agentadaptor.MCPPayload, synced bool) (agentadaptor.ResourceSnapshot, error) {
-	out := agentadaptor.ResourceSnapshot{
-		Kind:            agentadaptor.ProfileResourceMCP,
+func SnapshotResource(driverType, profileDir string, payload driver.MCPPayload, synced bool) (engine.ResourceSnapshot, error) {
+	out := engine.ResourceSnapshot{
+		Kind:            engine.ProfileResourceMCP,
 		Fingerprint:     payload.Fingerprint,
-		Support:         agentadaptor.ProfileResourceSupportPortableCore,
-		Materialization: agentadaptor.ProfileResourceMaterializationNotMaterialized,
+		Support:         engine.ProfileResourceSupportPortableCore,
+		Materialization: engine.ProfileResourceMaterializationNotMaterialized,
 		Warnings:        cloneStrings(payload.Warnings),
 	}
 	if !synced {
@@ -43,54 +44,54 @@ func SnapshotResource(driverType, profileDir string, payload agentadaptor.MCPPay
 	}
 	layout, err := layoutFor(driverType, profileDir)
 	if err != nil {
-		return agentadaptor.ResourceSnapshot{}, err
+		return engine.ResourceSnapshot{}, err
 	}
 	manifest, err := profilestate.LoadManifest(profileDir)
 	if err != nil {
-		return agentadaptor.ResourceSnapshot{}, err
+		return engine.ResourceSnapshot{}, err
 	}
 	root, err := readStructuredRoot(layout)
 	if err != nil {
-		return agentadaptor.ResourceSnapshot{}, err
+		return engine.ResourceSnapshot{}, err
 	}
 	managed, external, err := snapshotState(layout, manifest, root)
 	if err != nil {
-		return agentadaptor.ResourceSnapshot{}, err
+		return engine.ResourceSnapshot{}, err
 	}
 	out.Managed = managed
 	out.External = external
 	if len(managed) > 0 || len(external) > 0 {
-		out.Materialization = agentadaptor.ProfileResourceMaterializationNativeManaged
+		out.Materialization = engine.ProfileResourceMaterializationNativeManaged
 	}
 	return out, nil
 }
 
-func SyncResource(ctx context.Context, driverType, profileDir string, kind ProfileKind, payload agentadaptor.MCPPayload) (agentadaptor.ResourceSnapshot, error) {
+func SyncResource(ctx context.Context, driverType, profileDir string, kind ProfileKind, payload driver.MCPPayload) (engine.ResourceSnapshot, error) {
 	layout, err := layoutFor(driverType, profileDir)
 	if err != nil {
-		return agentadaptor.ResourceSnapshot{}, err
+		return engine.ResourceSnapshot{}, err
 	}
 	lock, err := profilestate.AcquireLock(ctx, profileDir, profilestate.LockOptions{StaleAfter: 10 * time.Minute})
 	if err != nil {
-		return agentadaptor.ResourceSnapshot{}, err
+		return engine.ResourceSnapshot{}, err
 	}
 	defer lock.Release()
 
 	manifest, err := profilestate.LoadManifest(profileDir)
 	if err != nil {
-		return agentadaptor.ResourceSnapshot{}, err
+		return engine.ResourceSnapshot{}, err
 	}
 	root, err := readStructuredRoot(layout)
 	if err != nil {
-		return agentadaptor.ResourceSnapshot{}, err
+		return engine.ResourceSnapshot{}, err
 	}
 	current, err := sectionMap(root, layout.field)
 	if err != nil {
-		return agentadaptor.ResourceSnapshot{}, err
+		return engine.ResourceSnapshot{}, err
 	}
 	desired, err := desiredServers(layout, payload.Servers)
 	if err != nil {
-		return agentadaptor.ResourceSnapshot{}, err
+		return engine.ResourceSnapshot{}, err
 	}
 	next := cloneAnyMap(current)
 	for key, value := range desired {
@@ -113,10 +114,10 @@ func SyncResource(ctx context.Context, driverType, profileDir string, kind Profi
 	}
 
 	if err := writeSection(layout, root, next); err != nil {
-		return agentadaptor.ResourceSnapshot{}, err
+		return engine.ResourceSnapshot{}, err
 	}
 	if err := profilestate.SaveManifest(profileDir, manifest); err != nil {
-		return agentadaptor.ResourceSnapshot{}, err
+		return engine.ResourceSnapshot{}, err
 	}
 	return SnapshotResource(driverType, profileDir, payload, true)
 }
@@ -193,7 +194,7 @@ func writeStructuredRoot(layout providerLayout, root map[string]any) error {
 	}
 }
 
-func desiredServers(layout providerLayout, servers []agentadaptor.MCPServerSpec) (map[string]any, error) {
+func desiredServers(layout providerLayout, servers []driver.MCPServerSpec) (map[string]any, error) {
 	desired := make(map[string]any, len(servers))
 	for _, server := range servers {
 		if _, exists := desired[server.Key]; exists {
@@ -278,7 +279,7 @@ func snapshotState(layout providerLayout, manifest profilestate.Manifest, root m
 	return managed, external, nil
 }
 
-func serverFingerprint(server agentadaptor.MCPServerSpec) string {
+func serverFingerprint(server driver.MCPServerSpec) string {
 	raw, err := json.Marshal(server)
 	if err != nil {
 		raw = []byte(server.Key + string(server.Transport) + server.Command + server.URL + server.BearerTokenEnvVar)

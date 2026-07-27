@@ -21,7 +21,6 @@ import (
 	"sync"
 	"testing"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/driver"
 	adaptor "github.com/agent-dance/agent-adaptor/next"
 	"github.com/agent-dance/agent-adaptor/profile"
@@ -238,8 +237,8 @@ func TestSyncProfileFallbackReportsUnsupportedAsErrors(t *testing.T) {
 	if snapshot.DriverType != "fake" {
 		t.Errorf("driver type = %q, want fake", snapshot.DriverType)
 	}
-	agents := profileResourceByKind(t, snapshot, agentadaptor.ProfileResourceAgents)
-	if agents.Materialization != agentadaptor.ProfileResourceMaterializationNotMaterialized {
+	agents := profileResourceByKind(t, snapshot, adaptor.ProfileResourceAgents)
+	if agents.Materialization != adaptor.ProfileResourceMaterializationNotMaterialized {
 		t.Errorf("agents materialization = %q, want not_materialized after a sync that cannot apply them", agents.Materialization)
 	}
 	if agents.Error == "" {

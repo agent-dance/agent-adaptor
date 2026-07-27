@@ -1,7 +1,6 @@
 package codebuddy
 
 import (
-	agentadaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/driver"
 )
 
@@ -17,17 +16,17 @@ import (
 //
 // AutoApprove alone keeps the run on the headless engine, where the
 // permission mode flag grants the equivalent blanket approval.
-func wantsControlTransport(p agentadaptor.HumanDecisionPolicy) bool {
+func wantsControlTransport(p driver.HumanDecisionPolicy) bool {
 	switch p.Permission {
-	case agentadaptor.HumanDecisionAsk, agentadaptor.HumanDecisionAutoReject:
+	case driver.HumanDecisionAsk, driver.HumanDecisionAutoReject:
 		return true
 	}
 	switch p.PlanReview {
-	case agentadaptor.HumanDecisionAsk, agentadaptor.HumanDecisionAutoReject:
+	case driver.HumanDecisionAsk, driver.HumanDecisionAutoReject:
 		return true
 	}
 	switch p.Question {
-	case agentadaptor.QuestionAsk, agentadaptor.QuestionAutoReject:
+	case driver.QuestionAsk, driver.QuestionAutoReject:
 		return true
 	}
 	return false
@@ -40,13 +39,13 @@ func wantsControlTransport(p agentadaptor.HumanDecisionPolicy) bool {
 // matches the AutoApprove intent in a non-interactive engine. Anything else
 // falls back to the CLI default (Always Ask), which in headless `-p` mode
 // results in the CLI declining tools that would otherwise prompt.
-func headlessPermissionMode(cfg agentadaptor.CodeBuddyConfig, policy agentadaptor.RunPolicy) agentadaptor.CodeBuddyPermissionMode {
-	if cfg.PermissionMode != agentadaptor.CodeBuddyPermissionUnset {
+func headlessPermissionMode(cfg Config, policy driver.RunPolicy) PermissionMode {
+	if cfg.PermissionMode != PermissionUnset {
 		return cfg.PermissionMode
 	}
 	effective := driver.EffectiveHumanDecisionPolicy(policy.HumanDecision)
-	if effective.Permission == agentadaptor.HumanDecisionAutoApprove {
-		return agentadaptor.CodeBuddyPermissionBypass
+	if effective.Permission == driver.HumanDecisionAutoApprove {
+		return PermissionBypass
 	}
-	return agentadaptor.CodeBuddyPermissionDefault
+	return PermissionDefault
 }

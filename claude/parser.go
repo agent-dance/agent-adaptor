@@ -10,7 +10,6 @@ import (
 	"sync"
 	"time"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/driver"
 )
 
@@ -20,22 +19,22 @@ import (
 type claudeParser struct {
 	mu sync.Mutex
 
-	sink agentadaptor.EventSink
+	sink driver.EventSink
 
 	stdoutLine bytes.Buffer
 	stderrLine bytes.Buffer
 
-	transcript    []agentadaptor.TranscriptItem
+	transcript    []driver.TranscriptItem
 	assistantText []string
 
 	sessionID         string
 	displayID         string
-	summary           string // last assistant text; used only as summary fallback
+	summary           string // last assistant text retained for parser diagnostics
 	terminalSummary   string // authoritative summary from terminal result events
-	usage             *agentadaptor.Usage
+	usage             *driver.Usage
 	cost              *float64
-	resultFinal       map[string]any
-	structuredOutput  *agentadaptor.StructuredOutput
+	terminal          *driver.TerminalPayload
+	structuredOutput  *driver.StructuredOutput
 	errorMessage      string
 	terminalSeen      bool
 	terminalSuccess   bool
@@ -45,7 +44,7 @@ type claudeParser struct {
 	deltaBuffers map[string]*strings.Builder // messageID -> streamed text (cancel/crash fallback)
 
 	runID  string
-	policy agentadaptor.HumanDecisionPolicy
+	policy driver.HumanDecisionPolicy
 
 	// pendingHITL tracks tool_use frames that belong to the claudeInteractiveTools
 	// whitelist so tool_result can be resolved into HITL decisions. Keyed by
@@ -53,7 +52,7 @@ type claudeParser struct {
 	pendingHITL map[string]*pendingHITL
 
 	// decisionSeq allocates RequestID suffixes for HITL events the parser
-	// synthesizes locally. A separate sink-level allocator (dualSink.decSeq)
+	// synthesizes locally. A separate sink-level allocator
 	// owns the canonical counter when adapters call sink.RequestDecision —
 	// this one is only used when the parser recognizes a historical
 	// locally-resolved tool_use (§5.1 Phase 1).
@@ -62,7 +61,7 @@ type claudeParser struct {
 	// pendingFailure is the HITL-originated failure recorded when the CLI
 	// reports a rejected plan. The driver layer reads it in Run() to set
 	// DriverRunResult.Failure.
-	pendingFailure *agentadaptor.RunFailure
+	pendingFailure *driver.RunFailure
 
 	// -------------------------------------------------------------------
 	// Phase 3 interactive mode.
@@ -78,7 +77,7 @@ type claudeParser struct {
 	// sink.RequestDecision calls without needing the driver to thread a
 	// context through every event handler.
 	interactiveCtx  context.Context
-	interactiveSink agentadaptor.DecisionCapableSink
+	interactiveSink driver.DecisionCapableSink
 	stdin           InteractiveStdin
 
 	// interactiveTools captures tool_use frames so streaming mode can still
@@ -118,7 +117,7 @@ type interactiveToolUse struct {
 // pendingHITL captures a whitelisted tool_use frame while its tool_result is
 // still in flight.
 type pendingHITL struct {
-	Kind      agentadaptor.HumanDecisionKind
+	Kind      driver.HumanDecisionKind
 	Source    string
 	ToolUseID string
 	StartedAt time.Time
@@ -128,7 +127,7 @@ type pendingHITL struct {
 	Plan    string
 	Prompt  string
 	Schema  map[string]any
-	Choices []agentadaptor.DecisionChoice
+	Choices []driver.DecisionChoice
 }
 
 var claudeCheckpointEvents = map[string]struct{}{
@@ -139,7 +138,7 @@ var claudeCheckpointEvents = map[string]struct{}{
 	"turn.completed":  {},
 }
 
-func newClaudeParser(sink agentadaptor.EventSink) *claudeParser {
+func newClaudeParser(sink driver.EventSink) *claudeParser {
 	return &claudeParser{sink: sink}
 }
 
@@ -215,16 +214,16 @@ func (p *claudeParser) processLine(stream string, line []byte, _ time.Time) {
 	}
 
 	if stream == "stderr" {
-		p.emit(agentadaptor.TranscriptItem{
-			Kind: agentadaptor.TranscriptStderr,
+		p.emit(driver.TranscriptItem{
+			Kind: driver.TranscriptStderr,
 			Text: text,
 		})
 		return
 	}
 
 	if !strings.HasPrefix(trimmed, "{") {
-		p.emit(agentadaptor.TranscriptItem{
-			Kind: agentadaptor.TranscriptStdout,
+		p.emit(driver.TranscriptItem{
+			Kind: driver.TranscriptStdout,
 			Text: text,
 		})
 		return
@@ -232,8 +231,8 @@ func (p *claudeParser) processLine(stream string, line []byte, _ time.Time) {
 	var payload map[string]any
 	if err := json.Unmarshal([]byte(trimmed), &payload); err != nil {
 		p.protocolMalformed = true
-		p.emit(agentadaptor.TranscriptItem{
-			Kind: agentadaptor.TranscriptStdout,
+		p.emit(driver.TranscriptItem{
+			Kind: driver.TranscriptStdout,
 			Text: text,
 		})
 		return
@@ -268,8 +267,8 @@ func (p *claudeParser) handlePayload(raw string, payload map[string]any) {
 		if subtype == "init" {
 			model := claudeTopLevelString(payload, "model")
 			session := claudeTopLevelString(payload, "session_id", "sessionId")
-			p.emit(agentadaptor.TranscriptItem{
-				Kind:      agentadaptor.TranscriptInit,
+			p.emit(driver.TranscriptItem{
+				Kind:      driver.TranscriptInit,
 				Model:     model,
 				SessionID: session,
 			})
@@ -281,8 +280,8 @@ func (p *claudeParser) handlePayload(raw string, payload map[string]any) {
 		if p.stream != nil && subtype == "api_retry" {
 			p.stream.handleAPIRetry(payload)
 		}
-		p.emit(agentadaptor.TranscriptItem{
-			Kind:    agentadaptor.TranscriptSystem,
+		p.emit(driver.TranscriptItem{
+			Kind:    driver.TranscriptSystem,
 			Text:    raw,
 			Subtype: subtype,
 		})
@@ -298,8 +297,8 @@ func (p *claudeParser) handlePayload(raw string, payload map[string]any) {
 		if p.interactive && p.handleInteractiveControlRequest(payload) {
 			return
 		}
-		p.emit(agentadaptor.TranscriptItem{
-			Kind:    agentadaptor.TranscriptSystem,
+		p.emit(driver.TranscriptItem{
+			Kind:    driver.TranscriptSystem,
 			Text:    raw,
 			Subtype: eventType,
 			Data:    map[string]any{"payload": payload},
@@ -316,6 +315,7 @@ func (p *claudeParser) handlePayload(raw string, payload map[string]any) {
 	case "error":
 		p.terminalSeen = true
 		p.terminalSuccess = false
+		p.terminal = &driver.TerminalPayload{Event: eventType, JSON: append(json.RawMessage(nil), raw...)}
 		message := claudeTopLevelString(payload, "message", "error")
 		if message == "" {
 			message = "claude provider error"
@@ -324,23 +324,23 @@ func (p *claudeParser) handlePayload(raw string, payload map[string]any) {
 		if p.stream != nil {
 			p.stream.handleErrorTerminal(payload)
 		}
-		p.emit(agentadaptor.TranscriptItem{
-			Kind:     agentadaptor.TranscriptFailure,
+		p.emit(driver.TranscriptItem{
+			Kind:     driver.TranscriptFailure,
 			Text:     message,
 			Metadata: map[string]string{"code": "error"},
 		})
 	case "permission_request":
 		if p.stream != nil {
-			_ = p.sink.EmitStream(agentadaptor.StreamPayload{
-				Kind:     agentadaptor.StreamHITLRequested,
+			_ = p.sink.EmitStream(driver.StreamPayload{
+				Kind:     driver.StreamHITLRequested,
 				Name:     "permission_request",
 				RunID:    p.stream.runID,
 				ThreadID: p.sessionID,
 				Raw:      payload,
 			})
 		}
-		p.emit(agentadaptor.TranscriptItem{
-			Kind:    agentadaptor.TranscriptSystem,
+		p.emit(driver.TranscriptItem{
+			Kind:    driver.TranscriptSystem,
 			Text:    raw,
 			Subtype: eventType,
 			Data:    map[string]any{"payload": payload},
@@ -350,8 +350,8 @@ func (p *claudeParser) handlePayload(raw string, payload map[string]any) {
 		// names like "turn.completed" with session_id at the top level.
 		if eventType != "" {
 			if _, ok := claudeCheckpointEvents[eventType]; ok {
-				p.emit(agentadaptor.TranscriptItem{
-					Kind:    agentadaptor.TranscriptResult,
+				p.emit(driver.TranscriptItem{
+					Kind:    driver.TranscriptResult,
 					Subtype: eventType,
 					Data:    map[string]any{"payload": payload},
 				})
@@ -361,15 +361,15 @@ func (p *claudeParser) handlePayload(raw string, payload map[string]any) {
 		if p.stream != nil {
 			op := cloneUnknownPayload(payload)
 			op["_claude_wrapper_type"] = eventType
-			_ = p.sink.EmitStream(agentadaptor.StreamPayload{
+			_ = p.sink.EmitStream(driver.StreamPayload{
 				RunID:    p.stream.runID,
 				ThreadID: p.sessionID,
 				Name:     eventType,
 				Raw:      op,
 			})
 		}
-		p.emit(agentadaptor.TranscriptItem{
-			Kind: agentadaptor.TranscriptSystem,
+		p.emit(driver.TranscriptItem{
+			Kind: driver.TranscriptSystem,
 			Text: raw,
 			Data: map[string]any{"payload": payload},
 		})
@@ -423,8 +423,8 @@ func (p *claudeParser) handleAssistantMessage(message map[string]any) {
 			}
 			p.assistantText = append(p.assistantText, text)
 			p.summary = text
-			p.emit(agentadaptor.TranscriptItem{
-				Kind:  agentadaptor.TranscriptAssistant,
+			p.emit(driver.TranscriptItem{
+				Kind:  driver.TranscriptAssistant,
 				Text:  text,
 				Model: model,
 			})
@@ -433,8 +433,8 @@ func (p *claudeParser) handleAssistantMessage(message map[string]any) {
 			if text == "" {
 				continue
 			}
-			p.emit(agentadaptor.TranscriptItem{
-				Kind:  agentadaptor.TranscriptThinking,
+			p.emit(driver.TranscriptItem{
+				Kind:  driver.TranscriptThinking,
 				Text:  text,
 				Model: model,
 			})
@@ -444,8 +444,8 @@ func (p *claudeParser) handleAssistantMessage(message map[string]any) {
 			if kind, interactive := claudeInteractiveTools[name]; interactive && id != "" {
 				p.registerPendingHITL(id, name, kind, block["input"])
 			}
-			p.emit(agentadaptor.TranscriptItem{
-				Kind:      agentadaptor.TranscriptToolCall,
+			p.emit(driver.TranscriptItem{
+				Kind:      driver.TranscriptToolCall,
 				ToolName:  name,
 				ToolUseID: id,
 				Input:     block["input"],
@@ -477,8 +477,8 @@ func (p *claudeParser) handleUserMessage(message map[string]any) {
 			}
 			// Resolve any pending HITL tool_use_id against this tool_result.
 			p.resolveHITLOnToolResult(id, text, isError)
-			p.emit(agentadaptor.TranscriptItem{
-				Kind:      agentadaptor.TranscriptToolResult,
+			p.emit(driver.TranscriptItem{
+				Kind:      driver.TranscriptToolResult,
 				ToolUseID: id,
 				Text:      text,
 				IsError:   isError,
@@ -487,8 +487,8 @@ func (p *claudeParser) handleUserMessage(message map[string]any) {
 		}
 		text := claudeTopLevelString(block, "text")
 		if text != "" {
-			p.emit(agentadaptor.TranscriptItem{
-				Kind: agentadaptor.TranscriptUser,
+			p.emit(driver.TranscriptItem{
+				Kind: driver.TranscriptUser,
 				Text: text,
 			})
 		}
@@ -520,18 +520,18 @@ func (p *claudeParser) handleResult(raw string, payload map[string]any, subtype 
 	isErrorFlag, _ := payload["is_error"].(bool)
 	p.terminalSuccess = subtype == "success" && !isErrorFlag
 
-	var decoded map[string]any
-	if err := json.Unmarshal([]byte(raw), &decoded); err == nil {
-		p.resultFinal = decoded
+	p.terminal = &driver.TerminalPayload{
+		Event: "result",
+		JSON:  append(json.RawMessage(nil), raw...),
 	}
 
 	if resultText := claudeTopLevelString(payload, "result", "summary"); resultText != "" {
 		p.terminalSummary = resultText
 	}
 	if raw, ok := claudeStructuredJSONFromResult(payload); ok {
-		p.structuredOutput = &agentadaptor.StructuredOutput{
-			Format:  agentadaptor.OutputFormatJSONSchema,
-			Source:  agentadaptor.StructuredOutputSourceNative,
+		p.structuredOutput = &driver.StructuredOutput{
+			Format:  driver.OutputFormatJSONSchema,
+			Source:  driver.StructuredOutputSourceNative,
 			RawJSON: raw,
 			Valid:   true,
 		}
@@ -544,7 +544,7 @@ func (p *claudeParser) handleResult(raw string, payload map[string]any, subtype 
 		output, okOutput := claudeTopLevelInt(usage, "output_tokens")
 		if okInput || okCached || okOutput {
 			if p.usage == nil {
-				p.usage = &agentadaptor.Usage{}
+				p.usage = &driver.Usage{}
 			}
 			if okInput {
 				p.usage.InputTokens = input
@@ -571,8 +571,8 @@ func (p *claudeParser) handleResult(raw string, payload map[string]any, subtype 
 		}
 	}
 
-	p.emit(agentadaptor.TranscriptItem{
-		Kind:    agentadaptor.TranscriptResult,
+	p.emit(driver.TranscriptItem{
+		Kind:    driver.TranscriptResult,
 		Subtype: subtype,
 		IsError: isError,
 		Usage:   p.usage,
@@ -634,26 +634,23 @@ func claudeJSONRawMessageFromValue(raw any) (json.RawMessage, bool) {
 	}
 }
 
-func (p *claudeParser) emit(item agentadaptor.TranscriptItem) {
+func (p *claudeParser) emit(item driver.TranscriptItem) {
 	p.transcript = append(p.transcript, item)
 	if p.sink == nil {
 		return
 	}
 	clone := item
-	_ = p.sink.Emit(agentadaptor.RunEvent{
-		Type:      agentadaptor.RunEventItem,
+	_ = p.sink.Emit(driver.RunEvent{
+		Type:      driver.RunEventItem,
 		Timestamp: time.Now().UTC(),
 		Item:      &clone,
 	})
 }
 
-// finalSummary implements the Summary precedence rule: terminal result text
-// wins; the last assistant text only serves as a fallback.
+// finalSummary returns only a bounded provider terminal summary. Assistant
+// output is never reused as Summary because it may be arbitrarily large.
 func (p *claudeParser) finalSummary() string {
-	if strings.TrimSpace(p.terminalSummary) != "" {
-		return p.terminalSummary
-	}
-	return p.summary
+	return strings.TrimSpace(p.terminalSummary)
 }
 
 func (p *claudeParser) buildOutput() string {
@@ -716,7 +713,7 @@ func (p *claudeParser) outputMetadata() map[string]string {
 // checkpoint safety contract are satisfied: the process exited cleanly and
 // the official stream-json protocol delivered a successful terminal result
 // carrying a top-level session_id. An init frame alone is never sufficient.
-func (p *claudeParser) checkpoint(exitCode int) *agentadaptor.DriverCheckpoint {
+func (p *claudeParser) checkpoint(exitCode int) *driver.Checkpoint {
 	if exitCode != 0 || p.protocolMalformed || !p.terminalSeen || !p.terminalSuccess || p.sessionID == "" {
 		return nil
 	}
@@ -724,8 +721,8 @@ func (p *claudeParser) checkpoint(exitCode int) *agentadaptor.DriverCheckpoint {
 	if display == "" {
 		display = p.sessionID
 	}
-	return &agentadaptor.DriverCheckpoint{
-		State: &agentadaptor.DriverSessionState{
+	return &driver.Checkpoint{
+		State: &driver.SessionState{
 			ResumeID:  p.sessionID,
 			DisplayID: display,
 		},
@@ -736,7 +733,7 @@ func (p *claudeParser) checkpoint(exitCode int) *agentadaptor.DriverCheckpoint {
 // checkpointForOutcome adds the process signal/timeout and structured
 // provider-failure gates that are only known by the Driver after the process
 // helper returns.
-func (p *claudeParser) checkpointForOutcome(exitCode int, signal string, timedOut bool, failure *agentadaptor.RunFailure) *agentadaptor.DriverCheckpoint {
+func (p *claudeParser) checkpointForOutcome(exitCode int, signal string, timedOut bool, failure *driver.RunFailure) *driver.Checkpoint {
 	if signal != "" || timedOut || failure != nil {
 		return nil
 	}
@@ -752,7 +749,7 @@ func snapshotClaudeStdout(stdout string) *claudeParser {
 
 // parseCheckpoint is the snapshot compatibility entry point. It deliberately
 // delegates to the same formal-protocol parser and safety gate as live runs.
-func parseCheckpoint(stdout string, exitCode int) *agentadaptor.DriverCheckpoint {
+func parseCheckpoint(stdout string, exitCode int) *driver.Checkpoint {
 	return snapshotClaudeStdout(stdout).checkpoint(exitCode)
 }
 
@@ -821,7 +818,7 @@ func claudeTopLevelFloat(payload map[string]any, keys ...string) (float64, bool)
 // setHITLContext wires the policy + run id the streaming driver resolved for
 // this run. Called by the driver before the CLI pipeline starts so pending
 // HITL events carry authoritative Deadline / Source values.
-func (p *claudeParser) setHITLContext(runID string, policy agentadaptor.HumanDecisionPolicy) {
+func (p *claudeParser) setHITLContext(runID string, policy driver.HumanDecisionPolicy) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.runID = runID
@@ -837,7 +834,7 @@ func (p *claudeParser) setHITLContext(runID string, policy agentadaptor.HumanDec
 // After enableInteractive, the parser's observation of tool_use frames
 // switches from "wait for tool_result and emit observational HITL" (Phase 1)
 // to "block on RequestDecision, answer control_request via stdin" (Phase 3).
-func (p *claudeParser) enableInteractive(ctx context.Context, sink agentadaptor.DecisionCapableSink, stdin InteractiveStdin) {
+func (p *claudeParser) enableInteractive(ctx context.Context, sink driver.DecisionCapableSink, stdin InteractiveStdin) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.interactive = true
@@ -872,7 +869,7 @@ func (p *claudeParser) onAssistantMessageStop(stopReason string) {
 // registerPendingHITL records an interactive tool_use frame so the parser can
 // pair it with a subsequent tool_result. Must be called from within
 // handleAssistantMessage / handleContentBlockStart where p.mu is already held.
-func (p *claudeParser) registerPendingHITL(toolUseID, toolName string, kind agentadaptor.HumanDecisionKind, input any) {
+func (p *claudeParser) registerPendingHITL(toolUseID, toolName string, kind driver.HumanDecisionKind, input any) {
 	// Phase 3 interactive mode handles tool_use via interactiveOnToolUseStart
 	// on the streaming path; the batch handleAssistantMessage path would
 	// double-register and pollute pendingHITL. Skip.
@@ -958,19 +955,19 @@ func (p *claudeParser) resolveHITLOnToolResult(toolUseID, content string, isErro
 
 	requestedAt := time.Now().UTC()
 	if p.sink != nil {
-		requested := agentadaptor.StreamPayload{
-			Kind:     agentadaptor.StreamHITLRequested,
+		requested := driver.StreamPayload{
+			Kind:     driver.StreamHITLRequested,
 			RunID:    p.runID,
 			ThreadID: p.sessionID,
 			Name:     pending.Source,
-			HITLRequested: &agentadaptor.HITLRequestedPayload{
+			HITLRequested: &driver.HITLRequestedPayload{
 				RequestID:    requestID,
 				Kind:         pending.Kind,
 				Source:       pending.Source,
 				ToolCallID:   pending.ToolUseID,
 				Prompt:       pending.Prompt,
 				Payload:      payloadMap,
-				Choices:      append([]agentadaptor.DecisionChoice(nil), pending.Choices...),
+				Choices:      append([]driver.DecisionChoice(nil), pending.Choices...),
 				CreatedAt:    createdAt,
 				Deadline:     deadline,
 				RetryAttempt: 0,
@@ -981,12 +978,12 @@ func (p *claudeParser) resolveHITLOnToolResult(toolUseID, content string, isErro
 
 	if p.sink != nil {
 		resolvedAt := time.Now().UTC()
-		resolved := agentadaptor.StreamPayload{
-			Kind:     agentadaptor.StreamHITLResolved,
+		resolved := driver.StreamPayload{
+			Kind:     driver.StreamHITLResolved,
 			RunID:    p.runID,
 			ThreadID: p.sessionID,
 			Name:     pending.Source,
-			HITLResolved: &agentadaptor.HITLResolvedPayload{
+			HITLResolved: &driver.HITLResolvedPayload{
 				RequestID:    requestID,
 				Kind:         pending.Kind,
 				Source:       pending.Source,
@@ -999,13 +996,13 @@ func (p *claudeParser) resolveHITLOnToolResult(toolUseID, content string, isErro
 		_ = p.sink.EmitStream(resolved)
 	}
 
-	if decision == agentadaptor.DecisionRejected {
-		if effective.OnReject == agentadaptor.FailureAbort || effective.OnReject == agentadaptor.FailureActionUnset {
+	if decision == driver.DecisionRejected {
+		if effective.OnReject == driver.FailureAbort || effective.OnReject == driver.FailureActionUnset {
 			// Record a structured failure so the driver surfaces it on
 			// DriverRunResult.Failure. The run continues locally because the
 			// CLI already produced a reject tool_result, but the host sees
 			// the failure via RunResult.Failure.
-			snapshot := &agentadaptor.DecisionRequest{
+			snapshot := &driver.DecisionRequest{
 				RequestID:  requestID,
 				RunID:      p.runID,
 				ThreadID:   p.sessionID,
@@ -1014,18 +1011,18 @@ func (p *claudeParser) resolveHITLOnToolResult(toolUseID, content string, isErro
 				ToolCallID: pending.ToolUseID,
 				Prompt:     pending.Prompt,
 				Payload:    payloadMap,
-				Choices:    append([]agentadaptor.DecisionChoice(nil), pending.Choices...),
+				Choices:    append([]driver.DecisionChoice(nil), pending.Choices...),
 				CreatedAt:  createdAt,
 				Deadline:   deadline,
 			}
 			msg := hitlFailureMessage(pending.Kind)
-			p.pendingFailure = &agentadaptor.RunFailure{
-				Code:    agentadaptor.FailureReject,
+			p.pendingFailure = &driver.RunFailure{
+				Code:    driver.FailureReject,
 				Message: msg,
-				HumanDecision: &agentadaptor.HumanDecisionFailure{
+				HumanDecision: &driver.HumanDecisionFailure{
 					Kind:     pending.Kind,
 					Source:   pending.Source,
-					Decision: agentadaptor.DecisionRejected,
+					Decision: driver.DecisionRejected,
 					Request:  snapshot,
 					Attempts: 1,
 				},
@@ -1056,17 +1053,17 @@ func (p *pendingHITL) payloadAsMap() map[string]any {
 	return out
 }
 
-func decodeChoices(raw []any) []agentadaptor.DecisionChoice {
+func decodeChoices(raw []any) []driver.DecisionChoice {
 	if len(raw) == 0 {
 		return nil
 	}
-	out := make([]agentadaptor.DecisionChoice, 0, len(raw))
+	out := make([]driver.DecisionChoice, 0, len(raw))
 	for _, entry := range raw {
 		m, ok := entry.(map[string]any)
 		if !ok {
 			continue
 		}
-		choice := agentadaptor.DecisionChoice{}
+		choice := driver.DecisionChoice{}
 		if v, ok := m["key"].(string); ok {
 			choice.Key = v
 		} else if v, ok := m["value"].(string); ok {
@@ -1083,13 +1080,13 @@ func decodeChoices(raw []any) []agentadaptor.DecisionChoice {
 	return out
 }
 
-func hitlFailureMessage(kind agentadaptor.HumanDecisionKind) string {
+func hitlFailureMessage(kind driver.HumanDecisionKind) string {
 	switch kind {
-	case agentadaptor.HumanDecisionPlanReview:
+	case driver.HumanDecisionPlanReview:
 		return "Claude Plan Mode was not approved; no file changes applied."
-	case agentadaptor.HumanDecisionPermission:
+	case driver.HumanDecisionPermission:
 		return "Claude tool permission was denied by the user."
-	case agentadaptor.HumanDecisionQuestion:
+	case driver.HumanDecisionQuestion:
 		return "Claude asked the user a question and the request was rejected."
 	}
 	return "Claude human-in-the-loop decision was rejected."
@@ -1147,20 +1144,20 @@ func (p *claudeParser) interactiveOnToolUseStop(idx int) {
 	}
 }
 
-func (p *claudeParser) buildInteractiveDecisionRequestFromControl(requestID, toolName, toolUseID string, input map[string]any) agentadaptor.DecisionRequest {
+func (p *claudeParser) buildInteractiveDecisionRequestFromControl(requestID, toolName, toolUseID string, input map[string]any) driver.DecisionRequest {
 	kind, ok := claudeInteractiveTools[toolName]
 	if !ok {
-		kind = agentadaptor.HumanDecisionPermission
+		kind = driver.HumanDecisionPermission
 	}
 	prompt, choices, payload := extractInteractivePayload(kind, input)
-	if kind == agentadaptor.HumanDecisionPermission {
+	if kind == driver.HumanDecisionPermission {
 		if prompt == "" {
 			if s, ok := payload["prompt"].(string); ok && s != "" {
 				prompt = s
 			}
 		}
 	}
-	return agentadaptor.DecisionRequest{
+	return driver.DecisionRequest{
 		RequestID:  requestID,
 		RunID:      p.runID,
 		ThreadID:   p.sessionID,
@@ -1193,20 +1190,20 @@ func (p *claudeParser) buildInteractiveDecisionRequestFromControl(requestID, too
 //
 // The function tolerates unknown shapes: anything it doesn't recognise is
 // copied verbatim into payload so hosts can still render it.
-func extractInteractivePayload(kind agentadaptor.HumanDecisionKind, input map[string]any) (prompt string, choices []agentadaptor.DecisionChoice, payload map[string]any) {
+func extractInteractivePayload(kind driver.HumanDecisionKind, input map[string]any) (prompt string, choices []driver.DecisionChoice, payload map[string]any) {
 	payload = map[string]any{}
 	for k, v := range input {
 		payload[k] = v
 	}
 
 	switch kind {
-	case agentadaptor.HumanDecisionPlanReview:
+	case driver.HumanDecisionPlanReview:
 		if s, ok := input["plan"].(string); ok && s != "" {
 			payload["plan"] = s
 		}
 		return "", nil, payload
 
-	case agentadaptor.HumanDecisionQuestion:
+	case driver.HumanDecisionQuestion:
 		// Claude's AskUserQuestion packs the actual question(s) inside a
 		// "questions" array. Extract the first entry's prompt + options.
 		questions, _ := input["questions"].([]any)
@@ -1252,14 +1249,14 @@ func extractInteractivePayload(kind agentadaptor.HumanDecisionKind, input map[st
 // decodeAskUserQuestionOptions converts claude's AskUserQuestion options —
 // which are usually plain strings or objects — into the SDK's DecisionChoice
 // shape. Strings become {Key: s, Label: s}.
-func decodeAskUserQuestionOptions(raw []any) []agentadaptor.DecisionChoice {
-	out := make([]agentadaptor.DecisionChoice, 0, len(raw))
+func decodeAskUserQuestionOptions(raw []any) []driver.DecisionChoice {
+	out := make([]driver.DecisionChoice, 0, len(raw))
 	for _, entry := range raw {
 		switch v := entry.(type) {
 		case string:
-			out = append(out, agentadaptor.DecisionChoice{Key: v, Label: v})
+			out = append(out, driver.DecisionChoice{Key: v, Label: v})
 		case map[string]any:
-			c := agentadaptor.DecisionChoice{}
+			c := driver.DecisionChoice{}
 			if s, ok := v["key"].(string); ok {
 				c.Key = s
 			} else if s, ok := v["value"].(string); ok {
@@ -1313,14 +1310,14 @@ func (p *claudeParser) handleInteractiveControlRequest(payload map[string]any) b
 	if _, ok := claudeInteractiveTools[toolName]; ok {
 		resp, err := p.interactiveSink.RequestDecision(p.interactiveCtx, req)
 		if err != nil {
-			response := buildInteractiveControlResponse(req, agentadaptor.DecisionResponse{
+			response := buildInteractiveControlResponse(req, driver.DecisionResponse{
 				RequestID: req.RequestID,
-				Result:    agentadaptor.DecisionRejected,
+				Result:    driver.DecisionRejected,
 				Text:      "User decision aborted.",
 			})
-			response = p.decorateInteractiveControlResponse(req, agentadaptor.DecisionResponse{
+			response = p.decorateInteractiveControlResponse(req, driver.DecisionResponse{
 				RequestID: req.RequestID,
-				Result:    agentadaptor.DecisionRejected,
+				Result:    driver.DecisionRejected,
 				Text:      "User decision aborted.",
 			}, response)
 			_ = p.writeInteractiveControlResponse(requestID, response)
@@ -1337,14 +1334,14 @@ func (p *claudeParser) handleInteractiveControlRequest(payload map[string]any) b
 
 	effective := driver.EffectiveHumanDecisionPolicy(p.policy)
 	switch effective.Permission {
-	case agentadaptor.HumanDecisionAutoApprove:
-		_ = p.writeInteractiveControlResponse(requestID, buildInteractiveControlResponse(req, agentadaptor.DecisionResponse{
+	case driver.HumanDecisionAutoApprove:
+		_ = p.writeInteractiveControlResponse(requestID, buildInteractiveControlResponse(req, driver.DecisionResponse{
 			RequestID: req.RequestID,
-			Result:    agentadaptor.DecisionApproved,
+			Result:    driver.DecisionApproved,
 		}))
 		return true
-	case agentadaptor.HumanDecisionAutoReject:
-		resp := agentadaptor.DecisionResponse{RequestID: requestID, Result: agentadaptor.DecisionRejected}
+	case driver.HumanDecisionAutoReject:
+		resp := driver.DecisionResponse{RequestID: requestID, Result: driver.DecisionRejected}
 		response := buildInteractiveControlResponse(req, resp)
 		response = p.decorateInteractiveControlResponse(req, resp, response)
 		_ = p.writeInteractiveControlResponse(requestID, response)
@@ -1429,30 +1426,30 @@ func parseToolUseInput(raw string) map[string]any {
 // the tool_result content in claude's CLI is stringly-typed, not structured,
 // so we write human-readable prose that captures the question → answer
 // mapping. This mirrors Claude's own AskUserQuestionTool source.
-func renderInteractiveToolResult(req agentadaptor.DecisionRequest, resp agentadaptor.DecisionResponse) (string, bool) {
+func renderInteractiveToolResult(req driver.DecisionRequest, resp driver.DecisionResponse) (string, bool) {
 	switch req.Kind {
-	case agentadaptor.HumanDecisionPlanReview:
+	case driver.HumanDecisionPlanReview:
 		switch resp.Result {
-		case agentadaptor.DecisionApproved:
+		case driver.DecisionApproved:
 			return "User approved the plan. Proceed with implementation.", false
-		case agentadaptor.DecisionRejected:
+		case driver.DecisionRejected:
 			if resp.Text != "" {
 				return "User rejected the plan. Correction hint: " + resp.Text, true
 			}
 			return "User rejected the plan.", true
 		}
-	case agentadaptor.HumanDecisionQuestion:
+	case driver.HumanDecisionQuestion:
 		switch resp.Result {
-		case agentadaptor.DecisionAnswered:
+		case driver.DecisionAnswered:
 			return formatQuestionAnswer(req, resp), false
-		case agentadaptor.DecisionRejected:
+		case driver.DecisionRejected:
 			return "User declined to answer.", true
 		}
-	case agentadaptor.HumanDecisionPermission:
+	case driver.HumanDecisionPermission:
 		switch resp.Result {
-		case agentadaptor.DecisionApproved:
+		case driver.DecisionApproved:
 			return "Permission granted by user.", false
-		case agentadaptor.DecisionRejected:
+		case driver.DecisionRejected:
 			return "Permission denied by user.", true
 		}
 	}
@@ -1463,7 +1460,7 @@ func renderInteractiveToolResult(req agentadaptor.DecisionRequest, resp agentada
 // to the model. We first try to reconstruct Claude's native
 // `"question"="answer"` summary, then fall back to generic prose only when
 // the host did not provide enough structure.
-func formatQuestionAnswer(req agentadaptor.DecisionRequest, resp agentadaptor.DecisionResponse) string {
+func formatQuestionAnswer(req driver.DecisionRequest, resp driver.DecisionResponse) string {
 	if structured := formatStructuredQuestionAnswer(req, resp); structured != "" {
 		return structured
 	}
@@ -1478,7 +1475,7 @@ func formatQuestionAnswer(req agentadaptor.DecisionRequest, resp agentadaptor.De
 	return "User answered."
 }
 
-func buildInteractiveControlResponse(req agentadaptor.DecisionRequest, resp agentadaptor.DecisionResponse) map[string]any {
+func buildInteractiveControlResponse(req driver.DecisionRequest, resp driver.DecisionResponse) map[string]any {
 	toolUseID := strings.TrimSpace(req.ToolCallID)
 	allow := func(updatedInput map[string]any) map[string]any {
 		out := map[string]any{
@@ -1501,8 +1498,8 @@ func buildInteractiveControlResponse(req agentadaptor.DecisionRequest, resp agen
 		return out
 	}
 	switch req.Kind {
-	case agentadaptor.HumanDecisionPlanReview:
-		if resp.Result == agentadaptor.DecisionApproved {
+	case driver.HumanDecisionPlanReview:
+		if resp.Result == driver.DecisionApproved {
 			return allow(cloneInteractivePayload(req.Payload))
 		}
 		message := "User rejected the plan."
@@ -1510,13 +1507,13 @@ func buildInteractiveControlResponse(req agentadaptor.DecisionRequest, resp agen
 			message += " Correction hint: " + hint
 		}
 		return deny(message)
-	case agentadaptor.HumanDecisionQuestion:
-		if resp.Result == agentadaptor.DecisionAnswered {
+	case driver.HumanDecisionQuestion:
+		if resp.Result == driver.DecisionAnswered {
 			return allow(buildQuestionUpdatedInput(req, resp))
 		}
 		return deny("User declined to answer.")
-	case agentadaptor.HumanDecisionPermission:
-		if resp.Result == agentadaptor.DecisionApproved {
+	case driver.HumanDecisionPermission:
+		if resp.Result == driver.DecisionApproved {
 			return allow(cloneInteractivePayload(req.Payload))
 		}
 		return deny("Permission denied by user.")
@@ -1525,7 +1522,7 @@ func buildInteractiveControlResponse(req agentadaptor.DecisionRequest, resp agen
 	}
 }
 
-func (p *claudeParser) decorateInteractiveControlResponse(req agentadaptor.DecisionRequest, resp agentadaptor.DecisionResponse, response map[string]any) map[string]any {
+func (p *claudeParser) decorateInteractiveControlResponse(req driver.DecisionRequest, resp driver.DecisionResponse, response map[string]any) map[string]any {
 	if response == nil {
 		return nil
 	}
@@ -1534,8 +1531,8 @@ func (p *claudeParser) decorateInteractiveControlResponse(req agentadaptor.Decis
 	}
 	effective := driver.EffectiveHumanDecisionPolicy(p.policy)
 	shouldInterrupt := false
-	if resp.Result == agentadaptor.DecisionRejected {
-		shouldInterrupt = effective.OnReject == agentadaptor.FailureAbort || effective.OnReject == agentadaptor.FailureActionUnset
+	if resp.Result == driver.DecisionRejected {
+		shouldInterrupt = effective.OnReject == driver.FailureAbort || effective.OnReject == driver.FailureActionUnset
 	}
 	if shouldInterrupt {
 		response["interrupt"] = true
@@ -1565,7 +1562,7 @@ type questionAnnotation struct {
 	Notes   string
 }
 
-func formatStructuredQuestionAnswer(req agentadaptor.DecisionRequest, resp agentadaptor.DecisionResponse) string {
+func formatStructuredQuestionAnswer(req driver.DecisionRequest, resp driver.DecisionResponse) string {
 	entries := collectQuestionAnswerEntries(req, resp)
 	if len(entries) == 0 {
 		return ""
@@ -1590,7 +1587,7 @@ func formatStructuredQuestionAnswer(req agentadaptor.DecisionRequest, resp agent
 	return "User has answered your questions: " + strings.Join(parts, ", ") + ". You can now continue with the user's answers in mind."
 }
 
-func collectQuestionAnswerEntries(req agentadaptor.DecisionRequest, resp agentadaptor.DecisionResponse) []questionAnswerEntry {
+func collectQuestionAnswerEntries(req driver.DecisionRequest, resp driver.DecisionResponse) []questionAnswerEntry {
 	questions := extractQuestionTexts(req)
 	annotations := extractQuestionAnnotations(resp.Answer)
 
@@ -1621,7 +1618,7 @@ func collectQuestionAnswerEntries(req agentadaptor.DecisionRequest, resp agentad
 	return nil
 }
 
-func buildQuestionUpdatedInput(req agentadaptor.DecisionRequest, resp agentadaptor.DecisionResponse) map[string]any {
+func buildQuestionUpdatedInput(req driver.DecisionRequest, resp driver.DecisionResponse) map[string]any {
 	updated := cloneInteractivePayload(req.Payload)
 	delete(updated, "question_type")
 
@@ -1707,7 +1704,7 @@ func buildQuestionAnswerEntries(questions []string, answers map[string]string, a
 	return out
 }
 
-func extractQuestionTexts(req agentadaptor.DecisionRequest) []string {
+func extractQuestionTexts(req driver.DecisionRequest) []string {
 	out := make([]string, 0, 4)
 	seen := make(map[string]struct{}, 4)
 	appendQuestion := func(raw string) {
@@ -1823,7 +1820,7 @@ func extractQuestionAnnotations(answer map[string]any) map[string]questionAnnota
 	return out
 }
 
-func resolveSingleQuestionAnswer(req agentadaptor.DecisionRequest, resp agentadaptor.DecisionResponse) string {
+func resolveSingleQuestionAnswer(req driver.DecisionRequest, resp driver.DecisionResponse) string {
 	if s := strings.TrimSpace(resp.Text); s != "" {
 		return s
 	}
@@ -1869,7 +1866,7 @@ func stringifyQuestionAnswerValue(raw any) string {
 	}
 }
 
-func choiceDisplayValue(choices []agentadaptor.DecisionChoice, raw string) string {
+func choiceDisplayValue(choices []driver.DecisionChoice, raw string) string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return ""
@@ -1893,21 +1890,21 @@ func quoteQuestionAnswerValue(raw string) string {
 	return `"` + replacer.Replace(raw) + `"`
 }
 
-func (p *claudeParser) recordInteractiveRejectFailure(req agentadaptor.DecisionRequest, resp agentadaptor.DecisionResponse) {
-	if resp.Result != agentadaptor.DecisionRejected {
+func (p *claudeParser) recordInteractiveRejectFailure(req driver.DecisionRequest, resp driver.DecisionResponse) {
+	if resp.Result != driver.DecisionRejected {
 		return
 	}
 	effective := driver.EffectiveHumanDecisionPolicy(p.policy)
-	if effective.OnReject != agentadaptor.FailureAbort && effective.OnReject != agentadaptor.FailureActionUnset {
+	if effective.OnReject != driver.FailureAbort && effective.OnReject != driver.FailureActionUnset {
 		return
 	}
-	p.pendingFailure = &agentadaptor.RunFailure{
-		Code:    agentadaptor.FailureReject,
+	p.pendingFailure = &driver.RunFailure{
+		Code:    driver.FailureReject,
 		Message: hitlFailureMessage(req.Kind),
-		HumanDecision: &agentadaptor.HumanDecisionFailure{
+		HumanDecision: &driver.HumanDecisionFailure{
 			Kind:     req.Kind,
 			Source:   req.Source,
-			Decision: agentadaptor.DecisionRejected,
+			Decision: driver.DecisionRejected,
 			Request:  cloneInteractiveRequest(req),
 			Attempts: 1,
 		},
@@ -1928,7 +1925,7 @@ func cloneInteractivePayload(payload map[string]any) map[string]any {
 // cloneInteractiveRequest makes a small-scoped copy for Failure snapshot
 // recording. We want RunResult.Failure to survive after the parser state
 // is cleared.
-func cloneInteractiveRequest(req agentadaptor.DecisionRequest) *agentadaptor.DecisionRequest {
+func cloneInteractiveRequest(req driver.DecisionRequest) *driver.DecisionRequest {
 	out := req
 	if req.Payload != nil {
 		p := make(map[string]any, len(req.Payload))
@@ -1938,7 +1935,7 @@ func cloneInteractiveRequest(req agentadaptor.DecisionRequest) *agentadaptor.Dec
 		out.Payload = p
 	}
 	if len(req.Choices) > 0 {
-		out.Choices = append([]agentadaptor.DecisionChoice(nil), req.Choices...)
+		out.Choices = append([]driver.DecisionChoice(nil), req.Choices...)
 	}
 	return &out
 }

@@ -4,12 +4,13 @@
 // of the optional capability interfaces) against the request/response/event
 // types declared here.
 //
-// Application code that consumes the SDK does not need to import this
-// package. The root package github.com/agent-dance/agent-adaptor re-exports
-// every type in this package under its historical name via type aliases (for
-// example agentadaptor.DriverAdapter is an alias for [Driver]), so hosts keep
-// working against the root package only.
+// Application code that consumes the SDK normally imports only the root
+// adaptor package and provider packages. This package is intentionally the
+// extension-author boundary: the root package does not re-export the Driver
+// SPI or preserve the historical DriverAdapter aliases.
 //
 // The dependency direction is one-way: the root package imports driver,
-// never the reverse.
+// never the reverse. Provider packages may import driver to implement this
+// SPI; driver must not import the root package, provider packages, bridges, or
+// internal implementation packages.
 package driver

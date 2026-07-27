@@ -47,12 +47,13 @@ func (s engineStore) Finalize(ctx context.Context, req engine.SessionFinalizeReq
 		leases = append(leases, threadstore.Lease{Target: lease.Target, Owner: lease.Owner, Token: lease.Token})
 	}
 	return s.store.Finalize(ctx, threadstore.FinalizeRequest{
-		Record:       storeRecord(req.Record),
-		PreviousID:   req.PreviousID,
-		Key:          req.Key,
-		HeldLeases:   leases,
-		ArchiveOld:   req.ArchiveOld,
-		RebindActive: req.RebindActive,
+		Record:           storeRecord(req.Record),
+		PreviousID:       req.PreviousID,
+		Key:              req.Key,
+		HeldLeases:       leases,
+		ArchiveOld:       req.ArchiveOld,
+		RebindActive:     req.RebindActive,
+		RequireKeyAbsent: req.RequireKeyAbsent,
 	})
 }
 
@@ -84,6 +85,7 @@ func engineRecord(rec threadstore.Record) engine.SessionRecord {
 		Agent:                    rec.Agent,
 		Fingerprint:              rec.Fingerprint,
 		CompatibilityFingerprint: rec.CompatibilityFingerprint,
+		SessionCodec:             rec.SessionCodec,
 		DriverState:              rec.State,
 		CreatedAt:                rec.CreatedAt,
 		UpdatedAt:                rec.UpdatedAt,
@@ -101,6 +103,7 @@ func storeRecord(rec engine.SessionRecord) threadstore.Record {
 		Agent:                    rec.Agent,
 		Fingerprint:              rec.Fingerprint,
 		CompatibilityFingerprint: rec.CompatibilityFingerprint,
+		SessionCodec:             rec.SessionCodec,
 		State:                    rec.DriverState,
 		CreatedAt:                rec.CreatedAt,
 		UpdatedAt:                rec.UpdatedAt,

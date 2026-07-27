@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
 )
 
 // codexParser consumes raw stdout/stderr chunks from a Codex CLI run and
@@ -21,23 +21,23 @@ import (
 type codexParser struct {
 	mu sync.Mutex
 
-	sink agentadaptor.EventSink
+	sink driver.EventSink
 
 	stdoutLine bytes.Buffer
 	stderrLine bytes.Buffer
 
-	transcript    []agentadaptor.TranscriptItem
+	transcript    []driver.TranscriptItem
 	assistantText []string
 
 	sessionID          string
 	displayID          string
-	summary            string // last assistant text; used only as summary fallback
+	summary            string // last assistant text retained for parser diagnostics
 	terminalSummary    string // authoritative summary from terminal result events
-	usage              *agentadaptor.Usage
+	usage              *driver.Usage
 	cost               *float64
 	hasUsage           bool
-	resultFinal        map[string]any
-	structuredOutput   *agentadaptor.StructuredOutput
+	terminal           *driver.TerminalPayload
+	structuredOutput   *driver.StructuredOutput
 	errorMessage       string
 	checkpointThreadID string
 	threadStarted      bool
@@ -46,7 +46,7 @@ type codexParser struct {
 	protocolMalformed  bool
 }
 
-func newCodexParser(sink agentadaptor.EventSink) *codexParser {
+func newCodexParser(sink driver.EventSink) *codexParser {
 	return &codexParser{sink: sink}
 }
 
@@ -97,8 +97,8 @@ func (p *codexParser) processLine(stream string, line []byte, _ time.Time) {
 	}
 
 	if stream == "stderr" {
-		p.emit(agentadaptor.TranscriptItem{
-			Kind: agentadaptor.TranscriptStderr,
+		p.emit(driver.TranscriptItem{
+			Kind: driver.TranscriptStderr,
 			Text: text,
 		})
 		return
@@ -107,8 +107,8 @@ func (p *codexParser) processLine(stream string, line []byte, _ time.Time) {
 	if !strings.HasPrefix(trimmed, "{") {
 		// Codex CLI may print non-JSON stdout banners; treat them as raw
 		// stdout transcript entries rather than guessing JSON shape.
-		p.emit(agentadaptor.TranscriptItem{
-			Kind: agentadaptor.TranscriptStdout,
+		p.emit(driver.TranscriptItem{
+			Kind: driver.TranscriptStdout,
 			Text: text,
 		})
 		return
@@ -117,8 +117,8 @@ func (p *codexParser) processLine(stream string, line []byte, _ time.Time) {
 	var payload map[string]any
 	if err := json.Unmarshal([]byte(trimmed), &payload); err != nil {
 		p.protocolMalformed = true
-		p.emit(agentadaptor.TranscriptItem{
-			Kind: agentadaptor.TranscriptStdout,
+		p.emit(driver.TranscriptItem{
+			Kind: driver.TranscriptStdout,
 			Text: text,
 		})
 		return
@@ -140,8 +140,8 @@ func (p *codexParser) handlePayload(raw string, payload map[string]any) {
 			p.checkpointThreadID = threadID
 			p.sessionID = threadID
 			p.displayID = threadID
-			p.emit(agentadaptor.TranscriptItem{
-				Kind:      agentadaptor.TranscriptInit,
+			p.emit(driver.TranscriptItem{
+				Kind:      driver.TranscriptInit,
 				SessionID: threadID,
 			})
 		}
@@ -163,13 +163,14 @@ func (p *codexParser) handlePayload(raw string, payload map[string]any) {
 		p.handleTerminal(raw, payload, kind)
 	case "error":
 		p.terminalFailed = true
+		p.terminal = &driver.TerminalPayload{Event: kind, JSON: append(json.RawMessage(nil), raw...)}
 		message := codexTopLevelString(payload, "message")
 		if message == "" {
 			message = "codex provider error"
 		}
 		p.errorMessage = message
-		p.emit(agentadaptor.TranscriptItem{
-			Kind:     agentadaptor.TranscriptFailure,
+		p.emit(driver.TranscriptItem{
+			Kind:     driver.TranscriptFailure,
 			Text:     message,
 			Metadata: map[string]string{"code": "error"},
 		})
@@ -181,8 +182,8 @@ func (p *codexParser) handlePayload(raw string, payload map[string]any) {
 			} else if p.displayID == "" {
 				p.displayID = id
 			}
-			p.emit(agentadaptor.TranscriptItem{
-				Kind:      agentadaptor.TranscriptInit,
+			p.emit(driver.TranscriptItem{
+				Kind:      driver.TranscriptInit,
 				SessionID: id,
 			})
 		}
@@ -190,8 +191,8 @@ func (p *codexParser) handlePayload(raw string, payload map[string]any) {
 		if p.tryAbsorbCheckpointOnlyPayload(payload) {
 			return
 		}
-		p.emit(agentadaptor.TranscriptItem{
-			Kind: agentadaptor.TranscriptSystem,
+		p.emit(driver.TranscriptItem{
+			Kind: driver.TranscriptSystem,
 			Text: raw,
 			Data: map[string]any{"payload": payload},
 		})
@@ -212,8 +213,8 @@ func (p *codexParser) tryAbsorbCheckpointOnlyPayload(payload map[string]any) boo
 	} else {
 		p.displayID = sessionID
 	}
-	p.emit(agentadaptor.TranscriptItem{
-		Kind:      agentadaptor.TranscriptInit,
+	p.emit(driver.TranscriptItem{
+		Kind:      driver.TranscriptInit,
 		SessionID: sessionID,
 	})
 	return true
@@ -233,8 +234,8 @@ func (p *codexParser) handleItem(item map[string]any, delta bool) {
 			p.assistantText = append(p.assistantText, text)
 			p.summary = text
 		}
-		p.emit(agentadaptor.TranscriptItem{
-			Kind:  agentadaptor.TranscriptAssistant,
+		p.emit(driver.TranscriptItem{
+			Kind:  driver.TranscriptAssistant,
 			Text:  text,
 			Delta: delta,
 		})
@@ -243,16 +244,16 @@ func (p *codexParser) handleItem(item map[string]any, delta bool) {
 		if text == "" {
 			return
 		}
-		p.emit(agentadaptor.TranscriptItem{
-			Kind:  agentadaptor.TranscriptThinking,
+		p.emit(driver.TranscriptItem{
+			Kind:  driver.TranscriptThinking,
 			Text:  text,
 			Delta: delta,
 		})
 	case "command_execution", "tool_call", "function_call":
 		name := codexTopLevelString(item, "name", "tool_name", "command")
 		id := codexTopLevelString(item, "id", "call_id", "tool_use_id")
-		p.emit(agentadaptor.TranscriptItem{
-			Kind:      agentadaptor.TranscriptToolCall,
+		p.emit(driver.TranscriptItem{
+			Kind:      driver.TranscriptToolCall,
 			ToolName:  name,
 			ToolUseID: id,
 			Input:     item["input"],
@@ -260,8 +261,8 @@ func (p *codexParser) handleItem(item map[string]any, delta bool) {
 	case "tool_result", "command_output", "file_change":
 		id := codexTopLevelString(item, "id", "call_id", "tool_use_id")
 		text := codexTopLevelString(item, "text", "output", "message")
-		p.emit(agentadaptor.TranscriptItem{
-			Kind:      agentadaptor.TranscriptToolResult,
+		p.emit(driver.TranscriptItem{
+			Kind:      driver.TranscriptToolResult,
 			ToolUseID: id,
 			Text:      text,
 		})
@@ -269,9 +270,9 @@ func (p *codexParser) handleItem(item map[string]any, delta bool) {
 }
 
 func (p *codexParser) handleTerminal(raw string, payload map[string]any, kind string) {
-	var decoded map[string]any
-	if err := json.Unmarshal([]byte(raw), &decoded); err == nil {
-		p.resultFinal = decoded
+	p.terminal = &driver.TerminalPayload{
+		Event: kind,
+		JSON:  append(json.RawMessage(nil), raw...),
 	}
 
 	usage := codexTopLevelObject(payload, "usage")
@@ -282,7 +283,7 @@ func (p *codexParser) handleTerminal(raw string, payload map[string]any, kind st
 		if okInput || okCached || okOutput {
 			p.hasUsage = true
 			if p.usage == nil {
-				p.usage = &agentadaptor.Usage{}
+				p.usage = &driver.Usage{}
 			}
 			if okInput {
 				p.usage.InputTokens = input
@@ -315,16 +316,16 @@ func (p *codexParser) handleTerminal(raw string, payload map[string]any, kind st
 		p.terminalSummary = summary
 	}
 	if raw, ok := codexStructuredJSONFromTerminal(payload); ok {
-		p.structuredOutput = &agentadaptor.StructuredOutput{
-			Format:  agentadaptor.OutputFormatJSONSchema,
-			Source:  agentadaptor.StructuredOutputSourceNative,
+		p.structuredOutput = &driver.StructuredOutput{
+			Format:  driver.OutputFormatJSONSchema,
+			Source:  driver.StructuredOutputSourceNative,
 			RawJSON: raw,
 			Valid:   true,
 		}
 	}
 
-	p.emit(agentadaptor.TranscriptItem{
-		Kind:    agentadaptor.TranscriptResult,
+	p.emit(driver.TranscriptItem{
+		Kind:    driver.TranscriptResult,
 		Subtype: kind,
 		IsError: isError,
 		Usage:   p.usage,
@@ -373,26 +374,23 @@ func jsonRawMessageFromValue(raw any) (json.RawMessage, bool) {
 	}
 }
 
-func (p *codexParser) emit(item agentadaptor.TranscriptItem) {
+func (p *codexParser) emit(item driver.TranscriptItem) {
 	p.transcript = append(p.transcript, item)
 	if p.sink == nil {
 		return
 	}
 	clone := item
-	_ = p.sink.Emit(agentadaptor.RunEvent{
-		Type:      agentadaptor.RunEventItem,
+	_ = p.sink.Emit(driver.RunEvent{
+		Type:      driver.RunEventItem,
 		Timestamp: time.Now().UTC(),
 		Item:      &clone,
 	})
 }
 
-// finalSummary implements the Summary precedence rule: terminal result text
-// wins; the last assistant text only serves as a fallback.
+// finalSummary returns only a bounded provider terminal summary. Assistant
+// output is never reused as Summary because it may be arbitrarily large.
 func (p *codexParser) finalSummary() string {
-	if strings.TrimSpace(p.terminalSummary) != "" {
-		return p.terminalSummary
-	}
-	return p.summary
+	return strings.TrimSpace(p.terminalSummary)
 }
 
 // buildOutput concatenates assistant-kind transcript entries with the
@@ -407,7 +405,7 @@ func (p *codexParser) buildOutput() string {
 	return strings.Join(nonEmpty, "\n\n")
 }
 
-func (p *codexParser) checkpoint(exitCode int) *agentadaptor.DriverCheckpoint {
+func (p *codexParser) checkpoint(exitCode int) *driver.Checkpoint {
 	if exitCode != 0 || p.protocolMalformed || p.terminalFailed || !p.threadStarted || !p.turnCompleted || p.checkpointThreadID == "" {
 		return nil
 	}
@@ -415,8 +413,8 @@ func (p *codexParser) checkpoint(exitCode int) *agentadaptor.DriverCheckpoint {
 	if display == "" {
 		display = p.checkpointThreadID
 	}
-	return &agentadaptor.DriverCheckpoint{
-		State: &agentadaptor.DriverSessionState{
+	return &driver.Checkpoint{
+		State: &driver.SessionState{
 			ResumeID:  p.checkpointThreadID,
 			DisplayID: display,
 		},
@@ -424,7 +422,7 @@ func (p *codexParser) checkpoint(exitCode int) *agentadaptor.DriverCheckpoint {
 	}
 }
 
-func (p *codexParser) checkpointForOutcome(exitCode int, signal string, timedOut bool, failure *agentadaptor.RunFailure) *agentadaptor.DriverCheckpoint {
+func (p *codexParser) checkpointForOutcome(exitCode int, signal string, timedOut bool, failure *driver.RunFailure) *driver.Checkpoint {
 	if signal != "" || timedOut || failure != nil {
 		return nil
 	}

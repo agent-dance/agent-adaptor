@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/internal/adapterutil"
 	"github.com/agent-dance/agent-adaptor/internal/configprobe"
 	"github.com/agent-dance/agent-adaptor/internal/skillruntime"
@@ -19,7 +19,7 @@ type cursorAuthInfo struct {
 	UserID      int
 }
 
-func effectiveCursorBindings(config agentadaptor.CommonConfig, selection *agentadaptor.ProfileSelection) ([]agentadaptor.EnvBinding, error) {
+func effectiveCursorBindings(config driver.CommonConfig, selection *driver.ProfileSelection) ([]driver.EnvBinding, error) {
 	profile, err := resolveCursorProfileWithOptions(config, selection, false)
 	if err != nil {
 		return nil, err
@@ -27,7 +27,7 @@ func effectiveCursorBindings(config agentadaptor.CommonConfig, selection *agenta
 	return skillruntime.WithBinding(config.Env, "CURSOR_HOME", profile.Dir), nil
 }
 
-func effectiveCursorBindingsNoInitialize(config agentadaptor.CommonConfig, selection *agentadaptor.ProfileSelection) ([]agentadaptor.EnvBinding, error) {
+func effectiveCursorBindingsNoInitialize(config driver.CommonConfig, selection *driver.ProfileSelection) ([]driver.EnvBinding, error) {
 	profile, err := resolveCursorProfileWithOptions(config, selection, true)
 	if err != nil {
 		return nil, err
@@ -35,7 +35,7 @@ func effectiveCursorBindingsNoInitialize(config agentadaptor.CommonConfig, selec
 	return skillruntime.WithBinding(config.Env, "CURSOR_HOME", profile.Dir), nil
 }
 
-func resolveCursorHome(bindings []agentadaptor.EnvBinding) string {
+func resolveCursorHome(bindings []driver.EnvBinding) string {
 	if configured := skillruntime.ResolveBinding(bindings, "CURSOR_HOME"); strings.TrimSpace(configured) != "" {
 		return filepath.Clean(configured)
 	}
@@ -45,11 +45,11 @@ func resolveCursorHome(bindings []agentadaptor.EnvBinding) string {
 	return filepath.Join(skillruntime.ResolveHome(bindings), ".cursor")
 }
 
-func resolveCursorProfile(config agentadaptor.CommonConfig, selection *agentadaptor.ProfileSelection) (agentadaptor.AgentProfile, error) {
+func resolveCursorProfile(config driver.CommonConfig, selection *driver.ProfileSelection) (driver.AgentProfile, error) {
 	return resolveCursorProfileWithOptions(config, selection, false)
 }
 
-func resolveCursorProfileWithOptions(config agentadaptor.CommonConfig, selection *agentadaptor.ProfileSelection, skipInitialize bool) (agentadaptor.AgentProfile, error) {
+func resolveCursorProfileWithOptions(config driver.CommonConfig, selection *driver.ProfileSelection, skipInitialize bool) (driver.AgentProfile, error) {
 	resolution, err := skillruntime.ResolveProfile(skillruntime.ProfileResolveOptions{
 		Bindings:         config.Env,
 		Selection:        selection,
@@ -64,25 +64,25 @@ func resolveCursorProfileWithOptions(config agentadaptor.CommonConfig, selection
 		SkipInitialize:   skipInitialize,
 	})
 	if err != nil {
-		return agentadaptor.AgentProfile{}, err
+		return driver.AgentProfile{}, err
 	}
 	profile := resolution.Profile
 	profile.DriverType = DriverType
 	return profile, nil
 }
 
-func cursorProfile(config agentadaptor.CommonConfig, selection *agentadaptor.ProfileSelection) agentadaptor.AgentProfile {
+func cursorProfile(config driver.CommonConfig, selection *driver.ProfileSelection) driver.AgentProfile {
 	profile, err := resolveCursorProfile(config, selection)
 	if err != nil {
-		return agentadaptor.AgentProfile{DriverType: DriverType, Supported: true, EnvVar: "CURSOR_HOME", Error: err.Error()}
+		return driver.AgentProfile{DriverType: DriverType, Supported: true, EnvVar: "CURSOR_HOME", Error: err.Error()}
 	}
 	return profile
 }
 
-func cursorAuthChecks(bindings []agentadaptor.EnvBinding) []agentadaptor.EnvironmentCheck {
-	checks := make([]agentadaptor.EnvironmentCheck, 0, 2)
+func cursorAuthChecks(bindings []driver.EnvBinding) []driver.EnvironmentCheck {
+	checks := make([]driver.EnvironmentCheck, 0, 2)
 	if _, source := adapterutil.ResolvedEnvValue(bindings, "CURSOR_API_KEY"); source != "" {
-		checks = append(checks, agentadaptor.EnvironmentCheck{
+		checks = append(checks, driver.EnvironmentCheck{
 			Code:    "cursor_api_key_present",
 			Level:   "info",
 			Message: "CURSOR_API_KEY is available for Cursor authentication.",
@@ -90,7 +90,7 @@ func cursorAuthChecks(bindings []agentadaptor.EnvBinding) []agentadaptor.Environ
 		})
 	}
 	if _, source := adapterutil.ResolvedEnvValue(bindings, "OPENAI_API_KEY"); source != "" {
-		checks = append(checks, agentadaptor.EnvironmentCheck{
+		checks = append(checks, driver.EnvironmentCheck{
 			Code:    "cursor_openai_api_key_present",
 			Level:   "info",
 			Message: "OPENAI_API_KEY is available for Cursor API-mode authentication.",
@@ -103,7 +103,7 @@ func cursorAuthChecks(bindings []agentadaptor.EnvBinding) []agentadaptor.Environ
 
 	auth, err := readCursorAuthInfo(bindings)
 	if err != nil {
-		return []agentadaptor.EnvironmentCheck{{
+		return []driver.EnvironmentCheck{{
 			Code:    "cursor_auth_unreadable",
 			Level:   "warn",
 			Message: "Cursor CLI auth state exists but could not be parsed.",
@@ -112,7 +112,7 @@ func cursorAuthChecks(bindings []agentadaptor.EnvBinding) []agentadaptor.Environ
 		}}
 	}
 	if auth == nil {
-		return []agentadaptor.EnvironmentCheck{{
+		return []driver.EnvironmentCheck{{
 			Code:    "cursor_auth_missing",
 			Level:   "warn",
 			Message: "No Cursor CLI auth state, CURSOR_API_KEY, or OPENAI_API_KEY was found.",
@@ -120,14 +120,14 @@ func cursorAuthChecks(bindings []agentadaptor.EnvBinding) []agentadaptor.Environ
 		}}
 	}
 
-	checks = []agentadaptor.EnvironmentCheck{{
+	checks = []driver.EnvironmentCheck{{
 		Code:    "cursor_auth_present",
 		Level:   "info",
 		Message: "Cursor CLI auth state is present.",
 		Detail:  auth.Path,
 	}}
 	if auth.Email != "" {
-		checks = append(checks, agentadaptor.EnvironmentCheck{
+		checks = append(checks, driver.EnvironmentCheck{
 			Code:    "cursor_auth_email",
 			Level:   "info",
 			Message: "Cursor auth identifies the logged-in account.",
@@ -135,7 +135,7 @@ func cursorAuthChecks(bindings []agentadaptor.EnvBinding) []agentadaptor.Environ
 		})
 	}
 	if auth.DisplayName != "" {
-		checks = append(checks, agentadaptor.EnvironmentCheck{
+		checks = append(checks, driver.EnvironmentCheck{
 			Code:    "cursor_auth_display_name",
 			Level:   "info",
 			Message: "Cursor auth exposes the operator display name.",
@@ -143,7 +143,7 @@ func cursorAuthChecks(bindings []agentadaptor.EnvBinding) []agentadaptor.Environ
 		})
 	}
 	if auth.UserID > 0 {
-		checks = append(checks, agentadaptor.EnvironmentCheck{
+		checks = append(checks, driver.EnvironmentCheck{
 			Code:    "cursor_auth_user_id",
 			Level:   "info",
 			Message: "Cursor auth exposes the operator user id.",
@@ -153,7 +153,7 @@ func cursorAuthChecks(bindings []agentadaptor.EnvBinding) []agentadaptor.Environ
 	return checks
 }
 
-func readCursorAuthInfo(bindings []agentadaptor.EnvBinding) (*cursorAuthInfo, error) {
+func readCursorAuthInfo(bindings []driver.EnvBinding) (*cursorAuthInfo, error) {
 	configPath := filepath.Join(resolveCursorHome(bindings), "cli-config.json")
 	payload, err := configprobe.ReadJSONObject(configPath)
 	if err != nil {

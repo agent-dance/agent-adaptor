@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/internal/adapterutil"
 )
 
@@ -30,7 +30,7 @@ type codexQuotaWindow struct {
 	ResetAt     any      `json:"reset_at"`
 }
 
-func fetchCodexQuota(ctx context.Context, auth *codexAuthInfo) ([]agentadaptor.QuotaWindow, error) {
+func fetchCodexQuota(ctx context.Context, auth *codexAuthInfo) ([]driver.QuotaWindow, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, codexQuotaUsageURL, nil)
 	if err != nil {
 		return nil, err
@@ -51,23 +51,23 @@ func fetchCodexQuota(ctx context.Context, auth *codexAuthInfo) ([]agentadaptor.Q
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
 		return nil, err
 	}
-	windows := make([]agentadaptor.QuotaWindow, 0, 3)
+	windows := make([]driver.QuotaWindow, 0, 3)
 	if payload.RateLimit != nil && payload.RateLimit.PrimaryWindow != nil {
-		windows = append(windows, agentadaptor.QuotaWindow{
+		windows = append(windows, driver.QuotaWindow{
 			Label:       "5h limit",
 			UsedPercent: normalizeCodexUsedPercent(payload.RateLimit.PrimaryWindow.UsedPercent),
 			ResetsAt:    quotaResetString(payload.RateLimit.PrimaryWindow.ResetAt),
 		})
 	}
 	if payload.RateLimit != nil && payload.RateLimit.SecondaryWindow != nil {
-		windows = append(windows, agentadaptor.QuotaWindow{
+		windows = append(windows, driver.QuotaWindow{
 			Label:       "Weekly limit",
 			UsedPercent: normalizeCodexUsedPercent(payload.RateLimit.SecondaryWindow.UsedPercent),
 			ResetsAt:    quotaResetString(payload.RateLimit.SecondaryWindow.ResetAt),
 		})
 	}
 	if payload.Credits != nil && !payload.Credits.Unlimited && payload.Credits.Balance != nil {
-		windows = append(windows, agentadaptor.QuotaWindow{
+		windows = append(windows, driver.QuotaWindow{
 			Label:      "Credits",
 			ValueLabel: fmt.Sprintf("$%.2f remaining", *payload.Credits.Balance/100),
 		})
@@ -75,8 +75,8 @@ func fetchCodexQuota(ctx context.Context, auth *codexAuthInfo) ([]agentadaptor.Q
 	return windows, nil
 }
 
-func codexQuotaReport(ctx context.Context, bindings []agentadaptor.EnvBinding) (agentadaptor.QuotaReport, error) {
-	report := agentadaptor.QuotaReport{
+func codexQuotaReport(ctx context.Context, bindings []driver.EnvBinding) (driver.QuotaReport, error) {
+	report := driver.QuotaReport{
 		DriverType: DriverType,
 		Provider:   "openai",
 		Source:     "codex_wham",

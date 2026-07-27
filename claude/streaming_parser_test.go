@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	agentadaptor "github.com/agent-dance/agent-adaptor/driver"
 )
 
 type streamSink struct {

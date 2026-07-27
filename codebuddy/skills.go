@@ -6,26 +6,27 @@ import (
 	"path/filepath"
 	"strings"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/internal/engine"
 	"github.com/agent-dance/agent-adaptor/internal/skillruntime"
 )
 
-func resolveSkillsHome(bindings []agentadaptor.EnvBinding) string {
+func resolveSkillsHome(bindings []driver.EnvBinding) string {
 	return filepath.Join(resolveConfigDir(bindings), "skills")
 }
 
-func skillsLocationLabel(bindings []agentadaptor.EnvBinding) string {
+func skillsLocationLabel(bindings []driver.EnvBinding) string {
 	if skillruntime.ResolveBinding(bindings, configEnvVar) != "" || strings.TrimSpace(os.Getenv(configEnvVar)) != "" {
 		return resolveSkillsHome(bindings)
 	}
 	return "~/.codebuddy/skills"
 }
 
-func listSkills(payload agentadaptor.ResolvedSkills, selected []string, resolved []agentadaptor.Skill, bindings []agentadaptor.EnvBinding) (agentadaptor.SkillSnapshot, error) {
+func listSkills(payload driver.ResolvedSkills, selected []string, resolved []driver.Skill, bindings []driver.EnvBinding) (driver.SkillSnapshot, error) {
 	skillsHome := resolveSkillsHome(bindings)
 	installed, err := skillruntime.ReadInstalledSkillTargets(skillsHome)
 	if err != nil {
-		return agentadaptor.SkillSnapshot{}, err
+		return driver.SkillSnapshot{}, err
 	}
 	return skillruntime.BuildPersistentSnapshot(skillruntime.PersistentSnapshotOptions{
 		DriverType:             DriverType,
@@ -42,10 +43,10 @@ func listSkills(payload agentadaptor.ResolvedSkills, selected []string, resolved
 	}), nil
 }
 
-func syncSkills(ctx context.Context, payload agentadaptor.ResolvedSkills, selected []string, resolved []agentadaptor.Skill, bindings []agentadaptor.EnvBinding, kind agentadaptor.ProfileKind) (agentadaptor.SkillSnapshot, error) {
+func syncSkills(ctx context.Context, payload driver.ResolvedSkills, selected []string, resolved []driver.Skill, bindings []driver.EnvBinding, kind engine.ProfileKind) (driver.SkillSnapshot, error) {
 	skillsHome := resolveSkillsHome(bindings)
 	pruneMode := skillruntime.ProfileSkillPruneBrokenManaged
-	if kind == agentadaptor.ProfileKindHostManaged {
+	if kind == engine.ProfileKindHostManaged {
 		pruneMode = skillruntime.ProfileSkillPruneManaged
 	}
 	if _, err := skillruntime.ReconcileProfileSkills(ctx, skillruntime.ProfileSkillReconcileOptions{
@@ -57,7 +58,7 @@ func syncSkills(ctx context.Context, payload agentadaptor.ResolvedSkills, select
 		ConflictMode: skillruntime.ProfileSkillConflictError,
 		PruneMode:    pruneMode,
 	}); err != nil {
-		return agentadaptor.SkillSnapshot{}, err
+		return driver.SkillSnapshot{}, err
 	}
 	return listSkills(payload, selected, resolved, bindings)
 }

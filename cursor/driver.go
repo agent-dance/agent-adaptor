@@ -7,11 +7,11 @@ import (
 	"path/filepath"
 	"strings"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/internal/adapterutil"
 	"github.com/agent-dance/agent-adaptor/internal/clihelper"
 	"github.com/agent-dance/agent-adaptor/internal/configprobe"
+	"github.com/agent-dance/agent-adaptor/internal/engine"
 	"github.com/agent-dance/agent-adaptor/internal/mcpruntime"
 	"github.com/agent-dance/agent-adaptor/internal/profileagents"
 	"github.com/agent-dance/agent-adaptor/internal/profileconfig"
@@ -25,46 +25,33 @@ const DriverType = "cursor"
 
 type adapter struct{}
 
-// New returns a configured Cursor AgentBinding. Hosts should pass the result
-// to agentadaptor.WithDefaultAgent or agentadaptor.WithAgent; direct adapter
-// use is reserved for lower-level tests and custom plumbing.
-func New(cfg agentadaptor.CursorConfig, opts ...agentadaptor.AgentOption) agentadaptor.TypedAgentBinding[agentadaptor.CursorConfig] {
-	return agentadaptor.BindTyped(NewAdapter(), cfg, opts...)
-}
-
-// NewAdapter returns the low-level Cursor DriverAdapter. Most hosts should use
-// New so config and binding defaults travel together.
-func NewAdapter() agentadaptor.DriverAdapter {
-	return adapter{}
-}
-
-func (adapter) Descriptor() agentadaptor.DriverDescriptor {
-	fields := []agentadaptor.ConfigField{
+func (adapter) Descriptor() driver.Descriptor {
+	fields := []driver.ConfigField{
 		{Name: "command", Label: "Command", Type: "text", Description: "Override the Cursor Agent CLI executable.", Hint: "Defaults to `agent` when unset.", Default: "agent", Group: "command"},
 		{Name: "cwd", Label: "Working Directory", Type: "text", Description: "Default working directory when the workspace manager does not override it.", Hint: "Leave empty to let the workspace manager resolve the cwd.", Group: "command"},
 		{Name: "model", Label: "Model", Type: "select", Description: "Cursor model identifier, for example gpt-5.", Default: "gpt-5", Options: modelOptions(cursorModels()), Group: "model"},
-		{Name: "mode", Label: "Mode", Type: "select", Description: "Cursor agent mode passed through --mode.", Options: []agentadaptor.ConfigOption{{Value: "agent", Label: "Agent"}, {Value: "ask", Label: "Ask"}}, Group: "execution"},
+		{Name: "mode", Label: "Mode", Type: "select", Description: "Cursor agent mode passed through --mode.", Options: []driver.ConfigOption{{Value: "agent", Label: "Agent"}, {Value: "ask", Label: "Ask"}}, Group: "execution"},
 		{Name: "extra_args", Label: "Extra Args", Type: "textarea", Description: "Additional CLI args appended after SDK-managed flags.", Group: "command"},
 	}
 	fields = append(fields, profileconfig.CapabilityFields(DriverType)...)
-	return agentadaptor.DriverDescriptor{
+	return driver.Descriptor{
 		Type:         DriverType,
 		DisplayName:  "Cursor Agent",
 		Models:       cursorModels(),
-		ConfigSchema: &agentadaptor.ConfigSchema{Fields: fields},
-		Sessions:     agentadaptor.SessionCapability{SupportsResume: true},
-		Skills:       agentadaptor.SkillCapability{Supported: true, Mode: agentadaptor.SkillSyncPersistent},
-		MCP:          agentadaptor.MCPCapability{Supported: true, Stdio: true, HTTP: true, SSE: true},
-		Instructions: agentadaptor.InstructionsCapability{Supported: true},
-		Workspace:    agentadaptor.WorkspaceCapability{Supported: true},
-		RunPolicyCaps: agentadaptor.RunPolicyCapabilities{
+		ConfigSchema: &driver.ConfigSchema{Fields: fields},
+		Sessions:     driver.SessionCapability{SupportsResume: true},
+		Skills:       driver.SkillCapability{Supported: true, Mode: driver.SkillSyncPersistent},
+		MCP:          driver.MCPCapability{Supported: true, Stdio: true, HTTP: true, SSE: true},
+		Instructions: driver.InstructionsCapability{Supported: true},
+		Workspace:    driver.WorkspaceCapability{Supported: true},
+		RunPolicyCaps: driver.RunPolicyCapabilities{
 			Isolation: false, WebSearch: true, Browser: false,
-			Permission: agentadaptor.HumanDecisionSupport{Ask: false, AutoApprove: true, AutoReject: false, Retry: false},
-			PlanReview: agentadaptor.HumanDecisionSupport{Ask: false, AutoApprove: true, AutoReject: false, Retry: false},
-			Question:   agentadaptor.QuestionSupport{Ask: false, AutoReject: false, Retry: false},
+			Permission: driver.HumanDecisionSupport{Ask: false, AutoApprove: true, AutoReject: false, Retry: false},
+			PlanReview: driver.HumanDecisionSupport{Ask: false, AutoApprove: true, AutoReject: false, Retry: false},
+			Question:   driver.QuestionSupport{Ask: false, AutoReject: false, Retry: false},
 		},
-		Runtime: agentadaptor.RuntimeCapability{ReportsServices: true},
-		StructuredOutput: agentadaptor.StructuredOutputCapability{
+		Runtime: driver.RuntimeCapability{ReportsServices: true},
+		StructuredOutput: driver.StructuredOutputCapability{
 			JSONSchemaNative:         false,
 			JSONSchemaPromptValidate: true,
 			WorksWithRun:             true,
@@ -75,8 +62,8 @@ func (adapter) Descriptor() agentadaptor.DriverDescriptor {
 	}
 }
 
-func cursorModels() []agentadaptor.ModelInfo {
-	return []agentadaptor.ModelInfo{
+func cursorModels() []driver.ModelInfo {
+	return []driver.ModelInfo{
 		{ID: "gpt-5", Label: "gpt-5"},
 		{ID: "claude-sonnet-4", Label: "claude-sonnet-4"},
 	}
@@ -84,14 +71,14 @@ func cursorModels() []agentadaptor.ModelInfo {
 
 func (adapter) ValidateConfig(cfg any) error {
 	switch cfg.(type) {
-	case agentadaptor.CursorConfig, *agentadaptor.CursorConfig, Config, *Config:
+	case Config, *Config:
 		return nil
 	default:
-		return errors.New("cursor driver requires agentadaptor.CursorConfig")
+		return errors.New("cursor driver requires cursor.Config")
 	}
 }
 
-func (adapter) CheckEnvironment(_ context.Context, cfg any) (agentadaptor.EnvironmentReport, error) {
+func (adapter) CheckEnvironment(_ context.Context, cfg any) (driver.EnvironmentReport, error) {
 	config := readConfig(cfg)
 	command := config.Command
 	if command == "" {
@@ -100,19 +87,19 @@ func (adapter) CheckEnvironment(_ context.Context, cfg any) (agentadaptor.Enviro
 	checks := append(adapterutil.CommandEnvironmentChecks(command), adapterutil.CWDEnvironmentChecks(config.CommonConfig.CWD)...)
 	bindings, err := effectiveCursorBindings(config.CommonConfig, nil)
 	if err != nil {
-		checks = append(checks, agentadaptor.EnvironmentCheck{Code: "cursor_profile_error", Level: "fail", Message: "Cursor profile resolution failed.", Detail: err.Error()})
+		checks = append(checks, driver.EnvironmentCheck{Code: "cursor_profile_error", Level: "fail", Message: "Cursor profile resolution failed.", Detail: err.Error()})
 		return adapterutil.SummarizeEnvironment(DriverType, checks), nil
 	}
 	cursorHome := resolveCursorHome(bindings)
 	if _, err := os.Stat(cursorHome); err == nil {
-		checks = append(checks, agentadaptor.EnvironmentCheck{
+		checks = append(checks, driver.EnvironmentCheck{
 			Code:    "cursor_home_present",
 			Level:   "info",
 			Message: "Cursor home directory exists.",
 			Detail:  cursorHome,
 		})
 	} else {
-		checks = append(checks, agentadaptor.EnvironmentCheck{
+		checks = append(checks, driver.EnvironmentCheck{
 			Code:    "cursor_home_missing",
 			Level:   "warn",
 			Message: "Cursor home directory was not found yet.",
@@ -125,11 +112,11 @@ func (adapter) CheckEnvironment(_ context.Context, cfg any) (agentadaptor.Enviro
 	return adapterutil.SummarizeEnvironment(DriverType, checks), nil
 }
 
-func (adapter) ListModels(_ context.Context, _ any) ([]agentadaptor.ModelInfo, error) {
+func (adapter) ListModels(_ context.Context, _ any) ([]driver.ModelInfo, error) {
 	return adapter{}.Descriptor().Models, nil
 }
 
-func (adapter) DetectModel(_ context.Context, cfg any, profile *agentadaptor.ProfileSelection) (*agentadaptor.DetectedModel, error) {
+func (adapter) DetectModel(_ context.Context, cfg any, profile *driver.ProfileSelection) (*driver.DetectedModel, error) {
 	config := readConfig(cfg)
 	bindings, err := effectiveCursorBindings(config.CommonConfig, profile)
 	if err != nil {
@@ -138,7 +125,7 @@ func (adapter) DetectModel(_ context.Context, cfg any, profile *agentadaptor.Pro
 	if strings.TrimSpace(config.Model) == "" {
 		for _, candidate := range cursorConfigCandidates(bindings) {
 			if model, ok, err := configprobe.ReadTopLevelJSONString(candidate, "model"); err == nil && ok {
-				return &agentadaptor.DetectedModel{
+				return &driver.DetectedModel{
 					Model:      model,
 					Provider:   "cursor",
 					Source:     "config_file",
@@ -148,7 +135,7 @@ func (adapter) DetectModel(_ context.Context, cfg any, profile *agentadaptor.Pro
 		}
 		return nil, nil
 	}
-	return &agentadaptor.DetectedModel{
+	return &driver.DetectedModel{
 		Model:      config.Model,
 		Provider:   "cursor",
 		Source:     "binding_config",
@@ -156,11 +143,11 @@ func (adapter) DetectModel(_ context.Context, cfg any, profile *agentadaptor.Pro
 	}, nil
 }
 
-func (adapter) GetProfile(_ context.Context, cfg any, _ agentadaptor.AgentIdentity, profile *agentadaptor.ProfileSelection) (agentadaptor.AgentProfile, error) {
+func (adapter) GetProfile(_ context.Context, cfg any, _ driver.AgentIdentity, profile *driver.ProfileSelection) (driver.AgentProfile, error) {
 	return cursorProfile(readConfig(cfg).CommonConfig, profile), nil
 }
 
-func cursorConfigCandidates(bindings []agentadaptor.EnvBinding) []string {
+func cursorConfigCandidates(bindings []driver.EnvBinding) []string {
 	home := resolveCursorHome(bindings)
 	return []string{
 		filepath.Join(home, "config.json"),
@@ -169,20 +156,20 @@ func cursorConfigCandidates(bindings []agentadaptor.EnvBinding) []string {
 	}
 }
 
-func cursorConfigChecks(bindings []agentadaptor.EnvBinding) []agentadaptor.EnvironmentCheck {
-	checks := make([]agentadaptor.EnvironmentCheck, 0)
+func cursorConfigChecks(bindings []driver.EnvBinding) []driver.EnvironmentCheck {
+	checks := make([]driver.EnvironmentCheck, 0)
 	for _, candidate := range cursorConfigCandidates(bindings) {
 		if _, err := os.Stat(candidate); err != nil {
 			continue
 		}
-		checks = append(checks, agentadaptor.EnvironmentCheck{
+		checks = append(checks, driver.EnvironmentCheck{
 			Code:    "cursor_config_present",
 			Level:   "info",
 			Message: "Cursor config/state file is present.",
 			Detail:  candidate,
 		})
 		if model, ok, err := configprobe.ReadTopLevelJSONString(candidate, "model"); err == nil && ok {
-			checks = append(checks, agentadaptor.EnvironmentCheck{
+			checks = append(checks, driver.EnvironmentCheck{
 				Code:    "cursor_config_model",
 				Level:   "info",
 				Message: "Cursor config file declares a default model.",
@@ -193,13 +180,13 @@ func cursorConfigChecks(bindings []agentadaptor.EnvBinding) []agentadaptor.Envir
 	return checks
 }
 
-func modelOptions(models []agentadaptor.ModelInfo) []agentadaptor.ConfigOption {
+func modelOptions(models []driver.ModelInfo) []driver.ConfigOption {
 	if len(models) == 0 {
 		return nil
 	}
-	options := make([]agentadaptor.ConfigOption, 0, len(models))
+	options := make([]driver.ConfigOption, 0, len(models))
 	for _, model := range models {
-		options = append(options, agentadaptor.ConfigOption{
+		options = append(options, driver.ConfigOption{
 			Value: model.ID,
 			Label: model.Label,
 		})
@@ -207,12 +194,12 @@ func modelOptions(models []agentadaptor.ModelInfo) []agentadaptor.ConfigOption {
 	return options
 }
 
-func (adapter) ConfigSchema(_ context.Context, _ any) (*agentadaptor.ConfigSchema, error) {
+func (adapter) ConfigSchema(_ context.Context, _ any) (*driver.ConfigSchema, error) {
 	return adapter{}.Descriptor().ConfigSchema, nil
 }
 
-func (adapter) GetQuota(_ context.Context, _ any, _ *agentadaptor.ProfileSelection) (agentadaptor.QuotaReport, error) {
-	return agentadaptor.QuotaReport{
+func (adapter) GetQuota(_ context.Context, _ any, _ *driver.ProfileSelection) (driver.QuotaReport, error) {
+	return driver.QuotaReport{
 		DriverType: DriverType,
 		Provider:   "cursor",
 		Available:  false,
@@ -220,11 +207,11 @@ func (adapter) GetQuota(_ context.Context, _ any, _ *agentadaptor.ProfileSelecti
 	}, nil
 }
 
-func (adapter) ListSkills(_ context.Context, cfg any, payload agentadaptor.ResolvedSkills, selected []string, resolved []agentadaptor.Skill, profile *agentadaptor.ProfileSelection) (agentadaptor.SkillSnapshot, error) {
+func (adapter) ListSkills(_ context.Context, cfg any, payload driver.ResolvedSkills, selected []string, resolved []driver.Skill, profile *driver.ProfileSelection) (driver.SkillSnapshot, error) {
 	config := readConfig(cfg)
 	bindings, err := effectiveCursorBindings(config.CommonConfig, profile)
 	if err != nil {
-		return agentadaptor.SkillSnapshot{}, err
+		return driver.SkillSnapshot{}, err
 	}
 	return listCursorSkills(payload, selected, resolved, bindings)
 }
@@ -234,34 +221,34 @@ func (adapter) ListSkills(_ context.Context, cfg any, payload agentadaptor.Resol
 // available once Run produces the effective bindings, so the heavy lifting
 // is performed in Run itself. Implementing the interface here keeps the
 // adapter spec explicit.
-func (adapter) InjectSkills(_ context.Context, _ any, _ agentadaptor.ResolvedSkills, _ *agentadaptor.ProfileSelection) error {
+func (adapter) InjectSkills(_ context.Context, _ any, _ driver.ResolvedSkills, _ *driver.ProfileSelection) error {
 	return nil
 }
 
-func (adapter) SyncSkills(ctx context.Context, cfg any, payload agentadaptor.ResolvedSkills, selected []string, resolved []agentadaptor.Skill, profile *agentadaptor.ProfileSelection) (agentadaptor.SkillSnapshot, error) {
+func (adapter) SyncSkills(ctx context.Context, cfg any, payload driver.ResolvedSkills, selected []string, resolved []driver.Skill, profile *driver.ProfileSelection) (driver.SkillSnapshot, error) {
 	config := readConfig(cfg)
 	bindings, err := effectiveCursorBindings(config.CommonConfig, profile)
 	if err != nil {
-		return agentadaptor.SkillSnapshot{}, err
+		return driver.SkillSnapshot{}, err
 	}
 	return syncCursorSkills(ctx, payload, selected, resolved, bindings, noopCursorSink{})
 }
 
-func (adapter) SnapshotProfileResources(_ context.Context, cfg any, _ agentadaptor.AgentIdentity, profile *agentadaptor.ProfileSelection, payload agentadaptor.ProfilePayload, selected []string, resolved []agentadaptor.Skill) (agentadaptor.ProfileSnapshot, error) {
+func (adapter) SnapshotProfileResources(_ context.Context, cfg any, _ driver.AgentIdentity, profile *driver.ProfileSelection, payload driver.ProfilePayload, selected []string, resolved []driver.Skill) (engine.ProfileSnapshot, error) {
 	config := readConfig(cfg)
 	bindings, err := effectiveCursorBindings(config.CommonConfig, profile)
 	if err != nil {
-		return agentadaptor.ProfileSnapshot{}, err
+		return engine.ProfileSnapshot{}, err
 	}
 	skills, err := listCursorSkills(payload.Skills, selected, resolved, bindings)
 	if err != nil {
-		return agentadaptor.ProfileSnapshot{}, err
+		return engine.ProfileSnapshot{}, err
 	}
 	effectiveProfile, kind := cursorProfileAndKind(config.CommonConfig, profile)
 	snapshot := profilesnapshot.Build(DriverType, effectiveProfile, kind, payload, skills, false)
 	mcpSnapshot, err := mcpruntime.SnapshotResource(DriverType, effectiveProfile.Dir, payload.MCP, false)
 	if err != nil {
-		return agentadaptor.ProfileSnapshot{}, err
+		return engine.ProfileSnapshot{}, err
 	}
 	snapshot = profileconfig.WithSnapshotResource(snapshot, mcpSnapshot)
 	if payload.Declared.Config {
@@ -279,57 +266,57 @@ func (adapter) SnapshotProfileResources(_ context.Context, cfg any, _ agentadapt
 	return snapshot, nil
 }
 
-func (adapter) SyncProfileResources(ctx context.Context, cfg any, _ agentadaptor.AgentIdentity, profile *agentadaptor.ProfileSelection, payload agentadaptor.ProfilePayload, selected []string, resolved []agentadaptor.Skill) (agentadaptor.ProfileSnapshot, error) {
+func (adapter) SyncProfileResources(ctx context.Context, cfg any, _ driver.AgentIdentity, profile *driver.ProfileSelection, payload driver.ProfilePayload, selected []string, resolved []driver.Skill) (engine.ProfileSnapshot, error) {
 	config := readConfig(cfg)
 	bindings, err := effectiveCursorBindings(config.CommonConfig, profile)
 	if err != nil {
-		return agentadaptor.ProfileSnapshot{}, err
+		return engine.ProfileSnapshot{}, err
 	}
 	skills, err := syncCursorSkills(ctx, payload.Skills, selected, resolved, bindings, noopCursorSink{})
 	if err != nil {
-		return agentadaptor.ProfileSnapshot{}, err
+		return engine.ProfileSnapshot{}, err
 	}
 	effectiveProfile, kind := cursorProfileAndKind(config.CommonConfig, profile)
 	mcpSnapshot, err := mcpruntime.SyncResource(ctx, DriverType, effectiveProfile.Dir, kind, payload.MCP)
 	if err != nil {
-		return agentadaptor.ProfileSnapshot{}, err
+		return engine.ProfileSnapshot{}, err
 	}
 	snapshot := profilesnapshot.Build(DriverType, effectiveProfile, kind, payload, skills, true)
 	snapshot = profileconfig.WithSnapshotResource(snapshot, mcpSnapshot)
 	if payload.Declared.Config {
 		configSnapshot, err := profileconfig.SyncNativePatches(ctx, DriverType, effectiveProfile.Dir, payload.Config)
 		if err != nil {
-			return agentadaptor.ProfileSnapshot{}, err
+			return engine.ProfileSnapshot{}, err
 		}
 		snapshot = profileconfig.WithSnapshotResource(snapshot, configSnapshot)
 	}
 	if payload.Declared.Instructions {
 		instructionsSnapshot, _, err := profileinstructions.Sync(ctx, DriverType, effectiveProfile.Dir, payload.Instructions)
 		if err != nil {
-			return agentadaptor.ProfileSnapshot{}, err
+			return engine.ProfileSnapshot{}, err
 		}
 		snapshot = profileconfig.WithSnapshotResource(snapshot, instructionsSnapshot)
 	}
 	if payload.Declared.Agents {
 		agentsSnapshot, err := profileagents.Sync(ctx, DriverType, effectiveProfile.Dir, payload.Agents)
 		if err != nil {
-			return agentadaptor.ProfileSnapshot{}, err
+			return engine.ProfileSnapshot{}, err
 		}
 		snapshot = profileconfig.WithSnapshotResource(snapshot, agentsSnapshot)
 	}
 	if payload.Declared.Hooks {
 		hooksSnapshot, err := profilehooks.Sync(ctx, DriverType, effectiveProfile.Dir, payload.Hooks)
 		if err != nil {
-			return agentadaptor.ProfileSnapshot{}, err
+			return engine.ProfileSnapshot{}, err
 		}
 		snapshot = profileconfig.WithSnapshotResource(snapshot, hooksSnapshot)
 	}
 	return snapshot, nil
 }
 
-func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink agentadaptor.EventSink) (agentadaptor.DriverRunResult, error) {
-	if req.OutputSchema != nil && req.OutputSchema.Mode == agentadaptor.StructuredOutputNativeStrict {
-		return agentadaptor.DriverRunResult{}, &agentadaptor.StructuredOutputUnsupportedError{Adapter: DriverType, Mode: req.OutputSchema.Mode, Reason: "Cursor CLI does not expose native JSON Schema output"}
+func (adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSink) (driver.Response, error) {
+	if req.OutputSchema != nil && req.OutputSchema.Mode == driver.StructuredOutputNativeStrict {
+		return driver.Response{}, &driver.StructuredOutputUnsupportedError{Adapter: DriverType, Mode: req.OutputSchema.Mode, Reason: "Cursor CLI does not expose native JSON Schema output"}
 	}
 	cfg := readConfig(req.Config)
 	// per-run WithModel overrides the binding model for this invocation only.
@@ -343,48 +330,48 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 	profileFingerprint := req.ProfilePayload.Fingerprint
 	bindings, err := effectiveCursorBindingsNoInitialize(cfg.CommonConfig, req.Profile)
 	if err != nil {
-		return agentadaptor.DriverRunResult{}, err
+		return driver.Response{}, err
 	}
 	effectiveCWD := chooseCWD(cfg.CommonConfig, req.Workspace)
 	if err := validateCursorSessionGuard(req, effectiveCWD, profileFingerprint); err != nil {
-		return agentadaptor.DriverRunResult{}, err
+		return driver.Response{}, err
 	}
 	bindings, err = effectiveCursorBindings(cfg.CommonConfig, req.Profile)
 	if err != nil {
-		return agentadaptor.DriverRunResult{}, err
+		return driver.Response{}, err
 	}
 	effectiveEnv, err := adapterutil.RuntimeEnvBindings(bindings, req.Runtime)
 	if err != nil {
-		return agentadaptor.DriverRunResult{}, err
+		return driver.Response{}, err
 	}
 	effectiveProfile, profileKind := cursorProfileAndKind(cfg.CommonConfig, req.Profile)
 	if _, err := mcpruntime.SyncResource(ctx, DriverType, effectiveProfile.Dir, profileKind, req.MCP); err != nil {
-		return agentadaptor.DriverRunResult{}, err
+		return driver.Response{}, err
 	}
 	if req.ProfilePayload.Declared.Config {
 		if _, err := profileconfig.SyncNativePatches(ctx, DriverType, effectiveProfile.Dir, req.ProfilePayload.Config); err != nil {
-			return agentadaptor.DriverRunResult{}, err
+			return driver.Response{}, err
 		}
 	}
 	var preparedInstructions profileinstructions.Prepared
 	if req.ProfilePayload.Declared.Instructions {
 		preparedInstructions, err = profileinstructions.PrepareForRun(ctx, DriverType, effectiveProfile.Dir, effectiveCWD, req.Instructions)
 		if err != nil {
-			return agentadaptor.DriverRunResult{}, err
+			return driver.Response{}, err
 		}
 	}
 	if req.ProfilePayload.Declared.Agents {
 		if _, err := profileagents.Sync(ctx, DriverType, effectiveProfile.Dir, req.ProfilePayload.Agents); err != nil {
-			return agentadaptor.DriverRunResult{}, err
+			return driver.Response{}, err
 		}
 	}
 	if req.ProfilePayload.Declared.Hooks {
 		if _, err := profilehooks.Sync(ctx, DriverType, effectiveProfile.Dir, req.ProfilePayload.Hooks); err != nil {
-			return agentadaptor.DriverRunResult{}, err
+			return driver.Response{}, err
 		}
 	}
 	if _, err := syncCursorSkills(ctx, req.Skills, req.Skills.Keys(), nil, effectiveEnv, sink); err != nil {
-		return agentadaptor.DriverRunResult{}, err
+		return driver.Response{}, err
 	}
 
 	args := []string{"-p", "--output-format", "stream-json", "--workspace", effectiveCWD}
@@ -397,7 +384,7 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 	if cfg.Mode != "" {
 		args = append(args, "--mode", string(cfg.Mode))
 	}
-	if req.Policy.HumanDecision.Permission == agentadaptor.HumanDecisionAutoApprove {
+	if req.Policy.HumanDecision.Permission == driver.HumanDecisionAutoApprove {
 		args = append(args, "--force")
 	}
 	args = append(args, cfg.ExtraArgs...)
@@ -420,14 +407,14 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 		Observe: parser.onChunk,
 	}, sink)
 	if err != nil {
-		return agentadaptor.DriverRunResult{}, err
+		return driver.Response{}, err
 	}
 	parser.finalize()
-	raw := agentadaptor.RawStreams{Stdout: result.RawStreams.Stdout, Stderr: result.RawStreams.Stderr}
-	var failure *agentadaptor.RunFailure
+	raw := driver.RawStreams{Stdout: result.RawStreams.Stdout, Stderr: result.RawStreams.Stderr, Terminal: parser.terminal}
+	var failure *driver.RunFailure
 	if strings.TrimSpace(parser.errorMessage) != "" {
-		failure = &agentadaptor.RunFailure{
-			Code:    agentadaptor.FailureAgentError,
+		failure = &driver.RunFailure{
+			Code:    driver.FailureAgentError,
 			Message: parser.errorMessage,
 		}
 	}
@@ -440,7 +427,7 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 		}
 	}
 
-	return agentadaptor.DriverRunResult{
+	return driver.Response{
 		Output:          parser.buildOutput(),
 		RawStreams:      &raw,
 		Transcript:      parser.transcript,
@@ -452,52 +439,43 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 		Provider:        "cursor",
 		Model:           cfg.Model,
 		Summary:         parser.finalSummary(),
-		Result:          parser.resultFinal,
 		RuntimeServices: adapterutil.RuntimeReportsFromRefs(req.Runtime.Ensured, req.Agent),
 		Failure:         failure,
 	}, nil
 }
 
-func validateCursorSessionGuard(req agentadaptor.DriverRunRequest, effectiveCWD, profileFingerprint string) error {
+func validateCursorSessionGuard(req driver.Request, effectiveCWD, profileFingerprint string) error {
 	if req.Session == nil || req.Session.State == nil {
 		return nil
 	}
 	if req.Session.State.Data[driver.SessionParamCWD] != "" && req.Session.State.Data[driver.SessionParamCWD] != effectiveCWD {
-		return &agentadaptor.ResumeRejectedError{Reason: "session working directory changed"}
+		return &engine.ResumeRejectedError{Reason: "session working directory changed"}
 	}
 	if req.Session.State.Data[driver.SessionParamWorkspaceID] != "" && req.Session.State.Data[driver.SessionParamWorkspaceID] != req.Workspace.ID {
-		return &agentadaptor.ResumeRejectedError{Reason: "session workspace changed"}
+		return &engine.ResumeRejectedError{Reason: "session workspace changed"}
 	}
 	if req.Session.State.Data[driver.SessionParamProfileFingerprint] != "" && req.Session.State.Data[driver.SessionParamProfileFingerprint] != profileFingerprint {
-		return &agentadaptor.ResumeRejectedError{Reason: "profile resources changed"}
+		return &engine.ResumeRejectedError{Reason: "profile resources changed"}
 	}
 	return nil
 }
 
-func chooseCWD(cfg agentadaptor.CommonConfig, workspace agentadaptor.WorkspaceLease) string {
+func chooseCWD(cfg driver.CommonConfig, workspace driver.WorkspaceLease) string {
 	if workspace.CWD != "" {
 		return workspace.CWD
 	}
 	return cfg.CWD
 }
 
-// readConfig normalizes every config shape the adapter accepts. The v1
-// entry point (Driver) hands over the package-owned Config, so this is the
-// single point where it is converted for the shared adapter path.
-func readConfig(cfg any) agentadaptor.CursorConfig {
+// readConfig snapshots the package-owned configuration used by the v1 path.
+func readConfig(cfg any) Config {
 	switch typed := cfg.(type) {
-	case agentadaptor.CursorConfig:
-		return typed
-	case *agentadaptor.CursorConfig:
-		if typed != nil {
-			return *typed
-		}
 	case Config:
-		return typed.engineConfig()
+		return cloneConfig(typed)
 	case *Config:
 		if typed != nil {
-			return typed.engineConfig()
+			return cloneConfig(*typed)
 		}
 	}
-	return agentadaptor.CursorConfig{}
+	return Config{}
 }

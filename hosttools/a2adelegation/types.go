@@ -2,7 +2,7 @@
 // A2A agents as visual subagents of a local parent run.
 //
 // The package deliberately stays above the core SDK: it consumes
-// pkg/clients/a2a DTOs, emits UI-facing delegation events, and leaves concrete
+// clients/a2a DTOs, emits UI-facing delegation events, and leaves concrete
 // local adapters unaware of A2A.
 package a2adelegation
 

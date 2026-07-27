@@ -150,33 +150,12 @@ func (t *Thread) Run(ctx context.Context, prompt string, opts ...CallOption) (*R
 // surface through the normal contract (closed Events channel + Result()
 // error), never as a second return value.
 func (t *Thread) Stream(ctx context.Context, prompt string, opts ...CallOption) Stream {
-	st, eff, runCtx, ok := t.agent.openStream(ctx, opts)
-	if !ok {
-		return st
-	}
-
-	go func() {
-		defer st.cancel()
-		// Same environment acquisition as Agent.Stream, and for the same
-		// reason: the run's services must exist before resolution assembles
-		// the MCP payload, and their events must be subscribed before the
-		// driver can publish any.
-		rs, acquireErr := t.agent.acquireRun(runCtx, st.runID, &eff, st.sink)
-		if acquireErr != nil {
-			st.err = fmt.Errorf("adaptor: run %s: %w", st.runID, acquireErr)
-			st.sink.close()
-			close(st.done)
-			return
-		}
-		res, err := t.execute(runCtx, st.runID, prompt, &eff, st.sink, rs)
-		// Same close-timing contract as Agent.Stream: outcome first, then
-		// the event channel, done last.
-		st.res, st.err = res, err
-		backfillRunServices(rs, st.res, st.err)
-		rs.finish(runCtx, st.sink)
-		close(st.done)
-	}()
-	return st
+	mode, forkFromKey := t.planMode()
+	return t.agent.startInvocation(ctx, prompt, opts, &invocationTarget{
+		thread:      t,
+		mode:        mode,
+		forkFromKey: forkFromKey,
+	})
 }
 
 // Checkpoint returns the driver resume handle currently stored under the
@@ -200,128 +179,6 @@ func (t *Thread) Checkpoint(ctx context.Context) (*Checkpoint, error) {
 	return &Checkpoint{State: state, Valid: state != nil}, nil
 }
 
-// execute is the session-coordinated run pipeline: prepare the session plan
-// (leases + mode logic + fingerprint gating), run the driver with the
-// resume context, and persist the new checkpoint. It reuses the engine's
-// session logic verbatim through the ThreadSessionPlan entry, so the
-// semantics match the legacy session path item by item.
-func (t *Thread) execute(ctx context.Context, runID, prompt string, eff *RunSettings, sink *eventSink, rs *runResources) (*Result, error) {
-	store := t.agent.defaults.threadStore
-	if store == nil {
-		return nil, fmt.Errorf("%w (thread %q)", ErrThreadStoreRequired, t.key)
-	}
-	es := engineStore{store: store}
-	drv := t.agent.driver
-	driverType := drv.Descriptor().Type
-
-	mode, forkParent := t.planMode()
-	req := engine.SessionRequest{Namespace: threadNamespace, Key: t.key, Mode: mode}
-	if mode == driver.SessionFork {
-		parent, err := es.Resolve(ctx, engine.SessionQuery{Namespace: threadNamespace, Key: forkParent})
-		if err != nil {
-			return nil, fmt.Errorf("adaptor: thread %q: resolve fork parent: %w", t.key, err)
-		}
-		if parent == nil {
-			return nil, fmt.Errorf("%w (fork parent %q)", ErrThreadNotFound, forkParent)
-		}
-		req.ForkFrom = parent.ID
-	}
-
-	var identity driver.AgentIdentity
-	if eff.identity != nil {
-		identity = eff.identity.driverIdentity()
-	}
-
-	// Resolution (skills, MCP, profile payload, structured output
-	// negotiation) precedes session planning, exactly like the legacy
-	// Execute order, because the profile payload fingerprint participates
-	// in the thread compatibility recipe.
-	rr, err := t.agent.resolveRun(ctx, runID, prompt, eff, rs)
-	if err != nil {
-		return nil, fmt.Errorf("adaptor: run %s: %w", runID, err)
-	}
-	fingerprint := threadFingerprint(driverType, identity, eff, rr.payloadFingerprint)
-
-	plan, err := engine.PrepareThreadSession(ctx, es, req, identity, driverType, fingerprint)
-	if err != nil {
-		return nil, t.threadError(err)
-	}
-	if plan == nil {
-		// Unreachable: every thread mode is stateful. Guard anyway.
-		return nil, fmt.Errorf("adaptor: thread %q: internal: no session plan", t.key)
-	}
-	runCtx, runCancel := context.WithCancel(ctx)
-	defer runCancel()
-	defer plan.Release()
-	plan.StartLeaseRenewal(runCtx, runCancel)
-
-	dreq := rr.req
-	dreq.Streaming = true
-
-	var resp driver.Response
-	var runErr error
-	for {
-		dreq.Session = plan.DriverSession(drv)
-		resp, runErr = drv.Run(runCtx, dreq, sink)
-		if runErr != nil {
-			var rejected *engine.ResumeRejectedError
-			if errors.As(runErr, &rejected) {
-				if plan.Reused() && plan.Mode() == driver.SessionContinueOrStart {
-					// Same fallback as the legacy path: a rejected
-					// continue-or-start resume retries once against a
-					// fresh session (old one archived on persist).
-					if freshErr := plan.PrepareFresh(runCtx, driverType, fingerprint); freshErr != nil {
-						return nil, t.threadError(freshErr)
-					}
-					continue
-				}
-				// Resume-only (or non-reused) rejections are final;
-				// expose them through the consumer sentinel while
-				// keeping the driver's chain intact.
-				runErr = fmt.Errorf("%w: %w", ErrResumeRejected, runErr)
-			}
-		}
-		break
-	}
-
-	// Renewal failures take precedence over the run outcome: the renewal
-	// goroutine cancelled runCtx, so whatever the driver returned is just
-	// collateral of losing exclusivity.
-	plan.StopLeaseRenewal()
-	if renewErr := plan.RenewalError(); renewErr != nil {
-		return nil, t.threadError(renewErr)
-	}
-
-	if runErr == nil {
-		// Post-run structured output contract, applied before persistence
-		// exactly like the legacy path (an escalated FailurePolicyError is
-		// not a human decision, so it does not enable the missing-
-		// checkpoint tolerance below).
-		resp.StructuredOutput, resp.Failure = engine.FinalizeStructuredOutput(
-			rr.schema, rr.source, resp.Output, resp.StructuredOutput, resp.Failure)
-	}
-
-	if runErr == nil {
-		if _, perr := plan.Persist(runCtx, identity, drv, fingerprint, resp.Checkpoint); perr != nil {
-			failure := resp.Failure
-			if pending := sink.pendingFailure(); pending != nil {
-				failure = pending
-			}
-			if !errors.Is(perr, engine.ErrSessionCheckpointMissing) || !failure.IsHumanDecision() {
-				return nil, t.threadError(perr)
-			}
-			// Tolerated: a human decision ended the run before the driver
-			// produced a resumable checkpoint. The thread's stored state
-			// stays untouched; the failure itself surfaces through
-			// finalizeRun as the normal *RunError.
-		} else {
-			t.markEstablished()
-		}
-	}
-
-	return finalizeRun(runID, sink, resp, runErr)
-}
-
 // planMode picks the session mode for the next run.
 func (t *Thread) planMode() (driver.SessionMode, string) {
 	if t.resumeOnly {
@@ -343,18 +200,6 @@ func (t *Thread) markEstablished() {
 	t.mu.Unlock()
 }
 
-// threadFingerprint computes the compatibility fingerprint guarding thread
-// resumes. Recipe parity with the legacy session fingerprint: identity,
-// driver type, model, workspace, and the profile payload fingerprint
-// (which folds skills, MCP, agents, hooks, instructions, config, and the
-// declaration flags — replacing the P2 instructions-only term) participate;
-// policy and metadata deliberately do not (tuning them must not orphan
-// conversations). The output schema is deliberately absent, matching the
-// legacy recipe: changing the schema or mode reuses the session.
-func threadFingerprint(driverType string, identity driver.AgentIdentity, eff *RunSettings, payloadFingerprint string) string {
-	return engine.StableHash("thread", driverType, identity, eff.model, eff.workspace, payloadFingerprint)
-}
-
 // ============ Thread error vocabulary ============
 //
 // Session-coordination failures are infrastructure-side (decision D1: plain
@@ -371,7 +216,8 @@ var (
 	// right now; retry after it finishes.
 	ErrThreadBusy = errors.New("adaptor: thread busy")
 	// ErrThreadIncompatible: the stored conversation no longer matches the
-	// current configuration (identity/model/workspace/instructions) and
+	// current configured Driver, identity, model, resolved workspace,
+	// profile/skill/MCP/instructions, or runtime-service environment, and
 	// the thread is resume-only, so silently starting over is not allowed.
 	ErrThreadIncompatible = errors.New("adaptor: thread incompatible with current configuration")
 	// ErrThreadLeaseLost: the run lost its exclusivity lease mid-flight
@@ -380,6 +226,9 @@ var (
 	// ErrThreadCheckpointMissing: the driver finished without producing a
 	// resumable checkpoint, so the thread state could not be persisted.
 	ErrThreadCheckpointMissing = errors.New("adaptor: driver returned no resumable checkpoint")
+	// ErrThreadAlreadyExists: Fork's target key already has an active
+	// conversation. The parent and existing target remain unchanged.
+	ErrThreadAlreadyExists = errors.New("adaptor: thread already exists")
 	// ErrResumeRejected: the driver refused to resume from the stored
 	// checkpoint and the thread mode does not allow a fresh start.
 	ErrResumeRejected = errors.New("adaptor: driver rejected thread resume")
@@ -408,6 +257,8 @@ func (t *Thread) threadError(err error) error {
 		return fmt.Errorf("%w (thread %q)", ErrThreadLeaseLost, t.key)
 	case errors.Is(err, engine.ErrSessionCheckpointMissing):
 		return fmt.Errorf("%w (thread %q)", ErrThreadCheckpointMissing, t.key)
+	case errors.Is(err, engine.ErrThreadAlreadyExists), errors.Is(err, threadstore.ErrAlreadyExists):
+		return fmt.Errorf("%w (thread %q)", ErrThreadAlreadyExists, t.key)
 	default:
 		return fmt.Errorf("adaptor: thread %q: %w", t.key, err)
 	}

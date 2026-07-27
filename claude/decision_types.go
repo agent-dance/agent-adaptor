@@ -4,15 +4,15 @@ import (
 	"strings"
 	"unicode"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
 )
 
 // claudeInteractiveTools is the whitelist of tool names whose tool_use /
 // tool_result frames the claude parser recognizes as HITL decisions. See
 // docs/workstream-hitl-v2.md §5.1.2.
-var claudeInteractiveTools = map[string]agentadaptor.HumanDecisionKind{
-	"ExitPlanMode":    agentadaptor.HumanDecisionPlanReview,
-	"AskUserQuestion": agentadaptor.HumanDecisionQuestion,
+var claudeInteractiveTools = map[string]driver.HumanDecisionKind{
+	"ExitPlanMode":    driver.HumanDecisionPlanReview,
+	"AskUserQuestion": driver.HumanDecisionQuestion,
 }
 
 // sourceForTool produces the canonical Source label for a given claude tool
@@ -51,7 +51,7 @@ func toSnakeCase(s string) string {
 // failure (wrapped in <tool_use_error>…</tool_use_error>) that happened before
 // the UI could even be shown — those are model-authored bugs, not human
 // decisions, and must not be reported through the HITL channel.
-func interpretClaudeToolResult(content string, isError bool) (agentadaptor.DecisionResult, bool) {
+func interpretClaudeToolResult(content string, isError bool) (driver.DecisionResult, bool) {
 	if isError && looksLikeToolUseError(content) {
 		// Not a HITL outcome at all: the CLI rejected the model's tool call
 		// on schema / validation grounds. The regular tool_call.result
@@ -60,18 +60,18 @@ func interpretClaudeToolResult(content string, isError bool) (agentadaptor.Decis
 		return "", false
 	}
 	if isError {
-		return agentadaptor.DecisionRejected, true
+		return driver.DecisionRejected, true
 	}
 	lower := strings.ToLower(strings.TrimSpace(content))
 	switch {
 	case strings.HasPrefix(lower, "user approved the plan"),
 		strings.HasPrefix(lower, "user approved"),
 		strings.Contains(lower, "plan approved"):
-		return agentadaptor.DecisionApproved, true
+		return driver.DecisionApproved, true
 	}
 	// No explicit error / rejection signal: treat as approved. Callers may
 	// log unrecognised content for future-CLI drift.
-	return agentadaptor.DecisionApproved, true
+	return driver.DecisionApproved, true
 }
 
 // looksLikeToolUseError detects the wrapper Claude's CLI uses when it

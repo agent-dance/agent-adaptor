@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/internal/adapterutil"
 	"github.com/agent-dance/agent-adaptor/internal/configprobe"
 	"github.com/agent-dance/agent-adaptor/internal/skillruntime"
@@ -14,7 +14,7 @@ import (
 // configEnvVar is CodeBuddy's config directory override.
 const configEnvVar = "CODEBUDDY_CONFIG_DIR"
 
-func effectiveBindings(config agentadaptor.CommonConfig, selection *agentadaptor.ProfileSelection) ([]agentadaptor.EnvBinding, error) {
+func effectiveBindings(config CommonConfig, selection *driver.ProfileSelection) ([]driver.EnvBinding, error) {
 	profile, err := resolveProfileWithOptions(config, selection, false)
 	if err != nil {
 		return nil, err
@@ -22,7 +22,7 @@ func effectiveBindings(config agentadaptor.CommonConfig, selection *agentadaptor
 	return skillruntime.WithBinding(config.Env, configEnvVar, profile.Dir), nil
 }
 
-func effectiveBindingsNoInitialize(config agentadaptor.CommonConfig, selection *agentadaptor.ProfileSelection) ([]agentadaptor.EnvBinding, error) {
+func effectiveBindingsNoInitialize(config CommonConfig, selection *driver.ProfileSelection) ([]driver.EnvBinding, error) {
 	profile, err := resolveProfileWithOptions(config, selection, true)
 	if err != nil {
 		return nil, err
@@ -30,7 +30,7 @@ func effectiveBindingsNoInitialize(config agentadaptor.CommonConfig, selection *
 	return skillruntime.WithBinding(config.Env, configEnvVar, profile.Dir), nil
 }
 
-func resolveConfigDir(bindings []agentadaptor.EnvBinding) string {
+func resolveConfigDir(bindings []driver.EnvBinding) string {
 	if configured := skillruntime.ResolveBinding(bindings, configEnvVar); strings.TrimSpace(configured) != "" {
 		return filepath.Clean(configured)
 	}
@@ -40,11 +40,11 @@ func resolveConfigDir(bindings []agentadaptor.EnvBinding) string {
 	return filepath.Join(skillruntime.ResolveHome(bindings), ".codebuddy")
 }
 
-func canonicalSharedConfigDir(bindings []agentadaptor.EnvBinding) string {
+func canonicalSharedConfigDir(bindings []driver.EnvBinding) string {
 	return filepath.Join(skillruntime.ResolveHome(bindings), ".codebuddy")
 }
 
-func resolveProfileWithOptions(config agentadaptor.CommonConfig, selection *agentadaptor.ProfileSelection, skipInitialize bool) (agentadaptor.AgentProfile, error) {
+func resolveProfileWithOptions(config CommonConfig, selection *driver.ProfileSelection, skipInitialize bool) (driver.AgentProfile, error) {
 	resolution, err := skillruntime.ResolveProfile(skillruntime.ProfileResolveOptions{
 		Bindings:         config.Env,
 		Selection:        selection,
@@ -59,22 +59,22 @@ func resolveProfileWithOptions(config agentadaptor.CommonConfig, selection *agen
 		SkipInitialize:   skipInitialize,
 	})
 	if err != nil {
-		return agentadaptor.AgentProfile{}, err
+		return driver.AgentProfile{}, err
 	}
 	profile := resolution.Profile
 	profile.DriverType = DriverType
 	return profile, nil
 }
 
-func resolveProfile(config agentadaptor.CommonConfig, selection *agentadaptor.ProfileSelection) agentadaptor.AgentProfile {
+func resolveProfile(config CommonConfig, selection *driver.ProfileSelection) driver.AgentProfile {
 	profile, err := resolveProfileWithOptions(config, selection, false)
 	if err != nil {
-		return agentadaptor.AgentProfile{DriverType: DriverType, Supported: true, EnvVar: configEnvVar, Error: err.Error()}
+		return driver.AgentProfile{DriverType: DriverType, Supported: true, EnvVar: configEnvVar, Error: err.Error()}
 	}
 	return profile
 }
 
-func credentialCandidates(bindings []agentadaptor.EnvBinding) []string {
+func credentialCandidates(bindings []driver.EnvBinding) []string {
 	root := resolveConfigDir(bindings)
 	return []string{
 		filepath.Join(root, ".credentials.json"),
@@ -82,15 +82,15 @@ func credentialCandidates(bindings []agentadaptor.EnvBinding) []string {
 	}
 }
 
-func authChecks(bindings []agentadaptor.EnvBinding) []agentadaptor.EnvironmentCheck {
-	checks := make([]agentadaptor.EnvironmentCheck, 0)
+func authChecks(bindings []driver.EnvBinding) []driver.EnvironmentCheck {
+	checks := make([]driver.EnvironmentCheck, 0)
 	for _, candidate := range credentialCandidates(bindings) {
 		payload, err := configprobe.ReadJSONObject(candidate)
 		if err != nil {
 			if os.IsNotExist(err) {
 				continue
 			}
-			checks = append(checks, agentadaptor.EnvironmentCheck{
+			checks = append(checks, driver.EnvironmentCheck{
 				Code:    "codebuddy_credentials_unreadable",
 				Level:   "warn",
 				Message: "CodeBuddy credentials file exists but could not be parsed.",
@@ -102,7 +102,7 @@ func authChecks(bindings []agentadaptor.EnvBinding) []agentadaptor.EnvironmentCh
 		if len(payload) == 0 {
 			continue
 		}
-		checks = append(checks, agentadaptor.EnvironmentCheck{
+		checks = append(checks, driver.EnvironmentCheck{
 			Code:    "codebuddy_credentials_present",
 			Level:   "info",
 			Message: "CodeBuddy credentials file is present.",
@@ -112,14 +112,14 @@ func authChecks(bindings []agentadaptor.EnvBinding) []agentadaptor.EnvironmentCh
 	}
 
 	if _, source := adapterutil.ResolvedEnvValue(bindings, "CODEBUDDY_API_KEY"); source != "" {
-		return append(checks, agentadaptor.EnvironmentCheck{
+		return append(checks, driver.EnvironmentCheck{
 			Code:    "codebuddy_api_key_present",
 			Level:   "info",
 			Message: "CODEBUDDY_API_KEY is available for CodeBuddy authentication.",
 		})
 	}
 
-	return append(checks, agentadaptor.EnvironmentCheck{
+	return append(checks, driver.EnvironmentCheck{
 		Code:    "codebuddy_credentials_missing",
 		Level:   "warn",
 		Message: "No CodeBuddy credentials file or CODEBUDDY_API_KEY was found.",

@@ -40,6 +40,15 @@ func (id Identity) driverIdentity() driver.AgentIdentity {
 	}
 }
 
+func identityFromDriver(id driver.AgentIdentity) Identity {
+	return Identity{
+		ID:      id.ID,
+		Tenant:  id.TenantID,
+		Profile: id.ProfileID,
+		Name:    id.Name,
+	}
+}
+
 // identityContextKey is the unexported context key the SDK uses to stash the
 // caller Identity before invoking hooks and the driver. Read it through
 // IdentityFromContext — that is the public contract.

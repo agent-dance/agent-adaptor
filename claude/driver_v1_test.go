@@ -16,14 +16,11 @@ func TestDriverReturnsNonNilDriver(t *testing.T) {
 	}
 }
 
-func TestDriverDescriptorMatchesLegacyEntryPoints(t *testing.T) {
+func TestDriverDescriptorMatchesPackageAdapter(t *testing.T) {
 	cfg := Config{Model: "claude-fable-5"}
-	want := New(cfg.engineConfig()).Adapter().Descriptor()
+	want := adapter{}.Descriptor()
 	if got := Driver(cfg).Descriptor(); !reflect.DeepEqual(got, want) {
-		t.Fatalf("Driver(cfg).Descriptor() = %+v\nwant legacy binding descriptor %+v", got, want)
-	}
-	if got := NewAdapter().Descriptor(); !reflect.DeepEqual(got, want) {
-		t.Fatalf("NewAdapter().Descriptor() = %+v\nwant %+v", got, want)
+		t.Fatalf("Driver(cfg).Descriptor() = %+v\nwant adapter descriptor %+v", got, want)
 	}
 }
 
@@ -52,14 +49,7 @@ func TestDriverInjectsCapturedConfigIntoRunRequest(t *testing.T) {
 		t.Fatalf("injected config = %+v, want %+v", injected, cfg)
 	}
 
-	// Parity with the legacy entry point: the injected v1 config converts to
-	// exactly the value New binds. The two are no longer the same
-	// declaration — this package owns Config (docs/p5.2-recon.md D-P5.2-2).
-	if legacy := New(cfg.engineConfig()).TypedConfig(); !reflect.DeepEqual(legacy, injected.engineConfig()) {
-		t.Fatalf("legacy binding config = %+v, want %+v", legacy, injected.engineConfig())
-	}
-
-	// An explicit request-level config (legacy binding path) wins untouched.
+	// An explicit request-level config wins untouched.
 	override := Config{Model: "claude-sonnet-5"}
 	req = d.requestWithConfig(driver.Request{Config: override})
 	if !reflect.DeepEqual(req.Config, override) {
@@ -163,7 +153,7 @@ func TestDriverValidateConfigStaysDeferredAndUsesCapturedConfig(t *testing.T) {
 		t.Fatalf("ValidateConfig(nil) = %v, want nil (captured config)", err)
 	}
 	if err := Driver(Config{}).ValidateConfig(42); err == nil {
-		t.Fatal("ValidateConfig(42) = nil, want type error (legacy semantics)")
+		t.Fatal("ValidateConfig(42) = nil, want provider Config type error")
 	}
 }
 

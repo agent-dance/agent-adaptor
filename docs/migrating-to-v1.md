@@ -220,6 +220,7 @@ v1 是干净切换（v0.x 打 tag 冻结，无兼容层）。API 围绕六个名
 | `ErrSessionIncompatible` | `adaptor.ErrThreadIncompatible` | ✅ |
 | `ErrSessionLeaseLost` | `adaptor.ErrThreadLeaseLost` | ✅ |
 | `ErrSessionCheckpointMissing` | `adaptor.ErrThreadCheckpointMissing` | ✅ |
+| Fork target conflict（旧版会静默覆盖） | `adaptor.ErrThreadAlreadyExists`；父 Thread 与既有目标均保持不变 | ✅ |
 | `ErrResumeRejected` | `adaptor.ErrResumeRejected`（同名保留） | ✅ |
 | `ErrDecisionRequestExpired` | 超时语义并入 `Policy.Approvals` 兜底：`adaptor.ErrApprovalTimeout` / `RunError.Reason == ReasonApprovalTimeout` | ✅ |
 | `ErrDecisionResultKindMismatch` | 结构性消灭（D2：应答器在请求上，kind 错配不可能发生）；方法级误用（如对 Permission 调 `Answer`）返回 `adaptor.ErrApprovalKindMismatch` | ✅ |

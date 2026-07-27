@@ -105,10 +105,8 @@ func (s *Service) DetachRun(_ context.Context, runID string) error {
 }
 
 // sidecarServiceRef projects one live sidecar onto the runtime-service shape
-// the driver consumes. The typed MCP field replaces the eight
-// "agentadaptor.mcp.*" stringly metadata keys the hand-written host runtime
-// used to assemble (design doc §7 row 3): transport, URL, auth, and
-// requiredness are struct fields now.
+// the driver consumes. Transport, URL, auth, and requiredness use the typed
+// MCP contract; no stringly metadata parsing participates in execution.
 func sidecarServiceRef(sidecar Sidecar) adaptor.ServiceRef {
 	server := mcp.HTTP(ServiceKey, sidecar.URL,
 		mcp.WithBearerTokenEnv(BearerTokenEnvVar),
@@ -139,9 +137,9 @@ func sidecarServiceRef(sidecar Sidecar) adaptor.ServiceRef {
 	}
 }
 
-// runEvents is the RunEventSource half of the attachment: every delegation
-// event published for the run, projected onto adaptor.SubagentUpdate and
-// delivered on a channel the SDK folds into the leader's own event stream.
+// runEvents is the attachment's Event source: every delegation event
+// published for the run is projected onto adaptor.SubagentUpdate and delivered
+// on a channel the SDK folds into the leader's own event stream.
 //
 // Cancellation contract (the SDK drains this channel to closure before it
 // closes the run's event channel): when ctx ends, whatever the bus has already

@@ -1,14 +1,15 @@
 package codebuddy
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
 	adaptertestv1 "github.com/agent-dance/agent-adaptor/adaptertest/v1"
 	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/internal/engine"
 )
 
 // codebuddyV1LiveGate decides whether the live conformance probes (EVT-*,
@@ -27,10 +28,73 @@ func codebuddyV1LiveGate(t *testing.T) (bool, adaptertestv1.Option) {
 	return true, adaptertestv1.WithLiveRun("")
 }
 
+func TestCodeBuddyProfileInstructionMaterialization(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		instructions    driver.InstructionsBundleRef
+		wantSupport     engine.ProfileResourceSupport
+		wantMaterialize engine.ProfileResourceMaterialization
+	}{
+		{
+			name:            "provider-native default scope",
+			instructions:    driver.InstructionsBundleRef{ID: "team", Content: "Prefer concise answers."},
+			wantSupport:     engine.ProfileResourceSupportPortableCore,
+			wantMaterialize: engine.ProfileResourceMaterializationNativeManaged,
+		},
+		{
+			name:            "run-scoped prompt fallback",
+			instructions:    driver.InstructionsBundleRef{ID: "run", Content: "Answer for this run.", Scope: driver.InstructionScopeRun},
+			wantSupport:     engine.ProfileResourceSupportFallback,
+			wantMaterialize: engine.ProfileResourceMaterializationPromptInjected,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			configured := Driver(Config{CommonConfig: CommonConfig{Env: []driver.EnvBinding{
+				{Name: "HOME", Value: home},
+				{Name: "USERPROFILE", Value: home},
+			}}})
+			profileDriver, ok := configured.(engine.ProfileResourceDriver)
+			if !ok {
+				t.Fatal("configured driver lost profile resource capability")
+			}
+			snapshot, err := profileDriver.SyncProfileResources(
+				context.Background(), nil, driver.AgentIdentity{}, nil,
+				driver.ProfilePayload{
+					Instructions: &tc.instructions,
+					Declared:     driver.ProfileResourceDeclarations{Instructions: true},
+				},
+				nil, nil,
+			)
+			if err != nil {
+				t.Fatalf("SyncProfileResources: %v", err)
+			}
+			resource, ok := profileResourceByKind(snapshot, engine.ProfileResourceInstructions)
+			if !ok {
+				t.Fatalf("instruction resource missing: %+v", snapshot.Resources)
+			}
+			if resource.Support != tc.wantSupport || resource.Materialization != tc.wantMaterialize {
+				t.Fatalf("instruction resource = %+v, want support=%s materialization=%s", resource, tc.wantSupport, tc.wantMaterialize)
+			}
+			if len(resource.Managed) != 1 || resource.Managed[0] != tc.instructions.ID {
+				t.Fatalf("managed instructions = %v, want [%s]", resource.Managed, tc.instructions.ID)
+			}
+		})
+	}
+}
+
+func profileResourceByKind(snapshot engine.ProfileSnapshot, kind engine.ProfileResourceKind) (engine.ResourceSnapshot, bool) {
+	for _, resource := range snapshot.Resources {
+		if resource.Kind == kind {
+			return resource, true
+		}
+	}
+	return engine.ResourceSnapshot{}, false
+}
+
 // TestCodeBuddyDriverV1Conformance runs the v1 SPI conformance suite
 // (adaptertest/v1) against the codebuddy.Driver constructor. Hermetic
-// clauses always run against an isolated temp HOME, mirroring
-// TestCodeBuddyAdapterConformance; live clauses are gated by
+// clauses always run against an isolated temp HOME; live clauses are gated by
 // codebuddyV1LiveGate.
 func TestCodeBuddyDriverV1Conformance(t *testing.T) {
 	live, liveOpt := codebuddyV1LiveGate(t)
@@ -46,7 +110,7 @@ func TestCodeBuddyDriverV1Conformance(t *testing.T) {
 		// Hermetic isolation, matching the v0 conformance test: probes must
 		// not read or write the operator's real HOME or config dir.
 		t.Setenv("CODEBUDDY_CONFIG_DIR", "")
-		cfg.Env = []agentadaptor.EnvBinding{
+		cfg.Env = []driver.EnvBinding{
 			{Name: "HOME", Value: home},
 			{Name: "USERPROFILE", Value: home},
 		}

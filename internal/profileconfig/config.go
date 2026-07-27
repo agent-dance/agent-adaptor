@@ -8,17 +8,18 @@ import (
 	"strings"
 	"time"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/internal/engine"
 	"github.com/agent-dance/agent-adaptor/internal/profilereconcile"
 	"github.com/agent-dance/agent-adaptor/internal/profilestate"
 )
 
-func Snapshot(driverType, profileDir string, payload agentadaptor.ProfileConfigPayload, synced bool) agentadaptor.ResourceSnapshot {
-	out := agentadaptor.ResourceSnapshot{
-		Kind:            agentadaptor.ProfileResourceConfig,
+func Snapshot(driverType, profileDir string, payload driver.ProfileConfigPayload, synced bool) engine.ResourceSnapshot {
+	out := engine.ResourceSnapshot{
+		Kind:            engine.ProfileResourceConfig,
 		Fingerprint:     payload.Fingerprint,
-		Support:         agentadaptor.ProfileResourceSupportUnsupported,
-		Materialization: agentadaptor.ProfileResourceMaterializationNotMaterialized,
+		Support:         engine.ProfileResourceSupportUnsupported,
+		Materialization: engine.ProfileResourceMaterializationNotMaterialized,
 		Warnings:        cloneStrings(payload.Warnings),
 	}
 	nativeKeys, supportedCapabilityKeys, unsupportedCapabilityKeys, providerErrors, capabilityWarnings := classifyPatches(driverType, payload)
@@ -27,18 +28,18 @@ func Snapshot(driverType, profileDir string, payload agentadaptor.ProfileConfigP
 	sort.Strings(managedKeys)
 	switch {
 	case len(nativeKeys) > 0:
-		out.Support = agentadaptor.ProfileResourceSupportNativeEscape
+		out.Support = engine.ProfileResourceSupportNativeEscape
 		if synced {
 			out.Managed = managedKeys
-			out.Materialization = agentadaptor.ProfileResourceMaterializationNativeManaged
+			out.Materialization = engine.ProfileResourceMaterializationNativeManaged
 		} else {
 			out.Warnings = append(out.Warnings, "config patches are desired but not observed by ProfileSnapshot; call SyncProfile to materialize them")
 		}
 	case len(supportedCapabilityKeys) > 0:
-		out.Support = agentadaptor.ProfileResourceSupportPortableExtended
+		out.Support = engine.ProfileResourceSupportPortableExtended
 		if synced {
 			out.Managed = managedKeys
-			out.Materialization = agentadaptor.ProfileResourceMaterializationNativeManaged
+			out.Materialization = engine.ProfileResourceMaterializationNativeManaged
 		} else {
 			out.Warnings = append(out.Warnings, "config capability patches are desired but not observed by ProfileSnapshot; call SyncProfile to materialize them")
 		}
@@ -59,7 +60,7 @@ func Snapshot(driverType, profileDir string, payload agentadaptor.ProfileConfigP
 	return out
 }
 
-func WithSnapshotResource(snapshot agentadaptor.ProfileSnapshot, resource agentadaptor.ResourceSnapshot) agentadaptor.ProfileSnapshot {
+func WithSnapshotResource(snapshot engine.ProfileSnapshot, resource engine.ResourceSnapshot) engine.ProfileSnapshot {
 	for i := range snapshot.Resources {
 		if snapshot.Resources[i].Kind == resource.Kind {
 			snapshot.Resources[i] = resource
@@ -70,20 +71,20 @@ func WithSnapshotResource(snapshot agentadaptor.ProfileSnapshot, resource agenta
 	return snapshot
 }
 
-func SyncNativePatches(ctx context.Context, driverType, profileDir string, payload agentadaptor.ProfileConfigPayload) (agentadaptor.ResourceSnapshot, error) {
+func SyncNativePatches(ctx context.Context, driverType, profileDir string, payload driver.ProfileConfigPayload) (engine.ResourceSnapshot, error) {
 	type plannedPatch struct {
 		key    string
-		native agentadaptor.NativeConfigPatch
+		native driver.NativeConfigPatch
 	}
 	planned := make([]plannedPatch, 0, len(payload.Patches))
 	for _, patch := range payload.Patches {
 		native, ok, err := effectivePatchForDriver(driverType, patch)
 		if err != nil {
-			return agentadaptor.ResourceSnapshot{}, err
+			return engine.ResourceSnapshot{}, err
 		}
 		if !ok {
 			if strings.TrimSpace(patch.Capability) != "" {
-				return agentadaptor.ResourceSnapshot{}, fmt.Errorf("config capability patch %q is unsupported by adapter %q", patch.Key, driverType)
+				return engine.ResourceSnapshot{}, fmt.Errorf("config capability patch %q is unsupported by adapter %q", patch.Key, driverType)
 			}
 			continue
 		}
@@ -94,18 +95,18 @@ func SyncNativePatches(ctx context.Context, driverType, profileDir string, paylo
 	}
 	lock, err := profilestate.AcquireLock(ctx, profileDir, profilestate.LockOptions{StaleAfter: 10 * time.Minute})
 	if err != nil {
-		return agentadaptor.ResourceSnapshot{}, err
+		return engine.ResourceSnapshot{}, err
 	}
 	defer lock.Release()
 
 	for _, patch := range planned {
 		target, err := targetPath(profileDir, patch.native.Path)
 		if err != nil {
-			return agentadaptor.ResourceSnapshot{}, fmt.Errorf("config patch %q: %w", patch.key, err)
+			return engine.ResourceSnapshot{}, fmt.Errorf("config patch %q: %w", patch.key, err)
 		}
 		kind, err := structuredKind(patch.native.FileKind)
 		if err != nil {
-			return agentadaptor.ResourceSnapshot{}, fmt.Errorf("config patch %q: %w", patch.key, err)
+			return engine.ResourceSnapshot{}, fmt.Errorf("config patch %q: %w", patch.key, err)
 		}
 		if err := profilereconcile.ApplyStructuredPatch(profilereconcile.StructuredPatch{
 			FileKind: kind,
@@ -113,13 +114,13 @@ func SyncNativePatches(ctx context.Context, driverType, profileDir string, paylo
 			Section:  patch.native.Section,
 			Values:   patch.native.Values,
 		}); err != nil {
-			return agentadaptor.ResourceSnapshot{}, fmt.Errorf("config patch %q: %w", patch.key, err)
+			return engine.ResourceSnapshot{}, fmt.Errorf("config patch %q: %w", patch.key, err)
 		}
 	}
 	return Snapshot(driverType, profileDir, payload, true), nil
 }
 
-func effectivePatchForDriver(driverType string, patch agentadaptor.ProfileConfigPatch) (agentadaptor.NativeConfigPatch, bool, error) {
+func effectivePatchForDriver(driverType string, patch driver.ProfileConfigPatch) (driver.NativeConfigPatch, bool, error) {
 	if strings.TrimSpace(patch.Capability) != "" {
 		native, ok, _, err := capabilityPatchForDriver(driverType, patch)
 		return native, ok, err
@@ -127,11 +128,11 @@ func effectivePatchForDriver(driverType string, patch agentadaptor.ProfileConfig
 	return nativePatchForDriver(driverType, patch)
 }
 
-func nativePatchForDriver(driverType string, patch agentadaptor.ProfileConfigPatch) (agentadaptor.NativeConfigPatch, bool, error) {
+func nativePatchForDriver(driverType string, patch driver.ProfileConfigPatch) (driver.NativeConfigPatch, bool, error) {
 	if strings.TrimSpace(patch.Capability) != "" {
-		return agentadaptor.NativeConfigPatch{}, false, nil
+		return driver.NativeConfigPatch{}, false, nil
 	}
-	native := agentadaptor.NativeConfigPatch{
+	native := driver.NativeConfigPatch{
 		FileKind: patch.FileKind,
 		Path:     patch.Path,
 		Section:  patch.Section,
@@ -145,15 +146,15 @@ func nativePatchForDriver(driverType string, patch agentadaptor.ProfileConfigPat
 		}
 	}
 	if strings.TrimSpace(native.Provider) != "" && strings.TrimSpace(native.Provider) != driverType {
-		return agentadaptor.NativeConfigPatch{}, false, fmt.Errorf("native config patch %q targets provider %q, not %q", patch.Key, native.Provider, driverType)
+		return driver.NativeConfigPatch{}, false, fmt.Errorf("native config patch %q targets provider %q, not %q", patch.Key, native.Provider, driverType)
 	}
 	if native.FileKind == "" && strings.TrimSpace(native.Path) == "" {
-		return agentadaptor.NativeConfigPatch{}, false, nil
+		return driver.NativeConfigPatch{}, false, nil
 	}
 	return native, true, nil
 }
 
-func classifyPatches(driverType string, payload agentadaptor.ProfileConfigPayload) ([]string, []string, []string, []string, []string) {
+func classifyPatches(driverType string, payload driver.ProfileConfigPayload) ([]string, []string, []string, []string, []string) {
 	nativeKeys := make([]string, 0)
 	supportedCapabilityKeys := make([]string, 0)
 	unsupportedCapabilityKeys := make([]string, 0)
@@ -191,7 +192,7 @@ func classifyPatches(driverType string, payload agentadaptor.ProfileConfigPayloa
 	return nativeKeys, supportedCapabilityKeys, unsupportedCapabilityKeys, providerErrors, capabilityWarnings
 }
 
-func capabilityPatchForDriver(driverType string, patch agentadaptor.ProfileConfigPatch) (agentadaptor.NativeConfigPatch, bool, []string, error) {
+func capabilityPatchForDriver(driverType string, patch driver.ProfileConfigPatch) (driver.NativeConfigPatch, bool, []string, error) {
 	capability := strings.ToLower(strings.TrimSpace(patch.Capability))
 	values := cloneAnyMap(patch.Values)
 	warnings := make([]string, 0)
@@ -201,26 +202,26 @@ func capabilityPatchForDriver(driverType string, patch agentadaptor.ProfileConfi
 		case "model":
 			model, ok := stringValue(values, "model", "id", "value")
 			if !ok {
-				return agentadaptor.NativeConfigPatch{}, false, nil, fmt.Errorf("config capability patch %q requires model value", patch.Key)
+				return driver.NativeConfigPatch{}, false, nil, fmt.Errorf("config capability patch %q requires model value", patch.Key)
 			}
 			return tomlPatch("config.toml", "", map[string]any{"model": model}), true, nil, nil
 		case "reasoning", "reasoning_effort":
 			effort, ok := stringValue(values, "effort", "reasoning_effort", "value")
 			if !ok {
-				return agentadaptor.NativeConfigPatch{}, false, nil, fmt.Errorf("config capability patch %q requires reasoning effort value", patch.Key)
+				return driver.NativeConfigPatch{}, false, nil, fmt.Errorf("config capability patch %q requires reasoning effort value", patch.Key)
 			}
 			return tomlPatch("config.toml", "", map[string]any{"model_reasoning_effort": effort}), true, nil, nil
 		case "sandbox", "isolation":
 			mode, ok := stringValue(values, "mode", "sandbox_mode", "value")
 			if !ok {
-				return agentadaptor.NativeConfigPatch{}, false, nil, fmt.Errorf("config capability patch %q requires sandbox mode value", patch.Key)
+				return driver.NativeConfigPatch{}, false, nil, fmt.Errorf("config capability patch %q requires sandbox mode value", patch.Key)
 			}
 			warnings = appendUnsupportedFields(warnings, patch.Key, capability, values, "mode", "sandbox_mode", "value")
 			return tomlPatch("config.toml", "", map[string]any{"sandbox_mode": mode}), true, warnings, nil
 		case "approval", "permission":
 			mode, ok := stringValue(values, "mode", "policy", "approval_policy", "value")
 			if !ok {
-				return agentadaptor.NativeConfigPatch{}, false, nil, fmt.Errorf("config capability patch %q requires approval policy value", patch.Key)
+				return driver.NativeConfigPatch{}, false, nil, fmt.Errorf("config capability patch %q requires approval policy value", patch.Key)
 			}
 			return tomlPatch("config.toml", "", map[string]any{"approval_policy": mode}), true, nil, nil
 		}
@@ -229,24 +230,24 @@ func capabilityPatchForDriver(driverType string, patch agentadaptor.ProfileConfi
 		case "model":
 			model, ok := stringValue(values, "model", "id", "value")
 			if !ok {
-				return agentadaptor.NativeConfigPatch{}, false, nil, fmt.Errorf("config capability patch %q requires model value", patch.Key)
+				return driver.NativeConfigPatch{}, false, nil, fmt.Errorf("config capability patch %q requires model value", patch.Key)
 			}
 			return jsonPatch("settings.json", "", map[string]any{"model": model}), true, nil, nil
 		case "effort", "reasoning", "reasoning_effort":
 			effort, ok := stringValue(values, "effort", "reasoning_effort", "value")
 			if !ok {
-				return agentadaptor.NativeConfigPatch{}, false, nil, fmt.Errorf("config capability patch %q requires effort value", patch.Key)
+				return driver.NativeConfigPatch{}, false, nil, fmt.Errorf("config capability patch %q requires effort value", patch.Key)
 			}
 			return jsonPatch("settings.json", "", map[string]any{"effort": effort}), true, nil, nil
 		case "permission", "approval":
 			mode, ok := stringValue(values, "mode", "permissionMode", "permission_mode", "value")
 			if !ok {
-				return agentadaptor.NativeConfigPatch{}, false, nil, fmt.Errorf("config capability patch %q requires permission mode value", patch.Key)
+				return driver.NativeConfigPatch{}, false, nil, fmt.Errorf("config capability patch %q requires permission mode value", patch.Key)
 			}
 			return jsonPatch("settings.json", "", map[string]any{"permissionMode": mode}), true, nil, nil
 		case "env":
 			if len(values) == 0 {
-				return agentadaptor.NativeConfigPatch{}, false, nil, fmt.Errorf("config capability patch %q requires env values", patch.Key)
+				return driver.NativeConfigPatch{}, false, nil, fmt.Errorf("config capability patch %q requires env values", patch.Key)
 			}
 			return jsonPatch("settings.json", "env", values), true, nil, nil
 		}
@@ -254,36 +255,36 @@ func capabilityPatchForDriver(driverType string, patch agentadaptor.ProfileConfi
 		switch capability {
 		case "sandbox", "isolation":
 			if len(values) == 0 {
-				return agentadaptor.NativeConfigPatch{}, false, nil, fmt.Errorf("config capability patch %q requires sandbox values", patch.Key)
+				return driver.NativeConfigPatch{}, false, nil, fmt.Errorf("config capability patch %q requires sandbox values", patch.Key)
 			}
 			return jsonPatch("cli-config.json", "sandbox", values), true, nil, nil
 		case "approval", "permission":
 			mode, ok := stringValue(values, "mode", "approvalMode", "approval_mode", "value")
 			if !ok {
-				return agentadaptor.NativeConfigPatch{}, false, nil, fmt.Errorf("config capability patch %q requires approval mode value", patch.Key)
+				return driver.NativeConfigPatch{}, false, nil, fmt.Errorf("config capability patch %q requires approval mode value", patch.Key)
 			}
 			return jsonPatch("cli-config.json", "", map[string]any{"approvalMode": mode}), true, nil, nil
 		case "permissions":
 			if len(values) == 0 {
-				return agentadaptor.NativeConfigPatch{}, false, nil, fmt.Errorf("config capability patch %q requires permission values", patch.Key)
+				return driver.NativeConfigPatch{}, false, nil, fmt.Errorf("config capability patch %q requires permission values", patch.Key)
 			}
 			return jsonPatch("cli-config.json", "permissions", values), true, nil, nil
 		case "display", "ui":
 			if len(values) == 0 {
-				return agentadaptor.NativeConfigPatch{}, false, nil, fmt.Errorf("config capability patch %q requires display values", patch.Key)
+				return driver.NativeConfigPatch{}, false, nil, fmt.Errorf("config capability patch %q requires display values", patch.Key)
 			}
 			return jsonPatch("cli-config.json", "display", values), true, nil, nil
 		}
 	}
-	return agentadaptor.NativeConfigPatch{}, false, nil, nil
+	return driver.NativeConfigPatch{}, false, nil, nil
 }
 
-func tomlPatch(path, section string, values map[string]any) agentadaptor.NativeConfigPatch {
-	return agentadaptor.NativeConfigPatch{FileKind: agentadaptor.ProfileConfigFileTOML, Path: path, Section: section, Values: cloneAnyMap(values)}
+func tomlPatch(path, section string, values map[string]any) driver.NativeConfigPatch {
+	return driver.NativeConfigPatch{FileKind: driver.ProfileConfigFileTOML, Path: path, Section: section, Values: cloneAnyMap(values)}
 }
 
-func jsonPatch(path, section string, values map[string]any) agentadaptor.NativeConfigPatch {
-	return agentadaptor.NativeConfigPatch{FileKind: agentadaptor.ProfileConfigFileJSON, Path: path, Section: section, Values: cloneAnyMap(values)}
+func jsonPatch(path, section string, values map[string]any) driver.NativeConfigPatch {
+	return driver.NativeConfigPatch{FileKind: driver.ProfileConfigFileJSON, Path: path, Section: section, Values: cloneAnyMap(values)}
 }
 
 func stringValue(values map[string]any, keys ...string) (string, bool) {
@@ -322,11 +323,11 @@ func appendUnsupportedFields(warnings []string, patchKey, capability string, val
 	return warnings
 }
 
-func structuredKind(kind agentadaptor.ProfileConfigFileKind) (profilereconcile.StructuredFileKind, error) {
+func structuredKind(kind driver.ProfileConfigFileKind) (profilereconcile.StructuredFileKind, error) {
 	switch kind {
-	case agentadaptor.ProfileConfigFileJSON:
+	case driver.ProfileConfigFileJSON:
 		return profilereconcile.StructuredJSON, nil
-	case agentadaptor.ProfileConfigFileTOML:
+	case driver.ProfileConfigFileTOML:
 		return profilereconcile.StructuredTOML, nil
 	default:
 		return "", fmt.Errorf("unsupported native config file kind %q", kind)

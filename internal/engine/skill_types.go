@@ -2,11 +2,12 @@ package engine
 
 import (
 	"context"
-	"fmt"
 	"io/fs"
 	"path"
 	"sort"
 	"strings"
+
+	"github.com/agent-dance/agent-adaptor/skill"
 )
 
 // SkillFromPath sources a skill from an existing local directory that
@@ -220,74 +221,12 @@ type SkillMaterializer interface {
 	Materialize(ctx context.Context, s Skill) (sourcePath string, err error)
 }
 
-// SkillKeyConflictError is returned (wrapped by ErrSkillKeyConflict) when
-// two skill candidates share the same Key but differ structurally. The
-// Sources slice lists human-readable labels for the conflicting origins
-// (for example "binding:default", "run:per-call", "provider").
-type SkillKeyConflictError struct {
-	Key     string
-	Sources []string
-	Detail  string
-}
-
-// Error returns a diagnostic message that includes the offending Key and
-// the contributing sources.
-func (e *SkillKeyConflictError) Error() string {
-	if e == nil {
-		return ErrSkillKeyConflict.Error()
-	}
-	parts := append([]string(nil), e.Sources...)
-	sort.Strings(parts)
-	msg := fmt.Sprintf("agentadaptor: skill key %q is defined by multiple sources with different content", e.Key)
-	if len(parts) > 0 {
-		msg += " [" + strings.Join(parts, ", ") + "]"
-	}
-	if strings.TrimSpace(e.Detail) != "" {
-		msg += ": " + e.Detail
-	}
-	return msg
-}
-
-// Unwrap lets callers detect the error kind with errors.Is(err, ErrSkillKeyConflict).
-func (e *SkillKeyConflictError) Unwrap() error { return ErrSkillKeyConflict }
-
-// SkillMaterializationError is returned (matching
-// ErrSkillMaterializationFailed) when a selected skill is known to the SDK but
-// cannot be materialized into a local SKILL.md directory before adapter.Run.
-type SkillMaterializationError struct {
-	Key         string
-	RuntimeName string
-	Cause       error
-}
-
-func (e *SkillMaterializationError) Error() string {
-	if e == nil {
-		return ErrSkillMaterializationFailed.Error()
-	}
-	msg := fmt.Sprintf("agentadaptor: skill %q materialization failed", e.Key)
-	if strings.TrimSpace(e.RuntimeName) != "" && e.RuntimeName != e.Key {
-		msg += fmt.Sprintf(" (runtime name %q)", e.RuntimeName)
-	}
-	if e.Cause != nil {
-		msg += ": " + e.Cause.Error()
-	}
-	return msg
-}
-
-// Unwrap exposes the underlying materializer error, so hosts can still match
-// lower-level causes such as ErrSkillSourceMissing where appropriate.
-func (e *SkillMaterializationError) Unwrap() error {
-	if e == nil {
-		return nil
-	}
-	return e.Cause
-}
-
-// Is lets errors.Is match ErrSkillMaterializationFailed while Unwrap still
-// exposes Cause for lower-level checks.
-func (e *SkillMaterializationError) Is(target error) bool {
-	return target == ErrSkillMaterializationFailed
-}
+type (
+	// SkillKeyConflictError is a migration alias of the public skill error.
+	SkillKeyConflictError = skill.SkillKeyConflictError
+	// SkillMaterializationError is a migration alias of the public skill error.
+	SkillMaterializationError = skill.SkillMaterializationError
+)
 
 // keyFromPath returns the slug-ish basename of a path-like string. The
 // rules intentionally mirror the filesystem basename of a skill directory so

@@ -8,7 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/internal/engine"
 	"github.com/agent-dance/agent-adaptor/internal/testutil"
 )
 
@@ -23,11 +24,11 @@ func TestCodexRunPreservesAndGuardsSessionState(t *testing.T) {
 		"@echo off\r\nsetlocal\r\nset /p PROMPT=\r\n>&2 echo stderr:%PROMPT%\r\necho {\"type\":\"thread.started\",\"thread_id\":\"codex-session\"}\r\necho {\"type\":\"turn.completed\"}\r\n",
 	)
 
-	cfg := agentadaptor.CodexConfig{
-		CommonConfig: agentadaptor.CommonConfig{
+	cfg := Config{
+		CommonConfig: CommonConfig{
 			Command: command,
 			CWD:     workspace,
-			Env: []agentadaptor.EnvBinding{
+			Env: []driver.EnvBinding{
 				{Name: "HOME", Value: home},
 				{Name: "USERPROFILE", Value: home},
 				{Name: "CODEX_HOME", Value: filepath.Join(home, ".codex")},
@@ -35,24 +36,24 @@ func TestCodexRunPreservesAndGuardsSessionState(t *testing.T) {
 		},
 		Model: "gpt-5.4",
 	}
-	req := agentadaptor.DriverRunRequest{
+	req := driver.Request{
 		Prompt:    "hello from codex",
 		Config:    cfg,
-		Workspace: agentadaptor.WorkspaceLease{ID: "workspace-a", CWD: workspace},
+		Workspace: driver.WorkspaceLease{ID: "workspace-a", CWD: workspace},
 	}
 
 	events := &testutil.EventRecorder{}
-	first, err := NewAdapter().Run(context.Background(), req, events)
+	first, err := (adapter{}).Run(context.Background(), req, events)
 	if err != nil {
 		t.Fatalf("first run: %v", err)
 	}
 	if first.Checkpoint == nil || first.Checkpoint.State == nil || !first.Checkpoint.Valid {
 		t.Fatalf("expected valid checkpoint, got %#v", first.Checkpoint)
 	}
-	if first.Checkpoint.State.Data[agentadaptor.SessionParamCWD] != workspace {
+	if first.Checkpoint.State.Data[driver.SessionParamCWD] != workspace {
 		t.Fatalf("expected cwd session param, got %#v", first.Checkpoint.State.Data)
 	}
-	if first.Checkpoint.State.Data[agentadaptor.SessionParamWorkspaceID] != "workspace-a" {
+	if first.Checkpoint.State.Data[driver.SessionParamWorkspaceID] != "workspace-a" {
 		t.Fatalf("expected workspace guard, got %#v", first.Checkpoint.State.Data)
 	}
 	if len(first.Transcript) == 0 {
@@ -64,16 +65,16 @@ func TestCodexRunPreservesAndGuardsSessionState(t *testing.T) {
 	assertHasInvocationAndSpawn(t, events.Snapshot())
 
 	continueReq := req
-	continueReq.Session = &agentadaptor.DriverSessionContext{State: first.Checkpoint.State}
-	if _, err := NewAdapter().Run(context.Background(), continueReq, &testutil.EventRecorder{}); err != nil {
+	continueReq.Session = &driver.SessionContext{State: first.Checkpoint.State}
+	if _, err := (adapter{}).Run(context.Background(), continueReq, &testutil.EventRecorder{}); err != nil {
 		t.Fatalf("resume run: %v", err)
 	}
 
 	rejectReq := req
-	rejectReq.Workspace = agentadaptor.WorkspaceLease{ID: "workspace-b", CWD: workspace}
-	rejectReq.Session = &agentadaptor.DriverSessionContext{State: first.Checkpoint.State}
-	_, err = NewAdapter().Run(context.Background(), rejectReq, &testutil.EventRecorder{})
-	if !errors.Is(err, agentadaptor.ErrResumeRejected) {
+	rejectReq.Workspace = driver.WorkspaceLease{ID: "workspace-b", CWD: workspace}
+	rejectReq.Session = &driver.SessionContext{State: first.Checkpoint.State}
+	_, err = (adapter{}).Run(context.Background(), rejectReq, &testutil.EventRecorder{})
+	if !errors.Is(err, engine.ErrResumeRejected) {
 		t.Fatalf("expected ErrResumeRejected, got %v", err)
 	}
 }
@@ -89,8 +90,8 @@ func TestCodexRunMapsDedicatedProfileOptionToCodexHome(t *testing.T) {
 		"@echo off\r\nsetlocal\r\nset /p PROMPT=\r\necho {\"type\":\"session.updated\",\"session_id\":\"codex-session\"}\r\n",
 	)
 
-	cfg := agentadaptor.CodexConfig{
-		CommonConfig: agentadaptor.CommonConfig{
+	cfg := Config{
+		CommonConfig: CommonConfig{
 			Command: command,
 			CWD:     workspace,
 		},
@@ -98,11 +99,11 @@ func TestCodexRunMapsDedicatedProfileOptionToCodexHome(t *testing.T) {
 	}
 
 	events := &testutil.EventRecorder{}
-	_, err := NewAdapter().Run(context.Background(), agentadaptor.DriverRunRequest{
+	_, err := (adapter{}).Run(context.Background(), driver.Request{
 		Prompt:    "hello from codex",
 		Config:    cfg,
-		Profile:   (&agentadaptor.ProfileSelection{Mode: agentadaptor.ProfileModeDedicated, Dir: profileDir}),
-		Workspace: agentadaptor.WorkspaceLease{ID: "workspace-a", CWD: workspace},
+		Profile:   (&driver.ProfileSelection{Mode: driver.ProfileModeDedicated, Dir: profileDir}),
+		Workspace: driver.WorkspaceLease{ID: "workspace-a", CWD: workspace},
 	}, events)
 	if err != nil {
 		t.Fatalf("run: %v", err)
@@ -124,31 +125,31 @@ func TestCodexResumeProfileMismatchDoesNotWriteProfileResources(t *testing.T) {
 				"#!/bin/sh\nset -eu\ncat >/dev/null\nprintf '{\"type\":\"session.updated\",\"session_id\":\"codex-session\"}\\n'\n",
 				"@echo off\r\nsetlocal\r\nset /p PROMPT=\r\necho {\"type\":\"session.updated\",\"session_id\":\"codex-session\"}\r\n",
 			)
-			req := agentadaptor.DriverRunRequest{
+			req := driver.Request{
 				Prompt:    "hello",
-				Config:    agentadaptor.CodexConfig{CommonConfig: agentadaptor.CommonConfig{Command: command, CWD: workspace, Env: []agentadaptor.EnvBinding{{Name: "HOME", Value: home}, {Name: "USERPROFILE", Value: home}, {Name: "CODEX_HOME", Value: codexHome}}}},
-				Workspace: agentadaptor.WorkspaceLease{ID: "workspace-a", CWD: workspace},
-				Skills: agentadaptor.ResolvedSkills{Entries: []agentadaptor.ResolvedSkill{
+				Config:    Config{CommonConfig: CommonConfig{Command: command, CWD: workspace, Env: []driver.EnvBinding{{Name: "HOME", Value: home}, {Name: "USERPROFILE", Value: home}, {Name: "CODEX_HOME", Value: codexHome}}}},
+				Workspace: driver.WorkspaceLease{ID: "workspace-a", CWD: workspace},
+				Skills: driver.ResolvedSkills{Entries: []driver.ResolvedSkill{
 					{Key: "analysis", RuntimeName: "analysis", SourcePath: skillDir},
 				}},
-				MCP: agentadaptor.MCPPayload{Servers: []agentadaptor.MCPServerSpec{{
+				MCP: driver.MCPPayload{Servers: []driver.MCPServerSpec{{
 					Key:       "local",
-					Transport: agentadaptor.MCPTransportStdio,
+					Transport: driver.MCPTransportStdio,
 					Command:   "echo",
 				}}},
-				ProfilePayload: agentadaptor.ProfilePayload{Fingerprint: "new-profile"},
-				Session: &agentadaptor.DriverSessionContext{State: &agentadaptor.DriverSessionState{
+				ProfilePayload: driver.ProfilePayload{Fingerprint: "new-profile"},
+				Session: &driver.SessionContext{State: &driver.SessionState{
 					ResumeID: "codex-session",
 					Data: map[string]string{
-						agentadaptor.SessionParamCWD:                workspace,
-						agentadaptor.SessionParamWorkspaceID:        "workspace-a",
-						agentadaptor.SessionParamProfileFingerprint: "old-profile",
+						driver.SessionParamCWD:                workspace,
+						driver.SessionParamWorkspaceID:        "workspace-a",
+						driver.SessionParamProfileFingerprint: "old-profile",
 					},
 				}},
 				Streaming: streaming,
 			}
-			_, err := NewAdapter().Run(context.Background(), req, &testutil.EventRecorder{})
-			if !errors.Is(err, agentadaptor.ErrResumeRejected) {
+			_, err := (adapter{}).Run(context.Background(), req, &testutil.EventRecorder{})
+			if !errors.Is(err, engine.ErrResumeRejected) {
 				t.Fatalf("expected ErrResumeRejected, got %v", err)
 			}
 			if _, err := os.Stat(filepath.Join(codexHome, "skills")); !os.IsNotExist(err) {
@@ -172,25 +173,25 @@ func TestCodexResumeProfileMismatchDoesNotInitializeDedicatedProfile(t *testing.
 		"#!/bin/sh\nset -eu\ncat >/dev/null\nprintf '{\"type\":\"session.updated\",\"session_id\":\"codex-session\"}\\n'\n",
 		"@echo off\r\nsetlocal\r\nset /p PROMPT=\r\necho {\"type\":\"session.updated\",\"session_id\":\"codex-session\"}\r\n",
 	)
-	req := agentadaptor.DriverRunRequest{
+	req := driver.Request{
 		Prompt:    "hello",
-		Config:    agentadaptor.CodexConfig{CommonConfig: agentadaptor.CommonConfig{Command: command, CWD: workspace, Env: []agentadaptor.EnvBinding{{Name: "HOME", Value: home}, {Name: "USERPROFILE", Value: home}}}},
-		Profile:   &agentadaptor.ProfileSelection{Mode: agentadaptor.ProfileModeDedicated, Dir: profileDir},
-		Workspace: agentadaptor.WorkspaceLease{ID: "workspace-a", CWD: workspace},
-		ProfilePayload: agentadaptor.ProfilePayload{
+		Config:    Config{CommonConfig: CommonConfig{Command: command, CWD: workspace, Env: []driver.EnvBinding{{Name: "HOME", Value: home}, {Name: "USERPROFILE", Value: home}}}},
+		Profile:   &driver.ProfileSelection{Mode: driver.ProfileModeDedicated, Dir: profileDir},
+		Workspace: driver.WorkspaceLease{ID: "workspace-a", CWD: workspace},
+		ProfilePayload: driver.ProfilePayload{
 			Fingerprint: "new-profile",
 		},
-		Session: &agentadaptor.DriverSessionContext{State: &agentadaptor.DriverSessionState{
+		Session: &driver.SessionContext{State: &driver.SessionState{
 			ResumeID: "codex-session",
 			Data: map[string]string{
-				agentadaptor.SessionParamCWD:                workspace,
-				agentadaptor.SessionParamWorkspaceID:        "workspace-a",
-				agentadaptor.SessionParamProfileFingerprint: "old-profile",
+				driver.SessionParamCWD:                workspace,
+				driver.SessionParamWorkspaceID:        "workspace-a",
+				driver.SessionParamProfileFingerprint: "old-profile",
 			},
 		}},
 	}
-	_, err := NewAdapter().Run(context.Background(), req, &testutil.EventRecorder{})
-	if !errors.Is(err, agentadaptor.ErrResumeRejected) {
+	_, err := (adapter{}).Run(context.Background(), req, &testutil.EventRecorder{})
+	if !errors.Is(err, engine.ErrResumeRejected) {
 		t.Fatalf("expected ErrResumeRejected, got %v", err)
 	}
 	if _, err := os.Stat(profileDir); !os.IsNotExist(err) {
@@ -198,7 +199,7 @@ func TestCodexResumeProfileMismatchDoesNotInitializeDedicatedProfile(t *testing.
 	}
 }
 
-func assertHasInvocationAndSpawn(t *testing.T, events []agentadaptor.RunEvent) {
+func assertHasInvocationAndSpawn(t *testing.T, events []driver.RunEvent) {
 	t.Helper()
 
 	hasInvocation := false
@@ -207,13 +208,13 @@ func assertHasInvocationAndSpawn(t *testing.T, events []agentadaptor.RunEvent) {
 	hasItem := false
 	for _, event := range events {
 		switch event.Type {
-		case agentadaptor.RunEventInvocation:
+		case driver.RunEventInvocation:
 			hasInvocation = true
-		case agentadaptor.RunEventSpawn:
+		case driver.RunEventSpawn:
 			hasSpawn = true
-		case agentadaptor.RunEventChunk:
+		case driver.RunEventChunk:
 			hasChunk = true
-		case agentadaptor.RunEventItem:
+		case driver.RunEventItem:
 			hasItem = true
 		}
 	}
@@ -222,10 +223,10 @@ func assertHasInvocationAndSpawn(t *testing.T, events []agentadaptor.RunEvent) {
 	}
 }
 
-func assertInvocationEnvKeysContain(t *testing.T, events []agentadaptor.RunEvent, expected string) {
+func assertInvocationEnvKeysContain(t *testing.T, events []driver.RunEvent, expected string) {
 	t.Helper()
 	for _, event := range events {
-		if event.Type != agentadaptor.RunEventInvocation {
+		if event.Type != driver.RunEventInvocation {
 			continue
 		}
 		keys, ok := event.Data["env_keys"].([]string)

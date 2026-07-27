@@ -8,25 +8,18 @@ import (
 	"strings"
 	"testing"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	agentadaptor "github.com/agent-dance/agent-adaptor/driver"
 )
 
-func TestNewReturnsTypedBinding(t *testing.T) {
-	binding := New(agentadaptor.CursorConfig{Model: "gpt-5"})
-	if binding.TypedConfig().Model != "gpt-5" {
-		t.Fatalf("expected typed config model to round-trip, got %#v", binding.TypedConfig())
-	}
-}
-
 func TestDescriptorAdvertisesExpectedMCPCapabilities(t *testing.T) {
-	caps := NewAdapter().Descriptor().MCP
+	caps := adapter{}.Descriptor().MCP
 	if !caps.Supported || !caps.Stdio || !caps.HTTP || !caps.SSE {
 		t.Fatalf("unexpected Cursor MCP capability: %#v", caps)
 	}
 }
 
 func TestDescriptorAdvertisesStructuredOutputCapabilities(t *testing.T) {
-	caps := NewAdapter().Descriptor().StructuredOutput
+	caps := adapter{}.Descriptor().StructuredOutput
 	if caps.JSONSchemaNative || !caps.JSONSchemaPromptValidate || !caps.WorksWithRun || !caps.WorksWithStreaming {
 		t.Fatalf("unexpected Cursor structured-output capability: %#v", caps)
 	}
@@ -36,7 +29,7 @@ func TestDescriptorAdvertisesStructuredOutputCapabilities(t *testing.T) {
 }
 
 func TestRunRejectsNativeStrictStructuredOutput(t *testing.T) {
-	_, err := NewAdapter().Run(context.Background(), agentadaptor.DriverRunRequest{
+	_, err := adapter{}.Run(context.Background(), agentadaptor.Request{
 		OutputSchema: &agentadaptor.OutputSchema{
 			Format:     agentadaptor.OutputFormatJSONSchema,
 			Mode:       agentadaptor.StructuredOutputNativeStrict,
@@ -79,10 +72,10 @@ func TestDetectModelFallsBackToCursorConfigFile(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 
-	detected, err := NewAdapter().(interface {
+	detected, err := any(adapter{}).(interface {
 		DetectModel(context.Context, any, *agentadaptor.ProfileSelection) (*agentadaptor.DetectedModel, error)
-	}).DetectModel(context.Background(), agentadaptor.CursorConfig{
-		CommonConfig: agentadaptor.CommonConfig{
+	}).DetectModel(context.Background(), Config{
+		CommonConfig: CommonConfig{
 			Env: []agentadaptor.EnvBinding{{Name: "HOME", Value: home}},
 		},
 	}, nil)
@@ -100,10 +93,10 @@ func TestDetectModelUsesExplicitProfileOptionAsCursorHome(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 
-	detected, err := NewAdapter().(interface {
+	detected, err := any(adapter{}).(interface {
 		DetectModel(context.Context, any, *agentadaptor.ProfileSelection) (*agentadaptor.DetectedModel, error)
-	}).DetectModel(context.Background(), agentadaptor.CursorConfig{
-		CommonConfig: agentadaptor.CommonConfig{
+	}).DetectModel(context.Background(), Config{
+		CommonConfig: CommonConfig{
 			Env: []agentadaptor.EnvBinding{{Name: "CURSOR_HOME", Value: profileDir}},
 		},
 	}, nil)
@@ -121,10 +114,10 @@ func TestDetectModelPrefersExplicitCursorHomeOverProfileOption(t *testing.T) {
 		t.Fatalf("write override config: %v", err)
 	}
 
-	detected, err := NewAdapter().(interface {
+	detected, err := any(adapter{}).(interface {
 		DetectModel(context.Context, any, *agentadaptor.ProfileSelection) (*agentadaptor.DetectedModel, error)
-	}).DetectModel(context.Background(), agentadaptor.CursorConfig{
-		CommonConfig: agentadaptor.CommonConfig{
+	}).DetectModel(context.Background(), Config{
+		CommonConfig: CommonConfig{
 			Env: []agentadaptor.EnvBinding{
 				{Name: "CURSOR_HOME", Value: overrideDir},
 			},
@@ -140,10 +133,10 @@ func TestDetectModelPrefersExplicitCursorHomeOverProfileOption(t *testing.T) {
 
 func TestGetProfilePrefersExplicitCursorHomeOverProfileOption(t *testing.T) {
 	overrideDir := t.TempDir()
-	profile, err := NewAdapter().(interface {
+	profile, err := any(adapter{}).(interface {
 		GetProfile(context.Context, any, agentadaptor.AgentIdentity, *agentadaptor.ProfileSelection) (agentadaptor.AgentProfile, error)
-	}).GetProfile(context.Background(), agentadaptor.CursorConfig{
-		CommonConfig: agentadaptor.CommonConfig{
+	}).GetProfile(context.Background(), Config{
+		CommonConfig: CommonConfig{
 			Env: []agentadaptor.EnvBinding{
 				{Name: "CURSOR_HOME", Value: overrideDir},
 			},
@@ -161,9 +154,9 @@ func TestGetProfileUsesProcessEnvForCursorWhenUnset(t *testing.T) {
 	profileDir := t.TempDir()
 	t.Setenv("CURSOR_HOME", profileDir)
 
-	profile, err := NewAdapter().(interface {
+	profile, err := any(adapter{}).(interface {
 		GetProfile(context.Context, any, agentadaptor.AgentIdentity, *agentadaptor.ProfileSelection) (agentadaptor.AgentProfile, error)
-	}).GetProfile(context.Background(), agentadaptor.CursorConfig{}, agentadaptor.AgentIdentity{}, nil)
+	}).GetProfile(context.Background(), Config{}, agentadaptor.AgentIdentity{}, nil)
 	if err != nil {
 		t.Fatalf("get profile: %v", err)
 	}
@@ -187,10 +180,10 @@ func TestGetProfileCloneCanShareNativeCursorAuth(t *testing.T) {
 	}
 	target := filepath.Join(t.TempDir(), "isolated")
 
-	profile, err := NewAdapter().(interface {
+	profile, err := any(adapter{}).(interface {
 		GetProfile(context.Context, any, agentadaptor.AgentIdentity, *agentadaptor.ProfileSelection) (agentadaptor.AgentProfile, error)
-	}).GetProfile(context.Background(), agentadaptor.CursorConfig{
-		CommonConfig: agentadaptor.CommonConfig{
+	}).GetProfile(context.Background(), Config{
+		CommonConfig: CommonConfig{
 			Env: []agentadaptor.EnvBinding{{Name: "HOME", Value: home}, {Name: "USERPROFILE", Value: home}},
 		},
 	}, agentadaptor.AgentIdentity{}, &agentadaptor.ProfileSelection{
@@ -225,7 +218,7 @@ func TestGetProfileCloneCanShareNativeCursorAuth(t *testing.T) {
 }
 
 func TestConfigSchemaIncludesGroupsDefaultsAndOptions(t *testing.T) {
-	schema := NewAdapter().Descriptor().ConfigSchema
+	schema := adapter{}.Descriptor().ConfigSchema
 	if schema == nil || len(schema.Fields) == 0 {
 		t.Fatalf("expected config schema, got %#v", schema)
 	}
@@ -250,10 +243,10 @@ func TestCheckEnvironmentReportsConfigFileState(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 
-	report, err := NewAdapter().(interface {
+	report, err := any(adapter{}).(interface {
 		CheckEnvironment(context.Context, any) (agentadaptor.EnvironmentReport, error)
-	}).CheckEnvironment(context.Background(), agentadaptor.CursorConfig{
-		CommonConfig: agentadaptor.CommonConfig{
+	}).CheckEnvironment(context.Background(), Config{
+		CommonConfig: CommonConfig{
 			Env: []agentadaptor.EnvBinding{{Name: "HOME", Value: home}},
 		},
 	})
@@ -275,10 +268,10 @@ func TestCheckEnvironmentReportsCursorNativeAuth(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 
-	report, err := NewAdapter().(interface {
+	report, err := any(adapter{}).(interface {
 		CheckEnvironment(context.Context, any) (agentadaptor.EnvironmentReport, error)
-	}).CheckEnvironment(context.Background(), agentadaptor.CursorConfig{
-		CommonConfig: agentadaptor.CommonConfig{
+	}).CheckEnvironment(context.Background(), Config{
+		CommonConfig: CommonConfig{
 			Env: []agentadaptor.EnvBinding{{Name: "CURSOR_HOME", Value: cursorHome}},
 		},
 	})
@@ -292,10 +285,10 @@ func TestCheckEnvironmentReportsCursorNativeAuth(t *testing.T) {
 }
 
 func TestCheckEnvironmentReportsOpenAIAPIKeyForCursorAPIMode(t *testing.T) {
-	report, err := NewAdapter().(interface {
+	report, err := any(adapter{}).(interface {
 		CheckEnvironment(context.Context, any) (agentadaptor.EnvironmentReport, error)
-	}).CheckEnvironment(context.Background(), agentadaptor.CursorConfig{
-		CommonConfig: agentadaptor.CommonConfig{
+	}).CheckEnvironment(context.Background(), Config{
+		CommonConfig: CommonConfig{
 			Env: []agentadaptor.EnvBinding{{Name: "OPENAI_API_KEY", Value: "test-key"}},
 		},
 	})

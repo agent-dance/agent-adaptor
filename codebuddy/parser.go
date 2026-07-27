@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
 )
 
 // parser consumes raw stdout/stderr chunks from a CodeBuddy CLI stream-json
@@ -16,22 +16,22 @@ import (
 type parser struct {
 	mu sync.Mutex
 
-	sink agentadaptor.EventSink
+	sink driver.EventSink
 
 	stdoutLine bytes.Buffer
 	stderrLine bytes.Buffer
 
-	transcript    []agentadaptor.TranscriptItem
+	transcript    []driver.TranscriptItem
 	assistantText []string
 
 	sessionID         string
 	displayID         string
 	summary           string
 	terminalSummary   string
-	usage             *agentadaptor.Usage
+	usage             *driver.Usage
 	cost              *float64
-	resultFinal       map[string]any
-	structuredOutput  *agentadaptor.StructuredOutput
+	terminal          *driver.TerminalPayload
+	structuredOutput  *driver.StructuredOutput
 	errorMessage      string
 	terminalSeen      bool
 	terminalSuccess   bool
@@ -41,7 +41,7 @@ type parser struct {
 	deltaBuffers map[string]*strings.Builder
 	control      *controlState
 
-	pendingFailure *agentadaptor.RunFailure
+	pendingFailure *driver.RunFailure
 
 	runID string
 }
@@ -54,7 +54,7 @@ var checkpointEvents = map[string]struct{}{
 	"turn.completed":  {},
 }
 
-func newParser(sink agentadaptor.EventSink) *parser {
+func newParser(sink driver.EventSink) *parser {
 	return &parser{sink: sink}
 }
 
@@ -131,18 +131,18 @@ func (p *parser) processLine(stream string, line []byte, _ time.Time) {
 	}
 
 	if stream == "stderr" {
-		p.emit(agentadaptor.TranscriptItem{Kind: agentadaptor.TranscriptStderr, Text: text})
+		p.emit(driver.TranscriptItem{Kind: driver.TranscriptStderr, Text: text})
 		return
 	}
 
 	if !strings.HasPrefix(trimmed, "{") {
-		p.emit(agentadaptor.TranscriptItem{Kind: agentadaptor.TranscriptStdout, Text: text})
+		p.emit(driver.TranscriptItem{Kind: driver.TranscriptStdout, Text: text})
 		return
 	}
 	var payload map[string]any
 	if err := json.Unmarshal([]byte(trimmed), &payload); err != nil {
 		p.protocolMalformed = true
-		p.emit(agentadaptor.TranscriptItem{Kind: agentadaptor.TranscriptStdout, Text: text})
+		p.emit(driver.TranscriptItem{Kind: driver.TranscriptStdout, Text: text})
 		return
 	}
 
@@ -169,7 +169,7 @@ func (p *parser) handlePayload(raw string, payload map[string]any) {
 		if subtype == "init" {
 			model := topString(payload, "model")
 			session := topString(payload, "session_id", "sessionId")
-			p.emit(agentadaptor.TranscriptItem{Kind: agentadaptor.TranscriptInit, Model: model, SessionID: session})
+			p.emit(driver.TranscriptItem{Kind: driver.TranscriptInit, Model: model, SessionID: session})
 			if p.stream != nil {
 				p.stream.handleSystemInit(payload)
 			}
@@ -178,7 +178,7 @@ func (p *parser) handlePayload(raw string, payload map[string]any) {
 		if p.stream != nil && subtype == "api_retry" {
 			p.stream.handleAPIRetry(payload)
 		}
-		p.emit(agentadaptor.TranscriptItem{Kind: agentadaptor.TranscriptSystem, Text: raw, Subtype: subtype})
+		p.emit(driver.TranscriptItem{Kind: driver.TranscriptSystem, Text: raw, Subtype: subtype})
 	case "stream_event":
 		if p.stream != nil {
 			p.stream.handleStreamEvent(raw, payload)
@@ -193,6 +193,7 @@ func (p *parser) handlePayload(raw string, payload map[string]any) {
 	case "error":
 		p.terminalSeen = true
 		p.terminalSuccess = false
+		p.terminal = &driver.TerminalPayload{Event: eventType, JSON: append(json.RawMessage(nil), raw...)}
 		message := topString(payload, "message", "error")
 		if message == "" {
 			message = "codebuddy provider error"
@@ -201,20 +202,20 @@ func (p *parser) handlePayload(raw string, payload map[string]any) {
 		if p.stream != nil {
 			p.stream.handleErrorTerminal(payload)
 		}
-		p.emit(agentadaptor.TranscriptItem{Kind: agentadaptor.TranscriptFailure, Text: message, Metadata: map[string]string{"code": "error"}})
+		p.emit(driver.TranscriptItem{Kind: driver.TranscriptFailure, Text: message, Metadata: map[string]string{"code": "error"}})
 	default:
 		if eventType != "" {
 			if _, ok := checkpointEvents[eventType]; ok {
-				p.emit(agentadaptor.TranscriptItem{Kind: agentadaptor.TranscriptResult, Subtype: eventType, Data: map[string]any{"payload": payload}})
+				p.emit(driver.TranscriptItem{Kind: driver.TranscriptResult, Subtype: eventType, Data: map[string]any{"payload": payload}})
 				return
 			}
 		}
 		if p.stream != nil {
 			op := cloneMap(payload)
 			op["_codebuddy_wrapper_type"] = eventType
-			_ = p.sink.EmitStream(agentadaptor.StreamPayload{RunID: p.stream.runID, ThreadID: p.sessionID, Name: eventType, Raw: op})
+			_ = p.sink.EmitStream(driver.StreamPayload{RunID: p.stream.runID, ThreadID: p.sessionID, Name: eventType, Raw: op})
 		}
-		p.emit(agentadaptor.TranscriptItem{Kind: agentadaptor.TranscriptSystem, Text: raw, Data: map[string]any{"payload": payload}})
+		p.emit(driver.TranscriptItem{Kind: driver.TranscriptSystem, Text: raw, Data: map[string]any{"payload": payload}})
 	}
 }
 
@@ -264,19 +265,19 @@ func (p *parser) handleAssistantMessage(message map[string]any) {
 			}
 			p.assistantText = append(p.assistantText, text)
 			p.summary = text
-			p.emit(agentadaptor.TranscriptItem{Kind: agentadaptor.TranscriptAssistant, Text: text, Model: model})
+			p.emit(driver.TranscriptItem{Kind: driver.TranscriptAssistant, Text: text, Model: model})
 		case "thinking":
 			text := topString(block, "text", "thinking")
 			if text == "" {
 				continue
 			}
-			p.emit(agentadaptor.TranscriptItem{Kind: agentadaptor.TranscriptThinking, Text: text, Model: model})
+			p.emit(driver.TranscriptItem{Kind: driver.TranscriptThinking, Text: text, Model: model})
 		case "tool_use":
 			toolName := topString(block, "name")
 			input, _ := block["input"].(map[string]any)
 			p.captureControlPlan(toolName, input)
-			p.emit(agentadaptor.TranscriptItem{
-				Kind:      agentadaptor.TranscriptToolCall,
+			p.emit(driver.TranscriptItem{
+				Kind:      driver.TranscriptToolCall,
 				ToolName:  toolName,
 				ToolUseID: topString(block, "id", "tool_use_id"),
 				Input:     block["input"],
@@ -305,11 +306,11 @@ func (p *parser) handleUserMessage(message map[string]any) {
 			if p.stream != nil {
 				p.stream.handleUserToolResult(block)
 			}
-			p.emit(agentadaptor.TranscriptItem{Kind: agentadaptor.TranscriptToolResult, ToolUseID: id, Text: text, IsError: isError})
+			p.emit(driver.TranscriptItem{Kind: driver.TranscriptToolResult, ToolUseID: id, Text: text, IsError: isError})
 			continue
 		}
 		if text := topString(block, "text"); text != "" {
-			p.emit(agentadaptor.TranscriptItem{Kind: agentadaptor.TranscriptUser, Text: text})
+			p.emit(driver.TranscriptItem{Kind: driver.TranscriptUser, Text: text})
 		}
 	}
 }
@@ -344,18 +345,18 @@ func (p *parser) handleResult(raw string, payload map[string]any, subtype string
 		// result arrives, closing it lets the CLI terminate cleanly.
 		_ = p.control.stdin.Close()
 	}
-	var decoded map[string]any
-	if err := json.Unmarshal([]byte(raw), &decoded); err == nil {
-		p.resultFinal = decoded
+	p.terminal = &driver.TerminalPayload{
+		Event: "result",
+		JSON:  append(json.RawMessage(nil), raw...),
 	}
 
 	if resultText := topString(payload, "result", "summary"); resultText != "" {
 		p.terminalSummary = resultText
 	}
 	if rawJSON, ok := structuredJSONFromResult(payload); ok {
-		p.structuredOutput = &agentadaptor.StructuredOutput{
-			Format:  agentadaptor.OutputFormatJSONSchema,
-			Source:  agentadaptor.StructuredOutputSourceNative,
+		p.structuredOutput = &driver.StructuredOutput{
+			Format:  driver.OutputFormatJSONSchema,
+			Source:  driver.StructuredOutputSourceNative,
 			RawJSON: rawJSON,
 			Valid:   true,
 		}
@@ -367,7 +368,7 @@ func (p *parser) handleResult(raw string, payload map[string]any, subtype string
 		output, okOutput := topInt(usage, "output_tokens")
 		if okInput || okCached || okOutput {
 			if p.usage == nil {
-				p.usage = &agentadaptor.Usage{}
+				p.usage = &driver.Usage{}
 			}
 			if okInput {
 				p.usage.InputTokens = input
@@ -394,8 +395,8 @@ func (p *parser) handleResult(raw string, payload map[string]any, subtype string
 		}
 	}
 
-	p.emit(agentadaptor.TranscriptItem{
-		Kind:    agentadaptor.TranscriptResult,
+	p.emit(driver.TranscriptItem{
+		Kind:    driver.TranscriptResult,
 		Subtype: subtype,
 		IsError: isError,
 		Usage:   p.usage,
@@ -457,20 +458,17 @@ func jsonRawMessageFromValue(raw any) (json.RawMessage, bool) {
 	}
 }
 
-func (p *parser) emit(item agentadaptor.TranscriptItem) {
+func (p *parser) emit(item driver.TranscriptItem) {
 	p.transcript = append(p.transcript, item)
 	if p.sink == nil {
 		return
 	}
 	clone := item
-	_ = p.sink.Emit(agentadaptor.RunEvent{Type: agentadaptor.RunEventItem, Timestamp: time.Now().UTC(), Item: &clone})
+	_ = p.sink.Emit(driver.RunEvent{Type: driver.RunEventItem, Timestamp: time.Now().UTC(), Item: &clone})
 }
 
 func (p *parser) finalSummary() string {
-	if strings.TrimSpace(p.terminalSummary) != "" {
-		return p.terminalSummary
-	}
-	return p.summary
+	return strings.TrimSpace(p.terminalSummary)
 }
 
 func (p *parser) buildOutput() string {
@@ -525,7 +523,7 @@ func (p *parser) outputMetadata() map[string]string {
 	return map[string]string{"output_source": "reconstructed_from_deltas"}
 }
 
-func (p *parser) checkpoint(exitCode int) *agentadaptor.DriverCheckpoint {
+func (p *parser) checkpoint(exitCode int) *driver.Checkpoint {
 	if exitCode != 0 || p.protocolMalformed || !p.terminalSeen || !p.terminalSuccess || p.sessionID == "" {
 		return nil
 	}
@@ -533,13 +531,13 @@ func (p *parser) checkpoint(exitCode int) *agentadaptor.DriverCheckpoint {
 	if display == "" {
 		display = p.sessionID
 	}
-	return &agentadaptor.DriverCheckpoint{
-		State: &agentadaptor.DriverSessionState{ResumeID: p.sessionID, DisplayID: display},
+	return &driver.Checkpoint{
+		State: &driver.SessionState{ResumeID: p.sessionID, DisplayID: display},
 		Valid: true,
 	}
 }
 
-func (p *parser) checkpointForOutcome(exitCode int, signal string, timedOut bool, failure *agentadaptor.RunFailure) *agentadaptor.DriverCheckpoint {
+func (p *parser) checkpointForOutcome(exitCode int, signal string, timedOut bool, failure *driver.RunFailure) *driver.Checkpoint {
 	if signal != "" || timedOut || failure != nil {
 		return nil
 	}

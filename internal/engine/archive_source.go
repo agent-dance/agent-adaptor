@@ -3,11 +3,12 @@ package engine
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+
+	"github.com/agent-dance/agent-adaptor/internal/skillmaterializer"
 )
 
 // SkillArchiveFormat selects the decompressor used by SDK's built-in
@@ -179,7 +180,7 @@ func ArchiveFromURL(url string, opts ...ArchiveHTTPOption) func(context.Context)
 // errArchiveFormat reports a format-detection or decompression failure
 // for a SkillFromArchive source. It is wrapped by the materializer so
 // callers can match with errors.Is(err, ErrArchiveFormat).
-var errArchiveFormat = errors.New("agentadaptor: archive format error")
+var errArchiveFormat = skillmaterializer.ErrArchiveFormat
 
 // sniffArchiveFormat inspects the first bytes of data and returns the
 // detected format. SkillArchiveAuto means "could not identify".
@@ -194,23 +195,5 @@ var errArchiveFormat = errors.New("agentadaptor: archive format error")
 // magic), tar last (the magic is at offset 257 so we need at least
 // that many bytes).
 func sniffArchiveFormat(data []byte) SkillArchiveFormat {
-	switch {
-	case len(data) >= 4 && bytes.Equal(data[:4], []byte{0x50, 0x4b, 0x03, 0x04}):
-		return SkillArchiveZip
-	case len(data) >= 4 && bytes.Equal(data[:4], []byte{0x50, 0x4b, 0x05, 0x06}):
-		// Empty zip (end-of-central-directory marker as the only thing)
-		return SkillArchiveZip
-	case len(data) >= 2 && data[0] == 0x1f && data[1] == 0x8b:
-		// gzip-wrapped; we treat all gzip streams as tar.gz here. The
-		// materializer will surface a decompression-then-tar error if
-		// the inner stream isn't actually tar.
-		return SkillArchiveTarGz
-	case len(data) >= 262 && bytes.Equal(data[257:262], []byte("ustar")):
-		// 5-byte "ustar" prefix at offset 257 covers both POSIX
-		// (ustar\x00) and GNU tar (ustar followed by spaces) magic;
-		// no need for a separate full-6-byte check.
-		return SkillArchiveTar
-	default:
-		return SkillArchiveAuto
-	}
+	return SkillArchiveFormat(skillmaterializer.SniffArchiveFormat(data))
 }

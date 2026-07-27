@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	agentadaptor "github.com/agent-dance/agent-adaptor/driver"
 )
 
 type recordingSink struct {
@@ -60,6 +60,9 @@ func TestCursorParserHappyAssistantProducesOutput(t *testing.T) {
 	checkpoint := p.checkpoint(0)
 	if checkpoint == nil || checkpoint.State == nil || checkpoint.State.ResumeID != "cursor-happy" {
 		t.Fatalf("checkpoint: got %#v", checkpoint)
+	}
+	if p.terminal == nil || p.terminal.Event == "" || !json.Valid(p.terminal.JSON) {
+		t.Fatalf("terminal = %#v", p.terminal)
 	}
 	if !reflect.DeepEqual(p.transcript, sink.items) {
 		t.Fatalf("sink and transcript diverge")
@@ -135,7 +138,7 @@ func TestCursorParserLongLineSurvives(t *testing.T) {
 	}
 }
 
-func TestCursorParserPureDeltaStreamFeedsOutputAndSummaryFallback(t *testing.T) {
+func TestCursorParserPureDeltaStreamDoesNotReuseOutputAsSummary(t *testing.T) {
 	stdout := strings.Join([]string{
 		`{"type":"session","session_id":"cursor-delta"}`,
 		`{"type":"assistant.delta","delta":"Hello "}`,
@@ -151,8 +154,8 @@ func TestCursorParserPureDeltaStreamFeedsOutputAndSummaryFallback(t *testing.T) 
 	if got, want := p.buildOutput(), "Hello from deltas."; got != want {
 		t.Fatalf("delta output: got %q want %q", got, want)
 	}
-	if got := p.finalSummary(); got != "Hello from deltas." {
-		t.Fatalf("delta summary fallback: got %q", got)
+	if got := p.finalSummary(); got != "" {
+		t.Fatalf("Summary must remain empty without a provider terminal summary, got %q", got)
 	}
 }
 

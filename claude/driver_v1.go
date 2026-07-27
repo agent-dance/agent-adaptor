@@ -3,7 +3,6 @@ package claude
 import (
 	"context"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/internal/engine"
 )
@@ -78,9 +77,8 @@ func engineCommonConfig(c CommonConfig) engine.CommonConfig {
 }
 
 // Driver returns the Claude driver with cfg captured at construction. Pass
-// the result to the v1 root constructor (adaptor.New). The legacy
-// New/NewAdapter entry points are unchanged. Config validation stays deferred
-// to run/probe time, matching New: Driver never panics or validates eagerly.
+// the result to adaptor.New. Validation remains deferred to run/probe time;
+// construction only snapshots configuration and performs no environment I/O.
 func Driver(cfg Config) driver.Driver {
 	return configuredDriver{cfg: cloneConfig(cfg)}
 }
@@ -107,15 +105,15 @@ func (d configuredDriver) SessionConfigFingerprint() (string, error) {
 }
 
 // Run injects the captured config when the request does not carry one (the
-// v1 execution path sends req.Config == nil) and delegates to the adapter. A
-// non-nil req.Config — the legacy binding path — wins untouched.
+// v1 execution path sends req.Config == nil) and delegates to the adapter.
+// A direct SPI caller's explicit non-nil request config wins untouched.
 func (d configuredDriver) Run(ctx context.Context, req driver.Request, sink driver.EventSink) (driver.Response, error) {
 	return d.adapter.Run(ctx, d.requestWithConfig(req), sink)
 }
 
 // ValidateConfig validates the captured config when cfg is nil, so hosts and
 // the engine can probe a v1 driver without re-supplying configuration.
-// Explicit non-nil values keep the legacy adapter semantics.
+// Explicit non-nil values remain the direct SPI caller's responsibility.
 func (d configuredDriver) ValidateConfig(cfg any) error {
 	return d.adapter.ValidateConfig(d.configOrCaptured(cfg))
 }
@@ -156,11 +154,11 @@ func (d configuredDriver) SyncSkills(ctx context.Context, cfg any, payload drive
 	return d.adapter.SyncSkills(ctx, d.configOrCaptured(cfg), payload, selected, resolved, profile)
 }
 
-func (d configuredDriver) SnapshotProfileResources(ctx context.Context, cfg any, agent driver.AgentIdentity, profile *driver.ProfileSelection, payload driver.ProfilePayload, selected []string, resolved []driver.Skill) (agentadaptor.ProfileSnapshot, error) {
+func (d configuredDriver) SnapshotProfileResources(ctx context.Context, cfg any, agent driver.AgentIdentity, profile *driver.ProfileSelection, payload driver.ProfilePayload, selected []string, resolved []driver.Skill) (engine.ProfileSnapshot, error) {
 	return d.adapter.SnapshotProfileResources(ctx, d.configOrCaptured(cfg), agent, profile, payload, selected, resolved)
 }
 
-func (d configuredDriver) SyncProfileResources(ctx context.Context, cfg any, agent driver.AgentIdentity, profile *driver.ProfileSelection, payload driver.ProfilePayload, selected []string, resolved []driver.Skill) (agentadaptor.ProfileSnapshot, error) {
+func (d configuredDriver) SyncProfileResources(ctx context.Context, cfg any, agent driver.AgentIdentity, profile *driver.ProfileSelection, payload driver.ProfilePayload, selected []string, resolved []driver.Skill) (engine.ProfileSnapshot, error) {
 	return d.adapter.SyncProfileResources(ctx, d.configOrCaptured(cfg), agent, profile, payload, selected, resolved)
 }
 

@@ -239,20 +239,43 @@ Claude 已把这些事项列入 P4/P5 收口，但尚未实施。它们会改变
 4. sessionrecorder 的 v1 typed Event JSONL backend 与持久化失败语义
 5. SSE v1 审批错误映射助手
 6. AG-UI user turn 的 v1 Event 访问面与最后用户消息 ID
-7. **拒绝新增** SSE `SubagentBus`/`WrapAGUI` v1 平行入口；typed Event + `team.Option()` 是唯一主路径，并以不重复事件测试固化
+7. **最终拒绝新增** SSE `SubagentBus`/`WrapAGUI` v1 平行入口；typed Event + `team.Option()` 是唯一主路径
 8. A2A adapter stream status 的 v1 Event 解码
-9. Driver 会话参数键导出（PRE D-P5.2-5 已开始处理）
-10. **拒绝进入 core** 的 `SubagentEventKind.String()` 与 ToolCall args 预览（UI/安全展示属于宿主）
+9. Driver 会话参数键导出（PRE D-P5.2-5 已完成，本波只引用）
+10. **最终拒绝进入 core** 的 `SubagentEventKind.String()`、ToolCall args 预览和 `Summary`→`Text` 展示兜底（UI、安全展示与 fallback policy 属于宿主）
 11. 本次 run 的有序 delegation 访问器
 12. `Result.Summary` 与 `Result.Text` 的稳定语义
-13. 不新增 accessor；修复 `Result.Services` 按稳定 ID 合并（driver observed 覆盖同 ID，SDK ensured 只补缺失）
-14. **拒绝新增**供 A2A policy 使用的 provider streaming 查询；委托 transport 与 provider rich transport 是不同语义，以 Local/Remote policy 测试固定
+13. **最终拒绝新增 attachment accessor**；`Result.Services()` 是唯一 typed runtime observation 面，按稳定 ID 合并时 driver observed 覆盖同 ID，SDK ensured 只补缺失
+14. **最终拒绝新增**供 A2A policy 使用的 provider streaming 查询；委托 transport 与 provider rich transport 是不同语义
 
 实施项为 1～6、8、11～13；第 9 项已由 PRE 完成，不重复验收；7、10、14 以 godoc/测试明确拒绝。
 
+上述四项拒绝裁决已经关闭，不再作为“以后可以补的便利 API”：
+
+- **#7 单流边界**：`team.Option()` 把 `SubagentUpdate` 注入 Runner 的唯一 Event 流，SSE/AG-UI 只翻译该流。再次接收 bus 或包装第二条 AG-UI 流会引入重复事件、双重 drain 与不同取消顺序。`adaptertest/v1/p4_api_boundary_test.go::TestP4NoParallelSubagentBusAPI` 锁定 v1 SSE 不依赖 delegation overlay；legacy bridge 仅是 DELETE 前的迁移对象。
+- **#10 展示边界**：`SubagentEventKind` 是语义枚举，`ToolCall.Args` 是未删改的原始结构；统一字符串化或预览必然替 SDK 选择截断、脱敏和本地化策略。`Summary` 允许为空且不从 `Text` 自动兜底，宿主可按自己的展示场景选择 fallback。`TestP4PresentationPolicyStaysOutsideCore` 锁定 core 不增加这些展示方法或 fallback accessor。
+- **#13 观察边界**：run attachment 含输入声明、事件源和 secret 生命周期，不能伪装成执行观察或被 Result 旁路暴露。宿主只从 `Result.Services()` 读取实际观察/ensure 报告；公开 Result 方法集不增加 attachment accessor，由同一架构测试固化。稳定 ID 合并的行为正确性仍必须由 Result 合同测试覆盖，不能靠新增 accessor 绕过。
+- **#14 transport 边界**：所有 v1 Runner 都有 `Stream`；A2A `RequireStreaming` 询问的是远端 A2A transport，Remote 以 AgentCard 协商，Local 直接消费 Runner.Stream。`driver.StreamSupport` 仅陈述 provider-native 事件保真，不能成为 A2A policy 查询面。`TestP4NoProviderStreamingCapabilityQuery` 锁定 Agent/Thread/Inspector 不暴露这种混合语义的查询。
+
 ### 7.2 Driver SPI 的 9 项 godoc 硬化
 
-Claude 原报告的九项是：生命周期终局；SessionCodec 零值；Session 参数键；Sequence/Seq 权威；structured-output capability 矩阵；HumanDecision failure invariant；checkpoint validity；`SupportsResume` 与 SessionCodecProvider 双向真话；Transcript mirror。当前 `adaptertest/v1/doc.go` 只记录其中 4 组/6 个 clause，不能把它当成完整清单。Session 参数键已由 PRE 完成；其余八项必须让 `driver/` godoc、adaptertest 硬条款和四内置 Driver 一致，去掉 Lenient/SHOULD 逃生舱。
+Claude 原报告的九项是：生命周期终局；SessionCodec 零值；Session 参数键；Sequence/Seq 权威；structured-output capability 矩阵；HumanDecision failure invariant；checkpoint validity；`SupportsResume` 与 SessionCodecProvider 双向真话；Transcript mirror。
+
+合同硬化已关闭，映射如下：
+
+| 原缺口 | `driver/` 权威合同 | `adaptertest/v1` 硬条款 |
+|---|---|---|
+| 生命周期终局 | `StreamKind` / `StreamPayload` | EVT-01、02、11（成功和错误终局都不得留开放 lifecycle） |
+| SessionCodec 零值 | `SessionCodec` | SES-01、02、07 |
+| Session 参数键 | PRE 导出的 `SessionParam*` 常量；本波只引用、不重复验收 | SES-08 |
+| Sequence/Seq 权威 | `EventSink`、`RunEvent`、`StreamPayload` | EVT-10、RUN-03 |
+| structured-output 矩阵 | `StructuredOutputCapability` 的 mode × mechanism × provider transport × HITL Ask 完整矩阵 | SO-01～03 |
+| HumanDecision failure invariant | `RunFailure` | RSP-02 |
+| checkpoint validity | `Checkpoint`、`Driver.Run` | RSP-01、RSP-05；`VerifyOutcome` 同时检查 Go error |
+| resume 与 codec 双向真话 | `SessionCodecProvider`、`SessionCapability` | CAP-01 |
+| Transcript mirror | `EventSink`、`RunEvent` | RUN-04 |
+
+这些条款均为 MUST，不存在 Lenient/SHOULD 逃生舱。`adaptertest` 的 hermetic reference driver 证明套件正向路径，negative table 证明 SPI 的结构与声明违规会真实被拒绝；structured-output 的三种 mode × provider transport × HITL 运行时选择/拒绝由 core structured contract tests 负责。四内置 Driver 的正式协议/fixture 证据由 §7.4 的 correctness workstream 继续承担，不能以 live probe 默认跳过替代。
 
 ### 7.3 bridge/协议保真
 

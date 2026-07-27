@@ -1,23 +1,43 @@
 package appserver
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
 	aguievents "github.com/ag-ui-protocol/ag-ui/sdks/community/go/pkg/core/events"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/pkg/bridges/agui"
+	"github.com/agent-dance/agent-adaptor/bridges/agui"
+	"github.com/agent-dance/agent-adaptor/driver"
+	adaptor "github.com/agent-dance/agent-adaptor/next"
 )
 
-func translateAppserverToAGUI(t *testing.T, payloads []agentadaptor.StreamPayload) []aguievents.Event {
+func translateAppserverToAGUI(t *testing.T, payloads []driver.StreamPayload) []aguievents.Event {
 	t.Helper()
-	tr := agui.NewTranslator()
+	stream := adaptor.New(payloadDriver{payloads: payloads}).Stream(context.Background(), "AG-UI conformance")
 	var out []aguievents.Event
-	for _, p := range payloads {
-		out = append(out, tr.Translate(p)...)
+	for event := range agui.Events(stream) {
+		out = append(out, event)
 	}
 	return out
+}
+
+type payloadDriver struct {
+	payloads []driver.StreamPayload
+}
+
+func (payloadDriver) Descriptor() driver.Descriptor {
+	return driver.Descriptor{Type: "codex-appserver-test"}
+}
+func (payloadDriver) ValidateConfig(any) error { return nil }
+
+func (d payloadDriver) Run(_ context.Context, _ driver.Request, sink driver.EventSink) (driver.Response, error) {
+	for _, payload := range d.payloads {
+		if err := sink.EmitStream(payload); err != nil {
+			return driver.Response{}, err
+		}
+	}
+	return driver.Response{}, nil
 }
 
 func mustVerifyAGUI(t *testing.T, evs []aguievents.Event) {
@@ -112,13 +132,13 @@ func TestCodexTranslatorCommandOutputDeltaBeforeItemStarted_AGUIConformant(t *te
 	mustVerifyAGUI(t, evs)
 }
 
-func TestCodexTranslatorTurnFailedToAGUIConformant(t *testing.T) {
+func TestCodexTranslatorCompletedStatusFailedToAGUIConformant(t *testing.T) {
 	t.Parallel()
 	sink := &recordingSink{}
 	tr := NewTranslator(sink, "run-fail")
 	tr.Dispatch(NotifyThreadStarted, json.RawMessage(`{"thread":{"id":"t-fail"}}`))
 	tr.Dispatch(NotifyTurnStarted, json.RawMessage(`{"threadId":"t-fail","turn":{"id":"turn-1","status":"inProgress"}}`))
-	tr.Dispatch(NotifyTurnFailed, json.RawMessage(`{"threadId":"t-fail","turn":{"id":"turn-1","error":"boom detail"}}`))
+	tr.Dispatch(NotifyTurnCompleted, json.RawMessage(`{"threadId":"t-fail","turn":{"id":"turn-1","status":"failed","error":{"message":"boom detail"}}}`))
 	evs := translateAppserverToAGUI(t, sink.streams)
 	mustVerifyAGUI(t, evs)
 }
@@ -129,7 +149,8 @@ func TestCodexTranslatorErrorNotificationToAGUIConformant(t *testing.T) {
 	tr := NewTranslator(sink, "run-errn")
 	tr.Dispatch(NotifyThreadStarted, json.RawMessage(`{"thread":{"id":"t-errn"}}`))
 	tr.Dispatch(NotifyTurnStarted, json.RawMessage(`{"threadId":"t-errn","turn":{"id":"turn-1","status":"inProgress"}}`))
-	tr.Dispatch(NotifyError, json.RawMessage(`{"error":{"message":"e","type":"E"}}`))
+	tr.Dispatch(NotifyError, json.RawMessage(`{"error":{"message":"e","type":"E"},"willRetry":false}`))
+	tr.Dispatch(NotifyTurnCompleted, json.RawMessage(`{"threadId":"t-errn","turn":{"id":"turn-1","status":"failed","error":{"message":"e"}}}`))
 	evs := translateAppserverToAGUI(t, sink.streams)
 	mustVerifyAGUI(t, evs)
 }

@@ -5,20 +5,22 @@ package claude_test
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"os/exec"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/claude"
-	"github.com/agent-dance/agent-adaptor/internal/testutil"
 	"github.com/agent-dance/agent-adaptor/memory"
+	adaptor "github.com/agent-dance/agent-adaptor/next"
 )
 
 func requireClaudeCLI(t *testing.T) {
 	t.Helper()
+	if os.Getenv("AGENT_ADAPTOR_LIVE_CONFORMANCE") != "1" {
+		t.Skip("set AGENT_ADAPTOR_LIVE_CONFORMANCE=1 in addition to -tags claude_live")
+	}
 	if _, err := exec.LookPath("claude"); err != nil {
 		t.Skip("claude CLI not in PATH")
 	}
@@ -26,225 +28,125 @@ func requireClaudeCLI(t *testing.T) {
 
 func TestClaudeStreamingHaiku(t *testing.T) {
 	requireClaudeCLI(t)
-	cwd := t.TempDir()
-
-	sdk := agentadaptor.New(
-		agentadaptor.WithDefaultAgent(claude.New(agentadaptor.ClaudeConfig{
-			CommonConfig: agentadaptor.CommonConfig{CWD: cwd},
-			Model:        "claude-haiku-4",
-		},
-			agentadaptor.WithDefaultRunPolicy(agentadaptor.PolicyAutonomous),
-		)),
-		agentadaptor.WithSessionStore(memory.NewSessionStore()),
-	)
-
+	agent := newStreamingAgent(t, false)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
-	rec := &testutil.EventRecorder{}
-	handle, err := sdk.Start(ctx, "Write a haiku about autumn. Reply with only the haiku.",
-		agentadaptor.WithStreaming(),
-		agentadaptor.WithSessionKey("claude_live_haiku", "v1"),
-	)
-	if err != nil {
-		t.Fatalf("Start: %v", err)
-	}
-
-	streamDone := make(chan struct{})
-	go func() {
-		defer close(streamDone)
-		for p := range handle.StreamEvents() {
-			_ = rec.EmitStream(p)
-		}
-	}()
-	eventsDone := make(chan struct{})
-	go func() {
-		defer close(eventsDone)
-		for ev := range handle.Events() {
-			_ = rec.Emit(ev)
-		}
-	}()
-
-	res, err := handle.Wait(ctx)
-	if err != nil {
-		t.Fatalf("Wait: %v", err)
-	}
-	<-streamDone
-	<-eventsDone
-
-	stream := rec.StreamSnapshot()
-	textDeltas := 0
+	stream := agent.Stream(ctx, "Write a haiku about autumn. Reply with only the haiku.")
 	var assembled strings.Builder
-	for _, p := range stream {
-		if p.Kind == agentadaptor.StreamTextContent {
-			textDeltas++
-			assembled.WriteString(p.Delta)
+	textDeltas := 0
+	sawFinishWithUsage := false
+	for event := range stream.Events() {
+		switch typed := event.(type) {
+		case adaptor.TextDelta:
+			if typed.Phase == adaptor.PhaseContent && typed.Text != "" {
+				textDeltas++
+				assembled.WriteString(typed.Text)
+			}
+		case adaptor.RunFinished:
+			sawFinishWithUsage = typed.Usage != nil && typed.Usage.InputTokens > 0
 		}
+	}
+	result, err := stream.Result()
+	if err != nil {
+		t.Fatalf("Result: %v", err)
 	}
 	if textDeltas < 3 {
-		t.Fatalf("need >=3 StreamTextContent; got %d streams=%d", textDeltas, len(stream))
+		t.Fatalf("need >=3 TextDelta events; got %d", textDeltas)
 	}
-	sawFinish := false
-	for _, p := range stream {
-		if p.Kind == agentadaptor.StreamRunFinished && p.Usage != nil && p.Usage.InputTokens > 0 {
-			sawFinish = true
-			break
-		}
+	if !sawFinishWithUsage {
+		t.Fatal("missing RunFinished with observed input-token usage")
 	}
-	if !sawFinish {
-		t.Fatal("missing StreamRunFinished with InputTokens")
-	}
-	a := strings.TrimSpace(assembled.String())
-	b := strings.TrimSpace(res.Output)
+	a, b := strings.TrimSpace(assembled.String()), strings.TrimSpace(result.Text)
 	if a != "" && b != "" && !strings.Contains(b, a) && !strings.Contains(a, b) {
-		t.Fatalf("delta text diverges from Output:\n stream=%q\n output=%q", a, b)
+		t.Fatalf("delta text diverges from Text: stream=%q result=%q", a, b)
 	}
-	t.Logf("deltas=%d output=%q usage=%v", textDeltas, res.Output, res.Usage)
 }
 
 func TestClaudeStreamingResumeThreadID(t *testing.T) {
 	requireClaudeCLI(t)
-	cwd := t.TempDir()
-
-	sdk := agentadaptor.New(
-		agentadaptor.WithDefaultAgent(claude.New(agentadaptor.ClaudeConfig{
-			CommonConfig: agentadaptor.CommonConfig{CWD: cwd},
-			Model:        "claude-haiku-4",
-		},
-			agentadaptor.WithDefaultRunPolicy(agentadaptor.PolicyAutonomous),
-		)),
-		agentadaptor.WithSessionStore(memory.NewSessionStore()),
-	)
-
+	agent := newStreamingAgent(t, true)
+	thread := agent.Thread("claude_live_resume/thread-a")
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
 
-	h1, err := sdk.Start(ctx, "Say only the word hello.",
-		agentadaptor.WithStreaming(),
-		agentadaptor.WithSessionKey("claude_live_resume", "thread-a"),
-	)
-	if err != nil {
-		t.Fatalf("Start: %v", err)
+	first := thread.Stream(ctx, "Say only the word hello.")
+	firstThreadID := providerThreadID(first)
+	if _, err := first.Result(); err != nil {
+		t.Fatalf("first Result: %v", err)
+	}
+	checkpoint, err := thread.Checkpoint(ctx)
+	if err != nil || checkpoint == nil || checkpoint.State == nil || checkpoint.State.ResumeID == "" {
+		t.Fatalf("Checkpoint = (%#v, %v)", checkpoint, err)
 	}
 
-	var threadStart string
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		for p := range h1.StreamEvents() {
-			if threadStart == "" && p.Kind == agentadaptor.StreamRunStarted && p.ThreadID != "" {
-				threadStart = p.ThreadID
-			}
-		}
-	}()
-	go func() {
-		defer wg.Done()
-		for range h1.Events() {
-		}
-	}()
-
-	r1, err := h1.Wait(ctx)
-	if err != nil {
-		t.Fatalf("Wait 1: %v", err)
+	second := thread.Stream(ctx, "Say only the word goodbye.")
+	secondThreadID := providerThreadID(second)
+	if _, err := second.Result(); err != nil {
+		t.Fatalf("second Result: %v", err)
 	}
-	wg.Wait()
-
-	if r1.Session == nil || r1.Session.ID == "" {
-		t.Fatalf("missing session ref: %+v", r1.Session)
+	if firstThreadID != "" && secondThreadID != "" && firstThreadID != secondThreadID {
+		t.Fatalf("resume thread mismatch first=%q second=%q", firstThreadID, secondThreadID)
 	}
+}
 
-	h2, err := sdk.Start(ctx, "Say only the word goodbye.",
-		agentadaptor.WithStreaming(),
-		agentadaptor.WithSession(agentadaptor.SessionRequest{
-			Namespace: r1.Session.Namespace,
-			Key:       r1.Session.Key,
-			ID:        r1.Session.ID,
-			Mode:      agentadaptor.SessionContinueOnly,
-		}),
-	)
-	if err != nil {
-		t.Fatalf("Start 2: %v", err)
-	}
-	for p := range h2.StreamEvents() {
-		if p.Kind == agentadaptor.StreamRunStarted {
-			if threadStart != "" && p.ThreadID != "" && p.ThreadID != threadStart {
-				t.Fatalf("resume thread mismatch first=%q second=%q", threadStart, p.ThreadID)
-			}
-			break
+func providerThreadID(stream adaptor.Stream) string {
+	var threadID string
+	for event := range stream.Events() {
+		if started, ok := event.(adaptor.RunStarted); ok && threadID == "" {
+			threadID = started.ThreadID
 		}
 	}
-	if _, err := h2.Wait(ctx); err != nil {
-		t.Fatalf("Wait 2: %v", err)
-	}
+	return threadID
 }
 
 func TestClaudeStreamingToolUseRead(t *testing.T) {
 	requireClaudeCLI(t)
-	cwd := t.TempDir()
-
-	sdk := agentadaptor.New(
-		agentadaptor.WithDefaultAgent(claude.New(agentadaptor.ClaudeConfig{
-			CommonConfig: agentadaptor.CommonConfig{CWD: cwd},
-			Model:        "claude-haiku-4",
-		},
-			agentadaptor.WithDefaultRunPolicy(agentadaptor.PolicyAutonomous),
-		)),
-		agentadaptor.WithSessionStore(memory.NewSessionStore()),
-	)
-
+	agent := newStreamingAgent(t, false)
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
 
-	rec := &testutil.EventRecorder{}
-	handle, err := sdk.Start(ctx,
-		"In this workspace, call read_file on go.mod in the repo root if available, otherwise reply NO_TOOL. Reply with one word OK or NO_TOOL.",
-		agentadaptor.WithStreaming(),
-		agentadaptor.WithSessionKey("claude_live_tool", "t1"),
-	)
-	if err != nil {
-		t.Fatalf("Start: %v", err)
-	}
-
-	streamDone := make(chan struct{})
-	go func() {
-		defer close(streamDone)
-		for p := range handle.StreamEvents() {
-			_ = rec.EmitStream(p)
-		}
-	}()
-	go func() {
-		for range handle.Events() {
-		}
-	}()
-
-	if _, err := handle.Wait(ctx); err != nil {
-		t.Fatalf("Wait: %v", err)
-	}
-	<-streamDone
-
-	stream := rec.StreamSnapshot()
+	stream := agent.Stream(ctx,
+		"In this workspace, call read_file on go.mod in the repo root if available, otherwise reply NO_TOOL. Reply with one word OK or NO_TOOL.")
 	started := 0
-	for _, p := range stream {
-		if p.Kind == agentadaptor.StreamToolCallStart {
-			started++
+	var args strings.Builder
+	for event := range stream.Events() {
+		if call, ok := event.(adaptor.ToolCall); ok {
+			if call.Phase == adaptor.PhaseStart {
+				started++
+			}
+			if call.Phase == adaptor.PhaseContent {
+				args.WriteString(call.ArgsDelta)
+			}
 		}
+	}
+	if _, err := stream.Result(); err != nil {
+		t.Fatalf("Result: %v", err)
 	}
 	if started == 0 {
 		t.Skip("model did not invoke a tool in this environment")
 	}
-
-	argsConcat := ""
-	for _, p := range stream {
-		if p.Kind == agentadaptor.StreamToolCallArgs {
-			argsConcat += p.Delta
-		}
-	}
-	if strings.TrimSpace(argsConcat) == "" {
+	if strings.TrimSpace(args.String()) == "" {
 		return
 	}
 	var payload map[string]any
-	if err := json.Unmarshal([]byte(strings.TrimSpace(argsConcat)), &payload); err != nil {
-		t.Fatalf("concatenated tool args not valid JSON: %v raw=%q", err, argsConcat)
+	if err := json.Unmarshal([]byte(strings.TrimSpace(args.String())), &payload); err != nil {
+		t.Fatalf("concatenated tool args not valid JSON: %v raw=%q", err, args.String())
 	}
+}
+
+func newStreamingAgent(t *testing.T, withThreads bool) *adaptor.Agent {
+	t.Helper()
+	options := []adaptor.Option{
+		adaptor.WithWorkspace(t.TempDir()),
+		adaptor.WithPolicy(adaptor.Policy{Approvals: adaptor.ApprovalPolicy{
+			Permission: adaptor.ApprovalAutoApprove,
+			PlanReview: adaptor.ApprovalAutoApprove,
+			Question:   adaptor.QuestionAutoDeny,
+		}}),
+	}
+	if withThreads {
+		options = append(options, adaptor.WithThreadStore(memory.NewStore()))
+	}
+	return adaptor.New(claude.Driver(claude.Config{Model: "claude-haiku-4"}), options...)
 }

@@ -23,7 +23,6 @@ import (
 	"context"
 	"testing"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/mcp"
 	adaptor "github.com/agent-dance/agent-adaptor/next"
@@ -48,7 +47,7 @@ func TestWithSkillsAppendsEverythingElseReplaces(t *testing.T) {
 	// Inline skills materialize to disk; keep the cache inside the test
 	// sandbox. (Importing the root package also installs the default
 	// materializer factory, exactly like production hosts do.)
-	t.Setenv(agentadaptor.SkillCacheRootEnv, t.TempDir())
+	t.Setenv(skill.SkillCacheRootEnv, t.TempDir())
 	ctx := context.Background()
 
 	rows := []struct {

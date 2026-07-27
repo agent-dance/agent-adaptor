@@ -1,6 +1,7 @@
 package a2a_test
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -22,11 +23,13 @@ func TestNewServerV1DefaultExposureOmitsDiagnostics(t *testing.T) {
 			Summary:  "safe summary",
 			Metadata: map[string]string{"authorization": "Bearer super-secret"},
 			Usage:    &driver.Usage{InputTokens: 12, OutputTokens: 34},
-			Result:   map[string]any{"token": "secret-token"},
+			RawStreams: &driver.RawStreams{
+				Stdout:   "Authorization: Bearer hidden",
+				Terminal: &driver.TerminalPayload{Event: "done", JSON: json.RawMessage(`{"token":"secret-token"}`)},
+			},
 			Transcript: []driver.TranscriptItem{{
 				Kind: driver.TranscriptAssistant, Text: "hidden transcript",
 			}},
-			RawStreams: &driver.RawStreams{Stdout: "Authorization: Bearer hidden"},
 		}, nil
 	}}
 	srv := a2a.NewServerV1(adaptor.New(fake), a2a.ServerOptionsV1{AgentCard: v1TestCard()})

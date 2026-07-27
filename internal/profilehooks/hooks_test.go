@@ -10,17 +10,18 @@ import (
 	"testing"
 	"time"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/internal/engine"
 )
 
 func TestSyncCodexHooksMaterializesHooksJSON(t *testing.T) {
 	root := t.TempDir()
-	payload := agentadaptor.HookPayload{
-		Hooks: []agentadaptor.HookSpec{{
+	payload := driver.HookPayload{
+		Hooks: []driver.HookSpec{{
 			Key:           "pre-shell",
-			Event:         agentadaptor.HookEventPreShell,
-			MatcherSpec:   agentadaptor.HookMatcher{Syntax: agentadaptor.HookMatcherSyntaxContains, Pattern: "git"},
-			Handler:       agentadaptor.HookHandler{Type: agentadaptor.HookHandlerCommand, Command: "echo", Args: []string{"hello world"}},
+			Event:         driver.HookEventPreShell,
+			MatcherSpec:   driver.HookMatcher{Syntax: driver.HookMatcherSyntaxContains, Pattern: "git"},
+			Handler:       driver.HookHandler{Type: driver.HookHandlerCommand, Command: "echo", Args: []string{"hello world"}},
 			Timeout:       3 * time.Second,
 			StatusMessage: "Checking shell",
 		}},
@@ -40,18 +41,18 @@ func TestSyncCodexHooksMaterializesHooksJSON(t *testing.T) {
 			t.Fatalf("expected %q in %s", want, text)
 		}
 	}
-	if snapshot.Materialization != agentadaptor.ProfileResourceMaterializationNativeManaged {
+	if snapshot.Materialization != engine.ProfileResourceMaterializationNativeManaged {
 		t.Fatalf("unexpected snapshot: %#v", snapshot)
 	}
 }
 
 func TestSyncCodexMCPShortcutUsesDefaultMatcher(t *testing.T) {
 	root := t.TempDir()
-	payload := agentadaptor.HookPayload{
-		Hooks: []agentadaptor.HookSpec{{
+	payload := driver.HookPayload{
+		Hooks: []driver.HookSpec{{
 			Key:     "pre-mcp",
-			Event:   agentadaptor.HookEventPreMCP,
-			Handler: agentadaptor.HookHandler{Type: agentadaptor.HookHandlerCommand, Command: "true"},
+			Event:   driver.HookEventPreMCP,
+			Handler: driver.HookHandler{Type: driver.HookHandlerCommand, Command: "true"},
 		}},
 		Fingerprint: "hooks-fp",
 	}
@@ -72,12 +73,12 @@ func TestSyncCodexMCPShortcutUsesDefaultMatcher(t *testing.T) {
 
 func TestSyncHookCommandQuotesExecutablePath(t *testing.T) {
 	root := t.TempDir()
-	payload := agentadaptor.HookPayload{
-		Hooks: []agentadaptor.HookSpec{{
+	payload := driver.HookPayload{
+		Hooks: []driver.HookSpec{{
 			Key:   "spaced-command",
-			Event: agentadaptor.HookEventPreShell,
-			Handler: agentadaptor.HookHandler{
-				Type:    agentadaptor.HookHandlerCommand,
+			Event: driver.HookEventPreShell,
+			Handler: driver.HookHandler{
+				Type:    driver.HookHandlerCommand,
 				Command: filepath.Join(root, "my hook.sh"),
 				Args:    []string{"hello world"},
 			},
@@ -113,11 +114,11 @@ func TestSyncClaudeHooksMaterializesSettingsJSON(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "settings.json"), []byte(`{"env":{"FOO":"bar"}}`), 0o644); err != nil {
 		t.Fatalf("write existing settings: %v", err)
 	}
-	payload := agentadaptor.HookPayload{
-		Hooks: []agentadaptor.HookSpec{{
+	payload := driver.HookPayload{
+		Hooks: []driver.HookSpec{{
 			Key:     "prompt",
-			Event:   agentadaptor.HookEventPromptSubmit,
-			Handler: agentadaptor.HookHandler{Type: agentadaptor.HookHandlerPrompt, Prompt: "Check the prompt for policy issues."},
+			Event:   driver.HookEventPromptSubmit,
+			Handler: driver.HookHandler{Type: driver.HookHandlerPrompt, Prompt: "Check the prompt for policy issues."},
 		}},
 		Fingerprint: "hooks-fp",
 	}
@@ -135,19 +136,19 @@ func TestSyncClaudeHooksMaterializesSettingsJSON(t *testing.T) {
 			t.Fatalf("expected %q in %s", want, text)
 		}
 	}
-	if snapshot.Support != agentadaptor.ProfileResourceSupportPortableExtended {
+	if snapshot.Support != engine.ProfileResourceSupportPortableExtended {
 		t.Fatalf("expected extended support, got %#v", snapshot)
 	}
 }
 
 func TestSyncClaudeShortcutHooksUseDefaultMatchers(t *testing.T) {
 	root := t.TempDir()
-	payload := agentadaptor.HookPayload{
-		Hooks: []agentadaptor.HookSpec{
-			{Key: "pre-shell", Event: agentadaptor.HookEventPreShell, Handler: agentadaptor.HookHandler{Type: agentadaptor.HookHandlerCommand, Command: "true"}},
-			{Key: "pre-mcp", Event: agentadaptor.HookEventPreMCP, Handler: agentadaptor.HookHandler{Type: agentadaptor.HookHandlerCommand, Command: "true"}},
-			{Key: "pre-read", Event: agentadaptor.HookEventPreFileRead, Handler: agentadaptor.HookHandler{Type: agentadaptor.HookHandlerCommand, Command: "true"}},
-			{Key: "post-edit", Event: agentadaptor.HookEventPostFileEdit, Handler: agentadaptor.HookHandler{Type: agentadaptor.HookHandlerCommand, Command: "true"}},
+	payload := driver.HookPayload{
+		Hooks: []driver.HookSpec{
+			{Key: "pre-shell", Event: driver.HookEventPreShell, Handler: driver.HookHandler{Type: driver.HookHandlerCommand, Command: "true"}},
+			{Key: "pre-mcp", Event: driver.HookEventPreMCP, Handler: driver.HookHandler{Type: driver.HookHandlerCommand, Command: "true"}},
+			{Key: "pre-read", Event: driver.HookEventPreFileRead, Handler: driver.HookHandler{Type: driver.HookHandlerCommand, Command: "true"}},
+			{Key: "post-edit", Event: driver.HookEventPostFileEdit, Handler: driver.HookHandler{Type: driver.HookHandlerCommand, Command: "true"}},
 		},
 		Fingerprint: "hooks-fp",
 	}
@@ -171,8 +172,8 @@ func TestSyncClaudeHooksRejectsExternalHooks(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "settings.json"), []byte(`{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"echo"}]}]}}`), 0o644); err != nil {
 		t.Fatalf("write external hooks: %v", err)
 	}
-	payload := agentadaptor.HookPayload{
-		Hooks:       []agentadaptor.HookSpec{{Key: "stop", Event: agentadaptor.HookEventStop, Handler: agentadaptor.HookHandler{Type: agentadaptor.HookHandlerCommand, Command: "echo"}}},
+	payload := driver.HookPayload{
+		Hooks:       []driver.HookSpec{{Key: "stop", Event: driver.HookEventStop, Handler: driver.HookHandler{Type: driver.HookHandlerCommand, Command: "echo"}}},
 		Fingerprint: "hooks-fp",
 	}
 	if _, err := Sync(context.Background(), "claude", root, payload); err == nil || !strings.Contains(err.Error(), "external entry") {
@@ -182,11 +183,11 @@ func TestSyncClaudeHooksRejectsExternalHooks(t *testing.T) {
 
 func TestSyncCursorHooksRejectsUnsupportedHandler(t *testing.T) {
 	root := t.TempDir()
-	payload := agentadaptor.HookPayload{
-		Hooks: []agentadaptor.HookSpec{{
+	payload := driver.HookPayload{
+		Hooks: []driver.HookSpec{{
 			Key:     "http",
-			Event:   agentadaptor.HookEventPreShell,
-			Handler: agentadaptor.HookHandler{Type: agentadaptor.HookHandlerHTTP, URL: "https://example.test/hook"},
+			Event:   driver.HookEventPreShell,
+			Handler: driver.HookHandler{Type: driver.HookHandlerHTTP, URL: "https://example.test/hook"},
 		}},
 		Fingerprint: "hooks-fp",
 	}
@@ -200,8 +201,8 @@ func TestSyncHooksRejectsExternalConflict(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "hooks.json"), []byte(`{"hooks":{}}`), 0o644); err != nil {
 		t.Fatalf("write external hooks: %v", err)
 	}
-	payload := agentadaptor.HookPayload{
-		Hooks:       []agentadaptor.HookSpec{{Key: "stop", Event: agentadaptor.HookEventStop, Handler: agentadaptor.HookHandler{Type: agentadaptor.HookHandlerCommand, Command: "echo"}}},
+	payload := driver.HookPayload{
+		Hooks:       []driver.HookSpec{{Key: "stop", Event: driver.HookEventStop, Handler: driver.HookHandler{Type: driver.HookHandlerCommand, Command: "echo"}}},
 		Fingerprint: "hooks-fp",
 	}
 	if _, err := Sync(context.Background(), "codex", root, payload); err == nil || !strings.Contains(err.Error(), "external entry") {

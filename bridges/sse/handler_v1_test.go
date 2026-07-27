@@ -1,7 +1,7 @@
 package sse_test
 
-// P4.3 acceptance tests for the v1 HandlerV1(Runner) entry: Raw and AG-UI
-// wire parity with the legacy handler, thread binding through the inbound
+// Contract tests for the v1 HandlerV1(Runner) entry: Raw and AG-UI wire,
+// thread binding through the inbound
 // session identity, and — the mandated anchor — deterministic
 // disconnect-cancel semantics (client disconnect → request ctx cancel → run
 // cancel → suppressed error frame), synchronized entirely by channels.
@@ -38,11 +38,33 @@ type fakeV1Driver struct {
 	runFunc func(ctx context.Context, req driver.Request, sink driver.EventSink) (driver.Response, error)
 }
 
+type fakeV1SessionCodec struct{}
+
+func (fakeV1SessionCodec) Name() string { return "fake-v1/session" }
+func (fakeV1SessionCodec) ToParams(state *driver.SessionState) driver.SessionParams {
+	if state == nil {
+		return driver.SessionParams{}
+	}
+	return driver.SessionParams{ResumeID: state.ResumeID, DisplayID: state.DisplayID, Values: state.Data}
+}
+func (fakeV1SessionCodec) FromParams(params driver.SessionParams) *driver.SessionState {
+	if params.ResumeID == "" && params.DisplayID == "" && len(params.Values) == 0 {
+		return nil
+	}
+	return &driver.SessionState{ResumeID: params.ResumeID, DisplayID: params.DisplayID, Data: params.Values}
+}
+func (fakeV1SessionCodec) GuardFingerprint(params driver.SessionParams) string {
+	return params.ResumeID
+}
+
 func (f *fakeV1Driver) Descriptor() driver.Descriptor {
 	return driver.Descriptor{Type: "fake-v1", DisplayName: "Fake V1"}
 }
 
 func (f *fakeV1Driver) ValidateConfig(any) error { return nil }
+
+func (f *fakeV1Driver) SessionConfigFingerprint() (string, error) { return "fake-v1", nil }
+func (f *fakeV1Driver) SessionCodec() driver.SessionCodec         { return fakeV1SessionCodec{} }
 
 func (f *fakeV1Driver) Run(ctx context.Context, req driver.Request, sink driver.EventSink) (driver.Response, error) {
 	f.mu.Lock()
@@ -102,13 +124,13 @@ func TestHandlerV1RawHappyPath(t *testing.T) {
 
 	counts := map[string]int{}
 	sawHello := false
-	lastID := -1
+	lastID := 0
 	for _, f := range frames {
 		counts[f.event]++
 		if f.event == "text.delta" && strings.Contains(f.data, `"hello"`) {
 			sawHello = true
 		}
-		// The v1 raw wire ids are a run-local zero-based counter.
+		// EventMeta.Sequence is the v1 cursor authority and starts at one.
 		id, err := strconv.Atoi(f.id)
 		if err != nil {
 			t.Fatalf("frame id %q is not an integer", f.id)
@@ -143,7 +165,10 @@ func TestHandlerV1AGUIHappyPath(t *testing.T) {
 			{Kind: driver.StreamTextEnd, MessageID: "m1"},
 			{Kind: driver.StreamRunFinished, ThreadID: "t", RunID: "r"},
 		},
-		response: driver.Response{Output: "hello world"},
+		response: driver.Response{
+			Output:     "hello world",
+			Checkpoint: &driver.Checkpoint{Valid: true, State: &driver.SessionState{ResumeID: "session-happy"}},
+		},
 	}
 	agent := adaptor.New(fake, adaptor.WithThreadStore(memory.NewStore()))
 	srv := httptest.NewServer(sse.HandlerV1(agent, sse.OptionsV1{Protocol: sse.AGUI}))
@@ -215,7 +240,7 @@ func TestHandlerV1AGUIHappyPath(t *testing.T) {
 }
 
 // TestHandlerV1AGUIThreadContinuation anchors the session-binding half of the
-// v1 handler: the AG-UI threadId maps to agent.Thread("agui/<threadId>"), so
+// v1 handler: the AG-UI threadId maps to a collision-free AG-UI Thread key, so
 // a second request on the same threadId continues from the checkpoint the
 // first run left in the thread store.
 func TestHandlerV1AGUIThreadContinuation(t *testing.T) {

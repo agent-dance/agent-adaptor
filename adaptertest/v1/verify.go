@@ -1,6 +1,7 @@
 package adaptertest
 
 import (
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"strings"
@@ -20,6 +21,25 @@ func (v Violation) String() string { return v.Clause + ": " + v.Message }
 
 func violationf(clause, format string, args ...any) Violation {
 	return Violation{Clause: clause, Message: fmt.Sprintf(format, args...)}
+}
+
+// VerifyStructuredOutputCapability checks the declaration half of the
+// structured-output matrix (SO-01). The optional live probe verifies the
+// native, non-streaming baseline; core's structured contract tests own mode
+// selection and rejection across provider-streaming and HITL combinations.
+func VerifyStructuredOutputCapability(capability driver.StructuredOutputCapability) []Violation {
+	declared := capability.JSONSchemaNative || capability.JSONSchemaPromptValidate
+	anyWorks := capability.WorksWithRun || capability.WorksWithStreaming || capability.WorksWithHITL
+	var out []Violation
+	if !declared && anyWorks {
+		out = append(out, violationf("SO-01",
+			"WorksWith* is true without JSONSchemaNative or JSONSchemaPromptValidate; a transport flag cannot create an output mechanism"))
+	}
+	if declared && !capability.WorksWithRun {
+		out = append(out, violationf("SO-01",
+			"a structured-output mechanism is declared with WorksWithRun=false; every mode uses v1's single execution pipeline"))
+	}
+	return out
 }
 
 // knownStreamKind reports whether kind is one of the 19 normalized
@@ -418,8 +438,58 @@ func verifyTranscriptItem(item driver.TranscriptItem, where string) []Violation 
 	return out
 }
 
-// VerifyResponse checks Response-level structural invariants (clauses
-// RSP-01 .. RSP-04 plus TRN-* for the transcript).
+// VerifyOutcome checks Response-level structural invariants (clauses
+// RSP-01 .. RSP-04 plus TRN-* for the transcript) together with the error
+// returned by Driver.Run. A non-nil runErr makes a valid checkpoint unsafe
+// even when the Response's process fields happen to look successful.
+func VerifyOutcome(resp *driver.Response, runErr error) []Violation {
+	out := VerifyResponse(resp)
+	if runErr != nil && resp != nil && resp.Checkpoint != nil && resp.Checkpoint.Valid {
+		out = append(out, violationf("RSP-01",
+			"Checkpoint.Valid=true when Driver.Run returned error %v; infrastructure or execution errors MUST NOT produce a persistable checkpoint",
+			runErr))
+	}
+	return out
+}
+
+// VerifyCheckpointCodec checks RSP-05 without running a paid/live probe. A
+// valid checkpoint is meaningful only when the same Driver exposes a codec
+// that accepts its resume identity and derives a non-empty guard.
+func VerifyCheckpointCodec(d driver.Driver, resp *driver.Response) []Violation {
+	if resp == nil || resp.Checkpoint == nil || !resp.Checkpoint.Valid || resp.Checkpoint.State == nil {
+		return nil
+	}
+	provider, ok := d.(driver.SessionCodecProvider)
+	if !ok {
+		return []Violation{violationf("RSP-05",
+			"valid checkpoint returned by a driver without SessionCodecProvider")}
+	}
+	codec := provider.SessionCodec()
+	if codec == nil {
+		return []Violation{violationf("RSP-05",
+			"valid checkpoint returned but SessionCodecProvider returned nil")}
+	}
+	params := codec.ToParams(resp.Checkpoint.State)
+	var out []Violation
+	if params.ResumeID != resp.Checkpoint.State.ResumeID {
+		out = append(out, violationf("RSP-05",
+			"codec.ToParams(checkpoint) changed ResumeID from %q to %q", resp.Checkpoint.State.ResumeID, params.ResumeID))
+	}
+	if codec.GuardFingerprint(params) == "" {
+		out = append(out, violationf("RSP-05", "GuardFingerprint is empty for a valid checkpoint"))
+	}
+	restored := codec.FromParams(params)
+	if restored == nil {
+		out = append(out, violationf("RSP-05", "codec.FromParams returned nil for a valid checkpoint"))
+	} else if roundTrip := codec.ToParams(restored); !reflect.DeepEqual(roundTrip, params) {
+		out = append(out, violationf("RSP-05",
+			"checkpoint codec round-trip is lossy: first=%+v second=%+v", params, roundTrip))
+	}
+	return out
+}
+
+// VerifyResponse checks the invariants observable from Response alone. Use
+// VerifyOutcome when the Driver.Run error is available.
 func VerifyResponse(resp *driver.Response) []Violation {
 	if resp == nil {
 		return nil
@@ -460,6 +530,14 @@ func VerifyResponse(resp *driver.Response) []Violation {
 		if strings.Contains(trimmed, "\n") && strings.HasPrefix(trimmed, "{") {
 			out = append(out, violationf("RSP-04",
 				"Output equals the full protocol-shaped stdout dump; Response.Output docs: final assistant-facing text only, no raw stdout dumps"))
+		}
+	}
+	if rs := resp.RawStreams; rs != nil && rs.Terminal != nil {
+		if strings.TrimSpace(rs.Terminal.Event) == "" {
+			out = append(out, violationf("RSP-06", "RawStreams.Terminal has an empty provider event name"))
+		}
+		if len(rs.Terminal.JSON) == 0 || !json.Valid(rs.Terminal.JSON) {
+			out = append(out, violationf("RSP-06", "RawStreams.Terminal.JSON is not valid provider terminal JSON"))
 		}
 	}
 	return out

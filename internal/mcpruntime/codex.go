@@ -6,19 +6,20 @@ import (
 	"os"
 	"path/filepath"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/internal/engine"
 	"github.com/agent-dance/agent-adaptor/internal/profilestate"
 	toml "github.com/pelletier/go-toml/v2"
 )
 
-func SyncCodexProfile(codexHome string, kind ProfileKind, payload agentadaptor.MCPPayload) error {
+func SyncCodexProfile(codexHome string, kind ProfileKind, payload driver.MCPPayload) error {
 	_, err := SyncResource(context.Background(), "codex", codexHome, kind, payload)
 	return err
 }
 
-func codexServerConfig(server agentadaptor.MCPServerSpec) (map[string]any, error) {
+func codexServerConfig(server driver.MCPServerSpec) (map[string]any, error) {
 	switch server.Transport {
-	case agentadaptor.MCPTransportStdio:
+	case driver.MCPTransportStdio:
 		entry := map[string]any{
 			"command": server.Command,
 		}
@@ -29,9 +30,9 @@ func codexServerConfig(server agentadaptor.MCPServerSpec) (map[string]any, error
 			entry["env"] = cloneStringMapAny(server.Env)
 		}
 		return entry, nil
-	case agentadaptor.MCPTransportHTTP:
+	case driver.MCPTransportHTTP:
 		if len(server.Headers) > 0 {
-			return nil, fmt.Errorf("%w: Codex MCP server %q does not support custom headers", agentadaptor.ErrInvalidMCPConfig, server.Key)
+			return nil, fmt.Errorf("%w: Codex MCP server %q does not support custom headers", engine.ErrInvalidMCPConfig, server.Key)
 		}
 		entry := map[string]any{
 			"url": server.URL,
@@ -41,7 +42,7 @@ func codexServerConfig(server agentadaptor.MCPServerSpec) (map[string]any, error
 		}
 		return entry, nil
 	default:
-		return nil, fmt.Errorf("%w: Codex MCP server %q does not support transport %q", agentadaptor.ErrMCPTransportUnsupported, server.Key, server.Transport)
+		return nil, fmt.Errorf("%w: Codex MCP server %q does not support transport %q", engine.ErrMCPTransportUnsupported, server.Key, server.Transport)
 	}
 }
 

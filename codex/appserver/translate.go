@@ -2,9 +2,11 @@ package appserver
 
 import (
 	"encoding/json"
+	"fmt"
+	"strings"
 	"sync"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
 )
 
 // Translator converts codex app-server notifications into StreamPayload
@@ -12,7 +14,7 @@ import (
 // per-run and single-goroutine: jrpc2 delivers notifications sequentially so
 // there is no internal locking beyond what tracks per-turn state.
 type Translator struct {
-	sink     agentadaptor.EventSink
+	sink     driver.EventSink
 	runID    string
 	threadID string
 
@@ -27,7 +29,7 @@ type Translator struct {
 	// thread/tokenUsage/updated notifications. Codex splits usage out of
 	// turn/completed in current builds, so the translator caches it and
 	// attaches it to StreamRunFinished on turn completion.
-	latestUsage *agentadaptor.Usage
+	latestUsage *driver.Usage
 
 	// runStarted tracks whether we already emitted StreamRunStarted. Codex
 	// emits turn/started and thread/started separately; we fold thread info
@@ -37,7 +39,7 @@ type Translator struct {
 
 // NewTranslator creates a translator that attributes every emitted payload
 // to runID.
-func NewTranslator(sink agentadaptor.EventSink, runID string) *Translator {
+func NewTranslator(sink driver.EventSink, runID string) *Translator {
 	return &Translator{
 		sink:       sink,
 		runID:      runID,
@@ -77,8 +79,6 @@ func (t *Translator) Dispatch(method string, params json.RawMessage) {
 		t.handleTurnStarted(params)
 	case NotifyTurnCompleted:
 		t.handleTurnCompleted(params)
-	case NotifyTurnFailed:
-		t.handleTurnFailed(params)
 	case NotifyItemStarted:
 		t.handleItemStarted(params)
 	case NotifyItemCompleted:
@@ -94,7 +94,7 @@ func (t *Translator) Dispatch(method string, params json.RawMessage) {
 		// command/exec surface rather than the turn/item pipeline. The
 		// codex adapter never issues command/exec directly, so we surface
 		// it opaquely for forward compatibility.
-		t.emit(agentadaptor.StreamPayload{
+		t.emit(driver.StreamPayload{
 			Kind: "",
 			Name: NotifyCommandExecOutputDelta,
 			Raw:  rawToMap(params, NotifyCommandExecOutputDelta),
@@ -109,7 +109,7 @@ func (t *Translator) Dispatch(method string, params json.RawMessage) {
 		// Opaque pass-through for notifications we do not model. The Raw
 		// payload lets downstream bridges (e.g. AG-UI) decide whether to
 		// surface or ignore it.
-		t.emit(agentadaptor.StreamPayload{
+		t.emit(driver.StreamPayload{
 			Kind: "",
 			Name: method,
 			Raw:  rawToMap(params, method),
@@ -137,14 +137,14 @@ func (t *Translator) handleThreadTokenUsageUpdated(params json.RawMessage) {
 	var body ThreadTokenUsageUpdatedNotification
 	if err := json.Unmarshal(params, &body); err == nil {
 		t.mu.Lock()
-		t.latestUsage = &agentadaptor.Usage{
+		t.latestUsage = &driver.Usage{
 			InputTokens:       body.TokenUsage.Total.InputTokens,
 			OutputTokens:      body.TokenUsage.Total.OutputTokens,
 			CachedInputTokens: body.TokenUsage.Total.CachedInputTokens,
 		}
 		t.mu.Unlock()
 	}
-	t.emit(agentadaptor.StreamPayload{
+	t.emit(driver.StreamPayload{
 		Kind: "",
 		Name: NotifyThreadTokenUsageUpdated,
 		Raw:  rawToMap(params, NotifyThreadTokenUsageUpdated),
@@ -162,7 +162,7 @@ func (t *Translator) handleTurnStarted(params json.RawMessage) {
 		t.mu.Unlock()
 	}
 	payload := t.basePayload()
-	payload.Kind = agentadaptor.StreamRunStarted
+	payload.Kind = driver.StreamRunStarted
 	if !t.runStarted {
 		t.runStarted = true
 	}
@@ -171,11 +171,38 @@ func (t *Translator) handleTurnStarted(params json.RawMessage) {
 
 func (t *Translator) handleTurnCompleted(params json.RawMessage) {
 	var body TurnCompletedNotificationBody
-	_ = json.Unmarshal(params, &body)
+	if err := json.Unmarshal(params, &body); err != nil {
+		payload := t.basePayload()
+		payload.Kind = driver.StreamRunError
+		payload.Error = &driver.RunFailure{Message: "codex turn/completed payload is malformed", Code: driver.FailureAgentError}
+		payload.Raw = rawToMap(params, NotifyTurnCompleted)
+		t.emit(payload)
+		return
+	}
 	payload := t.basePayload()
-	payload.Kind = agentadaptor.StreamRunFinished
+	switch body.Turn.Status {
+	case TurnStatusCompleted:
+		if body.Turn.Error != nil {
+			payload.Kind = driver.StreamRunError
+			payload.Error = &driver.RunFailure{Message: "codex completed turn carried an error", Code: driver.FailureAgentError}
+			payload.Raw = rawToMap(params, NotifyTurnCompleted)
+		} else {
+			payload.Kind = driver.StreamRunFinished
+		}
+	case TurnStatusFailed, TurnStatusInterrupted:
+		payload.Kind = driver.StreamRunError
+		payload.Error = failureFromCompletedTurn(body.Turn)
+		payload.Raw = rawToMap(params, NotifyTurnCompleted)
+	default:
+		payload.Kind = driver.StreamRunError
+		payload.Error = &driver.RunFailure{
+			Message: fmt.Sprintf("codex turn/completed reported invalid status %q", body.Turn.Status),
+			Code:    driver.FailureAgentError,
+		}
+		payload.Raw = rawToMap(params, NotifyTurnCompleted)
+	}
 	if body.Turn.Usage != nil {
-		payload.Usage = &agentadaptor.Usage{
+		payload.Usage = &driver.Usage{
 			InputTokens:       body.Turn.Usage.InputTokens,
 			OutputTokens:      body.Turn.Usage.OutputTokens,
 			CachedInputTokens: body.Turn.Usage.CachedInputTokens,
@@ -187,21 +214,6 @@ func (t *Translator) handleTurnCompleted(params json.RawMessage) {
 			payload.Usage = &copyUsage
 		}
 		t.mu.Unlock()
-	}
-	t.emit(payload)
-}
-
-func (t *Translator) handleTurnFailed(params json.RawMessage) {
-	var body TurnFailedNotificationBody
-	_ = json.Unmarshal(params, &body)
-	payload := t.basePayload()
-	payload.Kind = agentadaptor.StreamRunError
-	if len(body.Turn.Error) > 0 {
-		payload.Error = &agentadaptor.RunFailure{
-			Message: "codex turn failed",
-			Code:    "codex.turn_failed",
-		}
-		payload.Raw = map[string]any{"error": string(body.Turn.Error)}
 	}
 	t.emit(payload)
 }
@@ -227,12 +239,12 @@ func (t *Translator) handleItemStarted(params json.RawMessage) {
 	switch item.Kind {
 	case ThreadItemAgentMessage:
 		payload := t.basePayload()
-		payload.Kind = agentadaptor.StreamTextStart
+		payload.Kind = driver.StreamTextStart
 		payload.MessageID = item.ID
 		t.emit(payload)
 	case ThreadItemReasoning:
 		payload := t.basePayload()
-		payload.Kind = agentadaptor.StreamReasoningStart
+		payload.Kind = driver.StreamReasoningStart
 		payload.MessageID = item.ID
 		t.emit(payload)
 	case ThreadItemCommandExecution:
@@ -240,7 +252,7 @@ func (t *Translator) handleItemStarted(params json.RawMessage) {
 		t.toolNames[item.ID] = "shell"
 		t.mu.Unlock()
 		payload := t.basePayload()
-		payload.Kind = agentadaptor.StreamToolCallStart
+		payload.Kind = driver.StreamToolCallStart
 		payload.ToolCallID = item.ID
 		payload.Name = "shell"
 		if item.CommandExecution != nil {
@@ -255,7 +267,7 @@ func (t *Translator) handleItemStarted(params json.RawMessage) {
 		t.toolNames[item.ID] = "apply_patch"
 		t.mu.Unlock()
 		payload := t.basePayload()
-		payload.Kind = agentadaptor.StreamToolCallStart
+		payload.Kind = driver.StreamToolCallStart
 		payload.ToolCallID = item.ID
 		payload.Name = "apply_patch"
 		t.emit(payload)
@@ -268,7 +280,7 @@ func (t *Translator) handleItemStarted(params json.RawMessage) {
 		t.toolNames[item.ID] = toolName
 		t.mu.Unlock()
 		payload := t.basePayload()
-		payload.Kind = agentadaptor.StreamToolCallStart
+		payload.Kind = driver.StreamToolCallStart
 		payload.ToolCallID = item.ID
 		payload.Name = toolName
 		if item.McpToolCall != nil && len(item.McpToolCall.Arguments) > 0 {
@@ -280,7 +292,7 @@ func (t *Translator) handleItemStarted(params json.RawMessage) {
 		t.toolNames[item.ID] = "web_search"
 		t.mu.Unlock()
 		payload := t.basePayload()
-		payload.Kind = agentadaptor.StreamToolCallStart
+		payload.Kind = driver.StreamToolCallStart
 		payload.ToolCallID = item.ID
 		payload.Name = "web_search"
 		if item.WebSearch != nil {
@@ -296,7 +308,7 @@ func (t *Translator) handleItemStarted(params json.RawMessage) {
 		t.toolNames[item.ID] = toolName
 		t.mu.Unlock()
 		payload := t.basePayload()
-		payload.Kind = agentadaptor.StreamToolCallStart
+		payload.Kind = driver.StreamToolCallStart
 		payload.ToolCallID = item.ID
 		payload.Name = toolName
 		if item.DynamicToolCall != nil && len(item.DynamicToolCall.Arguments) > 0 {
@@ -328,7 +340,7 @@ func (t *Translator) handleItemCompleted(params json.RawMessage) {
 			return
 		}
 		payload := t.basePayload()
-		payload.Kind = agentadaptor.StreamTextEnd
+		payload.Kind = driver.StreamTextEnd
 		payload.MessageID = item.ID
 		t.emit(payload)
 	case ThreadItemReasoning:
@@ -336,7 +348,7 @@ func (t *Translator) handleItemCompleted(params json.RawMessage) {
 			return
 		}
 		payload := t.basePayload()
-		payload.Kind = agentadaptor.StreamReasoningEnd
+		payload.Kind = driver.StreamReasoningEnd
 		payload.MessageID = item.ID
 		t.emit(payload)
 	case ThreadItemCommandExecution:
@@ -368,14 +380,14 @@ func (t *Translator) emitToolEnd(itemID string, result map[string]any) {
 	t.mu.Unlock()
 
 	endPayload := t.basePayload()
-	endPayload.Kind = agentadaptor.StreamToolCallEnd
+	endPayload.Kind = driver.StreamToolCallEnd
 	endPayload.ToolCallID = itemID
 	endPayload.Name = name
 	t.emit(endPayload)
 
 	if result != nil {
 		resultPayload := t.basePayload()
-		resultPayload.Kind = agentadaptor.StreamToolCallResult
+		resultPayload.Kind = driver.StreamToolCallResult
 		resultPayload.ToolCallID = itemID
 		resultPayload.Name = name
 		resultPayload.Result = result
@@ -389,7 +401,7 @@ func (t *Translator) handleAgentMessageDelta(params json.RawMessage) {
 		return
 	}
 	payload := t.basePayload()
-	payload.Kind = agentadaptor.StreamTextContent
+	payload.Kind = driver.StreamTextContent
 	payload.MessageID = body.ItemID
 	payload.Delta = body.Delta
 	if body.ThreadID != "" {
@@ -411,7 +423,7 @@ func (t *Translator) handleReasoningTextDelta(params json.RawMessage) {
 		return
 	}
 	payload := t.basePayload()
-	payload.Kind = agentadaptor.StreamReasoningContent
+	payload.Kind = driver.StreamReasoningContent
 	payload.MessageID = body.ItemID
 	payload.Delta = body.Delta
 	if body.ThreadID != "" {
@@ -433,7 +445,7 @@ func (t *Translator) handleCommandExecOutputDelta(params json.RawMessage) {
 		return
 	}
 	payload := t.basePayload()
-	payload.Kind = agentadaptor.StreamToolCallArgs
+	payload.Kind = driver.StreamToolCallArgs
 	payload.ToolCallID = body.ItemID
 	payload.Delta = body.Delta
 	if body.ThreadID != "" {
@@ -451,7 +463,7 @@ func (t *Translator) handleFileChangeOutputDelta(params json.RawMessage) {
 		return
 	}
 	payload := t.basePayload()
-	payload.Kind = agentadaptor.StreamToolCallArgs
+	payload.Kind = driver.StreamToolCallArgs
 	payload.ToolCallID = body.ItemID
 	payload.Delta = body.Delta
 	if body.ThreadID != "" {
@@ -475,34 +487,39 @@ func (t *Translator) handlePlanDelta(method string, params json.RawMessage) {
 }
 
 func (t *Translator) handleError(params json.RawMessage) {
-	var body ErrorNotification
-	_ = json.Unmarshal(params, &body)
 	payload := t.basePayload()
-	payload.Kind = agentadaptor.StreamRunError
-	msg := body.Error.Message
-	if msg == "" {
-		msg = "codex app-server error"
-	}
-	failure := &agentadaptor.RunFailure{
-		Message: msg,
-		Code:    "codex.error",
-	}
-	if body.Error.AdditionalDetails != nil && *body.Error.AdditionalDetails != "" {
-		failure.Metadata = map[string]any{"details": *body.Error.AdditionalDetails}
-	}
-	payload.Error = failure
+	// Error notifications can be retriable and are not terminal in the
+	// official app-server protocol. Preserve them as provider notices; the
+	// subsequent turn/completed status owns the unique terminal lifecycle.
+	payload.Kind = ""
+	payload.Name = NotifyError
 	payload.Raw = rawToMap(params, NotifyError)
 	t.emit(payload)
+}
+
+func failureFromCompletedTurn(turn TurnCompletedTurn) *driver.RunFailure {
+	message := "codex turn " + string(turn.Status)
+	if turn.Error != nil && strings.TrimSpace(turn.Error.Message) != "" {
+		message = turn.Error.Message
+	}
+	failure := &driver.RunFailure{
+		Message: message,
+		Code:    driver.FailureAgentError,
+	}
+	if turn.Error != nil && turn.Error.AdditionalDetails != nil && strings.TrimSpace(*turn.Error.AdditionalDetails) != "" {
+		failure.Metadata = map[string]any{"details": *turn.Error.AdditionalDetails}
+	}
+	return failure
 }
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-func (t *Translator) basePayload() agentadaptor.StreamPayload {
+func (t *Translator) basePayload() driver.StreamPayload {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return agentadaptor.StreamPayload{
+	return driver.StreamPayload{
 		RunID:    t.runID,
 		ThreadID: t.threadID,
 		TurnID:   t.turnID,
@@ -529,7 +546,7 @@ func (t *Translator) markReasoningEnded(id string) bool {
 	return true
 }
 
-func (t *Translator) emit(payload agentadaptor.StreamPayload) {
+func (t *Translator) emit(payload driver.StreamPayload) {
 	if t.sink == nil {
 		return
 	}

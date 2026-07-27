@@ -20,6 +20,8 @@ package subagentstream
 
 import (
 	"context"
+	"sync"
+	"time"
 
 	"github.com/agent-dance/agent-adaptor/hosttools/a2adelegation"
 	adaptor "github.com/agent-dance/agent-adaptor/next"
@@ -40,20 +42,52 @@ func Merge(ctx context.Context, stream adaptor.Stream, bus EventBus) adaptor.Str
 	if stream == nil || bus == nil {
 		return stream
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	out := make(chan adaptor.Event, 64)
-	merged := &mergedStream{parent: stream, events: out}
+	mergeCtx, cancelMerge := context.WithCancel(ctx)
+	merged := &mergedStream{parent: stream, events: out, done: make(chan struct{}), cancelMerge: cancelMerge}
 
 	go func() {
 		defer close(out)
+		defer close(merged.done)
 		parent := stream.Events()
-		subCtx, cancelSubagents := context.WithCancel(ctx)
+		subCtx, cancelSubagents := context.WithCancel(mergeCtx)
 		defer cancelSubagents()
 		subagents := bus.SubscribeRun(subCtx, stream.RunID())
 
 		tracker := newDelegationTracker()
+		var sequence uint64
+		var threadKey string
+		var parentTerminal adaptor.Event
+		stamp := func(ev adaptor.Event, source *adaptor.EventSourceMeta, observed time.Time) adaptor.Event {
+			sequence++
+			meta := ev.Meta()
+			if meta.RunID == "" {
+				meta.RunID = stream.RunID()
+			}
+			if meta.ThreadKey != "" {
+				threadKey = meta.ThreadKey
+			} else {
+				meta.ThreadKey = threadKey
+			}
+			if meta.Time.IsZero() {
+				if observed.IsZero() {
+					meta.Time = time.Now().UTC()
+				} else {
+					meta.Time = observed
+				}
+			}
+			meta.Sequence = sequence
+			if source != nil {
+				meta.Source = source
+			}
+			return adaptor.WithEventMeta(ev, meta)
+		}
 		send := func(ev adaptor.Event) bool {
 			select {
-			case <-ctx.Done():
+			case <-mergeCtx.Done():
 				return false
 			case out <- ev:
 				return true
@@ -61,7 +95,11 @@ func Merge(ctx context.Context, stream adaptor.Stream, bus EventBus) adaptor.Str
 		}
 		sendSubagent := func(ev a2adelegation.DelegationEvent) bool {
 			tracker.Track(ev)
-			return send(SubagentEvent(ev))
+			source := &adaptor.EventSourceMeta{
+				RunID: ev.RunID, ThreadID: ev.RemoteContextID,
+				TurnID: ev.DelegationID, Sequence: ev.Sequence, Timestamp: ev.Time,
+			}
+			return send(stamp(SubagentEvent(ev), source, ev.Time))
 		}
 		// drainSubagents forwards every already-delivered delegation event
 		// without blocking. Delegation terminals are published before the
@@ -91,14 +129,19 @@ func Merge(ctx context.Context, stream adaptor.Stream, bus EventBus) adaptor.Str
 
 		for parent != nil || subagents != nil {
 			select {
-			case <-ctx.Done():
+			case <-mergeCtx.Done():
 				tracker.FlushSynthetic(
 					a2adelegation.DelegationCancelled,
 					"cancelled",
 					&a2adelegation.DelegationError{Code: "parent_cancelled", Message: "parent run context cancelled"},
 					func(ev a2adelegation.DelegationEvent) bool {
+						tracker.Track(ev)
+						projected := stamp(SubagentEvent(ev), &adaptor.EventSourceMeta{
+							RunID: ev.RunID, ThreadID: ev.RemoteContextID, TurnID: ev.DelegationID,
+							Sequence: ev.Sequence, Timestamp: ev.Time,
+						}, ev.Time)
 						select {
-						case out <- SubagentEvent(ev):
+						case out <- projected:
 							return true
 						default:
 							return false
@@ -118,9 +161,16 @@ func Merge(ctx context.Context, stream adaptor.Stream, bus EventBus) adaptor.Str
 						return
 					}
 					stopSubagents()
+					if parentTerminal != nil && !send(stamp(parentTerminal, nil, time.Time{})) {
+						return
+					}
 					continue
 				}
-				if !send(ev) {
+				if _, terminal := ev.(adaptor.RunFinished); terminal {
+					parentTerminal = ev
+					continue
+				}
+				if !send(stamp(ev, nil, time.Time{})) {
 					return
 				}
 			case ev, ok := <-subagents:
@@ -139,18 +189,27 @@ func Merge(ctx context.Context, stream adaptor.Stream, bus EventBus) adaptor.Str
 
 // mergedStream decorates the parent stream with the merged event channel.
 type mergedStream struct {
-	parent adaptor.Stream
-	events chan adaptor.Event
+	parent      adaptor.Stream
+	events      chan adaptor.Event
+	done        chan struct{}
+	cancelMerge context.CancelFunc
+	cancelOnce  sync.Once
 }
 
 var _ adaptor.Stream = (*mergedStream)(nil)
 
 func (s *mergedStream) Events() <-chan adaptor.Event { return s.events }
 func (s *mergedStream) Result() (*adaptor.Result, error) {
+	<-s.done
 	return s.parent.Result()
 }
 func (s *mergedStream) RunID() string { return s.parent.RunID() }
-func (s *mergedStream) Cancel()       { s.parent.Cancel() }
+func (s *mergedStream) Cancel() {
+	s.cancelOnce.Do(func() {
+		s.cancelMerge()
+		s.parent.Cancel()
+	})
+}
 
 // SubagentEvent projects one DelegationEvent onto the next-gen event
 // vocabulary. The 19 DelegationEventKinds collapse onto the three

@@ -1,10 +1,11 @@
 package codebuddy
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	driver "github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/internal/testutil"
 )
 
@@ -45,36 +46,36 @@ func TestStreamingParserEmitsFullLifecycle(t *testing.T) {
 	}
 	p.finalize()
 
-	counts := map[agentadaptor.StreamKind]int{}
+	counts := map[driver.StreamKind]int{}
 	var textDelta strings.Builder
 	var toolArgs strings.Builder
-	var finished *agentadaptor.StreamPayload
+	var finished *driver.StreamPayload
 	for _, pl := range rec.StreamSnapshot() {
 		counts[pl.Kind]++
 		switch pl.Kind {
-		case agentadaptor.StreamTextContent:
+		case driver.StreamTextContent:
 			textDelta.WriteString(pl.Delta)
-		case agentadaptor.StreamToolCallArgs:
+		case driver.StreamToolCallArgs:
 			toolArgs.WriteString(pl.Delta)
-		case agentadaptor.StreamRunFinished:
+		case driver.StreamRunFinished:
 			clone := pl
 			finished = &clone
 		}
 	}
 
-	want := map[agentadaptor.StreamKind]int{
-		agentadaptor.StreamRunStarted:       1,
-		agentadaptor.StreamTextStart:        1,
-		agentadaptor.StreamTextContent:      2,
-		agentadaptor.StreamTextEnd:          1,
-		agentadaptor.StreamReasoningStart:   1,
-		agentadaptor.StreamReasoningContent: 1,
-		agentadaptor.StreamReasoningEnd:     1,
-		agentadaptor.StreamToolCallStart:    1,
-		agentadaptor.StreamToolCallArgs:     1,
-		agentadaptor.StreamToolCallEnd:      1,
-		agentadaptor.StreamToolCallResult:   1,
-		agentadaptor.StreamRunFinished:      1,
+	want := map[driver.StreamKind]int{
+		driver.StreamRunStarted:       1,
+		driver.StreamTextStart:        1,
+		driver.StreamTextContent:      2,
+		driver.StreamTextEnd:          1,
+		driver.StreamReasoningStart:   1,
+		driver.StreamReasoningContent: 1,
+		driver.StreamReasoningEnd:     1,
+		driver.StreamToolCallStart:    1,
+		driver.StreamToolCallArgs:     1,
+		driver.StreamToolCallEnd:      1,
+		driver.StreamToolCallResult:   1,
+		driver.StreamRunFinished:      1,
 	}
 	for kind, n := range want {
 		if counts[kind] != n {
@@ -103,6 +104,9 @@ func TestStreamingParserEmitsFullLifecycle(t *testing.T) {
 	if got := p.buildOutput(); got != "Hello" {
 		t.Errorf("buildOutput = %q, want Hello", got)
 	}
+	if p.terminal == nil || p.terminal.Event != "result" || !json.Valid(p.terminal.JSON) {
+		t.Fatalf("terminal = %#v", p.terminal)
+	}
 }
 
 // TestStreamingParserAPIRetryExhaustion verifies the api_retry escalation path
@@ -125,7 +129,7 @@ func TestStreamingParserAPIRetryExhaustion(t *testing.T) {
 
 	sawRunError := false
 	for _, pl := range rec.StreamSnapshot() {
-		if pl.Kind == agentadaptor.StreamRunError {
+		if pl.Kind == driver.StreamRunError {
 			sawRunError = true
 		}
 	}

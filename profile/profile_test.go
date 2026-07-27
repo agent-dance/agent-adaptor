@@ -5,105 +5,73 @@ import (
 	"testing"
 	"time"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/mcp"
 	"github.com/agent-dance/agent-adaptor/profile"
 	"github.com/agent-dance/agent-adaptor/skill"
 )
 
-// Compile-time proof that profile selection remains assignable to the
-// migration surface. Resources intentionally are not aliases: profile owns
-// the v1 consumer declaration and the engine performs an explicit conversion.
-var (
-	_ agentadaptor.ProfileSelection     = profile.Native()
-	_ agentadaptor.ProfileMode          = profile.ModeClone
-	_ agentadaptor.CloneProfileOptions  = profile.CloneOptions{}
-	_ agentadaptor.CloneProfileAuthMode = profile.AuthLink
-)
-
-// selectionFromOption applies a legacy binding-level profile option and
-// returns the ProfileSelection it stored.
-func selectionFromOption(t *testing.T, opt agentadaptor.AgentOption) agentadaptor.ProfileSelection {
-	t.Helper()
-	var defaults agentadaptor.AgentDefaults
-	opt(&defaults)
-	if defaults.Profile == nil {
-		t.Fatal("legacy option did not set AgentDefaults.Profile")
-	}
-	return *defaults.Profile
-}
-
-func TestSelectionConstructorsMatchLegacyOptions(t *testing.T) {
+func TestSelectionConstructors(t *testing.T) {
 	cases := []struct {
-		name   string
-		v1     agentadaptor.ProfileSelection
-		legacy agentadaptor.AgentOption
+		name string
+		got  profile.Selection
+		want profile.Selection
 	}{
 		{
-			name:   "native",
-			v1:     profile.Native(),
-			legacy: agentadaptor.WithNativeProfile(),
+			name: "native",
+			got:  profile.Native(),
+			want: profile.Selection{Mode: profile.ModeNative},
 		},
 		{
-			name:   "dedicated",
-			v1:     profile.Dedicated(`C:\profiles\tenant-a`),
-			legacy: agentadaptor.WithDedicatedProfile(`C:\profiles\tenant-a`),
+			name: "dedicated",
+			got:  profile.Dedicated(`C:\profiles\tenant-a`),
+			want: profile.Selection{Mode: profile.ModeDedicated, Dir: `C:\profiles\tenant-a`},
 		},
 		{
-			name:   "clone native zero options",
-			v1:     profile.CloneNative(`C:\profiles\clone`),
-			legacy: agentadaptor.WithCloneProfile(`C:\profiles\clone`, agentadaptor.CloneProfileOptions{}),
+			name: "clone native zero options",
+			got:  profile.CloneNative(`C:\profiles\clone`),
+			want: profile.Selection{Mode: profile.ModeClone, Dir: `C:\profiles\clone`, Clone: &profile.CloneOptions{}},
 		},
 		{
 			name: "clone native copy settings mcp skills",
-			v1:   profile.CloneNative(`C:\profiles\clone`, profile.CopySettings(), profile.CopyMCP(), profile.CopySkills()),
-			legacy: agentadaptor.WithCloneProfile(`C:\profiles\clone`, agentadaptor.CloneProfileOptions{
-				IncludeSettings: true,
-				IncludeMCP:      true,
-				IncludeSkills:   true,
-			}),
+			got:  profile.CloneNative(`C:\profiles\clone`, profile.CopySettings(), profile.CopyMCP(), profile.CopySkills()),
+			want: profile.Selection{Mode: profile.ModeClone, Dir: `C:\profiles\clone`, Clone: &profile.CloneOptions{
+				IncludeSettings: true, IncludeMCP: true, IncludeSkills: true,
+			}},
 		},
 		{
 			name: "clone native link auth",
-			v1:   profile.CloneNative(`C:\profiles\clone`, profile.LinkAuth()),
-			legacy: agentadaptor.WithCloneProfile(`C:\profiles\clone`, agentadaptor.CloneProfileOptions{
-				AuthMode: agentadaptor.CloneProfileAuthLink,
-			}),
+			got:  profile.CloneNative(`C:\profiles\clone`, profile.LinkAuth()),
+			want: profile.Selection{Mode: profile.ModeClone, Dir: `C:\profiles\clone`, Clone: &profile.CloneOptions{AuthMode: profile.AuthLink}},
 		},
 		{
 			name: "clone native copy auth",
-			v1:   profile.CloneNative(`C:\profiles\clone`, profile.CopyAuth()),
-			legacy: agentadaptor.WithCloneProfile(`C:\profiles\clone`, agentadaptor.CloneProfileOptions{
-				AuthMode: agentadaptor.CloneProfileAuthCopy,
-			}),
+			got:  profile.CloneNative(`C:\profiles\clone`, profile.CopyAuth()),
+			want: profile.Selection{Mode: profile.ModeClone, Dir: `C:\profiles\clone`, Clone: &profile.CloneOptions{AuthMode: profile.AuthCopy}},
 		},
 		{
 			name: "clone from template",
-			v1: profile.CloneFrom(`C:\templates\golden`, `C:\profiles\job-42`,
+			got: profile.CloneFrom(`C:\templates\golden`, `C:\profiles\job-42`,
 				profile.CopySettings(), profile.CopySkills(), profile.LinkAuth()),
-			legacy: agentadaptor.WithCloneProfileFrom(`C:\templates\golden`, `C:\profiles\job-42`, agentadaptor.CloneProfileOptions{
-				IncludeSettings: true,
-				IncludeSkills:   true,
-				AuthMode:        agentadaptor.CloneProfileAuthLink,
-			}),
+			want: profile.Selection{Mode: profile.ModeClone, From: `C:\templates\golden`, Dir: `C:\profiles\job-42`, Clone: &profile.CloneOptions{
+				IncludeSettings: true, IncludeSkills: true, AuthMode: profile.AuthLink,
+			}},
 		},
 		{
-			name: "clone with legacy include-auth struct via WithOptions",
-			v1: profile.CloneNative(`C:\profiles\clone`, profile.WithOptions(agentadaptor.CloneProfileOptions{
+			name: "clone with prebuilt options",
+			got: profile.CloneNative(`C:\profiles\clone`, profile.WithOptions(profile.CloneOptions{
 				IncludeSettings: true,
 				IncludeAuth:     true,
 			})),
-			legacy: agentadaptor.WithCloneProfile(`C:\profiles\clone`, agentadaptor.CloneProfileOptions{
+			want: profile.Selection{Mode: profile.ModeClone, Dir: `C:\profiles\clone`, Clone: &profile.CloneOptions{
 				IncludeSettings: true,
 				IncludeAuth:     true,
-			}),
+			}},
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			legacy := selectionFromOption(t, tc.legacy)
-			if !reflect.DeepEqual(tc.v1, legacy) {
-				t.Fatalf("v1 constructor product differs from legacy option\n v1:     %+v\n legacy: %+v", tc.v1, legacy)
+			if !reflect.DeepEqual(tc.got, tc.want) {
+				t.Fatalf("constructor product differs\n got:  %+v\n want: %+v", tc.got, tc.want)
 			}
 		})
 	}
@@ -111,30 +79,23 @@ func TestSelectionConstructorsMatchLegacyOptions(t *testing.T) {
 
 func TestDefaultSelectionIsUnsetMode(t *testing.T) {
 	got := profile.Default()
-	if !reflect.DeepEqual(got, agentadaptor.ProfileSelection{}) {
+	if !reflect.DeepEqual(got, profile.Selection{}) {
 		t.Fatalf("Default() = %+v, want zero ProfileSelection", got)
 	}
-	if got.Mode != agentadaptor.ProfileModeUnset {
+	if got.Mode != profile.ModeUnset {
 		t.Fatalf("Default().Mode = %q, want ProfileModeUnset", got.Mode)
-	}
-	// The legacy API expresses this form by not applying any profile option.
-	var defaults agentadaptor.AgentDefaults
-	if defaults.Profile != nil {
-		t.Fatal("zero AgentDefaults unexpectedly carries a profile selection")
 	}
 }
 
 func TestCloneConstructorsAlwaysPinCloneOptions(t *testing.T) {
-	// Legacy WithCloneProfile always stores a non-nil Clone pointer, even for
-	// the zero option struct; the v1 constructors must match.
-	for name, sel := range map[string]agentadaptor.ProfileSelection{
+	for name, sel := range map[string]profile.Selection{
 		"CloneNative": profile.CloneNative(`C:\profiles\clone`),
 		"CloneFrom":   profile.CloneFrom(`C:\templates\golden`, `C:\profiles\clone`),
 	} {
 		if sel.Clone == nil {
 			t.Fatalf("%s: Clone pointer is nil, want non-nil zero CloneOptions", name)
 		}
-		if *sel.Clone != (agentadaptor.CloneProfileOptions{}) {
+		if *sel.Clone != (profile.CloneOptions{}) {
 			t.Fatalf("%s: Clone = %+v, want zero CloneOptions", name, *sel.Clone)
 		}
 	}
@@ -165,46 +126,16 @@ func TestCloneOptionProducts(t *testing.T) {
 
 func TestWithOptionsComposesWithLaterOptions(t *testing.T) {
 	sel := profile.CloneNative(`C:\profiles\clone`,
-		profile.WithOptions(agentadaptor.CloneProfileOptions{IncludeSettings: true, IncludeAuth: true}),
+		profile.WithOptions(profile.CloneOptions{IncludeSettings: true, IncludeAuth: true}),
 		profile.LinkAuth(),
 	)
-	want := agentadaptor.CloneProfileOptions{
+	want := profile.CloneOptions{
 		IncludeSettings: true,
 		IncludeAuth:     true,
-		AuthMode:        agentadaptor.CloneProfileAuthLink,
+		AuthMode:        profile.AuthLink,
 	}
 	if *sel.Clone != want {
 		t.Fatalf("composed clone options = %+v, want %+v", *sel.Clone, want)
-	}
-}
-
-func TestSelectionModeConstantsMatchRoot(t *testing.T) {
-	pairs := []struct {
-		name      string
-		got, want agentadaptor.ProfileMode
-	}{
-		{"unset", profile.ModeUnset, agentadaptor.ProfileModeUnset},
-		{"native", profile.ModeNative, agentadaptor.ProfileModeNative},
-		{"dedicated", profile.ModeDedicated, agentadaptor.ProfileModeDedicated},
-		{"clone", profile.ModeClone, agentadaptor.ProfileModeClone},
-	}
-	for _, pair := range pairs {
-		if pair.got != pair.want {
-			t.Fatalf("Mode constant %s = %q, want %q", pair.name, pair.got, pair.want)
-		}
-	}
-	auth := []struct {
-		name      string
-		got, want agentadaptor.CloneProfileAuthMode
-	}{
-		{"none", profile.AuthNone, agentadaptor.CloneProfileAuthNone},
-		{"copy", profile.AuthCopy, agentadaptor.CloneProfileAuthCopy},
-		{"link", profile.AuthLink, agentadaptor.CloneProfileAuthLink},
-	}
-	for _, pair := range auth {
-		if pair.got != pair.want {
-			t.Fatalf("AuthMode constant %s = %q, want %q", pair.name, pair.got, pair.want)
-		}
 	}
 }
 

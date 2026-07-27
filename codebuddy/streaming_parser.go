@@ -6,14 +6,14 @@ import (
 	"strconv"
 	"strings"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
 )
 
 // streamingState maps CodeBuddy stream-json stream_event frames (Anthropic
 // Messages API-shaped) into StreamPayload. It is a copy of the Claude
 // streaming mapper with the interactive HITL hooks removed.
 type streamingState struct {
-	sink   agentadaptor.EventSink
+	sink   driver.EventSink
 	runID  string
 	parser *parser
 
@@ -29,12 +29,12 @@ type streamingState struct {
 	finishedEmitted bool
 	apiRetryHits    int
 	lastRetryWas5xx bool
-	streamUsage     *agentadaptor.Usage
+	streamUsage     *driver.Usage
 	stopReason      string
 	numTurns        int
 }
 
-func newStreamingState(sink agentadaptor.EventSink, runID string, p *parser) *streamingState {
+func newStreamingState(sink driver.EventSink, runID string, p *parser) *streamingState {
 	return &streamingState{
 		sink:        sink,
 		runID:       runID,
@@ -48,11 +48,11 @@ func newStreamingState(sink agentadaptor.EventSink, runID string, p *parser) *st
 	}
 }
 
-func (s *streamingState) basePayload() agentadaptor.StreamPayload {
-	return agentadaptor.StreamPayload{RunID: s.runID, ThreadID: s.parser.sessionID}
+func (s *streamingState) basePayload() driver.StreamPayload {
+	return driver.StreamPayload{RunID: s.runID, ThreadID: s.parser.sessionID}
 }
 
-func (s *streamingState) emitStream(pl agentadaptor.StreamPayload) {
+func (s *streamingState) emitStream(pl driver.StreamPayload) {
 	if s.sink == nil || s.finishedEmitted {
 		return
 	}
@@ -63,7 +63,7 @@ func (s *streamingState) emitStream(pl agentadaptor.StreamPayload) {
 		pl.ThreadID = s.parser.sessionID
 	}
 	_ = s.sink.EmitStream(pl)
-	if pl.Kind == agentadaptor.StreamRunFinished || pl.Kind == agentadaptor.StreamRunError {
+	if pl.Kind == driver.StreamRunFinished || pl.Kind == driver.StreamRunError {
 		s.finishedEmitted = true
 	}
 }
@@ -74,7 +74,7 @@ func (s *streamingState) markRunStarted() {
 	}
 	s.runStarted = true
 	pl := s.basePayload()
-	pl.Kind = agentadaptor.StreamRunStarted
+	pl.Kind = driver.StreamRunStarted
 	pl.ThreadID = s.parser.sessionID
 	s.emitStream(pl)
 }
@@ -84,7 +84,7 @@ func (s *streamingState) handleSystemInit(_ map[string]any) {
 }
 
 func (s *streamingState) handleAPIRetry(payload map[string]any) {
-	s.emitStream(agentadaptor.StreamPayload{Name: "system.api_retry", Raw: payload})
+	s.emitStream(driver.StreamPayload{Name: "system.api_retry", Raw: payload})
 
 	status, ok := httpStatusFromPayload(payload)
 	is5xx := ok && status >= 500 && status < 600
@@ -111,7 +111,7 @@ func (s *streamingState) handleAPIRetry(payload map[string]any) {
 		if msg == "" {
 			msg = "API retry exhausted"
 		}
-		s.emitErrorTerminal(&agentadaptor.RunFailure{Message: msg, Code: "api_retry"}, payload)
+		s.emitErrorTerminal(&driver.RunFailure{Message: msg, Code: "api_retry"}, payload)
 	}
 }
 
@@ -139,12 +139,12 @@ func (s *streamingState) handleStreamEvent(rawLine string, outer map[string]any)
 	s.markRunStarted()
 	eventAny, ok := outer["event"]
 	if !ok {
-		s.emitStream(agentadaptor.StreamPayload{Name: "stream_event", Raw: outer})
+		s.emitStream(driver.StreamPayload{Name: "stream_event", Raw: outer})
 		return
 	}
 	eventObj, ok := eventAny.(map[string]any)
 	if !ok {
-		s.emitStream(agentadaptor.StreamPayload{Name: "stream_event", Raw: outer})
+		s.emitStream(driver.StreamPayload{Name: "stream_event", Raw: outer})
 		return
 	}
 
@@ -164,7 +164,7 @@ func (s *streamingState) handleStreamEvent(rawLine string, outer map[string]any)
 	default:
 		cp := cloneMapShallow(outer)
 		cp["_stream_raw_line"] = rawLine
-		s.emitStream(agentadaptor.StreamPayload{Name: strings.ToLower(asString(eventObj["type"])), Raw: cp})
+		s.emitStream(driver.StreamPayload{Name: strings.ToLower(asString(eventObj["type"])), Raw: cp})
 	}
 }
 
@@ -197,7 +197,7 @@ func (s *streamingState) handleContentBlockStart(event map[string]any) {
 		s.toolCallID[idx] = id
 		s.toolName[idx] = name
 		pl := s.basePayload()
-		pl.Kind = agentadaptor.StreamToolCallStart
+		pl.Kind = driver.StreamToolCallStart
 		pl.ToolCallID = id
 		pl.Name = name
 		if input := block["input"]; input != nil {
@@ -208,7 +208,7 @@ func (s *streamingState) handleContentBlockStart(event map[string]any) {
 		thID := fmt.Sprintf("thinking-%d", idx)
 		s.thinkingID[idx] = thID
 		pl := s.basePayload()
-		pl.Kind = agentadaptor.StreamReasoningStart
+		pl.Kind = driver.StreamReasoningStart
 		pl.MessageID = thID
 		s.emitStream(pl)
 	case "text":
@@ -234,13 +234,13 @@ func (s *streamingState) handleContentBlockDelta(event map[string]any) {
 		if !s.textStarted[idx] {
 			s.textStarted[idx] = true
 			pl := s.basePayload()
-			pl.Kind = agentadaptor.StreamTextStart
+			pl.Kind = driver.StreamTextStart
 			pl.MessageID = s.messageID
 			s.emitStream(pl)
 		}
 		s.parser.appendTextDelta(s.messageID, text)
 		pl := s.basePayload()
-		pl.Kind = agentadaptor.StreamTextContent
+		pl.Kind = driver.StreamTextContent
 		pl.MessageID = s.messageID
 		pl.Delta = text
 		s.emitStream(pl)
@@ -252,7 +252,7 @@ func (s *streamingState) handleContentBlockDelta(event map[string]any) {
 			tid = fmt.Sprintf("idx-%d", idx)
 		}
 		pl := s.basePayload()
-		pl.Kind = agentadaptor.StreamToolCallArgs
+		pl.Kind = driver.StreamToolCallArgs
 		pl.ToolCallID = tid
 		pl.Delta = raw
 		s.emitStream(pl)
@@ -268,7 +268,7 @@ func (s *streamingState) handleContentBlockDelta(event map[string]any) {
 			s.thinkingID[idx] = thID
 		}
 		pl := s.basePayload()
-		pl.Kind = agentadaptor.StreamReasoningContent
+		pl.Kind = driver.StreamReasoningContent
 		pl.MessageID = thID
 		pl.Delta = thinking
 		s.emitStream(pl)
@@ -278,7 +278,7 @@ func (s *streamingState) handleContentBlockDelta(event map[string]any) {
 			s.signatures[idx] += sig
 		}
 	default:
-		s.emitStream(agentadaptor.StreamPayload{Name: strings.ToLower(asString(delta["type"])), Raw: cloneMapShallow(delta)})
+		s.emitStream(driver.StreamPayload{Name: strings.ToLower(asString(delta["type"])), Raw: cloneMapShallow(delta)})
 	}
 }
 
@@ -290,27 +290,27 @@ func (s *streamingState) handleContentBlockStop(event map[string]any) {
 	case "text":
 		if s.textStarted[idx] && s.messageID != "" {
 			pl := s.basePayload()
-			pl.Kind = agentadaptor.StreamTextEnd
+			pl.Kind = driver.StreamTextEnd
 			pl.MessageID = s.messageID
 			s.emitStream(pl)
 		}
 	case "tool_use":
 		if tid := s.toolCallID[idx]; tid != "" {
 			pl := s.basePayload()
-			pl.Kind = agentadaptor.StreamToolCallEnd
+			pl.Kind = driver.StreamToolCallEnd
 			pl.ToolCallID = tid
 			s.emitStream(pl)
 		}
 	case "thinking":
 		if thID := s.thinkingID[idx]; thID != "" {
 			pl := s.basePayload()
-			pl.Kind = agentadaptor.StreamReasoningEnd
+			pl.Kind = driver.StreamReasoningEnd
 			pl.MessageID = thID
 			s.emitStream(pl)
 		}
 	default:
 		if bt != "" {
-			s.emitStream(agentadaptor.StreamPayload{Name: "content_block_stop", Raw: map[string]any{"index": idx, "kind": bt}})
+			s.emitStream(driver.StreamPayload{Name: "content_block_stop", Raw: map[string]any{"index": idx, "kind": bt}})
 		}
 	}
 
@@ -340,7 +340,7 @@ func (s *streamingState) handleMessageDelta(event map[string]any) {
 
 func (s *streamingState) mergeUsageMap(u map[string]any) {
 	if s.streamUsage == nil {
-		s.streamUsage = &agentadaptor.Usage{}
+		s.streamUsage = &driver.Usage{}
 	}
 	if v, ok := topInt(u, "input_tokens"); ok && v > s.streamUsage.InputTokens {
 		s.streamUsage.InputTokens = v
@@ -361,7 +361,7 @@ func (s *streamingState) handleUserToolResult(block map[string]any) {
 		isError = v
 	}
 	pl := s.basePayload()
-	pl.Kind = agentadaptor.StreamToolCallResult
+	pl.Kind = driver.StreamToolCallResult
 	pl.ToolCallID = id
 	pl.Result = map[string]any{"text": text, "is_error": isError, "tool_use_id": id}
 	s.emitStream(pl)
@@ -378,12 +378,12 @@ func (s *streamingState) handleResultTerminal(payload map[string]any) {
 		if msg == "" {
 			msg = "codebuddy terminal result did not report success"
 		}
-		s.emitErrorTerminal(&agentadaptor.RunFailure{Message: msg, Code: agentadaptor.FailureAgentError}, payload)
+		s.emitErrorTerminal(&driver.RunFailure{Message: msg, Code: driver.FailureAgentError}, payload)
 		return
 	}
 
 	pl := s.basePayload()
-	pl.Kind = agentadaptor.StreamRunFinished
+	pl.Kind = driver.StreamRunFinished
 
 	if s.parser.usage != nil {
 		u := *s.parser.usage
@@ -415,7 +415,7 @@ func (s *streamingState) handleErrorTerminal(payload map[string]any) {
 	if msg == "" {
 		msg = "codebuddy stream error"
 	}
-	s.emitErrorTerminal(&agentadaptor.RunFailure{Message: msg, Code: agentadaptor.FailureCode(code)}, payload)
+	s.emitErrorTerminal(&driver.RunFailure{Message: msg, Code: driver.FailureCode(code)}, payload)
 }
 
 func (s *streamingState) closeOpenLifecycles() {
@@ -428,21 +428,21 @@ func (s *streamingState) closeOpenLifecycles() {
 		case "text":
 			if s.textStarted[idx] && s.messageID != "" {
 				pl := s.basePayload()
-				pl.Kind = agentadaptor.StreamTextEnd
+				pl.Kind = driver.StreamTextEnd
 				pl.MessageID = s.messageID
 				s.emitStream(pl)
 			}
 		case "tool_use":
 			if tid := s.toolCallID[idx]; tid != "" {
 				pl := s.basePayload()
-				pl.Kind = agentadaptor.StreamToolCallEnd
+				pl.Kind = driver.StreamToolCallEnd
 				pl.ToolCallID = tid
 				s.emitStream(pl)
 			}
 		case "thinking":
 			if thID := s.thinkingID[idx]; thID != "" {
 				pl := s.basePayload()
-				pl.Kind = agentadaptor.StreamReasoningEnd
+				pl.Kind = driver.StreamReasoningEnd
 				pl.MessageID = thID
 				s.emitStream(pl)
 			}
@@ -456,13 +456,13 @@ func (s *streamingState) closeOpenLifecycles() {
 	s.signatures = nil
 }
 
-func (s *streamingState) emitErrorTerminal(failure *agentadaptor.RunFailure, raw map[string]any) {
+func (s *streamingState) emitErrorTerminal(failure *driver.RunFailure, raw map[string]any) {
 	if s == nil || s.sink == nil || s.finishedEmitted {
 		return
 	}
 	s.markRunStarted()
 	s.closeOpenLifecycles()
-	s.emitStream(agentadaptor.StreamPayload{Kind: agentadaptor.StreamRunError, Error: failure, Raw: raw})
+	s.emitStream(driver.StreamPayload{Kind: driver.StreamRunError, Error: failure, Raw: raw})
 }
 
 func (s *streamingState) finalize() {
@@ -472,8 +472,8 @@ func (s *streamingState) finalize() {
 	s.markRunStarted()
 	s.closeOpenLifecycles()
 
-	s.emitErrorTerminal(&agentadaptor.RunFailure{
-		Code:    agentadaptor.FailureAgentError,
+	s.emitErrorTerminal(&driver.RunFailure{
+		Code:    driver.FailureAgentError,
 		Message: "codebuddy protocol ended without a terminal result",
 	}, map[string]any{"reason": "missing_terminal"})
 }

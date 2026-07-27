@@ -1,8 +1,6 @@
 package memory
 
-// Contract tests for the threadstore.Store implementation, mirroring the
-// SessionStore tests in session_store_test.go (P2 migration: the same
-// finalize/lease semantics, single thread key instead of namespace+key).
+// Contract tests for the threadstore.Store implementation.
 
 import (
 	"context"

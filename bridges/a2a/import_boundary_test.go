@@ -3,49 +3,60 @@ package a2a_test
 import (
 	"go/parser"
 	"go/token"
-	"os"
+	"io/fs"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 )
 
-func TestBridgePackageDoesNotImportConcreteAdaptersOrA2AClient(t *testing.T) {
+// TestBridgeProductionImportBoundary is the architecture guard for every
+// bridge package during staging: production may consume the v1 API at /next,
+// but must never regain an edge to the replaced module-root SDK surface.
+func TestBridgeProductionImportBoundary(t *testing.T) {
 	t.Parallel()
 
 	_, thisFile, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("runtime.Caller failed")
 	}
-	root := filepath.Dir(thisFile)
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		t.Fatalf("readdir: %v", err)
+	bridgesRoot := filepath.Dir(filepath.Dir(thisFile))
+	forbiddenExact := map[string]struct{}{
+		"github.com/agent-dance/agent-adaptor":             {},
+		"github.com/agent-dance/agent-adaptor/clients/a2a": {},
 	}
-	forbidden := []string{
+	forbiddenPrefixes := []string{
 		"github.com/agent-dance/agent-adaptor/claude",
 		"github.com/agent-dance/agent-adaptor/codebuddy",
 		"github.com/agent-dance/agent-adaptor/codex",
 		"github.com/agent-dance/agent-adaptor/cursor",
-		"github.com/agent-dance/agent-adaptor/clients/a2a",
 	}
 	fset := token.NewFileSet()
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") || strings.HasSuffix(entry.Name(), "_test.go") {
-			continue
+	err := filepath.WalkDir(bridgesRoot, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
 		}
-		path := filepath.Join(root, entry.Name())
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") || strings.HasSuffix(entry.Name(), "_test.go") {
+			return nil
+		}
 		file, err := parser.ParseFile(fset, path, nil, parser.ImportsOnly)
 		if err != nil {
-			t.Fatalf("parse %s: %v", path, err)
+			return err
 		}
-		for _, imp := range file.Imports {
-			pathValue := strings.Trim(imp.Path.Value, `"`)
-			for _, forbiddenImport := range forbidden {
-				if pathValue == forbiddenImport {
-					t.Fatalf("%s imports forbidden dependency %s", path, forbiddenImport)
+		for _, imported := range file.Imports {
+			pathValue := strings.Trim(imported.Path.Value, `"`)
+			if _, forbidden := forbiddenExact[pathValue]; forbidden {
+				t.Errorf("%s imports forbidden dependency %s", path, pathValue)
+			}
+			for _, prefix := range forbiddenPrefixes {
+				if pathValue == prefix || strings.HasPrefix(pathValue, prefix+"/") {
+					t.Errorf("%s imports forbidden provider dependency %s", path, pathValue)
 				}
 			}
 		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk bridge production files: %v", err)
 	}
 }

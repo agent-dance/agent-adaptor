@@ -8,14 +8,14 @@ import (
 	"path/filepath"
 	"strings"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/internal/skillruntime"
 )
 
-func CommandEnvironmentChecks(command string) []agentadaptor.EnvironmentCheck {
+func CommandEnvironmentChecks(command string) []driver.EnvironmentCheck {
 	command = strings.TrimSpace(command)
 	if command == "" {
-		return []agentadaptor.EnvironmentCheck{{
+		return []driver.EnvironmentCheck{{
 			Code:    "command_missing",
 			Level:   "error",
 			Message: "no command configured",
@@ -24,7 +24,7 @@ func CommandEnvironmentChecks(command string) []agentadaptor.EnvironmentCheck {
 	}
 	resolved, err := exec.LookPath(command)
 	if err != nil {
-		return []agentadaptor.EnvironmentCheck{{
+		return []driver.EnvironmentCheck{{
 			Code:    "command_missing",
 			Level:   "error",
 			Message: err.Error(),
@@ -32,7 +32,7 @@ func CommandEnvironmentChecks(command string) []agentadaptor.EnvironmentCheck {
 			Hint:    "Install the CLI or update CommonConfig.Command to a resolvable executable.",
 		}}
 	}
-	return []agentadaptor.EnvironmentCheck{{
+	return []driver.EnvironmentCheck{{
 		Code:    "command_found",
 		Level:   "info",
 		Message: "command resolved",
@@ -40,10 +40,10 @@ func CommandEnvironmentChecks(command string) []agentadaptor.EnvironmentCheck {
 	}}
 }
 
-func CWDEnvironmentChecks(cwd string) []agentadaptor.EnvironmentCheck {
+func CWDEnvironmentChecks(cwd string) []driver.EnvironmentCheck {
 	cwd = strings.TrimSpace(cwd)
 	if cwd == "" {
-		return []agentadaptor.EnvironmentCheck{{
+		return []driver.EnvironmentCheck{{
 			Code:    "cwd_default",
 			Level:   "info",
 			Message: "working directory will be resolved from the workspace manager",
@@ -51,7 +51,7 @@ func CWDEnvironmentChecks(cwd string) []agentadaptor.EnvironmentCheck {
 	}
 	info, err := os.Stat(cwd)
 	if err != nil {
-		return []agentadaptor.EnvironmentCheck{{
+		return []driver.EnvironmentCheck{{
 			Code:    "cwd_invalid",
 			Level:   "error",
 			Message: err.Error(),
@@ -60,7 +60,7 @@ func CWDEnvironmentChecks(cwd string) []agentadaptor.EnvironmentCheck {
 		}}
 	}
 	if !info.IsDir() {
-		return []agentadaptor.EnvironmentCheck{{
+		return []driver.EnvironmentCheck{{
 			Code:    "cwd_not_directory",
 			Level:   "error",
 			Message: "configured working directory is not a directory",
@@ -69,7 +69,7 @@ func CWDEnvironmentChecks(cwd string) []agentadaptor.EnvironmentCheck {
 		}}
 	}
 	abs, _ := filepath.Abs(cwd)
-	return []agentadaptor.EnvironmentCheck{{
+	return []driver.EnvironmentCheck{{
 		Code:    "cwd_valid",
 		Level:   "info",
 		Message: "configured working directory exists",
@@ -77,21 +77,21 @@ func CWDEnvironmentChecks(cwd string) []agentadaptor.EnvironmentCheck {
 	}}
 }
 
-func SummarizeEnvironment(driverType string, checks []agentadaptor.EnvironmentCheck) agentadaptor.EnvironmentReport {
-	report := agentadaptor.EnvironmentReport{
+func SummarizeEnvironment(driverType string, checks []driver.EnvironmentCheck) driver.EnvironmentReport {
+	report := driver.EnvironmentReport{
 		DriverType: driverType,
-		Status:     agentadaptor.EnvironmentPass,
+		Status:     driver.EnvironmentPass,
 		Healthy:    true,
-		Checks:     append([]agentadaptor.EnvironmentCheck(nil), checks...),
+		Checks:     append([]driver.EnvironmentCheck(nil), checks...),
 	}
 	for _, check := range checks {
 		switch check.Level {
 		case "error":
-			report.Status = agentadaptor.EnvironmentFail
+			report.Status = driver.EnvironmentFail
 			report.Healthy = false
 		case "warn":
-			if report.Status != agentadaptor.EnvironmentFail {
-				report.Status = agentadaptor.EnvironmentWarn
+			if report.Status != driver.EnvironmentFail {
+				report.Status = driver.EnvironmentWarn
 			}
 		}
 	}
@@ -100,9 +100,9 @@ func SummarizeEnvironment(driverType string, checks []agentadaptor.EnvironmentCh
 		return report
 	}
 	switch report.Status {
-	case agentadaptor.EnvironmentFail:
+	case driver.EnvironmentFail:
 		report.Summary = "environment checks failed"
-	case agentadaptor.EnvironmentWarn:
+	case driver.EnvironmentWarn:
 		report.Summary = "environment checks completed with warnings"
 	default:
 		report.Summary = "environment checks passed"
@@ -110,7 +110,7 @@ func SummarizeEnvironment(driverType string, checks []agentadaptor.EnvironmentCh
 	return report
 }
 
-func ResolvedEnvValue(bindings []agentadaptor.EnvBinding, name string) (string, string) {
+func ResolvedEnvValue(bindings []driver.EnvBinding, name string) (string, string) {
 	if value := strings.TrimSpace(skillruntime.ResolveBinding(bindings, name)); value != "" {
 		return value, "binding_env"
 	}
@@ -120,7 +120,7 @@ func ResolvedEnvValue(bindings []agentadaptor.EnvBinding, name string) (string, 
 	return "", ""
 }
 
-func ResolvedTruthyEnv(bindings []agentadaptor.EnvBinding, name string) (bool, string) {
+func ResolvedTruthyEnv(bindings []driver.EnvBinding, name string) (bool, string) {
 	value, source := ResolvedEnvValue(bindings, name)
 	if value == "" {
 		return false, ""
@@ -133,24 +133,24 @@ func ResolvedTruthyEnv(bindings []agentadaptor.EnvBinding, name string) (bool, s
 	}
 }
 
-func RuntimeEnvBindings(bindings []agentadaptor.EnvBinding, payload agentadaptor.RuntimePayload) ([]agentadaptor.EnvBinding, error) {
-	out := append([]agentadaptor.EnvBinding(nil), bindings...)
+func RuntimeEnvBindings(bindings []driver.EnvBinding, payload driver.RuntimePayload) ([]driver.EnvBinding, error) {
+	out := append([]driver.EnvBinding(nil), bindings...)
 	out = append(out, payload.SecretEnv...)
 	if len(payload.Ensured) > 0 {
 		raw, err := json.Marshal(runtimeServiceRefsForEnv(payload.Ensured))
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, agentadaptor.EnvBinding{Name: "PAPERCLIP_RUNTIME_SERVICES_JSON", Value: string(raw)})
+		out = append(out, driver.EnvBinding{Name: "PAPERCLIP_RUNTIME_SERVICES_JSON", Value: string(raw)})
 	}
 	return out, nil
 }
 
-func runtimeServiceRefsForEnv(refs []agentadaptor.RuntimeServiceRef) []agentadaptor.RuntimeServiceRef {
+func runtimeServiceRefsForEnv(refs []driver.RuntimeServiceRef) []driver.RuntimeServiceRef {
 	if len(refs) == 0 {
 		return nil
 	}
-	out := make([]agentadaptor.RuntimeServiceRef, 0, len(refs))
+	out := make([]driver.RuntimeServiceRef, 0, len(refs))
 	for _, ref := range refs {
 		clean := ref
 		clean.SecretEnv = nil
@@ -160,7 +160,7 @@ func runtimeServiceRefsForEnv(refs []agentadaptor.RuntimeServiceRef) []agentadap
 	return out
 }
 
-func RuntimePromptPrefix(payload agentadaptor.RuntimePayload) string {
+func RuntimePromptPrefix(payload driver.RuntimePayload) string {
 	if len(payload.Ensured) == 0 {
 		return ""
 	}
@@ -178,7 +178,7 @@ func RuntimePromptPrefix(payload agentadaptor.RuntimePayload) string {
 		if service.Lifecycle != "" {
 			annotations = append(annotations, string(service.Lifecycle))
 		}
-		if service.Health != "" && service.Health != agentadaptor.RuntimeHealthUnknown {
+		if service.Health != "" && service.Health != driver.RuntimeHealthUnknown {
 			annotations = append(annotations, string(service.Health))
 		}
 		if len(annotations) > 0 {
@@ -193,19 +193,19 @@ func RuntimePromptPrefix(payload agentadaptor.RuntimePayload) string {
 	return strings.Join(lines, "\n")
 }
 
-func RuntimeReportsFromRefs(refs []agentadaptor.RuntimeServiceRef, owner agentadaptor.AgentIdentity) []agentadaptor.RuntimeServiceReport {
+func RuntimeReportsFromRefs(refs []driver.RuntimeServiceRef, owner driver.AgentIdentity) []driver.RuntimeServiceReport {
 	if len(refs) == 0 {
 		return nil
 	}
-	out := make([]agentadaptor.RuntimeServiceReport, 0, len(refs))
+	out := make([]driver.RuntimeServiceReport, 0, len(refs))
 	for _, ref := range refs {
 		status := ref.Status
 		if status == "" {
-			status = agentadaptor.RuntimeServiceRunning
+			status = driver.RuntimeServiceRunning
 		}
 		lifecycle := ref.Lifecycle
 		if lifecycle == "" {
-			lifecycle = agentadaptor.RuntimeLifecycleShared
+			lifecycle = driver.RuntimeLifecycleShared
 		}
 		ownerID := ref.OwnerAgentID
 		if ownerID == "" {
@@ -213,9 +213,9 @@ func RuntimeReportsFromRefs(refs []agentadaptor.RuntimeServiceRef, owner agentad
 		}
 		health := ref.Health
 		if health == "" {
-			health = agentadaptor.RuntimeHealthUnknown
+			health = driver.RuntimeHealthUnknown
 		}
-		out = append(out, agentadaptor.RuntimeServiceReport{
+		out = append(out, driver.RuntimeServiceReport{
 			ID:           ref.ID,
 			Name:         ref.Name,
 			URL:          ref.URL,

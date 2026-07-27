@@ -9,22 +9,22 @@ import (
 	"testing"
 	"time"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
 )
 
 // captureSink collects Emit/EmitStream calls for assertion.
 type captureSink struct {
 	mu     sync.Mutex
-	events []agentadaptor.RunEvent
+	events []driver.RunEvent
 }
 
-func (c *captureSink) Emit(e agentadaptor.RunEvent) error {
+func (c *captureSink) Emit(e driver.RunEvent) error {
 	c.mu.Lock()
 	c.events = append(c.events, e)
 	c.mu.Unlock()
 	return nil
 }
-func (c *captureSink) EmitStream(agentadaptor.StreamPayload) error { return nil }
+func (c *captureSink) EmitStream(driver.StreamPayload) error { return nil }
 
 // TestStdinController_WriteBlocksUntilReady verifies Write does not deadlock
 // when called before the subprocess has spawned — the controller exposes a

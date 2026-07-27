@@ -39,8 +39,6 @@ const (
 	NotifyTurnStarted = "turn/started"
 	// NotifyTurnCompleted reports normal turn completion.
 	NotifyTurnCompleted = "turn/completed"
-	// NotifyTurnFailed reports turn failure.
-	NotifyTurnFailed = "turn/failed"
 	// NotifyItemStarted reports the start of a thread item lifecycle.
 	NotifyItemStarted = "item/started"
 	// NotifyItemCompleted reports the end of a thread item lifecycle.
@@ -123,6 +121,13 @@ func (c *Client) Close() error {
 		return nil
 	}
 	return c.conn.Close()
+}
+
+// DisconnectNotify is closed after the JSON-RPC reader reaches EOF or a
+// protocol/transport error. Waiting for it before snapshotting captured stdout
+// guarantees the reader has consumed every available inbound byte.
+func (c *Client) DisconnectNotify() <-chan struct{} {
+	return c.conn.DisconnectNotify()
 }
 
 // ---------------------------------------------------------------------------

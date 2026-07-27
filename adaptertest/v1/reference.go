@@ -262,12 +262,12 @@ func (d referenceDriver) Run(ctx context.Context, req driver.Request, sink drive
 
 	// RSP-01: Valid checkpoint carries State with the provider handle.
 	// Session guard data survives resume round-trips (SES-08 counterpart).
-	data := map[string]string{"cwd": cwd}
+	data := map[string]string{driver.SessionParamCWD: cwd}
 	if req.Session != nil && req.Session.State != nil {
 		for k, v := range req.Session.State.Data {
 			data[k] = v
 		}
-		data["cwd"] = cwd
+		data[driver.SessionParamCWD] = cwd
 	}
 	checkpoint := &driver.Checkpoint{
 		Valid: true,
@@ -276,8 +276,11 @@ func (d referenceDriver) Run(ctx context.Context, req driver.Request, sink drive
 
 	return driver.Response{
 		// RSP-04: Output is final assistant-facing text only.
-		Output:           output,
-		RawStreams:       &driver.RawStreams{},
+		Output: output,
+		RawStreams: &driver.RawStreams{Terminal: &driver.TerminalPayload{
+			Event: "result",
+			JSON:  json.RawMessage(`{"subtype":"success"}`),
+		}},
 		Transcript:       transcript,
 		ExitCode:         0,
 		Usage:            usage,
@@ -285,7 +288,6 @@ func (d referenceDriver) Run(ctx context.Context, req driver.Request, sink drive
 		Provider:         referenceDriverType,
 		Model:            model,
 		Summary:          "reference run completed",
-		Result:           map[string]any{"subtype": "success"},
 		StructuredOutput: structured,
 	}, nil
 }

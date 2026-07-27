@@ -1,13 +1,13 @@
 package skill
 
-import "github.com/agent-dance/agent-adaptor/internal/engine"
+import "github.com/agent-dance/agent-adaptor/internal/skillmaterializer"
 
 // SkillCacheRootEnv is the environment variable that overrides the
 // default materializer's cache root. Drivers inspect the same variable
 // to decide which materialized skill directories they are allowed to
 // manage, so hosts that relocate the cache should set it once for the
 // whole process rather than per materializer.
-const SkillCacheRootEnv = engine.SkillCacheRootEnv
+const SkillCacheRootEnv = skillmaterializer.CacheRootEnv
 
 // DefaultMaterializerOption configures the materializer returned by
 // [NewDefaultSkillMaterializer].
@@ -75,18 +75,18 @@ func NewDefaultSkillMaterializer(opts ...DefaultMaterializerOption) Materializer
 			opt(&cfg)
 		}
 	}
-	engineOpts := make([]engine.DefaultMaterializerOption, 0, 4)
+	materializerOpts := make([]skillmaterializer.Option, 0, 4)
 	if cfg.cacheRoot != "" {
-		engineOpts = append(engineOpts, engine.WithSkillCacheRoot(cfg.cacheRoot))
+		materializerOpts = append(materializerOpts, skillmaterializer.WithSkillCacheRoot(cfg.cacheRoot))
 	}
 	if cfg.maxArchiveBytes > 0 {
-		engineOpts = append(engineOpts, engine.WithMaxArchiveSize(cfg.maxArchiveBytes))
+		materializerOpts = append(materializerOpts, skillmaterializer.WithMaxArchiveSize(cfg.maxArchiveBytes))
 	}
 	if cfg.maxFileBytes > 0 {
-		engineOpts = append(engineOpts, engine.WithMaxFileSize(cfg.maxFileBytes))
+		materializerOpts = append(materializerOpts, skillmaterializer.WithMaxFileSize(cfg.maxFileBytes))
 	}
 	if cfg.maxArchiveEntries > 0 {
-		engineOpts = append(engineOpts, engine.WithMaxArchiveEntries(cfg.maxArchiveEntries))
+		materializerOpts = append(materializerOpts, skillmaterializer.WithMaxArchiveEntries(cfg.maxArchiveEntries))
 	}
-	return engine.NewDefaultSkillMaterializer(engineOpts...)
+	return skillmaterializer.New(ErrSkillSourceMissing, materializerOpts...)
 }

@@ -3,21 +3,22 @@ package claude
 import (
 	"path/filepath"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/internal/engine"
 	"github.com/agent-dance/agent-adaptor/internal/mcpruntime"
 	"github.com/agent-dance/agent-adaptor/internal/skillruntime"
 )
 
-func canonicalSharedClaudeConfigDir(bindings []agentadaptor.EnvBinding) string {
+func canonicalSharedClaudeConfigDir(bindings []driver.EnvBinding) string {
 	return filepath.Join(skillruntime.ResolveHome(bindings), ".claude")
 }
 
-func claudeProfileAndKind(config agentadaptor.CommonConfig, selection *agentadaptor.ProfileSelection) (agentadaptor.AgentProfile, agentadaptor.ProfileKind) {
+func claudeProfileAndKind(config driver.CommonConfig, selection *driver.ProfileSelection) (driver.AgentProfile, engine.ProfileKind) {
 	profile := claudeProfile(config, selection)
 	return profile, mcpruntime.ClassifyProfile(profile, canonicalSharedClaudeConfigDir(config.Env))
 }
 
-func syncClaudeMCPProfile(config agentadaptor.CommonConfig, selection *agentadaptor.ProfileSelection, payload agentadaptor.MCPPayload) error {
+func syncClaudeMCPProfile(config driver.CommonConfig, selection *driver.ProfileSelection, payload driver.MCPPayload) error {
 	profile, kind := claudeProfileAndKind(config, selection)
 	return mcpruntime.SyncClaudeProfile(profile.Dir, kind, payload)
 }

@@ -7,13 +7,14 @@ import (
 	"strings"
 	"testing"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/internal/engine"
 )
 
 func TestSyncCodexAgentMaterializesTOML(t *testing.T) {
 	root := t.TempDir()
-	payload := agentadaptor.AgentPayload{
-		Agents: []agentadaptor.AgentSpec{{
+	payload := driver.AgentPayload{
+		Agents: []driver.AgentSpec{{
 			Key:             "reviewer",
 			Description:     "Reviews risky changes.",
 			Instructions:    "Focus on correctness.",
@@ -36,15 +37,15 @@ func TestSyncCodexAgentMaterializesTOML(t *testing.T) {
 			t.Fatalf("expected %q in %s", want, text)
 		}
 	}
-	if snapshot.Materialization != agentadaptor.ProfileResourceMaterializationNativeManaged {
+	if snapshot.Materialization != engine.ProfileResourceMaterializationNativeManaged {
 		t.Fatalf("unexpected snapshot: %#v", snapshot)
 	}
 }
 
 func TestSyncEmptyAgentsPrunesManagedFiles(t *testing.T) {
 	root := t.TempDir()
-	payload := agentadaptor.AgentPayload{
-		Agents: []agentadaptor.AgentSpec{{
+	payload := driver.AgentPayload{
+		Agents: []driver.AgentSpec{{
 			Key:          "reviewer",
 			Description:  "Reviews risky changes.",
 			Instructions: "Focus on correctness.",
@@ -59,7 +60,7 @@ func TestSyncEmptyAgentsPrunesManagedFiles(t *testing.T) {
 		t.Fatalf("expected materialized agent: %v", err)
 	}
 
-	snapshot, err := Sync(context.Background(), "codex", root, agentadaptor.AgentPayload{Fingerprint: "empty-agents-fp"})
+	snapshot, err := Sync(context.Background(), "codex", root, driver.AgentPayload{Fingerprint: "empty-agents-fp"})
 	if err != nil {
 		t.Fatalf("sync empty agents: %v", err)
 	}
@@ -73,12 +74,12 @@ func TestSyncEmptyAgentsPrunesManagedFiles(t *testing.T) {
 
 func TestSyncClaudeAgentMaterializesMarkdown(t *testing.T) {
 	root := t.TempDir()
-	payload := agentadaptor.AgentPayload{
-		Agents: []agentadaptor.AgentSpec{{
+	payload := driver.AgentPayload{
+		Agents: []driver.AgentSpec{{
 			Key:          "api-developer",
 			Description:  "Implements APIs.",
 			Instructions: "Follow API conventions.",
-			ToolPolicy:   &agentadaptor.AgentToolPolicy{Allow: []string{"Read", "Grep"}, Deny: []string{"Write"}},
+			ToolPolicy:   &driver.AgentToolPolicy{Allow: []string{"Read", "Grep"}, Deny: []string{"Write"}},
 			Skills:       []string{"api-conventions"},
 		}},
 		Fingerprint: "agents-fp",
@@ -99,21 +100,21 @@ func TestSyncClaudeAgentMaterializesMarkdown(t *testing.T) {
 }
 
 func TestSnapshotClaudeAgentLocalHooksWarnsUnsupported(t *testing.T) {
-	payload := agentadaptor.AgentPayload{
-		Agents: []agentadaptor.AgentSpec{{
+	payload := driver.AgentPayload{
+		Agents: []driver.AgentSpec{{
 			Key:          "api-developer",
 			Instructions: "Follow API conventions.",
-			Hooks: []agentadaptor.HookSpec{{
+			Hooks: []driver.HookSpec{{
 				Key:     "pre-shell",
-				Event:   agentadaptor.HookEventPreShell,
-				Handler: agentadaptor.HookHandler{Type: agentadaptor.HookHandlerCommand, Command: "true"},
+				Event:   driver.HookEventPreShell,
+				Handler: driver.HookHandler{Type: driver.HookHandlerCommand, Command: "true"},
 			}},
 		}},
 		Fingerprint: "agents-fp",
 	}
 
 	snapshot := Snapshot("claude", t.TempDir(), payload, true)
-	if snapshot.Support != agentadaptor.ProfileResourceSupportPortableExtended {
+	if snapshot.Support != engine.ProfileResourceSupportPortableExtended {
 		t.Fatalf("expected extended support warning, got %#v", snapshot)
 	}
 	if !strings.Contains(strings.Join(snapshot.Warnings, "\n"), "agent-local hooks are not mapped for Claude agents") {
@@ -129,8 +130,8 @@ func TestSyncAgentRejectsExternalConflict(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "agents", "reviewer.toml"), []byte("external"), 0o644); err != nil {
 		t.Fatalf("write external: %v", err)
 	}
-	payload := agentadaptor.AgentPayload{
-		Agents:      []agentadaptor.AgentSpec{{Key: "reviewer", Instructions: "Review."}},
+	payload := driver.AgentPayload{
+		Agents:      []driver.AgentSpec{{Key: "reviewer", Instructions: "Review."}},
 		Fingerprint: "agents-fp",
 	}
 	if _, err := Sync(context.Background(), "codex", root, payload); err == nil || !strings.Contains(err.Error(), "external entry") {

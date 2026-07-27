@@ -1,6 +1,9 @@
 package adaptertest
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -13,6 +16,30 @@ func clauseSet(violations []Violation) map[string]bool {
 		out[v.Clause] = true
 	}
 	return out
+}
+
+func TestVerifyStructuredOutputCapabilityMatrix(t *testing.T) {
+	cases := []struct {
+		name string
+		caps driver.StructuredOutputCapability
+		bad  bool
+	}{
+		{name: "unsupported_zero"},
+		{name: "native_run", caps: driver.StructuredOutputCapability{JSONSchemaNative: true, WorksWithRun: true}},
+		{name: "prompt_stream_hitl", caps: driver.StructuredOutputCapability{JSONSchemaPromptValidate: true, WorksWithRun: true, WorksWithStreaming: true, WorksWithHITL: true}},
+		{name: "both_run", caps: driver.StructuredOutputCapability{JSONSchemaNative: true, JSONSchemaPromptValidate: true, WorksWithRun: true}},
+		{name: "transport_without_mechanism", caps: driver.StructuredOutputCapability{WorksWithStreaming: true}, bad: true},
+		{name: "native_without_run", caps: driver.StructuredOutputCapability{JSONSchemaNative: true, WorksWithHITL: true}, bad: true},
+		{name: "prompt_without_run", caps: driver.StructuredOutputCapability{JSONSchemaPromptValidate: true}, bad: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := clauseSet(VerifyStructuredOutputCapability(tc.caps))
+			if got["SO-01"] != tc.bad {
+				t.Errorf("SO-01 present=%v, want %v (violations=%v)", got["SO-01"], tc.bad, got)
+			}
+		})
+	}
 }
 
 func TestVerifyStreamSequenceAcceptsCompliantStream(t *testing.T) {
@@ -149,6 +176,12 @@ func TestVerifyStreamSequenceNegativeTable(t *testing.T) {
 			{Kind: driver.StreamTextEnd, MessageID: "m1"},
 			finished,
 		}, "EVT-10"},
+		{"seq_set_by_driver", []driver.StreamPayload{
+			started,
+			{Kind: driver.StreamTextStart, MessageID: "m1", Seq: 7},
+			{Kind: driver.StreamTextEnd, MessageID: "m1"},
+			finished,
+		}, "EVT-10"},
 		{"timestamp_set_by_driver", []driver.StreamPayload{
 			{Kind: driver.StreamRunStarted, Timestamp: time.Unix(1, 0)},
 			finished,
@@ -157,6 +190,11 @@ func TestVerifyStreamSequenceNegativeTable(t *testing.T) {
 			started,
 			{Kind: driver.StreamTextStart, MessageID: "m1"},
 			finished,
+		}, "EVT-11"},
+		{"open_lifecycle_at_error", []driver.StreamPayload{
+			started,
+			{Kind: driver.StreamReasoningStart, MessageID: "r1"},
+			{Kind: driver.StreamRunError, Error: failure},
 		}, "EVT-11"},
 		{"message_id_on_run_frame", []driver.StreamPayload{
 			{Kind: driver.StreamRunStarted, MessageID: "m1"},
@@ -227,6 +265,7 @@ func TestVerifyResponseNegativeTable(t *testing.T) {
 		{"valid_checkpoint_without_resume_id", driver.Response{Checkpoint: &driver.Checkpoint{Valid: true, State: &driver.SessionState{}}}, "RSP-01"},
 		{"valid_checkpoint_on_failure", driver.Response{ExitCode: 1, Checkpoint: &driver.Checkpoint{Valid: true, State: &driver.SessionState{ResumeID: "s"}}}, "RSP-01"},
 		{"reject_without_human_decision", driver.Response{Failure: &driver.RunFailure{Message: "no", Code: driver.FailureReject}}, "RSP-02"},
+		{"timeout_without_human_decision", driver.Response{Failure: &driver.RunFailure{Message: "late", Code: driver.FailureTimeout}}, "RSP-02"},
 		{"agent_error_with_human_decision", driver.Response{Failure: &driver.RunFailure{
 			Message:       "boom",
 			Code:          driver.FailureAgentError,
@@ -237,6 +276,8 @@ func TestVerifyResponseNegativeTable(t *testing.T) {
 			Output:     "{\"type\":\"a\"}\n{\"type\":\"b\"}",
 			RawStreams: &driver.RawStreams{Stdout: "{\"type\":\"a\"}\n{\"type\":\"b\"}"},
 		}, "RSP-04"},
+		{"terminal_without_event", driver.Response{RawStreams: &driver.RawStreams{Terminal: &driver.TerminalPayload{JSON: json.RawMessage(`{"ok":true}`)}}}, "RSP-06"},
+		{"terminal_with_invalid_json", driver.Response{RawStreams: &driver.RawStreams{Terminal: &driver.TerminalPayload{Event: "result", JSON: json.RawMessage(`{`)}}}, "RSP-06"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -250,6 +291,66 @@ func TestVerifyResponseNegativeTable(t *testing.T) {
 		t.Errorf("VerifyResponse(nil) = %v, want nil", vs)
 	}
 }
+
+func TestVerifyOutcomeRejectsCheckpointWhenRunReturnsError(t *testing.T) {
+	resp := driver.Response{
+		Checkpoint: &driver.Checkpoint{
+			Valid: true,
+			State: &driver.SessionState{ResumeID: "unsafe"},
+		},
+	}
+	got := clauseSet(VerifyOutcome(&resp, errors.New("transport failed")))
+	if !got["RSP-01"] {
+		t.Errorf("want RSP-01 for checkpoint returned with Driver.Run error, got %v", got)
+	}
+}
+
+func TestVerifyCheckpointCodecRejectsMissingProvider(t *testing.T) {
+	resp := &driver.Response{Checkpoint: &driver.Checkpoint{Valid: true, State: &driver.SessionState{ResumeID: "s"}}}
+	d := driverWithoutCodec{}
+	got := clauseSet(VerifyCheckpointCodec(d, resp))
+	if !got["RSP-05"] {
+		t.Errorf("want RSP-05 for valid checkpoint without codec, got %v", got)
+	}
+}
+
+func TestVerifyCheckpointCodecRejectsLossyRoundTrip(t *testing.T) {
+	resp := &driver.Response{Checkpoint: &driver.Checkpoint{Valid: true, State: &driver.SessionState{
+		ResumeID: "s", DisplayID: "display", Data: map[string]string{"guard": "one"},
+	}}}
+	got := clauseSet(VerifyCheckpointCodec(driverWithLossyCodec{}, resp))
+	if !got["RSP-05"] {
+		t.Errorf("want RSP-05 for lossy checkpoint codec, got %v", got)
+	}
+}
+
+type driverWithoutCodec struct{}
+
+func (driverWithoutCodec) Descriptor() driver.Descriptor {
+	return driver.Descriptor{Type: "no-codec", DisplayName: "No Codec"}
+}
+func (driverWithoutCodec) ValidateConfig(any) error { return nil }
+func (driverWithoutCodec) Run(context.Context, driver.Request, driver.EventSink) (driver.Response, error) {
+	return driver.Response{}, nil
+}
+
+type driverWithLossyCodec struct{ driverWithoutCodec }
+
+func (driverWithLossyCodec) SessionCodec() driver.SessionCodec { return lossyCodec{} }
+
+type lossyCodec struct{}
+
+func (lossyCodec) Name() string { return "lossy" }
+func (lossyCodec) ToParams(state *driver.SessionState) driver.SessionParams {
+	if state == nil {
+		return driver.SessionParams{}
+	}
+	return driver.SessionParams{ResumeID: state.ResumeID, DisplayID: state.DisplayID, Values: state.Data}
+}
+func (lossyCodec) FromParams(params driver.SessionParams) *driver.SessionState {
+	return &driver.SessionState{ResumeID: params.ResumeID}
+}
+func (lossyCodec) GuardFingerprint(driver.SessionParams) string { return "guard" }
 
 func TestVerifyTranscriptMirror(t *testing.T) {
 	item := driver.TranscriptItem{Kind: driver.TranscriptAssistant, Text: "hi"}

@@ -12,20 +12,21 @@ import (
 	"strings"
 	"time"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/internal/engine"
 	"github.com/agent-dance/agent-adaptor/internal/profilereconcile"
 	"github.com/agent-dance/agent-adaptor/internal/profilestate"
 	toml "github.com/pelletier/go-toml/v2"
 )
 
-const resourceKind = string(agentadaptor.ProfileResourceAgents)
+const resourceKind = string(engine.ProfileResourceAgents)
 
-func Snapshot(driverType, profileDir string, payload agentadaptor.AgentPayload, synced bool) agentadaptor.ResourceSnapshot {
-	out := agentadaptor.ResourceSnapshot{
-		Kind:            agentadaptor.ProfileResourceAgents,
+func Snapshot(driverType, profileDir string, payload driver.AgentPayload, synced bool) engine.ResourceSnapshot {
+	out := engine.ResourceSnapshot{
+		Kind:            engine.ProfileResourceAgents,
 		Fingerprint:     payload.Fingerprint,
-		Support:         agentadaptor.ProfileResourceSupportPortableCore,
-		Materialization: agentadaptor.ProfileResourceMaterializationNotMaterialized,
+		Support:         engine.ProfileResourceSupportPortableCore,
+		Materialization: engine.ProfileResourceMaterializationNotMaterialized,
 		Warnings:        cloneStrings(payload.Warnings),
 	}
 	if len(payload.Agents) == 0 {
@@ -34,45 +35,45 @@ func Snapshot(driverType, profileDir string, payload agentadaptor.AgentPayload, 
 	warnings := collectWarnings(driverType, payload)
 	out.Warnings = append(out.Warnings, warnings...)
 	if anySourcePath(payload) {
-		out.Support = agentadaptor.ProfileResourceSupportNativeEscape
+		out.Support = engine.ProfileResourceSupportNativeEscape
 	} else if len(warnings) > 0 {
-		out.Support = agentadaptor.ProfileResourceSupportPortableExtended
+		out.Support = engine.ProfileResourceSupportPortableExtended
 	}
 	if synced {
 		for _, spec := range payload.Agents {
 			out.Managed = append(out.Managed, spec.Key)
 		}
 		sort.Strings(out.Managed)
-		out.Materialization = agentadaptor.ProfileResourceMaterializationNativeManaged
+		out.Materialization = engine.ProfileResourceMaterializationNativeManaged
 	} else {
 		out.Warnings = append(out.Warnings, "agent resources are desired but not observed by ProfileSnapshot; call SyncProfile to materialize them")
 	}
 	return out
 }
 
-func Sync(ctx context.Context, driverType, profileDir string, payload agentadaptor.AgentPayload) (agentadaptor.ResourceSnapshot, error) {
+func Sync(ctx context.Context, driverType, profileDir string, payload driver.AgentPayload) (engine.ResourceSnapshot, error) {
 	if strings.TrimSpace(profileDir) == "" {
-		return agentadaptor.ResourceSnapshot{}, fmt.Errorf("profile agents require profile directory")
+		return engine.ResourceSnapshot{}, fmt.Errorf("profile agents require profile directory")
 	}
 	root, ext, err := layout(driverType, profileDir)
 	if err != nil {
-		return agentadaptor.ResourceSnapshot{}, err
+		return engine.ResourceSnapshot{}, err
 	}
 	lock, err := profilestate.AcquireLock(ctx, profileDir, profilestate.LockOptions{StaleAfter: 10 * time.Minute})
 	if err != nil {
-		return agentadaptor.ResourceSnapshot{}, err
+		return engine.ResourceSnapshot{}, err
 	}
 	defer lock.Release()
 
 	manifest, err := profilestate.LoadManifest(profileDir)
 	if err != nil {
-		return agentadaptor.ResourceSnapshot{}, err
+		return engine.ResourceSnapshot{}, err
 	}
 	entries := make([]profilereconcile.DirectoryEntry, 0, len(payload.Agents))
 	for _, spec := range payload.Agents {
 		entry, err := directoryEntry(driverType, spec, ext)
 		if err != nil {
-			return agentadaptor.ResourceSnapshot{}, err
+			return engine.ResourceSnapshot{}, err
 		}
 		entries = append(entries, entry)
 	}
@@ -84,10 +85,10 @@ func Sync(ctx context.Context, driverType, profileDir string, payload agentadapt
 		AllowPrune: true,
 	})
 	if err != nil {
-		return agentadaptor.ResourceSnapshot{}, err
+		return engine.ResourceSnapshot{}, err
 	}
 	if err := profilestate.SaveManifest(profileDir, manifest); err != nil {
-		return agentadaptor.ResourceSnapshot{}, err
+		return engine.ResourceSnapshot{}, err
 	}
 	snapshot := Snapshot(driverType, profileDir, payload, true)
 	snapshot.Managed = dirSnapshot.Managed
@@ -106,7 +107,7 @@ func layout(driverType, profileDir string) (string, string, error) {
 	}
 }
 
-func directoryEntry(driverType string, spec agentadaptor.AgentSpec, ext string) (profilereconcile.DirectoryEntry, error) {
+func directoryEntry(driverType string, spec driver.AgentSpec, ext string) (profilereconcile.DirectoryEntry, error) {
 	name := agentName(spec)
 	runtimeName := runtimeFileName(spec, ext)
 	entry := profilereconcile.DirectoryEntry{
@@ -130,7 +131,7 @@ func directoryEntry(driverType string, spec agentadaptor.AgentSpec, ext string) 
 	return entry, nil
 }
 
-func render(driverType string, spec agentadaptor.AgentSpec, name string) (string, error) {
+func render(driverType string, spec driver.AgentSpec, name string) (string, error) {
 	switch driverType {
 	case "codex":
 		return renderCodex(spec, name)
@@ -143,7 +144,7 @@ func render(driverType string, spec agentadaptor.AgentSpec, name string) (string
 	}
 }
 
-func renderCodex(spec agentadaptor.AgentSpec, name string) (string, error) {
+func renderCodex(spec driver.AgentSpec, name string) (string, error) {
 	values := map[string]any{
 		"name":                   name,
 		"description":            description(spec),
@@ -165,7 +166,7 @@ func renderCodex(spec agentadaptor.AgentSpec, name string) (string, error) {
 	return string(raw), nil
 }
 
-func renderMarkdown(spec agentadaptor.AgentSpec, name string, claude bool) string {
+func renderMarkdown(spec driver.AgentSpec, name string, claude bool) string {
 	lines := []string{
 		"---",
 		"name: " + yamlString(name),
@@ -200,7 +201,7 @@ func renderMarkdown(spec agentadaptor.AgentSpec, name string, claude bool) strin
 	return strings.Join(lines, "\n")
 }
 
-func collectWarnings(driverType string, payload agentadaptor.AgentPayload) []string {
+func collectWarnings(driverType string, payload driver.AgentPayload) []string {
 	warnings := make([]string, 0)
 	for _, spec := range payload.Agents {
 		for _, warning := range unsupportedFields(driverType, spec) {
@@ -211,7 +212,7 @@ func collectWarnings(driverType string, payload agentadaptor.AgentPayload) []str
 	return warnings
 }
 
-func unsupportedFields(driverType string, spec agentadaptor.AgentSpec) []string {
+func unsupportedFields(driverType string, spec driver.AgentSpec) []string {
 	var warnings []string
 	if len(spec.Native) > 0 {
 		warnings = append(warnings, "native agent fields are not materialized by the generic adapter layout")
@@ -255,7 +256,7 @@ func unsupportedFields(driverType string, spec agentadaptor.AgentSpec) []string 
 	return warnings
 }
 
-func runtimeFileName(spec agentadaptor.AgentSpec, ext string) string {
+func runtimeFileName(spec driver.AgentSpec, ext string) string {
 	name := strings.TrimSpace(spec.RuntimeName)
 	if name == "" {
 		name = spec.Key
@@ -273,7 +274,7 @@ func runtimeFileName(spec agentadaptor.AgentSpec, ext string) string {
 	return safeFileName(base) + ext
 }
 
-func agentName(spec agentadaptor.AgentSpec) string {
+func agentName(spec driver.AgentSpec) string {
 	name := strings.TrimSpace(spec.RuntimeName)
 	if name == "" {
 		name = spec.Key
@@ -284,14 +285,14 @@ func agentName(spec agentadaptor.AgentSpec) string {
 	return safeFileName(name)
 }
 
-func description(spec agentadaptor.AgentSpec) string {
+func description(spec driver.AgentSpec) string {
 	if strings.TrimSpace(spec.Description) != "" {
 		return strings.TrimSpace(spec.Description)
 	}
 	return fmt.Sprintf("SDK-managed profile agent %s", spec.Key)
 }
 
-func instructions(spec agentadaptor.AgentSpec) string {
+func instructions(spec driver.AgentSpec) string {
 	if strings.TrimSpace(spec.Instructions) != "" {
 		return strings.TrimSpace(spec.Instructions)
 	}
@@ -367,7 +368,7 @@ func cleanStrings(values []string) []string {
 	return out
 }
 
-func anySourcePath(payload agentadaptor.AgentPayload) bool {
+func anySourcePath(payload driver.AgentPayload) bool {
 	for _, spec := range payload.Agents {
 		if strings.TrimSpace(spec.SourcePath) != "" {
 			return true
@@ -376,7 +377,7 @@ func anySourcePath(payload agentadaptor.AgentPayload) bool {
 	return false
 }
 
-func fingerprint(spec agentadaptor.AgentSpec) string {
+func fingerprint(spec driver.AgentSpec) string {
 	raw, err := json.Marshal(spec)
 	if err != nil {
 		raw = []byte(spec.Key + spec.RuntimeName + spec.Instructions + spec.Content + spec.SourcePath + spec.SourceFingerprint)

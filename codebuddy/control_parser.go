@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/internal/clihelper"
 )
@@ -16,17 +15,17 @@ const controlInitializeRequestID = "agent-adaptor-initialize"
 
 type controlState struct {
 	ctx         context.Context
-	sink        agentadaptor.DecisionCapableSink
+	sink        driver.DecisionCapableSink
 	stdin       clihelper.StdinController
 	runID       string
-	policy      agentadaptor.HumanDecisionPolicy
+	policy      driver.HumanDecisionPolicy
 	prompt      string
 	configDir   string
 	userStarted bool
 	plan        string
 }
 
-func (p *parser) enableControl(ctx context.Context, sink agentadaptor.DecisionCapableSink, stdin clihelper.StdinController, runID string, policy agentadaptor.HumanDecisionPolicy, prompt string) {
+func (p *parser) enableControl(ctx context.Context, sink driver.DecisionCapableSink, stdin clihelper.StdinController, runID string, policy driver.HumanDecisionPolicy, prompt string) {
 	p.control = &controlState{ctx: ctx, sink: sink, stdin: stdin, runID: runID, policy: policy, prompt: prompt}
 }
 
@@ -64,8 +63,8 @@ func (p *parser) handleControlRequest(payload map[string]any) {
 	_ = p.control.stdin.Write(encodeControlResponse(requestID, toolUseID, input, decision, p.control.policy))
 }
 
-func (s *controlState) sinkDecision(p *parser, requestID, toolUseID, toolName string, input map[string]any, kind agentadaptor.HumanDecisionKind) agentadaptor.DecisionResponse {
-	req := agentadaptor.DecisionRequest{
+func (s *controlState) sinkDecision(p *parser, requestID, toolUseID, toolName string, input map[string]any, kind driver.HumanDecisionKind) driver.DecisionResponse {
+	req := driver.DecisionRequest{
 		RequestID:  requestID,
 		RunID:      s.runID,
 		ThreadID:   p.sessionID,
@@ -76,11 +75,11 @@ func (s *controlState) sinkDecision(p *parser, requestID, toolUseID, toolName st
 		Payload:    map[string]any{"tool": toolName, "input": input},
 		CreatedAt:  time.Now().UTC(),
 	}
-	if kind == agentadaptor.HumanDecisionPlanReview {
+	if kind == driver.HumanDecisionPlanReview {
 		req.Prompt = "ExitPlanMode"
 		req.Payload["plan"] = s.plan
 	}
-	if kind == agentadaptor.HumanDecisionQuestion {
+	if kind == driver.HumanDecisionQuestion {
 		req.Prompt = questionPrompt(input)
 		req.Choices = questionChoices(input)
 	}
@@ -89,7 +88,7 @@ func (s *controlState) sinkDecision(p *parser, requestID, toolUseID, toolName st
 		// The SDK may already classify a timeout or abort in resp. Preserve
 		// that classification; only an unclassified transport error becomes
 		// an aborted decision.
-		resp = agentadaptor.DecisionResponse{RequestID: requestID, Result: agentadaptor.DecisionAborted, Text: err.Error()}
+		resp = driver.DecisionResponse{RequestID: requestID, Result: driver.DecisionAborted, Text: err.Error()}
 	}
 	if resp.RequestID == "" {
 		resp.RequestID = requestID
@@ -127,22 +126,22 @@ func isCodeBuddyPlanFile(path, configDir string) bool {
 	return strings.Contains(clean, ".codebuddy/plans/")
 }
 
-func controlDecisionKind(toolName string) agentadaptor.HumanDecisionKind {
+func controlDecisionKind(toolName string) driver.HumanDecisionKind {
 	switch toolName {
 	case "AskUserQuestion":
-		return agentadaptor.HumanDecisionQuestion
+		return driver.HumanDecisionQuestion
 	case "ExitPlanMode":
-		return agentadaptor.HumanDecisionPlanReview
+		return driver.HumanDecisionPlanReview
 	default:
-		return agentadaptor.HumanDecisionPermission
+		return driver.HumanDecisionPermission
 	}
 }
 
-func controlSource(kind agentadaptor.HumanDecisionKind) string {
+func controlSource(kind driver.HumanDecisionKind) string {
 	switch kind {
-	case agentadaptor.HumanDecisionQuestion:
+	case driver.HumanDecisionQuestion:
 		return "AskUserQuestion"
-	case agentadaptor.HumanDecisionPlanReview:
+	case driver.HumanDecisionPlanReview:
 		return "ExitPlanMode"
 	default:
 		return "permission"
@@ -162,13 +161,13 @@ func encodeControlUser(prompt string) []byte {
 	return append(frame, '\n')
 }
 
-func encodeControlResponse(requestID, toolUseID string, input map[string]any, decision agentadaptor.DecisionResponse,
-	policy agentadaptor.HumanDecisionPolicy) []byte {
-	allowed := decision.Result == agentadaptor.DecisionApproved || decision.Result == agentadaptor.DecisionAnswered
+func encodeControlResponse(requestID, toolUseID string, input map[string]any, decision driver.DecisionResponse,
+	policy driver.HumanDecisionPolicy) []byte {
+	allowed := decision.Result == driver.DecisionApproved || decision.Result == driver.DecisionAnswered
 	response := map[string]any{"allowed": allowed, "tool_use_id": toolUseID}
 	if allowed {
 		updated := cloneMap(input)
-		if decision.Result == agentadaptor.DecisionAnswered {
+		if decision.Result == driver.DecisionAnswered {
 			updated["answers"] = questionAnswers(input, decision)
 			if decision.Choice != "" {
 				updated["choice"] = decision.Choice
@@ -194,32 +193,32 @@ func encodeControlResponse(requestID, toolUseID string, input map[string]any, de
 // interrupt=true, i.e. abort the CLI run. Rejected/Aborted honor OnReject and
 // TimedOut honors OnTimeout; both default (Unset) to Abort. Approved/Answered
 // never reach this path. 与 claude 的 interrupt 门控保持一致。
-func controlDenyInterrupts(result agentadaptor.DecisionResult, policy agentadaptor.HumanDecisionPolicy) bool {
+func controlDenyInterrupts(result driver.DecisionResult, policy driver.HumanDecisionPolicy) bool {
 	effective := driver.EffectiveHumanDecisionPolicy(policy)
 	switch result {
-	case agentadaptor.DecisionTimedOut:
-		return effective.OnTimeout == agentadaptor.FailureAbort
-	case agentadaptor.DecisionRejected, agentadaptor.DecisionAborted:
-		return effective.OnReject == agentadaptor.FailureAbort
+	case driver.DecisionTimedOut:
+		return effective.OnTimeout == driver.FailureAbort
+	case driver.DecisionRejected, driver.DecisionAborted:
+		return effective.OnReject == driver.FailureAbort
 	default:
 		return false
 	}
 }
 
-func (p *parser) recordControlReject(req agentadaptor.DecisionRequest, resp agentadaptor.DecisionResponse, policy agentadaptor.HumanDecisionPolicy) {
-	if resp.Result != agentadaptor.DecisionRejected || p.pendingFailure != nil {
+func (p *parser) recordControlReject(req driver.DecisionRequest, resp driver.DecisionResponse, policy driver.HumanDecisionPolicy) {
+	if resp.Result != driver.DecisionRejected || p.pendingFailure != nil {
 		return
 	}
 	effective := driver.EffectiveHumanDecisionPolicy(policy)
-	if effective.OnReject != agentadaptor.FailureAbort && effective.OnReject != agentadaptor.FailureActionUnset {
+	if effective.OnReject != driver.FailureAbort && effective.OnReject != driver.FailureActionUnset {
 		return
 	}
 	snapshot := req
-	p.pendingFailure = &agentadaptor.RunFailure{
-		Code:    agentadaptor.FailureReject,
+	p.pendingFailure = &driver.RunFailure{
+		Code:    driver.FailureReject,
 		Message: "CodeBuddy control request was rejected.",
-		HumanDecision: &agentadaptor.HumanDecisionFailure{
-			Kind: req.Kind, Source: req.Source, Decision: agentadaptor.DecisionRejected, Request: &snapshot, Attempts: 1,
+		HumanDecision: &driver.HumanDecisionFailure{
+			Kind: req.Kind, Source: req.Source, Decision: driver.DecisionRejected, Request: &snapshot, Attempts: 1,
 		},
 	}
 }
@@ -235,7 +234,7 @@ func questionPrompt(input map[string]any) string {
 
 // questionAnswers 将宿主的显式 Answer 原样写入 CodeBuddy 控制响应。
 // 未提供 Answer 时，使用 SDK 的 Text 或 Choice 回填首题。
-func questionAnswers(input map[string]any, decision agentadaptor.DecisionResponse) map[string]any {
+func questionAnswers(input map[string]any, decision driver.DecisionResponse) map[string]any {
 	if len(decision.Answer) > 0 {
 		return cloneMap(decision.Answer)
 	}
@@ -259,18 +258,18 @@ func firstQuestionText(input map[string]any) string {
 	return topString(question, "question")
 }
 
-func questionChoices(input map[string]any) []agentadaptor.DecisionChoice {
+func questionChoices(input map[string]any) []driver.DecisionChoice {
 	questions, _ := input["questions"].([]any)
 	if len(questions) == 0 {
 		return nil
 	}
 	question, _ := questions[0].(map[string]any)
 	options, _ := question["options"].([]any)
-	choices := make([]agentadaptor.DecisionChoice, 0, len(options))
+	choices := make([]driver.DecisionChoice, 0, len(options))
 	for _, option := range options {
 		entry, _ := option.(map[string]any)
 		label := topString(entry, "label")
-		choices = append(choices, agentadaptor.DecisionChoice{Key: label, Label: label, Description: topString(entry, "description")})
+		choices = append(choices, driver.DecisionChoice{Key: label, Label: label, Description: topString(entry, "description")})
 	}
 	return choices
 }

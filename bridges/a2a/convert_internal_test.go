@@ -3,11 +3,9 @@ package a2a
 import (
 	"encoding/json"
 	"math"
-	"strings"
 	"testing"
 
 	a2aproto "github.com/a2aproject/a2a-go/v2/a2a"
-	agentadaptor "github.com/agent-dance/agent-adaptor"
 )
 
 type testTaskInfo struct{}
@@ -90,98 +88,5 @@ func TestCustomTerminalArtifactsRejectReservedAndDuplicateIDs(t *testing.T) {
 	}
 	if _, err := customTerminalArtifacts(testTaskInfo{}, []ArtifactSpec{{ID: "result", Parts: part}, {ID: "result", Parts: part}}, nil); err == nil {
 		t.Fatal("expected duplicate artifact ID to fail")
-	}
-}
-
-func TestStreamTranslatorEmitsToolEndWithoutArgs(t *testing.T) {
-	translator := newStreamTranslator(testTaskInfo{}, ExposurePolicy{IncludeToolCalls: true})
-	start := translator.Translate(agentadaptor.StreamPayload{Kind: agentadaptor.StreamToolCallStart, ToolCallID: "tool-1", Name: "Read"})
-	if len(start) != 1 {
-		t.Fatalf("start = %#v", start)
-	}
-	end := translator.Translate(agentadaptor.StreamPayload{Kind: agentadaptor.StreamToolCallEnd, ToolCallID: "tool-1"})
-	if len(end) != 1 {
-		t.Fatalf("end = %#v", end)
-	}
-	update, ok := end[0].(*a2aproto.TaskStatusUpdateEvent)
-	if !ok || update.Status.Message == nil || len(update.Status.Message.Parts) != 1 {
-		t.Fatalf("end event = %#v", end[0])
-	}
-	data, ok := update.Status.Message.Parts[0].Content.(a2aproto.Data)
-	if !ok {
-		t.Fatalf("end data = %#v", update.Status.Message.Parts[0].Content)
-	}
-	payload, matched, err := DecodeAdapterStreamStatus(data.Value)
-	if err != nil || !matched || payload.Kind != agentadaptor.StreamToolCallEnd {
-		t.Fatalf("end payload=%#v matched=%v err=%v", payload, matched, err)
-	}
-}
-
-func TestStreamTranslatorStatusDataRoundTrip(t *testing.T) {
-	translator := newStreamTranslator(testTaskInfo{}, ExposurePolicy{IncludeToolCalls: true})
-	want := []agentadaptor.StreamPayload{
-		{Kind: agentadaptor.StreamTextStart, Sequence: 1, MessageID: "msg-1"},
-		{Kind: agentadaptor.StreamTextContent, Sequence: 2, MessageID: "msg-1", Delta: "hello"},
-		{Kind: agentadaptor.StreamTextEnd, Sequence: 3, MessageID: "msg-1"},
-		{Kind: agentadaptor.StreamToolCallStart, Sequence: 4, ToolCallID: "tool-1", Name: "Bash"},
-		{Kind: agentadaptor.StreamToolCallArgs, Sequence: 5, ToolCallID: "tool-1", Delta: `{"command":`},
-		{Kind: agentadaptor.StreamToolCallEnd, Sequence: 6, ToolCallID: "tool-1"},
-		{Kind: agentadaptor.StreamToolCallResult, Sequence: 7, ToolCallID: "tool-1", Result: map[string]any{"exit_code": 0}},
-	}
-	for _, payload := range want {
-		events := translator.Translate(payload)
-		if len(events) != 1 {
-			t.Fatalf("%s events = %#v", payload.Kind, events)
-		}
-		update, ok := events[0].(*a2aproto.TaskStatusUpdateEvent)
-		if !ok || update.Status.State != a2aproto.TaskStateWorking || update.Status.Message == nil || len(update.Status.Message.Parts) != 1 {
-			t.Fatalf("%s status event = %#v", payload.Kind, events[0])
-		}
-		data, ok := update.Status.Message.Parts[0].Content.(a2aproto.Data)
-		if !ok {
-			t.Fatalf("%s data part = %#v", payload.Kind, update.Status.Message.Parts[0])
-		}
-		got, matched, err := DecodeAdapterStreamStatus(data.Value)
-		if err != nil || !matched {
-			t.Fatalf("%s decode matched=%v err=%v", payload.Kind, matched, err)
-		}
-		if got.Kind != payload.Kind || got.Sequence != payload.Sequence || got.MessageID != payload.MessageID ||
-			got.ToolCallID != payload.ToolCallID || got.Name != payload.Name || got.Delta != payload.Delta {
-			t.Fatalf("%s round trip = %#v, want %#v", payload.Kind, got, payload)
-		}
-	}
-}
-
-func TestDecodeAdapterStreamStatusIgnoresOtherSchemas(t *testing.T) {
-	_, matched, err := DecodeAdapterStreamStatus(map[string]any{"type": "STATUS_TYPE_TOOL_CALL"})
-	if err != nil || matched {
-		t.Fatalf("matched=%v err=%v", matched, err)
-	}
-	_, matched, err = DecodeAdapterStreamStatus(map[string]any{
-		"schema":  "external.status.v1",
-		"payload": strings.Repeat("x", adapterStreamMaxBytes),
-	})
-	if err != nil || matched {
-		t.Fatalf("oversized external schema matched=%v err=%v", matched, err)
-	}
-}
-
-func TestStreamTranslatorStatusDataReportsOversizedEvent(t *testing.T) {
-	translator := newStreamTranslator(testTaskInfo{}, ExposurePolicy{})
-	events := translator.Translate(agentadaptor.StreamPayload{
-		Kind: agentadaptor.StreamTextContent, Sequence: 9, MessageID: "msg-1",
-		Delta: strings.Repeat("x", adapterStreamMaxBytes),
-	})
-	if len(events) != 1 {
-		t.Fatalf("events = %#v", events)
-	}
-	update := events[0].(*a2aproto.TaskStatusUpdateEvent)
-	data := update.Status.Message.Parts[0].Content.(a2aproto.Data)
-	payload, matched, err := DecodeAdapterStreamStatus(data.Value)
-	if err != nil || !matched || payload.Kind != agentadaptor.StreamDropped || payload.Sequence != 9 {
-		t.Fatalf("overflow payload=%#v matched=%v err=%v", payload, matched, err)
-	}
-	if payload.Raw["dropped_kind"] != string(agentadaptor.StreamTextContent) {
-		t.Fatalf("overflow raw = %#v", payload.Raw)
 	}
 }

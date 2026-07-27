@@ -16,21 +16,19 @@ import (
 	"testing"
 	"testing/fstest"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/skill"
 )
 
-// Compile-time proof that every constructor result is a Ref in both
-// vocabularies (alias identity, no conversion involved).
+// Compile-time proof that the public skill package owns the complete
+// host-facing vocabulary without relying on the legacy root aliases.
 var (
 	_ skill.Ref               = skill.Skill{}
-	_ agentadaptor.SkillRef   = skill.Skill{}
-	_ skill.Materializer      = agentadaptor.SkillMaterializer(nil)
+	_ skill.Materializer      = skill.NewDefaultSkillMaterializer()
 	_ skill.Provider          = skill.Set{}
 	_ skill.Catalog           = skill.Set{}
 	_ skill.Source            = skill.ArchiveSource{}
-	_ skill.Opener            = agentadaptor.ArchiveFromBytes(nil)
-	_ skill.ArchiveHTTPOption = agentadaptor.WithArchiveHeader("k", "v")
+	_ skill.Opener            = skill.ArchiveBytes(nil)
+	_ skill.ArchiveHTTPOption = skill.WithArchiveHeader("k", "v")
 )
 
 func TestDirMatchesLocalSkill(t *testing.T) {
@@ -101,29 +99,21 @@ func TestInlineMatchesInlineSkill(t *testing.T) {
 	}
 }
 
-func TestKeyMatchesRootKey(t *testing.T) {
-	got := skill.Key("deploy-checklist")
-	want := agentadaptor.Key("deploy-checklist")
-	if got != want {
-		t.Fatalf("skill.Key = %#v, want %#v", got, want)
+func TestKeyResolvesThroughPublicProvider(t *testing.T) {
+	set := skill.Set{"deploy-checklist": skill.Inline("deploy-checklist", "# Deploy")}
+	refs, err := set.GetSkills(context.Background(), []string{"deploy-checklist"})
+	if err != nil {
+		t.Fatalf("GetSkills: %v", err)
 	}
-	sk, ok := got.(agentadaptor.SkillKey)
-	if !ok {
-		t.Fatalf("dynamic type = %T, want SkillKey", got)
-	}
-	if string(sk) != "deploy-checklist" {
-		t.Fatalf("SkillKey = %q, want %q", sk, "deploy-checklist")
+	if _, ok := refs["deploy-checklist"]; !ok {
+		t.Fatalf("public provider did not resolve the key produced by skill.Key: %#v", skill.Key("deploy-checklist"))
 	}
 }
 
-func TestRequireMatchesRoot(t *testing.T) {
+func TestRequireReturnsRequiredCopy(t *testing.T) {
 	base := skill.Dir(filepath.Join("skills", "write-proof"))
 
 	got := skill.Require(base, "compliance mandate")
-	want := agentadaptor.Require(base, "compliance mandate")
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("skill.Require = %#v, want %#v", got, want)
-	}
 	if !got.Required || got.Reason != "compliance mandate" {
 		t.Fatalf("Required/Reason not set: %#v", got)
 	}
@@ -132,14 +122,12 @@ func TestRequireMatchesRoot(t *testing.T) {
 	}
 }
 
-func TestMetadataConstantsMatchRoot(t *testing.T) {
-	if skill.MetadataRuntimeName != agentadaptor.SkillMetadataRuntimeName {
-		t.Fatalf("MetadataRuntimeName = %q, want %q",
-			skill.MetadataRuntimeName, agentadaptor.SkillMetadataRuntimeName)
+func TestMetadataConstantWireValues(t *testing.T) {
+	if skill.MetadataRuntimeName != "_runtime_name" {
+		t.Fatalf("MetadataRuntimeName = %q", skill.MetadataRuntimeName)
 	}
-	if skill.MetadataDisplayName != agentadaptor.SkillMetadataDisplayName {
-		t.Fatalf("MetadataDisplayName = %q, want %q",
-			skill.MetadataDisplayName, agentadaptor.SkillMetadataDisplayName)
+	if skill.MetadataDisplayName != "_display_name" {
+		t.Fatalf("MetadataDisplayName = %q", skill.MetadataDisplayName)
 	}
 }
 
@@ -150,8 +138,8 @@ func TestRuntimeNameOverride(t *testing.T) {
 	s := skill.Inline("team/retention", "# Retention playbook")
 	s.Metadata = map[string]string{skill.MetadataRuntimeName: "retention-playbook"}
 
-	var m skill.Materializer = agentadaptor.NewDefaultSkillMaterializer(
-		agentadaptor.WithSkillCacheRoot(t.TempDir()))
+	var m skill.Materializer = skill.NewDefaultSkillMaterializer(
+		skill.WithSkillCacheRoot(t.TempDir()))
 	dir, err := m.Materialize(context.Background(), s)
 	if err != nil {
 		t.Fatalf("Materialize: %v", err)
@@ -178,7 +166,7 @@ func TestArchiveFieldPassthrough(t *testing.T) {
 		t.Fatalf("Source type = %T, want SkillFromArchive", got.Source)
 	}
 	if src.Format != skill.FormatZip {
-		t.Fatalf("Format = %q, want %q", src.Format, agentadaptor.SkillArchiveZip)
+		t.Fatalf("Format = %q, want %q", src.Format, skill.FormatZip)
 	}
 	if src.Subpath != "inner" {
 		t.Fatalf("Subpath = %q, want %q", src.Subpath, "inner")
@@ -232,7 +220,7 @@ func TestArchiveMaterializesAllFormats(t *testing.T) {
 			opts: []skill.ArchiveOption{skill.WithFormat(skill.FormatTarGz)}},
 	}
 
-	m := agentadaptor.NewDefaultSkillMaterializer(agentadaptor.WithSkillCacheRoot(t.TempDir()))
+	m := skill.NewDefaultSkillMaterializer(skill.WithSkillCacheRoot(t.TempDir()))
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			s := skill.Archive(tc.key, skill.ArchiveBytes(tc.data), tc.opts...)
@@ -264,7 +252,7 @@ func TestArchiveSubpath(t *testing.T) {
 		"bundle/extra.txt": "extra",
 		"unrelated.txt":    "ignored",
 	})
-	m := agentadaptor.NewDefaultSkillMaterializer(agentadaptor.WithSkillCacheRoot(t.TempDir()))
+	m := skill.NewDefaultSkillMaterializer(skill.WithSkillCacheRoot(t.TempDir()))
 
 	s := skill.Archive("kit-sub", skill.ArchiveBytes(data), skill.WithSubpath("bundle"))
 	dir, err := m.Materialize(context.Background(), s)
@@ -288,7 +276,7 @@ func TestArchiveSubpath(t *testing.T) {
 // back to sniffing.
 func TestArchiveFormatMismatch(t *testing.T) {
 	data := tarBytes(t, map[string]string{"SKILL.md": "# tar"})
-	m := agentadaptor.NewDefaultSkillMaterializer(agentadaptor.WithSkillCacheRoot(t.TempDir()))
+	m := skill.NewDefaultSkillMaterializer(skill.WithSkillCacheRoot(t.TempDir()))
 
 	s := skill.Archive("kit-mismatch", skill.ArchiveBytes(data), skill.WithFormat(skill.FormatZip))
 	if _, err := m.Materialize(context.Background(), s); err == nil {
@@ -378,18 +366,14 @@ func TestArchiveURL(t *testing.T) {
 	}
 }
 
-// TestProviderCatalogAliases exercises the re-exported interfaces via
-// the built-in Set implementation to prove alias identity is
-// behavioural, not just nominal.
-func TestProviderCatalogAliases(t *testing.T) {
+func TestProviderAndCatalogContracts(t *testing.T) {
 	set := skill.Set{
 		"code-review": skill.Inline("code-review", "# Review"),
 		"mandatory":   skill.Require(skill.Inline("mandatory", "# Always"), "tenant policy"),
 	}
 
 	var p skill.Provider = set
-	var rootP agentadaptor.SkillProvider = p // alias identity
-	got, err := rootP.GetSkills(context.Background(), []string{"code-review"})
+	got, err := p.GetSkills(context.Background(), []string{"code-review"})
 	if err != nil {
 		t.Fatalf("GetSkills: %v", err)
 	}
@@ -408,26 +392,6 @@ func TestProviderCatalogAliases(t *testing.T) {
 	if len(all) != 2 {
 		t.Fatalf("Catalogue len = %d, want 2", len(all))
 	}
-}
-
-// TestConsumableByRootOptions proves the constructors plug into the
-// existing root-package option surface without conversion — the
-// forward-compatibility contract for v1 WithSkills(refs ...skill.Ref).
-func TestConsumableByRootOptions(t *testing.T) {
-	refs := []skill.Ref{
-		skill.Dir(filepath.Join("skills", "write-proof")),
-		skill.Key("code-review"),
-	}
-	var rootRefs []agentadaptor.SkillRef = refs // alias identity, no copy
-
-	var _ agentadaptor.AgentOption = agentadaptor.WithDefaultSkills(rootRefs...)
-	var _ agentadaptor.RunOption = agentadaptor.WithSkills(
-		skill.Inline("greet", "# hi"),
-		skill.Archive("kit", skill.ArchiveBytes([]byte("x"))),
-	)
-	var _ agentadaptor.Option = agentadaptor.WithSkillProvider(skill.Set{})
-	var _ agentadaptor.Option = agentadaptor.WithSkillMaterializer(
-		agentadaptor.NewDefaultSkillMaterializer())
 }
 
 // --- archive builders -------------------------------------------------------

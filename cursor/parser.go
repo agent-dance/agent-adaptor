@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
 )
 
 // cursorParser consumes raw stdout/stderr chunks from a Cursor Agent CLI run
@@ -16,12 +16,12 @@ import (
 type cursorParser struct {
 	mu sync.Mutex
 
-	sink agentadaptor.EventSink
+	sink driver.EventSink
 
 	stdoutLine bytes.Buffer
 	stderrLine bytes.Buffer
 
-	transcript    []agentadaptor.TranscriptItem
+	transcript    []driver.TranscriptItem
 	assistantText []string
 
 	// deltaBuffer accumulates consecutive assistant.delta fragments so that
@@ -31,18 +31,18 @@ type cursorParser struct {
 
 	sessionID         string
 	displayID         string
-	summary           string // last assistant text; used only as summary fallback
+	summary           string // last assistant text retained for parser diagnostics
 	terminalSummary   string // authoritative summary from terminal result events
-	usage             *agentadaptor.Usage
+	usage             *driver.Usage
 	cost              *float64
-	resultFinal       map[string]any
+	terminal          *driver.TerminalPayload
 	errorMessage      string
 	terminalSeen      bool
 	terminalSuccess   bool
 	protocolMalformed bool
 }
 
-func newCursorParser(sink agentadaptor.EventSink) *cursorParser {
+func newCursorParser(sink driver.EventSink) *cursorParser {
 	return &cursorParser{sink: sink}
 }
 
@@ -109,16 +109,16 @@ func (p *cursorParser) processLine(stream string, line []byte, _ time.Time) {
 	}
 
 	if stream == "stderr" {
-		p.emit(agentadaptor.TranscriptItem{
-			Kind: agentadaptor.TranscriptStderr,
+		p.emit(driver.TranscriptItem{
+			Kind: driver.TranscriptStderr,
 			Text: text,
 		})
 		return
 	}
 
 	if !strings.HasPrefix(trimmed, "{") {
-		p.emit(agentadaptor.TranscriptItem{
-			Kind: agentadaptor.TranscriptStdout,
+		p.emit(driver.TranscriptItem{
+			Kind: driver.TranscriptStdout,
 			Text: text,
 		})
 		return
@@ -126,8 +126,8 @@ func (p *cursorParser) processLine(stream string, line []byte, _ time.Time) {
 	var payload map[string]any
 	if err := json.Unmarshal([]byte(trimmed), &payload); err != nil {
 		p.protocolMalformed = true
-		p.emit(agentadaptor.TranscriptItem{
-			Kind: agentadaptor.TranscriptStdout,
+		p.emit(driver.TranscriptItem{
+			Kind: driver.TranscriptStdout,
 			Text: text,
 		})
 		return
@@ -158,15 +158,15 @@ func (p *cursorParser) handlePayload(raw string, payload map[string]any) {
 		if text == "" {
 			return
 		}
-		p.emit(agentadaptor.TranscriptItem{
-			Kind: agentadaptor.TranscriptThinking,
+		p.emit(driver.TranscriptItem{
+			Kind: driver.TranscriptThinking,
 			Text: text,
 		})
 	case "tool_call", "tool.call":
 		name := cursorTopLevelString(payload, "name", "tool_name")
 		id := cursorTopLevelString(payload, "id", "call_id", "tool_use_id")
-		p.emit(agentadaptor.TranscriptItem{
-			Kind:      agentadaptor.TranscriptToolCall,
+		p.emit(driver.TranscriptItem{
+			Kind:      driver.TranscriptToolCall,
 			ToolName:  name,
 			ToolUseID: id,
 			Input:     payload["input"],
@@ -174,16 +174,16 @@ func (p *cursorParser) handlePayload(raw string, payload map[string]any) {
 	case "tool_result", "tool.result":
 		id := cursorTopLevelString(payload, "id", "call_id", "tool_use_id")
 		text := cursorTopLevelString(payload, "text", "output", "result")
-		p.emit(agentadaptor.TranscriptItem{
-			Kind:      agentadaptor.TranscriptToolResult,
+		p.emit(driver.TranscriptItem{
+			Kind:      driver.TranscriptToolResult,
 			ToolUseID: id,
 			Text:      text,
 		})
 	case "init", "session", "session.updated", "system":
 		model := cursorTopLevelString(payload, "model")
 		session := cursorTopLevelString(payload, "session_id", "sessionId", "sessionID")
-		p.emit(agentadaptor.TranscriptItem{
-			Kind:      agentadaptor.TranscriptInit,
+		p.emit(driver.TranscriptItem{
+			Kind:      driver.TranscriptInit,
 			Model:     model,
 			SessionID: session,
 		})
@@ -193,13 +193,14 @@ func (p *cursorParser) handlePayload(raw string, payload map[string]any) {
 	case "error", "run.failed":
 		p.terminalSeen = true
 		p.terminalSuccess = false
+		p.terminal = &driver.TerminalPayload{Event: eventType, JSON: append(json.RawMessage(nil), raw...)}
 		message := cursorTopLevelString(payload, "message", "error")
 		if message == "" {
 			message = "cursor provider error"
 		}
 		p.errorMessage = message
-		p.emit(agentadaptor.TranscriptItem{
-			Kind:     agentadaptor.TranscriptFailure,
+		p.emit(driver.TranscriptItem{
+			Kind:     driver.TranscriptFailure,
 			Text:     message,
 			Metadata: map[string]string{"code": "error"},
 		})
@@ -210,8 +211,8 @@ func (p *cursorParser) handlePayload(raw string, payload map[string]any) {
 			// maybeCaptureSession.
 			return
 		}
-		p.emit(agentadaptor.TranscriptItem{
-			Kind: agentadaptor.TranscriptSystem,
+		p.emit(driver.TranscriptItem{
+			Kind: driver.TranscriptSystem,
 			Text: raw,
 			Data: map[string]any{"payload": payload},
 		})
@@ -249,8 +250,8 @@ func (p *cursorParser) handleAssistant(payload map[string]any) {
 				}
 				p.assistantText = append(p.assistantText, text)
 				p.summary = text
-				p.emit(agentadaptor.TranscriptItem{
-					Kind: agentadaptor.TranscriptAssistant,
+				p.emit(driver.TranscriptItem{
+					Kind: driver.TranscriptAssistant,
 					Text: text,
 				})
 			case "thinking":
@@ -258,8 +259,8 @@ func (p *cursorParser) handleAssistant(payload map[string]any) {
 				if text == "" {
 					continue
 				}
-				p.emit(agentadaptor.TranscriptItem{
-					Kind: agentadaptor.TranscriptThinking,
+				p.emit(driver.TranscriptItem{
+					Kind: driver.TranscriptThinking,
 					Text: text,
 				})
 			}
@@ -272,8 +273,8 @@ func (p *cursorParser) handleAssistant(payload map[string]any) {
 	}
 	p.assistantText = append(p.assistantText, text)
 	p.summary = text
-	p.emit(agentadaptor.TranscriptItem{
-		Kind: agentadaptor.TranscriptAssistant,
+	p.emit(driver.TranscriptItem{
+		Kind: driver.TranscriptAssistant,
 		Text: text,
 	})
 }
@@ -287,8 +288,8 @@ func (p *cursorParser) handleAssistantDelta(payload map[string]any) {
 		return
 	}
 	p.deltaBuffer.WriteString(text)
-	p.emit(agentadaptor.TranscriptItem{
-		Kind:  agentadaptor.TranscriptAssistant,
+	p.emit(driver.TranscriptItem{
+		Kind:  driver.TranscriptAssistant,
 		Text:  text,
 		Delta: true,
 	})
@@ -318,9 +319,9 @@ func (p *cursorParser) handleResult(raw string, payload map[string]any, subtype 
 		p.errorMessage = "cursor terminal result did not report success"
 	}
 
-	var decoded map[string]any
-	if err := json.Unmarshal([]byte(raw), &decoded); err == nil {
-		p.resultFinal = decoded
+	p.terminal = &driver.TerminalPayload{
+		Event: subtype,
+		JSON:  append(json.RawMessage(nil), raw...),
 	}
 	if result := cursorTopLevelString(payload, "result", "summary", "text"); result != "" {
 		p.terminalSummary = result
@@ -333,7 +334,7 @@ func (p *cursorParser) handleResult(raw string, payload map[string]any, subtype 
 		output, okOutput := cursorTopLevelInt(usage, "output_tokens")
 		if okInput || okCached || okOutput {
 			if p.usage == nil {
-				p.usage = &agentadaptor.Usage{}
+				p.usage = &driver.Usage{}
 			}
 			if okInput {
 				p.usage.InputTokens = input
@@ -351,8 +352,8 @@ func (p *cursorParser) handleResult(raw string, payload map[string]any, subtype 
 		p.cost = &c
 	}
 
-	p.emit(agentadaptor.TranscriptItem{
-		Kind:    agentadaptor.TranscriptResult,
+	p.emit(driver.TranscriptItem{
+		Kind:    driver.TranscriptResult,
 		Subtype: subtype,
 		Usage:   p.usage,
 		CostUSD: p.cost,
@@ -372,26 +373,23 @@ func cursorFormalEvent(eventType string) bool {
 	}
 }
 
-func (p *cursorParser) emit(item agentadaptor.TranscriptItem) {
+func (p *cursorParser) emit(item driver.TranscriptItem) {
 	p.transcript = append(p.transcript, item)
 	if p.sink == nil {
 		return
 	}
 	clone := item
-	_ = p.sink.Emit(agentadaptor.RunEvent{
-		Type:      agentadaptor.RunEventItem,
+	_ = p.sink.Emit(driver.RunEvent{
+		Type:      driver.RunEventItem,
 		Timestamp: time.Now().UTC(),
 		Item:      &clone,
 	})
 }
 
-// finalSummary implements the Summary precedence rule: terminal result text
-// wins; the last assistant text only serves as a fallback.
+// finalSummary returns only a bounded provider terminal summary. Assistant
+// output is never reused as Summary because it may be arbitrarily large.
 func (p *cursorParser) finalSummary() string {
-	if strings.TrimSpace(p.terminalSummary) != "" {
-		return p.terminalSummary
-	}
-	return p.summary
+	return strings.TrimSpace(p.terminalSummary)
 }
 
 func (p *cursorParser) buildOutput() string {
@@ -407,7 +405,7 @@ func (p *cursorParser) buildOutput() string {
 // checkpoint promotes a Cursor session only after a clean process exit and an
 // official successful result/completion event with a top-level session_id.
 // Session/init frames and partial assistant output are not terminal proof.
-func (p *cursorParser) checkpoint(exitCode int) *agentadaptor.DriverCheckpoint {
+func (p *cursorParser) checkpoint(exitCode int) *driver.Checkpoint {
 	if exitCode != 0 || p.protocolMalformed || !p.terminalSeen || !p.terminalSuccess || p.sessionID == "" {
 		return nil
 	}
@@ -415,8 +413,8 @@ func (p *cursorParser) checkpoint(exitCode int) *agentadaptor.DriverCheckpoint {
 	if display == "" {
 		display = p.sessionID
 	}
-	return &agentadaptor.DriverCheckpoint{
-		State: &agentadaptor.DriverSessionState{
+	return &driver.Checkpoint{
+		State: &driver.SessionState{
 			ResumeID:  p.sessionID,
 			DisplayID: display,
 		},
@@ -424,7 +422,7 @@ func (p *cursorParser) checkpoint(exitCode int) *agentadaptor.DriverCheckpoint {
 	}
 }
 
-func (p *cursorParser) checkpointForOutcome(exitCode int, signal string, timedOut bool, failure *agentadaptor.RunFailure) *agentadaptor.DriverCheckpoint {
+func (p *cursorParser) checkpointForOutcome(exitCode int, signal string, timedOut bool, failure *driver.RunFailure) *driver.Checkpoint {
 	if signal != "" || timedOut || failure != nil {
 		return nil
 	}
@@ -440,7 +438,7 @@ func snapshotCursorStdout(stdout string) *cursorParser {
 
 // parseCheckpoint is the snapshot compatibility entry point and shares the
 // live parser's formal-terminal safety gate.
-func parseCheckpoint(stdout string, exitCode int) *agentadaptor.DriverCheckpoint {
+func parseCheckpoint(stdout string, exitCode int) *driver.Checkpoint {
 	return snapshotCursorStdout(stdout).checkpoint(exitCode)
 }
 

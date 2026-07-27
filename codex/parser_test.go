@@ -10,29 +10,29 @@ import (
 	"testing"
 	"time"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
 )
 
 type recordingSink struct {
 	mu    sync.Mutex
-	items []agentadaptor.TranscriptItem
+	items []driver.TranscriptItem
 }
 
-func (r *recordingSink) Emit(event agentadaptor.RunEvent) error {
+func (r *recordingSink) Emit(event driver.RunEvent) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if event.Type == agentadaptor.RunEventItem && event.Item != nil {
+	if event.Type == driver.RunEventItem && event.Item != nil {
 		r.items = append(r.items, *event.Item)
 	}
 	return nil
 }
 
-func (r *recordingSink) EmitStream(agentadaptor.StreamPayload) error { return nil }
+func (r *recordingSink) EmitStream(driver.StreamPayload) error { return nil }
 
-func (r *recordingSink) Snapshot() []agentadaptor.TranscriptItem {
+func (r *recordingSink) Snapshot() []driver.TranscriptItem {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	out := make([]agentadaptor.TranscriptItem, len(r.items))
+	out := make([]driver.TranscriptItem, len(r.items))
 	copy(out, r.items)
 	return out
 }
@@ -69,20 +69,23 @@ func TestCodexParserHappyAssistantProducesOutputAndTranscript(t *testing.T) {
 	if checkpoint == nil || checkpoint.State == nil || checkpoint.State.ResumeID != "thread-happy-1" {
 		t.Fatalf("checkpoint: got %#v", checkpoint)
 	}
+	if p.terminal == nil || p.terminal.Event != "turn.completed" || !json.Valid(p.terminal.JSON) {
+		t.Fatalf("terminal = %#v", p.terminal)
+	}
 
 	sinkItems := sink.Snapshot()
 	if !reflect.DeepEqual(sinkItems, p.transcript) {
 		t.Fatalf("sink items diverged from final transcript: sink=%#v final=%#v", sinkItems, p.transcript)
 	}
 
-	kinds := make([]agentadaptor.TranscriptKind, 0, len(p.transcript))
+	kinds := make([]driver.TranscriptKind, 0, len(p.transcript))
 	for _, item := range p.transcript {
 		kinds = append(kinds, item.Kind)
 	}
-	want := []agentadaptor.TranscriptKind{
-		agentadaptor.TranscriptInit,
-		agentadaptor.TranscriptAssistant,
-		agentadaptor.TranscriptResult,
+	want := []driver.TranscriptKind{
+		driver.TranscriptInit,
+		driver.TranscriptAssistant,
+		driver.TranscriptResult,
 	}
 	if !reflect.DeepEqual(kinds, want) {
 		t.Fatalf("transcript kinds: got %#v want %#v", kinds, want)
@@ -205,12 +208,12 @@ func TestCodexCheckpointRequiresOfficialSuccessAndCleanOutcome(t *testing.T) {
 		exitCode int
 		signal   string
 		timedOut bool
-		failure  *agentadaptor.RunFailure
+		failure  *driver.RunFailure
 	}{
 		{name: "nonzero", exitCode: 1},
 		{name: "signal", signal: "SIGTERM"},
 		{name: "timeout", timedOut: true},
-		{name: "failure", failure: &agentadaptor.RunFailure{Code: agentadaptor.FailureAgentError}},
+		{name: "failure", failure: &driver.RunFailure{Code: driver.FailureAgentError}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if cp := success.checkpointForOutcome(tc.exitCode, tc.signal, tc.timedOut, tc.failure); cp != nil {
@@ -239,16 +242,16 @@ func TestCodexParserWithToolFixtureEmitsToolCallAndResult(t *testing.T) {
 	_ = p.onChunk("stdout", fixture, time.Now().UTC())
 	p.finalize()
 
-	kinds := make([]agentadaptor.TranscriptKind, 0, len(p.transcript))
+	kinds := make([]driver.TranscriptKind, 0, len(p.transcript))
 	for _, item := range p.transcript {
 		kinds = append(kinds, item.Kind)
 	}
-	want := []agentadaptor.TranscriptKind{
-		agentadaptor.TranscriptInit,
-		agentadaptor.TranscriptToolCall,
-		agentadaptor.TranscriptToolResult,
-		agentadaptor.TranscriptAssistant,
-		agentadaptor.TranscriptResult,
+	want := []driver.TranscriptKind{
+		driver.TranscriptInit,
+		driver.TranscriptToolCall,
+		driver.TranscriptToolResult,
+		driver.TranscriptAssistant,
+		driver.TranscriptResult,
 	}
 	if !reflect.DeepEqual(kinds, want) {
 		t.Fatalf("transcript kinds: got %#v want %#v", kinds, want)

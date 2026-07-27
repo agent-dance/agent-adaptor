@@ -2,12 +2,13 @@ name: Go
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "codex/**" ]
   pull_request:
     branches: [ "main" ]
+  workflow_dispatch:
 
 jobs:
-  build:
+  validate:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
@@ -30,5 +31,33 @@ jobs:
     - name: Repeat A2A tests
       run: go test -count=20 ./clients/a2a ./bridges/a2a
 
-    - name: Race A2A tests
-      run: go test -race ./clients/a2a ./bridges/a2a
+  race:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version-file: go.mod
+        cache: true
+
+    - name: Race tests
+      run: go test -race ./...
+
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version-file: go.mod
+        cache: true
+
+    - name: Fuzz archive extraction
+      run: |
+        go test ./internal/engine -run=^$ -fuzz=FuzzExtractZip -fuzztime=30s
+        go test ./internal/engine -run=^$ -fuzz=FuzzExtractTar -fuzztime=30s
+        go test ./internal/engine -run=^$ -fuzz=FuzzSniffArchiveFormat -fuzztime=30s

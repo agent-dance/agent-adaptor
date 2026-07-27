@@ -1,20 +1,13 @@
 //go:build codebuddy_live
 
-// Package codebuddy live smoke tests exercise the REAL `codebuddy` CLI
-// end to end through the SDK. They are excluded from the default build and only
-// run when the codebuddy_live tag is set and a logged-in `codebuddy` binary is
-// on PATH.
-//
-// Run with:
-//
-//	# headless (autonomous) + resume smoke
-//	go test -tags codebuddy_live -run TestCodeBuddyLiveHeadless -v ./codebuddy
-//	# interactive control-transport permission loop
-//	go test -tags codebuddy_live -run TestCodeBuddyLivePermission -v ./codebuddy
+// Package codebuddy live tests exercise the real CodeBuddy CLI through the
+// v1 Agent/Thread/Stream API. They remain opt-in because they require a
+// logged-in CLI and may make paid provider calls.
 package codebuddy
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,21 +16,19 @@ import (
 	"testing"
 	"time"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/internal/testutil"
+	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/memory"
+	adaptor "github.com/agent-dance/agent-adaptor/next"
 )
 
 func envOr(key, fallback string) string {
-	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
-		return v
+	if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+		return value
 	}
 	return fallback
 }
 
-func codebuddyCLIName() string {
-	return "codebuddy"
-}
+func codebuddyCLIName() string { return "codebuddy" }
 
 func requireCodeBuddyCLI(t *testing.T) {
 	t.Helper()
@@ -48,599 +39,342 @@ func requireCodeBuddyCLI(t *testing.T) {
 
 func liveModel() string { return "glm-5.2-ioa" }
 
-// isolatedConfigDir returns a fresh directory for CODEBUDDY_CONFIG_DIR that
-// carries over the operator's real login credentials but deliberately omits
-// mcp.json, so live tests do not depend on (or get polluted by) any locally
-// configured MCP servers. Kept as good test hygiene so live runs are not
-// implicitly coupled to the operator's global mcp.json.
+// isolatedConfigDir copies only login material. In particular it omits
+// mcp.json so live conformance never depends on an operator's MCP servers.
 func isolatedConfigDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-
 	home, err := os.UserHomeDir()
 	if err != nil {
-		t.Logf("isolatedConfigDir: could not resolve home dir: %v", err)
+		t.Logf("isolatedConfigDir: resolve home: %v", err)
 		return dir
 	}
-	realConfigDir := envOr("CODEBUDDY_CONFIG_DIR_SOURCE", filepath.Join(home, ".codebuddy"))
+	source := envOr("CODEBUDDY_CONFIG_DIR_SOURCE", filepath.Join(home, ".codebuddy"))
 	for _, name := range []string{".credentials.json", "credentials.json", "settings.json"} {
-		src := filepath.Join(realConfigDir, name)
-		data, readErr := os.ReadFile(src)
+		payload, readErr := os.ReadFile(filepath.Join(source, name))
 		if readErr != nil {
 			continue
 		}
-		if writeErr := os.WriteFile(filepath.Join(dir, name), data, 0o600); writeErr != nil {
-			t.Logf("isolatedConfigDir: failed to copy %s: %v", name, writeErr)
+		if writeErr := os.WriteFile(filepath.Join(dir, name), payload, 0o600); writeErr != nil {
+			t.Logf("isolatedConfigDir: copy %s: %v", name, writeErr)
 		}
 	}
 	return dir
 }
 
-// --- real-time CLI event logging ---------------------------------------
-//
-// sdk.Run blocks silently until the whole turn completes, which makes a
-// multi-minute live run indistinguishable from a genuine hang. All live
-// tests below use sdk.Start + logLiveEvents so raw CLI chunks, transcript
-// items, and stream deltas print to `go test -v` output as they happen.
-
-// logLiveEvents drains handle.Events() and handle.StreamEvents() in the
-// background, logging each one via t.Logf as it arrives, and returns a wait
-// function the caller must invoke (after handle.Wait) to join both
-// goroutines before the test returns.
-func logLiveEvents(t *testing.T, handle agentadaptor.RunHandle) (wait func()) {
+func newLiveAgent(t *testing.T, cwd string, planMode bool) *adaptor.Agent {
 	t.Helper()
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		for ev := range handle.Events() {
-			logRunEvent(t, ev)
-		}
-	}()
-	go func() {
-		defer wg.Done()
-		for p := range handle.StreamEvents() {
-			logStreamPayload(t, p)
-		}
-	}()
-	return wg.Wait
-}
-
-func logRunEvent(t *testing.T, ev agentadaptor.RunEvent) {
-	t.Helper()
-	switch ev.Type {
-	case agentadaptor.RunEventChunk:
-		t.Logf("[cli:%s] %s", ev.Stream, strings.TrimRight(string(ev.Bytes), "\n"))
-	case agentadaptor.RunEventSpawn:
-		t.Logf("[spawn] %s data=%v", ev.Text, ev.Data)
-	case agentadaptor.RunEventInvocation:
-		t.Logf("[invocation] %s data=%v", ev.Text, ev.Data)
-	case agentadaptor.RunEventItem:
-		if ev.Item != nil {
-			t.Logf("[item] kind=%s subtype=%s text=%q", ev.Item.Kind, ev.Item.Subtype, truncateForLog(ev.Item.Text))
-		}
-	default:
-		t.Logf("[event:%s] %s data=%v", ev.Type, ev.Text, ev.Data)
-	}
-}
-
-func logStreamPayload(t *testing.T, p agentadaptor.StreamPayload) {
-	t.Helper()
-	switch p.Kind {
-	case agentadaptor.StreamTextContent:
-		t.Logf("[stream:text] %s", p.Delta)
-	case agentadaptor.StreamReasoningContent:
-		t.Logf("[stream:thinking] %s", p.Delta)
-	case agentadaptor.StreamHITLRequested:
-		if p.HITLRequested != nil {
-			t.Logf("[stream:hitl-requested] kind=%s source=%s prompt=%q", p.HITLRequested.Kind, p.HITLRequested.Source, truncateForLog(p.HITLRequested.Prompt))
-		}
-	case agentadaptor.StreamHITLResolved:
-		if p.HITLResolved != nil {
-			t.Logf("[stream:hitl-resolved] kind=%s result=%s latency=%s", p.HITLResolved.Kind, p.HITLResolved.Result, p.HITLResolved.Latency)
-		}
-	case agentadaptor.StreamRunFinished:
-		t.Logf("[stream:finished] usage=%+v", p.Usage)
-	case agentadaptor.StreamRunError:
-		t.Logf("[stream:error] %+v", p.Error)
-	default:
-		t.Logf("[stream:%s] name=%s raw=%v", p.Kind, p.Name, p.Raw)
-	}
-}
-
-func truncateForLog(s string) string {
-	const max = 300
-	if len(s) <= max {
-		return s
-	}
-	return s[:max] + "…"
-}
-
-func newLiveSDK(t *testing.T, cwd string) agentadaptor.SDK {
-	t.Helper()
-	return agentadaptor.New(
-		agentadaptor.WithDefaultAgent(New(agentadaptor.CodeBuddyConfig{
-			CommonConfig: agentadaptor.CommonConfig{
-				CWD:     cwd,
-				Command: codebuddyCLIName(),
-				Env: []agentadaptor.EnvBinding{
-					{Name: "CODEBUDDY_CONFIG_DIR", Value: isolatedConfigDir(t)},
-				},
+	cfg := Config{
+		CommonConfig: CommonConfig{
+			Command: codebuddyCLIName(),
+			CWD:     cwd,
+			Env: []driver.EnvBinding{
+				{Name: "CODEBUDDY_CONFIG_DIR", Value: isolatedConfigDir(t)},
 			},
-			Model: liveModel(),
-		})),
-		agentadaptor.WithSessionStore(memory.NewSessionStore()),
+		},
+		Model: liveModel(),
+	}
+	if planMode {
+		cfg.ExtraArgs = []string{"--permission-mode", "plan"}
+	}
+	return adaptor.New(
+		Driver(cfg),
+		adaptor.WithWorkspace(cwd),
+		adaptor.WithThreadStore(memory.NewStore()),
 	)
 }
 
-// livePolicyHeadless 保持 wantsControlTransport=false，从而真正驱动底层
-// `codebuddy --print` batch 引擎，而非 control stream-json 传输。
-// Permission/PlanReview=AutoApprove 会映射到 --permission-mode bypassPermissions；
-// Question 保持 Unset：该 smoke test 不需要阻塞的 question control request。
-var livePolicyHeadless = agentadaptor.RunPolicy{
-	Isolation: agentadaptor.IsolationUnrestricted,
-	HumanDecision: agentadaptor.HumanDecisionPolicy{
-		Permission: agentadaptor.HumanDecisionAutoApprove,
-		PlanReview: agentadaptor.HumanDecisionAutoApprove,
+var livePolicyHeadless = adaptor.Policy{
+	Sandbox: adaptor.Unrestricted,
+	Approvals: adaptor.ApprovalPolicy{
+		Permission: adaptor.ApprovalAutoApprove,
+		PlanReview: adaptor.ApprovalAutoApprove,
 	},
 }
 
-// TestCodeBuddyLiveHeadlessStreaming drives the headless stream-json engine
-// against the real CLI and asserts we observe streamed text deltas, a terminal
-// StreamRunFinished with usage, and an assembled Output that matches the
-// deltas.
+func collectLiveStream(ctx context.Context, runner adaptor.Runner, prompt string, opts ...adaptor.CallOption) (*adaptor.Result, []adaptor.Event, error) {
+	stream := runner.Stream(ctx, prompt, opts...)
+	events := make([]adaptor.Event, 0, 32)
+	for event := range stream.Events() {
+		events = append(events, event)
+	}
+	result, err := stream.Result()
+	return result, events, err
+}
+
+func logLiveEvents(t *testing.T, events []adaptor.Event) {
+	t.Helper()
+	for _, event := range events {
+		switch typed := event.(type) {
+		case adaptor.TextDelta:
+			if typed.Phase == adaptor.PhaseContent {
+				t.Logf("[text] %s", typed.Text)
+			}
+		case adaptor.Thinking:
+			if typed.Phase == adaptor.PhaseContent {
+				t.Logf("[thinking] %s", typed.Text)
+			}
+		case adaptor.ToolCall:
+			t.Logf("[tool] phase=%s name=%s id=%s", typed.Phase, typed.Name, typed.ID)
+		case adaptor.ProcessInfo:
+			t.Logf("[process] kind=%s text=%s bytes=%q", typed.Kind, typed.Text, truncateForLog(string(typed.Bytes)))
+		case adaptor.RunFinished:
+			t.Logf("[finished] failed=%v usage=%+v", typed.Failed, typed.Usage)
+		case adaptor.Notice:
+			t.Logf("[notice] kind=%s text=%s", typed.Kind, truncateForLog(typed.Text))
+		case *adaptor.ApprovalRequest:
+			t.Logf("[approval] kind=%s source=%s title=%q", typed.Kind, typed.Source, truncateForLog(typed.Title))
+		}
+	}
+}
+
+func truncateForLog(value string) string {
+	const max = 300
+	if len(value) <= max {
+		return value
+	}
+	return value[:max] + "…"
+}
+
 func TestCodeBuddyLiveHeadlessStreaming(t *testing.T) {
 	requireCodeBuddyCLI(t)
-	cwd := t.TempDir()
-	sdk := newLiveSDK(t, cwd)
-
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
-	rec := &testutil.EventRecorder{}
-	handle, err := sdk.Start(ctx, "Write a haiku about autumn. Reply with only the haiku.",
-		agentadaptor.WithStreaming(),
-		agentadaptor.WithRunPolicy(livePolicyHeadless),
-		agentadaptor.WithSessionKey("codebuddy_live_haiku", "v1"),
+	agent := newLiveAgent(t, t.TempDir(), false)
+	result, events, err := collectLiveStream(ctx, agent,
+		"Write a haiku about autumn. Reply with only the haiku.",
+		adaptor.WithPolicy(livePolicyHeadless),
 	)
+	logLiveEvents(t, events)
 	if err != nil {
-		t.Fatalf("Start: %v", err)
+		t.Fatalf("Stream.Result: %v", err)
 	}
 
-	streamDone := make(chan struct{})
-	go func() {
-		defer close(streamDone)
-		for p := range handle.StreamEvents() {
-			logStreamPayload(t, p)
-			_ = rec.EmitStream(p)
-		}
-	}()
-	eventsDone := make(chan struct{})
-	go func() {
-		defer close(eventsDone)
-		for ev := range handle.Events() {
-			logRunEvent(t, ev)
-			_ = rec.Emit(ev)
-		}
-	}()
-
-	res, err := handle.Wait(ctx)
-	if err != nil {
-		t.Fatalf("Wait: %v", err)
-	}
-	<-streamDone
-	<-eventsDone
-
-	stream := rec.StreamSnapshot()
-	textDeltas := 0
 	var assembled strings.Builder
-	sawFinish := false
-	for _, p := range stream {
-		if p.Kind == agentadaptor.StreamTextContent {
-			textDeltas++
-			assembled.WriteString(p.Delta)
+	sawFinishWithUsage := false
+	for _, event := range events {
+		switch typed := event.(type) {
+		case adaptor.TextDelta:
+			if typed.Phase == adaptor.PhaseContent {
+				assembled.WriteString(typed.Text)
+			}
+		case adaptor.RunFinished:
+			if typed.Usage != nil && typed.Usage.InputTokens > 0 {
+				sawFinishWithUsage = true
+			}
 		}
-		if p.Kind == agentadaptor.StreamRunFinished && p.Usage != nil && p.Usage.InputTokens > 0 {
-			sawFinish = true
-		}
 	}
-	// A short reply (e.g. a haiku) may arrive in only 1-2 text deltas depending
-	// on the CLI's chunking, so we only require the streaming path to emit at
-	// least one delta; the assembled-vs-Output consistency check below is the
-	// real correctness assertion.
-	if textDeltas < 1 {
-		t.Fatalf("expected >=1 StreamTextContent delta, got %d (streams=%d)", textDeltas, len(stream))
+	if assembled.Len() == 0 {
+		t.Fatal("missing streamed text content")
 	}
-	if !sawFinish {
-		t.Fatal("missing StreamRunFinished with InputTokens")
+	if !sawFinishWithUsage {
+		t.Fatal("missing RunFinished with observed input usage")
 	}
-	if !strings.Contains(strings.TrimSpace(res.Output), strings.TrimSpace(assembled.String())) {
-		t.Fatalf("delta text diverges from output:\n stream=%q\n output=%q", assembled.String(), res.Output)
+	if !strings.Contains(strings.TrimSpace(result.Text), strings.TrimSpace(assembled.String())) {
+		t.Fatalf("delta text diverges from result: stream=%q result=%q", assembled.String(), result.Text)
 	}
-	t.Logf("deltas=%d output=%q usage=%v", textDeltas, res.Output, res.Usage)
 }
 
-// TestCodeBuddyLiveHeadlessResume checks a second turn continues the same
-// CodeBuddy session (stream-json session id / --resume) as the first.
-func TestCodeBuddyLiveHeadlessResume(t *testing.T) {
+func TestCodeBuddyLiveThreadResume(t *testing.T) {
 	requireCodeBuddyCLI(t)
-	cwd := t.TempDir()
-	sdk := newLiveSDK(t, cwd)
-
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
 
-	handle1, err := sdk.Start(ctx, "Remember the word banana. Reply with only: OK.",
-		agentadaptor.WithStreaming(),
-		agentadaptor.WithRunPolicy(livePolicyHeadless),
-		agentadaptor.WithSessionKey("codebuddy_live_resume", "v1"),
+	agent := newLiveAgent(t, t.TempDir(), false)
+	thread := agent.Thread("codebuddy/live/resume")
+	first, events, err := collectLiveStream(ctx, thread,
+		"Remember the word banana. Reply with only: OK.",
+		adaptor.WithPolicy(livePolicyHeadless),
 	)
+	logLiveEvents(t, events)
 	if err != nil {
-		t.Fatalf("Start 1: %v", err)
+		t.Fatalf("first turn: %v", err)
 	}
-	wait1 := logLiveEvents(t, handle1)
-	r1, err := handle1.Wait(ctx)
-	wait1()
-	if err != nil {
-		t.Fatalf("Run 1: %v", err)
+	if first == nil || strings.TrimSpace(first.Text) == "" {
+		t.Fatalf("first turn returned no text: %+v", first)
 	}
-	if r1.Session == nil || r1.Session.ID == "" {
-		t.Fatalf("missing session ref after first run: %+v", r1.Session)
+	checkpoint, err := thread.Checkpoint(ctx)
+	if err != nil || checkpoint == nil || checkpoint.State == nil || checkpoint.State.ResumeID == "" {
+		t.Fatalf("checkpoint after first turn = (%+v, %v)", checkpoint, err)
 	}
 
-	handle2, err := sdk.Start(ctx, "What word did I ask you to remember? Reply with only that word.",
-		agentadaptor.WithStreaming(),
-		agentadaptor.WithRunPolicy(livePolicyHeadless),
-		agentadaptor.WithSession(agentadaptor.SessionRequest{
-			Namespace: r1.Session.Namespace,
-			Key:       r1.Session.Key,
-			ID:        r1.Session.ID,
-			Mode:      agentadaptor.SessionContinueOnly,
-		}),
+	second, events, err := collectLiveStream(ctx, thread,
+		"What word did I ask you to remember? Reply with only that word.",
+		adaptor.WithPolicy(livePolicyHeadless),
 	)
+	logLiveEvents(t, events)
 	if err != nil {
-		t.Fatalf("Start 2: %v", err)
+		t.Fatalf("second turn: %v", err)
 	}
-	wait2 := logLiveEvents(t, handle2)
-	r2, err := handle2.Wait(ctx)
-	wait2()
-	if err != nil {
-		t.Fatalf("Run 2: %v", err)
-	}
-	if !strings.Contains(strings.ToLower(r2.Output), "banana") {
-		t.Logf("resume did not recall context (model-dependent): output=%q", r2.Output)
+	if !strings.Contains(strings.ToLower(second.Text), "banana") {
+		t.Logf("resume recall is model-dependent; result=%q", second.Text)
 	}
 }
 
-// TestCodeBuddyLivePermissionApprove drives the interactive control transport:
-// a Permission=Ask policy selects stream-json control mode, the prompt triggers a real
-// tool that needs permission, and the host approves it. Verifies the handler
-// is invoked and the run completes without a rejection failure.
 func TestCodeBuddyLivePermissionApprove(t *testing.T) {
 	requireCodeBuddyCLI(t)
 	cwd := t.TempDir()
-	sdk := newLiveSDK(t, cwd)
-
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
 
 	var (
-		mu    sync.Mutex
-		calls []agentadaptor.PermissionRequest
+		mu       sync.Mutex
+		requests []*adaptor.ApprovalRequest
 	)
-	handle, err := sdk.Start(ctx,
-		"Create a file named hello.txt in the current directory containing the text hi. "+
-			"Use your file-editing tool. Reply with only DONE.",
-		agentadaptor.WithStreaming(),
-		agentadaptor.WithRunPolicy(agentadaptor.RunPolicy{
-			HumanDecision: agentadaptor.HumanDecisionPolicy{
-				Permission: agentadaptor.HumanDecisionAsk,
-				PlanReview: agentadaptor.HumanDecisionAutoApprove,
-				Question:   agentadaptor.QuestionAutoReject,
-			},
-		}),
-		agentadaptor.WithPermissionHandler(func(_ context.Context, req agentadaptor.PermissionRequest) (agentadaptor.PermissionResponse, error) {
+	agent := newLiveAgent(t, cwd, false)
+	result, events, err := collectLiveStream(ctx, agent,
+		"Create hello.txt containing hi using a file-editing tool. Reply only DONE.",
+		adaptor.WithPolicy(adaptor.Policy{Approvals: adaptor.ApprovalPolicy{
+			Permission: adaptor.ApprovalAsk,
+			PlanReview: adaptor.ApprovalAutoApprove,
+			Question:   adaptor.QuestionAutoDeny,
+		}}),
+		adaptor.OnApproval(func(callbackCtx context.Context, request *adaptor.ApprovalRequest) error {
 			mu.Lock()
-			calls = append(calls, req)
+			requests = append(requests, request)
 			mu.Unlock()
-			t.Logf("[permission-handler] approving tool=%q prompt=%q", req.Tool, truncateForLog(req.Prompt))
-			return agentadaptor.PermissionResponse{Result: agentadaptor.ApprovalApproved}, nil
+			if request.Kind != adaptor.ApprovalPermission {
+				return request.Deny(callbackCtx, "unexpected approval kind")
+			}
+			return request.Approve(callbackCtx)
 		}),
-		agentadaptor.WithSessionKey("codebuddy_live_perm", "approve"),
 	)
+	logLiveEvents(t, events)
 	if err != nil {
-		t.Fatalf("Start: %v", err)
+		t.Fatalf("permission-approved run: %v", err)
 	}
-	wait := logLiveEvents(t, handle)
-	res, err := handle.Wait(ctx)
-	wait()
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-
 	mu.Lock()
-	got := append([]agentadaptor.PermissionRequest(nil), calls...)
+	count := len(requests)
 	mu.Unlock()
-	if len(got) == 0 {
-		t.Fatalf("permission handler never invoked; model likely used no permissioned tool — output=%q", res.Output)
+	if count == 0 {
+		t.Fatalf("permission callback was not invoked; result=%q", result.Text)
 	}
-	for i, req := range got {
-		if req.Tool == "" {
-			t.Errorf("permission request[%d] missing tool name (empty Tool): %+v", i, req)
-		}
-	}
-	if res.Failure != nil {
-		t.Errorf("approved run should not fail: %+v", res.Failure)
-	}
-	data, statErr := os.ReadFile(filepath.Join(cwd, "hello.txt"))
-	if statErr != nil {
-		t.Fatalf("hello.txt should exist in cwd after approval: %v", statErr)
-	}
-	if strings.TrimSpace(string(data)) != "hi" {
-		t.Errorf("hello.txt content = %q, want \"hi\"", string(data))
+	payload, readErr := os.ReadFile(filepath.Join(cwd, "hello.txt"))
+	if readErr != nil || strings.TrimSpace(string(payload)) != "hi" {
+		t.Fatalf("hello.txt = (%q, %v), want hi", payload, readErr)
 	}
 }
 
-// TestCodeBuddyLiveQuestionAnswered runs the real CLI through the complete
-// AskUserQuestion path: the host receives the question, supplies an answer,
-// and the CLI continues with that answer.
 func TestCodeBuddyLiveQuestionAnswered(t *testing.T) {
 	requireCodeBuddyCLI(t)
-	cwd := t.TempDir()
-	sdk := newLiveSDK(t, cwd)
-
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
 
-	var (
-		mu    sync.Mutex
-		calls []agentadaptor.QuestionRequest
-	)
-	handle, err := sdk.Start(ctx,
-		"请使用 AskUserQuestion 工具问我喜欢哪种编程语言。"+
-			"在收到我的回答后，只回复 ANSWER=<回答>，不要使用其他工具。",
-		agentadaptor.WithStreaming(),
-		agentadaptor.WithRunPolicy(agentadaptor.RunPolicy{
-			HumanDecision: agentadaptor.HumanDecisionPolicy{
-				Permission: agentadaptor.HumanDecisionAutoApprove,
-				PlanReview: agentadaptor.HumanDecisionAutoApprove,
-				Question:   agentadaptor.QuestionAsk,
-			},
+	var calls int
+	agent := newLiveAgent(t, t.TempDir(), false)
+	result, events, err := collectLiveStream(ctx, agent,
+		"请使用 AskUserQuestion 问我喜欢哪种编程语言，收到回答后只回复 ANSWER=<回答>。",
+		adaptor.WithPolicy(adaptor.Policy{Approvals: adaptor.ApprovalPolicy{
+			Permission: adaptor.ApprovalAutoApprove,
+			PlanReview: adaptor.ApprovalAutoApprove,
+			Question:   adaptor.QuestionAsk,
+		}}),
+		adaptor.OnApproval(func(callbackCtx context.Context, request *adaptor.ApprovalRequest) error {
+			if request.Kind != adaptor.ApprovalQuestion {
+				return request.Deny(callbackCtx, "unexpected approval kind")
+			}
+			calls++
+			return request.Answer(callbackCtx, "Go")
 		}),
-		agentadaptor.WithQuestionHandler(func(_ context.Context, req agentadaptor.QuestionRequest) (agentadaptor.QuestionResponse, error) {
-			mu.Lock()
-			calls = append(calls, req)
-			mu.Unlock()
-			t.Logf("[question-handler] answering prompt=%q choices=%+v", req.Prompt, req.Choices)
-			return agentadaptor.QuestionResponse{
-				Result: agentadaptor.QuestionAnswered,
-				Choice: "Go",
-				Text:   "Go",
-			}, nil
-		}),
-		agentadaptor.WithSessionKey("codebuddy_live_question", "answered"),
 	)
+	logLiveEvents(t, events)
 	if err != nil {
-		t.Fatalf("Start: %v", err)
+		t.Fatalf("question run: %v", err)
 	}
-	wait := logLiveEvents(t, handle)
-	res, err := handle.Wait(ctx)
-	wait()
-	if err != nil {
-		t.Fatalf("Wait: %v", err)
+	if calls != 1 {
+		t.Fatalf("question callback calls=%d, want 1", calls)
 	}
-
-	mu.Lock()
-	got := append([]agentadaptor.QuestionRequest(nil), calls...)
-	mu.Unlock()
-	if len(got) != 1 {
-		t.Fatalf("question handler calls = %d, want 1; output=%q", len(got), res.Output)
-	}
-	if !strings.Contains(got[0].Prompt, "编程语言") {
-		t.Errorf("question prompt = %q, want programming-language question", got[0].Prompt)
-	}
-	if res.Failure != nil {
-		t.Fatalf("answered question should not fail: %+v", res.Failure)
-	}
-	if !strings.Contains(strings.ToLower(res.Output), "answer=go") {
-		t.Fatalf("final output must contain ANSWER=Go after answer delivery, got %q", res.Output)
+	if !strings.Contains(strings.ToLower(result.Text), "answer=go") {
+		t.Fatalf("result must contain ANSWER=Go, got %q", result.Text)
 	}
 }
 
-// newLivePlanSDK builds a live SDK forced into CodeBuddy plan mode. The control
-// transport (selected by PlanReview=Ask) never emits `--permission-mode` on its
-// own, so plan mode is injected via ExtraArgs; controlSafeExtraArgs lets
-// `--permission-mode` through. Without this the model never drafts a plan nor
-// calls ExitPlanMode.
-func newLivePlanSDK(t *testing.T, cwd string) agentadaptor.SDK {
-	t.Helper()
-	return agentadaptor.New(
-		agentadaptor.WithDefaultAgent(New(agentadaptor.CodeBuddyConfig{
-			CommonConfig: agentadaptor.CommonConfig{
-				CWD:     cwd,
-				Command: codebuddyCLIName(),
-				Env: []agentadaptor.EnvBinding{
-					{Name: "CODEBUDDY_CONFIG_DIR", Value: isolatedConfigDir(t)},
-				},
-				ExtraArgs: []string{"--permission-mode", "plan"},
-			},
-			Model: liveModel(),
-		})),
-		agentadaptor.WithSessionStore(memory.NewSessionStore()),
-	)
-}
-
-// TestCodeBuddyLivePlanApprove drives the full plan-review HITL loop against the
-// real CLI: plan mode makes the model draft a plan (written to
-// <configDir>/plans/*.md and captured by the parser) then call ExitPlanMode. The
-// parser routes it as a PlanReview decision, the host approves, and the CLI
-// continues to implement. Verifies the handler is invoked with a non-empty plan,
-// no failure is recorded, and a final output is produced.
 func TestCodeBuddyLivePlanApprove(t *testing.T) {
 	requireCodeBuddyCLI(t)
-	cwd := t.TempDir()
-	sdk := newLivePlanSDK(t, cwd)
-
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
 
-	var (
-		mu    sync.Mutex
-		calls []agentadaptor.PlanReviewRequest
-	)
-	handle, err := sdk.Start(ctx,
-		"Add a file named hello.py in the current directory that prints 'Hello, plan mode'. "+
-			"First think through the steps, then call ExitPlanMode to submit the plan for approval "+
-			"before implementing. Do not ask questions.",
-		agentadaptor.WithStreaming(),
-		agentadaptor.WithRunPolicy(agentadaptor.RunPolicy{
-			HumanDecision: agentadaptor.HumanDecisionPolicy{
-				Permission: agentadaptor.HumanDecisionAutoApprove,
-				PlanReview: agentadaptor.HumanDecisionAsk,
-				Question:   agentadaptor.QuestionAutoReject,
-			},
+	var plan string
+	agent := newLiveAgent(t, t.TempDir(), true)
+	result, events, err := collectLiveStream(ctx, agent,
+		"Plan and then add hello.py that prints 'Hello, plan mode'. Submit the plan through ExitPlanMode before implementation.",
+		adaptor.WithPolicy(adaptor.Policy{Approvals: adaptor.ApprovalPolicy{
+			Permission: adaptor.ApprovalAutoApprove,
+			PlanReview: adaptor.ApprovalAsk,
+			Question:   adaptor.QuestionAutoDeny,
+		}}),
+		adaptor.OnApproval(func(callbackCtx context.Context, request *adaptor.ApprovalRequest) error {
+			if request.Kind != adaptor.ApprovalPlanReview {
+				return request.Deny(callbackCtx, "unexpected approval kind")
+			}
+			plan, _ = request.Details["plan"].(string)
+			return request.Approve(callbackCtx)
 		}),
-		agentadaptor.WithPlanReviewHandler(func(_ context.Context, req agentadaptor.PlanReviewRequest) (agentadaptor.PlanReviewResponse, error) {
-			mu.Lock()
-			calls = append(calls, req)
-			mu.Unlock()
-			t.Logf("[plan-handler] approving prompt=%q plan=%q", req.Prompt, truncateForLog(req.Plan))
-			return agentadaptor.PlanReviewResponse{Result: agentadaptor.ApprovalApproved}, nil
-		}),
-		agentadaptor.WithSessionKey("codebuddy_live_plan", "approve"),
 	)
+	logLiveEvents(t, events)
 	if err != nil {
-		t.Fatalf("Start: %v", err)
+		t.Fatalf("plan-approved run: %v", err)
 	}
-	wait := logLiveEvents(t, handle)
-	res, err := handle.Wait(ctx)
-	wait()
-	if err != nil {
-		t.Fatalf("Wait: %v", err)
+	if strings.TrimSpace(plan) == "" {
+		t.Fatal("plan approval did not carry captured plan text")
 	}
-
-	mu.Lock()
-	got := append([]agentadaptor.PlanReviewRequest(nil), calls...)
-	mu.Unlock()
-	if len(got) == 0 {
-		t.Fatalf("plan-review handler never invoked; model likely did not call ExitPlanMode — output=%q", res.Output)
-	}
-	if got[0].Prompt != "ExitPlanMode" {
-		t.Errorf("plan-review prompt = %q, want ExitPlanMode", got[0].Prompt)
-	}
-	if strings.TrimSpace(got[0].Plan) == "" {
-		t.Errorf("plan-review request missing captured Plan text: %+v", got[0])
-	}
-	if res.Failure != nil {
-		t.Errorf("approved plan should not fail: %+v", res.Failure)
-	}
-	if strings.TrimSpace(res.Output) == "" {
-		t.Error("final Output missing after plan approval")
+	if result == nil || strings.TrimSpace(result.Text) == "" {
+		t.Fatalf("missing result after plan approval: %+v", result)
 	}
 }
 
-// TestCodeBuddyLivePlanReject verifies the OnReject=FailureAbort path for plan
-// review against the real CLI: the host rejects the plan and the adapter records
-// a structured rejection failure.
 func TestCodeBuddyLivePlanReject(t *testing.T) {
 	requireCodeBuddyCLI(t)
 	cwd := t.TempDir()
-	sdk := newLivePlanSDK(t, cwd)
-
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
 
-	var (
-		mu    sync.Mutex
-		calls int
-	)
-	handle, err := sdk.Start(ctx,
-		"Add a file named hello.py in the current directory that prints 'Hello, plan mode'. "+
-			"First think through the steps, then call ExitPlanMode to submit the plan for approval "+
-			"before implementing. Do not ask questions.",
-		agentadaptor.WithStreaming(),
-		agentadaptor.WithRunPolicy(agentadaptor.RunPolicy{
-			HumanDecision: agentadaptor.HumanDecisionPolicy{
-				Permission: agentadaptor.HumanDecisionAutoApprove,
-				PlanReview: agentadaptor.HumanDecisionAsk,
-				Question:   agentadaptor.QuestionAutoReject,
-				OnReject:   agentadaptor.FailureAbort,
-			},
+	agent := newLiveAgent(t, cwd, true)
+	_, events, err := collectLiveStream(ctx, agent,
+		"Plan and then add hello.py that prints 'Hello'. Submit the plan through ExitPlanMode before implementation.",
+		adaptor.WithPolicy(adaptor.Policy{Approvals: adaptor.ApprovalPolicy{
+			Permission: adaptor.ApprovalAutoApprove,
+			PlanReview: adaptor.ApprovalAsk,
+			Question:   adaptor.QuestionAutoDeny,
+			OnReject:   adaptor.FallbackAbort,
+		}}),
+		adaptor.OnApproval(func(callbackCtx context.Context, request *adaptor.ApprovalRequest) error {
+			return request.Deny(callbackCtx, "plan rejected by live test")
 		}),
-		agentadaptor.WithPlanReviewHandler(func(_ context.Context, req agentadaptor.PlanReviewRequest) (agentadaptor.PlanReviewResponse, error) {
-			mu.Lock()
-			calls++
-			mu.Unlock()
-			t.Logf("[plan-handler] rejecting prompt=%q plan=%q", req.Prompt, truncateForLog(req.Plan))
-			return agentadaptor.PlanReviewResponse{Result: agentadaptor.ApprovalRejected}, nil
-		}),
-		agentadaptor.WithSessionKey("codebuddy_live_plan", "reject"),
 	)
-	if err != nil {
-		t.Fatalf("Start: %v", err)
+	logLiveEvents(t, events)
+	var runErr *adaptor.RunError
+	if !errors.As(err, &runErr) || !errors.Is(err, adaptor.ErrApprovalDenied) {
+		t.Fatalf("plan rejection error=%v, want RunError/ErrApprovalDenied", err)
 	}
-	wait := logLiveEvents(t, handle)
-	res, err := handle.Wait(ctx)
-	wait()
-	if err != nil {
-		t.Fatalf("Wait: %v", err)
-	}
-
-	mu.Lock()
-	n := calls
-	mu.Unlock()
-	if n == 0 {
-		t.Fatalf("plan-review handler never invoked; model likely did not call ExitPlanMode — output=%q", res.Output)
-	}
-	if res.Failure == nil {
-		t.Fatalf("rejected plan with OnReject=Abort should record a failure; output=%q", res.Output)
-	}
-	if res.Failure.Code != agentadaptor.FailureReject {
-		t.Errorf("failure code = %q, want %q", res.Failure.Code, agentadaptor.FailureReject)
+	if runErr.Result == nil {
+		t.Fatal("plan rejection RunError lost partial Result")
 	}
 	if _, statErr := os.Stat(filepath.Join(cwd, "hello.py")); statErr == nil {
-		t.Errorf("hello.py should not be created after plan rejection")
+		t.Error("hello.py was created despite rejected plan")
 	}
 }
 
-// TestCodeBuddyLivePermissionReject verifies the OnReject=FailureAbort path
-// against the real CLI: the host rejects the tool permission and the adapter
-// records a structured rejection failure.
 func TestCodeBuddyLivePermissionReject(t *testing.T) {
 	requireCodeBuddyCLI(t)
-	cwd := t.TempDir()
-	sdk := newLiveSDK(t, cwd)
-
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
 
-	handle, err := sdk.Start(ctx,
-		"Create a file named blocked.txt in the current directory with any content. "+
-			"Use your file-editing tool. Do not ask questions.",
-		agentadaptor.WithStreaming(),
-		agentadaptor.WithRunPolicy(agentadaptor.RunPolicy{
-			HumanDecision: agentadaptor.HumanDecisionPolicy{
-				Permission: agentadaptor.HumanDecisionAutoApprove,
-				PlanReview: agentadaptor.HumanDecisionAutoApprove,
-				OnReject:   agentadaptor.FailureAbort,
-			},
+	agent := newLiveAgent(t, t.TempDir(), false)
+	_, events, err := collectLiveStream(ctx, agent,
+		"Create blocked.txt with any content using a file-editing tool.",
+		adaptor.WithPolicy(adaptor.Policy{Approvals: adaptor.ApprovalPolicy{
+			Permission: adaptor.ApprovalAsk,
+			PlanReview: adaptor.ApprovalAutoApprove,
+			OnReject:   adaptor.FallbackAbort,
+		}}),
+		adaptor.OnApproval(func(callbackCtx context.Context, request *adaptor.ApprovalRequest) error {
+			return request.Deny(callbackCtx, "permission rejected by live test")
 		}),
-		agentadaptor.WithPermissionHandler(func(_ context.Context, req agentadaptor.PermissionRequest) (agentadaptor.PermissionResponse, error) {
-			t.Logf("[permission-handler] rejecting tool=%q prompt=%q", req.Tool, truncateForLog(req.Prompt))
-			return agentadaptor.PermissionResponse{Result: agentadaptor.ApprovalRejected}, nil
-		}),
-		agentadaptor.WithSessionKey("codebuddy_live_perm", "reject"),
 	)
-	if err != nil {
-		t.Fatalf("Start: %v", err)
-	}
-	wait := logLiveEvents(t, handle)
-	res, err := handle.Wait(ctx)
-	wait()
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	if res.Failure == nil {
-		t.Logf("no failure recorded; model may not have attempted the permissioned tool — output=%q", res.Output)
+	logLiveEvents(t, events)
+	if err != nil && !errors.Is(err, adaptor.ErrApprovalDenied) {
+		t.Fatalf("permission rejection error=%v", err)
 	}
 }
