@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	adaptor "github.com/agent-dance/agent-adaptor/next"
+	adaptor "github.com/agent-dance/agent-adaptor"
 )
 
 func TestJSONLEventAppendDetectsShortWriteAndRollsBack(t *testing.T) {

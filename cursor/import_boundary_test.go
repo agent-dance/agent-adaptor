@@ -6,13 +6,14 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 )
 
 const rootImportPath = "github.com/agent-dance/agent-adaptor"
 
-// TestPackageFilesDoNotImportLegacyRoot protects production and test code
-// from drifting back through historical module-root aliases.
+// TestPackageFilesDoNotImportLegacyRoot protects production code from
+// depending on the consumer-facing root API. Integration tests may use it.
 func TestPackageFilesDoNotImportLegacyRoot(t *testing.T) {
 	entries, err := os.ReadDir(".")
 	if err != nil {
@@ -21,7 +22,7 @@ func TestPackageFilesDoNotImportLegacyRoot(t *testing.T) {
 
 	for _, entry := range entries {
 		name := entry.Name()
-		if entry.IsDir() || filepath.Ext(name) != ".go" {
+		if entry.IsDir() || filepath.Ext(name) != ".go" || strings.HasSuffix(name, "_test.go") {
 			continue
 		}
 		file, err := parser.ParseFile(token.NewFileSet(), filepath.Clean(name), nil, parser.ImportsOnly)

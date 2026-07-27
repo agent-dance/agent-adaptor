@@ -9,7 +9,7 @@ import (
 
 	"github.com/agent-dance/agent-adaptor/bridges/agui"
 	"github.com/agent-dance/agent-adaptor/examples/internal/exampleutil"
-	adaptor "github.com/agent-dance/agent-adaptor/next"
+	adaptor "github.com/agent-dance/agent-adaptor"
 )
 
 type appServer struct {

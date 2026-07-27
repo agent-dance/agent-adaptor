@@ -1,541 +1,657 @@
-package agentadaptor
+package adaptor
 
-import "github.com/agent-dance/agent-adaptor/internal/engine"
+import (
+	"maps"
+	"reflect"
+	"strings"
+	"time"
 
-// Option configures SDK construction. Options install the default agent,
-// named agents, and host-provided managers used by every run. Use Build when
-// you want option errors returned; New panics on invalid construction.
-// It is an alias for the engine declaration (the pipeline core moved to
-// internal/engine in P0.2).
-type Option = engine.Option
+	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/internal/engine"
+	"github.com/agent-dance/agent-adaptor/mcp"
+	"github.com/agent-dance/agent-adaptor/profile"
+	"github.com/agent-dance/agent-adaptor/skill"
+	"github.com/agent-dance/agent-adaptor/threadstore"
+)
 
-// AgentOption configures a single AgentBinding. These defaults are merged into
-// every run on that binding before per-call RunOptions are applied. It is an
-// alias for the engine declaration.
-type AgentOption = engine.AgentOption
-
-// WithDefaultAgent binds the agent used by SDK.Run, SDK.Start, and
-// SDK.Default. It is required exactly once; hosts that want to choose between
-// agents dynamically should do that before calling the SDK, then use
-// WithAgent(name, binding) for explicit named alternatives.
-func WithDefaultAgent(binding AgentBinding) Option {
-	return engine.WithDefaultAgent(binding)
-}
-
-// WithAgent registers an additional named agent binding. The name "default"
-// is reserved for WithDefaultAgent. Named agents are reached with SDK.Agent or
-// Admin().Agent and follow the same execution semantics as the default agent.
-func WithAgent(name string, binding AgentBinding) Option {
-	return engine.WithAgent(name, binding)
-}
-
-// WithSessionStore enables stateful session modes. Without it the SDK is
-// stateless by default; session-aware options such as WithSessionKey,
-// WithContinueSession, and WithForkSession require a store.
-func WithSessionStore(store SessionStore) Option {
-	return engine.WithSessionStore(store)
-}
-
-// WithWorkspaceManager installs the host component that resolves workspace
-// specs into concrete working directories. If unset, the SDK uses a
-// passthrough shared-workspace manager.
-func WithWorkspaceManager(manager WorkspaceManager) Option {
-	return engine.WithWorkspaceManager(manager)
-}
-
-// WithSkillProvider installs the host-side SkillProvider that backs
-// WithSkills / WithDefaultSkills. The provider's GetSkills is invoked
-// on every Run to translate the user-referenced SkillKey set into
-// concrete Skill descriptions (and to inject any tenant-mandatory
-// "required" skills the provider chooses to include).
+// ============ Scope interfaces (decision D7, case A) ============
 //
-// Providers that can also enumerate their full visible catalogue
-// (small, in-memory or cached) should additionally implement
-// [SkillCatalog]. SDK detects the extension via type assertion and
-// uses Catalogue() exclusively for Admin.ListSkills; Run-time
-// resolution always goes through GetSkills regardless. Providers
-// that cannot enumerate (remote stores, etc.) implement only
-// SkillProvider — Admin.ListSkills then reports
-// SkillSyncMode = SkillSyncUnsupported.
+// One option vocabulary, two scopes: the same WithX used in New(...) is the
+// agent-level default, used in Run/Stream(...) it is a per-call override.
+// The merge rule is a single sentence: the nearer scope wins; skills append,
+// everything else replaces. Scope-illegal combinations are compile errors in
+// both directions. See docs/p0-option-scope-decision.md.
+
+// Option is the full set New accepts. It writes agent-level defaults.
 //
-// AgentIdentity (tenant / profile / name) is propagated to the
-// provider through ctx; providers that need scoping read it via
-// [CallerIdentityFromContext].
-func WithSkillProvider(provider SkillProvider) Option {
-	return engine.WithSkillProvider(provider)
+// Passing an Option-only value (WithThreadStore, WithEventBuffer, ...) to
+// Run/Stream does not compile: "adaptor.Option does not implement
+// adaptor.CallOption (missing method ApplyRun)" means the option is
+// construction-scope only.
+type Option interface {
+	// ApplyNew writes the option into the agent-level default settings.
+	ApplyNew(*AgentSettings)
 }
 
-// WithSkillSet is sugar for WithSkillProvider when the catalogue is
-// fully known at SDK construction time. The supplied SkillSet
-// implements both SkillProvider (per-key fetch) and SkillCatalog
-// (full enumeration), so Admin.ListSkills works automatically.
+// CallOption is the set Run/Stream accept. It writes the effective settings
+// of one invocation (a clone of the agent defaults).
 //
-// Hosts with a remote skill store should implement SkillProvider
-// directly instead of constructing a SkillSet.
-func WithSkillSet(set SkillSet) Option {
-	return engine.WithSkillSet(set)
+// CallOption intentionally does NOT embed Option: call-scope-only options
+// passed to New fail to compile too ("missing method ApplyNew"), keeping the
+// misuse feedback symmetric in both directions.
+type CallOption interface {
+	// ApplyRun writes the option into this call's effective settings.
+	ApplyRun(*RunSettings)
 }
 
-// WithSkillMaterializer overrides how SkillFromFS / SkillFromInline sources
-// are written to disk before an adapter consumes them. When unset, the SDK
-// uses the built-in cache-root materializer documented in
-// docs/skill-api-design.md §3.
-func WithSkillMaterializer(materializer SkillMaterializer) Option {
-	return engine.WithSkillMaterializer(materializer)
+// SharedOption is the return type of dual-scope options: used in New it is
+// the Agent's default, used in Run/Stream it overrides this call only. Most
+// of the ~24 core options return it.
+type SharedOption interface {
+	Option
+	CallOption
 }
 
-// WithRuntimeServiceManager installs the host component that starts, finds,
-// and releases runtime services requested by bindings or individual runs. If
-// unset, runtime service requests resolve to an empty set.
-func WithRuntimeServiceManager(manager RuntimeServiceManager) Option {
-	return engine.WithRuntimeServiceManager(manager)
-}
+// ============ Option write targets (the controlled ecosystem surface) ============
 
-// WithEventBuffer configures the per-run event-sink capacity and backpressure
-// policy. runBuf sizes the RunEvent channel (default 64); streamBuf sizes the
-// StreamPayload channel (default 1024). Values <= 0 fall back to the defaults.
-//
-// Policy controls how the SDK reacts when the StreamPayload channel is full:
-//   - BackpressureDropStream (default): drop payloads and emit a single
-//     StreamDropped marker carrying the lost count as soon as capacity
-//     returns; the adapter sub-process never blocks.
-//   - BackpressureBlock: block the adapter goroutine until the host consumes
-//     a payload; use this when strict AG-UI ordering without gaps is
-//     required.
-//
-// RunEvent backpressure is always drop-with-marker and is unaffected by this
-// option.
-func WithEventBuffer(runBuf, streamBuf int, policy EventBackpressure) Option {
-	return engine.WithEventBuffer(runBuf, streamBuf, policy)
-}
+// RunSettings collects every setting that can be overridden at the call
+// site. Fields are unexported; ecosystem packages write through the exported
+// methods below, whose semantics encode the merge rule (Set* replaces,
+// Add* appends). The root package's own options go through the same methods
+// so the extension surface stays self-validating.
+type RunSettings struct {
+	model     string
+	timeout   time.Duration
+	workspace string
+	metadata  map[string]string
+	identity  *Identity
+	policy    *Policy
+	approval  ApprovalHandler
 
-// WithDefaultPermissionHandler binds a PermissionHandler at the agent level.
-// Per-call WithPermissionHandler still overrides this default.
-func WithDefaultPermissionHandler(h PermissionHandler) AgentOption {
-	return engine.WithDefaultPermissionHandler(h)
-}
-
-// WithDefaultPlanReviewHandler binds a PlanReviewHandler at the agent level.
-func WithDefaultPlanReviewHandler(h PlanReviewHandler) AgentOption {
-	return engine.WithDefaultPlanReviewHandler(h)
-}
-
-// WithDefaultQuestionHandler binds a QuestionHandler at the agent level.
-func WithDefaultQuestionHandler(h QuestionHandler) AgentOption {
-	return engine.WithDefaultQuestionHandler(h)
-}
-
-// WithDefaultIdentity sets the binding-level identity visible to host hooks
-// such as SkillProvider and RuntimeServiceManager. Per-call WithAgentIdentity
-// overrides it for one run.
-func WithDefaultIdentity(identity AgentIdentity) AgentOption {
-	return engine.WithDefaultIdentity(identity)
-}
-
-// WithDefaultWorkspace sets the binding-level workspace request. Per-call
-// WithWorkspace overrides it for one run.
-func WithDefaultWorkspace(spec WorkspaceSpec) AgentOption {
-	return engine.WithDefaultWorkspace(spec)
-}
-
-// WithDefaultSkills installs per-agent default skill references. Each SkillRef
-// is either a SkillKey (resolved against the SkillProvider) or an inline
-// Skill value. Multiple calls are additive: later SkillRef values are appended
-// to the previously-declared set. Duplicate keys must be structurally equal
-// (see ErrSkillKeyConflict).
-func WithDefaultSkills(refs ...SkillRef) AgentOption {
-	return engine.WithDefaultSkills(refs...)
-}
-
-// WithDefaultMCP sets the binding-level MCP server configuration. Per-call
-// WithMCP replaces the full MCP config for one run; it is not additive.
-func WithDefaultMCP(cfg MCPConfig) AgentOption {
-	return engine.WithDefaultMCP(cfg)
-}
-
-// WithDefaultProfileResources installs a binding-level profile desired state.
-// Skills are additive with WithDefaultSkills; MCP, instructions, agents, hooks,
-// and config replace the corresponding binding defaults for their resource
-// kind.
-func WithDefaultProfileResources(resources ProfileResources) AgentOption {
-	return engine.WithDefaultProfileResources(resources)
-}
-
-// WithDefaultAgents sets the binding-level desired sub-agent resources.
-func WithDefaultAgents(specs ...AgentSpec) AgentOption {
-	return engine.WithDefaultAgents(specs...)
-}
-
-// WithDefaultHooks sets the binding-level desired hook resources.
-func WithDefaultHooks(specs ...HookSpec) AgentOption {
-	return engine.WithDefaultHooks(specs...)
-}
-
-// WithDefaultProfileConfig sets the binding-level structured profile config
-// patches.
-func WithDefaultProfileConfig(patches ...ProfileConfigPatch) AgentOption {
-	return engine.WithDefaultProfileConfig(patches...)
-}
-
-// WithDefaultRuntimeServices attaches default runtime-service requirements to
-// an agent binding. Per-run WithRuntimeServices(...) overrides these defaults.
-func WithDefaultRuntimeServices(services ...RuntimeServiceSpec) AgentOption {
-	return engine.WithDefaultRuntimeServices(services...)
-}
-
-// WithDefaultRunPolicy sets binding-level defaults. Per-field empty values
-// (…Inherit) mean "no default for that field" until a per-call WithRunPolicy
-// sets it.
-func WithDefaultRunPolicy(p RunPolicy) AgentOption {
-	return engine.WithDefaultRunPolicy(p)
-}
-
-// WithDefaultInstructions sets the binding-level instruction bundle. Passing
-// nil clears the default. Per-call WithInstructions overrides it for one run.
-func WithDefaultInstructions(ref *InstructionsBundleRef) AgentOption {
-	return engine.WithDefaultInstructions(ref)
-}
-
-// WithDefaultMetadata attaches binding-level metadata copied into every
-// DriverRunRequest. Hosts commonly use it for audit tags or workflow labels;
-// adapters should treat it as opaque.
-func WithDefaultMetadata(key, value string) AgentOption {
-	return engine.WithDefaultMetadata(key, value)
-}
-
-// WithDefaultStreaming marks the bound agent as streaming-by-default. Per-call
-// WithStreaming / WithoutStreaming still override this default.
-func WithDefaultStreaming() AgentOption {
-	return engine.WithDefaultStreaming()
-}
-
-// RunOption configures one Run or Start invocation. RunOptions are resolved
-// after binding defaults and affect only the current call.
-type RunOption func(*runOptions)
-
-type runOptions struct {
-	session         *SessionRequest
-	workspace       WorkspaceSpec
-	runtime         *WorkspaceRuntimeConfig
-	skills          []SkillRef
-	mcp             *MCPConfig
-	agents          *AgentPayload
-	hooks           *HookPayload
-	profileConfig   *ProfileConfigPayload
-	outputSchema    *OutputSchema
-	outputSchemaErr error
-	model           string
-	runPolicy       *RunPolicy
-	instructions    *InstructionsBundleRef
+	// instructions is the extra instruction bundle handed to the driver.
+	// instructionsSet records an explicit write (even a clearing one), which
+	// is what marks the resource as host-declared in the profile payload —
+	// the legacy InstructionsSet semantics.
+	instructions    *driver.InstructionsBundleRef
 	instructionsSet bool
-	metadata        map[string]string
-	agent           *AgentIdentity
-	// streaming is tri-state: nil means "inherit from binding defaults",
-	// non-nil wins over the binding default.
-	streaming *bool
-	// runIDPreset is an internal option set by Start() so the resolved run
-	// shares the same ID that the RunHandle exposes before Wait() returns.
-	runIDPreset string
 
-	// per-Kind typed HITL handlers (RunOption-level beat AgentOption-level).
-	permissionHandler PermissionHandler
-	planReviewHandler PlanReviewHandler
-	questionHandler   QuestionHandler
+	// skills is the single append-merged option family in the "nearer scope
+	// wins; skills append, everything else replaces" rule. clone() deep-
+	// copies the slice and records defaultSkillBoundary = len(skills), so
+	// entries below the boundary are the agent defaults (legacy
+	// WithDefaultSkills source label) and entries appended by per-call
+	// options are the run refs (legacy WithSkills source label).
+	skills               []driver.SkillRef
+	defaultSkillBoundary int
+
+	// mcpServers is root-owned option state. Pointer-to-slice preserves an
+	// unset declaration versus an explicit clear; conversion to the internal
+	// envelope happens only at the engine boundary.
+	mcpServers *[]mcp.Server
+
+	// agents/hooks/configPatches use pointer-to-slice so "never set" (nil
+	// pointer) is distinguishable from "explicitly declared empty" (non-nil
+	// pointer, empty slice) — the legacy *AgentPayload / *HookPayload /
+	// *ProfileConfigPayload declaration semantics.
+	agents        *[]driver.AgentSpec
+	hooks         *[]driver.HookSpec
+	configPatches *[]driver.ProfileConfigPatch
+
+	// outputSchema is the structured output request for this run;
+	// outputSchemaErr records a schema generation failure at option-build
+	// time, surfaced before the driver launches (legacy outputSchemaErr
+	// short-circuit).
+	outputSchema    *driver.OutputSchema
+	outputSchemaErr error
+
+	// workspaceSpec selects the workspace provisioning strategy. It
+	// replaces as a whole value and, together with WithWorkspaceManager,
+	// switches the run from direct WithWorkspace(dir) lease synthesis to
+	// managed lease resolution.
+	workspaceSpec WorkspaceSpec
+
+	// services is the declared runtime-service set, replaced as a whole
+	// value (an empty declaration clears the agent default). They are
+	// ensured through the installed ServiceManager before the driver
+	// launches.
+	services []driver.RuntimeServiceSpec
+
+	// runServices are the run-scoped service providers attached to every
+	// invocation (delegation.Service.Option() and friends). This family
+	// appends rather than replaces — an ecosystem option must compose with
+	// the agent's other providers, not silently displace them — and
+	// de-duplicates by provider identity so passing the same option in both
+	// New and Run attaches it once.
+	runServices []RunServiceProvider
 }
 
-// applyRunOptions folds opts into a fresh runOptions value, skipping nil
-// entries (same semantics the resolver used before the pipeline moved to
-// internal/engine).
-func applyRunOptions(opts []RunOption) runOptions {
-	ro := runOptions{}
-	for _, opt := range opts {
-		if opt != nil {
-			opt(&ro)
+// SetModel replaces the effective model for the target scope. Empty and
+// whitespace-only values mean no override, matching the Driver Request
+// contract and preventing an all-space model name from reaching providers.
+func (s *RunSettings) SetModel(m string) { s.model = strings.TrimSpace(m) }
+
+// SetTimeout replaces the wall-clock budget for one run. Zero means no
+// SDK-imposed deadline.
+func (s *RunSettings) SetTimeout(d time.Duration) { s.timeout = d }
+
+// SetInstructions replaces the extra instruction text handed to the driver
+// and declares the instructions resource as host-managed. Empty text clears
+// the effective instructions (an explicit clear still declares).
+func (s *RunSettings) SetInstructions(text string) {
+	if text == "" {
+		s.instructions = nil
+	} else {
+		s.instructions = &driver.InstructionsBundleRef{Content: text}
+	}
+	s.instructionsSet = true
+}
+
+// SetInstructionsBundle replaces the full instruction bundle (path- or
+// content-based) and declares the instructions resource. A nil ref clears
+// while still declaring — the legacy WithInstructions(nil) semantics.
+func (s *RunSettings) SetInstructionsBundle(ref *driver.InstructionsBundleRef) {
+	s.instructions = engine.CloneInstructions(ref)
+	s.instructionsSet = true
+}
+
+// AddSkills appends skill references for the target scope — the single
+// append-merged option family: call-site refs never displace the agent
+// defaults, they extend them.
+func (s *RunSettings) AddSkills(refs ...skill.Ref) {
+	s.skills = append(s.skills, engine.CloneSkillRefs(refs)...)
+}
+
+// SetMCPServers replaces the MCP server set as a whole value. An empty
+// (or nil) slice is an explicit clear: it substitutes the agent default
+// with "no servers" rather than inheriting it.
+func (s *RunSettings) SetMCPServers(servers []mcp.Server) {
+	cloned := engine.CloneMCPServerSpecs(servers)
+	s.mcpServers = &cloned
+}
+
+func (s RunSettings) engineMCPConfig() *engine.MCPConfig {
+	if s.mcpServers == nil {
+		return nil
+	}
+	return &engine.MCPConfig{Servers: engine.CloneMCPServerSpecs(*s.mcpServers)}
+}
+
+// SetAgents replaces the sub-agent spec set and declares the resource.
+// An empty slice declares "explicitly no sub-agents".
+func (s *RunSettings) SetAgents(specs []driver.AgentSpec) {
+	cp := engine.CloneAgentSpecs(specs)
+	s.agents = &cp
+}
+
+// SetHooks replaces the hook spec set and declares the resource. An empty
+// slice declares "explicitly no hooks".
+func (s *RunSettings) SetHooks(specs []driver.HookSpec) {
+	cp := engine.CloneHookSpecs(specs)
+	s.hooks = &cp
+}
+
+// SetConfigPatches replaces the profile config patch set and declares the
+// resource. An empty slice declares "explicitly no patches".
+func (s *RunSettings) SetConfigPatches(patches []driver.ProfileConfigPatch) {
+	cp := engine.CloneProfileConfigPatches(patches)
+	s.configPatches = &cp
+}
+
+// SetOutputSchema replaces the structured output request for this run.
+func (s *RunSettings) SetOutputSchema(schema driver.OutputSchema) {
+	s.outputSchema = engine.CloneOutputSchema(&schema)
+}
+
+// SetOutputSchemaError records a schema construction failure. The run fails
+// with this error before the driver launches — schema bugs are programmer
+// errors that must not silently degrade into unvalidated output. The error
+// is sticky (legacy outputSchemaErr semantics): a valid schema set later in
+// the option list does not clear it.
+func (s *RunSettings) SetOutputSchemaError(err error) {
+	s.outputSchemaErr = err
+}
+
+// SetWorkspace replaces the working directory for the target scope.
+func (s *RunSettings) SetWorkspace(dir string) { s.workspace = dir }
+
+// SetWorkspaceSpec replaces the workspace provisioning strategy. A non-nil
+// spec routes the run through the WorkspaceManager (the passthrough manager
+// when none is installed) instead of the direct lease synthesis.
+func (s *RunSettings) SetWorkspaceSpec(spec WorkspaceSpec) { s.workspaceSpec = spec }
+
+// SetServices replaces the declared runtime-service set as a whole value. An
+// empty (or nil) slice is an explicit clear: it substitutes the agent default
+// with "no services" rather than inheriting it.
+func (s *RunSettings) SetServices(specs []ServiceSpec) {
+	s.services = engine.CloneRuntimeServiceSpecs(specs)
+}
+
+// AddRunServiceProvider appends a run-scoped service provider — the controlled
+// extension surface behind ecosystem options such as
+// delegation.Service.Option(). Providers append rather than replace, and a
+// provider already present is not added twice: the same option value used in
+// both New and Run attaches exactly once, which is what keeps its MCP server
+// key unique (a duplicate would fail the run before launch).
+func (s *RunSettings) AddRunServiceProvider(p RunServiceProvider) {
+	if p == nil {
+		return
+	}
+	if t := reflect.TypeOf(p); t != nil && t.Comparable() {
+		for _, existing := range s.runServices {
+			// Interface comparison short-circuits on differing dynamic
+			// types, so a non-comparable neighbour cannot panic here.
+			if existing == p {
+				return
+			}
 		}
 	}
-	return ro
+	s.runServices = append(s.runServices, p)
 }
 
-// params converts the applied run options into the engine's exported
-// RunParams mirror. It is a field-by-field copy: pointer/nil semantics are
-// preserved exactly, so engine-side resolution behaves as before.
-func (ro *runOptions) params() engine.RunParams {
-	return engine.RunParams{
-		Session:           ro.session,
-		Workspace:         ro.workspace,
-		Runtime:           ro.runtime,
-		Skills:            ro.skills,
-		MCP:               ro.mcp,
-		Agents:            ro.agents,
-		Hooks:             ro.hooks,
-		ProfileConfig:     ro.profileConfig,
-		OutputSchema:      ro.outputSchema,
-		OutputSchemaErr:   ro.outputSchemaErr,
-		Model:             ro.model,
-		RunPolicy:         ro.runPolicy,
-		Instructions:      ro.instructions,
-		InstructionsSet:   ro.instructionsSet,
-		Metadata:          ro.metadata,
-		Agent:             ro.agent,
-		Streaming:         ro.streaming,
-		RunIDPreset:       ro.runIDPreset,
-		PermissionHandler: ro.permissionHandler,
-		PlanReviewHandler: ro.planReviewHandler,
-		QuestionHandler:   ro.questionHandler,
+// SetMetadata sets one audit metadata key. Keys merge per key: a call-site
+// value overrides the same key from the agent defaults and leaves the other
+// default keys intact.
+func (s *RunSettings) SetMetadata(k, v string) {
+	if s.metadata == nil {
+		s.metadata = make(map[string]string)
 	}
+	s.metadata[k] = v
 }
 
-// WithPermissionHandler installs a PermissionHandler for this run. Overrides
-// any WithDefaultPermissionHandler set on the binding.
-func WithPermissionHandler(h PermissionHandler) RunOption {
-	return func(ro *runOptions) {
-		ro.permissionHandler = h
+// SetIdentity replaces the caller identity propagated to host hooks and the
+// driver.
+func (s *RunSettings) SetIdentity(id Identity) { s.identity = &id }
+
+// SetPolicy replaces the whole execution policy ("everything else replaces":
+// a call-site policy substitutes the agent-default policy as one value, it
+// does not merge field-wise).
+func (s *RunSettings) SetPolicy(p Policy) { s.policy = &p }
+
+// SetApprovalHandler replaces the approval callback (form A of approval
+// consumption). A nil handler restores event-form consumption.
+func (s *RunSettings) SetApprovalHandler(h ApprovalHandler) { s.approval = h }
+
+// clone returns a deep copy so per-call overrides never leak back into the
+// agent defaults (and one run never pollutes the next). It also stamps the
+// default/run skill boundary: everything present at clone time is an agent
+// default; everything a CallOption appends afterwards is a run ref.
+func (s RunSettings) clone() RunSettings {
+	out := s
+	out.metadata = maps.Clone(s.metadata)
+	if s.identity != nil {
+		id := *s.identity
+		out.identity = &id
 	}
-}
-
-// WithPlanReviewHandler installs a PlanReviewHandler for this run. Overrides
-// any WithDefaultPlanReviewHandler set on the binding.
-func WithPlanReviewHandler(h PlanReviewHandler) RunOption {
-	return func(ro *runOptions) {
-		ro.planReviewHandler = h
+	if s.policy != nil {
+		p := *s.policy
+		out.policy = &p
 	}
-}
-
-// WithQuestionHandler installs a QuestionHandler for this run. Overrides
-// any WithDefaultQuestionHandler set on the binding.
-func WithQuestionHandler(h QuestionHandler) RunOption {
-	return func(ro *runOptions) {
-		ro.questionHandler = h
+	out.instructions = engine.CloneInstructions(s.instructions)
+	out.skills = engine.CloneSkillRefs(s.skills)
+	out.defaultSkillBoundary = len(out.skills)
+	if s.mcpServers != nil {
+		cloned := engine.CloneMCPServerSpecs(*s.mcpServers)
+		out.mcpServers = &cloned
 	}
-}
-
-// withPresetRunID is an internal RunOption used by Start() to propagate the
-// pre-allocated run identifier into resolveInvocation. It is not part of the
-// public API.
-func withPresetRunID(runID string) RunOption {
-	return func(ro *runOptions) {
-		ro.runIDPreset = runID
+	if s.agents != nil {
+		cp := engine.CloneAgentSpecs(*s.agents)
+		out.agents = &cp
 	}
-}
-
-// WithSession supplies the complete session request for one run. Most hosts
-// should prefer the helper options WithSessionKey, WithContinueSession,
-// WithNewSession, or WithForkSession unless they need exact mode control.
-func WithSession(req SessionRequest) RunOption {
-	return func(ro *runOptions) {
-		copyReq := req
-		ro.session = &copyReq
+	if s.hooks != nil {
+		cp := engine.CloneHookSpecs(*s.hooks)
+		out.hooks = &cp
 	}
-}
-
-// WithSessionKey requests continue_or_start semantics for the stable
-// host-facing (namespace, key) pair. The store resolves that pair to the
-// current concrete SessionID, creating a new session when none exists.
-func WithSessionKey(namespace, key string) RunOption {
-	return WithSession(SessionRequest{
-		Namespace: namespace,
-		Key:       key,
-		Mode:      SessionContinueOrStart,
-	})
-}
-
-// WithContinueSession resumes one exact SessionID and fails if it cannot be
-// found or is incompatible. Use this when the host is holding a concrete
-// session handle rather than a stable business key.
-func WithContinueSession(id string) RunOption {
-	return WithSession(SessionRequest{
-		ID:   id,
-		Mode: SessionContinueOnly,
-	})
-}
-
-// WithNewSession starts a fresh session and binds it to the supplied
-// (namespace, key), replacing the active mapping only after a valid checkpoint
-// is produced.
-func WithNewSession(namespace, key string) RunOption {
-	return WithSession(SessionRequest{
-		Namespace: namespace,
-		Key:       key,
-		Mode:      SessionStartNew,
-	})
-}
-
-// WithForkSession starts a new session from an existing concrete SessionID and
-// binds the fork to the supplied (namespace, key).
-func WithForkSession(fromID, namespace, key string) RunOption {
-	return WithSession(SessionRequest{
-		Namespace: namespace,
-		Key:       key,
-		Mode:      SessionFork,
-		ForkFrom:  fromID,
-	})
-}
-
-// WithWorkspace overrides the binding-level workspace request for one run.
-func WithWorkspace(spec WorkspaceSpec) RunOption {
-	return func(ro *runOptions) {
-		ro.workspace = spec
+	if s.configPatches != nil {
+		cp := engine.CloneProfileConfigPatches(*s.configPatches)
+		out.configPatches = &cp
 	}
+	out.outputSchema = engine.CloneOutputSchema(s.outputSchema)
+	out.services = engine.CloneRuntimeServiceSpecs(s.services)
+	out.runServices = append([]RunServiceProvider(nil), s.runServices...)
+	return out
 }
 
-// WithRuntimeServices overrides the runtime services for a single run.
-func WithRuntimeServices(services ...RuntimeServiceSpec) RunOption {
-	return func(ro *runOptions) {
-		if len(services) == 0 {
-			ro.runtime = nil
-			return
-		}
-		ro.runtime = &WorkspaceRuntimeConfig{Services: cloneRuntimeServiceSpecs(services)}
-	}
+// AgentSettings = RunSettings (dual-scope fields) + construction-scope-only
+// fields. The subset relation is expressed by struct embedding: a CallOption
+// receives *RunSettings, on which the construction-only fields simply do not
+// exist — the writable field set is the scope boundary.
+type AgentSettings struct {
+	RunSettings
+
+	// threadStore backs Agent.Thread/NewThread (stateful conversations).
+	// Nil is valid: Threads then fail their runs with
+	// ErrThreadStoreRequired while the stateless Agent paths stay
+	// unaffected.
+	threadStore threadstore.Store
+
+	// eventBuffer sizes the per-run event channel (0 = default 1024).
+	eventBuffer int
+
+	// blockingEvents switches the event pipeline from the default
+	// drop-with-aggregated-marker strategy to blocking delivery.
+	blockingEvents bool
+
+	// profile selects the driver-native profile strategy (shared /
+	// dedicated / clone). Construction scope only: the profile identity of
+	// an Agent is part of what the Agent *is*, and it participates in
+	// session fingerprints.
+	profile *driver.ProfileSelection
+
+	// skillProvider resolves bare skill keys to full Skill descriptions
+	// (and, when it implements SkillCatalog, enumerates the admin
+	// catalogue). Nil means inline Skill values are the only source.
+	skillProvider SkillProvider
+
+	// skillMaterializer overrides how non-path skill sources are
+	// materialized to disk. Nil uses the process-default materializer.
+	skillMaterializer SkillMaterializer
+
+	// workspaceManager turns a WorkspaceSpec into a concrete lease. Nil
+	// means the passthrough manager when a spec is set, and no managed
+	// resolution at all when none is.
+	workspaceManager WorkspaceManager
+
+	// serviceManager starts/locates the services declared with
+	// WithServices. Nil means declared services are not ensured — the
+	// legacy noop-manager behavior, which never invents endpoints.
+	serviceManager ServiceManager
 }
 
-// WithSkills adds skill references to the current run's Selected set. It is
-// additive: per-run WithSkills values are unioned with the binding's
-// WithDefaultSkills and the SkillProvider's Required entries. Duplicate keys
-// must be structurally equal; conflicting duplicates return an error via
-// ErrSkillKeyConflict before the adapter is invoked.
-func WithSkills(refs ...SkillRef) RunOption {
-	return func(ro *runOptions) {
-		ro.skills = append(ro.skills, cloneSkillRefs(refs)...)
-	}
+// SetThreadStore injects the thread storage backend (stateful conversations).
+func (s *AgentSettings) SetThreadStore(store threadstore.Store) { s.threadStore = store }
+
+// SetEventBuffer sets the per-run event channel buffer size.
+func (s *AgentSettings) SetEventBuffer(n int) { s.eventBuffer = n }
+
+// SetBlockingEvents switches event delivery to blocking (no-drop) mode.
+func (s *AgentSettings) SetBlockingEvents() { s.blockingEvents = true }
+
+// SetProfile replaces the driver-native profile selection.
+func (s *AgentSettings) SetProfile(sel profile.Selection) {
+	s.profile = engine.CloneProfileSelection(&sel)
 }
 
-// WithMCP replaces the effective MCP server configuration for one run. Use it
-// for request-scoped tool access; use WithDefaultMCP for binding-level tools.
-func WithMCP(cfg MCPConfig) RunOption {
-	return func(ro *runOptions) {
-		copyCfg := MCPConfig{Servers: cloneMCPServerSpecs(cfg.Servers)}
-		ro.mcp = &copyCfg
-	}
+// SetSkillProvider injects the skill provider used to resolve bare keys.
+func (s *AgentSettings) SetSkillProvider(p SkillProvider) { s.skillProvider = p }
+
+// SetSkillMaterializer overrides the skill materialization strategy.
+func (s *AgentSettings) SetSkillMaterializer(m SkillMaterializer) { s.skillMaterializer = m }
+
+// SetWorkspaceManager injects the workspace provisioning backend.
+func (s *AgentSettings) SetWorkspaceManager(m WorkspaceManager) { s.workspaceManager = m }
+
+// SetServiceManager injects the runtime-service orchestration backend.
+func (s *AgentSettings) SetServiceManager(m ServiceManager) { s.serviceManager = m }
+
+// ============ In-package function adapters (one per scope) ============
+
+// sharedOptionFunc backs dual-scope options: one func, two forwarding methods.
+type sharedOptionFunc func(*RunSettings)
+
+func (f sharedOptionFunc) ApplyNew(s *AgentSettings) { f(&s.RunSettings) }
+func (f sharedOptionFunc) ApplyRun(s *RunSettings)   { f(s) }
+
+// newOptionFunc backs construction-scope-only options.
+type newOptionFunc func(*AgentSettings)
+
+func (f newOptionFunc) ApplyNew(s *AgentSettings) { f(s) }
+
+// callOptionFunc backs call-scope-only options (WithSchema[T]; later
+// WithoutTokenStream).
+type callOptionFunc func(*RunSettings)
+
+func (f callOptionFunc) ApplyRun(s *RunSettings) { f(s) }
+
+// ============ P0 option vocabulary ============
+
+// WithModel selects the model. In New it is the Agent's default model; in
+// Run/Stream it overrides this invocation only (delivered to the driver as
+// the per-run model override).
+func WithModel(m string) SharedOption {
+	return sharedOptionFunc(func(s *RunSettings) { s.SetModel(m) })
 }
 
-// WithProfileResources installs a per-run profile desired state. Skills are
-// additive; MCP, instructions, agents, hooks, and config replace the effective
-// desired state for their resource kind on this run.
-func WithProfileResources(resources ProfileResources) RunOption {
-	return func(ro *runOptions) {
-		copyResources := cloneProfileResources(resources)
-		if len(copyResources.Skills) > 0 {
-			ro.skills = append(ro.skills, copyResources.Skills...)
-		}
-		if copyResources.MCP != nil {
-			ro.mcp = copyResources.MCP
-		}
-		if resources.Agents != nil {
-			ro.agents = &AgentPayload{Agents: copyResources.Agents}
-		}
-		if resources.Hooks != nil {
-			ro.hooks = &HookPayload{Hooks: copyResources.Hooks}
-		}
-		if resources.Config != nil {
-			ro.profileConfig = &ProfileConfigPayload{Patches: copyResources.Config}
-		}
-		if copyResources.Instructions != nil {
-			ro.instructions = copyResources.Instructions
-			ro.instructionsSet = true
-		}
-	}
+// WithTimeout bounds one run's wall-clock time. In New it is the default
+// budget for every run; in Run/Stream it overrides this invocation only.
+// The SDK enforces it via context deadline; a run that exceeds it fails with
+// context.DeadlineExceeded.
+func WithTimeout(d time.Duration) SharedOption {
+	return sharedOptionFunc(func(s *RunSettings) { s.SetTimeout(d) })
 }
 
-// WithAgents replaces the effective desired agent resources for this run.
-func WithAgents(specs ...AgentSpec) RunOption {
-	return func(ro *runOptions) {
-		ro.agents = &AgentPayload{Agents: cloneAgentSpecs(specs)}
-	}
+// WithInstructions supplies extra instruction text alongside the prompt.
+// Nearer scope replaces: a call-site value substitutes the agent default.
+func WithInstructions(text string) SharedOption {
+	return sharedOptionFunc(func(s *RunSettings) { s.SetInstructions(text) })
 }
 
-// WithHooks replaces the effective desired hook resources for this run.
-func WithHooks(specs ...HookSpec) RunOption {
-	return func(ro *runOptions) {
-		ro.hooks = &HookPayload{Hooks: cloneHookSpecs(specs)}
-	}
+// WithWorkspace sets the working directory the agent operates in.
+func WithWorkspace(dir string) SharedOption {
+	return sharedOptionFunc(func(s *RunSettings) { s.SetWorkspace(dir) })
 }
 
-// WithProfileConfig replaces the effective desired structured config patches
-// for this run.
-func WithProfileConfig(patches ...ProfileConfigPatch) RunOption {
-	return func(ro *runOptions) {
-		ro.profileConfig = &ProfileConfigPayload{Patches: cloneProfileConfigPatches(patches)}
-	}
+// WithMetadata attaches one audit metadata key/value to runs. Metadata
+// merges per key: call-site keys override same-named default keys and leave
+// the rest of the defaults intact.
+func WithMetadata(k, v string) SharedOption {
+	return sharedOptionFunc(func(s *RunSettings) { s.SetMetadata(k, v) })
 }
 
-// WithModel overrides the bound agent's model for one run. It is the per-run
-// counterpart to the binding-level model carried by CodexConfig.Model /
-// ClaudeConfig.Model / CursorConfig.Model: the value is forwarded to the
-// adapter's native model selection (the `--model` flag for the built-in
-// codex / claude / cursor adapters) and takes precedence over the binding
-// model for this invocation only.
+// WithIdentity sets the caller identity (tenant / user / profile / agent
+// scoping) propagated to host hooks and the driver. See Identity.
+func WithIdentity(id Identity) SharedOption {
+	return sharedOptionFunc(func(s *RunSettings) { s.SetIdentity(id) })
+}
+
+// WithPolicy sets the execution policy (sandbox, optional feature levels,
+// and — from P1 — approvals). The policy replaces as a whole value; it does
+// not merge field-wise with the agent default.
+func WithPolicy(p Policy) SharedOption {
+	return sharedOptionFunc(func(s *RunSettings) { s.SetPolicy(p) })
+}
+
+// OnApproval installs the approval callback — form A of approval
+// consumption. Every human-in-the-loop request whose policy mode is "ask"
+// invokes the handler with a live *ApprovalRequest; the handler resolves it
+// (Approve / Deny / Answer) and returns nil, or returns an error to abort
+// the run. When no handler is installed the request arrives as a
+// *ApprovalRequest event on the Stream instead (form B); either way an
+// unconsumed request times out into the Policy.Approvals fallback.
 //
-// Unlike WithProfileConfig, it does not persist anything to the agent profile
-// on disk and works uniformly across drivers regardless of whether the driver
-// exposes a "model" profile-config capability. An empty or whitespace-only
-// value is ignored, leaving the binding model in effect.
-func WithModel(model string) RunOption {
-	return func(ro *runOptions) {
-		ro.model = model
-	}
+// In New the handler is the agent default; in Run/Stream it overrides this
+// invocation only ("nearer scope wins").
+func OnApproval(h ApprovalHandler) SharedOption {
+	return sharedOptionFunc(func(s *RunSettings) { s.SetApprovalHandler(h) })
 }
 
-// WithRunPolicy sets per-run policy. Empty fields inherit from the binding
-// default (or stay unset for adapter fallbacks).
-func WithRunPolicy(p RunPolicy) RunOption {
-	return func(ro *runOptions) {
-		copyP := p
-		ro.runPolicy = &copyP
-	}
+// WithThreadStore injects the thread storage backend that enables stateful
+// conversations: with it, Agent.Thread / Agent.NewThread persist and resume
+// driver checkpoints across runs and processes (memory.NewStore() for
+// single-process hosts, a durable implementation for services). Without it
+// Threads fail their runs with ErrThreadStoreRequired. Construction scope
+// only; passing it to Run/Stream is a compile error (missing method
+// ApplyRun).
+func WithThreadStore(store threadstore.Store) Option {
+	return newOptionFunc(func(s *AgentSettings) { s.SetThreadStore(store) })
 }
 
-// WithInstructions overrides the binding-level instruction bundle for one
-// run. Passing nil clears the effective instructions for that run.
-func WithInstructions(ref *InstructionsBundleRef) RunOption {
-	return func(ro *runOptions) {
-		ro.instructions = cloneInstructions(ref)
-		ro.instructionsSet = true
-	}
+// WithEventBuffer sets the per-run event channel buffer size used by the
+// streaming pipeline (default 1024). When the consumer falls behind and the
+// buffer fills, events are dropped and surfaced as one aggregated
+// Dropped{Count} marker. Construction scope only.
+func WithEventBuffer(n int) Option {
+	return newOptionFunc(func(s *AgentSettings) { s.SetEventBuffer(n) })
 }
 
-// WithMetadata attaches request-scoped metadata to DriverRunRequest. It is
-// opaque to the SDK and intended for adapters, audit logs, and host hooks.
-func WithMetadata(key, value string) RunOption {
-	return func(ro *runOptions) {
-		if ro.metadata == nil {
-			ro.metadata = map[string]string{}
-		}
-		ro.metadata[key] = value
-	}
+// WithBlockingEvents switches event delivery from the default
+// drop-with-marker strategy to blocking: EmitStream/Emit wait for the
+// consumer, no event is ever dropped, and a stalled consumer stalls the
+// driver. Construction scope only.
+func WithBlockingEvents() Option {
+	return newOptionFunc(func(s *AgentSettings) { s.SetBlockingEvents() })
 }
 
-// WithAgentIdentity overrides the binding-level identity for one run. This is
-// useful when one SDK instance serves multiple tenants or profiles but the
-// host has already chosen the concrete agent binding.
-func WithAgentIdentity(identity AgentIdentity) RunOption {
-	return func(ro *runOptions) {
-		copyIdentity := identity
-		ro.agent = &copyIdentity
-	}
+// ============ P3 option vocabulary: skills / MCP / profile ============
+
+// SkillRef references a skill for WithSkills: either a bare key resolved
+// through the SkillProvider (skill.Key) or a fully described inline skill
+// (skill.Dir / skill.FS / skill.Inline / skill.Require). Alias of the
+// driver SPI type — skill package constructors produce values of exactly
+// this type.
+type SkillRef = skill.Ref
+
+// SkillProvider resolves bare skill keys to full skill descriptions.
+// Implementations that also implement skill.Catalog (a Catalogue
+// method) additionally power Inspect().Skills enumeration.
+type SkillProvider = skill.Provider
+
+// SkillMaterializer converts non-path skill sources into on-disk skill
+// directories before the driver launches.
+type SkillMaterializer = skill.Materializer
+
+// WithSkills appends skill references. This is the single append-merged
+// option family: in New the refs are the agent's default skills, in
+// Run/Stream they extend (never displace) the defaults for this invocation
+// only. Bare keys (skill.Key) are resolved through the SkillProvider;
+// inline values (skill.Dir / skill.FS / skill.Inline) are taken at face
+// value. Duplicate keys must be structurally equal — conflicting
+// duplicates fail the run with ErrSkillKeyConflict.
+func WithSkills(refs ...SkillRef) SharedOption {
+	return sharedOptionFunc(func(s *RunSettings) { s.AddSkills(refs...) })
 }
 
-// WithStreaming requests that the adapter emit normalized StreamPayload
-// events for this run. When the adapter implements StreamAwareDriver it will
-// switch to its richest token-level transport (e.g. codex app-server,
-// claude --include-partial-messages, cursor --stream-partial-output).
+// WithSkillProvider installs the skill provider that resolves bare keys
+// (and, when it implements a Catalogue method, feeds Inspect().Skills).
+// Construction scope only: the provider is part of the Agent's identity,
+// not a per-call knob.
+func WithSkillProvider(p SkillProvider) Option {
+	return newOptionFunc(func(s *AgentSettings) { s.SetSkillProvider(p) })
+}
+
+// WithSkillMaterializer overrides how non-path skill sources are staged to
+// disk. Construction scope only.
+func WithSkillMaterializer(m SkillMaterializer) Option {
+	return newOptionFunc(func(s *AgentSettings) { s.SetSkillMaterializer(m) })
+}
+
+// WithMCP replaces the MCP server set as a whole value ("everything else
+// replaces"): in New it is the agent default, in Run/Stream it substitutes
+// the default for this invocation only. Calling WithMCP() with no servers
+// is an explicit clear — the run sees no MCP servers even when the agent
+// default has some. Server specs are validated against the driver's
+// declared MCP capability before the driver launches; unsupported
+// transports fail the run with ErrMCPTransportUnsupported and the driver
+// is never started.
+func WithMCP(servers ...mcp.Server) SharedOption {
+	return sharedOptionFunc(func(s *RunSettings) { s.SetMCPServers(servers) })
+}
+
+// WithProfile selects the driver-native profile strategy (profile.Native /
+// profile.Dedicated / profile.CloneNative / profile.Default). Construction
+// scope only: the profile is part of what the Agent is, participates in
+// session fingerprints, and cannot be swapped per call.
+func WithProfile(sel profile.Selection) Option {
+	return newOptionFunc(func(s *AgentSettings) { s.SetProfile(sel) })
+}
+
+// WithProfileResources declares the desired profile-shaped resource set in
+// one value. Each resource keeps its own merge rule (the same rules as the
+// dedicated options):
 //
-// Adapters without streaming support will simply produce an empty
-// StreamEvents channel; the run still completes normally with standard
-// RunEvents and RunResult.
-func WithStreaming() RunOption {
-	return func(ro *runOptions) {
-		t := true
-		ro.streaming = &t
-	}
+//   - Skills append (like WithSkills);
+//   - MCP replaces when non-nil (like WithMCP);
+//   - Agents / Hooks / Config replace and declare when the field is
+//     non-nil — an explicitly empty slice declares "none";
+//   - Instructions replace and declare when non-nil.
+//
+// In New the resources are agent defaults; in Run/Stream they override
+// this invocation only. Every declared resource lands in the run's
+// ProfilePayload, and ProfileState reports truthfully whether the adapter
+// actually materialized it.
+func WithProfileResources(res profile.Resources) SharedOption {
+	return sharedOptionFunc(func(s *RunSettings) {
+		cp := profileResourcesToEngine(res)
+		if len(cp.Skills) > 0 {
+			s.AddSkills(cp.Skills...)
+		}
+		if cp.MCP != nil {
+			s.SetMCPServers(cp.MCP.Servers)
+		}
+		if res.Agents != nil {
+			s.SetAgents(cp.Agents)
+		}
+		if res.Hooks != nil {
+			s.SetHooks(cp.Hooks)
+		}
+		if res.Config != nil {
+			s.SetConfigPatches(cp.Config)
+		}
+		if cp.Instructions != nil {
+			s.SetInstructionsBundle(cp.Instructions)
+		}
+	})
 }
 
-// WithoutStreaming disables streaming for this run even when the bound agent
-// set WithDefaultStreaming. It is the explicit opt-out for batch / scripted
-// invocations on a streaming-default binding.
-func WithoutStreaming() RunOption {
-	return func(ro *runOptions) {
-		f := false
-		ro.streaming = &f
-	}
+// ============ P4.7 option vocabulary: workspace / services ============
+
+// WithWorkspaceSpec selects how the run's workspace is provisioned —
+// adaptor.SharedWorkspace{} to reuse the project directory,
+// adaptor.GitWorktreeWorkspace{...} for an isolated worktree,
+// adaptor.AdapterManagedWorkspace{} to let the driver choose. It replaces as a
+// whole value: in New it is the agent default, in Run/Stream it overrides this
+// invocation only.
+//
+// WithWorkspace(dir) and WithWorkspaceSpec compose: the directory is the base
+// CWD handed to the WorkspaceManager, the spec is the strategy. Setting either
+// a spec or a manager routes the run through managed lease resolution; setting
+// neither keeps the plain "run here" behavior.
+func WithWorkspaceSpec(spec WorkspaceSpec) SharedOption {
+	return sharedOptionFunc(func(s *RunSettings) { s.SetWorkspaceSpec(spec) })
+}
+
+// WithWorkspaceManager installs the backend that turns a WorkspaceSpec into a
+// concrete working-directory lease (git worktrees, sandboxes, an external
+// workspace service). Without one, specs resolve through the SDK's passthrough
+// manager, which leases the base directory unchanged. Construction scope only:
+// the manager is infrastructure the Agent is built on, not a per-call knob.
+func WithWorkspaceManager(m WorkspaceManager) Option {
+	return newOptionFunc(func(s *AgentSettings) { s.SetWorkspaceManager(m) })
+}
+
+// WithServices declares the runtime services a run needs — dev servers,
+// databases, tool sidecars. They are ensured through the installed
+// ServiceManager before the driver launches, and the resulting endpoints reach
+// the driver in the run's runtime payload; a service that publishes a typed
+// ServiceRef.MCP additionally joins the run's MCP server set alongside (never
+// in place of) WithMCP.
+//
+// The declaration replaces as a whole value: calling WithServices() with no
+// specs is an explicit clear. Without a ServiceManager the declaration is
+// inert — the SDK never invents endpoints for services nobody manages.
+func WithServices(specs ...ServiceSpec) SharedOption {
+	return sharedOptionFunc(func(s *RunSettings) { s.SetServices(specs) })
+}
+
+// WithServiceManager installs the backend that starts or locates the services
+// declared with WithServices, and releases the run-scoped ones afterwards.
+// Construction scope only.
+func WithServiceManager(m ServiceManager) Option {
+	return newOptionFunc(func(s *AgentSettings) { s.SetServiceManager(m) })
+}
+
+// WithRunServices attaches run-scoped service providers to every invocation:
+// the generic form of what ecosystem packages ship as their own one-liner
+// option (delegation.Service.Option()). Each provider is attached after the run
+// ID is minted and before the driver is dispatched, contributes its endpoints
+// to the run's runtime/MCP payload, may stream its own events into the run's
+// event channel, and is detached once the run's events are done.
+//
+// Providers append rather than replace, and the same provider is never attached
+// twice — passing one option value in both New and Run is safe.
+func WithRunServices(providers ...RunServiceProvider) SharedOption {
+	return sharedOptionFunc(func(s *RunSettings) {
+		for _, p := range providers {
+			s.AddRunServiceProvider(p)
+		}
+	})
 }

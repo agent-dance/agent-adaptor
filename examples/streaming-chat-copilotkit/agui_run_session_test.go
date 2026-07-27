@@ -9,7 +9,7 @@ import (
 	aguievents "github.com/ag-ui-protocol/ag-ui/sdks/community/go/pkg/core/events"
 
 	"github.com/agent-dance/agent-adaptor/bridges/agui"
-	adaptor "github.com/agent-dance/agent-adaptor/next"
+	adaptor "github.com/agent-dance/agent-adaptor"
 )
 
 // TestAGUIRunSessionRecordsUserTurnBeforeAssistant is the canonical "user

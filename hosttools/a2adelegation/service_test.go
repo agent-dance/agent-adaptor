@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"github.com/agent-dance/agent-adaptor/hosttools/a2adelegation"
-	adaptor "github.com/agent-dance/agent-adaptor/next"
+	adaptor "github.com/agent-dance/agent-adaptor"
 )
 
 func newUnitService(t *testing.T) *a2adelegation.Service {

@@ -6,14 +6,14 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 )
 
 const legacyRootImport = "github.com/agent-dance/agent-adaptor"
 
-// TestPackageRootImportBoundary keeps both production and test code on the
-// final v1 leaf contracts. Reintroducing the historical module root anywhere
-// in this package is a compile-boundary regression.
+// TestPackageRootImportBoundary keeps production code on the Driver SPI and
+// leaf contracts. Tests may import the final root API for integration coverage.
 func TestPackageRootImportBoundary(t *testing.T) {
 	t.Parallel()
 	entries, err := os.ReadDir(".")
@@ -22,7 +22,7 @@ func TestPackageRootImportBoundary(t *testing.T) {
 	}
 	for _, entry := range entries {
 		name := entry.Name()
-		if entry.IsDir() || filepath.Ext(name) != ".go" {
+		if entry.IsDir() || filepath.Ext(name) != ".go" || strings.HasSuffix(name, "_test.go") {
 			continue
 		}
 		file, err := parser.ParseFile(token.NewFileSet(), name, nil, parser.ImportsOnly)

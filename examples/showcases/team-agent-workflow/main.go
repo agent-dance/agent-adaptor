@@ -52,7 +52,7 @@ import (
 	"github.com/agent-dance/agent-adaptor/examples/internal/exampleutil"
 	delegation "github.com/agent-dance/agent-adaptor/hosttools/a2adelegation"
 	"github.com/agent-dance/agent-adaptor/memory"
-	adaptor "github.com/agent-dance/agent-adaptor/next"
+	adaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/profile"
 )
 

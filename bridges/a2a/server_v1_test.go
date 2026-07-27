@@ -8,7 +8,7 @@ import (
 	a2a "github.com/agent-dance/agent-adaptor/bridges/a2a"
 	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/memory"
-	adaptor "github.com/agent-dance/agent-adaptor/next"
+	adaptor "github.com/agent-dance/agent-adaptor"
 )
 
 // Redaction anchor: the v1 server keeps the legacy default ExposurePolicy —

@@ -47,7 +47,7 @@ import (
 
 	"github.com/agent-dance/agent-adaptor/bridges/agui"
 	"github.com/agent-dance/agent-adaptor/bridges/internal/bridgekey"
-	adaptor "github.com/agent-dance/agent-adaptor/next"
+	adaptor "github.com/agent-dance/agent-adaptor"
 )
 
 // OptionsV1 configures a HandlerV1. Zero values select AG-UI protocol, no

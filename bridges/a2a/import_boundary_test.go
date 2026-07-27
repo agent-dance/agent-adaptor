@@ -11,8 +11,8 @@ import (
 )
 
 // TestBridgeProductionImportBoundary is the architecture guard for every
-// bridge package during staging: production may consume the v1 API at /next,
-// but must never regain an edge to the replaced module-root SDK surface.
+// bridge package. Bridges may consume the final root API, but must not depend
+// on the A2A client or concrete provider implementations.
 func TestBridgeProductionImportBoundary(t *testing.T) {
 	t.Parallel()
 
@@ -22,7 +22,6 @@ func TestBridgeProductionImportBoundary(t *testing.T) {
 	}
 	bridgesRoot := filepath.Dir(filepath.Dir(thisFile))
 	forbiddenExact := map[string]struct{}{
-		"github.com/agent-dance/agent-adaptor":             {},
 		"github.com/agent-dance/agent-adaptor/clients/a2a": {},
 	}
 	forbiddenPrefixes := []string{

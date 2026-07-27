@@ -26,7 +26,7 @@ import (
 	"time"
 
 	"github.com/agent-dance/agent-adaptor/examples/internal/exampleutil"
-	adaptor "github.com/agent-dance/agent-adaptor/next"
+	adaptor "github.com/agent-dance/agent-adaptor"
 )
 
 // Ack is the business struct -structured asks for. RunAs[Ack] is the only

@@ -67,7 +67,7 @@ func TestP4NoParallelSubagentBusAPI(t *testing.T) {
 }
 
 func TestP4PresentationPolicyStaysOutsideCore(t *testing.T) {
-	apiDir := stagingAPIDir(t)
+	apiDir := publicAPIDir(t)
 	files := parsePackageFiles(t, apiDir)
 
 	if methods := exportedReceiverMethods(files, "SubagentEventKind"); len(methods) != 0 {
@@ -116,7 +116,7 @@ func TestP4PresentationPolicyStaysOutsideCore(t *testing.T) {
 }
 
 func TestP4NoProviderStreamingCapabilityQuery(t *testing.T) {
-	files := parsePackageFiles(t, stagingAPIDir(t))
+	files := parsePackageFiles(t, publicAPIDir(t))
 	for _, file := range files {
 		for _, decl := range file.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
@@ -144,14 +144,9 @@ func moduleRoot(t *testing.T) string {
 	return filepath.Clean(filepath.Join(filepath.Dir(current), "..", ".."))
 }
 
-func stagingAPIDir(t *testing.T) string {
+func publicAPIDir(t *testing.T) string {
 	t.Helper()
-	root := moduleRoot(t)
-	next := filepath.Join(root, "next")
-	if info, err := os.Stat(next); err == nil && info.IsDir() {
-		return next
-	}
-	return root
+	return moduleRoot(t)
 }
 
 func parseGoFile(t *testing.T, path string) *ast.File {

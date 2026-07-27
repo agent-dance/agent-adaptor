@@ -25,7 +25,7 @@ import (
 	"github.com/agent-dance/agent-adaptor/bridges/subagentstream"
 	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/hosttools/a2adelegation"
-	adaptor "github.com/agent-dance/agent-adaptor/next"
+	adaptor "github.com/agent-dance/agent-adaptor"
 )
 
 // scriptedRoleDriver is a deterministic fake driver.Driver for team-member

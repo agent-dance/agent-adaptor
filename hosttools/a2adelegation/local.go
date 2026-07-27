@@ -24,7 +24,7 @@ import (
 	bridgea2a "github.com/agent-dance/agent-adaptor/bridges/a2a"
 	clienta2a "github.com/agent-dance/agent-adaptor/clients/a2a"
 	"github.com/agent-dance/agent-adaptor/driver"
-	adaptor "github.com/agent-dance/agent-adaptor/next"
+	adaptor "github.com/agent-dance/agent-adaptor"
 )
 
 // localRoleAgent mirrors the wire spelling of the A2A agent role so local
