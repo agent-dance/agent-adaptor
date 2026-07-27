@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/internal/adapterutil"
 	"github.com/agent-dance/agent-adaptor/internal/clihelper"
 	"github.com/agent-dance/agent-adaptor/internal/configprobe"
@@ -88,7 +89,7 @@ func codexModels() []agentadaptor.ModelInfo {
 
 func (adapter) ValidateConfig(cfg any) error {
 	switch cfg.(type) {
-	case agentadaptor.CodexConfig, *agentadaptor.CodexConfig:
+	case agentadaptor.CodexConfig, *agentadaptor.CodexConfig, Config, *Config:
 		return nil
 	default:
 		return errors.New("codex driver requires agentadaptor.CodexConfig")
@@ -488,9 +489,9 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 	checkpoint := parser.checkpoint(result.ExitCode)
 	if checkpoint != nil && checkpoint.State != nil {
 		checkpoint.State.Data = map[string]string{
-			agentadaptor.SessionParamCWD:                effectiveCWD,
-			agentadaptor.SessionParamWorkspaceID:        req.Workspace.ID,
-			agentadaptor.SessionParamProfileFingerprint: profileFingerprint,
+			driver.SessionParamCWD:                effectiveCWD,
+			driver.SessionParamWorkspaceID:        req.Workspace.ID,
+			driver.SessionParamProfileFingerprint: profileFingerprint,
 		}
 	}
 	provider := ""
@@ -543,13 +544,13 @@ func validateCodexSessionGuard(req agentadaptor.DriverRunRequest, effectiveCWD, 
 	if req.Session == nil || req.Session.State == nil {
 		return nil
 	}
-	if req.Session.State.Data[agentadaptor.SessionParamCWD] != "" && req.Session.State.Data[agentadaptor.SessionParamCWD] != effectiveCWD {
+	if req.Session.State.Data[driver.SessionParamCWD] != "" && req.Session.State.Data[driver.SessionParamCWD] != effectiveCWD {
 		return &agentadaptor.ResumeRejectedError{Reason: "session working directory changed"}
 	}
-	if req.Session.State.Data[agentadaptor.SessionParamWorkspaceID] != "" && req.Session.State.Data[agentadaptor.SessionParamWorkspaceID] != req.Workspace.ID {
+	if req.Session.State.Data[driver.SessionParamWorkspaceID] != "" && req.Session.State.Data[driver.SessionParamWorkspaceID] != req.Workspace.ID {
 		return &agentadaptor.ResumeRejectedError{Reason: "session workspace changed"}
 	}
-	if req.Session.State.Data[agentadaptor.SessionParamProfileFingerprint] != "" && req.Session.State.Data[agentadaptor.SessionParamProfileFingerprint] != profileFingerprint {
+	if req.Session.State.Data[driver.SessionParamProfileFingerprint] != "" && req.Session.State.Data[driver.SessionParamProfileFingerprint] != profileFingerprint {
 		return &agentadaptor.ResumeRejectedError{Reason: "profile resources changed"}
 	}
 	return nil
@@ -571,6 +572,9 @@ func chooseCWD(cfg agentadaptor.CommonConfig, workspace agentadaptor.WorkspaceLe
 	return cfg.CWD
 }
 
+// readConfig normalizes every config shape the adapter accepts. The v1
+// entry point (Driver) hands over the package-owned Config, so this is the
+// single point where it is converted for the shared adapter path.
 func readConfig(cfg any) agentadaptor.CodexConfig {
 	switch typed := cfg.(type) {
 	case agentadaptor.CodexConfig:
@@ -578,6 +582,12 @@ func readConfig(cfg any) agentadaptor.CodexConfig {
 	case *agentadaptor.CodexConfig:
 		if typed != nil {
 			return *typed
+		}
+	case Config:
+		return typed.engineConfig()
+	case *Config:
+		if typed != nil {
+			return typed.engineConfig()
 		}
 	}
 	return agentadaptor.CodexConfig{}

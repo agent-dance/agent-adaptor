@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/internal/adapterutil"
 	"github.com/agent-dance/agent-adaptor/internal/clihelper"
 )
@@ -55,9 +56,9 @@ func (adapter) runControl(ctx context.Context, cfg agentadaptor.CodeBuddyConfig,
 	checkpoint := p.checkpoint(result.ExitCode)
 	if checkpoint != nil && checkpoint.State != nil {
 		checkpoint.State.Data = map[string]string{
-			agentadaptor.SessionParamCWD:                prep.effectiveCWD,
-			agentadaptor.SessionParamWorkspaceID:        req.Workspace.ID,
-			agentadaptor.SessionParamProfileFingerprint: req.ProfilePayload.Fingerprint,
+			driver.SessionParamCWD:                prep.effectiveCWD,
+			driver.SessionParamWorkspaceID:        req.Workspace.ID,
+			driver.SessionParamProfileFingerprint: req.ProfilePayload.Fingerprint,
 		}
 	}
 	failure := p.pendingFailure

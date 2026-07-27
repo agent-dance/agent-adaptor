@@ -1,23 +1,24 @@
 package engine
 
-// Well-known session parameter keys used by the built-in adapters.
-//
-// Hosts should prefer SessionCodec over direct map access, but these constants
-// define the stable meanings for the SDK's built-in adapters and examples.
+import "github.com/agent-dance/agent-adaptor/driver"
+
+// Well-known session parameter keys used by the built-in adapters. The truth
+// moved to the driver package in P5.2 (the keys are part of the driver SPI);
+// these stay as constant aliases so the engine call sites are unchanged.
 const (
 	// SessionParamCWD records the workspace directory captured in a session.
-	SessionParamCWD = "cwd"
+	SessionParamCWD = driver.SessionParamCWD
 	// SessionParamWorkspaceID records the SDK workspace lease identifier.
-	SessionParamWorkspaceID = "workspace_id"
+	SessionParamWorkspaceID = driver.SessionParamWorkspaceID
 	// SessionParamPromptBundleKey records the prompt/skill bundle fingerprint
 	// used as a resume guard by skill-aware adapters.
 	//
 	// Deprecated: built-in adapters now use SessionParamProfileFingerprint so
 	// MCP, skills, agents, hooks, instructions, and config share one guard.
-	SessionParamPromptBundleKey = "prompt_bundle_key"
+	SessionParamPromptBundleKey = driver.SessionParamPromptBundleKey
 	// SessionParamProfileFingerprint records the provider-visible effective
 	// profile resource fingerprint captured by a resumable session.
-	SessionParamProfileFingerprint = "profile_fingerprint"
+	SessionParamProfileFingerprint = driver.SessionParamProfileFingerprint
 )
 
 type passthroughSessionCodec struct{}

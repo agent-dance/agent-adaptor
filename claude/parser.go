@@ -11,6 +11,7 @@ import (
 	"time"
 
 	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
 )
 
 // claudeParser consumes raw stdout/stderr chunks from a Claude CLI run
@@ -976,7 +977,7 @@ func (p *claudeParser) resolveHITLOnToolResult(toolUseID, content string, isErro
 	}
 
 	p.decisionSeq++
-	effective := agentadaptor.EffectiveHumanDecisionPolicy(p.policy)
+	effective := driver.EffectiveHumanDecisionPolicy(p.policy)
 	createdAt := pending.StartedAt
 	if createdAt.IsZero() {
 		createdAt = time.Now().UTC()
@@ -1365,7 +1366,7 @@ func (p *claudeParser) handleInteractiveControlRequest(payload map[string]any) b
 		return true
 	}
 
-	effective := agentadaptor.EffectiveHumanDecisionPolicy(p.policy)
+	effective := driver.EffectiveHumanDecisionPolicy(p.policy)
 	switch effective.Permission {
 	case agentadaptor.HumanDecisionAutoApprove:
 		_ = p.writeInteractiveControlResponse(requestID, buildInteractiveControlResponse(req, agentadaptor.DecisionResponse{
@@ -1562,7 +1563,7 @@ func (p *claudeParser) decorateInteractiveControlResponse(req agentadaptor.Decis
 	if behavior, _ := response["behavior"].(string); behavior != "deny" {
 		return response
 	}
-	effective := agentadaptor.EffectiveHumanDecisionPolicy(p.policy)
+	effective := driver.EffectiveHumanDecisionPolicy(p.policy)
 	shouldInterrupt := false
 	if resp.Result == agentadaptor.DecisionRejected {
 		shouldInterrupt = effective.OnReject == agentadaptor.FailureAbort || effective.OnReject == agentadaptor.FailureActionUnset
@@ -1927,7 +1928,7 @@ func (p *claudeParser) recordInteractiveRejectFailure(req agentadaptor.DecisionR
 	if resp.Result != agentadaptor.DecisionRejected {
 		return
 	}
-	effective := agentadaptor.EffectiveHumanDecisionPolicy(p.policy)
+	effective := driver.EffectiveHumanDecisionPolicy(p.policy)
 	if effective.OnReject != agentadaptor.FailureAbort && effective.OnReject != agentadaptor.FailureActionUnset {
 		return
 	}

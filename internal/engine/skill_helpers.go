@@ -156,30 +156,63 @@ func skillSourcesEquivalent(a, b SkillSource) bool {
 		return false
 	}
 	switch left := a.(type) {
-	case SkillFromPath:
-		right, ok := b.(SkillFromPath)
+	case skillPathProjection:
+		right, ok := b.(skillPathProjection)
 		if !ok {
 			return false
 		}
-		return cleanSkillPath(left.Path) == cleanSkillPath(right.Path)
-	case SkillFromFS:
-		right, ok := b.(SkillFromFS)
+		return cleanSkillPath(left.SkillPath()) == cleanSkillPath(right.SkillPath())
+	case skillFSProjection:
+		right, ok := b.(skillFSProjection)
 		if !ok {
 			return false
 		}
-		if left.Root != right.Root {
+		leftFS, leftRoot := left.SkillFS()
+		rightFS, rightRoot := right.SkillFS()
+		if leftRoot != rightRoot {
 			return false
 		}
 		// fs.FS identity is the most reliable comparison we can make without
 		// recursive enumeration. Hosts that want content-level equivalence
 		// should wrap their FS in a stable value type.
-		return fsIdentityEqual(left.FS, right.FS)
-	case SkillFromInline:
-		right, ok := b.(SkillFromInline)
+		return fsIdentityEqual(leftFS, rightFS)
+	case inlineSkillProjection:
+		right, ok := b.(inlineSkillProjection)
 		if !ok {
 			return false
 		}
-		return left.SkillMD == right.SkillMD
+		return left.InlineSkillMD() == right.InlineSkillMD()
+	case archiveSkillProjection:
+		right, ok := b.(archiveSkillProjection)
+		if !ok {
+			return false
+		}
+		_, leftFormat, leftSubpath, leftFingerprint := left.SkillArchive()
+		_, rightFormat, rightSubpath, rightFingerprint := right.SkillArchive()
+		if leftFormat != rightFormat {
+			return false
+		}
+		// Subpath is compared in the form the materializer actually uses,
+		// so "./docs" and "docs" describe the same skill.
+		if normalizeSubpath(leftSubpath) != normalizeSubpath(rightSubpath) {
+			return false
+		}
+		leftPrint := strings.TrimSpace(leftFingerprint)
+		if leftPrint != strings.TrimSpace(rightFingerprint) {
+			return false
+		}
+		// A non-empty Fingerprint is the host's declared identity for the
+		// archive content, so matching fingerprints settle equivalence on
+		// their own (the two openers may legitimately be a URL and a local
+		// file serving the same bytes).
+		if leftPrint != "" {
+			return true
+		}
+		// Function values have no portable, stable content identity. In
+		// particular, closures created by the same constructor can capture
+		// different bytes while sharing one code address. Independent
+		// declarations therefore require an explicit stable fingerprint.
+		return false
 	}
 	return false
 }

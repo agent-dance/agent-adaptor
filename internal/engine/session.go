@@ -10,11 +10,10 @@ import (
 )
 
 // LeaseTTL and LeaseRenewInterval report the session lease timing knobs.
-// They are function variables (not plain durations) because the historical
-// package vars defaultLeaseTTL / defaultLeaseRenewInterval stay declared in
-// the root package, where internal tests mutate them; the root package
-// injects closures over those vars at init time so mutations keep flowing
-// into the engine exactly as before.
+// The defaults are self-sufficient: no wiring is required for the session
+// pipeline to work. They stay function variables (not plain durations) so
+// tests — both engine-side and facade-side — can shorten the timings
+// without touching the production call sites.
 var (
 	LeaseTTL           = func() time.Duration { return 5 * time.Minute }
 	LeaseRenewInterval = func() time.Duration { return 2 * time.Minute }

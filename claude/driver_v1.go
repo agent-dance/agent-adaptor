@@ -5,24 +5,84 @@ import (
 
 	agentadaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/internal/engine"
 )
+
+// CommonConfig carries the adapter-independent CLI/process defaults embedded
+// by Config: command, cwd, env, instructions, prompt templates, workspace
+// strategy/runtime, timeouts, and extra args.
+type CommonConfig = driver.CommonConfig
+
+// ThinkingEffort is the Claude thinking effort flag value ("low", "medium",
+// "high"). The empty value leaves the CLI default in place.
+type ThinkingEffort string
 
 // Config configures the Claude driver for the v1 consumer API:
 //
 //	agent := adaptor.New(claude.Driver(claude.Config{Model: "claude-fable-5"}))
 //
-// During the v1 staging period Config is an alias for
-// [agentadaptor.ClaudeConfig], so struct literals remain interchangeable with
-// the legacy claude.New entry point; P5 flips the alias direction so this
-// package owns the concrete type (docs/api-v1-implementation-plan.md P3.1).
-type Config = agentadaptor.ClaudeConfig
+// This package owns the concrete type. MaxTurnsPerRun is a guardrail for a
+// single adapter invocation, not a session length. Translating Config into
+// the execution engine's config shape is an internal detail of this package
+// (docs/p5.2-recon.md D-P5.2-2).
+type Config struct {
+	CommonConfig
+	Model          string
+	Effort         ThinkingEffort
+	MaxTurnsPerRun int
+}
+
+// engineConfig converts the package-owned Config into the engine config the
+// adapter path consumes. The conversion is field-by-field on purpose: a new
+// engine field cannot silently appear on the public Config, and a new Config
+// field must be routed here explicitly.
+func (c Config) engineConfig() engine.ClaudeConfig {
+	return engine.ClaudeConfig{
+		CommonConfig:   engineCommonConfig(c.CommonConfig),
+		Model:          c.Model,
+		Effort:         engine.ThinkingEffort(c.Effort),
+		MaxTurnsPerRun: c.MaxTurnsPerRun,
+	}
+}
+
+func engineCommonConfig(c CommonConfig) engine.CommonConfig {
+	c = c.Clone()
+	var workspaceStrategy *engine.WorkspaceStrategy
+	if c.WorkspaceStrategy != nil {
+		workspaceStrategy = &engine.WorkspaceStrategy{
+			Type:              c.WorkspaceStrategy.Type,
+			BaseRef:           c.WorkspaceStrategy.BaseRef,
+			BranchTemplate:    c.WorkspaceStrategy.BranchTemplate,
+			WorktreeParentDir: c.WorkspaceStrategy.WorktreeParentDir,
+		}
+	}
+	var workspaceRuntime *engine.WorkspaceRuntimeConfig
+	if c.WorkspaceRuntime != nil {
+		workspaceRuntime = &engine.WorkspaceRuntimeConfig{
+			Services: append([]driver.RuntimeServiceSpec(nil), c.WorkspaceRuntime.Services...),
+		}
+	}
+	return engine.CommonConfig{
+		Command:                 c.Command,
+		CWD:                     c.CWD,
+		Env:                     append([]driver.EnvBinding(nil), c.Env...),
+		Instructions:            c.Instructions,
+		PromptTemplate:          c.PromptTemplate,
+		BootstrapPromptTemplate: c.BootstrapPromptTemplate,
+		WorkspaceStrategy:       workspaceStrategy,
+		WorkspaceRuntime:        workspaceRuntime,
+		Timeout:                 c.Timeout,
+		GracePeriod:             c.GracePeriod,
+		ExtraArgs:               append([]string(nil), c.ExtraArgs...),
+	}
+}
 
 // Driver returns the Claude driver with cfg captured at construction. Pass
 // the result to the v1 root constructor (adaptor.New). The legacy
 // New/NewAdapter entry points are unchanged. Config validation stays deferred
 // to run/probe time, matching New: Driver never panics or validates eagerly.
 func Driver(cfg Config) driver.Driver {
-	return configuredDriver{cfg: cfg}
+	return configuredDriver{cfg: cloneConfig(cfg)}
 }
 
 // configuredDriver couples the stateless low-level adapter with the config it
@@ -47,15 +107,68 @@ func (d configuredDriver) Run(ctx context.Context, req driver.Request, sink driv
 // the engine can probe a v1 driver without re-supplying configuration.
 // Explicit non-nil values keep the legacy adapter semantics.
 func (d configuredDriver) ValidateConfig(cfg any) error {
+	return d.adapter.ValidateConfig(d.configOrCaptured(cfg))
+}
+
+func (d configuredDriver) CheckEnvironment(ctx context.Context, cfg any) (driver.EnvironmentReport, error) {
+	return d.adapter.CheckEnvironment(ctx, d.configOrCaptured(cfg))
+}
+
+func (d configuredDriver) ListModels(ctx context.Context, cfg any) ([]driver.ModelInfo, error) {
+	return d.adapter.ListModels(ctx, d.configOrCaptured(cfg))
+}
+
+func (d configuredDriver) DetectModel(ctx context.Context, cfg any, profile *driver.ProfileSelection) (*driver.DetectedModel, error) {
+	return d.adapter.DetectModel(ctx, d.configOrCaptured(cfg), profile)
+}
+
+func (d configuredDriver) GetProfile(ctx context.Context, cfg any, agent driver.AgentIdentity, profile *driver.ProfileSelection) (driver.AgentProfile, error) {
+	return d.adapter.GetProfile(ctx, d.configOrCaptured(cfg), agent, profile)
+}
+
+func (d configuredDriver) ConfigSchema(ctx context.Context, cfg any) (*driver.ConfigSchema, error) {
+	return d.adapter.ConfigSchema(ctx, d.configOrCaptured(cfg))
+}
+
+func (d configuredDriver) GetQuota(ctx context.Context, cfg any, profile *driver.ProfileSelection) (driver.QuotaReport, error) {
+	return d.adapter.GetQuota(ctx, d.configOrCaptured(cfg), profile)
+}
+
+func (d configuredDriver) ListSkills(ctx context.Context, cfg any, payload driver.ResolvedSkills, selected []string, resolved []driver.Skill, profile *driver.ProfileSelection) (driver.SkillSnapshot, error) {
+	return d.adapter.ListSkills(ctx, d.configOrCaptured(cfg), payload, selected, resolved, profile)
+}
+
+func (d configuredDriver) InjectSkills(ctx context.Context, cfg any, payload driver.ResolvedSkills, profile *driver.ProfileSelection) error {
+	return d.adapter.InjectSkills(ctx, d.configOrCaptured(cfg), payload, profile)
+}
+
+func (d configuredDriver) SyncSkills(ctx context.Context, cfg any, payload driver.ResolvedSkills, selected []string, resolved []driver.Skill, profile *driver.ProfileSelection) (driver.SkillSnapshot, error) {
+	return d.adapter.SyncSkills(ctx, d.configOrCaptured(cfg), payload, selected, resolved, profile)
+}
+
+func (d configuredDriver) SnapshotProfileResources(ctx context.Context, cfg any, agent driver.AgentIdentity, profile *driver.ProfileSelection, payload driver.ProfilePayload, selected []string, resolved []driver.Skill) (agentadaptor.ProfileSnapshot, error) {
+	return d.adapter.SnapshotProfileResources(ctx, d.configOrCaptured(cfg), agent, profile, payload, selected, resolved)
+}
+
+func (d configuredDriver) SyncProfileResources(ctx context.Context, cfg any, agent driver.AgentIdentity, profile *driver.ProfileSelection, payload driver.ProfilePayload, selected []string, resolved []driver.Skill) (agentadaptor.ProfileSnapshot, error) {
+	return d.adapter.SyncProfileResources(ctx, d.configOrCaptured(cfg), agent, profile, payload, selected, resolved)
+}
+
+func (d configuredDriver) configOrCaptured(cfg any) any {
 	if cfg == nil {
-		cfg = d.cfg
+		return cloneConfig(d.cfg)
 	}
-	return d.adapter.ValidateConfig(cfg)
+	return cfg
 }
 
 func (d configuredDriver) requestWithConfig(req driver.Request) driver.Request {
 	if req.Config == nil {
-		req.Config = d.cfg
+		req.Config = cloneConfig(d.cfg)
 	}
 	return req
+}
+
+func cloneConfig(cfg Config) Config {
+	cfg.CommonConfig = cfg.CommonConfig.Clone()
+	return cfg
 }

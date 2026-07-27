@@ -122,6 +122,36 @@ type HumanDecisionPolicy struct {
 	MaxRetries int
 }
 
+// EffectiveHumanDecisionPolicy materializes SDK defaults for unset fields in
+// a HumanDecisionPolicy. Drivers use it when they need to know the actual
+// Timeout / OnTimeout / OnReject / MaxRetries values that the runner applies
+// so they can surface consistent Deadline timestamps and failure messages.
+func EffectiveHumanDecisionPolicy(p HumanDecisionPolicy) HumanDecisionPolicy {
+	out := p
+	if out.Permission == HumanDecisionUnset {
+		out.Permission = HumanDecisionAsk
+	}
+	if out.PlanReview == HumanDecisionUnset {
+		out.PlanReview = HumanDecisionAsk
+	}
+	if out.Question == QuestionUnset {
+		out.Question = QuestionAutoReject
+	}
+	if out.Timeout == 0 {
+		out.Timeout = DefaultHumanDecisionTimeout
+	}
+	if out.OnTimeout == FailureActionUnset {
+		out.OnTimeout = FailureAbort
+	}
+	if out.OnReject == FailureActionUnset {
+		out.OnReject = FailureAbort
+	}
+	if out.MaxRetries == 0 {
+		out.MaxRetries = DefaultHumanDecisionMaxRetries
+	}
+	return out
+}
+
 // HumanDecisionSupport describes Permission / PlanReview support on a given
 // driver. Fields set to false reject the matching host-facing setting at
 // Start() time.

@@ -1,6 +1,9 @@
 package codebuddy
 
-import agentadaptor "github.com/agent-dance/agent-adaptor"
+import (
+	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
+)
 
 // wantsControlTransport reports whether the run policy requires the
 // bidirectional CodeBuddy SDK control transport.
@@ -41,7 +44,7 @@ func headlessPermissionMode(cfg agentadaptor.CodeBuddyConfig, policy agentadapto
 	if cfg.PermissionMode != agentadaptor.CodeBuddyPermissionUnset {
 		return cfg.PermissionMode
 	}
-	effective := agentadaptor.EffectiveHumanDecisionPolicy(policy.HumanDecision)
+	effective := driver.EffectiveHumanDecisionPolicy(policy.HumanDecision)
 	if effective.Permission == agentadaptor.HumanDecisionAutoApprove {
 		return agentadaptor.CodeBuddyPermissionBypass
 	}

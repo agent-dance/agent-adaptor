@@ -34,13 +34,6 @@ const (
 	BackpressureBlock
 )
 
-// DefaultSkillMaterializerFactory produces the built-in SkillMaterializer.
-// The implementation lives in the root package (it is backed by the
-// archive_source.go / archive_materializer.go cluster, which stays there),
-// so the root package injects the constructor at init time. Engine code MUST
-// go through this variable instead of naming the materializer directly.
-var DefaultSkillMaterializerFactory func() SkillMaterializer
-
 // Core is the execution pipeline extracted from the historical root-package
 // sdkImpl. The root package wraps it in the public SDK facade; the
 // behaviorally identical option merging, session coordination, skill
@@ -71,7 +64,7 @@ func Build(opts ...Option) (*Core, error) {
 		namedBindings:     map[string]AgentBinding{},
 		workspaceManager:  passthroughWorkspaceManager{},
 		skillProvider:     emptySkillProvider{},
-		skillMaterializer: defaultSkillMaterializer(),
+		skillMaterializer: newDefaultSkillMaterializer(),
 		runtimeManager:    noopRuntimeManager{},
 		skillSelections:   map[string][]string{},
 		eventRunBuf:       DefaultRunEventBuffer,
@@ -90,13 +83,6 @@ func Build(opts ...Option) (*Core, error) {
 		return nil, ErrDefaultAgentMissing
 	}
 	return s, nil
-}
-
-func defaultSkillMaterializer() SkillMaterializer {
-	if DefaultSkillMaterializerFactory == nil {
-		return nil
-	}
-	return DefaultSkillMaterializerFactory()
 }
 
 // EventSinkSettings returns a snapshot of the runtime sink configuration used

@@ -8,6 +8,7 @@ import (
 	"context"
 	"io/fs"
 
+	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/internal/engine"
 )
 
@@ -54,18 +55,18 @@ func CallerIdentityFromContext(ctx context.Context) (AgentIdentity, bool) {
 // define the stable meanings for the SDK's built-in adapters and examples.
 const (
 	// SessionParamCWD records the workspace directory captured in a session.
-	SessionParamCWD = engine.SessionParamCWD
+	SessionParamCWD = driver.SessionParamCWD
 	// SessionParamWorkspaceID records the SDK workspace lease identifier.
-	SessionParamWorkspaceID = engine.SessionParamWorkspaceID
+	SessionParamWorkspaceID = driver.SessionParamWorkspaceID
 	// SessionParamPromptBundleKey records the prompt/skill bundle fingerprint
 	// used as a resume guard by skill-aware adapters.
 	//
 	// Deprecated: built-in adapters now use SessionParamProfileFingerprint so
 	// MCP, skills, agents, hooks, instructions, and config share one guard.
-	SessionParamPromptBundleKey = engine.SessionParamPromptBundleKey
+	SessionParamPromptBundleKey = driver.SessionParamPromptBundleKey
 	// SessionParamProfileFingerprint records the provider-visible effective
 	// profile resource fingerprint captured by a resumable session.
-	SessionParamProfileFingerprint = engine.SessionParamProfileFingerprint
+	SessionParamProfileFingerprint = driver.SessionParamProfileFingerprint
 )
 
 // SessionCodecFor returns the adapter's explicit session codec when available,

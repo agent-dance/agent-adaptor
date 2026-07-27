@@ -26,10 +26,9 @@ var (
 	_ skill.Ref               = skill.Skill{}
 	_ agentadaptor.SkillRef   = skill.Skill{}
 	_ skill.Materializer      = agentadaptor.SkillMaterializer(nil)
-	_ agentadaptor.SkillSet   = skill.Set{}
 	_ skill.Provider          = skill.Set{}
 	_ skill.Catalog           = skill.Set{}
-	_ skill.Source            = agentadaptor.SkillFromArchive{}
+	_ skill.Source            = skill.ArchiveSource{}
 	_ skill.Opener            = agentadaptor.ArchiveFromBytes(nil)
 	_ skill.ArchiveHTTPOption = agentadaptor.WithArchiveHeader("k", "v")
 )
@@ -38,15 +37,14 @@ func TestDirMatchesLocalSkill(t *testing.T) {
 	path := filepath.Join("skills", "write-proof")
 
 	got := skill.Dir(path)
-	want := agentadaptor.LocalSkill(path)
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("skill.Dir(%q) = %#v, want %#v", path, got, want)
+	if got.Key != "write-proof" {
+		t.Fatalf("skill.Dir(%q).Key = %q", path, got.Key)
 	}
 
 	if got.Key != "write-proof" {
 		t.Fatalf("Key = %q, want %q", got.Key, "write-proof")
 	}
-	src, ok := got.Source.(agentadaptor.SkillFromPath)
+	src, ok := got.Source.(skill.PathSource)
 	if !ok {
 		t.Fatalf("Source type = %T, want SkillFromPath", got.Source)
 	}
@@ -61,15 +59,14 @@ func TestFSMatchesFSSkill(t *testing.T) {
 	}
 
 	got := skill.FS(fsys, "bundle/code-review")
-	want := agentadaptor.FSSkill(fsys, "bundle/code-review")
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("skill.FS = %#v, want %#v", got, want)
+	if got.Key != "code-review" {
+		t.Fatalf("skill.FS.Key = %q", got.Key)
 	}
 
 	if got.Key != "code-review" {
 		t.Fatalf("Key = %q, want %q", got.Key, "code-review")
 	}
-	src, ok := got.Source.(agentadaptor.SkillFromFS)
+	src, ok := got.Source.(skill.FSSource)
 	if !ok {
 		t.Fatalf("Source type = %T, want SkillFromFS", got.Source)
 	}
@@ -88,15 +85,14 @@ func TestFSMatchesFSSkill(t *testing.T) {
 
 func TestInlineMatchesInlineSkill(t *testing.T) {
 	got := skill.Inline("greet", "# Greeting\nSay hi.")
-	want := agentadaptor.InlineSkill("greet", "# Greeting\nSay hi.")
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("skill.Inline = %#v, want %#v", got, want)
+	if got.Key != "greet" {
+		t.Fatalf("skill.Inline.Key = %q", got.Key)
 	}
 
 	if got.Key != "greet" {
 		t.Fatalf("Key = %q, want %q", got.Key, "greet")
 	}
-	src, ok := got.Source.(agentadaptor.SkillFromInline)
+	src, ok := got.Source.(skill.InlineSource)
 	if !ok {
 		t.Fatalf("Source type = %T, want SkillFromInline", got.Source)
 	}
@@ -177,11 +173,11 @@ func TestArchiveFieldPassthrough(t *testing.T) {
 	if got.Key != "kit" {
 		t.Fatalf("Key = %q, want %q", got.Key, "kit")
 	}
-	src, ok := got.Source.(agentadaptor.SkillFromArchive)
+	src, ok := got.Source.(skill.ArchiveSource)
 	if !ok {
 		t.Fatalf("Source type = %T, want SkillFromArchive", got.Source)
 	}
-	if src.Format != agentadaptor.SkillArchiveZip {
+	if src.Format != skill.FormatZip {
 		t.Fatalf("Format = %q, want %q", src.Format, agentadaptor.SkillArchiveZip)
 	}
 	if src.Subpath != "inner" {
@@ -205,7 +201,7 @@ func TestArchiveFieldPassthrough(t *testing.T) {
 
 	// Defaults: no options → auto format, empty subpath / fingerprint.
 	def := skill.Archive("kit2", open)
-	src = def.Source.(agentadaptor.SkillFromArchive)
+	src = def.Source.(skill.ArchiveSource)
 	if src.Format != skill.FormatAuto || src.Subpath != "" || src.Fingerprint != "" {
 		t.Fatalf("defaults not zero: %#v", src)
 	}

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/internal/adapterutil"
 	"github.com/agent-dance/agent-adaptor/internal/clihelper"
 	"github.com/agent-dance/agent-adaptor/internal/mcpruntime"
@@ -401,9 +402,9 @@ func (adapter) runHeadless(ctx context.Context, cfg agentadaptor.CodeBuddyConfig
 	checkpoint := p.checkpoint(result.ExitCode)
 	if checkpoint != nil && checkpoint.State != nil {
 		checkpoint.State.Data = map[string]string{
-			agentadaptor.SessionParamCWD:                prep.effectiveCWD,
-			agentadaptor.SessionParamWorkspaceID:        req.Workspace.ID,
-			agentadaptor.SessionParamProfileFingerprint: req.ProfilePayload.Fingerprint,
+			driver.SessionParamCWD:                prep.effectiveCWD,
+			driver.SessionParamWorkspaceID:        req.Workspace.ID,
+			driver.SessionParamProfileFingerprint: req.ProfilePayload.Fingerprint,
 		}
 	}
 	var failure *agentadaptor.RunFailure
@@ -441,18 +442,18 @@ func validateSessionGuard(req agentadaptor.DriverRunRequest, effectiveCWD, profi
 		return nil
 	}
 	data := req.Session.State.Data
-	if data[agentadaptor.SessionParamCWD] != "" && data[agentadaptor.SessionParamCWD] != effectiveCWD {
+	if data[driver.SessionParamCWD] != "" && data[driver.SessionParamCWD] != effectiveCWD {
 		return &agentadaptor.ResumeRejectedError{Reason: "session working directory changed"}
 	}
-	if data[agentadaptor.SessionParamWorkspaceID] != "" && data[agentadaptor.SessionParamWorkspaceID] != req.Workspace.ID {
+	if data[driver.SessionParamWorkspaceID] != "" && data[driver.SessionParamWorkspaceID] != req.Workspace.ID {
 		return &agentadaptor.ResumeRejectedError{Reason: "session workspace changed"}
 	}
-	if data[agentadaptor.SessionParamProfileFingerprint] != "" && data[agentadaptor.SessionParamProfileFingerprint] != profileFingerprint {
+	if data[driver.SessionParamProfileFingerprint] != "" && data[driver.SessionParamProfileFingerprint] != profileFingerprint {
 		return &agentadaptor.ResumeRejectedError{Reason: "profile resources changed"}
 	}
-	if data[agentadaptor.SessionParamProfileFingerprint] == "" &&
-		data[agentadaptor.SessionParamPromptBundleKey] != "" &&
-		data[agentadaptor.SessionParamPromptBundleKey] != legacyBundleKey {
+	if data[driver.SessionParamProfileFingerprint] == "" &&
+		data[driver.SessionParamPromptBundleKey] != "" &&
+		data[driver.SessionParamPromptBundleKey] != legacyBundleKey {
 		return &agentadaptor.ResumeRejectedError{Reason: "profile resources changed"}
 	}
 	return nil
@@ -465,6 +466,9 @@ func chooseCWD(cfg agentadaptor.CommonConfig, workspace agentadaptor.WorkspaceLe
 	return cfg.CWD
 }
 
+// asConfig normalizes every config shape the adapter accepts. The v1 entry
+// point (Driver) hands over the package-owned Config, so this is the single
+// point where it is converted for the shared adapter path.
 func asConfig(cfg any) (agentadaptor.CodeBuddyConfig, bool) {
 	switch typed := cfg.(type) {
 	case agentadaptor.CodeBuddyConfig:
@@ -472,6 +476,12 @@ func asConfig(cfg any) (agentadaptor.CodeBuddyConfig, bool) {
 	case *agentadaptor.CodeBuddyConfig:
 		if typed != nil {
 			return *typed, true
+		}
+	case Config:
+		return typed.engineConfig(), true
+	case *Config:
+		if typed != nil {
+			return typed.engineConfig(), true
 		}
 	}
 	return agentadaptor.CodeBuddyConfig{}, false

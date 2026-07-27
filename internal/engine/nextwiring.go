@@ -26,7 +26,7 @@ import "context"
 // delegates to it, so both facades run the identical code.
 //
 // A nil provider behaves like the legacy unset provider (no fetch); a nil
-// materializer falls back to defaultSkillMaterializer(), exactly like the
+// materializer falls back to newDefaultSkillMaterializer(), exactly like the
 // legacy Core field default.
 func ResolveSkills(
 	ctx context.Context,

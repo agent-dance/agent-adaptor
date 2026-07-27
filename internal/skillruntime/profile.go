@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/internal/engine"
 )
 
 type ProfileResolveOptions struct {
@@ -31,7 +32,7 @@ type ProfileResolution struct {
 func ResolveProfile(opts ProfileResolveOptions) (ProfileResolution, error) {
 	bindings := append([]agentadaptor.EnvBinding(nil), opts.Bindings...)
 	if configured := ResolveBinding(bindings, opts.EnvVar); configured != "" {
-		dir, err := agentadaptor.NormalizeProfileDir(configured)
+		dir, err := engine.NormalizeProfileDir(configured)
 		if err != nil {
 			return ProfileResolution{}, err
 		}
@@ -84,7 +85,7 @@ func ResolveProfile(opts ProfileResolveOptions) (ProfileResolution, error) {
 	}
 
 	if configured := strings.TrimSpace(os.Getenv(opts.EnvVar)); configured != "" {
-		dir, err := agentadaptor.NormalizeProfileDir(configured)
+		dir, err := engine.NormalizeProfileDir(configured)
 		if err != nil {
 			return ProfileResolution{}, err
 		}
@@ -95,7 +96,7 @@ func ResolveProfile(opts ProfileResolveOptions) (ProfileResolution, error) {
 	if dir == "" {
 		dir = opts.NativeSharedDir
 	}
-	normalized, err := agentadaptor.NormalizeProfileDir(dir)
+	normalized, err := engine.NormalizeProfileDir(dir)
 	if err != nil {
 		return ProfileResolution{}, err
 	}
@@ -104,13 +105,13 @@ func ResolveProfile(opts ProfileResolveOptions) (ProfileResolution, error) {
 
 func nativeProfileDir(bindings []agentadaptor.EnvBinding, opts ProfileResolveOptions) (string, error) {
 	if configured := strings.TrimSpace(os.Getenv(opts.EnvVar)); configured != "" {
-		return agentadaptor.NormalizeProfileDir(configured)
+		return engine.NormalizeProfileDir(configured)
 	}
-	return agentadaptor.NormalizeProfileDir(opts.NativeSharedDir)
+	return engine.NormalizeProfileDir(opts.NativeSharedDir)
 }
 
 func dedicatedProfileDir(dir string) (string, error) {
-	normalized, err := agentadaptor.NormalizeProfileDir(dir)
+	normalized, err := engine.NormalizeProfileDir(dir)
 	if err != nil {
 		return "", err
 	}
@@ -122,7 +123,7 @@ func dedicatedProfileDir(dir string) (string, error) {
 
 func cloneSourceDir(bindings []agentadaptor.EnvBinding, from string, opts ProfileResolveOptions) (string, error) {
 	if strings.TrimSpace(from) != "" {
-		return agentadaptor.NormalizeProfileDir(from)
+		return engine.NormalizeProfileDir(from)
 	}
 	return nativeProfileDir(bindings, opts)
 }
