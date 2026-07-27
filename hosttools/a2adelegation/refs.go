@@ -11,7 +11,7 @@ package a2adelegation
 import (
 	"strings"
 
-	adaptor "github.com/agent-dance/agent-adaptor/next"
+	adaptor "github.com/agent-dance/agent-adaptor"
 )
 
 // Runner is the next-gen SDK execution contract (adaptor.Runner): both

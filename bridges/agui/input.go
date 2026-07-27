@@ -35,7 +35,7 @@ import (
 	"time"
 
 	"github.com/agent-dance/agent-adaptor/bridges/internal/bridgekey"
-	adaptor "github.com/agent-dance/agent-adaptor/next"
+	adaptor "github.com/agent-dance/agent-adaptor"
 )
 
 // RunAgentInput is the canonical HTTP body an AG-UI client (CopilotKit

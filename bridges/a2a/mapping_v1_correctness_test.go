@@ -10,7 +10,7 @@ import (
 
 	a2aproto "github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/agent-dance/agent-adaptor/driver"
-	adaptor "github.com/agent-dance/agent-adaptor/next"
+	adaptor "github.com/agent-dance/agent-adaptor"
 )
 
 func dataValueV1(t *testing.T, event a2aproto.Event) any {

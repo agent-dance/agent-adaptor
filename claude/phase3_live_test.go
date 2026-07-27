@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/agent-dance/agent-adaptor/claude"
-	adaptor "github.com/agent-dance/agent-adaptor/next"
+	adaptor "github.com/agent-dance/agent-adaptor"
 )
 
 // Run with:

@@ -21,7 +21,7 @@ import (
 	"sync"
 	"time"
 
-	adaptor "github.com/agent-dance/agent-adaptor/next"
+	adaptor "github.com/agent-dance/agent-adaptor"
 )
 
 // EventRecord is one persisted unified event together with the HostSeq

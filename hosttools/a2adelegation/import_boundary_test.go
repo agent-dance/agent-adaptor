@@ -33,7 +33,7 @@ func TestDelegationPackagesDoNotImportConcreteAdapters(t *testing.T) {
 	})
 }
 
-func TestHosttoolsDoNotImportLegacyRootOrInternalPackages(t *testing.T) {
+func TestHosttoolsDoNotImportInternalPackages(t *testing.T) {
 	t.Parallel()
 
 	repoRoot := repositoryRoot(t)
@@ -41,11 +41,7 @@ func TestHosttoolsDoNotImportLegacyRootOrInternalPackages(t *testing.T) {
 		filepath.Join(repoRoot, "hosttools", "a2adelegation"),
 		filepath.Join(repoRoot, "hosttools", "sessionrecorder"),
 	}
-	const legacyRoot = "github.com/agent-dance/agent-adaptor"
 	forEachProductionImport(t, packages, func(path, importPath string) {
-		if importPath == legacyRoot {
-			t.Fatalf("%s imports the deleted legacy root API", path)
-		}
 		if strings.Contains(importPath, "/internal/") {
 			t.Fatalf("%s crosses an internal package boundary via %s", path, importPath)
 		}

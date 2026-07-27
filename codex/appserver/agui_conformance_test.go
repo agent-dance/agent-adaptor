@@ -9,7 +9,7 @@ import (
 
 	"github.com/agent-dance/agent-adaptor/bridges/agui"
 	"github.com/agent-dance/agent-adaptor/driver"
-	adaptor "github.com/agent-dance/agent-adaptor/next"
+	adaptor "github.com/agent-dance/agent-adaptor"
 )
 
 func translateAppserverToAGUI(t *testing.T, payloads []driver.StreamPayload) []aguievents.Event {

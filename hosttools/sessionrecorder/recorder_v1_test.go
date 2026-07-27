@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/agent-dance/agent-adaptor/hosttools/sessionrecorder"
-	adaptor "github.com/agent-dance/agent-adaptor/next"
+	adaptor "github.com/agent-dance/agent-adaptor"
 )
 
 func TestEventRecorderAssignsSequentialHostSeqAndSince(t *testing.T) {

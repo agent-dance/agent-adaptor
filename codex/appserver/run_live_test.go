@@ -11,7 +11,7 @@ import (
 
 	"github.com/agent-dance/agent-adaptor/codex"
 	"github.com/agent-dance/agent-adaptor/memory"
-	adaptor "github.com/agent-dance/agent-adaptor/next"
+	adaptor "github.com/agent-dance/agent-adaptor"
 )
 
 // TestAppServerHaiku is the canonical end-to-end smoke test for the codex

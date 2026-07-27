@@ -14,7 +14,7 @@ import (
 
 	"github.com/agent-dance/agent-adaptor/bridges/sse"
 	"github.com/agent-dance/agent-adaptor/hosttools/sessionrecorder"
-	adaptor "github.com/agent-dance/agent-adaptor/next"
+	adaptor "github.com/agent-dance/agent-adaptor"
 )
 
 // threadStore is the example's host-owned recovery state. It persists the

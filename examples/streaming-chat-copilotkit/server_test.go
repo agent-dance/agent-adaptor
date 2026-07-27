@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/agent-dance/agent-adaptor/bridges/agui"
-	adaptor "github.com/agent-dance/agent-adaptor/next"
+	adaptor "github.com/agent-dance/agent-adaptor"
 )
 
 func TestBuildInvocationUsesLatestUserTextAndThreadKey(t *testing.T) {

@@ -22,7 +22,7 @@ import (
 	"time"
 
 	"github.com/agent-dance/agent-adaptor/examples/internal/exampleutil"
-	adaptor "github.com/agent-dance/agent-adaptor/next"
+	adaptor "github.com/agent-dance/agent-adaptor"
 )
 
 func main() {

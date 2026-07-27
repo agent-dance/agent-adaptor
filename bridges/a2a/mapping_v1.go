@@ -11,7 +11,7 @@ import (
 
 	a2aproto "github.com/a2aproject/a2a-go/v2/a2a"
 
-	adaptor "github.com/agent-dance/agent-adaptor/next"
+	adaptor "github.com/agent-dance/agent-adaptor"
 )
 
 // streamTranslatorV1 maps unified events onto A2A working-status DataParts.

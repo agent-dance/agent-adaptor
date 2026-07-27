@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/agent-dance/agent-adaptor/bridges/sse"
-	adaptor "github.com/agent-dance/agent-adaptor/next"
+	adaptor "github.com/agent-dance/agent-adaptor"
 )
 
 func TestApprovalErrorV1HTTPMapping(t *testing.T) {

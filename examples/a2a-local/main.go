@@ -41,7 +41,7 @@ import (
 	clienta2a "github.com/agent-dance/agent-adaptor/clients/a2a"
 	"github.com/agent-dance/agent-adaptor/examples/internal/exampleutil"
 	"github.com/agent-dance/agent-adaptor/memory"
-	adaptor "github.com/agent-dance/agent-adaptor/next"
+	adaptor "github.com/agent-dance/agent-adaptor"
 	agentprofile "github.com/agent-dance/agent-adaptor/profile"
 )
 

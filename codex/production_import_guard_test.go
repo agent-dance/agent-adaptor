@@ -15,11 +15,9 @@ const moduleRootImport = "github.com/agent-dance/agent-adaptor"
 
 const engineImport = moduleRootImport + "/internal/engine"
 
-// TestProviderFilesDoNotDependOnLegacyRoot keeps all Codex and CodeBuddy
-// implementation and test code pointed at driver/, public leaf packages, and
-// internal implementation packages. Provider legacy edges have been deleted,
-// so neither production nor tests have an exception for importing the old
-// module root or its internal engine configuration aliases.
+// TestProviderFilesDoNotDependOnLegacyRoot keeps Codex and CodeBuddy
+// production code pointed at driver/, public leaf packages, and internal
+// implementation packages. Integration tests may consume the final root API.
 func TestProviderFilesDoNotDependOnLegacyRoot(t *testing.T) {
 	t.Parallel()
 	for _, root := range []string{".", filepath.Join("..", "codebuddy")} {
@@ -30,7 +28,7 @@ func TestProviderFilesDoNotDependOnLegacyRoot(t *testing.T) {
 				if walkErr != nil {
 					return walkErr
 				}
-				if entry.IsDir() || filepath.Ext(path) != ".go" {
+				if entry.IsDir() || filepath.Ext(path) != ".go" || strings.HasSuffix(path, "_test.go") {
 					return nil
 				}
 				parsed, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)

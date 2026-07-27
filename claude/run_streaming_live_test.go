@@ -13,7 +13,7 @@ import (
 
 	"github.com/agent-dance/agent-adaptor/claude"
 	"github.com/agent-dance/agent-adaptor/memory"
-	adaptor "github.com/agent-dance/agent-adaptor/next"
+	adaptor "github.com/agent-dance/agent-adaptor"
 )
 
 func requireClaudeCLI(t *testing.T) {
