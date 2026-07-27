@@ -68,7 +68,10 @@
 //
 //	SO-01  WorksWith* flags require a declared JSONSchema* mechanism, and a
 //	       declared mechanism requires WorksWithRun for v1's one execution
-//	       pipeline. WorksWithStreaming refers to provider transport only.
+//	       pipeline. NativeStrict requires JSONSchemaNative; PromptValidate
+//	       requires JSONSchemaPromptValidate; PreferNative tries those in
+//	       that order. Provider streaming and effective HITL Ask additionally
+//	       require WorksWithStreaming and WorksWithHITL respectively.
 //	SO-02  (live, opt-in) a native_strict Run yields StructuredOutput with
 //	       Source=native, Valid=true and parseable RawJSON.
 //	SO-03  Suite guarantee: no probe ever sends a mode or transport shape
@@ -131,13 +134,15 @@
 // Response invariants (live; driver/run.go):
 //
 //	RSP-01  Checkpoint.Valid=true requires State with a ResumeID and a clean
-//	        outcome (exit 0, no signal/timeout/Failure).
+//	        outcome (Driver.Run error nil, exit 0, no signal/timeout/Failure).
 //	RSP-02  Failure.HumanDecision is non-nil exactly when Code is
 //	        decision_rejected or decision_timeout.
 //	RSP-03  Question carries a Prompt.
 //	RSP-04  Output is never the raw protocol-shaped stdout dump.
 //	RSP-05  a valid checkpoint round-trips through the session codec with
 //	        its ResumeID and a non-empty guard fingerprint.
+//	RSP-06  when a provider exposes terminal JSON, RawStreams.Terminal carries
+//	        its non-empty official event name and valid exact JSON payload.
 //
 // These clauses are normative. The driver package states the lifecycle,
 // codec-empty mapping, core-owned sequence, transcript mirror, resume-codec,

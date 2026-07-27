@@ -9,40 +9,41 @@ import (
 	"sort"
 	"strings"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/internal/engine"
 )
 
-func Build(driverType string, profile agentadaptor.AgentProfile, kind agentadaptor.ProfileKind, payload agentadaptor.ProfilePayload, skills agentadaptor.SkillSnapshot, synced bool) agentadaptor.ProfileSnapshot {
-	return agentadaptor.ProfileSnapshot{
+func Build(driverType string, profile driver.AgentProfile, kind engine.ProfileKind, payload driver.ProfilePayload, skills driver.SkillSnapshot, synced bool) engine.ProfileSnapshot {
+	return engine.ProfileSnapshot{
 		DriverType:  driverType,
 		Profile:     profile,
 		Kind:        kind,
 		Fingerprint: payload.Fingerprint,
 		Warnings:    cloneStrings(payload.Warnings),
-		Resources: []agentadaptor.ResourceSnapshot{
+		Resources: []engine.ResourceSnapshot{
 			skillResource(payload.Skills.Fingerprint, skills),
 			mcpResource(payload.MCP, synced),
-			unsupportedResource(agentadaptor.ProfileResourceAgents, payload.Agents.Fingerprint, agentKeys(payload.Agents), nil, synced),
-			unsupportedResource(agentadaptor.ProfileResourceHooks, payload.Hooks.Fingerprint, hookKeys(payload.Hooks), nil, synced),
-			unsupportedResource(agentadaptor.ProfileResourceInstructions, instructionFingerprint(payload.Instructions), instructionKeys(payload.Instructions), nil, synced),
-			unsupportedResource(agentadaptor.ProfileResourceConfig, payload.Config.Fingerprint, configPatchKeys(payload.Config), cloneStrings(payload.Config.Warnings), synced),
+			unsupportedResource(engine.ProfileResourceAgents, payload.Agents.Fingerprint, agentKeys(payload.Agents), nil, synced),
+			unsupportedResource(engine.ProfileResourceHooks, payload.Hooks.Fingerprint, hookKeys(payload.Hooks), nil, synced),
+			unsupportedResource(engine.ProfileResourceInstructions, instructionFingerprint(payload.Instructions), instructionKeys(payload.Instructions), nil, synced),
+			unsupportedResource(engine.ProfileResourceConfig, payload.Config.Fingerprint, configPatchKeys(payload.Config), cloneStrings(payload.Config.Warnings), synced),
 		},
 	}
 }
 
-func skillResource(fingerprint string, snapshot agentadaptor.SkillSnapshot) agentadaptor.ResourceSnapshot {
-	out := agentadaptor.ResourceSnapshot{
-		Kind:            agentadaptor.ProfileResourceSkills,
+func skillResource(fingerprint string, snapshot driver.SkillSnapshot) engine.ResourceSnapshot {
+	out := engine.ResourceSnapshot{
+		Kind:            engine.ProfileResourceSkills,
 		Fingerprint:     fingerprint,
-		Support:         agentadaptor.ProfileResourceSupportPortableCore,
-		Materialization: agentadaptor.ProfileResourceMaterializationFileManaged,
+		Support:         engine.ProfileResourceSupportPortableCore,
+		Materialization: engine.ProfileResourceMaterializationFileManaged,
 		Warnings:        cloneStrings(snapshot.Warnings),
 	}
 	for _, entry := range snapshot.Entries {
 		switch {
-		case entry.Managed && (entry.State == agentadaptor.SkillStateInstalled || entry.State == agentadaptor.SkillStateConfigured):
+		case entry.Managed && (entry.State == driver.SkillStateInstalled || entry.State == driver.SkillStateConfigured):
 			out.Managed = append(out.Managed, entry.Key)
-		case entry.State == agentadaptor.SkillStateExternal:
+		case entry.State == driver.SkillStateExternal:
 			out.External = append(out.External, entry.Key)
 		}
 	}
@@ -51,13 +52,13 @@ func skillResource(fingerprint string, snapshot agentadaptor.SkillSnapshot) agen
 	return out
 }
 
-func mcpResource(payload agentadaptor.MCPPayload, synced bool) agentadaptor.ResourceSnapshot {
+func mcpResource(payload driver.MCPPayload, synced bool) engine.ResourceSnapshot {
 	keys := mcpKeys(payload)
-	out := agentadaptor.ResourceSnapshot{
-		Kind:            agentadaptor.ProfileResourceMCP,
+	out := engine.ResourceSnapshot{
+		Kind:            engine.ProfileResourceMCP,
 		Fingerprint:     payload.Fingerprint,
-		Support:         agentadaptor.ProfileResourceSupportPortableCore,
-		Materialization: agentadaptor.ProfileResourceMaterializationNotMaterialized,
+		Support:         engine.ProfileResourceSupportPortableCore,
+		Materialization: engine.ProfileResourceMaterializationNotMaterialized,
 		Warnings:        cloneStrings(payload.Warnings),
 	}
 	if len(keys) == 0 {
@@ -65,19 +66,19 @@ func mcpResource(payload agentadaptor.MCPPayload, synced bool) agentadaptor.Reso
 	}
 	if synced {
 		out.Managed = keys
-		out.Materialization = agentadaptor.ProfileResourceMaterializationNativeManaged
+		out.Materialization = engine.ProfileResourceMaterializationNativeManaged
 		return out
 	}
 	out.Warnings = append(out.Warnings, "mcp resources are desired but not observed by ProfileSnapshot; call SyncProfile to materialize them")
 	return out
 }
 
-func unsupportedResource(kind agentadaptor.ProfileResourceKind, fingerprint string, desired []string, warnings []string, synced bool) agentadaptor.ResourceSnapshot {
-	out := agentadaptor.ResourceSnapshot{
+func unsupportedResource(kind engine.ProfileResourceKind, fingerprint string, desired []string, warnings []string, synced bool) engine.ResourceSnapshot {
+	out := engine.ResourceSnapshot{
 		Kind:            kind,
 		Fingerprint:     fingerprint,
-		Support:         agentadaptor.ProfileResourceSupportUnsupported,
-		Materialization: agentadaptor.ProfileResourceMaterializationNotMaterialized,
+		Support:         engine.ProfileResourceSupportUnsupported,
+		Materialization: engine.ProfileResourceMaterializationNotMaterialized,
 		Warnings:        cloneStrings(warnings),
 	}
 	if len(desired) == 0 {
@@ -91,7 +92,7 @@ func unsupportedResource(kind agentadaptor.ProfileResourceKind, fingerprint stri
 	return out
 }
 
-func mcpKeys(payload agentadaptor.MCPPayload) []string {
+func mcpKeys(payload driver.MCPPayload) []string {
 	out := make([]string, 0, len(payload.Servers))
 	for _, server := range payload.Servers {
 		out = append(out, server.Key)
@@ -100,7 +101,7 @@ func mcpKeys(payload agentadaptor.MCPPayload) []string {
 	return out
 }
 
-func agentKeys(payload agentadaptor.AgentPayload) []string {
+func agentKeys(payload driver.AgentPayload) []string {
 	out := make([]string, 0, len(payload.Agents))
 	for _, agent := range payload.Agents {
 		out = append(out, agent.Key)
@@ -109,7 +110,7 @@ func agentKeys(payload agentadaptor.AgentPayload) []string {
 	return out
 }
 
-func hookKeys(payload agentadaptor.HookPayload) []string {
+func hookKeys(payload driver.HookPayload) []string {
 	out := make([]string, 0, len(payload.Hooks))
 	for _, hook := range payload.Hooks {
 		out = append(out, hook.Key)
@@ -118,7 +119,7 @@ func hookKeys(payload agentadaptor.HookPayload) []string {
 	return out
 }
 
-func configPatchKeys(payload agentadaptor.ProfileConfigPayload) []string {
+func configPatchKeys(payload driver.ProfileConfigPayload) []string {
 	out := make([]string, 0, len(payload.Patches))
 	for _, patch := range payload.Patches {
 		out = append(out, patch.Key)
@@ -127,7 +128,7 @@ func configPatchKeys(payload agentadaptor.ProfileConfigPayload) []string {
 	return out
 }
 
-func instructionKeys(ref *agentadaptor.InstructionsBundleRef) []string {
+func instructionKeys(ref *driver.InstructionsBundleRef) []string {
 	if ref == nil {
 		return nil
 	}
@@ -146,7 +147,7 @@ func instructionKeys(ref *agentadaptor.InstructionsBundleRef) []string {
 	return []string{"instructions"}
 }
 
-func instructionFingerprint(ref *agentadaptor.InstructionsBundleRef) string {
+func instructionFingerprint(ref *driver.InstructionsBundleRef) string {
 	if ref == nil {
 		return ""
 	}

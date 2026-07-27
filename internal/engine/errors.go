@@ -2,11 +2,9 @@
 // package re-exports every name below so hosts keep matching the same
 // error values via the historical agentadaptor identifiers).
 //
-// This file is the single source of truth for the public sentinel errors
-// and typed errors hosts may inspect via errors.Is / errors.As. New public
-// errors MUST be added here (or, when carrying structured fields, as a
-// typed *Error here) so the host integration matrix in docs/public-errors.md
-// stays exhaustive.
+// This file is the migration engine's error catalogue. Domain leaf packages
+// own errors that belong to their public vocabulary (skill, MCP, structured
+// output); the aliases below preserve legacy identity during the cutover.
 //
 // # Quick reference
 //
@@ -61,7 +59,13 @@
 // predicate's semantics. See docs/v0.5.0-host-integration-plan.md §A4.
 package engine
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/mcp"
+	"github.com/agent-dance/agent-adaptor/skill"
+)
 
 // --- Agent / binding -----------------------------------------------------
 
@@ -239,15 +243,15 @@ func (e *ResumeRejectedError) Unwrap() error {
 var (
 	// ErrInvalidMCPConfig is returned when WithMCP / WithDefaultMCP is
 	// given a malformed MCPConfig.
-	ErrInvalidMCPConfig = errors.New("agentadaptor: invalid MCP configuration")
+	ErrInvalidMCPConfig = mcp.ErrInvalidConfig
 
 	// ErrMCPUnsupported is returned when an MCP-bound Run targets an
 	// adapter that does not declare MCP support in its descriptor.
-	ErrMCPUnsupported = errors.New("agentadaptor: MCP unsupported by adapter")
+	ErrMCPUnsupported = mcp.ErrUnsupported
 
 	// ErrMCPTransportUnsupported is returned when the adapter declares
 	// MCP support but not for the transport the host requested.
-	ErrMCPTransportUnsupported = errors.New("agentadaptor: MCP transport unsupported by adapter")
+	ErrMCPTransportUnsupported = mcp.ErrTransportUnsupported
 )
 
 // --- HITL (see docs/workstream-hitl-v2.md) ------------------------------
@@ -280,75 +284,34 @@ var (
 	// ErrStructuredOutputUnsupported is returned before adapter launch when
 	// the requested structured-output mode cannot be honored by the bound
 	// adapter or selected run mode.
-	ErrStructuredOutputUnsupported = errors.New("agentadaptor: structured output unsupported by adapter")
+	ErrStructuredOutputUnsupported = driver.ErrStructuredOutputUnsupported
 
 	// ErrInvalidOutputSchema is returned before adapter launch when the host
 	// supplies malformed JSON, an unsupported output format/mode, or a JSON
 	// Schema document that cannot be compiled for local validation.
-	ErrInvalidOutputSchema = errors.New("agentadaptor: invalid output schema")
+	ErrInvalidOutputSchema = driver.ErrInvalidOutputSchema
 )
 
-// StructuredOutputUnsupportedError carries diagnostic detail while unwrapping
-// to ErrStructuredOutputUnsupported.
-type StructuredOutputUnsupportedError struct {
-	Adapter string
-	Mode    StructuredOutputMode
-	Reason  string
-}
-
-func (e *StructuredOutputUnsupportedError) Error() string {
-	if e == nil {
-		return ErrStructuredOutputUnsupported.Error()
-	}
-	msg := ErrStructuredOutputUnsupported.Error()
-	if e.Adapter != "" {
-		msg += ": adapter=" + e.Adapter
-	}
-	if e.Mode != "" {
-		msg += " mode=" + string(e.Mode)
-	}
-	if e.Reason != "" {
-		msg += " reason=" + e.Reason
-	}
-	return msg
-}
-
-func (e *StructuredOutputUnsupportedError) Unwrap() error {
-	return ErrStructuredOutputUnsupported
-}
-
-// InvalidOutputSchemaError carries diagnostic detail while unwrapping to
-// ErrInvalidOutputSchema.
-type InvalidOutputSchemaError struct {
-	Reason string
-	Cause  error
-}
-
-func (e *InvalidOutputSchemaError) Error() string {
-	if e == nil || e.Reason == "" {
-		return ErrInvalidOutputSchema.Error()
-	}
-	return ErrInvalidOutputSchema.Error() + ": " + e.Reason
-}
-
-func (e *InvalidOutputSchemaError) Unwrap() error {
-	if e == nil || e.Cause == nil {
-		return ErrInvalidOutputSchema
-	}
-	return errors.Join(ErrInvalidOutputSchema, e.Cause)
-}
+type (
+	// StructuredOutputUnsupportedError is retained as a migration alias. The
+	// concrete type and sentinel identity are owned by package driver.
+	StructuredOutputUnsupportedError = driver.StructuredOutputUnsupportedError
+	// InvalidOutputSchemaError is retained as a migration alias. The concrete
+	// type and sentinel identity are owned by package driver.
+	InvalidOutputSchemaError = driver.InvalidOutputSchemaError
+)
 
 // --- Skill (see docs/skill-api-design.md) -------------------------------
 
 var (
 	// ErrSkillKeyConflict is the base sentinel; SkillKeyConflictError in
 	// skill_types.go carries the conflicting sources slice.
-	ErrSkillKeyConflict = errors.New("agentadaptor: skill key defined with conflicting sources")
+	ErrSkillKeyConflict = skill.ErrSkillKeyConflict
 
 	// ErrSkillMaterializationFailed is returned when a selected skill was
 	// resolved but could not be materialized into a local SKILL.md directory.
 	// SkillMaterializationError carries the skill key and underlying cause.
-	ErrSkillMaterializationFailed = errors.New("agentadaptor: skill materialization failed")
+	ErrSkillMaterializationFailed = skill.ErrSkillMaterializationFailed
 
 	// (v0.4 ErrSkillsNotEnumerable removed in v0.5 PR4: non-enumerable
 	// providers now simply do not implement SkillCatalog. Hosts that
@@ -358,16 +321,16 @@ var (
 
 	// ErrSkillSourceMissing is returned when a Skill value is registered
 	// or selected without a non-nil Source.
-	ErrSkillSourceMissing = errors.New("agentadaptor: skill source is required")
+	ErrSkillSourceMissing = skill.ErrSkillSourceMissing
 
 	// ErrSkillKeyMissing is returned when a Skill is constructed with an
 	// empty Key.
-	ErrSkillKeyMissing = errors.New("agentadaptor: skill key is required")
+	ErrSkillKeyMissing = skill.ErrSkillKeyMissing
 
 	// ErrSkillNotFound is returned during Run-time selection when a bare
 	// SkillKey reference cannot be resolved against the configured
 	// provider, default skills, or per-call skills.
-	ErrSkillNotFound = errors.New("agentadaptor: skill not found in provider")
+	ErrSkillNotFound = skill.ErrSkillNotFound
 )
 
 // --- Predicates ---------------------------------------------------------

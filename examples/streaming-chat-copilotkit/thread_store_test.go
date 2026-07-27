@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/agent-dance/agent-adaptor/bridges/sse"
 	"github.com/agent-dance/agent-adaptor/hosttools/sessionrecorder"
 	adaptor "github.com/agent-dance/agent-adaptor/next"
 )
@@ -88,7 +87,7 @@ func TestThreadStoreResolveDecisionRejectsUnboundRequest(t *testing.T) {
 	store := mustNewThreadStore(t)
 	store.addPending("thread-1", &adaptor.ApprovalRequest{ID: "req-1", Kind: adaptor.ApprovalQuestion})
 
-	err := store.resolveDecision(context.Background(), "thread-1", sse.DecisionResolveRequest{
+	err := store.resolveDecision(context.Background(), "thread-1", approvalResolveRequest{
 		RequestID: "req-1",
 		Result:    "approved",
 	})
@@ -99,7 +98,7 @@ func TestThreadStoreResolveDecisionRejectsUnboundRequest(t *testing.T) {
 
 func TestThreadStoreResolveDecisionExpiresUnknownRequest(t *testing.T) {
 	store := mustNewThreadStore(t)
-	err := store.resolveDecision(context.Background(), "thread-1", sse.DecisionResolveRequest{
+	err := store.resolveDecision(context.Background(), "thread-1", approvalResolveRequest{
 		RequestID: "missing",
 		Result:    "approved",
 	})

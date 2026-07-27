@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
 	adaptertestv1 "github.com/agent-dance/agent-adaptor/adaptertest/v1"
 	"github.com/agent-dance/agent-adaptor/driver"
 )
@@ -45,7 +44,7 @@ func TestClaudeDriverV1Conformance(t *testing.T) {
 		// Hermetic isolation, matching the v0 conformance test: probes must
 		// not read or write the operator's real HOME or config dir.
 		t.Setenv("CLAUDE_CONFIG_DIR", "")
-		cfg.Env = []agentadaptor.EnvBinding{
+		cfg.Env = []driver.EnvBinding{
 			{Name: "HOME", Value: home},
 			{Name: "USERPROFILE", Value: home},
 		}

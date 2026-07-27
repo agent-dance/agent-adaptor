@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/bridges/agui"
+	adaptor "github.com/agent-dance/agent-adaptor/next"
 )
 
 func TestDecodeHTTPRequestHappyPath(t *testing.T) {
@@ -138,141 +138,48 @@ func TestSessionKey(t *testing.T) {
 	}
 }
 
-// TestUserTurnPayloadsHappy proves UserTurnPayloads returns a
-// well-formed text.start / text.content / text.end triple tagged with
-// RoleUser, sharing a stable MessageID lifted from the AG-UI message.
-func TestUserTurnPayloadsHappy(t *testing.T) {
-	t.Parallel()
+func TestLastUserMessageIDAndUserTurnEvents(t *testing.T) {
 	in := &agui.RunAgentInput{
-		ThreadID: "thr-1",
+		ThreadID: "tenant/a:b",
 		Messages: []agui.Message{
-			{ID: "msg-a", Role: "assistant", Content: rawString("greetings")},
-			{ID: "msg-u", Role: "user", Content: rawString("hello there")},
+			{ID: "old", Role: "user", Content: json.RawMessage(`"old"`)},
+			{ID: "latest", Role: "user", Content: json.RawMessage(`"hello"`)},
 		},
 	}
-	got := in.UserTurnPayloads("run-9")
-	if len(got) != 3 {
-		t.Fatalf("want 3 payloads, got %d (%+v)", len(got), got)
+	if got := in.LastUserMessageID(); got != "latest" {
+		t.Fatalf("LastUserMessageID = %q", got)
 	}
-	wantKinds := []agentadaptor.StreamKind{
-		agentadaptor.StreamTextStart,
-		agentadaptor.StreamTextContent,
-		agentadaptor.StreamTextEnd,
+	events := in.UserTurnEvents("run-1")
+	if len(events) != 3 {
+		t.Fatalf("UserTurnEvents len = %d", len(events))
 	}
-	for i, p := range got {
-		if p.Kind != wantKinds[i] {
-			t.Fatalf("payload %d: want kind %q got %q", i, wantKinds[i], p.Kind)
+	for i, event := range events {
+		text, ok := event.(adaptor.TextDelta)
+		if !ok {
+			t.Fatalf("event[%d] = %T", i, event)
 		}
-		if p.Role != agentadaptor.RoleUser {
-			t.Fatalf("payload %d: want Role=RoleUser, got %q", i, p.Role)
+		if text.MessageID != "latest" || text.Role != adaptor.RoleUser {
+			t.Fatalf("event[%d] = %#v", i, text)
 		}
-		if p.MessageID != "msg-u" {
-			t.Fatalf("payload %d: want MessageID=msg-u, got %q", i, p.MessageID)
-		}
-		if p.RunID != "run-9" {
-			t.Fatalf("payload %d: want RunID=run-9, got %q", i, p.RunID)
-		}
-		if p.ThreadID != "thr-1" {
-			t.Fatalf("payload %d: want ThreadID=thr-1, got %q", i, p.ThreadID)
-		}
-		if p.Timestamp.IsZero() {
-			t.Fatalf("payload %d: timestamp must be set", i)
+		meta := event.Meta()
+		if meta.RunID != "run-1" || meta.ThreadKey == "" || meta.ThreadKey == "agui/tenant/a:b" {
+			t.Fatalf("event[%d] meta = %#v", i, meta)
 		}
 	}
-	if got[1].Delta != "hello there" {
-		t.Fatalf("content delta: want %q got %q", "hello there", got[1].Delta)
-	}
-	if got[0].Delta != "" || got[2].Delta != "" {
-		t.Fatalf("start/end must have empty Delta")
-	}
-}
-
-// TestUserTurnPayloadsSynthesizesMessageID covers the case where the
-// AG-UI Message has no ID — the helper must mint a stable identifier so
-// the triple still shares a single MessageID.
-func TestUserTurnPayloadsSynthesizesMessageID(t *testing.T) {
-	t.Parallel()
-	in := &agui.RunAgentInput{
-		ThreadID: "thr",
-		Messages: []agui.Message{
-			{Role: "user", Content: rawString("hi")},
-		},
-	}
-	got := in.UserTurnPayloads("run-x")
-	if len(got) != 3 {
-		t.Fatalf("want 3 payloads, got %d", len(got))
-	}
-	id := got[0].MessageID
-	if id == "" {
-		t.Fatal("MessageID must be synthesized")
-	}
-	if got[1].MessageID != id || got[2].MessageID != id {
-		t.Fatalf("triple must share MessageID, got %q / %q / %q",
-			got[0].MessageID, got[1].MessageID, got[2].MessageID)
-	}
-	if !strings.Contains(id, "run-x") {
-		t.Fatalf("synthesized MessageID should include runID, got %q", id)
-	}
-}
-
-// TestUserTurnPayloadsReturnsNilOnNoUser covers two empty cases:
-// (a) no user-role message and (b) user message with empty content.
-// Both must return nil so the caller can simply range over the result.
-func TestUserTurnPayloadsReturnsNilOnNoUser(t *testing.T) {
-	t.Parallel()
-
-	noUser := &agui.RunAgentInput{
-		Messages: []agui.Message{
-			{Role: "assistant", Content: rawString("hello")},
-		},
-	}
-	if got := noUser.UserTurnPayloads("r"); got != nil {
-		t.Fatalf("expected nil when no user message, got %+v", got)
+	if events[0].(adaptor.TextDelta).Phase != adaptor.PhaseStart ||
+		events[1].(adaptor.TextDelta).Text != "hello" ||
+		events[2].(adaptor.TextDelta).Phase != adaptor.PhaseEnd {
+		t.Fatalf("malformed lifecycle: %#v", events)
 	}
 
-	emptyUser := &agui.RunAgentInput{
-		Messages: []agui.Message{
-			{Role: "user", Content: rawString("")},
-		},
+	in.Messages[1].ID = ""
+	if got := in.LastUserMessageID(); got != "" {
+		t.Fatalf("missing client id = %q", got)
 	}
-	if got := emptyUser.UserTurnPayloads("r"); got != nil {
-		t.Fatalf("expected nil when user content empty, got %+v", got)
+	events = in.UserTurnEvents("run-1")
+	if got := events[0].(adaptor.TextDelta).MessageID; got != "user-run-1-1" {
+		t.Fatalf("synthesized id = %q", got)
 	}
-
-	var nilIn *agui.RunAgentInput
-	if got := nilIn.UserTurnPayloads("r"); got != nil {
-		t.Fatalf("expected nil on nil receiver, got %+v", got)
-	}
-}
-
-// TestUserTurnPayloadsPicksLatestUser confirms the helper picks the most
-// recent user message, matching LastUserText.
-func TestUserTurnPayloadsPicksLatestUser(t *testing.T) {
-	t.Parallel()
-	in := &agui.RunAgentInput{
-		Messages: []agui.Message{
-			{ID: "u1", Role: "user", Content: rawString("first")},
-			{ID: "a1", Role: "assistant", Content: rawString("reply")},
-			{ID: "u2", Role: "user", Content: rawString("latest")},
-		},
-	}
-	got := in.UserTurnPayloads("r")
-	if len(got) != 3 {
-		t.Fatalf("want 3 payloads, got %d", len(got))
-	}
-	if got[0].MessageID != "u2" {
-		t.Fatalf("want MessageID=u2, got %q", got[0].MessageID)
-	}
-	if got[1].Delta != "latest" {
-		t.Fatalf("want delta=latest, got %q", got[1].Delta)
-	}
-}
-
-func rawString(s string) json.RawMessage {
-	if s == "" {
-		return json.RawMessage(`""`)
-	}
-	return json.RawMessage(`"` + s + `"`)
 }
 
 func TestRunAgentInputPreservesExtensionFields(t *testing.T) {

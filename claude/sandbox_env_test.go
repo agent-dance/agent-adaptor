@@ -3,7 +3,7 @@ package claude
 import (
 	"testing"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	agentadaptor "github.com/agent-dance/agent-adaptor/driver"
 )
 
 func withGeteuid(t *testing.T, uid int) {

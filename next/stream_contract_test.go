@@ -34,9 +34,10 @@ func collect(st adaptor.Stream) ([]adaptor.Event, *adaptor.Result, error) {
 // each — the StreamKind mapping table as an executable contract.
 func TestStreamTranslationCoversAllKinds(t *testing.T) {
 	fake := newFakeDriver()
+	fake.streamCaps = driver.StreamCapability{Native: true, TokenLevel: true}
 	fake.runFunc = func(ctx context.Context, req driver.Request, sink driver.EventSink) (driver.Response, error) {
 		if !req.Streaming {
-			t.Error("Stream path must set driver.Request.Streaming")
+			t.Error("rich driver capability must select provider streaming")
 		}
 		// Operational RunEvents — all 6 types plus an unknown extension.
 		_ = sink.Emit(driver.RunEvent{Type: driver.RunEventSpawn, Text: "codex --json"})
@@ -230,9 +231,10 @@ func TestStreamCloseTiming(t *testing.T) {
 // failure contract (D1) is unchanged.
 func TestRunIsStreamPlusDrain(t *testing.T) {
 	fake := newFakeDriver()
+	fake.streamCaps = driver.StreamCapability{Native: true}
 	fake.runFunc = func(ctx context.Context, req driver.Request, sink driver.EventSink) (driver.Response, error) {
 		if !req.Streaming {
-			t.Error("Run now travels the streaming path (single execution path)")
+			t.Error("provider transport must be independent of the consumer Run method")
 		}
 		_ = sink.EmitStream(driver.StreamPayload{Kind: driver.StreamTextContent, Delta: "ignored"})
 		return driver.Response{

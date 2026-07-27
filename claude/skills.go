@@ -7,26 +7,27 @@ import (
 	"path/filepath"
 	"strings"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/internal/engine"
 	"github.com/agent-dance/agent-adaptor/internal/skillruntime"
 )
 
-func resolveClaudeSkillsHome(bindings []agentadaptor.EnvBinding) string {
+func resolveClaudeSkillsHome(bindings []driver.EnvBinding) string {
 	return filepath.Join(resolveClaudeConfigDir(bindings), "skills")
 }
 
-func claudeSkillsLocationLabel(bindings []agentadaptor.EnvBinding) string {
+func claudeSkillsLocationLabel(bindings []driver.EnvBinding) string {
 	if skillruntime.ResolveBinding(bindings, "CLAUDE_CONFIG_DIR") != "" || strings.TrimSpace(os.Getenv("CLAUDE_CONFIG_DIR")) != "" {
 		return resolveClaudeSkillsHome(bindings)
 	}
 	return "~/.claude/skills"
 }
 
-func listClaudeSkills(payload agentadaptor.ResolvedSkills, selected []string, resolved []agentadaptor.Skill, bindings []agentadaptor.EnvBinding) (agentadaptor.SkillSnapshot, error) {
+func listClaudeSkills(payload driver.ResolvedSkills, selected []string, resolved []driver.Skill, bindings []driver.EnvBinding) (driver.SkillSnapshot, error) {
 	skillsHome := resolveClaudeSkillsHome(bindings)
 	installed, err := skillruntime.ReadInstalledSkillTargets(skillsHome)
 	if err != nil {
-		return agentadaptor.SkillSnapshot{}, err
+		return driver.SkillSnapshot{}, err
 	}
 	return skillruntime.BuildPersistentSnapshot(skillruntime.PersistentSnapshotOptions{
 		DriverType:             DriverType,
@@ -43,10 +44,10 @@ func listClaudeSkills(payload agentadaptor.ResolvedSkills, selected []string, re
 	}), nil
 }
 
-func syncClaudeSkills(ctx context.Context, payload agentadaptor.ResolvedSkills, selected []string, resolved []agentadaptor.Skill, bindings []agentadaptor.EnvBinding, kind agentadaptor.ProfileKind) (agentadaptor.SkillSnapshot, error) {
+func syncClaudeSkills(ctx context.Context, payload driver.ResolvedSkills, selected []string, resolved []driver.Skill, bindings []driver.EnvBinding, kind engine.ProfileKind) (driver.SkillSnapshot, error) {
 	skillsHome := resolveClaudeSkillsHome(bindings)
 	pruneMode := skillruntime.ProfileSkillPruneBrokenManaged
-	if kind == agentadaptor.ProfileKindHostManaged {
+	if kind == engine.ProfileKindHostManaged {
 		pruneMode = skillruntime.ProfileSkillPruneManaged
 	}
 	if _, err := skillruntime.ReconcileProfileSkills(ctx, skillruntime.ProfileSkillReconcileOptions{
@@ -58,14 +59,14 @@ func syncClaudeSkills(ctx context.Context, payload agentadaptor.ResolvedSkills, 
 		ConflictMode: skillruntime.ProfileSkillConflictError,
 		PruneMode:    pruneMode,
 	}); err != nil {
-		return agentadaptor.SkillSnapshot{}, err
+		return driver.SkillSnapshot{}, err
 	}
 	return listClaudeSkills(payload, selected, resolved, bindings)
 }
 
 // prepareClaudePromptBundle materializes the Selected skills into a per-run
 // prompt bundle layout that Claude's CLI can discover via --add-dir.
-func prepareClaudePromptBundle(agent agentadaptor.AgentIdentity, payload agentadaptor.ResolvedSkills) (string, string, error) {
+func prepareClaudePromptBundle(agent driver.AgentIdentity, payload driver.ResolvedSkills) (string, string, error) {
 	if len(payload.Entries) == 0 {
 		return "", "", nil
 	}

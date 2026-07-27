@@ -3,7 +3,6 @@ package codex
 import (
 	"context"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/internal/engine"
 )
@@ -23,8 +22,8 @@ type ReasoningEffort string
 //
 // This package owns the concrete type. CommonConfig controls
 // process/profile/workspace defaults; Model and ReasoningEffort map to Codex
-// model settings. Translating Config into the execution engine's config shape
-// is an internal detail of this package (docs/p5.2-recon.md D-P5.2-2).
+// model settings. The execution and probe paths consume this concrete value
+// directly; it is not an alias for an internal engine configuration.
 type Config struct {
 	CommonConfig
 	Model           string
@@ -32,55 +31,9 @@ type Config struct {
 	FastMode        bool
 }
 
-// engineConfig converts the package-owned Config into the engine config the
-// adapter path consumes. The conversion is field-by-field on purpose: a new
-// engine field cannot silently appear on the public Config, and a new Config
-// field must be routed here explicitly.
-func (c Config) engineConfig() engine.CodexConfig {
-	return engine.CodexConfig{
-		CommonConfig:    engineCommonConfig(c.CommonConfig),
-		Model:           c.Model,
-		ReasoningEffort: engine.ReasoningEffort(c.ReasoningEffort),
-		FastMode:        c.FastMode,
-	}
-}
-
-func engineCommonConfig(c CommonConfig) engine.CommonConfig {
-	c = c.Clone()
-	var workspaceStrategy *engine.WorkspaceStrategy
-	if c.WorkspaceStrategy != nil {
-		workspaceStrategy = &engine.WorkspaceStrategy{
-			Type:              c.WorkspaceStrategy.Type,
-			BaseRef:           c.WorkspaceStrategy.BaseRef,
-			BranchTemplate:    c.WorkspaceStrategy.BranchTemplate,
-			WorktreeParentDir: c.WorkspaceStrategy.WorktreeParentDir,
-		}
-	}
-	var workspaceRuntime *engine.WorkspaceRuntimeConfig
-	if c.WorkspaceRuntime != nil {
-		workspaceRuntime = &engine.WorkspaceRuntimeConfig{
-			Services: append([]driver.RuntimeServiceSpec(nil), c.WorkspaceRuntime.Services...),
-		}
-	}
-	return engine.CommonConfig{
-		Command:                 c.Command,
-		CWD:                     c.CWD,
-		Env:                     append([]driver.EnvBinding(nil), c.Env...),
-		Instructions:            c.Instructions,
-		PromptTemplate:          c.PromptTemplate,
-		BootstrapPromptTemplate: c.BootstrapPromptTemplate,
-		WorkspaceStrategy:       workspaceStrategy,
-		WorkspaceRuntime:        workspaceRuntime,
-		Timeout:                 c.Timeout,
-		GracePeriod:             c.GracePeriod,
-		ExtraArgs:               append([]string(nil), c.ExtraArgs...),
-	}
-}
-
 // Driver returns the Codex driver with cfg captured at construction. Pass the
-// result to the v1 root constructor (adaptor.New). The legacy New/NewAdapter
-// entry points are unchanged. Config validation stays deferred to run/probe
-// time, matching New: Driver never panics or validates eagerly.
+// result to the v1 root constructor (adaptor.New). Config validation stays
+// deferred to run/probe time: Driver never panics or validates eagerly.
 func Driver(cfg Config) driver.Driver {
 	return configuredDriver{cfg: cloneConfig(cfg)}
 }
@@ -107,15 +60,15 @@ func (d configuredDriver) SessionConfigFingerprint() (string, error) {
 }
 
 // Run injects the captured config when the request does not carry one (the
-// v1 execution path sends req.Config == nil) and delegates to the adapter. A
-// non-nil req.Config — the legacy binding path — wins untouched.
+// v1 execution path sends req.Config == nil) and delegates to the adapter.
+// An explicit non-nil SPI request config wins untouched.
 func (d configuredDriver) Run(ctx context.Context, req driver.Request, sink driver.EventSink) (driver.Response, error) {
 	return d.adapter.Run(ctx, d.requestWithConfig(req), sink)
 }
 
 // ValidateConfig validates the captured config when cfg is nil, so hosts and
 // the engine can probe a v1 driver without re-supplying configuration.
-// Explicit non-nil values keep the legacy adapter semantics.
+// Explicit non-nil values are delegated unchanged for direct SPI probes.
 func (d configuredDriver) ValidateConfig(cfg any) error {
 	return d.adapter.ValidateConfig(d.configOrCaptured(cfg))
 }
@@ -156,11 +109,11 @@ func (d configuredDriver) SyncSkills(ctx context.Context, cfg any, payload drive
 	return d.adapter.SyncSkills(ctx, d.configOrCaptured(cfg), payload, selected, resolved, profile)
 }
 
-func (d configuredDriver) SnapshotProfileResources(ctx context.Context, cfg any, agent driver.AgentIdentity, profile *driver.ProfileSelection, payload driver.ProfilePayload, selected []string, resolved []driver.Skill) (agentadaptor.ProfileSnapshot, error) {
+func (d configuredDriver) SnapshotProfileResources(ctx context.Context, cfg any, agent driver.AgentIdentity, profile *driver.ProfileSelection, payload driver.ProfilePayload, selected []string, resolved []driver.Skill) (engine.ProfileSnapshot, error) {
 	return d.adapter.SnapshotProfileResources(ctx, d.configOrCaptured(cfg), agent, profile, payload, selected, resolved)
 }
 
-func (d configuredDriver) SyncProfileResources(ctx context.Context, cfg any, agent driver.AgentIdentity, profile *driver.ProfileSelection, payload driver.ProfilePayload, selected []string, resolved []driver.Skill) (agentadaptor.ProfileSnapshot, error) {
+func (d configuredDriver) SyncProfileResources(ctx context.Context, cfg any, agent driver.AgentIdentity, profile *driver.ProfileSelection, payload driver.ProfilePayload, selected []string, resolved []driver.Skill) (engine.ProfileSnapshot, error) {
 	return d.adapter.SyncProfileResources(ctx, d.configOrCaptured(cfg), agent, profile, payload, selected, resolved)
 }
 

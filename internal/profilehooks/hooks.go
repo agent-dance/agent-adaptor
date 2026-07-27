@@ -14,12 +14,13 @@ import (
 	"strings"
 	"time"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/internal/engine"
 	"github.com/agent-dance/agent-adaptor/internal/profilestate"
 )
 
 const (
-	resourceKind     = string(agentadaptor.ProfileResourceHooks)
+	resourceKind     = string(engine.ProfileResourceHooks)
 	shellToolMatcher = "Bash"
 	mcpToolMatcher   = "mcp__.*"
 	fileReadMatcher  = "Read"
@@ -33,12 +34,12 @@ type providerHook struct {
 	Handler map[string]any
 }
 
-func Snapshot(driverType, profileDir string, payload agentadaptor.HookPayload, synced bool) agentadaptor.ResourceSnapshot {
-	out := agentadaptor.ResourceSnapshot{
-		Kind:            agentadaptor.ProfileResourceHooks,
+func Snapshot(driverType, profileDir string, payload driver.HookPayload, synced bool) engine.ResourceSnapshot {
+	out := engine.ResourceSnapshot{
+		Kind:            engine.ProfileResourceHooks,
 		Fingerprint:     payload.Fingerprint,
-		Support:         agentadaptor.ProfileResourceSupportPortableCore,
-		Materialization: agentadaptor.ProfileResourceMaterializationNotMaterialized,
+		Support:         engine.ProfileResourceSupportPortableCore,
+		Materialization: engine.ProfileResourceMaterializationNotMaterialized,
 		Warnings:        cloneStrings(payload.Warnings),
 	}
 	if len(payload.Hooks) == 0 {
@@ -47,49 +48,49 @@ func Snapshot(driverType, profileDir string, payload agentadaptor.HookPayload, s
 	warnings := collectWarnings(driverType, payload)
 	out.Warnings = append(out.Warnings, warnings...)
 	if len(warnings) > 0 || hasExtendedHandlers(payload) {
-		out.Support = agentadaptor.ProfileResourceSupportPortableExtended
+		out.Support = engine.ProfileResourceSupportPortableExtended
 	}
 	if synced {
 		for _, spec := range payload.Hooks {
 			out.Managed = append(out.Managed, spec.Key)
 		}
 		sort.Strings(out.Managed)
-		out.Materialization = agentadaptor.ProfileResourceMaterializationNativeManaged
+		out.Materialization = engine.ProfileResourceMaterializationNativeManaged
 	} else {
 		out.Warnings = append(out.Warnings, "hook resources are desired but not observed by ProfileSnapshot; call SyncProfile to materialize them")
 	}
 	return out
 }
 
-func Sync(ctx context.Context, driverType, profileDir string, payload agentadaptor.HookPayload) (agentadaptor.ResourceSnapshot, error) {
+func Sync(ctx context.Context, driverType, profileDir string, payload driver.HookPayload) (engine.ResourceSnapshot, error) {
 	if strings.TrimSpace(profileDir) == "" {
-		return agentadaptor.ResourceSnapshot{}, fmt.Errorf("profile hooks require profile directory")
+		return engine.ResourceSnapshot{}, fmt.Errorf("profile hooks require profile directory")
 	}
 	target, err := targetPath(driverType, profileDir)
 	if err != nil {
-		return agentadaptor.ResourceSnapshot{}, err
+		return engine.ResourceSnapshot{}, err
 	}
 	lock, err := profilestate.AcquireLock(ctx, profileDir, profilestate.LockOptions{StaleAfter: 10 * time.Minute})
 	if err != nil {
-		return agentadaptor.ResourceSnapshot{}, err
+		return engine.ResourceSnapshot{}, err
 	}
 	defer lock.Release()
 
 	manifest, err := profilestate.LoadManifest(profileDir)
 	if err != nil {
-		return agentadaptor.ResourceSnapshot{}, err
+		return engine.ResourceSnapshot{}, err
 	}
 	if len(payload.Hooks) == 0 {
 		if err := pruneManagedTarget(target, &manifest); err != nil {
-			return agentadaptor.ResourceSnapshot{}, err
+			return engine.ResourceSnapshot{}, err
 		}
 		if err := profilestate.SaveManifest(profileDir, manifest); err != nil {
-			return agentadaptor.ResourceSnapshot{}, err
+			return engine.ResourceSnapshot{}, err
 		}
 		return Snapshot(driverType, profileDir, payload, true), nil
 	}
 	if err := ensureTargetAvailable(driverType, target, &manifest); err != nil {
-		return agentadaptor.ResourceSnapshot{}, err
+		return engine.ResourceSnapshot{}, err
 	}
 	hooks := make([]providerHook, 0, len(payload.Hooks))
 	for _, spec := range payload.Hooks {
@@ -98,16 +99,16 @@ func Sync(ctx context.Context, driverType, profileDir string, payload agentadapt
 		}
 		hook, err := renderHook(driverType, spec)
 		if err != nil {
-			return agentadaptor.ResourceSnapshot{}, fmt.Errorf("hook %q: %w", spec.Key, err)
+			return engine.ResourceSnapshot{}, fmt.Errorf("hook %q: %w", spec.Key, err)
 		}
 		hooks = append(hooks, hook)
 	}
 	raw, err := renderFile(driverType, target, hooks)
 	if err != nil {
-		return agentadaptor.ResourceSnapshot{}, err
+		return engine.ResourceSnapshot{}, err
 	}
 	if err := profilestate.AtomicWriteFile(target, raw, 0o644); err != nil {
-		return agentadaptor.ResourceSnapshot{}, err
+		return engine.ResourceSnapshot{}, err
 	}
 	for _, spec := range payload.Hooks {
 		manifest.Set(profilestate.ManifestEntry{
@@ -123,7 +124,7 @@ func Sync(ctx context.Context, driverType, profileDir string, payload agentadapt
 	}
 	pruneRemovedHooks(payload, &manifest)
 	if err := profilestate.SaveManifest(profileDir, manifest); err != nil {
-		return agentadaptor.ResourceSnapshot{}, err
+		return engine.ResourceSnapshot{}, err
 	}
 	snapshot := Snapshot(driverType, profileDir, payload, true)
 	if externalHookFile(target, &manifest) {
@@ -143,7 +144,7 @@ func targetPath(driverType, profileDir string) (string, error) {
 	}
 }
 
-func renderHook(driverType string, spec agentadaptor.HookSpec) (providerHook, error) {
+func renderHook(driverType string, spec driver.HookSpec) (providerHook, error) {
 	event, matcher, err := mapEvent(driverType, spec)
 	if err != nil {
 		return providerHook{}, err
@@ -203,51 +204,51 @@ func sortGrouped(grouped map[string][]map[string]any) {
 	}
 }
 
-func mapEvent(driverType string, spec agentadaptor.HookSpec) (string, string, error) {
+func mapEvent(driverType string, spec driver.HookSpec) (string, string, error) {
 	matcher := matcherPattern(spec)
 	switch driverType {
 	case "codex":
 		switch spec.Event {
-		case agentadaptor.HookEventSessionStart:
+		case driver.HookEventSessionStart:
 			return "SessionStart", matcher, nil
-		case agentadaptor.HookEventPromptSubmit:
+		case driver.HookEventPromptSubmit:
 			return "UserPromptSubmit", "", nil
-		case agentadaptor.HookEventPreTool:
+		case driver.HookEventPreTool:
 			return "PreToolUse", matcher, nil
-		case agentadaptor.HookEventPostTool:
+		case driver.HookEventPostTool:
 			return "PostToolUse", matcher, nil
-		case agentadaptor.HookEventPermissionRequest:
+		case driver.HookEventPermissionRequest:
 			return "PermissionRequest", matcher, nil
-		case agentadaptor.HookEventPreShell:
+		case driver.HookEventPreShell:
 			return "PreToolUse", defaultMatcher(matcher, shellToolMatcher), nil
-		case agentadaptor.HookEventPostShell:
+		case driver.HookEventPostShell:
 			return "PostToolUse", defaultMatcher(matcher, shellToolMatcher), nil
-		case agentadaptor.HookEventPreMCP:
+		case driver.HookEventPreMCP:
 			return "PreToolUse", defaultMatcher(matcher, mcpToolMatcher), nil
-		case agentadaptor.HookEventPostMCP:
+		case driver.HookEventPostMCP:
 			return "PostToolUse", defaultMatcher(matcher, mcpToolMatcher), nil
-		case agentadaptor.HookEventPreFileRead:
+		case driver.HookEventPreFileRead:
 			return "PreToolUse", defaultMatcher(matcher, fileReadMatcher), nil
-		case agentadaptor.HookEventPostFileEdit:
+		case driver.HookEventPostFileEdit:
 			return "PostToolUse", defaultMatcher(matcher, fileEditMatcher), nil
-		case agentadaptor.HookEventStop:
+		case driver.HookEventStop:
 			return "Stop", "", nil
 		default:
 			return "", "", fmt.Errorf("event %q is unsupported by Codex hooks", spec.Event)
 		}
 	case "claude":
 		switch spec.Event {
-		case agentadaptor.HookEventPreShell:
+		case driver.HookEventPreShell:
 			return "PreToolUse", defaultMatcher(matcher, shellToolMatcher), nil
-		case agentadaptor.HookEventPostShell:
+		case driver.HookEventPostShell:
 			return "PostToolUse", defaultMatcher(matcher, shellToolMatcher), nil
-		case agentadaptor.HookEventPreMCP:
+		case driver.HookEventPreMCP:
 			return "PreToolUse", defaultMatcher(matcher, mcpToolMatcher), nil
-		case agentadaptor.HookEventPostMCP:
+		case driver.HookEventPostMCP:
 			return "PostToolUse", defaultMatcher(matcher, mcpToolMatcher), nil
-		case agentadaptor.HookEventPreFileRead:
+		case driver.HookEventPreFileRead:
 			return "PreToolUse", defaultMatcher(matcher, fileReadMatcher), nil
-		case agentadaptor.HookEventPostFileEdit:
+		case driver.HookEventPostFileEdit:
 			return "PostToolUse", defaultMatcher(matcher, fileEditMatcher), nil
 		}
 		event, ok := claudeEvents()[spec.Event]
@@ -266,77 +267,77 @@ func mapEvent(driverType string, spec agentadaptor.HookSpec) (string, string, er
 	}
 }
 
-func claudeEvents() map[agentadaptor.HookEvent]string {
-	return map[agentadaptor.HookEvent]string{
-		agentadaptor.HookEventSessionStart:      "SessionStart",
-		agentadaptor.HookEventSessionEnd:        "SessionEnd",
-		agentadaptor.HookEventPromptSubmit:      "UserPromptSubmit",
-		agentadaptor.HookEventPromptExpand:      "UserPromptExpansion",
-		agentadaptor.HookEventPreTool:           "PreToolUse",
-		agentadaptor.HookEventPostTool:          "PostToolUse",
-		agentadaptor.HookEventToolFailure:       "PostToolUseFailure",
-		agentadaptor.HookEventPermissionRequest: "PermissionRequest",
-		agentadaptor.HookEventPreShell:          "PreToolUse",
-		agentadaptor.HookEventPostShell:         "PostToolUse",
-		agentadaptor.HookEventPreMCP:            "PreToolUse",
-		agentadaptor.HookEventPostMCP:           "PostToolUse",
-		agentadaptor.HookEventPreFileRead:       "PreToolUse",
-		agentadaptor.HookEventPostFileEdit:      "PostToolUse",
-		agentadaptor.HookEventSubagentStart:     "SubagentStart",
-		agentadaptor.HookEventSubagentStop:      "SubagentStop",
-		agentadaptor.HookEventPreCompact:        "PreCompact",
-		agentadaptor.HookEventPostCompact:       "PostCompact",
-		agentadaptor.HookEventStop:              "Stop",
-		agentadaptor.HookEventStopFailure:       "StopFailure",
+func claudeEvents() map[driver.HookEvent]string {
+	return map[driver.HookEvent]string{
+		driver.HookEventSessionStart:      "SessionStart",
+		driver.HookEventSessionEnd:        "SessionEnd",
+		driver.HookEventPromptSubmit:      "UserPromptSubmit",
+		driver.HookEventPromptExpand:      "UserPromptExpansion",
+		driver.HookEventPreTool:           "PreToolUse",
+		driver.HookEventPostTool:          "PostToolUse",
+		driver.HookEventToolFailure:       "PostToolUseFailure",
+		driver.HookEventPermissionRequest: "PermissionRequest",
+		driver.HookEventPreShell:          "PreToolUse",
+		driver.HookEventPostShell:         "PostToolUse",
+		driver.HookEventPreMCP:            "PreToolUse",
+		driver.HookEventPostMCP:           "PostToolUse",
+		driver.HookEventPreFileRead:       "PreToolUse",
+		driver.HookEventPostFileEdit:      "PostToolUse",
+		driver.HookEventSubagentStart:     "SubagentStart",
+		driver.HookEventSubagentStop:      "SubagentStop",
+		driver.HookEventPreCompact:        "PreCompact",
+		driver.HookEventPostCompact:       "PostCompact",
+		driver.HookEventStop:              "Stop",
+		driver.HookEventStopFailure:       "StopFailure",
 	}
 }
 
-func cursorEvents() map[agentadaptor.HookEvent]string {
-	return map[agentadaptor.HookEvent]string{
-		agentadaptor.HookEventSessionStart:  "sessionStart",
-		agentadaptor.HookEventSessionEnd:    "sessionEnd",
-		agentadaptor.HookEventPromptSubmit:  "beforeSubmitPrompt",
-		agentadaptor.HookEventPreTool:       "preToolUse",
-		agentadaptor.HookEventPostTool:      "postToolUse",
-		agentadaptor.HookEventToolFailure:   "postToolUseFailure",
-		agentadaptor.HookEventPreShell:      "beforeShellExecution",
-		agentadaptor.HookEventPostShell:     "afterShellExecution",
-		agentadaptor.HookEventPreMCP:        "beforeMCPExecution",
-		agentadaptor.HookEventPostMCP:       "afterMCPExecution",
-		agentadaptor.HookEventPreFileRead:   "beforeReadFile",
-		agentadaptor.HookEventPostFileEdit:  "afterFileEdit",
-		agentadaptor.HookEventSubagentStart: "subagentStart",
-		agentadaptor.HookEventSubagentStop:  "subagentStop",
-		agentadaptor.HookEventPreCompact:    "preCompact",
-		agentadaptor.HookEventStop:          "stop",
+func cursorEvents() map[driver.HookEvent]string {
+	return map[driver.HookEvent]string{
+		driver.HookEventSessionStart:  "sessionStart",
+		driver.HookEventSessionEnd:    "sessionEnd",
+		driver.HookEventPromptSubmit:  "beforeSubmitPrompt",
+		driver.HookEventPreTool:       "preToolUse",
+		driver.HookEventPostTool:      "postToolUse",
+		driver.HookEventToolFailure:   "postToolUseFailure",
+		driver.HookEventPreShell:      "beforeShellExecution",
+		driver.HookEventPostShell:     "afterShellExecution",
+		driver.HookEventPreMCP:        "beforeMCPExecution",
+		driver.HookEventPostMCP:       "afterMCPExecution",
+		driver.HookEventPreFileRead:   "beforeReadFile",
+		driver.HookEventPostFileEdit:  "afterFileEdit",
+		driver.HookEventSubagentStart: "subagentStart",
+		driver.HookEventSubagentStop:  "subagentStop",
+		driver.HookEventPreCompact:    "preCompact",
+		driver.HookEventStop:          "stop",
 	}
 }
 
-func mapHandler(driverType string, spec agentadaptor.HookSpec) (map[string]any, error) {
+func mapHandler(driverType string, spec driver.HookSpec) (map[string]any, error) {
 	handler := spec.Handler
 	switch handler.Type {
-	case agentadaptor.HookHandlerCommand:
+	case driver.HookHandlerCommand:
 		out := map[string]any{
 			"type":    "command",
 			"command": commandString(handler),
 		}
 		addCommonHandlerFields(driverType, spec, out)
 		return out, nil
-	case agentadaptor.HookHandlerPrompt:
+	case driver.HookHandlerPrompt:
 		if driverType != "claude" && driverType != "cursor" {
 			return nil, fmt.Errorf("prompt hooks are unsupported by %s", driverType)
 		}
 		out := map[string]any{"type": "prompt", "prompt": handler.Prompt}
 		addCommonHandlerFields(driverType, spec, out)
 		return out, nil
-	case agentadaptor.HookHandlerHTTP:
+	case driver.HookHandlerHTTP:
 		if driverType != "claude" {
 			return nil, fmt.Errorf("http hooks are unsupported by %s", driverType)
 		}
 		out := map[string]any{"type": "http", "url": handler.URL}
 		addCommonHandlerFields(driverType, spec, out)
 		return out, nil
-	case agentadaptor.HookHandlerMCPTool:
+	case driver.HookHandlerMCPTool:
 		if driverType != "claude" {
 			return nil, fmt.Errorf("mcp_tool hooks are unsupported by %s", driverType)
 		}
@@ -346,7 +347,7 @@ func mapHandler(driverType string, spec agentadaptor.HookSpec) (map[string]any, 
 		}
 		addCommonHandlerFields(driverType, spec, out)
 		return out, nil
-	case agentadaptor.HookHandlerAgent:
+	case driver.HookHandlerAgent:
 		if driverType != "claude" {
 			return nil, fmt.Errorf("agent hooks are unsupported by %s", driverType)
 		}
@@ -358,19 +359,19 @@ func mapHandler(driverType string, spec agentadaptor.HookSpec) (map[string]any, 
 	}
 }
 
-func addCommonHandlerFields(driverType string, spec agentadaptor.HookSpec, out map[string]any) {
+func addCommonHandlerFields(driverType string, spec driver.HookSpec, out map[string]any) {
 	if spec.Timeout > 0 {
 		out["timeout"] = int(spec.Timeout.Seconds())
 	}
 	if driverType == "codex" && strings.TrimSpace(spec.StatusMessage) != "" {
 		out["statusMessage"] = strings.TrimSpace(spec.StatusMessage)
 	}
-	if driverType == "cursor" && spec.FailPolicy == agentadaptor.HookFailPolicyClosed {
+	if driverType == "cursor" && spec.FailPolicy == driver.HookFailPolicyClosed {
 		out["failClosed"] = true
 	}
 }
 
-func matcherPattern(spec agentadaptor.HookSpec) string {
+func matcherPattern(spec driver.HookSpec) string {
 	if strings.TrimSpace(spec.Matcher) != "" {
 		return strings.TrimSpace(spec.Matcher)
 	}
@@ -379,11 +380,11 @@ func matcherPattern(spec agentadaptor.HookSpec) string {
 		return ""
 	}
 	switch spec.MatcherSpec.Syntax {
-	case agentadaptor.HookMatcherSyntaxExact:
+	case driver.HookMatcherSyntaxExact:
 		return "^" + regexp.QuoteMeta(pattern) + "$"
-	case agentadaptor.HookMatcherSyntaxPrefix:
+	case driver.HookMatcherSyntaxPrefix:
 		return "^" + regexp.QuoteMeta(pattern)
-	case agentadaptor.HookMatcherSyntaxContains:
+	case driver.HookMatcherSyntaxContains:
 		return regexp.QuoteMeta(pattern)
 	default:
 		return pattern
@@ -397,7 +398,7 @@ func defaultMatcher(value, fallback string) string {
 	return fallback
 }
 
-func commandString(handler agentadaptor.HookHandler) string {
+func commandString(handler driver.HookHandler) string {
 	parts := []string{shellQuote(handler.Command)}
 	for _, arg := range handler.Args {
 		parts = append(parts, shellQuote(arg))
@@ -417,7 +418,7 @@ func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
-func collectWarnings(driverType string, payload agentadaptor.HookPayload) []string {
+func collectWarnings(driverType string, payload driver.HookPayload) []string {
 	warnings := make([]string, 0)
 	for _, spec := range payload.Hooks {
 		if spec.Disabled {
@@ -430,7 +431,7 @@ func collectWarnings(driverType string, payload agentadaptor.HookPayload) []stri
 		if len(spec.Handler.Env) > 0 || len(spec.Env) > 0 {
 			warnings = append(warnings, fmt.Sprintf("hook %q: hook env values are not written into provider config; wrap the command if env injection is required", spec.Key))
 		}
-		if spec.FailPolicy != "" && !(driverType == "cursor" && spec.FailPolicy == agentadaptor.HookFailPolicyClosed) {
+		if spec.FailPolicy != "" && !(driverType == "cursor" && spec.FailPolicy == driver.HookFailPolicyClosed) {
 			warnings = append(warnings, fmt.Sprintf("hook %q: fail policy %q is not mapped for %s", spec.Key, spec.FailPolicy, driverType))
 		}
 		if strings.TrimSpace(spec.StatusMessage) != "" && driverType != "codex" {
@@ -447,9 +448,9 @@ func collectWarnings(driverType string, payload agentadaptor.HookPayload) []stri
 	return warnings
 }
 
-func hasExtendedHandlers(payload agentadaptor.HookPayload) bool {
+func hasExtendedHandlers(payload driver.HookPayload) bool {
 	for _, spec := range payload.Hooks {
-		if spec.Handler.Type != "" && spec.Handler.Type != agentadaptor.HookHandlerCommand {
+		if spec.Handler.Type != "" && spec.Handler.Type != driver.HookHandlerCommand {
 			return true
 		}
 	}
@@ -550,7 +551,7 @@ func hooksEmpty(value any) bool {
 	}
 }
 
-func pruneRemovedHooks(payload agentadaptor.HookPayload, manifest *profilestate.Manifest) {
+func pruneRemovedHooks(payload driver.HookPayload, manifest *profilestate.Manifest) {
 	desired := map[string]struct{}{}
 	for _, spec := range payload.Hooks {
 		desired[spec.Key] = struct{}{}
@@ -562,7 +563,7 @@ func pruneRemovedHooks(payload agentadaptor.HookPayload, manifest *profilestate.
 	}
 }
 
-func fingerprint(spec agentadaptor.HookSpec) string {
+func fingerprint(spec driver.HookSpec) string {
 	raw, err := json.Marshal(spec)
 	if err != nil {
 		raw = []byte(spec.Key + string(spec.Event) + spec.Command + strconv.FormatBool(spec.Disabled))

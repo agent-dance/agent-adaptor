@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	agentadaptor "github.com/agent-dance/agent-adaptor/driver"
 )
 
 // fakeInteractiveSink records RequestDecision invocations and returns a

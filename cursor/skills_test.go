@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	agentadaptor "github.com/agent-dance/agent-adaptor/driver"
 )
 
 func createCursorSkillDir(t *testing.T, root, name string) string {
@@ -136,10 +136,10 @@ func TestSyncCursorSkillsUsesProfileSelection(t *testing.T) {
 		Entries: []agentadaptor.ResolvedSkill{{Key: "team/review", RuntimeName: "review", SourcePath: source}},
 	}
 
-	_, err := NewAdapter().(agentadaptor.SkillAwareDriver).SyncSkills(
+	_, err := any(adapter{}).(agentadaptor.SkillSupport).SyncSkills(
 		context.Background(),
-		agentadaptor.CursorConfig{
-			CommonConfig: agentadaptor.CommonConfig{Env: []agentadaptor.EnvBinding{{Name: "HOME", Value: nativeHome}}},
+		Config{
+			CommonConfig: CommonConfig{Env: []agentadaptor.EnvBinding{{Name: "HOME", Value: nativeHome}}},
 		},
 		payload,
 		[]string{"team/review"},

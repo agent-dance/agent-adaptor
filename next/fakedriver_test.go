@@ -41,9 +41,15 @@ type fakeDriver struct {
 	// P3 capability-matrix tests use it to advertise Models, MCP transport
 	// support, and StructuredOutput support.
 	descriptor *driver.Descriptor
+
+	// streamCaps selects the provider-native transport independently of the
+	// consumer-facing Run/Stream method.
+	streamCaps driver.StreamCapability
 }
 
 var _ driver.Driver = (*fakeDriver)(nil)
+var _ driver.SessionConfigFingerprinter = (*fakeDriver)(nil)
+var _ driver.StreamSupport = (*fakeDriver)(nil)
 
 func newFakeDriver() *fakeDriver {
 	return &fakeDriver{response: driver.Response{Output: "ok"}}
@@ -57,6 +63,12 @@ func (f *fakeDriver) Descriptor() driver.Descriptor {
 }
 
 func (f *fakeDriver) ValidateConfig(any) error { return nil }
+
+func (f *fakeDriver) SessionConfigFingerprint() (string, error) {
+	return "fake-driver-config/v1", nil
+}
+
+func (f *fakeDriver) StreamCapability() driver.StreamCapability { return f.streamCaps }
 
 func (f *fakeDriver) Run(ctx context.Context, req driver.Request, sink driver.EventSink) (driver.Response, error) {
 	f.mu.Lock()

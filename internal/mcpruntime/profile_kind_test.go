@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	agentadaptor "github.com/agent-dance/agent-adaptor/driver"
 )
 
 func TestClassifyProfileTreatsManagedHomesAsDedicated(t *testing.T) {

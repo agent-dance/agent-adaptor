@@ -7,26 +7,26 @@ import (
 	"path/filepath"
 	"strings"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/internal/skillruntime"
 )
 
-func resolveCursorSkillsHome(bindings []agentadaptor.EnvBinding) string {
+func resolveCursorSkillsHome(bindings []driver.EnvBinding) string {
 	return filepath.Join(resolveCursorHome(bindings), "skills")
 }
 
-func cursorSkillsLocationLabel(bindings []agentadaptor.EnvBinding) string {
+func cursorSkillsLocationLabel(bindings []driver.EnvBinding) string {
 	if skillruntime.ResolveBinding(bindings, "CURSOR_HOME") != "" || strings.TrimSpace(os.Getenv("CURSOR_HOME")) != "" {
 		return resolveCursorSkillsHome(bindings)
 	}
 	return "~/.cursor/skills"
 }
 
-func listCursorSkills(payload agentadaptor.ResolvedSkills, selected []string, resolved []agentadaptor.Skill, bindings []agentadaptor.EnvBinding) (agentadaptor.SkillSnapshot, error) {
+func listCursorSkills(payload driver.ResolvedSkills, selected []string, resolved []driver.Skill, bindings []driver.EnvBinding) (driver.SkillSnapshot, error) {
 	skillsHome := resolveCursorSkillsHome(bindings)
 	installed, err := skillruntime.ReadInstalledSkillTargets(skillsHome)
 	if err != nil {
-		return agentadaptor.SkillSnapshot{}, err
+		return driver.SkillSnapshot{}, err
 	}
 	return skillruntime.BuildPersistentSnapshot(skillruntime.PersistentSnapshotOptions{
 		DriverType:             DriverType,
@@ -43,7 +43,7 @@ func listCursorSkills(payload agentadaptor.ResolvedSkills, selected []string, re
 	}), nil
 }
 
-func syncCursorSkills(ctx context.Context, payload agentadaptor.ResolvedSkills, selected []string, resolved []agentadaptor.Skill, bindings []agentadaptor.EnvBinding, sink agentadaptor.EventSink) (agentadaptor.SkillSnapshot, error) {
+func syncCursorSkills(ctx context.Context, payload driver.ResolvedSkills, selected []string, resolved []driver.Skill, bindings []driver.EnvBinding, sink driver.EventSink) (driver.SkillSnapshot, error) {
 	skillsHome := resolveCursorSkillsHome(bindings)
 	result, err := skillruntime.ReconcileProfileSkills(ctx, skillruntime.ProfileSkillReconcileOptions{
 		ProfileDir:              resolveCursorHome(bindings),
@@ -56,7 +56,7 @@ func syncCursorSkills(ctx context.Context, payload agentadaptor.ResolvedSkills, 
 		PruneMatchingUnselected: true,
 	})
 	if err != nil {
-		return agentadaptor.SkillSnapshot{}, err
+		return driver.SkillSnapshot{}, err
 	}
 	for _, change := range result.Changes {
 		if sink == nil {
@@ -64,13 +64,13 @@ func syncCursorSkills(ctx context.Context, payload agentadaptor.ResolvedSkills, 
 		}
 		switch change.Action {
 		case "removed":
-			_ = sink.Emit(agentadaptor.RunEvent{
-				Type: agentadaptor.RunEventLifecycle,
+			_ = sink.Emit(driver.RunEvent{
+				Type: driver.RunEventLifecycle,
 				Text: fmt.Sprintf("removed stale Cursor skill %q from %s", change.RuntimeName, skillsHome),
 			})
 		case "created", "repaired":
-			_ = sink.Emit(agentadaptor.RunEvent{
-				Type: agentadaptor.RunEventLifecycle,
+			_ = sink.Emit(driver.RunEvent{
+				Type: driver.RunEventLifecycle,
 				Text: fmt.Sprintf("%s Cursor skill %q into %s", capitalize(change.Action), change.RuntimeName, skillsHome),
 			})
 		}
@@ -87,5 +87,5 @@ func capitalize(value string) string {
 
 type noopCursorSink struct{}
 
-func (noopCursorSink) Emit(agentadaptor.RunEvent) error            { return nil }
-func (noopCursorSink) EmitStream(agentadaptor.StreamPayload) error { return nil }
+func (noopCursorSink) Emit(driver.RunEvent) error            { return nil }
+func (noopCursorSink) EmitStream(driver.StreamPayload) error { return nil }

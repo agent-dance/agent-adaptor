@@ -39,7 +39,6 @@ import (
 
 	bridgea2a "github.com/agent-dance/agent-adaptor/bridges/a2a"
 	clienta2a "github.com/agent-dance/agent-adaptor/clients/a2a"
-	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/examples/internal/exampleutil"
 	"github.com/agent-dance/agent-adaptor/memory"
 	adaptor "github.com/agent-dance/agent-adaptor/next"
@@ -416,10 +415,12 @@ func consumeStream(stream *clienta2a.Stream) (streamSummary, string, error) {
 							continue
 						}
 						// The remote peer sees the stable adapter.stream.v1
-						// wire DTO, not the SDK's in-process event types.
-						payload, matched, err := bridgea2a.DecodeAdapterStreamStatus(part.Data)
-						if err == nil && matched && payload.Kind == driver.StreamTextContent {
-							output.WriteString(payload.Delta)
+						// wire DTO. Decode it into the public typed Event vocabulary.
+						event, matched, err := bridgea2a.DecodeAdapterEventV1(part.Data)
+						if err == nil && matched {
+							if delta, ok := event.(adaptor.TextDelta); ok && delta.Phase == adaptor.PhaseContent {
+								output.WriteString(delta.Text)
+							}
 						}
 					}
 				}

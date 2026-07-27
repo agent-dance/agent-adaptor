@@ -28,7 +28,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/mcp"
 	adaptor "github.com/agent-dance/agent-adaptor/next"
@@ -37,7 +36,7 @@ import (
 )
 
 func TestProfileResourcesResolveIntoProfilePayload(t *testing.T) {
-	t.Setenv(agentadaptor.SkillCacheRootEnv, t.TempDir())
+	t.Setenv(skill.SkillCacheRootEnv, t.TempDir())
 	fake := capsFake()
 	agent := adaptor.New(fake, adaptor.WithProfileResources(profile.Resources{
 		Skills: []adaptor.SkillRef{skill.Inline("team/default", "# default")},
@@ -322,21 +321,21 @@ func TestProfileStateFallbackReportsSupportAndMaterialization(t *testing.T) {
 	if err != nil {
 		t.Fatalf("profile state: %v", err)
 	}
-	skills := profileResourceByKind(t, snapshot, agentadaptor.ProfileResourceSkills)
-	if skills.Support != agentadaptor.ProfileResourceSupportPortableCore || skills.Materialization != agentadaptor.ProfileResourceMaterializationFileManaged {
+	skills := profileResourceByKind(t, snapshot, adaptor.ProfileResourceSkills)
+	if skills.Support != adaptor.ProfileResourceSupportPortableCore || skills.Materialization != adaptor.ProfileResourceMaterializationFileManaged {
 		t.Fatalf("unexpected skills support status: %#v", skills)
 	}
-	agents := profileResourceByKind(t, snapshot, agentadaptor.ProfileResourceAgents)
-	if agents.Support != agentadaptor.ProfileResourceSupportUnsupported || agents.Materialization != agentadaptor.ProfileResourceMaterializationNotMaterialized {
+	agents := profileResourceByKind(t, snapshot, adaptor.ProfileResourceAgents)
+	if agents.Support != adaptor.ProfileResourceSupportUnsupported || agents.Materialization != adaptor.ProfileResourceMaterializationNotMaterialized {
 		t.Fatalf("unexpected agents support status: %#v", agents)
 	}
-	instructions := profileResourceByKind(t, snapshot, agentadaptor.ProfileResourceInstructions)
+	instructions := profileResourceByKind(t, snapshot, adaptor.ProfileResourceInstructions)
 	if instructions.Fingerprint == "" {
 		t.Fatalf("expected inline instructions fingerprint, got %#v", instructions)
 	}
 }
 
-func profileResourceByKind(t *testing.T, snapshot adaptor.ProfileSnapshot, kind agentadaptor.ProfileResourceKind) adaptor.ResourceSnapshot {
+func profileResourceByKind(t *testing.T, snapshot adaptor.ProfileSnapshot, kind adaptor.ProfileResourceKind) adaptor.ResourceSnapshot {
 	t.Helper()
 	for _, resource := range snapshot.Resources {
 		if resource.Kind == kind {

@@ -4,7 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/internal/engine"
 )
 
 func syncJSONServers(
@@ -12,8 +13,8 @@ func syncJSONServers(
 	root map[string]any,
 	field string,
 	kind ProfileKind,
-	servers []agentadaptor.MCPServerSpec,
-	render func(agentadaptor.MCPServerSpec) (map[string]any, error),
+	servers []driver.MCPServerSpec,
+	render func(driver.MCPServerSpec) (map[string]any, error),
 ) error {
 	existing := mapFromAny(root[field])
 	desired := map[string]any{}
@@ -63,7 +64,7 @@ func mergeBearerHeader(headers map[string]string, bearerEnvVar, format, key stri
 		return out, nil
 	}
 	if _, exists := out["Authorization"]; exists {
-		return nil, fmt.Errorf("%w: MCP server %q cannot set both Headers.Authorization and BearerTokenEnvVar", agentadaptor.ErrInvalidMCPConfig, key)
+		return nil, fmt.Errorf("%w: MCP server %q cannot set both Headers.Authorization and BearerTokenEnvVar", engine.ErrInvalidMCPConfig, key)
 	}
 	out["Authorization"] = fmt.Sprintf("Bearer "+format, bearerEnvVar)
 	return out, nil

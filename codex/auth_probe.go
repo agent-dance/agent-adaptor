@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/internal/adapterutil"
 	"github.com/agent-dance/agent-adaptor/internal/configprobe"
 )
@@ -21,9 +21,9 @@ type codexAuthInfo struct {
 	LastRefresh string
 }
 
-func codexAuthChecks(bindings []agentadaptor.EnvBinding) []agentadaptor.EnvironmentCheck {
+func codexAuthChecks(bindings []driver.EnvBinding) []driver.EnvironmentCheck {
 	if _, source := adapterutil.ResolvedEnvValue(bindings, "OPENAI_API_KEY"); source != "" {
-		return []agentadaptor.EnvironmentCheck{{
+		return []driver.EnvironmentCheck{{
 			Code:    "openai_api_key_present",
 			Level:   "info",
 			Message: "OPENAI_API_KEY is available for Codex authentication.",
@@ -33,7 +33,7 @@ func codexAuthChecks(bindings []agentadaptor.EnvBinding) []agentadaptor.Environm
 
 	auth, err := readCodexAuthInfo(bindings)
 	if err != nil {
-		return []agentadaptor.EnvironmentCheck{{
+		return []driver.EnvironmentCheck{{
 			Code:    "codex_auth_unreadable",
 			Level:   "warn",
 			Message: "Codex auth.json exists but could not be parsed.",
@@ -42,7 +42,7 @@ func codexAuthChecks(bindings []agentadaptor.EnvBinding) []agentadaptor.Environm
 		}}
 	}
 	if auth == nil {
-		return []agentadaptor.EnvironmentCheck{{
+		return []driver.EnvironmentCheck{{
 			Code:    "codex_auth_missing",
 			Level:   "warn",
 			Message: "No Codex auth.json or OPENAI_API_KEY was found.",
@@ -50,14 +50,14 @@ func codexAuthChecks(bindings []agentadaptor.EnvBinding) []agentadaptor.Environm
 		}}
 	}
 
-	checks := []agentadaptor.EnvironmentCheck{{
+	checks := []driver.EnvironmentCheck{{
 		Code:    "codex_auth_present",
 		Level:   "info",
 		Message: "Codex native auth.json is present.",
 		Detail:  auth.Path,
 	}}
 	if auth.Email != "" {
-		checks = append(checks, agentadaptor.EnvironmentCheck{
+		checks = append(checks, driver.EnvironmentCheck{
 			Code:    "codex_auth_email",
 			Level:   "info",
 			Message: "Codex auth identifies the logged-in account.",
@@ -65,7 +65,7 @@ func codexAuthChecks(bindings []agentadaptor.EnvBinding) []agentadaptor.Environm
 		})
 	}
 	if auth.PlanType != "" {
-		checks = append(checks, agentadaptor.EnvironmentCheck{
+		checks = append(checks, driver.EnvironmentCheck{
 			Code:    "codex_auth_plan",
 			Level:   "info",
 			Message: "Codex auth token exposes the ChatGPT plan type.",
@@ -73,7 +73,7 @@ func codexAuthChecks(bindings []agentadaptor.EnvBinding) []agentadaptor.Environm
 		})
 	}
 	if auth.AccountID != "" {
-		checks = append(checks, agentadaptor.EnvironmentCheck{
+		checks = append(checks, driver.EnvironmentCheck{
 			Code:    "codex_auth_account",
 			Level:   "info",
 			Message: "Codex auth token includes an account id.",
@@ -81,7 +81,7 @@ func codexAuthChecks(bindings []agentadaptor.EnvBinding) []agentadaptor.Environm
 		})
 	}
 	if auth.LastRefresh != "" {
-		checks = append(checks, agentadaptor.EnvironmentCheck{
+		checks = append(checks, driver.EnvironmentCheck{
 			Code:    "codex_auth_last_refresh",
 			Level:   "info",
 			Message: "Codex auth metadata reports the last refresh timestamp.",
@@ -91,7 +91,7 @@ func codexAuthChecks(bindings []agentadaptor.EnvBinding) []agentadaptor.Environm
 	return checks
 }
 
-func readCodexAuthInfo(bindings []agentadaptor.EnvBinding) (*codexAuthInfo, error) {
+func readCodexAuthInfo(bindings []driver.EnvBinding) (*codexAuthInfo, error) {
 	authPath := filepath.Join(resolveSharedCodexHome(bindings), "auth.json")
 	payload, err := configprobe.ReadJSONObject(authPath)
 	if err != nil {

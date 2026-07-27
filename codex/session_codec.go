@@ -5,19 +5,18 @@ import (
 	"fmt"
 	"strings"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/driver"
 )
 
 type sessionCodec struct{}
 
-func (adapter) SessionCodec() agentadaptor.SessionCodec {
+func (adapter) SessionCodec() driver.SessionCodec {
 	return sessionCodec{}
 }
 
 func (sessionCodec) Name() string { return DriverType }
 
-func (sessionCodec) ToParams(state *agentadaptor.DriverSessionState) driver.SessionParams {
+func (sessionCodec) ToParams(state *driver.SessionState) driver.SessionParams {
 	if state == nil {
 		return driver.SessionParams{}
 	}
@@ -28,7 +27,7 @@ func (sessionCodec) ToParams(state *agentadaptor.DriverSessionState) driver.Sess
 	}
 }
 
-func (sessionCodec) FromParams(params driver.SessionParams) *agentadaptor.DriverSessionState {
+func (sessionCodec) FromParams(params driver.SessionParams) *driver.SessionState {
 	if params.ResumeID == "" && params.DisplayID == "" && len(params.Values) == 0 {
 		return nil
 	}
@@ -36,7 +35,7 @@ func (sessionCodec) FromParams(params driver.SessionParams) *agentadaptor.Driver
 	if displayID == "" {
 		displayID = params.ResumeID
 	}
-	return &agentadaptor.DriverSessionState{
+	return &driver.SessionState{
 		ResumeID:  params.ResumeID,
 		DisplayID: displayID,
 		Data:      cloneData(params.Values),
@@ -51,7 +50,7 @@ func (sessionCodec) GuardFingerprint(params driver.SessionParams) string {
 	)
 }
 
-func displayID(state *agentadaptor.DriverSessionState) string {
+func displayID(state *driver.SessionState) string {
 	if state.DisplayID != "" {
 		return state.DisplayID
 	}

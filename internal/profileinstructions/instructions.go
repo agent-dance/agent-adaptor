@@ -13,7 +13,8 @@ import (
 	"strings"
 	"time"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/internal/engine"
 	"github.com/agent-dance/agent-adaptor/internal/profilereconcile"
 	"github.com/agent-dance/agent-adaptor/internal/profilestate"
 )
@@ -21,19 +22,19 @@ import (
 type Prepared struct {
 	Path           string
 	Content        string
-	Snapshot       agentadaptor.ResourceSnapshot
+	Snapshot       engine.ResourceSnapshot
 	PromptFallback bool
 }
 
-const resourceKind = string(agentadaptor.ProfileResourceInstructions)
+const resourceKind = string(engine.ProfileResourceInstructions)
 
-func Snapshot(driverType, profileDir string, ref *agentadaptor.InstructionsBundleRef, synced bool) agentadaptor.ResourceSnapshot {
+func Snapshot(driverType, profileDir string, ref *driver.InstructionsBundleRef, synced bool) engine.ResourceSnapshot {
 	target := targetFor(driverType, profileDir, ref)
-	out := agentadaptor.ResourceSnapshot{
-		Kind:            agentadaptor.ProfileResourceInstructions,
+	out := engine.ResourceSnapshot{
+		Kind:            engine.ProfileResourceInstructions,
 		Fingerprint:     fingerprint(ref),
 		Support:         target.Support,
-		Materialization: agentadaptor.ProfileResourceMaterializationNotMaterialized,
+		Materialization: engine.ProfileResourceMaterializationNotMaterialized,
 	}
 	if ref == nil {
 		return out
@@ -54,27 +55,27 @@ func Snapshot(driverType, profileDir string, ref *agentadaptor.InstructionsBundl
 	return out
 }
 
-func Sync(ctx context.Context, driverType, profileDir string, ref *agentadaptor.InstructionsBundleRef) (agentadaptor.ResourceSnapshot, string, error) {
+func Sync(ctx context.Context, driverType, profileDir string, ref *driver.InstructionsBundleRef) (engine.ResourceSnapshot, string, error) {
 	if strings.TrimSpace(profileDir) == "" {
-		return agentadaptor.ResourceSnapshot{}, "", fmt.Errorf("profile instructions require profile directory")
+		return engine.ResourceSnapshot{}, "", fmt.Errorf("profile instructions require profile directory")
 	}
 	lock, err := profilestate.AcquireLock(ctx, profileDir, profilestate.LockOptions{StaleAfter: 10 * time.Minute})
 	if err != nil {
-		return agentadaptor.ResourceSnapshot{}, "", err
+		return engine.ResourceSnapshot{}, "", err
 	}
 	defer lock.Release()
 
 	manifest, err := profilestate.LoadManifest(profileDir)
 	if err != nil {
-		return agentadaptor.ResourceSnapshot{}, "", err
+		return engine.ResourceSnapshot{}, "", err
 	}
 
 	if ref == nil {
 		if err := pruneProfileInstructionEntries(profileDir, &manifest, ""); err != nil {
-			return agentadaptor.ResourceSnapshot{}, "", err
+			return engine.ResourceSnapshot{}, "", err
 		}
 		if err := profilestate.SaveManifest(profileDir, manifest); err != nil {
-			return agentadaptor.ResourceSnapshot{}, "", err
+			return engine.ResourceSnapshot{}, "", err
 		}
 		return Snapshot(driverType, profileDir, nil, true), "", nil
 	}
@@ -82,14 +83,14 @@ func Sync(ctx context.Context, driverType, profileDir string, ref *agentadaptor.
 	target := targetFor(driverType, profileDir, ref)
 	content, sourcePath, err := instructionContent(ref)
 	if err != nil {
-		return agentadaptor.ResourceSnapshot{}, "", err
+		return engine.ResourceSnapshot{}, "", err
 	}
 	if err := ensureManagedTargetAvailable(instructionKey(ref), target.Path, &manifest); err != nil {
-		return agentadaptor.ResourceSnapshot{}, "", err
+		return engine.ResourceSnapshot{}, "", err
 	}
 	previousEntry, hadPrevious := manifest.Entry(resourceKind, instructionKey(ref))
 	if err := profilestate.AtomicWriteFile(target.Path, []byte(content), 0o644); err != nil {
-		return agentadaptor.ResourceSnapshot{}, "", err
+		return engine.ResourceSnapshot{}, "", err
 	}
 	manifest.Set(profilestate.ManifestEntry{
 		Kind:        resourceKind,
@@ -108,19 +109,19 @@ func Sync(ctx context.Context, driverType, profileDir string, ref *agentadaptor.
 	})
 	if hadPrevious && filepath.Clean(previousEntry.Path) != filepath.Clean(target.Path) {
 		if err := removeProfileInstructionPath(profileDir, previousEntry.Path); err != nil {
-			return agentadaptor.ResourceSnapshot{}, "", err
+			return engine.ResourceSnapshot{}, "", err
 		}
 	}
 	if err := pruneProfileInstructionEntries(profileDir, &manifest, target.Path); err != nil {
-		return agentadaptor.ResourceSnapshot{}, "", err
+		return engine.ResourceSnapshot{}, "", err
 	}
 	if err := profilestate.SaveManifest(profileDir, manifest); err != nil {
-		return agentadaptor.ResourceSnapshot{}, "", err
+		return engine.ResourceSnapshot{}, "", err
 	}
 	return Snapshot(driverType, profileDir, ref, true), target.Path, nil
 }
 
-func PrepareForRun(ctx context.Context, driverType, profileDir, workspaceDir string, ref *agentadaptor.InstructionsBundleRef) (Prepared, error) {
+func PrepareForRun(ctx context.Context, driverType, profileDir, workspaceDir string, ref *driver.InstructionsBundleRef) (Prepared, error) {
 	snapshot, path, err := Sync(ctx, driverType, profileDir, ref)
 	if err != nil {
 		return Prepared{}, err
@@ -152,7 +153,7 @@ func PrepareForRun(ctx context.Context, driverType, profileDir, workspaceDir str
 	return Prepared{Path: path, Content: string(raw), Snapshot: snapshot, PromptFallback: targetFor(driverType, profileDir, ref).PromptFallback}, nil
 }
 
-func PromptPrefix(prepared Prepared, mode agentadaptor.InstructionMode) string {
+func PromptPrefix(prepared Prepared, mode driver.InstructionMode) string {
 	if !prepared.PromptFallback {
 		return ""
 	}
@@ -161,20 +162,20 @@ func PromptPrefix(prepared Prepared, mode agentadaptor.InstructionMode) string {
 		return ""
 	}
 	verb := "Apply these additional profile instructions"
-	if mode == agentadaptor.InstructionModeReplace {
+	if mode == driver.InstructionModeReplace {
 		verb = "Use these profile instructions as the active instruction bundle"
 	}
 	return fmt.Sprintf("%s from %s:\n\n%s", verb, prepared.Path, content)
 }
 
-func Mode(ref *agentadaptor.InstructionsBundleRef) agentadaptor.InstructionMode {
+func Mode(ref *driver.InstructionsBundleRef) driver.InstructionMode {
 	if ref == nil {
-		return agentadaptor.InstructionModeAdditive
+		return driver.InstructionModeAdditive
 	}
 	return ref.Mode
 }
 
-func directoryEntry(ref *agentadaptor.InstructionsBundleRef) profilereconcile.DirectoryEntry {
+func directoryEntry(ref *driver.InstructionsBundleRef) profilereconcile.DirectoryEntry {
 	key := instructionKey(ref)
 	entry := profilereconcile.DirectoryEntry{
 		Key:         key,
@@ -192,49 +193,49 @@ func directoryEntry(ref *agentadaptor.InstructionsBundleRef) profilereconcile.Di
 
 type target struct {
 	Path            string
-	Support         agentadaptor.ProfileResourceSupport
-	Materialization agentadaptor.ProfileResourceMaterialization
+	Support         engine.ProfileResourceSupport
+	Materialization engine.ProfileResourceMaterialization
 	Warning         string
 	Native          bool
 	PromptFallback  bool
 }
 
-func targetFor(driverType, profileDir string, ref *agentadaptor.InstructionsBundleRef) target {
+func targetFor(driverType, profileDir string, ref *driver.InstructionsBundleRef) target {
 	base := filepath.Join(profileDir, ".agent-adaptor", "instructions", safeFileName(instructionKey(ref))+".md")
 	out := target{
 		Path:            base,
-		Support:         agentadaptor.ProfileResourceSupportFallback,
-		Materialization: agentadaptor.ProfileResourceMaterializationPromptInjected,
+		Support:         engine.ProfileResourceSupportFallback,
+		Materialization: engine.ProfileResourceMaterializationPromptInjected,
 		Warning:         "instructions are materialized as an SDK-managed prompt fallback, not provider-native rules",
 		PromptFallback:  true,
 	}
-	if ref == nil || ref.Scope == agentadaptor.InstructionScopeRun {
+	if ref == nil || ref.Scope == driver.InstructionScopeRun {
 		return out
 	}
 	switch driverType {
 	case "codex":
 		name := "AGENTS.md"
-		if ref.Mode == agentadaptor.InstructionModeReplace {
+		if ref.Mode == driver.InstructionModeReplace {
 			name = "AGENTS.override.md"
 		}
 		return target{
 			Path:            filepath.Join(profileDir, name),
-			Support:         agentadaptor.ProfileResourceSupportPortableCore,
-			Materialization: agentadaptor.ProfileResourceMaterializationNativeManaged,
+			Support:         engine.ProfileResourceSupportPortableCore,
+			Materialization: engine.ProfileResourceMaterializationNativeManaged,
 			Native:          true,
 		}
 	case "claude":
 		return target{
 			Path:            filepath.Join(profileDir, "CLAUDE.md"),
-			Support:         agentadaptor.ProfileResourceSupportPortableCore,
-			Materialization: agentadaptor.ProfileResourceMaterializationNativeManaged,
+			Support:         engine.ProfileResourceSupportPortableCore,
+			Materialization: engine.ProfileResourceMaterializationNativeManaged,
 			Native:          true,
 		}
 	case "codebuddy":
 		return target{
 			Path:            filepath.Join(profileDir, "CODEBUDDY.md"),
-			Support:         agentadaptor.ProfileResourceSupportPortableCore,
-			Materialization: agentadaptor.ProfileResourceMaterializationNativeManaged,
+			Support:         engine.ProfileResourceSupportPortableCore,
+			Materialization: engine.ProfileResourceMaterializationNativeManaged,
 			Native:          true,
 		}
 	default:
@@ -242,38 +243,38 @@ func targetFor(driverType, profileDir string, ref *agentadaptor.InstructionsBund
 	}
 }
 
-func projectTargetFor(driverType, workspaceDir string, ref *agentadaptor.InstructionsBundleRef) (target, bool) {
+func projectTargetFor(driverType, workspaceDir string, ref *driver.InstructionsBundleRef) (target, bool) {
 	if driverType != "cursor" || ref == nil || strings.TrimSpace(workspaceDir) == "" {
 		return target{}, false
 	}
 	switch ref.Scope {
-	case agentadaptor.InstructionScopeProject, agentadaptor.InstructionScopeLocal:
+	case driver.InstructionScopeProject, driver.InstructionScopeLocal:
 	default:
 		return target{}, false
 	}
 	return target{
 		Path:            filepath.Join(workspaceDir, ".cursor", "rules", safeFileName(instructionKey(ref))+".mdc"),
-		Support:         agentadaptor.ProfileResourceSupportPortableCore,
-		Materialization: agentadaptor.ProfileResourceMaterializationNativeManaged,
+		Support:         engine.ProfileResourceSupportPortableCore,
+		Materialization: engine.ProfileResourceMaterializationNativeManaged,
 		Native:          true,
 	}, true
 }
 
-func syncProjectTarget(ctx context.Context, target target, ref *agentadaptor.InstructionsBundleRef) (agentadaptor.ResourceSnapshot, string, error) {
+func syncProjectTarget(ctx context.Context, target target, ref *driver.InstructionsBundleRef) (engine.ResourceSnapshot, string, error) {
 	root := filepath.Dir(target.Path)
 	lock, err := profilestate.AcquireLock(ctx, root, profilestate.LockOptions{StaleAfter: 10 * time.Minute})
 	if err != nil {
-		return agentadaptor.ResourceSnapshot{}, "", err
+		return engine.ResourceSnapshot{}, "", err
 	}
 	defer lock.Release()
 
 	manifest, err := profilestate.LoadManifest(root)
 	if err != nil {
-		return agentadaptor.ResourceSnapshot{}, "", err
+		return engine.ResourceSnapshot{}, "", err
 	}
 	content, _, err := instructionContent(ref)
 	if err != nil {
-		return agentadaptor.ResourceSnapshot{}, "", err
+		return engine.ResourceSnapshot{}, "", err
 	}
 	entry := profilereconcile.DirectoryEntry{
 		Key:         instructionKey(ref),
@@ -296,13 +297,13 @@ func syncProjectTarget(ctx context.Context, target target, ref *agentadaptor.Ins
 		Manifest:   &manifest,
 		AllowPrune: true,
 	}); err != nil {
-		return agentadaptor.ResourceSnapshot{}, "", err
+		return engine.ResourceSnapshot{}, "", err
 	}
 	if err := profilestate.SaveManifest(root, manifest); err != nil {
-		return agentadaptor.ResourceSnapshot{}, "", err
+		return engine.ResourceSnapshot{}, "", err
 	}
-	snapshot := agentadaptor.ResourceSnapshot{
-		Kind:            agentadaptor.ProfileResourceInstructions,
+	snapshot := engine.ResourceSnapshot{
+		Kind:            engine.ProfileResourceInstructions,
 		Fingerprint:     fingerprint(ref),
 		Managed:         []string{instructionKey(ref)},
 		Support:         target.Support,
@@ -336,7 +337,7 @@ func pruneProjectTargets(ctx context.Context, driverType, workspaceDir string) e
 	return profilestate.SaveManifest(root, manifest)
 }
 
-func renderCursorMDC(ref *agentadaptor.InstructionsBundleRef, content string) string {
+func renderCursorMDC(ref *driver.InstructionsBundleRef, content string) string {
 	description := "Profile instructions managed by agent-adaptor"
 	if id := strings.TrimSpace(ref.ID); id != "" {
 		description = "Profile instructions " + id + " managed by agent-adaptor"
@@ -344,7 +345,7 @@ func renderCursorMDC(ref *agentadaptor.InstructionsBundleRef, content string) st
 	return fmt.Sprintf("---\ndescription: %s\nglobs:\nalwaysApply: true\n---\n\n%s\n", description, strings.TrimSpace(content))
 }
 
-func instructionContent(ref *agentadaptor.InstructionsBundleRef) (string, string, error) {
+func instructionContent(ref *driver.InstructionsBundleRef) (string, string, error) {
 	if ref == nil {
 		return "", "", nil
 	}
@@ -411,7 +412,7 @@ func pathWithin(root, path string) bool {
 	return err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
-func instructionKey(ref *agentadaptor.InstructionsBundleRef) string {
+func instructionKey(ref *driver.InstructionsBundleRef) string {
 	if ref == nil {
 		return "instructions"
 	}
@@ -447,7 +448,7 @@ func safeFileName(value string) string {
 	return out
 }
 
-func fingerprint(ref *agentadaptor.InstructionsBundleRef) string {
+func fingerprint(ref *driver.InstructionsBundleRef) string {
 	if ref == nil {
 		return ""
 	}
@@ -468,7 +469,7 @@ func fingerprint(ref *agentadaptor.InstructionsBundleRef) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func ManagedKeysForTest(refs ...*agentadaptor.InstructionsBundleRef) []string {
+func ManagedKeysForTest(refs ...*driver.InstructionsBundleRef) []string {
 	keys := make([]string, 0, len(refs))
 	for _, ref := range refs {
 		keys = append(keys, instructionKey(ref))

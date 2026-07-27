@@ -121,7 +121,7 @@ type TranscriptItem struct {
 }
 
 // StreamKind enumerates the protocol-agnostic streaming events drivers emit
-// via EventSink.EmitStream when streaming is enabled. Bridges (pkg/bridges/*)
+// via EventSink.EmitStream when streaming is enabled. Bridges (bridges/*)
 // translate these into host-facing protocols such as AG-UI without having to
 // know the concrete driver.
 //
@@ -191,7 +191,7 @@ const (
 //
 // RoleUser is exclusively produced by bridges or hosts that want the
 // human turn to appear in the recorded / replayed StreamPayload stream
-// (see pkg/bridges/agui.RunAgentInput.UserTurnPayloads). Drivers MUST
+// (see bridges/agui.RunAgentInput.UserTurnPayloads). Drivers MUST
 // NOT emit RoleUser themselves.
 type Role string
 

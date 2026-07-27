@@ -11,26 +11,19 @@ import (
 	"strings"
 	"testing"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/internal/testutil"
 )
 
-func TestNewReturnsTypedBinding(t *testing.T) {
-	binding := New(agentadaptor.CodexConfig{Model: "gpt-5.4"})
-	if binding.TypedConfig().Model != "gpt-5.4" {
-		t.Fatalf("expected typed config model to round-trip, got %#v", binding.TypedConfig())
-	}
-}
-
 func TestDescriptorAdvertisesExpectedMCPCapabilities(t *testing.T) {
-	caps := NewAdapter().Descriptor().MCP
+	caps := (adapter{}).Descriptor().MCP
 	if !caps.Supported || !caps.Stdio || !caps.HTTP || caps.SSE {
 		t.Fatalf("unexpected Codex MCP capability: %#v", caps)
 	}
 }
 
 func TestDescriptorAdvertisesStructuredOutputCapabilities(t *testing.T) {
-	caps := NewAdapter().Descriptor().StructuredOutput
+	caps := (adapter{}).Descriptor().StructuredOutput
 	if !caps.JSONSchemaNative || !caps.JSONSchemaPromptValidate || !caps.WorksWithRun {
 		t.Fatalf("unexpected Codex structured-output capability: %#v", caps)
 	}
@@ -100,13 +93,13 @@ func TestCodexRunAddsOutputSchemaArgAndParsesStructuredResult(t *testing.T) {
 		"@echo off\r\nsetlocal enabledelayedexpansion\r\n> \"%ARG_FILE%\" echo %*\r\nset \"NEXT=\"\r\nset \"SCHEMA=\"\r\nfor %%A in (%*) do (\r\n  if defined NEXT (\r\n    set \"SCHEMA=%%~A\"\r\n    set \"NEXT=\"\r\n  )\r\n  if \"%%~A\"==\"--output-schema\" set \"NEXT=1\"\r\n)\r\nif not exist \"!SCHEMA!\" exit /b 3\r\nfor %%S in (\"!SCHEMA!\") do if %%~zS LEQ 0 exit /b 4\r\necho {\"type\":\"thread.started\",\"thread_id\":\"codex-session\"}\r\necho {\"type\":\"result\",\"result\":{\"project_name\":\"agent-adaptor\"}}\r\n",
 	)
 
-	result, err := NewAdapter().Run(context.Background(), agentadaptor.DriverRunRequest{
+	result, err := (adapter{}).Run(context.Background(), driver.Request{
 		Prompt:    "extract",
-		Config:    agentadaptor.CodexConfig{CommonConfig: agentadaptor.CommonConfig{Command: command, CWD: workspace, Env: []agentadaptor.EnvBinding{{Name: "HOME", Value: home}, {Name: "USERPROFILE", Value: home}, {Name: "CODEX_HOME", Value: filepath.Join(home, ".codex")}, {Name: "ARG_FILE", Value: argFile}}}},
-		Workspace: agentadaptor.WorkspaceLease{ID: "workspace-a", CWD: workspace},
-		OutputSchema: &agentadaptor.OutputSchema{
-			Format:     agentadaptor.OutputFormatJSONSchema,
-			Mode:       agentadaptor.StructuredOutputNativeStrict,
+		Config:    Config{CommonConfig: CommonConfig{Command: command, CWD: workspace, Env: []driver.EnvBinding{{Name: "HOME", Value: home}, {Name: "USERPROFILE", Value: home}, {Name: "CODEX_HOME", Value: filepath.Join(home, ".codex")}, {Name: "ARG_FILE", Value: argFile}}}},
+		Workspace: driver.WorkspaceLease{ID: "workspace-a", CWD: workspace},
+		OutputSchema: &driver.OutputSchema{
+			Format:     driver.OutputFormatJSONSchema,
+			Mode:       driver.StructuredOutputNativeStrict,
 			SchemaJSON: []byte(`{"type":"object","properties":{"project_name":{"type":"string"}},"required":["project_name"]}`),
 		},
 	}, &testutil.EventRecorder{})
@@ -145,11 +138,9 @@ func TestDetectModelFallsBackToCodexConfigFile(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 
-	detected, err := NewAdapter().(interface {
-		DetectModel(context.Context, any, *agentadaptor.ProfileSelection) (*agentadaptor.DetectedModel, error)
-	}).DetectModel(context.Background(), agentadaptor.CodexConfig{
-		CommonConfig: agentadaptor.CommonConfig{
-			Env: []agentadaptor.EnvBinding{{Name: "HOME", Value: home}},
+	detected, err := (adapter{}).DetectModel(context.Background(), Config{
+		CommonConfig: CommonConfig{
+			Env: []driver.EnvBinding{{Name: "HOME", Value: home}},
 		},
 	}, nil)
 	if err != nil {
@@ -166,11 +157,9 @@ func TestDetectModelUsesExplicitProfileOptionAsCodexHome(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 
-	detected, err := NewAdapter().(interface {
-		DetectModel(context.Context, any, *agentadaptor.ProfileSelection) (*agentadaptor.DetectedModel, error)
-	}).DetectModel(context.Background(), agentadaptor.CodexConfig{
-		CommonConfig: agentadaptor.CommonConfig{
-			Env: []agentadaptor.EnvBinding{{Name: "CODEX_HOME", Value: profileDir}},
+	detected, err := (adapter{}).DetectModel(context.Background(), Config{
+		CommonConfig: CommonConfig{
+			Env: []driver.EnvBinding{{Name: "CODEX_HOME", Value: profileDir}},
 		},
 	}, nil)
 	if err != nil {
@@ -187,11 +176,9 @@ func TestDetectModelPrefersExplicitCodexHomeOverProfileOption(t *testing.T) {
 		t.Fatalf("write override config: %v", err)
 	}
 
-	detected, err := NewAdapter().(interface {
-		DetectModel(context.Context, any, *agentadaptor.ProfileSelection) (*agentadaptor.DetectedModel, error)
-	}).DetectModel(context.Background(), agentadaptor.CodexConfig{
-		CommonConfig: agentadaptor.CommonConfig{
-			Env: []agentadaptor.EnvBinding{
+	detected, err := (adapter{}).DetectModel(context.Background(), Config{
+		CommonConfig: CommonConfig{
+			Env: []driver.EnvBinding{
 				{Name: "CODEX_HOME", Value: overrideDir},
 			},
 		},
@@ -205,35 +192,31 @@ func TestDetectModelPrefersExplicitCodexHomeOverProfileOption(t *testing.T) {
 }
 
 func TestGetProfileReturnsManagedCodexHomeWhenUnset(t *testing.T) {
-	profile, err := NewAdapter().(interface {
-		GetProfile(context.Context, any, agentadaptor.AgentIdentity, *agentadaptor.ProfileSelection) (agentadaptor.AgentProfile, error)
-	}).GetProfile(context.Background(), agentadaptor.CodexConfig{}, agentadaptor.AgentIdentity{TenantID: "examples"}, nil)
+	profile, err := (adapter{}).GetProfile(context.Background(), Config{}, driver.AgentIdentity{TenantID: "examples"}, nil)
 	if err != nil {
 		t.Fatalf("get profile: %v", err)
 	}
-	if !profile.Supported || !profile.Managed || profile.Source != agentadaptor.AgentProfileSourceManaged || profile.EnvVar != "CODEX_HOME" {
+	if !profile.Supported || !profile.Managed || profile.Source != driver.AgentProfileSourceManaged || profile.EnvVar != "CODEX_HOME" {
 		t.Fatalf("unexpected profile metadata: %#v", profile)
 	}
-	if want := resolveManagedCodexHome(agentadaptor.AgentIdentity{TenantID: "examples"}); profile.Dir != want {
+	if want := resolveManagedCodexHome(driver.AgentIdentity{TenantID: "examples"}); profile.Dir != want {
 		t.Fatalf("expected managed home %q, got %#v", want, profile)
 	}
 }
 
 func TestGetProfileUsesExplicitCodexHomeOverProfileOption(t *testing.T) {
 	overrideDir := t.TempDir()
-	profile, err := NewAdapter().(interface {
-		GetProfile(context.Context, any, agentadaptor.AgentIdentity, *agentadaptor.ProfileSelection) (agentadaptor.AgentProfile, error)
-	}).GetProfile(context.Background(), agentadaptor.CodexConfig{
-		CommonConfig: agentadaptor.CommonConfig{
-			Env: []agentadaptor.EnvBinding{
+	profile, err := (adapter{}).GetProfile(context.Background(), Config{
+		CommonConfig: CommonConfig{
+			Env: []driver.EnvBinding{
 				{Name: "CODEX_HOME", Value: overrideDir},
 			},
 		},
-	}, agentadaptor.AgentIdentity{}, nil)
+	}, driver.AgentIdentity{}, nil)
 	if err != nil {
 		t.Fatalf("get profile: %v", err)
 	}
-	if profile.Dir != overrideDir || profile.Source != agentadaptor.AgentProfileSourceBindingEnv || profile.Managed {
+	if profile.Dir != overrideDir || profile.Source != driver.AgentProfileSourceBindingEnv || profile.Managed {
 		t.Fatalf("unexpected profile: %#v", profile)
 	}
 }
@@ -253,24 +236,22 @@ func TestGetProfileCloneCanShareNativeCodexAuth(t *testing.T) {
 	}
 	target := filepath.Join(t.TempDir(), "isolated")
 
-	profile, err := NewAdapter().(interface {
-		GetProfile(context.Context, any, agentadaptor.AgentIdentity, *agentadaptor.ProfileSelection) (agentadaptor.AgentProfile, error)
-	}).GetProfile(context.Background(), agentadaptor.CodexConfig{
-		CommonConfig: agentadaptor.CommonConfig{
-			Env: []agentadaptor.EnvBinding{{Name: "HOME", Value: home}, {Name: "USERPROFILE", Value: home}},
+	profile, err := (adapter{}).GetProfile(context.Background(), Config{
+		CommonConfig: CommonConfig{
+			Env: []driver.EnvBinding{{Name: "HOME", Value: home}, {Name: "USERPROFILE", Value: home}},
 		},
-	}, agentadaptor.AgentIdentity{}, &agentadaptor.ProfileSelection{
-		Mode: agentadaptor.ProfileModeClone,
+	}, driver.AgentIdentity{}, &driver.ProfileSelection{
+		Mode: driver.ProfileModeClone,
 		Dir:  target,
-		Clone: &agentadaptor.CloneProfileOptions{
+		Clone: &driver.CloneProfileOptions{
 			IncludeSettings: true,
-			AuthMode:        agentadaptor.CloneProfileAuthLink,
+			AuthMode:        driver.CloneProfileAuthLink,
 		},
 	})
 	if err != nil {
 		t.Fatalf("get profile: %v", err)
 	}
-	if profile.Dir != target || profile.Source != agentadaptor.AgentProfileSourceProfileOption {
+	if profile.Dir != target || profile.Source != driver.AgentProfileSourceProfileOption {
 		t.Fatalf("unexpected profile: %#v", profile)
 	}
 	rawConfig, err := os.ReadFile(filepath.Join(target, "config.toml"))
@@ -291,7 +272,7 @@ func TestGetProfileCloneCanShareNativeCodexAuth(t *testing.T) {
 }
 
 func TestConfigSchemaIncludesGroupsDefaultsAndOptions(t *testing.T) {
-	schema := NewAdapter().Descriptor().ConfigSchema
+	schema := (adapter{}).Descriptor().ConfigSchema
 	if schema == nil || len(schema.Fields) == 0 {
 		t.Fatalf("expected config schema, got %#v", schema)
 	}
@@ -316,11 +297,9 @@ func TestCheckEnvironmentReportsConfigFileState(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 
-	report, err := NewAdapter().(interface {
-		CheckEnvironment(context.Context, any) (agentadaptor.EnvironmentReport, error)
-	}).CheckEnvironment(context.Background(), agentadaptor.CodexConfig{
-		CommonConfig: agentadaptor.CommonConfig{
-			Env: []agentadaptor.EnvBinding{{Name: "HOME", Value: home}},
+	report, err := (adapter{}).CheckEnvironment(context.Background(), Config{
+		CommonConfig: CommonConfig{
+			Env: []driver.EnvBinding{{Name: "HOME", Value: home}},
 		},
 	})
 	if err != nil {
@@ -349,11 +328,9 @@ func TestCheckEnvironmentReportsCodexAuthMetadata(t *testing.T) {
 		t.Fatalf("write auth: %v", err)
 	}
 
-	report, err := NewAdapter().(interface {
-		CheckEnvironment(context.Context, any) (agentadaptor.EnvironmentReport, error)
-	}).CheckEnvironment(context.Background(), agentadaptor.CodexConfig{
-		CommonConfig: agentadaptor.CommonConfig{
-			Env: []agentadaptor.EnvBinding{{Name: "HOME", Value: home}},
+	report, err := (adapter{}).CheckEnvironment(context.Background(), Config{
+		CommonConfig: CommonConfig{
+			Env: []driver.EnvBinding{{Name: "HOME", Value: home}},
 		},
 	})
 	if err != nil {
@@ -398,11 +375,9 @@ func TestGetQuotaReadsCodexWHAMUsage(t *testing.T) {
 	codexQuotaUsageURL = "https://unit.test/codex-quota"
 	defer func() { codexQuotaUsageURL = previous }()
 
-	report, err := NewAdapter().(interface {
-		GetQuota(context.Context, any, *agentadaptor.ProfileSelection) (agentadaptor.QuotaReport, error)
-	}).GetQuota(context.Background(), agentadaptor.CodexConfig{
-		CommonConfig: agentadaptor.CommonConfig{
-			Env: []agentadaptor.EnvBinding{{Name: "HOME", Value: home}},
+	report, err := (adapter{}).GetQuota(context.Background(), Config{
+		CommonConfig: CommonConfig{
+			Env: []driver.EnvBinding{{Name: "HOME", Value: home}},
 		},
 	}, nil)
 	if err != nil {
@@ -428,7 +403,7 @@ func testJWT(t *testing.T, payload map[string]any) string {
 	return "header." + base64.RawURLEncoding.EncodeToString(raw) + ".sig"
 }
 
-func assertCheckPresent(t *testing.T, checks []agentadaptor.EnvironmentCheck, code string) {
+func assertCheckPresent(t *testing.T, checks []driver.EnvironmentCheck, code string) {
 	t.Helper()
 	for _, check := range checks {
 		if check.Code == code {
@@ -438,7 +413,7 @@ func assertCheckPresent(t *testing.T, checks []agentadaptor.EnvironmentCheck, co
 	t.Fatalf("expected check %q in %#v", code, checks)
 }
 
-func assertCheckWithDetail(t *testing.T, checks []agentadaptor.EnvironmentCheck, code, detail string) {
+func assertCheckWithDetail(t *testing.T, checks []driver.EnvironmentCheck, code, detail string) {
 	t.Helper()
 	for _, check := range checks {
 		if check.Code == code {
@@ -457,7 +432,7 @@ func (fn roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return fn(req)
 }
 
-func schemaFieldByName(t *testing.T, schema *agentadaptor.ConfigSchema, name string) agentadaptor.ConfigField {
+func schemaFieldByName(t *testing.T, schema *driver.ConfigSchema, name string) driver.ConfigField {
 	t.Helper()
 	for _, field := range schema.Fields {
 		if field.Name == name {
@@ -465,7 +440,7 @@ func schemaFieldByName(t *testing.T, schema *agentadaptor.ConfigSchema, name str
 		}
 	}
 	t.Fatalf("missing schema field %q in %#v", name, schema.Fields)
-	return agentadaptor.ConfigField{}
+	return driver.ConfigField{}
 }
 
 func TestGetQuotaUsesProfileSelection(t *testing.T) {
@@ -473,9 +448,7 @@ func TestGetQuotaUsesProfileSelection(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(profileDir, "auth.json"), []byte(`{"tokens":{"access_token":"token"}}`), 0o644); err != nil {
 		t.Fatalf("write auth: %v", err)
 	}
-	report, err := NewAdapter().(interface {
-		GetQuota(context.Context, any, *agentadaptor.ProfileSelection) (agentadaptor.QuotaReport, error)
-	}).GetQuota(context.Background(), agentadaptor.CodexConfig{}, &agentadaptor.ProfileSelection{Mode: agentadaptor.ProfileModeDedicated, Dir: profileDir})
+	report, err := (adapter{}).GetQuota(context.Background(), Config{}, &driver.ProfileSelection{Mode: driver.ProfileModeDedicated, Dir: profileDir})
 	if err != nil {
 		t.Fatalf("get quota: %v", err)
 	}

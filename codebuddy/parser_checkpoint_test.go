@@ -3,7 +3,7 @@ package codebuddy
 import (
 	"testing"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	driver "github.com/agent-dance/agent-adaptor/driver"
 )
 
 func TestCodeBuddyCheckpointRequiresOfficialSuccessAndCleanOutcome(t *testing.T) {
@@ -22,12 +22,12 @@ func TestCodeBuddyCheckpointRequiresOfficialSuccessAndCleanOutcome(t *testing.T)
 		exitCode int
 		signal   string
 		timedOut bool
-		failure  *agentadaptor.RunFailure
+		failure  *driver.RunFailure
 	}{
 		{name: "nonzero", exitCode: 1},
 		{name: "signal", signal: "SIGTERM"},
 		{name: "timeout", timedOut: true},
-		{name: "failure", failure: &agentadaptor.RunFailure{Code: agentadaptor.FailureAgentError}},
+		{name: "failure", failure: &driver.RunFailure{Code: driver.FailureAgentError}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if cp := success.checkpointForOutcome(tc.exitCode, tc.signal, tc.timedOut, tc.failure); cp != nil {

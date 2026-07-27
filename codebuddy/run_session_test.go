@@ -8,7 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	driver "github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/internal/engine"
 	"github.com/agent-dance/agent-adaptor/internal/testutil"
 )
 
@@ -29,10 +30,10 @@ func fakeHeadlessCLI(t *testing.T, dir string) string {
 	)
 }
 
-func autoApprovePolicy() agentadaptor.RunPolicy {
-	return agentadaptor.RunPolicy{HumanDecision: agentadaptor.HumanDecisionPolicy{
-		Permission: agentadaptor.HumanDecisionAutoApprove,
-		PlanReview: agentadaptor.HumanDecisionAutoApprove,
+func autoApprovePolicy() driver.RunPolicy {
+	return driver.RunPolicy{HumanDecision: driver.HumanDecisionPolicy{
+		Permission: driver.HumanDecisionAutoApprove,
+		PlanReview: driver.HumanDecisionAutoApprove,
 	}}
 }
 
@@ -45,28 +46,28 @@ func TestCodeBuddyHeadlessRunProducesCheckpointAndArgs(t *testing.T) {
 	}
 	command := fakeHeadlessCLI(t, home)
 
-	cfg := agentadaptor.CodeBuddyConfig{
-		CommonConfig: agentadaptor.CommonConfig{
+	cfg := Config{
+		CommonConfig: CommonConfig{
 			Command: command,
 			CWD:     workspace,
-			Env: []agentadaptor.EnvBinding{
+			Env: []driver.EnvBinding{
 				{Name: "HOME", Value: home},
 				{Name: "USERPROFILE", Value: home},
 			},
 		},
 		Model: "claude-sonnet-5",
 	}
-	req := agentadaptor.DriverRunRequest{
+	req := driver.Request{
 		RunID:          "run-headless-1",
 		Prompt:         "hello from codebuddy",
 		Config:         cfg,
-		Workspace:      agentadaptor.WorkspaceLease{ID: "workspace-a", CWD: workspace},
+		Workspace:      driver.WorkspaceLease{ID: "workspace-a", CWD: workspace},
 		Policy:         autoApprovePolicy(),
-		ProfilePayload: agentadaptor.ProfilePayload{Fingerprint: "profile-a"},
+		ProfilePayload: driver.ProfilePayload{Fingerprint: "profile-a"},
 	}
 
 	events := &testutil.EventRecorder{}
-	res, err := NewAdapter().Run(context.Background(), req, events)
+	res, err := (adapter{}).Run(context.Background(), req, events)
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -87,9 +88,9 @@ func TestCodeBuddyHeadlessRunProducesCheckpointAndArgs(t *testing.T) {
 	if res.Checkpoint.State.ResumeID != "cb-sess" {
 		t.Errorf("resume id = %q, want cb-sess", res.Checkpoint.State.ResumeID)
 	}
-	if data[agentadaptor.SessionParamCWD] != workspace ||
-		data[agentadaptor.SessionParamWorkspaceID] != "workspace-a" ||
-		data[agentadaptor.SessionParamProfileFingerprint] != "profile-a" {
+	if data[driver.SessionParamCWD] != workspace ||
+		data[driver.SessionParamWorkspaceID] != "workspace-a" ||
+		data[driver.SessionParamProfileFingerprint] != "profile-a" {
 		t.Errorf("checkpoint guard data = %#v", data)
 	}
 	if res.RawStreams == nil || !strings.Contains(res.RawStreams.Stdout, "turn") && !strings.Contains(res.RawStreams.Stdout, "result") {
@@ -118,41 +119,41 @@ func TestCodeBuddyHeadlessResumeAndGuard(t *testing.T) {
 		t.Fatalf("mkdir workspace: %v", err)
 	}
 	command := fakeHeadlessCLI(t, home)
-	cfg := agentadaptor.CodeBuddyConfig{
-		CommonConfig: agentadaptor.CommonConfig{
+	cfg := Config{
+		CommonConfig: CommonConfig{
 			Command: command,
 			CWD:     workspace,
-			Env:     []agentadaptor.EnvBinding{{Name: "HOME", Value: home}, {Name: "USERPROFILE", Value: home}},
+			Env:     []driver.EnvBinding{{Name: "HOME", Value: home}, {Name: "USERPROFILE", Value: home}},
 		},
 		Model: "claude-sonnet-5",
 	}
-	base := agentadaptor.DriverRunRequest{
+	base := driver.Request{
 		Prompt:         "hi",
 		Config:         cfg,
-		Workspace:      agentadaptor.WorkspaceLease{ID: "workspace-a", CWD: workspace},
+		Workspace:      driver.WorkspaceLease{ID: "workspace-a", CWD: workspace},
 		Policy:         autoApprovePolicy(),
-		ProfilePayload: agentadaptor.ProfilePayload{Fingerprint: "profile-a"},
+		ProfilePayload: driver.ProfilePayload{Fingerprint: "profile-a"},
 	}
 
-	first, err := NewAdapter().Run(context.Background(), base, &testutil.EventRecorder{})
+	first, err := (adapter{}).Run(context.Background(), base, &testutil.EventRecorder{})
 	if err != nil {
 		t.Fatalf("first run: %v", err)
 	}
 
 	// Matching resume: passes the guard and forwards --resume <session>.
 	resume := base
-	resume.Session = &agentadaptor.DriverSessionContext{State: first.Checkpoint.State}
+	resume.Session = &driver.SessionContext{State: first.Checkpoint.State}
 	events := &testutil.EventRecorder{}
-	if _, err := NewAdapter().Run(context.Background(), resume, events); err != nil {
+	if _, err := (adapter{}).Run(context.Background(), resume, events); err != nil {
 		t.Fatalf("resume run: %v", err)
 	}
 	assertArgsContain(t, invocationArgs(t, events.Snapshot()), "--resume", "cb-sess")
 
 	// Profile fingerprint mismatch: resume is rejected.
 	reject := base
-	reject.ProfilePayload = agentadaptor.ProfilePayload{Fingerprint: "profile-b"}
-	reject.Session = &agentadaptor.DriverSessionContext{State: first.Checkpoint.State}
-	if _, err := NewAdapter().Run(context.Background(), reject, &testutil.EventRecorder{}); !errors.Is(err, agentadaptor.ErrResumeRejected) {
+	reject.ProfilePayload = driver.ProfilePayload{Fingerprint: "profile-b"}
+	reject.Session = &driver.SessionContext{State: first.Checkpoint.State}
+	if _, err := (adapter{}).Run(context.Background(), reject, &testutil.EventRecorder{}); !errors.Is(err, engine.ErrResumeRejected) {
 		t.Fatalf("expected ErrResumeRejected, got %v", err)
 	}
 }
@@ -171,27 +172,27 @@ func TestCodeBuddyHeadlessStructuredOutput(t *testing.T) {
 			"echo {\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"{\\\"answer\\\":42}\",\"structured_output\":{\"answer\":42},\"session_id\":\"cb-json\",\"usage\":{\"input_tokens\":5,\"output_tokens\":1}}\r\n",
 	)
 
-	cfg := agentadaptor.CodeBuddyConfig{
-		CommonConfig: agentadaptor.CommonConfig{
+	cfg := Config{
+		CommonConfig: CommonConfig{
 			Command: command,
 			CWD:     workspace,
-			Env:     []agentadaptor.EnvBinding{{Name: "HOME", Value: home}, {Name: "USERPROFILE", Value: home}},
+			Env:     []driver.EnvBinding{{Name: "HOME", Value: home}, {Name: "USERPROFILE", Value: home}},
 		},
 		Model: "claude-sonnet-5",
 	}
-	req := agentadaptor.DriverRunRequest{
+	req := driver.Request{
 		Prompt:    "give me json",
 		Config:    cfg,
-		Workspace: agentadaptor.WorkspaceLease{ID: "workspace-a", CWD: workspace},
+		Workspace: driver.WorkspaceLease{ID: "workspace-a", CWD: workspace},
 		Policy:    autoApprovePolicy(),
-		OutputSchema: &agentadaptor.OutputSchema{
-			Mode:       agentadaptor.StructuredOutputNativeStrict,
+		OutputSchema: &driver.OutputSchema{
+			Mode:       driver.StructuredOutputNativeStrict,
 			SchemaJSON: []byte(`{"type":"object","properties":{"answer":{"type":"integer"}}}`),
 		},
 	}
 
 	events := &testutil.EventRecorder{}
-	res, err := NewAdapter().Run(context.Background(), req, events)
+	res, err := (adapter{}).Run(context.Background(), req, events)
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -225,33 +226,33 @@ func TestCodeBuddyHeadlessMaterializesMCPAndSkills(t *testing.T) {
 	}
 	command := fakeHeadlessCLI(t, home)
 
-	cfg := agentadaptor.CodeBuddyConfig{
-		CommonConfig: agentadaptor.CommonConfig{
+	cfg := Config{
+		CommonConfig: CommonConfig{
 			Command: command,
 			CWD:     workspace,
-			Env:     []agentadaptor.EnvBinding{{Name: "HOME", Value: home}, {Name: "USERPROFILE", Value: home}},
+			Env:     []driver.EnvBinding{{Name: "HOME", Value: home}, {Name: "USERPROFILE", Value: home}},
 		},
 		Model: "claude-sonnet-5",
 	}
-	req := agentadaptor.DriverRunRequest{
+	req := driver.Request{
 		Prompt:    "hi",
 		Config:    cfg,
-		Workspace: agentadaptor.WorkspaceLease{ID: "workspace-a", CWD: workspace},
+		Workspace: driver.WorkspaceLease{ID: "workspace-a", CWD: workspace},
 		Policy:    autoApprovePolicy(),
-		Skills: agentadaptor.ResolvedSkills{
-			Mode: agentadaptor.SkillSyncPersistent,
-			Entries: []agentadaptor.ResolvedSkill{
+		Skills: driver.ResolvedSkills{
+			Mode: driver.SkillSyncPersistent,
+			Entries: []driver.ResolvedSkill{
 				{Key: "analysis", RuntimeName: "analysis", SourcePath: skillDir},
 			},
 			Fingerprint: "bundle-a",
 		},
-		MCP: agentadaptor.MCPPayload{Servers: []agentadaptor.MCPServerSpec{
-			{Key: "local", Transport: agentadaptor.MCPTransportStdio, Command: "echo", Args: []string{"hi"}},
-			{Key: "remote", Transport: agentadaptor.MCPTransportHTTP, URL: "https://example.com/mcp"},
+		MCP: driver.MCPPayload{Servers: []driver.MCPServerSpec{
+			{Key: "local", Transport: driver.MCPTransportStdio, Command: "echo", Args: []string{"hi"}},
+			{Key: "remote", Transport: driver.MCPTransportHTTP, URL: "https://example.com/mcp"},
 		}},
 	}
 
-	if _, err := NewAdapter().Run(context.Background(), req, &testutil.EventRecorder{}); err != nil {
+	if _, err := (adapter{}).Run(context.Background(), req, &testutil.EventRecorder{}); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -286,22 +287,22 @@ func TestCodeBuddyHeadlessNonZeroExitSurfacesError(t *testing.T) {
 			"echo {\"type\":\"error\",\"message\":\"boom\"}\r\n"+
 			">&2 echo fatal: boom\r\nexit /b 3\r\n",
 	)
-	cfg := agentadaptor.CodeBuddyConfig{
-		CommonConfig: agentadaptor.CommonConfig{
+	cfg := Config{
+		CommonConfig: CommonConfig{
 			Command: command,
 			CWD:     workspace,
-			Env:     []agentadaptor.EnvBinding{{Name: "HOME", Value: home}, {Name: "USERPROFILE", Value: home}},
+			Env:     []driver.EnvBinding{{Name: "HOME", Value: home}, {Name: "USERPROFILE", Value: home}},
 		},
 		Model: "claude-sonnet-5",
 	}
-	req := agentadaptor.DriverRunRequest{
+	req := driver.Request{
 		Prompt:    "hi",
 		Config:    cfg,
-		Workspace: agentadaptor.WorkspaceLease{ID: "workspace-a", CWD: workspace},
+		Workspace: driver.WorkspaceLease{ID: "workspace-a", CWD: workspace},
 		Policy:    autoApprovePolicy(),
 	}
 
-	res, err := NewAdapter().Run(context.Background(), req, &testutil.EventRecorder{})
+	res, err := (adapter{}).Run(context.Background(), req, &testutil.EventRecorder{})
 	if err != nil {
 		t.Fatalf("run should not hard-error on CLI non-zero exit, got %v", err)
 	}
@@ -315,10 +316,10 @@ func TestCodeBuddyHeadlessNonZeroExitSurfacesError(t *testing.T) {
 
 // --- assertion helpers ------------------------------------------------------
 
-func invocationArgs(t *testing.T, events []agentadaptor.RunEvent) []string {
+func invocationArgs(t *testing.T, events []driver.RunEvent) []string {
 	t.Helper()
 	for _, event := range events {
-		if event.Type != agentadaptor.RunEventInvocation {
+		if event.Type != driver.RunEventInvocation {
 			continue
 		}
 		args, ok := event.Data["args"].([]string)
@@ -357,16 +358,16 @@ func containsSubsequence(args, expected []string) bool {
 	return false
 }
 
-func assertHasSpawnAndChunk(t *testing.T, events []agentadaptor.RunEvent) {
+func assertHasSpawnAndChunk(t *testing.T, events []driver.RunEvent) {
 	t.Helper()
 	var spawn, chunk, item bool
 	for _, e := range events {
 		switch e.Type {
-		case agentadaptor.RunEventSpawn:
+		case driver.RunEventSpawn:
 			spawn = true
-		case agentadaptor.RunEventChunk:
+		case driver.RunEventChunk:
 			chunk = true
-		case agentadaptor.RunEventItem:
+		case driver.RunEventItem:
 			item = true
 		}
 	}

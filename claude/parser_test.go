@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	agentadaptor "github.com/agent-dance/agent-adaptor/driver"
 )
 
 type recordingSink struct {
@@ -64,7 +64,7 @@ func TestClaudeParserHappyAssistantProducesOutputAndUsage(t *testing.T) {
 	if checkpoint == nil || checkpoint.State == nil || checkpoint.State.ResumeID != "claude-happy" {
 		t.Fatalf("checkpoint: got %#v", checkpoint)
 	}
-	if p.resultFinal == nil {
+	if p.terminal == nil || p.terminal.Event != "result" || !json.Valid(p.terminal.JSON) {
 		t.Fatal("expected terminal result payload")
 	}
 

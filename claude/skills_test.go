@@ -6,7 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	agentadaptor "github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/internal/engine"
 	"github.com/agent-dance/agent-adaptor/internal/skillruntime"
 )
 
@@ -115,7 +116,7 @@ func TestSyncClaudeSkillsRepairsManagedTargetWhenSourcePathChanges(t *testing.T)
 		[]string{"team/analysis"},
 		nil,
 		[]agentadaptor.EnvBinding{{Name: "CLAUDE_CONFIG_DIR", Value: configDir}},
-		agentadaptor.ProfileKindHostManaged,
+		engine.ProfileKindHostManaged,
 	)
 	if err != nil {
 		t.Fatalf("sync skills: %v", err)
@@ -167,10 +168,10 @@ func TestListClaudeSkillsUsesProfileSelection(t *testing.T) {
 	dedicatedSkill := createClaudeSkillDir(t, filepath.Join(dedicated, "skills"), "dedicated-only")
 	payload := agentadaptor.ResolvedSkills{}
 
-	snapshot, err := NewAdapter().(agentadaptor.SkillAwareDriver).ListSkills(
+	snapshot, err := any(adapter{}).(agentadaptor.SkillSupport).ListSkills(
 		context.Background(),
-		agentadaptor.ClaudeConfig{
-			CommonConfig: agentadaptor.CommonConfig{Env: []agentadaptor.EnvBinding{{Name: "HOME", Value: nativeHome}}},
+		Config{
+			CommonConfig: CommonConfig{Env: []agentadaptor.EnvBinding{{Name: "HOME", Value: nativeHome}}},
 		},
 		payload,
 		nil,

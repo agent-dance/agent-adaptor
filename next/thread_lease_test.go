@@ -69,6 +69,20 @@ type failRenewStore struct {
 	threadstore.Store
 }
 
+var errReleaseLease = errors.New("test store: release lease failed")
+
+type failReleaseStore struct {
+	threadstore.Store
+}
+
+func (s *failReleaseStore) ReleaseLease(ctx context.Context, lease threadstore.Lease) error {
+	// Release in the backing store first so the test does not leave a real
+	// lease behind; the wrapper then proves coordinator cleanup errors are
+	// observable without compromising cleanup progress.
+	_ = s.Store.ReleaseLease(ctx, lease)
+	return errReleaseLease
+}
+
 func (s *failRenewStore) RenewLease(_ context.Context, lease threadstore.Lease, _ time.Duration) error {
 	return &threadstore.LeaseLostError{Target: lease.Target}
 }
@@ -147,5 +161,32 @@ func TestThreadLeaseRenewalFailureAbortsRunAndSkipsPersist(t *testing.T) {
 	}
 	if rec != nil {
 		t.Fatalf("state persisted after lost lease: %+v", rec)
+	}
+}
+
+func TestThreadLeaseReleaseFailureIsObservable(t *testing.T) {
+	backing := memory.NewStore()
+	store := &failReleaseStore{Store: backing}
+	fake := newFakeDriver()
+	fake.runFunc = func(context.Context, driver.Request, driver.EventSink) (driver.Response, error) {
+		return driver.Response{
+			Output: "completed",
+			Checkpoint: &driver.Checkpoint{
+				Valid: true,
+				State: &driver.SessionState{ResumeID: "release-resume-1"},
+			},
+		}, nil
+	}
+
+	agent := adaptor.New(fake, adaptor.WithThreadStore(store))
+	res, err := agent.Thread("release-error").Run(context.Background(), "go")
+	if res != nil {
+		t.Fatalf("cleanup infrastructure failure returned success Result: %+v", res)
+	}
+	if !errors.Is(err, errReleaseLease) {
+		t.Fatalf("release error=%v, want observable store failure", err)
+	}
+	if rec := activeRecord(t, backing, "release-error"); rec.State == nil || rec.State.ResumeID != "release-resume-1" {
+		t.Fatalf("healthy checkpoint was not atomically finalized before cleanup failed: %+v", rec)
 	}
 }

@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
 )
 
 const sourceMarkerName = ".agent-adaptor-source-path"
@@ -25,9 +25,9 @@ type InstalledSkillTarget struct {
 // which re-materialises every run rather than installing into a home dir).
 type EphemeralSnapshotOptions struct {
 	DriverType       string
-	Payload          agentadaptor.ResolvedSkills
+	Payload          driver.ResolvedSkills
 	Selected         []string
-	Resolved         []agentadaptor.Skill
+	Resolved         []driver.Skill
 	ConfiguredDetail string
 	MissingDetail    string
 	Externals        map[string]InstalledSkillTarget
@@ -40,9 +40,9 @@ type EphemeralSnapshotOptions struct {
 // (e.g. Cursor, Codex installing to ~/.cursor/skills).
 type PersistentSnapshotOptions struct {
 	DriverType             string
-	Payload                agentadaptor.ResolvedSkills
+	Payload                driver.ResolvedSkills
 	Selected               []string
-	Resolved               []agentadaptor.Skill
+	Resolved               []driver.Skill
 	Installed              map[string]InstalledSkillTarget
 	SkillsHome             string
 	LocationLabel          string
@@ -52,7 +52,7 @@ type PersistentSnapshotOptions struct {
 	ExternalDetail         string
 }
 
-func ResolveBinding(bindings []agentadaptor.EnvBinding, key string) string {
+func ResolveBinding(bindings []driver.EnvBinding, key string) string {
 	for _, binding := range bindings {
 		if strings.EqualFold(strings.TrimSpace(binding.Name), key) {
 			return strings.TrimSpace(binding.Value)
@@ -61,13 +61,13 @@ func ResolveBinding(bindings []agentadaptor.EnvBinding, key string) string {
 	return ""
 }
 
-func WithBinding(bindings []agentadaptor.EnvBinding, key, value string) []agentadaptor.EnvBinding {
-	out := make([]agentadaptor.EnvBinding, 0, len(bindings)+1)
+func WithBinding(bindings []driver.EnvBinding, key, value string) []driver.EnvBinding {
+	out := make([]driver.EnvBinding, 0, len(bindings)+1)
 	replaced := false
 	for _, binding := range bindings {
 		if strings.EqualFold(strings.TrimSpace(binding.Name), key) {
 			if !replaced {
-				out = append(out, agentadaptor.EnvBinding{Name: key, Value: value})
+				out = append(out, driver.EnvBinding{Name: key, Value: value})
 				replaced = true
 			}
 			continue
@@ -75,22 +75,22 @@ func WithBinding(bindings []agentadaptor.EnvBinding, key, value string) []agenta
 		out = append(out, binding)
 	}
 	if !replaced {
-		out = append(out, agentadaptor.EnvBinding{Name: key, Value: value})
+		out = append(out, driver.EnvBinding{Name: key, Value: value})
 	}
 	return out
 }
 
-func ApplyProfileBinding(bindings []agentadaptor.EnvBinding, profileDir, key string) []agentadaptor.EnvBinding {
+func ApplyProfileBinding(bindings []driver.EnvBinding, profileDir, key string) []driver.EnvBinding {
 	if ResolveBinding(bindings, key) != "" {
-		return append([]agentadaptor.EnvBinding(nil), bindings...)
+		return append([]driver.EnvBinding(nil), bindings...)
 	}
 	if strings.TrimSpace(profileDir) == "" {
-		return append([]agentadaptor.EnvBinding(nil), bindings...)
+		return append([]driver.EnvBinding(nil), bindings...)
 	}
 	return WithBinding(bindings, key, filepath.Clean(profileDir))
 }
 
-func ResolveHome(bindings []agentadaptor.EnvBinding) string {
+func ResolveHome(bindings []driver.EnvBinding) string {
 	for _, key := range []string{"HOME", "USERPROFILE"} {
 		if value := ResolveBinding(bindings, key); value != "" {
 			return filepath.Clean(value)
@@ -175,10 +175,10 @@ func ReadInstalledSkillTargets(skillsHome string) (map[string]InstalledSkillTarg
 // BuildEphemeralSnapshot produces an Admin-layer snapshot for ephemeral
 // adapters. Selected is the union of provider-required + host-selected keys;
 // Payload.Entries contains the fully-materialised skill targets.
-func BuildEphemeralSnapshot(options EphemeralSnapshotOptions) agentadaptor.SkillSnapshot {
-	entriesByKey := map[string]agentadaptor.ResolvedSkill{}
+func BuildEphemeralSnapshot(options EphemeralSnapshotOptions) driver.SkillSnapshot {
+	entriesByKey := map[string]driver.ResolvedSkill{}
 	availableRuntimeNames := map[string]struct{}{}
-	entries := make([]agentadaptor.SnapshotEntry, 0, len(options.Payload.Entries))
+	entries := make([]driver.SnapshotEntry, 0, len(options.Payload.Entries))
 	selectedSet := map[string]struct{}{}
 	for _, key := range options.Selected {
 		selectedSet[key] = struct{}{}
@@ -187,7 +187,7 @@ func BuildEphemeralSnapshot(options EphemeralSnapshotOptions) agentadaptor.Skill
 		entriesByKey[runtimeEntry.Key] = runtimeEntry
 		availableRuntimeNames[runtimeEntry.RuntimeName] = struct{}{}
 		_, selected := selectedSet[runtimeEntry.Key]
-		entries = append(entries, agentadaptor.SnapshotEntry{
+		entries = append(entries, driver.SnapshotEntry{
 			Key:            runtimeEntry.Key,
 			RuntimeName:    runtimeEntry.RuntimeName,
 			Selected:       selected,
@@ -208,12 +208,12 @@ func BuildEphemeralSnapshot(options EphemeralSnapshotOptions) agentadaptor.Skill
 			continue
 		}
 		warnings = append(warnings, fmt.Sprintf(`selected skill %q is not available from the runtime skill catalog`, selected))
-		entries = append(entries, agentadaptor.SnapshotEntry{
+		entries = append(entries, driver.SnapshotEntry{
 			Key:         selected,
 			Selected:    true,
 			Managed:     true,
-			State:       agentadaptor.SkillStateMissing,
-			Origin:      agentadaptor.SkillOriginUnknown,
+			State:       driver.SkillStateMissing,
+			Origin:      driver.SkillOriginUnknown,
 			OriginLabel: "External or unavailable",
 			Detail:      options.MissingDetail,
 		})
@@ -223,12 +223,12 @@ func BuildEphemeralSnapshot(options EphemeralSnapshotOptions) agentadaptor.Skill
 		if _, managed := availableRuntimeNames[name]; managed {
 			continue
 		}
-		entries = append(entries, agentadaptor.SnapshotEntry{
+		entries = append(entries, driver.SnapshotEntry{
 			Key:           name,
 			RuntimeName:   name,
 			Managed:       false,
-			State:         agentadaptor.SkillStateExternal,
-			Origin:        agentadaptor.SkillOriginUser,
+			State:         driver.SkillStateExternal,
+			Origin:        driver.SkillOriginUser,
 			OriginLabel:   "User-installed",
 			LocationLabel: options.LocationLabel,
 			ReadOnly:      true,
@@ -238,10 +238,10 @@ func BuildEphemeralSnapshot(options EphemeralSnapshotOptions) agentadaptor.Skill
 	}
 
 	sortSnapshotEntries(entries)
-	return agentadaptor.SkillSnapshot{
+	return driver.SkillSnapshot{
 		DriverType:  options.DriverType,
 		Supported:   true,
-		Mode:        agentadaptor.SkillSyncEphemeral,
+		Mode:        driver.SkillSyncEphemeral,
 		Selected:    append([]string(nil), options.Selected...),
 		Resolved:    cloneSkills(options.Resolved),
 		Entries:     cloneSnapshotEntries(entries),
@@ -255,18 +255,18 @@ func BuildEphemeralSnapshot(options EphemeralSnapshotOptions) agentadaptor.Skill
 // each resolved skill currently exists on disk (Installed vs Missing),
 // whether external / user-managed entries shadow the managed ones, and any
 // leftover user-installed entries not covered by the Selected set.
-func BuildPersistentSnapshot(options PersistentSnapshotOptions) agentadaptor.SkillSnapshot {
-	entriesByKey := map[string]agentadaptor.ResolvedSkill{}
+func BuildPersistentSnapshot(options PersistentSnapshotOptions) driver.SkillSnapshot {
+	entriesByKey := map[string]driver.ResolvedSkill{}
 	selectedSet := map[string]struct{}{}
 	for _, key := range options.Selected {
 		selectedSet[key] = struct{}{}
 	}
-	entries := make([]agentadaptor.SnapshotEntry, 0, len(options.Payload.Entries))
+	entries := make([]driver.SnapshotEntry, 0, len(options.Payload.Entries))
 	for _, runtimeEntry := range options.Payload.Entries {
 		entriesByKey[runtimeEntry.Key] = runtimeEntry
 		installed, ok := options.Installed[runtimeEntry.RuntimeName]
 		selected := hasString(selectedSet, runtimeEntry.Key)
-		state := agentadaptor.SkillStateAvailable
+		state := driver.SkillStateAvailable
 		managed := false
 		detail := ""
 		targetPath := filepath.Join(options.SkillsHome, runtimeEntry.RuntimeName)
@@ -274,13 +274,13 @@ func BuildPersistentSnapshot(options PersistentSnapshotOptions) agentadaptor.Ski
 			managed = true
 			targetPath = filepath.Join(options.SkillsHome, runtimeEntry.RuntimeName)
 			if selected {
-				state = agentadaptor.SkillStateInstalled
+				state = driver.SkillStateInstalled
 			} else {
-				state = agentadaptor.SkillStateStale
+				state = driver.SkillStateStale
 			}
 			detail = options.InstalledDetail
 		} else if ok {
-			state = agentadaptor.SkillStateExternal
+			state = driver.SkillStateExternal
 			targetPath = installed.TargetPath
 			if selected {
 				detail = options.ExternalConflictDetail
@@ -288,10 +288,10 @@ func BuildPersistentSnapshot(options PersistentSnapshotOptions) agentadaptor.Ski
 				detail = options.ExternalDetail
 			}
 		} else if selected {
-			state = agentadaptor.SkillStateMissing
+			state = driver.SkillStateMissing
 			detail = options.MissingDetail
 		}
-		entries = append(entries, agentadaptor.SnapshotEntry{
+		entries = append(entries, driver.SnapshotEntry{
 			Key:            runtimeEntry.Key,
 			RuntimeName:    runtimeEntry.RuntimeName,
 			Selected:       selected,
@@ -313,12 +313,12 @@ func BuildPersistentSnapshot(options PersistentSnapshotOptions) agentadaptor.Ski
 			continue
 		}
 		warnings = append(warnings, fmt.Sprintf(`selected skill %q is not available from the runtime skill catalog`, selected))
-		entries = append(entries, agentadaptor.SnapshotEntry{
+		entries = append(entries, driver.SnapshotEntry{
 			Key:         selected,
 			Selected:    true,
 			Managed:     true,
-			State:       agentadaptor.SkillStateMissing,
-			Origin:      agentadaptor.SkillOriginUnknown,
+			State:       driver.SkillStateMissing,
+			Origin:      driver.SkillOriginUnknown,
 			OriginLabel: "External or unavailable",
 			Detail:      options.MissingDetail,
 		})
@@ -328,12 +328,12 @@ func BuildPersistentSnapshot(options PersistentSnapshotOptions) agentadaptor.Ski
 		if runtimeNameInEntries(name, options.Payload.Entries) {
 			continue
 		}
-		entries = append(entries, agentadaptor.SnapshotEntry{
+		entries = append(entries, driver.SnapshotEntry{
 			Key:           name,
 			RuntimeName:   name,
 			Managed:       false,
-			State:         agentadaptor.SkillStateExternal,
-			Origin:        agentadaptor.SkillOriginUser,
+			State:         driver.SkillStateExternal,
+			Origin:        driver.SkillOriginUser,
 			OriginLabel:   "User-installed",
 			LocationLabel: options.LocationLabel,
 			ReadOnly:      true,
@@ -343,10 +343,10 @@ func BuildPersistentSnapshot(options PersistentSnapshotOptions) agentadaptor.Ski
 	}
 
 	sortSnapshotEntries(entries)
-	return agentadaptor.SkillSnapshot{
+	return driver.SkillSnapshot{
 		DriverType:  options.DriverType,
 		Supported:   true,
-		Mode:        agentadaptor.SkillSyncPersistent,
+		Mode:        driver.SkillSyncPersistent,
 		Selected:    append([]string(nil), options.Selected...),
 		Resolved:    cloneSkills(options.Resolved),
 		Entries:     cloneSnapshotEntries(entries),
@@ -358,12 +358,12 @@ func BuildPersistentSnapshot(options PersistentSnapshotOptions) agentadaptor.Ski
 // SelectedResolvedSkills returns the subset of payload.Entries whose Key is in
 // selected. Helpers kept for adapters that want a straight-through list of
 // already-selected skills.
-func SelectedResolvedSkills(payload agentadaptor.ResolvedSkills, selected []string) []agentadaptor.ResolvedSkill {
+func SelectedResolvedSkills(payload driver.ResolvedSkills, selected []string) []driver.ResolvedSkill {
 	allowed := map[string]struct{}{}
 	for _, key := range selected {
 		allowed[key] = struct{}{}
 	}
-	out := make([]agentadaptor.ResolvedSkill, 0, len(payload.Entries))
+	out := make([]driver.ResolvedSkill, 0, len(payload.Entries))
 	for _, entry := range payload.Entries {
 		if _, ok := allowed[entry.Key]; ok {
 			out = append(out, entry)
@@ -622,7 +622,7 @@ func normalizePath(value string) string {
 	return filepath.Clean(value)
 }
 
-func runtimeNameInEntries(runtimeName string, values []agentadaptor.ResolvedSkill) bool {
+func runtimeNameInEntries(runtimeName string, values []driver.ResolvedSkill) bool {
 	for _, value := range values {
 		if value.RuntimeName == runtimeName {
 			return true
@@ -631,7 +631,7 @@ func runtimeNameInEntries(runtimeName string, values []agentadaptor.ResolvedSkil
 	return false
 }
 
-func sortSnapshotEntries(values []agentadaptor.SnapshotEntry) {
+func sortSnapshotEntries(values []driver.SnapshotEntry) {
 	sort.Slice(values, func(left, right int) bool {
 		if values[left].Key == values[right].Key {
 			return values[left].RuntimeName < values[right].RuntimeName
@@ -662,11 +662,11 @@ func hasString(values map[string]struct{}, key string) bool {
 	return ok
 }
 
-func chooseEphemeralState(selected bool) agentadaptor.SkillState {
+func chooseEphemeralState(selected bool) driver.SkillState {
 	if selected {
-		return agentadaptor.SkillStateConfigured
+		return driver.SkillStateConfigured
 	}
-	return agentadaptor.SkillStateAvailable
+	return driver.SkillStateAvailable
 }
 
 func detailWhen(condition bool, value string) string {
@@ -676,11 +676,11 @@ func detailWhen(condition bool, value string) string {
 	return ""
 }
 
-func skillOrigin(required bool) agentadaptor.SkillOrigin {
+func skillOrigin(required bool) driver.SkillOrigin {
 	if required {
-		return agentadaptor.SkillOriginRequired
+		return driver.SkillOriginRequired
 	}
-	return agentadaptor.SkillOriginManaged
+	return driver.SkillOriginManaged
 }
 
 func skillOriginLabel(required bool) string {
@@ -690,13 +690,13 @@ func skillOriginLabel(required bool) string {
 	return "Managed by agent-adaptor"
 }
 
-func cloneSkills(values []agentadaptor.Skill) []agentadaptor.Skill {
+func cloneSkills(values []driver.Skill) []driver.Skill {
 	if len(values) == 0 {
 		return nil
 	}
-	out := make([]agentadaptor.Skill, len(values))
+	out := make([]driver.Skill, len(values))
 	for index, value := range values {
-		out[index] = agentadaptor.Skill{
+		out[index] = driver.Skill{
 			Key:      value.Key,
 			Source:   value.Source,
 			Required: value.Required,
@@ -707,11 +707,11 @@ func cloneSkills(values []agentadaptor.Skill) []agentadaptor.Skill {
 	return out
 }
 
-func cloneSnapshotEntries(values []agentadaptor.SnapshotEntry) []agentadaptor.SnapshotEntry {
+func cloneSnapshotEntries(values []driver.SnapshotEntry) []driver.SnapshotEntry {
 	if len(values) == 0 {
 		return nil
 	}
-	out := make([]agentadaptor.SnapshotEntry, len(values))
+	out := make([]driver.SnapshotEntry, len(values))
 	copy(out, values)
 	return out
 }

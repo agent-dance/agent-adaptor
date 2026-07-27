@@ -1,10 +1,7 @@
 package sessionrecorder
 
-// This file is the v1-API twin of recorder.go: the same HostSeq bookkeeping
-// and session semantics, recording the new unified event family
-// (adaptor.Event, decision D3) instead of the legacy StreamPayload. The
-// legacy Recorder stays untouched until P5 deletes it; both entries coexist
-// additively.
+// This file implements HostSeq bookkeeping and session semantics for the
+// unified adaptor.Event family.
 //
 // Because adaptor.Event is a sealed interface, EventRecord carries its own
 // stable JSON envelope ({host_seq, recorded_at, kind, meta, event}) so durable
@@ -133,9 +130,8 @@ func (wire eventMetaWire) eventMeta() adaptor.EventMeta {
 	return meta
 }
 
-// EventRecorder is the host-facing v1 recording API — Recorder's contract
-// verbatim, typed on the unified event family. Implementations MUST be
-// safe for concurrent use.
+// EventRecorder is the host-facing typed Event recording API.
+// Implementations MUST be safe for concurrent use.
 type EventRecorder interface {
 	// Record appends an event under sessionKey and returns the record
 	// with the HostSeq it was assigned. HostSeq values strictly increase
@@ -188,7 +184,7 @@ func WithEventClock(fn func() time.Time) EventOption {
 }
 
 // WithEventKeyValidator overrides the session-key validator. The default
-// is DefaultKeyValidator, shared with the legacy Recorder.
+// is DefaultKeyValidator.
 func WithEventKeyValidator(v KeyValidator) EventOption {
 	return func(r *eventRecorder) {
 		if v != nil {
@@ -375,8 +371,8 @@ func (r *eventRecorder) loadedSession(ctx context.Context, sessionKey string) (*
 	return st, nil
 }
 
-// NewMemoryEventBackend returns an EventBackend that keeps records in
-// process memory — the v1 twin of NewMemoryBackend.
+// NewMemoryEventBackend returns an EventBackend that keeps records in process
+// memory. It is intended for tests and explicitly ephemeral hosts.
 func NewMemoryEventBackend() EventBackend {
 	return &memoryEventBackend{sessions: map[string][]EventRecord{}}
 }

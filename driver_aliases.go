@@ -92,12 +92,13 @@ type DriverSessionState = driver.SessionState
 type DriverCheckpoint = driver.Checkpoint
 
 type (
-	AgentIdentity = driver.AgentIdentity
-	RawStreams    = driver.RawStreams
-	Usage         = driver.Usage
-	RunQuestion   = driver.RunQuestion
-	RunChoice     = driver.RunChoice
-	RunFailure    = driver.RunFailure
+	AgentIdentity   = driver.AgentIdentity
+	RawStreams      = driver.RawStreams
+	TerminalPayload = driver.TerminalPayload
+	Usage           = driver.Usage
+	RunQuestion     = driver.RunQuestion
+	RunChoice       = driver.RunChoice
+	RunFailure      = driver.RunFailure
 )
 
 // --- Events / transcript / streaming (was run_types.go) -------------------

@@ -20,8 +20,8 @@
 // skills), while a Materializer controls how skill sources are written
 // to disk before a driver consumes them.
 //
-// Every exported type here is an alias for the corresponding public
-// type in github.com/agent-dance/agent-adaptor, so values built with
-// this package interoperate 1:1 with the root-package skill API and
-// with host code that predates this vocabulary package.
+// Skill owns the host extension contracts, source values, and skill-specific
+// error identities. Driver-facing value shapes are exact aliases of package
+// driver where identity at the execution boundary is useful; the root package
+// re-exports this package's consumer vocabulary.
 package skill

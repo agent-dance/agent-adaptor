@@ -1,12 +1,8 @@
 package a2a
 
-// This file is the v1-API twin of mapping.go / stream_status.go's encode
-// half: it projects the new unified event family (adaptor.Event) onto the
-// same adapter.stream.v1 DataPart wire and the same terminal artifacts,
-// with the same ExposurePolicy gating and the same redaction helpers
-// (convert.go). DecodeAdapterStreamStatus continues to decode the frames
-// this file produces — the wire schema did not change, only the producer's
-// input vocabulary.
+// This file projects adaptor.Event onto the adapter.stream.v1 DataPart wire
+// and terminal A2A artifacts. DecodeAdapterEventV1 restores the public Event
+// vocabulary from that stable wire schema.
 
 import (
 	"encoding/json"
@@ -19,11 +15,10 @@ import (
 )
 
 // streamTranslatorV1 maps unified events onto A2A working-status DataParts.
-// Exposure gating is identical to the legacy translator: text always
+// Exposure gating is conservative: text always
 // crosses; reasoning / tool calls / HITL are opt-in; run failures become a
 // failed status; drop markers require any streaming diagnostics; everything
-// else (process output, notices, subagent updates) stays server-side, as it
-// did when those flows rode the legacy RunEvent channel.
+// else (process output, notices, subagent updates) stays server-side.
 type streamTranslatorV1 struct {
 	info     a2aproto.TaskInfoProvider
 	exposure ExposurePolicy
@@ -40,19 +35,25 @@ func newStreamTranslatorV1(info a2aproto.TaskInfoProvider, exposure ExposurePoli
 func (t *streamTranslatorV1) Translate(ev adaptor.Event) []a2aproto.Event {
 	switch e := ev.(type) {
 	case adaptor.RunStarted:
-		// Not forwarded (legacy behavior); remembered so subsequent wire
+		// Not forwarded; remembered so subsequent wire
 		// frames carry run/thread identity.
 		t.runID = e.RunID
 		t.threadID = e.ThreadID
+		if meta := e.Meta(); meta.RunID != "" {
+			t.runID = meta.RunID
+		}
 		return nil
 
 	case adaptor.RunFinished:
-		if !e.Failed {
-			return nil // the terminal projection belongs to the executor
+		if e.RunID != "" {
+			t.runID = e.RunID
 		}
-		msg := defaultString(e.Message, "stream run error")
-		details := map[string]any{"code": string(e.Reason)}
-		return []a2aproto.Event{a2aproto.NewStatusUpdateEvent(t.info, a2aproto.TaskStateFailed, failureMessage(t.info, msg, details))}
+		if e.ThreadID != "" {
+			t.threadID = e.ThreadID
+		}
+		// Informational only. executorV1 drains the stream and projects
+		// exactly one terminal from Stream.Result().
+		return nil
 
 	case adaptor.TextDelta:
 		kind := "text.content"
@@ -62,7 +63,7 @@ func (t *streamTranslatorV1) Translate(ev adaptor.Event) []a2aproto.Event {
 		case adaptor.PhaseEnd:
 			kind = "text.end"
 		}
-		return t.emit(AdapterStreamEventV1{
+		return t.emit(ev, AdapterStreamEventV1{
 			Kind:      kind,
 			MessageID: e.MessageID,
 			Delta:     e.Text,
@@ -80,7 +81,7 @@ func (t *streamTranslatorV1) Translate(ev adaptor.Event) []a2aproto.Event {
 		case adaptor.PhaseEnd:
 			kind = "reasoning.end"
 		}
-		return t.emit(AdapterStreamEventV1{
+		return t.emit(ev, AdapterStreamEventV1{
 			Kind:      kind,
 			MessageID: e.MessageID,
 			Delta:     e.Text,
@@ -90,25 +91,25 @@ func (t *streamTranslatorV1) Translate(ev adaptor.Event) []a2aproto.Event {
 		if !t.exposure.IncludeToolCalls {
 			return nil
 		}
-		event := AdapterStreamEventV1{ToolCallID: e.ID, Name: e.Name}
+		event := AdapterStreamEventV1{
+			ToolCallID: e.ID, Name: e.Name, Delta: e.ArgsDelta,
+			Args: e.Args, Result: e.Result,
+		}
 		switch e.Phase {
 		case adaptor.PhaseStart:
 			event.Kind = "tool_call.start"
-			event.Args = e.Args
 		case adaptor.PhaseEnd:
 			event.Kind = "tool_call.end"
-			event.Result = e.Result
 		default:
 			event.Kind = "tool_call.args"
-			event.Delta = e.ArgsDelta
 		}
-		return t.emit(event)
+		return t.emit(ev, event)
 
 	case adaptor.ToolResult:
 		if !t.exposure.IncludeToolCalls {
 			return nil
 		}
-		return t.emit(AdapterStreamEventV1{
+		return t.emit(ev, AdapterStreamEventV1{
 			Kind:       "tool_call.result",
 			ToolCallID: e.ID,
 			Result:     e.Result,
@@ -118,7 +119,7 @@ func (t *streamTranslatorV1) Translate(ev adaptor.Event) []a2aproto.Event {
 		if !t.exposure.IncludeHITL || e == nil {
 			return nil
 		}
-		return t.emit(AdapterStreamEventV1{
+		return t.emit(ev, AdapterStreamEventV1{
 			Kind:       "hitl.requested",
 			ToolCallID: e.ToolCallID,
 			HITL:       hitlRequestedArtifactV1(e, t.exposure),
@@ -130,7 +131,7 @@ func (t *streamTranslatorV1) Translate(ev adaptor.Event) []a2aproto.Event {
 			if !t.exposure.IncludeHITL {
 				return nil
 			}
-			return t.emit(AdapterStreamEventV1{
+			return t.emit(ev, AdapterStreamEventV1{
 				Kind: "hitl.requested",
 				HITL: hitlNoticeArtifactV1("hitl.requested", e),
 			})
@@ -138,7 +139,7 @@ func (t *streamTranslatorV1) Translate(ev adaptor.Event) []a2aproto.Event {
 			if !t.exposure.IncludeHITL {
 				return nil
 			}
-			return t.emit(AdapterStreamEventV1{
+			return t.emit(ev, AdapterStreamEventV1{
 				Kind: "hitl.resolved",
 				HITL: hitlNoticeArtifactV1("hitl.resolved", e),
 			})
@@ -149,32 +150,78 @@ func (t *streamTranslatorV1) Translate(ev adaptor.Event) []a2aproto.Event {
 		if !t.exposure.hasStreamingDiagnostics() {
 			return nil
 		}
-		return t.emit(AdapterStreamEventV1{
+		return t.emit(ev, AdapterStreamEventV1{
 			Kind: "stream.dropped",
-			Raw:  map[string]any{"dropped_count": e.Count},
+			Raw: map[string]any{
+				"dropped_count": e.Count, "by_kind": e.ByKind,
+				"first_sequence": e.FirstSequence, "last_sequence": e.LastSequence,
+				"reason": e.Reason, "source": e.Source, "details": e.Details,
+			},
 		})
 	}
 	return nil // ProcessInfo, SubagentUpdate, unknown: not exposed
 }
 
 // emit stamps identity + sequence onto the wire DTO, encodes the envelope
-// (redaction + 64KiB cap + JSON normalization shared with the legacy
-// encoder), and wraps it in a working-status DataPart message.
-func (t *streamTranslatorV1) emit(event AdapterStreamEventV1) []a2aproto.Event {
-	t.seq++
-	event.Sequence = t.seq
-	if event.RunID == "" {
+// (redaction + 64KiB cap + JSON normalization), and wraps it in a
+// working-status DataPart message.
+func (t *streamTranslatorV1) emit(source adaptor.Event, event AdapterStreamEventV1) []a2aproto.Event {
+	meta := source.Meta()
+	if meta.Sequence != 0 {
+		event.Sequence = meta.Sequence
+		if meta.Sequence > t.seq {
+			t.seq = meta.Sequence
+		}
+	} else {
+		t.seq++
+		event.Sequence = t.seq
+	}
+	if meta.RunID != "" {
+		event.RunID = meta.RunID
+	} else if event.RunID == "" {
 		event.RunID = t.runID
 	}
-	if event.ThreadID == "" {
+	if meta.ThreadKey != "" {
+		event.ThreadID = meta.ThreadKey
+	} else if event.ThreadID == "" {
 		event.ThreadID = t.threadID
 	}
+	if meta.TurnID != "" {
+		event.TurnID = meta.TurnID
+	}
+	if !meta.Time.IsZero() {
+		event.Timestamp = meta.Time.UTC().Format(time.RFC3339Nano)
+	}
+	event.Meta = adapterEventMetaV1(meta, t.exposure.Diagnostics.IncludeMetadata)
 	data, err := encodeAdapterStreamEventV1(event)
 	if err != nil {
 		data = encodeAdapterStreamDropV1(event, err)
 	}
 	msg := a2aproto.NewMessageForTask(a2aproto.MessageRoleAgent, t.info, dataPart(data))
 	return []a2aproto.Event{a2aproto.NewStatusUpdateEvent(t.info, a2aproto.TaskStateWorking, msg)}
+}
+
+func adapterEventMetaV1(meta adaptor.EventMeta, includeSource bool) *AdapterEventMetaV1 {
+	if meta == (adaptor.EventMeta{}) {
+		return nil
+	}
+	out := &AdapterEventMetaV1{
+		RunID: meta.RunID, ThreadKey: meta.ThreadKey, Sequence: meta.Sequence,
+		TurnID: meta.TurnID,
+	}
+	if !meta.Time.IsZero() {
+		out.Time = meta.Time.UTC().Format(time.RFC3339Nano)
+	}
+	if includeSource && meta.Source != nil {
+		out.Source = &AdapterEventSourceMetaV1{
+			RunID: meta.Source.RunID, ThreadID: meta.Source.ThreadID,
+			TurnID: meta.Source.TurnID, Sequence: meta.Source.Sequence,
+		}
+		if !meta.Source.Timestamp.IsZero() {
+			out.Source.Timestamp = meta.Source.Timestamp.UTC().Format(time.RFC3339Nano)
+		}
+	}
+	return out
 }
 
 // encodeAdapterStreamEventV1 applies the shared redaction pipeline to a
@@ -210,22 +257,28 @@ func encodeAdapterStreamEventV1(event AdapterStreamEventV1) (map[string]any, err
 	return data, nil
 }
 
-// encodeAdapterStreamDropV1 is the fallback frame when a payload cannot be
-// encoded (marshal failure, size cap) — same shape as the legacy
-// encodeAdapterStreamDrop.
+// encodeAdapterStreamDropV1 is the fallback frame when an event cannot be
+// encoded (marshal failure or size cap).
 func encodeAdapterStreamDropV1(event AdapterStreamEventV1, cause error) map[string]any {
-	return map[string]any{
-		"schema": AdapterStreamSchemaV1,
-		"event": map[string]any{
-			"kind":     "stream.dropped",
-			"sequence": event.Sequence,
-			"raw": map[string]any{
-				"dropped_kind":  event.Kind,
-				"dropped_count": 1,
-				"reason":        cause.Error(),
-			},
+	dropped := AdapterStreamEnvelopeV1{Schema: AdapterStreamSchemaV1, Event: AdapterStreamEventV1{
+		Kind: "stream.dropped", Sequence: event.Sequence,
+		RunID: event.RunID, ThreadID: event.ThreadID, TurnID: event.TurnID,
+		Timestamp: event.Timestamp, Meta: event.Meta,
+		Raw: map[string]any{
+			"dropped_kind": event.Kind, "dropped_count": 1, "reason": cause.Error(),
 		},
+	}}
+	raw, err := json.Marshal(dropped)
+	if err == nil {
+		var normalized map[string]any
+		if json.Unmarshal(raw, &normalized) == nil {
+			return normalized
+		}
 	}
+	return map[string]any{"schema": AdapterStreamSchemaV1, "event": map[string]any{
+		"kind": "stream.dropped", "sequence": event.Sequence,
+		"raw": map[string]any{"dropped_kind": event.Kind, "dropped_count": 1, "reason": cause.Error()},
+	}}
 }
 
 // hitlRequestedArtifactV1 projects a live *ApprovalRequest (full fidelity:
@@ -310,9 +363,7 @@ func terminalArtifactsV1(info a2aproto.TaskInfoProvider, result *adaptor.Result,
 }
 
 // defaultTerminalArtifactsV1 emits the bridge-owned agent-adaptor-result
-// artifact. Redaction and exposure opt-ins match the legacy function; the
-// v1 Result has no provider-result field, so IncludeProviderResult has
-// nothing to expose (seam note in the P4 report).
+// artifact with explicit exposure opt-ins and redaction.
 func defaultTerminalArtifactsV1(info a2aproto.TaskInfoProvider, result *adaptor.Result, exposure ExposurePolicy) []a2aproto.Event {
 	if result == nil {
 		result = &adaptor.Result{}
@@ -334,10 +385,21 @@ func defaultTerminalArtifactsV1(info a2aproto.TaskInfoProvider, result *adaptor.
 		}
 	}
 	if exposure.Diagnostics.IncludeRawStreams {
-		if raw := result.Raw(); raw != (adaptor.RawStreams{}) {
+		if raw := result.Raw(); raw.Stdout != "" || raw.Stderr != "" {
 			details["raw_streams"] = map[string]any{
 				"stdout": redactInlineSecrets(raw.Stdout),
 				"stderr": redactInlineSecrets(raw.Stderr),
+			}
+		}
+	}
+	if exposure.Diagnostics.IncludeProviderResult {
+		if terminal := result.Raw().Terminal; terminal != nil && len(terminal.JSON) > 0 && json.Valid(terminal.JSON) {
+			var payload any
+			if err := json.Unmarshal(terminal.JSON, &payload); err == nil {
+				details["provider_result"] = map[string]any{
+					"event":   redactInlineSecrets(terminal.Event),
+					"payload": sanitizeRemoteValue(payload),
+				}
 			}
 		}
 	}
@@ -349,10 +411,8 @@ func defaultTerminalArtifactsV1(info a2aproto.TaskInfoProvider, result *adaptor.
 	return []a2aproto.Event{ev}
 }
 
-// failureDetailsV1 mirrors failureDetails for the D1 error model: the code
-// is the v1 FailureReason; Details ride the metadata opt-in. The legacy
-// human_decision block has no v1 source (RunError carries no
-// HumanDecisionOutcome) — seam note in the P4 report.
+// failureDetailsV1 exposes the typed FailureReason; Details ride the metadata
+// opt-in.
 func failureDetailsV1(re *adaptor.RunError, exposure ExposurePolicy) map[string]any {
 	if re == nil {
 		return nil

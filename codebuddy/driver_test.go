@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	driver "github.com/agent-dance/agent-adaptor/driver"
 )
 
 func timeNow() time.Time { return time.Now().UTC() }
@@ -29,7 +29,7 @@ func TestDescriptorCapabilities(t *testing.T) {
 	if !d.Sessions.SupportsResume {
 		t.Errorf("expected SupportsResume=true")
 	}
-	if !d.Skills.Supported || d.Skills.Mode != agentadaptor.SkillSyncPersistent {
+	if !d.Skills.Supported || d.Skills.Mode != driver.SkillSyncPersistent {
 		t.Errorf("expected SkillSyncPersistent, got %+v", d.Skills)
 	}
 	if !d.MCP.Supported || !d.MCP.Stdio || !d.MCP.HTTP {
@@ -52,19 +52,19 @@ func TestDescriptorCapabilities(t *testing.T) {
 
 func TestValidateConfig(t *testing.T) {
 	a := adapter{}
-	if err := a.ValidateConfig(agentadaptor.CodeBuddyConfig{}); err != nil {
+	if err := a.ValidateConfig(Config{}); err != nil {
 		t.Errorf("empty config should validate, got %v", err)
 	}
-	if err := a.ValidateConfig(agentadaptor.CodeBuddyConfig{PermissionMode: agentadaptor.CodeBuddyPermissionAcceptEdits}); err != nil {
+	if err := a.ValidateConfig(Config{PermissionMode: PermissionAcceptEdits}); err != nil {
 		t.Errorf("acceptEdits should validate, got %v", err)
 	}
-	if err := a.ValidateConfig(agentadaptor.CodeBuddyConfig{PermissionMode: "bogus"}); err == nil {
+	if err := a.ValidateConfig(Config{PermissionMode: "bogus"}); err == nil {
 		t.Errorf("bogus permission mode should fail")
 	}
-	if err := a.ValidateConfig(agentadaptor.CodeBuddyConfig{Effort: "medium"}); err != nil {
+	if err := a.ValidateConfig(Config{Effort: "medium"}); err != nil {
 		t.Errorf("medium effort should validate, got %v", err)
 	}
-	if err := a.ValidateConfig(agentadaptor.CodeBuddyConfig{Effort: "ludicrous"}); err == nil {
+	if err := a.ValidateConfig(Config{Effort: "ludicrous"}); err == nil {
 		t.Errorf("bad effort should fail")
 	}
 	if err := a.ValidateConfig(struct{}{}); err == nil {
@@ -73,9 +73,9 @@ func TestValidateConfig(t *testing.T) {
 }
 
 func TestBuildExecArgsHeadless(t *testing.T) {
-	cfg := agentadaptor.CodeBuddyConfig{Model: "claude-sonnet-5", Effort: "high", MaxTurnsPerRun: 5}
-	req := agentadaptor.DriverRunRequest{Streaming: true}
-	args := buildExecArgs(cfg, req, agentadaptor.CodeBuddyPermissionAcceptEdits)
+	cfg := Config{Model: "claude-sonnet-5", Effort: "high", MaxTurnsPerRun: 5}
+	req := driver.Request{Streaming: true}
+	args := buildExecArgs(cfg, req, PermissionAcceptEdits)
 
 	if !hasArg(args, "--print") {
 		t.Errorf("missing --print: %v", args)
@@ -101,15 +101,15 @@ func TestBuildExecArgsHeadless(t *testing.T) {
 }
 
 func TestBuildExecArgsResumeAndStructured(t *testing.T) {
-	cfg := agentadaptor.CodeBuddyConfig{}
-	req := agentadaptor.DriverRunRequest{
-		Session: &agentadaptor.DriverSessionContext{State: &agentadaptor.DriverSessionState{ResumeID: "sess-1"}},
-		OutputSchema: &agentadaptor.OutputSchema{
-			Mode:       agentadaptor.StructuredOutputNativeStrict,
+	cfg := Config{}
+	req := driver.Request{
+		Session: &driver.SessionContext{State: &driver.SessionState{ResumeID: "sess-1"}},
+		OutputSchema: &driver.OutputSchema{
+			Mode:       driver.StructuredOutputNativeStrict,
 			SchemaJSON: []byte(`{"type":"object"}`),
 		},
 	}
-	args := buildExecArgs(cfg, req, agentadaptor.CodeBuddyPermissionUnset)
+	args := buildExecArgs(cfg, req, PermissionUnset)
 	if i := argIndex(args, "--resume"); i < 0 || args[i+1] != "sess-1" {
 		t.Errorf("missing --resume: %v", args)
 	}
@@ -126,30 +126,30 @@ func TestBuildExecArgsResumeAndStructured(t *testing.T) {
 
 func TestHeadlessPermissionMode(t *testing.T) {
 	// explicit override wins
-	cfg := agentadaptor.CodeBuddyConfig{PermissionMode: agentadaptor.CodeBuddyPermissionPlan}
-	if got := headlessPermissionMode(cfg, agentadaptor.RunPolicy{}); got != agentadaptor.CodeBuddyPermissionPlan {
+	cfg := Config{PermissionMode: PermissionPlan}
+	if got := headlessPermissionMode(cfg, driver.RunPolicy{}); got != PermissionPlan {
 		t.Errorf("override: got %q", got)
 	}
 	// AutoApprove -> bypass
-	autoApprove := agentadaptor.RunPolicy{HumanDecision: agentadaptor.HumanDecisionPolicy{Permission: agentadaptor.HumanDecisionAutoApprove}}
-	if got := headlessPermissionMode(agentadaptor.CodeBuddyConfig{}, autoApprove); got != agentadaptor.CodeBuddyPermissionBypass {
+	autoApprove := driver.RunPolicy{HumanDecision: driver.HumanDecisionPolicy{Permission: driver.HumanDecisionAutoApprove}}
+	if got := headlessPermissionMode(Config{}, autoApprove); got != PermissionBypass {
 		t.Errorf("auto approve: got %q, want bypass", got)
 	}
 }
 
-func TestWantsControlTransportLegacyCases(t *testing.T) {
+func TestWantsControlTransportPolicyMatrix(t *testing.T) {
 	cases := []struct {
 		name string
-		p    agentadaptor.HumanDecisionPolicy
+		p    driver.HumanDecisionPolicy
 		want bool
 	}{
-		{"empty", agentadaptor.HumanDecisionPolicy{}, false},
-		{"all auto approve", agentadaptor.HumanDecisionPolicy{Permission: agentadaptor.HumanDecisionAutoApprove, PlanReview: agentadaptor.HumanDecisionAutoApprove}, false},
-		{"permission ask", agentadaptor.HumanDecisionPolicy{Permission: agentadaptor.HumanDecisionAsk}, true},
-		{"plan ask", agentadaptor.HumanDecisionPolicy{PlanReview: agentadaptor.HumanDecisionAsk}, true},
-		{"question ask", agentadaptor.HumanDecisionPolicy{Question: agentadaptor.QuestionAsk}, true},
-		{"permission auto reject", agentadaptor.HumanDecisionPolicy{Permission: agentadaptor.HumanDecisionAutoReject}, true},
-		{"question auto reject", agentadaptor.HumanDecisionPolicy{Question: agentadaptor.QuestionAutoReject}, true},
+		{"empty", driver.HumanDecisionPolicy{}, false},
+		{"all auto approve", driver.HumanDecisionPolicy{Permission: driver.HumanDecisionAutoApprove, PlanReview: driver.HumanDecisionAutoApprove}, false},
+		{"permission ask", driver.HumanDecisionPolicy{Permission: driver.HumanDecisionAsk}, true},
+		{"plan ask", driver.HumanDecisionPolicy{PlanReview: driver.HumanDecisionAsk}, true},
+		{"question ask", driver.HumanDecisionPolicy{Question: driver.QuestionAsk}, true},
+		{"permission auto reject", driver.HumanDecisionPolicy{Permission: driver.HumanDecisionAutoReject}, true},
+		{"question auto reject", driver.HumanDecisionPolicy{Question: driver.QuestionAutoReject}, true},
 	}
 	for _, tc := range cases {
 		if got := wantsControlTransport(tc.p); got != tc.want {

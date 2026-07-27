@@ -8,7 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	agentadaptor "github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/internal/engine"
 	"github.com/agent-dance/agent-adaptor/internal/testutil"
 )
 
@@ -32,8 +33,8 @@ func TestClaudeRunPreservesAndGuardsSessionState(t *testing.T) {
 		"@echo off\r\nsetlocal\r\nset /p PROMPT=\r\n>&2 echo stderr:%PROMPT%\r\necho {\"type\":\"result\",\"subtype\":\"success\",\"session_id\":\"claude-session\",\"display_id\":\"claude-display\"}\r\n",
 	)
 
-	cfg := agentadaptor.ClaudeConfig{
-		CommonConfig: agentadaptor.CommonConfig{
+	cfg := Config{
+		CommonConfig: CommonConfig{
 			Command: command,
 			CWD:     workspace,
 			Env: []agentadaptor.EnvBinding{
@@ -57,7 +58,7 @@ func TestClaudeRunPreservesAndGuardsSessionState(t *testing.T) {
 		},
 		Fingerprint: "bundle-b",
 	}
-	req := agentadaptor.DriverRunRequest{
+	req := agentadaptor.Request{
 		Prompt:         "hello from claude",
 		Config:         cfg,
 		Workspace:      agentadaptor.WorkspaceLease{ID: "workspace-a", CWD: workspace},
@@ -66,7 +67,7 @@ func TestClaudeRunPreservesAndGuardsSessionState(t *testing.T) {
 	}
 
 	events := &testutil.EventRecorder{}
-	first, err := NewAdapter().Run(context.Background(), req, events)
+	first, err := adapter{}.Run(context.Background(), req, events)
 	if err != nil {
 		t.Fatalf("first run: %v", err)
 	}
@@ -92,31 +93,31 @@ func TestClaudeRunPreservesAndGuardsSessionState(t *testing.T) {
 	assertInvocationArgsDoNotContain(t, events.Snapshot(), "--add-dir")
 
 	continueReq := req
-	continueReq.Session = &agentadaptor.DriverSessionContext{State: first.Checkpoint.State}
-	if _, err := NewAdapter().Run(context.Background(), continueReq, &testutil.EventRecorder{}); err != nil {
+	continueReq.Session = &agentadaptor.SessionContext{State: first.Checkpoint.State}
+	if _, err := (adapter{}).Run(context.Background(), continueReq, &testutil.EventRecorder{}); err != nil {
 		t.Fatalf("resume run: %v", err)
 	}
 
 	rejectReq := req
 	rejectReq.Skills = payloadB
 	rejectReq.ProfilePayload = agentadaptor.ProfilePayload{Fingerprint: "profile-b"}
-	rejectReq.Session = &agentadaptor.DriverSessionContext{State: first.Checkpoint.State}
-	_, err = NewAdapter().Run(context.Background(), rejectReq, &testutil.EventRecorder{})
-	if !errors.Is(err, agentadaptor.ErrResumeRejected) {
+	rejectReq.Session = &agentadaptor.SessionContext{State: first.Checkpoint.State}
+	_, err = (adapter{}).Run(context.Background(), rejectReq, &testutil.EventRecorder{})
+	if !errors.Is(err, engine.ErrResumeRejected) {
 		t.Fatalf("expected ErrResumeRejected, got %v", err)
 	}
 
 	legacyReq := req
 	legacyReq.Skills = payloadB
 	legacyReq.ProfilePayload = agentadaptor.ProfilePayload{}
-	legacyReq.Session = &agentadaptor.DriverSessionContext{State: &agentadaptor.DriverSessionState{
+	legacyReq.Session = &agentadaptor.SessionContext{State: &agentadaptor.SessionState{
 		ResumeID: "claude-session",
 		Data: map[string]string{
 			agentadaptor.SessionParamPromptBundleKey: "bundle-a",
 		},
 	}}
-	_, err = NewAdapter().Run(context.Background(), legacyReq, &testutil.EventRecorder{})
-	if !errors.Is(err, agentadaptor.ErrResumeRejected) {
+	_, err = (adapter{}).Run(context.Background(), legacyReq, &testutil.EventRecorder{})
+	if !errors.Is(err, engine.ErrResumeRejected) {
 		t.Fatalf("expected legacy ErrResumeRejected, got %v", err)
 	}
 }
@@ -131,8 +132,8 @@ func TestClaudeRunMapsDedicatedProfileOptionToClaudeConfigDir(t *testing.T) {
 		"#!/bin/sh\nset -eu\ncat >/dev/null\nprintf '{\"event\":\"turn.completed\",\"session_id\":\"claude-session\"}\\n'\n",
 		"@echo off\r\nsetlocal\r\nset /p PROMPT=\r\necho {\"event\":\"turn.completed\",\"session_id\":\"claude-session\"}\r\n",
 	)
-	cfg := agentadaptor.ClaudeConfig{
-		CommonConfig: agentadaptor.CommonConfig{
+	cfg := Config{
+		CommonConfig: CommonConfig{
 			Command: command,
 			CWD:     workspace,
 		},
@@ -140,7 +141,7 @@ func TestClaudeRunMapsDedicatedProfileOptionToClaudeConfigDir(t *testing.T) {
 	}
 
 	events := &testutil.EventRecorder{}
-	_, err := NewAdapter().Run(context.Background(), agentadaptor.DriverRunRequest{
+	_, err := (adapter{}).Run(context.Background(), agentadaptor.Request{
 		Prompt:    "hello from claude",
 		Config:    cfg,
 		Profile:   (&agentadaptor.ProfileSelection{Mode: agentadaptor.ProfileModeDedicated, Dir: profileDir}),
@@ -165,9 +166,9 @@ func TestClaudeResumeProfileMismatchDoesNotWriteProfileResources(t *testing.T) {
 		"#!/bin/sh\nset -eu\ncat >/dev/null\nprintf '{\"event\":\"turn.completed\",\"session_id\":\"claude-session\"}\\n'\n",
 		"@echo off\r\nsetlocal\r\nset /p PROMPT=\r\necho {\"event\":\"turn.completed\",\"session_id\":\"claude-session\"}\r\n",
 	)
-	req := agentadaptor.DriverRunRequest{
+	req := agentadaptor.Request{
 		Prompt:    "hello",
-		Config:    agentadaptor.ClaudeConfig{CommonConfig: agentadaptor.CommonConfig{Command: command, CWD: workspace, Env: []agentadaptor.EnvBinding{{Name: "HOME", Value: home}, {Name: "USERPROFILE", Value: home}, {Name: "CLAUDE_CONFIG_DIR", Value: configDir}}}},
+		Config:    Config{CommonConfig: CommonConfig{Command: command, CWD: workspace, Env: []agentadaptor.EnvBinding{{Name: "HOME", Value: home}, {Name: "USERPROFILE", Value: home}, {Name: "CLAUDE_CONFIG_DIR", Value: configDir}}}},
 		Workspace: agentadaptor.WorkspaceLease{ID: "workspace-a", CWD: workspace},
 		Skills: agentadaptor.ResolvedSkills{Entries: []agentadaptor.ResolvedSkill{
 			{Key: "analysis", RuntimeName: "analysis", SourcePath: skillDir},
@@ -178,7 +179,7 @@ func TestClaudeResumeProfileMismatchDoesNotWriteProfileResources(t *testing.T) {
 			Command:   "echo",
 		}}},
 		ProfilePayload: agentadaptor.ProfilePayload{Fingerprint: "new-profile"},
-		Session: &agentadaptor.DriverSessionContext{State: &agentadaptor.DriverSessionState{
+		Session: &agentadaptor.SessionContext{State: &agentadaptor.SessionState{
 			ResumeID: "claude-session",
 			Data: map[string]string{
 				agentadaptor.SessionParamCWD:                workspace,
@@ -187,8 +188,8 @@ func TestClaudeResumeProfileMismatchDoesNotWriteProfileResources(t *testing.T) {
 			},
 		}},
 	}
-	_, err := NewAdapter().Run(context.Background(), req, &testutil.EventRecorder{})
-	if !errors.Is(err, agentadaptor.ErrResumeRejected) {
+	_, err := (adapter{}).Run(context.Background(), req, &testutil.EventRecorder{})
+	if !errors.Is(err, engine.ErrResumeRejected) {
 		t.Fatalf("expected ErrResumeRejected, got %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(configDir, "skills")); !os.IsNotExist(err) {
@@ -210,11 +211,11 @@ func TestClaudeRunModelOverrideReflectedInReportedModel(t *testing.T) {
 		"#!/bin/sh\nset -eu\ncat >/dev/null\nprintf '{\"event\":\"turn.completed\",\"session_id\":\"claude-session\"}\\n'\n",
 		"@echo off\r\nsetlocal\r\nset /p PROMPT=\r\necho {\"event\":\"turn.completed\",\"session_id\":\"claude-session\"}\r\n",
 	)
-	newReq := func(override string) agentadaptor.DriverRunRequest {
-		return agentadaptor.DriverRunRequest{
+	newReq := func(override string) agentadaptor.Request {
+		return agentadaptor.Request{
 			Prompt: "hello",
-			Config: agentadaptor.ClaudeConfig{
-				CommonConfig: agentadaptor.CommonConfig{
+			Config: Config{
+				CommonConfig: CommonConfig{
 					Command: command,
 					CWD:     workspace,
 					Env:     []agentadaptor.EnvBinding{{Name: "HOME", Value: home}, {Name: "USERPROFILE", Value: home}},
@@ -227,7 +228,7 @@ func TestClaudeRunModelOverrideReflectedInReportedModel(t *testing.T) {
 	}
 
 	// per-run override must drive both the --model flag and the reported model.
-	overridden, err := NewAdapter().Run(context.Background(), newReq("claude-opus-4-1"), &testutil.EventRecorder{})
+	overridden, err := (adapter{}).Run(context.Background(), newReq("claude-opus-4-1"), &testutil.EventRecorder{})
 	if err != nil {
 		t.Fatalf("run with override: %v", err)
 	}
@@ -236,7 +237,7 @@ func TestClaudeRunModelOverrideReflectedInReportedModel(t *testing.T) {
 	}
 
 	// blank override falls back to the binding model.
-	fallback, err := NewAdapter().Run(context.Background(), newReq("   "), &testutil.EventRecorder{})
+	fallback, err := (adapter{}).Run(context.Background(), newReq("   "), &testutil.EventRecorder{})
 	if err != nil {
 		t.Fatalf("run without override: %v", err)
 	}
@@ -256,8 +257,8 @@ func TestClaudeRunOmitsAnthropicModelFlagInBedrockMode(t *testing.T) {
 		"#!/bin/sh\nset -eu\ncat >/dev/null\nprintf '{\"event\":\"turn.completed\",\"session_id\":\"claude-session\"}\\n'\n",
 		"@echo off\r\nsetlocal\r\nset /p PROMPT=\r\necho {\"event\":\"turn.completed\",\"session_id\":\"claude-session\"}\r\n",
 	)
-	cfg := agentadaptor.ClaudeConfig{
-		CommonConfig: agentadaptor.CommonConfig{
+	cfg := Config{
+		CommonConfig: CommonConfig{
 			Command: command,
 			CWD:     workspace,
 			Env: []agentadaptor.EnvBinding{
@@ -270,7 +271,7 @@ func TestClaudeRunOmitsAnthropicModelFlagInBedrockMode(t *testing.T) {
 	}
 
 	events := &testutil.EventRecorder{}
-	_, err := NewAdapter().Run(context.Background(), agentadaptor.DriverRunRequest{
+	_, err := (adapter{}).Run(context.Background(), agentadaptor.Request{
 		Prompt:    "hello from claude",
 		Config:    cfg,
 		Workspace: agentadaptor.WorkspaceLease{ID: "workspace-a", CWD: workspace},
@@ -292,8 +293,8 @@ func TestClaudeRunPreservesBedrockNativeModelFlag(t *testing.T) {
 		"#!/bin/sh\nset -eu\ncat >/dev/null\nprintf '{\"event\":\"turn.completed\",\"session_id\":\"claude-session\"}\\n'\n",
 		"@echo off\r\nsetlocal\r\nset /p PROMPT=\r\necho {\"event\":\"turn.completed\",\"session_id\":\"claude-session\"}\r\n",
 	)
-	cfg := agentadaptor.ClaudeConfig{
-		CommonConfig: agentadaptor.CommonConfig{
+	cfg := Config{
+		CommonConfig: CommonConfig{
 			Command: command,
 			CWD:     workspace,
 			Env: []agentadaptor.EnvBinding{
@@ -306,7 +307,7 @@ func TestClaudeRunPreservesBedrockNativeModelFlag(t *testing.T) {
 	}
 
 	events := &testutil.EventRecorder{}
-	result, err := NewAdapter().Run(context.Background(), agentadaptor.DriverRunRequest{
+	result, err := (adapter{}).Run(context.Background(), agentadaptor.Request{
 		Prompt:    "hello from claude",
 		Config:    cfg,
 		Workspace: agentadaptor.WorkspaceLease{ID: "workspace-a", CWD: workspace},

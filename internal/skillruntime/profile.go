@@ -6,13 +6,13 @@ import (
 	"path/filepath"
 	"strings"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/internal/engine"
 )
 
 type ProfileResolveOptions struct {
-	Bindings         []agentadaptor.EnvBinding
-	Selection        *agentadaptor.ProfileSelection
+	Bindings         []driver.EnvBinding
+	Selection        *driver.ProfileSelection
 	EnvVar           string
 	DefaultDir       string
 	NativeSharedDir  string
@@ -25,30 +25,30 @@ type ProfileResolveOptions struct {
 }
 
 type ProfileResolution struct {
-	Bindings []agentadaptor.EnvBinding
-	Profile  agentadaptor.AgentProfile
+	Bindings []driver.EnvBinding
+	Profile  driver.AgentProfile
 }
 
 func ResolveProfile(opts ProfileResolveOptions) (ProfileResolution, error) {
-	bindings := append([]agentadaptor.EnvBinding(nil), opts.Bindings...)
+	bindings := append([]driver.EnvBinding(nil), opts.Bindings...)
 	if configured := ResolveBinding(bindings, opts.EnvVar); configured != "" {
 		dir, err := engine.NormalizeProfileDir(configured)
 		if err != nil {
 			return ProfileResolution{}, err
 		}
-		return ProfileResolution{Bindings: WithBinding(bindings, opts.EnvVar, dir), Profile: agentadaptor.AgentProfile{Supported: true, Dir: dir, EnvVar: opts.EnvVar, Source: agentadaptor.AgentProfileSourceBindingEnv}}, nil
+		return ProfileResolution{Bindings: WithBinding(bindings, opts.EnvVar, dir), Profile: driver.AgentProfile{Supported: true, Dir: dir, EnvVar: opts.EnvVar, Source: driver.AgentProfileSourceBindingEnv}}, nil
 	}
 
 	selection := opts.Selection
 	if selection != nil {
 		switch selection.Mode {
-		case agentadaptor.ProfileModeNative:
+		case driver.ProfileModeNative:
 			dir, err := nativeProfileDir(bindings, opts)
 			if err != nil {
 				return ProfileResolution{}, err
 			}
-			return ProfileResolution{Bindings: WithBinding(bindings, opts.EnvVar, dir), Profile: agentadaptor.AgentProfile{Supported: true, Dir: dir, EnvVar: opts.EnvVar, Source: agentadaptor.AgentProfileSourceProcessEnv}}, nil
-		case agentadaptor.ProfileModeDedicated:
+			return ProfileResolution{Bindings: WithBinding(bindings, opts.EnvVar, dir), Profile: driver.AgentProfile{Supported: true, Dir: dir, EnvVar: opts.EnvVar, Source: driver.AgentProfileSourceProcessEnv}}, nil
+		case driver.ProfileModeDedicated:
 			dir, err := dedicatedProfileDir(selection.Dir)
 			if err != nil {
 				return ProfileResolution{}, err
@@ -58,8 +58,8 @@ func ResolveProfile(opts ProfileResolveOptions) (ProfileResolution, error) {
 					return ProfileResolution{}, err
 				}
 			}
-			return ProfileResolution{Bindings: WithBinding(bindings, opts.EnvVar, dir), Profile: agentadaptor.AgentProfile{Supported: true, Dir: dir, EnvVar: opts.EnvVar, Source: agentadaptor.AgentProfileSourceProfileOption}}, nil
-		case agentadaptor.ProfileModeClone:
+			return ProfileResolution{Bindings: WithBinding(bindings, opts.EnvVar, dir), Profile: driver.AgentProfile{Supported: true, Dir: dir, EnvVar: opts.EnvVar, Source: driver.AgentProfileSourceProfileOption}}, nil
+		case driver.ProfileModeClone:
 			dir, err := dedicatedProfileDir(selection.Dir)
 			if err != nil {
 				return ProfileResolution{}, err
@@ -69,7 +69,7 @@ func ResolveProfile(opts ProfileResolveOptions) (ProfileResolution, error) {
 				return ProfileResolution{}, err
 			}
 			if !opts.SkipInitialize {
-				cloneOpts := agentadaptor.CloneProfileOptions{}
+				cloneOpts := driver.CloneProfileOptions{}
 				if selection.Clone != nil {
 					cloneOpts = *selection.Clone
 				}
@@ -77,8 +77,8 @@ func ResolveProfile(opts ProfileResolveOptions) (ProfileResolution, error) {
 					return ProfileResolution{}, err
 				}
 			}
-			return ProfileResolution{Bindings: WithBinding(bindings, opts.EnvVar, dir), Profile: agentadaptor.AgentProfile{Supported: true, Dir: dir, EnvVar: opts.EnvVar, Source: agentadaptor.AgentProfileSourceProfileOption}}, nil
-		case agentadaptor.ProfileModeUnset:
+			return ProfileResolution{Bindings: WithBinding(bindings, opts.EnvVar, dir), Profile: driver.AgentProfile{Supported: true, Dir: dir, EnvVar: opts.EnvVar, Source: driver.AgentProfileSourceProfileOption}}, nil
+		case driver.ProfileModeUnset:
 		default:
 			return ProfileResolution{}, fmt.Errorf("unsupported profile mode %q", selection.Mode)
 		}
@@ -89,7 +89,7 @@ func ResolveProfile(opts ProfileResolveOptions) (ProfileResolution, error) {
 		if err != nil {
 			return ProfileResolution{}, err
 		}
-		return ProfileResolution{Bindings: WithBinding(bindings, opts.EnvVar, dir), Profile: agentadaptor.AgentProfile{Supported: true, Dir: dir, EnvVar: opts.EnvVar, Source: agentadaptor.AgentProfileSourceProcessEnv}}, nil
+		return ProfileResolution{Bindings: WithBinding(bindings, opts.EnvVar, dir), Profile: driver.AgentProfile{Supported: true, Dir: dir, EnvVar: opts.EnvVar, Source: driver.AgentProfileSourceProcessEnv}}, nil
 	}
 
 	dir := strings.TrimSpace(opts.DefaultDir)
@@ -100,10 +100,10 @@ func ResolveProfile(opts ProfileResolveOptions) (ProfileResolution, error) {
 	if err != nil {
 		return ProfileResolution{}, err
 	}
-	return ProfileResolution{Bindings: WithBinding(bindings, opts.EnvVar, normalized), Profile: agentadaptor.AgentProfile{Supported: true, Dir: normalized, EnvVar: opts.EnvVar, Source: agentadaptor.AgentProfileSourceDefault}}, nil
+	return ProfileResolution{Bindings: WithBinding(bindings, opts.EnvVar, normalized), Profile: driver.AgentProfile{Supported: true, Dir: normalized, EnvVar: opts.EnvVar, Source: driver.AgentProfileSourceDefault}}, nil
 }
 
-func nativeProfileDir(bindings []agentadaptor.EnvBinding, opts ProfileResolveOptions) (string, error) {
+func nativeProfileDir(bindings []driver.EnvBinding, opts ProfileResolveOptions) (string, error) {
 	if configured := strings.TrimSpace(os.Getenv(opts.EnvVar)); configured != "" {
 		return engine.NormalizeProfileDir(configured)
 	}
@@ -121,7 +121,7 @@ func dedicatedProfileDir(dir string) (string, error) {
 	return normalized, nil
 }
 
-func cloneSourceDir(bindings []agentadaptor.EnvBinding, from string, opts ProfileResolveOptions) (string, error) {
+func cloneSourceDir(bindings []driver.EnvBinding, from string, opts ProfileResolveOptions) (string, error) {
 	if strings.TrimSpace(from) != "" {
 		return engine.NormalizeProfileDir(from)
 	}
@@ -143,7 +143,7 @@ func ensureDedicatedProfile(dir string, subdirs []string) error {
 	return nil
 }
 
-func reconcileCloneProfile(source, target string, opts ProfileResolveOptions, cloneOpts agentadaptor.CloneProfileOptions) error {
+func reconcileCloneProfile(source, target string, opts ProfileResolveOptions, cloneOpts driver.CloneProfileOptions) error {
 	if _, err := os.Stat(target); err != nil && !os.IsNotExist(err) {
 		return err
 	}
@@ -166,12 +166,12 @@ func reconcileCloneProfile(source, target string, opts ProfileResolveOptions, cl
 		}
 	}
 	switch cloneAuthMode(cloneOpts) {
-	case agentadaptor.CloneProfileAuthNone:
-	case agentadaptor.CloneProfileAuthCopy:
+	case driver.CloneProfileAuthNone:
+	case driver.CloneProfileAuthCopy:
 		if err := copyNamedEntriesIfMissing(source, target, opts.AuthFiles); err != nil {
 			return err
 		}
-	case agentadaptor.CloneProfileAuthLink:
+	case driver.CloneProfileAuthLink:
 		if err := linkNamedEntries(source, target, opts.AuthFiles); err != nil {
 			return err
 		}
@@ -181,14 +181,14 @@ func reconcileCloneProfile(source, target string, opts ProfileResolveOptions, cl
 	return nil
 }
 
-func cloneAuthMode(opts agentadaptor.CloneProfileOptions) agentadaptor.CloneProfileAuthMode {
+func cloneAuthMode(opts driver.CloneProfileOptions) driver.CloneProfileAuthMode {
 	if opts.AuthMode != "" {
 		return opts.AuthMode
 	}
 	if opts.IncludeAuth {
-		return agentadaptor.CloneProfileAuthCopy
+		return driver.CloneProfileAuthCopy
 	}
-	return agentadaptor.CloneProfileAuthNone
+	return driver.CloneProfileAuthNone
 }
 
 func copyNamedEntriesIfMissing(sourceRoot, targetRoot string, names []string) error {

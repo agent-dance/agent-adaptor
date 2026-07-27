@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -159,7 +160,7 @@ func (s *threadStore) pendingRequests(threadID string) []*adaptor.ApprovalReques
 // one of Approve / Deny / Answer on it. Wrong verb for the kind gives
 // ErrApprovalKindMismatch; a second answer (or an answer to a request the
 // SDK already expired) gives ErrApprovalResolved.
-func (s *threadStore) resolveDecision(ctx context.Context, threadID string, body sse.DecisionResolveRequest) error {
+func (s *threadStore) resolveDecision(ctx context.Context, threadID string, body approvalResolveRequest) error {
 	s.mu.Lock()
 	var req *adaptor.ApprovalRequest
 	if st, ok := s.threads[threadID]; ok {
@@ -203,24 +204,48 @@ func (s *threadStore) thread(threadID string) *threadRuntime {
 
 // ---- misc helpers used by server.go ----
 
-// writeApprovalError maps the v1 approval sentinels onto HTTP status codes.
-//
-// GAP (v1): bridges/sse.WriteDecisionResolveError still only understands the
-// legacy ErrDecision* family, so the mapping is inlined here. The inbound
-// DTO (sse.DecisionResolveRequest) is protocol-level and unchanged, which is
-// why the browser contract needs no edit.
+// approvalResolveRequest is this example's companion-endpoint wire DTO. The
+// bridge remains one-way; the host keeps the live ApprovalRequest responder
+// and chooses its own HTTP endpoint shape.
+type approvalResolveRequest struct {
+	RunID     string         `json:"run_id"`
+	RequestID string         `json:"request_id"`
+	Result    string         `json:"result"`
+	Choice    string         `json:"choice,omitempty"`
+	Answer    map[string]any `json:"answer,omitempty"`
+	Text      string         `json:"text,omitempty"`
+}
+
+func decodeApprovalResolveRequest(r *http.Request) (*approvalResolveRequest, error) {
+	if r == nil || r.Body == nil {
+		return nil, fmt.Errorf("approval response body is empty")
+	}
+	defer r.Body.Close()
+	var body approvalResolveRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil, fmt.Errorf("approval response body is empty")
+		}
+		return nil, fmt.Errorf("decode approval response: %w", err)
+	}
+	if body.RequestID == "" {
+		return nil, fmt.Errorf("request_id is required")
+	}
+	if body.Result == "" {
+		return nil, fmt.Errorf("result is required")
+	}
+	return &body, nil
+}
+
+// writeApprovalError delegates stable HTTP/JSON error semantics to the typed
+// v1 SSE companion helper.
 func writeApprovalError(w http.ResponseWriter, err error) bool {
 	if err == nil {
 		return false
 	}
-	switch {
-	case errors.Is(err, adaptor.ErrApprovalResolved):
-		http.Error(w, err.Error(), http.StatusGone)
-	case errors.Is(err, adaptor.ErrApprovalKindMismatch):
-		http.Error(w, err.Error(), http.StatusBadRequest)
-	default:
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
+	sse.WriteApprovalErrorV1(w, err)
 	return true
 }
 

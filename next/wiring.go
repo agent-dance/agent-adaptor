@@ -18,16 +18,13 @@ import (
 // BuildProfilePayload / FinalizeStructuredOutput); only the pass-through
 // field mapping is local.
 
-// resolvedRun is everything the execution paths (Agent.Stream goroutine,
-// Thread.execute) need from one resolution: the request itself, the
-// normalized schema + negotiated source for post-run structured output
-// finalization, and the profile payload fingerprint for the thread
-// compatibility recipe.
+// resolvedRun is everything the invocation coordinator needs from one
+// resolution: the request itself and the normalized schema + negotiated
+// source for post-run structured output finalization.
 type resolvedRun struct {
-	req                driver.Request
-	schema             *driver.OutputSchema
-	source             driver.StructuredOutputSource
-	payloadFingerprint string
+	req    driver.Request
+	schema *driver.OutputSchema
+	source driver.StructuredOutputSource
 }
 
 // resolveRun resolves one invocation. Every failure here is a pre-launch
@@ -59,15 +56,24 @@ func (a *Agent) resolveRun(ctx context.Context, runID, prompt string, eff *RunSe
 		return resolvedRun{}, err
 	}
 
-	// 3. Structured output: normalize the schema, then negotiate the
-	// source against the driver's declared capability matrix. next/ always
-	// streams (Run == Stream + drain), so the negotiation always demands
-	// streaming-compatible support — see the P3 report deviation note.
+	// 3. Structured output and provider transport: consumer Run and Stream
+	// both use the SDK's unified Event pipeline, so neither public method
+	// chooses the provider protocol. Prefer the driver's richer native
+	// transport only when StreamSupport advertises one; if a requested
+	// schema cannot be honored there, negotiate the batch transport instead.
 	schema, err := engine.NormalizeOutputSchema(eff.outputSchema)
 	if err != nil {
 		return resolvedRun{}, err
 	}
-	source, err := engine.ResolveStructuredOutputSource(desc, schema, true, policy)
+	providerStreaming := providerRichTransport(a.driver)
+	source, err := engine.ResolveStructuredOutputSource(desc, schema, providerStreaming, policy)
+	if err != nil && providerStreaming {
+		batchSource, batchErr := engine.ResolveStructuredOutputSource(desc, schema, false, policy)
+		if batchErr == nil {
+			providerStreaming = false
+			source, err = batchSource, nil
+		}
+	}
 	if err != nil {
 		return resolvedRun{}, err
 	}
@@ -85,7 +91,7 @@ func (a *Agent) resolveRun(ctx context.Context, runID, prompt string, eff *RunSe
 	// to the host's own WithMCP set rather than replacing it. A service
 	// whose MCP key collides with a host server fails the run before launch
 	// (key uniqueness), which is the intended loud failure.
-	mcpPayload, err := engine.ResolveMCPPayloadWithRuntime(eff.mcp, nil, res.runtimeRefs(), desc.MCP)
+	mcpPayload, err := engine.ResolveMCPPayloadWithRuntime(eff.engineMCPConfig(), nil, res.runtimeRefs(), desc.MCP)
 	if err != nil {
 		return resolvedRun{}, err
 	}
@@ -154,13 +160,22 @@ func (a *Agent) resolveRun(ctx context.Context, runID, prompt string, eff *RunSe
 	req.ProfilePayload = profilePayload
 	req.Profile = engine.CloneProfileSelection(a.defaults.profile)
 	req.OutputSchema = engine.CloneOutputSchema(schema)
+	req.Streaming = providerStreaming
 
 	return resolvedRun{
-		req:                req,
-		schema:             schema,
-		source:             source,
-		payloadFingerprint: profilePayload.Fingerprint,
+		req:    req,
+		schema: schema,
+		source: source,
 	}, nil
+}
+
+func providerRichTransport(d driver.Driver) bool {
+	support, ok := d.(driver.StreamSupport)
+	if !ok {
+		return false
+	}
+	capability := support.StreamCapability()
+	return capability.Native || capability.TokenLevel || capability.Reasoning || capability.ToolCallArgs || capability.HITL
 }
 
 // skillDefaultRefs returns the default-scope skill refs for one resolution:

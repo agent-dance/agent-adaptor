@@ -8,8 +8,10 @@ package subagentstream_test
 import (
 	"context"
 	"reflect"
+	"runtime"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/agent-dance/agent-adaptor/bridges/subagentstream"
 	"github.com/agent-dance/agent-adaptor/hosttools/a2adelegation"
@@ -189,6 +191,92 @@ func TestMergeCancelViaContext(t *testing.T) {
 		t.Errorf("subagent updates after cancel = %#v, want none (nothing was tracked)", subs)
 	}
 	<-fake.cancelled // Merge must cancel the parent run; blocks forever on failure
+}
+
+func TestMergeHoldsParentTerminalUntilAllSubagentsAndRestampsOrder(t *testing.T) {
+	const runID = "run-terminal-order"
+	bus := a2adelegation.NewEventBus(16)
+	child := delegationEvent(runID, "d1", a2adelegation.DelegationStarted)
+	child.Sequence = 70
+	child.RemoteContextID = "remote-context"
+	child.Time = time.Date(2026, 7, 28, 1, 2, 3, 0, time.UTC)
+	if !bus.Publish(child) || !bus.Publish(delegationEvent(runID, "d1", a2adelegation.DelegationFinished)) {
+		t.Fatal("publish refused")
+	}
+
+	fake := newFakeStream(runID)
+	fake.events <- adaptor.WithEventMeta(adaptor.TextDelta{MessageID: "m", Text: "leader"}, adaptor.EventMeta{
+		RunID: runID, ThreadKey: "host-thread", Sequence: 99,
+	})
+	// The parent terminal arrives before Merge drains replayed child events.
+	fake.events <- adaptor.WithEventMeta(adaptor.RunFinished{RunID: runID}, adaptor.EventMeta{RunID: runID, ThreadKey: "host-thread", Sequence: 100})
+	close(fake.events)
+
+	var events []adaptor.Event
+	for event := range subagentstream.Merge(context.Background(), fake, bus).Events() {
+		events = append(events, event)
+	}
+	if len(events) < 4 {
+		t.Fatalf("events = %#v", events)
+	}
+	if _, ok := events[len(events)-1].(adaptor.RunFinished); !ok {
+		t.Fatalf("last event = %T, want parent RunFinished: %#v", events[len(events)-1], events)
+	}
+	for index, event := range events {
+		if got := event.Meta().Sequence; got != uint64(index+1) {
+			t.Fatalf("event[%d] sequence=%d, want %d (%T)", index, got, index+1, event)
+		}
+		if event.Meta().RunID != runID {
+			t.Fatalf("event[%d] run id = %q", index, event.Meta().RunID)
+		}
+	}
+	var sawChildSource bool
+	for _, event := range events[:len(events)-1] {
+		if child, ok := event.(adaptor.SubagentUpdate); ok && child.Meta().Source != nil && child.Meta().Source.Sequence == 70 && child.Meta().Source.ThreadID == "remote-context" {
+			sawChildSource = true
+		}
+	}
+	if !sawChildSource {
+		t.Fatalf("child provider coordinates were not retained: %#v", events)
+	}
+}
+
+func TestMergeCancelUnblocksSaturatedOutput(t *testing.T) {
+	fake := newFakeStream("run-blocked")
+	bus := a2adelegation.NewEventBus(0)
+	merged := subagentstream.Merge(context.Background(), fake, bus)
+	// Keep producing asynchronously until Merge's 64-event output is full.
+	producerDone := make(chan struct{})
+	go func() {
+		defer close(producerDone)
+		for index := 0; index < 256; index++ {
+			select {
+			case <-fake.cancelled:
+				return
+			case fake.events <- adaptor.TextDelta{MessageID: "m", Text: "x"}:
+			}
+		}
+	}()
+	deadline := time.Now().Add(time.Second)
+	for len(merged.Events()) < cap(merged.Events()) && time.Now().Before(deadline) {
+		runtime.Gosched()
+	}
+	if len(merged.Events()) < cap(merged.Events()) {
+		t.Fatalf("merged output did not saturate: len=%d cap=%d", len(merged.Events()), cap(merged.Events()))
+	}
+	merged.Cancel()
+	select {
+	case <-fake.cancelled:
+	case <-time.After(time.Second):
+		t.Fatal("Cancel did not reach parent")
+	}
+	select {
+	case <-producerDone:
+	case <-time.After(time.Second):
+		t.Fatal("blocked producer did not observe cancellation")
+	}
+	for range merged.Events() {
+	}
 }
 
 func TestSubagentEventProjection(t *testing.T) {

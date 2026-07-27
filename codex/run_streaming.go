@@ -2,10 +2,8 @@ package codex
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/codex/appserver"
 	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/internal/adapterutil"
@@ -22,17 +20,17 @@ import (
 // the two transports are interchangeable from the SDK's point of view.
 func runAppServer(
 	ctx context.Context,
-	req agentadaptor.DriverRunRequest,
-	sink agentadaptor.EventSink,
-	cfg agentadaptor.CodexConfig,
+	req driver.Request,
+	sink driver.EventSink,
+	cfg Config,
 	command string,
-	effectiveBindings []agentadaptor.EnvBinding,
+	effectiveBindings []driver.EnvBinding,
 	preparedInstructions profileinstructions.Prepared,
-) (agentadaptor.DriverRunResult, error) {
+) (driver.Response, error) {
 	effectiveCWD := chooseCWD(cfg.CommonConfig, req.Workspace)
 
 	if err := validateCodexSessionGuard(req, effectiveCWD, req.ProfilePayload.Fingerprint); err != nil {
-		return agentadaptor.DriverRunResult{}, err
+		return driver.Response{}, err
 	}
 
 	prompt := req.Prompt
@@ -78,9 +76,6 @@ func runAppServer(
 	}
 
 	result, err := appserver.Run(ctx, opts, sink)
-	if err != nil {
-		return agentadaptor.DriverRunResult{}, err
-	}
 
 	// Stamp CWD + workspace id onto the checkpoint so resume validation
 	// works the same way as in the exec --json path.
@@ -101,40 +96,37 @@ func runAppServer(
 		result.Metadata = map[string]string{}
 	}
 	result.Metadata["transport"] = "app-server"
-	return result, nil
+	return result, err
 }
 
-func mapApprovalPolicy(p agentadaptor.RunPolicy) string {
-	if p.Isolation == agentadaptor.IsolationUnrestricted {
+func mapApprovalPolicy(p driver.RunPolicy) string {
+	if p.Isolation == driver.IsolationUnrestricted {
 		return "never"
 	}
 	switch p.HumanDecision.Permission {
-	case agentadaptor.HumanDecisionAutoApprove:
+	case driver.HumanDecisionAutoApprove:
 		return "never"
-	case agentadaptor.HumanDecisionAsk:
+	case driver.HumanDecisionAsk:
 		return "on-request"
-	case agentadaptor.HumanDecisionAutoReject:
+	case driver.HumanDecisionAutoReject:
 		return "on-request"
-	case agentadaptor.HumanDecisionUnset:
+	case driver.HumanDecisionUnset:
 		return ""
 	default:
 		return ""
 	}
 }
 
-func mapSandbox(p agentadaptor.RunPolicy) string {
-	if p.Isolation == agentadaptor.IsolationUnrestricted {
+func mapSandbox(p driver.RunPolicy) string {
+	if p.Isolation == driver.IsolationUnrestricted {
 		return "danger-full-access"
 	}
 	switch p.Isolation {
-	case agentadaptor.IsolationReadOnly:
+	case driver.IsolationReadOnly:
 		return "read-only"
-	case agentadaptor.IsolationWorkspaceWrite, agentadaptor.IsolationInherit:
+	case driver.IsolationWorkspaceWrite, driver.IsolationInherit:
 		return "workspace-write"
 	default:
 		return "workspace-write"
 	}
 }
-
-// Ensure fmt import stays used so future adjustments can reference it.
-var _ = fmt.Sprintf

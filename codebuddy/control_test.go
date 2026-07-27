@@ -7,18 +7,18 @@ import (
 	"sync"
 	"testing"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	driver "github.com/agent-dance/agent-adaptor/driver"
 )
 
 type controlTestSink struct {
 	mu       sync.Mutex
-	requests []agentadaptor.DecisionRequest
-	respond  func(agentadaptor.DecisionRequest) agentadaptor.DecisionResponse
+	requests []driver.DecisionRequest
+	respond  func(driver.DecisionRequest) driver.DecisionResponse
 }
 
-func (s *controlTestSink) Emit(agentadaptor.RunEvent) error            { return nil }
-func (s *controlTestSink) EmitStream(agentadaptor.StreamPayload) error { return nil }
-func (s *controlTestSink) RequestDecision(_ context.Context, req agentadaptor.DecisionRequest) (agentadaptor.DecisionResponse, error) {
+func (s *controlTestSink) Emit(driver.RunEvent) error            { return nil }
+func (s *controlTestSink) EmitStream(driver.StreamPayload) error { return nil }
+func (s *controlTestSink) RequestDecision(_ context.Context, req driver.DecisionRequest) (driver.DecisionResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.requests = append(s.requests, req)
@@ -46,12 +46,12 @@ func (s *controlTestStdin) Close() error {
 
 func TestControlResultClosesStdin(t *testing.T) {
 	stdin := &controlTestStdin{}
-	p := newParser(&controlTestSink{respond: func(agentadaptor.DecisionRequest) agentadaptor.DecisionResponse {
-		return agentadaptor.DecisionResponse{Result: agentadaptor.DecisionApproved}
+	p := newParser(&controlTestSink{respond: func(driver.DecisionRequest) driver.DecisionResponse {
+		return driver.DecisionResponse{Result: driver.DecisionApproved}
 	}})
-	p.enableControl(context.Background(), &controlTestSink{respond: func(agentadaptor.DecisionRequest) agentadaptor.DecisionResponse {
-		return agentadaptor.DecisionResponse{Result: agentadaptor.DecisionApproved}
-	}}, stdin, "run-1", agentadaptor.HumanDecisionPolicy{}, "prompt")
+	p.enableControl(context.Background(), &controlTestSink{respond: func(driver.DecisionRequest) driver.DecisionResponse {
+		return driver.DecisionResponse{Result: driver.DecisionApproved}
+	}}, stdin, "run-1", driver.HumanDecisionPolicy{}, "prompt")
 	p.handleResult(`{"type":"result","subtype":"success","result":"done"}`, map[string]any{"result": "done"}, "success")
 	if !stdin.closed {
 		t.Fatal("terminal control result must close stdin")
@@ -61,15 +61,15 @@ func TestControlResultClosesStdin(t *testing.T) {
 func TestWantsControlTransport(t *testing.T) {
 	cases := []struct {
 		name string
-		p    agentadaptor.HumanDecisionPolicy
+		p    driver.HumanDecisionPolicy
 		want bool
 	}{
 		{name: "empty policy remains batch", want: false},
-		{name: "permission ask", p: agentadaptor.HumanDecisionPolicy{Permission: agentadaptor.HumanDecisionAsk}, want: true},
-		{name: "plan review ask", p: agentadaptor.HumanDecisionPolicy{PlanReview: agentadaptor.HumanDecisionAsk}, want: true},
-		{name: "question ask", p: agentadaptor.HumanDecisionPolicy{Question: agentadaptor.QuestionAsk}, want: true},
-		{name: "permission auto reject", p: agentadaptor.HumanDecisionPolicy{Permission: agentadaptor.HumanDecisionAutoReject}, want: true},
-		{name: "auto approve remains batch", p: agentadaptor.HumanDecisionPolicy{Permission: agentadaptor.HumanDecisionAutoApprove}, want: false},
+		{name: "permission ask", p: driver.HumanDecisionPolicy{Permission: driver.HumanDecisionAsk}, want: true},
+		{name: "plan review ask", p: driver.HumanDecisionPolicy{PlanReview: driver.HumanDecisionAsk}, want: true},
+		{name: "question ask", p: driver.HumanDecisionPolicy{Question: driver.QuestionAsk}, want: true},
+		{name: "permission auto reject", p: driver.HumanDecisionPolicy{Permission: driver.HumanDecisionAutoReject}, want: true},
+		{name: "auto approve remains batch", p: driver.HumanDecisionPolicy{Permission: driver.HumanDecisionAutoApprove}, want: false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -81,15 +81,15 @@ func TestWantsControlTransport(t *testing.T) {
 }
 
 func TestBuildExecArgsControl(t *testing.T) {
-	req := agentadaptor.DriverRunRequest{
-		Session: &agentadaptor.DriverSessionContext{
-			State: &agentadaptor.DriverSessionState{ResumeID: "session-1"},
+	req := driver.Request{
+		Session: &driver.SessionContext{
+			State: &driver.SessionState{ResumeID: "session-1"},
 		},
 	}
 	args := buildExecArgs(
-		agentadaptor.CodeBuddyConfig{Model: "glm", Effort: "high", MaxTurnsPerRun: 3},
+		Config{Model: "glm", Effort: "high", MaxTurnsPerRun: 3},
 		req,
-		agentadaptor.CodeBuddyPermissionUnset,
+		PermissionUnset,
 		true,
 	)
 	for _, want := range []string{"--input-format=stream-json", "--output-format=stream-json", "--verbose", "--include-partial-messages", "--resume", "session-1"} {
@@ -105,11 +105,11 @@ func TestBuildExecArgsControl(t *testing.T) {
 }
 
 func TestBuildExecArgsControlDropsConflictingExtraArgs(t *testing.T) {
-	args := buildExecArgs(agentadaptor.CodeBuddyConfig{
-		CommonConfig: agentadaptor.CommonConfig{
+	args := buildExecArgs(Config{
+		CommonConfig: CommonConfig{
 			ExtraArgs: []string{"--acp", "--acp-transport", "stdio", "--print", "--setting-sources", "none", "--custom-flag"},
 		},
-	}, agentadaptor.DriverRunRequest{}, agentadaptor.CodeBuddyPermissionUnset, true)
+	}, driver.Request{}, PermissionUnset, true)
 	for _, forbidden := range []string{"--acp", "--acp-transport", "--print", "--setting-sources"} {
 		if hasArg(args, forbidden) {
 			t.Fatalf("control args contain forbidden %q: %v", forbidden, args)
@@ -121,12 +121,12 @@ func TestBuildExecArgsControlDropsConflictingExtraArgs(t *testing.T) {
 }
 
 func TestControlRequestRoutesPlanReviewWithObservedPlan(t *testing.T) {
-	sink := &controlTestSink{respond: func(req agentadaptor.DecisionRequest) agentadaptor.DecisionResponse {
-		return agentadaptor.DecisionResponse{RequestID: req.RequestID, Result: agentadaptor.DecisionApproved}
+	sink := &controlTestSink{respond: func(req driver.DecisionRequest) driver.DecisionResponse {
+		return driver.DecisionResponse{RequestID: req.RequestID, Result: driver.DecisionApproved}
 	}}
 	stdin := &controlTestStdin{}
 	p := newParser(sink)
-	p.enableControl(context.Background(), sink, stdin, "run-1", agentadaptor.HumanDecisionPolicy{PlanReview: agentadaptor.HumanDecisionAsk}, "prompt")
+	p.enableControl(context.Background(), sink, stdin, "run-1", driver.HumanDecisionPolicy{PlanReview: driver.HumanDecisionAsk}, "prompt")
 
 	write := []byte(`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Write","id":"tool-write","input":{"file_path":"/tmp/.codebuddy/plans/example.md","content":"# Actual plan"}}]}}` + "\n")
 	exitPlan := []byte(`{"type":"control_request","request_id":"request-1","request":{"subtype":"can_use_tool","tool_name":"ExitPlanMode","tool_use_id":"tool-plan","input":{}}}` + "\n")
@@ -137,7 +137,7 @@ func TestControlRequestRoutesPlanReviewWithObservedPlan(t *testing.T) {
 		t.Fatalf("decision calls = %d, want 1", len(sink.requests))
 	}
 	req := sink.requests[0]
-	if req.RequestID != "request-1" || req.Kind != agentadaptor.HumanDecisionPlanReview || req.Payload["plan"] != "# Actual plan" {
+	if req.RequestID != "request-1" || req.Kind != driver.HumanDecisionPlanReview || req.Payload["plan"] != "# Actual plan" {
 		t.Fatalf("plan request = %+v", req)
 	}
 	if len(stdin.frames) != 1 {
@@ -185,12 +185,12 @@ func TestIsCodeBuddyPlanFile(t *testing.T) {
 // CODEBUDDY_CONFIG_DIR points outside ~/.codebuddy, the plan file written under
 // <configDir>/plans/*.md must still be captured and surfaced in Payload["plan"].
 func TestControlRoutesPlanReviewWithCustomConfigDir(t *testing.T) {
-	sink := &controlTestSink{respond: func(req agentadaptor.DecisionRequest) agentadaptor.DecisionResponse {
-		return agentadaptor.DecisionResponse{RequestID: req.RequestID, Result: agentadaptor.DecisionApproved}
+	sink := &controlTestSink{respond: func(req driver.DecisionRequest) driver.DecisionResponse {
+		return driver.DecisionResponse{RequestID: req.RequestID, Result: driver.DecisionApproved}
 	}}
 	stdin := &controlTestStdin{}
 	p := newParser(sink)
-	p.enableControl(context.Background(), sink, stdin, "run-1", agentadaptor.HumanDecisionPolicy{PlanReview: agentadaptor.HumanDecisionAsk}, "prompt")
+	p.enableControl(context.Background(), sink, stdin, "run-1", driver.HumanDecisionPolicy{PlanReview: driver.HumanDecisionAsk}, "prompt")
 	p.control.configDir = "/var/folders/tmp/002"
 
 	write := []byte(`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Write","id":"tool-write","input":{"file_path":"/var/folders/tmp/002/plans/quantum.md","content":"# Real plan"}}]}}` + "\n")
@@ -202,23 +202,23 @@ func TestControlRoutesPlanReviewWithCustomConfigDir(t *testing.T) {
 		t.Fatalf("decision calls = %d, want 1", len(sink.requests))
 	}
 	req := sink.requests[0]
-	if req.Kind != agentadaptor.HumanDecisionPlanReview || req.Payload["plan"] != "# Real plan" {
+	if req.Kind != driver.HumanDecisionPlanReview || req.Payload["plan"] != "# Real plan" {
 		t.Fatalf("plan request = %+v", req)
 	}
 }
 
 func TestControlQuestionWritesAnswersToUpdatedInput(t *testing.T) {
-	sink := &controlTestSink{respond: func(req agentadaptor.DecisionRequest) agentadaptor.DecisionResponse {
-		return agentadaptor.DecisionResponse{RequestID: req.RequestID, Result: agentadaptor.DecisionAnswered, Answer: map[string]any{"Choose": "A"}}
+	sink := &controlTestSink{respond: func(req driver.DecisionRequest) driver.DecisionResponse {
+		return driver.DecisionResponse{RequestID: req.RequestID, Result: driver.DecisionAnswered, Answer: map[string]any{"Choose": "A"}}
 	}}
 	stdin := &controlTestStdin{}
 	p := newParser(sink)
-	p.enableControl(context.Background(), sink, stdin, "run-1", agentadaptor.HumanDecisionPolicy{Question: agentadaptor.QuestionAsk}, "prompt")
+	p.enableControl(context.Background(), sink, stdin, "run-1", driver.HumanDecisionPolicy{Question: driver.QuestionAsk}, "prompt")
 	line := []byte(`{"type":"control_request","request_id":"question-1","request":{"subtype":"can_use_tool","tool_name":"AskUserQuestion","tool_use_id":"tool-question","input":{"questions":[{"question":"Choose","options":[{"label":"A"}]}]}}}` + "\n")
 	if err := p.onChunk("stdout", line, timeNow()); err != nil {
 		t.Fatal(err)
 	}
-	if len(sink.requests) != 1 || sink.requests[0].Kind != agentadaptor.HumanDecisionQuestion {
+	if len(sink.requests) != 1 || sink.requests[0].Kind != driver.HumanDecisionQuestion {
 		t.Fatalf("question requests = %+v", sink.requests)
 	}
 	var frame struct {
@@ -243,16 +243,16 @@ func TestControlQuestionPassesNestedAnswerThroughUnchanged(t *testing.T) {
 		"第三题": "答案三",
 	}
 	want := map[string]any{"answers": answers}
-	sink := &controlTestSink{respond: func(req agentadaptor.DecisionRequest) agentadaptor.DecisionResponse {
-		return agentadaptor.DecisionResponse{
+	sink := &controlTestSink{respond: func(req driver.DecisionRequest) driver.DecisionResponse {
+		return driver.DecisionResponse{
 			RequestID: req.RequestID,
-			Result:    agentadaptor.DecisionAnswered,
+			Result:    driver.DecisionAnswered,
 			Answer:    want,
 		}
 	}}
 	stdin := &controlTestStdin{}
 	p := newParser(sink)
-	p.enableControl(context.Background(), sink, stdin, "run-1", agentadaptor.HumanDecisionPolicy{Question: agentadaptor.QuestionAsk}, "prompt")
+	p.enableControl(context.Background(), sink, stdin, "run-1", driver.HumanDecisionPolicy{Question: driver.QuestionAsk}, "prompt")
 	line := []byte(`{"type":"control_request","request_id":"question-1","request":{"subtype":"can_use_tool","tool_name":"AskUserQuestion","tool_use_id":"tool-question","input":{"questions":[{"question":"第一题"},{"question":"第二题"},{"question":"第三题"}]}}}` + "\n")
 	if err := p.onChunk("stdout", line, timeNow()); err != nil {
 		t.Fatal(err)
@@ -290,7 +290,7 @@ func TestQuestionAnswersPreservesDirectMultiQuestionAnswers(t *testing.T) {
 		"第二题": "答案二",
 		"第三题": "答案三",
 	}
-	got := questionAnswers(input, agentadaptor.DecisionResponse{Answer: want})
+	got := questionAnswers(input, driver.DecisionResponse{Answer: want})
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("question answers = %#v, want %#v", got, want)
 	}
@@ -310,39 +310,39 @@ func TestControlDenyInterruptHonorsPolicy(t *testing.T) {
 	}
 	cases := []struct {
 		name          string
-		policy        agentadaptor.HumanDecisionPolicy
-		result        agentadaptor.DecisionResult
+		policy        driver.HumanDecisionPolicy
+		result        driver.DecisionResult
 		wantInterrupt bool
 	}{
 		{
 			name:          "reject default aborts",
-			policy:        agentadaptor.HumanDecisionPolicy{Permission: agentadaptor.HumanDecisionAsk},
-			result:        agentadaptor.DecisionRejected,
+			policy:        driver.HumanDecisionPolicy{Permission: driver.HumanDecisionAsk},
+			result:        driver.DecisionRejected,
 			wantInterrupt: true,
 		},
 		{
 			name:          "reject continue keeps run",
-			policy:        agentadaptor.HumanDecisionPolicy{Permission: agentadaptor.HumanDecisionAsk, OnReject: agentadaptor.FailureContinue},
-			result:        agentadaptor.DecisionRejected,
+			policy:        driver.HumanDecisionPolicy{Permission: driver.HumanDecisionAsk, OnReject: driver.FailureContinue},
+			result:        driver.DecisionRejected,
 			wantInterrupt: false,
 		},
 		{
 			name:          "timeout honors on_timeout continue",
-			policy:        agentadaptor.HumanDecisionPolicy{Permission: agentadaptor.HumanDecisionAsk, OnTimeout: agentadaptor.FailureContinue},
-			result:        agentadaptor.DecisionTimedOut,
+			policy:        driver.HumanDecisionPolicy{Permission: driver.HumanDecisionAsk, OnTimeout: driver.FailureContinue},
+			result:        driver.DecisionTimedOut,
 			wantInterrupt: false,
 		},
 		{
 			name:          "aborted default aborts",
-			policy:        agentadaptor.HumanDecisionPolicy{Permission: agentadaptor.HumanDecisionAsk},
-			result:        agentadaptor.DecisionAborted,
+			policy:        driver.HumanDecisionPolicy{Permission: driver.HumanDecisionAsk},
+			result:        driver.DecisionAborted,
 			wantInterrupt: true,
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			sink := &controlTestSink{respond: func(req agentadaptor.DecisionRequest) agentadaptor.DecisionResponse {
-				return agentadaptor.DecisionResponse{RequestID: req.RequestID, Result: tc.result, Text: "nope"}
+			sink := &controlTestSink{respond: func(req driver.DecisionRequest) driver.DecisionResponse {
+				return driver.DecisionResponse{RequestID: req.RequestID, Result: tc.result, Text: "nope"}
 			}}
 			stdin := &controlTestStdin{}
 			p := newParser(sink)
@@ -377,12 +377,12 @@ func TestControlDenyInterruptHonorsPolicy(t *testing.T) {
 // codebuddy only trusted decision.Answer, so updatedInput.answers stayed nil
 // no matter which choice the host picked, and the CLI never unblocked.
 func TestControlQuestionAnswersFromChoiceWhenAnswerMissing(t *testing.T) {
-	sink := &controlTestSink{respond: func(req agentadaptor.DecisionRequest) agentadaptor.DecisionResponse {
-		return agentadaptor.DecisionResponse{RequestID: req.RequestID, Result: agentadaptor.DecisionAnswered, Choice: "A"}
+	sink := &controlTestSink{respond: func(req driver.DecisionRequest) driver.DecisionResponse {
+		return driver.DecisionResponse{RequestID: req.RequestID, Result: driver.DecisionAnswered, Choice: "A"}
 	}}
 	stdin := &controlTestStdin{}
 	p := newParser(sink)
-	p.enableControl(context.Background(), sink, stdin, "run-1", agentadaptor.HumanDecisionPolicy{Question: agentadaptor.QuestionAsk}, "prompt")
+	p.enableControl(context.Background(), sink, stdin, "run-1", driver.HumanDecisionPolicy{Question: driver.QuestionAsk}, "prompt")
 	line := []byte(`{"type":"control_request","request_id":"question-1","request":{"subtype":"can_use_tool","tool_name":"AskUserQuestion","tool_use_id":"tool-question","input":{"questions":[{"question":"Choose","options":[{"label":"A"},{"label":"B"}]}]}}}` + "\n")
 	if err := p.onChunk("stdout", line, timeNow()); err != nil {
 		t.Fatal(err)
@@ -407,12 +407,12 @@ func TestControlQuestionAnswersFromChoiceWhenAnswerMissing(t *testing.T) {
 // that doesn't match any known option label (defensive path): the raw
 // choice string is still surfaced as the answer instead of null.
 func TestControlQuestionAnswersFromChoiceFallsBackToRawValue(t *testing.T) {
-	sink := &controlTestSink{respond: func(req agentadaptor.DecisionRequest) agentadaptor.DecisionResponse {
-		return agentadaptor.DecisionResponse{RequestID: req.RequestID, Result: agentadaptor.DecisionAnswered, Choice: "custom-value"}
+	sink := &controlTestSink{respond: func(req driver.DecisionRequest) driver.DecisionResponse {
+		return driver.DecisionResponse{RequestID: req.RequestID, Result: driver.DecisionAnswered, Choice: "custom-value"}
 	}}
 	stdin := &controlTestStdin{}
 	p := newParser(sink)
-	p.enableControl(context.Background(), sink, stdin, "run-1", agentadaptor.HumanDecisionPolicy{Question: agentadaptor.QuestionAsk}, "prompt")
+	p.enableControl(context.Background(), sink, stdin, "run-1", driver.HumanDecisionPolicy{Question: driver.QuestionAsk}, "prompt")
 	line := []byte(`{"type":"control_request","request_id":"question-1","request":{"subtype":"can_use_tool","tool_name":"AskUserQuestion","tool_use_id":"tool-question","input":{"questions":[{"question":"Choose","options":[{"label":"A"}]}]}}}` + "\n")
 	if err := p.onChunk("stdout", line, timeNow()); err != nil {
 		t.Fatal(err)
@@ -434,12 +434,12 @@ func TestControlQuestionAnswersFromChoiceFallsBackToRawValue(t *testing.T) {
 }
 
 func TestControlInitializeResponseStartsUserMessage(t *testing.T) {
-	sink := &controlTestSink{respond: func(req agentadaptor.DecisionRequest) agentadaptor.DecisionResponse {
-		return agentadaptor.DecisionResponse{RequestID: req.RequestID, Result: agentadaptor.DecisionApproved}
+	sink := &controlTestSink{respond: func(req driver.DecisionRequest) driver.DecisionResponse {
+		return driver.DecisionResponse{RequestID: req.RequestID, Result: driver.DecisionApproved}
 	}}
 	stdin := &controlTestStdin{}
 	p := newParser(sink)
-	p.enableControl(context.Background(), sink, stdin, "run-1", agentadaptor.HumanDecisionPolicy{}, "hello")
+	p.enableControl(context.Background(), sink, stdin, "run-1", driver.HumanDecisionPolicy{}, "hello")
 	line := []byte(`{"type":"control_response","response":{"subtype":"success","request_id":"agent-adaptor-initialize","response":{}}}` + "\n")
 	if err := p.onChunk("stdout", line, timeNow()); err != nil {
 		t.Fatal(err)

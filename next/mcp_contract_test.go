@@ -14,7 +14,6 @@ import (
 	"strings"
 	"testing"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/mcp"
 	"github.com/agent-dance/agent-adaptor/memory"
@@ -73,7 +72,7 @@ func TestMCPDefaultOverrideClear(t *testing.T) {
 // the thread key), because the provider session was created under the old
 // tool/skill surface.
 func TestMCPChangeStartsFreshThreadSession(t *testing.T) {
-	t.Setenv(agentadaptor.SkillCacheRootEnv, t.TempDir())
+	t.Setenv(skill.SkillCacheRootEnv, t.TempDir())
 	ctx := context.Background()
 
 	sf := newSessionFake("mcp")

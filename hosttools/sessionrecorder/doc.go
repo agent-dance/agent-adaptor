@@ -1,9 +1,7 @@
 // Package sessionrecorder is an opt-in host utility that records typed
 // agent-adaptor events under a host-owned session key and serves them back by
 // a cursor that stays monotonic across runs. EventRecorder,
-// NewMemoryEventBackend, and NewJSONLEventBackend are the v1 API. The
-// StreamPayload-based Recorder and its backends exist only for migration and
-// are removed by the v1 root cutover.
+// NewMemoryEventBackend, and NewJSONLEventBackend form the typed Event API.
 //
 // # Placement
 //
@@ -60,9 +58,7 @@
 //
 // # Scope
 //
-// The v1 API handles "append an Event, read Events back by cursor". The
-// StreamPayload pending-decision derivers remain migration-only alongside the
-// legacy Recorder.
+// The package handles "append an Event, read Events back by cursor".
 //
 // The package does NOT own:
 //

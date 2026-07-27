@@ -4,7 +4,6 @@ import (
 	"context"
 	"reflect"
 	"testing"
-	"time"
 
 	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/internal/engine"
@@ -16,14 +15,10 @@ func TestDriverReturnsNonNilDriver(t *testing.T) {
 	}
 }
 
-func TestDriverDescriptorMatchesLegacyEntryPoints(t *testing.T) {
-	cfg := Config{Model: "claude-sonnet-5"}
-	want := New(cfg.engineConfig()).Adapter().Descriptor()
-	if got := Driver(cfg).Descriptor(); !reflect.DeepEqual(got, want) {
-		t.Fatalf("Driver(cfg).Descriptor() = %+v\nwant legacy binding descriptor %+v", got, want)
-	}
-	if got := NewAdapter().Descriptor(); !reflect.DeepEqual(got, want) {
-		t.Fatalf("NewAdapter().Descriptor() = %+v\nwant %+v", got, want)
+func TestDriverDescriptorMatchesAdapterImplementation(t *testing.T) {
+	want := (adapter{}).Descriptor()
+	if got := Driver(Config{Model: "claude-sonnet-5"}).Descriptor(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("Driver(cfg).Descriptor() = %+v\nwant adapter descriptor %+v", got, want)
 	}
 }
 
@@ -53,39 +48,12 @@ func TestDriverInjectsCapturedConfigIntoRunRequest(t *testing.T) {
 		t.Fatalf("injected config = %+v, want %+v", injected, cfg)
 	}
 
-	// Parity with the legacy entry point: the injected v1 config converts to
-	// exactly the value New binds. The two are no longer the same
-	// declaration — this package owns Config (docs/p5.2-recon.md D-P5.2-2).
-	if legacy := New(cfg.engineConfig()).TypedConfig(); !reflect.DeepEqual(legacy, injected.engineConfig()) {
-		t.Fatalf("legacy binding config = %+v, want %+v", legacy, injected.engineConfig())
-	}
-
-	// An explicit request-level config (legacy binding path) wins untouched.
+	// An explicit request-level package config supplied by a direct SPI caller
+	// wins untouched.
 	override := Config{Model: "gpt-5.5"}
 	req = d.requestWithConfig(driver.Request{Config: override})
 	if !reflect.DeepEqual(req.Config, override) {
 		t.Fatalf("explicit req.Config was overwritten: %+v", req.Config)
-	}
-}
-
-func TestConfigMapsEveryCommonFieldToEngine(t *testing.T) {
-	instructions := &driver.InstructionsBundleRef{ID: "instructions"}
-	common := CommonConfig{
-		Command: "codebuddy-bin", CWD: "/repo", Env: []driver.EnvBinding{{Name: "KEY", Value: "value"}}, Instructions: instructions,
-		PromptTemplate: "prompt {{.Prompt}}", BootstrapPromptTemplate: "bootstrap {{.Prompt}}",
-		WorkspaceStrategy: &driver.WorkspaceStrategy{Type: driver.WorkspaceStrategyGitWorktree, BaseRef: "main", BranchTemplate: "run/{{.RunID}}", WorktreeParentDir: "/worktrees"},
-		WorkspaceRuntime:  &driver.WorkspaceRuntimeConfig{Services: []driver.RuntimeServiceSpec{{ID: "svc", Name: "service"}}},
-		Timeout:           2 * time.Minute, GracePeriod: 3 * time.Second, ExtraArgs: []string{"--verbose"},
-	}
-	want := engine.CommonConfig{
-		Command: common.Command, CWD: common.CWD, Env: common.Env, Instructions: instructions,
-		PromptTemplate: common.PromptTemplate, BootstrapPromptTemplate: common.BootstrapPromptTemplate,
-		WorkspaceStrategy: &engine.WorkspaceStrategy{Type: driver.WorkspaceStrategyGitWorktree, BaseRef: "main", BranchTemplate: "run/{{.RunID}}", WorktreeParentDir: "/worktrees"},
-		WorkspaceRuntime:  &engine.WorkspaceRuntimeConfig{Services: common.WorkspaceRuntime.Services},
-		Timeout:           common.Timeout, GracePeriod: common.GracePeriod, ExtraArgs: common.ExtraArgs,
-	}
-	if got := (Config{CommonConfig: common}).engineConfig().CommonConfig; !reflect.DeepEqual(got, want) {
-		t.Fatalf("engine common config = %#v, want %#v", got, want)
 	}
 }
 
@@ -101,7 +69,7 @@ func TestConfiguredDriverProbesUseCapturedConfigAndRespectExplicitOverride(t *te
 	}
 }
 
-func TestDriverCapturedConfigAndEngineConversionAreMutationIsolated(t *testing.T) {
+func TestDriverCapturedConfigIsMutationIsolated(t *testing.T) {
 	nested := map[string]any{"value": "original"}
 	cfg := Config{CommonConfig: CommonConfig{
 		Env: []driver.EnvBinding{{Name: "KEY", Value: "original"}}, ExtraArgs: []string{"original"},
@@ -110,8 +78,6 @@ func TestDriverCapturedConfigAndEngineConversionAreMutationIsolated(t *testing.T
 		WorkspaceRuntime:  &driver.WorkspaceRuntimeConfig{Services: []driver.RuntimeServiceSpec{{ID: "original", Metadata: map[string]string{"key": "original"}}}},
 	}, Model: "original-model", Effort: "high", PermissionMode: PermissionPlan, MaxTurnsPerRun: 7}
 	d := Driver(cfg).(configuredDriver)
-	converted := cfg.engineConfig()
-
 	cfg.Env[0].Value, cfg.ExtraArgs[0], cfg.Instructions.ID = "mutated", "mutated", "mutated"
 	nested["value"] = "mutated"
 	cfg.WorkspaceStrategy.BaseRef = "mutated"
@@ -121,7 +87,6 @@ func TestDriverCapturedConfigAndEngineConversionAreMutationIsolated(t *testing.T
 
 	captured := d.requestWithConfig(driver.Request{}).Config.(Config)
 	assertConfigSnapshot(t, captured)
-	assertEngineCommonConfigSnapshot(t, converted)
 	captured.Env[0].Value = "mutated-by-consumer"
 	captured.Instructions.Native["nested"].(map[string]any)["value"] = "mutated-by-consumer"
 	assertConfigSnapshot(t, d.requestWithConfig(driver.Request{}).Config.(Config))
@@ -134,19 +99,12 @@ func assertConfigSnapshot(t *testing.T, got Config) {
 	}
 }
 
-func assertEngineCommonConfigSnapshot(t *testing.T, got engine.CodeBuddyConfig) {
-	t.Helper()
-	if got.Model != "original-model" || got.Effort != "high" || got.PermissionMode != engine.CodeBuddyPermissionMode(PermissionPlan) || got.MaxTurnsPerRun != 7 || got.Env[0].Value != "original" || got.ExtraArgs[0] != "original" || got.Instructions.ID != "original" || got.Instructions.Native["nested"].(map[string]any)["value"] != "original" || got.WorkspaceStrategy.BaseRef != "original" || got.WorkspaceRuntime.Services[0].ID != "original" || got.WorkspaceRuntime.Services[0].Metadata["key"] != "original" {
-		t.Fatalf("engine Config was mutated through source data: %#v", got)
-	}
-}
-
 func TestDriverValidateConfigStaysDeferredAndUsesCapturedConfig(t *testing.T) {
 	if err := Driver(Config{}).ValidateConfig(nil); err != nil {
 		t.Fatalf("ValidateConfig(nil) = %v, want nil (captured config)", err)
 	}
 	if err := Driver(Config{}).ValidateConfig(42); err == nil {
-		t.Fatal("ValidateConfig(42) = nil, want type error (legacy semantics)")
+		t.Fatal("ValidateConfig(42) = nil, want type error")
 	}
 	// Invalid captured config surfaces on probe, not at construction:
 	// Driver itself must not panic or reject eagerly.

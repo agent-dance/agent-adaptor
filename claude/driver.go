@@ -9,11 +9,11 @@ import (
 	"strconv"
 	"strings"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/internal/adapterutil"
 	"github.com/agent-dance/agent-adaptor/internal/clihelper"
 	"github.com/agent-dance/agent-adaptor/internal/configprobe"
+	"github.com/agent-dance/agent-adaptor/internal/engine"
 	"github.com/agent-dance/agent-adaptor/internal/mcpruntime"
 	"github.com/agent-dance/agent-adaptor/internal/profileagents"
 	"github.com/agent-dance/agent-adaptor/internal/profileconfig"
@@ -36,23 +36,10 @@ const DriverType = "claude"
 
 type adapter struct{}
 
-// New returns a configured Claude AgentBinding. Hosts should pass the result
-// to agentadaptor.WithDefaultAgent or agentadaptor.WithAgent; direct adapter
-// use is reserved for lower-level tests and custom plumbing.
-func New(cfg agentadaptor.ClaudeConfig, opts ...agentadaptor.AgentOption) agentadaptor.TypedAgentBinding[agentadaptor.ClaudeConfig] {
-	return agentadaptor.BindTyped(NewAdapter(), cfg, opts...)
-}
-
-// NewAdapter returns the low-level Claude DriverAdapter. Most hosts should use
-// New so config and binding defaults travel together.
-func NewAdapter() agentadaptor.DriverAdapter {
-	return adapter{}
-}
-
 // StreamCapability declares Claude Code stream-json capabilities when
 // --include-partial-messages is enabled.
-func (adapter) StreamCapability() agentadaptor.StreamCapability {
-	return agentadaptor.StreamCapability{
+func (adapter) StreamCapability() driver.StreamCapability {
+	return driver.StreamCapability{
 		Native:       true,
 		TokenLevel:   true,
 		Reasoning:    true,
@@ -61,44 +48,44 @@ func (adapter) StreamCapability() agentadaptor.StreamCapability {
 	}
 }
 
-func (adapter) Descriptor() agentadaptor.DriverDescriptor {
-	fields := []agentadaptor.ConfigField{
+func (adapter) Descriptor() driver.Descriptor {
+	fields := []driver.ConfigField{
 		{Name: "command", Label: "Command", Type: "text", Description: "Override the Claude CLI executable.", Hint: "Defaults to `claude` when unset.", Default: "claude", Group: "command"},
 		{Name: "cwd", Label: "Working Directory", Type: "text", Description: "Default working directory when the workspace manager does not override it.", Hint: "Leave empty to let the workspace manager resolve the cwd.", Group: "command"},
 		{Name: "model", Label: "Model", Type: "select", Description: "Claude model identifier, for example claude-sonnet-4 or a Bedrock-native us.anthropic.* id.", Default: defaultClaudeModel, Options: modelOptions(claudeModels()), Group: "model"},
-		{Name: "effort", Label: "Thinking Effort", Type: "select", Description: "Optional Claude thinking effort.", Options: []agentadaptor.ConfigOption{{Value: "low", Label: "Low"}, {Value: "medium", Label: "Medium"}, {Value: "high", Label: "High"}}, Group: "model"},
+		{Name: "effort", Label: "Thinking Effort", Type: "select", Description: "Optional Claude thinking effort.", Options: []driver.ConfigOption{{Value: "low", Label: "Low"}, {Value: "medium", Label: "Medium"}, {Value: "high", Label: "High"}}, Group: "model"},
 		{Name: "max_turns_per_run", Label: "Max Turns", Type: "number", Description: "Optional max-turns guard for one run.", Group: "execution"},
 		{Name: "extra_args", Label: "Extra Args", Type: "textarea", Description: "Additional CLI args appended after SDK-managed flags.", Group: "command"},
 	}
 	fields = append(fields, profileconfig.CapabilityFields(DriverType)...)
-	return agentadaptor.DriverDescriptor{
+	return driver.Descriptor{
 		Type:         DriverType,
 		DisplayName:  "Claude Code",
 		Models:       claudeModels(),
-		ConfigSchema: &agentadaptor.ConfigSchema{Fields: fields},
-		Sessions:     agentadaptor.SessionCapability{SupportsResume: true},
-		Skills:       agentadaptor.SkillCapability{Supported: true, Mode: agentadaptor.SkillSyncPersistent},
-		MCP:          agentadaptor.MCPCapability{Supported: true, Stdio: true, HTTP: true, SSE: true},
-		Instructions: agentadaptor.InstructionsCapability{Supported: true},
-		Workspace:    agentadaptor.WorkspaceCapability{Supported: true},
-		RunPolicyCaps: agentadaptor.RunPolicyCapabilities{
+		ConfigSchema: &driver.ConfigSchema{Fields: fields},
+		Sessions:     driver.SessionCapability{SupportsResume: true},
+		Skills:       driver.SkillCapability{Supported: true, Mode: driver.SkillSyncPersistent},
+		MCP:          driver.MCPCapability{Supported: true, Stdio: true, HTTP: true, SSE: true},
+		Instructions: driver.InstructionsCapability{Supported: true},
+		Workspace:    driver.WorkspaceCapability{Supported: true},
+		RunPolicyCaps: driver.RunPolicyCapabilities{
 			Isolation: false, WebSearch: false, Browser: true,
 			// Phase 3 interactive mode uses stdio permission prompting
 			// (`--permission-prompt-tool stdio`) so Claude emits native
 			// can_use_tool control_request frames. We still keep
 			// Permission.Ask disabled until the dedicated host UX and
 			// end-to-end coverage are expanded beyond PlanReview/Question.
-			Permission: agentadaptor.HumanDecisionSupport{Ask: false, AutoApprove: true, AutoReject: true, Retry: false},
+			Permission: driver.HumanDecisionSupport{Ask: false, AutoApprove: true, AutoReject: true, Retry: false},
 			// PlanReview + Question are fully supported in Phase 3 via
 			// can_use_tool control_request / control_response over stdio.
 			// Retry stays false: CLI cannot
 			// "re-ask the same tool_use_id"; retry would need to push the
 			// model to emit a new tool_use, which is not automatic.
-			PlanReview: agentadaptor.HumanDecisionSupport{Ask: true, AutoApprove: true, AutoReject: true, Retry: false},
-			Question:   agentadaptor.QuestionSupport{Ask: true, AutoReject: true, Retry: false},
+			PlanReview: driver.HumanDecisionSupport{Ask: true, AutoApprove: true, AutoReject: true, Retry: false},
+			Question:   driver.QuestionSupport{Ask: true, AutoReject: true, Retry: false},
 		},
-		Runtime: agentadaptor.RuntimeCapability{ReportsServices: true},
-		StructuredOutput: agentadaptor.StructuredOutputCapability{
+		Runtime: driver.RuntimeCapability{ReportsServices: true},
+		StructuredOutput: driver.StructuredOutputCapability{
 			JSONSchemaNative:         true,
 			JSONSchemaPromptValidate: true,
 			WorksWithRun:             true,
@@ -111,14 +98,14 @@ func (adapter) Descriptor() agentadaptor.DriverDescriptor {
 
 func (adapter) ValidateConfig(cfg any) error {
 	switch cfg.(type) {
-	case agentadaptor.ClaudeConfig, *agentadaptor.ClaudeConfig, Config, *Config:
+	case Config, *Config:
 		return nil
 	default:
-		return errors.New("claude driver requires agentadaptor.ClaudeConfig")
+		return errors.New("claude driver requires claude.Config")
 	}
 }
 
-func (adapter) CheckEnvironment(_ context.Context, cfg any) (agentadaptor.EnvironmentReport, error) {
+func (adapter) CheckEnvironment(_ context.Context, cfg any) (driver.EnvironmentReport, error) {
 	config := readConfig(cfg)
 	command := config.Command
 	if command == "" {
@@ -127,7 +114,7 @@ func (adapter) CheckEnvironment(_ context.Context, cfg any) (agentadaptor.Enviro
 	checks := append(adapterutil.CommandEnvironmentChecks(command), adapterutil.CWDEnvironmentChecks(config.CommonConfig.CWD)...)
 	bindings, err := effectiveClaudeBindings(config.CommonConfig, nil)
 	if err != nil {
-		checks = append(checks, agentadaptor.EnvironmentCheck{Code: "claude_profile_error", Level: "fail", Message: "Claude profile resolution failed.", Detail: err.Error()})
+		checks = append(checks, driver.EnvironmentCheck{Code: "claude_profile_error", Level: "fail", Message: "Claude profile resolution failed.", Detail: err.Error()})
 		return adapterutil.SummarizeEnvironment(DriverType, checks), nil
 	}
 	checks = append(checks, claudeAuthChecks(bindings)...)
@@ -136,7 +123,7 @@ func (adapter) CheckEnvironment(_ context.Context, cfg any) (agentadaptor.Enviro
 	return adapterutil.SummarizeEnvironment(DriverType, checks), nil
 }
 
-func (adapter) ListModels(_ context.Context, cfg any) ([]agentadaptor.ModelInfo, error) {
+func (adapter) ListModels(_ context.Context, cfg any) ([]driver.ModelInfo, error) {
 	config := readConfig(cfg)
 	bindings, err := effectiveClaudeBindings(config.CommonConfig, nil)
 	if err != nil {
@@ -145,15 +132,15 @@ func (adapter) ListModels(_ context.Context, cfg any) ([]agentadaptor.ModelInfo,
 	return claudeModelsForBindings(bindings), nil
 }
 
-func (adapter) DetectModel(_ context.Context, cfg any, profile *agentadaptor.ProfileSelection) (*agentadaptor.DetectedModel, error) {
+func (adapter) DetectModel(_ context.Context, cfg any, profile *driver.ProfileSelection) (*driver.DetectedModel, error) {
 	return detectClaudeEffectiveModel(readConfig(cfg), profile)
 }
 
-func (adapter) GetProfile(_ context.Context, cfg any, _ agentadaptor.AgentIdentity, profile *agentadaptor.ProfileSelection) (agentadaptor.AgentProfile, error) {
+func (adapter) GetProfile(_ context.Context, cfg any, _ driver.AgentIdentity, profile *driver.ProfileSelection) (driver.AgentProfile, error) {
 	return claudeProfile(readConfig(cfg).CommonConfig, profile), nil
 }
 
-func claudeConfigCandidates(bindings []agentadaptor.EnvBinding) []string {
+func claudeConfigCandidates(bindings []driver.EnvBinding) []string {
 	home := skillruntime.ResolveHome(bindings)
 	configDir := resolveClaudeConfigDir(bindings)
 	candidates := []string{
@@ -166,20 +153,20 @@ func claudeConfigCandidates(bindings []agentadaptor.EnvBinding) []string {
 	return candidates
 }
 
-func claudeConfigChecks(bindings []agentadaptor.EnvBinding) []agentadaptor.EnvironmentCheck {
-	checks := make([]agentadaptor.EnvironmentCheck, 0)
+func claudeConfigChecks(bindings []driver.EnvBinding) []driver.EnvironmentCheck {
+	checks := make([]driver.EnvironmentCheck, 0)
 	for _, candidate := range claudeConfigCandidates(bindings) {
 		if _, err := os.Stat(candidate); err != nil {
 			continue
 		}
-		checks = append(checks, agentadaptor.EnvironmentCheck{
+		checks = append(checks, driver.EnvironmentCheck{
 			Code:    "claude_config_present",
 			Level:   "info",
 			Message: "Claude config file is present.",
 			Detail:  candidate,
 		})
 		if model, ok, err := configprobe.ReadTopLevelJSONString(candidate, "model"); err == nil && ok {
-			checks = append(checks, agentadaptor.EnvironmentCheck{
+			checks = append(checks, driver.EnvironmentCheck{
 				Code:    "claude_config_model",
 				Level:   "info",
 				Message: "Claude config file declares a default model.",
@@ -187,7 +174,7 @@ func claudeConfigChecks(bindings []agentadaptor.EnvBinding) []agentadaptor.Envir
 			})
 		}
 		if baseURL, ok, err := configprobe.ReadNestedJSONString(candidate, "env", "ANTHROPIC_BASE_URL"); err == nil && ok {
-			checks = append(checks, agentadaptor.EnvironmentCheck{
+			checks = append(checks, driver.EnvironmentCheck{
 				Code:    "claude_config_base_url",
 				Level:   "info",
 				Message: "Claude config file overrides the Anthropic base URL.",
@@ -198,13 +185,13 @@ func claudeConfigChecks(bindings []agentadaptor.EnvBinding) []agentadaptor.Envir
 	return checks
 }
 
-func modelOptions(models []agentadaptor.ModelInfo) []agentadaptor.ConfigOption {
+func modelOptions(models []driver.ModelInfo) []driver.ConfigOption {
 	if len(models) == 0 {
 		return nil
 	}
-	options := make([]agentadaptor.ConfigOption, 0, len(models))
+	options := make([]driver.ConfigOption, 0, len(models))
 	for _, model := range models {
-		options = append(options, agentadaptor.ConfigOption{
+		options = append(options, driver.ConfigOption{
 			Value: model.ID,
 			Label: model.Label,
 		})
@@ -212,24 +199,24 @@ func modelOptions(models []agentadaptor.ModelInfo) []agentadaptor.ConfigOption {
 	return options
 }
 
-func (adapter) ConfigSchema(_ context.Context, cfg any) (*agentadaptor.ConfigSchema, error) {
+func (adapter) ConfigSchema(_ context.Context, cfg any) (*driver.ConfigSchema, error) {
 	return hydrateClaudeConfigSchema(readConfig(cfg)), nil
 }
 
-func (adapter) GetQuota(ctx context.Context, cfg any, profile *agentadaptor.ProfileSelection) (agentadaptor.QuotaReport, error) {
+func (adapter) GetQuota(ctx context.Context, cfg any, profile *driver.ProfileSelection) (driver.QuotaReport, error) {
 	config := readConfig(cfg)
 	bindings, err := effectiveClaudeBindings(config.CommonConfig, profile)
 	if err != nil {
-		return agentadaptor.QuotaReport{}, err
+		return driver.QuotaReport{}, err
 	}
 	return claudeQuotaReport(ctx, bindings)
 }
 
-func (adapter) ListSkills(_ context.Context, cfg any, payload agentadaptor.ResolvedSkills, selected []string, resolved []agentadaptor.Skill, profile *agentadaptor.ProfileSelection) (agentadaptor.SkillSnapshot, error) {
+func (adapter) ListSkills(_ context.Context, cfg any, payload driver.ResolvedSkills, selected []string, resolved []driver.Skill, profile *driver.ProfileSelection) (driver.SkillSnapshot, error) {
 	config := readConfig(cfg)
 	bindings, err := effectiveClaudeBindings(config.CommonConfig, profile)
 	if err != nil {
-		return agentadaptor.SkillSnapshot{}, err
+		return driver.SkillSnapshot{}, err
 	}
 	return listClaudeSkills(payload, selected, resolved, bindings)
 }
@@ -238,35 +225,35 @@ func (adapter) ListSkills(_ context.Context, cfg any, payload agentadaptor.Resol
 // needs the Run-scoped effective profile bindings before it can reconcile the
 // profile-local skills home, so the built-in adapter keeps this hook as a
 // no-op and performs materialization after the resume guard inside Run.
-func (adapter) InjectSkills(_ context.Context, _ any, _ agentadaptor.ResolvedSkills, _ *agentadaptor.ProfileSelection) error {
+func (adapter) InjectSkills(_ context.Context, _ any, _ driver.ResolvedSkills, _ *driver.ProfileSelection) error {
 	return nil
 }
 
-func (adapter) SyncSkills(ctx context.Context, cfg any, payload agentadaptor.ResolvedSkills, selected []string, resolved []agentadaptor.Skill, profile *agentadaptor.ProfileSelection) (agentadaptor.SkillSnapshot, error) {
+func (adapter) SyncSkills(ctx context.Context, cfg any, payload driver.ResolvedSkills, selected []string, resolved []driver.Skill, profile *driver.ProfileSelection) (driver.SkillSnapshot, error) {
 	config := readConfig(cfg)
 	bindings, err := effectiveClaudeBindings(config.CommonConfig, profile)
 	if err != nil {
-		return agentadaptor.SkillSnapshot{}, err
+		return driver.SkillSnapshot{}, err
 	}
 	_, kind := claudeProfileAndKind(config.CommonConfig, profile)
 	return syncClaudeSkills(ctx, payload, selected, resolved, bindings, kind)
 }
 
-func (adapter) SnapshotProfileResources(_ context.Context, cfg any, _ agentadaptor.AgentIdentity, profile *agentadaptor.ProfileSelection, payload agentadaptor.ProfilePayload, selected []string, resolved []agentadaptor.Skill) (agentadaptor.ProfileSnapshot, error) {
+func (adapter) SnapshotProfileResources(_ context.Context, cfg any, _ driver.AgentIdentity, profile *driver.ProfileSelection, payload driver.ProfilePayload, selected []string, resolved []driver.Skill) (engine.ProfileSnapshot, error) {
 	config := readConfig(cfg)
 	bindings, err := effectiveClaudeBindings(config.CommonConfig, profile)
 	if err != nil {
-		return agentadaptor.ProfileSnapshot{}, err
+		return engine.ProfileSnapshot{}, err
 	}
 	skills, err := listClaudeSkills(payload.Skills, selected, resolved, bindings)
 	if err != nil {
-		return agentadaptor.ProfileSnapshot{}, err
+		return engine.ProfileSnapshot{}, err
 	}
 	effectiveProfile, kind := claudeProfileAndKind(config.CommonConfig, profile)
 	snapshot := profilesnapshot.Build(DriverType, effectiveProfile, kind, payload, skills, false)
 	mcpSnapshot, err := mcpruntime.SnapshotResource(DriverType, effectiveProfile.Dir, payload.MCP, false)
 	if err != nil {
-		return agentadaptor.ProfileSnapshot{}, err
+		return engine.ProfileSnapshot{}, err
 	}
 	snapshot = profileconfig.WithSnapshotResource(snapshot, mcpSnapshot)
 	if payload.Declared.Config {
@@ -284,55 +271,55 @@ func (adapter) SnapshotProfileResources(_ context.Context, cfg any, _ agentadapt
 	return snapshot, nil
 }
 
-func (adapter) SyncProfileResources(ctx context.Context, cfg any, _ agentadaptor.AgentIdentity, profile *agentadaptor.ProfileSelection, payload agentadaptor.ProfilePayload, selected []string, resolved []agentadaptor.Skill) (agentadaptor.ProfileSnapshot, error) {
+func (adapter) SyncProfileResources(ctx context.Context, cfg any, _ driver.AgentIdentity, profile *driver.ProfileSelection, payload driver.ProfilePayload, selected []string, resolved []driver.Skill) (engine.ProfileSnapshot, error) {
 	config := readConfig(cfg)
 	bindings, err := effectiveClaudeBindings(config.CommonConfig, profile)
 	if err != nil {
-		return agentadaptor.ProfileSnapshot{}, err
+		return engine.ProfileSnapshot{}, err
 	}
 	effectiveProfile, kind := claudeProfileAndKind(config.CommonConfig, profile)
 	skills, err := syncClaudeSkills(ctx, payload.Skills, selected, resolved, bindings, kind)
 	if err != nil {
-		return agentadaptor.ProfileSnapshot{}, err
+		return engine.ProfileSnapshot{}, err
 	}
 	mcpSnapshot, err := mcpruntime.SyncResource(ctx, DriverType, effectiveProfile.Dir, kind, payload.MCP)
 	if err != nil {
-		return agentadaptor.ProfileSnapshot{}, err
+		return engine.ProfileSnapshot{}, err
 	}
 	snapshot := profilesnapshot.Build(DriverType, effectiveProfile, kind, payload, skills, true)
 	snapshot = profileconfig.WithSnapshotResource(snapshot, mcpSnapshot)
 	if payload.Declared.Config {
 		configSnapshot, err := profileconfig.SyncNativePatches(ctx, DriverType, effectiveProfile.Dir, payload.Config)
 		if err != nil {
-			return agentadaptor.ProfileSnapshot{}, err
+			return engine.ProfileSnapshot{}, err
 		}
 		snapshot = profileconfig.WithSnapshotResource(snapshot, configSnapshot)
 	}
 	if payload.Declared.Instructions {
 		instructionsSnapshot, _, err := profileinstructions.Sync(ctx, DriverType, effectiveProfile.Dir, payload.Instructions)
 		if err != nil {
-			return agentadaptor.ProfileSnapshot{}, err
+			return engine.ProfileSnapshot{}, err
 		}
 		snapshot = profileconfig.WithSnapshotResource(snapshot, instructionsSnapshot)
 	}
 	if payload.Declared.Agents {
 		agentsSnapshot, err := profileagents.Sync(ctx, DriverType, effectiveProfile.Dir, payload.Agents)
 		if err != nil {
-			return agentadaptor.ProfileSnapshot{}, err
+			return engine.ProfileSnapshot{}, err
 		}
 		snapshot = profileconfig.WithSnapshotResource(snapshot, agentsSnapshot)
 	}
 	if payload.Declared.Hooks {
 		hooksSnapshot, err := profilehooks.Sync(ctx, DriverType, effectiveProfile.Dir, payload.Hooks)
 		if err != nil {
-			return agentadaptor.ProfileSnapshot{}, err
+			return engine.ProfileSnapshot{}, err
 		}
 		snapshot = profileconfig.WithSnapshotResource(snapshot, hooksSnapshot)
 	}
 	return snapshot, nil
 }
 
-func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink agentadaptor.EventSink) (agentadaptor.DriverRunResult, error) {
+func (adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSink) (driver.Response, error) {
 	cfg := readConfig(req.Config)
 	// per-run WithModel overrides the binding model for this invocation only.
 	if m := strings.TrimSpace(req.ModelOverride); m != "" {
@@ -345,50 +332,50 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 	profileFingerprint := req.ProfilePayload.Fingerprint
 	bindings, err := effectiveClaudeBindingsNoInitialize(cfg.CommonConfig, req.Profile)
 	if err != nil {
-		return agentadaptor.DriverRunResult{}, err
+		return driver.Response{}, err
 	}
 	effectiveCWD := chooseCWD(cfg.CommonConfig, req.Workspace)
 	legacyBundleKey := req.Skills.Fingerprint
 	if err := validateClaudeSessionGuard(req, effectiveCWD, profileFingerprint, legacyBundleKey); err != nil {
-		return agentadaptor.DriverRunResult{}, err
+		return driver.Response{}, err
 	}
 	bindings, err = effectiveClaudeBindings(cfg.CommonConfig, req.Profile)
 	if err != nil {
-		return agentadaptor.DriverRunResult{}, err
+		return driver.Response{}, err
 	}
 	_, profileKind := claudeProfileAndKind(cfg.CommonConfig, req.Profile)
 	if _, err := syncClaudeSkills(ctx, req.Skills, req.Skills.Keys(), nil, bindings, profileKind); err != nil {
-		return agentadaptor.DriverRunResult{}, err
+		return driver.Response{}, err
 	}
 	effectiveProfile, _ := claudeProfileAndKind(cfg.CommonConfig, req.Profile)
 	if _, err := mcpruntime.SyncResource(ctx, DriverType, effectiveProfile.Dir, profileKind, req.MCP); err != nil {
-		return agentadaptor.DriverRunResult{}, err
+		return driver.Response{}, err
 	}
 	if req.ProfilePayload.Declared.Config {
 		if _, err := profileconfig.SyncNativePatches(ctx, DriverType, effectiveProfile.Dir, req.ProfilePayload.Config); err != nil {
-			return agentadaptor.DriverRunResult{}, err
+			return driver.Response{}, err
 		}
 	}
 	var preparedInstructions profileinstructions.Prepared
 	if req.ProfilePayload.Declared.Instructions {
 		preparedInstructions, err = profileinstructions.PrepareForRun(ctx, DriverType, effectiveProfile.Dir, effectiveCWD, req.Instructions)
 		if err != nil {
-			return agentadaptor.DriverRunResult{}, err
+			return driver.Response{}, err
 		}
 	}
 	if req.ProfilePayload.Declared.Agents {
 		if _, err := profileagents.Sync(ctx, DriverType, effectiveProfile.Dir, req.ProfilePayload.Agents); err != nil {
-			return agentadaptor.DriverRunResult{}, err
+			return driver.Response{}, err
 		}
 	}
 	if req.ProfilePayload.Declared.Hooks {
 		if _, err := profilehooks.Sync(ctx, DriverType, effectiveProfile.Dir, req.ProfilePayload.Hooks); err != nil {
-			return agentadaptor.DriverRunResult{}, err
+			return driver.Response{}, err
 		}
 	}
 	effectiveEnv, err := adapterutil.RuntimeEnvBindings(bindings, req.Runtime)
 	if err != nil {
-		return agentadaptor.DriverRunResult{}, err
+		return driver.Response{}, err
 	}
 
 	modelFlag := claudeRequestedModelFlag(cfg)
@@ -402,21 +389,21 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 	interactive := wantsInteractiveClaude(req.Policy.HumanDecision)
 	if interactive {
 		if err := validateInteractivePolicy(req.Policy.HumanDecision); err != nil {
-			return agentadaptor.DriverRunResult{}, err
+			return driver.Response{}, err
 		}
 	}
-	if req.OutputSchema != nil && req.OutputSchema.Mode != agentadaptor.StructuredOutputPromptValidate {
+	if req.OutputSchema != nil && req.OutputSchema.Mode != driver.StructuredOutputPromptValidate {
 		if interactive {
-			return agentadaptor.DriverRunResult{}, &agentadaptor.StructuredOutputUnsupportedError{Adapter: DriverType, Mode: req.OutputSchema.Mode, Reason: "Claude native structured output is not supported with interactive HITL"}
+			return driver.Response{}, &engine.StructuredOutputUnsupportedError{Adapter: DriverType, Mode: req.OutputSchema.Mode, Reason: "Claude native structured output is not supported with interactive HITL"}
 		}
 		if hasAnyArg(cfg.ExtraArgs, "--json-schema", "--output-format") {
-			return agentadaptor.DriverRunResult{}, &agentadaptor.InvalidOutputSchemaError{Reason: "Claude ExtraArgs must not include --json-schema or --output-format when SDK structured output is enabled"}
+			return driver.Response{}, &engine.InvalidOutputSchemaError{Reason: "Claude ExtraArgs must not include --json-schema or --output-format when SDK structured output is enabled"}
 		}
 	}
 
 	args, err := buildClaudeExecArgs(cfg, req, "", interactive)
 	if err != nil {
-		return agentadaptor.DriverRunResult{}, err
+		return driver.Response{}, err
 	}
 
 	rawPrompt := req.Prompt
@@ -435,7 +422,7 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 		// Streaming flag. Hosts that invoke Start without streaming but
 		// want HITL nevertheless get the StreamHITLRequested/Resolved
 		// pair for audit — the stream channel is closed on the outer
-		// handle so those events are dropped by the dualSink, but the
+		// handle so those events are dropped by the unified event sink, but the
 		// parser's RequestDecision flow still works through the runner's
 		// typed-handler dispatch.
 		parser.enableStreaming(req.RunID)
@@ -455,7 +442,7 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 		// protocol envelope.
 		initial, err := encodeInteractiveUserFrame(rawPrompt)
 		if err != nil {
-			return agentadaptor.DriverRunResult{}, err
+			return driver.Response{}, err
 		}
 		runReq.Prompt = initial
 		runReq.Stdin = clihelper.NewStdinController()
@@ -463,9 +450,9 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 		// Bind the parser to the interactive sink and stdin so tool_use
 		// frames route through sink.RequestDecision and the response is
 		// injected back via stdin.Write.
-		ic, ok := sink.(agentadaptor.DecisionCapableSink)
+		ic, ok := sink.(driver.DecisionCapableSink)
 		if !ok {
-			return agentadaptor.DriverRunResult{}, errClaudeInteractiveSinkRequired
+			return driver.Response{}, errClaudeInteractiveSinkRequired
 		}
 		parser.enableInteractive(ctx, ic, runReq.Stdin)
 	} else {
@@ -474,16 +461,16 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 
 	result, err := clihelper.Run(ctx, runReq, sink)
 	if err != nil {
-		return agentadaptor.DriverRunResult{}, err
+		return driver.Response{}, err
 	}
 	parser.finalize()
-	raw := agentadaptor.RawStreams{Stdout: result.RawStreams.Stdout, Stderr: result.RawStreams.Stderr}
-	var failure *agentadaptor.RunFailure
+	raw := driver.RawStreams{Stdout: result.RawStreams.Stdout, Stderr: result.RawStreams.Stderr, Terminal: parser.terminal}
+	var failure *driver.RunFailure
 	if parser.pendingFailure != nil {
 		failure = parser.pendingFailure
 	} else if strings.TrimSpace(parser.errorMessage) != "" {
-		failure = &agentadaptor.RunFailure{
-			Code:    agentadaptor.FailureAgentError,
+		failure = &driver.RunFailure{
+			Code:    driver.FailureAgentError,
 			Message: parser.errorMessage,
 		}
 	}
@@ -497,12 +484,12 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 	}
 
 	meta := parser.outputMetadata()
-	var structuredOutput *agentadaptor.StructuredOutput
-	if req.OutputSchema != nil && req.OutputSchema.Mode != agentadaptor.StructuredOutputPromptValidate {
+	var structuredOutput *driver.StructuredOutput
+	if req.OutputSchema != nil && req.OutputSchema.Mode != driver.StructuredOutputPromptValidate {
 		structuredOutput = parser.structuredOutput
 	}
 
-	return agentadaptor.DriverRunResult{
+	return driver.Response{
 		Output:           parser.buildOutput(),
 		RawStreams:       &raw,
 		Transcript:       parser.transcript,
@@ -515,42 +502,41 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 		Provider:         "anthropic",
 		Model:            reportedModel,
 		Summary:          parser.finalSummary(),
-		Result:           parser.resultFinal,
 		StructuredOutput: structuredOutput,
 		RuntimeServices:  adapterutil.RuntimeReportsFromRefs(req.Runtime.Ensured, req.Agent),
 		Failure:          failure,
 	}, nil
 }
 
-func validateClaudeSessionGuard(req agentadaptor.DriverRunRequest, effectiveCWD, profileFingerprint, legacyBundleKey string) error {
+func validateClaudeSessionGuard(req driver.Request, effectiveCWD, profileFingerprint, legacyBundleKey string) error {
 	if req.Session == nil || req.Session.State == nil {
 		return nil
 	}
 	if req.Session.State.Data[driver.SessionParamCWD] != "" && req.Session.State.Data[driver.SessionParamCWD] != effectiveCWD {
-		return &agentadaptor.ResumeRejectedError{Reason: "session working directory changed"}
+		return &engine.ResumeRejectedError{Reason: "session working directory changed"}
 	}
 	if req.Session.State.Data[driver.SessionParamWorkspaceID] != "" && req.Session.State.Data[driver.SessionParamWorkspaceID] != req.Workspace.ID {
-		return &agentadaptor.ResumeRejectedError{Reason: "session workspace changed"}
+		return &engine.ResumeRejectedError{Reason: "session workspace changed"}
 	}
 	if req.Session.State.Data[driver.SessionParamProfileFingerprint] != "" && req.Session.State.Data[driver.SessionParamProfileFingerprint] != profileFingerprint {
-		return &agentadaptor.ResumeRejectedError{Reason: "profile resources changed"}
+		return &engine.ResumeRejectedError{Reason: "profile resources changed"}
 	}
 	if req.Session.State.Data[driver.SessionParamProfileFingerprint] == "" &&
 		req.Session.State.Data[driver.SessionParamPromptBundleKey] != "" &&
 		req.Session.State.Data[driver.SessionParamPromptBundleKey] != legacyBundleKey {
-		return &agentadaptor.ResumeRejectedError{Reason: "profile resources changed"}
+		return &engine.ResumeRejectedError{Reason: "profile resources changed"}
 	}
 	return nil
 }
 
-func buildClaudeExecArgs(cfg agentadaptor.ClaudeConfig, req agentadaptor.DriverRunRequest, bundleRoot string, interactive bool) ([]string, error) {
+func buildClaudeExecArgs(cfg Config, req driver.Request, bundleRoot string, interactive bool) ([]string, error) {
 	// Common core. Native structured output supports two modes:
 	//   - non-streaming: final JSON result via --output-format json
 	//   - streaming: stream-json events + final structured_output/result event
 	//
 	// Prompt-validated structured output and ordinary runs always stay on the
 	// existing stream-json path.
-	nativeStructured := req.OutputSchema != nil && req.OutputSchema.Mode != agentadaptor.StructuredOutputPromptValidate
+	nativeStructured := req.OutputSchema != nil && req.OutputSchema.Mode != driver.StructuredOutputPromptValidate
 	args := []string{"--print"}
 	if nativeStructured {
 		schemaJSON, err := prepareClaudeJSONSchema(req.OutputSchema.SchemaJSON)
@@ -596,7 +582,7 @@ func buildClaudeExecArgs(cfg agentadaptor.ClaudeConfig, req agentadaptor.DriverR
 	if req.Session != nil && req.Session.State != nil && req.Session.State.ResumeID != "" {
 		args = append(args, "--resume", req.Session.State.ResumeID)
 	}
-	if !interactive && req.Policy.HumanDecision.Permission == agentadaptor.HumanDecisionAutoApprove {
+	if !interactive && req.Policy.HumanDecision.Permission == driver.HumanDecisionAutoApprove {
 		// --dangerously-skip-permissions is only meaningful in Phase 1
 		// mode where the CLI itself enforces permissions. In interactive
 		// mode the CLI routes permission prompts back through stdio
@@ -604,7 +590,7 @@ func buildClaudeExecArgs(cfg agentadaptor.ClaudeConfig, req agentadaptor.DriverR
 		// decision path and muddy the audit trail.
 		args = append(args, "--dangerously-skip-permissions")
 	}
-	if req.Policy.Browser == agentadaptor.FeatureAllow {
+	if req.Policy.Browser == driver.FeatureAllow {
 		args = append(args, "--chrome")
 	}
 	if modelFlag != "" {
@@ -661,7 +647,7 @@ func hasAnyArg(args []string, names ...string) bool {
 // geteuid is overridable in tests; production always delegates to os.Geteuid.
 var geteuid = os.Geteuid
 
-func ensureRootSandboxEnv(args []string, env []agentadaptor.EnvBinding) []agentadaptor.EnvBinding {
+func ensureRootSandboxEnv(args []string, env []driver.EnvBinding) []driver.EnvBinding {
 	if geteuid() != 0 {
 		return env
 	}
@@ -680,9 +666,9 @@ func ensureRootSandboxEnv(args []string, env []agentadaptor.EnvBinding) []agenta
 			return env
 		}
 	}
-	out := make([]agentadaptor.EnvBinding, len(env), len(env)+1)
+	out := make([]driver.EnvBinding, len(env), len(env)+1)
 	copy(out, env)
-	return append(out, agentadaptor.EnvBinding{Name: "IS_SANDBOX", Value: "1"})
+	return append(out, driver.EnvBinding{Name: "IS_SANDBOX", Value: "1"})
 }
 
 // wantsInteractiveClaude reports whether the policy explicitly asks for
@@ -695,9 +681,9 @@ func ensureRootSandboxEnv(args []string, env []agentadaptor.EnvBinding) []agenta
 // Interactive mode engages when the host explicitly sets PlanReview=Ask or
 // Question=Ask. AutoReject stays in Phase 1 because it's deterministic and
 // the observational flow is sufficient.
-func wantsInteractiveClaude(p agentadaptor.HumanDecisionPolicy) bool {
-	return p.PlanReview == agentadaptor.HumanDecisionAsk ||
-		p.Question == agentadaptor.QuestionAsk
+func wantsInteractiveClaude(p driver.HumanDecisionPolicy) bool {
+	return p.PlanReview == driver.HumanDecisionAsk ||
+		p.Question == driver.QuestionAsk
 }
 
 // validateInteractivePolicy rejects policy shapes Phase 3 cannot honour.
@@ -709,8 +695,8 @@ func wantsInteractiveClaude(p agentadaptor.HumanDecisionPolicy) bool {
 // than effective defaults, so users who never touched Permission are not
 // penalised for the SDK default (Ask). Phase 3 only rejects when the host
 // *explicitly* requested Permission=Ask.
-func validateInteractivePolicy(p agentadaptor.HumanDecisionPolicy) error {
-	if p.Permission == agentadaptor.HumanDecisionAsk {
+func validateInteractivePolicy(p driver.HumanDecisionPolicy) error {
+	if p.Permission == driver.HumanDecisionAsk {
 		return errors.New("claude Phase 3: HumanDecision.Permission=Ask is not yet supported (needs host-side tool executor in Phase 3.5). " +
 			"Use Permission=AutoApprove to run Bash/Write/Edit, or leave Permission unset and only set PlanReview/Question.")
 	}
@@ -738,33 +724,25 @@ func encodeInteractiveUserFrame(prompt string) (string, error) {
 // errClaudeInteractiveSinkRequired is returned when the policy demands
 // interactive HITL but the supplied EventSink does not implement
 // DecisionCapableSink (this should never happen for runs started through
-// the runner, which always passes a dualSink).
-var errClaudeInteractiveSinkRequired = errors.New("claude Phase 3 interactive mode requires a DecisionCapableSink; the runner's dualSink provides this automatically — this error usually means the driver was invoked outside the SDK")
+// adaptor.Agent, which always passes a decision-capable unified event sink).
+var errClaudeInteractiveSinkRequired = errors.New("claude Phase 3 interactive mode requires a DecisionCapableSink; adaptor.Agent provides one automatically — this error usually means the driver was invoked directly")
 
-func chooseCWD(cfg agentadaptor.CommonConfig, workspace agentadaptor.WorkspaceLease) string {
+func chooseCWD(cfg CommonConfig, workspace driver.WorkspaceLease) string {
 	if workspace.CWD != "" {
 		return workspace.CWD
 	}
 	return cfg.CWD
 }
 
-// readConfig normalizes every config shape the adapter accepts. The v1
-// entry point (Driver) hands over the package-owned Config, so this is the
-// single point where it is converted for the shared adapter path.
-func readConfig(cfg any) agentadaptor.ClaudeConfig {
+// readConfig snapshots the package-owned configuration used by the v1 path.
+func readConfig(cfg any) Config {
 	switch typed := cfg.(type) {
-	case agentadaptor.ClaudeConfig:
-		return typed
-	case *agentadaptor.ClaudeConfig:
-		if typed != nil {
-			return *typed
-		}
 	case Config:
-		return typed.engineConfig()
+		return cloneConfig(typed)
 	case *Config:
 		if typed != nil {
-			return typed.engineConfig()
+			return cloneConfig(*typed)
 		}
 	}
-	return agentadaptor.ClaudeConfig{}
+	return Config{}
 }

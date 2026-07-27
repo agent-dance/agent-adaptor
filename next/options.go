@@ -3,12 +3,14 @@ package adaptor
 import (
 	"maps"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/internal/engine"
 	"github.com/agent-dance/agent-adaptor/mcp"
 	"github.com/agent-dance/agent-adaptor/profile"
+	"github.com/agent-dance/agent-adaptor/skill"
 	"github.com/agent-dance/agent-adaptor/threadstore"
 )
 
@@ -82,10 +84,10 @@ type RunSettings struct {
 	skills               []driver.SkillRef
 	defaultSkillBoundary int
 
-	// mcp replaces as a whole value: a non-nil config substitutes the agent
-	// default wholesale (legacy WithMCP override semantics); an explicitly
-	// empty config clears the default server set.
-	mcp *engine.MCPConfig
+	// mcpServers is root-owned option state. Pointer-to-slice preserves an
+	// unset declaration versus an explicit clear; conversion to the internal
+	// envelope happens only at the engine boundary.
+	mcpServers *[]mcp.Server
 
 	// agents/hooks/configPatches use pointer-to-slice so "never set" (nil
 	// pointer) is distinguishable from "explicitly declared empty" (non-nil
@@ -123,8 +125,10 @@ type RunSettings struct {
 	runServices []RunServiceProvider
 }
 
-// SetModel replaces the effective model for the target scope.
-func (s *RunSettings) SetModel(m string) { s.model = m }
+// SetModel replaces the effective model for the target scope. Empty and
+// whitespace-only values mean no override, matching the Driver Request
+// contract and preventing an all-space model name from reaching providers.
+func (s *RunSettings) SetModel(m string) { s.model = strings.TrimSpace(m) }
 
 // SetTimeout replaces the wall-clock budget for one run. Zero means no
 // SDK-imposed deadline.
@@ -153,15 +157,23 @@ func (s *RunSettings) SetInstructionsBundle(ref *driver.InstructionsBundleRef) {
 // AddSkills appends skill references for the target scope — the single
 // append-merged option family: call-site refs never displace the agent
 // defaults, they extend them.
-func (s *RunSettings) AddSkills(refs ...driver.SkillRef) {
+func (s *RunSettings) AddSkills(refs ...skill.Ref) {
 	s.skills = append(s.skills, engine.CloneSkillRefs(refs)...)
 }
 
 // SetMCPServers replaces the MCP server set as a whole value. An empty
 // (or nil) slice is an explicit clear: it substitutes the agent default
 // with "no servers" rather than inheriting it.
-func (s *RunSettings) SetMCPServers(servers []driver.MCPServerSpec) {
-	s.mcp = &engine.MCPConfig{Servers: engine.CloneMCPServerSpecs(servers)}
+func (s *RunSettings) SetMCPServers(servers []mcp.Server) {
+	cloned := engine.CloneMCPServerSpecs(servers)
+	s.mcpServers = &cloned
+}
+
+func (s RunSettings) engineMCPConfig() *engine.MCPConfig {
+	if s.mcpServers == nil {
+		return nil
+	}
+	return &engine.MCPConfig{Servers: engine.CloneMCPServerSpecs(*s.mcpServers)}
 }
 
 // SetAgents replaces the sub-agent spec set and declares the resource.
@@ -210,7 +222,7 @@ func (s *RunSettings) SetWorkspaceSpec(spec WorkspaceSpec) { s.workspaceSpec = s
 // SetServices replaces the declared runtime-service set as a whole value. An
 // empty (or nil) slice is an explicit clear: it substitutes the agent default
 // with "no services" rather than inheriting it.
-func (s *RunSettings) SetServices(specs []driver.RuntimeServiceSpec) {
+func (s *RunSettings) SetServices(specs []ServiceSpec) {
 	s.services = engine.CloneRuntimeServiceSpecs(specs)
 }
 
@@ -277,7 +289,10 @@ func (s RunSettings) clone() RunSettings {
 	out.instructions = engine.CloneInstructions(s.instructions)
 	out.skills = engine.CloneSkillRefs(s.skills)
 	out.defaultSkillBoundary = len(out.skills)
-	out.mcp = engine.CloneMCPConfig(s.mcp)
+	if s.mcpServers != nil {
+		cloned := engine.CloneMCPServerSpecs(*s.mcpServers)
+		out.mcpServers = &cloned
+	}
 	if s.agents != nil {
 		cp := engine.CloneAgentSpecs(*s.agents)
 		out.agents = &cp
@@ -352,7 +367,7 @@ func (s *AgentSettings) SetEventBuffer(n int) { s.eventBuffer = n }
 func (s *AgentSettings) SetBlockingEvents() { s.blockingEvents = true }
 
 // SetProfile replaces the driver-native profile selection.
-func (s *AgentSettings) SetProfile(sel driver.ProfileSelection) {
+func (s *AgentSettings) SetProfile(sel profile.Selection) {
 	s.profile = engine.CloneProfileSelection(&sel)
 }
 
@@ -483,16 +498,16 @@ func WithBlockingEvents() Option {
 // (skill.Dir / skill.FS / skill.Inline / skill.Require). Alias of the
 // driver SPI type — skill package constructors produce values of exactly
 // this type.
-type SkillRef = driver.SkillRef
+type SkillRef = skill.Ref
 
 // SkillProvider resolves bare skill keys to full skill descriptions.
-// Implementations that also implement engine SkillCatalog (a Catalogue
+// Implementations that also implement skill.Catalog (a Catalogue
 // method) additionally power Inspect().Skills enumeration.
-type SkillProvider = engine.SkillProvider
+type SkillProvider = skill.Provider
 
 // SkillMaterializer converts non-path skill sources into on-disk skill
 // directories before the driver launches.
-type SkillMaterializer = engine.SkillMaterializer
+type SkillMaterializer = skill.Materializer
 
 // WithSkills appends skill references. This is the single append-merged
 // option family: in New the refs are the agent's default skills, in

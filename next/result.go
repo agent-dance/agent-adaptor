@@ -18,6 +18,9 @@ type (
 	Usage = driver.Usage
 	// RawStreams captures the complete raw stdout/stderr of one run.
 	RawStreams = driver.RawStreams
+	// TerminalPayload preserves the exact provider terminal JSON recognized
+	// by the driver parser and its provider-native event name.
+	TerminalPayload = driver.TerminalPayload
 	// TranscriptItem is the normalized semantic transcript unit.
 	TranscriptItem = driver.TranscriptItem
 	// ServiceReport is the execution report for one ensured runtime
@@ -67,27 +70,28 @@ func resultFromResponse(runID string, resp driver.Response) *Result {
 		Text:       resp.Output,
 		Summary:    resp.Summary,
 		Metadata:   maps.Clone(resp.Metadata),
-		transcript: append([]TranscriptItem(nil), resp.Transcript...),
-		structured: resp.StructuredOutput,
-		services:   append([]ServiceReport(nil), resp.RuntimeServices...),
+		transcript: cloneTranscript(resp.Transcript),
+		structured: cloneStructuredOutput(resp.StructuredOutput),
+		services:   cloneServiceReports(resp.RuntimeServices),
 	}
 	if resp.Usage != nil {
 		res.Usage = *resp.Usage
 	}
 	if resp.RawStreams != nil {
-		res.raw = *resp.RawStreams
+		res.raw = cloneRawStreams(*resp.RawStreams)
 	}
 	return res
 }
 
-// Raw returns the complete raw stdout/stderr captured during the run — the
-// stable audit/replay surface. It is deliberately separate from Text and
-// Transcript (the layers never contaminate each other).
+// Raw returns the complete raw stdout/stderr and exact provider terminal JSON
+// captured during the run — the stable audit/replay surface. It is deliberately
+// separate from Text and Transcript (the layers never contaminate each other).
+// The returned Terminal and JSON bytes are deep copies.
 func (r *Result) Raw() RawStreams {
 	if r == nil {
 		return RawStreams{}
 	}
-	return r.raw
+	return cloneRawStreams(r.raw)
 }
 
 // Transcript returns the normalized semantic item stream parsed by the
@@ -96,13 +100,14 @@ func (r *Result) Transcript() []TranscriptItem {
 	if r == nil {
 		return nil
 	}
-	return append([]TranscriptItem(nil), r.transcript...)
+	return cloneTranscript(r.transcript)
 }
 
-// Services returns the runtime-service execution reports for this run: what the
-// driver reported, or — when the driver reports nothing but the SDK ensured
-// services (WithServices, or a RunServiceProvider attachment) — reports derived
-// from the ensured endpoints. The returned slice is a copy.
+// Services returns the runtime-service execution reports for this run. Reports
+// observed by the driver are merged by stable service ID with reports from
+// services the SDK actually ensured; driver fields override matching SDK fields
+// and missing fields are filled from the SDK observation. The returned values,
+// including Metadata maps, are copies.
 //
 // The report deliberately does not echo the typed ServiceRef.MCP declaration
 // (closing TODO(P4.5)). Three reasons, in order of weight:
@@ -126,7 +131,95 @@ func (r *Result) Services() []ServiceReport {
 	if r == nil {
 		return nil
 	}
-	return append([]ServiceReport(nil), r.services...)
+	return cloneServiceReports(r.services)
+}
+
+func cloneRawStreams(raw RawStreams) RawStreams {
+	raw.Terminal = cloneTerminalPayload(raw.Terminal)
+	return raw
+}
+
+func cloneTerminalPayload(terminal *TerminalPayload) *TerminalPayload {
+	if terminal == nil {
+		return nil
+	}
+	clone := *terminal
+	clone.JSON = append(json.RawMessage(nil), terminal.JSON...)
+	return &clone
+}
+
+func cloneTranscript(items []TranscriptItem) []TranscriptItem {
+	if items == nil {
+		return nil
+	}
+	cloned := make([]TranscriptItem, len(items))
+	for i := range items {
+		cloned[i] = items[i]
+		cloned[i].Errors = append([]string(nil), items[i].Errors...)
+		cloned[i].Metadata = maps.Clone(items[i].Metadata)
+		cloned[i].Input = cloneJSONValue(items[i].Input)
+		if items[i].Data != nil {
+			cloned[i].Data = make(map[string]any, len(items[i].Data))
+			for key, value := range items[i].Data {
+				cloned[i].Data[key] = cloneJSONValue(value)
+			}
+		}
+		if items[i].Usage != nil {
+			usage := *items[i].Usage
+			cloned[i].Usage = &usage
+		}
+		if items[i].CostUSD != nil {
+			cost := *items[i].CostUSD
+			cloned[i].CostUSD = &cost
+		}
+	}
+	return cloned
+}
+
+func cloneStructuredOutput(value *driver.StructuredOutput) *driver.StructuredOutput {
+	if value == nil {
+		return nil
+	}
+	clone := *value
+	clone.RawJSON = append(json.RawMessage(nil), value.RawJSON...)
+	clone.ValidationErrors = append([]string(nil), value.ValidationErrors...)
+	clone.Value = cloneJSONValue(value.Value)
+	return &clone
+}
+
+func cloneServiceReports(reports []ServiceReport) []ServiceReport {
+	if reports == nil {
+		return nil
+	}
+	cloned := make([]ServiceReport, len(reports))
+	for i := range reports {
+		cloned[i] = reports[i]
+		cloned[i].Metadata = maps.Clone(reports[i].Metadata)
+	}
+	return cloned
+}
+
+func cloneJSONValue(value any) any {
+	switch value := value.(type) {
+	case json.RawMessage:
+		return append(json.RawMessage(nil), value...)
+	case []byte:
+		return append([]byte(nil), value...)
+	case []any:
+		clone := make([]any, len(value))
+		for i := range value {
+			clone[i] = cloneJSONValue(value[i])
+		}
+		return clone
+	case map[string]any:
+		clone := make(map[string]any, len(value))
+		for key, item := range value {
+			clone[key] = cloneJSONValue(item)
+		}
+		return clone
+	default:
+		return value
+	}
 }
 
 // Decode unmarshals the run's structured output into v.

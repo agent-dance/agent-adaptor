@@ -1,10 +1,8 @@
 package a2a
 
-// This file is the v1-API twin of server.go: the same A2A protocol server,
-// driven by the new adaptor.Runner / adaptor.Stream surface instead of the
-// legacy SDK handle. The legacy NewServer stays untouched until P5 deletes
-// it; both entries coexist additively (hence the V1 suffixes — P5 collapses
-// the names onto the design-doc spelling).
+// ServerV1 drives the A2A protocol from adaptor.Runner / adaptor.Stream. The
+// V1 suffix is temporary public Go naming retained until the RENAME wave;
+// there is no parallel executor in this package.
 //
 // Design-doc target (S6):
 //
@@ -15,9 +13,9 @@ package a2a
 //	})
 //	http.Handle("/a2a", srv.Handler())
 //
-// Semantics carried over item-by-item from the legacy server:
-//   - AgentCard building, task-store configuration (TaskLifecycle), and the
-//     capability misconfiguration panics are shared code, byte-identical;
+// Protocol semantics:
+//   - AgentCard building, task-store configuration (TaskLifecycle), and
+//     capability misconfiguration checks are shared protocol code;
 //   - the adapter.stream.v1 extension is appended to the card;
 //   - Execute projects submitted → working → per-event working DataParts →
 //     exactly one terminal (completed / failed / canceled) outcome;
@@ -37,12 +35,12 @@ import (
 	a2aproto "github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 
+	"github.com/agent-dance/agent-adaptor/bridges/internal/bridgekey"
 	adaptor "github.com/agent-dance/agent-adaptor/next"
 )
 
-// SessionBinding decides which Runner executes one inbound A2A request —
-// the v1 replacement for the legacy SessionMapper (which produced
-// WithSessionKey run options). Build one with StatelessV1 or
+// SessionBinding decides which Runner executes one inbound A2A request.
+// Build one with StatelessV1 or
 // ThreadByContextID; a nil binding means stateless.
 type SessionBinding interface {
 	bindRunner(base adaptor.Runner, req InboundRequest) (adaptor.Runner, error)
@@ -63,7 +61,8 @@ func StatelessV1() SessionBinding {
 }
 
 // ThreadByContextID maps the A2A contextID onto a conversation thread: each
-// distinct contextID becomes agent.Thread("a2a/<contextID>"), so follow-up
+// distinct contextID becomes a collision-free ("a2a", contextID) Thread key,
+// so follow-up
 // messages in the same A2A context continue the same conversation.
 //
 // The configured Runner must be an *adaptor.Agent carrying a thread store
@@ -78,7 +77,7 @@ func ThreadByContextID() SessionBinding {
 		if !ok {
 			return nil, fmt.Errorf("a2a bridge: ThreadByContextID requires an *adaptor.Agent runner, got %T", base)
 		}
-		return agent.Thread("a2a/" + req.ContextID), nil
+		return agent.Thread(bridgekey.Encode("a2a", req.ContextID)), nil
 	})
 }
 
@@ -92,8 +91,8 @@ type PromptBuilderV1 func(ctx context.Context, req InboundRequest) (prompt strin
 type ResultBuilderV1 func(ctx context.Context, req InboundRequest, result *adaptor.Result) (BuiltResult, error)
 
 // ServerOptionsV1 configures NewServerV1. AgentCard is required; everything
-// else defaults to the legacy server's behavior (stateless sessions, last
-// text part as prompt, in-memory ephemeral task store, minimal exposure).
+// else uses stateless sessions, the last text part as prompt, an in-memory
+// ephemeral task store, and minimal exposure.
 type ServerOptionsV1 struct {
 	// AgentCard is the public A2A identity of this server.
 	AgentCard AgentCard
@@ -106,28 +105,27 @@ type ServerOptionsV1 struct {
 	// non-blank text part of the inbound message).
 	Prompt PromptBuilderV1
 
-	// Options are appended to every run (call scope, decision D7) — the v1
-	// equivalent of the legacy RunOptions field.
+	// Options are appended to every run (call scope, decision D7).
 	Options []adaptor.CallOption
 
 	// ResultBuilder, when set, customizes terminal artifacts and status.
 	ResultBuilder ResultBuilderV1
 
-	// TaskLifecycle configures task retention. Same semantics as the
-	// legacy server (default: in-memory ephemeral store, 256 tasks / 1h).
+	// TaskLifecycle configures task retention (default: in-memory ephemeral
+	// store, 256 tasks / 1h).
 	TaskLifecycle TaskLifecycleOptions
 
 	// PushNotifications must be set exactly when the card enables the
-	// capability; same validation as the legacy server.
+	// capability; configuration is validated at construction.
 	PushNotifications *PushNotificationSupport
 
 	// ExtendedAgentCard must be set exactly when the card enables the
-	// capability; same validation as the legacy server.
+	// capability; configuration is validated at construction.
 	ExtendedAgentCard *ExtendedAgentCardSupport
 
 	// Exposure controls how much intermediate detail crosses the A2A
 	// boundary. The zero value hides reasoning, tool calls, HITL traffic,
-	// and all diagnostics — identical to the legacy default.
+	// and all diagnostics.
 	Exposure ExposurePolicy
 }
 
@@ -144,8 +142,7 @@ type ServerV1 struct {
 
 // NewServerV1 assembles an A2A server around a Runner (Agent or Thread).
 // It panics on construction-time misconfiguration (nil runner, invalid
-// card, invalid task lifecycle, capability support mismatch) — the same
-// fail-fast contract as the legacy NewServer.
+// card, invalid task lifecycle, capability support mismatch).
 func NewServerV1(runner adaptor.Runner, opts ServerOptionsV1) *ServerV1 {
 	if runner == nil {
 		panic("a2a bridge: nil runner")
@@ -183,12 +180,7 @@ func NewServerV1(runner adaptor.Runner, opts ServerOptionsV1) *ServerV1 {
 		pending:       map[a2aproto.TaskID]context.CancelFunc{},
 	}
 	handlerOpts := []a2asrv.RequestHandlerOption{a2asrv.WithTaskStore(taskStore)}
-	// The capability validation is shared with the legacy server verbatim:
-	// only the two support fields participate.
-	capabilityOpts, err := requestHandlerCapabilityOptions(card, ServerOptions{
-		PushNotifications: opts.PushNotifications,
-		ExtendedAgentCard: opts.ExtendedAgentCard,
-	})
+	capabilityOpts, err := requestHandlerCapabilityOptions(card, opts.PushNotifications, opts.ExtendedAgentCard)
 	if err != nil {
 		panic(err)
 	}
@@ -292,8 +284,12 @@ func (e *executorV1) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContex
 			select {
 			case <-runCtx.Done():
 				stream.Cancel()
-				yield(canceledStatusV1(execCtx, runCtx.Err()), nil)
-				return
+				// Cancellation is a request to stop, not a second terminal
+				// authority. Drain the now-cancelled stream and let Result()
+				// classify the one terminal status below.
+				for range stream.Events() {
+				}
+				goto drained
 			case ev, ok := <-stream.Events():
 				if !ok {
 					goto drained

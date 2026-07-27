@@ -24,6 +24,8 @@ var ErrJSONLEventBackendClosed = errors.New("sessionrecorder: jsonl event backen
 // successful history.
 var ErrJSONLEventLogCorrupt = errors.New("sessionrecorder: corrupt jsonl event log")
 
+const jsonlExt = ".jsonl"
+
 // JSONLEventBackend is the durable, typed-Event implementation of
 // EventBackend. Flush synchronizes every dirty session file with its storage
 // device. Close is idempotent and flushes before closing files.

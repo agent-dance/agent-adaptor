@@ -153,8 +153,8 @@ func EffectiveHumanDecisionPolicy(p HumanDecisionPolicy) HumanDecisionPolicy {
 }
 
 // HumanDecisionSupport describes Permission / PlanReview support on a given
-// driver. Fields set to false reject the matching host-facing setting at
-// Start() time.
+// driver. Fields set to false reject the matching host-facing setting before
+// driver launch.
 type HumanDecisionSupport struct {
 	Ask         bool
 	AutoApprove bool

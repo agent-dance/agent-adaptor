@@ -4,15 +4,16 @@ import (
 	"context"
 	"fmt"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/internal/engine"
 )
 
-func SyncClaudeProfile(configDir string, kind ProfileKind, payload agentadaptor.MCPPayload) error {
+func SyncClaudeProfile(configDir string, kind ProfileKind, payload driver.MCPPayload) error {
 	_, err := SyncResource(context.Background(), "claude", configDir, kind, payload)
 	return err
 }
 
-func claudeServerConfig(server agentadaptor.MCPServerSpec) (map[string]any, error) {
+func claudeServerConfig(server driver.MCPServerSpec) (map[string]any, error) {
 	headers, err := mergeBearerHeader(server.Headers, server.BearerTokenEnvVar, "${%s}", server.Key)
 	if err != nil {
 		return nil, err
@@ -22,19 +23,19 @@ func claudeServerConfig(server agentadaptor.MCPServerSpec) (map[string]any, erro
 		"type": string(server.Transport),
 	}
 	switch server.Transport {
-	case agentadaptor.MCPTransportStdio:
+	case driver.MCPTransportStdio:
 		entry["command"] = server.Command
 		if len(server.Args) > 0 {
 			entry["args"] = append([]string(nil), server.Args...)
 		}
 		entry["env"] = cloneStringMapAny(server.Env)
-	case agentadaptor.MCPTransportHTTP, agentadaptor.MCPTransportSSE:
+	case driver.MCPTransportHTTP, driver.MCPTransportSSE:
 		entry["url"] = server.URL
 		if len(headers) > 0 {
 			entry["headers"] = headers
 		}
 	default:
-		return nil, fmt.Errorf("%w: Claude MCP server %q does not support transport %q", agentadaptor.ErrMCPTransportUnsupported, server.Key, server.Transport)
+		return nil, fmt.Errorf("%w: Claude MCP server %q does not support transport %q", engine.ErrMCPTransportUnsupported, server.Key, server.Transport)
 	}
 	return entry, nil
 }

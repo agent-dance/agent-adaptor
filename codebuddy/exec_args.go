@@ -4,14 +4,14 @@ import (
 	"strconv"
 	"strings"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
 )
 
 // buildExecArgs assembles CodeBuddy CLI arguments. Batch prompts are passed as
 // a trailing positional argument; control prompts are NDJSON stdin frames.
-func buildExecArgs(cfg agentadaptor.CodeBuddyConfig, req agentadaptor.DriverRunRequest, permMode agentadaptor.CodeBuddyPermissionMode, interactive ...bool) []string {
+func buildExecArgs(cfg Config, req driver.Request, permMode PermissionMode, interactive ...bool) []string {
 	control := len(interactive) > 0 && interactive[0]
-	nativeStructured := req.OutputSchema != nil && req.OutputSchema.Mode != agentadaptor.StructuredOutputPromptValidate
+	nativeStructured := req.OutputSchema != nil && req.OutputSchema.Mode != driver.StructuredOutputPromptValidate
 	args := make([]string, 0, 16)
 	if control {
 		args = append(args, "--input-format=stream-json", "--output-format=stream-json", "--verbose", "--include-partial-messages")
@@ -29,7 +29,7 @@ func buildExecArgs(cfg agentadaptor.CodeBuddyConfig, req agentadaptor.DriverRunR
 	if req.Session != nil && req.Session.State != nil && req.Session.State.ResumeID != "" {
 		args = append(args, "--resume", req.Session.State.ResumeID)
 	}
-	if !control && permMode != agentadaptor.CodeBuddyPermissionUnset {
+	if !control && permMode != PermissionUnset {
 		args = append(args, "--permission-mode", string(permMode))
 	}
 	if model := requestedModelFlag(cfg); model != "" {

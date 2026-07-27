@@ -4,12 +4,19 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
 )
 
 // ---------------------------------------------------------------------------
@@ -226,9 +233,9 @@ func TestTranslatorDispatchCoreFlow(t *testing.T) {
 	// turn/completed WITHOUT body.Turn.Usage → should use cached usage
 	tr.Dispatch(NotifyTurnCompleted, json.RawMessage(`{"threadId":"t1","turn":{"id":"turn-1","status":"completed"}}`))
 
-	kinds := map[agentadaptor.StreamKind]int{}
+	kinds := map[driver.StreamKind]int{}
 	var lastSeq uint64
-	var finishUsage *agentadaptor.Usage
+	var finishUsage *driver.Usage
 	for _, p := range sink.streams {
 		kinds[p.Kind]++
 		if p.Sequence != 0 && p.Sequence <= lastSeq {
@@ -240,17 +247,17 @@ func TestTranslatorDispatchCoreFlow(t *testing.T) {
 		if p.RunID != "run-123" {
 			t.Fatalf("RunID mismatch on %q: %q", p.Kind, p.RunID)
 		}
-		if p.Kind == agentadaptor.StreamRunFinished {
+		if p.Kind == driver.StreamRunFinished {
 			finishUsage = p.Usage
 		}
 	}
 
-	expected := map[agentadaptor.StreamKind]int{
-		agentadaptor.StreamRunStarted:   1,
-		agentadaptor.StreamTextStart:    1,
-		agentadaptor.StreamTextContent:  2,
-		agentadaptor.StreamTextEnd:      1,
-		agentadaptor.StreamRunFinished:  1,
+	expected := map[driver.StreamKind]int{
+		driver.StreamRunStarted:  1,
+		driver.StreamTextStart:   1,
+		driver.StreamTextContent: 2,
+		driver.StreamTextEnd:     1,
+		driver.StreamRunFinished: 1,
 	}
 	for kind, want := range expected {
 		if got := kinds[kind]; got != want {
@@ -290,18 +297,18 @@ func TestTranslatorUnknownNotificationPassthrough(t *testing.T) {
 
 type recordingSink struct {
 	mu      sync.Mutex
-	events  []agentadaptor.RunEvent
-	streams []agentadaptor.StreamPayload
+	events  []driver.RunEvent
+	streams []driver.StreamPayload
 }
 
-func (r *recordingSink) Emit(event agentadaptor.RunEvent) error {
+func (r *recordingSink) Emit(event driver.RunEvent) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.events = append(r.events, event)
 	return nil
 }
 
-func (r *recordingSink) EmitStream(payload agentadaptor.StreamPayload) error {
+func (r *recordingSink) EmitStream(payload driver.StreamPayload) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if payload.Sequence == 0 {
@@ -313,3 +320,268 @@ func (r *recordingSink) EmitStream(payload agentadaptor.StreamPayload) error {
 
 // Ensure fmt stays used when future tests add diagnostic messages.
 var _ = fmt.Sprintf
+
+func TestRunStateUsesTurnCompletedStatusAsSoleTerminal(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		status      TurnStatus
+		wantFailure bool
+		wantValid   bool
+	}{
+		{status: TurnStatusCompleted, wantValid: true},
+		{status: TurnStatusFailed, wantFailure: true},
+		{status: TurnStatusInterrupted, wantFailure: true},
+	}
+	for _, tc := range tests {
+		t.Run(string(tc.status), func(t *testing.T) {
+			t.Parallel()
+			state := newRunState("run-status", &recordingSink{})
+			state.setThread("thread-1")
+			state.onNotification(NotifyItemCompleted, json.RawMessage(`{"threadId":"thread-1","turnId":"turn-1","item":{"id":"msg-1","type":"agentMessage","text":"assistant text"}}`))
+			errorField := ""
+			if tc.status != TurnStatusCompleted {
+				errorField = `,"error":{"message":"provider stopped"}`
+			}
+			terminal := fmt.Sprintf(`{"threadId":"thread-1","turn":{"id":"turn-1","status":%q%s,"usage":{"inputTokens":3,"outputTokens":5}}}`, tc.status, errorField)
+			state.onNotification(NotifyTurnCompleted, json.RawMessage(terminal))
+
+			result := state.snapshot(Options{Model: "gpt-test"}, "thread-1", "wire stdout", "wire stderr", 0, "", false)
+			if got := result.Output; got != "assistant text" {
+				t.Fatalf("Output = %q", got)
+			}
+			if result.Summary != "" {
+				t.Fatalf("Summary must not fall back to Output, got %q", result.Summary)
+			}
+			if (result.Failure != nil) != tc.wantFailure {
+				t.Fatalf("Failure = %#v, want present=%v", result.Failure, tc.wantFailure)
+			}
+			if got := result.Checkpoint != nil && result.Checkpoint.Valid; got != tc.wantValid {
+				t.Fatalf("valid checkpoint = %v, want %v", got, tc.wantValid)
+			}
+			if result.RawStreams == nil || result.RawStreams.Terminal == nil {
+				t.Fatal("terminal payload missing")
+			}
+			if result.RawStreams.Terminal.Event != NotifyTurnCompleted || string(result.RawStreams.Terminal.JSON) != terminal {
+				t.Fatalf("terminal = %#v", result.RawStreams.Terminal)
+			}
+			if len(result.Transcript) < 3 || result.Transcript[len(result.Transcript)-1].Kind != driver.TranscriptResult {
+				t.Fatalf("Transcript = %#v", result.Transcript)
+			}
+		})
+	}
+}
+
+func TestRunStateErrorNotificationIsNotTerminal(t *testing.T) {
+	t.Parallel()
+	state := newRunState("run-error", &recordingSink{})
+	state.onNotification(NotifyError, json.RawMessage(`{"threadId":"t","turnId":"turn","willRetry":false,"error":{"message":"transient"}}`))
+	select {
+	case <-state.done:
+		t.Fatal("error notification must not terminate the run")
+	default:
+	}
+	if state.hasTerminal() {
+		t.Fatal("error notification must not create a terminal payload")
+	}
+}
+
+func TestRunStateMalformedAndMissingTerminalNeverCheckpoint(t *testing.T) {
+	t.Parallel()
+	malformed := newRunState("run-malformed", &recordingSink{})
+	malformed.setThread("thread-1")
+	malformed.onNotification(NotifyTurnCompleted, json.RawMessage(`{"turn":`))
+	if malformed.protocolError() == nil {
+		t.Fatal("malformed terminal must record a protocol error")
+	}
+	if result := malformed.snapshot(Options{}, "thread-1", "", "", 0, "", false); result.Checkpoint != nil {
+		t.Fatalf("malformed terminal checkpoint = %#v", result.Checkpoint)
+	}
+
+	missing := newRunState("run-missing", &recordingSink{})
+	missing.setThread("thread-1")
+	if missing.hasTerminal() {
+		t.Fatal("fresh state unexpectedly has terminal")
+	}
+	if result := missing.snapshot(Options{}, "thread-1", "", "", 0, "", false); result.Checkpoint != nil {
+		t.Fatalf("missing terminal checkpoint = %#v", result.Checkpoint)
+	}
+}
+
+func TestRunCapturesExactFullOutputAndOfficialTerminal(t *testing.T) {
+	fake := buildFakeAppserver(t)
+	result, err := Run(context.Background(), Options{
+		Command: fake,
+		Env:     []driver.EnvBinding{{Name: "FAKE_APPSERVER_SCENARIO", Value: "success"}},
+		Prompt:  "hello",
+		Model:   "gpt-test",
+		RunID:   "run-full-output",
+	}, &recordingSink{})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if result.Output != "hello from fake" || result.Summary != "" {
+		t.Fatalf("Output/Summary = %q/%q", result.Output, result.Summary)
+	}
+	if result.RawStreams == nil {
+		t.Fatal("RawStreams missing")
+	}
+	if !strings.Contains(result.RawStreams.Stdout, "  {\"method\":\"turn/completed\"") {
+		t.Fatalf("stdout lost exact terminal frame formatting: %q", result.RawStreams.Stdout)
+	}
+	if !strings.Contains(result.RawStreams.Stdout, `"method":"custom/after-terminal"`) {
+		t.Fatalf("stdout snapshot occurred before reader EOF: %q", result.RawStreams.Stdout)
+	}
+	if result.RawStreams.Stderr != "stderr-after-terminal" {
+		t.Fatalf("stderr snapshot occurred before process end: %q", result.RawStreams.Stderr)
+	}
+	if result.RawStreams.Terminal == nil || result.RawStreams.Terminal.Event != NotifyTurnCompleted || !json.Valid(result.RawStreams.Terminal.JSON) {
+		t.Fatalf("terminal = %#v", result.RawStreams.Terminal)
+	}
+	if result.Checkpoint == nil || !result.Checkpoint.Valid || result.Checkpoint.State.ResumeID != "thread-fake" {
+		t.Fatalf("checkpoint = %#v", result.Checkpoint)
+	}
+	if result.Usage == nil || result.Usage.InputTokens != 7 || result.Usage.OutputTokens != 11 {
+		t.Fatalf("usage = %#v", result.Usage)
+	}
+	if len(result.Transcript) < 3 {
+		t.Fatalf("transcript = %#v", result.Transcript)
+	}
+}
+
+func TestRunOfficialFailureStatusesAndProtocolFailures(t *testing.T) {
+	fake := buildFakeAppserver(t)
+	for _, status := range []string{"failed", "interrupted"} {
+		t.Run(status, func(t *testing.T) {
+			result, err := Run(context.Background(), Options{
+				Command: fake,
+				Env:     []driver.EnvBinding{{Name: "FAKE_APPSERVER_SCENARIO", Value: status}},
+			}, &recordingSink{})
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			if result.Failure == nil || result.Checkpoint != nil || result.RawStreams.Terminal == nil {
+				t.Fatalf("failure result = %#v", result)
+			}
+		})
+	}
+	for _, scenario := range []string{"missing", "malformed"} {
+		t.Run(scenario, func(t *testing.T) {
+			result, err := Run(context.Background(), Options{
+				Command: fake,
+				Env:     []driver.EnvBinding{{Name: "FAKE_APPSERVER_SCENARIO", Value: scenario}},
+			}, &recordingSink{})
+			if err == nil {
+				t.Fatal("expected protocol error")
+			}
+			if result.Checkpoint != nil || result.RawStreams == nil || result.RawStreams.Stdout == "" {
+				t.Fatalf("partial result = %#v", result)
+			}
+		})
+	}
+}
+
+func TestRunCancellationReturnsPartialRawWithoutCheckpoint(t *testing.T) {
+	fake := buildFakeAppserver(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+	result, err := Run(ctx, Options{
+		Command: fake,
+		Env:     []driver.EnvBinding{{Name: "FAKE_APPSERVER_SCENARIO", Value: "cancel"}},
+	}, &recordingSink{})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("error = %v", err)
+	}
+	if result.Checkpoint != nil || result.RawStreams == nil || result.RawStreams.Stdout == "" {
+		t.Fatalf("cancelled partial result = %#v", result)
+	}
+}
+
+func buildFakeAppserver(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	source := filepath.Join(dir, "fake_appserver.go")
+	if err := os.WriteFile(source, []byte(fakeAppserverSource), 0o600); err != nil {
+		t.Fatalf("write fake app-server: %v", err)
+	}
+	binary := filepath.Join(dir, "fake-appserver")
+	if runtime.GOOS == "windows" {
+		binary += ".exe"
+	}
+	cmd := exec.Command("go", "build", "-o", binary, source)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("build fake app-server: %v\n%s", err, output)
+	}
+	return binary
+}
+
+const fakeAppserverSource = `package main
+
+import (
+	"bufio"
+	"encoding/json"
+	"fmt"
+	"os"
+)
+
+type request struct {
+	ID json.RawMessage ` + "`json:\"id\"`" + `
+	Method string ` + "`json:\"method\"`" + `
+}
+
+func main() {
+	scenario := os.Getenv("FAKE_APPSERVER_SCENARIO")
+	decoder := json.NewDecoder(os.Stdin)
+	writer := bufio.NewWriter(os.Stdout)
+	defer func() {
+		_ = writer.Flush()
+		_, _ = fmt.Fprint(os.Stderr, "stderr-after-terminal")
+	}()
+	write := func(frame string) {
+		_, _ = fmt.Fprintln(writer, frame)
+		_ = writer.Flush()
+	}
+	respond := func(id json.RawMessage, result string) {
+		write(fmt.Sprintf("{\"id\":%s,\"result\":%s}", id, result))
+	}
+	for {
+		var req request
+		if err := decoder.Decode(&req); err != nil {
+			return
+		}
+		switch req.Method {
+		case "initialize":
+			respond(req.ID, "{}")
+		case "thread/start", "thread/resume":
+			respond(req.ID, "{\"thread\":{\"id\":\"thread-fake\"}}")
+		case "turn/start":
+			respond(req.ID, "{\"turn\":{\"id\":\"turn-fake\",\"status\":\"inProgress\"}}")
+			if scenario == "cancel" {
+				continue
+			}
+			write("{\"method\":\"item/completed\",\"params\":{\"threadId\":\"thread-fake\",\"turnId\":\"turn-fake\",\"item\":{\"id\":\"msg-fake\",\"type\":\"agentMessage\",\"text\":\"hello from fake\"}}}")
+			if scenario == "missing" {
+				return
+			}
+			if scenario == "malformed" {
+				write("{\"method\":")
+				return
+			}
+			status := scenario
+			if status == "success" || status == "" {
+				status = "completed"
+			}
+			errorField := ""
+			if status != "completed" {
+				errorField = fmt.Sprintf(",\"error\":{\"message\":\"provider %s\"}", status)
+			}
+			frame := fmt.Sprintf("  {\"method\":\"turn/completed\",\"params\":{\"threadId\":\"thread-fake\",\"turn\":{\"id\":\"turn-fake\",\"status\":\"%s\"%s,\"usage\":{\"inputTokens\":7,\"outputTokens\":11}}}}", status, errorField)
+			write(frame)
+			write("{\"method\":\"custom/after-terminal\",\"params\":{\"preserved\":true}}")
+		case "turn/interrupt":
+			respond(req.ID, "{}")
+			write("{\"method\":\"turn/completed\",\"params\":{\"threadId\":\"thread-fake\",\"turn\":{\"id\":\"turn-fake\",\"status\":\"interrupted\",\"error\":{\"message\":\"cancelled\"}}}}")
+		}
+	}
+}
+`

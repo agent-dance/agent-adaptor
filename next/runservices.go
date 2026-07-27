@@ -22,7 +22,7 @@ import (
 // engine entry so next/ and the legacy Core produce identical leases,
 // fingerprints, and normalized refs.
 
-// ============ Host-facing aliases (engine truth, no engine import) ============
+// ============ Host-facing contracts ============
 
 type (
 	// ServiceSpec declares one runtime service a run needs — an
@@ -34,38 +34,248 @@ type (
 	// SecretEnv field is the subprocess-only channel for run-scoped secrets
 	// (bearer tokens) that never reach public reports.
 	ServiceRef = driver.RuntimeServiceRef
-	// ServiceRequest is what a ServiceManager receives for one run.
-	ServiceRequest = engine.RuntimeServiceRequest
-	// ServiceManager is the host hook that starts/locates runtime services.
-	// Install it with WithServiceManager.
-	ServiceManager = engine.RuntimeServiceManager
-
-	// WorkspaceSpec is a workspace provisioning request: SharedWorkspace,
-	// GitWorktreeWorkspace, or AdapterManagedWorkspace.
-	WorkspaceSpec = engine.WorkspaceSpec
-	// SharedWorkspace requests direct reuse of the project workspace.
-	SharedWorkspace = engine.SharedWorkspace
-	// GitWorktreeWorkspace requests an isolated git worktree for the run.
-	GitWorktreeWorkspace = engine.GitWorktreeWorkspace
-	// AdapterManagedWorkspace lets the driver choose its own workspace.
-	AdapterManagedWorkspace = engine.AdapterManagedWorkspace
-	// WorkspaceRequest is what a WorkspaceManager receives for one run.
-	WorkspaceRequest = engine.WorkspaceRequest
 	// WorkspaceLease is the concrete working directory a manager returns.
 	WorkspaceLease = driver.WorkspaceLease
-	// WorkspaceReleaseMode tells a WorkspaceManager what to do after a run.
-	WorkspaceReleaseMode = engine.WorkspaceReleaseMode
-	// WorkspaceManager is the host hook that turns a WorkspaceSpec into a
-	// concrete lease. Install it with WithWorkspaceManager.
-	WorkspaceManager = engine.WorkspaceManager
 )
+
+// ServiceRequest is the immutable run envelope passed to
+// [ServiceManager.Ensure]. Slice and map fields are owned by the SDK for the
+// duration of the call; managers must copy values they retain afterwards.
+type ServiceRequest struct {
+	RunID      string
+	DriverType string
+	Agent      Identity
+	Config     any
+	Workspace  WorkspaceLease
+	Desired    []ServiceSpec
+	Metadata   map[string]string
+}
+
+// ServiceManager is the host hook that starts or locates runtime services.
+// Install it with [WithServiceManager]. Implementations must be safe for
+// concurrent runs of one Agent.
+type ServiceManager interface {
+	Ensure(ctx context.Context, req ServiceRequest) ([]ServiceRef, error)
+	ReleaseByRun(ctx context.Context, runID string) error
+	ReleaseByLabels(ctx context.Context, labels map[string]string) error
+}
+
+// WorkspaceSpec is the closed set of workspace provisioning requests:
+// [SharedWorkspace], [GitWorktreeWorkspace], and [AdapterManagedWorkspace].
+type WorkspaceSpec interface {
+	workspaceRequest() workspaceRequestData
+}
+
+type workspaceRequestData struct {
+	mode           driver.WorkspaceMode
+	strategyType   driver.WorkspaceStrategyType
+	baseRef        string
+	branchTemplate string
+	parentDir      string
+}
+
+// SharedWorkspace requests direct reuse of the project workspace.
+type SharedWorkspace struct{}
+
+func (SharedWorkspace) workspaceRequest() workspaceRequestData {
+	return workspaceRequestData{
+		mode:         driver.WorkspaceModeShared,
+		strategyType: driver.WorkspaceStrategyProjectPrimary,
+	}
+}
+
+// GitWorktreeWorkspace requests an isolated git worktree for the run.
+type GitWorktreeWorkspace struct {
+	BaseRef           string
+	BranchTemplate    string
+	WorktreeParentDir string
+}
+
+func (w GitWorktreeWorkspace) workspaceRequest() workspaceRequestData {
+	return workspaceRequestData{
+		mode:           driver.WorkspaceModeIsolated,
+		strategyType:   driver.WorkspaceStrategyGitWorktree,
+		baseRef:        w.BaseRef,
+		branchTemplate: w.BranchTemplate,
+		parentDir:      w.WorktreeParentDir,
+	}
+}
+
+// AdapterManagedWorkspace lets the driver choose or create its own
+// workspace according to its native behavior.
+type AdapterManagedWorkspace struct{}
+
+func (AdapterManagedWorkspace) workspaceRequest() workspaceRequestData {
+	return workspaceRequestData{
+		mode:         driver.WorkspaceModeAgentDefault,
+		strategyType: driver.WorkspaceStrategyAdapterManaged,
+	}
+}
+
+// WorkspaceRequest is passed to [WorkspaceManager.Resolve] after agent
+// defaults and per-call workspace options have been merged.
+type WorkspaceRequest struct {
+	BaseCWD  string
+	Spec     WorkspaceSpec
+	Metadata map[string]string
+}
+
+// WorkspaceReleaseMode tells a WorkspaceManager what to do after a run.
+type WorkspaceReleaseMode string
+
+// WorkspaceManager is the host hook that turns a [WorkspaceSpec] into a
+// concrete lease. Install it with [WithWorkspaceManager]. Implementations must
+// be safe for concurrent runs of one Agent.
+type WorkspaceManager interface {
+	Resolve(ctx context.Context, req WorkspaceRequest) (WorkspaceLease, error)
+	Release(ctx context.Context, lease WorkspaceLease, mode WorkspaceReleaseMode) error
+}
 
 const (
 	// WorkspaceReleaseKeep leaves the workspace available after the run.
-	WorkspaceReleaseKeep = engine.WorkspaceReleaseKeep
+	WorkspaceReleaseKeep WorkspaceReleaseMode = "keep"
 	// WorkspaceReleaseStop asks the manager to tear down run-scoped state.
-	WorkspaceReleaseStop = engine.WorkspaceReleaseStop
+	WorkspaceReleaseStop WorkspaceReleaseMode = "stop"
 )
+
+// workspaceManagerAdapter is the only place the public workspace contract
+// crosses into the migration engine. Keeping the conversion private prevents
+// internal types from becoming part of the v1 API while preserving the
+// engine's established passthrough and release semantics.
+type workspaceManagerAdapter struct{ target WorkspaceManager }
+
+func (a workspaceManagerAdapter) Resolve(ctx context.Context, req engine.WorkspaceRequest) (driver.WorkspaceLease, error) {
+	return a.target.Resolve(ctx, workspaceRequestFromEngine(req))
+}
+
+func (a workspaceManagerAdapter) Release(ctx context.Context, lease driver.WorkspaceLease, mode engine.WorkspaceReleaseMode) error {
+	return a.target.Release(ctx, lease, WorkspaceReleaseMode(mode))
+}
+
+func workspaceManagerToEngine(manager WorkspaceManager) engine.WorkspaceManager {
+	if manager == nil {
+		return nil
+	}
+	return workspaceManagerAdapter{target: manager}
+}
+
+func workspaceRequestToEngine(req WorkspaceRequest) engine.WorkspaceRequest {
+	return engine.WorkspaceRequest{
+		BaseCWD:  req.BaseCWD,
+		Spec:     workspaceSpecToEngine(req.Spec),
+		Metadata: maps.Clone(req.Metadata),
+	}
+}
+
+func workspaceRequestFromEngine(req engine.WorkspaceRequest) WorkspaceRequest {
+	return WorkspaceRequest{
+		BaseCWD:  req.BaseCWD,
+		Spec:     workspaceSpecFromEngine(req.Spec),
+		Metadata: maps.Clone(req.Metadata),
+	}
+}
+
+func workspaceSpecToEngine(spec WorkspaceSpec) engine.WorkspaceSpec {
+	if spec == nil {
+		return nil
+	}
+	switch value := spec.(type) {
+	case *GitWorktreeWorkspace:
+		if value == nil {
+			return nil
+		}
+		spec = *value
+	case *SharedWorkspace:
+		if value == nil {
+			return nil
+		}
+		spec = *value
+	case *AdapterManagedWorkspace:
+		if value == nil {
+			return nil
+		}
+		spec = *value
+	}
+	data := spec.workspaceRequest()
+	switch data.strategyType {
+	case driver.WorkspaceStrategyGitWorktree:
+		return engine.GitWorktreeWorkspace{
+			BaseRef:           data.baseRef,
+			BranchTemplate:    data.branchTemplate,
+			WorktreeParentDir: data.parentDir,
+		}
+	case driver.WorkspaceStrategyAdapterManaged:
+		return engine.AdapterManagedWorkspace{}
+	default:
+		return engine.SharedWorkspace{}
+	}
+}
+
+func workspaceSpecFromEngine(spec engine.WorkspaceSpec) WorkspaceSpec {
+	switch value := spec.(type) {
+	case nil:
+		return nil
+	case engine.GitWorktreeWorkspace:
+		return GitWorktreeWorkspace{
+			BaseRef:           value.BaseRef,
+			BranchTemplate:    value.BranchTemplate,
+			WorktreeParentDir: value.WorktreeParentDir,
+		}
+	case engine.SharedWorkspace:
+		return SharedWorkspace{}
+	case engine.AdapterManagedWorkspace:
+		return AdapterManagedWorkspace{}
+	default:
+		// WorkspaceSpec is closed in the engine. A defensive nil keeps an
+		// unexpected future engine type from being misrepresented publicly.
+		return nil
+	}
+}
+
+type serviceManagerAdapter struct{ target ServiceManager }
+
+func (a serviceManagerAdapter) Ensure(ctx context.Context, req engine.RuntimeServiceRequest) ([]driver.RuntimeServiceRef, error) {
+	return a.target.Ensure(ctx, serviceRequestFromEngine(req))
+}
+
+func (a serviceManagerAdapter) ReleaseByRun(ctx context.Context, runID string) error {
+	return a.target.ReleaseByRun(ctx, runID)
+}
+
+func (a serviceManagerAdapter) ReleaseByLabels(ctx context.Context, labels map[string]string) error {
+	return a.target.ReleaseByLabels(ctx, maps.Clone(labels))
+}
+
+func serviceManagerToEngine(manager ServiceManager) engine.RuntimeServiceManager {
+	if manager == nil {
+		return nil
+	}
+	return serviceManagerAdapter{target: manager}
+}
+
+func serviceRequestToEngine(req ServiceRequest) engine.RuntimeServiceRequest {
+	return engine.RuntimeServiceRequest{
+		RunID:      req.RunID,
+		DriverType: req.DriverType,
+		Agent:      req.Agent.driverIdentity(),
+		Config:     req.Config,
+		Workspace:  req.Workspace,
+		Desired:    engine.CloneRuntimeServiceSpecs(req.Desired),
+		Metadata:   maps.Clone(req.Metadata),
+	}
+}
+
+func serviceRequestFromEngine(req engine.RuntimeServiceRequest) ServiceRequest {
+	return ServiceRequest{
+		RunID:      req.RunID,
+		DriverType: req.DriverType,
+		Agent:      identityFromDriver(req.Agent),
+		Config:     req.Config,
+		Workspace:  req.Workspace,
+		Desired:    engine.CloneRuntimeServiceSpecs(req.Desired),
+		Metadata:   maps.Clone(req.Metadata),
+	}
+}
 
 // ============ The generic run-scoped service mount point ============
 
@@ -168,8 +378,10 @@ func (a *Agent) acquireRun(ctx context.Context, runID string, eff *RunSettings, 
 		return nil, nil
 	}
 
+	var publicIdentity Identity
 	var identity driver.AgentIdentity
 	if eff.identity != nil {
+		publicIdentity = *eff.identity
 		identity = eff.identity.driverIdentity()
 	}
 	r := &runResources{
@@ -183,11 +395,16 @@ func (a *Agent) acquireRun(ctx context.Context, runID string, eff *RunSettings, 
 	// workspaces — otherwise WithWorkspace(dir) keeps its direct lease
 	// synthesis and an agent with no workspace at all keeps an empty one.
 	if needsWorkspace {
-		lease, err := engine.ResolveWorkspaceLease(ctx, r.workspaceManager, WorkspaceRequest{
+		workspaceReq := WorkspaceRequest{
 			BaseCWD:  eff.workspace,
 			Spec:     eff.workspaceSpec,
 			Metadata: maps.Clone(eff.metadata),
-		})
+		}
+		lease, err := engine.ResolveWorkspaceLease(
+			ctx,
+			workspaceManagerToEngine(r.workspaceManager),
+			workspaceRequestToEngine(workspaceReq),
+		)
 		if err != nil {
 			return nil, err
 		}
@@ -198,13 +415,19 @@ func (a *Agent) acquireRun(ctx context.Context, runID string, eff *RunSettings, 
 	// installed ServiceManager (nil manager = the legacy noop: declared but
 	// unmanaged services do not invent endpoints).
 	if needsRuntime || len(providers) > 0 {
-		payload, err := engine.PrepareRuntimePayload(ctx, r.serviceManager, ServiceRequest{
+		serviceReq := ServiceRequest{
 			RunID:      runID,
 			DriverType: a.driver.Descriptor().Type,
-			Agent:      identity,
+			Agent:      publicIdentity,
 			Workspace:  r.workspace,
 			Metadata:   maps.Clone(eff.metadata),
-		}, eff.services)
+		}
+		payload, err := engine.PrepareRuntimePayload(
+			ctx,
+			serviceManagerToEngine(r.serviceManager),
+			serviceRequestToEngine(serviceReq),
+			eff.services,
+		)
 		if err != nil {
 			r.release(ctx)
 			return nil, err
@@ -316,15 +539,113 @@ func (r *runResources) applyRequest(req *driver.Request) {
 	}
 }
 
-// backfillServices makes Result.Services() honest for SDK-ensured services:
-// when the driver reports none, the reports are derived from the ensured refs
-// exactly like the legacy execute.go fallback. It never overrides a driver that
-// reported its own.
+// backfillServices merges SDK-observed ensured services with driver-observed
+// reports by stable service ID. Driver observations win field-by-field for a
+// matching ID, missing driver fields are filled from the SDK observation, and
+// reports unique to either side are retained. An empty ID is never used for
+// deduplication because doing so would conflate unrelated services.
 func (r *runResources) backfillServices(res *Result) {
-	if r == nil || res == nil || len(res.services) > 0 || len(r.runtime.Ensured) == 0 {
+	if r == nil || res == nil || len(r.runtime.Ensured) == 0 {
 		return
 	}
-	res.services = engine.RuntimeReportsFromRefs(r.runtime.Ensured, r.identity)
+	ensured := engine.RuntimeReportsFromRefs(r.runtime.Ensured, r.identity)
+	res.services = mergeServiceReports(ensured, res.services)
+}
+
+func mergeServiceReports(ensured, observed []ServiceReport) []ServiceReport {
+	ensuredByID := make(map[string]ServiceReport, len(ensured))
+	for _, report := range ensured {
+		if report.ID != "" {
+			ensuredByID[report.ID] = report
+		}
+	}
+
+	merged := make([]ServiceReport, 0, len(ensured)+len(observed))
+	seen := make(map[string]struct{}, len(ensured)+len(observed))
+	for _, report := range observed {
+		if report.ID == "" {
+			merged = append(merged, cloneServiceReport(report))
+			continue
+		}
+		if _, duplicate := seen[report.ID]; duplicate {
+			for i := range merged {
+				if merged[i].ID == report.ID {
+					merged[i] = mergeServiceReport(merged[i], report)
+					break
+				}
+			}
+			continue
+		}
+		base, ok := ensuredByID[report.ID]
+		if ok {
+			report = mergeServiceReport(base, report)
+		} else {
+			report = cloneServiceReport(report)
+		}
+		merged = append(merged, report)
+		seen[report.ID] = struct{}{}
+	}
+	for _, report := range ensured {
+		if report.ID != "" {
+			if _, ok := seen[report.ID]; ok {
+				continue
+			}
+			seen[report.ID] = struct{}{}
+		}
+		merged = append(merged, cloneServiceReport(report))
+	}
+	return merged
+}
+
+func mergeServiceReport(base, override ServiceReport) ServiceReport {
+	merged := cloneServiceReport(base)
+	if override.ID != "" {
+		merged.ID = override.ID
+	}
+	if override.Name != "" {
+		merged.Name = override.Name
+	}
+	if override.URL != "" {
+		merged.URL = override.URL
+	}
+	if override.Status != "" {
+		merged.Status = override.Status
+	}
+	if override.Lifecycle != "" {
+		merged.Lifecycle = override.Lifecycle
+	}
+	if override.ReuseKey != "" {
+		merged.ReuseKey = override.ReuseKey
+	}
+	if override.Command != "" {
+		merged.Command = override.Command
+	}
+	if override.CWD != "" {
+		merged.CWD = override.CWD
+	}
+	if override.Port != 0 {
+		merged.Port = override.Port
+	}
+	if override.OwnerAgentID != "" {
+		merged.OwnerAgentID = override.OwnerAgentID
+	}
+	if override.Health != "" {
+		merged.Health = override.Health
+	}
+	if len(override.Metadata) > 0 {
+		if merged.Metadata == nil {
+			merged.Metadata = map[string]string{}
+		}
+		for key, value := range override.Metadata {
+			merged.Metadata[key] = value
+		}
+	}
+	return merged
+}
+
+func cloneServiceReport(report ServiceReport) ServiceReport {
+	report.Metadata = maps.Clone(report.Metadata)
+	return report
 }
 
 // backfillRunServices applies the ensured-refs fallback to whichever Result the
@@ -374,11 +695,16 @@ func (r *runResources) release(ctx context.Context) {
 	}
 	r.attached = nil
 	if r.runtimeEnsured {
-		_ = engine.ReleaseRuntimeServicesByRun(relCtx, r.serviceManager, r.runID)
+		_ = engine.ReleaseRuntimeServicesByRun(relCtx, serviceManagerToEngine(r.serviceManager), r.runID)
 		r.runtimeEnsured = false
 	}
 	if r.workspaceLeased {
-		_ = engine.ReleaseWorkspaceLease(relCtx, r.workspaceManager, r.workspace, WorkspaceReleaseStop)
+		_ = engine.ReleaseWorkspaceLease(
+			relCtx,
+			workspaceManagerToEngine(r.workspaceManager),
+			r.workspace,
+			engine.WorkspaceReleaseMode(WorkspaceReleaseStop),
+		)
 		r.workspaceLeased = false
 	}
 }

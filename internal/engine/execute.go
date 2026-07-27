@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -556,12 +557,27 @@ func (c *Core) executeWithSessionPlan(
 		BillingType:      runResult.BillingType,
 		CostUSD:          cloneFloat64Pointer(runResult.CostUSD),
 		Summary:          runResult.Summary,
-		Result:           cloneAnyMap(runResult.Result),
+		Result:           legacyTerminalMap(runResult.RawStreams),
 		StructuredOutput: structuredOutput,
 		RuntimeServices:  runtimeReports,
 		Question:         cloneRunQuestion(runResult.Question),
 		Failure:          failure,
 	}, runResult.Checkpoint, nil
+}
+
+// legacyTerminalMap is confined to the pre-v1 engine boundary. The v1 SPI and
+// consumer API retain terminal protocol data as immutable raw JSON in
+// RawStreams.Terminal; the legacy RunResult shape still expects a decoded map
+// until ROOT CUTOVER deletes that surface.
+func legacyTerminalMap(raw *RawStreams) map[string]any {
+	if raw == nil || raw.Terminal == nil || len(raw.Terminal.JSON) == 0 {
+		return nil
+	}
+	var value map[string]any
+	if err := json.Unmarshal(raw.Terminal.JSON, &value); err != nil {
+		return nil
+	}
+	return value
 }
 
 func finalizeStructuredOutput(invocation resolvedInvocation, runResult DriverRunResult) (*StructuredOutput, *RunFailure) {

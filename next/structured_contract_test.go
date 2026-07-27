@@ -5,7 +5,6 @@ package adaptor_test
 // untouched):
 //
 //	TestJSONSchemaForAndDecodeStructuredOutput            → TestWithSchemaGeneratesDeterministicStrictSchema
-//	TestWithJSONSchemaOutputForPreservesGeneratedSchema   → TestWithSchemaMatchesLegacyJSONSchemaFor
 //	TestWithJSONSchemaOutputForSupportsRecursiveTypes     → TestWithSchemaSupportsRecursiveTypes
 //	TestJSONSchemaForRejectsInliningRecursiveTypes        → TestWithSchemaRejectsInliningRecursiveTypes
 //	TestWithJSONSchemaOutputForSupportsRecursiveCollections → TestWithSchemaSupportsRecursiveCollections
@@ -23,8 +22,8 @@ package adaptor_test
 //	TestStructuredOutputSchemaDoesNotAffectSessionFingerprint → TestSchemaChangeDoesNotAffectThreadSessionFingerprint
 //
 // Contract deltas the v1 surface imposes (documented, not weakened):
-//   - next/ always streams, so every capability fixture must advertise
-//     WorksWithStreaming (fullStructuredCaps does).
+//   - provider-native streaming is selected by Driver capabilities and schema
+//     compatibility, never by the consumer Run/Stream method.
 //   - Result hides the raw *StructuredOutput; validity/source assertions
 //     ride Result.Decode. Under SchemaPromptOnly the fake never emits
 //     native structured output, so a successful Decode is itself the proof
@@ -43,7 +42,6 @@ import (
 	"sync"
 	"testing"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/memory"
 	adaptor "github.com/agent-dance/agent-adaptor/next"
@@ -68,6 +66,8 @@ type structuredFake struct {
 }
 
 var _ driver.Driver = (*structuredFake)(nil)
+var _ driver.SessionConfigFingerprinter = (*structuredFake)(nil)
+var _ driver.StreamSupport = (*structuredFake)(nil)
 
 func (d *structuredFake) Descriptor() driver.Descriptor {
 	return driver.Descriptor{
@@ -79,6 +79,14 @@ func (d *structuredFake) Descriptor() driver.Descriptor {
 }
 
 func (d *structuredFake) ValidateConfig(any) error { return nil }
+
+func (d *structuredFake) SessionConfigFingerprint() (string, error) {
+	return "structured-fake-config/v1", nil
+}
+
+func (d *structuredFake) StreamCapability() driver.StreamCapability {
+	return driver.StreamCapability{Native: true}
+}
 
 func (d *structuredFake) Run(_ context.Context, req driver.Request, _ driver.EventSink) (driver.Response, error) {
 	d.mu.Lock()
@@ -150,9 +158,8 @@ func (d *structuredFake) runCount() int {
 	return len(d.requests)
 }
 
-// fullStructuredCaps advertises every structured-output capability. next/
-// always streams, so WorksWithStreaming is mandatory for any fixture that
-// expects a run to launch.
+// fullStructuredCaps advertises both provider transports so these fixtures
+// exercise native streaming unless a focused test requests batch fallback.
 func fullStructuredCaps() driver.StructuredOutputCapability {
 	return driver.StructuredOutputCapability{
 		JSONSchemaNative:         true,
@@ -228,37 +235,6 @@ func TestWithSchemaGeneratesDeterministicStrictSchema(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 	if decoded.ProjectName != "agent-adaptor" || len(decoded.ProgrammingLanguages) != 1 || decoded.ProgrammingLanguages[0] != "go" {
-		t.Errorf("unexpected decoded value: %#v", decoded)
-	}
-}
-
-// TestWithSchemaMatchesLegacyJSONSchemaFor pins schema-generation parity:
-// WithSchema[T] must produce byte-identical documents to the legacy
-// JSONSchemaFor[T] pipeline it replicates.
-func TestWithSchemaMatchesLegacyJSONSchemaFor(t *testing.T) {
-	fake := &structuredFake{caps: fullStructuredCaps(), output: `{"project_name":"agent-adaptor","artifact":{"project_name":"nested","programming_languages":["go"]}}`}
-	agent := adaptor.New(fake)
-	want, err := agentadaptor.JSONSchemaFor[nestedProjectMetadata]()
-	if err != nil {
-		t.Fatalf("JSONSchemaFor: %v", err)
-	}
-
-	res, err := agent.Run(context.Background(), "extract nested metadata", adaptor.WithSchema[nestedProjectMetadata]())
-	if err != nil {
-		t.Fatalf("run: %v", err)
-	}
-	req := fake.lastRequest(t)
-	if req.OutputSchema == nil {
-		t.Fatal("expected output schema on driver request")
-	}
-	if got := string(req.OutputSchema.SchemaJSON); got != string(want) {
-		t.Fatalf("WithSchema diverged from the legacy generator:\ngot  %s\nwant %s", got, want)
-	}
-	var decoded nestedProjectMetadata
-	if err := res.Decode(&decoded); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if decoded.Artifact.ProjectName != "nested" {
 		t.Errorf("unexpected decoded value: %#v", decoded)
 	}
 }
@@ -414,6 +390,24 @@ func TestStructuredOutputRejectsUnsupportedNativeStrictBeforeLaunch(t *testing.T
 	}
 	if fake.runCount() != 0 {
 		t.Errorf("driver ran %d time(s), want pre-launch failure", fake.runCount())
+	}
+}
+
+func TestStructuredSchemaFallsBackToCompatibleProviderTransport(t *testing.T) {
+	caps := fullStructuredCaps()
+	caps.WorksWithStreaming = false
+	fake := &structuredFake{caps: caps, output: `{"project_name":"agent-adaptor"}`}
+	agent := adaptor.New(fake)
+
+	res, err := agent.Stream(context.Background(), "extract", adaptor.WithSchema[projectMetadata]()).Result()
+	if err != nil {
+		t.Fatalf("Stream.Result: %v", err)
+	}
+	if res == nil {
+		t.Fatal("missing Result")
+	}
+	if req := fake.lastRequest(t); req.Streaming {
+		t.Fatalf("request selected provider streaming despite schema capability %+v", caps)
 	}
 }
 

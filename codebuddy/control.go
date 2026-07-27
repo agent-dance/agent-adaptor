@@ -6,7 +6,6 @@ import (
 	"errors"
 	"strings"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/internal/adapterutil"
 	"github.com/agent-dance/agent-adaptor/internal/clihelper"
@@ -14,17 +13,17 @@ import (
 
 var errControlSinkRequired = errors.New("codebuddy control transport requires a decision-capable sink")
 
-func (adapter) runControl(ctx context.Context, cfg agentadaptor.CodeBuddyConfig, command string, req agentadaptor.DriverRunRequest, sink agentadaptor.EventSink, prep runPrep) (agentadaptor.DriverRunResult, error) {
-	if req.OutputSchema != nil && req.OutputSchema.Mode != agentadaptor.StructuredOutputPromptValidate {
-		return agentadaptor.DriverRunResult{}, &agentadaptor.StructuredOutputUnsupportedError{
+func (adapter) runControl(ctx context.Context, cfg Config, command string, req driver.Request, sink driver.EventSink, prep runPrep) (driver.Response, error) {
+	if req.OutputSchema != nil && req.OutputSchema.Mode != driver.StructuredOutputPromptValidate {
+		return driver.Response{}, &driver.StructuredOutputUnsupportedError{
 			Adapter: DriverType,
 			Mode:    req.OutputSchema.Mode,
 			Reason:  "CodeBuddy native structured output is not supported with control HITL",
 		}
 	}
-	decisionSink, ok := sink.(agentadaptor.DecisionCapableSink)
+	decisionSink, ok := sink.(driver.DecisionCapableSink)
 	if !ok {
-		return agentadaptor.DriverRunResult{}, errControlSinkRequired
+		return driver.Response{}, errControlSinkRequired
 	}
 
 	stdin := clihelper.NewStdinController()
@@ -41,21 +40,21 @@ func (adapter) runControl(ctx context.Context, cfg agentadaptor.CodeBuddyConfig,
 
 	result, err := clihelper.Run(ctx, clihelper.CommandRequest{
 		Command: command,
-		Args:    buildExecArgs(cfg, req, agentadaptor.CodeBuddyPermissionUnset, true),
+		Args:    buildExecArgs(cfg, req, PermissionUnset, true),
 		CWD:     prep.effectiveCWD,
-		Env:     append(prep.env, agentadaptor.EnvBinding{Name: "CODEBUDDY_CODE_ENTRYPOINT", Value: "sdk-py"}),
+		Env:     append(prep.env, driver.EnvBinding{Name: "CODEBUDDY_CODE_ENTRYPOINT", Value: "sdk-py"}),
 		Observe: p.onChunk,
 		Stdin:   stdin,
 	}, sink)
 	if err != nil {
-		return agentadaptor.DriverRunResult{}, err
+		return driver.Response{}, err
 	}
 	p.finalize()
 
-	raw := agentadaptor.RawStreams{Stdout: result.RawStreams.Stdout, Stderr: result.RawStreams.Stderr}
+	raw := driver.RawStreams{Stdout: result.RawStreams.Stdout, Stderr: result.RawStreams.Stderr, Terminal: p.terminal}
 	failure := p.pendingFailure
 	if failure == nil && strings.TrimSpace(p.errorMessage) != "" {
-		failure = &agentadaptor.RunFailure{Code: agentadaptor.FailureAgentError, Message: p.errorMessage}
+		failure = &driver.RunFailure{Code: driver.FailureAgentError, Message: p.errorMessage}
 	}
 	checkpoint := p.checkpointForOutcome(result.ExitCode, result.Signal, result.TimedOut, failure)
 	if checkpoint != nil && checkpoint.State != nil {
@@ -65,7 +64,7 @@ func (adapter) runControl(ctx context.Context, cfg agentadaptor.CodeBuddyConfig,
 			driver.SessionParamProfileFingerprint: req.ProfilePayload.Fingerprint,
 		}
 	}
-	return agentadaptor.DriverRunResult{
+	return driver.Response{
 		Output:          p.buildOutput(),
 		RawStreams:      &raw,
 		Transcript:      p.transcript,
@@ -78,7 +77,6 @@ func (adapter) runControl(ctx context.Context, cfg agentadaptor.CodeBuddyConfig,
 		Provider:        "codebuddy",
 		Model:           prep.reportedModel,
 		Summary:         p.finalSummary(),
-		Result:          p.resultFinal,
 		RuntimeServices: adapterutil.RuntimeReportsFromRefs(req.Runtime.Ensured, req.Agent),
 		Failure:         failure,
 	}, nil

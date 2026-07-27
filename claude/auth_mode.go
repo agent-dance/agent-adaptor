@@ -4,7 +4,7 @@ import (
 	"regexp"
 	"strings"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/internal/adapterutil"
 	"github.com/agent-dance/agent-adaptor/internal/configprobe"
 )
@@ -16,36 +16,36 @@ const (
 
 var bedrockModelPattern = regexp.MustCompile(`^\w+\.anthropic\.`)
 
-func claudeModels() []agentadaptor.ModelInfo {
-	return cloneModelInfos([]agentadaptor.ModelInfo{
+func claudeModels() []driver.ModelInfo {
+	return cloneModelInfos([]driver.ModelInfo{
 		{ID: defaultClaudeModel, Label: defaultClaudeModel},
 		{ID: "claude-opus-4", Label: "claude-opus-4"},
 	})
 }
 
-func claudeBedrockModels() []agentadaptor.ModelInfo {
-	return cloneModelInfos([]agentadaptor.ModelInfo{
+func claudeBedrockModels() []driver.ModelInfo {
+	return cloneModelInfos([]driver.ModelInfo{
 		{ID: "us.anthropic.claude-opus-4-6-v1", Label: "Bedrock Opus 4.6"},
 		{ID: defaultClaudeBedrockModel, Label: "Bedrock Sonnet 4.5"},
 		{ID: "us.anthropic.claude-haiku-4-5-20251001-v1:0", Label: "Bedrock Haiku 4.5"},
 	})
 }
 
-func claudeModelsForBindings(bindings []agentadaptor.EnvBinding) []agentadaptor.ModelInfo {
+func claudeModelsForBindings(bindings []driver.EnvBinding) []driver.ModelInfo {
 	if claudeBedrockEnabled(bindings) {
 		return claudeBedrockModels()
 	}
 	return claudeModels()
 }
 
-func claudeDefaultModel(bindings []agentadaptor.EnvBinding) string {
+func claudeDefaultModel(bindings []driver.EnvBinding) string {
 	if claudeBedrockEnabled(bindings) {
 		return defaultClaudeBedrockModel
 	}
 	return defaultClaudeModel
 }
 
-func claudeBedrockEnabled(bindings []agentadaptor.EnvBinding) bool {
+func claudeBedrockEnabled(bindings []driver.EnvBinding) bool {
 	if enabled, _ := adapterutil.ResolvedTruthyEnv(bindings, "CLAUDE_CODE_USE_BEDROCK"); enabled {
 		return true
 	}
@@ -61,7 +61,7 @@ func isBedrockModelID(model string) bool {
 	return bedrockModelPattern.MatchString(model) || strings.HasPrefix(model, "arn:aws:bedrock:")
 }
 
-func claudeRequestedModelFlag(config agentadaptor.ClaudeConfig) string {
+func claudeRequestedModelFlag(config Config) string {
 	model := strings.TrimSpace(config.Model)
 	if model == "" {
 		return ""
@@ -75,7 +75,7 @@ func claudeRequestedModelFlag(config agentadaptor.ClaudeConfig) string {
 	return model
 }
 
-func claudeConfigFileModel(bindings []agentadaptor.EnvBinding) (string, bool, error) {
+func claudeConfigFileModel(bindings []driver.EnvBinding) (string, bool, error) {
 	for _, candidate := range claudeConfigCandidates(bindings) {
 		model, ok, err := configprobe.ReadTopLevelJSONString(candidate, "model")
 		if err != nil {
@@ -91,9 +91,9 @@ func claudeConfigFileModel(bindings []agentadaptor.EnvBinding) (string, bool, er
 	return "", false, nil
 }
 
-func detectClaudeEffectiveModel(config agentadaptor.ClaudeConfig, profile *agentadaptor.ProfileSelection) (*agentadaptor.DetectedModel, error) {
+func detectClaudeEffectiveModel(config Config, profile *driver.ProfileSelection) (*driver.DetectedModel, error) {
 	if model := claudeRequestedModelFlag(config); model != "" {
-		return &agentadaptor.DetectedModel{
+		return &driver.DetectedModel{
 			Model:      model,
 			Provider:   "anthropic",
 			Source:     "binding_config",
@@ -110,7 +110,7 @@ func detectClaudeEffectiveModel(config agentadaptor.ClaudeConfig, profile *agent
 	if err != nil || !ok {
 		return nil, err
 	}
-	return &agentadaptor.DetectedModel{
+	return &driver.DetectedModel{
 		Model:      model,
 		Provider:   "anthropic",
 		Source:     "config_file",
@@ -118,7 +118,7 @@ func detectClaudeEffectiveModel(config agentadaptor.ClaudeConfig, profile *agent
 	}, nil
 }
 
-func hydrateClaudeConfigSchema(config agentadaptor.ClaudeConfig) *agentadaptor.ConfigSchema {
+func hydrateClaudeConfigSchema(config Config) *driver.ConfigSchema {
 	schema := cloneClaudeConfigSchema(adapter{}.Descriptor().ConfigSchema)
 	if schema == nil {
 		return nil
@@ -138,16 +138,16 @@ func hydrateClaudeConfigSchema(config agentadaptor.ClaudeConfig) *agentadaptor.C
 	return schema
 }
 
-func cloneClaudeConfigSchema(schema *agentadaptor.ConfigSchema) *agentadaptor.ConfigSchema {
+func cloneClaudeConfigSchema(schema *driver.ConfigSchema) *driver.ConfigSchema {
 	if schema == nil {
 		return nil
 	}
-	out := &agentadaptor.ConfigSchema{
-		Fields: make([]agentadaptor.ConfigField, 0, len(schema.Fields)),
+	out := &driver.ConfigSchema{
+		Fields: make([]driver.ConfigField, 0, len(schema.Fields)),
 	}
 	for _, field := range schema.Fields {
 		copyField := field
-		copyField.Options = append([]agentadaptor.ConfigOption(nil), field.Options...)
+		copyField.Options = append([]driver.ConfigOption(nil), field.Options...)
 		if len(field.Meta) > 0 {
 			copyField.Meta = make(map[string]string, len(field.Meta))
 			for key, value := range field.Meta {
@@ -159,6 +159,6 @@ func cloneClaudeConfigSchema(schema *agentadaptor.ConfigSchema) *agentadaptor.Co
 	return out
 }
 
-func cloneModelInfos(models []agentadaptor.ModelInfo) []agentadaptor.ModelInfo {
-	return append([]agentadaptor.ModelInfo(nil), models...)
+func cloneModelInfos(models []driver.ModelInfo) []driver.ModelInfo {
+	return append([]driver.ModelInfo(nil), models...)
 }

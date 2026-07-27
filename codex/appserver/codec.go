@@ -2,6 +2,7 @@ package appserver
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"sync"
 )
@@ -29,6 +30,8 @@ type stdioStream struct {
 	decoder *json.Decoder
 	enc     *json.Encoder
 	wmu     sync.Mutex
+	rmu     sync.Mutex
+	readErr error
 }
 
 // newStdioStream returns an ObjectStream bound to a subprocess's I/O.
@@ -42,7 +45,23 @@ func newStdioStream(stdin io.WriteCloser, stdout io.Reader) *stdioStream {
 
 // ReadObject decodes the next JSON object from stdout into v.
 func (s *stdioStream) ReadObject(v interface{}) error {
-	return s.decoder.Decode(v)
+	err := s.decoder.Decode(v)
+	if err != nil && !errors.Is(err, io.EOF) {
+		s.rmu.Lock()
+		if s.readErr == nil {
+			s.readErr = err
+		}
+		s.rmu.Unlock()
+	}
+	return err
+}
+
+// ReadError returns the first non-EOF JSON decoding error observed by the
+// inbound reader. It is safe to call after DisconnectNotify closes.
+func (s *stdioStream) ReadError() error {
+	s.rmu.Lock()
+	defer s.rmu.Unlock()
+	return s.readErr
 }
 
 // WriteObject marshals v and writes it (plus a trailing newline) to

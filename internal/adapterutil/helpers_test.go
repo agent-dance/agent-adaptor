@@ -4,12 +4,12 @@ import (
 	"strings"
 	"testing"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
 )
 
 func TestResolvedEnvValuePrefersBindingOverProcessEnv(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "process-value")
-	value, source := ResolvedEnvValue([]agentadaptor.EnvBinding{{
+	value, source := ResolvedEnvValue([]driver.EnvBinding{{
 		Name:  "OPENAI_API_KEY",
 		Value: "binding-value",
 	}}, "OPENAI_API_KEY")
@@ -19,7 +19,7 @@ func TestResolvedEnvValuePrefersBindingOverProcessEnv(t *testing.T) {
 }
 
 func TestResolvedTruthyEnvRecognizesTrueValues(t *testing.T) {
-	ok, source := ResolvedTruthyEnv([]agentadaptor.EnvBinding{{
+	ok, source := ResolvedTruthyEnv([]driver.EnvBinding{{
 		Name:  "CLAUDE_CODE_USE_BEDROCK",
 		Value: "true",
 	}}, "CLAUDE_CODE_USE_BEDROCK")
@@ -32,19 +32,19 @@ func TestRuntimeEnvBindingsInjectsSecretEnvWithoutLeakingRuntimeJSON(t *testing.
 	const secret = "sk-runtime-secret"
 
 	env, err := RuntimeEnvBindings(
-		[]agentadaptor.EnvBinding{{Name: "EXISTING", Value: "1"}},
-		agentadaptor.RuntimePayload{
-			SecretEnv: []agentadaptor.EnvBinding{{Name: "DELEGATION_TOKEN", Value: secret}},
-			Ensured: []agentadaptor.RuntimeServiceRef{{
+		[]driver.EnvBinding{{Name: "EXISTING", Value: "1"}},
+		driver.RuntimePayload{
+			SecretEnv: []driver.EnvBinding{{Name: "DELEGATION_TOKEN", Value: secret}},
+			Ensured: []driver.RuntimeServiceRef{{
 				ID:     "svc-delegation",
 				Name:   "delegation",
 				URL:    "http://127.0.0.1:43127/mcp",
-				Status: agentadaptor.RuntimeServiceRunning,
+				Status: driver.RuntimeServiceRunning,
 				Metadata: map[string]string{
 					"agentadaptor.mcp.enabled":              "true",
 					"agentadaptor.mcp.bearer_token_env_var": "DELEGATION_TOKEN",
 				},
-				SecretEnv: []agentadaptor.EnvBinding{{Name: "DELEGATION_TOKEN", Value: secret}},
+				SecretEnv: []driver.EnvBinding{{Name: "DELEGATION_TOKEN", Value: secret}},
 			}},
 		},
 	)
@@ -69,8 +69,8 @@ func TestRuntimeEnvBindingsInjectsSecretEnvWithoutLeakingRuntimeJSON(t *testing.
 func TestRuntimeEnvBindingsInjectsSecretEnvWithoutEnsuredRefs(t *testing.T) {
 	const secret = "sk-secret-only"
 
-	env, err := RuntimeEnvBindings(nil, agentadaptor.RuntimePayload{
-		SecretEnv: []agentadaptor.EnvBinding{{Name: "DELEGATION_TOKEN", Value: secret}},
+	env, err := RuntimeEnvBindings(nil, driver.RuntimePayload{
+		SecretEnv: []driver.EnvBinding{{Name: "DELEGATION_TOKEN", Value: secret}},
 	})
 	if err != nil {
 		t.Fatalf("runtime env bindings: %v", err)
@@ -83,7 +83,7 @@ func TestRuntimeEnvBindingsInjectsSecretEnvWithoutEnsuredRefs(t *testing.T) {
 	}
 }
 
-func lastEnvValue(bindings []agentadaptor.EnvBinding, name string) string {
+func lastEnvValue(bindings []driver.EnvBinding, name string) string {
 	var out string
 	for _, binding := range bindings {
 		if binding.Name == name {

@@ -54,7 +54,10 @@ func TestReferenceDriverFailurePath(t *testing.T) {
 	if vs := VerifyRunEvents(sink.Events()); len(vs) != 0 {
 		t.Errorf("failure-path run events violate the contract: %v", vs)
 	}
-	if vs := VerifyResponse(&resp); len(vs) != 0 {
+	if vs := VerifyTranscriptMirror(sink.Events(), resp.Transcript); len(vs) != 0 {
+		t.Errorf("failure-path transcript mirror violates the contract: %v", vs)
+	}
+	if vs := VerifyOutcome(&resp, err); len(vs) != 0 {
 		t.Errorf("failure-path response violates the contract: %v", vs)
 	}
 	stream := sink.Stream()

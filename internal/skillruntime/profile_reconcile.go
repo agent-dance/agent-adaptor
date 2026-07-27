@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/internal/profilestate"
 )
 
@@ -45,7 +45,7 @@ type ProfileSkillChange struct {
 type ProfileSkillReconcileOptions struct {
 	ProfileDir              string
 	SkillsHome              string
-	Payload                 agentadaptor.ResolvedSkills
+	Payload                 driver.ResolvedSkills
 	Selected                []string
 	ManagedRoots            []string
 	ConflictMode            ProfileSkillConflictMode
@@ -200,10 +200,10 @@ func ReconcileProfileSkills(ctx context.Context, opts ProfileSkillReconcileOptio
 	return result, nil
 }
 
-func desiredProfileSkillEntries(payload agentadaptor.ResolvedSkills, selected []string) (map[string]agentadaptor.ResolvedSkill, error) {
+func desiredProfileSkillEntries(payload driver.ResolvedSkills, selected []string) (map[string]driver.ResolvedSkill, error) {
 	desiredKeys := selectedKeySet(selected)
 	filterSelected := selected != nil
-	desired := make(map[string]agentadaptor.ResolvedSkill, len(payload.Entries))
+	desired := make(map[string]driver.ResolvedSkill, len(payload.Entries))
 	runtimeOwners := map[string]string{}
 	for _, entry := range payload.Entries {
 		entry.Key = strings.TrimSpace(entry.Key)
@@ -312,7 +312,7 @@ func pruneBrokenManagedProfileSkillPath(skillsHome string, entry profilestate.Ma
 	return false, true, nil
 }
 
-func profileSkillManifestEntry(entry agentadaptor.ResolvedSkill, target string) profilestate.ManifestEntry {
+func profileSkillManifestEntry(entry driver.ResolvedSkill, target string) profilestate.ManifestEntry {
 	metadata := map[string]string{}
 	if sourceHash := hashedSourcePath(entry.SourcePath); sourceHash != "" {
 		metadata[manifestSourceHashKey] = sourceHash
@@ -329,7 +329,7 @@ func profileSkillManifestEntry(entry agentadaptor.ResolvedSkill, target string) 
 	}
 }
 
-func profileSkillFingerprint(entry agentadaptor.ResolvedSkill) string {
+func profileSkillFingerprint(entry driver.ResolvedSkill) string {
 	sum := sha256.Sum256([]byte(entry.Key + "\x00" + entry.RuntimeName + "\x00" + hashedSourcePath(entry.SourcePath)))
 	return hex.EncodeToString(sum[:])
 }

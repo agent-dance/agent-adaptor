@@ -4,7 +4,8 @@ import (
 	"errors"
 
 	"github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/internal/engine"
+	"github.com/agent-dance/agent-adaptor/mcp"
+	"github.com/agent-dance/agent-adaptor/skill"
 )
 
 // Decision D1: business failures are typed errors. A run that completed but
@@ -119,49 +120,50 @@ func (e *RunError) Unwrap() error {
 //
 // Skill, MCP, and structured-output resolution failures happen before the
 // driver launches and surface as plain wrapped errors (decision D1: they
-// are configuration problems, not business outcomes). The sentinels and
-// typed errors are the engine's single truth, re-exported here so hosts
-// match them without importing internal packages.
+// are configuration problems, not business outcomes). Their leaf vocabulary
+// packages own the canonical identities; the root only re-exports them.
 
 var (
 	// ErrSkillNotFound: a bare skill key was requested (WithSkills /
 	// SelectSkills) but the SkillProvider did not return it.
-	ErrSkillNotFound = engine.ErrSkillNotFound
+	ErrSkillNotFound = skill.ErrSkillNotFound
 	// ErrSkillKeyConflict: two skill candidates share a key but differ
 	// structurally. Unwrap to *SkillKeyConflictError for the sources.
-	ErrSkillKeyConflict = engine.ErrSkillKeyConflict
+	ErrSkillKeyConflict = skill.ErrSkillKeyConflict
 	// ErrSkillMaterializationFailed: staging a skill's source to disk
 	// failed. Unwrap to *SkillMaterializationError for the key.
-	ErrSkillMaterializationFailed = engine.ErrSkillMaterializationFailed
+	ErrSkillMaterializationFailed = skill.ErrSkillMaterializationFailed
 	// ErrSkillSourceMissing: a skill declares no usable source.
-	ErrSkillSourceMissing = engine.ErrSkillSourceMissing
+	ErrSkillSourceMissing = skill.ErrSkillSourceMissing
+	// ErrSkillKeyMissing: a concrete skill declaration has an empty key.
+	ErrSkillKeyMissing = skill.ErrSkillKeyMissing
 	// ErrInvalidMCPConfig: an MCP server spec is malformed (missing key,
 	// transport/field mismatch, duplicate key).
-	ErrInvalidMCPConfig = engine.ErrInvalidMCPConfig
+	ErrInvalidMCPConfig = mcp.ErrInvalidConfig
 	// ErrMCPUnsupported: the driver does not support MCP servers at all.
-	ErrMCPUnsupported = engine.ErrMCPUnsupported
+	ErrMCPUnsupported = mcp.ErrUnsupported
 	// ErrMCPTransportUnsupported: the driver supports MCP but not this
 	// server's transport.
-	ErrMCPTransportUnsupported = engine.ErrMCPTransportUnsupported
+	ErrMCPTransportUnsupported = mcp.ErrTransportUnsupported
 	// ErrInvalidOutputSchema: the structured-output schema is invalid or
 	// could not be derived. Unwrap to *InvalidOutputSchemaError.
-	ErrInvalidOutputSchema = engine.ErrInvalidOutputSchema
+	ErrInvalidOutputSchema = driver.ErrInvalidOutputSchema
 	// ErrStructuredOutputUnsupported: the driver's capability matrix
 	// cannot honor the requested structured-output mode. Unwrap to
 	// *StructuredOutputUnsupportedError for the adapter and mode.
-	ErrStructuredOutputUnsupported = engine.ErrStructuredOutputUnsupported
+	ErrStructuredOutputUnsupported = driver.ErrStructuredOutputUnsupported
 )
 
 // Typed error aliases for errors.As matching.
 type (
 	// SkillKeyConflictError reports conflicting duplicate skill keys.
-	SkillKeyConflictError = engine.SkillKeyConflictError
+	SkillKeyConflictError = skill.SkillKeyConflictError
 	// SkillMaterializationError reports a failed skill staging.
-	SkillMaterializationError = engine.SkillMaterializationError
+	SkillMaterializationError = skill.SkillMaterializationError
 	// InvalidOutputSchemaError reports an invalid or underivable schema.
-	InvalidOutputSchemaError = engine.InvalidOutputSchemaError
+	InvalidOutputSchemaError = driver.InvalidOutputSchemaError
 	// StructuredOutputUnsupportedError reports a capability-matrix miss.
-	StructuredOutputUnsupportedError = engine.StructuredOutputUnsupportedError
+	StructuredOutputUnsupportedError = driver.StructuredOutputUnsupportedError
 )
 
 // failureReason maps the driver SPI failure code onto the consumer

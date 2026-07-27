@@ -4,9 +4,10 @@ import (
 	"testing"
 	"time"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
 	bridgea2a "github.com/agent-dance/agent-adaptor/bridges/a2a"
 	clienta2a "github.com/agent-dance/agent-adaptor/clients/a2a"
+	"github.com/agent-dance/agent-adaptor/driver"
+	adaptor "github.com/agent-dance/agent-adaptor/next"
 )
 
 // TestEventMapperArtifactsNeverCreateProcessEvents verifies ArtifactUpdate is
@@ -105,7 +106,7 @@ func TestAdapterStreamStatusEndIsPriorityEvent(t *testing.T) {
 			Kind: clienta2a.PartData,
 			Data: bridgea2a.AdapterStreamEnvelopeV1{
 				Schema: bridgea2a.AdapterStreamSchemaV1,
-				Event:  bridgea2a.AdapterStreamEventV1{Kind: string(agentadaptor.StreamTextEnd), MessageID: "msg-1"},
+				Event:  bridgea2a.AdapterStreamEventV1{Kind: string(driver.StreamTextEnd), MessageID: "msg-1"},
 			},
 		}}}},
 	})
@@ -120,20 +121,20 @@ func TestEventMapperAdapterStreamProfile(t *testing.T) {
 	mapper := newEventMapper(DelegationEvent{RunID: "run-1", DelegationID: "del-1", AgentKey: "implement"})
 	eventTime := time.Date(2026, time.July, 21, 10, 30, 0, 0, time.UTC)
 	firstStatus := adapterStreamStatusEvent(bridgea2a.AdapterStreamEventV1{
-		Kind:      string(agentadaptor.StreamTextStart),
+		Kind:      string(driver.StreamTextStart),
 		Sequence:  1,
 		RunID:     "member-run",
 		ThreadID:  "member-thread",
 		TurnID:    "member-turn",
 		MessageID: "msg-1",
-		Role:      string(agentadaptor.RoleUser),
+		Role:      string(adaptor.RoleUser),
 		Timestamp: eventTime.Format(time.RFC3339Nano),
 	})
 	first := mapper.Map(firstStatus)
 	if len(first) != 3 || first[0].Kind != DelegationStarted || first[1].Kind != DelegationStatus || first[2].Kind != DelegationTextStart {
 		t.Fatalf("first events = %#v", first)
 	}
-	if first[2].Sequence != 1 || first[2].RemoteMessageID != "msg-1" || first[2].Role != string(agentadaptor.RoleUser) ||
+	if first[2].Sequence != 1 || first[2].RemoteMessageID != "msg-1" || first[2].Role != string(adaptor.RoleUser) ||
 		!first[2].Time.Equal(eventTime) || first[2].Raw["stream_profile"] != bridgea2a.AdapterStreamSchemaV1 ||
 		first[2].Raw["member_run_id"] != "member-run" || first[2].Raw["member_thread_id"] != "member-thread" ||
 		first[2].Raw["member_turn_id"] != "member-turn" {
@@ -146,7 +147,7 @@ func TestEventMapperAdapterStreamProfile(t *testing.T) {
 	}
 
 	third := mapper.Map(adapterStreamStatusEvent(bridgea2a.AdapterStreamEventV1{
-		Kind:       string(agentadaptor.StreamToolCallArgs),
+		Kind:       string(driver.StreamToolCallArgs),
 		Sequence:   3,
 		ToolCallID: "bash-1",
 		Delta:      `{"command":"go test ./..."}`,
@@ -171,6 +172,80 @@ func TestEventMapperAdapterStreamProfile(t *testing.T) {
 	})
 	if len(artifact) != 1 || artifact[0].Kind != DelegationArtifactCreated {
 		t.Fatalf("artifact events = %#v", artifact)
+	}
+}
+
+func TestEventMapperTypedAdapterStreamPreservesMetaAndDroppedDetails(t *testing.T) {
+	eventTime := time.Date(2026, time.July, 28, 11, 15, 0, 0, time.UTC)
+	mapper := newEventMapper(DelegationEvent{RunID: "leader-run", DelegationID: "del-1", AgentKey: "implement"})
+	events := mapper.Map(adapterStreamStatusEvent(bridgea2a.AdapterStreamEventV1{
+		Kind:     string(driver.StreamDropped),
+		Sequence: 5,
+		Meta: &bridgea2a.AdapterEventMetaV1{
+			RunID: "member-run", ThreadKey: "host-thread", TurnID: "host-turn",
+			Sequence: 7, Time: eventTime.Format(time.RFC3339Nano),
+			Source: &bridgea2a.AdapterEventSourceMetaV1{
+				RunID: "provider-run", ThreadID: "provider-thread", TurnID: "provider-turn",
+				Sequence: 11, Timestamp: eventTime.Add(-time.Second).Format(time.RFC3339Nano),
+			},
+		},
+		Raw: map[string]any{
+			"dropped_count": 3, "by_kind": map[string]any{"text.content": 2, "reasoning.content": 1},
+			"first_sequence": 4, "last_sequence": 6, "reason": "backpressure", "source": "sdk",
+			"details": map[string]any{"buffer": 1},
+		},
+	}))
+	if len(events) != 3 || events[2].Kind != DelegationStreamDropped {
+		t.Fatalf("events = %#v", events)
+	}
+	dropped := events[2]
+	if dropped.Sequence != 7 || !dropped.Time.Equal(eventTime) {
+		t.Fatalf("dropped coordinates = %#v", dropped)
+	}
+	for key, want := range map[string]any{
+		"member_run_id": "member-run", "member_thread_id": "provider-thread",
+		"member_thread_key": "host-thread", "member_turn_id": "host-turn",
+		"member_provider_run_id": "provider-run", "member_provider_thread_id": "provider-thread",
+		"member_provider_turn_id": "provider-turn",
+		"dropped_count": 3, "reason": "backpressure", "source": "sdk",
+	} {
+		if got := dropped.Raw[key]; got != want {
+			t.Errorf("Raw[%q] = %#v, want %#v", key, got, want)
+		}
+	}
+	byKind, ok := dropped.Raw["by_kind"].(map[string]int)
+	if !ok || byKind["text.content"] != 2 || byKind["reasoning.content"] != 1 {
+		t.Fatalf("dropped by_kind = %#v", dropped.Raw["by_kind"])
+	}
+}
+
+func TestEventMapperTypedAdapterStreamPreservesApprovalPayload(t *testing.T) {
+	mapper := newEventMapper(DelegationEvent{RunID: "leader-run", DelegationID: "del-1", AgentKey: "implement"})
+	events := mapper.Map(adapterStreamStatusEvent(bridgea2a.AdapterStreamEventV1{
+		Kind:       string(driver.StreamHITLRequested),
+		ToolCallID: "tool-1",
+		HITL: map[string]any{
+			"request_id": "approval-1", "decision_kind": string(driver.HumanDecisionPermission),
+			"source": "bash", "retry_attempt": 2,
+			"request": map[string]any{
+				"prompt": "run command?", "tool_call_id": "tool-1",
+				"payload": map[string]any{"command": "go test ./..."},
+				"choices": []any{map[string]any{"key": "yes", "label": "Approve"}},
+			},
+		},
+	}))
+	if len(events) != 3 || events[2].Kind != DelegationCustom || events[2].Name != "hitl.requested" {
+		t.Fatalf("events = %#v", events)
+	}
+	approval := events[2]
+	if approval.RemoteToolCallID != "tool-1" || approval.Raw["request_id"] != "approval-1" ||
+		approval.Raw["decision_kind"] != string(driver.HumanDecisionPermission) || approval.Raw["title"] != "run command?" ||
+		approval.Raw["attempt"] != 2 {
+		t.Fatalf("approval event = %#v", approval)
+	}
+	details, ok := approval.Raw["details"].(map[string]any)
+	if !ok || details["command"] != "go test ./..." {
+		t.Fatalf("approval details = %#v", approval.Raw["details"])
 	}
 }
 
@@ -232,7 +307,7 @@ func TestEventMapperInjectedStatusDecoder(t *testing.T) {
 	}
 
 	mixed := mapper.Map(adapterStreamStatusEvent(bridgea2a.AdapterStreamEventV1{
-		Kind:      string(agentadaptor.StreamTextContent),
+		Kind:      string(driver.StreamTextContent),
 		Sequence:  1,
 		MessageID: "msg-1",
 		Delta:     "duplicate",

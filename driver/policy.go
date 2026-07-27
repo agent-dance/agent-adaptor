@@ -58,7 +58,7 @@ const (
 // apply. False means the dimension is ignored or not modeled for that
 // driver. Permission / PlanReview / Question declare per-mode support via
 // HumanDecisionSupport / QuestionSupport so the runner can validate host
-// requests before Start().
+// requests before driver launch.
 type RunPolicyCapabilities struct {
 	Isolation bool
 	WebSearch bool

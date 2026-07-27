@@ -3,7 +3,7 @@ package codebuddy
 import (
 	"strings"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
 )
 
 const defaultModel = "claude-sonnet-5"
@@ -12,8 +12,8 @@ const defaultModel = "claude-sonnet-5"
 // the stream-json system.init response. CodeBuddy proxies many providers; this list is
 // used for the config schema select field and admin surfaces. It is not
 // exhaustive and the CLI accepts any id it recognises.
-func models() []agentadaptor.ModelInfo {
-	return cloneModelInfos([]agentadaptor.ModelInfo{
+func models() []driver.ModelInfo {
+	return cloneModelInfos([]driver.ModelInfo{
 		{ID: "claude-sonnet-5", Label: "Claude-Sonnet-5"},
 		{ID: "claude-opus-4.8", Label: "Claude-Opus-4.8"},
 		{ID: "claude-haiku-4.5", Label: "Claude-Haiku-4.5"},
@@ -23,24 +23,24 @@ func models() []agentadaptor.ModelInfo {
 	})
 }
 
-func modelOptions(list []agentadaptor.ModelInfo) []agentadaptor.ConfigOption {
+func modelOptions(list []driver.ModelInfo) []driver.ConfigOption {
 	if len(list) == 0 {
 		return nil
 	}
-	options := make([]agentadaptor.ConfigOption, 0, len(list))
+	options := make([]driver.ConfigOption, 0, len(list))
 	for _, model := range list {
-		options = append(options, agentadaptor.ConfigOption{Value: model.ID, Label: model.Label})
+		options = append(options, driver.ConfigOption{Value: model.ID, Label: model.Label})
 	}
 	return options
 }
 
-func requestedModelFlag(cfg agentadaptor.CodeBuddyConfig) string {
+func requestedModelFlag(cfg Config) string {
 	return strings.TrimSpace(cfg.Model)
 }
 
-func detectEffectiveModel(cfg agentadaptor.CodeBuddyConfig) *agentadaptor.DetectedModel {
+func detectEffectiveModel(cfg Config) *driver.DetectedModel {
 	if model := requestedModelFlag(cfg); model != "" {
-		return &agentadaptor.DetectedModel{
+		return &driver.DetectedModel{
 			Model:      model,
 			Provider:   "codebuddy",
 			Source:     "binding_config",
@@ -50,6 +50,6 @@ func detectEffectiveModel(cfg agentadaptor.CodeBuddyConfig) *agentadaptor.Detect
 	return nil
 }
 
-func cloneModelInfos(list []agentadaptor.ModelInfo) []agentadaptor.ModelInfo {
-	return append([]agentadaptor.ModelInfo(nil), list...)
+func cloneModelInfos(list []driver.ModelInfo) []driver.ModelInfo {
+	return append([]driver.ModelInfo(nil), list...)
 }

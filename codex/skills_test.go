@@ -6,19 +6,19 @@ import (
 	"path/filepath"
 	"testing"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
 )
 
 type eventSink struct {
-	events []agentadaptor.RunEvent
+	events []driver.RunEvent
 }
 
-func (s *eventSink) Emit(event agentadaptor.RunEvent) error {
+func (s *eventSink) Emit(event driver.RunEvent) error {
 	s.events = append(s.events, event)
 	return nil
 }
 
-func (s *eventSink) EmitStream(agentadaptor.StreamPayload) error { return nil }
+func (s *eventSink) EmitStream(driver.StreamPayload) error { return nil }
 
 func createSkillDir(t *testing.T, root, name string) string {
 	t.Helper()
@@ -46,8 +46,8 @@ func TestInjectCodexSkillsRepairsManagedSymlink(t *testing.T) {
 		t.Fatalf("seed symlink: %v", err)
 	}
 
-	payload := agentadaptor.ResolvedSkills{
-		Entries: []agentadaptor.ResolvedSkill{
+	payload := driver.ResolvedSkills{
+		Entries: []driver.ResolvedSkill{
 			{Key: "team/paperclip", RuntimeName: "paperclip", SourcePath: currentSource},
 		},
 	}
@@ -84,8 +84,8 @@ func TestInjectCodexSkillsPreservesExternalSymlink(t *testing.T) {
 		t.Fatalf("seed external symlink: %v", err)
 	}
 
-	payload := agentadaptor.ResolvedSkills{
-		Entries: []agentadaptor.ResolvedSkill{
+	payload := driver.ResolvedSkills{
+		Entries: []driver.ResolvedSkill{
 			{Key: "team/paperclip", RuntimeName: "paperclip", SourcePath: currentSource},
 		},
 	}

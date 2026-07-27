@@ -51,6 +51,23 @@ type sessionFake struct {
 	humanRejectNoCP bool
 }
 
+type configuredSessionFake struct {
+	*sessionFake
+	configFingerprint string
+}
+
+type noFingerprintDriver struct{ inner *fakeDriver }
+
+func (d *noFingerprintDriver) Descriptor() driver.Descriptor  { return d.inner.Descriptor() }
+func (d *noFingerprintDriver) ValidateConfig(value any) error { return d.inner.ValidateConfig(value) }
+func (d *noFingerprintDriver) Run(ctx context.Context, req driver.Request, sink driver.EventSink) (driver.Response, error) {
+	return d.inner.Run(ctx, req, sink)
+}
+
+func (d *configuredSessionFake) SessionConfigFingerprint() (string, error) {
+	return d.configFingerprint, nil
+}
+
 func newSessionFake(label string) *sessionFake {
 	sf := &sessionFake{fakeDriver: newFakeDriver()}
 	sf.runFunc = func(_ context.Context, req driver.Request, _ driver.EventSink) (driver.Response, error) {
@@ -333,6 +350,37 @@ func TestThreadResumeOnlyNotFound(t *testing.T) {
 	}
 }
 
+func TestThreadForkRejectsExistingTargetWithoutMutation(t *testing.T) {
+	ctx := context.Background()
+	fake := newSessionFake("conflict")
+	store := memory.NewStore()
+	agent := adaptor.New(fake.fakeDriver, adaptor.WithThreadStore(store))
+
+	if _, err := agent.Thread("parent").Run(ctx, "seed parent"); err != nil {
+		t.Fatalf("seed parent: %v", err)
+	}
+	if _, err := agent.Thread("target").Run(ctx, "seed target"); err != nil {
+		t.Fatalf("seed target: %v", err)
+	}
+	parentBefore := activeRecord(t, store, "parent")
+	targetBefore := activeRecord(t, store, "target")
+
+	if _, err := agent.Thread("parent").Fork("target").Run(ctx, "must conflict"); !errors.Is(err, adaptor.ErrThreadAlreadyExists) {
+		t.Fatalf("fork existing target: err=%v, want ErrThreadAlreadyExists", err)
+	}
+	if got := fake.runCount(); got != 2 {
+		t.Fatalf("driver ran %d times, want two seeds only", got)
+	}
+	parentAfter := activeRecord(t, store, "parent")
+	targetAfter := activeRecord(t, store, "target")
+	if parentAfter.ID != parentBefore.ID || parentAfter.State.ResumeID != parentBefore.State.ResumeID {
+		t.Fatalf("parent mutated by conflicting fork: before=%+v after=%+v", parentBefore, parentAfter)
+	}
+	if targetAfter.ID != targetBefore.ID || targetAfter.State.ResumeID != targetBefore.State.ResumeID {
+		t.Fatalf("target mutated by conflicting fork: before=%+v after=%+v", targetBefore, targetAfter)
+	}
+}
+
 func TestNewThreadArchivesPreviousConversation(t *testing.T) {
 	ctx := context.Background()
 	fake := newSessionFake("arch")
@@ -428,6 +476,174 @@ func TestThreadFingerprintGuard(t *testing.T) {
 	}
 	if archived == nil || archived.Status != threadstore.StatusArchived {
 		t.Fatalf("old record = %+v, want archived", archived)
+	}
+}
+
+func TestThreadFingerprintIncludesDriverConstructionConfig(t *testing.T) {
+	store := memory.NewStore()
+	first := &configuredSessionFake{sessionFake: newSessionFake("cfg-a"), configFingerprint: "configured/v1:a"}
+	firstAgent := adaptor.New(first, adaptor.WithThreadStore(store))
+	if _, err := firstAgent.Thread("configured").Run(context.Background(), "seed"); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	second := &configuredSessionFake{sessionFake: newSessionFake("cfg-b"), configFingerprint: "configured/v1:b"}
+	secondAgent := adaptor.New(second, adaptor.WithThreadStore(store))
+	if _, err := secondAgent.Thread("configured", adaptor.ResumeOnly()).Run(context.Background(), "resume"); !errors.Is(err, adaptor.ErrThreadIncompatible) {
+		t.Fatalf("changed construction config: err=%v, want ErrThreadIncompatible", err)
+	}
+	if second.runCount() != 0 {
+		t.Fatalf("incompatible configured driver ran %d times", second.runCount())
+	}
+}
+
+func TestThreadRejectsDriverWithoutStableConfigFingerprint(t *testing.T) {
+	inner := newFakeDriver()
+	driverWithoutFingerprint := &noFingerprintDriver{inner: inner}
+	agent := adaptor.New(driverWithoutFingerprint, adaptor.WithThreadStore(memory.NewStore()))
+	if _, err := agent.Thread("no-config-fingerprint").Run(context.Background(), "go"); !errors.Is(err, adaptor.ErrThreadIncompatible) {
+		t.Fatalf("missing config fingerprint: err=%v, want ErrThreadIncompatible", err)
+	}
+	if inner.runCount() != 0 {
+		t.Fatalf("driver ran %d times despite missing stable config fingerprint", inner.runCount())
+	}
+
+	empty := &configuredSessionFake{sessionFake: newSessionFake("empty-config"), configFingerprint: "  "}
+	agent = adaptor.New(empty, adaptor.WithThreadStore(memory.NewStore()))
+	if _, err := agent.Thread("empty-config-fingerprint").Run(context.Background(), "go"); !errors.Is(err, adaptor.ErrThreadIncompatible) {
+		t.Fatalf("empty config fingerprint: err=%v, want ErrThreadIncompatible", err)
+	}
+	if empty.runCount() != 0 {
+		t.Fatalf("driver ran %d times despite empty stable config fingerprint", empty.runCount())
+	}
+}
+
+func TestThreadFingerprintUsesResolvedWorkspace(t *testing.T) {
+	store := memory.NewStore()
+	fake := newSessionFake("workspace")
+	manager := &fakeWorkspaceManager{
+		log: &callLog{},
+		lease: adaptor.WorkspaceLease{
+			ID: "workspace-1", CWD: "C:/resolved/repo", Fingerprint: "resolved-workspace/v1",
+			Mode: driver.WorkspaceModeShared, StrategyType: driver.WorkspaceStrategyProjectPrimary,
+		},
+	}
+	first := adaptor.New(fake.fakeDriver,
+		adaptor.WithThreadStore(store), adaptor.WithWorkspaceManager(manager), adaptor.WithWorkspace("C:/raw/input-a"),
+	)
+	if _, err := first.Thread("workspace").Run(context.Background(), "seed"); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	second := adaptor.New(fake.fakeDriver,
+		adaptor.WithThreadStore(store), adaptor.WithWorkspaceManager(manager), adaptor.WithWorkspace("C:/raw/input-b"),
+	)
+	if _, err := second.Thread("workspace", adaptor.ResumeOnly()).Run(context.Background(), "same resolved workspace"); err != nil {
+		t.Fatalf("raw input changed but resolved lease stayed identical: %v", err)
+	}
+
+	manager.lease = adaptor.WorkspaceLease{
+		ID: "workspace-2", CWD: "C:/resolved/other", Fingerprint: "resolved-workspace/v2",
+		Mode: driver.WorkspaceModeShared, StrategyType: driver.WorkspaceStrategyProjectPrimary,
+	}
+	if _, err := second.Thread("workspace", adaptor.ResumeOnly()).Run(context.Background(), "different resolved workspace"); !errors.Is(err, adaptor.ErrThreadIncompatible) {
+		t.Fatalf("changed resolved workspace: err=%v, want ErrThreadIncompatible", err)
+	}
+}
+
+func TestThreadFingerprintIncludesResolvedRuntimeAttachments(t *testing.T) {
+	store := memory.NewStore()
+	fake := newSessionFake("runtime")
+	log := &callLog{}
+	endpoint := "http://127.0.0.1:4101"
+	manager := &fakeServiceManager{
+		log: log,
+		ensure: func(context.Context, adaptor.ServiceRequest) ([]adaptor.ServiceRef, error) {
+			return []adaptor.ServiceRef{{ID: "sidecar", Name: "sidecar", URL: endpoint, Status: driver.RuntimeServiceRunning}}, nil
+		},
+	}
+	agent := adaptor.New(fake.fakeDriver,
+		adaptor.WithThreadStore(store), adaptor.WithServiceManager(manager), adaptor.WithServices(adaptor.ServiceSpec{ID: "sidecar"}),
+	)
+	if _, err := agent.Thread("runtime").Run(context.Background(), "seed"); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	endpoint = "http://127.0.0.1:4202"
+	if _, err := agent.Thread("runtime", adaptor.ResumeOnly()).Run(context.Background(), "resume"); !errors.Is(err, adaptor.ErrThreadIncompatible) {
+		t.Fatalf("changed resolved runtime attachment: err=%v, want ErrThreadIncompatible", err)
+	}
+}
+
+func TestThreadRuntimeSecretRotationDoesNotBreakResume(t *testing.T) {
+	store := memory.NewStore()
+	fake := newSessionFake("runtime-secret")
+	log := &callLog{}
+	endpoint := "http://127.0.0.1:4303"
+	secret := "sk-first-runtime-secret"
+	manager := &fakeServiceManager{
+		log: log,
+		ensure: func(context.Context, adaptor.ServiceRequest) ([]adaptor.ServiceRef, error) {
+			return []adaptor.ServiceRef{{
+				ID:        "sidecar",
+				Name:      "sidecar",
+				URL:       endpoint,
+				Status:    driver.RuntimeServiceRunning,
+				Lifecycle: driver.RuntimeLifecycleShared,
+				SecretEnv: []driver.EnvBinding{{Name: "RUNTIME_TOKEN", Value: secret}},
+			}}, nil
+		},
+	}
+	agent := adaptor.New(fake.fakeDriver,
+		adaptor.WithThreadStore(store),
+		adaptor.WithServiceManager(manager),
+		adaptor.WithServices(adaptor.ServiceSpec{ID: "sidecar"}),
+	)
+
+	if _, err := agent.Thread("runtime-secret").Run(context.Background(), "seed"); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	seedRecord := activeRecord(t, store, "runtime-secret")
+	if strings.Contains(seedRecord.Fingerprint, secret) || strings.Contains(seedRecord.CompatibilityFingerprint, secret) {
+		t.Fatalf("durable fingerprint leaked the first runtime secret: %+v", seedRecord)
+	}
+
+	secret = "sk-rotated-runtime-secret"
+	result, err := agent.Thread("runtime-secret", adaptor.ResumeOnly()).Run(context.Background(), "resume")
+	if err != nil {
+		t.Fatalf("resume after secret rotation: %v", err)
+	}
+	if result.Text != "runtime-secret:reused:runtime-secret-resume-1" {
+		t.Fatalf("resume text = %q, want the existing provider session", result.Text)
+	}
+	if got := fake.runCount(); got != 2 {
+		t.Fatalf("driver ran %d times, want seed plus resumed turn", got)
+	}
+	resumeRequest := fake.request(t, 1)
+	if len(resumeRequest.Runtime.SecretEnv) != 1 ||
+		resumeRequest.Runtime.SecretEnv[0].Name != "RUNTIME_TOKEN" ||
+		resumeRequest.Runtime.SecretEnv[0].Value != secret {
+		t.Fatalf("resumed driver did not receive exactly one RUNTIME_TOKEN binding with the rotated credential")
+	}
+	resumedRecord := activeRecord(t, store, "runtime-secret")
+	if resumedRecord.Fingerprint != seedRecord.Fingerprint || resumedRecord.CompatibilityFingerprint != seedRecord.CompatibilityFingerprint {
+		t.Fatalf("secret rotation changed compatibility fingerprint: before=%+v after=%+v", seedRecord, resumedRecord)
+	}
+	if strings.Contains(resumedRecord.Fingerprint, secret) || strings.Contains(resumedRecord.CompatibilityFingerprint, secret) {
+		t.Fatalf("durable fingerprint leaked the rotated runtime secret: %+v", resumedRecord)
+	}
+
+	// A real compatibility change still fails, and the diagnostic must not
+	// serialize the credential that accompanied the incompatible attachment.
+	endpoint = "http://127.0.0.1:4404"
+	secret = "sk-incompatible-runtime-secret"
+	_, err = agent.Thread("runtime-secret", adaptor.ResumeOnly()).Run(context.Background(), "changed endpoint")
+	if !errors.Is(err, adaptor.ErrThreadIncompatible) {
+		t.Fatalf("changed endpoint: err=%v, want ErrThreadIncompatible", err)
+	}
+	if strings.Contains(err.Error(), secret) || strings.Contains(err.Error(), "sk-first-runtime-secret") || strings.Contains(err.Error(), "sk-rotated-runtime-secret") {
+		t.Fatalf("thread compatibility error leaked a runtime secret: %v", err)
+	}
+	if got := fake.runCount(); got != 2 {
+		t.Fatalf("incompatible runtime reached driver: run count=%d, want 2", got)
 	}
 }
 
@@ -565,6 +781,27 @@ func TestThreadRunRequiresValidCheckpoint(t *testing.T) {
 	}
 	if rec != nil {
 		t.Fatalf("record persisted without checkpoint: %+v", rec)
+	}
+}
+
+func TestThreadRejectsCheckpointWithoutResumeID(t *testing.T) {
+	fake := newFakeDriver()
+	fake.runFunc = func(context.Context, driver.Request, driver.EventSink) (driver.Response, error) {
+		return driver.Response{
+			Output: "nominal success",
+			Checkpoint: &driver.Checkpoint{
+				Valid: true,
+				State: &driver.SessionState{DisplayID: "display-only", Data: map[string]string{"nested_session": "not-authoritative"}},
+			},
+		}, nil
+	}
+	store := memory.NewStore()
+	agent := adaptor.New(fake, adaptor.WithThreadStore(store))
+	if _, err := agent.Thread("empty-resume").Run(context.Background(), "go"); !errors.Is(err, adaptor.ErrThreadCheckpointMissing) {
+		t.Fatalf("empty resume ID: err=%v, want ErrThreadCheckpointMissing", err)
+	}
+	if rec, err := store.Resolve(context.Background(), threadstore.Query{Key: "empty-resume", IncludeArchived: true}); err != nil || rec != nil {
+		t.Fatalf("invalid checkpoint persisted: rec=%+v err=%v", rec, err)
 	}
 }
 

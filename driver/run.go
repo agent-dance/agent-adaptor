@@ -1,5 +1,7 @@
 package driver
 
+import "encoding/json"
+
 // AgentIdentity is host-supplied caller identity propagated into SDK hooks.
 //
 // The SDK does not use these fields for routing. They exist so host-provided
@@ -13,17 +15,33 @@ type AgentIdentity struct {
 	Name      string
 }
 
+// TerminalPayload preserves the provider's official terminal protocol event.
+// JSON contains the exact JSON value recognized by the driver parser, before
+// downstream normalization. Event is the provider-native event or method name
+// (for example "result" or "turn/completed").
+//
+// Drivers MUST populate this value only from an official terminal event. They
+// must not synthesize it from Output, Summary, Transcript, or arbitrary JSON
+// found elsewhere in stdout.
+type TerminalPayload struct {
+	Event string
+	JSON  json.RawMessage
+}
+
 // RawStreams captures the complete raw stdout and stderr emitted during one
-// run. It is the stable surface hosts should rely on for auditing, replay,
-// debugging, or archival.
+// run together with the provider terminal payload recognized from that same
+// byte stream. It is the stable surface hosts should rely on for auditing,
+// replay, debugging, or archival.
 //
 // Contract:
 //   - Stdout / Stderr hold the full untruncated bytes the child process wrote.
 //   - No redaction, no semantic parsing, no line-wise transformation is applied.
-//   - Both Run() and Start().Wait() must return the same RawStreams payload.
+//   - Terminal is nil when no official terminal event was observed.
+//   - Both consumer Run and Stream.Result must return equivalent values.
 type RawStreams struct {
-	Stdout string
-	Stderr string
+	Stdout   string
+	Stderr   string
+	Terminal *TerminalPayload
 }
 
 // Usage is normalized token/cost accounting reported by drivers when the
@@ -41,8 +59,6 @@ type Usage struct {
 // have been merged, sessions have been coordinated, workspace/runtime/skill/
 // MCP payloads have been resolved, and policy has been validated against the
 // descriptor.
-//
-// The root package exposes this type as agentadaptor.DriverRunRequest.
 type Request struct {
 	RunID          string
 	Prompt         string
@@ -83,15 +99,14 @@ type Request struct {
 // Response is the driver-facing execution result.
 //
 // Built-in drivers must fill Output / RawStreams / Transcript / Summary /
-// Result / Checkpoint from the same pass that parses the CLI protocol; none of
+// Checkpoint from the same pass that parses the CLI protocol; none of
 // these fields may be recomputed by downstream helpers.
-//
-// The root package exposes this type as agentadaptor.DriverRunResult.
 type Response struct {
 	// Output is final assistant-facing text only. It must not contain raw
 	// stdout/stderr dumps, Summary text, or provider terminal JSON.
 	Output string
-	// RawStreams carries complete raw stdout/stderr for audit and debugging.
+	// RawStreams carries complete raw stdout/stderr and the official provider
+	// terminal JSON (when the protocol defines one) for audit and debugging.
 	RawStreams *RawStreams
 	// Transcript is the normalized semantic item stream parsed by the driver.
 	Transcript       []TranscriptItem
@@ -107,7 +122,6 @@ type Response struct {
 	BillingType      string
 	CostUSD          *float64
 	Summary          string
-	Result           map[string]any
 	StructuredOutput *StructuredOutput
 	RuntimeServices  []RuntimeServiceReport
 	Question         *RunQuestion
@@ -140,8 +154,6 @@ const (
 // one run. EngineSessionID is the provider handle to continue; State holds
 // the full driver checkpoint; Mode tells the driver whether this is a fresh,
 // continued, forked, or stateless invocation.
-//
-// The root package exposes this type as agentadaptor.DriverSessionContext.
 type SessionContext struct {
 	EngineSessionID string
 	Mode            SessionMode
@@ -153,8 +165,6 @@ type SessionContext struct {
 // session store after a successful run. ResumeID is the provider session
 // handle; Data contains driver-specific guards such as cwd or prompt-bundle
 // hashes.
-//
-// The root package exposes this type as agentadaptor.DriverSessionState.
 type SessionState struct {
 	ResumeID  string
 	DisplayID string
@@ -175,8 +185,9 @@ type SessionState struct {
 // exception: non-zero exit, cancellation, malformed protocol, missing
 // terminal, or business failure MUST return nil or Valid=false. This prevents
 // a failed run from replacing a previously healthy Thread checkpoint.
-//
-// The root package exposes this type as agentadaptor.DriverCheckpoint.
+// Structurally, Valid=true also requires State != nil and a non-empty
+// State.ResumeID that round-trips through the codec exposed by the same
+// resume-capable Driver.
 type Checkpoint struct {
 	State *SessionState
 	Valid bool
@@ -201,7 +212,7 @@ type RunChoice struct {
 //
 // HumanDecision is non-nil exactly when Code is FailureReject or
 // FailureTimeout. Drivers MUST uphold this invariant on Response.Failure;
-// core validates it before exposing the final Result.
+// adaptertest verifies it as RSP-02.
 type RunFailure struct {
 	Message       string
 	Code          FailureCode

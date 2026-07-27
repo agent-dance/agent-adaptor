@@ -1,10 +1,7 @@
 package agui
 
-// This file is the v1-API twin of bridge.go: it rewrites the AG-UI state
-// machine on the new unified event family (adaptor.Event, decision D3)
-// instead of the legacy driver StreamPayload vocabulary. The legacy
-// Translator / Wrap surface stays untouched until P5 deletes it; both
-// implementations coexist additively in this package.
+// This file maps the unified adaptor.Event family onto the AG-UI state
+// machine.
 //
 // Typical v1 use from a host (design doc §2.11):
 //
@@ -13,12 +10,13 @@ package agui
 //	    // ev is an AG-UI events.Event; forward it via SSE / WebSocket.
 //	}
 //
-// Protocol invariants carried over item-by-item from the legacy bridge:
+// Protocol invariants:
 //   - the output always starts with RUN_STARTED (pre-start events buffer);
 //   - lifecycle START/CONTENT/END markers are idempotent and synthesized
 //     when the producer skipped the opening marker;
 //   - all open lifecycles close before the terminal event;
-//   - after RUN_FINISHED / RUN_ERROR the translator suppresses all traffic;
+//   - after CloseRun emits RUN_FINISHED / RUN_ERROR the translator suppresses
+//     all traffic;
 //   - approvals project as "dec.<kind>.<source>" tool-call lifecycles
 //     (DecisionAsToolCall) or CUSTOM events (DecisionAsCustom);
 //   - capability degradation stays visible: the run-policy retry warning
@@ -29,20 +27,19 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
 
 	aguievents "github.com/ag-ui-protocol/ag-ui/sdks/community/go/pkg/core/events"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
 	adaptor "github.com/agent-dance/agent-adaptor/next"
 )
 
 // EventTranslator is the v1 stateful mapper from adaptor.Event to AG-UI
-// events. It mirrors Translator's state machine exactly; only the input
-// vocabulary changed. Create one per run via NewEventTranslator (or let
-// Events do it) so state never leaks between runs.
+// events. Create one per run via NewEventTranslator (or let Events do it) so
+// state never leaks between runs.
 type EventTranslator struct {
 	mu sync.Mutex
 
@@ -66,8 +63,8 @@ type EventTranslator struct {
 type EventTranslatorOption func(*EventTranslator)
 
 // WithEventDecisionMode selects the approval projection strategy for the
-// v1 translator. DecisionAsToolCall is the default; DecisionAsCustom keeps
-// the legacy CustomEvent mapping.
+// v1 translator. DecisionAsToolCall is the default; DecisionAsCustom selects
+// an explicit CustomEvent mapping.
 func WithEventDecisionMode(mode DecisionMode) EventTranslatorOption {
 	return func(t *EventTranslator) { t.decisionMode = mode }
 }
@@ -91,27 +88,59 @@ func NewEventTranslator(opts ...EventTranslatorOption) *EventTranslator {
 // event into AG-UI protocol events, and returns a channel the caller can
 // range over. When the run ends (Events() closes), the bridge consults
 // stream.Result() and emits a closing RUN_FINISHED / RUN_ERROR if the
-// producer did not, then closes the channel — the exact contract legacy
-// Wrap provided on RunHandle.
+// producer did not, then closes the channel.
 //
-// Cancellation is the stream's own concern in v1: the context handed to
-// Agent/Thread.Stream governs the run, and stream.Cancel() ends it early;
-// either way Events drains and closes normally.
+// Events uses a background context for compatibility. Request-scoped bridges
+// should use EventsContext so a disconnected consumer cancels the stream and
+// cannot leave this fan-out goroutine blocked on its output channel.
 func Events(stream adaptor.Stream, opts ...EventTranslatorOption) <-chan aguievents.Event {
+	return EventsContext(context.Background(), stream, opts...)
+}
+
+// EventsContext is Events with explicit consumer lifetime. It cancels the
+// underlying stream and exits promptly when ctx ends; every output send is
+// cancellation-aware.
+func EventsContext(ctx context.Context, stream adaptor.Stream, opts ...EventTranslatorOption) <-chan aguievents.Event {
 	out := make(chan aguievents.Event, 32)
 	translator := NewEventTranslator(opts...)
+	if ctx == nil {
+		ctx = context.Background()
+	}
 
 	go func() {
 		defer close(out)
-		for ev := range stream.Events() {
-			for _, e := range translator.Translate(ev) {
-				out <- e
+		send := func(event aguievents.Event) bool {
+			select {
+			case <-ctx.Done():
+				stream.Cancel()
+				return false
+			case out <- event:
+				return true
 			}
 		}
+		for {
+			select {
+			case <-ctx.Done():
+				stream.Cancel()
+				return
+			case ev, ok := <-stream.Events():
+				if !ok {
+					goto drained
+				}
+				for _, event := range translator.Translate(ev) {
+					if !send(event) {
+						return
+					}
+				}
+			}
+		}
+	drained:
 		_, err := stream.Result()
 		translator.fillRunID(stream.RunID())
-		for _, e := range translator.CloseRun(err) {
-			out <- e
+		for _, event := range translator.CloseRun(err) {
+			if !send(event) {
+				return
+			}
 		}
 	}()
 
@@ -120,7 +149,8 @@ func Events(stream adaptor.Stream, opts ...EventTranslatorOption) <-chan aguieve
 
 // Translate maps one adaptor.Event to zero or more AG-UI events. Stateful:
 // it synthesizes missing opening lifecycle markers, buffers pre-RUN_STARTED
-// output, dedupes lifecycle markers, and latches after the terminal event.
+// output and dedupes lifecycle markers. RunFinished only supplies identity;
+// CloseRun latches the authoritative terminal after Stream.Result().
 func (t *EventTranslator) Translate(ev adaptor.Event) []aguievents.Event {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -130,13 +160,24 @@ func (t *EventTranslator) Translate(ev adaptor.Event) []aguievents.Event {
 	if t.runFinish {
 		return nil
 	}
+	if approval, ok := ev.(*adaptor.ApprovalRequest); ok && approval == nil {
+		return nil
+	}
+
+	meta := ev.Meta()
+	if meta.RunID != "" {
+		t.runID = meta.RunID
+	}
+	if t.threadID == "" && meta.ThreadKey != "" {
+		t.threadID = meta.ThreadKey
+	}
 
 	switch e := ev.(type) {
 	case adaptor.RunStarted:
 		if e.ThreadID != "" {
 			t.threadID = e.ThreadID
 		}
-		if e.RunID != "" {
+		if meta.RunID == "" && e.RunID != "" {
 			t.runID = e.RunID
 		}
 		if t.runStart {
@@ -156,24 +197,12 @@ func (t *EventTranslator) Translate(ev adaptor.Event) []aguievents.Event {
 		if e.ThreadID != "" {
 			t.threadID = e.ThreadID
 		}
-		if e.RunID != "" {
+		if meta.RunID == "" && e.RunID != "" {
 			t.runID = e.RunID
 		}
-		t.runFinish = true
-		out := t.ensureRunStartedV1Locked()
-		out = append(out, t.closeAllOpenLifecyclesV1Locked()...)
-		if e.Failed {
-			msg := defaultString(e.Message, "stream run error")
-			opts := []aguievents.RunErrorOption{}
-			if e.Reason != "" {
-				opts = append(opts, aguievents.WithErrorCode(string(e.Reason)))
-			}
-			if t.runID != "" {
-				opts = append(opts, aguievents.WithRunID(t.runID))
-			}
-			return append(out, aguievents.NewRunErrorEvent(msg, opts...))
-		}
-		return append(out, aguievents.NewRunFinishedEvent(t.threadOrDefaultV1(), t.runOrDefaultV1()))
+		// Informational only. Stream.Result() is the sole terminal authority;
+		// Events calls CloseRun after the event channel is fully drained.
+		return nil
 	}
 
 	translated := t.translateNonTerminalV1Locked(ev)
@@ -188,15 +217,14 @@ func (t *EventTranslator) Translate(ev adaptor.Event) []aguievents.Event {
 }
 
 // CloseRun emits the terminal AG-UI event for the run based on the
-// stream.Result() error, exactly once. It is the v1 counterpart of both
-// legacy Translator.CloseRun and Wrap's closing synthesis:
+// stream.Result() error, exactly once:
 //
 //   - err == nil → RUN_FINISHED;
 //   - errors.Is(err, context.Canceled) → RUN_ERROR code "run.cancelled";
 //   - *adaptor.RunError → RUN_ERROR code = string(RunError.Reason);
 //   - any other error → RUN_ERROR code "run.error".
 //
-// Idempotent: once the translator saw (or emitted) a terminal event, all
+// Idempotent: once the translator emitted a terminal event, all
 // further CloseRun / Translate calls return nil.
 func (t *EventTranslator) CloseRun(err error) []aguievents.Event {
 	t.mu.Lock()
@@ -231,8 +259,7 @@ func (t *EventTranslator) CloseRun(err error) []aguievents.Event {
 }
 
 // fillRunID backfills the run identifier from the authoritative stream when
-// the producer never emitted RunStarted (legacy Wrap filled it from the
-// RunResult the same way).
+// the producer never emitted RunStarted.
 func (t *EventTranslator) fillRunID(runID string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -260,7 +287,7 @@ func (t *EventTranslator) translateNonTerminalV1Locked(ev adaptor.Event) []aguie
 	case adaptor.Notice:
 		return t.noticeLocked(e)
 	case adaptor.Dropped:
-		return []aguievents.Event{customEvent("stream.dropped", map[string]any{"dropped_count": e.Count})}
+		return []aguievents.Event{customEvent("stream.dropped", droppedValueV1(e))}
 	case adaptor.SubagentUpdate:
 		value := map[string]any{}
 		if e.Agent != "" {
@@ -276,8 +303,7 @@ func (t *EventTranslator) translateNonTerminalV1Locked(ev adaptor.Event) []aguie
 	case *adaptor.ApprovalRequest:
 		return t.approvalRequestLocked(e)
 	case adaptor.ProcessInfo:
-		// Process chunks never had an AG-UI projection (legacy RunEvents
-		// did not reach the Translator); keep the wire identical.
+		// Process chunks have no AG-UI protocol projection.
 		return nil
 	}
 	return nil
@@ -353,13 +379,29 @@ func (t *EventTranslator) toolCallLocked(e adaptor.ToolCall) []aguievents.Event 
 			return nil
 		}
 		t.activeToolStart[e.ID] = true
-		return []aguievents.Event{aguievents.NewToolCallStartEvent(e.ID, defaultString(e.Name, "tool"))}
+		out := []aguievents.Event{aguievents.NewToolCallStartEvent(e.ID, defaultString(e.Name, "tool"))}
+		if e.Args != nil {
+			if encoded, err := json.Marshal(e.Args); err == nil {
+				out = append(out, aguievents.NewToolCallArgsEvent(e.ID, string(encoded)))
+			}
+		}
+		return out
 	case adaptor.PhaseEnd:
+		out := []aguievents.Event{}
 		if !t.activeToolStart[e.ID] {
-			return nil
+			// An end-only snapshot is still meaningful when it carries the
+			// provider's complete result. Synthesize its missing opening edge.
+			if e.Result == nil {
+				return nil
+			}
+			out = append(out, aguievents.NewToolCallStartEvent(e.ID, defaultString(e.Name, "tool")))
 		}
 		delete(t.activeToolStart, e.ID)
-		return []aguievents.Event{aguievents.NewToolCallEndEvent(e.ID)}
+		out = append(out, aguievents.NewToolCallEndEvent(e.ID))
+		if e.Result != nil {
+			out = append(out, aguievents.NewToolCallResultEvent(e.ID+":result", e.ID, toolResultContentV1(e.Result)))
+		}
+		return out
 	default: // args delta
 		if e.ArgsDelta == "" {
 			return nil
@@ -409,7 +451,7 @@ func (t *EventTranslator) noticeLocked(e adaptor.Notice) []aguievents.Event {
 // approvalRequestLocked projects a live *ApprovalRequest event (form B
 // consumption) with full fidelity — the request carries payload, choices,
 // deadline, and the agent-native tool call id, so the wire shape matches
-// the legacy StreamHITLRequested projection key for key.
+// the stable approval wire projection key for key.
 func (t *EventTranslator) approvalRequestLocked(req *adaptor.ApprovalRequest) []aguievents.Event {
 	if req == nil || req.ID == "" {
 		return nil
@@ -438,7 +480,7 @@ func (t *EventTranslator) approvalRequestLocked(req *adaptor.ApprovalRequest) []
 	}
 	t.activeToolStart[toolCallID] = true
 	return []aguievents.Event{
-		aguievents.NewToolCallStartEvent(toolCallID, hitlToolName(agentadaptor.HumanDecisionKind(req.Kind), req.Source)),
+		aguievents.NewToolCallStartEvent(toolCallID, hitlToolName(string(req.Kind), req.Source)),
 		aguievents.NewToolCallArgsEvent(toolCallID, string(body)),
 	}
 }
@@ -471,7 +513,7 @@ func (t *EventTranslator) approvalNoticeRequestedLocked(e adaptor.Notice) []agui
 	}
 	t.activeToolStart[toolCallID] = true
 	return []aguievents.Event{
-		aguievents.NewToolCallStartEvent(toolCallID, hitlToolName(agentadaptor.HumanDecisionKind(kind), source)),
+		aguievents.NewToolCallStartEvent(toolCallID, hitlToolName(kind, source)),
 		aguievents.NewToolCallArgsEvent(toolCallID, string(body)),
 	}
 }
@@ -485,10 +527,10 @@ func (t *EventTranslator) approvalNoticeResolvedLocked(e adaptor.Notice) []aguie
 	tail := hitlResolvedTailV1(toolCallID, e.Data)
 	if !t.activeToolStart[toolCallID] {
 		// Out-of-order resolved — synthesize a start so the AG-UI stream
-		// stays well-formed (legacy hitlResolvedAsToolCall behavior).
+		// stays well-formed.
 		kind, _ := e.Data["kind"].(string)
 		source, _ := e.Data["source"].(string)
-		start := aguievents.NewToolCallStartEvent(toolCallID, hitlToolName(agentadaptor.HumanDecisionKind(kind), source))
+		start := aguievents.NewToolCallStartEvent(toolCallID, hitlToolName(kind, source))
 		return append([]aguievents.Event{start}, tail...)
 	}
 	delete(t.activeToolStart, toolCallID)
@@ -558,23 +600,31 @@ func (t *EventTranslator) ensureRunStartedV1Locked() []aguievents.Event {
 
 func (t *EventTranslator) closeAllOpenLifecyclesV1Locked() []aguievents.Event {
 	out := []aguievents.Event{}
-	for id := range t.activeText {
+	for _, id := range sortedActiveIDs(t.activeText) {
 		out = append(out, aguievents.NewTextMessageEndEvent(id))
 	}
 	t.activeText = map[string]bool{}
-	for id := range t.activeReason {
+	for _, id := range sortedActiveIDs(t.activeReason) {
 		out = append(out, aguievents.NewReasoningMessageEndEvent(id))
 	}
 	t.activeReason = map[string]bool{}
-	for id := range t.activeToolStart {
+	for _, id := range sortedActiveIDs(t.activeToolStart) {
 		out = append(out, aguievents.NewToolCallEndEvent(id))
 	}
 	t.activeToolStart = map[string]bool{}
 	return out
 }
 
-// textRoleOptV1 maps the v1 Role (driver vocabulary: "" = assistant) onto
-// the AG-UI role option, matching legacy textRoleOpt output exactly.
+func sortedActiveIDs(active map[string]bool) []string {
+	ids := make([]string, 0, len(active))
+	for id := range active {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+// textRoleOptV1 maps the public Role onto the AG-UI role option.
 func textRoleOptV1(r adaptor.Role) aguievents.TextMessageStartOption {
 	if r == adaptor.RoleUser {
 		return aguievents.WithRole("user")
@@ -582,8 +632,8 @@ func textRoleOptV1(r adaptor.Role) aguievents.TextMessageStartOption {
 	return aguievents.WithRole("assistant")
 }
 
-// toolResultContentV1 inlines the common tool-result payload shapes; same
-// preference order as the legacy toolResultContent.
+// toolResultContentV1 inlines common tool-result payload shapes using a
+// stable preference order.
 func toolResultContentV1(result map[string]any) string {
 	if result == nil {
 		return "{}"
@@ -606,7 +656,30 @@ func toolResultContentV1(result map[string]any) string {
 	if raw, err := json.Marshal(result); err == nil && len(raw) > 0 && string(raw) != "{}" {
 		return string(raw)
 	}
-	return ""
+	return "{}"
+}
+
+func droppedValueV1(e adaptor.Dropped) map[string]any {
+	value := map[string]any{"dropped_count": e.Count}
+	if len(e.ByKind) > 0 {
+		value["by_kind"] = e.ByKind
+	}
+	if e.FirstSequence != 0 {
+		value["first_sequence"] = e.FirstSequence
+	}
+	if e.LastSequence != 0 {
+		value["last_sequence"] = e.LastSequence
+	}
+	if e.Reason != "" {
+		value["reason"] = e.Reason
+	}
+	if e.Source != "" {
+		value["source"] = e.Source
+	}
+	if len(e.Details) > 0 {
+		value["details"] = e.Details
+	}
+	return value
 }
 
 func noticeValue(e adaptor.Notice) map[string]any {

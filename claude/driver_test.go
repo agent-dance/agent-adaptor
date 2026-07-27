@@ -10,13 +10,14 @@ import (
 	"strings"
 	"testing"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	agentadaptor "github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/internal/testutil"
+	adaptor "github.com/agent-dance/agent-adaptor/next"
 )
 
 func TestBuildClaudeExecArgsIncludesPartialMessagesWhenStreaming(t *testing.T) {
-	cfg := agentadaptor.ClaudeConfig{Model: "claude-sonnet-4"}
-	req := agentadaptor.DriverRunRequest{Streaming: true}
+	cfg := Config{Model: "claude-sonnet-4"}
+	req := agentadaptor.Request{Streaming: true}
 	args, err := buildClaudeExecArgs(cfg, req, "", false)
 	if err != nil {
 		t.Fatalf("build args: %v", err)
@@ -32,7 +33,7 @@ func TestBuildClaudeExecArgsIncludesPartialMessagesWhenStreaming(t *testing.T) {
 		t.Fatalf("expected --include-partial-messages in %#v", args)
 	}
 
-	argsBatch, err := buildClaudeExecArgs(cfg, agentadaptor.DriverRunRequest{Streaming: false}, "", false)
+	argsBatch, err := buildClaudeExecArgs(cfg, agentadaptor.Request{Streaming: false}, "", false)
 	if err != nil {
 		t.Fatalf("build batch args: %v", err)
 	}
@@ -45,7 +46,7 @@ func TestBuildClaudeExecArgsIncludesPartialMessagesWhenStreaming(t *testing.T) {
 
 func TestBuildClaudeExecArgsUsesJSONSchemaForNativeStructuredOutput(t *testing.T) {
 	schema := []byte(`{"type":"object","properties":{"project_name":{"type":"string"}}}`)
-	args, err := buildClaudeExecArgs(agentadaptor.ClaudeConfig{Model: "claude-sonnet-4"}, agentadaptor.DriverRunRequest{
+	args, err := buildClaudeExecArgs(Config{Model: "claude-sonnet-4"}, agentadaptor.Request{
 		OutputSchema: &agentadaptor.OutputSchema{
 			Format:     agentadaptor.OutputFormatJSONSchema,
 			Mode:       agentadaptor.StructuredOutputNativeStrict,
@@ -70,7 +71,7 @@ func TestBuildClaudeExecArgsUsesJSONSchemaForNativeStructuredOutput(t *testing.T
 
 func TestBuildClaudeExecArgsUsesStreamJSONForStreamingStructuredOutput(t *testing.T) {
 	schema := []byte(`{"type":"object","properties":{"project_name":{"type":"string"}}}`)
-	args, err := buildClaudeExecArgs(agentadaptor.ClaudeConfig{Model: "claude-sonnet-4"}, agentadaptor.DriverRunRequest{
+	args, err := buildClaudeExecArgs(Config{Model: "claude-sonnet-4"}, agentadaptor.Request{
 		Streaming: true,
 		OutputSchema: &agentadaptor.OutputSchema{
 			Format:     agentadaptor.OutputFormatJSONSchema,
@@ -96,7 +97,7 @@ func TestBuildClaudeExecArgsUsesStreamJSONForStreamingStructuredOutput(t *testin
 
 func TestBuildClaudeExecArgsInlinesReferencesWithoutLosingLargeNumbers(t *testing.T) {
 	schema := []byte(`{"$schema":"https://json-schema.org/draft/2020-12/schema","$defs":{"item":{"type":"object","properties":{"id":{"type":"integer","minimum":9007199254740993}}}},"type":"object","properties":{"item":{"$ref":"#/$defs/item"}}}`)
-	args, err := buildClaudeExecArgs(agentadaptor.ClaudeConfig{}, agentadaptor.DriverRunRequest{
+	args, err := buildClaudeExecArgs(Config{}, agentadaptor.Request{
 		OutputSchema: &agentadaptor.OutputSchema{
 			Format:     agentadaptor.OutputFormatJSONSchema,
 			Mode:       agentadaptor.StructuredOutputNativeStrict,
@@ -128,7 +129,7 @@ func TestBuildClaudeExecArgsInlinesReferencesWithoutLosingLargeNumbers(t *testin
 
 func TestBuildClaudeExecArgsRejectsRecursiveSchemaReferences(t *testing.T) {
 	schema := []byte(`{"$defs":{"node":{"type":"object","properties":{"children":{"type":"array","items":{"$ref":"#/$defs/node"}}}}},"$ref":"#/$defs/node"}`)
-	_, err := buildClaudeExecArgs(agentadaptor.ClaudeConfig{}, agentadaptor.DriverRunRequest{
+	_, err := buildClaudeExecArgs(Config{}, agentadaptor.Request{
 		OutputSchema: &agentadaptor.OutputSchema{
 			Format:     agentadaptor.OutputFormatJSONSchema,
 			Mode:       agentadaptor.StructuredOutputNativeStrict,
@@ -142,7 +143,7 @@ func TestBuildClaudeExecArgsRejectsRecursiveSchemaReferences(t *testing.T) {
 
 func TestBuildClaudeExecArgsPreservesDefinitionsProperty(t *testing.T) {
 	schema := []byte(`{"type":"object","properties":{"definitions":{"type":"string"}},"required":["definitions"],"additionalProperties":false}`)
-	args, err := buildClaudeExecArgs(agentadaptor.ClaudeConfig{}, agentadaptor.DriverRunRequest{
+	args, err := buildClaudeExecArgs(Config{}, agentadaptor.Request{
 		OutputSchema: &agentadaptor.OutputSchema{Format: agentadaptor.OutputFormatJSONSchema, Mode: agentadaptor.StructuredOutputNativeStrict, SchemaJSON: schema},
 	}, "", false)
 	if err != nil {
@@ -156,7 +157,7 @@ func TestBuildClaudeExecArgsPreservesDefinitionsProperty(t *testing.T) {
 
 func TestBuildClaudeExecArgsResolvesArrayJSONPointer(t *testing.T) {
 	schema := []byte(`{"$defs":{"choice":{"allOf":[{"type":"string"}]}},"type":"object","properties":{"value":{"$ref":"#/$defs/choice/allOf/0"}}}`)
-	args, err := buildClaudeExecArgs(agentadaptor.ClaudeConfig{}, agentadaptor.DriverRunRequest{
+	args, err := buildClaudeExecArgs(Config{}, agentadaptor.Request{
 		OutputSchema: &agentadaptor.OutputSchema{Format: agentadaptor.OutputFormatJSONSchema, Mode: agentadaptor.StructuredOutputNativeStrict, SchemaJSON: schema},
 	}, "", false)
 	if err != nil {
@@ -170,7 +171,7 @@ func TestBuildClaudeExecArgsResolvesArrayJSONPointer(t *testing.T) {
 
 func TestBuildClaudeExecArgsDoesNotRewriteConstData(t *testing.T) {
 	schema := []byte(`{"$defs":{"value":{"type":"string"}},"type":"object","const":{"$ref":"#/$defs/value"}}`)
-	args, err := buildClaudeExecArgs(agentadaptor.ClaudeConfig{}, agentadaptor.DriverRunRequest{
+	args, err := buildClaudeExecArgs(Config{}, agentadaptor.Request{
 		OutputSchema: &agentadaptor.OutputSchema{Format: agentadaptor.OutputFormatJSONSchema, Mode: agentadaptor.StructuredOutputNativeStrict, SchemaJSON: schema},
 	}, "", false)
 	if err != nil {
@@ -183,14 +184,14 @@ func TestBuildClaudeExecArgsDoesNotRewriteConstData(t *testing.T) {
 }
 
 func TestDescriptorAdvertisesExpectedMCPCapabilities(t *testing.T) {
-	caps := NewAdapter().Descriptor().MCP
+	caps := adapter{}.Descriptor().MCP
 	if !caps.Supported || !caps.Stdio || !caps.HTTP || !caps.SSE {
 		t.Fatalf("unexpected Claude MCP capability: %#v", caps)
 	}
 }
 
 func TestDescriptorAdvertisesStructuredOutputCapabilities(t *testing.T) {
-	caps := NewAdapter().Descriptor().StructuredOutput
+	caps := adapter{}.Descriptor().StructuredOutput
 	if !caps.JSONSchemaNative || !caps.JSONSchemaPromptValidate || !caps.WorksWithRun {
 		t.Fatalf("unexpected Claude structured-output capability: %#v", caps)
 	}
@@ -200,8 +201,8 @@ func TestDescriptorAdvertisesStructuredOutputCapabilities(t *testing.T) {
 }
 
 func TestBuildClaudeExecArgsInteractiveEnablesStdioPermissionPrompt(t *testing.T) {
-	cfg := agentadaptor.ClaudeConfig{Model: "claude-sonnet-4"}
-	args, err := buildClaudeExecArgs(cfg, agentadaptor.DriverRunRequest{}, "", true)
+	cfg := Config{Model: "claude-sonnet-4"}
+	args, err := buildClaudeExecArgs(cfg, agentadaptor.Request{}, "", true)
 	if err != nil {
 		t.Fatalf("build args: %v", err)
 	}
@@ -221,18 +222,11 @@ func TestBuildClaudeExecArgsInteractiveEnablesStdioPermissionPrompt(t *testing.T
 }
 
 func TestStreamCapabilityValues(t *testing.T) {
-	cap := NewAdapter().(interface {
+	cap := any(adapter{}).(interface {
 		StreamCapability() agentadaptor.StreamCapability
 	}).StreamCapability()
 	if !cap.Native || !cap.TokenLevel || !cap.Reasoning || !cap.ToolCallArgs || !cap.HITL {
 		t.Fatalf("unexpected capability: %#v", cap)
-	}
-}
-
-func TestNewReturnsTypedBinding(t *testing.T) {
-	binding := New(agentadaptor.ClaudeConfig{Model: "claude-sonnet-4"})
-	if binding.TypedConfig().Model != "claude-sonnet-4" {
-		t.Fatalf("expected typed config model to round-trip, got %#v", binding.TypedConfig())
 	}
 }
 
@@ -277,8 +271,8 @@ printf '%s\n' '{"type":"result","subtype":"success","session_id":"sess-structure
 `,
 		"@echo off\r\nmore > nul\r\necho {\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"sess-structured\",\"model\":\"claude-fixture\"}\r\necho {\"type\":\"stream_event\",\"session_id\":\"sess-structured\",\"event\":{\"type\":\"message_start\",\"message\":{\"id\":\"msg-1\"}}}\r\necho {\"type\":\"stream_event\",\"session_id\":\"sess-structured\",\"event\":{\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\"}}}\r\necho {\"type\":\"stream_event\",\"session_id\":\"sess-structured\",\"event\":{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"done\"}}}\r\necho {\"type\":\"stream_event\",\"session_id\":\"sess-structured\",\"event\":{\"type\":\"content_block_stop\",\"index\":0}}\r\necho {\"type\":\"assistant\",\"session_id\":\"sess-structured\",\"message\":{\"model\":\"claude-fixture\",\"content\":[{\"type\":\"text\",\"text\":\"done\"}]}}\r\necho {\"type\":\"result\",\"subtype\":\"success\",\"session_id\":\"sess-structured\",\"structured_output\":{\"project_name\":\"agent-adaptor\"},\"result\":\"done\"}\r\n",
 	)
-	sdk := agentadaptor.New(agentadaptor.WithDefaultAgent(New(agentadaptor.ClaudeConfig{
-		CommonConfig: agentadaptor.CommonConfig{
+	agent := adaptor.New(Driver(Config{
+		CommonConfig: CommonConfig{
 			Command: command,
 			CWD:     workspace,
 			Env: []agentadaptor.EnvBinding{
@@ -287,38 +281,39 @@ printf '%s\n' '{"type":"result","subtype":"success","session_id":"sess-structure
 			},
 		},
 		Model: "claude-sonnet-4",
-	})))
-	handle, err := sdk.Start(
+	}))
+	stream := agent.Stream(
 		context.Background(),
 		"extract project metadata",
-		agentadaptor.WithStreaming(),
-		agentadaptor.WithJSONSchemaOutput([]byte(`{"type":"object","properties":{"project_name":{"type":"string"}},"required":["project_name"],"additionalProperties":false}`)),
+		adaptor.WithSchemaJSON([]byte(`{"type":"object","properties":{"project_name":{"type":"string"}},"required":["project_name"],"additionalProperties":false}`)),
 	)
+	var events []adaptor.Event
+	for event := range stream.Events() {
+		events = append(events, event)
+	}
+	result, err := stream.Result()
 	if err != nil {
-		t.Fatalf("start: %v", err)
+		t.Fatalf("stream result: %v", err)
 	}
-	var streams []agentadaptor.StreamPayload
-	for payload := range handle.StreamEvents() {
-		streams = append(streams, payload)
+	var structured map[string]string
+	if err := result.Decode(&structured); err != nil || structured["project_name"] != "agent-adaptor" {
+		t.Fatalf("Decode = (%#v, %v), want project_name=agent-adaptor", structured, err)
 	}
-	result, err := handle.Wait(context.Background())
-	if err != nil {
-		t.Fatalf("wait: %v", err)
-	}
-	if result.StructuredOutput == nil || !result.StructuredOutput.Valid || string(result.StructuredOutput.RawJSON) != `{"project_name":"agent-adaptor"}` {
-		t.Fatalf("structured output = %#v", result.StructuredOutput)
-	}
-	if result.Output != "done" || result.RawStreams == nil || !strings.Contains(result.RawStreams.Stdout, `"structured_output"`) {
+	if result.Text != "done" || !strings.Contains(result.Raw().Stdout, `"structured_output"`) {
 		t.Fatalf("result = %#v", result)
 	}
 	seenText := false
 	seenFinished := false
-	for _, payload := range streams {
-		seenText = seenText || payload.Kind == agentadaptor.StreamTextContent && payload.Delta == "done"
-		seenFinished = seenFinished || payload.Kind == agentadaptor.StreamRunFinished
+	for _, event := range events {
+		switch typed := event.(type) {
+		case adaptor.TextDelta:
+			seenText = seenText || typed.Text == "done"
+		case adaptor.RunFinished:
+			seenFinished = true
+		}
 	}
 	if !seenText || !seenFinished {
-		t.Fatalf("stream payloads = %#v", streams)
+		t.Fatalf("events = %#v", events)
 	}
 }
 
@@ -340,10 +335,10 @@ func TestDetectModelFallsBackToClaudeSettingsFile(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 
-	detected, err := NewAdapter().(interface {
+	detected, err := any(adapter{}).(interface {
 		DetectModel(context.Context, any, *agentadaptor.ProfileSelection) (*agentadaptor.DetectedModel, error)
-	}).DetectModel(context.Background(), agentadaptor.ClaudeConfig{
-		CommonConfig: agentadaptor.CommonConfig{
+	}).DetectModel(context.Background(), Config{
+		CommonConfig: CommonConfig{
 			Env: []agentadaptor.EnvBinding{{Name: "HOME", Value: home}},
 		},
 	}, nil)
@@ -361,10 +356,10 @@ func TestDetectModelUsesExplicitProfileOptionAsClaudeConfigDir(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 
-	detected, err := NewAdapter().(interface {
+	detected, err := any(adapter{}).(interface {
 		DetectModel(context.Context, any, *agentadaptor.ProfileSelection) (*agentadaptor.DetectedModel, error)
-	}).DetectModel(context.Background(), agentadaptor.ClaudeConfig{
-		CommonConfig: agentadaptor.CommonConfig{
+	}).DetectModel(context.Background(), Config{
+		CommonConfig: CommonConfig{
 			Env: []agentadaptor.EnvBinding{{Name: "CLAUDE_CONFIG_DIR", Value: profileDir}},
 		},
 	}, nil)
@@ -386,10 +381,10 @@ func TestDetectModelPrefersExplicitClaudeConfigDirOverProfileOption(t *testing.T
 		t.Fatalf("write override config: %v", err)
 	}
 
-	detected, err := NewAdapter().(interface {
+	detected, err := any(adapter{}).(interface {
 		DetectModel(context.Context, any, *agentadaptor.ProfileSelection) (*agentadaptor.DetectedModel, error)
-	}).DetectModel(context.Background(), agentadaptor.ClaudeConfig{
-		CommonConfig: agentadaptor.CommonConfig{
+	}).DetectModel(context.Background(), Config{
+		CommonConfig: CommonConfig{
 			Env: []agentadaptor.EnvBinding{
 				{Name: "CLAUDE_CONFIG_DIR", Value: overrideDir},
 			},
@@ -405,10 +400,10 @@ func TestDetectModelPrefersExplicitClaudeConfigDirOverProfileOption(t *testing.T
 
 func TestGetProfileUsesDedicatedProfileOptionForClaude(t *testing.T) {
 	profileDir := t.TempDir()
-	profile, err := NewAdapter().(interface {
+	profile, err := any(adapter{}).(interface {
 		GetProfile(context.Context, any, agentadaptor.AgentIdentity, *agentadaptor.ProfileSelection) (agentadaptor.AgentProfile, error)
-	}).GetProfile(context.Background(), agentadaptor.ClaudeConfig{
-		CommonConfig: agentadaptor.CommonConfig{
+	}).GetProfile(context.Background(), Config{
+		CommonConfig: CommonConfig{
 			Env: []agentadaptor.EnvBinding{{Name: "CLAUDE_CONFIG_DIR", Value: profileDir}},
 		},
 	}, agentadaptor.AgentIdentity{}, nil)
@@ -424,9 +419,9 @@ func TestGetProfileUsesProcessEnvForClaudeWhenUnset(t *testing.T) {
 	profileDir := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", profileDir)
 
-	profile, err := NewAdapter().(interface {
+	profile, err := any(adapter{}).(interface {
 		GetProfile(context.Context, any, agentadaptor.AgentIdentity, *agentadaptor.ProfileSelection) (agentadaptor.AgentProfile, error)
-	}).GetProfile(context.Background(), agentadaptor.ClaudeConfig{}, agentadaptor.AgentIdentity{}, nil)
+	}).GetProfile(context.Background(), Config{}, agentadaptor.AgentIdentity{}, nil)
 	if err != nil {
 		t.Fatalf("get profile: %v", err)
 	}
@@ -450,10 +445,10 @@ func TestGetProfileCloneCanShareNativeClaudeAuth(t *testing.T) {
 	}
 	target := filepath.Join(t.TempDir(), "isolated")
 
-	profile, err := NewAdapter().(interface {
+	profile, err := any(adapter{}).(interface {
 		GetProfile(context.Context, any, agentadaptor.AgentIdentity, *agentadaptor.ProfileSelection) (agentadaptor.AgentProfile, error)
-	}).GetProfile(context.Background(), agentadaptor.ClaudeConfig{
-		CommonConfig: agentadaptor.CommonConfig{
+	}).GetProfile(context.Background(), Config{
+		CommonConfig: CommonConfig{
 			Env: []agentadaptor.EnvBinding{{Name: "HOME", Value: home}, {Name: "USERPROFILE", Value: home}},
 		},
 	}, agentadaptor.AgentIdentity{}, &agentadaptor.ProfileSelection{
@@ -488,7 +483,7 @@ func TestGetProfileCloneCanShareNativeClaudeAuth(t *testing.T) {
 }
 
 func TestConfigSchemaIncludesGroupsDefaultsAndOptions(t *testing.T) {
-	schema := NewAdapter().Descriptor().ConfigSchema
+	schema := adapter{}.Descriptor().ConfigSchema
 	if schema == nil || len(schema.Fields) == 0 {
 		t.Fatalf("expected config schema, got %#v", schema)
 	}
@@ -503,10 +498,10 @@ func TestConfigSchemaIncludesGroupsDefaultsAndOptions(t *testing.T) {
 }
 
 func TestListModelsUsesBedrockIdentifiersWhenBedrockAuthEnabled(t *testing.T) {
-	models, err := NewAdapter().(interface {
+	models, err := any(adapter{}).(interface {
 		ListModels(context.Context, any) ([]agentadaptor.ModelInfo, error)
-	}).ListModels(context.Background(), agentadaptor.ClaudeConfig{
-		CommonConfig: agentadaptor.CommonConfig{
+	}).ListModels(context.Background(), Config{
+		CommonConfig: CommonConfig{
 			Env: []agentadaptor.EnvBinding{{Name: "CLAUDE_CODE_USE_BEDROCK", Value: "true"}},
 		},
 	})
@@ -519,10 +514,10 @@ func TestListModelsUsesBedrockIdentifiersWhenBedrockAuthEnabled(t *testing.T) {
 }
 
 func TestConfigSchemaHydratesBedrockModelOptions(t *testing.T) {
-	schema, err := NewAdapter().(interface {
+	schema, err := any(adapter{}).(interface {
 		ConfigSchema(context.Context, any) (*agentadaptor.ConfigSchema, error)
-	}).ConfigSchema(context.Background(), agentadaptor.ClaudeConfig{
-		CommonConfig: agentadaptor.CommonConfig{
+	}).ConfigSchema(context.Background(), Config{
+		CommonConfig: CommonConfig{
 			Env: []agentadaptor.EnvBinding{{Name: "ANTHROPIC_BEDROCK_BASE_URL", Value: "https://bedrock.local"}},
 		},
 	})
@@ -552,10 +547,10 @@ func TestCheckEnvironmentReportsConfigFileState(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 
-	report, err := NewAdapter().(interface {
+	report, err := any(adapter{}).(interface {
 		CheckEnvironment(context.Context, any) (agentadaptor.EnvironmentReport, error)
-	}).CheckEnvironment(context.Background(), agentadaptor.ClaudeConfig{
-		CommonConfig: agentadaptor.CommonConfig{
+	}).CheckEnvironment(context.Background(), Config{
+		CommonConfig: CommonConfig{
 			Env: []agentadaptor.EnvBinding{{Name: "HOME", Value: home}},
 		},
 	})
@@ -576,10 +571,10 @@ func TestCheckEnvironmentReportsClaudeCredentialsFromConfigDir(t *testing.T) {
 		t.Fatalf("write settings: %v", err)
 	}
 
-	report, err := NewAdapter().(interface {
+	report, err := any(adapter{}).(interface {
 		CheckEnvironment(context.Context, any) (agentadaptor.EnvironmentReport, error)
-	}).CheckEnvironment(context.Background(), agentadaptor.ClaudeConfig{
-		CommonConfig: agentadaptor.CommonConfig{
+	}).CheckEnvironment(context.Background(), Config{
+		CommonConfig: CommonConfig{
 			Env: []agentadaptor.EnvBinding{{Name: "CLAUDE_CONFIG_DIR", Value: configDir}},
 		},
 	})
@@ -590,10 +585,10 @@ func TestCheckEnvironmentReportsClaudeCredentialsFromConfigDir(t *testing.T) {
 }
 
 func TestCheckEnvironmentReportsClaudeBedrockMode(t *testing.T) {
-	report, err := NewAdapter().(interface {
+	report, err := any(adapter{}).(interface {
 		CheckEnvironment(context.Context, any) (agentadaptor.EnvironmentReport, error)
-	}).CheckEnvironment(context.Background(), agentadaptor.ClaudeConfig{
-		CommonConfig: agentadaptor.CommonConfig{
+	}).CheckEnvironment(context.Background(), Config{
+		CommonConfig: CommonConfig{
 			Env: []agentadaptor.EnvBinding{
 				{Name: "CLAUDE_CODE_USE_BEDROCK", Value: "true"},
 				{Name: "AWS_REGION", Value: "us-east-1"},
@@ -608,10 +603,10 @@ func TestCheckEnvironmentReportsClaudeBedrockMode(t *testing.T) {
 }
 
 func TestCheckEnvironmentWarnsOnIncompatibleBedrockBindingModel(t *testing.T) {
-	report, err := NewAdapter().(interface {
+	report, err := any(adapter{}).(interface {
 		CheckEnvironment(context.Context, any) (agentadaptor.EnvironmentReport, error)
-	}).CheckEnvironment(context.Background(), agentadaptor.ClaudeConfig{
-		CommonConfig: agentadaptor.CommonConfig{
+	}).CheckEnvironment(context.Background(), Config{
+		CommonConfig: CommonConfig{
 			Env: []agentadaptor.EnvBinding{{Name: "CLAUDE_CODE_USE_BEDROCK", Value: "true"}},
 		},
 		Model: "claude-sonnet-4",
@@ -633,10 +628,10 @@ func TestDetectModelIgnoresIncompatibleBedrockBindingModel(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 
-	detected, err := NewAdapter().(interface {
+	detected, err := any(adapter{}).(interface {
 		DetectModel(context.Context, any, *agentadaptor.ProfileSelection) (*agentadaptor.DetectedModel, error)
-	}).DetectModel(context.Background(), agentadaptor.ClaudeConfig{
-		CommonConfig: agentadaptor.CommonConfig{
+	}).DetectModel(context.Background(), Config{
+		CommonConfig: CommonConfig{
 			Env: []agentadaptor.EnvBinding{
 				{Name: "HOME", Value: home},
 				{Name: "CLAUDE_CODE_USE_BEDROCK", Value: "true"},
@@ -678,10 +673,10 @@ func TestGetQuotaReadsClaudeOAuthUsage(t *testing.T) {
 	claudeQuotaUsageURL = "https://unit.test/claude-quota"
 	defer func() { claudeQuotaUsageURL = previous }()
 
-	report, err := NewAdapter().(interface {
+	report, err := any(adapter{}).(interface {
 		GetQuota(context.Context, any, *agentadaptor.ProfileSelection) (agentadaptor.QuotaReport, error)
-	}).GetQuota(context.Background(), agentadaptor.ClaudeConfig{
-		CommonConfig: agentadaptor.CommonConfig{
+	}).GetQuota(context.Background(), Config{
+		CommonConfig: CommonConfig{
 			Env: []agentadaptor.EnvBinding{{Name: "CLAUDE_CONFIG_DIR", Value: configDir}},
 		},
 	}, nil)

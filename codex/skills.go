@@ -7,15 +7,15 @@ import (
 	"path/filepath"
 	"strings"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/internal/skillruntime"
 )
 
-func listCodexSkills(payload agentadaptor.ResolvedSkills, selected []string, resolved []agentadaptor.Skill, codexHome string) (agentadaptor.SkillSnapshot, error) {
+func listCodexSkills(payload driver.ResolvedSkills, selected []string, resolved []driver.Skill, codexHome string) (driver.SkillSnapshot, error) {
 	skillsHome := filepath.Join(codexHome, "skills")
 	installed, err := skillruntime.ReadInstalledSkillTargets(skillsHome)
 	if err != nil {
-		return agentadaptor.SkillSnapshot{}, err
+		return driver.SkillSnapshot{}, err
 	}
 	return skillruntime.BuildPersistentSnapshot(skillruntime.PersistentSnapshotOptions{
 		DriverType:             DriverType,
@@ -32,14 +32,14 @@ func listCodexSkills(payload agentadaptor.ResolvedSkills, selected []string, res
 	}), nil
 }
 
-func syncCodexSkills(ctx context.Context, payload agentadaptor.ResolvedSkills, selected []string, resolved []agentadaptor.Skill, codexHome string, sink agentadaptor.EventSink) (agentadaptor.SkillSnapshot, error) {
+func syncCodexSkills(ctx context.Context, payload driver.ResolvedSkills, selected []string, resolved []driver.Skill, codexHome string, sink driver.EventSink) (driver.SkillSnapshot, error) {
 	if err := injectCodexSkillsSelected(ctx, payload, selected, codexHome, sink); err != nil {
-		return agentadaptor.SkillSnapshot{}, err
+		return driver.SkillSnapshot{}, err
 	}
 	return listCodexSkills(payload, selected, resolved, codexHome)
 }
 
-func effectiveCodexBindings(config agentadaptor.CommonConfig, selection *agentadaptor.ProfileSelection, agent agentadaptor.AgentIdentity) ([]agentadaptor.EnvBinding, error) {
+func effectiveCodexBindings(config driver.CommonConfig, selection *driver.ProfileSelection, agent driver.AgentIdentity) ([]driver.EnvBinding, error) {
 	profile, err := resolveCodexProfileWithOptions(config, selection, agent, false)
 	if err != nil {
 		return nil, err
@@ -47,11 +47,11 @@ func effectiveCodexBindings(config agentadaptor.CommonConfig, selection *agentad
 	return skillruntime.WithBinding(config.Env, "CODEX_HOME", profile.Dir), nil
 }
 
-func resolveCodexProfile(config agentadaptor.CommonConfig, selection *agentadaptor.ProfileSelection, agent agentadaptor.AgentIdentity) (agentadaptor.AgentProfile, error) {
+func resolveCodexProfile(config driver.CommonConfig, selection *driver.ProfileSelection, agent driver.AgentIdentity) (driver.AgentProfile, error) {
 	return resolveCodexProfileWithOptions(config, selection, agent, false)
 }
 
-func effectiveCodexBindingsNoInitialize(config agentadaptor.CommonConfig, selection *agentadaptor.ProfileSelection, agent agentadaptor.AgentIdentity) ([]agentadaptor.EnvBinding, error) {
+func effectiveCodexBindingsNoInitialize(config driver.CommonConfig, selection *driver.ProfileSelection, agent driver.AgentIdentity) ([]driver.EnvBinding, error) {
 	profile, err := resolveCodexProfileWithOptions(config, selection, agent, true)
 	if err != nil {
 		return nil, err
@@ -59,17 +59,17 @@ func effectiveCodexBindingsNoInitialize(config agentadaptor.CommonConfig, select
 	return skillruntime.WithBinding(config.Env, "CODEX_HOME", profile.Dir), nil
 }
 
-func resolveCodexProfileWithOptions(config agentadaptor.CommonConfig, selection *agentadaptor.ProfileSelection, agent agentadaptor.AgentIdentity, skipInitialize bool) (agentadaptor.AgentProfile, error) {
+func resolveCodexProfileWithOptions(config driver.CommonConfig, selection *driver.ProfileSelection, agent driver.AgentIdentity, skipInitialize bool) (driver.AgentProfile, error) {
 	if selection == nil && skillruntime.ResolveBinding(config.Env, "CODEX_HOME") == "" && strings.TrimSpace(os.Getenv("CODEX_HOME")) == "" {
 		bindings := config.Env
 		if home := skillruntime.ResolveBinding(bindings, "HOME"); strings.TrimSpace(home) != "" {
 			sharedHome := resolveSharedCodexHome(bindings)
 			if _, err := os.Stat(sharedHome); err == nil {
-				return agentadaptor.AgentProfile{DriverType: DriverType, Supported: true, Dir: sharedHome, EnvVar: "CODEX_HOME", Source: agentadaptor.AgentProfileSourceDefault}, nil
+				return driver.AgentProfile{DriverType: DriverType, Supported: true, Dir: sharedHome, EnvVar: "CODEX_HOME", Source: driver.AgentProfileSourceDefault}, nil
 			}
 		}
 		dir := resolveManagedCodexHome(agent)
-		return agentadaptor.AgentProfile{DriverType: DriverType, Supported: true, Dir: dir, EnvVar: "CODEX_HOME", Source: agentadaptor.AgentProfileSourceManaged, Managed: true}, nil
+		return driver.AgentProfile{DriverType: DriverType, Supported: true, Dir: dir, EnvVar: "CODEX_HOME", Source: driver.AgentProfileSourceManaged, Managed: true}, nil
 	}
 	resolution, err := skillruntime.ResolveProfile(skillruntime.ProfileResolveOptions{
 		Bindings:         config.Env,
@@ -85,29 +85,29 @@ func resolveCodexProfileWithOptions(config agentadaptor.CommonConfig, selection 
 		SkipInitialize:   skipInitialize,
 	})
 	if err != nil {
-		return agentadaptor.AgentProfile{}, err
+		return driver.AgentProfile{}, err
 	}
 	profile := resolution.Profile
 	profile.DriverType = DriverType
 	return profile, nil
 }
 
-func codexProfile(config agentadaptor.CommonConfig, selection *agentadaptor.ProfileSelection, agent agentadaptor.AgentIdentity) agentadaptor.AgentProfile {
+func codexProfile(config driver.CommonConfig, selection *driver.ProfileSelection, agent driver.AgentIdentity) driver.AgentProfile {
 	profile, err := resolveCodexProfile(config, selection, agent)
 	if err != nil {
-		return agentadaptor.AgentProfile{DriverType: DriverType, Supported: true, EnvVar: "CODEX_HOME", Error: err.Error()}
+		return driver.AgentProfile{DriverType: DriverType, Supported: true, EnvVar: "CODEX_HOME", Error: err.Error()}
 	}
 	return profile
 }
 
-func resolveSharedCodexHome(bindings []agentadaptor.EnvBinding) string {
+func resolveSharedCodexHome(bindings []driver.EnvBinding) string {
 	if configured := skillruntime.ResolveBinding(bindings, "CODEX_HOME"); configured != "" {
 		return filepath.Clean(configured)
 	}
 	return filepath.Join(skillruntime.ResolveHome(bindings), ".codex")
 }
 
-func resolveManagedCodexHome(agent agentadaptor.AgentIdentity) string {
+func resolveManagedCodexHome(agent driver.AgentIdentity) string {
 	root, err := os.UserConfigDir()
 	if err != nil || strings.TrimSpace(root) == "" {
 		root = skillruntime.ResolveHome(nil)
@@ -137,11 +137,11 @@ func safeNamespace(value string) string {
 	return strings.Trim(builder.String(), "-")
 }
 
-func injectCodexSkills(ctx context.Context, skills agentadaptor.ResolvedSkills, codexHome string, sink agentadaptor.EventSink) error {
+func injectCodexSkills(ctx context.Context, skills driver.ResolvedSkills, codexHome string, sink driver.EventSink) error {
 	return injectCodexSkillsSelected(ctx, skills, nil, codexHome, sink)
 }
 
-func injectCodexSkillsSelected(ctx context.Context, skills agentadaptor.ResolvedSkills, selected []string, codexHome string, sink agentadaptor.EventSink) error {
+func injectCodexSkillsSelected(ctx context.Context, skills driver.ResolvedSkills, selected []string, codexHome string, sink driver.EventSink) error {
 	if len(skills.Entries) == 0 {
 		return nil
 	}
@@ -164,13 +164,13 @@ func injectCodexSkillsSelected(ctx context.Context, skills agentadaptor.Resolved
 		}
 		switch change.Action {
 		case "removed":
-			_ = sink.Emit(agentadaptor.RunEvent{
-				Type: agentadaptor.RunEventLifecycle,
+			_ = sink.Emit(driver.RunEvent{
+				Type: driver.RunEventLifecycle,
 				Text: fmt.Sprintf("removed stale Codex skill %q from %s", change.RuntimeName, skillsHome),
 			})
 		case "created", "repaired":
-			_ = sink.Emit(agentadaptor.RunEvent{
-				Type: agentadaptor.RunEventLifecycle,
+			_ = sink.Emit(driver.RunEvent{
+				Type: driver.RunEventLifecycle,
 				Text: fmt.Sprintf("%s Codex skill %q into %s", capitalize(change.Action), change.RuntimeName, skillsHome),
 			})
 		}

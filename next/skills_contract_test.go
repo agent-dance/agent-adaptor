@@ -42,7 +42,6 @@ import (
 	"testing"
 	"testing/fstest"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/driver"
 	adaptor "github.com/agent-dance/agent-adaptor/next"
 	"github.com/agent-dance/agent-adaptor/skill"
@@ -88,7 +87,7 @@ func skillKeys(skills []driver.Skill) []string {
 func setSkillCache(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
-	t.Setenv(agentadaptor.SkillCacheRootEnv, root)
+	t.Setenv(skill.SkillCacheRootEnv, root)
 	return root
 }
 

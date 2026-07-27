@@ -490,6 +490,51 @@ func TestWithServicesEnsuresThroughManagerAndReleases(t *testing.T) {
 	}
 }
 
+func TestServiceReportsMergeByStableIDWithDriverPrecedence(t *testing.T) {
+	log := &callLog{}
+	manager := &fakeServiceManager{
+		log: log,
+		ensure: func(context.Context, adaptor.ServiceRequest) ([]adaptor.ServiceRef, error) {
+			return []adaptor.ServiceRef{
+				{ID: "db", Name: "database", URL: "postgres://sdk", Status: driver.RuntimeServiceRunning, Lifecycle: driver.RuntimeLifecycleShared, Metadata: map[string]string{"sdk": "kept", "owner": "sdk"}},
+				{ID: "cache", Name: "cache", URL: "redis://sdk", Status: driver.RuntimeServiceRunning},
+			}, nil
+		},
+	}
+	fake := newFakeDriver()
+	fake.response = driver.Response{
+		Output: "done",
+		RuntimeServices: []driver.RuntimeServiceReport{
+			{ID: "db", Status: driver.RuntimeServiceFailed, Health: driver.RuntimeHealthUnhealthy, Metadata: map[string]string{"owner": "driver", "observed": "yes"}},
+			{ID: "driver-only", Name: "provider helper", Status: driver.RuntimeServiceRunning},
+		},
+	}
+	agent := adaptor.New(fake,
+		adaptor.WithServiceManager(manager),
+		adaptor.WithServices(adaptor.ServiceSpec{ID: "db"}, adaptor.ServiceSpec{ID: "cache"}),
+	)
+	res, err := agent.Run(context.Background(), "inspect services")
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	reports := res.Services()
+	if len(reports) != 3 {
+		t.Fatalf("Services = %+v, want merged db + driver-only + cache", reports)
+	}
+	if reports[0].ID != "db" || reports[0].Name != "database" || reports[0].URL != "postgres://sdk" {
+		t.Fatalf("matching driver report did not inherit missing SDK fields: %+v", reports[0])
+	}
+	if reports[0].Status != driver.RuntimeServiceFailed || reports[0].Health != driver.RuntimeHealthUnhealthy {
+		t.Fatalf("driver observation did not override matching SDK fields: %+v", reports[0])
+	}
+	if reports[0].Metadata["sdk"] != "kept" || reports[0].Metadata["owner"] != "driver" || reports[0].Metadata["observed"] != "yes" {
+		t.Fatalf("metadata merge lost precedence or fields: %+v", reports[0].Metadata)
+	}
+	if reports[1].ID != "driver-only" || reports[2].ID != "cache" {
+		t.Fatalf("stable order/unique reports lost: %+v", reports)
+	}
+}
+
 func TestWithServicesWithoutManagerStaysInert(t *testing.T) {
 	fake := newFakeDriver()
 	agent := adaptor.New(fake, adaptor.WithServices(adaptor.ServiceSpec{ID: "db", Name: "db"}))

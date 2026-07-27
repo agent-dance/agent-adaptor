@@ -7,19 +7,20 @@ import "context"
 // workspace/runtime/skill resolution, and result archiving; drivers own
 // provider-specific validation, process/protocol execution, transcript
 // parsing, and checkpoint extraction.
-//
-// The root package exposes this interface as agentadaptor.DriverAdapter.
 type Driver interface {
 	Descriptor() Descriptor
 	ValidateConfig(cfg any) error
+	// Run executes exactly one resolved invocation. When req.Streaming is
+	// true, normalized payloads obey the lifecycle contract documented on
+	// StreamKind; all RunEventItem values emitted through sink must mirror the
+	// returned Response.Transcript. A non-nil error is an infrastructure or
+	// execution error and makes any returned valid Checkpoint invalid.
 	Run(ctx context.Context, req Request, sink EventSink) (Response, error)
 }
 
 // EnvironmentProbe is implemented by drivers that can perform preflight
 // checks against local CLIs, auth files, profile directories, or other
 // dependencies. Admin.CheckEnvironment uses it when present.
-//
-// The root package exposes this interface as agentadaptor.EnvironmentAwareDriver.
 type EnvironmentProbe interface {
 	CheckEnvironment(ctx context.Context, cfg any) (EnvironmentReport, error)
 }
@@ -27,16 +28,12 @@ type EnvironmentProbe interface {
 // ModelLister is implemented by drivers that can list visible model choices.
 // Drivers may return static descriptor models or inspect local provider
 // state when a live list is available.
-//
-// The root package exposes this interface as agentadaptor.ModelAwareDriver.
 type ModelLister interface {
 	ListModels(ctx context.Context, cfg any) ([]ModelInfo, error)
 }
 
 // ModelDetector is implemented by drivers that can infer the effective model
 // from config files, CLI defaults, profile state, or the supplied config.
-//
-// The root package exposes this interface as agentadaptor.ModelDetectorDriver.
 type ModelDetector interface {
 	DetectModel(ctx context.Context, cfg any, profile *ProfileSelection) (*DetectedModel, error)
 }
@@ -47,8 +44,6 @@ type ModelDetector interface {
 // Built-in drivers use this to report effective CODEX_HOME,
 // CLAUDE_CONFIG_DIR, or CURSOR_HOME resolution, including managed homes when
 // the SDK synthesizes one.
-//
-// The root package exposes this interface as agentadaptor.ProfileAwareDriver.
 type ProfileReporter interface {
 	GetProfile(ctx context.Context, cfg any, agent AgentIdentity, profile *ProfileSelection) (AgentProfile, error)
 }
@@ -56,24 +51,18 @@ type ProfileReporter interface {
 // SessionCodecProvider exposes the stable, deterministic session mapping used
 // for resume compatibility. A Driver MUST implement this interface with a
 // non-nil codec if and only if Descriptor.Sessions.SupportsResume is true.
-//
-// The root package exposes this interface as agentadaptor.SessionCodecAwareDriver.
 type SessionCodecProvider interface {
 	SessionCodec() SessionCodec
 }
 
 // ConfigSchemaProvider lets drivers expose a runtime-hydrated config schema
 // through the control plane without changing the execution contract.
-//
-// The root package exposes this interface as agentadaptor.ConfigSchemaAwareDriver.
 type ConfigSchemaProvider interface {
 	ConfigSchema(ctx context.Context, cfg any) (*ConfigSchema, error)
 }
 
 // QuotaProbe lets drivers expose provider quota or credit windows when the
 // underlying CLI or local auth files support that probe.
-//
-// The root package exposes this interface as agentadaptor.QuotaAwareDriver.
 type QuotaProbe interface {
 	GetQuota(ctx context.Context, cfg any, profile *ProfileSelection) (QuotaReport, error)
 }
@@ -115,8 +104,6 @@ type QuotaProbe interface {
 //   - The Resolved slice returned in SkillSnapshot MUST describe the full
 //     merged catalogue the SDK passed in. Drivers are free to clone or
 //     reorder it; they MUST NOT silently drop entries.
-//
-// The root package exposes this interface as agentadaptor.SkillAwareDriver.
 type SkillSupport interface {
 	ListSkills(ctx context.Context, cfg any, payload ResolvedSkills, selected []string, resolved []Skill, profile *ProfileSelection) (SkillSnapshot, error)
 	InjectSkills(ctx context.Context, cfg any, payload ResolvedSkills, profile *ProfileSelection) error
@@ -140,12 +127,14 @@ type EventSink interface {
 	EmitStream(payload StreamPayload) error
 }
 
-// StreamSupport is the optional contract implemented by drivers that can
-// produce normalized StreamPayload events. Hosts can advertise the driver's
-// streaming capabilities (e.g. whether it supports token-level text deltas)
-// through Admin introspection without changing the execution contract.
+// StreamSupport is the optional fidelity contract implemented by drivers that
+// can produce normalized StreamPayload events. Core and bridges use it to
+// understand provider-transport detail such as token-level deltas; it does
+// not change the Runner execution contract.
 //
-// The root package exposes this interface as agentadaptor.StreamAwareDriver.
+// In particular, StreamSupport MUST NOT be interpreted as an A2A transport
+// capability. Every v1 Runner has Stream; remote A2A streaming availability is
+// negotiated from the remote AgentCard, not by querying a local Driver.
 type StreamSupport interface {
 	StreamCapability() StreamCapability
 }
@@ -178,8 +167,6 @@ type StreamCapability struct {
 // Descriptor is the driver's static capability declaration. The SDK uses it
 // to validate host requests before launching a driver; hosts can use it to
 // disable unsupported UI controls instead of discovering failures late.
-//
-// The root package exposes this type as agentadaptor.DriverDescriptor.
 type Descriptor struct {
 	Type             string
 	DisplayName      string
@@ -227,14 +214,29 @@ type RuntimeCapability struct {
 	ReportsServices bool
 }
 
-// StructuredOutputCapability declares which runtime structured-output modes
-// the driver can honor. JSONSchemaNative means a provider/CLI-native schema
-// surface exists; JSONSchemaPromptValidate means the driver can accept core's
-// explicit prompt+local-validation fallback. WorksWithRun covers the single
-// v1 execution pipeline used by both consumer Run and Stream. The historical
-// WorksWithStreaming name refers only to compatibility with the provider-native
-// streaming transport selected in Request.Streaming; it does not describe the
-// consumer Stream method.
+// StructuredOutputCapability is a truthful matrix for structured-output
+// resolution. JSONSchemaNative means the driver can pass a schema through an
+// official provider/CLI surface and return the provider-produced value.
+// JSONSchemaPromptValidate means the driver can accept core's explicit
+// exact-JSON prompt while core performs local validation. At least one of
+// those mechanisms MUST be true before any WorksWith* field is true, and a
+// declared mechanism MUST set WorksWithRun because v1 has one execution
+// pipeline shared by consumer Run and Stream.
+//
+// WorksWithStreaming applies only when Request.Streaming selects the
+// provider-native streaming transport; it does not describe the consumer
+// Stream method. WorksWithHITL applies when the effective policy contains an
+// Ask decision. A false combination MUST be rejected before driver launch;
+// neither core nor a driver may silently switch mechanism or transport.
+// Eligibility is therefore the following complete matrix:
+//
+//   - NativeStrict requires JSONSchemaNative and WorksWithRun.
+//   - PromptValidate requires JSONSchemaPromptValidate and WorksWithRun.
+//   - PreferNative selects native when eligible, otherwise prompt-validation
+//     when eligible, and otherwise rejects the invocation.
+//   - every row additionally requires WorksWithStreaming when
+//     Request.Streaming is true and WorksWithHITL when any effective decision
+//     mode is Ask.
 type StructuredOutputCapability struct {
 	JSONSchemaNative         bool
 	JSONSchemaPromptValidate bool

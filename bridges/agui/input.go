@@ -34,7 +34,8 @@ import (
 	"strings"
 	"time"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/bridges/internal/bridgekey"
+	adaptor "github.com/agent-dance/agent-adaptor/next"
 )
 
 // RunAgentInput is the canonical HTTP body an AG-UI client (CopilotKit
@@ -47,14 +48,12 @@ import (
 // through untouched — the bridge promises to round-trip unknown payload
 // slices rather than reject or lose them.
 type RunAgentInput struct {
-	// ThreadID identifies the conversation thread. agent-adaptor maps it
-	// into the SDK session namespace so multi-turn conversations reuse
-	// the same underlying adapter session.
+	// ThreadID identifies the conversation thread. The bridge encodes the
+	// AG-UI identity into one collision-free adaptor Thread key.
 	ThreadID string `json:"threadId"`
 
-	// RunID uniquely identifies this invocation. We do not currently
-	// correlate it with SDK RunHandle.RunID() (they live in independent
-	// scopes), but the field is accepted and surfaced.
+	// RunID is the AG-UI invocation identity. It is accepted and surfaced but
+	// remains independent from the adaptor Stream RunID.
 	RunID string `json:"runId"`
 
 	// Messages is the ordered chat history. The latest user-role entry
@@ -132,55 +131,44 @@ func (in *RunAgentInput) LastUserText() string {
 	return ""
 }
 
-// UserTurnPayloads converts the latest user-role message in this AG-UI
-// input into a well-formed text.start / text.content / text.end triple
-// of StreamPayloads. The triple uses RoleUser so downstream Translator
-// and Recorder treat it symmetrically to assistant text.
-//
-// The caller owns where these payloads go:
-//
-//   - to a sessionrecorder.Recorder so the user turn appears in
-//     recorder-backed transcript views;
-//   - to an SSE writer (via agui.NewTranslator().Translate(p)) so other
-//     tabs subscribed to the same thread observe the turn in real time;
-//   - or simply discarded if the host does not need cross-client replay.
-//
-// runID is opaque to the SDK; passing the AG-UI RunAgentInput.RunID is
-// the canonical choice for correlation.
-//
-// The MessageID reuses the AG-UI Message.ID when present; when absent
-// the helper synthesises a "user-<runID>-<index>" identifier so the
-// start/content/end triple remains internally consistent.
-//
-// Returns nil when the input has no user-role message with non-empty
-// text content. Safe to call on a nil receiver.
-func (in *RunAgentInput) UserTurnPayloads(runID string) []agentadaptor.StreamPayload {
-	if in == nil {
-		return nil
+// LastUserMessageID returns the AG-UI message id of the most recent
+// non-empty user text message. It returns an empty string when the client did
+// not supply an id or there is no usable user message. Use UserTurnEvents
+// when a deterministic fallback id is required.
+func (in *RunAgentInput) LastUserMessageID() string {
+	_, id, text := lastUserMessageWithID(in)
+	if text == "" {
+		return ""
 	}
-	idx, msgID, text := lastUserMessageWithID(in)
+	return id
+}
+
+// UserTurnEvents emits a well-formed user TextDelta start/content/end
+// lifecycle for the latest
+// non-empty user message, preserving the client message id or synthesizing a
+// deterministic id from runID and the message index.
+//
+// EventMeta carries the caller-provided run id and the collision-free AG-UI
+// thread tuple. The three events share one observation time; their sequence
+// remains zero because only a live Agent sink may assign authoritative run
+// ordering.
+func (in *RunAgentInput) UserTurnEvents(runID string) []adaptor.Event {
+	idx, messageID, text := lastUserMessageWithID(in)
 	if text == "" {
 		return nil
 	}
-	if msgID == "" {
-		msgID = synthesizeUserMessageID(runID, idx)
+	if messageID == "" {
+		messageID = synthesizeUserMessageID(runID, idx)
 	}
-	now := time.Now()
-	common := agentadaptor.StreamPayload{
-		Role:      agentadaptor.RoleUser,
-		MessageID: msgID,
-		RunID:     runID,
-		ThreadID:  in.ThreadID,
-		Timestamp: now,
+	meta := adaptor.EventMeta{RunID: runID, Time: time.Now()}
+	if in.ThreadID != "" {
+		meta.ThreadKey = bridgekey.Encode("agui", in.ThreadID)
 	}
-	start := common
-	start.Kind = agentadaptor.StreamTextStart
-	content := common
-	content.Kind = agentadaptor.StreamTextContent
-	content.Delta = text
-	end := common
-	end.Kind = agentadaptor.StreamTextEnd
-	return []agentadaptor.StreamPayload{start, content, end}
+	return []adaptor.Event{
+		adaptor.WithEventMeta(adaptor.TextDelta{MessageID: messageID, Role: adaptor.RoleUser, Phase: adaptor.PhaseStart}, meta),
+		adaptor.WithEventMeta(adaptor.TextDelta{MessageID: messageID, Text: text, Role: adaptor.RoleUser, Phase: adaptor.PhaseContent}, meta),
+		adaptor.WithEventMeta(adaptor.TextDelta{MessageID: messageID, Role: adaptor.RoleUser, Phase: adaptor.PhaseEnd}, meta),
+	}
 }
 
 // lastUserMessageWithID is the ID-aware variant of LastUserText. It
@@ -214,9 +202,9 @@ func synthesizeUserMessageID(runID string, idx int) string {
 	return fmt.Sprintf("user-%s-%d", runID, idx)
 }
 
-// SessionKey derives the SDK SessionKey (namespace, key) pair for this
-// input. The convention is "agui/<threadId>" so AG-UI threads collide
-// with each other but not with other namespaces a host may use.
+// SessionKey derives the AG-UI session identity tuple for this input. The
+// SSE bridge passes the two values through its
+// collision-free tuple encoder rather than joining them with a delimiter.
 //
 // When ThreadID is empty the function returns ("", "") — callers must
 // treat that as "no session binding" and run the adapter stateless.

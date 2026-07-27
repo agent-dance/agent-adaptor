@@ -41,7 +41,8 @@ type SessionParams struct {
 // tests, and drivers a stable way to normalize SessionState and inspect
 // driver-specific parameters without guessing map keys.
 //
-// Every implementation MUST define the canonical empty mapping:
+// Name MUST return a non-empty identifier stable across instances and
+// processes. Every implementation MUST define the canonical empty mapping:
 // ToParams(nil) returns the zero SessionParams, FromParams(SessionParams{})
 // returns nil, and GuardFingerprint accepts the zero value without panicking.
 // For non-empty values, ToParams and FromParams MUST round-trip ResumeID,
@@ -52,7 +53,8 @@ type SessionParams struct {
 // params so that GuardFingerprint changes whenever MCP, skills, agents,
 // hooks, instructions, or structured config changes. A Run invocation that
 // supplies a resume ID whose GuardFingerprint no longer matches the current
-// profile payload SHOULD be rejected by the driver with a dedicated error.
+// profile payload MUST be rejected before provider launch with a dedicated
+// error.
 // This keeps provider-visible profile resources consistent with the session
 // they were captured for.
 type SessionCodec interface {

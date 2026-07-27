@@ -6,7 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	agentadaptor "github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/internal/engine"
 )
 
 func TestSyncProfileResourcesReportsManagedAndExternalMCP(t *testing.T) {
@@ -18,7 +19,7 @@ func TestSyncProfileResourcesReportsManagedAndExternalMCP(t *testing.T) {
 
 	snapshot, err := adapter{}.SyncProfileResources(
 		context.Background(),
-		agentadaptor.ClaudeConfig{},
+		Config{},
 		agentadaptor.AgentIdentity{},
 		&agentadaptor.ProfileSelection{Mode: agentadaptor.ProfileModeDedicated, Dir: profileDir},
 		agentadaptor.ProfilePayload{
@@ -37,13 +38,13 @@ func TestSyncProfileResourcesReportsManagedAndExternalMCP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sync profile resources: %v", err)
 	}
-	resource := resourceByKind(t, snapshot, agentadaptor.ProfileResourceMCP)
+	resource := resourceByKind(t, snapshot, engine.ProfileResourceMCP)
 	if !sameStrings(resource.Managed, []string{"managed"}) || !sameStrings(resource.External, []string{"external"}) {
 		t.Fatalf("unexpected MCP resource snapshot: %#v", resource)
 	}
 }
 
-func resourceByKind(t *testing.T, snapshot agentadaptor.ProfileSnapshot, kind agentadaptor.ProfileResourceKind) agentadaptor.ResourceSnapshot {
+func resourceByKind(t *testing.T, snapshot engine.ProfileSnapshot, kind engine.ProfileResourceKind) engine.ResourceSnapshot {
 	t.Helper()
 	for _, resource := range snapshot.Resources {
 		if resource.Kind == kind {
@@ -51,7 +52,7 @@ func resourceByKind(t *testing.T, snapshot agentadaptor.ProfileSnapshot, kind ag
 		}
 	}
 	t.Fatalf("missing resource %s", kind)
-	return agentadaptor.ResourceSnapshot{}
+	return engine.ResourceSnapshot{}
 }
 
 func sameStrings(got, want []string) bool {

@@ -6,21 +6,22 @@ import (
 	"runtime"
 	"strings"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/internal/engine"
 )
 
 // Classify maps an adapter-resolved effective profile to the SDK's neutral
 // shared vs host-managed profile kind. Adapters should classify the effective
 // profile after resolving provider env/profile options rather than branching
 // directly on ProfileSelection.Mode.
-func Classify(profile agentadaptor.AgentProfile, canonicalShared string) agentadaptor.ProfileKind {
+func Classify(profile driver.AgentProfile, canonicalShared string) engine.ProfileKind {
 	if profile.Managed {
-		return agentadaptor.ProfileKindHostManaged
+		return engine.ProfileKindHostManaged
 	}
 	if SamePath(profile.Dir, canonicalShared) {
-		return agentadaptor.ProfileKindShared
+		return engine.ProfileKindShared
 	}
-	return agentadaptor.ProfileKindHostManaged
+	return engine.ProfileKindHostManaged
 }
 
 func SamePath(left, right string) bool {

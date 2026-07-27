@@ -113,9 +113,21 @@ type TurnStartParams struct {
 
 // TurnRef carries the minimum turn metadata the adapter tracks.
 type TurnRef struct {
-	ID     string `json:"id"`
-	Status string `json:"status"`
+	ID     string     `json:"id"`
+	Status TurnStatus `json:"status"`
 }
+
+// TurnStatus is the official status carried by turn objects. A
+// turn/completed notification is the sole terminal notification; its status
+// distinguishes success, provider failure, and interruption.
+type TurnStatus string
+
+const (
+	TurnStatusCompleted   TurnStatus = "completed"
+	TurnStatusFailed      TurnStatus = "failed"
+	TurnStatusInterrupted TurnStatus = "interrupted"
+	TurnStatusInProgress  TurnStatus = "inProgress"
+)
 
 // TurnStartResponse is the reply to turn/start.
 type TurnStartResponse struct {
@@ -145,8 +157,8 @@ type TurnStartedNotificationBody struct {
 // "turn/completed". Usage is the important field; Error surfaces on failure.
 type TurnCompletedTurn struct {
 	ID          string            `json:"id"`
-	Status      string            `json:"status"`
-	Error       json.RawMessage   `json:"error,omitempty"`
+	Status      TurnStatus        `json:"status"`
+	Error       *TurnError        `json:"error,omitempty"`
 	Usage       *TurnUsage        `json:"usage,omitempty"`
 	CompletedAt int64             `json:"completedAt,omitempty"`
 	Items       []json.RawMessage `json:"items,omitempty"`
@@ -161,12 +173,6 @@ type TurnUsage struct {
 
 // TurnCompletedNotificationBody is the adapter's view of "turn/completed".
 type TurnCompletedNotificationBody struct {
-	ThreadID string            `json:"threadId"`
-	Turn     TurnCompletedTurn `json:"turn"`
-}
-
-// TurnFailedNotificationBody is the adapter's view of "turn/failed".
-type TurnFailedNotificationBody struct {
 	ThreadID string            `json:"threadId"`
 	Turn     TurnCompletedTurn `json:"turn"`
 }

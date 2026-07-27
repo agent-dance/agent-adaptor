@@ -1,6 +1,6 @@
 // Package appserver is a typed client for the codex app-server JSON-RPC
 // protocol over stdio. It is the backing transport used by codex adapter
-// runs that opt into streaming (DriverRunRequest.Streaming == true).
+// runs whose resolved driver.Request selects provider-native streaming.
 //
 // The package is organised into five files:
 //

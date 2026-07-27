@@ -5,12 +5,13 @@ import (
 	"path/filepath"
 	"testing"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/internal/engine"
 )
 
 func TestClassifyTreatsManagedHomesAsHostManaged(t *testing.T) {
-	kind := Classify(agentadaptor.AgentProfile{Dir: t.TempDir(), Managed: true}, t.TempDir())
-	if kind != agentadaptor.ProfileKindHostManaged {
+	kind := Classify(driver.AgentProfile{Dir: t.TempDir(), Managed: true}, t.TempDir())
+	if kind != engine.ProfileKindHostManaged {
 		t.Fatalf("expected managed profile to be host-managed, got %q", kind)
 	}
 }
@@ -26,8 +27,8 @@ func TestClassifyResolvesSymlinksBeforeComparingCanonicalSharedPath(t *testing.T
 		t.Fatalf("symlink: %v", err)
 	}
 
-	kind := Classify(agentadaptor.AgentProfile{Dir: link}, target)
-	if kind != agentadaptor.ProfileKindShared {
+	kind := Classify(driver.AgentProfile{Dir: link}, target)
+	if kind != engine.ProfileKindShared {
 		t.Fatalf("expected symlinked shared profile to classify as shared, got %q", kind)
 	}
 }

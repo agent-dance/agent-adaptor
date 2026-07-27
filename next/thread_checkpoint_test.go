@@ -24,6 +24,13 @@ type codecFake struct {
 	codec driver.SessionCodec
 }
 
+type typedNilCodecFake struct{ *fakeDriver }
+
+func (*typedNilCodecFake) SessionCodec() driver.SessionCodec {
+	var codec *allowlistCodec
+	return codec
+}
+
 var (
 	_ driver.Driver               = (*codecFake)(nil)
 	_ driver.SessionCodecProvider = (*codecFake)(nil)
@@ -76,6 +83,17 @@ func TestThreadCheckpointNotFound(t *testing.T) {
 	agent := adaptor.New(newFakeDriver(), adaptor.WithThreadStore(memory.NewStore()))
 	if _, err := agent.Thread("never-ran").Checkpoint(context.Background()); !errors.Is(err, adaptor.ErrThreadNotFound) {
 		t.Fatalf("Checkpoint on missing thread: err = %v, want ErrThreadNotFound", err)
+	}
+}
+
+func TestThreadRejectsTypedNilSessionCodecWithoutPanic(t *testing.T) {
+	fake := &typedNilCodecFake{fakeDriver: newFakeDriver()}
+	agent := adaptor.New(fake, adaptor.WithThreadStore(memory.NewStore()))
+	if _, err := agent.Thread("bad-codec").Run(context.Background(), "go"); !errors.Is(err, adaptor.ErrThreadIncompatible) {
+		t.Fatalf("typed nil codec: err=%v, want ErrThreadIncompatible", err)
+	}
+	if fake.runCount() != 0 {
+		t.Fatalf("driver ran %d times despite invalid codec", fake.runCount())
 	}
 }
 

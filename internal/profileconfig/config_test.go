@@ -8,7 +8,8 @@ import (
 	"testing"
 	"time"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	agentadaptor "github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/internal/engine"
 	"github.com/agent-dance/agent-adaptor/internal/profilestate"
 )
 
@@ -29,7 +30,7 @@ func TestSyncNativePatchesMaterializesRelativeConfigPatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sync native patches: %v", err)
 	}
-	if snapshot.Support != agentadaptor.ProfileResourceSupportNativeEscape || snapshot.Materialization != agentadaptor.ProfileResourceMaterializationNativeManaged {
+	if snapshot.Support != engine.ProfileResourceSupportNativeEscape || snapshot.Materialization != engine.ProfileResourceMaterializationNativeManaged {
 		t.Fatalf("unexpected snapshot: %#v", snapshot)
 	}
 	if !sameStrings(snapshot.Managed, []string{"sandbox"}) {
@@ -99,7 +100,7 @@ func TestSnapshotReportsUnsupportedCapabilityPatch(t *testing.T) {
 	snapshot := Snapshot("codex", t.TempDir(), agentadaptor.ProfileConfigPayload{
 		Patches: []agentadaptor.ProfileConfigPatch{{Key: "ui", Capability: "ui"}},
 	}, true)
-	if snapshot.Support != agentadaptor.ProfileResourceSupportUnsupported || snapshot.Error == "" {
+	if snapshot.Support != engine.ProfileResourceSupportUnsupported || snapshot.Error == "" {
 		t.Fatalf("expected unsupported capability snapshot, got %#v", snapshot)
 	}
 }
@@ -130,7 +131,7 @@ func TestSyncCapabilityPatchMaterializesCodexSandbox(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sync capability patch: %v", err)
 	}
-	if snapshot.Support != agentadaptor.ProfileResourceSupportPortableExtended || snapshot.Materialization != agentadaptor.ProfileResourceMaterializationNativeManaged {
+	if snapshot.Support != engine.ProfileResourceSupportPortableExtended || snapshot.Materialization != engine.ProfileResourceMaterializationNativeManaged {
 		t.Fatalf("unexpected snapshot: %#v", snapshot)
 	}
 	if !sameStrings(snapshot.Managed, []string{"sandbox"}) {
@@ -161,7 +162,7 @@ func TestSyncCapabilityPatchMaterializesClaudeEnv(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sync capability patch: %v", err)
 	}
-	if snapshot.Support != agentadaptor.ProfileResourceSupportPortableExtended {
+	if snapshot.Support != engine.ProfileResourceSupportPortableExtended {
 		t.Fatalf("unexpected snapshot: %#v", snapshot)
 	}
 	raw, err := os.ReadFile(filepath.Join(profileDir, "settings.json"))

@@ -9,7 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor"
+	agentadaptor "github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/internal/engine"
 	"github.com/agent-dance/agent-adaptor/internal/testutil"
 )
 
@@ -25,8 +26,8 @@ func TestCursorRunPreservesAndGuardsSessionState(t *testing.T) {
 		"@echo off\r\nsetlocal\r\nset /p PROMPT=\r\n>&2 echo stderr:%PROMPT%\r\necho {\"type\":\"run.completed\",\"session_id\":\"cursor-session\",\"display_id\":\"cursor-display\"}\r\n",
 	)
 
-	cfg := agentadaptor.CursorConfig{
-		CommonConfig: agentadaptor.CommonConfig{
+	cfg := Config{
+		CommonConfig: CommonConfig{
 			Command: command,
 			CWD:     workspace,
 			Env: []agentadaptor.EnvBinding{
@@ -36,14 +37,14 @@ func TestCursorRunPreservesAndGuardsSessionState(t *testing.T) {
 		},
 		Model: "gpt-5",
 	}
-	req := agentadaptor.DriverRunRequest{
+	req := agentadaptor.Request{
 		Prompt:    "hello from cursor",
 		Config:    cfg,
 		Workspace: agentadaptor.WorkspaceLease{ID: "workspace-a", CWD: workspace},
 	}
 
 	events := &testutil.EventRecorder{}
-	first, err := NewAdapter().Run(context.Background(), req, events)
+	first, err := adapter{}.Run(context.Background(), req, events)
 	if err != nil {
 		t.Fatalf("first run: %v", err)
 	}
@@ -62,16 +63,16 @@ func TestCursorRunPreservesAndGuardsSessionState(t *testing.T) {
 	assertHasInvocationAndSpawn(t, events.Snapshot())
 
 	continueReq := req
-	continueReq.Session = &agentadaptor.DriverSessionContext{State: first.Checkpoint.State}
-	if _, err := NewAdapter().Run(context.Background(), continueReq, &testutil.EventRecorder{}); err != nil {
+	continueReq.Session = &agentadaptor.SessionContext{State: first.Checkpoint.State}
+	if _, err := (adapter{}).Run(context.Background(), continueReq, &testutil.EventRecorder{}); err != nil {
 		t.Fatalf("resume run: %v", err)
 	}
 
 	rejectReq := req
 	rejectReq.Workspace = agentadaptor.WorkspaceLease{ID: "workspace-b", CWD: workspace}
-	rejectReq.Session = &agentadaptor.DriverSessionContext{State: first.Checkpoint.State}
-	_, err = NewAdapter().Run(context.Background(), rejectReq, &testutil.EventRecorder{})
-	if !errors.Is(err, agentadaptor.ErrResumeRejected) {
+	rejectReq.Session = &agentadaptor.SessionContext{State: first.Checkpoint.State}
+	_, err = (adapter{}).Run(context.Background(), rejectReq, &testutil.EventRecorder{})
+	if !errors.Is(err, engine.ErrResumeRejected) {
 		t.Fatalf("expected ErrResumeRejected, got %v", err)
 	}
 }
@@ -92,9 +93,9 @@ func TestCursorRunUsesCurrentForceFlagForAutoApprove(t *testing.T) {
 		"@echo off\r\nsetlocal\r\nset /p PROMPT=\r\necho {\"type\":\"run.completed\",\"session_id\":\"cursor-session\"}\r\n",
 	)
 
-	_, err := NewAdapter().Run(context.Background(), agentadaptor.DriverRunRequest{
+	_, err := (adapter{}).Run(context.Background(), agentadaptor.Request{
 		Prompt:    "hello from cursor",
-		Config:    agentadaptor.CursorConfig{CommonConfig: agentadaptor.CommonConfig{Command: command, CWD: workspace, Env: []agentadaptor.EnvBinding{{Name: "HOME", Value: home}, {Name: "USERPROFILE", Value: home}}}},
+		Config:    Config{CommonConfig: CommonConfig{Command: command, CWD: workspace, Env: []agentadaptor.EnvBinding{{Name: "HOME", Value: home}, {Name: "USERPROFILE", Value: home}}}},
 		Workspace: agentadaptor.WorkspaceLease{ID: "workspace-a", CWD: workspace},
 		Policy: agentadaptor.RunPolicy{HumanDecision: agentadaptor.HumanDecisionPolicy{
 			Permission: agentadaptor.HumanDecisionAutoApprove,
@@ -127,8 +128,8 @@ func TestCursorRunMapsDedicatedProfileOptionToCursorHome(t *testing.T) {
 		"@echo off\r\nsetlocal\r\nset /p PROMPT=\r\necho {\"type\":\"run.completed\",\"session_id\":\"cursor-session\"}\r\n",
 	)
 
-	cfg := agentadaptor.CursorConfig{
-		CommonConfig: agentadaptor.CommonConfig{
+	cfg := Config{
+		CommonConfig: CommonConfig{
 			Command: command,
 			CWD:     workspace,
 		},
@@ -136,7 +137,7 @@ func TestCursorRunMapsDedicatedProfileOptionToCursorHome(t *testing.T) {
 	}
 
 	events := &testutil.EventRecorder{}
-	_, err := NewAdapter().Run(context.Background(), agentadaptor.DriverRunRequest{
+	_, err := (adapter{}).Run(context.Background(), agentadaptor.Request{
 		Prompt:    "hello from cursor",
 		Config:    cfg,
 		Profile:   (&agentadaptor.ProfileSelection{Mode: agentadaptor.ProfileModeDedicated, Dir: profileDir}),
@@ -161,9 +162,9 @@ func TestCursorResumeProfileMismatchDoesNotWriteProfileResources(t *testing.T) {
 		"#!/bin/sh\nset -eu\ncat >/dev/null\nprintf '{\"type\":\"run.completed\",\"session_id\":\"cursor-session\"}\\n'\n",
 		"@echo off\r\nsetlocal\r\nset /p PROMPT=\r\necho {\"type\":\"run.completed\",\"session_id\":\"cursor-session\"}\r\n",
 	)
-	req := agentadaptor.DriverRunRequest{
+	req := agentadaptor.Request{
 		Prompt:    "hello",
-		Config:    agentadaptor.CursorConfig{CommonConfig: agentadaptor.CommonConfig{Command: command, CWD: workspace, Env: []agentadaptor.EnvBinding{{Name: "HOME", Value: home}, {Name: "USERPROFILE", Value: home}, {Name: "CURSOR_HOME", Value: cursorHome}}}},
+		Config:    Config{CommonConfig: CommonConfig{Command: command, CWD: workspace, Env: []agentadaptor.EnvBinding{{Name: "HOME", Value: home}, {Name: "USERPROFILE", Value: home}, {Name: "CURSOR_HOME", Value: cursorHome}}}},
 		Workspace: agentadaptor.WorkspaceLease{ID: "workspace-a", CWD: workspace},
 		Skills: agentadaptor.ResolvedSkills{Entries: []agentadaptor.ResolvedSkill{
 			{Key: "analysis", RuntimeName: "analysis", SourcePath: skillDir},
@@ -174,7 +175,7 @@ func TestCursorResumeProfileMismatchDoesNotWriteProfileResources(t *testing.T) {
 			Command:   "echo",
 		}}},
 		ProfilePayload: agentadaptor.ProfilePayload{Fingerprint: "new-profile"},
-		Session: &agentadaptor.DriverSessionContext{State: &agentadaptor.DriverSessionState{
+		Session: &agentadaptor.SessionContext{State: &agentadaptor.SessionState{
 			ResumeID: "cursor-session",
 			Data: map[string]string{
 				agentadaptor.SessionParamCWD:                workspace,
@@ -183,8 +184,8 @@ func TestCursorResumeProfileMismatchDoesNotWriteProfileResources(t *testing.T) {
 			},
 		}},
 	}
-	_, err := NewAdapter().Run(context.Background(), req, &testutil.EventRecorder{})
-	if !errors.Is(err, agentadaptor.ErrResumeRejected) {
+	_, err := (adapter{}).Run(context.Background(), req, &testutil.EventRecorder{})
+	if !errors.Is(err, engine.ErrResumeRejected) {
 		t.Fatalf("expected ErrResumeRejected, got %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(cursorHome, "skills")); !os.IsNotExist(err) {

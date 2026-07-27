@@ -2,6 +2,7 @@ package adaptor
 
 import (
 	"context"
+	"slices"
 
 	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/internal/engine"
@@ -23,9 +24,9 @@ import (
 //   - the SelectSkills override lives on the Agent (mutex-guarded), not in a
 //     central SDK map.
 
-// Consumer-facing aliases for the inspection report types, so application
-// code only imports this package. All are driver SPI types except the two
-// profile snapshot shapes, which are engine-declared.
+// Consumer-facing aliases for driver-owned inspection reports. Profile
+// snapshot values are declared below as root-owned DTOs: an application-facing
+// report must never expose the migration engine's concrete types.
 type (
 	// EnvironmentReport is the result of an environment health check.
 	EnvironmentReport = driver.EnvironmentReport
@@ -42,12 +43,101 @@ type (
 	SkillSnapshot = driver.SkillSnapshot
 	// AgentProfile is the driver-local profile report.
 	AgentProfile = driver.AgentProfile
-	// ProfileSnapshot reports the desired vs observed profile resource
-	// state (ProfileState / SyncProfile).
-	ProfileSnapshot = engine.ProfileSnapshot
-	// ResourceSnapshot is one resource row inside a ProfileSnapshot.
-	ResourceSnapshot = engine.ResourceSnapshot
 )
+
+// ProfileKind classifies where the effective provider profile lives.
+type ProfileKind string
+
+const (
+	ProfileKindShared      ProfileKind = "shared"
+	ProfileKindHostManaged ProfileKind = "host_managed"
+)
+
+// ProfileResourceKind names one provider-visible resource family.
+type ProfileResourceKind string
+
+const (
+	ProfileResourceSkills       ProfileResourceKind = "skills"
+	ProfileResourceMCP          ProfileResourceKind = "mcp"
+	ProfileResourceAgents       ProfileResourceKind = "agents"
+	ProfileResourceHooks        ProfileResourceKind = "hooks"
+	ProfileResourceInstructions ProfileResourceKind = "instructions"
+	ProfileResourceConfig       ProfileResourceKind = "config"
+)
+
+// ProfileResourceSupport describes how portable a resource is for the bound
+// driver.
+type ProfileResourceSupport string
+
+const (
+	ProfileResourceSupportPortableCore     ProfileResourceSupport = "portable_core"
+	ProfileResourceSupportPortableExtended ProfileResourceSupport = "portable_extended"
+	ProfileResourceSupportNativeEscape     ProfileResourceSupport = "native_escape"
+	ProfileResourceSupportFallback         ProfileResourceSupport = "fallback"
+	ProfileResourceSupportUnsupported      ProfileResourceSupport = "unsupported"
+)
+
+// ProfileResourceMaterialization describes how a desired resource became
+// provider-visible.
+type ProfileResourceMaterialization string
+
+const (
+	ProfileResourceMaterializationNativeManaged   ProfileResourceMaterialization = "native_managed"
+	ProfileResourceMaterializationFileManaged     ProfileResourceMaterialization = "file_managed"
+	ProfileResourceMaterializationPromptInjected  ProfileResourceMaterialization = "prompt_injected"
+	ProfileResourceMaterializationFallback        ProfileResourceMaterialization = "fallback"
+	ProfileResourceMaterializationNotMaterialized ProfileResourceMaterialization = "not_materialized"
+)
+
+// ResourceSnapshot is one resource row inside a [ProfileSnapshot].
+type ResourceSnapshot struct {
+	Kind            ProfileResourceKind
+	Fingerprint     string
+	Managed         []string
+	External        []string
+	Support         ProfileResourceSupport
+	Materialization ProfileResourceMaterialization
+	Warnings        []string
+	Error           string
+}
+
+// ProfileSnapshot reports the desired versus observed profile resource state
+// returned by [Agent.ProfileState] and [Agent.SyncProfile].
+type ProfileSnapshot struct {
+	DriverType  string
+	Profile     AgentProfile
+	Kind        ProfileKind
+	Fingerprint string
+	Resources   []ResourceSnapshot
+	Warnings    []string
+}
+
+func profileSnapshotFromEngine(snapshot engine.ProfileSnapshot) ProfileSnapshot {
+	resources := make([]ResourceSnapshot, len(snapshot.Resources))
+	for i, resource := range snapshot.Resources {
+		resources[i] = ResourceSnapshot{
+			Kind:            ProfileResourceKind(resource.Kind),
+			Fingerprint:     resource.Fingerprint,
+			Managed:         slices.Clone(resource.Managed),
+			External:        slices.Clone(resource.External),
+			Support:         ProfileResourceSupport(resource.Support),
+			Materialization: ProfileResourceMaterialization(resource.Materialization),
+			Warnings:        slices.Clone(resource.Warnings),
+			Error:           resource.Error,
+		}
+	}
+	if snapshot.Resources == nil {
+		resources = nil
+	}
+	return ProfileSnapshot{
+		DriverType:  snapshot.DriverType,
+		Profile:     snapshot.Profile,
+		Kind:        ProfileKind(snapshot.Kind),
+		Fingerprint: snapshot.Fingerprint,
+		Resources:   resources,
+		Warnings:    slices.Clone(snapshot.Warnings),
+	}
+}
 
 // Inspector is the read-only inspection panel of one Agent, obtained via
 // Agent.Inspect(). Every method degrades honestly when the driver does not
@@ -145,13 +235,14 @@ func (a *Agent) ProfileState(ctx context.Context) (ProfileSnapshot, error) {
 		return ProfileSnapshot{}, err
 	}
 	if prd, ok := a.driver.(engine.ProfileResourceDriver); ok {
-		return prd.SnapshotProfileResources(ctx, nil, a.inspectIdentity(), a.defaults.profile, state.payload, state.selected, state.resolved)
+		snapshot, err := prd.SnapshotProfileResources(ctx, nil, a.inspectIdentity(), a.defaults.profile, state.payload, state.selected, state.resolved)
+		return profileSnapshotFromEngine(snapshot), err
 	}
 	profileInfo, err := a.getProfile(ctx)
 	if err != nil {
 		return ProfileSnapshot{}, err
 	}
-	return engine.SnapshotProfilePayload(a.driver.Descriptor().Type, profileInfo, a.defaults.profile, state.payload, false), nil
+	return profileSnapshotFromEngine(engine.SnapshotProfilePayload(a.driver.Descriptor().Type, profileInfo, a.defaults.profile, state.payload, false)), nil
 }
 
 // SyncProfile pushes the desired profile resources to the driver and reports
@@ -165,7 +256,8 @@ func (a *Agent) SyncProfile(ctx context.Context) (ProfileSnapshot, error) {
 		return ProfileSnapshot{}, err
 	}
 	if prd, ok := a.driver.(engine.ProfileResourceDriver); ok {
-		return prd.SyncProfileResources(ctx, nil, a.inspectIdentity(), a.defaults.profile, state.payload, state.selected, state.resolved)
+		snapshot, err := prd.SyncProfileResources(ctx, nil, a.inspectIdentity(), a.defaults.profile, state.payload, state.selected, state.resolved)
+		return profileSnapshotFromEngine(snapshot), err
 	}
 	if _, err := engine.SyncSkillSnapshot(ctx, a.driver, nil, state.payload.Skills, state.selected, state.resolved, a.defaults.profile); err != nil {
 		return ProfileSnapshot{}, err
@@ -174,7 +266,7 @@ func (a *Agent) SyncProfile(ctx context.Context) (ProfileSnapshot, error) {
 	if err != nil {
 		return ProfileSnapshot{}, err
 	}
-	return engine.SnapshotProfilePayload(a.driver.Descriptor().Type, profileInfo, a.defaults.profile, state.payload, true), nil
+	return profileSnapshotFromEngine(engine.SnapshotProfilePayload(a.driver.Descriptor().Type, profileInfo, a.defaults.profile, state.payload, true)), nil
 }
 
 // SelectSkills installs a process-local skill selection override: the given
@@ -239,7 +331,7 @@ func (a *Agent) profileState(ctx context.Context) (profileState, error) {
 	if err != nil {
 		return profileState{}, err
 	}
-	mcpPayload, err := engine.ResolveMCPPayload(a.defaults.mcp, nil, a.driver.Descriptor().MCP)
+	mcpPayload, err := engine.ResolveMCPPayload(a.defaults.engineMCPConfig(), nil, a.driver.Descriptor().MCP)
 	if err != nil {
 		return profileState{}, err
 	}

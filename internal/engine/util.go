@@ -184,6 +184,11 @@ func cloneRawStreams(value *RawStreams) *RawStreams {
 		return nil
 	}
 	copy := *value
+	if value.Terminal != nil {
+		terminal := *value.Terminal
+		terminal.JSON = append([]byte(nil), value.Terminal.JSON...)
+		copy.Terminal = &terminal
+	}
 	return &copy
 }
 
