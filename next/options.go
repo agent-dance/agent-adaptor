@@ -555,7 +555,7 @@ func WithProfile(sel profile.Selection) Option {
 // actually materialized it.
 func WithProfileResources(res profile.Resources) SharedOption {
 	return sharedOptionFunc(func(s *RunSettings) {
-		cp := engine.CloneProfileResources(res)
+		cp := profileResourcesToEngine(res)
 		if len(cp.Skills) > 0 {
 			s.AddSkills(cp.Skills...)
 		}

@@ -48,33 +48,37 @@ type threadRuntime struct {
 	runs    map[adaptor.Stream]struct{}
 }
 
-// newThreadStore returns a threadStore backed by the in-memory event
-// backend.
-//
-// GAP (v1): sessionrecorder ships NewMemoryEventBackend for adaptor.Event
-// but no JSONL EventBackend yet — NewJSONLBackend is still typed on the
-// legacy StreamPayload. THREAD_STORE_DIR therefore only logs a warning
-// instead of switching to durable storage.
-func newThreadStore() *threadStore {
+// newThreadStore returns a durable typed-Event recorder when
+// THREAD_STORE_DIR is configured. Directory creation/open errors are returned
+// to startup; configured persistence is never silently replaced with memory.
+// With no directory configured, the in-memory backend is an explicit choice.
+func newThreadStore() (*threadStore, error) {
+	var backend sessionrecorder.EventBackend
 	if dir := os.Getenv("THREAD_STORE_DIR"); dir != "" {
-		slog.Warn("thread_store: THREAD_STORE_DIR ignored; the v1 EventBackend has no JSONL implementation yet", "dir", dir)
+		jsonl, err := sessionrecorder.NewJSONLEventBackend(dir)
+		if err != nil {
+			return nil, fmt.Errorf("create persistent thread store: %w", err)
+		}
+		backend = jsonl
+	} else {
+		backend = sessionrecorder.NewMemoryEventBackend()
 	}
 	return &threadStore{
-		recorder: sessionrecorder.NewEventRecorder(sessionrecorder.NewMemoryEventBackend()),
+		recorder: sessionrecorder.NewEventRecorder(backend),
 		threads:  map[string]*threadRuntime{},
-	}
+	}, nil
 }
 
 // ---- history (delegated to sessionrecorder) ----
 
-// appendHistory persists one event under threadID. It is called on the hot
-// path of event forwarding, so it intentionally does not block the caller
-// on backend errors: hosts that need fail-hard persistence should replace
-// this with a wrapper that surfaces errors.
-func (s *threadStore) appendHistory(threadID string, ev adaptor.Event) {
+// appendHistory persists one event under threadID. A configured durable
+// recorder's write/sync failure is part of request success and is therefore
+// returned to the serving loop, never downgraded to a log-only warning.
+func (s *threadStore) appendHistory(threadID string, ev adaptor.Event) error {
 	if _, err := s.recorder.Record(context.Background(), threadID, ev); err != nil {
-		slog.Error("thread_store: record event", "err", err, "thread_id", threadID)
+		return fmt.Errorf("thread_store: record event for %q: %w", threadID, err)
 	}
+	return nil
 }
 
 // historyAfter returns the records with HostSeq strictly greater than

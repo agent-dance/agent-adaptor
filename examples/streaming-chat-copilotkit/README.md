@@ -81,7 +81,7 @@ Browser
 | `CODEX_MODEL` / `CLAUDE_MODEL` / `CURSOR_MODEL` | agent 默认模型 | 覆盖对应 agent 模型 |
 | `ADDR` | `:8080` | backend 监听地址 |
 | `CORS_ORIGIN` | `*` | 允许的前端 Origin |
-| `THREAD_STORE_DIR` | unset | 当前会被忽略并打一条 warn：v1 `sessionrecorder` 还没有 `adaptor.Event` 的 JSONL backend，示例统一走 `NewMemoryEventBackend()` |
+| `THREAD_STORE_DIR` | unset | 设置后使用 typed Event JSONL 持久化；目录创建、写入或同步失败会显式终止启动/本次请求，绝不静默退回内存。未设置时明确使用 `NewMemoryEventBackend()` |
 
 前端：
 

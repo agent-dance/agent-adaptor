@@ -175,20 +175,8 @@ func TestClaudeParserFailureFixtureSurfacesErrorMessage(t *testing.T) {
 	if p.errorMessage != "upstream error" {
 		t.Fatalf("errorMessage: got %q", p.errorMessage)
 	}
-	// The CLI exited abnormally, but it still emitted a system.init with a
-	// real session_id before the failing terminal result. The session is
-	// resumable server-side, so the checkpoint must be preserved; the
-	// downstream error surfaces through errorMessage / RunResult.Failure,
-	// not by silently dropping the captured session.
-	checkpoint := p.checkpoint(1)
-	if checkpoint == nil || checkpoint.State == nil {
-		t.Fatalf("abnormal exit with captured session_id must still produce a checkpoint, got %#v", checkpoint)
-	}
-	if checkpoint.State.ResumeID != "claude-fail" {
-		t.Fatalf("checkpoint ResumeID: got %q want %q", checkpoint.State.ResumeID, "claude-fail")
-	}
-	if !checkpoint.Valid {
-		t.Fatalf("checkpoint Valid must be true when session_id is captured")
+	if checkpoint := p.checkpoint(1); checkpoint != nil {
+		t.Fatalf("failed terminal/non-zero exit must not produce a checkpoint, got %#v", checkpoint)
 	}
 }
 
@@ -205,19 +193,8 @@ func TestCheckpoint_AbnormalExitWithSessionID(t *testing.T) {
 	}
 	p.finalize()
 
-	// Simulate a non-zero exit (max_turns, upstream API 400, etc.).
-	checkpoint := p.checkpoint(1)
-	if checkpoint == nil {
-		t.Fatal("expected non-nil checkpoint when session_id was captured before abnormal exit")
-	}
-	if checkpoint.State == nil || checkpoint.State.ResumeID != "claude-abnormal" {
-		t.Fatalf("checkpoint ResumeID: got %#v", checkpoint.State)
-	}
-	if checkpoint.State.DisplayID != "claude-abnormal" {
-		t.Fatalf("checkpoint DisplayID should fall back to session id, got %q", checkpoint.State.DisplayID)
-	}
-	if !checkpoint.Valid {
-		t.Fatalf("checkpoint Valid must be true; session is resumable server-side")
+	if checkpoint := p.checkpoint(1); checkpoint != nil {
+		t.Fatalf("init plus partial output without a successful terminal must be invalid, got %#v", checkpoint)
 	}
 }
 
@@ -240,18 +217,36 @@ func TestParseCheckpoint_AbnormalExitWithSessionID(t *testing.T) {
 		"",
 	}, "\n")
 
-	checkpoint := parseCheckpoint(stdout, 1)
-	if checkpoint == nil {
-		t.Fatal("expected non-nil checkpoint for abnormal exit when session_id is present")
+	if checkpoint := parseCheckpoint(stdout, 1); checkpoint != nil {
+		t.Fatalf("non-zero exit must invalidate a snapshot checkpoint, got %#v", checkpoint)
 	}
-	if checkpoint.State == nil || checkpoint.State.ResumeID != "claude-legacy" {
-		t.Fatalf("checkpoint ResumeID: got %#v", checkpoint.State)
+}
+
+func TestClaudeCheckpointOutcomeGates(t *testing.T) {
+	p := snapshotClaudeStdout("{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"s\"}\n{\"type\":\"result\",\"subtype\":\"success\",\"session_id\":\"s\"}\n")
+	if cp := p.checkpointForOutcome(0, "", false, nil); cp == nil || !cp.Valid {
+		t.Fatalf("clean official success = %#v, want valid checkpoint", cp)
 	}
-	if checkpoint.State.DisplayID != "claude-legacy-display" {
-		t.Fatalf("checkpoint DisplayID: got %q", checkpoint.State.DisplayID)
+	for _, tc := range []struct {
+		name     string
+		exitCode int
+		signal   string
+		timedOut bool
+		failure  *agentadaptor.RunFailure
+	}{
+		{name: "nonzero", exitCode: 1},
+		{name: "signal", signal: "SIGTERM"},
+		{name: "timeout", timedOut: true},
+		{name: "failure", failure: &agentadaptor.RunFailure{Code: agentadaptor.FailureAgentError}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if cp := p.checkpointForOutcome(tc.exitCode, tc.signal, tc.timedOut, tc.failure); cp != nil {
+				t.Fatalf("unsafe outcome produced checkpoint %#v", cp)
+			}
+		})
 	}
-	if !checkpoint.Valid {
-		t.Fatalf("checkpoint Valid must be true")
+	if cp := snapshotClaudeStdout("{broken\n").checkpoint(0); cp != nil {
+		t.Fatalf("malformed protocol produced checkpoint %#v", cp)
 	}
 }
 

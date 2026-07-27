@@ -28,8 +28,8 @@ func TestClaudeRunPreservesAndGuardsSessionState(t *testing.T) {
 		t.Fatalf("write skill: %v", err)
 	}
 	command := testutil.WriteCommand(t, home, "fake-claude",
-		"#!/bin/sh\nset -eu\nprompt=$(cat)\nprintf 'stderr:%s\\n' \"$prompt\" >&2\nprintf '{\"event\":\"turn.completed\",\"session_id\":\"claude-session\",\"display_id\":\"claude-display\"}\\n'\n",
-		"@echo off\r\nsetlocal\r\nset /p PROMPT=\r\n>&2 echo stderr:%PROMPT%\r\necho {\"event\":\"turn.completed\",\"session_id\":\"claude-session\",\"display_id\":\"claude-display\"}\r\n",
+		"#!/bin/sh\nset -eu\nprompt=$(cat)\nprintf 'stderr:%s\\n' \"$prompt\" >&2\nprintf '{\"type\":\"result\",\"subtype\":\"success\",\"session_id\":\"claude-session\",\"display_id\":\"claude-display\"}\\n'\n",
+		"@echo off\r\nsetlocal\r\nset /p PROMPT=\r\n>&2 echo stderr:%PROMPT%\r\necho {\"type\":\"result\",\"subtype\":\"success\",\"session_id\":\"claude-session\",\"display_id\":\"claude-display\"}\r\n",
 	)
 
 	cfg := agentadaptor.ClaudeConfig{
@@ -85,7 +85,7 @@ func TestClaudeRunPreservesAndGuardsSessionState(t *testing.T) {
 	if len(first.Transcript) == 0 {
 		t.Fatalf("expected transcript items, got %#v", first.Transcript)
 	}
-	if first.RawStreams == nil || !strings.Contains(first.RawStreams.Stdout, "turn.completed") {
+	if first.RawStreams == nil || !strings.Contains(first.RawStreams.Stdout, `"subtype":"success"`) {
 		t.Fatalf("expected raw stdout to be captured, got %#v", first.RawStreams)
 	}
 	assertHasInvocationAndSpawn(t, events.Snapshot())

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	agentadaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/internal/keycodec"
 )
 
 type leaseRecord struct {
@@ -56,7 +57,7 @@ func (s *SessionStore) Resolve(_ context.Context, q agentadaptor.SessionQuery) (
 	if q.Namespace == "" || q.Key == "" {
 		return nil, nil
 	}
-	indexKey := q.Namespace + ":" + q.Key
+	indexKey := keycodec.Encode("legacy-session-key", q.Namespace, q.Key)
 	id := s.keyIndex[indexKey]
 	if id == "" {
 		return nil, nil
@@ -99,7 +100,7 @@ func (s *SessionStore) Finalize(_ context.Context, req agentadaptor.SessionFinal
 	}
 
 	if req.RebindActive && req.Namespace != "" && req.Key != "" {
-		s.keyIndex[req.Namespace+":"+req.Key] = req.Record.ID
+		s.keyIndex[keycodec.Encode("legacy-session-key", req.Namespace, req.Key)] = req.Record.ID
 	}
 	return nil
 }

@@ -42,8 +42,8 @@
 // Capability-declaration truthfulness (driver/driver.go capability
 // interfaces; driver/environment.go report types):
 //
-//	CAP-01  Sessions.SupportsResume implies SessionCodecProvider with a
-//	        non-nil codec.
+//	CAP-01  Sessions.SupportsResume is true iff SessionCodecProvider returns
+//	        a non-nil, stable codec.
 //	CAP-02  Skills.Supported implies SkillSupport and a declared Mode of
 //	        ephemeral|persistent; unsupported skills must not declare a mode.
 //	CAP-03  CheckEnvironment succeeds hermetically; DriverType matches the
@@ -66,9 +66,9 @@
 // Structured output (driver/driver.go StructuredOutputCapability,
 // driver/output.go; engine resolution in internal/engine/structured.go):
 //
-//	SO-01  WorksWith* flags require a declared JSONSchema* mechanism; a
-//	       mechanism without WorksWithRun+WorksWithStart is logged as a
-//	       note (the engine honors no mode in that shape).
+//	SO-01  WorksWith* flags require a declared JSONSchema* mechanism, and a
+//	       declared mechanism requires WorksWithRun for v1's one execution
+//	       pipeline. WorksWithStreaming refers to provider transport only.
 //	SO-02  (live, opt-in) a native_strict Run yields StructuredOutput with
 //	       Source=native, Valid=true and parseable RawJSON.
 //	SO-03  Suite guarantee: no probe ever sends a mode or transport shape
@@ -92,9 +92,8 @@
 //
 //	EVT-01  run.started is emitted exactly once and before every other
 //	        normalized payload.
-//	EVT-02  at most one run.finished; after a terminal frame
-//	        (run.finished/run.error) only lifecycle-closing frames or
-//	        further run.error frames may follow; run.error carries Error.
+//	EVT-02  exactly one run.finished or run.error is emitted, it is last,
+//	        and run.error carries Error.
 //	EVT-03  text lifecycles: MessageID required, opened once by text.start,
 //	        content/end only while open.
 //	EVT-04  text.content carries a non-empty Delta.
@@ -114,8 +113,7 @@
 //	EVT-13  run.* frames leave MessageID and ToolCallID empty.
 //
 // Vendor-specific StreamKinds and RunEventTypes outside the declared enums
-// are tolerated and skipped. LenientStreamLifecycle downgrades EVT-01 /
-// EVT-02 / EVT-11 to logs (see the ambiguity notes below).
+// are tolerated for field validation, but no payload may follow a terminal.
 //
 // RunEvent envelope and transcript (live; driver/events.go RunEvent,
 // TranscriptItem):
@@ -123,8 +121,7 @@
 //	RUN-01  chunk events carry Stream "stdout"|"stderr".
 //	RUN-02  item events carry a non-nil Item obeying the TRN rules.
 //	RUN-03  drivers leave RunEvent.Seq zero (SDK-assigned).
-//	RUN-04  (advisory, logged) the RunEventItem sequence mirrors
-//	        Response.Transcript.
+//	RUN-04  the RunEventItem sequence exactly mirrors Response.Transcript.
 //	TRN-01  text-bearing kinds (assistant/thinking/user/stdout/stderr/
 //	        system/summary/question/failure) require Text.
 //	TRN-02  tool_call requires ToolName.
@@ -133,7 +130,8 @@
 //
 // Response invariants (live; driver/run.go):
 //
-//	RSP-01  Checkpoint.Valid=true requires State with a ResumeID.
+//	RSP-01  Checkpoint.Valid=true requires State with a ResumeID and a clean
+//	        outcome (exit 0, no signal/timeout/Failure).
 //	RSP-02  Failure.HumanDecision is non-nil exactly when Code is
 //	        decision_rejected or decision_timeout.
 //	RSP-03  Question carries a Prompt.
@@ -141,22 +139,8 @@
 //	RSP-05  a valid checkpoint round-trips through the session codec with
 //	        its ResumeID and a non-empty guard fingerprint.
 //
-// # Known contract-documentation gaps
-//
-// The following clauses encode behavior every built-in driver exhibits but
-// the driver-package godoc does not state explicitly; they are candidates
-// for godoc hardening before the v1 freeze (and the reason
-// LenientStreamLifecycle exists):
-//
-//   - EVT-01/EVT-02/EVT-11: run-lifecycle framing (started-first, terminal
-//     uniqueness, close-before-finish) is implied by the StreamKind docs
-//     ("marks the beginning/completion") and implemented by every built-in
-//     streaming parser, but never written as MUST rules.
-//   - SES-02: the nil/zero mappings mirror all four built-in codecs; the
-//     SessionCodec godoc is silent about nil handling.
-//   - RUN-04: the RunEvent godoc promises transcript mirroring but does not
-//     say how streaming delta items participate, so the clause is advisory.
-//   - RSP-02: the RunFailure godoc states the invariant without naming who
-//     upholds it (driver vs SDK); the suite enforces it on the driver's
-//     Response as the conservative reading.
+// These clauses are normative. The driver package states the lifecycle,
+// codec-empty mapping, core-owned sequence, transcript mirror, resume-codec,
+// checkpoint, structured-output transport and HumanDecision requirements as
+// MUST rules; this suite does not offer lenient/advisory escape hatches.
 package adaptertest

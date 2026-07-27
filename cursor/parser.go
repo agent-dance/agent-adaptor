@@ -29,21 +29,17 @@ type cursorParser struct {
 	// fallback even when the CLI never emits a non-delta assistant event.
 	deltaBuffer strings.Builder
 
-	sessionID       string
-	displayID       string
-	summary         string // last assistant text; used only as summary fallback
-	terminalSummary string // authoritative summary from terminal result events
-	usage           *agentadaptor.Usage
-	cost            *float64
-	resultFinal     map[string]any
-	errorMessage    string
-}
-
-var cursorCheckpointEvents = map[string]struct{}{
-	"result":          {},
-	"run.completed":   {},
-	"session":         {},
-	"session.updated": {},
+	sessionID         string
+	displayID         string
+	summary           string // last assistant text; used only as summary fallback
+	terminalSummary   string // authoritative summary from terminal result events
+	usage             *agentadaptor.Usage
+	cost              *float64
+	resultFinal       map[string]any
+	errorMessage      string
+	terminalSeen      bool
+	terminalSuccess   bool
+	protocolMalformed bool
 }
 
 func newCursorParser(sink agentadaptor.EventSink) *cursorParser {
@@ -129,6 +125,7 @@ func (p *cursorParser) processLine(stream string, line []byte, _ time.Time) {
 	}
 	var payload map[string]any
 	if err := json.Unmarshal([]byte(trimmed), &payload); err != nil {
+		p.protocolMalformed = true
 		p.emit(agentadaptor.TranscriptItem{
 			Kind: agentadaptor.TranscriptStdout,
 			Text: text,
@@ -140,9 +137,15 @@ func (p *cursorParser) processLine(stream string, line []byte, _ time.Time) {
 }
 
 func (p *cursorParser) handlePayload(raw string, payload map[string]any) {
+	if p.terminalSeen {
+		p.protocolMalformed = true
+		return
+	}
 	eventType := strings.ToLower(cursorTopLevelString(payload, "type", "event", "kind"))
 
-	p.maybeCaptureSession(payload)
+	if cursorFormalEvent(eventType) {
+		p.maybeCaptureSession(payload)
+	}
 
 	switch eventType {
 	case "assistant", "assistant_message", "assistant.message", "message":
@@ -188,10 +191,13 @@ func (p *cursorParser) handlePayload(raw string, payload map[string]any) {
 		p.flushDeltaLocked()
 		p.handleResult(raw, payload, eventType)
 	case "error", "run.failed":
+		p.terminalSeen = true
+		p.terminalSuccess = false
 		message := cursorTopLevelString(payload, "message", "error")
-		if message != "" {
-			p.errorMessage = message
+		if message == "" {
+			message = "cursor provider error"
 		}
+		p.errorMessage = message
 		p.emit(agentadaptor.TranscriptItem{
 			Kind:     agentadaptor.TranscriptFailure,
 			Text:     message,
@@ -305,6 +311,13 @@ func cursorRawString(payload map[string]any, keys ...string) string {
 }
 
 func (p *cursorParser) handleResult(raw string, payload map[string]any, subtype string) {
+	p.terminalSeen = true
+	isError, _ := payload["is_error"].(bool)
+	p.terminalSuccess = (subtype == "result" || subtype == "run.completed" || subtype == "completion") && !isError
+	if !p.terminalSuccess && p.errorMessage == "" {
+		p.errorMessage = "cursor terminal result did not report success"
+	}
+
 	var decoded map[string]any
 	if err := json.Unmarshal([]byte(raw), &decoded); err == nil {
 		p.resultFinal = decoded
@@ -348,6 +361,17 @@ func (p *cursorParser) handleResult(raw string, payload map[string]any, subtype 
 	})
 }
 
+func cursorFormalEvent(eventType string) bool {
+	switch eventType {
+	case "assistant", "assistant_message", "assistant.message", "message", "assistant.delta", "delta",
+		"thinking", "reasoning", "tool_call", "tool.call", "tool_result", "tool.result",
+		"init", "session", "session.updated", "system", "result", "run.completed", "completion", "error", "run.failed":
+		return true
+	default:
+		return false
+	}
+}
+
 func (p *cursorParser) emit(item agentadaptor.TranscriptItem) {
 	p.transcript = append(p.transcript, item)
 	if p.sink == nil {
@@ -380,15 +404,11 @@ func (p *cursorParser) buildOutput() string {
 	return strings.Join(nonEmpty, "\n\n")
 }
 
-// checkpoint promotes a captured Cursor session id into a persistable
-// DriverCheckpoint. The session id is minted server-side on the first event,
-// so it remains resumable independent of how the local subprocess terminated.
-// We gate solely on a non-empty session_id; abnormal CLI exits do not by
-// themselves invalidate the session — if the session is unusable the upstream
-// API will surface an actionable error on the next resume attempt.
+// checkpoint promotes a Cursor session only after a clean process exit and an
+// official successful result/completion event with a top-level session_id.
+// Session/init frames and partial assistant output are not terminal proof.
 func (p *cursorParser) checkpoint(exitCode int) *agentadaptor.DriverCheckpoint {
-	_ = exitCode // retained in the signature for call-site symmetry; see GoDoc.
-	if p.sessionID == "" {
+	if exitCode != 0 || p.protocolMalformed || !p.terminalSeen || !p.terminalSuccess || p.sessionID == "" {
 		return nil
 	}
 	display := p.displayID
@@ -404,6 +424,13 @@ func (p *cursorParser) checkpoint(exitCode int) *agentadaptor.DriverCheckpoint {
 	}
 }
 
+func (p *cursorParser) checkpointForOutcome(exitCode int, signal string, timedOut bool, failure *agentadaptor.RunFailure) *agentadaptor.DriverCheckpoint {
+	if signal != "" || timedOut || failure != nil {
+		return nil
+	}
+	return p.checkpoint(exitCode)
+}
+
 func snapshotCursorStdout(stdout string) *cursorParser {
 	p := newCursorParser(nil)
 	_ = p.onChunk("stdout", []byte(stdout), time.Now().UTC())
@@ -411,51 +438,10 @@ func snapshotCursorStdout(stdout string) *cursorParser {
 	return p
 }
 
-// parseCheckpoint preserves the historical snapshot semantics for legacy unit
-// tests: only recognized terminal events or scalar-only session payloads may
-// promote the session id into a checkpoint.
-//
-// Like (*cursorParser).checkpoint, this function no longer gates on
-// exitCode: a recognized session_id remains resumable even if the CLI
-// exited abnormally. exitCode is kept in the signature for call-site
-// symmetry with the streaming path.
+// parseCheckpoint is the snapshot compatibility entry point and shares the
+// live parser's formal-terminal safety gate.
 func parseCheckpoint(stdout string, exitCode int) *agentadaptor.DriverCheckpoint {
-	_ = exitCode
-	var last *agentadaptor.DriverCheckpoint
-	for _, line := range strings.Split(stdout, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if !strings.HasPrefix(trimmed, "{") {
-			continue
-		}
-		var payload map[string]any
-		if err := json.Unmarshal([]byte(trimmed), &payload); err != nil {
-			continue
-		}
-		sessionID := cursorTopLevelString(payload, "session_id", "sessionId", "sessionID")
-		if sessionID == "" {
-			continue
-		}
-		eventKind := strings.ToLower(cursorTopLevelString(payload, "event", "type", "kind"))
-		if eventKind != "" {
-			if _, ok := cursorCheckpointEvents[eventKind]; !ok {
-				continue
-			}
-		} else if !isCursorScalarOnlyPayload(payload) {
-			continue
-		}
-		display := cursorTopLevelString(payload, "display_id", "displayId")
-		if display == "" {
-			display = sessionID
-		}
-		last = &agentadaptor.DriverCheckpoint{
-			State: &agentadaptor.DriverSessionState{
-				ResumeID:  sessionID,
-				DisplayID: display,
-			},
-			Valid: true,
-		}
-	}
-	return last
+	return snapshotCursorStdout(stdout).checkpoint(exitCode)
 }
 
 func isCursorScalarOnlyPayload(payload map[string]any) bool {

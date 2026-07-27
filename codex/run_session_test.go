@@ -19,8 +19,8 @@ func TestCodexRunPreservesAndGuardsSessionState(t *testing.T) {
 		t.Fatalf("mkdir workspace: %v", err)
 	}
 	command := testutil.WriteCommand(t, home, "fake-codex",
-		"#!/bin/sh\nset -eu\nprompt=$(cat)\nprintf 'stderr:%s\\n' \"$prompt\" >&2\nprintf '{\"type\":\"session.updated\",\"session_id\":\"codex-session\",\"display_id\":\"codex-display\"}\\n'\n",
-		"@echo off\r\nsetlocal\r\nset /p PROMPT=\r\n>&2 echo stderr:%PROMPT%\r\necho {\"type\":\"session.updated\",\"session_id\":\"codex-session\",\"display_id\":\"codex-display\"}\r\n",
+		"#!/bin/sh\nset -eu\nprompt=$(cat)\nprintf 'stderr:%s\\n' \"$prompt\" >&2\nprintf '{\"type\":\"thread.started\",\"thread_id\":\"codex-session\"}\\n'\nprintf '{\"type\":\"turn.completed\"}\\n'\n",
+		"@echo off\r\nsetlocal\r\nset /p PROMPT=\r\n>&2 echo stderr:%PROMPT%\r\necho {\"type\":\"thread.started\",\"thread_id\":\"codex-session\"}\r\necho {\"type\":\"turn.completed\"}\r\n",
 	)
 
 	cfg := agentadaptor.CodexConfig{
@@ -58,7 +58,7 @@ func TestCodexRunPreservesAndGuardsSessionState(t *testing.T) {
 	if len(first.Transcript) == 0 {
 		t.Fatalf("expected transcript items, got %#v", first.Transcript)
 	}
-	if first.RawStreams == nil || !strings.Contains(first.RawStreams.Stdout, "session.updated") {
+	if first.RawStreams == nil || !strings.Contains(first.RawStreams.Stdout, "turn.completed") {
 		t.Fatalf("expected raw stdout to be captured, got %#v", first.RawStreams)
 	}
 	assertHasInvocationAndSpawn(t, events.Snapshot())

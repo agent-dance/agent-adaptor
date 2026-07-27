@@ -160,11 +160,20 @@ func TestEventRecordMarshalRejectsNilAndUnknownKinds(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "nil event") {
 		t.Fatalf("marshal nil event err = %v", err)
 	}
+	var nilApproval *adaptor.ApprovalRequest
+	_, err = json.Marshal(sessionrecorder.EventRecord{HostSeq: 1, Event: nilApproval})
+	if err == nil || !strings.Contains(err.Error(), "nil approval request") {
+		t.Fatalf("marshal typed nil approval err = %v", err)
+	}
 
 	var decoded sessionrecorder.EventRecord
 	err = json.Unmarshal([]byte(`{"host_seq":1,"recorded_at":"2026-07-01T12:00:00Z","kind":"bogus","event":{}}`), &decoded)
 	if err == nil || !strings.Contains(err.Error(), `unknown event kind "bogus"`) {
 		t.Fatalf("unmarshal unknown kind err = %v", err)
+	}
+	err = json.Unmarshal([]byte(`{"host_seq":1,"recorded_at":"2026-07-01T12:00:00Z","kind":"dropped","meta":{},"event":null}`), &decoded)
+	if err == nil || !strings.Contains(err.Error(), "has no event payload") {
+		t.Fatalf("unmarshal null event err = %v", err)
 	}
 }
 

@@ -57,7 +57,7 @@ func normalizeOutputSchema(schema *OutputSchema) (*OutputSchema, error) {
 	return out, nil
 }
 
-func resolveStructuredOutputSource(desc DriverDescriptor, schema *OutputSchema, streaming bool, policy RunPolicy) (StructuredOutputSource, error) {
+func resolveStructuredOutputSource(desc DriverDescriptor, schema *OutputSchema, providerStreaming bool, policy RunPolicy) (StructuredOutputSource, error) {
 	if schema == nil {
 		return "", nil
 	}
@@ -66,16 +66,16 @@ func resolveStructuredOutputSource(desc DriverDescriptor, schema *OutputSchema, 
 		policy.HumanDecision.PlanReview == HumanDecisionAsk ||
 		policy.HumanDecision.Question == QuestionAsk
 
-	nativeOK := caps.JSONSchemaNative && caps.WorksWithRun && caps.WorksWithStart
-	if nativeOK && streaming && !caps.WorksWithStreaming {
+	nativeOK := caps.JSONSchemaNative && caps.WorksWithRun
+	if nativeOK && providerStreaming && !caps.WorksWithStreaming {
 		nativeOK = false
 	}
 	if nativeOK && hitlAsk && !caps.WorksWithHITL {
 		nativeOK = false
 	}
 
-	promptOK := caps.JSONSchemaPromptValidate && caps.WorksWithRun && caps.WorksWithStart
-	if promptOK && streaming && !caps.WorksWithStreaming {
+	promptOK := caps.JSONSchemaPromptValidate && caps.WorksWithRun
+	if promptOK && providerStreaming && !caps.WorksWithStreaming {
 		promptOK = false
 	}
 	if promptOK && hitlAsk && !caps.WorksWithHITL {
@@ -87,12 +87,12 @@ func resolveStructuredOutputSource(desc DriverDescriptor, schema *OutputSchema, 
 		if nativeOK {
 			return StructuredOutputSourceNative, nil
 		}
-		return "", &StructuredOutputUnsupportedError{Adapter: desc.Type, Mode: schema.Mode, Reason: structuredCapabilityReason(caps, streaming, hitlAsk, true)}
+		return "", &StructuredOutputUnsupportedError{Adapter: desc.Type, Mode: schema.Mode, Reason: structuredCapabilityReason(caps, providerStreaming, hitlAsk, true)}
 	case StructuredOutputPromptValidate:
 		if promptOK {
 			return StructuredOutputSourcePromptValidate, nil
 		}
-		return "", &StructuredOutputUnsupportedError{Adapter: desc.Type, Mode: schema.Mode, Reason: structuredCapabilityReason(caps, streaming, hitlAsk, false)}
+		return "", &StructuredOutputUnsupportedError{Adapter: desc.Type, Mode: schema.Mode, Reason: structuredCapabilityReason(caps, providerStreaming, hitlAsk, false)}
 	case StructuredOutputPreferNative:
 		if nativeOK {
 			return StructuredOutputSourceNative, nil
@@ -100,22 +100,22 @@ func resolveStructuredOutputSource(desc DriverDescriptor, schema *OutputSchema, 
 		if promptOK {
 			return StructuredOutputSourcePromptValidate, nil
 		}
-		return "", &StructuredOutputUnsupportedError{Adapter: desc.Type, Mode: schema.Mode, Reason: structuredCapabilityReason(caps, streaming, hitlAsk, false)}
+		return "", &StructuredOutputUnsupportedError{Adapter: desc.Type, Mode: schema.Mode, Reason: structuredCapabilityReason(caps, providerStreaming, hitlAsk, false)}
 	default:
 		return "", &InvalidOutputSchemaError{Reason: fmt.Sprintf("unsupported structured output mode %q", schema.Mode)}
 	}
 }
 
-func structuredCapabilityReason(caps StructuredOutputCapability, streaming, hitlAsk, native bool) string {
+func structuredCapabilityReason(caps StructuredOutputCapability, providerStreaming, hitlAsk, native bool) string {
 	switch {
 	case native && !caps.JSONSchemaNative:
 		return "native JSON Schema output is not supported"
 	case !native && !caps.JSONSchemaPromptValidate:
 		return "prompt-validation JSON Schema output is not supported"
-	case !caps.WorksWithRun || !caps.WorksWithStart:
-		return "structured output is not supported for Run/Start"
-	case streaming && !caps.WorksWithStreaming:
-		return "structured output is not supported with streaming"
+	case !caps.WorksWithRun:
+		return "structured output is not supported by the execution pipeline"
+	case providerStreaming && !caps.WorksWithStreaming:
+		return "structured output is not supported by the selected provider streaming transport"
 	case hitlAsk && !caps.WorksWithHITL:
 		return "structured output is not supported with HITL Ask modes"
 	case caps.Notes != "":

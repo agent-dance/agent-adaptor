@@ -68,7 +68,6 @@ func (adapter) Descriptor() agentadaptor.DriverDescriptor {
 			JSONSchemaNative:         false,
 			JSONSchemaPromptValidate: true,
 			WorksWithRun:             true,
-			WorksWithStart:           true,
 			WorksWithStreaming:       true,
 			WorksWithHITL:            false,
 			Notes:                    "Cursor CLI exposes JSON/stream-json envelopes but no native JSON Schema output surface; use explicit prompt validation.",
@@ -425,19 +424,19 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 	}
 	parser.finalize()
 	raw := agentadaptor.RawStreams{Stdout: result.RawStreams.Stdout, Stderr: result.RawStreams.Stderr}
-	checkpoint := parser.checkpoint(result.ExitCode)
-	if checkpoint != nil && checkpoint.State != nil {
-		checkpoint.State.Data = map[string]string{
-			driver.SessionParamCWD:                effectiveCWD,
-			driver.SessionParamWorkspaceID:        req.Workspace.ID,
-			driver.SessionParamProfileFingerprint: profileFingerprint,
-		}
-	}
 	var failure *agentadaptor.RunFailure
 	if strings.TrimSpace(parser.errorMessage) != "" {
 		failure = &agentadaptor.RunFailure{
 			Code:    agentadaptor.FailureAgentError,
 			Message: parser.errorMessage,
+		}
+	}
+	checkpoint := parser.checkpointForOutcome(result.ExitCode, result.Signal, result.TimedOut, failure)
+	if checkpoint != nil && checkpoint.State != nil {
+		checkpoint.State.Data = map[string]string{
+			driver.SessionParamCWD:                effectiveCWD,
+			driver.SessionParamWorkspaceID:        req.Workspace.ID,
+			driver.SessionParamProfileFingerprint: profileFingerprint,
 		}
 	}
 

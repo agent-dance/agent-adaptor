@@ -49,6 +49,8 @@ func TestVerifyStreamSequenceNegativeTable(t *testing.T) {
 		payloads   []driver.StreamPayload
 		wantClause string
 	}{
+		{"missing_started", []driver.StreamPayload{finished}, "EVT-01"},
+		{"missing_terminal", []driver.StreamPayload{started}, "EVT-02"},
 		{"text_before_started", []driver.StreamPayload{
 			{Kind: driver.StreamTextStart, MessageID: "m1"},
 			started,
@@ -67,6 +69,7 @@ func TestVerifyStreamSequenceNegativeTable(t *testing.T) {
 			{Kind: driver.StreamRunError, Error: failure},
 			finished,
 		}, "EVT-02"},
+		{"vendor_after_terminal", []driver.StreamPayload{started, finished, {Kind: "x.after-terminal"}}, "EVT-02"},
 		{"error_without_failure", []driver.StreamPayload{
 			started,
 			{Kind: driver.StreamRunError},
@@ -222,6 +225,7 @@ func TestVerifyResponseNegativeTable(t *testing.T) {
 	}{
 		{"valid_checkpoint_without_state", driver.Response{Checkpoint: &driver.Checkpoint{Valid: true}}, "RSP-01"},
 		{"valid_checkpoint_without_resume_id", driver.Response{Checkpoint: &driver.Checkpoint{Valid: true, State: &driver.SessionState{}}}, "RSP-01"},
+		{"valid_checkpoint_on_failure", driver.Response{ExitCode: 1, Checkpoint: &driver.Checkpoint{Valid: true, State: &driver.SessionState{ResumeID: "s"}}}, "RSP-01"},
 		{"reject_without_human_decision", driver.Response{Failure: &driver.RunFailure{Message: "no", Code: driver.FailureReject}}, "RSP-02"},
 		{"agent_error_with_human_decision", driver.Response{Failure: &driver.RunFailure{
 			Message:       "boom",

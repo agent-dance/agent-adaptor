@@ -195,6 +195,43 @@ func TestCodexParserFailureFixtureSurfacesErrorMessage(t *testing.T) {
 	}
 }
 
+func TestCodexCheckpointRequiresOfficialSuccessAndCleanOutcome(t *testing.T) {
+	success := snapshotCodexStdout("{\"type\":\"thread.started\",\"thread_id\":\"t-1\"}\n{\"type\":\"turn.completed\"}\n")
+	if cp := success.checkpointForOutcome(0, "", false, nil); cp == nil || !cp.Valid {
+		t.Fatalf("clean thread.started + turn.completed = %#v, want valid", cp)
+	}
+	for _, tc := range []struct {
+		name     string
+		exitCode int
+		signal   string
+		timedOut bool
+		failure  *agentadaptor.RunFailure
+	}{
+		{name: "nonzero", exitCode: 1},
+		{name: "signal", signal: "SIGTERM"},
+		{name: "timeout", timedOut: true},
+		{name: "failure", failure: &agentadaptor.RunFailure{Code: agentadaptor.FailureAgentError}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if cp := success.checkpointForOutcome(tc.exitCode, tc.signal, tc.timedOut, tc.failure); cp != nil {
+				t.Fatalf("unsafe outcome produced checkpoint %#v", cp)
+			}
+		})
+	}
+	for name, stdout := range map[string]string{
+		"init_only":     "{\"type\":\"thread.started\",\"thread_id\":\"t-1\"}\n",
+		"terminal_only": "{\"type\":\"turn.completed\"}\n",
+		"legacy_result": "{\"type\":\"thread.started\",\"thread_id\":\"t-1\"}\n{\"type\":\"result\"}\n",
+		"malformed":     "{\"type\":\"thread.started\",\"thread_id\":\"t-1\"}\n{broken\n{\"type\":\"turn.completed\"}\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if cp := snapshotCodexStdout(stdout).checkpoint(0); cp != nil {
+				t.Fatalf("incomplete/malformed protocol produced checkpoint %#v", cp)
+			}
+		})
+	}
+}
+
 func TestCodexParserWithToolFixtureEmitsToolCallAndResult(t *testing.T) {
 	fixture := loadFixture(t, "with-tool.jsonl")
 

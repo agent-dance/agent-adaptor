@@ -20,13 +20,17 @@ type appServer struct {
 	store  *threadStore
 }
 
-func newAppServer(agent *adaptor.Agent, driver, cors string) *appServer {
+func newAppServer(agent *adaptor.Agent, driver, cors string) (*appServer, error) {
+	store, err := newThreadStore()
+	if err != nil {
+		return nil, err
+	}
 	return &appServer{
 		agent:  agent,
 		driver: driver,
 		cors:   cors,
-		store:  newThreadStore(),
-	}
+		store:  store,
+	}, nil
 }
 
 func (s *appServer) routes() http.Handler {

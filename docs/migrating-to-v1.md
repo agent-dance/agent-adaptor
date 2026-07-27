@@ -470,11 +470,11 @@ res, err := agent.Run(ctx, prompt, adaptor.WithSkills(skill.Key("deploy-checklis
 ```go
 adaptor.WithMCP(
     mcp.HTTP("docs", "https://example.com/mcp"),
-    mcp.Stdio("repo-tools", "npx", "repo-mcp"),
+    mcp.Stdio("repo-tools", "npx", mcp.Args("repo-mcp")),
 )
 ```
 
-需要鉴权头 / 必需标记时：`mcp.HTTP(name, url, mcp.WithBearerTokenEnv("DOCS_TOKEN"), mcp.Required("docs are mandatory"))`。
+stdio 参数、环境变量和必需标记可以在一个表达式中组合：`mcp.Stdio(name, command, mcp.Args("serve"), mcp.Env(map[string]string{"TOKEN_FILE": "/run/secrets/token"}), mcp.Required("tools are mandatory"))`。远程鉴权使用：`mcp.HTTP(name, url, mcp.WithBearerTokenEnv("DOCS_TOKEN"), mcp.Required("docs are mandatory"))`。stdio 专属选项与远程专属选项不可混用；若混用，SDK 会在启动 Driver 前返回 `ErrInvalidMCPConfig`。
 
 ### 3.7 Profile（租户隔离的专用 profile）
 

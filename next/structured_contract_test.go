@@ -158,7 +158,6 @@ func fullStructuredCaps() driver.StructuredOutputCapability {
 		JSONSchemaNative:         true,
 		JSONSchemaPromptValidate: true,
 		WorksWithRun:             true,
-		WorksWithStart:           true,
 		WorksWithStreaming:       true,
 		WorksWithHITL:            true,
 	}

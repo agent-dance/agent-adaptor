@@ -14,7 +14,7 @@ import (
 type runStateStore interface {
 	registerRun(threadID string, stream adaptor.Stream)
 	unregisterRun(threadID string, stream adaptor.Stream)
-	appendHistory(threadID string, ev adaptor.Event)
+	appendHistory(threadID string, ev adaptor.Event) error
 	addPending(threadID string, req *adaptor.ApprovalRequest)
 	removePending(threadID, requestID string)
 }
@@ -127,7 +127,9 @@ func (s *aguiRunSession) recordUserTurn() error {
 }
 
 func (s *aguiRunSession) forwardEvent(ev adaptor.Event) error {
-	s.store.appendHistory(s.threadID, ev)
+	if err := s.store.appendHistory(s.threadID, ev); err != nil {
+		return err
+	}
 
 	switch e := ev.(type) {
 	case *adaptor.ApprovalRequest:

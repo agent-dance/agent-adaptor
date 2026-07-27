@@ -36,7 +36,7 @@ func mcpServerKeys(payload driver.MCPPayload) []string {
 func TestMCPDefaultOverrideClear(t *testing.T) {
 	ctx := context.Background()
 	fake := capsFake()
-	agent := adaptor.New(fake, adaptor.WithMCP(mcp.Stdio("default-stdio", "npx", "default-server")))
+	agent := adaptor.New(fake, adaptor.WithMCP(mcp.Stdio("default-stdio", "npx", mcp.Args("default-server"))))
 
 	if _, err := agent.Run(ctx, "run 1"); err != nil {
 		t.Fatalf("run 1: %v", err)
@@ -86,7 +86,7 @@ func TestMCPChangeStartsFreshThreadSession(t *testing.T) {
 	agent := adaptor.New(sf.fakeDriver,
 		adaptor.WithThreadStore(store),
 		adaptor.WithSkills(skill.Inline("team/default", "# default\n")),
-		adaptor.WithMCP(mcp.Stdio("default-stdio", "npx", "default-server")),
+		adaptor.WithMCP(mcp.Stdio("default-stdio", "npx", mcp.Args("default-server"))),
 	)
 
 	const key = "tenant-1/issue-1"
@@ -151,5 +151,72 @@ func TestMCPTransportUnsupportedFailsPreLaunch(t *testing.T) {
 	}
 	if fake.runCount() != 0 {
 		t.Errorf("driver ran %d time(s), want pre-launch failure", fake.runCount())
+	}
+}
+
+// Transport-specific builder options deliberately remain visible on the
+// declaration when used with the wrong constructor. The invocation pipeline
+// then rejects them through the same structured configuration error as a
+// malformed Server literal, before a driver or process can start.
+func TestMCPTransportScopedOptionsFailPreLaunch(t *testing.T) {
+	tests := []struct {
+		name   string
+		server mcp.Server
+	}{
+		{
+			name:   "zero server",
+			server: mcp.Server{},
+		},
+		{
+			name:   "stdio missing key",
+			server: mcp.Stdio("", "server"),
+		},
+		{
+			name: "stdio with remote header",
+			server: mcp.Stdio("local", "server",
+				mcp.WithHeader("X-Team", "platform"),
+			),
+		},
+		{
+			name: "stdio with remote bearer token",
+			server: mcp.Stdio("local", "server",
+				mcp.WithBearerTokenEnv("MCP_TOKEN"),
+			),
+		},
+		{
+			name: "http with process args",
+			server: mcp.HTTP("remote", "https://example.com/mcp",
+				mcp.Args("serve"),
+			),
+		},
+		{
+			name: "sse with process env",
+			server: mcp.SSE("remote", "https://example.com/sse",
+				mcp.Env(map[string]string{"TOKEN": "secret"}),
+			),
+		},
+		{
+			name:   "stdio missing command",
+			server: mcp.Stdio("local", ""),
+		},
+		{
+			name:   "http missing url",
+			server: mcp.HTTP("remote", ""),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := capsFake()
+			agent := adaptor.New(fake, adaptor.WithMCP(tt.server))
+
+			_, err := agent.Run(context.Background(), "go")
+			if !errors.Is(err, adaptor.ErrInvalidMCPConfig) {
+				t.Fatalf("err = %v, want ErrInvalidMCPConfig", err)
+			}
+			if fake.runCount() != 0 {
+				t.Fatalf("driver ran %d time(s), want pre-launch failure", fake.runCount())
+			}
+		})
 	}
 }

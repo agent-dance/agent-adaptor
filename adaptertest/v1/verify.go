@@ -62,7 +62,7 @@ func VerifyStreamSequence(payloads []driver.StreamPayload) []Violation {
 	}
 
 	started := 0
-	finished := 0
+	terminalCount := 0
 	terminal := false
 	openText := map[string]bool{}
 	closedText := map[string]bool{}
@@ -70,11 +70,12 @@ func VerifyStreamSequence(payloads []driver.StreamPayload) []Violation {
 	closedReasoning := map[string]bool{}
 	openTool := map[string]bool{}
 	closedTool := map[string]bool{}
+	openStep := map[string]int{}
 
 	contentAfterTerminal := func(i int, kind driver.StreamKind) {
 		if terminal {
 			out = append(out, violationf("EVT-02",
-				"payload %d (%s) emitted after a terminal frame; only lifecycle-closing frames or further run.error frames may follow run.finished/run.error",
+				"payload %d (%s) emitted after a terminal frame; the terminal frame MUST be last",
 				i, kind))
 		}
 	}
@@ -86,7 +87,13 @@ func VerifyStreamSequence(payloads []driver.StreamPayload) []Violation {
 				i, p.Kind, p.Sequence, p.Seq, p.Timestamp))
 		}
 		if !knownStreamKind(p.Kind) {
+			if terminal {
+				out = append(out, violationf("EVT-02", "payload %d (%s) emitted after the terminal frame; terminal MUST be last", i, p.Kind))
+			}
 			continue
+		}
+		if terminal && p.Kind == driver.StreamDropped {
+			out = append(out, violationf("EVT-02", "payload %d (%s) emitted after the terminal frame; terminal MUST be last", i, p.Kind))
 		}
 		if p.Role != driver.RoleAssistant {
 			out = append(out, violationf("EVT-09",
@@ -107,12 +114,8 @@ func VerifyStreamSequence(payloads []driver.StreamPayload) []Violation {
 			contentAfterTerminal(i, p.Kind)
 
 		case driver.StreamRunFinished:
-			finished++
-			if finished > 1 {
-				out = append(out, violationf("EVT-02", "payload %d: duplicate run.finished (%d total); a run has at most one normal-completion frame", i, finished))
-			} else if terminal {
-				out = append(out, violationf("EVT-02", "payload %d: run.finished emitted after a terminal frame", i))
-			}
+			terminalCount++
+			contentAfterTerminal(i, p.Kind)
 			if p.MessageID != "" || p.ToolCallID != "" {
 				out = append(out, violationf("EVT-13",
 					"payload %d (run.finished) carries MessageID=%q ToolCallID=%q; run.* frames leave both empty", i, p.MessageID, p.ToolCallID))
@@ -126,9 +129,16 @@ func VerifyStreamSequence(payloads []driver.StreamPayload) []Violation {
 			for id := range openTool {
 				out = append(out, violationf("EVT-11", "payload %d: run.finished with tool_call lifecycle %q still open", i, id))
 			}
+			for name, count := range openStep {
+				if count > 0 {
+					out = append(out, violationf("EVT-11", "payload %d: run.finished with step lifecycle %q still open (%d)", i, name, count))
+				}
+			}
 			terminal = true
 
 		case driver.StreamRunError:
+			terminalCount++
+			contentAfterTerminal(i, p.Kind)
 			if p.Error == nil {
 				out = append(out, violationf("EVT-02", "payload %d: run.error without Error (StreamPayload docs: Error on error)", i))
 			}
@@ -136,11 +146,37 @@ func VerifyStreamSequence(payloads []driver.StreamPayload) []Violation {
 				out = append(out, violationf("EVT-13",
 					"payload %d (run.error) carries MessageID=%q ToolCallID=%q; run.* frames leave both empty", i, p.MessageID, p.ToolCallID))
 			}
+			for id := range openText {
+				out = append(out, violationf("EVT-11", "payload %d: run.error with text lifecycle %q still open", i, id))
+			}
+			for id := range openReasoning {
+				out = append(out, violationf("EVT-11", "payload %d: run.error with reasoning lifecycle %q still open", i, id))
+			}
+			for id := range openTool {
+				out = append(out, violationf("EVT-11", "payload %d: run.error with tool_call lifecycle %q still open", i, id))
+			}
+			for name, count := range openStep {
+				if count > 0 {
+					out = append(out, violationf("EVT-11", "payload %d: run.error with step lifecycle %q still open (%d)", i, name, count))
+				}
+			}
 			terminal = true
 
-		case driver.StreamStepStarted, driver.StreamStepFinished:
+		case driver.StreamStepStarted:
 			if p.Name == "" {
 				out = append(out, violationf("EVT-07", "payload %d (%s) without Name; step frames require Name", i, p.Kind))
+			} else {
+				openStep[p.Name]++
+			}
+			contentAfterTerminal(i, p.Kind)
+
+		case driver.StreamStepFinished:
+			if p.Name == "" {
+				out = append(out, violationf("EVT-07", "payload %d (%s) without Name; step frames require Name", i, p.Kind))
+			} else if openStep[p.Name] == 0 {
+				out = append(out, violationf("EVT-07", "payload %d: step.finished for %q without a matching step.started", i, p.Name))
+			} else {
+				openStep[p.Name]--
 			}
 			contentAfterTerminal(i, p.Kind)
 
@@ -264,6 +300,23 @@ func VerifyStreamSequence(payloads []driver.StreamPayload) []Violation {
 			// SDK-side backpressure marker; no driver-side ordering rule.
 		}
 	}
+	if started != 1 {
+		out = append(out, violationf("EVT-01", "run.started count = %d, want exactly one", started))
+	}
+	if terminalCount != 1 {
+		out = append(out, violationf("EVT-02", "terminal frame count = %d, want exactly one run.finished or run.error", terminalCount))
+	}
+	if terminalCount == 1 {
+		for i := len(payloads) - 1; i >= 0; i-- {
+			if !knownStreamKind(payloads[i].Kind) || payloads[i].Kind == driver.StreamDropped {
+				continue
+			}
+			if payloads[i].Kind != driver.StreamRunFinished && payloads[i].Kind != driver.StreamRunError {
+				out = append(out, violationf("EVT-02", "last normalized payload is %q, want the unique terminal frame", payloads[i].Kind))
+			}
+			break
+		}
+	}
 	return out
 }
 
@@ -379,6 +432,11 @@ func VerifyResponse(resp *driver.Response) []Violation {
 		} else if cp.State.ResumeID == "" {
 			out = append(out, violationf("RSP-01", "Checkpoint.Valid=true with empty State.ResumeID; a resumable checkpoint needs the provider session handle"))
 		}
+		if resp.ExitCode != 0 || resp.Signal != "" || resp.TimedOut || resp.Failure != nil {
+			out = append(out, violationf("RSP-01",
+				"Checkpoint.Valid=true on unsafe outcome (exit=%d signal=%q timed_out=%v failure=%v); Checkpoint requires a clean successful run",
+				resp.ExitCode, resp.Signal, resp.TimedOut, resp.Failure != nil))
+		}
 	}
 
 	if f := resp.Failure; f != nil {
@@ -407,13 +465,10 @@ func VerifyResponse(resp *driver.Response) []Violation {
 	return out
 }
 
-// VerifyTranscriptMirror checks that collecting RunEventItem events in
-// emission order reproduces Response.Transcript (clause RUN-04, from the
-// RunEvent godoc: "Hosts that collect RunEventItem events in Seq order will
-// observe the exact same sequence that the final result's Transcript
-// reflects"). TestDriver reports RUN-04 findings as informational logs, not
-// failures, because the godoc does not state how streaming delta items
-// participate; see the package documentation's ambiguity notes.
+// VerifyTranscriptMirror checks the hard SPI invariant that collecting every
+// driver-emitted RunEventItem in emission order exactly reproduces
+// Response.Transcript. Streaming deltas participate when and only when the
+// driver also includes them in the final Transcript.
 func VerifyTranscriptMirror(events []driver.RunEvent, transcript []driver.TranscriptItem) []Violation {
 	var items []driver.TranscriptItem
 	for _, ev := range events {

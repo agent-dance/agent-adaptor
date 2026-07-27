@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -47,6 +48,12 @@ type Delegator struct {
 	NewID          func() string
 	LifecycleHook  DelegationLifecycleHook
 	statusDecoders []StatusPartDecoder
+
+	// publishMu gives all producers one acceptance order. beforePublish is a
+	// package-private integration seam used by Service to index delegations
+	// before their Started event becomes visible to EventBus subscribers.
+	publishMu     sync.Mutex
+	beforePublish func(DelegationEvent)
 }
 
 // DelegatorOption 配置 Delegator 的扩展行为。
@@ -457,9 +464,15 @@ func (d *Delegator) cancelRemoteTask(ctx context.Context, client A2AClient, task
 }
 
 func (d *Delegator) publish(ev DelegationEvent) {
-	if d != nil && d.Bus != nil {
-		d.Bus.Publish(ev)
+	if d == nil || d.Bus == nil || ev.RunID == "" {
+		return
 	}
+	d.publishMu.Lock()
+	defer d.publishMu.Unlock()
+	if d.beforePublish != nil {
+		d.beforePublish(ev)
+	}
+	d.Bus.Publish(ev)
 }
 
 func (r *delegationRun) publish(ev DelegationEvent) {
@@ -729,9 +742,32 @@ func cloneDelegationRequest(req DelegationRequest) DelegationRequest {
 
 func cloneDelegationResult(in DelegationResult) DelegationResult {
 	out := in
-	out.Artifacts = append([]DelegationArtifact(nil), in.Artifacts...)
+	if in.Artifacts != nil {
+		out.Artifacts = make([]DelegationArtifact, len(in.Artifacts))
+		for i, artifact := range in.Artifacts {
+			out.Artifacts[i] = artifact
+			out.Artifacts[i].Metadata = cloneAnyMap(artifact.Metadata)
+		}
+	}
 	out.Messages = append([]DelegationMessage(nil), in.Messages...)
-	out.RemoteArtifacts = append([]RemoteArtifact(nil), in.RemoteArtifacts...)
+	if in.RemoteArtifacts != nil {
+		out.RemoteArtifacts = make([]RemoteArtifact, len(in.RemoteArtifacts))
+		for i, artifact := range in.RemoteArtifacts {
+			out.RemoteArtifacts[i] = artifact
+			out.RemoteArtifacts[i].Extensions = append([]string(nil), artifact.Extensions...)
+			out.RemoteArtifacts[i].Metadata = cloneAnyMap(artifact.Metadata)
+			out.RemoteArtifacts[i].Raw = cloneAnyMap(artifact.Raw)
+			if artifact.Parts != nil {
+				out.RemoteArtifacts[i].Parts = make([]RemotePart, len(artifact.Parts))
+			}
+			for j, part := range artifact.Parts {
+				out.RemoteArtifacts[i].Parts[j] = part
+				out.RemoteArtifacts[i].Parts[j].Raw = append([]byte(nil), part.Raw...)
+				out.RemoteArtifacts[i].Parts[j].Data = cloneAnyValue(part.Data)
+				out.RemoteArtifacts[i].Parts[j].Metadata = cloneAnyMap(part.Metadata)
+			}
+		}
+	}
 	out.RawTask = cloneAnyMap(in.RawTask)
 	if in.Error != nil {
 		cloneErr := *in.Error
@@ -741,7 +777,7 @@ func cloneDelegationResult(in DelegationResult) DelegationResult {
 	if len(in.Metadata) > 0 {
 		out.Metadata = make(map[string]interface{}, len(in.Metadata))
 		for k, v := range in.Metadata {
-			out.Metadata[k] = v
+			out.Metadata[k] = cloneAnyValue(v)
 		}
 	}
 	return out

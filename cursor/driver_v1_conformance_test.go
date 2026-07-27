@@ -58,18 +58,18 @@ func TestCursorDriverV1Conformance(t *testing.T) {
 		adaptertestv1.WithSessionState(&driver.SessionState{
 			ResumeID: "cursor-v1-session",
 			Data: map[string]string{
-				agentadaptor.SessionParamCWD:         workspace,
-				agentadaptor.SessionParamWorkspaceID: "workspace-a",
+				driver.SessionParamCWD:         workspace,
+				driver.SessionParamWorkspaceID: "workspace-a",
 			},
 		}),
 		adaptertestv1.WithSessionKeys(
-			agentadaptor.SessionParamCWD,
-			agentadaptor.SessionParamWorkspaceID,
+			driver.SessionParamCWD,
+			driver.SessionParamWorkspaceID,
 		),
 		adaptertestv1.WithGuardKeys(
-			agentadaptor.SessionParamCWD,
-			agentadaptor.SessionParamWorkspaceID,
-			agentadaptor.SessionParamProfileFingerprint,
+			driver.SessionParamCWD,
+			driver.SessionParamWorkspaceID,
+			driver.SessionParamProfileFingerprint,
 		),
 		adaptertestv1.WithWorkspace(workspace),
 		adaptertestv1.WithExpectedDetectedModel("gpt-5"),

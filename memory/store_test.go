@@ -50,6 +50,27 @@ func TestStoreFinalizeRejectsStaleLeaseToken(t *testing.T) {
 	}
 }
 
+func TestStoreFinalizeRejectsWrongLeaseOwnerWithoutWriting(t *testing.T) {
+	store := NewStore()
+	ctx := context.Background()
+	lease, err := store.AcquireLease(ctx, "session-owner", "owner-1", time.Minute)
+	if err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	forged := lease
+	forged.Owner = "owner-2"
+	err = store.Finalize(ctx, threadstore.FinalizeRequest{
+		Record: threadstore.Record{ID: "session-owner", Key: "key", Status: threadstore.StatusActive},
+		Key:    "key", HeldLeases: []threadstore.Lease{forged}, RebindActive: true,
+	})
+	if !errors.Is(err, threadstore.ErrLeaseLost) {
+		t.Fatalf("finalize: err=%v, want ErrLeaseLost", err)
+	}
+	if record, err := store.Resolve(ctx, threadstore.Query{ID: "session-owner", IncludeArchived: true}); err != nil || record != nil {
+		t.Fatalf("wrong-owner finalize wrote record=%#v err=%v", record, err)
+	}
+}
+
 func TestStoreFinalizeArchivesPreviousAndRebindsKey(t *testing.T) {
 	store := NewStore()
 	ctx := context.Background()
@@ -162,5 +183,43 @@ func TestStoreLeaseConflictRenewalAndIdempotentRelease(t *testing.T) {
 	}
 	if err := store.ReleaseLease(ctx, fresh); err != nil {
 		t.Fatalf("second release: %v", err)
+	}
+}
+
+func TestStoreFinalizeRequireKeyAbsentIsAtomicAndPreservesRawKey(t *testing.T) {
+	store := NewStore()
+	ctx := context.Background()
+	key := "tenant\x00一:issue/1"
+	now := time.Now().UTC()
+
+	firstLease, err := store.AcquireLease(ctx, "record:first", "owner:first", time.Minute)
+	if err != nil {
+		t.Fatalf("acquire first: %v", err)
+	}
+	if err := store.Finalize(ctx, threadstore.FinalizeRequest{
+		Record: threadstore.Record{ID: "first", Key: key, Status: threadstore.StatusActive, CreatedAt: now, UpdatedAt: now},
+		Key:    key, HeldLeases: []threadstore.Lease{firstLease}, RebindActive: true,
+	}); err != nil {
+		t.Fatalf("finalize first: %v", err)
+	}
+
+	secondLease, err := store.AcquireLease(ctx, "record:second", "owner:second", time.Minute)
+	if err != nil {
+		t.Fatalf("acquire second: %v", err)
+	}
+	err = store.Finalize(ctx, threadstore.FinalizeRequest{
+		Record:     threadstore.Record{ID: "second", Key: key, Status: threadstore.StatusActive, CreatedAt: now, UpdatedAt: now},
+		PreviousID: "first", Key: key, HeldLeases: []threadstore.Lease{secondLease},
+		ArchiveOld: true, RebindActive: true, RequireKeyAbsent: true,
+	})
+	if !errors.Is(err, threadstore.ErrAlreadyExists) {
+		t.Fatalf("conditional finalize: err = %v, want ErrAlreadyExists", err)
+	}
+	active, err := store.Resolve(ctx, threadstore.Query{Key: key})
+	if err != nil || active == nil || active.ID != "first" || active.Key != key || active.Status != threadstore.StatusActive {
+		t.Fatalf("active changed after rejected finalize: record=%#v err=%v", active, err)
+	}
+	if leaked, err := store.Resolve(ctx, threadstore.Query{ID: "second", IncludeArchived: true}); err != nil || leaked != nil {
+		t.Fatalf("rejected child was partially saved: record=%#v err=%v", leaked, err)
 	}
 }

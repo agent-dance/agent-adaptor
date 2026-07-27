@@ -145,6 +145,15 @@ var (
 	// (continue_only / fork / ...) is invoked on an SDK that has no
 	// SessionStore configured.
 	ErrSessionStoreRequired = errors.New("agentadaptor: session store required")
+
+	// ErrThreadAlreadyExists is returned by structured fork coordination when
+	// the requested child key already has an active record. The parent and
+	// existing target remain unchanged.
+	ErrThreadAlreadyExists = errors.New("agentadaptor: fork target thread already exists")
+
+	// ErrInvalidSessionRequest is returned before store access when selectors
+	// are incomplete, contradictory, or invalid for the requested mode.
+	ErrInvalidSessionRequest = errors.New("agentadaptor: invalid session request")
 )
 
 // SessionBusyError is wrapped by ErrSessionBusy when the busy target

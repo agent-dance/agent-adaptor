@@ -1,6 +1,9 @@
 package adaptor
 
 import (
+	"maps"
+	"time"
+
 	"github.com/agent-dance/agent-adaptor/driver"
 )
 
@@ -30,6 +33,44 @@ import (
 type Event interface {
 	// isEvent seals the interface to this package.
 	isEvent()
+	// Meta returns the SDK-owned event envelope. Sequence and Time describe
+	// the order in which the unified sink accepted events, not a provider's
+	// protocol cursor. Provider values, when present, remain in Source.
+	Meta() EventMeta
+}
+
+// EventMeta is the common, SDK-owned envelope carried by every Event.
+// Sequence is strictly increasing for one run and is assigned while the
+// event sink serializes producers. ThreadKey is the host's opaque key; a
+// provider thread/session identifier, if any, is kept in Source.ThreadID.
+type EventMeta struct {
+	RunID     string
+	ThreadKey string
+	Sequence  uint64
+	Time      time.Time
+	TurnID    string
+	Source    *EventSourceMeta
+}
+
+// EventSourceMeta preserves provider/driver envelope coordinates without
+// allowing them to compete with the SDK's authoritative EventMeta fields.
+type EventSourceMeta struct {
+	RunID     string
+	ThreadID  string
+	TurnID    string
+	Sequence  uint64
+	Timestamp time.Time
+}
+
+type eventMetaCarrier struct{ meta EventMeta }
+
+func (c eventMetaCarrier) Meta() EventMeta {
+	out := c.meta
+	if out.Source != nil {
+		source := *out.Source
+		out.Source = &source
+	}
+	return out
 }
 
 // Role identifies the speaker of a text event. It aliases the driver SPI
@@ -63,6 +104,7 @@ const (
 // Translated from StreamKinds text.start / text.content / text.end,
 // discriminated by Phase; only PhaseContent events carry Text.
 type TextDelta struct {
+	eventMetaCarrier
 	// MessageID groups the deltas of one message lifecycle.
 	MessageID string
 	// Text is the incremental content chunk (empty on start/end phases).
@@ -77,6 +119,7 @@ type TextDelta struct {
 // reasoning.start / reasoning.content / reasoning.end, discriminated by
 // Phase; only PhaseContent events carry Text.
 type Thinking struct {
+	eventMetaCarrier
 	// MessageID groups the deltas of one reasoning lifecycle.
 	MessageID string
 	// Text is the incremental reasoning chunk (empty on start/end phases).
@@ -96,6 +139,7 @@ type Thinking struct {
 //   - PhaseEnd: closes the lifecycle; Result is populated when the driver
 //     attaches it to the end marker.
 type ToolCall struct {
+	eventMetaCarrier
 	// ID is the tool-call correlation identifier.
 	ID string
 	// Name is the tool name (PhaseStart).
@@ -112,6 +156,7 @@ type ToolCall struct {
 
 // ToolResult carries a completed tool result (StreamKind tool_call.result).
 type ToolResult struct {
+	eventMetaCarrier
 	// ID correlates with the originating ToolCall.ID.
 	ID string
 	// Result is the structured tool result.
@@ -120,6 +165,7 @@ type ToolResult struct {
 
 // RunStarted marks the beginning of a streamed run (StreamKind run.started).
 type RunStarted struct {
+	eventMetaCarrier
 	RunID    string
 	ThreadID string
 }
@@ -131,6 +177,7 @@ type RunStarted struct {
 // RunFinished is informational: the authoritative outcome — including the
 // full Result and the typed *RunError — always comes from Stream.Result().
 type RunFinished struct {
+	eventMetaCarrier
 	RunID    string
 	ThreadID string
 	// Usage is the token accounting reported on normal completion.
@@ -158,6 +205,7 @@ const (
 // and chunk). Most consumers ignore it; debugging and audit tooling reads
 // it from the same stream instead of a second channel.
 type ProcessInfo struct {
+	eventMetaCarrier
 	// Kind is ProcessSpawn, ProcessStdout, or ProcessStderr.
 	Kind string
 	// Text is the human-readable description (spawn).
@@ -202,6 +250,7 @@ const (
 // and approval lifecycle broadcasts. Consumers that do not care simply omit
 // the case.
 type Notice struct {
+	eventMetaCarrier
 	// Kind is one of the Notice* constants (unknown driver-specific kinds
 	// pass through verbatim so no information is lost).
 	Kind string
@@ -220,8 +269,20 @@ type Notice struct {
 // surfaced as one Dropped event as soon as the channel has room again.
 // See WithEventBuffer / WithBlockingEvents.
 type Dropped struct {
+	eventMetaCarrier
 	// Count is how many events were dropped since the previous marker.
 	Count int
+	// ByKind breaks Count down by the public event kind.
+	ByKind map[string]int
+	// FirstSequence and LastSequence bound the SDK sequence numbers which
+	// were reserved for, but not delivered with, the discarded events.
+	FirstSequence uint64
+	LastSequence  uint64
+	// Reason and Source distinguish local backpressure from provider-side
+	// loss reports. Details preserves additional audit fields.
+	Reason  string
+	Source  string
+	Details map[string]any
 }
 
 // SubagentEventKind classifies a SubagentUpdate.
@@ -240,6 +301,7 @@ const (
 // leader's own event stream (design doc §9). The type is part of the P1
 // event vocabulary; the delegation service starts injecting it in P4.
 type SubagentUpdate struct {
+	eventMetaCarrier
 	// Agent is the delegation key of the subagent.
 	Agent string
 	// Kind classifies the update.
@@ -262,6 +324,125 @@ func (Notice) isEvent()           {}
 func (Dropped) isEvent()          {}
 func (SubagentUpdate) isEvent()   {}
 func (*ApprovalRequest) isEvent() {}
+
+// WithEventMeta returns ev with meta restored on a value copy. It is the
+// narrow replay hook for bridges and persistent event recorders, whose wire
+// envelope stores EventMeta separately from the typed event payload. A live
+// run's sink always overwrites restored coordinates with its own authoritative
+// run order before publication.
+func WithEventMeta(ev Event, meta EventMeta) Event {
+	if ev == nil {
+		return nil
+	}
+	meta.Source = cloneEventSourceMeta(meta.Source)
+	return stampEvent(ev, meta)
+}
+
+// stampEvent returns an event copy carrying the authoritative SDK envelope.
+// ApprovalRequest copies retain the shared exactly-once responder pointer.
+func stampEvent(ev Event, meta EventMeta) Event {
+	c := eventMetaCarrier{meta: meta}
+	switch e := ev.(type) {
+	case TextDelta:
+		e.eventMetaCarrier = c
+		return e
+	case Thinking:
+		e.eventMetaCarrier = c
+		return e
+	case ToolCall:
+		e.eventMetaCarrier = c
+		return e
+	case ToolResult:
+		e.eventMetaCarrier = c
+		return e
+	case RunStarted:
+		e.eventMetaCarrier = c
+		return e
+	case RunFinished:
+		e.eventMetaCarrier = c
+		return e
+	case ProcessInfo:
+		e.eventMetaCarrier = c
+		return e
+	case Notice:
+		e.eventMetaCarrier = c
+		return e
+	case Dropped:
+		e.eventMetaCarrier = c
+		e.ByKind = maps.Clone(e.ByKind)
+		e.Details = maps.Clone(e.Details)
+		return e
+	case SubagentUpdate:
+		e.eventMetaCarrier = c
+		return e
+	case *ApprovalRequest:
+		if e != nil {
+			out := *e
+			out.eventMetaCarrier = c
+			return &out
+		}
+		return e
+	default:
+		return ev
+	}
+}
+
+func eventKind(ev Event) string {
+	switch e := ev.(type) {
+	case TextDelta:
+		return "text." + phaseKind(e.Phase)
+	case Thinking:
+		return "thinking." + phaseKind(e.Phase)
+	case ToolCall:
+		return "tool_call." + phaseKind(e.Phase)
+	case ToolResult:
+		return "tool_result"
+	case RunStarted:
+		return "run.started"
+	case RunFinished:
+		return "run.finished"
+	case ProcessInfo:
+		return "process." + e.Kind
+	case Notice:
+		return "notice." + e.Kind
+	case Dropped:
+		return "dropped"
+	case SubagentUpdate:
+		return "subagent." + string(e.Kind)
+	case *ApprovalRequest:
+		return "approval.requested"
+	default:
+		return "unknown"
+	}
+}
+
+func phaseKind(p Phase) string {
+	if p == PhaseContent {
+		return "content"
+	}
+	return string(p)
+}
+
+// eventMayDrop is deliberately narrow. Only replayable, high-frequency
+// deltas may be discarded. Lifecycle, approvals, terminal events, provider
+// Dropped reports, transcript items, and tool results are always reliable
+// until the run is explicitly cancelled.
+func eventMayDrop(ev Event) bool {
+	switch e := ev.(type) {
+	case TextDelta:
+		return e.Phase == PhaseContent
+	case Thinking:
+		return e.Phase == PhaseContent
+	case ToolCall:
+		return e.Phase == PhaseContent
+	case ProcessInfo:
+		return e.Kind == ProcessStdout || e.Kind == ProcessStderr
+	case SubagentUpdate:
+		return e.Kind == SubagentDelta
+	default:
+		return false
+	}
+}
 
 // ============ SPI → Event translation (P1.2) ============
 
@@ -358,6 +539,11 @@ func eventFromStreamPayload(p driver.StreamPayload) Event {
 			n.Data["request_id"] = r.RequestID
 			n.Data["kind"] = string(r.Kind)
 			n.Data["source"] = r.Source
+			n.Data["tool_call_id"] = r.ToolCallID
+			n.Data["payload"] = maps.Clone(r.Payload)
+			n.Data["choices"] = append([]driver.DecisionChoice(nil), r.Choices...)
+			n.Data["created_at"] = r.CreatedAt
+			n.Data["deadline"] = r.Deadline
 			n.Data["attempt"] = r.RetryAttempt
 		}
 		return n
@@ -366,30 +552,72 @@ func eventFromStreamPayload(p driver.StreamPayload) Event {
 		if r := p.HITLResolved; r != nil {
 			n.Data["request_id"] = r.RequestID
 			n.Data["kind"] = string(r.Kind)
+			n.Data["source"] = r.Source
 			n.Data["result"] = string(r.Result)
 			n.Data["choice"] = r.Choice
+			n.Data["answer"] = maps.Clone(r.Answer)
 			n.Data["attempt"] = r.RetryAttempt
+			n.Data["resolved_at"] = r.ResolvedAt
+			n.Data["latency"] = r.Latency
 		}
 		return n
 
 	case driver.StreamDropped:
-		return Dropped{Count: droppedCount(p.Raw)}
+		return droppedFromProvider(p.Raw)
 
 	default:
 		// Unknown driver extension kinds pass through as notices so no
 		// information is silently lost.
-		return Notice{Kind: string(p.Kind), Text: p.Delta, Data: p.Raw}
+		data := maps.Clone(p.Raw)
+		if data == nil {
+			data = make(map[string]any)
+		}
+		if p.Name != "" {
+			data["name"] = p.Name
+		}
+		return Notice{Kind: string(p.Kind), Text: p.Delta, Data: data}
 	}
 }
 
-// droppedCount extracts Raw["dropped_count"] from a stream.dropped payload.
-func droppedCount(raw map[string]any) int {
-	switch n := raw["dropped_count"].(type) {
+func droppedFromProvider(raw map[string]any) Dropped {
+	d := Dropped{
+		Count:   droppedCount(raw),
+		Reason:  stringValue(raw["reason"]),
+		Source:  stringValue(raw["source"]),
+		Details: maps.Clone(raw),
+		ByKind:  map[string]int{},
+	}
+	if d.Source == "" {
+		d.Source = "provider"
+	}
+	if byKind, ok := raw["by_kind"].(map[string]int); ok {
+		d.ByKind = maps.Clone(byKind)
+	} else if byKind, ok := raw["by_kind"].(map[string]any); ok {
+		for kind, value := range byKind {
+			d.ByKind[kind] = numberValue(value)
+		}
+	}
+	d.FirstSequence = uint64(numberValue(raw["first_sequence"]))
+	d.LastSequence = uint64(numberValue(raw["last_sequence"]))
+	return d
+}
+
+func stringValue(v any) string {
+	s, _ := v.(string)
+	return s
+}
+
+func numberValue(v any) int {
+	switch n := v.(type) {
 	case int:
 		return n
 	case int32:
 		return int(n)
 	case int64:
+		return int(n)
+	case uint:
+		return int(n)
+	case uint32:
 		return int(n)
 	case uint64:
 		return int(n)
@@ -398,4 +626,9 @@ func droppedCount(raw map[string]any) int {
 	default:
 		return 0
 	}
+}
+
+// droppedCount extracts Raw["dropped_count"] from a stream.dropped payload.
+func droppedCount(raw map[string]any) int {
+	return numberValue(raw["dropped_count"])
 }

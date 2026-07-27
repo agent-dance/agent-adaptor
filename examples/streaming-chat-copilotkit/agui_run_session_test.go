@@ -19,7 +19,7 @@ import (
 // MessageID — exactly what a browser refresh needs to reconstruct the chat
 // transcript.
 func TestAGUIRunSessionRecordsUserTurnBeforeAssistant(t *testing.T) {
-	store := newThreadStore()
+	store := mustNewThreadStore(t)
 	threadID := "thr-userprompt"
 	runID := "run-1"
 
@@ -130,7 +130,7 @@ func TestAGUIRunSessionRecordsUserTurnBeforeAssistant(t *testing.T) {
 // case: if the AG-UI input had no user-role text content, userTurnEvents
 // returns nil and Serve must not record anything user-side.
 func TestAGUIRunSessionSkipsUserTurnWhenAbsent(t *testing.T) {
-	store := newThreadStore()
+	store := mustNewThreadStore(t)
 	threadID := "thr-empty"
 
 	events := make(chan adaptor.Event, 2)
@@ -159,7 +159,7 @@ func TestAGUIRunSessionSkipsUserTurnWhenAbsent(t *testing.T) {
 // the host parks it for the browser, and the SDK's approval.resolved notice
 // clears it again without host bookkeeping.
 func TestAGUIRunSessionParksApprovalRequests(t *testing.T) {
-	store := newThreadStore()
+	store := mustNewThreadStore(t)
 	threadID := "thr-approval"
 	req := &adaptor.ApprovalRequest{ID: "req-1", RunID: "run-approval", Kind: adaptor.ApprovalPermission, Title: "run bash"}
 
@@ -179,7 +179,7 @@ func TestAGUIRunSessionParksApprovalRequests(t *testing.T) {
 
 	// unregisterRun drops requests owned by the finished run, so inspect the
 	// parking behaviour through a second session that stays "open".
-	store2 := newThreadStore()
+	store2 := mustNewThreadStore(t)
 	store2.addPending(threadID, req)
 	if got := len(store2.pendingRequests(threadID)); got != 1 {
 		t.Fatalf("pending len = %d, want 1", got)

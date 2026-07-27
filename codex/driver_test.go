@@ -31,7 +31,7 @@ func TestDescriptorAdvertisesExpectedMCPCapabilities(t *testing.T) {
 
 func TestDescriptorAdvertisesStructuredOutputCapabilities(t *testing.T) {
 	caps := NewAdapter().Descriptor().StructuredOutput
-	if !caps.JSONSchemaNative || !caps.JSONSchemaPromptValidate || !caps.WorksWithRun || !caps.WorksWithStart {
+	if !caps.JSONSchemaNative || !caps.JSONSchemaPromptValidate || !caps.WorksWithRun {
 		t.Fatalf("unexpected Codex structured-output capability: %#v", caps)
 	}
 	if caps.WorksWithStreaming {
@@ -41,7 +41,8 @@ func TestDescriptorAdvertisesStructuredOutputCapabilities(t *testing.T) {
 
 func TestParseCheckpointRequiresRecognizedCodexEvent(t *testing.T) {
 	stdout := `{"type":"tool.result","thread_id":"ignore-me"}
-{"type":"thread.started","thread_id":"codex-thread"}`
+{"type":"thread.started","thread_id":"codex-thread"}
+{"type":"turn.completed"}`
 
 	checkpoint := snapshotCodexStdout(stdout).checkpoint(0)
 	if checkpoint == nil || checkpoint.State == nil {
@@ -54,8 +55,8 @@ func TestParseCheckpointRequiresRecognizedCodexEvent(t *testing.T) {
 
 func TestParseCheckpointAcceptsSessionOnlyPayload(t *testing.T) {
 	checkpoint := snapshotCodexStdout(`{"thread_id":"codex-thread"}`).checkpoint(0)
-	if checkpoint == nil || checkpoint.State == nil || checkpoint.State.ResumeID != "codex-thread" {
-		t.Fatalf("unexpected checkpoint: %#v", checkpoint)
+	if checkpoint != nil {
+		t.Fatalf("session-only payload is not terminal proof: %#v", checkpoint)
 	}
 }
 

@@ -81,7 +81,7 @@ func TestWithSkillsAppendsEverythingElseReplaces(t *testing.T) {
 		},
 		{
 			name:    "mcp: run-scope WithMCP replaces the default set",
-			newOpts: []adaptor.Option{adaptor.WithMCP(mcp.Stdio("default-stdio", "npx", "default-server"))},
+			newOpts: []adaptor.Option{adaptor.WithMCP(mcp.Stdio("default-stdio", "npx", mcp.Args("default-server")))},
 			runOpts: []adaptor.CallOption{adaptor.WithMCP(mcp.HTTP("remote-http", "https://example.com/mcp"))},
 			check: func(t *testing.T, req driver.Request) {
 				if len(req.MCP.Servers) != 1 || req.MCP.Servers[0].Key != "remote-http" {
@@ -91,7 +91,7 @@ func TestWithSkillsAppendsEverythingElseReplaces(t *testing.T) {
 		},
 		{
 			name:    "mcp: zero-arg WithMCP is an explicit clear",
-			newOpts: []adaptor.Option{adaptor.WithMCP(mcp.Stdio("default-stdio", "npx", "default-server"))},
+			newOpts: []adaptor.Option{adaptor.WithMCP(mcp.Stdio("default-stdio", "npx", mcp.Args("default-server")))},
 			runOpts: []adaptor.CallOption{adaptor.WithMCP()},
 			check: func(t *testing.T, req driver.Request) {
 				if len(req.MCP.Servers) != 0 {

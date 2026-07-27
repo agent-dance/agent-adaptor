@@ -36,7 +36,6 @@ type suiteConfig struct {
 	liveTimeout          time.Duration
 	liveSkipReason       string
 	liveStructured       bool
-	lenientLifecycle     bool
 }
 
 // WithConfig supplies the driver-specific config value passed to every
@@ -123,13 +122,6 @@ func SkipLiveRun(reason string) Option {
 // suite never sends a mode the descriptor does not declare (SO-03).
 func WithLiveStructuredOutput() Option { return func(c *suiteConfig) { c.liveStructured = true } }
 
-// LenientStreamLifecycle downgrades the run-lifecycle framing clauses
-// EVT-01, EVT-02, and EVT-11 from failures to logs. The driver-package
-// godoc implies but does not state these rules (see the package
-// documentation's ambiguity notes); drivers with a deliberate divergence
-// can stay on the suite while the contract wording is settled.
-func LenientStreamLifecycle() Option { return func(c *suiteConfig) { c.lenientLifecycle = true } }
-
 // foreignConfig is a type no driver under test can know about (CFG-03).
 type foreignConfig struct{ marker string }
 
@@ -198,25 +190,6 @@ func reportViolations(t *testing.T, violations []Violation) {
 	}
 }
 
-// filterLenient splits off the EVT-01/EVT-02/EVT-11 lifecycle clauses when
-// LenientStreamLifecycle is active, logging instead of failing.
-func filterLenient(t *testing.T, c *suiteConfig, violations []Violation) []Violation {
-	t.Helper()
-	if !c.lenientLifecycle {
-		return violations
-	}
-	kept := violations[:0:0]
-	for _, v := range violations {
-		switch v.Clause {
-		case "EVT-01", "EVT-02", "EVT-11":
-			t.Logf("lenient (LenientStreamLifecycle): %s", v)
-		default:
-			kept = append(kept, v)
-		}
-	}
-	return kept
-}
-
 func mustNotPanic(t *testing.T, clause, what string, fn func()) {
 	t.Helper()
 	defer func() {
@@ -276,6 +249,8 @@ func checkDeclarations(t *testing.T, d driver.Driver, desc driver.Descriptor) {
 		} else if provider.SessionCodec() == nil {
 			t.Error("CAP-01: SessionCodec() returned nil on a resume-capable driver")
 		}
+	} else if provider, ok := d.(driver.SessionCodecProvider); ok && provider.SessionCodec() != nil {
+		t.Error("CAP-01: driver exposes a non-nil SessionCodec but Sessions.SupportsResume=false; the declaration is an iff contract")
 	}
 	// CAP-02: skills declaration implies SkillSupport and a coherent mode.
 	if desc.Skills.Supported {
@@ -291,12 +266,12 @@ func checkDeclarations(t *testing.T, d driver.Driver, desc driver.Descriptor) {
 	// SO-01: structured-output declaration coherence.
 	so := desc.StructuredOutput
 	declared := so.JSONSchemaNative || so.JSONSchemaPromptValidate
-	anyWorks := so.WorksWithRun || so.WorksWithStart || so.WorksWithStreaming || so.WorksWithHITL
+	anyWorks := so.WorksWithRun || so.WorksWithStreaming || so.WorksWithHITL
 	if !declared && anyWorks {
 		t.Error("SO-01: StructuredOutput declares WorksWith* flags without declaring JSONSchemaNative or JSONSchemaPromptValidate")
 	}
-	if declared && !(so.WorksWithRun && so.WorksWithStart) {
-		t.Logf("note (SO-01): structured output is declared but WorksWithRun=%v WorksWithStart=%v; the engine requires both before honoring any mode (internal/engine/structured.go)", so.WorksWithRun, so.WorksWithStart)
+	if declared && !so.WorksWithRun {
+		t.Error("SO-01: structured-output mechanism declared with WorksWithRun=false; v1 has one execution pipeline for both consumer Run and Stream")
 	}
 }
 
@@ -644,15 +619,13 @@ func checkLiveRun(t *testing.T, d driver.Driver, c *suiteConfig) {
 		t.Fatalf("live run failed: %v\nstderr tail: %s", err, rawStderrTail(&resp))
 	}
 
-	reportViolations(t, filterLenient(t, c, VerifyRunEvents(sink.Events())))
-	reportViolations(t, filterLenient(t, c, VerifyStreamSequence(sink.Stream())))
+	reportViolations(t, VerifyRunEvents(sink.Events()))
 	if support, ok := d.(driver.StreamSupport); ok {
+		reportViolations(t, VerifyStreamSequence(sink.Stream()))
 		reportViolations(t, VerifyStreamCapability(support.StreamCapability(), sink.Stream()))
 	}
 	reportViolations(t, VerifyResponse(&resp))
-	for _, v := range VerifyTranscriptMirror(sink.Events(), resp.Transcript) {
-		t.Logf("informational (advisory clause, see package docs): %s", v)
-	}
+	reportViolations(t, VerifyTranscriptMirror(sink.Events(), resp.Transcript))
 	if resp.Output == "" {
 		t.Log("note: live run returned an empty Output")
 	}

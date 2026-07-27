@@ -27,7 +27,7 @@
 //	├── main.go                 # bootstrap
 //	├── server.go               # HTTP host wiring
 //	├── agui_run_session.go     # AG-UI stream forwarder + tee
-//	├── thread_store.go         # in-memory recovery store
+//	├── thread_store.go         # memory / JSONL recovery store
 //	└── web/                    # Next.js + CopilotKit frontend, port 3000
 //
 // Run:
@@ -51,7 +51,11 @@ func main() {
 	cwd, _ := os.Getwd()
 
 	ai, driver := exampleutil.NewAGUIStreamingAgent(cwd)
-	server := newAppServer(ai, driver, cors)
+	server, err := newAppServer(ai, driver, cors)
+	if err != nil {
+		slog.Error("initialize server", "err", err)
+		os.Exit(1)
+	}
 
 	slog.Info("agent-adaptor AG-UI backend listening",
 		"agent", driver,

@@ -46,8 +46,9 @@ type Record struct {
 	// it and keep it stable for the record's lifetime.
 	ID string
 	// Key is the host's thread key — the stable business handle. Multiple
-	// records may share a Key over time (StartNew/Fork archive the old
-	// one); at most one of them is StatusActive.
+	// records may share a Key over time when StartNew archives the old one;
+	// at most one of them is StatusActive. Fork requires a previously unused
+	// target key and never archives its parent.
 	Key string
 	// Status is the lifecycle state (active / archived).
 	Status Status
@@ -60,6 +61,10 @@ type Record struct {
 	// CompatibilityFingerprint is the guard compared on resume; a mismatch
 	// rejects the resume instead of contaminating the conversation.
 	CompatibilityFingerprint string
+	// SessionCodec is the stable name of the driver codec that normalized
+	// State. Fork and resume coordination use it to reject checkpoint formats
+	// that the current driver cannot safely interpret.
+	SessionCodec string
 	// State is the driver-owned resume checkpoint.
 	State *driver.SessionState
 	// CreatedAt/UpdatedAt are storage timestamps (UTC).
@@ -88,7 +93,8 @@ type Lease struct {
 // FinalizeRequest tells a Store how to persist the post-run thread state:
 // save the new record, optionally archive the previous one, and rebind the
 // key's active mapping — atomically relative to the store's backend, after
-// validating every held lease.
+// validating every held lease. When RequireKeyAbsent is set, checking the
+// key precondition and applying all mutations are one atomic operation.
 type FinalizeRequest struct {
 	Record     Record
 	PreviousID string
@@ -96,11 +102,16 @@ type FinalizeRequest struct {
 	// RebindActive is set.
 	Key        string
 	HeldLeases []Lease
-	// ArchiveOld archives the PreviousID record (StartNew/Fork/fallback
+	// ArchiveOld archives the PreviousID record (StartNew/resume-fallback
 	// paths keep the old conversation addressable for audit).
 	ArchiveOld bool
 	// RebindActive points the Key's active mapping at Record.ID.
 	RebindActive bool
+	// RequireKeyAbsent makes Finalize fail atomically with ErrAlreadyExists
+	// when Key already has an active mapping. Fork uses this compare-and-set
+	// guard in addition to its key lease so a stale or non-cooperating writer
+	// cannot create two active children for the same host key.
+	RequireKeyAbsent bool
 }
 
 // Store persists Thread state for resume-capable drivers. Semantics are
@@ -133,6 +144,9 @@ var (
 	// ErrLeaseLost matches RenewLease/Finalize failures when the caller's
 	// lease token is no longer current.
 	ErrLeaseLost = errors.New("threadstore: lease lost")
+	// ErrAlreadyExists matches a conditional Finalize that found an active
+	// mapping where the caller required the thread key to be unused.
+	ErrAlreadyExists = errors.New("threadstore: thread already exists")
 )
 
 // BusyError is returned by AcquireLease when the target is exclusively held
@@ -169,3 +183,25 @@ func (e *LeaseLostError) Error() string {
 
 // Unwrap returns ErrLeaseLost so errors.Is(err, ErrLeaseLost) holds.
 func (e *LeaseLostError) Unwrap() error { return ErrLeaseLost }
+
+// AlreadyExistsError is returned by a conditional Finalize when Key already
+// has an active mapping. Unwrap returns ErrAlreadyExists.
+type AlreadyExistsError struct {
+	Key string
+}
+
+// Error reports the conflicting host thread key when present.
+func (e *AlreadyExistsError) Error() string {
+	if e == nil || e.Key == "" {
+		return ErrAlreadyExists.Error()
+	}
+	return ErrAlreadyExists.Error() + ": " + e.Key
+}
+
+// Unwrap returns ErrAlreadyExists so errors.Is(err, ErrAlreadyExists) holds.
+func (e *AlreadyExistsError) Unwrap() error { return ErrAlreadyExists }
+
+// ThreadAlreadyExists marks this as the store-neutral conditional-finalize
+// conflict understood by the internal coordinator. The method deliberately
+// carries no data and keeps threadstore independent of internal/engine.
+func (e *AlreadyExistsError) ThreadAlreadyExists() bool { return true }

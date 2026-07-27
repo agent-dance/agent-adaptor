@@ -100,7 +100,6 @@ func (adapter) Descriptor() agentadaptor.DriverDescriptor {
 			JSONSchemaNative:         true,
 			JSONSchemaPromptValidate: true,
 			WorksWithRun:             true,
-			WorksWithStart:           true,
 			WorksWithStreaming:       false,
 			WorksWithHITL:            false,
 			Notes:                    "Native JSON Schema output uses CodeBuddy print-mode --output-format json --json-schema; stream-json/HITL combinations are not advertised.",
@@ -399,17 +398,19 @@ func (adapter) runHeadless(ctx context.Context, cfg agentadaptor.CodeBuddyConfig
 	p.finalize()
 
 	raw := agentadaptor.RawStreams{Stdout: result.RawStreams.Stdout, Stderr: result.RawStreams.Stderr}
-	checkpoint := p.checkpoint(result.ExitCode)
+	var failure *agentadaptor.RunFailure
+	if p.pendingFailure != nil {
+		failure = p.pendingFailure
+	} else if strings.TrimSpace(p.errorMessage) != "" {
+		failure = &agentadaptor.RunFailure{Code: agentadaptor.FailureAgentError, Message: p.errorMessage}
+	}
+	checkpoint := p.checkpointForOutcome(result.ExitCode, result.Signal, result.TimedOut, failure)
 	if checkpoint != nil && checkpoint.State != nil {
 		checkpoint.State.Data = map[string]string{
 			driver.SessionParamCWD:                prep.effectiveCWD,
 			driver.SessionParamWorkspaceID:        req.Workspace.ID,
 			driver.SessionParamProfileFingerprint: req.ProfilePayload.Fingerprint,
 		}
-	}
-	var failure *agentadaptor.RunFailure
-	if strings.TrimSpace(p.errorMessage) != "" {
-		failure = &agentadaptor.RunFailure{Code: agentadaptor.FailureAgentError, Message: p.errorMessage}
 	}
 
 	var structuredOutput *agentadaptor.StructuredOutput

@@ -160,7 +160,7 @@ res, err := agent.Run(ctx, prompt,
 ```go
 adaptor.WithMCP(
     mcp.HTTP("docs", "https://example.com/mcp"),
-    mcp.Stdio("repo-tools", "npx", "repo-mcp"),
+    mcp.Stdio("repo-tools", "npx", mcp.Args("repo-mcp")),
 )
 adaptor.WithSkills(skill.Dir("./skills/write-proof"), skill.Key("code-review"))
 ```

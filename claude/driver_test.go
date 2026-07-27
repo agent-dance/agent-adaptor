@@ -191,7 +191,7 @@ func TestDescriptorAdvertisesExpectedMCPCapabilities(t *testing.T) {
 
 func TestDescriptorAdvertisesStructuredOutputCapabilities(t *testing.T) {
 	caps := NewAdapter().Descriptor().StructuredOutput
-	if !caps.JSONSchemaNative || !caps.JSONSchemaPromptValidate || !caps.WorksWithRun || !caps.WorksWithStart {
+	if !caps.JSONSchemaNative || !caps.JSONSchemaPromptValidate || !caps.WorksWithRun {
 		t.Fatalf("unexpected Claude structured-output capability: %#v", caps)
 	}
 	if !caps.WorksWithStreaming || caps.WorksWithHITL {
@@ -238,7 +238,7 @@ func TestNewReturnsTypedBinding(t *testing.T) {
 
 func TestParseCheckpointRequiresRecognizedClaudeEvent(t *testing.T) {
 	stdout := `{"type":"tool.result","session_id":"ignore-me"}
-{"event":"turn.completed","session_id":"claude-session","display_id":"claude-display"}`
+{"type":"result","subtype":"success","session_id":"claude-session","display_id":"claude-display"}`
 
 	checkpoint := parseCheckpoint(stdout, 0)
 	if checkpoint == nil || checkpoint.State == nil {
@@ -324,8 +324,8 @@ printf '%s\n' '{"type":"result","subtype":"success","session_id":"sess-structure
 
 func TestParseCheckpointAcceptsSessionOnlyPayload(t *testing.T) {
 	checkpoint := parseCheckpoint(`{"session_id":"claude-session"}`, 0)
-	if checkpoint == nil || checkpoint.State == nil || checkpoint.State.ResumeID != "claude-session" {
-		t.Fatalf("unexpected checkpoint: %#v", checkpoint)
+	if checkpoint != nil {
+		t.Fatalf("session-only payload is not terminal proof: %#v", checkpoint)
 	}
 }
 

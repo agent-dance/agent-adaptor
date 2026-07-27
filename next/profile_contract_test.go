@@ -41,11 +41,11 @@ func TestProfileResourcesResolveIntoProfilePayload(t *testing.T) {
 	fake := capsFake()
 	agent := adaptor.New(fake, adaptor.WithProfileResources(profile.Resources{
 		Skills: []adaptor.SkillRef{skill.Inline("team/default", "# default")},
-		MCP: &agentadaptor.MCPConfig{Servers: []mcp.Server{{
+		MCP: []mcp.Server{{
 			Key:       "default-mcp",
 			Transport: driver.MCPTransportStdio,
 			Command:   "npx",
-		}}},
+		}},
 		Agents: []profile.SubAgent{{
 			Key:             "reviewer",
 			Description:     "Review code changes",
@@ -86,7 +86,7 @@ func TestProfileResourcesResolveIntoProfilePayload(t *testing.T) {
 	if len(payload.Agents.Agents) != 1 || payload.Agents.Agents[0].RuntimeName != "reviewer" || payload.Agents.Agents[0].Instructions != "review things" {
 		t.Fatalf("unexpected agent payload: %#v", payload.Agents)
 	}
-	if len(payload.Hooks.Hooks) != 1 || payload.Hooks.Hooks[0].Event != profile.HookEventPreTool || payload.Hooks.Hooks[0].Handler.Command != "echo" {
+	if len(payload.Hooks.Hooks) != 1 || payload.Hooks.Hooks[0].Event != driver.HookEventPreTool || payload.Hooks.Hooks[0].Handler.Command != "echo" {
 		t.Fatalf("unexpected hook payload: %#v", payload.Hooks)
 	}
 	if len(payload.Config.Patches) != 1 || payload.Config.Patches[0].Capability != "sandbox" {

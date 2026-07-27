@@ -92,6 +92,16 @@ type configuredDriver struct {
 }
 
 var _ driver.Driver = configuredDriver{}
+var _ driver.SessionConfigFingerprinter = configuredDriver{}
+
+const sessionConfigFingerprintDomain = DriverType + "/configured-driver/v1;session-codec/v1"
+
+// SessionConfigFingerprint identifies every provider-visible construction
+// setting together with the Cursor session-codec contract. It intentionally
+// hashes the captured snapshot rather than exposing it through Config() any.
+func (d configuredDriver) SessionConfigFingerprint() (string, error) {
+	return driver.CanonicalSessionConfigFingerprint(sessionConfigFingerprintDomain, d.cfg)
+}
 
 // Run injects the captured config when the request does not carry one (the
 // v1 execution path sends req.Config == nil) and delegates to the adapter. A

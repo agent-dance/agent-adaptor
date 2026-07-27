@@ -61,7 +61,8 @@ func (d referenceDriver) model() string {
 
 // Descriptor declares exactly what the implementation delivers (CAP-01,
 // CAP-02, SO-01): resume + codec, ephemeral skills, native and
-// prompt-validate structured output working with Run/Start/Streaming.
+// prompt-validate structured output working in the v1 execution pipeline and
+// with the provider-native streaming transport.
 func (d referenceDriver) Descriptor() driver.Descriptor {
 	return driver.Descriptor{
 		Type:        referenceDriverType,
@@ -78,7 +79,6 @@ func (d referenceDriver) Descriptor() driver.Descriptor {
 			JSONSchemaNative:         true,
 			JSONSchemaPromptValidate: true,
 			WorksWithRun:             true,
-			WorksWithStart:           true,
 			WorksWithStreaming:       true,
 			Notes:                    "in-memory reference implementation",
 		},

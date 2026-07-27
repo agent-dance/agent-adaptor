@@ -71,7 +71,6 @@ func (adapter) Descriptor() agentadaptor.DriverDescriptor {
 			JSONSchemaNative:         true,
 			JSONSchemaPromptValidate: true,
 			WorksWithRun:             true,
-			WorksWithStart:           true,
 			WorksWithStreaming:       false,
 			WorksWithHITL:            false,
 			Notes:                    "Native JSON Schema output is supported by codex exec --output-schema; codex app-server streaming support is not advertised.",
@@ -486,14 +485,6 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 		}
 		return agentadaptor.DriverRunResult{}, &agentadaptor.ResumeRejectedError{Reason: reason}
 	}
-	checkpoint := parser.checkpoint(result.ExitCode)
-	if checkpoint != nil && checkpoint.State != nil {
-		checkpoint.State.Data = map[string]string{
-			driver.SessionParamCWD:                effectiveCWD,
-			driver.SessionParamWorkspaceID:        req.Workspace.ID,
-			driver.SessionParamProfileFingerprint: profileFingerprint,
-		}
-	}
 	provider := ""
 	if cfg.Model != "" {
 		provider = "openai"
@@ -503,6 +494,14 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 		failure = &agentadaptor.RunFailure{
 			Code:    agentadaptor.FailureAgentError,
 			Message: parser.errorMessage,
+		}
+	}
+	checkpoint := parser.checkpointForOutcome(result.ExitCode, result.Signal, result.TimedOut, failure)
+	if checkpoint != nil && checkpoint.State != nil {
+		checkpoint.State.Data = map[string]string{
+			driver.SessionParamCWD:                effectiveCWD,
+			driver.SessionParamWorkspaceID:        req.Workspace.ID,
+			driver.SessionParamProfileFingerprint: profileFingerprint,
 		}
 	}
 	var structuredOutput *agentadaptor.StructuredOutput

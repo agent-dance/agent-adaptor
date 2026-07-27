@@ -29,9 +29,10 @@ import (
 //
 // Events() closes when the run ends; Result() then returns immediately with
 // the same Result / *RunError / infrastructure-error contract as Run.
-// Abandoning the loop early is safe: the default backpressure mode drops
-// excess events (aggregated into Dropped markers) and the run finishes on
-// its own; Cancel() ends it early.
+// Consumers must continuously drain Events. The default backpressure mode
+// may discard only high-frequency deltas; approvals, lifecycle, terminal,
+// transcript and drop-report events remain reliable and can therefore apply
+// backpressure. A consumer which abandons the loop must call Cancel first.
 type Stream interface {
 	// Events returns the unified typed event channel. It is closed when
 	// the run ends (after the final events, including the terminal
@@ -45,8 +46,9 @@ type Stream interface {
 	// RunID returns the SDK-assigned execution identifier, available
 	// immediately (before the first event).
 	RunID() string
-	// Cancel aborts the run (context cancellation). Idempotent. The
-	// consumer still drains Events() and reads Result() normally.
+	// Cancel aborts the run and immediately releases blocked event publishers
+	// and approval waiters. It is idempotent. Buffered Events may still be
+	// drained before reading Result().
 	Cancel()
 }
 
@@ -65,7 +67,17 @@ var _ Stream = (*runStream)(nil)
 
 func (s *runStream) Events() <-chan Event { return s.sink.events }
 func (s *runStream) RunID() string        { return s.runID }
-func (s *runStream) Cancel()              { s.cancel() }
+func (s *runStream) Cancel() {
+	if s == nil {
+		return
+	}
+	if s.sink != nil {
+		s.sink.abort()
+	}
+	if s.cancel != nil {
+		s.cancel()
+	}
+}
 
 func (s *runStream) Result() (*Result, error) {
 	<-s.done
@@ -189,6 +201,15 @@ func (a *Agent) openStream(ctx context.Context, opts []CallOption) (st *runStrea
 		close(st.done)
 		return st, eff, ctx, false
 	}
+	// Parent cancellation has the same unblocking guarantees as Cancel().
+	// A successful normal close ends the watcher through broker.done.
+	go func() {
+		select {
+		case <-ctx.Done():
+			sink.abort()
+		case <-sink.broker.done:
+		}
+	}()
 	return st, eff, ctx, true
 }
 

@@ -67,13 +67,12 @@ type Request struct {
 	// override" and the driver falls back to the binding model.
 	ModelOverride string
 
-	// Streaming is a hint from the host that the caller wants structured
-	// stream events (StreamPayload) emitted via EventSink.EmitStream in
-	// addition to the regular RunEvent channel. Drivers that implement
-	// StreamSupport should switch their underlying transport to the
-	// richest token-level channel available (for codex this means
-	// `codex app-server`; for claude this means `--include-partial-messages`;
-	// for cursor this means `--stream-partial-output`).
+	// Streaming selects a provider-native streaming transport after the core
+	// has resolved the invocation. It is not derived from whether the consumer
+	// called Agent.Run or Agent.Stream: both consumer methods share one Event
+	// pipeline, and either may use a batch or streaming provider transport.
+	// Drivers that implement StreamSupport should use their declared native
+	// transport when this field is true.
 	//
 	// Drivers that do not implement StreamSupport are free to ignore
 	// this field. Hosts consuming stream events on such drivers will see
@@ -165,20 +164,17 @@ type SessionState struct {
 	Data map[string]string
 }
 
-// Checkpoint is returned by drivers when the run produced a session state
-// that is safe to persist. Valid must be false for non-resumable runs so the
-// SDK does not contaminate a healthy session mapping.
-//
-// "Non-resumable" refers to the session itself — e.g. the upstream provider
-// never issued a session id, or the driver knows the session was rejected
-// or revoked server-side. A non-zero exit code from the local CLI subprocess
-// (max_turns reached, upstream model provider API error, network blip, OOM,
-// signal, ...) does not by itself imply the session is non-resumable: the
-// session id is already minted on the provider when the first event arrives,
-// and a subsequent resume will either succeed or surface a clean upstream
-// error. Drivers SHOULD therefore preserve the captured session in the
-// checkpoint whenever one is available, and only set Valid=false when they
-// have positive evidence that resuming will not work.
+// Checkpoint is returned by drivers only when the run produced session state
+// that is proven safe to persist. A driver MUST set Valid=true only when all
+// of the following hold: the provider process exited successfully, no signal
+// or timeout occurred, Response.Failure is nil, the driver's official parser
+// observed its successful terminal event, and that protocol supplied an
+// explicit top-level resume/session identifier accepted by SessionCodec.
+// Init/session announcements, partial output, guessed/nested identifiers and
+// terminal error events are not sufficient. In v1 there is no failed-run
+// exception: non-zero exit, cancellation, malformed protocol, missing
+// terminal, or business failure MUST return nil or Valid=false. This prevents
+// a failed run from replacing a previously healthy Thread checkpoint.
 //
 // The root package exposes this type as agentadaptor.DriverCheckpoint.
 type Checkpoint struct {
@@ -204,8 +200,8 @@ type RunChoice struct {
 // classifies a failure more precisely than a plain stderr string.
 //
 // HumanDecision is non-nil exactly when Code is FailureReject or
-// FailureTimeout; hosts can rely on that invariant when rendering attribution
-// (see docs/run-policy.md §5).
+// FailureTimeout. Drivers MUST uphold this invariant on Response.Failure;
+// core validates it before exposing the final Result.
 type RunFailure struct {
 	Message       string
 	Code          FailureCode

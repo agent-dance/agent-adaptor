@@ -102,7 +102,6 @@ func (adapter) Descriptor() agentadaptor.DriverDescriptor {
 			JSONSchemaNative:         true,
 			JSONSchemaPromptValidate: true,
 			WorksWithRun:             true,
-			WorksWithStart:           true,
 			WorksWithStreaming:       true,
 			WorksWithHITL:            false,
 			Notes:                    "Native JSON Schema output supports print-mode streaming via --output-format stream-json --json-schema; interactive HITL combinations are still not advertised.",
@@ -479,14 +478,6 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 	}
 	parser.finalize()
 	raw := agentadaptor.RawStreams{Stdout: result.RawStreams.Stdout, Stderr: result.RawStreams.Stderr}
-	checkpoint := parser.checkpoint(result.ExitCode)
-	if checkpoint != nil && checkpoint.State != nil {
-		checkpoint.State.Data = map[string]string{
-			driver.SessionParamCWD:                effectiveCWD,
-			driver.SessionParamWorkspaceID:        req.Workspace.ID,
-			driver.SessionParamProfileFingerprint: profileFingerprint,
-		}
-	}
 	var failure *agentadaptor.RunFailure
 	if parser.pendingFailure != nil {
 		failure = parser.pendingFailure
@@ -494,6 +485,14 @@ func (adapter) Run(ctx context.Context, req agentadaptor.DriverRunRequest, sink 
 		failure = &agentadaptor.RunFailure{
 			Code:    agentadaptor.FailureAgentError,
 			Message: parser.errorMessage,
+		}
+	}
+	checkpoint := parser.checkpointForOutcome(result.ExitCode, result.Signal, result.TimedOut, failure)
+	if checkpoint != nil && checkpoint.State != nil {
+		checkpoint.State.Data = map[string]string{
+			driver.SessionParamCWD:                effectiveCWD,
+			driver.SessionParamWorkspaceID:        req.Workspace.ID,
+			driver.SessionParamProfileFingerprint: profileFingerprint,
 		}
 	}
 
