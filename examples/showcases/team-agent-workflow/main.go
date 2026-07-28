@@ -25,15 +25,16 @@
 //
 // LIVE ONLY, and it costs real money: one leader run plus three role runs
 // against the selected local CLIs. There is therefore no default agent
-// (-leader is required), no fallback that picks one for you, and no Go test
-// in this directory. It is not part of examples/run_examples.ps1.
+// (-leader is required), no fallback that picks one for you, and no test ever
+// invokes main or a local CLI. It is not part of examples/run_examples.ps1.
 //
 // Usage:
 //
 //	go run ./examples/showcases/team-agent-workflow -leader=claude
 //	go run ./examples/showcases/team-agent-workflow -leader=claude -plan=codex -review=codex
 //	go run ./examples/showcases/team-agent-workflow -leader=claude -keep-workspace
-//	go run ./examples/showcases/team-agent-workflow -leader=claude -web-mode -web-addr=:8080
+//	go run ./examples/showcases/team-agent-workflow -leader=claude -web-mode
+//	go run ./examples/showcases/team-agent-workflow -leader=claude -web-mode -web-addr=0.0.0.0:8080 -web-cors=https://chat.example.com
 package main
 
 import (
@@ -48,15 +49,20 @@ import (
 	"strings"
 	"time"
 
+	adaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/bridges/sse"
 	"github.com/agent-dance/agent-adaptor/examples/internal/exampleutil"
 	delegation "github.com/agent-dance/agent-adaptor/hosttools/a2adelegation"
 	"github.com/agent-dance/agent-adaptor/memory"
-	adaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/profile"
 )
 
 const (
+	defaultWebListenAddr = "127.0.0.1:8080"
+	// This live, paid showcase has no bundled browser UI. Cross-origin access
+	// stays disabled unless the operator deliberately enables one origin.
+	defaultWebCORSOrigin = ""
+
 	// workflowSentinel is the leader's own completion marker.
 	workflowSentinel = "TEAM_AGENT_WORKFLOW_OK"
 	// reviewApprovalSentinel / reviewRejectSentinel gate the workflow on the
@@ -90,8 +96,8 @@ func main() {
 	flag.DurationVar(&opts.roleTimeout, "role-timeout", 4*time.Minute, "Deadline for one delegation")
 	flag.BoolVar(&opts.keepWorkspace, "keep-workspace", false, "Keep the temporary workspace and cloned profiles")
 	flag.BoolVar(&opts.webMode, "web-mode", false, "Serve the leader over AG-UI SSE instead of running one CLI workflow")
-	flag.StringVar(&opts.webAddr, "web-addr", ":8080", "AG-UI listen address (-web-mode)")
-	flag.StringVar(&opts.webCORS, "web-cors", "*", "Access-Control-Allow-Origin (-web-mode)")
+	flag.StringVar(&opts.webAddr, "web-addr", defaultWebListenAddr, "AG-UI listen address (-web-mode; explicitly set a non-loopback address for remote access)")
+	flag.StringVar(&opts.webCORS, "web-cors", defaultWebCORSOrigin, "Optional Access-Control-Allow-Origin (-web-mode; disabled by default)")
 	flag.Parse()
 
 	// No default agent on purpose: every run of this showcase makes four paid
@@ -132,7 +138,7 @@ func run(opts options) error {
 			adaptor.WithProfile(profile.CloneNative(fixture.ProfileDir(def.Key),
 				profile.CopySettings(), profile.LinkAuth())),
 			adaptor.WithWorkspace(fixture.WorkspaceDir),
-			adaptor.WithPolicy(exampleutil.NonInteractivePolicy(def.Sandbox)),
+			adaptor.WithPolicy(exampleutil.NonInteractivePolicy(def.Agent, def.Sandbox)),
 			adaptor.WithInstructions(def.Instructions),
 			adaptor.WithIdentity(adaptor.Identity{ID: "team-" + def.Key, Tenant: "example", Name: def.DisplayName}),
 			adaptor.WithMetadata("example", "team-agent-workflow"),
@@ -168,7 +174,7 @@ func run(opts options) error {
 		adaptor.WithProfile(profile.CloneNative(fixture.ProfileDir("leader"),
 			profile.CopySettings(), profile.LinkAuth())),
 		adaptor.WithWorkspace(fixture.WorkspaceDir),
-		adaptor.WithPolicy(exampleutil.NonInteractivePolicy(adaptor.ReadOnly)),
+		adaptor.WithPolicy(exampleutil.NonInteractivePolicy(leaderCfg.Agent, adaptor.ReadOnly)),
 		adaptor.WithIdentity(adaptor.Identity{ID: "team-leader", Tenant: "example", Name: "Team leader"}),
 		adaptor.WithMetadata("example", "team-agent-workflow"),
 		adaptor.WithMetadata("workflow_role", "leader"),
@@ -180,20 +186,6 @@ func run(opts options) error {
 			adaptor.WithInstructions(leaderProtocol(opts.roleTimeout)), // the browser supplies the per-turn prompt
 		)
 	}
-	// R9 note — resident leader process. The leader runs the whole workflow in
-	// one long invocation, so it is the one agent that benefits from CLI
-	// process reuse:
-	//
-	//	claude.Driver(claude.Config{
-	//	    Model: leaderCfg.Model,
-	//	    // PersistentProcess: true,
-	//	})
-	//
-	// PersistentProcess is out of v1.0.0 scope (implementation plan R9). It
-	// returns as an additive claude.Config field once cl/opt_examples merges
-	// into main — the v1 API shape does not change when it does — so the line
-	// is kept here as a comment switch to flip on after that merge.
-	// exampleutil.NewLiveDriver carries the same note on its claude branch.
 	leader := adaptor.New(exampleutil.NewLiveDriver(leaderCfg), leaderOpts...)
 
 	if opts.webMode {
@@ -279,7 +271,7 @@ func run(opts options) error {
 // so CLI and browser render one shape.
 func serveAGUI(ctx context.Context, leader adaptor.Runner, opts options, term *console) error {
 	mux := http.NewServeMux()
-	mux.Handle("/agent", sse.HandlerV1(leader, sse.OptionsV1{
+	mux.Handle("/agent", sse.Handler(leader, sse.Options{
 		Protocol:          sse.AGUI,
 		CORSAllowedOrigin: opts.webCORS,
 	}))

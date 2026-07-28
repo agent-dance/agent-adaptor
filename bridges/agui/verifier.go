@@ -18,8 +18,8 @@ import (
 //     - "First event must be RUN_STARTED" (or RUN_ERROR).
 //     - "No further events after RUN_ERROR / RUN_FINISHED".
 //     - "Open TEXT/TOOL/REASONING/STEP lifecycles must close before
-//       RUN_FINISHED" (Go ValidateSequence permits dangling lifecycles
-//       at run end; the TS verifier does not).
+//     RUN_FINISHED" (Go ValidateSequence permits dangling lifecycles
+//     at run end; the TS verifier does not).
 //
 // Returns nil when the sequence is compliant. Tests should fail fast on
 // any non-nil error. Callers that want to separate concerns can call the

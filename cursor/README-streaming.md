@@ -1,60 +1,46 @@
-# Cursor Streaming 落地备忘
+# Cursor `stream-json` parser contract
 
-本文件预留 Cursor Agent CLI 接入 streaming 的映射表。Cursor 尚未在本次 workstream 实际落地；实施者按此清单开工，不需要改动 `core SDK` 或 `pkg/bridges/*`。
+Cursor Driver invokes the Agent CLI with `-p --output-format stream-json` and
+parses the documented NDJSON protocol. The protocol authority is Cursor's
+[Output format](https://docs.cursor.com/en/cli/reference/output-format)
+reference; local fixtures mirror those shapes rather than synthetic adapter
+events.
 
-参见：[streaming-adapter-contract.md](../docs/streaming-adapter-contract.md)、[workstream-streaming-chat.md](../docs/workstream-streaming-chat.md) §12.2
+## Recognized events
 
-## 1. CLI flag
+| Cursor event | Driver projection |
+|---|---|
+| `system` / `init` | `TranscriptInit`; captures top-level `model` and `session_id` |
+| `user.message.content[].type=text` | `TranscriptUser` |
+| `assistant.message.content[].type=text` | incremental `TranscriptAssistant`; exact text chunks are concatenated for `Response.Output` |
+| `tool_call` / `started` | `TranscriptToolCall`; `call_id` correlates the lifecycle, the nested variant name is `ToolName`, and its `args` are `Input` |
+| `tool_call` / `completed` | `TranscriptToolResult`; preserves the nested variant result structurally and extracts readable success content when available |
+| `result` / `success` | official terminal payload and `TranscriptResult`; its full `result` text is only an Output fallback when assistant deltas are absent |
 
-当 `DriverRunRequest.Streaming == true` 时，在现有 `-p --output-format stream-json --workspace ...` 参数上追加：
+Cursor documents that print mode suppresses thinking events, so the Driver
+does not infer reasoning from unrelated fields. Unknown additive event types
+are preserved as opaque `TranscriptSystem` items and never guessed into text,
+tools, terminal state, or checkpoints.
 
-```
---stream-partial-output
-```
+## Output and checkpoint rules
 
-Cursor 在 print 模式下**主动抑制** `thinking` 事件；`StreamReasoning*` 在 Cursor adapter 不产生。
+- Assistant chunks are deltas and are concatenated byte-for-byte; whitespace
+  is significant.
+- Cursor's terminal `result` is the full assistant response, not a bounded
+  summary. `Response.Summary` therefore remains empty.
+- `RawStreams.Terminal` contains the exact recognized `result.success` JSON.
+- A checkpoint is valid only when the process outcome is clean and the
+  terminal `result.success` itself carries a non-empty top-level `session_id`.
+  An init event cannot substitute for a missing terminal session identifier.
+- Non-zero exit, signal, timeout, classified failure, malformed protocol,
+  conflicting session IDs, missing terminal, or data after the terminal event
+  invalidate checkpoint persistence.
 
-## 2. 事件映射
+## Dependency choice
 
-基于 `cursor-agent` 0.x 的 stream-json partial 事件：
-
-| Cursor event | StreamKind | 关键字段 |
-|---|---|---|
-| `{"type":"system","subtype":"init","session_id":"..."}` | `StreamRunStarted` | ThreadID=session_id, RunID |
-| 首条 `{"type":"assistant", ...}` (partial) | `StreamTextStart` | MessageID=model_call_id |
-| 中间 `assistant` 片段 | `StreamTextContent` | Delta=text |
-| 最后一条 `assistant`（standard mode 整段） | `StreamTextEnd` + `StreamTextContent`(整段) | |
-| `{"type":"tool_call","subtype":"started","tool_call":{...}}` | `StreamToolCallStart` | ToolCallID, Name, Args=完整 |
-| `{"type":"tool_call","subtype":"completed","tool_call":{...}}` | `StreamToolCallEnd` + `StreamToolCallResult` | Result=tool_result |
-| `{"type":"result","subtype":"success",...}` | `StreamRunFinished` | Usage=无 (Cursor 不一定提供), CostUSD |
-| `{"type":"result","subtype":"error_*",...}` | `StreamRunError` | Error |
-| `thinking` | — | 被 Cursor 主动抑制，不映射 |
-
-## 3. StreamCapability
-
-```go
-func (adapter) StreamCapability() agentadaptor.StreamCapability {
-	return agentadaptor.StreamCapability{
-		Native:       true,
-		TokenLevel:   true,
-		Reasoning:    false,
-		ToolCallArgs: false, // Cursor tool_call args 是一次性带完
-		HITL:         false,
-	}
-}
-```
-
-## 4. Bridges 降级提示
-
-由于 `ToolCallArgs=false`，`pkg/bridges/agui` 看到 `StreamToolCallStart` 不等 `StreamToolCallArgs`，直接配 `StreamToolCallEnd`。已在 bridge 状态机里兼容，不需要额外改动。
-
-## 5. 文件组织建议
-
-- 现有 `cursor/driver.go` 增加 `req.Streaming == true` 分派
-- 新增 `cursor/streaming_parser.go` 解析 partial stream-json
-
-## 6. 验收（与 codex 对齐）
-
-- `go test -tags=cursor_live -run TestCursorStreamingHaiku` 端到端
-- 断言 ≥3 条 `StreamTextContent`、`StreamRunFinished`
-- `StreamRunFinished.Usage` 可能为 nil（Cursor 未必给），测试不作强制
+The protocol is newline-delimited JSON with a small documented envelope and
+open-ended tool variants. Go's maintained `encoding/json` is sufficient and
+keeps parsing localized in the Cursor Driver. A provider SDK would not improve
+protocol fidelity here because Cursor publishes a wire schema rather than a Go
+client library; adding a runtime dependency would increase the audit surface
+without improving reliability or maintenance.

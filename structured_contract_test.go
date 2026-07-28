@@ -1,6 +1,6 @@
 package adaptor_test
 
-// P3.7 migration of the root structured-output baseline
+// Structured-output contract derived from the root baseline
 // (structured_output_test.go) onto the v1 surface. Mapping (roots stay
 // untouched):
 //
@@ -42,9 +42,9 @@ import (
 	"sync"
 	"testing"
 
+	adaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/memory"
-	adaptor "github.com/agent-dance/agent-adaptor"
 )
 
 // structuredFake mirrors the root structuredTestDriver on the driver SPI:
@@ -67,6 +67,7 @@ type structuredFake struct {
 
 var _ driver.Driver = (*structuredFake)(nil)
 var _ driver.SessionConfigFingerprinter = (*structuredFake)(nil)
+var _ driver.SessionCodecProvider = (*structuredFake)(nil)
 var _ driver.StreamSupport = (*structuredFake)(nil)
 
 func (d *structuredFake) Descriptor() driver.Descriptor {
@@ -83,6 +84,8 @@ func (d *structuredFake) ValidateConfig(any) error { return nil }
 func (d *structuredFake) SessionConfigFingerprint() (string, error) {
 	return "structured-fake-config/v1", nil
 }
+
+func (d *structuredFake) SessionCodec() driver.SessionCodec { return fakeSessionCodec{} }
 
 func (d *structuredFake) StreamCapability() driver.StreamCapability {
 	return driver.StreamCapability{Native: true}
@@ -350,8 +353,8 @@ func TestWithSchemaRejectsUnsupportedTypes(t *testing.T) {
 
 func TestWithSchemaPreservesLargeConstraintNumbers(t *testing.T) {
 	// SchemaReturnInvalid keeps the run alive regardless of how the local
-	// validator treats the extreme constraint — the assertion under
-	// migration is only that the generated document preserves the integer
+	// validator treats the extreme constraint — the assertion is that the
+	// generated document preserves the integer
 	// verbatim on its way to the driver.
 	fake := &structuredFake{caps: fullStructuredCaps(), output: `{"id":9007199254740993}`}
 	_, err := adaptor.New(fake).Run(context.Background(), "extract",

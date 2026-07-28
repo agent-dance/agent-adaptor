@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/agent-dance/agent-adaptor/hosttools/a2adelegation"
 	adaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/hosttools/a2adelegation"
 )
 
 func TestServiceDelegationsPreservesStartedOrderAndRepeatedAgents(t *testing.T) {

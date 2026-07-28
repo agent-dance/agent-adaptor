@@ -59,7 +59,7 @@ func TestSyncCodeBuddyProfileRendersType(t *testing.T) {
 			t.Fatalf("expected codebuddy .mcp.json to contain %q, got:\n%s", want, text)
 		}
 	}
-	// 对齐文档/SDK：使用 type 字段而非历史遗留的 transportType。
+	// 对齐正式合同：使用 type 字段而非 provider 的 transportType 变体。
 	if strings.Contains(text, "transportType") {
 		t.Fatalf("codebuddy MCP config should not use transportType, got:\n%s", text)
 	}

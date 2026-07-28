@@ -28,6 +28,17 @@ jobs:
     - name: Vet
       run: go vet ./...
 
+    - name: Vulnerability scan
+      run: go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
+
+    - name: Compile opt-in live suites without running paid CLIs
+      env:
+        AGENT_ADAPTOR_LIVE_CONFORMANCE: "0"
+      run: |
+        go test -count=1 -tags=claude_live ./claude
+        go test -count=1 -tags=codebuddy_live ./codebuddy
+        go test -count=1 -tags=codex_live ./codex/...
+
     - name: Repeat A2A tests
       run: go test -count=20 ./clients/a2a ./bridges/a2a
 
@@ -61,3 +72,59 @@ jobs:
         go test ./internal/engine -run=^$ -fuzz=FuzzExtractZip -fuzztime=30s
         go test ./internal/engine -run=^$ -fuzz=FuzzExtractTar -fuzztime=30s
         go test ./internal/engine -run=^$ -fuzz=FuzzSniffArchiveFormat -fuzztime=30s
+
+    - name: Fuzz provider protocol parsers
+      run: |
+        go test ./claude -run='^$' -fuzz='^FuzzClaudeBatchParser$' -fuzztime=30s
+        go test ./cursor -run='^$' -fuzz='^FuzzCursorBatchParser$' -fuzztime=30s
+        go test ./codebuddy -run='^$' -fuzz='^FuzzCodeBuddyBatchParser$' -fuzztime=30s
+        go test ./codex -run='^$' -fuzz='^FuzzCodexBatchParser$' -fuzztime=30s
+
+    - name: Fuzz Codex app-server decoders
+      run: |
+        go test ./codex/appserver -run='^$' -fuzz='^FuzzCodexAppserverNotificationDecoder$' -fuzztime=30s
+        go test ./codex/appserver -run='^$' -fuzz='^FuzzDecodeThreadItem$' -fuzztime=30s
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: 22
+        cache: npm
+        cache-dependency-path: |
+          examples/web-chat/aguiclient/web/package-lock.json
+          examples/web-chat/copilotkit/web/package-lock.json
+
+    - name: Install AG-UI client dependencies
+      run: npm ci
+      working-directory: examples/web-chat/aguiclient/web
+
+    - name: Build AG-UI client
+      run: npm run build
+      working-directory: examples/web-chat/aguiclient/web
+
+    - name: Audit AG-UI production dependencies
+      run: npm audit --omit=dev --audit-level=high
+      working-directory: examples/web-chat/aguiclient/web
+
+    - name: Install CopilotKit dependencies
+      run: npm ci
+      working-directory: examples/web-chat/copilotkit/web
+
+    - name: Lint CopilotKit frontend
+      run: npm run lint
+      working-directory: examples/web-chat/copilotkit/web
+
+    - name: Build CopilotKit frontend
+      run: npm run build
+      working-directory: examples/web-chat/copilotkit/web
+      env:
+        COPILOTKIT_TELEMETRY_DISABLED: "true"
+
+    - name: Audit CopilotKit production dependencies
+      run: npm audit --omit=dev --audit-level=high
+      working-directory: examples/web-chat/copilotkit/web

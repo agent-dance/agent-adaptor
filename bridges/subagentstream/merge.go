@@ -1,8 +1,8 @@
 package subagentstream
 
-// Merge (P4.6/P4.7 fallback bridge): fold delegation-bus events into a
-// next-gen adaptor.Stream as adaptor.SubagentUpdate events, so a leader's
-// consumer sees team progress on the one unified channel (design doc §9.7):
+// Merge folds delegation-bus events into an adaptor.Stream as
+// adaptor.SubagentUpdate events, so a leader's consumer sees team progress on
+// the unified event channel:
 //
 //	stream := leader.Stream(ctx, prompt)
 //	merged := subagentstream.Merge(ctx, stream, team.Bus())
@@ -14,17 +14,16 @@ package subagentstream
 //	}
 //	res, err := merged.Result()
 //
-// This is the host-side fallback for engine-level SubagentUpdate injection
-// (team.Option()), which lands in a later wave; the projection is shared so
-// the engine path can reuse SubagentEvent verbatim.
+// The bridge shares its projection with a2adelegation so direct host merging
+// and delegation service injection produce the same event vocabulary.
 
 import (
 	"context"
 	"sync"
 	"time"
 
-	"github.com/agent-dance/agent-adaptor/hosttools/a2adelegation"
 	adaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/hosttools/a2adelegation"
 )
 
 // Merge returns a Stream that carries every event of stream plus one
@@ -211,17 +210,14 @@ func (s *mergedStream) Cancel() {
 	})
 }
 
-// SubagentEvent projects one DelegationEvent onto the next-gen event
+// SubagentEvent projects one DelegationEvent onto the adaptor event
 // vocabulary. The 19 DelegationEventKinds collapse onto the three
 // SubagentUpdate kinds (started / delta / finished); the full detail —
 // original kind, status, remote identifiers, tool payloads, errors — is
 // preserved in Data so nothing is lost in the projection.
 //
-// The implementation moved to a2adelegation.SubagentEvent in P4.7, when the
-// engine-level injection path (delegation.Service.Option()) needed the same
-// projection: that package cannot import this one, so the truth lives there
-// and this stays as the bridge's stable name for it. Both paths therefore
-// produce byte-identical SubagentUpdate values.
+// The canonical projection lives in a2adelegation so host-side merging and
+// delegation service injection produce identical SubagentUpdate values.
 func SubagentEvent(ev a2adelegation.DelegationEvent) adaptor.SubagentUpdate {
 	return a2adelegation.SubagentEvent(ev)
 }

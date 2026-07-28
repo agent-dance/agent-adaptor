@@ -1,608 +1,694 @@
 # 迁移到 v1：旧 API → 新 API 完整对照
 
-> **本稿状态**：P5.4 提前稿，基于本 worktree commit `771590a` 起草。v1 各阶段仍在并行落地中：
->
-> - 标注 **✅** 的新 API 已提交，形状即最终形状（P5 只做 import 路径搬迁，见 §5）；
-> - 标注 **🚧 接线中** 的新 API 尚未提交或尚未接线，**形状以 [docs/api-v1-redesign.md](./api-v1-redesign.md) 对应小节为准**，本文引用处均注明小节号；
-> - v1.0.0 发布前本文随 P5 收尾更新，移除全部 🚧 标注。待定稿章节清单见 §4。
->
-> **import 路径注记**：新 API 目前暂存在 `next/`（包名已经是 `adaptor`），P5 整体搬到仓库根。本文所有新 API 示例按**最终形态**（根包 `adaptor`）书写；暂存期试用方法见 §5。
+本文面向从仓库实际冻结的 `v0.12.0` API 迁移到 v1 的使用者。v1 是一次干净切换：中央 `SDK`、命名 Agent 注册表、`Start`、`RunHandle`、双事件通道和根包中的 Driver SPI 都不会保留兼容壳。
 
----
+公共 API 的完整语义见 [api-v1-redesign.md](./api-v1-redesign.md)。本文解决的是迁移问题：旧代码中的每个主要入口、全部 66 个选项和常见辅助类型应该改到哪里。
 
-## 1. 五分钟概览：心智模型变了什么
+## 1. 先换心智模型
 
-v1 是干净切换（v0.x 打 tag 冻结，无兼容层）。API 围绕六个名词组织：**Agent、Thread、Stream、Event、Result、Driver**。旧世界的概念按下表折叠：
+v1 的应用侧只需要六个核心名词：
 
-| 旧世界 | 新世界 | 决策 |
-|---|---|---|
-| 中央 `SDK` 对象 + 命名注册表（`sdk.Agent("review")` 运行时查找） | **agent 就是 Go 变量**：`agent := adaptor.New(driver, opts...)`；多 agent = 多变量 | 设计 §2.2 |
-| 四层 ID（AgentName / Namespace+Key / SessionID / RunID） | **两层**：thread key（你起的业务字符串）+ run ID（SDK 给的执行号）；SessionID 降级为 `th.Checkpoint()` 内部细节 | 设计 §2.4 |
-| `Run` / `Start` 两个入口 + `WithStreaming()` 开关 + `Events()`/`StreamEvents()` 双通道 | **动词即开关**：`Run` = 批处理，`Stream` = 流式；`Run` 内部就是 `Stream` + drain，单一执行路径 | D4、设计 §2.5 |
-| `err` + `result.Failure` 两层判断（容易漏检） | **一个 `err`**：业务失败是类型化 `*RunError`（携带完整 `Result`），`errors.As` 一层判定 | D1、设计 §2.7 |
-| 3 种选项类型（`Option`/`AgentOption`/`RunOption`）+ 16 对 `WithDefaultX`/`WithX` | **1 套词汇、2 个作用域**：同名选项用在 `New` 是默认值，用在 `Run/Stream` 是本次覆盖；作用域非法双向都是**编译错误**（三接口 `Option`/`CallOption`/`SharedOption`） | D7、设计 §2.3 |
-| `DecisionRequests()` channel + `ResolveDecision(requestID, resp)` + 3×2 typed handler 选项 | **审批请求自己会应答**：`*ApprovalRequest` 自带 `Approve/Deny/Answer`，回调（`OnApproval`）与事件双形态 | D2、设计 §2.6 |
-| 事件 = `Kind string` + 松散字段 | **密封接口 + 11 个类型化事件**，type switch 分发，不处理即忽略 | 设计 §2.5 |
-| 包名 `agentadaptor` | 包名 **`adaptor`**（import 路径不变） | D3 |
+| 名词 | 含义 |
+|---|---|
+| `Agent` | 一个配置完整、构造后即可执行的智能体 |
+| `Thread` | 由宿主 key 标识、可续接或分叉的有状态对话 |
+| `Stream` | 一次正在进行的执行 |
+| `Event` | 执行中的一件 typed 事件 |
+| `Result` | 最终输出、用量和审计信息 |
+| `Driver` | provider/CLI 的扩展方 SPI |
 
-合并语义只有一句话（与现状一致）：**「近处覆盖远处；skills 追加、其余替换」**；metadata 按键合并。
+最重要的变化是：
 
----
+- 不再先创建中央 `SDK`，也不再向其中注册默认或命名 Agent。每个 Agent 都是普通 Go 变量。
+- 唯一构造入口是 `adaptor.New(driver, opts...)`。
+- 唯一执行动词是 `Run` 和 `Stream`。`Agent` 与 `Thread` 都实现 `adaptor.Runner`。
+- 一次运行只有一条 `Events()` 流；文本、thinking、tool、生命周期、进程、丢弃标记和审批请求都在其中。
+- 成功返回 `*Result, nil`；业务失败返回携带完整结果的 `*RunError`；不存在 `Result.Failure` 第二判定面。
+- Driver 扩展合同只在 `driver/`；应用代码通常只需要根包和具体驱动包。
 
-## 2. 逐 API 对照表
+## 2. 入口与顶层类型
 
-本节是 §4 能力映射表（api-v1-redesign.md）的逐 API 展开。**全部 66 个旧 `With*` 选项**（options.go 48 + profile.go 4 + structured_output.go 4 + skill_dirscan.go 3 + archive_materializer.go 4 + archive_source.go 2 + engine_wrappers.go 1）在 §2.2–§2.5 中逐一编号列出，一个不漏。
+| 旧 API | v1 API / 迁移方式 |
+|---|---|
+| `agentadaptor.Build(opts...) (SDK, error)` | `adaptor.New(d, opts...) *adaptor.Agent`。nil Driver 属于编程错误，会 panic；Driver 配置和环境错误在 `Inspect` 或执行前结构化返回。 |
+| `agentadaptor.New(opts...) SDK` | `adaptor.New(d, opts...) *adaptor.Agent`。同名但含义不同：第一个参数现在必须是 `driver.Driver`。 |
+| `SDK` | 删除。多 Agent 使用多个 Go 变量；宿主若需要动态注册表，自行维护 `map[string]*adaptor.Agent`。 |
+| `sdk.Run(ctx, prompt, opts...)` | `agent.Run(ctx, prompt, opts...) (*adaptor.Result, error)`。 |
+| `sdk.Start(ctx, prompt, opts...)` | `agent.Stream(ctx, prompt, opts...) adaptor.Stream`。启动前错误由关闭后的 `stream.Result()` 返回。 |
+| `sdk.Default()` / `sdk.Agent(name)` | 删除。v1 没有内置默认 Agent 或字符串查找。 |
+| `sdk.Admin()` / `AdminAPI` / `AgentAdmin` | `agent.Inspect()` 提供 `Environment`、`Models`、`Quota`、`ConfigSchema`、`Skills`；profile 操作是 `agent.ProfileState(ctx)`、`agent.SyncProfile(ctx)`；skill 选择是 `agent.SelectSkills(ctx, keys)`。Inspector 没有模型猜测入口。 |
+| 旧 `Runner`（`Run` / `Start`） | `adaptor.Runner`（`Run` / `Stream`）；`*Agent`、`*Thread` 和宿主装饰器可互换。 |
+| `RunHandle.Events()` + `RunHandle.StreamEvents()` | 合并为 `stream.Events() <-chan adaptor.Event`。不再维护第二条通道。 |
+| `RunHandle.RunID()` | `stream.RunID()`，`Stream` 返回时立即可用。 |
+| `RunHandle.Wait(ctx)` | `stream.Result()`；可并发、多次调用，结果一致。等待由创建 Stream 时的 context 和 `Cancel()` 控制。 |
+| `RunHandle.Cancel()` | `stream.Cancel()`；幂等。 |
+| `RunHandle.DecisionRequests()` | `*adaptor.ApprovalRequest` 直接出现在统一事件流中，或用 `adaptor.OnApproval` 安装回调。 |
+| `RunHandle.ResolveDecision(id, response)` | `req.Approve(ctx)`、`req.Deny(ctx, reason)`、`req.Answer(ctx, choice)`。请求自身持有 exactly-once responder。 |
+| `Bind` / `BindTyped` / `AgentBinding` / `TypedAgentBinding` | 删除；内置与第三方 Driver 都直接交给 `adaptor.New`。 |
+| `codex.New(cfg, ...)`，以及 Claude/Cursor/CodeBuddy 同形入口 | `<provider>.Driver(<provider>.Config{...})`，再传给 `adaptor.New`。配置由 Driver 捕获，`Run` 与 `Inspect` 观察同一份配置。 |
+| `codex.NewAdapter()` / `DriverAdapter` | 实现 `driver.Driver`；可选能力也在 `driver/` 中声明。 |
+| `RunResult` | `*adaptor.Result`：`Text`、`Summary`、`Usage`、`Model`、`Provider`、`Metadata`，以及 `Raw()`、`Transcript()`、`Services()`、`Decode()`。 |
+| `RunResult.Output` | `result.Text`。 |
+| `RunResult.Failure` | 删除；用 `errors.As(err, *adaptor.RunError)` 判断业务失败，并从 `runErr.Result` 读取部分或完整结果。 |
+| `RunResult.SessionID` | Thread 连续性由宿主 key 管理；需要审计 Driver resume 状态时调用 `thread.Checkpoint(ctx)`。 |
+| `AgentIdentity{ID, TenantID, ProfileID, Name}` | `adaptor.Identity{ID, Tenant, Profile, Name}`。 |
+| `SessionStore` / `SessionRequest` / `SessionMode` | `threadstore.Store` + `Agent.Thread` / `Agent.NewThread` / `Thread.Fork` / `ResumeOnly`。 |
+| `memory.NewSessionStore()` | `memory.NewStore()`。 |
 
-### 2.1 入口与顶层类型
+## 3. 全部旧选项的去向
 
-| 旧 API | 新 API | 状态 |
-|---|---|---|
-| `agentadaptor.Build(opts...) (SDK, error)` | `adaptor.New(driver, opts...) *Agent`——构造不再返回 error（nil driver 直接 panic，属编程错误） | ✅ |
-| `agentadaptor.New(opts...) SDK`（出错 panic） | `adaptor.New(driver, opts...) *Agent`。**注意同名不同义**：旧 `New` 收选项造 SDK，新 `New` 第一个参数是 driver | ✅ |
-| `SDK` 接口 | 删除。没有中央对象；共享基础设施（store/manager）通过共享实例达成（设计 §6.1） | ✅ |
-| `sdk.Run(ctx, prompt, opts...)` | `agent.Run(ctx, prompt, opts...) (*Result, error)` | ✅ |
-| `sdk.Start(ctx, prompt, opts...) (RunHandle, error)` | `agent.Stream(ctx, prompt, opts...) Stream`——不返回 error，启动失败走「关闭的事件通道 + `Result()` 报错」 | ✅ |
-| `sdk.Default()` / `sdk.Agent(name)` | 删除（命名注册表删除；多 agent = 多变量） | ✅ |
-| `sdk.Admin()` / `AdminAPI` / `AgentAdmin` 全部探针 | `agent.Inspect()` 面板（`Environment/Models/DetectModel/Quota/ConfigSchema/Skills`）+ `agent.ProfileState(ctx)` / `agent.SyncProfile(ctx)`；`SetSelectedSkills` → `agent.SelectSkills(ctx, keys)` | 🚧 接线中（P3.6），形状以设计 §2.9 为准 |
-| `Runner` 接口（`Run`/`Start`） | `adaptor.Runner` 接口（`Run`/`Stream`）——`Agent` 与 `Thread` 都实现它 | ✅ |
-| `RunHandle.Events() <-chan RunEvent` | 删除双通道：操作事件（`RunStarted`/`RunFinished`/`ProcessInfo`/`Notice`）并入同一条 `stream.Events()`，不处理即忽略，**没有「必须 drain 第二条通道」义务** | ✅ |
-| `RunHandle.StreamEvents() <-chan StreamPayload` | `stream.Events() <-chan Event`（类型化事件，见 §2.8 事件对照） | ✅ |
-| `RunHandle.RunID()` | `stream.RunID()`（启动即可用） | ✅ |
-| `RunHandle.Wait(ctx) (RunResult, error)` | `stream.Result() (*Result, error)`——含 D1 错误合同，可多次、跨 goroutine 调用 | ✅ |
-| `RunHandle.Cancel()` | `stream.Cancel()`（幂等；或直接 cancel ctx） | ✅ |
-| `RunHandle.DecisionRequests() <-chan DecisionRequest` | `*ApprovalRequest` 作为事件出现在 `stream.Events()`（形态 B），或走 `OnApproval` 回调（形态 A） | ✅（D2） |
-| `RunHandle.ResolveDecision(requestID, resp)` | `req.Approve(ctx)` / `req.Deny(ctx, reason)` / `req.Answer(ctx, option)`——应答器就在请求上，requestID 簿记消失 | ✅（D2） |
-| `Bind(adapter, cfg, opts...)` / `BindTyped[T](...)` / `AgentBinding` / `TypedAgentBinding[T]` | 删除。驱动构造收敛为 `adaptor.New(<驱动包>.Driver(cfg), opts...)`（设计 §2.10） | ✅ |
-| `codex.New(cfg, opts...)`（及 claude / cursor / codebuddy 同形） | `codex.Driver(codex.Config{...})` 得到 `driver.Driver`，再 `adaptor.New(...)`。四个内置驱动包均已提交 `Config` + `Driver()` | ✅（P3.1） |
-| `codex.NewAdapter()` / `DriverAdapter` SPI | `driver.Driver` SPI（独立 `driver/` 包；能力接口原样保留） | ✅（P0） |
-| `RunResult` | `*adaptor.Result`：高频字段平铺（`Text`/`Summary`/`Usage`/`Model`/`Provider`/`Metadata`），审计收拢为 `Raw()`/`Transcript()`/`Services()`/`Decode()` | ✅ |
-| `RunResult.Output` | `res.Text` | ✅ |
-| `RunResult.Failure` | 删除字段。业务失败 = `*RunError`（`Reason`/`Message`/`Details` + 完整 `Result`），走 err 路径 | ✅（D1） |
-| `RunResult.SessionID` | `th.Checkpoint(ctx)`（驱动 resume 句柄降级为审计入口） | ✅ |
-| `AgentIdentity{ID, TenantID, ProfileID, Name}` | `adaptor.Identity{ID, Tenant, Profile, Name}`——四字段全保留，字段名去 `ID` 后缀 | ✅（D11） |
-| `SessionStore` / `SessionRequest` / 4 种 `SessionMode` | `threadstore.Store`（能力等价：resolve / finalize / lease 防并发）+ Thread 的 4 个**有名字的动作**（见 §2.4 行 33–37） | ✅（P2） |
-| `memory.NewSessionStore()` | `memory.NewStore()`（同包并存至 P5） | ✅ |
+v1 使用一套词汇、两个作用域：
 
-### 2.2 SDK 级 `Option`（9 个）
+- `adaptor.Option` 只能传给 `New`。
+- `adaptor.CallOption` 只能传给 `Run` / `Stream`。
+- `adaptor.SharedOption` 同时适用于两处，调用处覆盖构造默认值；skills 追加，其余选项按合同替换或显式合并。
 
-| # | 旧选项 | 新归宿 | 状态 |
-|---|---|---|---|
-| 1 | `WithDefaultAgent(binding)` | 删除。每个 agent 由 `adaptor.New(driver, opts...)` 独立构造，「默认 agent」概念随注册表消失（设计 §2.2、§6.1） | ✅ |
-| 2 | `WithAgent(name, binding)` | 删除。多 agent = 多变量；`name` 字符串查找不复存在 | ✅ |
-| 3 | `WithSessionStore(store)` | `adaptor.WithThreadStore(store threadstore.Store)`（仅 New；用在 Run/Stream 是编译错误） | ✅ |
-| 4 | `WithWorkspaceManager(m)` | `WithWorkspaceManager(m)`（仅 New） | 🚧 接线中，形状以设计 §2.3 为准 |
-| 5 | `WithSkillProvider(p)` | `WithSkillProvider(p)`（仅 New；`skill.Provider` 别名 ✅ 已就位） | 🚧 接线中，形状以设计 §2.3 为准 |
-| 6 | `WithSkillSet(set)` | 由 `WithSkillProvider` 承接——`SkillSet` 本就是静态 Catalog，`skill.Set`/`skill.Catalog` 别名 ✅ 已就位 | 🚧 接线中，形状以设计 §2.3 为准 |
-| 7 | `WithSkillMaterializer(m)` | `WithSkillMaterializer(m)`（仅 New；`skill.Materializer` 别名 ✅ 已就位） | 🚧 接线中，形状以设计 §2.3 为准 |
-| 8 | `WithRuntimeServiceManager(m)` | `WithServiceManager(m)`（仅 New）。与已删除的 `runtimeservice/` 包无代码关系（见 §2.9，D10） | 🚧 接线中，形状以设计 §2.3 为准 |
-| 9 | `WithEventBuffer(runBuf, streamBuf, policy)` | `WithEventBuffer(n int)` + `WithBlockingEvents()`——事件流合一后只剩一个缓冲；背压两策略从枚举参数变成两个显式选项（默认丢弃 + `Dropped{Count}` 聚合标记） | ✅ |
+作用域错误会尽可能成为编译错误。
 
-### 2.3 `AgentOption`（20 个）
+### 3.1 原 SDK 级 `Option`（1–9）
 
-新世界没有 `AgentOption` 这一类：下列选项的语义由**同一词汇在 New 作用域**承接。
+| # | 旧选项 | v1 迁移方式 |
+|---:|---|---|
+| 1 | `WithDefaultAgent(binding)` | 删除。直接把对应 Driver 传给 `adaptor.New`。 |
+| 2 | `WithAgent(name, binding)` | 删除。每个 Agent 是一个变量；动态映射由宿主管理。 |
+| 3 | `WithSessionStore(store)` | `adaptor.WithThreadStore(store)`，仅构造作用域。 |
+| 4 | `WithWorkspaceManager(m)` | `adaptor.WithWorkspaceManager(m)`，仅构造作用域。 |
+| 5 | `WithSkillProvider(p)` | `adaptor.WithSkillProvider(p)`，仅构造作用域；合同在 `skill.Provider`。 |
+| 6 | `WithSkillSet(set)` | 将 `skill.Set` 作为 `adaptor.WithSkillProvider(set)` 传入。`skill.Set` 同时实现 `skill.Provider` 与 `skill.Catalog`。 |
+| 7 | `WithSkillMaterializer(m)` | `adaptor.WithSkillMaterializer(m)`，仅构造作用域；合同在 `skill.Materializer`。 |
+| 8 | `WithRuntimeServiceManager(m)` | `adaptor.WithServiceManager(m)`，仅构造作用域。它是 v1 的 runtime service 合同，不兼容旧 `runtimeservice` mixin。 |
+| 9 | `WithEventBuffer(runBuf, streamBuf, policy)` | 单流后改为 `adaptor.WithEventBuffer(n)`；默认仅允许丢弃的高频增量会聚合为 `Dropped`。需要全阻塞背压时再加 `adaptor.WithBlockingEvents()`。两者仅构造作用域。 |
 
-| # | 旧选项 | 新归宿 | 状态 |
-|---|---|---|---|
-| 10 | `WithDefaultPermissionHandler(h)` | `OnApproval(h)` 用于 `New(...)`；handler 内按 `req.Kind == adaptor.ApprovalPermission` 分流，`req.Approve/Deny` 应答 | ✅（D2） |
-| 11 | `WithDefaultPlanReviewHandler(h)` | 同上（`adaptor.ApprovalPlanReview`） | ✅（D2） |
-| 12 | `WithDefaultQuestionHandler(h)` | 同上（`adaptor.ApprovalQuestion`；用 `req.Answer(ctx, option)` 从 `req.Choices` 选择） | ✅（D2） |
-| 13 | `WithDefaultIdentity(id)` | `WithIdentity(adaptor.Identity{...})` 用于 `New(...)` | ✅（D11） |
-| 14 | `WithDefaultWorkspace(dir)` | `WithWorkspace(dir)` 用于 `New(...)` | ✅ |
-| 15 | `WithDefaultSkills(refs...)` | `WithSkills(skill.Dir/FS/Inline/Key/Archive...)` 用于 `New(...)`；skills 是唯一**追加合并**的选项族（skill 构造器 ✅ 已提交） | 🚧 接线中，形状以设计 §2.3 为准 |
-| 16 | `WithDefaultMCP(specs...)` | `WithMCP(mcp.HTTP/SSE/Stdio(...))` 用于 `New(...)`（mcp 构造器 ✅ 已提交；替换语义不变） | 🚧 接线中，形状以设计 §2.3 为准 |
-| 17 | `WithDefaultProfileResources(res)` | `WithProfileResources(profile.Resources{...})` 用于 `New(...)`（`profile.Resources` ✅ 已提交） | 🚧 接线中，形状以设计 §2.3 为准 |
-| 18 | `WithDefaultAgents(specs...)` | 并入 `profile.Resources` 的子代理字段 + `WithProfileResources`。字段暂名 `Agents`（P3.4 提交形态），设计 §3 S8 写作 `SubAgents`，P5 统一定名 | 🚧 接线中，形状以设计 §2.9/§3 S8 为准 |
-| 19 | `WithDefaultHooks(specs...)` | `profile.Resources.Hooks` + `WithProfileResources`（`profile.Hook` 别名与 20 个 HookEvent 常量 ✅ 已提交） | 🚧 接线中，形状以设计 §2.9 为准 |
-| 20 | `WithDefaultProfileConfig(patches...)` | `profile.Resources` 的 ConfigPatch 族 + `WithProfileResources`（ConfigPatch 家族 ✅ 已提交） | 🚧 接线中，形状以设计 §2.9 为准 |
-| 21 | `WithDefaultRuntimeServices(services...)` | `WithServices(specs...)` 用于 `New(...)`；服务规格随 P4.5 类型化（`RuntimeServiceRef.MCP`） | 🚧 接线中，形状以设计 §2.3、§4 表为准 |
-| 22 | `WithDefaultRunPolicy(p)` | `WithPolicy(adaptor.Policy{Sandbox, WebSearch, Browser, Approvals})` 用于 `New(...)`；HITL 策略并入 `Policy.Approvals` | ✅ |
-| 23 | `WithDefaultInstructions(ref *InstructionsBundleRef)` | `WithInstructions(text string)`——**签名变化**：直接传文本。作为 profile 资源下发的形态改用 `profile.Resources.Instructions` + `profile.Text(...)`（后者 🚧 接线中） | ✅（文本形态） |
-| 24 | `WithDefaultMetadata(key, value)` | `WithMetadata(k, v)` 用于 `New(...)`（按键合并语义不变） | ✅ |
-| 25 | `WithDefaultStreaming(...)` | 删除。动词即开关：`Run` = 批处理、`Stream` = 流式（设计 §2.5） | ✅ |
-| 26 | `WithNativeProfile()` | `WithProfile(profile.Native())`（构造器 ✅ 已提交，选项接线在 P3） | 🚧 接线中，形状以设计 §2.9 为准 |
-| 27 | `WithDedicatedProfile(dir)` | `WithProfile(profile.Dedicated(dir))` | 🚧 接线中，形状以设计 §2.9 为准 |
-| 28 | `WithCloneProfile(dir, opts)` | `WithProfile(profile.CloneNative(dir, opts...))`；`CloneProfileOptions` 结构体变一行式选项：`IncludeSettings/IncludeMCP/IncludeSkills` → `profile.CopySettings()/CopyMCP()/CopySkills()`，`AuthMode: CloneProfileAuthCopy/Link` → `profile.CopyAuth()/LinkAuth()`（`LinkAuth` 保留 OAuth 登录态共享），另有 `profile.WithOptions(...)` 逃生舱 | 🚧 接线中，形状以设计 §2.9 为准 |
-| 29 | `WithCloneProfileFrom(src, dst, opts)` | `WithProfile(profile.CloneFrom(src, dst, opts...))` | 🚧 接线中，形状以设计 §2.9 为准 |
+### 3.2 原 `AgentOption`（10–29）
 
-### 2.4 `RunOption`（27 个）
+| # | 旧选项 | v1 迁移方式 |
+|---:|---|---|
+| 10 | `WithDefaultPermissionHandler(h)` | `adaptor.OnApproval(h)`；在 handler 中按 `req.Kind == adaptor.ApprovalPermission` 分流。 |
+| 11 | `WithDefaultPlanReviewHandler(h)` | 同一 `adaptor.OnApproval(h)`，Kind 为 `ApprovalPlanReview`。 |
+| 12 | `WithDefaultQuestionHandler(h)` | 同一 `adaptor.OnApproval(h)`，Kind 为 `ApprovalQuestion`，用 `req.Answer` 回答。 |
+| 13 | `WithDefaultIdentity(id)` | `adaptor.WithIdentity(adaptor.Identity{...})`。 |
+| 14 | `WithDefaultWorkspace(spec)` | `adaptor.WithWorkspaceSpec(convertedSpec)`。`SharedWorkspace`、`GitWorktreeWorkspace` 名称不变；`AdapterManagedWorkspace` 改名为 `DriverManagedWorkspace`。工作目录现在与 provisioning spec 分离，另用 `adaptor.WithWorkspace(dir)` 设置。 |
+| 15 | `WithDefaultSkills(refs...)` | `adaptor.WithSkills(skill.Dir(...) / skill.FS(...) / skill.Inline(...) / skill.Key(...) / skill.Archive(...))`。 |
+| 16 | `WithDefaultMCP(specs...)` | `adaptor.WithMCP(mcp.Stdio(...) / mcp.HTTP(...) / mcp.SSE(...))`。 |
+| 17 | `WithDefaultProfileResources(res)` | `adaptor.WithProfileResources(profile.Resources{...})`。 |
+| 18 | `WithDefaultAgents(specs...)` | `adaptor.WithProfileResources(profile.Resources{Agents: []profile.SubAgent{...}})`。最终字段名是 `Agents`。 |
+| 19 | `WithDefaultHooks(specs...)` | `profile.Resources.Hooks`，元素使用最终的 `profile.Hook{Event, MatcherSpec, Handler, ...}` 结构。 |
+| 20 | `WithDefaultProfileConfig(patches...)` | `profile.Resources.Config`，元素为 `profile.ConfigPatch{Key, Capability, Values, Native}`；provider 原生文件坐标放在 `NativeConfigPatch` 内。 |
+| 21 | `WithDefaultRuntimeServices(services...)` | `adaptor.WithServices(specs...)`。 |
+| 22 | `WithDefaultRunPolicy(p)` | `adaptor.WithPolicy(adaptor.Policy{Sandbox, WebSearch, Browser, Approvals})`。 |
+| 23 | `WithDefaultInstructions(ref)` | 只有纯内联 `Content` 才可简化为 `adaptor.WithInstructions(text)`。完整旧 bundle 必须重建为 `adaptor.WithProfileResources(profile.Resources{Instructions: &profile.Instructions{ID: ..., Path: ..., Content: ..., Fingerprint: ..., Scope: ..., Mode: ..., Native: ...}})`，并把旧 Scope/Mode 常量换成 `profile` 包对应常量；`profile.Text(text)` 只是纯内联便利函数。 |
+| 24 | `WithDefaultMetadata(key, value)` | `adaptor.WithMetadata(key, value)`；按 key 合并。 |
+| 25 | `WithDefaultStreaming(...)` | 删除。选择 `Run` 或 `Stream` 即可。 |
+| 26 | `WithNativeProfile()` | `adaptor.WithProfile(profile.Native())`，仅构造作用域。 |
+| 27 | `WithDedicatedProfile(dir)` | `adaptor.WithProfile(profile.Dedicated(dir))`。 |
+| 28 | `WithCloneProfile(dir, opts)` | `adaptor.WithProfile(profile.CloneNative(dir, ...))`；使用 `profile.CopySettings()`、`CopyMCP()`、`CopySkills()`、`CopyAuth()` 或 `LinkAuth()`。旧、新 options 是不同命名类型，需重建 `profile.CloneOptions`；旧 `IncludeAuth: true` 映射为 `AuthMode: profile.AuthCopy`（或 `profile.CopyAuth()`），OAuth 场景优先 `profile.LinkAuth()`。重建后才可传给 `profile.WithOptions(newOpts)`。 |
+| 29 | `WithCloneProfileFrom(src, dst, opts)` | `adaptor.WithProfile(profile.CloneFrom(src, dst, ...))`；options 按上一行重建。 |
 
-| # | 旧选项 | 新归宿 | 状态 |
-|---|---|---|---|
-| 30 | `WithPermissionHandler(h)` | `OnApproval(h)` 用于 `Run/Stream(...)`（近处覆盖 New 处默认） | ✅（D2） |
-| 31 | `WithPlanReviewHandler(h)` | 同上 | ✅（D2） |
-| 32 | `WithQuestionHandler(h)` | 同上 | ✅（D2） |
-| 33 | `WithSession(req SessionRequest)` | 删除结构体入口。4 种 SessionMode 变 4 个有名字的动作（行 34–37），会话本身升格为 `Thread` 对象 | ✅（P2） |
-| 34 | `WithSessionKey(namespace, key)`（continue_or_start） | `agent.Thread(key)`——有则续、无则建；namespace 并入 key，多租户自拼 `"tenant/key"` | ✅ |
-| 35 | `WithContinueSession(id)`（continue_only） | `agent.Thread(key, adaptor.ResumeOnly())`——只续不建，缺档报 `ErrThreadNotFound`。按 SessionID 定位的审计场景改用 `th.Checkpoint(ctx)` | ✅ |
-| 36 | `WithNewSession(namespace, key)`（start_new） | `agent.NewThread(key)`——强制新开 | ✅ |
-| 37 | `WithForkSession(fromID, namespace, key)`（fork） | `th.Fork(newKey)`——从现有 Thread 分叉，不需要拿着 fromID 对三元组 | ✅ |
-| 38 | `WithWorkspace(dir)` | `WithWorkspace(dir)`（同名保留，双作用域） | ✅ |
-| 39 | `WithRuntimeServices(services...)` | `WithServices(specs...)`（双作用域） | 🚧 接线中，形状以设计 §2.3 为准 |
-| 40 | `WithSkills(refs...)` | `WithSkills(refs ...)`（同名保留；参数改收 `skill` 包构造器产物；追加合并语义不变） | 🚧 接线中，形状以设计 §2.3 为准 |
-| 41 | `WithMCP(specs...)` | `WithMCP(mcp.HTTP/SSE/Stdio(...))`（替换语义不变） | 🚧 接线中，形状以设计 §2.3 为准 |
-| 42 | `WithProfileResources(res)` | `WithProfileResources(profile.Resources{...})` | 🚧 接线中，形状以设计 §2.3 为准 |
-| 43 | `WithAgents(specs...)` | 并入 `profile.Resources` 子代理字段（同行 18） | 🚧 接线中，形状以设计 §2.9/§3 S8 为准 |
-| 44 | `WithHooks(specs...)` | `profile.Resources.Hooks`（同行 19） | 🚧 接线中，形状以设计 §2.9 为准 |
-| 45 | `WithProfileConfig(patches...)` | `profile.Resources` ConfigPatch 族（同行 20） | 🚧 接线中，形状以设计 §2.9 为准 |
-| 46 | `WithModel(m)` | `WithModel(m)`（同名保留，双作用域） | ✅ |
-| 47 | `WithRunPolicy(p)` | `WithPolicy(p)`（整体替换，不做字段级合并） | ✅ |
-| 48 | `WithInstructions(ref *InstructionsBundleRef)` | `WithInstructions(text string)`——**签名变化**，同行 23 | ✅（文本形态） |
-| 49 | `WithMetadata(key, value)` | `WithMetadata(k, v)`（同名保留；按键合并） | ✅ |
-| 50 | `WithAgentIdentity(id)` | `WithIdentity(adaptor.Identity{...})` | ✅（D11） |
-| 51 | `WithStreaming()` | 删除。要流式就调 `agent.Stream(...)`（设计 §2.5） | ✅ |
-| 52 | `WithoutStreaming()` | 删除。要批处理就调 `agent.Run(...)`；「流式跑但不要 token 级增量」→ `WithoutTokenStream()`（仅 Run/Stream） | 🚧 后者接线中，形状以设计 §2.3 为准 |
-| 53 | `WithOutputSchema(schema OutputSchema)` | `WithSchema[T](...)` 的模式参数（`schema.Strict/Flexible/PromptOnly`；模式词汇 D8 待定，默认方案为根包常量如 `adaptor.SchemaStrict`） | 🚧 P3.5，形状以设计 §2.8 + D8 为准 |
-| 54 | `WithJSONSchemaOutput(schemaJSON, opts...)` | 裸 JSON schema 形态并入 `WithSchema` 定稿（宿主已有 schema 字节串的场景） | 🚧 P3.5，形状以设计 §2.8 为准 |
-| 55 | `WithJSONSchemaOutputFile(path, opts...)` | 同上（宿主读文件后传入；SDK 不再代读文件） | 🚧 P3.5，形状以设计 §2.8 为准 |
-| 56 | `WithJSONSchemaOutputFor[T](opts...)` | 一步到位用 `adaptor.RunAs[T](ctx, runner, prompt)`；流式/手动用 `WithSchema[T]()` + `res.Decode(&v)` | 🚧 P3.5，形状以设计 §2.8 为准 |
+### 3.3 原 `RunOption`（30–56）
 
-### 2.5 其余选项族（10 个）
+| # | 旧选项 | v1 迁移方式 |
+|---:|---|---|
+| 30 | `WithPermissionHandler(h)` | 调用处使用 `adaptor.OnApproval(h)`，覆盖构造默认 handler。 |
+| 31 | `WithPlanReviewHandler(h)` | 同上，在统一 handler 中按 Kind 分流。 |
+| 32 | `WithQuestionHandler(h)` | 同上。 |
+| 33 | `WithSession(req SessionRequest)` | 删除结构体入口；根据意图改用下面四个有名字的 Thread 动作。 |
+| 34 | `WithSessionKey(namespace, key)` | `agent.Thread(hostKey)`：有则续、无则建。v1 只保存一个宿主提供的不透明 key；合并 namespace 等维度时必须使用无碰撞编码，不能依赖未转义分隔符。 |
+| 35 | `WithContinueSession(id)` | `agent.Thread(hostKey, adaptor.ResumeOnly())`：只续不建。Driver resume ID 不再是消费者身份；审计状态用 `Checkpoint`。 |
+| 36 | `WithNewSession(namespace, key)` | `agent.NewThread(hostKey)`：首次运行强制新建，只有新 checkpoint 成功落库后才替换旧 active 记录。 |
+| 37 | `WithForkSession(fromID, namespace, key)` | `parent.Fork(newHostKey)`；父 Thread 保持不变，已存在目标返回 `adaptor.ErrThreadAlreadyExists`。 |
+| 38 | `WithWorkspace(spec)` | `adaptor.WithWorkspaceSpec(convertedSpec)`，同名 WorkspaceSpec 按第 14 项转换。单次调用的工作目录另用 `adaptor.WithWorkspace(dir)` 覆盖。 |
+| 39 | `WithRuntimeServices(services...)` | `adaptor.WithServices(specs...)`，SharedOption。 |
+| 40 | `WithSkills(refs...)` | `adaptor.WithSkills(refs...)`，参数使用 `skill` 包词汇；调用处在构造默认 skills 后追加。 |
+| 41 | `WithMCP(specs...)` | `adaptor.WithMCP(servers...)`；调用处声明替换构造默认声明。 |
+| 42 | `WithProfileResources(res)` | `adaptor.WithProfileResources(profile.Resources{...})`。 |
+| 43 | `WithAgents(specs...)` | `adaptor.WithProfileResources(profile.Resources{Agents: ...})`。 |
+| 44 | `WithHooks(specs...)` | `adaptor.WithProfileResources(profile.Resources{Hooks: ...})`。 |
+| 45 | `WithProfileConfig(patches...)` | `adaptor.WithProfileResources(profile.Resources{Config: ...})`。 |
+| 46 | `WithModel(model)` | `adaptor.WithModel(model)`，同名 SharedOption。 |
+| 47 | `WithRunPolicy(p)` | `adaptor.WithPolicy(p)`；调用处整体替换构造默认 Policy，不做字段级合并。 |
+| 48 | `WithInstructions(ref)` | 纯内联文本可改为 `adaptor.WithInstructions(text)`；若旧 ref 使用 ID、Path、Fingerprint、Scope、Mode 或 Native，必须在调用处用 `adaptor.WithProfileResources(profile.Resources{Instructions: &profile.Instructions{...}})` 保留全部字段，不能只取 Content。 |
+| 49 | `WithMetadata(key, value)` | `adaptor.WithMetadata(key, value)`，按 key 合并。 |
+| 50 | `WithAgentIdentity(id)` | `adaptor.WithIdentity(adaptor.Identity{...})`。 |
+| 51 | `WithStreaming()` | 删除；调用 `runner.Stream(...)`。 |
+| 52 | `WithoutStreaming()` | 删除；调用 `runner.Run(...)`。批处理/事件消费方式与 provider transport 协商是两件事，v1 不提供平行的 token 增量抑制开关。 |
+| 53 | `WithOutputSchema(schema)` | Go 类型使用 `adaptor.WithSchema[T](...)`；已有 JSON Schema 使用 `adaptor.WithSchemaJSON(schemaJSON, ...)`。 |
+| 54 | `WithJSONSchemaOutput(schemaJSON, opts...)` | `adaptor.WithSchemaJSON(schemaJSON, opts...)`。 |
+| 55 | `WithJSONSchemaOutputFile(path, opts...)` | 宿主先 `os.ReadFile(path)`，再调用 `adaptor.WithSchemaJSON(data, opts...)`；SDK 不代读文件。 |
+| 56 | `WithJSONSchemaOutputFor[T](opts...)` | 批处理优先用 `adaptor.RunAs[T](ctx, runner, prompt, callOpts...)`；流式或手动解码用 `adaptor.WithSchema[T](schemaOpts...)` + `result.Decode(&value)`。 |
 
-| # | 旧选项 | 新归宿 | 状态 |
-|---|---|---|---|
-| 57 | `WithDirSkillKeyPrefix(prefix)`（DirScanOption） | 随 `LocalSkillsFromDir` 迁入 `skill` 包，语义不变 | 🚧 P5 搬迁，形状以 p0-inventory §3 为准 |
-| 58 | `WithDirIgnore(patterns...)`（DirScanOption） | 同上 | 🚧 P5 搬迁 |
-| 59 | `WithDirSkillFile(name)`（DirScanOption） | 同上 | 🚧 P5 搬迁 |
-| 60 | `WithSkillCacheRoot(dir)`（DefaultMaterializerOption） | 随 `NewDefaultSkillMaterializer` 迁入 `skill` 包物化管线（`skill.Materializer` 别名 ✅ 已就位），语义不变 | 🚧 P5 搬迁 |
-| 61 | `WithMaxArchiveSize(n)`（DefaultMaterializerOption） | 同上 | 🚧 P5 搬迁 |
-| 62 | `WithMaxFileSize(n)`（DefaultMaterializerOption） | 同上 | 🚧 P5 搬迁 |
-| 63 | `WithMaxArchiveEntries(n)`（DefaultMaterializerOption） | 同上 | 🚧 P5 搬迁 |
-| 64 | `WithArchiveHeader(key, value)`（ArchiveHTTPOption） | `skill.WithArchiveHeader(key, value)`——挂在 `skill.ArchiveURL(url, opts...)` opener 上 | ✅ |
-| 65 | `WithArchiveHTTPClient(c)`（ArchiveHTTPOption） | `skill.WithArchiveHTTPClient(c)` | ✅ |
-| 66 | `WithCallerIdentity(ctx, id)`（context 助手） | 传播端：`WithIdentity(...)` 选项，SDK 自动注入运行 ctx；读取端：`CallerIdentityFromContext(ctx)` → `adaptor.IdentityFromContext(ctx) (Identity, bool)` | ✅ |
+### 3.4 其余选项族（57–66）
 
-### 2.6 技能 / 归档 / 结构化输出辅助 API
+| # | 旧选项 | v1 迁移方式 |
+|---:|---|---|
+| 57 | `WithDirSkillKeyPrefix(prefix)` | `skill.WithDirSkillKeyPrefix(prefix)`，传给 `skill.LocalSkillsFromDir`。 |
+| 58 | `WithDirIgnore(patterns...)` | `skill.WithDirIgnore(patterns...)`。 |
+| 59 | `WithDirSkillFile(name)` | `skill.WithDirSkillFile(name)`。 |
+| 60 | `WithSkillCacheRoot(dir)` | `skill.WithSkillCacheRoot(dir)`，传给 `skill.NewDefaultSkillMaterializer`。 |
+| 61 | `WithMaxArchiveSize(n)` | `skill.WithMaxArchiveSize(n)`。 |
+| 62 | `WithMaxFileSize(n)` | `skill.WithMaxFileSize(n)`。 |
+| 63 | `WithMaxArchiveEntries(n)` | `skill.WithMaxArchiveEntries(n)`。 |
+| 64 | `WithArchiveHeader(key, value)` | `skill.WithArchiveHeader(key, value)`，传给 `skill.ArchiveURL`。 |
+| 65 | `WithArchiveHTTPClient(client)` | `skill.WithArchiveHTTPClient(client)`。 |
+| 66 | `WithCallerIdentity(ctx, id)` | 传播身份用 `adaptor.WithIdentity(id)`；运行中的读取端改为 `adaptor.IdentityFromContext(ctx) (adaptor.Identity, bool)`。 |
 
-| 旧 API | 新 API | 状态 |
-|---|---|---|
-| `LocalSkill(dir)` | `skill.Dir(path)` | ✅ |
-| `FSSkill(fsys, root)` | `skill.FS(fsys, root)` | ✅ |
-| `InlineSkill(key, skillMD)` | `skill.Inline(key, skillMD)` | ✅ |
-| `Key(k)` | `skill.Key(k)` | ✅ |
-| `Require(s, reason)` | `skill.Require(s, reason)` | ✅ |
-| `ArchiveFromBytes(data)` / `ArchiveFromPath(path)` / `ArchiveFromURL(url, opts...)` | `skill.Archive(key, opener, opts...)` + `skill.ArchiveBytes(data)` / `skill.ArchiveFile(path)` / `skill.ArchiveURL(url, opts...)`；归档细节选项 `skill.WithFormat(FormatAuto/Zip/Tar/TarGz)` / `WithSubpath` / `WithFingerprint` | ✅ |
-| `LocalSkillsFromDir(root, opts...)` / `SkillsAsRefs(skills)` | 目录批量扫描随 skill 包保留；`SkillsAsRefs` 转换助手删除（skill 构造器产物可直接交给 `WithSkills`） | 🚧 P5 搬迁，语义不变 |
-| `NewDefaultSkillMaterializer(opts...)` | skill 包物化管线（同 §2.5 行 60–63） | 🚧 P5 搬迁 |
-| `NativeStrictOutput()` | `schema.Strict()`（默认模式；仅 provider 原生约束） | 🚧 P3.5 + D8，形状以设计 §2.8 为准 |
-| `PreferNativeOutput()` | `schema.Flexible()`（原生优先，允许提示词 + 本地校验回退） | 🚧 同上 |
-| `PromptValidateOutput()` | `schema.PromptOnly()` | 🚧 同上 |
-| `StructuredOutputName(...)` / `StructuredOutputDescription(...)` | `WithSchema` 定稿携带的命名/描述参数 | 🚧 P3.5，形状以设计 §2.8 为准 |
-| `ReturnInvalidStructuredOutput()` | 校验失败时原文已随 `*RunError.Result` 保留（`res.Decode` 自行处理）；是否保留独立开关随 P3.5 定稿 | 🚧 P3.5 |
-| `SchemaInlineReferences()` / `SchemaAllowAdditionalProperties()` / `SchemaRequireExplicitTags()` / `SchemaUseGoComments()` | schema 派生细节选项随 `WithSchema[T]` 定稿 | 🚧 P3.5 |
-| `JSONSchemaFor[T](opts...)` | 内部化：`RunAs[T]` / `WithSchema[T]` 自动派生 schema；需要裸 schema 的宿主场景以 §2.8 定稿为准 | 🚧 P3.5 |
-| `DecodeStructuredOutput[T](res)` | `res.Decode(&v)` | ✅ |
-| `RunStructured[T](ctx, r, prompt, opts...)` | `adaptor.RunAs[T](ctx, runner, prompt)`——接受任何 `Runner`（Agent 或 Thread） | 🚧 P3.5，形状以设计 §2.8 为准 |
+## 4. 叶子包和辅助 API
 
-### 2.7 策略预设与 HITL 类型
+### 4.1 skill
 
-| 旧 API | 新 API | 状态 |
-|---|---|---|
-| `RunPolicy` | `adaptor.Policy{Sandbox, WebSearch, Browser, Approvals}` | ✅ |
-| `IsolationLevel`（ReadOnly / WorkspaceWrite / Unrestricted / Inherit） | `adaptor.SandboxLevel`（= `driver.IsolationLevel`）：`adaptor.SandboxInherit/ReadOnly/WorkspaceWrite/Unrestricted` | ✅ |
-| `PolicyHostReview`（WorkspaceWrite + 全 Ask） | 预设名不保留：`adaptor.PolicyWorkspaceWrite` + `OnApproval(宿主 handler)`（Ask 即审批默认模式） | ✅ |
-| `PolicyReadOnlyReview`（ReadOnly + 全 Ask） | `adaptor.PolicyReadOnly` + `OnApproval(...)` | ✅ |
-| `PolicyAutonomous`（Unrestricted + 自动批准 + Question 自动拒答） | `adaptor.PolicyUnrestricted` + `OnApproval(adaptor.ApproveAll())`——`ApproveAll` 批准 Permission/PlanReview、拒答 Question，与旧预设语义一致 | ✅ |
-| `HumanDecisionPolicy`（超时 / 重试 / 兜底） | `adaptor.ApprovalPolicy`（= `driver.HumanDecisionPolicy` 别名，字段语义不变），并入 `Policy.Approvals`；默认超时 30s / 重试 3 次的缺省值不变 | ✅ |
-| `EffectiveHumanDecisionPolicy(p)` | 驱动内部继续使用（claude / codebuddy 调用点），由 `driver` 包承接等价入口 | 🚧 P5 盘点定稿，依据 p0-inventory §3.4 |
-| `HumanDecisionKind` | `adaptor.ApprovalKind`：`ApprovalPermission` / `ApprovalPlanReview` / `ApprovalQuestion` | ✅ |
-| `DecisionRequest` / `DecisionResponse` | `*adaptor.ApprovalRequest`（`ID/RunID/Kind/Title/Source/ToolCallID/Choices/Details/CreatedAt/Deadline/Attempt`）+ `Approve/Deny/Answer` 方法 | ✅（D2） |
-| `DecisionChoice` | `adaptor.Choice`（= `driver.DecisionChoice`） | ✅ |
-| HITL 各 mode 枚举 | `ApprovalMode`（Inherit/Ask/AutoApprove/AutoDeny）、`QuestionMode`、`FallbackAction`（Abort/Continue/Retry）+ 预设 `adaptor.ApprovalsAutoDeny` | ✅ |
-| 审批预设 handler | `adaptor.ApproveAll()`、`adaptor.DenyAll(reason)` | ✅ |
-| `DecisionRequest` 的风险分级 | **v1.0 不提供 `req.Risk()`**：驱动 SPI 没有真实风险信号源，不造假数据；待上游有信号后再加 | 延期（D12） |
+| 旧 API | v1 API |
+|---|---|
+| `LocalSkill(dir)` | `skill.Dir(dir)` |
+| `FSSkill(fsys, root)` | `skill.FS(fsys, root)` |
+| `InlineSkill(key, skillMD)` | `skill.Inline(key, skillMD)` |
+| `Key(key)` | `skill.Key(key)` |
+| `Require(value, reason)` | `skill.Require(value, reason)` |
+| `ArchiveFromBytes` / `ArchiveFromPath` / `ArchiveFromURL` | `skill.Archive(key, skill.ArchiveBytes(...)/ArchiveFile(...)/ArchiveURL(...), archiveOpts...)` |
+| `LocalSkillsFromDir(root, opts...)` | `skill.LocalSkillsFromDir(root, opts...)` |
+| `SkillsAsRefs(skills)` | `skill.SkillsAsRefs(skills)`；具体 `skill.Skill` 本身也能直接作为 `skill.Ref` 传给 `WithSkills`。 |
+| `NewDefaultSkillMaterializer(opts...)` | `skill.NewDefaultSkillMaterializer(opts...)` |
 
-### 2.8 事件模型对照
-
-旧世界：`Events()` 通道（`RunEvent`，6 种 `RunEventType`）+ `StreamEvents()` 通道（`StreamPayload`，18 种 `StreamKind` 字符串）。新世界：**一条 `Events()` 流、11 个密封类型**（P1 已提交，18 + 6 种旧 kind 全部有归宿）：
-
-| 旧事件 | 新事件类型 | 状态 |
-|---|---|---|
-| `text.start` / `text.content` / `text.end`（`Delta` 字段） | `TextDelta{MessageID, Text, Role, Phase}`（`PhaseStart`/`PhaseContent`/`PhaseEnd`） | ✅ |
-| `reasoning.start` / `reasoning.content` / `reasoning.end` | `Thinking{...}`（同 Phase 机制） | ✅ |
-| `tool_call.start` / `tool_call.args` / `tool_call.end` | `ToolCall{ID, Name, Args, ArgsDelta, Phase}` | ✅ |
-| `tool_call.result` | `ToolResult{...}` | ✅ |
-| `run.started` | `RunStarted{RunID, ThreadID}` | ✅ |
-| `run.finished` / `run.error` | `RunFinished{RunID, ThreadID, Usage, Failed, Reason, Message}` | ✅ |
-| RunEvent：进程 spawn / stdout / stderr | `ProcessInfo{Kind, Text, Bytes, ...}` | ✅ |
-| RunEvent：invocation / lifecycle / runtime 服务 / `step.started` / `step.finished` / transcript item | `Notice{Kind, Text, Item, ...}`（kind：`invocation`/`lifecycle`/`runtime`/`step`/`transcript.item`） | ✅ |
-| `hitl.requested` / `hitl.resolved` | `*ApprovalRequest` 事件本体 + `Notice`（`approval.requested`/`approval.resolved` 公告） | ✅ |
-| `stream.dropped` | `Dropped{Count}`（聚合标记） | ✅ |
-| subagent 委托事件（现走独立 sidecar 流） | `SubagentUpdate{Agent, Kind, Delta, Data}`（started/delta/finished）——类型 ✅ 已提交，委托服务注入主流在 P4 | 🚧 注入接线中，形状以设计 §2.11（D5）为准 |
-
-### 2.9 错误哨兵对照
-
-| 旧哨兵 | 新归宿 | 状态 |
-|---|---|---|
-| `ErrAgentBindingRequired` / `ErrAgentNameRequired` / `ErrAgentNotFound` / `ErrDefaultAgentAlreadyConfigured` / `ErrDefaultAgentMissing` / `ErrReservedAgentName` | 删除——注册表消失后无此失败模式；nil driver 为 `New` panic | ✅ |
-| `ErrSessionStoreRequired` | `adaptor.ErrThreadStoreRequired` | ✅ |
-| `ErrSessionNotFound` | `adaptor.ErrThreadNotFound` | ✅ |
-| `ErrSessionBusy` | `adaptor.ErrThreadBusy` | ✅ |
-| `ErrSessionIncompatible` | `adaptor.ErrThreadIncompatible` | ✅ |
-| `ErrSessionLeaseLost` | `adaptor.ErrThreadLeaseLost` | ✅ |
-| `ErrSessionCheckpointMissing` | `adaptor.ErrThreadCheckpointMissing` | ✅ |
-| Fork target conflict（旧版会静默覆盖） | `adaptor.ErrThreadAlreadyExists`；父 Thread 与既有目标均保持不变 | ✅ |
-| `ErrResumeRejected` | `adaptor.ErrResumeRejected`（同名保留） | ✅ |
-| `ErrDecisionRequestExpired` | 超时语义并入 `Policy.Approvals` 兜底：`adaptor.ErrApprovalTimeout` / `RunError.Reason == ReasonApprovalTimeout` | ✅ |
-| `ErrDecisionResultKindMismatch` | 结构性消灭（D2：应答器在请求上，kind 错配不可能发生）；方法级误用（如对 Permission 调 `Answer`）返回 `adaptor.ErrApprovalKindMismatch` | ✅ |
-| `ErrRunEnded`（运行结束后应答） | `adaptor.ErrApprovalResolved`（请求已被应答或已失效） | ✅ |
-| 运行失败分类 | `RunError.Reason` + 哨兵：`ErrApprovalDenied` / `ErrApprovalTimeout` / `ErrAgentFailed` / `ErrRunCancelled` / `ErrPolicyViolation`（`errors.Is` 可匹配） | ✅（D1） |
-| `ErrInvalidDriverConfig` | 驱动构造/校验期错误，随 `driver` 包保留 | 🚧 P5 哨兵终表定稿 |
-| `ErrInvalidMCPConfig` / `ErrMCPUnsupported` / `ErrMCPTransportUnsupported` | 随 `WithMCP` 接线保留（能力校验语义不变） | 🚧 P3 接线 |
-| `ErrHumanDecisionModeUnsupported` | 随审批能力校验保留（`driver.RunPolicyCaps` 真话降级） | 🚧 P5 哨兵终表定稿 |
-| `ErrStructuredOutputUnsupported` / `ErrInvalidOutputSchema` | 随 `RunAs`/`WithSchema` 定稿（能力矩阵仍在启动前报错） | 🚧 P3.5 |
-| `ErrSkillKeyConflict` / `ErrSkillMaterializationFailed` / `ErrSkillSourceMissing` / `ErrSkillKeyMissing` / `ErrSkillNotFound` | 随 `WithSkills` 接线保留（语义不变） | 🚧 P3 接线 |
-
-### 2.10 删除的包与延期项（必读）
-
-**`providers/` 包：删除，不迁移（D9）。**
-全仓唯一消费者是它自己的测试；`Required` 能力本体保留在 skill Provider 合同与 `skill.Require(s, reason)` 中。需要「整个 Provider 打 Required 标记」的宿主，用约 10 行装饰器达到 `providers.MarkRequired` 等价效果：
+归档选项都在 `skill` 包：`WithFormat`、`WithSubpath`、`WithFingerprint`、`WithArchiveHeader`、`WithArchiveHTTPClient`。`WithFingerprint` 声明稳定的来源身份/版本，不是缓存 key，也不提供完整性校验；内置 materializer 的缓存来自实际解包内容。
 
 ```go
-// 等价于旧 providers.MarkRequired 的宿主侧装饰器。
+import (
+    adaptor "github.com/agent-dance/agent-adaptor"
+    "github.com/agent-dance/agent-adaptor/codex"
+    "github.com/agent-dance/agent-adaptor/skill"
+)
+
+agent := adaptor.New(
+    codex.Driver(codex.Config{}),
+    adaptor.WithSkills(
+        skill.Dir("./skills/review"),
+        skill.Archive(
+            "deploy-kit",
+            skill.ArchiveFile("./deploy-kit.tgz"),
+            skill.WithFormat(skill.FormatTarGz),
+            skill.WithFingerprint("deploy-kit-v3"),
+        ),
+    ),
+)
+```
+
+旧 `providers.MarkRequired` 不迁移；需要把某个 Provider 的全部返回项标成 required 时，用普通装饰器组合 `skill.Require`：
+
+```go
+import (
+    "context"
+
+    adaptor "github.com/agent-dance/agent-adaptor"
+    "github.com/agent-dance/agent-adaptor/driver"
+    "github.com/agent-dance/agent-adaptor/skill"
+)
+
 type requireAll struct {
     skill.Provider
     reason string
 }
 
 func (p requireAll) GetSkills(ctx context.Context, keys []string) (map[string]skill.Skill, error) {
-    out, err := p.Provider.GetSkills(ctx, keys)
+    values, err := p.Provider.GetSkills(ctx, keys)
     if err != nil {
         return nil, err
     }
-    for k, s := range out {
-        out[k] = skill.Require(s, p.reason)
+    for key, value := range values {
+        values[key] = skill.Require(value, p.reason)
     }
-    return out, nil
+    return values, nil
+}
+
+func newRequiredAgent(d driver.Driver, provider skill.Provider) *adaptor.Agent {
+    return adaptor.New(d, adaptor.WithSkillProvider(requireAll{provider, "host-required"}))
 }
 ```
 
-若后续社区需求集中，回迁位置定为 `skill.MarkRequired`（p0-inventory §2 裁定）。
+### 4.2 MCP
 
-**`runtimeservice/` 包：删除，不迁移（D10）。**
-它是 v0.5 宿主兼容 mixin，与 `RuntimeServiceRef` 没有任何代码关系；v1 的 `WithServiceManager` 是新合同（🚧 接线中，形状以设计 §2.3 为准），不承诺兼容该包的接口形状。
-
-**`ApprovalRequest.Risk()`：延期出 v1.0（D12）。**
-现有驱动 SPI 拿不到真实的风险分级信号，v1.0 不提供会说谎的字段；设计 §2.6 示例中的注释即此裁定。
-
----
-
-## 3. 典型流程 Before / After
-
-### 3.1 一次性任务（Run）
-
-**旧：**
-
-```go
-sdk := agentadaptor.New(
-    agentadaptor.WithDefaultAgent(codex.New(agentadaptor.CodexConfig{Model: "gpt-5.4"})),
-)
-result, err := sdk.Run(ctx, "fix the failing tests")
-if err != nil { ... }
-if result.Failure != nil { ... }        // 第二层判断，容易漏
-fmt.Println(result.Output)
-```
-
-**新：**
-
-```go
-agent := adaptor.New(codex.Driver(codex.Config{Model: "gpt-5.4"}))
-
-res, err := agent.Run(ctx, "fix the failing tests")
-if err != nil { ... }                    // 唯一判断点
-fmt.Println(res.Text)
-```
-
-错误判定的完整形态（D1）：
-
-```go
-res, err := agent.Run(ctx, prompt)
-if err != nil {
-    var runErr *adaptor.RunError
-    if errors.As(err, &runErr) {
-        // agent 完整跑完但业务失败：runErr.Reason ∈ {ApprovalDenied, ApprovalTimeout, PolicyViolation, ...}
-        // 部分结果仍可访问：runErr.Result
-        log.Warn("run failed", "reason", runErr.Reason, "summary", runErr.Result.Summary)
-    }
-    return err // 基础设施失败（ctx 取消、进程崩溃、协议破裂）同样走这里
-}
-fmt.Println(res.Text)
-```
-
-### 3.2 流式消费
-
-**旧**（双通道 + 手动 drain + Wait 后仍要查 Failure）：
-
-```go
-handle, err := sdk.Start(ctx, prompt, agentadaptor.WithStreaming())
-if err != nil { return err }
-
-go func() {
-    for range handle.Events() { /* 操作事件通道必须 drain，否则可能阻塞 */ }
-}()
-for p := range handle.StreamEvents() {
-    switch p.Kind {
-    case agentadaptor.StreamTextContent:
-        io.WriteString(w, p.Delta)
-    }
-}
-res, err := handle.Wait(ctx)
-if err != nil { return err }
-if res.Failure != nil { ... }
-```
-
-**新**（一条流、一次 for-range、一个收口）：
-
-```go
-stream := agent.Stream(ctx, prompt)
-
-for ev := range stream.Events() {
-    switch e := ev.(type) {
-    case adaptor.TextDelta:
-        io.WriteString(w, e.Text)
-    case adaptor.ToolCall:
-        renderToolCard(e.Name, e.Args)
-    case adaptor.Thinking:
-        renderReasoning(e.Text)
-    case *adaptor.ApprovalRequest:
-        e.Approve(ctx)                        // 审批请求自带应答能力，见 §3.4
-    }
-}
-
-res, err := stream.Result()                    // 收口：最终结果 + 错误一次拿到
-```
-
-提前弃读是安全的：默认背压丢弃多余事件并聚合成 `Dropped{Count}`，运行自行结束；`stream.Cancel()` 提前终止。
-
-### 3.3 会话 → Thread
-
-**旧**（四层 ID + SessionMode 枚举）：
-
-```go
-sdk := agentadaptor.New(
-    agentadaptor.WithDefaultAgent(claude.New(cfg)),
-    agentadaptor.WithSessionStore(memory.NewSessionStore()),
-)
-
-res, err := sdk.Run(ctx, prompt, agentadaptor.WithSessionKey("tenant-1", "issue-123")) // continue_or_start
-res, err  = sdk.Run(ctx, prompt, agentadaptor.WithContinueSession(sessionID))          // continue_only
-res, err  = sdk.Run(ctx, prompt, agentadaptor.WithNewSession("tenant-1", "issue-123")) // start_new
-res, err  = sdk.Run(ctx, prompt, agentadaptor.WithForkSession(fromID, "tenant-1", "issue-123-alt")) // fork
-```
-
-**新**（4 种模式 = 4 个有名字的动作；P2 已提交）：
-
-```go
-agent := adaptor.New(claude.Driver(cfg), adaptor.WithThreadStore(memory.NewStore()))
-
-th := agent.Thread("tenant-1/issue-123")     // 有则续、无则建（continue_or_start）
-res, err := th.Run(ctx, "continue the fix")
-
-fresh := agent.NewThread("tenant-1/issue-123")        // 强制新开（start_new）
-locked := agent.Thread("k", adaptor.ResumeOnly())     // 只续不建（continue_only）
-branch := th.Fork("tenant-1/issue-123-alt")           // 分叉（fork）
-```
-
-`Thread` 与 `Agent` 都实现 `Runner`（`Run` + `Stream`），bridges、`RunAs[T]`、宿主工具对两者一视同仁。需要驱动 resume 句柄做审计时：`cp, err := th.Checkpoint(ctx)`。
-
-### 3.4 HITL 审批（两种形态）
-
-**旧**（requestID 簿记 + 跨对象往返 + 3×2 typed handler）：
-
-```go
-handle, _ := sdk.Start(ctx, prompt)
-go func() {
-    for req := range handle.DecisionRequests() {
-        // 自己对 req.Kind 选 handler、自己保证 resp 的 kind 匹配
-        _ = handle.ResolveDecision(req.ID, agentadaptor.DecisionResponse{ /* ... */ })
-    }
-}()
-```
-
-**新·形态 A —— 回调（程序化策略 / 终端应用）：**
-
-```go
-res, err := agent.Run(ctx, "refactor the auth module",
-    adaptor.OnApproval(func(ctx context.Context, req *adaptor.ApprovalRequest) error {
-        if req.Kind == adaptor.ApprovalPermission {
-            // 注：风险分级 req.Risk() 推迟到驱动 SPI 有真实风险信号源后再加（实施计划 D12）
-            return req.Approve(ctx)
-        }
-        fmt.Printf("[%s] %s\n(y/N): ", req.Kind, req.Title)
-        if askUser() { return req.Approve(ctx) }
-        return req.Deny(ctx, "operator rejected")
-    }),
-)
-```
-
-**新·形态 B —— 事件（Web UI 异步审批）：**
-
-```go
-case *adaptor.ApprovalRequest:
-    pending.Store(e.ID, e)          // 存下请求本身
-    pushCardToBrowser(e)            // 推审批卡片
-// 浏览器回包后，在 HTTP handler 里：
-req, _ := pending.Load(id)
-req.(*adaptor.ApprovalRequest).Answer(ctx, chosenOption)
-```
-
-超时 / 重试 / 兜底并入 `Policy.Approvals`（原 `HumanDecisionPolicy` 语义不变）；现成 handler：`adaptor.ApproveAll()`、`adaptor.DenyAll(reason)`。
-
-### 3.5 技能（含归档技能包）
-
-**旧：**
-
-```go
-sdk := agentadaptor.New(
-    agentadaptor.WithDefaultAgent(claude.New(cfg,
-        agentadaptor.WithDefaultSkills(
-            agentadaptor.LocalSkill("./skills/write-proof"),
-            agentadaptor.Key("code-review"),
-        ),
-    )),
-    agentadaptor.WithSkillMaterializer(agentadaptor.NewDefaultSkillMaterializer(
-        agentadaptor.WithSkillCacheRoot(cacheDir),
-    )),
-)
-```
-
-**新**（skill 构造器 ✅ 已提交；`WithSkills` 选项本身 🚧 接线中，形状以设计 §2.3 为准）：
-
-```go
-agent := adaptor.New(claude.Driver(cfg),
-    adaptor.WithSkills(                       // 🚧 接线中
-        skill.Dir("./skills/write-proof"),
-        skill.Key("code-review"),
-        skill.Archive("deploy-kit",
-            skill.ArchiveURL("https://example.com/skills/deploy-kit.tgz",
-                skill.WithArchiveHeader("Authorization", "Bearer "+token),
-            ),
-        ),
-    ),
-)
-
-// 调用处追加（skills 是唯一追加合并的选项族）：
-res, err := agent.Run(ctx, prompt, adaptor.WithSkills(skill.Key("deploy-checklist")))
-```
-
-### 3.6 MCP
-
-**旧**（嵌套结构体 `MCPServerSpec{...}` 交给 `WithDefaultMCP`/`WithMCP`）。**新**（一行式构造器 ✅ 已提交；`WithMCP` 选项 🚧 接线中）：
-
-```go
-adaptor.WithMCP(
-    mcp.HTTP("docs", "https://example.com/mcp"),
-    mcp.Stdio("repo-tools", "npx", mcp.Args("repo-mcp")),
-)
-```
-
-stdio 参数、环境变量和必需标记可以在一个表达式中组合：`mcp.Stdio(name, command, mcp.Args("serve"), mcp.Env(map[string]string{"TOKEN_FILE": "/run/secrets/token"}), mcp.Required("tools are mandatory"))`。远程鉴权使用：`mcp.HTTP(name, url, mcp.WithBearerTokenEnv("DOCS_TOKEN"), mcp.Required("docs are mandatory"))`。stdio 专属选项与远程专属选项不可混用；若混用，SDK 会在启动 Driver 前返回 `ErrInvalidMCPConfig`。
-
-### 3.7 Profile（租户隔离的专用 profile）
-
-**旧：**
-
-```go
-binding := claude.New(cfg,
-    agentadaptor.WithCloneProfile(
-        filepath.Join(appData, "profiles", tenantID),
-        agentadaptor.CloneProfileOptions{
-            IncludeSettings: true,
-            IncludeMCP:      true,
-            AuthMode:        agentadaptor.CloneProfileAuthLink,
-        },
-    ),
-)
-```
-
-**新**（profile 构造器 ✅ 已提交；`WithProfile`/`WithProfileResources` 选项 🚧 接线中，形状以设计 §2.9、§3 S8 为准）：
-
-```go
-agent := adaptor.New(claude.Driver(cfg),
-    adaptor.WithProfile(profile.CloneNative(
-        filepath.Join(appData, "profiles", tenantID),
-        profile.LinkAuth(),                        // 共享本机 OAuth 登录态，不复制 token 文件
-    )),
-    adaptor.WithProfileResources(profile.Resources{
-        Instructions: profile.Text("Follow ACME coding standards."),
-        SubAgents:    []profile.SubAgent{{Key: "tester", Instructions: "..."}},
-    }),
-)
-```
-
-注：`profile.Resources` 的子代理字段在 P3.4 提交形态中暂名 `Agents`，设计稿写作 `SubAgents`，P5 统一定名（见 §4）。
-
-### 3.8 结构化输出
-
-**旧**（两段式）：
-
-```go
-res, err := sdk.Run(ctx, "triage this issue:\n"+issueBody,
-    agentadaptor.WithJSONSchemaOutputFor[Triage](
-        agentadaptor.NativeStrictOutput(),
-        agentadaptor.StructuredOutputName("triage"),
-    ),
-)
-if err != nil { ... }
-triage, err := agentadaptor.DecodeStructuredOutput[Triage](res)
-```
-
-**新**（🚧 P3.5，形状以设计 §2.8 为准）：
-
-```go
-type Triage struct {
-    Severity  string   `json:"severity"`
-    Component string   `json:"component"`
-    Duplicate *string  `json:"duplicate_of"`
-}
-
-triage, _, err := adaptor.RunAs[Triage](ctx, agent, "triage this issue:\n"+issueBody)
-```
-
-流式 / 手动场景：`agent.Stream(ctx, p, adaptor.WithSchema[Review]())` + `res.Decode(&review)`。三种执行模式收敛为 `WithSchema` 的模式参数：`schema.Strict()`（默认）/ `schema.Flexible()` / `schema.PromptOnly()`——模式词汇归属（独立 schema 子包 vs 根包常量 `adaptor.SchemaStrict` 等）由 D8 定稿，当前默认方案是根包常量。
-
-### 3.9 驱动构造（内置与第三方）
-
-**旧：**
-
-```go
-binding := codex.New(agentadaptor.CodexConfig{Model: "gpt-5.4"}, /* AgentOption... */)
-sdk := agentadaptor.New(agentadaptor.WithDefaultAgent(binding))
-// 或底层形态：
-binding = agentadaptor.Bind(codex.NewAdapter(), agentadaptor.CodexConfig{...})
-```
-
-**新**（四个内置驱动包 ✅ 已提交 `Config` + `Driver()`）：
-
-```go
-agent := adaptor.New(codex.Driver(codex.Config{Model: "gpt-5.4"}))
-```
-
-第三方驱动实现 `driver.Driver`（独立 `driver/` 包，能力接口原样保留），使用方同样 `adaptor.New(myDriver, opts...)`；`Bind`/`BindTyped` 删除。一致性测试套件 `adaptertest` 升级为 `driver.Driver` 版本（🚧 P5.3 进行中）。
-
----
-
-## 4. 未定稿清单（状态标注纪律）
-
-本文基于 commit `771590a`。下列表面**尚未落地或尚未接线**，正文相应行已标 🚧；它们的最终形状以 `docs/api-v1-redesign.md` 对应小节为准，落地后本文随即更新：
-
-| 主题 | 等待阶段 | 定稿依据 |
-|---|---|---|
-| `WithSkills` / `WithMCP` / `WithProfile` / `WithProfileResources` / `WithServices` / `WithWorkspaceSpec` / `WithWorkspaceManager` / `WithSkillProvider` / `WithSkillMaterializer` / `WithServiceManager` 选项接线 | P3 接线波 | 设计 §2.3 |
-| `RunAs[T]` / `WithSchema[T]` / `WithoutTokenStream` / schema 模式词汇（D8 待定） | P3.5 | 设计 §2.8 + 实施计划 D8 |
-| `Inspect()` 面板 / `ProfileState` / `SyncProfile` / `SelectSkills` | P3.6 | 设计 §2.9 |
-| `profile.Resources` 子代理字段定名（`Agents` vs `SubAgents`） | P5 | 设计 §3 S8 + 实施计划 P3.4 备注 |
-| bridges 新签名：`sse.Handler(agent)` / agui / `a2a.NewServer(agent, ...)`；`delegation.Service`（D5）+ `SubagentUpdate` 注入主流；`RuntimeServiceRef.MCP` 类型化 | P4 | 设计 §2.11、§3 S3/S6、§4 表 |
-| `LocalSkillsFromDir` / 目录扫描选项 / 物化器及其 4 个选项迁入 `skill` 包 | P5 | p0-inventory §3 |
-| 错误哨兵终表（`ErrInvalidDriverConfig`、MCP/技能/结构化输出族） | P5 | — |
-| 根包搬迁（`next/` → 仓库根）、旧 API 删除、`adaptertest` v1、v1.0.0 tag | P5 | 设计 §5 |
-
-另注：`PersistentProcess` 常驻进程开关**不进 v1.0.0 范围**（实施计划 R9 裁定），examples 中以注释形式保留旋钮位置。
-
----
-
-## 5. import 路径迁移注记
-
-**最终形态（v1.0.0，P5 之后）**——本文全部示例按此书写：
+应用代码使用 `mcp.Server` 与一行式构造器，不需要导入 `driver`：
 
 ```go
 import (
-    adaptor "github.com/agent-dance/agent-adaptor"          // 根包，包名 adaptor（D3）
-    "github.com/agent-dance/agent-adaptor/codex"            // 驱动包：codex / claude / cursor / codebuddy
-    "github.com/agent-dance/agent-adaptor/driver"            // 扩展作者 SPI
-    "github.com/agent-dance/agent-adaptor/skill"             // 词汇包
+    adaptor "github.com/agent-dance/agent-adaptor"
+    "github.com/agent-dance/agent-adaptor/claude"
     "github.com/agent-dance/agent-adaptor/mcp"
-    "github.com/agent-dance/agent-adaptor/profile"
-    "github.com/agent-dance/agent-adaptor/threadstore"
-    "github.com/agent-dance/agent-adaptor/memory"
+)
+
+agent := adaptor.New(
+    claude.Driver(claude.Config{}),
+    adaptor.WithMCP(
+        mcp.Stdio("repo", "repo-mcp", mcp.Args("--root", "/repo")),
+        mcp.HTTP("search", "https://mcp.example.com", mcp.WithBearerTokenEnv("MCP_TOKEN")),
+    ),
 )
 ```
 
-**暂存期（现在，P5 之前）**：新消费者 API 位于 `next/`，包名已经是 `adaptor`，因此只需把根包一行换成：
+`mcp.Required(reason)` 可标记必须成功解析的服务。transport 与字段不匹配、重复 key 或 Driver 能力不足会在启动前返回明确错误，不会静默忽略。
 
-```go
-import adaptor "github.com/agent-dance/agent-adaptor/next"   // 暂存路径；P5 整体搬到根
+### 4.3 profile
+
+`profile.Resources` 的最终结构是：
+
+```text
+type Resources struct {
+    Skills       []skill.Ref
+    MCP          []mcp.Server
+    Agents       []SubAgent
+    Hooks        []Hook
+    Instructions *Instructions
+    Config       []ConfigPatch
+}
 ```
 
-其余包（`driver/`、`skill/`、`mcp/`、`profile/`、`threadstore/`、`memory/` 与四个驱动包）**已经在最终路径上**（P4.1 顶层化完成），暂存期与最终形态的 import 完全一致。P5 搬迁时只有 `next` → 根包一处路径变化，示例代码本体不动。
+`MCP`、`Agents`、`Hooks`、`Config` 为 nil 表示该资源族未声明，非 nil 空切片表示显式清空 SDK 管理的条目；`Skills` 采用追加语义；`Instructions != nil` 才表示声明。
 
-旧 API（根包 `agentadaptor`）在 P5 删除前保持原样可用；v0.x 以 tag 冻结。旧→新多数是机械映射（见 §2 表），若后续需要可提供一次性 `go fix` 风格迁移工具（设计 §5 兼容策略）。
+Hook 的 matcher 与 handler 是嵌套结构；ConfigPatch 的 provider 文件坐标也只放在 `Native` 内：
+
+```go
+import (
+    adaptor "github.com/agent-dance/agent-adaptor"
+    "github.com/agent-dance/agent-adaptor/claude"
+    "github.com/agent-dance/agent-adaptor/profile"
+)
+
+agent := adaptor.New(
+    claude.Driver(claude.Config{}),
+    adaptor.WithProfile(profile.CloneNative(
+        "/profiles/tenant-42",
+        profile.CopySettings(),
+        profile.LinkAuth(),
+    )),
+    adaptor.WithProfileResources(profile.Resources{
+        Instructions: profile.Text("Review every change before editing."),
+        Agents: []profile.SubAgent{
+            {Key: "reviewer", Description: "Reviews proposed changes"},
+        },
+        Hooks: []profile.Hook{
+            {
+                Key:   "format-go",
+                Event: profile.HookEventPostTool,
+                MatcherSpec: profile.HookMatcher{
+                    Subject: profile.HookMatcherSubjectTool,
+                    Syntax:  profile.HookMatcherSyntaxExact,
+                    Pattern: "Edit",
+                },
+                Handler: profile.HookHandler{
+                    Type:    profile.HookHandlerCommand,
+                    Command: "gofmt",
+                    Args:    []string{"-w", "."},
+                },
+            },
+        },
+        Config: []profile.ConfigPatch{
+            {
+                Key:        "review-policy",
+                Capability: "review",
+                Values:     map[string]any{"required": true},
+                Native: &profile.NativeConfigPatch{
+                    Provider: "claude",
+                    FileKind: profile.ConfigFileJSON,
+                    Path:     "settings.json",
+                    Section:  "review",
+                    Values:   map[string]any{"required": true},
+                },
+            },
+        },
+    }),
+)
+```
+
+`agent.ProfileState(ctx)` 只读取 desired/observed 状态；真正物化使用 `agent.SyncProfile(ctx)`。profile、skill 或 schema 准备失败都会阻止 Driver 启动。
+
+### 4.4 结构化输出
+
+结构化输出的 mode 和生成选项全部位于根包：
+
+| 旧 API | v1 API |
+|---|---|
+| `NativeStrictOutput()` | `adaptor.SchemaStrict()`，也是默认 mode |
+| `PreferNativeOutput()` | `adaptor.SchemaFlexible()` |
+| `PromptValidateOutput()` | `adaptor.SchemaPromptOnly()` |
+| `StructuredOutputName(name)` | `adaptor.SchemaName(name)` |
+| `StructuredOutputDescription(text)` | `adaptor.SchemaDescription(text)` |
+| `ReturnInvalidStructuredOutput()` | `adaptor.SchemaReturnInvalid()` |
+| schema 派生选项 | `adaptor.SchemaInlineReferences()`、`SchemaAllowAdditionalProperties()`、`SchemaRequireExplicitTags()`、`SchemaUseGoComments(base, path)` |
+| `JSONSchemaFor[T]` | 由 `WithSchema[T]` / `RunAs[T]` 自动派生；外部已有 schema 时使用 `WithSchemaJSON` |
+| `DecodeStructuredOutput[T](result)` | `result.Decode(&value)` |
+| `RunStructured[T](...)` | `adaptor.RunAs[T](ctx, runner, prompt, callOpts...)` |
+
+```go
+import (
+    "context"
+
+    adaptor "github.com/agent-dance/agent-adaptor"
+)
+
+type Review struct {
+    Summary string   `json:"summary" jsonschema:"required"`
+    Risks   []string `json:"risks" jsonschema:"required"`
+}
+
+func review(ctx context.Context, runner adaptor.Runner) (Review, *adaptor.Result, error) {
+    return adaptor.RunAs[Review](ctx, runner, "Review the current diff")
+}
+```
+
+流式场景使用：
+
+```go
+import adaptor "github.com/agent-dance/agent-adaptor"
+
+stream := agent.Stream(
+    ctx,
+    "Review the current diff",
+    adaptor.WithSchema[Review](
+        adaptor.SchemaFlexible(),
+        adaptor.SchemaName("change_review"),
+    ),
+)
+for range stream.Events() {}
+result, err := stream.Result()
+if err == nil {
+    var value Review
+    err = result.Decode(&value)
+}
+```
+
+默认是 strict + 校验失败即运行失败。`SchemaReturnInvalid()` 会保留无效结构化结果，但随后调用 `Decode` 仍返回校验错误。
+
+### 4.5 policy 与 HITL
+
+| 旧 API | v1 API |
+|---|---|
+| `RunPolicy` | `adaptor.Policy{Sandbox, WebSearch, Browser, Approvals}` |
+| `IsolationLevel` | `adaptor.SandboxLevel`：`SandboxInherit`、`ReadOnly`、`WorkspaceWrite`、`Unrestricted` |
+| `PolicyHostReview` | `adaptor.PolicyWorkspaceWrite` + `adaptor.OnApproval(hostHandler)` |
+| `PolicyReadOnlyReview` | `adaptor.PolicyReadOnly` + `adaptor.OnApproval(hostHandler)` |
+| `PolicyAutonomous` | 在 Driver 声明对应能力时，使用 `Policy{Sandbox: Unrestricted, Approvals: ApprovalPolicy{Permission: ApprovalAutoApprove, PlanReview: ApprovalAutoApprove, Question: QuestionAutoDeny}}`；若 Driver 支持 Ask、且希望请求仍经过宿主，可改用 `PolicyUnrestricted` + `OnApproval(adaptor.ApproveAll())`。 |
+| `HumanDecisionPolicy` | `adaptor.ApprovalPolicy`，放在 `Policy.Approvals`。 |
+| `EffectiveHumanDecisionPolicy` | 仅 Driver 实现侧使用 `driver.EffectiveHumanDecisionPolicy`；应用不需要调用。 |
+| `HumanDecisionKind` | `adaptor.ApprovalKind`：`ApprovalPermission`、`ApprovalPlanReview`、`ApprovalQuestion` |
+| `DecisionRequest` / `DecisionResponse` | `*adaptor.ApprovalRequest` + `Approve` / `Deny` / `Answer` |
+| `DecisionChoice` | `adaptor.Choice` |
+| mode / fallback | `ApprovalMode`、`QuestionMode`、`FallbackAction`；常量使用 `ApprovalAsk`、`ApprovalAutoApprove`、`ApprovalAutoDeny`、`QuestionAsk`、`QuestionAutoDeny`、`FallbackAbort`、`FallbackContinue`、`FallbackRetry` 等根包名字。 |
+
+`ApprovalsAutoDeny` 是严格依赖能力声明的 preset：只有 Driver 对 Permission、PlanReview 和 Question 都声明相应 AutoReject 能力时才可使用。显式 Policy 维度与 approval mode 会在启动前按 Driver capability 校验；跨 provider 最可移植的写法是保留零值，让 SDK/Driver 采用默认值，而不是假设所有 Driver 都支持某个显式 mode。
+
+回调形态：
+
+```go
+import (
+    "context"
+
+    adaptor "github.com/agent-dance/agent-adaptor"
+    "github.com/agent-dance/agent-adaptor/codex"
+)
+
+agent := adaptor.New(
+    codex.Driver(codex.Config{}),
+    adaptor.OnApproval(func(ctx context.Context, req *adaptor.ApprovalRequest) error {
+        switch req.Kind {
+        case adaptor.ApprovalPermission, adaptor.ApprovalPlanReview:
+            return req.Approve(ctx)
+        case adaptor.ApprovalQuestion:
+            return req.Answer(ctx, "continue")
+        default:
+            return req.Deny(ctx, "unsupported request kind")
+        }
+    }),
+)
+```
+
+Web/UI 形态直接在 `stream.Events()` 中处理 `*adaptor.ApprovalRequest`。应答 exactly-once；重复应答、Kind 不匹配、过期和未绑定请求分别返回稳定错误。timeout、retry 和 fallback 只由 `Policy.Approvals` 控制。
+
+v1 不提供 `ApprovalRequest.Risk()`：当前 Driver SPI 没有真实风险信号，SDK 不伪造风险级别。
+
+## 5. Stream、Event 与 Result
+
+### 5.1 事件对照
+
+| 旧事件 | v1 typed Event |
+|---|---|
+| `text.start/content/end` | `adaptor.TextDelta{MessageID, Text, Role, Phase}` |
+| `reasoning.start/content/end` | `adaptor.Thinking{MessageID, Text, Phase}` |
+| `tool_call.start/args/end` | `adaptor.ToolCall{ID, Name, Args, ArgsDelta, Result, Phase}` |
+| `tool_call.result` | `adaptor.ToolResult` |
+| `run.started` | `adaptor.RunStarted` |
+| `run.finished` / `run.error` | `adaptor.RunFinished{Failed, Reason, Message, Usage, ...}`；最终判定仍以 `Stream.Result()` 为准 |
+| 进程 spawn / stdout / stderr | `adaptor.ProcessInfo` |
+| invocation / lifecycle / runtime / step / transcript item | `adaptor.Notice` 与对应 `Notice*` kind |
+| `hitl.requested` / `hitl.resolved` | `*adaptor.ApprovalRequest` + 审批生命周期 `Notice` |
+| `stream.dropped` | `adaptor.Dropped{Count, ByKind, FirstSequence, LastSequence, Reason, Source, Details}` |
+| subagent side stream | 主事件流中的 `adaptor.SubagentUpdate{Agent, Kind, Delta, Data}` |
+
+每个 Event 都通过 `Meta()` 暴露 SDK 权威的 `RunID`、`ThreadKey`、严格递增 `Sequence`、`Time` 与可选 provider `Source` 坐标。
+
+### 5.2 正确消费 Stream
+
+```go
+import (
+    "fmt"
+
+    adaptor "github.com/agent-dance/agent-adaptor"
+)
+
+stream := agent.Stream(ctx, "Explain this repository")
+for event := range stream.Events() {
+    switch value := event.(type) {
+    case adaptor.TextDelta:
+        if value.Phase == adaptor.PhaseContent {
+            fmt.Print(value.Text)
+        }
+    case *adaptor.ApprovalRequest:
+        _ = value.Deny(ctx, "interactive approval is disabled")
+    case adaptor.Dropped:
+        fmt.Printf("\n[dropped %d incremental events]\n", value.Count)
+    }
+}
+result, err := stream.Result()
+```
+
+默认背压只允许丢弃可重建的高频增量；审批、生命周期、terminal、tool result、transcript 和 Dropped 等关键事件不能丢。因此消费者应持续 drain `Events()`；若提前停止读取，必须调用 `stream.Cancel()`。`WithBlockingEvents()` 适合要求不丢增量的消费者，但同样必须持续 drain 或取消。
+
+`Run` 与 `Stream` 不是两套执行管线：`Run` 等价于启动 Stream、drain Events、再取 Result。是否使用 provider 原生 streaming transport 由已解析调用与 Driver 能力协商，并不由调用 `Run` 还是 `Stream` 单独决定。
+
+### 5.3 Result 与错误
+
+`Result` 的层次不可互相替代：
+
+- `Text` 是最终 assistant-facing 文本，不含 stdout dump、Summary 或 terminal JSON。
+- `Summary` 是有界的宿主摘要；缺失时允许为空。
+- `Usage` 是 `*adaptor.Usage`：nil 表示 provider 未报告用量；非 nil 的零值表示用量已被观察，只是所有归一化指标明确为 0。
+- `Raw()` 返回完整 stdout、stderr 和 Driver 识别的 provider terminal payload。
+- `Transcript()` 只包含 Driver 从正式协议解析的标准化语义条目。
+- `Services()` 只报告实际观察到或 SDK 实际确保的 runtime service 状态，不回显声明冒充执行证据。
+- `Decode()` 解码已校验结构化输出；没有 schema 时才从 `Text` 做便利 JSON 解码。
+
+```go
+import (
+    "errors"
+
+    adaptor "github.com/agent-dance/agent-adaptor"
+)
+
+result, err := agent.Run(ctx, "Apply the requested change")
+if err != nil {
+    var runErr *adaptor.RunError
+    if errors.As(err, &runErr) {
+        result = runErr.Result
+        // runErr.Reason / Message / Details 是唯一业务失败判定面。
+    }
+    return
+}
+_ = result.Text
+```
+
+错误终表如下。所有哨兵均可用 `errors.Is`；表中列出的 typed error 可用 `errors.As`。
+
+| 类别 | v1 错误 |
+|---|---|
+| 业务运行失败 | `ErrApprovalDenied`、`ErrApprovalTimeout`、`ErrAgentFailed`、`ErrRunCancelled`、`ErrPolicyViolation`；对应 `RunError.Reason` 为 `ReasonApprovalDenied`、`ReasonApprovalTimeout`、`ReasonAgentError`、`ReasonCancelled`、`ReasonPolicyViolation`。 |
+| Approval responder | `ErrApprovalResolved`、`ErrApprovalExpired`（同时包装 `ErrApprovalResolved`）、`ErrApprovalKindMismatch`、`ErrApprovalUnavailable`。零值或 nil `ApprovalRequest` 会立即返回 unavailable，不会阻塞。 |
+| Thread | `ErrThreadStoreRequired`、`ErrThreadNotFound`、`ErrThreadBusy`、`ErrThreadIncompatible`、`ErrThreadLeaseLost`、`ErrThreadCheckpointMissing`、`ErrThreadAlreadyExists`、`ErrResumeRejected`。 |
+| Driver config / policy | `ErrInvalidDriverConfig` / `InvalidDriverConfigError`；`ErrInvalidPolicy` / `InvalidPolicyError`；非审批维度能力缺失使用 `ErrPolicyCapabilityUnsupported` / `PolicyCapabilityUnsupportedError`；审批 mode 能力缺失使用 `ErrHumanDecisionModeUnsupported` / `HumanDecisionModeUnsupportedError`。 |
+| Skill | `ErrSkillNotFound`、`ErrSkillKeyConflict` / `SkillKeyConflictError`、`ErrSkillMaterializationFailed` / `SkillMaterializationError`、`ErrSkillSourceMissing`、`ErrSkillKeyMissing`。 |
+| MCP | `ErrInvalidMCPConfig`、`ErrMCPUnsupported`、`ErrMCPTransportUnsupported`。 |
+| Structured output | `ErrInvalidOutputSchema` / `InvalidOutputSchemaError`、`ErrStructuredOutputUnsupported` / `StructuredOutputUnsupportedError`。 |
+
+旧 Agent 注册表错误（`ErrAgentBindingRequired`、`ErrAgentNameRequired`、`ErrAgentNotFound`、`ErrDefaultAgentAlreadyConfigured`、`ErrDefaultAgentMissing`、`ErrReservedAgentName`）随注册表删除，不再有对应失败模式。
+
+## 6. Thread 迁移
+
+只有显式注入 `WithThreadStore` 才启用状态；`Agent` 默认无状态。
+
+```go
+import (
+    adaptor "github.com/agent-dance/agent-adaptor"
+    "github.com/agent-dance/agent-adaptor/codex"
+    "github.com/agent-dance/agent-adaptor/memory"
+)
+
+agent := adaptor.New(
+    codex.Driver(codex.Config{}),
+    adaptor.WithThreadStore(memory.NewStore()),
+)
+
+thread := agent.Thread("host-ticket-123")
+first, err := thread.Run(ctx, "Investigate the failure")
+second, err := thread.Run(ctx, "Now propose the smallest fix")
+
+existing := agent.Thread("host-ticket-123", adaptor.ResumeOnly())
+fresh := agent.NewThread("host-ticket-123")
+branch := existing.Fork("host-ticket-123-alternative")
+checkpoint, err := existing.Checkpoint(ctx)
+
+_, _, _, _, _, _ = first, second, fresh, branch, checkpoint, err
+```
+
+Thread key 是宿主提供的单一、不透明字符串，SDK 会逐字保存和比较。若宿主必须从 tenant、ticket 等多个维度生成 key，应使用 length-prefix、结构化序列化后编码或等价无碰撞方案；不要直接拼接未经转义的分隔符。Driver resume ID 只存在于 checkpoint，不应成为第二套外部身份。
+
+同一 Thread 同时只允许一个持有效 lease 的运行。`NewThread`、`Fork`、resume reject fallback 和 checkpoint 持久化都遵守原子更新语义；失败时不会覆盖先前健康的 active 记录。
+
+## 7. Inspector、bridges 与 hosttools
+
+### 7.1 Inspector
+
+```go
+import adaptor "github.com/agent-dance/agent-adaptor"
+
+inspector := agent.Inspect()
+environment, err := inspector.Environment(ctx)
+models, err := inspector.Models(ctx)
+quota, err := inspector.Quota(ctx)
+configSchema, err := inspector.ConfigSchema(ctx)
+skills, err := inspector.Skills(ctx)
+
+_, _, _, _, _, _ = environment, models, quota, configSchema, skills, err
+```
+
+可选 probe 不受支持时返回明确 unavailable/unsupported 语义，不伪造结果。所有 probe 使用 `Agent` 构造时 Driver 捕获的真实配置。
+
+### 7.2 bridges
+
+bridge 只消费公开 `Runner` / `Stream` / `Event` / `Result`：
+
+- SSE：`sse.Handler(runner, sse.Options{})`
+- AG-UI：`agui.Events(stream, opts...)`；请求级取消优先使用 `agui.EventsContext`
+- A2A：`a2a.NewServer(runner, a2a.ServerOptions{...})`
+- subagent stream：使用 `bridges/subagentstream` 合并公开 Stream，不直接调 Driver
+
+AG-UI 的机械迁移如下：import `pkg/bridges/agui` 改为 `bridges/agui`；`NewTranslator` 改为 `NewEventTranslator`；`WithDecisionMode` 改为 `WithEventDecisionMode`；`Wrap(handle)` / `WrapWithContext(ctx, handle)` 分别改为 `Events(stream)` / `EventsContext(ctx, stream)`。旧 `ResolveDecision` 已删除，宿主直接保留 Event 中的 `*adaptor.ApprovalRequest` 并调用其 `Approve`、`Deny` 或 `Answer`。
+
+SSE/A2A 的外部会话 ID 映射使用 bridge 内部无碰撞编码。A2A 默认最小暴露；reasoning、tool、审批和诊断只有在 `ExposurePolicy` 明确允许时才越过协议边界。
+
+### 7.3 delegation 与运行期服务
+
+`adaptor.WithRunServices(providers...)` 是通用的 run-scoped 扩展点。`hosttools/a2adelegation.Service.Option()` 已通过它接线：每次运行建立带认证的 MCP sidecar，绑定清理生命周期，并把委托进度作为 `adaptor.SubagentUpdate` 合入 leader 的唯一事件流。
+
+```go
+import (
+    adaptor "github.com/agent-dance/agent-adaptor"
+    "github.com/agent-dance/agent-adaptor/codex"
+    "github.com/agent-dance/agent-adaptor/hosttools/a2adelegation"
+)
+
+reviewer := adaptor.New(codex.Driver(codex.Config{}))
+team, err := a2adelegation.NewService(a2adelegation.Config{
+    Agents: []a2adelegation.AgentRef{
+        a2adelegation.Local("review", reviewer, a2adelegation.Policy{}),
+    },
+})
+if err != nil {
+    return err
+}
+defer team.Close()
+
+leader := adaptor.New(codex.Driver(codex.Config{}), team.Option())
+stream := leader.Stream(ctx, "Implement and ask review to verify it")
+for event := range stream.Events() {
+    if update, ok := event.(adaptor.SubagentUpdate); ok {
+        _ = update
+    }
+}
+_, err = stream.Result()
+return err
+```
+
+`team.Option()` 是首选写法；根包不会新增团队注册表、自动路由或 `WithTeam`。
+
+旧 import `pkg/hosttools/a2adelegation` 改为 `hosttools/a2adelegation`。`WithStatusPartDecoder` 名称与职责不变，但必须从最终 import 路径引用。
+
+### 7.4 session recorder
+
+session recorder 从旧 `StreamPayload` 双栈彻底切换为唯一的 typed `Event` 信封；import 从 `pkg/hosttools/sessionrecorder` 改为 `hosttools/sessionrecorder`。主要符号逐项迁移如下：
+
+| v0.12.0 | v1 |
+|---|---|
+| `Record{Payload: StreamPayload}` | `EventRecord{Event: adaptor.Event}` |
+| `Recorder` / `Backend` | `EventRecorder` / `EventBackend` |
+| `New` | `NewEventRecorder` |
+| `Option` / `WithClock` / `WithKeyValidator` | `EventOption` / `WithEventClock` / `WithEventKeyValidator` |
+| `NewMemoryBackend` | `NewMemoryEventBackend` |
+| `JSONLOption` | `JSONLEventOption` |
+| `NewJSONLBackend` | `NewJSONLEventBackend` |
+| `WithJSONLKeyValidator` / `WithJSONLFileMode` / `WithJSONLDirMode` | `WithJSONLEventKeyValidator` / `WithJSONLEventFileMode` / `WithJSONLEventDirMode` |
+| `WithJSONLBadLineHandler` | 删除。v1 不允许跳过损坏审计记录；读取畸形、截断或不一致日志返回可用 `errors.Is(err, sessionrecorder.ErrJSONLEventLogCorrupt)` 判断的错误。 |
+| `PendingTracker` / `NewPendingTracker` / `PendingDecisions` | 删除。宿主按 ID 保存运行中的 `*adaptor.ApprovalRequest` 以执行应答；只读 pending 视图从已记录的 `ApprovalRequest` 与 `NoticeApprovalResolved` Event 历史派生。重放的 ApprovalRequest 不带 live responder，不能用于应答。 |
+
+`HostSeq`、`SessionInfo`、`KeyValidator`、`DefaultKeyPattern`、`DefaultKeyValidator` 与 `ErrInvalidSessionKey` 保留名称。JSONL v1 默认每次 append 同步到存储；只有明确接受 buffered durability 时才使用 `WithoutJSONLEventSyncOnAppend()`，并由宿主检查 `Flush` 或 `Close` 错误。
+
+## 8. Driver 扩展与一致性测试
+
+第三方扩展实现 `driver.Driver`，直接走与内置 Driver 相同的 `adaptor.New`。Descriptor 必须如实声明能力；正式协议解析、Transcript、terminal payload 和 checkpoint 归 Driver 所有。
+
+一致性测试的最终 import 路径是 `github.com/agent-dance/agent-adaptor/adaptertest`：
+
+```go
+import (
+    "testing"
+
+    adaptor "github.com/agent-dance/agent-adaptor"
+    "github.com/agent-dance/agent-adaptor/adaptertest"
+    "github.com/agent-dance/agent-adaptor/driver"
+)
+
+func TestMyDriver(t *testing.T) {
+    newDriver := func() driver.Driver {
+        return mydriver.Driver(mydriver.Config{})
+    }
+    adaptertest.TestDriver(t, newDriver, adaptertest.WithConfig(mydriver.Config{}))
+
+    // 第三方 Driver 与内置 Driver 使用同一消费者构造入口。
+    var _ adaptor.Runner = adaptor.New(newDriver())
+}
+```
+
+按 Driver 能力补充 `adaptertest.WithSessionState`、`WithSessionKeys`、`WithGuardKeys`、`WithWorkspace`、`WithRequiredConfigFields`、`WithSyncSkillsProbe` 和显式双门 live 选项。普通测试不得触发付费调用。
+
+## 9. import 路径与删除项
+
+v1 应用代码使用根包：
+
+```go
+import (
+    adaptor "github.com/agent-dance/agent-adaptor"
+    "github.com/agent-dance/agent-adaptor/claude"
+    "github.com/agent-dance/agent-adaptor/codebuddy"
+    "github.com/agent-dance/agent-adaptor/codex"
+    "github.com/agent-dance/agent-adaptor/cursor"
+    "github.com/agent-dance/agent-adaptor/mcp"
+    "github.com/agent-dance/agent-adaptor/profile"
+    "github.com/agent-dance/agent-adaptor/skill"
+)
+```
+
+Driver 作者另外导入 `github.com/agent-dance/agent-adaptor/driver`；Thread store 实现导入 `threadstore`，内存实现使用 `memory`；协议和宿主组件分别位于 `bridges/...` 与 `hosttools/...`。
+
+以下旧表面不迁移：
+
+- 中央 SDK、默认/命名 Agent registry、binding、`Start`、`RunHandle`、双事件通道。
+- 旧根包 Driver SPI aliases、provider sugar、`pkg/` forward 包和迁移期别名。
+- `providers/` 包；单个 skill 的 required 语义改用 `skill.Require`，整个 Provider 的装饰策略由宿主实现。
+- 旧 `runtimeservice/` mixin；改用 `WithServices`、`WithServiceManager` 或 `WithRunServices`。
+- 因缺少真实 Driver 风险信号而无法诚实实现的 `ApprovalRequest.Risk()`。
+
+迁移完成后，应用代码不应再依赖旧中央对象、字符串查找 Runner、平行执行入口或兼容 metadata key。

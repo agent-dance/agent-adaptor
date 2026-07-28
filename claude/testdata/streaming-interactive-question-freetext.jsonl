@@ -1,0 +1,10 @@
+{"type":"system","subtype":"init","session_id":"sess-interactive-qft","model":"claude-fixture"}
+{"type":"stream_event","event":{"type":"message_start","message":{"id":"msg-interactive-qft"}}}
+{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_ask_ft","name":"AskUserQuestion","input":{}}}}
+{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"questions\":[{\"type"}}}
+{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\":\"freeText\",\"question"}}}
+{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\":\"What problem would you like me to tackle?\"}]}"}}}
+{"type":"stream_event","event":{"type":"content_block_stop","index":0}}
+{"type":"stream_event","event":{"type":"message_delta","delta":{"stop_reason":"tool_use"}}}
+{"type":"stream_event","event":{"type":"message_stop"}}
+{"type":"control_request","request_id":"req-question-ft","request":{"subtype":"can_use_tool","tool_name":"AskUserQuestion","tool_use_id":"toolu_ask_ft","input":{"questions":[{"type":"freeText","question":"What problem would you like me to tackle?"}]}}}

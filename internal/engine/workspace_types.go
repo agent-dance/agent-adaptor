@@ -21,7 +21,7 @@ type WorkspaceStrategy struct {
 }
 
 // WorkspaceRuntimeConfig declares runtime services associated with a workspace
-// or binding. It is resolved by RuntimeServiceManager before adapter launch.
+// or Agent default. The service manager resolves them before Driver launch.
 type WorkspaceRuntimeConfig struct {
 	Services []RuntimeServiceSpec
 }
@@ -77,14 +77,14 @@ func (SharedWorkspace) workspaceRequest() WorkspaceRequestData {
 	}
 }
 
-// AdapterManagedWorkspace lets the adapter/provider choose or create its own
+// DriverManagedWorkspace lets the Driver/provider choose or create its own
 // workspace according to native behavior.
-type AdapterManagedWorkspace struct{}
+type DriverManagedWorkspace struct{}
 
-func (AdapterManagedWorkspace) workspaceRequest() WorkspaceRequestData {
+func (DriverManagedWorkspace) workspaceRequest() WorkspaceRequestData {
 	return WorkspaceRequestData{
 		Mode:         WorkspaceModeAgentDefault,
-		StrategyType: WorkspaceStrategyAdapterManaged,
+		StrategyType: WorkspaceStrategyDriverManaged,
 	}
 }
 

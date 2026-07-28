@@ -1,6 +1,6 @@
 package a2adelegation_test
 
-// Local/Remote behavioral parity (P4 gate requirement): the same role
+// Local/Remote behavioral parity: the same role
 // registered once as delegation.Local (in-process Runner loopback) and once
 // as delegation.Remote (real httptest A2A server consumed through
 // clients/a2a) must yield the same DelegationEvent sequence and the same
@@ -21,9 +21,9 @@ import (
 	"testing"
 	"time"
 
+	adaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/hosttools/a2adelegation"
-	adaptor "github.com/agent-dance/agent-adaptor"
 )
 
 // parityScript defines one role behavior realized on both transports.

@@ -14,16 +14,27 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2aclient/agentcard"
 )
 
+// Options configures discovery, authentication, and protocol negotiation for
+// a Client.
 type Options struct {
-	AgentCardURL        string
-	AgentCardPath       string
-	Auth                Auth
-	HTTPClient          *http.Client
-	TrustedAuthOrigins  []string
+	// AgentCardURL is the absolute URL used to discover the remote agent.
+	AgentCardURL string
+	// AgentCardPath overrides the discovery path derived from AgentCardURL.
+	AgentCardPath string
+	// Auth supplies credentials for trusted discovery and agent endpoints.
+	Auth Auth
+	// HTTPClient supplies transport settings. A nil value uses http.DefaultClient.
+	HTTPClient *http.Client
+	// TrustedAuthOrigins are additional absolute origins allowed to receive Auth.
+	TrustedAuthOrigins []string
+	// AcceptedOutputModes restrict the media types accepted from the agent.
 	AcceptedOutputModes []string
+	// PreferredTransports orders the protocol bindings considered by discovery.
 	PreferredTransports []TransportProtocol
 }
 
+// Client discovers an A2A agent and invokes its task protocol. A Client is
+// safe for concurrent use.
 type Client struct {
 	opts       Options
 	httpClient *http.Client
@@ -34,10 +45,13 @@ type Client struct {
 	upstream   *upclient.Client
 }
 
+// New constructs a lazy Client. Discovery and protocol validation occur on
+// the first operation that contacts the remote agent.
 func New(opts Options) *Client {
 	return &Client{opts: opts, httpClient: cloneHTTPClient(opts.HTTPClient)}
 }
 
+// AgentCard returns the validated and normalized discovery document.
 func (c *Client) AgentCard(ctx context.Context) (AgentCard, error) {
 	if err := c.ensure(ctx); err != nil {
 		return AgentCard{}, err
@@ -47,6 +61,8 @@ func (c *Client) AgentCard(ctx context.Context) (AgentCard, error) {
 	return c.publicCard, nil
 }
 
+// Send sends one message and waits for the remote operation's immediate
+// protocol result.
 func (c *Client) Send(ctx context.Context, req SendRequest) (Task, error) {
 	upstreamReq, err := upstreamSendRequest(req)
 	if err != nil {
@@ -79,6 +95,7 @@ func (c *Client) Send(ctx context.Context, req SendRequest) (Task, error) {
 	}
 }
 
+// SendStream sends one message and returns its ordered stream of A2A events.
 func (c *Client) SendStream(ctx context.Context, req SendRequest) (*Stream, error) {
 	upstreamReq, err := upstreamSendRequest(req)
 	if err != nil {
@@ -94,6 +111,7 @@ func (c *Client) SendStream(ctx context.Context, req SendRequest) (*Stream, erro
 	return c.startStream(streamCtx, cancel, taskID, seq), nil
 }
 
+// Subscribe returns a stream of subsequent events for an existing task.
 func (c *Client) Subscribe(ctx context.Context, req SubscribeRequest) (*Stream, error) {
 	if req.TaskID == "" {
 		return nil, fmt.Errorf("%w: task id is required", ErrProtocol)
@@ -111,6 +129,7 @@ func (c *Client) Subscribe(ctx context.Context, req SubscribeRequest) (*Stream, 
 	return c.startStream(streamCtx, cancel, req.TaskID, seq), nil
 }
 
+// GetTask retrieves the current state of one remote task.
 func (c *Client) GetTask(ctx context.Context, req GetTaskRequest) (Task, error) {
 	if req.TaskID == "" {
 		return Task{}, fmt.Errorf("%w: task id is required", ErrProtocol)
@@ -130,6 +149,8 @@ func (c *Client) GetTask(ctx context.Context, req GetTaskRequest) (Task, error) 
 	return convertTask(task)
 }
 
+// CancelTask requests cancellation and returns the remote task state reported
+// by the server.
 func (c *Client) CancelTask(ctx context.Context, req CancelTaskRequest) (Task, error) {
 	if req.TaskID == "" {
 		return Task{}, fmt.Errorf("%w: task id is required", ErrProtocol)
@@ -149,6 +170,8 @@ func (c *Client) CancelTask(ctx context.Context, req CancelTaskRequest) (Task, e
 	return convertTask(task)
 }
 
+// Close releases transports owned by the underlying A2A client. It is safe to
+// call before the client has performed discovery.
 func (c *Client) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -357,6 +380,7 @@ func validateAuthInterfaceOrigins(card *a2aproto.AgentCard, auth Auth, trusted t
 	return nil
 }
 
+// Stream is an ordered remote A2A event stream.
 type Stream struct {
 	cancel context.CancelFunc
 	events <-chan streamItem
@@ -367,6 +391,7 @@ type streamItem struct {
 	err   error
 }
 
+// Recv waits for the next event. It returns io.EOF after the stream closes.
 func (s *Stream) Recv() (Event, error) {
 	item, ok := <-s.events
 	if !ok {
@@ -388,6 +413,7 @@ func (s *Stream) RecvContext(ctx context.Context) (Event, error) {
 	}
 }
 
+// Close cancels the stream and waits until its event producer has stopped.
 func (s *Stream) Close() error {
 	if s.cancel != nil {
 		s.cancel()

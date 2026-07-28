@@ -13,9 +13,8 @@ import (
 	"github.com/agent-dance/agent-adaptor/internal/engine"
 )
 
-// Structured output, v1 surface (P3.5, decision D8: mode vocabulary lives
-// in this package as adaptor.SchemaStrict / SchemaFlexible /
-// SchemaPromptOnly).
+// Structured output is configured with SchemaStrict, SchemaFlexible, or
+// SchemaPromptOnly.
 //
 //	review, _, err := adaptor.RunAs[Review](ctx, reviewer, "review the diff")
 //
@@ -25,12 +24,9 @@ import (
 //	var review Review
 //	err = res.Decode(&review)
 //
-// The engine halves (request normalization, capability-matrix negotiation,
-// local validation, post-run finalization) are single-sourced in
-// internal/engine; this file keeps schema derivation from Go types and the
-// generic entry points. The capability matrix is still declared truthfully
-// by driver.Descriptor — an unsupported mode fails the run before the
-// driver launches (ErrStructuredOutputUnsupported).
+// The Driver capability matrix determines which modes are available. An
+// unsupported mode fails before Driver.Run starts with
+// ErrStructuredOutputUnsupported.
 
 // SchemaOption customizes WithSchema[T]: how the JSON Schema document is
 // generated from the Go type, and how the structured-output request is
@@ -42,8 +38,7 @@ type schemaSettings struct {
 	mutate []func(*driver.OutputSchema)
 }
 
-// schemaGenSettings are the generation knobs, mirroring the legacy
-// JSONSchemaFor options one for one.
+// schemaGenSettings contains the Go-to-JSON-Schema generation knobs.
 type schemaGenSettings struct {
 	inlineRefs                bool
 	allowAdditionalProperties bool
@@ -205,9 +200,9 @@ func collectSchemaSettings(opts []SchemaOption) schemaSettings {
 	return cfg
 }
 
-// buildSchema assembles the driver-facing request with the legacy
-// defaults (json_schema / native_strict / fail_run) and applies the
-// request-side option mutations in order.
+// buildSchema assembles the driver-facing request with the documented
+// defaults (json_schema / native_strict / fail_run) and applies option
+// mutations in order.
 func (s schemaSettings) buildSchema(raw json.RawMessage) driver.OutputSchema {
 	schema := driver.OutputSchema{
 		Format:     driver.OutputFormatJSONSchema,
@@ -221,10 +216,9 @@ func (s schemaSettings) buildSchema(raw json.RawMessage) driver.OutputSchema {
 	return schema
 }
 
-// jsonSchemaForType derives a JSON Schema document from a Go type. It is
-// the legacy JSONSchemaFor pipeline replicated one for one: type
-// validation, cycle detection (inline-refs rejects recursive types), the
-// invopop reflector configuration, and engine-side JSON normalization.
+// jsonSchemaForType derives a JSON Schema document from a Go type. It performs
+// type validation, rejects recursive types when refs are inlined, configures
+// the reflector, and normalizes the generated JSON.
 func jsonSchemaForType(t reflect.Type, cfg schemaGenSettings) (json.RawMessage, error) {
 	if err := validateSchemaType(t, nil); err != nil {
 		return nil, err

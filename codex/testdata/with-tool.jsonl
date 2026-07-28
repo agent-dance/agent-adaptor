@@ -1,5 +1,5 @@
 {"type":"thread.started","thread_id":"thread-tool"}
-{"type":"item.completed","item":{"type":"command_execution","id":"call-1","name":"bash","input":{"cmd":"ls"}}}
-{"type":"item.completed","item":{"type":"command_output","id":"call-1","output":"file-a\nfile-b"}}
-{"type":"item.completed","item":{"type":"agent_message","text":"Listed two files."}}
-{"type":"turn.completed","session_id":"thread-tool"}
+{"type":"item.started","item":{"id":"item-1","type":"command_execution","command":"ls","status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item-1","type":"command_execution","command":"ls","aggregated_output":"file-a\nfile-b\n","exit_code":0,"status":"completed"}}
+{"type":"item.completed","item":{"id":"item-2","type":"agent_message","text":"Listed two files."}}
+{"type":"turn.completed","usage":{"input_tokens":5,"cached_input_tokens":0,"output_tokens":3}}

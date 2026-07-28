@@ -7,25 +7,31 @@ import (
 	"strings"
 )
 
-// Skill resolution and materialization errors live with the skill
-// vocabulary. The engine and root package reuse these exact values and types,
-// so errors.Is and errors.As never depend on an internal package identity.
 var (
-	ErrSkillKeyConflict           = errors.New("agentadaptor: skill key defined with conflicting sources")
+	// ErrSkillKeyConflict identifies conflicting declarations of one skill key.
+	ErrSkillKeyConflict = errors.New("agentadaptor: skill key defined with conflicting sources")
+	// ErrSkillMaterializationFailed identifies a failure to stage a skill.
 	ErrSkillMaterializationFailed = errors.New("agentadaptor: skill materialization failed")
-	ErrSkillSourceMissing         = errors.New("agentadaptor: skill source is required")
-	ErrSkillKeyMissing            = errors.New("agentadaptor: skill key is required")
-	ErrSkillNotFound              = errors.New("agentadaptor: skill not found in provider")
+	// ErrSkillSourceMissing identifies a skill declaration without a source.
+	ErrSkillSourceMissing = errors.New("agentadaptor: skill source is required")
+	// ErrSkillKeyMissing identifies a skill declaration without a key.
+	ErrSkillKeyMissing = errors.New("agentadaptor: skill key is required")
+	// ErrSkillNotFound identifies a catalogue key that a Provider cannot resolve.
+	ErrSkillNotFound = errors.New("agentadaptor: skill not found in provider")
 )
 
 // SkillKeyConflictError reports two structurally different declarations with
 // the same skill key.
 type SkillKeyConflictError struct {
-	Key     string
+	// Key is the conflicting skill key.
+	Key string
+	// Sources describes the declarations that conflict.
 	Sources []string
-	Detail  string
+	// Detail contains optional diagnostic context.
+	Detail string
 }
 
+// Error implements error.
 func (e *SkillKeyConflictError) Error() string {
 	if e == nil {
 		return ErrSkillKeyConflict.Error()
@@ -48,11 +54,15 @@ func (e *SkillKeyConflictError) Unwrap() error { return ErrSkillKeyConflict }
 // SkillMaterializationError reports a failure to stage a resolved skill into
 // a provider-visible directory.
 type SkillMaterializationError struct {
-	Key         string
+	// Key is the logical skill key.
+	Key string
+	// RuntimeName is the provider-visible directory name, when known.
 	RuntimeName string
-	Cause       error
+	// Cause is the underlying materialization failure.
+	Cause error
 }
 
+// Error implements error.
 func (e *SkillMaterializationError) Error() string {
 	if e == nil {
 		return ErrSkillMaterializationFailed.Error()

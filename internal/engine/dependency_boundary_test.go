@@ -10,13 +10,12 @@ import (
 	"testing"
 )
 
-// TestInternalProductionDoesNotImportLegacyRoot protects the dependency
-// direction required for the v1 cutover. Internal implementation packages
-// must consume driver/public leaf contracts (or engine's own true types), not
-// the legacy root aliases that are scheduled for deletion.
-func TestInternalProductionDoesNotImportLegacyRoot(t *testing.T) {
+// TestInternalProductionDoesNotImportRoot protects the required dependency
+// direction. Internal packages consume driver/public leaf contracts or their
+// own private types; they never depend back on the application-facing root.
+func TestInternalProductionDoesNotImportRoot(t *testing.T) {
 	t.Parallel()
-	const legacyRoot = "github.com/agent-dance/agent-adaptor"
+	const rootImport = "github.com/agent-dance/agent-adaptor"
 	internalRoot := filepath.Clean("..")
 
 	err := filepath.WalkDir(internalRoot, func(path string, entry fs.DirEntry, walkErr error) error {
@@ -37,8 +36,8 @@ func TestInternalProductionDoesNotImportLegacyRoot(t *testing.T) {
 				t.Errorf("decode import in %s: %v", path, err)
 				continue
 			}
-			if importPath == legacyRoot {
-				t.Errorf("%s imports legacy root %q; depend on driver/public leaf contracts or engine true types directly", path, legacyRoot)
+			if importPath == rootImport {
+				t.Errorf("%s imports root %q; depend on driver/public leaf contracts or private implementation types directly", path, rootImport)
 			}
 		}
 		return nil

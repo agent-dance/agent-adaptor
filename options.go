@@ -14,13 +14,11 @@ import (
 	"github.com/agent-dance/agent-adaptor/threadstore"
 )
 
-// ============ Scope interfaces (decision D7, case A) ============
-//
 // One option vocabulary, two scopes: the same WithX used in New(...) is the
 // agent-level default, used in Run/Stream(...) it is a per-call override.
 // The merge rule is a single sentence: the nearer scope wins; skills append,
 // everything else replaces. Scope-illegal combinations are compile errors in
-// both directions. See docs/p0-option-scope-decision.md.
+// both directions.
 
 // Option is the full set New accepts. It writes agent-level defaults.
 //
@@ -46,7 +44,7 @@ type CallOption interface {
 
 // SharedOption is the return type of dual-scope options: used in New it is
 // the Agent's default, used in Run/Stream it overrides this call only. Most
-// of the ~24 core options return it.
+// options that configure execution values return it.
 type SharedOption interface {
 	Option
 	CallOption
@@ -70,17 +68,15 @@ type RunSettings struct {
 
 	// instructions is the extra instruction bundle handed to the driver.
 	// instructionsSet records an explicit write (even a clearing one), which
-	// is what marks the resource as host-declared in the profile payload —
-	// the legacy InstructionsSet semantics.
+	// is what marks the resource as host-declared in the profile payload.
 	instructions    *driver.InstructionsBundleRef
 	instructionsSet bool
 
 	// skills is the single append-merged option family in the "nearer scope
 	// wins; skills append, everything else replaces" rule. clone() deep-
 	// copies the slice and records defaultSkillBoundary = len(skills), so
-	// entries below the boundary are the agent defaults (legacy
-	// WithDefaultSkills source label) and entries appended by per-call
-	// options are the run refs (legacy WithSkills source label).
+	// entries below the boundary are agent defaults and entries appended by
+	// per-call options are invocation-specific refs.
 	skills               []driver.SkillRef
 	defaultSkillBoundary int
 
@@ -91,16 +87,14 @@ type RunSettings struct {
 
 	// agents/hooks/configPatches use pointer-to-slice so "never set" (nil
 	// pointer) is distinguishable from "explicitly declared empty" (non-nil
-	// pointer, empty slice) — the legacy *AgentPayload / *HookPayload /
-	// *ProfileConfigPayload declaration semantics.
+	// pointer, empty slice).
 	agents        *[]driver.AgentSpec
 	hooks         *[]driver.HookSpec
 	configPatches *[]driver.ProfileConfigPatch
 
 	// outputSchema is the structured output request for this run;
 	// outputSchemaErr records a schema generation failure at option-build
-	// time, surfaced before the driver launches (legacy outputSchemaErr
-	// short-circuit).
+	// time and is surfaced before the driver launches.
 	outputSchema    *driver.OutputSchema
 	outputSchemaErr error
 
@@ -148,7 +142,7 @@ func (s *RunSettings) SetInstructions(text string) {
 
 // SetInstructionsBundle replaces the full instruction bundle (path- or
 // content-based) and declares the instructions resource. A nil ref clears
-// while still declaring — the legacy WithInstructions(nil) semantics.
+// the effective bundle while still declaring the resource.
 func (s *RunSettings) SetInstructionsBundle(ref *driver.InstructionsBundleRef) {
 	s.instructions = engine.CloneInstructions(ref)
 	s.instructionsSet = true
@@ -205,8 +199,7 @@ func (s *RunSettings) SetOutputSchema(schema driver.OutputSchema) {
 // SetOutputSchemaError records a schema construction failure. The run fails
 // with this error before the driver launches — schema bugs are programmer
 // errors that must not silently degrade into unvalidated output. The error
-// is sticky (legacy outputSchemaErr semantics): a valid schema set later in
-// the option list does not clear it.
+// is sticky: a valid schema set later in the option list does not clear it.
 func (s *RunSettings) SetOutputSchemaError(err error) {
 	s.outputSchemaErr = err
 }
@@ -316,6 +309,7 @@ func (s RunSettings) clone() RunSettings {
 // receives *RunSettings, on which the construction-only fields simply do not
 // exist — the writable field set is the scope boundary.
 type AgentSettings struct {
+	// RunSettings contains the defaults inherited by each invocation.
 	RunSettings
 
 	// threadStore backs Agent.Thread/NewThread (stateful conversations).
@@ -338,8 +332,8 @@ type AgentSettings struct {
 	profile *driver.ProfileSelection
 
 	// skillProvider resolves bare skill keys to full Skill descriptions
-	// (and, when it implements SkillCatalog, enumerates the admin
-	// catalogue). Nil means inline Skill values are the only source.
+	// and, when it implements skill.Catalog, enumerates the inspection
+	// catalogue. Nil means inline Skill values are the only source.
 	skillProvider SkillProvider
 
 	// skillMaterializer overrides how non-path skill sources are
@@ -352,15 +346,16 @@ type AgentSettings struct {
 	workspaceManager WorkspaceManager
 
 	// serviceManager starts/locates the services declared with
-	// WithServices. Nil means declared services are not ensured — the
-	// legacy noop-manager behavior, which never invents endpoints.
+	// WithServices. Nil means declared services are not ensured and no
+	// endpoints are invented.
 	serviceManager ServiceManager
 }
 
 // SetThreadStore injects the thread storage backend (stateful conversations).
 func (s *AgentSettings) SetThreadStore(store threadstore.Store) { s.threadStore = store }
 
-// SetEventBuffer sets the per-run event channel buffer size.
+// SetEventBuffer sets the per-run ordinary-event buffer size. Terminal
+// delivery uses separate internal reserve capacity.
 func (s *AgentSettings) SetEventBuffer(n int) { s.eventBuffer = n }
 
 // SetBlockingEvents switches event delivery to blocking (no-drop) mode.
@@ -396,13 +391,10 @@ type newOptionFunc func(*AgentSettings)
 
 func (f newOptionFunc) ApplyNew(s *AgentSettings) { f(s) }
 
-// callOptionFunc backs call-scope-only options (WithSchema[T]; later
-// WithoutTokenStream).
+// callOptionFunc backs call-scope-only options such as WithSchema[T].
 type callOptionFunc func(*RunSettings)
 
 func (f callOptionFunc) ApplyRun(s *RunSettings) { f(s) }
-
-// ============ P0 option vocabulary ============
 
 // WithModel selects the model. In New it is the Agent's default model; in
 // Run/Stream it overrides this invocation only (delivered to the driver as
@@ -443,8 +435,8 @@ func WithIdentity(id Identity) SharedOption {
 	return sharedOptionFunc(func(s *RunSettings) { s.SetIdentity(id) })
 }
 
-// WithPolicy sets the execution policy (sandbox, optional feature levels,
-// and — from P1 — approvals). The policy replaces as a whole value; it does
+// WithPolicy sets the execution policy: sandbox, optional feature levels,
+// and approvals. The policy replaces as a whole value; it does
 // not merge field-wise with the agent default.
 func WithPolicy(p Policy) SharedOption {
 	return sharedOptionFunc(func(s *RunSettings) { s.SetPolicy(p) })
@@ -475,23 +467,24 @@ func WithThreadStore(store threadstore.Store) Option {
 	return newOptionFunc(func(s *AgentSettings) { s.SetThreadStore(store) })
 }
 
-// WithEventBuffer sets the per-run event channel buffer size used by the
-// streaming pipeline (default 1024). When the consumer falls behind and the
-// buffer fills, events are dropped and surfaced as one aggregated
+// WithEventBuffer sets the per-run ordinary-event buffer size used by the
+// streaming pipeline (default 1024). The SDK keeps separate internal capacity
+// for the terminal event, so RunFinished remains deliverable when cancellation
+// occurs while the ordinary buffer is full. When the consumer falls behind and
+// the ordinary buffer fills, droppable events are surfaced as one aggregated
 // Dropped{Count} marker. Construction scope only.
 func WithEventBuffer(n int) Option {
 	return newOptionFunc(func(s *AgentSettings) { s.SetEventBuffer(n) })
 }
 
-// WithBlockingEvents switches event delivery from the default
-// drop-with-marker strategy to blocking: EmitStream/Emit wait for the
-// consumer, no event is ever dropped, and a stalled consumer stalls the
-// driver. Construction scope only.
+// WithBlockingEvents switches ordinary event delivery from the default
+// drop-with-marker strategy to blocking: during normal execution EmitStream
+// and Emit wait for the consumer and do not drop events. Cancel still releases
+// blocked producers and may abandon pending ordinary events; the terminal
+// event remains reserved. Construction scope only.
 func WithBlockingEvents() Option {
 	return newOptionFunc(func(s *AgentSettings) { s.SetBlockingEvents() })
 }
-
-// ============ P3 option vocabulary: skills / MCP / profile ============
 
 // SkillRef references a skill for WithSkills: either a bare key resolved
 // through the SkillProvider (skill.Key) or a fully described inline skill
@@ -566,7 +559,7 @@ func WithProfile(sel profile.Selection) Option {
 //
 // In New the resources are agent defaults; in Run/Stream they override
 // this invocation only. Every declared resource lands in the run's
-// ProfilePayload, and ProfileState reports truthfully whether the adapter
+// ProfilePayload, and ProfileState reports truthfully whether the Driver
 // actually materialized it.
 func WithProfileResources(res profile.Resources) SharedOption {
 	return sharedOptionFunc(func(s *RunSettings) {
@@ -592,12 +585,10 @@ func WithProfileResources(res profile.Resources) SharedOption {
 	})
 }
 
-// ============ P4.7 option vocabulary: workspace / services ============
-
 // WithWorkspaceSpec selects how the run's workspace is provisioned —
 // adaptor.SharedWorkspace{} to reuse the project directory,
 // adaptor.GitWorktreeWorkspace{...} for an isolated worktree,
-// adaptor.AdapterManagedWorkspace{} to let the driver choose. It replaces as a
+// adaptor.DriverManagedWorkspace{} to let the Driver choose. It replaces as a
 // whole value: in New it is the agent default, in Run/Stream it overrides this
 // invocation only.
 //

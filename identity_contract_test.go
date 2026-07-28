@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/agent-dance/agent-adaptor/driver"
 	adaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
 )
 
 func TestIdentityZeroValueIsExplicitlyInjected(t *testing.T) {

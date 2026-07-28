@@ -37,10 +37,10 @@ type ChunkObserver func(stream string, chunk []byte, ts time.Time) error
 var ErrStdinClosed = errors.New("clihelper: stdin closed")
 
 // StdinController lets an adapter drive the subprocess stdin throughout the
-// run, instead of the legacy "write Prompt once, close stdin" lifecycle.
+// run instead of using the default one-shot prompt lifecycle.
 //
-// Intended for HITL-interactive adapters (e.g. claude Phase 3 stream-json
-// bidirectional mode) that need to inject user tool_result frames after the
+// Intended for HITL-interactive adapters (for example Claude's bidirectional
+// stream-json mode) that need to inject user tool_result frames after the
 // CLI emits a tool_use event.
 //
 // Concurrency:
@@ -192,7 +192,7 @@ type CommandRequest struct {
 
 	// Stdin controls how the subprocess stdin is fed.
 	//
-	//   - Stdin == nil (default): legacy behaviour. The helper writes
+	//   - Stdin == nil (default): the helper writes
 	//     Prompt once and closes stdin immediately. Use this for one-shot
 	//     prompt pipelines.
 	//   - Stdin != nil: the helper enables long-lived stdin. Prompt (if
@@ -218,6 +218,12 @@ const interruptedExitCode = -1
 // Run executes the requested command and streams raw stdout/stderr chunks to
 // sink and (optionally) the Observe callback. The returned CommandResult
 // always contains the full captured RawStreams, regardless of exit status.
+// Once a process starts, a non-zero exit, signal, or context-driven process
+// termination is represented in CommandResult rather than returned as an
+// error. This lets the Driver parse the complete provider protocol first;
+// the common invocation boundary supplies a structured fallback when the
+// provider protocol offers no more specific failure. Returned errors are
+// reserved for launch, pipe, observation, and other helper failures.
 func Run(ctx context.Context, req CommandRequest, sink driver.EventSink) (CommandResult, error) {
 	command, args, err := prepareCommand(req.Command, req.Args)
 	if err != nil {
@@ -272,7 +278,7 @@ func Run(ctx context.Context, req CommandRequest, sink driver.EventSink) (Comman
 
 	writeErr := make(chan error, 1)
 	if req.Stdin == nil {
-		// Legacy one-shot prompt path.
+		// Default one-shot prompt path.
 		go func() {
 			_, copyErr := stdinPipe.Write([]byte(req.Prompt))
 			closeErr := stdinPipe.Close()

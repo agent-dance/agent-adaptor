@@ -1,7 +1,7 @@
 //go:build codebuddy_live
 
 // Package codebuddy live tests exercise the real CodeBuddy CLI through the
-// v1 Agent/Thread/Stream API. They remain opt-in because they require a
+// Agent/Thread/Stream API. They remain opt-in because they require a
 // logged-in CLI and may make paid provider calls.
 package codebuddy
 
@@ -16,9 +16,9 @@ import (
 	"testing"
 	"time"
 
+	adaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/memory"
-	adaptor "github.com/agent-dance/agent-adaptor"
 )
 
 func envOr(key, fallback string) string {
@@ -32,6 +32,9 @@ func codebuddyCLIName() string { return "codebuddy" }
 
 func requireCodeBuddyCLI(t *testing.T) {
 	t.Helper()
+	if os.Getenv("AGENT_ADAPTOR_LIVE_CONFORMANCE") != "1" {
+		t.Skip("set AGENT_ADAPTOR_LIVE_CONFORMANCE=1 in addition to -tags codebuddy_live")
+	}
 	if _, err := exec.LookPath(codebuddyCLIName()); err != nil {
 		t.Skipf("%s CLI not in PATH", codebuddyCLIName())
 	}

@@ -11,23 +11,16 @@ import (
 	"github.com/agent-dance/agent-adaptor/driver"
 )
 
-// ============ Approvals (P1.3, design doc §2.6): the request answers itself ============
+// Approval requests support two consumption forms:
 //
-// The legacy surface — requestID bookkeeping, ResolveDecision round-trips,
-// kind-mismatch runtime errors, and 3×2 typed handler options — collapses to
-// two consumption forms of one type:
-//
-//	Form A, callback:  adaptor.OnApproval(func(ctx, req *ApprovalRequest) error { ... })
-//	Form B, event:     case *adaptor.ApprovalRequest: on the Stream — store it,
-//	                   answer later from any goroutine.
+//	Callback: adaptor.OnApproval(func(ctx, req *ApprovalRequest) error { ... })
+//	Event:    case *adaptor.ApprovalRequest: on the Stream; answer it from any goroutine.
 //
 // The responder lives on the request (Approve / Deny / Answer), so a kind
-// mismatch is impossible below the method level, and timeout / retry /
-// fallback semantics live in Policy.Approvals (the legacy HumanDecisionPolicy
-// semantics, unchanged).
+// mismatch is rejected by the response methods. Timeout, retry, and fallback
+// behavior is controlled exclusively by Policy.Approvals.
 
-// ApprovalKind labels the semantic category of an approval request. The
-// values are the legacy HumanDecisionKind taxonomy.
+// ApprovalKind labels the semantic category of an approval request.
 type ApprovalKind string
 
 const (
@@ -45,8 +38,8 @@ type Choice = driver.DecisionChoice
 
 // ApprovalPolicy carries the timeout / fallback / retry knobs for approval
 // requests, plus the per-kind routing modes. It aliases the driver SPI
-// HumanDecisionPolicy — the semantics are the legacy ones, unchanged:
-// zero-valued fields inherit the SDK defaults (Permission/PlanReview ask,
+// HumanDecisionPolicy. Zero-valued fields inherit the package defaults
+// (Permission/PlanReview ask,
 // Question auto-deny, 30s timeout, abort on timeout/reject, 3 max retries).
 type ApprovalPolicy = driver.HumanDecisionPolicy
 
@@ -95,8 +88,10 @@ const (
 	FallbackRetry FallbackAction = driver.FailureRetry
 )
 
-// ApprovalsAutoDeny is the ApprovalPolicy preset that denies every approval
-// kind without asking — the unattended-worker setting (scenario S4).
+// ApprovalsAutoDeny is the ApprovalPolicy preset that explicitly denies every
+// approval kind without asking. The bound Driver must advertise AutoReject
+// for all three kinds; use a zero ApprovalPolicy for the portable conservative
+// defaults when that capability is unavailable.
 var ApprovalsAutoDeny = ApprovalPolicy{
 	Permission: driver.HumanDecisionAutoReject,
 	PlanReview: driver.HumanDecisionAutoReject,
@@ -111,7 +106,7 @@ type ApprovalHandler func(ctx context.Context, req *ApprovalRequest) error
 
 // ApproveAll returns a ready-made handler that approves every Permission
 // and PlanReview request. Questions are denied: they have no legitimate
-// synthesized answer (same rule as the legacy autonomous preset).
+// synthesized answer.
 func ApproveAll() ApprovalHandler {
 	return func(ctx context.Context, req *ApprovalRequest) error {
 		if req.Kind == ApprovalQuestion {
@@ -144,8 +139,8 @@ var (
 	// can never be answered.
 	ErrApprovalUnavailable = errors.New("adaptor: approval responder unavailable")
 	// ErrApprovalExpired identifies a request whose response window or owning
-	// run ended. It wraps ErrApprovalResolved so callers which only distinguish
-	// first response from subsequent responses remain compatible.
+	// run ended. It wraps ErrApprovalResolved so callers can treat every late
+	// response as an already-resolved request while still detecting expiry.
 	ErrApprovalExpired = fmt.Errorf("%w: request expired", ErrApprovalResolved)
 )
 
@@ -179,10 +174,11 @@ type ApprovalRequest struct {
 	// Details carries driver-specific structured request data.
 	Details map[string]any
 
-	// CreatedAt / Deadline bound the response window; after Deadline the
-	// ApprovalPolicy OnTimeout fallback applies.
+	// CreatedAt is when the current approval attempt was created.
 	CreatedAt time.Time
-	Deadline  time.Time
+	// Deadline bounds the response window; after it the ApprovalPolicy
+	// OnTimeout fallback applies.
+	Deadline time.Time
 
 	// Attempt is the zero-based retry attempt (FallbackRetry re-asks).
 	Attempt int

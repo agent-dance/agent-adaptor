@@ -5,8 +5,8 @@ import (
 	"strings"
 
 	"github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/internal/adapterutil"
 	"github.com/agent-dance/agent-adaptor/internal/configprobe"
+	"github.com/agent-dance/agent-adaptor/internal/driverutil"
 )
 
 const (
@@ -46,10 +46,10 @@ func claudeDefaultModel(bindings []driver.EnvBinding) string {
 }
 
 func claudeBedrockEnabled(bindings []driver.EnvBinding) bool {
-	if enabled, _ := adapterutil.ResolvedTruthyEnv(bindings, "CLAUDE_CODE_USE_BEDROCK"); enabled {
+	if enabled, _ := driverutil.ResolvedTruthyEnv(bindings, "CLAUDE_CODE_USE_BEDROCK"); enabled {
 		return true
 	}
-	_, source := adapterutil.ResolvedEnvValue(bindings, "ANTHROPIC_BEDROCK_BASE_URL")
+	_, source := driverutil.ResolvedEnvValue(bindings, "ANTHROPIC_BEDROCK_BASE_URL")
 	return source != ""
 }
 
@@ -100,7 +100,7 @@ func detectClaudeEffectiveModel(config Config, profile *driver.ProfileSelection)
 			Candidates: []string{model},
 		}, nil
 	}
-	// When a binding model is intentionally ignored in Bedrock mode, fall back
+	// When the configured model is intentionally ignored in Bedrock mode, fall back
 	// to the operator's local Claude config so admin surfaces stay truthful.
 	bindings, err := effectiveClaudeBindings(config.CommonConfig, profile)
 	if err != nil {

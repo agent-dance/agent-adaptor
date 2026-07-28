@@ -11,8 +11,8 @@ const (
 	WorkspaceStrategyProjectPrimary WorkspaceStrategyType = "project_primary"
 	// WorkspaceStrategyGitWorktree provisions a separate git worktree.
 	WorkspaceStrategyGitWorktree WorkspaceStrategyType = "git_worktree"
-	// WorkspaceStrategyAdapterManaged delegates workspace selection to the driver.
-	WorkspaceStrategyAdapterManaged WorkspaceStrategyType = "adapter_managed"
+	// WorkspaceStrategyDriverManaged delegates workspace selection to the Driver.
+	WorkspaceStrategyDriverManaged WorkspaceStrategyType = "driver_managed"
 	// WorkspaceStrategyCloudSandbox represents an externally managed sandbox.
 	WorkspaceStrategyCloudSandbox WorkspaceStrategyType = "cloud_sandbox"
 )
@@ -82,17 +82,14 @@ type RuntimeServiceRef struct {
 	OwnerAgentID string
 	Health       RuntimeServiceHealth
 	// MCP, when non-nil, declares the MCP server this runtime service exposes
-	// to the run. It is the typed replacement for the legacy
-	// "agentadaptor.mcp.*" Metadata keys: when MCP is set the legacy keys are
-	// ignored entirely; when it is nil the legacy keys are still parsed as a
-	// migration-period fallback (removed in v1.0). MCPServerSpec's
-	// consumer-facing alias is mcp.Server, so hosts typically assign a value
-	// built with the mcp package constructors. An empty Key defaults to the
-	// ref's Name (then ID); an empty URL/Command defaults from the ref's
-	// URL/Command according to the transport.
+	// to the run. Metadata is opaque and is never interpreted as an MCP
+	// declaration. MCPServerSpec's consumer-facing alias is mcp.Server, so
+	// hosts typically assign a value built with the mcp package constructors.
+	// An empty Key defaults to the ref's Name (then ID); an empty URL/Command
+	// defaults from the ref's URL/Command according to the transport.
 	MCP      *MCPServerSpec
 	Metadata map[string]string
-	// SecretEnv is a subprocess-only channel for runtime-issued secrets, such
+	// SecretEnv carries subprocess-only runtime-issued secrets, such
 	// as per-run MCP bearer tokens. The SDK strips these bindings from public
 	// runtime refs/reports and injects them only into driver process env.
 	SecretEnv []EnvBinding
@@ -100,9 +97,9 @@ type RuntimeServiceRef struct {
 
 // RuntimePayload is the runtime-service equivalent of ResolvedSkills.
 //
-// Requested contains the desired runtime services declared by binding defaults,
-// config defaults, or per-run overrides. Ensured contains the concrete service
-// endpoints returned by RuntimeServiceManager.Ensure.
+// Requested contains the desired runtime services produced by Agent defaults,
+// construction config, and CallOption overrides. Ensured contains the concrete
+// service endpoints returned by the host ServiceManager.
 type RuntimePayload struct {
 	Requested   []RuntimeServiceSpec
 	Ensured     []RuntimeServiceRef
@@ -147,8 +144,8 @@ const (
 )
 
 // RuntimeServiceReport is the driver-facing execution report for one ensured
-// runtime service. It can simply echo the ensured refs, or carry richer status
-// data when the driver/runtime manager can observe more details.
+// runtime service. It records state actually observed during the invocation;
+// an input declaration alone must not be reported as successful execution.
 type RuntimeServiceReport struct {
 	ID           string
 	Name         string

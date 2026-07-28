@@ -10,19 +10,16 @@ import (
 	"github.com/agent-dance/agent-adaptor/driver"
 )
 
-// Skill, Ref, and Source are the driver-facing value types exchanged at the
-// core/SPI boundary. The host-side extension contracts below are deliberately
-// declared in this package so application code never depends on internal
-// engine types.
+// Skill, Ref, and Source are the values accepted by adaptor.WithSkills and by
+// the host extension contracts in this package.
 type (
 	// Skill is the full description of one skill: identity (Key),
 	// origin (Source), Required marker, human-readable Reason, and
 	// optional Metadata. Skill values act as [Ref], so constructor
-	// results can be passed straight to WithSkills /
-	// WithDefaultSkills.
+	// results can be passed straight to adaptor.WithSkills.
 	Skill = driver.Skill
 
-	// Ref is what WithSkills / WithDefaultSkills accept: either a
+	// Ref is what adaptor.WithSkills accepts: either a
 	// provider catalogue key (built with [Key]) or a fully-defined
 	// [Skill] value (built with [Dir], [FS], [Inline], or [Archive]).
 	Ref = driver.SkillRef
@@ -34,45 +31,55 @@ type (
 )
 
 // PathSource sources a skill from a local directory containing SKILL.md.
-type PathSource struct{ Path string }
+type PathSource struct {
+	// Path is the skill directory.
+	Path string
+}
 
 // SkillSource implements [Source].
 func (PathSource) SkillSource() {}
 
-// SkillPath exposes the source to the SDK's materialization boundary without
-// coupling this public package to the internal engine.
+// SkillPath returns the directory consumed by a compatible materializer.
 func (s PathSource) SkillPath() string { return s.Path }
 
 // FSSource sources a skill from an io/fs.FS tree rooted at Root.
 type FSSource struct {
-	FS   fs.FS
+	// FS contains the skill tree.
+	FS fs.FS
+	// Root locates the skill directory within FS. Empty and "." mean the FS root.
 	Root string
 }
 
 // SkillSource implements [Source].
 func (FSSource) SkillSource() {}
 
-// SkillFS exposes the source to the SDK's materialization boundary.
+// SkillFS returns the filesystem and root consumed by a compatible materializer.
 func (s FSSource) SkillFS() (fs.FS, string) { return s.FS, s.Root }
 
 // InlineSource carries a single SKILL.md document.
-type InlineSource struct{ SkillMD string }
+type InlineSource struct {
+	// SkillMD is the complete SKILL.md content.
+	SkillMD string
+}
 
 // SkillSource implements [Source].
 func (InlineSource) SkillSource() {}
 
-// InlineSkillMD exposes the source to the SDK's materialization boundary.
+// InlineSkillMD returns the SKILL.md content consumed by a compatible materializer.
 func (s InlineSource) InlineSkillMD() string { return s.SkillMD }
 
 // Provider resolves catalogue keys into concrete skills for a run. Providers
 // may additionally return Required skills that were not explicitly requested.
 type Provider interface {
+	// GetSkills resolves the requested catalogue keys. Implementations may also
+	// include skills marked Required.
 	GetSkills(ctx context.Context, keys []string) (map[string]Skill, error)
 }
 
 // Catalog extends [Provider] with deterministic catalogue enumeration.
 type Catalog interface {
 	Provider
+	// Catalogue returns the skills available from the provider.
 	Catalogue(ctx context.Context) ([]Skill, error)
 }
 
@@ -131,15 +138,19 @@ func (s Set) lookup(key string) (Skill, bool) {
 
 // Materializer writes a skill source to a directory containing SKILL.md.
 type Materializer interface {
+	// Materialize makes s available in a directory containing SKILL.md and
+	// returns that directory.
 	Materialize(ctx context.Context, s Skill) (sourcePath string, err error)
 }
 
 // Reserved Metadata keys interpreted by the SDK and drivers. Setting
 // MetadataRuntimeName on a Skill overrides the directory name the
-// materializer writes (and drivers mount); MetadataDisplayName is an
-// admin-UI friendly alias.
+// materializer writes and drivers mount. MetadataDisplayName provides a
+// human-readable label for inspection and user interfaces.
 const (
+	// MetadataRuntimeName is the metadata key for the provider-visible directory name.
 	MetadataRuntimeName = driver.SkillMetadataRuntimeName
+	// MetadataDisplayName is the metadata key for a human-readable skill name.
 	MetadataDisplayName = driver.SkillMetadataDisplayName
 )
 

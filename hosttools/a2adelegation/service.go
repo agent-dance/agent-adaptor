@@ -1,24 +1,17 @@
 package a2adelegation
 
-// Service (P4.6, design doc §9.7): the one-stop delegation entry that
-// consolidates what hosts previously hand-wired per example — Registry +
-// EventBus + Delegator + per-run MCP sidecar (random bearer token, loopback
-// listener, http.Server lifecycle) + result recording — into a single type.
-// The separate components remain exported and independently usable; Service
-// only composes them.
+// Service is the one-stop delegation entry: Registry + EventBus + Delegator +
+// authenticated per-run MCP sidecar + result recording. The separate
+// components remain exported for lower-level host composition.
 //
-//	team, err := delegation.NewService(delegation.Config{
-//	    Agents: []delegation.AgentRef{
-//	        delegation.Local("plan", planner, delegation.Policy{MaxTimeout: t}),
-//	        delegation.Remote("review", reviewCardURL, delegation.Policy{MaxTimeout: t}),
+//	team, err := a2adelegation.NewService(a2adelegation.Config{
+//	    Agents: []a2adelegation.AgentRef{
+//	        a2adelegation.Local("plan", planner, a2adelegation.Policy{}),
+//	        a2adelegation.Remote("review", reviewCardURL, a2adelegation.Policy{}),
 //	    },
-//	    ToolTimeout: t + 30*time.Second,
-//	    Observe:     func(ev delegation.Event) { term.Live(ev) },
 //	})
 //	defer team.Close()
-//	...
-//	review, ok := team.Result(stream.RunID(), "review")
-//	if !ok || !review.HasLine(reviewApprovalSentinel) { ... }
+//	leader := adaptor.New(leaderDriver, team.Option())
 
 import (
 	"context"
@@ -34,7 +27,8 @@ import (
 // already delegated) still see the full recent event history.
 const defaultReplayLimit = 256
 
-// Config configures NewService.
+// Config configures NewService. Agents is required; all other fields have
+// conservative local defaults.
 type Config struct {
 	// Agents is the delegation table: Local, Remote, and RemoteAgent refs
 	// mix freely. At least one entry is required.
@@ -197,7 +191,8 @@ func (s *Service) clientFactory(spec RemoteAgentSpec) A2AClient {
 // EnsureSidecar returns the per-run MCP endpoint for runID, starting it on
 // first use. Idempotent per run: repeated calls return the same URL and
 // token. The endpoint serves the delegate_to_agent tool authenticated by
-// Sidecar.BearerToken; point the leader driver's mcp_servers entry at it.
+// Sidecar.BearerToken. Agent integrations should prefer Option or
+// adaptor.WithRunServices, which publishes the typed MCP declaration safely.
 func (s *Service) EnsureSidecar(runID string) (Sidecar, error) {
 	runID = strings.TrimSpace(runID)
 	if runID == "" {
@@ -238,7 +233,7 @@ func (s *Service) Delegate(ctx context.Context, req DelegationRequest) (Delegati
 }
 
 // Result returns the recorded final DelegationResult of the given run and
-// agent key (§9.7: team.Result(stream.RunID(), "review")). The result is
+// agent key. The result is
 // recorded by the Service's lifecycle hook before the terminal delegation
 // event reaches the bus, so a consumer that just saw a terminal event can
 // read the result without further synchronization. When the same agent was
@@ -288,8 +283,9 @@ func (s *Service) Delegations(runID string) []DelegationResult {
 	return out
 }
 
-// Bus exposes the shared EventBus (bridge attachment point:
-// subagentstream.Merge(stream, service.Bus())).
+// Bus exposes the shared EventBus for component-level subscribers. Ordinary
+// Agent integration should use Option or adaptor.WithRunServices, which folds
+// these events into the leader's existing Event stream.
 func (s *Service) Bus() *EventBus { return s.bus }
 
 // Registry exposes the delegation registry (read-only usage expected).
@@ -326,7 +322,7 @@ func (s *Service) ReleaseRun(runID string) error {
 
 // Close shuts down every sidecar, stops every observer, clears bus state,
 // and waits for observer callbacks to drain. Idempotent; safe to defer
-// immediately after NewService (§9.7). Recorded results remain readable.
+// immediately after NewService. Recorded results remain readable.
 func (s *Service) Close() error {
 	s.mu.Lock()
 	if s.closed {

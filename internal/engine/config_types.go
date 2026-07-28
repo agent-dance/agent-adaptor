@@ -76,8 +76,6 @@ const (
 	CodeBuddyPermissionDontAsk CodeBuddyPermissionMode = "dontAsk"
 	// CodeBuddyPermissionBypass skips all permission prompts.
 	CodeBuddyPermissionBypass CodeBuddyPermissionMode = "bypassPermissions"
-	// CodeBuddyPermissionFullAccess skips ALL permission checks.
-	CodeBuddyPermissionFullAccess CodeBuddyPermissionMode = "fullAccess"
 )
 
 // ReasoningEffort is the Codex reasoning effort flag value.

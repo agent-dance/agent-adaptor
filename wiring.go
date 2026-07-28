@@ -8,15 +8,10 @@ import (
 	"github.com/agent-dance/agent-adaptor/internal/engine"
 )
 
-// This file is the P3 request-resolution pipeline: it turns the merged
-// effective settings of one invocation into a fully-populated driver.Request
-// in the exact order of the legacy resolveInvocation path — schema-error
-// short-circuit, instructions preparation, structured output negotiation,
-// prompt instruction injection, MCP validation, skill resolution +
-// injection, profile resource payload assembly. Semantic blocks are engine
-// truth (ResolveSkills / ResolveMCPPayloadWithRuntime / Prepare* /
-// BuildProfilePayload / FinalizeStructuredOutput); only the pass-through
-// field mapping is local.
+// The request-resolution pipeline turns the merged effective settings of one
+// invocation into a fully populated driver.Request. It validates option-time
+// schema errors, prepares instructions, negotiates structured output, resolves
+// MCP and skills, and assembles the profile payload before Driver.Run starts.
 
 // resolvedRun is everything the invocation coordinator needs from one
 // resolution: the request itself and the normalized schema + negotiated
@@ -34,7 +29,7 @@ type resolvedRun struct {
 // ErrSkillNotFound, ...).
 func (a *Agent) resolveRun(ctx context.Context, runID, prompt string, eff *RunSettings, res *runResources) (resolvedRun, error) {
 	// 1. Schema construction failures recorded at option-build time fail
-	// the run before anything else (legacy outputSchemaErr short-circuit).
+	// the run before anything else.
 	if eff.outputSchemaErr != nil {
 		return resolvedRun{}, eff.outputSchemaErr
 	}
@@ -49,8 +44,8 @@ func (a *Agent) resolveRun(ctx context.Context, runID, prompt string, eff *RunSe
 		policy = eff.policy.driverPolicy()
 	}
 
-	// 2. Instructions: the merged bundle is normalized exactly like the
-	// legacy path (trim, path/content exclusivity, file fingerprint).
+	// 2. Instructions: normalize whitespace, path/content exclusivity, and
+	// file fingerprints before the Driver observes the bundle.
 	instructions, err := engine.PrepareInstructionsBundle(eff.instructions)
 	if err != nil {
 		return resolvedRun{}, err
@@ -97,11 +92,10 @@ func (a *Agent) resolveRun(ctx context.Context, runID, prompt string, eff *RunSe
 	}
 
 	// 5. Skills: defaults below the clone boundary carry the default
-	// source label, per-call appends above it carry the run label —
-	// preserving the legacy default/run source semantics inside the
-	// merger. The candidate pool is the agent defaults (run-path rule);
+	// source label, while per-call appends above it carry the run label.
+	// The candidate pool is the agent defaults;
 	// an Inspect-level SelectSkills override substitutes the default refs
-	// exactly like the legacy admin selection.
+	// for this resolution.
 	defaultRefs := a.skillDefaultRefs(eff.skills[:eff.defaultSkillBoundary])
 	runRefs := eff.skills[eff.defaultSkillBoundary:]
 	candidates := eff.skills[:eff.defaultSkillBoundary]
@@ -151,7 +145,7 @@ func (a *Agent) resolveRun(ctx context.Context, runID, prompt string, eff *RunSe
 
 	// 7. Request assembly: base fields via buildRequest, resolved payloads
 	// overlaid. The payloads are single-use values built above, so direct
-	// assignment preserves the legacy defensive-copy guarantees.
+	// assignment preserves the pipeline's defensive-copy guarantees.
 	req := buildRequest(runID, prompt, eff)
 	res.applyRequest(&req)
 	req.Instructions = instructions
@@ -180,8 +174,7 @@ func providerRichTransport(d driver.Driver) bool {
 
 // skillDefaultRefs returns the default-scope skill refs for one resolution:
 // the SelectSkills override when one is active (bare keys re-resolved
-// through the provider, exactly like the legacy admin selectedRefsFor),
-// otherwise the agent-default refs.
+// through the provider), otherwise the agent-default refs.
 func (a *Agent) skillDefaultRefs(defaults []driver.SkillRef) []driver.SkillRef {
 	a.mu.Lock()
 	selection := a.skillSelection

@@ -1,7 +1,7 @@
-# agent-adaptor v1 API 重设计提案 — 以 SDK 使用方为中心
+# agent-adaptor v1 API 合同 — 以 SDK 使用方为中心
 
-> 状态：提案（未实施）。目标：抛弃历史包袱，从「易用、易理解、易扩展、可持续维护」出发重构公共 API。
-> 本文所有「现状」代码均来自当前仓库的真实示例与文档；所有「新 API」代码是提案目标形态。
+> 状态：已批准并已落地。本文定义 v1 的公共 API 语义，代码、测试与其他文档必须与此一致。
+> 本文的「Before」、「现状」与旧 API 名均是对 `v0.12.0` 的历史快照；「v1 最终形态」则是已落地合同，不是待实施方案。
 
 ---
 
@@ -13,7 +13,7 @@
 
 > 「我要**让 codex 在这个仓库里干活**，**记住这段对话**，**把过程流式推给前端**，**危险操作要人审批**，**结果要能解析成结构体**。」
 
-这句话里的每个名词/动词，都应该恰好对应一个 API 元素，而且只对应一个。新 API 一共 **6 个核心名词**：
+这句话里的每个名词/动词，都应该恰好对应一个 API 元素，而且只对应一个。v1 一共 **6 个核心名词**：
 
 | 名词 | 含义 | 取代现状中的 |
 |---|---|---|
@@ -26,7 +26,7 @@
 
 **量化对比：**
 
-| 维度 | 现状 | 新 API |
+| 维度 | v0.12.0 Before | v1 最终形态 |
 |---|---:|---:|
 | 根包 `With*` 选项函数 | 66 个 | ~24 个 |
 | 选项类型 | 3 种（`Option`/`AgentOption`/`RunOption`，调用点无法区分） | 1 套词汇、2 个作用域（同名选项在构造处=默认值，在调用处=本次覆盖） |
@@ -37,9 +37,9 @@
 
 ---
 
-## 1. 现状诊断：为什么必须重构
+## 1. v0.12.0 诊断：为什么必须重构
 
-以下每一条都有仓库内证据，不是审美偏好。
+以下每一条都是 `v0.12.0` Before 证据，不是对 v1 当前导出面的描述。
 
 ### 1.1 三种 Option 类型共用同一命名风格，调用点无法区分
 
@@ -83,27 +83,31 @@
 
 ---
 
-## 2. 新 API 全景
+## 2. v1 最终 API 全景
 
 ### 2.1 包布局：按「读者」分包，而不是按「功能」分包
 
 ```
-github.com/agent-dance/agent-adaptor          → package adaptor   （应用开发者，~35 个导出名）
+github.com/agent-dance/agent-adaptor          → package adaptor   （应用开发者，24 个 `With*` 名 + 约 13 个核心概念组）
 ├── driver/                                    → SPI（适配器作者专属：Driver、RunRequest、EventSink、能力接口）
 ├── codex/  claude/  cursor/  codebuddy/       → 各驱动的 Config + Driver() 构造器（配置回归各自的包）
 ├── skill/                                     → skill.Dir / skill.FS / skill.Archive / skill.Inline / skill.Key / Provider 接口
 ├── mcp/                                       → mcp.HTTP / mcp.Stdio / mcp.Server
 ├── profile/                                   → profile.Native / Dedicated / Clone / 资源声明（子 agent、hooks、config patch）
 ├── threadstore/  memory/                      → Thread 存储接口与内置实现
-├── bridges/{sse,agui,a2a,subagentstream}/     → 传输桥（现 pkg/bridges 提升一级）
-├── hosttools/{a2adelegation,sessionrecorder}/ → 宿主可选组件（现 pkg/hosttools）
-├── clients/a2a/                               → A2A 客户端（现 pkg/clients/a2a 提升一级）
+├── bridges/{sse,agui,a2a,subagentstream}/     → 传输桥
+├── hosttools/{a2adelegation,sessionrecorder}/ → 宿主可选组件
+├── clients/a2a/                               → A2A 客户端
 └── adaptertest/                               → 驱动一致性测试套件
 ```
 
 原则：**应用开发者只需要根包 + 一个驱动包就能完成 80% 的场景**；`skill` / `mcp` / `profile` 是需要时才 import 的「词汇扩展包」；`driver` 包把 SPI 从消费者视野里彻底移走。
 
-根包 package name 由 `agentadaptor` 改为 `adaptor`（import path 不变，goimports 自动处理别名）。备选：保持 `agentadaptor`，此项为低成本可逆决策。
+上述数量是心智负担指标：24 个 `With*` 名（其中 `WithEventMeta` 是 Event helper），再加 `OnApproval` / `ResumeOnly` / `Schema*` 等属于其各自概念组的小型构造器，以及 Agent、Thread、Stream、Event、Result、Driver 等约 13 个核心概念组。它不把每个枚举值、稳定 error sentinel、Event DTO 和为避免强制 import SPI 而提供的公共 alias 分别当作新概念，也不是“根包 AST 导出声明数必须 ≤35”的字面门禁。原始导出声明面由完整 AST golden 逐签名冻结，任何新增仍需显式评审。
+
+> **2026-07-27 设计勘误**：获批草稿原文确实写过“应用开发者，~35 个导出名”，实施计划也曾把“根包导出名 ≤~35”列为 P5.5 门禁；这不是原文从来没有的约束。最终 AST 机械清点为 229 个顶层导出标识符：64 个 const、35 个 var、41 个 func、89 个 type（53 个 defined type + 36 个 alias），另有 54 个具体类型导出方法。字面压到 35 会迫使删除同一设计明确要求的 typed Event/Result DTO、枚举、稳定错误、options 和跨 SPI alias，或把它们合并成不安全的字符串/`any` 接口，因此与设计自身的类型安全目标不可同时满足。接管实施将其明确修订为“24 个 `With*` 名 + 约 13 个概念组”的消费者心智门禁，同时用完整 AST golden 冻结全部 229 个声明及签名。该修订、构成和取舍也记录在 [`v1-takeover-audit.md`](./v1-takeover-audit.md)，不得再把它表述成未经说明的原始口径。
+
+根包 package name 为 `adaptor`，import path 保持 `github.com/agent-dance/agent-adaptor`。
 
 ### 2.2 Agent：构造即可用，没有中央 SDK 对象
 
@@ -116,7 +120,7 @@ res, err := agent.Run(ctx, "fix the failing tests")
 ```
 
 - `adaptor.New(d driver.Driver, opts ...Option) *Agent` 是唯一构造入口——学一次，所有驱动通用。根包提供别名 `type Driver = driver.Driver`，宿主在结构体字段等处引用该类型时无需 import SPI 包。
-- 驱动包只提供 `codex.Driver(codex.Config) driver.Driver`（以及给扩展作者的低层 `codex.NewAdapter`）。配置类型回归驱动自己的包。
+- 内置驱动包提供 `codex.Driver(codex.Config) driver.Driver`；第三方扩展方直接实现 `driver.Driver`。配置类型回归各自的驱动包。
 - **删除命名注册表**。多 agent = 多个 Go 变量；需要注册表的宿主自己写 `map[string]*adaptor.Agent`，这本来就是一行 Go。
 - 原 SDK 级注入（ThreadStore / WorkspaceManager / SkillProvider / ServiceManager / 事件缓冲）全部变为 Agent 构造选项；多个 Agent 共享同一个 store/manager 实例即可实现今天「一个 SDK 多个 binding」的共享效果。
 
@@ -138,7 +142,7 @@ res, err := agent.Run(ctx, prompt,
 )
 ```
 
-实现上采用三接口定稿（P0.1 spike 已验证，详见 [p0-option-scope-decision.md](./p0-option-scope-decision.md)）：`Option`（New 接受的全集）、`CallOption`（Run/Stream 接受，**有意不嵌入** Option）、`SharedOption`（双作用域，同时满足两者）。作用域非法的组合双向都是编译错误（如 `WithThreadStore` 用在 Run 上、仅调用处选项用在 New 上），IDE 即时红线，godoc 的返回类型即作用域文档。16 对 `WithDefaultX/WithX` 就此消失，语义规则只有一句话：**「近处覆盖远处；skills 追加、其余替换」**（与现状合并语义一致）。
+已落地的三接口为：`Option`（`New` 接受的全集）、`CallOption`（`Run`/`Stream` 接受，**有意不嵌入** `Option`）、`SharedOption`（双作用域，同时满足两者）。作用域非法的组合双向都是编译错误（如 `WithThreadStore` 用在 `Run` 上、仅调用处选项用在 `New` 上），IDE 即时红线，godoc 的返回类型即作用域文档。16 对 `WithDefaultX/WithX` 就此消失，语义规则只有一句话：**「近处覆盖远处；skills 追加、其余替换」**。选项作用域的决策与验证记录见 [归档文档](./archive/p0-option-scope-decision.md)。
 
 核心选项词汇（全集，约 24 个）：
 
@@ -152,7 +156,7 @@ res, err := agent.Run(ctx, prompt,
 | 标注 | `WithMetadata(k, v)` `WithIdentity(Identity{...})` | 双 |
 | 资源 | `WithProfileResources(profile.Resources{...})` | 双 |
 | 模型 | `WithModel(m)` `WithTimeout(d)` | 双 |
-| 单次 | `WithSchema[T](...)` `WithoutTokenStream()` | 仅 Run/Stream |
+| 单次 | `WithSchema[T](...)` | 仅 Run/Stream |
 | 构造 | `WithThreadStore(s)` `WithProfile(profile.Dedicated(dir))` `WithWorkspaceManager(m)` `WithSkillProvider(p)` `WithSkillMaterializer(m)` `WithServiceManager(m)` `WithEventBuffer(n)` `WithBlockingEvents()` | 仅 New |
 
 `skill` / `mcp` 包提供一行式构造器，消灭嵌套结构体：
@@ -164,6 +168,10 @@ adaptor.WithMCP(
 )
 adaptor.WithSkills(skill.Dir("./skills/write-proof"), skill.Key("code-review"))
 ```
+
+`WithPolicy` 按整体替换。每一个显式（非 inherit）的 `Sandbox`/`WebSearch`/`Browser` 值，以及 Permission/PlanReview/Question 的显式审批模式，都是对 `driver.Descriptor.RunPolicyCaps` 的严格能力要求。不支持时必须在获取资源和调用 `Driver.Run` 前返回结构化错误，不得静默丢弃或降级。
+
+`ApprovalsAutoDeny` 会对 Permission、PlanReview 和 Question 全部显式设置 AutoReject，因此只能用于三种 Kind 均声明 AutoReject 的 Driver；它不是跨 Driver 通用的「非交互」开关。当 Driver 没有这组能力时，应保留零值 `ApprovalPolicy` 的保守默认，或像仓库 showcase 一样根据已选 Driver 构造 capability-aware policy。
 
 ### 2.4 Thread：对话就是对话，不是 (Namespace, Key, Mode) 三元组
 
@@ -178,7 +186,7 @@ locked := agent.Thread("k", adaptor.ResumeOnly())     // 只续不建（continue
 branch := th.Fork("tenant-1/issue-123-alt")           // 分叉（fork）
 ```
 
-- Thread key 是宿主自己的业务字符串（多租户自行拼 `"tenant/key"` ——现状 SSE bridge 的 wire 格式 `"ns/thread-id"` 已经证明这就是宿主的真实用法）。
+- Thread key 是宿主提供的单一、不透明业务字符串，SDK 必须逐字保存和比较。宿主或 bridge 需要合成多个维度时，必须使用无碰撞编码，不得靠未转义分隔符拼接。
 - 4 种 SessionMode 变成 4 个**有名字的动作**，不再是传给结构体的枚举。
 - `SessionID`（驱动 resume 句柄）降级为内部实现细节，需要审计的宿主用 `th.Checkpoint()` 获取。四层 ID 变两层：**你起的名字（thread key）和 SDK 给的执行号（run ID）**。
 - `Thread` 与 `Agent` 都实现 `Runner` 接口（`Run` + `Stream`），所以 bridges、`RunAs[T]`、宿主工具对两者一视同仁。
@@ -186,7 +194,7 @@ branch := th.Fork("tenant-1/issue-123-alt")           // 分叉（fork）
 
 ### 2.5 Stream + Event：一条事件流，一次 for-range
 
-`Run` = 批处理语义，`Stream` = 流式语义。**动词本身就是开关**，`WithStreaming()` / `WithoutStreaming()` / `WithDefaultStreaming()` 三个选项、以及 `Events()` 与 `StreamEvents()` 两条通道的辨析，全部删除。
+`Run` 是批处理便利形态，严格等价于 `Stream` + drain Events + `Result()`；`Stream` 把同一管线的事件暴露给消费者。`WithStreaming()` / `WithoutStreaming()` / `WithDefaultStreaming()` 三个公共选项，以及 `Events()` 与 `StreamEvents()` 两条通道的辨析，全部删除。provider transport 是另一个维度，必须由 resolved invocation 和 Driver capability 明确协商，不得仅因消费者调用 `Run` 或 `Stream` 就静默切换协议。
 
 ```go
 stream := th.Stream(ctx, userMsg)
@@ -222,7 +230,6 @@ res, err := stream.Result()                    // 收口：最终结果 + 错误
 res, err := agent.Run(ctx, "refactor the auth module",
     adaptor.OnApproval(func(ctx context.Context, req *adaptor.ApprovalRequest) error {
         if req.Kind == adaptor.ApprovalPermission {
-            // 注：风险分级 req.Risk() 推迟到驱动 SPI 有真实风险信号源后再加（实施计划 D12）
             return req.Approve(ctx)
         }
         fmt.Printf("[%s] %s\n(y/N): ", req.Kind, req.Title)
@@ -243,7 +250,7 @@ req, _ := pending.Load(id)
 req.(*adaptor.ApprovalRequest).Answer(ctx, chosenOption)
 ```
 
-- `ApprovalRequest` 统一三种 Kind（Permission / PlanReview / Question），带 `Approve` / `Deny(reason)` / `Answer(option)` 方法，**应答器就在请求上**，没有跨对象的 requestID 往返，kind 不匹配在方法级即不可能发生。
+- `ApprovalRequest` 统一三种 Kind（Permission / PlanReview / Question），带 `Approve` / `Deny(reason)` / `Answer(option)` 方法，**应答器就在请求上**，没有跨对象的 requestID 往返。应答 exactly-once；重复应答、Kind 不匹配、请求过期或未绑定 responder 均立即返回稳定错误，不得阻塞。
 - 超时 / 重试 / 兜底策略并入 `Policy.Approvals`（现 `HumanDecisionPolicy` 语义不变）。
 - 预设策略：`adaptor.ApproveAll()`、`adaptor.DenyAll(reason)` 作为现成 handler。
 
@@ -265,7 +272,7 @@ fmt.Println(res.Text)
 
 - 「业务失败」不再是成功返回值里的 `Failure` 字段，而是**类型化的 error**（携带完整 `Result`），与 Go 的 `*exec.ExitError` 惯例一致。使用方只有一条判定路径。
 - 哨兵错误保留匹配能力：`errors.Is(err, adaptor.ErrApprovalDenied)` 等。
-- `Result` 瘦身分组：高频字段平铺（`Text` / `Summary` / `Usage` / `Model`），审计字段收拢（`res.Raw()` 返回 stdout/stderr/终端 payload；`res.Transcript()`；`res.Services()`），`res.Decode(&v)` 解结构化输出。字段能力一个不丢，godoc 首屏只有使用方每天要看的东西。
+- `Result` 瘦身分组：高频字段平铺（`Text` / `Summary` / `Usage` / `Model`），审计字段收拢（`res.Raw()` 返回 stdout/stderr/终端 payload；`res.Transcript()`；`res.Services()`），`res.Decode(&v)` 解结构化输出。`Usage` 为指针：`nil` 表示 provider 未报告，非 nil 零值表示已观测且所有归一化指标确为零。
 
 ### 2.8 结构化输出：一个泛型动词
 
@@ -280,7 +287,7 @@ review, res, err := adaptor.RunAs[Review](ctx, reviewer, "review the diff")
 
 - `RunAs[T]` 接受任何 `Runner`（Agent 或 Thread），内部完成 schema 派生、模式协商、校验、解码。
 - 流式/手动场景用选项：`agent.Stream(ctx, p, adaptor.WithSchema[Review]())` + `res.Decode(&review)`。
-- 三种执行模式收敛为 `WithSchema` 的模式参数：`schema.Strict()`（默认，仅 provider 原生约束）/ `schema.Flexible()`（原生优先，允许提示词+本地校验回退）/ `schema.PromptOnly()`。能力矩阵仍由 `driver.Descriptor` 真话声明，不支持即启动前报错。
+- 三种执行模式收敛为 `WithSchema` 的根包模式参数：`adaptor.SchemaStrict()`（默认，仅 provider 原生约束）/ `adaptor.SchemaFlexible()`（原生优先，允许提示词+本地校验回退）/ `adaptor.SchemaPromptOnly()`。能力矩阵由 `driver.Descriptor` 真话声明，不支持即启动前报错。
 
 ### 2.9 Inspect / Profile：管理面按用途命名
 
@@ -308,17 +315,17 @@ package driver
 
 type Driver interface {
     Descriptor() Descriptor
-    Validate(cfg any) error
+    ValidateConfig(cfg any) error
     Run(ctx context.Context, req Request, sink EventSink) (Response, error)
 }
 // 能力接口原样保留：EnvironmentProbe / ModelLister / ModelDetector / ProfileReporter /
-// QuotaProbe / ConfigSchemaProvider / SkillSupport / StreamSupport / SessionCodec
+// QuotaProbe / ConfigSchemaProvider / SkillSupport / StreamSupport / SessionCodecProvider
 ```
 
 - 消费者的 godoc 里再也看不到 `ResolvedSkills` / `EventSink` / `DriverRunRequest`。
 - `adaptor.Bind` / `BindTyped` 不再需要——`adaptor.New(myDriver, opts...)` 对第三方驱动与内置驱动完全同构。
 - `adaptertest` 升级为对 `driver.Driver` 的一致性套件，第三方驱动的验收路径不变。
-- RuntimeServiceRef 发布 MCP 的通道由 stringly metadata 升级为类型化字段 `RuntimeServiceRef.MCP *mcp.Server`（旧 metadata key 在迁移期兼容解析）。
+- RuntimeServiceRef 发布 MCP 只使用类型化字段 `RuntimeServiceRef.MCP`；`Metadata` 是不透明字段，不会被解释为 MCP 声明。
 
 ### 2.11 Bridges 与宿主工具：接口换新词，分层不变
 
@@ -338,7 +345,7 @@ subagentstream / a2adelegation / sessionrecorder 保持宿主可选层定位，�
 
 ### S1 · CLI 工具：一次性任务
 
-**现状（examples/codex-basic 形态）：**
+**Before（v0.12.0 一次性调用形态）：**
 
 ```go
 sdk := agentadaptor.New(
@@ -350,7 +357,7 @@ if result.Failure != nil { ... }        // 第二层判断，容易漏
 fmt.Println(result.Output)
 ```
 
-**新 API：**
+**v1 最终形态：**
 
 ```go
 agent := adaptor.New(codex.Driver(codex.Config{Model: "gpt-5.4"}))
@@ -366,7 +373,7 @@ fmt.Println(res.Text)
 
 **现状：** 注册表 + 字符串查找 + 两处错误处理（见 README「Multiple Agents」）。
 
-**新 API：agent 就是变量。**
+**v1 最终形态：agent 就是变量。**
 
 ```go
 coder    := adaptor.New(codex.Driver(codex.Config{Model: "gpt-5.4"}))
@@ -389,7 +396,7 @@ if review.Verdict != "approve" { ... }
 
 **现状：** `WithSessionStore` + `WithSessionKey(ns,key)` + `Start` + `WithStreaming()` + 区分 `Events`/`StreamEvents` + `DecisionRequests` channel + `ResolveDecision(requestID, ...)`，四层 ID 对照表就是为这个场景写的。
 
-**新 API：**
+**v1 最终形态：**
 
 ```go
 agent := adaptor.New(claude.Driver(claude.Config{Model: "claude-sonnet-4"}),
@@ -434,7 +441,14 @@ func resolve(w http.ResponseWriter, r *http.Request) {
 
 ```go
 agent := adaptor.New(codex.Driver(codex.Config{Model: "gpt-5.4"}),
-    adaptor.WithPolicy(adaptor.Policy{Sandbox: adaptor.WorkspaceWrite, Approvals: adaptor.ApprovalsAutoDeny}),
+    adaptor.WithPolicy(adaptor.Policy{
+        Sandbox: adaptor.WorkspaceWrite,
+        // Codex 声明 AutoApprove，但未声明 AutoReject；只设置它能强制的模式。
+        Approvals: adaptor.ApprovalPolicy{
+            Permission: adaptor.ApprovalAutoApprove,
+            PlanReview: adaptor.ApprovalAutoApprove,
+        },
+    }),
 )
 
 for job := range jobs {
@@ -454,7 +468,7 @@ for job := range jobs {
 
 **现状：** `WithJSONSchemaOutputFor[T](NativeStrictOutput(), StructuredOutputName(...))` + `DecodeStructuredOutput[T](res)` 两段式。
 
-**新 API：**
+**v1 最终形态：**
 
 ```go
 type Triage struct {
@@ -504,16 +518,16 @@ agent := adaptor.New(claude.Driver(cfg),
     )),
     adaptor.WithProfileResources(profile.Resources{
         Instructions: profile.Text("Follow ACME coding standards."),
-        SubAgents:    []profile.SubAgent{{Key: "tester", Instructions: "..."}},
+        Agents:       []profile.SubAgent{{Key: "tester", Instructions: "..."}},
     }),
 )
 ```
 
-### S9 · 团队协作 showcase：Claude 领队 + plan/impl/review 三个 A2A 角色（team-agent-workflow 全量重构）
+### S9 · 团队协作 showcase：一个领队 + plan/impl/review 三个本地 Runner
 
-> 现状代码：`examples/showcases/team-agent-workflow/`（分支 cl/opt_examples）——main.go 463 行 + roles.go 326 行 + delegation_runtime.go 323 行，共 1112 行核心编排（另有 fixture / trace / console 辅助）。这是仓库最复杂的展示案例，现状 API 的每一处摩擦在这里集中出现，故单列一章做全量对照。
+> 最终可运行示例位于 [`examples/showcases/team-agent-workflow/`](../examples/showcases/team-agent-workflow/)。下文的 Before 行数和 A2A localhost 回环均是 v0.12.0 历史快照；v1 实现已改为 `delegation.Local` 直接消费 `Runner`。
 
-**场景**：Claude 领队通过宿主注入的 `delegate_to_agent` MCP 工具，按 plan(Codex, 只读) → impl(Claude, 可写) → review(Codex, 只读) 顺序调度三个以 A2A 发布的角色；MCP sidecar 按 run 创建、带 per-run bearer token；远端执行过程实时回流渲染但**不进入领队的模型上下文**；工作区阶段边界与 review 结论由宿主审计。
+**场景**：领队通过宿主注入的 `delegate_to_agent` MCP 工具，按 plan（只读）→ impl（可写）→ review（只读）顺序调度三个本地 `Runner`；MCP sidecar 按 run 创建、带 per-run bearer token；子任务过程实时回流渲染但**不进入领队的模型上下文**；工作区阶段边界与 review 结论由宿主审计。Driver 由启动参数显式选择，示例不默认发起付费调用。
 
 **现状仪式清单：**
 
@@ -551,13 +565,13 @@ return []agentadaptor.RuntimeServiceRef{{
 
 外加手工 `net.Listen` / `http.Server` / serveErr channel / `ReleaseByRun` / `ReleaseByLabels` / `Close` 生命周期，以及为了拿回每次委托的 `DelegationResult` 而对 MCP HTTP body 做的 JSON 拦截解析。
 
-**新 API：**
+**v1 最终形态：**
 
 ```go
 team, err := delegation.NewService(delegation.Config{
-    Agents:      remoteSpecs,                       // plan/impl/review 的 RemoteAgentSpec（协议形状不变）
+    Agents:      refs,                              // delegation.Local(...) 产生的 AgentRef
     ToolTimeout: opts.roleTimeout + 30*time.Second, // 取代 withMCPToolTimeout 的 env 侧信道
-    Observe:     func(ev delegation.Event) { term.Live(ev) },
+    Tenant:      "example",
 })
 defer team.Close()
 ```
@@ -588,15 +602,15 @@ leaderBinding := claude.New(agentadaptor.ClaudeConfig{
 leaderSDK := newLeaderSDK(leaderBinding, runtimeManager, opts.webMode) // 又一层封装
 ```
 
-**新 API：**
+**v1 最终形态：**
 
 ```go
 leader := adaptor.New(
-    claude.Driver(claude.Config{Model: cfg.Model, PersistentProcess: true}),
+    exampleutil.NewLiveDriver(leaderCfg),
     adaptor.WithProfile(profile.CloneNative(fixture.ProfileDir("leader"), profile.LinkAuth())),
     adaptor.WithWorkspace(fixture.WorkspaceDir),
-    adaptor.WithPolicy(adaptor.Policy{Sandbox: adaptor.ReadOnly, Approvals: adaptor.ApprovalsAutoDeny}),
-    adaptor.WithIdentity(adaptor.Identity{Tenant: "example", User: "team-leader"}),
+    adaptor.WithPolicy(exampleutil.NonInteractivePolicy(leaderCfg.Agent, adaptor.ReadOnly)),
+    adaptor.WithIdentity(adaptor.Identity{ID: "team-leader", Tenant: "example", Name: "Team leader"}),
     adaptor.WithMetadata("example", "team-agent-workflow"),
     adaptor.WithMetadata("workflow_role", "leader"),
     team.Option(),      // 委托服务：service 声明 + manager + 过程事件汇入，一个选项接完
@@ -604,10 +618,10 @@ leader := adaptor.New(
 ```
 
 - `team.Option()` 展示 Option 作为接口的扩展性红利：**生态包可以发行自己的选项**。它一次接入三件事——runtime service 声明（现状要 `WithDefaultRuntimeServices` + `WithRuntimeServiceManager` 两处）、sidecar 生命周期、以及把委托过程事件汇入领队事件流（见 9.4）。
-- 隔离策略从每次调用的 `exampleutil.NonInteractiveRunOption(IsolationReadOnly)` 上移为构造期 `WithPolicy`——领队本来就永远只读。
+- 隔离策略从每次调用上移为构造期 `WithPolicy`——领队本来就永远只读。`exampleutil.NonInteractivePolicy` 根据已选 Driver 只设置它声明支持的非交互维度，不把 `ApprovalsAutoDeny` 当成通用开关。
 - web 模式的差异收敛为两个追加选项：`adaptor.WithThreadStore(memory.NewStore())` + `adaptor.WithInstructions(leaderProtocol)`。
 
-#### 9.3 角色发布：每角色一个 SDK → 每角色一个变量
+#### 9.3 角色注册：每角色一个 SDK + A2A 回环 → 每角色一个 Agent + `delegation.Local`
 
 **现状（roles.go 节选）：**
 
@@ -629,29 +643,30 @@ server := bridgea2a.NewServer(observeRoleRunner(role.Key, roleSDK.Default(), hub
     })
 ```
 
-**新 API：**
+**v1 最终形态：**
 
 ```go
-role := adaptor.New(def.Driver,     // codex.Driver(...) 或 claude.Driver(...)
-    adaptor.WithProfile(profile.CloneNative(fixture.ProfileDir(def.Key), profile.LinkAuth())),
+role := adaptor.New(def.Driver,
+    adaptor.WithProfile(profile.CloneNative(fixture.ProfileDir(def.Key),
+        profile.CopySettings(), profile.LinkAuth())),
     adaptor.WithWorkspace(fixture.WorkspaceDir),
-    adaptor.WithPolicy(adaptor.Policy{Sandbox: def.Sandbox, Approvals: adaptor.ApprovalsAutoDeny}),
+    adaptor.WithPolicy(exampleutil.NonInteractivePolicy(def.Agent, def.Sandbox)),
     adaptor.WithInstructions(def.Instructions),
+    adaptor.WithIdentity(adaptor.Identity{
+        ID: "team-" + def.Key, Tenant: "example", Name: def.DisplayName,
+    }),
     adaptor.WithMetadata("workflow_role", def.Key),
 )
-srv := a2a.NewServer(observe(def.Key, role, hub.Audit.Record), a2a.ServerOptions{
-    AgentCard: def.Card(baseURL),
-    Session:   a2a.Stateless(),
-    Prompt:    rolePrompt(def, fixture),
-    Exposure:  a2a.ExposurePolicy{IncludeToolCalls: true, IncludeReasoning: true},
-})
-mux.Handle(def.CardPath(), srv.AgentCardHandler())
-mux.Handle(def.RPCPath(), srv.Handler())
+refs = append(refs, delegation.Local(
+    def.Key,
+    observe(def.Key, role, term, audit.Record),
+    delegation.Policy{MaxTimeout: roleTimeout, RequireStreaming: true, MaxArtifactBytes: 1 << 20},
+))
 ```
 
-- per-role SDK 消失；`a2a.NewServer` 直接吃 `Runner`——Agent、Thread、装饰器同构。
-- 角色的只读/可写沙箱是角色的**固有属性**，落在构造期 `WithPolicy`；`ServerOptions.RunOptions` 转发层不再需要。
-- `RemoteAgentSpec` / `DelegationPolicy`（MaxTimeout / RequireStreaming / MaxArtifactBytes）保持原样——它们是协议形状，没有历史包袱。
+- per-role SDK、localhost listener、AgentCard 和 JSON-RPC 回环全部消失；`delegation.Local` 直接吃 `Runner`——Agent、Thread、装饰器同构。
+- 角色的只读/可写沙箱是角色的**固有属性**，落在构造期 `WithPolicy`。
+- `delegation.Remote` 仍保留给真正跨进程或跨组织的 A2A 目标，而不再为同进程角色强制增加协议跳转。
 
 #### 9.4 过程消费：3 个手工 goroutine → 1 个 for-range
 
@@ -679,7 +694,7 @@ if waitErr != nil { return fmt.Errorf("wait for Claude leader: %w", waitErr) }
 if result.Failure != nil { return fmt.Errorf("Claude leader failed: %s", result.Failure.Message) }
 ```
 
-**新 API：**
+**v1 最终形态：**
 
 ```go
 stream := leader.Stream(ctx, leaderPrompt(opts.roleTimeout))
@@ -708,14 +723,14 @@ if !ok || !review.HasLine(reviewApprovalSentinel) {
 ```
 
 - 空转 drain `Events()` 的义务、`sync.WaitGroup`、`bus.SubscribeRun` / `ClearRun` 簿记全部消失。
-- 委托过程事件（started / text.delta / artifact / finished…）由 `team.Option()` 汇入同一条流，成为 `adaptor.SubagentUpdate` 事件——**CLI 模式与 web 模式从此消费同一形状**。现状是两套写法：CLI 手工订阅 bus，web 靠 `sse.Options.SubagentBus` 叠加；新 API 里 web 模式就是 `sse.Handler(leader)`，SubagentUpdate 已在流上，无需额外选项。
+- 委托过程事件（started / text.delta / artifact / finished…）由 `team.Option()` 汇入同一条流，成为 `adaptor.SubagentUpdate` 事件——**CLI 模式与 web 模式从此消费同一形状**。v0.12.0 Before 是两套写法：CLI 手工订阅 bus，web 靠 `sse.Options.SubagentBus` 叠加；v1 中 web 模式就是 `sse.Handler(leader)`，SubagentUpdate 已在流上，无需额外选项。
 - 委托事件仍然只进宿主事件流、**不进领队模型上下文**（保持现有隔离原则）。实现要点：runtime service 在 Ensure 时已绑定 RunID，核心为宿主组件提供 per-run 事件注入口（内部 API），bridges 不再各自实现 overlay。
 
 #### 9.5 角色观测：3 个拦截点 → 2 个方法
 
 **现状：** `observedRoleRunner` 手工实现 `Run` / `Start`，再用 `observedRoleHandle` 包 `Wait`，共 3 个拦截点、~45 行；`logRoleResult` 里 `err` 与 `result.Failure` 双路径打印。
 
-**新 API：** `Runner` 只有 `Run` + `Stream` 两个方法，且 `Stream` 定义为小接口（`Events` / `Result` / `RunID` / `Cancel`），装饰与测试替身就是普通 Go 代码：
+**v1 最终形态：** `Runner` 只有 `Run` + `Stream` 两个方法，且 `Stream` 定义为小接口（`Events` / `Result` / `RunID` / `Cancel`），装饰与测试替身就是普通 Go 代码：
 
 ```go
 type observed struct {
@@ -724,7 +739,7 @@ type observed struct {
     record func(string)
 }
 
-func (o observed) Run(ctx context.Context, prompt string, opts ...adaptor.Option) (*adaptor.Result, error) {
+func (o observed) Run(ctx context.Context, prompt string, opts ...adaptor.CallOption) (*adaptor.Result, error) {
     started := time.Now()
     res, err := o.Runner.Run(ctx, prompt, opts...)
     logRole(o.role, started, res, err) // err 一元判定；业务失败用 errors.As 取 *RunError.Result
@@ -732,7 +747,7 @@ func (o observed) Run(ctx context.Context, prompt string, opts ...adaptor.Option
     return res, err
 }
 
-func (o observed) Stream(ctx context.Context, prompt string, opts ...adaptor.Option) adaptor.Stream {
+func (o observed) Stream(ctx context.Context, prompt string, opts ...adaptor.CallOption) adaptor.Stream {
     return observedStream{Stream: o.Runner.Stream(ctx, prompt, opts...), o: o, started: time.Now()}
 }
 
@@ -752,7 +767,7 @@ func (s observedStream) Result() (*adaptor.Result, error) {
 
 #### 9.6 量化对比
 
-| 维度 | 现状 | 新 API |
+| 维度 | v0.12.0 Before | v1 最终形态 |
 |---|---:|---:|
 | 中央对象 | 4 个 SDK 实例（领队 + 3 角色） | 0（4 个 `*adaptor.Agent` 变量） |
 | 手写委托运行时 | 323 行（delegation_runtime.go） | ~6 行 `delegation.NewService` 配置 |
@@ -761,360 +776,88 @@ func (s observedStream) Result() (*adaptor.Result, error) {
 | 委托过程消费形状 | CLI / web 两套（手工订阅 bus vs `SubagentBus` 选项） | 一套（`SubagentUpdate` 事件） |
 | 结果判定 | `err` + `Failure` 双检 ×2 处 | `if err != nil` |
 | 观测装饰器 | 3 拦截点 / ~45 行 | 2 方法 / ~25 行 |
-| 编排代码总量（main + roles + delegation_runtime） | 1112 行 | 粗估 ~450 行（约 -60%） |
+| 角色联通 | 每角色启动 localhost A2A server | `delegation.Local` 直接消费 `Runner` |
 
-这个案例正是 §0 那句话的团队版：「让 Claude 当领队，把 plan/impl/review 三个角色以 A2A 发布出去，领队通过一个 MCP 工具调度他们，全程可看、可审计。」——新 API 里每个子句恰好对应一个变量或一个选项。
+这个案例正是 §0 那句话的团队版：「让一个 Agent 当领队，把 plan/impl/review 三个 `Runner` 注册为可委托目标，领队通过一个 MCP 工具调度它们，全程可看、可审计。」——v1 里每个子句恰好对应一个变量或一个选项。
 
-#### 9.7 重构后完整示例（单文件全景）
+#### 9.7 已落地的完整示例
 
-> 现状的 main.go(463) + roles.go(326) + delegation_runtime.go(323) 收敛为下面这一个文件（~250 行）。
-> fixture / console / audit / rolePrompt / leaderProtocol 是纯宿主逻辑（临时 git 仓库、终端渲染、工作区阶段快照、给 review 附加 go test 证据、领队编排协议文本），与 SDK API 无关，原样保留，此处只引用。
->
-> R9 注记：`PersistentProcess` 常驻进程复用不在 v1.0.0 范围内，随 `cl/opt_examples` 合入 main 后以 `claude.Config` additive 字段形态开启（v1 API 形态不因此改变）；在此之前示例中以注释开关保留——见落地版 `examples/showcases/team-agent-workflow/main.go` 与 `examples/internal/exampleutil/live_agent.go`。
+最终源码以 [`examples/showcases/team-agent-workflow/main.go`](../examples/showcases/team-agent-workflow/main.go) 和同目录的宿主辅助代码为准。它是显式 live-only showcase：必须由调用者选择本地 Driver，普通测试和示例脚本不会发起付费调用。下面只摘录决定公共 API 形状的核心构造，避免在设计合同里复制一份会漂移的整文件：
 
 ```go
-// Command team-agent-workflow —— v1 API 重构版。
-//
-// Claude 领队通过宿主注入的 delegate_to_agent MCP 工具，按
-// plan(Codex, 只读) → impl(Claude, 可写) → review(Codex, 只读)
-// 的顺序调度三个以 A2A 发布的角色。全程在临时仓库与克隆 profile 中进行。
-package main
+roles := buildRoles(opts, fixture.WorkspaceDir)
+refs := make([]delegation.AgentRef, 0, len(roles))
+for _, def := range roles {
+    role := adaptor.New(def.Driver, append([]adaptor.Option{
+        adaptor.WithProfile(profile.CloneNative(
+            fixture.ProfileDir(def.Key), profile.CopySettings(), profile.LinkAuth(),
+        )),
+        adaptor.WithWorkspace(fixture.WorkspaceDir),
+        adaptor.WithPolicy(exampleutil.NonInteractivePolicy(def.Agent, def.Sandbox)),
+        adaptor.WithInstructions(def.Instructions),
+        adaptor.WithIdentity(adaptor.Identity{
+            ID: "team-" + def.Key, Tenant: "example", Name: def.DisplayName,
+        }),
+    }, def.Options...)...)
 
-import (
-	"context"
-	"errors"
-	"flag"
-	"fmt"
-	"net"
-	"net/http"
-	"net/url"
-	"os"
-	"os/signal"
-	"slices"
-	"strings"
-	"time"
+    refs = append(refs, delegation.Local(
+        def.Key,
+        observe(def.Key, role, term, audit.Record),
+        delegation.Policy{
+            MaxTimeout: opts.roleTimeout, RequireStreaming: true, MaxArtifactBytes: 1 << 20,
+        },
+    ))
+}
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/bridges/a2a"
-	"github.com/agent-dance/agent-adaptor/bridges/sse"
-	"github.com/agent-dance/agent-adaptor/claude"
-	"github.com/agent-dance/agent-adaptor/codex"
-	delegation "github.com/agent-dance/agent-adaptor/hosttools/a2adelegation"
-	"github.com/agent-dance/agent-adaptor/memory"
-	"github.com/agent-dance/agent-adaptor/profile"
-	"github.com/agent-dance/agent-adaptor/skill"
+team, err := delegation.NewService(delegation.Config{
+    Agents: refs, ToolTimeout: opts.roleTimeout + 30*time.Second, Tenant: "example",
+})
+if err != nil { return err }
+defer team.Close()
+
+leaderCfg := liveConfig(opts.leader, opts.model, opts.command, fixture.WorkspaceDir)
+leader := adaptor.New(exampleutil.NewLiveDriver(leaderCfg),
+    adaptor.WithWorkspace(fixture.WorkspaceDir),
+    adaptor.WithPolicy(exampleutil.NonInteractivePolicy(leaderCfg.Agent, adaptor.ReadOnly)),
+    adaptor.WithIdentity(adaptor.Identity{
+        ID: "team-leader", Tenant: "example", Name: "Team leader",
+    }),
+    team.Option(),
 )
 
-const (
-	workflowSentinel       = "TEAM_AGENT_WORKFLOW_OK"
-	reviewApprovalSentinel = "TEAM_REVIEW_APPROVED"
-)
-
-type options struct {
-	claudeModel, codexModel string
-	timeout, roleTimeout    time.Duration
-	keepWorkspace, webMode  bool
-	webAddr, webCORS        string
+stream := leader.Stream(ctx, leaderProtocol(opts.roleTimeout))
+for ev := range stream.Events() {
+    switch e := ev.(type) {
+    case adaptor.TextDelta:
+        term.Print(e.Text)
+    case adaptor.SubagentUpdate:
+        term.Live(e.Agent, string(e.Kind), e.Delta)
+    case adaptor.Dropped:
+        term.Warnf("dropped %d events", e.Count)
+    }
 }
-
-func main() {
-	var opts options
-	flag.StringVar(&opts.claudeModel, "claude-model", "", "Claude model override")
-	flag.StringVar(&opts.codexModel, "codex-model", "", "Codex model override")
-	flag.DurationVar(&opts.timeout, "timeout", 15*time.Minute, "workflow deadline")
-	flag.DurationVar(&opts.roleTimeout, "role-timeout", 4*time.Minute, "per-role deadline")
-	flag.BoolVar(&opts.keepWorkspace, "keep-workspace", false, "keep temp repo & profiles")
-	flag.BoolVar(&opts.webMode, "web-mode", false, "serve over AG-UI instead of one-shot CLI")
-	flag.StringVar(&opts.webAddr, "web-addr", ":8080", "AG-UI listen address")
-	flag.StringVar(&opts.webCORS, "web-cors", "*", "Access-Control-Allow-Origin")
-	flag.Parse()
-	if err := run(opts); err != nil {
-		fmt.Fprintln(os.Stderr, "team-agent-workflow:", err)
-		os.Exit(1)
-	}
-}
-
-func run(opts options) error {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
-	ctx, cancel := context.WithTimeout(ctx, opts.timeout)
-	defer cancel()
-
-	fixture, err := newWorkflowFixture(opts.keepWorkspace) // 临时 git 仓库 + TASK.md（宿主逻辑）
-	if err != nil {
-		return err
-	}
-	defer fixture.Cleanup()
-
-	// 1. 三个角色：每个角色就是一个 Agent 变量，以 A2A 发布。
-	hub, remoteSpecs, err := startRoleHub(fixture, buildRoles(opts), opts.roleTimeout)
-	if err != nil {
-		return err
-	}
-	defer hub.Close()
-
-	// 2. 委托服务：Registry + EventBus + per-run MCP sidecar + 结果记录，一次配置。
-	//    取代现状 323 行手写 delegation_runtime.go；bearer token、监听器、
-	//    MCP 注入（类型化 RuntimeServiceRef.MCP）、工具超时全部内置。
-	team, err := delegation.NewService(delegation.Config{
-		Agents:      remoteSpecs,
-		ToolTimeout: opts.roleTimeout + 30*time.Second,
-	})
-	if err != nil {
-		return err
-	}
-	defer team.Close()
-
-	// 3. 领队：一个 Agent 变量；委托能力用 team.Option() 一个选项接入。
-	leaderOpts := []adaptor.Option{
-		adaptor.WithProfile(profile.CloneNative(fixture.ProfileDir("leader-claude"), profile.LinkAuth())),
-		adaptor.WithWorkspace(fixture.WorkspaceDir),
-		adaptor.WithPolicy(adaptor.Policy{Sandbox: adaptor.ReadOnly, Approvals: adaptor.ApprovalsAutoDeny}),
-		adaptor.WithIdentity(adaptor.Identity{Tenant: "example", User: "team-leader"}),
-		adaptor.WithMetadata("example", "team-agent-workflow"),
-		adaptor.WithMetadata("workflow_role", "leader"),
-		team.Option(), // service 声明 + sidecar 生命周期 + SubagentUpdate 事件汇入
-	}
-	if opts.webMode {
-		leaderOpts = append(leaderOpts,
-			adaptor.WithThreadStore(memory.NewStore()),                 // AG-UI thread ↔ Thread
-			adaptor.WithInstructions(leaderProtocol(opts.roleTimeout)), // 前端供 per-turn 输入，编排协议进指令
-		)
-	}
-	leader := adaptor.New(claude.Driver(claude.Config{
-		Model:             opts.claudeModel,
-		PersistentProcess: true, // 领队多轮复用一个长驻 claude 进程
-	}), leaderOpts...)
-
-	if opts.webMode {
-		mux := http.NewServeMux()
-		mux.Handle("/agent", sse.Handler(leader, sse.Options{
-			Protocol:          sse.AGUI,
-			CORSAllowedOrigin: opts.webCORS,
-			// 无需 SubagentBus：SubagentUpdate 已在 leader 的事件流上。
-		}))
-		term.Logf("[web] AG-UI server on %s (POST /agent)", opts.webAddr)
-		return http.ListenAndServe(opts.webAddr, mux)
-	}
-
-	// 4. CLI 模式：一条事件流，一个 for-range。没有 drain 义务、没有手工 goroutine。
-	stream := leader.Stream(ctx, leaderProtocol(opts.roleTimeout))
-
-	trace := &workflowTrace{}
-	for ev := range stream.Events() {
-		switch e := ev.(type) {
-		case adaptor.TextDelta:
-			term.Print(e.Text)
-		case adaptor.Thinking:
-			term.Reasoning(e.Text)
-		case adaptor.ToolCall:
-			term.Tool(e.Name, e.Args)
-		case adaptor.SubagentUpdate: // plan/impl/review 的远端过程，与主流同序到达
-			term.Live(e.Agent, e.Kind, e.Delta)
-			trace.Add(e)
-		case adaptor.Dropped:
-			term.Warnf("dropped %d events", e.Count)
-		}
-	}
-
-	res, err := stream.Result()
-	if err != nil {
-		var runErr *adaptor.RunError
-		if errors.As(err, &runErr) { // 领队完整跑完但业务失败
-			return fmt.Errorf("leader failed (%s): %s", runErr.Reason, runErr.Result.Summary)
-		}
-		return fmt.Errorf("leader: %w", err) // 基础设施失败同一条路
-	}
-
-	// 5. 编排校验：委托顺序、工作区阶段边界、review 结论。
-	if err := trace.RequireOrder("plan", "impl", "review"); err != nil {
-		return err
-	}
-	hub.Audit.Record("final")
-	if err := hub.Audit.ValidateStageBoundaries(); err != nil {
-		return err
-	}
-	review, ok := team.Result(stream.RunID(), "review")
-	if !ok || !review.HasLine(reviewApprovalSentinel) {
-		return fmt.Errorf("review did not approve; leader_output=%q", preview(res.Text, 1200))
-	}
-	if _, err := fixture.Validate(ctx); err != nil {
-		return err
-	}
-	term.Logf("[done] sentinel=%v run_id=%s order=%v",
-		strings.Contains(res.Text, workflowSentinel), stream.RunID(), trace.Order())
-	return nil
-}
-
-// ---- 角色定义与 A2A 发布 ----
-
-type roleDef struct {
-	Key, DisplayName string
-	Driver           adaptor.Driver   // 根包别名 = driver.Driver，宿主无需 import SPI 包
-	Sandbox          adaptor.SandboxLevel
-	Instructions     string
-	Options          []adaptor.Option // 逃生舱：该角色专属的任意追加配置，全量选项词汇可用
-}
-
-func buildRoles(opts options) []roleDef {
-	return []roleDef{{
-		Key: "plan", DisplayName: "Codex planner",
-		Driver:  codex.Driver(codex.Config{Model: opts.codexModel}),
-		Sandbox: adaptor.ReadOnly,
-		Instructions: "Act only as the planning stage. Inspect TASK.md, code, and tests. " +
-			"Do not modify files. Return a concise ordered plan with acceptance checks.",
-	}, {
-		Key: "impl", DisplayName: "Claude Code implementer",
-		Driver:  claude.Driver(claude.Config{Model: opts.claudeModel}),
-		Sandbox: adaptor.WorkspaceWrite,
-		Instructions: "Act only as the implementation stage. Use the supplied plan context, " +
-			"modify only slug.go, run go test ./... and git diff --check, and do not commit.",
-		Options: []adaptor.Option{ // 角色差异化不受表结构限制：技能、MCP、profile 资源……
-			adaptor.WithSkills(skill.Dir("./skills/go-implementer")),
-			adaptor.WithProfileResources(profile.Resources{
-				SubAgents: []profile.SubAgent{{Key: "tester", Instructions: "Run and summarize go test."}},
-			}),
-		},
-	}, {
-		Key: "review", DisplayName: "Codex reviewer",
-		Driver:  codex.Driver(codex.Config{Model: opts.codexModel}),
-		Sandbox: adaptor.ReadOnly,
-		Instructions: "Act only as the review stage. Do not modify files. Evaluate the attached " +
-			"go test / git diff evidence; do not rerun the Go toolchain. End with a line containing " +
-			"exactly TEAM_REVIEW_APPROVED only if every requirement is satisfied; otherwise end with " +
-			"TEAM_REVIEW_REJECTED.",
-	}}
-}
-
-func startRoleHub(fixture *workflowFixture, roles []roleDef, roleTimeout time.Duration) (*roleHub, []delegation.RemoteAgentSpec, error) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return nil, nil, fmt.Errorf("listen for A2A role hub: %w", err)
-	}
-	baseURL := (&url.URL{Scheme: "http", Host: listener.Addr().String()}).String()
-	mux := http.NewServeMux()
-	hub := newRoleHub(baseURL, listener, fixture)
-
-	remote := make([]delegation.RemoteAgentSpec, 0, len(roles))
-	for _, def := range roles {
-		cardPath := "/agents/" + def.Key + "/.well-known/agent-card.json"
-		rpcPath := "/agents/" + def.Key + "/a2a"
-
-		role := adaptor.New(def.Driver, append([]adaptor.Option{ // 角色 = Agent 变量，不再有 per-role SDK 实例
-			adaptor.WithProfile(profile.CloneNative(fixture.ProfileDir(def.Key), profile.LinkAuth())),
-			adaptor.WithWorkspace(fixture.WorkspaceDir),
-			adaptor.WithPolicy(adaptor.Policy{Sandbox: def.Sandbox, Approvals: adaptor.ApprovalsAutoDeny}),
-			adaptor.WithInstructions(def.Instructions),
-			adaptor.WithIdentity(adaptor.Identity{Tenant: "example", User: "team-" + def.Key}),
-			adaptor.WithMetadata("example", "team-agent-workflow"),
-			adaptor.WithMetadata("workflow_role", def.Key),
-		}, def.Options...)...) // 角色专属选项排在公共默认之后：按「近处覆盖远处」规则可覆盖任何公共默认
-
-		srv := a2a.NewServer(observe(def.Key, role, hub.Audit.Record), a2a.ServerOptions{
-			AgentCard: a2a.AgentCard{
-				Name:        def.DisplayName,
-				Description: def.Key + " role in the plan -> impl -> review team workflow.",
-				Version:     "1.0.0",
-				URL:         baseURL + rpcPath,
-				Skills:      []a2a.Skill{{ID: def.Key, Name: def.DisplayName, Description: def.Instructions}},
-			},
-			Session:  a2a.Stateless(),
-			Prompt:   rolePrompt(def, fixture), // review 角色附加 go test / git diff 证据（宿主逻辑）
-			Exposure: a2a.ExposurePolicy{IncludeToolCalls: true, IncludeReasoning: true},
-			TaskLifecycle: a2a.TaskLifecycleOptions{
-				Ephemeral: &a2a.EphemeralTaskStoreOptions{MaxTasks: 32, TTL: 30 * time.Minute},
-			},
-		})
-		mux.Handle(cardPath, srv.AgentCardHandler())
-		mux.Handle(rpcPath, srv.Handler())
-
-		remote = append(remote, delegation.RemoteAgentSpec{
-			Key:          def.Key,
-			DisplayName:  def.DisplayName,
-			AgentCardURL: baseURL + cardPath, // Protocol / Transport 默认 A2A + JSON-RPC
-			Policy: delegation.Policy{
-				MaxTimeout: roleTimeout, RequireStreaming: true, MaxArtifactBytes: 1 << 20,
-			},
-		})
-	}
-	hub.Serve(mux)
-	return hub, remote, nil
-}
-
-// ---- 角色观测：装饰 Runner 的两个方法（现状是 Run/Start/Wait 三个拦截点） ----
-
-type observed struct {
-	adaptor.Runner
-	role   string
-	record func(string)
-}
-
-func observe(role string, next adaptor.Runner, record func(string)) adaptor.Runner {
-	return observed{Runner: next, role: role, record: record}
-}
-
-func (o observed) Run(ctx context.Context, prompt string, opts ...adaptor.Option) (*adaptor.Result, error) {
-	started := time.Now()
-	res, err := o.Runner.Run(ctx, prompt, opts...)
-	o.done(started, res, err)
-	return res, err
-}
-
-func (o observed) Stream(ctx context.Context, prompt string, opts ...adaptor.Option) adaptor.Stream {
-	return observedStream{Stream: o.Runner.Stream(ctx, prompt, opts...), o: o, started: time.Now()}
-}
-
-func (o observed) done(started time.Time, res *adaptor.Result, err error) {
-	elapsed := time.Since(started).Round(time.Millisecond)
-	if err != nil { // err 一元判定：业务失败细节在 *RunError.Result，无需 Failure 双路径
-		term.Logf("[role] %s failed in %s: %v", o.role, elapsed, err)
-	} else {
-		term.Logf("[role] %s done in %s: %s", o.role, elapsed, res.Summary)
-	}
-	o.record(o.role) // 工作区阶段快照（宿主审计逻辑）
-}
-
-type observedStream struct {
-	adaptor.Stream
-	o       observed
-	started time.Time
-}
-
-func (s observedStream) Result() (*adaptor.Result, error) {
-	res, err := s.Stream.Result()
-	s.o.done(s.started, res, err)
-	return res, err
-}
-
-// ---- 委托顺序校验 ----
-
-type workflowTrace struct{ order []string }
-
-func (t *workflowTrace) Add(e adaptor.SubagentUpdate) {
-	if e.Kind == adaptor.SubagentStarted {
-		t.order = append(t.order, e.Agent)
-	}
-}
-
-func (t *workflowTrace) Order() []string { return t.order }
-
-func (t *workflowTrace) RequireOrder(want ...string) error {
-	if !slices.Equal(t.order, want) {
-		return fmt.Errorf("delegation order = %v, want %v", t.order, want)
-	}
-	return nil
-}
+res, err := stream.Result()
 ```
 
-对照读法（现状 → 本文件）：
+实现角色若要声明 profile 子 agent，最终字段名是 `profile.Resources.Agents`：
 
-| 现状 | 行数 | 新 API 归宿 | 位置 |
+```go
+adaptor.WithProfileResources(profile.Resources{
+    Agents: []profile.SubAgent{{
+        Key: "proofreader", Instructions: "Compare the produced file with TASK.md.",
+    }},
+})
+```
+
+对照读法（v0.12.0 Before → v1 最终形态）：
+
+| v0.12.0 Before | 行数 | v1 归宿 | 位置 |
 |---|---:|---|---|
-| `newLeaderSDK` + `claude.New(ClaudeConfig, 7×WithDefault*)` | ~60 | `adaptor.New(claude.Driver(...), leaderOpts...)` | run() 第 3 步 |
+| `newLeaderSDK` + `claude.New(ClaudeConfig, 7×WithDefault*)` | ~60 | `adaptor.New(driver, leaderOpts...)` | `run()` 第 3 步 |
 | `delegation_runtime.go` 整个文件 | 323 | `delegation.NewService` + `team.Option()` + `team.Result` | run() 第 2 步 |
 | trace/drain/render 3 goroutine + WaitGroup + ClearRun | ~70 | 一个 for-range | run() 第 4 步 |
 | `waitErr` + `result.Failure` 双检 | 分散 | `stream.Result()` 单判定 | run() 第 4 步末 |
-| per-role SDK + `observedRoleRunner`（3 拦截点） | ~120 | Agent 变量 + 2 方法装饰器 | startRoleHub / observed |
+| per-role SDK + A2A 回环 + `observedRoleRunner`（3 拦截点） | ~120 | Agent 变量 + `delegation.Local` + 2 方法装饰器 | 角色构造循环 / `observed` |
 | `withMCPToolTimeout` env 侧信道 | ~15 | `delegation.Config.ToolTimeout` | run() 第 2 步 |
 
 关于 `roleDef` 的定位：它是**宿主自己的数据表，不是 SDK 概念**。三个角色恰好只差四个维度所以压成了表；`Options []adaptor.Option` 字段是全量逃生舱——任何角色可携带任意构造选项（技能、MCP、profile 资源、独立 ThreadStore、审批回调……），且排在公共默认之后即可按「近处覆盖远处」规则覆盖公共默认。这种表驱动写法在现状 API 里做不干净：同样的角色差异必须拆进两种类型的切片（`AgentOption` 给 binding、`RunOption` 给 `ServerOptions.RunOptions`），而新 API 单一选项词汇让宿主数据表天然可组合。若某个角色的差异大到表放不下，直接不用表——每个 Agent 本来就是变量，逐个手写也只有十来行。另外 `a2a.ServerOptions` 仍保留调用作用域的 `Options []adaptor.CallOption`（本例不需要：沙箱已上移为角色构造期属性），供需要按请求维度注入的宿主使用。
@@ -1123,7 +866,7 @@ func (t *workflowTrace) RequireOrder(want ...string) error {
 
 评审中的自然追问：领队侧已经有 `team.Option()` 了，为什么不把 roleDef 也内建进 SDK？拆开看，roleDef 承担两件事，内建价值截然不同。
 
-**该内建的一半——「可委托目标」的注册与联通。** 现状 Registry 只认 `ProtocolA2A`（`pkg/hosttools/a2adelegation/types.go` 强校验），进程内的角色也被迫先发布成 HTTP A2A 服务、再被同进程的领队绕一圈 localhost 调用。v1 的 `delegation.Service` 补上本地目标：
+**该内建的一半——「可委托目标」的注册与联通。** v0.12.0 Registry 只认 `ProtocolA2A`，进程内的角色也被迫先发布成 HTTP A2A 服务、再被同进程的领队绕一圈 localhost 调用。v1 的 `delegation.Service` 直接支持本地目标：
 
 ```go
 // 进程内团队：多数宿主的真实形态——零 HTTP、零 AgentCard、零端口管理
@@ -1140,7 +883,7 @@ leader := adaptor.New(claude.Driver(cfg), team.Option())
 - `delegation.Local(key, runner, policy)` 接受任何 `Runner`——Agent、Thread、装饰器（`observe(...)` 照样能包）。
 - 本地目标直接消费 Runner 的事件流，`SubagentUpdate` 保真度反而高于经 A2A 序列化的远端流。
 - `Local` 与 `Remote` 可混编：三个本地角色 + 一个跨组织的远程 A2A 角色是同一张表。
-- showcase 保留 Remote 形态是因为它的教学目的就是跨进程 A2A；换成 Local 后，startRoleHub 里的 HTTP hub 整段消失。
+- showcase 已使用 Local 形态，因此没有角色 HTTP hub；需要跨进程 A2A 时改用 `delegation.Remote`。
 
 **不该内建的一半——roleDef 的配置表（Driver / Sandbox / Instructions 字段）。** 三条理由：
 
@@ -1159,16 +902,16 @@ leader := adaptor.New(claude.Driver(cfg), team.Option())
 | Run / Start 单一执行路径 | `Run` / `Stream`（同一内部管线） |
 | 4 种 SessionMode + SessionStore + lease | `Thread` / `NewThread` / `ResumeOnly` / `Fork` + `threadstore.Store`（接口能力等价） |
 | Session codec / 参数检视 | `driver.SessionCodec` 能力接口 + `th.Checkpoint()` |
-| skill 归档源（archive source / materializer，zip/tar/tgz 分发技能包） | `skill.Archive(...)` 构造器 + 物化管线随 skill/ 包保留（P0.7 盘点勘误：archive_*.go 是 skill 归档源而非 run 结果归档） |
+| skill 归档源（archive source / materializer，zip/tar/tgz 分发技能包） | `skill.Archive(...)` 构造器 + `skill` 包物化管线（archive source 与 run 结果归档是两个边界） |
 | Skills：key/dir/FS/inline、Provider、Catalog、Materializer、Required、冲突检测、严格物化 | `skill` 包 + `WithSkills` / `WithSkillProvider` / `WithSkillMaterializer`（语义不变） |
 | MCP 声明式注入 + profile 物化 + fingerprint | `mcp` 包 + `WithMCP`（替换语义不变） |
 | Runtime services 生命周期 + MCP sidecar 注入 | `WithServices` / `WithServiceManager` + 类型化 `RuntimeServiceRef.MCP` |
 | Profile：native/dedicated/clone/cloneFrom + AuthLink | `profile` 包 4 个构造器 + `LinkAuth` |
 | Profile resources：agents/hooks/instructions/config patch + 真话物化汇报 | `profile.Resources` + `ProfileState` / `SyncProfile` |
-| RunPolicy（isolation / websearch / browser / HITL 策略） | `Policy` 结构体选项 |
+| RunPolicy（isolation / websearch / browser / HITL 策略） | `Policy` 结构体选项；所有显式维度严格校验 `Descriptor.RunPolicyCaps` |
 | HITL 三种 Kind、超时重试兜底、channel 模式、typed handler 模式 | `ApprovalRequest`（事件 + 回调双形态）+ `Policy.Approvals` |
 | 流式能力声明与降级、背压两策略、Dropped 标记 | `StreamCapability`（driver 包）+ `WithEventBuffer` / `WithBlockingEvents` + `Dropped` 事件 |
-| 结构化输出三模式 + 泛型派生 + 能力矩阵校验 | `RunAs[T]` / `WithSchema[T]` + `schema.Strict/Flexible/PromptOnly` |
+| 结构化输出三模式 + 泛型派生 + 能力矩阵校验 | `RunAs[T]` / `WithSchema[T]` + `adaptor.SchemaStrict/Flexible/PromptOnly` |
 | Admin 全部探针 + SetSelectedSkills | `Inspect()` 面板 + `SelectSkills` |
 | AG-UI / SSE / A2A bridge、subagent 委托、session recorder | 包原样保留，适配新事件模型 |
 | delegate_to_agent 委托（Registry / EventBus / Delegator / MCP server 分立组件 + 宿主手写 sidecar） | `delegation.Service` 一体化入口（组件仍可单独使用）+ 类型化 `RuntimeServiceRef.MCP` + `SubagentUpdate` 事件入主流 |
@@ -1177,18 +920,18 @@ leader := adaptor.New(claude.Driver(cfg), team.Option())
 
 ---
 
-## 5. 落地计划（建议 6 个阶段，每阶段可独立评审）
+## 5. 落地状态
 
-| 阶段 | 内容 | 产出 |
-|---|---|---|
-| P0 | 根包骨架：`Agent` / `Option`（双作用域机制）/ `Result` / `RunError`；`driver` 包拆分 | 新旧并存的编译单元 + S1/S2/S4 场景测试 |
-| P1 | 事件流合一：`Stream` / `Event` 类型族 / `ApprovalRequest` 双形态；删除双通道 | S3 场景测试 + streaming 合同测试迁移 |
-| P2 | `Thread` + `threadstore`：mode → 方法映射、Fork、Checkpoint、lease | 会话合同测试迁移 |
-| P3 | 驱动包迁移（codex/claude/cursor/codebuddy 的 Config 回家）、`skill`/`mcp`/`profile` 词汇包、`Inspect` | S5/S7/S8 场景测试 |
-| P4 | bridges / hosttools 适配新事件模型；`RuntimeServiceRef.MCP` 类型化 | S6 场景 + examples 全量重写 |
-| P5 | 删除旧 API、`adaptertest` v1、文档重写（README 以 6 名词开篇）、迁移指南 | v1.0.0 tag |
+| 合同面 | 当前状态 |
+|---|---|
+| 根包与选项 | `Agent` / `Thread` / `Stream` / `Event` / `Result` 已落地；`Option` / `CallOption` / `SharedOption` 在编译期隔离作用域 |
+| 唯一执行管线 | `Run` 与 `Stream` 共用 resolved invocation、Driver 派发、事件、结果与 Thread 协调逻辑 |
+| Driver 与词汇包 | 四个内置 Driver 配置归位各自包；`driver` / `skill` / `mcp` / `profile` / `threadstore` 边界已落地 |
+| bridges 与 hosttools | SSE、AG-UI、A2A、subagent stream、delegation 和 session recorder 已改为消费 v1 `Runner` / `Event` / `Result` |
+| 根包切换 | 旧根 API 已删除，完整 v1 实现已移入根包，生产 import 已指向最终公开包 |
+| 文档与示例 | README 以六名词开篇；示例使用最终根 import 和最终 API；历史决策仅作归档证据 |
 
-兼容策略：按「抛弃历史包袱」的前提，v1 是干净切换；v0.x 打 tag 冻结。若后续需要，可提供一次性 `go fix` 风格迁移工具（旧 API → 新 API 多数是机械映射，见 §4 表）。
+v1 采用干净切换，不保留中央 SDK、命名 Agent registry、`Start`、`RunHandle` 或多事件通道的公共兼容层。`v1.0.0` 标签只能由发布门禁产生；本文不宣称尚未完成的发布操作。
 
 ---
 
@@ -1198,5 +941,5 @@ leader := adaptor.New(claude.Driver(cfg), team.Option())
 2. **业务失败并入 error**：从「返回值字段」变「类型化 error」。反对观点是「完成了的 run 不是 error」；但现状三步判定的实际漏检成本更高，且 `RunError.Result` 保留全部信息。与 Go 生态惯例（`exec.ExitError`）一致。
 3. **事件合一后的低频操作事件**：spawn/lifecycle 混入语义流可能让纯 UI 消费者多写两个 case——代价是 default 分支一行；换来的是删除整条 `Events()` 通道与「必须 drain」义务。
 4. **`ApprovalRequest` 合并三种 Kind**：損失一点编译期 kind 精度（现状 3 个 typed handler），换来审批表面从 10 个 API 元素减到 2 个。Kind 专属数据以字段组暴露，误用在方法级被拦截。
-5. **root 包名改 `adaptor`**：与目录名不一致（Go 工具链完全支持，goimports 自动别名）。若团队反感，保持 `agentadaptor` 不影响其余设计。
-6. **实施规模**：这是全量 breaking change，P0–P5 需要同步重写测试与文档。缓解：§4 映射表保证能力不丢；每阶段以场景测试为验收锚点；`adaptertest` 保住第三方驱动的迁移路径。
+5. **root 包名为 `adaptor`**：与目录名不一致，但 Go 工具链完全支持，导入路径保持不变。
+6. **全量 breaking change**：不保留双栈会提高一次迁移成本；§4 的映射表、migration guide 和 `adaptertest` 分别保住应用、文档与第三方 Driver 的迁移路径。

@@ -14,10 +14,10 @@ import (
 	"github.com/agent-dance/agent-adaptor/threadstore"
 )
 
-const legacyRootImport = "github.com/agent-dance/agent-adaptor"
+const rootAPIImport = "github.com/agent-dance/agent-adaptor"
 
-// TestProductionImportBoundary prevents the v1 memory implementation from
-// regaining a dependency on the deleted root-package SessionStore API.
+// TestProductionImportBoundary keeps the leaf implementation independent of
+// the consumer-facing root API.
 func TestProductionImportBoundary(t *testing.T) {
 	var _ threadstore.Store = memory.NewStore()
 
@@ -39,8 +39,8 @@ func TestProductionImportBoundary(t *testing.T) {
 				if err != nil {
 					t.Fatalf("decode import in %s: %v", filename, err)
 				}
-				if path == legacyRootImport {
-					t.Fatalf("production file %s imports deleted legacy root package %q", filepath.Base(filename), path)
+				if path == rootAPIImport {
+					t.Fatalf("production file %s imports consumer-facing root API %q", filepath.Base(filename), path)
 				}
 			}
 		}

@@ -8,7 +8,7 @@ import (
 	"github.com/agent-dance/agent-adaptor/skill"
 )
 
-// Decision D1: business failures are typed errors. A run that completed but
+// Business failures are typed errors. A run that completed but
 // failed at the business level returns a *RunError carrying the full Result;
 // infrastructure failures (context cancellation, process crash, protocol
 // breakage) travel the same err path as plain wrapped errors. Hosts have one
@@ -27,11 +27,10 @@ import (
 type FailureReason string
 
 const (
-	// ReasonApprovalDenied: a human decision was rejected (including
-	// auto-deny synthesis). Legacy code: decision_rejected.
+	// ReasonApprovalDenied means an approval was denied, including an
+	// automatically denied request.
 	ReasonApprovalDenied FailureReason = "approval_denied"
-	// ReasonApprovalTimeout: a human decision deadline elapsed.
-	// Legacy code: decision_timeout.
+	// ReasonApprovalTimeout means an approval deadline elapsed.
 	ReasonApprovalTimeout FailureReason = "approval_timeout"
 	// ReasonAgentError: the driver classified an agent-level failure
 	// (bad protocol, non-zero exit, handler panic, ...).
@@ -40,8 +39,7 @@ const (
 	// business failure (as opposed to a bare context cancellation, which
 	// surfaces as a plain error wrapping ctx.Err()).
 	ReasonCancelled FailureReason = "cancelled"
-	// ReasonPolicyViolation: policy validation failed. Legacy code:
-	// policy_error.
+	// ReasonPolicyViolation means policy validation failed.
 	ReasonPolicyViolation FailureReason = "policy_violation"
 )
 
@@ -116,11 +114,9 @@ func (e *RunError) Unwrap() error {
 	}
 }
 
-// ============ Pre-launch failure vocabulary (P3) ============
-//
 // Skill, MCP, and structured-output resolution failures happen before the
-// driver launches and surface as plain wrapped errors (decision D1: they
-// are configuration problems, not business outcomes). Their leaf vocabulary
+// driver launches and surface as plain wrapped errors. They are configuration
+// problems, not business outcomes. Their leaf vocabulary
 // packages own the canonical identities; the root only re-exports them.
 
 var (
@@ -150,8 +146,19 @@ var (
 	ErrInvalidOutputSchema = driver.ErrInvalidOutputSchema
 	// ErrStructuredOutputUnsupported: the driver's capability matrix
 	// cannot honor the requested structured-output mode. Unwrap to
-	// *StructuredOutputUnsupportedError for the adapter and mode.
+	// *StructuredOutputUnsupportedError for the Driver and mode.
 	ErrStructuredOutputUnsupported = driver.ErrStructuredOutputUnsupported
+	// ErrInvalidDriverConfig: Driver.ValidateConfig rejected the Driver's
+	// captured construction-time configuration before launch.
+	ErrInvalidDriverConfig = driver.ErrInvalidDriverConfig
+	// ErrInvalidPolicy: a Policy field contains an out-of-domain value.
+	ErrInvalidPolicy = driver.ErrInvalidPolicy
+	// ErrPolicyCapabilityUnsupported: a valid, explicitly selected Sandbox,
+	// WebSearch, or Browser value is unsupported by the Driver.
+	ErrPolicyCapabilityUnsupported = driver.ErrPolicyCapabilityUnsupported
+	// ErrHumanDecisionModeUnsupported: an explicitly selected approval mode
+	// is not advertised by the Driver's RunPolicyCaps.
+	ErrHumanDecisionModeUnsupported = driver.ErrHumanDecisionModeUnsupported
 )
 
 // Typed error aliases for errors.As matching.
@@ -164,6 +171,16 @@ type (
 	InvalidOutputSchemaError = driver.InvalidOutputSchemaError
 	// StructuredOutputUnsupportedError reports a capability-matrix miss.
 	StructuredOutputUnsupportedError = driver.StructuredOutputUnsupportedError
+	// InvalidDriverConfigError reports a rejected captured Driver config.
+	InvalidDriverConfigError = driver.InvalidDriverConfigError
+	// InvalidPolicyError reports one out-of-domain Policy field.
+	InvalidPolicyError = driver.InvalidPolicyError
+	// PolicyCapabilityUnsupportedError reports the rejected dimension, value,
+	// and Driver.
+	PolicyCapabilityUnsupportedError = driver.PolicyCapabilityUnsupportedError
+	// HumanDecisionModeUnsupportedError reports the rejected kind, mode, and
+	// Driver capability matrix.
+	HumanDecisionModeUnsupportedError = driver.HumanDecisionModeUnsupportedError
 )
 
 // failureReason maps the driver SPI failure code onto the consumer

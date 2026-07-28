@@ -60,11 +60,11 @@ func TestSelectionConstructors(t *testing.T) {
 			name: "clone with prebuilt options",
 			got: profile.CloneNative(`C:\profiles\clone`, profile.WithOptions(profile.CloneOptions{
 				IncludeSettings: true,
-				IncludeAuth:     true,
+				AuthMode:        profile.AuthCopy,
 			})),
 			want: profile.Selection{Mode: profile.ModeClone, Dir: `C:\profiles\clone`, Clone: &profile.CloneOptions{
 				IncludeSettings: true,
-				IncludeAuth:     true,
+				AuthMode:        profile.AuthCopy,
 			}},
 		},
 	}
@@ -126,12 +126,11 @@ func TestCloneOptionProducts(t *testing.T) {
 
 func TestWithOptionsComposesWithLaterOptions(t *testing.T) {
 	sel := profile.CloneNative(`C:\profiles\clone`,
-		profile.WithOptions(profile.CloneOptions{IncludeSettings: true, IncludeAuth: true}),
+		profile.WithOptions(profile.CloneOptions{IncludeSettings: true, AuthMode: profile.AuthCopy}),
 		profile.LinkAuth(),
 	)
 	want := profile.CloneOptions{
 		IncludeSettings: true,
-		IncludeAuth:     true,
 		AuthMode:        profile.AuthLink,
 	}
 	if *sel.Clone != want {

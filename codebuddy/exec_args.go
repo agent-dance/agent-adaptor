@@ -26,7 +26,7 @@ func buildExecArgs(cfg Config, req driver.Request, permMode PermissionMode, inte
 		}
 	}
 
-	if req.Session != nil && req.Session.State != nil && req.Session.State.ResumeID != "" {
+	if req.Session != nil && req.Session.Mode != driver.SessionFork && req.Session.State != nil && req.Session.State.ResumeID != "" {
 		args = append(args, "--resume", req.Session.State.ResumeID)
 	}
 	if !control && permMode != PermissionUnset {
@@ -41,18 +41,31 @@ func buildExecArgs(cfg Config, req driver.Request, permMode PermissionMode, inte
 	if cfg.MaxTurnsPerRun > 0 {
 		args = append(args, "--max-turns", strconv.Itoa(cfg.MaxTurnsPerRun))
 	}
-	if control {
-		args = append(args, controlSafeExtraArgs(cfg.ExtraArgs)...)
-	} else {
-		args = append(args, cfg.ExtraArgs...)
-	}
+	args = append(args, codeBuddySafeExtraArgs(cfg.ExtraArgs, control)...)
 	return args
 }
 
-func controlSafeExtraArgs(extra []string) []string {
-	blocked := map[string]bool{
-		"--acp": true, "--acp-transport": true, "--print": true,
-		"--setting-sources": true, "--input-format": true, "--output-format": true,
+// codeBuddySafeExtraArgs preserves provider-specific escape hatches while
+// preventing construction-time arguments from replacing the resolved
+// invocation's transport, output contract, session selector, model, limits,
+// or permission policy. Filtering is unconditional: an inherited/empty call
+// value must not let constructor ExtraArgs become a hidden nearer override.
+func codeBuddySafeExtraArgs(extra []string, control bool) []string {
+	blockedValues := map[string]bool{
+		"--input-format": true, "--output-format": true, "--json-schema": true,
+		"--resume": true, "-r": true, "--session-id": true,
+		"--model": true, "--effort": true, "--max-turns": true,
+		"--permission-mode": true, "--permission-prompt-tool": true,
+	}
+	blockedBooleans := map[string]bool{
+		"--print": true, "-p": true, "--include-partial-messages": true,
+		"--continue": true, "-c": true, "--fork-session": true,
+		"--dangerously-skip-permissions": true, "-y": true,
+	}
+	if control {
+		blockedValues["--acp-transport"] = true
+		blockedValues["--setting-sources"] = true
+		blockedBooleans["--acp"] = true
 	}
 	out := make([]string, 0, len(extra))
 	for i := 0; i < len(extra); i++ {
@@ -61,24 +74,13 @@ func controlSafeExtraArgs(extra []string) []string {
 		if eq := strings.IndexByte(name, '='); eq >= 0 {
 			base = name[:eq]
 		}
-		if !blocked[base] {
+		if !blockedValues[base] && !blockedBooleans[base] {
 			out = append(out, name)
 			continue
 		}
-		if !strings.Contains(name, "=") && i+1 < len(extra) {
+		if blockedValues[base] && !strings.Contains(name, "=") && i+1 < len(extra) && !strings.HasPrefix(extra[i+1], "-") {
 			i++
 		}
 	}
 	return out
-}
-
-func hasAnyArg(args []string, names ...string) bool {
-	for _, arg := range args {
-		for _, name := range names {
-			if arg == name || (len(arg) > len(name) && arg[:len(name)+1] == name+"=") {
-				return true
-			}
-		}
-	}
-	return false
 }

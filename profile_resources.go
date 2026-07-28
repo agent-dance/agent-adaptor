@@ -36,7 +36,6 @@ func publicSubAgentsToDriver(values []profile.SubAgent) []driver.AgentSpec {
 			RuntimeName:       value.RuntimeName,
 			Description:       value.Description,
 			Instructions:      value.Instructions,
-			Content:           value.Content,
 			SourcePath:        value.SourcePath,
 			SourceFingerprint: value.SourceFingerprint,
 			Model:             value.Model,
@@ -79,10 +78,6 @@ func publicHooksToDriver(values []profile.Hook) []driver.HookSpec {
 				Pattern: value.MatcherSpec.Pattern,
 			},
 			Handler:       publicHookHandlerToDriver(value.Handler),
-			Matcher:       value.Matcher,
-			Command:       value.Command,
-			Args:          cloneProfileStrings(value.Args),
-			Env:           cloneProfileStringMap(value.Env),
 			Timeout:       value.Timeout,
 			FailPolicy:    driver.HookFailPolicy(value.FailPolicy),
 			StatusMessage: value.StatusMessage,
@@ -135,9 +130,6 @@ func publicConfigPatchesToDriver(values []profile.ConfigPatch) []driver.ProfileC
 			Capability: value.Capability,
 			Values:     cloneProfileAnyMap(value.Values),
 			Native:     publicNativeConfigPatchToDriver(value.Native),
-			FileKind:   driver.ProfileConfigFileKind(value.FileKind),
-			Path:       value.Path,
-			Section:    value.Section,
 		}
 	}
 	return out

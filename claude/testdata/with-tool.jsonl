@@ -2,4 +2,4 @@
 {"type":"assistant","session_id":"claude-tool","message":{"content":[{"type":"tool_use","id":"tool-1","name":"read_file","input":{"path":"/tmp/x"}}]}}
 {"type":"user","session_id":"claude-tool","message":{"content":[{"type":"tool_result","tool_use_id":"tool-1","content":"ok"}]}}
 {"type":"assistant","session_id":"claude-tool","message":{"content":[{"type":"text","text":"Tool finished."}]}}
-{"type":"result","subtype":"success","session_id":"claude-tool","result":"Tool finished."}
+{"type":"result","subtype":"success","is_error":false,"session_id":"claude-tool","result":"Tool finished."}

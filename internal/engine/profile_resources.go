@@ -38,7 +38,7 @@ const (
 
 // ProfileResources is the host-facing desired-state bundle accepted by
 // WithDefaultProfileResources and WithProfileResources. Existing sugar options
-// (WithDefaultSkills, WithMCP, WithInstructions, etc.) continue to work and are
+// (WithSkills, WithMCP, WithInstructions, etc.) continue to work and are
 // folded into the same ProfilePayload before invoking an adapter.
 type ProfileResources struct {
 	Skills       []SkillRef
@@ -139,7 +139,6 @@ func cloneAgentSpecs(values []AgentSpec) []AgentSpec {
 			RuntimeName:       value.RuntimeName,
 			Description:       value.Description,
 			Instructions:      value.Instructions,
-			Content:           value.Content,
 			SourcePath:        value.SourcePath,
 			SourceFingerprint: value.SourceFingerprint,
 			Model:             value.Model,
@@ -175,10 +174,6 @@ func cloneHookSpecs(values []HookSpec) []HookSpec {
 			Event:         value.Event,
 			MatcherSpec:   value.MatcherSpec,
 			Handler:       cloneHookHandler(value.Handler),
-			Matcher:       value.Matcher,
-			Command:       value.Command,
-			Args:          cloneStrings(value.Args),
-			Env:           cloneStringMap(value.Env),
 			Timeout:       value.Timeout,
 			FailPolicy:    value.FailPolicy,
 			StatusMessage: value.StatusMessage,
@@ -208,9 +203,6 @@ func cloneProfileConfigPatches(values []ProfileConfigPatch) []ProfileConfigPatch
 			Capability: value.Capability,
 			Values:     cloneAnyMap(value.Values),
 			Native:     cloneNativeConfigPatch(value.Native),
-			FileKind:   value.FileKind,
-			Path:       value.Path,
-			Section:    value.Section,
 		})
 	}
 	return out
@@ -239,7 +231,6 @@ func prepareAgentPayload(specs []AgentSpec) (AgentPayload, error) {
 		spec.RuntimeName = strings.TrimSpace(spec.RuntimeName)
 		spec.Description = strings.TrimSpace(spec.Description)
 		spec.Instructions = strings.TrimSpace(spec.Instructions)
-		spec.Content = strings.TrimSpace(spec.Content)
 		spec.SourcePath = strings.TrimSpace(spec.SourcePath)
 		spec.SourceFingerprint = strings.TrimSpace(spec.SourceFingerprint)
 		spec.Model = strings.TrimSpace(spec.Model)
@@ -258,13 +249,7 @@ func prepareAgentPayload(specs []AgentSpec) (AgentPayload, error) {
 		if spec.RuntimeName == "" {
 			spec.RuntimeName = spec.Key
 		}
-		if spec.Instructions != "" && spec.Content != "" && spec.Instructions != spec.Content {
-			return AgentPayload{}, fmt.Errorf("agentadaptor: invalid profile resources: agent %q cannot set different instructions and legacy content", spec.Key)
-		}
-		if spec.Instructions == "" && spec.Content != "" {
-			spec.Instructions = spec.Content
-		}
-		if spec.SourcePath != "" && (spec.Instructions != "" || spec.Content != "") {
+		if spec.SourcePath != "" && spec.Instructions != "" {
 			return AgentPayload{}, fmt.Errorf("agentadaptor: invalid profile resources: agent %q cannot set both source path and instructions", spec.Key)
 		}
 		if spec.SourcePath != "" && spec.SourceFingerprint == "" {
@@ -341,18 +326,8 @@ func prepareHookPayload(specs []HookSpec) (HookPayload, error) {
 		spec := &normalized[i]
 		spec.Key = strings.TrimSpace(spec.Key)
 		spec.Event = normalizeHookEvent(spec.Event)
-		spec.Matcher = strings.TrimSpace(spec.Matcher)
 		spec.MatcherSpec.Pattern = strings.TrimSpace(spec.MatcherSpec.Pattern)
-		spec.Command = strings.TrimSpace(spec.Command)
 		spec.Handler = normalizeHookHandler(spec.Handler)
-		if spec.Handler.Type == "" && spec.Command != "" {
-			spec.Handler = HookHandler{Type: HookHandlerCommand, Command: spec.Command, Args: cloneStrings(spec.Args), Env: cloneStringMap(spec.Env)}
-		}
-		if spec.Command == "" && spec.Handler.Type == HookHandlerCommand {
-			spec.Command = spec.Handler.Command
-			spec.Args = cloneStrings(spec.Handler.Args)
-			spec.Env = cloneStringMap(spec.Handler.Env)
-		}
 		if spec.Key == "" {
 			return HookPayload{}, fmt.Errorf("agentadaptor: invalid profile resources: hook key is required")
 		}
@@ -378,8 +353,6 @@ func prepareProfileConfigPayload(patches []ProfileConfigPatch) (ProfileConfigPay
 		patch := &normalized[i]
 		patch.Key = strings.TrimSpace(patch.Key)
 		patch.Capability = strings.TrimSpace(patch.Capability)
-		patch.Path = strings.TrimSpace(patch.Path)
-		patch.Section = strings.TrimSpace(patch.Section)
 		if patch.Native != nil {
 			patch.Native.Provider = strings.TrimSpace(patch.Native.Provider)
 			patch.Native.Path = strings.TrimSpace(patch.Native.Path)
@@ -393,12 +366,18 @@ func prepareProfileConfigPayload(patches []ProfileConfigPatch) (ProfileConfigPay
 		}
 		seen[patch.Key] = struct{}{}
 		if patch.Capability != "" {
-			if hasNativeConfigTarget(*patch) {
+			if patch.Native != nil {
 				return ProfileConfigPayload{}, fmt.Errorf("agentadaptor: invalid profile resources: config patch %q cannot set both capability and native target", patch.Key)
 			}
 			continue
 		}
-		nativePatch := effectiveNativeConfigPatch(*patch)
+		if patch.Native == nil {
+			return ProfileConfigPayload{}, fmt.Errorf("agentadaptor: invalid profile resources: config patch %q requires capability or native target", patch.Key)
+		}
+		nativePatch := cloneNativeConfigPatch(patch.Native)
+		if len(nativePatch.Values) == 0 {
+			nativePatch.Values = cloneAnyMap(patch.Values)
+		}
 		switch nativePatch.FileKind {
 		case ProfileConfigFileJSON, ProfileConfigFileTOML:
 		case "":
@@ -412,13 +391,6 @@ func prepareProfileConfigPayload(patches []ProfileConfigPatch) (ProfileConfigPay
 		patch.Native = nativePatch
 	}
 	return ProfileConfigPayload{Patches: normalized, Fingerprint: stableHash("profile_config", normalized)}, nil
-}
-
-func hasNativeConfigTarget(patch ProfileConfigPatch) bool {
-	if patch.Native != nil {
-		return patch.Native.FileKind != "" || patch.Native.Path != "" || patch.Native.Section != "" || patch.Native.Provider != ""
-	}
-	return patch.FileKind != "" || patch.Path != "" || patch.Section != ""
 }
 
 func prepareInstructionsBundle(ref *InstructionsBundleRef) (*InstructionsBundleRef, error) {
@@ -538,22 +510,6 @@ func hasHookHandler(handler HookHandler) bool {
 	}
 }
 
-func effectiveNativeConfigPatch(patch ProfileConfigPatch) *NativeConfigPatch {
-	if patch.Native != nil {
-		out := cloneNativeConfigPatch(patch.Native)
-		if len(out.Values) == 0 {
-			out.Values = cloneAnyMap(patch.Values)
-		}
-		return out
-	}
-	return &NativeConfigPatch{
-		FileKind: patch.FileKind,
-		Path:     patch.Path,
-		Section:  patch.Section,
-		Values:   cloneAnyMap(patch.Values),
-	}
-}
-
 func buildProfilePayload(skills ResolvedSkills, mcp MCPPayload, agents AgentPayload, hooks HookPayload, instructions *InstructionsBundleRef, config ProfileConfigPayload, declared ProfileResourceDeclarations) ProfilePayload {
 	warnings := append(cloneStrings(skills.Warnings), mcp.Warnings...)
 	warnings = append(warnings, agents.Warnings...)
@@ -592,8 +548,7 @@ func instructionFingerprint(ref *InstructionsBundleRef) string {
 	return stableHash("instructions", ref.ID, ref.Path, content, ref.Scope, ref.Mode, ref.Native)
 }
 
-// cloneInstructions and cloneBool moved here from the root binding.go; the
-// clone helpers for profile payloads below depend on them.
+// cloneInstructions and cloneBool support the profile-payload copy helpers.
 func cloneInstructions(ref *InstructionsBundleRef) *InstructionsBundleRef {
 	if ref == nil {
 		return nil

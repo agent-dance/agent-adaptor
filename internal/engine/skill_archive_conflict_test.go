@@ -8,13 +8,15 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	publicskill "github.com/agent-dance/agent-adaptor/skill"
 )
 
 // archiveSkill builds the Skill value the tests below feed into the
 // merger. The opener is captured once so callers can decide whether two
 // Skills share an origin or genuinely differ.
-func archiveSkill(key string, open func(context.Context) (io.ReadCloser, error), opts ...func(*SkillFromArchive)) Skill {
-	src := SkillFromArchive{Archive: open, Format: SkillArchiveZip}
+func archiveSkill(key string, open func(context.Context) (io.ReadCloser, error), opts ...func(*publicskill.ArchiveSource)) Skill {
+	src := publicskill.ArchiveSource{Archive: open, Format: publicskill.FormatZip}
 	for _, opt := range opts {
 		opt(&src)
 	}
@@ -28,67 +30,67 @@ func archiveSkill(key string, open func(context.Context) (io.ReadCloser, error),
 func TestSkillSourcesEquivalent_Archive(t *testing.T) {
 	t.Parallel()
 	data := makeZip(t, map[string]string{"SKILL.md": "# kit"})
-	opener := ArchiveFromBytes(data)
-	other := ArchiveFromPath(filepath.Join(t.TempDir(), "kit.zip"))
+	opener := publicskill.ArchiveBytes(data)
+	other := publicskill.ArchiveFile(filepath.Join(t.TempDir(), "kit.zip"))
 
 	cases := []struct {
 		name string
-		a    SkillFromArchive
-		b    SkillFromArchive
+		a    publicskill.ArchiveSource
+		b    publicskill.ArchiveSource
 		want bool
 	}{
 		{
 			name: "same opener",
-			a:    SkillFromArchive{Archive: opener, Format: SkillArchiveZip},
-			b:    SkillFromArchive{Archive: opener, Format: SkillArchiveZip},
+			a:    publicskill.ArchiveSource{Archive: opener, Format: publicskill.FormatZip},
+			b:    publicskill.ArchiveSource{Archive: opener, Format: publicskill.FormatZip},
 			want: false,
 		},
 		{
 			name: "subpath normalized",
-			a:    SkillFromArchive{Archive: opener, Subpath: "./docs"},
-			b:    SkillFromArchive{Archive: opener, Subpath: "docs"},
+			a:    publicskill.ArchiveSource{Archive: opener, Subpath: "./docs"},
+			b:    publicskill.ArchiveSource{Archive: opener, Subpath: "docs"},
 			want: false,
 		},
 		{
 			name: "same fingerprint different opener",
-			a:    SkillFromArchive{Archive: opener, Fingerprint: "sha256:abc"},
-			b:    SkillFromArchive{Archive: other, Fingerprint: "sha256:abc"},
+			a:    publicskill.ArchiveSource{Archive: opener, Fingerprint: "sha256:abc"},
+			b:    publicskill.ArchiveSource{Archive: other, Fingerprint: "sha256:abc"},
 			want: true,
 		},
 		{
 			name: "different fingerprint",
-			a:    SkillFromArchive{Archive: opener, Fingerprint: "sha256:abc"},
-			b:    SkillFromArchive{Archive: opener, Fingerprint: "sha256:def"},
+			a:    publicskill.ArchiveSource{Archive: opener, Fingerprint: "sha256:abc"},
+			b:    publicskill.ArchiveSource{Archive: opener, Fingerprint: "sha256:def"},
 			want: false,
 		},
 		{
 			name: "different format",
-			a:    SkillFromArchive{Archive: opener, Format: SkillArchiveZip},
-			b:    SkillFromArchive{Archive: opener, Format: SkillArchiveTarGz},
+			a:    publicskill.ArchiveSource{Archive: opener, Format: publicskill.FormatZip},
+			b:    publicskill.ArchiveSource{Archive: opener, Format: publicskill.FormatTarGz},
 			want: false,
 		},
 		{
 			name: "different subpath",
-			a:    SkillFromArchive{Archive: opener, Subpath: "docs"},
-			b:    SkillFromArchive{Archive: opener, Subpath: "kit"},
+			a:    publicskill.ArchiveSource{Archive: opener, Subpath: "docs"},
+			b:    publicskill.ArchiveSource{Archive: opener, Subpath: "kit"},
 			want: false,
 		},
 		{
 			name: "different opener kind",
-			a:    SkillFromArchive{Archive: opener},
-			b:    SkillFromArchive{Archive: other},
+			a:    publicskill.ArchiveSource{Archive: opener},
+			b:    publicskill.ArchiveSource{Archive: other},
 			want: false,
 		},
 		{
 			name: "nil vs opener",
-			a:    SkillFromArchive{},
-			b:    SkillFromArchive{Archive: opener},
+			a:    publicskill.ArchiveSource{},
+			b:    publicskill.ArchiveSource{Archive: opener},
 			want: false,
 		},
 		{
 			name: "both nil",
-			a:    SkillFromArchive{},
-			b:    SkillFromArchive{},
+			a:    publicskill.ArchiveSource{},
+			b:    publicskill.ArchiveSource{},
 			want: false,
 		},
 	}
@@ -106,23 +108,23 @@ func TestSkillSourcesEquivalent_Archive(t *testing.T) {
 // same key.
 func TestSkillSourcesEquivalent_ArchiveCrossFamily(t *testing.T) {
 	t.Parallel()
-	opener := ArchiveFromBytes(makeZip(t, map[string]string{"SKILL.md": "# kit"}))
-	archive := SkillFromArchive{Archive: opener}
-	if skillSourcesEquivalent(archive, SkillFromInline{SkillMD: "# kit"}) {
+	opener := publicskill.ArchiveBytes(makeZip(t, map[string]string{"SKILL.md": "# kit"}))
+	archive := publicskill.ArchiveSource{Archive: opener}
+	if skillSourcesEquivalent(archive, publicskill.InlineSource{SkillMD: "# kit"}) {
 		t.Fatal("archive source must not equal an inline source")
 	}
-	if skillSourcesEquivalent(SkillFromInline{SkillMD: "# kit"}, archive) {
+	if skillSourcesEquivalent(publicskill.InlineSource{SkillMD: "# kit"}, archive) {
 		t.Fatal("inline source must not equal an archive source")
 	}
 }
 
 func TestSkillSourcesEquivalent_ArchiveClosuresRequireFingerprint(t *testing.T) {
 	t.Parallel()
-	first := ArchiveFromBytes([]byte("first"))
-	second := ArchiveFromBytes([]byte("second"))
+	first := publicskill.ArchiveBytes([]byte("first"))
+	second := publicskill.ArchiveBytes([]byte("second"))
 	if skillSourcesEquivalent(
-		SkillFromArchive{Archive: first},
-		SkillFromArchive{Archive: second},
+		publicskill.ArchiveSource{Archive: first},
+		publicskill.ArchiveSource{Archive: second},
 	) {
 		t.Fatal("closures from one constructor with different captures must conflict")
 	}
@@ -134,27 +136,26 @@ func TestSkillSourcesEquivalent_ArchiveClosuresRequireFingerprint(t *testing.T) 
 		return io.NopCloser(strings.NewReader("b")), nil
 	}
 	if skillSourcesEquivalent(
-		SkillFromArchive{Archive: plainA},
-		SkillFromArchive{Archive: plainB},
+		publicskill.ArchiveSource{Archive: plainA},
+		publicskill.ArchiveSource{Archive: plainB},
 	) {
 		t.Fatal("plain closures without a fingerprint must conflict")
 	}
 }
 
 // TestResolveSkills_ArchiveNoSelfConflict is the end-to-end regression for
-// the same bug: Admin paths register binding defaults as candidates and
+// the same bug: inspection paths register Agent defaults as candidates and
 // then again as defaults, so one Skill value reaches the merger twice.
-// It also doubles as the P5.2 decoupling probe — package engine cannot
-// import the root package, so a green run proves the default materializer
-// works without the deleted init() injection.
+// Package engine cannot import the root package, so the test also proves the
+// default materializer works without root-package initialization.
 func TestResolveSkills_ArchiveNoSelfConflict(t *testing.T) {
 	t.Parallel()
 	data := makeZip(t, map[string]string{
 		"SKILL.md":      "# deploy kit",
 		"refs/note.txt": "hi",
 	})
-	sk := archiveSkill("deploy-kit", ArchiveFromBytes(data))
-	mat := NewDefaultSkillMaterializer(WithSkillCacheRoot(t.TempDir()))
+	sk := archiveSkill("deploy-kit", publicskill.ArchiveBytes(data))
+	mat := publicskill.NewDefaultSkillMaterializer(publicskill.WithSkillCacheRoot(t.TempDir()))
 
 	payload, selected, _, err := resolveSkillsWith(
 		context.Background(), nil, mat, AgentIdentity{},
@@ -185,11 +186,11 @@ func TestResolveSkills_ArchiveNoSelfConflict(t *testing.T) {
 // two genuinely different archives under one key must still be rejected.
 func TestResolveSkills_ArchiveConflictStillDetected(t *testing.T) {
 	t.Parallel()
-	first := archiveSkill("deploy-kit", ArchiveFromBytes(makeZip(t, map[string]string{"SKILL.md": "# one"})),
-		func(s *SkillFromArchive) { s.Fingerprint = "sha256:one" })
-	second := archiveSkill("deploy-kit", ArchiveFromBytes(makeZip(t, map[string]string{"SKILL.md": "# two"})),
-		func(s *SkillFromArchive) { s.Fingerprint = "sha256:two" })
-	mat := NewDefaultSkillMaterializer(WithSkillCacheRoot(t.TempDir()))
+	first := archiveSkill("deploy-kit", publicskill.ArchiveBytes(makeZip(t, map[string]string{"SKILL.md": "# one"})),
+		func(s *publicskill.ArchiveSource) { s.Fingerprint = "sha256:one" })
+	second := archiveSkill("deploy-kit", publicskill.ArchiveBytes(makeZip(t, map[string]string{"SKILL.md": "# two"})),
+		func(s *publicskill.ArchiveSource) { s.Fingerprint = "sha256:two" })
+	mat := publicskill.NewDefaultSkillMaterializer(publicskill.WithSkillCacheRoot(t.TempDir()))
 
 	_, _, _, err := resolveSkillsWith(
 		context.Background(), nil, mat, AgentIdentity{},
@@ -202,15 +203,15 @@ func TestResolveSkills_ArchiveConflictStillDetected(t *testing.T) {
 
 func TestArchiveFingerprintDoesNotControlContentCache(t *testing.T) {
 	t.Parallel()
-	mat := NewDefaultSkillMaterializer(WithSkillCacheRoot(t.TempDir()))
+	mat := publicskill.NewDefaultSkillMaterializer(publicskill.WithSkillCacheRoot(t.TempDir()))
 	content := makeZip(t, map[string]string{"SKILL.md": "# same"})
 
 	materialize := func(body []byte, fingerprint string) string {
 		t.Helper()
 		path, err := mat.Materialize(context.Background(), Skill{
 			Key: "kit",
-			Source: SkillFromArchive{
-				Archive: ArchiveFromBytes(body), Fingerprint: fingerprint,
+			Source: publicskill.ArchiveSource{
+				Archive: publicskill.ArchiveBytes(body), Fingerprint: fingerprint,
 			},
 		})
 		if err != nil {

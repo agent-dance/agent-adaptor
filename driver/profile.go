@@ -18,22 +18,18 @@ const (
 )
 
 // CloneProfileOptions controls which parts of a source provider profile are
-// copied when WithCloneProfile or WithCloneProfileFrom is used.
+// copied by a clone selection created through package profile.
 type CloneProfileOptions struct {
 	IncludeSettings bool
 	IncludeMCP      bool
 	IncludeSkills   bool
-	// IncludeAuth keeps the original clone behavior: auth files are copied
-	// into the target profile when they are missing. Prefer AuthMode for
-	// OAuth-backed CLIs where duplicated refresh-token state is unsafe.
-	IncludeAuth bool
-	// AuthMode controls auth-file handling independently from IncludeAuth.
-	// The zero value keeps auth out of the clone unless IncludeAuth is true.
+	// AuthMode controls auth-file handling. The zero value keeps auth out of
+	// the clone.
 	AuthMode CloneProfileAuthMode
 }
 
-// CloneProfileAuthMode controls how WithCloneProfile and WithCloneProfileFrom
-// seed auth files from the source provider profile.
+// CloneProfileAuthMode controls how a clone selection seeds auth files from
+// the source provider profile.
 type CloneProfileAuthMode string
 
 const (
@@ -49,14 +45,17 @@ const (
 	CloneProfileAuthLink CloneProfileAuthMode = "link"
 )
 
-// ProfileSelection is the normalized binding-level profile request. Hosts
-// usually construct it through WithNativeProfile, WithDedicatedProfile,
-// WithCloneProfile, or WithCloneProfileFrom rather than setting fields
-// directly.
+// ProfileSelection is the normalized Agent profile request. Application code
+// normally constructs its public profile.Selection alias with package profile
+// and supplies it to adaptor.WithProfile.
 type ProfileSelection struct {
-	Mode  ProfileMode
-	Dir   string
-	From  string
+	// Mode selects native, dedicated, cloned, or driver-default resolution.
+	Mode ProfileMode
+	// Dir is the dedicated or managed destination profile directory.
+	Dir string
+	// From is the optional source directory for clone mode.
+	From string
+	// Clone controls clone contents when Mode is ProfileModeClone.
 	Clone *CloneProfileOptions
 }
 
@@ -64,34 +63,50 @@ type ProfileSelection struct {
 // treats it as desired state; drivers decide whether to materialize it as a
 // provider-native file/rule or inject it into the prompt as a fallback.
 type InstructionsBundleRef struct {
-	ID          string
-	Path        string
-	Content     string
+	// ID is the stable host identity of the instruction bundle.
+	ID string
+	// Path locates instruction material already present on disk.
+	Path string
+	// Content carries inline instruction material.
+	Content string
+	// Fingerprint identifies the resolved provider-visible contents.
 	Fingerprint string
-	Scope       InstructionScope
-	Mode        InstructionMode
-	Native      map[string]any
+	// Scope selects where the instructions apply.
+	Scope InstructionScope
+	// Mode selects additive or replacement semantics.
+	Mode InstructionMode
+	// Native carries provider-specific extensions.
+	Native map[string]any
 }
 
+// InstructionScope identifies where an instruction bundle applies.
 type InstructionScope string
 
 const (
+	// InstructionScopeDefault delegates scope selection to the driver.
 	InstructionScopeDefault InstructionScope = ""
-	InstructionScopeUser    InstructionScope = "user"
+	// InstructionScopeUser applies instructions to the provider user profile.
+	InstructionScopeUser InstructionScope = "user"
+	// InstructionScopeProject applies instructions to the resolved project.
 	InstructionScopeProject InstructionScope = "project"
-	InstructionScopeLocal   InstructionScope = "local"
-	InstructionScopeRun     InstructionScope = "run"
+	// InstructionScopeLocal applies instructions to the local workspace only.
+	InstructionScopeLocal InstructionScope = "local"
+	// InstructionScopeRun applies instructions only to the current invocation.
+	InstructionScopeRun InstructionScope = "run"
 )
 
+// InstructionMode controls whether instructions extend or replace native ones.
 type InstructionMode string
 
 const (
+	// InstructionModeAdditive adds the bundle to native instructions.
 	InstructionModeAdditive InstructionMode = ""
-	InstructionModeReplace  InstructionMode = "replace"
+	// InstructionModeReplace replaces native instructions where supported.
+	InstructionModeReplace InstructionMode = "replace"
 )
 
 // ProfilePayload is the driver-facing normalized profile desired state for a
-// single Run/Start invocation. Fingerprint covers every provider-visible
+// single resolved invocation. Fingerprint covers every provider-visible
 // resource kind so drivers can use it as the session resume guard.
 type ProfilePayload struct {
 	Skills       ResolvedSkills
@@ -118,14 +133,10 @@ type ProfileResourceDeclarations struct {
 
 // AgentSpec describes one host-declared sub-agent/profile agent entry.
 type AgentSpec struct {
-	Key          string
-	RuntimeName  string
-	Description  string
-	Instructions string
-	// Content is a backward-compatible alias for Instructions. New callers
-	// should set Instructions so Content can remain an unambiguous migration
-	// bridge rather than a provider-native blob.
-	Content           string
+	Key               string
+	RuntimeName       string
+	Description       string
+	Instructions      string
 	SourcePath        string
 	SourceFingerprint string
 
@@ -164,13 +175,6 @@ type HookSpec struct {
 	MatcherSpec HookMatcher
 	Handler     HookHandler
 
-	// Matcher, Command, Args, and Env are backward-compatible command hook
-	// fields. New callers should prefer MatcherSpec and Handler.
-	Matcher string
-	Command string
-	Args    []string
-	Env     map[string]string
-
 	Timeout       time.Duration
 	FailPolicy    HookFailPolicy
 	StatusMessage string
@@ -185,26 +189,46 @@ type HookSpec struct {
 type HookEvent string
 
 const (
-	HookEventSessionStart      HookEvent = "session_start"
-	HookEventSessionEnd        HookEvent = "session_end"
-	HookEventPromptSubmit      HookEvent = "prompt_submit"
-	HookEventPromptExpand      HookEvent = "prompt_expand"
-	HookEventPreTool           HookEvent = "pre_tool"
-	HookEventPostTool          HookEvent = "post_tool"
-	HookEventToolFailure       HookEvent = "tool_failure"
+	// HookEventSessionStart runs when a provider session starts.
+	HookEventSessionStart HookEvent = "session_start"
+	// HookEventSessionEnd runs when a provider session ends.
+	HookEventSessionEnd HookEvent = "session_end"
+	// HookEventPromptSubmit runs when a prompt is submitted.
+	HookEventPromptSubmit HookEvent = "prompt_submit"
+	// HookEventPromptExpand runs when a provider expands a prompt.
+	HookEventPromptExpand HookEvent = "prompt_expand"
+	// HookEventPreTool runs before a tool invocation.
+	HookEventPreTool HookEvent = "pre_tool"
+	// HookEventPostTool runs after a successful tool invocation.
+	HookEventPostTool HookEvent = "post_tool"
+	// HookEventToolFailure runs after a failed tool invocation.
+	HookEventToolFailure HookEvent = "tool_failure"
+	// HookEventPermissionRequest runs when a permission decision is requested.
 	HookEventPermissionRequest HookEvent = "permission_request"
-	HookEventPreShell          HookEvent = "pre_shell"
-	HookEventPostShell         HookEvent = "post_shell"
-	HookEventPreMCP            HookEvent = "pre_mcp"
-	HookEventPostMCP           HookEvent = "post_mcp"
-	HookEventPreFileRead       HookEvent = "pre_file_read"
-	HookEventPostFileEdit      HookEvent = "post_file_edit"
-	HookEventSubagentStart     HookEvent = "subagent_start"
-	HookEventSubagentStop      HookEvent = "subagent_stop"
-	HookEventPreCompact        HookEvent = "pre_compact"
-	HookEventPostCompact       HookEvent = "post_compact"
-	HookEventStop              HookEvent = "stop"
-	HookEventStopFailure       HookEvent = "stop_failure"
+	// HookEventPreShell runs before a shell command.
+	HookEventPreShell HookEvent = "pre_shell"
+	// HookEventPostShell runs after a shell command.
+	HookEventPostShell HookEvent = "post_shell"
+	// HookEventPreMCP runs before an MCP operation.
+	HookEventPreMCP HookEvent = "pre_mcp"
+	// HookEventPostMCP runs after an MCP operation.
+	HookEventPostMCP HookEvent = "post_mcp"
+	// HookEventPreFileRead runs before a file read.
+	HookEventPreFileRead HookEvent = "pre_file_read"
+	// HookEventPostFileEdit runs after a file edit.
+	HookEventPostFileEdit HookEvent = "post_file_edit"
+	// HookEventSubagentStart runs when a provider sub-agent starts.
+	HookEventSubagentStart HookEvent = "subagent_start"
+	// HookEventSubagentStop runs when a provider sub-agent stops.
+	HookEventSubagentStop HookEvent = "subagent_stop"
+	// HookEventPreCompact runs before provider context compaction.
+	HookEventPreCompact HookEvent = "pre_compact"
+	// HookEventPostCompact runs after provider context compaction.
+	HookEventPostCompact HookEvent = "post_compact"
+	// HookEventStop runs when provider execution stops normally.
+	HookEventStop HookEvent = "stop"
+	// HookEventStopFailure runs when provider execution stops with a failure.
+	HookEventStopFailure HookEvent = "stop_failure"
 )
 
 // HookMatcher describes what a hook filters on and which syntax the pattern
@@ -215,26 +239,41 @@ type HookMatcher struct {
 	Pattern string
 }
 
+// HookMatcherSubject identifies the value matched by a hook filter.
 type HookMatcherSubject string
 
 const (
-	HookMatcherSubjectDefault  HookMatcherSubject = ""
-	HookMatcherSubjectTool     HookMatcherSubject = "tool"
-	HookMatcherSubjectCommand  HookMatcherSubject = "command"
-	HookMatcherSubjectMCP      HookMatcherSubject = "mcp"
-	HookMatcherSubjectPath     HookMatcherSubject = "path"
-	HookMatcherSubjectPrompt   HookMatcherSubject = "prompt"
+	// HookMatcherSubjectDefault delegates subject selection to the provider.
+	HookMatcherSubjectDefault HookMatcherSubject = ""
+	// HookMatcherSubjectTool matches tool names.
+	HookMatcherSubjectTool HookMatcherSubject = "tool"
+	// HookMatcherSubjectCommand matches shell commands.
+	HookMatcherSubjectCommand HookMatcherSubject = "command"
+	// HookMatcherSubjectMCP matches MCP servers or tools.
+	HookMatcherSubjectMCP HookMatcherSubject = "mcp"
+	// HookMatcherSubjectPath matches filesystem paths.
+	HookMatcherSubjectPath HookMatcherSubject = "path"
+	// HookMatcherSubjectPrompt matches prompt text.
+	HookMatcherSubjectPrompt HookMatcherSubject = "prompt"
+	// HookMatcherSubjectSubagent matches sub-agent identifiers.
 	HookMatcherSubjectSubagent HookMatcherSubject = "subagent"
-	HookMatcherSubjectSource   HookMatcherSubject = "source"
+	// HookMatcherSubjectSource matches provider event sources.
+	HookMatcherSubjectSource HookMatcherSubject = "source"
 )
 
+// HookMatcherSyntax identifies how a HookMatcher pattern is interpreted.
 type HookMatcherSyntax string
 
 const (
+	// HookMatcherSyntaxProvider delegates pattern syntax to the provider.
 	HookMatcherSyntaxProvider HookMatcherSyntax = ""
-	HookMatcherSyntaxExact    HookMatcherSyntax = "exact"
-	HookMatcherSyntaxRegex    HookMatcherSyntax = "regex"
-	HookMatcherSyntaxPrefix   HookMatcherSyntax = "prefix"
+	// HookMatcherSyntaxExact requires an exact match.
+	HookMatcherSyntaxExact HookMatcherSyntax = "exact"
+	// HookMatcherSyntaxRegex interprets the pattern as a regular expression.
+	HookMatcherSyntaxRegex HookMatcherSyntax = "regex"
+	// HookMatcherSyntaxPrefix requires a matching prefix.
+	HookMatcherSyntaxPrefix HookMatcherSyntax = "prefix"
+	// HookMatcherSyntaxContains requires the value to contain the pattern.
 	HookMatcherSyntaxContains HookMatcherSyntax = "contains"
 )
 
@@ -255,22 +294,32 @@ type HookHandler struct {
 	Agent  string
 }
 
+// HookHandlerType identifies the action executed for a hook.
 type HookHandlerType string
 
 const (
+	// HookHandlerCommand executes a local command.
 	HookHandlerCommand HookHandlerType = "command"
-	HookHandlerPrompt  HookHandlerType = "prompt"
-	HookHandlerHTTP    HookHandlerType = "http"
+	// HookHandlerPrompt invokes a provider prompt hook.
+	HookHandlerPrompt HookHandlerType = "prompt"
+	// HookHandlerHTTP invokes an HTTP endpoint.
+	HookHandlerHTTP HookHandlerType = "http"
+	// HookHandlerMCPTool invokes an MCP tool.
 	HookHandlerMCPTool HookHandlerType = "mcp_tool"
-	HookHandlerAgent   HookHandlerType = "agent"
+	// HookHandlerAgent invokes a provider sub-agent.
+	HookHandlerAgent HookHandlerType = "agent"
 )
 
+// HookFailPolicy controls whether a hook failure stops the provider action.
 type HookFailPolicy string
 
 const (
+	// HookFailPolicyProviderDefault delegates failure handling to the provider.
 	HookFailPolicyProviderDefault HookFailPolicy = ""
-	HookFailPolicyOpen            HookFailPolicy = "open"
-	HookFailPolicyClosed          HookFailPolicy = "closed"
+	// HookFailPolicyOpen allows the provider action after a hook failure.
+	HookFailPolicyOpen HookFailPolicy = "open"
+	// HookFailPolicyClosed prevents the provider action after a hook failure.
+	HookFailPolicyClosed HookFailPolicy = "closed"
 )
 
 // HookPayload is the normalized driver-facing hook resource state.
@@ -285,7 +334,9 @@ type HookPayload struct {
 type ProfileConfigFileKind string
 
 const (
+	// ProfileConfigFileJSON selects a JSON profile configuration file.
 	ProfileConfigFileJSON ProfileConfigFileKind = "json"
+	// ProfileConfigFileTOML selects a TOML profile configuration file.
 	ProfileConfigFileTOML ProfileConfigFileKind = "toml"
 )
 
@@ -295,14 +346,7 @@ type ProfileConfigPatch struct {
 	Key        string
 	Capability string
 	Values     map[string]any
-
-	// Native is an explicit provider-native escape hatch. FileKind, Path, and
-	// Section remain for backward compatibility and are interpreted as a native
-	// patch when Capability is empty.
-	Native   *NativeConfigPatch
-	FileKind ProfileConfigFileKind
-	Path     string
-	Section  string
+	Native     *NativeConfigPatch
 }
 
 // NativeConfigPatch identifies a provider-native structured config patch.

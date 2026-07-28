@@ -1,6 +1,7 @@
 package codebuddy
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -55,8 +56,21 @@ func TestValidateConfig(t *testing.T) {
 	if err := a.ValidateConfig(Config{}); err != nil {
 		t.Errorf("empty config should validate, got %v", err)
 	}
-	if err := a.ValidateConfig(Config{PermissionMode: PermissionAcceptEdits}); err != nil {
-		t.Errorf("acceptEdits should validate, got %v", err)
+	for _, mode := range []PermissionMode{
+		PermissionDefault,
+		PermissionAcceptEdits,
+		PermissionAuto,
+		PermissionDontAsk,
+		PermissionPlan,
+		PermissionBypass,
+	} {
+		if err := a.ValidateConfig(Config{PermissionMode: mode}); err != nil {
+			t.Errorf("official CLI permission mode %q should validate: %v", mode, err)
+		}
+		args := buildExecArgs(Config{}, driver.Request{}, mode)
+		if index := argIndex(args, "--permission-mode"); index < 0 || index+1 >= len(args) || args[index+1] != string(mode) {
+			t.Errorf("permission mode %q args = %v", mode, args)
+		}
 	}
 	if err := a.ValidateConfig(Config{PermissionMode: "bogus"}); err == nil {
 		t.Errorf("bogus permission mode should fail")
@@ -125,15 +139,18 @@ func TestBuildExecArgsResumeAndStructured(t *testing.T) {
 }
 
 func TestHeadlessPermissionMode(t *testing.T) {
-	// explicit override wins
+	// Constructor default applies when the call inherits it.
 	cfg := Config{PermissionMode: PermissionPlan}
 	if got := headlessPermissionMode(cfg, driver.RunPolicy{}); got != PermissionPlan {
 		t.Errorf("override: got %q", got)
 	}
-	// AutoApprove -> bypass
+	// A nearer call override wins over the constructor default.
 	autoApprove := driver.RunPolicy{HumanDecision: driver.HumanDecisionPolicy{Permission: driver.HumanDecisionAutoApprove}}
 	if got := headlessPermissionMode(Config{}, autoApprove); got != PermissionBypass {
 		t.Errorf("auto approve: got %q, want bypass", got)
+	}
+	if got := headlessPermissionMode(cfg, autoApprove); got != PermissionBypass {
+		t.Errorf("call auto approve over constructor plan: got %q, want bypass", got)
 	}
 }
 
@@ -144,6 +161,8 @@ func TestWantsControlTransportPolicyMatrix(t *testing.T) {
 		want bool
 	}{
 		{"empty", driver.HumanDecisionPolicy{}, false},
+		{"permission auto approve", driver.HumanDecisionPolicy{Permission: driver.HumanDecisionAutoApprove}, false},
+		{"plan auto approve", driver.HumanDecisionPolicy{PlanReview: driver.HumanDecisionAutoApprove}, true},
 		{"all auto approve", driver.HumanDecisionPolicy{Permission: driver.HumanDecisionAutoApprove, PlanReview: driver.HumanDecisionAutoApprove}, false},
 		{"permission ask", driver.HumanDecisionPolicy{Permission: driver.HumanDecisionAsk}, true},
 		{"plan ask", driver.HumanDecisionPolicy{PlanReview: driver.HumanDecisionAsk}, true},
@@ -175,8 +194,8 @@ func TestParserHeadlessStreamJSON(t *testing.T) {
 	if got := p.buildOutput(); got != "OK" {
 		t.Errorf("output = %q, want OK", got)
 	}
-	if p.finalSummary() != "OK" {
-		t.Errorf("summary = %q, want OK", p.finalSummary())
+	if p.finalSummary() != "" {
+		t.Errorf("summary = %q, want empty", p.finalSummary())
 	}
 	if p.usage == nil || p.usage.InputTokens != 25445 || p.usage.OutputTokens != 4 {
 		t.Errorf("usage = %+v", p.usage)
@@ -184,6 +203,51 @@ func TestParserHeadlessStreamJSON(t *testing.T) {
 	cp := p.checkpoint(0)
 	if cp == nil || cp.State == nil || cp.State.ResumeID != "791ecd9d" {
 		t.Errorf("checkpoint = %+v", cp)
+	}
+}
+
+func TestCodeBuddyParserFinalResultIsNotSummary(t *testing.T) {
+	fullText := strings.Repeat("long final assistant response ", 400) + "done"
+	assistant, err := json.Marshal(map[string]any{
+		"type":       "assistant",
+		"session_id": "codebuddy-long",
+		"message": map[string]any{
+			"content": []any{map[string]any{"type": "text", "text": fullText}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal assistant: %v", err)
+	}
+	terminal, err := json.Marshal(map[string]any{
+		"type":              "result",
+		"subtype":           "success",
+		"session_id":        "codebuddy-long",
+		"result":            fullText,
+		"summary":           "undocumented summary must not be promoted",
+		"structured_output": map[string]any{"answer": 42},
+	})
+	if err != nil {
+		t.Fatalf("marshal terminal: %v", err)
+	}
+
+	p := newParser(nil)
+	stdout := string(assistant) + "\n" + string(terminal) + "\n"
+	if err := p.onChunk("stdout", []byte(stdout), timeNow()); err != nil {
+		t.Fatalf("onChunk: %v", err)
+	}
+	p.finalize()
+
+	if got := p.buildOutput(); got != fullText {
+		t.Fatalf("Output length = %d, want %d", len(got), len(fullText))
+	}
+	if got := p.finalSummary(); got != "" {
+		t.Fatalf("Summary must remain empty without an official bounded field, got %q", got)
+	}
+	if p.terminal == nil || string(p.terminal.JSON) != string(terminal) {
+		t.Fatalf("terminal Raw mismatch: got %#v", p.terminal)
+	}
+	if p.structuredOutput == nil || string(p.structuredOutput.RawJSON) != `{"answer":42}` {
+		t.Fatalf("structured output = %#v", p.structuredOutput)
 	}
 }
 

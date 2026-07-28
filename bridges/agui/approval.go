@@ -12,7 +12,9 @@ import (
 type DecisionMode int
 
 const (
+	// DecisionAsToolCall projects approvals as standard AG-UI tool-call events.
 	DecisionAsToolCall DecisionMode = iota
+	// DecisionAsCustom projects approvals as AG-UI custom events.
 	DecisionAsCustom
 )
 

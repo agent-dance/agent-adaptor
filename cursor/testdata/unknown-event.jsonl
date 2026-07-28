@@ -1,0 +1,4 @@
+{"type":"system","subtype":"init","cwd":"/workspace","session_id":"cursor-unknown","model":"GPT-5"}
+{"type":"connection","subtype":"reconnected","attempt":2,"session_id":"cursor-unknown"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Recovered."}]},"session_id":"cursor-unknown"}
+{"type":"result","subtype":"success","duration_ms":900,"duration_api_ms":800,"is_error":false,"result":"Recovered.","session_id":"cursor-unknown"}

@@ -1,6 +1,6 @@
 package adaptor_test
 
-// P3.7 migration of the root MCP baseline (mcp_sdk_test.go) onto the v1
+// MCP resolution and pre-launch validation contract, derived from the root
 // surface. Mapping (roots stay untouched):
 //
 //	default → override → clear      → TestMCPDefaultOverrideClear
@@ -14,10 +14,10 @@ import (
 	"strings"
 	"testing"
 
+	adaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/mcp"
 	"github.com/agent-dance/agent-adaptor/memory"
-	adaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/skill"
 )
 
@@ -79,6 +79,7 @@ func TestMCPChangeStartsFreshThreadSession(t *testing.T) {
 	sf.descriptor = &driver.Descriptor{
 		Type:        "fake",
 		DisplayName: "Fake Driver",
+		Sessions:    driver.SessionCapability{SupportsResume: true},
 		MCP:         driver.MCPCapability{Supported: true, Stdio: true, HTTP: true, SSE: true},
 	}
 	store := memory.NewStore()

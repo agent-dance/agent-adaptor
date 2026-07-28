@@ -10,17 +10,19 @@ import (
 	"github.com/agent-dance/agent-adaptor/driver"
 )
 
-// Driver is the adapter SPI implemented by built-in and third-party agent
-// integrations. It aliases the driver package interface so hosts can
-// reference the type (struct fields, function signatures) without importing
-// the SPI package.
+// Driver is the provider integration SPI implemented by built-in and
+// third-party agent integrations. It aliases the driver package interface so
+// hosts can reference the type (struct fields, function signatures) without
+// importing the SPI package.
 type Driver = driver.Driver
 
 // Runner is the single execution contract shared by Agent (stateless runs)
 // and Thread (stateful conversations). Bridges, RunAs[T], and host
 // decorators accept a Runner so both are interchangeable.
 type Runner interface {
+	// Run executes one prompt to completion through the unified event pipeline.
 	Run(ctx context.Context, prompt string, opts ...CallOption) (*Result, error)
+	// Stream starts one prompt and returns its live typed event stream.
 	Stream(ctx context.Context, prompt string, opts ...CallOption) Stream
 }
 
@@ -32,9 +34,9 @@ type Agent struct {
 	defaults AgentSettings
 
 	// mu guards skillSelection, the process-local skill selection override
-	// installed by SelectSkills (legacy Admin.SetSelectedSkills semantics):
-	// nil means no override, non-nil (possibly empty) substitutes the
-	// default skill refs of every subsequent resolution.
+	// installed by SelectSkills: nil means no override, while a non-nil
+	// slice (including an empty slice) replaces the default skill refs for
+	// every subsequent resolution.
 	mu             sync.Mutex
 	skillSelection []string
 }
@@ -62,9 +64,9 @@ func New(d driver.Driver, opts ...Option) *Agent {
 }
 
 // Run executes one prompt to completion and returns the Result. It is
-// Stream + drain + Result() — there is no separate batch execution path
-// (P1.4): Run consumes the same unified event pipeline and discards the
-// events. Approvals still work through the OnApproval callback (form A);
+// Stream + drain + Result() — there is no separate batch execution path.
+// Run consumes the same unified event pipeline and discards the events.
+// Approvals still work through the OnApproval callback;
 // without a handler, an "ask" approval times out into the Policy.Approvals
 // fallback, since Run has no event consumer to answer it.
 //
@@ -73,7 +75,7 @@ func New(d driver.Driver, opts ...Option) *Agent {
 // defaults are never mutated, so concurrent and successive runs do not
 // pollute each other.
 //
-// Error contract (decision D1): business failures return *RunError carrying
+// Business failures return *RunError carrying
 // the full Result; infrastructure failures (context cancellation/deadline,
 // process crash, protocol breakage) return plain wrapped errors. Both travel
 // the single err path.
@@ -94,10 +96,8 @@ func buildRequest(runID, prompt string, eff *RunSettings) driver.Request {
 		Prompt:        prompt,
 		Metadata:      maps.Clone(eff.metadata),
 		ModelOverride: eff.model,
-		// Config stays nil in P0: v1 drivers carry their own config
+		// Config stays nil: configured Drivers carry their own config
 		// (codex.Driver(codex.Config{...}) captures it at construction).
-		// TODO(P3.1): drop the field hand-off entirely when driver
-		// configs move home.
 		// Session stays nil here: the Thread path (thread.go) attaches
 		// the per-turn session context; plain Agent runs are stateless.
 	}

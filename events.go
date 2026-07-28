@@ -7,14 +7,11 @@ import (
 	"github.com/agent-dance/agent-adaptor/driver"
 )
 
-// ============ The unified event stream (P1.1, design doc §2.5) ============
-//
 // One run produces one ordered stream of typed events. Semantic streaming
 // (text / thinking / tool calls), operational signals (process spawn, raw
 // chunks, lifecycle notices), approvals, and backpressure markers all travel
 // the same channel; a single type switch dispatches them and unhandled types
-// are ignored for free. The legacy dual-channel model (RunEvent operational +
-// StreamPayload semantic, each with its own drain obligation) is gone.
+// can be ignored.
 
 // Event is the sealed interface implemented by every stream event type.
 //
@@ -44,21 +41,32 @@ type Event interface {
 // event sink serializes producers. ThreadKey is the host's opaque key; a
 // provider thread/session identifier, if any, is kept in Source.ThreadID.
 type EventMeta struct {
-	RunID     string
+	// RunID is the package-assigned execution identifier.
+	RunID string
+	// ThreadKey is the host's opaque Thread key, or empty for an Agent run.
 	ThreadKey string
-	Sequence  uint64
-	Time      time.Time
-	TurnID    string
-	Source    *EventSourceMeta
+	// Sequence is the authoritative receive order within the run.
+	Sequence uint64
+	// Time is when the unified event sink accepted the event.
+	Time time.Time
+	// TurnID identifies a provider turn when the protocol exposes one.
+	TurnID string
+	// Source preserves provider envelope coordinates, when available.
+	Source *EventSourceMeta
 }
 
 // EventSourceMeta preserves provider/driver envelope coordinates without
 // allowing them to compete with the SDK's authoritative EventMeta fields.
 type EventSourceMeta struct {
-	RunID     string
-	ThreadID  string
-	TurnID    string
-	Sequence  uint64
+	// RunID is the provider-reported run identifier.
+	RunID string
+	// ThreadID is the provider-reported conversation identifier.
+	ThreadID string
+	// TurnID is the provider-reported turn identifier.
+	TurnID string
+	// Sequence is the provider-reported event sequence.
+	Sequence uint64
+	// Timestamp is the provider-reported event time.
 	Timestamp time.Time
 }
 
@@ -166,7 +174,9 @@ type ToolResult struct {
 // RunStarted marks the beginning of a streamed run (StreamKind run.started).
 type RunStarted struct {
 	eventMetaCarrier
-	RunID    string
+	// RunID is the run identifier reported by the Driver event.
+	RunID string
+	// ThreadID is the provider conversation identifier, when reported.
 	ThreadID string
 }
 
@@ -178,7 +188,9 @@ type RunStarted struct {
 // full Result and the typed *RunError — always comes from Stream.Result().
 type RunFinished struct {
 	eventMetaCarrier
-	RunID    string
+	// RunID is the run identifier reported by the Driver event.
+	RunID string
+	// ThreadID is the provider conversation identifier, when reported.
 	ThreadID string
 	// Usage is the token accounting reported on normal completion.
 	Usage *Usage
@@ -201,8 +213,8 @@ const (
 )
 
 // ProcessInfo carries process-level operational signals: child-process
-// spawn details and raw stdout/stderr chunks (legacy RunEvent types spawn
-// and chunk). Most consumers ignore it; debugging and audit tooling reads
+// spawn details and raw stdout/stderr chunks. Most consumers ignore it;
+// debugging and audit tooling reads
 // it from the same stream instead of a second channel.
 type ProcessInfo struct {
 	eventMetaCarrier
@@ -233,7 +245,7 @@ const (
 	// "started" or "finished" and Text carries the step name.
 	NoticeStep = "step"
 	// NoticeTranscriptItem carries one progressively parsed transcript
-	// item (legacy RunEventItem). Item holds the normalized entry; the
+	// item. Item holds the normalized entry; the
 	// complete ordered transcript remains available via Result.Transcript().
 	NoticeTranscriptItem = "transcript.item"
 	// NoticeApprovalRequested broadcasts that an approval request was
@@ -274,14 +286,15 @@ type Dropped struct {
 	Count int
 	// ByKind breaks Count down by the public event kind.
 	ByKind map[string]int
-	// FirstSequence and LastSequence bound the SDK sequence numbers which
-	// were reserved for, but not delivered with, the discarded events.
+	// FirstSequence is the first sequence number reserved for a discarded event.
 	FirstSequence uint64
-	LastSequence  uint64
-	// Reason and Source distinguish local backpressure from provider-side
-	// loss reports. Details preserves additional audit fields.
-	Reason  string
-	Source  string
+	// LastSequence is the last sequence number reserved for a discarded event.
+	LastSequence uint64
+	// Reason explains why events were lost.
+	Reason string
+	// Source identifies the component that reported the loss.
+	Source string
+	// Details preserves additional loss-report fields.
 	Details map[string]any
 }
 
@@ -298,8 +311,8 @@ const (
 )
 
 // SubagentUpdate reports remote progress of a delegated subagent on the
-// leader's own event stream (design doc §9). The type is part of the P1
-// event vocabulary; the delegation service starts injecting it in P4.
+// parent Agent's own event stream. Optional delegation host components can
+// publish it through a RunServiceProvider attachment.
 type SubagentUpdate struct {
 	eventMetaCarrier
 	// Agent is the delegation key of the subagent.
@@ -425,8 +438,10 @@ func phaseKind(p Phase) string {
 
 // eventMayDrop is deliberately narrow. Only replayable, high-frequency
 // deltas may be discarded. Lifecycle, approvals, terminal events, provider
-// Dropped reports, transcript items, and tool results are always reliable
-// until the run is explicitly cancelled.
+// Dropped reports, transcript items, and tool results are reliable during
+// normal execution. Cancellation may abandon ordinary pending events to
+// unblock teardown; the authoritative terminal has a dedicated broker reserve
+// and remains deliverable.
 func eventMayDrop(ev Event) bool {
 	switch e := ev.(type) {
 	case TextDelta:
@@ -443,8 +458,6 @@ func eventMayDrop(ev Event) bool {
 		return false
 	}
 }
-
-// ============ SPI → Event translation (P1.2) ============
 
 // eventFromRunEvent translates one operational RunEvent. Every RunEventType
 // has a destination:
@@ -483,10 +496,9 @@ func eventFromRunEvent(ev driver.RunEvent) Event {
 	}
 }
 
-// eventFromStreamPayload translates one semantic StreamPayload. All 18
-// StreamKinds have a destination (see the mapping table in the P1 report /
-// contract test); several kinds share one event type discriminated by Phase
-// or by field population.
+// eventFromStreamPayload translates one semantic StreamPayload. Every
+// StreamKind has a destination; several kinds share one Event type
+// discriminated by Phase or by field population.
 func eventFromStreamPayload(p driver.StreamPayload) Event {
 	switch p.Kind {
 	case driver.StreamRunStarted:

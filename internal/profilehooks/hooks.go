@@ -140,7 +140,7 @@ func targetPath(driverType, profileDir string) (string, error) {
 	case "claude":
 		return filepath.Join(profileDir, "settings.json"), nil
 	default:
-		return "", fmt.Errorf("profile hooks are unsupported by adapter %q", driverType)
+		return "", fmt.Errorf("profile hooks are unsupported by driver %q", driverType)
 	}
 }
 
@@ -263,7 +263,7 @@ func mapEvent(driverType string, spec driver.HookSpec) (string, string, error) {
 		}
 		return event, matcher, nil
 	default:
-		return "", "", fmt.Errorf("profile hooks are unsupported by adapter %q", driverType)
+		return "", "", fmt.Errorf("profile hooks are unsupported by driver %q", driverType)
 	}
 }
 
@@ -372,9 +372,6 @@ func addCommonHandlerFields(driverType string, spec driver.HookSpec, out map[str
 }
 
 func matcherPattern(spec driver.HookSpec) string {
-	if strings.TrimSpace(spec.Matcher) != "" {
-		return strings.TrimSpace(spec.Matcher)
-	}
 	pattern := strings.TrimSpace(spec.MatcherSpec.Pattern)
 	if pattern == "" {
 		return ""
@@ -428,7 +425,7 @@ func collectWarnings(driverType string, payload driver.HookPayload) []string {
 		if len(spec.Native) > 0 {
 			warnings = append(warnings, fmt.Sprintf("hook %q: native hook fields are not materialized by the generic adapter layout", spec.Key))
 		}
-		if len(spec.Handler.Env) > 0 || len(spec.Env) > 0 {
+		if len(spec.Handler.Env) > 0 {
 			warnings = append(warnings, fmt.Sprintf("hook %q: hook env values are not written into provider config; wrap the command if env injection is required", spec.Key))
 		}
 		if spec.FailPolicy != "" && !(driverType == "cursor" && spec.FailPolicy == driver.HookFailPolicyClosed) {
@@ -566,7 +563,7 @@ func pruneRemovedHooks(payload driver.HookPayload, manifest *profilestate.Manife
 func fingerprint(spec driver.HookSpec) string {
 	raw, err := json.Marshal(spec)
 	if err != nil {
-		raw = []byte(spec.Key + string(spec.Event) + spec.Command + strconv.FormatBool(spec.Disabled))
+		raw = []byte(spec.Key + string(spec.Event) + spec.Handler.Command + strconv.FormatBool(spec.Disabled))
 	}
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:])

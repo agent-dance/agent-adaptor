@@ -15,7 +15,7 @@ type callerIdentityKey struct{}
 // it to forward identity through their own ctx chains.
 //
 // Most hosts do not need to call this directly: SDK already injects
-// the AgentIdentity resolved from binding defaults / WithAgentIdentity
+// the AgentIdentity resolved from Agent defaults / WithIdentity
 // before invoking provider hooks.
 func WithCallerIdentity(ctx context.Context, id AgentIdentity) context.Context {
 	return context.WithValue(ctx, callerIdentityKey{}, id)

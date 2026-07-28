@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-const legacyRootImport = "github.com/agent-dance/agent-adaptor"
+const rootAPIImport = "github.com/agent-dance/agent-adaptor"
 
 // TestPackageRootImportBoundary keeps production code on the Driver SPI and
 // leaf contracts. Tests may import the final root API for integration coverage.
@@ -36,8 +36,8 @@ func TestPackageRootImportBoundary(t *testing.T) {
 				t.Errorf("unquote import in %s: %v", name, err)
 				continue
 			}
-			if path == legacyRootImport {
-				t.Errorf("file %s imports legacy root %q", name, path)
+			if path == rootAPIImport {
+				t.Errorf("production file %s imports consumer-facing root API %q", name, path)
 			}
 		}
 	}

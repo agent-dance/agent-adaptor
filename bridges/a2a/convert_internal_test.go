@@ -72,11 +72,11 @@ func TestConvertPartPreservesInboundNumberType(t *testing.T) {
 }
 
 func TestOutboundPartsTreatsZeroKindAsText(t *testing.T) {
-	parts, err := outboundParts([]Part{{Text: "legacy text"}})
+	parts, err := outboundParts([]Part{{Text: "plain text"}})
 	if err != nil {
 		t.Fatalf("outboundParts: %v", err)
 	}
-	if len(parts) != 1 || parts[0].Content != a2aproto.Text("legacy text") {
+	if len(parts) != 1 || parts[0].Content != a2aproto.Text("plain text") {
 		t.Fatalf("parts = %#v", parts)
 	}
 }

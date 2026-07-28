@@ -4,21 +4,21 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
 	aguievents "github.com/ag-ui-protocol/ag-ui/sdks/community/go/pkg/core/events"
 
+	adaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/bridges/agui"
 	"github.com/agent-dance/agent-adaptor/driver"
-	adaptor "github.com/agent-dance/agent-adaptor"
 )
 
-// claudeFixtureDriver keeps these provider conformance tests on the real v1
-// path: Claude's formal-protocol parser emits the Driver SPI, next turns that
+// claudeFixtureDriver keeps these provider conformance tests on the production
+// path: Claude's formal-protocol parser emits the Driver SPI, the core turns that
 // SPI into its one typed Event stream, and bridges/agui consumes that Stream.
-// It deliberately does not call a translator with legacy StreamPayloads.
+// It deliberately exercises the unified Event stream directly rather than a
+// separate payload translation path.
 type claudeFixtureDriver struct {
 	stdout []byte
 }
@@ -37,16 +37,8 @@ func (d claudeFixtureDriver) Run(_ context.Context, req driver.Request, sink dri
 	}
 	parser.finalize()
 
-	var failure *driver.RunFailure
-	switch {
-	case parser.pendingFailure != nil:
-		copy := *parser.pendingFailure
-		failure = &copy
-	case strings.TrimSpace(parser.errorMessage) != "":
-		failure = &driver.RunFailure{Code: driver.FailureAgentError, Message: parser.errorMessage}
-	case !parser.terminalSeen || !parser.terminalSuccess:
-		failure = &driver.RunFailure{Code: driver.FailureAgentError, Message: "claude protocol ended without a successful terminal result"}
-	}
+	failure := parser.failureForOutcome(0, "", false)
+	parser.completeStream(failure, 0, "", false)
 
 	raw := driver.RawStreams{
 		Stdout:   string(d.stdout),

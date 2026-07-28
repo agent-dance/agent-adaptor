@@ -13,9 +13,9 @@ import (
 
 	aguievents "github.com/ag-ui-protocol/ag-ui/sdks/community/go/pkg/core/events"
 
+	adaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/bridges/agui"
 	"github.com/agent-dance/agent-adaptor/driver"
-	adaptor "github.com/agent-dance/agent-adaptor"
 )
 
 func typesOf(events []aguievents.Event) []aguievents.EventType {
@@ -31,6 +31,16 @@ func assertVerified(t *testing.T, events []aguievents.Event) {
 	if err := agui.VerifySequence(events); err != nil {
 		t.Fatalf("AG-UI sequence verification failed: %v\nevents=%v", err, typesOf(events))
 	}
+}
+
+func textContents(events []aguievents.Event) []string {
+	var out []string
+	for _, event := range events {
+		if content, ok := event.(*aguievents.TextMessageContentEvent); ok {
+			out = append(out, content.Delta)
+		}
+	}
+	return out
 }
 
 // frameMap renders one AG-UI event as its wire JSON, minus the constructor
@@ -142,6 +152,85 @@ func TestEventTranslatorCloseRunCodes(t *testing.T) {
 	}
 }
 
+func TestEventTranslatorCloseResultTextFallback(t *testing.T) {
+	t.Run("cursor-like result without deltas", func(t *testing.T) {
+		tr := agui.NewEventTranslator()
+		events := tr.Translate(adaptor.RunStarted{RunID: "cursor-run", ThreadID: "thread"})
+		events = append(events, tr.CloseResult(&adaptor.Result{Text: "cursor final answer"}, nil)...)
+
+		if got := textContents(events); !reflect.DeepEqual(got, []string{"cursor final answer"}) {
+			t.Fatalf("assistant contents = %v, want one result fallback", got)
+		}
+		if got := typesOf(events); !reflect.DeepEqual(got, []aguievents.EventType{
+			aguievents.EventTypeRunStarted,
+			aguievents.EventTypeTextMessageStart,
+			aguievents.EventTypeTextMessageContent,
+			aguievents.EventTypeTextMessageEnd,
+			aguievents.EventTypeRunFinished,
+		}) {
+			t.Fatalf("event order = %v", got)
+		}
+		assertVerified(t, events)
+	})
+
+	t.Run("existing assistant delta is not duplicated", func(t *testing.T) {
+		tr := agui.NewEventTranslator()
+		events := tr.Translate(adaptor.RunStarted{RunID: "streaming-run", ThreadID: "thread"})
+		events = append(events, tr.Translate(adaptor.TextDelta{MessageID: "assistant", Text: "streamed answer"})...)
+		events = append(events, tr.CloseResult(&adaptor.Result{Text: "streamed answer"}, nil)...)
+
+		if got := textContents(events); !reflect.DeepEqual(got, []string{"streamed answer"}) {
+			t.Fatalf("assistant contents = %v, want streamed content exactly once", got)
+		}
+		if events[len(events)-1].Type() != aguievents.EventTypeRunFinished {
+			t.Fatalf("last event = %s, want RUN_FINISHED", events[len(events)-1].Type())
+		}
+		assertVerified(t, events)
+	})
+
+	t.Run("empty result creates no assistant bubble", func(t *testing.T) {
+		tr := agui.NewEventTranslator()
+		events := tr.CloseResult(&adaptor.Result{Text: " \n\t"}, nil)
+		if got := textContents(events); len(got) != 0 {
+			t.Fatalf("assistant contents = %v, want none", got)
+		}
+		if got := typesOf(events); !reflect.DeepEqual(got, []aguievents.EventType{
+			aguievents.EventTypeRunStarted, aguievents.EventTypeRunFinished,
+		}) {
+			t.Fatalf("event order = %v", got)
+		}
+		assertVerified(t, events)
+	})
+
+	t.Run("user text does not suppress assistant fallback", func(t *testing.T) {
+		tr := agui.NewEventTranslator()
+		events := tr.Translate(adaptor.RunStarted{RunID: "user-run", ThreadID: "thread"})
+		events = append(events, tr.Translate(adaptor.TextDelta{MessageID: "user", Role: adaptor.RoleUser, Text: "question"})...)
+		events = append(events, tr.CloseResult(&adaptor.Result{Text: "answer"}, nil)...)
+		if got := textContents(events); !reflect.DeepEqual(got, []string{"question", "answer"}) {
+			t.Fatalf("text contents = %v, want user text plus assistant fallback", got)
+		}
+		assertVerified(t, events)
+	})
+
+	t.Run("business failure keeps partial text before run error", func(t *testing.T) {
+		tr := agui.NewEventTranslator()
+		runErr := &adaptor.RunError{
+			Reason:  adaptor.ReasonAgentError,
+			Message: "provider failed",
+			Result:  &adaptor.Result{Text: "partial answer"},
+		}
+		events := tr.CloseResult(nil, runErr)
+		if got := textContents(events); !reflect.DeepEqual(got, []string{"partial answer"}) {
+			t.Fatalf("assistant contents = %v, want partial result text", got)
+		}
+		if events[len(events)-1].Type() != aguievents.EventTypeRunError {
+			t.Fatalf("last event = %s, want RUN_ERROR", events[len(events)-1].Type())
+		}
+		assertVerified(t, events)
+	})
+}
+
 // wrapErr wraps an inner error without using fmt.Errorf so the test controls
 // the exact message.
 type wrapErr struct {
@@ -154,8 +243,8 @@ func (e *wrapErr) Unwrap() error { return e.inner }
 
 // TestEventTranslatorDegradationWarningVisible anchors the capability
 // degradation semantics: the run-policy retry-unsupported warning (emitted as
-// a lifecycle Notice by the v1 sink) must reach the AG-UI wire as a CUSTOM
-// event, exactly as the legacy lifecycle RunEvent projection did.
+// a lifecycle Notice by the sink) must reach the AG-UI wire as a CUSTOM
+// event without being dropped.
 func TestEventTranslatorDegradationWarningVisible(t *testing.T) {
 	t.Parallel()
 	tr := agui.NewEventTranslator()
@@ -248,7 +337,7 @@ func (f *fakeEventDriver) Run(_ context.Context, _ driver.Request, sink driver.E
 // TestEventsStreamEndToEnd drives agui.Events over a real v1 Stream: the
 // bridge must open with RUN_STARTED, forward content, and synthesize the
 // closing RUN_FINISHED from stream.Result() when the producer never emitted a
-// terminal marker (legacy Wrap contract).
+// terminal marker (the bridge's end-of-stream contract).
 func TestEventsStreamEndToEnd(t *testing.T) {
 	t.Parallel()
 	fake := &fakeEventDriver{
@@ -282,6 +371,27 @@ func TestEventsStreamEndToEnd(t *testing.T) {
 	}
 	if !sawContent {
 		t.Errorf("no TEXT_MESSAGE_CONTENT in %v", typesOf(events))
+	}
+	assertVerified(t, events)
+}
+
+func TestEventsStreamSynthesizesNonStreamingResultText(t *testing.T) {
+	t.Parallel()
+	fake := &fakeEventDriver{
+		payloads: []driver.StreamPayload{{Kind: driver.StreamRunStarted, ThreadID: "t", RunID: "cursor-run"}},
+		response: driver.Response{Output: "cursor final answer"},
+	}
+	stream := adaptor.New(fake).Stream(context.Background(), "hi")
+
+	var events []aguievents.Event
+	for event := range agui.Events(stream) {
+		events = append(events, event)
+	}
+	if got := textContents(events); !reflect.DeepEqual(got, []string{"cursor final answer"}) {
+		t.Fatalf("assistant contents = %v, want one final-result fallback", got)
+	}
+	if events[len(events)-1].Type() != aguievents.EventTypeRunFinished {
+		t.Fatalf("last event = %s, want RUN_FINISHED", events[len(events)-1].Type())
 	}
 	assertVerified(t, events)
 }
@@ -321,6 +431,9 @@ func TestEventsStreamEndToEndBusinessFailure(t *testing.T) {
 	}
 	if errorCount != 1 {
 		t.Errorf("RUN_ERROR count = %d, want exactly 1 (%v)", errorCount, typesOf(events))
+	}
+	if got := textContents(events); !reflect.DeepEqual(got, []string{"partial"}) {
+		t.Errorf("partial assistant contents = %v, want one result fallback", got)
 	}
 	assertVerified(t, events)
 }

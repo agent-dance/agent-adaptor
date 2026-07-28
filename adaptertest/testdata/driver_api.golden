@@ -1,0 +1,1448 @@
+type AgentIdentity struct {
+	ID string
+	TenantID string
+	ProfileID string
+	Name string
+}
+
+type AgentPayload struct {
+	Agents []AgentSpec
+	Fingerprint string
+	Warnings []string
+}
+
+type AgentProfile struct {
+	DriverType string
+	Supported bool
+	Dir string
+	EnvVar string
+	Source AgentProfileSource
+	Managed bool
+	Error string
+}
+
+type AgentProfileSource string
+
+const AgentProfileSourceBindingEnv AgentProfileSource = "binding_env"
+
+const AgentProfileSourceDefault AgentProfileSource = "default"
+
+const AgentProfileSourceManaged AgentProfileSource = "managed"
+
+const AgentProfileSourceProcessEnv AgentProfileSource = "process_env"
+
+const AgentProfileSourceProfileOption AgentProfileSource = "profile_option"
+
+const AgentProfileSourceUnsupported AgentProfileSource = "unsupported"
+
+type AgentSpec struct {
+	Key string
+	RuntimeName string
+	Description string
+	Instructions string
+	SourcePath string
+	SourceFingerprint string
+	Model string
+	ReasoningEffort string
+	ToolPolicy *AgentToolPolicy
+	PermissionMode string
+	SandboxMode string
+	MCPServers []string
+	Skills []string
+	Hooks []HookSpec
+	Native map[string]any
+	Metadata map[string]string
+}
+
+type AgentToolPolicy struct {
+	Allow []string
+	Deny []string
+}
+
+func CanonicalSessionConfigFingerprint(domain string, value any) (string, error)
+
+type Checkpoint struct {
+	State *SessionState
+	Valid bool
+}
+
+const CloneProfileAuthCopy CloneProfileAuthMode = "copy"
+
+const CloneProfileAuthLink CloneProfileAuthMode = "link"
+
+type CloneProfileAuthMode string
+
+const CloneProfileAuthNone CloneProfileAuthMode = ""
+
+type CloneProfileOptions struct {
+	IncludeSettings bool
+	IncludeMCP bool
+	IncludeSkills bool
+	AuthMode CloneProfileAuthMode
+}
+
+type CommonConfig struct {
+	Command string
+	CWD string
+	Env []EnvBinding
+	Instructions *InstructionsBundleRef
+	PromptTemplate string
+	BootstrapPromptTemplate string
+	WorkspaceStrategy *WorkspaceStrategy
+	WorkspaceRuntime *WorkspaceRuntimeConfig
+	Timeout time.Duration
+	GracePeriod time.Duration
+	ExtraArgs []string
+}
+
+methodset CommonConfig {
+	value Clone() CommonConfig
+	pointer Clone() CommonConfig
+}
+
+type ConfigField struct {
+	Name string
+	Label string
+	Type string
+	Required bool
+	Description string
+	Hint string
+	Default any
+	Options []ConfigOption
+	Group string
+	Meta map[string]string
+}
+
+type ConfigOption struct {
+	Value string
+	Label string
+	Description string
+}
+
+type ConfigSchema struct {
+	Fields []ConfigField
+}
+
+type ConfigSchemaProvider interface {
+	ConfigSchema(ctx context.Context, cfg any) (*ConfigSchema, error)
+}
+
+methodset ConfigSchemaProvider {
+	value ConfigSchema(ctx context.Context, cfg any) (*ConfigSchema, error)
+}
+
+const DecisionAborted DecisionResult = "aborted"
+
+const DecisionAnswered DecisionResult = "answered"
+
+const DecisionApproved DecisionResult = "approved"
+
+type DecisionCapableSink interface {
+	EventSink
+	RequestDecision(ctx context.Context, req DecisionRequest) (DecisionResponse, error)
+}
+
+methodset DecisionCapableSink {
+	value Emit(event RunEvent) error
+	value EmitStream(payload StreamPayload) error
+	value RequestDecision(ctx context.Context, req DecisionRequest) (DecisionResponse, error)
+}
+
+type DecisionChoice struct {
+	Key string
+	Label string
+	Description string
+}
+
+const DecisionRejected DecisionResult = "rejected"
+
+type DecisionRequest struct {
+	RequestID string
+	RunID string
+	ThreadID string
+	Kind HumanDecisionKind
+	Source string
+	ToolCallID string
+	Prompt string
+	Payload map[string]any
+	Choices []DecisionChoice
+	DefaultDecision DecisionResult
+	CreatedAt time.Time
+	Deadline time.Time
+	RetryAttempt int
+}
+
+type DecisionResponse struct {
+	RequestID string
+	Result DecisionResult
+	Choice string
+	Answer map[string]any
+	Text string
+}
+
+type DecisionResult string
+
+const DecisionTimedOut DecisionResult = "timed_out"
+
+const DefaultHumanDecisionMaxRetries untyped int = 3
+
+const DefaultHumanDecisionTimeout time.Duration = 30000000000
+
+type Descriptor struct {
+	Type string
+	DisplayName string
+	Models []ModelInfo
+	ConfigSchema *ConfigSchema
+	Sessions SessionCapability
+	Skills SkillCapability
+	MCP MCPCapability
+	Instructions InstructionsCapability
+	Workspace WorkspaceCapability
+	RunPolicyCaps RunPolicyCapabilities
+	Runtime RuntimeCapability
+	StructuredOutput StructuredOutputCapability
+}
+
+type DetectedModel struct {
+	Model string
+	Provider string
+	Source string
+	Candidates []string
+}
+
+type Driver interface {
+	Descriptor() Descriptor
+	Run(ctx context.Context, req Request, sink EventSink) (Response, error)
+	ValidateConfig(cfg any) error
+}
+
+methodset Driver {
+	value Descriptor() Descriptor
+	value Run(ctx context.Context, req Request, sink EventSink) (Response, error)
+	value ValidateConfig(cfg any) error
+}
+
+func EffectiveHumanDecisionPolicy(p HumanDecisionPolicy) HumanDecisionPolicy
+
+type EnvBinding struct {
+	Name string
+	Value string
+}
+
+type EnvironmentCheck struct {
+	Code string
+	Level string
+	Message string
+	Detail string
+	Hint string
+}
+
+const EnvironmentFail EnvironmentStatus = "fail"
+
+const EnvironmentPass EnvironmentStatus = "pass"
+
+type EnvironmentProbe interface {
+	CheckEnvironment(ctx context.Context, cfg any) (EnvironmentReport, error)
+}
+
+methodset EnvironmentProbe {
+	value CheckEnvironment(ctx context.Context, cfg any) (EnvironmentReport, error)
+}
+
+type EnvironmentReport struct {
+	DriverType string
+	Status EnvironmentStatus
+	Healthy bool
+	Summary string
+	Checks []EnvironmentCheck
+}
+
+type EnvironmentStatus string
+
+const EnvironmentWarn EnvironmentStatus = "warn"
+
+var ErrHumanDecisionModeUnsupported error
+
+var ErrInvalidDriverConfig error
+
+var ErrInvalidOutputSchema error
+
+var ErrInvalidPolicy error
+
+var ErrPolicyCapabilityUnsupported error
+
+var ErrStructuredOutputUnsupported error
+
+type EventSink interface {
+	Emit(event RunEvent) error
+	EmitStream(payload StreamPayload) error
+}
+
+methodset EventSink {
+	value Emit(event RunEvent) error
+	value EmitStream(payload StreamPayload) error
+}
+
+const FailureAbort FailureAction = "abort"
+
+type FailureAction string
+
+const FailureActionUnset FailureAction = ""
+
+const FailureAgentError FailureCode = "agent_error"
+
+const FailureCancelled FailureCode = "cancelled"
+
+type FailureCode string
+
+const FailureContinue FailureAction = "continue"
+
+const FailurePolicyError FailureCode = "policy_error"
+
+const FailureReject FailureCode = "decision_rejected"
+
+const FailureRetry FailureAction = "retry"
+
+const FailureTimeout FailureCode = "decision_timeout"
+
+const FeatureAllow FeatureLevel = "allow"
+
+const FeatureDeny FeatureLevel = "deny"
+
+const FeatureInherit FeatureLevel = ""
+
+type FeatureLevel string
+
+type HITLRequestedPayload struct {
+	RequestID string
+	Kind HumanDecisionKind
+	Source string
+	ToolCallID string
+	Prompt string
+	Payload map[string]any
+	Choices []DecisionChoice
+	CreatedAt time.Time
+	Deadline time.Time
+	RetryAttempt int
+}
+
+type HITLResolvedPayload struct {
+	RequestID string
+	Kind HumanDecisionKind
+	Source string
+	RetryAttempt int
+	Result DecisionResult
+	Choice string
+	Answer map[string]any
+	ResolvedAt time.Time
+	Latency time.Duration
+}
+
+type HookEvent string
+
+const HookEventPermissionRequest HookEvent = "permission_request"
+
+const HookEventPostCompact HookEvent = "post_compact"
+
+const HookEventPostFileEdit HookEvent = "post_file_edit"
+
+const HookEventPostMCP HookEvent = "post_mcp"
+
+const HookEventPostShell HookEvent = "post_shell"
+
+const HookEventPostTool HookEvent = "post_tool"
+
+const HookEventPreCompact HookEvent = "pre_compact"
+
+const HookEventPreFileRead HookEvent = "pre_file_read"
+
+const HookEventPreMCP HookEvent = "pre_mcp"
+
+const HookEventPreShell HookEvent = "pre_shell"
+
+const HookEventPreTool HookEvent = "pre_tool"
+
+const HookEventPromptExpand HookEvent = "prompt_expand"
+
+const HookEventPromptSubmit HookEvent = "prompt_submit"
+
+const HookEventSessionEnd HookEvent = "session_end"
+
+const HookEventSessionStart HookEvent = "session_start"
+
+const HookEventStop HookEvent = "stop"
+
+const HookEventStopFailure HookEvent = "stop_failure"
+
+const HookEventSubagentStart HookEvent = "subagent_start"
+
+const HookEventSubagentStop HookEvent = "subagent_stop"
+
+const HookEventToolFailure HookEvent = "tool_failure"
+
+type HookFailPolicy string
+
+const HookFailPolicyClosed HookFailPolicy = "closed"
+
+const HookFailPolicyOpen HookFailPolicy = "open"
+
+const HookFailPolicyProviderDefault HookFailPolicy = ""
+
+type HookHandler struct {
+	Type HookHandlerType
+	Command string
+	Args []string
+	Env map[string]string
+	Prompt string
+	URL string
+	Server string
+	Tool string
+	Input map[string]any
+	Agent string
+}
+
+const HookHandlerAgent HookHandlerType = "agent"
+
+const HookHandlerCommand HookHandlerType = "command"
+
+const HookHandlerHTTP HookHandlerType = "http"
+
+const HookHandlerMCPTool HookHandlerType = "mcp_tool"
+
+const HookHandlerPrompt HookHandlerType = "prompt"
+
+type HookHandlerType string
+
+type HookMatcher struct {
+	Subject HookMatcherSubject
+	Syntax HookMatcherSyntax
+	Pattern string
+}
+
+type HookMatcherSubject string
+
+const HookMatcherSubjectCommand HookMatcherSubject = "command"
+
+const HookMatcherSubjectDefault HookMatcherSubject = ""
+
+const HookMatcherSubjectMCP HookMatcherSubject = "mcp"
+
+const HookMatcherSubjectPath HookMatcherSubject = "path"
+
+const HookMatcherSubjectPrompt HookMatcherSubject = "prompt"
+
+const HookMatcherSubjectSource HookMatcherSubject = "source"
+
+const HookMatcherSubjectSubagent HookMatcherSubject = "subagent"
+
+const HookMatcherSubjectTool HookMatcherSubject = "tool"
+
+type HookMatcherSyntax string
+
+const HookMatcherSyntaxContains HookMatcherSyntax = "contains"
+
+const HookMatcherSyntaxExact HookMatcherSyntax = "exact"
+
+const HookMatcherSyntaxPrefix HookMatcherSyntax = "prefix"
+
+const HookMatcherSyntaxProvider HookMatcherSyntax = ""
+
+const HookMatcherSyntaxRegex HookMatcherSyntax = "regex"
+
+type HookPayload struct {
+	Hooks []HookSpec
+	Fingerprint string
+	Warnings []string
+}
+
+type HookSpec struct {
+	Key string
+	Event HookEvent
+	MatcherSpec HookMatcher
+	Handler HookHandler
+	Timeout time.Duration
+	FailPolicy HookFailPolicy
+	StatusMessage string
+	Disabled bool
+	Native map[string]any
+	Metadata map[string]string
+}
+
+const HumanDecisionAsk HumanDecisionMode = "ask"
+
+const HumanDecisionAutoApprove HumanDecisionMode = "auto_approve"
+
+const HumanDecisionAutoReject HumanDecisionMode = "auto_reject"
+
+type HumanDecisionFailure struct {
+	Kind HumanDecisionKind
+	Source string
+	Decision DecisionResult
+	Request *DecisionRequest
+	Attempts int
+}
+
+type HumanDecisionKind string
+
+type HumanDecisionMode string
+
+type HumanDecisionModeUnsupportedError struct {
+	Driver string
+	Kind HumanDecisionKind
+	Mode string
+}
+
+methodset HumanDecisionModeUnsupportedError {
+	pointer Error() string
+	pointer Unwrap() error
+}
+
+const HumanDecisionPermission HumanDecisionKind = "permission"
+
+const HumanDecisionPlanReview HumanDecisionKind = "plan_review"
+
+type HumanDecisionPolicy struct {
+	Permission HumanDecisionMode
+	PlanReview HumanDecisionMode
+	Question QuestionMode
+	Timeout time.Duration
+	OnTimeout FailureAction
+	OnReject FailureAction
+	MaxRetries int
+}
+
+const HumanDecisionQuestion HumanDecisionKind = "question"
+
+type HumanDecisionSupport struct {
+	Ask bool
+	AutoApprove bool
+	AutoReject bool
+	Retry bool
+}
+
+const HumanDecisionUnset HumanDecisionMode = ""
+
+type InstructionMode string
+
+const InstructionModeAdditive InstructionMode = ""
+
+const InstructionModeReplace InstructionMode = "replace"
+
+type InstructionScope string
+
+const InstructionScopeDefault InstructionScope = ""
+
+const InstructionScopeLocal InstructionScope = "local"
+
+const InstructionScopeProject InstructionScope = "project"
+
+const InstructionScopeRun InstructionScope = "run"
+
+const InstructionScopeUser InstructionScope = "user"
+
+type InstructionsBundleRef struct {
+	ID string
+	Path string
+	Content string
+	Fingerprint string
+	Scope InstructionScope
+	Mode InstructionMode
+	Native map[string]any
+}
+
+type InstructionsCapability struct {
+	Supported bool
+}
+
+type InvalidDriverConfigError struct {
+	Driver string
+	Cause error
+}
+
+methodset InvalidDriverConfigError {
+	pointer Error() string
+	pointer Unwrap() error
+}
+
+type InvalidOutputSchemaError struct {
+	Reason string
+	Cause error
+}
+
+methodset InvalidOutputSchemaError {
+	pointer Error() string
+	pointer Unwrap() error
+}
+
+type InvalidPolicyError struct {
+	Driver string
+	Field string
+	Value string
+}
+
+methodset InvalidPolicyError {
+	pointer Error() string
+	pointer Unwrap() error
+}
+
+const IsolationInherit IsolationLevel = ""
+
+type IsolationLevel string
+
+const IsolationReadOnly IsolationLevel = "read_only"
+
+const IsolationUnrestricted IsolationLevel = "unrestricted"
+
+const IsolationWorkspaceWrite IsolationLevel = "workspace_write"
+
+type MCPCapability struct {
+	Supported bool
+	Stdio bool
+	HTTP bool
+	SSE bool
+}
+
+type MCPPayload struct {
+	Servers []MCPServerSpec
+	Fingerprint string
+	Warnings []string
+}
+
+type MCPServerSpec struct {
+	Key string
+	Transport MCPTransport
+	Command string
+	Args []string
+	Env map[string]string
+	URL string
+	Headers map[string]string
+	BearerTokenEnvVar string
+	Required bool
+	RequiredReason string
+}
+
+type MCPTransport string
+
+const MCPTransportHTTP MCPTransport = "http"
+
+const MCPTransportSSE MCPTransport = "sse"
+
+const MCPTransportStdio MCPTransport = "stdio"
+
+type ModelDetector interface {
+	DetectModel(ctx context.Context, cfg any, profile *ProfileSelection) (*DetectedModel, error)
+}
+
+methodset ModelDetector {
+	value DetectModel(ctx context.Context, cfg any, profile *ProfileSelection) (*DetectedModel, error)
+}
+
+type ModelInfo struct {
+	ID string
+	Label string
+}
+
+type ModelLister interface {
+	ListModels(ctx context.Context, cfg any) ([]ModelInfo, error)
+}
+
+methodset ModelLister {
+	value ListModels(ctx context.Context, cfg any) ([]ModelInfo, error)
+}
+
+type NativeConfigPatch struct {
+	Provider string
+	FileKind ProfileConfigFileKind
+	Path string
+	Section string
+	Values map[string]any
+}
+
+type OutputFormat string
+
+const OutputFormatJSONSchema OutputFormat = "json_schema"
+
+type OutputSchema struct {
+	Format OutputFormat
+	Mode StructuredOutputMode
+	SchemaJSON json.RawMessage
+	Name string
+	Description string
+	OnInvalid StructuredOutputInvalidPolicy
+}
+
+type PolicyCapabilityUnsupportedError struct {
+	Driver string
+	Dimension string
+	Value string
+}
+
+methodset PolicyCapabilityUnsupportedError {
+	pointer Error() string
+	pointer Unwrap() error
+}
+
+const ProfileConfigFileJSON ProfileConfigFileKind = "json"
+
+type ProfileConfigFileKind string
+
+const ProfileConfigFileTOML ProfileConfigFileKind = "toml"
+
+type ProfileConfigPatch struct {
+	Key string
+	Capability string
+	Values map[string]any
+	Native *NativeConfigPatch
+}
+
+type ProfileConfigPayload struct {
+	Patches []ProfileConfigPatch
+	Fingerprint string
+	Warnings []string
+}
+
+type ProfileMode string
+
+const ProfileModeClone ProfileMode = "clone"
+
+const ProfileModeDedicated ProfileMode = "dedicated"
+
+const ProfileModeNative ProfileMode = "native"
+
+const ProfileModeUnset ProfileMode = ""
+
+type ProfilePayload struct {
+	Skills ResolvedSkills
+	MCP MCPPayload
+	Agents AgentPayload
+	Hooks HookPayload
+	Instructions *InstructionsBundleRef
+	Config ProfileConfigPayload
+	Declared ProfileResourceDeclarations
+	Fingerprint string
+	Warnings []string
+}
+
+type ProfileReporter interface {
+	GetProfile(ctx context.Context, cfg any, agent AgentIdentity, profile *ProfileSelection) (AgentProfile, error)
+}
+
+methodset ProfileReporter {
+	value GetProfile(ctx context.Context, cfg any, agent AgentIdentity, profile *ProfileSelection) (AgentProfile, error)
+}
+
+type ProfileResourceDeclarations struct {
+	Agents bool
+	Hooks bool
+	Instructions bool
+	Config bool
+}
+
+type ProfileSelection struct {
+	Mode ProfileMode
+	Dir string
+	From string
+	Clone *CloneProfileOptions
+}
+
+const QuestionAsk QuestionMode = "ask"
+
+const QuestionAutoReject QuestionMode = "auto_reject"
+
+type QuestionMode string
+
+type QuestionSupport struct {
+	Ask bool
+	AutoReject bool
+	Retry bool
+}
+
+const QuestionUnset QuestionMode = ""
+
+type QuotaProbe interface {
+	GetQuota(ctx context.Context, cfg any, profile *ProfileSelection) (QuotaReport, error)
+}
+
+methodset QuotaProbe {
+	value GetQuota(ctx context.Context, cfg any, profile *ProfileSelection) (QuotaReport, error)
+}
+
+type QuotaReport struct {
+	DriverType string
+	Provider string
+	Source string
+	Available bool
+	Error string
+	Windows []QuotaWindow
+}
+
+type QuotaWindow struct {
+	Label string
+	UsedPercent *int
+	ResetsAt string
+	ValueLabel string
+	Detail string
+}
+
+type RawStreams struct {
+	Stdout string
+	Stderr string
+	Terminal *TerminalPayload
+}
+
+type Request struct {
+	RunID string
+	Prompt string
+	Config any
+	Agent AgentIdentity
+	Workspace WorkspaceLease
+	Runtime RuntimePayload
+	Skills ResolvedSkills
+	MCP MCPPayload
+	ProfilePayload ProfilePayload
+	Profile *ProfileSelection
+	Policy RunPolicy
+	Instructions *InstructionsBundleRef
+	Session *SessionContext
+	Metadata map[string]string
+	OutputSchema *OutputSchema
+	ModelOverride string
+	Streaming bool
+}
+
+type ResolvedSkill struct {
+	Key string
+	RuntimeName string
+	SourcePath string
+	Required bool
+	Reason string
+	Metadata map[string]string
+}
+
+type ResolvedSkills struct {
+	Mode SkillSyncMode
+	Entries []ResolvedSkill
+	Warnings []string
+	Fingerprint string
+}
+
+methodset ResolvedSkills {
+	value Keys() []string
+	pointer Keys() []string
+}
+
+type Response struct {
+	Output string
+	RawStreams *RawStreams
+	Transcript []TranscriptItem
+	ExitCode int
+	Signal string
+	TimedOut bool
+	Usage *Usage
+	Checkpoint *Checkpoint
+	Metadata map[string]string
+	Provider string
+	Model string
+	Summary string
+	StructuredOutput *StructuredOutput
+	RuntimeServices []RuntimeServiceReport
+	Failure *RunFailure
+}
+
+type Role string
+
+const RoleAssistant Role = ""
+
+const RoleUser Role = "user"
+
+type RunEvent struct {
+	Type RunEventType
+	Seq uint64
+	Timestamp time.Time
+	Stream string
+	Bytes []byte
+	Item *TranscriptItem
+	Text string
+	Metadata map[string]string
+	Data map[string]any
+}
+
+const RunEventChunk RunEventType = "chunk"
+
+const RunEventInvocation RunEventType = "invocation"
+
+const RunEventItem RunEventType = "item"
+
+const RunEventLifecycle RunEventType = "lifecycle"
+
+const RunEventRuntime RunEventType = "runtime"
+
+const RunEventSpawn RunEventType = "spawn"
+
+type RunEventType string
+
+type RunFailure struct {
+	Message string
+	Code FailureCode
+	Metadata map[string]any
+	HumanDecision *HumanDecisionFailure
+}
+
+methodset RunFailure {
+	pointer IsHumanDecision() bool
+	pointer IsRejected() bool
+	pointer IsTimedOut() bool
+}
+
+type RunPolicy struct {
+	Isolation IsolationLevel
+	WebSearch FeatureLevel
+	Browser FeatureLevel
+	HumanDecision HumanDecisionPolicy
+}
+
+type RunPolicyCapabilities struct {
+	Isolation bool
+	WebSearch bool
+	Browser bool
+	Permission HumanDecisionSupport
+	PlanReview HumanDecisionSupport
+	Question QuestionSupport
+}
+
+type RuntimeCapability struct {
+	ReportsServices bool
+}
+
+const RuntimeHealthHealthy RuntimeServiceHealth = "healthy"
+
+const RuntimeHealthUnhealthy RuntimeServiceHealth = "unhealthy"
+
+const RuntimeHealthUnknown RuntimeServiceHealth = "unknown"
+
+const RuntimeLifecycleEphemeral RuntimeServiceLifecycle = "ephemeral"
+
+const RuntimeLifecycleShared RuntimeServiceLifecycle = "shared"
+
+type RuntimePayload struct {
+	Requested []RuntimeServiceSpec
+	Ensured []RuntimeServiceRef
+	SecretEnv []EnvBinding
+	Fingerprint string
+}
+
+const RuntimeServiceFailed RuntimeServiceStatus = "failed"
+
+type RuntimeServiceHealth string
+
+type RuntimeServiceLifecycle string
+
+type RuntimeServiceRef struct {
+	ID string
+	Name string
+	URL string
+	Status RuntimeServiceStatus
+	Lifecycle RuntimeServiceLifecycle
+	ReuseKey string
+	Command string
+	CWD string
+	Port int
+	OwnerAgentID string
+	Health RuntimeServiceHealth
+	MCP *MCPServerSpec
+	Metadata map[string]string
+	SecretEnv []EnvBinding
+}
+
+type RuntimeServiceReport struct {
+	ID string
+	Name string
+	URL string
+	Status RuntimeServiceStatus
+	Lifecycle RuntimeServiceLifecycle
+	ReuseKey string
+	Command string
+	CWD string
+	Port int
+	OwnerAgentID string
+	Health RuntimeServiceHealth
+	Metadata map[string]string
+}
+
+const RuntimeServiceRunning RuntimeServiceStatus = "running"
+
+type RuntimeServiceSpec struct {
+	ID string
+	Name string
+	URL string
+	Description string
+	Lifecycle RuntimeServiceLifecycle
+	ReuseKey string
+	Command string
+	CWD string
+	Port int
+	Metadata map[string]string
+}
+
+const RuntimeServiceStarting RuntimeServiceStatus = "starting"
+
+type RuntimeServiceStatus string
+
+const RuntimeServiceStopped RuntimeServiceStatus = "stopped"
+
+type SessionCapability struct {
+	SupportsResume bool
+}
+
+type SessionCodec interface {
+	FromParams(params SessionParams) *SessionState
+	GuardFingerprint(params SessionParams) string
+	Name() string
+	ToParams(state *SessionState) SessionParams
+}
+
+type SessionCodecProvider interface {
+	SessionCodec() SessionCodec
+}
+
+methodset SessionCodecProvider {
+	value SessionCodec() SessionCodec
+}
+
+methodset SessionCodec {
+	value FromParams(params SessionParams) *SessionState
+	value GuardFingerprint(params SessionParams) string
+	value Name() string
+	value ToParams(state *SessionState) SessionParams
+}
+
+type SessionConfigFingerprintError struct {
+	Path string
+	Type string
+	Kind reflect.Kind
+	Why string
+}
+
+methodset SessionConfigFingerprintError {
+	pointer Error() string
+}
+
+type SessionConfigFingerprinter interface {
+	SessionConfigFingerprint() (string, error)
+}
+
+methodset SessionConfigFingerprinter {
+	value SessionConfigFingerprint() (string, error)
+}
+
+type SessionContext struct {
+	EngineSessionID string
+	Mode SessionMode
+	State *SessionState
+	PreviousID string
+}
+
+const SessionContinueOnly SessionMode = "continue_only"
+
+const SessionContinueOrStart SessionMode = "continue_or_start"
+
+const SessionFork SessionMode = "fork"
+
+type SessionMode string
+
+const SessionParamCWD untyped string = "cwd"
+
+const SessionParamProfileFingerprint untyped string = "profile_fingerprint"
+
+const SessionParamWorkspaceID untyped string = "workspace_id"
+
+type SessionParams struct {
+	ResumeID string
+	DisplayID string
+	Values map[string]string
+}
+
+const SessionStartNew SessionMode = "start_new"
+
+type SessionState struct {
+	ResumeID string
+	DisplayID string
+	Data map[string]string
+}
+
+const SessionStateless SessionMode = "stateless"
+
+type Skill struct {
+	Key string
+	Source SkillSource
+	Required bool
+	Reason string
+	Metadata map[string]string
+}
+
+type SkillCapability struct {
+	Supported bool
+	Mode SkillSyncMode
+}
+
+type SkillKey string
+
+const SkillMetadataDisplayName untyped string = "_display_name"
+
+const SkillMetadataRuntimeName untyped string = "_runtime_name"
+
+type SkillOrigin string
+
+const SkillOriginManaged SkillOrigin = "company_managed"
+
+const SkillOriginRequired SkillOrigin = "paperclip_required"
+
+const SkillOriginUnknown SkillOrigin = "external_unknown"
+
+const SkillOriginUser SkillOrigin = "user_installed"
+
+type SkillRef interface {
+	isSkillRef()
+}
+
+methodset SkillRef {
+	value private isSkillRef()
+}
+
+type SkillSnapshot struct {
+	DriverType string
+	Supported bool
+	Mode SkillSyncMode
+	Selected []string
+	Resolved []Skill
+	Entries []SnapshotEntry
+	Warnings []string
+	Fingerprint string
+}
+
+type SkillSource interface {
+	SkillSource()
+}
+
+methodset SkillSource {
+	value SkillSource()
+}
+
+type SkillState string
+
+const SkillStateAvailable SkillState = "available"
+
+const SkillStateConfigured SkillState = "configured"
+
+const SkillStateExternal SkillState = "external"
+
+const SkillStateInstalled SkillState = "installed"
+
+const SkillStateMissing SkillState = "missing"
+
+const SkillStateStale SkillState = "stale"
+
+type SkillSupport interface {
+	InjectSkills(ctx context.Context, cfg any, payload ResolvedSkills, profile *ProfileSelection) error
+	ListSkills(ctx context.Context, cfg any, payload ResolvedSkills, selected []string, resolved []Skill, profile *ProfileSelection) (SkillSnapshot, error)
+	SyncSkills(ctx context.Context, cfg any, payload ResolvedSkills, selected []string, resolved []Skill, profile *ProfileSelection) (SkillSnapshot, error)
+}
+
+methodset SkillSupport {
+	value InjectSkills(ctx context.Context, cfg any, payload ResolvedSkills, profile *ProfileSelection) error
+	value ListSkills(ctx context.Context, cfg any, payload ResolvedSkills, selected []string, resolved []Skill, profile *ProfileSelection) (SkillSnapshot, error)
+	value SyncSkills(ctx context.Context, cfg any, payload ResolvedSkills, selected []string, resolved []Skill, profile *ProfileSelection) (SkillSnapshot, error)
+}
+
+const SkillSyncEphemeral SkillSyncMode = "ephemeral"
+
+type SkillSyncMode string
+
+const SkillSyncPersistent SkillSyncMode = "persistent"
+
+const SkillSyncUnsupported SkillSyncMode = "unsupported"
+
+type SnapshotEntry struct {
+	Key string
+	RuntimeName string
+	Selected bool
+	Managed bool
+	Required bool
+	RequiredReason string
+	State SkillState
+	Origin SkillOrigin
+	OriginLabel string
+	LocationLabel string
+	ReadOnly bool
+	SourcePath string
+	TargetPath string
+	Detail string
+}
+
+type StreamCapability struct {
+	Native bool
+	TokenLevel bool
+	Reasoning bool
+	ToolCallArgs bool
+	HITL bool
+}
+
+const StreamDropped StreamKind = "stream.dropped"
+
+const StreamHITLRequested StreamKind = "hitl.requested"
+
+const StreamHITLResolved StreamKind = "hitl.resolved"
+
+type StreamKind string
+
+type StreamPayload struct {
+	Kind StreamKind
+	Sequence uint64
+	Seq uint64
+	RunID string
+	ThreadID string
+	TurnID string
+	MessageID string
+	ToolCallID string
+	Name string
+	Delta string
+	Args map[string]any
+	Result map[string]any
+	Usage *Usage
+	Error *RunFailure
+	Timestamp time.Time
+	HITLRequested *HITLRequestedPayload
+	HITLResolved *HITLResolvedPayload
+	Role Role
+	Raw map[string]any
+}
+
+const StreamReasoningContent StreamKind = "reasoning.content"
+
+const StreamReasoningEnd StreamKind = "reasoning.end"
+
+const StreamReasoningStart StreamKind = "reasoning.start"
+
+const StreamRunError StreamKind = "run.error"
+
+const StreamRunFinished StreamKind = "run.finished"
+
+const StreamRunStarted StreamKind = "run.started"
+
+const StreamStepFinished StreamKind = "step.finished"
+
+const StreamStepStarted StreamKind = "step.started"
+
+type StreamSupport interface {
+	StreamCapability() StreamCapability
+}
+
+methodset StreamSupport {
+	value StreamCapability() StreamCapability
+}
+
+const StreamTextContent StreamKind = "text.content"
+
+const StreamTextEnd StreamKind = "text.end"
+
+const StreamTextStart StreamKind = "text.start"
+
+const StreamToolCallArgs StreamKind = "tool_call.args"
+
+const StreamToolCallEnd StreamKind = "tool_call.end"
+
+const StreamToolCallResult StreamKind = "tool_call.result"
+
+const StreamToolCallStart StreamKind = "tool_call.start"
+
+type StructuredOutput struct {
+	Format OutputFormat
+	Mode StructuredOutputMode
+	Source StructuredOutputSource
+	RawJSON json.RawMessage
+	Value any
+	Valid bool
+	ValidationErrors []string
+	SchemaHash string
+}
+
+type StructuredOutputCapability struct {
+	JSONSchemaNative bool
+	JSONSchemaPromptValidate bool
+	WorksWithRun bool
+	WorksWithStreaming bool
+	WorksWithHITL bool
+	Notes string
+}
+
+const StructuredOutputFailRun StructuredOutputInvalidPolicy = "fail_run"
+
+type StructuredOutputInvalidPolicy string
+
+type StructuredOutputMode string
+
+const StructuredOutputNativeStrict StructuredOutputMode = "native_strict"
+
+const StructuredOutputPreferNative StructuredOutputMode = "prefer_native"
+
+const StructuredOutputPromptValidate StructuredOutputMode = "prompt_validate"
+
+const StructuredOutputReturnInvalid StructuredOutputInvalidPolicy = "return_invalid"
+
+type StructuredOutputSource string
+
+const StructuredOutputSourceNative StructuredOutputSource = "native"
+
+const StructuredOutputSourcePromptValidate StructuredOutputSource = "prompt_validate"
+
+type StructuredOutputUnsupportedError struct {
+	Driver string
+	Mode StructuredOutputMode
+	Reason string
+}
+
+methodset StructuredOutputUnsupportedError {
+	pointer Error() string
+	pointer Unwrap() error
+}
+
+type TerminalPayload struct {
+	Event string
+	JSON json.RawMessage
+}
+
+const TranscriptAssistant TranscriptKind = "assistant"
+
+const TranscriptFailure TranscriptKind = "failure"
+
+const TranscriptInit TranscriptKind = "init"
+
+type TranscriptItem struct {
+	Kind TranscriptKind
+	Text string
+	Delta bool
+	ToolUseID string
+	ToolName string
+	Input any
+	IsError bool
+	Model string
+	SessionID string
+	Usage *Usage
+	CostUSD *float64
+	Subtype string
+	Errors []string
+	Metadata map[string]string
+	Data map[string]any
+}
+
+type TranscriptKind string
+
+const TranscriptQuestion TranscriptKind = "question"
+
+const TranscriptResult TranscriptKind = "result"
+
+const TranscriptStderr TranscriptKind = "stderr"
+
+const TranscriptStdout TranscriptKind = "stdout"
+
+const TranscriptSummary TranscriptKind = "summary"
+
+const TranscriptSystem TranscriptKind = "system"
+
+const TranscriptThinking TranscriptKind = "thinking"
+
+const TranscriptToolCall TranscriptKind = "tool_call"
+
+const TranscriptToolResult TranscriptKind = "tool_result"
+
+const TranscriptUser TranscriptKind = "user"
+
+type Usage struct {
+	InputTokens int
+	OutputTokens int
+	CachedInputTokens int
+	EstimatedCostMilli int64
+}
+
+type WorkspaceCapability struct {
+	Supported bool
+}
+
+type WorkspaceLease struct {
+	ID string
+	Mode WorkspaceMode
+	StrategyType WorkspaceStrategyType
+	CWD string
+	Fingerprint string
+	Metadata map[string]string
+	InstructionsID string
+}
+
+type WorkspaceMode string
+
+const WorkspaceModeAgentDefault WorkspaceMode = "agent_default"
+
+const WorkspaceModeIsolated WorkspaceMode = "isolated_workspace"
+
+const WorkspaceModeOperator WorkspaceMode = "operator_branch"
+
+const WorkspaceModeReuse WorkspaceMode = "reuse_existing"
+
+const WorkspaceModeShared WorkspaceMode = "shared_workspace"
+
+type WorkspaceRuntimeConfig struct {
+	Services []RuntimeServiceSpec
+}
+
+type WorkspaceStrategy struct {
+	Type WorkspaceStrategyType
+	BaseRef string
+	BranchTemplate string
+	WorktreeParentDir string
+}
+
+const WorkspaceStrategyCloudSandbox WorkspaceStrategyType = "cloud_sandbox"
+
+const WorkspaceStrategyDriverManaged WorkspaceStrategyType = "driver_managed"
+
+const WorkspaceStrategyGitWorktree WorkspaceStrategyType = "git_worktree"
+
+const WorkspaceStrategyProjectPrimary WorkspaceStrategyType = "project_primary"
+
+type WorkspaceStrategyType string
+
+func (CommonConfig).Clone() CommonConfig
+
+func (*HumanDecisionModeUnsupportedError).Error() string
+
+func (*HumanDecisionModeUnsupportedError).Unwrap() error
+
+func (*InvalidDriverConfigError).Error() string
+
+func (*InvalidDriverConfigError).Unwrap() error
+
+func (*InvalidOutputSchemaError).Error() string
+
+func (*InvalidOutputSchemaError).Unwrap() error
+
+func (*InvalidPolicyError).Error() string
+
+func (*InvalidPolicyError).Unwrap() error
+
+func (*PolicyCapabilityUnsupportedError).Error() string
+
+func (*PolicyCapabilityUnsupportedError).Unwrap() error
+
+func (ResolvedSkills).Keys() []string
+
+func (*RunFailure).IsHumanDecision() bool
+
+func (*RunFailure).IsRejected() bool
+
+func (*RunFailure).IsTimedOut() bool
+
+func (*SessionConfigFingerprintError).Error() string
+
+func (*StructuredOutputUnsupportedError).Error() string
+
+func (*StructuredOutputUnsupportedError).Unwrap() error

@@ -49,6 +49,7 @@ func TestStreamingHappyFixture_TextDeltasMatchAssistant(t *testing.T) {
 		t.Fatal(err)
 	}
 	p.finalize()
+	p.completeStream(p.failureForOutcome(0, "", false), 0, "", false)
 
 	if got, want := p.buildOutput(), "Hi there"; got != want {
 		t.Fatalf("buildOutput: got %q want %q", got, want)
@@ -113,6 +114,30 @@ func TestStreamingBatchOutputEquivalence(t *testing.T) {
 	if raw.usage.InputTokens != streamed.usage.InputTokens || raw.usage.OutputTokens != streamed.usage.OutputTokens {
 		t.Fatalf("usage differs raw=%v streamed=%v", raw.usage, streamed.usage)
 	}
+}
+
+func TestStreamingAPIRetriesDoNotPreemptLaterSuccess(t *testing.T) {
+	stdout := strings.Join([]string{
+		`{"type":"system","subtype":"init","session_id":"retry-success"}`,
+		`{"type":"system","subtype":"api_retry","error_status":500,"will_retry":true}`,
+		`{"type":"system","subtype":"api_retry","error_status":502,"will_retry":true}`,
+		`{"type":"system","subtype":"api_retry","error_status":503,"will_retry":true}`,
+		`{"type":"result","subtype":"success","is_error":false,"session_id":"retry-success","result":"recovered"}`,
+		"",
+	}, "\n")
+	sink := &streamSink{}
+	p := newClaudeParser(sink)
+	p.enableStreaming("run-retry-success")
+	if err := p.onChunk("stdout", []byte(stdout), time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	p.finalize()
+	failure := p.failureForOutcome(0, "", false)
+	if failure != nil {
+		t.Fatalf("recovered run failure = %#v", failure)
+	}
+	p.completeStream(failure, 0, "", false)
+	assertClaudeStreamTerminal(t, sink.snapshot(), agentadaptor.StreamRunFinished)
 }
 
 func TestStreamingToolFixture_ArgsFragmentsConcatenateToJSON(t *testing.T) {

@@ -1,4 +1,4 @@
 {"type":"system","subtype":"init","session_id":"sess-plan-rejected","model":"claude-fixture"}
 {"type":"assistant","session_id":"sess-plan-rejected","message":{"model":"claude-fixture","content":[{"type":"tool_use","id":"toolu_plan_2","name":"ExitPlanMode","input":{"plan":"Risky plan that touches /etc"}}]}}
 {"type":"user","session_id":"sess-plan-rejected","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_plan_2","content":"User rejected the plan","is_error":true}]}}
-{"type":"result","subtype":"success","session_id":"sess-plan-rejected","result":"Plan rejected; no changes applied.","usage":{"input_tokens":8,"output_tokens":2}}
+{"type":"result","subtype":"success","is_error":false,"session_id":"sess-plan-rejected","result":"Plan rejected; no changes applied.","usage":{"input_tokens":8,"output_tokens":2}}

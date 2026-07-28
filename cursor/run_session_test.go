@@ -8,11 +8,165 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	agentadaptor "github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/internal/engine"
 	"github.com/agent-dance/agent-adaptor/internal/testutil"
 )
+
+func TestCursorRunPreservesUnclassifiedProcessOutcome(t *testing.T) {
+	t.Setenv("CURSOR_HOME", "")
+	for _, tc := range []struct {
+		name        string
+		posixBody   string
+		windowsBody string
+		cancel      bool
+	}{
+		{
+			name:        "exit without provider terminal",
+			posixBody:   "#!/bin/sh\ncat >/dev/null\nprintf 'partial stdout\\n'\nprintf 'partial stderr\\n' >&2\nexit 7\n",
+			windowsBody: "@echo off\r\nset /p X=\r\necho partial stdout\r\n>&2 echo partial stderr\r\nexit /b 7\r\n",
+		},
+		{
+			name:        "cancel before provider terminal",
+			posixBody:   "#!/bin/sh\ncat >/dev/null\nprintf 'partial stdout\\n'\nprintf 'partial stderr\\n' >&2\nsleep 30\n",
+			windowsBody: "@echo off\r\nset /p X=\r\necho partial stdout\r\n>&2 echo partial stderr\r\nping -n 31 127.0.0.1 >nul\r\n",
+			cancel:      true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			command := testutil.WriteCommand(t, home, "fake-cursor-outcome", tc.posixBody, tc.windowsBody)
+			ctx := context.Background()
+			if tc.cancel {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, 500*time.Millisecond)
+				defer cancel()
+			}
+			res, err := (adapter{}).Run(ctx, agentadaptor.Request{
+				Prompt:    "go",
+				Config:    Config{CommonConfig: CommonConfig{Command: command, CWD: home}},
+				Workspace: agentadaptor.WorkspaceLease{CWD: home},
+			}, &testutil.EventRecorder{})
+			if err != nil {
+				t.Fatalf("Driver.Run error = %v", err)
+			}
+			if res.ExitCode == 0 || res.Failure != nil || res.Checkpoint != nil {
+				t.Fatalf("outcome = %+v, want abnormal fields with no provider classification/checkpoint", res)
+			}
+			if tc.cancel && !res.TimedOut {
+				t.Fatalf("TimedOut = false for context deadline outcome: %+v", res)
+			}
+			if tc.cancel && !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				t.Fatalf("context error = %v, want deadline", ctx.Err())
+			}
+			if res.RawStreams == nil || !strings.Contains(res.RawStreams.Stdout, "partial stdout") || !strings.Contains(res.RawStreams.Stderr, "partial stderr") {
+				t.Fatalf("raw streams = %#v", res.RawStreams)
+			}
+			if len(res.Transcript) < 2 {
+				t.Fatalf("transcript = %#v, want partial stdout/stderr", res.Transcript)
+			}
+		})
+	}
+}
+
+func TestCursorExitZeroProtocolFailuresAreClassified(t *testing.T) {
+	t.Setenv("CURSOR_HOME", "")
+	for _, tc := range []struct {
+		name        string
+		posixBody   string
+		windowsBody string
+	}{
+		{
+			name:        "missing terminal",
+			posixBody:   "#!/bin/sh\ncat >/dev/null\nprintf '{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"partial\"}]}}\\n'\n",
+			windowsBody: "@echo off\r\nset /p X=\r\necho {\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"partial\"}]}}\r\n",
+		},
+		{
+			name:        "malformed before terminal",
+			posixBody:   "#!/bin/sh\ncat >/dev/null\nprintf '{broken\\n'\nprintf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"done\",\"session_id\":\"cursor-session\"}\\n'\n",
+			windowsBody: "@echo off\r\nset /p X=\r\necho {broken\r\necho {\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"done\",\"session_id\":\"cursor-session\"}\r\n",
+		},
+		{
+			name:        "terminal missing required session id",
+			posixBody:   "#!/bin/sh\ncat >/dev/null\nprintf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"done\"}\\n'\n",
+			windowsBody: "@echo off\r\nset /p X=\r\necho {\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"done\"}\r\n",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			command := testutil.WriteCommand(t, home, "fake-cursor-protocol", tc.posixBody, tc.windowsBody)
+			res, err := (adapter{}).Run(context.Background(), agentadaptor.Request{
+				Prompt:    "go",
+				Config:    Config{CommonConfig: CommonConfig{Command: command, CWD: home}},
+				Workspace: agentadaptor.WorkspaceLease{CWD: home},
+			}, &testutil.EventRecorder{})
+			if err != nil {
+				t.Fatalf("Driver.Run error = %v", err)
+			}
+			if res.Failure == nil || res.Failure.Code != agentadaptor.FailureAgentError {
+				t.Fatalf("Failure = %#v, want protocol agent failure", res.Failure)
+			}
+			if res.Checkpoint != nil {
+				t.Fatalf("Checkpoint = %#v, want nil", res.Checkpoint)
+			}
+		})
+	}
+}
+
+func TestCursorForkIsRejectedBeforeProviderLaunch(t *testing.T) {
+	t.Setenv("CURSOR_HOME", "")
+	home := t.TempDir()
+	_, err := (adapter{}).Run(context.Background(), agentadaptor.Request{
+		Prompt:    "fork",
+		Config:    Config{CommonConfig: CommonConfig{Command: filepath.Join(home, "must-not-run"), CWD: home}},
+		Workspace: agentadaptor.WorkspaceLease{ID: "workspace-a", CWD: home},
+		Session: &agentadaptor.SessionContext{
+			Mode:  agentadaptor.SessionFork,
+			State: &agentadaptor.SessionState{ResumeID: "parent-session"},
+		},
+	}, &testutil.EventRecorder{})
+	if !errors.Is(err, engine.ErrResumeRejected) {
+		t.Fatalf("error = %v, want safe fork rejection", err)
+	}
+}
+
+func TestCursorProviderResumeRejectionTriggersContinueOrStartSignal(t *testing.T) {
+	t.Setenv("CURSOR_HOME", "")
+	home := t.TempDir()
+	command := testutil.WriteCommand(t, home, "fake-cursor-resume-reject",
+		"#!/bin/sh\ncat >/dev/null\nprintf 'session parent-session not found\\n' >&2\nexit 7\n",
+		"@echo off\r\nset /p X=\r\n>&2 echo session parent-session not found\r\nexit /b 7\r\n",
+	)
+	_, err := (adapter{}).Run(context.Background(), agentadaptor.Request{
+		Prompt:    "continue",
+		Config:    Config{CommonConfig: CommonConfig{Command: command, CWD: home}},
+		Workspace: agentadaptor.WorkspaceLease{ID: "workspace-a", CWD: home},
+		Session: &agentadaptor.SessionContext{
+			Mode:  agentadaptor.SessionContinueOrStart,
+			State: &agentadaptor.SessionState{ResumeID: "parent-session"},
+		},
+	}, &testutil.EventRecorder{})
+	if !errors.Is(err, engine.ErrResumeRejected) {
+		t.Fatalf("error = %v, want ErrResumeRejected", err)
+	}
+}
+
+func TestCursorSafeExtraArgsCannotReplaceResolvedInvocation(t *testing.T) {
+	got := cursorSafeExtraArgs([]string{
+		"--output-format", "text",
+		"--workspace=/other",
+		"--resume", "other-session",
+		"--model", "other-model",
+		"--mode=ask",
+		"--print", "--force", "-f", "--yolo",
+		"--custom", "kept",
+	})
+	if strings.Join(got, " ") != "--custom kept" {
+		t.Fatalf("safe extra args = %#v, want unrelated args only", got)
+	}
+}
 
 func TestCursorRunPreservesAndGuardsSessionState(t *testing.T) {
 	t.Setenv("CURSOR_HOME", "")
@@ -22,8 +176,8 @@ func TestCursorRunPreservesAndGuardsSessionState(t *testing.T) {
 		t.Fatalf("mkdir workspace: %v", err)
 	}
 	command := testutil.WriteCommand(t, home, "fake-cursor",
-		"#!/bin/sh\nset -eu\nprompt=$(cat)\nprintf 'stderr:%s\\n' \"$prompt\" >&2\nprintf '{\"type\":\"run.completed\",\"session_id\":\"cursor-session\",\"display_id\":\"cursor-display\"}\\n'\n",
-		"@echo off\r\nsetlocal\r\nset /p PROMPT=\r\n>&2 echo stderr:%PROMPT%\r\necho {\"type\":\"run.completed\",\"session_id\":\"cursor-session\",\"display_id\":\"cursor-display\"}\r\n",
+		"#!/bin/sh\nset -eu\nprompt=$(cat)\nprintf 'stderr:%s\\n' \"$prompt\" >&2\nprintf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"done\",\"session_id\":\"cursor-session\"}\\n'\n",
+		"@echo off\r\nsetlocal\r\nset /p PROMPT=\r\n>&2 echo stderr:%PROMPT%\r\necho {\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"done\",\"session_id\":\"cursor-session\"}\r\n",
 	)
 
 	cfg := Config{
@@ -57,7 +211,7 @@ func TestCursorRunPreservesAndGuardsSessionState(t *testing.T) {
 	if len(first.Transcript) == 0 {
 		t.Fatalf("expected transcript items, got %#v", first.Transcript)
 	}
-	if first.RawStreams == nil || !strings.Contains(first.RawStreams.Stdout, "run.completed") {
+	if first.RawStreams == nil || !strings.Contains(first.RawStreams.Stdout, `"subtype":"success"`) {
 		t.Fatalf("expected raw stdout to be captured, got %#v", first.RawStreams)
 	}
 	assertHasInvocationAndSpawn(t, events.Snapshot())
@@ -89,8 +243,8 @@ func TestCursorRunUsesCurrentForceFlagForAutoApprove(t *testing.T) {
 	}
 	argsPath := filepath.Join(home, "args.txt")
 	command := testutil.WriteCommand(t, home, "fake-cursor-args",
-		"#!/bin/sh\nset -eu\nprintf '%s\\n' \"$@\" >"+argsPath+"\ncat >/dev/null\nprintf '{\"type\":\"run.completed\",\"session_id\":\"cursor-session\"}\\n'\n",
-		"@echo off\r\nsetlocal\r\nset /p PROMPT=\r\necho {\"type\":\"run.completed\",\"session_id\":\"cursor-session\"}\r\n",
+		"#!/bin/sh\nset -eu\nprintf '%s\\n' \"$@\" >"+argsPath+"\ncat >/dev/null\nprintf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"done\",\"session_id\":\"cursor-session\"}\\n'\n",
+		"@echo off\r\nsetlocal\r\nset /p PROMPT=\r\necho {\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"done\",\"session_id\":\"cursor-session\"}\r\n",
 	)
 
 	_, err := (adapter{}).Run(context.Background(), agentadaptor.Request{
@@ -124,8 +278,8 @@ func TestCursorRunMapsDedicatedProfileOptionToCursorHome(t *testing.T) {
 		t.Fatalf("mkdir workspace: %v", err)
 	}
 	command := testutil.WriteCommand(t, profileDir, "fake-cursor-profile",
-		"#!/bin/sh\nset -eu\ncat >/dev/null\nprintf '{\"type\":\"run.completed\",\"session_id\":\"cursor-session\"}\\n'\n",
-		"@echo off\r\nsetlocal\r\nset /p PROMPT=\r\necho {\"type\":\"run.completed\",\"session_id\":\"cursor-session\"}\r\n",
+		"#!/bin/sh\nset -eu\ncat >/dev/null\nprintf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"done\",\"session_id\":\"cursor-session\"}\\n'\n",
+		"@echo off\r\nsetlocal\r\nset /p PROMPT=\r\necho {\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"done\",\"session_id\":\"cursor-session\"}\r\n",
 	)
 
 	cfg := Config{
@@ -159,8 +313,8 @@ func TestCursorResumeProfileMismatchDoesNotWriteProfileResources(t *testing.T) {
 	}
 	skillDir := createCursorSkillDir(t, filepath.Join(home, "source"), "analysis")
 	command := testutil.WriteCommand(t, home, "fake-cursor-no-write",
-		"#!/bin/sh\nset -eu\ncat >/dev/null\nprintf '{\"type\":\"run.completed\",\"session_id\":\"cursor-session\"}\\n'\n",
-		"@echo off\r\nsetlocal\r\nset /p PROMPT=\r\necho {\"type\":\"run.completed\",\"session_id\":\"cursor-session\"}\r\n",
+		"#!/bin/sh\nset -eu\ncat >/dev/null\nprintf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"done\",\"session_id\":\"cursor-session\"}\\n'\n",
+		"@echo off\r\nsetlocal\r\nset /p PROMPT=\r\necho {\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"done\",\"session_id\":\"cursor-session\"}\r\n",
 	)
 	req := agentadaptor.Request{
 		Prompt:    "hello",

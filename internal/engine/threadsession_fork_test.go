@@ -3,6 +3,7 @@ package engine_test
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -31,6 +32,45 @@ type releaseTestStore struct {
 	engineStoreAdapter
 	gate chan struct{}
 	err  error
+}
+
+type combinedReleaseStore struct {
+	engineStoreAdapter
+	keyTarget string
+	gate      chan struct{}
+	entered   chan string
+	errorDone chan struct{}
+	err       error
+	once      sync.Once
+}
+
+type nthAcquireErrorStore struct {
+	engineStoreAdapter
+	failAt int
+	err    error
+	calls  int
+}
+
+func (s *nthAcquireErrorStore) AcquireLease(ctx context.Context, target, owner string, ttl time.Duration) (engine.SessionLease, error) {
+	s.calls++
+	if s.calls == s.failAt {
+		return engine.SessionLease{}, s.err
+	}
+	return s.engineStoreAdapter.AcquireLease(ctx, target, owner, ttl)
+}
+
+func (s *combinedReleaseStore) ReleaseLease(ctx context.Context, lease engine.SessionLease) error {
+	s.entered <- lease.Target
+	if lease.Target != s.keyTarget {
+		<-s.gate // deliberately ignore ctx for the first (record) release
+		return s.engineStoreAdapter.ReleaseLease(ctx, lease)
+	}
+	err := s.engineStoreAdapter.ReleaseLease(ctx, lease)
+	s.once.Do(func() { close(s.errorDone) })
+	if err != nil {
+		return errors.Join(s.err, err)
+	}
+	return s.err
 }
 
 func (s releaseTestStore) ReleaseLease(ctx context.Context, lease engine.SessionLease) error {
@@ -78,6 +118,9 @@ func (s engineStoreAdapter) Finalize(ctx context.Context, req engine.SessionFina
 
 func (s engineStoreAdapter) AcquireLease(ctx context.Context, target, owner string, ttl time.Duration) (engine.SessionLease, error) {
 	lease, err := s.store.AcquireLease(ctx, target, owner, ttl)
+	if errors.Is(err, threadstore.ErrBusy) {
+		return engine.SessionLease{}, &engine.SessionBusyError{Target: target}
+	}
 	return engine.SessionLease{Target: lease.Target, Owner: lease.Owner, Token: lease.Token}, err
 }
 
@@ -108,8 +151,13 @@ func (namedCodec) GuardFingerprint(driver.SessionParams) string { return "guard"
 
 type forkDriver struct{}
 
-func (forkDriver) Descriptor() driver.Descriptor { return driver.Descriptor{Type: testDriverType} }
-func (forkDriver) ValidateConfig(any) error      { return nil }
+func (forkDriver) Descriptor() driver.Descriptor {
+	return driver.Descriptor{
+		Type:     testDriverType,
+		Sessions: driver.SessionCapability{SupportsResume: true},
+	}
+}
+func (forkDriver) ValidateConfig(any) error { return nil }
 func (forkDriver) Run(context.Context, driver.Request, driver.EventSink) (driver.Response, error) {
 	return driver.Response{}, nil
 }
@@ -240,6 +288,175 @@ func TestStructuredForkParentCompatibilityMatrix(t *testing.T) {
 				t.Fatalf("parent mutated: %#v", got)
 			}
 		})
+	}
+}
+
+func TestReusedThreadRequiresUsableCheckpointAndMatchingCodec(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*threadstore.Record)
+		want   error
+	}{
+		{name: "nil state", mutate: func(r *threadstore.Record) { r.State = nil }, want: engine.ErrSessionCheckpointMissing},
+		{name: "empty resume id", mutate: func(r *threadstore.Record) {
+			r.State = &driver.SessionState{DisplayID: "display-only"}
+		}, want: engine.ErrSessionIncompatible},
+		{name: "codec mismatch", mutate: func(r *threadstore.Record) { r.SessionCodec = "other/codec" }, want: engine.ErrSessionIncompatible},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name+"/continue_only", func(t *testing.T) {
+			store := memory.NewStore()
+			record := validParent("thread-key")
+			tc.mutate(&record)
+			seedRecord(t, store, record)
+			_, err := engine.PrepareThreadSessionForDriver(context.Background(), engineStoreAdapter{store: store}, engine.SessionRequest{
+				Namespace: testNamespace, Key: record.Key, Mode: driver.SessionContinueOnly,
+			}, testIdentity, forkDriver{}, testFingerprint)
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("error = %v, want %v", err, tc.want)
+			}
+			active, _ := store.Resolve(context.Background(), threadstore.Query{Key: record.Key})
+			if active == nil || active.ID != record.ID || active.Status != threadstore.StatusActive {
+				t.Fatalf("rejected resume mutated record: %+v", active)
+			}
+		})
+
+		t.Run(tc.name+"/continue_or_start", func(t *testing.T) {
+			store := memory.NewStore()
+			record := validParent("thread-key")
+			tc.mutate(&record)
+			seedRecord(t, store, record)
+			plan, err := engine.PrepareThreadSessionForDriver(context.Background(), engineStoreAdapter{store: store}, engine.SessionRequest{
+				Namespace: testNamespace, Key: record.Key, Mode: driver.SessionContinueOrStart,
+			}, testIdentity, forkDriver{}, testFingerprint)
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("error = %v, want %v", err, tc.want)
+			}
+			if plan != nil {
+				plan.Release()
+				t.Fatal("invalid durable checkpoint returned a runnable plan")
+			}
+			active, _ := store.Resolve(context.Background(), threadstore.Query{Key: record.Key})
+			if active == nil || active.ID != record.ID || active.Status != threadstore.StatusActive {
+				t.Fatalf("rejected invalid checkpoint mutated record: %+v", active)
+			}
+		})
+	}
+}
+
+func TestSessionAcquireLeasePreservesBackendErrorAtEveryAcquirePosition(t *testing.T) {
+	backendErr := errors.New("test session store: acquire backend unavailable")
+	tests := []struct {
+		name        string
+		request     engine.SessionRequest
+		fingerprint string
+		failAt      int
+		seed        func(*testing.T, *memory.Store)
+	}{
+		{
+			name: "thread key", request: engine.SessionRequest{Namespace: testNamespace, Key: "new", Mode: driver.SessionContinueOrStart},
+			fingerprint: testFingerprint, failAt: 1,
+		},
+		{
+			name: "continue current record", request: engine.SessionRequest{Namespace: testNamespace, Key: "existing", Mode: driver.SessionContinueOnly},
+			fingerprint: testFingerprint, failAt: 2,
+			seed: func(t *testing.T, store *memory.Store) { seedRecord(t, store, validParent("existing")) },
+		},
+		{
+			name: "continue new record", request: engine.SessionRequest{Namespace: testNamespace, Key: "new", Mode: driver.SessionContinueOrStart},
+			fingerprint: testFingerprint, failAt: 2,
+		},
+		{
+			name: "incompatible replacement record", request: engine.SessionRequest{Namespace: testNamespace, Key: "existing", Mode: driver.SessionContinueOrStart},
+			fingerprint: testFingerprint, failAt: 3,
+			seed: func(t *testing.T, store *memory.Store) {
+				record := validParent("existing")
+				record.CompatibilityFingerprint = "old-fingerprint"
+				seedRecord(t, store, record)
+			},
+		},
+		{
+			name: "start-new record", request: engine.SessionRequest{Namespace: testNamespace, Key: "existing", Mode: driver.SessionStartNew},
+			fingerprint: testFingerprint, failAt: 3,
+			seed: func(t *testing.T, store *memory.Store) { seedRecord(t, store, validParent("existing")) },
+		},
+		{
+			name: "fork parent key", request: forkRequest("parent", "child"),
+			fingerprint: testFingerprint, failAt: 2,
+			seed: func(t *testing.T, store *memory.Store) { seedRecord(t, store, validParent("parent")) },
+		},
+		{
+			name: "fork parent key resolved by id", request: engine.SessionRequest{
+				Namespace: testNamespace, Key: "child", Mode: driver.SessionFork, ForkFrom: "parent-id",
+			},
+			fingerprint: testFingerprint, failAt: 2,
+			seed: func(t *testing.T, store *memory.Store) { seedRecord(t, store, validParent("parent")) },
+		},
+		{
+			name: "fork parent record", request: forkRequest("parent", "child"),
+			fingerprint: testFingerprint, failAt: 3,
+			seed: func(t *testing.T, store *memory.Store) { seedRecord(t, store, validParent("parent")) },
+		},
+		{
+			name: "fork child record", request: forkRequest("parent", "child"),
+			fingerprint: testFingerprint, failAt: 4,
+			seed: func(t *testing.T, store *memory.Store) { seedRecord(t, store, validParent("parent")) },
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			memoryStore := memory.NewStore()
+			if tc.seed != nil {
+				tc.seed(t, memoryStore)
+			}
+			store := &nthAcquireErrorStore{
+				engineStoreAdapter: engineStoreAdapter{store: memoryStore},
+				failAt:             tc.failAt,
+				err:                backendErr,
+			}
+			plan, err := engine.PrepareThreadSessionForDriver(
+				context.Background(), store, tc.request, testIdentity, forkDriver{}, tc.fingerprint,
+			)
+			if plan != nil {
+				plan.Release()
+				t.Fatal("failed acquisition returned a plan")
+			}
+			if !errors.Is(err, backendErr) {
+				t.Fatalf("error = %v, want backend identity", err)
+			}
+			if errors.Is(err, engine.ErrSessionBusy) {
+				t.Fatalf("backend error was misclassified as busy: %v", err)
+			}
+			if store.calls != tc.failAt {
+				t.Fatalf("AcquireLease calls = %d, want %d", store.calls, tc.failAt)
+			}
+		})
+	}
+}
+
+func TestPrepareFreshPreservesAcquireBackendError(t *testing.T) {
+	backendErr := errors.New("test session store: fresh acquire unavailable")
+	memoryStore := memory.NewStore()
+	seedRecord(t, memoryStore, validParent("existing"))
+	store := &nthAcquireErrorStore{
+		engineStoreAdapter: engineStoreAdapter{store: memoryStore},
+		failAt:             3,
+		err:                backendErr,
+	}
+	plan, err := engine.PrepareThreadSessionForDriver(context.Background(), store, engine.SessionRequest{
+		Namespace: testNamespace, Key: "existing", Mode: driver.SessionContinueOrStart,
+	}, testIdentity, forkDriver{}, testFingerprint)
+	if err != nil {
+		t.Fatalf("prepare reused plan: %v", err)
+	}
+	defer plan.Release()
+	if err := plan.PrepareFresh(context.Background(), testDriverType, testFingerprint); !errors.Is(err, backendErr) {
+		t.Fatalf("PrepareFresh error = %v, want backend identity", err)
+	} else if errors.Is(err, engine.ErrSessionBusy) {
+		t.Fatalf("PrepareFresh backend error was misclassified as busy: %v", err)
+	}
+	if store.calls != 3 {
+		t.Fatalf("AcquireLease calls = %d, want 3", store.calls)
 	}
 }
 
@@ -468,5 +685,64 @@ func TestThreadSessionReleaseContextIsObservableAndBounded(t *testing.T) {
 	close(gate)
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("ReleaseContext err=%v, want deadline exceeded", err)
+	}
+}
+
+func TestThreadSessionReleaseAttemptsEveryLeaseAndAggregatesBeforeTimeout(t *testing.T) {
+	ctx := context.Background()
+	key := "release-combined"
+	base := memory.NewStore()
+	immediateFailure := errors.New("key release failed")
+	gate := make(chan struct{})
+	store := &combinedReleaseStore{
+		engineStoreAdapter: engineStoreAdapter{store: base},
+		keyTarget:          keycodec.Encode("session-key", testNamespace, key),
+		gate:               gate,
+		entered:            make(chan string, 2),
+		errorDone:          make(chan struct{}),
+		err:                immediateFailure,
+	}
+	plan, err := engine.PrepareThreadSessionForDriver(ctx, store,
+		engine.SessionRequest{Namespace: testNamespace, Key: key, Mode: driver.SessionContinueOrStart},
+		testIdentity, forkDriver{}, testFingerprint)
+	if err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+
+	releaseCtx, cancel := context.WithCancel(ctx)
+	done := make(chan error, 1)
+	go func() { done <- plan.ReleaseContext(releaseCtx) }()
+
+	seen := map[string]bool{}
+	for len(seen) < 2 {
+		select {
+		case target := <-store.entered:
+			seen[target] = true
+		case <-time.After(time.Second):
+			close(gate)
+			cancel()
+			t.Fatal("not every held lease release hook was attempted")
+		}
+	}
+	if !seen[store.keyTarget] {
+		close(gate)
+		cancel()
+		t.Fatalf("key lease release was not attempted: %v", seen)
+	}
+	<-store.errorDone
+	cancel()
+
+	select {
+	case err := <-done:
+		close(gate)
+		if !errors.Is(err, immediateFailure) {
+			t.Fatalf("ReleaseContext err=%v, want immediate release failure", err)
+		}
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("ReleaseContext err=%v, want cancellation timeout for hung release", err)
+		}
+	case <-time.After(time.Second):
+		close(gate)
+		t.Fatal("ReleaseContext remained blocked behind a context-ignoring lease hook")
 	}
 }

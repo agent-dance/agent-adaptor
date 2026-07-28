@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/agent-dance/agent-adaptor/memory"
 	adaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/memory"
 )
 
 // ResolveAGUIAgent returns the driver name for AG-UI streaming examples.
@@ -16,8 +16,8 @@ func ResolveAGUIAgent() string {
 	return normalizeAgent(os.Getenv("AGUI_AGENT"), "AGUI_AGENT")
 }
 
-// NewAGUIStreamingAgent builds the Agent used by streaming-chat-aguiclient and
-// streaming-chat-copilotkit. The returned string is the resolved driver name.
+// NewAGUIStreamingAgent builds the Agent used by web-chat/aguiclient and
+// web-chat/copilotkit. The returned string is the resolved driver name.
 //
 // v1 shape: one adaptor.New call taking the driver value plus agent-level
 // defaults. WithThreadStore is what makes agent.Thread(key) work — the AG-UI
@@ -52,7 +52,6 @@ func AGUIExamplePolicy() adaptor.SharedOption {
 	switch ResolveAGUIAgent() {
 	case AgentClaude:
 		return adaptor.WithPolicy(adaptor.Policy{
-			Sandbox: adaptor.WorkspaceWrite,
 			Approvals: adaptor.ApprovalPolicy{
 				Permission: adaptor.ApprovalAutoApprove,
 				PlanReview: adaptor.ApprovalAsk,
@@ -61,6 +60,6 @@ func AGUIExamplePolicy() adaptor.SharedOption {
 			},
 		})
 	default:
-		return NonInteractive(adaptor.WorkspaceWrite)
+		return NonInteractive(ResolveAGUIAgent(), adaptor.WorkspaceWrite)
 	}
 }

@@ -1,161 +1,261 @@
-# Run policy（`RunPolicy`）合同与实施说明
+# Run policy and approvals
 
-本文档是 **agent-adaptor** 对「一次执行要遵守哪些安全/能力边界」的**唯一**公开合同；实现与 `AGENTS.md` §2.1 单一路径执行模型一致。
+`adaptor.Policy` is the public execution-guardrail value used by
+`adaptor.WithPolicy`. It controls the provider sandbox, optional features,
+and the single human-in-the-loop approval model. Drivers translate this value
+to their native controls; it is never a list of CLI flags.
 
-**HITL v2（2026-04-22）**：`RunPolicy.Approvals` / `RunPolicy.Trust` 已被替换为单维度 `RunPolicy.HumanDecision`（类型 `HumanDecisionPolicy`）。详细设计见 [`docs/workstream-hitl-v2.md`](./workstream-hitl-v2.md)，本文档只做合同总览。
-
-## 1. 类型与语义
-
-### 1.1 `RunPolicy` 字段
-
-| 字段 | 类型 | 说明 | 空值 |
-|------|------|------|------|
-| `Isolation` | `IsolationLevel` | 工作区/系统隔离强度 | `""` 表示继承 |
-| `WebSearch` | `FeatureLevel` | 是否允许联网搜索类能力 | `""` 表示继承 |
-| `Browser` | `FeatureLevel` | 是否允许浏览器/受控页工具 | `""` 表示继承 |
-| `HumanDecision` | `HumanDecisionPolicy` | 人在回路（HITL）三类决策的策略 | 零值表示全部继承 SDK 默认 |
-
-### 1.2 枚举
-
-- **`IsolationLevel`**：`read_only` / `workspace_write` / `unrestricted`（`unrestricted` 映射各 CLI 的"全访问/危险沙箱 off"）
-- **`FeatureLevel`**（WebSearch / Browser）：`allow` / `deny`
-
-### 1.3 `HumanDecisionPolicy`
+## Policy value and replacement rule
 
 ```go
-type HumanDecisionPolicy struct {
-    Permission HumanDecisionMode   // Ask / AutoApprove / AutoReject
-    PlanReview HumanDecisionMode   // Ask / AutoApprove / AutoReject
-    Question   QuestionMode        // Ask / AutoReject（值集合是 HumanDecisionMode 的真子集）
-    Timeout    time.Duration       // 0 = 30s 默认；<0 = 永不超时
-    OnTimeout  FailureAction       // FailureAbort / FailureContinue / FailureRetry
-    OnReject   FailureAction       // 同上
-    MaxRetries int                 // FailureRetry 动作的上限，0 = SDK 默认 3
+type Policy struct {
+	Sandbox   SandboxLevel
+	WebSearch FeatureLevel
+	Browser   FeatureLevel
+	Approvals ApprovalPolicy
 }
 ```
 
-SDK 默认值（字段为零时生效）：
+| Dimension | Values | Zero value |
+|---|---|---|
+| `Sandbox` | `ReadOnly`, `WorkspaceWrite`, `Unrestricted` | `SandboxInherit` |
+| `WebSearch` | `FeatureAllow`, `FeatureDeny` | `FeatureInherit` |
+| `Browser` | `FeatureAllow`, `FeatureDeny` | `FeatureInherit` |
+| `Approvals` | per-kind modes and timeout/fallback settings | portable defaults described below |
 
-| 字段 | 默认 |
-|------|------|
-| `Permission` | `HumanDecisionAsk` |
-| `PlanReview` | `HumanDecisionAsk` |
-| `Question` | `QuestionAutoReject` |
-| `Timeout` | `30s` |
-| `OnTimeout` | `FailureAbort` |
-| `OnReject` | `FailureAbort` |
-| `MaxRetries` | `3` |
+The sandbox-only presets are `PolicyReadOnly`, `PolicyWorkspaceWrite`, and
+`PolicyUnrestricted`.
 
-### 1.4 具名预设
-
-包级变量（可直接用于 `WithRunPolicy` / `WithDefaultRunPolicy`）：
-
-- **`PolicyHostReview`**：`Isolation=workspace_write`，三类 HITL 全部 `Ask`——有 UI、宿主参与全部决策的场景。
-- **`PolicyReadOnlyReview`**：`Isolation=read_only` + 三类 HITL 全部 `Ask`——审阅模式。
-- **`PolicyAutonomous`**：`Isolation=unrestricted`，`Permission`/`PlanReview` = `AutoApprove`，`Question` = `AutoReject`（Question 类没有 AutoApprove，见 §1.3）。等价于旧 `RunPolicyTrusted`。
-
-预设表达的是宿主意图，不保证每个 adapter 都支持。SDK 会在 `Start` 前用 `DriverDescriptor.RunPolicyCaps` 校验显式请求；不支持的 mode 返回 `ErrHumanDecisionModeUnsupported`。
-
-## 2. 合并规则
-
-1. 从 `AgentBinding.Defaults().RunPolicy` 得到绑定默认。
-2. 与本次 `RunOption` 中的 `WithRunPolicy` 按字段合并，零值字段继承绑定默认。
-3. `HumanDecision` 也按字段合并（每个子字段独立判零）。
-4. 合并时调用 `validateHumanDecisionPolicy`，非法取值（`MaxRetries<0` 等）在合并阶段即报错。
-5. 合并结果写入 `resolvedInvocation` / `DriverRunRequest.Policy`，**唯一**进入 adapter。
-
-## 3. 宿主使用三种模式
-
-| 模式 | 何时选 | 做法 |
-|------|--------|------|
-| **A. 声明式 policy** | CI / 脚本 / 无 UI | 三类字段写 `AutoApprove`/`AutoReject`；不挂任何 handler |
-| **B. 同步 handler** | CLI / TUI / 单元测试 | 相关 Kind 写 `Ask` + `WithPermissionHandler` / `WithPlanReviewHandler` / `WithQuestionHandler` |
-| **C. 异步 channel** | 服务化 / 远程 UI | 相关 Kind 写 `Ask`，消费 `handle.DecisionRequests()`，用 `handle.ResolveDecision` 回填 |
-
-完整示例与失败处理合同见 `docs/workstream-hitl-v2.md` §4。
-
-## 4. 内置 adapter 映射
-
-| 维度 | Codex | Claude | Cursor |
-|------|-------|--------|--------|
-| Permission | `AutoApprove`；`Ask` / `AutoReject` 当前不声明支持（app-server server request 尚未接入 `DecisionCapableSink`） | `AutoApprove` / `AutoReject`；`Ask` 当前不支持（Permission 需要宿主 tool executor） | `AutoApprove`；`Ask` / `AutoReject` 不支持 |
-| PlanReview | `AutoApprove`；`Ask` / `AutoReject` 不支持 | `Ask` / `AutoApprove` / `AutoReject` | `AutoApprove`；`Ask` / `AutoReject` 不支持 |
-| Question | 不支持；portable `QuestionAutoReject` 对未建模 adapter 视为 no-op | `Ask` / `AutoReject` | 不支持；portable `QuestionAutoReject` 对未建模 adapter 视为 no-op |
-| Retry | Codex / Claude / Cursor 当前 built-in adapter 都不声明 retry 支持 | — | — |
-
-`DriverDescriptor.RunPolicyCaps` 里 `Permission` / `PlanReview` 使用 `HumanDecisionSupport{Ask, AutoApprove, AutoReject, Retry}`；`Question` 使用 `QuestionSupport{Ask, AutoReject, Retry}`（无 AutoApprove）。宿主写一个 adapter 不支持的 `Ask` 值时，`Start` 前返回 `ErrHumanDecisionModeUnsupported`。
-
-## 5. 失败模型
-
-`RunResult.Failure` 采用结构化类型 `RunFailure`：
+`WithPolicy` is a `SharedOption`: it can establish the Agent default or
+override one invocation. The nearer policy replaces the entire farther
+policy; fields are not merged independently.
 
 ```go
-type RunFailure struct {
-    Message       string
-    Code          FailureCode
-    Metadata      map[string]any
-    HumanDecision *HumanDecisionFailure // 非 nil 时 Code ∈ {FailureReject, FailureTimeout}
+agent := adaptor.New(d,
+	adaptor.WithPolicy(adaptor.Policy{
+		Sandbox:   adaptor.ReadOnly,
+		WebSearch: adaptor.FeatureDeny,
+	}),
+)
+
+// This call has WorkspaceWrite and inherited WebSearch, because the whole
+// call-site value replaces the Agent default.
+result, err := agent.Run(ctx, prompt,
+	adaptor.WithPolicy(adaptor.Policy{Sandbox: adaptor.WorkspaceWrite}),
+)
+```
+
+An all-zero `Policy` delegates the non-approval dimensions to the Driver and
+uses the SDK approval defaults.
+
+## Approval policy
+
+`ApprovalPolicy` contains three routing modes and the common fallback rules:
+
+```go
+type ApprovalPolicy struct {
+	Permission ApprovalMode
+	PlanReview ApprovalMode
+	Question   QuestionMode
+	Timeout    time.Duration
+	OnTimeout  FallbackAction
+	OnReject   FallbackAction
+	MaxRetries int
 }
 ```
 
-`FailureCode` 枚举：`FailureReject` / `FailureTimeout` / `FailureAgentError` / `FailureCancelled` / `FailurePolicyError`。
+Permission and plan review accept:
 
-提供三个 nil-safe 便利方法用于粗粒度分类：
+- `ApprovalInherit`
+- `ApprovalAsk`
+- `ApprovalAutoApprove`
+- `ApprovalAutoDeny`
 
-- `f.IsHumanDecision()` — 是否源自 HITL 决策
-- `f.IsRejected()` — `Code == FailureReject`
-- `f.IsTimedOut()` — `Code == FailureTimeout`
+Questions accept `QuestionInherit`, `QuestionAsk`, or `QuestionAutoDeny`.
+There is no question auto-approve mode because a question requires an actual
+answer.
 
-细粒度处理请 `switch f.Code`。宿主处理 `handle.Wait(ctx)` 返回值时按"**err → Failure → success**"三段式处理：
+Zero-valued fields materialize to these portable defaults:
+
+| Field | Default |
+|---|---|
+| `Permission` | `ApprovalAsk` |
+| `PlanReview` | `ApprovalAsk` |
+| `Question` | `QuestionAutoDeny` |
+| `Timeout` | 30 seconds |
+| `OnTimeout` | `FallbackAbort` |
+| `OnReject` | `FallbackAbort` |
+| `MaxRetries` | 3 |
+
+A negative timeout means no approval deadline. A negative `MaxRetries` is
+invalid. `ApprovalsAutoDeny` is a strict capability-dependent preset, not a
+portable unattended default: it explicitly selects auto-deny for all three
+kinds and therefore requires the bound Driver to advertise all three modes.
+For a more portable unattended policy, explicitly select auto-approve for
+permission and plan review where the Driver advertises it, and leave questions
+at `QuestionInherit`; the SDK default for questions then materializes to
+auto-deny.
+
+`FallbackAbort` ends the run with a business failure. `FallbackContinue`
+forwards the reject/timeout outcome so the Driver can continue. `FallbackRetry`
+renews the request ID and asks again up to `MaxRetries`. If the Driver does not
+advertise retry for that kind, the SDK emits one lifecycle `Notice` with
+`Data["warning"] == "human_decision_retry_unsupported"` and safely degrades to
+abort.
+
+## Capability validation
+
+The public `driver.Descriptor.RunPolicyCaps` is the source of truth. Keep the
+Driver value if the host wants to disable unsupported controls before Agent
+construction:
 
 ```go
-result, err := handle.Wait(ctx)
-if err != nil { /* 基础设施错误：agent 没跑完 */ }
-if result.Failure != nil { /* 业务失败：agent 跑完但结果是失败 */ }
-// success
+d := claude.Driver(claude.Config{Model: "claude-sonnet-4"})
+caps := d.Descriptor().RunPolicyCaps
+agent := adaptor.New(d)
+
+if !caps.Question.Ask {
+	// Do not offer a QuestionAsk control for this Driver.
+}
 ```
 
-## 6. Stream 事件
+Before acquiring run resources or invoking the Driver, the SDK rejects:
 
-HITL v2 在 stream 通道上发 `StreamHITLRequested` + `StreamHITLResolved`：
+- out-of-domain sandbox, feature, approval-mode, fallback-action, or retry
+  values with `adaptor.ErrInvalidPolicy` and
+  `*adaptor.InvalidPolicyError` (`Driver`, `Field`, `Value`);
+- a valid, explicitly selected sandbox, web-search, or browser value which the
+  Driver does not model with `adaptor.ErrPolicyCapabilityUnsupported` and
+  `*adaptor.PolicyCapabilityUnsupportedError` (`Driver`, `Dimension`,
+  `Value`);
+- an explicitly selected approval mode absent from the capability matrix with
+  `adaptor.ErrHumanDecisionModeUnsupported` and
+  `*adaptor.HumanDecisionModeUnsupportedError` (`Driver`, `Kind`, `Mode`).
+
+Unset approval modes are not treated as explicit capability requests. This
+keeps a zero policy usable for a Driver which never emits that request kind.
+The same explicit-value rule applies to non-approval dimensions: inherit
+values are portable, while selected values require the corresponding
+`Isolation`, `WebSearch`, or `Browser` capability. Hosts can inspect those
+booleans before running to keep unsupported choices out of their UI.
+
+Current built-in approval declarations are:
+
+| Driver | Permission | Plan review | Question | Retry |
+|---|---|---|---|---:|
+| Codex | auto-approve | none | none | no |
+| Claude | auto-approve, auto-deny | ask, auto-approve, auto-deny | ask, auto-deny | no |
+| Cursor | auto-approve | none | none | no |
+| CodeBuddy | ask, auto-approve, auto-deny | ask, auto-approve, auto-deny | ask, auto-deny | no |
+
+These are descriptor declarations, not promises that every future provider
+version has the same matrix. Validate against the Driver value used to build
+the Agent.
+
+## Callback form
+
+`OnApproval` is a `SharedOption`. It installs an Agent default handler or a
+nearer per-invocation override. Every `Ask` request invokes the handler with a
+live `*ApprovalRequest`.
 
 ```go
-type HITLRequestedPayload struct {
-    RequestID, Source string
-    Kind HumanDecisionKind
-    ToolCallID string
-    Prompt string
-    Payload map[string]any
-    Choices []DecisionChoice
-    CreatedAt, Deadline time.Time
-    RetryAttempt int
-}
+agent := adaptor.New(d,
+	adaptor.WithPolicy(adaptor.Policy{
+		Approvals: adaptor.ApprovalPolicy{
+			PlanReview: adaptor.ApprovalAsk,
+			Question:   adaptor.QuestionAsk,
+		},
+	}),
+	adaptor.OnApproval(func(ctx context.Context, req *adaptor.ApprovalRequest) error {
+		switch req.Kind {
+		case adaptor.ApprovalQuestion:
+			return req.Answer(ctx, "proceed")
+		default:
+			return req.Approve(ctx)
+		}
+	}),
+)
+```
 
-type HITLResolvedPayload struct {
-    RequestID, Source string
-    Kind HumanDecisionKind
-    RetryAttempt int
-    Result DecisionResult
-    Choice string
-    Answer map[string]any
-    ResolvedAt time.Time
-    Latency time.Duration
+The callback must call exactly one of `Approve`, `Deny`, or `Answer` and then
+return nil. Returning an error aborts the invocation with that infrastructure
+error. A panic or a nil return without resolving the request is classified as
+an agent business failure. `ApproveAll()` and `DenyAll(reason)` provide common
+handlers; `ApproveAll` denies questions because it cannot synthesize an answer.
+
+## Event responder form
+
+Without an `OnApproval` handler, an `Ask` request is a reliable event on the
+same Stream as all other typed events:
+
+```go
+stream := agent.Stream(ctx, prompt,
+	adaptor.WithPolicy(adaptor.Policy{
+		Approvals: adaptor.ApprovalPolicy{PlanReview: adaptor.ApprovalAsk},
+	}),
+)
+
+for event := range stream.Events() {
+	switch req := event.(type) {
+	case *adaptor.ApprovalRequest:
+		if err := req.Approve(ctx); err != nil {
+			stream.Cancel()
+			return err
+		}
+	}
+}
+result, err := stream.Result()
+```
+
+The event includes `ID`, `RunID`, `Kind`, `Title`, `Source`, `ToolCallID`,
+`Choices`, `Details`, `CreatedAt`, `Deadline`, `Attempt`, and the standard
+`Event.Meta()` envelope. Approval events are not eligible for drop-mode loss.
+Consumers must keep draining the stream; a consumer that abandons it must call
+`Cancel`.
+
+The responder is exactly-once and shared by copies of the request:
+
+| Response error | Meaning |
+|---|---|
+| `ErrApprovalResolved` | A response already won. |
+| `ErrApprovalExpired` | The deadline or owning invocation ended; it also matches `ErrApprovalResolved`. |
+| `ErrApprovalKindMismatch` | `Approve` was used for a question, or `Answer` for a binary request. |
+| `ErrApprovalUnavailable` | The request is nil, zero-valued, or detached from its run-owned responder. |
+
+These methods always return promptly for invalid or expired requests; they do
+not send to a nil channel.
+
+For `Agent.Run`, no external consumer sees drained events. An invocation that
+can ask must therefore install `OnApproval`, use an auto mode, or intentionally
+accept the timeout fallback. Interactive hosts normally use `Stream`.
+
+## Run errors
+
+Approval denial and timeout are business failures on the single Go error path:
+
+```go
+result, err := agent.Run(ctx, prompt)
+if err != nil {
+	var runErr *adaptor.RunError
+	if errors.As(err, &runErr) {
+		switch {
+		case errors.Is(err, adaptor.ErrApprovalDenied):
+			result = runErr.Result
+		case errors.Is(err, adaptor.ErrApprovalTimeout):
+			result = runErr.Result
+		}
+	}
+	return err
 }
 ```
 
-`StreamPayload.Seq` 是 run 内部零基单调计数器（见 `docs/workstream-hitl-v2.md` §3.4.2），供持久化 / SSE 断线重连使用。
+`RunError.Result` retains the available text, raw streams, transcript, usage,
+and service reports. Handler errors, process/protocol failures, and context
+cancellation remain ordinary wrapped infrastructure errors unless the Driver
+classifies them as a business failure. See [Public errors](./public-errors.md)
+for the complete matching matrix.
 
-## 7. 迁移表（旧 → 新）
-
-| 旧写法 | 新写法 |
-|--------|--------|
-| `RunPolicy{Approvals: ApprovalAsk}` | `RunPolicy{HumanDecision: HumanDecisionPolicy{Permission: HumanDecisionAsk}}` |
-| `RunPolicy{Approvals: ApprovalAuto/Off}` | `RunPolicy{HumanDecision: HumanDecisionPolicy{Permission: HumanDecisionAutoApprove}}` |
-| `RunPolicy{Trust: TrustAuto}` | `RunPolicy{HumanDecision: HumanDecisionPolicy{Permission: HumanDecisionAutoApprove}}` |
-| `RunPolicyInteractive` | `PolicyHostReview` |
-| `RunPolicyReadOnly` | `PolicyReadOnlyReview` |
-| `RunPolicyTrusted` | `PolicyAutonomous` |
-
-## 8. 与 profile 文档的衔接
-
-外置 profile/持久化层若在结构中存储策略，应使用 `*RunPolicy`（与 `AGENTS` 中绑定默认字段对齐），见 `docs/profile-resolver-api.md`。
+Structured output combined with an explicit `Ask` mode also requires the
+Driver's structured-output `WorksWithHITL` capability. The current built-in
+Drivers do not advertise that combination; see
+[Structured output](./structured-output.md).

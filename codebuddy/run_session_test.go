@@ -7,11 +7,70 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	driver "github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/internal/engine"
 	"github.com/agent-dance/agent-adaptor/internal/testutil"
 )
+
+func TestCodeBuddyHeadlessRunPreservesUnclassifiedProcessOutcome(t *testing.T) {
+	t.Setenv("CODEBUDDY_CONFIG_DIR", "")
+	for _, tc := range []struct {
+		name        string
+		posixBody   string
+		windowsBody string
+		cancel      bool
+	}{
+		{
+			name:        "exit without provider terminal",
+			posixBody:   "#!/bin/sh\nprintf 'partial stdout\\n'\nprintf 'partial stderr\\n' >&2\nexit 7\n",
+			windowsBody: "@echo off\r\necho partial stdout\r\n>&2 echo partial stderr\r\nexit /b 7\r\n",
+		},
+		{
+			name:        "cancel before provider terminal",
+			posixBody:   "#!/bin/sh\nprintf 'partial stdout\\n'\nprintf 'partial stderr\\n' >&2\nsleep 30\n",
+			windowsBody: "@echo off\r\necho partial stdout\r\n>&2 echo partial stderr\r\nping -n 31 127.0.0.1 >nul\r\n",
+			cancel:      true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			command := testutil.WriteCommand(t, home, "fake-codebuddy-outcome", tc.posixBody, tc.windowsBody)
+			ctx := context.Background()
+			if tc.cancel {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, 500*time.Millisecond)
+				defer cancel()
+			}
+			res, err := (adapter{}).Run(ctx, driver.Request{
+				RunID:     "run-outcome",
+				Prompt:    "go",
+				Config:    Config{CommonConfig: CommonConfig{Command: command, CWD: home}},
+				Workspace: driver.WorkspaceLease{CWD: home},
+				Policy:    autoApprovePolicy(),
+			}, &testutil.EventRecorder{})
+			if err != nil {
+				t.Fatalf("Driver.Run error = %v", err)
+			}
+			if res.ExitCode == 0 || res.Failure != nil || res.Checkpoint != nil {
+				t.Fatalf("outcome = %+v, want abnormal fields with no provider classification/checkpoint", res)
+			}
+			if tc.cancel && !res.TimedOut {
+				t.Fatalf("TimedOut = false for context deadline outcome: %+v", res)
+			}
+			if tc.cancel && !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				t.Fatalf("context error = %v, want deadline", ctx.Err())
+			}
+			if res.RawStreams == nil || !strings.Contains(res.RawStreams.Stdout, "partial stdout") || !strings.Contains(res.RawStreams.Stderr, "partial stderr") {
+				t.Fatalf("raw streams = %#v", res.RawStreams)
+			}
+			if len(res.Transcript) < 2 {
+				t.Fatalf("transcript = %#v, want partial stdout/stderr", res.Transcript)
+			}
+		})
+	}
+}
 
 // fakeHeadlessCLI writes a stub `codebuddy` executable that drains stdin and
 // emits a fixed stream-json transcript, letting the headless engine run end to

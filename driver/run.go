@@ -5,7 +5,7 @@ import "encoding/json"
 // AgentIdentity is host-supplied caller identity propagated into SDK hooks.
 //
 // The SDK does not use these fields for routing. They exist so host-provided
-// components such as SkillProvider, WorkspaceManager, and RuntimeServiceManager
+// components such as SkillProvider, WorkspaceManager, and ServiceManager
 // can scope lookups by tenant, user/profile, or logical agent name without
 // inventing their own context keys.
 type AgentIdentity struct {
@@ -45,8 +45,10 @@ type RawStreams struct {
 }
 
 // Usage is normalized token/cost accounting reported by drivers when the
-// provider protocol exposes it. Values may be zero when a driver cannot
-// observe the metric.
+// provider protocol exposes it. Individual values may legitimately be zero.
+// A nil *Usage on Response, TranscriptItem, or a terminal event means usage
+// was not observed; a non-nil zero Usage means the provider explicitly
+// reported zero for every normalized metric.
 type Usage struct {
 	InputTokens        int
 	OutputTokens       int
@@ -55,8 +57,8 @@ type Usage struct {
 }
 
 // Request is the fully resolved invocation the SDK passes to a driver. By
-// the time a driver sees this value, binding defaults and per-call options
-// have been merged, sessions have been coordinated, workspace/runtime/skill/
+// the time a driver sees this value, Agent defaults and CallOption values
+// have been merged, Thread state has been coordinated, workspace/runtime/skill/
 // MCP payloads have been resolved, and policy has been validated against the
 // descriptor.
 type Request struct {
@@ -77,10 +79,10 @@ type Request struct {
 	OutputSchema   *OutputSchema
 
 	// ModelOverride is the per-run model selected via WithModel. When
-	// non-empty it supersedes the binding model carried by Config for this
+	// non-empty it supersedes the construction model carried by Config for this
 	// invocation; drivers must prefer it over their Config model when
 	// resolving the provider-native model selection. Empty means "no
-	// override" and the driver falls back to the binding model.
+	// override" and the driver falls back to its construction config.
 	ModelOverride string
 
 	// Streaming selects a provider-native streaming transport after the core
@@ -91,8 +93,8 @@ type Request struct {
 	// transport when this field is true.
 	//
 	// Drivers that do not implement StreamSupport are free to ignore
-	// this field. Hosts consuming stream events on such drivers will see
-	// an immediately-closed channel.
+	// this field. The public Event stream remains available, but it will not
+	// contain provider-native normalized deltas from that capability.
 	Streaming bool
 }
 
@@ -109,7 +111,15 @@ type Response struct {
 	// terminal JSON (when the protocol defines one) for audit and debugging.
 	RawStreams *RawStreams
 	// Transcript is the normalized semantic item stream parsed by the driver.
-	Transcript       []TranscriptItem
+	Transcript []TranscriptItem
+	// ExitCode, Signal, and TimedOut preserve the observed subprocess
+	// outcome. Drivers should attach the more specific Failure parsed from an
+	// official provider error event when one exists. If they do not, core
+	// classifies any non-zero exit, signal, or timeout as FailureAgentError,
+	// except that cancellation of the outer invocation context retains its
+	// context.Canceled/context.DeadlineExceeded error identity. An abnormal
+	// process outcome can therefore never become a successful Result merely
+	// because the provider emitted no terminal error event.
 	ExitCode         int
 	Signal           string
 	TimedOut         bool
@@ -117,41 +127,37 @@ type Response struct {
 	Checkpoint       *Checkpoint
 	Metadata         map[string]string
 	Provider         string
-	Biller           string
 	Model            string
-	BillingType      string
-	CostUSD          *float64
 	Summary          string
 	StructuredOutput *StructuredOutput
 	RuntimeServices  []RuntimeServiceReport
-	Question         *RunQuestion
 	Failure          *RunFailure
 }
 
-// SessionMode controls how the SDK coordinates a run with the session store.
-// Without a session store, runs are stateless and session-aware modes return
+// SessionMode controls how the SDK coordinates an invocation with a Thread
+// store. Without a Thread store, runs are stateless and stateful modes return
 // an error rather than silently pretending to resume.
 type SessionMode string
 
 const (
-	// SessionContinueOrStart resolves (Namespace, Key) and resumes when an
-	// active mapping exists; otherwise it starts a new session.
+	// SessionContinueOrStart resolves the Thread's single opaque host key and
+	// resumes its active checkpoint when one exists; otherwise it starts fresh.
 	SessionContinueOrStart SessionMode = "continue_or_start"
-	// SessionContinueOnly requires an existing concrete SessionID or key
-	// mapping and fails when no compatible session exists.
+	// SessionContinueOnly requires a compatible active checkpoint for the
+	// Thread key and fails when none exists.
 	SessionContinueOnly SessionMode = "continue_only"
-	// SessionStartNew starts fresh and rebinds (Namespace, Key) only after a
-	// valid checkpoint is produced.
+	// SessionStartNew starts fresh and rebinds the Thread key only after a valid
+	// checkpoint is produced.
 	SessionStartNew SessionMode = "start_new"
-	// SessionFork starts from ForkFrom but persists the result as a distinct
-	// session mapping.
+	// SessionFork starts from a parent checkpoint but persists the result under
+	// the fork's distinct Thread key without modifying the parent.
 	SessionFork SessionMode = "fork"
 	// SessionStateless forces no session resolution or persistence for this run.
 	SessionStateless SessionMode = "stateless"
 )
 
-// SessionContext is the session state a resume-capable driver receives for
-// one run. EngineSessionID is the provider handle to continue; State holds
+// SessionContext is the checkpoint state a resume-capable driver receives for
+// one invocation. EngineSessionID is the provider handle to continue; State holds
 // the full driver checkpoint; Mode tells the driver whether this is a fresh,
 // continued, forked, or stateless invocation.
 type SessionContext struct {
@@ -161,16 +167,16 @@ type SessionContext struct {
 	PreviousID      string
 }
 
-// SessionState is the driver-owned checkpoint payload persisted by the
-// session store after a successful run. ResumeID is the provider session
-// handle; Data contains driver-specific guards such as cwd or prompt-bundle
-// hashes.
+// SessionState is the driver-owned checkpoint payload persisted by the Thread
+// store after a successful run. ResumeID is the provider session
+// handle; Data contains driver-specific guards such as cwd or effective
+// profile fingerprints.
 type SessionState struct {
 	ResumeID  string
 	DisplayID string
-	// Data stores driver-specific session parameters such as cwd,
-	// prompt-bundle fingerprints, or repo identifiers needed to validate a
-	// resume attempt.
+	// Data stores driver-specific session parameters such as cwd, effective
+	// profile fingerprints, or repo identifiers needed to validate a resume
+	// attempt.
 	Data map[string]string
 }
 
@@ -181,8 +187,8 @@ type SessionState struct {
 // observed its successful terminal event, and that protocol supplied an
 // explicit top-level resume/session identifier accepted by SessionCodec.
 // Init/session announcements, partial output, guessed/nested identifiers and
-// terminal error events are not sufficient. In v1 there is no failed-run
-// exception: non-zero exit, cancellation, malformed protocol, missing
+// terminal error events are not sufficient. There is no failed-run exception:
+// non-zero exit, cancellation, malformed protocol, missing
 // terminal, or business failure MUST return nil or Valid=false. This prevents
 // a failed run from replacing a previously healthy Thread checkpoint.
 // Structurally, Valid=true also requires State != nil and a non-empty
@@ -191,20 +197,6 @@ type SessionState struct {
 type Checkpoint struct {
 	State *SessionState
 	Valid bool
-}
-
-// RunQuestion represents a driver-requested follow-up question that the host
-// can present to the operator before launching another run.
-type RunQuestion struct {
-	Prompt  string
-	Choices []RunChoice
-}
-
-// RunChoice is one selectable answer for a RunQuestion.
-type RunChoice struct {
-	Key         string
-	Label       string
-	Description string
 }
 
 // RunFailure carries structured error information when the SDK or a driver
@@ -233,8 +225,8 @@ func (f *RunFailure) IsRejected() bool {
 }
 
 // IsTimedOut reports whether the failure is a HITL decision timeout
-// (OnTimeout=FailureAbort path). Distinct from context.DeadlineExceeded on
-// the outer ctx, which is surfaced as the Wait() error instead. nil-safe.
+// (OnTimeout=FailureAbort path). It is distinct from context.DeadlineExceeded
+// on the outer context, which is returned by Run or Stream.Result. nil-safe.
 func (f *RunFailure) IsTimedOut() bool {
 	return f != nil && f.Code == FailureTimeout
 }

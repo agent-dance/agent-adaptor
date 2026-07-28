@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"strings"
@@ -13,10 +14,17 @@ import (
 	"time"
 )
 
-const maxToolTimeoutSeconds = int64(1<<63-1) / int64(time.Second)
+const (
+	maxToolTimeoutSeconds = int64(1<<63-1) / int64(time.Second)
+	// maxMCPRequestBytes bounds model-controlled JSON-RPC input before decode.
+	// MCP tool calls are compact control messages, so one MiB is deliberately
+	// generous while preventing an unbounded allocation/read attack.
+	maxMCPRequestBytes int64 = 1 << 20
+)
 
 const mcpProgressHeartbeatInterval = 10 * time.Second
 
+// ToolInput is the strictly decoded model-facing input of DelegateToolName.
 type ToolInput struct {
 	Agent       string          `json:"agent"`
 	Objective   string          `json:"objective"`
@@ -24,12 +32,15 @@ type ToolInput struct {
 	Constraints ToolConstraints `json:"constraints,omitempty"`
 }
 
+// ToolInputBody carries optional prompt context and artifact references.
 type ToolInputBody struct {
 	Prompt    string          `json:"prompt,omitempty"`
 	Context   string          `json:"context,omitempty"`
 	Artifacts []InputArtifact `json:"artifacts,omitempty"`
 }
 
+// ToolConstraints carries model-requested bounds. The Set fields distinguish
+// an omitted value from an explicit JSON zero during validation.
 type ToolConstraints struct {
 	TimeoutSeconds    int  `json:"timeout_seconds,omitempty"`
 	TimeoutSecondsSet bool `json:"-"`
@@ -40,6 +51,8 @@ type ToolConstraints struct {
 	HistoryLengthSet  bool `json:"-"`
 }
 
+// ToolSchema returns a fresh JSON Schema for the default delegate_to_agent
+// tool input. The schema accepts registry keys, never endpoint URLs.
 func ToolSchema() map[string]any {
 	return map[string]any{
 		"type": "object",
@@ -83,6 +96,9 @@ func ToolSchema() map[string]any {
 	}
 }
 
+// ParseToolInput strictly decodes and validates default tool input. Unknown
+// fields, endpoint_url, missing required fields, and invalid bounds fail with
+// *DelegationError.
 func ParseToolInput(raw []byte) (ToolInput, error) {
 	var envelope map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &envelope); err == nil {
@@ -140,6 +156,9 @@ func ParseToolInput(raw []byte) (ToolInput, error) {
 	return input, nil
 }
 
+// MCPServerOptions configures one authenticated MCP endpoint. RunID attributes
+// default-tool delegations; Tools add host-owned tool projections. Every
+// request body is limited to 1 MiB.
 type MCPServerOptions struct {
 	RunID              string
 	ParentToolCallID   string
@@ -154,11 +173,15 @@ type MCPServerOptions struct {
 	AllowUnauthenticatedLoopbackForTest bool
 }
 
+// MCPServer serves the default delegation tool and optional host-owned tools
+// over Streamable HTTP MCP JSON-RPC.
 type MCPServer struct {
 	Delegator *Delegator
 	Options   MCPServerOptions
 }
 
+// NewMCPServer constructs an MCPServer and panics on duplicate, blank, or
+// default-tool-conflicting custom names.
 func NewMCPServer(delegator *Delegator, opts MCPServerOptions) *MCPServer {
 	seen := make(map[string]struct{}, len(opts.Tools))
 	tools := make([]ToolSpec, len(opts.Tools))
@@ -180,10 +203,13 @@ func NewMCPServer(delegator *Delegator, opts MCPServerOptions) *MCPServer {
 	return &MCPServer{Delegator: delegator, Options: opts}
 }
 
+// Handler returns the MCPServer as an http.Handler.
 func (s *MCPServer) Handler() http.Handler {
 	return http.HandlerFunc(s.ServeHTTP)
 }
 
+// ServeHTTP handles authenticated MCP JSON-RPC and streamable progress. Only
+// POST is accepted.
 func (s *MCPServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -195,8 +221,28 @@ func (s *MCPServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 	var req rpcRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxMCPRequestBytes))
+	if err := decoder.Decode(&req); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeRPC(w, rpcError(nil, -32001, "request body exceeds 1 MiB limit"))
+			return
+		}
 		writeRPC(w, rpcError(nil, -32700, "parse error: "+err.Error()))
+		return
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeRPC(w, rpcError(nil, -32001, "request body exceeds 1 MiB limit"))
+			return
+		}
+		message := "multiple JSON values"
+		if err != nil {
+			message = err.Error()
+		}
+		writeRPC(w, rpcError(nil, -32700, "parse error: "+message))
 		return
 	}
 	if len(req.ID) == 0 && strings.HasPrefix(req.Method, "notifications/") {

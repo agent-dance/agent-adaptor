@@ -13,15 +13,11 @@ import (
 
 // Thread is a stateful conversation handle: the same Runner contract as
 // Agent, plus continuity — every run resumes the driver checkpoint stored
-// under the thread key and persists the new checkpoint afterwards
-// (docs/api-v1-redesign.md §2.4).
+// under the thread key and persists the new checkpoint afterwards.
 //
-// v1 keeps exactly two consumer-visible identity layers: the thread key
-// (host-owned business string) and the run ID. The internal session ID and
-// the driver's native resume handle stay demoted to storage details,
-// reachable only through Checkpoint for audit.
-//
-// Mode mapping (legacy session modes → Thread methods):
+// The thread key is the host-owned, opaque conversation identity. The
+// internal session ID and the Driver's native resume handle remain storage
+// details, reachable only through Checkpoint for audit.
 //
 //	agent.Thread("tenant-1/issue-123")            // continue_or_start
 //	agent.NewThread("tenant-1/issue-123")         // start_new (first run)
@@ -32,6 +28,10 @@ import (
 // handles for the same key are interchangeable (state lives in the
 // threadstore.Store). Concurrent runs on the same key are serialized by the
 // store lease — the loser fails fast with ErrThreadBusy.
+// The configured Driver must declare Sessions.SupportsResume and implement
+// both driver.SessionCodecProvider and driver.SessionConfigFingerprinter;
+// Run/Stream reject an incomplete contract before acquiring resources or
+// touching the store.
 type Thread struct {
 	agent      *Agent
 	key        string
@@ -52,8 +52,8 @@ var _ Runner = (*Thread)(nil)
 // importing the SPI package.
 type Checkpoint = driver.Checkpoint
 
-// ThreadOption tweaks how a Thread binds to its key. The only P2 option is
-// ResumeOnly.
+// ThreadOption tweaks how a Thread binds to its key. ResumeOnly is the sole
+// Thread option.
 type ThreadOption interface {
 	applyThread(*Thread)
 }
@@ -73,8 +73,8 @@ func ResumeOnly() ThreadOption {
 
 // Thread returns the conversation handle for key, continuing the stored
 // conversation when one exists and starting fresh otherwise
-// (continue-or-start). key is the host's own business string — compose
-// tenant scoping into it ("tenant-1/issue-123") as needed.
+// (continue-or-start). key is the host's own opaque business string and is
+// stored and compared verbatim.
 //
 // Runs require a store injected via WithThreadStore; without one they fail
 // with ErrThreadStoreRequired. Thread panics on an empty key (programmer
@@ -132,7 +132,7 @@ func (t *Thread) Key() string { return t.key }
 
 // Run executes one prompt on the thread to completion: resume the stored
 // conversation per the thread's mode, run the driver, persist the new
-// checkpoint. Same drain-the-stream semantics and D1 error contract as
+// checkpoint. It has the same drain-the-stream and error contracts as
 // Agent.Run, plus the thread error vocabulary (ErrThreadBusy,
 // ErrThreadNotFound, ErrThreadIncompatible, ...).
 func (t *Thread) Run(ctx context.Context, prompt string, opts ...CallOption) (*Result, error) {
@@ -162,21 +162,33 @@ func (t *Thread) Stream(ctx context.Context, prompt string, opts ...CallOption) 
 // thread key, normalized through the driver's session codec (audit /
 // debugging use — the SDK resumes threads by itself). It fails with
 // ErrThreadNotFound when the key has no active conversation and with
-// ErrThreadStoreRequired when the agent has no store.
+// ErrThreadStoreRequired when the agent has no store. Corrupt or unusable
+// durable state returns ErrThreadCheckpointMissing or ErrThreadIncompatible;
+// Checkpoint never returns an invalid checkpoint with a nil error.
 func (t *Thread) Checkpoint(ctx context.Context) (*Checkpoint, error) {
 	store := t.agent.defaults.threadStore
 	if store == nil {
 		return nil, fmt.Errorf("%w (thread %q)", ErrThreadStoreRequired, t.key)
 	}
+	contract, err := validateThreadDriverContract(t.agent.driver)
+	if err != nil {
+		return nil, t.threadError(err)
+	}
 	rec, err := store.Resolve(ctx, threadstore.Query{Key: t.key})
 	if err != nil {
 		return nil, fmt.Errorf("adaptor: thread %q: checkpoint: %w", t.key, err)
 	}
-	if rec == nil || rec.State == nil {
+	if rec == nil {
 		return nil, fmt.Errorf("%w (thread %q)", ErrThreadNotFound, t.key)
 	}
-	state := engine.NormalizeSessionState(t.agent.driver, rec.State)
-	return &Checkpoint{State: state, Valid: state != nil}, nil
+	if rec.SessionCodec == "" || rec.SessionCodec != contract.codecName {
+		return nil, t.threadError(&engine.SessionIncompatibleError{Reason: "stored session codec does not match the configured driver"})
+	}
+	state, err := engine.NormalizeResumableSessionState(t.agent.driver, rec.State)
+	if err != nil {
+		return nil, t.threadError(err)
+	}
+	return &Checkpoint{State: state, Valid: true}, nil
 }
 
 // planMode picks the session mode for the next run.
@@ -200,10 +212,8 @@ func (t *Thread) markEstablished() {
 	t.mu.Unlock()
 }
 
-// ============ Thread error vocabulary ============
-//
-// Session-coordination failures are infrastructure-side (decision D1: plain
-// wrapped errors, no Result), classified by sentinel so hosts can branch
+// Session-coordination failures are infrastructure errors: plain wrapped
+// errors without a Result, classified by sentinel so hosts can branch
 // with errors.Is.
 var (
 	// ErrThreadStoreRequired: the agent has no threadstore.Store
@@ -237,28 +247,43 @@ var (
 // threadError translates engine/store session errors into the consumer
 // vocabulary, keeping the original chain wrapped for diagnostics.
 func (t *Thread) threadError(err error) error {
+	primary := err
+	// releaseAfter joins the preparation failure first and cleanup failures
+	// after it. Classify that first error so a cleanup error that happens to
+	// match another Thread category cannot replace the primary public outcome.
+	for {
+		joined, ok := primary.(interface{ Unwrap() []error })
+		if !ok {
+			break
+		}
+		children := joined.Unwrap()
+		if len(children) == 0 || children[0] == nil {
+			break
+		}
+		primary = children[0]
+	}
 	var incompatible *engine.SessionIncompatibleError
 	switch {
-	case errors.Is(err, engine.ErrSessionStoreRequired):
-		return fmt.Errorf("%w (thread %q)", ErrThreadStoreRequired, t.key)
-	case errors.Is(err, engine.ErrSessionNotFound):
-		return fmt.Errorf("%w (thread %q)", ErrThreadNotFound, t.key)
-	case errors.Is(err, engine.ErrSessionBusy), errors.Is(err, threadstore.ErrBusy):
-		return fmt.Errorf("%w (thread %q)", ErrThreadBusy, t.key)
-	case errors.As(err, &incompatible):
+	case errors.Is(primary, engine.ErrSessionStoreRequired):
+		return errors.Join(fmt.Errorf("%w (thread %q)", ErrThreadStoreRequired, t.key), err)
+	case errors.Is(primary, engine.ErrSessionNotFound):
+		return errors.Join(fmt.Errorf("%w (thread %q)", ErrThreadNotFound, t.key), err)
+	case errors.Is(primary, engine.ErrSessionBusy), errors.Is(primary, threadstore.ErrBusy):
+		return errors.Join(fmt.Errorf("%w (thread %q)", ErrThreadBusy, t.key), err)
+	case errors.As(primary, &incompatible):
 		reason := incompatible.Reason
 		if reason == "" {
 			reason = "fingerprint mismatch"
 		}
-		return fmt.Errorf("%w (thread %q): %s", ErrThreadIncompatible, t.key, reason)
-	case errors.Is(err, engine.ErrSessionIncompatible):
-		return fmt.Errorf("%w (thread %q)", ErrThreadIncompatible, t.key)
-	case errors.Is(err, engine.ErrSessionLeaseLost), errors.Is(err, threadstore.ErrLeaseLost):
-		return fmt.Errorf("%w (thread %q)", ErrThreadLeaseLost, t.key)
-	case errors.Is(err, engine.ErrSessionCheckpointMissing):
-		return fmt.Errorf("%w (thread %q)", ErrThreadCheckpointMissing, t.key)
-	case errors.Is(err, engine.ErrThreadAlreadyExists), errors.Is(err, threadstore.ErrAlreadyExists):
-		return fmt.Errorf("%w (thread %q)", ErrThreadAlreadyExists, t.key)
+		return errors.Join(fmt.Errorf("%w (thread %q): %s", ErrThreadIncompatible, t.key, reason), err)
+	case errors.Is(primary, engine.ErrSessionIncompatible):
+		return errors.Join(fmt.Errorf("%w (thread %q)", ErrThreadIncompatible, t.key), err)
+	case errors.Is(primary, engine.ErrSessionLeaseLost), errors.Is(primary, threadstore.ErrLeaseLost):
+		return errors.Join(fmt.Errorf("%w (thread %q)", ErrThreadLeaseLost, t.key), err)
+	case errors.Is(primary, engine.ErrSessionCheckpointMissing):
+		return errors.Join(fmt.Errorf("%w (thread %q)", ErrThreadCheckpointMissing, t.key), err)
+	case errors.Is(primary, engine.ErrThreadAlreadyExists), errors.Is(primary, threadstore.ErrAlreadyExists):
+		return errors.Join(fmt.Errorf("%w (thread %q)", ErrThreadAlreadyExists, t.key), err)
 	default:
 		return fmt.Errorf("adaptor: thread %q: %w", t.key, err)
 	}

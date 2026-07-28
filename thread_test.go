@@ -1,24 +1,10 @@
 package adaptor_test
 
-// P2 contract migration: the semantic assertions of the legacy session
-// baseline tests (sdk_session_test.go, sdk_start_session_test.go), replayed
-// against the v1 Thread surface. Mapping:
-//
-//	TestSessionStoreRequired                        → TestThreadRequiresStore
-//	mode → method matrix (implicit in legacy modes) → TestThreadModeMethodMatrix
-//	TestContinueOrStartReuse                        → TestThreadContinueOrStartReuse
-//	TestContinueOnlyNotFound                        → TestThreadResumeOnlyNotFound
-//	TestStartNewRebindsKeyAndKeepsOldSession        → TestNewThreadArchivesPreviousConversation
-//	TestContinueOnlyDetectsIncompatibility          → TestThreadFingerprintGuard
-//	TestSessionBusyOnConcurrentKey                  → TestThreadBusyOnConcurrentRuns
-//	TestContinueOrStartFallsBackAfterResumeRejected → TestThreadFallsBackAfterResumeRejected
-//	TestContinueOnlyKeepsResumeRejectedFailure      → TestThreadResumeOnlyKeepsResumeRejected
-//	TestStatefulRunRequiresValidCheckpoint          → TestThreadRunRequiresValidCheckpoint
-//	TestHumanDecisionFailureWithoutCheckpoint...    → TestThreadHumanRejectWithoutCheckpointDoesNotPoisonThread
-//	  (+ Start() mirror in sdk_start_session_test)  →   (Stream leg of the same test)
-//
-// The legacy tests stay untouched; these replicate their semantics over
-// Agent.Thread / Agent.NewThread / Thread.Fork / ResumeOnly.
+// Thread lifecycle contract tests cover the complete Agent.Thread,
+// Agent.NewThread, Thread.Fork, and ResumeOnly mode matrix. They pin store
+// requirements, reuse and archival, fingerprint guards, leases, resume
+// rejection, valid-checkpoint persistence, and failure isolation across both
+// Run and Stream forms.
 
 import (
 	"context"
@@ -29,15 +15,15 @@ import (
 	"sync"
 	"testing"
 
+	adaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/internal/engine"
 	"github.com/agent-dance/agent-adaptor/memory"
-	adaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/threadstore"
 )
 
-// sessionFake extends the programmable fakeDriver with the resume /
-// checkpoint behavior of the legacy session baseline fake: fresh runs mint
+// sessionFake extends the programmable fakeDriver with deterministic resume /
+// checkpoint behavior: fresh runs mint
 // "<label>-resume-N" checkpoints, resumed runs echo the incoming state, and
 // three switches reproduce the failure scenarios (reject the resume, omit
 // the checkpoint, human-reject without checkpoint).
@@ -60,6 +46,9 @@ type noFingerprintDriver struct{ inner *fakeDriver }
 
 func (d *noFingerprintDriver) Descriptor() driver.Descriptor  { return d.inner.Descriptor() }
 func (d *noFingerprintDriver) ValidateConfig(value any) error { return d.inner.ValidateConfig(value) }
+func (d *noFingerprintDriver) SessionCodec() driver.SessionCodec {
+	return d.inner.SessionCodec()
+}
 func (d *noFingerprintDriver) Run(ctx context.Context, req driver.Request, sink driver.EventSink) (driver.Response, error) {
 	return d.inner.Run(ctx, req, sink)
 }
@@ -137,6 +126,15 @@ func activeRecord(t *testing.T, store threadstore.Store, key string) *threadstor
 		t.Fatalf("no active record for thread %q", key)
 	}
 	return rec
+}
+
+func overwriteActiveRecord(t *testing.T, store threadstore.Store, record threadstore.Record) {
+	t.Helper()
+	if err := store.Finalize(context.Background(), threadstore.FinalizeRequest{
+		Record: record, Key: record.Key, RebindActive: true,
+	}); err != nil {
+		t.Fatalf("overwrite active record %q: %v", record.Key, err)
+	}
 }
 
 func TestThreadRequiresStore(t *testing.T) {
@@ -350,6 +348,84 @@ func TestThreadResumeOnlyNotFound(t *testing.T) {
 	}
 }
 
+func TestThreadResumeOnlyRejectsUnusableStoredCheckpointBeforeDriverRun(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*threadstore.Record)
+		want   error
+	}{
+		{name: "nil_state", mutate: func(r *threadstore.Record) { r.State = nil }, want: adaptor.ErrThreadCheckpointMissing},
+		{name: "empty_resume_id", mutate: func(r *threadstore.Record) {
+			r.State = &driver.SessionState{DisplayID: "display-only"}
+		}, want: adaptor.ErrThreadIncompatible},
+		{name: "codec_mismatch", mutate: func(r *threadstore.Record) { r.SessionCodec = "other/codec" }, want: adaptor.ErrThreadIncompatible},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := newSessionFake("resume-only-invalid")
+			store := memory.NewStore()
+			agent := adaptor.New(fake.fakeDriver, adaptor.WithThreadStore(store))
+			if _, err := agent.Thread("k").Run(context.Background(), "seed"); err != nil {
+				t.Fatalf("seed: %v", err)
+			}
+			record := *activeRecord(t, store, "k")
+			tc.mutate(&record)
+			overwriteActiveRecord(t, store, record)
+
+			_, err := agent.Thread("k", adaptor.ResumeOnly()).Run(context.Background(), "must not launch")
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("error = %v, want %v", err, tc.want)
+			}
+			if got := fake.runCount(); got != 1 {
+				t.Fatalf("Driver.Run calls = %d, want seed only", got)
+			}
+			got := activeRecord(t, store, "k")
+			if got.ID != record.ID || got.Status != threadstore.StatusActive {
+				t.Fatalf("rejected resume mutated active record: %+v", got)
+			}
+		})
+	}
+}
+
+func TestThreadContinueOrStartRejectsStructurallyInvalidCheckpoint(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*threadstore.Record)
+		want   error
+	}{
+		{name: "nil_state", mutate: func(r *threadstore.Record) { r.State = nil }, want: adaptor.ErrThreadCheckpointMissing},
+		{name: "empty_resume_id", mutate: func(r *threadstore.Record) {
+			r.State = &driver.SessionState{DisplayID: "display-only"}
+		}, want: adaptor.ErrThreadIncompatible},
+		{name: "codec_mismatch", mutate: func(r *threadstore.Record) { r.SessionCodec = "other/codec" }, want: adaptor.ErrThreadIncompatible},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := newSessionFake("continue-invalid")
+			store := memory.NewStore()
+			agent := adaptor.New(fake.fakeDriver, adaptor.WithThreadStore(store))
+			if _, err := agent.Thread("k").Run(context.Background(), "seed"); err != nil {
+				t.Fatalf("seed: %v", err)
+			}
+			old := *activeRecord(t, store, "k")
+			tc.mutate(&old)
+			overwriteActiveRecord(t, store, old)
+
+			_, err := agent.Thread("k").Run(context.Background(), "must not launch")
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("error = %v, want %v", err, tc.want)
+			}
+			if got := fake.runCount(); got != 1 {
+				t.Fatalf("Driver.Run calls = %d, want seed only", got)
+			}
+			active := activeRecord(t, store, "k")
+			if active.ID != old.ID || active.Status != threadstore.StatusActive {
+				t.Fatalf("rejected invalid checkpoint mutated active record: %+v", active)
+			}
+		})
+	}
+}
+
 func TestThreadForkRejectsExistingTargetWithoutMutation(t *testing.T) {
 	ctx := context.Background()
 	fake := newSessionFake("conflict")
@@ -500,21 +576,29 @@ func TestThreadFingerprintIncludesDriverConstructionConfig(t *testing.T) {
 func TestThreadRejectsDriverWithoutStableConfigFingerprint(t *testing.T) {
 	inner := newFakeDriver()
 	driverWithoutFingerprint := &noFingerprintDriver{inner: inner}
-	agent := adaptor.New(driverWithoutFingerprint, adaptor.WithThreadStore(memory.NewStore()))
+	missingStore := newObservingStore()
+	agent := adaptor.New(driverWithoutFingerprint, adaptor.WithThreadStore(missingStore))
 	if _, err := agent.Thread("no-config-fingerprint").Run(context.Background(), "go"); !errors.Is(err, adaptor.ErrThreadIncompatible) {
 		t.Fatalf("missing config fingerprint: err=%v, want ErrThreadIncompatible", err)
 	}
 	if inner.runCount() != 0 {
 		t.Fatalf("driver ran %d times despite missing stable config fingerprint", inner.runCount())
 	}
+	if calls := missingStore.callCount(); calls != 0 {
+		t.Fatalf("store observed %d calls despite missing stable config fingerprint", calls)
+	}
 
 	empty := &configuredSessionFake{sessionFake: newSessionFake("empty-config"), configFingerprint: "  "}
-	agent = adaptor.New(empty, adaptor.WithThreadStore(memory.NewStore()))
+	emptyStore := newObservingStore()
+	agent = adaptor.New(empty, adaptor.WithThreadStore(emptyStore))
 	if _, err := agent.Thread("empty-config-fingerprint").Run(context.Background(), "go"); !errors.Is(err, adaptor.ErrThreadIncompatible) {
 		t.Fatalf("empty config fingerprint: err=%v, want ErrThreadIncompatible", err)
 	}
 	if empty.runCount() != 0 {
 		t.Fatalf("driver ran %d times despite empty stable config fingerprint", empty.runCount())
+	}
+	if calls := emptyStore.callCount(); calls != 0 {
+		t.Fatalf("store observed %d calls despite empty stable config fingerprint", calls)
 	}
 }
 
@@ -805,8 +889,8 @@ func TestThreadRejectsCheckpointWithoutResumeID(t *testing.T) {
 	}
 }
 
-// TestThreadHumanRejectWithoutCheckpointDoesNotPoisonThread replays the
-// legacy three-run scenario on both Runner forms: a healthy seed, a
+// TestThreadHumanRejectWithoutCheckpointDoesNotPoisonThread exercises the
+// three-run failure-isolation scenario on both Runner forms: a healthy seed, a
 // human-rejected run without checkpoint (business failure, stored state
 // untouched), then a healthy run that resumes the original conversation.
 func TestThreadHumanRejectWithoutCheckpointDoesNotPoisonThread(t *testing.T) {
@@ -842,7 +926,7 @@ func TestThreadHumanRejectWithoutCheckpointDoesNotPoisonThread(t *testing.T) {
 	_, err := agent.Thread("k").Run(ctx, "please deploy")
 	assertRejected(t, err)
 
-	// Stream form (legacy Start() mirror).
+	// Stream form of the same scenario.
 	stream := agent.Thread("k").Stream(ctx, "please deploy")
 	for range stream.Events() {
 	}

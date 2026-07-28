@@ -3,7 +3,6 @@ package codebuddy
 import (
 	"bytes"
 	"encoding/json"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -21,13 +20,13 @@ type parser struct {
 	stdoutLine bytes.Buffer
 	stderrLine bytes.Buffer
 
-	transcript    []driver.TranscriptItem
-	assistantText []string
+	transcript        []driver.TranscriptItem
+	assistantText     []string
+	terminalResult    string
+	terminalResultSet bool
+	terminalSessionID string
 
 	sessionID         string
-	displayID         string
-	summary           string
-	terminalSummary   string
 	usage             *driver.Usage
 	cost              *float64
 	terminal          *driver.TerminalPayload
@@ -39,19 +38,12 @@ type parser struct {
 
 	stream       *streamingState
 	deltaBuffers map[string]*strings.Builder
+	deltaOrder   []string
 	control      *controlState
 
 	pendingFailure *driver.RunFailure
 
 	runID string
-}
-
-var checkpointEvents = map[string]struct{}{
-	"completion":      {},
-	"result":          {},
-	"session":         {},
-	"session.updated": {},
-	"turn.completed":  {},
 }
 
 func newParser(sink driver.EventSink) *parser {
@@ -78,6 +70,7 @@ func (p *parser) appendTextDelta(messageID, delta string) {
 		var b strings.Builder
 		buf = &b
 		p.deltaBuffers[messageID] = buf
+		p.deltaOrder = append(p.deltaOrder, messageID)
 	}
 	buf.WriteString(delta)
 }
@@ -118,8 +111,13 @@ func (p *parser) finalize() {
 		p.stderrLine.Reset()
 		p.processLine("stderr", remaining, time.Now().UTC())
 	}
+}
+
+func (p *parser) completeStream(failure *driver.RunFailure, exitCode int, signal string, timedOut bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	if p.stream != nil {
-		p.stream.finalize()
+		p.stream.complete(failure, exitCode, signal, timedOut)
 	}
 }
 
@@ -157,7 +155,7 @@ func (p *parser) handlePayload(raw string, payload map[string]any) {
 	if p.handleControlPayload(payload) {
 		return
 	}
-	eventType := strings.ToLower(topString(payload, "type", "event", "kind"))
+	eventType := strings.ToLower(topString(payload, "type"))
 	subtype := strings.ToLower(topString(payload, "subtype"))
 
 	if codeBuddyFormalEvent(eventType) {
@@ -168,7 +166,7 @@ func (p *parser) handlePayload(raw string, payload map[string]any) {
 	case "system":
 		if subtype == "init" {
 			model := topString(payload, "model")
-			session := topString(payload, "session_id", "sessionId")
+			session := topString(payload, "session_id")
 			p.emit(driver.TranscriptItem{Kind: driver.TranscriptInit, Model: model, SessionID: session})
 			if p.stream != nil {
 				p.stream.handleSystemInit(payload)
@@ -204,12 +202,6 @@ func (p *parser) handlePayload(raw string, payload map[string]any) {
 		}
 		p.emit(driver.TranscriptItem{Kind: driver.TranscriptFailure, Text: message, Metadata: map[string]string{"code": "error"}})
 	default:
-		if eventType != "" {
-			if _, ok := checkpointEvents[eventType]; ok {
-				p.emit(driver.TranscriptItem{Kind: driver.TranscriptResult, Subtype: eventType, Data: map[string]any{"payload": payload}})
-				return
-			}
-		}
 		if p.stream != nil {
 			op := cloneMap(payload)
 			op["_codebuddy_wrapper_type"] = eventType
@@ -231,16 +223,11 @@ func cloneMap(payload map[string]any) map[string]any {
 }
 
 func (p *parser) maybeCaptureSession(payload map[string]any) {
-	session := topString(payload, "session_id", "sessionId", "sessionID")
+	session := topString(payload, "session_id")
 	if session == "" {
 		return
 	}
 	p.sessionID = session
-	if display := topString(payload, "display_id", "displayId"); display != "" {
-		p.displayID = display
-	} else if p.displayID == "" {
-		p.displayID = session
-	}
 }
 
 func (p *parser) handleAssistantMessage(message map[string]any) {
@@ -264,10 +251,9 @@ func (p *parser) handleAssistantMessage(message map[string]any) {
 				continue
 			}
 			p.assistantText = append(p.assistantText, text)
-			p.summary = text
 			p.emit(driver.TranscriptItem{Kind: driver.TranscriptAssistant, Text: text, Model: model})
 		case "thinking":
-			text := topString(block, "text", "thinking")
+			text := topString(block, "thinking")
 			if text == "" {
 				continue
 			}
@@ -279,7 +265,7 @@ func (p *parser) handleAssistantMessage(message map[string]any) {
 			p.emit(driver.TranscriptItem{
 				Kind:      driver.TranscriptToolCall,
 				ToolName:  toolName,
-				ToolUseID: topString(block, "id", "tool_use_id"),
+				ToolUseID: topString(block, "id"),
 				Input:     block["input"],
 			})
 		}
@@ -337,8 +323,17 @@ func resultText(raw any) string {
 
 func (p *parser) handleResult(raw string, payload map[string]any, subtype string) {
 	p.terminalSeen = true
-	isErrorFlag, _ := payload["is_error"].(bool)
-	p.terminalSuccess = subtype == "success" && !isErrorFlag
+	isErrorFlag, hasErrorFlag := payload["is_error"].(bool)
+	result, hasResult := payload["result"].(string)
+	p.terminalSessionID = topString(payload, "session_id")
+	if p.terminalSessionID == "" || !hasErrorFlag || (subtype == "success" && !hasResult) {
+		p.protocolMalformed = true
+	}
+	p.terminalSuccess = subtype == "success" && hasErrorFlag && !isErrorFlag && hasResult && p.terminalSessionID != ""
+	if subtype == "success" && hasResult {
+		p.terminalResult = result
+		p.terminalResultSet = true
+	}
 
 	if p.control != nil {
 		// Control sessions retain stdin for host responses. Once a terminal
@@ -350,21 +345,17 @@ func (p *parser) handleResult(raw string, payload map[string]any, subtype string
 		JSON:  append(json.RawMessage(nil), raw...),
 	}
 
-	if resultText := topString(payload, "result", "summary"); resultText != "" {
-		p.terminalSummary = resultText
-	}
 	if rawJSON, ok := structuredJSONFromResult(payload); ok {
 		p.structuredOutput = &driver.StructuredOutput{
 			Format:  driver.OutputFormatJSONSchema,
 			Source:  driver.StructuredOutputSourceNative,
 			RawJSON: rawJSON,
-			Valid:   true,
 		}
 	}
 
 	if usage := topObject(payload, "usage"); usage != nil {
 		input, okInput := topInt(usage, "input_tokens")
-		cached, okCached := topInt(usage, "cache_read_input_tokens", "cached_input_tokens")
+		cached, okCached := topInt(usage, "cache_read_input_tokens")
 		output, okOutput := topInt(usage, "output_tokens")
 		if okInput || okCached || okOutput {
 			if p.usage == nil {
@@ -381,32 +372,57 @@ func (p *parser) handleResult(raw string, payload map[string]any, subtype string
 			}
 		}
 	}
-	if cost, ok := topFloat(payload, "total_cost_usd", "cost_usd", "costUSD"); ok {
+	if cost, ok := topFloat(payload, "total_cost_usd"); ok {
 		c := cost
 		p.cost = &c
 	}
 
 	isError := !p.terminalSuccess
 	if isError {
-		if message := topString(payload, "message", "result"); message != "" {
+		if p.terminalSessionID == "" && subtype == "success" {
+			p.errorMessage = "codebuddy successful terminal result is missing required session_id"
+		} else if !hasErrorFlag && subtype == "success" {
+			p.errorMessage = "codebuddy successful terminal result is missing required is_error"
+		} else if !hasResult && subtype == "success" {
+			p.errorMessage = "codebuddy successful terminal result is missing required result"
+		} else if message := codeBuddyResultErrorMessage(payload); message != "" {
 			p.errorMessage = message
 		} else if p.errorMessage == "" {
 			p.errorMessage = "codebuddy terminal result did not report success"
 		}
 	}
 
+	transcriptText := p.terminalResult
+	if isError {
+		transcriptText = p.errorMessage
+	}
 	p.emit(driver.TranscriptItem{
 		Kind:    driver.TranscriptResult,
 		Subtype: subtype,
 		IsError: isError,
 		Usage:   p.usage,
 		CostUSD: p.cost,
-		Text:    topString(payload, "result"),
+		Text:    transcriptText,
 		Data:    map[string]any{"payload": payload},
 	})
 	if p.stream != nil {
 		p.stream.handleResultTerminal(payload)
 	}
+}
+
+func codeBuddyResultErrorMessage(payload map[string]any) string {
+	raw, ok := payload["errors"].([]any)
+	if !ok {
+		return ""
+	}
+	messages := make([]string, 0, len(raw))
+	for _, value := range raw {
+		message, ok := value.(string)
+		if ok && strings.TrimSpace(message) != "" {
+			messages = append(messages, strings.TrimSpace(message))
+		}
+	}
+	return strings.Join(messages, "\n")
 }
 
 func codeBuddyFormalEvent(eventType string) bool {
@@ -419,14 +435,12 @@ func codeBuddyFormalEvent(eventType string) bool {
 }
 
 func structuredJSONFromResult(payload map[string]any) (json.RawMessage, bool) {
-	for _, key := range []string{"structured_output", "structuredOutput"} {
-		raw, ok := payload[key]
-		if !ok {
-			continue
-		}
-		if msg, ok := jsonRawMessageFromValue(raw); ok {
-			return msg, true
-		}
+	raw, ok := payload["structured_output"]
+	if !ok {
+		return nil, false
+	}
+	if msg, ok := jsonRawMessageFromValue(raw); ok {
+		return msg, true
 	}
 	return nil, false
 }
@@ -468,71 +482,98 @@ func (p *parser) emit(item driver.TranscriptItem) {
 }
 
 func (p *parser) finalSummary() string {
-	return strings.TrimSpace(p.terminalSummary)
+	// CodeBuddy documents result as the final text response. It does not
+	// publish a distinct bounded run-summary field, so keep Summary empty and
+	// preserve the exact terminal object in RawStreams.Terminal.
+	return ""
 }
 
 func (p *parser) buildOutput() string {
-	nonEmpty := make([]string, 0, len(p.assistantText))
-	for _, text := range p.assistantText {
-		if strings.TrimSpace(text) != "" {
-			nonEmpty = append(nonEmpty, text)
+	// CodeBuddy's official ResultMessage.result is the final assistant-facing
+	// response. It is authoritative when present; streamed assistant messages
+	// are intermediate protocol frames and must never be concatenated into a
+	// synthetic final answer.
+	if p.terminalResultSet {
+		return p.terminalResult
+	}
+	for i := len(p.assistantText) - 1; i >= 0; i-- {
+		if strings.TrimSpace(p.assistantText[i]) != "" {
+			return p.assistantText[i]
 		}
 	}
-	if len(nonEmpty) > 0 {
-		return strings.Join(nonEmpty, "\n\n")
-	}
-	if len(p.deltaBuffers) == 0 {
-		return ""
-	}
-	keys := make([]string, 0, len(p.deltaBuffers))
-	for id := range p.deltaBuffers {
-		keys = append(keys, id)
-	}
-	sort.Strings(keys)
-	parts := make([]string, 0, len(keys))
-	for _, id := range keys {
+	for i := len(p.deltaOrder) - 1; i >= 0; i-- {
+		id := p.deltaOrder[i]
 		if b := p.deltaBuffers[id]; b != nil {
-			if s := strings.TrimSpace(b.String()); s != "" {
-				parts = append(parts, s)
+			if strings.TrimSpace(b.String()) != "" {
+				return b.String()
 			}
 		}
 	}
-	return strings.Join(parts, "\n\n")
+	return ""
 }
 
 func (p *parser) outputMetadata() map[string]string {
-	out := make([]string, 0, len(p.assistantText))
-	for _, text := range p.assistantText {
-		if strings.TrimSpace(text) != "" {
-			out = append(out, text)
-		}
-	}
-	if len(out) > 0 || len(p.deltaBuffers) == 0 {
+	if strings.TrimSpace(p.terminalResult) != "" || len(p.assistantText) != 0 {
 		return nil
 	}
-	hasDelta := false
-	for _, b := range p.deltaBuffers {
+	for _, id := range p.deltaOrder {
+		b := p.deltaBuffers[id]
 		if b != nil && strings.TrimSpace(b.String()) != "" {
-			hasDelta = true
-			break
+			return map[string]string{"output_source": "reconstructed_from_deltas"}
 		}
 	}
-	if !hasDelta {
+	return nil
+}
+
+// failureForOutcome classifies provider-protocol failures without stealing
+// bare non-zero/signal/timeout process outcomes from the common invocation
+// classifier. A zero exit is successful only after one clean official
+// ResultMessage with subtype=success, is_error=false, and its own session_id.
+func (p *parser) failureForOutcome(exitCode int) *driver.RunFailure {
+	if p.pendingFailure != nil {
+		return p.pendingFailure
+	}
+	if strings.TrimSpace(p.errorMessage) != "" {
+		return &driver.RunFailure{Code: driver.FailureAgentError, Message: p.errorMessage}
+	}
+	if exitCode != 0 {
 		return nil
 	}
-	return map[string]string{"output_source": "reconstructed_from_deltas"}
+	if p.protocolMalformed {
+		return &driver.RunFailure{Code: driver.FailureAgentError, Message: "codebuddy protocol was malformed"}
+	}
+	if !p.terminalSeen {
+		return &driver.RunFailure{Code: driver.FailureAgentError, Message: "codebuddy protocol ended without a terminal result"}
+	}
+	if !p.terminalSuccess {
+		return &driver.RunFailure{Code: driver.FailureAgentError, Message: "codebuddy terminal result did not report success"}
+	}
+	return nil
+}
+
+// nativeStructuredOutputForOutcome exposes a provider-native candidate only
+// for a clean successful terminal. The parser recognizes the official
+// structured_output field but deliberately does not claim schema validity;
+// Driver.Run validates it through the shared core validator first.
+func (p *parser) nativeStructuredOutputForOutcome(exitCode int, signal string, timedOut bool, failure *driver.RunFailure) *driver.StructuredOutput {
+	if exitCode != 0 || signal != "" || timedOut || failure != nil || p.protocolMalformed || !p.terminalSuccess || p.terminalSessionID == "" || p.structuredOutput == nil {
+		return nil
+	}
+	out := *p.structuredOutput
+	out.RawJSON = append(json.RawMessage(nil), p.structuredOutput.RawJSON...)
+	out.Valid = false
+	out.Value = nil
+	out.ValidationErrors = nil
+	out.SchemaHash = ""
+	return &out
 }
 
 func (p *parser) checkpoint(exitCode int) *driver.Checkpoint {
-	if exitCode != 0 || p.protocolMalformed || !p.terminalSeen || !p.terminalSuccess || p.sessionID == "" {
+	if exitCode != 0 || p.protocolMalformed || !p.terminalSeen || !p.terminalSuccess || p.terminalSessionID == "" {
 		return nil
 	}
-	display := p.displayID
-	if display == "" {
-		display = p.sessionID
-	}
 	return &driver.Checkpoint{
-		State: &driver.SessionState{ResumeID: p.sessionID, DisplayID: display},
+		State: &driver.SessionState{ResumeID: p.terminalSessionID, DisplayID: p.terminalSessionID},
 		Valid: true,
 	}
 }

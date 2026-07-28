@@ -8,8 +8,7 @@ import (
 )
 
 // claudeInteractiveTools is the whitelist of tool names whose tool_use /
-// tool_result frames the claude parser recognizes as HITL decisions. See
-// docs/workstream-hitl-v2.md §5.1.2.
+// tool_result frames the claude parser recognizes as HITL decisions.
 var claudeInteractiveTools = map[string]driver.HumanDecisionKind{
 	"ExitPlanMode":    driver.HumanDecisionPlanReview,
 	"AskUserQuestion": driver.HumanDecisionQuestion,
@@ -44,8 +43,7 @@ func toSnakeCase(s string) string {
 }
 
 // interpretClaudeToolResult maps the content of a claude tool_result frame
-// for one of the whitelisted interactive tools into a DecisionResult. See
-// docs/workstream-hitl-v2.md §5.1.5 for the rule table.
+// for one of the whitelisted interactive tools into a DecisionResult.
 //
 // Returns ok=false when the tool_result is a CLI-side validation / execution
 // failure (wrapped in <tool_use_error>…</tool_use_error>) that happened before

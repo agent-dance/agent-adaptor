@@ -3,7 +3,6 @@ package claude
 import (
 	"encoding/json"
 	"fmt"
-	"strconv"
 	"strings"
 
 	"github.com/agent-dance/agent-adaptor/driver"
@@ -26,11 +25,9 @@ type streamingState struct {
 
 	runStarted      bool
 	finishedEmitted bool
-	apiRetryHits    int
-	lastRetryWas5xx bool
 	streamUsage     *driver.Usage
 	stopReason      string
-	numTurns        int
+	terminalPayload map[string]any
 }
 
 func newStreamingState(sink driver.EventSink, runID string, p *claudeParser) *streamingState {
@@ -91,57 +88,6 @@ func (s *streamingState) handleAPIRetry(payload map[string]any) {
 		Name: "system.api_retry",
 		Raw:  payload,
 	})
-
-	status, ok := claudeHTTPStatusFromPayload(payload)
-	is5xx := ok && status >= 500 && status < 600
-	if is5xx {
-		if s.lastRetryWas5xx {
-			s.apiRetryHits++
-		} else {
-			s.apiRetryHits = 1
-		}
-		s.lastRetryWas5xx = true
-	} else {
-		s.lastRetryWas5xx = false
-	}
-
-	willRetry := true
-	if v, ok := payload["will_retry"].(bool); ok {
-		willRetry = v
-	} else if v, ok := payload["willRetry"].(bool); ok {
-		willRetry = v
-	}
-
-	if s.apiRetryHits >= 3 || (!willRetry && is5xx) {
-		msg := claudeTopLevelString(payload, "message", "error", "detail")
-		if msg == "" {
-			msg = "API retry exhausted"
-		}
-		s.emitErrorTerminal(&driver.RunFailure{
-			Message: msg,
-			Code:    "api_retry",
-		}, payload)
-	}
-}
-
-func claudeHTTPStatusFromPayload(payload map[string]any) (int, bool) {
-	if v, ok := payload["error_status"].(float64); ok {
-		return int(v), true
-	}
-	if v, ok := payload["error_status"].(int); ok {
-		return v, true
-	}
-	if nested, ok := payload["error"].(map[string]any); ok {
-		if v, ok := nested["status"].(float64); ok {
-			return int(v), true
-		}
-		if code, ok := nested["code"].(string); ok {
-			if n, err := strconv.Atoi(strings.TrimSpace(code)); err == nil {
-				return n, true
-			}
-		}
-	}
-	return 0, false
 }
 
 func (s *streamingState) handleStreamEvent(rawLine string, outer map[string]any) {
@@ -262,7 +208,6 @@ func (s *streamingState) handleContentBlockDelta(event map[string]any) {
 			pl.MessageID = s.messageID
 			s.emitStream(pl)
 		}
-		s.parser.appendTextDelta(s.messageID, text)
 		pl := s.basePayload()
 		pl.Kind = driver.StreamTextContent
 		pl.MessageID = s.messageID
@@ -385,7 +330,7 @@ func (s *streamingState) mergeUsageMap(u map[string]any) {
 			s.streamUsage.InputTokens = v
 		}
 	}
-	if v, ok := claudeTopLevelInt(u, "cache_read_input_tokens", "cached_input_tokens"); ok {
+	if v, ok := claudeTopLevelInt(u, "cache_read_input_tokens"); ok {
 		if v > s.streamUsage.CachedInputTokens {
 			s.streamUsage.CachedInputTokens = v
 		}
@@ -417,60 +362,15 @@ func (s *streamingState) handleUserToolResult(block map[string]any) {
 }
 
 func (s *streamingState) handleResultTerminal(payload map[string]any) {
-	// Pair finish with a start when the CLI omits system.init (should be rare).
-	s.markRunStarted()
-	if s.finishedEmitted {
-		return
-	}
-	s.closeOpenLifecycles()
-	if !s.parser.terminalSuccess {
-		msg := s.parser.errorMessage
-		if msg == "" {
-			msg = "claude terminal result did not report success"
-		}
-		s.emitErrorTerminal(&driver.RunFailure{Message: msg, Code: driver.FailureAgentError}, payload)
-		return
-	}
-
-	pl := s.basePayload()
-	pl.Kind = driver.StreamRunFinished
-
-	if s.parser.usage != nil {
-		u := *s.parser.usage
-		pl.Usage = &u
-	} else if s.streamUsage != nil {
-		u := *s.streamUsage
-		pl.Usage = &u
-	}
-
-	raw := map[string]any{
-		"stop_reason": s.stopReason,
-	}
-	if v, ok := claudeTopLevelFloat(payload, "total_cost_usd", "cost_usd"); ok {
-		raw["total_cost_usd"] = v
-	}
-	if subtype := claudeTopLevelString(payload, "subtype"); subtype != "" {
-		raw["subtype"] = subtype
-	}
-	if v, ok := payload["num_turns"].(float64); ok {
-		raw["num_turns"] = int(v)
-		s.numTurns = int(v)
-	}
-	pl.Raw = raw
-
-	s.emitStream(pl)
+	// A result frame is provider evidence, not the final SDK outcome. More
+	// stdout, process failure, HITL failure, fork validation, or structured
+	// output validation may still invalidate it. Driver.Run calls complete
+	// exactly once after all of those gates have frozen the outcome.
+	s.terminalPayload = cloneMapShallow(payload)
 }
 
 func (s *streamingState) handleErrorTerminal(payload map[string]any) {
-	msg := claudeTopLevelString(payload, "message", "error")
-	code := claudeTopLevelString(payload, "code")
-	if msg == "" {
-		msg = "claude stream error"
-	}
-	s.emitErrorTerminal(&driver.RunFailure{
-		Message: msg,
-		Code:    driver.FailureCode(code),
-	}, payload)
+	s.terminalPayload = cloneMapShallow(payload)
 }
 
 func (s *streamingState) closeOpenLifecycles() {
@@ -522,17 +422,43 @@ func (s *streamingState) emitErrorTerminal(failure *driver.RunFailure, raw map[s
 	s.emitStream(driver.StreamPayload{Kind: driver.StreamRunError, Error: failure, Raw: raw})
 }
 
-func (s *streamingState) finalize() {
+func (s *streamingState) complete(failure *driver.RunFailure, exitCode int, signal string, timedOut bool) {
 	if s == nil || s.sink == nil || s.finishedEmitted {
 		return
 	}
 	s.markRunStarted()
 	s.closeOpenLifecycles()
 
-	s.emitErrorTerminal(&driver.RunFailure{
-		Code:    driver.FailureAgentError,
-		Message: "claude protocol ended without a terminal result",
-	}, map[string]any{"reason": "missing_terminal"})
+	if failure == nil {
+		switch {
+		case timedOut:
+			failure = &driver.RunFailure{Code: driver.FailureAgentError, Message: "claude process timed out"}
+		case signal != "":
+			failure = &driver.RunFailure{Code: driver.FailureAgentError, Message: "claude process exited after signal " + signal}
+		case exitCode != 0:
+			failure = &driver.RunFailure{Code: driver.FailureAgentError, Message: fmt.Sprintf("claude process exited with code %d", exitCode)}
+		}
+	}
+	if failure != nil {
+		raw := s.terminalPayload
+		if raw == nil {
+			raw = map[string]any{"reason": "missing_or_invalid_terminal"}
+		}
+		s.emitErrorTerminal(failure, raw)
+		return
+	}
+
+	pl := s.basePayload()
+	pl.Kind = driver.StreamRunFinished
+	if s.parser.usage != nil {
+		u := *s.parser.usage
+		pl.Usage = &u
+	} else if s.streamUsage != nil {
+		u := *s.streamUsage
+		pl.Usage = &u
+	}
+	pl.Raw = s.terminalPayload
+	s.emitStream(pl)
 }
 
 func asString(v any) string {

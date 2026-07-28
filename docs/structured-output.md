@@ -1,12 +1,14 @@
-# Runtime Structured Output
+# Structured output
 
-Runtime structured output is a per-run JSON Schema contract for the final
-assistant business value. It is separate from CLI JSON event envelopes,
-`RawStreams`, `Transcript`, `Summary`, and provider terminal `Result` payloads.
+Structured output is a per-invocation JSON Schema contract for the final
+assistant business value. It is independent of provider protocol envelopes,
+`Result.Raw()`, `Result.Transcript()`, `Result.Summary`, and the provider
+terminal payload.
 
 ## Public API
 
-Preferred Go-host usage derives the schema from a struct:
+The shortest path accepts any `adaptor.Runner`, so an `Agent` and a `Thread`
+use the same helper:
 
 ```go
 type ProjectMetadata struct {
@@ -14,199 +16,208 @@ type ProjectMetadata struct {
 	ProgrammingLanguages []string `json:"programming_languages"`
 }
 
-res, err := sdk.Run(ctx,
+value, result, err := adaptor.RunAs[ProjectMetadata](
+	ctx,
+	runner,
 	"Extract project metadata from this repository.",
-	agentadaptor.WithJSONSchemaOutputFor[ProjectMetadata](
-		agentadaptor.NativeStrictOutput(),
-		agentadaptor.StructuredOutputName("project_metadata"),
+)
+if err != nil {
+	return err
+}
+fmt.Println(value.ProjectName, result.RunID)
+```
+
+`RunAs[T]` prepends `WithSchema[T]()` to the supplied call options, calls
+`Runner.Run`, and decodes the validated value. A later explicit schema option
+wins when implicit schema derivation succeeded, which makes this valid:
+
+```go
+value, result, err := adaptor.RunAs[ProjectMetadata](
+	ctx,
+	runner,
+	prompt,
+	adaptor.WithSchema[ProjectMetadata](adaptor.SchemaPromptOnly()),
+)
+```
+
+Schema derivation failures are sticky: a later explicit schema option does not
+clear an error produced while deriving the implicit `WithSchema[T]()` schema.
+
+On an execution error, `RunAs` returns the zero value of `T` together with the
+normal `Runner.Run` result/error pair. On a decode error, it returns the
+available `*Result` with that error.
+
+For event consumption or manual decode, attach a schema to `Run` or `Stream`:
+
+```go
+stream := runner.Stream(ctx, prompt,
+	adaptor.WithSchema[ProjectMetadata](
+		adaptor.SchemaFlexible(),
+		adaptor.SchemaName("project_metadata"),
 	),
 )
-if err != nil {
-	return err
+for event := range stream.Events() {
+	_ = event
 }
-meta, err := agentadaptor.DecodeStructuredOutput[ProjectMetadata](res)
-```
-
-Use the lower-level schema APIs only when the schema is dynamic or already
-owned outside Go:
-
-```go
-schema, err := agentadaptor.JSONSchemaFor[ProjectMetadata](
-	agentadaptor.SchemaInlineReferences(),
-)
+result, err := stream.Result()
 if err != nil {
 	return err
 }
 
-res, err := sdk.Run(ctx,
-	"Extract project metadata from this repository.",
-	agentadaptor.WithJSONSchemaOutput(schema, agentadaptor.NativeStrictOutput()),
-)
-```
-
-`RunStructured[T]` is a convenience wrapper around `Runner.Run` plus
-`DecodeStructuredOutput[T]`. It is a package function rather than a `Runner`
-method because Go interface methods cannot define their own type parameters.
-
-## Examples
-
-Codex native structured output through the default agent:
-
-```go
-sdk := agentadaptor.New(
-	agentadaptor.WithDefaultAgent(codex.New(agentadaptor.CodexConfig{
-		Model: "gpt-5.4",
-	})),
-)
-
-res, err := sdk.Run(ctx,
-	"Extract project metadata from this repository.",
-	agentadaptor.WithJSONSchemaOutputFor[ProjectMetadata](
-		agentadaptor.NativeStrictOutput(),
-	),
-)
-```
-
-Claude native structured output through a named agent:
-
-```go
-sdk := agentadaptor.New(
-	agentadaptor.WithDefaultAgent(codex.New(agentadaptor.CodexConfig{Model: "gpt-5.4"})),
-	agentadaptor.WithAgent("claude", claude.New(agentadaptor.ClaudeConfig{
-		Model: "claude-sonnet-4",
-	})),
-)
-
-review, err := sdk.Agent("claude")
-if err != nil {
+var value ProjectMetadata
+if err := result.Decode(&value); err != nil {
 	return err
 }
-res, err := review.Run(ctx,
-	"Return a release-note summary for the pending changes.",
-	agentadaptor.WithJSONSchemaOutputFor[ReleaseSummary](
-		agentadaptor.NativeStrictOutput(),
+```
+
+For a schema owned outside Go, use the raw-document escape hatch. The byte
+slice is copied when the option is built.
+
+```go
+result, err := runner.Run(ctx, prompt,
+	adaptor.WithSchemaJSON(schemaBytes,
+		adaptor.SchemaPromptOnly(),
+		adaptor.SchemaDescription("Release readiness report"),
 	),
 )
 ```
 
-Cursor prompt-validation fallback must be explicit:
+`WithSchema[T]` and `WithSchemaJSON` return `CallOption`: they are valid only
+on `Run` and `Stream`, never on `adaptor.New`.
 
-```go
-cursorRunner, err := sdk.Agent("cursor")
-if err != nil {
-	return err
-}
-res, err := cursorRunner.Run(ctx,
-	"Summarize repository risk as JSON.",
-	agentadaptor.WithJSONSchemaOutputFor[RiskProfile](
-		agentadaptor.PromptValidateOutput(),
-	),
-)
-if err != nil {
-	return err
-}
-if res.StructuredOutput == nil || !res.StructuredOutput.Valid {
-	return fmt.Errorf("invalid structured output: %v", res.StructuredOutput.ValidationErrors)
-}
-```
+## Schema options
 
-## Modes
+Options are applied in order. A later option for the same setting wins.
 
-| Mode | Contract |
+| Option | Contract |
 |---|---|
-| `NativeStrictOutput()` | Require provider/CLI-native JSON Schema enforcement. Unsupported adapters fail before launch with `ErrStructuredOutputUnsupported`. This is the default. |
-| `PreferNativeOutput()` | Use native enforcement when available, otherwise use explicit prompt+SDK validation when the adapter advertises it. |
-| `PromptValidateOutput()` | Inject exact-JSON prompt instructions and validate the final adapter `Output` locally. This is weaker than native constrained output and must be requested explicitly. |
+| `SchemaStrict()` | Require provider-native JSON Schema enforcement. This is the default. |
+| `SchemaFlexible()` | Prefer native enforcement, then use prompt injection plus local validation when the Driver supports it. |
+| `SchemaPromptOnly()` | Require exact-JSON prompt injection plus SDK-side validation. This is weaker than native constrained output. |
+| `SchemaName(name)` | Set the trimmed provider-facing schema name. |
+| `SchemaDescription(text)` | Set the trimmed provider-facing description. |
+| `SchemaReturnInvalid()` | Keep the run successful when the final value is invalid; `Result.Decode` still reports the validation error. |
+| `SchemaInlineReferences()` | Inline generated references. Recursive Go types cannot use this option. |
+| `SchemaAllowAdditionalProperties()` | Relax the generator's default strict-object behavior. |
+| `SchemaRequireExplicitTags()` | Require fields only when marked `jsonschema:"required"`. |
+| `SchemaUseGoComments(base, path)` | Add Go comments as descriptions. Both arguments are required. |
 
-Prompt validation parses only the final adapter `Output` as exact JSON. It does
-not scan `RawStreams`, strip Markdown fences, or guess JSON from protocol
-wrappers.
+The four generation options affect `WithSchema[T]`. They intentionally have
+no effect on `WithSchemaJSON`, because that function receives an already-owned
+schema document. Mode, name, description, and invalid-result policy apply to
+both constructors.
 
-## Built-In Adapter Matrix
+Schema derivation rejects Go shapes that cannot be represented safely, such as
+functions, channels, unsafe pointers, complex values, and maps with non-string
+keys. Generated and supplied documents are normalized and compiled as JSON
+Schema Draft 2020-12 before the Driver is invoked. Malformed JSON, multiple JSON
+values, an empty document, an unsupported mode, or a schema compile failure all
+match `adaptor.ErrInvalidOutputSchema`.
 
-| Adapter | Native JSON Schema | Prompt validation | Works with streaming | Works with HITL | Mapping |
-|---|---:|---:|---:|---:|---|
-| Codex | yes | yes | prompt-validation only | no | Native batch runs materialize the schema to a per-run temp file and call `codex exec --output-schema <file> --json`. The Codex parser extracts final JSON from official terminal result events. |
-| Claude Code | yes | yes | yes | no | Native batch runs use `--output-format json`; streaming runs use `--output-format stream-json --verbose`. Both pass `--json-schema`, and the parser reads the terminal `structured_output`. Interactive HITL plus native structured output is rejected before launch. |
-| Cursor | no | yes | yes | no | Cursor CLI exposes `json` / `stream-json` protocol envelopes but no native output-schema flag. `NativeStrictOutput()` is rejected; `PromptValidateOutput()` uses SDK prompt injection plus local validation. |
+## Mode and capability negotiation
 
-Capability gating is available through `Admin().Agent(name).Info()`:
+Every Driver declares `driver.Descriptor.StructuredOutput`. The SDK validates
+the requested mechanism before invoking it:
+
+- strict mode requires `JSONSchemaNative` and `WorksWithRun`;
+- prompt-only mode requires `JSONSchemaPromptValidate` and `WorksWithRun`;
+- flexible mode chooses the first eligible mechanism in that order;
+- explicit approval `Ask` modes additionally require `WorksWithHITL`.
+
+The consumer's choice between `Run` and `Stream` does not select the provider
+transport. The unified invocation pipeline prefers a Driver's rich transport,
+then negotiates its batch transport when structured output is not supported by
+that rich transport. A `Stream` therefore remains usable but may receive fewer
+incremental provider events. If neither transport can honor the request, the
+run fails before the Driver is invoked with
+`adaptor.ErrStructuredOutputUnsupported`.
+
+Hosts that need to prepare UI choices before constructing an Agent can retain
+the public Driver value and read its descriptor:
 
 ```go
-admin, err := sdk.Admin().Agent("cursor")
-if err != nil {
-	return err
-}
-caps := admin.Info().Descriptor.StructuredOutput
+d := cursor.Driver(cursor.Config{Model: "gpt-5"})
+caps := d.Descriptor().StructuredOutput
+agent := adaptor.New(d)
+
 if !caps.JSONSchemaNative && caps.JSONSchemaPromptValidate {
-	// Offer an explicit "prompt + validate" mode instead of native strict.
+	// Offer SchemaFlexible or SchemaPromptOnly, not SchemaStrict.
 }
 ```
 
-Cursor cannot be made provider-native by the SDK alone. `agent-adaptor` sits
-outside the Cursor CLI, so it cannot pass a schema into Cursor's model request
-until Cursor exposes a schema-output surface. Prompt validation remains useful
-for automation, but hosts should surface it as a weaker local validation mode.
+Current built-in declarations are:
 
-## Results And Failures
+| Driver | Native schema | Prompt validation | Rich provider transport | Explicit HITL `Ask` |
+|---|---:|---:|---:|---:|
+| Codex | yes | yes | no; batch is negotiated | no |
+| Claude | yes | yes | yes | no |
+| Cursor | no | yes | yes | no |
+| CodeBuddy | yes | yes | no; batch is negotiated | no |
 
-`RunResult.StructuredOutput` carries the final JSON value:
+Cursor strict mode is therefore rejected. `SchemaFlexible` and
+`SchemaPromptOnly` can use local validation. Prompt validation parses only the
+final assistant `Result.Text` as one exact JSON value; it does not strip
+Markdown fences, search raw stdout, or guess through provider envelopes.
+Provider-native output is also revalidated by the SDK before its raw JSON is
+made available to `Result.Decode`.
 
-- `RawJSON`: canonical final JSON bytes.
-- `Value`: decoded JSON tree for convenience.
-- `Valid`: local validation result.
-- `ValidationErrors`: structured validation diagnostics.
-- `Source`: `native` or `prompt_validate`.
-- `SchemaHash`: stable hash of the requested schema.
+For Codex batch runs, `codex exec --json --output-schema` carries the native
+JSON value in the `text` field of the last completed `agent_message` item. The
+Driver keeps all completed assistant messages in `Result.Text`, keeps
+`turn.completed` as the provider terminal payload in `Result.Raw()`, and gives
+only that last assistant value to the shared schema validator. A top-level
+`result` envelope is not part of this wire contract and is never treated as
+structured output. Missing or failed terminals, malformed protocols, nonzero
+exits, signals, timeouts, and business failures cannot yield a native
+structured-output candidate.
 
-`Run()` and `Start().Wait()` return the same structured-output surface because
-the request travels through the existing `resolvedInvocation -> DriverRunRequest
--> adapter.Run` path. Schema handling does not change session, workspace,
-skills, runtime, streaming, checkpoint, or archive semantics.
+## Decode and failure behavior
 
-Invalid schema JSON fails before adapter launch with `ErrInvalidOutputSchema`.
-Unsupported mode/capability combinations fail before launch with
-`ErrStructuredOutputUnsupported`. If an adapter or prompt-validation run returns
-JSON that does not validate and the policy is `StructuredOutputFailRun`, the
-run returns a `FailurePolicyError` on `RunResult.Failure`; use
-`ReturnInvalidStructuredOutput()` to receive `StructuredOutput.Valid=false`
-without marking the run failed.
+`(*Result).Decode(v)` has two deliberately distinct paths:
 
-`WithJSONSchemaOutputFor[T]` preserves the generated schema and its stable hash
-for every adapter. Claude prepares a provider-local copy by removing root schema
-metadata and inlining local references. Recursive schemas remain valid for the
-public helper and prompt validation, but Claude native mode rejects recursive
-local references because they cannot be safely inlined for that CLI path.
+1. When a schema was requested, it decodes only the value already validated by
+   the structured-output pipeline. Invalid or empty structured data is an
+   error.
+2. Without a schema, it trims `Result.Text` and decodes that text as a JSON
+   convenience. Empty text or malformed JSON is an error.
 
-## Security Notes
+The default invalid-result policy fails the completed run with a
+`*adaptor.RunError` matching `adaptor.ErrPolicyViolation`. The full audit value
+is retained in `runErr.Result`:
 
-Schema content may be sent to provider CLIs and may be retained according to
-provider policy. Do not put secrets in schema names, descriptions, enum values,
-const values, regex patterns, examples, or comments used to generate
-descriptions.
+```go
+result, err := runner.Run(ctx, prompt,
+	adaptor.WithSchema[ProjectMetadata](adaptor.SchemaPromptOnly()),
+)
+if err != nil {
+	var runErr *adaptor.RunError
+	if errors.As(err, &runErr) && errors.Is(err, adaptor.ErrPolicyViolation) {
+		result = runErr.Result
+	}
+	return err
+}
+```
 
-## Dependency Selection
+With `SchemaReturnInvalid`, the run returns `*Result, nil`, while
+`result.Decode(&value)` reports the validation diagnostics. This option changes
+only the run verdict; it does not make invalid JSON decodable.
 
-The implementation uses `github.com/invopop/jsonschema` for Go struct to JSON
-Schema generation and `github.com/santhosh-tekuri/jsonschema/v6` for local
-validation.
+`Run` and `Stream.Result` share the same negotiation, validation, and decode
+surface. Changing an output schema does not change Thread compatibility or
+split an otherwise compatible conversation.
 
-Reliability: `invopop/jsonschema` reflects ordinary Go structs into strict,
-LLM-friendly JSON Schema while respecting `json` and `jsonschema` tags.
-`santhosh-tekuri/jsonschema/v6` is a mature JSON Schema compiler/validator with
-Draft 2020-12 support, which avoids hand-written validation and protocol drift.
+## Security and dependencies
 
-Maintainability: both packages are maintained public Go libraries with
-documented APIs and versioned modules. The older `github.com/alecthomas/jsonschema`
-line has moved to Invopop and is not used for new work.
+Schema content can be sent to the provider. Do not put secrets in names,
+descriptions, enum/const values, regular expressions, examples, or Go comments
+used as schema descriptions.
 
-Localization: no third-party schema type appears in the public API. Public
-entry points accept and return `json.RawMessage`/`[]byte`; generation and
-validation stay inside the SDK implementation. Adapter-specific CLI flags stay
-inside `codex`, `claude`, and `cursor` packages.
+The implementation localizes two maintained libraries behind standard
+`[]byte` and `encoding/json` types:
 
-Rejected alternatives: `github.com/google/jsonschema-go/jsonschema` was a
-strong official-backed candidate, but the current API is younger and less
-tailored to strict LLM output schemas. `github.com/swaggest/jsonschema-go` is
-powerful but brings a larger and more complex API surface than needed for the
-SDK-owned helper layer.
+- `github.com/invopop/jsonschema` derives schemas from Go types;
+- `github.com/santhosh-tekuri/jsonschema/v6` compiles and validates Draft
+  2020-12 documents.
+
+No third-party schema type appears in the public API, and provider-specific
+flags remain inside their Driver packages.

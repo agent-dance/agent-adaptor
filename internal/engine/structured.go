@@ -57,7 +57,7 @@ func normalizeOutputSchema(schema *OutputSchema) (*OutputSchema, error) {
 	return out, nil
 }
 
-func resolveStructuredOutputSource(desc DriverDescriptor, schema *OutputSchema, providerStreaming bool, policy RunPolicy) (StructuredOutputSource, error) {
+func resolveStructuredOutputSource(desc Descriptor, schema *OutputSchema, providerStreaming bool, policy RunPolicy) (StructuredOutputSource, error) {
 	if schema == nil {
 		return "", nil
 	}
@@ -87,12 +87,12 @@ func resolveStructuredOutputSource(desc DriverDescriptor, schema *OutputSchema, 
 		if nativeOK {
 			return StructuredOutputSourceNative, nil
 		}
-		return "", &StructuredOutputUnsupportedError{Adapter: desc.Type, Mode: schema.Mode, Reason: structuredCapabilityReason(caps, providerStreaming, hitlAsk, true)}
+		return "", &StructuredOutputUnsupportedError{Driver: desc.Type, Mode: schema.Mode, Reason: structuredCapabilityReason(caps, providerStreaming, hitlAsk, true)}
 	case StructuredOutputPromptValidate:
 		if promptOK {
 			return StructuredOutputSourcePromptValidate, nil
 		}
-		return "", &StructuredOutputUnsupportedError{Adapter: desc.Type, Mode: schema.Mode, Reason: structuredCapabilityReason(caps, providerStreaming, hitlAsk, false)}
+		return "", &StructuredOutputUnsupportedError{Driver: desc.Type, Mode: schema.Mode, Reason: structuredCapabilityReason(caps, providerStreaming, hitlAsk, false)}
 	case StructuredOutputPreferNative:
 		if nativeOK {
 			return StructuredOutputSourceNative, nil
@@ -100,7 +100,7 @@ func resolveStructuredOutputSource(desc DriverDescriptor, schema *OutputSchema, 
 		if promptOK {
 			return StructuredOutputSourcePromptValidate, nil
 		}
-		return "", &StructuredOutputUnsupportedError{Adapter: desc.Type, Mode: schema.Mode, Reason: structuredCapabilityReason(caps, providerStreaming, hitlAsk, false)}
+		return "", &StructuredOutputUnsupportedError{Driver: desc.Type, Mode: schema.Mode, Reason: structuredCapabilityReason(caps, providerStreaming, hitlAsk, false)}
 	default:
 		return "", &InvalidOutputSchemaError{Reason: fmt.Sprintf("unsupported structured output mode %q", schema.Mode)}
 	}
@@ -286,7 +286,7 @@ func structuredOutputPromptInstruction(schema *OutputSchema) string {
 	return b.String()
 }
 
-// --- exported shims for the root package ----------------------------------
+// --- operations used by the root package ----------------------------------
 
 // NormalizeOutputSchema exposes normalizeOutputSchema for the root package.
 func NormalizeOutputSchema(schema *OutputSchema) (*OutputSchema, error) {
@@ -295,25 +295,12 @@ func NormalizeOutputSchema(schema *OutputSchema) (*OutputSchema, error) {
 
 // ResolveStructuredOutputSource exposes resolveStructuredOutputSource for the
 // root package.
-func ResolveStructuredOutputSource(desc DriverDescriptor, schema *OutputSchema, streaming bool, policy RunPolicy) (StructuredOutputSource, error) {
+func ResolveStructuredOutputSource(desc Descriptor, schema *OutputSchema, streaming bool, policy RunPolicy) (StructuredOutputSource, error) {
 	return resolveStructuredOutputSource(desc, schema, streaming, policy)
-}
-
-// ValidateStructuredOutput exposes validateStructuredOutput for the root package.
-func ValidateStructuredOutput(schema *OutputSchema, source StructuredOutputSource, raw []byte) *StructuredOutput {
-	return validateStructuredOutput(schema, source, raw)
 }
 
 // CloneOutputSchema exposes cloneOutputSchema for the root package.
 func CloneOutputSchema(schema *OutputSchema) *OutputSchema { return cloneOutputSchema(schema) }
-
-// CloneStructuredOutput exposes cloneStructuredOutput for the root package.
-func CloneStructuredOutput(value *StructuredOutput) *StructuredOutput {
-	return cloneStructuredOutput(value)
-}
-
-// SchemaHash exposes schemaHash for the root package.
-func SchemaHash(schema *OutputSchema) string { return schemaHash(schema) }
 
 // NormalizeJSON exposes normalizeJSON for the root package.
 func NormalizeJSON(raw []byte) (json.RawMessage, error) { return normalizeJSON(raw) }

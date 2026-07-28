@@ -6,7 +6,8 @@
 //   - it exposes Send, SendStream, Subscribe, GetTask, and CancelTask
 //   - it preserves task IDs, context IDs, status, artifacts, raw protocol
 //     payloads, and protocol errors in stable agent-adaptor-owned DTOs
-//   - it surfaces typed protocol errors without introducing SDK RunResult semantics
+//   - it surfaces typed protocol errors without pretending remote traffic has
+//     local process Result semantics
 //
 // The implementation delegates discovery and wire transports to the official
 // github.com/a2aproject/a2a-go/v2 SDK.

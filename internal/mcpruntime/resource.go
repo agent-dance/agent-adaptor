@@ -168,7 +168,7 @@ func layoutFor(driverType, profileDir string) (providerLayout, error) {
 			render: codebuddyServerConfig,
 		}, nil
 	default:
-		return providerLayout{}, fmt.Errorf("mcp profile materialization is unsupported by adapter %q", driverType)
+		return providerLayout{}, fmt.Errorf("mcp profile materialization is unsupported by driver %q", driverType)
 	}
 }
 

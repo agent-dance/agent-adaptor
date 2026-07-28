@@ -30,7 +30,7 @@ package adaptor_test
 //	// “重新生成” = fork
 //	alt := th.Fork(newThreadKey())
 //
-// The sse.Handler(agent) one-liner bridge returns in P4.
+// The HTTP bridge is covered separately by bridges/sse contract tests.
 
 import (
 	"context"
@@ -38,9 +38,9 @@ import (
 	"sync"
 	"testing"
 
+	adaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/memory"
-	adaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/threadstore"
 )
 

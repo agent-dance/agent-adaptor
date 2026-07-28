@@ -1,3 +1,3 @@
 {"type":"system","subtype":"init","session_id":"claude-happy","model":"claude-sonnet-4"}
 {"type":"assistant","session_id":"claude-happy","message":{"model":"claude-sonnet-4","content":[{"type":"text","text":"Hello from Claude."}]}}
-{"type":"result","subtype":"success","session_id":"claude-happy","result":"Hello from Claude.","usage":{"input_tokens":7,"output_tokens":4,"cache_read_input_tokens":1},"total_cost_usd":0.0012}
+{"type":"result","subtype":"success","is_error":false,"session_id":"claude-happy","result":"Hello from Claude.","usage":{"input_tokens":7,"output_tokens":4,"cache_read_input_tokens":1},"total_cost_usd":0.0012}

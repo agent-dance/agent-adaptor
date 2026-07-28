@@ -1,7 +1,0 @@
-{"type":"system","subtype":"init","session_id":"sess-phase3-bash","model":"claude-fixture"}
-{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_bash_phase3","name":"Bash","input":{}}}}
-{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"command\":\"ls\"}"}}}
-{"type":"stream_event","event":{"type":"content_block_stop","index":0}}
-{"type":"stream_event","event":{"type":"message_delta","delta":{"stop_reason":"tool_use"}}}
-{"type":"stream_event","event":{"type":"message_stop"}}
-{"type":"control_request","request_id":"req-bash-phase3","request":{"subtype":"can_use_tool","tool_name":"Bash","tool_use_id":"toolu_bash_phase3","input":{"command":"ls"}}}

@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/agent-dance/agent-adaptor/skill"
 )
 
-// resolveSkills merges all skill candidates for one Run / Admin call,
+// resolveSkillsWith merges all skill candidates for one run or inspection,
 // materialises any non-path sources through the SkillMaterializer, and
-// returns the adapter-facing ResolvedSkills together with the selected
+// returns the Driver-facing ResolvedSkills together with the selected
 // keys and the full merged catalogue.
 //
 // Sources are combined additively (v0.5 SkillProvider model):
@@ -30,22 +32,6 @@ import (
 // CallerIdentityFromContext so multi-tenant providers can scope their
 // lookup without forcing every caller to carry tenant in the public
 // signature.
-func (s *Core) resolveSkills(
-	ctx context.Context,
-	identity AgentIdentity,
-	defaultRefs []SkillRef,
-	runRefs []SkillRef,
-	candidateRefs []SkillRef,
-) (payload ResolvedSkills, selected []string, resolved []Skill, err error) {
-	return resolveSkillsWith(ctx, s.skillProvider, s.skillMaterializer, identity, defaultRefs, runRefs, candidateRefs)
-}
-
-// resolveSkillsWith is the provider/materializer-parameterised body of
-// (*Core).resolveSkills. The lift is purely mechanical (P3 seam choice:
-// reuse, not replicate): the Core method above delegates here with its own
-// configured provider and materializer, so the legacy path is byte-for-byte
-// unchanged, while the next/ facade reaches the same algorithm through the
-// exported ResolveSkills entry without needing a Core.
 func resolveSkillsWith(
 	ctx context.Context,
 	provider SkillProvider,
@@ -57,15 +43,13 @@ func resolveSkillsWith(
 ) (payload ResolvedSkills, selected []string, resolved []Skill, err error) {
 	state := newResolutionState()
 
-	// 1. Inline candidates registered through binding-only candidates
-	//    (used by Admin.SetSelectedSkills to expose inline Skill values
-	//    coming from WithDefaultSkills without forcing them into
-	//    selection by themselves).
-	// collectSkillCandidatesFrom places the binding defaults first. Those
+	// 1. Inline candidates registered for Agent.SelectSkills without forcing
+	//    them into the selection by themselves.
+	// collectSkillCandidatesFrom places the Agent defaults first. Those
 	// values are registration copies, not independent declarations; consume
 	// one matching candidate for each inline default before conflict-aware
-	// merging. This removes the historical candidate/default self-join
-	// structurally and avoids inventing equality for Go function values.
+	// merging. Consuming those registration copies prevents a candidate/default
+	// self-join without inventing equality for Go function values.
 	defaultCandidateCopies := make(map[string]int)
 	for _, ref := range defaultRefs {
 		if value, ok := ref.(Skill); ok {
@@ -124,7 +108,7 @@ func resolveSkillsWith(
 	//     returned by the provider.
 	for _, key := range providerKeys {
 		if !state.merger.has(key) {
-			return ResolvedSkills{}, nil, nil, fmt.Errorf("%w: key %q was requested via WithDefaultSkills/WithSkills but the configured SkillProvider did not return it", ErrSkillNotFound, key)
+			return ResolvedSkills{}, nil, nil, fmt.Errorf("%w: key %q was requested via Agent defaults or WithSkills but the configured SkillProvider did not return it", ErrSkillNotFound, key)
 		}
 	}
 
@@ -142,7 +126,7 @@ func resolveSkillsWith(
 	// 4. Build the final Selected list and materialise in a single
 	//    pass. Selected = provider ∪ default ∪ run; candidate-only
 	//    entries are intentionally skipped (they are registered for
-	//    Admin.SetSelectedSkills lookups, not auto-selection).
+	//    Agent.SelectSkills lookups, not auto-selection).
 	selectedSet := map[string]struct{}{}
 	selectedList := make([]string, 0)
 	mergedByKey := map[string]Skill{}
@@ -165,7 +149,7 @@ func resolveSkillsWith(
 	//    before the adapter starts.
 	materializer := skillMaterializer
 	if materializer == nil {
-		materializer = newDefaultSkillMaterializer()
+		materializer = skill.NewDefaultSkillMaterializer()
 	}
 	entries := make([]ResolvedSkill, 0, len(selectedList))
 	var warnings []string
@@ -257,9 +241,7 @@ func (st *resolutionState) absorbRefs(label sourceLabel, refs []SkillRef) error 
 
 // fetchSkillsFrom invokes the given SkillProvider with the requested keys,
 // propagating the AgentIdentity through ctx so providers that need scoping
-// can read it via CallerIdentityFromContext. (Formerly the Core method
-// fetchSkillsFromProvider; parameterised on provider for the P3 seam — its
-// only caller was resolveSkills, whose body moved into resolveSkillsWith.)
+// can read it via CallerIdentityFromContext.
 //
 // A nil / unset provider returns nil; the resolution layer then falls
 // back to inline Skill values exclusively.
@@ -275,17 +257,17 @@ func fetchSkillsFrom(ctx context.Context, provider SkillProvider, identity Agent
 	return skills, nil
 }
 
-// collectAdminCandidates returns the candidate pool admin paths
-// (ListSkills / SetSelectedSkills) feed into resolveSkills as the
+// collectSkillCandidatesFrom returns the candidate pool inspection paths
+// (Skills / SelectSkills) feed into resolveSkills as the
 // non-selected catalogue.
 //
 // Pool composition (and order, which is part of the internal contract):
 //
-//   - binding-inline skills (defaults.Skills) first — visible candidates
+//   - Agent-default inline skills first — visible candidates
 //     even when the operator is overriding the selection
 //   - upstream SkillCatalog.Catalogue() entries when the configured
 //     SkillProvider implements SkillCatalog — these expose the full
-//     enumerable catalogue so admin can render "available but off"
+//     enumerable catalogue so an inspector can render "available but off"
 //     rows. Providers that don't implement SkillCatalog (e.g. remote
 //     stores) contribute nothing here, which leaves the snapshot in
 //     the SkillSyncUnsupported mode the host UI should detect and
@@ -293,15 +275,6 @@ func fetchSkillsFrom(ctx context.Context, provider SkillProvider, identity Agent
 //
 // Errors from Catalogue propagate verbatim. The returned slice is
 // safe to append to without disturbing defaults.
-func (s *Core) collectAdminCandidates(ctx context.Context, defaults AgentDefaults) ([]SkillRef, error) {
-	return collectSkillCandidatesFrom(ctx, s.skillProvider, defaults.Agent, defaults.Skills)
-}
-
-// collectSkillCandidatesFrom is the provider-parameterised body of
-// (*Core).collectAdminCandidates (P3 seam choice: reuse, not replicate).
-// The Core method delegates here with (s.skillProvider, defaults.Agent,
-// defaults.Skills); the next/ Inspect surface reaches the same pool
-// composition through the exported CollectSkillCandidates entry.
 func collectSkillCandidatesFrom(ctx context.Context, provider SkillProvider, identity AgentIdentity, defaultSkills []SkillRef) ([]SkillRef, error) {
 	candidates := append([]SkillRef(nil), defaultSkills...)
 	if cat, ok := provider.(SkillCatalog); ok {

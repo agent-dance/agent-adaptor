@@ -6,8 +6,8 @@ import (
 	"strings"
 
 	"github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/internal/adapterutil"
 	"github.com/agent-dance/agent-adaptor/internal/configprobe"
+	"github.com/agent-dance/agent-adaptor/internal/driverutil"
 	"github.com/agent-dance/agent-adaptor/internal/skillruntime"
 )
 
@@ -86,14 +86,14 @@ func claudeCredentialCandidates(bindings []driver.EnvBinding) []string {
 
 func claudeAuthChecks(bindings []driver.EnvBinding) []driver.EnvironmentCheck {
 	checks := make([]driver.EnvironmentCheck, 0)
-	if enabled, source := adapterutil.ResolvedTruthyEnv(bindings, "CLAUDE_CODE_USE_BEDROCK"); enabled {
+	if enabled, source := driverutil.ResolvedTruthyEnv(bindings, "CLAUDE_CODE_USE_BEDROCK"); enabled {
 		checks = append(checks, driver.EnvironmentCheck{
 			Code:    "claude_bedrock_auth",
 			Level:   "info",
 			Message: "AWS Bedrock auth is enabled for Claude.",
 			Detail:  authSourceDetail(source),
 		})
-	} else if _, source := adapterutil.ResolvedEnvValue(bindings, "ANTHROPIC_BEDROCK_BASE_URL"); source != "" {
+	} else if _, source := driverutil.ResolvedEnvValue(bindings, "ANTHROPIC_BEDROCK_BASE_URL"); source != "" {
 		checks = append(checks, driver.EnvironmentCheck{
 			Code:    "claude_bedrock_auth",
 			Level:   "info",
@@ -102,14 +102,14 @@ func claudeAuthChecks(bindings []driver.EnvBinding) []driver.EnvironmentCheck {
 		})
 	}
 
-	if region, source := adapterutil.ResolvedEnvValue(bindings, "AWS_REGION"); source != "" {
+	if region, source := driverutil.ResolvedEnvValue(bindings, "AWS_REGION"); source != "" {
 		checks = append(checks, driver.EnvironmentCheck{
 			Code:    "claude_bedrock_region",
 			Level:   "info",
 			Message: "AWS region is configured for Bedrock-backed Claude runs.",
 			Detail:  region,
 		})
-	} else if region, source := adapterutil.ResolvedEnvValue(bindings, "AWS_DEFAULT_REGION"); source != "" {
+	} else if region, source := driverutil.ResolvedEnvValue(bindings, "AWS_DEFAULT_REGION"); source != "" {
 		checks = append(checks, driver.EnvironmentCheck{
 			Code:    "claude_bedrock_region",
 			Level:   "info",
@@ -118,7 +118,7 @@ func claudeAuthChecks(bindings []driver.EnvBinding) []driver.EnvironmentCheck {
 		})
 	}
 
-	if _, source := adapterutil.ResolvedEnvValue(bindings, "ANTHROPIC_API_KEY"); source != "" {
+	if _, source := driverutil.ResolvedEnvValue(bindings, "ANTHROPIC_API_KEY"); source != "" {
 		checks = append(checks, driver.EnvironmentCheck{
 			Code:    "anthropic_api_key_present",
 			Level:   "info",

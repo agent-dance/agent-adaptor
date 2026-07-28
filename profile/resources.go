@@ -26,14 +26,10 @@ type Resources struct {
 
 // SubAgent describes one host-declared sub-agent/profile agent entry.
 type SubAgent struct {
-	Key          string
-	RuntimeName  string
-	Description  string
-	Instructions string
-
-	// Content is the legacy spelling of Instructions. New declarations should
-	// set Instructions. If both are set, they must contain the same text.
-	Content           string
+	Key               string
+	RuntimeName       string
+	Description       string
+	Instructions      string
 	SourcePath        string
 	SourceFingerprint string
 
@@ -63,13 +59,6 @@ type Hook struct {
 	Event       HookEvent
 	MatcherSpec HookMatcher
 	Handler     HookHandler
-
-	// Matcher, Command, Args, and Env are migration spellings for command
-	// hooks. New declarations should use MatcherSpec and Handler.
-	Matcher string
-	Command string
-	Args    []string
-	Env     map[string]string
 
 	Timeout       time.Duration
 	FailPolicy    HookFailPolicy
@@ -218,14 +207,7 @@ type ConfigPatch struct {
 	Key        string
 	Capability string
 	Values     map[string]any
-
-	// Native is the explicit provider-native escape hatch. FileKind, Path,
-	// and Section are retained migration spellings and are interpreted as a
-	// native patch when Capability is empty.
-	Native   *NativeConfigPatch
-	FileKind ConfigFileKind
-	Path     string
-	Section  string
+	Native     *NativeConfigPatch
 }
 
 // NativeConfigPatch identifies a provider-native structured config patch.

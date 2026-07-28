@@ -18,11 +18,13 @@ func TestSyncNativePatchesMaterializesRelativeConfigPatch(t *testing.T) {
 	payload := agentadaptor.ProfileConfigPayload{
 		Fingerprint: "config-fp",
 		Patches: []agentadaptor.ProfileConfigPatch{{
-			Key:      "sandbox",
-			FileKind: agentadaptor.ProfileConfigFileTOML,
-			Path:     "config.toml",
-			Section:  "sandbox",
-			Values:   map[string]any{"mode": "workspace-write"},
+			Key: "sandbox",
+			Native: &agentadaptor.NativeConfigPatch{
+				FileKind: agentadaptor.ProfileConfigFileTOML,
+				Path:     "config.toml",
+				Section:  "sandbox",
+			},
+			Values: map[string]any{"mode": "workspace-write"},
 		}},
 	}
 
@@ -64,9 +66,11 @@ func TestSyncNativePatchesRejectsProviderMismatch(t *testing.T) {
 func TestSyncNativePatchesRejectsPathEscape(t *testing.T) {
 	_, err := SyncNativePatches(context.Background(), "codex", t.TempDir(), agentadaptor.ProfileConfigPayload{
 		Patches: []agentadaptor.ProfileConfigPatch{{
-			Key:      "escape",
-			FileKind: agentadaptor.ProfileConfigFileJSON,
-			Path:     "../settings.json",
+			Key: "escape",
+			Native: &agentadaptor.NativeConfigPatch{
+				FileKind: agentadaptor.ProfileConfigFileJSON,
+				Path:     "../settings.json",
+			},
 		}},
 	})
 	if err == nil {

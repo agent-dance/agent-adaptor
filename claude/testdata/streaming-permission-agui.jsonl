@@ -1,3 +1,3 @@
 {"type":"system","subtype":"init","session_id":"sess-perm-agui","model":"claude-fixture"}
 {"type":"permission_request","session_id":"sess-perm-agui","request_id":"pr-1","tool_name":"Bash"}
-{"type":"result","subtype":"success","session_id":"sess-perm-agui","result":"ok","usage":{"input_tokens":1,"output_tokens":1}}
+{"type":"result","subtype":"success","is_error":false,"session_id":"sess-perm-agui","result":"ok","usage":{"input_tokens":1,"output_tokens":1}}

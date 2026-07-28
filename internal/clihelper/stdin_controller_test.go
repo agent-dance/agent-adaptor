@@ -174,12 +174,12 @@ func TestRun_LegacyPromptPathUnchanged(t *testing.T) {
 
 	result, err := Run(ctx, CommandRequest{
 		Command: "cat",
-		Prompt:  "legacy-hello\n",
+		Prompt:  "line-mode-hello\n",
 	}, &captureSink{})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if !strings.Contains(result.RawStreams.Stdout, "legacy-hello") {
+	if !strings.Contains(result.RawStreams.Stdout, "line-mode-hello") {
 		t.Errorf("stdout: %q", result.RawStreams.Stdout)
 	}
 }

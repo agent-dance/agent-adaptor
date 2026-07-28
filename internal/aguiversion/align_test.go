@@ -14,9 +14,9 @@ import (
 )
 
 // expectedAGUICoreNPM is the @ag-ui/core version used by
-// examples/streaming-chat-copilotkit (see package-lock.json "node_modules/@ag-ui/core").
+// examples/web-chat/copilotkit (see package-lock.json "node_modules/@ag-ui/core").
 // Bump this when you upgrade frontend AG-UI packages.
-const expectedAGUICoreNPM = "0.0.52"
+const expectedAGUICoreNPM = "0.0.57"
 
 // expectedGoAGUIModuleSubstr is a stable substring of the go.mod require line for
 // github.com/ag-ui-protocol/ag-ui/sdks/community/go — update when the pin changes.
@@ -46,7 +46,7 @@ func TestPackageLockAGUICoreVersion(t *testing.T) {
 		t.Fatal("runtime.Caller")
 	}
 	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(thisFile), "../.."))
-	lockPath := filepath.Join(repoRoot, "examples/streaming-chat-copilotkit/web/package-lock.json")
+	lockPath := filepath.Join(repoRoot, "examples/web-chat/copilotkit/web/package-lock.json")
 	b, err := os.ReadFile(lockPath)
 	if err != nil {
 		t.Fatalf("read package-lock: %v", err)

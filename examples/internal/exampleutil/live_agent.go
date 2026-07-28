@@ -8,12 +8,12 @@ import (
 	"strings"
 	"time"
 
+	adaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/claude"
 	"github.com/agent-dance/agent-adaptor/codebuddy"
 	"github.com/agent-dance/agent-adaptor/codex"
 	"github.com/agent-dance/agent-adaptor/cursor"
 	"github.com/agent-dance/agent-adaptor/driver"
-	adaptor "github.com/agent-dance/agent-adaptor"
 )
 
 const (
@@ -74,15 +74,10 @@ func DriverTypeForAgent(agent string) string {
 	}
 }
 
-// NewLiveDriver builds the v1 driver value for the resolved local CLI. The
+// NewLiveDriver builds a driver value for the resolved local CLI. The
 // four built-in packages all expose the same one-line shape —
 // codex.Driver(codex.Config{...}) — so the example helper is just a switch
 // over which Config type to fill.
-//
-// v1 note: a driver is now a plain value handed to adaptor.New; there is no
-// binding wrapper and no named registry. Agent-level defaults (skills,
-// profile, policy, ...) are adaptor.Option values passed to adaptor.New
-// alongside this driver.
 func NewLiveDriver(cfg LiveAgentConfig) driver.Driver {
 	agent := normalizeAgent(cfg.Agent, "agent")
 	model := ResolveAgentModel(agent, cfg.Model)
@@ -91,10 +86,6 @@ func NewLiveDriver(cfg LiveAgentConfig) driver.Driver {
 	case AgentClaude:
 		c := claude.Config{Model: model}
 		c.Command, c.CWD, c.Env, c.ExtraArgs = cfg.Command, cfg.CWD, cfg.Env, cfg.ExtraArgs
-		// PersistentProcess: true — the claude driver's resident-process reuse
-		// lives on the cl/opt_examples branch and is out of v1.0.0 scope
-		// (implementation plan R9). It becomes an additive Config field once
-		// that branch merges; the v1 API shape does not change.
 		return claude.Driver(c)
 	case AgentCursor:
 		c := cursor.Config{Model: model}
@@ -241,26 +232,27 @@ func LiveAgentSummary(cfg LiveAgentConfig) map[string]any {
 	}
 }
 
-// NonInteractivePolicy is the v1 spelling of the legacy
-// NonInteractivePolicy(RunPolicy): one adaptor.Policy value carrying the
-// sandbox strength plus the approval routing. Permission / PlanReview are
-// auto-approved and Questions auto-denied so the examples never block on a
-// human.
-func NonInteractivePolicy(sandbox adaptor.SandboxLevel) adaptor.Policy {
-	return adaptor.Policy{
-		Sandbox: sandbox,
+// NonInteractivePolicy combines portable unattended approval routing with
+// the requested sandbox when the selected Driver advertises isolation. A
+// non-zero unsupported policy is rejected before launch, so sandbox remains
+// inherited for providers that do not expose an isolation control.
+func NonInteractivePolicy(agent string, sandbox adaptor.SandboxLevel) adaptor.Policy {
+	policy := adaptor.Policy{
 		Approvals: adaptor.ApprovalPolicy{
 			Permission: adaptor.ApprovalAutoApprove,
 			PlanReview: adaptor.ApprovalAutoApprove,
-			Question:   adaptor.QuestionAutoDeny,
 		},
 	}
+	if normalizeAgent(agent, "agent") == AgentCodex {
+		policy.Sandbox = sandbox
+	}
+	return policy
 }
 
 // NonInteractive returns the policy as a SharedOption, so the same value works
 // as an adaptor.New default and as a per-call Run/Stream override.
-func NonInteractive(sandbox adaptor.SandboxLevel) adaptor.SharedOption {
-	return adaptor.WithPolicy(NonInteractivePolicy(sandbox))
+func NonInteractive(agent string, sandbox adaptor.SandboxLevel) adaptor.SharedOption {
+	return adaptor.WithPolicy(NonInteractivePolicy(agent, sandbox))
 }
 
 func normalizeAgent(raw, field string) string {

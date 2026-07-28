@@ -1,4 +1,4 @@
-{"type":"session","session_id":"cursor-multi","model":"gpt-5"}
-{"type":"assistant","session_id":"cursor-multi","text":"First paragraph from Cursor."}
-{"type":"assistant","session_id":"cursor-multi","text":"Second paragraph closing it."}
-{"type":"run.completed","session_id":"cursor-multi","result":"wrapped multi-message reply"}
+{"type":"system","subtype":"init","cwd":"/workspace","session_id":"cursor-multi","model":"GPT-5"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"First paragraph from Cursor."}]},"session_id":"cursor-multi"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"\n\nSecond paragraph closing it."}]},"session_id":"cursor-multi"}
+{"type":"result","subtype":"success","duration_ms":2000,"duration_api_ms":1900,"is_error":false,"result":"First paragraph from Cursor.\n\nSecond paragraph closing it.","session_id":"cursor-multi"}

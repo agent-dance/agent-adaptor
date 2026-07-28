@@ -1,4 +1,4 @@
 {"type":"system","subtype":"init","session_id":"claude-multi","model":"claude-sonnet-4"}
 {"type":"assistant","session_id":"claude-multi","message":{"content":[{"type":"text","text":"First paragraph from Claude."}]}}
 {"type":"assistant","session_id":"claude-multi","message":{"content":[{"type":"text","text":"Second paragraph that wraps it up."}]}}
-{"type":"result","subtype":"success","session_id":"claude-multi","result":"wrapped multi-message reply","usage":{"input_tokens":11,"output_tokens":9,"cache_read_input_tokens":0}}
+{"type":"result","subtype":"success","is_error":false,"session_id":"claude-multi","result":"wrapped multi-message reply","usage":{"input_tokens":11,"output_tokens":9,"cache_read_input_tokens":0}}

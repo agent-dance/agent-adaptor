@@ -192,20 +192,6 @@ func cloneRawStreams(value *RawStreams) *RawStreams {
 	return &copy
 }
 
-func cloneRunQuestion(question *RunQuestion) *RunQuestion {
-	if question == nil {
-		return nil
-	}
-	out := &RunQuestion{
-		Prompt:  question.Prompt,
-		Choices: make([]RunChoice, 0, len(question.Choices)),
-	}
-	for _, choice := range question.Choices {
-		out.Choices = append(out.Choices, choice)
-	}
-	return out
-}
-
 func cloneRunFailure(failure *RunFailure) *RunFailure {
 	if failure == nil {
 		return nil

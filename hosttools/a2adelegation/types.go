@@ -1,9 +1,20 @@
-// Package a2adelegation contains host-owned tools for exposing curated remote
-// A2A agents as visual subagents of a local parent run.
+// Package a2adelegation provides host-owned Local and Remote delegation for an
+// adaptor Agent.
 //
-// The package deliberately stays above the core SDK: it consumes
-// clients/a2a DTOs, emits UI-facing delegation events, and leaves concrete
-// local adapters unaware of A2A.
+// A Service owns a curated target registry, an authenticated per-run MCP
+// sidecar, ordered DelegationEvent publication, and final result recording.
+// Service.Option or adaptor.WithRunServices attaches that lifecycle to a
+// leader's ordinary Run/Stream pipeline, where delegation progress appears as
+// adaptor.SubagentUpdate on the existing Event channel.
+//
+// Local targets consume adaptor.Runner directly. Remote targets use
+// clients/a2a. Both are normalized through the same A2A event mapper. The
+// adapter.stream.v1 spelling used by the mapper is an intentional versioned
+// wire schema, not a temporary Go API name.
+//
+// This package stays above core: it never dispatches a Driver directly, never
+// introduces a second execution stream, and leaves network exposure, auth,
+// tenant policy, durable storage, and target selection to the host.
 package a2adelegation
 
 import (
@@ -16,34 +27,61 @@ import (
 	clienta2a "github.com/agent-dance/agent-adaptor/clients/a2a"
 )
 
+// ProtocolA2A identifies the A2A transport used by remote and local-loopback
+// delegation results and events.
 const ProtocolA2A = "a2a"
 
+// DelegateToolName is the default MCP tool exposed by each Service sidecar.
 const DelegateToolName = "delegate_to_agent"
 
+// DelegationEventKind classifies one event in a delegated task lifecycle.
 type DelegationEventKind string
 
 const (
-	DelegationStarted         DelegationEventKind = "subagent.started"
-	DelegationStatus          DelegationEventKind = "subagent.status"
-	DelegationTextStart       DelegationEventKind = "subagent.text.start"
-	DelegationTextDelta       DelegationEventKind = "subagent.text.delta"
-	DelegationTextEnd         DelegationEventKind = "subagent.text.end"
-	DelegationReasoningStart  DelegationEventKind = "subagent.reasoning.start"
-	DelegationReasoningDelta  DelegationEventKind = "subagent.reasoning.delta"
-	DelegationReasoningEnd    DelegationEventKind = "subagent.reasoning.end"
-	DelegationToolCallStart   DelegationEventKind = "subagent.tool_call.start"
-	DelegationToolCallArgs    DelegationEventKind = "subagent.tool_call.args"
-	DelegationToolCallResult  DelegationEventKind = "subagent.tool_call.result"
-	DelegationToolCallEnd     DelegationEventKind = "subagent.tool_call.end"
+	// DelegationStarted reports that the target accepted the delegated task.
+	DelegationStarted DelegationEventKind = "subagent.started"
+	// DelegationStatus carries an A2A task status update.
+	DelegationStatus DelegationEventKind = "subagent.status"
+	// DelegationTextStart starts one delegated assistant text item.
+	DelegationTextStart DelegationEventKind = "subagent.text.start"
+	// DelegationTextDelta carries incremental delegated assistant text.
+	DelegationTextDelta DelegationEventKind = "subagent.text.delta"
+	// DelegationTextEnd closes one delegated assistant text item.
+	DelegationTextEnd DelegationEventKind = "subagent.text.end"
+	// DelegationReasoningStart starts one delegated reasoning item.
+	DelegationReasoningStart DelegationEventKind = "subagent.reasoning.start"
+	// DelegationReasoningDelta carries incremental delegated reasoning.
+	DelegationReasoningDelta DelegationEventKind = "subagent.reasoning.delta"
+	// DelegationReasoningEnd closes one delegated reasoning item.
+	DelegationReasoningEnd DelegationEventKind = "subagent.reasoning.end"
+	// DelegationToolCallStart starts one delegated tool call.
+	DelegationToolCallStart DelegationEventKind = "subagent.tool_call.start"
+	// DelegationToolCallArgs carries delegated tool-call arguments.
+	DelegationToolCallArgs DelegationEventKind = "subagent.tool_call.args"
+	// DelegationToolCallResult carries a delegated tool result.
+	DelegationToolCallResult DelegationEventKind = "subagent.tool_call.result"
+	// DelegationToolCallEnd closes one delegated tool call.
+	DelegationToolCallEnd DelegationEventKind = "subagent.tool_call.end"
+	// DelegationArtifactCreated reports an artifact from the delegated task.
 	DelegationArtifactCreated DelegationEventKind = "subagent.artifact"
-	DelegationCustom          DelegationEventKind = "subagent.custom"
-	DelegationStreamDropped   DelegationEventKind = "subagent.stream.dropped"
-	DelegationInputRequired   DelegationEventKind = "subagent.input_required"
-	DelegationFinished        DelegationEventKind = "subagent.finished"
-	DelegationFailed          DelegationEventKind = "subagent.failed"
-	DelegationCancelled       DelegationEventKind = "subagent.cancelled"
+	// DelegationCustom carries a host-decoded custom status event.
+	DelegationCustom DelegationEventKind = "subagent.custom"
+	// DelegationStreamDropped summarizes delegated events lost to a sequence
+	// gap, unsupported schema, or local EventBus backpressure.
+	DelegationStreamDropped DelegationEventKind = "subagent.stream.dropped"
+	// DelegationInputRequired reports that the remote task needs more input.
+	DelegationInputRequired DelegationEventKind = "subagent.input_required"
+	// DelegationFinished reports successful delegated-task completion.
+	DelegationFinished DelegationEventKind = "subagent.finished"
+	// DelegationFailed reports delegated-task failure.
+	DelegationFailed DelegationEventKind = "subagent.failed"
+	// DelegationCancelled reports delegated-task cancellation.
+	DelegationCancelled DelegationEventKind = "subagent.cancelled"
 )
 
+// RemoteAgentSpec is one host-curated remote A2A target. It carries discovery,
+// auth, transport, tenant, output-mode, and delegation-policy configuration;
+// model-facing tool input names only Key and cannot replace these values.
 type RemoteAgentSpec struct {
 	Key                 string
 	DisplayName         string
@@ -59,6 +97,8 @@ type RemoteAgentSpec struct {
 	Policy              DelegationPolicy
 }
 
+// DelegationPolicy bounds remote execution and controls transport behavior.
+// Zero timeout, polling, count, and artifact values select Delegator defaults.
 type DelegationPolicy struct {
 	MaxTimeout         time.Duration
 	AllowInputRequired bool
@@ -68,10 +108,14 @@ type DelegationPolicy struct {
 	MaxArtifactBytes   int64
 }
 
+// Registry stores host-curated remote target specifications by stable key.
+// Registry returns defensive copies and is safe for read-only concurrent use
+// after construction; hosts should complete registration before delegation.
 type Registry struct {
 	agents map[string]RemoteAgentSpec
 }
 
+// NewRegistry constructs a Registry and validates each supplied target.
 func NewRegistry(specs ...RemoteAgentSpec) (*Registry, error) {
 	r := &Registry{agents: map[string]RemoteAgentSpec{}}
 	for _, spec := range specs {
@@ -82,6 +126,7 @@ func NewRegistry(specs ...RemoteAgentSpec) (*Registry, error) {
 	return r, nil
 }
 
+// Register validates and adds one target. Duplicate keys are rejected.
 func (r *Registry) Register(spec RemoteAgentSpec) error {
 	if r.agents == nil {
 		r.agents = map[string]RemoteAgentSpec{}
@@ -107,6 +152,7 @@ func (r *Registry) Register(spec RemoteAgentSpec) error {
 	return nil
 }
 
+// Lookup returns a defensive copy of the target registered under key.
 func (r *Registry) Lookup(key string) (RemoteAgentSpec, bool) {
 	if r == nil || len(r.agents) == 0 {
 		return RemoteAgentSpec{}, false
@@ -115,6 +161,8 @@ func (r *Registry) Lookup(key string) (RemoteAgentSpec, bool) {
 	return cloneRemoteAgentSpec(spec), ok
 }
 
+// Keys returns the registered target keys. Callers that need deterministic
+// presentation order should sort the result.
 func (r *Registry) Keys() []string {
 	if r == nil || len(r.agents) == 0 {
 		return nil
@@ -126,6 +174,9 @@ func (r *Registry) Keys() []string {
 	return keys
 }
 
+// DelegationRequest describes one host-authorized delegation. RunID attributes
+// events to the leader run; Agent selects a Registry key. Message, when set,
+// takes precedence over Prompt/Objective/Context and Artifacts.
 type DelegationRequest struct {
 	RunID                  string
 	ParentToolCallID       string
@@ -146,12 +197,15 @@ type DelegationRequest struct {
 	StageContext           DelegationStageContext
 }
 
+// InputArtifact is a model-facing reference supplied to a delegated task.
 type InputArtifact struct {
 	Name      string `json:"name,omitempty"`
 	URI       string `json:"uri,omitempty"`
 	MediaType string `json:"mime_type,omitempty"`
 }
 
+// DelegationStageContext carries optional host workflow coordinates without
+// making the delegation package responsible for workflow orchestration.
 type DelegationStageContext struct {
 	WorkflowRunID string `json:"workflow_run_id,omitempty"`
 	Stage         string `json:"stage,omitempty"`
@@ -159,6 +213,8 @@ type DelegationStageContext struct {
 	Attempt       int    `json:"attempt,omitempty"`
 }
 
+// DelegationArtifact is the compact artifact projection returned to the
+// leader and emitted in DelegationArtifactCreated events.
 type DelegationArtifact struct {
 	ID          string         `json:"id,omitempty"`
 	Name        string         `json:"name,omitempty"`
@@ -168,6 +224,7 @@ type DelegationArtifact struct {
 	Metadata    map[string]any `json:"metadata,omitempty"`
 }
 
+// RemoteArtifact preserves an opt-in full remote A2A artifact projection.
 type RemoteArtifact struct {
 	ID          string         `json:"id,omitempty"`
 	Name        string         `json:"name,omitempty"`
@@ -178,6 +235,7 @@ type RemoteArtifact struct {
 	Raw         map[string]any `json:"raw,omitempty"`
 }
 
+// RemotePart preserves one part of an opt-in RemoteArtifact.
 type RemotePart struct {
 	Kind      clienta2a.PartKind `json:"kind,omitempty"`
 	Text      string             `json:"text,omitempty"`
@@ -189,14 +247,18 @@ type RemotePart struct {
 	Metadata  map[string]any     `json:"metadata,omitempty"`
 }
 
-// StatusPartDecoder 把一种 Status DataPart schema 直接转换为 DelegationEvent。
-// decoder 只填写事件语义字段；当前 delegation 的身份、A2A 上下文和 profile
-// 由 mapper 统一补齐。matched=false 表示 data 不属于当前 decoder，允许后续 decoder 继续尝试。
+// StatusPartDecoder converts one host-owned A2A Status DataPart schema into
+// DelegationEvent values. Implementations fill semantic fields only; the
+// mapper supplies delegation identity, A2A coordinates, profile, and time.
+// matched=false allows the next registered decoder to inspect the value.
 type StatusPartDecoder interface {
 	Profile() string
 	DecodeStatusPart(data any) (events []DelegationEvent, matched bool, err error)
 }
 
+// DelegationEvent is one typed, ordered observation from a delegated task.
+// Identity and remote coordinates are separate from the semantic payload so a
+// host can correlate leader tool calls, delegation attempts, and A2A objects.
 type DelegationEvent struct {
 	RunID            string
 	ParentToolCallID string
@@ -230,6 +292,9 @@ type DelegationEvent struct {
 	Time        time.Time
 }
 
+// DelegationResult is the terminal, structured outcome of one delegation.
+// Summary and Messages are the model-facing layers; RawTask and
+// RemoteArtifacts preserve explicitly requested protocol detail.
 type DelegationResult struct {
 	DelegationID    string                 `json:"delegation_id"`
 	Agent           string                 `json:"agent"`
@@ -246,11 +311,14 @@ type DelegationResult struct {
 	Metadata        map[string]interface{} `json:"metadata,omitempty"`
 }
 
+// DelegationMessage is one normalized message retained in a result.
 type DelegationMessage struct {
 	Role string `json:"role,omitempty"`
 	Text string `json:"text,omitempty"`
 }
 
+// DelegationError is a stable host-facing error with optional A2A status and
+// retry metadata.
 type DelegationError struct {
 	Code         string         `json:"code"`
 	Message      string         `json:"message"`
@@ -259,6 +327,7 @@ type DelegationError struct {
 	Metadata     map[string]any `json:"metadata,omitempty"`
 }
 
+// Error implements error using Message, then Code, then a stable fallback.
 func (e *DelegationError) Error() string {
 	if e == nil {
 		return ""
@@ -272,17 +341,21 @@ func (e *DelegationError) Error() string {
 	return "delegation failed"
 }
 
+// DelegationLifecycleHook observes one resolved delegation before remote I/O
+// and after its terminal result. Returning an error fails that delegation.
 type DelegationLifecycleHook interface {
 	BeforeDelegate(ctx context.Context, req BeforeDelegation) error
 	AfterDelegate(ctx context.Context, req AfterDelegation) error
 }
 
+// BeforeDelegation is the defensive hook payload supplied before remote I/O.
 type BeforeDelegation struct {
 	DelegationID string
 	AgentSpec    RemoteAgentSpec
 	Request      DelegationRequest
 }
 
+// AfterDelegation is the defensive hook payload supplied after execution.
 type AfterDelegation struct {
 	DelegationID string
 	AgentSpec    RemoteAgentSpec
@@ -291,11 +364,14 @@ type AfterDelegation struct {
 	Err          error
 }
 
+// DelegationLifecycleHookFuncs adapts optional functions to
+// DelegationLifecycleHook.
 type DelegationLifecycleHookFuncs struct {
 	BeforeFunc func(context.Context, BeforeDelegation) error
 	AfterFunc  func(context.Context, AfterDelegation) error
 }
 
+// BeforeDelegate invokes BeforeFunc when configured.
 func (h DelegationLifecycleHookFuncs) BeforeDelegate(ctx context.Context, req BeforeDelegation) error {
 	if h.BeforeFunc == nil {
 		return nil
@@ -303,6 +379,7 @@ func (h DelegationLifecycleHookFuncs) BeforeDelegate(ctx context.Context, req Be
 	return h.BeforeFunc(ctx, req)
 }
 
+// AfterDelegate invokes AfterFunc when configured.
 func (h DelegationLifecycleHookFuncs) AfterDelegate(ctx context.Context, req AfterDelegation) error {
 	if h.AfterFunc == nil {
 		return nil

@@ -8,7 +8,7 @@ Claude 设计的 v1 API 已获批准，并完全取代此前以中央 `SDK`、�
 
 1. 本文件
 2. [`docs/api-v1-redesign.md`](./docs/api-v1-redesign.md)（公共 API 设计）
-3. [`docs/v1-takeover-audit.md`](./docs/v1-takeover-audit.md)（当前事实、阻断项与接管顺序）
+3. [`docs/v1-takeover-audit.md`](./docs/v1-takeover-audit.md)（接管发现、阻断项关闭与验收证据）
 4. [`docs/api-v1-implementation-plan.md`](./docs/api-v1-implementation-plan.md) 与 [`docs/p5.2-recon.md`](./docs/p5.2-recon.md)（阶段计划和机械迁移清单）
 
 下级文档与本文件冲突时，必须修正文档，不能以历史文本为由偏离本文件。
@@ -328,53 +328,40 @@ Hosttools：
 - 每个新增顶层 `require` 必须在相关 workstream 的“依赖选型”记录上述评估。
 - 不得手工编辑 Codex app-server generated Go 或 schema JSON；同步必须走官方 schema 生成命令与 `go generate`。
 
-## 13. P5 迁移纪律
+## 13. v1 切换结果
 
-最终 v1 是干净切换，不保留双栈。机械复核证明原“MOVE 约 107 文件后再 DELETE”会在根目录留下两种 package，且漏算旧根 API 的大量生产消费者；因此当前执行顺序固定为：
+v1 已完成干净切换，仓库不保留双栈。PRE、CORRECTNESS、REHOME/REPOINT、LEGACY EDGE DELETE、ROOT CUTOVER、RESIDUAL DELETE、RENAME 与 FREEZE 实施项均已落入最终代码和合同测试。详细决策、逐项关闭证据与本地验收记录见：
 
-1. PRE 验收：审计并提交已写入的 D-P5.2-2/5/6/7 解耦改动
-2. CORRECTNESS：关闭 takeover audit 的阻断项并收敛唯一执行管线
-3. REHOME/REPOINT：完成 D-P5.2-3/4 与所有公共类型归位，先把生产消费者从旧根 aliases 改到公开叶子包/driver
-4. LEGACY EDGE DELETE：在旧根仍可编译时逐包删除或替换旧 bridge、hosttool、memory、provider sugar、旧 adaptertest 与 `pkg/` forward
-5. ROOT CUTOVER（即最终 MOVE）：删除全部剩余旧根 Go 文件、搬入完整 staging、清除 `/next` import；同一提交保证根目录只有 `package adaptor/adaptor_test`
-6. RESIDUAL DELETE：删除 cutover 后无引用的 aliases、兼容解析与死代码
-7. RENAME：移除临时 V1 后缀、上提 adaptertest、整理 examples 与文档
-8. FREEZE：完整发布验收并打 `v1.0.0`
+- [`docs/api-v1-implementation-plan.md`](./docs/api-v1-implementation-plan.md)
+- [`docs/p5.2-recon.md`](./docs/p5.2-recon.md)
+- [`docs/v1-takeover-audit.md`](./docs/v1-takeover-audit.md)
 
-硬约束：
+最终树的硬约束：
 
-- CORRECTNESS、REHOME/REPOINT 与 LEGACY EDGE DELETE 未关闭前禁止 ROOT CUTOVER。
-- ROOT CUTOVER 必须作为可编译的原子波执行，不允许根目录在任何提交中存在两个 package。
-- 每一波结束必须 `go test -count=1 ./...` 与 `go vet ./...` 全绿。
-- `next/`、`pkg/` 转发包、旧 metadata key、旧 provider sugar、旧 aliases 与无调用死代码不得残留在 v1。
-- 不允许用兼容 shim 把已删除的中央对象、registry 或平行执行入口带回 v1。
-- PRE 的公共 Config 必须完成真结构体化且不泄露 internal 类型；Profile/HITL 及其余公共 internal aliases 必须在 REHOME/REPOINT 时落入正确层，之后才能删除别名壳。
+- 根目录只保留最终 `package adaptor/adaptor_test`；不得复活 `next/`、`pkg/` 转发包或旧根 API。
+- 不允许用兼容 shim 带回中央 SDK、registry、binding、RunHandle 或平行执行入口。
+- 公共 Config 必须是真结构体且不泄露 `internal` 类型；Profile、HITL、skill、MCP 与 runtime 词汇必须由正确公共层拥有。
 - archive source 等价性不得依赖函数地址判断 closure 内容；Fingerprint 的文档语义必须与 materializer/cache 实际用途一致。
 - examples 必须使用最终名与最终 API；不得保留只为迁移期编译的示例。
-- migration guide 必须覆盖全部旧选项和主要类型的去向，发布前清除所有 `🚧`。
-- v0 冻结以仓库实际 `v0.12.0` 基线核对，禁止继续复制已经过期的 `v0.9.x` 假设。
+- migration guide 必须覆盖 v0.12.0 的全部旧选项和主要类型去向。
+- 历史 workstream 只保存在 `docs/archive/`，不再定义当前 API。
+- Git tag 属于独立发布动作，只能在明确发布授权和发布门禁满足后创建。
 
-## 14. 当前发布阻断项
+## 14. 阻断项关闭记录
 
-以下问题在修复并增加回归测试前禁止 ROOT CUTOVER 或发布 v1.0.0；实时状态与证据以 takeover audit 为准：
+接管审计曾列出的发布阻断项均已关闭，并由回归测试或 API 冻结守卫覆盖：
 
-1. staging 尚存在绕过统一 core 的第二套执行与 Thread 编排。
-2. Claude、Cursor、CodeBuddy 非零退出仍可能产生 Valid checkpoint。
-3. Thread/store/bridge 的 key 编码存在维度碰撞风险。
-4. Fork 未完整执行 Driver/config/identity/fingerprint 兼容校验，目标 key 冲突可能留下多条 active record。
-5. Thread fingerprint 尚未覆盖 Driver 完整配置、实际 workspace 与 runtime fingerprint。
-6. blocking Event 背压与 Cancel 存在闭环死锁风险。
-7. Codex app-server 尚未完整提供 Raw stdout、Transcript 与 provider 终局 payload。
-8. Driver Response → Result 尚会丢失 provider 终局 payload。
-9. Inspect 的可选 probe 尚未一致使用 Driver 捕获的真实配置。
-10. 零值或未绑定 responder 的 ApprovalRequest 可能永久阻塞。
-11. 公共 Driver Config 仍存在 `internal/engine` 类型泄漏。
-12. archive opener 等价性与 Fingerprint/cache 合同仍有不可靠实现或文档冲突。
-13. P4 记录的 14 项 v1 可用性缺口尚未逐项关闭或形成明确、有测试的最终裁决。
-14. `adaptertest` 记录的 9 项 Driver SPI godoc 含糊点尚未硬化。
-15. bridge 保真缺口尚未逐项验证，包括审批 payload、Dropped 明细、事件顺序字段、业务失败细节和 provider terminal result。
+- 所有执行收敛到单一 invocation/Thread 管线；Fork、lease、fingerprint、key 编码与 checkpoint 污染边界已硬化。
+- Claude、Cursor、CodeBuddy 的非零退出不再产生有效 checkpoint。
+- blocking/drop 背压、Cancel、Event 顺序、关闭时序与 Approval exactly-once 已形成可执行合同。
+- Codex app-server 与 batch 路径均保留 Raw streams、Transcript、Output、Summary、provider terminal Result 与 Usage 语义。
+- Driver Response 到公共 Result 的逐字段映射、Run 与 Stream.Result 等价性已覆盖。
+- Inspect 使用构造时真实 Driver 配置；公共 Config 不再泄露 internal 类型。
+- ApprovalRequest 零值、超时、拒绝与 responder 生命周期不会永久阻塞。
+- archive/Fingerprint、P4 可用性缺口、Driver SPI 含糊点与 bridge 保真缺口均已有最终裁决和测试。
+- 根包导出面由完整 AST golden 冻结；临时 V1 名只在明确版本化的 A2A wire schema 中保留。
 
-“测试通过”不能替代这些合同缺口的修复或明确裁决。
+若代码、godoc、测试或权威文档对上述任一合同出现矛盾，必须重新打开对应审计项；单纯“测试通过”不能替代合同修复。
 
 ## 15. 发布门禁
 
@@ -391,12 +378,12 @@ Hosttools：
 - Event 顺序、关闭、Cancel、blocking/drop 背压与 Approval exactly-once race 测试通过
 - Result 各层在 Run 与 Stream.Result 上逐字段等价
 - 所有 examples 编译，fake-driver 示例可执行
-- 根包 godoc 以六个核心名词开篇，导出面达到既定精简目标
+- 根包 godoc 以六个核心名词开篇，24 个 `With*` 名与约 13 个核心概念组的心智负担目标达成；这是对批准草稿“~35 个 raw exports”自相矛盾口径的显式设计勘误，依据与 229 个实际导出的构成记录在 `docs/v1-takeover-audit.md` §0.1；其他构造器、枚举/error/DTO/alias 等原始声明由完整 AST golden 冻结
 - README、API reference、usage、streaming、A2A、structured output、migration guide 与代码一致
 - 无 TODO、无死代码、无临时 V1 后缀、无过期兼容入口
 - CHANGELOG 与实际 breaking changes 一致
 - 当前脏工作树中的 PRE 改动已逐项验收并形成可追溯提交
-- `v1.0.0` tag 只在上述条件全部满足后创建
+- `v1.0.0` tag 只在上述条件全部满足且获得用户/发布负责人明确授权后创建
 
 ## 16. 对未来修改者的硬要求
 

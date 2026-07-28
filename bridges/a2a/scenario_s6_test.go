@@ -1,7 +1,7 @@
 // Scenario S6 (design doc): publish an agent over A2A.
 //
 //	agent := adaptor.New(driver, adaptor.WithThreadStore(store))
-//	srv := a2a.NewServerV1(agent, a2a.ServerOptionsV1{
+//	srv := a2a.NewServer(agent, a2a.ServerOptions{
 //	    AgentCard: a2a.AgentCard{Name: "Local Codex", ...},
 //	    Session:   a2a.ThreadByContextID(),
 //	})
@@ -21,51 +21,55 @@ import (
 	"sync"
 	"testing"
 
+	adaptor "github.com/agent-dance/agent-adaptor"
 	a2a "github.com/agent-dance/agent-adaptor/bridges/a2a"
 	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/memory"
-	adaptor "github.com/agent-dance/agent-adaptor"
 )
 
-// scriptedV1Driver is a minimal three-method driver.Driver for v1 bridge
+// scriptedDriver is a minimal driver.Driver for bridge
 // tests. It records every Request and delegates each turn to the script.
-type scriptedV1Driver struct {
+type scriptedDriver struct {
 	mu       sync.Mutex
 	requests []driver.Request
 	run      func(turn int, req driver.Request, sink driver.EventSink) (driver.Response, error)
 }
 
-type scriptedV1SessionCodec struct{}
+type scriptedSessionCodec struct{}
 
-func (scriptedV1SessionCodec) Name() string { return "scripted-v1/session" }
-func (scriptedV1SessionCodec) ToParams(state *driver.SessionState) driver.SessionParams {
+func (scriptedSessionCodec) Name() string { return "scripted/session" }
+func (scriptedSessionCodec) ToParams(state *driver.SessionState) driver.SessionParams {
 	if state == nil {
 		return driver.SessionParams{}
 	}
 	return driver.SessionParams{ResumeID: state.ResumeID, DisplayID: state.DisplayID, Values: state.Data}
 }
-func (scriptedV1SessionCodec) FromParams(params driver.SessionParams) *driver.SessionState {
+func (scriptedSessionCodec) FromParams(params driver.SessionParams) *driver.SessionState {
 	if params.ResumeID == "" && params.DisplayID == "" && len(params.Values) == 0 {
 		return nil
 	}
 	return &driver.SessionState{ResumeID: params.ResumeID, DisplayID: params.DisplayID, Data: params.Values}
 }
-func (scriptedV1SessionCodec) GuardFingerprint(params driver.SessionParams) string {
+func (scriptedSessionCodec) GuardFingerprint(params driver.SessionParams) string {
 	return params.ResumeID
 }
 
-func (d *scriptedV1Driver) Descriptor() driver.Descriptor {
-	return driver.Descriptor{Type: "fake-v1", DisplayName: "Fake V1"}
+func (d *scriptedDriver) Descriptor() driver.Descriptor {
+	return driver.Descriptor{
+		Type:        "fake",
+		DisplayName: "Fake",
+		Sessions:    driver.SessionCapability{SupportsResume: true},
+	}
 }
 
-func (d *scriptedV1Driver) ValidateConfig(any) error { return nil }
+func (d *scriptedDriver) ValidateConfig(any) error { return nil }
 
-func (d *scriptedV1Driver) SessionConfigFingerprint() (string, error) {
-	return "scripted-v1", nil
+func (d *scriptedDriver) SessionConfigFingerprint() (string, error) {
+	return "scripted", nil
 }
-func (d *scriptedV1Driver) SessionCodec() driver.SessionCodec { return scriptedV1SessionCodec{} }
+func (d *scriptedDriver) SessionCodec() driver.SessionCodec { return scriptedSessionCodec{} }
 
-func (d *scriptedV1Driver) Run(ctx context.Context, req driver.Request, sink driver.EventSink) (driver.Response, error) {
+func (d *scriptedDriver) Run(ctx context.Context, req driver.Request, sink driver.EventSink) (driver.Response, error) {
 	d.mu.Lock()
 	turn := len(d.requests)
 	d.requests = append(d.requests, req)
@@ -77,7 +81,7 @@ func (d *scriptedV1Driver) Run(ctx context.Context, req driver.Request, sink dri
 	return run(turn, req, sink)
 }
 
-func (d *scriptedV1Driver) request(t *testing.T, i int) driver.Request {
+func (d *scriptedDriver) request(t *testing.T, i int) driver.Request {
 	t.Helper()
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -87,8 +91,8 @@ func (d *scriptedV1Driver) request(t *testing.T, i int) driver.Request {
 	return d.requests[i]
 }
 
-// v1TaskEnvelope decodes the non-streaming SendMessage JSON-RPC response.
-type v1TaskEnvelope struct {
+// taskEnvelope decodes the non-streaming SendMessage JSON-RPC response.
+type taskEnvelope struct {
 	Result struct {
 		Task *struct {
 			ID     string `json:"id"`
@@ -106,8 +110,8 @@ type v1TaskEnvelope struct {
 	} `json:"error"`
 }
 
-// v1StatusText flattens the status message parts for failure dumps.
-func v1StatusText(envelope v1TaskEnvelope) string {
+// statusText flattens the status message parts for failure dumps.
+func statusText(envelope taskEnvelope) string {
 	task := envelope.Result.Task
 	if task == nil || task.Status.Message == nil {
 		return ""
@@ -119,20 +123,20 @@ func v1StatusText(envelope v1TaskEnvelope) string {
 	return strings.Join(parts, " | ")
 }
 
-func decodeV1Task(t *testing.T, resp *http.Response) v1TaskEnvelope {
+func decodeTask(t *testing.T, resp *http.Response) taskEnvelope {
 	t.Helper()
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d", resp.StatusCode)
 	}
-	var envelope v1TaskEnvelope
+	var envelope taskEnvelope
 	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
 	return envelope
 }
 
-func v1TestCard() a2a.AgentCard {
+func testCard() a2a.AgentCard {
 	return a2a.AgentCard{
 		Name: "Local Codex", Description: "test", Version: "1.0.0", URL: "https://example.com/a2a",
 		Skills: []a2a.Skill{{ID: "chat", Name: "Chat", Description: "chat"}},
@@ -142,7 +146,7 @@ func v1TestCard() a2a.AgentCard {
 func TestScenarioS6PublishAgentOverA2A(t *testing.T) {
 	t.Parallel()
 
-	fake := &scriptedV1Driver{run: func(turn int, req driver.Request, sink driver.EventSink) (driver.Response, error) {
+	fake := &scriptedDriver{run: func(turn int, req driver.Request, sink driver.EventSink) (driver.Response, error) {
 		_ = sink.EmitStream(driver.StreamPayload{Kind: driver.StreamTextContent, Delta: "turn output"})
 		if turn == 0 {
 			return driver.Response{
@@ -168,13 +172,13 @@ func TestScenarioS6PublishAgentOverA2A(t *testing.T) {
 	}}
 
 	agent := adaptor.New(fake, adaptor.WithThreadStore(memory.NewStore()))
-	srv := a2a.NewServerV1(agent, a2a.ServerOptionsV1{
-		AgentCard: v1TestCard(),
+	srv := a2a.NewServer(agent, a2a.ServerOptions{
+		AgentCard: testCard(),
 		Session:   a2a.ThreadByContextID(),
 	})
 	handler := srv.Handler()
 
-	first := decodeV1Task(t, postRPC(t, handler,
+	first := decodeTask(t, postRPC(t, handler,
 		`{"jsonrpc":"2.0","id":"1","method":"SendMessage","params":{"message":{"messageId":"m1","contextId":"ctx-1","role":"ROLE_USER","parts":[{"text":"hello there"}]}}}`))
 	if first.Error != nil {
 		t.Fatalf("turn 1 error = %+v", first.Error)
@@ -187,13 +191,13 @@ func TestScenarioS6PublishAgentOverA2A(t *testing.T) {
 		t.Fatalf("turn 1 summary = %#v", got)
 	}
 
-	second := decodeV1Task(t, postRPC(t, handler,
+	second := decodeTask(t, postRPC(t, handler,
 		`{"jsonrpc":"2.0","id":"2","method":"SendMessage","params":{"message":{"messageId":"m2","contextId":"ctx-1","role":"ROLE_USER","parts":[{"text":"back again"}]}}}`))
 	if second.Error != nil {
 		t.Fatalf("turn 2 error = %+v", second.Error)
 	}
 	if second.Result.Task == nil || second.Result.Task.Status.State != "TASK_STATE_COMPLETED" {
-		t.Fatalf("turn 2 task = %+v (status: %s)", second.Result.Task, v1StatusText(second))
+		t.Fatalf("turn 2 task = %+v (status: %s)", second.Result.Task, statusText(second))
 	}
 
 	// Thread continuity: turn 1 started fresh, turn 2 resumed the persisted

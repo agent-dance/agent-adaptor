@@ -4,11 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/internal/adapterutil"
 	"github.com/agent-dance/agent-adaptor/internal/clihelper"
+	"github.com/agent-dance/agent-adaptor/internal/driverutil"
 	"github.com/agent-dance/agent-adaptor/internal/engine"
 	"github.com/agent-dance/agent-adaptor/internal/mcpruntime"
 	"github.com/agent-dance/agent-adaptor/internal/profileagents"
@@ -18,7 +19,7 @@ import (
 	"github.com/agent-dance/agent-adaptor/internal/profilesnapshot"
 )
 
-// DriverType is the stable descriptor type for the built-in CodeBuddy adapter.
+// DriverType is the stable descriptor type for the built-in CodeBuddy driver.
 const DriverType = "codebuddy"
 
 // defaultCommand is the CodeBuddy CLI executable.
@@ -120,14 +121,14 @@ func (adapter) CheckEnvironment(_ context.Context, cfg any) (driver.EnvironmentR
 	if command == "" {
 		command = defaultCommand
 	}
-	checks := append(adapterutil.CommandEnvironmentChecks(command), adapterutil.CWDEnvironmentChecks(config.CommonConfig.CWD)...)
+	checks := append(driverutil.CommandEnvironmentChecks(command), driverutil.CWDEnvironmentChecks(config.CommonConfig.CWD)...)
 	bindings, err := effectiveBindings(config.CommonConfig, nil)
 	if err != nil {
 		checks = append(checks, driver.EnvironmentCheck{Code: "codebuddy_profile_error", Level: "fail", Message: "CodeBuddy profile resolution failed.", Detail: err.Error()})
-		return adapterutil.SummarizeEnvironment(DriverType, checks), nil
+		return driverutil.SummarizeEnvironment(DriverType, checks), nil
 	}
 	checks = append(checks, authChecks(bindings)...)
-	return adapterutil.SummarizeEnvironment(DriverType, checks), nil
+	return driverutil.SummarizeEnvironment(DriverType, checks), nil
 }
 
 func (adapter) ListModels(_ context.Context, _ any) ([]driver.ModelInfo, error) {
@@ -266,9 +267,9 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 	if wantsControlTransport(req.Policy.HumanDecision) {
 		if req.OutputSchema != nil && req.OutputSchema.Mode != driver.StructuredOutputPromptValidate {
 			return driver.Response{}, &driver.StructuredOutputUnsupportedError{
-				Adapter: DriverType,
-				Mode:    req.OutputSchema.Mode,
-				Reason:  "CodeBuddy native structured output is not supported with control HITL",
+				Driver: DriverType,
+				Mode:   req.OutputSchema.Mode,
+				Reason: "CodeBuddy native structured output is not supported with control HITL",
 			}
 		}
 		return a.runControl(ctx, cfg, command, req, sink, prep)
@@ -287,11 +288,14 @@ type runPrep struct {
 
 func (a adapter) prepareRun(ctx context.Context, cfg Config, req driver.Request) (runPrep, error) {
 	profileFingerprint := req.ProfilePayload.Fingerprint
+	if err := validateCodeBuddySessionContext(req); err != nil {
+		return runPrep{}, err
+	}
 	if _, err := effectiveBindingsNoInitialize(cfg.CommonConfig, req.Profile); err != nil {
 		return runPrep{}, err
 	}
 	effectiveCWD := chooseCWD(cfg.CommonConfig, req.Workspace)
-	if err := validateSessionGuard(req, effectiveCWD, profileFingerprint, req.Skills.Fingerprint); err != nil {
+	if err := validateSessionGuard(req, effectiveCWD, profileFingerprint); err != nil {
 		return runPrep{}, err
 	}
 	bindings, err := effectiveBindings(cfg.CommonConfig, req.Profile)
@@ -327,13 +331,13 @@ func (a adapter) prepareRun(ctx context.Context, cfg Config, req driver.Request)
 			return runPrep{}, err
 		}
 	}
-	env, err := adapterutil.RuntimeEnvBindings(bindings, req.Runtime)
+	env, err := driverutil.RuntimeEnvBindings(bindings, req.Runtime)
 	if err != nil {
 		return runPrep{}, err
 	}
 
 	prompt := req.Prompt
-	if runtimePrefix := adapterutil.RuntimePromptPrefix(req.Runtime); runtimePrefix != "" {
+	if runtimePrefix := driverutil.RuntimePromptPrefix(req.Runtime); runtimePrefix != "" {
 		prompt = runtimePrefix + "\n\n" + prompt
 	}
 	if prefix := profileinstructions.PromptPrefix(preparedInstructions, profileinstructions.Mode(req.Instructions)); prefix != "" {
@@ -357,12 +361,6 @@ func (a adapter) prepareRun(ctx context.Context, cfg Config, req driver.Request)
 }
 
 func (adapter) runHeadless(ctx context.Context, cfg Config, command string, req driver.Request, sink driver.EventSink, prep runPrep) (driver.Response, error) {
-	if req.OutputSchema != nil && req.OutputSchema.Mode != driver.StructuredOutputPromptValidate {
-		if hasAnyArg(cfg.ExtraArgs, "--json-schema", "--output-format") {
-			return driver.Response{}, &driver.InvalidOutputSchemaError{Reason: "CodeBuddy ExtraArgs must not include --json-schema or --output-format when SDK structured output is enabled"}
-		}
-	}
-
 	permMode := headlessPermissionMode(cfg, req.Policy)
 	args := buildExecArgs(cfg, req, permMode, false)
 	args = append(args, prep.prompt)
@@ -387,12 +385,29 @@ func (adapter) runHeadless(ctx context.Context, cfg Config, command string, req 
 	p.finalize()
 
 	raw := driver.RawStreams{Stdout: result.RawStreams.Stdout, Stderr: result.RawStreams.Stderr, Terminal: p.terminal}
-	var failure *driver.RunFailure
-	if p.pendingFailure != nil {
-		failure = p.pendingFailure
-	} else if strings.TrimSpace(p.errorMessage) != "" {
-		failure = &driver.RunFailure{Code: driver.FailureAgentError, Message: p.errorMessage}
+	if resumedCodeBuddySession(req) && isCodeBuddyResumeRejected(result.ExitCode, p.errorMessage, raw.Stdout, raw.Stderr) {
+		reason := strings.TrimSpace(p.errorMessage)
+		if reason == "" {
+			reason = fmt.Sprintf("codebuddy resume session %q is unavailable", req.Session.State.ResumeID)
+		}
+		p.completeStream(&driver.RunFailure{Code: driver.FailureAgentError, Message: reason}, result.ExitCode, result.Signal, result.TimedOut)
+		return driver.Response{}, &engine.ResumeRejectedError{Reason: reason}
 	}
+	failure := p.failureForOutcome(result.ExitCode)
+
+	var structuredOutput *driver.StructuredOutput
+	if req.OutputSchema != nil && req.OutputSchema.Mode != driver.StructuredOutputPromptValidate {
+		candidate := p.nativeStructuredOutputForOutcome(result.ExitCode, result.Signal, result.TimedOut, failure)
+		structuredOutput, failure = engine.FinalizeStructuredOutput(
+			req.OutputSchema,
+			driver.StructuredOutputSourceNative,
+			p.buildOutput(),
+			candidate,
+			failure,
+		)
+	}
+	p.completeStream(failure, result.ExitCode, result.Signal, result.TimedOut)
+
 	checkpoint := p.checkpointForOutcome(result.ExitCode, result.Signal, result.TimedOut, failure)
 	if checkpoint != nil && checkpoint.State != nil {
 		checkpoint.State.Data = map[string]string{
@@ -400,11 +415,6 @@ func (adapter) runHeadless(ctx context.Context, cfg Config, command string, req 
 			driver.SessionParamWorkspaceID:        req.Workspace.ID,
 			driver.SessionParamProfileFingerprint: req.ProfilePayload.Fingerprint,
 		}
-	}
-
-	var structuredOutput *driver.StructuredOutput
-	if req.OutputSchema != nil && req.OutputSchema.Mode != driver.StructuredOutputPromptValidate {
-		structuredOutput = p.structuredOutput
 	}
 
 	return driver.Response{
@@ -421,12 +431,12 @@ func (adapter) runHeadless(ctx context.Context, cfg Config, command string, req 
 		Model:            prep.reportedModel,
 		Summary:          p.finalSummary(),
 		StructuredOutput: structuredOutput,
-		RuntimeServices:  adapterutil.RuntimeReportsFromRefs(req.Runtime.Ensured, req.Agent),
+		RuntimeServices:  driverutil.RuntimeReportsFromRefs(req.Runtime.Ensured, req.Agent),
 		Failure:          failure,
 	}, nil
 }
 
-func validateSessionGuard(req driver.Request, effectiveCWD, profileFingerprint, skillFingerprintFallback string) error {
+func validateSessionGuard(req driver.Request, effectiveCWD, profileFingerprint string) error {
 	if req.Session == nil || req.Session.State == nil {
 		return nil
 	}
@@ -440,12 +450,41 @@ func validateSessionGuard(req driver.Request, effectiveCWD, profileFingerprint, 
 	if data[driver.SessionParamProfileFingerprint] != "" && data[driver.SessionParamProfileFingerprint] != profileFingerprint {
 		return &engine.ResumeRejectedError{Reason: "profile resources changed"}
 	}
-	if data[driver.SessionParamProfileFingerprint] == "" &&
-		data[driver.SessionParamPromptBundleKey] != "" &&
-		data[driver.SessionParamPromptBundleKey] != skillFingerprintFallback {
-		return &engine.ResumeRejectedError{Reason: "profile resources changed"}
-	}
 	return nil
+}
+
+func validateCodeBuddySessionContext(req driver.Request) error {
+	if req.Session == nil || req.Session.Mode != driver.SessionFork {
+		return nil
+	}
+	// CodeBuddy's public headless/CLI reference documents resume but no fork
+	// flag. Some SDK wrappers expose an internal fork_session option, but the
+	// Driver cannot make an unpublished CLI detail part of the v1 contract.
+	// Reject before profile/resource materialization so a fork can never
+	// silently advance the parent via ordinary --resume.
+	return &engine.ResumeRejectedError{Reason: "CodeBuddy CLI does not expose a supported headless session fork"}
+}
+
+func resumedCodeBuddySession(req driver.Request) bool {
+	return req.Session != nil && req.Session.State != nil && strings.TrimSpace(req.Session.State.ResumeID) != ""
+}
+
+var codeBuddyResumeRejectedRE = regexp.MustCompile(`(?i)^(?:error:\s*)?(?:conversation\s+\S+\s+(?:not found|does not exist|expired|is invalid)|session\s+\S+\s+(?:not found|does not exist|expired|is invalid)|no conversation found (?:for session|with session id:?)\s*\S+|failed to resume (?:session|conversation)(?:\s+\S+)?|(?:unable|cannot) to (?:resume|find|load) (?:session|conversation)(?:\s+\S+)?)\.?$`)
+
+func isCodeBuddyResumeRejected(exitCode int, providerMessage, stdout, stderr string) bool {
+	// On an official error ResultMessage, parser.errorMessage is authoritative
+	// even when the CLI exits zero. For a non-zero process, startup/session
+	// lookup diagnostics may exist only in raw stdout/stderr.
+	haystack := providerMessage + "\n" + stderr
+	if exitCode != 0 {
+		haystack += "\n" + stdout
+	}
+	for _, line := range strings.Split(haystack, "\n") {
+		if codeBuddyResumeRejectedRE.MatchString(strings.TrimSpace(line)) {
+			return true
+		}
+	}
+	return false
 }
 
 func chooseCWD(cfg CommonConfig, workspace driver.WorkspaceLease) string {

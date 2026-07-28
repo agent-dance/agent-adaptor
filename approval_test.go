@@ -1,14 +1,14 @@
 package adaptor_test
 
-// P1.3 / P1.5 contract tests · approvals (design doc §2.6, decision D2).
+// Approval request, policy, callback, and event contracts.
 //
-// Matrix reproduced from the legacy HITL dispatcher semantics:
+// The current approval policy matrix covers:
 //   3 kinds (Permission / PlanReview / Question)
 //   × 2 consumption forms (OnApproval callback / *ApprovalRequest event)
 //   × outcomes (approve / deny / answer / timeout)
 //   with the OnReject / OnTimeout fallbacks (abort / continue / retry),
 //   capability-gated retry degradation, exactly-once responder semantics
-//   (duplicate answers, answers after run end), and the D1 error contract.
+//   (duplicate answers, answers after run end), and the stable error contract.
 //
 // Concurrency is channel-synchronized throughout — no sleeps; the only
 // elapsed time is real approval Timeouts that deterministically fire
@@ -22,11 +22,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/agent-dance/agent-adaptor/driver"
 	adaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
 )
 
-// Compile-scope proofs for the P1 option additions: OnApproval is
+// Compile-scope proofs for approval options: OnApproval is
 // dual-scope, WithBlockingEvents is construction-only.
 var (
 	_ adaptor.SharedOption = adaptor.OnApproval(nil)
@@ -233,7 +233,7 @@ func TestApprovalQuestionFreeTextAnswer(t *testing.T) {
 
 func TestApprovalQuestionDefaultAutoDenied(t *testing.T) {
 	// Question mode defaults to auto-deny: the handler is never consulted
-	// and the run aborts through OnReject (legacy default matrix).
+	// and the run aborts through OnReject (the conservative default policy).
 	fake := newFakeDriver()
 	fake.runFunc = askOnce(driver.HumanDecisionQuestion, questionChoices)
 	calls := 0
@@ -479,7 +479,7 @@ func TestApprovalTimeoutFallbackMatrix(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestApprovalRetryUnsupportedDegradesToAbort(t *testing.T) {
-	fake := newFakeDriver() // zero caps: retry unsupported
+	fake := newFakeDriver() // all retry caps remain false
 	fake.runFunc = askOnce(driver.HumanDecisionPermission, nil)
 	calls := 0
 	agent := adaptor.New(fake,

@@ -1,11 +1,11 @@
 package adaptor_test
 
-// P3.7 mandated table: "WithSkills appends vs everything else replaces",
-// asserted at the driver SPI boundary. This is the P3 growth of
+// Table-driven contract: "WithSkills appends vs everything else replaces",
+// asserted at the Driver SPI boundary. This complements
 // TestOptionMergeSemantics (options_scope_test.go), which anchored the rule
-// for the P0 option families; this table pins it for the P3 families
+// for the basic option families; this table pins it for resource families
 // (skills, MCP, profile resources) plus one representative replacing family
-// from P0 (model, instructions) so the contrast lives in a single test.
+// (model, instructions) so the contrast lives in a single test.
 //
 // Migration mapping (root baseline → here):
 //
@@ -23,9 +23,9 @@ import (
 	"context"
 	"testing"
 
+	adaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/mcp"
-	adaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/profile"
 	"github.com/agent-dance/agent-adaptor/skill"
 )
@@ -204,12 +204,9 @@ func TestWithSkillsAppendsEverythingElseReplaces(t *testing.T) {
 	}
 }
 
-// TestIdentityFromContextContract migrates the read-side rows of the legacy
-// caller_identity_test.go baseline: nil and identity-free contexts report
-// ok=false with a zero Identity. (The attach side — SDK injection before the
-// driver runs — is TestIdentityContextInjection; next/ deliberately has no
-// public WithCallerIdentity equivalent, providers receive identity only via
-// SDK plumbing.)
+// TestIdentityFromContextContract verifies that nil and identity-free contexts
+// report ok=false with a zero Identity. TestIdentityContextInjection covers the
+// corresponding SDK injection before the Driver runs.
 func TestIdentityFromContextContract(t *testing.T) {
 	//lint:ignore SA1012 the nil-context leg is the documented contract.
 	var nilCtx context.Context

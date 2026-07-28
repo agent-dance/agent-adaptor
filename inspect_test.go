@@ -1,7 +1,6 @@
 package adaptor_test
 
-// P3.6/P3.7 coverage for the Inspect() panel and the profile verbs, mirroring
-// the legacy Admin semantics (internal/engine/admin.go):
+// Coverage for the Inspector panel and Agent profile verbs:
 //
 //   - drivers WITHOUT probes degrade honestly (descriptor-derived or
 //     explicitly "unsupported" reports, never fabricated success) —
@@ -21,8 +20,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/agent-dance/agent-adaptor/driver"
 	adaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/profile"
 )
 

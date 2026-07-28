@@ -19,10 +19,6 @@ package adaptor_test
 //	    )
 //	    record(job, res, err)                          // err 一元判定
 //	}
-//
-// Two P0 adaptations: Policy.Approvals (ApprovalsAutoDeny) joins in P1.3,
-// and the fleet-default model is expressed with dual-scope WithModel until
-// codex.Config moves home in P3.1.
 
 import (
 	"context"

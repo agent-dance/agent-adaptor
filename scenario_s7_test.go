@@ -1,6 +1,6 @@
 package adaptor_test
 
-// P3.8 scenario S7 (design doc docs/api-v1-redesign.md §S7): the settings /
+// Scenario S7 (design doc docs/api-v1-redesign.md §S7): the settings /
 // onboarding wizard — four read-only Inspect() probes power the whole page.
 //
 // Documented deviation from the doc sketch: the doc reads env.Ready /
@@ -11,8 +11,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/agent-dance/agent-adaptor/driver"
 	adaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
 )
 
 func TestScenarioS7OnboardingWizard(t *testing.T) {

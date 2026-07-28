@@ -1,10 +1,3 @@
-// Package a2a contains thin client primitives for consuming remote A2A agents.
-//
-// The package intentionally exposes agent-adaptor-owned DTOs instead of
-// re-exporting github.com/a2aproject/a2a-go/v2/a2a types. Upstream protocol
-// types are used at the package edge for wire behavior, while callers get a
-// stable narrow API that does not pretend remote A2A traffic has local CLI
-// stdout/stderr semantics.
 package a2a
 
 import "time"
@@ -13,179 +6,304 @@ import "time"
 type TransportProtocol string
 
 const (
-	TransportJSONRPC  TransportProtocol = "JSONRPC"
+	// TransportJSONRPC selects the A2A JSON-RPC transport binding.
+	TransportJSONRPC TransportProtocol = "JSONRPC"
+	// TransportHTTPJSON selects the A2A HTTP+JSON transport binding.
 	TransportHTTPJSON TransportProtocol = "HTTP+JSON"
 )
 
 // AgentCard is the validated discovery document returned by AgentCard.
 type AgentCard struct {
-	Name                string
-	Description         string
-	URL                 string
-	Version             string
-	DocumentationURL    string
-	IconURL             string
-	Provider            *Provider
-	Capabilities        Capabilities
-	DefaultInputModes   []string
-	DefaultOutputModes  []string
-	Skills              []Skill
-	SupportedInterfaces []AgentInterface
-	Fingerprint         string
-	Raw                 map[string]any
-}
-
-type Provider struct {
-	Organization string
-	URL          string
-}
-
-type Capabilities struct {
-	Streaming         bool
-	PushNotifications bool
-	ExtendedAgentCard bool
-	Extensions        []Extension
-}
-
-type Extension struct {
-	URI         string
+	// Name is the agent's display name.
+	Name string
+	// Description explains the agent's purpose.
 	Description string
-	Required    bool
-	Params      map[string]any
+	// URL is the preferred endpoint advertised by the agent.
+	URL string
+	// Version is the agent implementation version.
+	Version string
+	// DocumentationURL points to human-readable agent documentation.
+	DocumentationURL string
+	// IconURL points to the agent's display icon.
+	IconURL string
+	// Provider identifies the organization operating the agent, when declared.
+	Provider *Provider
+	// Capabilities describes optional protocol behavior.
+	Capabilities Capabilities
+	// DefaultInputModes lists accepted input media types.
+	DefaultInputModes []string
+	// DefaultOutputModes lists produced output media types.
+	DefaultOutputModes []string
+	// Skills describes the operations advertised by the agent.
+	Skills []Skill
+	// SupportedInterfaces lists usable protocol endpoints.
+	SupportedInterfaces []AgentInterface
+	// Fingerprint is a deterministic digest of the validated discovery document.
+	Fingerprint string
+	// Raw preserves the normalized discovery payload.
+	Raw map[string]any
 }
 
+// Provider identifies the organization responsible for an A2A agent.
+type Provider struct {
+	// Organization is the provider's display name.
+	Organization string
+	// URL is the provider's public URL.
+	URL string
+}
+
+// Capabilities describes optional behavior advertised by an A2A agent.
+type Capabilities struct {
+	// Streaming reports support for streaming message execution.
+	Streaming bool
+	// PushNotifications reports support for push notification configuration.
+	PushNotifications bool
+	// ExtendedAgentCard reports support for authenticated extended discovery.
+	ExtendedAgentCard bool
+	// Extensions lists additional advertised protocol features.
+	Extensions []Extension
+}
+
+// Extension is one optional protocol feature declared by an agent.
+type Extension struct {
+	// URI uniquely identifies the extension contract.
+	URI string
+	// Description explains the extension's behavior.
+	Description string
+	// Required reports whether clients must understand the extension.
+	Required bool
+	// Params preserves extension-specific parameters.
+	Params map[string]any
+}
+
+// AgentInterface describes one protocol endpoint advertised by an agent.
 type AgentInterface struct {
-	URL             string
+	// URL is the absolute endpoint URL.
+	URL string
+	// ProtocolBinding identifies the endpoint's transport binding.
 	ProtocolBinding TransportProtocol
-	Tenant          string
+	// Tenant is the endpoint's optional tenant selector.
+	Tenant string
+	// ProtocolVersion is the A2A protocol version implemented by the endpoint.
 	ProtocolVersion string
 }
 
+// Skill describes one operation advertised in an AgentCard.
 type Skill struct {
-	ID          string
-	Name        string
+	// ID is the stable protocol identifier for the skill.
+	ID string
+	// Name is the skill's display name.
+	Name string
+	// Description explains the skill's behavior.
 	Description string
-	Tags        []string
-	Examples    []string
-	InputModes  []string
+	// Tags provide discovery keywords.
+	Tags []string
+	// Examples contain representative requests.
+	Examples []string
+	// InputModes lists accepted media types for the skill.
+	InputModes []string
+	// OutputModes lists media types the skill may produce.
 	OutputModes []string
 }
 
 // Message is an A2A message projected into a stable local shape.
 type Message struct {
-	ID             string
-	Role           string
-	TaskID         string
-	ContextID      string
-	Parts          []Part
+	// ID is the message identifier assigned by its producer.
+	ID string
+	// Role identifies the message author role.
+	Role string
+	// TaskID associates the message with a task, when available.
+	TaskID string
+	// ContextID associates the message with a remote conversation context.
+	ContextID string
+	// Parts contains the ordered message content.
+	Parts []Part
+	// ReferenceTasks lists tasks referenced by this message.
 	ReferenceTasks []string
-	Extensions     []string
-	Metadata       map[string]any
-	Raw            map[string]any
+	// Extensions lists extension URIs used by this message.
+	Extensions []string
+	// Metadata preserves application-defined message metadata.
+	Metadata map[string]any
+	// Raw preserves the normalized protocol message.
+	Raw map[string]any
 }
 
+// Part is one typed content part in an A2A message or artifact.
 type Part struct {
-	Kind      PartKind
-	Text      string
-	Raw       []byte
-	Data      any
-	URL       string
+	// Kind identifies which content field is populated.
+	Kind PartKind
+	// Text contains text content.
+	Text string
+	// Raw contains inline binary content.
+	Raw []byte
+	// Data contains structured data content.
+	Data any
+	// URL identifies remotely hosted content.
+	URL string
+	// MediaType is the content MIME type.
 	MediaType string
-	Filename  string
-	Metadata  map[string]any
+	// Filename is the suggested content filename.
+	Filename string
+	// Metadata preserves application-defined part metadata.
+	Metadata map[string]any
 }
 
+// PartKind identifies the representation used by a Part.
 type PartKind string
 
 const (
+	// PartText identifies UTF-8 text content.
 	PartText PartKind = "text"
-	PartRaw  PartKind = "raw"
+	// PartRaw identifies inline binary content.
+	PartRaw PartKind = "raw"
+	// PartData identifies structured data content.
 	PartData PartKind = "data"
-	PartURL  PartKind = "url"
+	// PartURL identifies content referenced by URL.
+	PartURL PartKind = "url"
 )
 
+// Task is a normalized snapshot of one remote A2A task.
 type Task struct {
-	ID        string
+	// ID is the remote task identifier.
+	ID string
+	// ContextID is the remote conversation context identifier.
 	ContextID string
-	Status    TaskStatus
-	Messages  []Message
+	// Status is the task's current execution state.
+	Status TaskStatus
+	// Messages contains task conversation history returned by the server.
+	Messages []Message
+	// Artifacts contains outputs produced by the task.
 	Artifacts []Artifact
-	Metadata  map[string]any
-	Raw       map[string]any
+	// Metadata preserves application-defined task metadata.
+	Metadata map[string]any
+	// Raw preserves the normalized protocol task.
+	Raw map[string]any
 }
 
+// TaskStatus describes the current state and optional status message of a task.
 type TaskStatus struct {
-	State     TaskState
-	Message   *Message
+	// State is the normalized task lifecycle state.
+	State TaskState
+	// Message provides status detail when supplied by the server.
+	Message *Message
+	// Timestamp is the server-reported status time.
 	Timestamp *time.Time
 }
 
+// TaskState identifies an A2A task lifecycle state.
 type TaskState string
 
 const (
-	TaskStateUnspecified   TaskState = ""
-	TaskStateSubmitted     TaskState = "TASK_STATE_SUBMITTED"
-	TaskStateWorking       TaskState = "TASK_STATE_WORKING"
-	TaskStateCompleted     TaskState = "TASK_STATE_COMPLETED"
-	TaskStateFailed        TaskState = "TASK_STATE_FAILED"
-	TaskStateCanceled      TaskState = "TASK_STATE_CANCELED"
+	// TaskStateUnspecified means no task state was reported.
+	TaskStateUnspecified TaskState = ""
+	// TaskStateSubmitted means the task has been accepted but not started.
+	TaskStateSubmitted TaskState = "TASK_STATE_SUBMITTED"
+	// TaskStateWorking means the task is executing.
+	TaskStateWorking TaskState = "TASK_STATE_WORKING"
+	// TaskStateCompleted means the task completed successfully.
+	TaskStateCompleted TaskState = "TASK_STATE_COMPLETED"
+	// TaskStateFailed means the task terminated with failure.
+	TaskStateFailed TaskState = "TASK_STATE_FAILED"
+	// TaskStateCanceled means the task was canceled.
+	TaskStateCanceled TaskState = "TASK_STATE_CANCELED"
+	// TaskStateInputRequired means the task is waiting for user input.
 	TaskStateInputRequired TaskState = "TASK_STATE_INPUT_REQUIRED"
-	TaskStateRejected      TaskState = "TASK_STATE_REJECTED"
-	TaskStateAuthRequired  TaskState = "TASK_STATE_AUTH_REQUIRED"
+	// TaskStateRejected means the task was rejected.
+	TaskStateRejected TaskState = "TASK_STATE_REJECTED"
+	// TaskStateAuthRequired means the task is waiting for authentication.
+	TaskStateAuthRequired TaskState = "TASK_STATE_AUTH_REQUIRED"
 )
 
+// Terminal reports whether s represents a final task state.
 func (s TaskState) Terminal() bool {
 	return s == TaskStateCompleted || s == TaskStateFailed || s == TaskStateCanceled || s == TaskStateRejected
 }
 
+// Artifact is one output produced by an A2A task.
 type Artifact struct {
-	ID          string
-	Name        string
+	// ID is the artifact identifier.
+	ID string
+	// Name is the artifact's display name.
+	Name string
+	// Description explains the artifact contents.
 	Description string
-	Parts       []Part
-	Extensions  []string
-	Metadata    map[string]any
-	Raw         map[string]any
+	// Parts contains the ordered artifact content.
+	Parts []Part
+	// Extensions lists extension URIs used by the artifact.
+	Extensions []string
+	// Metadata preserves application-defined artifact metadata.
+	Metadata map[string]any
+	// Raw preserves the normalized protocol artifact.
+	Raw map[string]any
 }
 
 // Event is one ordered A2A stream/subscription update.
 type Event struct {
-	Kind           EventKind
-	Task           *Task
-	Message        *Message
-	Status         *TaskStatus
-	Artifact       *Artifact
-	TaskID         string
-	ContextID      string
-	Append         bool
-	LastChunk      bool
+	// Kind identifies the event payload and lifecycle meaning.
+	Kind EventKind
+	// Task contains a full task snapshot for task events.
+	Task *Task
+	// Message contains a message event payload.
+	Message *Message
+	// Status contains a status update payload.
+	Status *TaskStatus
+	// Artifact contains an artifact update payload.
+	Artifact *Artifact
+	// TaskID identifies the affected task.
+	TaskID string
+	// ContextID identifies the affected conversation context.
+	ContextID string
+	// Append reports that artifact content appends to earlier content.
+	Append bool
+	// LastChunk reports that an artifact update is complete.
+	LastChunk bool
+	// RecoveredState reports that the terminal event was reconstructed with GetTask.
 	RecoveredState bool
-	Raw            map[string]any
+	// Raw preserves the normalized protocol event.
+	Raw map[string]any
 }
 
+// EventKind identifies the normalized payload carried by an Event.
 type EventKind string
 
 const (
-	EventTask     EventKind = "task"
-	EventMessage  EventKind = "message"
-	EventStatus   EventKind = "status"
+	// EventTask carries a full task snapshot.
+	EventTask EventKind = "task"
+	// EventMessage carries a standalone message.
+	EventMessage EventKind = "message"
+	// EventStatus carries a task status update.
+	EventStatus EventKind = "status"
+	// EventArtifact carries an artifact update.
 	EventArtifact EventKind = "artifact"
+	// EventTerminal carries the final recovered or observed task state.
 	EventTerminal EventKind = "terminal"
 )
 
+// SendRequest configures one Send or SendStream operation.
 type SendRequest struct {
-	Message             Message
-	ContextID           string
-	TaskID              string
-	Tenant              string
+	// Message is the message to send.
+	Message Message
+	// ContextID continues a remote conversation context when non-empty.
+	ContextID string
+	// TaskID associates the message with an existing task when non-empty.
+	TaskID string
+	// Tenant selects the remote tenant when supported.
+	Tenant string
+	// AcceptedOutputModes restricts acceptable response media types.
 	AcceptedOutputModes []string
-	ReturnImmediately   bool
-	HistoryLength       *int
-	Metadata            map[string]any
+	// ReturnImmediately requests an immediate protocol response.
+	ReturnImmediately bool
+	// HistoryLength limits task history returned with the result.
+	HistoryLength *int
+	// Metadata contains application-defined request metadata.
+	Metadata map[string]any
 }
 
+// SubscribeRequest identifies an existing task to observe.
 type SubscribeRequest struct {
+	// TaskID identifies the task to subscribe to.
 	TaskID string
+	// Tenant selects the remote tenant when supported.
 	Tenant string
 	// Since is rejected when set. A2A 1.0 SubscribeToTask has no cursor replay
 	// field, and the client refuses to pretend host-side replay cursors are
@@ -193,14 +311,22 @@ type SubscribeRequest struct {
 	Since string
 }
 
+// GetTaskRequest identifies a task snapshot to retrieve.
 type GetTaskRequest struct {
-	TaskID        string
-	Tenant        string
+	// TaskID identifies the task to retrieve.
+	TaskID string
+	// Tenant selects the remote tenant when supported.
+	Tenant string
+	// HistoryLength limits message history returned with the task.
 	HistoryLength *int
 }
 
+// CancelTaskRequest identifies a task to cancel.
 type CancelTaskRequest struct {
-	TaskID   string
-	Tenant   string
+	// TaskID identifies the task to cancel.
+	TaskID string
+	// Tenant selects the remote tenant when supported.
+	Tenant string
+	// Metadata contains application-defined cancellation metadata.
 	Metadata map[string]any
 }

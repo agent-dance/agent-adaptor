@@ -1,6 +1,6 @@
 package adaptor_test
 
-// Decision D1 acceptance: table-driven errors.Is / errors.As coverage of the
+// Table-driven errors.Is / errors.As coverage of the
 // three error paths — business failure (*RunError with sentinel + carried
 // Result), context cancellation/deadline, and process crash. One err, one
 // verdict point.
@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/agent-dance/agent-adaptor/driver"
 	adaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
 )
 
 func TestRunErrorPaths(t *testing.T) {

@@ -10,8 +10,8 @@ import (
 	"github.com/agent-dance/agent-adaptor/internal/engine"
 )
 
-// Classify maps an adapter-resolved effective profile to the SDK's neutral
-// shared vs host-managed profile kind. Adapters should classify the effective
+// Classify maps a Driver-resolved effective profile to the SDK's neutral
+// shared vs host-managed profile kind. Drivers should classify the effective
 // profile after resolving provider env/profile options rather than branching
 // directly on ProfileSelection.Mode.
 func Classify(profile driver.AgentProfile, canonicalShared string) engine.ProfileKind {
@@ -28,7 +28,7 @@ func SamePath(left, right string) bool {
 	return samePathForOS(left, right, runtime.GOOS)
 }
 
-// SamePathForOSForTest exposes OS-specific comparison to legacy package tests.
+// SamePathForOSForTest exposes OS-specific comparison to cross-platform tests.
 func SamePathForOSForTest(left, right, goos string) bool {
 	return samePathForOS(left, right, goos)
 }

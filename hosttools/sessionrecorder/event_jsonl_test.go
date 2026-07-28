@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/agent-dance/agent-adaptor/hosttools/sessionrecorder"
 	adaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/hosttools/sessionrecorder"
 )
 
 func TestJSONLEventBackendPersistsStableTypedEnvelopeAcrossReopen(t *testing.T) {
@@ -95,8 +95,8 @@ func TestJSONLEventBackendPersistsStableTypedEnvelopeAcrossReopen(t *testing.T) 
 			t.Fatalf("stable envelope missing %q: %s", field, lines[0])
 		}
 	}
-	if _, legacy := first["payload"]; legacy {
-		t.Fatalf("typed event envelope contains legacy payload field: %s", lines[0])
+	if _, removed := first["payload"]; removed {
+		t.Fatalf("typed event envelope contains removed payload field: %s", lines[0])
 	}
 
 	reopened, err := sessionrecorder.NewJSONLEventBackend(dir)

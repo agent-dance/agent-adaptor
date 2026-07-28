@@ -66,7 +66,7 @@ func TestResolveProfileCloneLinkAuthReplacesStaleCopiedAuth(t *testing.T) {
 	assertFileContains(t, filepath.Join(target, "auth.json"), "fresh")
 }
 
-func TestResolveProfileCloneIncludeAuthCopiesWithoutSharing(t *testing.T) {
+func TestResolveProfileCloneAuthCopyDoesNotShareFile(t *testing.T) {
 	source := t.TempDir()
 	target := filepath.Join(t.TempDir(), "isolated")
 	writeFile(t, filepath.Join(source, "auth.json"), `{"tokens":{"access_token":"copied"}}`)
@@ -76,7 +76,7 @@ func TestResolveProfileCloneIncludeAuthCopiesWithoutSharing(t *testing.T) {
 			Mode: agentadaptor.ProfileModeClone,
 			Dir:  target,
 			Clone: &agentadaptor.CloneProfileOptions{
-				IncludeAuth: true,
+				AuthMode: agentadaptor.CloneProfileAuthCopy,
 			},
 		},
 		EnvVar:          "CODEX_HOME",
@@ -89,7 +89,7 @@ func TestResolveProfileCloneIncludeAuthCopiesWithoutSharing(t *testing.T) {
 	}
 	assertFileContains(t, filepath.Join(target, "auth.json"), "copied")
 	if sameFile(filepath.Join(source, "auth.json"), filepath.Join(target, "auth.json")) {
-		t.Fatalf("expected IncludeAuth to copy auth rather than share the native file")
+		t.Fatalf("expected AuthCopy to copy auth rather than share the native file")
 	}
 }
 

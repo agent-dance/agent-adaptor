@@ -156,7 +156,6 @@ func assertNoEngineSelector(t *testing.T, fset *token.FileSet, node ast.Node) {
 
 func TestRunAndStreamHaveFullResultParity(t *testing.T) {
 	terminal := &driver.TerminalPayload{Event: "result", JSON: []byte(`{"type":"result","ok":true}`)}
-	cost := 0.125
 	fake := newFakeDriver()
 	fake.streamCaps = driver.StreamCapability{Native: true, TokenLevel: true}
 	fake.descriptor = &driver.Descriptor{
@@ -181,7 +180,6 @@ func TestRunAndStreamHaveFullResultParity(t *testing.T) {
 			RawJSON: []byte(`{"answer":42}`), Valid: true,
 		},
 		RuntimeServices: []driver.RuntimeServiceReport{{ID: "svc-1", Name: "worker", Metadata: map[string]string{"observed": "yes"}}},
-		CostUSD:         &cost,
 	}
 	agent := adaptor.New(fake)
 	option := adaptor.WithSchemaJSON([]byte(`{"type":"object","properties":{"answer":{"type":"integer"}},"required":["answer"],"additionalProperties":false}`))

@@ -1,12 +1,8 @@
 package a2adelegation
 
-// P4.6 vocabulary for the delegation service (design doc §9.7/§9.8).
-//
-// The design doc imports this package under the alias "delegation", so the
-// consumer-facing spellings are delegation.Local / delegation.Remote /
-// delegation.Policy / delegation.Event. This file adds only new exported
-// names; the pre-existing component types (Registry, EventBus, Delegator,
-// MCPServer) stay untouched and remain usable on their own.
+// Public convenience vocabulary for configuring a delegation Service. The
+// lower-level Registry, EventBus, Delegator, and MCPServer remain available to
+// hosts that need component-level composition.
 
 import (
 	"strings"
@@ -14,18 +10,14 @@ import (
 	adaptor "github.com/agent-dance/agent-adaptor"
 )
 
-// Runner is the next-gen SDK execution contract (adaptor.Runner): both
-// *adaptor.Agent and *adaptor.Thread satisfy it, as does any host decorator
-// that wraps one. Local delegation targets execute through this interface
-// in-process — no A2A server, no HTTP hop.
+// Runner is adaptor.Runner. Agent, Thread, and host decorators can all be Local
+// delegation targets and execute in-process without an A2A server or HTTP hop.
 type Runner = adaptor.Runner
 
-// Event is the consumer-facing alias for DelegationEvent, matching the
-// design-doc spelling delegation.Event (§9.7 Observe callback).
+// Event is the concise consumer-facing spelling of DelegationEvent.
 type Event = DelegationEvent
 
-// Policy is the consumer-facing alias for DelegationPolicy, matching the
-// design-doc spelling delegation.Policy (§9.7/§9.8).
+// Policy is the concise consumer-facing spelling of DelegationPolicy.
 type Policy = DelegationPolicy
 
 // AgentRef is one delegatable role in a Service configuration: either a
@@ -41,16 +33,16 @@ type AgentRef struct {
 	spec   *RemoteAgentSpec
 }
 
-// Local registers an in-process Runner as a delegatable role (design doc
-// §9.8 / decision D5). The runner's event stream is consumed directly and
-// projected through the adapter.stream.v1 profile, so text, reasoning, and
-// tool-call fidelity survives without any A2A server or network hop.
+// Local registers an in-process Runner as a delegatable target. Its Event
+// stream is projected through the intentional adapter.stream.v1 wire schema,
+// preserving text, reasoning, tool, approval, and drop semantics without a
+// network hop.
 func Local(key string, runner Runner, policy Policy) AgentRef {
 	return AgentRef{key: strings.TrimSpace(key), policy: policy, runner: runner}
 }
 
-// Remote registers a remote A2A agent by its agent-card URL (design doc
-// §9.7). The card is fetched and the task executed through clients/a2a.
+// Remote registers a remote A2A target by Agent Card URL. Discovery and task
+// execution use clients/a2a.
 func Remote(key, cardURL string, policy Policy) AgentRef {
 	spec := &RemoteAgentSpec{
 		Key:          strings.TrimSpace(key),
@@ -71,8 +63,8 @@ func RemoteAgent(spec RemoteAgentSpec) AgentRef {
 
 // HasLine reports whether the result carries the given line — matched
 // against the trimmed lines of Summary and of every result message — so
-// hosts can gate a workflow on a sentinel (§9.7: review approval line)
-// without re-parsing transport payloads.
+// hosts can gate a workflow on an exact sentinel without re-parsing transport
+// payloads.
 func (r DelegationResult) HasLine(line string) bool {
 	target := strings.TrimSpace(line)
 	if target == "" {

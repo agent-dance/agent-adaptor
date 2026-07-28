@@ -35,6 +35,7 @@ type Translator struct {
 	// emits turn/started and thread/started separately; we fold thread info
 	// into run.started so the bridge sees a single lifecycle boundary.
 	runStarted bool
+	terminal   bool
 }
 
 // NewTranslator creates a translator that attributes every emitted payload
@@ -58,6 +59,15 @@ func (t *Translator) SetThread(id string) {
 	t.mu.Unlock()
 }
 
+// SetTurn records the turn id acknowledged by turn/start before queued wire
+// notifications are flushed. This ensures even an unknown first notification
+// carries the authoritative RPC identity.
+func (t *Translator) SetTurn(id string) {
+	t.mu.Lock()
+	t.turnID = id
+	t.mu.Unlock()
+}
+
 // ThreadID returns the thread id currently associated with the run. It is
 // exposed for adapter code that needs to report the id back to the caller.
 func (t *Translator) ThreadID() string {
@@ -70,6 +80,22 @@ func (t *Translator) ThreadID() string {
 // methods are forwarded as a StreamPayload with Kind "" and their raw body
 // in Raw so downstream bridges can still surface them as custom events.
 func (t *Translator) Dispatch(method string, params json.RawMessage) {
+	if method == NotifyTurnCompleted {
+		t.start()
+	}
+	// The official turn/completed frame is the unique public terminal. The
+	// stdio layer may still capture trailing provider diagnostics in Raw
+	// stdout, but no normalized payload may follow this boundary.
+	t.mu.Lock()
+	if t.terminal {
+		t.mu.Unlock()
+		return
+	}
+	if method == NotifyTurnCompleted {
+		t.terminal = true
+	}
+	t.mu.Unlock()
+
 	switch method {
 	case NotifyThreadStarted:
 		t.handleThreadStarted(params)
@@ -161,11 +187,19 @@ func (t *Translator) handleTurnStarted(params json.RawMessage) {
 		}
 		t.mu.Unlock()
 	}
+	t.start()
+}
+
+func (t *Translator) start() {
+	t.mu.Lock()
+	if t.runStarted || t.terminal {
+		t.mu.Unlock()
+		return
+	}
+	t.runStarted = true
+	t.mu.Unlock()
 	payload := t.basePayload()
 	payload.Kind = driver.StreamRunStarted
-	if !t.runStarted {
-		t.runStarted = true
-	}
 	t.emit(payload)
 }
 
@@ -214,6 +248,53 @@ func (t *Translator) handleTurnCompleted(params json.RawMessage) {
 			payload.Usage = &copyUsage
 		}
 		t.mu.Unlock()
+	}
+	t.emit(payload)
+}
+
+// FinishError closes a run whose transport or protocol ended without a
+// usable official turn/completed notification. It never fabricates a Raw
+// provider terminal; it only satisfies the normalized stream lifecycle.
+func (t *Translator) FinishError(err error) {
+	if err == nil {
+		return
+	}
+	t.start()
+	t.mu.Lock()
+	if t.terminal {
+		t.mu.Unlock()
+		return
+	}
+	t.terminal = true
+	t.mu.Unlock()
+	payload := t.basePayload()
+	payload.Kind = driver.StreamRunError
+	payload.Error = &driver.RunFailure{Message: err.Error(), Code: driver.FailureAgentError}
+	t.emit(payload)
+}
+
+// FinishFailure publishes the unique normalized run.error after the caller
+// has combined the official provider terminal with process and validation
+// outcomes. Raw provider terminal bytes remain attached for protocol-aware
+// bridges without allowing an earlier optimistic run.finished.
+func (t *Translator) FinishFailure(failure *driver.RunFailure, raw *driver.RawStreams, usage *driver.Usage) {
+	if failure == nil {
+		return
+	}
+	t.start()
+	t.mu.Lock()
+	if t.terminal {
+		t.mu.Unlock()
+		return
+	}
+	t.terminal = true
+	t.mu.Unlock()
+	payload := t.basePayload()
+	payload.Kind = driver.StreamRunError
+	payload.Error = cloneRunFailure(failure)
+	payload.Usage = cloneUsage(usage)
+	if raw != nil && raw.Terminal != nil {
+		payload.Raw = rawToMap(raw.Terminal.JSON, raw.Terminal.Event)
 	}
 	t.emit(payload)
 }
@@ -550,11 +631,20 @@ func (t *Translator) emit(payload driver.StreamPayload) {
 	if t.sink == nil {
 		return
 	}
-	if payload.RunID == "" && t.runID != "" {
-		// Defensive: if basePayload was bypassed, backfill the run id so
-		// downstream consumers always see a stable attribution.
+	// Some opaque/forward-compatible handlers intentionally construct only
+	// Name and Raw. Backfill all run identities from the authoritative RPC
+	// state so those payloads remain attributable too.
+	t.mu.Lock()
+	if payload.RunID == "" {
 		payload.RunID = t.runID
 	}
+	if payload.ThreadID == "" {
+		payload.ThreadID = t.threadID
+	}
+	if payload.TurnID == "" {
+		payload.TurnID = t.turnID
+	}
+	t.mu.Unlock()
 	_ = t.sink.EmitStream(payload)
 }
 

@@ -5,12 +5,13 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/internal/adapterutil"
 	"github.com/agent-dance/agent-adaptor/internal/clihelper"
 	"github.com/agent-dance/agent-adaptor/internal/configprobe"
+	"github.com/agent-dance/agent-adaptor/internal/driverutil"
 	"github.com/agent-dance/agent-adaptor/internal/engine"
 	"github.com/agent-dance/agent-adaptor/internal/mcpruntime"
 	"github.com/agent-dance/agent-adaptor/internal/profileagents"
@@ -20,7 +21,7 @@ import (
 	"github.com/agent-dance/agent-adaptor/internal/profilesnapshot"
 )
 
-// DriverType is the stable descriptor type for the built-in Cursor adapter.
+// DriverType is the stable descriptor type for the built-in Cursor driver.
 const DriverType = "cursor"
 
 type adapter struct{}
@@ -45,9 +46,9 @@ func (adapter) Descriptor() driver.Descriptor {
 		Instructions: driver.InstructionsCapability{Supported: true},
 		Workspace:    driver.WorkspaceCapability{Supported: true},
 		RunPolicyCaps: driver.RunPolicyCapabilities{
-			Isolation: false, WebSearch: true, Browser: false,
+			Isolation: false, WebSearch: false, Browser: false,
 			Permission: driver.HumanDecisionSupport{Ask: false, AutoApprove: true, AutoReject: false, Retry: false},
-			PlanReview: driver.HumanDecisionSupport{Ask: false, AutoApprove: true, AutoReject: false, Retry: false},
+			PlanReview: driver.HumanDecisionSupport{},
 			Question:   driver.QuestionSupport{Ask: false, AutoReject: false, Retry: false},
 		},
 		Runtime: driver.RuntimeCapability{ReportsServices: true},
@@ -84,11 +85,11 @@ func (adapter) CheckEnvironment(_ context.Context, cfg any) (driver.EnvironmentR
 	if command == "" {
 		command = "agent"
 	}
-	checks := append(adapterutil.CommandEnvironmentChecks(command), adapterutil.CWDEnvironmentChecks(config.CommonConfig.CWD)...)
+	checks := append(driverutil.CommandEnvironmentChecks(command), driverutil.CWDEnvironmentChecks(config.CommonConfig.CWD)...)
 	bindings, err := effectiveCursorBindings(config.CommonConfig, nil)
 	if err != nil {
 		checks = append(checks, driver.EnvironmentCheck{Code: "cursor_profile_error", Level: "fail", Message: "Cursor profile resolution failed.", Detail: err.Error()})
-		return adapterutil.SummarizeEnvironment(DriverType, checks), nil
+		return driverutil.SummarizeEnvironment(DriverType, checks), nil
 	}
 	cursorHome := resolveCursorHome(bindings)
 	if _, err := os.Stat(cursorHome); err == nil {
@@ -109,7 +110,7 @@ func (adapter) CheckEnvironment(_ context.Context, cfg any) (driver.EnvironmentR
 	}
 	checks = append(checks, cursorAuthChecks(bindings)...)
 	checks = append(checks, cursorConfigChecks(bindings)...)
-	return adapterutil.SummarizeEnvironment(DriverType, checks), nil
+	return driverutil.SummarizeEnvironment(DriverType, checks), nil
 }
 
 func (adapter) ListModels(_ context.Context, _ any) ([]driver.ModelInfo, error) {
@@ -316,10 +317,10 @@ func (adapter) SyncProfileResources(ctx context.Context, cfg any, _ driver.Agent
 
 func (adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSink) (driver.Response, error) {
 	if req.OutputSchema != nil && req.OutputSchema.Mode == driver.StructuredOutputNativeStrict {
-		return driver.Response{}, &driver.StructuredOutputUnsupportedError{Adapter: DriverType, Mode: req.OutputSchema.Mode, Reason: "Cursor CLI does not expose native JSON Schema output"}
+		return driver.Response{}, &driver.StructuredOutputUnsupportedError{Driver: DriverType, Mode: req.OutputSchema.Mode, Reason: "Cursor CLI does not expose native JSON Schema output"}
 	}
 	cfg := readConfig(req.Config)
-	// per-run WithModel overrides the binding model for this invocation only.
+	// Per-run WithModel overrides the configured model for this invocation only.
 	if m := strings.TrimSpace(req.ModelOverride); m != "" {
 		cfg.Model = m
 	}
@@ -336,11 +337,18 @@ func (adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSin
 	if err := validateCursorSessionGuard(req, effectiveCWD, profileFingerprint); err != nil {
 		return driver.Response{}, err
 	}
+	if req.Session != nil && req.Session.Mode == driver.SessionFork {
+		// Cursor's public CLI currently exposes resume but no conversation-fork
+		// primitive. Resuming here would append to the parent's provider chat and
+		// violate Thread.Fork's parent-immutability contract, so fail before any
+		// profile/resource materialization or subprocess launch.
+		return driver.Response{}, &engine.ResumeRejectedError{Reason: "Cursor CLI does not support safe session fork"}
+	}
 	bindings, err = effectiveCursorBindings(cfg.CommonConfig, req.Profile)
 	if err != nil {
 		return driver.Response{}, err
 	}
-	effectiveEnv, err := adapterutil.RuntimeEnvBindings(bindings, req.Runtime)
+	effectiveEnv, err := driverutil.RuntimeEnvBindings(bindings, req.Runtime)
 	if err != nil {
 		return driver.Response{}, err
 	}
@@ -387,10 +395,10 @@ func (adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSin
 	if req.Policy.HumanDecision.Permission == driver.HumanDecisionAutoApprove {
 		args = append(args, "--force")
 	}
-	args = append(args, cfg.ExtraArgs...)
+	args = append(args, cursorSafeExtraArgs(cfg.ExtraArgs)...)
 
 	prompt := req.Prompt
-	if runtimePrefix := adapterutil.RuntimePromptPrefix(req.Runtime); runtimePrefix != "" {
+	if runtimePrefix := driverutil.RuntimePromptPrefix(req.Runtime); runtimePrefix != "" {
 		prompt = runtimePrefix + "\n\n" + prompt
 	}
 	if prefix := profileinstructions.PromptPrefix(preparedInstructions, profileinstructions.Mode(req.Instructions)); prefix != "" {
@@ -411,12 +419,22 @@ func (adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSin
 	}
 	parser.finalize()
 	raw := driver.RawStreams{Stdout: result.RawStreams.Stdout, Stderr: result.RawStreams.Stderr, Terminal: parser.terminal}
+	if req.Session != nil && req.Session.State != nil && req.Session.State.ResumeID != "" &&
+		result.ExitCode != 0 && isCursorUnknownSessionError(raw.Stdout, raw.Stderr) {
+		return driver.Response{}, &engine.ResumeRejectedError{Reason: "Cursor resume session is unavailable"}
+	}
 	var failure *driver.RunFailure
 	if strings.TrimSpace(parser.errorMessage) != "" {
 		failure = &driver.RunFailure{
 			Code:    driver.FailureAgentError,
 			Message: parser.errorMessage,
 		}
+	} else if result.ExitCode == 0 && (parser.protocolMalformed || !parser.terminalSeen || !parser.terminalSuccess) {
+		message := "Cursor stream-json protocol ended without a successful terminal result"
+		if parser.protocolMalformed {
+			message = "Cursor stream-json protocol was malformed"
+		}
+		failure = &driver.RunFailure{Code: driver.FailureAgentError, Message: message}
 	}
 	checkpoint := parser.checkpointForOutcome(result.ExitCode, result.Signal, result.TimedOut, failure)
 	if checkpoint != nil && checkpoint.State != nil {
@@ -439,9 +457,54 @@ func (adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSin
 		Provider:        "cursor",
 		Model:           cfg.Model,
 		Summary:         parser.finalSummary(),
-		RuntimeServices: adapterutil.RuntimeReportsFromRefs(req.Runtime.Ensured, req.Agent),
+		RuntimeServices: driverutil.RuntimeReportsFromRefs(req.Runtime.Ensured, req.Agent),
 		Failure:         failure,
 	}, nil
+}
+
+// cursorSafeExtraArgs preserves provider-specific escape hatches while
+// preventing construction-time arguments from replacing the invocation's
+// resolved transport, workspace, model, mode, or Thread selector.
+func cursorSafeExtraArgs(extra []string) []string {
+	blockedValues := map[string]struct{}{
+		"--output-format": {},
+		"--workspace":     {},
+		"--resume":        {},
+		"--model":         {},
+		"-m":              {},
+		"--mode":          {},
+	}
+	blockedBooleans := map[string]struct{}{
+		"--print": {}, "-p": {},
+		// Permission policy is resolved per call. Constructor ExtraArgs must
+		// never enable Cursor's force-approval mode behind that policy.
+		"--force": {}, "-f": {}, "--yolo": {},
+	}
+	out := make([]string, 0, len(extra))
+	for i := 0; i < len(extra); i++ {
+		arg := extra[i]
+		base := arg
+		if eq := strings.IndexByte(arg, '='); eq >= 0 {
+			base = arg[:eq]
+		}
+		if _, blocked := blockedBooleans[base]; blocked {
+			continue
+		}
+		if _, blocked := blockedValues[base]; blocked {
+			if !strings.Contains(arg, "=") && i+1 < len(extra) && !strings.HasPrefix(extra[i+1], "-") {
+				i++
+			}
+			continue
+		}
+		out = append(out, arg)
+	}
+	return out
+}
+
+var cursorUnknownSessionErrorRE = regexp.MustCompile(`(?i)(session|chat).*(not found|unknown|does not exist|invalid|expired)|unable to (resume|find).*(session|chat)`)
+
+func isCursorUnknownSessionError(stdout, stderr string) bool {
+	return cursorUnknownSessionErrorRE.MatchString(stdout + "\n" + stderr)
 }
 
 func validateCursorSessionGuard(req driver.Request, effectiveCWD, profileFingerprint string) error {
@@ -467,7 +530,7 @@ func chooseCWD(cfg driver.CommonConfig, workspace driver.WorkspaceLease) string 
 	return cfg.CWD
 }
 
-// readConfig snapshots the package-owned configuration used by the v1 path.
+// readConfig snapshots the package-owned configuration used by the configured driver.
 func readConfig(cfg any) Config {
 	switch typed := cfg.(type) {
 	case Config:

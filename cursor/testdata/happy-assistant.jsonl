@@ -1,3 +1,5 @@
-{"type":"session","session_id":"cursor-happy","model":"gpt-5"}
-{"type":"assistant","session_id":"cursor-happy","text":"Cursor says hi."}
-{"type":"run.completed","session_id":"cursor-happy","result":"Cursor says hi.","usage":{"input_tokens":3,"output_tokens":2}}
+{"type":"system","subtype":"init","apiKeySource":"login","cwd":"/workspace","session_id":"cursor-happy","model":"GPT-5","permissionMode":"default"}
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"Say hello"}]},"session_id":"cursor-happy"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Cursor "}]},"session_id":"cursor-happy"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"says hi."}]},"session_id":"cursor-happy"}
+{"type":"result","subtype":"success","duration_ms":1234,"duration_api_ms":1200,"is_error":false,"result":"Cursor says hi.","session_id":"cursor-happy","request_id":"request-happy"}

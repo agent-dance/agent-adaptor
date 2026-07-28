@@ -10,7 +10,7 @@ import (
 )
 
 // DirScanOption configures LocalSkillsFromDir. Hosts that need
-// non-default behaviour (custom key prefix, glob exclusions, custom
+// non-default behaviour (custom key prefix, exact-name exclusions, custom
 // SKILL.md filename) chain options into the call.
 type DirScanOption func(*dirScanConfig)
 
@@ -51,8 +51,8 @@ func WithDirSkillKeyPrefix(prefix string) DirScanOption {
 }
 
 // WithDirIgnore declares directory names that the scan must skip.
-// Useful for filtering ".git", "node_modules", or stray top-level
-// files that look like skills but aren't.
+// Useful for filtering generated or dependency directories such as
+// "node_modules".
 //
 // Multiple WithDirIgnore options accumulate; matching is exact
 // (case-sensitive), not glob-style.
@@ -72,8 +72,10 @@ func WithDirIgnore(names ...string) DirScanOption {
 }
 
 // WithDirSkillFile overrides the per-directory marker file name.
-// Default "SKILL.md". Setting it to e.g. "AGENT.md" lets the scan
-// pick up directories that follow a different convention.
+// Default "SKILL.md". Setting it to, for example, "AGENT.md" lets the scan
+// identify directories that follow a different convention. This option only
+// changes discovery; callers remain responsible for ensuring each returned
+// directory has the files required by its eventual consumer.
 func WithDirSkillFile(name string) DirScanOption {
 	return func(c *dirScanConfig) {
 		if name = strings.TrimSpace(name); name != "" {
@@ -113,7 +115,7 @@ func WithDirSkillFile(name string) DirScanOption {
 //
 //	skills, err := skill.LocalSkillsFromDir("/opt/skills")
 //	if err != nil { return err }
-//	agent, err := adaptor.New(drv,
+//	agent := adaptor.New(drv,
 //	    adaptor.WithSkills(skill.SkillsAsRefs(skills)...),
 //	)
 func LocalSkillsFromDir(root string, opts ...DirScanOption) ([]Skill, error) {
@@ -183,8 +185,8 @@ func LocalSkillsFromDir(root string, opts ...DirScanOption) ([]Skill, error) {
 //
 //	adaptor.WithSkills(skill.SkillsAsRefs(skills)...)
 //
-// The conversion is shallow; the returned refs reference the same
-// underlying Skill values.
+// The conversion preserves order and does not deep-clone nested values such
+// as Metadata.
 func SkillsAsRefs(skills []Skill) []Ref {
 	if len(skills) == 0 {
 		return nil

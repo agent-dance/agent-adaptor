@@ -22,9 +22,10 @@ type DetectedModel struct {
 type AgentProfileSource string
 
 const (
-	// AgentProfileSourceBindingEnv means an explicit env binding selected the profile.
+	// AgentProfileSourceBindingEnv means an explicit Driver config environment
+	// override selected the profile.
 	AgentProfileSourceBindingEnv AgentProfileSource = "binding_env"
-	// AgentProfileSourceProfileOption means a profile AgentOption selected the profile.
+	// AgentProfileSourceProfileOption means WithProfile selected the profile.
 	AgentProfileSourceProfileOption AgentProfileSource = "profile_option"
 	// AgentProfileSourceProcessEnv means a process environment variable selected the profile.
 	AgentProfileSourceProcessEnv AgentProfileSource = "process_env"
@@ -37,7 +38,7 @@ const (
 )
 
 // AgentProfile reports the effective local operator profile directory for one
-// bound driver as seen by the SDK control plane.
+// configured Driver as observed during profile inspection or synchronization.
 //
 // Dir is the effective directory the built-in driver will inspect or use for
 // local profile semantics. Source tells whether that directory came from an
@@ -67,9 +68,9 @@ const (
 	EnvironmentFail EnvironmentStatus = "fail"
 )
 
-// EnvironmentReport is the normalized admin-facing health report for one
-// driver binding. Healthy remains for backward compatibility; new hosts should
-// prefer Status plus the individual Checks.
+// EnvironmentReport is the normalized health report returned by
+// Agent.Inspect().Environment. Status and Checks are authoritative; Healthy
+// reports whether Status is EnvironmentPass.
 type EnvironmentReport struct {
 	DriverType string
 	Status     EnvironmentStatus
@@ -89,7 +90,7 @@ type EnvironmentCheck struct {
 	Hint    string
 }
 
-// QuotaReport is the control-plane shape returned by Admin().GetQuota().
+// QuotaReport is returned by Agent.Inspect().Quota.
 type QuotaReport struct {
 	DriverType string
 	Provider   string

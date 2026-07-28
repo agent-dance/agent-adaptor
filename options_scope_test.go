@@ -1,16 +1,19 @@
 package adaptor_test
 
-// Compile-time proof of the option scope system (decision D7, case A) plus
+// Compile-time proof of the option scope system plus
 // the merge-semantics contract "nearer scope wins; skills append, everything
 // else replaces".
 
 import (
 	"context"
+	"slices"
 	"testing"
 	"time"
 
-	"github.com/agent-dance/agent-adaptor/driver"
 	adaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/profile"
+	"github.com/agent-dance/agent-adaptor/skill"
 )
 
 // ---- Positive scope assertions (compile-time) ----
@@ -26,6 +29,12 @@ var (
 	_ adaptor.SharedOption = adaptor.WithMetadata("k", "v")
 	_ adaptor.SharedOption = adaptor.WithIdentity(adaptor.Identity{})
 	_ adaptor.SharedOption = adaptor.WithPolicy(adaptor.Policy{})
+	_ adaptor.SharedOption = adaptor.WithSkills()
+	_ adaptor.SharedOption = adaptor.WithMCP()
+	_ adaptor.SharedOption = adaptor.WithProfileResources(profile.Resources{})
+	_ adaptor.SharedOption = adaptor.WithWorkspaceSpec(nil)
+	_ adaptor.SharedOption = adaptor.WithServices()
+	_ adaptor.SharedOption = adaptor.WithRunServices()
 
 	// SharedOption is usable in both positions.
 	_ adaptor.Option     = adaptor.WithModel("m")
@@ -34,13 +43,23 @@ var (
 	// Construction-scope-only options.
 	_ adaptor.Option = adaptor.WithThreadStore(nil)
 	_ adaptor.Option = adaptor.WithEventBuffer(64)
+	_ adaptor.Option = adaptor.WithBlockingEvents()
+	_ adaptor.Option = adaptor.WithSkillProvider(nil)
+	_ adaptor.Option = adaptor.WithSkillMaterializer(nil)
+	_ adaptor.Option = adaptor.WithProfile(profile.Default())
+	_ adaptor.Option = adaptor.WithWorkspaceManager(nil)
+	_ adaptor.Option = adaptor.WithServiceManager(nil)
+
+	// Call-scope-only options.
+	_ adaptor.CallOption = adaptor.WithSchema[struct{}]()
+	_ adaptor.CallOption = adaptor.WithSchemaJSON([]byte(`{"type":"object"}`))
 )
 
 // ---- Negative scope assertions (must NOT compile) ----
 //
 // The following misuse examples are intentionally comments: they are
 // rejected by the compiler, which is the whole point. Error texts below are
-// the go1.26 outputs recorded in docs/p0-option-scope-decision.md §2.
+// representative go1.26 outputs.
 //
 //	agent.Run(ctx, "p", adaptor.WithThreadStore(store))
 //	  → cannot use adaptor.WithThreadStore(store) (value of interface type
@@ -54,10 +73,7 @@ var (
 //	var _ adaptor.CallOption = adaptor.WithThreadStore(store)
 //	  → same compile error, without needing an Agent in scope.
 //
-// The reverse direction (call-scope-only option passed to New) has no P0
-// instance because every P0 call-site option is deliberately dual-scope
-// (D7 finalized WithModel/WithTimeout as shared). When WithSchema[T] /
-// WithoutTokenStream land (P1/P3) they return CallOption, and
+// The reverse direction is symmetric for call-scope schema options:
 //
 //	adaptor.New(d, adaptor.WithSchema[Review]())
 //	  → adaptor.CallOption does not implement adaptor.Option
@@ -66,9 +82,10 @@ var (
 // fails symmetrically.
 
 // TestOptionMergeSemantics pins the one-sentence merge rule at the SPI
-// boundary: nearer scope wins; (skills append — P3 anchor); everything else
+// boundary: nearer scope wins; skills append; everything else
 // replaces.
 func TestOptionMergeSemantics(t *testing.T) {
+	setSkillCache(t)
 	ctx := context.Background()
 	fake := newFakeDriver()
 
@@ -79,6 +96,7 @@ func TestOptionMergeSemantics(t *testing.T) {
 		adaptor.WithMetadata("env", "prod"),
 		adaptor.WithMetadata("team", "sdk"),
 		adaptor.WithIdentity(adaptor.Identity{ID: "agent-1", Tenant: "acme", Profile: "p-1", Name: "Default Agent"}),
+		adaptor.WithSkills(skill.Inline("agent/base", "# base\n")),
 	)
 
 	// Run 1: override a subset at the call site.
@@ -87,6 +105,7 @@ func TestOptionMergeSemantics(t *testing.T) {
 		adaptor.WithInstructions("override instructions"),
 		adaptor.WithPolicy(adaptor.Policy{Sandbox: adaptor.WorkspaceWrite}),
 		adaptor.WithMetadata("team", "app"),
+		adaptor.WithSkills(skill.Inline("run/extra", "# extra\n")),
 	); err != nil {
 		t.Fatalf("run-1: %v", err)
 	}
@@ -121,6 +140,9 @@ func TestOptionMergeSemantics(t *testing.T) {
 	if req1.Agent != wantID {
 		t.Errorf("agent identity = %+v, want %+v", req1.Agent, wantID)
 	}
+	if got, want := req1.Skills.Keys(), []string{"agent/base", "run/extra"}; !slices.Equal(got, want) {
+		t.Errorf("run-1 skills = %v, want append order %v", got, want)
+	}
 
 	// Run 2: no overrides — defaults intact, run-1 overrides gone.
 	if _, err := agent.Run(ctx, "run-2"); err != nil {
@@ -136,15 +158,14 @@ func TestOptionMergeSemantics(t *testing.T) {
 	if req2.Metadata["team"] != "sdk" {
 		t.Errorf("run-2 metadata = %v, want team=sdk default back", req2.Metadata)
 	}
-
-	// Skills append semantics anchor (P3.2): when WithSkills lands,
-	// this test grows the third merge family —
-	//   New(..., WithSkills(a)) + Run(..., WithSkills(b)) → driver sees [a, b].
+	if got, want := req2.Skills.Keys(), []string{"agent/base"}; !slices.Equal(got, want) {
+		t.Errorf("run-2 skills = %v, want pristine Agent defaults %v", got, want)
+	}
 }
 
 // TestIdentityContextInjection verifies the pipeline injects the caller
 // Identity into ctx before dispatching, readable via IdentityFromContext
-// (the D11 provider-side contract).
+// (the provider-side identity contract).
 func TestIdentityContextInjection(t *testing.T) {
 	fake := newFakeDriver()
 	var seen adaptor.Identity

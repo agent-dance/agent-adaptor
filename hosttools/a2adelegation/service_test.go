@@ -1,6 +1,6 @@
 package a2adelegation_test
 
-// Unit tests for the consolidated Service (P4.6): construction validation,
+// Unit tests for the consolidated Service: construction validation,
 // per-run sidecar lifecycle (bearer auth, idempotency, release), and the
 // closed-service behavior. The end-to-end delegation paths are covered by
 // service_s9_test.go and local_remote_parity_test.go.
@@ -16,8 +16,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/agent-dance/agent-adaptor/hosttools/a2adelegation"
 	adaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/hosttools/a2adelegation"
 )
 
 func newUnitService(t *testing.T) *a2adelegation.Service {

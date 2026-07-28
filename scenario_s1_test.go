@@ -10,15 +10,14 @@ package adaptor_test
 //	if err != nil { ... }                    // 唯一判断点
 //	fmt.Println(res.Text)
 //
-// The fake driver stands in for codex.Driver(codex.Config{...}) until the
-// driver configs move home in P3.1.
+// The hermetic fake Driver keeps this acceptance test free of paid CLI calls.
 
 import (
 	"context"
 	"testing"
 
-	"github.com/agent-dance/agent-adaptor/driver"
 	adaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
 )
 
 func TestScenarioS1OneShotTask(t *testing.T) {
@@ -47,8 +46,8 @@ func TestScenarioS1OneShotTask(t *testing.T) {
 	if res.Model != "gpt-5.4" {
 		t.Errorf("res.Model = %q", res.Model)
 	}
-	if res.Usage.OutputTokens != 48 {
-		t.Errorf("res.Usage.OutputTokens = %d, want 48", res.Usage.OutputTokens)
+	if res.Usage == nil || res.Usage.OutputTokens != 48 {
+		t.Errorf("res.Usage = %+v, want OutputTokens=48", res.Usage)
 	}
 	if res.RunID == "" {
 		t.Error("res.RunID must be assigned by the SDK")

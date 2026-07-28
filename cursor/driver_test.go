@@ -18,6 +18,19 @@ func TestDescriptorAdvertisesExpectedMCPCapabilities(t *testing.T) {
 	}
 }
 
+func TestDescriptorAdvertisesTruthfulRunPolicyCapabilities(t *testing.T) {
+	caps := (adapter{}).Descriptor().RunPolicyCaps
+	if caps.Isolation || caps.WebSearch || caps.Browser {
+		t.Fatalf("Cursor CLI exposes no controllable isolation/web/browser policy: %#v", caps)
+	}
+	if !caps.Permission.AutoApprove || caps.Permission.Ask || caps.Permission.AutoReject || caps.Permission.Retry {
+		t.Fatalf("unexpected Cursor permission capabilities: %#v", caps.Permission)
+	}
+	if caps.PlanReview.Ask || caps.PlanReview.AutoApprove || caps.PlanReview.AutoReject || caps.PlanReview.Retry {
+		t.Fatalf("Cursor has no independent plan-review control: %#v", caps.PlanReview)
+	}
+}
+
 func TestDescriptorAdvertisesStructuredOutputCapabilities(t *testing.T) {
 	caps := adapter{}.Descriptor().StructuredOutput
 	if caps.JSONSchemaNative || !caps.JSONSchemaPromptValidate || !caps.WorksWithRun || !caps.WorksWithStreaming {
@@ -42,14 +55,14 @@ func TestRunRejectsNativeStrictStructuredOutput(t *testing.T) {
 }
 
 func TestParseCheckpointRequiresRecognizedCursorEvent(t *testing.T) {
-	stdout := `{"kind":"tool.result","session_id":"ignore-me"}
-{"type":"run.completed","session_id":"cursor-session","display_id":"cursor-display"}`
+	stdout := `{"type":"connection","subtype":"reconnected","session_id":"ignore-me"}
+{"type":"result","subtype":"success","is_error":false,"result":"done","session_id":"cursor-session"}`
 
 	checkpoint := parseCheckpoint(stdout, 0)
 	if checkpoint == nil || checkpoint.State == nil {
 		t.Fatal("expected checkpoint")
 	}
-	if checkpoint.State.ResumeID != "cursor-session" || checkpoint.State.DisplayID != "cursor-display" {
+	if checkpoint.State.ResumeID != "cursor-session" || checkpoint.State.DisplayID != "cursor-session" {
 		t.Fatalf("unexpected checkpoint: %#v", checkpoint.State)
 	}
 }

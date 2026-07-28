@@ -106,8 +106,11 @@ if (-not $Agent) {
 }
 
 Assert-AgentName -Name $Agent
-$resolvedCommand = Resolve-AgentCommand -Name $Agent -Override $Command
+# The codec example is deterministic and never starts a CLI. Run it even when
+# no local provider is installed so the script always performs a useful smoke.
+Run-Example -Name "threads/codec" -Arguments @("./examples/threads/codec", "-agent=$Agent")
 
+$resolvedCommand = Resolve-AgentCommand -Name $Agent -Override $Command
 if (-not (Test-AgentHealthy -CommandPath $resolvedCommand)) {
     Write-Host ""
     Write-Host "SKIP: selected local CLI '$Agent' is not healthy via command '$resolvedCommand --help'" -ForegroundColor Yellow
@@ -117,17 +120,14 @@ if (-not (Test-AgentHealthy -CommandPath $resolvedCommand)) {
 $common = @("-agent=$Agent")
 $common += "-command=$resolvedCommand"
 
-# session-codec-inspect never starts a CLI, so it runs first as a cheap
-# smoke of the driver wiring (it also has no -command flag).
-Run-Example -Name "session-codec-inspect" -Arguments @("./examples/session-codec-inspect", "-agent=$Agent")
-
-Run-Example -Name "basic" -Arguments (@("./examples/codex-basic") + $common)
-Run-Example -Name "stream" -Arguments (@("./examples/codex-stream") + $common)
-Run-Example -Name "sessions" -Arguments (@("./examples/codex-sessions") + $common)
-Run-Example -Name "inspect-panel" -Arguments (@("./examples/codex-admin-named") + $common)
-Run-Example -Name "skills-live" -Arguments (@("./examples/codex-skills-live") + $common)
-Run-Example -Name "profile-resources" -Arguments (@("./examples/profile-resources") + $common)
+Run-Example -Name "quickstart" -Arguments (@("./examples/quickstart") + $common)
+Run-Example -Name "structured-output" -Arguments (@("./examples/structured-output") + $common)
+Run-Example -Name "streaming" -Arguments (@("./examples/streaming") + $common)
+Run-Example -Name "threads" -Arguments (@("./examples/threads") + $common)
+Run-Example -Name "inspect" -Arguments (@("./examples/inspect") + $common)
+Run-Example -Name "skills" -Arguments (@("./examples/skills") + $common)
+Run-Example -Name "profiles/resources" -Arguments (@("./examples/profiles/resources") + $common)
 # -run=false keeps this one free: it materializes the profile and reports the
 # on-disk evidence without ever invoking the paid model.
-Run-Example -Name "profile-full (sync only)" -Arguments (@("./examples/codex-profile-full", "-run=false", "-probe=false") + $common)
-Run-Example -Name "a2a-local" -Arguments (@("./examples/a2a-local") + $common)
+Run-Example -Name "profiles (sync only)" -Arguments (@("./examples/profiles", "-run=false", "-probe=false") + $common)
+Run-Example -Name "a2a-server" -Arguments (@("./examples/a2a-server") + $common)

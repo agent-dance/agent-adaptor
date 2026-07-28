@@ -15,8 +15,7 @@
 //     bridges a subprocess's stdin (io.WriteCloser) and stdout (io.Reader)
 //     into the format sourcegraph/jsonrpc2 expects. It does not mutate
 //     frames; sourcegraph/jsonrpc2 already tolerates missing
-//     "jsonrpc":"2.0" markers. See the workstream doc §16.2 for the long-
-//     term policy.
+//     "jsonrpc":"2.0" markers.
 //   - client.go — sourcegraph/jsonrpc2.Conn wrapper with typed method
 //     helpers for Initialize, ThreadStart, ThreadResume, TurnStart,
 //     TurnInterrupt, and notification subscription. Chosen over
@@ -26,6 +25,5 @@
 //     subprocess lifecycle for a single Run.
 //   - translate.go — notification → StreamPayload mapping.
 //
-// Protocol upgrade flow is documented in
-// docs/workstream-streaming-chat.md §16.1.
+// Protocol upgrades follow the generation procedure in generate.go.
 package appserver

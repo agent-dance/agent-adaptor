@@ -10,9 +10,9 @@ import (
 	"strings"
 
 	"github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/internal/adapterutil"
 	"github.com/agent-dance/agent-adaptor/internal/clihelper"
 	"github.com/agent-dance/agent-adaptor/internal/configprobe"
+	"github.com/agent-dance/agent-adaptor/internal/driverutil"
 	"github.com/agent-dance/agent-adaptor/internal/engine"
 	"github.com/agent-dance/agent-adaptor/internal/mcpruntime"
 	"github.com/agent-dance/agent-adaptor/internal/profileagents"
@@ -22,7 +22,7 @@ import (
 	"github.com/agent-dance/agent-adaptor/internal/profilesnapshot"
 )
 
-// DriverType is the stable descriptor type for the built-in Codex adapter.
+// DriverType is the stable descriptor type for the built-in Codex driver.
 const DriverType = "codex"
 
 type adapter struct{}
@@ -50,7 +50,7 @@ func (adapter) Descriptor() driver.Descriptor {
 		RunPolicyCaps: driver.RunPolicyCapabilities{
 			Isolation: true, WebSearch: true, Browser: false,
 			Permission: driver.HumanDecisionSupport{Ask: false, AutoApprove: true, AutoReject: false, Retry: false},
-			PlanReview: driver.HumanDecisionSupport{Ask: false, AutoApprove: true, AutoReject: false, Retry: false},
+			PlanReview: driver.HumanDecisionSupport{},
 			Question:   driver.QuestionSupport{Ask: false, AutoReject: false, Retry: false},
 		},
 		Runtime: driver.RuntimeCapability{ReportsServices: true},
@@ -88,15 +88,15 @@ func (adapter) CheckEnvironment(_ context.Context, cfg any) (driver.EnvironmentR
 	if command == "" {
 		command = "codex"
 	}
-	checks := append(adapterutil.CommandEnvironmentChecks(command), adapterutil.CWDEnvironmentChecks(config.CommonConfig.CWD)...)
+	checks := append(driverutil.CommandEnvironmentChecks(command), driverutil.CWDEnvironmentChecks(config.CommonConfig.CWD)...)
 	bindings, err := effectiveCodexBindings(config.CommonConfig, nil, driver.AgentIdentity{})
 	if err != nil {
 		checks = append(checks, driver.EnvironmentCheck{Code: "codex_profile_error", Level: "fail", Message: "Codex profile resolution failed.", Detail: err.Error()})
-		return adapterutil.SummarizeEnvironment(DriverType, checks), nil
+		return driverutil.SummarizeEnvironment(DriverType, checks), nil
 	}
 	checks = append(checks, codexAuthChecks(bindings)...)
 	checks = append(checks, codexConfigChecks(bindings)...)
-	return adapterutil.SummarizeEnvironment(DriverType, checks), nil
+	return driverutil.SummarizeEnvironment(DriverType, checks), nil
 }
 
 func (adapter) ListModels(_ context.Context, _ any) ([]driver.ModelInfo, error) {
@@ -323,29 +323,36 @@ func (adapter) SyncProfileResources(ctx context.Context, cfg any, agent driver.A
 	return snapshot, nil
 }
 
-// StreamCapability advertises the codex adapter's streaming fidelity. When
-// the caller opts into streaming, codex switches from `codex exec --json` to
-// `codex app-server`, which natively emits token-level deltas, reasoning
-// deltas, and tool-call lifecycle events.
+// StreamCapability advertises the Codex app-server transport's fidelity.
+// Core selects that provider transport from the resolved invocation; the
+// public choice between Runner.Run and Runner.Stream does not select it.
 func (adapter) StreamCapability() driver.StreamCapability {
 	return driver.StreamCapability{
 		Native:       true,
 		TokenLevel:   true,
 		Reasoning:    true,
 		ToolCallArgs: true,
-		HITL:         false, // app-server HITL requests are not yet wired into the SDK decision path.
+		HITL:         false, // The app-server transport does not expose host decision requests.
 	}
 }
 
 func (adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSink) (driver.Response, error) {
 	cfg := readConfig(req.Config)
-	// per-run WithModel overrides the binding model for this invocation only.
+	// Per-run WithModel overrides the configured model for this invocation only.
 	if m := strings.TrimSpace(req.ModelOverride); m != "" {
 		cfg.Model = m
 	}
 	command := cfg.Command
 	if command == "" {
 		command = "codex"
+	}
+	if err := validateCodexForkRequest(req); err != nil {
+		return driver.Response{}, err
+	}
+	if usesCodexAppServer(req) {
+		if _, err := codexAppServerExtraArgs(cfg.ExtraArgs, req.Policy); err != nil {
+			return driver.Response{}, err
+		}
 	}
 	profileFingerprint := req.ProfilePayload.Fingerprint
 	effectiveBindings, err := effectiveCodexBindingsNoInitialize(cfg.CommonConfig, req.Profile, req.Agent)
@@ -359,8 +366,7 @@ func (adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSin
 	}
 
 	// Streaming runs switch the transport to `codex app-server`. The
-	// exec --json path remains the default for batch / scripted usage; see
-	// docs/workstream-streaming-chat.md §§5–8.
+	// exec --json path remains the default for batch or scripted usage.
 	effectiveBindings, err = effectiveCodexBindings(cfg.CommonConfig, req.Profile, req.Agent)
 	if err != nil {
 		return driver.Response{}, err
@@ -395,15 +401,15 @@ func (adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSin
 			return driver.Response{}, err
 		}
 	}
-	effectiveBindings, err = adapterutil.RuntimeEnvBindings(effectiveBindings, req.Runtime)
+	effectiveBindings, err = driverutil.RuntimeEnvBindings(effectiveBindings, req.Runtime)
 	if err != nil {
 		return driver.Response{}, err
 	}
-	if req.Streaming {
+	if usesCodexAppServer(req) {
 		return runAppServer(ctx, req, sink, cfg, command, effectiveBindings, preparedInstructions)
 	}
 
-	args := []string{"exec", "--json"}
+	args := append(codexPolicyArgs(req.Policy), "exec", "--json")
 	var schemaTempDir string
 	if req.OutputSchema != nil && req.OutputSchema.Mode != driver.StructuredOutputPromptValidate {
 		if hasAnyArg(cfg.ExtraArgs, "--output-schema") {
@@ -420,12 +426,6 @@ func (adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSin
 		}
 		args = append(args, "--output-schema", schemaPath)
 	}
-	if req.Policy.WebSearch == driver.FeatureAllow {
-		args = append([]string{"--search"}, args...)
-	}
-	if req.Policy.Isolation == driver.IsolationUnrestricted {
-		args = append(args, "--dangerously-bypass-approvals-and-sandbox")
-	}
 	if cfg.Model != "" {
 		args = append(args, "--model", cfg.Model)
 	}
@@ -435,7 +435,7 @@ func (adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSin
 	if cfg.FastMode {
 		args = append(args, "-c", `service_tier="fast"`, "-c", "features.fast_mode=true")
 	}
-	args = append(args, cfg.ExtraArgs...)
+	args = append(args, filterCodexPolicyExtraArgs(cfg.ExtraArgs, req.Policy)...)
 	if req.Session != nil && req.Session.State != nil && req.Session.State.ResumeID != "" {
 		args = append(args, "resume", req.Session.State.ResumeID, "-")
 	} else {
@@ -443,7 +443,7 @@ func (adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSin
 	}
 
 	prompt := req.Prompt
-	if runtimePrefix := adapterutil.RuntimePromptPrefix(req.Runtime); runtimePrefix != "" {
+	if runtimePrefix := driverutil.RuntimePromptPrefix(req.Runtime); runtimePrefix != "" {
 		prompt = runtimePrefix + "\n\n" + prompt
 	}
 	if prefix := profileinstructions.PromptPrefix(preparedInstructions, profileinstructions.Mode(req.Instructions)); prefix != "" {
@@ -476,12 +476,53 @@ func (adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSin
 	if cfg.Model != "" {
 		provider = "openai"
 	}
+	cleanProcess := result.ExitCode == 0 && result.Signal == "" && !result.TimedOut
+	expectedResumeID := codexExpectedResumeID(req.Session)
 	var failure *driver.RunFailure
 	if strings.TrimSpace(parser.errorMessage) != "" {
 		failure = &driver.RunFailure{
 			Code:    driver.FailureAgentError,
 			Message: parser.errorMessage,
 		}
+	} else if cleanProcess && parser.protocolMalformed {
+		failure = &driver.RunFailure{
+			Code:    driver.FailureAgentError,
+			Message: "codex exec emitted malformed JSONL protocol",
+		}
+	} else if cleanProcess && !parser.turnCompleted && !parser.terminalFailed {
+		failure = &driver.RunFailure{
+			Code:    driver.FailureAgentError,
+			Message: "codex exec protocol ended without an official terminal event",
+		}
+	} else if cleanProcess && parser.turnCompleted && !parser.threadStarted {
+		failure = &driver.RunFailure{
+			Code:    driver.FailureAgentError,
+			Message: "codex exec completed without an official thread.started checkpoint",
+		}
+	} else if cleanProcess && parser.turnCompleted && parser.threadStarted && expectedResumeID != "" && parser.checkpointThreadID != expectedResumeID {
+		failure = &driver.RunFailure{
+			Code: driver.FailureAgentError,
+			Message: fmt.Sprintf(
+				"codex exec resume returned thread %q for requested thread %q",
+				parser.checkpointThreadID,
+				expectedResumeID,
+			),
+		}
+	}
+	var structuredOutput *driver.StructuredOutput
+	if req.OutputSchema != nil && req.OutputSchema.Mode != driver.StructuredOutputPromptValidate {
+		structuredOutput = parser.nativeStructuredOutputForOutcome(result.ExitCode, result.Signal, result.TimedOut, failure)
+		// Keep parser protocol responsibilities separate from schema validation.
+		// Finalize even when the provider omitted a completed agent_message: the
+		// missing native value is itself an invalid structured result and must gate
+		// checkpoint persistence for direct Driver.Run callers as well as core.
+		structuredOutput, failure = engine.FinalizeStructuredOutput(
+			req.OutputSchema,
+			driver.StructuredOutputSourceNative,
+			parser.buildOutput(),
+			structuredOutput,
+			failure,
+		)
 	}
 	checkpoint := parser.checkpointForOutcome(result.ExitCode, result.Signal, result.TimedOut, failure)
 	if checkpoint != nil && checkpoint.State != nil {
@@ -490,10 +531,6 @@ func (adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSin
 			driver.SessionParamWorkspaceID:        req.Workspace.ID,
 			driver.SessionParamProfileFingerprint: profileFingerprint,
 		}
-	}
-	var structuredOutput *driver.StructuredOutput
-	if req.OutputSchema != nil && req.OutputSchema.Mode != driver.StructuredOutputPromptValidate {
-		structuredOutput = parser.structuredOutput
 	}
 
 	return driver.Response{
@@ -509,9 +546,33 @@ func (adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSin
 		Model:            cfg.Model,
 		Summary:          parser.finalSummary(),
 		StructuredOutput: structuredOutput,
-		RuntimeServices:  adapterutil.RuntimeReportsFromRefs(req.Runtime.Ensured, req.Agent),
+		RuntimeServices:  driverutil.RuntimeReportsFromRefs(req.Runtime.Ensured, req.Agent),
 		Failure:          failure,
 	}, nil
+}
+
+// usesCodexAppServer selects the provider transport from invocation semantics.
+// Fork is implemented only by the official app-server thread/fork method;
+// routing it through `codex exec resume` would continue and mutate the parent.
+func usesCodexAppServer(req driver.Request) bool {
+	return req.Streaming || (req.Session != nil && req.Session.Mode == driver.SessionFork)
+}
+
+func validateCodexForkRequest(req driver.Request) error {
+	if req.Session == nil || req.Session.Mode != driver.SessionFork {
+		return nil
+	}
+	if req.Session.State == nil || strings.TrimSpace(req.Session.State.ResumeID) == "" {
+		return &engine.ResumeRejectedError{Reason: "codex fork requires a parent checkpoint"}
+	}
+	return nil
+}
+
+func codexExpectedResumeID(session *driver.SessionContext) string {
+	if session == nil || session.Mode == driver.SessionFork || session.State == nil {
+		return ""
+	}
+	return strings.TrimSpace(session.State.ResumeID)
 }
 
 func hasAnyArg(args []string, names ...string) bool {

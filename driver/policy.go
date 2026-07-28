@@ -4,11 +4,9 @@ import "time"
 
 // RunPolicy is the only host-facing contract for execution guardrails. Values
 // are not CLI flag names: each driver maps them to provider-specific
-// controls. Use empty fields (…Inherit) to mean "use binding default for this
-// run".
-//
-// The HITL dimension (Approvals / Trust in the legacy API) is now expressed
-// through HumanDecision. See docs/run-policy.md for the public contract.
+// controls. Empty fields (…Inherit) leave the dimension unspecified so the
+// resolved Agent default or driver fallback applies. HumanDecision contains
+// the complete HITL policy. See docs/run-policy.md for the public contract.
 type RunPolicy struct {
 	Isolation     IsolationLevel
 	WebSearch     FeatureLevel
@@ -20,7 +18,7 @@ type RunPolicy struct {
 type IsolationLevel string
 
 const (
-	// IsolationInherit leaves isolation to binding defaults or driver fallback.
+	// IsolationInherit leaves isolation to the Agent default or driver fallback.
 	IsolationInherit IsolationLevel = ""
 	// IsolationReadOnly requests a read-only workspace.
 	IsolationReadOnly IsolationLevel = "read_only"
@@ -35,7 +33,7 @@ const (
 type FeatureLevel string
 
 const (
-	// FeatureInherit leaves the capability to binding defaults or driver fallback.
+	// FeatureInherit leaves the capability to the Agent default or driver fallback.
 	FeatureInherit FeatureLevel = ""
 	// FeatureAllow explicitly enables the optional capability when supported.
 	FeatureAllow FeatureLevel = "allow"
@@ -54,11 +52,12 @@ const (
 	DefaultHumanDecisionMaxRetries = 3
 )
 
-// RunPolicyCapabilities lists which RunPolicy dimensions a driver can
-// apply. False means the dimension is ignored or not modeled for that
-// driver. Permission / PlanReview / Question declare per-mode support via
-// HumanDecisionSupport / QuestionSupport so the runner can validate host
-// requests before driver launch.
+// RunPolicyCapabilities lists which RunPolicy dimensions a Driver can honor.
+// False means unsupported: the root runner rejects an explicitly selected
+// non-zero value before Driver.Run instead of silently ignoring host intent.
+// Zero/inherit values remain portable and are not rejected. Permission /
+// PlanReview / Question declare per-mode support via HumanDecisionSupport /
+// QuestionSupport under the same explicit-value rule.
 type RunPolicyCapabilities struct {
 	Isolation bool
 	WebSearch bool

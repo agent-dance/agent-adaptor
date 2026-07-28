@@ -5,7 +5,7 @@ package driver
 // it (Required). See docs/skill-api-design.md §1 for the full contract.
 //
 // Skill also acts as a SkillRef so callers can pass a Skill value directly to
-// WithDefaultSkills / WithSkills without first registering it in a provider.
+// adaptor.WithSkills without first registering it in a provider.
 type Skill struct {
 	// Key is the business-facing identifier of the skill. It is compared
 	// case-sensitively during merging; any two Skill values that share a Key
@@ -13,15 +13,14 @@ type Skill struct {
 	Key string
 	// Source describes how the SDK should locate / materialize the SKILL.md
 	// content. Source == nil is invalid; the SDK reports ErrSkillSourceMissing
-	// at construction time (for binding-level values) or at Run() time (for
-	// per-run values).
+	// while resolving Agent defaults or a Run/Stream invocation.
 	Source SkillSource
 	// Required marks the skill as must-install. Required skills are added to
 	// the Selected set for every run regardless of what the caller passed in
 	// WithSkills.
 	Required bool
 	// Reason is a human-readable explanation attached to Required skills.
-	// Rendered by Admin UIs; ignored when Required is false.
+	// Rendered by host UIs; ignored when Required is false.
 	Reason string
 	// Metadata carries optional extension fields. Keys with an underscore
 	// prefix are reserved for SDK-level interpretation (see the reserved
@@ -35,18 +34,17 @@ const (
 	// materializer writes the skill to disk (and when drivers such as
 	// Cursor mount it under <home>/skills/<name>). Defaults to slug(Key).
 	SkillMetadataRuntimeName = "_runtime_name"
-	// SkillMetadataDisplayName is an Admin UI friendly alias.
+	// SkillMetadataDisplayName is a host-UI-friendly label.
 	SkillMetadataDisplayName = "_display_name"
 )
 
 // isSkillRef is the marker that makes Skill a SkillRef value.
 func (Skill) isSkillRef() {}
 
-// SkillSource is the open marker for a Skill's origin. Built-in
-// implementations live in the root package: SkillFromPath, SkillFromFS,
-// SkillFromInline, SkillFromArchive. Hosts MAY define custom source types as
-// long as a matching SkillMaterializer is installed via
-// WithSkillMaterializer.
+// SkillSource is the open marker for a Skill's origin. Built-in sources and
+// constructors live in package skill. Hosts MAY define custom source types as
+// long as a matching skill.Materializer is installed with
+// adaptor.WithSkillMaterializer.
 //
 // SDK never branches on host-defined source types itself; it only
 // routes them to the configured materializer. This keeps the SDK
@@ -60,8 +58,8 @@ type SkillSource interface {
 	SkillSource()
 }
 
-// SkillRef is accepted by WithDefaultSkills and WithSkills. It is either
-// a string key (SkillKey) or a fully-defined Skill value.
+// SkillRef is accepted by adaptor.WithSkills. It is either a catalogue key
+// (SkillKey) or a fully-defined Skill value.
 type SkillRef interface {
 	isSkillRef()
 }
@@ -121,7 +119,7 @@ type SkillSyncMode string
 
 const (
 	// SkillSyncUnsupported means the driver ignores SDK-resolved skills or
-	// cannot report skill state through Admin.
+	// cannot report observed skill state through Agent.Inspect().Skills.
 	SkillSyncUnsupported SkillSyncMode = "unsupported"
 	// SkillSyncEphemeral means skills are materialized for the current run or
 	// managed profile and do not represent durable user configuration.
@@ -131,8 +129,8 @@ const (
 	SkillSyncPersistent SkillSyncMode = "persistent"
 )
 
-// SkillSnapshot is the Admin-layer report for ListSkills / SetSelectedSkills.
-// See docs/skill-api-design.md §5.
+// SkillSnapshot is the inspection and synchronization report returned through
+// Agent.Inspect().Skills, Agent.SelectSkills, and Agent.SyncProfile.
 type SkillSnapshot struct {
 	DriverType  string
 	Supported   bool
@@ -144,9 +142,8 @@ type SkillSnapshot struct {
 	Fingerprint string
 }
 
-// SnapshotEntry is one Admin-layer skill status entry. It replaces the old
-// SkillEntry type and uses consistent terminology (Selected instead of
-// Desired) across the public surface.
+// SnapshotEntry is one observed or desired skill status entry in a
+// SkillSnapshot.
 type SnapshotEntry struct {
 	Key            string
 	RuntimeName    string

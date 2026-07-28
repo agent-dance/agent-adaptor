@@ -6,14 +6,13 @@ import (
 
 	"github.com/agent-dance/agent-adaptor/codex/appserver"
 	"github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/internal/adapterutil"
+	"github.com/agent-dance/agent-adaptor/internal/driverutil"
 	"github.com/agent-dance/agent-adaptor/internal/profileinstructions"
 )
 
-// runAppServer handles the req.Streaming=true code path. It spawns the
-// codex app-server JSON-RPC subprocess, performs the handshake, and drives
-// one turn while translating server notifications into StreamPayloads on
-// the supplied sink.
+// runAppServer handles provider-streaming invocations and SessionFork. Forks
+// use the official app-server thread/fork method even when the public caller
+// selected Run; the unified event pipeline drains the provider stream.
 //
 // The function mirrors the existing exec --json path for session resume
 // validation (CWD / workspace-id consistency) and checkpoint construction so
@@ -34,7 +33,7 @@ func runAppServer(
 	}
 
 	prompt := req.Prompt
-	if runtimePrefix := adapterutil.RuntimePromptPrefix(req.Runtime); runtimePrefix != "" {
+	if runtimePrefix := driverutil.RuntimePromptPrefix(req.Runtime); runtimePrefix != "" {
 		prompt = runtimePrefix + "\n\n" + prompt
 	}
 	if prefix := profileinstructions.PromptPrefix(preparedInstructions, profileinstructions.Mode(req.Instructions)); prefix != "" {
@@ -44,35 +43,39 @@ func runAppServer(
 	approval := mapApprovalPolicy(req.Policy)
 	sandbox := mapSandbox(req.Policy)
 
-	resumeID := ""
-	if req.Session != nil && req.Session.State != nil {
-		resumeID = req.Session.State.ResumeID
+	resumeID, forkID := codexAppServerThreadIDs(req.Session)
+	if err := validateCodexForkRequest(req); err != nil {
+		return driver.Response{}, err
 	}
+	extraArgs, err := codexAppServerExtraArgs(cfg.ExtraArgs, req.Policy)
+	if err != nil {
+		return driver.Response{}, err
+	}
+	model, effort, serviceTier := codexAppServerConfigProjection(cfg)
 
 	opts := appserver.Options{
 		Command:        command,
+		ExtraArgs:      extraArgs,
 		CWD:            effectiveCWD,
 		Env:            effectiveBindings,
 		ClientName:     "agent-adaptor",
 		ClientVersion:  "v0",
 		Prompt:         prompt,
 		ResumeThreadID: resumeID,
-		// ephemeral=true tells codex app-server "do not persist this
-		// thread to disk". Because we rely on SessionStore to resume
-		// across process restarts, every run must leave a persistent
-		// thread behind. Otherwise the threadId we stash in the
-		// checkpoint is invalid the moment this subprocess exits, and
-		// the next call with the same sessionKey silently starts a
-		// brand new conversation (the 2026-04-21 regression).
-		//
-		// If a host ever wants truly stateless runs they can omit
-		// WithSessionStore on the SDK, which takes us through the
-		// non-streaming code path without a session binding.
-		Ephemeral: false,
-		Sandbox:   sandbox,
-		Approval:  approval,
-		Model:     strings.TrimSpace(cfg.Model),
-		RunID:     req.RunID,
+		ForkThreadID:   forkID,
+		// Keep app-server threads persistent so any checkpoint returned to a
+		// Thread remains resumable after this subprocess exits. Stateless Agent
+		// runs simply ignore the checkpoint.
+		Ephemeral:   false,
+		Sandbox:     sandbox,
+		Approval:    approval,
+		Model:       model,
+		Effort:      effort,
+		ServiceTier: serviceTier,
+		RunID:       req.RunID,
+	}
+	if req.OutputSchema != nil && req.OutputSchema.Mode != driver.StructuredOutputPromptValidate {
+		opts.OutputSchema = req.OutputSchema
 	}
 
 	result, err := appserver.Run(ctx, opts, sink)
@@ -91,7 +94,7 @@ func runAppServer(
 	// Attach runtime-service reports: these are produced by the SDK
 	// upstream rather than the app-server, but the codex adapter advertises
 	// ReportsServices = true and so must surface them here as well.
-	result.RuntimeServices = adapterutil.RuntimeReportsFromRefs(req.Runtime.Ensured, req.Agent)
+	result.RuntimeServices = driverutil.RuntimeReportsFromRefs(req.Runtime.Ensured, req.Agent)
 	if result.Metadata == nil {
 		result.Metadata = map[string]string{}
 	}
@@ -99,34 +102,47 @@ func runAppServer(
 	return result, err
 }
 
-func mapApprovalPolicy(p driver.RunPolicy) string {
-	if p.Isolation == driver.IsolationUnrestricted {
-		return "never"
+func codexAppServerThreadIDs(session *driver.SessionContext) (resumeID, forkID string) {
+	if session == nil || session.State == nil {
+		return "", ""
 	}
-	switch p.HumanDecision.Permission {
+	if session.Mode == driver.SessionFork {
+		return "", session.State.ResumeID
+	}
+	return session.State.ResumeID, ""
+}
+
+func codexAppServerConfigProjection(cfg Config) (model, effort, serviceTier string) {
+	model = strings.TrimSpace(cfg.Model)
+	effort = string(cfg.ReasoningEffort)
+	if cfg.FastMode {
+		serviceTier = "fast"
+	}
+	return model, effort, serviceTier
+}
+
+func mapApprovalPolicy(p driver.RunPolicy) string {
+	switch driver.EffectiveHumanDecisionPolicy(p.HumanDecision).Permission {
 	case driver.HumanDecisionAutoApprove:
 		return "never"
 	case driver.HumanDecisionAsk:
 		return "on-request"
 	case driver.HumanDecisionAutoReject:
 		return "on-request"
-	case driver.HumanDecisionUnset:
-		return ""
 	default:
 		return ""
 	}
 }
 
 func mapSandbox(p driver.RunPolicy) string {
-	if p.Isolation == driver.IsolationUnrestricted {
-		return "danger-full-access"
-	}
 	switch p.Isolation {
 	case driver.IsolationReadOnly:
 		return "read-only"
-	case driver.IsolationWorkspaceWrite, driver.IsolationInherit:
+	case driver.IsolationWorkspaceWrite:
 		return "workspace-write"
+	case driver.IsolationUnrestricted:
+		return "danger-full-access"
 	default:
-		return "workspace-write"
+		return ""
 	}
 }

@@ -8,6 +8,9 @@ import (
 
 const subscriberBuffer = 32
 
+// EventBus publishes DelegationEvent values by leader RunID, retains a bounded
+// replay window for late subscribers, and suppresses duplicate terminal events
+// per delegation. It is safe for concurrent publishers and subscribers.
 type EventBus struct {
 	mu          sync.Mutex
 	subscribers map[string]map[chan DelegationEvent]struct{}
@@ -16,6 +19,8 @@ type EventBus struct {
 	terminal    map[string]map[string]struct{}
 }
 
+// NewEventBus constructs an EventBus. replayLimit is the maximum retained
+// event count per run; zero disables replay and negative values become zero.
 func NewEventBus(replayLimit int) *EventBus {
 	if replayLimit < 0 {
 		replayLimit = 0
@@ -28,6 +33,9 @@ func NewEventBus(replayLimit int) *EventBus {
 	}
 }
 
+// Publish accepts one event and returns whether it entered the bus. Events
+// without RunID and duplicate terminal events are rejected. Subscriber
+// backpressure is summarized as DelegationStreamDropped.
 func (b *EventBus) Publish(ev DelegationEvent) bool {
 	if b == nil || ev.RunID == "" {
 		return false
@@ -129,6 +137,8 @@ func isPriorityEvent(ev DelegationEvent) bool {
 		ev.Kind == DelegationToolCallEnd || ev.Kind == DelegationStreamDropped || isTerminal(ev.Kind)
 }
 
+// ClearRun closes current subscribers and removes replay and terminal state for
+// runID. It does not remove results recorded by Service.
 func (b *EventBus) ClearRun(runID string) {
 	if b == nil || runID == "" {
 		return
@@ -143,6 +153,8 @@ func (b *EventBus) ClearRun(runID string) {
 	delete(b.terminal, runID)
 }
 
+// SubscribeRun returns the retained replay followed by live events for runID.
+// Canceling ctx removes the subscription and closes the channel.
 func (b *EventBus) SubscribeRun(ctx context.Context, runID string) <-chan DelegationEvent {
 	if b == nil || runID == "" {
 		out := make(chan DelegationEvent)

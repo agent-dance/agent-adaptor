@@ -1,15 +1,12 @@
-// Package profile is the v1 vocabulary package for provider profile
-// selection and profile resource declarations (docs/api-v1-redesign.md §2.9,
-// docs/api-v1-implementation-plan.md P3.4).
+// Package profile defines provider profile selection and profile resource
+// declarations (see docs/api-v1-redesign.md §2.9).
 //
 // It answers two host questions with one import:
 //
 //   - Where does the provider profile live? Native(), Dedicated(dir),
 //     CloneNative(dir, ...), and CloneFrom(src, dst, ...) build the same
-//     normalized Selection that the historical root options
-//     WithNativeProfile / WithDedicatedProfile / WithCloneProfile /
-//     WithCloneProfileFrom produce today. Clone constructors accept
-//     CloneOption values such as LinkAuth() to share OAuth login state
+//     normalized Selection consumed by adaptor.WithProfile. Clone constructors
+//     accept CloneOption values such as LinkAuth() to share OAuth login state
 //     without copying token files.
 //
 //   - What must exist inside it? Resources declares desired skills, MCP
