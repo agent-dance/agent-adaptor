@@ -2,7 +2,7 @@
 
 > **接管结案（2026-07-27）**：本文已从“待执行清单”转为“已执行审计证据”，不是当前 API 使用说明。文中 `next/`、`pkg/`、旧 SDK/RunHandle/registry、临时 `V1` 名和“未开始/阻断”措辞均保留为接管时事实。
 >
-> PRE、G-01～G-12、P4 14 项、Driver SPI 9 项、bridge 保真、REHOME/DELETE/ROOT CUTOVER/RESIDUAL DELETE/RENAME/DOCS 均已关闭；ROOT CUTOVER 提交为 `cc6cd82`。当前仍是 **[Unreleased]**，未创建 `v1.0.0` tag，也不虚称尚未取得结果的远端 Linux CI 已成功。
+> PRE、G-01～G-12、P4 14 项、Driver SPI 9 项、bridge 保真、REHOME/DELETE/ROOT CUTOVER/RESIDUAL DELETE/RENAME/DOCS 均已关闭；ROOT CUTOVER 提交为 `cc6cd82`，最终实现冻结提交为 `3b918d1`。当前仍是 **[Unreleased]**，未创建 `v1.0.0` tag；最终实现提交的远端 Linux CI 证据见 §0.3。
 
 ## 0. 最终关闭矩阵
 
@@ -68,7 +68,17 @@
 - 活跃 Go 源码没有旧 `/next`、`/pkg`、`/providers` import；活动目录没有实际 TODO/FIXME/`🚧`、本机 Claude project 路径或临时 `V1` 名。剩余 `V1` 仅属于明确版本化的 `adapter.stream.v1` A2A wire contract。
 - 四条独立终审（架构、API/文档、Driver、release）全部给出 PASS；Windows 无 CGO/GCC，`go test -race ./...` 必须由推送后的 Linux CI 完成。
 
-推送前仍不得写成“远端 CI 已绿”。下一项且唯一开放的外部门禁是：创建新的 `codex/**` 分支、推送，等待 validate/race/fuzz/frontend 四个 job 全绿；本轮没有 `v1.0.0` tag 授权。
+以上是推送前的本地冻结记录。其当时唯一开放的外部门禁已按 §0.3 关闭；本轮仍没有 `v1.0.0` tag 授权。
+
+### 0.3 远端冻结证据
+
+- 新分支：`codex/sdk-api-v1-complete`；最终实现冻结提交：`3b918d1ca7b39f50a7bb216974e9dc679855d789`。
+- GitHub Actions [`Go` run 30377952585](https://github.com/agent-dance/agent-adaptor/actions/runs/30377952585) 以该提交为 head，结论为 success。
+- `validate` success：build、全量 test、vet、govulncheck、opt-in live suites 无付费执行编译、A2A 重复测试全部通过。
+- `race` success：Linux `go test -race ./...` 通过。
+- `fuzz` success：archive extraction、四个 provider protocol parser、Codex app-server decoder 全部通过。
+- `frontend` success：AG-UI 与 CopilotKit 均完成 clean install、build/lint 与 production audit。
+- 流水线只有 GitHub 托管 runner 对 `actions/checkout@v4` / `actions/setup-go@v5` 的 Node 20 runtime 弃用提示；没有代码、依赖或测试失败。该提示属于上游 Action 迁移事项，不改变本次冻结结论。
 
 > 历史状态：**接管时执行事实源（现已结案）**
 > 接管日期：2026-07-27  
