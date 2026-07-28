@@ -6,19 +6,31 @@ import (
 )
 
 var (
+	// ErrInvalidAgentCard identifies invalid or incomplete discovery documents.
 	ErrInvalidAgentCard = errors.New("a2a client: invalid agent card")
-	ErrProtocol         = errors.New("a2a client: protocol error")
-	ErrUnauthorized     = errors.New("a2a client: unauthorized")
-	ErrNotFound         = errors.New("a2a client: task not found")
-	ErrUnsupported      = errors.New("a2a client: unsupported operation")
-	ErrUntrustedOrigin  = errors.New("a2a client: untrusted origin")
+	// ErrProtocol identifies malformed or unexpected A2A protocol data.
+	ErrProtocol = errors.New("a2a client: protocol error")
+	// ErrUnauthorized identifies authentication or authorization failures.
+	ErrUnauthorized = errors.New("a2a client: unauthorized")
+	// ErrNotFound identifies a remote task that does not exist.
+	ErrNotFound = errors.New("a2a client: task not found")
+	// ErrUnsupported identifies an operation the remote endpoint cannot perform.
+	ErrUnsupported = errors.New("a2a client: unsupported operation")
+	// ErrUntrustedOrigin identifies an endpoint that is not allowed to receive credentials.
+	ErrUntrustedOrigin = errors.New("a2a client: untrusted origin")
 )
 
+// ProtocolError records the A2A operation, normalized reason, causal error,
+// and any structured protocol details observed for a failed request.
 type ProtocolError struct {
-	Op     string
+	// Op is the protocol operation that failed.
+	Op string
+	// Reason is the remote or validation error description.
 	Reason string
-	Cause  error
-	Raw    map[string]any
+	// Cause supports errors.Is and errors.As classification.
+	Cause error
+	// Raw preserves structured error details when the transport provides them.
+	Raw map[string]any
 }
 
 func (e *ProtocolError) Error() string {
@@ -47,9 +59,13 @@ func (e *ProtocolError) Unwrap() error {
 	return ErrProtocol
 }
 
+// StreamRecoveryError reports a disconnected stream whose terminal task state
+// could not be recovered.
 type StreamRecoveryError struct {
+	// TaskID is the last task identifier observed before disconnection.
 	TaskID string
-	Cause  error
+	// Cause is the transport or protocol error that ended the stream.
+	Cause error
 }
 
 func (e *StreamRecoveryError) Error() string {

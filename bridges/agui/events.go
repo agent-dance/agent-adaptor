@@ -3,7 +3,7 @@ package agui
 // This file maps the unified adaptor.Event family onto the AG-UI state
 // machine.
 //
-// Typical v1 use from a host (design doc §2.11):
+// Typical host use:
 //
 //	stream := agent.Stream(ctx, prompt)
 //	for ev := range agui.Events(stream) {
@@ -15,8 +15,11 @@ package agui
 //   - lifecycle START/CONTENT/END markers are idempotent and synthesized
 //     when the producer skipped the opening marker;
 //   - all open lifecycles close before the terminal event;
-//   - after CloseRun emits RUN_FINISHED / RUN_ERROR the translator suppresses
-//     all traffic;
+//   - when a Driver publishes no assistant text events, a non-empty final
+//     Result.Text is projected once as a complete assistant message before
+//     the terminal event;
+//   - after CloseRun or CloseResult emits RUN_FINISHED / RUN_ERROR the
+//     translator suppresses all traffic;
 //   - approvals project as "dec.<kind>.<source>" tool-call lifecycles
 //     (DecisionAsToolCall) or CUSTOM events (DecisionAsCustom);
 //   - capability degradation stays visible: the run-policy retry warning
@@ -29,6 +32,7 @@ import (
 	"errors"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -37,7 +41,7 @@ import (
 	adaptor "github.com/agent-dance/agent-adaptor"
 )
 
-// EventTranslator is the v1 stateful mapper from adaptor.Event to AG-UI
+// EventTranslator is the stateful mapper from adaptor.Event to AG-UI
 // events. Create one per run via NewEventTranslator (or let Events do it) so
 // state never leaks between runs.
 type EventTranslator struct {
@@ -55,6 +59,7 @@ type EventTranslator struct {
 	activeText      map[string]bool
 	activeReason    map[string]bool
 	activeToolStart map[string]bool
+	assistantText   bool // non-empty assistant TEXT_MESSAGE_CONTENT was emitted
 
 	decisionMode DecisionMode
 }
@@ -69,7 +74,7 @@ func WithEventDecisionMode(mode DecisionMode) EventTranslatorOption {
 	return func(t *EventTranslator) { t.decisionMode = mode }
 }
 
-// NewEventTranslator returns a fresh v1 translator with the default
+// NewEventTranslator returns a fresh translator with the default
 // DecisionAsToolCall approval mapping.
 func NewEventTranslator(opts ...EventTranslatorOption) *EventTranslator {
 	t := &EventTranslator{
@@ -135,9 +140,9 @@ func EventsContext(ctx context.Context, stream adaptor.Stream, opts ...EventTran
 			}
 		}
 	drained:
-		_, err := stream.Result()
+		result, err := stream.Result()
 		translator.fillRunID(stream.RunID())
-		for _, event := range translator.CloseRun(err) {
+		for _, event := range translator.CloseResult(result, err) {
 			if !send(event) {
 				return
 			}
@@ -150,7 +155,7 @@ func EventsContext(ctx context.Context, stream adaptor.Stream, opts ...EventTran
 // Translate maps one adaptor.Event to zero or more AG-UI events. Stateful:
 // it synthesizes missing opening lifecycle markers, buffers pre-RUN_STARTED
 // output and dedupes lifecycle markers. RunFinished only supplies identity;
-// CloseRun latches the authoritative terminal after Stream.Result().
+// CloseResult latches the authoritative terminal after Stream.Result().
 func (t *EventTranslator) Translate(ev adaptor.Event) []aguievents.Event {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -185,7 +190,7 @@ func (t *EventTranslator) Translate(ev adaptor.Event) []aguievents.Event {
 		}
 		t.runStart = true
 		out := []aguievents.Event{
-			aguievents.NewRunStartedEvent(t.threadOrDefaultV1(), t.runOrDefaultV1()),
+			aguievents.NewRunStartedEvent(t.threadOrDefault(), t.runOrDefault()),
 		}
 		if len(t.pending) > 0 {
 			out = append(out, t.pending...)
@@ -201,11 +206,11 @@ func (t *EventTranslator) Translate(ev adaptor.Event) []aguievents.Event {
 			t.runID = e.RunID
 		}
 		// Informational only. Stream.Result() is the sole terminal authority;
-		// Events calls CloseRun after the event channel is fully drained.
+		// Events calls CloseResult after the event channel is fully drained.
 		return nil
 	}
 
-	translated := t.translateNonTerminalV1Locked(ev)
+	translated := t.translateNonTerminalLocked(ev)
 	if len(translated) == 0 {
 		return nil
 	}
@@ -216,8 +221,18 @@ func (t *EventTranslator) Translate(ev adaptor.Event) []aguievents.Event {
 	return translated
 }
 
-// CloseRun emits the terminal AG-UI event for the run based on the
-// stream.Result() error, exactly once:
+// CloseRun emits the terminal AG-UI event for callers that do not have a
+// Result to project. Hosts draining an adaptor.Stream should prefer
+// CloseResult so a non-streaming Driver's final assistant text is not lost.
+func (t *EventTranslator) CloseRun(err error) []aguievents.Event {
+	return t.CloseResult(nil, err)
+}
+
+// CloseResult emits the terminal AG-UI event for the run based on the
+// stream.Result() outcome, exactly once. When no non-empty assistant text was
+// previously translated, it first projects Result.Text as one complete
+// assistant message. On a business failure, the partial assistant-facing text
+// comes from RunError.Result; the terminal remains RUN_ERROR.
 //
 //   - err == nil → RUN_FINISHED;
 //   - errors.Is(err, context.Canceled) → RUN_ERROR code "run.cancelled";
@@ -225,8 +240,8 @@ func (t *EventTranslator) Translate(ev adaptor.Event) []aguievents.Event {
 //   - any other error → RUN_ERROR code "run.error".
 //
 // Idempotent: once the translator emitted a terminal event, all
-// further CloseRun / Translate calls return nil.
-func (t *EventTranslator) CloseRun(err error) []aguievents.Event {
+// further CloseRun / CloseResult / Translate calls return nil.
+func (t *EventTranslator) CloseResult(result *adaptor.Result, err error) []aguievents.Event {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.runFinish {
@@ -234,11 +249,22 @@ func (t *EventTranslator) CloseRun(err error) []aguievents.Event {
 	}
 	t.runFinish = true
 
-	out := t.ensureRunStartedV1Locked()
-	out = append(out, t.closeAllOpenLifecyclesV1Locked()...)
+	out := t.ensureRunStartedLocked()
+	out = append(out, t.closeAllOpenLifecyclesLocked()...)
+	if !t.assistantText {
+		if text := resultText(result, err); strings.TrimSpace(text) != "" {
+			messageID := t.runOrDefault() + ":result"
+			out = append(out,
+				aguievents.NewTextMessageStartEvent(messageID, aguievents.WithRole("assistant")),
+				aguievents.NewTextMessageContentEvent(messageID, text),
+				aguievents.NewTextMessageEndEvent(messageID),
+			)
+			t.assistantText = true
+		}
+	}
 
 	if err == nil {
-		return append(out, aguievents.NewRunFinishedEvent(t.threadOrDefaultV1(), t.runOrDefaultV1()))
+		return append(out, aguievents.NewRunFinishedEvent(t.threadOrDefault(), t.runOrDefault()))
 	}
 
 	code := "run.error"
@@ -268,9 +294,9 @@ func (t *EventTranslator) fillRunID(runID string) {
 	}
 }
 
-// translateNonTerminalV1Locked handles every event except the run terminal
+// translateNonTerminalLocked handles every event except the run terminal
 // markers. The caller holds t.mu.
-func (t *EventTranslator) translateNonTerminalV1Locked(ev adaptor.Event) []aguievents.Event {
+func (t *EventTranslator) translateNonTerminalLocked(ev adaptor.Event) []aguievents.Event {
 	switch e := ev.(type) {
 	case adaptor.TextDelta:
 		return t.textDeltaLocked(e)
@@ -282,12 +308,12 @@ func (t *EventTranslator) translateNonTerminalV1Locked(ev adaptor.Event) []aguie
 		if e.ID == "" {
 			return nil
 		}
-		content := toolResultContentV1(e.Result)
+		content := toolResultContent(e.Result)
 		return []aguievents.Event{aguievents.NewToolCallResultEvent(e.ID+":result", e.ID, content)}
 	case adaptor.Notice:
 		return t.noticeLocked(e)
 	case adaptor.Dropped:
-		return []aguievents.Event{customEvent("stream.dropped", droppedValueV1(e))}
+		return []aguievents.Event{customEvent("stream.dropped", droppedValue(e))}
 	case adaptor.SubagentUpdate:
 		value := map[string]any{}
 		if e.Agent != "" {
@@ -319,7 +345,7 @@ func (t *EventTranslator) textDeltaLocked(e adaptor.TextDelta) []aguievents.Even
 			return nil
 		}
 		t.activeText[e.MessageID] = true
-		return []aguievents.Event{aguievents.NewTextMessageStartEvent(e.MessageID, textRoleOptV1(e.Role))}
+		return []aguievents.Event{aguievents.NewTextMessageStartEvent(e.MessageID, textRoleOpt(e.Role))}
 	case adaptor.PhaseEnd:
 		if !t.activeText[e.MessageID] {
 			return nil
@@ -330,13 +356,30 @@ func (t *EventTranslator) textDeltaLocked(e adaptor.TextDelta) []aguievents.Even
 		if e.Text == "" {
 			return nil
 		}
+		if e.Role != adaptor.RoleUser && strings.TrimSpace(e.Text) != "" {
+			t.assistantText = true
+		}
 		out := []aguievents.Event{}
 		if !t.activeText[e.MessageID] {
 			t.activeText[e.MessageID] = true
-			out = append(out, aguievents.NewTextMessageStartEvent(e.MessageID, textRoleOptV1(e.Role)))
+			out = append(out, aguievents.NewTextMessageStartEvent(e.MessageID, textRoleOpt(e.Role)))
 		}
 		return append(out, aguievents.NewTextMessageContentEvent(e.MessageID, e.Text))
 	}
+}
+
+// resultText returns only the assistant-facing result layer. In particular it
+// never guesses from Summary, raw process output, transcript entries, or an
+// error message. Business failures carry their partial Result on RunError.
+func resultText(result *adaptor.Result, err error) string {
+	if result != nil {
+		return result.Text
+	}
+	var runErr *adaptor.RunError
+	if errors.As(err, &runErr) && runErr != nil && runErr.Result != nil {
+		return runErr.Result.Text
+	}
+	return ""
 }
 
 func (t *EventTranslator) thinkingLocked(e adaptor.Thinking) []aguievents.Event {
@@ -399,7 +442,7 @@ func (t *EventTranslator) toolCallLocked(e adaptor.ToolCall) []aguievents.Event 
 		delete(t.activeToolStart, e.ID)
 		out = append(out, aguievents.NewToolCallEndEvent(e.ID))
 		if e.Result != nil {
-			out = append(out, aguievents.NewToolCallResultEvent(e.ID+":result", e.ID, toolResultContentV1(e.Result)))
+			out = append(out, aguievents.NewToolCallResultEvent(e.ID+":result", e.ID, toolResultContent(e.Result)))
 		}
 		return out
 	default: // args delta
@@ -524,7 +567,7 @@ func (t *EventTranslator) approvalNoticeResolvedLocked(e adaptor.Notice) []aguie
 		return nil
 	}
 	toolCallID := decisionToolPrefix + requestID
-	tail := hitlResolvedTailV1(toolCallID, e.Data)
+	tail := hitlResolvedTail(toolCallID, e.Data)
 	if !t.activeToolStart[toolCallID] {
 		// Out-of-order resolved — synthesize a start so the AG-UI stream
 		// stays well-formed.
@@ -537,7 +580,7 @@ func (t *EventTranslator) approvalNoticeResolvedLocked(e adaptor.Notice) []aguie
 	return tail
 }
 
-func hitlResolvedTailV1(toolCallID string, data map[string]any) []aguievents.Event {
+func hitlResolvedTail(toolCallID string, data map[string]any) []aguievents.Event {
 	result, _ := data["result"].(string)
 	choice, _ := data["choice"].(string)
 	var latencyMs int64
@@ -547,10 +590,8 @@ func hitlResolvedTailV1(toolCallID string, data map[string]any) []aguievents.Eve
 	payload := map[string]any{
 		"result": result,
 		"choice": choice,
-		// The resolved sink notice carries no "answer" today (next/ seam
-		// note); pass the raw value through so the wire matches the legacy
-		// frame ("answer":null when absent, the structured answer if a
-		// future producer adds one).
+		// Preserve an answer when the resolved notice carries one and encode
+		// JSON null when it does not.
 		"answer":        data["answer"],
 		"retry_attempt": intFromAny(data["attempt"]),
 		"latency_ms":    latencyMs,
@@ -566,30 +607,30 @@ func hitlResolvedTailV1(toolCallID string, data map[string]any) []aguievents.Eve
 }
 
 // ---------------------------------------------------------------------------
-// Shared v1 helpers
+// Shared translation helpers.
 // ---------------------------------------------------------------------------
 
-func (t *EventTranslator) threadOrDefaultV1() string {
+func (t *EventTranslator) threadOrDefault() string {
 	if t.threadID != "" {
 		return t.threadID
 	}
 	return fallbackThreadID
 }
 
-func (t *EventTranslator) runOrDefaultV1() string {
+func (t *EventTranslator) runOrDefault() string {
 	if t.runID != "" {
 		return t.runID
 	}
 	return fallbackRunID
 }
 
-func (t *EventTranslator) ensureRunStartedV1Locked() []aguievents.Event {
+func (t *EventTranslator) ensureRunStartedLocked() []aguievents.Event {
 	if t.runStart {
 		return nil
 	}
 	t.runStart = true
 	out := []aguievents.Event{
-		aguievents.NewRunStartedEvent(t.threadOrDefaultV1(), t.runOrDefaultV1()),
+		aguievents.NewRunStartedEvent(t.threadOrDefault(), t.runOrDefault()),
 	}
 	if len(t.pending) > 0 {
 		out = append(out, t.pending...)
@@ -598,7 +639,7 @@ func (t *EventTranslator) ensureRunStartedV1Locked() []aguievents.Event {
 	return out
 }
 
-func (t *EventTranslator) closeAllOpenLifecyclesV1Locked() []aguievents.Event {
+func (t *EventTranslator) closeAllOpenLifecyclesLocked() []aguievents.Event {
 	out := []aguievents.Event{}
 	for _, id := range sortedActiveIDs(t.activeText) {
 		out = append(out, aguievents.NewTextMessageEndEvent(id))
@@ -624,17 +665,17 @@ func sortedActiveIDs(active map[string]bool) []string {
 	return ids
 }
 
-// textRoleOptV1 maps the public Role onto the AG-UI role option.
-func textRoleOptV1(r adaptor.Role) aguievents.TextMessageStartOption {
+// textRoleOpt maps the public Role onto the AG-UI role option.
+func textRoleOpt(r adaptor.Role) aguievents.TextMessageStartOption {
 	if r == adaptor.RoleUser {
 		return aguievents.WithRole("user")
 	}
 	return aguievents.WithRole("assistant")
 }
 
-// toolResultContentV1 inlines common tool-result payload shapes using a
+// toolResultContent inlines common tool-result payload shapes using a
 // stable preference order.
-func toolResultContentV1(result map[string]any) string {
+func toolResultContent(result map[string]any) string {
 	if result == nil {
 		return "{}"
 	}
@@ -659,7 +700,7 @@ func toolResultContentV1(result map[string]any) string {
 	return "{}"
 }
 
-func droppedValueV1(e adaptor.Dropped) map[string]any {
+func droppedValue(e adaptor.Dropped) map[string]any {
 	value := map[string]any{"dropped_count": e.Count}
 	if len(e.ByKind) > 0 {
 		value["by_kind"] = e.ByKind

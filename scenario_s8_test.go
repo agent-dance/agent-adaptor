@@ -1,6 +1,6 @@
 package adaptor_test
 
-// P3.8 scenario S8 (design doc docs/api-v1-redesign.md §S8): the
+// Scenario S8 (design doc docs/api-v1-redesign.md §S8): the
 // tenant-isolated dedicated profile of a desktop product — a cloned
 // provider profile per tenant that shares the machine's OAuth login state
 // by link (never copying token files), plus profile-shaped resources

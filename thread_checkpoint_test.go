@@ -1,20 +1,21 @@
 package adaptor_test
 
-// P2 contract migration, codec leg: the semantic assertions of the legacy
-// session_codec_internal_test.go (passthrough round-trip, DisplayID
-// defaulting, driver-owned codec normalization), replayed through the two
-// v1 touch points that consume the codec: the persist pipeline and
+// Thread codec assertions replayed through the two v1 touch points that
+// consume the codec: the persist pipeline and
 // Thread.Checkpoint (the audit window onto the driver resume handle).
 
 import (
 	"context"
 	"errors"
 	"maps"
+	"sync"
 	"testing"
+	"time"
 
+	adaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/memory"
-	adaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/threadstore"
 )
 
 // codecFake is a fakeDriver that additionally implements
@@ -25,6 +26,62 @@ type codecFake struct {
 }
 
 type typedNilCodecFake struct{ *fakeDriver }
+
+type noCodecFake struct {
+	inner    *fakeDriver
+	supports bool
+}
+
+func (d *noCodecFake) Descriptor() driver.Descriptor {
+	desc := d.inner.Descriptor()
+	desc.Sessions.SupportsResume = d.supports
+	return desc
+}
+func (d *noCodecFake) ValidateConfig(cfg any) error { return d.inner.ValidateConfig(cfg) }
+func (d *noCodecFake) SessionConfigFingerprint() (string, error) {
+	return d.inner.SessionConfigFingerprint()
+}
+func (d *noCodecFake) Run(ctx context.Context, req driver.Request, sink driver.EventSink) (driver.Response, error) {
+	return d.inner.Run(ctx, req, sink)
+}
+
+type observingStore struct {
+	inner *memory.Store
+	mu    sync.Mutex
+	calls int
+}
+
+func newObservingStore() *observingStore { return &observingStore{inner: memory.NewStore()} }
+func (s *observingStore) called() {
+	s.mu.Lock()
+	s.calls++
+	s.mu.Unlock()
+}
+func (s *observingStore) callCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.calls
+}
+func (s *observingStore) Resolve(ctx context.Context, q threadstore.Query) (*threadstore.Record, error) {
+	s.called()
+	return s.inner.Resolve(ctx, q)
+}
+func (s *observingStore) Finalize(ctx context.Context, req threadstore.FinalizeRequest) error {
+	s.called()
+	return s.inner.Finalize(ctx, req)
+}
+func (s *observingStore) AcquireLease(ctx context.Context, target, owner string, ttl time.Duration) (threadstore.Lease, error) {
+	s.called()
+	return s.inner.AcquireLease(ctx, target, owner, ttl)
+}
+func (s *observingStore) RenewLease(ctx context.Context, lease threadstore.Lease, ttl time.Duration) error {
+	s.called()
+	return s.inner.RenewLease(ctx, lease, ttl)
+}
+func (s *observingStore) ReleaseLease(ctx context.Context, lease threadstore.Lease) error {
+	s.called()
+	return s.inner.ReleaseLease(ctx, lease)
+}
 
 func (*typedNilCodecFake) SessionCodec() driver.SessionCodec {
 	var codec *allowlistCodec
@@ -41,6 +98,10 @@ func (d *codecFake) SessionCodec() driver.SessionCodec { return d.codec }
 // allowlistCodec keeps only the "cwd" session parameter — everything else
 // in State.Data is transient and must not survive normalization.
 type allowlistCodec struct{}
+
+type rejectingAllowlistCodec struct{ allowlistCodec }
+
+func (rejectingAllowlistCodec) FromParams(driver.SessionParams) *driver.SessionState { return nil }
 
 func (allowlistCodec) Name() string { return "allowlist" }
 
@@ -86,22 +147,118 @@ func TestThreadCheckpointNotFound(t *testing.T) {
 	}
 }
 
-func TestThreadRejectsTypedNilSessionCodecWithoutPanic(t *testing.T) {
-	fake := &typedNilCodecFake{fakeDriver: newFakeDriver()}
-	agent := adaptor.New(fake, adaptor.WithThreadStore(memory.NewStore()))
-	if _, err := agent.Thread("bad-codec").Run(context.Background(), "go"); !errors.Is(err, adaptor.ErrThreadIncompatible) {
-		t.Fatalf("typed nil codec: err=%v, want ErrThreadIncompatible", err)
+func TestThreadCheckpointRejectsInvalidDurableState(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*threadstore.Record)
+		want   error
+	}{
+		{name: "nil_state", mutate: func(record *threadstore.Record) { record.State = nil }, want: adaptor.ErrThreadCheckpointMissing},
+		{name: "empty_resume_id", mutate: func(record *threadstore.Record) {
+			record.State = &driver.SessionState{DisplayID: "display-only"}
+		}, want: adaptor.ErrThreadIncompatible},
+		{name: "codec_mismatch", mutate: func(record *threadstore.Record) {
+			record.SessionCodec = "other/codec"
+		}, want: adaptor.ErrThreadIncompatible},
 	}
-	if fake.runCount() != 0 {
-		t.Fatalf("driver ran %d times despite invalid codec", fake.runCount())
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			fake := newFakeDriver()
+			fake.runFunc = checkpointing(driver.SessionState{ResumeID: "resume-1"})
+			store := memory.NewStore()
+			agent := adaptor.New(fake, adaptor.WithThreadStore(store))
+			thread := agent.Thread("invalid-checkpoint")
+			if _, err := thread.Run(ctx, "seed"); err != nil {
+				t.Fatalf("seed: %v", err)
+			}
+			record := *activeRecord(t, store, thread.Key())
+			tc.mutate(&record)
+			overwriteActiveRecord(t, store, record)
+
+			checkpoint, err := thread.Checkpoint(ctx)
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("Checkpoint error = %v, want %v", err, tc.want)
+			}
+			if checkpoint != nil {
+				t.Fatalf("Checkpoint = %+v, want nil on invalid durable state", checkpoint)
+			}
+		})
 	}
 }
 
-// TestThreadCheckpointPassthroughRoundTrip: without a driver codec the
-// passthrough codec round-trips the state — Data preserved, DisplayID
-// defaulting to ResumeID — and the returned snapshot is isolated from the
-// store.
-func TestThreadCheckpointPassthroughRoundTrip(t *testing.T) {
+func TestThreadCheckpointRejectsStateCodecCannotNormalize(t *testing.T) {
+	ctx := context.Background()
+	store := memory.NewStore()
+	seedFake := newFakeDriver()
+	seedFake.runFunc = checkpointing(driver.SessionState{ResumeID: "resume-1"})
+	seedDriver := &codecFake{fakeDriver: seedFake, codec: allowlistCodec{}}
+	if _, err := adaptor.New(seedDriver, adaptor.WithThreadStore(store)).Thread("codec-reject").Run(ctx, "seed"); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	readDriver := &codecFake{fakeDriver: newFakeDriver(), codec: rejectingAllowlistCodec{}}
+	checkpoint, err := adaptor.New(readDriver, adaptor.WithThreadStore(store)).Thread("codec-reject").Checkpoint(ctx)
+	if !errors.Is(err, adaptor.ErrThreadIncompatible) {
+		t.Fatalf("Checkpoint error = %v, want ErrThreadIncompatible", err)
+	}
+	if checkpoint != nil {
+		t.Fatalf("Checkpoint = %+v, want nil when codec rejects state", checkpoint)
+	}
+}
+
+func TestThreadSessionCapabilityPrelaunchMatrix(t *testing.T) {
+	tests := []struct {
+		name    string
+		driver  func(*fakeDriver) driver.Driver
+		wantErr bool
+	}{
+		{name: "unsupported_without_provider", driver: func(f *fakeDriver) driver.Driver {
+			return &noCodecFake{inner: f, supports: false}
+		}, wantErr: true},
+		{name: "declared_without_provider", driver: func(f *fakeDriver) driver.Driver {
+			return &noCodecFake{inner: f, supports: true}
+		}, wantErr: true},
+		{name: "declared_with_typed_nil_codec", driver: func(f *fakeDriver) driver.Driver {
+			return &typedNilCodecFake{fakeDriver: f}
+		}, wantErr: true},
+		{name: "declared_with_valid_codec", driver: func(f *fakeDriver) driver.Driver {
+			return &codecFake{fakeDriver: f, codec: allowlistCodec{}}
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := newFakeDriver()
+			fake.runFunc = checkpointing(driver.SessionState{ResumeID: "resume-1", Data: map[string]string{"cwd": "/repo"}})
+			store := newObservingStore()
+			agent := adaptor.New(tc.driver(fake), adaptor.WithThreadStore(store))
+			_, err := agent.Thread("capability-matrix").Run(context.Background(), "go")
+			if tc.wantErr {
+				if !errors.Is(err, adaptor.ErrThreadIncompatible) {
+					t.Fatalf("error = %v, want ErrThreadIncompatible", err)
+				}
+				if fake.runCount() != 0 {
+					t.Fatalf("Driver.Run called %d times after prelaunch rejection", fake.runCount())
+				}
+				if calls := store.callCount(); calls != 0 {
+					t.Fatalf("thread store observed %d calls after prelaunch rejection, want 0", calls)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("valid resume capability rejected: %v", err)
+			}
+			if fake.runCount() != 1 || store.callCount() == 0 {
+				t.Fatalf("valid path: runs=%d store calls=%d", fake.runCount(), store.callCount())
+			}
+		})
+	}
+}
+
+// TestThreadCheckpointExplicitCodecRoundTrip proves an explicitly declared
+// codec preserves Data, defaults DisplayID to ResumeID, and returns snapshots
+// isolated from the store.
+func TestThreadCheckpointExplicitCodecRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	fake := newFakeDriver()
 	fake.runFunc = checkpointing(driver.SessionState{

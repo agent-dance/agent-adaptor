@@ -1,17 +1,11 @@
 package adaptor_test
 
-// The programmable fake driver backing the S1/S2/S4 scenario tests and the
+// The programmable fake Driver backing the S1/S2/S4 scenario tests and the
 // RunError path tests.
-//
-// Placement note (P0.6): the task sheet allowed either internal/testutil or
-// the next/ test package. It lives here so that next/'s gate
-// (go build/vet/test ./next/...) depends only on next/ + driver/ — the
-// legacy root package (currently being strangled into internal/engine in a
-// parallel workstream) never enters this package's compile graph. When later
-// phases need the fake outside next/, promote it to internal/testutil.
 
 import (
 	"context"
+	"maps"
 	"sync"
 	"testing"
 
@@ -38,7 +32,7 @@ type fakeDriver struct {
 	caps driver.RunPolicyCapabilities
 
 	// descriptor, when non-nil, replaces the default descriptor wholesale.
-	// P3 capability-matrix tests use it to advertise Models, MCP transport
+	// Capability-matrix tests use it to advertise Models, MCP transport
 	// support, and StructuredOutput support.
 	descriptor *driver.Descriptor
 
@@ -49,17 +43,56 @@ type fakeDriver struct {
 
 var _ driver.Driver = (*fakeDriver)(nil)
 var _ driver.SessionConfigFingerprinter = (*fakeDriver)(nil)
+var _ driver.SessionCodecProvider = (*fakeDriver)(nil)
 var _ driver.StreamSupport = (*fakeDriver)(nil)
 
+type fakeSessionCodec struct{}
+
+func (fakeSessionCodec) Name() string { return "fake/session/v1" }
+func (fakeSessionCodec) ToParams(state *driver.SessionState) driver.SessionParams {
+	if state == nil {
+		return driver.SessionParams{}
+	}
+	return driver.SessionParams{ResumeID: state.ResumeID, DisplayID: state.DisplayID, Values: maps.Clone(state.Data)}
+}
+func (fakeSessionCodec) FromParams(params driver.SessionParams) *driver.SessionState {
+	if params.ResumeID == "" && params.DisplayID == "" && len(params.Values) == 0 {
+		return nil
+	}
+	displayID := params.DisplayID
+	if displayID == "" {
+		displayID = params.ResumeID
+	}
+	return &driver.SessionState{ResumeID: params.ResumeID, DisplayID: displayID, Data: maps.Clone(params.Values)}
+}
+func (fakeSessionCodec) GuardFingerprint(params driver.SessionParams) string {
+	return params.ResumeID
+}
+
 func newFakeDriver() *fakeDriver {
-	return &fakeDriver{response: driver.Response{Output: "ok"}}
+	return &fakeDriver{
+		response: driver.Response{Output: "ok"},
+		caps: driver.RunPolicyCapabilities{
+			Isolation:  true,
+			WebSearch:  true,
+			Browser:    true,
+			Permission: driver.HumanDecisionSupport{Ask: true, AutoApprove: true, AutoReject: true},
+			PlanReview: driver.HumanDecisionSupport{Ask: true, AutoApprove: true, AutoReject: true},
+			Question:   driver.QuestionSupport{Ask: true, AutoReject: true},
+		},
+	}
 }
 
 func (f *fakeDriver) Descriptor() driver.Descriptor {
 	if f.descriptor != nil {
 		return *f.descriptor
 	}
-	return driver.Descriptor{Type: "fake", DisplayName: "Fake Driver", RunPolicyCaps: f.caps}
+	return driver.Descriptor{
+		Type:          "fake",
+		DisplayName:   "Fake Driver",
+		Sessions:      driver.SessionCapability{SupportsResume: true},
+		RunPolicyCaps: f.caps,
+	}
 }
 
 func (f *fakeDriver) ValidateConfig(any) error { return nil }
@@ -67,6 +100,8 @@ func (f *fakeDriver) ValidateConfig(any) error { return nil }
 func (f *fakeDriver) SessionConfigFingerprint() (string, error) {
 	return "fake-driver-config/v1", nil
 }
+
+func (f *fakeDriver) SessionCodec() driver.SessionCodec { return fakeSessionCodec{} }
 
 func (f *fakeDriver) StreamCapability() driver.StreamCapability { return f.streamCaps }
 

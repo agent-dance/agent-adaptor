@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -24,6 +25,8 @@ const (
 	MethodThreadStart = "thread/start"
 	// MethodThreadResume resumes an existing codex thread.
 	MethodThreadResume = "thread/resume"
+	// MethodThreadFork creates a child thread without mutating its parent.
+	MethodThreadFork = "thread/fork"
 	// MethodTurnStart starts one turn inside a thread.
 	MethodTurnStart = "turn/start"
 	// MethodTurnInterrupt interrupts an in-flight turn.
@@ -53,7 +56,8 @@ const (
 	NotifyItemReasoningSummaryPartAdded = "item/reasoning/summaryPartAdded"
 	// NotifyItemCommandExecutionOutputDelta carries command output deltas.
 	NotifyItemCommandExecutionOutputDelta = "item/commandExecution/outputDelta"
-	// NotifyCommandExecOutputDelta carries legacy command output deltas.
+	// NotifyCommandExecOutputDelta carries command output deltas emitted under
+	// the alternate app-server notification name.
 	NotifyCommandExecOutputDelta = "command/exec/outputDelta"
 	// NotifyItemFileChangeOutputDelta carries file-change output deltas.
 	NotifyItemFileChangeOutputDelta = "item/fileChange/outputDelta"
@@ -155,7 +159,7 @@ func (c *Client) ThreadStart(ctx context.Context, params ThreadStartParams) (*Th
 	if err := c.conn.Call(ctx, MethodThreadStart, params, &resp); err != nil {
 		return nil, wrapRPCErr(MethodThreadStart, err)
 	}
-	if resp.Thread.ID == "" {
+	if strings.TrimSpace(resp.Thread.ID) == "" {
 		return nil, fmt.Errorf("appserver: thread/start returned empty thread id")
 	}
 	return &resp, nil
@@ -167,8 +171,26 @@ func (c *Client) ThreadResume(ctx context.Context, params ThreadResumeParams) (*
 	if err := c.conn.Call(ctx, MethodThreadResume, params, &resp); err != nil {
 		return nil, wrapRPCErr(MethodThreadResume, err)
 	}
-	if resp.Thread.ID == "" {
+	if strings.TrimSpace(resp.Thread.ID) == "" {
 		return nil, fmt.Errorf("appserver: thread/resume returned empty thread id")
+	}
+	if resp.Thread.ID != params.ThreadID {
+		return nil, fmt.Errorf("appserver: thread/resume returned thread id %q for requested thread %q", resp.Thread.ID, params.ThreadID)
+	}
+	return &resp, nil
+}
+
+// ThreadFork creates a new child thread from an existing parent thread id.
+func (c *Client) ThreadFork(ctx context.Context, params ThreadForkParams) (*ThreadForkResponse, error) {
+	var resp ThreadForkResponse
+	if err := c.conn.Call(ctx, MethodThreadFork, params, &resp); err != nil {
+		return nil, wrapRPCErr(MethodThreadFork, err)
+	}
+	if strings.TrimSpace(resp.Thread.ID) == "" {
+		return nil, fmt.Errorf("appserver: thread/fork returned empty thread id")
+	}
+	if resp.Thread.ID == params.ThreadID {
+		return nil, fmt.Errorf("appserver: thread/fork returned parent thread id %q", params.ThreadID)
 	}
 	return &resp, nil
 }
@@ -179,6 +201,9 @@ func (c *Client) TurnStart(ctx context.Context, params TurnStartParams) (*TurnSt
 	var resp TurnStartResponse
 	if err := c.conn.Call(ctx, MethodTurnStart, params, &resp); err != nil {
 		return nil, wrapRPCErr(MethodTurnStart, err)
+	}
+	if strings.TrimSpace(resp.Turn.ID) == "" {
+		return nil, fmt.Errorf("appserver: turn/start returned empty turn id")
 	}
 	return &resp, nil
 }
@@ -198,8 +223,8 @@ func (c *Client) TurnInterrupt(ctx context.Context, params TurnInterruptParams) 
 
 // connHandler implements jsonrpc2.Handler. It is the single place where
 // inbound frames are observed: notifications are forwarded to the
-// registered NotificationHandler, unsolicited server requests (e.g.
-// approval prompts — unused in v1) are rejected to unblock the peer.
+// registered NotificationHandler, unsolicited server requests (for example,
+// approval prompts) are rejected to unblock the peer.
 type connHandler struct {
 	client *Client
 }
@@ -207,13 +232,13 @@ type connHandler struct {
 func (h *connHandler) Handle(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
 	if !req.Notif {
 		// codex app-server may emit ServerRequest frames for approval
-		// prompts. v1 never enables approval policies that require
-		// human-in-the-loop, but we must reply to avoid leaking a
-		// pending request on the peer. Respond with "method not found"
-		// so the server fails fast instead of blocking.
+		// prompts. This client does not negotiate server-initiated approval
+		// requests, but it must reply to avoid leaking a pending request on
+		// the peer. Respond with "method not found" so the server fails fast
+		// instead of blocking.
 		_ = conn.ReplyWithError(ctx, req.ID, &jsonrpc2.Error{
 			Code:    jsonrpc2.CodeMethodNotFound,
-			Message: fmt.Sprintf("agent-adaptor does not accept server-initiated request %q in v1", req.Method),
+			Message: fmt.Sprintf("agent-adaptor does not accept server-initiated request %q", req.Method),
 		})
 		return
 	}

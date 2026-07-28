@@ -1,6 +1,6 @@
 # Profile Resource Provider Matrix
 
-> Status: maximum-capability research baseline with repeatable smoke evidence. This file records the evidence used to design the public profile-resource surface for Codex, Claude Code, and Cursor. The goal is not the smallest common denominator. The goal is a portable capability envelope: common host intent where possible, typed extended capabilities when at least one provider has a stable native surface, explicit fallback/unsupported states when a provider cannot honor a field, and provider-native escape hatches for the long tail.
+> Status: v1 contract and provider-capability reference. This file records the research evidence behind the final public profile-resource surface for Codex, Claude Code, and Cursor. The contract uses portable host intent where possible, typed extended capabilities where providers expose a stable native surface, explicit fallback or unsupported states where they do not, and provider-native escape hatches for the long tail.
 
 ## Research Scope
 
@@ -18,11 +18,11 @@ Primary documentation used:
 |---|---|
 | Codex | Custom agents live under `~/.codex/agents/` or `.codex/agents/` and require `name`, `description`, and `developer_instructions`; optional fields include model, reasoning effort, sandbox, MCP servers, and skills. Hooks are configured in `hooks.json` or inline `[hooks]`, support command handlers, event groups, regex matchers, timeout, and lifecycle events such as `SessionStart`, `PreToolUse`, `PermissionRequest`, `PostToolUse`, `UserPromptSubmit`, and `Stop`. `config.toml` exposes model, profile, sandbox, approval, permission, shell environment, skills, MCP, tools, and instruction-file keys. |
 | Claude Code | Subagents are Markdown files with YAML frontmatter or `--agents` JSON; required fields are `name` and `description`, with body/`prompt` as system prompt and optional fields for tools, model, permission mode, MCP servers, hooks, skills, effort, isolation, etc. Hooks are JSON settings with event -> matcher group -> handler nesting; handler types include command, http, mcp_tool, prompt, and agent. Settings are hierarchical JSON files with user/project/local/managed scopes and include permissions, env, sandbox, hook policy, MCP policy, and more. `CLAUDE.md` and `.claude/rules/` are persistent instruction surfaces. |
-| Cursor | Public docs cover Rules (`.cursor/rules`, user rules, `AGENTS.md`, legacy `.cursorrules`) and the Agent CLI. Local bundled Cursor guides document `.cursor/agents/*.md` / `~/.cursor/agents/*.md` subagents with YAML frontmatter and `.cursor/hooks.json` / `~/.cursor/hooks.json` hooks with command/prompt handlers, event names, matchers, timeout, `failClosed`, and event-specific outputs. The January 8, 2026 changelog confirms CLI rules/MCP management and hook performance/behavior updates. |
+| Cursor | Public docs cover Rules (`.cursor/rules`, user rules, `AGENTS.md`, and the older `.cursorrules` format) and the Agent CLI. Local bundled Cursor guides document `.cursor/agents/*.md` / `~/.cursor/agents/*.md` subagents with YAML frontmatter and `.cursor/hooks.json` / `~/.cursor/hooks.json` hooks with command/prompt handlers, event names, matchers, timeout, `failClosed`, and event-specific outputs. The January 8, 2026 changelog confirms CLI rules/MCP management and hook performance/behavior updates. |
 
 ## Support Levels
 
-The public API should model support with these levels. Capability reporting must be per provider and per field, not just per resource kind.
+The public API models support with these levels. Capability reporting is per provider and per field, not just per resource kind.
 
 | Level | Meaning |
 |---|---|
@@ -32,104 +32,129 @@ The public API should model support with these levels. Capability reporting must
 | `fallback` | Adapter can approximate the host intent, usually by prompt injection, script-side filtering, or per-run CLI flags. Snapshot must say fallback. |
 | `unsupported` | Provider lacks a stable surface for this field. Adapter must report error/warning according to the caller's unsupported policy; it must not silently succeed. |
 
-## Repeatable Smoke Evidence
+## Historical Local Smoke Evidence
 
-Run these from the repo root:
+The following results were recorded on the research machine with the CLI versions listed above. They are historical environment evidence, not the current release gate. The example now lives at `examples/profiles/resources`; reruns must use the current path and record the current CLI/auth state independently.
 
-| Command | Result on this machine | Meaning |
+| Current equivalent command | Historically recorded result | Meaning |
 |---|---|---|
-| `go test ./...` | pass | repo-wide verification, including examples compile |
-| `go run ./examples/profile-resources -agent=codex -timeout=2m` | pass | verified local smoke for profile resources |
-| `go run ./examples/profile-resources -agent=claude -timeout=1m` | fail: `Not logged in` | environment/auth gap |
-| `go run ./examples/profile-resources -agent=cursor -timeout=1m` | fail: `no healthy local cursor CLI command found` | environment/CLI gap |
+| `go test ./...` | pass | repository-wide verification, including example compilation |
+| `go run ./examples/profiles/resources -agent=codex -timeout=2m` | pass | local profile-resource smoke completed |
+| `go run ./examples/profiles/resources -agent=claude -timeout=1m` | fail: `Not logged in` | historical environment/auth gap, not a profile-resource regression |
+| `go run ./examples/profiles/resources -agent=cursor -timeout=1m` | fail: `no healthy local cursor CLI command found` | historical environment/CLI gap, not a profile-resource regression |
 
-The successful smoke should print `before_sync` and `after_sync` snapshots plus two successful `Run` results. If Claude or Cursor fails earlier, record the CLI/auth gap instead of treating the failure as a profile-resource regression.
+A successful smoke prints `before_sync` and `after_sync` snapshots plus two successful `Run` results. A provider that cannot start because of local auth or CLI availability must be recorded as an environment gap rather than as proof of either profile-resource success or regression.
 
 ## Capability Matrix
 
 | Resource | Public capability envelope | Codex | Claude Code | Cursor |
 |---|---|---|---|---|
-| `agents` | `portable_core`: key/runtime name, description, instruction/system-prompt body, source file passthrough, metadata. `portable_extended`: model, reasoning/effort, tool policy, permission/sandbox/isolation hints, MCP server scope, skills, hooks-on-agent when provider supports it. | Native custom agents with TOML files. Strong support for model, reasoning effort, sandbox, MCP servers, skills config. Tool policy should map through sandbox/permissions only where documented; otherwise unsupported. | Native subagents with Markdown/YAML or `--agents` JSON. Strong support for tools, disallowed tools, model, permission mode, MCP servers, hooks, max turns, skills, effort, background, isolation, memory, color. | Native subagents per bundled guide with Markdown/YAML and required `name`/`description`; body is system prompt. Additional fields beyond that are unverified and should be either native escape or unsupported until smoke-tested. |
-| `hooks` | `portable_core`: command hook, event taxonomy, optional matcher, timeout, disabled flag, env keys, fail policy, status label. `portable_extended`: prompt hooks, HTTP hooks, MCP-tool hooks, agent hooks, richer output actions, shell/MCP/file/subagent shortcut events. | Native command hooks only in current docs; events include session start, pre/post tool, permission request, prompt submit, stop. Regex matcher, timeout, status message. No native prompt/http/mcp_tool/agent handlers found. | Native hooks with five handler types: command, http, mcp_tool, prompt, agent. Very broad event set, matcher semantics, `if` filtering, output decision control. | Bundled guide documents command and prompt hooks; broad event set including shell, MCP, file, subagent, prompt, compaction, stop, thought/response events; JS regex matcher, timeout, failClosed, loop limit. |
+| `agents` | `portable_core`: key/runtime name, description, and instruction/system-prompt body. `native_escape`: source file plus stable source fingerprint. `portable_extended`: model, reasoning/effort, tool policy, permission/sandbox/isolation hints, MCP server scope, skills, hooks-on-agent, native data, and metadata where the Driver can materialize them. | Native custom agents with TOML files. The built-in materializer maps model, reasoning effort, and sandbox; tool policy, permission mode, MCP servers, skills, and agent-local hooks are reported as unmapped. | Native subagents with Markdown/YAML or `--agents` JSON. The built-in materializer maps tools, disallowed tools, model, permission mode, MCP servers, skills, and effort; sandbox and agent-local hooks are reported as unmapped. | Native subagents per bundled guide with Markdown/YAML and required name/description; body is system prompt. The built-in materializer reports extended agent fields as unmapped. |
+| `hooks` | `portable_core`: command handler, canonical event, typed matcher, timeout, and disabled state. `portable_extended`: prompt, HTTP, MCP-tool, and agent handlers; fail policy, status label, handler environment, and shortcut events where the Driver can represent them. | Native command hooks; events include session start, pre/post tool, permission request, prompt submit, and stop. Regex matcher, timeout, and status message are available. The built-in materializer reports handler environment and unsupported extended handlers explicitly. | Native hooks with command, HTTP, MCP-tool, prompt, and agent handlers, broad events, matcher semantics, filtering, and output decision control. The built-in materializer reports handler environment and any unmapped policy fields explicitly. | Bundled guides document command and prompt hooks, broad events, regex matchers, timeout, `failClosed`, and loop limits. The built-in materializer reports handler environment and unsupported handler kinds explicitly. |
 | `instructions` | `portable_core`: instruction material enters effective context; source can be path or inline content; fingerprint participates in resume guard; snapshot states distinguish native/file managed, prompt injected, and unsupported. `portable_extended`: scope hints, path-scoped rules, append vs replace, provider-specific rules format. | Implemented profile-native materialization to `$CODEX_HOME/AGENTS.md`; `replace` mode maps to `$CODEX_HOME/AGENTS.override.md`. Prompt injection remains fallback for run-scoped bundles. | Implemented profile-native materialization to `$CLAUDE_CONFIG_DIR/CLAUDE.md`. Prompt injection remains fallback for run-scoped bundles. | Profile sync remains fallback because public CLI docs expose project rules and user settings, but no stable profile-level rules file. `Run` materializes project/local scoped bundles to `<workspace>/.cursor/rules/<id>.mdc`; other scopes remain prompt fallback. |
-| `config` | Public config must be adapter-declared capability patches, not arbitrary file/section writes. `portable_core`: model hint, reasoning/effort, sandbox/isolation, approval/permission policy, env policy, MCP policy where adapter declares support. `native_escape`: provider-native structured patch with explicit provider target. | Native `config.toml` has broad stable keys for model, reasoning, approval, sandbox, permissions, shell env, tools, skills, MCP, profiles, instructions. Current allowlist materializes `model`, `reasoning_effort`, `sandbox`, and `approval`. | Native hierarchical JSON settings expose agent selection, permissions, env, sandbox, hook policy, MCP policy, attribution, worktree settings, and managed settings. CLI flags provide per-session model/effort/system prompt overrides. Current allowlist materializes `model`, `effort`, `permission`, and `env`. | Cursor Agent CLI exposes sandbox, modes, MCP commands, rules generation, and local bundled `update-cli-config` documents `cli-config.json`. Current allowlist materializes `sandbox`, `approval`, `permissions`, and `display`; model remains unsupported because the bundled guide marks model fields as model-picker managed. |
+| `config` | Public config uses Driver-declared capability patches rather than arbitrary file/section writes. Each capability's support level is reported by the bound Driver; an explicit `NativeConfigPatch` is always `native_escape`. | Current allowlist materializes `model`, `reasoning_effort`, `sandbox`, and `approval` into `config.toml`. | Current allowlist materializes `model`, `effort`, `permission`, and `env` into `settings.json`. | Current allowlist materializes `sandbox`, `approval`, `permissions`, and `display` into `cli-config.json`; model remains unsupported because the bundled guide marks model fields as model-picker managed. |
 
-## Target Public Spec Envelope
+## Final v1 Public Contract
 
-These target shapes are design guidance for the next API revision. The existing structs can be migrated incrementally, but examples and implementation plans should use these semantics.
+Application-facing declarations live in `profile`. Driver-facing normalized declarations live in `driver`. The two packages intentionally own separate concrete types so application code does not depend on the Driver SPI; the root package performs the single conversion between them.
 
-### AgentSpec
+### SubAgent and AgentSpec
 
-Admit as a maximum-capability public resource after adding first-class fields:
+The application-facing shape is exactly:
 
 ```go
-type AgentSpec struct {
-	Key          string
-	RuntimeName  string
-	Description  string
-	Instructions string
-	SourcePath   string
+type SubAgent struct {
+	Key               string
+	RuntimeName       string
+	Description       string
+	Instructions      string
+	SourcePath        string
+	SourceFingerprint string
 
 	Model           string
 	ReasoningEffort string
-	ToolPolicy      *AgentToolPolicy
+	ToolPolicy      *ToolPolicy
 	PermissionMode  string
 	SandboxMode     string
 	MCPServers      []string
 	Skills          []string
-	Hooks           []HookSpec
+	Hooks           []Hook
 
 	Native   map[string]any
 	Metadata map[string]string
 }
+
+type ToolPolicy struct {
+	Allow []string
+	Deny  []string
+}
 ```
+
+`driver.AgentSpec` has the same fields and ordering, with `*driver.AgentToolPolicy` and `[]driver.HookSpec` as the SPI-owned nested types.
 
 Rules:
 
-- `Description` and `Instructions` are `portable_core`.
-- `SourcePath` is `native_escape`: adapter may copy/reference a provider-native file but must not translate it to another provider.
-- `Content` in the current API should be deprecated or documented as an alias for `Instructions`; it must not mean both common instruction body and provider-native blob.
-- Extended fields are allowed in public API, but adapter capability checks decide whether to materialize, fallback, or reject.
+- `Instructions` is the only inline sub-agent instruction body.
+- `SourcePath` and `Instructions` are mutually exclusive. A source path is provider-native material and is not translated across providers.
+- `SourceFingerprint` is supplied by an advanced host or computed from the source content before execution. It participates in profile and Thread compatibility fingerprints.
+- Extended fields are accepted only where the bound Driver can materialize them; unsupported intent is reported rather than silently presented as managed.
 
-### HookSpec
+### Hook and HookSpec
 
-Admit as a maximum-capability public resource after replacing bare strings with typed event/matcher/handler fields:
+The application-facing shape is exactly:
 
 ```go
-type HookSpec struct {
-	Key           string
-	Event         HookEvent
-	MatcherSpec   HookMatcher
-	Handler       HookHandler
+type Hook struct {
+	Key         string
+	Event       HookEvent
+	MatcherSpec HookMatcher
+	Handler     HookHandler
+
 	Timeout       time.Duration
 	FailPolicy    HookFailPolicy
-	StatusMessage  string
+	StatusMessage string
 	Disabled      bool
 
-	// Legacy v1 command-hook compatibility:
-	Matcher string
+	Native   map[string]any
+	Metadata map[string]string
+}
+
+type HookMatcher struct {
+	Subject HookMatcherSubject
+	Syntax  HookMatcherSyntax
+	Pattern string
+}
+
+type HookHandler struct {
+	Type    HookHandlerType
 	Command string
 	Args    []string
 	Env     map[string]string
 
-	Native   map[string]any
-	Metadata map[string]string
+	Prompt string
+	URL    string
+	Server string
+	Tool   string
+	Input  map[string]any
+	Agent  string
 }
 ```
 
-Core/extended split:
+`driver.HookSpec` has the same fields and ordering, using the corresponding `driver` event, matcher, handler, and fail-policy types.
 
-- `command` handler is `portable_core`; all three providers have a command/script hook surface.
-- `prompt` handler is `portable_extended`; Claude and Cursor support it, Codex currently does not.
-- `http`, `mcp_tool`, and `agent` handlers are `portable_extended` only where adapter reports support; currently Claude-native, not portable across all three.
-- `Timeout` is public because all known hook systems either support it or need a deterministic adapter default.
-- `FailPolicy` is public because Cursor exposes `failClosed`, and Claude/Codex have event-specific blocking behavior that must not be hidden.
-- `Matcher` / `Command` / `Args` / `Env` remain as v1 command-hook compatibility fields; v2 callers should use `MatcherSpec` + `Handler`.
-- `Args` can remain public for command hooks, but adapter must either safely quote to provider shell strings or reject unrepresentable argv.
+Rules:
+
+- `MatcherSpec` is the only matcher contract. Its `Subject`, `Syntax`, and `Pattern` preserve host intent without conflating provider-native matcher strings with canonical matching.
+- `Handler` is the only action contract. Command, argv, and environment are `HookHandler.Command`, `HookHandler.Args`, and `HookHandler.Env`.
+- `command` is `portable_core`; all three researched providers have a command/script hook surface.
+- `prompt` is `portable_extended`; Claude and Cursor support it while Codex does not currently expose it.
+- `http`, `mcp_tool`, and `agent` are `portable_extended` only where the Driver reports support; they are currently Claude-native rather than portable across all three.
+- Drivers must safely encode command argv for the provider representation or reject an unrepresentable command.
+- `Timeout`, `FailPolicy`, and `StatusMessage` remain explicit because provider behavior differs and must not be hidden.
 
 ### Hook Event Mapping
 
-Canonical events should be host intent names, not provider event names:
+Canonical events are host-intent names, not provider event names:
 
 | Canonical event | Codex | Claude Code | Cursor |
 |---|---|---|---|
@@ -154,9 +179,23 @@ Canonical events should be host intent names, not provider event names:
 | `stop` | `Stop` | `Stop` | `stop` |
 | `stop_failure` | unsupported | `StopFailure` | unsupported/unverified |
 
-### InstructionsBundleRef
+### Instructions and InstructionsBundleRef
 
-Admit as public intent, but expand sources:
+The application-facing shape is exactly:
+
+```go
+type Instructions struct {
+	ID          string
+	Path        string
+	Content     string
+	Fingerprint string
+	Scope       InstructionScope
+	Mode        InstructionMode
+	Native      map[string]any
+}
+```
+
+The Driver SPI mirrors it as:
 
 ```go
 type InstructionsBundleRef struct {
@@ -175,11 +214,31 @@ Rules:
 - `Path` and `Content` are mutually exclusive.
 - `Scope` can express user/project/local/run when adapters can map it.
 - `Mode` separates additive guidance from provider-specific replacement of built-in instructions.
-- Snapshot states must include `native_managed`, `file_managed`, `prompt_injected`, and `unsupported`.
+- `Fingerprint`, when supplied, is the host's stable content identity. Otherwise the execution pipeline derives a fingerprint from the resolved instruction material.
+- Profile state reports the actual support and materialization outcome, including `native_managed`, `file_managed`, `prompt_injected`, or `not_materialized` as applicable.
 
 ### Config
 
-Do not admit arbitrary `Path` / `Section` as the main common API. Replace the default path with adapter-declared config capabilities:
+The application-facing shape is exactly:
+
+```go
+type ConfigPatch struct {
+	Key        string
+	Capability string
+	Values     map[string]any
+	Native     *NativeConfigPatch
+}
+
+type NativeConfigPatch struct {
+	Provider string
+	FileKind ConfigFileKind
+	Path     string
+	Section  string
+	Values   map[string]any
+}
+```
+
+The Driver SPI mirrors it as:
 
 ```go
 type ProfileConfigPatch struct {
@@ -188,22 +247,33 @@ type ProfileConfigPatch struct {
 	Values     map[string]any
 	Native     *NativeConfigPatch
 }
+
+type NativeConfigPatch struct {
+	Provider string
+	FileKind ProfileConfigFileKind
+	Path     string
+	Section  string
+	Values   map[string]any
+}
 ```
 
 Rules:
 
-- `Capability` is validated against `AgentAdmin.ConfigSchema()`.
-- Stable public capabilities should include model, reasoning/effort, sandbox/isolation, approval/permission rules, env policy, MCP policy, hook policy, and instruction-file linkage when the adapter declares support.
-- `NativeConfigPatch` may expose provider/file/section for advanced hosts, but must be explicit, provider-scoped, and excluded from portable examples.
+- Exactly one of `Capability` or `Native` is required. Supplying both or neither is rejected before Driver execution.
+- `Capability` is validated against the profile-config capabilities implemented for the bound Driver. An unknown capability is reported as unsupported; it is not converted into an arbitrary file write.
+- `NativeConfigPatch` owns `Provider`, `FileKind`, `Path`, `Section`, and native `Values`. A non-empty `Provider` restricts the patch to that Driver; an empty provider targets the already-bound Driver.
+- Outer `Values` is the portable capability payload and also supplies native values when `Native.Values` is empty. `Native.Values` takes precedence when explicitly populated.
+- Stable capability names currently materialized by the built-in Drivers are recorded in the capability matrix above; support and materialization remain observable through `Agent.ProfileState`.
+- Native patches are explicit escape hatches and are excluded from portable examples.
 - Secret-bearing config values must be environment references or secret handles; manifest must never persist raw secret values.
 
-## Implementation Gates
+## Change Gates
 
-Before implementing or marking a field as managed:
+Before changing a field or marking additional provider support as managed:
 
 1. Update this matrix with provider-specific file paths, config keys, event names, and local CLI versions.
 2. Add a temp-profile smoke test that writes the minimum resource and verifies the provider accepts or loads it.
-3. Add adapter conformance covering `portable_core`, `portable_extended`, `fallback`, `native_escape`, and `unsupported`.
+3. Add Driver conformance covering `portable_core`, `portable_extended`, `fallback`, `native_escape`, and `unsupported`.
 4. Update `docs/api-reference.md` with field-level support states, not just resource-level support.
 5. Ensure `ProfileSnapshot` reports the exact materialization state and never presents fallback or unsupported as native managed.
 

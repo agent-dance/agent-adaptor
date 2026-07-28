@@ -111,6 +111,58 @@ func TestMCPServerReturnsJSONRPCErrorForUnencodableToolSchema(t *testing.T) {
 	}
 }
 
+func TestMCPServerRequestBodyLimit(t *testing.T) {
+	t.Parallel()
+	const prefix = `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`
+	server := NewMCPServer(NewDelegator(nil, nil), MCPServerOptions{RunID: "run-1", BearerToken: "token"})
+
+	t.Run("exactly at limit", func(t *testing.T) {
+		body := prefix + strings.Repeat(" ", int(maxMCPRequestBytes)-len(prefix))
+		request := httptest.NewRequest(http.MethodPost, "http://localhost", strings.NewReader(body))
+		request.Header.Set("Authorization", "Bearer token")
+		response := httptest.NewRecorder()
+		server.ServeHTTP(response, request)
+
+		var envelope struct {
+			Result any `json:"result"`
+			Error  any `json:"error"`
+		}
+		if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
+			t.Fatalf("decode exact-limit response: %v", err)
+		}
+		if envelope.Error != nil || envelope.Result == nil {
+			t.Fatalf("response = %#v, want successful tools/list", envelope)
+		}
+	})
+
+	t.Run("one byte over limit", func(t *testing.T) {
+		body := prefix + strings.Repeat(" ", int(maxMCPRequestBytes)-len(prefix)+1)
+		request := httptest.NewRequest(http.MethodPost, "http://localhost", strings.NewReader(body))
+		request.Header.Set("Authorization", "Bearer token")
+		response := httptest.NewRecorder()
+		server.ServeHTTP(response, request)
+
+		var envelope struct {
+			JSONRPC string `json:"jsonrpc"`
+			ID      any    `json:"id"`
+			Error   *struct {
+				Code    int    `json:"code"`
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
+			t.Fatalf("decode oversized response: %v", err)
+		}
+		if response.Code != http.StatusOK {
+			t.Fatalf("HTTP status = %d, want 200 JSON-RPC error", response.Code)
+		}
+		if envelope.JSONRPC != "2.0" || envelope.ID != nil || envelope.Error == nil ||
+			envelope.Error.Code != -32001 || envelope.Error.Message != "request body exceeds 1 MiB limit" {
+			t.Fatalf("response = %#v", envelope)
+		}
+	})
+}
+
 func TestNewMCPServerRejectsAmbiguousToolNames(t *testing.T) {
 	tests := []MCPServerOptions{
 		{Tools: []ToolSpec{{Name: ""}}},

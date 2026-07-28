@@ -103,7 +103,7 @@ func layout(driverType, profileDir string) (string, string, error) {
 	case "claude", "cursor":
 		return filepath.Join(profileDir, "agents"), ".md", nil
 	default:
-		return "", "", fmt.Errorf("profile agents are unsupported by adapter %q", driverType)
+		return "", "", fmt.Errorf("profile agents are unsupported by driver %q", driverType)
 	}
 }
 
@@ -140,7 +140,7 @@ func render(driverType string, spec driver.AgentSpec, name string) (string, erro
 	case "cursor":
 		return renderMarkdown(spec, name, false), nil
 	default:
-		return "", fmt.Errorf("profile agents are unsupported by adapter %q", driverType)
+		return "", fmt.Errorf("profile agents are unsupported by driver %q", driverType)
 	}
 }
 
@@ -296,9 +296,6 @@ func instructions(spec driver.AgentSpec) string {
 	if strings.TrimSpace(spec.Instructions) != "" {
 		return strings.TrimSpace(spec.Instructions)
 	}
-	if strings.TrimSpace(spec.Content) != "" {
-		return strings.TrimSpace(spec.Content)
-	}
 	return "Follow the host-provided role description for this agent."
 }
 
@@ -380,7 +377,7 @@ func anySourcePath(payload driver.AgentPayload) bool {
 func fingerprint(spec driver.AgentSpec) string {
 	raw, err := json.Marshal(spec)
 	if err != nil {
-		raw = []byte(spec.Key + spec.RuntimeName + spec.Instructions + spec.Content + spec.SourcePath + spec.SourceFingerprint)
+		raw = []byte(spec.Key + spec.RuntimeName + spec.Instructions + spec.SourcePath + spec.SourceFingerprint)
 	}
 	if strings.TrimSpace(spec.SourcePath) != "" {
 		if stat, err := os.Stat(spec.SourcePath); err == nil {

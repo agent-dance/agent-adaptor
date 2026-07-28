@@ -25,7 +25,7 @@ func TestA2AImportsStayLocalized(t *testing.T) {
 		}
 		if entry.IsDir() {
 			switch entry.Name() {
-			case ".git", ".omx":
+			case ".git", ".omx", ".next", "dist", "node_modules":
 				return filepath.SkipDir
 			default:
 				return nil

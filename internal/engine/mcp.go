@@ -1,14 +1,12 @@
 package engine
 
 import (
-	"encoding/json"
 	"fmt"
 	"slices"
-	"strconv"
 	"strings"
 )
 
-// MCPConfig is the binding-level or per-run collection of MCP servers. Per-run
+// MCPConfig is the Agent-level or per-run collection of MCP servers. Per-run
 // WithMCP replaces the full effective config rather than appending to defaults.
 type MCPConfig struct {
 	Servers []MCPServerSpec
@@ -111,70 +109,20 @@ func mcpServersFromRuntimeRefs(refs []RuntimeServiceRef) ([]MCPServerSpec, error
 	return out, nil
 }
 
-// mcpServerFromRuntimeRef materializes the MCP server a runtime service ref
-// publishes for the run, if any. The typed RuntimeServiceRef.MCP field wins;
-// when it is nil the legacy "agentadaptor.mcp.*" metadata keys are parsed as
-// a migration-period fallback (compat path scheduled for removal in P5).
+// mcpServerFromRuntimeRef materializes the typed MCP server a runtime service
+// ref publishes for the run, if any. Metadata is deliberately opaque to the
+// engine and is never interpreted as an MCP declaration.
 func mcpServerFromRuntimeRef(ref RuntimeServiceRef) (MCPServerSpec, bool, error) {
-	if ref.MCP != nil {
-		return mcpServerFromTypedRef(ref), true, nil
-	}
-
-	metadata := ref.Metadata
-	if !runtimeMCPEnabled(metadata) {
+	if ref.MCP == nil {
 		return MCPServerSpec{}, false, nil
 	}
-
-	spec := MCPServerSpec{
-		Key:               strings.TrimSpace(metadata["agentadaptor.mcp.key"]),
-		Transport:         MCPTransport(strings.TrimSpace(metadata["agentadaptor.mcp.transport"])),
-		Command:           strings.TrimSpace(metadata["agentadaptor.mcp.command"]),
-		URL:               strings.TrimSpace(metadata["agentadaptor.mcp.url"]),
-		BearerTokenEnvVar: strings.TrimSpace(metadata["agentadaptor.mcp.bearer_token_env_var"]),
-		RequiredReason:    strings.TrimSpace(metadata["agentadaptor.mcp.required_reason"]),
-	}
-	if spec.Key == "" {
-		spec.Key = strings.TrimSpace(ref.Name)
-	}
-	if spec.Key == "" {
-		spec.Key = strings.TrimSpace(ref.ID)
-	}
-	if spec.Transport == "" {
-		if spec.Command != "" {
-			spec.Transport = MCPTransportStdio
-		} else {
-			spec.Transport = MCPTransportHTTP
-		}
-	}
-	if spec.URL == "" && spec.Transport != MCPTransportStdio {
-		spec.URL = strings.TrimSpace(ref.URL)
-	}
-	if spec.Command == "" && spec.Transport == MCPTransportStdio {
-		spec.Command = strings.TrimSpace(ref.Command)
-	}
-
-	var err error
-	if spec.Args, err = parseRuntimeMCPStringSlice(metadata, "agentadaptor.mcp.args_json"); err != nil {
-		return MCPServerSpec{}, false, err
-	}
-	if spec.Env, err = parseRuntimeMCPStringMap(metadata, "agentadaptor.mcp.env_json"); err != nil {
-		return MCPServerSpec{}, false, err
-	}
-	if spec.Headers, err = parseRuntimeMCPStringMap(metadata, "agentadaptor.mcp.headers_json"); err != nil {
-		return MCPServerSpec{}, false, err
-	}
-	if spec.Required, err = parseRuntimeMCPBool(metadata, "agentadaptor.mcp.required"); err != nil {
-		return MCPServerSpec{}, false, err
-	}
-
-	return spec, true, nil
+	return mcpServerFromTypedRef(ref), true, nil
 }
 
 // mcpServerFromTypedRef materializes the typed RuntimeServiceRef.MCP field
-// with the same defaulting rules as the legacy metadata path: an empty Key
-// falls back to the ref's Name then ID, an empty Transport is inferred from
-// Command (stdio) versus URL (http), and empty URL/Command default from the
-// ref's own endpoint fields.
+// with ergonomic defaults: an empty Key falls back to the ref's Name then ID,
+// an empty Transport is inferred from Command (stdio) versus URL (http), and
+// empty URL/Command default from the ref's own endpoint fields.
 func mcpServerFromTypedRef(ref RuntimeServiceRef) MCPServerSpec {
 	spec := cloneMCPServerSpec(*ref.MCP)
 	if strings.TrimSpace(spec.Key) == "" {
@@ -197,54 +145,6 @@ func mcpServerFromTypedRef(ref RuntimeServiceRef) MCPServerSpec {
 		spec.Command = strings.TrimSpace(ref.Command)
 	}
 	return spec
-}
-
-func runtimeMCPEnabled(metadata map[string]string) bool {
-	if len(metadata) == 0 {
-		return false
-	}
-	raw, ok := metadata["agentadaptor.mcp.enabled"]
-	if !ok {
-		return false
-	}
-	enabled, err := strconv.ParseBool(strings.TrimSpace(raw))
-	return err == nil && enabled
-}
-
-func parseRuntimeMCPStringSlice(metadata map[string]string, key string) ([]string, error) {
-	raw := strings.TrimSpace(metadata[key])
-	if raw == "" {
-		return nil, nil
-	}
-	var values []string
-	if err := json.Unmarshal([]byte(raw), &values); err != nil {
-		return nil, fmt.Errorf("%w: runtime MCP metadata %s must be a JSON string array: %v", ErrInvalidMCPConfig, key, err)
-	}
-	return cloneStrings(values), nil
-}
-
-func parseRuntimeMCPStringMap(metadata map[string]string, key string) (map[string]string, error) {
-	raw := strings.TrimSpace(metadata[key])
-	if raw == "" {
-		return nil, nil
-	}
-	var values map[string]string
-	if err := json.Unmarshal([]byte(raw), &values); err != nil {
-		return nil, fmt.Errorf("%w: runtime MCP metadata %s must be a JSON object with string values: %v", ErrInvalidMCPConfig, key, err)
-	}
-	return cloneStringMap(values), nil
-}
-
-func parseRuntimeMCPBool(metadata map[string]string, key string) (bool, error) {
-	raw := strings.TrimSpace(metadata[key])
-	if raw == "" {
-		return false, nil
-	}
-	value, err := strconv.ParseBool(raw)
-	if err != nil {
-		return false, fmt.Errorf("%w: runtime MCP metadata %s must be boolean: %v", ErrInvalidMCPConfig, key, err)
-	}
-	return value, nil
 }
 
 func prepareMCPPayload(cfg MCPConfig, caps MCPCapability) (MCPPayload, error) {

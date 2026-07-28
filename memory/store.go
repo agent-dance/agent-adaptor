@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
+	"io"
 	"sync"
 	"time"
 
@@ -16,15 +18,15 @@ type leaseRecord struct {
 	Token string
 }
 
+var leaseEntropyRead = rand.Read
+
 // Store is an in-memory implementation of threadstore.Store. It is useful for
 // tests, local CLIs, demos, and single-process hosts that do not need thread
 // state to survive process restarts. Production services that run multiple
 // processes should provide a durable/centralized store instead.
 //
-// The memory package intentionally depends only on the public threadstore
-// contract. The legacy root-package SessionStore implementation was removed
-// during the v1 cutover so this package cannot pull the old SDK surface back
-// into production dependency graphs.
+// Store coordinates callers within one process. It does not provide durable
+// storage or coordination across processes.
 type Store struct {
 	mu       sync.Mutex
 	records  map[string]threadstore.Record
@@ -128,9 +130,15 @@ func cloneThreadRecord(record threadstore.Record) threadstore.Record {
 
 // AcquireLease obtains or renews exclusive use of target for owner until ttl
 // elapses. A valid lease held by a different owner yields a BusyError.
-func (s *Store) AcquireLease(_ context.Context, target, owner string, ttl time.Duration) (threadstore.Lease, error) {
+func (s *Store) AcquireLease(ctx context.Context, target, owner string, ttl time.Duration) (threadstore.Lease, error) {
+	if err := ctx.Err(); err != nil {
+		return threadstore.Lease{}, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return threadstore.Lease{}, err
+	}
 	now := time.Now().UTC()
 	current, ok := s.leases[target]
 	if ok && current.Until.After(now) && current.Owner != owner {
@@ -138,7 +146,11 @@ func (s *Store) AcquireLease(_ context.Context, target, owner string, ttl time.D
 	}
 	token := current.Token
 	if token == "" || !ok || !current.Until.After(now) {
-		token = newLeaseToken()
+		var err error
+		token, err = newLeaseToken()
+		if err != nil {
+			return threadstore.Lease{}, err
+		}
 	}
 	s.leases[target] = leaseRecord{
 		Owner: owner,
@@ -181,10 +193,14 @@ func (s *Store) ReleaseLease(_ context.Context, lease threadstore.Lease) error {
 	return nil
 }
 
-func newLeaseToken() string {
-	var buf [8]byte
-	if _, err := rand.Read(buf[:]); err != nil {
-		return hex.EncodeToString([]byte(time.Now().UTC().Format(time.RFC3339Nano)))
+func newLeaseToken() (string, error) {
+	var buf [16]byte
+	n, err := leaseEntropyRead(buf[:])
+	if err != nil {
+		return "", fmt.Errorf("memory: generate lease token entropy: %w", err)
 	}
-	return hex.EncodeToString(buf[:])
+	if n != len(buf) {
+		return "", fmt.Errorf("memory: generate lease token entropy: read %d of %d bytes: %w", n, len(buf), io.ErrUnexpectedEOF)
+	}
+	return hex.EncodeToString(buf[:]), nil
 }

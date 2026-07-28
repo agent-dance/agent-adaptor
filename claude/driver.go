@@ -6,13 +6,14 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 
 	"github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/internal/adapterutil"
 	"github.com/agent-dance/agent-adaptor/internal/clihelper"
 	"github.com/agent-dance/agent-adaptor/internal/configprobe"
+	"github.com/agent-dance/agent-adaptor/internal/driverutil"
 	"github.com/agent-dance/agent-adaptor/internal/engine"
 	"github.com/agent-dance/agent-adaptor/internal/mcpruntime"
 	"github.com/agent-dance/agent-adaptor/internal/profileagents"
@@ -31,7 +32,7 @@ func jsonMarshalInteractive(v any) ([]byte, error) {
 	return json.Marshal(v)
 }
 
-// DriverType is the stable descriptor type for the built-in Claude adapter.
+// DriverType is the stable descriptor type for the built-in Claude driver.
 const DriverType = "claude"
 
 type adapter struct{}
@@ -70,13 +71,12 @@ func (adapter) Descriptor() driver.Descriptor {
 		Workspace:    driver.WorkspaceCapability{Supported: true},
 		RunPolicyCaps: driver.RunPolicyCapabilities{
 			Isolation: false, WebSearch: false, Browser: true,
-			// Phase 3 interactive mode uses stdio permission prompting
-			// (`--permission-prompt-tool stdio`) so Claude emits native
-			// can_use_tool control_request frames. We still keep
-			// Permission.Ask disabled until the dedicated host UX and
-			// end-to-end coverage are expanded beyond PlanReview/Question.
-			Permission: driver.HumanDecisionSupport{Ask: false, AutoApprove: true, AutoReject: true, Retry: false},
-			// PlanReview + Question are fully supported in Phase 3 via
+			// Interactive mode uses stdio permission prompting
+			// (`--permission-prompt-tool stdio`) so every native can_use_tool
+			// control_request, including ordinary tools, is resolved through
+			// the same DecisionCapableSink as plan review and questions.
+			Permission: driver.HumanDecisionSupport{Ask: true, AutoApprove: true, AutoReject: true, Retry: false},
+			// PlanReview + Question are fully supported in interactive mode via
 			// can_use_tool control_request / control_response over stdio.
 			// Retry stays false: CLI cannot
 			// "re-ask the same tool_use_id"; retry would need to push the
@@ -111,16 +111,16 @@ func (adapter) CheckEnvironment(_ context.Context, cfg any) (driver.EnvironmentR
 	if command == "" {
 		command = "claude"
 	}
-	checks := append(adapterutil.CommandEnvironmentChecks(command), adapterutil.CWDEnvironmentChecks(config.CommonConfig.CWD)...)
+	checks := append(driverutil.CommandEnvironmentChecks(command), driverutil.CWDEnvironmentChecks(config.CommonConfig.CWD)...)
 	bindings, err := effectiveClaudeBindings(config.CommonConfig, nil)
 	if err != nil {
 		checks = append(checks, driver.EnvironmentCheck{Code: "claude_profile_error", Level: "fail", Message: "Claude profile resolution failed.", Detail: err.Error()})
-		return adapterutil.SummarizeEnvironment(DriverType, checks), nil
+		return driverutil.SummarizeEnvironment(DriverType, checks), nil
 	}
 	checks = append(checks, claudeAuthChecks(bindings)...)
 	checks = append(checks, claudeModelCompatibilityChecks(config)...)
 	checks = append(checks, claudeConfigChecks(bindings)...)
-	return adapterutil.SummarizeEnvironment(DriverType, checks), nil
+	return driverutil.SummarizeEnvironment(DriverType, checks), nil
 }
 
 func (adapter) ListModels(_ context.Context, cfg any) ([]driver.ModelInfo, error) {
@@ -321,7 +321,10 @@ func (adapter) SyncProfileResources(ctx context.Context, cfg any, _ driver.Agent
 
 func (adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSink) (driver.Response, error) {
 	cfg := readConfig(req.Config)
-	// per-run WithModel overrides the binding model for this invocation only.
+	if err := validateClaudeSessionRequest(req); err != nil {
+		return driver.Response{}, err
+	}
+	// Per-run WithModel overrides the configured model for this invocation only.
 	if m := strings.TrimSpace(req.ModelOverride); m != "" {
 		cfg.Model = m
 	}
@@ -335,8 +338,7 @@ func (adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSin
 		return driver.Response{}, err
 	}
 	effectiveCWD := chooseCWD(cfg.CommonConfig, req.Workspace)
-	legacyBundleKey := req.Skills.Fingerprint
-	if err := validateClaudeSessionGuard(req, effectiveCWD, profileFingerprint, legacyBundleKey); err != nil {
+	if err := validateClaudeSessionGuard(req, effectiveCWD, profileFingerprint); err != nil {
 		return driver.Response{}, err
 	}
 	bindings, err = effectiveClaudeBindings(cfg.CommonConfig, req.Profile)
@@ -373,7 +375,7 @@ func (adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSin
 			return driver.Response{}, err
 		}
 	}
-	effectiveEnv, err := adapterutil.RuntimeEnvBindings(bindings, req.Runtime)
+	effectiveEnv, err := driverutil.RuntimeEnvBindings(bindings, req.Runtime)
 	if err != nil {
 		return driver.Response{}, err
 	}
@@ -387,27 +389,19 @@ func (adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSin
 	}
 
 	interactive := wantsInteractiveClaude(req.Policy.HumanDecision)
-	if interactive {
-		if err := validateInteractivePolicy(req.Policy.HumanDecision); err != nil {
-			return driver.Response{}, err
-		}
-	}
 	if req.OutputSchema != nil && req.OutputSchema.Mode != driver.StructuredOutputPromptValidate {
 		if interactive {
-			return driver.Response{}, &engine.StructuredOutputUnsupportedError{Adapter: DriverType, Mode: req.OutputSchema.Mode, Reason: "Claude native structured output is not supported with interactive HITL"}
-		}
-		if hasAnyArg(cfg.ExtraArgs, "--json-schema", "--output-format") {
-			return driver.Response{}, &engine.InvalidOutputSchemaError{Reason: "Claude ExtraArgs must not include --json-schema or --output-format when SDK structured output is enabled"}
+			return driver.Response{}, &engine.StructuredOutputUnsupportedError{Driver: DriverType, Mode: req.OutputSchema.Mode, Reason: "Claude native structured output is not supported with interactive HITL"}
 		}
 	}
 
-	args, err := buildClaudeExecArgs(cfg, req, "", interactive)
+	args, err := buildClaudeExecArgs(cfg, req, interactive)
 	if err != nil {
 		return driver.Response{}, err
 	}
 
 	rawPrompt := req.Prompt
-	if runtimePrefix := adapterutil.RuntimePromptPrefix(req.Runtime); runtimePrefix != "" {
+	if runtimePrefix := driverutil.RuntimePromptPrefix(req.Runtime); runtimePrefix != "" {
 		rawPrompt = runtimePrefix + "\n\n" + rawPrompt
 	}
 	if prefix := profileinstructions.PromptPrefix(preparedInstructions, profileinstructions.Mode(req.Instructions)); prefix != "" {
@@ -418,13 +412,10 @@ func (adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSin
 	parser.setHITLContext(req.RunID, req.Policy.HumanDecision)
 	if req.Streaming || interactive {
 		// Interactive mode always streams (we need the partial_json deltas
-		// to reconstruct tool_use inputs), regardless of the caller's
-		// Streaming flag. Hosts that invoke Start without streaming but
-		// want HITL nevertheless get the StreamHITLRequested/Resolved
-		// pair for audit — the stream channel is closed on the outer
-		// handle so those events are dropped by the unified event sink, but the
-		// parser's RequestDecision flow still works through the runner's
-		// typed-handler dispatch.
+		// to reconstruct tool_use inputs), even when the resolved invocation
+		// did not otherwise select the rich provider transport. HITL requests
+		// and resolutions still travel through the same decision-capable Event
+		// sink used by every Agent.Run and Agent.Stream invocation.
 		parser.enableStreaming(req.RunID)
 	}
 
@@ -465,14 +456,41 @@ func (adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSin
 	}
 	parser.finalize()
 	raw := driver.RawStreams{Stdout: result.RawStreams.Stdout, Stderr: result.RawStreams.Stderr, Terminal: parser.terminal}
-	var failure *driver.RunFailure
-	if parser.pendingFailure != nil {
-		failure = parser.pendingFailure
-	} else if strings.TrimSpace(parser.errorMessage) != "" {
-		failure = &driver.RunFailure{
-			Code:    driver.FailureAgentError,
-			Message: parser.errorMessage,
+	if parser.interactiveErr != nil {
+		failure := &driver.RunFailure{Code: driver.FailureAgentError, Message: parser.interactiveErr.Error()}
+		parser.completeStream(failure, result.ExitCode, result.Signal, result.TimedOut)
+		return driver.Response{}, parser.interactiveErr
+	}
+	if err := validateClaudeForkOutcome(req, parser); err != nil {
+		parser.completeStream(&driver.RunFailure{Code: driver.FailureAgentError, Message: err.Error()}, result.ExitCode, result.Signal, result.TimedOut)
+		return driver.Response{}, err
+	}
+	if req.Session != nil && req.Session.State != nil && strings.TrimSpace(req.Session.State.ResumeID) != "" &&
+		!parser.terminalSuccess && isClaudeResumeRejected(raw.Stdout, raw.Stderr, parser.errorMessage) {
+		reason := strings.TrimSpace(parser.errorMessage)
+		if reason == "" {
+			reason = "claude resume session " + strconv.Quote(req.Session.State.ResumeID) + " is unavailable"
 		}
+		err := &engine.ResumeRejectedError{Reason: reason}
+		parser.completeStream(&driver.RunFailure{Code: driver.FailureAgentError, Message: err.Error()}, result.ExitCode, result.Signal, result.TimedOut)
+		return driver.Response{}, err
+	}
+	failure := parser.failureForOutcome(result.ExitCode, result.Signal, result.TimedOut)
+	var structuredOutput *driver.StructuredOutput
+	if req.OutputSchema != nil {
+		source := driver.StructuredOutputSourceNative
+		if req.OutputSchema.Mode == driver.StructuredOutputPromptValidate {
+			source = driver.StructuredOutputSourcePromptValidate
+		} else {
+			structuredOutput = parser.structuredOutput
+		}
+		structuredOutput, failure = engine.FinalizeStructuredOutput(
+			req.OutputSchema,
+			source,
+			parser.buildOutput(),
+			structuredOutput,
+			failure,
+		)
 	}
 	checkpoint := parser.checkpointForOutcome(result.ExitCode, result.Signal, result.TimedOut, failure)
 	if checkpoint != nil && checkpoint.State != nil {
@@ -482,12 +500,7 @@ func (adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSin
 			driver.SessionParamProfileFingerprint: profileFingerprint,
 		}
 	}
-
-	meta := parser.outputMetadata()
-	var structuredOutput *driver.StructuredOutput
-	if req.OutputSchema != nil && req.OutputSchema.Mode != driver.StructuredOutputPromptValidate {
-		structuredOutput = parser.structuredOutput
-	}
+	parser.completeStream(failure, result.ExitCode, result.Signal, result.TimedOut)
 
 	return driver.Response{
 		Output:           parser.buildOutput(),
@@ -498,17 +511,45 @@ func (adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSin
 		TimedOut:         result.TimedOut,
 		Usage:            parser.usage,
 		Checkpoint:       checkpoint,
-		Metadata:         meta,
 		Provider:         "anthropic",
 		Model:            reportedModel,
 		Summary:          parser.finalSummary(),
 		StructuredOutput: structuredOutput,
-		RuntimeServices:  adapterutil.RuntimeReportsFromRefs(req.Runtime.Ensured, req.Agent),
+		RuntimeServices:  driverutil.RuntimeReportsFromRefs(req.Runtime.Ensured, req.Agent),
 		Failure:          failure,
 	}, nil
 }
 
-func validateClaudeSessionGuard(req driver.Request, effectiveCWD, profileFingerprint, legacyBundleKey string) error {
+func validateClaudeSessionRequest(req driver.Request) error {
+	if req.Session == nil || req.Session.Mode != driver.SessionFork {
+		return nil
+	}
+	if req.Session.State == nil || strings.TrimSpace(req.Session.State.ResumeID) == "" {
+		return &engine.ResumeRejectedError{Reason: "Claude session fork requires a parent resume ID"}
+	}
+	return nil
+}
+
+func validateClaudeForkOutcome(req driver.Request, parser *claudeParser) error {
+	if req.Session == nil || req.Session.Mode != driver.SessionFork || !parser.terminalSuccess {
+		return nil
+	}
+	parentID := ""
+	if req.Session.State != nil {
+		parentID = strings.TrimSpace(req.Session.State.ResumeID)
+	}
+	childID := strings.TrimSpace(parser.terminalSessionID)
+	switch {
+	case childID == "":
+		return &engine.ResumeRejectedError{Reason: "Claude session fork succeeded without a child session ID"}
+	case childID == parentID:
+		return &engine.ResumeRejectedError{Reason: "Claude session fork reused the parent session ID"}
+	default:
+		return nil
+	}
+}
+
+func validateClaudeSessionGuard(req driver.Request, effectiveCWD, profileFingerprint string) error {
 	if req.Session == nil || req.Session.State == nil {
 		return nil
 	}
@@ -521,15 +562,10 @@ func validateClaudeSessionGuard(req driver.Request, effectiveCWD, profileFingerp
 	if req.Session.State.Data[driver.SessionParamProfileFingerprint] != "" && req.Session.State.Data[driver.SessionParamProfileFingerprint] != profileFingerprint {
 		return &engine.ResumeRejectedError{Reason: "profile resources changed"}
 	}
-	if req.Session.State.Data[driver.SessionParamProfileFingerprint] == "" &&
-		req.Session.State.Data[driver.SessionParamPromptBundleKey] != "" &&
-		req.Session.State.Data[driver.SessionParamPromptBundleKey] != legacyBundleKey {
-		return &engine.ResumeRejectedError{Reason: "profile resources changed"}
-	}
 	return nil
 }
 
-func buildClaudeExecArgs(cfg Config, req driver.Request, bundleRoot string, interactive bool) ([]string, error) {
+func buildClaudeExecArgs(cfg Config, req driver.Request, interactive bool) ([]string, error) {
 	// Common core. Native structured output supports two modes:
 	//   - non-streaming: final JSON result via --output-format json
 	//   - streaming: stream-json events + final structured_output/result event
@@ -553,7 +589,7 @@ func buildClaudeExecArgs(cfg Config, req driver.Request, bundleRoot string, inte
 	}
 
 	if interactive {
-		// Phase 3 bidirectional:
+		// Bidirectional interactive mode:
 		//   - --input-format stream-json: read NDJSON user frames from stdin
 		//     at any time during the turn
 		//   - --include-partial-messages: ensure input_json_delta frames
@@ -571,7 +607,7 @@ func buildClaudeExecArgs(cfg Config, req driver.Request, bundleRoot string, inte
 			"--permission-prompt-tool", "stdio",
 		)
 	} else {
-		// Phase 1 one-shot: read the prompt as plain text from stdin.
+		// One-shot observational mode reads the prompt as plain text from stdin.
 		args = append(args, "-")
 		if req.Streaming {
 			args = append(args, "--include-partial-messages")
@@ -581,17 +617,20 @@ func buildClaudeExecArgs(cfg Config, req driver.Request, bundleRoot string, inte
 	modelFlag := claudeRequestedModelFlag(cfg)
 	if req.Session != nil && req.Session.State != nil && req.Session.State.ResumeID != "" {
 		args = append(args, "--resume", req.Session.State.ResumeID)
+		if req.Session.Mode == driver.SessionFork {
+			// Claude's --resume mutates the selected conversation unless the
+			// explicit fork flag is present. A Thread fork must therefore use
+			// both flags so the provider returns an independent child session.
+			args = append(args, "--fork-session")
+		}
 	}
 	if !interactive && req.Policy.HumanDecision.Permission == driver.HumanDecisionAutoApprove {
-		// --dangerously-skip-permissions is only meaningful in Phase 1
+		// --dangerously-skip-permissions is only meaningful in one-shot
 		// mode where the CLI itself enforces permissions. In interactive
 		// mode the CLI routes permission prompts back through stdio
 		// control_request frames, so the flag would bypass the host's
 		// decision path and muddy the audit trail.
 		args = append(args, "--dangerously-skip-permissions")
-	}
-	if req.Policy.Browser == driver.FeatureAllow {
-		args = append(args, "--chrome")
 	}
 	if modelFlag != "" {
 		args = append(args, "--model", modelFlag)
@@ -602,25 +641,121 @@ func buildClaudeExecArgs(cfg Config, req driver.Request, bundleRoot string, inte
 	if cfg.MaxTurnsPerRun > 0 {
 		args = append(args, "--max-turns", strconv.Itoa(cfg.MaxTurnsPerRun))
 	}
-	if bundleRoot != "" {
-		args = append(args, "--add-dir", bundleRoot)
+	// Call-scoped SDK semantics are authoritative over constructor ExtraArgs.
+	// Remove every provider flag owned by this builder (including its detached
+	// value) before appending unrelated escape-hatch arguments.
+	extraArgs := withoutManagedClaudeArgs(cfg.ExtraArgs)
+	if req.Policy.Browser != driver.FeatureInherit {
+		// Browser policy is a nearer per-call setting than constructor-level
+		// ExtraArgs. Remove either opaque browser toggle before appending the
+		// one canonical flag below so provider flag ordering cannot invert it.
+		extraArgs = withoutBooleanArgs(extraArgs, "--chrome", "--no-chrome")
 	}
-	args = append(args, cfg.ExtraArgs...)
+	args = append(args, extraArgs...)
+	switch req.Policy.Browser {
+	case driver.FeatureAllow:
+		args = append(args, "--chrome")
+	case driver.FeatureDeny:
+		args = append(args, "--no-chrome")
+	}
 	return args, nil
 }
 
-func hasAnyArg(args []string, names ...string) bool {
+func withoutBooleanArgs(args []string, names ...string) []string {
+	out := make([]string, 0, len(args))
 	for _, arg := range args {
+		managed := false
 		for _, name := range names {
 			if arg == name || strings.HasPrefix(arg, name+"=") {
-				return true
+				managed = true
+				break
+			}
+		}
+		if !managed {
+			out = append(out, arg)
+		}
+	}
+	return out
+}
+
+// claudeManagedExtraArgs lists CLI flags whose semantics are owned by the SDK.
+// The bool reports whether the separated form consumes the following argv.
+// Both long --flag=value and detached-value forms are removed.
+var claudeManagedExtraArgs = map[string]bool{
+	"--print":                              false,
+	"-p":                                   false,
+	"-":                                    false,
+	"--output-format":                      true,
+	"--input-format":                       true,
+	"--json-schema":                        true,
+	"--verbose":                            false,
+	"--include-partial-messages":           false,
+	"--replay-user-messages":               false,
+	"--permission-prompt-tool":             true,
+	"--permission-mode":                    true,
+	"--dangerously-skip-permissions":       false,
+	"--allow-dangerously-skip-permissions": false,
+	"--settings":                           true,
+	"--setting-sources":                    true,
+	"--tools":                              true,
+	"--allowedTools":                       true,
+	"--allowed-tools":                      true,
+	"--disallowedTools":                    true,
+	"--disallowed-tools":                   true,
+	"--resume":                             true,
+	"-r":                                   true,
+	"--continue":                           false,
+	"-c":                                   false,
+	"--fork-session":                       false,
+	"--session-id":                         true,
+	"--no-session-persistence":             false,
+	"--model":                              true,
+	"--effort":                             true,
+	"--max-turns":                          true,
+}
+
+var claudeManagedVariadicExtraArgs = map[string]struct{}{
+	"--tools":            {},
+	"--allowedTools":     {},
+	"--allowed-tools":    {},
+	"--disallowedTools":  {},
+	"--disallowed-tools": {},
+}
+
+func withoutManagedClaudeArgs(args []string) []string {
+	out := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		name := arg
+		hasInlineValue := false
+		if idx := strings.IndexByte(arg, '='); idx >= 0 {
+			name = arg[:idx]
+			hasInlineValue = true
+		}
+		consumesValue, managed := claudeManagedExtraArgs[name]
+		if !managed {
+			out = append(out, arg)
+			continue
+		}
+		if consumesValue && !hasInlineValue && i+1 < len(args) {
+			if _, variadic := claudeManagedVariadicExtraArgs[name]; variadic {
+				for i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+					i++
+				}
+				continue
+			}
+			// A following flag is not a detached value. Leave it for the next
+			// iteration so malformed `--model --custom value` input cannot
+			// swallow an otherwise valid unrelated provider argument.
+			if !strings.HasPrefix(args[i+1], "-") {
+				i++
 			}
 		}
 	}
-	return false
+	return out
 }
 
-// ensureRootSandboxEnv protects Phase 1 runs launched under a UID-0 process
+// ensureRootSandboxEnv protects one-shot runs launched under a UID-0 process
 // (systemd User=root, container root, CI runners, …) from the upstream
 // Claude CLI's built-in guard:
 //
@@ -672,35 +807,25 @@ func ensureRootSandboxEnv(args []string, env []driver.EnvBinding) []driver.EnvBi
 }
 
 // wantsInteractiveClaude reports whether the policy explicitly asks for
-// Phase 3 stream-json bidirectional mode. We deliberately look at the raw
+// stream-json bidirectional mode. We deliberately look at the raw
 // policy fields (not EffectiveHumanDecisionPolicy) so that a zero-value
-// policy stays in Phase 1 observational mode — otherwise the default
-// (PlanReview=Ask + Permission=Ask) would silently promote every claude
-// run into interactive mode AND then fail validateInteractivePolicy.
+// policy stays in observational mode — otherwise the default
+// (PlanReview=Ask + Permission=Ask) would silently promote every Claude run
+// into interactive mode.
 //
-// Interactive mode engages when the host explicitly sets PlanReview=Ask or
-// Question=Ask. AutoReject stays in Phase 1 because it's deterministic and
-// the observational flow is sufficient.
+// Interactive mode engages for every explicit plan/question decision and for
+// permission Ask/AutoReject. Those values require an actual control_request /
+// control_response exchange; observational print mode cannot prove that the
+// requested per-kind decision was honoured. Permission auto-approve alone can
+// use Claude's native one-shot bypass flag.
 func wantsInteractiveClaude(p driver.HumanDecisionPolicy) bool {
-	return p.PlanReview == driver.HumanDecisionAsk ||
-		p.Question == driver.QuestionAsk
-}
-
-// validateInteractivePolicy rejects policy shapes Phase 3 cannot honour.
-// The main one: Permission=Ask has no Phase 3 implementation (Phase 3.5
-// is needed for host-side tool execution). Callers get a clear policy
-// error before the CLI starts.
-//
-// This inspects raw fields — identical to wantsInteractiveClaude — rather
-// than effective defaults, so users who never touched Permission are not
-// penalised for the SDK default (Ask). Phase 3 only rejects when the host
-// *explicitly* requested Permission=Ask.
-func validateInteractivePolicy(p driver.HumanDecisionPolicy) error {
-	if p.Permission == driver.HumanDecisionAsk {
-		return errors.New("claude Phase 3: HumanDecision.Permission=Ask is not yet supported (needs host-side tool executor in Phase 3.5). " +
-			"Use Permission=AutoApprove to run Bash/Write/Edit, or leave Permission unset and only set PlanReview/Question.")
-	}
-	return nil
+	return p.Permission == driver.HumanDecisionAsk ||
+		p.Permission == driver.HumanDecisionAutoReject ||
+		p.PlanReview == driver.HumanDecisionAsk ||
+		p.PlanReview == driver.HumanDecisionAutoApprove ||
+		p.PlanReview == driver.HumanDecisionAutoReject ||
+		p.Question == driver.QuestionAsk ||
+		p.Question == driver.QuestionAutoReject
 }
 
 // encodeInteractiveUserFrame wraps the raw prompt in the NDJSON envelope the
@@ -725,7 +850,25 @@ func encodeInteractiveUserFrame(prompt string) (string, error) {
 // interactive HITL but the supplied EventSink does not implement
 // DecisionCapableSink (this should never happen for runs started through
 // adaptor.Agent, which always passes a decision-capable unified event sink).
-var errClaudeInteractiveSinkRequired = errors.New("claude Phase 3 interactive mode requires a DecisionCapableSink; adaptor.Agent provides one automatically — this error usually means the driver was invoked directly")
+var errClaudeInteractiveSinkRequired = errors.New("claude interactive mode requires a DecisionCapableSink; adaptor.Agent provides one automatically — this error usually means the driver was invoked directly")
+
+// Keep resume-rejection detection deliberately narrow: a false positive can
+// make ContinueOrStart abandon a healthy provider conversation and retry as a
+// fresh session. These phrases cover Claude CLI's unavailable-conversation
+// diagnostics while auth/network/model failures remain ordinary failures.
+var claudeResumeRejectedRE = regexp.MustCompile(`(?i)^(?:error:\s*)?(?:no conversation found with session id:\s*\S+|conversation with id \S+ not found|failed to resume session)\.?$`)
+
+func isClaudeResumeRejected(parts ...string) bool {
+	for _, part := range parts {
+		for _, line := range strings.Split(part, "\n") {
+			line = strings.TrimSpace(strings.TrimSuffix(line, "\r"))
+			if claudeResumeRejectedRE.MatchString(line) {
+				return true
+			}
+		}
+	}
+	return false
+}
 
 func chooseCWD(cfg CommonConfig, workspace driver.WorkspaceLease) string {
 	if workspace.CWD != "" {
@@ -734,7 +877,7 @@ func chooseCWD(cfg CommonConfig, workspace driver.WorkspaceLease) string {
 	return cfg.CWD
 }
 
-// readConfig snapshots the package-owned configuration used by the v1 path.
+// readConfig snapshots the package-owned configuration used by the configured driver.
 func readConfig(cfg any) Config {
 	switch typed := cfg.(type) {
 	case Config:

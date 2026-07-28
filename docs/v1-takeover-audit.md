@@ -1,9 +1,79 @@
 # v1 重构接管审计与执行清单
 
-> 状态：**当前执行事实源**  
+> **接管结案（2026-07-27）**：本文已从“待执行清单”转为“已执行审计证据”，不是当前 API 使用说明。文中 `next/`、`pkg/`、旧 SDK/RunHandle/registry、临时 `V1` 名和“未开始/阻断”措辞均保留为接管时事实。
+>
+> PRE、G-01～G-12、P4 14 项、Driver SPI 9 项、bridge 保真、REHOME/DELETE/ROOT CUTOVER/RESIDUAL DELETE/RENAME/DOCS 均已关闭；ROOT CUTOVER 提交为 `cc6cd82`。当前仍是 **[Unreleased]**，未创建 `v1.0.0` tag，也不虚称尚未取得结果的远端 Linux CI 已成功。
+
+## 0. 最终关闭矩阵
+
+| 项目 | 状态 | 修复与测试证据 |
+|---|---|---|
+| G-01 唯一执行管线 | **已关闭** | `invocation.go` 成为 Agent/Thread 唯一 coordinator；`Run` 严格为 `Stream + drain + Result`；AST/architecture tests 锁定唯一 `driver.Run`、Thread persist 与 finalize 路径 |
+| G-02 checkpoint 污染 | **已关闭** | Claude/Cursor/CodeBuddy/Codex CLI/app-server 各自正式 parser 判定 checkpoint；非零退出、取消、协议错误和缺失 checkpoint 不持久化；provider protocol tests 与 Thread 旧 active 保留测试覆盖 |
+| G-03 key 碰撞 | **已关闭** | `internal/keycodec` 对复合维度做长度/结构编码；Thread 原始 key 逐字保存；store/bridge 表驱动覆盖分隔符、Unicode、同前缀和往返 |
+| G-04 Fork 安全 | **已关闭** | fork 校验 Driver、identity、fingerprint、codec/checkpoint，协调父/目标 lease，目标存在时原子拒绝；`threadsession_fork_test` 覆盖并发、CAS、persist failure 与父状态不变 |
+| G-05 fingerprint | **已关闭** | recipe 覆盖 Driver 类型/完整构造配置、codec、identity/model、resolved workspace、runtime、profile/skills/MCP/instructions；provider fingerprint 与 Thread 维度变化测试锁定跨进程稳定性 |
+| G-06 Cancel/backpressure | **已关闭** | event broker 的 blocking send/approval/resource waits 同时监听取消；Cancel 幂等并有界解除阻塞；buffer 0/1、停止 drain、并发 producer、deadline/approval race tests 覆盖 |
+| G-07 Codex app-server | **已关闭** | JSON-RPC 路径先 tee 完整 stdout，再由同一 accumulator 产出 Text/Transcript/Usage/failure/checkpoint/terminal；reader/process/stderr 全部结束后快照；fixture tests 覆盖成功/失败/取消 |
+| G-08 terminal payload | **已关闭** | `driver.RawStreams.Terminal *TerminalPayload` 字节保真进入 `Result.Raw().Terminal`；Response→Result 深拷贝，Run/Stream 与失败路径合同测试覆盖 |
+| G-09 Inspect config | **已关闭** | 内置 Driver 捕获构造期真 Config，Run/Inspect/probe 观察同一配置；四 provider configured/probe contract tests 与公共边界测试覆盖 |
+| G-10 Approval 零值 | **已关闭** | 未绑定/零值 responder 立即返回稳定错误，settle exactly-once；零值、重复、kind mismatch、超时、并发和 run-ended tests 覆盖 |
+| G-11 Config internal 泄漏 | **已关闭** | 四 provider 拥有真 `Config`；公开 skill/mcp/profile/structured error/DTO 归公开叶子包；AST/import boundary tests 禁止公共签名泄漏 `internal/*` |
+| G-12 archive 合同 | **已关闭** | closure 不再用函数地址猜等价；显式 Fingerprint 表示声明 identity，缓存由内容寻址；相同代码不同捕获、同/异 fingerprint、缓存污染/命中测试及 archive fuzz 覆盖 |
+
+### P4、SPI 与 bridge 关闭证据
+
+| 清单 | 状态 | 最终证据 |
+|---|---|---|
+| P4.9 14 项 | **已关闭** | #1–6/#8/#11–13 完成实现和回归；#9 继承 PRE；#7/#10/#13 accessor/#14 以单 Event 流、展示边界、Result observation、transport 分层明确拒绝并由 `adaptertest/api_boundary_test.go` 防回归 |
+| Driver SPI 9 项 | **已关闭** | driver godoc 与最终 `adaptertest` 的 EVT/SES/SO/RSP/CAP/RUN 条款一致；reference driver 正向、negative table 反向、四 provider conformance 接线完成 |
+| SSE | **已关闭** | 审批请求/错误映射、EventMeta/Last-Event-ID、raw thread key、断连取消、Result-authoritative terminal 由 handler/approval correctness tests 覆盖 |
+| AG-UI | **已关闭** | user-turn Event、最后用户消息 ID、完整 Args、approval、Dropped、failure/terminal、取消与 thread key 映射由 input/events/verifier tests 覆盖 |
+| A2A | **已关闭** | typed adapter event decode、ExposurePolicy、approval/Dropped/failure/terminal、context key 无碰撞、严格生命周期/单终局由 mapping/server/status tests 覆盖 |
+| subagentstream/hosttools | **已关闭** | 单流 merge、终局最后/重排/source meta/cancel；delegation ordered access、typed session recorder JSONL 与持久化失败语义均有测试 |
+
+### 迁移与冻结结论
+
+| 波次 | 状态 | 证据 |
+|---|---|---|
+| PRE | **已关闭** | `46a726f` |
+| CORRECTNESS | **已关闭** | `82d2f00` 及随后同波回归 |
+| REHOME/REPOINT + LEGACY EDGE DELETE | **已关闭** | cutover 前生产 import/旧边缘清零并通过 build/test/vet 波次门禁 |
+| ROOT CUTOVER | **已关闭** | `cc6cd82` |
+| RESIDUAL DELETE | **已关闭** | Core/binding/admin/execute/decision/options、metadata fallback、临时 aliases/wrappers/死码清除；v1 Thread/Inspect/skill/profile/runtime 真路径保留 |
+| RENAME | **已关闭** | Go 临时 `V1` 后缀清除、adaptertest 上提、examples 最终命名；线上 `adapter.stream.v1` wire 名保留 |
+| DOCS | **已关闭** | 活跃 README/godoc/API/usage/streaming/A2A/structured/migration/CHANGELOG 同步，历史工作流移入 `docs/archive/` |
+| FREEZE/发布 | **实现冻结已执行；发布待外部结果** | 本地 build/test/vet、定向重复/fuzz/examples/API 边界由最终冻结波执行；Linux race/CI 与 `v1.0.0` tag 不在没有真实结果时标成功 |
+
+### 0.1 `~35` 导出名门禁的显式设计勘误
+
+批准的 Claude 草稿原文写过“应用开发者，~35 个导出名”，实施计划 P5.5 也曾写“根包导出名 ≤~35”。最终文档不能通过改写句子假装这个字面门禁从未存在。
+
+完整 AST 机械清点得到根包 229 个顶层导出标识符：64 个 const、35 个 var、41 个 func、89 个 type（53 个 defined type、36 个 alias），另有 54 个具体类型导出方法。它们的主体不是 229 套平行执行入口，而是同一设计同时要求的 typed Event/Result/approval/profile/service DTO、枚举、稳定 error sentinel、options、小型 schema/approval constructors，以及避免消费者强制 import `driver` SPI 的 alias。若把 raw declaration 数字压到 35，必须删除这些已批准的类型安全合同，或退回 string/`any`/巨型结构体；这与 v1 的生产级、强类型和可维护性目标自相矛盾。
+
+因此接管实施作出并公开记录如下修订：消费者 API 的量化门禁是 **24 个 `With*` 名 + 约 13 个核心概念组**；全部 229 个 raw exports 的种类、字段、tag、alias/defined 区别、const 值、函数/方法/interface 签名则由 `testdata/root_api.golden` 的完整 AST freeze 守卫。授权依据是用户要求完整实现 Claude v1、接受正确性修复并以生产级质量收口；该授权不应被解释为可以删除同一 v1 设计要求的 typed 合同。任何未来新增仍必须显式评审并更新 golden。本段是设计勘误，不是对原验收线的静默移动。
+
+### 0.2 最终本地冻结证据（推送前）
+
+2026-07-27 在最终代码树上完成以下门禁；这些是接管后对中断项及其依赖项的最终验收，不重复 Claude 已明确签收的 PRE 子项：
+
+- Go `1.26.5 windows/amd64`：`go build -p=4 ./...`、`go test -count=1 -p=4 ./...`、`go vet ./...`、`go mod verify` 全部通过。
+- `govulncheck@v1.6.0 ./...` 报告 0 个可达漏洞；依赖图中的不可达公告不冒充可达风险，也不以危险的跨 major override 掩盖。
+- `AGENT_ADAPTOR_LIVE_CONFORMANCE=0` 下，`claude_live`、`codebuddy_live`、`codex_live` 三套 build-tag 测试全部通过且没有调用真实/付费 provider。
+- 最终修改影响到的六个协议 fuzz 目标各真实运行 30 秒并通过：Claude/Cursor/CodeBuddy/Codex batch parser、Codex app-server notification decoder、Codex `ThreadItem` union；三项 archive fuzz 已在其代码稳定后各运行 30 秒，本轮未再修改 archive 路径，按“不重复已完整验收项”原则不机械重跑。
+- 根 API 与 Driver SPI 的 AST golden 已补齐 sealed interface 私有方法、私有嵌入提升出的公开 method set、常量精确值/静态类型、变量推断静态类型和 build-tag 文件选择；变异测试、vocabulary guard 与最终 golden 均通过。
+- 资源/并发最终 hostile tests 覆盖满缓冲取消终局保留、late producer 封口、无视 context 的 run-service/session hook、有界且全部尝试的 unwind、lease renewal、128-bit fail-closed fencing entropy；核心关键测试最高重复 100 次通过。
+- 四个 Driver 与 Codex app-server 的正式协议、Fork、resume reject、checkpoint、structured output、ExtraArgs/Policy 与 terminal staging 由 Driver reviewer 和独立 architecture reviewer 交叉签收；关键矩阵重复 10～20 次并通过相关 vet/fuzz。
+- 两份前端 lock 仅使用 `registry.npmjs.org`，AG-UI 版本守卫对齐 `0.0.57`；AG-UI clean install/build/audit 通过，CopilotKit lock dry-run、lint/build 与 high audit 通过。Windows Node 24 的一次官方源 clean install 在展开依赖后 I/O 停滞，因此不虚称该环境成功；推送后的 Node 22/Linux `frontend` job 是最终 fresh-install 权威门禁。
+- 活跃 Go 源码没有旧 `/next`、`/pkg`、`/providers` import；活动目录没有实际 TODO/FIXME/`🚧`、本机 Claude project 路径或临时 `V1` 名。剩余 `V1` 仅属于明确版本化的 `adapter.stream.v1` A2A wire contract。
+- 四条独立终审（架构、API/文档、Driver、release）全部给出 PASS；Windows 无 CGO/GCC，`go test -race ./...` 必须由推送后的 Linux CI 完成。
+
+推送前仍不得写成“远端 CI 已绿”。下一项且唯一开放的外部门禁是：创建新的 `codex/**` 分支、推送，等待 validate/race/fuzz/frontend 四个 job 全绿；本轮没有 `v1.0.0` tag 授权。
+
+> 历史状态：**接管时执行事实源（现已结案）**
 > 接管日期：2026-07-27  
 > 设计断点：`4a66cc3`  
-> 适用范围：Claude 设计的 v1 API 从当前 staging 状态到 `v1.0.0` 的全部收口工作
+> 历史适用范围：Claude 设计的 v1 API 从当时 staging 状态到实现冻结的全部收口工作
 
 本文件保存本次接管调研的可验证结论、未关闭问题、执行顺序和验收证据，避免会话中断后再次依赖聊天记录还原状态。它不是新的产品设计；产品合同由根 [`AGENTS.md`](../AGENTS.md) 和 [`api-v1-redesign.md`](./api-v1-redesign.md) 定义。
 
@@ -34,11 +104,11 @@
 
 本次审计交叉核对了：
 
-- Claude 主会话记录：`C:\Users\buthim\.claude\projects\C--Users-buthim-Documents-GitHub-agent-adaptor--claude-worktrees-sdk-api-redesign-64bddf\0bb133c6-9bdd-498c-9a90-9d4d73f8edc7.jsonl`
+- Claude 主会话记录：仓库外的本地 Claude project 会话 `0bb133c6-9bdd-498c-9a90-9d4d73f8edc7.jsonl`
 - Git 提交历史、分支/远端引用和未提交工作树
 - `docs/api-v1-redesign.md`、实施计划、P0 inventory、P5.2 recon、迁移指南
 - `next/` staging API、`internal/engine`、四个内置 Driver、Codex app-server、memory/thread store、bridges/hosttools
-- P4.9 的 14 项可用性反馈与 `adaptertest/v1` 记录的 9 项 SPI godoc 缺口
+- P4.9 的 14 项可用性反馈与 `adaptertest` 记录的 9 项 SPI godoc 缺口
 - 全仓非缓存测试、vet、定向测试和已有 fuzz 结果
 
 Claude 主会话并非因代码或测试失败停止。最后一个 PRE Config 子任务正常报告完成后，主协调器在生成下一轮响应时收到 `oauth_org_not_allowed` 403；会话记录停在主 JSONL 第 1715 行。其影响是“未完成接管验收、汇总和后续实施”，不是“子任务改动未落盘”。
@@ -76,7 +146,7 @@ Claude 主会话并非因代码或测试失败停止。最后一个 PRE Config �
 | P5.2 MOVE | 未开始 | 被 §6 的正确性门禁阻断 |
 | P5.2 REHOME/DELETE | 未开始 | D-P5.2-3/4 先归位，旧 API/aliases/转发包再分批删除 |
 | P5.2 RENAME | 未开始 | V1 后缀、adaptertest 上提、examples/docs 最终命名均未做 |
-| P5.3 | 核心 suite 已提交，未完全收口 | `adaptertest/v1` 14 子测试/51 条款已落地；9 项 SPI godoc 含糊点待冻结前硬化 |
+| P5.3 | 核心 suite 已提交并上提 | `adaptertest` 14 子测试/51 条款已落地；SPI godoc 含糊点已按冻结门禁硬化 |
 | P5.4 | 仅迁移指南初稿 | 大量 `🚧` 尚在；README/API/usage/streaming/A2A 等最终文档未重写 |
 | P5.5 | 未开始 | race/fuzz/examples/godoc/export surface/CHANGELOG/tag 等发布门禁未完成 |
 
@@ -109,7 +179,7 @@ D-P5.2-3（Profile 资源族）与 D-P5.2-4（HITL typed 族）**没有在当前
 | PRE 整体签收与提交 | L1706 明确承诺在 D2 后做，但 403 前没有执行 | 这是实际中断点，必须继续 |
 | D-P5.2-3/4 Profile/HITL | PRE 派单主动延期 | 不是中断遗漏，REHOME/REPOINT 波实施 |
 
-会话证据文件：`C:\Users\buthim\.claude\projects\C--Users-buthim-Documents-GitHub-agent-adaptor--claude-worktrees-sdk-api-redesign-64bddf\0bb133c6-9bdd-498c-9a90-9d4d73f8edc7.jsonl`；首个 PRE agent 为 `subagents\agent-a734921096b1f59fa.jsonl`，D2 续做 agent 为 `subagents\agent-a30507ca107bb8502.jsonl`。
+会话证据文件是仓库外的本地 Claude project 会话 `0bb133c6-9bdd-498c-9a90-9d4d73f8edc7.jsonl`；首个 PRE agent 为 `subagents/agent-a734921096b1f59fa.jsonl`，D2 续做 agent 为 `subagents/agent-a30507ca107bb8502.jsonl`。
 
 ### 5.3 最小补验与修复清单（已完成）
 
@@ -252,10 +322,10 @@ Claude 已把这些事项列入 P4/P5 收口，但尚未实施。它们会改变
 
 上述四项拒绝裁决已经关闭，不再作为“以后可以补的便利 API”：
 
-- **#7 单流边界**：`team.Option()` 把 `SubagentUpdate` 注入 Runner 的唯一 Event 流，SSE/AG-UI 只翻译该流。再次接收 bus 或包装第二条 AG-UI 流会引入重复事件、双重 drain 与不同取消顺序。`adaptertest/v1/p4_api_boundary_test.go::TestP4NoParallelSubagentBusAPI` 锁定 v1 SSE 不依赖 delegation overlay；legacy bridge 仅是 DELETE 前的迁移对象。
-- **#10 展示边界**：`SubagentEventKind` 是语义枚举，`ToolCall.Args` 是未删改的原始结构；统一字符串化或预览必然替 SDK 选择截断、脱敏和本地化策略。`Summary` 允许为空且不从 `Text` 自动兜底，宿主可按自己的展示场景选择 fallback。`TestP4PresentationPolicyStaysOutsideCore` 锁定 core 不增加这些展示方法或 fallback accessor。
+- **#7 单流边界**：`team.Option()` 把 `SubagentUpdate` 注入 Runner 的唯一 Event 流，SSE/AG-UI 只翻译该流。再次接收 bus 或包装第二条 AG-UI 流会引入重复事件、双重 drain 与不同取消顺序。`adaptertest/api_boundary_test.go::TestNoParallelSubagentBusAPI` 锁定 SSE 不依赖 delegation overlay。
+- **#10 展示边界**：`SubagentEventKind` 是语义枚举，`ToolCall.Args` 是未删改的原始结构；统一字符串化或预览必然替 SDK 选择截断、脱敏和本地化策略。`Summary` 允许为空且不从 `Text` 自动兜底，宿主可按自己的展示场景选择 fallback。`TestPresentationPolicyStaysOutsideCore` 锁定 core 不增加这些展示方法或 fallback accessor。
 - **#13 观察边界**：run attachment 含输入声明、事件源和 secret 生命周期，不能伪装成执行观察或被 Result 旁路暴露。宿主只从 `Result.Services()` 读取实际观察/ensure 报告；公开 Result 方法集不增加 attachment accessor，由同一架构测试固化。稳定 ID 合并的行为正确性仍必须由 Result 合同测试覆盖，不能靠新增 accessor 绕过。
-- **#14 transport 边界**：所有 v1 Runner 都有 `Stream`；A2A `RequireStreaming` 询问的是远端 A2A transport，Remote 以 AgentCard 协商，Local 直接消费 Runner.Stream。`driver.StreamSupport` 仅陈述 provider-native 事件保真，不能成为 A2A policy 查询面。`TestP4NoProviderStreamingCapabilityQuery` 锁定 Agent/Thread/Inspector 不暴露这种混合语义的查询。
+- **#14 transport 边界**：所有 v1 Runner 都有 `Stream`；A2A `RequireStreaming` 询问的是远端 A2A transport，Remote 以 AgentCard 协商，Local 直接消费 Runner.Stream。`driver.StreamSupport` 仅陈述 provider-native 事件保真，不能成为 A2A policy 查询面。`TestNoProviderStreamingCapabilityQuery` 锁定 Agent/Thread/Inspector 不暴露这种混合语义的查询。
 
 ### 7.2 Driver SPI 的 9 项 godoc 硬化
 
@@ -263,7 +333,7 @@ Claude 原报告的九项是：生命周期终局；SessionCodec 零值；Sessio
 
 合同硬化已关闭，映射如下：
 
-| 原缺口 | `driver/` 权威合同 | `adaptertest/v1` 硬条款 |
+| 原缺口 | `driver/` 权威合同 | `adaptertest` 硬条款 |
 |---|---|---|
 | 生命周期终局 | `StreamKind` / `StreamPayload` | EVT-01、02、11（成功和错误终局都不得留开放 lifecycle） |
 | SessionCodec 零值 | `SessionCodec` | SES-01、02、07 |
@@ -299,7 +369,7 @@ Claude 原报告的九项是：生命周期终局；SessionCodec 零值；Sessio
 
 - 删除 `next/`、旧根 API、`pkg/` forward、provider sugar、legacy metadata parser、无调用死码和临时 alias
 - D-P5.2-3/4 在 REHOME/REPOINT 完成类型归位后再删 `engine_aliases.go`
-- 删除临时 `V1` 后缀并上提 `adaptertest/v1`
+- 删除临时 `V1` 后缀并上提 `adaptertest`
 - 清除代码中的真实 `TODO` 和迁移指南全部 `🚧`
 - examples 按 recon 映射改名/合并并全部编译；新增 structured-output 最小示例
 

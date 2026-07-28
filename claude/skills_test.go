@@ -132,35 +132,6 @@ func TestSyncClaudeSkillsRepairsManagedTargetWhenSourcePathChanges(t *testing.T)
 	assertClaudeSkillEntry(t, snapshot, "team/analysis", agentadaptor.SkillStateInstalled)
 }
 
-func TestPrepareClaudePromptBundleMaterializesSelectedSkillsOnly(t *testing.T) {
-	t.Setenv("CLAUDE_CONFIG_DIR", "")
-	t.Setenv("HOME", t.TempDir())
-	root := t.TempDir()
-	desired := createClaudeSkillDir(t, root, "main")
-	// The prompt bundle only materialises whatever lands in
-	// ResolvedSkills.Entries; the SDK is responsible for filtering that list
-	// down to the Selected set before the adapter sees it.
-	payload := agentadaptor.ResolvedSkills{
-		Entries: []agentadaptor.ResolvedSkill{
-			{Key: "team/main", RuntimeName: "main", SourcePath: desired},
-		},
-	}
-
-	bundleRoot, _, err := prepareClaudePromptBundle(agentadaptor.AgentIdentity{TenantID: "tenant-a"}, payload)
-	if err != nil {
-		t.Fatalf("prepare bundle: %v", err)
-	}
-	if bundleRoot == "" {
-		t.Fatal("expected non-empty bundle root")
-	}
-	if _, err := os.Stat(filepath.Join(bundleRoot, ".claude", "skills", "main")); err != nil {
-		t.Fatalf("expected desired skill in bundle: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(bundleRoot, ".claude", "skills", "other")); !os.IsNotExist(err) {
-		t.Fatalf("expected undesired skill to be excluded, got err=%v", err)
-	}
-}
-
 func TestListClaudeSkillsUsesProfileSelection(t *testing.T) {
 	nativeHome := t.TempDir()
 	dedicated := t.TempDir()

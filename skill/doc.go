@@ -2,8 +2,8 @@
 //
 // A skill is a directory containing SKILL.md (plus optional reference
 // files) that teaches an agent a repeatable workflow. This package
-// provides one-line constructors that produce values accepted by
-// WithSkills / WithDefaultSkills as [Ref]:
+// provides constructors that produce [Ref] values accepted by
+// adaptor.WithSkills:
 //
 //	adaptor.WithSkills(
 //	    skill.Dir("./skills/write-proof"),         // local directory
@@ -20,8 +20,7 @@
 // skills), while a Materializer controls how skill sources are written
 // to disk before a driver consumes them.
 //
-// Skill owns the host extension contracts, source values, and skill-specific
-// error identities. Driver-facing value shapes are exact aliases of package
-// driver where identity at the execution boundary is useful; the root package
-// re-exports this package's consumer vocabulary.
+// This package also owns the host extension contracts, source values, default
+// materializer, and skill-specific error identities used by errors.Is and
+// errors.As.
 package skill

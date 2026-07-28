@@ -39,14 +39,24 @@ type Options struct {
 	// Prompt is the user input for the single turn.
 	Prompt string
 
-	// Thread controls whether this run starts a new thread or resumes one.
+	// Thread controls whether this run starts, resumes, or forks a thread.
+	// ResumeThreadID and ForkThreadID are mutually exclusive. A fork returns a
+	// checkpoint for the newly created child and never runs a turn on the parent.
 	ResumeThreadID string
+	ForkThreadID   string
 	Ephemeral      bool
 
 	// Sandbox / Approval / Model overrides.
 	Sandbox  string // "read-only" | "workspace-write" | "danger-full-access"
 	Approval string // passed to TurnStartParams.ApprovalPolicy
 	Model    string
+	Effort   string
+	// ServiceTier is the official app-server service tier override (for
+	// example, "fast").
+	ServiceTier string
+	// OutputSchema is forwarded to turn/start and validated before the final
+	// public lifecycle event when native structured output is selected.
+	OutputSchema *driver.OutputSchema
 
 	// RunID identifies the run for StreamPayload attribution.
 	RunID string
@@ -63,6 +73,9 @@ type Options struct {
 // transport are propagated; if the turn itself fails, the error is surfaced
 // inside [driver.Response.Failure] rather than as a returned error.
 func Run(ctx context.Context, opts Options, sink driver.EventSink) (driver.Response, error) {
+	if opts.ResumeThreadID != "" && opts.ForkThreadID != "" {
+		return driver.Response{}, errors.New("codex app-server: resume and fork thread ids are mutually exclusive")
+	}
 	command := opts.Command
 	if command == "" {
 		command = "codex"
@@ -159,20 +172,23 @@ func Run(ctx context.Context, opts Options, sink driver.EventSink) (driver.Respo
 			cancellation = ctx.Err()
 		}
 		exitCode, signal, timedOut, waitFatal := processOutcome(waitErr, cancellation)
-		result := state.snapshot(opts, threadID, stdoutBuf.String(), stderrBuf.String(), exitCode, signal, timedOut)
+		var finalErr error
 		if primary != nil {
-			return result, primary
+			finalErr = primary
+		} else if protocolErr := state.protocolError(); protocolErr != nil {
+			finalErr = protocolErr
+		} else if !state.hasTerminal() {
+			finalErr = fmt.Errorf("codex app-server protocol ended without turn/completed")
+		} else if waitFatal != nil {
+			finalErr = fmt.Errorf("codex app-server wait: %w", waitFatal)
 		}
-		if protocolErr := state.protocolError(); protocolErr != nil {
-			return result, protocolErr
-		}
-		if !state.hasTerminal() {
-			return result, fmt.Errorf("codex app-server protocol ended without turn/completed")
-		}
-		if waitFatal != nil {
-			return result, fmt.Errorf("codex app-server wait: %w", waitFatal)
-		}
-		return result, nil
+		result := state.snapshot(opts, threadID, stdoutBuf.String(), stderrBuf.String(), exitCode, signal, timedOut)
+		result = finalizeAppServerStructuredOutput(opts.OutputSchema, result)
+		// The official terminal is staged until the process outcome and native
+		// structured-output validation are known. This makes the final public
+		// lifecycle agree with the returned Response on every exit path.
+		state.finishPublicResult(result, finalErr)
+		return result, finalErr
 	}
 
 	clientInfo := ClientInfo{
@@ -189,7 +205,21 @@ func Run(ctx context.Context, opts Options, sink driver.EventSink) (driver.Respo
 	}
 
 	// 2. thread start or resume.
-	if opts.ResumeThreadID != "" {
+	if opts.ForkThreadID != "" {
+		resp, err := client.ThreadFork(ctx, ThreadForkParams{
+			ThreadID:       opts.ForkThreadID,
+			CWD:            opts.CWD,
+			Ephemeral:      opts.Ephemeral,
+			Sandbox:        opts.Sandbox,
+			Model:          opts.Model,
+			ServiceTier:    opts.ServiceTier,
+			ApprovalPolicy: opts.Approval,
+		})
+		if err != nil {
+			return finish(classifyThreadError(err, opts.ForkThreadID))
+		}
+		threadID = resp.Thread.ID
+	} else if opts.ResumeThreadID != "" {
 		resp, err := client.ThreadResume(ctx, ThreadResumeParams{ThreadID: opts.ResumeThreadID})
 		if err != nil {
 			return finish(classifyThreadError(err, opts.ResumeThreadID))
@@ -197,25 +227,35 @@ func Run(ctx context.Context, opts Options, sink driver.EventSink) (driver.Respo
 		threadID = resp.Thread.ID
 	} else {
 		resp, err := client.ThreadStart(ctx, ThreadStartParams{
-			CWD:       opts.CWD,
-			Ephemeral: opts.Ephemeral,
-			Sandbox:   opts.Sandbox,
-			Model:     opts.Model,
+			CWD:         opts.CWD,
+			Ephemeral:   opts.Ephemeral,
+			Sandbox:     opts.Sandbox,
+			Model:       opts.Model,
+			ServiceTier: opts.ServiceTier,
 		})
 		if err != nil {
 			return finish(fmt.Errorf("codex app-server thread/start: %w", err))
 		}
 		threadID = resp.Thread.ID
 	}
-	state.translator.SetThread(threadID)
 	state.setThread(threadID)
+	if err := state.protocolError(); err != nil {
+		return finish(err)
+	}
 
 	// 3. turn/start.
+	var outputSchema json.RawMessage
+	if opts.OutputSchema != nil {
+		outputSchema = append(json.RawMessage(nil), opts.OutputSchema.SchemaJSON...)
+	}
 	turnParams := TurnStartParams{
-		ThreadID: threadID,
-		Input:    []UserInput{TextInput(opts.Prompt)},
-		CWD:      opts.CWD,
-		Model:    opts.Model,
+		ThreadID:     threadID,
+		Input:        []UserInput{TextInput(opts.Prompt)},
+		CWD:          opts.CWD,
+		Model:        opts.Model,
+		Effort:       opts.Effort,
+		ServiceTier:  opts.ServiceTier,
+		OutputSchema: outputSchema,
 	}
 	if opts.Approval != "" {
 		turnParams.ApprovalPolicy = opts.Approval
@@ -228,6 +268,10 @@ func Run(ctx context.Context, opts Options, sink driver.EventSink) (driver.Respo
 		return finish(fmt.Errorf("codex app-server turn/start: %w", err))
 	}
 	turnID = turn.Turn.ID
+	state.setTurn(turnID)
+	if err := state.protocolError(); err != nil {
+		return finish(err)
+	}
 
 	// 4. wait for the turn to complete or the context to expire.
 	select {
@@ -253,10 +297,11 @@ func Run(ctx context.Context, opts Options, sink driver.EventSink) (driver.Respo
 
 type runState struct {
 	translator *Translator
+	sink       driver.EventSink
+	notifyMu   sync.Mutex
 
 	mu             sync.Mutex
-	textByItemID   map[string]*strings.Builder
-	itemOrder      []string
+	finalAgentText string
 	transcript     []driver.TranscriptItem
 	usage          *driver.Usage
 	turnFailure    *driver.RunFailure
@@ -264,31 +309,69 @@ type runState struct {
 	terminalStatus TurnStatus
 	protocolErr    error
 	threadID       string
+	turnID         string
+	pending        []pendingNotification
+	publicClosed   bool
+	publicStarted  bool
+	itemsEmitted   int
 	done           chan struct{}
 	doneOnce       sync.Once
 }
 
+type pendingNotification struct {
+	method string
+	params json.RawMessage
+}
+
 func (s *runState) setThread(threadID string) {
+	s.notifyMu.Lock()
+	defer s.notifyMu.Unlock()
 	if strings.TrimSpace(threadID) == "" {
+		s.recordProtocolError(errors.New("RPC returned an empty thread identity"))
 		return
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.threadID == threadID {
+	if s.threadID != "" && s.threadID != threadID {
+		s.recordProtocolErrorLocked(fmt.Errorf("RPC thread identity changed from %q to %q", s.threadID, threadID))
+		s.mu.Unlock()
 		return
 	}
-	s.threadID = threadID
-	s.transcript = append(s.transcript, driver.TranscriptItem{
-		Kind:      driver.TranscriptInit,
-		SessionID: threadID,
-	})
+	if s.threadID == "" {
+		s.threadID = threadID
+		s.appendTranscriptLocked(driver.TranscriptItem{
+			Kind:      driver.TranscriptInit,
+			SessionID: threadID,
+		})
+	}
+	s.mu.Unlock()
+	s.translator.SetThread(threadID)
+	s.flushPendingNotificationsLocked()
+}
+
+func (s *runState) setTurn(turnID string) {
+	s.notifyMu.Lock()
+	defer s.notifyMu.Unlock()
+	if strings.TrimSpace(turnID) == "" {
+		s.recordProtocolError(errors.New("RPC returned an empty turn identity"))
+		return
+	}
+	s.mu.Lock()
+	if s.turnID != "" && s.turnID != turnID {
+		s.recordProtocolErrorLocked(fmt.Errorf("RPC turn identity changed from %q to %q", s.turnID, turnID))
+		s.mu.Unlock()
+		return
+	}
+	s.turnID = turnID
+	s.mu.Unlock()
+	s.translator.SetTurn(turnID)
+	s.flushPendingNotificationsLocked()
 }
 
 func newRunState(runID string, sink driver.EventSink) *runState {
 	return &runState{
-		translator:   NewTranslator(sink, runID),
-		textByItemID: map[string]*strings.Builder{},
-		done:         make(chan struct{}),
+		translator: NewTranslator(sink, runID),
+		sink:       sink,
+		done:       make(chan struct{}),
 	}
 }
 
@@ -296,28 +379,85 @@ func newRunState(runID string, sink driver.EventSink) *runState {
 // extracts run-level state (final text, usage, failure, completion
 // signal).
 func (s *runState) onNotification(method string, params json.RawMessage) {
-	// Always forward to translator first so bridges see the event before
-	// we signal completion (which may end the consumer loop).
-	s.translator.Dispatch(method, params)
+	s.notifyMu.Lock()
+	defer s.notifyMu.Unlock()
+	s.handleNotificationLocked(method, params)
+}
+
+func (s *runState) handleNotificationLocked(method string, params json.RawMessage) {
+	// Once the official terminal has closed normalized semantics, trailing
+	// frames remain audit-only Raw stdout. A duplicate official terminal is a
+	// protocol violation; every other trailing frame is ignored here.
+	s.mu.Lock()
+	if s.publicClosed {
+		if method == NotifyTurnCompleted {
+			s.recordProtocolErrorLocked(errors.New("duplicate turn/completed notification"))
+		}
+		s.mu.Unlock()
+		return
+	}
+	// Once an earlier wire notification is waiting for an RPC identity, every
+	// later notification must wait behind it, including unknown diagnostic
+	// frames. Otherwise an unscoped frame written after turn/completed can be
+	// published before the queued terminal and escape the terminal boundary.
+	if s.threadID == "" || s.turnID == "" || len(s.pending) != 0 {
+		s.pending = append(s.pending, pendingNotification{
+			method: method,
+			params: append(json.RawMessage(nil), params...),
+		})
+		s.mu.Unlock()
+		return
+	}
+	s.mu.Unlock()
+
+	deferred, err := s.bindNotificationScopeLocked(method, params)
+	if deferred {
+		return
+	}
+	if err != nil {
+		s.recordProtocolError(err)
+		s.signalDone()
+		return
+	}
+	if err := validateAppServerNotification(method, params); err != nil {
+		s.recordProtocolError(fmt.Errorf("decode %s: %w", method, err))
+		return
+	}
+	// turn/completed is the unique public terminal boundary.
+	if method == NotifyTurnCompleted {
+		s.mu.Lock()
+		s.publicClosed = true
+		s.mu.Unlock()
+	}
+
+	if method == NotifyTurnCompleted {
+		s.handleTurnCompleted(params)
+		return
+	}
+
+	// Non-terminal normalized payloads retain wire order. Transcript items
+	// parsed below are emitted in their own append order by
+	// appendTranscriptLocked.
+	if method == NotifyTurnStarted {
+		// Let the official notification populate TurnID before run.started,
+		// then release any init transcript accumulated during the handshake.
+		s.translator.Dispatch(method, params)
+		s.markPublicStarted()
+	} else if method == NotifyThreadStarted {
+		// thread/started only contributes the pending init transcript; the
+		// public lifecycle starts at the first turn-scoped notification.
+		s.translator.Dispatch(method, params)
+	} else {
+		s.startPublic()
+		s.translator.Dispatch(method, params)
+	}
 
 	switch method {
-	case NotifyThreadStarted:
-		var body ThreadStartedNotificationBody
-		if err := json.Unmarshal(params, &body); err != nil {
-			s.recordProtocolError(fmt.Errorf("decode thread/started: %w", err))
-			return
-		}
-		s.setThread(body.Thread.ID)
 	case NotifyItemAgentMessageDelta:
 		var body AgentMessageDeltaNotification
 		if err := json.Unmarshal(params, &body); err != nil {
 			s.recordProtocolError(fmt.Errorf("decode item/agentMessage/delta: %w", err))
-			return
 		}
-		s.mu.Lock()
-		b := s.textBuilderLocked(body.ItemID)
-		b.WriteString(body.Delta)
-		s.mu.Unlock()
 	case NotifyItemStarted:
 		s.absorbItem(params, true)
 	case NotifyItemCompleted:
@@ -339,58 +479,6 @@ func (s *runState) onNotification(method string, params json.RawMessage) {
 			CachedInputTokens: body.TokenUsage.Total.CachedInputTokens,
 		}
 		s.mu.Unlock()
-	case NotifyTurnCompleted:
-		var body TurnCompletedNotificationBody
-		if err := json.Unmarshal(params, &body); err != nil {
-			s.recordProtocolError(fmt.Errorf("decode turn/completed: %w", err))
-			s.signalDone()
-			return
-		}
-		s.mu.Lock()
-		if s.terminal != nil {
-			s.recordProtocolErrorLocked(errors.New("duplicate turn/completed notification"))
-			s.mu.Unlock()
-			s.signalDone()
-			return
-		}
-		s.terminal = &driver.TerminalPayload{
-			Event: NotifyTurnCompleted,
-			JSON:  append(json.RawMessage(nil), params...),
-		}
-		s.terminalStatus = body.Turn.Status
-		if body.Turn.Usage != nil {
-			s.usage = &driver.Usage{
-				InputTokens:       body.Turn.Usage.InputTokens,
-				OutputTokens:      body.Turn.Usage.OutputTokens,
-				CachedInputTokens: body.Turn.Usage.CachedInputTokens,
-			}
-		}
-		switch body.Turn.Status {
-		case TurnStatusCompleted:
-			if body.Turn.Error != nil {
-				s.recordProtocolErrorLocked(errors.New("completed turn carried an error payload"))
-			}
-		case TurnStatusFailed, TurnStatusInterrupted:
-			s.turnFailure = failureFromCompletedTurn(body.Turn)
-		default:
-			s.recordProtocolErrorLocked(fmt.Errorf("turn/completed reported invalid status %q", body.Turn.Status))
-		}
-		usage := cloneUsage(s.usage)
-		terminalData := map[string]any{}
-		_ = json.Unmarshal(params, &terminalData)
-		item := driver.TranscriptItem{
-			Kind:    driver.TranscriptResult,
-			Subtype: string(body.Turn.Status),
-			IsError: body.Turn.Status != TurnStatusCompleted,
-			Usage:   usage,
-			Data:    map[string]any{"payload": terminalData},
-		}
-		if s.turnFailure != nil {
-			item.Text = s.turnFailure.Message
-		}
-		s.transcript = append(s.transcript, item)
-		s.mu.Unlock()
-		s.signalDone()
 	case NotifyError:
 		var body ErrorNotification
 		if err := json.Unmarshal(params, &body); err != nil {
@@ -402,7 +490,7 @@ func (s *runState) onNotification(method string, params json.RawMessage) {
 			kind = driver.TranscriptSystem
 		}
 		s.mu.Lock()
-		s.transcript = append(s.transcript, driver.TranscriptItem{
+		s.appendTranscriptLocked(driver.TranscriptItem{
 			Kind:    kind,
 			Text:    body.Error.Message,
 			Subtype: NotifyError,
@@ -412,18 +500,211 @@ func (s *runState) onNotification(method string, params json.RawMessage) {
 	}
 }
 
-func (s *runState) signalDone() {
-	s.doneOnce.Do(func() { close(s.done) })
+func (s *runState) flushPendingNotificationsLocked() {
+	if len(s.pending) == 0 {
+		return
+	}
+	pending := s.pending
+	s.pending = nil
+	for _, notification := range pending {
+		s.handleNotificationLocked(notification.method, notification.params)
+	}
 }
 
-func (s *runState) textBuilderLocked(itemID string) *strings.Builder {
-	b, ok := s.textByItemID[itemID]
-	if !ok {
-		b = &strings.Builder{}
-		s.textByItemID[itemID] = b
-		s.itemOrder = append(s.itemOrder, itemID)
+func (s *runState) bindNotificationScopeLocked(method string, params json.RawMessage) (bool, error) {
+	threadID, turnID, scoped, turnScoped, err := appServerNotificationScope(method, params)
+	if err != nil || !scoped {
+		return false, err
 	}
-	return b
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.threadID == "" || (turnScoped && s.turnID == "") {
+		s.pending = append(s.pending, pendingNotification{
+			method: method,
+			params: append(json.RawMessage(nil), params...),
+		})
+		return true, nil
+	}
+	if threadID != s.threadID {
+		return false, fmt.Errorf("codex app-server notification %s belongs to thread %q, want %q", method, threadID, s.threadID)
+	}
+	if turnScoped && turnID != s.turnID {
+		return false, fmt.Errorf("codex app-server notification %s belongs to turn %q, want %q", method, turnID, s.turnID)
+	}
+	return false, nil
+}
+
+func appServerNotificationScope(method string, params json.RawMessage) (threadID, turnID string, scoped, turnScoped bool, err error) {
+	var envelope struct {
+		ThreadID string `json:"threadId"`
+		TurnID   string `json:"turnId"`
+		Thread   struct {
+			ID string `json:"id"`
+		} `json:"thread"`
+		Turn struct {
+			ID string `json:"id"`
+		} `json:"turn"`
+	}
+	switch method {
+	case NotifyThreadStarted, NotifyThreadStatusChanged:
+		scoped = true
+	case NotifyTurnStarted, NotifyTurnCompleted,
+		NotifyItemStarted, NotifyItemCompleted,
+		NotifyItemAgentMessageDelta, NotifyItemReasoningTextDelta,
+		NotifyItemReasoningSummaryTextDelta, NotifyItemReasoningSummaryPartAdded,
+		NotifyItemCommandExecutionOutputDelta,
+		NotifyItemFileChangeOutputDelta, NotifyItemPlanDelta,
+		NotifyThreadTokenUsageUpdated, NotifyError:
+		scoped = true
+		turnScoped = true
+	default:
+		return "", "", false, false, nil
+	}
+	if err := json.Unmarshal(params, &envelope); err != nil {
+		return "", "", true, turnScoped, fmt.Errorf("decode %s scope: %w", method, err)
+	}
+	threadID = envelope.ThreadID
+	if method == NotifyThreadStarted {
+		threadID = envelope.Thread.ID
+	}
+	turnID = envelope.TurnID
+	if method == NotifyTurnStarted || method == NotifyTurnCompleted {
+		turnID = envelope.Turn.ID
+	}
+	if strings.TrimSpace(threadID) == "" {
+		return "", "", true, turnScoped, fmt.Errorf("codex app-server notification %s has no thread id", method)
+	}
+	if turnScoped && strings.TrimSpace(turnID) == "" {
+		return "", "", true, true, fmt.Errorf("codex app-server notification %s has no turn id", method)
+	}
+	return threadID, turnID, true, turnScoped, nil
+}
+
+func validateAppServerNotification(method string, params json.RawMessage) error {
+	var target any
+	switch method {
+	case NotifyThreadStarted:
+		target = &ThreadStartedNotificationBody{}
+	case NotifyTurnStarted:
+		target = &TurnStartedNotificationBody{}
+	case NotifyTurnCompleted:
+		target = &TurnCompletedNotificationBody{}
+	case NotifyItemAgentMessageDelta:
+		target = &AgentMessageDeltaNotification{}
+	case NotifyItemReasoningTextDelta:
+		target = &ReasoningTextDeltaNotification{}
+	case NotifyItemReasoningSummaryTextDelta:
+		target = &ReasoningSummaryTextDeltaNotification{}
+	case NotifyItemReasoningSummaryPartAdded:
+		target = &ReasoningSummaryPartAddedNotification{}
+	case NotifyItemCommandExecutionOutputDelta:
+		target = &CommandExecutionOutputDeltaNotification{}
+	case NotifyCommandExecOutputDelta:
+		target = &CommandExecOutputDeltaNotification{}
+	case NotifyItemFileChangeOutputDelta:
+		target = &FileChangeOutputDeltaNotification{}
+	case NotifyItemPlanDelta:
+		target = &PlanDeltaNotification{}
+	case NotifyThreadTokenUsageUpdated:
+		target = &ThreadTokenUsageUpdatedNotification{}
+	case NotifyError:
+		target = &ErrorNotification{}
+	case NotifyItemStarted:
+		var body ItemStartedNotificationBody
+		if err := json.Unmarshal(params, &body); err != nil {
+			return err
+		}
+		_, err := DecodeThreadItem(body.Item)
+		return err
+	case NotifyItemCompleted:
+		var body ItemCompletedNotificationBody
+		if err := json.Unmarshal(params, &body); err != nil {
+			return err
+		}
+		_, err := DecodeThreadItem(body.Item)
+		return err
+	default:
+		return nil
+	}
+	return json.Unmarshal(params, target)
+}
+
+func (s *runState) handleTurnCompleted(params json.RawMessage) {
+	s.startPublic()
+	var body TurnCompletedNotificationBody
+	if err := json.Unmarshal(params, &body); err != nil {
+		s.recordProtocolError(fmt.Errorf("decode turn/completed: %w", err))
+		// A malformed official terminal closes semantic ingestion but the public
+		// run.error is staged until shutdown confirms the final process outcome.
+		s.signalDone()
+		return
+	}
+
+	s.mu.Lock()
+	s.terminal = &driver.TerminalPayload{
+		Event: NotifyTurnCompleted,
+		JSON:  append(json.RawMessage(nil), params...),
+	}
+	s.terminalStatus = body.Turn.Status
+	if body.Turn.Usage != nil {
+		s.usage = &driver.Usage{
+			InputTokens:       body.Turn.Usage.InputTokens,
+			OutputTokens:      body.Turn.Usage.OutputTokens,
+			CachedInputTokens: body.Turn.Usage.CachedInputTokens,
+		}
+	}
+	switch body.Turn.Status {
+	case TurnStatusCompleted:
+		if body.Turn.Error != nil {
+			s.recordProtocolErrorLocked(errors.New("completed turn carried an error payload"))
+		}
+	case TurnStatusFailed, TurnStatusInterrupted:
+		s.turnFailure = failureFromCompletedTurn(body.Turn)
+	default:
+		s.recordProtocolErrorLocked(fmt.Errorf("turn/completed reported invalid status %q", body.Turn.Status))
+	}
+	usage := cloneUsage(s.usage)
+	terminalData := map[string]any{}
+	_ = json.Unmarshal(params, &terminalData)
+	item := driver.TranscriptItem{
+		Kind:    driver.TranscriptResult,
+		Subtype: string(body.Turn.Status),
+		IsError: body.Turn.Status != TurnStatusCompleted,
+		Usage:   usage,
+		Data:    map[string]any{"payload": terminalData},
+	}
+	if s.turnFailure != nil {
+		item.Text = s.turnFailure.Message
+	}
+	// The terminal TranscriptResult must reach the unified public Event flow
+	// before run.finished/run.error, because the lifecycle terminal is strict
+	// last across all provider-originated public events.
+	s.appendTranscriptLocked(item)
+	s.mu.Unlock()
+
+	s.signalDone()
+}
+
+func (s *runState) finishPublicResult(result driver.Response, runErr error) {
+	s.startPublic()
+	if runErr != nil {
+		s.translator.FinishError(runErr)
+		return
+	}
+	if result.Failure != nil {
+		s.translator.FinishFailure(result.Failure, result.RawStreams, result.Usage)
+		return
+	}
+	if result.RawStreams == nil || result.RawStreams.Terminal == nil {
+		s.translator.FinishError(errors.New("codex app-server protocol ended without a usable terminal"))
+		return
+	}
+	s.translator.Dispatch(result.RawStreams.Terminal.Event, result.RawStreams.Terminal.JSON)
+}
+
+func (s *runState) signalDone() {
+	s.doneOnce.Do(func() { close(s.done) })
 }
 
 func (s *runState) absorbItem(params json.RawMessage, started bool) {
@@ -453,17 +734,54 @@ func (s *runState) absorbItem(params json.RawMessage, started bool) {
 	defer s.mu.Unlock()
 	if started {
 		if transcript := transcriptForStartedItem(item); transcript != nil {
-			s.transcript = append(s.transcript, *transcript)
+			s.appendTranscriptLocked(*transcript)
 		}
 		return
 	}
 	if item.Kind == ThreadItemAgentMessage && item.AgentMessage != nil {
-		b := s.textBuilderLocked(item.ID)
-		b.Reset()
-		b.WriteString(item.AgentMessage.Text)
+		s.finalAgentText = item.AgentMessage.Text
 	}
 	if transcript := transcriptForCompletedItem(item); transcript != nil {
-		s.transcript = append(s.transcript, *transcript)
+		s.appendTranscriptLocked(*transcript)
+	}
+}
+
+// appendTranscriptLocked is the sole transcript write path. Items parsed
+// during the handshake are held until run.started is public; from that point
+// the Response slice and RunEventItem emission advance together, making their
+// order and values identical by construction. Callers must hold s.mu.
+func (s *runState) appendTranscriptLocked(item driver.TranscriptItem) {
+	s.transcript = append(s.transcript, item)
+	s.emitPendingTranscriptLocked()
+}
+
+func (s *runState) startPublic() {
+	s.translator.start()
+	s.markPublicStarted()
+}
+
+func (s *runState) markPublicStarted() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.publicStarted {
+		return
+	}
+	s.publicStarted = true
+	s.emitPendingTranscriptLocked()
+}
+
+func (s *runState) emitPendingTranscriptLocked() {
+	if !s.publicStarted || s.sink == nil {
+		return
+	}
+	for s.itemsEmitted < len(s.transcript) {
+		clone := s.transcript[s.itemsEmitted]
+		_ = s.sink.Emit(driver.RunEvent{
+			Type:      driver.RunEventItem,
+			Timestamp: time.Now().UTC(),
+			Item:      &clone,
+		})
+		s.itemsEmitted++
 	}
 }
 
@@ -559,13 +877,22 @@ func decodeJSONValue(raw json.RawMessage) any {
 
 func (s *runState) recordProtocolError(err error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.recordProtocolErrorLocked(err)
+	s.mu.Unlock()
+	if err != nil {
+		// A protocol-fatal decoder error may be followed by an otherwise valid
+		// terminal while the long-lived app-server stays alive. Wake Run now;
+		// public lifecycle emission remains staged until shutdown completes.
+		s.signalDone()
+	}
 }
 
 func (s *runState) recordProtocolErrorLocked(err error) {
 	if err != nil && s.protocolErr == nil {
 		s.protocolErr = fmt.Errorf("codex app-server protocol: %w", err)
+		// Protocol corruption is a semantic terminal. Later frames are retained
+		// only in Raw stdout and must not repair or contaminate normalized state.
+		s.publicClosed = true
 	}
 }
 
@@ -614,20 +941,33 @@ func (s *runState) snapshot(opts Options, threadID, stdout, stderr string, exitC
 	}
 }
 
-func (s *runState) assembleOutputLocked() string {
-	if len(s.itemOrder) == 0 {
-		return ""
+func finalizeAppServerStructuredOutput(schema *driver.OutputSchema, result driver.Response) driver.Response {
+	if schema == nil || schema.Mode == driver.StructuredOutputPromptValidate {
+		return result
 	}
-	var b strings.Builder
-	for _, id := range s.itemOrder {
-		if sb, ok := s.textByItemID[id]; ok {
-			if b.Len() > 0 {
-				b.WriteString("\n")
-			}
-			b.WriteString(sb.String())
+	var candidate *driver.StructuredOutput
+	if strings.TrimSpace(result.Output) != "" && result.Failure == nil {
+		candidate = &driver.StructuredOutput{
+			Format:  driver.OutputFormatJSONSchema,
+			Source:  driver.StructuredOutputSourceNative,
+			RawJSON: append([]byte(nil), result.Output...),
 		}
 	}
-	return b.String()
+	result.StructuredOutput, result.Failure = engine.FinalizeStructuredOutput(
+		schema,
+		driver.StructuredOutputSourceNative,
+		result.Output,
+		candidate,
+		result.Failure,
+	)
+	if result.Failure != nil {
+		result.Checkpoint = nil
+	}
+	return result
+}
+
+func (s *runState) assembleOutputLocked() string {
+	return s.finalAgentText
 }
 
 func cloneUsage(usage *driver.Usage) *driver.Usage {

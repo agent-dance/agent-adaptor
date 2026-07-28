@@ -1,6 +1,6 @@
 package adaptor_test
 
-// P3.7 migration of the root skill baselines onto the v1 surface. Mapping
+// Skill construction, resolution, selection, and materialization contract. Mapping
 // (root test → here; roots stay untouched):
 //
 //	skills_sdk_test.go
@@ -28,8 +28,7 @@ package adaptor_test
 //	  provider without catalog        → TestInspectSkillsSnapshotCandidates
 //	  catalogue not auto-selected     → TestInspectSkillsSnapshotCandidates
 //
-// Legacy admin_profile_test.go / skill_dirscan_test.go rows have no next/
-// equivalent surface yet — recorded as a deviation in the P3 report.
+// The table below covers the final skill constructor surface.
 
 import (
 	"context"
@@ -42,8 +41,8 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/agent-dance/agent-adaptor/driver"
 	adaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/skill"
 )
 
@@ -208,7 +207,7 @@ func TestSkillsFSMaterializationCanonicalizesSelectedRefs(t *testing.T) {
 
 // TestSelectSkillsUpdatesProcessLocalSelection: SelectSkills replaces the
 // default selection for subsequent runs and inspection reports, process-
-// locally (legacy Admin.SetSelectedSkills semantics).
+// locally through Agent.SelectSkills.
 func TestSelectSkillsUpdatesProcessLocalSelection(t *testing.T) {
 	setSkillCache(t)
 	ctx := context.Background()
@@ -406,15 +405,8 @@ func TestSkillNilSourceFails(t *testing.T) {
 
 // TestSkillMaterializationFailureIsPreLaunch: a selected skill whose source
 // cannot be staged fails the run with the typed materialization error, and
-// the driver is never invoked — on Run and on Stream.
-//
-// The bad archive is passed at RUN scope, matching the root baseline
-// (TestSkillMaterializationFailure used a per-run WithSkills). Default-scope
-// archive skills cannot reach materialization at all: the engine merger's
-// skillSourcesEquivalent has no SkillFromArchive case, so the default ref and
-// its own candidate-pool copy report a same-key/different-content conflict —
-// a pre-existing engine limitation shared with the legacy run path
-// (execute.go passes defaults.Skills as candidates too).
+// the Driver is never invoked. Agent-default and call-scoped archives follow
+// the same materialization path; Run and Stream expose the same error.
 func TestSkillMaterializationFailureIsPreLaunch(t *testing.T) {
 	setSkillCache(t)
 	ctx := context.Background()
@@ -439,6 +431,16 @@ func TestSkillMaterializationFailureIsPreLaunch(t *testing.T) {
 			t.Error("Cause nil, want the underlying archive error")
 		}
 	}
+
+	t.Run("Agent default Run", func(t *testing.T) {
+		fake := newFakeDriver()
+		agent := adaptor.New(fake, adaptor.WithSkills(badSkill))
+		_, err := agent.Run(ctx, "go")
+		assertMatErr(t, err)
+		if fake.runCount() != 0 {
+			t.Errorf("driver ran %d time(s), want pre-launch failure", fake.runCount())
+		}
+	})
 
 	t.Run("Run", func(t *testing.T) {
 		fake := newFakeDriver()

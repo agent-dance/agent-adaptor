@@ -7,18 +7,19 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
+	adaptor "github.com/agent-dance/agent-adaptor"
 	agentadaptor "github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/internal/testutil"
-	adaptor "github.com/agent-dance/agent-adaptor"
 )
 
 func TestBuildClaudeExecArgsIncludesPartialMessagesWhenStreaming(t *testing.T) {
 	cfg := Config{Model: "claude-sonnet-4"}
 	req := agentadaptor.Request{Streaming: true}
-	args, err := buildClaudeExecArgs(cfg, req, "", false)
+	args, err := buildClaudeExecArgs(cfg, req, false)
 	if err != nil {
 		t.Fatalf("build args: %v", err)
 	}
@@ -33,7 +34,7 @@ func TestBuildClaudeExecArgsIncludesPartialMessagesWhenStreaming(t *testing.T) {
 		t.Fatalf("expected --include-partial-messages in %#v", args)
 	}
 
-	argsBatch, err := buildClaudeExecArgs(cfg, agentadaptor.Request{Streaming: false}, "", false)
+	argsBatch, err := buildClaudeExecArgs(cfg, agentadaptor.Request{Streaming: false}, false)
 	if err != nil {
 		t.Fatalf("build batch args: %v", err)
 	}
@@ -44,6 +45,196 @@ func TestBuildClaudeExecArgsIncludesPartialMessagesWhenStreaming(t *testing.T) {
 	}
 }
 
+func TestBuildClaudeExecArgsBrowserPolicyMatrix(t *testing.T) {
+	tests := []struct {
+		name      string
+		policy    agentadaptor.FeatureLevel
+		extra     []string
+		want      string
+		forbidden string
+		wantExtra string
+	}{
+		{name: "inherit preserves constructor args", policy: agentadaptor.FeatureInherit, extra: []string{"--chrome", "--custom-browser-test"}, want: "--chrome", wantExtra: "--custom-browser-test"},
+		{name: "allow overrides constructor deny", policy: agentadaptor.FeatureAllow, extra: []string{"--no-chrome", "--custom-browser-test"}, want: "--chrome", forbidden: "--no-chrome", wantExtra: "--custom-browser-test"},
+		{name: "deny overrides constructor allow", policy: agentadaptor.FeatureDeny, extra: []string{"--chrome", "--custom-browser-test"}, want: "--no-chrome", forbidden: "--chrome", wantExtra: "--custom-browser-test"},
+	}
+	for _, interactive := range []bool{false, true} {
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				args, err := buildClaudeExecArgs(Config{CommonConfig: CommonConfig{ExtraArgs: tt.extra}}, agentadaptor.Request{
+					Policy: agentadaptor.RunPolicy{Browser: tt.policy},
+				}, interactive)
+				if err != nil {
+					t.Fatalf("buildClaudeExecArgs: %v", err)
+				}
+				count := func(value string) int {
+					n := 0
+					for _, arg := range args {
+						if arg == value {
+							n++
+						}
+					}
+					return n
+				}
+				if got := count(tt.want); got != 1 {
+					t.Fatalf("%q count = %d in %v", tt.want, got, args)
+				}
+				if tt.forbidden != "" && count(tt.forbidden) != 0 {
+					t.Fatalf("forbidden %q present in %v", tt.forbidden, args)
+				}
+				if tt.wantExtra != "" && count(tt.wantExtra) != 1 {
+					t.Fatalf("unrelated ExtraArgs not preserved: %v", args)
+				}
+			})
+		}
+	}
+}
+
+func TestBuildClaudeExecArgsSessionForkUsesIndependentProviderSession(t *testing.T) {
+	base := agentadaptor.Request{Session: &agentadaptor.SessionContext{
+		Mode:  agentadaptor.SessionContinueOnly,
+		State: &agentadaptor.SessionState{ResumeID: "parent-session"},
+	}}
+	continued, err := buildClaudeExecArgs(Config{}, base, false)
+	if err != nil {
+		t.Fatalf("continue args: %v", err)
+	}
+	assertArgPair(t, continued, "--resume", "parent-session")
+	assertArgCount(t, continued, "--fork-session", 0)
+
+	forked := base
+	forked.Session = &agentadaptor.SessionContext{
+		Mode:  agentadaptor.SessionFork,
+		State: &agentadaptor.SessionState{ResumeID: "parent-session"},
+	}
+	forkArgs, err := buildClaudeExecArgs(Config{}, forked, false)
+	if err != nil {
+		t.Fatalf("fork args: %v", err)
+	}
+	assertArgPair(t, forkArgs, "--resume", "parent-session")
+	assertArgCount(t, forkArgs, "--resume", 1)
+	assertArgCount(t, forkArgs, "--fork-session", 1)
+	resumeAt, forkAt := indexOfArg(forkArgs, "--resume"), indexOfArg(forkArgs, "--fork-session")
+	if resumeAt < 0 || forkAt != resumeAt+2 {
+		t.Fatalf("fork must be encoded as --resume ID --fork-session, got %v", forkArgs)
+	}
+}
+
+func TestBuildClaudeExecArgsFiltersSDKManagedExtraArgs(t *testing.T) {
+	extra := []string{
+		"--output-format", "text",
+		"--input-format=plain",
+		"--permission-mode", "bypassPermissions",
+		"--dangerously-skip-permissions",
+		"--permission-prompt-tool=unsafe",
+		"--settings", "dangerous-settings.json",
+		"--setting-sources=user,project",
+		"--allowedTools", "Bash", "Write", "Edit",
+		"--tools", "Read", "Grep",
+		"--resume", "wrong-parent",
+		"--fork-session",
+		"--session-id=wrong-session",
+		"--model", "wrong-model",
+		"--effort=low",
+		"--max-turns", "999",
+		"--model", "--custom-after-malformed", "kept",
+		"--custom-provider-flag", "custom-value",
+	}
+	req := agentadaptor.Request{
+		Streaming:     true,
+		ModelOverride: "ignored-by-this-helper",
+		Policy: agentadaptor.RunPolicy{HumanDecision: agentadaptor.HumanDecisionPolicy{
+			Permission: agentadaptor.HumanDecisionAutoReject,
+		}},
+		Session: &agentadaptor.SessionContext{
+			Mode:  agentadaptor.SessionContinueOnly,
+			State: &agentadaptor.SessionState{ResumeID: "right-parent"},
+		},
+	}
+	args, err := buildClaudeExecArgs(Config{
+		CommonConfig:   CommonConfig{ExtraArgs: extra},
+		Model:          "right-model",
+		Effort:         "high",
+		MaxTurnsPerRun: 7,
+	}, req, true)
+	if err != nil {
+		t.Fatalf("build args: %v", err)
+	}
+	for _, forbidden := range []string{"text", "plain", "bypassPermissions", "unsafe", "dangerous-settings.json", "Bash", "Write", "Edit", "Read", "Grep", "wrong-parent", "wrong-session", "wrong-model", "low", "999"} {
+		if indexOfArg(args, forbidden) >= 0 {
+			t.Fatalf("managed ExtraArgs value %q leaked into %v", forbidden, args)
+		}
+	}
+	assertArgPair(t, args, "--output-format", "stream-json")
+	assertArgPair(t, args, "--input-format", "stream-json")
+	assertArgPair(t, args, "--permission-prompt-tool", "stdio")
+	assertArgPair(t, args, "--resume", "right-parent")
+	assertArgPair(t, args, "--model", "right-model")
+	assertArgPair(t, args, "--effort", "high")
+	assertArgPair(t, args, "--max-turns", "7")
+	assertArgPair(t, args, "--custom-provider-flag", "custom-value")
+	assertArgPair(t, args, "--custom-after-malformed", "kept")
+	assertArgCount(t, args, "--dangerously-skip-permissions", 0)
+}
+
+func TestIsClaudeResumeRejectedIsConservative(t *testing.T) {
+	for _, message := range []string{
+		"No conversation found with session ID: deadbeef",
+		"conversation with id deadbeef not found",
+		"failed to resume session",
+	} {
+		if !isClaudeResumeRejected(message) {
+			t.Fatalf("known resume rejection was not classified: %q", message)
+		}
+	}
+	for _, message := range []string{
+		"authentication session expired",
+		"network unavailable while creating session",
+		"model overloaded",
+		"permission denied",
+		"session could not start because model was not found",
+		"failed to resume session because authentication expired",
+		"unknown session policy returned by server",
+		"session is unavailable because credentials expired",
+	} {
+		if isClaudeResumeRejected(message) {
+			t.Fatalf("unrelated failure was classified as resume rejection: %q", message)
+		}
+	}
+}
+
+func assertArgPair(t *testing.T, args []string, name, value string) {
+	t.Helper()
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == name && args[i+1] == value {
+			return
+		}
+	}
+	t.Fatalf("missing argv pair %q %q in %v", name, value, args)
+}
+
+func assertArgCount(t *testing.T, args []string, name string, want int) {
+	t.Helper()
+	got := 0
+	for _, arg := range args {
+		if arg == name {
+			got++
+		}
+	}
+	if got != want {
+		t.Fatalf("argv %q count = %d, want %d in %v", name, got, want, args)
+	}
+}
+
+func indexOfArg(args []string, want string) int {
+	for i, arg := range args {
+		if arg == want {
+			return i
+		}
+	}
+	return -1
+}
+
 func TestBuildClaudeExecArgsUsesJSONSchemaForNativeStructuredOutput(t *testing.T) {
 	schema := []byte(`{"type":"object","properties":{"project_name":{"type":"string"}}}`)
 	args, err := buildClaudeExecArgs(Config{Model: "claude-sonnet-4"}, agentadaptor.Request{
@@ -52,7 +243,7 @@ func TestBuildClaudeExecArgsUsesJSONSchemaForNativeStructuredOutput(t *testing.T
 			Mode:       agentadaptor.StructuredOutputNativeStrict,
 			SchemaJSON: schema,
 		},
-	}, "", false)
+	}, false)
 	if err != nil {
 		t.Fatalf("build args: %v", err)
 	}
@@ -78,7 +269,7 @@ func TestBuildClaudeExecArgsUsesStreamJSONForStreamingStructuredOutput(t *testin
 			Mode:       agentadaptor.StructuredOutputNativeStrict,
 			SchemaJSON: schema,
 		},
-	}, "", false)
+	}, false)
 	if err != nil {
 		t.Fatalf("build args: %v", err)
 	}
@@ -103,7 +294,7 @@ func TestBuildClaudeExecArgsInlinesReferencesWithoutLosingLargeNumbers(t *testin
 			Mode:       agentadaptor.StructuredOutputNativeStrict,
 			SchemaJSON: schema,
 		},
-	}, "", false)
+	}, false)
 	if err != nil {
 		t.Fatalf("build args: %v", err)
 	}
@@ -135,7 +326,7 @@ func TestBuildClaudeExecArgsRejectsRecursiveSchemaReferences(t *testing.T) {
 			Mode:       agentadaptor.StructuredOutputNativeStrict,
 			SchemaJSON: schema,
 		},
-	}, "", false)
+	}, false)
 	if !errors.Is(err, agentadaptor.ErrInvalidOutputSchema) || !strings.Contains(err.Error(), "recursive local reference") {
 		t.Fatalf("error = %v, want recursive ErrInvalidOutputSchema", err)
 	}
@@ -145,7 +336,7 @@ func TestBuildClaudeExecArgsPreservesDefinitionsProperty(t *testing.T) {
 	schema := []byte(`{"type":"object","properties":{"definitions":{"type":"string"}},"required":["definitions"],"additionalProperties":false}`)
 	args, err := buildClaudeExecArgs(Config{}, agentadaptor.Request{
 		OutputSchema: &agentadaptor.OutputSchema{Format: agentadaptor.OutputFormatJSONSchema, Mode: agentadaptor.StructuredOutputNativeStrict, SchemaJSON: schema},
-	}, "", false)
+	}, false)
 	if err != nil {
 		t.Fatalf("build args: %v", err)
 	}
@@ -159,7 +350,7 @@ func TestBuildClaudeExecArgsResolvesArrayJSONPointer(t *testing.T) {
 	schema := []byte(`{"$defs":{"choice":{"allOf":[{"type":"string"}]}},"type":"object","properties":{"value":{"$ref":"#/$defs/choice/allOf/0"}}}`)
 	args, err := buildClaudeExecArgs(Config{}, agentadaptor.Request{
 		OutputSchema: &agentadaptor.OutputSchema{Format: agentadaptor.OutputFormatJSONSchema, Mode: agentadaptor.StructuredOutputNativeStrict, SchemaJSON: schema},
-	}, "", false)
+	}, false)
 	if err != nil {
 		t.Fatalf("build args: %v", err)
 	}
@@ -173,7 +364,7 @@ func TestBuildClaudeExecArgsDoesNotRewriteConstData(t *testing.T) {
 	schema := []byte(`{"$defs":{"value":{"type":"string"}},"type":"object","const":{"$ref":"#/$defs/value"}}`)
 	args, err := buildClaudeExecArgs(Config{}, agentadaptor.Request{
 		OutputSchema: &agentadaptor.OutputSchema{Format: agentadaptor.OutputFormatJSONSchema, Mode: agentadaptor.StructuredOutputNativeStrict, SchemaJSON: schema},
-	}, "", false)
+	}, false)
 	if err != nil {
 		t.Fatalf("build args: %v", err)
 	}
@@ -202,7 +393,7 @@ func TestDescriptorAdvertisesStructuredOutputCapabilities(t *testing.T) {
 
 func TestBuildClaudeExecArgsInteractiveEnablesStdioPermissionPrompt(t *testing.T) {
 	cfg := Config{Model: "claude-sonnet-4"}
-	args, err := buildClaudeExecArgs(cfg, agentadaptor.Request{}, "", true)
+	args, err := buildClaudeExecArgs(cfg, agentadaptor.Request{}, true)
 	if err != nil {
 		t.Fatalf("build args: %v", err)
 	}
@@ -232,7 +423,7 @@ func TestStreamCapabilityValues(t *testing.T) {
 
 func TestParseCheckpointRequiresRecognizedClaudeEvent(t *testing.T) {
 	stdout := `{"type":"tool.result","session_id":"ignore-me"}
-{"type":"result","subtype":"success","session_id":"claude-session","display_id":"claude-display"}`
+{"type":"result","subtype":"success","is_error":false,"session_id":"claude-session","display_id":"claude-display","result":""}`
 
 	checkpoint := parseCheckpoint(stdout, 0)
 	if checkpoint == nil || checkpoint.State == nil {
@@ -244,7 +435,10 @@ func TestParseCheckpointRequiresRecognizedClaudeEvent(t *testing.T) {
 }
 
 func TestParseClaudeResultStructuredOutput(t *testing.T) {
-	parsed := snapshotClaudeStdout(`{"type":"result","subtype":"success","structured_output":{"project_name":"agent-adaptor"},"result":"ok"}`)
+	parsed := snapshotClaudeStdout(`{"type":"result","subtype":"success","is_error":false,"session_id":"claude-structured","structured_output":{"project_name":"agent-adaptor"},"result":"ok"}`)
+	if got := parsed.buildOutput(); got != "ok" {
+		t.Fatalf("terminal-only structured Output = %q, want ok", got)
+	}
 	if parsed.structuredOutput == nil || string(parsed.structuredOutput.RawJSON) != `{"project_name":"agent-adaptor"}` {
 		t.Fatalf("expected structured output, got %#v", parsed.structuredOutput)
 	}
@@ -267,9 +461,9 @@ printf '%s\n' '{"type":"stream_event","session_id":"sess-structured","event":{"t
 printf '%s\n' '{"type":"stream_event","session_id":"sess-structured","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"done"}}}'
 printf '%s\n' '{"type":"stream_event","session_id":"sess-structured","event":{"type":"content_block_stop","index":0}}'
 printf '%s\n' '{"type":"assistant","session_id":"sess-structured","message":{"model":"claude-fixture","content":[{"type":"text","text":"done"}]}}'
-printf '%s\n' '{"type":"result","subtype":"success","session_id":"sess-structured","structured_output":{"project_name":"agent-adaptor"},"result":"done"}'
+printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"session_id":"sess-structured","structured_output":{"project_name":"agent-adaptor"},"result":"done"}'
 `,
-		"@echo off\r\nmore > nul\r\necho {\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"sess-structured\",\"model\":\"claude-fixture\"}\r\necho {\"type\":\"stream_event\",\"session_id\":\"sess-structured\",\"event\":{\"type\":\"message_start\",\"message\":{\"id\":\"msg-1\"}}}\r\necho {\"type\":\"stream_event\",\"session_id\":\"sess-structured\",\"event\":{\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\"}}}\r\necho {\"type\":\"stream_event\",\"session_id\":\"sess-structured\",\"event\":{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"done\"}}}\r\necho {\"type\":\"stream_event\",\"session_id\":\"sess-structured\",\"event\":{\"type\":\"content_block_stop\",\"index\":0}}\r\necho {\"type\":\"assistant\",\"session_id\":\"sess-structured\",\"message\":{\"model\":\"claude-fixture\",\"content\":[{\"type\":\"text\",\"text\":\"done\"}]}}\r\necho {\"type\":\"result\",\"subtype\":\"success\",\"session_id\":\"sess-structured\",\"structured_output\":{\"project_name\":\"agent-adaptor\"},\"result\":\"done\"}\r\n",
+		"@echo off\r\nmore > nul\r\necho {\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"sess-structured\",\"model\":\"claude-fixture\"}\r\necho {\"type\":\"stream_event\",\"session_id\":\"sess-structured\",\"event\":{\"type\":\"message_start\",\"message\":{\"id\":\"msg-1\"}}}\r\necho {\"type\":\"stream_event\",\"session_id\":\"sess-structured\",\"event\":{\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\"}}}\r\necho {\"type\":\"stream_event\",\"session_id\":\"sess-structured\",\"event\":{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"done\"}}}\r\necho {\"type\":\"stream_event\",\"session_id\":\"sess-structured\",\"event\":{\"type\":\"content_block_stop\",\"index\":0}}\r\necho {\"type\":\"assistant\",\"session_id\":\"sess-structured\",\"message\":{\"model\":\"claude-fixture\",\"content\":[{\"type\":\"text\",\"text\":\"done\"}]}}\r\necho {\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"session_id\":\"sess-structured\",\"structured_output\":{\"project_name\":\"agent-adaptor\"},\"result\":\"done\"}\r\n",
 	)
 	agent := adaptor.New(Driver(Config{
 		CommonConfig: CommonConfig{
@@ -314,6 +508,126 @@ printf '%s\n' '{"type":"result","subtype":"success","session_id":"sess-structure
 	}
 	if !seenText || !seenFinished {
 		t.Fatalf("events = %#v", events)
+	}
+
+	runResult, err := agent.Run(
+		context.Background(),
+		"extract project metadata",
+		adaptor.WithSchemaJSON([]byte(`{"type":"object","properties":{"project_name":{"type":"string"}},"required":["project_name"],"additionalProperties":false}`)),
+	)
+	if err != nil {
+		t.Fatalf("Run result: %v", err)
+	}
+	if runResult.Text != result.Text || runResult.Summary != result.Summary ||
+		runResult.Raw().Stdout != result.Raw().Stdout || runResult.Raw().Stderr != result.Raw().Stderr ||
+		!reflect.DeepEqual(runResult.Raw().Terminal, result.Raw().Terminal) ||
+		!reflect.DeepEqual(runResult.Transcript(), result.Transcript()) {
+		t.Fatalf("Run and Stream.Result diverged:\nrun=%#v\nstream=%#v", runResult, result)
+	}
+	var runStructured map[string]string
+	if err := runResult.Decode(&runStructured); err != nil || !reflect.DeepEqual(runStructured, structured) {
+		t.Fatalf("Run Decode = (%#v, %v), Stream Decode = %#v", runStructured, err, structured)
+	}
+}
+
+func TestClaudeNativeStructuredOutputValidationPrecedesCheckpoint(t *testing.T) {
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	home := t.TempDir()
+	command := testutil.WriteCommand(t, home, "fake-claude-invalid-structured",
+		"#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"session_id\":\"structured-invalid\",\"result\":\"done\",\"structured_output\":{\"project_name\":42}}'\n",
+		"@echo off\r\nmore > nul\r\necho {\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"session_id\":\"structured-invalid\",\"result\":\"done\",\"structured_output\":{\"project_name\":42}}\r\n",
+	)
+	sink := &streamSink{}
+	resp, err := (adapter{}).Run(context.Background(), agentadaptor.Request{
+		RunID:     "run-invalid-structured",
+		Streaming: true,
+		Prompt:    "extract project metadata",
+		Config:    Config{CommonConfig: CommonConfig{Command: command, CWD: home}},
+		Workspace: agentadaptor.WorkspaceLease{ID: "workspace", CWD: home},
+		OutputSchema: &agentadaptor.OutputSchema{
+			Format:     agentadaptor.OutputFormatJSONSchema,
+			Mode:       agentadaptor.StructuredOutputNativeStrict,
+			SchemaJSON: []byte(`{"type":"object","properties":{"project_name":{"type":"string"}},"required":["project_name"],"additionalProperties":false}`),
+			OnInvalid:  agentadaptor.StructuredOutputFailRun,
+		},
+	}, sink)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if resp.StructuredOutput == nil || resp.StructuredOutput.Valid {
+		t.Fatalf("StructuredOutput = %#v, want invalid", resp.StructuredOutput)
+	}
+	if resp.Failure == nil || resp.Failure.Code != agentadaptor.FailurePolicyError {
+		t.Fatalf("Failure = %#v, want policy_error", resp.Failure)
+	}
+	if resp.Checkpoint != nil {
+		t.Fatalf("invalid structured output produced checkpoint %#v", resp.Checkpoint)
+	}
+	assertClaudeStreamTerminal(t, sink.snapshot(), agentadaptor.StreamRunError)
+}
+
+func TestClaudeDirectStreamTerminalMatchesFrozenProtocolOutcome(t *testing.T) {
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	tests := []struct {
+		name  string
+		lines []string
+	}{
+		{
+			name:  "success result missing result field",
+			lines: []string{`{"type":"result","subtype":"success","is_error":false,"session_id":"missing-result"}`},
+		},
+		{
+			name: "payload follows success result",
+			lines: []string{
+				`{"type":"result","subtype":"success","is_error":false,"session_id":"late-payload","result":"done"}`,
+				`{"type":"system","subtype":"status"}`,
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			var shell, batch strings.Builder
+			shell.WriteString("#!/bin/sh\ncat >/dev/null\n")
+			batch.WriteString("@echo off\r\nmore > nul\r\n")
+			for _, line := range tc.lines {
+				shell.WriteString("printf '%s\\n' '")
+				shell.WriteString(line)
+				shell.WriteString("'\n")
+				batch.WriteString("echo ")
+				batch.WriteString(line)
+				batch.WriteString("\r\n")
+			}
+			command := testutil.WriteCommand(t, home, "fake-claude-frozen-outcome", shell.String(), batch.String())
+			sink := &streamSink{}
+			resp, err := (adapter{}).Run(context.Background(), agentadaptor.Request{
+				RunID:     "run-frozen-outcome",
+				Streaming: true,
+				Prompt:    "test",
+				Config:    Config{CommonConfig: CommonConfig{Command: command, CWD: home}},
+				Workspace: agentadaptor.WorkspaceLease{ID: "workspace", CWD: home},
+			}, sink)
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			if resp.Failure == nil || resp.Checkpoint != nil {
+				t.Fatalf("Response = failure %#v checkpoint %#v", resp.Failure, resp.Checkpoint)
+			}
+			assertClaudeStreamTerminal(t, sink.snapshot(), agentadaptor.StreamRunError)
+		})
+	}
+}
+
+func assertClaudeStreamTerminal(t *testing.T, payloads []agentadaptor.StreamPayload, want agentadaptor.StreamKind) {
+	t.Helper()
+	terminals := make([]agentadaptor.StreamKind, 0, 1)
+	for _, payload := range payloads {
+		if payload.Kind == agentadaptor.StreamRunFinished || payload.Kind == agentadaptor.StreamRunError {
+			terminals = append(terminals, payload.Kind)
+		}
+	}
+	if len(terminals) != 1 || terminals[0] != want {
+		t.Fatalf("stream terminals = %v, want exactly [%s]; payloads=%#v", terminals, want, payloads)
 	}
 }
 

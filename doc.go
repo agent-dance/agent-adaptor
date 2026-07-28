@@ -1,29 +1,43 @@
-// Package adaptor is the v1 consumer API of agent-adaptor.
+// Package adaptor provides one API for running local coding agents.
 //
-// This package currently lives in the next/ staging directory while the v1
-// rewrite is in progress (strangler route, see docs/api-v1-implementation-plan.md
-// §1). It moves to the repository root in P5; nothing outside next/ should
-// import it before then.
+// The API is organized around six nouns:
 //
-// The API is organized around six nouns (docs/api-v1-redesign.md §0):
-// Agent, Thread, Stream, Event, Result, and Driver. Delivered so far:
+//   - Agent is a configured, ready-to-run driver plus host defaults.
+//   - Thread adds durable resume and fork semantics to an Agent.
+//   - Stream represents one execution in progress.
+//   - Event is one typed observation from that execution.
+//   - Result is its final output and audit record.
+//   - Driver is the provider integration SPI implemented in package driver.
 //
-//   - Agent: adaptor.New(driver, opts...) + Agent.Run — construct and go.
-//   - Options: one vocabulary, two scopes. The same WithX used in New is the
-//     agent default; used in Run/Stream it is a per-call override. Scope
-//     misuse is a compile error (see Option / CallOption / SharedOption).
-//   - Result: flat high-frequency fields plus Raw() / Transcript() /
-//     Services() / Decode() audit accessors.
-//   - RunError: business failures are typed errors carrying the full Result;
-//     "if err != nil" is the single verdict point.
-//   - Stream/Event (P1): Agent.Stream returns one typed event channel —
-//     text/thinking deltas, tool calls, process output, notices, Dropped
-//     backpressure markers, and live *ApprovalRequest events — closed out by
-//     Stream.Result(). Run is Stream + drain + Result(): one execution path.
-//   - Approvals (P1): ApprovalRequest carries its own responder
-//     (Approve/Deny/Answer); consume it via the OnApproval callback or as a
-//     stream event, with Policy.Approvals timeout/fallback/retry semantics.
+// Construct an Agent directly from a provider Driver. Multiple agents are
+// ordinary Go variables; the package has no central SDK object or registry:
 //
-// Thread (P2) and the skill/mcp/profile vocabulary packages (P3) join in
-// later phases.
+//	agent := adaptor.New(
+//		codex.Driver(codex.Config{Model: "gpt-5.4"}),
+//		adaptor.WithWorkspace("/repo"),
+//	)
+//	result, err := agent.Run(ctx, "Review this change")
+//
+// Run and Stream share one execution pipeline. Run is exactly Stream followed
+// by draining Events and calling Result. Agent and Thread both implement
+// Runner, so bridges and host integrations do not need separate stateful and
+// stateless paths.
+//
+// Options have explicit scopes. Option applies at construction, CallOption
+// applies to one invocation, and SharedOption may be used in either place.
+// Per-call values override Agent defaults; skills append, while other settings
+// follow their documented replacement or merge rules.
+//
+// An Agent is stateless unless constructed with a ThreadStore. Agent.Thread
+// continues or creates the host key, Agent.NewThread starts a replacement only
+// after a valid checkpoint, and Thread.Fork creates an independent child. The
+// SDK coordinates leases, compatibility fingerprints, and atomic checkpoint
+// persistence; provider resume identifiers remain Driver details.
+//
+// Stream exposes one ordered typed Event channel. ApprovalRequest events carry
+// their own exactly-once responder, allowing either callbacks or interactive
+// hosts to approve, deny, or answer. Result separates assistant Text and
+// Summary from Raw process streams, Transcript entries, runtime Services, and
+// validated structured output. Business failures use RunError and retain the
+// partial Result; infrastructure failures remain ordinary wrapped errors.
 package adaptor

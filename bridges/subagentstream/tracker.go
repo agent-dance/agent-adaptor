@@ -9,6 +9,8 @@ import (
 
 // EventBus is the minimal host-side subscription contract Merge consumes.
 type EventBus interface {
+	// SubscribeRun returns delegation events associated with runID until ctx
+	// is canceled or the subscription closes.
 	SubscribeRun(ctx context.Context, runID string) <-chan a2adelegation.DelegationEvent
 }
 

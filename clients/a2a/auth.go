@@ -18,10 +18,14 @@ type Auth interface {
 
 type bearerToken string
 
+// BearerToken returns authentication that sends token as an HTTP bearer
+// credential to trusted A2A origins. An empty token sends no credential.
 func BearerToken(token string) Auth {
 	return bearerToken(token)
 }
 
+// BearerTokenFromEnv reads name immediately and returns bearer authentication
+// for the resulting value. An unset or empty variable sends no credential.
 func BearerTokenFromEnv(name string) Auth {
 	return bearerToken(os.Getenv(name))
 }

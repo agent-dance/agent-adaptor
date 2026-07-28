@@ -17,10 +17,10 @@ func (m failingSkillMaterializer) Materialize(context.Context, Skill) (string, e
 
 func TestEngineErrorsUsePublicLeafConcreteTypes(t *testing.T) {
 	merger := newSkillMerger()
-	if err := merger.add(sourceLabelDefault, Skill{Key: "review", Source: SkillFromInline{SkillMD: "one"}}); err != nil {
+	if err := merger.add(sourceLabelDefault, Skill{Key: "review", Source: skill.InlineSource{SkillMD: "one"}}); err != nil {
 		t.Fatal(err)
 	}
-	err := merger.add(sourceLabelRun, Skill{Key: "review", Source: SkillFromInline{SkillMD: "two"}})
+	err := merger.add(sourceLabelRun, Skill{Key: "review", Source: skill.InlineSource{SkillMD: "two"}})
 	var conflict *skill.SkillKeyConflictError
 	if !errors.As(err, &conflict) || !errors.Is(err, skill.ErrSkillKeyConflict) {
 		t.Fatalf("merge error = %T %v, want public skill conflict", err, err)
@@ -32,7 +32,7 @@ func TestEngineErrorsUsePublicLeafConcreteTypes(t *testing.T) {
 		nil,
 		failingSkillMaterializer{err: cause},
 		AgentIdentity{},
-		[]SkillRef{Skill{Key: "review", Source: SkillFromInline{SkillMD: "one"}}},
+		[]SkillRef{Skill{Key: "review", Source: skill.InlineSource{SkillMD: "one"}}},
 		nil,
 		nil,
 	)
@@ -48,7 +48,7 @@ func TestEngineErrorsUsePublicLeafConcreteTypes(t *testing.T) {
 	}
 
 	_, err = resolveStructuredOutputSource(
-		DriverDescriptor{Type: "fake"},
+		Descriptor{Type: "fake"},
 		&OutputSchema{Mode: StructuredOutputNativeStrict},
 		false,
 		RunPolicy{},

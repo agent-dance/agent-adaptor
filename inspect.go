@@ -8,25 +8,17 @@ import (
 	"github.com/agent-dance/agent-adaptor/internal/engine"
 )
 
-// This file is the P3.6 inspection surface (design §2.9): a read-only panel
-// behind Agent.Inspect() plus the three profile verbs on Agent itself
-// (ProfileState / SyncProfile / SelectSkills). Semantics mirror the legacy
-// Admin implementation (internal/engine/admin.go) block for block — the same
-// probe-interface assertions, the same honest fallbacks when a driver does
-// not implement a probe, and the same truthful materialization reporting in
-// snapshots (a desired-but-unmaterialized resource is a warning/error, never
-// silently reported as applied).
-//
-// Differences from legacy Admin, by design:
-//   - no registry/name — the panel inspects this one Agent;
-//   - config is always nil — v1 drivers carry their own config internally
-//     (same rule as the run path in buildRequest);
-//   - the SelectSkills override lives on the Agent (mutex-guarded), not in a
-//     central SDK map.
+// Agent.Inspect returns a read-only panel for one configured Agent. Optional
+// probes use the same configuration captured by the Agent's Driver. When a
+// Driver does not implement a probe, the panel reports a truthful unavailable
+// or descriptor-derived result rather than fabricating observed state.
+// ProfileState reports desired and observed resources, SyncProfile performs
+// materialization, and SelectSkills changes this Agent's process-local skill
+// selection.
 
 // Consumer-facing aliases for driver-owned inspection reports. Profile
 // snapshot values are declared below as root-owned DTOs: an application-facing
-// report must never expose the migration engine's concrete types.
+// report never exposes internal implementation types.
 type (
 	// EnvironmentReport is the result of an environment health check.
 	EnvironmentReport = driver.EnvironmentReport
@@ -49,7 +41,11 @@ type (
 type ProfileKind string
 
 const (
-	ProfileKindShared      ProfileKind = "shared"
+	// ProfileKindShared identifies a profile shared with the provider's normal
+	// user configuration.
+	ProfileKindShared ProfileKind = "shared"
+	// ProfileKindHostManaged identifies a profile whose lifecycle is managed
+	// by the embedding host.
 	ProfileKindHostManaged ProfileKind = "host_managed"
 )
 
@@ -57,12 +53,18 @@ const (
 type ProfileResourceKind string
 
 const (
-	ProfileResourceSkills       ProfileResourceKind = "skills"
-	ProfileResourceMCP          ProfileResourceKind = "mcp"
-	ProfileResourceAgents       ProfileResourceKind = "agents"
-	ProfileResourceHooks        ProfileResourceKind = "hooks"
+	// ProfileResourceSkills identifies skill resources.
+	ProfileResourceSkills ProfileResourceKind = "skills"
+	// ProfileResourceMCP identifies MCP server resources.
+	ProfileResourceMCP ProfileResourceKind = "mcp"
+	// ProfileResourceAgents identifies sub-agent declarations.
+	ProfileResourceAgents ProfileResourceKind = "agents"
+	// ProfileResourceHooks identifies hook declarations.
+	ProfileResourceHooks ProfileResourceKind = "hooks"
+	// ProfileResourceInstructions identifies instruction resources.
 	ProfileResourceInstructions ProfileResourceKind = "instructions"
-	ProfileResourceConfig       ProfileResourceKind = "config"
+	// ProfileResourceConfig identifies provider configuration patches.
+	ProfileResourceConfig ProfileResourceKind = "config"
 )
 
 // ProfileResourceSupport describes how portable a resource is for the bound
@@ -70,11 +72,19 @@ const (
 type ProfileResourceSupport string
 
 const (
-	ProfileResourceSupportPortableCore     ProfileResourceSupport = "portable_core"
+	// ProfileResourceSupportPortableCore is supported by every conforming
+	// Driver through the portable core contract.
+	ProfileResourceSupportPortableCore ProfileResourceSupport = "portable_core"
+	// ProfileResourceSupportPortableExtended is supported through an optional
+	// portable Driver extension.
 	ProfileResourceSupportPortableExtended ProfileResourceSupport = "portable_extended"
-	ProfileResourceSupportNativeEscape     ProfileResourceSupport = "native_escape"
-	ProfileResourceSupportFallback         ProfileResourceSupport = "fallback"
-	ProfileResourceSupportUnsupported      ProfileResourceSupport = "unsupported"
+	// ProfileResourceSupportNativeEscape requires provider-native handling.
+	ProfileResourceSupportNativeEscape ProfileResourceSupport = "native_escape"
+	// ProfileResourceSupportFallback uses a documented fallback representation.
+	ProfileResourceSupportFallback ProfileResourceSupport = "fallback"
+	// ProfileResourceSupportUnsupported means the Driver cannot represent the
+	// resource.
+	ProfileResourceSupportUnsupported ProfileResourceSupport = "unsupported"
 )
 
 // ProfileResourceMaterialization describes how a desired resource became
@@ -82,34 +92,60 @@ const (
 type ProfileResourceMaterialization string
 
 const (
-	ProfileResourceMaterializationNativeManaged   ProfileResourceMaterialization = "native_managed"
-	ProfileResourceMaterializationFileManaged     ProfileResourceMaterialization = "file_managed"
-	ProfileResourceMaterializationPromptInjected  ProfileResourceMaterialization = "prompt_injected"
-	ProfileResourceMaterializationFallback        ProfileResourceMaterialization = "fallback"
+	// ProfileResourceMaterializationNativeManaged means the provider manages
+	// the resource natively.
+	ProfileResourceMaterializationNativeManaged ProfileResourceMaterialization = "native_managed"
+	// ProfileResourceMaterializationFileManaged means the package materialized
+	// the resource as provider configuration files.
+	ProfileResourceMaterializationFileManaged ProfileResourceMaterialization = "file_managed"
+	// ProfileResourceMaterializationPromptInjected means the resource was
+	// injected into the run instructions.
+	ProfileResourceMaterializationPromptInjected ProfileResourceMaterialization = "prompt_injected"
+	// ProfileResourceMaterializationFallback means a documented fallback was
+	// used.
+	ProfileResourceMaterializationFallback ProfileResourceMaterialization = "fallback"
+	// ProfileResourceMaterializationNotMaterialized means the desired resource
+	// was not made visible to the provider.
 	ProfileResourceMaterializationNotMaterialized ProfileResourceMaterialization = "not_materialized"
 )
 
 // ResourceSnapshot is one resource row inside a [ProfileSnapshot].
 type ResourceSnapshot struct {
-	Kind            ProfileResourceKind
-	Fingerprint     string
-	Managed         []string
-	External        []string
-	Support         ProfileResourceSupport
+	// Kind identifies the resource family.
+	Kind ProfileResourceKind
+	// Fingerprint is the deterministic fingerprint of the desired resource.
+	Fingerprint string
+	// Managed lists resources controlled by this Agent's profile lifecycle.
+	Managed []string
+	// External lists provider-visible resources not controlled by this Agent.
+	External []string
+	// Support describes the Driver's portability level for the resource.
+	Support ProfileResourceSupport
+	// Materialization describes how the desired resource became visible to the
+	// provider.
 	Materialization ProfileResourceMaterialization
-	Warnings        []string
-	Error           string
+	// Warnings contains non-fatal observation or materialization diagnostics.
+	Warnings []string
+	// Error contains a resource-specific failure message, or is empty when the
+	// resource has no reported failure.
+	Error string
 }
 
 // ProfileSnapshot reports the desired versus observed profile resource state
 // returned by [Agent.ProfileState] and [Agent.SyncProfile].
 type ProfileSnapshot struct {
-	DriverType  string
-	Profile     AgentProfile
-	Kind        ProfileKind
+	// DriverType identifies the configured Driver.
+	DriverType string
+	// Profile is the Driver's observed native profile report.
+	Profile AgentProfile
+	// Kind classifies how the effective profile is managed.
+	Kind ProfileKind
+	// Fingerprint identifies the complete desired profile state.
 	Fingerprint string
-	Resources   []ResourceSnapshot
-	Warnings    []string
+	// Resources reports desired and observed state by resource family.
+	Resources []ResourceSnapshot
+	// Warnings contains profile-wide non-fatal diagnostics.
+	Warnings []string
 }
 
 func profileSnapshotFromEngine(snapshot engine.ProfileSnapshot) ProfileSnapshot {
@@ -201,14 +237,14 @@ func (in Inspector) ConfigSchema(ctx context.Context) (*ConfigSchema, error) {
 // Skills resolves and reports the agent's effective skill set: the default
 // refs (or the SelectSkills override when one is active) resolved against
 // the provider, with the inline defaults + the provider catalogue as
-// non-selected candidates — exactly the legacy Admin.ListSkills recipe. The
-// snapshot's sync mode reports truthfully whether the driver can observe
-// installed skills (SkillAwareDriver) or the SDK only knows the desired set.
+// non-selected candidates. The snapshot's sync mode reports truthfully whether
+// the Driver can observe installed skills through driver.SkillSupport or the
+// SDK only knows the desired set.
 func (in Inspector) Skills(ctx context.Context) (SkillSnapshot, error) {
 	a := in.agent
 	identity := a.inspectIdentity()
 	defaultRefs := a.skillDefaultRefs(a.defaults.skills)
-	// Inline default Skill values + the upstream SkillCatalog (when the
+	// Inline default Skill values + the upstream skill.Catalog (when the
 	// provider implements it) join as non-selected candidates so the full
 	// catalogue participates in the snapshot even under a SelectSkills
 	// override.
@@ -276,7 +312,7 @@ func (a *Agent) SyncProfile(ctx context.Context) (ProfileSnapshot, error) {
 // defaults (bare-key selection semantics — inline Skill values can only be
 // introduced via WithSkills); unknown keys fail with ErrSkillNotFound and the
 // override is NOT installed. The resolved selection is synced to the driver
-// before the override takes effect, mirroring legacy Admin.SetSelectedSkills.
+// before the override takes effect.
 func (a *Agent) SelectSkills(ctx context.Context, keys []string) (SkillSnapshot, error) {
 	refs := make([]driver.SkillRef, 0, len(keys))
 	normalized := make([]string, 0, len(keys))
@@ -290,8 +326,8 @@ func (a *Agent) SelectSkills(ctx context.Context, keys []string) (SkillSnapshot,
 	}
 	identity := a.inspectIdentity()
 	// Inline defaults + catalogue re-enter as non-selected candidates so
-	// SelectSkills can target them by key (legacy comment carried over:
-	// keys in neither pool report ErrSkillNotFound).
+	// SelectSkills can target them by key; keys in neither pool report
+	// ErrSkillNotFound.
 	candidates, err := engine.CollectSkillCandidates(ctx, a.defaults.skillProvider, identity, a.defaults.skills)
 	if err != nil {
 		return SkillSnapshot{}, err
@@ -312,8 +348,7 @@ func (a *Agent) SelectSkills(ctx context.Context, keys []string) (SkillSnapshot,
 
 // profileState is the desired-state assembly shared by ProfileState and
 // SyncProfile: resolve the default skills (honoring a SelectSkills
-// override), then compose the full profile payload from the agent defaults —
-// the legacy defaultProfileState + defaultProfilePayloadWithSkills recipe.
+// override), then compose the full profile payload from the agent defaults.
 type profileState struct {
 	payload  driver.ProfilePayload
 	selected []string

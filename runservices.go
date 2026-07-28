@@ -3,24 +3,25 @@ package adaptor
 import (
 	"context"
 	"errors"
+	"fmt"
 	"maps"
 	"sync"
+	"time"
 
 	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/internal/engine"
 )
 
-// This file is the P4.7 run-scoped environment pipeline: workspace leases,
-// runtime services, and the generic run-service mount point that lets an
-// ecosystem package (delegation, a database sidecar, a browser pool, ...)
-// attach a per-run endpoint to the agent without the root package knowing
-// anything about it.
+const runResourceCleanupTimeout = 5 * time.Second
+
+// The run-scoped environment pipeline coordinates workspace leases, runtime
+// services, and the generic run-service mount point through which an optional
+// host component can attach per-run endpoints and events.
 //
-// Ordering is the legacy engine order (execute.go): workspace Resolve → run ID
-// → runtime Ensure → provider AttachRun → MCP assembly → driver dispatch, and
-// the exact reverse on the way out. Every semantic step routes through an
-// engine entry so next/ and the legacy Core produce identical leases,
-// fingerprints, and normalized refs.
+// Acquisition order is workspace resolution, runtime service Ensure,
+// RunServiceProvider attachment, MCP assembly, and Driver dispatch. Teardown
+// runs in reverse order so every partially acquired environment can unwind
+// safely.
 
 // ============ Host-facing contracts ============
 
@@ -42,26 +43,38 @@ type (
 // [ServiceManager.Ensure]. Slice and map fields are owned by the SDK for the
 // duration of the call; managers must copy values they retain afterwards.
 type ServiceRequest struct {
-	RunID      string
+	// RunID is the package-assigned execution identifier.
+	RunID string
+	// DriverType identifies the configured Driver.
 	DriverType string
-	Agent      Identity
-	Config     any
-	Workspace  WorkspaceLease
-	Desired    []ServiceSpec
-	Metadata   map[string]string
+	// Agent is the effective host-supplied identity for the run.
+	Agent Identity
+	// Config is optional opaque Driver configuration. It is nil when the
+	// configured Driver retains its construction-time configuration internally.
+	Config any
+	// Workspace is the resolved workspace lease, if one was acquired.
+	Workspace WorkspaceLease
+	// Desired is the complete service declaration for the run.
+	Desired []ServiceSpec
+	// Metadata is the effective audit metadata for the run.
+	Metadata map[string]string
 }
 
 // ServiceManager is the host hook that starts or locates runtime services.
 // Install it with [WithServiceManager]. Implementations must be safe for
 // concurrent runs of one Agent.
 type ServiceManager interface {
+	// Ensure starts or locates the desired services and returns the endpoints
+	// actually made available to the run.
 	Ensure(ctx context.Context, req ServiceRequest) ([]ServiceRef, error)
+	// ReleaseByRun releases run-scoped services owned by runID.
 	ReleaseByRun(ctx context.Context, runID string) error
+	// ReleaseByLabels releases services selected by host-defined labels.
 	ReleaseByLabels(ctx context.Context, labels map[string]string) error
 }
 
 // WorkspaceSpec is the closed set of workspace provisioning requests:
-// [SharedWorkspace], [GitWorktreeWorkspace], and [AdapterManagedWorkspace].
+// [SharedWorkspace], [GitWorktreeWorkspace], and [DriverManagedWorkspace].
 type WorkspaceSpec interface {
 	workspaceRequest() workspaceRequestData
 }
@@ -86,8 +99,11 @@ func (SharedWorkspace) workspaceRequest() workspaceRequestData {
 
 // GitWorktreeWorkspace requests an isolated git worktree for the run.
 type GitWorktreeWorkspace struct {
-	BaseRef           string
-	BranchTemplate    string
+	// BaseRef is the git revision from which the worktree is created.
+	BaseRef string
+	// BranchTemplate is the host-defined template for naming a worktree branch.
+	BranchTemplate string
+	// WorktreeParentDir is the directory under which worktrees are created.
 	WorktreeParentDir string
 }
 
@@ -101,22 +117,25 @@ func (w GitWorktreeWorkspace) workspaceRequest() workspaceRequestData {
 	}
 }
 
-// AdapterManagedWorkspace lets the driver choose or create its own
+// DriverManagedWorkspace lets the Driver choose or create its own
 // workspace according to its native behavior.
-type AdapterManagedWorkspace struct{}
+type DriverManagedWorkspace struct{}
 
-func (AdapterManagedWorkspace) workspaceRequest() workspaceRequestData {
+func (DriverManagedWorkspace) workspaceRequest() workspaceRequestData {
 	return workspaceRequestData{
 		mode:         driver.WorkspaceModeAgentDefault,
-		strategyType: driver.WorkspaceStrategyAdapterManaged,
+		strategyType: driver.WorkspaceStrategyDriverManaged,
 	}
 }
 
 // WorkspaceRequest is passed to [WorkspaceManager.Resolve] after agent
 // defaults and per-call workspace options have been merged.
 type WorkspaceRequest struct {
-	BaseCWD  string
-	Spec     WorkspaceSpec
+	// BaseCWD is the effective working directory before managed provisioning.
+	BaseCWD string
+	// Spec describes the requested provisioning strategy.
+	Spec WorkspaceSpec
+	// Metadata is the effective audit metadata for the run.
 	Metadata map[string]string
 }
 
@@ -127,7 +146,9 @@ type WorkspaceReleaseMode string
 // concrete lease. Install it with [WithWorkspaceManager]. Implementations must
 // be safe for concurrent runs of one Agent.
 type WorkspaceManager interface {
+	// Resolve provisions or selects a workspace and returns its concrete lease.
 	Resolve(ctx context.Context, req WorkspaceRequest) (WorkspaceLease, error)
+	// Release applies mode to a previously resolved lease.
 	Release(ctx context.Context, lease WorkspaceLease, mode WorkspaceReleaseMode) error
 }
 
@@ -138,10 +159,9 @@ const (
 	WorkspaceReleaseStop WorkspaceReleaseMode = "stop"
 )
 
-// workspaceManagerAdapter is the only place the public workspace contract
-// crosses into the migration engine. Keeping the conversion private prevents
-// internal types from becoming part of the v1 API while preserving the
-// engine's established passthrough and release semantics.
+// workspaceManagerAdapter is the boundary between the public workspace
+// contract and the internal coordinator. Keeping the conversion private
+// prevents internal types from becoming part of the public API.
 type workspaceManagerAdapter struct{ target WorkspaceManager }
 
 func (a workspaceManagerAdapter) Resolve(ctx context.Context, req engine.WorkspaceRequest) (driver.WorkspaceLease, error) {
@@ -190,7 +210,7 @@ func workspaceSpecToEngine(spec WorkspaceSpec) engine.WorkspaceSpec {
 			return nil
 		}
 		spec = *value
-	case *AdapterManagedWorkspace:
+	case *DriverManagedWorkspace:
 		if value == nil {
 			return nil
 		}
@@ -204,8 +224,8 @@ func workspaceSpecToEngine(spec WorkspaceSpec) engine.WorkspaceSpec {
 			BranchTemplate:    data.branchTemplate,
 			WorktreeParentDir: data.parentDir,
 		}
-	case driver.WorkspaceStrategyAdapterManaged:
-		return engine.AdapterManagedWorkspace{}
+	case driver.WorkspaceStrategyDriverManaged:
+		return engine.DriverManagedWorkspace{}
 	default:
 		return engine.SharedWorkspace{}
 	}
@@ -223,8 +243,8 @@ func workspaceSpecFromEngine(spec engine.WorkspaceSpec) WorkspaceSpec {
 		}
 	case engine.SharedWorkspace:
 		return SharedWorkspace{}
-	case engine.AdapterManagedWorkspace:
-		return AdapterManagedWorkspace{}
+	case engine.DriverManagedWorkspace:
+		return DriverManagedWorkspace{}
 	default:
 		// WorkspaceSpec is closed in the engine. A defensive nil keeps an
 		// unexpected future engine type from being misrepresented publicly.
@@ -288,18 +308,19 @@ func serviceRequestFromEngine(req engine.RuntimeServiceRequest) ServiceRequest {
 //
 // Lifecycle, per run:
 //
-//	AttachRun(ctx, runID)  — after the run ID is minted, before anything is
-//	                         resolved or dispatched. Returning an error is a
-//	                         pre-launch failure: the driver never starts, the
-//	                         error surfaces through Result(), and every
-//	                         provider already attached for this run is
-//	                         detached again.
+//	AttachRun(ctx, runID)  — after workspace and declared runtime services are
+//	                         resolved, but before request/MCP resolution and
+//	                         Driver dispatch. Returning an error is a pre-launch
+//	                         failure: the Driver never starts, the error surfaces
+//	                         through Result(), and every provider already attached
+//	                         for this run is detached again.
 //	  ... the run ...
-//	DetachRun(ctx, runID)  — after the run's event channel is closed. The ctx
-//	                         is cancellation-detached (context.WithoutCancel),
-//	                         so teardown still happens for cancelled and
-//	                         timed-out runs. Errors are ignored: the run's
-//	                         outcome is already decided.
+//	DetachRun(ctx, runID)  — after provider events have flushed, but before the
+//	                         run's terminal event and channel close. The SDK uses
+//	                         a cancellation-detached, bounded context so teardown
+//	                         is attempted after cancellation without allowing a
+//	                         broken hook to wedge Result. Errors are joined into
+//	                         the observable run outcome.
 //
 // Implementations must be safe for concurrent runs of the same Agent: AttachRun
 // and DetachRun are keyed by run ID and may overlap.
@@ -338,7 +359,9 @@ type RunAttachment struct {
 // event already published for the run must be delivered before that close. The
 // SDK drains the channel to closure before it closes the run's event channel,
 // so a source that abandons its tail on cancellation clips terminal events —
-// flush first, then close. A nil channel is treated as "no events".
+// flush first, then close. RunStarted and RunFinished are reserved for the
+// core-owned merged-run envelope and are filtered if a source supplies them.
+// A nil channel is treated as "no events".
 type RunEventSource func(ctx context.Context, runID string) <-chan Event
 
 // ============ Per-run resource acquisition and release ============
@@ -365,16 +388,16 @@ type runResources struct {
 	pumpDone   chan struct{}
 }
 
-// acquireRun resolves the run's environment in legacy engine order and returns
-// it ready for request assembly. Every failure is a pre-launch failure and
-// unwinds whatever was already acquired.
+// acquireRun resolves the run's environment in dependency order and returns it
+// ready for request assembly. Every failure is a pre-launch failure and unwinds
+// whatever was already acquired.
 func (a *Agent) acquireRun(ctx context.Context, runID string, eff *RunSettings, sink *eventSink) (*runResources, error) {
 	needsWorkspace := a.defaults.workspaceManager != nil || eff.workspaceSpec != nil
 	needsRuntime := len(eff.services) > 0
 	providers := eff.runServices
 	if !needsWorkspace && !needsRuntime && len(providers) == 0 {
-		// Zero-cost path: an agent that uses none of this behaves exactly
-		// as it did before P4.7, down to the untouched request fields.
+		// Zero-cost path: leave the Driver request untouched when the run has
+		// no managed workspace, runtime service, or attached provider.
 		return nil, nil
 	}
 
@@ -412,8 +435,8 @@ func (a *Agent) acquireRun(ctx context.Context, runID string, eff *RunSettings, 
 	}
 
 	// 2. Runtime services declared with WithServices, ensured through the
-	// installed ServiceManager (nil manager = the legacy noop: declared but
-	// unmanaged services do not invent endpoints).
+	// installed ServiceManager. Without a manager, declarations do not invent
+	// endpoints.
 	if needsRuntime || len(providers) > 0 {
 		serviceReq := ServiceRequest{
 			RunID:      runID,
@@ -429,8 +452,10 @@ func (a *Agent) acquireRun(ctx context.Context, runID string, eff *RunSettings, 
 			eff.services,
 		)
 		if err != nil {
-			r.release(ctx)
-			return nil, err
+			cleanupCtx, cancel := runResourceCleanupContext(ctx)
+			releaseErr := r.release(cleanupCtx)
+			cancel()
+			return nil, errors.Join(err, releaseErr)
 		}
 		r.runtime, r.runtimeEnsured = payload, needsRuntime
 	}
@@ -441,14 +466,15 @@ func (a *Agent) acquireRun(ctx context.Context, runID string, eff *RunSettings, 
 	for _, p := range providers {
 		att, err := p.AttachRun(ctx, runID)
 		if err != nil {
-			r.release(ctx)
-			return nil, err
+			cleanupCtx, cancel := runResourceCleanupContext(ctx)
+			releaseErr := r.release(cleanupCtx)
+			cancel()
+			return nil, errors.Join(err, releaseErr)
 		}
 		r.attached = append(r.attached, p)
 		if len(att.Services) > 0 {
-			// Secrets are harvested from the raw refs first and normalization
-			// runs second — the same order as the legacy engine path, and for
-			// the same reason: the normalized refs deliberately carry no
+			// Secrets are harvested from the raw refs before normalization:
+			// normalized refs deliberately carry no
 			// SecretEnv, so the payload-level slice is the only carrier that
 			// reaches driver env.
 			r.runtime.SecretEnv = append(r.runtime.SecretEnv, engine.CollectRuntimeSecretEnv(att.Services)...)
@@ -474,6 +500,10 @@ func (r *runResources) startPumps(ctx context.Context, sink *eventSink, sources 
 	if len(sources) == 0 || sink == nil {
 		return
 	}
+	// Core's start event must win the first sequence before an attachment is
+	// allowed to publish. Its matching terminal is delayed until stopPumps
+	// has flushed every source.
+	sink.enableAuthoritativeLifecycle()
 	pumpCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	done := make(chan struct{})
 	r.pumpCancel, r.pumpDone = cancel, done
@@ -488,6 +518,13 @@ func (r *runResources) startPumps(ctx context.Context, sink *eventSink, sources 
 		go func(ch <-chan Event) {
 			defer wg.Done()
 			for ev := range ch {
+				// Run services contribute activity inside the run envelope; they
+				// cannot open or close that envelope themselves. Filtering here
+				// keeps lifecycle uniqueness independent of provider correctness.
+				switch ev.(type) {
+				case RunStarted, *RunStarted, RunFinished, *RunFinished:
+					continue
+				}
 				sink.push(ev)
 			}
 		}(ch)
@@ -498,16 +535,23 @@ func (r *runResources) startPumps(ctx context.Context, sink *eventSink, sources 
 	}()
 }
 
-// stopPumps ends the provider subscriptions and waits for every pumped event to
-// have been pushed. It returns only once the sources are drained to closure, so
-// the caller may close the event channel without losing a tail.
-func (r *runResources) stopPumps() {
+// stopPumps ends the provider subscriptions and waits, within ctx's bound, for
+// every pumped event to be pushed. A conforming source flushes and closes, so
+// the caller may close the event channel without losing a tail; a broken source
+// instead produces an observable timeout rather than wedging Result forever.
+func (r *runResources) stopPumps(ctx context.Context) error {
 	if r == nil || r.pumpCancel == nil {
-		return
+		return nil
 	}
-	r.pumpCancel()
-	<-r.pumpDone
+	cancel := r.pumpCancel
 	r.pumpCancel = nil
+	cancel()
+	select {
+	case <-r.pumpDone:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("stop run event sources: %w", ctx.Err())
+	}
 }
 
 // runtimeRefs returns the ensured service refs of this run — manager-ensured
@@ -662,49 +706,166 @@ func backfillRunServices(r *runResources, res *Result, err error) {
 }
 
 // finish is the single teardown sequence, in the order the contract demands:
-// drain the provider event sources, close the run's event channel, then release
-// providers, runtime services, and the workspace lease. Closing the channel
-// after the drain is what guarantees a terminal SubagentUpdate is delivered;
-// detaching after the close is what guarantees a consumer that saw the channel
-// end can rely on the sidecar being gone.
+// drain provider event sources, then release providers, runtime services, and
+// the workspace lease. The invocation publishes its authoritative terminal
+// event and closes the event channel only after this method returns. Draining
+// first preserves terminal provider events; closing last guarantees that a
+// consumer which observes Events closed can immediately obtain the result with
+// all run-scoped resources already released (or a teardown error explaining why
+// they could not be).
 //
 // The release half runs on a cancellation-detached context so a cancelled or
 // timed-out run still tears its environment down.
-func (r *runResources) finish(ctx context.Context, sink *eventSink) {
-	r.stopPumps()
-	if sink != nil {
-		sink.close()
-	}
+func (r *runResources) finish(ctx context.Context) error {
 	if r == nil {
-		return
+		return nil
 	}
-	r.release(ctx)
+	cleanupCtx, cancel := runResourceCleanupContext(ctx)
+	defer cancel()
+	var pumpErr error
+	remaining := r.cleanupActionCount()
+	if r.pumpCancel != nil {
+		pumpCtx, pumpCancel := runResourceCleanupStepContext(cleanupCtx, remaining)
+		pumpErr = r.stopPumps(pumpCtx)
+		pumpCancel()
+	}
+	releaseErr := r.release(cleanupCtx)
+	return errors.Join(pumpErr, releaseErr)
+}
+
+// cleanupActionCount reports the remaining teardown actions. It lets finish
+// divide one global cleanup deadline fairly: one broken source or hook gets a
+// bounded share instead of consuming the budget needed to attempt everything
+// acquired after it.
+func (r *runResources) cleanupActionCount() int {
+	if r == nil {
+		return 0
+	}
+	actions := len(r.attached)
+	if r.pumpCancel != nil {
+		actions++
+	}
+	if r.runtimeEnsured {
+		actions++
+	}
+	if r.workspaceLeased {
+		actions++
+	}
+	return actions
+}
+
+func (r *runResources) releaseActionCount() int {
+	if r == nil {
+		return 0
+	}
+	actions := len(r.attached)
+	if r.runtimeEnsured {
+		actions++
+	}
+	if r.workspaceLeased {
+		actions++
+	}
+	return actions
 }
 
 // release detaches providers and releases managed resources in reverse
 // acquisition order. It is also the unwind path for a failed acquireRun.
-func (r *runResources) release(ctx context.Context) {
+func (r *runResources) release(ctx context.Context) error {
 	if r == nil {
-		return
+		return nil
 	}
-	relCtx := context.WithoutCancel(ctx)
+	var releaseErrors []error
+	remaining := r.releaseActionCount()
 	for i := len(r.attached) - 1; i >= 0; i-- {
-		// Teardown errors are deliberately dropped: the run's outcome is
-		// already decided, and a failed detach must not mask it.
-		_ = r.attached[i].DetachRun(relCtx, r.runID)
+		provider := r.attached[i]
+		callCtx, cancel := runResourceCleanupStepContext(ctx, remaining)
+		err := boundedCleanupCall(callCtx, func(callCtx context.Context) error {
+			return provider.DetachRun(callCtx, r.runID)
+		})
+		cancel()
+		remaining--
+		if err != nil {
+			releaseErrors = append(releaseErrors, fmt.Errorf("detach run service %T: %w", provider, err))
+		}
 	}
 	r.attached = nil
 	if r.runtimeEnsured {
-		_ = engine.ReleaseRuntimeServicesByRun(relCtx, serviceManagerToEngine(r.serviceManager), r.runID)
+		callCtx, cancel := runResourceCleanupStepContext(ctx, remaining)
+		err := boundedCleanupCall(callCtx, func(callCtx context.Context) error {
+			return engine.ReleaseRuntimeServicesByRun(callCtx, serviceManagerToEngine(r.serviceManager), r.runID)
+		})
+		cancel()
+		remaining--
+		if err != nil {
+			releaseErrors = append(releaseErrors, fmt.Errorf("release runtime services: %w", err))
+		}
 		r.runtimeEnsured = false
 	}
 	if r.workspaceLeased {
-		_ = engine.ReleaseWorkspaceLease(
-			relCtx,
-			workspaceManagerToEngine(r.workspaceManager),
-			r.workspace,
-			engine.WorkspaceReleaseMode(WorkspaceReleaseStop),
-		)
+		callCtx, cancel := runResourceCleanupStepContext(ctx, remaining)
+		err := boundedCleanupCall(callCtx, func(callCtx context.Context) error {
+			return engine.ReleaseWorkspaceLease(
+				callCtx,
+				workspaceManagerToEngine(r.workspaceManager),
+				r.workspace,
+				engine.WorkspaceReleaseMode(WorkspaceReleaseStop),
+			)
+		})
+		cancel()
+		remaining--
+		if err != nil {
+			releaseErrors = append(releaseErrors, fmt.Errorf("release workspace: %w", err))
+		}
 		r.workspaceLeased = false
+	}
+	return errors.Join(releaseErrors...)
+}
+
+func runResourceCleanupContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	timeout := runResourceCleanupTimeout
+	if deadline, ok := ctx.Deadline(); ok {
+		if remaining := time.Until(deadline); remaining > 0 && remaining < timeout {
+			timeout = remaining
+		}
+	}
+	return context.WithTimeout(context.WithoutCancel(ctx), timeout)
+}
+
+// runResourceCleanupStepContext assigns one action a fair share of the
+// remaining global cleanup budget. Recomputing the share after each action
+// absorbs fast completions while ensuring an early hang cannot starve later
+// release hooks.
+func runResourceCleanupStepContext(ctx context.Context, remaining int) (context.Context, context.CancelFunc) {
+	if remaining <= 1 {
+		return context.WithCancel(ctx)
+	}
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return context.WithCancel(ctx)
+	}
+	budget := time.Until(deadline)
+	if budget <= 0 {
+		return context.WithCancel(ctx)
+	}
+	share := budget / time.Duration(remaining)
+	if share <= 0 {
+		share = time.Nanosecond
+	}
+	return context.WithTimeout(ctx, share)
+}
+
+// boundedCleanupCall keeps a misbehaving host hook from wedging Stream.Result
+// forever even when it ignores cancellation. The buffered result channel lets
+// a late return exit without retaining the invocation goroutine. The call is
+// always launched, even when ctx is already done, so an earlier timeout cannot
+// make a later release hook disappear without being invoked.
+func boundedCleanupCall(ctx context.Context, call func(context.Context) error) error {
+	done := make(chan error, 1)
+	go func() { done <- call(ctx) }()
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }

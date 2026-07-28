@@ -13,7 +13,7 @@ func TestCodeBuddyCheckpointRequiresOfficialSuccessAndCleanOutcome(t *testing.T)
 		p.finalize()
 		return p
 	}
-	success := parse("{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"s\"}\n{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"session_id\":\"s\"}\n")
+	success := parse("{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"s\"}\n{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"session_id\":\"s\",\"result\":\"\"}\n")
 	if cp := success.checkpointForOutcome(0, "", false, nil); cp == nil || !cp.Valid {
 		t.Fatalf("clean official result success = %#v, want valid", cp)
 	}

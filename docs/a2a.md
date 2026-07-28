@@ -1,72 +1,50 @@
-# A2A Bridge And Client
+# A2A bridge, client, and delegation
 
-`agent-adaptor` supports A2A through two localized packages:
+`agent-adaptor` keeps A2A at the host integration boundary:
 
-- `pkg/bridges/a2a` exposes an existing `agentadaptor.Runner` as an A2A-compatible agent.
-- `pkg/clients/a2a` provides thin client primitives for calling remote A2A agents.
+- `bridges/a2a` publishes any `adaptor.Runner` as an A2A agent.
+- `clients/a2a` calls remote A2A agents through stable, protocol-shaped DTOs.
+- `hosttools/a2adelegation` optionally gives a leader Agent a curated Local/Remote delegation service.
 
-The core SDK remains protocol-agnostic. There is no `WithA2A`, no remote A2A `AgentBinding`, no built-in HTTP server, and no automatic remote-agent routing in core.
+Core execution remains protocol-independent. There is no A2A Driver, automatic remote-agent routing, built-in production server, or A2A-specific execution entry point.
 
-## Dependency Choice
+## Dependency choice
 
-The implementation uses `github.com/a2aproject/a2a-go/v2`.
+The bridge and client use the official `github.com/a2aproject/a2a-go/v2` SDK for Agent Card conversion, JSON-RPC/SSE transport, task events, protocol errors, and request handling.
 
-Reliability: A2A card parsing, JSON-RPC/SSE transport, task events, protocol errors, and request handlers are delegated to the official Go SDK instead of duplicated with hand-rolled wire code.
+- Reliability: protocol parsing and transport behavior stay with the official implementation instead of a parallel handwritten stack.
+- Maintainability: the dependency has upstream documentation, versioning, issue tracking, and protocol evolution.
+- Localization: only `bridges/a2a` and `clients/a2a` import the A2A SDK. Core, Drivers, and unrelated bridges do not.
 
-Maintainability: The dependency is maintained by the A2A project and currently exposes protocol `1.0` through the `a2a.Version` constant. The package is pinned in `go.mod` so protocol updates are explicit.
+## Publishing a Runner
 
-Localization: Imports from `github.com/a2aproject/a2a-go/v2` are confined to `pkg/bridges/a2a` and `pkg/clients/a2a`. The bridge imports only the core `Runner` contract from this repository and does not import concrete provider adapters.
-
-## Bridge
-
-The bridge maps A2A task execution onto the single SDK execution path:
-
-1. `SendMessage` / `SendStreamingMessage` decode inbound A2A messages.
-2. The configured `PromptBuilder` produces a prompt and optional `RunOption`s.
-3. The configured `SessionMapper` may bind A2A `contextId` or `taskId` to SDK session options.
-4. The bridge calls `Runner.Start(...)` and applies `RunStreaming` as the final
-   per-call streaming override (`WithStreaming` by default,
-   `WithoutStreaming` when disabled).
-5. `StreamEvents` are translated to `TaskStatusUpdateEvent` DataParts using the
-   `adapter.stream.v1` schema. `Wait` and `Cancel` produce terminal status and
-   final artifact events.
-
-Bridge capability advertisement is strict:
-
-- `AgentCard.Capabilities.Streaming` is a tri-state. The zero value keeps A2A streaming enabled; use `a2a.CapabilityDisabled` to publish `streaming=false`.
-- `PushNotifications` is not exposed unless `AgentCard.Capabilities.PushNotifications=true` and `ServerOptions.PushNotifications` provides both an A2A push `ConfigStore` and `Sender`.
-- `ExtendedAgentCard` is not exposed unless `AgentCard.Capabilities.ExtendedAgentCard=true` and `ServerOptions.ExtendedAgentCard` provides either a static card or a provider.
-- `ServerOptions.PromptBuilder` customizes inbound prompt construction. The
-  legacy `ServerOptions.Prompt` field remains supported for source
-  compatibility, with `PromptBuilder` taking precedence when both are set.
-- `ServerOptions.ResultBuilder` can add or replace terminal artifacts and
-  override completed status text. It runs only after a successful SDK result;
-  intermediate status events are not changed retroactively.
-- Intermediate text, reasoning, tool, HITL, and dropped-stream events always
-  use `TaskStatusUpdateEvent` DataParts with the stable `adapter.stream.v1`
-  schema. The server advertises the `urn:agent-adaptor:stream:v1` Agent Card
-  extension while each DataPart remains self-describing. `ArtifactUpdate` is
-  reserved for final result artifacts.
+`a2a.NewServer` accepts the same `adaptor.Runner` implemented by `*adaptor.Agent`, `*adaptor.Thread`, and host decorators. The bridge always executes through `Runner.Stream`, consumes the one typed `Event` channel, and obtains the terminal `Result` from `Stream.Result`. It does not dispatch a Driver directly or reproduce option merging, Thread coordination, error policy, or result construction.
 
 ```go
-runner := sdk.Default()
+agent := adaptor.New(
+	configuredDriver,
+	adaptor.WithThreadStore(memory.NewStore()),
+)
 
-server := a2a.NewServer(runner, a2a.ServerOptions{
-	AgentCard: a2a.AgentCard{
-		Name:        "Local Codex",
-		Description: "Runs local agent-adaptor tasks",
+server := bridgea2a.NewServer(agent, bridgea2a.ServerOptions{
+	AgentCard: bridgea2a.AgentCard{
+		Name:        "Local coding agent",
+		Description: "Runs coding tasks through agent-adaptor",
 		Version:     "1.0.0",
 		URL:         "https://host.example/a2a",
-		Skills: []a2a.Skill{{
-			ID:          "chat",
-			Name:        "Chat",
-			Description: "Run a prompt through the configured default agent",
-			Tags:        []string{"agent", "coding"},
+		Skills: []bridgea2a.Skill{{
+			ID:          "coding",
+			Name:        "Coding",
+			Description: "Implement and review repository changes",
+			Tags:        []string{"coding", "repository"},
 		}},
 	},
-	Session: a2a.SessionByContextID("a2a"),
-	TaskLifecycle: a2a.TaskLifecycleOptions{
-		Ephemeral: &a2a.EphemeralTaskStoreOptions{
+	Session: bridgea2a.ThreadByContextID(),
+	Options: []adaptor.CallOption{
+		adaptor.WithPolicy(nonInteractivePolicy),
+	},
+	TaskLifecycle: bridgea2a.TaskLifecycleOptions{
+		Ephemeral: &bridgea2a.EphemeralTaskStoreOptions{
 			MaxTasks: 512,
 			TTL:      2 * time.Hour,
 		},
@@ -78,44 +56,75 @@ mux.Handle("/.well-known/agent-card.json", server.AgentCardHandler())
 mux.Handle("/a2a", server.Handler())
 ```
 
-See [`examples/a2a-local`](../examples/a2a-local) for a runnable local
-end-to-end demo that starts this bridge around a real local SDK runner, calls
-it with `pkg/clients/a2a`, consumes streaming status updates, and verifies the final
-task with `GetTask`. The example defaults to an isolated temporary workspace
-and isolated cloned provider profile seeded from native settings so custom API
-key / base URL setups work without writing demo state into a host's active
-local agent profile.
+Hosts own route layout, authentication, authorization, TLS, tenancy, rate limiting, observability, and durable task storage. `Server` only supplies mountable handlers.
 
-The terminal result is emitted as a structured artifact named `agent-adaptor-result`. Assistant-facing output remains in the final A2A status message. The default artifact contains only the safe summary; diagnostics such as metadata, usage, provider result payloads, transcript, raw streams, reasoning, tool-call internals, and HITL payloads require explicit `ExposurePolicy` opt-in and are sanitized before they cross the A2A boundary.
+### Session binding
 
-`a2a.ArtifactAgentAdaptorResult` (`agent-adaptor-result`) carries the terminal
-summary and any opt-in sanitized diagnostics, and is emitted as a single final
-chunk. No bridge-owned artifact name represents an intermediate process event.
+`ServerOptions.Session` has two final modes:
 
-Task retention is explicit. `NewServer` no longer hides the upstream unbounded in-memory task store. If `ServerOptions.TaskLifecycle.Store` is nil, the bridge uses a bounded ephemeral store with a default `MaxTasks=256` and `TTL=1h`. Hosts that need durable retention, custom paging/auth behavior, or cross-process lifecycle ownership must inject their own `a2asrv/taskstore.Store`.
+- `a2a.Stateless()` executes each request on the configured Runner without cross-request memory. It is the default.
+- `a2a.ThreadByContextID()` maps a non-empty A2A `contextID` to a collision-free adaptor Thread key. Follow-up requests with the same `contextID` continue the same conversation.
 
-Hosts own serving concerns: route layout, authentication, authorization, TLS, tenancy, durability, task retention, and observability.
+`ThreadByContextID` requires the configured Runner to be an `*adaptor.Agent` with `adaptor.WithThreadStore(...)`; only an Agent can create Threads. A missing `contextID` runs stateless. Passing an already selected `*adaptor.Thread` is valid with `Stateless`, because the bridge simply invokes that Runner.
 
-## Client
+### Prompt and call options
 
-The client package is intentionally protocol-shaped. It does not wrap remote A2A tasks in local `RunResult` semantics and does not expose stdout/stderr concepts.
+The default prompt is the last non-blank text part of the inbound A2A message. Set `ServerOptions.Prompt` to a `PromptBuilder` when the host needs domain-specific projection of data, files, or multiple message parts. `ServerOptions.Options` supplies the shared call options; the builder returns the prompt plus request-specific `[]adaptor.CallOption`, which are applied afterward.
+
+Both sources remain call-scoped. They do not create a second set of Agent defaults.
+
+### Event mapping and the intentional wire schema
+
+The bridge maps adaptor events to A2A task updates in one order:
+
+1. submitted and working task status;
+2. one working `TaskStatusUpdateEvent` per exposed adaptor `Event`;
+3. exactly one completed, failed, or canceled terminal outcome;
+4. terminal result artifacts when allowed by the exposure policy.
+
+Intermediate typed events use DataParts with schema `adapter.stream.v1`. The exported names `AdapterStreamSchemaV1`, `AdapterStreamEnvelopeV1`, `AdapterStreamEventV1`, and `DecodeAdapterEventV1` intentionally keep the `V1` suffix: they version an interoperable wire format, not a temporary Go API. Encoding remains an internal bridge responsibility. The server advertises `urn:agent-adaptor:stream:v1` in its Agent Card, and each DataPart is self-describing.
+
+The wire envelope preserves adaptor `EventMeta` plus provider source coordinates, complete tool snapshots, approval fields, and detailed dropped-event markers. Unknown DataPart schemas remain protocol data; the bridge does not guess provider semantics.
+
+### Result and exposure
+
+Successful `Stream.Result()` values produce the completed status and terminal artifacts. `*adaptor.RunError` produces a failed A2A task with the available partial Result; cancellation produces a canceled task. Infrastructure errors are mapped to failed terminal status. The bridge never treats a non-nil execution error as success.
+
+The default `agent-adaptor-result` artifact contains only the safe summary. `ExposurePolicy` must explicitly opt in to reasoning, tool calls, HITL, metadata, usage, provider terminal payload, transcript, or raw streams. Enabled diagnostics are sanitized before leaving the bridge.
+
+`ServerOptions.ResultBuilder` may append or replace terminal artifacts and override completed status text. It runs only after successful adaptor execution and cannot rewrite already emitted intermediate events.
+
+Task retention is explicit. With no custom `TaskLifecycle.Store`, the bridge uses a bounded in-memory store (default 256 tasks, one-hour TTL). Configure `TaskLifecycle.Ephemeral` to change those bounds or inject an upstream `taskstore.Store` for durable or cross-process retention.
+
+Capability advertisement is strict:
+
+- `Capabilities.Streaming` is tri-state; the zero value enables A2A streaming, while `CapabilityDisabled` advertises `false`.
+- push notifications require both card advertisement and `ServerOptions.PushNotifications` with a config store and sender.
+- an extended Agent Card requires both card advertisement and `ServerOptions.ExtendedAgentCard` with a static card or provider.
+
+Construction-time mismatches panic because they are host programming errors, not per-run failures.
+
+## Calling a remote A2A agent
+
+`clients/a2a` intentionally returns A2A tasks, messages, artifacts, and events. It does not pretend that a remote protocol task has local CLI stdout/stderr or an adaptor `Result`.
 
 ```go
-client := a2a.New(a2a.Options{
+client := clienta2a.New(clienta2a.Options{
 	AgentCardURL: "https://remote.example/.well-known/agent-card.json",
-	Auth:         a2a.BearerTokenFromEnv("REMOTE_A2A_TOKEN"),
+	Auth:         clienta2a.BearerTokenFromEnv("REMOTE_A2A_TOKEN"),
 })
+defer client.Close()
 
 card, err := client.AgentCard(ctx)
 if err != nil {
 	return err
 }
 
-task, err := client.Send(ctx, a2a.SendRequest{
-	Message: a2a.Message{
+task, err := client.Send(ctx, clienta2a.SendRequest{
+	Message: clienta2a.Message{
 		Role: "user",
-		Parts: []a2a.Part{{
-			Kind:      a2a.PartText,
+		Parts: []clienta2a.Part{{
+			Kind:      clienta2a.PartText,
 			Text:      "Review this change",
 			MediaType: "text/plain",
 		}},
@@ -128,31 +137,17 @@ if err != nil {
 _ = task
 ```
 
-`SendStream` and `Subscribe` return ordered protocol events. The client uses the same execution-final semantics as the official server stack: a `Message`, a terminal task/status, or `TASK_STATE_INPUT_REQUIRED` ends the stream. Duplicate or late events after the first final event are ignored. If a stream fails before a final event and the task ID is known, the client attempts one `GetTask` recovery; a final recovered task is returned with `RecoveredState=true`.
+`SendStream` and `Subscribe` return ordered protocol events. A message, final task/status, or `TASK_STATE_INPUT_REQUIRED` completes the stream. Duplicate or late events after the first terminal event are ignored. If transport fails after a task ID is known, the client attempts one `GetTask` recovery and marks a recovered terminal event with `RecoveredState`.
 
-`PartData`, `SendRequest.Metadata`, `Message.Metadata`, and `Part.Metadata` are
-normalized before send. Values must encode as non-null JSON, and
-integer-valued numbers must stay within the interoperable IEEE-754 safe range
-(`-9007199254740991` through `9007199254740991`). Encode larger IDs and counters
-as strings. Invalid outbound values are rejected before send; unsafe `PartData`
-received from a remote agent is returned as a protocol error instead of being
-silently rounded.
-
-Bearer credentials are origin-pinned. With `Auth` configured, the client only sends credentials to the Agent Card origin by default. Agent Card interface URLs on another origin require explicit `TrustedAuthOrigins`, and redirects to untrusted origins have authorization headers stripped. `SubscribeRequest.Since` is rejected when set because A2A 1.0 `SubscribeToTask` has no cursor replay field.
-
-Task lookup and cancellation use request DTOs so hosts can pass A2A tenant and
-retention/cancellation metadata without changing the client API later:
+`GetTaskRequest` and `CancelTaskRequest` carry tenant and operation metadata:
 
 ```go
-task, err := client.GetTask(ctx, a2a.GetTaskRequest{
+task, err := client.GetTask(ctx, clienta2a.GetTaskRequest{
 	TaskID: "task-123",
 	Tenant: "tenant-a",
 })
-if err != nil {
-	return err
-}
 
-_, err = client.CancelTask(ctx, a2a.CancelTaskRequest{
+_, err = client.CancelTask(ctx, clienta2a.CancelTaskRequest{
 	TaskID: "task-123",
 	Tenant: "tenant-a",
 	Metadata: map[string]any{
@@ -161,126 +156,75 @@ _, err = client.CancelTask(ctx, a2a.CancelTaskRequest{
 })
 ```
 
-## Visual Delegation Host Tools
+Outbound DataPart and metadata values must encode as non-null JSON. Integer-valued numbers must remain within the interoperable IEEE-754 safe range; encode larger IDs and counters as strings. Invalid values fail before sending, and unsafe inbound DataParts return protocol errors rather than silently rounding.
 
-The optional host-owned visual subagent delegation layer sits above the A2A client layer:
+Credentials are origin-pinned. Auth is sent to the Agent Card origin by default; cross-origin interfaces require `TrustedAuthOrigins`, and redirects to untrusted origins lose authorization headers. `SubscribeRequest.Since` is rejected because A2A 1.0 has no cursor replay field.
 
-- `pkg/hosttools/a2adelegation` exposes a curated registry, `delegate_to_agent`
-  MCP tool server, delegation event bus, A2A event mapper, and `Delegator`.
-- `pkg/bridges/subagentstream` overlays delegation events onto an existing
-  parent AG-UI stream as `CUSTOM` events named `subagent.*`.
-- `pkg/bridges/sse.Options.SubagentBus` enables the overlay in the stock SSE
-  handler for AG-UI callers.
+See [`examples/a2a-server`](../examples/a2a-server) for an end-to-end server and client using the final API.
 
-The model-facing tool input accepts registry keys only:
+## Curated Local/Remote delegation
 
-```json
-{
-  "agent": "research",
-  "objective": "Find current A2A streaming behavior.",
-  "input": {
-    "prompt": "Summarize exact APIs and artifact behavior.",
-    "context": "We are implementing visual delegation."
-  },
-  "constraints": {
-    "timeout_seconds": 180,
-    "stream": true,
-    "max_artifacts": 10
-  }
+`hosttools/a2adelegation` is an optional host component for a leader Agent. A `Service` combines:
+
+- a host-curated registry of Local and Remote targets;
+- the authenticated per-run `delegate_to_agent` MCP sidecar;
+- A2A transport and event mapping;
+- ordered delegation events and final result recording;
+- runtime-service attachment and teardown.
+
+Local targets execute any `adaptor.Runner` in-process. Remote targets use `clients/a2a`. Both paths pass through the same A2A-shaped mapper and emit the same `DelegationEvent` vocabulary.
+
+```go
+team, err := a2adelegation.NewService(a2adelegation.Config{
+	Agents: []a2adelegation.AgentRef{
+		a2adelegation.Local("plan", planner, a2adelegation.Policy{}),
+		a2adelegation.Remote("review", reviewCardURL, a2adelegation.Policy{
+			MaxTimeout: 2 * time.Minute,
+		}),
+	},
+	ToolTimeout: 3 * time.Minute,
+})
+if err != nil {
+	return err
 }
+defer team.Close()
+
+leader := adaptor.New(leaderDriver, team.Option())
+stream := leader.Stream(ctx, "coordinate the change")
+for event := range stream.Events() {
+	switch event := event.(type) {
+	case adaptor.TextDelta:
+		_ = event.Text
+	case adaptor.SubagentUpdate:
+		_ = event.Agent
+	}
+}
+result, err := stream.Result()
 ```
 
-`endpoint_url`, unknown top-level fields, and unknown nested input/constraint
-fields are rejected. Host code owns the registry entry (`RemoteAgentSpec`), auth,
-tenant, timeout policy, artifact limits, accepted output modes, and trusted
-origins. `constraints.max_artifacts`, when supplied, limits only the final
-`DelegationResult.Artifacts` returned to the parent model; live `subagent.*`
-artifact events remain a UI side channel. The parent model receives only the
-final structured `DelegationResult` JSON through the MCP tool result. Live remote
-progress is published to the bus and rendered as AG-UI custom events:
+`team.Option()` is a `SharedOption`: pass it to `adaptor.New` for every run or to one `Run`/`Stream` call for a single invocation. It is equivalent to the generic extension point:
 
-```json
-{
-  "type": "CUSTOM",
-  "name": "subagent.text.delta",
-  "value": {
-    "runId": "run-...",
-    "parentToolCallId": "tool-...",
-    "delegationId": "del-...",
-    "agentKey": "research",
-    "remoteProtocol": "a2a",
-    "remoteTaskId": "task-...",
-    "delta": "Searching official examples..."
-  }
-}
+```go
+leader := adaptor.New(leaderDriver, adaptor.WithRunServices(team))
 ```
 
-Assistant output uses the ordered `subagent.text.start`,
-`subagent.text.delta`, and `subagent.text.end` lifecycle. Process events are
-decoded only from StatusUpdate message parts. `ArtifactUpdate` always produces
-a final `subagent.artifact.created` event and is never interpreted as text,
-reasoning, or a tool lifecycle. Hosts using `adapter.stream.v1` receive typed
-`DelegationEvent` values for each supported Status DataPart. A host-owned schema
-can implement `StatusPartDecoder` and pass it through `WithStatusPartDecoder`;
-the decoder directly returns `DelegationEvent` values containing only its event
-meaning, while the mapper fills delegation identity, remote A2A context, profile,
-and default time. The mapper locks one stream profile per delegation,
-deduplicates replayed status data, and reports sequence gaps as
-`subagent.stream.dropped`. For typed tool events, `StreamPayload.ToolCallID` is
-the remote tool-call ID; the parent model tool-call ID remains available as
-`parentToolCallId` and `Raw["parent_tool_call_id"]`.
+`Service` implements `adaptor.RunServiceProvider`. For each run it publishes a typed `ServiceRef.MCP` declaration, carries the bearer token only through `SecretEnv`, injects `SubagentUpdate` into the leader's existing Event channel, and tears the sidecar down during normal run cleanup. There is no separate subagent bus in the Runner API, and MCP declarations are never inferred from stringly metadata.
 
-`parentToolCallId` is included only when the host can supply the parent provider
-tool-call ID, for example by setting `a2adelegation.MCPServerOptions.ParentToolCallID`
-or by publishing `DelegationEvent` values with that field. The MCP JSON-RPC
-request ID is not treated as the parent model tool-call ID. UI grouping should
-tolerate this field being absent and fall back to `runId` + `delegationId`.
+The leader sees only registry keys, objectives, optional input, and bounded constraints. It never receives endpoint URLs or credentials. Unknown tool fields and attempts to provide `endpoint_url` are rejected.
 
-Runtime-created MCP sidecars can be injected into a run without asking the model
-for run IDs, URLs, or credentials. A `RuntimeServiceManager` returns a
-`RuntimeServiceRef` with metadata keys: `agentadaptor.mcp.enabled=true`,
-`agentadaptor.mcp.key`, `agentadaptor.mcp.transport`, `agentadaptor.mcp.url`,
-`agentadaptor.mcp.command`, `agentadaptor.mcp.args_json`,
-`agentadaptor.mcp.env_json`, `agentadaptor.mcp.headers_json`,
-`agentadaptor.mcp.bearer_token_env_var`, `agentadaptor.mcp.required`, and
-`agentadaptor.mcp.required_reason`. If `agentadaptor.mcp.key` is omitted, the SDK
-falls back to the runtime ref `Name`, then `ID`. If transport is omitted, it
-defaults to `stdio` when a command is present and `http` otherwise. Non-stdio
-servers use `RuntimeServiceRef.URL` when `agentadaptor.mcp.url` is omitted;
-stdio servers use `RuntimeServiceRef.Command` when `agentadaptor.mcp.command` is
-omitted. The SDK appends those servers after runtime ensure, before profile
-materialization, so adapter MCP config and session fingerprints include the
-per-run delegation endpoint.
+`Service.Result(runID, key)` returns the latest result for an Agent key. `Service.Results(runID)` is the latest-by-key map. `Service.Delegations(runID)` preserves every delegation in `DelegationStarted` acceptance order, including repeated calls to the same Agent. Recorded results remain readable after per-run sidecar teardown and after `Service.Close`.
 
-Security boundary: concrete adapters stay unaware of A2A delegation; remote
-protocol dumps are not appended to `RunResult.RawStreams`; remote artifacts are
-reported as structured references/metadata unless host policy explicitly stores
-and exposes content elsewhere.
+For lower-level integrations, `Registry`, `Delegator`, `EventBus`, and `MCPServer` remain independently usable. `StatusPartDecoder` can decode a host-owned A2A Status DataPart schema. The built-in `adapter.stream.v1` decoder remains the lossless path for adaptor events.
 
-## Upgrade Notes
+## Security boundaries
 
-- `ServerOptions`, `Delegator`, `DelegationRequest`, `DelegationEvent`,
-  `DelegationResult`, and `MCPServerOptions` gained additive fields. Existing
-  keyed literals and constructor-based setup continue to compile. External code
-  using unkeyed composite literals must migrate to keyed fields.
-- Custom `A2AStream` implementations must make `Close` unblock an in-flight
-  `Recv`. Implementing the optional `RecvContext(context.Context)` method avoids
-  the compatibility goroutine used for legacy streams.
-- `DelegationResult.Summary` prefers the final task status message when one is
-  present, then falls back to result artifacts and task history.
-- Custom MCP tools are configured with `MCPServerOptions.Tools`. Because this is
-  a slice, `MCPServerOptions` and `MCPServer` are no longer comparable; code that
-  previously used either value with `==` or as a map key must use an explicit
-  stable key instead.
+- Drivers remain unaware of A2A and delegation.
+- The bridge and delegation service never bypass `Runner` to dispatch a Driver.
+- Remote protocol dumps are not appended to a leader's raw stdout/stderr.
+- Remote artifacts are structured references unless host policy explicitly fetches and exposes content.
+- Bearer tokens do not enter runtime-service reports, run metadata, or serialized MCP declarations.
+- Hosts remain responsible for network exposure, authentication, authorization, tenant policy, and durable storage.
 
-## Non-Goals
+## Non-goals
 
-Automatic A2A-to-local adapter routing, bridge-managed durable task persistence,
-default push delivery infrastructure, dynamic remote-agent discovery, built-in
-tenant/auth policy, and production per-run MCP sidecar lifecycle remain outside
-this slice.
-
-Visual subagent delegation is an optional host-owned layer built from
-`pkg/hosttools/a2adelegation`, `pkg/bridges/subagentstream`, and runtime-service
-MCP injection. Core SDK execution remains protocol-agnostic and does not route to
-remote A2A agents automatically.
+Core does not provide automatic remote-agent discovery, A2A-to-Driver routing, team role configuration, business workflow planning, production push infrastructure, built-in tenant/auth policy, or durable task persistence. These remain explicit host responsibilities composed above the six core nouns: Agent, Thread, Stream, Event, Result, and Driver.

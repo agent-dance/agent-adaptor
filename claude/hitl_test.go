@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/agent-dance/agent-adaptor/adaptertest"
 	agentadaptor "github.com/agent-dance/agent-adaptor/driver"
 )
 
@@ -60,6 +61,38 @@ func TestHITLPlanApproved_EmitsRequestedAndResolved(t *testing.T) {
 	}
 	if resolvedDecision != agentadaptor.DecisionApproved {
 		t.Errorf("want Approved, got %q", resolvedDecision)
+	}
+}
+
+func TestObservationalPermissionRequestUsesOpaqueProviderEvent(t *testing.T) {
+	data := mustReadFixture(t, "streaming-permission-agui.jsonl")
+	sink := &streamSink{}
+	p := newClaudeParser(sink)
+	p.enableStreaming("run-observational-permission")
+	if err := p.onChunk("stdout", data, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	p.finalize()
+	p.completeStream(p.failureForOutcome(0, "", false), 0, "", false)
+
+	payloads := sink.snapshot()
+	if violations := adaptertest.VerifyStreamSequence(payloads); len(violations) != 0 {
+		t.Fatalf("Claude permission fixture violates Driver stream contract: %v", violations)
+	}
+	foundOpaque := false
+	for _, payload := range payloads {
+		if payload.Kind == agentadaptor.StreamHITLRequested {
+			t.Fatalf("observational permission_request emitted answerable HITL event: %+v", payload)
+		}
+		if payload.Kind == agentadaptor.StreamKind("claude.permission_request") {
+			foundOpaque = true
+			if payload.Raw == nil || payload.Raw["request_id"] != "pr-1" {
+				t.Fatalf("opaque permission payload lost raw protocol: %+v", payload)
+			}
+		}
+	}
+	if !foundOpaque {
+		t.Fatal("missing opaque claude.permission_request provider event")
 	}
 }
 

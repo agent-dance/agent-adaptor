@@ -3,14 +3,17 @@ package agui_test
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
-	"github.com/agent-dance/agent-adaptor/bridges/agui"
 	adaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/bridges/agui"
 )
+
+const aguiRequestLimitForTest = 4 << 20
 
 func TestDecodeHTTPRequestHappyPath(t *testing.T) {
 	t.Parallel()
@@ -46,6 +49,36 @@ func TestDecodeHTTPRequestInvalidJSON(t *testing.T) {
 	if _, err := agui.DecodeHTTPRequest(req); err == nil {
 		t.Fatal("want error on invalid json")
 	}
+}
+
+func TestDecodeHTTPRequestBodyLimit(t *testing.T) {
+	t.Parallel()
+	prefix := `{"messages":[{"role":"user","content":"hi"}]}`
+
+	t.Run("exactly at limit", func(t *testing.T) {
+		body := prefix + strings.Repeat(" ", aguiRequestLimitForTest-len(prefix))
+		req := httptest.NewRequest(http.MethodPost, "/agent", strings.NewReader(body))
+		in, err := agui.DecodeHTTPRequest(req)
+		if err != nil {
+			t.Fatalf("decode exact-limit request: %v", err)
+		}
+		if got := in.LastUserText(); got != "hi" {
+			t.Fatalf("LastUserText = %q, want hi", got)
+		}
+	})
+
+	t.Run("one byte over limit", func(t *testing.T) {
+		body := prefix + strings.Repeat(" ", aguiRequestLimitForTest-len(prefix)+1)
+		req := httptest.NewRequest(http.MethodPost, "/agent", strings.NewReader(body))
+		_, err := agui.DecodeHTTPRequest(req)
+		var tooLarge *http.MaxBytesError
+		if !errors.As(err, &tooLarge) {
+			t.Fatalf("error = %v, want *http.MaxBytesError", err)
+		}
+		if tooLarge.Limit != aguiRequestLimitForTest {
+			t.Fatalf("limit = %d, want %d", tooLarge.Limit, aguiRequestLimitForTest)
+		}
+	})
 }
 
 // TestLastUserText covers the two AG-UI content shapes plus edge cases.

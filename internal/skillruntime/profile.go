@@ -182,13 +182,7 @@ func reconcileCloneProfile(source, target string, opts ProfileResolveOptions, cl
 }
 
 func cloneAuthMode(opts driver.CloneProfileOptions) driver.CloneProfileAuthMode {
-	if opts.AuthMode != "" {
-		return opts.AuthMode
-	}
-	if opts.IncludeAuth {
-		return driver.CloneProfileAuthCopy
-	}
-	return driver.CloneProfileAuthNone
+	return opts.AuthMode
 }
 
 func copyNamedEntriesIfMissing(sourceRoot, targetRoot string, names []string) error {

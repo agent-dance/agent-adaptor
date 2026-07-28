@@ -9,16 +9,8 @@ import (
 // Identity is host-supplied caller identity propagated into SDK hooks and
 // the driver request. The SDK does not use these fields for routing; they
 // exist so host-provided components (SkillProvider, WorkspaceManager,
-// RuntimeServiceManager) can scope lookups without inventing their own
+// ServiceManager) can scope lookups without inventing their own
 // context keys.
-//
-// Decision D11: all four legacy AgentIdentity dimensions are preserved
-// (capability parity), renamed to v1 vocabulary:
-//
-//	legacy AgentIdentity.ID        → Identity.ID      (logical agent id)
-//	legacy AgentIdentity.TenantID  → Identity.Tenant  (tenant partition)
-//	legacy AgentIdentity.ProfileID → Identity.Profile (user-private partition)
-//	legacy AgentIdentity.Name      → Identity.Name    (display / logical name)
 type Identity struct {
 	// ID is the logical agent identifier.
 	ID string
@@ -55,8 +47,8 @@ func identityFromDriver(id driver.AgentIdentity) Identity {
 type identityContextKey struct{}
 
 // contextWithIdentity attaches id to ctx. The run pipeline injects it
-// automatically before dispatching; it stays unexported until provider-side
-// forwarding needs surface in P3.
+// automatically before dispatching. Consumers read the value through
+// IdentityFromContext.
 func contextWithIdentity(ctx context.Context, id Identity) context.Context {
 	return context.WithValue(ctx, identityContextKey{}, id)
 }

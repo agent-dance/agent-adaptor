@@ -1,6 +1,6 @@
 package subagentstream_test
 
-// Tests for Merge / SubagentEvent (P4.6/P4.7 fallback bridge). Determinism:
+// Tests for the Merge/SubagentEvent bridge. Determinism:
 // all delegation events are published to the bus before Merge subscribes, so
 // they sit in the replay buffer (delivered synchronously at SubscribeRun
 // time); every wait is channel-based — no sleeps.
@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
+	adaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/bridges/subagentstream"
 	"github.com/agent-dance/agent-adaptor/hosttools/a2adelegation"
-	adaptor "github.com/agent-dance/agent-adaptor"
 )
 
 // fakeStream is a minimal chan-backed adaptor.Stream.

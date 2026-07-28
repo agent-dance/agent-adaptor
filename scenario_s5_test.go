@@ -1,8 +1,8 @@
 package adaptor_test
 
-// P3.8 scenario S5 (design doc docs/api-v1-redesign.md §S5): the issue
+// Scenario S5 (design doc docs/api-v1-redesign.md §S5): the issue
 // triager — structured output decoded straight into a business struct with
-// one generic call, replacing the legacy two-step
+// one generic call instead of a two-step schema/decode sequence:
 // WithJSONSchemaOutputFor[T] + DecodeStructuredOutput[T].
 //
 // The Triage type and the RunAs line are verbatim from the doc.

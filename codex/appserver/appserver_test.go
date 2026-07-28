@@ -10,12 +10,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/agent-dance/agent-adaptor/adaptertest"
 	"github.com/agent-dance/agent-adaptor/driver"
 )
 
@@ -65,6 +67,38 @@ func TestStdioStreamRoundtrip(t *testing.T) {
 	}
 	if !stdin.closed {
 		t.Fatalf("stdin not closed")
+	}
+}
+
+func TestThreadForkParamsWireShape(t *testing.T) {
+	t.Parallel()
+	raw, err := json.Marshal(ThreadForkParams{
+		ThreadID:       "parent",
+		CWD:            "/repo",
+		Ephemeral:      true,
+		Sandbox:        "workspace-write",
+		Model:          "gpt-test",
+		ServiceTier:    "fast",
+		ApprovalPolicy: "never",
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	want := map[string]any{
+		"threadId":       "parent",
+		"cwd":            "/repo",
+		"ephemeral":      true,
+		"sandbox":        "workspace-write",
+		"model":          "gpt-test",
+		"serviceTier":    "fast",
+		"approvalPolicy": "never",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("thread/fork params = %#v, want %#v", got, want)
 	}
 }
 
@@ -234,15 +268,11 @@ func TestTranslatorDispatchCoreFlow(t *testing.T) {
 	tr.Dispatch(NotifyTurnCompleted, json.RawMessage(`{"threadId":"t1","turn":{"id":"turn-1","status":"completed"}}`))
 
 	kinds := map[driver.StreamKind]int{}
-	var lastSeq uint64
 	var finishUsage *driver.Usage
 	for _, p := range sink.streams {
 		kinds[p.Kind]++
-		if p.Sequence != 0 && p.Sequence <= lastSeq {
-			t.Fatalf("non-monotonic sequence: %d after %d", p.Sequence, lastSeq)
-		}
-		if p.Sequence != 0 {
-			lastSeq = p.Sequence
+		if p.Sequence != 0 || p.Seq != 0 || !p.Timestamp.IsZero() {
+			t.Fatalf("translator must leave ordering fields for core: %+v", p)
 		}
 		if p.RunID != "run-123" {
 			t.Fatalf("RunID mismatch on %q: %q", p.Kind, p.RunID)
@@ -267,6 +297,7 @@ func TestTranslatorDispatchCoreFlow(t *testing.T) {
 	if finishUsage == nil || finishUsage.InputTokens != 11 || finishUsage.OutputTokens != 22 || finishUsage.CachedInputTokens != 3 {
 		t.Fatalf("StreamRunFinished.Usage not populated from tokenUsage cache: %+v", finishUsage)
 	}
+	assertNoViolations(t, adaptertest.VerifyStreamSequence(sink.streams))
 }
 
 func TestTranslatorUnknownNotificationPassthrough(t *testing.T) {
@@ -311,11 +342,26 @@ func (r *recordingSink) Emit(event driver.RunEvent) error {
 func (r *recordingSink) EmitStream(payload driver.StreamPayload) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if payload.Sequence == 0 {
-		payload.Sequence = uint64(len(r.streams) + 1)
-	}
 	r.streams = append(r.streams, payload)
 	return nil
+}
+
+func assertNoViolations(t *testing.T, violations []adaptertest.Violation) {
+	t.Helper()
+	if len(violations) == 0 {
+		return
+	}
+	for _, violation := range violations {
+		t.Errorf("driver contract violation: %s", violation)
+	}
+	t.FailNow()
+}
+
+func verifyAppserverContracts(t *testing.T, sink *recordingSink, result driver.Response) {
+	t.Helper()
+	assertNoViolations(t, adaptertest.VerifyRunEvents(sink.events))
+	assertNoViolations(t, adaptertest.VerifyTranscriptMirror(sink.events, result.Transcript))
+	assertNoViolations(t, adaptertest.VerifyStreamSequence(sink.streams))
 }
 
 // Ensure fmt stays used when future tests add diagnostic messages.
@@ -338,6 +384,7 @@ func TestRunStateUsesTurnCompletedStatusAsSoleTerminal(t *testing.T) {
 			t.Parallel()
 			state := newRunState("run-status", &recordingSink{})
 			state.setThread("thread-1")
+			state.setTurn("turn-1")
 			state.onNotification(NotifyItemCompleted, json.RawMessage(`{"threadId":"thread-1","turnId":"turn-1","item":{"id":"msg-1","type":"agentMessage","text":"assistant text"}}`))
 			errorField := ""
 			if tc.status != TurnStatusCompleted {
@@ -372,9 +419,157 @@ func TestRunStateUsesTurnCompletedStatusAsSoleTerminal(t *testing.T) {
 	}
 }
 
+func TestRunStateOutputUsesOnlyLastCompletedAgentMessage(t *testing.T) {
+	t.Parallel()
+	state := newRunState("run-final", &recordingSink{})
+	state.setThread("thread-final")
+	state.setTurn("turn-final")
+	state.onNotification(NotifyItemCompleted, json.RawMessage(`{"threadId":"thread-final","turnId":"turn-final","item":{"id":"progress","type":"agentMessage","text":"intermediate progress"}}`))
+	state.onNotification(NotifyItemCompleted, json.RawMessage(`{"threadId":"thread-final","turnId":"turn-final","item":{"id":"final","type":"agentMessage","text":"final answer"}}`))
+	state.onNotification(NotifyTurnCompleted, json.RawMessage(`{"threadId":"thread-final","turn":{"id":"turn-final","status":"completed"}}`))
+
+	result := state.snapshot(Options{}, "thread-final", "", "", 0, "", false)
+	if result.Output != "final answer" {
+		t.Fatalf("Output = %q, want final completed agent message", result.Output)
+	}
+	var assistant []string
+	for _, item := range result.Transcript {
+		if item.Kind == driver.TranscriptAssistant {
+			assistant = append(assistant, item.Text)
+		}
+	}
+	if !reflect.DeepEqual(assistant, []string{"intermediate progress", "final answer"}) {
+		t.Fatalf("assistant transcript = %#v", assistant)
+	}
+}
+
+func TestRunStateRejectsWrongTurnBeforeAbsorbingSemanticOutput(t *testing.T) {
+	t.Parallel()
+	sink := &recordingSink{}
+	state := newRunState("run-wrong-turn", sink)
+	state.setThread("thread-expected")
+	state.setTurn("turn-expected")
+	state.onNotification(NotifyItemCompleted, json.RawMessage(`{"threadId":"thread-expected","turnId":"turn-wrong","item":{"id":"wrong","type":"agentMessage","text":"must not escape"}}`))
+	state.onNotification(NotifyItemCompleted, json.RawMessage(`{"threadId":"thread-expected","turnId":"turn-expected","item":{"id":"later","type":"agentMessage","text":"must also not escape"}}`))
+	state.onNotification(NotifyTurnCompleted, json.RawMessage(`{"threadId":"thread-expected","turn":{"id":"turn-expected","status":"completed"}}`))
+	if err := state.protocolError(); err == nil || !strings.Contains(err.Error(), "belongs to turn") {
+		t.Fatalf("protocol error = %v", err)
+	}
+	result := state.snapshot(Options{}, "thread-expected", "raw", "", 0, "", false)
+	if result.Output != "" || result.Checkpoint != nil {
+		t.Fatalf("wrong-turn result = %#v", result)
+	}
+	for _, item := range result.Transcript {
+		if item.Kind == driver.TranscriptAssistant || item.Kind == driver.TranscriptResult {
+			t.Fatalf("semantic transcript was absorbed after scope failure: %#v", result.Transcript)
+		}
+	}
+	state.finishPublicResult(result, state.protocolError())
+	finished, failed := 0, 0
+	for _, payload := range sink.streams {
+		switch payload.Kind {
+		case driver.StreamRunFinished:
+			finished++
+		case driver.StreamRunError:
+			failed++
+		}
+	}
+	if finished != 0 || failed != 1 {
+		t.Fatalf("terminal lifecycle finished=%d error=%d streams=%#v", finished, failed, sink.streams)
+	}
+	select {
+	case <-state.done:
+	default:
+		t.Fatal("wrong-turn semantic event did not terminate the run")
+	}
+}
+
+func TestRunStateRejectsMalformedTypedDeltas(t *testing.T) {
+	t.Parallel()
+	for _, method := range []string{
+		NotifyItemReasoningTextDelta,
+		NotifyItemReasoningSummaryTextDelta,
+		NotifyItemCommandExecutionOutputDelta,
+		NotifyItemFileChangeOutputDelta,
+		NotifyItemPlanDelta,
+	} {
+		t.Run(method, func(t *testing.T) {
+			sink := &recordingSink{}
+			state := newRunState("run-malformed-delta", sink)
+			state.setThread("thread-delta")
+			state.setTurn("turn-delta")
+			state.onNotification(method, json.RawMessage(`{"threadId":"thread-delta","turnId":"turn-delta","itemId":"item-delta","delta":7}`))
+			state.onNotification(NotifyItemCompleted, json.RawMessage(`{"threadId":"thread-delta","turnId":"turn-delta","item":{"id":"later","type":"agentMessage","text":"must not escape"}}`))
+			state.onNotification(NotifyTurnCompleted, json.RawMessage(`{"threadId":"thread-delta","turn":{"id":"turn-delta","status":"completed"}}`))
+
+			err := state.protocolError()
+			if err == nil || !strings.Contains(err.Error(), "decode "+method) {
+				t.Fatalf("protocol error = %v", err)
+			}
+			result := state.snapshot(Options{}, "thread-delta", "raw", "", 0, "", false)
+			if result.Output != "" || result.Checkpoint != nil {
+				t.Fatalf("malformed delta result = %#v", result)
+			}
+			state.finishPublicResult(result, err)
+			assertTerminalLifecycle(t, sink.streams, 0, 1)
+		})
+	}
+}
+
+func TestRunStateQueuesNotificationsUntilRPCIdentitiesAreKnown(t *testing.T) {
+	t.Parallel()
+	sink := &recordingSink{}
+	state := newRunState("run-pending", sink)
+	state.onNotification("custom/before-identities", json.RawMessage(`{"audit":true}`))
+	state.onNotification(NotifyThreadStarted, json.RawMessage(`{"thread":{"id":"thread-pending"}}`))
+	state.onNotification(NotifyTurnStarted, json.RawMessage(`{"threadId":"thread-pending","turn":{"id":"turn-pending","status":"inProgress"}}`))
+	state.onNotification(NotifyItemCompleted, json.RawMessage(`{"threadId":"thread-pending","turnId":"turn-pending","item":{"id":"final","type":"agentMessage","text":"final after RPC"}}`))
+	state.onNotification(NotifyTurnCompleted, json.RawMessage(`{"threadId":"thread-pending","turn":{"id":"turn-pending","status":"completed"}}`))
+	state.onNotification("custom/after-pending-terminal", json.RawMessage(`{"audit":true}`))
+	select {
+	case <-state.done:
+		t.Fatal("pending notification completed before RPC identities were known")
+	default:
+	}
+
+	state.setThread("thread-pending")
+	state.setTurn("turn-pending")
+	result := state.snapshot(Options{}, "thread-pending", "", "", 0, "", false)
+	if result.Output != "final after RPC" || result.Checkpoint == nil || !result.Checkpoint.Valid {
+		t.Fatalf("flushed pending result = %#v", result)
+	}
+	select {
+	case <-state.done:
+	default:
+		t.Fatal("official pending terminal did not complete after RPC binding")
+	}
+	for _, payload := range sink.streams {
+		if payload.Name == "custom/after-pending-terminal" {
+			t.Fatalf("wire frame after pending terminal escaped to public stream: %+v", payload)
+		}
+	}
+	foundEarly := false
+	for _, payload := range sink.streams {
+		if payload.Name == "custom/before-identities" {
+			foundEarly = true
+			if payload.ThreadID != "thread-pending" || payload.TurnID != "turn-pending" {
+				t.Fatalf("queued custom notification identity = %q/%q", payload.ThreadID, payload.TurnID)
+			}
+		}
+		if payload.Kind == driver.StreamRunStarted && (payload.ThreadID != "thread-pending" || payload.TurnID != "turn-pending") {
+			t.Fatalf("queued run.started identity = %q/%q", payload.ThreadID, payload.TurnID)
+		}
+	}
+	if !foundEarly {
+		t.Fatalf("unknown notification queued before identities was not flushed: %#v", sink.streams)
+	}
+}
+
 func TestRunStateErrorNotificationIsNotTerminal(t *testing.T) {
 	t.Parallel()
 	state := newRunState("run-error", &recordingSink{})
+	state.setThread("t")
+	state.setTurn("turn")
 	state.onNotification(NotifyError, json.RawMessage(`{"threadId":"t","turnId":"turn","willRetry":false,"error":{"message":"transient"}}`))
 	select {
 	case <-state.done:
@@ -386,10 +581,44 @@ func TestRunStateErrorNotificationIsNotTerminal(t *testing.T) {
 	}
 }
 
+func TestRunStateTranscriptAlwaysMirrorsItemEvents(t *testing.T) {
+	t.Parallel()
+	sink := &recordingSink{}
+	state := newRunState("run-mirror", sink)
+	state.setThread("thread-mirror")
+	state.setTurn("turn-mirror")
+	state.onNotification(NotifyTurnStarted, json.RawMessage(`{"threadId":"thread-mirror","turn":{"id":"turn-mirror","status":"inProgress"}}`))
+	state.onNotification(NotifyItemStarted, json.RawMessage(`{"threadId":"thread-mirror","turnId":"turn-mirror","item":{"id":"tool-1","type":"commandExecution","command":"go test ./...","cwd":"/repo","status":"inProgress"}}`))
+	state.onNotification(NotifyItemCompleted, json.RawMessage(`{"threadId":"thread-mirror","turnId":"turn-mirror","item":{"id":"tool-1","type":"commandExecution","command":"go test ./...","cwd":"/repo","status":"completed","exitCode":0,"aggregatedOutput":"ok"}}`))
+	state.onNotification(NotifyError, json.RawMessage(`{"threadId":"thread-mirror","turnId":"turn-mirror","willRetry":true,"error":{"message":"retrying provider request"}}`))
+	state.onNotification(NotifyTurnCompleted, json.RawMessage(`{"threadId":"thread-mirror","turn":{"id":"turn-mirror","status":"completed","usage":{"inputTokens":2,"outputTokens":3}}}`))
+
+	result := state.snapshot(Options{}, "thread-mirror", "raw stdout", "", 0, "", false)
+	state.finishPublicResult(result, nil)
+	verifyAppserverContracts(t, sink, result)
+	if len(result.Transcript) != 5 {
+		t.Fatalf("Transcript = %#v, want init/tool call/tool result/system/result", result.Transcript)
+	}
+	eventsBefore := len(sink.events)
+	streamsBefore := len(sink.streams)
+	state.onNotification(NotifyError, json.RawMessage(`{"willRetry":false,"error":{"message":"after terminal"}}`))
+	state.onNotification("custom/after-terminal", json.RawMessage(`{"preserved":true}`))
+	if len(sink.events) != eventsBefore || len(sink.streams) != streamsBefore {
+		t.Fatalf("terminal boundary leaked public events: events %d->%d streams %d->%d", eventsBefore, len(sink.events), streamsBefore, len(sink.streams))
+	}
+	if err := state.protocolError(); err != nil {
+		t.Fatalf("non-terminal trailing frame poisoned completed run: %v", err)
+	}
+	if checkpoint := state.snapshot(Options{}, "thread-mirror", "", "", 0, "", false).Checkpoint; checkpoint == nil || !checkpoint.Valid {
+		t.Fatalf("trailing audit-only frame cleared checkpoint: %#v", checkpoint)
+	}
+}
+
 func TestRunStateMalformedAndMissingTerminalNeverCheckpoint(t *testing.T) {
 	t.Parallel()
 	malformed := newRunState("run-malformed", &recordingSink{})
 	malformed.setThread("thread-1")
+	malformed.setTurn("turn-1")
 	malformed.onNotification(NotifyTurnCompleted, json.RawMessage(`{"turn":`))
 	if malformed.protocolError() == nil {
 		t.Fatal("malformed terminal must record a protocol error")
@@ -410,13 +639,14 @@ func TestRunStateMalformedAndMissingTerminalNeverCheckpoint(t *testing.T) {
 
 func TestRunCapturesExactFullOutputAndOfficialTerminal(t *testing.T) {
 	fake := buildFakeAppserver(t)
+	sink := &recordingSink{}
 	result, err := Run(context.Background(), Options{
 		Command: fake,
 		Env:     []driver.EnvBinding{{Name: "FAKE_APPSERVER_SCENARIO", Value: "success"}},
 		Prompt:  "hello",
 		Model:   "gpt-test",
 		RunID:   "run-full-output",
-	}, &recordingSink{})
+	}, sink)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -447,35 +677,281 @@ func TestRunCapturesExactFullOutputAndOfficialTerminal(t *testing.T) {
 	if len(result.Transcript) < 3 {
 		t.Fatalf("transcript = %#v", result.Transcript)
 	}
+	verifyAppserverContracts(t, sink, result)
+	if got := sink.streams[len(sink.streams)-1].Kind; got != driver.StreamRunFinished {
+		t.Fatalf("last public payload = %q, want %q", got, driver.StreamRunFinished)
+	}
+	for _, payload := range sink.streams {
+		if payload.Name == "custom/after-terminal" {
+			t.Fatalf("after-terminal diagnostic escaped to public stream: %+v", payload)
+		}
+	}
+}
+
+func TestRunStagesTerminalUntilProcessOutcome(t *testing.T) {
+	fake := buildFakeAppserver(t)
+	sink := &recordingSink{}
+	result, err := Run(context.Background(), Options{
+		Command: fake,
+		Env:     []driver.EnvBinding{{Name: "FAKE_APPSERVER_SCENARIO", Value: "nonzero-after-terminal"}},
+		Prompt:  "hello",
+		RunID:   "run-nonzero-after-terminal",
+	}, sink)
+	if err != nil {
+		t.Fatalf("Run returned infrastructure error: %v", err)
+	}
+	if result.ExitCode != 17 || result.Failure == nil || result.Failure.Code != driver.FailureAgentError {
+		t.Fatalf("process failure result = %#v", result)
+	}
+	if result.Checkpoint != nil {
+		t.Fatalf("nonzero exit retained checkpoint: %#v", result.Checkpoint)
+	}
+	assertTerminalLifecycle(t, sink.streams, 0, 1)
+}
+
+func TestRunStagesTerminalUntilStructuredOutputValidation(t *testing.T) {
+	fake := buildFakeAppserver(t)
+	schema := &driver.OutputSchema{
+		Format:     driver.OutputFormatJSONSchema,
+		Mode:       driver.StructuredOutputNativeStrict,
+		SchemaJSON: json.RawMessage(`{"type":"object","properties":{"answer":{"type":"integer"}},"required":["answer"],"additionalProperties":false}`),
+		OnInvalid:  driver.StructuredOutputFailRun,
+	}
+	for _, tc := range []struct {
+		name         string
+		scenario     string
+		wantFinished int
+		wantError    int
+		wantValid    bool
+	}{
+		{name: "valid", scenario: "structured-valid", wantFinished: 1, wantValid: true},
+		{name: "invalid", scenario: "success", wantError: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sink := &recordingSink{}
+			result, err := Run(context.Background(), Options{
+				Command:      fake,
+				Env:          []driver.EnvBinding{{Name: "FAKE_APPSERVER_SCENARIO", Value: tc.scenario}},
+				ForkThreadID: "thread-parent",
+				Prompt:       "structured",
+				RunID:        "run-structured-" + tc.name,
+				OutputSchema: schema,
+			}, sink)
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			if tc.wantValid {
+				if result.Failure != nil || result.StructuredOutput == nil || !result.StructuredOutput.Valid || result.Checkpoint == nil || !result.Checkpoint.Valid {
+					t.Fatalf("valid structured result = %#v", result)
+				}
+			} else {
+				if result.Failure == nil || result.Failure.Code != driver.FailurePolicyError || result.StructuredOutput == nil || result.StructuredOutput.Valid || result.Checkpoint != nil {
+					t.Fatalf("invalid structured result = %#v", result)
+				}
+			}
+			assertTerminalLifecycle(t, sink.streams, tc.wantFinished, tc.wantError)
+		})
+	}
+}
+
+func TestRunProtocolFatalNotificationStopsSemanticIngestion(t *testing.T) {
+	fake := buildFakeAppserver(t)
+	sink := &recordingSink{}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	result, err := Run(ctx, Options{
+		Command: fake,
+		Env:     []driver.EnvBinding{{Name: "FAKE_APPSERVER_SCENARIO", Value: "malformed-item-live"}},
+		Prompt:  "hello",
+		RunID:   "run-malformed-live",
+	}, sink)
+	if err == nil || !strings.Contains(err.Error(), "protocol") {
+		t.Fatalf("Run error = %v, want protocol failure", err)
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("protocol failure waited for context deadline: %v", err)
+	}
+	if result.Output != "" || result.Checkpoint != nil {
+		t.Fatalf("semantic state changed after malformed notification: %#v", result)
+	}
+	for _, item := range result.Transcript {
+		if item.Kind == driver.TranscriptAssistant || item.Kind == driver.TranscriptResult {
+			t.Fatalf("malformed notification admitted later semantic item: %#v", result.Transcript)
+		}
+	}
+	assertTerminalLifecycle(t, sink.streams, 0, 1)
+}
+
+func TestRunRejectsWhitespaceRPCIdentities(t *testing.T) {
+	fake := buildFakeAppserver(t)
+	for _, tc := range []struct {
+		name     string
+		scenario string
+		options  Options
+	}{
+		{name: "thread start", scenario: "whitespace-thread-start"},
+		{name: "thread resume", scenario: "whitespace-thread-resume", options: Options{ResumeThreadID: "thread-parent"}},
+		{name: "thread fork", scenario: "whitespace-thread-fork", options: Options{ForkThreadID: "thread-parent"}},
+		{name: "turn start", scenario: "whitespace-turn-start"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			opts := tc.options
+			opts.Command = fake
+			opts.Env = []driver.EnvBinding{{Name: "FAKE_APPSERVER_SCENARIO", Value: tc.scenario}}
+			_, err := Run(context.Background(), opts, &recordingSink{})
+			if err == nil || !strings.Contains(err.Error(), "empty") {
+				t.Fatalf("Run error = %v, want empty identity rejection", err)
+			}
+		})
+	}
+}
+
+func TestRunStateRejectsWhitespaceRPCIdentities(t *testing.T) {
+	thread := newRunState("thread-space", &recordingSink{})
+	thread.setThread(" \t")
+	if err := thread.protocolError(); err == nil || !strings.Contains(err.Error(), "thread identity") {
+		t.Fatalf("thread identity error = %v", err)
+	}
+	select {
+	case <-thread.done:
+	default:
+		t.Fatal("whitespace thread identity did not terminate state")
+	}
+
+	turn := newRunState("turn-space", &recordingSink{})
+	turn.setThread("thread-valid")
+	turn.setTurn(" \t")
+	if err := turn.protocolError(); err == nil || !strings.Contains(err.Error(), "turn identity") {
+		t.Fatalf("turn identity error = %v", err)
+	}
+	select {
+	case <-turn.done:
+	default:
+		t.Fatal("whitespace turn identity did not terminate state")
+	}
+}
+
+func assertTerminalLifecycle(t *testing.T, streams []driver.StreamPayload, wantFinished, wantError int) {
+	t.Helper()
+	finished, failed := 0, 0
+	for _, payload := range streams {
+		switch payload.Kind {
+		case driver.StreamRunFinished:
+			finished++
+		case driver.StreamRunError:
+			failed++
+		}
+	}
+	if finished != wantFinished || failed != wantError {
+		t.Fatalf("terminal lifecycle finished=%d error=%d, want %d/%d; streams=%#v", finished, failed, wantFinished, wantError, streams)
+	}
+}
+
+func TestRunForksParentAndRunsTurnOnChild(t *testing.T) {
+	fake := buildFakeAppserver(t)
+	result, err := Run(context.Background(), Options{
+		Command:      fake,
+		Env:          []driver.EnvBinding{{Name: "FAKE_APPSERVER_SCENARIO", Value: "success"}},
+		ForkThreadID: "thread-parent",
+		Prompt:       "forked work",
+	}, &recordingSink{})
+	if err != nil {
+		t.Fatalf("Run fork: %v", err)
+	}
+	if result.Checkpoint == nil || result.Checkpoint.State == nil || result.Checkpoint.State.ResumeID != "thread-child" {
+		t.Fatalf("fork checkpoint = %#v, want child thread", result.Checkpoint)
+	}
+	if result.Checkpoint.State.ResumeID == "thread-parent" {
+		t.Fatal("fork returned the parent checkpoint")
+	}
+}
+
+func TestRunResumeRejectsProviderThreadIdentityChange(t *testing.T) {
+	fake := buildFakeAppserver(t)
+	result, err := Run(context.Background(), Options{
+		Command:        fake,
+		Env:            []driver.EnvBinding{{Name: "FAKE_APPSERVER_SCENARIO", Value: "success"}},
+		ResumeThreadID: "thread-parent",
+	}, &recordingSink{})
+	if err == nil || !strings.Contains(err.Error(), "returned thread id") {
+		t.Fatalf("error = %v, want resume identity mismatch", err)
+	}
+	if result.Checkpoint != nil {
+		t.Fatalf("resume identity mismatch produced checkpoint %#v", result.Checkpoint)
+	}
+}
+
+func TestRunRejectsNotificationOutsideExpectedThreadAndTurn(t *testing.T) {
+	fake := buildFakeAppserver(t)
+	sink := &recordingSink{}
+	result, err := Run(context.Background(), Options{
+		Command: fake,
+		Env:     []driver.EnvBinding{{Name: "FAKE_APPSERVER_SCENARIO", Value: "scope-mismatch"}},
+	}, sink)
+	if err == nil || !strings.Contains(err.Error(), "belongs to thread") {
+		t.Fatalf("error = %v, want notification scope mismatch", err)
+	}
+	if result.Checkpoint != nil || result.Output != "" || result.RawStreams == nil || result.RawStreams.Stdout == "" {
+		t.Fatalf("scope mismatch result = %#v", result)
+	}
+	for _, item := range result.Transcript {
+		if item.Kind == driver.TranscriptAssistant || item.Kind == driver.TranscriptResult {
+			t.Fatalf("wrong-thread semantic item escaped: %#v", result.Transcript)
+		}
+	}
+	if len(sink.streams) == 0 || sink.streams[len(sink.streams)-1].Kind != driver.StreamRunError {
+		t.Fatalf("scope mismatch stream terminal = %#v", sink.streams)
+	}
+}
+
+func TestRunRejectsConflictingResumeAndForkBeforeSpawn(t *testing.T) {
+	_, err := Run(context.Background(), Options{
+		Command:        filepath.Join(t.TempDir(), "must-not-spawn"),
+		ResumeThreadID: "resume",
+		ForkThreadID:   "fork",
+	}, &recordingSink{})
+	if err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Fatalf("error = %v, want selector conflict", err)
+	}
 }
 
 func TestRunOfficialFailureStatusesAndProtocolFailures(t *testing.T) {
 	fake := buildFakeAppserver(t)
 	for _, status := range []string{"failed", "interrupted"} {
 		t.Run(status, func(t *testing.T) {
+			sink := &recordingSink{}
 			result, err := Run(context.Background(), Options{
 				Command: fake,
 				Env:     []driver.EnvBinding{{Name: "FAKE_APPSERVER_SCENARIO", Value: status}},
-			}, &recordingSink{})
+			}, sink)
 			if err != nil {
 				t.Fatalf("Run: %v", err)
 			}
 			if result.Failure == nil || result.Checkpoint != nil || result.RawStreams.Terminal == nil {
 				t.Fatalf("failure result = %#v", result)
 			}
+			verifyAppserverContracts(t, sink, result)
+			if got := sink.streams[len(sink.streams)-1].Kind; got != driver.StreamRunError {
+				t.Fatalf("last public payload = %q, want %q", got, driver.StreamRunError)
+			}
 		})
 	}
 	for _, scenario := range []string{"missing", "malformed"} {
 		t.Run(scenario, func(t *testing.T) {
+			sink := &recordingSink{}
 			result, err := Run(context.Background(), Options{
 				Command: fake,
 				Env:     []driver.EnvBinding{{Name: "FAKE_APPSERVER_SCENARIO", Value: scenario}},
-			}, &recordingSink{})
+			}, sink)
 			if err == nil {
 				t.Fatal("expected protocol error")
 			}
 			if result.Checkpoint != nil || result.RawStreams == nil || result.RawStreams.Stdout == "" {
 				t.Fatalf("partial result = %#v", result)
+			}
+			verifyAppserverContracts(t, sink, result)
+			if got := sink.streams[len(sink.streams)-1].Kind; got != driver.StreamRunError {
+				t.Fatalf("last public payload = %q, want %q", got, driver.StreamRunError)
 			}
 		})
 	}
@@ -485,15 +961,20 @@ func TestRunCancellationReturnsPartialRawWithoutCheckpoint(t *testing.T) {
 	fake := buildFakeAppserver(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
 	defer cancel()
+	sink := &recordingSink{}
 	result, err := Run(ctx, Options{
 		Command: fake,
 		Env:     []driver.EnvBinding{{Name: "FAKE_APPSERVER_SCENARIO", Value: "cancel"}},
-	}, &recordingSink{})
+	}, sink)
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("error = %v", err)
 	}
 	if result.Checkpoint != nil || result.RawStreams == nil || result.RawStreams.Stdout == "" {
 		t.Fatalf("cancelled partial result = %#v", result)
+	}
+	verifyAppserverContracts(t, sink, result)
+	if got := sink.streams[len(sink.streams)-1].Kind; got != driver.StreamRunError {
+		t.Fatalf("last public payload = %q, want %q", got, driver.StreamRunError)
 	}
 }
 
@@ -527,6 +1008,7 @@ import (
 type request struct {
 	ID json.RawMessage ` + "`json:\"id\"`" + `
 	Method string ` + "`json:\"method\"`" + `
+	Params json.RawMessage ` + "`json:\"params\"`" + `
 }
 
 func main() {
@@ -544,6 +1026,7 @@ func main() {
 	respond := func(id json.RawMessage, result string) {
 		write(fmt.Sprintf("{\"id\":%s,\"result\":%s}", id, result))
 	}
+	currentThread := ""
 	for {
 		var req request
 		if err := decoder.Decode(&req); err != nil {
@@ -553,13 +1036,53 @@ func main() {
 		case "initialize":
 			respond(req.ID, "{}")
 		case "thread/start", "thread/resume":
+			if (req.Method == "thread/start" && scenario == "whitespace-thread-start") || (req.Method == "thread/resume" && scenario == "whitespace-thread-resume") {
+				respond(req.ID, "{\"thread\":{\"id\":\" \"}}")
+				continue
+			}
+			currentThread = "thread-fake"
 			respond(req.ID, "{\"thread\":{\"id\":\"thread-fake\"}}")
+		case "thread/fork":
+			if scenario == "whitespace-thread-fork" {
+				respond(req.ID, "{\"thread\":{\"id\":\" \"}}")
+				continue
+			}
+			var params struct { ThreadID string ` + "`json:\"threadId\"`" + ` }
+			if err := json.Unmarshal(req.Params, &params); err != nil || params.ThreadID != "thread-parent" {
+				write(fmt.Sprintf("{\"id\":%s,\"error\":{\"code\":-32602,\"message\":\"wrong fork parent\"}}", req.ID))
+				continue
+			}
+			currentThread = "thread-child"
+			respond(req.ID, "{\"thread\":{\"id\":\"thread-child\"}}")
 		case "turn/start":
+			var params struct { ThreadID string ` + "`json:\"threadId\"`" + ` }
+			if err := json.Unmarshal(req.Params, &params); err != nil || params.ThreadID != currentThread {
+				write(fmt.Sprintf("{\"id\":%s,\"error\":{\"code\":-32602,\"message\":\"turn started on wrong thread\"}}", req.ID))
+				continue
+			}
+			if scenario == "whitespace-turn-start" {
+				respond(req.ID, "{\"turn\":{\"id\":\" \",\"status\":\"inProgress\"}}")
+				continue
+			}
 			respond(req.ID, "{\"turn\":{\"id\":\"turn-fake\",\"status\":\"inProgress\"}}")
+			eventThread := currentThread
+			if scenario == "scope-mismatch" {
+				eventThread = "wrong-thread"
+			}
+			write(fmt.Sprintf("{\"method\":\"turn/started\",\"params\":{\"threadId\":%q,\"turn\":{\"id\":\"turn-fake\",\"status\":\"inProgress\"}}}", eventThread))
 			if scenario == "cancel" {
 				continue
 			}
-			write("{\"method\":\"item/completed\",\"params\":{\"threadId\":\"thread-fake\",\"turnId\":\"turn-fake\",\"item\":{\"id\":\"msg-fake\",\"type\":\"agentMessage\",\"text\":\"hello from fake\"}}}")
+			if scenario == "malformed-item-live" {
+				write(fmt.Sprintf("{\"method\":\"item/completed\",\"params\":{\"threadId\":%q,\"turnId\":\"turn-fake\",\"item\":{\"id\":\"bad\",\"type\":\"agentMessage\",\"text\":7}}}", eventThread))
+			}
+			message := "hello from fake"
+			if scenario == "structured-valid" {
+				message = ` + "`" + `{"answer":42}` + "`" + `
+			}
+			write(fmt.Sprintf("{\"method\":\"item/started\",\"params\":{\"threadId\":%q,\"turnId\":\"turn-fake\",\"item\":{\"id\":\"msg-fake\",\"type\":\"agentMessage\",\"text\":\"\"}}}", eventThread))
+			write(fmt.Sprintf("{\"method\":\"item/agentMessage/delta\",\"params\":{\"delta\":%q,\"itemId\":\"msg-fake\",\"threadId\":%q,\"turnId\":\"turn-fake\"}}", message, eventThread))
+			write(fmt.Sprintf("{\"method\":\"item/completed\",\"params\":{\"threadId\":%q,\"turnId\":\"turn-fake\",\"item\":{\"id\":\"msg-fake\",\"type\":\"agentMessage\",\"text\":%q}}}", eventThread, message))
 			if scenario == "missing" {
 				return
 			}
@@ -568,19 +1091,26 @@ func main() {
 				return
 			}
 			status := scenario
-			if status == "success" || status == "" {
+			if status == "scope-mismatch" {
+				status = "completed"
+			}
+			if status == "success" || status == "" || status == "structured-valid" || status == "nonzero-after-terminal" || status == "malformed-item-live" {
 				status = "completed"
 			}
 			errorField := ""
 			if status != "completed" {
 				errorField = fmt.Sprintf(",\"error\":{\"message\":\"provider %s\"}", status)
 			}
-			frame := fmt.Sprintf("  {\"method\":\"turn/completed\",\"params\":{\"threadId\":\"thread-fake\",\"turn\":{\"id\":\"turn-fake\",\"status\":\"%s\"%s,\"usage\":{\"inputTokens\":7,\"outputTokens\":11}}}}", status, errorField)
+			frame := fmt.Sprintf("  {\"method\":\"turn/completed\",\"params\":{\"threadId\":%q,\"turn\":{\"id\":\"turn-fake\",\"status\":\"%s\"%s,\"usage\":{\"inputTokens\":7,\"outputTokens\":11}}}}", eventThread, status, errorField)
 			write(frame)
 			write("{\"method\":\"custom/after-terminal\",\"params\":{\"preserved\":true}}")
+			if scenario == "nonzero-after-terminal" {
+				_ = writer.Flush()
+				os.Exit(17)
+			}
 		case "turn/interrupt":
 			respond(req.ID, "{}")
-			write("{\"method\":\"turn/completed\",\"params\":{\"threadId\":\"thread-fake\",\"turn\":{\"id\":\"turn-fake\",\"status\":\"interrupted\",\"error\":{\"message\":\"cancelled\"}}}}")
+			write(fmt.Sprintf("{\"method\":\"turn/completed\",\"params\":{\"threadId\":%q,\"turn\":{\"id\":\"turn-fake\",\"status\":\"interrupted\",\"error\":{\"message\":\"cancelled\"}}}}", currentThread))
 		}
 	}
 }

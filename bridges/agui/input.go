@@ -4,24 +4,21 @@
 // canonical AG-UI HTTP request shape (RunAgentInput) without the host
 // having to write a decoder.
 //
-// v1 coverage (deliberately narrow):
+// The Driver-facing projection is deliberately narrow:
 //
 //   - prompt extraction: latest role=user message, text content only
-//   - session binding: threadId → ("agui", threadId)
+//   - thread binding: threadId is encoded as a collision-free bridge key
 //
-// v1 silently drops (tracked in docs/workstream-streaming-chat.md §18):
+// The Driver-facing projection does not interpret:
 //
 //   - image / audio / file / document content parts
 //   - tools[] (frontend tool declarations)
 //   - assistant tool_calls + role=tool results
 //   - state, context, forwardedProps
 //
-// The JSON-level round trip preserves every field (no UnmarshalJSON
-// validation that rejects extensions), but the bridge does not forward
-// them to the adapter. Callers must not read RunAgentInput.Tools /
-// State / Context / ForwardedProps outside this package until §18.2
-// lands the unified pass-through — otherwise the bridge grows
-// inconsistent read paths.
+// The JSON decoder preserves these fields without rejecting protocol
+// extensions, while prompt and thread helpers consume only the documented
+// text projection.
 
 package agui
 
@@ -34,9 +31,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/agent-dance/agent-adaptor/bridges/internal/bridgekey"
 	adaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/bridges/internal/bridgekey"
 )
+
+// maxHTTPRequestBytes bounds the canonical AG-UI request before it is held in
+// memory. Four MiB leaves room for normal multi-turn chat state while keeping
+// an unauthenticated bridge endpoint from becoming an unbounded allocation
+// primitive.
+const maxHTTPRequestBytes int64 = 4 << 20
 
 // RunAgentInput is the canonical HTTP body an AG-UI client (CopilotKit
 // HttpAgent, @ag-ui/client, AG-UI Dojo, etc.) sends when it invokes an
@@ -61,29 +64,36 @@ type RunAgentInput struct {
 	// adapters carry their own transcript via the session store.
 	Messages []Message `json:"messages"`
 
-	// State / Tools / Context / ForwardedProps are reserved AG-UI fields
-	// that the bridge does not interpret but preserves verbatim so
-	// downstream instrumentation can still see them.
-	State          json.RawMessage   `json:"state,omitempty"`
-	Tools          []json.RawMessage `json:"tools,omitempty"`
-	Context        []json.RawMessage `json:"context,omitempty"`
-	ForwardedProps json.RawMessage   `json:"forwardedProps,omitempty"`
+	// State preserves AG-UI state without interpreting it.
+	State json.RawMessage `json:"state,omitempty"`
+	// Tools preserves frontend tool declarations without interpreting them.
+	Tools []json.RawMessage `json:"tools,omitempty"`
+	// Context preserves AG-UI context entries without interpreting them.
+	Context []json.RawMessage `json:"context,omitempty"`
+	// ForwardedProps preserves application-defined forwarded properties.
+	ForwardedProps json.RawMessage `json:"forwardedProps,omitempty"`
 }
 
 // Message is one entry in RunAgentInput.Messages. Content is kept raw
 // because the AG-UI spec allows either a plain string or a
 // polymorphic parts array, and we decode the two shapes lazily.
 type Message struct {
-	ID      string          `json:"id"`
-	Role    string          `json:"role"`
+	// ID is the client-supplied message identifier.
+	ID string `json:"id"`
+	// Role identifies the message author.
+	Role string `json:"role"`
+	// Content preserves the AG-UI string or polymorphic parts payload.
 	Content json.RawMessage `json:"content"`
-	Name    string          `json:"name,omitempty"`
+	// Name optionally identifies the message author or tool.
+	Name string `json:"name,omitempty"`
 }
 
 // DecodeHTTPRequest parses an incoming AG-UI HTTP POST body into a
 // RunAgentInput. It fails when the body cannot be read or is not valid
-// JSON. It does not validate semantic constraints (presence of
-// messages, role values, etc.) — those are the caller's responsibility.
+// JSON. Bodies are limited to 4 MiB; an oversized body returns an error that
+// wraps *http.MaxBytesError so an HTTP adapter can return status 413. It does
+// not validate semantic constraints (presence of messages, role values, etc.)
+// — those are the caller's responsibility.
 //
 // The request body is closed before returning so the caller does not
 // have to.
@@ -91,8 +101,9 @@ func DecodeHTTPRequest(r *http.Request) (*RunAgentInput, error) {
 	if r == nil || r.Body == nil {
 		return nil, errors.New("agui: nil http.Request")
 	}
-	defer r.Body.Close()
-	body, err := io.ReadAll(r.Body)
+	limited := http.MaxBytesReader(nil, r.Body, maxHTTPRequestBytes)
+	defer limited.Close()
+	body, err := io.ReadAll(limited)
 	if err != nil {
 		return nil, fmt.Errorf("agui: read body: %w", err)
 	}
@@ -110,7 +121,7 @@ func DecodeHTTPRequest(r *http.Request) (*RunAgentInput, error) {
 // whose role is "user". It returns an empty string if no such message
 // exists or its content is structurally empty.
 //
-// This is the single adapter-facing entrypoint for extracting the
+// This is the single Driver-facing entrypoint for extracting the
 // prompt from an AG-UI input: AG-UI clients (including CopilotKit) send
 // the full chat history on every turn, but agent-adaptor's session
 // store already carries the transcript inside the adapter, so only the
@@ -222,7 +233,7 @@ func (in *RunAgentInput) SessionKey() (namespace, key string) {
 //   - a parts array, e.g. [{"type":"text","text":"hello"}, ...]
 //
 // Non-text parts (image / audio / tool) are silently skipped; the
-// adapter layer is text-only for v1. When both decode attempts fail the
+// Driver-facing prompt projection is text-only. When both decode attempts fail the
 // function returns "" rather than panicking, on the assumption that an
 // unknown content shape is still better treated as empty than as a
 // fatal error here.

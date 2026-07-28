@@ -124,6 +124,162 @@ func TestEventBrokerPreservesProviderDropped(t *testing.T) {
 	b.close()
 }
 
+func TestEventBrokerAbortNeverFlushesDroppedAfterTerminal(t *testing.T) {
+	b := newEventBroker("run-terminal-drop", "", 2, false)
+	if !b.publish(TextDelta{Text: "first"}, nil) || !b.publish(TextDelta{Text: "second"}, nil) {
+		t.Fatal("initial deltas must fill the buffer")
+	}
+	if b.publish(TextDelta{Text: "pending-drop"}, nil) {
+		t.Fatal("third delta must become a pending drop aggregate")
+	}
+	b.abort()
+	<-b.events
+	<-b.events
+	if !b.publishTerminal(RunFinished{RunID: "run-terminal-drop", Failed: true}, nil) {
+		t.Fatal("terminal must fit after the consumer drains the buffer")
+	}
+	b.close()
+
+	var events []Event
+	for event := range b.events {
+		events = append(events, event)
+	}
+	if len(events) != 1 {
+		t.Fatalf("events after drain = %+v, want terminal only", events)
+	}
+	if _, ok := events[0].(RunFinished); !ok {
+		t.Fatalf("event = %T, want RunFinished", events[0])
+	}
+}
+
+func TestEventBrokerFullBufferAbortReservesTerminalAndSealsLateEvents(t *testing.T) {
+	b := newEventBroker("run-terminal-reserve", "", 1, false)
+	if !b.publish(RunStarted{RunID: "run-terminal-reserve"}, nil) {
+		t.Fatal("RunStarted must fill the ordinary event slot")
+	}
+	if b.publish(TextDelta{Text: "pending-drop"}, nil) {
+		t.Fatal("delta must be aggregated while the ordinary slot is full")
+	}
+
+	b.abort()
+	terminalDone := make(chan bool, 1)
+	go func() {
+		terminalDone <- b.publishTerminal(RunFinished{RunID: "run-terminal-reserve", Failed: true}, nil)
+	}()
+	select {
+	case ok := <-terminalDone:
+		if !ok {
+			t.Fatal("terminal publication failed despite its reserved slot")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("terminal publication waited for a consumer after abort")
+	}
+	if b.publish(Notice{Kind: NoticeLifecycle, Text: "late"}, nil) {
+		t.Fatal("late event crossed the terminal seal")
+	}
+	b.close()
+
+	var events []Event
+	for event := range b.events {
+		events = append(events, event)
+	}
+	if len(events) != 2 {
+		t.Fatalf("events = %+v, want RunStarted and RunFinished", events)
+	}
+	if _, ok := events[0].(RunStarted); !ok {
+		t.Fatalf("events[0] = %T, want RunStarted", events[0])
+	}
+	terminal, ok := events[1].(RunFinished)
+	if !ok || !terminal.Failed {
+		t.Fatalf("events[1] = %#v, want failed RunFinished", events[1])
+	}
+	if events[0].Meta().Sequence != 1 || events[1].Meta().Sequence != 3 {
+		t.Fatalf("sequences = %d, %d, want 1, 3 including the dropped delta gap",
+			events[0].Meta().Sequence, events[1].Meta().Sequence)
+	}
+}
+
+func TestEventBrokerBlockingAbortReleasesPublisherWithoutUsingTerminalReserve(t *testing.T) {
+	b := newEventBroker("run-blocked-terminal", "", 1, true)
+	if !b.publish(RunStarted{RunID: "run-blocked-terminal"}, nil) {
+		t.Fatal("RunStarted must fill the ordinary event slot")
+	}
+
+	entered := make(chan struct{})
+	blocked := make(chan bool, 1)
+	go func() {
+		close(entered)
+		blocked <- b.publish(Notice{Kind: NoticeLifecycle, Text: "blocked"}, nil)
+	}()
+	<-entered
+	select {
+	case <-blocked:
+		t.Fatal("ordinary publisher unexpectedly consumed the terminal reserve")
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	b.abort()
+	select {
+	case ok := <-blocked:
+		if ok {
+			t.Fatal("aborted ordinary publication reported success")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("abort did not release the blocked ordinary publisher")
+	}
+	if !b.publishTerminal(RunFinished{RunID: "run-blocked-terminal", Failed: true}, nil) {
+		t.Fatal("terminal did not use its reserved slot")
+	}
+	b.close()
+
+	var events []Event
+	for event := range b.events {
+		events = append(events, event)
+	}
+	if len(events) != 2 {
+		t.Fatalf("events = %+v, want RunStarted and RunFinished", events)
+	}
+	if _, ok := events[1].(RunFinished); !ok {
+		t.Fatalf("last event = %T, want RunFinished", events[1])
+	}
+}
+
+func TestEventBrokerNormalTerminalFlushesDroppedBeforeReservedTerminal(t *testing.T) {
+	b := newEventBroker("run-normal-terminal", "", 1, false)
+	if !b.publish(TextDelta{Text: "kept"}, nil) {
+		t.Fatal("first delta must fill the ordinary slot")
+	}
+	if b.publish(TextDelta{Text: "dropped"}, nil) {
+		t.Fatal("second delta must be aggregated")
+	}
+
+	done := make(chan bool, 1)
+	go func() {
+		done <- b.publishTerminal(RunFinished{RunID: "run-normal-terminal"}, nil)
+	}()
+	if event := <-b.events; eventKind(event) != "text.content" {
+		t.Fatalf("first event = %T, want TextDelta", event)
+	}
+	if event := <-b.events; eventKind(event) != "dropped" {
+		t.Fatalf("second event = %T, want Dropped", event)
+	}
+	select {
+	case ok := <-done:
+		if !ok {
+			t.Fatal("normal terminal publication failed")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("normal terminal publication remained blocked after the ordinary slot drained")
+	}
+	b.close()
+	if event := <-b.events; eventKind(event) != "run.finished" {
+		t.Fatalf("last event = %T, want RunFinished", event)
+	}
+	if _, ok := <-b.events; ok {
+		t.Fatal("event channel remained open after terminal drain")
+	}
+}
+
 func TestWithEventMetaSupportsEveryEventKind(t *testing.T) {
 	approval := newApprovalRequest(testDecisionRequest("meta", ApprovalPermission))
 	events := []Event{
@@ -236,6 +392,115 @@ func TestStreamConcurrentCancelIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestStreamImmediateCancelWithFullMergedLifecycleDeliversTerminalWithoutConsumer(t *testing.T) {
+	subscribed := make(chan struct{})
+	provider := brokerTestRunService{source: func(context.Context, string) <-chan Event {
+		close(subscribed)
+		closed := make(chan Event)
+		close(closed)
+		return closed
+	}}
+	d := brokerTestDriver{run: func(ctx context.Context, _ driver.Request, _ driver.EventSink) (driver.Response, error) {
+		<-ctx.Done()
+		return driver.Response{}, ctx.Err()
+	}}
+	stream := New(d, WithEventBuffer(1), WithRunServices(provider)).Stream(context.Background(), "cancel")
+	select {
+	case <-subscribed:
+	case <-time.After(time.Second):
+		t.Fatal("run event source was not subscribed")
+	}
+
+	// RunStarted now occupies the sole ordinary slot. Do not consume Events
+	// until Result returns: Cancel must remain bounded and RunFinished must use
+	// the broker's independent terminal reserve.
+	stream.Cancel()
+	resultDone := make(chan error, 1)
+	go func() {
+		_, err := stream.Result()
+		resultDone <- err
+	}()
+	select {
+	case err := <-resultDone:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Result error = %v, want context.Canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Cancel/Result waited for an event consumer while the ordinary buffer was full")
+	}
+
+	var events []Event
+	for event := range stream.Events() {
+		events = append(events, event)
+	}
+	if len(events) != 2 {
+		t.Fatalf("events = %+v, want RunStarted and RunFinished", events)
+	}
+	if _, ok := events[0].(RunStarted); !ok {
+		t.Fatalf("first event = %T, want RunStarted", events[0])
+	}
+	terminal, ok := events[1].(RunFinished)
+	if !ok || !terminal.Failed || terminal.Reason != ReasonCancelled {
+		t.Fatalf("last event = %#v, want cancelled RunFinished", events[1])
+	}
+}
+
+func TestDriverOnlyTerminalUsesReserveAndSealsAfterFullBufferCancel(t *testing.T) {
+	started := make(chan struct{})
+	d := brokerTestDriver{run: func(ctx context.Context, req driver.Request, sink driver.EventSink) (driver.Response, error) {
+		if err := sink.EmitStream(driver.StreamPayload{Kind: driver.StreamRunStarted, RunID: req.RunID}); err != nil {
+			return driver.Response{}, err
+		}
+		close(started)
+		<-ctx.Done()
+		if err := sink.EmitStream(driver.StreamPayload{
+			Kind: driver.StreamRunError, RunID: req.RunID,
+			Error: &driver.RunFailure{Code: driver.FailureCancelled, Message: "cancelled"},
+		}); err != nil {
+			return driver.Response{}, err
+		}
+		// A non-conforming late payload must be rejected by the terminal seal.
+		_ = sink.EmitStream(driver.StreamPayload{Kind: driver.StreamTextContent, Delta: "late"})
+		return driver.Response{}, ctx.Err()
+	}}
+	stream := New(d, WithEventBuffer(1)).Stream(context.Background(), "cancel")
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("driver did not fill the ordinary event slot")
+	}
+
+	stream.Cancel()
+	resultDone := make(chan error, 1)
+	go func() {
+		_, err := stream.Result()
+		resultDone <- err
+	}()
+	select {
+	case err := <-resultDone:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Result error = %v, want context.Canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Driver-only Cancel/Result waited for an event consumer")
+	}
+
+	var events []Event
+	for event := range stream.Events() {
+		events = append(events, event)
+	}
+	if len(events) != 2 {
+		t.Fatalf("events = %+v, want RunStarted and RunFinished only", events)
+	}
+	if _, ok := events[0].(RunStarted); !ok {
+		t.Fatalf("first event = %T, want RunStarted", events[0])
+	}
+	terminal, ok := events[1].(RunFinished)
+	if !ok || !terminal.Failed || terminal.Reason != ReasonCancelled {
+		t.Fatalf("last event = %#v, want cancelled RunFinished", events[1])
+	}
+}
+
 func TestRunServicePumpStopsWhenSinkAborts(t *testing.T) {
 	sink := newEventSink(eventSinkConfig{runID: "run-pump", buffer: 1, blocking: true})
 	r := &runResources{runID: "run-pump"}
@@ -260,12 +525,18 @@ func TestRunServicePumpStopsWhenSinkAborts(t *testing.T) {
 		return ch
 	}
 	r.startPumps(context.Background(), sink, []RunEventSource{source})
+	// startPumps owns the merged lifecycle and publishes RunStarted before it
+	// subscribes the provider. Drain that envelope so the first provider event
+	// can fill the one-slot buffer exercised below.
+	if ev := <-sink.events; eventKind(ev) != "run.started" {
+		t.Fatalf("first event = %T, want RunStarted", ev)
+	}
 	// The second source send is received only after the first publication
 	// filled the one-slot output buffer; the pump then blocks publishing it.
 	<-twoSent
 	sink.abort()
 	stopped := make(chan struct{})
-	go func() { r.stopPumps(); close(stopped) }()
+	go func() { _ = r.stopPumps(context.Background()); close(stopped) }()
 	select {
 	case <-stopped:
 	case <-time.After(time.Second):
@@ -278,9 +549,62 @@ func TestRunServicePumpStopsWhenSinkAborts(t *testing.T) {
 	}
 }
 
+func TestRunServicePumpShutdownIsBoundedForNonClosingSource(t *testing.T) {
+	sink := newEventSink(eventSinkConfig{runID: "run-stuck-source", buffer: 2, blocking: true})
+	r := &runResources{runID: "run-stuck-source"}
+	providerEvents := make(chan Event)
+	source := func(context.Context, string) <-chan Event {
+		return providerEvents // deliberately ignores cancellation and stays open
+	}
+	r.startPumps(context.Background(), sink, []RunEventSource{source})
+	if ev := <-sink.events; eventKind(ev) != "run.started" {
+		t.Fatalf("first event = %T, want RunStarted", ev)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	err := r.stopPumps(ctx)
+	cancel()
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("stopPumps error = %v, want context deadline", err)
+	}
+
+	// Seal and publish the authoritative terminal while the deliberately
+	// broken pump is still alive. Its subsequent event must be rejected by the
+	// broker barrier rather than appearing after RunFinished.
+	sink.completeAuthoritativeLifecycle(&Result{RunID: "run-stuck-source"}, err)
+	providerEvents <- Notice{Kind: NoticeLifecycle, Text: "late-after-terminal"}
+	close(providerEvents)
+	select {
+	case <-r.pumpDone:
+	case <-time.After(time.Second):
+		t.Fatal("pump did not exit after its source was closed")
+	}
+	sink.close()
+	var events []Event
+	for ev := range sink.events {
+		events = append(events, ev)
+	}
+	if len(events) != 1 {
+		t.Fatalf("events = %+v, want only the authoritative RunFinished", events)
+	}
+	if terminal, ok := events[0].(RunFinished); !ok || !terminal.Failed {
+		t.Fatalf("event = %#v, want failed RunFinished", events[0])
+	}
+}
+
 type brokerTestDriver struct {
 	run func(context.Context, driver.Request, driver.EventSink) (driver.Response, error)
 }
+
+type brokerTestRunService struct {
+	source RunEventSource
+}
+
+func (p brokerTestRunService) AttachRun(context.Context, string) (RunAttachment, error) {
+	return RunAttachment{Events: p.source}, nil
+}
+
+func (brokerTestRunService) DetachRun(context.Context, string) error { return nil }
 
 func (d brokerTestDriver) Descriptor() driver.Descriptor {
 	return driver.Descriptor{Type: "broker-test", DisplayName: "Broker Test"}

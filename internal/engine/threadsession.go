@@ -1,24 +1,19 @@
 package engine
 
-import "context"
+import (
+	"context"
+	"strings"
+)
 
-// ThreadSessionPlan is the additive v1-facing entry over the historical
-// session coordination logic (P2 seam choice: reuse, not replicate). It
-// wraps the unexported resolvedSessionPlan produced by prepareSessionPlan so
-// the next/ Thread path shares the exact plan/lease/fingerprint/persistence
-// semantics of the legacy Core.Execute path — mode mapping, key + session
-// lease acquisition, ticker-driven renewal, compatibility gating, and
-// Finalize archive/rebind all stay single-sourced in session.go.
-//
-// The legacy path keeps calling the unexported functions directly; nothing
-// about its behavior changes.
+// ThreadSessionPlan owns one Thread operation's leases, compatibility state,
+// resume/fork plan, and atomic persistence request.
 type ThreadSessionPlan struct {
 	plan  *resolvedSessionPlan
 	store SessionStore
 }
 
 // PrepareThreadSession resolves a session plan against store for the given
-// request. Semantics are identical to the legacy prepare step:
+// request:
 //
 //   - Stateless mode (or an empty request) yields (nil, nil).
 //   - A nil store yields ErrSessionStoreRequired.
@@ -47,43 +42,47 @@ func PrepareThreadSession(
 
 // PrepareThreadSessionForDriver is the v1 coordinator entry. In addition to
 // normal planning it derives the codec identity from the configured Driver
-// and proves a fork parent's checkpoint can be normalized by that exact
-// codec before returning a runnable plan. Callers must prefer this entry over
-// supplying SessionRequest.SessionCodec themselves.
+// and proves every reused checkpoint or fork parent's checkpoint can be
+// normalized by that exact codec before returning a runnable plan. Callers
+// must prefer this entry over supplying SessionRequest.SessionCodec themselves.
 func PrepareThreadSessionForDriver(
 	ctx context.Context,
 	store SessionStore,
 	req SessionRequest,
 	identity AgentIdentity,
-	adapter DriverAdapter,
+	driverImpl Driver,
 	fingerprint string,
 ) (*ThreadSessionPlan, error) {
-	if adapter == nil {
-		return nil, ErrInvalidDriverConfig
+	codec, err := resumeSessionCodecFor(driverImpl)
+	if err != nil {
+		return nil, err
 	}
-	driverType := adapter.Descriptor().Type
-	req.SessionCodec = SessionCodecFor(adapter).Name()
+	driverType := driverImpl.Descriptor().Type
+	req.SessionCodec = strings.TrimSpace(codec.Name())
 	plan, err := prepareSessionPlan(ctx, store, req, identity, driverType, fingerprint)
 	if err != nil || plan == nil {
 		return nil, err
 	}
-	if req.Mode == SessionFork && plan.record != nil && normalizeSessionState(adapter, plan.record.DriverState) == nil {
-		plan.release()
-		return nil, &SessionIncompatibleError{Reason: "fork parent checkpoint is invalid for session codec"}
+	if plan.record != nil && (plan.reused || req.Mode == SessionFork) {
+		if stateErr := validateResumableRecord(plan.record, codec); stateErr != nil {
+			// Structurally invalid durable state is corruption, not a provider
+			// resume rejection. Starting over here would silently discard a
+			// conversation without giving the provider a chance to classify it.
+			return nil, plan.releaseAfter(stateErr)
+		}
 	}
 	return &ThreadSessionPlan{plan: plan, store: store}, nil
 }
 
-// DriverSession builds the per-run driver session context. It applies the
-// same state-attachment rule as the legacy execute path: driver state is
-// forwarded only when a record exists and the plan either reuses it or
-// forks from it, normalized through the driver's session codec.
-func (p *ThreadSessionPlan) DriverSession(adapter DriverAdapter) *DriverSessionContext {
-	var state *DriverSessionState
+// DriverSession builds the per-run driver session context. Driver state is
+// forwarded only when a record exists and the plan either reuses it or forks
+// from it, normalized through the driver's session codec.
+func (p *ThreadSessionPlan) DriverSession(adapter Driver) *SessionContext {
+	var state *SessionState
 	if p.plan.record != nil && (p.plan.reused || p.plan.request.Mode == SessionFork) {
 		state = normalizeSessionState(adapter, p.plan.record.DriverState)
 	}
-	return &DriverSessionContext{
+	return &SessionContext{
 		EngineSessionID: p.plan.engineID,
 		Mode:            p.plan.request.Mode,
 		State:           state,
@@ -119,9 +118,7 @@ func (p *ThreadSessionPlan) Release() {
 
 // ReleaseContext stops renewal and releases every held lease, returning any
 // store error. The call is bounded by ctx even when a broken Store ignores
-// cancellation. Final coordinators must use this method and surface its error;
-// Release remains a bounded best-effort compatibility helper for legacy call
-// sites that have a primary run error to return.
+// cancellation. Final coordinators use this method and surface its error.
 func (p *ThreadSessionPlan) ReleaseContext(ctx context.Context) error {
 	return p.plan.releaseContext(ctx)
 }
@@ -138,8 +135,8 @@ func (p *ThreadSessionPlan) Mode() SessionMode {
 
 // PrepareFresh rewires the plan to a brand-new session after the driver
 // rejected a resume: the old engine ID becomes PreviousID (archived on
-// persist) and a new session lease is acquired. Mirrors the legacy
-// ResumeRejected fallback, which only applies when Reused() and the mode is
+// persist) and a new session lease is acquired. This resume-rejection
+// fallback only applies when Reused() and the mode is
 // SessionContinueOrStart.
 func (p *ThreadSessionPlan) PrepareFresh(ctx context.Context, driverType, fingerprint string) error {
 	return p.plan.prepareFresh(ctx, p.store, driverType, fingerprint)
@@ -149,15 +146,13 @@ func (p *ThreadSessionPlan) PrepareFresh(ctx context.Context, driverType, finger
 // validates held leases, saves the record (state normalized through the
 // driver codec), archives the previous record when one was displaced, and
 // rebinds the key's active mapping. A nil/invalid checkpoint yields
-// ErrSessionCheckpointMissing, which callers may tolerate exactly like the
-// legacy path does (human-decision failures without a resumable
-// checkpoint).
+// ErrSessionCheckpointMissing.
 func (p *ThreadSessionPlan) Persist(
 	ctx context.Context,
 	identity AgentIdentity,
-	adapter DriverAdapter,
+	adapter Driver,
 	fingerprint string,
-	checkpoint *DriverCheckpoint,
+	checkpoint *Checkpoint,
 ) (*SessionRef, error) {
 	return persistSessionPlan(ctx, p.store, p.plan, identity, adapter, fingerprint, checkpoint)
 }

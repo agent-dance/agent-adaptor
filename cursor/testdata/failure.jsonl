@@ -1,2 +1,2 @@
-{"type":"session","session_id":"cursor-fail"}
-{"type":"run.failed","session_id":"cursor-fail","message":"network unreachable"}
+{"type":"system","subtype":"init","cwd":"/workspace","session_id":"cursor-fail","model":"GPT-5"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Partial reply before process failure"}]},"session_id":"cursor-fail"}

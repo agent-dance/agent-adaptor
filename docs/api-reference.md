@@ -1,271 +1,615 @@
-# Public API Reference
+# API 参考
 
-This is the current host-facing surface of `github.com/agent-dance/agent-adaptor`.
-It is intentionally a map, not a replacement for godoc.
-
-## Construction
-
-Use `Build(opts...) (SDK, error)` when callers need to handle configuration errors. Use `New(opts...) SDK` when fail-fast setup is acceptable.
-
-Required:
-
-- `WithDefaultAgent(binding)` — every SDK has an explicit default binding.
-
-Optional SDK-level injections:
-
-- `WithAgent(name, binding)` — named binding; `"default"` is reserved.
-- `WithSessionStore(store)` — enables stateful `SessionRequest` modes.
-- `WithWorkspaceManager(manager)` — resolves `WorkspaceSpec` into a lease.
-- `WithSkillProvider(provider)` / `WithSkillSet(set)` — skill resolution.
-- `WithSkillMaterializer(materializer)` — custom skill materialization.
-- `WithRuntimeServiceManager(manager)` — runtime services.
-- `WithEventBuffer(runBuf, streamBuf, policy)` — event backpressure.
-
-Built-in bindings:
-
-- `codex.New(agentadaptor.CodexConfig, opts...)`
-- `claude.New(agentadaptor.ClaudeConfig, opts...)`
-- `cursor.New(agentadaptor.CursorConfig, opts...)`
-
-Each returns a configured `AgentBinding`. Use `NewAdapter()` only when writing lower-level tests or custom binding plumbing.
-
-## Execution
-
-`SDK` and `Runner` expose the same execution contract:
+`agent-adaptor` 的根包名是 `adaptor`，导入路径保持不变：
 
 ```go
-Run(ctx context.Context, prompt string, opts ...RunOption) (RunResult, error)
-Start(ctx context.Context, prompt string, opts ...RunOption) (RunHandle, error)
+import adaptor "github.com/agent-dance/agent-adaptor"
 ```
 
-`sdk.Run` / `sdk.Start` use the default agent. `sdk.Agent(name)` returns a `Runner` for a named binding. There is no registry-first execution path.
+公共 API 围绕六个名词组织：`Agent`、`Thread`、`Stream`、`Event`、`Result`、`Driver`。应用通常只需导入根包和一个 provider 包；只有扩展 Driver 时才直接导入 `driver`。
 
-`RunHandle` exposes:
-
-- `Events()` — operational `RunEvent` stream: raw chunks, transcript items, spawn/runtime/lifecycle metadata.
-- `StreamEvents()` — normalized token/tool/reasoning/HITL stream payloads when `WithStreaming()` is enabled.
-- `RunID()` — stable SDK run id, available immediately after `Start`.
-- `Wait(ctx)` — final `RunResult`; check returned error first, then `RunResult.Failure`.
-- `Cancel(ctx)` — cancel the in-flight run.
-- `DecisionRequests()` / `ResolveDecision(...)` — async HITL channel mode.
-
-## Run Options
-
-Session:
-
-- `WithSession(req)`
-- `WithSessionKey(namespace, key)` — `continue_or_start`
-- `WithContinueSession(id)` — exact `SessionID`
-- `WithNewSession(namespace, key)`
-- `WithForkSession(fromID, namespace, key)`
-
-Context and injection:
-
-- `WithWorkspace(spec)`
-- `WithRuntimeServices(services...)`
-- `WithSkills(refs...)`
-- `WithMCP(cfg)`
-- `WithProfileResources(resources)` — per-run profile desired state bundle.
-
-Runtime service MCP injection: a `RuntimeServiceManager` may append run-scoped MCP
-servers after `RuntimeServiceManager.Ensure` by returning `RuntimeServiceRef`
-values whose metadata includes `agentadaptor.mcp.enabled=true`. This does not
-require an explicit `WithMCP` option. Recognized metadata keys are
-`agentadaptor.mcp.enabled`, `agentadaptor.mcp.key`,
-`agentadaptor.mcp.transport`, `agentadaptor.mcp.url`,
-`agentadaptor.mcp.command`, `agentadaptor.mcp.args_json`,
-`agentadaptor.mcp.env_json`, `agentadaptor.mcp.headers_json`,
-`agentadaptor.mcp.bearer_token_env_var`, `agentadaptor.mcp.required`, and
-`agentadaptor.mcp.required_reason`. The SDK converts enabled refs to
-`MCPServerSpec`s, appends them to the effective MCP config, validates them with
-ordinary MCP capability checks, and includes them in `DriverRunRequest.MCP` plus
-the profile/session fingerprint. Malformed JSON metadata and duplicate MCP keys
-fail the run before adapter start. Other runtime metadata remains runtime-service
-metadata; it is not promoted into MCP server configuration.
-
-- `WithAgents(specs...)`
-- `WithHooks(specs...)`
-- `WithProfileConfig(patches...)`
-- `WithModel(model)` — per-run model override. Forwarded to the adapter as
-  `DriverRunRequest.ModelOverride` and supersedes the binding model
-  (`CodexConfig.Model` / `ClaudeConfig.Model` / `CursorConfig.Model`) for the
-  built-in `--model` flag on this run only. Unlike `WithProfileConfig` it does
-  not persist anything to the profile on disk and applies uniformly across
-  drivers regardless of any `model` profile-config capability. Blank values are
-  ignored (binding model stays in effect).
-- `WithInstructions(ref)`
-- `WithMetadata(key, value)`
-- `WithAgentIdentity(identity)`
-
-Selected skill materialization is strict: invalid archives, missing
-`SKILL.md`, unavailable paths, or custom materializer failures surface as a
-`Run` / `Wait` error matching `ErrSkillMaterializationFailed` before the
-adapter starts.
-
-Profile resource status: skills, MCP, agents, hooks, instructions, and explicit
-native config patches all have materialization paths in the built-in adapters.
-`ProfileSnapshot` and `SyncProfile` report the actual materialization state,
-including warning/error paths for unsupported or fallback fields. The target
-design remains a maximum-capability envelope: portable core fields, typed
-extended fields, explicit fallback/unsupported reporting, and provider-native
-escape hatches.
-
-Current public resource envelope:
-
-- `AgentSpec`: portable core `Key`, `RuntimeName`, `Description`,
-  `Instructions` / legacy `Content`, and `SourcePath`; extended fields include
-  model, reasoning effort, tool policy, permission/sandbox mode, MCP servers,
-  skills, nested hooks, and `Native`. Built-in adapters materialize portable
-  core agents to provider-native agent directories. Codex writes TOML custom
-  agents; Claude Code and Cursor write Markdown/YAML agents. Unsupported
-  extended fields are reported in `ResourceSnapshot.Warnings`.
-- `HookSpec`: canonical `HookEvent`, `MatcherSpec`, `HookHandler`, timeout,
-  fail policy, status message, disabled flag, plus legacy command-hook
-  `Matcher` / `Command` / `Args` / `Env`. Built-in adapters materialize
-  command-hook core to provider-native hook config. Claude Code additionally
-  accepts prompt/http/mcp_tool/agent handlers; Cursor accepts prompt handlers;
-  Codex accepts command handlers. Unsupported events/handlers fail sync/run
-  instead of silently succeeding.
-- `InstructionsBundleRef`: `ID`, `Path`, `Content`, `Fingerprint`, `Scope`,
-  `Mode`, and `Native`. Codex materializes profile instructions to
-  `AGENTS.md` / `AGENTS.override.md` under the effective `CODEX_HOME`; Claude
-  Code materializes them to `CLAUDE.md` under the effective
-  `CLAUDE_CONFIG_DIR`. Cursor has no stable profile-level rules file in the
-  public CLI config, so profile sync uses an SDK-managed fallback file; during
-  `Run`, project/local scoped Cursor instructions are materialized as
-  `.cursor/rules/<id>.mdc` in the effective workspace. Run-scoped or otherwise
-  unmapped bundles are prompt-injected and reported as fallback.
-- `ProfileConfigPatch`: preferred `Capability + Values`, with
-  `NativeConfigPatch` and legacy `FileKind` / `Path` / `Section` for explicit
-  provider-native patches. Built-in adapters materialize explicit
-  provider-native JSON/TOML patches guarded to the effective profile root and
-  an allowlisted set of capability patches: Codex `model`,
-  `reasoning_effort`, `sandbox`, `approval`; Claude Code `model`, `effort`,
-  `permission`, `env`; Cursor `sandbox`, `approval`, `permissions`, `display`.
-  The same allowlist is exposed from `AgentAdmin.ConfigSchema()` as
-  `profile_config.*` fields with capability metadata. Unsupported capabilities
-  remain desired-state and are reported in snapshot warnings/errors.
-- `ResourceSnapshot`: every resource kind reports both `Support` and
-  `Materialization`, so hosts can distinguish native managed, file managed,
-  prompt-injected fallback, and unsupported desired state.
-
-Policy, streaming, HITL:
-
-- `WithRunPolicy(policy)`
-- `WithStreaming()` / `WithoutStreaming()`
-- `WithPermissionHandler(h)`
-- `WithPlanReviewHandler(h)`
-- `WithQuestionHandler(h)`
-
-Structured output:
-
-- `WithJSONSchemaOutputFor[T](opts...)` — preferred Go-host path. The SDK derives a JSON Schema from `T`, deep-copies it into the invocation, and returns the final JSON on `RunResult.StructuredOutput`.
-- `JSONSchemaFor[T](schemaOpts...)` — derive only the schema bytes when the host needs to inspect or cache the schema before a run.
-- `WithJSONSchemaOutput(schemaJSON, opts...)` / `WithJSONSchemaOutputFile(path, opts...)` — low-level escape hatches for dynamic schemas or non-Go hosts.
-- `WithOutputSchema(schema)` — fully specified request for advanced callers.
-- `NativeStrictOutput()` — default; require provider/CLI-native schema enforcement and fail before adapter launch when unsupported.
-- `PreferNativeOutput()` — use native enforcement when available, otherwise explicit prompt+SDK validation when the adapter advertises it.
-- `PromptValidateOutput()` — inject exact-JSON instructions and validate the final adapter `Output`; this is not provider-native constrained decoding.
-- `DecodeStructuredOutput[T](res)` / `RunStructured[T](ctx, runner, prompt, opts...)` — decode the validated final JSON into a Go value.
-
-Adapter support is exposed through `DriverDescriptor.StructuredOutput`. Current built-ins:
-
-| Adapter | Native JSON Schema | Prompt validation | Streaming | Notes |
-|---|---:|---:|---:|---|
-| Codex | yes, batch `codex exec --output-schema` | yes | no native streaming guarantee | app-server schema support is not advertised until verified |
-| Claude Code | yes, print-mode `--json-schema` with `json` or `stream-json` output | yes | yes, native | interactive HITL + native schema is rejected; recursive local references are unsupported in native mode |
-| Cursor | no | yes | yes for prompt validation | Cursor CLI has JSON envelopes but no native schema-output surface |
-
-Example:
+## 1. 构造 Agent
 
 ```go
-type ProjectMetadata struct {
-	ProjectName          string   `json:"project_name"`
-	ProgrammingLanguages []string `json:"programming_languages"`
+func New(d driver.Driver, opts ...Option) *Agent
+```
+
+`New` 是应用侧的构造入口。它接收一个已经捕获配置的 Driver 和构造选项，返回可并发使用的 `*Agent`。
+
+```go
+agent := adaptor.New(
+	codex.Driver(codex.Config{Model: "gpt-5.4"}),
+	adaptor.WithWorkspace("/repo"),
+)
+```
+
+传入 nil Driver 属于启动期编程错误，`New` 会 panic。CLI 可用性、登录态和动态能力在执行或检查时返回错误，不在构造期间做环境 I/O。
+
+多个 Agent 直接使用多个 Go 变量：
+
+```go
+coder := adaptor.New(codex.Driver(codex.Config{Model: "gpt-5.4"}))
+reviewer := adaptor.New(
+	claude.Driver(claude.Config{Model: "claude-sonnet-4"}),
+	adaptor.WithPolicy(adaptor.PolicyReadOnly),
+)
+```
+
+## 2. Agent 与 Runner
+
+```go
+type Runner interface {
+	Run(ctx context.Context, prompt string, opts ...CallOption) (*Result, error)
+	Stream(ctx context.Context, prompt string, opts ...CallOption) Stream
+}
+```
+
+`*Agent` 与 `*Thread` 都实现 `Runner`。bridge、结构化输出和宿主装饰器应面向 `Runner` 编程，以便无状态和有状态执行使用同一合同。
+
+```go
+func (a *Agent) Run(ctx context.Context, prompt string, opts ...CallOption) (*Result, error)
+func (a *Agent) Stream(ctx context.Context, prompt string, opts ...CallOption) Stream
+```
+
+`Run` 是 `Stream`、消费完整事件流、再读取 `Result()` 的便捷形式。两者共享同一执行管线和相同的结果合同。
+
+## 3. 选项作用域
+
+选项接口用于在编译期限制使用位置：
+
+```go
+type Option interface {
+	ApplyNew(*AgentSettings)
 }
 
-res, err := sdk.Run(ctx,
-	"Extract project metadata from this repository.",
-	agentadaptor.WithJSONSchemaOutputFor[ProjectMetadata](
-		agentadaptor.NativeStrictOutput(),
-		agentadaptor.StructuredOutputName("project_metadata"),
-	),
-)
+type CallOption interface {
+	ApplyRun(*RunSettings)
+}
+
+type SharedOption interface {
+	Option
+	CallOption
+}
+```
+
+- `Option`：仅用于 `New`。
+- `CallOption`：仅用于 `Run` 或 `Stream`。
+- `SharedOption`：构造时设置 Agent 默认值，调用时只覆盖本次执行。
+
+总体合并规则是：调用处比构造处更近；skills 追加；其他选项按下表替换或合并。Agent 默认值不会被单次调用修改，因此并发调用不会互相污染。
+
+### 3.1 双作用域选项
+
+| 函数 | 语义 | 调用处合并规则 |
+|---|---|---|
+| `WithModel(string)` | provider 模型覆盖 | 非空值替换 |
+| `WithTimeout(time.Duration)` | 单次执行总时限 | 替换；超时匹配 `context.DeadlineExceeded` |
+| `WithInstructions(string)` | 附加指令文本 | 替换 |
+| `WithWorkspace(string)` | 基础工作目录 | 替换 |
+| `WithMetadata(key, value)` | 审计元数据 | 按 key 合并，同名 key 覆盖 |
+| `WithIdentity(Identity)` | 传给宿主 hook 与 Driver 的调用方身份 | 整体替换 |
+| `WithPolicy(Policy)` | sandbox、可选能力和审批策略 | 整体替换，不做字段级合并 |
+| `OnApproval(ApprovalHandler)` | HITL 回调 | 替换 |
+| `WithSkills(...SkillRef)` | skill 引用 | 追加；冲突 key 必须结构相同 |
+| `WithMCP(...mcp.Server)` | MCP server 集合 | 整组替换；空调用显式清空 |
+| `WithProfileResources(profile.Resources)` | profile 资源期望状态 | 各资源族按其合同合并 |
+| `WithWorkspaceSpec(WorkspaceSpec)` | workspace 供应策略 | 整体替换 |
+| `WithServices(...ServiceSpec)` | 声明式 runtime service 集合 | 整组替换；空调用显式清空 |
+| `WithRunServices(...RunServiceProvider)` | 每次执行附着的生态服务 | 追加，并按 provider 身份去重 |
+
+`WithProfileResources` 的细分规则：
+
+- `Skills` 追加。
+- 非 nil `MCP` 替换 MCP 集合；非 nil 空切片表示显式清空。
+- 非 nil `Agents`、`Hooks`、`Config` 分别替换对应资源族；非 nil 空切片表示显式声明为空。
+- 非 nil `Instructions` 替换指令资源。
+
+### 3.2 仅构造选项
+
+| 函数 | 语义 |
+|---|---|
+| `WithThreadStore(threadstore.Store)` | 启用 Thread 持久化、续接与租约协调 |
+| `WithEventBuffer(int)` | 设置每次执行的事件缓冲；默认 1024 |
+| `WithBlockingEvents()` | 事件发送改为阻塞、无丢弃模式 |
+| `WithProfile(profile.Selection)` | 选择 provider profile 策略 |
+| `WithSkillProvider(skill.Provider)` | 解析 `skill.Key` 并可选提供 catalogue |
+| `WithSkillMaterializer(skill.Materializer)` | 覆盖非目录 skill 的物化方式 |
+| `WithWorkspaceManager(WorkspaceManager)` | 将 `WorkspaceSpec` 解析为实际 lease |
+| `WithServiceManager(ServiceManager)` | 确保和释放 `WithServices` 声明的服务 |
+
+将这些选项传给 `Run` 或 `Stream` 会编译失败。
+
+### 3.3 仅调用选项
+
+| 函数 | 语义 |
+|---|---|
+| `WithSchema[T](...SchemaOption)` | 从 Go 类型派生本次执行的 JSON Schema |
+| `WithSchemaJSON([]byte, ...SchemaOption)` | 使用调用方提供的 JSON Schema |
+
+schema 属于一个具体问题，因此不能传给 `New`。
+
+### 3.4 生态选项
+
+`AgentSettings` 和 `RunSettings` 提供受控 setter，生态包可实现上述选项接口。setter 的 `Set*` 表示替换，`Add*` 表示追加。典型例子是 delegation service 发行自己的选项，并通过 `WithRunServices` 接入，而无需在根包增加业务词汇。
+
+## 4. Policy 与 Identity
+
+```go
+type Identity struct {
+	ID      string
+	Tenant  string
+	Profile string
+	Name    string
+}
+```
+
+Identity 用于宿主提供的 skill、workspace、service 等组件做作用域隔离；库不会用它自动路由 Agent。`IdentityFromContext(ctx)` 可从运行期间传给宿主 hook 的 context 读取生效身份。
+
+```go
+type Policy struct {
+	Sandbox   SandboxLevel
+	WebSearch FeatureLevel
+	Browser   FeatureLevel
+	Approvals ApprovalPolicy
+}
+```
+
+Sandbox 值为 `SandboxInherit`、`ReadOnly`、`WorkspaceWrite`、`Unrestricted`。可选能力值为 `FeatureInherit`、`FeatureAllow`、`FeatureDeny`。
+
+常用 Policy 预设：
+
+- `PolicyReadOnly`
+- `PolicyWorkspaceWrite`
+- `PolicyUnrestricted`
+
+`WithPolicy` 整体替换默认 Policy；需要单次只修改一个维度时，调用方应显式构造完整值。
+
+零值 / Inherit 是跨 Driver 的可移植表达。任何显式 Sandbox、WebSearch 或 Browser 值都会在进程启动前严格检查 `Descriptor.RunPolicyCaps`；Driver 不支持时返回匹配 `ErrPolicyCapabilityUnsupported` 的 `*PolicyCapabilityUnsupportedError`，不会静默忽略。
+
+审批 mode 遵循相同规则。显式 `ApprovalAsk`、`ApprovalAutoApprove`、`ApprovalAutoDeny` 或 `QuestionAutoDeny` 必须由对应 Kind 的 capability 声明支持，否则返回匹配 `ErrHumanDecisionModeUnsupported` 的 `*HumanDecisionModeUnsupportedError`。`ApprovalsAutoDeny` 要求 Permission、PlanReview、Question 三类都支持 auto-reject，因此不是跨 provider 的通用预设；Question 保持 `QuestionInherit` 时会使用库的保守默认 auto-deny，而不形成显式 capability 要求。
+
+## 5. Thread
+
+Thread 是带持久化续接能力的 `Runner`。Agent 默认无状态，使用 Thread 前必须通过 `WithThreadStore` 注入 store。
+
+```go
+func (a *Agent) Thread(key string, opts ...ThreadOption) *Thread
+func (a *Agent) NewThread(key string) *Thread
+func (t *Thread) Fork(newKey string) *Thread
+func (t *Thread) Key() string
+func (t *Thread) Checkpoint(ctx context.Context) (*Checkpoint, error)
+func ResumeOnly() ThreadOption
+```
+
+动作语义：
+
+| 动作 | 语义 |
+|---|---|
+| `agent.Thread(key)` | 有 active checkpoint 就续接，否则新建 |
+| `agent.Thread(key, ResumeOnly())` | 只允许续接；缺失或不兼容时返回错误 |
+| `agent.NewThread(key)` | 首次执行强制新建；成功产生有效 checkpoint 后归档旧 active record 并重绑 key |
+| `parent.Fork(newKey)` | 首次执行从父 checkpoint 分叉；父 Thread 保持不变，目标 key 必须未占用 |
+
+key 是宿主自己的非空、不透明字符串；空 key 会 panic。`Checkpoint` 只用于审计和诊断，正常续接由 Thread 自动完成。
+
+主要错误均可用 `errors.Is` 判断：
+
+- `ErrThreadStoreRequired`
+- `ErrThreadNotFound`
+- `ErrThreadBusy`
+- `ErrThreadIncompatible`
+- `ErrThreadLeaseLost`
+- `ErrThreadCheckpointMissing`
+- `ErrThreadAlreadyExists`
+- `ErrResumeRejected`
+
+Thread store 只保存 provider resume checkpoint、兼容 fingerprint 和租约，不保存 UI 聊天记录。
+
+## 6. Stream 与 Event
+
+```go
+type Stream interface {
+	Events() <-chan Event
+	Result() (*Result, error)
+	RunID() string
+	Cancel()
+}
+```
+
+`Stream` 创建后立即返回，启动前错误也通过 `Result()` 返回；不会增加第二个 error 返回值。`Cancel` 幂等。调用者通常先消费 `Events()` 到关闭，再读取 `Result()`。
+
+```go
+stream := agent.Stream(ctx, prompt)
+for ev := range stream.Events() {
+	switch e := ev.(type) {
+	case adaptor.TextDelta:
+		if e.Phase == adaptor.PhaseContent {
+			fmt.Print(e.Text)
+		}
+	case adaptor.ToolCall:
+		log.Printf("tool %s", e.Name)
+	case *adaptor.ApprovalRequest:
+		_ = e.Approve(ctx)
+	}
+}
+result, err := stream.Result()
+```
+
+`Event` 是 sealed typed interface。每个事件的 `Meta()` 返回根包拥有的权威 envelope：
+
+```go
+type EventMeta struct {
+	RunID     string
+	ThreadKey string
+	Sequence  uint64
+	Time      time.Time
+	TurnID    string
+	Source    *EventSourceMeta
+}
+```
+
+`Sequence` 在一个 run 内严格递增。provider 自带的坐标保存在 `Source`，不会覆盖根包的顺序。
+
+事件族：
+
+| 类型 | 含义 |
+|---|---|
+| `TextDelta` | assistant 文本；`PhaseStart` / `PhaseContent` / `PhaseEnd` |
+| `Thinking` | reasoning 文本生命周期 |
+| `ToolCall` | tool start、参数增量、end 生命周期 |
+| `ToolResult` | 完整 tool result |
+| `RunStarted` | 执行开始 |
+| `RunFinished` | 执行终局提示；权威结果仍以 `Stream.Result()` 为准 |
+| `ProcessInfo` | spawn、原始 stdout/stderr chunk |
+| `Notice` | invocation、lifecycle、runtime、step、transcript、approval 通知 |
+| `Dropped` | 背压丢弃聚合，含数量、种类、序号范围和原因 |
+| `SubagentUpdate` | delegation 子 Agent 的开始、增量和结束 |
+| `*ApprovalRequest` | 等待宿主应答的 HITL 请求 |
+
+默认背压在缓冲满时丢弃合同允许丢弃的事件，并产生 `Dropped`。`WithBlockingEvents` 保证不丢弃，但慢消费者会反压 Driver；取消仍会解除阻塞。
+
+`WithEventMeta` 仅供 bridge 和持久化 recorder 回放 typed Event。实时 sink 总会重写权威顺序。
+
+## 7. Approval
+
+HITL 有两种消费方式，但共用同一个 `ApprovalRequest`。
+
+回调方式：
+
+```go
+adaptor.OnApproval(func(ctx context.Context, req *adaptor.ApprovalRequest) error {
+	switch req.Kind {
+	case adaptor.ApprovalQuestion:
+		return req.Answer(ctx, "yes")
+	default:
+		return req.Approve(ctx)
+	}
+})
+```
+
+事件方式是在 `Stream.Events()` 中接收 `*ApprovalRequest`，保存请求对象并在其他 goroutine 调用它的应答方法。
+
+```go
+func (r *ApprovalRequest) Approve(ctx context.Context) error
+func (r *ApprovalRequest) Deny(ctx context.Context, reason string) error
+func (r *ApprovalRequest) Answer(ctx context.Context, option string) error
+```
+
+Kinds：`ApprovalPermission`、`ApprovalPlanReview`、`ApprovalQuestion`。`Approve` 不适用于 Question，`Answer` 只适用于 Question，`Deny` 适用于所有 Kind。
+
+应答 exactly-once。主要错误：
+
+- `ErrApprovalResolved`
+- `ErrApprovalExpired`
+- `ErrApprovalKindMismatch`
+- `ErrApprovalUnavailable`
+
+策略通过 `Policy.Approvals` 配置：Permission 和 PlanReview 使用 `ApprovalMode`；Question 使用 `QuestionMode`；超时或拒绝后的动作使用 `FallbackAction`。零值采用保守默认值。所有显式 mode 都会按 Driver capability 做启动前严格校验。`ApproveAll()` 和 `DenyAll(reason)` 只处理已经通过 capability 校验并路由到 handler 的 Ask 请求。
+
+## 8. Result 与错误
+
+```go
+type Result struct {
+	RunID    string
+	Model    string
+	Provider string
+	Text     string
+	Summary  string
+	Usage    *Usage
+	Metadata map[string]string
+}
+```
+
+高频字段直接暴露；审计和大对象通过方法访问：
+
+```go
+func (r *Result) Raw() RawStreams
+func (r *Result) Transcript() []TranscriptItem
+func (r *Result) Services() []ServiceReport
+func (r *Result) Decode(v any) error
+```
+
+分层语义：
+
+- `Text` 只包含最终 assistant-facing 文本。
+- `Summary` 是可选的短摘要，不保证由每个 Driver 生成。
+- `Usage == nil` 表示 provider 未报告用量；非 nil 的零值表示已观察到用量且所有归一化计数明确为零。
+- `Raw().Stdout` 与 `Raw().Stderr` 是完整原始进程输出。
+- `Raw().Terminal` 保存 Driver 从官方协议识别出的终局事件名与精确 JSON；未识别到时为 nil。
+- `Transcript()` 是 Driver 从官方协议解析出的标准化条目，并返回深拷贝。
+- `Services()` 是实际确保或 Driver 观察到的 runtime service 报告，不回显秘密环境变量或 MCP 声明。
+- `Decode()` 优先解码已经校验的结构化输出；未请求 schema 时会尝试把 `Text` 当 JSON。
+
+业务失败返回 `*RunError`，其中保留部分或完整 Result：
+
+```go
+type RunError struct {
+	Reason  FailureReason
+	Message string
+	Details map[string]any
+	Result  *Result
+}
+```
+
+```go
+res, err := agent.Run(ctx, prompt)
 if err != nil {
+	var runErr *adaptor.RunError
+	if errors.As(err, &runErr) {
+		log.Printf("reason=%s partial=%q", runErr.Reason, runErr.Result.Text)
+	}
 	return err
 }
-meta, err := agentadaptor.DecodeStructuredOutput[ProjectMetadata](res)
+_ = res
 ```
 
-Use `PromptValidateOutput()` explicitly for Cursor or for other runs where a weaker prompt+local-validation contract is acceptable. Schema names, descriptions, enum values, const values, regex patterns, and examples may be sent to provider CLIs; do not put secrets there. More examples and the built-in adapter matrix are in [`structured-output.md`](./structured-output.md).
+`errors.Is` 可匹配 `ErrApprovalDenied`、`ErrApprovalTimeout`、`ErrAgentFailed`、`ErrRunCancelled`、`ErrPolicyViolation`。启动前配置和策略错误可匹配 `ErrInvalidDriverConfig`、`ErrInvalidPolicy`、`ErrPolicyCapabilityUnsupported` 或 `ErrHumanDecisionModeUnsupported`。配置、资源解析、context 取消和其他基础设施错误也走同一个 `error` 判定面；相应 typed error 可通过 `errors.As` 读取 Driver、字段和值等诊断信息。
 
-## Binding Defaults
-
-`AgentOption` values on a binding establish defaults for later runs:
-
-- `WithDefaultIdentity`
-- `WithDefaultWorkspace`
-- `WithDefaultSkills`
-- `WithDefaultMCP`
-- `WithDefaultProfileResources`
-- `WithDefaultAgents`
-- `WithDefaultHooks`
-- `WithDefaultProfileConfig`
-- `WithDefaultRuntimeServices`
-- `WithDefaultRunPolicy`
-- `WithDefaultInstructions`
-- `WithDefaultStreaming`
-- `WithDefaultMetadata`
-- `WithDefaultPermissionHandler`
-- `WithDefaultPlanReviewHandler`
-- `WithDefaultQuestionHandler`
-
-Profile options are binding defaults too:
-
-- `WithNativeProfile()`
-- `WithDedicatedProfile(dir)`
-- `WithCloneProfile(dir, opts)`
-- `WithCloneProfileFrom(src, dst, opts)`
-
-Provider-specific env in `CommonConfig.Env` still wins over profile options.
-`CloneProfileOptions.IncludeAuth` keeps the legacy copy behavior; for local
-OAuth-backed CLIs use `CloneProfileOptions{AuthMode: CloneProfileAuthLink}` to
-share the native auth file with an isolated clone.
-
-## Result Contract
-
-`RunResult` and `DriverRunResult` keep output layers separate:
-
-- `Output` — final assistant-facing text only.
-- `RawStreams.Stdout` / `RawStreams.Stderr` — complete raw process streams for audit/debug.
-- `Transcript` — structured semantic items parsed by the adapter from the official provider protocol.
-- `Summary` — short host-facing label.
-- `Result` — raw terminal provider result payload, when one exists.
-
-`Output` must not contain a raw stdout dump and must not auto-concatenate `Summary` or `Result`.
-
-## Admin
-
-`sdk.Admin()` is control plane only:
-
-- `Default()` / `Agent(name)` mirror the execution binding model.
-- `Agents()` returns default + named binding metadata.
-- `Info()`, `CheckEnvironment()`, `ListModels()`, `DetectModel()`, `GetProfile()`, `ConfigSchema()`, `GetQuota()` expose adapter diagnostics.
-- `ProfileSnapshot(ctx)` reports the effective profile resource view.
-- `SyncProfile(ctx)` materializes supported profile resources for the binding defaults without starting a run; current built-in coverage includes skills, MCP, agents, hooks, instructions, and config capability patches. Unsupported resource families must be reported as warnings/errors rather than managed.
-- `ListSkills()` reports the effective catalogue / selected set.
-- `SetSelectedSkills(ctx, keys)` installs a process-local selected-key override for that bound agent. It is not persistent storage.
-
-## Adapter Surface
-
-Custom adapters implement:
+## 9. 结构化输出
 
 ```go
-type DriverAdapter interface {
-	Descriptor() DriverDescriptor
-	ValidateConfig(cfg any) error
-	Run(ctx context.Context, req DriverRunRequest, sink EventSink) (DriverRunResult, error)
+func RunAs[T any](ctx context.Context, r Runner, prompt string, opts ...CallOption) (T, *Result, error)
+func WithSchema[T any](opts ...SchemaOption) CallOption
+func WithSchemaJSON(schemaJSON []byte, opts ...SchemaOption) CallOption
+```
+
+`RunAs` 接收任意 Runner，自动增加 `WithSchema[T]`、执行并解码。
+
+```go
+type Review struct {
+	Verdict string   `json:"verdict"`
+	Issues  []string `json:"issues"`
+}
+
+review, result, err := adaptor.RunAs[Review](ctx, reviewer, "review the diff")
+```
+
+Schema options：
+
+| 选项 | 语义 |
+|---|---|
+| `SchemaStrict()` | 要求 provider 原生 JSON Schema 约束；默认模式 |
+| `SchemaFlexible()` | 原生优先，不支持时允许 prompt + 本地校验 |
+| `SchemaPromptOnly()` | 明确使用 prompt + 本地校验 |
+| `SchemaName(string)` | provider-facing schema 名称 |
+| `SchemaDescription(string)` | schema 描述 |
+| `SchemaReturnInvalid()` | 校验失败时保留 invalid payload，而不是让执行失败 |
+| `SchemaInlineReferences()` | 内联 `$ref`；递归类型会报错 |
+| `SchemaAllowAdditionalProperties()` | 允许对象附加属性 |
+| `SchemaRequireExplicitTags()` | 仅 `jsonschema:"required"` 字段为 required |
+| `SchemaUseGoComments(base, path)` | 用 Go 注释生成描述 |
+
+无效 schema 匹配 `ErrInvalidOutputSchema`，能力不支持匹配 `ErrStructuredOutputUnsupported`。Driver 的 `Descriptor.StructuredOutput` 是能力真相源，能力不足会在进程启动前失败。
+
+## 10. Inspect 与 profile 状态
+
+```go
+func (a *Agent) Inspect() Inspector
+```
+
+Inspector 只有五个只读方法：
+
+```go
+func (in Inspector) Environment(ctx context.Context) (EnvironmentReport, error)
+func (in Inspector) Models(ctx context.Context) ([]ModelInfo, error)
+func (in Inspector) Quota(ctx context.Context) (QuotaReport, error)
+func (in Inspector) ConfigSchema(ctx context.Context) (*ConfigSchema, error)
+func (in Inspector) Skills(ctx context.Context) (SkillSnapshot, error)
+```
+
+Driver 未实现相应 probe 时，Inspector 返回 descriptor fallback 或明确不可用的报告，不伪造成功。
+
+Profile 和 skill 的有状态动作直接挂在 Agent：
+
+```go
+func (a *Agent) ProfileState(ctx context.Context) (ProfileSnapshot, error)
+func (a *Agent) SyncProfile(ctx context.Context) (ProfileSnapshot, error)
+func (a *Agent) SelectSkills(ctx context.Context, keys []string) (SkillSnapshot, error)
+```
+
+- `ProfileState` 只读取 desired 与 observed 状态。
+- `SyncProfile` 物化 Driver 支持的资源，并对不支持的资源如实报告。
+- `SelectSkills` 安装进程内 selection override；它不替宿主持久化用户偏好。
+
+## 11. skill、MCP 与 profile 词汇包
+
+### 11.1 skill
+
+常用构造器：
+
+```go
+skill.Dir(path)
+skill.FS(fsys, root)
+skill.Inline(key, skillMD)
+skill.Archive(key, opener, opts...)
+skill.Key(key)
+skill.Require(value, reason)
+```
+
+`WithSkills` 接受 `skill.Ref`。完整 Skill 值可直接使用；`skill.Key` 由 `WithSkillProvider` 注入的 `skill.Provider` 解析。实现 `skill.Catalog` 可让 `Inspect().Skills()` 枚举 catalogue。`skill.Set` 是静态 map-backed 实现。
+
+归档支持 zip、tar、tgz；`NewDefaultSkillMaterializer` 可配置 cache root、archive 大小、文件大小与条目数上限。skill 解析或物化失败会在 Driver 启动前返回错误。
+
+### 11.2 MCP
+
+```go
+adaptor.WithMCP(
+	mcp.HTTP("docs", "https://example.com/mcp"),
+	mcp.SSE("events", "https://example.com/sse"),
+	mcp.Stdio("repo-tools", "npx", mcp.Args("repo-mcp")),
+)
+```
+
+可选项：`mcp.Args`、`mcp.Env`、`mcp.WithHeader`、`mcp.WithHeaders`、`mcp.WithBearerTokenEnv`、`mcp.Required`。transport 与 option 不匹配时不会静默忽略，而是在启动前返回 MCP 配置错误。
+
+### 11.3 profile
+
+Profile selection：
+
+```go
+profile.Default()
+profile.Native()
+profile.Dedicated(dir)
+profile.CloneNative(dir, profile.LinkAuth())
+profile.CloneFrom(src, dst, profile.CopySettings(), profile.CopyMCP())
+```
+
+clone options 包括 `CopySettings`、`CopyMCP`、`CopySkills`、`CopyAuth`、`LinkAuth`、`WithOptions`。OAuth CLI 通常应使用 `LinkAuth`，避免复制会轮转的 refresh token 状态。
+
+`profile.Resources` 可声明 `Skills`、`MCP`、`Agents`、`Hooks`、`Instructions`、`Config`，并通过 `WithProfileResources` 进入统一解析管线。
+
+## 12. Workspace 与 runtime services
+
+直接目录使用 `WithWorkspace(dir)`。需要策略化供应时使用：
+
+```go
+adaptor.WithWorkspaceSpec(adaptor.SharedWorkspace{})
+adaptor.WithWorkspaceSpec(adaptor.GitWorktreeWorkspace{
+	BaseRef:           "main",
+	BranchTemplate:    "agent/{run_id}",
+	WorktreeParentDir: "/tmp/worktrees",
+})
+adaptor.WithWorkspaceSpec(adaptor.DriverManagedWorkspace{})
+```
+
+`WorkspaceManager`：
+
+```go
+type WorkspaceManager interface {
+	Resolve(ctx context.Context, req WorkspaceRequest) (WorkspaceLease, error)
+	Release(ctx context.Context, lease WorkspaceLease, mode WorkspaceReleaseMode) error
 }
 ```
 
-Optional extension interfaces include environment/model/profile/quota/config-schema probes, `SkillAwareDriver`, `StreamAwareDriver`, and `SessionCodecAwareDriver`. `SkillAwareDriver.InjectSkills` remains a public SPI hook: the SDK invokes it once per run after skill resolution and before adapter `Run`; built-in adapters keep it non-destructive and do profile-local materialization inside `Run` after resume guards pass. Adapter capability declarations must match the behavior actually implemented, especially `DriverDescriptor.RunPolicyCaps`.
+未注入 manager 时，WorkspaceSpec 通过 passthrough manager 解析为基础目录；需要真正创建 worktree 或 sandbox 时必须提供 manager。
+
+声明式服务：
+
+```go
+type ServiceManager interface {
+	Ensure(ctx context.Context, req ServiceRequest) ([]ServiceRef, error)
+	ReleaseByRun(ctx context.Context, runID string) error
+	ReleaseByLabels(ctx context.Context, labels map[string]string) error
+}
+```
+
+`WithServices` 只声明期望服务；没有 `WithServiceManager` 时声明不会虚构 endpoint。`ServiceRef.MCP` 是服务向本次执行发布 MCP 的类型化入口，`SecretEnv` 只进入 Driver 子进程，不进入 Result report。
+
+`RunServiceProvider` 用于 delegation、浏览器池等每次执行附着的动态服务：
+
+```go
+type RunServiceProvider interface {
+	AttachRun(ctx context.Context, runID string) (RunAttachment, error)
+	DetachRun(ctx context.Context, runID string) error
+}
+```
+
+`RunAttachment` 可贡献 Services 和一条已经投影成根 Event 的 `RunEventSource`；这些事件直接进入同一 Stream。`RunStarted` / `RunFinished` 由 core 独占，event source 若提供这两种事件会被过滤。SDK 会先发布唯一的 `RunStarted`，在事件源完成 flush 且 run-scoped 资源释放后再发布唯一的 `RunFinished` 并关闭 Events。`DetachRun`、`ReleaseByRun` 和 workspace release 共享一个全局有界预算，但每一步都有公平子预算；任一 source/hook 超时不会阻止后续释放动作被调用。超时或释放错误会进入 `Result()` 的 error，不会被静默吞掉。
+
+## 13. threadstore 与 memory
+
+```go
+type Store interface {
+	Resolve(ctx context.Context, q Query) (*Record, error)
+	Finalize(ctx context.Context, req FinalizeRequest) error
+	AcquireLease(ctx context.Context, target, owner string, ttl time.Duration) (Lease, error)
+	RenewLease(ctx context.Context, lease Lease, ttl time.Duration) error
+	ReleaseLease(ctx context.Context, lease Lease) error
+}
+```
+
+`Finalize` 必须原子完成 lease 校验、record 保存、旧 record 归档和 key 重绑；Fork 使用 `RequireKeyAbsent` 防止目标冲突。
+
+`memory.NewStore()` 返回并发安全的单进程实现，适用于测试、本地工具和 demo。需要跨进程续接与协调的服务应实现持久化 Store。
+
+## 14. 内置 provider Driver
+
+四个 provider 都采用同一形状：
+
+```go
+func Driver(cfg Config) driver.Driver
+```
+
+| 包 | Config 主要字段 |
+|---|---|
+| `codex` | `CommonConfig`、`Model`、`ReasoningEffort`、`FastMode` |
+| `claude` | `CommonConfig`、`Model`、`Effort`、`MaxTurnsPerRun` |
+| `cursor` | `CommonConfig`、`Model`、`Mode` |
+| `codebuddy` | `CommonConfig`、`Model`、`Effort`、`PermissionMode`、`MaxTurnsPerRun` |
+
+各包的 `CommonConfig` 都是 `driver.CommonConfig` 的别名，包含 `Command`、`CWD`、`Env`、instructions、prompt templates、workspace defaults、timeouts、grace period 与 extra args。Driver 构造器对配置做深拷贝快照，后续修改原切片或 map 不影响 Agent。
+
+provider-specific Config 表达 CLI 与 transport 配置；调用级 `WithModel` 等覆盖由根包统一解析。
+
+## 15. Driver SPI 与 adaptertest
+
+第三方 Driver 的最小合同：
+
+```go
+type Driver interface {
+	Descriptor() Descriptor
+	ValidateConfig(cfg any) error
+	Run(ctx context.Context, req Request, sink EventSink) (Response, error)
+}
+```
+
+根包负责选项合并、Thread 协调、workspace/runtime/skill/MCP 解析和结果收口；Driver 负责 provider 配置校验、进程或协议执行、Transcript 解析和 checkpoint 提取。
+
+可选 capability interfaces 包括：
+
+- `EnvironmentProbe`
+- `ModelLister`
+- `ModelDetector`
+- `ProfileReporter`
+- `SessionCodecProvider`
+- `SessionConfigFingerprinter`
+- `ConfigSchemaProvider`
+- `QuotaProbe`
+- `SkillSupport`
+- `StreamSupport`
+
+`Descriptor` 的声明必须与实现接口和真实行为一致。声明 `Descriptor.Sessions.SupportsResume=true` 的 Driver 必须同时稳定提供 non-nil `SessionCodec` 与 non-empty、跨进程确定的 `SessionConfigFingerprint`；fingerprint 覆盖所有 provider 可见构造配置及 codec/version 合同，不能稳定 canonicalize 时必须报错。公共 Thread 在获取 workspace/runtime/store lease 或派发 Driver 前校验这两项，缺失或不稳定时返回可 `errors.Is(err, adaptor.ErrThreadIncompatible)` 判断的错误。
+
+Driver 发出的 stream sequence、时间戳和根 Event 顺序由 core 分配；Driver 的 `Response.Transcript` 必须与它发出的 transcript item 镜像一致。`Checkpoint.Valid` 只允许在干净成功、官方终局和可 round-trip resume ID 同时成立时设置。
+
+一致性测试：
+
+```go
+func TestMyDriver(t *testing.T) {
+	adaptertest.TestDriver(t, func() driver.Driver {
+		return mydriver.Driver(mydriver.Config{Model: "m-1"})
+	}, adaptertest.WithConfig(mydriver.Config{Model: "m-1"}))
+}
+```
+
+`adaptertest.TestDriver` 检查 Driver/config、capability 真话性、structured output、session codec、session config fingerprint、event 生命周期、Transcript 镜像和 Response 不变量。真实 CLI 探针必须显式使用 `WithLiveRun`；默认测试不应产生外部或付费调用。
+
+`adaptertest.NewReferenceDriver` 是全内存合规参考实现；`VerifyOutcome`、`VerifyStreamSequence`、`VerifyRunEvents`、`VerifyTranscript`、`VerifyTranscriptMirror` 等函数可用于更细粒度测试。
+
+## 16. 相关文档
+
+- [调用方使用指南](./usage-guide.md)
+- [结构化输出](./structured-output.md)
+- [Streaming](./streaming.md)
+- [A2A bridge](./a2a.md)
+- [架构与发布合同](../AGENTS.md)

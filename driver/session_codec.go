@@ -5,18 +5,12 @@ package driver
 // Hosts should prefer SessionCodec over direct map access, but these constants
 // define the stable meanings for the SDK's built-in drivers and examples, and
 // they let out-of-tree drivers populate the same keys without importing the
-// facade package.
+// root adaptor package.
 const (
 	// SessionParamCWD records the workspace directory captured in a session.
 	SessionParamCWD = "cwd"
 	// SessionParamWorkspaceID records the SDK workspace lease identifier.
 	SessionParamWorkspaceID = "workspace_id"
-	// SessionParamPromptBundleKey records the prompt/skill bundle fingerprint
-	// used as a resume guard by skill-aware drivers.
-	//
-	// Deprecated: built-in drivers now use SessionParamProfileFingerprint so
-	// MCP, skills, agents, hooks, instructions, and config share one guard.
-	SessionParamPromptBundleKey = "prompt_bundle_key"
 	// SessionParamProfileFingerprint records the provider-visible effective
 	// profile resource fingerprint captured by a resumable session.
 	SessionParamProfileFingerprint = "profile_fingerprint"

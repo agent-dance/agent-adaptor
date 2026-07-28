@@ -2,8 +2,8 @@
 // used by internal indexes and lease targets.
 //
 // Callers must keep host-owned v1 Thread keys unchanged in records and public
-// APIs. Encode is only for internal compound identities such as a legacy
-// namespace/key tuple or a domain-qualified lease target.
+// APIs. Encode is only for private compound identities such as a
+// domain-qualified lease target.
 package keycodec
 
 import (

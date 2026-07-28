@@ -13,8 +13,7 @@ import (
 )
 
 // defaultEventBuffer is the unified event channel buffer when
-// WithEventBuffer is not used. It matches the legacy semantic-stream
-// default (DefaultStreamEventBuffer = 1024).
+// WithEventBuffer is not used.
 const defaultEventBuffer = 1024
 
 // errApprovalAbort is the sentinel RequestDecision returns to the driver
@@ -25,7 +24,7 @@ const defaultEventBuffer = 1024
 // failure path.
 var errApprovalAbort = errors.New("adaptor: approval aborted the run")
 
-// eventSink is the v1 internal driver.EventSink: it translates RunEvents
+// eventSink implements driver.EventSink: it translates RunEvents
 // and StreamPayloads into typed Events on one channel, applies the
 // backpressure strategy, and implements driver.DecisionCapableSink so
 // approval requests route through the unified stream / OnApproval callback.
@@ -42,8 +41,7 @@ type eventSink struct {
 	retryMu     sync.Mutex
 	retryWarned map[driver.HumanDecisionKind]struct{}
 
-	// decisionSerial serializes RequestDecision calls (legacy contract:
-	// one in-flight decision at a time).
+	// decisionSerial enforces one in-flight approval request at a time.
 	decisionSerial sync.Mutex
 	decSeq         atomic.Uint64
 
@@ -54,6 +52,20 @@ type eventSink struct {
 
 	failMu  sync.Mutex
 	failure *driver.RunFailure
+
+	// lifecycleMu guards the optional core-owned run envelope used when
+	// RunServiceProvider events are merged with Driver events. Core publishes
+	// the unique RunStarted before provider pumps subscribe, retains the
+	// Driver's terminal details, and publishes the unique RunFinished only
+	// after those pumps have flushed. This prevents host events from escaping
+	// outside the public run lifecycle without changing Driver-only streams.
+	lifecycleMu      sync.Mutex
+	lifecycleActive  bool
+	lifecycleEnded   bool
+	providerRunID    string
+	providerThreadID string
+	driverTerminal   *RunFinished
+	terminalSource   *EventSourceMeta
 }
 
 type eventSinkConfig struct {
@@ -84,8 +96,7 @@ func newEventSink(cfg eventSinkConfig) *eventSink {
 	}
 }
 
-// effectiveApprovalPolicy materializes the SDK defaults for unset fields —
-// the exact legacy EffectiveHumanDecisionPolicy semantics.
+// effectiveApprovalPolicy materializes the package defaults for unset fields.
 func effectiveApprovalPolicy(p ApprovalPolicy) ApprovalPolicy {
 	if p.Permission == driver.HumanDecisionUnset {
 		p.Permission = driver.HumanDecisionAsk
@@ -125,27 +136,151 @@ func (s *eventSink) Emit(ev driver.RunEvent) error {
 }
 
 func (s *eventSink) EmitStream(p driver.StreamPayload) error {
+	source := sourceMetaFromStreamPayload(p)
+	if s.captureDriverLifecycle(p, source) {
+		return nil
+	}
+	event := eventFromStreamPayload(p)
+	if p.Kind == driver.StreamRunFinished || p.Kind == driver.StreamRunError {
+		// In a Driver-only stream the provider owns the lifecycle envelope.
+		// Its terminal is still a hard public boundary: use the broker's
+		// reserved terminal slot and atomically seal out any later payloads.
+		s.broker.publishTerminal(event, source)
+		return nil
+	}
+	s.pushWithSource(event, source)
+	return nil
+}
+
+func sourceMetaFromStreamPayload(p driver.StreamPayload) *EventSourceMeta {
 	sequence := p.Sequence
 	if sequence == 0 {
 		sequence = p.Seq
 	}
-	var source *EventSourceMeta
-	if p.RunID != "" || p.ThreadID != "" || p.TurnID != "" || sequence != 0 || !p.Timestamp.IsZero() {
-		source = &EventSourceMeta{
-			RunID: p.RunID, ThreadID: p.ThreadID, TurnID: p.TurnID,
-			Sequence: sequence, Timestamp: p.Timestamp,
+	if p.RunID == "" && p.ThreadID == "" && p.TurnID == "" && sequence == 0 && p.Timestamp.IsZero() {
+		return nil
+	}
+	return &EventSourceMeta{
+		RunID: p.RunID, ThreadID: p.ThreadID, TurnID: p.TurnID,
+		Sequence: sequence, Timestamp: p.Timestamp,
+	}
+}
+
+// enableAuthoritativeLifecycle switches on the core-owned public run
+// envelope before the first host event source is subscribed. Driver-only
+// streams retain their provider lifecycle unchanged.
+func (s *eventSink) enableAuthoritativeLifecycle() {
+	if s == nil || s.broker == nil {
+		return
+	}
+	s.lifecycleMu.Lock()
+	if s.lifecycleActive {
+		s.lifecycleMu.Unlock()
+		return
+	}
+	s.lifecycleActive = true
+	s.lifecycleMu.Unlock()
+	s.push(RunStarted{RunID: s.runID})
+}
+
+// captureDriverLifecycle suppresses duplicate Driver run-envelope events
+// while the core owns the merged lifecycle. Non-lifecycle payloads continue
+// through the broker immediately. The terminal is retained as a source of
+// provider coordinates/usage, but the final Go outcome remains authoritative.
+func (s *eventSink) captureDriverLifecycle(p driver.StreamPayload, source *EventSourceMeta) bool {
+	if s == nil {
+		return false
+	}
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	if !s.lifecycleActive {
+		return false
+	}
+	switch p.Kind {
+	case driver.StreamRunStarted:
+		if p.RunID != "" {
+			s.providerRunID = p.RunID
+		}
+		if p.ThreadID != "" {
+			s.providerThreadID = p.ThreadID
+		}
+		return true
+	case driver.StreamRunFinished, driver.StreamRunError:
+		if s.driverTerminal == nil {
+			terminal, _ := eventFromStreamPayload(p).(RunFinished)
+			if terminal.Usage != nil {
+				usage := *terminal.Usage
+				terminal.Usage = &usage
+			}
+			s.driverTerminal = &terminal
+			s.terminalSource = cloneEventSourceMeta(source)
+		}
+		return true
+	default:
+		return false
+	}
+}
+
+// completeAuthoritativeLifecycle publishes the merged stream's unique
+// terminal event. It is called after host event pumps and run-scoped
+// resources have completed teardown, immediately before broker close.
+func (s *eventSink) completeAuthoritativeLifecycle(res *Result, runErr error) {
+	if s == nil || s.broker == nil {
+		return
+	}
+	s.lifecycleMu.Lock()
+	if !s.lifecycleActive || s.lifecycleEnded {
+		s.lifecycleMu.Unlock()
+		return
+	}
+	s.lifecycleEnded = true
+	terminal := RunFinished{RunID: s.providerRunID, ThreadID: s.providerThreadID}
+	if s.driverTerminal != nil {
+		terminal = *s.driverTerminal
+		if terminal.Usage != nil {
+			usage := *terminal.Usage
+			terminal.Usage = &usage
 		}
 	}
-	s.pushWithSource(eventFromStreamPayload(p), source)
-	return nil
+	if terminal.RunID == "" {
+		terminal.RunID = s.runID
+	}
+	if terminal.ThreadID == "" {
+		terminal.ThreadID = s.providerThreadID
+	}
+	source := cloneEventSourceMeta(s.terminalSource)
+	s.lifecycleMu.Unlock()
+
+	if terminal.Usage == nil && res != nil && res.Usage != nil {
+		usage := *res.Usage
+		terminal.Usage = &usage
+	}
+	terminal.Failed = runErr != nil
+	terminal.Reason = ""
+	terminal.Message = ""
+	if runErr != nil {
+		var business *RunError
+		switch {
+		case errors.As(runErr, &business):
+			terminal.Reason = business.Reason
+			terminal.Message = business.Message
+		case errors.Is(runErr, context.Canceled), errors.Is(runErr, context.DeadlineExceeded):
+			terminal.Reason = ReasonCancelled
+			terminal.Message = runErr.Error()
+		default:
+			terminal.Reason = ReasonAgentError
+			terminal.Message = runErr.Error()
+		}
+	}
+	s.broker.publishTerminal(terminal, source)
 }
 
 // push delivers one event under the configured backpressure strategy.
 //
 // Drop mode (default): non-blocking send; overflow increments a counter
 // that is flushed as one aggregated Dropped{Count} marker before the next
-// event that fits — the legacy BackpressureDropStream semantics (marker
-// first, then the payload; the marker itself never duplicates).
+// event that fits. The marker is delivered before that event and is never
+// duplicated.
 //
 // Blocking mode (WithBlockingEvents): the send waits for the consumer;
 // close() releases pending senders. Emitting on a closed sink is a no-op,
@@ -223,12 +358,11 @@ func (s *eventSink) pendingFailure() *driver.RunFailure {
 // DecisionCapableSink: the approval dispatcher
 // ---------------------------------------------------------------------------
 
-// RequestDecision routes one approval request. Semantics mirror the legacy
-// dualSink dispatcher step by step: normalize → auto-resolve short-circuit →
-// ask loop (callback or event form) → OnReject / OnTimeout fallback with
-// bounded, capability-gated retry.
+// RequestDecision routes one approval request: normalize, apply automatic
+// policy modes, dispatch the callback or event form, then apply OnReject or
+// OnTimeout with bounded, capability-gated retry.
 //
-// Return contract (unchanged from the legacy SPI):
+// Driver SPI return contract:
 //   - (resp, nil): the driver proceeds using resp.Result — Approved,
 //     Answered, or Rejected/TimedOut when the fallback is Continue.
 //   - (_, err): the run must end; the failure context is already recorded
@@ -277,8 +411,7 @@ func (s *eventSink) RequestDecision(ctx context.Context, req driver.DecisionRequ
 			return out.resp, abortErr
 
 		default: // DecisionAborted (ctx cancelled, handler error/panic, run end)
-			// The abort cause travels as the error itself (legacy
-			// semantics): a handler error surfaces verbatim on the plain
+			// The abort cause travels as the error itself: a handler error surfaces verbatim on the plain
 			// error path; a context cancellation stays a bare ctx error;
 			// panic / unresolved-return already recorded an agent-error
 			// failure. No synthesized failure here.
@@ -317,7 +450,7 @@ func (s *eventSink) tryAutoResolve(req driver.DecisionRequest) (driver.DecisionR
 
 // applyAutoResolve finishes the auto path: approvals return immediately,
 // denials route through OnReject. Retrying a deterministic auto-denial
-// would loop forever, so FallbackRetry degrades to abort (legacy rule).
+// would loop forever, so FallbackRetry degrades to abort.
 func (s *eventSink) applyAutoResolve(req driver.DecisionRequest, resp driver.DecisionResponse) (driver.DecisionResponse, error) {
 	if resp.Result == driver.DecisionApproved {
 		return resp, nil
@@ -356,8 +489,7 @@ func (s *eventSink) dispatchOnce(ctx context.Context, req driver.DecisionRequest
 
 // runHandler is form A: invoke the OnApproval callback with a live request.
 // The handler resolves the request and returns nil; a handler error aborts
-// the run; a panic or an unresolved return is an agent error (legacy typed
-// handler semantics).
+// the run; a panic or an unresolved return is an agent error.
 func (s *eventSink) runHandler(ctx context.Context, req driver.DecisionRequest) (driver.DecisionResponse, driver.DecisionResult, error) {
 	ar := newApprovalRequest(req)
 	s.pushRequestedNotice(req)
@@ -412,7 +544,7 @@ func (s *eventSink) runHandler(ctx context.Context, req driver.DecisionRequest) 
 // event stream and wait for a responder call. The enqueue is exempt from
 // the drop strategy — it blocks until the consumer has room, bounded by
 // the same deadline that guards an unconsumed request (timeout → policy
-// fallback, exactly the legacy channel-mode behavior).
+// fallback).
 func (s *eventSink) runEventDispatch(ctx context.Context, req driver.DecisionRequest) (driver.DecisionResponse, driver.DecisionResult, error) {
 	ar := newApprovalRequest(req)
 
@@ -472,14 +604,13 @@ func (s *eventSink) runEventDispatch(ctx context.Context, req driver.DecisionReq
 	}
 }
 
-// retryOutcome mirrors the legacy retry plumbing.
+// retryOutcome carries either a retry instruction or the response to return.
 type retryOutcome struct {
 	retry bool
 	resp  driver.DecisionResponse
 }
 
-// applyFailureAction centralizes OnReject / OnTimeout handling — the exact
-// legacy decision table:
+// applyFailureAction centralizes OnReject and OnTimeout handling:
 //
 //	Continue            → (resp, nil), no failure recorded
 //	Retry, unsupported  → one-time warning Notice + abort with failure
@@ -553,7 +684,7 @@ func (s *eventSink) retrySupported(kind driver.HumanDecisionKind) bool {
 }
 
 // pushRetryUnsupportedWarning emits the retry-degradation warning Notice at
-// most once per kind (legacy lifecycle warning event, same Data contract).
+// most once per kind.
 func (s *eventSink) pushRetryUnsupportedWarning(kind driver.HumanDecisionKind, action driver.FailureAction) {
 	s.retryMu.Lock()
 	if _, dup := s.retryWarned[kind]; dup {
@@ -624,9 +755,8 @@ func withDecisionDeadline(ctx context.Context, deadline time.Time) (context.Cont
 
 // pushRequestedNotice broadcasts an approval request that does NOT appear
 // as a *ApprovalRequest event (callback form and auto-resolved policy
-// paths), keeping stream observability on par with the legacy
-// StreamHITLRequested emission. In event form the *ApprovalRequest event
-// itself is the request signal.
+// paths). In event form the *ApprovalRequest event itself is the request
+// signal.
 func (s *eventSink) pushRequestedNotice(req driver.DecisionRequest) {
 	s.push(Notice{
 		Kind: NoticeApprovalRequested,
@@ -646,8 +776,8 @@ func (s *eventSink) pushRequestedNotice(req driver.DecisionRequest) {
 	})
 }
 
-// pushResolvedNotice broadcasts the outcome of every approval attempt
-// (legacy StreamHITLResolved emission, exactly one per attempt).
+// pushResolvedNotice broadcasts exactly one outcome for every approval
+// attempt.
 func (s *eventSink) pushResolvedNotice(req driver.DecisionRequest, resp driver.DecisionResponse, at time.Time) {
 	var latency time.Duration
 	if !req.CreatedAt.IsZero() {

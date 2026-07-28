@@ -1,6 +1,6 @@
 package adaptor_test
 
-// P3.7 migration of the root profile-resources baseline
+// Profile-resource contract derived from the root baseline
 // (profile_resources_test.go) onto the v1 surface. Mapping (roots stay
 // untouched):
 //
@@ -12,7 +12,6 @@ package adaptor_test
 //	TestInstructionPathFingerprintChangesWithFileContent  → TestInstructionPathFingerprintChangesWithFileContent
 //	TestAgentSourcePathFingerprintChangesWithFileContent  → TestAgentSourcePathFingerprintChangesWithFileContent
 //	TestAgentSourcePathFingerprintChangesWithDirectoryContent → TestAgentSourcePathFingerprintChangesWithDirectoryContent
-//	TestProfileResourcesRejectDivergentAgentContentAlias  → TestProfileResourcesRejectDivergentAgentContentAlias
 //	TestProfileResourcesRejectConfigCapabilityAndNativeTarget → TestProfileResourcesRejectConfigCapabilityAndNativeTarget
 //	TestProfileSnapshotFallbackReportsSupportAndMaterialization → TestProfileStateFallbackReportsSupportAndMaterialization
 //
@@ -28,9 +27,9 @@ import (
 	"path/filepath"
 	"testing"
 
+	adaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/mcp"
-	adaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/profile"
 	"github.com/agent-dance/agent-adaptor/skill"
 )
@@ -57,7 +56,7 @@ func TestProfileResourcesResolveIntoProfilePayload(t *testing.T) {
 		}},
 		Hooks: []profile.Hook{{
 			Key:         "before",
-			Event:       "PreToolUse", // legacy event alias — normalized into HookEventPreTool
+			Event:       "PreToolUse", // provider event alias normalized into HookEventPreTool
 			MatcherSpec: profile.HookMatcher{Subject: profile.HookMatcherSubjectTool, Syntax: profile.HookMatcherSyntaxRegex, Pattern: ".*"},
 			Handler:     profile.HookHandler{Type: profile.HookHandlerCommand, Command: "echo", Args: []string{"ok"}},
 			FailPolicy:  profile.HookFailPolicyOpen,
@@ -273,28 +272,16 @@ func TestAgentSourcePathFingerprintChangesWithDirectoryContent(t *testing.T) {
 	}
 }
 
-func TestProfileResourcesRejectDivergentAgentContentAlias(t *testing.T) {
-	fake := newFakeDriver()
-	agent := adaptor.New(fake, adaptor.WithProfileResources(profile.Resources{
-		Agents: []profile.SubAgent{{Key: "reviewer", Instructions: "new", Content: "old"}},
-	}))
-
-	if _, err := agent.Run(context.Background(), "hello"); err == nil {
-		t.Fatal("expected divergent instructions/content alias to fail")
-	}
-	if fake.runCount() != 0 {
-		t.Errorf("driver ran %d time(s), want pre-launch failure", fake.runCount())
-	}
-}
-
 func TestProfileResourcesRejectConfigCapabilityAndNativeTarget(t *testing.T) {
 	fake := newFakeDriver()
 	agent := adaptor.New(fake, adaptor.WithProfileResources(profile.Resources{
 		Config: []profile.ConfigPatch{{
 			Key:        "ambiguous",
 			Capability: "sandbox",
-			FileKind:   profile.ConfigFileTOML,
-			Path:       "config.toml",
+			Native: &profile.NativeConfigPatch{
+				FileKind: profile.ConfigFileTOML,
+				Path:     "config.toml",
+			},
 		}},
 	}))
 

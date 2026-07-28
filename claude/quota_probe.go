@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/internal/adapterutil"
+	"github.com/agent-dance/agent-adaptor/internal/driverutil"
 )
 
 var claudeQuotaUsageURL = "https://api.anthropic.com/api/oauth/usage"
@@ -107,11 +107,11 @@ func claudeQuotaReport(ctx context.Context, bindings []driver.EnvBinding) (drive
 		Source:     "anthropic_oauth_usage",
 		Available:  false,
 	}
-	if enabled, _ := adapterutil.ResolvedTruthyEnv(bindings, "CLAUDE_CODE_USE_BEDROCK"); enabled {
+	if enabled, _ := driverutil.ResolvedTruthyEnv(bindings, "CLAUDE_CODE_USE_BEDROCK"); enabled {
 		report.Error = "AWS Bedrock mode does not expose local Claude subscription quota windows"
 		return report, nil
 	}
-	if _, source := adapterutil.ResolvedEnvValue(bindings, "ANTHROPIC_BEDROCK_BASE_URL"); source != "" {
+	if _, source := driverutil.ResolvedEnvValue(bindings, "ANTHROPIC_BEDROCK_BASE_URL"); source != "" {
 		report.Error = "Anthropic Bedrock base URL mode does not expose local Claude subscription quota windows"
 		return report, nil
 	}
@@ -122,7 +122,7 @@ func claudeQuotaReport(ctx context.Context, bindings []driver.EnvBinding) (drive
 		return report, nil
 	}
 	if credentials == nil || credentials.AccessToken == "" {
-		if _, source := adapterutil.ResolvedEnvValue(bindings, "ANTHROPIC_API_KEY"); source != "" {
+		if _, source := driverutil.ResolvedEnvValue(bindings, "ANTHROPIC_API_KEY"); source != "" {
 			report.Error = "ANTHROPIC_API_KEY mode does not expose local Claude subscription quota windows"
 			return report, nil
 		}

@@ -27,8 +27,7 @@ const (
 	RunEventLifecycle RunEventType = "lifecycle"
 )
 
-// RunEvent is the streamed event envelope exposed through the host-facing
-// event channel.
+// RunEvent is the operational event envelope emitted into EventSink.
 //
 // Field usage by Type:
 //   - chunk: Stream ("stdout"|"stderr"), Bytes (raw chunk bytes, may be partial).
@@ -88,7 +87,7 @@ const (
 
 // TranscriptItem is the host-facing normalized transcript unit.
 //
-// Kind field rules (see docs/workstream-output-transcript-impl-spec.md §1.5):
+// Kind field rules:
 //   - assistant / thinking / user: Text required. Delta allowed for assistant
 //     and thinking only.
 //   - tool_call: ToolName required, ToolUseID recommended, Input optional.
@@ -182,7 +181,7 @@ const (
 //
 // The zero value is RoleAssistant: every driver today emits text.start /
 // text.content / text.end as assistant output, so leaving Role unset
-// preserves the historical wire shape exactly.
+// produces the canonical assistant encoding.
 //
 // Role only carries semantics on text-lifecycle kinds (text.start /
 // text.content / text.end). On every other Kind it MUST be left at the
@@ -232,10 +231,9 @@ const (
 // assigns all three monotonically/in receiver order in EmitStream; they have
 // one authority even when multiple driver goroutines emit concurrently.
 //
-// Seq mirrors Sequence as the canonical per-run monotonic cursor exposed by
-// the streaming/HITL contract (see docs/run-policy.md §6). It is always
-// equal to Sequence; Sequence is retained as the legacy field so downstream
-// bridges and tests that already referenced it keep compiling.
+// Sequence and Seq are reserved SPI placeholders. Drivers MUST leave both
+// zero; consumers use the single authoritative sequence in the root Event
+// metadata, which core assigns in receiver order.
 type StreamPayload struct {
 	Kind       StreamKind
 	Sequence   uint64
@@ -259,7 +257,7 @@ type StreamPayload struct {
 	HITLResolved *HITLResolvedPayload
 
 	// Role identifies the speaker for text.* kinds. Zero value =
-	// RoleAssistant for backward compatibility; see Role docs. Drivers
+	// RoleAssistant; see Role docs. Drivers
 	// MUST leave Role at zero on every Kind they emit.
 	Role Role
 

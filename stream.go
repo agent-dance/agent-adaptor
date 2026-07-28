@@ -3,10 +3,12 @@ package adaptor
 import (
 	"context"
 	"fmt"
+
+	"github.com/agent-dance/agent-adaptor/driver"
 )
 
-// Stream is the live view of one running invocation (decision D4: a small
-// interface, not a struct). One event channel carries everything —
+// Stream is the small interface representing one running invocation. One
+// event channel carries everything —
 // text/thinking deltas, tool calls, process output, notices, approval
 // requests — and Result() is the single close-out.
 //
@@ -22,8 +24,9 @@ import (
 //	}
 //	res, err := stream.Result()
 //
-// Events() closes when the run ends; Result() then returns immediately with
-// the same Result / *RunError / infrastructure-error contract as Run.
+// Events() closes after run-scoped resources have been released; Result()
+// then returns immediately with the same Result / *RunError /
+// infrastructure-error contract as Run.
 // Consumers must continuously drain Events. The default backpressure mode
 // may discard only high-frequency deltas; approvals, lifecycle, terminal,
 // transcript and drop-report events remain reliable and can therefore apply
@@ -116,6 +119,7 @@ func (a *Agent) openStream(ctx context.Context, opts []CallOption, threadKey str
 
 	runID, idErr := newRunID()
 
+	desc := a.driver.Descriptor()
 	var approvals ApprovalPolicy
 	if eff.policy != nil {
 		approvals = eff.policy.Approvals
@@ -127,7 +131,7 @@ func (a *Agent) openStream(ctx context.Context, opts []CallOption, threadKey str
 		blocking:  a.defaults.blockingEvents,
 		policy:    approvals,
 		handler:   eff.approval,
-		caps:      a.driver.Descriptor().RunPolicyCaps,
+		caps:      desc.RunPolicyCaps,
 	})
 
 	st = &runStream{
@@ -139,6 +143,23 @@ func (a *Agent) openStream(ctx context.Context, opts []CallOption, threadKey str
 
 	if idErr != nil {
 		st.err = fmt.Errorf("adaptor: generate run id: %w", idErr)
+		cancel()
+		sink.close()
+		close(st.done)
+		return st, eff, ctx, false
+	}
+	if configErr := a.driver.ValidateConfig(nil); configErr != nil {
+		st.err = fmt.Errorf("adaptor: run %s: %w", runID, &driver.InvalidDriverConfigError{
+			Driver: desc.Type,
+			Cause:  configErr,
+		})
+		cancel()
+		sink.close()
+		close(st.done)
+		return st, eff, ctx, false
+	}
+	if policyErr := validatePolicy(desc, eff.policy); policyErr != nil {
+		st.err = fmt.Errorf("adaptor: run %s: %w", runID, policyErr)
 		cancel()
 		sink.close()
 		close(st.done)

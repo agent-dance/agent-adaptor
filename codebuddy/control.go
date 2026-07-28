@@ -7,8 +7,9 @@ import (
 	"strings"
 
 	"github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/internal/adapterutil"
 	"github.com/agent-dance/agent-adaptor/internal/clihelper"
+	"github.com/agent-dance/agent-adaptor/internal/driverutil"
+	"github.com/agent-dance/agent-adaptor/internal/engine"
 )
 
 var errControlSinkRequired = errors.New("codebuddy control transport requires a decision-capable sink")
@@ -16,9 +17,9 @@ var errControlSinkRequired = errors.New("codebuddy control transport requires a 
 func (adapter) runControl(ctx context.Context, cfg Config, command string, req driver.Request, sink driver.EventSink, prep runPrep) (driver.Response, error) {
 	if req.OutputSchema != nil && req.OutputSchema.Mode != driver.StructuredOutputPromptValidate {
 		return driver.Response{}, &driver.StructuredOutputUnsupportedError{
-			Adapter: DriverType,
-			Mode:    req.OutputSchema.Mode,
-			Reason:  "CodeBuddy native structured output is not supported with control HITL",
+			Driver: DriverType,
+			Mode:   req.OutputSchema.Mode,
+			Reason: "CodeBuddy native structured output is not supported with control HITL",
 		}
 	}
 	decisionSink, ok := sink.(driver.DecisionCapableSink)
@@ -52,10 +53,16 @@ func (adapter) runControl(ctx context.Context, cfg Config, command string, req d
 	p.finalize()
 
 	raw := driver.RawStreams{Stdout: result.RawStreams.Stdout, Stderr: result.RawStreams.Stderr, Terminal: p.terminal}
-	failure := p.pendingFailure
-	if failure == nil && strings.TrimSpace(p.errorMessage) != "" {
-		failure = &driver.RunFailure{Code: driver.FailureAgentError, Message: p.errorMessage}
+	if resumedCodeBuddySession(req) && isCodeBuddyResumeRejected(result.ExitCode, p.errorMessage, raw.Stdout, raw.Stderr) {
+		reason := strings.TrimSpace(p.errorMessage)
+		if reason == "" {
+			reason = "codebuddy resume session is unavailable"
+		}
+		p.completeStream(&driver.RunFailure{Code: driver.FailureAgentError, Message: reason}, result.ExitCode, result.Signal, result.TimedOut)
+		return driver.Response{}, &engine.ResumeRejectedError{Reason: reason}
 	}
+	failure := p.failureForOutcome(result.ExitCode)
+	p.completeStream(failure, result.ExitCode, result.Signal, result.TimedOut)
 	checkpoint := p.checkpointForOutcome(result.ExitCode, result.Signal, result.TimedOut, failure)
 	if checkpoint != nil && checkpoint.State != nil {
 		checkpoint.State.Data = map[string]string{
@@ -77,7 +84,7 @@ func (adapter) runControl(ctx context.Context, cfg Config, command string, req d
 		Provider:        "codebuddy",
 		Model:           prep.reportedModel,
 		Summary:         p.finalSummary(),
-		RuntimeServices: adapterutil.RuntimeReportsFromRefs(req.Runtime.Ensured, req.Agent),
+		RuntimeServices: driverutil.RuntimeReportsFromRefs(req.Runtime.Ensured, req.Agent),
 		Failure:         failure,
 	}, nil
 }

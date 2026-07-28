@@ -2,7 +2,7 @@ package engine
 
 import "fmt"
 
-// mergeRunPolicy layers per-call runPolicy on top of binding defaults. Empty
+// mergeRunPolicy layers per-call runPolicy on top of Agent defaults. Empty
 // fields in override mean "keep default for that field". Returns an error
 // when the resolved policy has illegal values (e.g. MaxRetries < 0).
 func mergeRunPolicy(base, override *RunPolicy) (RunPolicy, error) {
@@ -108,6 +108,3 @@ func cloneRunPolicy(p *RunPolicy) *RunPolicy {
 	c := *p
 	return &c
 }
-
-// CloneRunPolicy exposes cloneRunPolicy for the root package.
-func CloneRunPolicy(p *RunPolicy) *RunPolicy { return cloneRunPolicy(p) }

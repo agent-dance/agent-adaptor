@@ -4,10 +4,10 @@ import (
 	"testing"
 	"time"
 
+	adaptor "github.com/agent-dance/agent-adaptor"
 	bridgea2a "github.com/agent-dance/agent-adaptor/bridges/a2a"
 	clienta2a "github.com/agent-dance/agent-adaptor/clients/a2a"
 	"github.com/agent-dance/agent-adaptor/driver"
-	adaptor "github.com/agent-dance/agent-adaptor"
 )
 
 // TestEventMapperArtifactsNeverCreateProcessEvents verifies ArtifactUpdate is
@@ -207,7 +207,7 @@ func TestEventMapperTypedAdapterStreamPreservesMetaAndDroppedDetails(t *testing.
 		"member_thread_key": "host-thread", "member_turn_id": "host-turn",
 		"member_provider_run_id": "provider-run", "member_provider_thread_id": "provider-thread",
 		"member_provider_turn_id": "provider-turn",
-		"dropped_count": 3, "reason": "backpressure", "source": "sdk",
+		"dropped_count":           3, "reason": "backpressure", "source": "sdk",
 	} {
 		if got := dropped.Raw[key]; got != want {
 			t.Errorf("Raw[%q] = %#v, want %#v", key, got, want)

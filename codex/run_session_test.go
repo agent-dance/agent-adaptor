@@ -7,11 +7,113 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/internal/engine"
 	"github.com/agent-dance/agent-adaptor/internal/testutil"
 )
+
+func TestCodexBatchRunPreservesUnclassifiedProcessOutcome(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		posixBody   string
+		windowsBody string
+		cancel      bool
+	}{
+		{
+			name:        "exit without provider terminal",
+			posixBody:   "#!/bin/sh\ncat >/dev/null\nprintf 'partial stdout\\n'\nprintf 'partial stderr\\n' >&2\nexit 7\n",
+			windowsBody: "@echo off\r\nset /p X=\r\necho partial stdout\r\n>&2 echo partial stderr\r\nexit /b 7\r\n",
+		},
+		{
+			name:        "cancel before provider terminal",
+			posixBody:   "#!/bin/sh\ncat >/dev/null\nprintf 'partial stdout\\n'\nprintf 'partial stderr\\n' >&2\nsleep 30\n",
+			windowsBody: "@echo off\r\nset /p X=\r\necho partial stdout\r\n>&2 echo partial stderr\r\nping -n 31 127.0.0.1 >nul\r\n",
+			cancel:      true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			command := testutil.WriteCommand(t, home, "fake-codex-outcome", tc.posixBody, tc.windowsBody)
+			ctx := context.Background()
+			if tc.cancel {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, 500*time.Millisecond)
+				defer cancel()
+			}
+			res, err := (adapter{}).Run(ctx, driver.Request{
+				Prompt:    "go",
+				Config:    Config{CommonConfig: CommonConfig{Command: command, CWD: home}},
+				Workspace: driver.WorkspaceLease{CWD: home},
+			}, &testutil.EventRecorder{})
+			if err != nil {
+				t.Fatalf("Driver.Run error = %v", err)
+			}
+			if res.ExitCode == 0 || res.Failure != nil || res.Checkpoint != nil {
+				t.Fatalf("outcome = %+v, want abnormal fields with no provider classification/checkpoint", res)
+			}
+			if tc.cancel && !res.TimedOut {
+				t.Fatalf("TimedOut = false for context deadline outcome: %+v", res)
+			}
+			if tc.cancel && !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				t.Fatalf("context error = %v, want deadline", ctx.Err())
+			}
+			if res.RawStreams == nil || !strings.Contains(res.RawStreams.Stdout, "partial stdout") || !strings.Contains(res.RawStreams.Stderr, "partial stderr") {
+				t.Fatalf("raw streams = %#v", res.RawStreams)
+			}
+			if len(res.Transcript) < 2 {
+				t.Fatalf("transcript = %#v, want partial stdout/stderr", res.Transcript)
+			}
+		})
+	}
+}
+
+func TestCodexBatchExitZeroProtocolFailureIsNotSuccess(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		posixBody   string
+		windowsBody string
+	}{
+		{
+			name:        "missing official terminal",
+			posixBody:   "#!/bin/sh\ncat >/dev/null\nprintf '{\"type\":\"thread.started\",\"thread_id\":\"partial\"}\\n'\nprintf '{\"type\":\"item.completed\",\"item\":{\"id\":\"msg\",\"type\":\"agent_message\",\"text\":\"partial answer\"}}\\n'\n",
+			windowsBody: "@echo off\r\nset /p X=\r\necho {\"type\":\"thread.started\",\"thread_id\":\"partial\"}\r\necho {\"type\":\"item.completed\",\"item\":{\"id\":\"msg\",\"type\":\"agent_message\",\"text\":\"partial answer\"}}\r\n",
+		},
+		{
+			name:        "malformed JSONL",
+			posixBody:   "#!/bin/sh\ncat >/dev/null\nprintf '{\"type\":\"thread.started\",\"thread_id\":\"partial\"}\\n'\nprintf '{broken\\n'\nprintf '{\"type\":\"turn.completed\"}\\n'\n",
+			windowsBody: "@echo off\r\nset /p X=\r\necho {\"type\":\"thread.started\",\"thread_id\":\"partial\"}\r\necho {broken\r\necho {\"type\":\"turn.completed\"}\r\n",
+		},
+		{
+			name:        "terminal without thread started",
+			posixBody:   "#!/bin/sh\ncat >/dev/null\nprintf '{\"type\":\"item.completed\",\"item\":{\"id\":\"msg\",\"type\":\"agent_message\",\"text\":\"answer\"}}\\n'\nprintf '{\"type\":\"turn.completed\"}\\n'\n",
+			windowsBody: "@echo off\r\nset /p X=\r\necho {\"type\":\"item.completed\",\"item\":{\"id\":\"msg\",\"type\":\"agent_message\",\"text\":\"answer\"}}\r\necho {\"type\":\"turn.completed\"}\r\n",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			command := testutil.WriteCommand(t, home, "fake-codex-protocol", tc.posixBody, tc.windowsBody)
+			result, err := (adapter{}).Run(context.Background(), driver.Request{
+				Prompt:    "go",
+				Config:    Config{CommonConfig: CommonConfig{Command: command, CWD: home}},
+				Workspace: driver.WorkspaceLease{CWD: home},
+			}, &testutil.EventRecorder{})
+			if err != nil {
+				t.Fatalf("Driver.Run error = %v", err)
+			}
+			if result.ExitCode != 0 || result.Failure == nil || result.Failure.Code != driver.FailureAgentError {
+				t.Fatalf("protocol outcome = %+v, want exit-zero FailureAgentError", result)
+			}
+			if result.Checkpoint != nil {
+				t.Fatalf("protocol failure produced checkpoint %#v", result.Checkpoint)
+			}
+			if result.RawStreams == nil || strings.TrimSpace(result.RawStreams.Stdout) == "" {
+				t.Fatalf("raw stdout lost: %#v", result.RawStreams)
+			}
+		})
+	}
+}
 
 func TestCodexRunPreservesAndGuardsSessionState(t *testing.T) {
 	home := t.TempDir()
@@ -76,6 +178,35 @@ func TestCodexRunPreservesAndGuardsSessionState(t *testing.T) {
 	_, err = (adapter{}).Run(context.Background(), rejectReq, &testutil.EventRecorder{})
 	if !errors.Is(err, engine.ErrResumeRejected) {
 		t.Fatalf("expected ErrResumeRejected, got %v", err)
+	}
+}
+
+func TestCodexBatchResumeRejectsProviderThreadIdentityChange(t *testing.T) {
+	home := t.TempDir()
+	command := testutil.WriteCommand(t, home, "fake-codex-resume-mismatch",
+		"#!/bin/sh\nset -eu\ncat >/dev/null\nprintf '{\"type\":\"thread.started\",\"thread_id\":\"unexpected-child\"}\\n'\nprintf '{\"type\":\"item.completed\",\"item\":{\"id\":\"msg\",\"type\":\"agent_message\",\"text\":\"answer\"}}\\n'\nprintf '{\"type\":\"turn.completed\"}\\n'\n",
+		"@echo off\r\nsetlocal\r\nset /p PROMPT=\r\necho {\"type\":\"thread.started\",\"thread_id\":\"unexpected-child\"}\r\necho {\"type\":\"item.completed\",\"item\":{\"id\":\"msg\",\"type\":\"agent_message\",\"text\":\"answer\"}}\r\necho {\"type\":\"turn.completed\"}\r\n",
+	)
+	result, err := (adapter{}).Run(context.Background(), driver.Request{
+		Prompt:    "continue",
+		Config:    Config{CommonConfig: CommonConfig{Command: command, CWD: home}},
+		Workspace: driver.WorkspaceLease{CWD: home},
+		Session: &driver.SessionContext{
+			Mode:  driver.SessionContinueOnly,
+			State: &driver.SessionState{ResumeID: "parent"},
+		},
+	}, &testutil.EventRecorder{})
+	if err != nil {
+		t.Fatalf("Driver.Run error = %v", err)
+	}
+	if result.Failure == nil || result.Failure.Code != driver.FailureAgentError || !strings.Contains(result.Failure.Message, "unexpected-child") {
+		t.Fatalf("resume identity mismatch = %#v", result.Failure)
+	}
+	if result.Checkpoint != nil {
+		t.Fatalf("resume identity mismatch produced checkpoint %#v", result.Checkpoint)
+	}
+	if result.RawStreams == nil || result.RawStreams.Terminal == nil || result.Output != "answer" {
+		t.Fatalf("partial result layers lost: %#v", result)
 	}
 }
 

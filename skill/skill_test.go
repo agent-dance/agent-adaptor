@@ -20,7 +20,7 @@ import (
 )
 
 // Compile-time proof that the public skill package owns the complete
-// host-facing vocabulary without relying on the legacy root aliases.
+// host-facing vocabulary directly from its owning package.
 var (
 	_ skill.Ref               = skill.Skill{}
 	_ skill.Materializer      = skill.NewDefaultSkillMaterializer()

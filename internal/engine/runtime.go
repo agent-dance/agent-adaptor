@@ -2,66 +2,14 @@ package engine
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 )
 
-func newRunID(driverType string) string {
-	var suffix [8]byte
-	if _, err := rand.Read(suffix[:]); err != nil {
-		return stableHash("run", driverType)
-	}
-	return stableHash("run", driverType, hex.EncodeToString(suffix[:]))
-}
-
-// NewRunID exposes newRunID for the root package: Start() pre-allocates the
-// run identifier so the RunHandle can report it before Wait() completes.
-func NewRunID(driverType string) string { return newRunID(driverType) }
-
-func (s *Core) prepareRuntime(
-	ctx context.Context,
-	runID string,
-	binding AgentBinding,
-	identity AgentIdentity,
-	workspace WorkspaceLease,
-	metadata map[string]string,
-	override *WorkspaceRuntimeConfig,
-) (RuntimePayload, error) {
-	common := extractCommonConfig(binding.Config())
-	defaults := binding.Defaults()
-
-	runtimeCfg := cloneWorkspaceRuntimeConfig(common.WorkspaceRuntime)
-	if defaults.Runtime != nil {
-		runtimeCfg = cloneWorkspaceRuntimeConfig(defaults.Runtime)
-	}
-	if override != nil {
-		runtimeCfg = cloneWorkspaceRuntimeConfig(override)
-	}
-
-	var desired []RuntimeServiceSpec
-	if runtimeCfg != nil {
-		desired = runtimeCfg.Services
-	}
-	return prepareRuntimePayload(ctx, s.runtimeManager, RuntimeServiceRequest{
-		RunID:      runID,
-		DriverType: binding.Adapter().Descriptor().Type,
-		Agent:      identity,
-		Config:     binding.Config(),
-		Workspace:  workspace,
-		Metadata:   cloneStringMap(metadata),
-	}, desired)
-}
-
-// prepareRuntimePayload is the lifted tail of (*Core).prepareRuntime: given an
-// already-merged desired service set and a partially filled request envelope,
+// prepareRuntimePayload resolves an already-merged desired service set and a
+// partially filled request envelope,
 // it produces the driver-facing RuntimePayload (requested clone, fingerprint,
 // manager Ensure, secret-env collection, ref normalization).
-//
-// It was lifted verbatim so the v1 facade (next/, via the PrepareRuntimePayload
-// entry in nextwiring.go) and the legacy Core path run the identical code — the
-// same "one truth, additive seam" rule the P2/P3 waves used. req.Desired is
-// filled here so callers cannot disagree with payload.Requested; a nil manager
-// behaves like the legacy default (noopRuntimeManager).
+// req.Desired is filled here so callers cannot disagree with
+// payload.Requested; a nil manager behaves like the noop manager.
 func prepareRuntimePayload(
 	ctx context.Context,
 	manager RuntimeServiceManager,

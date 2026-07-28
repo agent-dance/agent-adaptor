@@ -6,8 +6,8 @@ import (
 	"strings"
 
 	"github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/internal/adapterutil"
 	"github.com/agent-dance/agent-adaptor/internal/configprobe"
+	"github.com/agent-dance/agent-adaptor/internal/driverutil"
 	"github.com/agent-dance/agent-adaptor/internal/skillruntime"
 )
 
@@ -111,7 +111,7 @@ func authChecks(bindings []driver.EnvBinding) []driver.EnvironmentCheck {
 		return checks
 	}
 
-	if _, source := adapterutil.ResolvedEnvValue(bindings, "CODEBUDDY_API_KEY"); source != "" {
+	if _, source := driverutil.ResolvedEnvValue(bindings, "CODEBUDDY_API_KEY"); source != "" {
 		return append(checks, driver.EnvironmentCheck{
 			Code:    "codebuddy_api_key_present",
 			Level:   "info",

@@ -29,15 +29,9 @@ type codexParser struct {
 	transcript    []driver.TranscriptItem
 	assistantText []string
 
-	sessionID          string
-	displayID          string
-	summary            string // last assistant text retained for parser diagnostics
-	terminalSummary    string // authoritative summary from terminal result events
 	usage              *driver.Usage
-	cost               *float64
 	hasUsage           bool
 	terminal           *driver.TerminalPayload
-	structuredOutput   *driver.StructuredOutput
 	errorMessage       string
 	checkpointThreadID string
 	threadStarted      bool
@@ -135,31 +129,40 @@ func (p *codexParser) handlePayload(raw string, payload map[string]any) {
 	kind := codexEventKind(payload)
 	switch kind {
 	case "thread.started":
-		if threadID := codexTopLevelString(payload, "thread_id", "threadId"); threadID != "" {
+		if p.threadStarted {
+			p.protocolMalformed = true
+			return
+		}
+		if threadID := codexTopLevelString(payload, "thread_id"); threadID != "" {
 			p.threadStarted = true
 			p.checkpointThreadID = threadID
-			p.sessionID = threadID
-			p.displayID = threadID
 			p.emit(driver.TranscriptItem{
 				Kind:      driver.TranscriptInit,
 				SessionID: threadID,
 			})
+		} else {
+			p.protocolMalformed = true
 		}
 	case "item.started":
+		if !p.threadStarted {
+			p.protocolMalformed = true
+		}
 		item := codexTopLevelObject(payload, "item")
-		p.handleItem(item, true)
+		p.handleItem(item, codexItemStarted)
 	case "item.completed":
+		if !p.threadStarted {
+			p.protocolMalformed = true
+		}
 		item := codexTopLevelObject(payload, "item")
-		p.handleItem(item, false)
+		p.handleItem(item, codexItemCompleted)
 	case "turn.completed":
+		if !p.threadStarted {
+			p.protocolMalformed = true
+		}
 		p.turnCompleted = true
 		p.handleTerminal(raw, payload, kind)
 	case "turn.failed":
 		p.terminalFailed = true
-		p.handleTerminal(raw, payload, kind)
-	case "result":
-		// Historical provider wrappers used result, but Codex CLI checkpoint
-		// validity is proved only by thread.started + turn.completed.
 		p.handleTerminal(raw, payload, kind)
 	case "error":
 		p.terminalFailed = true
@@ -174,23 +177,7 @@ func (p *codexParser) handlePayload(raw string, payload map[string]any) {
 			Text:     message,
 			Metadata: map[string]string{"code": "error"},
 		})
-	case "session", "session.updated":
-		if id := codexTopLevelString(payload, "session_id", "sessionId", "sessionID"); id != "" {
-			p.sessionID = id
-			if display := codexTopLevelString(payload, "display_id", "displayId"); display != "" {
-				p.displayID = display
-			} else if p.displayID == "" {
-				p.displayID = id
-			}
-			p.emit(driver.TranscriptItem{
-				Kind:      driver.TranscriptInit,
-				SessionID: id,
-			})
-		}
 	default:
-		if p.tryAbsorbCheckpointOnlyPayload(payload) {
-			return
-		}
 		p.emit(driver.TranscriptItem{
 			Kind: driver.TranscriptSystem,
 			Text: raw,
@@ -199,74 +186,250 @@ func (p *codexParser) handlePayload(raw string, payload map[string]any) {
 	}
 }
 
-func (p *codexParser) tryAbsorbCheckpointOnlyPayload(payload map[string]any) bool {
-	if !isCheckpointPayload(payload) {
-		return false
-	}
-	sessionID := codexTopLevelString(payload, "session_id", "sessionId", "sessionID", "thread_id", "threadId")
-	if sessionID == "" {
-		return false
-	}
-	p.sessionID = sessionID
-	if display := codexTopLevelString(payload, "display_id", "displayId"); display != "" {
-		p.displayID = display
-	} else {
-		p.displayID = sessionID
-	}
-	p.emit(driver.TranscriptItem{
-		Kind:      driver.TranscriptInit,
-		SessionID: sessionID,
-	})
-	return true
-}
+type codexItemPhase uint8
 
-func (p *codexParser) handleItem(item map[string]any, delta bool) {
+const (
+	codexItemStarted codexItemPhase = iota + 1
+	codexItemCompleted
+)
+
+func (p *codexParser) handleItem(item map[string]any, phase codexItemPhase) {
 	if len(item) == 0 {
+		p.protocolMalformed = true
 		return
 	}
 	switch codexEventKind(item) {
 	case "agent_message":
-		text := codexTopLevelString(item, "text", "message")
+		// codex exec --json exposes the final assistant value on the completed
+		// item. item.started is lifecycle metadata, not a text delta.
+		if phase != codexItemCompleted {
+			return
+		}
+		text, ok := item["text"].(string)
+		if !ok {
+			p.protocolMalformed = true
+			return
+		}
+		p.assistantText = append(p.assistantText, text)
+		p.emit(driver.TranscriptItem{
+			Kind: driver.TranscriptAssistant,
+			Text: text,
+		})
+	case "reasoning":
+		if phase != codexItemCompleted {
+			return
+		}
+		text := codexTopLevelString(item, "text")
 		if text == "" {
 			return
 		}
-		if !delta {
-			p.assistantText = append(p.assistantText, text)
-			p.summary = text
-		}
 		p.emit(driver.TranscriptItem{
-			Kind:  driver.TranscriptAssistant,
-			Text:  text,
-			Delta: delta,
+			Kind: driver.TranscriptThinking,
+			Text: text,
 		})
-	case "reasoning", "thinking":
-		text := codexTopLevelString(item, "text", "message")
-		if text == "" {
-			return
-		}
-		p.emit(driver.TranscriptItem{
-			Kind:  driver.TranscriptThinking,
-			Text:  text,
-			Delta: delta,
-		})
-	case "command_execution", "tool_call", "function_call":
-		name := codexTopLevelString(item, "name", "tool_name", "command")
-		id := codexTopLevelString(item, "id", "call_id", "tool_use_id")
+	case "command_execution":
+		p.handleCommandExecution(item, phase)
+	case "file_change":
+		p.handleFileChange(item, phase)
+	case "mcp_tool_call":
+		p.handleMCPToolCall(item, phase)
+	case "web_search":
+		p.handleWebSearch(item, phase)
+	case "dynamic_tool_call":
+		p.handleDynamicToolCall(item, phase)
+	}
+}
+
+func (p *codexParser) handleCommandExecution(item map[string]any, phase codexItemPhase) {
+	id := p.codexToolItemID(item)
+	if id == "" {
+		return
+	}
+	if phase == codexItemStarted {
 		p.emit(driver.TranscriptItem{
 			Kind:      driver.TranscriptToolCall,
-			ToolName:  name,
 			ToolUseID: id,
-			Input:     item["input"],
+			ToolName:  "shell",
+			Input:     codexSelectedValues(item, "command", "cwd"),
 		})
-	case "tool_result", "command_output", "file_change":
-		id := codexTopLevelString(item, "id", "call_id", "tool_use_id")
-		text := codexTopLevelString(item, "text", "output", "message")
-		p.emit(driver.TranscriptItem{
-			Kind:      driver.TranscriptToolResult,
-			ToolUseID: id,
-			Text:      text,
-		})
+		return
 	}
+	p.emit(driver.TranscriptItem{
+		Kind:      driver.TranscriptToolResult,
+		ToolUseID: id,
+		Text:      codexTopLevelRawString(item, "aggregated_output"),
+		IsError:   codexToolFailed(item),
+		Data:      codexSelectedValues(item, "status", "exit_code", "duration_ms"),
+	})
+}
+
+func (p *codexParser) handleFileChange(item map[string]any, phase codexItemPhase) {
+	id := p.codexToolItemID(item)
+	if id == "" {
+		return
+	}
+	if phase == codexItemStarted {
+		p.emit(driver.TranscriptItem{
+			Kind:      driver.TranscriptToolCall,
+			ToolUseID: id,
+			ToolName:  "apply_patch",
+			Input:     codexSelectedValues(item, "changes"),
+		})
+		return
+	}
+	p.emit(driver.TranscriptItem{
+		Kind:      driver.TranscriptToolResult,
+		ToolUseID: id,
+		IsError:   codexToolFailed(item),
+		Data:      codexSelectedValues(item, "status", "changes"),
+	})
+}
+
+func (p *codexParser) handleMCPToolCall(item map[string]any, phase codexItemPhase) {
+	id := p.codexToolItemID(item)
+	if id == "" {
+		return
+	}
+	server := codexTopLevelString(item, "server")
+	tool := codexTopLevelString(item, "tool")
+	name := "mcp"
+	if tool != "" {
+		name = tool
+		if server != "" {
+			name = server + "/" + tool
+		}
+	}
+	if phase == codexItemStarted {
+		p.emit(driver.TranscriptItem{
+			Kind:      driver.TranscriptToolCall,
+			ToolUseID: id,
+			ToolName:  name,
+			Input:     item["arguments"],
+		})
+		return
+	}
+	p.emit(driver.TranscriptItem{
+		Kind:      driver.TranscriptToolResult,
+		ToolUseID: id,
+		Text:      codexJSONText(item["result"]),
+		IsError:   codexToolFailed(item) || codexHasValue(item["error"]),
+		Data:      codexSelectedValues(item, "status", "result", "error", "duration_ms"),
+	})
+}
+
+func (p *codexParser) handleWebSearch(item map[string]any, phase codexItemPhase) {
+	id := p.codexToolItemID(item)
+	if id == "" {
+		return
+	}
+	if phase == codexItemStarted {
+		p.emit(driver.TranscriptItem{
+			Kind:      driver.TranscriptToolCall,
+			ToolUseID: id,
+			ToolName:  "web_search",
+			Input:     codexSelectedValues(item, "query", "action"),
+		})
+		return
+	}
+	p.emit(driver.TranscriptItem{
+		Kind:      driver.TranscriptToolResult,
+		ToolUseID: id,
+		Text:      codexJSONText(item["result"]),
+		IsError:   codexToolFailed(item) || codexHasValue(item["error"]),
+		Data:      codexSelectedValues(item, "status", "action", "result", "error"),
+	})
+}
+
+func (p *codexParser) handleDynamicToolCall(item map[string]any, phase codexItemPhase) {
+	id := p.codexToolItemID(item)
+	if id == "" {
+		return
+	}
+	name := codexTopLevelString(item, "tool")
+	if name == "" {
+		name = "dynamic"
+	}
+	if phase == codexItemStarted {
+		p.emit(driver.TranscriptItem{
+			Kind:      driver.TranscriptToolCall,
+			ToolUseID: id,
+			ToolName:  name,
+			Input:     item["arguments"],
+		})
+		return
+	}
+	p.emit(driver.TranscriptItem{
+		Kind:      driver.TranscriptToolResult,
+		ToolUseID: id,
+		IsError:   codexToolFailed(item) || codexExplicitFalse(item["success"]),
+		Data:      codexSelectedValues(item, "status", "success", "duration_ms"),
+	})
+}
+
+func (p *codexParser) codexToolItemID(item map[string]any) string {
+	id := codexTopLevelString(item, "id")
+	if id == "" {
+		p.protocolMalformed = true
+	}
+	return id
+}
+
+func codexToolFailed(item map[string]any) bool {
+	switch strings.ToLower(codexTopLevelString(item, "status")) {
+	case "failed", "error", "declined", "interrupted", "cancelled", "canceled":
+		return true
+	}
+	if exitCode, ok := codexTopLevelInt(item, "exit_code"); ok {
+		return exitCode != 0
+	}
+	return false
+}
+
+func codexSelectedValues(item map[string]any, keys ...string) map[string]any {
+	selected := make(map[string]any, len(keys))
+	for _, key := range keys {
+		if value, ok := item[key]; ok && codexHasValue(value) {
+			selected[key] = value
+		}
+	}
+	if len(selected) == 0 {
+		return nil
+	}
+	return selected
+}
+
+func codexJSONText(value any) string {
+	if !codexHasValue(value) {
+		return ""
+	}
+	if text, ok := value.(string); ok {
+		return text
+	}
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return ""
+	}
+	return string(raw)
+}
+
+func codexHasValue(value any) bool {
+	switch v := value.(type) {
+	case nil:
+		return false
+	case string:
+		return strings.TrimSpace(v) != ""
+	case []any:
+		return len(v) > 0
+	case map[string]any:
+		return len(v) > 0
+	default:
+		return true
+	}
+}
+
+func codexExplicitFalse(value any) bool {
+	v, ok := value.(bool)
+	return ok && !v
 }
 
 func (p *codexParser) handleTerminal(raw string, payload map[string]any, kind string) {
@@ -296,11 +459,6 @@ func (p *codexParser) handleTerminal(raw string, payload map[string]any, kind st
 			}
 		}
 	}
-	if cost, ok := codexTopLevelFloat(payload, "cost_usd", "costUSD", "cost"); ok {
-		c := cost
-		p.cost = &c
-	}
-
 	isError := kind == "turn.failed"
 	if isError {
 		if errPayload := codexTopLevelObject(payload, "error"); errPayload != nil {
@@ -312,66 +470,13 @@ func (p *codexParser) handleTerminal(raw string, payload map[string]any, kind st
 			p.errorMessage = "codex terminal event reported failure"
 		}
 	}
-	if summary := codexTopLevelString(payload, "summary", "result", "text"); summary != "" {
-		p.terminalSummary = summary
-	}
-	if raw, ok := codexStructuredJSONFromTerminal(payload); ok {
-		p.structuredOutput = &driver.StructuredOutput{
-			Format:  driver.OutputFormatJSONSchema,
-			Source:  driver.StructuredOutputSourceNative,
-			RawJSON: raw,
-			Valid:   true,
-		}
-	}
-
 	p.emit(driver.TranscriptItem{
 		Kind:    driver.TranscriptResult,
 		Subtype: kind,
 		IsError: isError,
 		Usage:   p.usage,
-		CostUSD: p.cost,
 		Data:    map[string]any{"payload": payload},
 	})
-}
-
-func codexStructuredJSONFromTerminal(payload map[string]any) (json.RawMessage, bool) {
-	for _, key := range []string{"structured_output", "structuredOutput", "output", "result", "text"} {
-		raw, ok := payload[key]
-		if !ok {
-			continue
-		}
-		if msg, ok := jsonRawMessageFromValue(raw); ok {
-			return msg, true
-		}
-	}
-	return nil, false
-}
-
-func jsonRawMessageFromValue(raw any) (json.RawMessage, bool) {
-	switch value := raw.(type) {
-	case nil:
-		return nil, false
-	case string:
-		var decoded any
-		if err := json.Unmarshal([]byte(value), &decoded); err != nil {
-			return nil, false
-		}
-		msg, err := json.Marshal(decoded)
-		if err != nil {
-			return nil, false
-		}
-		return msg, true
-	default:
-		msg, err := json.Marshal(value)
-		if err != nil {
-			return nil, false
-		}
-		var decoded any
-		if err := json.Unmarshal(msg, &decoded); err != nil {
-			return nil, false
-		}
-		return msg, true
-	}
 }
 
 func (p *codexParser) emit(item driver.TranscriptItem) {
@@ -387,36 +492,31 @@ func (p *codexParser) emit(item driver.TranscriptItem) {
 	})
 }
 
-// finalSummary returns only a bounded provider terminal summary. Assistant
-// output is never reused as Summary because it may be arbitrarily large.
+// finalSummary is empty because the current codex exec JSONL terminal does not
+// define a bounded summary field. Assistant output is never reused as Summary
+// because it may be arbitrarily large.
 func (p *codexParser) finalSummary() string {
-	return strings.TrimSpace(p.terminalSummary)
+	return ""
 }
 
-// buildOutput concatenates assistant-kind transcript entries with the
-// "\n\n" separator required by the output contract.
+// buildOutput returns only the last officially completed agent_message. Codex
+// may emit intermediate agent_message items while it works; those remain in
+// Transcript, but Result.Text is the provider's final assistant-facing value.
 func (p *codexParser) buildOutput() string {
-	nonEmpty := make([]string, 0, len(p.assistantText))
-	for _, text := range p.assistantText {
-		if strings.TrimSpace(text) != "" {
-			nonEmpty = append(nonEmpty, text)
-		}
+	if len(p.assistantText) == 0 {
+		return ""
 	}
-	return strings.Join(nonEmpty, "\n\n")
+	return p.assistantText[len(p.assistantText)-1]
 }
 
 func (p *codexParser) checkpoint(exitCode int) *driver.Checkpoint {
 	if exitCode != 0 || p.protocolMalformed || p.terminalFailed || !p.threadStarted || !p.turnCompleted || p.checkpointThreadID == "" {
 		return nil
 	}
-	display := p.displayID
-	if display == "" {
-		display = p.checkpointThreadID
-	}
 	return &driver.Checkpoint{
 		State: &driver.SessionState{
 			ResumeID:  p.checkpointThreadID,
-			DisplayID: display,
+			DisplayID: p.checkpointThreadID,
 		},
 		Valid: true,
 	}
@@ -429,10 +529,31 @@ func (p *codexParser) checkpointForOutcome(exitCode int, signal string, timedOut
 	return p.checkpoint(exitCode)
 }
 
+// nativeStructuredOutputForOutcome returns the last officially completed
+// agent_message as the Codex native structured-output candidate. The parser
+// deliberately does not claim schema validity: the core invocation pipeline
+// canonicalizes and validates RawJSON against the host's requested schema.
+// A candidate is exposed only after the official turn.completed terminal and
+// a clean process/business outcome.
+func (p *codexParser) nativeStructuredOutputForOutcome(exitCode int, signal string, timedOut bool, failure *driver.RunFailure) *driver.StructuredOutput {
+	if exitCode != 0 || signal != "" || timedOut || failure != nil || p.protocolMalformed || p.terminalFailed || !p.turnCompleted || p.terminal == nil || p.terminal.Event != "turn.completed" || len(p.assistantText) == 0 {
+		return nil
+	}
+	text := p.assistantText[len(p.assistantText)-1]
+	if strings.TrimSpace(text) == "" {
+		return nil
+	}
+	return &driver.StructuredOutput{
+		Format:  driver.OutputFormatJSONSchema,
+		Source:  driver.StructuredOutputSourceNative,
+		RawJSON: append(json.RawMessage(nil), text...),
+	}
+}
+
 // snapshotCodexStdout feeds a complete stdout string through the parser and
-// returns its final state. It exists so legacy callers and unit tests can
-// operate on a complete stdout dump without giving up the streaming parser as
-// the single source of truth.
+// returns its final state. It lets batch consumers and unit tests operate on a
+// complete stdout dump without giving up the streaming parser as the single
+// source of truth.
 func snapshotCodexStdout(stdout string) *codexParser {
 	p := newCodexParser(nil)
 	_ = p.onChunk("stdout", []byte(stdout), time.Now().UTC())
@@ -441,7 +562,7 @@ func snapshotCodexStdout(stdout string) *codexParser {
 }
 
 func codexEventKind(payload map[string]any) string {
-	return strings.ToLower(codexTopLevelString(payload, "event", "type", "kind"))
+	return codexTopLevelString(payload, "type")
 }
 
 func codexTopLevelString(payload map[string]any, keys ...string) string {
@@ -455,6 +576,11 @@ func codexTopLevelString(payload map[string]any, keys ...string) string {
 		}
 	}
 	return ""
+}
+
+func codexTopLevelRawString(payload map[string]any, key string) string {
+	value, _ := payload[key].(string)
+	return value
 }
 
 func codexTopLevelObject(payload map[string]any, key string) map[string]any {
@@ -482,39 +608,4 @@ func codexTopLevelInt(payload map[string]any, keys ...string) (int, bool) {
 		}
 	}
 	return 0, false
-}
-
-func codexTopLevelFloat(payload map[string]any, keys ...string) (float64, bool) {
-	for _, key := range keys {
-		raw, ok := payload[key]
-		if !ok {
-			continue
-		}
-		switch value := raw.(type) {
-		case float64:
-			return value, true
-		case int:
-			return float64(value), true
-		case int64:
-			return float64(value), true
-		}
-	}
-	return 0, false
-}
-
-func isCheckpointPayload(payload map[string]any) bool {
-	for key, value := range payload {
-		switch value.(type) {
-		case nil, string, bool, float64:
-		default:
-			return false
-		}
-
-		switch key {
-		case "session_id", "sessionId", "sessionID", "thread_id", "threadId", "display_id", "displayId", "event", "type", "kind", "timestamp", "ts", "created_at", "createdAt":
-		default:
-			return false
-		}
-	}
-	return true
 }

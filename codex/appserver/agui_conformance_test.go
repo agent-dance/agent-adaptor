@@ -7,9 +7,9 @@ import (
 
 	aguievents "github.com/ag-ui-protocol/ag-ui/sdks/community/go/pkg/core/events"
 
+	adaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/bridges/agui"
 	"github.com/agent-dance/agent-adaptor/driver"
-	adaptor "github.com/agent-dance/agent-adaptor"
 )
 
 func translateAppserverToAGUI(t *testing.T, payloads []driver.StreamPayload) []aguievents.Event {

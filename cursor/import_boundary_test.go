@@ -12,9 +12,9 @@ import (
 
 const rootImportPath = "github.com/agent-dance/agent-adaptor"
 
-// TestPackageFilesDoNotImportLegacyRoot protects production code from
+// TestPackageFilesDoNotImportRootAPI protects production code from
 // depending on the consumer-facing root API. Integration tests may use it.
-func TestPackageFilesDoNotImportLegacyRoot(t *testing.T) {
+func TestPackageFilesDoNotImportRootAPI(t *testing.T) {
 	entries, err := os.ReadDir(".")
 	if err != nil {
 		t.Fatal(err)
@@ -37,7 +37,7 @@ func TestPackageFilesDoNotImportLegacyRoot(t *testing.T) {
 				continue
 			}
 			if path == rootImportPath {
-				t.Errorf("file %s imports legacy root %q", name, path)
+				t.Errorf("production file %s imports consumer-facing root API %q", name, path)
 			}
 		}
 	}

@@ -193,7 +193,7 @@ func TestSendReturnImmediatelySupportsGetTaskPollingFallback(t *testing.T) {
 		case "/.well-known/agent-card.json":
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = fmt.Fprintf(w, `{
-				"name":"Legacy Remote Agent",
+				"name":"Remote Test Agent",
 				"description":"test",
 				"version":"1.0.0",
 				"supportedInterfaces":[{"url":%q,"protocolBinding":"JSONRPC","protocolVersion":"1.0"}],

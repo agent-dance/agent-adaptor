@@ -9,4 +9,4 @@
 {"type":"stream_event","session_id":"sess-stream-think","event":{"type":"content_block_stop","index":1}}
 {"type":"stream_event","session_id":"sess-stream-think","event":{"type":"message_stop"}}
 {"type":"assistant","session_id":"sess-stream-think","message":{"model":"claude-fixture","content":[{"type":"thinking","text":"Let me think."},{"type":"text","text":"Done."}]}}
-{"type":"result","subtype":"success","session_id":"sess-stream-think","result":"Done.","usage":{"input_tokens":20,"output_tokens":8}}
+{"type":"result","subtype":"success","is_error":false,"session_id":"sess-stream-think","result":"Done.","usage":{"input_tokens":20,"output_tokens":8}}

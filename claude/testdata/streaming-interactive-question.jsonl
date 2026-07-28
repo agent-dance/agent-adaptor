@@ -1,0 +1,10 @@
+{"type":"system","subtype":"init","session_id":"sess-interactive-q","model":"claude-fixture"}
+{"type":"stream_event","event":{"type":"message_start","message":{"id":"msg-interactive-q"}}}
+{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_ask_interactive","name":"AskUserQuestion","input":{}}}}
+{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"questions\":[{\"type\":\""}}}
+{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"multipleChoice\",\"question\":\"Pick"}}}
+{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":" a directory\",\"options\":[\"docs\",\"src\"]}]}"}}}
+{"type":"stream_event","event":{"type":"content_block_stop","index":0}}
+{"type":"stream_event","event":{"type":"message_delta","delta":{"stop_reason":"tool_use"}}}
+{"type":"stream_event","event":{"type":"message_stop"}}
+{"type":"control_request","request_id":"req-question-interactive","request":{"subtype":"can_use_tool","tool_name":"AskUserQuestion","tool_use_id":"toolu_ask_interactive","input":{"questions":[{"type":"multipleChoice","question":"Pick a directory","options":["docs","src"]}]}}}

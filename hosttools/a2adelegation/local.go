@@ -1,12 +1,12 @@
 package a2adelegation
 
-// Local delegation loopback (P4.6, design doc §9.8 / decision D5).
+// Local delegation loopback.
 //
 // A Local(key, runner, policy) target is registered in the ordinary Registry
 // (which is A2A-protocol-only and therefore requires an AgentCard), backed by
 // a synthetic in-process card, and served by localClient: an A2AClient that
 // executes the Runner directly instead of dialing anything. The runner's
-// next-gen event stream is projected into A2A status updates carrying
+// Event stream is projected into A2A status updates carrying
 // adapter.stream.v1 DataParts — the same high-fidelity envelope the remote
 // bridge emits — so the existing eventMapper decodes local and remote targets
 // through one code path and both yield identical DelegationEvent sequences
@@ -21,10 +21,10 @@ import (
 	"sync"
 	"sync/atomic"
 
+	adaptor "github.com/agent-dance/agent-adaptor"
 	bridgea2a "github.com/agent-dance/agent-adaptor/bridges/a2a"
 	clienta2a "github.com/agent-dance/agent-adaptor/clients/a2a"
 	"github.com/agent-dance/agent-adaptor/driver"
-	adaptor "github.com/agent-dance/agent-adaptor"
 )
 
 // localRoleAgent mirrors the wire spelling of the A2A agent role so local
@@ -194,7 +194,7 @@ func promptFromMessage(msg clienta2a.Message) string {
 	return b.String()
 }
 
-// localA2AStream adapts a next-gen Stream to the A2AStream contract.
+// localA2AStream adapts an adaptor Stream to the A2AStream contract.
 type localA2AStream struct {
 	client    *localClient
 	taskID    string
@@ -294,7 +294,7 @@ func (s *localA2AStream) Close() error {
 	return nil
 }
 
-// adapterStreamFrame projects one next-gen event into an adapter.stream.v1
+// adapterStreamFrame projects one adaptor Event into an adapter.stream.v1
 // event object (without sequence, which the caller stamps). The kind strings
 // are the driver SPI StreamKind values — exactly what the remote bridge emits
 // and what adapterStreamStatusDecoder understands, which is what makes Local

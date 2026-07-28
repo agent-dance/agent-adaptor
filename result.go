@@ -13,8 +13,8 @@ import (
 // Consumer-facing aliases for audit types that already live in the driver
 // SPI package, so application code only imports this package.
 type (
-	// Usage is normalized token/cost accounting. Values may be zero when
-	// the driver cannot observe a metric.
+	// Usage is normalized token/cost accounting. Individual observed values
+	// may be zero; Result.Usage is nil when the provider reported no usage.
 	Usage = driver.Usage
 	// RawStreams captures the complete raw stdout/stderr of one run.
 	RawStreams = driver.RawStreams
@@ -48,9 +48,11 @@ type Result struct {
 	// Summary is a short host-facing label suitable for lists and logs,
 	// deliberately separate from Text.
 	Summary string
-	// Usage is normalized token/cost accounting (zero when unobserved).
-	Usage Usage
-	// Metadata is adapter-reported result metadata.
+	// Usage is normalized token/cost accounting. nil means the provider did
+	// not report usage; a non-nil zero value means usage was observed and all
+	// normalized metrics were explicitly zero.
+	Usage *Usage
+	// Metadata is Driver-reported result metadata.
 	Metadata map[string]string
 
 	raw        RawStreams
@@ -69,18 +71,24 @@ func resultFromResponse(runID string, resp driver.Response) *Result {
 		Provider:   resp.Provider,
 		Text:       resp.Output,
 		Summary:    resp.Summary,
+		Usage:      cloneUsage(resp.Usage),
 		Metadata:   maps.Clone(resp.Metadata),
 		transcript: cloneTranscript(resp.Transcript),
 		structured: cloneStructuredOutput(resp.StructuredOutput),
 		services:   cloneServiceReports(resp.RuntimeServices),
 	}
-	if resp.Usage != nil {
-		res.Usage = *resp.Usage
-	}
 	if resp.RawStreams != nil {
 		res.raw = cloneRawStreams(*resp.RawStreams)
 	}
 	return res
+}
+
+func cloneUsage(usage *Usage) *Usage {
+	if usage == nil {
+		return nil
+	}
+	cloned := *usage
+	return &cloned
 }
 
 // Raw returns the complete raw stdout/stderr and exact provider terminal JSON
@@ -109,8 +117,8 @@ func (r *Result) Transcript() []TranscriptItem {
 // and missing fields are filled from the SDK observation. The returned values,
 // including Metadata maps, are copies.
 //
-// The report deliberately does not echo the typed ServiceRef.MCP declaration
-// (closing TODO(P4.5)). Three reasons, in order of weight:
+// The report deliberately does not echo the typed ServiceRef.MCP declaration.
+// Three reasons, in order of weight:
 //
 //  1. Direction. ServiceRef.MCP is pre-run *input* the host itself authored
 //     (via WithServices or the provider it installed); ServiceReport is
@@ -227,9 +235,8 @@ func cloneJSONValue(value any) any {
 // When the run requested structured output (WithSchema[T] / RunAs[T]), the
 // validated payload is the only source: invalid output (possible under
 // SchemaReturnInvalid — the default policy fails the run instead) and
-// empty RawJSON are errors, mirroring the legacy DecodeStructuredOutput
-// contract. Runs without a schema fall back to interpreting Text as a JSON
-// document — the schema-less convenience decode.
+// empty RawJSON are errors. Runs without a schema fall back to interpreting
+// Text as a JSON document — the schema-less convenience decode.
 func (r *Result) Decode(v any) error {
 	if r == nil {
 		return errors.New("adaptor: Decode called on nil Result")

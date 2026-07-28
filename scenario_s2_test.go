@@ -18,18 +18,16 @@ package adaptor_test
 //	if err != nil { return err }
 //	if review.Verdict != "approve" { ... }
 //
-// RunAs[T] lands in P3.5; until then the equivalent P0 spelling is
-// reviewer.Run + res.Decode(&review). Agents are plain Go variables — the
-// named registry, sdk.Agent("review") lookups, and their runtime errors are
-// gone by construction.
+// Agents are plain Go variables, so results flow between them without a
+// registry or name lookup.
 
 import (
 	"context"
 	"strings"
 	"testing"
 
-	"github.com/agent-dance/agent-adaptor/driver"
 	adaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
 )
 
 type Review struct {
@@ -46,6 +44,12 @@ func TestScenarioS2MultiAgentPipeline(t *testing.T) {
 		Summary: "patch produced",
 	}
 	reviewerFake := newFakeDriver()
+	reviewerDescriptor := reviewerFake.Descriptor()
+	reviewerDescriptor.StructuredOutput = driver.StructuredOutputCapability{
+		JSONSchemaPromptValidate: true,
+		WorksWithRun:             true,
+	}
+	reviewerFake.descriptor = &reviewerDescriptor
 	reviewerFake.response = driver.Response{
 		Output:  `{"verdict":"approve","issues":[]}`,
 		Summary: "review complete",
@@ -61,16 +65,20 @@ func TestScenarioS2MultiAgentPipeline(t *testing.T) {
 		t.Fatalf("coder.Run: %v", err)
 	}
 
-	res, err := reviewer.Run(ctx, "review this patch:\n"+patch.Text)
+	review, res, err := adaptor.RunAs[Review](ctx, reviewer,
+		"review this patch:\n"+patch.Text,
+		// The hermetic fake has no provider-native schema transport; exercise
+		// the same typed API through prompt validation.
+		adaptor.WithSchema[Review](adaptor.SchemaPromptOnly()),
+	)
 	if err != nil {
-		t.Fatalf("reviewer.Run: %v", err)
-	}
-	var review Review
-	if err := res.Decode(&review); err != nil { // P3.5: adaptor.RunAs[Review] collapses this to one line
-		t.Fatalf("Decode: %v", err)
+		t.Fatalf("RunAs: %v", err)
 	}
 	if review.Verdict != "approve" {
 		t.Errorf("review.Verdict = %q, want approve", review.Verdict)
+	}
+	if res == nil || res.Summary != "review complete" {
+		t.Errorf("result = %+v, want review summary", res)
 	}
 
 	// The reviewer prompt was composed from the coder's Result.Text —

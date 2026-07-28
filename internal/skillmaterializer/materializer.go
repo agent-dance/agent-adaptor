@@ -16,8 +16,8 @@ import (
 )
 
 // This package is the single private implementation of the SDK's default
-// skill materializer. Both package skill and the migration engine delegate
-// here; public contracts and error identities remain owned by package skill.
+// skill materializer. Public entry points delegate here while public contracts
+// and error identities remain owned by package skill.
 
 // defaultSkillMaterializer implements Materializer using the
 // XDG-ish cache root described in docs/skill-api-design.md §3. The
@@ -31,9 +31,8 @@ type defaultSkillMaterializer struct {
 }
 
 // Source projections are deliberately structural. Public source values live
-// in package skill, while the engine still carries migration-only source
-// names; consuming their behavior through these narrow interfaces avoids a
-// dependency cycle and keeps one materialization implementation.
+// in package skill; consuming their behavior through these narrow interfaces
+// avoids a dependency cycle and keeps one materialization implementation.
 type skillPathProjection interface{ SkillPath() string }
 type skillFSProjection interface{ SkillFS() (fs.FS, string) }
 type inlineSkillProjection interface{ InlineSkillMD() string }

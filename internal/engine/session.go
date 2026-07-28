@@ -6,6 +6,9 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -20,9 +23,19 @@ import (
 var (
 	LeaseTTL           = func() time.Duration { return 5 * time.Minute }
 	LeaseRenewInterval = func() time.Duration { return 2 * time.Minute }
+	sessionEntropyRead = rand.Read
 )
 
-const defaultLeaseReleaseTimeout = 5 * time.Second
+const (
+	defaultLeaseReleaseTimeout = 5 * time.Second
+	// A Store method is an extension hook and may violate the context
+	// contract. This small grace distinguishes a context-aware hook that is
+	// returning from one that has abandoned its caller. The coordinator never
+	// waits beyond the caller deadline plus this fixed grace.
+	leaseHookCancellationGrace = 100 * time.Millisecond
+)
+
+var errLeaseRenewalStopped = errors.New("session lease renewal stopped")
 
 type resolvedSessionPlan struct {
 	request          SessionRequest
@@ -39,7 +52,7 @@ type resolvedSessionPlan struct {
 	leaseMu          sync.Mutex
 	leases           []SessionLease
 	renewMu          sync.Mutex
-	renewCancel      context.CancelFunc
+	renewCancel      context.CancelCauseFunc
 	renewWG          sync.WaitGroup
 	renewErrMu       sync.Mutex
 	renewErr         error
@@ -103,20 +116,28 @@ func sessionRecordLeaseID(id string) string {
 	return keycodec.Encode("session-record", id)
 }
 
-func newEngineSessionID(driverType, fingerprint string) string {
-	var suffix [8]byte
-	if _, err := rand.Read(suffix[:]); err != nil {
-		return stableHash("session", driverType, fingerprint, time.Now().UnixNano())
+func newEngineSessionID(driverType, fingerprint string) (string, error) {
+	var suffix [16]byte
+	n, err := sessionEntropyRead(suffix[:])
+	if err != nil {
+		return "", fmt.Errorf("generate engine session ID entropy: %w", err)
 	}
-	return stableHash("session", driverType, fingerprint, hex.EncodeToString(suffix[:]))
+	if n != len(suffix) {
+		return "", fmt.Errorf("generate engine session ID entropy: read %d of %d bytes: %w", n, len(suffix), io.ErrUnexpectedEOF)
+	}
+	return stableHash("session", driverType, fingerprint, hex.EncodeToString(suffix[:])), nil
 }
 
-func newLeaseOwner(identity AgentIdentity, driverType string, req SessionRequest) string {
-	var suffix [8]byte
-	if _, err := rand.Read(suffix[:]); err != nil {
-		return stableHash("lease_owner", time.Now().UnixNano(), identity, driverType, req)
+func newLeaseOwner(identity AgentIdentity, driverType string, req SessionRequest) (string, error) {
+	var suffix [16]byte
+	n, err := sessionEntropyRead(suffix[:])
+	if err != nil {
+		return "", fmt.Errorf("generate session lease owner entropy: %w", err)
 	}
-	return stableHash("lease_owner", identity, driverType, req, hex.EncodeToString(suffix[:]))
+	if n != len(suffix) {
+		return "", fmt.Errorf("generate session lease owner entropy: read %d of %d bytes: %w", n, len(suffix), io.ErrUnexpectedEOF)
+	}
+	return stableHash("lease_owner", identity, driverType, req, hex.EncodeToString(suffix[:])), nil
 }
 
 func sessionCompatibility(expected, actual string) SessionCompatibility {
@@ -147,6 +168,9 @@ func (p *resolvedSessionPlan) acquireLease(ctx context.Context, store SessionSto
 	}
 	lease, err := store.AcquireLease(ctx, target, p.owner, LeaseTTL())
 	if err != nil {
+		if errors.Is(err, ErrSessionBusy) {
+			return &SessionBusyError{Target: target}
+		}
 		return err
 	}
 	p.leaseMu.Lock()
@@ -159,6 +183,18 @@ func (p *resolvedSessionPlan) release() {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultLeaseReleaseTimeout)
 	defer cancel()
 	_ = p.releaseContext(ctx)
+}
+
+// releaseAfter is the prelaunch unwind path. Preparation failures remain the
+// primary error identity while every acquired lease is released through the
+// same bounded, observable cleanup contract used by ReleaseContext.
+func (p *resolvedSessionPlan) releaseAfter(primary error) error {
+	if p == nil {
+		return primary
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), defaultLeaseReleaseTimeout)
+	defer cancel()
+	return errors.Join(primary, p.releaseContext(ctx))
 }
 
 func (p *resolvedSessionPlan) releaseContext(ctx context.Context) error {
@@ -178,22 +214,69 @@ func (p *resolvedSessionPlan) releaseContext(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	done := make(chan error, 1)
-	go func() {
-		var releaseErrors []error
-		for index := len(leases) - 1; index >= 0; index-- {
-			if err := p.store.ReleaseLease(ctx, leases[index]); err != nil {
-				releaseErrors = append(releaseErrors, err)
-			}
-		}
-		done <- errors.Join(releaseErrors...)
-	}()
-	select {
-	case err := <-done:
-		return err
-	case <-ctx.Done():
-		return fmt.Errorf("release session leases: %w", ctx.Err())
+	// Release hooks are independent fencing operations. Start every one before
+	// waiting so a broken hook that ignores ctx cannot prevent later leases
+	// from being attempted. Results are buffered because timed-out hooks may
+	// return after this coordinator has moved on.
+	type releaseResult struct {
+		target string
+		err    error
 	}
+	results := make(chan releaseResult, len(leases))
+	pending := make(map[string]struct{}, len(leases))
+	for index := len(leases) - 1; index >= 0; index-- {
+		lease := leases[index]
+		pending[lease.Target] = struct{}{}
+		go func() {
+			err := p.store.ReleaseLease(ctx, lease)
+			results <- releaseResult{target: lease.Target, err: err}
+		}()
+	}
+
+	releaseErrors := make([]error, 0, len(leases)+1)
+	record := func(result releaseResult) {
+		delete(pending, result.target)
+		if result.err != nil {
+			releaseErrors = append(releaseErrors, fmt.Errorf("release session lease %q: %w", result.target, result.err))
+		}
+	}
+	for len(pending) > 0 {
+		select {
+		case result := <-results:
+			record(result)
+		case <-ctx.Done():
+			// Give already-cancelled, context-aware hooks one scheduling window
+			// to publish their concrete errors. An ignoring hook still cannot
+			// extend the total wait without bound.
+			grace := time.NewTimer(leaseHookCancellationGrace)
+		graceLoop:
+			for len(pending) > 0 {
+				select {
+				case result := <-results:
+					record(result)
+				case <-grace.C:
+					break graceLoop
+				}
+			}
+			if !grace.Stop() {
+				select {
+				case <-grace.C:
+				default:
+				}
+			}
+			if len(pending) > 0 {
+				targets := make([]string, 0, len(pending))
+				for target := range pending {
+					targets = append(targets, target)
+				}
+				slices.Sort(targets)
+				releaseErrors = append(releaseErrors,
+					fmt.Errorf("release session leases (pending %s): %w", strings.Join(targets, ", "), ctx.Err()))
+			}
+			return errors.Join(releaseErrors...)
+		}
+	}
+	return errors.Join(releaseErrors...)
 }
 
 func (p *resolvedSessionPlan) stopLeaseRenewal() {
@@ -203,15 +286,19 @@ func (p *resolvedSessionPlan) stopLeaseRenewal() {
 	p.renewMu.Lock()
 	defer p.renewMu.Unlock()
 	if p.renewCancel != nil {
-		p.renewCancel()
+		p.renewCancel(errLeaseRenewalStopped)
 		p.renewWG.Wait()
 		p.renewCancel = nil
 	}
 }
 
 func (p *resolvedSessionPlan) prepareFresh(ctx context.Context, store SessionStore, driverType, fingerprint string) error {
+	engineID, err := newEngineSessionID(driverType, fingerprint)
+	if err != nil {
+		return err
+	}
 	p.previousID = p.engineID
-	p.engineID = newEngineSessionID(driverType, fingerprint)
+	p.engineID = engineID
 	p.reused = false
 	p.created = true
 	p.record = nil
@@ -228,13 +315,13 @@ func (p *resolvedSessionPlan) startLeaseRenewal(ctx context.Context, store Sessi
 		return
 	}
 
-	renewCtx, renewCancel := context.WithCancel(ctx)
+	renewCtx, renewCancel := context.WithCancelCause(ctx)
 	p.renewMu.Lock()
 	defer p.renewMu.Unlock()
 	if p.renewCancel != nil {
 		// A plan owns one renewal loop. Treat repeated starts as an idempotent
 		// request instead of racing two tickers over the same lease set.
-		renewCancel()
+		renewCancel(errLeaseRenewalStopped)
 		return
 	}
 	p.renewCancel = renewCancel
@@ -250,8 +337,30 @@ func (p *resolvedSessionPlan) startLeaseRenewal(ctx context.Context, store Sessi
 				return
 			case <-ticker.C:
 				for _, lease := range p.snapshotLeases() {
-					if err := store.RenewLease(renewCtx, lease, LeaseTTL()); err != nil {
-						p.setRenewalError(err)
+					attemptCtx, attemptCancel := context.WithTimeout(renewCtx, leaseRenewAttemptTimeout())
+					err, completed := boundedSessionStoreCall(attemptCtx, func(callCtx context.Context) error {
+						return store.RenewLease(callCtx, lease, LeaseTTL())
+					})
+					attemptCancel()
+					if err != nil {
+						cause := context.Cause(renewCtx)
+						switch {
+						case errors.Is(cause, errLeaseRenewalStopped):
+							// A hook that acknowledged cancellation completed its
+							// contract. An abandoned call leaves renewal state unknown;
+							// fail closed and let Finalize preserve the old checkpoint.
+							if !completed {
+								p.setRenewalError(fmt.Errorf("%w: renew hook for %q did not stop", ErrSessionLeaseLost, lease.Target))
+							}
+							return
+						case cause != nil:
+							// The invocation itself was cancelled/deadlined. Preserve
+							// that public context identity instead of replacing it with
+							// a synthetic lease-lost error.
+							return
+						default:
+						}
+						p.setRenewalError(fmt.Errorf("%w: renew session lease %q: %w", ErrSessionLeaseLost, lease.Target, err))
 						if cancel != nil {
 							cancel()
 						}
@@ -261,6 +370,33 @@ func (p *resolvedSessionPlan) startLeaseRenewal(ctx context.Context, store Sessi
 			}
 		}
 	}()
+}
+
+// boundedSessionStoreCall isolates one external Store hook. Go cannot stop a
+// hostile function, so the hook runs in its own goroutine; the coordinator
+// stops waiting after context cancellation and a fixed acknowledgement grace.
+// completed reports whether the hook itself returned, which lets renewal
+// distinguish a normal context-aware stop from abandoned in-flight work.
+func boundedSessionStoreCall(ctx context.Context, call func(context.Context) error) (err error, completed bool) {
+	done := make(chan error, 1)
+	go func() { done <- call(ctx) }()
+	select {
+	case err := <-done:
+		return err, true
+	case <-ctx.Done():
+	}
+
+	grace := time.NewTimer(leaseHookCancellationGrace)
+	defer grace.Stop()
+	select {
+	case err := <-done:
+		return err, true
+	case <-grace.C:
+		if cause := context.Cause(ctx); cause != nil {
+			return cause, false
+		}
+		return ctx.Err(), false
+	}
 }
 
 func (p *resolvedSessionPlan) snapshotLeases() []SessionLease {
@@ -307,20 +443,22 @@ func leaseRenewInterval() time.Duration {
 	return interval
 }
 
-func (s *Core) prepareSession(
-	ctx context.Context,
-	req SessionRequest,
-	identity AgentIdentity,
-	driverType string,
-	fingerprint string,
-) (*resolvedSessionPlan, error) {
-	return prepareSessionPlan(ctx, s.sessionStore, req, identity, driverType, fingerprint)
+// leaseRenewAttemptTimeout fails a stalled renewal well before the current
+// lease can expire. The five-second cap keeps the SDK responsive with normal
+// production TTLs; short test/host TTLs retain a proportional safety margin.
+func leaseRenewAttemptTimeout() time.Duration {
+	timeout := LeaseTTL() / 2
+	if timeout <= 0 {
+		return time.Millisecond
+	}
+	if timeout > defaultLeaseReleaseTimeout {
+		return defaultLeaseReleaseTimeout
+	}
+	return timeout
 }
 
-// prepareSessionPlan is the store-parameterized session resolution logic.
-// It backs both the legacy Core.Execute path (via Core.prepareSession) and
-// the v1 Thread path (via PrepareThreadSession), so session mode semantics,
-// fingerprint gating, and lease acquisition stay single-sourced.
+// prepareSessionPlan is the store-parameterized thread resolution logic.
+// Thread modes, fingerprint gating, and lease acquisition stay single-sourced.
 func prepareSessionPlan(
 	ctx context.Context,
 	store SessionStore,
@@ -340,17 +478,20 @@ func prepareSessionPlan(
 		return nil, ErrSessionStoreRequired
 	}
 
+	owner, err := newLeaseOwner(identity, driverType, req)
+	if err != nil {
+		return nil, err
+	}
 	plan := &resolvedSessionPlan{
 		request: req,
-		owner:   newLeaseOwner(identity, driverType, req),
+		owner:   owner,
 		store:   store,
 	}
 
 	if req.Namespace != "" && req.Key != "" {
 		plan.keyLeaseID = sessionKeyLeaseID(req.Namespace, req.Key)
 		if err := plan.acquireLease(ctx, store, plan.keyLeaseID); err != nil {
-			plan.release()
-			return nil, &SessionBusyError{Target: req.Namespace + "/" + req.Key}
+			return nil, plan.releaseAfter(err)
 		}
 	}
 
@@ -362,8 +503,7 @@ func prepareSessionPlan(
 			Key:       req.Key,
 		})
 		if err != nil {
-			plan.release()
-			return nil, err
+			return nil, plan.releaseAfter(err)
 		}
 		current = record
 	case req.ID != "":
@@ -372,8 +512,7 @@ func prepareSessionPlan(
 			IncludeArchived: true,
 		})
 		if err != nil {
-			plan.release()
-			return nil, err
+			return nil, plan.releaseAfter(err)
 		}
 		current = record
 	case req.Namespace != "" && req.Key != "":
@@ -382,8 +521,7 @@ func prepareSessionPlan(
 			Key:       req.Key,
 		})
 		if err != nil {
-			plan.release()
-			return nil, err
+			return nil, plan.releaseAfter(err)
 		}
 		current = record
 	}
@@ -394,7 +532,7 @@ func prepareSessionPlan(
 			return nil
 		}
 		if err := plan.acquireLease(ctx, store, sessionRecordLeaseID(current.ID)); err != nil {
-			return &SessionBusyError{Target: current.ID}
+			return err
 		}
 		return nil
 	}
@@ -402,39 +540,37 @@ func prepareSessionPlan(
 	switch req.Mode {
 	case SessionContinueOnly:
 		if current == nil {
-			plan.release()
-			return nil, ErrSessionNotFound
+			return nil, plan.releaseAfter(ErrSessionNotFound)
 		}
 		if err := acquireCurrent(); err != nil {
-			plan.release()
-			return nil, err
+			return nil, plan.releaseAfter(err)
 		}
 		compat := sessionCompatibility(fingerprint, current.CompatibilityFingerprint)
 		plan.compatibility = compat
 		if compat.Status != SessionCompatibilityCompatible {
-			plan.release()
-			return nil, &SessionIncompatibleError{
+			return nil, plan.releaseAfter(&SessionIncompatibleError{
 				Reason:              compat.Reason,
 				ExpectedFingerprint: compat.ExpectedFingerprint,
 				ActualFingerprint:   compat.ActualFingerprint,
-			}
+			})
 		}
 		plan.engineID = current.ID
 		plan.reused = true
 	case SessionContinueOrStart:
 		if current == nil {
-			plan.engineID = newEngineSessionID(driverType, fingerprint)
+			plan.engineID, err = newEngineSessionID(driverType, fingerprint)
+			if err != nil {
+				return nil, plan.releaseAfter(err)
+			}
 			if err := plan.acquireLease(ctx, store, sessionRecordLeaseID(plan.engineID)); err != nil {
-				plan.release()
-				return nil, &SessionBusyError{Target: plan.engineID}
+				return nil, plan.releaseAfter(err)
 			}
 			plan.created = true
 			plan.compatibility = SessionCompatibility{Status: SessionCompatibilityNew}
 			return plan, nil
 		}
 		if err := acquireCurrent(); err != nil {
-			plan.release()
-			return nil, err
+			return nil, plan.releaseAfter(err)
 		}
 		compat := sessionCompatibility(fingerprint, current.CompatibilityFingerprint)
 		plan.compatibility = compat
@@ -443,58 +579,60 @@ func prepareSessionPlan(
 			plan.reused = true
 			return plan, nil
 		}
+		engineID, err := newEngineSessionID(driverType, fingerprint)
+		if err != nil {
+			return nil, plan.releaseAfter(err)
+		}
 		plan.previousID = current.ID
-		plan.engineID = newEngineSessionID(driverType, fingerprint)
+		plan.engineID = engineID
 		if err := plan.acquireLease(ctx, store, sessionRecordLeaseID(plan.engineID)); err != nil {
-			plan.release()
-			return nil, &SessionBusyError{Target: plan.engineID}
+			return nil, plan.releaseAfter(err)
 		}
 		plan.created = true
 	case SessionStartNew:
 		if current != nil {
 			if err := acquireCurrent(); err != nil {
-				plan.release()
-				return nil, err
+				return nil, plan.releaseAfter(err)
 			}
 			plan.previousID = current.ID
 		}
-		plan.engineID = newEngineSessionID(driverType, fingerprint)
+		plan.engineID, err = newEngineSessionID(driverType, fingerprint)
+		if err != nil {
+			return nil, plan.releaseAfter(err)
+		}
 		if err := plan.acquireLease(ctx, store, sessionRecordLeaseID(plan.engineID)); err != nil {
-			plan.release()
-			return nil, &SessionBusyError{Target: plan.engineID}
+			return nil, plan.releaseAfter(err)
 		}
 		plan.created = true
 		plan.compatibility = SessionCompatibility{Status: SessionCompatibilityNew}
 	case SessionFork:
 		if current != nil {
-			plan.release()
-			return nil, fmt.Errorf("%w: %s", ErrThreadAlreadyExists, req.Key)
+			return nil, plan.releaseAfter(fmt.Errorf("%w: %s", ErrThreadAlreadyExists, req.Key))
 		}
 		parent, err := prepareForkParent(ctx, store, plan, req)
 		if err != nil {
-			plan.release()
-			return nil, err
+			return nil, plan.releaseAfter(err)
 		}
 		if parent == nil {
-			plan.release()
-			return nil, ErrSessionNotFound
+			return nil, plan.releaseAfter(ErrSessionNotFound)
 		}
 		if err := validateForkParent(parent, identity, driverType, fingerprint, req.SessionCodec); err != nil {
-			plan.release()
-			return nil, err
+			return nil, plan.releaseAfter(err)
+		}
+		engineID, err := newEngineSessionID(driverType, fingerprint)
+		if err != nil {
+			return nil, plan.releaseAfter(err)
 		}
 		plan.record = parent
-		plan.engineID = newEngineSessionID(driverType, fingerprint)
+		plan.engineID = engineID
 		if err := plan.acquireLease(ctx, store, sessionRecordLeaseID(plan.engineID)); err != nil {
-			plan.release()
-			return nil, &SessionBusyError{Target: plan.engineID}
+			return nil, plan.releaseAfter(err)
 		}
 		plan.created = true
 		plan.requireKeyAbsent = true
 		plan.compatibility = SessionCompatibility{Status: SessionCompatibilityNew}
 	default:
-		plan.release()
-		return nil, fmt.Errorf("%w: unsupported mode %q", ErrInvalidSessionRequest, req.Mode)
+		return nil, plan.releaseAfter(fmt.Errorf("%w: unsupported mode %q", ErrInvalidSessionRequest, req.Mode))
 	}
 
 	return plan, nil
@@ -510,14 +648,14 @@ func prepareForkParent(ctx context.Context, store SessionStore, plan *resolvedSe
 	if req.ForkFromKey != "" {
 		parentKeyLease := sessionKeyLeaseID(req.Namespace, req.ForkFromKey)
 		if err := plan.acquireLease(ctx, store, parentKeyLease); err != nil {
-			return nil, &SessionBusyError{Target: req.ForkFromKey}
+			return nil, err
 		}
 		parent, err = store.Resolve(ctx, SessionQuery{Namespace: req.Namespace, Key: req.ForkFromKey})
 	} else {
 		parent, err = store.Resolve(ctx, SessionQuery{ID: req.ForkFrom, IncludeArchived: true})
 		if err == nil && parent != nil && parent.Namespace != "" && parent.Key != "" {
 			if leaseErr := plan.acquireLease(ctx, store, sessionKeyLeaseID(parent.Namespace, parent.Key)); leaseErr != nil {
-				return nil, &SessionBusyError{Target: parent.Key}
+				return nil, leaseErr
 			}
 		}
 	}
@@ -525,7 +663,7 @@ func prepareForkParent(ctx context.Context, store SessionStore, plan *resolvedSe
 		return parent, err
 	}
 	if err := plan.acquireLease(ctx, store, sessionRecordLeaseID(parent.ID)); err != nil {
-		return nil, &SessionBusyError{Target: parent.ID}
+		return nil, err
 	}
 	// Resolve by immutable internal ID after all coordinating leases are held,
 	// so codec/checkpoint/fingerprint validation observes one stable snapshot.
@@ -559,28 +697,16 @@ func validateForkParent(parent *SessionRecord, identity AgentIdentity, driverTyp
 	return nil
 }
 
-func (s *Core) persistSession(
-	ctx context.Context,
-	plan *resolvedSessionPlan,
-	identity AgentIdentity,
-	driver DriverAdapter,
-	fingerprint string,
-	checkpoint *DriverCheckpoint,
-) (*SessionRef, error) {
-	return persistSessionPlan(ctx, s.sessionStore, plan, identity, driver, fingerprint, checkpoint)
-}
-
 // persistSessionPlan is the store-parameterized post-run persistence logic
-// shared by the legacy Core path and the v1 Thread path (see
-// prepareSessionPlan).
+// used by the Thread pipeline.
 func persistSessionPlan(
 	ctx context.Context,
 	store SessionStore,
 	plan *resolvedSessionPlan,
 	identity AgentIdentity,
-	driver DriverAdapter,
+	driver Driver,
 	fingerprint string,
-	checkpoint *DriverCheckpoint,
+	checkpoint *Checkpoint,
 ) (*SessionRef, error) {
 	if plan == nil || store == nil || plan.request.Mode == SessionStateless {
 		return nil, nil
@@ -589,7 +715,17 @@ func persistSessionPlan(
 	if checkpoint == nil || !checkpoint.Valid || checkpoint.State == nil {
 		return nil, ErrSessionCheckpointMissing
 	}
-	persistedState := normalizeSessionState(driver, checkpoint.State)
+	codec, err := resumeSessionCodecFor(driver)
+	if err != nil {
+		return nil, err
+	}
+	persistedState, err := normalizeResumableSessionState(codec, checkpoint.State)
+	if err != nil {
+		if errors.Is(err, ErrSessionIncompatible) {
+			return nil, ErrSessionCheckpointMissing
+		}
+		return nil, err
+	}
 
 	record := SessionRecord{
 		ID:                       plan.engineID,
@@ -600,7 +736,7 @@ func persistSessionPlan(
 		Agent:                    identity,
 		Fingerprint:              fingerprint,
 		CompatibilityFingerprint: fingerprint,
-		SessionCodec:             SessionCodecFor(driver).Name(),
+		SessionCodec:             codec.Name(),
 		DriverState:              persistedState,
 		CreatedAt:                time.Now().UTC(),
 		UpdatedAt:                time.Now().UTC(),

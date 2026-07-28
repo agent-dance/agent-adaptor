@@ -16,6 +16,10 @@ import (
 	"time"
 )
 
+// maxRawRequestBytes bounds the Raw protocol's JSON body. The AG-UI decoder
+// applies the same four-MiB ceiling independently.
+const maxRawRequestBytes int64 = 4 << 20
+
 // Protocol selects the full on-wire contract (inbound + outbound).
 type Protocol int
 
@@ -42,11 +46,20 @@ func decodeRawRequest(r *http.Request) (*RawRequest, error) {
 			SessionKey: r.URL.Query().Get("sessionKey"),
 		}, nil
 	}
-	defer r.Body.Close()
+	limited := http.MaxBytesReader(nil, r.Body, maxRawRequestBytes)
+	defer limited.Close()
 	var req RawRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	decoder := json.NewDecoder(limited)
+	if err := decoder.Decode(&req); err != nil {
 		if errors.Is(err, io.EOF) {
 			return nil, errors.New("request body is empty")
+		}
+		return nil, fmt.Errorf("decode request: %w", err)
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return nil, errors.New("decode request: multiple JSON values")
 		}
 		return nil, fmt.Errorf("decode request: %w", err)
 	}

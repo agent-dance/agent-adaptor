@@ -7,12 +7,12 @@ import (
 	"strings"
 	"testing"
 
+	adaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/claude"
 	"github.com/agent-dance/agent-adaptor/codex"
 	"github.com/agent-dance/agent-adaptor/cursor"
 	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/mcp"
-	adaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/profile"
 	"github.com/agent-dance/agent-adaptor/skill"
 )

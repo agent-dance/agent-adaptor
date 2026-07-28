@@ -1,7 +1,6 @@
 package a2adelegation
 
-// Option() is the one-liner that turns a delegation Service into a leader
-// agent's team (design doc §9.7):
+// Option is the concise way to attach a delegation Service to a leader Agent:
 //
 //	team, err := delegation.NewService(delegation.Config{Agents: specs, ToolTimeout: t})
 //	defer team.Close()
@@ -16,20 +15,17 @@ package a2adelegation
 //	}
 //	review, ok := team.Result(stream.RunID(), "review")
 //
-// One option covers all three halves of what the hand-written host runtime
-// used to do: declaring the per-run MCP sidecar as a runtime service, keeping
-// its lifecycle bound to the run, and folding delegation events into the
-// leader's single event stream. No adaptor.WithTeam() exists and none is
-// wanted — the root package does not know the word "team" (§9.8). Option
-// implements the root package's generic RunServiceProvider extension point, so
-// this is the ecosystem-extension path any host tool can take.
+// The option declares the per-run MCP sidecar as a typed runtime service,
+// binds its lifecycle to the run, and folds delegation progress into the
+// leader's single Event stream. It uses the same RunServiceProvider extension
+// point as adaptor.WithRunServices; core does not gain team-specific API.
 
 import (
 	"context"
 
+	adaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/mcp"
-	adaptor "github.com/agent-dance/agent-adaptor"
 )
 
 const (
@@ -60,10 +56,8 @@ func (s *Service) Option() adaptor.SharedOption {
 	return runServiceOption{provider: s}
 }
 
-// runServiceOption is the delegation package's own option type. It exists to
-// demonstrate the intended shape of an ecosystem option: adaptor.Option is an
-// interface, so a package outside the SDK can issue one without the root
-// package's vocabulary growing a single entry.
+// runServiceOption binds the Service through adaptor's public extension point
+// without adding delegation-specific vocabulary to core.
 type runServiceOption struct {
 	provider adaptor.RunServiceProvider
 }
@@ -182,16 +176,12 @@ func (s *Service) runEvents(ctx context.Context, runID string) <-chan adaptor.Ev
 	return out
 }
 
-// SubagentEvent projects one DelegationEvent onto the next-gen event
-// vocabulary. The 19 DelegationEventKinds collapse onto the three
-// SubagentUpdate kinds (started / delta / finished); the full detail —
-// original kind, status, remote identifiers, tool payloads, errors — is
-// preserved in Data so nothing is lost in the projection.
-//
-// It lives here rather than in the bridge package because both consumers need
-// it and only one direction of import is legal: bridges/subagentstream imports
-// this package (and forwards to this function), while this package cannot
-// import the bridge.
+// SubagentEvent projects one DelegationEvent onto the adaptor Event vocabulary.
+// DelegationEventKinds collapse onto the three SubagentUpdate kinds (started,
+// delta, and finished). Data preserves the stable kind, status, remote
+// coordinates, tool payloads, errors, artifacts, and sequence. Raw A2A payloads
+// and StatusParts intentionally remain on the component-level EventBus and do
+// not enter the leader's core Event stream.
 func SubagentEvent(ev DelegationEvent) adaptor.SubagentUpdate {
 	update := adaptor.SubagentUpdate{
 		Agent: ev.AgentKey,

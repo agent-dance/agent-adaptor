@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/internal/engine"
 	"github.com/agent-dance/agent-adaptor/internal/testutil"
 )
 
@@ -19,6 +21,19 @@ func TestDescriptorAdvertisesExpectedMCPCapabilities(t *testing.T) {
 	caps := (adapter{}).Descriptor().MCP
 	if !caps.Supported || !caps.Stdio || !caps.HTTP || caps.SSE {
 		t.Fatalf("unexpected Codex MCP capability: %#v", caps)
+	}
+}
+
+func TestDescriptorAdvertisesTruthfulRunPolicyCapabilities(t *testing.T) {
+	caps := (adapter{}).Descriptor().RunPolicyCaps
+	if !caps.Isolation || !caps.WebSearch || caps.Browser {
+		t.Fatalf("unexpected Codex feature policy capabilities: %#v", caps)
+	}
+	if !caps.Permission.AutoApprove || caps.Permission.Ask || caps.Permission.AutoReject || caps.Permission.Retry {
+		t.Fatalf("unexpected Codex permission capabilities: %#v", caps.Permission)
+	}
+	if caps.PlanReview.Ask || caps.PlanReview.AutoApprove || caps.PlanReview.AutoReject || caps.PlanReview.Retry {
+		t.Fatalf("Codex has no independent plan-review control: %#v", caps.PlanReview)
 	}
 }
 
@@ -46,27 +61,25 @@ func TestParseCheckpointRequiresRecognizedCodexEvent(t *testing.T) {
 	}
 }
 
-func TestParseCheckpointAcceptsSessionOnlyPayload(t *testing.T) {
+func TestParseCheckpointRejectsSessionOnlyPayload(t *testing.T) {
 	checkpoint := snapshotCodexStdout(`{"thread_id":"codex-thread"}`).checkpoint(0)
 	if checkpoint != nil {
 		t.Fatalf("session-only payload is not terminal proof: %#v", checkpoint)
 	}
 }
 
-func TestParseCodexJSONLUsesThreadStartedSummaryAndUsage(t *testing.T) {
+func TestParseCodexJSONLUsesThreadStartedAssistantOutputAndUsage(t *testing.T) {
 	stdout := `{"type":"thread.started","thread_id":"thread-123"}
 {"type":"item.completed","item":{"type":"agent_message","text":"First update"}}
 {"type":"item.completed","item":{"type":"agent_message","text":"Final answer"}}
 {"type":"turn.completed","usage":{"input_tokens":12,"cached_input_tokens":4,"output_tokens":7}}`
 
 	parsed := snapshotCodexStdout(stdout)
-	if parsed.sessionID != "thread-123" || parsed.displayID != "thread-123" {
-		t.Fatalf("unexpected parsed session id=%q display=%q", parsed.sessionID, parsed.displayID)
+	checkpoint := parsed.checkpoint(0)
+	if checkpoint == nil || checkpoint.State == nil || checkpoint.State.ResumeID != "thread-123" || checkpoint.State.DisplayID != "thread-123" {
+		t.Fatalf("unexpected parsed checkpoint=%#v", checkpoint)
 	}
-	if parsed.summary != "Final answer" {
-		t.Fatalf("expected last agent message summary, got %q", parsed.summary)
-	}
-	if parsed.buildOutput() != "First update\n\nFinal answer" {
+	if parsed.buildOutput() != "Final answer" {
 		t.Fatalf("unexpected assistant output: %q", parsed.buildOutput())
 	}
 	if parsed.usage == nil || parsed.usage.InputTokens != 12 || parsed.usage.CachedInputTokens != 4 || parsed.usage.OutputTokens != 7 {
@@ -74,10 +87,95 @@ func TestParseCodexJSONLUsesThreadStartedSummaryAndUsage(t *testing.T) {
 	}
 }
 
-func TestParseCodexTerminalStructuredOutput(t *testing.T) {
-	parsed := snapshotCodexStdout(`{"type":"result","result":{"project_name":"agent-adaptor"}}`)
-	if parsed.structuredOutput == nil || string(parsed.structuredOutput.RawJSON) != `{"project_name":"agent-adaptor"}` {
-		t.Fatalf("expected structured output, got %#v", parsed.structuredOutput)
+func TestCodexNativeStructuredOutputUsesLastCompletedAgentMessageAndCoreValidation(t *testing.T) {
+	parsed := snapshotCodexStdout(`{"type":"thread.started","thread_id":"thread-structured"}
+{"type":"item.completed","item":{"id":"msg-1","type":"agent_message","text":"{\"project_name\":\"draft\"}"}}
+{"type":"item.completed","item":{"id":"msg-2","type":"agent_message","text":"{\"project_name\":\"agent-adaptor\"}"}}
+{"type":"turn.completed","usage":{"input_tokens":4,"output_tokens":2}}`)
+
+	candidate := parsed.nativeStructuredOutputForOutcome(0, "", false, nil)
+	if candidate == nil || string(candidate.RawJSON) != `{"project_name":"agent-adaptor"}` {
+		t.Fatalf("expected last completed agent_message, got %#v", candidate)
+	}
+	if candidate.Valid {
+		t.Fatal("Driver parser must not claim schema validity before core validation")
+	}
+	schema := &driver.OutputSchema{
+		Format:     driver.OutputFormatJSONSchema,
+		Mode:       driver.StructuredOutputNativeStrict,
+		SchemaJSON: json.RawMessage(`{"type":"object","properties":{"project_name":{"const":"agent-adaptor"}},"required":["project_name"],"additionalProperties":false}`),
+		OnInvalid:  driver.StructuredOutputFailRun,
+	}
+	validated, failure := engine.FinalizeStructuredOutput(schema, driver.StructuredOutputSourceNative, parsed.buildOutput(), candidate, nil)
+	if failure != nil || validated == nil || !validated.Valid || string(validated.RawJSON) != `{"project_name":"agent-adaptor"}` {
+		t.Fatalf("expected core-validated native output, value=%#v failure=%#v", validated, failure)
+	}
+	if got := parsed.buildOutput(); got != `{"project_name":"agent-adaptor"}` {
+		t.Fatalf("assistant Output must use only the final completed message, got %q", got)
+	}
+	if parsed.terminal == nil || parsed.terminal.Event != "turn.completed" || strings.Contains(string(parsed.terminal.JSON), "project_name") {
+		t.Fatalf("terminal Result must remain the official turn.completed envelope, got %#v", parsed.terminal)
+	}
+}
+
+func TestCodexForkAlwaysSelectsAppServerTransport(t *testing.T) {
+	if usesCodexAppServer(driver.Request{}) {
+		t.Fatal("stateless batch run unexpectedly selected app-server")
+	}
+	if !usesCodexAppServer(driver.Request{Streaming: true}) {
+		t.Fatal("streaming run did not select app-server")
+	}
+	if !usesCodexAppServer(driver.Request{Session: &driver.SessionContext{
+		Mode:  driver.SessionFork,
+		State: &driver.SessionState{ResumeID: "parent"},
+	}}) {
+		t.Fatal("non-streaming fork must select app-server thread/fork")
+	}
+	if usesCodexAppServer(driver.Request{Session: &driver.SessionContext{
+		Mode:  driver.SessionContinueOnly,
+		State: &driver.SessionState{ResumeID: "parent"},
+	}}) {
+		t.Fatal("ordinary batch resume unexpectedly selected app-server")
+	}
+}
+
+func TestCodexForkMapsOnlyParentToAppServerForkSelector(t *testing.T) {
+	parent := &driver.SessionContext{
+		Mode:  driver.SessionFork,
+		State: &driver.SessionState{ResumeID: "parent"},
+	}
+	resumeID, forkID := codexAppServerThreadIDs(parent)
+	if resumeID != "" || forkID != "parent" {
+		t.Fatalf("fork selectors = resume %q fork %q", resumeID, forkID)
+	}
+	continued := &driver.SessionContext{
+		Mode:  driver.SessionContinueOnly,
+		State: &driver.SessionState{ResumeID: "continued"},
+	}
+	resumeID, forkID = codexAppServerThreadIDs(continued)
+	if resumeID != "continued" || forkID != "" {
+		t.Fatalf("continue selectors = resume %q fork %q", resumeID, forkID)
+	}
+}
+
+func TestCodexAppServerPreservesConstructedModelEffortAndFastMode(t *testing.T) {
+	model, effort, serviceTier := codexAppServerConfigProjection(Config{
+		Model:           "  gpt-test  ",
+		ReasoningEffort: "xhigh",
+		FastMode:        true,
+	})
+	if model != "gpt-test" || effort != "xhigh" || serviceTier != "fast" {
+		t.Fatalf("app-server config projection = model %q effort %q tier %q", model, effort, serviceTier)
+	}
+}
+
+func TestCodexForkRejectsMissingParentBeforeProcessLaunch(t *testing.T) {
+	_, err := (adapter{}).Run(context.Background(), driver.Request{
+		Config:  Config{CommonConfig: CommonConfig{Command: filepath.Join(t.TempDir(), "must-not-launch")}},
+		Session: &driver.SessionContext{Mode: driver.SessionFork},
+	}, &testutil.EventRecorder{})
+	if !errors.Is(err, engine.ErrResumeRejected) {
+		t.Fatalf("error = %v, want ErrResumeRejected", err)
 	}
 }
 
@@ -89,8 +187,8 @@ func TestCodexRunAddsOutputSchemaArgAndParsesStructuredResult(t *testing.T) {
 	}
 	argFile := filepath.Join(home, "args.txt")
 	command := testutil.WriteCommand(t, home, "fake-codex-structured",
-		"#!/bin/sh\nset -eu\nprintf '%s\\n' \"$@\" > \"$ARG_FILE\"\nschema=''\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = '--output-schema' ]; then shift; schema=\"$1\"; break; fi\n  shift\ndone\n[ -s \"$schema\" ]\ncat >/dev/null\nprintf '{\"type\":\"thread.started\",\"thread_id\":\"codex-session\"}\\n'\nprintf '{\"type\":\"result\",\"result\":{\"project_name\":\"agent-adaptor\"}}\\n'\n",
-		"@echo off\r\nsetlocal enabledelayedexpansion\r\n> \"%ARG_FILE%\" echo %*\r\nset \"NEXT=\"\r\nset \"SCHEMA=\"\r\nfor %%A in (%*) do (\r\n  if defined NEXT (\r\n    set \"SCHEMA=%%~A\"\r\n    set \"NEXT=\"\r\n  )\r\n  if \"%%~A\"==\"--output-schema\" set \"NEXT=1\"\r\n)\r\nif not exist \"!SCHEMA!\" exit /b 3\r\nfor %%S in (\"!SCHEMA!\") do if %%~zS LEQ 0 exit /b 4\r\necho {\"type\":\"thread.started\",\"thread_id\":\"codex-session\"}\r\necho {\"type\":\"result\",\"result\":{\"project_name\":\"agent-adaptor\"}}\r\n",
+		"#!/bin/sh\nset -eu\nprintf '%s\\n' \"$@\" > \"$ARG_FILE\"\nschema=''\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = '--output-schema' ]; then shift; schema=\"$1\"; break; fi\n  shift\ndone\n[ -s \"$schema\" ]\ncat >/dev/null\nprintf '{\"type\":\"thread.started\",\"thread_id\":\"codex-session\"}\\n'\nprintf '{\"type\":\"item.completed\",\"item\":{\"id\":\"msg-1\",\"type\":\"agent_message\",\"text\":\"{\\\"project_name\\\":\\\"agent-adaptor\\\"}\"}}\\n'\nprintf '{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":4,\"output_tokens\":2}}\\n'\n",
+		"@echo off\r\nsetlocal enabledelayedexpansion\r\n> \"%ARG_FILE%\" echo %*\r\nset \"NEXT=\"\r\nset \"SCHEMA=\"\r\nfor %%A in (%*) do (\r\n  if defined NEXT (\r\n    set \"SCHEMA=%%~A\"\r\n    set \"NEXT=\"\r\n  )\r\n  if \"%%~A\"==\"--output-schema\" set \"NEXT=1\"\r\n)\r\nif not exist \"!SCHEMA!\" exit /b 3\r\nfor %%S in (\"!SCHEMA!\") do if %%~zS LEQ 0 exit /b 4\r\necho {\"type\":\"thread.started\",\"thread_id\":\"codex-session\"}\r\necho {\"type\":\"item.completed\",\"item\":{\"id\":\"msg-1\",\"type\":\"agent_message\",\"text\":\"{\\\"project_name\\\":\\\"agent-adaptor\\\"}\"}}\r\necho {\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":4,\"output_tokens\":2}}\r\n",
 	)
 
 	result, err := (adapter{}).Run(context.Background(), driver.Request{
@@ -115,6 +213,52 @@ func TestCodexRunAddsOutputSchemaArgAndParsesStructuredResult(t *testing.T) {
 	}
 	if result.StructuredOutput == nil || string(result.StructuredOutput.RawJSON) != `{"project_name":"agent-adaptor"}` {
 		t.Fatalf("expected native structured output, got %#v", result.StructuredOutput)
+	}
+	if !result.StructuredOutput.Valid || len(result.StructuredOutput.ValidationErrors) != 0 || result.StructuredOutput.SchemaHash == "" {
+		t.Fatalf("expected direct Driver response to use core schema validation, got %#v", result.StructuredOutput)
+	}
+	if result.Output != `{"project_name":"agent-adaptor"}` {
+		t.Fatalf("expected assistant Text to remain distinct, got %q", result.Output)
+	}
+	if result.RawStreams == nil || result.RawStreams.Terminal == nil || result.RawStreams.Terminal.Event != "turn.completed" {
+		t.Fatalf("expected official terminal payload, got %#v", result.RawStreams)
+	}
+	if len(result.Transcript) < 2 || result.Transcript[len(result.Transcript)-2].Kind != driver.TranscriptAssistant || result.Transcript[len(result.Transcript)-1].Kind != driver.TranscriptResult {
+		t.Fatalf("expected assistant/result transcript layers, got %#v", result.Transcript)
+	}
+}
+
+func TestCodexRunMissingNativeOutputFailsAndDoesNotCheckpoint(t *testing.T) {
+	home := t.TempDir()
+	command := testutil.WriteCommand(t, home, "fake-codex-missing-structured",
+		"#!/bin/sh\nset -eu\ncat >/dev/null\nprintf '{\"type\":\"thread.started\",\"thread_id\":\"codex-missing-output\"}\\n'\nprintf '{\"type\":\"turn.completed\"}\\n'\n",
+		"@echo off\r\nsetlocal\r\nset /p PROMPT=\r\necho {\"type\":\"thread.started\",\"thread_id\":\"codex-missing-output\"}\r\necho {\"type\":\"turn.completed\"}\r\n",
+	)
+	result, err := (adapter{}).Run(context.Background(), driver.Request{
+		Prompt:    "extract",
+		Config:    Config{CommonConfig: CommonConfig{Command: command, CWD: home}},
+		Workspace: driver.WorkspaceLease{CWD: home},
+		OutputSchema: &driver.OutputSchema{
+			Format:     driver.OutputFormatJSONSchema,
+			Mode:       driver.StructuredOutputNativeStrict,
+			SchemaJSON: json.RawMessage(`{"type":"object"}`),
+			OnInvalid:  driver.StructuredOutputFailRun,
+		},
+	}, &testutil.EventRecorder{})
+	if err != nil {
+		t.Fatalf("Driver.Run error = %v", err)
+	}
+	if result.StructuredOutput == nil || result.StructuredOutput.Valid || len(result.StructuredOutput.ValidationErrors) == 0 {
+		t.Fatalf("missing native value = %#v", result.StructuredOutput)
+	}
+	if result.Failure == nil || result.Failure.Code != driver.FailurePolicyError {
+		t.Fatalf("Failure = %#v, want policy error", result.Failure)
+	}
+	if result.Checkpoint != nil {
+		t.Fatalf("missing native output polluted checkpoint: %#v", result.Checkpoint)
+	}
+	if result.RawStreams == nil || result.RawStreams.Terminal == nil || result.RawStreams.Terminal.Event != "turn.completed" {
+		t.Fatalf("raw terminal lost: %#v", result.RawStreams)
 	}
 }
 

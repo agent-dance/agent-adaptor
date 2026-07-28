@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 
@@ -67,6 +68,7 @@ func TestWantsControlTransport(t *testing.T) {
 		{name: "empty policy remains batch", want: false},
 		{name: "permission ask", p: driver.HumanDecisionPolicy{Permission: driver.HumanDecisionAsk}, want: true},
 		{name: "plan review ask", p: driver.HumanDecisionPolicy{PlanReview: driver.HumanDecisionAsk}, want: true},
+		{name: "plan review auto approve", p: driver.HumanDecisionPolicy{PlanReview: driver.HumanDecisionAutoApprove}, want: true},
 		{name: "question ask", p: driver.HumanDecisionPolicy{Question: driver.QuestionAsk}, want: true},
 		{name: "permission auto reject", p: driver.HumanDecisionPolicy{Permission: driver.HumanDecisionAutoReject}, want: true},
 		{name: "auto approve remains batch", p: driver.HumanDecisionPolicy{Permission: driver.HumanDecisionAutoApprove}, want: false},
@@ -107,16 +109,47 @@ func TestBuildExecArgsControl(t *testing.T) {
 func TestBuildExecArgsControlDropsConflictingExtraArgs(t *testing.T) {
 	args := buildExecArgs(Config{
 		CommonConfig: CommonConfig{
-			ExtraArgs: []string{"--acp", "--acp-transport", "stdio", "--print", "--setting-sources", "none", "--custom-flag"},
+			ExtraArgs: []string{"--acp", "--custom-after-bool", "--acp-transport", "stdio", "--print", "--setting-sources", "none", "--permission-mode", "plan", "--dangerously-skip-permissions", "-y", "--custom-flag"},
 		},
 	}, driver.Request{}, PermissionUnset, true)
-	for _, forbidden := range []string{"--acp", "--acp-transport", "--print", "--setting-sources"} {
+	for _, forbidden := range []string{"--acp", "--acp-transport", "--print", "--setting-sources", "--permission-mode", "--dangerously-skip-permissions", "-y"} {
 		if hasArg(args, forbidden) {
 			t.Fatalf("control args contain forbidden %q: %v", forbidden, args)
 		}
 	}
 	if !hasArg(args, "--custom-flag") {
 		t.Fatalf("control args dropped safe extra argument: %v", args)
+	}
+	if !hasArg(args, "--custom-after-bool") {
+		t.Fatalf("control args consumed argument following boolean flag: %v", args)
+	}
+}
+
+func TestBuildExecArgsHeadlessPolicyDropsConflictingExtraArgs(t *testing.T) {
+	args := buildExecArgs(Config{
+		CommonConfig: CommonConfig{
+			ExtraArgs: []string{"--permission-mode", "plan", "--dangerously-skip-permissions", "-y", "--custom-flag"},
+		},
+	}, driver.Request{}, PermissionBypass)
+	if got := argIndex(args, "--permission-mode"); got < 0 || got+1 >= len(args) || args[got+1] != string(PermissionBypass) {
+		t.Fatalf("canonical permission mode missing: %v", args)
+	}
+	count := 0
+	for _, arg := range args {
+		if arg == "--permission-mode" || strings.HasPrefix(arg, "--permission-mode=") {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("permission mode count = %d, want 1: %v", count, args)
+	}
+	for _, forbidden := range []string{"plan", "--dangerously-skip-permissions", "-y"} {
+		if hasArg(args, forbidden) {
+			t.Fatalf("headless args contain conflicting %q: %v", forbidden, args)
+		}
+	}
+	if !hasArg(args, "--custom-flag") {
+		t.Fatalf("headless args dropped safe extra argument: %v", args)
 	}
 }
 
@@ -372,8 +405,8 @@ func TestControlDenyInterruptHonorsPolicy(t *testing.T) {
 // TestControlQuestionAnswersFromChoiceWhenAnswerMissing locks the fix for the
 // hang reported when hosts (debug viewer / production web viewer) resolve an
 // AskUserQuestion decision with only Choice set (no Answer) — a form that is
-// explicitly legal per docs/workstream-hitl-v2.md §3.12 and already handled
-// by the claude driver's resolveSingleQuestionAnswer fallback. Previously
+// explicitly legal and already handled by the claude driver's
+// resolveSingleQuestionAnswer fallback. Previously
 // codebuddy only trusted decision.Answer, so updatedInput.answers stayed nil
 // no matter which choice the host picked, and the CLI never unblocked.
 func TestControlQuestionAnswersFromChoiceWhenAnswerMissing(t *testing.T) {

@@ -32,6 +32,7 @@ type streamingState struct {
 	streamUsage     *driver.Usage
 	stopReason      string
 	numTurns        int
+	terminalPayload map[string]any
 }
 
 func newStreamingState(sink driver.EventSink, runID string, p *parser) *streamingState {
@@ -101,8 +102,6 @@ func (s *streamingState) handleAPIRetry(payload map[string]any) {
 
 	willRetry := true
 	if v, ok := payload["will_retry"].(bool); ok {
-		willRetry = v
-	} else if v, ok := payload["willRetry"].(bool); ok {
 		willRetry = v
 	}
 
@@ -372,11 +371,23 @@ func (s *streamingState) handleResultTerminal(payload map[string]any) {
 	if s.finishedEmitted {
 		return
 	}
+	// Stage the official terminal until parser.finalize has consumed the whole
+	// stdout stream. A malformed or post-terminal frame must turn both the
+	// Driver response and the typed stream into failure; emitting RunFinished
+	// eagerly here would make those two public views disagree.
+	s.terminalPayload = cloneMapShallow(payload)
+}
+
+func (s *streamingState) finishResultTerminal(payload map[string]any) {
 	s.closeOpenLifecycles()
-	if !s.parser.terminalSuccess {
+	if s.parser.protocolMalformed || !s.parser.terminalSuccess {
 		msg := s.parser.errorMessage
 		if msg == "" {
-			msg = "codebuddy terminal result did not report success"
+			if s.parser.protocolMalformed {
+				msg = "codebuddy protocol was malformed"
+			} else {
+				msg = "codebuddy terminal result did not report success"
+			}
 		}
 		s.emitErrorTerminal(&driver.RunFailure{Message: msg, Code: driver.FailureAgentError}, payload)
 		return
@@ -394,7 +405,7 @@ func (s *streamingState) handleResultTerminal(payload map[string]any) {
 	}
 
 	raw := map[string]any{"stop_reason": s.stopReason}
-	if v, ok := topFloat(payload, "total_cost_usd", "cost_usd"); ok {
+	if v, ok := topFloat(payload, "total_cost_usd"); ok {
 		raw["total_cost_usd"] = v
 	}
 	if subtype := topString(payload, "subtype"); subtype != "" {
@@ -465,11 +476,33 @@ func (s *streamingState) emitErrorTerminal(failure *driver.RunFailure, raw map[s
 	s.emitStream(driver.StreamPayload{Kind: driver.StreamRunError, Error: failure, Raw: raw})
 }
 
-func (s *streamingState) finalize() {
+func (s *streamingState) complete(failure *driver.RunFailure, exitCode int, signal string, timedOut bool) {
 	if s == nil || s.sink == nil || s.finishedEmitted {
 		return
 	}
 	s.markRunStarted()
+	if failure == nil {
+		switch {
+		case timedOut:
+			failure = &driver.RunFailure{Code: driver.FailureAgentError, Message: "codebuddy process timed out"}
+		case signal != "":
+			failure = &driver.RunFailure{Code: driver.FailureAgentError, Message: "codebuddy process exited after signal " + signal}
+		case exitCode != 0:
+			failure = &driver.RunFailure{Code: driver.FailureAgentError, Message: fmt.Sprintf("codebuddy process exited with code %d", exitCode)}
+		}
+	}
+	if failure != nil {
+		raw := s.terminalPayload
+		if raw == nil {
+			raw = map[string]any{"reason": "missing_or_invalid_terminal"}
+		}
+		s.emitErrorTerminal(failure, raw)
+		return
+	}
+	if s.terminalPayload != nil {
+		s.finishResultTerminal(s.terminalPayload)
+		return
+	}
 	s.closeOpenLifecycles()
 
 	s.emitErrorTerminal(&driver.RunFailure{

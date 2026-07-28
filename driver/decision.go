@@ -22,7 +22,7 @@ const (
 // decision (binary-approval classes).
 //
 // Semantic layering:
-//   - Ask         → route the request to a HITL channel (handler or channel).
+//   - Ask         → route the request to OnApproval or an ApprovalRequest Event.
 //   - AutoApprove → defer to the agent / CLI bypass / auto path.
 //   - AutoReject  → synthesize a rejection locally and emit a Failure.
 //   - Unset ("")  → fall back to the SDK default (see docs/run-policy.md §1.3).
@@ -33,9 +33,9 @@ const (
 type HumanDecisionMode string
 
 const (
-	// HumanDecisionUnset inherits the SDK/binding default.
+	// HumanDecisionUnset inherits the Agent or SDK default.
 	HumanDecisionUnset HumanDecisionMode = ""
-	// HumanDecisionAsk routes the decision to a host handler or async channel.
+	// HumanDecisionAsk routes the decision to OnApproval or an ApprovalRequest Event.
 	HumanDecisionAsk HumanDecisionMode = "ask"
 	// HumanDecisionAutoApprove lets the driver take its provider-specific
 	// automatic/bypass path for the decision class.
@@ -49,9 +49,9 @@ const (
 type QuestionMode string
 
 const (
-	// QuestionUnset inherits the SDK/binding default.
+	// QuestionUnset inherits the Agent or SDK default.
 	QuestionUnset QuestionMode = ""
-	// QuestionAsk routes the question to a host handler or async channel.
+	// QuestionAsk routes the question to OnApproval or an ApprovalRequest Event.
 	QuestionAsk QuestionMode = "ask"
 	// QuestionAutoReject rejects questions without asking the host.
 	QuestionAutoReject QuestionMode = "auto_reject"
@@ -177,8 +177,8 @@ type DecisionChoice struct {
 	Description string
 }
 
-// DecisionResult is the cross-class decision outcome used in
-// DecisionResponse, channel mode, and HumanDecisionFailure.Decision.
+// DecisionResult is the cross-class outcome used in DecisionResponse and
+// HumanDecisionFailure.Decision.
 type DecisionResult string
 
 const (
@@ -215,10 +215,10 @@ type DecisionRequest struct {
 	RetryAttempt    int
 }
 
-// DecisionResponse is the channel-mode response. Typed handlers use the
-// per-Kind Response types in the root package (PermissionResponse /
-// PlanReviewResponse / QuestionResponse) and are converted to
-// DecisionResponse internally before the driver sees them.
+// DecisionResponse is the normalized response returned to a driver after a
+// typed ApprovalRequest or OnApproval callback is resolved. The root package's
+// per-kind responses are converted to this envelope before the driver sees
+// them.
 type DecisionResponse struct {
 	RequestID string
 	Result    DecisionResult

@@ -2,6 +2,7 @@ package adaptor
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/agent-dance/agent-adaptor/internal/engine"
@@ -9,19 +10,18 @@ import (
 )
 
 // threadNamespace is the fixed engine namespace under which the Thread path
-// files every (key → session) mapping. The legacy engine addresses sessions
-// by a (Namespace, Key) pair; v1 collapses it to the host's single thread
-// key (multi-tenant hosts compose "tenant/key" themselves), so one constant
-// namespace satisfies the engine's non-empty requirement while the adapter
-// below strips it before it reaches a threadstore.Store.
+// files every (key → session) mapping. The public Thread contract exposes one
+// opaque host key, while the internal session coordinator requires a non-empty
+// namespace. The adapter below supplies this constant internally and strips it
+// before a request reaches threadstore.Store.
 const threadNamespace = "thread"
 
 // engineStore adapts a consumer-facing threadstore.Store onto the engine's
 // SessionStore port so PrepareThreadSession/Persist can drive it. The
 // mapping is purely mechanical: namespace dropped on the way out, restored
 // to threadNamespace on the way in; every other field carries over 1:1.
-// Living in next/ keeps the dependency arrow pointing outward — neither
-// engine nor threadstore imports the other.
+// Keeping the adapter in the root package preserves the dependency direction:
+// neither the internal engine nor threadstore imports adaptor.
 type engineStore struct {
 	store threadstore.Store
 }
@@ -60,6 +60,9 @@ func (s engineStore) Finalize(ctx context.Context, req engine.SessionFinalizeReq
 func (s engineStore) AcquireLease(ctx context.Context, target, owner string, ttl time.Duration) (engine.SessionLease, error) {
 	lease, err := s.store.AcquireLease(ctx, target, owner, ttl)
 	if err != nil {
+		if errors.Is(err, threadstore.ErrBusy) {
+			return engine.SessionLease{}, &engine.SessionBusyError{Target: target}
+		}
 		return engine.SessionLease{}, err
 	}
 	return engine.SessionLease{Target: lease.Target, Owner: lease.Owner, Token: lease.Token}, nil

@@ -8,6 +8,7 @@ import "encoding/json"
 type OutputFormat string
 
 const (
+	// OutputFormatJSONSchema requests a value governed by a JSON Schema.
 	OutputFormatJSONSchema OutputFormat = "json_schema"
 )
 
@@ -56,7 +57,10 @@ type OutputSchema struct {
 type StructuredOutputSource string
 
 const (
-	StructuredOutputSourceNative         StructuredOutputSource = "native"
+	// StructuredOutputSourceNative means the provider enforced the schema.
+	StructuredOutputSourceNative StructuredOutputSource = "native"
+	// StructuredOutputSourcePromptValidate means core prompted for exact JSON
+	// and validated the returned value locally.
 	StructuredOutputSourcePromptValidate StructuredOutputSource = "prompt_validate"
 )
 

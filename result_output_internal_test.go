@@ -10,9 +10,11 @@ import (
 
 func TestResultFromResponseDeepCopiesAuditLayers(t *testing.T) {
 	terminalJSON := json.RawMessage(`{"status":"completed","nested":{"value":1}}`)
+	usage := &driver.Usage{InputTokens: 3, OutputTokens: 5}
 	resp := driver.Response{
 		Output:   "assistant text",
 		Summary:  "bounded summary",
+		Usage:    usage,
 		Metadata: map[string]string{"source": "driver"},
 		RawStreams: &driver.RawStreams{
 			Stdout: "full stdout",
@@ -38,6 +40,7 @@ func TestResultFromResponseDeepCopiesAuditLayers(t *testing.T) {
 
 	result := resultFromResponse("run-1", resp)
 	resp.Metadata["source"] = "mutated"
+	usage.InputTokens = 99
 	resp.RawStreams.Terminal.JSON[0] = '['
 	resp.Transcript[0].Metadata["kind"] = "mutated"
 	resp.Transcript[0].Data["nested"].(map[string]any)["value"] = float64(99)
@@ -55,6 +58,9 @@ func TestResultFromResponseDeepCopiesAuditLayers(t *testing.T) {
 	if result.Services()[0].Metadata["observed"] != "yes" {
 		t.Fatalf("Services = %#v", result.Services())
 	}
+	if result.Usage == nil || result.Usage.InputTokens != 3 || result.Usage.OutputTokens != 5 || result.Usage == usage {
+		t.Fatalf("Usage = %#v; want independent observed usage copy", result.Usage)
+	}
 
 	// Accessors return fresh deep copies too.
 	raw.Terminal.JSON[0] = '['
@@ -63,6 +69,23 @@ func TestResultFromResponseDeepCopiesAuditLayers(t *testing.T) {
 	services[0].Metadata["observed"] = "changed"
 	if string(result.Raw().Terminal.JSON) != `{"status":"completed","nested":{"value":1}}` || result.Transcript()[0].Metadata["kind"] != "final" || result.Services()[0].Metadata["observed"] != "yes" {
 		t.Fatal("audit accessor mutation escaped into Result")
+	}
+}
+
+func TestResultFromResponsePreservesUsageObservation(t *testing.T) {
+	unobserved := resultFromResponse("unobserved", driver.Response{})
+	if unobserved.Usage != nil {
+		t.Fatalf("unobserved Usage = %#v, want nil", unobserved.Usage)
+	}
+
+	providerZero := &driver.Usage{}
+	observedZero := resultFromResponse("observed-zero", driver.Response{Usage: providerZero})
+	if observedZero.Usage == nil || *observedZero.Usage != (Usage{}) {
+		t.Fatalf("observed zero Usage = %#v, want non-nil zero value", observedZero.Usage)
+	}
+	providerZero.InputTokens = 1
+	if observedZero.Usage.InputTokens != 0 {
+		t.Fatalf("provider mutation escaped into Result.Usage: %#v", observedZero.Usage)
 	}
 }
 

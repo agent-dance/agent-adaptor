@@ -2,13 +2,17 @@ package driver
 
 import "context"
 
-// Driver is the adapter SPI implemented by built-in and third-party agent
-// integrations. The SDK owns default merging, session coordination,
+// Driver is the canonical SPI implemented by built-in and third-party agent
+// integrations. The SDK owns option merging, Thread coordination,
 // workspace/runtime/skill resolution, and result archiving; drivers own
 // provider-specific validation, process/protocol execution, transcript
 // parsing, and checkpoint extraction.
 type Driver interface {
 	Descriptor() Descriptor
+	// ValidateConfig validates the Driver's construction-time configuration.
+	// A configured Driver MUST interpret nil as "validate the captured
+	// configuration". The root runner calls this before every launch and wraps
+	// failures in InvalidDriverConfigError.
 	ValidateConfig(cfg any) error
 	// Run executes exactly one resolved invocation. When req.Streaming is
 	// true, normalized payloads obey the lifecycle contract documented on
@@ -20,7 +24,7 @@ type Driver interface {
 
 // EnvironmentProbe is implemented by drivers that can perform preflight
 // checks against local CLIs, auth files, profile directories, or other
-// dependencies. Admin.CheckEnvironment uses it when present.
+// dependencies. Agent.Inspect().Environment uses it when present.
 type EnvironmentProbe interface {
 	CheckEnvironment(ctx context.Context, cfg any) (EnvironmentReport, error)
 }
@@ -38,8 +42,10 @@ type ModelDetector interface {
 	DetectModel(ctx context.Context, cfg any, profile *ProfileSelection) (*DetectedModel, error)
 }
 
-// ProfileReporter lets drivers expose the effective local profile directory
-// used for auth/config/skill semantics through the control plane.
+// ProfileReporter lets drivers report the effective local profile directory
+// used for auth, config, MCP, and skill semantics. Agent.ProfileState and
+// Agent.SyncProfile use it when the driver does not implement richer profile
+// resource inspection.
 //
 // Built-in drivers use this to report effective CODEX_HOME,
 // CLAUDE_CONFIG_DIR, or CURSOR_HOME resolution, including managed homes when
@@ -50,13 +56,16 @@ type ProfileReporter interface {
 
 // SessionCodecProvider exposes the stable, deterministic session mapping used
 // for resume compatibility. A Driver MUST implement this interface with a
-// non-nil codec if and only if Descriptor.Sessions.SupportsResume is true.
+// non-nil, non-typed-nil codec if and only if
+// Descriptor.Sessions.SupportsResume is true. Resume-capable Drivers MUST also
+// implement SessionConfigFingerprinter; Thread prelaunch rejects either
+// missing contract before acquiring store leases or invoking Driver.Run.
 type SessionCodecProvider interface {
 	SessionCodec() SessionCodec
 }
 
 // ConfigSchemaProvider lets drivers expose a runtime-hydrated config schema
-// through the control plane without changing the execution contract.
+// through Agent.Inspect().ConfigSchema without changing execution semantics.
 type ConfigSchemaProvider interface {
 	ConfigSchema(ctx context.Context, cfg any) (*ConfigSchema, error)
 }
@@ -69,27 +78,27 @@ type QuotaProbe interface {
 
 // SkillSupport is the optional driver contract for skill-capable drivers.
 // Drivers that do not implement it simply ignore skills; the SDK still
-// reports an unsupported snapshot through the Admin surface.
+// reports an unsupported snapshot through Agent.Inspect().Skills.
 //
 // The design splits concerns across three methods:
-//   - ListSkills reports the Admin-layer snapshot. selected is the SDK's
-//     final selection set (Required ∪ WithDefaultSkills ∪ WithSkills) and
-//     matches payload.Keys(); resolved is the full merged catalogue
-//     (provider + binding-only candidates + selected skills). Drivers
+//   - ListSkills reports the read-only inspection snapshot. selected is the
+//     final selection set (required skills plus Agent defaults and any active
+//     SelectSkills selection) and matches payload.Keys(); resolved is the full
+//     merged catalogue (provider candidates plus selected skills). Drivers
 //     should pass resolved through to SkillSnapshot.Resolved so the
-//     Admin API can render the "available but unselected" view without
+//     inspection API can render the "available but unselected" view without
 //     re-enumerating the provider.
-//   - InjectSkills is invoked exactly once per Run() invocation after skill
-//     resolution and before the driver starts. It is a compatibility hook
-//     for third-party drivers and should stay non-destructive unless the
+//   - InjectSkills is invoked exactly once per resolved invocation after skill
+//     resolution and before the driver starts. It is an optional pre-launch
+//     materialization hook and should stay non-destructive unless the
 //     driver can prove the run cannot later be rejected. Built-in drivers
 //     treat it as a no-op and reconcile profile-local resources inside Run()
 //     after resume guards pass, because the effective profile directory is
 //     only known there.
-//   - SyncSkills is invoked by AgentAdmin.SetSelectedSkills to reconcile
-//     the persistent / ephemeral host-side layout with the newly-chosen
-//     set. It receives both the selected keys and the full resolved
-//     catalogue for the same reason as ListSkills.
+//   - SyncSkills is invoked by Agent.SelectSkills and Agent.SyncProfile to
+//     reconcile the persistent or ephemeral provider layout with the selected
+//     set. It receives both the selected keys and the full resolved catalogue
+//     for the same reason as ListSkills.
 //
 // Invariants the SDK guarantees to drivers:
 //
@@ -111,16 +120,17 @@ type SkillSupport interface {
 }
 
 // EventSink is the per-run event surface drivers write into while executing.
-// Emit carries operational RunEvent data; EmitStream carries normalized
-// token/tool/reasoning/HITL payloads when streaming is enabled. Drivers should
-// not retain the sink after Run returns. Every RunEventItem emitted through
-// Emit MUST appear in Response.Transcript in the same order, with no hidden or
-// recomputed entries.
+// Emit accepts operational RunEvent data; EmitStream accepts normalized
+// token, tool, reasoning, and HITL payloads when provider streaming is enabled.
+// Both methods feed the same public typed Event stream; they are not separate
+// consumer channels. Drivers should not retain the sink after Run returns.
+// Every RunEventItem emitted through Emit MUST appear in Response.Transcript
+// in the same order, with no hidden or recomputed entries.
 type EventSink interface {
-	// Emit publishes a RunEvent on the run-scoped event channel.
+	// Emit publishes a RunEvent to the run-scoped Event sink.
 	Emit(event RunEvent) error
 	// EmitStream publishes a structured StreamPayload on the run-scoped
-	// stream channel. When the resolved provider transport is non-streaming the
+	// Event sink. When the resolved provider transport is non-streaming the
 	// sink may discard the payload; this is independent of the public Run versus
 	// Stream method. Drivers MUST leave Sequence, Seq, and Timestamp zero; core
 	// assigns all three in receiver order.
@@ -133,7 +143,7 @@ type EventSink interface {
 // not change the Runner execution contract.
 //
 // In particular, StreamSupport MUST NOT be interpreted as an A2A transport
-// capability. Every v1 Runner has Stream; remote A2A streaming availability is
+// capability. Every Runner has Stream; remote A2A streaming availability is
 // negotiated from the remote AgentCard, not by querying a local Driver.
 type StreamSupport interface {
 	StreamCapability() StreamCapability
@@ -158,9 +168,9 @@ type StreamCapability struct {
 	// complete Args snapshot instead.
 	ToolCallArgs bool
 	// HITL reports whether human-in-the-loop approval / user-input events
-	// are exposed on the stream channel. The stream event is the broadcast
-	// channel; the decision path, when supported, still goes through
-	// DecisionCapableSink and the host-facing decision surfaces.
+	// are exposed as typed events. The response path, when supported, still
+	// goes through DecisionCapableSink and the ApprovalRequest carried by the
+	// public Event.
 	HITL bool
 }
 
@@ -168,23 +178,37 @@ type StreamCapability struct {
 // to validate host requests before launching a driver; hosts can use it to
 // disable unsupported UI controls instead of discovering failures late.
 type Descriptor struct {
-	Type             string
-	DisplayName      string
-	Models           []ModelInfo
-	ConfigSchema     *ConfigSchema
-	Sessions         SessionCapability
-	Skills           SkillCapability
-	MCP              MCPCapability
-	Instructions     InstructionsCapability
-	Workspace        WorkspaceCapability
-	RunPolicyCaps    RunPolicyCapabilities
-	Runtime          RuntimeCapability
+	// Type is the stable provider/driver identifier.
+	Type string
+	// DisplayName is the human-readable driver name.
+	DisplayName string
+	// Models lists statically known models; ModelLister may provide a live list.
+	Models []ModelInfo
+	// ConfigSchema is the static schema used when ConfigSchemaProvider is absent.
+	ConfigSchema *ConfigSchema
+	// Sessions declares resume support and its SessionCodec requirement.
+	Sessions SessionCapability
+	// Skills declares whether and how the driver consumes resolved skills.
+	Skills SkillCapability
+	// MCP declares the supported MCP transports.
+	MCP MCPCapability
+	// Instructions declares explicit instruction-bundle support.
+	Instructions InstructionsCapability
+	// Workspace declares support for SDK-resolved workspaces.
+	Workspace WorkspaceCapability
+	// RunPolicyCaps declares the policy dimensions the driver can enforce.
+	RunPolicyCaps RunPolicyCapabilities
+	// Runtime declares runtime-service reporting support.
+	Runtime RuntimeCapability
+	// StructuredOutput declares supported structured-output mechanisms.
 	StructuredOutput StructuredOutputCapability
 }
 
 // SessionCapability declares whether a driver can resume provider sessions.
 // SupportsResume MUST be true if and only if the Driver implements
-// SessionCodecProvider and returns a non-nil stable codec.
+// SessionCodecProvider and returns a non-nil stable codec. When true, the
+// Driver MUST additionally implement SessionConfigFingerprinter with a stable,
+// non-empty construction-config identity.
 type SessionCapability struct {
 	SupportsResume bool
 }
@@ -220,7 +244,7 @@ type RuntimeCapability struct {
 // JSONSchemaPromptValidate means the driver can accept core's explicit
 // exact-JSON prompt while core performs local validation. At least one of
 // those mechanisms MUST be true before any WorksWith* field is true, and a
-// declared mechanism MUST set WorksWithRun because v1 has one execution
+// declared mechanism MUST set WorksWithRun because the SDK has one execution
 // pipeline shared by consumer Run and Stream.
 //
 // WorksWithStreaming applies only when Request.Streaming selects the

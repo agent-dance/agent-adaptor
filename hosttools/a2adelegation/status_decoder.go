@@ -1,8 +1,8 @@
 package a2adelegation
 
 import (
-	bridgea2a "github.com/agent-dance/agent-adaptor/bridges/a2a"
 	adaptor "github.com/agent-dance/agent-adaptor"
+	bridgea2a "github.com/agent-dance/agent-adaptor/bridges/a2a"
 )
 
 type adapterStreamStatusDecoder struct{}
@@ -58,10 +58,9 @@ func delegationEventFromAdapterEvent(decoded adaptor.Event) (DelegationEvent, bo
 			event.Raw["member_provider_timestamp"] = meta.Source.Timestamp
 		}
 	} else {
-		// Pre-meta adapter.stream.v1 producers carried the provider thread
-		// identifier in the flat ThreadID field. DecodeAdapterEventV1 maps
-		// that compatibility field to ThreadKey; preserve its established
-		// delegation meaning when no explicit provider Source is present.
+		// The adapter.stream.v1 wire contract permits a flat ThreadID when
+		// provider Source coordinates are absent. DecodeAdapterEventV1 maps
+		// it to ThreadKey; retain that value as the member thread coordinate.
 		if meta.ThreadKey != "" {
 			event.Raw["member_thread_id"] = meta.ThreadKey
 		}

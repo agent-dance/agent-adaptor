@@ -4,11 +4,13 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
+
+	publicskill "github.com/agent-dance/agent-adaptor/skill"
 )
 
 func TestRehomedMaterializerPreservesCacheFingerprint(t *testing.T) {
-	value := Skill{Key: "team/review", Source: SkillFromInline{SkillMD: "# Review"}}
-	path, err := NewDefaultSkillMaterializer(WithSkillCacheRoot(t.TempDir())).Materialize(context.Background(), value)
+	value := Skill{Key: "team/review", Source: publicskill.InlineSource{SkillMD: "# Review"}}
+	path, err := publicskill.NewDefaultSkillMaterializer(publicskill.WithSkillCacheRoot(t.TempDir())).Materialize(context.Background(), value)
 	if err != nil {
 		t.Fatal(err)
 	}

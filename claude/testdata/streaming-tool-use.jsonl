@@ -7,4 +7,4 @@
 {"type":"assistant","session_id":"sess-stream-tool","message":{"content":[{"type":"tool_use","id":"tool-stream-1","name":"read_file","input":{"path":"/tmp/x"}}]}}
 {"type":"user","session_id":"sess-stream-tool","message":{"content":[{"type":"tool_result","tool_use_id":"tool-stream-1","content":"ok"}]}}
 {"type":"assistant","session_id":"sess-stream-tool","message":{"content":[{"type":"text","text":"Tool finished."}]}}
-{"type":"result","subtype":"success","session_id":"sess-stream-tool","result":"Tool finished.","usage":{"input_tokens":55,"output_tokens":12}}
+{"type":"result","subtype":"success","is_error":false,"session_id":"sess-stream-tool","result":"Tool finished.","usage":{"input_tokens":55,"output_tokens":12}}

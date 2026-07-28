@@ -2,15 +2,15 @@ package engine
 
 import "fmt"
 
-// Conflict-aware skill merging (moved from the root package's
-// skill_helpers.go with the resolution layer in P0.2 batch 3).
+// Conflict-aware skill merging for provider, catalog, Agent-default, and
+// call-scoped candidates.
 
 type sourceLabel string
 
 const (
 	sourceLabelProvider  sourceLabel = "provider"
-	sourceLabelCandidate sourceLabel = "binding:candidate"
-	sourceLabelDefault   sourceLabel = "binding:default"
+	sourceLabelCandidate sourceLabel = "agent:candidate"
+	sourceLabelDefault   sourceLabel = "agent:default"
 	sourceLabelRun       sourceLabel = "run:per-call"
 )
 
@@ -106,7 +106,7 @@ func (m *skillMerger) has(key string) bool {
 // the bucket for key. Used by the resolution layer to decide which
 // merged entries belong to the run's selected set (anything from
 // provider / default / run is selected; candidate-only entries are
-// registered for SetSelectedSkills lookups but not auto-selected).
+// registered for SelectSkills lookups but not auto-selected).
 func (m *skillMerger) hasSource(key string, label sourceLabel) bool {
 	bucket, ok := m.entries[normalizeSkillKey(key)]
 	if !ok {

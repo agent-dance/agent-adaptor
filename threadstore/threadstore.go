@@ -1,18 +1,16 @@
 // Package threadstore defines the storage contract behind stateful Threads
-// (v1 consumer API, docs/api-v1-redesign.md §2.4).
+// (see docs/api-v1-redesign.md §2.4).
 //
 // A Store persists the driver resume checkpoints that let a Thread continue
-// a conversation across runs and processes. It carries the exact capability
-// set of the legacy root-package SessionStore — resolve, finalize, and the
-// lease trio that guards concurrent use — with the v1 identity model: the
-// legacy (Namespace, Key) pair collapses into the host's single thread key
-// (multi-tenant hosts compose their own, e.g. "tenant-1/issue-123").
+// a conversation across runs and processes. It resolves and atomically
+// finalizes records, while a lease trio guards concurrent use. The host owns
+// one opaque thread key; multi-tenant hosts can use their own collision-free
+// encoding when several dimensions must share that key.
 //
-// Ontology guardrail (unchanged from the legacy SessionStore contract): a
-// Store holds resume tokens, compatibility fingerprints, and lease
-// coordination. It is NOT a chat-history store, not an HITL pending queue,
+// A Store holds resume tokens, compatibility fingerprints, and lease
+// coordination. It is not a chat-history store, an HITL pending queue,
 // and not "the conversation a user sees in a chat UI" — hosts that need
-// those compose their own recording on top (see pkg/hosttools).
+// those compose their own recording on top (see hosttools/sessionrecorder).
 //
 // Dependency rule: this package may import the driver SPI package only —
 // never the root package or the internal engine.
@@ -41,9 +39,9 @@ const (
 // unsafe resumes when important context (identity, model, workspace,
 // instructions, ...) changed between runs.
 type Record struct {
-	// ID is the SDK-assigned internal session identifier. Consumers never
-	// see it (v1 exposes only the thread key and run IDs); stores index by
-	// it and keep it stable for the record's lifetime.
+	// ID is the SDK-assigned internal session identifier. Consumers use the
+	// thread key and run IDs; stores index by ID and keep it stable for the
+	// record's lifetime.
 	ID string
 	// Key is the host's thread key — the stable business handle. Multiple
 	// records may share a Key over time when StartNew archives the old one;
@@ -114,8 +112,7 @@ type FinalizeRequest struct {
 	RequireKeyAbsent bool
 }
 
-// Store persists Thread state for resume-capable drivers. Semantics are
-// capability-equivalent to the legacy SessionStore five-method contract:
+// Store persists Thread state for resume-capable Drivers:
 //
 //   - Resolve: look up by internal ID or by thread key. A missing record is
 //     (nil, nil), not an error. Archived records require IncludeArchived.
@@ -124,6 +121,8 @@ type FinalizeRequest struct {
 //   - AcquireLease / RenewLease / ReleaseLease: exclusive-use coordination.
 //     Acquire fails with a BusyError while another owner holds an unexpired
 //     lease on target; acquiring an expired or self-owned lease succeeds.
+//     Context and backend failures retain their original errors.Is identity
+//     and must not be reported as BusyError.
 //     Renew and Finalize fail with a LeaseLostError when the caller no
 //     longer owns the matching token. Release is idempotent and ignores
 //     lost/stale leases.

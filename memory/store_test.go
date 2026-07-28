@@ -5,11 +5,75 @@ package memory
 import (
 	"context"
 	"errors"
+	"io"
 	"testing"
 	"time"
 
 	"github.com/agent-dance/agent-adaptor/threadstore"
 )
+
+func TestStoreAcquireLeaseFailsClosedWhenEntropyUnavailable(t *testing.T) {
+	original := leaseEntropyRead
+	defer func() { leaseEntropyRead = original }()
+
+	entropyErr := errors.New("test entropy unavailable")
+	tests := []struct {
+		name string
+		read func([]byte) (int, error)
+		want error
+	}{
+		{name: "read error", read: func([]byte) (int, error) { return 0, entropyErr }, want: entropyErr},
+		{name: "short read", read: func(buf []byte) (int, error) {
+			if len(buf) > 0 {
+				buf[0] = 1
+			}
+			return 1, nil
+		}, want: io.ErrUnexpectedEOF},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			leaseEntropyRead = tc.read
+			store := NewStore()
+			lease, err := store.AcquireLease(context.Background(), "target", "owner", time.Minute)
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("AcquireLease error = %v, want errors.Is(_, %v)", err, tc.want)
+			}
+			if lease != (threadstore.Lease{}) {
+				t.Fatalf("lease = %+v, want zero lease", lease)
+			}
+			if len(store.leases) != 0 {
+				t.Fatalf("entropy failure mutated lease state: %+v", store.leases)
+			}
+		})
+	}
+
+	leaseEntropyRead = original
+	store := NewStore()
+	lease, err := store.AcquireLease(context.Background(), "target", "owner", time.Minute)
+	if err != nil {
+		t.Fatalf("AcquireLease after restoring entropy source: %v", err)
+	}
+	if lease.Token == "" {
+		t.Fatal("AcquireLease returned an empty token after restoring entropy source")
+	}
+}
+
+func TestStoreAcquireLeaseHonorsCanceledContextWithoutMutation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	store := NewStore()
+
+	lease, err := store.AcquireLease(ctx, "target", "owner", time.Minute)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("AcquireLease error = %v, want context.Canceled", err)
+	}
+	if lease != (threadstore.Lease{}) {
+		t.Fatalf("lease = %+v, want zero lease", lease)
+	}
+	if len(store.leases) != 0 {
+		t.Fatalf("canceled acquire mutated lease state: %+v", store.leases)
+	}
+}
 
 func TestStoreFinalizeRejectsStaleLeaseToken(t *testing.T) {
 	store := NewStore()

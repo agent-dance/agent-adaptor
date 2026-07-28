@@ -84,7 +84,7 @@ func SyncNativePatches(ctx context.Context, driverType, profileDir string, paylo
 		}
 		if !ok {
 			if strings.TrimSpace(patch.Capability) != "" {
-				return engine.ResourceSnapshot{}, fmt.Errorf("config capability patch %q is unsupported by adapter %q", patch.Key, driverType)
+				return engine.ResourceSnapshot{}, fmt.Errorf("config capability patch %q is unsupported by driver %q", patch.Key, driverType)
 			}
 			continue
 		}
@@ -132,18 +132,13 @@ func nativePatchForDriver(driverType string, patch driver.ProfileConfigPatch) (d
 	if strings.TrimSpace(patch.Capability) != "" {
 		return driver.NativeConfigPatch{}, false, nil
 	}
-	native := driver.NativeConfigPatch{
-		FileKind: patch.FileKind,
-		Path:     patch.Path,
-		Section:  patch.Section,
-		Values:   cloneAnyMap(patch.Values),
+	if patch.Native == nil {
+		return driver.NativeConfigPatch{}, false, nil
 	}
-	if patch.Native != nil {
-		native = *patch.Native
-		native.Values = cloneAnyMap(patch.Native.Values)
-		if len(native.Values) == 0 {
-			native.Values = cloneAnyMap(patch.Values)
-		}
+	native := *patch.Native
+	native.Values = cloneAnyMap(patch.Native.Values)
+	if len(native.Values) == 0 {
+		native.Values = cloneAnyMap(patch.Values)
 	}
 	if strings.TrimSpace(native.Provider) != "" && strings.TrimSpace(native.Provider) != driverType {
 		return driver.NativeConfigPatch{}, false, fmt.Errorf("native config patch %q targets provider %q, not %q", patch.Key, native.Provider, driverType)

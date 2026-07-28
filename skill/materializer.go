@@ -2,12 +2,11 @@ package skill
 
 import "github.com/agent-dance/agent-adaptor/internal/skillmaterializer"
 
-// SkillCacheRootEnv is the environment variable that overrides the
-// default materializer's cache root. Drivers inspect the same variable
-// to decide which materialized skill directories they are allowed to
-// manage, so hosts that relocate the cache should set it once for the
-// whole process rather than per materializer.
-const SkillCacheRootEnv = skillmaterializer.CacheRootEnv
+// SkillCacheRootEnv names the AGENT_ADAPTOR_SKILL_CACHE_ROOT environment
+// variable. It overrides the default materializer's cache root. Drivers use
+// the same location to determine which materialized directories they may
+// manage, so hosts should set it consistently for the whole process.
+const SkillCacheRootEnv = "AGENT_ADAPTOR_SKILL_CACHE_ROOT"
 
 // DefaultMaterializerOption configures the materializer returned by
 // [NewDefaultSkillMaterializer].
@@ -37,7 +36,7 @@ func WithMaxArchiveSize(bytes int64) DefaultMaterializerOption {
 
 // WithMaxFileSize caps the uncompressed bytes a single archive entry
 // may occupy. Decompression bombs surface as an error mid-extraction
-// and the partially-extracted staging directory is removed. Default
+// and the partially extracted temporary directory is removed. Default
 // 64 MiB; values <= 0 are treated as the default.
 func WithMaxFileSize(bytes int64) DefaultMaterializerOption {
 	return func(c *defaultMaterializerConfig) { c.maxFileBytes = bytes }

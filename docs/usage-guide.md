@@ -1,321 +1,649 @@
 # 调用方使用指南
 
-本文档提供调用 `agent-adaptor` SDK 的典型场景示例。
+本文按常见宿主场景介绍 `agent-adaptor`。完整签名见 [API 参考](./api-reference.md)，架构与发布合同见 [AGENTS.md](../AGENTS.md)。
 
-架构边界与 API 合同见 [`AGENTS.md`](../AGENTS.md)；`RunPolicy` 合同见 [`run-policy.md`](./run-policy.md)。
-
-## 1. 单 Agent
+根包的导入名是 `adaptor`：
 
 ```go
-sdk := agentadaptor.New(
-	agentadaptor.WithDefaultAgent(codex.New(agentadaptor.CodexConfig{
-		Model: "gpt-5.4",
-	})),
-)
-
-result, err := sdk.Run(ctx, "fix the failing tests")
+import adaptor "github.com/agent-dance/agent-adaptor"
 ```
 
-## 2. 多 Agent
+## 1. 运行一个 Agent
+
+最小程序只需要根包和一个 provider 包：
 
 ```go
-sdk := agentadaptor.New(
-	agentadaptor.WithDefaultAgent(codex.New(agentadaptor.CodexConfig{
-		Model: "gpt-5.4",
-	})),
-	agentadaptor.WithAgent("review", claude.New(agentadaptor.ClaudeConfig{
-		Model: "claude-sonnet-4",
-	})),
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+
+	adaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/codex"
 )
 
-review, err := sdk.Agent("review")
-result, err := review.Run(ctx, "review the patch")
+func main() {
+	agent := adaptor.New(codex.Driver(codex.Config{Model: "gpt-5.4"}))
+
+	result, err := agent.Run(context.Background(), "fix the failing tests")
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(result.Text)
+}
 ```
 
-## 3. Session 复用
+`Driver(Config)` 只捕获配置，不探测环境。缺少 CLI、未登录或配置错误会在运行或 Inspect 时返回。
+
+设置常用默认值：
 
 ```go
-sdk := agentadaptor.New(
-	agentadaptor.WithDefaultAgent(codex.New(agentadaptor.CodexConfig{
-		Model: "gpt-5.4",
-	})),
-	agentadaptor.WithSessionStore(store),
-)
-
-result, err := sdk.Run(
-	ctx,
-	"continue issue-123",
-	agentadaptor.WithSessionKey("company-1", "issue-123"),
-)
-```
-
-## 4. 绑定默认值与调用覆盖
-
-绑定时可以设置：
-
-- `WithDefaultIdentity`
-- `WithDefaultWorkspace`
-- `WithDefaultSkills`
-- `WithDefaultMCP`
-- `WithDefaultRunPolicy`
-- `WithDefaultInstructions`
-- `WithDefaultRuntimeServices`
-- `WithDefaultStreaming`
-- `WithDefaultMetadata`
-- `WithDefaultPermissionHandler`
-- `WithDefaultPlanReviewHandler`
-- `WithDefaultQuestionHandler`
-- `WithNativeProfile` / `WithDedicatedProfile` / `WithCloneProfile` / `WithCloneProfileFrom`
-
-调用时可以覆盖：
-
-- `WithSession`
-- `WithSessionKey`
-- `WithContinueSession`
-- `WithNewSession`
-- `WithForkSession`
-- `WithWorkspace`
-- `WithSkills`
-- `WithModel`（per-run 覆盖 binding 模型，喂给内置 driver 的 `--model`，不落盘、对三种 driver 一致）
-- `WithMCP`
-- `WithRunPolicy`
-- `WithInstructions`
-- `WithRuntimeServices`
-- `WithStreaming` / `WithoutStreaming`
-- `WithMetadata`
-- `WithAgentIdentity`
-- `WithPermissionHandler`
-- `WithPlanReviewHandler`
-- `WithQuestionHandler`
-
-合并顺序固定（与 `resolveInvocation` 一致）：
-
-- 先取 `AgentBinding` 绑定默认值（含 `RunPolicy` 指针；空指针表示全字段继承）
-- 再按字段合并 per-call `RunOption`（`WithRunPolicy` 对非空字段覆盖绑定同字段；未覆盖字段继承绑定）
-- adapter 的 `config` 仅表达 CLI/环境级配置，**不再**承载与 `RunPolicy` 重复的权限类 toggle；策略统一由 `RunPolicy` 表达
-
-`RunPolicy` 合同与适配器映射见 [`run-policy.md`](./run-policy.md)。
-
-## 5. MCP 注入
-
-MCP 和 `skills` 一样走统一的 `resolveInvocation -> adapter.Run(...)` 主路径；宿主声明 server spec，SDK 负责合并默认值与 per-run override，adapter 负责在真实生效的 profile 中物化 provider-native 配置。
-
-```go
-sdk := agentadaptor.New(
-	agentadaptor.WithDefaultAgent(codex.New(
-		agentadaptor.CodexConfig{Model: "gpt-5.4"},
-		agentadaptor.WithDefaultMCP(agentadaptor.MCPConfig{
-			Servers: []agentadaptor.MCPServerSpec{
-				{
-					Key:       "docs",
-					Transport: agentadaptor.MCPTransportHTTP,
-					URL:       "https://example.com/mcp",
-				},
-			},
-		}),
-	)),
-)
-
-result, err := sdk.Run(
-	ctx,
-	"use the docs MCP",
-	agentadaptor.WithMCP(agentadaptor.MCPConfig{
-		Servers: []agentadaptor.MCPServerSpec{
-			{
-				Key:       "repo-tools",
-				Transport: agentadaptor.MCPTransportStdio,
-				Command:   "npx",
-				Args:      []string{"repo-mcp"},
-			},
-		},
+agent := adaptor.New(
+	claude.Driver(claude.Config{Model: "claude-sonnet-4"}),
+	adaptor.WithWorkspace("/work/acme-api"),
+	adaptor.WithTimeout(20*time.Minute),
+	adaptor.WithPolicy(adaptor.PolicyWorkspaceWrite),
+	adaptor.WithIdentity(adaptor.Identity{
+		ID:     "user-42",
+		Tenant: "acme",
+		Name:   "implementation-agent",
 	}),
 )
 ```
 
-MCP override 规则与 `skills` 的默认值 / 调用覆盖规则相似，但有一个关键区别：
+## 2. 多个 Agent 就是多个变量
 
-- 未显式传 `WithMCP(...)` 时，继承 binding default
-- 显式传 `WithMCP(...)` 时，整组 `Servers` 覆盖 binding default
-- `WithSkills(...)` 是追加合并：binding defaults、per-run refs、provider required skills 取并集
-- built-in adapters 会把 skills / MCP / instructions / agents / hooks / config 合成 `ProfilePayload.Fingerprint` 并写入 checkpoint；resume 时 profile fingerprint 变化会返回 `ErrResumeRejected`，`continue_or_start` 可自动 fresh start
-
-
-## 6. 本地 profile 目录
-
-当前 built-in adapter profile API 通过 profile option 指定 provider-native profile 目录：
-
-- `WithNativeProfile()`：复用 provider 原生共享 profile。
-- `WithDedicatedProfile(dir)`：使用宿主专用 profile 目录，并在需要时安全初始化基础目录。
-- `WithCloneProfile(dir, opts)`：使用宿主专用 profile 目录，从 native profile 按白名单补齐缺失的 settings/MCP/skills，并可按 `AuthMode` 共享或复制认证文件。
-- `WithCloneProfileFrom(src, dst, opts)`：高级场景下从指定源 profile 派生到指定目标目录。
-
-这些 option 将映射到 provider-native profile env：
-
-- `codex` -> `CODEX_HOME`
-- `claude` -> `CLAUDE_CONFIG_DIR`
-- `cursor` -> `CURSOR_HOME`
-
-`WithDedicatedProfile(dir)` 将只选择并初始化专用目录，不会自动把 `~/.codex`、`~/.claude`、`~/.cursor` 里的历史 settings、认证、cache 或 session 全量复制到新目录。需要派生配置时使用 `WithCloneProfile(dir, opts)`；认证必须显式 opt-in，OAuth CLI 优先用 `CloneProfileAuthLink` 共享本机登录态，只有确实需要静态副本时才用 `IncludeAuth` / `CloneProfileAuthCopy`。
-
-优先级固定为：
-
-1. `CommonConfig.Env` 中的 provider-specific env
-2. profile option
-3. 进程环境中的 provider-specific env
-4. adapter 默认 profile
-
-profile option 的设计背景见 [`workstream-profile-user-experience.md`](./workstream-profile-user-experience.md)；该文档是历史 workstream 记录，不是新的 API 入口。
-
-## 6.1 Skills 当前合同
-
-最小用法是直接把本地目录 / inline skill 作为 `SkillRef` 传给 binding 或 run：
+为不同角色分别构造 Agent，可以让策略、profile 和模型在类型检查范围内清晰可见：
 
 ```go
-sdk := agentadaptor.New(
-	agentadaptor.WithDefaultAgent(codex.New(
-		agentadaptor.CodexConfig{Model: "gpt-5.4"},
-		agentadaptor.WithDefaultSkills(agentadaptor.LocalSkill("./skills/write-proof")),
-	)),
+coder := adaptor.New(
+	codex.Driver(codex.Config{Model: "gpt-5.4"}),
+	adaptor.WithWorkspace(repoDir),
+	adaptor.WithPolicy(adaptor.PolicyWorkspaceWrite),
+)
+
+reviewer := adaptor.New(
+	claude.Driver(claude.Config{Model: "claude-sonnet-4"}),
+	adaptor.WithWorkspace(repoDir),
+	adaptor.WithPolicy(adaptor.PolicyReadOnly),
+)
+
+patch, err := coder.Run(ctx, "implement the issue")
+if err != nil {
+	return err
+}
+
+review, err := reviewer.Run(ctx, "review this result:\n"+patch.Text)
+if err != nil {
+	return err
+}
+fmt.Println(review.Text)
+```
+
+需要动态选择时，宿主可以保存自己的 `map[string]*adaptor.Agent`；生命周期和路由策略仍由宿主决定。
+
+## 3. 构造默认值与调用覆盖
+
+返回 `SharedOption` 的函数既能用于构造，也能用于单次调用。调用处覆盖只影响本次执行：
+
+```go
+agent := adaptor.New(
+	codex.Driver(codex.Config{Model: "gpt-5.4"}),
+	adaptor.WithWorkspace("/repos/default"),
+	adaptor.WithPolicy(adaptor.PolicyReadOnly),
+	adaptor.WithMetadata("component", "triage"),
+)
+
+result, err := agent.Run(ctx, "apply the approved fix",
+	adaptor.WithWorkspace("/repos/issue-123"),
+	adaptor.WithModel("gpt-5.4-mini"),
+	adaptor.WithPolicy(adaptor.PolicyWorkspaceWrite),
+	adaptor.WithMetadata("job_id", "job-123"),
 )
 ```
 
-如果 skill 来自宿主自己的 store，注入 `WithSkillProvider(provider)`；如果 store 也能枚举完整清单，则同时实现 `SkillCatalog`，这样 `Admin().Default().ListSkills(ctx)` 能展示 catalogue。静态表可以直接用 `WithSkillSet(agentadaptor.SkillSet{...})`。
+合并规则：
 
-Claude / Codex / Cursor 都把 selected skills 物化到本次 effective profile 的 skills home：
+- `WithSkills` 追加到 Agent 默认 skills。
+- `WithMetadata` 按 key 合并，调用处同名 key 覆盖。
+- `WithRunServices` 追加并去重。
+- `WithMCP`、`WithServices`、`WithPolicy`、workspace、instructions、identity 等整体替换对应默认值。
+- `WithMCP()` 或 `WithServices()` 的空调用表示本次显式清空。
 
-- Claude: `<CLAUDE_CONFIG_DIR>/skills`
-- Codex: `<CODEX_HOME>/skills`
-- Cursor: `<CURSOR_HOME>/skills`
+`WithThreadStore`、manager、profile 选择和事件缓冲只允许在构造时使用。`WithSchema` 只允许在调用时使用；放错位置会编译失败。
 
-Claude 不再因为 selected skills 自动追加 prompt-bundle `--add-dir`；旧 checkpoint 只有 `prompt_bundle_key` 时仍按 legacy guard 处理。
+Policy 的非零值是严格意图，不是尽力而为。显式 Sandbox、WebSearch、Browser 或 approval mode 如果不在 Driver 的 `Descriptor.RunPolicyCaps` 中，会在进程启动前分别返回 `ErrPolicyCapabilityUnsupported` 或 `ErrHumanDecisionModeUnsupported`。需要跨 provider 的默认行为时保留 Inherit；需要显式策略时，应先按目标 Driver 的 capability 选择。
 
-Selected skill 物化失败是启动前错误，而不是 best-effort warning：坏 zip、缺少 `SKILL.md`、本地路径不可用或自定义 materializer 报错时，`Run` / `Start().Wait()` 会返回匹配 `ErrSkillMaterializationFailed` 的错误，adapter 不会启动。
+## 4. 处理 Result 与失败
 
-`Admin().Default().ProfileSnapshot(ctx)` 报告 desired / observed profile resource 状态；`SyncProfile(ctx)` 现在覆盖 skills、MCP、agents、hooks、instructions 和 config capability patches。未支持的字段仍会以 warning / error 暴露，不会被伪装成 managed。
-
-`examples/profile-resources` 是当前最直接的 profile-resources smoke：Codex 在本机已验证通过；Claude 目前停在登录门槛（`Not logged in`）；Cursor 目前停在本机 CLI 健康检查（`no healthy local cursor CLI command found`）。后两项是环境缺口，不是 agents / hooks / instructions / config 未实现。
-
-Admin 里的 `SetSelectedSkills(ctx, keys)` 只是**进程内 selection override**，不会替宿主持久化用户偏好。需要长期保存勾选状态时，宿主应该写入自己的数据库，并在构造 binding 或调用时通过 `WithDefaultSkills` / `WithSkills` 重新声明。
-
-## 7. 宿主集成 — 维度对齐
-
-宿主集成 SDK 时常踩的第一个坑：**ID 命名层级混淆**。SDK 自己有 SessionKey / SessionID / RunID 三层；AG-UI 协议引入 ThreadID 第四层。下表把四层对齐给出一个权威坐标，避免宿主用错：
-
-| 层 | ID | 来源 | 值示例 | 跨层关系 |
-|---|---|---|---|---|
-| ① 业务/UI | `ThreadID` | Web IDE / Workflow / 业务方下发 | `"task-req-12345"` | 一个 Thread 可对应 N 个 SessionID（fork / start_new 触发新 SessionID） |
-| ② SDK API 入参 | `SessionKey = (Namespace, Key)` | 宿主，或 agui bridge 自动派生 `("agui", ThreadID)` | `("agui", "task-req-12345")` | 1 ThreadID : 1 SessionKey（命名空间隔离）|
-| ③ SDK driver 句柄 | `SessionID` | SDK 自身（fingerprint based） | `"claude-9c22b132-..."` | 1 SessionKey : N SessionID（fingerprint 漂移会 mint 新 ID）|
-| ④ 执行实例 | `RunID` | SDK 在 `Start()` 内分配 | `"run-2026-04-26-xx"` | 1 SessionID : N RunID |
-
-> **重要**：`SessionKey` 是**术语概念**，SDK 公共 API 里**不存在 `SessionKey` 类型**。它在 `SessionRequest{Namespace, Key, ...}` 里以二元组形式出现。新人 grep `SessionKey` 找不到对应类型不是 bug，是术语 / 类型分层。完整图示见 [`AGENTS.md`](../AGENTS.md) §6.1。
-
-### Fork 场景流转示例
-
-用户在同一个 chat 里点了"重新生成"按钮，AG-UI bridge 把这个动作翻译成 `SessionFork`：
-
-```
-Run 1 (initial):
-  ThreadID    = "thread-A"
-  SessionKey  = ("agui", "thread-A")
-  SessionID   = "sess-001"  # 首次创建
-  RunID       = "run-001"
-
-Run 2 (continue):
-  ThreadID    = "thread-A"  # 不变
-  SessionKey  = ("agui", "thread-A")  # 不变
-  SessionID   = "sess-001"  # 复用
-  RunID       = "run-002"
-
-Run 3 (fork from run-001's checkpoint):
-  ThreadID    = "thread-A"  # 不变
-  SessionKey  = ("agui", "thread-A")  # 不变
-  SessionID   = "sess-002"  # NEW！fork 切出新 driver session
-  RunID       = "run-003"
-```
-
-宿主侧的 `sessionrecorder` 如果用 `sessionKey = ThreadID` 风格，Run 1/2/3 的 stream history 全部累积在同一个 `sessionrecorder` 文件下；如果用 `sessionKey = SessionID` 风格，Run 3 会单独起一份。两种都合法，按你的 UI 模型选。
-
-## 8. 宿主集成 — 命名陷阱
-
-下面 5 种是真实生产宿主反复踩过的命名错误，每条给出"应该怎么写"的修正示例：
-
-### 陷阱 1：把宿主自己的 `ThreadHistoryStore` 叫 `SessionStore`
+成功时使用 `Result.Text` 作为最终 assistant 文本。原始进程输出、语义 transcript 和服务报告是独立层：
 
 ```go
-// 错：与 SDK 撞名，且语义完全不同
-type SessionStore interface {
-    SaveHistory(threadID string, payloads []StreamPayload) error
-    LoadHistory(threadID string) ([]StreamPayload, error)
+result, err := agent.Run(ctx, prompt)
+if err != nil {
+	var runErr *adaptor.RunError
+	if errors.As(err, &runErr) {
+		log.Printf("run failed: reason=%s summary=%q", runErr.Reason, runErr.Result.Summary)
+		log.Printf("partial stdout bytes=%d", len(runErr.Result.Raw().Stdout))
+	}
+	return err
 }
 
-// 对：用语义清晰的名字，与 SDK 的 SessionStore 区分
-type ThreadHistoryStore interface {
-    SaveHistory(threadID string, payloads []StreamPayload) error
-    LoadHistory(threadID string) ([]StreamPayload, error)
+fmt.Println(result.Text)
+raw := result.Raw()
+items := result.Transcript()
+services := result.Services()
+_, _, _ = raw, items, services
+```
+
+不要把 `Raw().Stdout` 当作 assistant 回复。`Raw().Terminal` 保存 provider 官方终局 JSON，适合审计；`Transcript()` 适合统一渲染 assistant、thinking、tool 与 result。
+
+业务失败可用 `errors.As(err, *RunError)` 读取部分 Result，也可用 `errors.Is` 判断：
+
+```go
+switch {
+case errors.Is(err, adaptor.ErrApprovalDenied):
+	// 操作者或策略拒绝。
+case errors.Is(err, adaptor.ErrApprovalTimeout):
+	// 审批超时。
+case errors.Is(err, adaptor.ErrAgentFailed):
+	// provider 报告业务终局失败。
+case errors.Is(err, context.Canceled):
+	// 调用方取消。
 }
 ```
 
-SDK 的 `SessionStore` 索引的是 driver-level resume tokens / lease / fingerprint（按 SessionID 索引），跟用户面 thread history 是两个 ontology 维度。撞名会让 review 时所有人都误以为它实现了 `agentadaptor.SessionStore` 接口。
+## 5. Thread：四个对话动作
 
-### 陷阱 2：把 `RunID` 当 `SessionID` 使用
+Thread 需要一个 `threadstore.Store`。本地工具和测试可以使用 `memory.NewStore()`：
 
 ```go
-// 错：把 RunID 灌进 SessionStore 的 SessionID 槽位
-sdk.WithContinueSession(handle.RunID())  // 永远找不到对应 SessionRecord
-
-// 对：从 RunResult.Session 取 SessionID
-result, _ := handle.Wait(ctx)
-sdk.WithContinueSession(result.Session.ID)
+store := memory.NewStore()
+agent := adaptor.New(
+	claude.Driver(claude.Config{Model: "claude-sonnet-4"}),
+	adaptor.WithThreadStore(store),
+)
 ```
 
-RunID 的生命周期是单次 Run；SessionID 跨多次 Run。混用会让 fork / continue 立刻 `ErrSessionNotFound`。
-
-### 陷阱 3：把 `sessionrecorder` 的 `sessionKey` 当 `SessionID` 使用
+### 5.1 有则续、无则建
 
 ```go
-// 错：用 SessionID 当 sessionKey
-recorder.Record(ctx, result.Session.ID, payload)
-// fork 之后 SessionID 换了，新 Run 写入新文件，无法跨 fork 累积同 thread 历史
+thread := agent.Thread("tenant-1/issue-123")
 
-// 对：用 ThreadID（或一个跨 fork 稳定的业务键）
-recorder.Record(ctx, threadID, payload)
+first, err := thread.Run(ctx, "inspect the failing test")
+if err != nil {
+	return err
+}
+second, err := thread.Run(ctx, "now implement the fix")
 ```
 
-`sessionrecorder.sessionKey` 是**宿主 ontology 中立聚合键**，与 SDK 的 SessionID 是两层。详见 [`pkg/hosttools/sessionrecorder/doc.go`](../pkg/hosttools/sessionrecorder/doc.go)。
+第二次调用会使用第一次成功运行保存的 checkpoint。
 
-### 陷阱 4：在 outbound API 里把 `task_id` 和 `thread_id` 混用
+### 5.2 只续不建
 
 ```go
-// 错：业务侧 1 个 task 在 UI 上可重试 3 次，每次 1 个 thread
-// task_id 和 thread_id 是 1:N 关系，但代码里当成同一个字段
-type Response struct { TaskID string `json:"thread_id"` }
-
-// 对：明确两者是不同维度
-type Response struct {
-    TaskID   string `json:"task_id"`
-    ThreadID string `json:"thread_id"`
+thread := agent.Thread("tenant-1/issue-123", adaptor.ResumeOnly())
+result, err := thread.Run(ctx, "continue the existing investigation")
+if errors.Is(err, adaptor.ErrThreadNotFound) {
+	return fmt.Errorf("the conversation must already exist: %w", err)
 }
 ```
 
-混用会让"重试"语义全错（task 维度的状态被 thread 状态覆盖）。
+配置或运行环境与旧 checkpoint 不兼容时匹配 `ErrThreadIncompatible`，不会静默新建。
 
-### 陷阱 5：给 `SessionStore` 加 `SaveHistory / LoadHistory` 方法
+### 5.3 强制新建
 
 ```go
-// 错：违反 SessionStore 的 ontology 边界
-type MySessionStore struct { ... }
-func (s *MySessionStore) Resolve(...)
-func (s *MySessionStore) Finalize(...)
-func (s *MySessionStore) SaveHistory(...) // ← 不在 SessionStore 接口里
-func (s *MySessionStore) LoadHistory(...) // ← 不在 SessionStore 接口里
+fresh := agent.NewThread("tenant-1/issue-123")
+result, err := fresh.Run(ctx, "restart the investigation from scratch")
+```
 
-// 对：独立组合 sessionrecorder
-type MyHostState struct {
-    SessionStore agentadaptor.SessionStore         // SDK 的；只管 driver resume
-    History      sessionrecorder.Recorder           // hosttools 的；只管 thread history
-    Tasks        *MyTaskStore                       // 你的；只管业务 task
+旧 active record 只会在新运行成功产生有效 checkpoint 后归档；失败不会污染旧健康对话。此 handle 后续调用会正常续接新对话。
+
+### 5.4 分叉
+
+```go
+parent := agent.Thread("tenant-1/issue-123", adaptor.ResumeOnly())
+branch := parent.Fork("tenant-1/issue-123/alternative")
+
+result, err := branch.Run(ctx, "try a different implementation")
+if errors.Is(err, adaptor.ErrThreadAlreadyExists) {
+	return fmt.Errorf("choose a new branch key: %w", err)
 }
 ```
 
-SDK 不会在 `SessionStore` 接口上加任何 history 相关方法；如果你的 `MySessionStore` 实现了它们，是死方法，永远不会被 SDK 调用。详见 [`session_types.go`](../session_types.go) 上 `SessionStore` 的 doc comment。
+父 Thread 保持 active，不会被分叉修改。目标 key 必须未被其他 active 对话占用。
+
+### 5.5 查看 checkpoint
+
+```go
+checkpoint, err := thread.Checkpoint(ctx)
+if err != nil {
+	return err
+}
+fmt.Printf("valid=%v resume=%s\n", checkpoint.Valid, checkpoint.State.ResumeID)
+```
+
+Checkpoint 是诊断面；正常业务只需要保存 Thread key。多进程服务必须提供持久化、支持原子 Finalize 和 lease token 校验的 Store，不能使用 `memory.Store` 做跨进程协调。
+
+## 6. Stream：一条 typed Event 流
+
+```go
+stream := agent.Stream(ctx, "explain and fix the failure")
+fmt.Printf("run=%s\n", stream.RunID())
+
+for ev := range stream.Events() {
+	switch e := ev.(type) {
+	case adaptor.TextDelta:
+		if e.Phase == adaptor.PhaseContent {
+			fmt.Print(e.Text)
+		}
+	case adaptor.Thinking:
+		if e.Phase == adaptor.PhaseContent {
+			log.Printf("thinking: %s", e.Text)
+		}
+	case adaptor.ToolCall:
+		if e.Phase == adaptor.PhaseStart {
+			log.Printf("tool %s (%s)", e.Name, e.ID)
+		}
+	case adaptor.ToolResult:
+		log.Printf("tool result %s", e.ID)
+	case adaptor.Dropped:
+		log.Printf("dropped %d events: %v", e.Count, e.ByKind)
+	case adaptor.RunFinished:
+		log.Printf("terminal hint failed=%v", e.Failed)
+	}
+}
+
+result, err := stream.Result()
+```
+
+`RunFinished` 是流上的提示，最终成功、类型化业务失败和完整 Result 以 `stream.Result()` 为准。
+
+默认缓冲大小为 1024。消费者跟不上时，可丢事件会聚合成 `Dropped`。只有确实需要无丢弃审计且能持续消费时才使用：
+
+```go
+agent := adaptor.New(driver,
+	adaptor.WithEventBuffer(4096),
+	adaptor.WithBlockingEvents(),
+)
+```
+
+blocking 模式会把慢消费者的压力传回执行端。提前停止消费时应调用 `stream.Cancel()`，然后继续收口 `Events()` 与 `Result()`。
+
+## 7. HITL 审批
+
+### 7.1 回调方式
+
+终端程序或自动策略可在构造或调用处安装 handler：
+
+```go
+agent := adaptor.New(
+	claude.Driver(claude.Config{Model: "claude-sonnet-4"}),
+	adaptor.WithPolicy(adaptor.Policy{
+		Sandbox: adaptor.WorkspaceWrite,
+		Approvals: adaptor.ApprovalPolicy{
+			Permission: adaptor.ApprovalAsk,
+			PlanReview: adaptor.ApprovalAsk,
+			Question:   adaptor.QuestionAsk,
+			Timeout:    2 * time.Minute,
+		},
+	}),
+	adaptor.OnApproval(func(ctx context.Context, req *adaptor.ApprovalRequest) error {
+		switch req.Kind {
+		case adaptor.ApprovalQuestion:
+			if len(req.Choices) > 0 {
+				return req.Answer(ctx, req.Choices[0].Key)
+			}
+			return req.Answer(ctx, "please continue with the safest option")
+		case adaptor.ApprovalPermission, adaptor.ApprovalPlanReview:
+			return req.Approve(ctx)
+		default:
+			return req.Deny(ctx, "unsupported request")
+		}
+	}),
+)
+```
+
+Question 不一定有 Choices；开放问题可以用自由文本调用 `Answer`。
+
+`ApprovalsAutoDeny` 只有在 Driver 对 Permission、PlanReview、Question 三类都声明 auto-reject 支持时才可用，不是跨 provider 的通用无人值守配置。Question 保持 `QuestionInherit` 时会采用保守默认 auto-deny；这与显式 `QuestionAutoDeny` 的严格 capability 要求不同。`DenyAll(reason)` 与 `ApproveAll()` 只处理已经按 capability 路由成 Ask 的请求，其中 `ApproveAll()` 会拒绝 Question，因为问题没有可安全合成的答案。
+
+### 7.2 事件方式
+
+Web UI 可以保存请求对象，在另一个 goroutine 或 HTTP handler 中回答：
+
+```go
+var pending sync.Map // request ID -> *adaptor.ApprovalRequest
+
+stream := agent.Stream(ctx, prompt)
+for ev := range stream.Events() {
+	if req, ok := ev.(*adaptor.ApprovalRequest); ok {
+		pending.Store(req.ID, req)
+		pushApprovalCard(req)
+	}
+}
+```
+
+回答端：
+
+```go
+value, ok := pending.LoadAndDelete(requestID)
+if !ok {
+	return adaptor.ErrApprovalExpired
+}
+req := value.(*adaptor.ApprovalRequest)
+if err := req.Approve(ctx); err != nil {
+	return err
+}
+```
+
+重复或迟到回答匹配 `ErrApprovalResolved`，过期匹配 `ErrApprovalExpired`，错误应答方法匹配 `ErrApprovalKindMismatch`。`bridges/sse.MapApprovalError` 可把这些错误映射为稳定 HTTP 状态和 JSON body。
+
+## 8. Skills、MCP 与 profile
+
+### 8.1 本地和 catalogue skills
+
+直接声明本地或 inline skill：
+
+```go
+agent := adaptor.New(driver,
+	adaptor.WithSkills(
+		skill.Dir("./skills/code-review"),
+		skill.Inline("release-check", "# Release check\nVerify changelog and tests."),
+	),
+)
+```
+
+使用静态 catalogue 和 key：
+
+```go
+catalogue := skill.Set{
+	"code-review": skill.Dir("./skills/code-review"),
+	"deploy":      skill.Require(skill.Dir("./skills/deploy"), "required for releases"),
+}
+
+agent := adaptor.New(driver,
+	adaptor.WithSkillProvider(catalogue),
+	adaptor.WithSkills(skill.Key("code-review")),
+)
+```
+
+`skill.Key` 必须由 provider 解析；未知 key 匹配 `ErrSkillNotFound`。坏 archive、缺少 `SKILL.md` 或 materializer 失败都会在 Driver 启动前失败。
+
+### 8.2 MCP
+
+```go
+agent := adaptor.New(driver,
+	adaptor.WithMCP(
+		mcp.HTTP("docs", "https://example.com/mcp",
+			mcp.WithBearerTokenEnv("DOCS_MCP_TOKEN"),
+			mcp.Required("documentation lookup is required"),
+		),
+		mcp.Stdio("repo-tools", "npx",
+			mcp.Args("repo-mcp", "--readonly"),
+			mcp.Env(map[string]string{"LOG_LEVEL": "warn"}),
+		),
+	),
+)
+```
+
+调用处 `WithMCP(...)` 替换 Agent 默认集合，不是追加。需要同时保留默认 server 时，应在调用处传入完整集合。MCP transport 不受 Driver 支持时匹配 `ErrMCPTransportUnsupported`。
+
+### 8.3 Profile 选择
+
+复用 provider 原生 profile：
+
+```go
+adaptor.WithProfile(profile.Native())
+```
+
+使用宿主专用目录：
+
+```go
+adaptor.WithProfile(profile.Dedicated(profileDir))
+```
+
+从本机原生 profile 派生，并共享 OAuth 登录态：
+
+```go
+adaptor.WithProfile(profile.CloneNative(
+	profileDir,
+	profile.CopySettings(),
+	profile.CopyMCP(),
+	profile.CopySkills(),
+	profile.LinkAuth(),
+))
+```
+
+`LinkAuth` 优先于复制 OAuth token 文件；无法创建共享链接时会失败，不会静默复制。
+
+provider-specific profile 环境变量如果已经在 Driver 的 `CommonConfig.Env` 中显式设置，会优先于 profile selection；之后才依次考虑 selection、进程环境和 provider 默认目录。
+
+### 8.4 Profile resources
+
+```go
+agent := adaptor.New(driver,
+	adaptor.WithSkillProvider(catalogue),
+	adaptor.WithProfile(profile.Dedicated(profileDir)),
+	adaptor.WithProfileResources(profile.Resources{
+		Skills: []skill.Ref{skill.Key("code-review")},
+		MCP: []mcp.Server{
+			mcp.HTTP("docs", "https://example.com/mcp"),
+		},
+		Instructions: profile.Text("Follow the ACME engineering standard."),
+	}),
+)
+```
+
+`ProfileState(ctx)` 只读取 desired/observed 状态；`SyncProfile(ctx)` 才执行物化。不支持的资源会出现在 `ResourceSnapshot` 的 warning/error 中，不会伪装成已管理。
+
+`SelectSkills(ctx, keys)` 是进程内选择覆盖。长期用户偏好应由宿主存储，并在下次构造 Agent 时重新声明。
+
+## 9. Workspace 与 runtime services
+
+### 9.1 直接工作目录
+
+```go
+result, err := agent.Run(ctx, prompt, adaptor.WithWorkspace(repoDir))
+```
+
+### 9.2 WorkspaceSpec
+
+```go
+agent := adaptor.New(driver,
+	adaptor.WithWorkspace(repoDir),
+	adaptor.WithWorkspaceSpec(adaptor.GitWorktreeWorkspace{
+		BaseRef:           "main",
+		BranchTemplate:    "agent/{run_id}",
+		WorktreeParentDir: worktreeRoot,
+	}),
+	adaptor.WithWorkspaceManager(workspaceManager),
+)
+```
+
+`WorkspaceManager.Resolve` 返回实际 `WorkspaceLease`，Driver 使用 lease 的 `CWD`。`Release` 必须并发安全并按 `WorkspaceReleaseMode` 清理。未提供 manager 时只是 passthrough，不会替宿主创建 git worktree。
+
+### 9.3 声明式服务
+
+```go
+agent := adaptor.New(driver,
+	adaptor.WithServices(
+		adaptor.ServiceSpec{
+			ID:      "preview",
+			Name:    "preview server",
+			Command: "npm run dev",
+			Port:    4317,
+		},
+	),
+	adaptor.WithServiceManager(serviceManager),
+)
+```
+
+`ServiceManager.Ensure` 在 Driver 前运行并返回 `[]ServiceRef`；执行结束后调用 `ReleaseByRun`。如果 ServiceRef 带 `MCP`，该 server 会追加到本次 MCP 集合。`SecretEnv` 只进入 Driver 子进程，不会出现在 `Result.Services()`。
+
+没有 `WithServiceManager` 时，`WithServices` 声明不会自动启动进程或虚构 endpoint。
+
+生态包提供的动态 sidecar 使用 `RunServiceProvider`。它的 `RunAttachment.Events` 会直接并入当前 Stream；调用方不需要再合并第二条 channel。
+
+## 10. Inspect 与 profile 运维
+
+环境体检：
+
+```go
+report, err := agent.Inspect().Environment(ctx)
+if err != nil {
+	return err
+}
+if !report.Healthy {
+	for _, check := range report.Checks {
+		log.Printf("%s: %s", check.Code, check.Message)
+	}
+}
+```
+
+其余只读检查：
+
+```go
+models, err := agent.Inspect().Models(ctx)
+quota, err := agent.Inspect().Quota(ctx)
+schema, err := agent.Inspect().ConfigSchema(ctx)
+skills, err := agent.Inspect().Skills(ctx)
+_, _, _, _ = models, quota, schema, skills
+```
+
+Driver 不提供动态 probe 时会返回静态 descriptor fallback 或明确不可用报告，不应把 `Available=false` 当作调用失败。
+
+Profile 运维：
+
+```go
+before, err := agent.ProfileState(ctx)
+if err != nil {
+	return err
+}
+after, err := agent.SyncProfile(ctx)
+_, _ = before, after
+```
+
+设置页面可用 `Models`、`ConfigSchema`、`Quota` 和 `Skills`；onboarding 可用 `Environment`；desired/observed 资源页使用 `ProfileState`。
+
+## 11. 结构化输出
+
+最简方式是 `RunAs[T]`：
+
+```go
+type Triage struct {
+	Severity  string   `json:"severity"`
+	Component string   `json:"component"`
+	Labels    []string `json:"labels"`
+}
+
+triage, result, err := adaptor.RunAs[Triage](
+	ctx,
+	agent,
+	"classify this issue",
+	adaptor.WithWorkspace(repoDir),
+)
+if err != nil {
+	return err
+}
+fmt.Printf("%s: %s\n", triage.Severity, result.Summary)
+```
+
+`RunAs` 同样接受 Thread：
+
+```go
+triage, result, err := adaptor.RunAs[Triage](ctx, thread, prompt)
+```
+
+流式消费后解码：
+
+```go
+stream := agent.Stream(ctx, prompt,
+	adaptor.WithSchema[Triage](
+		adaptor.SchemaStrict(),
+		adaptor.SchemaName("issue_triage"),
+	),
+)
+for ev := range stream.Events() {
+	render(ev)
+}
+result, err := stream.Result()
+if err != nil {
+	return err
+}
+var triage Triage
+if err := result.Decode(&triage); err != nil {
+	return err
+}
+```
+
+选择模式：
+
+- `SchemaStrict()`：要求 provider 原生约束，能力不足会在进程前失败。
+- `SchemaFlexible()`：原生优先，可回退到 prompt + 本地校验。
+- `SchemaPromptOnly()`：明确接受较弱的 prompt + 本地校验合同。
+
+来自外部 registry 的 schema 使用 `WithSchemaJSON(schemaBytes, ...)`。schema 名称、描述、enum、pattern 和 examples 可能传给 provider，不要写入秘密。
+
+## 12. Event recorder 与 Thread store 的边界
+
+二者保存完全不同的数据：
+
+| 组件 | 保存内容 | 典型 key |
+|---|---|---|
+| `threadstore.Store` | provider resume checkpoint、兼容 fingerprint、active/archive 状态和 lease | Thread key |
+| `sessionrecorder.EventRecorder` | 宿主需要回放的 typed Event 和跨 run `HostSeq` | RunID 或宿主稳定会话 key |
+
+Thread store 不是 UI 聊天历史。Event recorder 也不参与 resume、fork 或并发 lease。
+
+### 12.1 内存 recorder
+
+```go
+recorder := sessionrecorder.NewEventRecorder(
+	sessionrecorder.NewMemoryEventBackend(),
+)
+defer recorder.Close()
+
+stream := thread.Stream(ctx, prompt)
+for ev := range stream.Events() {
+	if _, err := recorder.Record(ctx, "thread_issue_123", ev); err != nil {
+		stream.Cancel()
+		return err
+	}
+	render(ev)
+}
+result, err := stream.Result()
+```
+
+### 12.2 JSONL recorder
+
+```go
+backend, err := sessionrecorder.NewJSONLEventBackend(eventDir)
+if err != nil {
+	return err
+}
+recorder := sessionrecorder.NewEventRecorder(backend)
+defer recorder.Close()
+```
+
+构造失败会直接返回错误，不会退回内存。默认每次 append 同步到存储；明确接受 buffered durability 时可使用 `WithoutJSONLEventSyncOnAppend()` 并自行调用 `Flush()`。
+
+`EventRecorder.Since(ctx, key, afterHostSeq)` 使用在一个 recorder key 内严格递增的 `HostSeq` 恢复事件。默认 key validator 只接受单个跨平台安全文件名片段；Thread key 含 `/` 时，应由宿主映射为稳定且无碰撞的 recorder key，而不是直接拿来当 JSONL 文件名。
+
+单个 recorder 实例在进程内分配 HostSeq。多进程宿主需要 sticky routing，或实现由数据库/协调器原子分配序号的 `EventBackend`。
+
+## 13. 生产集成检查
+
+- 为 Agent 设置明确 workspace、Policy、timeout 和 Identity。
+- 无状态任务直接使用 Agent；只有需要 provider 续接时才使用 Thread。
+- 多进程 Thread 使用持久化 Store，并实现原子 Finalize 与 token lease。
+- 始终消费 Stream 到关闭并读取 `Result()`；提前退出时先 `Cancel()`。
+- Web HITL 保存 `*ApprovalRequest` 本身，并处理重复、过期和 Kind 不匹配错误。
+- 对 `RunError` 保留的 Result 做审计，但不要把部分 Text 当作成功。
+- skill、MCP、schema、profile 和 runtime 失败都按启动前错误处理，不做静默降级。
+- 用 `ProfileState` 区分 desired 与 observed；需要物化时显式调用 `SyncProfile`。
+- 将 Thread checkpoint 与 Event 历史放在不同存储边界。
+- 自定义 Driver 必须运行 `adaptertest.TestDriver`，并让 Descriptor 与真实能力一致。

@@ -1,161 +1,222 @@
-# Public Errors Reference
+# Public errors
 
-The single complete catalogue of `agentadaptor` public errors, with the
-recommended host integration response per error. The inline godoc on
-[`errors.go`](../errors.go) mirrors the same matrix; this document is
-the longer-form reference hosts should link to from their own runbooks.
+This reference covers the stable error identities owned by the root
+`adaptor` package and the public leaf packages that define Driver, skill, MCP,
+Thread storage, A2A client, and hosttool contracts.
 
-> Source-of-truth invariant: every public error in the `agentadaptor`
-> package MUST appear here. New errors that don't update this table will
-> drift the integration matrix. CI does not yet enforce this; reviewers
-> please check it manually until a `go vet`-style linter is wired up.
+Use `errors.Is` for a category and `errors.As` when the table names a typed
+error. Error strings are diagnostics, not matching contracts.
 
-## How to read this matrix
+## One execution error path
 
-| Column | Meaning |
+`Runner.Run` and `Stream.Result` use one verdict model:
+
+- success returns `*Result, nil`;
+- a completed business failure returns `*RunError`, whose `Result` retains
+  the available audit data;
+- configuration, context, process, protocol, store, and resource failures are
+  ordinary wrapped errors.
+
+```go
+result, err := runner.Run(ctx, prompt)
+if err != nil {
+	var runErr *adaptor.RunError
+	if errors.As(err, &runErr) {
+		result = runErr.Result
+		log.Printf("business failure %s: %s", runErr.Reason, runErr.Message)
+		return err
+	}
+	return err
+}
+_ = result
+```
+
+`Stream` itself returns immediately; setup and execution failures are read
+from `Stream.Result()` after its event channel closes. Programmer-contract
+violations documented as panics, such as constructing an Agent with a nil
+Driver or creating a Thread with an empty key, are not error sentinels.
+
+## Root business failures
+
+Every row is a `*adaptor.RunError`. `errors.As` exposes `Reason`, `Message`,
+`Details`, and the non-nil `Result`; `errors.Is` selects one category.
+
+| Sentinel | `FailureReason` | Meaning |
+|---|---|---|
+| `ErrApprovalDenied` | `ReasonApprovalDenied` | A host or auto policy denied an approval and the fallback aborted. |
+| `ErrApprovalTimeout` | `ReasonApprovalTimeout` | An approval deadline elapsed and the fallback aborted. |
+| `ErrAgentFailed` | `ReasonAgentError` | The Driver classified an agent-level failure, such as a bad terminal protocol or non-zero exit. |
+| `ErrRunCancelled` | `ReasonCancelled` | The Driver returned a classified cancellation business failure. |
+| `ErrPolicyViolation` | `ReasonPolicyViolation` | A completed invocation violated a run policy, including default fail-on-invalid structured output. |
+
+`context.Canceled` and `context.DeadlineExceeded` are infrastructure errors;
+they do not imply `ErrRunCancelled`. Likewise, malformed host policy values
+match `ErrInvalidPolicy`, not `ErrPolicyViolation`.
+
+Unknown Driver failure codes remain available as `RunError.Reason` but do not
+silently match one of the five sentinels above.
+
+## Root pre-invocation errors
+
+These failures occur before `Driver.Run` is invoked. The root variables are
+the exact same identities as their owner-package variables.
+
+| Root sentinel | Canonical leaf identity | Typed error for `errors.As` | Meaning |
+|---|---|---|---|
+| `ErrSkillNotFound` | `skill.ErrSkillNotFound` | — | A requested catalogue key was not resolved. |
+| `ErrSkillKeyConflict` | `skill.ErrSkillKeyConflict` | `*adaptor.SkillKeyConflictError` (`Key`, `Sources`, `Detail`) | Structurally different skill declarations use the same key. |
+| `ErrSkillMaterializationFailed` | `skill.ErrSkillMaterializationFailed` | `*adaptor.SkillMaterializationError` (`Key`, `RuntimeName`, `Cause`) | A resolved skill could not be staged for the Driver. |
+| `ErrSkillSourceMissing` | `skill.ErrSkillSourceMissing` | — | A concrete skill has no source. |
+| `ErrSkillKeyMissing` | `skill.ErrSkillKeyMissing` | — | A concrete skill has an empty key. |
+| `ErrInvalidMCPConfig` | `mcp.ErrInvalidConfig` | — | An MCP declaration has a missing/duplicate key, missing command/URL, unknown transport, or transport-field mismatch. |
+| `ErrMCPUnsupported` | `mcp.ErrUnsupported` | — | The Driver declares no MCP support. |
+| `ErrMCPTransportUnsupported` | `mcp.ErrTransportUnsupported` | — | The Driver does not support the requested MCP transport. |
+| `ErrInvalidOutputSchema` | `driver.ErrInvalidOutputSchema` | `*adaptor.InvalidOutputSchemaError` (`Reason`, `Cause`) | A schema cannot be derived, parsed, normalized, or compiled. |
+| `ErrStructuredOutputUnsupported` | `driver.ErrStructuredOutputUnsupported` | `*adaptor.StructuredOutputUnsupportedError` (`Driver`, `Mode`, `Reason`) | The structured-output capability matrix cannot honor the request. |
+| `ErrInvalidDriverConfig` | `driver.ErrInvalidDriverConfig` | `*adaptor.InvalidDriverConfigError` (`Driver`, `Cause`) | `Driver.ValidateConfig` rejected the captured configuration. |
+| `ErrInvalidPolicy` | `driver.ErrInvalidPolicy` | `*adaptor.InvalidPolicyError` (`Driver`, `Field`, `Value`) | A policy enum, action, or retry value is out of domain. |
+| `ErrPolicyCapabilityUnsupported` | `driver.ErrPolicyCapabilityUnsupported` | `*adaptor.PolicyCapabilityUnsupportedError` (`Driver`, `Dimension`, `Value`) | A valid, explicitly selected sandbox, web-search, or browser value is unsupported. |
+| `ErrHumanDecisionModeUnsupported` | `driver.ErrHumanDecisionModeUnsupported` | `*adaptor.HumanDecisionModeUnsupportedError` (`Driver`, `Kind`, `Mode`) | An explicit approval mode is absent from `Descriptor.RunPolicyCaps`. |
+
+Typed errors preserve lower-level causes where their contracts say so.
+`InvalidDriverConfigError` and `InvalidOutputSchemaError` join their sentinel
+with `Cause`. `SkillMaterializationError` matches its SDK sentinel through an
+`Is` method while unwrapping the materializer cause.
+
+```go
+var invalid *adaptor.InvalidPolicyError
+if errors.As(err, &invalid) {
+	log.Printf("driver=%s field=%s value=%s", invalid.Driver, invalid.Field, invalid.Value)
+}
+
+if errors.Is(err, adaptor.ErrInvalidPolicy) {
+	// Stable category without typed detail.
+}
+```
+
+## Root Thread errors
+
+The root Thread API translates store/coordinator failures into application
+sentinels. Root consumers should match these names rather than depending on a
+particular store implementation.
+
+| Sentinel | Meaning | Typical host action |
+|---|---|---|
+| `ErrThreadStoreRequired` | A stateful Thread operation was requested without `WithThreadStore`. | Fix Agent construction. |
+| `ErrThreadNotFound` | A resume-only key or fork parent has no active record. | Return not-found or offer a new Thread. |
+| `ErrThreadBusy` | Another owner holds the required lease. | Retry with bounded backoff. |
+| `ErrThreadIncompatible` | Driver/config/identity/resolved-environment fingerprint or codec compatibility failed. | Keep the old record; explicitly create a new Thread if desired. |
+| `ErrThreadLeaseLost` | The run lost lease ownership, so its state was not persisted. | Treat the outcome as non-authoritative and investigate the store. |
+| `ErrThreadCheckpointMissing` | A nominally successful Thread run did not prove a healthy resumable checkpoint. | Preserve the previous healthy record and inspect the Driver. |
+| `ErrThreadAlreadyExists` | A fork target key already has an active conversation. | Choose another target key; parent and target remain unchanged. |
+| `ErrResumeRejected` | The Driver rejected a resume and the selected mode did not allow a fresh retry. | Inspect compatibility/auth state or explicitly create a new Thread. |
+
+The root contract promises `errors.Is` for these rows, not store-specific
+typed details. A `driver.SessionConfigFingerprintError` can remain discoverable
+with `errors.As` inside an `ErrThreadIncompatible` chain when strict config
+canonicalization caused the incompatibility.
+
+## Approval responder errors
+
+These are method errors from `ApprovalRequest.Approve`, `Deny`, and `Answer`,
+not run verdicts.
+
+| Sentinel | Meaning |
 |---|---|
-| **Sentinel** | The exported `Err*` variable. Use `errors.Is(err, ErrXxx)` to match. |
-| **Typed?** | Whether a `*Error` typed error wraps the sentinel and carries structured fields hosts may extract via `errors.As`. |
-| **HTTP** | Recommended HTTP status code when the host's outbound API surfaces this error. *Recommended*, not normative — hosts with their own error code conventions should map accordingly. |
-| **Log level** | Recommended log level. `info` = expected user error, `warn` = misconfiguration, `err` = SDK or backend bug. |
-| **Alert** | Whether the error usually warrants paging (yes/no). |
-| **Predicate** | If a typed predicate exists in `errors.go`, it appears here. Otherwise use `errors.Is` directly. |
-
-## Agent / binding errors
-
-These errors surface during SDK construction (`agentadaptor.New(...)`)
-or when invoking `Admin().Agent(...)` / `SDK.Agent(...)`. Most of them
-indicate misconfiguration that should never reach production.
-
-| Sentinel | Typed? | HTTP | Log | Alert | Predicate | Trigger |
-|---|---|---|---|---|---|---|
-| `ErrAgentBindingRequired` | — | 400 | warn | no | `errors.Is` | `WithAgent` / `WithDefaultAgent` called with `nil` binding |
-| `ErrAgentNameRequired` | — | 400 | warn | no | `errors.Is` | `WithAgent("")` |
-| `ErrAgentNotFound` | — | 404 | info | no | `errors.Is` | `SDK.Agent(name)` / `Admin.Agent(name)` for an unregistered name |
-| `ErrDefaultAgentAlreadyConfigured` | — | (panic) | — | — | — | `New` invoked with two `WithDefaultAgent`. Panics — never reaches HTTP. |
-| `ErrDefaultAgentMissing` | — | (panic) | — | — | — | `New` invoked with no `WithDefaultAgent`. Panics — never reaches HTTP. |
-| `ErrInvalidDriverConfig` | — | 400 | warn | no | `errors.Is` | Adapter `ValidateConfig` rejected the binding's config |
-| `ErrReservedAgentName` | — | 400 | warn | no | `errors.Is` | `WithAgent("default", ...)` (`default` is reserved for the default binding) |
-| (typed) `*DuplicateAgentError` | yes | 400 | warn | no | `errors.As` | `WithAgent(name, ...)` where `name` was already registered |
-
-## Session errors
-
-Errors related to session resume, lease coordination, and compatibility
-fingerprinting. See `AGENTS.md §6` for the session ontology.
-
-| Sentinel | Typed? | HTTP | Log | Alert | Predicate | Trigger |
-|---|---|---|---|---|---|---|
-| `ErrResumeRejected` | yes (`*ResumeRejectedError`) | 409 | warn | no | `errors.Is` / `errors.As` | Adapter rejected the resume attempt; `Reason` carries the adapter-side message |
-| `ErrSessionBusy` | yes (`*SessionBusyError`) | 409 | info | no | `IsSessionBusy` | Another worker holds the session lease; retry after backoff |
-| `ErrSessionCheckpointMissing` | — | 404 | info | no | `errors.Is` | The store has the SessionRecord but no `DriverState` to resume from |
-| `ErrSessionIncompatible` | yes (`*SessionIncompatibleError`) | 409 | warn | no | `IsSessionIncompatible` | Stored fingerprint differs from current; UI should suggest `start_new` |
-| `ErrSessionLeaseLost` | yes (`*SessionLeaseLostError`) | 409 | warn | **yes** | `errors.Is` | Lease holder lost the lease mid-run (clock skew, store timeout); investigate |
-| `ErrSessionNotFound` | — | 404 | info | no | `errors.Is` | `SessionStore.Resolve` returned no record |
-| `ErrSessionStoreRequired` | — | 500 | err | **yes** | `errors.Is` | Session-aware Run on an SDK with no `SessionStore`; must be a config bug |
-
-## MCP errors
-
-| Sentinel | Typed? | HTTP | Log | Alert | Predicate | Trigger |
-|---|---|---|---|---|---|---|
-| `ErrInvalidMCPConfig` | — | 400 | warn | no | `errors.Is` | `WithMCP` / `WithDefaultMCP` got malformed `MCPConfig` |
-| `ErrMCPUnsupported` | — | 400 | info | no | `errors.Is` | Adapter declares no MCP support in its descriptor |
-| `ErrMCPTransportUnsupported` | — | 400 | info | no | `errors.Is` | Adapter declares MCP support, but not for the requested transport |
-
-## HITL errors (see `docs/workstream-hitl-v2.md`)
-
-| Sentinel | Typed? | HTTP | Log | Alert | Predicate | Trigger |
-|---|---|---|---|---|---|---|
-| `ErrHumanDecisionModeUnsupported` | — | 400 | warn | no | `errors.Is` | `Start` invoked with a HumanDecisionPolicy mode the adapter's `RunPolicyCaps` does not advertise |
-| `ErrDecisionRequestExpired` | — | 409 | info | no | `IsDecisionExpired` | `ResolveDecision` after the request was already resolved or its deadline elapsed |
-| `ErrDecisionResultKindMismatch` | — | 400 | warn | no | `errors.Is` | `DecisionResponse.Kind` doesn't match `DecisionRequest.Kind` |
-| `ErrRunEnded` | — | 409 | info | no | `IsRunEnded` | Operation invoked on a `RunHandle` whose run already terminated; usually a benign race |
-
-## Structured-output errors (see `docs/structured-output.md`)
-
-| Sentinel | Typed? | HTTP | Log | Alert | Predicate | Trigger |
-|---|---|---|---|---|---|---|
-| `ErrStructuredOutputUnsupported` | yes (`*StructuredOutputUnsupportedError`) | 400 | warn | no | `errors.Is` / `errors.As` | A run requested a structured-output mode the adapter capability matrix cannot honor, for example Cursor with `NativeStrictOutput()` |
-| `ErrInvalidOutputSchema` | yes (`*InvalidOutputSchemaError`) | 400 | warn | no | `errors.Is` / `errors.As` | The JSON Schema document cannot be parsed/compiled, an SDK-owned schema helper cannot derive a safe schema, or adapter `ExtraArgs` conflict with SDK-managed schema flags |
-
-## Skill errors (see `docs/skill-api-design.md` / `docs/v0.5.0-host-integration-plan.md` §A1)
-
-| Sentinel | Typed? | HTTP | Log | Alert | Predicate | Trigger |
-|---|---|---|---|---|---|---|
-| `ErrSkillKeyConflict` | yes (`*SkillKeyConflictError`) | 500 | err | **yes** | `IsSkillKeyConflict` | Two skill candidates share Key but differ structurally; usually means the catalogue source is out of sync |
-| `ErrSkillMaterializationFailed` | yes (`*SkillMaterializationError`) | 500 | err | no | `IsSkillMaterializationFailed` | A selected skill was resolved but could not be materialized into a local `SKILL.md` directory before the adapter started |
-| `ErrSkillSourceMissing` | — | 500 | err | no | `errors.Is` | A `Skill` value reached resolution without a `Source` |
-| `ErrSkillKeyMissing` | — | 500 | err | no | `errors.Is` | A `Skill` value was constructed with empty Key |
-| `ErrSkillNotFound` | — | 404 | info | no | `errors.Is` | A bare `SkillKey` referenced via `WithSkills` / `WithDefaultSkills` cannot be resolved against any configured source |
-
-## Why no aggregate predicates
-
-The SDK exports six typed-error predicates and that is by design. We
-do **not** export aggregate predicates such as `IsExpired(err)` (would
-match `ErrDecisionRequestExpired` + `ErrRunEnded`) or `IsConflict(err)`
-(would match `ErrSkillKeyConflict` + `*DuplicateAgentError` + ...).
-Reasons:
-
-1. **Aggregation is irreversible.** Once a host writes
-   `if IsExpired(err) { ack409() }`, the SDK can never split
-   `ErrRunEnded` into more specific sentinels (e.g. `ErrRunEndedNormally`
-   vs `ErrRunEndedAborted`) without silently changing the host's
-   behaviour — even if the new sentinels are harmless.
-2. **Cross-sentinel "semantic similarity" is the SDK author's view, not
-   the host's.** A host that gets `ErrSkillKeyConflict` typically
-   triggers a "rebuild catalogue" workflow; a host that gets
-   `*DuplicateAgentError` triggers a "fix construction-time config"
-   workflow. Aggregating them into `IsConflict` would actively mislead.
-3. **`errors.Is(err, ErrXxx)` is enough.** The standard pattern is one
-   line, well-known, and respects the wrapping chain. Predicates exist
-   only when there is real value — typed-error syntactic sugar where
-   `errors.Is` and `errors.As` would otherwise both be needed.
-
-If you find yourself writing
-`if errors.Is(err, ErrA) || errors.Is(err, ErrB) { ... }` more than 2-3
-times in your codebase, define your own host-side predicate; do not
-expect the SDK to add one upstream.
-
-## Error chains and `errors.Is` / `errors.As`
-
-Typed errors either unwrap to their corresponding sentinel or implement
-`Is` for that sentinel while unwrapping a lower-level cause:
+| `ErrApprovalResolved` | A response already won the exactly-once race. |
+| `ErrApprovalExpired` | The deadline or owning invocation ended before this response. It also matches `ErrApprovalResolved`. |
+| `ErrApprovalKindMismatch` | The response method does not fit the request kind. |
+| `ErrApprovalUnavailable` | The request is nil, zero-valued, or has no run-owned responder. |
 
 ```go
-var typedErr *agentadaptor.SessionBusyError
-if errors.As(runErr, &typedErr) {
-    log.Printf("session %q is busy", typedErr.Target)
-}
-
-if errors.Is(runErr, agentadaptor.ErrSessionBusy) {
-    // Same condition, but no access to the typed fields.
+if err := request.Approve(ctx); err != nil {
+	switch {
+	case errors.Is(err, adaptor.ErrApprovalExpired):
+		// The UI response arrived too late.
+	case errors.Is(err, adaptor.ErrApprovalResolved):
+		// A duplicate response lost the race.
+	}
 }
 ```
 
-`*ResumeRejectedError` is the only typed error that joins two errors
-in its `Unwrap()` chain (`ErrResumeRejected` and the adapter-supplied
-`Cause`). `errors.Is` / `errors.As` walk both branches:
+## `threadstore` errors
 
-```go
-err := &ResumeRejectedError{Reason: "auth", Cause: io.ErrUnexpectedEOF}
+Store implementors and direct store consumers use the leaf identities. The
+root Thread API translates them to the root Thread categories above.
 
-errors.Is(err, ErrResumeRejected)        // true
-errors.Is(err, io.ErrUnexpectedEOF)      // true (joined branch)
-```
+| Sentinel | Typed error | Produced by |
+|---|---|---|
+| `threadstore.ErrBusy` | `*threadstore.BusyError{Target}` | `AcquireLease` while another owner has a live lease. |
+| `threadstore.ErrLeaseLost` | `*threadstore.LeaseLostError{Target}` | `RenewLease` or `Finalize` after owner/token/expiry validation fails. |
+| `threadstore.ErrAlreadyExists` | `*threadstore.AlreadyExistsError{Key}` | Conditional `Finalize` when a key was required to be absent. |
 
-`*SkillMaterializationError` matches `ErrSkillMaterializationFailed`
-through `Is` and unwraps the underlying materializer cause. This lets hosts
-branch on the SDK-level failure while still preserving lower-level matches:
+All three typed errors unwrap to their sentinel. `ReleaseLease` is idempotent
+and does not turn a stale release into `ErrLeaseLost`.
 
-```go
-var matErr *agentadaptor.SkillMaterializationError
-if errors.As(runErr, &matErr) {
-    log.Printf("skill %q failed to materialize: %v", matErr.Key, matErr.Cause)
-}
-```
+## Driver extension errors
 
-## See also
+Extension authors should return the canonical `driver` identities listed in
+the pre-invocation table. Their typed forms are:
 
-- [`errors.go`](../errors.go): inline godoc with the same matrix
-- [`docs/v0.5.0-host-integration-plan.md`](./v0.5.0-host-integration-plan.md) §A4: rationale for the matrix and the deliberate absence of aggregate predicates
-- [`AGENTS.md`](../AGENTS.md) §6: session ontology that the session errors reference
-- [`docs/workstream-hitl-v2.md`](./workstream-hitl-v2.md): HITL contract that the HITL errors reference
+- `*driver.InvalidDriverConfigError`
+- `*driver.InvalidPolicyError`
+- `*driver.PolicyCapabilityUnsupportedError`
+- `*driver.HumanDecisionModeUnsupportedError`
+- `*driver.InvalidOutputSchemaError`
+- `*driver.StructuredOutputUnsupportedError`
+
+`*driver.SessionConfigFingerprintError` has no sentinel. Match it with
+`errors.As`; its `Path`, `Type`, `Kind`, and `Why` fields describe only the
+unsupported Go shape and intentionally do not expose configuration values or
+map keys.
+
+## A2A client errors
+
+Package `clients/a2a` owns transport/client categories:
+
+| Sentinel | Meaning |
+|---|---|
+| `a2a.ErrInvalidAgentCard` | The card or selected interface is incomplete or invalid. |
+| `a2a.ErrProtocol` | A request, response, part, or event violates the supported protocol shape. |
+| `a2a.ErrUnauthorized` | The remote endpoint rejected authentication/authorization. |
+| `a2a.ErrNotFound` | The remote task does not exist. |
+| `a2a.ErrUnsupported` | The requested operation or content type is unsupported. |
+| `a2a.ErrUntrustedOrigin` | Credentials would cross an origin not explicitly trusted by client options. |
+
+`*a2a.ProtocolError` exposes `Op`, `Reason`, `Cause`, and sanitized `Raw`, and
+unwraps its cause (or `ErrProtocol` when no cause is set).
+`*a2a.StreamRecoveryError` exposes `TaskID` and unwraps the disconnection or
+recovery cause; it has no dedicated sentinel.
+
+## Hosttool errors
+
+`hosttools/sessionrecorder` exports:
+
+| Sentinel | Meaning |
+|---|---|
+| `sessionrecorder.ErrInvalidSessionKey` | A recorder/backend key validator or mandatory path-containment check rejected the key. |
+| `sessionrecorder.ErrJSONLEventBackendClosed` | An operation was attempted after the durable event backend closed. |
+| `sessionrecorder.ErrJSONLEventLogCorrupt` | A malformed, truncated, or inconsistent JSONL audit log could not be replayed faithfully. |
+
+`hosttools/a2adelegation.DelegationError` is a typed remote/business failure
+with `Code`, `Message`, `Retryable`, `RemoteStatus`, and `Metadata`. It
+implements `error` but has no sentinel and no unwrap contract.
+
+The `profile`, `memory`, and bridge packages currently define no additional
+SDK-owned stable error sentinels. They return documented standard errors,
+wrapped root/leaf errors, or external protocol-library errors as appropriate.
+
+## Matching rules
+
+- Match categories with `errors.Is`, never string comparison.
+- Use `errors.As` only for a documented typed error and keep the pointer target
+  form (`var typed *T; errors.As(err, &typed)`).
+- Do not collapse unrelated categories into a global `IsConflict` or
+  `IsExpired` helper. Hosts can define domain-specific groupings without
+  freezing them into the SDK.
+- Preserve the full chain with `%w` when adding host context.
+- Treat recommended retries and user-facing status codes as host policy; the
+  SDK defines error identity and semantics, not an HTTP response matrix.
+
+See [Run policy](./run-policy.md), [Structured output](./structured-output.md),
+and [`AGENTS.md`](../AGENTS.md) for the associated behavioral contracts.

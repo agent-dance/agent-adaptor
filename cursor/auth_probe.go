@@ -7,8 +7,8 @@ import (
 	"strings"
 
 	"github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/internal/adapterutil"
 	"github.com/agent-dance/agent-adaptor/internal/configprobe"
+	"github.com/agent-dance/agent-adaptor/internal/driverutil"
 	"github.com/agent-dance/agent-adaptor/internal/skillruntime"
 )
 
@@ -81,7 +81,7 @@ func cursorProfile(config driver.CommonConfig, selection *driver.ProfileSelectio
 
 func cursorAuthChecks(bindings []driver.EnvBinding) []driver.EnvironmentCheck {
 	checks := make([]driver.EnvironmentCheck, 0, 2)
-	if _, source := adapterutil.ResolvedEnvValue(bindings, "CURSOR_API_KEY"); source != "" {
+	if _, source := driverutil.ResolvedEnvValue(bindings, "CURSOR_API_KEY"); source != "" {
 		checks = append(checks, driver.EnvironmentCheck{
 			Code:    "cursor_api_key_present",
 			Level:   "info",
@@ -89,7 +89,7 @@ func cursorAuthChecks(bindings []driver.EnvBinding) []driver.EnvironmentCheck {
 			Detail:  authSourceDetail(source),
 		})
 	}
-	if _, source := adapterutil.ResolvedEnvValue(bindings, "OPENAI_API_KEY"); source != "" {
+	if _, source := driverutil.ResolvedEnvValue(bindings, "OPENAI_API_KEY"); source != "" {
 		checks = append(checks, driver.EnvironmentCheck{
 			Code:    "cursor_openai_api_key_present",
 			Level:   "info",

@@ -1,10 +1,7 @@
 package a2adelegation
 
-// Per-run MCP sidecar lifecycle (P4.6). This consolidates the hand-written
-// runtime from examples/showcases/team-agent-workflow/delegation_runtime.go
-// (random bearer token, loopback listener, http.Server lifecycle, serve-error
-// drain, graceful shutdown) into the Service. MCPServerOptions carries a
-// fixed RunID, so attribution is per run: one sidecar per RunID.
+// Per-run MCP sidecar lifecycle. Service owns the random bearer token,
+// loopback listener, HTTP server, graceful shutdown, and run attribution.
 
 import (
 	"context"

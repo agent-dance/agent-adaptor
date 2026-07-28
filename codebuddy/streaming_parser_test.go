@@ -45,6 +45,7 @@ func TestStreamingParserEmitsFullLifecycle(t *testing.T) {
 		t.Fatalf("onChunk 2: %v", err)
 	}
 	p.finalize()
+	p.completeStream(p.failureForOutcome(0), 0, "", false)
 
 	counts := map[driver.StreamKind]int{}
 	var textDelta strings.Builder

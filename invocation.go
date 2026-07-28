@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"reflect"
 	"slices"
 	"strings"
 	"time"
@@ -44,13 +43,14 @@ func (a *Agent) startInvocation(ctx context.Context, prompt string, opts []CallO
 
 // executeInvocation owns every phase between option resolution and terminal
 // teardown. In particular, this file contains the sole production Driver.Run
-// call and the sole ThreadSessionPlan.Persist call in next/.
+// call and the sole ThreadSessionPlan.Persist call in the root execution path.
 func (a *Agent) executeInvocation(ctx context.Context, st *runStream, prompt string, eff *RunSettings, target *invocationTarget) {
 	var (
-		resources *runResources
-		plan      *engine.ThreadSessionPlan
-		result    *Result
-		resultErr error
+		resources      *runResources
+		plan           *engine.ThreadSessionPlan
+		threadContract threadDriverContract
+		result         *Result
+		resultErr      error
 	)
 
 	defer func() {
@@ -74,11 +74,34 @@ func (a *Agent) executeInvocation(ctx context.Context, st *runStream, prompt str
 		}
 
 		backfillRunServices(resources, result, resultErr)
+		if teardownErr := resources.finish(ctx); teardownErr != nil {
+			teardownErr = fmt.Errorf("adaptor: run %s teardown: %w", st.runID, teardownErr)
+			if resultErr == nil {
+				result = nil
+				resultErr = teardownErr
+			} else {
+				resultErr = errors.Join(resultErr, teardownErr)
+			}
+		}
 		st.res, st.err = result, resultErr
-		resources.finish(ctx, st.sink)
+		st.sink.completeAuthoritativeLifecycle(result, resultErr)
+		st.sink.close()
 		close(st.done)
 		st.cancel()
 	}()
+
+	if target != nil {
+		if a.defaults.threadStore == nil {
+			resultErr = fmt.Errorf("%w (thread %q)", ErrThreadStoreRequired, target.thread.key)
+			return
+		}
+		var contractErr error
+		threadContract, contractErr = validateThreadDriverContract(a.driver)
+		if contractErr != nil {
+			resultErr = target.thread.threadError(contractErr)
+			return
+		}
+	}
 
 	resources, resultErr = a.acquireRun(ctx, st.runID, eff, st.sink)
 	if resultErr != nil {
@@ -98,15 +121,7 @@ func (a *Agent) executeInvocation(ctx context.Context, st *runStream, prompt str
 	}
 	fingerprint := ""
 	if target != nil {
-		if a.defaults.threadStore == nil {
-			resultErr = fmt.Errorf("%w (thread %q)", ErrThreadStoreRequired, target.thread.key)
-			return
-		}
-		fingerprint, err = a.threadInvocationFingerprint(identity, resolved.req)
-		if err != nil {
-			resultErr = target.thread.threadError(err)
-			return
-		}
+		fingerprint = a.threadInvocationFingerprint(identity, resolved.req, threadContract)
 		req := engine.SessionRequest{
 			Namespace: threadNamespace,
 			Key:       target.thread.key,
@@ -137,7 +152,8 @@ func (a *Agent) executeInvocation(ctx context.Context, st *runStream, prompt str
 			request.Session = plan.DriverSession(a.driver)
 		}
 		// Architectural invariant: this is the only Driver.Run call in the
-		// v1 facade. Retry changes only the prepared session context.
+		// root execution pipeline. Retry changes only the prepared session
+		// context.
 		response, runErr := a.driver.Run(ctx, request, st.sink)
 
 		if plan != nil && runErr != nil {
@@ -162,6 +178,15 @@ func (a *Agent) executeInvocation(ctx context.Context, st *runStream, prompt str
 			}
 		}
 
+		// A process helper reports an executed command's outcome as Response
+		// data so the Driver can first apply its provider-specific protocol
+		// classification. Close the remaining gap exactly once, here at the
+		// common invocation boundary: an unclassified abnormal process outcome
+		// must never become a successful stateless run or a persisted Thread.
+		// Provider and approval failures remain authoritative; bare outer-context
+		// cancellation keeps the public infrastructure-error identity.
+		response, runErr = classifyInvocationOutcome(ctx, response, runErr, st.sink.pendingFailure())
+
 		if runErr == nil {
 			response.StructuredOutput, response.Failure = engine.FinalizeStructuredOutput(
 				resolved.schema, resolved.source, response.Output, response.StructuredOutput, response.Failure,
@@ -169,7 +194,7 @@ func (a *Agent) executeInvocation(ctx context.Context, st *runStream, prompt str
 		}
 
 		if plan != nil && invocationCanPersist(ctx, a.driver, response, runErr, st.sink.pendingFailure()) {
-			// Architectural invariant: this is the only v1 persistence point.
+			// Architectural invariant: this is the only Thread persistence point.
 			if _, persistErr := plan.Persist(ctx, identity, a.driver, fingerprint, response.Checkpoint); persistErr != nil {
 				resultErr = target.thread.threadError(persistErr)
 				return
@@ -179,8 +204,8 @@ func (a *Agent) executeInvocation(ctx context.Context, st *runStream, prompt str
 			// A nominally successful Thread run must prove it is both healthy
 			// and resumable. Failed/cancelled/business-failure runs simply skip
 			// persistence, preserving the previous healthy active record.
-			if healthErr := invocationPersistenceHealthError(ctx, response); healthErr != nil {
-				resultErr = fmt.Errorf("adaptor: run %s: %w", st.runID, healthErr)
+			if cancelErr := ctx.Err(); cancelErr != nil {
+				resultErr = fmt.Errorf("adaptor: run %s: %w", st.runID, cancelErr)
 				return
 			}
 			resultErr = target.thread.threadError(engine.ErrSessionCheckpointMissing)
@@ -197,27 +222,12 @@ func (a *Agent) executeInvocation(ctx context.Context, st *runStream, prompt str
 // stable, secret-safe contract; the remaining values are the concrete request
 // handed to that same configured driver (including the acquired workspace and
 // runtime-service attachment payloads).
-func (a *Agent) threadInvocationFingerprint(identity driver.AgentIdentity, req driver.Request) (string, error) {
-	fingerprinter, ok := a.driver.(driver.SessionConfigFingerprinter)
-	if !ok {
-		return "", fmt.Errorf("%w: driver %q does not implement driver.SessionConfigFingerprinter", ErrThreadIncompatible, a.driver.Descriptor().Type)
-	}
-	configFingerprint, err := fingerprinter.SessionConfigFingerprint()
-	if err != nil {
-		return "", fmt.Errorf("%w: driver config fingerprint: %w", ErrThreadIncompatible, err)
-	}
-	if strings.TrimSpace(configFingerprint) == "" {
-		return "", fmt.Errorf("%w: driver %q returned an empty config fingerprint", ErrThreadIncompatible, a.driver.Descriptor().Type)
-	}
-	codecName, err := validatedSessionCodecName(a.driver)
-	if err != nil {
-		return "", fmt.Errorf("%w: %w", ErrThreadIncompatible, err)
-	}
+func (a *Agent) threadInvocationFingerprint(identity driver.AgentIdentity, req driver.Request, contract threadDriverContract) string {
 	return engine.StableHash(
 		"adaptor/thread-invocation/v1",
 		a.driver.Descriptor().Type,
-		codecName,
-		configFingerprint,
+		contract.codecName,
+		contract.configFingerprint,
 		identity,
 		req.ModelOverride,
 		req.Workspace,
@@ -226,7 +236,48 @@ func (a *Agent) threadInvocationFingerprint(identity driver.AgentIdentity, req d
 		req.ProfilePayload.Fingerprint,
 		req.Skills.Fingerprint,
 		engine.InstructionFingerprint(req.Instructions),
-	), nil
+	)
+}
+
+type threadDriverContract struct {
+	codecName         string
+	configFingerprint string
+}
+
+// validateThreadDriverContract is the Thread prelaunch gate. It runs before
+// workspace/runtime/profile acquisition and before any store operation, so an
+// incomplete resume declaration cannot acquire a lease or launch the Driver.
+func validateThreadDriverContract(d driver.Driver) (contract threadDriverContract, err error) {
+	codecName, err := engine.ValidateThreadSessionDriver(d)
+	if err != nil {
+		return threadDriverContract{}, err
+	}
+	fingerprinter, ok := d.(driver.SessionConfigFingerprinter)
+	if !ok {
+		return threadDriverContract{}, &engine.SessionIncompatibleError{Reason: "resume-capable driver does not implement SessionConfigFingerprinter"}
+	}
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			contract = threadDriverContract{}
+			err = &engine.SessionIncompatibleError{Reason: fmt.Sprintf("driver config fingerprinter panicked (%T)", recovered)}
+		}
+	}()
+	first, fpErr := fingerprinter.SessionConfigFingerprint()
+	if fpErr != nil {
+		return threadDriverContract{}, &engine.SessionIncompatibleError{Reason: "driver config fingerprint failed: " + fpErr.Error()}
+	}
+	first = strings.TrimSpace(first)
+	if first == "" {
+		return threadDriverContract{}, &engine.SessionIncompatibleError{Reason: "driver returned an empty config fingerprint"}
+	}
+	second, fpErr := fingerprinter.SessionConfigFingerprint()
+	if fpErr != nil {
+		return threadDriverContract{}, &engine.SessionIncompatibleError{Reason: "driver config fingerprint stability check failed: " + fpErr.Error()}
+	}
+	if strings.TrimSpace(second) != first {
+		return threadDriverContract{}, &engine.SessionIncompatibleError{Reason: "driver config fingerprint is not stable"}
+	}
+	return threadDriverContract{codecName: strings.TrimSpace(codecName), configFingerprint: first}, nil
 }
 
 // threadRuntimeCompatibility is the stable, secret-free part of the resolved
@@ -331,31 +382,6 @@ type threadRuntimeServiceRefView struct {
 	Metadata     map[string]string
 }
 
-func validatedSessionCodecName(d driver.Driver) (name string, err error) {
-	codec := engine.SessionCodecFor(d)
-	if codec == nil {
-		return "", errors.New("driver session codec is nil")
-	}
-	value := reflect.ValueOf(codec)
-	switch value.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
-		if value.IsNil() {
-			return "", errors.New("driver session codec is nil")
-		}
-	}
-	defer func() {
-		if recovered := recover(); recovered != nil {
-			name = ""
-			err = fmt.Errorf("driver session codec Name panicked (%T)", recovered)
-		}
-	}()
-	name = strings.TrimSpace(codec.Name())
-	if name == "" {
-		return "", errors.New("driver session codec has an empty stable name")
-	}
-	return name, nil
-}
-
 func invocationCanPersist(ctx context.Context, d driver.Driver, resp driver.Response, runErr error, pending *driver.RunFailure) bool {
 	validCheckpoint := resp.Checkpoint != nil && resp.Checkpoint.Valid && resp.Checkpoint.State != nil &&
 		strings.TrimSpace(resp.Checkpoint.State.ResumeID) != ""
@@ -368,48 +394,74 @@ func invocationCanPersist(ctx context.Context, d driver.Driver, resp driver.Resp
 		validCheckpoint
 }
 
-func invocationPersistenceHealthError(ctx context.Context, resp driver.Response) error {
-	if err := ctx.Err(); err != nil {
-		return err
+// classifyInvocationOutcome supplies the single provider-agnostic fallback
+// after a Driver has had the opportunity to parse its official protocol.
+// Process outcome fields are audit data on driver.Response rather than a
+// Driver.Run error, because non-zero exit can still carry useful raw output,
+// transcript, usage, and a provider terminal payload. When no more specific
+// provider or approval failure exists, convert that audit data into a
+// structured business failure so resultFromResponse can preserve all of it.
+func classifyInvocationOutcome(ctx context.Context, resp driver.Response, runErr error, pending *driver.RunFailure) (driver.Response, error) {
+	if resp.Failure != nil || pending != nil {
+		return resp, runErr
 	}
+	if runErr != nil {
+		return resp, runErr
+	}
+	if err := ctx.Err(); err != nil {
+		return resp, err
+	}
+	if resp.ExitCode == 0 && resp.Signal == "" && !resp.TimedOut {
+		return resp, nil
+	}
+
+	metadata := make(map[string]any, 3)
+	parts := make([]string, 0, 3)
 	if resp.ExitCode != 0 {
-		return fmt.Errorf("driver returned non-zero exit code %d without a classified failure", resp.ExitCode)
+		metadata["exit_code"] = resp.ExitCode
+		parts = append(parts, fmt.Sprintf("exit code %d", resp.ExitCode))
 	}
 	if resp.Signal != "" {
-		return fmt.Errorf("driver terminated by signal %q without a classified failure", resp.Signal)
+		metadata["signal"] = resp.Signal
+		parts = append(parts, fmt.Sprintf("signal %q", resp.Signal))
 	}
 	if resp.TimedOut {
-		return context.DeadlineExceeded
+		metadata["timed_out"] = true
+		parts = append(parts, "timeout")
 	}
-	return nil
+	resp.Failure = &driver.RunFailure{
+		Code:     driver.FailureAgentError,
+		Message:  "driver process ended unsuccessfully: " + strings.Join(parts, ", "),
+		Metadata: metadata,
+	}
+	return resp, nil
 }
 
 func finalizeRun(runID string, sink *eventSink, resp driver.Response, err error) (*Result, error) {
 	pending := sink.pendingFailure()
-	if err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return nil, fmt.Errorf("adaptor: run %s: %w", runID, err)
-		}
-		if pending != nil {
-			return nil, runErrorFromFailure(pending, resultFromResponse(runID, resp))
-		}
-		if errors.Is(err, errApprovalAbort) {
-			return nil, &RunError{
-				Reason:  ReasonAgentError,
-				Message: "approval aborted the run",
-				Result:  resultFromResponse(runID, resp),
-			}
-		}
-		return nil, fmt.Errorf("adaptor: run %s: %w", runID, err)
-	}
-
 	res := resultFromResponse(runID, resp)
 	failure := resp.Failure
 	if pending != nil {
 		failure = pending
 	}
+	// A protocol-classified provider failure or SDK approval failure is more
+	// specific than a concurrent process/context error. Preserve that verdict
+	// and its partial Result instead of replacing it with a generic wrapper.
 	if failure != nil {
 		return nil, runErrorFromFailure(failure, res)
+	}
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, fmt.Errorf("adaptor: run %s: %w", runID, err)
+		}
+		if errors.Is(err, errApprovalAbort) {
+			return nil, &RunError{
+				Reason:  ReasonAgentError,
+				Message: "approval aborted the run",
+				Result:  res,
+			}
+		}
+		return nil, fmt.Errorf("adaptor: run %s: %w", runID, err)
 	}
 	return res, nil
 }

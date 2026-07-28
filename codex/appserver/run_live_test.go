@@ -4,14 +4,15 @@ package appserver_test
 
 import (
 	"context"
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
 	"time"
 
+	adaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/codex"
 	"github.com/agent-dance/agent-adaptor/memory"
-	adaptor "github.com/agent-dance/agent-adaptor"
 )
 
 // TestAppServerHaiku is the canonical end-to-end smoke test for the codex
@@ -21,15 +22,19 @@ import (
 //
 // Run with:
 //
-//	go test -tags=codex_live -run TestAppServerHaiku ./codex/...
+//	AGENT_ADAPTOR_LIVE_CONFORMANCE=1 go test -tags=codex_live -run TestAppServerHaiku ./codex/...
 func TestAppServerHaiku(t *testing.T) {
+	if os.Getenv("AGENT_ADAPTOR_LIVE_CONFORMANCE") != "1" {
+		t.Skip("set AGENT_ADAPTOR_LIVE_CONFORMANCE=1 in addition to -tags codex_live")
+	}
 	if _, err := exec.LookPath("codex"); err != nil {
 		t.Skip("codex CLI not in PATH")
 	}
+	workspace := t.TempDir()
 
 	agent := adaptor.New(
 		codex.Driver(codex.Config{
-			CommonConfig: codex.CommonConfig{CWD: "/tmp"},
+			CommonConfig: codex.CommonConfig{CWD: workspace},
 			Model:        "gpt-5.4",
 		}),
 		adaptor.WithThreadStore(memory.NewStore()),
@@ -142,7 +147,7 @@ func TestAppServerHaiku(t *testing.T) {
 	if err != nil || checkpoint == nil || !checkpoint.Valid || checkpoint.State == nil || checkpoint.State.ResumeID == "" {
 		t.Fatalf("thread checkpoint missing: checkpoint=%+v err=%v", checkpoint, err)
 	}
-	if res.Usage.InputTokens == 0 {
+	if res.Usage == nil || res.Usage.InputTokens == 0 {
 		t.Fatalf("result.Usage missing or zero: %+v", res.Usage)
 	}
 	raw := res.Raw()

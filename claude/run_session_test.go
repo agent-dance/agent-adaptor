@@ -7,11 +7,216 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	agentadaptor "github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/internal/engine"
 	"github.com/agent-dance/agent-adaptor/internal/testutil"
 )
+
+func TestClaudeForkRejectsMissingParentBeforeMaterializationOrLaunch(t *testing.T) {
+	for _, state := range []*agentadaptor.SessionState{nil, {ResumeID: "   "}} {
+		_, err := (adapter{}).Run(context.Background(), agentadaptor.Request{
+			Config: Config{CommonConfig: CommonConfig{
+				Command: filepath.Join(t.TempDir(), "must-not-run-claude"),
+			}},
+			Session: &agentadaptor.SessionContext{Mode: agentadaptor.SessionFork, State: state},
+			Skills: agentadaptor.ResolvedSkills{Entries: []agentadaptor.ResolvedSkill{{
+				Key: "must-not-materialize", SourcePath: filepath.Join(t.TempDir(), "missing-skill"),
+			}}},
+		}, &testutil.EventRecorder{})
+		if !errors.Is(err, engine.ErrResumeRejected) {
+			t.Fatalf("fork state %#v: error = %v, want ErrResumeRejected before materialization/launch", state, err)
+		}
+	}
+}
+
+func TestClaudeForkRequiresDistinctChildCheckpoint(t *testing.T) {
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	tests := []struct {
+		name        string
+		terminal    string
+		wantReject  bool
+		wantChildID string
+	}{
+		{
+			name:       "missing child session ID",
+			terminal:   `{"type":"result","subtype":"success","is_error":false,"result":"done"}`,
+			wantReject: true,
+		},
+		{
+			name:       "parent ID reused",
+			terminal:   `{"type":"result","subtype":"success","is_error":false,"session_id":"parent-session","result":"done"}`,
+			wantReject: true,
+		},
+		{
+			name:        "distinct child ID",
+			terminal:    `{"type":"result","subtype":"success","is_error":false,"session_id":"child-session","result":"done"}`,
+			wantChildID: "child-session",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			command := testutil.WriteCommand(t, home, "fake-claude-fork-outcome",
+				"#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '"+tc.terminal+"'\n",
+				"@echo off\r\nset /p X=\r\necho "+tc.terminal+"\r\n",
+			)
+			resp, err := (adapter{}).Run(context.Background(), agentadaptor.Request{
+				Prompt:    "fork",
+				Config:    Config{CommonConfig: CommonConfig{Command: command, CWD: home}},
+				Workspace: agentadaptor.WorkspaceLease{ID: "workspace", CWD: home},
+				Session: &agentadaptor.SessionContext{
+					Mode:  agentadaptor.SessionFork,
+					State: &agentadaptor.SessionState{ResumeID: "parent-session"},
+				},
+			}, &testutil.EventRecorder{})
+			if tc.wantReject {
+				if !errors.Is(err, engine.ErrResumeRejected) {
+					t.Fatalf("error = %v, want ErrResumeRejected", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			if resp.Checkpoint == nil || resp.Checkpoint.State == nil || resp.Checkpoint.State.ResumeID != tc.wantChildID {
+				t.Fatalf("checkpoint = %#v, want distinct child %q", resp.Checkpoint, tc.wantChildID)
+			}
+		})
+	}
+}
+
+func TestClaudeRunPreservesUnclassifiedProcessOutcome(t *testing.T) {
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	for _, tc := range []struct {
+		name        string
+		posixBody   string
+		windowsBody string
+		cancel      bool
+	}{
+		{
+			name:        "exit without provider terminal",
+			posixBody:   "#!/bin/sh\ncat >/dev/null\nprintf 'partial stdout\\n'\nprintf 'partial stderr\\n' >&2\nexit 7\n",
+			windowsBody: "@echo off\r\nset /p X=\r\necho partial stdout\r\n>&2 echo partial stderr\r\nexit /b 7\r\n",
+		},
+		{
+			name:        "cancel before provider terminal",
+			posixBody:   "#!/bin/sh\ncat >/dev/null\nprintf 'partial stdout\\n'\nprintf 'partial stderr\\n' >&2\nsleep 30\n",
+			windowsBody: "@echo off\r\nset /p X=\r\necho partial stdout\r\n>&2 echo partial stderr\r\nping -n 31 127.0.0.1 >nul\r\n",
+			cancel:      true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			command := testutil.WriteCommand(t, home, "fake-claude-outcome", tc.posixBody, tc.windowsBody)
+			ctx := context.Background()
+			if tc.cancel {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, 500*time.Millisecond)
+				defer cancel()
+			}
+			res, err := (adapter{}).Run(ctx, agentadaptor.Request{
+				Prompt:    "go",
+				Config:    Config{CommonConfig: CommonConfig{Command: command, CWD: home}},
+				Workspace: agentadaptor.WorkspaceLease{CWD: home},
+			}, &testutil.EventRecorder{})
+			if err != nil {
+				t.Fatalf("Driver.Run error = %v", err)
+			}
+			if res.ExitCode == 0 || res.Failure != nil || res.Checkpoint != nil {
+				t.Fatalf("outcome = %+v, want abnormal fields with no provider classification/checkpoint", res)
+			}
+			if tc.cancel && !res.TimedOut {
+				t.Fatalf("TimedOut = false for context deadline outcome: %+v", res)
+			}
+			if tc.cancel && !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				t.Fatalf("context error = %v, want deadline", ctx.Err())
+			}
+			if res.RawStreams == nil || !strings.Contains(res.RawStreams.Stdout, "partial stdout") || !strings.Contains(res.RawStreams.Stderr, "partial stderr") {
+				t.Fatalf("raw streams = %#v", res.RawStreams)
+			}
+			if len(res.Transcript) < 2 {
+				t.Fatalf("transcript = %#v, want partial stdout/stderr", res.Transcript)
+			}
+		})
+	}
+}
+
+func TestClaudeRunCleanProtocolFailuresAreStructured(t *testing.T) {
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	tests := []struct {
+		name        string
+		posixBody   string
+		windowsBody string
+	}{
+		{
+			name:        "empty stdout",
+			posixBody:   "#!/bin/sh\ncat >/dev/null\nexit 0\n",
+			windowsBody: "@echo off\r\nset /p X=\r\nexit /b 0\r\n",
+		},
+		{
+			name:        "malformed stdout",
+			posixBody:   "#!/bin/sh\ncat >/dev/null\nprintf 'not protocol\\n'\n",
+			windowsBody: "@echo off\r\nset /p X=\r\necho not protocol\r\n",
+		},
+		{
+			name:        "missing terminal",
+			posixBody:   "#!/bin/sh\ncat >/dev/null\nprintf '{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"s\"}\\n'\n",
+			windowsBody: "@echo off\r\nset /p X=\r\necho {\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"s\"}\r\n",
+		},
+		{
+			name:        "non-success terminal",
+			posixBody:   "#!/bin/sh\ncat >/dev/null\nprintf '{\"type\":\"result\",\"subtype\":\"error\",\"session_id\":\"s\",\"result\":\"provider failed\"}\\n'\n",
+			windowsBody: "@echo off\r\nset /p X=\r\necho {\"type\":\"result\",\"subtype\":\"error\",\"session_id\":\"s\",\"result\":\"provider failed\"}\r\n",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			command := testutil.WriteCommand(t, home, "fake-claude-clean-protocol", tc.posixBody, tc.windowsBody)
+			resp, err := (adapter{}).Run(context.Background(), agentadaptor.Request{
+				Prompt:    "hello",
+				Config:    Config{CommonConfig: CommonConfig{Command: command, CWD: home}},
+				Workspace: agentadaptor.WorkspaceLease{ID: "workspace", CWD: home},
+			}, &testutil.EventRecorder{})
+			if err != nil {
+				t.Fatalf("Run infrastructure error: %v", err)
+			}
+			if resp.Failure == nil || resp.Failure.Code != agentadaptor.FailureAgentError {
+				t.Fatalf("Failure = %#v, want agent_error", resp.Failure)
+			}
+			if resp.Checkpoint != nil {
+				t.Fatalf("failed protocol produced checkpoint %#v", resp.Checkpoint)
+			}
+		})
+	}
+}
+
+func TestClaudeRunClassifiesProviderResumeRejection(t *testing.T) {
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	home := t.TempDir()
+	command := testutil.WriteCommand(t, home, "fake-claude-resume-rejected",
+		"#!/bin/sh\ncat >/dev/null\nprintf 'No conversation found with session ID: missing-session\\n' >&2\nexit 1\n",
+		"@echo off\r\nset /p X=\r\n>&2 echo No conversation found with session ID: missing-session\r\nexit /b 1\r\n",
+	)
+	base := agentadaptor.Request{
+		Prompt:    "continue",
+		Config:    Config{CommonConfig: CommonConfig{Command: command, CWD: home}},
+		Workspace: agentadaptor.WorkspaceLease{ID: "workspace", CWD: home},
+	}
+	resumed := base
+	resumed.Session = &agentadaptor.SessionContext{
+		Mode:  agentadaptor.SessionContinueOnly,
+		State: &agentadaptor.SessionState{ResumeID: "missing-session"},
+	}
+	if _, err := (adapter{}).Run(context.Background(), resumed, &testutil.EventRecorder{}); !errors.Is(err, engine.ErrResumeRejected) {
+		t.Fatalf("resume error = %v, want ErrResumeRejected", err)
+	}
+	if _, err := (adapter{}).Run(context.Background(), base, &testutil.EventRecorder{}); err != nil {
+		t.Fatalf("stateless run must not classify stderr as resume rejection: %v", err)
+	}
+}
 
 func TestClaudeRunPreservesAndGuardsSessionState(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", "")
@@ -29,8 +234,8 @@ func TestClaudeRunPreservesAndGuardsSessionState(t *testing.T) {
 		t.Fatalf("write skill: %v", err)
 	}
 	command := testutil.WriteCommand(t, home, "fake-claude",
-		"#!/bin/sh\nset -eu\nprompt=$(cat)\nprintf 'stderr:%s\\n' \"$prompt\" >&2\nprintf '{\"type\":\"result\",\"subtype\":\"success\",\"session_id\":\"claude-session\",\"display_id\":\"claude-display\"}\\n'\n",
-		"@echo off\r\nsetlocal\r\nset /p PROMPT=\r\n>&2 echo stderr:%PROMPT%\r\necho {\"type\":\"result\",\"subtype\":\"success\",\"session_id\":\"claude-session\",\"display_id\":\"claude-display\"}\r\n",
+		"#!/bin/sh\nset -eu\nprompt=$(cat)\nprintf 'stderr:%s\\n' \"$prompt\" >&2\nprintf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"session_id\":\"claude-session\",\"display_id\":\"claude-display\",\"result\":\"done\"}\\n'\n",
+		"@echo off\r\nsetlocal\r\nset /p PROMPT=\r\n>&2 echo stderr:%PROMPT%\r\necho {\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"session_id\":\"claude-session\",\"display_id\":\"claude-display\",\"result\":\"done\"}\r\n",
 	)
 
 	cfg := Config{
@@ -77,9 +282,6 @@ func TestClaudeRunPreservesAndGuardsSessionState(t *testing.T) {
 	if first.Checkpoint.State.Data[agentadaptor.SessionParamProfileFingerprint] != "profile-a" {
 		t.Fatalf("expected profile guard, got %#v", first.Checkpoint.State.Data)
 	}
-	if first.Checkpoint.State.Data[agentadaptor.SessionParamPromptBundleKey] != "" {
-		t.Fatalf("expected new checkpoints not to use prompt bundle guard, got %#v", first.Checkpoint.State.Data)
-	}
 	if _, err := os.Stat(filepath.Join(home, ".claude", "skills", "analysis")); err != nil {
 		t.Fatalf("expected selected skill in Claude profile-local skills home: %v", err)
 	}
@@ -107,19 +309,6 @@ func TestClaudeRunPreservesAndGuardsSessionState(t *testing.T) {
 		t.Fatalf("expected ErrResumeRejected, got %v", err)
 	}
 
-	legacyReq := req
-	legacyReq.Skills = payloadB
-	legacyReq.ProfilePayload = agentadaptor.ProfilePayload{}
-	legacyReq.Session = &agentadaptor.SessionContext{State: &agentadaptor.SessionState{
-		ResumeID: "claude-session",
-		Data: map[string]string{
-			agentadaptor.SessionParamPromptBundleKey: "bundle-a",
-		},
-	}}
-	_, err = (adapter{}).Run(context.Background(), legacyReq, &testutil.EventRecorder{})
-	if !errors.Is(err, engine.ErrResumeRejected) {
-		t.Fatalf("expected legacy ErrResumeRejected, got %v", err)
-	}
 }
 
 func TestClaudeRunMapsDedicatedProfileOptionToClaudeConfigDir(t *testing.T) {
@@ -129,8 +318,8 @@ func TestClaudeRunMapsDedicatedProfileOptionToClaudeConfigDir(t *testing.T) {
 		t.Fatalf("mkdir workspace: %v", err)
 	}
 	command := testutil.WriteCommand(t, profileDir, "fake-claude-profile",
-		"#!/bin/sh\nset -eu\ncat >/dev/null\nprintf '{\"event\":\"turn.completed\",\"session_id\":\"claude-session\"}\\n'\n",
-		"@echo off\r\nsetlocal\r\nset /p PROMPT=\r\necho {\"event\":\"turn.completed\",\"session_id\":\"claude-session\"}\r\n",
+		"#!/bin/sh\nset -eu\ncat >/dev/null\nprintf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"session_id\":\"claude-session\",\"result\":\"done\"}\\n'\n",
+		"@echo off\r\nsetlocal\r\nset /p PROMPT=\r\necho {\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"session_id\":\"claude-session\",\"result\":\"done\"}\r\n",
 	)
 	cfg := Config{
 		CommonConfig: CommonConfig{
@@ -163,8 +352,8 @@ func TestClaudeResumeProfileMismatchDoesNotWriteProfileResources(t *testing.T) {
 	}
 	skillDir := createClaudeSkillDir(t, filepath.Join(home, "source"), "analysis")
 	command := testutil.WriteCommand(t, home, "fake-claude-no-write",
-		"#!/bin/sh\nset -eu\ncat >/dev/null\nprintf '{\"event\":\"turn.completed\",\"session_id\":\"claude-session\"}\\n'\n",
-		"@echo off\r\nsetlocal\r\nset /p PROMPT=\r\necho {\"event\":\"turn.completed\",\"session_id\":\"claude-session\"}\r\n",
+		"#!/bin/sh\nset -eu\ncat >/dev/null\nprintf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"session_id\":\"claude-session\",\"result\":\"done\"}\\n'\n",
+		"@echo off\r\nsetlocal\r\nset /p PROMPT=\r\necho {\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"session_id\":\"claude-session\",\"result\":\"done\"}\r\n",
 	)
 	req := agentadaptor.Request{
 		Prompt:    "hello",
@@ -208,8 +397,8 @@ func TestClaudeRunModelOverrideReflectedInReportedModel(t *testing.T) {
 		t.Fatalf("mkdir workspace: %v", err)
 	}
 	command := testutil.WriteCommand(t, home, "fake-claude-model",
-		"#!/bin/sh\nset -eu\ncat >/dev/null\nprintf '{\"event\":\"turn.completed\",\"session_id\":\"claude-session\"}\\n'\n",
-		"@echo off\r\nsetlocal\r\nset /p PROMPT=\r\necho {\"event\":\"turn.completed\",\"session_id\":\"claude-session\"}\r\n",
+		"#!/bin/sh\nset -eu\ncat >/dev/null\nprintf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"session_id\":\"claude-session\",\"result\":\"done\"}\\n'\n",
+		"@echo off\r\nsetlocal\r\nset /p PROMPT=\r\necho {\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"session_id\":\"claude-session\",\"result\":\"done\"}\r\n",
 	)
 	newReq := func(override string) agentadaptor.Request {
 		return agentadaptor.Request{
@@ -254,8 +443,8 @@ func TestClaudeRunOmitsAnthropicModelFlagInBedrockMode(t *testing.T) {
 		t.Fatalf("mkdir workspace: %v", err)
 	}
 	command := testutil.WriteCommand(t, home, "fake-claude-bedrock",
-		"#!/bin/sh\nset -eu\ncat >/dev/null\nprintf '{\"event\":\"turn.completed\",\"session_id\":\"claude-session\"}\\n'\n",
-		"@echo off\r\nsetlocal\r\nset /p PROMPT=\r\necho {\"event\":\"turn.completed\",\"session_id\":\"claude-session\"}\r\n",
+		"#!/bin/sh\nset -eu\ncat >/dev/null\nprintf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"session_id\":\"claude-session\",\"result\":\"done\"}\\n'\n",
+		"@echo off\r\nsetlocal\r\nset /p PROMPT=\r\necho {\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"session_id\":\"claude-session\",\"result\":\"done\"}\r\n",
 	)
 	cfg := Config{
 		CommonConfig: CommonConfig{
@@ -290,8 +479,8 @@ func TestClaudeRunPreservesBedrockNativeModelFlag(t *testing.T) {
 		t.Fatalf("mkdir workspace: %v", err)
 	}
 	command := testutil.WriteCommand(t, home, "fake-claude-bedrock-native",
-		"#!/bin/sh\nset -eu\ncat >/dev/null\nprintf '{\"event\":\"turn.completed\",\"session_id\":\"claude-session\"}\\n'\n",
-		"@echo off\r\nsetlocal\r\nset /p PROMPT=\r\necho {\"event\":\"turn.completed\",\"session_id\":\"claude-session\"}\r\n",
+		"#!/bin/sh\nset -eu\ncat >/dev/null\nprintf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"session_id\":\"claude-session\",\"result\":\"done\"}\\n'\n",
+		"@echo off\r\nsetlocal\r\nset /p PROMPT=\r\necho {\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"session_id\":\"claude-session\",\"result\":\"done\"}\r\n",
 	)
 	cfg := Config{
 		CommonConfig: CommonConfig{

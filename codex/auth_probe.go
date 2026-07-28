@@ -8,8 +8,8 @@ import (
 	"strings"
 
 	"github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/internal/adapterutil"
 	"github.com/agent-dance/agent-adaptor/internal/configprobe"
+	"github.com/agent-dance/agent-adaptor/internal/driverutil"
 )
 
 type codexAuthInfo struct {
@@ -22,7 +22,7 @@ type codexAuthInfo struct {
 }
 
 func codexAuthChecks(bindings []driver.EnvBinding) []driver.EnvironmentCheck {
-	if _, source := adapterutil.ResolvedEnvValue(bindings, "OPENAI_API_KEY"); source != "" {
+	if _, source := driverutil.ResolvedEnvValue(bindings, "OPENAI_API_KEY"); source != "" {
 		return []driver.EnvironmentCheck{{
 			Code:    "openai_api_key_present",
 			Level:   "info",

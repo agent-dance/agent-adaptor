@@ -2,58 +2,6 @@ package engine
 
 import "context"
 
-// RunResult is the normalized outcome returned by Runner.Run or RunHandle.Wait.
-//
-// Output layering rules (see docs/workstream-transcript-contract.md):
-//   - Output: final assistant-facing text only; empty is valid when the
-//     adapter never produced assistant text.
-//   - RawStreams: raw stdout/stderr for auditing and debugging.
-//   - Transcript: structured semantic entries produced by the adapter from its
-//     protocol events. Must equal the sequence of RunEventItem items collected
-//     by Seq order.
-//   - Summary: short host-facing label; never equals Output and must come from
-//     a terminal result event (or adapter-generated short text).
-//   - Result: raw JSON payload of the terminal result event when the adapter
-//     protocol defines one. May be nil.
-type RunResult struct {
-	RunID      string
-	DriverType string
-	// Output is final assistant-facing text only. It must not contain raw
-	// stdout/stderr dumps, Summary text, or provider terminal JSON.
-	Output string
-	// RawStreams carries complete raw stdout/stderr for audit and debugging.
-	RawStreams *RawStreams
-	// Transcript is the normalized semantic item stream parsed by the adapter.
-	Transcript []TranscriptItem
-	ExitCode   int
-	Signal     string
-	TimedOut   bool
-	Usage      *Usage
-	// Session is populated when a valid checkpoint was produced and persisted
-	// (or when a stateless/no-store run can still report the provider handle).
-	Session  *SessionRef
-	Metadata map[string]string
-	Provider string
-	Biller   string
-	Model    string
-	// BillingType and CostUSD are best-effort adapter metadata for hosts that
-	// want to render cost/audit summaries; absence does not imply free usage.
-	BillingType string
-	CostUSD     *float64
-	// Summary is a short host-facing label suitable for lists, logs, or issue
-	// comments. It is deliberately separate from Output.
-	Summary string
-	// Result is the adapter-recognized terminal result event payload. Hosts
-	// should treat it as provider-specific audit data, not portable text.
-	Result           map[string]any
-	StructuredOutput *StructuredOutput
-	RuntimeServices  []RuntimeServiceReport
-	Question         *RunQuestion
-	// Failure is a structured business-level failure from a completed run.
-	// Check Wait's returned error first, then Failure, then success.
-	Failure *RunFailure
-}
-
 // WorkspaceManager is the host hook that turns a WorkspaceSpec into a concrete
 // working directory lease. Implementations may return the project directory
 // unchanged, create git worktrees, provision sandboxes, or delegate to an

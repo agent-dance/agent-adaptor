@@ -13,9 +13,7 @@ import (
 // FormatAuto (the zero value) triggers magic-byte sniffing.
 type Format string
 
-// Supported archive formats. They alias the engine-side
-// SkillArchiveFormat constants, so format values flow unchanged into
-// the built-in materializer.
+// Supported archive formats accepted by the built-in materializer.
 const (
 	// FormatAuto leaves format detection to the materializer's
 	// magic-byte sniffing (zip local-file header, gzip magic, ustar
@@ -83,17 +81,20 @@ func WithFingerprint(fingerprint string) ArchiveOption {
 // are intentionally not assumed equal because Go functions have no stable
 // content identity.
 type ArchiveSource struct {
-	Archive     Opener
-	Format      Format
-	Subpath     string
+	// Archive opens the archive from its beginning for each materialization.
+	Archive Opener
+	// Format selects archive decoding; its zero value enables detection.
+	Format Format
+	// Subpath locates the skill root within the archive.
+	Subpath string
+	// Fingerprint is an optional stable source revision or identity.
 	Fingerprint string
 }
 
 // SkillSource implements [Source].
 func (ArchiveSource) SkillSource() {}
 
-// SkillArchive exposes the source to the SDK's internal materialization
-// boundary while keeping the public vocabulary independent of internal types.
+// SkillArchive returns the values consumed by a compatible materializer.
 func (s ArchiveSource) SkillArchive() (Opener, string, string, string) {
 	return s.Archive, string(s.Format), s.Subpath, s.Fingerprint
 }

@@ -1,6 +1,6 @@
 package adaptor_test
 
-// P1.2 backpressure contract tests. Semantic baselines (legacy
+// Backpressure contract tests. Semantic baselines (
 // stream_internal_test.go, reproduced against the public API):
 //
 //   - default drop mode: overflow events are dropped and aggregated into ONE
@@ -17,8 +17,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/agent-dance/agent-adaptor/driver"
 	adaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
 )
 
 // numberedPayload is a trackable text delta ("e1", "e2", ...) so drop tests

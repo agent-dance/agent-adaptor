@@ -1,6 +1,7 @@
 package profile_test
 
 import (
+	"reflect"
 	"testing"
 	"time"
 
@@ -8,6 +9,26 @@ import (
 	"github.com/agent-dance/agent-adaptor/profile"
 	"github.com/agent-dance/agent-adaptor/skill"
 )
+
+func TestResourceContractsExcludeRemovedFields(t *testing.T) {
+	tests := []struct {
+		name      string
+		typeOf    reflect.Type
+		forbidden []string
+	}{
+		{name: "profile.SubAgent", typeOf: reflect.TypeOf(profile.SubAgent{}), forbidden: []string{"Content"}},
+		{name: "profile.Hook", typeOf: reflect.TypeOf(profile.Hook{}), forbidden: []string{"Matcher", "Command", "Args", "Env"}},
+		{name: "profile.ConfigPatch", typeOf: reflect.TypeOf(profile.ConfigPatch{}), forbidden: []string{"FileKind", "Path", "Section"}},
+		{name: "profile.CloneOptions", typeOf: reflect.TypeOf(profile.CloneOptions{}), forbidden: []string{"IncludeAuth"}},
+	}
+	for _, test := range tests {
+		for _, field := range test.forbidden {
+			if _, ok := test.typeOf.FieldByName(field); ok {
+				t.Errorf("%s still exposes removed field %s", test.name, field)
+			}
+		}
+	}
+}
 
 // TestResourcesPublicVocabulary is an external-package compile boundary: a
 // host can fill every resource family using only the three consumer

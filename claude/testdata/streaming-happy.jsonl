@@ -8,4 +8,4 @@
 {"type":"stream_event","session_id":"sess-stream-happy","event":{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}}}
 {"type":"stream_event","session_id":"sess-stream-happy","event":{"type":"message_stop"}}
 {"type":"assistant","session_id":"sess-stream-happy","message":{"model":"claude-fixture","content":[{"type":"text","text":"Hi there"}]}}
-{"type":"result","subtype":"success","session_id":"sess-stream-happy","result":"Hi there","usage":{"input_tokens":10,"output_tokens":5},"total_cost_usd":0.001}
+{"type":"result","subtype":"success","is_error":false,"session_id":"sess-stream-happy","result":"Hi there","usage":{"input_tokens":10,"output_tokens":5},"total_cost_usd":0.001}

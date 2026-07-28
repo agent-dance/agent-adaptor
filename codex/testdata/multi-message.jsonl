@@ -1,4 +1,4 @@
 {"type":"thread.started","thread_id":"thread-multi"}
-{"type":"item.completed","item":{"type":"agent_message","text":"First chunk of the reply."}}
-{"type":"item.completed","item":{"type":"agent_message","text":"Second chunk that completes it."}}
-{"type":"turn.completed","session_id":"thread-multi","usage":{"input_tokens":10,"output_tokens":20,"cached_input_tokens":2}}
+{"type":"item.completed","item":{"id":"msg-multi-1","type":"agent_message","text":"First chunk of the reply."}}
+{"type":"item.completed","item":{"id":"msg-multi-2","type":"agent_message","text":"Second chunk that completes it."}}
+{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":20,"cached_input_tokens":2}}

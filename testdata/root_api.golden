@@ -1,0 +1,1015 @@
+type Agent struct {
+	// no exported fields
+}
+
+type AgentProfile = driver.AgentProfile
+
+type AgentSettings struct {
+	RunSettings
+}
+
+methodset AgentSettings {
+	pointer AddRunServiceProvider(p RunServiceProvider)
+	pointer AddSkills(refs ...github.com/agent-dance/agent-adaptor/skill.Ref)
+	pointer SetAgents(specs []github.com/agent-dance/agent-adaptor/driver.AgentSpec)
+	pointer SetApprovalHandler(h ApprovalHandler)
+	pointer SetBlockingEvents()
+	pointer SetConfigPatches(patches []github.com/agent-dance/agent-adaptor/driver.ProfileConfigPatch)
+	pointer SetEventBuffer(n int)
+	pointer SetHooks(specs []github.com/agent-dance/agent-adaptor/driver.HookSpec)
+	pointer SetIdentity(id Identity)
+	pointer SetInstructions(text string)
+	pointer SetInstructionsBundle(ref *github.com/agent-dance/agent-adaptor/driver.InstructionsBundleRef)
+	pointer SetMCPServers(servers []github.com/agent-dance/agent-adaptor/mcp.Server)
+	pointer SetMetadata(k string, v string)
+	pointer SetModel(m string)
+	pointer SetOutputSchema(schema github.com/agent-dance/agent-adaptor/driver.OutputSchema)
+	pointer SetOutputSchemaError(err error)
+	pointer SetPolicy(p Policy)
+	pointer SetProfile(sel github.com/agent-dance/agent-adaptor/profile.Selection)
+	pointer SetServiceManager(m ServiceManager)
+	pointer SetServices(specs []ServiceSpec)
+	pointer SetSkillMaterializer(m SkillMaterializer)
+	pointer SetSkillProvider(p SkillProvider)
+	pointer SetThreadStore(store github.com/agent-dance/agent-adaptor/threadstore.Store)
+	pointer SetTimeout(d time.Duration)
+	pointer SetWorkspace(dir string)
+	pointer SetWorkspaceManager(m WorkspaceManager)
+	pointer SetWorkspaceSpec(spec WorkspaceSpec)
+}
+
+methodset Agent {
+	pointer Inspect() Inspector
+	pointer NewThread(key string) *Thread
+	pointer ProfileState(ctx context.Context) (ProfileSnapshot, error)
+	pointer Run(ctx context.Context, prompt string, opts ...CallOption) (*Result, error)
+	pointer SelectSkills(ctx context.Context, keys []string) (SkillSnapshot, error)
+	pointer Stream(ctx context.Context, prompt string, opts ...CallOption) Stream
+	pointer SyncProfile(ctx context.Context) (ProfileSnapshot, error)
+	pointer Thread(key string, opts ...ThreadOption) *Thread
+}
+
+const ApprovalAsk ApprovalMode = "ask"
+
+const ApprovalAutoApprove ApprovalMode = "auto_approve"
+
+const ApprovalAutoDeny ApprovalMode = "auto_reject"
+
+type ApprovalHandler func(ctx context.Context, req *ApprovalRequest) error
+
+const ApprovalInherit ApprovalMode = ""
+
+type ApprovalKind string
+
+type ApprovalMode = driver.HumanDecisionMode
+
+const ApprovalPermission ApprovalKind = "permission"
+
+const ApprovalPlanReview ApprovalKind = "plan_review"
+
+type ApprovalPolicy = driver.HumanDecisionPolicy
+
+const ApprovalQuestion ApprovalKind = "question"
+
+type ApprovalRequest struct {
+	ID string
+	RunID string
+	Kind ApprovalKind
+	Title string
+	Source string
+	ToolCallID string
+	Choices []Choice
+	Details map[string]any
+	CreatedAt time.Time
+	Deadline time.Time
+	Attempt int
+}
+
+methodset ApprovalRequest {
+	value Meta() EventMeta
+	pointer Answer(_ context.Context, option string) error
+	pointer Approve(_ context.Context) error
+	pointer Deny(_ context.Context, reason string) error
+	pointer Meta() EventMeta
+}
+
+var ApprovalsAutoDeny ApprovalPolicy
+
+func ApproveAll() ApprovalHandler
+
+type CallOption interface {
+	ApplyRun(*RunSettings)
+}
+
+methodset CallOption {
+	value ApplyRun(*RunSettings)
+}
+
+type Checkpoint = driver.Checkpoint
+
+type Choice = driver.DecisionChoice
+
+type ConfigSchema = driver.ConfigSchema
+
+func DenyAll(reason string) ApprovalHandler
+
+type Driver = driver.Driver
+
+type DriverManagedWorkspace struct {
+	// no exported fields
+}
+
+methodset Driver {
+	value Descriptor() github.com/agent-dance/agent-adaptor/driver.Descriptor
+	value Run(ctx context.Context, req github.com/agent-dance/agent-adaptor/driver.Request, sink github.com/agent-dance/agent-adaptor/driver.EventSink) (github.com/agent-dance/agent-adaptor/driver.Response, error)
+	value ValidateConfig(cfg any) error
+}
+
+type Dropped struct {
+	Count int
+	ByKind map[string]int
+	FirstSequence uint64
+	LastSequence uint64
+	Reason string
+	Source string
+	Details map[string]any
+}
+
+methodset Dropped {
+	value Meta() EventMeta
+	pointer Meta() EventMeta
+}
+
+type EnvironmentCheck = driver.EnvironmentCheck
+
+type EnvironmentReport = driver.EnvironmentReport
+
+var ErrAgentFailed error
+
+var ErrApprovalDenied error
+
+var ErrApprovalExpired error
+
+var ErrApprovalKindMismatch error
+
+var ErrApprovalResolved error
+
+var ErrApprovalTimeout error
+
+var ErrApprovalUnavailable error
+
+var ErrHumanDecisionModeUnsupported error
+
+var ErrInvalidDriverConfig error
+
+var ErrInvalidMCPConfig error
+
+var ErrInvalidOutputSchema error
+
+var ErrInvalidPolicy error
+
+var ErrMCPTransportUnsupported error
+
+var ErrMCPUnsupported error
+
+var ErrPolicyCapabilityUnsupported error
+
+var ErrPolicyViolation error
+
+var ErrResumeRejected error
+
+var ErrRunCancelled error
+
+var ErrSkillKeyConflict error
+
+var ErrSkillKeyMissing error
+
+var ErrSkillMaterializationFailed error
+
+var ErrSkillNotFound error
+
+var ErrSkillSourceMissing error
+
+var ErrStructuredOutputUnsupported error
+
+var ErrThreadAlreadyExists error
+
+var ErrThreadBusy error
+
+var ErrThreadCheckpointMissing error
+
+var ErrThreadIncompatible error
+
+var ErrThreadLeaseLost error
+
+var ErrThreadNotFound error
+
+var ErrThreadStoreRequired error
+
+type Event interface {
+	Meta() EventMeta
+	isEvent()
+}
+
+type EventMeta struct {
+	RunID string
+	ThreadKey string
+	Sequence uint64
+	Time time.Time
+	TurnID string
+	Source *EventSourceMeta
+}
+
+type EventSourceMeta struct {
+	RunID string
+	ThreadID string
+	TurnID string
+	Sequence uint64
+	Timestamp time.Time
+}
+
+methodset Event {
+	value Meta() EventMeta
+	value private isEvent()
+}
+
+type FailureReason string
+
+const FallbackAbort FallbackAction = "abort"
+
+type FallbackAction = driver.FailureAction
+
+const FallbackContinue FallbackAction = "continue"
+
+const FallbackInherit FallbackAction = ""
+
+const FallbackRetry FallbackAction = "retry"
+
+const FeatureAllow FeatureLevel = "allow"
+
+const FeatureDeny FeatureLevel = "deny"
+
+const FeatureInherit FeatureLevel = ""
+
+type FeatureLevel = driver.FeatureLevel
+
+type GitWorktreeWorkspace struct {
+	BaseRef string
+	BranchTemplate string
+	WorktreeParentDir string
+}
+
+type HumanDecisionModeUnsupportedError = driver.HumanDecisionModeUnsupportedError
+
+methodset HumanDecisionModeUnsupportedError {
+	pointer Error() string
+	pointer Unwrap() error
+}
+
+type Identity struct {
+	ID string
+	Tenant string
+	Profile string
+	Name string
+}
+
+func IdentityFromContext(ctx context.Context) (Identity, bool)
+
+type Inspector struct {
+	// no exported fields
+}
+
+methodset Inspector {
+	value ConfigSchema(ctx context.Context) (*ConfigSchema, error)
+	value Environment(ctx context.Context) (EnvironmentReport, error)
+	value Models(ctx context.Context) ([]ModelInfo, error)
+	value Quota(ctx context.Context) (QuotaReport, error)
+	value Skills(ctx context.Context) (SkillSnapshot, error)
+	pointer ConfigSchema(ctx context.Context) (*ConfigSchema, error)
+	pointer Environment(ctx context.Context) (EnvironmentReport, error)
+	pointer Models(ctx context.Context) ([]ModelInfo, error)
+	pointer Quota(ctx context.Context) (QuotaReport, error)
+	pointer Skills(ctx context.Context) (SkillSnapshot, error)
+}
+
+type InvalidDriverConfigError = driver.InvalidDriverConfigError
+
+methodset InvalidDriverConfigError {
+	pointer Error() string
+	pointer Unwrap() error
+}
+
+type InvalidOutputSchemaError = driver.InvalidOutputSchemaError
+
+methodset InvalidOutputSchemaError {
+	pointer Error() string
+	pointer Unwrap() error
+}
+
+type InvalidPolicyError = driver.InvalidPolicyError
+
+methodset InvalidPolicyError {
+	pointer Error() string
+	pointer Unwrap() error
+}
+
+type ModelInfo = driver.ModelInfo
+
+func New(d driver.Driver, opts ...Option) *Agent
+
+type Notice struct {
+	Kind string
+	Text string
+	Item *TranscriptItem
+	Metadata map[string]string
+	Data map[string]any
+}
+
+const NoticeApprovalRequested untyped string = "approval.requested"
+
+const NoticeApprovalResolved untyped string = "approval.resolved"
+
+const NoticeInvocation untyped string = "invocation"
+
+const NoticeLifecycle untyped string = "lifecycle"
+
+const NoticeRuntime untyped string = "runtime"
+
+const NoticeStep untyped string = "step"
+
+const NoticeTranscriptItem untyped string = "transcript.item"
+
+methodset Notice {
+	value Meta() EventMeta
+	pointer Meta() EventMeta
+}
+
+func OnApproval(h ApprovalHandler) SharedOption
+
+type Option interface {
+	ApplyNew(*AgentSettings)
+}
+
+methodset Option {
+	value ApplyNew(*AgentSettings)
+}
+
+type Phase string
+
+const PhaseContent Phase = ""
+
+const PhaseEnd Phase = "end"
+
+const PhaseStart Phase = "start"
+
+type Policy struct {
+	Sandbox SandboxLevel
+	WebSearch FeatureLevel
+	Browser FeatureLevel
+	Approvals ApprovalPolicy
+}
+
+type PolicyCapabilityUnsupportedError = driver.PolicyCapabilityUnsupportedError
+
+methodset PolicyCapabilityUnsupportedError {
+	pointer Error() string
+	pointer Unwrap() error
+}
+
+var PolicyReadOnly Policy
+
+var PolicyUnrestricted Policy
+
+var PolicyWorkspaceWrite Policy
+
+type ProcessInfo struct {
+	Kind string
+	Text string
+	Bytes []byte
+	Metadata map[string]string
+	Data map[string]any
+}
+
+methodset ProcessInfo {
+	value Meta() EventMeta
+	pointer Meta() EventMeta
+}
+
+const ProcessSpawn untyped string = "spawn"
+
+const ProcessStderr untyped string = "stderr"
+
+const ProcessStdout untyped string = "stdout"
+
+type ProfileKind string
+
+const ProfileKindHostManaged ProfileKind = "host_managed"
+
+const ProfileKindShared ProfileKind = "shared"
+
+const ProfileResourceAgents ProfileResourceKind = "agents"
+
+const ProfileResourceConfig ProfileResourceKind = "config"
+
+const ProfileResourceHooks ProfileResourceKind = "hooks"
+
+const ProfileResourceInstructions ProfileResourceKind = "instructions"
+
+type ProfileResourceKind string
+
+const ProfileResourceMCP ProfileResourceKind = "mcp"
+
+type ProfileResourceMaterialization string
+
+const ProfileResourceMaterializationFallback ProfileResourceMaterialization = "fallback"
+
+const ProfileResourceMaterializationFileManaged ProfileResourceMaterialization = "file_managed"
+
+const ProfileResourceMaterializationNativeManaged ProfileResourceMaterialization = "native_managed"
+
+const ProfileResourceMaterializationNotMaterialized ProfileResourceMaterialization = "not_materialized"
+
+const ProfileResourceMaterializationPromptInjected ProfileResourceMaterialization = "prompt_injected"
+
+const ProfileResourceSkills ProfileResourceKind = "skills"
+
+type ProfileResourceSupport string
+
+const ProfileResourceSupportFallback ProfileResourceSupport = "fallback"
+
+const ProfileResourceSupportNativeEscape ProfileResourceSupport = "native_escape"
+
+const ProfileResourceSupportPortableCore ProfileResourceSupport = "portable_core"
+
+const ProfileResourceSupportPortableExtended ProfileResourceSupport = "portable_extended"
+
+const ProfileResourceSupportUnsupported ProfileResourceSupport = "unsupported"
+
+type ProfileSnapshot struct {
+	DriverType string
+	Profile AgentProfile
+	Kind ProfileKind
+	Fingerprint string
+	Resources []ResourceSnapshot
+	Warnings []string
+}
+
+const QuestionAsk QuestionMode = "ask"
+
+const QuestionAutoDeny QuestionMode = "auto_reject"
+
+const QuestionInherit QuestionMode = ""
+
+type QuestionMode = driver.QuestionMode
+
+type QuotaReport = driver.QuotaReport
+
+type RawStreams = driver.RawStreams
+
+const ReadOnly SandboxLevel = "read_only"
+
+const ReasonAgentError FailureReason = "agent_error"
+
+const ReasonApprovalDenied FailureReason = "approval_denied"
+
+const ReasonApprovalTimeout FailureReason = "approval_timeout"
+
+const ReasonCancelled FailureReason = "cancelled"
+
+const ReasonPolicyViolation FailureReason = "policy_violation"
+
+type ResourceSnapshot struct {
+	Kind ProfileResourceKind
+	Fingerprint string
+	Managed []string
+	External []string
+	Support ProfileResourceSupport
+	Materialization ProfileResourceMaterialization
+	Warnings []string
+	Error string
+}
+
+type Result struct {
+	RunID string
+	Model string
+	Provider string
+	Text string
+	Summary string
+	Usage *Usage
+	Metadata map[string]string
+}
+
+methodset Result {
+	pointer Decode(v any) error
+	pointer Raw() RawStreams
+	pointer Services() []ServiceReport
+	pointer Transcript() []TranscriptItem
+}
+
+func ResumeOnly() ThreadOption
+
+type Role = driver.Role
+
+const RoleAssistant Role = ""
+
+const RoleUser Role = "user"
+
+func RunAs[T any](ctx context.Context, r Runner, prompt string, opts ...CallOption) (T, *Result, error)
+
+type RunAttachment struct {
+	Services []ServiceRef
+	Events RunEventSource
+}
+
+type RunError struct {
+	Reason FailureReason
+	Message string
+	Details map[string]any
+	Result *Result
+}
+
+methodset RunError {
+	pointer Error() string
+	pointer Unwrap() error
+}
+
+type RunEventSource func(ctx context.Context, runID string) <-chan Event
+
+type RunFinished struct {
+	RunID string
+	ThreadID string
+	Usage *Usage
+	Failed bool
+	Reason FailureReason
+	Message string
+}
+
+methodset RunFinished {
+	value Meta() EventMeta
+	pointer Meta() EventMeta
+}
+
+type RunServiceProvider interface {
+	AttachRun(ctx context.Context, runID string) (RunAttachment, error)
+	DetachRun(ctx context.Context, runID string) error
+}
+
+methodset RunServiceProvider {
+	value AttachRun(ctx context.Context, runID string) (RunAttachment, error)
+	value DetachRun(ctx context.Context, runID string) error
+}
+
+type RunSettings struct {
+	// no exported fields
+}
+
+methodset RunSettings {
+	pointer AddRunServiceProvider(p RunServiceProvider)
+	pointer AddSkills(refs ...github.com/agent-dance/agent-adaptor/skill.Ref)
+	pointer SetAgents(specs []github.com/agent-dance/agent-adaptor/driver.AgentSpec)
+	pointer SetApprovalHandler(h ApprovalHandler)
+	pointer SetConfigPatches(patches []github.com/agent-dance/agent-adaptor/driver.ProfileConfigPatch)
+	pointer SetHooks(specs []github.com/agent-dance/agent-adaptor/driver.HookSpec)
+	pointer SetIdentity(id Identity)
+	pointer SetInstructions(text string)
+	pointer SetInstructionsBundle(ref *github.com/agent-dance/agent-adaptor/driver.InstructionsBundleRef)
+	pointer SetMCPServers(servers []github.com/agent-dance/agent-adaptor/mcp.Server)
+	pointer SetMetadata(k string, v string)
+	pointer SetModel(m string)
+	pointer SetOutputSchema(schema github.com/agent-dance/agent-adaptor/driver.OutputSchema)
+	pointer SetOutputSchemaError(err error)
+	pointer SetPolicy(p Policy)
+	pointer SetServices(specs []ServiceSpec)
+	pointer SetTimeout(d time.Duration)
+	pointer SetWorkspace(dir string)
+	pointer SetWorkspaceSpec(spec WorkspaceSpec)
+}
+
+type RunStarted struct {
+	RunID string
+	ThreadID string
+}
+
+methodset RunStarted {
+	value Meta() EventMeta
+	pointer Meta() EventMeta
+}
+
+type Runner interface {
+	Run(ctx context.Context, prompt string, opts ...CallOption) (*Result, error)
+	Stream(ctx context.Context, prompt string, opts ...CallOption) Stream
+}
+
+methodset Runner {
+	value Run(ctx context.Context, prompt string, opts ...CallOption) (*Result, error)
+	value Stream(ctx context.Context, prompt string, opts ...CallOption) Stream
+}
+
+const SandboxInherit SandboxLevel = ""
+
+type SandboxLevel = driver.IsolationLevel
+
+func SchemaAllowAdditionalProperties() SchemaOption
+
+func SchemaDescription(desc string) SchemaOption
+
+func SchemaFlexible() SchemaOption
+
+func SchemaInlineReferences() SchemaOption
+
+func SchemaName(name string) SchemaOption
+
+type SchemaOption func(*schemaSettings)
+
+func SchemaPromptOnly() SchemaOption
+
+func SchemaRequireExplicitTags() SchemaOption
+
+func SchemaReturnInvalid() SchemaOption
+
+func SchemaStrict() SchemaOption
+
+func SchemaUseGoComments(base, path string) SchemaOption
+
+type ServiceManager interface {
+	Ensure(ctx context.Context, req ServiceRequest) ([]ServiceRef, error)
+	ReleaseByLabels(ctx context.Context, labels map[string]string) error
+	ReleaseByRun(ctx context.Context, runID string) error
+}
+
+methodset ServiceManager {
+	value Ensure(ctx context.Context, req ServiceRequest) ([]ServiceRef, error)
+	value ReleaseByLabels(ctx context.Context, labels map[string]string) error
+	value ReleaseByRun(ctx context.Context, runID string) error
+}
+
+type ServiceRef = driver.RuntimeServiceRef
+
+type ServiceReport = driver.RuntimeServiceReport
+
+type ServiceRequest struct {
+	RunID string
+	DriverType string
+	Agent Identity
+	Config any
+	Workspace WorkspaceLease
+	Desired []ServiceSpec
+	Metadata map[string]string
+}
+
+type ServiceSpec = driver.RuntimeServiceSpec
+
+type SharedOption interface {
+	CallOption
+	Option
+}
+
+methodset SharedOption {
+	value ApplyNew(*AgentSettings)
+	value ApplyRun(*RunSettings)
+}
+
+type SharedWorkspace struct {
+	// no exported fields
+}
+
+type SkillKeyConflictError = skill.SkillKeyConflictError
+
+methodset SkillKeyConflictError {
+	pointer Error() string
+	pointer Unwrap() error
+}
+
+type SkillMaterializationError = skill.SkillMaterializationError
+
+methodset SkillMaterializationError {
+	pointer Error() string
+	pointer Is(target error) bool
+	pointer Unwrap() error
+}
+
+type SkillMaterializer = skill.Materializer
+
+methodset SkillMaterializer {
+	value Materialize(ctx context.Context, s github.com/agent-dance/agent-adaptor/skill.Skill) (sourcePath string, err error)
+}
+
+type SkillProvider = skill.Provider
+
+methodset SkillProvider {
+	value GetSkills(ctx context.Context, keys []string) (map[string]github.com/agent-dance/agent-adaptor/skill.Skill, error)
+}
+
+type SkillRef = skill.Ref
+
+methodset SkillRef {
+	value private github.com/agent-dance/agent-adaptor/driver.isSkillRef()
+}
+
+type SkillSnapshot = driver.SkillSnapshot
+
+type Stream interface {
+	Cancel()
+	Events() <-chan Event
+	Result() (*Result, error)
+	RunID() string
+}
+
+methodset Stream {
+	value Cancel()
+	value Events() <-chan Event
+	value Result() (*Result, error)
+	value RunID() string
+}
+
+type StructuredOutputUnsupportedError = driver.StructuredOutputUnsupportedError
+
+methodset StructuredOutputUnsupportedError {
+	pointer Error() string
+	pointer Unwrap() error
+}
+
+const SubagentDelta SubagentEventKind = "delta"
+
+type SubagentEventKind string
+
+const SubagentFinished SubagentEventKind = "finished"
+
+const SubagentStarted SubagentEventKind = "started"
+
+type SubagentUpdate struct {
+	Agent string
+	Kind SubagentEventKind
+	Delta string
+	Data map[string]any
+}
+
+methodset SubagentUpdate {
+	value Meta() EventMeta
+	pointer Meta() EventMeta
+}
+
+type TerminalPayload = driver.TerminalPayload
+
+type TextDelta struct {
+	MessageID string
+	Text string
+	Role Role
+	Phase Phase
+}
+
+methodset TextDelta {
+	value Meta() EventMeta
+	pointer Meta() EventMeta
+}
+
+type Thinking struct {
+	MessageID string
+	Text string
+	Phase Phase
+}
+
+methodset Thinking {
+	value Meta() EventMeta
+	pointer Meta() EventMeta
+}
+
+type Thread struct {
+	// no exported fields
+}
+
+type ThreadOption interface {
+	applyThread(*Thread)
+}
+
+methodset ThreadOption {
+	value private applyThread(*Thread)
+}
+
+methodset Thread {
+	pointer Checkpoint(ctx context.Context) (*Checkpoint, error)
+	pointer Fork(newKey string) *Thread
+	pointer Key() string
+	pointer Run(ctx context.Context, prompt string, opts ...CallOption) (*Result, error)
+	pointer Stream(ctx context.Context, prompt string, opts ...CallOption) Stream
+}
+
+type ToolCall struct {
+	ID string
+	Name string
+	Args map[string]any
+	ArgsDelta string
+	Result map[string]any
+	Phase Phase
+}
+
+methodset ToolCall {
+	value Meta() EventMeta
+	pointer Meta() EventMeta
+}
+
+type ToolResult struct {
+	ID string
+	Result map[string]any
+}
+
+methodset ToolResult {
+	value Meta() EventMeta
+	pointer Meta() EventMeta
+}
+
+type TranscriptItem = driver.TranscriptItem
+
+const Unrestricted SandboxLevel = "unrestricted"
+
+type Usage = driver.Usage
+
+func WithBlockingEvents() Option
+
+func WithEventBuffer(n int) Option
+
+func WithEventMeta(ev Event, meta EventMeta) Event
+
+func WithIdentity(id Identity) SharedOption
+
+func WithInstructions(text string) SharedOption
+
+func WithMCP(servers ...mcp.Server) SharedOption
+
+func WithMetadata(k, v string) SharedOption
+
+func WithModel(m string) SharedOption
+
+func WithPolicy(p Policy) SharedOption
+
+func WithProfile(sel profile.Selection) Option
+
+func WithProfileResources(res profile.Resources) SharedOption
+
+func WithRunServices(providers ...RunServiceProvider) SharedOption
+
+func WithSchema[T any](opts ...SchemaOption) CallOption
+
+func WithSchemaJSON(schemaJSON []byte, opts ...SchemaOption) CallOption
+
+func WithServiceManager(m ServiceManager) Option
+
+func WithServices(specs ...ServiceSpec) SharedOption
+
+func WithSkillMaterializer(m SkillMaterializer) Option
+
+func WithSkillProvider(p SkillProvider) Option
+
+func WithSkills(refs ...SkillRef) SharedOption
+
+func WithThreadStore(store threadstore.Store) Option
+
+func WithTimeout(d time.Duration) SharedOption
+
+func WithWorkspace(dir string) SharedOption
+
+func WithWorkspaceManager(m WorkspaceManager) Option
+
+func WithWorkspaceSpec(spec WorkspaceSpec) SharedOption
+
+type WorkspaceLease = driver.WorkspaceLease
+
+type WorkspaceManager interface {
+	Release(ctx context.Context, lease WorkspaceLease, mode WorkspaceReleaseMode) error
+	Resolve(ctx context.Context, req WorkspaceRequest) (WorkspaceLease, error)
+}
+
+methodset WorkspaceManager {
+	value Release(ctx context.Context, lease WorkspaceLease, mode WorkspaceReleaseMode) error
+	value Resolve(ctx context.Context, req WorkspaceRequest) (WorkspaceLease, error)
+}
+
+const WorkspaceReleaseKeep WorkspaceReleaseMode = "keep"
+
+type WorkspaceReleaseMode string
+
+const WorkspaceReleaseStop WorkspaceReleaseMode = "stop"
+
+type WorkspaceRequest struct {
+	BaseCWD string
+	Spec WorkspaceSpec
+	Metadata map[string]string
+}
+
+type WorkspaceSpec interface {
+	workspaceRequest() workspaceRequestData
+}
+
+methodset WorkspaceSpec {
+	value private workspaceRequest() workspaceRequestData
+}
+
+const WorkspaceWrite SandboxLevel = "workspace_write"
+
+func (*Agent).Inspect() Inspector
+
+func (*Agent).NewThread(key string) *Thread
+
+func (*Agent).ProfileState(ctx context.Context) (ProfileSnapshot, error)
+
+func (*Agent).Run(ctx context.Context, prompt string, opts ...CallOption) (*Result, error)
+
+func (*Agent).SelectSkills(ctx context.Context, keys []string) (SkillSnapshot, error)
+
+func (*Agent).Stream(ctx context.Context, prompt string, opts ...CallOption) Stream
+
+func (*Agent).SyncProfile(ctx context.Context) (ProfileSnapshot, error)
+
+func (*Agent).Thread(key string, opts ...ThreadOption) *Thread
+
+func (*AgentSettings).SetBlockingEvents()
+
+func (*AgentSettings).SetEventBuffer(n int)
+
+func (*AgentSettings).SetProfile(sel profile.Selection)
+
+func (*AgentSettings).SetServiceManager(m ServiceManager)
+
+func (*AgentSettings).SetSkillMaterializer(m SkillMaterializer)
+
+func (*AgentSettings).SetSkillProvider(p SkillProvider)
+
+func (*AgentSettings).SetThreadStore(store threadstore.Store)
+
+func (*AgentSettings).SetWorkspaceManager(m WorkspaceManager)
+
+func (*ApprovalRequest).Answer(_ context.Context, option string) error
+
+func (*ApprovalRequest).Approve(_ context.Context) error
+
+func (*ApprovalRequest).Deny(_ context.Context, reason string) error
+
+func (Inspector).ConfigSchema(ctx context.Context) (*ConfigSchema, error)
+
+func (Inspector).Environment(ctx context.Context) (EnvironmentReport, error)
+
+func (Inspector).Models(ctx context.Context) ([]ModelInfo, error)
+
+func (Inspector).Quota(ctx context.Context) (QuotaReport, error)
+
+func (Inspector).Skills(ctx context.Context) (SkillSnapshot, error)
+
+func (*Result).Decode(v any) error
+
+func (*Result).Raw() RawStreams
+
+func (*Result).Services() []ServiceReport
+
+func (*Result).Transcript() []TranscriptItem
+
+func (*RunError).Error() string
+
+func (*RunError).Unwrap() error
+
+func (*RunSettings).AddRunServiceProvider(p RunServiceProvider)
+
+func (*RunSettings).AddSkills(refs ...skill.Ref)
+
+func (*RunSettings).SetAgents(specs []driver.AgentSpec)
+
+func (*RunSettings).SetApprovalHandler(h ApprovalHandler)
+
+func (*RunSettings).SetConfigPatches(patches []driver.ProfileConfigPatch)
+
+func (*RunSettings).SetHooks(specs []driver.HookSpec)
+
+func (*RunSettings).SetIdentity(id Identity)
+
+func (*RunSettings).SetInstructions(text string)
+
+func (*RunSettings).SetInstructionsBundle(ref *driver.InstructionsBundleRef)
+
+func (*RunSettings).SetMCPServers(servers []mcp.Server)
+
+func (*RunSettings).SetMetadata(k, v string)
+
+func (*RunSettings).SetModel(m string)
+
+func (*RunSettings).SetOutputSchema(schema driver.OutputSchema)
+
+func (*RunSettings).SetOutputSchemaError(err error)
+
+func (*RunSettings).SetPolicy(p Policy)
+
+func (*RunSettings).SetServices(specs []ServiceSpec)
+
+func (*RunSettings).SetTimeout(d time.Duration)
+
+func (*RunSettings).SetWorkspace(dir string)
+
+func (*RunSettings).SetWorkspaceSpec(spec WorkspaceSpec)
+
+func (*Thread).Checkpoint(ctx context.Context) (*Checkpoint, error)
+
+func (*Thread).Fork(newKey string) *Thread
+
+func (*Thread).Key() string
+
+func (*Thread).Run(ctx context.Context, prompt string, opts ...CallOption) (*Result, error)
+
+func (*Thread).Stream(ctx context.Context, prompt string, opts ...CallOption) Stream

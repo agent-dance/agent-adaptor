@@ -7,8 +7,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/agent-dance/agent-adaptor/driver"
 	adaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
 )
 
 func TestRunAndStreamResultAllLayersAreEquivalent(t *testing.T) {
@@ -80,5 +80,77 @@ func TestRunErrorCarriesCompletePartialResult(t *testing.T) {
 	partial := runErr.Result
 	if partial.Text != "partial assistant output" || partial.Summary != "partial" || partial.Raw().Terminal == nil || string(partial.Raw().Terminal.JSON) != `{"status":"failed"}` || len(partial.Transcript()) != 1 {
 		t.Fatalf("partial Result = %#v raw=%#v transcript=%#v", partial, partial.Raw(), partial.Transcript())
+	}
+}
+
+func TestUsageObservationIsEquivalentAcrossRunStreamAndRunError(t *testing.T) {
+	cases := []struct {
+		name     string
+		usage    *driver.Usage
+		observed bool
+	}{
+		{name: "unobserved", usage: nil, observed: false},
+		{name: "observed zero", usage: &driver.Usage{}, observed: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assertUsage := func(label string, usage *adaptor.Usage) {
+				t.Helper()
+				if (usage != nil) != tc.observed {
+					t.Fatalf("%s Usage = %#v, observed=%v", label, usage, tc.observed)
+				}
+				if usage != nil && *usage != (adaptor.Usage{}) {
+					t.Fatalf("%s Usage = %#v, want observed zero", label, usage)
+				}
+			}
+
+			success := newFakeDriver()
+			success.response = driver.Response{Usage: tc.usage}
+			agent := adaptor.New(success)
+			runResult, err := agent.Run(context.Background(), "prompt")
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			stream := agent.Stream(context.Background(), "prompt")
+			for range stream.Events() {
+			}
+			streamResult, err := stream.Result()
+			if err != nil {
+				t.Fatalf("Stream.Result: %v", err)
+			}
+			assertUsage("Run", runResult.Usage)
+			assertUsage("Stream.Result", streamResult.Usage)
+
+			for _, call := range []struct {
+				name string
+				run  func(*adaptor.Agent) error
+			}{
+				{name: "RunError from Run", run: func(agent *adaptor.Agent) error {
+					_, err := agent.Run(context.Background(), "prompt")
+					return err
+				}},
+				{name: "RunError from Stream", run: func(agent *adaptor.Agent) error {
+					stream := agent.Stream(context.Background(), "prompt")
+					for range stream.Events() {
+					}
+					_, err := stream.Result()
+					return err
+				}},
+			} {
+				t.Run(call.name, func(t *testing.T) {
+					failed := newFakeDriver()
+					failed.response = driver.Response{
+						Usage:   tc.usage,
+						Failure: &driver.RunFailure{Code: driver.FailureAgentError, Message: "failed"},
+					}
+					err := call.run(adaptor.New(failed))
+					var runErr *adaptor.RunError
+					if !errors.As(err, &runErr) || runErr.Result == nil {
+						t.Fatalf("error = %T %v, want RunError with Result", err, err)
+					}
+					assertUsage(call.name, runErr.Result.Usage)
+				})
+			}
+		})
 	}
 }

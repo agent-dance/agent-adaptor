@@ -9,7 +9,7 @@ var (
 	// ErrStructuredOutputUnsupported is returned before driver launch when
 	// the requested structured-output mode cannot be honored by the bound
 	// driver or selected run mode.
-	ErrStructuredOutputUnsupported = errors.New("agentadaptor: structured output unsupported by adapter")
+	ErrStructuredOutputUnsupported = errors.New("agentadaptor: structured output unsupported by driver")
 
 	// ErrInvalidOutputSchema is returned before driver launch when a host
 	// supplies malformed JSON, an unsupported output format or mode, or a
@@ -20,9 +20,9 @@ var (
 // StructuredOutputUnsupportedError carries diagnostic detail while
 // unwrapping to [ErrStructuredOutputUnsupported].
 type StructuredOutputUnsupportedError struct {
-	Adapter string
-	Mode    StructuredOutputMode
-	Reason  string
+	Driver string
+	Mode   StructuredOutputMode
+	Reason string
 }
 
 func (e *StructuredOutputUnsupportedError) Error() string {
@@ -30,8 +30,8 @@ func (e *StructuredOutputUnsupportedError) Error() string {
 		return ErrStructuredOutputUnsupported.Error()
 	}
 	msg := ErrStructuredOutputUnsupported.Error()
-	if e.Adapter != "" {
-		msg += ": adapter=" + e.Adapter
+	if e.Driver != "" {
+		msg += ": driver=" + e.Driver
 	}
 	if e.Mode != "" {
 		msg += " mode=" + string(e.Mode)

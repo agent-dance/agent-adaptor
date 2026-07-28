@@ -21,6 +21,9 @@ const lifecycleHookTimeout = 5 * time.Second
 
 var delegationIDCounter atomic.Uint64
 
+// A2AStream is the minimal ordered event stream required by Delegator. Close
+// must unblock an in-flight Recv. Implementations may additionally provide
+// RecvContext(context.Context) for native cancellation.
 type A2AStream interface {
 	// Recv blocks until the next event. Close must unblock any in-flight Recv.
 	Recv() (clienta2a.Event, error)
@@ -31,6 +34,8 @@ type contextA2AStream interface {
 	RecvContext(context.Context) (clienta2a.Event, error)
 }
 
+// A2AClient is the protocol-shaped client contract used by Delegator. The
+// bundled clients/a2a adapter and Local in-process targets both implement it.
 type A2AClient interface {
 	AgentCard(ctx context.Context) (clienta2a.AgentCard, error)
 	Send(ctx context.Context, req clienta2a.SendRequest) (clienta2a.Task, error)
@@ -39,8 +44,12 @@ type A2AClient interface {
 	CancelTask(ctx context.Context, req clienta2a.CancelTaskRequest) (clienta2a.Task, error)
 }
 
+// ClientFactory constructs the client for one resolved RemoteAgentSpec.
 type ClientFactory func(RemoteAgentSpec) A2AClient
 
+// Delegator resolves curated targets, executes A2A tasks, and publishes their
+// normalized lifecycle to an EventBus. Construct it with NewDelegator; Service
+// owns the common production wiring.
 type Delegator struct {
 	Registry       *Registry
 	Bus            *EventBus
@@ -56,10 +65,10 @@ type Delegator struct {
 	beforePublish func(DelegationEvent)
 }
 
-// DelegatorOption 配置 Delegator 的扩展行为。
+// DelegatorOption configures a Delegator during construction.
 type DelegatorOption func(*Delegator)
 
-// WithStatusPartDecoder 注册一种宿主拥有的 Status DataPart schema decoder。
+// WithStatusPartDecoder registers a host-owned Status DataPart schema decoder.
 func WithStatusPartDecoder(decoder StatusPartDecoder) DelegatorOption {
 	return func(d *Delegator) {
 		if decoder != nil {
@@ -68,6 +77,8 @@ func WithStatusPartDecoder(decoder StatusPartDecoder) DelegatorOption {
 	}
 }
 
+// NewDelegator constructs a Delegator over registry and bus. Nil options are
+// ignored; runtime configuration errors are returned by Delegate.
 func NewDelegator(registry *Registry, bus *EventBus, opts ...DelegatorOption) *Delegator {
 	d := &Delegator{
 		Registry: registry,
@@ -86,6 +97,9 @@ type delegationRun struct {
 	publishEvent func(DelegationEvent)
 }
 
+// Delegate executes one curated Local or Remote target, publishes ordered
+// DelegationEvent values, and returns its structured terminal result. Failure
+// returns both the available result and a *DelegationError.
 func (d *Delegator) Delegate(ctx context.Context, req DelegationRequest) (out DelegationResult, err error) {
 	if d == nil {
 		return DelegationResult{}, &DelegationError{Code: "configuration_error", Message: "delegation registry is required"}

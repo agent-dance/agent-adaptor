@@ -1,5 +1,6 @@
-{"type":"session","session_id":"cursor-tool"}
-{"type":"tool_call","id":"call-1","name":"search","input":{"query":"foo"}}
-{"type":"tool_result","id":"call-1","text":"3 matches"}
-{"type":"assistant","text":"Done searching."}
-{"type":"run.completed","session_id":"cursor-tool","result":"Done searching."}
+{"type":"system","subtype":"init","cwd":"/workspace","session_id":"cursor-tool","model":"GPT-5"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"I'll read the file."}]},"session_id":"cursor-tool"}
+{"type":"tool_call","subtype":"started","call_id":"toolu-read-1","tool_call":{"readToolCall":{"args":{"path":"README.md"}}},"session_id":"cursor-tool"}
+{"type":"tool_call","subtype":"completed","call_id":"toolu-read-1","tool_call":{"readToolCall":{"args":{"path":"README.md"},"result":{"success":{"content":"# Project\n","isEmpty":false,"exceededLimit":false,"totalLines":1,"totalChars":10}}}},"session_id":"cursor-tool"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" Done reading."}]},"session_id":"cursor-tool"}
+{"type":"result","subtype":"success","duration_ms":2345,"duration_api_ms":2200,"is_error":false,"result":"I'll read the file. Done reading.","session_id":"cursor-tool","request_id":"request-tool"}

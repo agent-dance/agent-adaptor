@@ -1,8 +1,8 @@
 package adaptor_test
 
-// P1 contract tests · the unified event stream (P1.1 / P1.4 / P1.5).
+// Contract tests for the unified Event stream.
 //
-// Semantic baselines reproduced here (not copied) from the legacy suite:
+// The unified stream contract requires:
 //   - every driver.RunEvent type and every driver.StreamPayload kind has a
 //     typed destination on the one Events() channel — no information loss;
 //   - Events() closes when the run ends and Result() is then immediately
@@ -15,8 +15,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/agent-dance/agent-adaptor/driver"
 	adaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
 )
 
 // collect drains the stream and returns all events plus the final outcome.
@@ -68,7 +68,6 @@ func TestStreamTranslationCoversAllKinds(t *testing.T) {
 		emit(driver.StreamPayload{Kind: driver.StreamHITLResolved, HITLResolved: &driver.HITLResolvedPayload{RequestID: "d1", Kind: driver.HumanDecisionPermission, Result: driver.DecisionApproved}})
 		emit(driver.StreamPayload{Kind: driver.StreamDropped, Raw: map[string]any{"dropped_count": 7}})
 		emit(driver.StreamPayload{Kind: driver.StreamKind("x.vendor"), Delta: "custom", Raw: map[string]any{"k": "v"}})
-		emit(driver.StreamPayload{Kind: driver.StreamRunError, Error: &driver.RunFailure{Code: driver.FailureAgentError, Message: "boom"}})
 		emit(driver.StreamPayload{Kind: driver.StreamRunFinished, RunID: "prov-run", Usage: &driver.Usage{OutputTokens: 9}})
 
 		return driver.Response{Output: "done"}, nil
@@ -171,14 +170,33 @@ func TestStreamTranslationCoversAllKinds(t *testing.T) {
 	if e, ok := next().(adaptor.Notice); !ok || e.Kind != "x.vendor" || e.Text != "custom" || e.Data["k"] != "v" {
 		t.Errorf("unknown StreamKind must pass through as Notice, got %#v", events[i-1])
 	}
-	if e, ok := next().(adaptor.RunFinished); !ok || !e.Failed || e.Reason != adaptor.ReasonAgentError || e.Message != "boom" {
-		t.Errorf("run.error → RunFinished{Failed}, got %#v", events[i-1])
-	}
 	if e, ok := next().(adaptor.RunFinished); !ok || e.Failed || e.Usage == nil || e.Usage.OutputTokens != 9 {
 		t.Errorf("run.finished → RunFinished{Usage}, got %#v", events[i-1])
 	}
 	if i != len(events) {
 		t.Errorf("unexpected trailing events: %#v", events[i:])
+	}
+
+	// RunError and RunFinished are alternative terminal kinds; exercising
+	// both in one run would violate the one-terminal lifecycle contract and
+	// should now be rejected by the broker seal. Cover RunError in its own
+	// valid lifecycle instead.
+	errorFake := newFakeDriver()
+	errorFake.runFunc = func(_ context.Context, req driver.Request, sink driver.EventSink) (driver.Response, error) {
+		failure := &driver.RunFailure{Code: driver.FailureAgentError, Message: "boom"}
+		_ = sink.EmitStream(driver.StreamPayload{Kind: driver.StreamRunStarted, RunID: req.RunID})
+		_ = sink.EmitStream(driver.StreamPayload{Kind: driver.StreamRunError, RunID: req.RunID, Error: failure})
+		return driver.Response{Failure: failure}, nil
+	}
+	errorEvents, _, runErr := collect(adaptor.New(errorFake).Stream(context.Background(), "map run error"))
+	if runErr == nil {
+		t.Fatal("RunError mapping fixture must finish with a business error")
+	}
+	if len(errorEvents) != 2 {
+		t.Fatalf("RunError events = %#v, want RunStarted and RunFinished", errorEvents)
+	}
+	if e, ok := errorEvents[1].(adaptor.RunFinished); !ok || !e.Failed || e.Reason != adaptor.ReasonAgentError || e.Message != "boom" {
+		t.Errorf("run.error → RunFinished{Failed}, got %#v", errorEvents[1])
 	}
 }
 

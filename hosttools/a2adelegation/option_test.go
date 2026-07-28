@@ -1,6 +1,6 @@
 package a2adelegation_test
 
-// P4.7 end-to-end: delegation.Service.Option() on the main agent path.
+// End-to-end contract for delegation.Service.Option() on the Agent path.
 //
 // The difference from service_s9_test.go is the whole point of this file. There
 // the host wired the sidecar by hand (the driver called EnsureSidecar itself)
@@ -30,9 +30,9 @@ import (
 	"testing"
 	"time"
 
+	adaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/hosttools/a2adelegation"
-	adaptor "github.com/agent-dance/agent-adaptor"
 )
 
 // requestDrivenLeader is the fake leader driver.Driver for the Option() path.

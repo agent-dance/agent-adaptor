@@ -1,6 +1,6 @@
 package a2adelegation_test
 
-// S9 (CI version, P4.10): the team-collaboration scenario on fake drivers.
+// S9 CI scenario: team collaboration on fake Drivers.
 // A fake leader driver reaches the Service's per-run MCP sidecar over real
 // HTTP (bearer auth, JSON-RPC tools/call), delegates to three Local roles
 // backed by scripted fake drivers, and the delegation events converge onto
@@ -22,10 +22,10 @@ import (
 	"testing"
 	"time"
 
+	adaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/bridges/subagentstream"
 	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/hosttools/a2adelegation"
-	adaptor "github.com/agent-dance/agent-adaptor"
 )
 
 // scriptedRoleDriver is a deterministic fake driver.Driver for team-member

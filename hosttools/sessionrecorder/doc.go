@@ -7,12 +7,10 @@
 //
 // This package lives under hosttools because:
 //
-//   - the core SDK (github.com/agent-dance/agent-adaptor) does not import
-//     it — AGENTS.md §1 and §11 explicitly forbid the core from growing
-//     server-side / persistence responsibilities;
-//   - it is one concrete answer to the "UI session history recovery"
-//     problem docs/workstream-hitl-v2.md §4.3.1 outlines but deliberately
-//     leaves to the host;
+//   - the core SDK (github.com/agent-dance/agent-adaptor) does not import it,
+//     preserving the boundary between execution and host persistence;
+//   - it is one concrete answer to UI session-history recovery while leaving
+//     storage policy under host control;
 //   - it keeps the SDK stateless by default while still
 //     saving every host from writing the same JSONL-plus-cursor plumbing.
 //
@@ -72,6 +70,6 @@
 //     single-process by design. Multi-pod hosts should plug a shared
 //     EventBackend (e.g. Redis, Postgres) below the EventRecorder.
 //   - fan-out (Stream → SSE + EventRecorder + metrics) — that's a few lines
-//     of host-owned for loop; see examples/streaming-chat-copilotkit
+//     of host-owned for loop; see examples/web-chat/copilotkit
 //     for the canonical pattern.
 package sessionrecorder

@@ -24,13 +24,12 @@ type claudeParser struct {
 	stdoutLine bytes.Buffer
 	stderrLine bytes.Buffer
 
-	transcript    []driver.TranscriptItem
-	assistantText []string
+	transcript []driver.TranscriptItem
 
 	sessionID         string
+	terminalSessionID string
 	displayID         string
-	summary           string // last assistant text retained for parser diagnostics
-	terminalSummary   string // authoritative summary from terminal result events
+	terminalResult    string
 	usage             *driver.Usage
 	cost              *float64
 	terminal          *driver.TerminalPayload
@@ -40,8 +39,7 @@ type claudeParser struct {
 	terminalSuccess   bool
 	protocolMalformed bool
 
-	stream       *streamingState
-	deltaBuffers map[string]*strings.Builder // messageID -> streamed text (cancel/crash fallback)
+	stream *streamingState
 
 	runID  string
 	policy driver.HumanDecisionPolicy
@@ -54,17 +52,17 @@ type claudeParser struct {
 	// decisionSeq allocates RequestID suffixes for HITL events the parser
 	// synthesizes locally. A separate sink-level allocator
 	// owns the canonical counter when adapters call sink.RequestDecision —
-	// this one is only used when the parser recognizes a historical
-	// locally-resolved tool_use (§5.1 Phase 1).
+	// this one is only used when the parser recognizes an observational,
+	// locally-resolved tool_use.
 	decisionSeq int
 
 	// pendingFailure is the HITL-originated failure recorded when the CLI
 	// reports a rejected plan. The driver layer reads it in Run() to set
-	// DriverRunResult.Failure.
+	// driver.Response.Failure.
 	pendingFailure *driver.RunFailure
 
 	// -------------------------------------------------------------------
-	// Phase 3 interactive mode.
+	// Bidirectional interactive mode.
 	// -------------------------------------------------------------------
 	//
 	// When interactive == true the driver has started the CLI in
@@ -78,7 +76,8 @@ type claudeParser struct {
 	// context through every event handler.
 	interactiveCtx  context.Context
 	interactiveSink driver.DecisionCapableSink
-	stdin           InteractiveStdin
+	stdin           interactiveStdin
+	interactiveErr  error
 
 	// interactiveTools captures tool_use frames so streaming mode can still
 	// expose arg deltas / tool IDs while interactive mode is active. Claude's
@@ -89,11 +88,11 @@ type claudeParser struct {
 	interactiveControl map[string]struct{}
 }
 
-// InteractiveStdin is the API the parser uses to inject control_response
-// frames back to the CLI when in Phase 3 interactive mode, and to signal
+// interactiveStdin is the package-private API the parser uses to inject control_response
+// frames back to the CLI when in interactive mode, and to signal
 // "no more host input" when a model turn is complete. It is satisfied by
 // clihelper.StdinController.
-type InteractiveStdin interface {
+type interactiveStdin interface {
 	Write(frame []byte) error
 	// Close signals no further frames (EOF on the subprocess stdin). The
 	// trpc stream-json driver often keeps the child alive waiting for
@@ -130,14 +129,6 @@ type pendingHITL struct {
 	Choices []driver.DecisionChoice
 }
 
-var claudeCheckpointEvents = map[string]struct{}{
-	"completion":      {},
-	"result":          {},
-	"session":         {},
-	"session.updated": {},
-	"turn.completed":  {},
-}
-
 func newClaudeParser(sink driver.EventSink) *claudeParser {
 	return &claudeParser{sink: sink}
 }
@@ -147,22 +138,6 @@ func (p *claudeParser) enableStreaming(runID string) {
 		return
 	}
 	p.stream = newStreamingState(p.sink, runID, p)
-}
-
-func (p *claudeParser) appendTextDelta(messageID, delta string) {
-	if messageID == "" || delta == "" {
-		return
-	}
-	if p.deltaBuffers == nil {
-		p.deltaBuffers = make(map[string]*strings.Builder)
-	}
-	buf := p.deltaBuffers[messageID]
-	if buf == nil {
-		var b strings.Builder
-		buf = &b
-		p.deltaBuffers[messageID] = buf
-	}
-	buf.WriteString(delta)
 }
 
 func (p *claudeParser) onChunk(stream string, chunk []byte, ts time.Time) error {
@@ -201,8 +176,13 @@ func (p *claudeParser) finalize() {
 		p.stderrLine.Reset()
 		p.processLine("stderr", remaining, time.Now().UTC())
 	}
+}
+
+func (p *claudeParser) completeStream(failure *driver.RunFailure, exitCode int, signal string, timedOut bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	if p.stream != nil {
-		p.stream.finalize()
+		p.stream.complete(failure, exitCode, signal, timedOut)
 	}
 }
 
@@ -222,6 +202,10 @@ func (p *claudeParser) processLine(stream string, line []byte, _ time.Time) {
 	}
 
 	if !strings.HasPrefix(trimmed, "{") {
+		// stdout is machine-readable for every transport selected by this
+		// driver. Preserve unexpected text for audit, but poison the protocol
+		// outcome so a clean process exit cannot become success.
+		p.protocolMalformed = true
 		p.emit(driver.TranscriptItem{
 			Kind: driver.TranscriptStdout,
 			Text: text,
@@ -246,10 +230,15 @@ func (p *claudeParser) handlePayload(raw string, payload map[string]any) {
 		p.protocolMalformed = true
 		return
 	}
-	eventType := strings.ToLower(claudeTopLevelString(payload, "type", "event", "kind"))
+	// The Claude CLI wire discriminator is the top-level `type` field. Do not
+	// promote lookalike event/kind fields into formal protocol events.
+	eventType := strings.ToLower(claudeTopLevelString(payload, "type"))
 	subtype := strings.ToLower(claudeTopLevelString(payload, "subtype"))
+	if eventType == "" {
+		p.protocolMalformed = true
+	}
 
-	// Phase 3 interactive mode: the CLI echoes every user frame we inject
+	// Interactive mode: the CLI echoes every user frame we inject
 	// back with isReplay:true as an ack signal (via --replay-user-messages).
 	// We must not re-process these as real user messages or they would
 	// pollute the transcript with duplicate tool_result entries.
@@ -266,7 +255,7 @@ func (p *claudeParser) handlePayload(raw string, payload map[string]any) {
 	case "system":
 		if subtype == "init" {
 			model := claudeTopLevelString(payload, "model")
-			session := claudeTopLevelString(payload, "session_id", "sessionId")
+			session := claudeTopLevelString(payload, "session_id")
 			p.emit(driver.TranscriptItem{
 				Kind:      driver.TranscriptInit,
 				Model:     model,
@@ -316,7 +305,7 @@ func (p *claudeParser) handlePayload(raw string, payload map[string]any) {
 		p.terminalSeen = true
 		p.terminalSuccess = false
 		p.terminal = &driver.TerminalPayload{Event: eventType, JSON: append(json.RawMessage(nil), raw...)}
-		message := claudeTopLevelString(payload, "message", "error")
+		message := claudeTopLevelString(payload, "message")
 		if message == "" {
 			message = "claude provider error"
 		}
@@ -332,7 +321,10 @@ func (p *claudeParser) handlePayload(raw string, payload map[string]any) {
 	case "permission_request":
 		if p.stream != nil {
 			_ = p.sink.EmitStream(driver.StreamPayload{
-				Kind:     driver.StreamHITLRequested,
+				// This stdout event is observational and has no responder. Keep
+				// it as an opaque provider extension instead of fabricating an
+				// invalid StreamHITLRequested envelope.
+				Kind:     driver.StreamKind("claude.permission_request"),
 				Name:     "permission_request",
 				RunID:    p.stream.runID,
 				ThreadID: p.sessionID,
@@ -346,18 +338,6 @@ func (p *claudeParser) handlePayload(raw string, payload map[string]any) {
 			Data:    map[string]any{"payload": payload},
 		})
 	default:
-		// Some CLI versions emit terminal events with top-level event/kind
-		// names like "turn.completed" with session_id at the top level.
-		if eventType != "" {
-			if _, ok := claudeCheckpointEvents[eventType]; ok {
-				p.emit(driver.TranscriptItem{
-					Kind:    driver.TranscriptResult,
-					Subtype: eventType,
-					Data:    map[string]any{"payload": payload},
-				})
-				return
-			}
-		}
 		if p.stream != nil {
 			op := cloneUnknownPayload(payload)
 			op["_claude_wrapper_type"] = eventType
@@ -388,12 +368,17 @@ func cloneUnknownPayload(payload map[string]any) map[string]any {
 }
 
 func (p *claudeParser) maybeCaptureSession(payload map[string]any) {
-	session := claudeTopLevelString(payload, "session_id", "sessionId", "sessionID")
+	session := claudeTopLevelString(payload, "session_id")
 	if session == "" {
 		return
 	}
-	p.sessionID = session
-	if display := claudeTopLevelString(payload, "display_id", "displayId"); display != "" {
+	if p.sessionID == "" {
+		p.sessionID = session
+	} else if p.sessionID != session {
+		// A single CLI run cannot legitimately switch provider sessions.
+		p.protocolMalformed = true
+	}
+	if display := claudeTopLevelString(payload, "display_id"); display != "" {
 		p.displayID = display
 	} else if p.displayID == "" {
 		p.displayID = session
@@ -421,15 +406,13 @@ func (p *claudeParser) handleAssistantMessage(message map[string]any) {
 			if text == "" {
 				continue
 			}
-			p.assistantText = append(p.assistantText, text)
-			p.summary = text
 			p.emit(driver.TranscriptItem{
 				Kind:  driver.TranscriptAssistant,
 				Text:  text,
 				Model: model,
 			})
 		case "thinking":
-			text := claudeTopLevelString(block, "text", "thinking")
+			text := claudeTopLevelString(block, "thinking")
 			if text == "" {
 				continue
 			}
@@ -440,7 +423,7 @@ func (p *claudeParser) handleAssistantMessage(message map[string]any) {
 			})
 		case "tool_use":
 			name := claudeTopLevelString(block, "name")
-			id := claudeTopLevelString(block, "id", "tool_use_id")
+			id := claudeTopLevelString(block, "id")
 			if kind, interactive := claudeInteractiveTools[name]; interactive && id != "" {
 				p.registerPendingHITL(id, name, kind, block["input"])
 			}
@@ -517,17 +500,34 @@ func claudeResultText(raw any) string {
 
 func (p *claudeParser) handleResult(raw string, payload map[string]any, subtype string) {
 	p.terminalSeen = true
-	isErrorFlag, _ := payload["is_error"].(bool)
+	isErrorFlag, isErrorOK := payload["is_error"].(bool)
 	p.terminalSuccess = subtype == "success" && !isErrorFlag
+	if subtype == "success" && (!isErrorOK || isErrorFlag) {
+		p.protocolMalformed = true
+	}
 
 	p.terminal = &driver.TerminalPayload{
 		Event: "result",
 		JSON:  append(json.RawMessage(nil), raw...),
 	}
-
-	if resultText := claudeTopLevelString(payload, "result", "summary"); resultText != "" {
-		p.terminalSummary = resultText
+	if session, ok := payload["session_id"].(string); ok && strings.TrimSpace(session) != "" {
+		p.terminalSessionID = session
+		if p.sessionID == "" {
+			p.sessionID = session
+		} else if p.sessionID != session {
+			p.protocolMalformed = true
+		}
+	} else if subtype == "success" {
+		p.protocolMalformed = true
 	}
+	if result, ok := payload["result"].(string); ok {
+		// ResultMessage.result is the provider's final assistant-facing text.
+		// Preserve it byte-for-byte; assistant frames remain transcript data.
+		p.terminalResult = result
+	} else if p.terminalSuccess {
+		p.protocolMalformed = true
+	}
+
 	if raw, ok := claudeStructuredJSONFromResult(payload); ok {
 		p.structuredOutput = &driver.StructuredOutput{
 			Format:  driver.OutputFormatJSONSchema,
@@ -540,7 +540,7 @@ func (p *claudeParser) handleResult(raw string, payload map[string]any, subtype 
 	usage := claudeTopLevelObject(payload, "usage")
 	if usage != nil {
 		input, okInput := claudeTopLevelInt(usage, "input_tokens")
-		cached, okCached := claudeTopLevelInt(usage, "cache_read_input_tokens", "cached_input_tokens")
+		cached, okCached := claudeTopLevelInt(usage, "cache_read_input_tokens")
 		output, okOutput := claudeTopLevelInt(usage, "output_tokens")
 		if okInput || okCached || okOutput {
 			if p.usage == nil {
@@ -557,7 +557,7 @@ func (p *claudeParser) handleResult(raw string, payload map[string]any, subtype 
 			}
 		}
 	}
-	if cost, ok := claudeTopLevelFloat(payload, "total_cost_usd", "cost_usd", "costUSD"); ok {
+	if cost, ok := claudeTopLevelFloat(payload, "total_cost_usd"); ok {
 		c := cost
 		p.cost = &c
 	}
@@ -577,7 +577,7 @@ func (p *claudeParser) handleResult(raw string, payload map[string]any, subtype 
 		IsError: isError,
 		Usage:   p.usage,
 		CostUSD: p.cost,
-		Text:    claudeTopLevelString(payload, "result"),
+		Text:    p.terminalResult,
 		Data:    map[string]any{"payload": payload},
 	})
 	if p.stream != nil {
@@ -595,14 +595,12 @@ func claudeFormalEvent(eventType string) bool {
 }
 
 func claudeStructuredJSONFromResult(payload map[string]any) (json.RawMessage, bool) {
-	for _, key := range []string{"structured_output", "structuredOutput"} {
-		raw, ok := payload[key]
-		if !ok {
-			continue
-		}
-		if msg, ok := claudeJSONRawMessageFromValue(raw); ok {
-			return msg, true
-		}
+	raw, ok := payload["structured_output"]
+	if !ok {
+		return nil, false
+	}
+	if msg, ok := claudeJSONRawMessageFromValue(raw); ok {
+		return msg, true
 	}
 	return nil, false
 }
@@ -647,66 +645,15 @@ func (p *claudeParser) emit(item driver.TranscriptItem) {
 	})
 }
 
-// finalSummary returns only a bounded provider terminal summary. Assistant
-// output is never reused as Summary because it may be arbitrarily large.
+// finalSummary is empty because Claude's official ResultMessage.result is the
+// text of the final assistant message, not a bounded host-facing summary. The
+// exact terminal payload remains available through RawStreams.Terminal.
 func (p *claudeParser) finalSummary() string {
-	return strings.TrimSpace(p.terminalSummary)
+	return ""
 }
 
 func (p *claudeParser) buildOutput() string {
-	nonEmpty := make([]string, 0, len(p.assistantText))
-	for _, text := range p.assistantText {
-		if strings.TrimSpace(text) != "" {
-			nonEmpty = append(nonEmpty, text)
-		}
-	}
-	if len(nonEmpty) > 0 {
-		return strings.Join(nonEmpty, "\n\n")
-	}
-	if len(p.deltaBuffers) == 0 {
-		return ""
-	}
-	// Prefer stable order by message id for deterministic tests.
-	keys := make([]string, 0, len(p.deltaBuffers))
-	for id := range p.deltaBuffers {
-		keys = append(keys, id)
-	}
-	sort.Strings(keys)
-	parts := make([]string, 0, len(keys))
-	for _, id := range keys {
-		if b := p.deltaBuffers[id]; b != nil {
-			s := strings.TrimSpace(b.String())
-			if s != "" {
-				parts = append(parts, s)
-			}
-		}
-	}
-	return strings.Join(parts, "\n\n")
-}
-
-// outputMetadata reports when Output was reconstructed from streamed deltas
-// because no assistant full text blocks were parsed (e.g. ctx cancel).
-func (p *claudeParser) outputMetadata() map[string]string {
-	out := make([]string, 0, len(p.assistantText))
-	for _, text := range p.assistantText {
-		if strings.TrimSpace(text) != "" {
-			out = append(out, text)
-		}
-	}
-	if len(out) > 0 || len(p.deltaBuffers) == 0 {
-		return nil
-	}
-	hasDelta := false
-	for _, b := range p.deltaBuffers {
-		if b != nil && strings.TrimSpace(b.String()) != "" {
-			hasDelta = true
-			break
-		}
-	}
-	if !hasDelta {
-		return nil
-	}
-	return map[string]string{"output_source": "reconstructed_from_deltas"}
+	return p.terminalResult
 }
 
 // checkpoint promotes a Claude session only after both layers of the
@@ -714,7 +661,7 @@ func (p *claudeParser) outputMetadata() map[string]string {
 // the official stream-json protocol delivered a successful terminal result
 // carrying a top-level session_id. An init frame alone is never sufficient.
 func (p *claudeParser) checkpoint(exitCode int) *driver.Checkpoint {
-	if exitCode != 0 || p.protocolMalformed || !p.terminalSeen || !p.terminalSuccess || p.sessionID == "" {
+	if exitCode != 0 || p.protocolMalformed || !p.terminalSeen || !p.terminalSuccess || strings.TrimSpace(p.terminalSessionID) == "" {
 		return nil
 	}
 	display := p.displayID
@@ -723,11 +670,38 @@ func (p *claudeParser) checkpoint(exitCode int) *driver.Checkpoint {
 	}
 	return &driver.Checkpoint{
 		State: &driver.SessionState{
-			ResumeID:  p.sessionID,
+			ResumeID:  p.terminalSessionID,
 			DisplayID: display,
 		},
 		Valid: true,
 	}
+}
+
+// failureForOutcome converts formal protocol state into one provider failure
+// without stealing abnormal-process classification from core. Missing or
+// malformed protocol is a Driver failure on a clean process exit; non-zero
+// exit, signal and timeout remain core's responsibility unless Claude emitted
+// a more specific provider or HITL failure.
+func (p *claudeParser) failureForOutcome(exitCode int, signal string, timedOut bool) *driver.RunFailure {
+	if p.pendingFailure != nil {
+		return p.pendingFailure
+	}
+	if message := strings.TrimSpace(p.errorMessage); message != "" {
+		return &driver.RunFailure{Code: driver.FailureAgentError, Message: message}
+	}
+	if exitCode != 0 || signal != "" || timedOut {
+		return nil
+	}
+	if p.protocolMalformed {
+		return &driver.RunFailure{Code: driver.FailureAgentError, Message: "claude protocol output was malformed"}
+	}
+	if !p.terminalSeen {
+		return &driver.RunFailure{Code: driver.FailureAgentError, Message: "claude protocol ended without a terminal result"}
+	}
+	if !p.terminalSuccess {
+		return &driver.RunFailure{Code: driver.FailureAgentError, Message: "claude terminal result did not report success"}
+	}
+	return nil
 }
 
 // checkpointForOutcome adds the process signal/timeout and structured
@@ -812,7 +786,7 @@ func claudeTopLevelFloat(payload map[string]any, keys ...string) (float64, bool)
 }
 
 // -----------------------------------------------------------------------------
-// HITL v2 hooks (see docs/workstream-hitl-v2.md §5.1).
+// HITL hooks.
 // -----------------------------------------------------------------------------
 
 // setHITLContext wires the policy + run id the streaming driver resolved for
@@ -825,16 +799,16 @@ func (p *claudeParser) setHITLContext(runID string, policy driver.HumanDecisionP
 	p.policy = policy
 }
 
-// enableInteractive puts the parser into Phase 3 stream-json bidirectional
+// enableInteractive puts the parser into stream-json bidirectional
 // mode. The driver must have started the CLI with --input-format stream-json
 // and provide a writable stdin. sink MUST implement DecisionCapableSink
 // (otherwise the parser cannot call RequestDecision and interactive mode is
 // meaningless).
 //
 // After enableInteractive, the parser's observation of tool_use frames
-// switches from "wait for tool_result and emit observational HITL" (Phase 1)
-// to "block on RequestDecision, answer control_request via stdin" (Phase 3).
-func (p *claudeParser) enableInteractive(ctx context.Context, sink driver.DecisionCapableSink, stdin InteractiveStdin) {
+// switches from "wait for tool_result and emit observational HITL" to
+// "block on RequestDecision, answer control_request via stdin".
+func (p *claudeParser) enableInteractive(ctx context.Context, sink driver.DecisionCapableSink, stdin interactiveStdin) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.interactive = true
@@ -847,7 +821,7 @@ func (p *claudeParser) enableInteractive(ctx context.Context, sink driver.Decisi
 
 // onAssistantMessageStop is invoked from the streaming state when the
 // Anthropic stream_event sequence emits message_stop, after the last
-// message_delta (which set stop_reason). In Phase 3 interactive mode the
+// message_delta (which set stop_reason). In interactive mode the
 // CLI will otherwise block reading stdin: closing stdin after a non
 // tool_use turn lets the process flush type:result and exit so the
 // host's /agent run can end and the UI can leave the busy state.
@@ -870,7 +844,7 @@ func (p *claudeParser) onAssistantMessageStop(stopReason string) {
 // pair it with a subsequent tool_result. Must be called from within
 // handleAssistantMessage / handleContentBlockStart where p.mu is already held.
 func (p *claudeParser) registerPendingHITL(toolUseID, toolName string, kind driver.HumanDecisionKind, input any) {
-	// Phase 3 interactive mode handles tool_use via interactiveOnToolUseStart
+	// Interactive mode handles tool_use via interactiveOnToolUseStart
 	// on the streaming path; the batch handleAssistantMessage path would
 	// double-register and pollute pendingHITL. Skip.
 	if p.interactive {
@@ -924,7 +898,7 @@ func (p *claudeParser) resolveHITLOnToolResult(toolUseID, content string, isErro
 	}
 	// In interactive mode the parser has already resolved whitelisted
 	// tool_use via sink.RequestDecision + synthesized tool_result. Skip the
-	// observational Phase 1 path entirely so we don't double-emit HITL
+	// observational path entirely so we don't double-emit HITL
 	// events or record a spurious pendingFailure.
 	if p.interactive {
 		return
@@ -999,9 +973,9 @@ func (p *claudeParser) resolveHITLOnToolResult(toolUseID, content string, isErro
 	if decision == driver.DecisionRejected {
 		if effective.OnReject == driver.FailureAbort || effective.OnReject == driver.FailureActionUnset {
 			// Record a structured failure so the driver surfaces it on
-			// DriverRunResult.Failure. The run continues locally because the
+			// driver.Response.Failure. The run continues locally because the
 			// CLI already produced a reject tool_result, but the host sees
-			// the failure via RunResult.Failure.
+			// the failure via driver.Response.Failure.
 			snapshot := &driver.DecisionRequest{
 				RequestID:  requestID,
 				RunID:      p.runID,
@@ -1093,7 +1067,7 @@ func hitlFailureMessage(kind driver.HumanDecisionKind) string {
 }
 
 // -----------------------------------------------------------------------------
-// Phase 3 interactive state machine.
+// Bidirectional interactive state machine.
 // -----------------------------------------------------------------------------
 
 // interactiveOnToolUseStart registers a tool_use block so streaming mode can
@@ -1287,7 +1261,7 @@ func decodeAskUserQuestionOptions(raw []any) []driver.DecisionChoice {
 }
 
 func (p *claudeParser) handleInteractiveControlRequest(payload map[string]any) bool {
-	requestID := claudeTopLevelString(payload, "request_id", "requestId")
+	requestID := claudeTopLevelString(payload, "request_id")
 	request := claudeTopLevelObject(payload, "request")
 	if requestID == "" || request == nil {
 		return false
@@ -1296,9 +1270,9 @@ func (p *claudeParser) handleInteractiveControlRequest(payload map[string]any) b
 		return false
 	}
 
-	toolName := claudeTopLevelString(request, "tool_name", "toolName")
+	toolName := claudeTopLevelString(request, "tool_name")
 	input := claudeTopLevelObject(request, "input")
-	toolUseID := claudeTopLevelString(request, "tool_use_id", "toolUseID")
+	toolUseID := claudeTopLevelString(request, "tool_use_id")
 	req := p.buildInteractiveDecisionRequestFromControl(requestID, toolName, toolUseID, input)
 	if toolUseID != "" {
 		if p.interactiveControl == nil {
@@ -1307,50 +1281,67 @@ func (p *claudeParser) handleInteractiveControlRequest(payload map[string]any) b
 		p.interactiveControl[toolUseID] = struct{}{}
 	}
 
-	if _, ok := claudeInteractiveTools[toolName]; ok {
-		resp, err := p.interactiveSink.RequestDecision(p.interactiveCtx, req)
-		if err != nil {
-			response := buildInteractiveControlResponse(req, driver.DecisionResponse{
-				RequestID: req.RequestID,
-				Result:    driver.DecisionRejected,
-				Text:      "User decision aborted.",
-			})
-			response = p.decorateInteractiveControlResponse(req, driver.DecisionResponse{
-				RequestID: req.RequestID,
-				Result:    driver.DecisionRejected,
-				Text:      "User decision aborted.",
-			}, response)
-			_ = p.writeInteractiveControlResponse(requestID, response)
-			p.trackInteractiveInterrupt(requestID, response)
-			return true
-		}
-		response := buildInteractiveControlResponse(req, resp)
-		response = p.decorateInteractiveControlResponse(req, resp, response)
-		_ = p.writeInteractiveControlResponse(requestID, response)
-		p.trackInteractiveInterrupt(requestID, response)
-		p.recordInteractiveRejectFailure(req, resp)
-		return true
-	}
-
 	effective := driver.EffectiveHumanDecisionPolicy(p.policy)
+	if _, whitelisted := claudeInteractiveTools[toolName]; whitelisted || effective.Permission == driver.HumanDecisionAsk {
+		return p.resolveInteractiveDecision(requestID, req)
+	}
 	switch effective.Permission {
 	case driver.HumanDecisionAutoApprove:
-		_ = p.writeInteractiveControlResponse(requestID, buildInteractiveControlResponse(req, driver.DecisionResponse{
+		resp := driver.DecisionResponse{
 			RequestID: req.RequestID,
 			Result:    driver.DecisionApproved,
-		}))
+		}
+		p.commitInteractiveControlResponse(requestID, buildInteractiveControlResponse(req, resp))
 		return true
 	case driver.HumanDecisionAutoReject:
 		resp := driver.DecisionResponse{RequestID: requestID, Result: driver.DecisionRejected}
 		response := buildInteractiveControlResponse(req, resp)
 		response = p.decorateInteractiveControlResponse(req, resp, response)
-		_ = p.writeInteractiveControlResponse(requestID, response)
-		p.trackInteractiveInterrupt(requestID, response)
+		p.commitInteractiveControlResponse(requestID, response)
 		p.recordInteractiveRejectFailure(req, resp)
 		return true
 	default:
 		return false
 	}
+}
+
+func (p *claudeParser) resolveInteractiveDecision(requestID string, req driver.DecisionRequest) bool {
+	resp, err := p.interactiveSink.RequestDecision(p.interactiveCtx, req)
+	if err != nil {
+		if p.interactiveErr == nil {
+			p.interactiveErr = err
+		}
+		// The sink contract says a non-nil decision error aborts the Driver
+		// run. Closing stdin releases the CLI without converting the abort into
+		// a synthetic provider denial that a later success could overwrite.
+		if p.stdin != nil {
+			_ = p.stdin.Close()
+		}
+		return true
+	}
+	response := buildInteractiveControlResponse(req, resp)
+	response = p.decorateInteractiveControlResponse(req, resp, response)
+	p.commitInteractiveControlResponse(requestID, response)
+	p.recordInteractiveRejectFailure(req, resp)
+	return true
+}
+
+func (p *claudeParser) commitInteractiveControlResponse(requestID string, response map[string]any) {
+	if err := p.writeInteractiveControlResponse(requestID, response); err != nil {
+		// Closing stdin releases a CLI that would otherwise wait forever for a
+		// response which the host can no longer deliver.
+		if p.stdin != nil {
+			_ = p.stdin.Close()
+		}
+		if p.interactiveCtx == nil || p.interactiveCtx.Err() == nil {
+			p.pendingFailure = &driver.RunFailure{
+				Code:    driver.FailureAgentError,
+				Message: "claude control response write failed: " + err.Error(),
+			}
+		}
+		return
+	}
+	p.trackInteractiveInterrupt(requestID, response)
 }
 
 // writeInteractiveToolResult formats and writes a user tool_result frame to
@@ -1385,7 +1376,7 @@ func (p *claudeParser) writeInteractiveToolResult(toolUseID, content string, isE
 
 func (p *claudeParser) writeInteractiveControlResponse(requestID string, response map[string]any) error {
 	if p.stdin == nil {
-		return nil
+		return fmt.Errorf("claude interactive stdin is unavailable")
 	}
 	frame := map[string]any{
 		"type": "control_response",
@@ -1923,7 +1914,7 @@ func cloneInteractivePayload(payload map[string]any) map[string]any {
 }
 
 // cloneInteractiveRequest makes a small-scoped copy for Failure snapshot
-// recording. We want RunResult.Failure to survive after the parser state
+// recording. We want driver.Response.Failure to survive after the parser state
 // is cleared.
 func cloneInteractiveRequest(req driver.DecisionRequest) *driver.DecisionRequest {
 	out := req

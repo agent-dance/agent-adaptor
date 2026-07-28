@@ -18,9 +18,8 @@ import (
 //     these as `interface{}`, which is too loose; we decode them by
 //     inspecting the "type" tag.
 //
-// When codex-cli evolves, rerun the generator and reconcile any fields
-// listed here against the new schema under schema/. See
-// docs/workstream-streaming-chat.md §16 for the upgrade contract.
+// When codex-cli evolves, rerun the generator as described in generate.go and
+// reconcile every hand-written field against the new schema under schema/.
 
 // ---------------------------------------------------------------------------
 // Initialize
@@ -50,17 +49,18 @@ type InitializeResponse struct {
 }
 
 // ---------------------------------------------------------------------------
-// thread/start & thread/resume
+// thread/start, thread/resume & thread/fork
 // ---------------------------------------------------------------------------
 
 // ThreadStartParams matches the v2 ThreadStartParams schema. All fields are
 // optional per the codex protocol; we only set the ones the adapter needs.
 type ThreadStartParams struct {
-	CWD       string          `json:"cwd,omitempty"`
-	Ephemeral bool            `json:"ephemeral,omitempty"`
-	Sandbox   string          `json:"sandbox,omitempty"`
-	Model     string          `json:"model,omitempty"`
-	Extras    json.RawMessage `json:"-"`
+	CWD         string          `json:"cwd,omitempty"`
+	Ephemeral   bool            `json:"ephemeral,omitempty"`
+	Sandbox     string          `json:"sandbox,omitempty"`
+	Model       string          `json:"model,omitempty"`
+	ServiceTier string          `json:"serviceTier,omitempty"`
+	Extras      json.RawMessage `json:"-"`
 }
 
 // ThreadRef is the minimal surface of the server's Thread object exposed
@@ -88,6 +88,24 @@ type ThreadResumeResponse struct {
 	Thread ThreadRef `json:"thread"`
 }
 
+// ThreadForkParams is the official v2 thread/fork request. Forking creates a
+// new provider thread from ThreadID; the parent thread remains unchanged.
+type ThreadForkParams struct {
+	ThreadID       string `json:"threadId"`
+	CWD            string `json:"cwd,omitempty"`
+	Ephemeral      bool   `json:"ephemeral,omitempty"`
+	Sandbox        string `json:"sandbox,omitempty"`
+	Model          string `json:"model,omitempty"`
+	ServiceTier    string `json:"serviceTier,omitempty"`
+	ApprovalPolicy string `json:"approvalPolicy,omitempty"`
+}
+
+// ThreadForkResponse is the reply to thread/fork. Thread.ID is the new child
+// identifier and is the only checkpoint that may be returned by the fork run.
+type ThreadForkResponse struct {
+	Thread ThreadRef `json:"thread"`
+}
+
 // ThreadStartedNotificationBody is the minimal view the adapter takes of
 // the "thread/started" notification.
 type ThreadStartedNotificationBody struct {
@@ -107,6 +125,7 @@ type TurnStartParams struct {
 	SandboxPolicy  *SandboxPolicy  `json:"sandboxPolicy,omitempty"`
 	Model          string          `json:"model,omitempty"`
 	Effort         string          `json:"effort,omitempty"`
+	ServiceTier    string          `json:"serviceTier,omitempty"`
 	CWD            string          `json:"cwd,omitempty"`
 	OutputSchema   json.RawMessage `json:"outputSchema,omitempty"`
 }
@@ -315,8 +334,7 @@ type ThreadItem struct {
 	DynamicToolCall  *ThreadItemDynamicToolCallBody  `json:"-"`
 
 	// Raw preserves the original JSON representation. It is always non-nil;
-	// use it when Kind is unknown or when a caller needs a field this
-	// package does not yet model.
+	// use it when Kind is unknown or when a caller needs an unmodeled field.
 	Raw json.RawMessage `json:"-"`
 }
 
