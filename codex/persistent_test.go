@@ -199,10 +199,29 @@ func TestPersistentCodexCloseCancelAndIdleReapProcesses(t *testing.T) {
 	t.Run("run context cancellation kills group", func(t *testing.T) {
 		a, req, spawnFile, activeFile := newPersistentCodexTest(t, "block_turn")
 		defer closeCodexTestAdapter(t, a)
-		ctx, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
+		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		_, err := a.Run(ctx, req, &testutil.EventRecorder{})
-		if !errors.Is(err, context.DeadlineExceeded) {
+		done := make(chan error, 1)
+		go func() {
+			_, err := a.Run(ctx, req, &testutil.EventRecorder{})
+			done <- err
+		}()
+
+		// Synchronize cancellation on the helper receiving turn/start. A fixed
+		// startup timeout can expire before the race-instrumented Linux binary
+		// has even spawned, which tests scheduler speed rather than the
+		// post-prompt cancellation contract.
+		turnFile := filepath.Join(filepath.Dir(spawnFile), "turns.log")
+		waitForHelperRecordCount(t, turnFile, 1)
+		cancel()
+
+		var err error
+		select {
+		case err = <-done:
+		case <-time.After(3 * time.Second):
+			t.Fatal("cancelled run did not return")
+		}
+		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("cancel error=%v", err)
 		}
 		if got := helperSpawnCount(t, spawnFile); got != 1 {
@@ -300,6 +319,7 @@ func newPersistentCodexTest(t *testing.T, mode string) (driver.Driver, driver.Re
 				{Name: "CODEX_HELPER_SPAWN_FILE", Value: spawnFile},
 				{Name: "CODEX_HELPER_ACTIVE_FILE", Value: activeFile},
 				{Name: "CODEX_HELPER_OVERLAP_FILE", Value: overlapFile},
+				{Name: "CODEX_HELPER_TURN_FILE", Value: filepath.Join(root, "turns.log")},
 			},
 		},
 		Model: "gpt-test",
@@ -376,6 +396,29 @@ func helperSpawnCount(t *testing.T, path string) int {
 	return count
 }
 
+func waitForHelperRecordCount(t *testing.T, path string, want int) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		raw, err := os.ReadFile(path)
+		if err == nil {
+			count := 0
+			for _, line := range strings.Split(string(raw), "\n") {
+				if strings.TrimSpace(line) != "" {
+					count++
+				}
+			}
+			if count >= want {
+				return
+			}
+		} else if !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("read helper record %s: %v", path, err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("helper record %s did not reach %d entries", path, want)
+}
+
 func assertHelperInactive(t *testing.T, activeFile string) {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
@@ -419,7 +462,7 @@ func runCodexHelper() int {
 	spawnFile := os.Getenv("CODEX_HELPER_SPAWN_FILE")
 	activeFile := os.Getenv("CODEX_HELPER_ACTIVE_FILE")
 	overlapFile := os.Getenv("CODEX_HELPER_OVERLAP_FILE")
-	spawnNo := appendHelperSpawn(spawnFile)
+	spawnNo := appendHelperRecord(spawnFile)
 	markHelperActive(activeFile, overlapFile)
 	defer clearHelperActive(activeFile)
 
@@ -458,6 +501,7 @@ func runCodexHelper() int {
 			writeHelperJSON(writer, helperResponse{ID: req.ID, Result: map[string]any{"thread": map[string]any{"id": params.ThreadID}}})
 		case "turn/start":
 			turn++
+			appendHelperRecord(os.Getenv("CODEX_HELPER_TURN_FILE"))
 			if mode == "fail_after_prompt_once" && spawnNo == 1 {
 				return 22
 			}
@@ -504,7 +548,7 @@ func writeHelperNotification(w *bufio.Writer, method string, params any) {
 	writeHelperJSON(w, map[string]any{"method": method, "params": params})
 }
 
-func appendHelperSpawn(path string) int {
+func appendHelperRecord(path string) int {
 	raw, _ := os.ReadFile(path)
 	count := 0
 	for _, line := range strings.Split(string(raw), "\n") {
