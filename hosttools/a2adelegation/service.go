@@ -117,10 +117,11 @@ func NewService(cfg Config) (*Service, error) {
 		switch {
 		case ref.runner != nil:
 			spec := RemoteAgentSpec{
-				Key:       ref.key,
-				Protocol:  ProtocolA2A,
-				AgentCard: localAgentCard(ref.key),
-				Policy:    s.effectivePolicy(ref.policy),
+				Key:         ref.key,
+				DisplayName: ref.displayName,
+				Protocol:    ProtocolA2A,
+				AgentCard:   localAgentCard(ref.key),
+				Policy:      s.effectivePolicy(ref.policy),
 			}
 			if err := registry.Register(spec); err != nil {
 				return nil, err

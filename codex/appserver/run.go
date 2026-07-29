@@ -942,7 +942,7 @@ func (s *runState) snapshot(opts Options, threadID, stdout, stderr string, exitC
 }
 
 func finalizeAppServerStructuredOutput(schema *driver.OutputSchema, result driver.Response) driver.Response {
-	if schema == nil || schema.Mode == driver.StructuredOutputPromptValidate {
+	if schema == nil {
 		return result
 	}
 	var candidate *driver.StructuredOutput

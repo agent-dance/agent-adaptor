@@ -153,12 +153,12 @@ var (
 
 var (
 	// ErrStructuredOutputUnsupported is returned before Driver launch when
-	// the requested structured-output mode cannot be honored by the bound
-	// adapter or selected run mode.
+	// structured output cannot be honored by the bound Driver or selected
+	// provider transport.
 	ErrStructuredOutputUnsupported = driver.ErrStructuredOutputUnsupported
 
 	// ErrInvalidOutputSchema is returned before Driver launch when the host
-	// supplies malformed JSON, an unsupported output format/mode, or a JSON
+	// supplies malformed JSON, an unsupported output format, or a JSON
 	// Schema document that cannot be compiled for local validation.
 	ErrInvalidOutputSchema = driver.ErrInvalidOutputSchema
 )

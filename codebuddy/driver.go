@@ -277,10 +277,9 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 
 	controlRequested := wantsControlTransport(req.Policy.HumanDecision)
 	if controlRequested {
-		if req.OutputSchema != nil && req.OutputSchema.Mode != driver.StructuredOutputPromptValidate {
+		if req.OutputSchema != nil && req.StructuredOutputSource == driver.StructuredOutputSourceNative {
 			return driver.Response{}, &driver.StructuredOutputUnsupportedError{
 				Driver: DriverType,
-				Mode:   req.OutputSchema.Mode,
 				Reason: "CodeBuddy native structured output is not supported with control HITL",
 			}
 		}
@@ -495,7 +494,7 @@ func (adapter) runHeadless(ctx context.Context, cfg Config, command string, req 
 	failure := p.failureForOutcome(result.ExitCode)
 
 	var structuredOutput *driver.StructuredOutput
-	if req.OutputSchema != nil && req.OutputSchema.Mode != driver.StructuredOutputPromptValidate {
+	if req.OutputSchema != nil && req.StructuredOutputSource == driver.StructuredOutputSourceNative {
 		candidate := p.nativeStructuredOutputForOutcome(result.ExitCode, result.Signal, result.TimedOut, failure)
 		structuredOutput, failure = engine.FinalizeStructuredOutput(
 			req.OutputSchema,

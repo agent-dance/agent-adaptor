@@ -1,5 +1,5 @@
-// threads demonstrates persistent, new, resume-only, and forked conversation
-// Threads on a host-owned key.
+// threads demonstrates persistent, resume-only, and forked conversation
+// Threads on host-owned keys.
 //
 // The SDK keeps exactly two consumer-visible identity layers: the thread key (the
 // host's own business string) and the run ID. The provider session id is
@@ -67,17 +67,9 @@ func main() {
 	exampleutil.Check(errors.Is(err, adaptor.ErrThreadNotFound),
 		"expected ErrThreadNotFound for an unknown resume-only key, got %v", err)
 
-	// 4. force a fresh conversation under the same key: the old one is
-	//    archived (still resolvable for audit) and the key rebinds.
-	restarted := ai.NewThread(*key)
-	runStep(restarted, *timeout, *prompt, "restarted")
-	restartedCheckpoint := checkpoint(restarted, *timeout)
-	exampleutil.Check(restartedCheckpoint != firstCheckpoint,
-		"expected NewThread to rebind the key to a different conversation")
-
-	// 5. fork: the "try another direction" button. The parent stays intact
+	// 4. fork: the "try another direction" button. The parent stays intact
 	//    and active under its own key.
-	fork := restarted.Fork(*forkKey)
+	fork := th.Fork(*forkKey)
 	runStep(fork, *timeout, *prompt, "forked")
 	exampleutil.Check(fork.Key() == *forkKey, "expected fork key %q, got %q", *forkKey, fork.Key())
 
@@ -89,10 +81,9 @@ func main() {
 			"fork_key": fork.Key(),
 		},
 		"checkpoints": map[string]any{
-			"after_first":      firstCheckpoint,
-			"after_second":     secondCheckpoint,
-			"after_new_thread": restartedCheckpoint,
-			"fork":             checkpoint(fork, *timeout),
+			"after_first":  firstCheckpoint,
+			"after_second": secondCheckpoint,
+			"fork":         checkpoint(fork, *timeout),
 		},
 	})
 }

@@ -12,21 +12,6 @@ const (
 	OutputFormatJSONSchema OutputFormat = "json_schema"
 )
 
-// StructuredOutputMode states the enforcement level the host is requesting.
-type StructuredOutputMode string
-
-const (
-	// StructuredOutputNativeStrict requires provider/CLI-native schema
-	// enforcement. The SDK rejects unsupported drivers before launch.
-	StructuredOutputNativeStrict StructuredOutputMode = "native_strict"
-	// StructuredOutputPreferNative uses native enforcement when available,
-	// otherwise the explicit prompt+validation fallback when supported.
-	StructuredOutputPreferNative StructuredOutputMode = "prefer_native"
-	// StructuredOutputPromptValidate injects exact-JSON instructions and
-	// validates the driver's final Output locally.
-	StructuredOutputPromptValidate StructuredOutputMode = "prompt_validate"
-)
-
 // StructuredOutputInvalidPolicy selects how prompt-validation failures are
 // surfaced after the driver returns.
 type StructuredOutputInvalidPolicy string
@@ -46,7 +31,6 @@ const (
 // library types.
 type OutputSchema struct {
 	Format      OutputFormat
-	Mode        StructuredOutputMode
 	SchemaJSON  json.RawMessage
 	Name        string
 	Description string
@@ -69,7 +53,6 @@ const (
 // is the final assistant JSON value validated against the requested schema.
 type StructuredOutput struct {
 	Format OutputFormat
-	Mode   StructuredOutputMode
 	Source StructuredOutputSource
 
 	RawJSON json.RawMessage

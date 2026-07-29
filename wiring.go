@@ -154,6 +154,7 @@ func (a *Agent) resolveRun(ctx context.Context, runID, prompt string, eff *RunSe
 	req.ProfilePayload = profilePayload
 	req.Profile = engine.CloneProfileSelection(a.defaults.profile)
 	req.OutputSchema = engine.CloneOutputSchema(schema)
+	req.StructuredOutputSource = source
 	req.Streaming = providerStreaming
 
 	return resolvedRun{

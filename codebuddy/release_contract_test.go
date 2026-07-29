@@ -293,9 +293,9 @@ func TestCodeBuddyNativeStructuredOutputValidatedBeforeCheckpoint(t *testing.T) 
 	res, err := (adapter{}).Run(context.Background(), driver.Request{
 		Prompt: "json", Config: isolatedCodeBuddyConfig(command, home),
 		Workspace: driver.WorkspaceLease{CWD: home}, Policy: autoApprovePolicy(),
+		StructuredOutputSource: driver.StructuredOutputSourceNative,
 		OutputSchema: &driver.OutputSchema{
 			Format:     driver.OutputFormatJSONSchema,
-			Mode:       driver.StructuredOutputNativeStrict,
 			SchemaJSON: []byte(`{"type":"object","properties":{"answer":{"type":"integer"}},"required":["answer"]}`),
 			OnInvalid:  driver.StructuredOutputFailRun,
 		},

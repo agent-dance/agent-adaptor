@@ -102,7 +102,6 @@ func TestCodexNativeStructuredOutputUsesLastCompletedAgentMessageAndCoreValidati
 	}
 	schema := &driver.OutputSchema{
 		Format:     driver.OutputFormatJSONSchema,
-		Mode:       driver.StructuredOutputNativeStrict,
 		SchemaJSON: json.RawMessage(`{"type":"object","properties":{"project_name":{"const":"agent-adaptor"}},"required":["project_name"],"additionalProperties":false}`),
 		OnInvalid:  driver.StructuredOutputFailRun,
 	}
@@ -192,12 +191,12 @@ func TestCodexRunAddsOutputSchemaArgAndParsesStructuredResult(t *testing.T) {
 	)
 
 	result, err := (adapter{}).Run(context.Background(), driver.Request{
-		Prompt:    "extract",
-		Config:    Config{CommonConfig: CommonConfig{Command: command, CWD: workspace, Env: []driver.EnvBinding{{Name: "HOME", Value: home}, {Name: "USERPROFILE", Value: home}, {Name: "CODEX_HOME", Value: filepath.Join(home, ".codex")}, {Name: "ARG_FILE", Value: argFile}}}},
-		Workspace: driver.WorkspaceLease{ID: "workspace-a", CWD: workspace},
+		Prompt:                 "extract",
+		Config:                 Config{CommonConfig: CommonConfig{Command: command, CWD: workspace, Env: []driver.EnvBinding{{Name: "HOME", Value: home}, {Name: "USERPROFILE", Value: home}, {Name: "CODEX_HOME", Value: filepath.Join(home, ".codex")}, {Name: "ARG_FILE", Value: argFile}}}},
+		Workspace:              driver.WorkspaceLease{ID: "workspace-a", CWD: workspace},
+		StructuredOutputSource: driver.StructuredOutputSourceNative,
 		OutputSchema: &driver.OutputSchema{
 			Format:     driver.OutputFormatJSONSchema,
-			Mode:       driver.StructuredOutputNativeStrict,
 			SchemaJSON: []byte(`{"type":"object","properties":{"project_name":{"type":"string"}},"required":["project_name"]}`),
 		},
 	}, &testutil.EventRecorder{})
@@ -235,12 +234,12 @@ func TestCodexRunMissingNativeOutputFailsAndDoesNotCheckpoint(t *testing.T) {
 		"@echo off\r\nsetlocal\r\nset /p PROMPT=\r\necho {\"type\":\"thread.started\",\"thread_id\":\"codex-missing-output\"}\r\necho {\"type\":\"turn.completed\"}\r\n",
 	)
 	result, err := (adapter{}).Run(context.Background(), driver.Request{
-		Prompt:    "extract",
-		Config:    Config{CommonConfig: CommonConfig{Command: command, CWD: home}},
-		Workspace: driver.WorkspaceLease{CWD: home},
+		Prompt:                 "extract",
+		Config:                 Config{CommonConfig: CommonConfig{Command: command, CWD: home}},
+		Workspace:              driver.WorkspaceLease{CWD: home},
+		StructuredOutputSource: driver.StructuredOutputSourceNative,
 		OutputSchema: &driver.OutputSchema{
 			Format:     driver.OutputFormatJSONSchema,
-			Mode:       driver.StructuredOutputNativeStrict,
 			SchemaJSON: json.RawMessage(`{"type":"object"}`),
 			OnInvalid:  driver.StructuredOutputFailRun,
 		},

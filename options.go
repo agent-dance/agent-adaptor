@@ -316,7 +316,7 @@ type AgentSettings struct {
 	// RunSettings contains the defaults inherited by each invocation.
 	RunSettings
 
-	// threadStore backs Agent.Thread/NewThread (stateful conversations).
+	// threadStore backs Agent.Thread (stateful conversations).
 	// Nil is valid: Threads then fail their runs with
 	// ErrThreadStoreRequired while the stateless Agent paths stay
 	// unaffected.
@@ -469,7 +469,7 @@ func OnApproval(h ApprovalHandler) SharedOption {
 }
 
 // WithThreadStore injects the thread storage backend that enables stateful
-// conversations: with it, Agent.Thread / Agent.NewThread persist and resume
+// conversations: with it, Agent.Thread persists and resumes
 // driver checkpoints across runs and processes (memory.NewStore() for
 // single-process hosts, a durable implementation for services). Without it
 // Threads fail their runs with ErrThreadStoreRequired. Construction scope

@@ -98,6 +98,29 @@ func TestEventMapperClosesTextBeforeTerminal(t *testing.T) {
 	}
 }
 
+func TestEventMapperTaskTerminalCarriesFinalText(t *testing.T) {
+	mapper := newEventMapper(DelegationEvent{RunID: "run-1", DelegationID: "del-1", AgentKey: "plan"})
+	events := mapper.terminalEvents(clienta2a.Event{Task: &clienta2a.Task{
+		ID: "task-1", ContextID: "ctx-1",
+		Status: clienta2a.TaskStatus{State: clienta2a.TaskStateCompleted},
+		Messages: []clienta2a.Message{{
+			Role:  "agent",
+			Parts: []clienta2a.Part{{Kind: clienta2a.PartText, Text: `{"filename":"PLAN.md"}`}},
+		}},
+	}})
+	if len(events) != 1 || events[0].Kind != DelegationFinished {
+		t.Fatalf("terminal events = %#v", events)
+	}
+	terminal := events[0]
+	if terminal.Text != `{"filename":"PLAN.md"}` {
+		t.Fatalf("terminal text = %q", terminal.Text)
+	}
+	result, ok := terminal.Result.(map[string]any)
+	if !ok || result["status"] != "completed" || result["text"] != terminal.Text {
+		t.Fatalf("terminal result = %#v", terminal.Result)
+	}
+}
+
 func TestAdapterStreamStatusEndIsPriorityEvent(t *testing.T) {
 	mapper := newEventMapper(DelegationEvent{RunID: "run-1", DelegationID: "del-1", AgentKey: "implement"})
 	events := mapper.Map(clienta2a.Event{

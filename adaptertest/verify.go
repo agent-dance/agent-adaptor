@@ -142,8 +142,8 @@ func callConfigFingerprint(fingerprinter driver.SessionConfigFingerprinter) (fin
 
 // VerifyStructuredOutputCapability checks the declaration half of the
 // structured-output matrix (SO-01). The optional live probe verifies the
-// native, non-streaming baseline; core's structured contract tests own mode
-// selection and rejection across provider-streaming and HITL combinations.
+// native, non-streaming baseline; core's structured contract tests own
+// automatic selection and rejection across provider-streaming and HITL.
 func VerifyStructuredOutputCapability(capability driver.StructuredOutputCapability) []Violation {
 	declared := capability.JSONSchemaNative || capability.JSONSchemaPromptValidate
 	anyWorks := capability.WorksWithRun || capability.WorksWithStreaming || capability.WorksWithHITL
@@ -154,7 +154,7 @@ func VerifyStructuredOutputCapability(capability driver.StructuredOutputCapabili
 	}
 	if declared && !capability.WorksWithRun {
 		out = append(out, violationf("SO-01",
-			"a structured-output mechanism is declared with WorksWithRun=false; every mode uses v1's single execution pipeline"))
+			"a structured-output mechanism is declared with WorksWithRun=false; structured output uses v1's single execution pipeline"))
 	}
 	return out
 }

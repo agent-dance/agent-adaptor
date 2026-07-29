@@ -101,12 +101,11 @@ agent := adaptor.New(
 thread := agent.Thread("tenant-42/issue-123")
 result, err := thread.Run(ctx, "继续调查")
 
-fresh := agent.NewThread("tenant-42/issue-123")
 resumeOnly := agent.Thread("tenant-42/issue-123", adaptor.ResumeOnly())
 branch := thread.Fork("tenant-42/issue-123/alternative")
 ```
 
-Thread key 是宿主拥有的不透明字符串。Driver 的 resume 标识只属于 checkpoint 细节。持久化宿主可以实现 `threadstore.Store`；`memory.NewStore()` 适合单进程使用。
+Thread key 是宿主拥有的不透明字符串。新的无关对话必须使用新的宿主 key；SDK 不提供主动重绑已有 key 的入口。Driver 的 resume 标识只属于 checkpoint 细节。持久化宿主可以实现 `threadstore.Store`；`memory.NewStore()` 适合单进程使用。
 
 Claude、CodeBuddy 和 Codex 对显式 Thread 默认跨轮复用 provider 进程。需要每轮或某一轮使用新进程时，在 Agent 构造处或调用处显式传入 `WithSpawn()`。宿主结束 Agent 生命周期时应关闭进程池：
 
@@ -146,6 +145,68 @@ result, err := agent.Run(ctx, "评审这个改动",
 
 workspace manager、runtime service manager、skill provider、skill materializer、profile resources 和 run-scoped host services 都是可选扩展。一次基本执行不依赖这些能力。
 
+## 结构化输出案例
+
+结构化输出是单次运行合同。`RunAs[T]` 从 Go 类型生成 JSON Schema，优先使用
+provider 原生约束；不支持时会自动回退到 Prompt 加本地校验，并同时返回
+typed value 与普通审计 `Result`：
+
+```go
+type ReleasePlan struct {
+	Filename  string `json:"filename"`
+	MediaType string `json:"media_type"`
+	Summary   string `json:"summary"`
+	Content   string `json:"content"`
+}
+
+plan, result, err := adaptor.RunAs[ReleasePlan](ctx, agent,
+	"Produce the release plan as a Markdown file artifact.")
+if err != nil {
+	return err
+}
+fmt.Printf("%s (%s)\n%s\n", plan.Filename, result.RunID, plan.Content)
+```
+
+完整可运行代码见 [`structured-output`](./examples/structured-output)，合同细节见
+[结构化输出文档](./docs/structured-output.md)。
+
+## Team agent 案例
+
+团队形状与路由属于宿主策略。把普通 Runner 配置成本地或远程委托目标，将一个
+`a2adelegation.Service` 挂到 leader，所有角色进度仍从 leader 的唯一 Event
+流消费：
+
+```go
+team, err := a2adelegation.NewService(a2adelegation.Config{
+	Agents: []a2adelegation.AgentRef{
+		a2adelegation.LocalNamed("plan", "Codex Planner", planner, a2adelegation.Policy{}),
+		a2adelegation.LocalNamed("impl", "Claude Code Implementer", implementer, a2adelegation.Policy{}),
+		a2adelegation.LocalNamed("review", "Codex Reviewer", reviewer, a2adelegation.Policy{}),
+	},
+})
+if err != nil {
+	return err
+}
+defer team.Close()
+
+leader := adaptor.New(leaderDriver, team.Option())
+stream := leader.Stream(ctx, "Plan, implement, and review TASK.md")
+for event := range stream.Events() {
+	if update, ok := event.(adaptor.SubagentUpdate); ok {
+		fmt.Printf("[%s] %s: %s\n", update.Agent, update.Kind, update.Delta)
+	}
+}
+result, err := stream.Result()
+```
+
+完整的 [`team-agent-workflow`](./examples/showcases/team-agent-workflow) 还包含
+角色级 sandbox、结构化 `PLAN.md` 文件制品、workspace 审计，以及带实时
+subagent 卡片的 CopilotKit 页面。一条命令即可启动：
+
+```bash
+./examples/showcases/team-agent-workflow/start-all.sh claude
+```
+
 ## Result 与错误
 
 成功执行返回 `*Result, nil`。已经完成但业务失败的执行返回携带可用 `Result` 的 typed `*RunError`；基础设施失败保持为普通可包装的 Go error。
@@ -170,7 +231,7 @@ if err != nil {
 - `Services()` 报告本次执行实际观察到的 runtime services。
 - `Decode()` 读取已经校验的结构化输出。
 
-结构化输出使用 `RunAs[T]`、`WithSchema[T]` 或 `WithSchemaJSON`。
+结构化输出直接使用 `RunAs[T]`；高级 schema 定制只在专项合同文档中展开。
 
 ## Inspect 与 Profile
 
@@ -200,14 +261,14 @@ synced, err := agent.SyncProfile(ctx)
 
 - [`quickstart`](./examples/quickstart)：构造 Agent 并执行一次 prompt。
 - [`inspect`](./examples/inspect)：环境、模型、配额、schema、skills 与 profile 状态。
-- [`threads`](./examples/threads)：续接、只续不建、强制新建、分叉和 checkpoint 审计。
+- [`threads`](./examples/threads)：续接、只续不建、分叉和 checkpoint 审计。
 - [`skills`](./examples/skills)：实时 skill 解析与物化。
 - [`profiles`](./examples/profiles)：provider profile resources 与同步。
 - [`streaming`](./examples/streaming)：typed Event 消费与取消。
 - [`structured-output`](./examples/structured-output)：typed JSON 输出。
 - [`web-chat`](./examples/web-chat)：SSE/AG-UI server，以及 [`aguiclient`](./examples/web-chat/aguiclient) 和 [`copilotkit`](./examples/web-chat/copilotkit) 前端。
 - [`a2a-server`](./examples/a2a-server)：通过 A2A 发布 Agent，并使用 A2A client 调用。
-- [`showcases`](./examples/showcases)：规模更大的宿主组合示例。
+- [`showcases/team-agent-workflow`](./examples/showcases/team-agent-workflow)：leader → plan → implementation → review，并提供一条命令启动的 CopilotKit 验收入口。
 
 会调用 provider 的 examples 需要对应的本地 CLI 和登录状态。普通仓库测试不会产生付费调用。
 

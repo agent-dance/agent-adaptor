@@ -148,8 +148,8 @@ var (
 	// could not be derived. Unwrap to *InvalidOutputSchemaError.
 	ErrInvalidOutputSchema = driver.ErrInvalidOutputSchema
 	// ErrStructuredOutputUnsupported: the driver's capability matrix
-	// cannot honor the requested structured-output mode. Unwrap to
-	// *StructuredOutputUnsupportedError for the Driver and mode.
+	// cannot honor structured output through either supported mechanism.
+	// Unwrap to *StructuredOutputUnsupportedError for Driver diagnostics.
 	ErrStructuredOutputUnsupported = driver.ErrStructuredOutputUnsupported
 	// ErrInvalidDriverConfig: Driver.ValidateConfig rejected the Driver's
 	// captured construction-time configuration before launch.

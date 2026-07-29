@@ -41,11 +41,11 @@ func TestDescriptorAdvertisesStructuredOutputCapabilities(t *testing.T) {
 	}
 }
 
-func TestRunRejectsNativeStrictStructuredOutput(t *testing.T) {
+func TestRunRejectsNativeStructuredOutput(t *testing.T) {
 	_, err := adapter{}.Run(context.Background(), agentadaptor.Request{
+		StructuredOutputSource: agentadaptor.StructuredOutputSourceNative,
 		OutputSchema: &agentadaptor.OutputSchema{
 			Format:     agentadaptor.OutputFormatJSONSchema,
-			Mode:       agentadaptor.StructuredOutputNativeStrict,
 			SchemaJSON: []byte(`{"type":"object"}`),
 		},
 	}, nil)

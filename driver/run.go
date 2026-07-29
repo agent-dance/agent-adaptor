@@ -77,6 +77,10 @@ type Request struct {
 	Session        *SessionContext
 	Metadata       map[string]string
 	OutputSchema   *OutputSchema
+	// StructuredOutputSource is the mechanism selected by core after
+	// capability and transport negotiation. It is non-empty exactly when
+	// OutputSchema is non-nil; Drivers consume it but do not renegotiate it.
+	StructuredOutputSource StructuredOutputSource
 
 	// Spawn forces this invocation onto a fresh provider process. The default
 	// false value allows a capable driver to reuse a process for a stateful
@@ -151,9 +155,6 @@ const (
 	// SessionContinueOnly requires a compatible active checkpoint for the
 	// Thread key and fails when none exists.
 	SessionContinueOnly SessionMode = "continue_only"
-	// SessionStartNew starts fresh and rebinds the Thread key only after a valid
-	// checkpoint is produced.
-	SessionStartNew SessionMode = "start_new"
 	// SessionFork starts from a parent checkpoint but persists the result under
 	// the fork's distinct Thread key without modifying the parent.
 	SessionFork SessionMode = "fork"

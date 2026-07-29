@@ -30,6 +30,7 @@
 //
 // Usage:
 //
+//	./examples/showcases/team-agent-workflow/start-all.sh claude
 //	go run ./examples/showcases/team-agent-workflow -leader=claude
 //	go run ./examples/showcases/team-agent-workflow -leader=claude -plan=codex -review=codex
 //	go run ./examples/showcases/team-agent-workflow -leader=claude -keep-workspace
@@ -59,8 +60,9 @@ import (
 
 const (
 	defaultWebListenAddr = "127.0.0.1:8080"
-	// This live, paid showcase has no bundled browser UI. Cross-origin access
-	// stays disabled unless the operator deliberately enables one origin.
+	// The one-command start script reuses the maintained CopilotKit frontend
+	// from examples/web-chat/copilotkit. Direct Go invocations remain locked
+	// down unless the operator deliberately enables one browser origin.
 	defaultWebCORSOrigin = ""
 
 	// workflowSentinel is the leader's own completion marker.
@@ -69,6 +71,7 @@ const (
 	// review role's verdict, read back with delegation.Result.HasLine.
 	reviewApprovalSentinel = "TEAM_REVIEW_APPROVED"
 	reviewRejectSentinel   = "TEAM_REVIEW_REJECTED"
+	planArtifactFilename   = "PLAN.md"
 
 	// delegateToolLiteral is the tool name the leader calls. It comes from
 	// the delegation package rather than a string literal in the protocol
@@ -144,8 +147,12 @@ func run(opts options) error {
 			adaptor.WithMetadata("example", "team-agent-workflow"),
 			adaptor.WithMetadata("workflow_role", def.Key),
 		}, def.Options...)...) // role-local options come last, so they may override any shared default
-		refs = append(refs, delegation.Local(def.Key,
-			observe(def.Key, role, term, audit.Record),
+		roleRunner := adaptor.Runner(role)
+		if len(def.CallOptions) > 0 {
+			roleRunner = withCallOptions(roleRunner, def.CallOptions...)
+		}
+		refs = append(refs, delegation.LocalNamed(def.Key, def.DelegationDisplayName(),
+			observe(def.Key, roleRunner, term, audit.Record),
 			delegation.Policy{MaxTimeout: opts.roleTimeout, RequireStreaming: true, MaxArtifactBytes: 1 << 20}))
 		term.Logf("[role] %s = %s (%s, sandbox=%s)", def.Key, def.Agent, def.Model, def.Sandbox)
 	}
@@ -270,12 +277,7 @@ func run(opts options) error {
 // bridge option: SubagentUpdate is already on the stream the handler consumes,
 // so CLI and browser render one shape.
 func serveAGUI(ctx context.Context, leader adaptor.Runner, opts options, term *console) error {
-	mux := http.NewServeMux()
-	mux.Handle("/agent", sse.Handler(leader, sse.Options{
-		Protocol:          sse.AGUI,
-		CORSAllowedOrigin: opts.webCORS,
-	}))
-	server := &http.Server{Addr: opts.webAddr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+	server := &http.Server{Addr: opts.webAddr, Handler: newTeamWebHandler(leader, opts.webCORS), ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -289,13 +291,27 @@ func serveAGUI(ctx context.Context, leader adaptor.Runner, opts options, term *c
 	return nil
 }
 
+func newTeamWebHandler(leader adaptor.Runner, corsOrigin string) http.Handler {
+	mux := http.NewServeMux()
+	mux.Handle("/agent", sse.Handler(leader, sse.Options{
+		Protocol:          sse.AGUI,
+		CORSAllowedOrigin: corsOrigin,
+	}))
+	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
+	return mux
+}
+
 // ---- The role table: host data, not an SDK concept ----
 
 // roleDef is this host's own description of a team member. The SDK has no
 // role type and wants none: "a configured agent" already has a name — Runner.
-// The Options field is the escape hatch that keeps the table honest: any role
-// may carry any construction option (skills, MCP, profile resources, its own
-// thread store, an approval handler, ...) without the table growing a column.
+// Options and CallOptions are the two scoped escape hatches that keep the
+// table honest: a role may carry construction resources or a per-invocation
+// output contract without the table growing a feature-specific column.
 type roleDef struct {
 	Key, DisplayName string
 	Driver           adaptor.Driver // root-package alias of driver.Driver
@@ -303,6 +319,34 @@ type roleDef struct {
 	Sandbox          adaptor.SandboxLevel
 	Instructions     string
 	Options          []adaptor.Option
+	CallOptions      []adaptor.CallOption
+}
+
+func (r roleDef) DelegationDisplayName() string {
+	return providerDisplayName(r.Agent) + " " + r.DisplayName
+}
+
+func providerDisplayName(agent string) string {
+	switch strings.ToLower(strings.TrimSpace(agent)) {
+	case exampleutil.AgentClaude:
+		return "Claude Code"
+	case exampleutil.AgentCursor:
+		return "Cursor"
+	case exampleutil.AgentCodebuddy:
+		return "CodeBuddy"
+	default:
+		return "Codex"
+	}
+}
+
+// planFileArtifact is both the plan role's structured-output contract and the
+// frontend attachment payload. It represents a file deliverable without
+// granting the read-only planning role permission to mutate the workspace.
+type planFileArtifact struct {
+	Filename  string `json:"filename"`
+	MediaType string `json:"media_type"`
+	Summary   string `json:"summary"`
+	Content   string `json:"content"`
 }
 
 func buildRoles(opts options, cwd string) []roleDef {
@@ -314,9 +358,16 @@ func buildRoles(opts options, cwd string) []roleDef {
 		Driver: exampleutil.NewLiveDriver(plan), Agent: plan.Agent, Model: plan.Model,
 		Sandbox: adaptor.ReadOnly,
 		Instructions: "You are the planning stage of a three-agent team, and only that stage. " +
-			"Read TASK.md in the working directory. Do not create, modify or delete any file. " +
-			"Answer with a numbered plan of at most six steps, followed by the acceptance checks " +
-			"copied verbatim from TASK.md. Keep the whole answer under 250 words.",
+			"Read TASK.md in the working directory. Do not create, modify or delete any workspace file. " +
+			"Return one structured file artifact: filename must be " + planArtifactFilename + ", media_type must be text/markdown, " +
+			"summary must be one sentence, and content must be Markdown containing a numbered plan of at most six steps " +
+			"followed by an Acceptance checks section copied verbatim from TASK.md. Keep content under 250 words.",
+		CallOptions: []adaptor.CallOption{
+			adaptor.WithSchema[planFileArtifact](
+				adaptor.SchemaName("team_plan_file"),
+				adaptor.SchemaDescription("A downloadable Markdown plan file produced by the read-only planning role."),
+			),
+		},
 	}, {
 		Key: "impl", DisplayName: "Implementer",
 		Driver: exampleutil.NewLiveDriver(impl), Agent: impl.Agent, Model: impl.Model,
@@ -346,6 +397,32 @@ func buildRoles(opts options, cwd string) []roleDef {
 			"containing exactly " + reviewApprovalSentinel + " when every check passes, otherwise a " +
 			"final line containing exactly " + reviewRejectSentinel + ".",
 	}}
+}
+
+// withCallOptions decorates a Runner with role-owned invocation contracts.
+// The role options are appended last so a delegate cannot replace the plan
+// role's required structured file schema.
+type callOptionRunner struct {
+	adaptor.Runner
+	opts []adaptor.CallOption
+}
+
+func withCallOptions(next adaptor.Runner, opts ...adaptor.CallOption) adaptor.Runner {
+	return callOptionRunner{Runner: next, opts: append([]adaptor.CallOption(nil), opts...)}
+}
+
+func (r callOptionRunner) Run(ctx context.Context, prompt string, opts ...adaptor.CallOption) (*adaptor.Result, error) {
+	return r.Runner.Run(ctx, prompt, appendCallOptions(opts, r.opts)...)
+}
+
+func (r callOptionRunner) Stream(ctx context.Context, prompt string, opts ...adaptor.CallOption) adaptor.Stream {
+	return r.Runner.Stream(ctx, prompt, appendCallOptions(opts, r.opts)...)
+}
+
+func appendCallOptions(first, last []adaptor.CallOption) []adaptor.CallOption {
+	out := make([]adaptor.CallOption, 0, len(first)+len(last))
+	out = append(out, first...)
+	return append(out, last...)
 }
 
 // liveConfig resolves one local CLI (PATH / *_COMMAND / -command) and probes

@@ -70,7 +70,8 @@ func assertApprovedRootName(t *testing.T, name, location string) {
 		"SDK": {}, "NewSDK": {}, "Start": {}, "RunHandle": {},
 		"Binding": {}, "AgentBinding": {}, "TypedAgentBinding": {},
 		"Registry": {}, "DefaultAgent": {}, "WithDefaultAgent": {},
-		"WithDriver": {}, "NewAdapter": {},
+		"WithDriver": {}, "NewAdapter": {}, "NewThread": {},
+		"SchemaStrict": {}, "SchemaFlexible": {}, "SchemaPromptOnly": {},
 	}
 	if _, forbidden := forbiddenExact[name]; forbidden {
 		t.Fatalf("%s reintroduces rejected root API vocabulary %q", location, name)

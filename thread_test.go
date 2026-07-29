@@ -1,8 +1,8 @@
 package adaptor_test
 
 // Thread lifecycle contract tests cover the complete Agent.Thread,
-// Agent.NewThread, Thread.Fork, and ResumeOnly mode matrix. They pin store
-// requirements, reuse and archival, fingerprint guards, leases, resume
+// Thread.Fork, and ResumeOnly mode matrix. They pin store requirements,
+// reuse and archival, fingerprint guards, leases, resume
 // rejection, valid-checkpoint persistence, and failure isolation across both
 // Run and Stream forms.
 
@@ -156,7 +156,7 @@ func TestThreadRequiresStore(t *testing.T) {
 	}
 }
 
-// TestThreadModeMethodMatrix pins the §2.4 mapping of the four stateful
+// TestThreadModeMethodMatrix pins the §2.4 mapping of the three stateful
 // session modes onto Thread methods, asserted at the driver SPI boundary
 // (the mode the driver actually sees) and at the store.
 func TestThreadModeMethodMatrix(t *testing.T) {
@@ -200,37 +200,6 @@ func TestThreadModeMethodMatrix(t *testing.T) {
 		}
 		if res.Text != "co:reused:co-resume-1" {
 			t.Fatalf("res.Text = %q, want the resumed output", res.Text)
-		}
-	})
-
-	t.Run("NewThread is start_new then continue_or_start", func(t *testing.T) {
-		fake := newSessionFake("sn")
-		store := memory.NewStore()
-		agent := adaptor.New(fake.fakeDriver, adaptor.WithThreadStore(store))
-		if _, err := agent.Thread("k").Run(ctx, "seed"); err != nil {
-			t.Fatalf("seed: %v", err)
-		}
-		th := agent.NewThread("k")
-		if _, err := th.Run(ctx, "fresh"); err != nil {
-			t.Fatalf("start-new run: %v", err)
-		}
-		sess := fake.request(t, 1).Session
-		if sess == nil || sess.Mode != driver.SessionStartNew {
-			t.Fatalf("driver session = %+v, want mode start_new", sess)
-		}
-		if sess.State != nil {
-			t.Fatalf("start_new carried state %+v, want none", sess.State)
-		}
-		// Once established, the same handle continues its own conversation.
-		if _, err := th.Run(ctx, "follow-up"); err != nil {
-			t.Fatalf("follow-up run: %v", err)
-		}
-		sess = fake.request(t, 2).Session
-		if sess == nil || sess.Mode != driver.SessionContinueOrStart {
-			t.Fatalf("driver session = %+v, want mode continue_or_start after establishment", sess)
-		}
-		if sess.State == nil || sess.State.ResumeID != "sn-resume-2" {
-			t.Fatalf("follow-up state = %+v, want the fresh conversation sn-resume-2", sess.State)
 		}
 	})
 
@@ -454,47 +423,6 @@ func TestThreadForkRejectsExistingTargetWithoutMutation(t *testing.T) {
 	}
 	if targetAfter.ID != targetBefore.ID || targetAfter.State.ResumeID != targetBefore.State.ResumeID {
 		t.Fatalf("target mutated by conflicting fork: before=%+v after=%+v", targetBefore, targetAfter)
-	}
-}
-
-func TestNewThreadArchivesPreviousConversation(t *testing.T) {
-	ctx := context.Background()
-	fake := newSessionFake("arch")
-	store := memory.NewStore()
-	agent := adaptor.New(fake.fakeDriver, adaptor.WithThreadStore(store))
-
-	if _, err := agent.Thread("k").Run(ctx, "seed"); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
-	oldRec := activeRecord(t, store, "k")
-
-	res, err := agent.NewThread("k").Run(ctx, "start over")
-	if err != nil {
-		t.Fatalf("start-new run: %v", err)
-	}
-	if res.Text != "arch:created:arch-resume-2" {
-		t.Fatalf("res.Text = %q, want a brand-new conversation", res.Text)
-	}
-
-	newRec := activeRecord(t, store, "k")
-	if newRec.ID == oldRec.ID {
-		t.Fatal("key still bound to the old record after NewThread")
-	}
-	// The old conversation is archived, not deleted: gone from the active
-	// view, still resolvable for audit.
-	gone, err := store.Resolve(ctx, threadstore.Query{ID: oldRec.ID})
-	if err != nil {
-		t.Fatalf("resolve archived (active view): %v", err)
-	}
-	if gone != nil {
-		t.Fatalf("old record still active: %+v", gone)
-	}
-	archived, err := store.Resolve(ctx, threadstore.Query{ID: oldRec.ID, IncludeArchived: true})
-	if err != nil {
-		t.Fatalf("resolve archived: %v", err)
-	}
-	if archived == nil || archived.Status != threadstore.StatusArchived {
-		t.Fatalf("old record = %+v, want archived", archived)
 	}
 }
 

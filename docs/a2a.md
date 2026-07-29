@@ -177,7 +177,7 @@ Local targets execute any `adaptor.Runner` in-process. Remote targets use `clien
 ```go
 team, err := a2adelegation.NewService(a2adelegation.Config{
 	Agents: []a2adelegation.AgentRef{
-		a2adelegation.Local("plan", planner, a2adelegation.Policy{}),
+		a2adelegation.LocalNamed("plan", "Codex Planner", planner, a2adelegation.Policy{}),
 		a2adelegation.Remote("review", reviewCardURL, a2adelegation.Policy{
 			MaxTimeout: 2 * time.Minute,
 		}),
@@ -201,6 +201,12 @@ for event := range stream.Events() {
 }
 result, err := stream.Result()
 ```
+
+Use `Local` when the registry key is also the only display label needed. Use
+`LocalNamed` to keep the model-facing key stable while carrying a separate
+human-facing name in `DelegationEvent.AgentName`; visual hosts can use names
+such as `Claude Code Implementer` to show the provider base independently from
+the workflow role.
 
 `team.Option()` is a `SharedOption`: pass it to `adaptor.New` for every run or to one `Run`/`Stream` call for a single invocation. It is equivalent to the generic extension point:
 

@@ -182,13 +182,13 @@ agent := adaptor.New(claude.Driver(cfg), adaptor.WithThreadStore(memory.NewStore
 th := agent.Thread("tenant-1/issue-123")     // 有则续、无则建（continue_or_start）
 res, err := th.Run(ctx, "continue the fix")
 
-fresh := agent.NewThread("tenant-1/issue-123")        // 强制新开（start_new）
 locked := agent.Thread("k", adaptor.ResumeOnly())     // 只续不建（continue_only）
 branch := th.Fork("tenant-1/issue-123-alt")           // 分叉（fork）
 ```
 
 - Thread key 是宿主提供的单一、不透明业务字符串，SDK 必须逐字保存和比较。宿主或 bridge 需要合成多个维度时，必须使用无碰撞编码，不得靠未转义分隔符拼接。
-- 4 种 SessionMode 变成 4 个**有名字的动作**，不再是传给结构体的枚举。
+- 主动开启无上下文的新对话时，宿主分配新的 Thread key；公共 API 不提供同 key 重绑动作。
+- 3 种有状态 SessionMode 变成 3 个**有名字的动作**，不再是传给结构体的枚举。
 - `SessionID`（驱动 resume 句柄）降级为内部实现细节，需要审计的宿主用 `th.Checkpoint()` 获取。四层 ID 变两层：**你起的名字（thread key）和 SDK 给的执行号（run ID）**。
 - `Thread` 与 `Agent` 都实现 `Runner` 接口（`Run` + `Stream`），所以 bridges、`RunAs[T]`、宿主工具对两者一视同仁。
 - `threadstore.Store` 接口保留现状 SessionStore 的全部能力（resolve / finalize / lease 防并发），只是命名对齐；`memory` 包照旧。
@@ -286,9 +286,9 @@ type Review struct {
 review, res, err := adaptor.RunAs[Review](ctx, reviewer, "review the diff")
 ```
 
-- `RunAs[T]` 接受任何 `Runner`（Agent 或 Thread），内部完成 schema 派生、模式协商、校验、解码。
+- `RunAs[T]` 接受任何 `Runner`（Agent 或 Thread），内部完成 schema 派生、自动能力协商、校验、解码。
 - 流式/手动场景用选项：`agent.Stream(ctx, p, adaptor.WithSchema[Review]())` + `res.Decode(&review)`。
-- 三种执行模式收敛为 `WithSchema` 的根包模式参数：`adaptor.SchemaStrict()`（默认，仅 provider 原生约束）/ `adaptor.SchemaFlexible()`（原生优先，允许提示词+本地校验回退）/ `adaptor.SchemaPromptOnly()`。能力矩阵由 `driver.Descriptor` 真话声明，不支持即启动前报错。
+- 消费者不选择执行模式：core 固定优先使用 provider 原生约束，当前 transport 或 policy 不支持时自动回退到提示词加本地校验；两种机制都不可用才在启动前报错。能力矩阵由 `driver.Descriptor` 真话声明，Driver 只执行 core 已解析的机制，不得二次协商。
 
 ### 2.9 Inspect / Profile：管理面按用途命名
 
@@ -801,9 +801,14 @@ for _, def := range roles {
         }),
     }, def.Options...)...)
 
-    refs = append(refs, delegation.Local(
+    roleRunner := adaptor.Runner(role)
+    if len(def.CallOptions) > 0 {
+        roleRunner = withCallOptions(roleRunner, def.CallOptions...)
+    }
+    refs = append(refs, delegation.LocalNamed(
         def.Key,
-        observe(def.Key, role, term, audit.Record),
+        def.DelegationDisplayName(),
+        observe(def.Key, roleRunner, term, audit.Record),
         delegation.Policy{
             MaxTimeout: opts.roleTimeout, RequireStreaming: true, MaxArtifactBytes: 1 << 20,
         },
@@ -839,6 +844,11 @@ for ev := range stream.Events() {
 }
 res, err := stream.Result()
 ```
+
+当前示例中 plan 角色通过 role-owned `CallOptions` 固定
+`WithSchema[planFileArtifact]()`，以结构化 `PLAN.md` 文件制品
+返回方案；它仍保持 read-only，不把该展示制品写入 workspace。`LocalNamed`
+让事件同时保留稳定角色 key 与含 provider 底座的人类可读名称。
 
 实现角色若要声明 profile 子 agent，最终字段名是 `profile.Resources.Agents`：
 
@@ -896,12 +906,14 @@ leader := adaptor.New(claude.Driver(cfg), team.Option())
 
 ---
 
-## 4. 能力保全映射（重构不丢任何一项现有能力）
+## 4. 能力归宿与显式删减
+
+除同 key 主动 `start_new` 外，旧执行能力都映射到最终 API。该模式会把 Thread key 从稳定对话身份退化成可重绑槽位，因此明确删除；无上下文的新对话由宿主分配新 key。
 
 | 现有能力 | 新 API 归宿 |
 |---|---|
 | Run / Start 单一执行路径 | `Run` / `Stream`（同一内部管线） |
-| 4 种 SessionMode + SessionStore + lease | `Thread` / `NewThread` / `ResumeOnly` / `Fork` + `threadstore.Store`（接口能力等价） |
+| 4 种有状态 SessionMode + SessionStore + lease | continue-or-start、continue-only、fork 分别归入 `Thread` / `ResumeOnly` / `Fork` + `threadstore.Store`；same-key start-new 明确删除 |
 | Session codec / 参数检视 | `driver.SessionCodec` 能力接口 + `th.Checkpoint()` |
 | skill 归档源（archive source / materializer，zip/tar/tgz 分发技能包） | `skill.Archive(...)` 构造器 + `skill` 包物化管线（archive source 与 run 结果归档是两个边界） |
 | Skills：key/dir/FS/inline、Provider、Catalog、Materializer、Required、冲突检测、严格物化 | `skill` 包 + `WithSkills` / `WithSkillProvider` / `WithSkillMaterializer`（语义不变） |
@@ -912,7 +924,7 @@ leader := adaptor.New(claude.Driver(cfg), team.Option())
 | RunPolicy（isolation / websearch / browser / HITL 策略） | `Policy` 结构体选项；所有显式维度严格校验 `Descriptor.RunPolicyCaps` |
 | HITL 三种 Kind、超时重试兜底、channel 模式、typed handler 模式 | `ApprovalRequest`（事件 + 回调双形态）+ `Policy.Approvals` |
 | 流式能力声明与降级、背压两策略、Dropped 标记 | `StreamCapability`（driver 包）+ `WithEventBuffer` / `WithBlockingEvents` + `Dropped` 事件 |
-| 结构化输出三模式 + 泛型派生 + 能力矩阵校验 | `RunAs[T]` / `WithSchema[T]` + `adaptor.SchemaStrict/Flexible/PromptOnly` |
+| 结构化输出 + 泛型派生 + 自动能力协商 | `RunAs[T]` / `WithSchema[T]`；原生优先、Prompt 校验自动回退 |
 | Admin 全部探针 + SetSelectedSkills | `Inspect()` 面板 + `SelectSkills` |
 | AG-UI / SSE / A2A bridge、subagent 委托、session recorder | 包原样保留，适配新事件模型 |
 | delegate_to_agent 委托（Registry / EventBus / Delegator / MCP server 分立组件 + 宿主手写 sidecar） | `delegation.Service` 一体化入口（组件仍可单独使用）+ 类型化 `RuntimeServiceRef.MCP` + `SubagentUpdate` 事件入主流 |
@@ -932,7 +944,7 @@ leader := adaptor.New(claude.Driver(cfg), team.Option())
 | 根包切换 | 旧根 API 已删除，完整 v1 实现已移入根包，生产 import 已指向最终公开包 |
 | 文档与示例 | README 以六名词开篇；示例使用最终根 import 和最终 API；历史决策仅作归档证据 |
 
-v1 采用干净切换，不保留中央 SDK、命名 Agent registry、`Start`、`RunHandle` 或多事件通道的公共兼容层。`v1.0.0` 标签只能由发布门禁产生；本文不宣称尚未完成的发布操作。
+v1 采用干净切换，不保留中央 SDK、命名 Agent registry、`Start`、`RunHandle` 或多事件通道的公共兼容层。`v1.0.0` 已于 2026-07-30 通过发布门禁后发布。
 
 ---
 

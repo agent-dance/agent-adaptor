@@ -89,7 +89,7 @@ func buildAppServerOptions(
 		ServiceTier: serviceTier,
 		RunID:       req.RunID,
 	}
-	if req.OutputSchema != nil && req.OutputSchema.Mode != driver.StructuredOutputPromptValidate {
+	if req.OutputSchema != nil && req.StructuredOutputSource == driver.StructuredOutputSourceNative {
 		opts.OutputSchema = req.OutputSchema
 	}
 

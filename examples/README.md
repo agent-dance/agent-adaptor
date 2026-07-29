@@ -16,7 +16,7 @@ go run ./examples/quickstart -agent=cursor -command=/absolute/path/to/agent
 - `quickstart`：最小 `Driver → Agent → Run → Result` 路径。
 - `structured-output`：用 `adaptor.RunAs[T]` 推导 schema、校验并解码类型化结果。
 - `inspect`：构造多个 Agent，读取 Environment、Models、ConfigSchema、Quota、Skills 等只读探针。
-- `threads`：continue-or-start、resume-only、start-new 和 fork。
+- `threads`：continue-or-start、resume-only 和 fork。
 - `threads/codec`：不启动 CLI，查看 Driver 的 SessionCodec 与稳定 fingerprint 输入。
 - `skills`：skill 发现、选择、单次 required skill 与 approval handler。
 - `profiles`：完整 profile materialization；保留 `hook/` 与 `mcpserver/` 辅助进程。

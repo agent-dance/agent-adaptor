@@ -114,16 +114,16 @@ func TestReferenceDriverModelOverride(t *testing.T) {
 	}
 }
 
-// TestReferenceDriverStructuredPromptValidate pins the prompt_validate
-// half: the driver returns exact JSON text and leaves StructuredOutput nil
+// TestReferenceDriverStructuredPromptSource pins the prompt-validation half:
+// the driver returns exact JSON text and leaves StructuredOutput nil
 // (validation happens above the SPI).
-func TestReferenceDriverStructuredPromptValidate(t *testing.T) {
+func TestReferenceDriverStructuredPromptSource(t *testing.T) {
 	d := NewReferenceDriver(ReferenceConfig{})
 	resp, err := d.Run(context.Background(), driver.Request{
-		Prompt: "structured",
+		Prompt:                 "structured",
+		StructuredOutputSource: driver.StructuredOutputSourcePromptValidate,
 		OutputSchema: &driver.OutputSchema{
 			Format:     driver.OutputFormatJSONSchema,
-			Mode:       driver.StructuredOutputPromptValidate,
 			SchemaJSON: json.RawMessage(`{"type":"object"}`),
 		},
 	}, NewRecordingSink())
@@ -131,7 +131,7 @@ func TestReferenceDriverStructuredPromptValidate(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 	if resp.StructuredOutput != nil {
-		t.Errorf("StructuredOutput = %+v, want nil for prompt_validate at the SPI level", resp.StructuredOutput)
+		t.Errorf("StructuredOutput = %+v, want nil for prompt validation at the SPI level", resp.StructuredOutput)
 	}
 	if !json.Valid([]byte(resp.Output)) {
 		t.Errorf("Output %q is not exact JSON text", resp.Output)

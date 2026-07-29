@@ -1,0 +1,87 @@
+.agent-workspace-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(400px, 480px);
+  gap: 1rem;
+  align-items: stretch;
+}
+
+.agent-workspace-grid.standard {
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 360px);
+}
+
+.subagent-panel {
+  min-width: 0;
+  max-height: calc(100vh - 9rem);
+  overflow: auto;
+  padding: 0.9rem;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  box-sizing: border-box;
+}
+
+.subagent-panel-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0 0.15rem 0.75rem;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.subagent-panel-heading h2,
+.subagent-panel-heading p {
+  margin: 0;
+}
+
+.subagent-panel-heading h2 { font-size: 0.98rem; }
+.subagent-panel-heading p { margin-top: 0.15rem; color: #64748b; font-size: 0.76rem; }
+.subagent-count { min-width: 1.7rem; padding: 0.15rem 0.45rem; text-align: center; border-radius: 999px; color: #4338ca; background: #eef2ff; font-size: 0.75rem; font-weight: 700; }
+.subagent-list { display: grid; gap: 0.7rem; padding-top: 0.75rem; }
+.subagent-empty { display: grid; place-items: center; gap: 0.5rem; min-height: 10rem; padding: 1rem; text-align: center; color: #64748b; font-size: 0.82rem; line-height: 1.5; }
+.subagent-empty span { font-size: 1.6rem; color: #a5b4fc; }
+
+.subagent-card { min-width: 0; overflow: hidden; border: 1px solid #e2e8f0; border-radius: 9px; background: #fff; box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04); }
+.subagent-card-header { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 0.55rem; padding: 0.7rem 0.75rem; border: 0; background: #fff; color: inherit; cursor: pointer; text-align: left; }
+.subagent-card-identity, .subagent-card-state { display: flex; align-items: center; gap: 0.4rem; min-width: 0; }
+.subagent-card-identity strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.86rem; }
+.subagent-role-tag, .subagent-provider, .subagent-status { padding: 0.12rem 0.42rem; border-radius: 999px; white-space: nowrap; text-transform: uppercase; font-size: 0.64rem; font-weight: 700; }
+.subagent-role-tag { color: #3730a3; background: #e0e7ff; }
+.subagent-card-body { display: grid; gap: 0.55rem; padding: 0 0.75rem 0.75rem; }
+.subagent-description, .subagent-muted { margin: 0; color: #475569; font-size: 0.8rem; line-height: 1.45; overflow-wrap: anywhere; }
+.subagent-muted { color: #94a3b8; }
+.subagent-output { max-height: 20rem; overflow: auto; padding: 0.65rem 0.7rem; border: 1px solid #e2e8f0; border-radius: 7px; background: #f8fafc; color: #1e293b; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.8rem; line-height: 1.52; }
+.subagent-cursor { margin-left: 2px; animation: subagent-blink 1s step-end infinite; }
+.subagent-reasoning { padding: 0.45rem 0.55rem; border: 1px solid #e5e7eb; border-radius: 6px; background: #fafafa; color: #64748b; font-size: 0.77rem; }
+.subagent-reasoning div { margin-top: 0.4rem; white-space: pre-wrap; overflow-wrap: anywhere; font-style: italic; line-height: 1.45; }
+.subagent-section-label { color: #64748b; text-transform: uppercase; font-size: 0.67rem; font-weight: 700; }
+.subagent-tools { display: grid; gap: 0.3rem; }
+.subagent-tool { overflow: hidden; border: 1px solid #e5e7eb; border-radius: 6px; background: #fafafa; }
+.subagent-tool button { width: 100%; display: flex; justify-content: space-between; gap: 0.5rem; padding: 0.4rem 0.5rem; border: 0; background: transparent; color: #475569; font-size: 0.73rem; text-align: left; cursor: pointer; }
+.subagent-tool button:disabled { cursor: default; }
+.subagent-tool pre { margin: 0; padding: 0.55rem; overflow: auto; background: #0f172a; color: #e2e8f0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.7rem; }
+.subagent-error { padding: 0.55rem; border: 1px solid #fecaca; border-radius: 6px; background: #fef2f2; color: #991b1b; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.76rem; }
+.subagent-footer { display: flex; justify-content: space-between; gap: 0.5rem; padding-top: 0.4rem; border-top: 1px solid #f1f5f9; color: #94a3b8; font-size: 0.68rem; }
+.plan-file { display: grid; gap: 0.55rem; padding: 0.65rem; border: 1px solid #c7d2fe; border-radius: 8px; background: #f5f7ff; min-width: 0; }
+.plan-file header { display: flex; align-items: center; gap: 0.5rem; min-width: 0; }
+.plan-file-icon { color: #4f46e5; font-size: 1.25rem; }
+.plan-file-name { display: grid; min-width: 0; margin-right: auto; }
+.plan-file-name strong { color: #312e81; font-size: 0.82rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.plan-file-name small { color: #6366f1; font-size: 0.64rem; }
+.plan-file button { padding: 0.25rem 0.5rem; border: 1px solid #c7d2fe; border-radius: 5px; background: #fff; color: #4338ca; cursor: pointer; font-size: 0.7rem; }
+.plan-file p { margin: 0; color: #374151; font-size: 0.77rem; }
+.plan-file pre { max-height: 18rem; margin: 0; padding: 0.6rem; overflow: auto; border-radius: 6px; background: #fff; color: #1e293b; white-space: pre-wrap; overflow-wrap: anywhere; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.72rem; line-height: 1.5; }
+.team-workflow-input { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.6rem; align-items: end; margin: 0.75rem 1rem 1rem; padding: 0.7rem; border: 1px solid #d1d5db; border-radius: 12px; background: #fff; }
+.team-workflow-input textarea { width: 100%; resize: vertical; min-height: 4.4rem; padding: 0; border: 0; outline: 0; color: #1f2937; background: transparent; font: inherit; line-height: 1.45; box-sizing: border-box; }
+.team-workflow-input button { min-width: 4.4rem; padding: 0.55rem 0.75rem; border: 0; border-radius: 8px; background: #111827; color: #fff; cursor: pointer; font-weight: 650; }
+.team-workflow-input button:disabled { cursor: default; opacity: 0.38; }
+
+@keyframes subagent-blink { 50% { opacity: 0; } }
+
+@media (max-width: 980px) {
+  .agent-workspace-grid,
+  .agent-workspace-grid.standard {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .subagent-panel { max-height: none; }
+}

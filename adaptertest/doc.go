@@ -69,13 +69,12 @@
 //
 //	SO-01  WorksWith* flags require a declared JSONSchema* mechanism, and a
 //	       declared mechanism requires WorksWithRun for v1's one execution
-//	       pipeline. NativeStrict requires JSONSchemaNative; PromptValidate
-//	       requires JSONSchemaPromptValidate; PreferNative tries those in
-//	       that order. Provider streaming and effective HITL Ask additionally
-//	       require WorksWithStreaming and WorksWithHITL respectively.
-//	SO-02  (live, opt-in) a native_strict Run yields StructuredOutput with
+//	       pipeline. Core selects native enforcement first and Prompt
+//	       validation as the fallback. Provider streaming and effective HITL
+//	       Ask additionally require WorksWithStreaming and WorksWithHITL.
+//	SO-02  (live, opt-in) a native structured run yields StructuredOutput with
 //	       Source=native, Valid=true and parseable RawJSON.
-//	SO-03  Suite guarantee: no probe ever sends a mode or transport shape
+//	SO-03  Suite guarantee: no probe requests a mechanism or transport shape
 //	       the descriptor does not declare.
 //
 // Session codec (driver/session_codec.go; driver/run.go SessionState):

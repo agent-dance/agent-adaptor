@@ -10,7 +10,6 @@ import (
 func TestStructuredErrorIdentityAndCause(t *testing.T) {
 	unsupported := &driver.StructuredOutputUnsupportedError{
 		Driver: "fake",
-		Mode:   driver.StructuredOutputNativeStrict,
 	}
 	if !errors.Is(unsupported, driver.ErrStructuredOutputUnsupported) {
 		t.Fatal("unsupported error must match its driver sentinel")

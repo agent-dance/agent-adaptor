@@ -119,7 +119,7 @@ func SkipLiveRun(reason string) Option {
 
 // WithLiveStructuredOutput additionally runs the native structured-output
 // probe (SO-02) when the descriptor declares JSONSchemaNative for Run. The
-// suite never sends a mode the descriptor does not declare (SO-03).
+// suite never requests a mechanism the descriptor does not declare (SO-03).
 func WithLiveStructuredOutput() Option { return func(c *suiteConfig) { c.liveStructured = true } }
 
 // foreignConfig is a type no driver under test can know about (CFG-03).
@@ -657,7 +657,7 @@ func checkLiveStructuredOutput(t *testing.T, d driver.Driver, desc driver.Descri
 	}
 	so := desc.StructuredOutput
 	if !so.JSONSchemaNative || !so.WorksWithRun {
-		// SO-03: the suite never sends a mode the descriptor does not declare.
+		// SO-03: the suite never requests a mechanism the descriptor does not declare.
 		t.Skipf("SO-03: descriptor does not declare native structured output for Run (JSONSchemaNative=%v WorksWithRun=%v)", so.JSONSchemaNative, so.WorksWithRun)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), c.liveTimeout)
@@ -665,15 +665,15 @@ func checkLiveStructuredOutput(t *testing.T, d driver.Driver, desc driver.Descri
 
 	sink := NewRecordingSink()
 	req := driver.Request{
-		RunID:  "adaptertest-live-structured",
-		Prompt: `Return a JSON object with a single boolean property "ok" set to true. Reply with only the JSON.`,
-		Config: c.config,
+		RunID:                  "adaptertest-live-structured",
+		Prompt:                 `Return a JSON object with a single boolean property "ok" set to true. Reply with only the JSON.`,
+		Config:                 c.config,
+		StructuredOutputSource: driver.StructuredOutputSourceNative,
 		// Streaming stays false so the probe remains inside the declared
 		// matrix even when WorksWithStreaming is false (SO-03).
 		Streaming: false,
 		OutputSchema: &driver.OutputSchema{
 			Format:     driver.OutputFormatJSONSchema,
-			Mode:       driver.StructuredOutputNativeStrict,
 			SchemaJSON: json.RawMessage(`{"type":"object","properties":{"ok":{"type":"boolean"}},"required":["ok"],"additionalProperties":false}`),
 			Name:       "adaptertest_result",
 		},
@@ -684,11 +684,11 @@ func checkLiveStructuredOutput(t *testing.T, d driver.Driver, desc driver.Descri
 	resp, err := d.Run(ctx, req, sink)
 	reportViolations(t, VerifyOutcome(&resp, err))
 	if err != nil {
-		t.Fatalf("SO-02: native_strict structured run failed: %v\nstderr tail: %s", err, rawStderrTail(&resp))
+		t.Fatalf("SO-02: native structured run failed: %v\nstderr tail: %s", err, rawStderrTail(&resp))
 	}
 	result := resp.StructuredOutput
 	if result == nil {
-		t.Fatal("SO-02: native_strict run returned nil StructuredOutput; native enforcement must report the validated business value (StructuredOutput docs)")
+		t.Fatal("SO-02: native run returned nil StructuredOutput; native enforcement must report the validated business value (StructuredOutput docs)")
 	}
 	if result.Source != driver.StructuredOutputSourceNative {
 		t.Errorf("SO-02: StructuredOutput.Source = %q, want %q", result.Source, driver.StructuredOutputSourceNative)

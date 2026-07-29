@@ -42,7 +42,6 @@ methodset AgentSettings {
 methodset Agent {
 	pointer Close(ctx context.Context) error
 	pointer Inspect() Inspector
-	pointer NewThread(key string) *Thread
 	pointer ProfileState(ctx context.Context) (ProfileSnapshot, error)
 	pointer Run(ctx context.Context, prompt string, opts ...CallOption) (*Result, error)
 	pointer SelectSkills(ctx context.Context, keys []string) (SkillSnapshot, error)
@@ -618,21 +617,15 @@ func SchemaAllowAdditionalProperties() SchemaOption
 
 func SchemaDescription(desc string) SchemaOption
 
-func SchemaFlexible() SchemaOption
-
 func SchemaInlineReferences() SchemaOption
 
 func SchemaName(name string) SchemaOption
 
 type SchemaOption func(*schemaSettings)
 
-func SchemaPromptOnly() SchemaOption
-
 func SchemaRequireExplicitTags() SchemaOption
 
 func SchemaReturnInvalid() SchemaOption
-
-func SchemaStrict() SchemaOption
 
 func SchemaUseGoComments(base, path string) SchemaOption
 
@@ -916,8 +909,6 @@ const WorkspaceWrite SandboxLevel = "workspace_write"
 func (*Agent).Close(ctx context.Context) error
 
 func (*Agent).Inspect() Inspector
-
-func (*Agent).NewThread(key string) *Thread
 
 func (*Agent).ProfileState(ctx context.Context) (ProfileSnapshot, error)
 

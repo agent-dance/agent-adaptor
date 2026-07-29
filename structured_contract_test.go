@@ -1,36 +1,10 @@
 package adaptor_test
 
-// Structured-output contract derived from the root baseline
-// (structured_output_test.go) onto the v1 surface. Mapping (roots stay
-// untouched):
-//
-//	TestJSONSchemaForAndDecodeStructuredOutput            → TestWithSchemaGeneratesDeterministicStrictSchema
-//	TestWithJSONSchemaOutputForSupportsRecursiveTypes     → TestWithSchemaSupportsRecursiveTypes
-//	TestJSONSchemaForRejectsInliningRecursiveTypes        → TestWithSchemaRejectsInliningRecursiveTypes
-//	TestWithJSONSchemaOutputForSupportsRecursiveCollections → TestWithSchemaSupportsRecursiveCollections
-//	TestJSONSchemaForRejectsSelfReferentialPointer        → TestWithSchemaRejectsSelfReferentialPointer
-//	TestJSONSchemaForRejectsSelfReferentialMapKeyPointer  → TestWithSchemaRejectsSelfReferentialMapKeyPointer
-//	TestJSONSchemaForPreservesLargeConstraintNumbers      → TestWithSchemaPreservesLargeConstraintNumbers
-//	TestJSONSchemaForRejectsUnsupportedTypes              → TestWithSchemaRejectsUnsupportedTypes
-//	TestStructuredOutputRejectsInvalidSchemaBeforeAdapterLaunch → TestStructuredOutputRejectsInvalidSchemaBeforeLaunch
-//	TestStructuredOutputRejectsUnsupportedNativeStrictBeforeAdapterLaunch → TestStructuredOutputRejectsUnsupportedNativeStrictBeforeLaunch
-//	TestPromptValidateStructuredOutputPassesAndInjectsInstructions → TestPromptValidatePassesAndInjectsInstructions
-//	TestPromptValidateStructuredOutputFailurePolicies     → TestPromptValidateFailurePolicies
-//	TestStructuredOutputIgnoredWithoutSchemaRequest       → TestStructuredOutputIgnoredWithoutSchemaRequest
-//	TestPromptValidateStructuredOutputPreservesLargeNumbers → TestPromptValidatePreservesLargeNumbers
-//	TestRunAndStartWaitReturnEquivalentStructuredOutput   → TestRunAndStreamReturnEquivalentStructuredOutput
-//	TestStructuredOutputSchemaDoesNotAffectSessionFingerprint → TestSchemaChangeDoesNotAffectThreadSessionFingerprint
-//
-// Contract deltas the v1 surface imposes (documented, not weakened):
-//   - provider-native streaming is selected by Driver capabilities and schema
-//     compatibility, never by the consumer Run/Stream method.
-//   - Result hides the raw *StructuredOutput; validity/source assertions
-//     ride Result.Decode. Under SchemaPromptOnly the fake never emits
-//     native structured output, so a successful Decode is itself the proof
-//     that SDK-side prompt validation produced the payload.
-//   - The fail-run policy surfaces as (*RunError).Reason ==
-//     ReasonPolicyViolation via Run's error return (root: res.Failure.Code
-//     == FailurePolicyError), with the Result riding RunError.Result.
+// Structured-output contract for the v1 surface. The consumer declares only
+// the desired schema. Core then selects provider-native enforcement when it is
+// compatible and otherwise falls back to exact-JSON prompting plus local
+// validation. Provider transport selection remains independent from whether
+// the consumer called Run or Stream.
 
 import (
 	"context"
@@ -49,8 +23,8 @@ import (
 
 // structuredFake mirrors the root structuredTestDriver on the driver SPI:
 // it mints/echoes session checkpoints exactly like a resumable CLI and emits
-// native structured output when the request asks for a non-prompt-validate
-// mode (or when forced, to probe unrequested-output suppression).
+// native structured output when core selected the native mechanism (or when
+// forced, to probe unrequested-output suppression).
 type structuredFake struct {
 	mu       sync.Mutex
 	requests []driver.Request
@@ -107,18 +81,13 @@ func (d *structuredFake) Run(_ context.Context, req driver.Request, _ driver.Eve
 		checkpoint = &driver.Checkpoint{State: state, Valid: true}
 	}
 	var structured *driver.StructuredOutput
-	if d.forceStructured || (req.OutputSchema != nil && req.OutputSchema.Mode != driver.StructuredOutputPromptValidate) {
-		mode := driver.StructuredOutputNativeStrict
-		if req.OutputSchema != nil {
-			mode = req.OutputSchema.Mode
-		}
+	if d.forceStructured || (req.OutputSchema != nil && req.StructuredOutputSource == driver.StructuredOutputSourceNative) {
 		raw := d.output
 		if d.structuredRaw != "" {
 			raw = d.structuredRaw
 		}
 		structured = &driver.StructuredOutput{
 			Format:  driver.OutputFormatJSONSchema,
-			Mode:    mode,
 			Source:  driver.StructuredOutputSourceNative,
 			RawJSON: []byte(raw),
 			Valid:   true,
@@ -203,7 +172,7 @@ type largeSchemaNumber struct {
 	ID int64 `json:"id" jsonschema:"minimum=9007199254740993"`
 }
 
-func TestWithSchemaGeneratesDeterministicStrictSchema(t *testing.T) {
+func TestWithSchemaGeneratesDeterministicSchema(t *testing.T) {
 	ctx := context.Background()
 	fake := &structuredFake{caps: fullStructuredCaps(), output: `{"project_name":"agent-adaptor","programming_languages":["go"]}`}
 	agent := adaptor.New(fake)
@@ -215,8 +184,10 @@ func TestWithSchemaGeneratesDeterministicStrictSchema(t *testing.T) {
 	if _, err := agent.Run(ctx, "extract again", adaptor.WithSchema[projectMetadata]()); err != nil {
 		t.Fatalf("run 2: %v", err)
 	}
-	first := fake.request(t, 0).OutputSchema
-	second := fake.request(t, 1).OutputSchema
+	firstReq := fake.request(t, 0)
+	secondReq := fake.request(t, 1)
+	first := firstReq.OutputSchema
+	second := secondReq.OutputSchema
 	if first == nil || second == nil {
 		t.Fatalf("output schema missing: first=%v second=%v", first, second)
 	}
@@ -229,8 +200,11 @@ func TestWithSchemaGeneratesDeterministicStrictSchema(t *testing.T) {
 	if !strings.Contains(string(first.SchemaJSON), `"project_name"`) {
 		t.Errorf("expected json tag name in schema, got %s", first.SchemaJSON)
 	}
-	if first.Mode != driver.StructuredOutputNativeStrict || first.OnInvalid != driver.StructuredOutputFailRun {
-		t.Errorf("defaults = mode %q / onInvalid %q, want native_strict + fail_run", first.Mode, first.OnInvalid)
+	if first.OnInvalid != driver.StructuredOutputFailRun {
+		t.Errorf("default invalid policy = %q, want fail_run", first.OnInvalid)
+	}
+	if firstReq.StructuredOutputSource != driver.StructuredOutputSourceNative || secondReq.StructuredOutputSource != driver.StructuredOutputSourceNative {
+		t.Errorf("resolved sources = %q / %q, want native", firstReq.StructuredOutputSource, secondReq.StructuredOutputSource)
 	}
 
 	var decoded projectMetadata
@@ -356,9 +330,11 @@ func TestWithSchemaPreservesLargeConstraintNumbers(t *testing.T) {
 	// validator treats the extreme constraint — the assertion is that the
 	// generated document preserves the integer
 	// verbatim on its way to the driver.
-	fake := &structuredFake{caps: fullStructuredCaps(), output: `{"id":9007199254740993}`}
+	caps := fullStructuredCaps()
+	caps.JSONSchemaNative = false
+	fake := &structuredFake{caps: caps, output: `{"id":9007199254740993}`}
 	_, err := adaptor.New(fake).Run(context.Background(), "extract",
-		adaptor.WithSchema[largeSchemaNumber](adaptor.SchemaPromptOnly(), adaptor.SchemaReturnInvalid()))
+		adaptor.WithSchema[largeSchemaNumber](adaptor.SchemaReturnInvalid()))
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -372,7 +348,7 @@ func TestStructuredOutputRejectsInvalidSchemaBeforeLaunch(t *testing.T) {
 	fake := &structuredFake{caps: fullStructuredCaps(), output: `{"project_name":"agent-adaptor"}`}
 	agent := adaptor.New(fake)
 
-	_, err := agent.Run(context.Background(), "extract", adaptor.WithSchemaJSON([]byte(`{`), adaptor.SchemaPromptOnly()))
+	_, err := agent.Run(context.Background(), "extract", adaptor.WithSchemaJSON([]byte(`{`)))
 	if !errors.Is(err, adaptor.ErrInvalidOutputSchema) {
 		t.Fatalf("expected ErrInvalidOutputSchema, got %v", err)
 	}
@@ -381,9 +357,10 @@ func TestStructuredOutputRejectsInvalidSchemaBeforeLaunch(t *testing.T) {
 	}
 }
 
-func TestStructuredOutputRejectsUnsupportedNativeStrictBeforeLaunch(t *testing.T) {
+func TestStructuredOutputRejectsUnsupportedBeforeLaunch(t *testing.T) {
 	caps := fullStructuredCaps()
 	caps.JSONSchemaNative = false
+	caps.JSONSchemaPromptValidate = false
 	fake := &structuredFake{caps: caps, output: `{"project_name":"agent-adaptor"}`}
 	agent := adaptor.New(fake)
 
@@ -414,12 +391,14 @@ func TestStructuredSchemaFallsBackToCompatibleProviderTransport(t *testing.T) {
 	}
 }
 
-func TestPromptValidatePassesAndInjectsInstructions(t *testing.T) {
-	fake := &structuredFake{caps: fullStructuredCaps(), output: `{"project_name":"agent-adaptor","programming_languages":["go"]}`}
+func TestStructuredOutputFallsBackToPromptValidation(t *testing.T) {
+	caps := fullStructuredCaps()
+	caps.JSONSchemaNative = false
+	fake := &structuredFake{caps: caps, output: `{"project_name":"agent-adaptor","programming_languages":["go"]}`}
 	agent := adaptor.New(fake)
 
 	schema := []byte(`{"type":"object","properties":{"project_name":{"type":"string"},"programming_languages":{"type":"array","items":{"type":"string"}}},"required":["project_name"],"additionalProperties":false}`)
-	opt := adaptor.WithSchemaJSON(schema, adaptor.SchemaPromptOnly(), adaptor.SchemaName("project_metadata"))
+	opt := adaptor.WithSchemaJSON(schema, adaptor.SchemaName("project_metadata"))
 	schema[0] = '[' // prove WithSchemaJSON made its own copy.
 
 	res, err := agent.Run(context.Background(), "extract metadata", opt)
@@ -436,7 +415,10 @@ func TestPromptValidatePassesAndInjectsInstructions(t *testing.T) {
 	if req.OutputSchema == nil || len(req.OutputSchema.SchemaJSON) == 0 || req.OutputSchema.SchemaJSON[0] != '{' {
 		t.Fatalf("expected deep-copied schema on the driver request, got %#v", req.OutputSchema)
 	}
-	// The fake emits no native structured output in prompt_validate mode,
+	if req.StructuredOutputSource != driver.StructuredOutputSourcePromptValidate {
+		t.Fatalf("resolved source = %q, want automatic prompt-validation fallback", req.StructuredOutputSource)
+	}
+	// The fake emits no native structured output on the fallback path,
 	// so a successful Decode proves the SDK validated the raw text itself.
 	var decoded projectMetadata
 	if err := res.Decode(&decoded); err != nil {
@@ -447,17 +429,19 @@ func TestPromptValidatePassesAndInjectsInstructions(t *testing.T) {
 	}
 }
 
-func TestPromptValidateFailurePolicies(t *testing.T) {
+func TestStructuredOutputFallbackFailurePolicies(t *testing.T) {
 	schema := []byte(`{"type":"object","properties":{"project_name":{"type":"string"}},"required":["project_name"],"additionalProperties":false}`)
+	caps := fullStructuredCaps()
+	caps.JSONSchemaNative = false
 
 	t.Run("default fail-run policy", func(t *testing.T) {
-		// Code fences around the JSON: prompt_validate demands an exact
+		// Code fences around the JSON: the fallback path demands an exact
 		// JSON document, so this output is invalid and the default policy
 		// fails the run as a policy violation.
-		fake := &structuredFake{caps: fullStructuredCaps(), output: "```json\n{\"project_name\":\"agent-adaptor\"}\n```"}
+		fake := &structuredFake{caps: caps, output: "```json\n{\"project_name\":\"agent-adaptor\"}\n```"}
 		agent := adaptor.New(fake)
 
-		_, err := agent.Run(context.Background(), "extract", adaptor.WithSchemaJSON(schema, adaptor.SchemaPromptOnly()))
+		_, err := agent.Run(context.Background(), "extract", adaptor.WithSchemaJSON(schema))
 		if !errors.Is(err, adaptor.ErrPolicyViolation) {
 			t.Fatalf("error = %v, want ErrPolicyViolation", err)
 		}
@@ -483,11 +467,11 @@ func TestPromptValidateFailurePolicies(t *testing.T) {
 	t.Run("SchemaReturnInvalid", func(t *testing.T) {
 		// Type mismatch (42 for a string): invalid, but the run succeeds
 		// and Decode reports the invalidity.
-		fake := &structuredFake{caps: fullStructuredCaps(), output: `{"project_name":42}`}
+		fake := &structuredFake{caps: caps, output: `{"project_name":42}`}
 		agent := adaptor.New(fake)
 
 		res, err := agent.Run(context.Background(), "extract",
-			adaptor.WithSchemaJSON(schema, adaptor.SchemaPromptOnly(), adaptor.SchemaReturnInvalid()))
+			adaptor.WithSchemaJSON(schema, adaptor.SchemaReturnInvalid()))
 		if err != nil {
 			t.Fatalf("run: %v", err)
 		}
@@ -523,12 +507,14 @@ func TestStructuredOutputIgnoredWithoutSchemaRequest(t *testing.T) {
 	}
 }
 
-func TestPromptValidatePreservesLargeNumbers(t *testing.T) {
-	fake := &structuredFake{caps: fullStructuredCaps(), output: `{"id":9007199254740993}`}
+func TestStructuredOutputFallbackPreservesLargeNumbers(t *testing.T) {
+	caps := fullStructuredCaps()
+	caps.JSONSchemaNative = false
+	fake := &structuredFake{caps: caps, output: `{"id":9007199254740993}`}
 	agent := adaptor.New(fake)
 	schema := []byte(`{"type":"object","properties":{"id":{"type":"integer","const":9007199254740993}},"required":["id"],"additionalProperties":false}`)
 
-	res, err := agent.Run(context.Background(), "extract", adaptor.WithSchemaJSON(schema, adaptor.SchemaPromptOnly()))
+	res, err := agent.Run(context.Background(), "extract", adaptor.WithSchemaJSON(schema))
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -545,9 +531,11 @@ func TestPromptValidatePreservesLargeNumbers(t *testing.T) {
 
 func TestRunAndStreamReturnEquivalentStructuredOutput(t *testing.T) {
 	ctx := context.Background()
-	fake := &structuredFake{caps: fullStructuredCaps(), output: `{"project_name":"agent-adaptor"}`}
+	caps := fullStructuredCaps()
+	caps.JSONSchemaNative = false
+	fake := &structuredFake{caps: caps, output: `{"project_name":"agent-adaptor"}`}
 	agent := adaptor.New(fake)
-	opt := adaptor.WithSchema[projectMetadata](adaptor.SchemaPromptOnly())
+	opt := adaptor.WithSchema[projectMetadata]()
 
 	runRes, err := agent.Run(ctx, "extract", opt)
 	if err != nil {
@@ -576,7 +564,7 @@ func TestRunAndStreamReturnEquivalentStructuredOutput(t *testing.T) {
 
 // TestSchemaChangeDoesNotAffectThreadSessionFingerprint: the thread
 // fingerprint folds the environment payload (skills/MCP/profile), never the
-// output schema — switching schema mode between runs must resume the same
+// output schema — changing schema metadata between runs must resume the same
 // provider session.
 func TestSchemaChangeDoesNotAffectThreadSessionFingerprint(t *testing.T) {
 	ctx := context.Background()
@@ -594,7 +582,7 @@ func TestSchemaChangeDoesNotAffectThreadSessionFingerprint(t *testing.T) {
 	}
 	rec1 := activeRecord(t, store, key)
 
-	if _, err := agent.Thread(key).Run(ctx, "extract metadata again", adaptor.WithSchema[projectMetadata](adaptor.SchemaPromptOnly())); err != nil {
+	if _, err := agent.Thread(key).Run(ctx, "extract metadata again", adaptor.WithSchema[projectMetadata](adaptor.SchemaName("renamed_schema"))); err != nil {
 		t.Fatalf("second run: %v", err)
 	}
 	req2 := fake.request(t, 1)
@@ -641,20 +629,21 @@ func TestRunAsDecodesAcrossRunners(t *testing.T) {
 		}
 	})
 
-	t.Run("explicit options win over the implicit schema", func(t *testing.T) {
+	t.Run("explicit schema options win over the implicit schema", func(t *testing.T) {
 		fake := &structuredFake{caps: fullStructuredCaps(), output: `{"project_name":"agent-adaptor"}`}
 		agent := adaptor.New(fake)
-		if _, _, err := adaptor.RunAs[projectMetadata](ctx, agent, "extract", adaptor.WithSchema[projectMetadata](adaptor.SchemaPromptOnly())); err != nil {
+		if _, _, err := adaptor.RunAs[projectMetadata](ctx, agent, "extract", adaptor.WithSchema[projectMetadata](adaptor.SchemaName("explicit"))); err != nil {
 			t.Fatalf("RunAs: %v", err)
 		}
-		if got := fake.lastRequest(t).OutputSchema; got == nil || got.Mode != driver.StructuredOutputPromptValidate {
-			t.Errorf("schema mode = %#v, want the explicit SchemaPromptOnly to win", got)
+		if got := fake.lastRequest(t).OutputSchema; got == nil || got.Name != "explicit" {
+			t.Errorf("schema = %#v, want the explicit SchemaName to win", got)
 		}
 	})
 
 	t.Run("pre-launch error yields zero value", func(t *testing.T) {
 		caps := fullStructuredCaps()
 		caps.JSONSchemaNative = false
+		caps.JSONSchemaPromptValidate = false
 		fake := &structuredFake{caps: caps, output: `{"project_name":"agent-adaptor"}`}
 		agent := adaptor.New(fake)
 		decoded, _, err := adaptor.RunAs[projectMetadata](ctx, agent, "extract")

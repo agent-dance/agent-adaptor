@@ -67,9 +67,6 @@ func TestScenarioS2MultiAgentPipeline(t *testing.T) {
 
 	review, res, err := adaptor.RunAs[Review](ctx, reviewer,
 		"review this patch:\n"+patch.Text,
-		// The hermetic fake has no provider-native schema transport; exercise
-		// the same typed API through prompt validation.
-		adaptor.WithSchema[Review](adaptor.SchemaPromptOnly()),
 	)
 	if err != nil {
 		t.Fatalf("RunAs: %v", err)
@@ -85,6 +82,9 @@ func TestScenarioS2MultiAgentPipeline(t *testing.T) {
 	// results flow between agents as plain values.
 	if got := reviewerFake.lastRequest(t).Prompt; !strings.Contains(got, patch.Text) {
 		t.Errorf("reviewer prompt %q does not embed the coder patch", got)
+	}
+	if got := reviewerFake.lastRequest(t).StructuredOutputSource; got != driver.StructuredOutputSourcePromptValidate {
+		t.Errorf("structured output source = %q, want automatic prompt-validation fallback", got)
 	}
 
 	// Construction-scope default took effect: the reviewer's read-only

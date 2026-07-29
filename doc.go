@@ -34,10 +34,9 @@
 // follow their documented replacement or merge rules.
 //
 // An Agent is stateless unless constructed with a ThreadStore. Agent.Thread
-// continues or creates the host key, Agent.NewThread starts a replacement only
-// after a valid checkpoint, and Thread.Fork creates an independent child. The
-// SDK coordinates leases, compatibility fingerprints, and atomic checkpoint
-// persistence; provider resume identifiers remain Driver details.
+// continues or creates the host key, while Thread.Fork creates an independent
+// child. The SDK coordinates leases, compatibility fingerprints, and atomic
+// checkpoint persistence; provider resume identifiers remain Driver details.
 //
 // Stream exposes one ordered typed Event channel. ApprovalRequest events carry
 // their own exactly-once responder, allowing either callbacks or interactive

@@ -269,17 +269,12 @@ type RuntimeCapability struct {
 // WorksWithStreaming applies only when Request.Streaming selects the
 // provider-native streaming transport; it does not describe the consumer
 // Stream method. WorksWithHITL applies when the effective policy contains an
-// Ask decision. A false combination MUST be rejected before driver launch;
-// neither core nor a driver may silently switch mechanism or transport.
-// Eligibility is therefore the following complete matrix:
-//
-//   - NativeStrict requires JSONSchemaNative and WorksWithRun.
-//   - PromptValidate requires JSONSchemaPromptValidate and WorksWithRun.
-//   - PreferNative selects native when eligible, otherwise prompt-validation
-//     when eligible, and otherwise rejects the invocation.
-//   - every row additionally requires WorksWithStreaming when
-//     Request.Streaming is true and WorksWithHITL when any effective decision
-//     mode is Ask.
+// Ask decision. Core always selects native enforcement when that mechanism is
+// eligible, otherwise prompt-validation when it is eligible, and rejects the
+// invocation before launch when neither works. Drivers consume the resolved
+// Request.StructuredOutputSource and must not renegotiate it. Every mechanism
+// additionally requires WorksWithStreaming when Request.Streaming is true and
+// WorksWithHITL when any effective decision mode is Ask.
 type StructuredOutputCapability struct {
 	JSONSchemaNative         bool
 	JSONSchemaPromptValidate bool

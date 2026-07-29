@@ -516,6 +516,7 @@ func persistentPreWarmEligible(cfg Config, req driver.Request) bool {
 	copyReq := req
 	copyReq.Streaming = true
 	copyReq.OutputSchema = nil
+	copyReq.StructuredOutputSource = ""
 	return persistentEligible(cfg, copyReq)
 }
 
