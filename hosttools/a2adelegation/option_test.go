@@ -377,10 +377,12 @@ func TestServiceOptionAttachFailureIsPreLaunch(t *testing.T) {
 	}
 }
 
-// TestServiceOptionEventsInterleaveWithLeaderOutput pins the ordering property
-// the injection point exists for: subagent updates are folded into the leader's
-// channel as they happen, not batched at the end.
-func TestServiceOptionEventsInterleaveWithLeaderOutput(t *testing.T) {
+// TestServiceOptionEventsShareLeaderStreamInSourceOrder pins the ordering
+// contract of the unified sink without inventing a cross-producer order. The
+// delegation pump and leader Driver publish concurrently, so whichever reaches
+// the sink first owns the next public sequence; each producer's own order must
+// remain stable and every event must survive the shared channel.
+func TestServiceOptionEventsShareLeaderStreamInSourceOrder(t *testing.T) {
 	team := newTeamOfThree(t, nil)
 	started := make(chan struct{})
 	drv := &requestDrivenLeader{
@@ -396,16 +398,16 @@ func TestServiceOptionEventsInterleaveWithLeaderOutput(t *testing.T) {
 	stream := leader.Stream(context.Background(), "go")
 	<-started
 
-	var order []string
+	var leaderOrder, subagentOrder []string
 	for ev := range stream.Events() {
 		switch e := ev.(type) {
 		case adaptor.TextDelta:
 			if e.Text != "" {
-				order = append(order, "leader:"+strings.TrimSpace(e.Text))
+				leaderOrder = append(leaderOrder, strings.TrimSpace(e.Text))
 			}
 		case adaptor.SubagentUpdate:
 			if e.Kind != adaptor.SubagentDelta {
-				order = append(order, string(e.Kind)+":"+e.Agent)
+				subagentOrder = append(subagentOrder, string(e.Kind)+":"+e.Agent)
 			}
 		}
 	}
@@ -413,19 +415,16 @@ func TestServiceOptionEventsInterleaveWithLeaderOutput(t *testing.T) {
 		t.Fatalf("Result: %v", err)
 	}
 
-	// The leader emits "plan done." only after the plan delegation returned,
-	// and the plan delegation's terminal event is published before the tool
-	// call returns — so the sequence below is a property of the pipeline, not
-	// a scheduling coincidence.
-	want := []string{
+	if want := []string{"plan done.", "review done."}; fmt.Sprint(leaderOrder) != fmt.Sprint(want) {
+		t.Fatalf("leader event order = %v, want %v", leaderOrder, want)
+	}
+	wantSubagents := []string{
 		"started:plan",
 		"finished:plan",
-		"leader:plan done.",
 		"started:review",
 		"finished:review",
-		"leader:review done.",
 	}
-	if fmt.Sprint(order) != fmt.Sprint(want) {
-		t.Fatalf("event order =\n  %v\nwant\n  %v", order, want)
+	if fmt.Sprint(subagentOrder) != fmt.Sprint(wantSubagents) {
+		t.Fatalf("subagent event order =\n  %v\nwant\n  %v", subagentOrder, wantSubagents)
 	}
 }
