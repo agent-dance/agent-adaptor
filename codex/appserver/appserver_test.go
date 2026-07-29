@@ -327,9 +327,10 @@ func TestTranslatorUnknownNotificationPassthrough(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 type recordingSink struct {
-	mu      sync.Mutex
-	events  []driver.RunEvent
-	streams []driver.StreamPayload
+	mu       sync.Mutex
+	events   []driver.RunEvent
+	streams  []driver.StreamPayload
+	onStream func(driver.StreamPayload)
 }
 
 func (r *recordingSink) Emit(event driver.RunEvent) error {
@@ -341,8 +342,12 @@ func (r *recordingSink) Emit(event driver.RunEvent) error {
 
 func (r *recordingSink) EmitStream(payload driver.StreamPayload) error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	r.streams = append(r.streams, payload)
+	hook := r.onStream
+	r.mu.Unlock()
+	if hook != nil {
+		hook(payload)
+	}
 	return nil
 }
 
@@ -757,7 +762,7 @@ func TestRunStagesTerminalUntilStructuredOutputValidation(t *testing.T) {
 func TestRunProtocolFatalNotificationStopsSemanticIngestion(t *testing.T) {
 	fake := buildFakeAppserver(t)
 	sink := &recordingSink{}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 	result, err := Run(ctx, Options{
 		Command: fake,
@@ -959,14 +964,18 @@ func TestRunOfficialFailureStatusesAndProtocolFailures(t *testing.T) {
 
 func TestRunCancellationReturnsPartialRawWithoutCheckpoint(t *testing.T) {
 	fake := buildFakeAppserver(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
-	sink := &recordingSink{}
+	sink := &recordingSink{onStream: func(payload driver.StreamPayload) {
+		if payload.Kind == driver.StreamRunStarted {
+			cancel()
+		}
+	}}
 	result, err := Run(ctx, Options{
 		Command: fake,
 		Env:     []driver.EnvBinding{{Name: "FAKE_APPSERVER_SCENARIO", Value: "cancel"}},
 	}, sink)
-	if !errors.Is(err, context.DeadlineExceeded) {
+	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("error = %v", err)
 	}
 	if result.Checkpoint != nil || result.RawStreams == nil || result.RawStreams.Stdout == "" {

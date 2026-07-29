@@ -243,6 +243,7 @@ func checkDeclarations(t *testing.T, newDriver func() driver.Driver, d driver.Dr
 	t.Helper()
 	resumeViolations := VerifySessionCapability(d)
 	reportViolations(t, resumeViolations)
+	reportViolations(t, VerifyProcessCapability(d))
 	if desc.Sessions.SupportsResume {
 		fresh := newDriver()
 		if fresh == nil {

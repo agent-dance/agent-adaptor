@@ -141,6 +141,14 @@ func (a *Agent) openStream(ctx context.Context, opts []CallOption, threadKey str
 		done:   make(chan struct{}),
 	}
 
+	if openErr := a.ensureOpen(); openErr != nil {
+		st.err = openErr
+		cancel()
+		sink.close()
+		close(st.done)
+		return st, eff, ctx, false
+	}
+
 	if idErr != nil {
 		st.err = fmt.Errorf("adaptor: generate run id: %w", idErr)
 		cancel()

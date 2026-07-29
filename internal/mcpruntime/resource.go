@@ -81,6 +81,13 @@ func SyncResource(ctx context.Context, driverType, profileDir string, kind Profi
 	if err != nil {
 		return engine.ResourceSnapshot{}, err
 	}
+	// An empty desired set with no SDK-owned entries is observational, not a
+	// sync mutation. In particular, rewriting a user's Codex config.toml just
+	// to preserve an empty MCP section can reformat or discard TOML constructs
+	// outside the MCP surface. Leave the provider file byte-for-byte intact.
+	if len(payload.Servers) == 0 && len(manifest.KindEntries(resourceKind)) == 0 {
+		return SnapshotResource(driverType, profileDir, payload, true)
+	}
 	root, err := readStructuredRoot(layout)
 	if err != nil {
 		return engine.ResourceSnapshot{}, err

@@ -85,6 +85,20 @@ func VerifySessionCapability(d driver.Driver) (out []Violation) {
 	return out
 }
 
+// VerifyProcessCapability checks that a Driver advertising a persistent
+// process also exposes the lifecycle hook Agent.Close needs to reap it.
+func VerifyProcessCapability(d driver.Driver) []Violation {
+	if d == nil {
+		return []Violation{violationf("CAP-11", "Driver is nil")}
+	}
+	if d.Descriptor().Process.Persistent {
+		if _, ok := d.(driver.ProcessLifecycleDriver); !ok {
+			return []Violation{violationf("CAP-11", "Process.Persistent=true but Driver does not implement ProcessLifecycleDriver")}
+		}
+	}
+	return nil
+}
+
 func nilDynamicValue(value any) bool {
 	if value == nil {
 		return true

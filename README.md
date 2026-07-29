@@ -108,6 +108,17 @@ branch := thread.Fork("tenant-42/issue-123/alternative")
 
 Thread keys are opaque strings owned by the host. Driver resume identifiers remain checkpoint details. Durable hosts can implement `threadstore.Store`; `memory.NewStore()` is intended for one process.
 
+Claude, CodeBuddy, and Codex reuse a provider process by default for successive turns of an explicit Thread. Use `WithSpawn()` at Agent construction or on one call to force fresh one-shot processes. Close the Agent to reap its process pool:
+
+```go
+defer agent.Close(context.Background())
+
+_, _ = thread.Run(ctx, "reuse the persistent writer")
+_, _ = thread.Run(ctx, "use a fresh process", adaptor.WithSpawn())
+```
+
+Cursor and stateless Agent calls always spawn per invocation. Once `Close` starts, new Agent and Thread runs fail with `ErrAgentClosed`.
+
 ## Options and resources
 
 Options use one vocabulary with compile-time scopes:

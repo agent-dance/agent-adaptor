@@ -215,6 +215,44 @@ func TestCodeBuddyLiveThreadResume(t *testing.T) {
 	}
 }
 
+func TestCodeBuddyLivePersistentReuse(t *testing.T) {
+	requireCodeBuddyCLI(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	agent := newLiveAgent(t, t.TempDir(), false)
+	defer func() {
+		closeCtx, closeCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer closeCancel()
+		if err := agent.Close(closeCtx); err != nil {
+			t.Errorf("Agent.Close: %v", err)
+		}
+	}()
+	thread := agent.Thread("codebuddy/live/persistent-reuse")
+	spawns := 0
+	for turn, prompt := range []string{
+		"Remember the exact token PERSISTENT-CODEBUDDY. Reply only ACK.",
+		"Reply only with the exact token from the previous turn.",
+	} {
+		result, events, err := collectLiveStream(ctx, thread, prompt, adaptor.WithPolicy(livePolicyHeadless))
+		logLiveEvents(t, events)
+		if err != nil {
+			t.Fatalf("turn %d: %v", turn+1, err)
+		}
+		for _, event := range events {
+			if process, ok := event.(adaptor.ProcessInfo); ok && process.Kind == adaptor.ProcessSpawn {
+				spawns++
+			}
+		}
+		if turn == 1 && !strings.Contains(result.Text, "PERSISTENT-CODEBUDDY") {
+			t.Fatalf("second turn lost conversation context: %q", result.Text)
+		}
+	}
+	if spawns != 1 {
+		t.Fatalf("two default Thread turns spawned %d CodeBuddy processes, want 1", spawns)
+	}
+}
+
 func TestCodeBuddyLivePermissionApprove(t *testing.T) {
 	requireCodeBuddyCLI(t)
 	cwd := t.TempDir()

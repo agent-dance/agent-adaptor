@@ -46,6 +46,9 @@ const (
 // Sentinels for errors.Is matching. Each RunError unwraps to the sentinel
 // matching its Reason.
 var (
+	// ErrAgentClosed is returned by an Agent or any Thread derived from it
+	// after Agent.Close has begun.
+	ErrAgentClosed = errors.New("adaptor: agent closed")
 	// ErrApprovalDenied matches runs that failed because a human decision
 	// was rejected.
 	ErrApprovalDenied = errors.New("adaptor: approval denied")

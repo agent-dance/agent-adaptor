@@ -380,6 +380,25 @@ func (driverWithoutCodec) Run(context.Context, driver.Request, driver.EventSink)
 
 type driverWithLossyCodec struct{ driverWithoutCodec }
 
+type persistentWithoutLifecycle struct{ driverWithoutCodec }
+
+func (persistentWithoutLifecycle) Descriptor() driver.Descriptor {
+	return driver.Descriptor{
+		Type: "persistent-no-lifecycle", DisplayName: "Persistent No Lifecycle",
+		Process: driver.ProcessCapability{Persistent: true},
+	}
+}
+
+func TestVerifyProcessCapabilityRequiresLifecycleHook(t *testing.T) {
+	got := clauseSet(VerifyProcessCapability(persistentWithoutLifecycle{}))
+	if !got["CAP-11"] {
+		t.Fatalf("want CAP-11, got %v", got)
+	}
+	if got := VerifyProcessCapability(driverWithoutCodec{}); len(got) != 0 {
+		t.Fatalf("non-persistent driver violations: %v", got)
+	}
+}
+
 func (driverWithLossyCodec) SessionCodec() driver.SessionCodec { return lossyCodec{} }
 
 type resumeWithoutCodec struct{ driverWithoutCodec }

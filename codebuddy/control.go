@@ -33,6 +33,8 @@ func (adapter) runControl(ctx context.Context, cfg Config, command string, req d
 	p.control.configDir = resolveConfigDir(cfg.Env)
 	if req.Streaming {
 		p.enableStreaming(req.RunID)
+	} else {
+		p.enableOutputReconstruction(req.RunID)
 	}
 
 	go func() {

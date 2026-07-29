@@ -78,6 +78,11 @@ type Request struct {
 	Metadata       map[string]string
 	OutputSchema   *OutputSchema
 
+	// Spawn forces this invocation onto a fresh provider process. The default
+	// false value allows a capable driver to reuse a process for a stateful
+	// Thread; stateless runs and drivers without Process.Persistent still spawn.
+	Spawn bool
+
 	// ModelOverride is the per-run model selected via WithModel. When
 	// non-empty it supersedes the construction model carried by Config for this
 	// invocation; drivers must prefer it over their Config model when

@@ -22,6 +22,15 @@ type Driver interface {
 	Run(ctx context.Context, req Request, sink EventSink) (Response, error)
 }
 
+// ProcessLifecycleDriver is the lifecycle contract implemented by every Driver
+// whose Descriptor.Process.Persistent is true. CloseProcesses must be
+// idempotent, stop every process owned by that configured Driver (including
+// child process groups), and treat ctx as a hard upper bound. A persistent
+// declaration without this interface is a capability-contract violation.
+type ProcessLifecycleDriver interface {
+	CloseProcesses(ctx context.Context) error
+}
+
 // EnvironmentProbe is implemented by drivers that can perform preflight
 // checks against local CLIs, auth files, profile directories, or other
 // dependencies. Agent.Inspect().Environment uses it when present.
@@ -196,6 +205,8 @@ type Descriptor struct {
 	Instructions InstructionsCapability
 	// Workspace declares support for SDK-resolved workspaces.
 	Workspace WorkspaceCapability
+	// Process declares the provider process lifecycle supported by this driver.
+	Process ProcessCapability
 	// RunPolicyCaps declares the policy dimensions the driver can enforce.
 	RunPolicyCaps RunPolicyCapabilities
 	// Runtime declares runtime-service reporting support.
@@ -230,6 +241,14 @@ type InstructionsCapability struct {
 // workspace leases.
 type WorkspaceCapability struct {
 	Supported bool
+}
+
+// ProcessCapability declares provider-process lifecycle support. Persistent
+// means a driver can reuse one provider process across turns of a stateful
+// Thread and therefore MUST implement ProcessLifecycleDriver. Core still
+// requests a one-shot process when Request.Spawn is true.
+type ProcessCapability struct {
+	Persistent bool
 }
 
 // RuntimeCapability declares whether a driver reports runtime-service state

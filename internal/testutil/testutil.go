@@ -35,6 +35,55 @@ type EventRecorder struct {
 	streams []driver.StreamPayload
 }
 
+// ChunkCancelRecorder records events and invokes cancel after every requested
+// raw stream has delivered at least one non-empty chunk. It lets cancellation
+// tests synchronize on observed process output instead of machine-dependent
+// startup delays.
+type ChunkCancelRecorder struct {
+	EventRecorder
+
+	chunkMu    sync.Mutex
+	required   map[string]struct{}
+	seen       map[string]struct{}
+	cancel     func()
+	cancelOnce sync.Once
+}
+
+func NewChunkCancelRecorder(cancel func(), streams ...string) *ChunkCancelRecorder {
+	required := make(map[string]struct{}, len(streams))
+	for _, stream := range streams {
+		required[stream] = struct{}{}
+	}
+	return &ChunkCancelRecorder{
+		required: required,
+		seen:     make(map[string]struct{}, len(required)),
+		cancel:   cancel,
+	}
+}
+
+func (r *ChunkCancelRecorder) Emit(event driver.RunEvent) error {
+	if err := r.EventRecorder.Emit(event); err != nil {
+		return err
+	}
+	if event.Type != driver.RunEventChunk || len(event.Bytes) == 0 {
+		return nil
+	}
+	r.chunkMu.Lock()
+	if _, wanted := r.required[event.Stream]; wanted {
+		r.seen[event.Stream] = struct{}{}
+	}
+	ready := len(r.seen) == len(r.required)
+	r.chunkMu.Unlock()
+	if ready && r.cancel != nil {
+		// Do not cancel CommandContext from inside clihelper's pipe reader: the
+		// process wait path may need that reader to return before reaping the
+		// process tree. Dispatching cancellation keeps the observation callback
+		// non-blocking and mirrors cancellation from a host goroutine.
+		r.cancelOnce.Do(func() { go r.cancel() })
+	}
+	return nil
+}
+
 func (r *EventRecorder) Emit(event driver.RunEvent) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

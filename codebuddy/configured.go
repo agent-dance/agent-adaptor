@@ -57,7 +57,7 @@ type Config struct {
 // the result to adaptor.New. Config validation stays
 // deferred to run/probe time: Driver never panics or validates eagerly.
 func Driver(cfg Config) driver.Driver {
-	return configuredDriver{cfg: cloneConfig(cfg)}
+	return configuredDriver{adapter: adapter{persistent: newPersistentPool()}, cfg: cloneConfig(cfg)}
 }
 
 // configuredDriver couples the stateless low-level adapter with the config it

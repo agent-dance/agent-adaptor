@@ -1088,3 +1088,19 @@ func (s *syncBuffer) String() string {
 	defer s.mu.Unlock()
 	return s.b.String()
 }
+
+func (s *syncBuffer) Len() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Len()
+}
+
+func (s *syncBuffer) Since(offset int) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	value := s.b.String()
+	if offset < 0 || offset > len(value) {
+		offset = 0
+	}
+	return value[offset:]
+}

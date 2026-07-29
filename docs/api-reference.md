@@ -49,9 +49,11 @@ type Runner interface {
 ```go
 func (a *Agent) Run(ctx context.Context, prompt string, opts ...CallOption) (*Result, error)
 func (a *Agent) Stream(ctx context.Context, prompt string, opts ...CallOption) Stream
+func (a *Agent) Close(ctx context.Context) error
 ```
 
 `Run` 是 `Stream`、消费完整事件流、再读取 `Result()` 的便捷形式。两者共享同一执行管线和相同的结果合同。
+`Close` 幂等停止该 Agent 的 Driver 所拥有的常驻进程；Close 开始后的 Agent/Thread 新运行返回 `ErrAgentClosed`。
 
 ## 3. 选项作用域
 
@@ -84,6 +86,7 @@ type SharedOption interface {
 |---|---|---|
 | `WithModel(string)` | provider 模型覆盖 | 非空值替换 |
 | `WithTimeout(time.Duration)` | 单次执行总时限 | 替换；超时匹配 `context.DeadlineExceeded` |
+| `WithSpawn()` | 强制使用新 provider 进程，不复用或留下常驻 writer | 替换默认进程模式 |
 | `WithInstructions(string)` | 附加指令文本 | 替换 |
 | `WithWorkspace(string)` | 基础工作目录 | 替换 |
 | `WithMetadata(key, value)` | 审计元数据 | 按 key 合并，同名 key 覆盖 |
@@ -170,7 +173,7 @@ Sandbox 值为 `SandboxInherit`、`ReadOnly`、`WorkspaceWrite`、`Unrestricted`
 
 ## 5. Thread
 
-Thread 是带持久化续接能力的 `Runner`。Agent 默认无状态，使用 Thread 前必须通过 `WithThreadStore` 注入 store。
+Thread 是带持久化续接能力的 `Runner`。Agent 默认无状态，使用 Thread 前必须通过 `WithThreadStore` 注入 store。Claude、CodeBuddy 和 Codex 对显式 Thread 默认允许常驻复用；Cursor 和直接 Agent 调用逐轮启动。
 
 ```go
 func (a *Agent) Thread(key string, opts ...ThreadOption) *Thread
@@ -204,6 +207,25 @@ key 是宿主自己的非空、不透明字符串；空 key 会 panic。`Checkpo
 - `ErrResumeRejected`
 
 Thread store 只保存 provider resume checkpoint、兼容 fingerprint 和租约，不保存 UI 聊天记录。
+
+### 5.1 provider 进程生命周期
+
+```go
+agent := adaptor.New(
+	claude.Driver(claude.Config{}),
+	adaptor.WithThreadStore(memory.NewStore()),
+)
+defer agent.Close(context.Background())
+
+thread := agent.Thread("ticket-42")
+_, _ = thread.Run(ctx, "first")
+_, _ = thread.Run(ctx, "second")
+_, _ = thread.Run(ctx, "isolated", adaptor.WithSpawn())
+```
+
+`WithSpawn()` 是双作用域选项：传给 `New` 时所有轮次默认为单次进程；传给 `Run`/`Stream` 时只覆盖本轮。配置/指纹漂移、native schema 等必须暂时切换进程形态时，Driver 在启动 replacement 前等待旧 writer 完整退出，并只在得到有效新 checkpoint 后预热。prompt 可能已经送达后的断线不会自动重放。
+
+Driver 通过 `Descriptor.Process.Persistent` 声明能力。声明为 true 的 Driver 必须实现 `driver.ProcessLifecycleDriver`，供 `Agent.Close` 有界回收全部进程组。
 
 ## 6. Stream 与 Event
 

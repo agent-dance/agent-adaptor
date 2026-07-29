@@ -146,3 +146,32 @@ command = "old"
 		t.Fatalf("expected shared sync to preserve old MCP and add new one, got:\n%s", text)
 	}
 }
+
+func TestSyncCodexEmptyUnmanagedPayloadDoesNotRewriteConfig(t *testing.T) {
+	codexHome := t.TempDir()
+	configPath := filepath.Join(codexHome, "config.toml")
+	original := []byte(`model_provider = "custom"
+
+[[skills.config]]
+path = "/native/custom/SKILL.md"
+enabled = false
+
+[model_providers.custom]
+base_url = "https://example.invalid"
+wire_api = "responses"
+`)
+	if err := os.WriteFile(configPath, original, 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	if _, err := SyncResource(context.Background(), "codex", codexHome, ProfileKindDedicated, agentadaptor.MCPPayload{}); err != nil {
+		t.Fatalf("sync empty Codex MCP: %v", err)
+	}
+	got, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	if string(got) != string(original) {
+		t.Fatalf("empty unmanaged MCP sync rewrote config:\n%s", got)
+	}
+}

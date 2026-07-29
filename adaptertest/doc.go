@@ -61,6 +61,8 @@
 //	        DriverType matches, valid Mode, Selected mirrors the (empty)
 //	        selection. SyncSkills half is opt-in (WithSyncSkillsProbe).
 //	CAP-10  StreamCapability() is deterministic.
+//	CAP-11  Process.Persistent implies ProcessLifecycleDriver, so Agent.Close
+//	        can reap every process owned by the configured Driver.
 //
 // Structured output (driver/driver.go StructuredOutputCapability,
 // driver/output.go; engine resolution in internal/engine/structured.go):

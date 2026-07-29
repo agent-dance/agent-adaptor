@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 
 	"github.com/agent-dance/agent-adaptor/driver"
@@ -25,7 +26,16 @@ import (
 // DriverType is the stable descriptor type for the built-in Codex driver.
 const DriverType = "codex"
 
-type adapter struct{}
+type adapter struct {
+	persistent *persistentPool
+}
+
+func (a adapter) CloseProcesses(ctx context.Context) error {
+	if a.persistent == nil {
+		return nil
+	}
+	return a.persistent.close(ctx)
+}
 
 func (adapter) Descriptor() driver.Descriptor {
 	fields := []driver.ConfigField{
@@ -47,6 +57,7 @@ func (adapter) Descriptor() driver.Descriptor {
 		MCP:          driver.MCPCapability{Supported: true, Stdio: true, HTTP: true},
 		Instructions: driver.InstructionsCapability{Supported: true},
 		Workspace:    driver.WorkspaceCapability{Supported: true},
+		Process:      driver.ProcessCapability{Persistent: true},
 		RunPolicyCaps: driver.RunPolicyCapabilities{
 			Isolation: true, WebSearch: true, Browser: false,
 			Permission: driver.HumanDecisionSupport{Ask: false, AutoApprove: true, AutoReject: false, Retry: false},
@@ -58,9 +69,9 @@ func (adapter) Descriptor() driver.Descriptor {
 			JSONSchemaNative:         true,
 			JSONSchemaPromptValidate: true,
 			WorksWithRun:             true,
-			WorksWithStreaming:       false,
+			WorksWithStreaming:       true,
 			WorksWithHITL:            false,
-			Notes:                    "Native JSON Schema output is supported by codex exec --output-schema; codex app-server streaming support is not advertised.",
+			Notes:                    "Native JSON Schema output is supported by codex exec --output-schema and app-server turn/start.",
 		},
 	}
 }
@@ -336,7 +347,7 @@ func (adapter) StreamCapability() driver.StreamCapability {
 	}
 }
 
-func (adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSink) (driver.Response, error) {
+func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSink) (driver.Response, error) {
 	cfg := readConfig(req.Config)
 	// Per-run WithModel overrides the configured model for this invocation only.
 	if m := strings.TrimSpace(req.ModelOverride); m != "" {
@@ -405,8 +416,68 @@ func (adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSin
 	if err != nil {
 		return driver.Response{}, err
 	}
+
+	var writer *persistentWriter
+	resumeID := codexResumeID(req)
+	if a.persistent != nil && persistentSessionKey(req) != "" && runtime.GOOS != "windows" {
+		writer = a.persistent.lockWriter(persistentWriterKey(req))
+		defer writer.release()
+	}
+	var persistentTurn persistentSpec
+	if writer != nil {
+		appOpts, optsErr := buildAppServerOptions(req, cfg, command, effectiveBindings, preparedInstructions)
+		if optsErr != nil {
+			return driver.Response{}, optsErr
+		}
+		var outputSchema *driver.OutputSchema
+		if appOpts.OutputSchema != nil {
+			copySchema := *appOpts.OutputSchema
+			copySchema.SchemaJSON = append([]byte(nil), appOpts.OutputSchema.SchemaJSON...)
+			outputSchema = &copySchema
+		}
+		persistentTurn = persistentSpec{
+			command: command, cwd: effectiveCWD,
+			env:   append([]driver.EnvBinding(nil), effectiveBindings...),
+			model: appOpts.Model, effort: appOpts.Effort, fastMode: cfg.FastMode,
+			extraArgs: append([]string(nil), appOpts.ExtraArgs...),
+			resumeID:  resumeID, engineID: persistentSessionKey(req), previousID: persistentPreviousSessionKey(req),
+			prompt: appOpts.Prompt, runID: req.RunID,
+			approval: appOpts.Approval, sandbox: appOpts.Sandbox, outputSchema: outputSchema,
+			profileFingerprint:  profileFingerprint,
+			settingsFingerprint: codexSettingsFingerprint(effectiveCodexHome, effectiveCWD),
+			commandFingerprint:  commandFileFingerprint(command),
+			gracePeriod:         cfg.GracePeriod,
+		}
+	}
+	if writer != nil && !req.Spawn && persistentEligible(cfg, req) {
+		result, persistentErr := writer.run(ctx, persistentTurn, sink)
+		if persistentErr == nil {
+			return finishAppServerResult(req, result, effectiveCWD), nil
+		}
+		if !errors.Is(persistentErr, errPersistentFallback) {
+			return result, persistentErr
+		}
+	} else if writer != nil {
+		if err := writer.suspendAndWait(resumeID, persistentSessionKey(req), persistentPreviousSessionKey(req)); err != nil {
+			return driver.Response{}, err
+		}
+	}
 	if usesCodexAppServer(req) {
-		return runAppServer(ctx, req, sink, cfg, command, effectiveBindings, preparedInstructions)
+		result, runErr := runAppServer(ctx, req, sink, cfg, command, effectiveBindings, preparedInstructions)
+		if runErr != nil {
+			return result, runErr
+		}
+		if writer != nil && !req.Spawn && persistentPreWarmEligible(cfg, req) &&
+			result.ExitCode == 0 && result.Failure == nil &&
+			result.Checkpoint != nil && result.Checkpoint.Valid && result.Checkpoint.State != nil {
+			prewarm := persistentTurn
+			prewarm.prompt = ""
+			prewarm.runID = ""
+			prewarm.resumeID = result.Checkpoint.State.ResumeID
+			prewarm.outputSchema = nil
+			_ = writer.preWarm(prewarm, sink)
+		}
+		return result, nil
 	}
 
 	args := append(codexPolicyArgs(req.Policy), "exec", "--json")
@@ -533,7 +604,7 @@ func (adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSin
 		}
 	}
 
-	return driver.Response{
+	driverResult := driver.Response{
 		Output:           parser.buildOutput(),
 		RawStreams:       &raw,
 		Transcript:       parser.transcript,
@@ -548,7 +619,18 @@ func (adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSin
 		StructuredOutput: structuredOutput,
 		RuntimeServices:  driverutil.RuntimeReportsFromRefs(req.Runtime.Ensured, req.Agent),
 		Failure:          failure,
-	}, nil
+	}
+	if writer != nil && !req.Spawn && persistentPreWarmEligible(cfg, req) &&
+		driverResult.ExitCode == 0 && driverResult.Failure == nil &&
+		driverResult.Checkpoint != nil && driverResult.Checkpoint.Valid && driverResult.Checkpoint.State != nil {
+		prewarm := persistentTurn
+		prewarm.prompt = ""
+		prewarm.runID = ""
+		prewarm.resumeID = driverResult.Checkpoint.State.ResumeID
+		prewarm.outputSchema = nil
+		_ = writer.preWarm(prewarm, sink)
+	}
+	return driverResult, nil
 }
 
 // usesCodexAppServer selects the provider transport from invocation semantics.
