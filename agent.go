@@ -33,6 +33,11 @@ type Agent struct {
 	driver   driver.Driver
 	defaults AgentSettings
 
+	lifecycleMu  sync.Mutex
+	closeStarted bool
+	closeDone    chan struct{}
+	closeErr     error
+
 	// mu guards skillSelection, the process-local skill selection override
 	// installed by SelectSkills: nil means no override, while a non-nil
 	// slice (including an empty slice) replaces the default skill refs for
@@ -89,6 +94,59 @@ func (a *Agent) Run(ctx context.Context, prompt string, opts ...CallOption) (*Re
 	return st.Result()
 }
 
+// Close prevents new runs and closes every persistent provider process owned
+// by the Agent's configured Driver. It is idempotent; concurrent callers wait
+// for the first close attempt or return ctx.Err() when their own deadline wins.
+// Drivers without persistent-process support make Close a successful no-op.
+func (a *Agent) Close(ctx context.Context) error {
+	if a == nil {
+		return ErrAgentClosed
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	a.lifecycleMu.Lock()
+	if a.closeStarted {
+		done := a.closeDone
+		a.lifecycleMu.Unlock()
+		select {
+		case <-done:
+			a.lifecycleMu.Lock()
+			err := a.closeErr
+			a.lifecycleMu.Unlock()
+			return err
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	a.closeStarted = true
+	a.closeDone = make(chan struct{})
+	a.lifecycleMu.Unlock()
+
+	var err error
+	if closer, ok := a.driver.(driver.ProcessLifecycleDriver); ok {
+		err = closer.CloseProcesses(ctx)
+	}
+
+	a.lifecycleMu.Lock()
+	a.closeErr = err
+	close(a.closeDone)
+	a.lifecycleMu.Unlock()
+	return err
+}
+
+func (a *Agent) ensureOpen() error {
+	if a == nil {
+		return ErrAgentClosed
+	}
+	a.lifecycleMu.Lock()
+	defer a.lifecycleMu.Unlock()
+	if a.closeStarted {
+		return ErrAgentClosed
+	}
+	return nil
+}
+
 // buildRequest maps the effective settings onto the driver SPI request.
 func buildRequest(runID, prompt string, eff *RunSettings) driver.Request {
 	req := driver.Request{
@@ -96,6 +154,7 @@ func buildRequest(runID, prompt string, eff *RunSettings) driver.Request {
 		Prompt:        prompt,
 		Metadata:      maps.Clone(eff.metadata),
 		ModelOverride: eff.model,
+		Spawn:         eff.spawn,
 		// Config stays nil: configured Drivers carry their own config
 		// (codex.Driver(codex.Config{...}) captures it at construction).
 		// Session stays nil here: the Thread path (thread.go) attaches

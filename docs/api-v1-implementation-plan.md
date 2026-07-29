@@ -162,11 +162,11 @@
 | P5.2 | **✅ 已关闭**。按 PRE → CORRECTNESS（含 P4/SPI/bridge）→ REHOME/REPOINT → LEGACY EDGE DELETE → ROOT CUTOVER → RESIDUAL DELETE → RENAME 执行；ROOT CUTOVER 提交为 `cc6cd82`。旧 API、旧测试、`pkg/` forwards、legacy metadata 兼容、`providers/`、`next/` 与残余死栈均已清除。机械清单见 [p5.2-recon.md](./p5.2-recon.md)。 |
 | P5.3 | **✅ 已关闭**。最终 `adaptertest/` 面向 `driver.Driver`，包含 14 子测试 × 51 编号条款、negative/reference 自证、四内置 Driver conformance 接线；Driver SPI 的 9 项 godoc 含糊点均已硬化。live 探针仍要求 CLI 在 PATH 且 `AGENT_ADAPTOR_LIVE_CONFORMANCE=1`，普通测试不触发付费调用。 |
 | P5.4 | **✅ 已关闭**。README（六名词）、根 godoc、API reference、usage、streaming、A2A、structured output、migration guide 与 CHANGELOG 已按最终 API 更新；历史 workstream/P0 决策文档移至 `docs/archive/`。本文中的旧名仅为执行证据。 |
-| P5.5 | 发布检查单：godoc 首屏审查（24 个 `With*` 名 + 约 13 个核心概念组；其他构造器、枚举/error/DTO/alias 由完整 AST golden 另行冻结）、`go vet`/race/fuzz（archive 与关键 provider parser）、examples 全绿、CHANGELOG；`v1.0.0` tag 仍需显式发布授权 |
+| P5.5 | 发布检查单：godoc 首屏审查（25 个 `With*` 名 + 约 13 个核心概念组；第 25 个为常驻默认语义的 `WithSpawn` 反向开关；其他构造器、枚举/error/DTO/alias 由完整 AST golden 另行冻结）、`go vet`/race/fuzz（archive 与关键 provider parser）、examples 全绿、CHANGELOG；`v1.0.0` tag 仍需显式发布授权 |
 
-**门禁**：S1–S9 全绿；`docs/api-v1-redesign.md` §4 能力映射表 100% 勾验；24 个 `With*` 名、核心概念组 ~13 的心智负担承诺逐项核对，其他构造器、全部枚举/error/DTO/alias 和签名由完整 AST golden 冻结；migration guide 覆盖全部 66 个旧选项的去向；takeover audit 的阻断项为零，且每项均有对应回归测试。
+**门禁**：S1–S9 全绿；`docs/api-v1-redesign.md` §4 能力映射表 100% 勾验；25 个 `With*` 名、核心概念组 ~13 的心智负担承诺逐项核对，其他构造器、全部枚举/error/DTO/alias 和签名由完整 AST golden 冻结；migration guide 覆盖全部 66 个旧选项的去向；takeover audit 的阻断项为零，且每项均有对应回归测试。
 
-**P5.5 量化口径修订**：本计划原文曾要求“根包导出名 ≤~35”。最终 AST 清点证明实际 229 个顶层导出由 typed DTO、枚举/错误、函数和 alias 构成，字面删减会与同一设计的类型安全合同冲突。这里不是声称旧门禁不存在，而是按 [`api-v1-redesign.md` §2.1](./api-v1-redesign.md#21-包布局按读者分包而不是按功能分包) 与 [`v1-takeover-audit.md`](./v1-takeover-audit.md) 记录的设计勘误，改用 24 个 `With*` 名和约 13 个概念组衡量消费者心智负担；原始声明数量与签名则由完整 AST golden 逐项冻结。
+**P5.5 量化口径修订**：本计划原文曾要求“根包导出名 ≤~35”。当前 AST 清点为 231 个顶层导出；常驻扩展增加 `WithSpawn` 与 `ErrAgentClosed` 两个顶层名字。字面删减会与 typed 合同冲突，故使用 25 个 `With*` 名和约 13 个概念组衡量消费者心智负担；原始声明数量与签名由完整 AST golden 逐项冻结。
 
 ---
 
@@ -218,7 +218,7 @@
 | R6 | 大挪移 PR 过大不可评审 | 高/中 | PRE 独立验收提交；阻断级合同修复与单管线收敛作为 MOVE 前置门禁；之后 MOVE → DELETE → RENAME 每波独立 CI 绿 |
 | R7 | v0 用户升级断崖 | —/中 | migration guide 覆盖 66 选项逐一映射；v0.x tag 冻结可长期 pin |
 | R8 | P0.2 波及面 ≈ 全根包 32 个非测试文件（合同类型必须随 engine 迁移并别名回指，否则依赖成环） | 高/中 | ✅ 已兑现：p0-inventory.md 为路线图分四批推进，两次中断均无损恢复 |
-| R9 | ✅ 已裁决（P4.9 前置检查完成）：`PersistentProcess` 确认只在 `cl/opt_examples`（claude/ 相对 main 分歧 17 文件 +2407 行，是完整的常驻进程复用 feature——batch/streaming/HITL 三路，4ac64f3——非单个开关字段）。**裁决**：不移植，v1.0.0 范围外。P4.9 的 team-agent-workflow 示例按本分支现有进程模型落地；最终 RENAME 删除所有未实现注释开关。该 feature 是 Claude Driver 的独立优化，不构成 v1 API 发布阻塞；若未来重提，必须作为独立设计、实现和验收工作处理 | — |
+| R9 | ✅ 2026-07-29 重新裁决并落地：按明确需求把 Claude、CodeBuddy、Codex 常驻能力迁入 v1 单管线；默认常驻，`WithSpawn()` 强制单次进程，`Agent.Close` 统一回收，Cursor 明确不支持。旧中央 SDK/Session/Start/双事件流未迁入；真实 CLI BDD 由双门保护。实现与依赖记录见 `docs/workstream-persistent-process-e2e.md` | — |
 | R10 | staging 已形成第二套执行编排，MOVE 会把旁路固化为 v1 根合同 | 高/高 | takeover audit 逐项关闭；以跨 `Run`/`Stream`/`Thread` 的同构结果、checkpoint、取消和背压合同测试证明单管线 |
 
 ---

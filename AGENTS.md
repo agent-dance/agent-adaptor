@@ -138,6 +138,15 @@ func New(d driver.Driver, opts ...Option) *Agent
 - Thread 只是在统一管线中增加状态协调阶段，不得复制执行管线。
 - bridges、hosttools、structured output 和 Inspect 不得产生第二套执行入口或默认值语义。
 
+进程生命周期合同：
+
+- Claude、CodeBuddy 与 Codex 对显式 Thread 默认允许复用常驻进程；Cursor 与无状态 Agent 调用仍逐轮启动。
+- `WithSpawn()` 是双作用域选项，显式强制使用本轮新进程；该进程不得注册为后续轮次的常驻 writer。
+- 常驻只是 Driver 内部 transport 生命周期选择，不得形成平行执行入口、事件流或结果合同。
+- `Agent.Close(ctx)` 必须幂等回收 Driver 管理的全部常驻进程；Close 开始后所有 Agent/Thread 新运行稳定返回 `ErrAgentClosed`。
+- Thread record 重绑、配置漂移、临时单次形态和预热之间必须保持单 writer：旧进程完成有界退出后才可启动 replacement。
+- prompt 交付前的常驻启动失败可以安全回退一次；prompt 可能已经交付后不得自动重放。
+
 ## 6. Thread 语义
 
 默认无状态。只有显式注入 `WithThreadStore(store)` 后才启用有状态对话。
@@ -378,7 +387,7 @@ v1 已完成干净切换，仓库不保留双栈。PRE、CORRECTNESS、REHOME/RE
 - Event 顺序、关闭、Cancel、blocking/drop 背压与 Approval exactly-once race 测试通过
 - Result 各层在 Run 与 Stream.Result 上逐字段等价
 - 所有 examples 编译，fake-driver 示例可执行
-- 根包 godoc 以六个核心名词开篇，24 个 `With*` 名与约 13 个核心概念组的心智负担目标达成；这是对批准草稿“~35 个 raw exports”自相矛盾口径的显式设计勘误，依据与 229 个实际导出的构成记录在 `docs/v1-takeover-audit.md` §0.1；其他构造器、枚举/error/DTO/alias 等原始声明由完整 AST golden 冻结
+- 根包 godoc 以六个核心名词开篇，25 个 `With*` 名与约 13 个核心概念组的心智负担目标达成；新增的 `WithSpawn` 是常驻进程默认语义的唯一显式反向开关；raw exports 的实际构成记录在 `docs/v1-takeover-audit.md` §0.1，其他构造器、枚举/error/DTO/alias 等原始声明由完整 AST golden 冻结
 - README、API reference、usage、streaming、A2A、structured output、migration guide 与代码一致
 - 无 TODO、无死代码、无临时 V1 后缀、无过期兼容入口
 - CHANGELOG 与实际 breaking changes 一致

@@ -548,6 +548,17 @@ Thread key 是宿主提供的单一、不透明字符串，SDK 会逐字保存�
 
 同一 Thread 同时只允许一个持有效 lease 的运行。`NewThread`、`Fork`、resume reject fallback 和 checkpoint 持久化都遵守原子更新语义；失败时不会覆盖先前健康的 active 记录。
 
+### 常驻进程配置
+
+旧分支中 provider `CommonConfig.PersistentProcess` 的布尔开关不再存在：Claude、CodeBuddy 和 Codex 对显式 Thread 默认允许常驻复用，Cursor 与无状态 Agent 调用仍逐轮启动。
+
+- 旧 `PersistentProcess: true`：删除该字段即可。
+- 旧 `PersistentProcess: false`：在 `adaptor.New` 中加入 `adaptor.WithSpawn()`。
+- 只要求某一轮使用新进程：把 `adaptor.WithSpawn()` 作为该次 `Run`/`Stream` 的 `CallOption`。
+- 旧中央对象的 `Close(ctx)`：改为对每个 `*adaptor.Agent` 调用幂等的 `agent.Close(ctx)`；Close 开始后的新运行匹配 `adaptor.ErrAgentClosed`。
+
+这只是 Driver 内部进程生命周期选择；不要增加新的执行入口或事件通道。`Run`/`Stream.Result()` 的 Result、error、Raw、Transcript、Services 和 checkpoint 合同保持一致。
+
 ## 7. Inspector、bridges 与 hosttools
 
 ### 7.1 Inspector

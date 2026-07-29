@@ -18,6 +18,7 @@ This release line is a clean v1 cutover from the `v0.12.0` public baseline. It h
 - Public `skill`, `mcp`, `profile`, `threadstore`, and `memory` vocabularies.
 - Top-level SSE, AG-UI, A2A, and subagent-stream bridges; an A2A client; optional delegation and event-recorder host tools.
 - A Driver conformance suite for built-in and third-party integrations.
+- Persistent provider processes for Claude, CodeBuddy, and Codex Threads, plus a guarded real-CLI Godog BDD suite.
 
 ### Changed
 
@@ -31,6 +32,7 @@ This release line is a clean v1 cutover from the `v0.12.0` public baseline. It h
 - Driver protocol parsers are solely responsible for transcript, output, terminal payload, and checkpoint validity.
 - Runtime-service MCP publication uses typed fields rather than string metadata conventions.
 - Bridges and host tools consume only the public Runner, Stream, Event, and Result contracts.
+- Stateful Threads use persistent provider processes by default where declared; `WithSpawn()` opts an Agent or one call into a fresh process, and `Agent.Close` reaps owned processes.
 
 ### Removed
 
@@ -48,6 +50,7 @@ This release line is a clean v1 cutover from the `v0.12.0` public baseline. It h
 - Preserved complete raw stdout, stderr, transcript, and official provider terminal payloads, including Codex app-server runs.
 - Hardened Driver lifecycle, sequence ownership, transcript mirroring, capability truthfulness, checkpoint codec, and approval contracts in the conformance suite.
 - Closed protocol-fidelity gaps across SSE, AG-UI, A2A, and subagent-stream bridges.
+- Added single-writer handoff, pre-delivery-only fallback, idle reaping, idempotent Close, and cross-turn app-server/control-channel reuse tests.
 
 ### Migration
 

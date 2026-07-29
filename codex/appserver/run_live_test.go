@@ -159,3 +159,60 @@ func TestAppServerHaiku(t *testing.T) {
 	}
 	t.Logf("text=%q deltas=%d usage=%+v", res.Text, deltas, res.Usage)
 }
+
+func TestAppServerPersistentTwoTurns(t *testing.T) {
+	if os.Getenv("AGENT_ADAPTOR_LIVE_CONFORMANCE") != "1" {
+		t.Skip("set AGENT_ADAPTOR_LIVE_CONFORMANCE=1 in addition to -tags codex_live")
+	}
+	if _, err := exec.LookPath("codex"); err != nil {
+		t.Skip("codex CLI not in PATH")
+	}
+	workspace := t.TempDir()
+	agent := adaptor.New(
+		codex.Driver(codex.Config{
+			CommonConfig: codex.CommonConfig{CWD: workspace},
+			Model:        "gpt-5.4",
+		}),
+		adaptor.WithThreadStore(memory.NewStore()),
+		adaptor.WithWorkspace(workspace),
+		adaptor.WithPolicy(adaptor.Policy{
+			Sandbox: adaptor.ReadOnly,
+			Approvals: adaptor.ApprovalPolicy{
+				Permission: adaptor.ApprovalAutoApprove,
+			},
+		}),
+	)
+	defer func() {
+		closeCtx, closeCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer closeCancel()
+		if err := agent.Close(closeCtx); err != nil {
+			t.Errorf("Agent.Close: %v", err)
+		}
+	}()
+	thread := agent.Thread("codex_live/persistent-two-turns")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	spawns := 0
+	for turn, prompt := range []string{
+		"Remember the exact token PERSISTENT-CODEX. Reply only ACK.",
+		"Reply only with the exact token from the previous turn.",
+	} {
+		stream := thread.Stream(ctx, prompt)
+		for event := range stream.Events() {
+			if process, ok := event.(adaptor.ProcessInfo); ok && process.Kind == adaptor.ProcessSpawn {
+				spawns++
+			}
+		}
+		result, err := stream.Result()
+		if err != nil {
+			t.Fatalf("turn %d: %v", turn+1, err)
+		}
+		if turn == 1 && !strings.Contains(result.Text, "PERSISTENT-CODEX") {
+			t.Fatalf("second turn lost conversation context: %q", result.Text)
+		}
+	}
+	if spawns != 1 {
+		t.Fatalf("two default Thread turns spawned %d app-server processes, want 1", spawns)
+	}
+}

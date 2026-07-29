@@ -198,6 +198,7 @@ type Descriptor struct {
 	MCP MCPCapability
 	Instructions InstructionsCapability
 	Workspace WorkspaceCapability
+	Process ProcessCapability
 	RunPolicyCaps RunPolicyCapabilities
 	Runtime RuntimeCapability
 	StructuredOutput StructuredOutputCapability
@@ -682,6 +683,18 @@ methodset PolicyCapabilityUnsupportedError {
 	pointer Unwrap() error
 }
 
+type ProcessCapability struct {
+	Persistent bool
+}
+
+type ProcessLifecycleDriver interface {
+	CloseProcesses(ctx context.Context) error
+}
+
+methodset ProcessLifecycleDriver {
+	value CloseProcesses(ctx context.Context) error
+}
+
 const ProfileConfigFileJSON ProfileConfigFileKind = "json"
 
 type ProfileConfigFileKind string
@@ -806,6 +819,7 @@ type Request struct {
 	Session *SessionContext
 	Metadata map[string]string
 	OutputSchema *OutputSchema
+	Spawn bool
 	ModelOverride string
 	Streaming bool
 }

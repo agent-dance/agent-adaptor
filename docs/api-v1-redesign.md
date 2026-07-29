@@ -28,7 +28,7 @@
 
 | 维度 | v0.12.0 Before | v1 最终形态 |
 |---|---:|---:|
-| 根包 `With*` 选项函数 | 66 个 | ~24 个 |
+| 根包 `With*` 选项函数 | 66 个 | 25 个 |
 | 选项类型 | 3 种（`Option`/`AgentOption`/`RunOption`，调用点无法区分） | 1 套词汇、2 个作用域（同名选项在构造处=默认值，在调用处=本次覆盖） |
 | 消费者必须理解的 ID 层级 | 4 层（ThreadID/SessionKey/SessionID/RunID） | 2 层（Thread key / Run ID） |
 | 消费运行过程的通道 | 4 种（`Events()` / `StreamEvents()` / `DecisionRequests()`+`ResolveDecision` / 3×2 typed handler） | 1 条事件流 + 1 个可选审批回调 |
@@ -88,7 +88,7 @@
 ### 2.1 包布局：按「读者」分包，而不是按「功能」分包
 
 ```
-github.com/agent-dance/agent-adaptor          → package adaptor   （应用开发者，24 个 `With*` 名 + 约 13 个核心概念组）
+github.com/agent-dance/agent-adaptor          → package adaptor   （应用开发者，25 个 `With*` 名 + 约 13 个核心概念组）
 ├── driver/                                    → SPI（适配器作者专属：Driver、RunRequest、EventSink、能力接口）
 ├── codex/  claude/  cursor/  codebuddy/       → 各驱动的 Config + Driver() 构造器（配置回归各自的包）
 ├── skill/                                     → skill.Dir / skill.FS / skill.Archive / skill.Inline / skill.Key / Provider 接口
@@ -103,9 +103,9 @@ github.com/agent-dance/agent-adaptor          → package adaptor   （应用开
 
 原则：**应用开发者只需要根包 + 一个驱动包就能完成 80% 的场景**；`skill` / `mcp` / `profile` 是需要时才 import 的「词汇扩展包」；`driver` 包把 SPI 从消费者视野里彻底移走。
 
-上述数量是心智负担指标：24 个 `With*` 名（其中 `WithEventMeta` 是 Event helper），再加 `OnApproval` / `ResumeOnly` / `Schema*` 等属于其各自概念组的小型构造器，以及 Agent、Thread、Stream、Event、Result、Driver 等约 13 个核心概念组。它不把每个枚举值、稳定 error sentinel、Event DTO 和为避免强制 import SPI 而提供的公共 alias 分别当作新概念，也不是“根包 AST 导出声明数必须 ≤35”的字面门禁。原始导出声明面由完整 AST golden 逐签名冻结，任何新增仍需显式评审。
+上述数量是心智负担指标：25 个 `With*` 名（其中 `WithEventMeta` 是 Event helper，`WithSpawn` 是默认常驻语义的唯一显式反向开关），再加 `OnApproval` / `ResumeOnly` / `Schema*` 等属于其各自概念组的小型构造器，以及 Agent、Thread、Stream、Event、Result、Driver 等约 13 个核心概念组。它不把每个枚举值、稳定 error sentinel、Event DTO 和为避免强制 import SPI 而提供的公共 alias 分别当作新概念，也不是“根包 AST 导出声明数必须 ≤35”的字面门禁。原始导出声明面由完整 AST golden 逐签名冻结，任何新增仍需显式评审。
 
-> **2026-07-27 设计勘误**：获批草稿原文确实写过“应用开发者，~35 个导出名”，实施计划也曾把“根包导出名 ≤~35”列为 P5.5 门禁；这不是原文从来没有的约束。最终 AST 机械清点为 229 个顶层导出标识符：64 个 const、35 个 var、41 个 func、89 个 type（53 个 defined type + 36 个 alias），另有 54 个具体类型导出方法。字面压到 35 会迫使删除同一设计明确要求的 typed Event/Result DTO、枚举、稳定错误、options 和跨 SPI alias，或把它们合并成不安全的字符串/`any` 接口，因此与设计自身的类型安全目标不可同时满足。接管实施将其明确修订为“24 个 `With*` 名 + 约 13 个概念组”的消费者心智门禁，同时用完整 AST golden 冻结全部 229 个声明及签名。该修订、构成和取舍也记录在 [`v1-takeover-audit.md`](./v1-takeover-audit.md)，不得再把它表述成未经说明的原始口径。
+> **2026-07-27 设计勘误；2026-07-29 常驻扩展**：首次冻结时 AST 机械清点为 229 个顶层导出标识符（64 const、35 var、41 func、89 type）和 54 个具体类型导出方法。常驻进程设计明确新增 `WithSpawn`、`ErrAgentClosed`、`Agent.Close` 与 `RunSettings.SetSpawn`，当前为 231 个顶层导出（64 const、36 var、42 func、89 type）和 56 个具体类型导出方法，消费者门禁相应为“25 个 `With*` 名 + 约 13 个概念组”。字面压到 35 仍会迫使删除 typed Event/Result DTO、枚举、稳定错误、options 和跨 SPI alias；全部当前声明及签名继续由 AST golden 冻结。构成和取舍也记录在 [`v1-takeover-audit.md`](./v1-takeover-audit.md)。
 
 根包 package name 为 `adaptor`，import path 保持 `github.com/agent-dance/agent-adaptor`。
 
@@ -144,7 +144,7 @@ res, err := agent.Run(ctx, prompt,
 
 已落地的三接口为：`Option`（`New` 接受的全集）、`CallOption`（`Run`/`Stream` 接受，**有意不嵌入** `Option`）、`SharedOption`（双作用域，同时满足两者）。作用域非法的组合双向都是编译错误（如 `WithThreadStore` 用在 `Run` 上、仅调用处选项用在 `New` 上），IDE 即时红线，godoc 的返回类型即作用域文档。16 对 `WithDefaultX/WithX` 就此消失，语义规则只有一句话：**「近处覆盖远处；skills 追加、其余替换」**。选项作用域的决策与验证记录见 [归档文档](./archive/p0-option-scope-decision.md)。
 
-核心选项词汇（全集，约 24 个）：
+核心选项词汇（全集，25 个）：
 
 | 类别 | 选项 | 作用域 |
 |---|---|---|
@@ -156,6 +156,7 @@ res, err := agent.Run(ctx, prompt,
 | 标注 | `WithMetadata(k, v)` `WithIdentity(Identity{...})` | 双 |
 | 资源 | `WithProfileResources(profile.Resources{...})` | 双 |
 | 模型 | `WithModel(m)` `WithTimeout(d)` | 双 |
+| 进程 | `WithSpawn()`（覆盖默认常驻，强制本次使用新进程） | 双 |
 | 单次 | `WithSchema[T](...)` | 仅 Run/Stream |
 | 构造 | `WithThreadStore(s)` `WithProfile(profile.Dedicated(dir))` `WithWorkspaceManager(m)` `WithSkillProvider(p)` `WithSkillMaterializer(m)` `WithServiceManager(m)` `WithEventBuffer(n)` `WithBlockingEvents()` | 仅 New |
 
@@ -887,11 +888,11 @@ leader := adaptor.New(claude.Driver(cfg), team.Option())
 
 **不该内建的一半——roleDef 的配置表（Driver / Sandbox / Instructions 字段）。** 三条理由：
 
-1. SDK 已有「配置好的 agent」的唯一通用表示：`Runner`。团队抽象消费 Runner 即可组合一切；若 SDK 再定义一个描述角色配置的结构体，字段集要么太窄（§9.7 的 Options 逃生舱问题会在 SDK 层重演，且用户无法逃生），要么膨胀成镜像全部 ~24 个选项的平行词汇——正是本次重构消灭的 `WithDefaultX`/`WithX` 双词汇病的转世。
+1. SDK 已有「配置好的 agent」的唯一通用表示：`Runner`。团队抽象消费 Runner 即可组合一切；若 SDK 再定义一个描述角色配置的结构体，字段集要么太窄（§9.7 的 Options 逃生舱问题会在 SDK 层重演，且用户无法逃生），要么膨胀成镜像全部 25 个选项的平行词汇——正是本次重构消灭的 `WithDefaultX`/`WithX` 双词汇病的转世。
 2. 现状 SDK 犯过一次同样的错：命名注册表 `WithAgent("review", binding)` + `sdk.Agent("review")` 就是内建的 roleDef-lite，§2.2 删除它的全部理由在此同样成立。
 3. 判据一句话：**进 SDK 的是协议与生命周期（目标注册、sidecar、事件桥、A2A 发布），留在宿主的是业务形状（有哪些角色、每个角色怎么配、何时委托）。**
 
-顺带澄清命名：`team.Option()` 不是根包的 `adaptor.WithTeam()`——根包不知道「团队」这个词。该选项由 `delegation` 包发行（`Option` 是接口，生态包可自行扩展），根包词汇表维持 ~24 个不动。
+顺带澄清命名：`team.Option()` 不是根包的 `adaptor.WithTeam()`——根包不知道「团队」这个词。该选项由 `delegation` 包发行（`Option` 是接口，生态包可自行扩展），根包词汇表维持 25 个不动。
 
 ---
 

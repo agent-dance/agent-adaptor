@@ -78,7 +78,7 @@ func engineCommonConfig(c CommonConfig) engine.CommonConfig {
 // the result to adaptor.New. Validation remains deferred to run/probe time;
 // construction only snapshots configuration and performs no environment I/O.
 func Driver(cfg Config) driver.Driver {
-	return configuredDriver{cfg: cloneConfig(cfg)}
+	return configuredDriver{adapter: adapter{persistent: newPersistentPool()}, cfg: cloneConfig(cfg)}
 }
 
 // configuredDriver couples the stateless low-level adapter with the config it

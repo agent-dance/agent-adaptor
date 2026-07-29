@@ -102,7 +102,7 @@ func TestClaudeRunPreservesUnclassifiedProcessOutcome(t *testing.T) {
 		},
 		{
 			name:        "cancel before provider terminal",
-			posixBody:   "#!/bin/sh\ncat >/dev/null\nprintf 'partial stdout\\n'\nprintf 'partial stderr\\n' >&2\nsleep 30\n",
+			posixBody:   "#!/bin/sh\ncat >/dev/null\nprintf 'partial stdout\\n'\nprintf 'partial stderr\\n' >&2\nexec sleep 30\n",
 			windowsBody: "@echo off\r\nset /p X=\r\necho partial stdout\r\n>&2 echo partial stderr\r\nping -n 31 127.0.0.1 >nul\r\n",
 			cancel:      true,
 		},
@@ -111,27 +111,31 @@ func TestClaudeRunPreservesUnclassifiedProcessOutcome(t *testing.T) {
 			home := t.TempDir()
 			command := testutil.WriteCommand(t, home, "fake-claude-outcome", tc.posixBody, tc.windowsBody)
 			ctx := context.Background()
+			var sink agentadaptor.EventSink = &testutil.EventRecorder{}
 			if tc.cancel {
 				var cancel context.CancelFunc
-				ctx, cancel = context.WithTimeout(ctx, 500*time.Millisecond)
+				ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
 				defer cancel()
+				// stderr is written after stdout in the fixture, so observing it
+				// proves both raw streams have been produced before cancellation.
+				sink = testutil.NewChunkCancelRecorder(cancel, "stderr")
 			}
 			res, err := (adapter{}).Run(ctx, agentadaptor.Request{
 				Prompt:    "go",
 				Config:    Config{CommonConfig: CommonConfig{Command: command, CWD: home}},
 				Workspace: agentadaptor.WorkspaceLease{CWD: home},
-			}, &testutil.EventRecorder{})
+			}, sink)
 			if err != nil {
 				t.Fatalf("Driver.Run error = %v", err)
 			}
 			if res.ExitCode == 0 || res.Failure != nil || res.Checkpoint != nil {
 				t.Fatalf("outcome = %+v, want abnormal fields with no provider classification/checkpoint", res)
 			}
-			if tc.cancel && !res.TimedOut {
-				t.Fatalf("TimedOut = false for context deadline outcome: %+v", res)
+			if tc.cancel && res.TimedOut {
+				t.Fatalf("TimedOut = true for explicit cancellation outcome: %+v", res)
 			}
-			if tc.cancel && !errors.Is(ctx.Err(), context.DeadlineExceeded) {
-				t.Fatalf("context error = %v, want deadline", ctx.Err())
+			if tc.cancel && !errors.Is(ctx.Err(), context.Canceled) {
+				t.Fatalf("context error = %v, want cancellation after observed chunks", ctx.Err())
 			}
 			if res.RawStreams == nil || !strings.Contains(res.RawStreams.Stdout, "partial stdout") || !strings.Contains(res.RawStreams.Stderr, "partial stderr") {
 				t.Fatalf("raw streams = %#v", res.RawStreams)

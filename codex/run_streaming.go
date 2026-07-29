@@ -26,10 +26,25 @@ func runAppServer(
 	effectiveBindings []driver.EnvBinding,
 	preparedInstructions profileinstructions.Prepared,
 ) (driver.Response, error) {
+	opts, err := buildAppServerOptions(req, cfg, command, effectiveBindings, preparedInstructions)
+	if err != nil {
+		return driver.Response{}, err
+	}
+	result, err := appserver.Run(ctx, opts, sink)
+	return finishAppServerResult(req, result, chooseCWD(cfg.CommonConfig, req.Workspace)), err
+}
+
+func buildAppServerOptions(
+	req driver.Request,
+	cfg Config,
+	command string,
+	effectiveBindings []driver.EnvBinding,
+	preparedInstructions profileinstructions.Prepared,
+) (appserver.Options, error) {
 	effectiveCWD := chooseCWD(cfg.CommonConfig, req.Workspace)
 
 	if err := validateCodexSessionGuard(req, effectiveCWD, req.ProfilePayload.Fingerprint); err != nil {
-		return driver.Response{}, err
+		return appserver.Options{}, err
 	}
 
 	prompt := req.Prompt
@@ -45,11 +60,11 @@ func runAppServer(
 
 	resumeID, forkID := codexAppServerThreadIDs(req.Session)
 	if err := validateCodexForkRequest(req); err != nil {
-		return driver.Response{}, err
+		return appserver.Options{}, err
 	}
 	extraArgs, err := codexAppServerExtraArgs(cfg.ExtraArgs, req.Policy)
 	if err != nil {
-		return driver.Response{}, err
+		return appserver.Options{}, err
 	}
 	model, effort, serviceTier := codexAppServerConfigProjection(cfg)
 
@@ -78,8 +93,10 @@ func runAppServer(
 		opts.OutputSchema = req.OutputSchema
 	}
 
-	result, err := appserver.Run(ctx, opts, sink)
+	return opts, nil
+}
 
+func finishAppServerResult(req driver.Request, result driver.Response, effectiveCWD string) driver.Response {
 	// Stamp CWD + workspace id onto the checkpoint so resume validation
 	// works the same way as in the exec --json path.
 	if result.Checkpoint != nil && result.Checkpoint.State != nil {
@@ -99,7 +116,7 @@ func runAppServer(
 		result.Metadata = map[string]string{}
 	}
 	result.Metadata["transport"] = "app-server"
-	return result, err
+	return result
 }
 
 func codexAppServerThreadIDs(session *driver.SessionContext) (resumeID, forkID string) {

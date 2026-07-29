@@ -42,7 +42,7 @@ func TestDescriptorAdvertisesStructuredOutputCapabilities(t *testing.T) {
 	if !caps.JSONSchemaNative || !caps.JSONSchemaPromptValidate || !caps.WorksWithRun {
 		t.Fatalf("unexpected Codex structured-output capability: %#v", caps)
 	}
-	if caps.WorksWithStreaming {
+	if !caps.WorksWithStreaming {
 		t.Fatalf("Codex app-server output-schema support is not advertised: %#v", caps)
 	}
 }
@@ -187,7 +187,7 @@ func TestCodexRunAddsOutputSchemaArgAndParsesStructuredResult(t *testing.T) {
 	}
 	argFile := filepath.Join(home, "args.txt")
 	command := testutil.WriteCommand(t, home, "fake-codex-structured",
-		"#!/bin/sh\nset -eu\nprintf '%s\\n' \"$@\" > \"$ARG_FILE\"\nschema=''\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = '--output-schema' ]; then shift; schema=\"$1\"; break; fi\n  shift\ndone\n[ -s \"$schema\" ]\ncat >/dev/null\nprintf '{\"type\":\"thread.started\",\"thread_id\":\"codex-session\"}\\n'\nprintf '{\"type\":\"item.completed\",\"item\":{\"id\":\"msg-1\",\"type\":\"agent_message\",\"text\":\"{\\\"project_name\\\":\\\"agent-adaptor\\\"}\"}}\\n'\nprintf '{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":4,\"output_tokens\":2}}\\n'\n",
+		"#!/bin/sh\nset -eu\nprintf '%s\\n' \"$@\" > \"$ARG_FILE\"\nschema=''\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = '--output-schema' ]; then shift; schema=\"$1\"; break; fi\n  shift\ndone\n[ -s \"$schema\" ]\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"thread.started\",\"thread_id\":\"codex-session\"}'\nprintf '%s\\n' '{\"type\":\"item.completed\",\"item\":{\"id\":\"msg-1\",\"type\":\"agent_message\",\"text\":\"{\\\"project_name\\\":\\\"agent-adaptor\\\"}\"}}'\nprintf '%s\\n' '{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":4,\"output_tokens\":2}}'\n",
 		"@echo off\r\nsetlocal enabledelayedexpansion\r\n> \"%ARG_FILE%\" echo %*\r\nset \"NEXT=\"\r\nset \"SCHEMA=\"\r\nfor %%A in (%*) do (\r\n  if defined NEXT (\r\n    set \"SCHEMA=%%~A\"\r\n    set \"NEXT=\"\r\n  )\r\n  if \"%%~A\"==\"--output-schema\" set \"NEXT=1\"\r\n)\r\nif not exist \"!SCHEMA!\" exit /b 3\r\nfor %%S in (\"!SCHEMA!\") do if %%~zS LEQ 0 exit /b 4\r\necho {\"type\":\"thread.started\",\"thread_id\":\"codex-session\"}\r\necho {\"type\":\"item.completed\",\"item\":{\"id\":\"msg-1\",\"type\":\"agent_message\",\"text\":\"{\\\"project_name\\\":\\\"agent-adaptor\\\"}\"}}\r\necho {\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":4,\"output_tokens\":2}}\r\n",
 	)
 
@@ -212,7 +212,7 @@ func TestCodexRunAddsOutputSchemaArgAndParsesStructuredResult(t *testing.T) {
 		t.Fatalf("expected --output-schema in args, got %s", string(rawArgs))
 	}
 	if result.StructuredOutput == nil || string(result.StructuredOutput.RawJSON) != `{"project_name":"agent-adaptor"}` {
-		t.Fatalf("expected native structured output, got %#v", result.StructuredOutput)
+		t.Fatalf("expected native structured output, got %#v (output=%q raw=%#v transcript=%#v failure=%#v)", result.StructuredOutput, result.Output, result.RawStreams, result.Transcript, result.Failure)
 	}
 	if !result.StructuredOutput.Valid || len(result.StructuredOutput.ValidationErrors) != 0 || result.StructuredOutput.SchemaHash == "" {
 		t.Fatalf("expected direct Driver response to use core schema validation, got %#v", result.StructuredOutput)

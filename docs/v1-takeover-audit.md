@@ -49,9 +49,9 @@
 
 批准的 Claude 草稿原文写过“应用开发者，~35 个导出名”，实施计划 P5.5 也曾写“根包导出名 ≤~35”。最终文档不能通过改写句子假装这个字面门禁从未存在。
 
-完整 AST 机械清点得到根包 229 个顶层导出标识符：64 个 const、35 个 var、41 个 func、89 个 type（53 个 defined type、36 个 alias），另有 54 个具体类型导出方法。它们的主体不是 229 套平行执行入口，而是同一设计同时要求的 typed Event/Result/approval/profile/service DTO、枚举、稳定 error sentinel、options、小型 schema/approval constructors，以及避免消费者强制 import `driver` SPI 的 alias。若把 raw declaration 数字压到 35，必须删除这些已批准的类型安全合同，或退回 string/`any`/巨型结构体；这与 v1 的生产级、强类型和可维护性目标自相矛盾。
+首次冻结的完整 AST 机械清点得到根包 229 个顶层导出标识符：64 个 const、35 个 var、41 个 func、89 个 type（53 个 defined type、36 个 alias），另有 54 个具体类型导出方法。2026-07-29 常驻进程扩展明确新增 `WithSpawn`、`ErrAgentClosed`、`Agent.Close` 与 `RunSettings.SetSpawn`；当前为 231 个顶层导出（64 const、36 var、42 func、89 type）和 56 个具体类型导出方法。它们的主体不是平行执行入口，而是同一设计要求的 typed Event/Result/approval/profile/service DTO、枚举、稳定 error sentinel、options、小型 schema/approval constructors，以及避免消费者强制 import `driver` SPI 的 alias。若把 raw declaration 数字压到 35，必须删除这些已批准的类型安全合同，或退回 string/`any`/巨型结构体；这与 v1 的生产级、强类型和可维护性目标自相矛盾。
 
-因此接管实施作出并公开记录如下修订：消费者 API 的量化门禁是 **24 个 `With*` 名 + 约 13 个核心概念组**；全部 229 个 raw exports 的种类、字段、tag、alias/defined 区别、const 值、函数/方法/interface 签名则由 `testdata/root_api.golden` 的完整 AST freeze 守卫。授权依据是用户要求完整实现 Claude v1、接受正确性修复并以生产级质量收口；该授权不应被解释为可以删除同一 v1 设计要求的 typed 合同。任何未来新增仍必须显式评审并更新 golden。本段是设计勘误，不是对原验收线的静默移动。
+因此当前消费者 API 的量化门禁是 **25 个 `With*` 名 + 约 13 个核心概念组**；全部 231 个 raw exports 的种类、字段、tag、alias/defined 区别、const 值、函数/方法/interface 签名由 `testdata/root_api.golden` 的完整 AST freeze 守卫。第 25 个名字 `WithSpawn` 是默认常驻语义的唯一显式反向开关，不形成第二条执行管线。任何未来新增仍必须显式评审并更新 golden。
 
 ### 0.2 最终本地冻结证据（推送前）
 

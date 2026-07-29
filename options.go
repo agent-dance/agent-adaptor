@@ -65,6 +65,7 @@ type RunSettings struct {
 	identity  *Identity
 	policy    *Policy
 	approval  ApprovalHandler
+	spawn     bool
 
 	// instructions is the extra instruction bundle handed to the driver.
 	// instructionsSet records an explicit write (even a clearing one), which
@@ -127,6 +128,9 @@ func (s *RunSettings) SetModel(m string) { s.model = strings.TrimSpace(m) }
 // SetTimeout replaces the wall-clock budget for one run. Zero means no
 // SDK-imposed deadline.
 func (s *RunSettings) SetTimeout(d time.Duration) { s.timeout = d }
+
+// SetSpawn forces a fresh provider process for the target scope.
+func (s *RunSettings) SetSpawn() { s.spawn = true }
 
 // SetInstructions replaces the extra instruction text handed to the driver
 // and declares the instructions resource as host-managed. Empty text clears
@@ -409,6 +413,14 @@ func WithModel(m string) SharedOption {
 // context.DeadlineExceeded.
 func WithTimeout(d time.Duration) SharedOption {
 	return sharedOptionFunc(func(s *RunSettings) { s.SetTimeout(d) })
+}
+
+// WithSpawn forces a fresh provider process instead of reusing the driver's
+// default persistent process. In New it applies to every invocation; in
+// Run/Stream it overrides this invocation only. Stateless Agent runs and
+// drivers without persistent-process support already spawn regardless.
+func WithSpawn() SharedOption {
+	return sharedOptionFunc(func(s *RunSettings) { s.SetSpawn() })
 }
 
 // WithInstructions supplies extra instruction text alongside the prompt.

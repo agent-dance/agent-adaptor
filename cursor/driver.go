@@ -45,6 +45,7 @@ func (adapter) Descriptor() driver.Descriptor {
 		MCP:          driver.MCPCapability{Supported: true, Stdio: true, HTTP: true, SSE: true},
 		Instructions: driver.InstructionsCapability{Supported: true},
 		Workspace:    driver.WorkspaceCapability{Supported: true},
+		Process:      driver.ProcessCapability{Persistent: false},
 		RunPolicyCaps: driver.RunPolicyCapabilities{
 			Isolation: false, WebSearch: false, Browser: false,
 			Permission: driver.HumanDecisionSupport{Ask: false, AutoApprove: true, AutoReject: false, Retry: false},

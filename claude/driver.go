@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -35,7 +36,16 @@ func jsonMarshalInteractive(v any) ([]byte, error) {
 // DriverType is the stable descriptor type for the built-in Claude driver.
 const DriverType = "claude"
 
-type adapter struct{}
+type adapter struct {
+	persistent *persistentPool
+}
+
+func (a adapter) CloseProcesses(ctx context.Context) error {
+	if a.persistent == nil {
+		return nil
+	}
+	return a.persistent.close(ctx)
+}
 
 // StreamCapability declares Claude Code stream-json capabilities when
 // --include-partial-messages is enabled.
@@ -69,6 +79,7 @@ func (adapter) Descriptor() driver.Descriptor {
 		MCP:          driver.MCPCapability{Supported: true, Stdio: true, HTTP: true, SSE: true},
 		Instructions: driver.InstructionsCapability{Supported: true},
 		Workspace:    driver.WorkspaceCapability{Supported: true},
+		Process:      driver.ProcessCapability{Persistent: true},
 		RunPolicyCaps: driver.RunPolicyCapabilities{
 			Isolation: false, WebSearch: false, Browser: true,
 			// Interactive mode uses stdio permission prompting
@@ -319,7 +330,7 @@ func (adapter) SyncProfileResources(ctx context.Context, cfg any, _ driver.Agent
 	return snapshot, nil
 }
 
-func (adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSink) (driver.Response, error) {
+func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSink) (driver.Response, error) {
 	cfg := readConfig(req.Config)
 	if err := validateClaudeSessionRequest(req); err != nil {
 		return driver.Response{}, err
@@ -408,6 +419,53 @@ func (adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSin
 		rawPrompt = prefix + "\n\n" + rawPrompt
 	}
 
+	var writer *persistentWriter
+	resumeID := claudeResumeID(req)
+	if a.persistent != nil && persistentSessionKey(req) != "" && runtime.GOOS != "windows" {
+		writer = a.persistent.lockWriter(persistentWriterKey(req))
+		defer writer.release()
+	}
+	chatSpec := persistentSpec{
+		command: command, model: modelFlag, effort: string(cfg.Effort),
+		extraArgs: append([]string(nil), withoutManagedClaudeArgs(cfg.ExtraArgs)...),
+		cwd:       effectiveCWD, env: append([]driver.EnvBinding(nil), effectiveEnv...),
+		skipPerms: req.Policy.HumanDecision.Permission == driver.HumanDecisionAutoApprove,
+		browser:   req.Policy.Browser == driver.FeatureAllow,
+		streaming: req.Streaming && !interactive, interactive: interactive,
+		resumeID: resumeID, engineID: persistentSessionKey(req), previousID: persistentPreviousSessionKey(req), prompt: rawPrompt,
+		profileFingerprint:  req.ProfilePayload.Fingerprint,
+		settingsFingerprint: claudeSettingsFingerprint(bindings, effectiveCWD, effectiveProfile.Dir),
+		commandFingerprint:  commandFileFingerprint(command),
+		gracePeriod:         cfg.GracePeriod,
+	}
+	if writer != nil && !req.Spawn && persistentEligible(cfg, req) {
+		pparser := newClaudeParser(sink)
+		pparser.setHITLContext(req.RunID, req.Policy.HumanDecision)
+		if req.Streaming || interactive {
+			pparser.enableStreaming(req.RunID)
+		}
+		var bind interactiveBinder
+		if interactive {
+			decisionSink, ok := sink.(driver.DecisionCapableSink)
+			if !ok {
+				return driver.Response{}, errClaudeInteractiveSinkRequired
+			}
+			bind = func(stdin interactiveStdin) { pparser.enableInteractive(ctx, decisionSink, stdin) }
+		}
+		praw, persistentErr := writer.run(ctx, chatSpec, sink, pparser, bind)
+		if persistentErr == nil {
+			praw.Terminal = pparser.terminal
+			return buildClaudeResponse(req, pparser, praw, 0, "", false, reportedModel, effectiveCWD, profileFingerprint)
+		}
+		if !errors.Is(persistentErr, errPersistentFallback) {
+			return driver.Response{}, persistentErr
+		}
+	} else if writer != nil {
+		if err := writer.suspendAndWait(resumeID, persistentSessionKey(req), persistentPreviousSessionKey(req)); err != nil {
+			return driver.Response{}, err
+		}
+	}
+
 	parser := newClaudeParser(sink)
 	parser.setHITLContext(req.RunID, req.Policy.HumanDecision)
 	if req.Streaming || interactive {
@@ -456,13 +514,39 @@ func (adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSin
 	}
 	parser.finalize()
 	raw := driver.RawStreams{Stdout: result.RawStreams.Stdout, Stderr: result.RawStreams.Stderr, Terminal: parser.terminal}
+	driverResult, err := buildClaudeResponse(req, parser, raw, result.ExitCode, result.Signal, result.TimedOut, reportedModel, effectiveCWD, profileFingerprint)
+	if err != nil {
+		return driver.Response{}, err
+	}
+	if writer != nil && !req.Spawn && persistentPreWarmEligible(cfg, req) &&
+		driverResult.ExitCode == 0 && driverResult.Failure == nil &&
+		driverResult.Checkpoint != nil && driverResult.Checkpoint.Valid && driverResult.Checkpoint.State != nil {
+		prewarm := chatSpec
+		prewarm.prompt = ""
+		prewarm.resumeID = driverResult.Checkpoint.State.ResumeID
+		_ = writer.preWarm(prewarm, sink)
+	}
+	return driverResult, nil
+}
+
+func buildClaudeResponse(
+	req driver.Request,
+	parser *claudeParser,
+	raw driver.RawStreams,
+	exitCode int,
+	signal string,
+	timedOut bool,
+	reportedModel string,
+	effectiveCWD string,
+	profileFingerprint string,
+) (driver.Response, error) {
 	if parser.interactiveErr != nil {
 		failure := &driver.RunFailure{Code: driver.FailureAgentError, Message: parser.interactiveErr.Error()}
-		parser.completeStream(failure, result.ExitCode, result.Signal, result.TimedOut)
+		parser.completeStream(failure, exitCode, signal, timedOut)
 		return driver.Response{}, parser.interactiveErr
 	}
 	if err := validateClaudeForkOutcome(req, parser); err != nil {
-		parser.completeStream(&driver.RunFailure{Code: driver.FailureAgentError, Message: err.Error()}, result.ExitCode, result.Signal, result.TimedOut)
+		parser.completeStream(&driver.RunFailure{Code: driver.FailureAgentError, Message: err.Error()}, exitCode, signal, timedOut)
 		return driver.Response{}, err
 	}
 	if req.Session != nil && req.Session.State != nil && strings.TrimSpace(req.Session.State.ResumeID) != "" &&
@@ -472,10 +556,10 @@ func (adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSin
 			reason = "claude resume session " + strconv.Quote(req.Session.State.ResumeID) + " is unavailable"
 		}
 		err := &engine.ResumeRejectedError{Reason: reason}
-		parser.completeStream(&driver.RunFailure{Code: driver.FailureAgentError, Message: err.Error()}, result.ExitCode, result.Signal, result.TimedOut)
+		parser.completeStream(&driver.RunFailure{Code: driver.FailureAgentError, Message: err.Error()}, exitCode, signal, timedOut)
 		return driver.Response{}, err
 	}
-	failure := parser.failureForOutcome(result.ExitCode, result.Signal, result.TimedOut)
+	failure := parser.failureForOutcome(exitCode, signal, timedOut)
 	var structuredOutput *driver.StructuredOutput
 	if req.OutputSchema != nil {
 		source := driver.StructuredOutputSourceNative
@@ -492,7 +576,7 @@ func (adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSin
 			failure,
 		)
 	}
-	checkpoint := parser.checkpointForOutcome(result.ExitCode, result.Signal, result.TimedOut, failure)
+	checkpoint := parser.checkpointForOutcome(exitCode, signal, timedOut, failure)
 	if checkpoint != nil && checkpoint.State != nil {
 		checkpoint.State.Data = map[string]string{
 			driver.SessionParamCWD:                effectiveCWD,
@@ -500,15 +584,15 @@ func (adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSin
 			driver.SessionParamProfileFingerprint: profileFingerprint,
 		}
 	}
-	parser.completeStream(failure, result.ExitCode, result.Signal, result.TimedOut)
+	parser.completeStream(failure, exitCode, signal, timedOut)
 
 	return driver.Response{
 		Output:           parser.buildOutput(),
 		RawStreams:       &raw,
 		Transcript:       parser.transcript,
-		ExitCode:         result.ExitCode,
-		Signal:           result.Signal,
-		TimedOut:         result.TimedOut,
+		ExitCode:         exitCode,
+		Signal:           signal,
+		TimedOut:         timedOut,
 		Usage:            parser.usage,
 		Checkpoint:       checkpoint,
 		Provider:         "anthropic",
@@ -518,6 +602,64 @@ func (adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSin
 		RuntimeServices:  driverutil.RuntimeReportsFromRefs(req.Runtime.Ensured, req.Agent),
 		Failure:          failure,
 	}, nil
+}
+
+func persistentSessionKey(req driver.Request) string {
+	if req.Session == nil {
+		return ""
+	}
+	return strings.TrimSpace(req.Session.EngineSessionID)
+}
+
+func persistentPreviousSessionKey(req driver.Request) string {
+	if req.Session == nil {
+		return ""
+	}
+	return strings.TrimSpace(req.Session.PreviousID)
+}
+
+func persistentWriterKey(req driver.Request) string {
+	if resumeID := claudeResumeID(req); resumeID != "" {
+		return persistentResumeWriterKey(resumeID)
+	}
+	if engineID := persistentSessionKey(req); engineID != "" {
+		return "engine:" + engineID
+	}
+	return ""
+}
+
+func claudeResumeID(req driver.Request) string {
+	if req.Session == nil || req.Session.State == nil {
+		return ""
+	}
+	return strings.TrimSpace(req.Session.State.ResumeID)
+}
+
+func persistentEligible(cfg Config, req driver.Request) bool {
+	if persistentSessionKey(req) == "" || cfg.MaxTurnsPerRun > 0 ||
+		(req.Session != nil && req.Session.Mode == driver.SessionFork) {
+		return false
+	}
+	if req.OutputSchema != nil && req.OutputSchema.Mode != driver.StructuredOutputPromptValidate {
+		return false
+	}
+	for _, spec := range req.Runtime.Requested {
+		if spec.Lifecycle != driver.RuntimeLifecycleShared {
+			return false
+		}
+	}
+	for _, ref := range req.Runtime.Ensured {
+		if ref.Lifecycle != driver.RuntimeLifecycleShared {
+			return false
+		}
+	}
+	return true
+}
+
+func persistentPreWarmEligible(cfg Config, req driver.Request) bool {
+	copyReq := req
+	copyReq.OutputSchema = nil
+	return persistentEligible(cfg, copyReq)
 }
 
 func validateClaudeSessionRequest(req driver.Request) error {

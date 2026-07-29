@@ -36,10 +36,11 @@ type parser struct {
 	terminalSuccess   bool
 	protocolMalformed bool
 
-	stream       *streamingState
-	deltaBuffers map[string]*strings.Builder
-	deltaOrder   []string
-	control      *controlState
+	stream                  *streamingState
+	deltaBuffers            map[string]*strings.Builder
+	deltaOrder              []string
+	control                 *controlState
+	reconstructedTranscript bool
 
 	pendingFailure *driver.RunFailure
 
@@ -56,6 +57,11 @@ func (p *parser) enableStreaming(runID string) {
 	}
 	p.runID = runID
 	p.stream = newStreamingState(p.sink, runID, p)
+}
+
+func (p *parser) enableOutputReconstruction(runID string) {
+	p.runID = runID
+	p.stream = newStreamingState(nil, runID, p)
 }
 
 func (p *parser) appendTextDelta(messageID, delta string) {
@@ -111,6 +117,10 @@ func (p *parser) finalize() {
 		p.stderrLine.Reset()
 		p.processLine("stderr", remaining, time.Now().UTC())
 	}
+	// A terminated control process may omit both the aggregated assistant frame
+	// and a formal result after having delivered valid partial-message deltas.
+	// Preserve those official protocol deltas in the partial transcript.
+	p.emitReconstructedAssistant()
 }
 
 func (p *parser) completeStream(failure *driver.RunFailure, exitCode int, signal string, timedOut bool) {
@@ -396,6 +406,11 @@ func (p *parser) handleResult(raw string, payload map[string]any, subtype string
 	if isError {
 		transcriptText = p.errorMessage
 	}
+	// Later turns from the real control CLI can omit the aggregated assistant
+	// frame and expose the answer only through partial-message events. Keep the
+	// official terminal result authoritative for Output, while reconstructing
+	// the missing semantic transcript item before the result item.
+	p.emitReconstructedAssistant()
 	p.emit(driver.TranscriptItem{
 		Kind:    driver.TranscriptResult,
 		Subtype: subtype,
@@ -510,6 +525,28 @@ func (p *parser) buildOutput() string {
 		}
 	}
 	return ""
+}
+
+func (p *parser) reconstructedOutput() string {
+	for i := len(p.deltaOrder) - 1; i >= 0; i-- {
+		id := p.deltaOrder[i]
+		if b := p.deltaBuffers[id]; b != nil && strings.TrimSpace(b.String()) != "" {
+			return b.String()
+		}
+	}
+	return ""
+}
+
+func (p *parser) emitReconstructedAssistant() {
+	if p.reconstructedTranscript || len(p.assistantText) != 0 {
+		return
+	}
+	text := p.reconstructedOutput()
+	if strings.TrimSpace(text) == "" {
+		return
+	}
+	p.reconstructedTranscript = true
+	p.emit(driver.TranscriptItem{Kind: driver.TranscriptAssistant, Text: text})
 }
 
 func (p *parser) outputMetadata() map[string]string {

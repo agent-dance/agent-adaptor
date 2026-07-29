@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"runtime"
 	"strings"
 
 	"github.com/agent-dance/agent-adaptor/driver"
@@ -25,7 +26,16 @@ const DriverType = "codebuddy"
 // defaultCommand is the CodeBuddy CLI executable.
 const defaultCommand = "codebuddy"
 
-type adapter struct{}
+type adapter struct {
+	persistent *persistentPool
+}
+
+func (a adapter) CloseProcesses(ctx context.Context) error {
+	if a.persistent == nil {
+		return nil
+	}
+	return a.persistent.close(ctx)
+}
 
 func (adapter) StreamCapability() driver.StreamCapability {
 	return driver.StreamCapability{
@@ -72,6 +82,7 @@ func (adapter) Descriptor() driver.Descriptor {
 		MCP:          driver.MCPCapability{Supported: true, Stdio: true, HTTP: true, SSE: true},
 		Instructions: driver.InstructionsCapability{Supported: true},
 		Workspace:    driver.WorkspaceCapability{Supported: true},
+		Process:      driver.ProcessCapability{Persistent: true},
 		RunPolicyCaps: driver.RunPolicyCapabilities{
 			// CodeBuddy CLI has no controllable flag for web search or
 			// browser tooling (browser lives in the agent-browser plugin),
@@ -264,7 +275,8 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 		return driver.Response{}, err
 	}
 
-	if wantsControlTransport(req.Policy.HumanDecision) {
+	controlRequested := wantsControlTransport(req.Policy.HumanDecision)
+	if controlRequested {
 		if req.OutputSchema != nil && req.OutputSchema.Mode != driver.StructuredOutputPromptValidate {
 			return driver.Response{}, &driver.StructuredOutputUnsupportedError{
 				Driver: DriverType,
@@ -272,9 +284,73 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 				Reason: "CodeBuddy native structured output is not supported with control HITL",
 			}
 		}
-		return a.runControl(ctx, cfg, command, req, sink, prep)
 	}
-	return a.runHeadless(ctx, cfg, command, req, sink, prep)
+
+	var writer *persistentWriter
+	resumeID := codeBuddyResumeID(req)
+	if a.persistent != nil && persistentSessionKey(req) != "" && runtime.GOOS != "windows" {
+		writer = a.persistent.lockWriter(persistentWriterKey(req))
+		defer writer.release()
+	}
+	spec := persistentSpec{
+		command: command, model: requestedModelFlag(cfg), effort: string(cfg.Effort),
+		extraArgs: append([]string(nil), cfg.ExtraArgs...),
+		cwd:       prep.effectiveCWD, env: appendCodeBuddyEntrypoint(prep.env),
+		resumeID: resumeID, prompt: prep.prompt,
+		engineSessionID:     persistentSessionKey(req),
+		previousEngineID:    persistentPreviousSessionKey(req),
+		profileFingerprint:  req.ProfilePayload.Fingerprint,
+		settingsFingerprint: codeBuddySettingsFingerprint(prep.bindings, prep.effectiveCWD, prep.profileDir, cfg.ExtraArgs),
+		commandFingerprint:  commandFileFingerprint(command),
+		gracePeriod:         cfg.GracePeriod,
+	}
+	if writer != nil && !req.Spawn && persistentEligible(cfg, req) {
+		decisionSink, ok := sink.(driver.DecisionCapableSink)
+		if ok {
+			p := newParser(sink)
+			p.enablePersistentControl(ctx, decisionSink, req.RunID, req.Policy.HumanDecision, prep.prompt, resolveConfigDir(prep.bindings))
+			if req.Streaming {
+				p.enableStreaming(req.RunID)
+			} else {
+				p.enableOutputReconstruction(req.RunID)
+			}
+			raw, persistentErr := writer.run(ctx, spec, sink, p)
+			if persistentErr == nil {
+				raw.Terminal = p.terminal
+				return buildPersistentCodeBuddyResponse(req, p, raw, prep), nil
+			}
+			if !errors.Is(persistentErr, errPersistentFallback) {
+				return driver.Response{}, persistentErr
+			}
+		} else if controlRequested {
+			return driver.Response{}, errControlSinkRequired
+		} else if err := writer.suspendAndWait(resumeID, persistentSessionKey(req), persistentPreviousSessionKey(req)); err != nil {
+			return driver.Response{}, err
+		}
+	} else if writer != nil {
+		if err := writer.suspendAndWait(resumeID, persistentSessionKey(req), persistentPreviousSessionKey(req)); err != nil {
+			return driver.Response{}, err
+		}
+	}
+
+	var result driver.Response
+	if controlRequested {
+		result, err = a.runControl(ctx, cfg, command, req, sink, prep)
+	} else {
+		result, err = a.runHeadless(ctx, cfg, command, req, sink, prep)
+	}
+	if err != nil {
+		return driver.Response{}, err
+	}
+	if writer != nil && !req.Spawn && persistentPreWarmEligible(cfg, req) &&
+		result.ExitCode == 0 && result.Failure == nil &&
+		result.Checkpoint != nil && result.Checkpoint.Valid && result.Checkpoint.State != nil {
+		prewarm := spec
+		prewarm.prompt = ""
+		prewarm.resumeID = result.Checkpoint.State.ResumeID
+		_ = writer.preWarm(prewarm, sink)
+	}
+	return result, nil
 }
 
 // runPrep carries the resolved per-run inputs shared by both engines.
@@ -282,6 +358,7 @@ type runPrep struct {
 	bindings      []driver.EnvBinding
 	env           []driver.EnvBinding
 	effectiveCWD  string
+	profileDir    string
 	prompt        string
 	reportedModel string
 }
@@ -355,9 +432,31 @@ func (a adapter) prepareRun(ctx context.Context, cfg Config, req driver.Request)
 		bindings:      bindings,
 		env:           env,
 		effectiveCWD:  effectiveCWD,
+		profileDir:    effectiveProfile.Dir,
 		prompt:        prompt,
 		reportedModel: reportedModel,
 	}, nil
+}
+
+func buildPersistentCodeBuddyResponse(req driver.Request, p *parser, raw driver.RawStreams, prep runPrep) driver.Response {
+	failure := p.failureForOutcome(0)
+	p.completeStream(failure, 0, "", false)
+	checkpoint := p.checkpointForOutcome(0, "", false, failure)
+	if checkpoint != nil && checkpoint.State != nil {
+		checkpoint.State.Data = map[string]string{
+			driver.SessionParamCWD:                prep.effectiveCWD,
+			driver.SessionParamWorkspaceID:        req.Workspace.ID,
+			driver.SessionParamProfileFingerprint: req.ProfilePayload.Fingerprint,
+		}
+	}
+	return driver.Response{
+		Output: p.buildOutput(), RawStreams: &raw, Transcript: p.transcript,
+		ExitCode: 0, Usage: p.usage, Checkpoint: checkpoint,
+		Metadata: p.outputMetadata(), Provider: "codebuddy", Model: prep.reportedModel,
+		Summary:         p.finalSummary(),
+		RuntimeServices: driverutil.RuntimeReportsFromRefs(req.Runtime.Ensured, req.Agent),
+		Failure:         failure,
+	}
 }
 
 func (adapter) runHeadless(ctx context.Context, cfg Config, command string, req driver.Request, sink driver.EventSink, prep runPrep) (driver.Response, error) {

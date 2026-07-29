@@ -29,6 +29,10 @@ func (p *parser) enableControl(ctx context.Context, sink driver.DecisionCapableS
 	p.control = &controlState{ctx: ctx, sink: sink, stdin: stdin, runID: runID, policy: policy, prompt: prompt}
 }
 
+func (p *parser) enablePersistentControl(ctx context.Context, sink driver.DecisionCapableSink, runID string, policy driver.HumanDecisionPolicy, prompt, configDir string) {
+	p.control = &controlState{ctx: ctx, sink: sink, runID: runID, policy: policy, prompt: prompt, configDir: configDir}
+}
+
 func (p *parser) handleControlPayload(payload map[string]any) bool {
 	if p.control == nil {
 		return false

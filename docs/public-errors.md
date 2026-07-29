@@ -36,6 +36,13 @@ from `Stream.Result()` after its event channel closes. Programmer-contract
 violations documented as panics, such as constructing an Agent with a nil
 Driver or creating a Thread with an empty key, are not error sentinels.
 
+## Agent lifecycle
+
+`ErrAgentClosed` means `Agent.Close` has started. New `Run`/`Stream` calls on
+the Agent or any Thread derived from it fail with this sentinel and do not
+restart the Driver's process pool. `Close` itself is idempotent; its context
+error reports a bounded cleanup failure rather than changing this sentinel.
+
 ## Root business failures
 
 Every row is a `*adaptor.RunError`. `errors.As` exposes `Reason`, `Message`,

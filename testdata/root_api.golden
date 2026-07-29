@@ -31,6 +31,7 @@ methodset AgentSettings {
 	pointer SetServices(specs []ServiceSpec)
 	pointer SetSkillMaterializer(m SkillMaterializer)
 	pointer SetSkillProvider(p SkillProvider)
+	pointer SetSpawn()
 	pointer SetThreadStore(store github.com/agent-dance/agent-adaptor/threadstore.Store)
 	pointer SetTimeout(d time.Duration)
 	pointer SetWorkspace(dir string)
@@ -39,6 +40,7 @@ methodset AgentSettings {
 }
 
 methodset Agent {
+	pointer Close(ctx context.Context) error
 	pointer Inspect() Inspector
 	pointer NewThread(key string) *Thread
 	pointer ProfileState(ctx context.Context) (ProfileSnapshot, error)
@@ -143,6 +145,8 @@ methodset Dropped {
 type EnvironmentCheck = driver.EnvironmentCheck
 
 type EnvironmentReport = driver.EnvironmentReport
+
+var ErrAgentClosed error
 
 var ErrAgentFailed error
 
@@ -580,6 +584,7 @@ methodset RunSettings {
 	pointer SetOutputSchemaError(err error)
 	pointer SetPolicy(p Policy)
 	pointer SetServices(specs []ServiceSpec)
+	pointer SetSpawn()
 	pointer SetTimeout(d time.Duration)
 	pointer SetWorkspace(dir string)
 	pointer SetWorkspaceSpec(spec WorkspaceSpec)
@@ -862,6 +867,8 @@ func WithSkillProvider(p SkillProvider) Option
 
 func WithSkills(refs ...SkillRef) SharedOption
 
+func WithSpawn() SharedOption
+
 func WithThreadStore(store threadstore.Store) Option
 
 func WithTimeout(d time.Duration) SharedOption
@@ -905,6 +912,8 @@ methodset WorkspaceSpec {
 }
 
 const WorkspaceWrite SandboxLevel = "workspace_write"
+
+func (*Agent).Close(ctx context.Context) error
 
 func (*Agent).Inspect() Inspector
 
@@ -997,6 +1006,8 @@ func (*RunSettings).SetOutputSchemaError(err error)
 func (*RunSettings).SetPolicy(p Policy)
 
 func (*RunSettings).SetServices(specs []ServiceSpec)
+
+func (*RunSettings).SetSpawn()
 
 func (*RunSettings).SetTimeout(d time.Duration)
 

@@ -110,6 +110,31 @@ func TestStreamingParserEmitsFullLifecycle(t *testing.T) {
 	}
 }
 
+func TestNonStreamingControlParserReconstructsTranscriptWithoutStreamEvents(t *testing.T) {
+	rec := &testutil.EventRecorder{}
+	p := newParser(rec)
+	p.enableOutputReconstruction("run-control-batch")
+
+	if err := p.onChunk("stdout", []byte(realStreamingOutput), timeNow()); err != nil {
+		t.Fatalf("onChunk: %v", err)
+	}
+	p.finalize()
+
+	// ResultMessage.result remains the v1-authoritative Output.
+	if got := p.buildOutput(); got != "Hello" {
+		t.Fatalf("buildOutput = %q, want official terminal result", got)
+	}
+	if streams := rec.StreamSnapshot(); len(streams) != 0 {
+		t.Fatalf("non-streaming reconstruction leaked %d StreamPayload events: %+v", len(streams), streams)
+	}
+	if len(p.transcript) < 2 ||
+		p.transcript[len(p.transcript)-2].Kind != driver.TranscriptAssistant ||
+		p.transcript[len(p.transcript)-2].Text != "Hello" ||
+		p.transcript[len(p.transcript)-1].Kind != driver.TranscriptResult {
+		t.Fatalf("reconstructed transcript does not end assistant -> result: %+v", p.transcript)
+	}
+}
+
 // TestStreamingParserAPIRetryExhaustion verifies the api_retry escalation path
 // surfaces a StreamRunError after repeated 5xx retries.
 func TestStreamingParserAPIRetryExhaustion(t *testing.T) {

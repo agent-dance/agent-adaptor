@@ -109,6 +109,7 @@ result, err := agent.Run(ctx, "apply the approved fix",
 - `WithSkills` 追加到 Agent 默认 skills。
 - `WithMetadata` 按 key 合并，调用处同名 key 覆盖。
 - `WithRunServices` 追加并去重。
+- `WithSpawn` 替换进程模式：构造处可令所有轮次使用新进程，调用处只强制本轮使用新进程。
 - `WithMCP`、`WithServices`、`WithPolicy`、workspace、instructions、identity 等整体替换对应默认值。
 - `WithMCP()` 或 `WithServices()` 的空调用表示本次显式清空。
 
@@ -180,6 +181,17 @@ second, err := thread.Run(ctx, "now implement the fix")
 ```
 
 第二次调用会使用第一次成功运行保存的 checkpoint。
+
+对于 Claude、CodeBuddy 和 Codex，同一 Thread 的连续轮次默认还会复用 provider 进程；这不改变 checkpoint、Result 或 Event 语义。宿主应在 Agent 生命周期结束时关闭它：
+
+```go
+defer agent.Close(context.Background())
+
+// 需要进程级隔离的一轮：先安全接力到新进程，本轮结束后不留作常驻 writer。
+result, err := thread.Run(ctx, "run in a fresh provider process", adaptor.WithSpawn())
+```
+
+也可以把 `WithSpawn()` 传给 `adaptor.New`，使这个 Agent 的所有调用默认为单次进程。Cursor 不声明常驻能力，因此是否传入该选项都逐轮启动；直接调用无状态 Agent 同样不会进入进程池。Close 幂等，开始 Close 后的新运行返回 `ErrAgentClosed`。
 
 ### 5.2 只续不建
 
