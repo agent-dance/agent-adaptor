@@ -184,6 +184,25 @@ func TestRun_LegacyPromptPathUnchanged(t *testing.T) {
 	}
 }
 
+func TestRun_EmptyPromptFastExitDoesNotRaceStdinClose(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX shell not available on Windows")
+	}
+
+	for range 100 {
+		result, err := Run(context.Background(), CommandRequest{
+			Command: "sh",
+			Args:    []string{"-c", "printf 'terminal\\n'"},
+		}, &captureSink{})
+		if err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+		if result.RawStreams.Stdout != "terminal\n" {
+			t.Fatalf("stdout = %q, want terminal line", result.RawStreams.Stdout)
+		}
+	}
+}
+
 func TestFinalizeCommandResultContextCancelMasksCancelFailure(t *testing.T) {
 	result, err := finalizeCommandResult(
 		CommandResult{},
