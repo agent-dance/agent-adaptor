@@ -257,9 +257,16 @@ func Run(ctx context.Context, req CommandRequest, sink driver.EventSink) (Comman
 	if err != nil {
 		return CommandResult{}, err
 	}
-	stdinPipe, err := cmd.StdinPipe()
-	if err != nil {
-		return CommandResult{}, err
+	// Leave cmd.Stdin nil when there is no stdin payload or controller. In
+	// that case os/exec connects the child to the null device, which provides
+	// the same immediate EOF as an empty pipe without creating a writer that
+	// can race cmd.Wait when a short-lived provider exits immediately.
+	var stdinPipe io.WriteCloser
+	if req.Prompt != "" || req.Stdin != nil {
+		stdinPipe, err = cmd.StdinPipe()
+		if err != nil {
+			return CommandResult{}, err
+		}
 	}
 
 	if err := cmd.Start(); err != nil {
@@ -278,12 +285,16 @@ func Run(ctx context.Context, req CommandRequest, sink driver.EventSink) (Comman
 
 	writeErr := make(chan error, 1)
 	if req.Stdin == nil {
-		// Default one-shot prompt path.
-		go func() {
-			_, copyErr := stdinPipe.Write([]byte(req.Prompt))
-			closeErr := stdinPipe.Close()
-			writeErr <- errors.Join(copyErr, closeErr)
-		}()
+		if stdinPipe == nil {
+			writeErr <- nil
+		} else {
+			// Default one-shot prompt path.
+			go func() {
+				_, copyErr := stdinPipe.Write([]byte(req.Prompt))
+				closeErr := stdinPipe.Close()
+				writeErr <- errors.Join(copyErr, closeErr)
+			}()
+		}
 	} else {
 		// Long-lived stdin path. The helper writes Prompt (if any) as the
 		// first frame, then forwards frames arriving on req.Stdin.Write
