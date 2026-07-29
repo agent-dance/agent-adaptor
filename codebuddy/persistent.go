@@ -772,7 +772,7 @@ func persistentEligible(cfg Config, req driver.Request) bool {
 	if persistentSessionKey(req) == "" || cfg.MaxTurnsPerRun > 0 {
 		return false
 	}
-	if req.OutputSchema != nil && req.OutputSchema.Mode != driver.StructuredOutputPromptValidate {
+	if req.OutputSchema != nil && req.StructuredOutputSource == driver.StructuredOutputSourceNative {
 		return false
 	}
 	for _, spec := range req.Runtime.Requested {
@@ -791,6 +791,7 @@ func persistentEligible(cfg Config, req driver.Request) bool {
 func persistentPreWarmEligible(cfg Config, req driver.Request) bool {
 	copyReq := req
 	copyReq.OutputSchema = nil
+	copyReq.StructuredOutputSource = ""
 	return persistentEligible(cfg, copyReq)
 }
 

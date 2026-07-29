@@ -11,7 +11,7 @@ import (
 // a trailing positional argument; control prompts are NDJSON stdin frames.
 func buildExecArgs(cfg Config, req driver.Request, permMode PermissionMode, interactive ...bool) []string {
 	control := len(interactive) > 0 && interactive[0]
-	nativeStructured := req.OutputSchema != nil && req.OutputSchema.Mode != driver.StructuredOutputPromptValidate
+	nativeStructured := req.OutputSchema != nil && req.StructuredOutputSource == driver.StructuredOutputSourceNative
 	args := make([]string, 0, 16)
 	if control {
 		args = append(args, "--input-format=stream-json", "--output-format=stream-json", "--verbose", "--include-partial-messages")

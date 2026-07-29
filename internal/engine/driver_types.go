@@ -158,7 +158,6 @@ const (
 
 type (
 	OutputFormat                  = driver.OutputFormat
-	StructuredOutputMode          = driver.StructuredOutputMode
 	StructuredOutputInvalidPolicy = driver.StructuredOutputInvalidPolicy
 	OutputSchema                  = driver.OutputSchema
 	StructuredOutputSource        = driver.StructuredOutputSource
@@ -166,12 +165,6 @@ type (
 )
 
 const OutputFormatJSONSchema = driver.OutputFormatJSONSchema
-
-const (
-	StructuredOutputNativeStrict   = driver.StructuredOutputNativeStrict
-	StructuredOutputPreferNative   = driver.StructuredOutputPreferNative
-	StructuredOutputPromptValidate = driver.StructuredOutputPromptValidate
-)
 
 const (
 	StructuredOutputFailRun       = driver.StructuredOutputFailRun
@@ -192,7 +185,6 @@ type SessionMode = driver.SessionMode
 const (
 	SessionContinueOrStart = driver.SessionContinueOrStart
 	SessionContinueOnly    = driver.SessionContinueOnly
-	SessionStartNew        = driver.SessionStartNew
 	SessionFork            = driver.SessionFork
 	SessionStateless       = driver.SessionStateless
 )

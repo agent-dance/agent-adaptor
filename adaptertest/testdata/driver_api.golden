@@ -665,7 +665,6 @@ const OutputFormatJSONSchema OutputFormat = "json_schema"
 
 type OutputSchema struct {
 	Format OutputFormat
-	Mode StructuredOutputMode
 	SchemaJSON json.RawMessage
 	Name string
 	Description string
@@ -819,6 +818,7 @@ type Request struct {
 	Session *SessionContext
 	Metadata map[string]string
 	OutputSchema *OutputSchema
+	StructuredOutputSource StructuredOutputSource
 	Spawn bool
 	ModelOverride string
 	Streaming bool
@@ -1076,8 +1076,6 @@ type SessionParams struct {
 	Values map[string]string
 }
 
-const SessionStartNew SessionMode = "start_new"
-
 type SessionState struct {
 	ResumeID string
 	DisplayID string
@@ -1271,7 +1269,6 @@ const StreamToolCallStart StreamKind = "tool_call.start"
 
 type StructuredOutput struct {
 	Format OutputFormat
-	Mode StructuredOutputMode
 	Source StructuredOutputSource
 	RawJSON json.RawMessage
 	Value any
@@ -1293,14 +1290,6 @@ const StructuredOutputFailRun StructuredOutputInvalidPolicy = "fail_run"
 
 type StructuredOutputInvalidPolicy string
 
-type StructuredOutputMode string
-
-const StructuredOutputNativeStrict StructuredOutputMode = "native_strict"
-
-const StructuredOutputPreferNative StructuredOutputMode = "prefer_native"
-
-const StructuredOutputPromptValidate StructuredOutputMode = "prompt_validate"
-
 const StructuredOutputReturnInvalid StructuredOutputInvalidPolicy = "return_invalid"
 
 type StructuredOutputSource string
@@ -1311,7 +1300,6 @@ const StructuredOutputSourcePromptValidate StructuredOutputSource = "prompt_vali
 
 type StructuredOutputUnsupportedError struct {
 	Driver string
-	Mode StructuredOutputMode
 	Reason string
 }
 

@@ -13,8 +13,8 @@ import (
 	"github.com/agent-dance/agent-adaptor/internal/engine"
 )
 
-// Structured output is configured with SchemaStrict, SchemaFlexible, or
-// SchemaPromptOnly.
+// Structured output always prefers provider-native JSON Schema enforcement
+// and automatically falls back to exact-JSON prompting plus SDK validation.
 //
 //	review, _, err := adaptor.RunAs[Review](ctx, reviewer, "review the diff")
 //
@@ -24,13 +24,13 @@ import (
 //	var review Review
 //	err = res.Decode(&review)
 //
-// The Driver capability matrix determines which modes are available. An
-// unsupported mode fails before Driver.Run starts with
-// ErrStructuredOutputUnsupported.
+// The Driver capability matrix determines which mechanism core selects. If
+// neither native enforcement nor prompt validation is available, the request
+// fails before Driver.Run starts with ErrStructuredOutputUnsupported.
 
 // SchemaOption customizes WithSchema[T]: how the JSON Schema document is
 // generated from the Go type, and how the structured-output request is
-// shaped (mode, name, description, invalid policy).
+// shaped (name, description, invalid policy).
 type SchemaOption func(*schemaSettings)
 
 type schemaSettings struct {
@@ -49,33 +49,6 @@ type schemaGenSettings struct {
 
 func (s *schemaSettings) request(fn func(*driver.OutputSchema)) {
 	s.mutate = append(s.mutate, fn)
-}
-
-// SchemaStrict requires provider/CLI-native JSON Schema enforcement
-// (native_strict — the default). Drivers that cannot enforce the schema
-// natively fail the run before launch.
-func SchemaStrict() SchemaOption {
-	return func(s *schemaSettings) {
-		s.request(func(schema *driver.OutputSchema) { schema.Mode = driver.StructuredOutputNativeStrict })
-	}
-}
-
-// SchemaFlexible uses native enforcement when the driver can honor it and
-// falls back to explicit prompt instructions plus SDK-side validation
-// otherwise (prefer_native).
-func SchemaFlexible() SchemaOption {
-	return func(s *schemaSettings) {
-		s.request(func(schema *driver.OutputSchema) { schema.Mode = driver.StructuredOutputPreferNative })
-	}
-}
-
-// SchemaPromptOnly requests explicit prompt instructions plus SDK-side
-// exact-JSON validation (prompt_validate). It is weaker than native
-// enforcement but works with drivers that have no native schema support.
-func SchemaPromptOnly() SchemaOption {
-	return func(s *schemaSettings) {
-		s.request(func(schema *driver.OutputSchema) { schema.Mode = driver.StructuredOutputPromptValidate })
-	}
 }
 
 // SchemaName sets a provider-facing schema name when supported.
@@ -134,7 +107,8 @@ func SchemaUseGoComments(base, path string) SchemaOption {
 // invocation. The JSON Schema document is derived from T at option
 // construction time; a derivation failure fails the run before the driver
 // launches (schema bugs are programmer errors, never silent degradation).
-// Defaults: json_schema format, SchemaStrict mode, fail-run invalid policy.
+// The SDK always prefers native enforcement and automatically falls back to
+// prompt validation. The default invalid policy fails the run.
 //
 // Call scope only — passing WithSchema to New is a compile error
 // ("missing method ApplyNew"): a schema belongs to one question, not to
@@ -155,8 +129,8 @@ func WithSchema[T any](opts ...SchemaOption) CallOption {
 // document — the escape hatch for schemas that do not originate from a Go
 // type (contract files, registry-served schemas). Generation-side
 // SchemaOptions (SchemaInlineReferences, ...) have no effect here; the
-// request-side ones (SchemaStrict / SchemaFlexible / SchemaPromptOnly /
-// SchemaName / SchemaDescription / SchemaReturnInvalid) apply as usual.
+// request-side ones (SchemaName / SchemaDescription / SchemaReturnInvalid)
+// apply as usual.
 // Call scope only.
 func WithSchemaJSON(schemaJSON []byte, opts ...SchemaOption) CallOption {
 	cfg := collectSchemaSettings(opts)
@@ -201,12 +175,10 @@ func collectSchemaSettings(opts []SchemaOption) schemaSettings {
 }
 
 // buildSchema assembles the driver-facing request with the documented
-// defaults (json_schema / native_strict / fail_run) and applies option
-// mutations in order.
+// defaults (json_schema / fail_run) and applies option mutations in order.
 func (s schemaSettings) buildSchema(raw json.RawMessage) driver.OutputSchema {
 	schema := driver.OutputSchema{
 		Format:     driver.OutputFormatJSONSchema,
-		Mode:       driver.StructuredOutputNativeStrict,
 		SchemaJSON: append(json.RawMessage(nil), raw...),
 		OnInvalid:  driver.StructuredOutputFailRun,
 	}

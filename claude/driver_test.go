@@ -238,9 +238,9 @@ func indexOfArg(args []string, want string) int {
 func TestBuildClaudeExecArgsUsesJSONSchemaForNativeStructuredOutput(t *testing.T) {
 	schema := []byte(`{"type":"object","properties":{"project_name":{"type":"string"}}}`)
 	args, err := buildClaudeExecArgs(Config{Model: "claude-sonnet-4"}, agentadaptor.Request{
+		StructuredOutputSource: agentadaptor.StructuredOutputSourceNative,
 		OutputSchema: &agentadaptor.OutputSchema{
 			Format:     agentadaptor.OutputFormatJSONSchema,
-			Mode:       agentadaptor.StructuredOutputNativeStrict,
 			SchemaJSON: schema,
 		},
 	}, false)
@@ -263,10 +263,10 @@ func TestBuildClaudeExecArgsUsesJSONSchemaForNativeStructuredOutput(t *testing.T
 func TestBuildClaudeExecArgsUsesStreamJSONForStreamingStructuredOutput(t *testing.T) {
 	schema := []byte(`{"type":"object","properties":{"project_name":{"type":"string"}}}`)
 	args, err := buildClaudeExecArgs(Config{Model: "claude-sonnet-4"}, agentadaptor.Request{
-		Streaming: true,
+		Streaming:              true,
+		StructuredOutputSource: agentadaptor.StructuredOutputSourceNative,
 		OutputSchema: &agentadaptor.OutputSchema{
 			Format:     agentadaptor.OutputFormatJSONSchema,
-			Mode:       agentadaptor.StructuredOutputNativeStrict,
 			SchemaJSON: schema,
 		},
 	}, false)
@@ -289,9 +289,9 @@ func TestBuildClaudeExecArgsUsesStreamJSONForStreamingStructuredOutput(t *testin
 func TestBuildClaudeExecArgsInlinesReferencesWithoutLosingLargeNumbers(t *testing.T) {
 	schema := []byte(`{"$schema":"https://json-schema.org/draft/2020-12/schema","$defs":{"item":{"type":"object","properties":{"id":{"type":"integer","minimum":9007199254740993}}}},"type":"object","properties":{"item":{"$ref":"#/$defs/item"}}}`)
 	args, err := buildClaudeExecArgs(Config{}, agentadaptor.Request{
+		StructuredOutputSource: agentadaptor.StructuredOutputSourceNative,
 		OutputSchema: &agentadaptor.OutputSchema{
 			Format:     agentadaptor.OutputFormatJSONSchema,
-			Mode:       agentadaptor.StructuredOutputNativeStrict,
 			SchemaJSON: schema,
 		},
 	}, false)
@@ -321,9 +321,9 @@ func TestBuildClaudeExecArgsInlinesReferencesWithoutLosingLargeNumbers(t *testin
 func TestBuildClaudeExecArgsRejectsRecursiveSchemaReferences(t *testing.T) {
 	schema := []byte(`{"$defs":{"node":{"type":"object","properties":{"children":{"type":"array","items":{"$ref":"#/$defs/node"}}}}},"$ref":"#/$defs/node"}`)
 	_, err := buildClaudeExecArgs(Config{}, agentadaptor.Request{
+		StructuredOutputSource: agentadaptor.StructuredOutputSourceNative,
 		OutputSchema: &agentadaptor.OutputSchema{
 			Format:     agentadaptor.OutputFormatJSONSchema,
-			Mode:       agentadaptor.StructuredOutputNativeStrict,
 			SchemaJSON: schema,
 		},
 	}, false)
@@ -335,7 +335,8 @@ func TestBuildClaudeExecArgsRejectsRecursiveSchemaReferences(t *testing.T) {
 func TestBuildClaudeExecArgsPreservesDefinitionsProperty(t *testing.T) {
 	schema := []byte(`{"type":"object","properties":{"definitions":{"type":"string"}},"required":["definitions"],"additionalProperties":false}`)
 	args, err := buildClaudeExecArgs(Config{}, agentadaptor.Request{
-		OutputSchema: &agentadaptor.OutputSchema{Format: agentadaptor.OutputFormatJSONSchema, Mode: agentadaptor.StructuredOutputNativeStrict, SchemaJSON: schema},
+		StructuredOutputSource: agentadaptor.StructuredOutputSourceNative,
+		OutputSchema:           &agentadaptor.OutputSchema{Format: agentadaptor.OutputFormatJSONSchema, SchemaJSON: schema},
 	}, false)
 	if err != nil {
 		t.Fatalf("build args: %v", err)
@@ -349,7 +350,8 @@ func TestBuildClaudeExecArgsPreservesDefinitionsProperty(t *testing.T) {
 func TestBuildClaudeExecArgsResolvesArrayJSONPointer(t *testing.T) {
 	schema := []byte(`{"$defs":{"choice":{"allOf":[{"type":"string"}]}},"type":"object","properties":{"value":{"$ref":"#/$defs/choice/allOf/0"}}}`)
 	args, err := buildClaudeExecArgs(Config{}, agentadaptor.Request{
-		OutputSchema: &agentadaptor.OutputSchema{Format: agentadaptor.OutputFormatJSONSchema, Mode: agentadaptor.StructuredOutputNativeStrict, SchemaJSON: schema},
+		StructuredOutputSource: agentadaptor.StructuredOutputSourceNative,
+		OutputSchema:           &agentadaptor.OutputSchema{Format: agentadaptor.OutputFormatJSONSchema, SchemaJSON: schema},
 	}, false)
 	if err != nil {
 		t.Fatalf("build args: %v", err)
@@ -363,7 +365,8 @@ func TestBuildClaudeExecArgsResolvesArrayJSONPointer(t *testing.T) {
 func TestBuildClaudeExecArgsDoesNotRewriteConstData(t *testing.T) {
 	schema := []byte(`{"$defs":{"value":{"type":"string"}},"type":"object","const":{"$ref":"#/$defs/value"}}`)
 	args, err := buildClaudeExecArgs(Config{}, agentadaptor.Request{
-		OutputSchema: &agentadaptor.OutputSchema{Format: agentadaptor.OutputFormatJSONSchema, Mode: agentadaptor.StructuredOutputNativeStrict, SchemaJSON: schema},
+		StructuredOutputSource: agentadaptor.StructuredOutputSourceNative,
+		OutputSchema:           &agentadaptor.OutputSchema{Format: agentadaptor.OutputFormatJSONSchema, SchemaJSON: schema},
 	}, false)
 	if err != nil {
 		t.Fatalf("build args: %v", err)
@@ -539,14 +542,14 @@ func TestClaudeNativeStructuredOutputValidationPrecedesCheckpoint(t *testing.T) 
 	)
 	sink := &streamSink{}
 	resp, err := (adapter{}).Run(context.Background(), agentadaptor.Request{
-		RunID:     "run-invalid-structured",
-		Streaming: true,
-		Prompt:    "extract project metadata",
-		Config:    Config{CommonConfig: CommonConfig{Command: command, CWD: home}},
-		Workspace: agentadaptor.WorkspaceLease{ID: "workspace", CWD: home},
+		RunID:                  "run-invalid-structured",
+		Streaming:              true,
+		Prompt:                 "extract project metadata",
+		Config:                 Config{CommonConfig: CommonConfig{Command: command, CWD: home}},
+		Workspace:              agentadaptor.WorkspaceLease{ID: "workspace", CWD: home},
+		StructuredOutputSource: agentadaptor.StructuredOutputSourceNative,
 		OutputSchema: &agentadaptor.OutputSchema{
 			Format:     agentadaptor.OutputFormatJSONSchema,
-			Mode:       agentadaptor.StructuredOutputNativeStrict,
 			SchemaJSON: []byte(`{"type":"object","properties":{"project_name":{"type":"string"}},"required":["project_name"],"additionalProperties":false}`),
 			OnInvalid:  agentadaptor.StructuredOutputFailRun,
 		},

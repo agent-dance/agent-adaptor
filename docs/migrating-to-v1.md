@@ -52,7 +52,7 @@ v1 的应用侧只需要六个核心名词：
 | `RunResult.Failure` | 删除；用 `errors.As(err, *adaptor.RunError)` 判断业务失败，并从 `runErr.Result` 读取部分或完整结果。 |
 | `RunResult.SessionID` | Thread 连续性由宿主 key 管理；需要审计 Driver resume 状态时调用 `thread.Checkpoint(ctx)`。 |
 | `AgentIdentity{ID, TenantID, ProfileID, Name}` | `adaptor.Identity{ID, Tenant, Profile, Name}`。 |
-| `SessionStore` / `SessionRequest` / `SessionMode` | `threadstore.Store` + `Agent.Thread` / `Agent.NewThread` / `Thread.Fork` / `ResumeOnly`。 |
+| `SessionStore` / `SessionRequest` / `SessionMode` | `threadstore.Store` + `Agent.Thread` / `Thread.Fork` / `ResumeOnly`。 |
 | `memory.NewSessionStore()` | `memory.NewStore()`。 |
 
 ## 3. 全部旧选项的去向
@@ -111,10 +111,10 @@ v1 使用一套词汇、两个作用域：
 | 30 | `WithPermissionHandler(h)` | 调用处使用 `adaptor.OnApproval(h)`，覆盖构造默认 handler。 |
 | 31 | `WithPlanReviewHandler(h)` | 同上，在统一 handler 中按 Kind 分流。 |
 | 32 | `WithQuestionHandler(h)` | 同上。 |
-| 33 | `WithSession(req SessionRequest)` | 删除结构体入口；根据意图改用下面四个有名字的 Thread 动作。 |
+| 33 | `WithSession(req SessionRequest)` | 删除结构体入口；根据意图改用下面三个有名字的 Thread 动作。 |
 | 34 | `WithSessionKey(namespace, key)` | `agent.Thread(hostKey)`：有则续、无则建。v1 只保存一个宿主提供的不透明 key；合并 namespace 等维度时必须使用无碰撞编码，不能依赖未转义分隔符。 |
 | 35 | `WithContinueSession(id)` | `agent.Thread(hostKey, adaptor.ResumeOnly())`：只续不建。Driver resume ID 不再是消费者身份；审计状态用 `Checkpoint`。 |
-| 36 | `WithNewSession(namespace, key)` | `agent.NewThread(hostKey)`：首次运行强制新建，只有新 checkpoint 成功落库后才替换旧 active 记录。 |
+| 36 | `WithNewSession(namespace, key)` | 为新对话分配新的、未使用过的宿主 key，再调用 `agent.Thread(newHostKey)`；v1 不提供同 key 主动重绑入口。 |
 | 37 | `WithForkSession(fromID, namespace, key)` | `parent.Fork(newHostKey)`；父 Thread 保持不变，已存在目标返回 `adaptor.ErrThreadAlreadyExists`。 |
 | 38 | `WithWorkspace(spec)` | `adaptor.WithWorkspaceSpec(convertedSpec)`，同名 WorkspaceSpec 按第 14 项转换。单次调用的工作目录另用 `adaptor.WithWorkspace(dir)` 覆盖。 |
 | 39 | `WithRuntimeServices(services...)` | `adaptor.WithServices(specs...)`，SharedOption。 |
@@ -320,13 +320,15 @@ agent := adaptor.New(
 
 ### 4.4 结构化输出
 
-结构化输出的 mode 和生成选项全部位于根包：
+v1 不再让消费者选择结构化输出 mode。旧 mode 选项全部删除：只保留 schema
+声明与生成选项，core 自动优先使用 provider 原生约束，不支持时回退到 Prompt
+加本地校验。
 
 | 旧 API | v1 API |
 |---|---|
-| `NativeStrictOutput()` | `adaptor.SchemaStrict()`，也是默认 mode |
-| `PreferNativeOutput()` | `adaptor.SchemaFlexible()` |
-| `PromptValidateOutput()` | `adaptor.SchemaPromptOnly()` |
+| `NativeStrictOutput()` | 删除，不需要替代；使用自动协商 |
+| `PreferNativeOutput()` | 删除，不需要替代；这就是 v1 固定行为 |
+| `PromptValidateOutput()` | 删除，不需要替代；原生不可用时自动回退 |
 | `StructuredOutputName(name)` | `adaptor.SchemaName(name)` |
 | `StructuredOutputDescription(text)` | `adaptor.SchemaDescription(text)` |
 | `ReturnInvalidStructuredOutput()` | `adaptor.SchemaReturnInvalid()` |
@@ -359,10 +361,9 @@ import adaptor "github.com/agent-dance/agent-adaptor"
 
 stream := agent.Stream(
     ctx,
-    "Review the current diff",
-    adaptor.WithSchema[Review](
-        adaptor.SchemaFlexible(),
-        adaptor.SchemaName("change_review"),
+	"Review the current diff",
+	adaptor.WithSchema[Review](
+		adaptor.SchemaName("change_review"),
     ),
 )
 for range stream.Events() {}
@@ -373,7 +374,8 @@ if err == nil {
 }
 ```
 
-默认是 strict + 校验失败即运行失败。`SchemaReturnInvalid()` 会保留无效结构化结果，但随后调用 `Decode` 仍返回校验错误。
+校验失败默认使运行失败。`SchemaReturnInvalid()` 会保留无效结构化结果，但随后调用
+`Decode` 仍返回校验错误。
 
 ### 4.5 policy 与 HITL
 
@@ -537,7 +539,7 @@ first, err := thread.Run(ctx, "Investigate the failure")
 second, err := thread.Run(ctx, "Now propose the smallest fix")
 
 existing := agent.Thread("host-ticket-123", adaptor.ResumeOnly())
-fresh := agent.NewThread("host-ticket-123")
+fresh := agent.Thread("host-ticket-124") // 新对话由宿主分配新的稳定 key
 branch := existing.Fork("host-ticket-123-alternative")
 checkpoint, err := existing.Checkpoint(ctx)
 
@@ -546,7 +548,7 @@ _, _, _, _, _, _ = first, second, fresh, branch, checkpoint, err
 
 Thread key 是宿主提供的单一、不透明字符串，SDK 会逐字保存和比较。若宿主必须从 tenant、ticket 等多个维度生成 key，应使用 length-prefix、结构化序列化后编码或等价无碰撞方案；不要直接拼接未经转义的分隔符。Driver resume ID 只存在于 checkpoint，不应成为第二套外部身份。
 
-同一 Thread 同时只允许一个持有效 lease 的运行。`NewThread`、`Fork`、resume reject fallback 和 checkpoint 持久化都遵守原子更新语义；失败时不会覆盖先前健康的 active 记录。
+同一 Thread 同时只允许一个持有效 lease 的运行。`Fork`、resume reject fallback 和 checkpoint 持久化都遵守原子更新语义；失败时不会覆盖先前健康的 active 记录。需要主动开始无上下文的新对话时，宿主必须分配新的 Thread key，而不是重绑已有 key。
 
 ### 常驻进程配置
 

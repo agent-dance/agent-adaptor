@@ -317,8 +317,8 @@ func (adapter) SyncProfileResources(ctx context.Context, cfg any, _ driver.Agent
 }
 
 func (adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSink) (driver.Response, error) {
-	if req.OutputSchema != nil && req.OutputSchema.Mode == driver.StructuredOutputNativeStrict {
-		return driver.Response{}, &driver.StructuredOutputUnsupportedError{Driver: DriverType, Mode: req.OutputSchema.Mode, Reason: "Cursor CLI does not expose native JSON Schema output"}
+	if req.OutputSchema != nil && req.StructuredOutputSource == driver.StructuredOutputSourceNative {
+		return driver.Response{}, &driver.StructuredOutputUnsupportedError{Driver: DriverType, Reason: "Cursor CLI does not expose native JSON Schema output"}
 	}
 	cfg := readConfig(req.Config)
 	// Per-run WithModel overrides the configured model for this invocation only.

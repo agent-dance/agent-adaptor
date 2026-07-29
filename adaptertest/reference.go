@@ -219,13 +219,12 @@ func (d referenceDriver) Run(ctx context.Context, req driver.Request, sink drive
 	if req.OutputSchema != nil {
 		raw := json.RawMessage(`{"ok":true}`)
 		output = string(raw)
-		if req.OutputSchema.Mode != driver.StructuredOutputPromptValidate {
+		if req.StructuredOutputSource == driver.StructuredOutputSourceNative {
 			// Native enforcement: the driver itself reports the validated
 			// business value (StructuredOutput docs: RawJSON is never raw
 			// stdout and never a provider terminal wrapper).
 			structured = &driver.StructuredOutput{
 				Format:     driver.OutputFormatJSONSchema,
-				Mode:       req.OutputSchema.Mode,
 				Source:     driver.StructuredOutputSourceNative,
 				RawJSON:    raw,
 				Value:      map[string]any{"ok": true},
@@ -233,7 +232,7 @@ func (d referenceDriver) Run(ctx context.Context, req driver.Request, sink drive
 				SchemaHash: hashBytes(req.OutputSchema.SchemaJSON),
 			}
 		}
-		// prompt_validate: the SDK injects instructions and validates the
+		// Prompt validation: the SDK injects instructions and validates the
 		// final Output above the SPI; the driver only guarantees Output is
 		// the exact JSON text.
 	}

@@ -117,9 +117,9 @@ func TestBuildExecArgsHeadless(t *testing.T) {
 func TestBuildExecArgsResumeAndStructured(t *testing.T) {
 	cfg := Config{}
 	req := driver.Request{
-		Session: &driver.SessionContext{State: &driver.SessionState{ResumeID: "sess-1"}},
+		Session:                &driver.SessionContext{State: &driver.SessionState{ResumeID: "sess-1"}},
+		StructuredOutputSource: driver.StructuredOutputSourceNative,
 		OutputSchema: &driver.OutputSchema{
-			Mode:       driver.StructuredOutputNativeStrict,
 			SchemaJSON: []byte(`{"type":"object"}`),
 		},
 	}

@@ -20,7 +20,6 @@ import (
 // details, reachable only through Checkpoint for audit.
 //
 //	agent.Thread("tenant-1/issue-123")            // continue_or_start
-//	agent.NewThread("tenant-1/issue-123")         // start_new (first run)
 //	agent.Thread("k", adaptor.ResumeOnly())       // continue_only
 //	th.Fork("tenant-1/issue-123/alt")             // fork (first run)
 //
@@ -36,13 +35,12 @@ type Thread struct {
 	agent      *Agent
 	key        string
 	resumeOnly bool
-	forkFrom   string // parent thread key, set by Fork
 
 	mu sync.Mutex
-	// pending is the one-shot first-run mode (start_new for NewThread,
-	// fork for Fork). It is cleared after the first successful persist;
-	// from then on the thread continues like a plain Thread(key).
-	pending driver.SessionMode
+	// forkFrom is the one-shot parent key set by Fork. It is cleared after
+	// the first successful persist; from then on the child continues like a
+	// plain Thread(key).
+	forkFrom string
 }
 
 var _ Runner = (*Thread)(nil)
@@ -93,20 +91,6 @@ func (a *Agent) Thread(key string, opts ...ThreadOption) *Thread {
 	return t
 }
 
-// NewThread returns a handle that force-starts a fresh conversation under
-// key: the first run starts new even when a conversation already exists —
-// the old one is archived (still resolvable for audit) and the key rebinds
-// to the new conversation. After the first successful run the handle
-// behaves exactly like Thread(key).
-//
-// NewThread panics on an empty key.
-func (a *Agent) NewThread(key string) *Thread {
-	if key == "" {
-		panic("adaptor.Agent.NewThread: key must not be empty")
-	}
-	return &Thread{agent: a, key: key, pending: driver.SessionStartNew}
-}
-
 // Fork branches the conversation to newKey — the "regenerate from here /
 // try another direction" button. The first run on the returned Thread forks
 // from t's current conversation (the parent stays intact and active under
@@ -123,7 +107,6 @@ func (t *Thread) Fork(newKey string) *Thread {
 		agent:    t.agent,
 		key:      newKey,
 		forkFrom: t.key,
-		pending:  driver.SessionFork,
 	}
 }
 
@@ -198,17 +181,17 @@ func (t *Thread) planMode() (driver.SessionMode, string) {
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.pending != "" {
-		return t.pending, t.forkFrom
+	if t.forkFrom != "" {
+		return driver.SessionFork, t.forkFrom
 	}
 	return driver.SessionContinueOrStart, ""
 }
 
-// markEstablished clears the one-shot first-run mode after a successful
-// persist: from now on the handle continues its own conversation.
+// markEstablished clears the one-shot fork parent after a successful persist:
+// from now on the child continues its own conversation.
 func (t *Thread) markEstablished() {
 	t.mu.Lock()
-	t.pending = ""
+	t.forkFrom = ""
 	t.mu.Unlock()
 }
 

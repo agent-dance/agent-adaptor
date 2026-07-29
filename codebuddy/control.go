@@ -15,10 +15,9 @@ import (
 var errControlSinkRequired = errors.New("codebuddy control transport requires a decision-capable sink")
 
 func (adapter) runControl(ctx context.Context, cfg Config, command string, req driver.Request, sink driver.EventSink, prep runPrep) (driver.Response, error) {
-	if req.OutputSchema != nil && req.OutputSchema.Mode != driver.StructuredOutputPromptValidate {
+	if req.OutputSchema != nil && req.StructuredOutputSource == driver.StructuredOutputSourceNative {
 		return driver.Response{}, &driver.StructuredOutputUnsupportedError{
 			Driver: DriverType,
-			Mode:   req.OutputSchema.Mode,
 			Reason: "CodeBuddy native structured output is not supported with control HITL",
 		}
 	}

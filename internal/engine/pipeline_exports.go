@@ -85,7 +85,7 @@ type ProfileResourceDriver = profileResourceDriver
 // contract to a driver response: suppress unrequested structured output,
 // prompt-validate raw text when the source is PromptValidate, synthesise
 // the "driver did not return native structured output" invalid marker,
-// backfill Source/Format/Mode/SchemaHash, re-validate returned RawJSON,
+// backfill Source/Format/SchemaHash, re-validate returned RawJSON,
 // and escalate invalid output into a FailurePolicyError failure when the
 // schema's OnInvalid is StructuredOutputFailRun.
 func FinalizeStructuredOutput(
@@ -107,7 +107,6 @@ func FinalizeStructuredOutput(
 		} else {
 			structured = &StructuredOutput{
 				Format:           schema.Format,
-				Mode:             schema.Mode,
 				Source:           source,
 				Valid:            false,
 				ValidationErrors: []string{"driver did not return native structured output"},
@@ -120,9 +119,6 @@ func FinalizeStructuredOutput(
 		}
 		if structured.Format == "" {
 			structured.Format = schema.Format
-		}
-		if structured.Mode == "" {
-			structured.Mode = schema.Mode
 		}
 		if structured.SchemaHash == "" {
 			structured.SchemaHash = schemaHash(schema)

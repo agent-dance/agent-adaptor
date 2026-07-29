@@ -482,7 +482,7 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 
 	args := append(codexPolicyArgs(req.Policy), "exec", "--json")
 	var schemaTempDir string
-	if req.OutputSchema != nil && req.OutputSchema.Mode != driver.StructuredOutputPromptValidate {
+	if req.OutputSchema != nil && req.StructuredOutputSource == driver.StructuredOutputSourceNative {
 		if hasAnyArg(cfg.ExtraArgs, "--output-schema") {
 			return driver.Response{}, &engine.InvalidOutputSchemaError{Reason: "Codex ExtraArgs must not include --output-schema when SDK structured output is enabled"}
 		}
@@ -581,7 +581,7 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 		}
 	}
 	var structuredOutput *driver.StructuredOutput
-	if req.OutputSchema != nil && req.OutputSchema.Mode != driver.StructuredOutputPromptValidate {
+	if req.OutputSchema != nil && req.StructuredOutputSource == driver.StructuredOutputSourceNative {
 		structuredOutput = parser.nativeStructuredOutputForOutcome(result.ExitCode, result.Signal, result.TimedOut, failure)
 		// Keep parser protocol responsibilities separate from schema validation.
 		// Finalize even when the provider omitted a completed agent_message: the

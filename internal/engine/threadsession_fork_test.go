@@ -376,11 +376,6 @@ func TestSessionAcquireLeasePreservesBackendErrorAtEveryAcquirePosition(t *testi
 			},
 		},
 		{
-			name: "start-new record", request: engine.SessionRequest{Namespace: testNamespace, Key: "existing", Mode: driver.SessionStartNew},
-			fingerprint: testFingerprint, failAt: 3,
-			seed: func(t *testing.T, store *memory.Store) { seedRecord(t, store, validParent("existing")) },
-		},
-		{
 			name: "fork parent key", request: forkRequest("parent", "child"),
 			fingerprint: testFingerprint, failAt: 2,
 			seed: func(t *testing.T, store *memory.Store) { seedRecord(t, store, validParent("parent")) },
@@ -548,7 +543,7 @@ func TestStructuredForkFinalizeCASRejectsRacingTarget(t *testing.T) {
 	}
 }
 
-func TestStructuredForkPersistFailureAndStartNewMissingCheckpointAreNonMutating(t *testing.T) {
+func TestStructuredForkPersistFailureIsNonMutating(t *testing.T) {
 	ctx := context.Background()
 	store := memory.NewStore()
 	parent := validParent("parent")
@@ -569,50 +564,6 @@ func TestStructuredForkPersistFailureAndStartNewMissingCheckpointAreNonMutating(
 	}
 	if got, _ := store.Resolve(ctx, threadstore.Query{Key: parent.Key}); got == nil || got.Status != threadstore.StatusActive {
 		t.Fatalf("parent changed after failure: %#v", got)
-	}
-
-	newPlan, err := engine.PrepareThreadSessionForDriver(ctx, engineStoreAdapter{store: store}, engine.SessionRequest{
-		Namespace: testNamespace, Key: parent.Key, Mode: driver.SessionStartNew,
-	}, testIdentity, forkDriver{}, testFingerprint)
-	if err != nil {
-		t.Fatalf("prepare start-new: %v", err)
-	}
-	_, err = newPlan.Persist(ctx, testIdentity, forkDriver{}, testFingerprint, nil)
-	newPlan.Release()
-	if !errors.Is(err, engine.ErrSessionCheckpointMissing) {
-		t.Fatalf("missing checkpoint: err=%v", err)
-	}
-	if got, _ := store.Resolve(ctx, threadstore.Query{Key: parent.Key}); got == nil || got.ID != parent.ID || got.Status != threadstore.StatusActive {
-		t.Fatalf("start-new failure changed old record: %#v", got)
-	}
-}
-
-func TestStartNewArchivesAndRebindsOnlyAfterValidCheckpoint(t *testing.T) {
-	ctx := context.Background()
-	store := memory.NewStore()
-	old := validParent("same-raw-key\x00一")
-	seedRecord(t, store, old)
-
-	plan, err := engine.PrepareThreadSessionForDriver(ctx, engineStoreAdapter{store: store}, engine.SessionRequest{
-		Namespace: testNamespace, Key: old.Key, Mode: driver.SessionStartNew,
-	}, testIdentity, forkDriver{}, testFingerprint)
-	if err != nil {
-		t.Fatalf("prepare: %v", err)
-	}
-	ref, err := plan.Persist(ctx, testIdentity, forkDriver{}, testFingerprint, &driver.Checkpoint{
-		Valid: true, State: &driver.SessionState{ResumeID: "new-provider-state"},
-	})
-	plan.Release()
-	if err != nil {
-		t.Fatalf("persist: %v", err)
-	}
-	active, _ := store.Resolve(ctx, threadstore.Query{Key: old.Key})
-	archived, _ := store.Resolve(ctx, threadstore.Query{ID: old.ID, IncludeArchived: true})
-	if active == nil || active.ID != ref.ID || active.Key != old.Key || active.State.ResumeID != "new-provider-state" {
-		t.Fatalf("active = %#v", active)
-	}
-	if archived == nil || archived.Status != threadstore.StatusArchived {
-		t.Fatalf("old record = %#v, want archived", archived)
 	}
 }
 

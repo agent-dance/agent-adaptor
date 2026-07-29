@@ -718,7 +718,6 @@ func TestRunStagesTerminalUntilStructuredOutputValidation(t *testing.T) {
 	fake := buildFakeAppserver(t)
 	schema := &driver.OutputSchema{
 		Format:     driver.OutputFormatJSONSchema,
-		Mode:       driver.StructuredOutputNativeStrict,
 		SchemaJSON: json.RawMessage(`{"type":"object","properties":{"answer":{"type":"integer"}},"required":["answer"],"additionalProperties":false}`),
 		OnInvalid:  driver.StructuredOutputFailRun,
 	}

@@ -438,7 +438,6 @@ func TestCodexInvalidNativeJSONIsRejectedByCoreSchemaValidator(t *testing.T) {
 	}
 	schema := &driver.OutputSchema{
 		Format:     driver.OutputFormatJSONSchema,
-		Mode:       driver.StructuredOutputNativeStrict,
 		SchemaJSON: json.RawMessage(`{"type":"object"}`),
 		OnInvalid:  driver.StructuredOutputFailRun,
 	}

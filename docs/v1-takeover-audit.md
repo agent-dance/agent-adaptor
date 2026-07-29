@@ -2,7 +2,7 @@
 
 > **接管结案（2026-07-27）**：本文已从“待执行清单”转为“已执行审计证据”，不是当前 API 使用说明。文中 `next/`、`pkg/`、旧 SDK/RunHandle/registry、临时 `V1` 名和“未开始/阻断”措辞均保留为接管时事实。
 >
-> PRE、G-01～G-12、P4 14 项、Driver SPI 9 项、bridge 保真、REHOME/DELETE/ROOT CUTOVER/RESIDUAL DELETE/RENAME/DOCS 均已关闭；ROOT CUTOVER 提交为 `cc6cd82`，最终实现冻结提交为 `3b918d1`。当前仍是 **[Unreleased]**，未创建 `v1.0.0` tag；最终实现提交的远端 Linux CI 证据见 §0.3。
+> PRE、G-01～G-12、P4 14 项、Driver SPI 9 项、bridge 保真、REHOME/DELETE/ROOT CUTOVER/RESIDUAL DELETE/RENAME/DOCS 均已关闭；ROOT CUTOVER 提交为 `cc6cd82`，首轮实现冻结提交为 `3b918d1`。`v1.0.0` 于 2026-07-30 通过最终发布门禁后发布；首轮冻结与最终发布证据分别见 §0.3、§0.4。
 
 ## 0. 最终关闭矩阵
 
@@ -43,15 +43,15 @@
 | RESIDUAL DELETE | **已关闭** | Core/binding/admin/execute/decision/options、metadata fallback、临时 aliases/wrappers/死码清除；v1 Thread/Inspect/skill/profile/runtime 真路径保留 |
 | RENAME | **已关闭** | Go 临时 `V1` 后缀清除、adaptertest 上提、examples 最终命名；线上 `adapter.stream.v1` wire 名保留 |
 | DOCS | **已关闭** | 活跃 README/godoc/API/usage/streaming/A2A/structured/migration/CHANGELOG 同步，历史工作流移入 `docs/archive/` |
-| FREEZE/发布 | **实现冻结已执行；发布待外部结果** | 本地 build/test/vet、定向重复/fuzz/examples/API 边界由最终冻结波执行；Linux race/CI 与 `v1.0.0` tag 不在没有真实结果时标成功 |
+| FREEZE/发布 | **已关闭并发布** | 最终发布树通过本地 build/test/vet/race、定向重复、全套 fuzz、examples/frontend 与 API 边界；同提交通过 Linux CI 后合入 `origin/main` 并创建 `v1.0.0` tag |
 
 ### 0.1 `~35` 导出名门禁的显式设计勘误
 
 批准的 Claude 草稿原文写过“应用开发者，~35 个导出名”，实施计划 P5.5 也曾写“根包导出名 ≤~35”。最终文档不能通过改写句子假装这个字面门禁从未存在。
 
-首次冻结的完整 AST 机械清点得到根包 229 个顶层导出标识符：64 个 const、35 个 var、41 个 func、89 个 type（53 个 defined type、36 个 alias），另有 54 个具体类型导出方法。2026-07-29 常驻进程扩展明确新增 `WithSpawn`、`ErrAgentClosed`、`Agent.Close` 与 `RunSettings.SetSpawn`；当前为 231 个顶层导出（64 const、36 var、42 func、89 type）和 56 个具体类型导出方法。它们的主体不是平行执行入口，而是同一设计要求的 typed Event/Result/approval/profile/service DTO、枚举、稳定 error sentinel、options、小型 schema/approval constructors，以及避免消费者强制 import `driver` SPI 的 alias。若把 raw declaration 数字压到 35，必须删除这些已批准的类型安全合同，或退回 string/`any`/巨型结构体；这与 v1 的生产级、强类型和可维护性目标自相矛盾。
+首次冻结的完整 AST 机械清点得到根包 229 个顶层导出标识符：64 个 const、35 个 var、41 个 func、89 个 type（53 个 defined type、36 个 alias），另有 54 个具体类型导出方法。2026-07-29 常驻进程扩展明确新增 `WithSpawn`、`ErrAgentClosed`、`Agent.Close` 与 `RunSettings.SetSpawn`；随后删除未被真实宿主场景证明的 `Agent.NewThread`，并在 v1 freeze 前删除三个结构化输出模式选择器。当前为 228 个顶层导出（64 const、36 var、39 func、89 type）和 55 个具体类型导出方法。它们的主体不是平行执行入口，而是同一设计要求的 typed Event/Result/approval/profile/service DTO、枚举、稳定 error sentinel、options、小型 schema/approval constructors，以及避免消费者强制 import `driver` SPI 的 alias。若把 raw declaration 数字压到 35，必须删除这些已批准的类型安全合同，或退回 string/`any`/巨型结构体；这与 v1 的生产级、强类型和可维护性目标自相矛盾。
 
-因此当前消费者 API 的量化门禁是 **25 个 `With*` 名 + 约 13 个核心概念组**；全部 231 个 raw exports 的种类、字段、tag、alias/defined 区别、const 值、函数/方法/interface 签名由 `testdata/root_api.golden` 的完整 AST freeze 守卫。第 25 个名字 `WithSpawn` 是默认常驻语义的唯一显式反向开关，不形成第二条执行管线。任何未来新增仍必须显式评审并更新 golden。
+因此当前消费者 API 的量化门禁是 **25 个 `With*` 名 + 约 13 个核心概念组**；全部 228 个 raw exports 的种类、字段、tag、alias/defined 区别、const 值、函数/方法/interface 签名由 `testdata/root_api.golden` 的完整 AST freeze 守卫。第 25 个名字 `WithSpawn` 是默认常驻语义的唯一显式反向开关，不形成第二条执行管线。任何未来新增仍必须显式评审并更新 golden。
 
 ### 0.2 最终本地冻结证据（推送前）
 
@@ -68,7 +68,7 @@
 - 活跃 Go 源码没有旧 `/next`、`/pkg`、`/providers` import；活动目录没有实际 TODO/FIXME/`🚧`、本机 Claude project 路径或临时 `V1` 名。剩余 `V1` 仅属于明确版本化的 `adapter.stream.v1` A2A wire contract。
 - 四条独立终审（架构、API/文档、Driver、release）全部给出 PASS；Windows 无 CGO/GCC，`go test -race ./...` 必须由推送后的 Linux CI 完成。
 
-以上是推送前的本地冻结记录。其当时唯一开放的外部门禁已按 §0.3 关闭；本轮仍没有 `v1.0.0` tag 授权。
+以上是首轮推送前的本地冻结记录。其当时唯一开放的外部门禁已按 §0.3 关闭；最终发布授权与新增变更的复验见 §0.4。
 
 ### 0.3 远端冻结证据
 
@@ -79,6 +79,14 @@
 - `fuzz` success：archive extraction、四个 provider protocol parser、Codex app-server decoder 全部通过。
 - `frontend` success：AG-UI 与 CopilotKit 均完成 clean install、build/lint 与 production audit。
 - 流水线只有 GitHub 托管 runner 对 `actions/checkout@v4` / `actions/setup-go@v5` 的 Node 20 runtime 弃用提示；没有代码、依赖或测试失败。该提示属于上游 Action 迁移事项，不改变本次冻结结论。
+
+### 0.4 `v1.0.0` 最终发布复验（2026-07-30）
+
+- 删除未被宿主场景证明的 same-key `NewThread/start_new`，由新 Thread key 表达无上下文新对话；API 与 Driver golden 加入防回归守卫。
+- 结构化输出删除消费者与 Driver SPI 的 mode 选择层，固定为 provider 原生约束优先、Prompt 加本地校验自动回退；README 只展示 `RunAs[T](ctx, runner, prompt)` 最短路径。
+- 本地 `go build ./...`、`go test -count=1 ./...`、`go vet ./...`、`go test -race -count=1 ./...`、S1～S9、关键并发/Thread/结构化输出 20 次重复、9 个 30 秒 fuzz、live-tag 非付费编译和 `govulncheck@v1.6.0` 全部通过。
+- AG-UI 与 CopilotKit 前端 build 通过，CopilotKit lint 通过；production audit 未发现 high/critical 漏洞。
+- 发布提交必须先在 `codex/sdk-api-v1-complete` 上通过 GitHub Actions 的 Linux validate/race/fuzz/frontend 全部 job，再以快进方式合入 `origin/main`；`v1.0.0` tag 与该提交必须完全同点。
 
 > 历史状态：**接管时执行事实源（现已结案）**
 > 接管日期：2026-07-27  
@@ -106,6 +114,7 @@
 - 不再以中央 `SDK`、默认/命名 Agent registry、`Runner` 查找、`Start`、`RunHandle` 或多条事件/决策 channel 作为产品方向。
 - 唯一消费者构造入口是 `adaptor.New(driver, opts...)`；多 Agent 由宿主持有多个 Go 值。
 - 唯一执行动词是 `Run` / `Stream`；`Agent` 与 `Thread` 实现同一 `Runner` 合同。
+- Thread 只保留 continue-or-start、resume-only 与 fork；主动开始无上下文的新对话必须由宿主分配新 key，不保留 `NewThread` / `start_new`。
 - 旧 API 只作为 P5 的删除对象存在。不得再为它新增能力，也不得用兼容 shim 把它带进 v1。
 
 这项裁决已经写入根 `AGENTS.md`，此前“旧 AGENTS 与 v1 redesign 谁优先”的架构冲突已关闭。
@@ -349,13 +358,13 @@ Claude 原报告的九项是：生命周期终局；SessionCodec 零值；Sessio
 | SessionCodec 零值 | `SessionCodec` | SES-01、02、07 |
 | Session 参数键 | PRE 导出的 `SessionParam*` 常量；本波只引用、不重复验收 | SES-08 |
 | Sequence/Seq 权威 | `EventSink`、`RunEvent`、`StreamPayload` | EVT-10、RUN-03 |
-| structured-output 矩阵 | `StructuredOutputCapability` 的 mode × mechanism × provider transport × HITL Ask 完整矩阵 | SO-01～03 |
+| structured-output 矩阵 | `StructuredOutputCapability` 的 mechanism × provider transport × HITL Ask 完整矩阵 | SO-01～03 |
 | HumanDecision failure invariant | `RunFailure` | RSP-02 |
 | checkpoint validity | `Checkpoint`、`Driver.Run` | RSP-01、RSP-05；`VerifyOutcome` 同时检查 Go error |
 | resume 与 codec 双向真话 | `SessionCodecProvider`、`SessionCapability` | CAP-01 |
 | Transcript mirror | `EventSink`、`RunEvent` | RUN-04 |
 
-这些条款均为 MUST，不存在 Lenient/SHOULD 逃生舱。`adaptertest` 的 hermetic reference driver 证明套件正向路径，negative table 证明 SPI 的结构与声明违规会真实被拒绝；structured-output 的三种 mode × provider transport × HITL 运行时选择/拒绝由 core structured contract tests 负责。四内置 Driver 的正式协议/fixture 证据由 §7.4 的 correctness workstream 继续承担，不能以 live probe 默认跳过替代。
+这些条款均为 MUST，不存在 Lenient/SHOULD 逃生舱。`adaptertest` 的 hermetic reference driver 证明套件正向路径，negative table 证明 SPI 的结构与声明违规会真实被拒绝；structured-output 的原生优先、Prompt 自动回退 × provider transport × HITL 运行时选择/拒绝由 core structured contract tests 负责。四内置 Driver 的正式协议/fixture 证据由 §7.4 的 correctness workstream 继续承担，不能以 live probe 默认跳过替代。
 
 ### 7.3 bridge/协议保真
 

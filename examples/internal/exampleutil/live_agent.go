@@ -240,10 +240,15 @@ func NonInteractivePolicy(agent string, sandbox adaptor.SandboxLevel) adaptor.Po
 	policy := adaptor.Policy{
 		Approvals: adaptor.ApprovalPolicy{
 			Permission: adaptor.ApprovalAutoApprove,
-			PlanReview: adaptor.ApprovalAutoApprove,
 		},
 	}
-	if normalizeAgent(agent, "agent") == AgentCodex {
+	switch normalizeAgent(agent, "agent") {
+	case AgentClaude, AgentCodebuddy:
+		// These providers expose an independent plan-review control. Codex and
+		// Cursor do not, so setting this field for them would be rejected by the
+		// SDK capability gate before the real CLI starts.
+		policy.Approvals.PlanReview = adaptor.ApprovalAutoApprove
+	case AgentCodex:
 		policy.Sandbox = sandbox
 	}
 	return policy

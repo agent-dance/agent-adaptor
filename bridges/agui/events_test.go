@@ -43,6 +43,36 @@ func textContents(events []aguievents.Event) []string {
 	return out
 }
 
+func activityContentMap(t *testing.T, event aguievents.Event) map[string]any {
+	t.Helper()
+	snapshot, ok := event.(*aguievents.ActivitySnapshotEvent)
+	if !ok {
+		t.Fatalf("event = %T, want *ActivitySnapshotEvent", event)
+	}
+	raw, err := json.Marshal(snapshot.Content)
+	if err != nil {
+		t.Fatalf("marshal activity content: %v", err)
+	}
+	var content map[string]any
+	if err := json.Unmarshal(raw, &content); err != nil {
+		t.Fatalf("unmarshal activity content: %v", err)
+	}
+	return content
+}
+
+func patchValue(event aguievents.Event, path string) (any, bool) {
+	delta, ok := event.(*aguievents.ActivityDeltaEvent)
+	if !ok {
+		return nil, false
+	}
+	for _, operation := range delta.Patch {
+		if operation.Path == path {
+			return operation.Value, true
+		}
+	}
+	return nil, false
+}
+
 // frameMap renders one AG-UI event as its wire JSON, minus the constructor
 // timestamp (the only field allowed to differ between the two translators).
 func frameMap(t *testing.T, ev aguievents.Event) map[string]any {
@@ -149,6 +179,111 @@ func TestEventTranslatorCloseRunCodes(t *testing.T) {
 				t.Errorf("post-terminal Translate emitted %v", typesOf(extra))
 			}
 		})
+	}
+}
+
+func TestEventTranslatorSubagentActivityLifecycle(t *testing.T) {
+	t.Parallel()
+	tr := agui.NewEventTranslator()
+	events := tr.Translate(adaptor.RunStarted{RunID: "leader-run", ThreadID: "thread"})
+
+	started := adaptor.WithEventMeta(adaptor.SubagentUpdate{
+		Agent: "plan",
+		Kind:  adaptor.SubagentStarted,
+		Delta: "Create an implementation plan",
+		Data: map[string]any{
+			"kind":                "subagent.started",
+			"delegation_id":       "delegation-1",
+			"agent_name":          "Codex planner",
+			"parent_tool_call_id": "leader-tool-1",
+			"remote_protocol":     "local",
+			"time":                "2026-07-30T09:00:00Z",
+		},
+	}, adaptor.EventMeta{RunID: "leader-run"})
+	events = append(events, tr.Translate(started)...)
+
+	if got := typesOf(events); !reflect.DeepEqual(got, []aguievents.EventType{
+		aguievents.EventTypeRunStarted,
+		aguievents.EventTypeActivitySnapshot,
+	}) {
+		t.Fatalf("event types = %v", got)
+	}
+	snapshot, ok := events[1].(*aguievents.ActivitySnapshotEvent)
+	if !ok {
+		t.Fatalf("events[1] = %T, want ActivitySnapshotEvent", events[1])
+	}
+	if snapshot.MessageID != "delegation-1" || snapshot.ActivityType != "subagent" {
+		t.Fatalf("snapshot identity = (%q, %q)", snapshot.MessageID, snapshot.ActivityType)
+	}
+	content := activityContentMap(t, snapshot)
+	if content["agentKey"] != "plan" || content["agentName"] != "Codex planner" || content["status"] != "started" {
+		t.Fatalf("snapshot content = %#v", content)
+	}
+
+	delta := adaptor.WithEventMeta(adaptor.SubagentUpdate{
+		Agent: "plan", Kind: adaptor.SubagentDelta, Delta: "Inspect the API. ",
+		Data: map[string]any{
+			"kind": "subagent.text.delta", "delegation_id": "delegation-1",
+			"time": "2026-07-30T09:00:01Z",
+		},
+	}, adaptor.EventMeta{RunID: "leader-run"})
+	translated := tr.Translate(delta)
+	if got := typesOf(translated); !reflect.DeepEqual(got, []aguievents.EventType{aguievents.EventTypeActivityDelta}) {
+		t.Fatalf("delta types = %v", got)
+	}
+	if got, ok := patchValue(translated[0], "/text"); !ok || got != "Inspect the API. " {
+		t.Fatalf("text patch = %#v, present=%v", got, ok)
+	}
+	if got, ok := patchValue(translated[0], "/status"); !ok || got != "running" {
+		t.Fatalf("status patch = %#v, present=%v", got, ok)
+	}
+	events = append(events, translated...)
+
+	finished := adaptor.WithEventMeta(adaptor.SubagentUpdate{
+		Agent: "plan", Kind: adaptor.SubagentFinished,
+		Data: map[string]any{
+			"kind": "subagent.finished", "delegation_id": "delegation-1",
+			"status": "completed", "text": "Final plan", "result": map[string]any{"approved": true},
+			"time": "2026-07-30T09:00:03Z",
+		},
+	}, adaptor.EventMeta{RunID: "leader-run"})
+	translated = tr.Translate(finished)
+	if got, ok := patchValue(translated[0], "/status"); !ok || got != "completed" {
+		t.Fatalf("terminal status patch = %#v, present=%v", got, ok)
+	}
+	if got, ok := patchValue(translated[0], "/durationMs"); !ok || got != int64(3000) {
+		t.Fatalf("duration patch = %#v, present=%v", got, ok)
+	}
+	events = append(events, translated...)
+
+	closed := tr.CloseResult(&adaptor.Result{}, nil)
+	for _, event := range closed {
+		if event.Type() == aguievents.EventTypeActivityDelta {
+			t.Fatalf("completed subagent was synthetically closed again: %#v", event)
+		}
+	}
+	events = append(events, closed...)
+	assertVerified(t, events)
+}
+
+func TestEventTranslatorClosesUnfinishedSubagentActivity(t *testing.T) {
+	t.Parallel()
+	tr := agui.NewEventTranslator()
+	_ = tr.Translate(adaptor.RunStarted{RunID: "leader-run", ThreadID: "thread"})
+	_ = tr.Translate(adaptor.WithEventMeta(adaptor.SubagentUpdate{
+		Agent: "impl", Kind: adaptor.SubagentStarted,
+		Data: map[string]any{"kind": "subagent.started", "delegation_id": "delegation-2"},
+	}, adaptor.EventMeta{RunID: "leader-run"}))
+
+	events := tr.CloseResult(nil, context.Canceled)
+	if len(events) < 2 || events[0].Type() != aguievents.EventTypeActivityDelta {
+		t.Fatalf("close types = %v, want activity delta before terminal", typesOf(events))
+	}
+	if got, ok := patchValue(events[0], "/status"); !ok || got != "cancelled" {
+		t.Fatalf("synthetic status = %#v, present=%v", got, ok)
+	}
+	if events[len(events)-1].Type() != aguievents.EventTypeRunError {
+		t.Fatalf("terminal = %s, want RUN_ERROR", events[len(events)-1].Type())
 	}
 }
 

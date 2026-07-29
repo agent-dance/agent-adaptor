@@ -25,6 +25,13 @@
 
 打开 http://localhost:3000 。Go backend 和 Next.js dev server 默认都只绑定 `127.0.0.1`；这个示例会调用已登录的真实 CLI，不会默认暴露到局域网。
 
+团队委托 showcase 复用同一套前端，但由它自己的脚本启动正确的 Go
+backend 并切换为团队工作流页面（不显示该 backend 不提供的 HITL 恢复侧栏）：
+
+```bash
+./examples/showcases/team-agent-workflow/start-all.sh claude
+```
+
 `cursor` 在没有正式 assistant delta 协议时不会伪造 token 流；后端只把 Driver 已确认的最终 `Result.Text` 恰好投影一次，并同步写入恢复历史。
 
 也可以只起后端：
@@ -114,9 +121,14 @@ pass `team.Option()` to `adaptor.New` (or pass the service through
 run-scoped `delegate_to_agent` MCP sidecar, exposes it through the typed MCP
 contract, binds its cleanup to the run, and folds progress into the Agent's
 single event stream as `adaptor.SubagentUpdate`. The AG-UI bridge projects those
-updates as `CUSTOM` events named `subagent.started`, `subagent.text.delta`,
-`subagent.artifact`, `subagent.finished`, etc.; Claude/Codex/Cursor receives only
-the final structured MCP result.
+updates into one incrementally patched AG-UI Activity message per delegation
+(`activityType="subagent"`, `messageId=delegationId`); Claude/Codex/Cursor
+receives only the final structured MCP result. In team-workflow mode the
+CopilotKit frontend renders these Activity messages as live cards in the right
+sidebar. A role's human-facing name carries its provider base, so the card tag
+shows `Claude Code`, `Codex`, `Cursor`, or `CodeBuddy` instead of the common
+A2A transport. Structured plan output shaped as a file value is rendered as a
+previewable and downloadable `PLAN.md` attachment.
 
 This example's default main path starts one local parent CLI. Hosts that enable
 delegation should run an A2A bridge for each remote agent (see
@@ -124,13 +136,13 @@ delegation should run an A2A bridge for each remote agent (see
 alive for the equipped Agent, and close it during host shutdown. No stringly
 runtime metadata or bridge-specific run handle is involved.
 
-The important boundary for UI authors: render the `subagent.*` custom events as
-a nested visual group, but do not add them to the chat transcript as parent model
-messages. `subagent.*` event values may include `parentToolCallId` when the host
-can correlate the delegation sidecar with a parent provider tool-use ID, but UI
-code should not require it. Use `delegationId` as the stable nested group key,
-with `runId` as the run scope. The parent transcript should contain the normal
-tool call plus the concise final delegation result only.
+The important boundary for UI authors: render `activityType="subagent"` as a
+nested visual group, but do not turn it into a parent assistant message. The
+Activity content may include `parentToolCallId` when the host can correlate the
+delegation sidecar with a parent provider tool-use ID, but UI code should not
+require it. `subagentId` is the stable nested group key and `runId` is its run
+scope. The parent transcript should contain the normal tool call plus the
+concise final delegation result only.
 
 ## 相关文档
 

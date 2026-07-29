@@ -177,7 +177,6 @@ Thread 是带持久化续接能力的 `Runner`。Agent 默认无状态，使用 
 
 ```go
 func (a *Agent) Thread(key string, opts ...ThreadOption) *Thread
-func (a *Agent) NewThread(key string) *Thread
 func (t *Thread) Fork(newKey string) *Thread
 func (t *Thread) Key() string
 func (t *Thread) Checkpoint(ctx context.Context) (*Checkpoint, error)
@@ -190,10 +189,9 @@ func ResumeOnly() ThreadOption
 |---|---|
 | `agent.Thread(key)` | 有 active checkpoint 就续接，否则新建 |
 | `agent.Thread(key, ResumeOnly())` | 只允许续接；缺失或不兼容时返回错误 |
-| `agent.NewThread(key)` | 首次执行强制新建；成功产生有效 checkpoint 后归档旧 active record 并重绑 key |
 | `parent.Fork(newKey)` | 首次执行从父 checkpoint 分叉；父 Thread 保持不变，目标 key 必须未占用 |
 
-key 是宿主自己的非空、不透明字符串；空 key 会 panic。`Checkpoint` 只用于审计和诊断，正常续接由 Thread 自动完成。
+key 是宿主自己的非空、不透明字符串；空 key 会 panic。新的无关对话必须由宿主分配新的 key，SDK 不提供同 key 主动重绑入口。`Checkpoint` 只用于审计和诊断，正常续接由 Thread 自动完成。
 
 主要错误均可用 `errors.Is` 判断：
 
@@ -410,9 +408,6 @@ Schema options：
 
 | 选项 | 语义 |
 |---|---|
-| `SchemaStrict()` | 要求 provider 原生 JSON Schema 约束；默认模式 |
-| `SchemaFlexible()` | 原生优先，不支持时允许 prompt + 本地校验 |
-| `SchemaPromptOnly()` | 明确使用 prompt + 本地校验 |
 | `SchemaName(string)` | provider-facing schema 名称 |
 | `SchemaDescription(string)` | schema 描述 |
 | `SchemaReturnInvalid()` | 校验失败时保留 invalid payload，而不是让执行失败 |
@@ -421,7 +416,10 @@ Schema options：
 | `SchemaRequireExplicitTags()` | 仅 `jsonschema:"required"` 字段为 required |
 | `SchemaUseGoComments(base, path)` | 用 Go 注释生成描述 |
 
-无效 schema 匹配 `ErrInvalidOutputSchema`，能力不支持匹配 `ErrStructuredOutputUnsupported`。Driver 的 `Descriptor.StructuredOutput` 是能力真相源，能力不足会在进程启动前失败。
+消费者不选择结构化输出模式。框架固定优先使用 provider 原生 JSON Schema；
+当前 transport 或 policy 不支持时，自动回退到 Prompt 加本地校验；两种机制都
+不可用才在进程启动前返回 `ErrStructuredOutputUnsupported`。无效 schema 匹配
+`ErrInvalidOutputSchema`，Driver 的 `Descriptor.StructuredOutput` 是能力真相源。
 
 ## 10. Inspect 与 profile 状态
 

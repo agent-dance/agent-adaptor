@@ -1,10 +1,18 @@
 import type { ReactNode } from "react";
 import { CopilotKit } from "@copilotkit/react-core";
 import "@copilotkit/react-ui/styles.css";
+import "./globals.css";
+
+const teamWorkflowMode =
+  process.env.NEXT_PUBLIC_COPILOTKIT_MODE === "team-agent-workflow";
 
 export const metadata = {
-  title: "agent-adaptor × CopilotKit",
-  description: "Streaming chat demo over AG-UI (local CLI backend).",
+  title: teamWorkflowMode
+    ? "agent-adaptor × CopilotKit × Team workflow"
+    : "agent-adaptor × CopilotKit",
+  description: teamWorkflowMode
+    ? "Leader, plan, implementation, and review over AG-UI."
+    : "Streaming chat demo over AG-UI (local CLI backend).",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

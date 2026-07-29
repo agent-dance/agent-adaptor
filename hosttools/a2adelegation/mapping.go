@@ -345,7 +345,16 @@ func (m *eventMapper) terminalEventsForState(taskID, contextID string, state cli
 
 func (m *eventMapper) terminalEvents(event clienta2a.Event) []DelegationEvent {
 	if event.Task != nil {
-		return m.terminalEventsForState(event.Task.ID, event.Task.ContextID, event.Task.Status.State, event.Task.Raw)
+		out := m.closeOpen(event.Task.ID, event.Task.ContextID)
+		terminal := m.terminalForState(event.Task.ID, event.Task.ContextID, event.Task.Status.State, event.Task.Raw)
+		if text := terminalTaskText(*event.Task); text != "" {
+			terminal.Text = text
+			terminal.Result = map[string]any{
+				"status": statusFromState(event.Task.Status.State),
+				"text":   text,
+			}
+		}
+		return append(out, terminal)
 	}
 	if event.Status != nil {
 		return m.terminalEventsForState(event.TaskID, event.ContextID, event.Status.State, event.Raw)
@@ -356,6 +365,21 @@ func (m *eventMapper) terminalEvents(event clienta2a.Event) []DelegationEvent {
 		return out
 	}
 	return m.terminalEventsForState(event.TaskID, event.ContextID, clienta2a.TaskStateCompleted, event.Raw)
+}
+
+func terminalTaskText(task clienta2a.Task) string {
+	text := ""
+	for _, message := range task.Messages {
+		if candidate := textFromMessage(message); candidate != "" {
+			text = candidate
+		}
+	}
+	if task.Status.Message != nil {
+		if candidate := textFromMessage(*task.Status.Message); candidate != "" {
+			text = candidate
+		}
+	}
+	return text
 }
 
 func (m *eventMapper) terminalForState(taskID, contextID string, state clienta2a.TaskState, raw map[string]any) DelegationEvent {

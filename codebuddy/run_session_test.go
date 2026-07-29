@@ -244,12 +244,12 @@ func TestCodeBuddyHeadlessStructuredOutput(t *testing.T) {
 		Model: "claude-sonnet-5",
 	}
 	req := driver.Request{
-		Prompt:    "give me json",
-		Config:    cfg,
-		Workspace: driver.WorkspaceLease{ID: "workspace-a", CWD: workspace},
-		Policy:    autoApprovePolicy(),
+		Prompt:                 "give me json",
+		Config:                 cfg,
+		Workspace:              driver.WorkspaceLease{ID: "workspace-a", CWD: workspace},
+		Policy:                 autoApprovePolicy(),
+		StructuredOutputSource: driver.StructuredOutputSourceNative,
 		OutputSchema: &driver.OutputSchema{
-			Mode:       driver.StructuredOutputNativeStrict,
 			SchemaJSON: []byte(`{"type":"object","properties":{"answer":{"type":"integer"}}}`),
 		},
 	}

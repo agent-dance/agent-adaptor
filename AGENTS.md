@@ -156,7 +156,6 @@ func New(d driver.Driver, opts ...Option) *Agent
 ```go
 th := agent.Thread(key)                 // 有则续、无则建
 th := agent.Thread(key, ResumeOnly())   // 只续不建
-th := agent.NewThread(key)              // 强制新建
 branch := th.Fork(newKey)               // 从父对话分叉
 checkpoint, err := th.Checkpoint(ctx)
 ```
@@ -164,11 +163,11 @@ checkpoint, err := th.Checkpoint(ctx)
 合同：
 
 - Thread key 是宿主提供的单一、不透明业务字符串，SDK 必须逐字保存和比较。
+- 宿主主动开启无上下文的新对话时必须分配新的 Thread key；core 不提供同 key 的 `NewThread`、`start_new` 或重绑入口。continue-or-start 仅可在配置不兼容或 provider 拒绝 resume 的安全回退中原子替换内部 checkpoint。
 - 内部存储或 bridge 不得通过未转义分隔符拼接多个维度；任何复合 key 必须使用无碰撞编码。
 - Driver 的 resume ID 是内部 checkpoint 细节，不得升级成第二个消费者身份体系。
 - 同一 Thread 同时只能有一个持有有效 lease 的运行。
 - lease 的 acquire、renew、finalize、release 必须以 owner 和 token 防止过期运行覆盖新状态；释放必须有界且错误可观察。
-- `NewThread(key)` 只能在新运行产生有效 checkpoint 后原子归档旧 active record并重绑 key；失败不得破坏旧健康对话。
 - `Fork(newKey)` 必须验证父 checkpoint、Driver、配置、identity 与 fingerprint 兼容性，并持有必要的父记录协调租约。
 - Fork 不得归档或修改父 Thread；目标 key 已存在时必须执行明确、有测试的冲突策略，不能静默留下多条 active record。
 - continue-or-start 在 provider 拒绝 resume 时最多按合同回退一次到新会话；旧状态只能在新 checkpoint 成功持久化后归档。
@@ -246,6 +245,7 @@ Result 分层合同：
 - Text 不得承载原始 stdout dump。
 - Text 不得自动拼接 Summary 或 provider 终局 payload。
 - Run 与 Stream.Result 必须提供同样完整的 Raw、Transcript、Services 与结构化输出。
+- 结构化输出只有一种固定协商语义：优先使用 provider 原生 schema 约束；当前 transport 或 policy 不支持时自动回退到 Prompt 加本地校验；两者都不可用才在启动前失败。消费者和 Driver SPI 均不得暴露模式选择，Driver 只能执行 core 已解析的机制。
 - Transcript 只能来自 Driver 对官方协议的解析，不能来自 shared helper 的 JSON 猜测。
 - provider 终局 payload 不得在 Driver Response → Result 转换中丢失。
 - Usage 未观察到与真实零值的区别若协议需要表达，必须在冻结前以明确类型合同解决，不得靠猜测。

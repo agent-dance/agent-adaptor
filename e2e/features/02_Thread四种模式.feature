@@ -1,6 +1,6 @@
 # language: zh-CN
 @real_cli @sdk
-功能: 常驻进程不改变五种 Thread 语义
+功能: 常驻进程不改变四种 Thread 语义
   Thread key 仍是业务稳定键
   Thread record ID 和 provider ResumeID 仍由统一执行管线协调
 
@@ -33,19 +33,6 @@
     当以 Thread(key, ResumeOnly()) 执行调用
     那么应返回 ErrThreadNotFound
     而且不应产生 ProcessInfo(ProcessSpawn)
-
-    例子:
-      | driver   |
-      | claude    |
-      | codex     |
-      | codebuddy |
-
-  场景大纲: NewThread 不复用旧 conversation
-    假如 "<driver>" 已有一个健康 Thread 和 live writer
-    当使用相同业务键通过 NewThread(key) 执行
-    那么应创建新的 Thread record 和 provider ResumeID
-    而且新 Thread 应启动独立真实 CLI writer
-    而且旧 Thread 的 checkpoint 不应改变
 
     例子:
       | driver   |

@@ -27,10 +27,11 @@ type Policy = DelegationPolicy
 // same delegate_to_agent tool, the same Delegator pipeline, and the same
 // DelegationEvent stream.
 type AgentRef struct {
-	key    string
-	policy DelegationPolicy
-	runner Runner
-	spec   *RemoteAgentSpec
+	key         string
+	displayName string
+	policy      DelegationPolicy
+	runner      Runner
+	spec        *RemoteAgentSpec
 }
 
 // Local registers an in-process Runner as a delegatable target. Its Event
@@ -39,6 +40,18 @@ type AgentRef struct {
 // network hop.
 func Local(key string, runner Runner, policy Policy) AgentRef {
 	return AgentRef{key: strings.TrimSpace(key), policy: policy, runner: runner}
+}
+
+// LocalNamed registers an in-process Runner with a separate model-facing key
+// and human-facing display name. The display name is carried by delegation
+// events and is useful for UIs that need to distinguish a workflow role from
+// its underlying provider, for example key "plan" and name "Claude Code
+// Planner". A blank displayName falls back to key, matching Local.
+func LocalNamed(key, displayName string, runner Runner, policy Policy) AgentRef {
+	return AgentRef{
+		key: strings.TrimSpace(key), displayName: strings.TrimSpace(displayName),
+		policy: policy, runner: runner,
+	}
 }
 
 // Remote registers a remote A2A target by Agent Card URL. Discovery and task

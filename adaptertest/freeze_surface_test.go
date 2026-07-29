@@ -47,12 +47,17 @@ func TestRejectedDriverVocabularyCannotReappear(t *testing.T) {
 		t.Fatal(err)
 	}
 	forbidden := map[string]struct{}{
-		"DriverAdapter":      {},
-		"DriverCheckpoint":   {},
-		"DriverDescriptor":   {},
-		"DriverRunRequest":   {},
-		"DriverRunResult":    {},
-		"DriverSessionState": {},
+		"DriverAdapter":                  {},
+		"DriverCheckpoint":               {},
+		"DriverDescriptor":               {},
+		"DriverRunRequest":               {},
+		"DriverRunResult":                {},
+		"DriverSessionState":             {},
+		"SessionStartNew":                {},
+		"StructuredOutputMode":           {},
+		"StructuredOutputNativeStrict":   {},
+		"StructuredOutputPreferNative":   {},
+		"StructuredOutputPromptValidate": {},
 	}
 	for _, declaration := range surface.Declarations {
 		names := []string{declaration.Name}
@@ -65,6 +70,29 @@ func TestRejectedDriverVocabularyCannotReappear(t *testing.T) {
 			}
 			if strings.HasPrefix(name, "DriverRun") || strings.HasPrefix(name, "DriverSession") {
 				t.Fatalf("%s reintroduces rejected Driver SPI vocabulary %q", declaration.Text, name)
+			}
+		}
+	}
+}
+
+func TestStructuredOutputModeSelectorsCannotReappear(t *testing.T) {
+	root := moduleRoot(t)
+	checks := []struct {
+		file     string
+		typeName string
+	}{
+		{file: "output.go", typeName: "OutputSchema"},
+		{file: "output.go", typeName: "StructuredOutput"},
+		{file: "structured_errors.go", typeName: "StructuredOutputUnsupportedError"},
+	}
+	for _, check := range checks {
+		file := parseGoFile(t, filepath.Join(root, "driver", check.file))
+		value := findStructType(t, file, check.typeName)
+		for _, field := range value.Fields.List {
+			for _, name := range field.Names {
+				if name.Name == "Mode" {
+					t.Errorf("driver.%s reintroduced a structured-output mode selector", check.typeName)
+				}
 			}
 		}
 	}

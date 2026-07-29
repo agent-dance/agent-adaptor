@@ -79,7 +79,7 @@ the exact same identities as their owner-package variables.
 | `ErrMCPUnsupported` | `mcp.ErrUnsupported` | — | The Driver declares no MCP support. |
 | `ErrMCPTransportUnsupported` | `mcp.ErrTransportUnsupported` | — | The Driver does not support the requested MCP transport. |
 | `ErrInvalidOutputSchema` | `driver.ErrInvalidOutputSchema` | `*adaptor.InvalidOutputSchemaError` (`Reason`, `Cause`) | A schema cannot be derived, parsed, normalized, or compiled. |
-| `ErrStructuredOutputUnsupported` | `driver.ErrStructuredOutputUnsupported` | `*adaptor.StructuredOutputUnsupportedError` (`Driver`, `Mode`, `Reason`) | The structured-output capability matrix cannot honor the request. |
+| `ErrStructuredOutputUnsupported` | `driver.ErrStructuredOutputUnsupported` | `*adaptor.StructuredOutputUnsupportedError` (`Driver`, `Reason`) | Neither native enforcement nor Prompt plus local validation can honor the request. |
 | `ErrInvalidDriverConfig` | `driver.ErrInvalidDriverConfig` | `*adaptor.InvalidDriverConfigError` (`Driver`, `Cause`) | `Driver.ValidateConfig` rejected the captured configuration. |
 | `ErrInvalidPolicy` | `driver.ErrInvalidPolicy` | `*adaptor.InvalidPolicyError` (`Driver`, `Field`, `Value`) | A policy enum, action, or retry value is out of domain. |
 | `ErrPolicyCapabilityUnsupported` | `driver.ErrPolicyCapabilityUnsupported` | `*adaptor.PolicyCapabilityUnsupportedError` (`Driver`, `Dimension`, `Value`) | A valid, explicitly selected sandbox, web-search, or browser value is unsupported. |

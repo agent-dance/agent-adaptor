@@ -91,7 +91,7 @@ func validateSessionRequest(req SessionRequest) error {
 		if hasID == hasTuple || hasForkID || hasForkKey {
 			return fmt.Errorf("%w: continue-only requires exactly one ID or key selector", ErrInvalidSessionRequest)
 		}
-	case SessionContinueOrStart, SessionStartNew:
+	case SessionContinueOrStart:
 		if !hasTuple || hasID || hasForkID || hasForkKey {
 			return fmt.Errorf("%w: %s requires exactly one key selector", ErrInvalidSessionRequest, req.Mode)
 		}
@@ -589,22 +589,6 @@ func prepareSessionPlan(
 			return nil, plan.releaseAfter(err)
 		}
 		plan.created = true
-	case SessionStartNew:
-		if current != nil {
-			if err := acquireCurrent(); err != nil {
-				return nil, plan.releaseAfter(err)
-			}
-			plan.previousID = current.ID
-		}
-		plan.engineID, err = newEngineSessionID(driverType, fingerprint)
-		if err != nil {
-			return nil, plan.releaseAfter(err)
-		}
-		if err := plan.acquireLease(ctx, store, sessionRecordLeaseID(plan.engineID)); err != nil {
-			return nil, plan.releaseAfter(err)
-		}
-		plan.created = true
-		plan.compatibility = SessionCompatibility{Status: SessionCompatibilityNew}
 	case SessionFork:
 		if current != nil {
 			return nil, plan.releaseAfter(fmt.Errorf("%w: %s", ErrThreadAlreadyExists, req.Key))

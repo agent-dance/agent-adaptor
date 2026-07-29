@@ -44,9 +44,9 @@ type Record struct {
 	// record's lifetime.
 	ID string
 	// Key is the host's thread key — the stable business handle. Multiple
-	// records may share a Key over time when StartNew archives the old one;
-	// at most one of them is StatusActive. Fork requires a previously unused
-	// target key and never archives its parent.
+	// records may share a Key over time when a resume fallback archives the
+	// old one; at most one of them is StatusActive. Fork requires a previously
+	// unused target key and never archives its parent.
 	Key string
 	// Status is the lifecycle state (active / archived).
 	Status Status
@@ -100,8 +100,8 @@ type FinalizeRequest struct {
 	// RebindActive is set.
 	Key        string
 	HeldLeases []Lease
-	// ArchiveOld archives the PreviousID record (StartNew/resume-fallback
-	// paths keep the old conversation addressable for audit).
+	// ArchiveOld archives the PreviousID record (resume-fallback paths keep
+	// the old conversation addressable for audit).
 	ArchiveOld bool
 	// RebindActive points the Key's active mapping at Record.ID.
 	RebindActive bool

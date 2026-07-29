@@ -247,9 +247,9 @@ func TestPersistentCodexNativeSchemaUsesPerTurnFieldWithoutHandoff(t *testing.T)
 	first := runCodexTurn(t, a, req)
 
 	structuredReq := resumedCodexRequest(req, first)
+	structuredReq.StructuredOutputSource = driver.StructuredOutputSourceNative
 	structuredReq.OutputSchema = &driver.OutputSchema{
 		Format:     driver.OutputFormatJSONSchema,
-		Mode:       driver.StructuredOutputNativeStrict,
 		SchemaJSON: json.RawMessage(`{"type":"object","properties":{"answer":{"type":"integer"}},"required":["answer"],"additionalProperties":false}`),
 	}
 	result := runCodexTurn(t, a, structuredReq)

@@ -49,7 +49,7 @@ func TestEngineErrorsUsePublicLeafConcreteTypes(t *testing.T) {
 
 	_, err = resolveStructuredOutputSource(
 		Descriptor{Type: "fake"},
-		&OutputSchema{Mode: StructuredOutputNativeStrict},
+		&OutputSchema{Format: OutputFormatJSONSchema, SchemaJSON: []byte(`{"type":"object"}`)},
 		false,
 		RunPolicy{},
 	)

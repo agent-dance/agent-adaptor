@@ -205,16 +205,9 @@ if errors.Is(err, adaptor.ErrThreadNotFound) {
 
 配置或运行环境与旧 checkpoint 不兼容时匹配 `ErrThreadIncompatible`，不会静默新建。
 
-### 5.3 强制新建
+需要主动开启无上下文的新对话时，为它分配新的宿主 key，再调用 `agent.Thread(newKey)`。SDK 不提供将已有 key 主动重绑到另一段对话的入口。
 
-```go
-fresh := agent.NewThread("tenant-1/issue-123")
-result, err := fresh.Run(ctx, "restart the investigation from scratch")
-```
-
-旧 active record 只会在新运行成功产生有效 checkpoint 后归档；失败不会污染旧健康对话。此 handle 后续调用会正常续接新对话。
-
-### 5.4 分叉
+### 5.3 分叉
 
 ```go
 parent := agent.Thread("tenant-1/issue-123", adaptor.ResumeOnly())
@@ -228,7 +221,7 @@ if errors.Is(err, adaptor.ErrThreadAlreadyExists) {
 
 父 Thread 保持 active，不会被分叉修改。目标 key 必须未被其他 active 对话占用。
 
-### 5.5 查看 checkpoint
+### 5.4 查看 checkpoint
 
 ```go
 checkpoint, err := thread.Checkpoint(ctx)
@@ -575,7 +568,6 @@ triage, result, err := adaptor.RunAs[Triage](ctx, thread, prompt)
 ```go
 stream := agent.Stream(ctx, prompt,
 	adaptor.WithSchema[Triage](
-		adaptor.SchemaStrict(),
 		adaptor.SchemaName("issue_triage"),
 	),
 )
@@ -592,11 +584,8 @@ if err := result.Decode(&triage); err != nil {
 }
 ```
 
-选择模式：
-
-- `SchemaStrict()`：要求 provider 原生约束，能力不足会在进程前失败。
-- `SchemaFlexible()`：原生优先，可回退到 prompt + 本地校验。
-- `SchemaPromptOnly()`：明确接受较弱的 prompt + 本地校验合同。
+结构化输出没有模式选项：框架优先使用 provider 原生约束，不支持时自动回退到
+Prompt 加本地校验；两者都不可用时才在进程启动前失败。
 
 来自外部 registry 的 schema 使用 `WithSchemaJSON(schemaBytes, ...)`。schema 名称、描述、enum、pattern 和 examples 可能传给 provider，不要写入秘密。
 

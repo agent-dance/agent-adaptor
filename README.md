@@ -101,12 +101,11 @@ agent := adaptor.New(
 thread := agent.Thread("tenant-42/issue-123")
 result, err := thread.Run(ctx, "Continue the investigation")
 
-fresh := agent.NewThread("tenant-42/issue-123")
 resumeOnly := agent.Thread("tenant-42/issue-123", adaptor.ResumeOnly())
 branch := thread.Fork("tenant-42/issue-123/alternative")
 ```
 
-Thread keys are opaque strings owned by the host. Driver resume identifiers remain checkpoint details. Durable hosts can implement `threadstore.Store`; `memory.NewStore()` is intended for one process.
+Thread keys are opaque strings owned by the host. A new unrelated conversation gets a new host key; the SDK does not rebind an existing key on request. Driver resume identifiers remain checkpoint details. Durable hosts can implement `threadstore.Store`; `memory.NewStore()` is intended for one process.
 
 Claude, CodeBuddy, and Codex reuse a provider process by default for successive turns of an explicit Thread. Use `WithSpawn()` at Agent construction or on one call to force fresh one-shot processes. Close the Agent to reap its process pool:
 
@@ -146,6 +145,69 @@ result, err := agent.Run(ctx, "Review this change",
 
 Workspace managers, runtime service managers, skill providers, skill materializers, profile resources, and run-scoped host services are optional construction or invocation extensions. None is required for a basic run.
 
+## Structured output example
+
+Structured output is a per-run contract. `RunAs[T]` derives JSON Schema from a
+Go type, prefers provider-native enforcement, automatically falls back to
+prompting plus local validation when needed, and returns both the typed value
+and the ordinary audit `Result`:
+
+```go
+type ReleasePlan struct {
+	Filename  string `json:"filename"`
+	MediaType string `json:"media_type"`
+	Summary   string `json:"summary"`
+	Content   string `json:"content"`
+}
+
+plan, result, err := adaptor.RunAs[ReleasePlan](ctx, agent,
+	"Produce the release plan as a Markdown file artifact.")
+if err != nil {
+	return err
+}
+fmt.Printf("%s (%s)\n%s\n", plan.Filename, result.RunID, plan.Content)
+```
+
+See the runnable [`structured-output`](./examples/structured-output) example
+and the [structured-output contract](./docs/structured-output.md).
+
+## Team agent example
+
+Team shape and routing remain host policy. Configure ordinary Runner values as
+local or remote delegation targets, attach one `a2adelegation.Service` to the
+leader, and consume every role update from the leader's single Event stream:
+
+```go
+team, err := a2adelegation.NewService(a2adelegation.Config{
+	Agents: []a2adelegation.AgentRef{
+		a2adelegation.LocalNamed("plan", "Codex Planner", planner, a2adelegation.Policy{}),
+		a2adelegation.LocalNamed("impl", "Claude Code Implementer", implementer, a2adelegation.Policy{}),
+		a2adelegation.LocalNamed("review", "Codex Reviewer", reviewer, a2adelegation.Policy{}),
+	},
+})
+if err != nil {
+	return err
+}
+defer team.Close()
+
+leader := adaptor.New(leaderDriver, team.Option())
+stream := leader.Stream(ctx, "Plan, implement, and review TASK.md")
+for event := range stream.Events() {
+	if update, ok := event.(adaptor.SubagentUpdate); ok {
+		fmt.Printf("[%s] %s: %s\n", update.Agent, update.Kind, update.Delta)
+	}
+}
+result, err := stream.Result()
+```
+
+The complete [`team-agent-workflow`](./examples/showcases/team-agent-workflow)
+showcase adds role-specific sandboxes, a structured `PLAN.md` artifact,
+workspace auditing, and a CopilotKit UI with live subagent cards. Start it with:
+
+```bash
+./examples/showcases/team-agent-workflow/start-all.sh claude
+```
+
 ## Results and errors
 
 A successful invocation returns `*Result, nil`. A completed business failure returns a typed `*RunError` that carries the available `Result`; infrastructure failures remain ordinary wrapped Go errors.
@@ -170,7 +232,8 @@ if err != nil {
 - `Services()` reports runtime services actually observed for the run.
 - `Decode()` reads validated structured output.
 
-Use `RunAs[T]`, `WithSchema[T]`, or `WithSchemaJSON` for structured output.
+Use `RunAs[T]` for structured output; advanced schema customization stays in
+the dedicated contract document.
 
 ## Inspect and profiles
 
@@ -200,14 +263,14 @@ synced, err := agent.SyncProfile(ctx)
 
 - [`quickstart`](./examples/quickstart): construct an Agent and run one prompt.
 - [`inspect`](./examples/inspect): environment, models, quota, schema, skills, and profile state.
-- [`threads`](./examples/threads): continue, resume-only, start-new, fork, and checkpoint inspection.
+- [`threads`](./examples/threads): continue, resume-only, fork, and checkpoint inspection.
 - [`skills`](./examples/skills): live skill resolution and materialization.
 - [`profiles`](./examples/profiles): provider profile resources and synchronization.
 - [`streaming`](./examples/streaming): typed Event consumption and cancellation.
 - [`structured-output`](./examples/structured-output): typed JSON output.
 - [`web-chat`](./examples/web-chat): SSE/AG-UI server, with [`aguiclient`](./examples/web-chat/aguiclient) and [`copilotkit`](./examples/web-chat/copilotkit) front ends.
 - [`a2a-server`](./examples/a2a-server): publish an Agent through A2A and call it with the A2A client.
-- [`showcases`](./examples/showcases): larger host compositions.
+- [`showcases/team-agent-workflow`](./examples/showcases/team-agent-workflow): leader → plan → implementation → review, with a one-command CopilotKit verifier.
 
 Examples that invoke a provider require its local CLI and authentication. They do not make paid calls during ordinary repository tests.
 

@@ -400,9 +400,9 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 	}
 
 	interactive := wantsInteractiveClaude(req.Policy.HumanDecision)
-	if req.OutputSchema != nil && req.OutputSchema.Mode != driver.StructuredOutputPromptValidate {
+	if req.OutputSchema != nil && req.StructuredOutputSource == driver.StructuredOutputSourceNative {
 		if interactive {
-			return driver.Response{}, &engine.StructuredOutputUnsupportedError{Driver: DriverType, Mode: req.OutputSchema.Mode, Reason: "Claude native structured output is not supported with interactive HITL"}
+			return driver.Response{}, &engine.StructuredOutputUnsupportedError{Driver: DriverType, Reason: "Claude native structured output is not supported with interactive HITL"}
 		}
 	}
 
@@ -562,15 +562,12 @@ func buildClaudeResponse(
 	failure := parser.failureForOutcome(exitCode, signal, timedOut)
 	var structuredOutput *driver.StructuredOutput
 	if req.OutputSchema != nil {
-		source := driver.StructuredOutputSourceNative
-		if req.OutputSchema.Mode == driver.StructuredOutputPromptValidate {
-			source = driver.StructuredOutputSourcePromptValidate
-		} else {
+		if req.StructuredOutputSource == driver.StructuredOutputSourceNative {
 			structuredOutput = parser.structuredOutput
 		}
 		structuredOutput, failure = engine.FinalizeStructuredOutput(
 			req.OutputSchema,
-			source,
+			req.StructuredOutputSource,
 			parser.buildOutput(),
 			structuredOutput,
 			failure,
@@ -640,7 +637,7 @@ func persistentEligible(cfg Config, req driver.Request) bool {
 		(req.Session != nil && req.Session.Mode == driver.SessionFork) {
 		return false
 	}
-	if req.OutputSchema != nil && req.OutputSchema.Mode != driver.StructuredOutputPromptValidate {
+	if req.OutputSchema != nil && req.StructuredOutputSource == driver.StructuredOutputSourceNative {
 		return false
 	}
 	for _, spec := range req.Runtime.Requested {
@@ -659,6 +656,7 @@ func persistentEligible(cfg Config, req driver.Request) bool {
 func persistentPreWarmEligible(cfg Config, req driver.Request) bool {
 	copyReq := req
 	copyReq.OutputSchema = nil
+	copyReq.StructuredOutputSource = ""
 	return persistentEligible(cfg, copyReq)
 }
 
@@ -714,7 +712,7 @@ func buildClaudeExecArgs(cfg Config, req driver.Request, interactive bool) ([]st
 	//
 	// Prompt-validated structured output and ordinary runs always stay on the
 	// existing stream-json path.
-	nativeStructured := req.OutputSchema != nil && req.OutputSchema.Mode != driver.StructuredOutputPromptValidate
+	nativeStructured := req.OutputSchema != nil && req.StructuredOutputSource == driver.StructuredOutputSourceNative
 	args := []string{"--print"}
 	if nativeStructured {
 		schemaJSON, err := prepareClaudeJSONSchema(req.OutputSchema.SchemaJSON)

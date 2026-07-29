@@ -210,8 +210,8 @@ delete any file yourself: your only way to change the workspace is the %s tool.
 Read %s in your working directory, then delegate three times, in this order,
 waiting for each result before the next:
 
-1. %s(agent="plan", objective="<the task, restated, plus: return a numbered plan>")
-2. %s(agent="impl", objective="<the plan from step 1, verbatim, plus the task>")
+1. %s(agent="plan", objective="<the task, restated, plus: return the structured %s file artifact>")
+2. %s(agent="impl", objective="<the complete %s artifact from step 1, verbatim, plus the task>")
 3. %s(agent="review", objective="<the task plus what impl reported>")
 
 Each delegation may take up to %s. Do not delegate to the same agent twice and
@@ -221,7 +221,9 @@ When the review agent approves, reply with a summary of at most 120 words that
 contains, on its own final line, exactly: %s
 If the review agent rejects, say why instead and do not print that line.`,
 		delegateToolLiteral, taskFile,
-		delegateToolLiteral, delegateToolLiteral, delegateToolLiteral,
+		delegateToolLiteral, planArtifactFilename,
+		delegateToolLiteral, planArtifactFilename,
+		delegateToolLiteral,
 		roleTimeout.Round(time.Second), workflowSentinel)
 }
 

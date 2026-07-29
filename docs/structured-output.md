@@ -28,15 +28,16 @@ fmt.Println(value.ProjectName, result.RunID)
 ```
 
 `RunAs[T]` prepends `WithSchema[T]()` to the supplied call options, calls
-`Runner.Run`, and decodes the validated value. A later explicit schema option
-wins when implicit schema derivation succeeded, which makes this valid:
+`Runner.Run`, and decodes the validated value. In ordinary code this is the
+only structured-output API needed. A later explicit schema option is useful
+only when the schema needs metadata or generation customization:
 
 ```go
 value, result, err := adaptor.RunAs[ProjectMetadata](
 	ctx,
 	runner,
 	prompt,
-	adaptor.WithSchema[ProjectMetadata](adaptor.SchemaPromptOnly()),
+	adaptor.WithSchema[ProjectMetadata](adaptor.SchemaName("project_metadata")),
 )
 ```
 
@@ -52,7 +53,6 @@ For event consumption or manual decode, attach a schema to `Run` or `Stream`:
 ```go
 stream := runner.Stream(ctx, prompt,
 	adaptor.WithSchema[ProjectMetadata](
-		adaptor.SchemaFlexible(),
 		adaptor.SchemaName("project_metadata"),
 	),
 )
@@ -76,7 +76,6 @@ slice is copied when the option is built.
 ```go
 result, err := runner.Run(ctx, prompt,
 	adaptor.WithSchemaJSON(schemaBytes,
-		adaptor.SchemaPromptOnly(),
 		adaptor.SchemaDescription("Release readiness report"),
 	),
 )
@@ -91,9 +90,6 @@ Options are applied in order. A later option for the same setting wins.
 
 | Option | Contract |
 |---|---|
-| `SchemaStrict()` | Require provider-native JSON Schema enforcement. This is the default. |
-| `SchemaFlexible()` | Prefer native enforcement, then use prompt injection plus local validation when the Driver supports it. |
-| `SchemaPromptOnly()` | Require exact-JSON prompt injection plus SDK-side validation. This is weaker than native constrained output. |
 | `SchemaName(name)` | Set the trimmed provider-facing schema name. |
 | `SchemaDescription(text)` | Set the trimmed provider-facing description. |
 | `SchemaReturnInvalid()` | Keep the run successful when the final value is invalid; `Result.Decode` still reports the validation error. |
@@ -104,25 +100,29 @@ Options are applied in order. A later option for the same setting wins.
 
 The four generation options affect `WithSchema[T]`. They intentionally have
 no effect on `WithSchemaJSON`, because that function receives an already-owned
-schema document. Mode, name, description, and invalid-result policy apply to
-both constructors.
+schema document. Name, description, and invalid-result policy apply to both
+constructors.
 
 Schema derivation rejects Go shapes that cannot be represented safely, such as
 functions, channels, unsafe pointers, complex values, and maps with non-string
 keys. Generated and supplied documents are normalized and compiled as JSON
 Schema Draft 2020-12 before the Driver is invoked. Malformed JSON, multiple JSON
-values, an empty document, an unsupported mode, or a schema compile failure all
-match `adaptor.ErrInvalidOutputSchema`.
+values, an empty document, an unsupported format, or a schema compile failure
+all match `adaptor.ErrInvalidOutputSchema`.
 
-## Mode and capability negotiation
+## Automatic capability negotiation
 
-Every Driver declares `driver.Descriptor.StructuredOutput`. The SDK validates
-the requested mechanism before invoking it:
+Every Driver declares `driver.Descriptor.StructuredOutput`. Consumers do not
+choose an enforcement mode. For every schema request, core applies one fixed
+rule before invoking the Driver:
 
-- strict mode requires `JSONSchemaNative` and `WorksWithRun`;
-- prompt-only mode requires `JSONSchemaPromptValidate` and `WorksWithRun`;
-- flexible mode chooses the first eligible mechanism in that order;
-- explicit approval `Ask` modes additionally require `WorksWithHITL`.
+1. use provider-native JSON Schema enforcement when the selected transport and
+   policy support it;
+2. otherwise inject exact-JSON instructions and validate locally;
+3. fail before process launch only when neither mechanism is supported.
+
+Explicit approval `Ask` policies additionally require `WorksWithHITL` for the
+selected mechanism.
 
 The consumer's choice between `Run` and `Stream` does not select the provider
 transport. The unified invocation pipeline prefers a Driver's rich transport,
@@ -132,17 +132,14 @@ incremental provider events. If neither transport can honor the request, the
 run fails before the Driver is invoked with
 `adaptor.ErrStructuredOutputUnsupported`.
 
-Hosts that need to prepare UI choices before constructing an Agent can retain
-the public Driver value and read its descriptor:
+Hosts may inspect the public Driver descriptor for diagnostics, but there is no
+structured-output choice to expose in their UI:
 
 ```go
 d := cursor.Driver(cursor.Config{Model: "gpt-5"})
 caps := d.Descriptor().StructuredOutput
 agent := adaptor.New(d)
-
-if !caps.JSONSchemaNative && caps.JSONSchemaPromptValidate {
-	// Offer SchemaFlexible or SchemaPromptOnly, not SchemaStrict.
-}
+_ = caps // diagnostics only; adaptor selects the mechanism automatically
 ```
 
 Current built-in declarations are:
@@ -154,12 +151,11 @@ Current built-in declarations are:
 | Cursor | no | yes | yes | no |
 | CodeBuddy | yes | yes | no; batch is negotiated | no |
 
-Cursor strict mode is therefore rejected. `SchemaFlexible` and
-`SchemaPromptOnly` can use local validation. Prompt validation parses only the
-final assistant `Result.Text` as one exact JSON value; it does not strip
-Markdown fences, search raw stdout, or guess through provider envelopes.
-Provider-native output is also revalidated by the SDK before its raw JSON is
-made available to `Result.Decode`.
+Cursor therefore falls back automatically to local validation. Prompt
+validation parses only the final assistant `Result.Text` as one exact JSON
+value; it does not strip Markdown fences, search raw stdout, or guess through
+provider envelopes. Provider-native output is also revalidated by the SDK
+before its raw JSON is made available to `Result.Decode`.
 
 For Codex batch runs, `codex exec --json --output-schema` carries the native
 JSON value in the `text` field of the last completed `agent_message` item. The
@@ -187,7 +183,7 @@ is retained in `runErr.Result`:
 
 ```go
 result, err := runner.Run(ctx, prompt,
-	adaptor.WithSchema[ProjectMetadata](adaptor.SchemaPromptOnly()),
+	adaptor.WithSchema[ProjectMetadata](),
 )
 if err != nil {
 	var runErr *adaptor.RunError

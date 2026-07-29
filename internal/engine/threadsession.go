@@ -19,7 +19,7 @@ type ThreadSessionPlan struct {
 //   - A nil store yields ErrSessionStoreRequired.
 //   - Key and session leases are acquired (busy → *SessionBusyError), the
 //     current record is resolved, and the per-mode plan logic runs
-//     (ContinueOnly / ContinueOrStart / StartNew / Fork).
+//     (ContinueOnly / ContinueOrStart / Fork).
 //
 // On success the caller owns the plan and must call Release when done.
 func PrepareThreadSession(

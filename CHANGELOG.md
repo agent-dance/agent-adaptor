@@ -2,15 +2,15 @@
 
 All notable changes to this project are documented in this file.
 
-## [Unreleased]
+## [1.0.0] - 2026-07-30
 
-This release line is a clean v1 cutover from the `v0.12.0` public baseline. It has not been tagged.
+This release is a clean v1 cutover from the `v0.12.0` public baseline.
 
 ### Added
 
 - A six-noun public model: Agent, Thread, Stream, Event, Result, and Driver.
 - One constructor for configured agents and one `Runner` contract shared by stateless Agents and stateful Threads.
-- Host-keyed Threads with continue-or-start, resume-only, start-new, fork, checkpoint, lease, fingerprint, and atomic-finalization semantics.
+- Host-keyed Threads with continue-or-start, resume-only, fork, checkpoint, lease, fingerprint, and atomic-finalization semantics.
 - One typed Event stream carrying text, thinking, tools, process details, lifecycle notices, drop reports, subagent updates, and approval requests.
 - Self-resolving approval requests with exactly-once `Approve`, `Deny`, and `Answer` operations.
 - Structured output through `RunAs[T]`, `WithSchema[T]`, `WithSchemaJSON`, and `Result.Decode`.
@@ -33,6 +33,7 @@ This release line is a clean v1 cutover from the `v0.12.0` public baseline. It h
 - Runtime-service MCP publication uses typed fields rather than string metadata conventions.
 - Bridges and host tools consume only the public Runner, Stream, Event, and Result contracts.
 - Stateful Threads use persistent provider processes by default where declared; `WithSpawn()` opts an Agent or one call into a fresh process, and `Agent.Close` reaps owned processes.
+- Structured output now has one automatic behavior: provider-native schema enforcement is preferred and Prompt plus local validation is used as the fallback.
 
 ### Removed
 
@@ -40,6 +41,8 @@ This release line is a clean v1 cutover from the `v0.12.0` public baseline. It h
 - The parallel asynchronous execution entry and its split operational, semantic, and decision channels.
 - Binding wrappers and provider constructor sugar that created a second construction model.
 - The control-plane façade; read-only probes and explicit profile operations now live on Agent.
+- Same-key start-new session rebinding; an unrelated conversation now requires a new host-owned Thread key.
+- Consumer and Driver SPI structured-output mode selectors; capability negotiation is owned entirely by core.
 - Legacy forwarding package paths, provider-only compatibility packages, stringly runtime metadata parsing, and migration-only aliases.
 
 ### Reliability

@@ -83,7 +83,7 @@ func TestRunErrorPaths(t *testing.T) {
 		},
 		{
 			name:         "business/policy violation",
-			setup:        businessFailure(driver.FailurePolicyError, "schema mode unsupported"),
+			setup:        businessFailure(driver.FailurePolicyError, "schema enforcement unsupported"),
 			run:          plainRun,
 			wantRunError: true,
 			wantReason:   adaptor.ReasonPolicyViolation,

@@ -2,7 +2,7 @@
 
 > **执行结案（2026-07-27）**：本文记录的 P0–P5.4 已执行完毕，不是当前 API 使用说明。文中的 `next/`、`pkg/`、临时 `V1` 后缀和旧 SDK 名称只保留为当时的计划/审计证据；当前公共 API 以根包 godoc、[API reference](./api-reference.md) 和 [usage guide](./usage-guide.md) 为准。
 >
-> ROOT CUTOVER 已由提交 `cc6cd82` 完成；随后完成 RESIDUAL DELETE、RENAME、examples 整理和文档冻结工作。版本仍为 **[Unreleased]**：本文不声称 `v1.0.0` tag 已创建，也不声称尚未取得结果的远端 Linux CI 已成功。
+> ROOT CUTOVER 已由提交 `cc6cd82` 完成；随后完成 RESIDUAL DELETE、RENAME、examples 整理和文档冻结工作。`v1.0.0` 于 2026-07-30 通过最终发布门禁后发布。
 >
 > 配套设计文档：[api-v1-redesign.md](./api-v1-redesign.md)（“什么/为什么”）。原始设计基线：main @ `bbba7a0`；接管断点：`4a66cc3`；v0 冻结基线为 `v0.12.0`。
 
@@ -17,7 +17,7 @@
 | RENAME | **已关闭** | 临时 Go `V1` 后缀和 `_v1.go` 文件已移除，`adaptertest/v1` 上提，examples 按最终主题改名/合并；A2A `adapter.stream.v1` 的 wire schema/DTO `V1` 保留 |
 | P5.3 | **已关闭** | 最终 `adaptertest` 套件、Driver SPI MUST/godoc 与四内置 Driver conformance 接线完成；live conformance 继续受双门保护 |
 | P5.4 DOCS | **已关闭** | README、根 godoc、API/usage/streaming/A2A/structured output/migration/CHANGELOG 同步；历史 workstream/P0 文档移入 `docs/archive/` |
-| 发布 | **未发布** | 当前仍是 `[Unreleased]`；tag 和远端 Linux CI 结果只在真实发生后另行记录 |
+| 发布 | **v1.0.0 已发布** | 发布提交先通过分支 Linux validate/race/fuzz/frontend CI，再快进合入 `origin/main` 并创建同提交 tag |
 
 ---
 
@@ -32,7 +32,7 @@
 | D5 | `delegation.Service` 一体化入口 + `delegation.Local/Remote` 双目标 + `SubagentUpdate` 事件入主流 | 采纳（S9/§9.8） | P4 |
 | D6 | 实施策略：**绞杀者路线**（内核抽取 → staging 包并行生长 → 终局大挪移），不做同包新旧共存 | 采纳（本文 §1） | 立即生效 |
 | D7 | Option 双作用域的编译期约束具体类型设计 | **已定案（P0.1 spike）**：案 A 三接口 `Option` / `CallOption`（不嵌入 Option）/ `SharedOption`，双向误用编译错；`AgentSettings` 内嵌 `RunSettings`，字段不导出、扩展面为精选导出方法。详见 [p0-option-scope-decision.md](./archive/p0-option-scope-decision.md)。连带定稿：`WithModel`/`WithTimeout` 为双作用域（已回改方案 §2.3）；`a2a.ServerOptions.Options` 类型为 `[]adaptor.CallOption` | 已关闭 |
-| D8 | 结构化输出模式词汇归属（根包常量 vs `schema` 子包） | **已定案**：根包常量 `SchemaStrict` / `SchemaFlexible` / `SchemaPromptOnly` | 已关闭 |
+| D8 | 结构化输出能力协商 | **最终定案**：不暴露模式；core 固定原生优先、Prompt 校验自动回退 | 已关闭 |
 | D9 | `providers/` 包去留 | **删除**（P0.7 裁决：全仓唯一引用者是自身测试，自述 opt-in sugar；Required 能力在 skill.Provider 合同中保留，宿主 10 行 wrapper 等价）。迁移指南记一行 | P5 前若产品异议，归宿为 `skill.MarkRequired` |
 | D10 | `runtimeservice/` 包去留 | **删除**（P0.7 裁决：v0.5 的宿主兼容 mixin，与 runtime.go / RuntimeServiceRef 零代码关系；v1 `WithServiceManager` 是全新契约，无存量宿主需要垫片） | P4.5 |
 | D11 | `Identity` 归属与字段集 | 归**根包** `adaptor.Identity` + `IdentityFromContext`（消费方横跨 skill/workspace/services 三域，不进 skill 包）；现状四字段（ID/Tenant/Profile/Name）vs 设计稿两字段是能力缩水，**字段集 P0.5 定案**（默认保四字段） | P0.5 |
@@ -98,18 +98,18 @@
 
 ### P2 · Thread + threadstore ✅ 已完成（提交 b0aea73，15 文件 +2263 行）
 
-**目标**：四层 ID 归两层。`Thread`/`NewThread`/`ResumeOnly`/`Fork`/`Checkpoint`；`threadstore.Store` 承接 SessionStore 全部能力。
+**目标**：四层 ID 归两层。`Thread`/`ResumeOnly`/`Fork`/`Checkpoint`；`threadstore.Store` 承接 SessionStore 全部能力。
 
 | 任务 | 内容 | 触及现状 |
 |---|---|---|
 | P2.1 | ✅ `threadstore/` 包：`Store` 五方法（Resolve/Finalize/AcquireLease/RenewLease/ReleaseLease）+ Record/Query/Lease/FinalizeRequest + ErrBusy/ErrLeaseLost；namespace+key 收敛为单一 thread key；只 import driver。`memory/` 双实现（新增 `memory.Store`/`NewStore()`，旧 `SessionStore` 零 diff） | `session_types.go` `memory/` |
-| P2.2 | ✅ `Thread(key)` → continue_or_start；`Thread(key, ResumeOnly())` → continue_only；`NewThread(key)` → start_new（仅首轮，成功持久化后转 continue，旧会话归档+key 重绑）；`th.Fork(newKey)` → fork（仅首轮，父会话运行时按 key 解析）；`*Thread` 实现 `Runner`；`WithThreadStore` 从 any 收紧为 `threadstore.Store` 并真消费；8 个哨兵错误（`ErrThreadStoreRequired`、`ErrThreadNotFound`、`ErrThreadBusy`、`ErrThreadIncompatible`、`ErrThreadLeaseLost`、`ErrThreadCheckpointMissing`、`ErrThreadAlreadyExists`、`ErrResumeRejected`） | `session.go` `sdk_session_test.go` |
+| P2.2 | ✅ `Thread(key)` → continue_or-start；`Thread(key, ResumeOnly())` → continue-only；`th.Fork(newKey)` → fork（仅首轮，父会话运行时按 key 解析）；新对话使用新的宿主 key，不提供同 key 主动重绑入口；`*Thread` 实现 `Runner`；`WithThreadStore` 从 any 收紧为 `threadstore.Store` 并真消费；8 个哨兵错误（`ErrThreadStoreRequired`、`ErrThreadNotFound`、`ErrThreadBusy`、`ErrThreadIncompatible`、`ErrThreadLeaseLost`、`ErrThreadCheckpointMissing`、`ErrThreadAlreadyExists`、`ErrResumeRejected`） | `session.go` `sdk_session_test.go` |
 | P2.3 | ✅ `Thread.Checkpoint()` 返回 `Checkpoint = driver.Checkpoint`，经 driver.SessionCodecProvider 归一化 | `session_codec.go` |
 | P2.4 | ✅ 13 组语义断言全部迁移（mode 矩阵/fingerprint 匹配失配/fork 边界/busy 并发/resume-rejected 回退与保留/无 checkpoint 人审容忍/lease 续期与丢失/codec 快照往返），旧测试零修改仍为基线；lease 测试全 channel 同步零 sleep；S3 升级为带 Thread+Fork 的完整版（原帧/审批断言逐字保留） | 同名测试 |
 
 **门禁**：✅ 全仓 35 包 build/vet/test 绿；next/threadstore/memory -count=5 稳定；根包 -count=2 绿（引擎 session.go 重构后旧行为不变）。
 **接缝裁决**：选了首选方案——engine 内 `prepareSession`/`persistSession` 机械抽为 store 参数化自由函数（一处真身），新增 additive 入口 `threadsession.go`（ThreadSessionPlan/PrepareThreadSession）；next/ 经 engineStore 适配器注入固定 namespace "thread"。
-**偏差记录**：NewThread 不收 ThreadOption（无有意义组合）；Fork 父会话延迟到首轮运行时按原始 key、在协调租约下解析（缺失 → ErrThreadNotFound，目标冲突 → ErrThreadAlreadyExists）；租约丢失时 ErrThreadLeaseLost 优先于被连带取消的 run 错误（与引擎语义一致）；memory/session_store.go 在 HEAD 本就 gofmt 不净，按零改动纪律未动。
+**偏差记录**：Fork 父会话延迟到首轮运行时按原始 key、在协调租约下解析（缺失 → ErrThreadNotFound，目标冲突 → ErrThreadAlreadyExists）；租约丢失时 ErrThreadLeaseLost 优先于被连带取消的 run 错误（与引擎语义一致）；memory/session_store.go 在 HEAD 本就 gofmt 不净，按零改动纪律未动。
 
 ### P3 · 词汇包 + 驱动配置回家 + 结构化输出 + Inspect
 
@@ -121,7 +121,7 @@
 | P3.2 | 🟡 词汇包已完成（提交 61b76ba）：`skill/` 包 `Dir`/`FS`/`Inline`/`Key`/`Require` + **`Archive(key, open, opts...)`**（P0.7 缺口补齐：Opener= 根包归档 helper 别名，`ArchiveBytes/File/URL`，`WithFormat`/`WithSubpath`/`WithFingerprint` 走不透明 config，P5 搬真身签名零变）+ `Ref`/`Skill`/`Source`/`Provider`/`Catalog`/`Set`/`Materializer` 别名族；15 用例含三格式×auto/显式共 6 路真实物化验证。**接线已完成（7e4f6d4）**：`WithSkills`（SharedOption，唯一追加合并，defaultSkillBoundary 分界）+ `WithSkillProvider`/`WithSkillMaterializer`（仅 New）经 engine `ResolveSkills`（resolveSkillsWith 抽参的 additive 导出）复用真身算法。**P5 待办**：① 收编 `archive_*.go` 真身 + `LocalSkillsFromDir`/`SkillsAsRefs`/`NewDefaultSkillMaterializer` 族；② SkillFromArchive.Fingerprint godoc 称缓存键但默认物化器忽略（纯内容寻址）——收编时二选一收敛；③ skill→根包依赖翻转；④ **接线波新发现（预存在 bug，未修）**：`skillSourcesEquivalent`（engine/skill_helpers.go:151）无 SkillFromArchive 分支，归档源永不相等（含与自身比较）→ **default 作用域归档技能必然自冲突**（"same key, different content"）；run 作用域不受影响。修复会改旧语义，留 P5 与 ② 一并收敛 | `skill_*.go` 5 个文件 + `archive_*.go` + `internal/skillruntime` |
 | P3.3 | 🟡 词汇包已完成（提交 66443b4）：`mcp/` 包 `Server = driver.MCPServerSpec`（单服务器形状，兼容 P4.5 `RuntimeServiceRef.MCP *mcp.Server`；别名指向叶子包 driver 避免 P5 后根包 import 环）+ `HTTP`/`SSE`/`Stdio` 构造器（SSE 为现状能力保全补入）+ `WithHeader(s)`/`WithBearerTokenEnv`/`Required` 选项，10 字段零缩水，8 用例全绿。**接线已完成（7e4f6d4）**：`WithMCP(servers ...mcp.Server)` SharedOption，整体替换、零参=显式清空，经 engine `ResolveMCPPayloadWithRuntime` 复用传输/键校验（runtime 槽位暂 nil，P4.7 接 delegation 时补） | `mcp_types.go` `internal/mcpruntime` |
 | P3.4 | 🟡 词汇包已完成（提交 0b670ed）：`profile/` 包 `Selection = driver.ProfileSelection` + `Default`/`Native`/`Dedicated`/`CloneNative`/`CloneFrom` 构造器（`Default()` 为现状 Unset 形态的显式 v1 名）+ CloneOption 族（`CopySettings`/`CopyMCP`/`CopySkills`/`CopyAuth`/`LinkAuth`/`WithOptions` 逃生舱，遗留 IncludeAuth 经 WithOptions 无损迁移）+ `Resources = ProfileResources` 及 SubAgent/Hook(20 事件全量)/Instructions(`Text()` 构造)/ConfigPatch 别名族，22 用例对照旧 root 选项 DeepEqual 全绿。**接线已完成（7e4f6d4）**：`WithProfile`（仅 New）+ `WithProfileResources`（SharedOption：Skills 追加、MCP 替换、Agents/Hooks/Config/Instructions 替换且**声明**——非 nil 空切片=声明为空），指纹与旧别名归一（如 Event:"PreToolUse"）全走 engine 真身。S8 的 `SubAgents` 字段名仍留 P5 定夺（现名 `Agents`） | `profile.go` `profile_resources.go` `internal/profile*` 8 个包 |
-| P3.5 | ✅ 已交（7e4f6d4）：`RunAs[T]`（接受任意 Runner，Agent/Thread 双验证；显式选项胜隐式 `WithSchema[T]()`）+ `WithSchema[T]`/`WithSchemaJSON`（裸 schema 逃生舱，超纲但对齐 root 能力）均 CallOption；**D8 已定**：根包常量 `SchemaStrict`（默认）/`SchemaFlexible`/`SchemaPromptOnly` + 失效策略 `SchemaFailRun`（默认，`*RunError` Reason=PolicyViolation）/`SchemaReturnInvalid`；schema 派生在选项构造期，失败=启动前错误；能力矩阵校验走 engine 真身（next 恒流式→streaming=true） | `structured_output.go` |
+| P3.5 | ✅ 已交（7e4f6d4，v1 freeze 前简化）：`RunAs[T]`（接受任意 Runner，Agent/Thread 双验证；显式选项胜隐式 `WithSchema[T]()`）+ `WithSchema[T]`/`WithSchemaJSON`（裸 schema 逃生舱，超纲但对齐 root 能力）均 CallOption；**D8 最终定案**：删除消费者与 Driver SPI 的模式层，core 固定原生优先、Prompt 校验自动回退；校验失败默认返回 `*RunError`（Reason=PolicyViolation），`SchemaReturnInvalid` 可改为保留 invalid 结果；schema 派生在选项构造期，失败=启动前错误；能力矩阵校验走 engine 真身 | `structured.go` |
 | P3.6 | ✅ 已交（7e4f6d4）：`Inspect()` 面板（Environment/Models/Quota/ConfigSchema/Skills）+ Agent 上 `ProfileState`/`SyncProfile`/`SelectSkills`；探针驱动原样透传，无探针驱动诚实降级（Available:false 等），绝不伪造成功 | `admin.go` `admin_helpers.go` |
 | P3.7 | ✅ 已交（7e4f6d4）：合同测试迁移 6 组 → next/（merge_semantics 含门禁要求的 9 行「WithSkills 追加 vs 其余替换」表驱动、skills 13 测试、mcp、structured 全 17 语义、profile、inspect）；旧测试零修改。**已知不可复制面**：`admin_profile_test.go`、`skill_dirscan_test.go`（对应表面 next 无，P5 收编时补） | 同名测试 |
 | P3.8 | ✅ 已交（7e4f6d4）：S5/S7/S8 场景测试按设计文档代码块近逐字落地（S7 的 env.Ready/Problems→实名 Healthy/Checks、S8 的 SubAgents→Agents，差异记在测试头注释） | — |

@@ -8,6 +8,8 @@ import {
   type CatchAllActionRenderProps,
 } from "@copilotkit/react-core";
 import { SessionPanel } from "./components/session-panel";
+import { LiveSubagentPanel } from "./components/live-subagent-panel";
+import { TeamWorkflowInput } from "./components/team-workflow-input";
 import { renderDecisionCard, ToolCallCard } from "./components/cards";
 
 // -----------------------------------------------------------------------------
@@ -17,7 +19,11 @@ import { renderDecisionCard, ToolCallCard } from "./components/cards";
 // the same thread marker.
 // -----------------------------------------------------------------------------
 
-const THREAD_ID_STORAGE_KEY = "agent-adaptor-copilotkit-thread";
+const APP_MODE = process.env.NEXT_PUBLIC_COPILOTKIT_MODE ?? "chat";
+const TEAM_WORKFLOW_MODE = APP_MODE === "team-agent-workflow";
+const THREAD_ID_STORAGE_KEY = TEAM_WORKFLOW_MODE
+  ? "agent-adaptor-team-workflow-thread"
+  : "agent-adaptor-copilotkit-thread";
 
 function useStableThreadId(): string {
   const [id, setId] = useState<string>("");
@@ -91,7 +97,7 @@ export default function HomePage() {
     },
   });
 
-  const hint = useMemo(() => chooseHint(), []);
+  const hint = useMemo(() => chooseHint(TEAM_WORKFLOW_MODE), []);
 
   if (!threadId) {
     return null;
@@ -102,7 +108,7 @@ export default function HomePage() {
       style={{
         display: "grid",
         gridTemplateRows: "auto 1fr",
-        maxWidth: 1280,
+        maxWidth: TEAM_WORKFLOW_MODE ? 1480 : 1280,
         margin: "0 auto",
         padding: "1.5rem",
         minHeight: "100vh",
@@ -112,24 +118,29 @@ export default function HomePage() {
     >
       <header>
         <h1 style={{ margin: 0, fontSize: "1.4rem" }}>
-          agent-adaptor · CopilotKit · HITL v2
+          {TEAM_WORKFLOW_MODE
+            ? "agent-adaptor · CopilotKit · Team workflow"
+            : "agent-adaptor · CopilotKit · HITL v2"}
         </h1>
         <p style={{ margin: "0.25rem 0 0", color: "#555", fontSize: "0.9rem" }}>
-          AG-UI over SSE. Tool-calls, plan-review, question, and permission
-          gates render as interactive cards. History + pending decisions
-          survive page reloads (per-browser <code>thread_id</code>). Try: “
-          <em>{hint}</em>”.
+          {TEAM_WORKFLOW_MODE ? (
+            <>
+              One leader delegates plan, implementation, and review through
+              AG-UI over SSE. Each submitted message makes four real CLI calls.
+              Try: “<em>{hint}</em>”.
+            </>
+          ) : (
+            <>
+              AG-UI over SSE. Tool-calls, plan-review, question, and permission
+              gates render as interactive cards. History + pending decisions
+              survive page reloads (per-browser <code>thread_id</code>). Try: “
+              <em>{hint}</em>”.
+            </>
+          )}
         </p>
       </header>
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "minmax(0, 1fr) minmax(320px, 360px)",
-          gap: "1rem",
-          alignItems: "stretch",
-        }}
-      >
+      <div className={`agent-workspace-grid${TEAM_WORKFLOW_MODE ? "" : " standard"}`}>
         <section
           style={{
             background: "#fff",
@@ -142,16 +153,24 @@ export default function HomePage() {
           }}
         >
           <CopilotChat
+            Input={TEAM_WORKFLOW_MODE ? TeamWorkflowInput : undefined}
             labels={{
               title: "agent",
-              initial:
-                "Ask anything. Every tool_call, plan-review, and question streams live.",
-              placeholder: "Type a message…",
+              initial: TEAM_WORKFLOW_MODE
+                ? "The team is ready. Review the prefilled request and click Send to start."
+                : "Ask anything. Every tool_call, plan-review, and question streams live.",
+              placeholder: TEAM_WORKFLOW_MODE
+                ? "Run the team workflow for TASK.md…"
+                : "Type a message…",
             }}
           />
         </section>
 
-        <SessionPanel threadId={threadId} />
+        {TEAM_WORKFLOW_MODE ? (
+          <LiveSubagentPanel />
+        ) : (
+          <SessionPanel threadId={threadId} />
+        )}
       </div>
     </main>
   );
@@ -256,7 +275,10 @@ function deriveOutcome(result: unknown): "approved" | "rejected" | "answered" | 
   return undefined;
 }
 
-function chooseHint(): string {
+function chooseHint(teamWorkflowMode: boolean): string {
+  if (teamWorkflowMode) {
+    return "Run the plan, implementation, and review workflow for TASK.md";
+  }
   const hints = [
     "Plan a migration",
     "Run ls -la for me",

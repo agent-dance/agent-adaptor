@@ -60,6 +60,7 @@ type EventTranslator struct {
 	activeReason    map[string]bool
 	activeToolStart map[string]bool
 	assistantText   bool // non-empty assistant TEXT_MESSAGE_CONTENT was emitted
+	subagents       *subagentTracker
 
 	decisionMode DecisionMode
 }
@@ -81,6 +82,7 @@ func NewEventTranslator(opts ...EventTranslatorOption) *EventTranslator {
 		activeText:      map[string]bool{},
 		activeReason:    map[string]bool{},
 		activeToolStart: map[string]bool{},
+		subagents:       newSubagentTracker(),
 		decisionMode:    DecisionAsToolCall,
 	}
 	for _, o := range opts {
@@ -250,6 +252,7 @@ func (t *EventTranslator) CloseResult(result *adaptor.Result, err error) []aguie
 	t.runFinish = true
 
 	out := t.ensureRunStartedLocked()
+	out = append(out, t.subagents.flush(err)...)
 	out = append(out, t.closeAllOpenLifecyclesLocked()...)
 	if !t.assistantText {
 		if text := resultText(result, err); strings.TrimSpace(text) != "" {
@@ -315,17 +318,7 @@ func (t *EventTranslator) translateNonTerminalLocked(ev adaptor.Event) []aguieve
 	case adaptor.Dropped:
 		return []aguievents.Event{customEvent("stream.dropped", droppedValue(e))}
 	case adaptor.SubagentUpdate:
-		value := map[string]any{}
-		if e.Agent != "" {
-			value["agent"] = e.Agent
-		}
-		if e.Delta != "" {
-			value["delta"] = e.Delta
-		}
-		for k, v := range e.Data {
-			value[k] = v
-		}
-		return []aguievents.Event{customEvent("subagent."+string(e.Kind), value)}
+		return t.subagents.translate(e)
 	case *adaptor.ApprovalRequest:
 		return t.approvalRequestLocked(e)
 	case adaptor.ProcessInfo:
