@@ -730,7 +730,17 @@ func (g *gateway) stopAdmission() error {
 }
 
 func isClosedNetworkError(err error) bool {
-	return errors.Is(err, net.ErrClosed) || (err != nil && err.Error() == net.ErrClosed.Error())
+	if errors.Is(err, net.ErrClosed) {
+		return true
+	}
+	// Older poll implementations expose an unwrap chain but use a distinct
+	// sentinel value with net.ErrClosed's canonical text.
+	for current := err; current != nil; current = errors.Unwrap(current) {
+		if current.Error() == net.ErrClosed.Error() {
+			return true
+		}
+	}
+	return false
 }
 
 func (g *gateway) shutdownAndDrain(registration *registration, timeout time.Duration) error {
