@@ -1,14 +1,8 @@
 package adaptor_test
 
-// Scenario S8 (design doc docs/api-v1-redesign.md §S8): the
-// tenant-isolated dedicated profile of a desktop product — a cloned
-// provider profile per tenant that shares the machine's OAuth login state
-// by link (never copying token files), plus profile-shaped resources
-// declared on the agent.
-//
-// Documented deviation from the doc sketch: the doc's Resources field
-// SubAgents is currently spelled Agents on the public profile.Resources
-// declaration. The resource types themselves are owned by profile.
+// Scenario S8 · tenant-isolated desktop profile: a cloned provider profile per
+// tenant shares the machine's OAuth login state by link (never copying token
+// files) and carries profile-shaped resources declared on the Agent.
 
 import (
 	"context"
@@ -25,7 +19,6 @@ func TestScenarioS8TenantIsolatedProfile(t *testing.T) {
 	const tenantID = "tenant-42"
 	fake := newFakeDriver()
 
-	// --- design doc S8, near-verbatim ---
 	agent := adaptor.New(fake,
 		adaptor.WithProfile(profile.CloneNative(
 			filepath.Join(appData, "profiles", tenantID),
@@ -36,8 +29,6 @@ func TestScenarioS8TenantIsolatedProfile(t *testing.T) {
 			Agents:       []profile.SubAgent{{Key: "tester", Instructions: "Write and run the tests."}},
 		}),
 	)
-	// --- end near-verbatim ---
-
 	if _, err := agent.Run(ctx, "fix the flaky login test"); err != nil {
 		t.Fatalf("run: %v", err)
 	}

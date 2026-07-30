@@ -5,7 +5,7 @@
 1. **Streaming**：文本、thinking、tool_call 通过一条 `stream.Events()` 通道流式传递，终局由一次 `stream.Result()` 收口。若 Driver 没有发布 assistant delta 但终局 `Result.Text` 非空，后端会在 terminal 前投影一次完整 assistant message；已有流式文本时绝不重复。
 2. **HITL**：没有安装 `OnApproval` 回调时，approval 以自带 responder 的 `*adaptor.ApprovalRequest` 事件出现在同一条流上。宿主停放请求后直接调用 `req.Approve(ctx)` / `req.Deny(ctx, reason)` / `req.Answer(ctx, option)`；`ErrApprovalResolved` 映射 HTTP 410，`ErrApprovalKindMismatch` 映射 400。`NoticeApprovalResolved` 会自动清掉 pending。
 3. **Recovery**：每个浏览器有稳定 `thread_id`，右侧面板通过 `/session/events` + `/decision/pending` 恢复历史与未决决策。`EventMeta.Sequence` 只在单次 run 内排序；跨 run 重放使用 `hosttools/sessionrecorder` 分配的 `HostSeq`。
-4. **User-prompt persistence**：user prompt 不会自动进入 SDK 持久层（thread store 只存 resume 元数据；driver 只 emit assistant 侧）。`handleAgent` 用 `userTurnEvents(lastUserMessageID(input), prompt)` 构造三段 `adaptor.TextDelta{Role: RoleUser, Phase: Start/Content/End}`，让它经过和 driver 事件相同的 fan-out。刷新页面拉 `/session/events` 即可恢复含 user 气泡的完整 transcript。<br>实现入口：`server.go::handleAgent` + `agui_run_session.go::recordUserTurn`；验证用例：`agui_run_session_test.go::TestAGUIRunSessionRecordsUserTurnBeforeAssistant`。详细设计见[归档工作流](../../../docs/archive/workstream-user-message-event.md)。
+4. **User-prompt persistence**：user prompt 不会自动进入 SDK 持久层（thread store 只存 resume 元数据；driver 只 emit assistant 侧）。`handleAgent` 用 `userTurnEvents(lastUserMessageID(input), prompt)` 构造三段 `adaptor.TextDelta{Role: RoleUser, Phase: Start/Content/End}`，让它经过和 driver 事件相同的 fan-out。刷新页面拉 `/session/events` 即可恢复含 user 气泡的完整 transcript。<br>实现入口：`server.go::handleAgent` + `agui_run_session.go::recordUserTurn`；验证用例：`agui_run_session_test.go::TestAGUIRunSessionRecordsUserTurnBeforeAssistant`。
 
 后端只调用真实本机 CLI：
 
@@ -146,8 +146,6 @@ concise final delegation result only.
 
 ## 相关文档
 
-- [`docs/workstream-user-message-event.md`](../../../docs/archive/workstream-user-message-event.md)
-- [`docs/workstream-hitl-v2.md`](../../../docs/archive/workstream-hitl-v2.md)
-- [`docs/workstream-session-recorder.md`](../../../docs/archive/workstream-session-recorder.md)
+- [`docs/streaming.md`](../../../docs/streaming.md)
 - [`docs/run-policy.md`](../../../docs/run-policy.md)
 - [`docs/streaming-adapter-contract.md`](../../../docs/streaming-adapter-contract.md)

@@ -152,6 +152,5 @@ Backend：
 ## 相关文档
 
 - [`docs/streaming.md`](../../../docs/streaming.md)
-- [`docs/workstream-streaming-chat.md`](../../../docs/archive/workstream-streaming-chat.md)
 - AG-UI 协议：https://docs.ag-ui.com
 - `@ag-ui/client`：https://docs.ag-ui.com/sdk/js/client/overview

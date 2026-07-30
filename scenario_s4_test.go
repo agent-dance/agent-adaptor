@@ -1,10 +1,10 @@
 package adaptor_test
 
 // Scenario S4 · background batch worker: per-job model / timeout / audit-tag
-// overrides (docs/api-v1-redesign.md §3 S4). This is the core acceptance
-// test for the dual-scope option system.
+// overrides. This is the core acceptance test for the dual-scope option
+// system.
 //
-// Target shape, verbatim from the design doc:
+// Acceptance shape:
 //
 //	agent := adaptor.New(codex.Driver(codex.Config{Model: "gpt-5.4"}),
 //	    adaptor.WithPolicy(adaptor.Policy{Sandbox: adaptor.WorkspaceWrite, Approvals: adaptor.ApprovalsAutoDeny}),

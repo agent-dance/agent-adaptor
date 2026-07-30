@@ -280,9 +280,7 @@ Core 不提供 HTTP 或 gRPC server、队列、调度器、租户系统、鉴权
 
 - [文档地图](./docs/README.md)
 - [API reference](./docs/api-reference.md)
-- [使用指南](./docs/usage-guide.md)
 - [Streaming 指南](./docs/streaming.md)
 - [结构化输出](./docs/structured-output.md)
 - [A2A 集成](./docs/a2a.md)
-- [迁移到 v1](./docs/migrating-to-v1.md)
 - [公开错误](./docs/public-errors.md)

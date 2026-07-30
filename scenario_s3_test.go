@@ -1,9 +1,9 @@
 package adaptor_test
 
 // Scenario S3 · Web chat service: SSE streaming + front-end approval card +
-// Thread continuation (docs/api-v1-redesign.md §3 S3).
+// Thread continuation.
 //
-// Target shape, verbatim from the design doc:
+// Acceptance shape:
 //
 //	th := agent.Thread(threadKeyFrom(r))        // 续聊：key 复用 / 自动新建
 //	stream := th.Stream(r.Context(), promptFrom(r))

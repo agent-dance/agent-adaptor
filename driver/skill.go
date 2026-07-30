@@ -2,7 +2,7 @@ package driver
 
 // Skill is the canonical description of one skill: who it is (Key), where it
 // comes from (Source), and whether it must participate in every run that sees
-// it (Required). See docs/skill-api-design.md §1 for the full contract.
+// it (Required). See docs/api-reference.md §11.1 for the public contract.
 //
 // Skill also acts as a SkillRef so callers can pass a Skill value directly to
 // adaptor.WithSkills without first registering it in a provider.
@@ -23,8 +23,8 @@ type Skill struct {
 	// Rendered by host UIs; ignored when Required is false.
 	Reason string
 	// Metadata carries optional extension fields. Keys with an underscore
-	// prefix are reserved for SDK-level interpretation (see the reserved
-	// keys documented in docs/skill-api-design.md §1).
+	// prefix are reserved for SDK-level interpretation; the currently defined
+	// keys are SkillMetadataRuntimeName and SkillMetadataDisplayName.
 	Metadata map[string]string
 }
 
@@ -49,7 +49,7 @@ func (Skill) isSkillRef() {}
 // SDK never branches on host-defined source types itself; it only
 // routes them to the configured materializer. This keeps the SDK
 // closed against host ontology while letting hosts own their fetch /
-// unpack / cache strategy. See docs/skill-api-design.md §3 for the
+// unpack / cache strategy. See docs/api-reference.md §11.1 for the
 // materializer contract.
 type SkillSource interface {
 	// SkillSource is the marker method. It MUST be a no-op; its only

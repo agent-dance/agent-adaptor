@@ -364,8 +364,8 @@ Hosttools：
 - Event 顺序、关闭、Cancel、blocking/drop 背压与 Approval exactly-once race 测试通过
 - Result 各层在 Run 与 Stream.Result 上逐字段等价
 - 所有 examples 编译，fake-driver 示例可执行
-- 根包 godoc 以六个核心名词开篇，25 个 `With*` 名与约 13 个核心概念组的心智负担目标达成；新增的 `WithSpawn` 是常驻进程默认语义的唯一显式反向开关；raw exports 的实际构成记录在 `docs/v1-takeover-audit.md` §0.1，其他构造器、枚举/error/DTO/alias 等原始声明由完整 AST golden 冻结
-- README、API reference、usage、streaming、A2A、structured output、migration guide 与代码一致
+- 根包 godoc 以六个核心名词开篇，25 个 `With*` 名与约 13 个核心概念组的心智负担目标达成；新增的 `WithSpawn` 是常驻进程默认语义的唯一显式反向开关；根包全部公共声明由 `testdata/root_api.golden` 的完整 AST golden 冻结
+- README、文档地图、API reference、streaming、run policy、A2A、structured output 与代码一致
 - 无 TODO、无死代码、无临时 V1 后缀、无过期兼容入口
 - CHANGELOG 与实际 breaking changes 一致
 - 当前脏工作树中的 PRE 改动已逐项验收并形成可追溯提交
@@ -380,4 +380,4 @@ Hosttools：
 - 不得以兼容为理由保留未经设计批准的旧 API。
 - 不得静默丢弃输出、事件、checkpoint 或安全相关状态。
 - 不得留下 TODO、死代码、临时 alias 或“后续再补”的发布缺口。
-- 任何公共语义变化必须同时更新合同测试、godoc、使用文档与 migration guide。
+- 任何公共语义变化必须同时更新合同测试、godoc、相关使用文档与 CHANGELOG。

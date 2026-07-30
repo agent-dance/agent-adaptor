@@ -37,9 +37,9 @@ const (
 )
 
 // ProfileResources is the host-facing desired-state bundle accepted by
-// WithDefaultProfileResources and WithProfileResources. Existing sugar options
-// (WithSkills, WithMCP, WithInstructions, etc.) continue to work and are
-// folded into the same ProfilePayload before invoking an adapter.
+// WithProfileResources at agent construction or per-call scope. Existing sugar
+// options (WithSkills, WithMCP, WithInstructions, etc.) continue to work and
+// are folded into the same ProfilePayload before invoking a driver.
 type ProfileResources struct {
 	Skills       []SkillRef
 	MCP          *MCPConfig

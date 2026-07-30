@@ -1,8 +1,8 @@
 package adaptor_test
 
-// Scenario S1 · CLI tool: one-shot task (docs/api-v1-redesign.md §3 S1).
+// Scenario S1 · CLI tool: one-shot task.
 //
-// Target shape, verbatim from the design doc:
+// Acceptance shape:
 //
 //	agent := adaptor.New(codex.Driver(codex.Config{Model: "gpt-5.4"}))
 //

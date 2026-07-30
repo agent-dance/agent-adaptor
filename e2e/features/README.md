@@ -27,7 +27,6 @@
 
 BDD runner 和真实 CLI 步骤实现位于 `e2e/*_test.go`，使用显式 `e2e` build tag，避免普通
 `go test ./...` 意外调用外部模型或消耗额度。默认运行三家各自的最终三轮 smoke 旅程：
-实现与实测记录见 [`docs/workstream-persistent-process-e2e.md`](../../docs/workstream-persistent-process-e2e.md)。
 
 ```bash
 AGENT_ADAPTOR_E2E=1 \

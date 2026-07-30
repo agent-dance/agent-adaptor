@@ -136,8 +136,8 @@ func (e *ResumeRejectedError) Unwrap() error {
 // --- MCP -----------------------------------------------------------------
 
 var (
-	// ErrInvalidMCPConfig is returned when WithMCP / WithDefaultMCP is
-	// given a malformed MCPConfig.
+	// ErrInvalidMCPConfig is returned when WithMCP is given a malformed
+	// MCPConfig.
 	ErrInvalidMCPConfig = mcp.ErrInvalidConfig
 
 	// ErrMCPUnsupported is returned when an MCP-bound Run targets an
@@ -170,7 +170,7 @@ type (
 	InvalidOutputSchemaError = driver.InvalidOutputSchemaError
 )
 
-// --- Skill (see docs/skill-api-design.md) -------------------------------
+// --- Skill --------------------------------------------------------------
 
 var (
 	// ErrSkillKeyConflict is the base sentinel; SkillKeyConflictError in

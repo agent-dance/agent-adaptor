@@ -1,5 +1,5 @@
 // Package threadstore defines the storage contract behind stateful Threads
-// (see docs/api-v1-redesign.md §2.4).
+// (see docs/api-reference.md §13).
 //
 // A Store persists the driver resume checkpoints that let a Thread continue
 // a conversation across runs and processes. It resolves and atomically

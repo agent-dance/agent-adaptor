@@ -20,7 +20,7 @@ import (
 //
 // Every dual-scope option satisfies all three interfaces; construction-only
 // options satisfy Option and nothing else. These vars are the machine-checked
-// half of the scope table in docs/api-v1-redesign.md §2.3.
+// half of the scope table in docs/api-reference.md §3.
 var (
 	_ adaptor.SharedOption = adaptor.WithModel("m")
 	_ adaptor.SharedOption = adaptor.WithTimeout(time.Second)

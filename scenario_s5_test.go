@@ -1,11 +1,7 @@
 package adaptor_test
 
-// Scenario S5 (design doc docs/api-v1-redesign.md §S5): the issue
-// triager — structured output decoded straight into a business struct with
-// one generic call instead of a two-step schema/decode sequence:
-// WithJSONSchemaOutputFor[T] + DecodeStructuredOutput[T].
-//
-// The Triage type and the RunAs line are verbatim from the doc.
+// Scenario S5 · issue triager: structured output decoded straight into a
+// business struct with one generic RunAs call.
 
 import (
 	"context"
@@ -30,9 +26,8 @@ func TestScenarioS5IssueTriage(t *testing.T) {
 	agent := adaptor.New(fake)
 	issueBody := "Login fails with 500 after the latest deploy."
 
-	// --- design doc S5, verbatim ---
+	// The generic call derives the schema, runs the Agent, and decodes the result.
 	triage, _, err := adaptor.RunAs[Triage](ctx, agent, "triage this issue:\n"+issueBody)
-	// --- end verbatim ---
 	if err != nil {
 		t.Fatalf("RunAs: %v", err)
 	}

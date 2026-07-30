@@ -42,8 +42,7 @@ type RuntimeServiceManager interface {
 	// This method exists primarily to support host-side cleanup by
 	// task / tenant / workspace label after a process restart, when
 	// the runID-scoped index from a previous incarnation has been
-	// lost. See docs/v0.5.0-host-integration-plan.md §A3 for the
-	// design rationale and why a host-driven Reconcile(aliveRunIDs)
-	// was deliberately NOT added.
+	// lost. It is deliberately narrower than a host-driven global
+	// Reconcile(aliveRunIDs) contract. See docs/api-reference.md §12.
 	ReleaseByLabels(ctx context.Context, labels map[string]string) error
 }

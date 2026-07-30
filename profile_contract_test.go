@@ -15,11 +15,11 @@ package adaptor_test
 //	TestProfileResourcesRejectConfigCapabilityAndNativeTarget → TestProfileResourcesRejectConfigCapabilityAndNativeTarget
 //	TestProfileSnapshotFallbackReportsSupportAndMaterialization → TestProfileStateFallbackReportsSupportAndMaterialization
 //
-// v1 deltas: the dedicated WithDefaultAgents/WithDefaultHooks/... options
-// collapse into WithProfileResources (per-kind merge rules unchanged), the
-// Admin().Default().ProfileSnapshot verb becomes Agent.ProfileState, and the
-// rejection tests additionally pin that the failure is pre-launch (driver
-// never runs) — a strengthening, not a change, of the root assertion.
+// v1 deltas: dedicated per-kind default resource options collapse into
+// WithProfileResources (per-kind merge rules unchanged), profile inspection is
+// exposed through Agent.ProfileState, and the rejection tests additionally pin
+// that the failure is pre-launch (the driver never runs) — a strengthening,
+// not a change, of the root assertion.
 
 import (
 	"context"

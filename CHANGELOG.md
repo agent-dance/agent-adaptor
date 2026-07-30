@@ -57,5 +57,5 @@ This release is a clean v1 cutover from the `v0.12.0` public baseline.
 
 ### Migration
 
-- The complete public mapping from `v0.12.0` is documented in [Migrating to v1](./docs/migrating-to-v1.md).
+- The final public API and option scopes are documented in the [API reference](./docs/api-reference.md).
 - Runnable final-shape integrations are available under [examples](./examples).
