@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -45,6 +46,9 @@ func TestTeamWebHandlerExposesHealthAndScopedCORS(t *testing.T) {
 }
 
 func TestStartAllScriptWiresTeamBackendToCopilotKit(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows filesystems do not expose the repository's POSIX executable bit")
+	}
 	info, err := os.Stat("start-all.sh")
 	if err != nil {
 		t.Fatal(err)

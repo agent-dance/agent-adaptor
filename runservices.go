@@ -394,7 +394,14 @@ type runResources struct {
 func (a *Agent) acquireRun(ctx context.Context, runID string, eff *RunSettings, sink *eventSink) (*runResources, error) {
 	needsWorkspace := a.defaults.workspaceManager != nil || eff.workspaceSpec != nil
 	needsRuntime := len(eff.services) > 0
-	providers := eff.runServices
+	providers := append([]RunServiceProvider(nil), eff.runServices...)
+	if a.toolProvider != nil {
+		// Host-defined Tools are construction-only and Agent-owned, but they
+		// deliberately join the same attachment -> runtime -> MCP path as every
+		// other service. This preserves one resource-resolution and Driver
+		// dispatch pipeline without exposing the internal transport publicly.
+		providers = append([]RunServiceProvider{a.toolProvider}, providers...)
+	}
 	if !needsWorkspace && !needsRuntime && len(providers) == 0 {
 		// Zero-cost path: leave the Driver request untouched when the run has
 		// no managed workspace, runtime service, or attached provider.
@@ -412,6 +419,11 @@ func (a *Agent) acquireRun(ctx context.Context, runID string, eff *RunSettings, 
 		identity:         identity,
 		workspaceManager: a.defaults.workspaceManager,
 		serviceManager:   a.defaults.serviceManager,
+	}
+	if a.toolProvider != nil {
+		if err := a.claimHostedToolProfile(ctx, identity, eff.effectiveProfile); err != nil {
+			return nil, err
+		}
 	}
 
 	// 1. Workspace lease. Only when the host actually asked for managed
@@ -484,6 +496,29 @@ func (a *Agent) acquireRun(ctx context.Context, runID string, eff *RunSettings, 
 			sources = append(sources, att.Events)
 		}
 	}
+	// Attachments are resolved runtime state, not an out-of-band side list.
+	// Recompute after the final attachment so every Driver observes a
+	// fingerprint for the exact requested/ensured surface it receives. Resolve
+	// the attachment-owned MCP subset as well: the outer service URL and
+	// ReuseKey cannot represent MCP key, transport, authentication-env, or
+	// required semantics on their own.
+	runtimeMCP, err := engine.ResolveMCPPayloadWithRuntime(
+		nil,
+		nil,
+		r.runtime.Ensured,
+		a.driver.Descriptor().MCP,
+	)
+	if err != nil {
+		cleanupCtx, cancel := runResourceCleanupContext(ctx)
+		releaseErr := r.release(cleanupCtx)
+		cancel()
+		return nil, errors.Join(err, releaseErr)
+	}
+	r.runtime.Fingerprint = engine.StableHash(
+		"adaptor/runtime-payload/v2",
+		a.driver.Descriptor().Type,
+		threadRuntimeCompatibility(r.runtime, runtimeMCP.Fingerprint),
+	)
 
 	// 4. Event pumps start before the driver does, so no provider event
 	// published during the run can be missed.

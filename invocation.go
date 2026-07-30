@@ -45,6 +45,7 @@ func (a *Agent) startInvocation(ctx context.Context, prompt string, opts []CallO
 // teardown. In particular, this file contains the sole production Driver.Run
 // call and the sole ThreadSessionPlan.Persist call in the root execution path.
 func (a *Agent) executeInvocation(ctx context.Context, st *runStream, prompt string, eff *RunSettings, target *invocationTarget) {
+	defer a.unregisterRun(st.runID)
 	var (
 		resources      *runResources
 		plan           *engine.ThreadSessionPlan
@@ -101,6 +102,10 @@ func (a *Agent) executeInvocation(ctx context.Context, st *runStream, prompt str
 			resultErr = target.thread.threadError(contractErr)
 			return
 		}
+		if a.toolThreadErr != nil {
+			resultErr = target.thread.threadError(a.toolThreadErr)
+			return
+		}
 	}
 
 	resources, resultErr = a.acquireRun(ctx, st.runID, eff, st.sink)
@@ -121,7 +126,8 @@ func (a *Agent) executeInvocation(ctx context.Context, st *runStream, prompt str
 	}
 	fingerprint := ""
 	if target != nil {
-		fingerprint = a.threadInvocationFingerprint(identity, resolved.req, threadContract)
+		mcpCompatibilityFingerprint := a.stabilizeHostedToolCompatibility(&resolved.req)
+		fingerprint = a.threadInvocationFingerprint(identity, resolved.req, threadContract, mcpCompatibilityFingerprint)
 		req := engine.SessionRequest{
 			Namespace: threadNamespace,
 			Key:       target.thread.key,
@@ -222,7 +228,13 @@ func (a *Agent) executeInvocation(ctx context.Context, st *runStream, prompt str
 // stable, secret-safe contract; the remaining values are the concrete request
 // handed to that same configured driver (including the acquired workspace and
 // runtime-service attachment payloads).
-func (a *Agent) threadInvocationFingerprint(identity driver.AgentIdentity, req driver.Request, contract threadDriverContract) string {
+func (a *Agent) threadInvocationFingerprint(identity driver.AgentIdentity, req driver.Request, contract threadDriverContract, mcpCompatibilityFingerprint string) string {
+	runtimeCompatibility := threadRuntimeCompatibility(req.Runtime, mcpCompatibilityFingerprint)
+	a.normalizeHostedToolServiceCompatibility(&runtimeCompatibility)
+	// Hosted Tool normalization changes one URL after the generic view was
+	// sorted. Re-sort so an ephemeral port cannot indirectly change collection
+	// order when other runtime services are present.
+	sortThreadRuntimeCompatibility(&runtimeCompatibility)
 	return engine.StableHash(
 		"adaptor/thread-invocation/v1",
 		a.driver.Descriptor().Type,
@@ -231,8 +243,8 @@ func (a *Agent) threadInvocationFingerprint(identity driver.AgentIdentity, req d
 		identity,
 		req.ModelOverride,
 		req.Workspace,
-		threadRuntimeCompatibility(req.Runtime, req.MCP.Fingerprint),
-		req.Profile,
+		runtimeCompatibility,
+		a.hostedToolProfileCompatibility(req.Profile),
 		req.ProfilePayload.Fingerprint,
 		req.Skills.Fingerprint,
 		engine.InstructionFingerprint(req.Instructions),
@@ -336,6 +348,14 @@ func threadRuntimeCompatibility(runtime driver.RuntimePayload, mcpFingerprint st
 		}
 	}
 
+	sortThreadRuntimeCompatibility(&view)
+	return view
+}
+
+func sortThreadRuntimeCompatibility(view *threadRuntimeCompatibilityView) {
+	if view == nil {
+		return
+	}
 	// Service collection order is not semantic: managers may discover the
 	// same endpoints in a different order on the next process or run.
 	slices.SortFunc(view.Requested, func(a, b threadRuntimeServiceSpecView) int {
@@ -346,7 +366,6 @@ func threadRuntimeCompatibility(runtime driver.RuntimePayload, mcpFingerprint st
 	})
 	slices.Sort(view.SecretEnvNames)
 	view.SecretEnvNames = slices.Compact(view.SecretEnvNames)
-	return view
 }
 
 type threadRuntimeCompatibilityView struct {

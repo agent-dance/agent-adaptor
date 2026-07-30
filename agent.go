@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"maps"
 	"sync"
 
@@ -33,10 +34,26 @@ type Agent struct {
 	driver   driver.Driver
 	defaults AgentSettings
 
-	lifecycleMu  sync.Mutex
-	closeStarted bool
-	closeDone    chan struct{}
-	closeErr     error
+	lifecycleMu   sync.Mutex
+	closeStarted  bool
+	closeRunning  bool
+	closeComplete bool
+	closeDone     chan struct{}
+	closeErr      error
+	activeRuns    map[string]context.CancelFunc
+	activeDone    chan struct{}
+
+	// toolRuntime is an Agent-owned local runtime, while toolProvider projects
+	// its stable endpoint into the existing run-service/MCP resolution path.
+	// The interface keeps lifecycle testing independent of the transport
+	// implementation hidden in internal/toolruntime.
+	toolRuntime           ownedToolRuntime
+	toolProvider          RunServiceProvider
+	toolConfigErr         error
+	toolThreadErr         error
+	toolProfileMu         sync.Mutex
+	toolProfiles          map[string]hostedToolProfileClaim
+	toolProfileSelections map[string]hostedToolProfileSelection
 
 	// mu guards skillSelection, the process-local skill selection override
 	// installed by SelectSkills: nil means no override, while a non-nil
@@ -65,6 +82,7 @@ func New(d driver.Driver, opts ...Option) *Agent {
 		}
 		o.ApplyNew(&a.defaults)
 	}
+	a.configureTools()
 	return a
 }
 
@@ -94,10 +112,11 @@ func (a *Agent) Run(ctx context.Context, prompt string, opts ...CallOption) (*Re
 	return st.Result()
 }
 
-// Close prevents new runs and closes every persistent provider process owned
-// by the Agent's configured Driver. It is idempotent; concurrent callers wait
-// for the first close attempt or return ctx.Err() when their own deadline wins.
-// Drivers without persistent-process support make Close a successful no-op.
+// Close prevents new runs, cancels and drains admitted runs, closes every
+// persistent provider process owned by the configured Driver, then closes the
+// Agent-owned Tool runtime. It is idempotent; concurrent callers wait for the
+// first close attempt or return ctx.Err() when their own deadline wins.
+// Drivers without persistent-process support skip the process-close phase.
 func (a *Agent) Close(ctx context.Context) error {
 	if a == nil {
 		return ErrAgentClosed
@@ -105,34 +124,110 @@ func (a *Agent) Close(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	a.lifecycleMu.Lock()
-	if a.closeStarted {
-		done := a.closeDone
-		a.lifecycleMu.Unlock()
-		select {
-		case <-done:
-			a.lifecycleMu.Lock()
+	for {
+		a.lifecycleMu.Lock()
+		if a.closeComplete {
 			err := a.closeErr
 			a.lifecycleMu.Unlock()
 			return err
-		case <-ctx.Done():
-			return ctx.Err()
+		}
+		if a.closeRunning {
+			done := a.closeDone
+			a.lifecycleMu.Unlock()
+			select {
+			case <-done:
+				continue
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+		a.closeStarted = true
+		a.closeRunning = true
+		a.closeDone = make(chan struct{})
+		activeDone := a.activeDone
+		cancels := make([]context.CancelFunc, 0, len(a.activeRuns))
+		for _, cancel := range a.activeRuns {
+			cancels = append(cancels, cancel)
+		}
+		a.lifecycleMu.Unlock()
+
+		for _, cancel := range cancels {
+			cancel()
+		}
+		err, complete := a.closeAttempt(ctx, activeDone)
+
+		a.lifecycleMu.Lock()
+		a.closeRunning = false
+		if complete {
+			a.closeComplete = true
+			a.closeErr = err
+		}
+		close(a.closeDone)
+		a.lifecycleMu.Unlock()
+		return err
+	}
+}
+
+func (a *Agent) closeAttempt(ctx context.Context, activeDone <-chan struct{}) (error, bool) {
+	// Closing once before the drain actively unblocks Drivers whose Run waits
+	// on their provider process after cancellation. The Tool listener remains
+	// available while cancellation propagates through an in-flight Tool call.
+	var processErr error
+	if closer, ok := a.driver.(driver.ProcessLifecycleDriver); ok {
+		processErr = closer.CloseProcesses(ctx)
+		if ctx.Err() != nil {
+			return errors.Join(processErr, ctx.Err()), false
+		}
+		if processErr != nil {
+			// The SPI does not provide a separate "all processes are gone"
+			// acknowledgement. Only nil proves that profile credentials and the
+			// Tool endpoint may be revoked safely; keep cleanup retryable on any
+			// other process-close result.
+			return processErr, false
 		}
 	}
-	a.closeStarted = true
-	a.closeDone = make(chan struct{})
-	a.lifecycleMu.Unlock()
 
-	var err error
-	if closer, ok := a.driver.(driver.ProcessLifecycleDriver); ok {
-		err = closer.CloseProcesses(ctx)
+	if activeDone != nil {
+		select {
+		case <-activeDone:
+		case <-ctx.Done():
+			return ctx.Err(), false
+		}
 	}
 
-	a.lifecycleMu.Lock()
-	a.closeErr = err
-	close(a.closeDone)
-	a.lifecycleMu.Unlock()
-	return err
+	// An admitted goroutine can begin Driver.Run immediately after the first
+	// process close. Draining proves it can no longer create work; a second
+	// idempotent close then reaps any late-created persistent writer and
+	// restores the strict post-Close no-process guarantee.
+	if closer, ok := a.driver.(driver.ProcessLifecycleDriver); ok && activeDone != nil {
+		processErr = errors.Join(processErr, closer.CloseProcesses(ctx))
+		if ctx.Err() != nil {
+			return errors.Join(processErr, ctx.Err()), false
+		}
+		if processErr != nil {
+			return processErr, false
+		}
+	}
+
+	// Remove the native profile projection while its endpoint is still live.
+	// A failed removal leaves the runtime alive and Close retryable, avoiding a
+	// dead endpoint in a shared provider profile.
+	if profileErr := a.releaseHostedToolProfiles(ctx); profileErr != nil {
+		return errors.Join(processErr, profileErr), false
+	}
+
+	var toolErr error
+	if a.toolRuntime != nil {
+		toolErr = a.toolRuntime.Close(ctx)
+	}
+	if ctx.Err() != nil {
+		return errors.Join(processErr, toolErr, ctx.Err()), false
+	}
+	return errors.Join(processErr, toolErr), true
+}
+
+type ownedToolRuntime interface {
+	Close(context.Context) error
 }
 
 func (a *Agent) ensureOpen() error {
@@ -145,6 +240,45 @@ func (a *Agent) ensureOpen() error {
 		return ErrAgentClosed
 	}
 	return nil
+}
+
+// registerRun atomically admits a fully validated invocation into the Agent
+// lifecycle. Close cannot slip between an open check and goroutine start: it
+// either observes and cancels this run, or registration observes Close and
+// rejects the run before resource acquisition.
+func (a *Agent) registerRun(runID string, cancel context.CancelFunc) error {
+	if a == nil {
+		return ErrAgentClosed
+	}
+	a.lifecycleMu.Lock()
+	defer a.lifecycleMu.Unlock()
+	if a.closeStarted {
+		return ErrAgentClosed
+	}
+	if a.activeRuns == nil {
+		a.activeRuns = make(map[string]context.CancelFunc)
+	}
+	if len(a.activeRuns) == 0 {
+		a.activeDone = make(chan struct{})
+	}
+	a.activeRuns[runID] = cancel
+	return nil
+}
+
+func (a *Agent) unregisterRun(runID string) {
+	if a == nil {
+		return
+	}
+	a.lifecycleMu.Lock()
+	defer a.lifecycleMu.Unlock()
+	if _, exists := a.activeRuns[runID]; !exists {
+		return
+	}
+	delete(a.activeRuns, runID)
+	if len(a.activeRuns) == 0 && a.activeDone != nil {
+		close(a.activeDone)
+		a.activeDone = nil
+	}
 }
 
 // buildRequest maps the effective settings onto the driver SPI request.

@@ -116,6 +116,26 @@ func TestResolveProfileRejectsUnknownCloneAuthMode(t *testing.T) {
 	}
 }
 
+func TestExplicitProfileSelectionOverridesConfiguredProfileBinding(t *testing.T) {
+	configured := filepath.Join(t.TempDir(), "configured")
+	selected := filepath.Join(t.TempDir(), "selected")
+	resolution, err := ResolveProfile(ProfileResolveOptions{
+		Bindings:        []agentadaptor.EnvBinding{{Name: "CURSOR_HOME", Value: configured}},
+		Selection:       &agentadaptor.ProfileSelection{Mode: agentadaptor.ProfileModeDedicated, Dir: selected},
+		EnvVar:          "CURSOR_HOME",
+		NativeSharedDir: configured,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolution.Profile.Dir != selected || resolution.Profile.Source != agentadaptor.AgentProfileSourceProfileOption {
+		t.Fatalf("resolution = %#v, want explicit selected profile", resolution.Profile)
+	}
+	if got := ResolveBinding(resolution.Bindings, "CURSOR_HOME"); got != selected {
+		t.Fatalf("resolved binding = %q, want %q", got, selected)
+	}
+}
+
 func writeFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

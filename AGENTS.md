@@ -10,13 +10,13 @@
 
 - 以统一 API 调用不同本地 coding agent
 - 统一构造、批处理、流式执行与有状态对话语义
-- 提供可选的 Thread、workspace、skill、MCP、profile、runtime service 注入点
+- 提供可选的 Thread、workspace、tool、skill、MCP、profile、runtime service 注入点
 - 提供稳定的 Driver SPI 与一致性测试
 - 允许宿主嵌入 CLI、桌面应用、HTTP/gRPC 服务、工作流和定时任务
 
 它不负责：
 
-- 在 core 内内置 HTTP/gRPC server、队列、调度器、租户、鉴权或数据库
+- 在 core 内内置面向宿主的通用 HTTP/gRPC server、队列、调度器、租户、鉴权或数据库；`WithTools` 私有、loopback-only 的 MCP transport 属于 Agent capability 交付实现，不构成宿主服务框架
 - 自动决定一次任务应使用哪个 Agent
 - 定义宿主的团队角色、业务流程或路由策略
 - 强制任何持久化、分布式锁或服务框架依赖
@@ -51,6 +51,7 @@ v1 的消费者心智只能由以下六个核心名词组成：
 github.com/agent-dance/agent-adaptor          package adaptor
 ├── driver/                                    Driver SPI
 ├── codex/ claude/ cursor/ codebuddy/          各驱动 Config 与 Driver(Config)
+├── tool/                                      宿主定义 Tool 词汇
 ├── skill/                                     skill 词汇与来源
 ├── mcp/                                       MCP 声明
 ├── profile/                                   profile 与资源声明
@@ -66,7 +67,7 @@ github.com/agent-dance/agent-adaptor          package adaptor
 - 根包可以依赖 `driver`、词汇包和 `internal/engine`。
 - `internal/engine` 不得 import 根包。
 - `driver` 不得依赖根包或具体 provider 包。
-- `skill`、`mcp`、`profile`、`threadstore` 不得反向 import 根包。
+- `tool`、`skill`、`mcp`、`profile`、`threadstore` 不得反向 import 根包。
 - bridges 与 hosttools 只能消费公开 `Runner`、`Stream`、`Event`、`Result` 等合同，不得调用内部 engine 或直接派发 Driver。
 - 公共类型不得通过 alias、字段或方法签名泄露 `internal/*` 类型。
 
@@ -110,7 +111,7 @@ func New(d driver.Driver, opts ...Option) *Agent
 1. 读取 Agent 默认值与本次 CallOption
 2. 生成唯一的 resolved invocation
 3. 校验 Driver 能力、policy、schema 与审批模式
-4. 解析 workspace、profile、skills、MCP 与 runtime services
+4. 解析 workspace、profile、Tools、skills、MCP 与 runtime services
 5. 若接收者是 Thread，协调 store、lease、resume/fork 与兼容性
 6. 通过唯一 Event sink 调用一次 `driver.Run`
 7. 形成 Event、Result、RunError 与 checkpoint
@@ -167,7 +168,7 @@ checkpoint, err := th.Checkpoint(ctx)
 - 模型与 identity
 - 实际解析后的 workspace，而非仅调用方原始字符串
 - profile 与 materialized resources
-- skills、instructions、MCP
+- Tools、skills、instructions、MCP
 - 会影响会话环境的 runtime service fingerprint
 - Driver SessionCodec 所要求的其他兼容维度
 
@@ -276,14 +277,14 @@ checkpoint 安全合同：
 
 Driver SPI 的所有 MUST/SHOULD、事件生命周期、Sequence/Seq 权威性、SessionCodec nil/零值映射及 capability 蕴含关系，必须在 `driver/` godoc 与 `adaptertest` 条款中一致表达。
 
-## 10. Inspect、skill、MCP、profile 与 runtime
+## 10. Inspect、tool、skill、MCP、profile 与 runtime
 
 - `Agent.Inspect()` 是只读探针入口，不是控制面或执行面。
 - Environment、Models、Quota、ConfigSchema、Skills 等探针不支持时必须返回明确 unavailable/unsupported 语义，不得伪造。
 - Inspect 必须使用 Agent 构造时真实 Driver 配置。
 - `ProfileState` 只报告 desired 与 observed；`SyncProfile` 才执行资源物化。
 - skill 物化、schema 协商、profile 同步等启动前错误必须显式失败，不得降级成 warning 后继续运行。
-- `skill`、`mcp`、`profile` 必须各自拥有完整公共词汇；调用方不得为了构造这些值 import `driver` 或 `internal`。
+- `tool`、`skill`、`mcp`、`profile` 必须各自拥有完整公共词汇；调用方不得为了构造这些值 import `driver` 或 `internal`。
 - Runtime service 发布 MCP 必须使用类型化字段，最终 v1 不保留 stringly metadata 兼容解析。
 - Service report 只能陈述实际观察，不能把宿主输入声明回显成“已执行”。
 
@@ -328,7 +329,7 @@ Hosttools：
 
 - 根目录只保留最终 `package adaptor/adaptor_test`；不得复活 `next/`、`pkg/` 转发包或旧根 API。
 - 不允许用兼容 shim 带回中央 SDK、registry、binding、RunHandle 或平行执行入口。
-- 公共 Config 必须是真结构体且不泄露 `internal` 类型；Profile、HITL、skill、MCP 与 runtime 词汇必须由正确公共层拥有。
+- 公共 Config 必须是真结构体且不泄露 `internal` 类型；Profile、HITL、tool、skill、MCP 与 runtime 词汇必须由正确公共层拥有。
 - archive source 等价性不得依赖函数地址判断 closure 内容；Fingerprint 的文档语义必须与 materializer/cache 实际用途一致。
 - examples 必须使用最终名与最终 API；不得保留只为迁移期编译的示例。
 - Git tag 属于独立发布动作，只能在明确发布授权和发布门禁满足后创建。
@@ -364,7 +365,7 @@ Hosttools：
 - Event 顺序、关闭、Cancel、blocking/drop 背压与 Approval exactly-once race 测试通过
 - Result 各层在 Run 与 Stream.Result 上逐字段等价
 - 所有 examples 编译，fake-driver 示例可执行
-- 根包 godoc 以六个核心名词开篇，25 个 `With*` 名与约 13 个核心概念组的心智负担目标达成；新增的 `WithSpawn` 是常驻进程默认语义的唯一显式反向开关；根包全部公共声明由 `testdata/root_api.golden` 的完整 AST golden 冻结
+- 根包 godoc 以六个核心名词开篇，26 个 `With*` 名与约 13 个核心概念组的心智负担目标达成；新增的 `WithTools` 是宿主定义能力的唯一根包入口，`WithSpawn` 是常驻进程默认语义的唯一显式反向开关；根包全部公共声明由 `testdata/root_api.golden` 的完整 AST golden 冻结
 - README、文档地图、API reference、streaming、run policy、A2A、structured output 与代码一致
 - 无 TODO、无死代码、无临时 V1 后缀、无过期兼容入口
 - CHANGELOG 与实际 breaking changes 一致

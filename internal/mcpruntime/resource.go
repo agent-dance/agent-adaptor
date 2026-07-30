@@ -15,6 +15,7 @@ import (
 	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/internal/engine"
 	"github.com/agent-dance/agent-adaptor/internal/profilestate"
+	"github.com/agent-dance/agent-adaptor/internal/toolidentity"
 )
 
 const resourceKind = string(engine.ProfileResourceMCP)
@@ -100,20 +101,28 @@ func SyncResource(ctx context.Context, driverType, profileDir string, kind Profi
 	if err != nil {
 		return engine.ResourceSnapshot{}, err
 	}
+	if err := rejectHostedToolCollisions(layout, payload.Servers, current, manifest); err != nil {
+		return engine.ResourceSnapshot{}, err
+	}
 	next := cloneAnyMap(current)
 	for key, value := range desired {
 		next[key] = value
 	}
 	for _, server := range payload.Servers {
+		metadata := map[string]string{
+			"provider":  layout.driverType,
+			"transport": string(server.Transport),
+		}
+		if isHostedToolServer(server) {
+			metadata["owner"] = toolidentity.ManifestOwner
+			metadata["rendered_fingerprint"] = renderedServerFingerprint(desired[server.Key])
+		}
 		manifest.Set(profilestate.ManifestEntry{
 			Kind:        resourceKind,
 			Key:         server.Key,
 			Path:        layout.path,
 			Fingerprint: serverFingerprint(server),
-			Metadata: map[string]string{
-				"provider":  layout.driverType,
-				"transport": string(server.Transport),
-			},
+			Metadata:    metadata,
 		})
 	}
 	if kind == ProfileKindHostManaged {
@@ -127,6 +136,104 @@ func SyncResource(ctx context.Context, driverType, profileDir string, kind Profi
 		return engine.ResourceSnapshot{}, err
 	}
 	return SnapshotResource(driverType, profileDir, payload, true)
+}
+
+// rejectHostedToolCollisions protects a user's native profile entry from the
+// one SDK-reserved key. Ordinary WithMCP declarations retain their established
+// overlay behavior; the Agent-owned Tool runtime is stricter because it would
+// otherwise silently replace an unrelated server and leave a stale local
+// endpoint in a shared profile.
+func rejectHostedToolCollisions(layout providerLayout, servers []driver.MCPServerSpec, current map[string]any, manifest profilestate.Manifest) error {
+	for _, server := range servers {
+		if !isHostedToolServer(server) {
+			continue
+		}
+		if _, exists := current[server.Key]; !exists {
+			continue
+		}
+		entry, managed := manifest.Entry(resourceKind, server.Key)
+		if managed && filepath.Clean(entry.Path) == filepath.Clean(layout.path) &&
+			entry.Metadata["owner"] == toolidentity.ManifestOwner &&
+			entry.Metadata["rendered_fingerprint"] == renderedServerFingerprint(current[server.Key]) {
+			continue
+		}
+		return fmt.Errorf("%w: hosted Tool MCP key %q already belongs to an external profile server", engine.ErrInvalidMCPConfig, server.Key)
+	}
+	return nil
+}
+
+// SupportsHostedToolProfile reports whether the built-in provider has a
+// profile materializer whose Agent-owned Tool entry can be cleaned safely.
+// Third-party Drivers consume the normalized MCP payload directly and retain
+// ownership of any provider-specific persistence they choose to perform.
+func SupportsHostedToolProfile(driverType string) bool {
+	switch driverType {
+	case "codex", "claude", "cursor", "codebuddy":
+		return true
+	default:
+		return false
+	}
+}
+
+// RemoveHostedToolProfile removes only the exact profile entry last written
+// by the Agent-owned Tool materializer. The owner marker prevents adopting a
+// pre-existing user entry, while rendered_fingerprint prevents deleting an
+// entry that the user or another process changed after materialization.
+func RemoveHostedToolProfile(ctx context.Context, driverType, profileDir string) error {
+	if _, err := os.Stat(profileDir); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	layout, err := layoutFor(driverType, profileDir)
+	if err != nil {
+		return err
+	}
+	lock, err := profilestate.AcquireLock(ctx, profileDir, profilestate.LockOptions{StaleAfter: 10 * time.Minute})
+	if err != nil {
+		return err
+	}
+	defer lock.Release()
+
+	manifest, err := profilestate.LoadManifest(profileDir)
+	if err != nil {
+		return err
+	}
+	entry, managed := manifest.Entry(resourceKind, toolidentity.ServerKey)
+	if !managed || filepath.Clean(entry.Path) != filepath.Clean(layout.path) ||
+		entry.Metadata["owner"] != toolidentity.ManifestOwner {
+		return nil
+	}
+	root, err := readStructuredRoot(layout)
+	if err != nil {
+		return err
+	}
+	current, err := sectionMap(root, layout.field)
+	if err != nil {
+		return err
+	}
+	if value, exists := current[toolidentity.ServerKey]; exists {
+		if entry.Metadata["rendered_fingerprint"] != renderedServerFingerprint(value) {
+			// Relinquish the stale ownership record but preserve the changed
+			// provider-native entry byte-for-byte at the semantic level.
+			manifest.Remove(resourceKind, toolidentity.ServerKey)
+			return profilestate.SaveManifest(profileDir, manifest)
+		}
+		delete(current, toolidentity.ServerKey)
+		if err := writeSection(layout, root, current); err != nil {
+			return err
+		}
+	}
+	manifest.Remove(resourceKind, toolidentity.ServerKey)
+	return profilestate.SaveManifest(profileDir, manifest)
+}
+
+func isHostedToolServer(server driver.MCPServerSpec) bool {
+	return server.Key == toolidentity.ServerKey &&
+		server.Transport == driver.MCPTransportHTTP &&
+		server.BearerTokenEnvVar == toolidentity.BearerTokenEnvVar &&
+		server.Required && server.RequiredReason == toolidentity.RequiredReason
 }
 
 func layoutFor(driverType, profileDir string) (providerLayout, error) {
@@ -290,6 +397,15 @@ func serverFingerprint(server driver.MCPServerSpec) string {
 	raw, err := json.Marshal(server)
 	if err != nil {
 		raw = []byte(server.Key + string(server.Transport) + server.Command + server.URL + server.BearerTokenEnvVar)
+	}
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
+}
+
+func renderedServerFingerprint(value any) string {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		raw = []byte(fmt.Sprintf("%T:%v", value, value))
 	}
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:])

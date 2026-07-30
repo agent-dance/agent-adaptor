@@ -1,7 +1,7 @@
 # Public errors
 
 This reference covers the stable error identities owned by the root
-`adaptor` package and the public leaf packages that define Driver, skill, MCP,
+`adaptor` package and the public leaf packages that define Driver, Tool, skill, MCP,
 Thread storage, A2A client, and hosttool contracts.
 
 Use `errors.Is` for a category and `errors.As` when the table names a typed
@@ -100,6 +100,22 @@ if errors.Is(err, adaptor.ErrInvalidPolicy) {
 	// Stable category without typed detail.
 }
 ```
+
+## Host-defined Tool errors
+
+Package `tool` owns three stable categories. Invalid definitions are retained
+by `tool.Define` and surface before `Driver.Run`; input and output failures are
+validated at the host-handler boundary.
+
+| Sentinel | Meaning |
+|---|---|
+| `tool.ErrInvalidDefinition` | The name, description, handler, annotations, Go types, or schemas cannot form a valid Tool. |
+| `tool.ErrInvalidInput` | Provider arguments fail JSON/schema validation or cannot decode into the declared Go input type. |
+| `tool.ErrInvalidOutput` | A handler result cannot encode as JSON or fails its output schema. |
+
+`tool.Reject(code, message)` is deliberately a constructor rather than an
+additional public error type. It marks an expected, model-visible Tool failure;
+all other handler errors and panics are sanitized by the internal runtime.
 
 ## Root Thread errors
 

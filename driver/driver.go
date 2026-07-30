@@ -17,8 +17,12 @@ type Driver interface {
 	// Run executes exactly one resolved invocation. When req.Streaming is
 	// true, normalized payloads obey the lifecycle contract documented on
 	// StreamKind; all RunEventItem values emitted through sink must mirror the
-	// returned Response.Transcript. A non-nil error is an infrastructure or
-	// execution error and makes any returned valid Checkpoint invalid.
+	// returned Response.Transcript. A Driver MUST apply the complete current
+	// Request on every invocation, including a resumed provider conversation;
+	// it must refresh provider-visible profile, MCP, skill, instruction, and
+	// runtime bindings rather than relying on values cached by an earlier
+	// process or turn. A non-nil error is an infrastructure or execution error
+	// and makes any returned valid Checkpoint invalid.
 	Run(ctx context.Context, req Request, sink EventSink) (Response, error)
 }
 
