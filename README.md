@@ -282,9 +282,7 @@ The core library does not provide an HTTP or gRPC server, queue, scheduler, tena
 
 - [Documentation map](./docs/README.md)
 - [API reference](./docs/api-reference.md)
-- [Usage guide](./docs/usage-guide.md)
 - [Streaming guide](./docs/streaming.md)
 - [Structured output](./docs/structured-output.md)
 - [A2A integration](./docs/a2a.md)
-- [Migration to v1](./docs/migrating-to-v1.md)
 - [Public errors](./docs/public-errors.md)

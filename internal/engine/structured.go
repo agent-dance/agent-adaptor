@@ -12,9 +12,8 @@ import (
 )
 
 // Engine-side structured-output helpers: request normalization, capability
-// resolution, and local validation. The host-facing constructors and the
-// generic JSONSchemaFor/DecodeStructuredOutput API stay in the root package
-// (structured_output.go).
+// resolution, and local validation. The host-facing WithSchema,
+// WithSchemaJSON, RunAs, and Result.Decode API stays in the root package.
 
 func normalizeOutputSchema(schema *OutputSchema) (*OutputSchema, error) {
 	if schema == nil {

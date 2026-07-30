@@ -20,7 +20,7 @@ import (
 // and error identities remain owned by package skill.
 
 // defaultSkillMaterializer implements Materializer using the
-// XDG-ish cache root described in docs/skill-api-design.md §3. The
+// SDK's XDG-like cache root described in docs/api-reference.md §11.1. The
 // archive-handling subset is configurable through Option.
 type Materializer interface {
 	Materialize(ctx context.Context, s driver.Skill) (string, error)

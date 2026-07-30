@@ -1,9 +1,8 @@
 package adaptor_test
 
-// Scenario S2 · multi-agent pipeline: Codex implements, Claude reviews
-// (docs/api-v1-redesign.md §3 S2).
+// Scenario S2 · multi-agent pipeline: Codex implements, Claude reviews.
 //
-// Target shape, verbatim from the design doc:
+// Acceptance shape:
 //
 //	coder    := adaptor.New(codex.Driver(codex.Config{Model: "gpt-5.4"}))
 //	reviewer := adaptor.New(claude.Driver(claude.Config{Model: "claude-sonnet-4"}),

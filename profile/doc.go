@@ -1,5 +1,5 @@
 // Package profile defines provider profile selection and profile resource
-// declarations (see docs/api-v1-redesign.md §2.9).
+// declarations (see docs/api-reference.md §§10–11).
 //
 // It answers two host questions with one import:
 //

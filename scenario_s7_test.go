@@ -1,11 +1,7 @@
 package adaptor_test
 
-// Scenario S7 (design doc docs/api-v1-redesign.md §S7): the settings /
-// onboarding wizard — four read-only Inspect() probes power the whole page.
-//
-// Documented deviation from the doc sketch: the doc reads env.Ready /
-// env.Problems; the real surface spells them EnvironmentReport.Healthy /
-// .Checks (same information, driver SPI names).
+// Scenario S7 · settings/onboarding wizard: four read-only Inspect probes
+// power the whole page.
 
 import (
 	"context"
@@ -35,7 +31,6 @@ func TestScenarioS7OnboardingWizard(t *testing.T) {
 	}
 	agent := adaptor.New(pf)
 
-	// --- design doc S7, near-verbatim ---
 	var shown []adaptor.EnvironmentCheck
 	env, err := agent.Inspect().Environment(ctx)
 	if err != nil {
@@ -56,8 +51,6 @@ func TestScenarioS7OnboardingWizard(t *testing.T) {
 	if err != nil {
 		t.Fatalf("quota: %v", err)
 	}
-	// --- end near-verbatim ---
-
 	if len(shown) != 2 || shown[0].Code != "binary-missing" || shown[1].Code != "not-logged-in" {
 		t.Errorf("wizard problems = %#v, want the driver's two failing checks verbatim", shown)
 	}
