@@ -1,17 +1,6 @@
 # agent-adaptor AGENTS
 
-本文件定义 `agent-adaptor` v1 的最终架构边界、公共语义、迁移纪律与发布门禁。后续设计、实现、重构、评审和文档均必须以本文件为准。
-
-Claude 设计的 v1 API 已获批准，并完全取代此前以中央 `SDK`、默认/命名 Agent、`Run/Start`、`RunHandle` 和多条事件通道为核心的公共 API 心智。旧 API 仅是 P5 期间的临时迁移对象，不再是产品方向，也不得成为新增功能的落点。
-
-文档权威顺序：
-
-1. 本文件
-2. [`docs/api-v1-redesign.md`](./docs/api-v1-redesign.md)（公共 API 设计）
-3. [`docs/v1-takeover-audit.md`](./docs/v1-takeover-audit.md)（接管发现、阻断项关闭与验收证据）
-4. [`docs/api-v1-implementation-plan.md`](./docs/api-v1-implementation-plan.md) 与 [`docs/p5.2-recon.md`](./docs/p5.2-recon.md)（阶段计划和机械迁移清单）
-
-下级文档与本文件冲突时，必须修正文档，不能以历史文本为由偏离本文件。
+本文件定义 `agent-adaptor` v1 的架构边界、公共语义、迁移纪律与发布门禁。后续设计、实现、重构、评审和文档均必须以本文件为准。
 
 ## 1. 项目定位
 
@@ -50,8 +39,6 @@ v1 的消费者心智只能由以下六个核心名词组成：
 硬约束：
 
 - 不存在中央 SDK 对象。
-- 不存在内置命名 Agent registry。
-- 多 Agent 就是多个 Go 变量；需要动态注册表的宿主自行维护 `map[string]*adaptor.Agent`。
 - 消费者执行动词只有 `Run` 与 `Stream`，不得增加 `Start` 或其他平行执行入口。
 - 不得重新引入 binding、默认 Agent、字符串查找 Runner 等平行抽象。
 - 根包面向应用开发者；SPI 必须收敛在 `driver/`，不得再次把扩展方合同铺回根包 godoc。
@@ -337,14 +324,6 @@ Hosttools：
 - 每个新增顶层 `require` 必须在相关 workstream 的“依赖选型”记录上述评估。
 - 不得手工编辑 Codex app-server generated Go 或 schema JSON；同步必须走官方 schema 生成命令与 `go generate`。
 
-## 13. v1 切换结果
-
-v1 已完成干净切换，仓库不保留双栈。PRE、CORRECTNESS、REHOME/REPOINT、LEGACY EDGE DELETE、ROOT CUTOVER、RESIDUAL DELETE、RENAME 与 FREEZE 实施项均已落入最终代码和合同测试。详细决策、逐项关闭证据与本地验收记录见：
-
-- [`docs/api-v1-implementation-plan.md`](./docs/api-v1-implementation-plan.md)
-- [`docs/p5.2-recon.md`](./docs/p5.2-recon.md)
-- [`docs/v1-takeover-audit.md`](./docs/v1-takeover-audit.md)
-
 最终树的硬约束：
 
 - 根目录只保留最终 `package adaptor/adaptor_test`；不得复活 `next/`、`pkg/` 转发包或旧根 API。
@@ -352,8 +331,6 @@ v1 已完成干净切换，仓库不保留双栈。PRE、CORRECTNESS、REHOME/RE
 - 公共 Config 必须是真结构体且不泄露 `internal` 类型；Profile、HITL、skill、MCP 与 runtime 词汇必须由正确公共层拥有。
 - archive source 等价性不得依赖函数地址判断 closure 内容；Fingerprint 的文档语义必须与 materializer/cache 实际用途一致。
 - examples 必须使用最终名与最终 API；不得保留只为迁移期编译的示例。
-- migration guide 必须覆盖 v0.12.0 的全部旧选项和主要类型去向。
-- 历史 workstream 只保存在 `docs/archive/`，不再定义当前 API。
 - Git tag 属于独立发布动作，只能在明确发布授权和发布门禁满足后创建。
 
 ## 14. 阻断项关闭记录
