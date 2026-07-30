@@ -33,6 +33,12 @@
 // Per-call values override Agent defaults; skills append, while other settings
 // follow their documented replacement or merge rules.
 //
+// Host-defined Tools use the provider-neutral tool package and the
+// construction-only WithTools option. The Agent owns their runtime for its
+// full lifetime; MCP delivery, authentication, and endpoint lifecycle remain
+// internal implementation details. Existing external MCP servers continue to
+// use WithMCP.
+//
 // An Agent is stateless unless constructed with a ThreadStore. Agent.Thread
 // continues or creates the host key, while Thread.Fork creates an independent
 // child. The SDK coordinates leases, compatibility fingerprints, and atomic

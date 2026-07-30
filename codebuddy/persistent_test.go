@@ -15,6 +15,7 @@ import (
 	adaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/memory"
+	"github.com/agent-dance/agent-adaptor/tool"
 )
 
 func TestPersistentCodeBuddyIsDefaultAndWithSpawnOptsOut(t *testing.T) {
@@ -48,6 +49,19 @@ func TestPersistentCodeBuddyIsDefaultAndWithSpawnOptsOut(t *testing.T) {
 	}
 	if got := fx.overlapCount(t); got != 0 {
 		t.Fatalf("detected %d overlapping provider writers", got)
+	}
+}
+
+func TestPersistentCodeBuddyReusesProcessWithHostDefinedTools(t *testing.T) {
+	definition := tool.Define("echo", "Echo a value.", func(context.Context, struct{}) (struct{}, error) {
+		return struct{}{}, nil
+	}, tool.ReadOnly(), tool.Revision("echo/v1"))
+	fx := newPersistentCodeBuddyFixtureWithOptions(t, nil, adaptor.WithTools(definition))
+	defer fx.close()
+	fx.run(t, "one")
+	fx.run(t, "two")
+	if got := fx.spawnCount(t); got != 1 {
+		t.Fatalf("host-defined Tools disabled CodeBuddy persistent reuse; spawns=%d", got)
 	}
 }
 
@@ -184,6 +198,10 @@ type persistentCodeBuddyFixture struct {
 }
 
 func newPersistentCodeBuddyFixture(t *testing.T, callerEnv []driver.EnvBinding) *persistentCodeBuddyFixture {
+	return newPersistentCodeBuddyFixtureWithOptions(t, callerEnv)
+}
+
+func newPersistentCodeBuddyFixtureWithOptions(t *testing.T, callerEnv []driver.EnvBinding, opts ...adaptor.Option) *persistentCodeBuddyFixture {
 	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("persistent process is POSIX-only")
@@ -260,7 +278,8 @@ fi
 		Command: command, CWD: root, Env: env, GracePeriod: 50 * time.Millisecond,
 	}}
 	d := configuredDriver{adapter: adapter{persistent: pool}, cfg: cfg}
-	agent := adaptor.New(d, adaptor.WithThreadStore(memory.NewStore()))
+	agentOpts := append([]adaptor.Option{adaptor.WithThreadStore(memory.NewStore())}, opts...)
+	agent := adaptor.New(d, agentOpts...)
 	return &persistentCodeBuddyFixture{
 		agent: agent, thread: agent.Thread("persistent-test/thread"), pool: pool,
 		spawnFile: spawnFile, pidFile: pidFile, overlap: overlapFile, profileDir: profileDir,

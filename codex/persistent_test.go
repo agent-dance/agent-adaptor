@@ -16,8 +16,11 @@ import (
 	"testing"
 	"time"
 
+	adaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/internal/testutil"
+	"github.com/agent-dance/agent-adaptor/memory"
+	"github.com/agent-dance/agent-adaptor/tool"
 )
 
 const codexHelperEnv = "GO_WANT_AGENT_ADAPTOR_CODEX_HELPER"
@@ -43,6 +46,56 @@ func TestPersistentCodexReusesAppServerAcrossTurns(t *testing.T) {
 	}
 	if second.Output != "reply-2" || third.Output != "reply-3" {
 		t.Fatalf("turns did not stay on one app-server: second=%q third=%q", second.Output, third.Output)
+	}
+}
+
+func TestPersistentCodexAcceptsSharedHostedToolRuntime(t *testing.T) {
+	req := driver.Request{
+		Streaming: true,
+		Session:   &driver.SessionContext{EngineSessionID: "engine-tools"},
+		Runtime: driver.RuntimePayload{Ensured: []driver.RuntimeServiceRef{{
+			ID: "agent-adaptor-tools", Lifecycle: driver.RuntimeLifecycleShared,
+			MCP: &driver.MCPServerSpec{Key: "agent-adaptor-tools", Transport: driver.MCPTransportHTTP, URL: "http://127.0.0.1:12345/mcp"},
+		}}},
+	}
+	if !persistentEligible(Config{}, req) {
+		t.Fatal("shared hosted Tool runtime disabled Codex persistent reuse")
+	}
+	req.Runtime.Ensured[0].Lifecycle = driver.RuntimeLifecycleEphemeral
+	if persistentEligible(Config{}, req) {
+		t.Fatal("ephemeral runtime incorrectly remained persistent-eligible")
+	}
+}
+
+func TestPersistentCodexReusesAppServerWithHostDefinedTools(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("persistent process is POSIX-only")
+	}
+	lowLevel, req, spawnFile, _ := newPersistentCodexTest(t, "")
+	configured := configuredDriver{adapter: lowLevel.(adapter), cfg: req.Config.(Config)}
+	definition := tool.Define("echo", "Echo a value.", func(context.Context, struct{}) (struct{}, error) {
+		return struct{}{}, nil
+	}, tool.ReadOnly(), tool.Revision("echo/v1"))
+	agent := adaptor.New(configured,
+		adaptor.WithThreadStore(memory.NewStore()),
+		adaptor.WithTools(definition),
+	)
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		if err := agent.Close(ctx); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	}()
+	thread := agent.Thread("codex-tools-persistent")
+	if _, err := thread.Run(context.Background(), "one"); err != nil {
+		t.Fatalf("first turn: %v", err)
+	}
+	if _, err := thread.Run(context.Background(), "two"); err != nil {
+		t.Fatalf("second turn: %v", err)
+	}
+	if got := helperSpawnCount(t, spawnFile); got != 1 {
+		t.Fatalf("host-defined Tools disabled Codex persistent reuse; spawns=%d", got)
 	}
 }
 

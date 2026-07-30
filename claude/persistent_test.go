@@ -13,6 +13,7 @@ import (
 	adaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/memory"
+	"github.com/agent-dance/agent-adaptor/tool"
 )
 
 func TestPersistentClaudeIsDefaultAndWithSpawnOptsOut(t *testing.T) {
@@ -40,6 +41,19 @@ func TestPersistentClaudeIsDefaultAndWithSpawnOptsOut(t *testing.T) {
 	}
 	if got := fx.overlapCount(t); got != 0 {
 		t.Fatalf("detected %d overlapping provider writers", got)
+	}
+}
+
+func TestPersistentClaudeReusesProcessWithHostDefinedTools(t *testing.T) {
+	definition := tool.Define("echo", "Echo a value.", func(context.Context, struct{}) (struct{}, error) {
+		return struct{}{}, nil
+	}, tool.ReadOnly(), tool.Revision("echo/v1"))
+	fx := newPersistentClaudeFixtureWithOptions(t, nil, adaptor.WithTools(definition))
+	defer fx.close()
+	fx.run(t, "one")
+	fx.run(t, "two")
+	if got := fx.spawnCount(t); got != 1 {
+		t.Fatalf("host-defined Tools disabled Claude persistent reuse; spawns=%d", got)
 	}
 }
 
@@ -124,6 +138,10 @@ type persistentClaudeFixture struct {
 }
 
 func newPersistentClaudeFixture(t *testing.T, callerEnv []driver.EnvBinding) *persistentClaudeFixture {
+	return newPersistentClaudeFixtureWithOptions(t, callerEnv)
+}
+
+func newPersistentClaudeFixtureWithOptions(t *testing.T, callerEnv []driver.EnvBinding, opts ...adaptor.Option) *persistentClaudeFixture {
 	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("persistent process is POSIX-only")
@@ -184,7 +202,8 @@ fi
 		Command: command, CWD: root, Env: env, GracePeriod: 50 * time.Millisecond,
 	}}
 	d := configuredDriver{adapter: adapter{persistent: pool}, cfg: cfg}
-	agent := adaptor.New(d, adaptor.WithThreadStore(memory.NewStore()))
+	agentOpts := append([]adaptor.Option{adaptor.WithThreadStore(memory.NewStore())}, opts...)
+	agent := adaptor.New(d, agentOpts...)
 	return &persistentClaudeFixture{
 		agent: agent, thread: agent.Thread("persistent-test/thread"), pool: pool,
 		spawnFile: spawnFile, overlap: overlapFile, profileDir: profileDir,

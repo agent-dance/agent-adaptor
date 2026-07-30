@@ -326,6 +326,33 @@ func TestRunServiceMCPMergesWithHostMCP(t *testing.T) {
 	}
 }
 
+func TestRuntimeFingerprintCoversAttachmentMCPSemantics(t *testing.T) {
+	makeProvider := func(bearerEnv string, required bool) *fakeProvider {
+		ref := sidecarRef("same", "http://127.0.0.1:65000/mcp", bearerEnv, "secret-value")
+		ref.MCP.Required = required
+		ref.MCP.RequiredReason = "required for this test"
+		return &fakeProvider{
+			name:       "sidecar",
+			log:        &callLog{},
+			attachment: adaptor.RunAttachment{Services: []adaptor.ServiceRef{ref}},
+		}
+	}
+
+	firstDriver := httpCapableDriver()
+	if _, err := adaptor.New(firstDriver, adaptor.WithRunServices(makeProvider("TOKEN_A", true))).Run(context.Background(), "first"); err != nil {
+		t.Fatal(err)
+	}
+	secondDriver := httpCapableDriver()
+	if _, err := adaptor.New(secondDriver, adaptor.WithRunServices(makeProvider("TOKEN_B", false))).Run(context.Background(), "second"); err != nil {
+		t.Fatal(err)
+	}
+	first := firstDriver.lastRequest(t).Runtime.Fingerprint
+	second := secondDriver.lastRequest(t).Runtime.Fingerprint
+	if first == "" || second == "" || first == second {
+		t.Fatalf("runtime fingerprints = %q and %q, want distinct MCP semantic identities", first, second)
+	}
+}
+
 func TestRunServiceMCPKeyCollisionFailsBeforeLaunch(t *testing.T) {
 	provider := &fakeProvider{
 		name: "sidecar",

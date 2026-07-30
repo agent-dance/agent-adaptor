@@ -2,6 +2,32 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- Provider-neutral host-defined Tools through typed Go handlers,
+  construction-only `WithTools`, inferred or explicit JSON Schemas, safe
+  model-visible rejection, tri-state behavioral annotations, deterministic
+  Thread compatibility, and an
+  Agent-owned authenticated loopback runtime backed internally by the official
+  MCP Go SDK.
+- Hermetic end-to-end coverage that launches a real provider fixture, reads its
+  materialized MCP profile, initializes/lists/calls the hosted Tool, verifies
+  unauthorized access, resumes a Thread across Agent reconstruction and a
+  forced endpoint change, and proves `Agent.Close` removes both the endpoint
+  and its isolated execution profile without modifying the source profile.
+
+### Changed
+
+- An explicit `WithProfile` selection now takes precedence over a provider
+  `CommonConfig.Env` profile-directory binding, matching the construction
+  option's nearer-scope semantics and enabling safe internal execution clones.
+- `Agent.Close` now fences and cancels active runs, uses bounded provider-close
+  and drain phases, safely cleans Tool execution profiles, and leaves a timed
+  out close retryable. The frozen root `With*` surface
+  intentionally increases from 25 to 26 with `WithTools`.
+
 ## [1.0.0] - 2026-07-30
 
 This release is a clean v1 cutover from the `v0.12.0` public baseline.

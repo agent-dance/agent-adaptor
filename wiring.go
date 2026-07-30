@@ -104,7 +104,7 @@ func (a *Agent) resolveRun(ctx context.Context, runID, prompt string, eff *RunSe
 		return resolvedRun{}, err
 	}
 	if sd, ok := a.driver.(driver.SkillSupport); ok {
-		if err := sd.InjectSkills(ctx, nil, engine.CloneResolvedSkills(skillPayload), engine.CloneProfileSelection(a.defaults.profile)); err != nil {
+		if err := sd.InjectSkills(ctx, nil, engine.CloneResolvedSkills(skillPayload), engine.CloneProfileSelection(eff.effectiveProfile)); err != nil {
 			return resolvedRun{}, err
 		}
 	}
@@ -152,7 +152,7 @@ func (a *Agent) resolveRun(ctx context.Context, runID, prompt string, eff *RunSe
 	req.Skills = engine.CloneResolvedSkills(skillPayload)
 	req.MCP = mcpPayload
 	req.ProfilePayload = profilePayload
-	req.Profile = engine.CloneProfileSelection(a.defaults.profile)
+	req.Profile = engine.CloneProfileSelection(eff.effectiveProfile)
 	req.OutputSchema = engine.CloneOutputSchema(schema)
 	req.StructuredOutputSource = source
 	req.Streaming = providerStreaming
