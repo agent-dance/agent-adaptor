@@ -128,7 +128,7 @@ func New(d driver.Driver, opts ...Option) *Agent
 
 进程生命周期合同：
 
-- Claude、CodeBuddy 与 Codex 在支持进程组生命周期的 POSIX 平台上对显式 Thread 默认允许复用常驻进程；Windows 必须如实声明 one-shot；Cursor 与无状态 Agent 调用仍逐轮启动。
+- Claude、CodeBuddy 与 Codex 对显式 Thread 默认允许复用常驻进程；Cursor 与无状态 Agent 调用仍逐轮启动。
 - `WithSpawn()` 是双作用域选项，显式强制使用本轮新进程；该进程不得注册为后续轮次的常驻 writer。
 - 常驻只是 Driver 内部 transport 生命周期选择，不得形成平行执行入口、事件流或结果合同。
 - `Agent.Close(ctx)` 必须幂等回收 Driver 管理的全部常驻进程；Close 开始后所有 Agent/Thread 新运行稳定返回 `ErrAgentClosed`。

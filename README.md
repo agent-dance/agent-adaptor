@@ -107,7 +107,7 @@ branch := thread.Fork("tenant-42/issue-123/alternative")
 
 Thread keys are opaque strings owned by the host. A new unrelated conversation gets a new host key; the SDK does not rebind an existing key on request. Driver resume identifiers remain checkpoint details. Durable hosts can implement `threadstore.Store`; `memory.NewStore()` is intended for one process.
 
-On POSIX platforms, Claude, CodeBuddy, and Codex reuse a provider process by default for successive turns of an explicit Thread; Windows truthfully reports one-shot process capability. Use `WithSpawn()` at Agent construction or on one call to force fresh one-shot processes. Close the Agent to reap its process pool:
+Claude, CodeBuddy, and Codex reuse a provider process by default for successive turns of an explicit Thread. Use `WithSpawn()` at Agent construction or on one call to force fresh one-shot processes. Close the Agent to reap its process pool:
 
 ```go
 defer agent.Close(context.Background())

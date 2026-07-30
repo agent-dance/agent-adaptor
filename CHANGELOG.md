@@ -8,7 +8,8 @@ All notable changes to this project are documented in this file.
 
 - Provider-neutral host-defined Tools through typed Go handlers,
   construction-only `WithTools`, inferred or explicit JSON Schemas, safe
-  model-visible rejection, deterministic Thread compatibility, and an
+  model-visible rejection, tri-state behavioral annotations, deterministic
+  Thread compatibility, and an
   Agent-owned authenticated loopback runtime backed internally by the official
   MCP Go SDK.
 - Hermetic end-to-end coverage that launches a real provider fixture, reads its

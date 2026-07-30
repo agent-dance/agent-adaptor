@@ -290,14 +290,42 @@ func TestRuntimeFingerprintIsOrderIndependentAndRevisionSensitive(t *testing.T) 
 	}
 }
 
-func TestCloseUnregistersBeforeWaitingForActiveHandler(t *testing.T) {
-	config := testGatewayConfig()
-	config.shutdownTimeout = 50 * time.Millisecond
-	manager := newGatewayManager(config)
+func TestExplicitFalseAnnotationsReachMCPAndFingerprint(t *testing.T) {
+	falseHints := tool.Define("local", "local update", echoHandler,
+		tool.NonDestructive(), tool.ClosedWorld(), tool.Revision("v1"))
+	descriptor, err := falseHints.Descriptor()
+	if err != nil {
+		t.Fatal(err)
+	}
+	projected := mcpAnnotations(descriptor)
+	if projected.DestructiveHint == nil || *projected.DestructiveHint {
+		t.Fatalf("DestructiveHint = %#v, want explicit false", projected.DestructiveHint)
+	}
+	if projected.OpenWorldHint == nil || *projected.OpenWorldHint {
+		t.Fatalf("OpenWorldHint = %#v, want explicit false", projected.OpenWorldHint)
+	}
+
+	manager := newGatewayManager(testGatewayConfig())
+	unspecified, err := newRuntime(manager, []tool.Definition{
+		tool.Define("local", "local update", echoHandler, tool.Revision("v1")),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	explicit, err := newRuntime(manager, []tool.Definition{falseHints})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unspecified.Fingerprint() == explicit.Fingerprint() {
+		t.Fatal("explicit false annotations did not change catalog fingerprint")
+	}
+}
+
+func TestProductionRuntimeCloseCanRetryAfterCallerDeadline(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
 	var entered atomic.Bool
-	runtime := newTestRuntime(t, manager, "slow", func(context.Context, testInput) (testOutput, error) {
+	runtime, err := New([]tool.Definition{tool.Define("slow", "test delayed close", func(context.Context, testInput) (testOutput, error) {
 		if entered.CompareAndSwap(false, true) {
 			close(started)
 		}
@@ -305,7 +333,10 @@ func TestCloseUnregistersBeforeWaitingForActiveHandler(t *testing.T) {
 		// bounded even when host code ignores cancellation.
 		<-release
 		return testOutput{}, errors.New("released after close")
-	})
+	}, tool.Revision("v1"))})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	endpoint, err := runtime.Start(ctx)
@@ -327,10 +358,31 @@ func TestCloseUnregistersBeforeWaitingForActiveHandler(t *testing.T) {
 	if err := runtime.Close(closeCtx); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("Close error = %v, want deadline exceeded", err)
 	}
+	if _, err := runtime.Start(ctx); !errors.Is(err, ErrClosed) {
+		t.Fatalf("Start after close = %v, want ErrClosed", err)
+	}
 	assertHTTPUnavailable(t, endpoint.URL, token)
+
+	const waiters = 8
+	retryErrors := make(chan error, waiters)
+	for range waiters {
+		go func() {
+			retryCtx, cancelRetry := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancelRetry()
+			retryErrors <- runtime.Close(retryCtx)
+		}()
+	}
 	close(release)
 	cancelCall()
 	<-callDone
+	for range waiters {
+		if err := <-retryErrors; err != nil {
+			t.Fatalf("retry Close: %v", err)
+		}
+	}
+	if err := runtime.Close(ctx); err != nil {
+		t.Fatalf("idempotent Close after cleanup: %v", err)
+	}
 }
 
 func echoHandler(_ context.Context, input testInput) (testOutput, error) {

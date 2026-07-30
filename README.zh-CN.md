@@ -107,7 +107,7 @@ branch := thread.Fork("tenant-42/issue-123/alternative")
 
 Thread key 是宿主拥有的不透明字符串。新的无关对话必须使用新的宿主 key；SDK 不提供主动重绑已有 key 的入口。Driver 的 resume 标识只属于 checkpoint 细节。持久化宿主可以实现 `threadstore.Store`；`memory.NewStore()` 适合单进程使用。
 
-在 POSIX 平台上，Claude、CodeBuddy 和 Codex 对显式 Thread 默认跨轮复用 provider 进程；Windows 会如实声明为逐轮启动。需要每轮或某一轮使用新进程时，在 Agent 构造处或调用处显式传入 `WithSpawn()`。宿主结束 Agent 生命周期时应关闭进程池：
+Claude、CodeBuddy 和 Codex 对显式 Thread 默认跨轮复用 provider 进程。需要每轮或某一轮使用新进程时，在 Agent 构造处或调用处显式传入 `WithSpawn()`。宿主结束 Agent 生命周期时应关闭进程池：
 
 ```go
 defer agent.Close(context.Background())

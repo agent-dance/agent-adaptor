@@ -56,10 +56,10 @@ func (f optionFunc) apply(s *settings) { f(s) }
 type settings struct {
 	title                string
 	revision             string
-	readOnly             bool
-	destructive          bool
-	idempotent           bool
-	openWorld            bool
+	readOnly             *bool
+	destructive          *bool
+	idempotent           *bool
+	openWorld            *bool
 	inputSchemaJSON      json.RawMessage
 	outputSchemaJSON     json.RawMessage
 	inputSchemaOverride  bool
@@ -74,24 +74,38 @@ func Title(title string) Option {
 
 // ReadOnly declares that the tool does not modify its environment.
 func ReadOnly() Option {
-	return optionFunc(func(s *settings) { s.readOnly = true })
+	return optionFunc(func(s *settings) { s.readOnly = boolOption(true) })
 }
 
 // Destructive declares that the tool may make destructive changes.
 func Destructive() Option {
-	return optionFunc(func(s *settings) { s.destructive = true })
+	return optionFunc(func(s *settings) { s.destructive = boolOption(true) })
+}
+
+// NonDestructive explicitly declares that the tool does not perform
+// destructive updates. This differs from leaving the hint unspecified: MCP
+// consumers otherwise default destructiveHint to true.
+func NonDestructive() Option {
+	return optionFunc(func(s *settings) { s.destructive = boolOption(false) })
 }
 
 // Idempotent declares that repeating a call with the same arguments has no
 // additional effect.
 func Idempotent() Option {
-	return optionFunc(func(s *settings) { s.idempotent = true })
+	return optionFunc(func(s *settings) { s.idempotent = boolOption(true) })
 }
 
 // OpenWorld declares that the tool may interact with entities outside the
 // Agent's local environment.
 func OpenWorld() Option {
-	return optionFunc(func(s *settings) { s.openWorld = true })
+	return optionFunc(func(s *settings) { s.openWorld = boolOption(true) })
+}
+
+// ClosedWorld explicitly declares that the tool only interacts with a closed
+// local domain. This differs from leaving the hint unspecified: MCP consumers
+// otherwise default openWorldHint to true.
+func ClosedWorld() Option {
+	return optionFunc(func(s *settings) { s.openWorld = boolOption(false) })
 }
 
 // Revision sets a stable semantic implementation revision. Change it when
@@ -211,7 +225,7 @@ func (d *typedDefinition[In, Out]) compile() (*compiledDefinition, error) {
 	if d.handler == nil {
 		return nil, invalidDefinition(name, "handler", "is nil", nil)
 	}
-	if d.settings.readOnly && d.settings.destructive {
+	if boolValue(d.settings.readOnly) && boolValue(d.settings.destructive) {
 		return nil, invalidDefinition(name, "annotations", "ReadOnly and Destructive are mutually exclusive", nil)
 	}
 
@@ -240,10 +254,10 @@ func (d *typedDefinition[In, Out]) compile() (*compiledDefinition, error) {
 		InputSchemaJSON:  inputSchema,
 		OutputSchemaJSON: outputSchema,
 		Annotations: Annotations{
-			ReadOnly:    optionalTrue(d.settings.readOnly),
-			Destructive: optionalTrue(d.settings.destructive),
-			Idempotent:  optionalTrue(d.settings.idempotent),
-			OpenWorld:   optionalTrue(d.settings.openWorld),
+			ReadOnly:    cloneBool(d.settings.readOnly),
+			Destructive: cloneBool(d.settings.destructive),
+			Idempotent:  cloneBool(d.settings.idempotent),
+			OpenWorld:   cloneBool(d.settings.openWorld),
 		},
 	}
 
@@ -642,13 +656,11 @@ func writeCanonicalJSON(buffer *bytes.Buffer, value any) error {
 	return nil
 }
 
-func optionalTrue(set bool) *bool {
-	if !set {
-		return nil
-	}
-	value := true
+func boolOption(value bool) *bool {
 	return &value
 }
+
+func boolValue(value *bool) bool { return value != nil && *value }
 
 // Annotations are optional provider-neutral behavioral hints. A nil field is
 // unspecified and must not be projected as an explicit false value. Hints are

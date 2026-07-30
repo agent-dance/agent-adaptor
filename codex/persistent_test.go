@@ -33,7 +33,6 @@ func TestMain(m *testing.M) {
 }
 
 func TestPersistentCodexReusesAppServerAcrossTurns(t *testing.T) {
-	requireCodexPersistentPlatform(t)
 	a, req, spawnFile, _ := newPersistentCodexTest(t, "")
 	defer closeCodexTestAdapter(t, a)
 
@@ -101,7 +100,6 @@ func TestPersistentCodexReusesAppServerWithHostDefinedTools(t *testing.T) {
 }
 
 func TestPersistentCodexSignatureDriftRebuilds(t *testing.T) {
-	requireCodexPersistentPlatform(t)
 	for _, tc := range []struct {
 		name   string
 		mutate func(*testing.T, *driver.Request)
@@ -184,7 +182,6 @@ func TestCodexSettingsFingerprintIgnoresProviderSystemSkills(t *testing.T) {
 }
 
 func TestPersistentCodexFailureBeforePromptFallsBack(t *testing.T) {
-	requireCodexPersistentPlatform(t)
 	a, req, spawnFile, _ := newPersistentCodexTest(t, "fail_open_once")
 	defer closeCodexTestAdapter(t, a)
 
@@ -198,7 +195,6 @@ func TestPersistentCodexFailureBeforePromptFallsBack(t *testing.T) {
 }
 
 func TestPersistentCodexDoesNotReplayAfterTurnStart(t *testing.T) {
-	requireCodexPersistentPlatform(t)
 	a, req, spawnFile, _ := newPersistentCodexTest(t, "fail_after_prompt_once")
 	defer closeCodexTestAdapter(t, a)
 
@@ -238,7 +234,6 @@ func TestPersistentCodexOneShotHandoffWaitsForOldWriter(t *testing.T) {
 }
 
 func TestPersistentCodexCloseCancelAndIdleReapProcesses(t *testing.T) {
-	requireCodexPersistentPlatform(t)
 	t.Run("close is idempotent", func(t *testing.T) {
 		a, req, _, activeFile := newPersistentCodexTest(t, "")
 		_ = runCodexTurn(t, a, req)
@@ -319,7 +314,6 @@ func TestPersistentCodexRequiresStableSessionKey(t *testing.T) {
 }
 
 func TestPersistentCodexNativeSchemaUsesPerTurnFieldWithoutHandoff(t *testing.T) {
-	requireCodexPersistentPlatform(t)
 	a, req, spawnFile, _ := newPersistentCodexTest(t, "")
 	defer closeCodexTestAdapter(t, a)
 	first := runCodexTurn(t, a, req)
@@ -402,13 +396,6 @@ func newPersistentCodexTest(t *testing.T, mode string) (driver.Driver, driver.Re
 		},
 	}
 	return adapter{persistent: newPersistentPool()}, req, spawnFile, activeFile
-}
-
-func requireCodexPersistentPlatform(t *testing.T) {
-	t.Helper()
-	if runtime.GOOS == "windows" {
-		t.Skip("Codex persistent app-server transport is POSIX-only")
-	}
 }
 
 func runCodexTurn(t *testing.T, a driver.Driver, req driver.Request) driver.Response {

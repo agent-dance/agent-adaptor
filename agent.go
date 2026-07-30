@@ -178,6 +178,13 @@ func (a *Agent) closeAttempt(ctx context.Context, activeDone <-chan struct{}) (e
 		if ctx.Err() != nil {
 			return errors.Join(processErr, ctx.Err()), false
 		}
+		if processErr != nil {
+			// The SPI does not provide a separate "all processes are gone"
+			// acknowledgement. Only nil proves that profile credentials and the
+			// Tool endpoint may be revoked safely; keep cleanup retryable on any
+			// other process-close result.
+			return processErr, false
+		}
 	}
 
 	if activeDone != nil {
@@ -196,6 +203,9 @@ func (a *Agent) closeAttempt(ctx context.Context, activeDone <-chan struct{}) (e
 		processErr = errors.Join(processErr, closer.CloseProcesses(ctx))
 		if ctx.Err() != nil {
 			return errors.Join(processErr, ctx.Err()), false
+		}
+		if processErr != nil {
+			return processErr, false
 		}
 	}
 

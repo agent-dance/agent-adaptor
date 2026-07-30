@@ -81,9 +81,9 @@ type Runtime struct {
 	token        string
 	registration *registration
 
-	closeOnce sync.Once
-	closeDone chan struct{}
-	closeErr  error
+	closeStarted bool
+	closeDone    chan struct{}
+	closeErr     error
 }
 
 // String intentionally omits credentials. Runtime occasionally appears in
@@ -215,9 +215,7 @@ func (r *Runtime) Close(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	r.closeOnce.Do(func() {
-		go r.close(ctx)
-	})
+	r.beginClose()
 	select {
 	case <-r.closeDone:
 		return r.closeErr
@@ -226,19 +224,31 @@ func (r *Runtime) Close(ctx context.Context) error {
 	}
 }
 
-func (r *Runtime) close(ctx context.Context) {
-	defer close(r.closeDone)
+func (r *Runtime) beginClose() {
 	r.mu.Lock()
+	if r.closeStarted {
+		r.mu.Unlock()
+		return
+	}
+	r.closeStarted = true
 	r.closed = true
 	registration := r.registration
 	token := r.token
-	r.mu.Unlock()
-	if registration != nil {
-		r.closeErr = r.manager.unregister(ctx, token, registration)
-	}
-	r.mu.Lock()
 	r.token = ""
 	r.mu.Unlock()
+
+	if registration == nil {
+		close(r.closeDone)
+		return
+	}
+	retirement := r.manager.retire(token, registration)
+	go func() {
+		err := retirement.cleanup(r.manager.config.shutdownTimeout)
+		r.mu.Lock()
+		r.closeErr = err
+		r.mu.Unlock()
+		close(r.closeDone)
+	}()
 }
 
 type runtimeCatalog struct {
@@ -487,25 +497,48 @@ func (m *gatewayManager) register(ctx context.Context, token string, catalog *ru
 	return m.instance.endpoint, registration, nil
 }
 
-func (m *gatewayManager) unregister(ctx context.Context, token string, registration *registration) error {
+func (m *gatewayManager) retire(token string, registration *registration) *retirement {
 	m.mu.Lock()
 	instance := m.instance
 	if instance == nil {
 		m.mu.Unlock()
-		return nil
+		registration.beginClose()
+		return &retirement{registration: registration}
 	}
 	last := instance.unregister(token, registration)
+	var stopErr error
 	if last {
-		// Keep the manager lock until the old listener is closed so a new
-		// registration cannot publish a second process-wide endpoint while the
-		// first one is still draining.
 		m.instance = nil
-		err := instance.shutdown(ctx)
-		m.mu.Unlock()
-		return err
+		// Stop accepting connections before publishing the manager as empty.
+		// Existing requests remain alive for the retirement worker to drain,
+		// while a later Agent may safely create the next sole listener.
+		stopErr = instance.stopAdmission()
 	}
 	m.mu.Unlock()
-	return registration.wait(ctx, m.config.shutdownTimeout)
+	return &retirement{
+		registration: registration,
+		gateway:      instance,
+		last:         last,
+		stopErr:      stopErr,
+	}
+}
+
+type retirement struct {
+	registration *registration
+	gateway      *gateway
+	last         bool
+	stopErr      error
+}
+
+func (r *retirement) cleanup(timeout time.Duration) error {
+	if r == nil || r.registration == nil {
+		return nil
+	}
+	if !r.last || r.gateway == nil {
+		<-r.registration.drained
+		return r.stopErr
+	}
+	return errors.Join(r.stopErr, r.gateway.shutdownAndDrain(r.registration, timeout))
 }
 
 type gateway struct {
@@ -678,22 +711,49 @@ func validOrigins(origins []string, expectedHost string) bool {
 func (g *gateway) serve() {
 	err := g.server.Serve(g.listener)
 	g.mu.Lock()
-	if err != nil && !errors.Is(err, http.ErrServerClosed) && !errors.Is(err, net.ErrClosed) {
+	if err != nil && !errors.Is(err, http.ErrServerClosed) && !isClosedNetworkError(err) {
 		g.serveErr = fmt.Errorf("serve tool runtime: %w", err)
 	}
 	close(g.serveDone)
 	g.mu.Unlock()
 }
 
-func (g *gateway) shutdown(ctx context.Context) error {
-	shutdownCtx, cancel := boundedContext(ctx, g.config.shutdownTimeout)
+func (g *gateway) stopAdmission() error {
+	err := g.listener.Close()
+	// Some Windows net.Listener implementations return the legacy unwrapped
+	// poll error whose text is net.ErrClosed instead of participating in
+	// errors.Is. Either form proves admission was already fenced.
+	if isClosedNetworkError(err) {
+		return nil
+	}
+	return err
+}
+
+func isClosedNetworkError(err error) bool {
+	return errors.Is(err, net.ErrClosed) || (err != nil && err.Error() == net.ErrClosed.Error())
+}
+
+func (g *gateway) shutdownAndDrain(registration *registration, timeout time.Duration) error {
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), timeout)
 	err := g.server.Shutdown(shutdownCtx)
 	cancel()
+	if errors.Is(err, http.ErrServerClosed) {
+		err = nil
+	}
 	if err != nil {
-		if closeErr := g.server.Close(); closeErr != nil && !errors.Is(closeErr, http.ErrServerClosed) {
+		closeErr := g.server.Close()
+		if closeErr != nil && !errors.Is(closeErr, http.ErrServerClosed) {
 			err = errors.Join(err, closeErr)
 		}
+		// A bounded graceful-shutdown deadline is an internal transition to
+		// forced transport close, not a permanent Runtime.Close failure. Keep
+		// waiting for the host handler below so a later Close can succeed once
+		// the handler actually exits.
+		if errors.Is(err, context.DeadlineExceeded) {
+			err = closeErr
+		}
 	}
+	<-registration.drained
 	<-g.serveDone
 	g.mu.RLock()
 	serveErr := g.serveErr
@@ -745,22 +805,4 @@ func (r *registration) beginClose() {
 		r.drainOnce.Do(func() { close(r.drained) })
 	}
 	r.mu.Unlock()
-}
-
-func (r *registration) wait(ctx context.Context, timeout time.Duration) error {
-	waitCtx, cancel := boundedContext(ctx, timeout)
-	defer cancel()
-	select {
-	case <-r.drained:
-		return nil
-	case <-waitCtx.Done():
-		return waitCtx.Err()
-	}
-}
-
-func boundedContext(parent context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
-	if parent == nil {
-		parent = context.Background()
-	}
-	return context.WithTimeout(parent, timeout)
 }

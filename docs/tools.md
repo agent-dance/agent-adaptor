@@ -101,8 +101,11 @@ internal failures and are replaced with a generic message. Handler error text
 never becomes provider-visible by accident. Context cancellation and the
 runtime's bounded handler deadline cancel the handler context.
 
-Annotations created with `ReadOnly`, `Destructive`, `Idempotent`, and
-`OpenWorld` are behavioral hints. They are not access control, risk proof, or
+Annotations created with `ReadOnly`, `Destructive`, `NonDestructive`,
+`Idempotent`, `OpenWorld`, and `ClosedWorld` are behavioral hints. The paired
+options preserve the difference between an unspecified hint and an explicit
+`false`; in particular, MCP defaults destructive and open-world hints to
+`true`. Annotations are not access control, risk proof, or
 a second approval mechanism. Provider approvals continue through the one
 typed Event stream and `ApprovalRequest` contract.
 
@@ -121,7 +124,9 @@ compatibility identity. The concrete loopback URL remains part of MCP profile
 materialization, but its ephemeral port is replaced by the catalog fingerprint
 only for Thread and provider-session compatibility. Reconstructing an Agent
 after a host restart can therefore resume an unchanged Tool catalog while still
-rewriting the provider profile with the new real endpoint.
+rewriting the provider profile with the new real endpoint. The Driver SPI
+requires resumed invocations to refresh the complete current request rather
+than rely on cached MCP or profile bindings.
 
 For the four built-in Drivers, the provider-native MCP file is written to an
 SDK-owned, Agent/identity-specific clone profile. The configured/native profile
@@ -132,6 +137,9 @@ is an internal safety boundary. Its random directory is normalized back to the
 stable source-profile identity only for Thread compatibility, just like the
 ephemeral loopback port. This prevents two host processes from racing on one
 provider MCP file without weakening the concrete request passed to the Driver.
+The stable view also fingerprints the copied settings, MCP declarations, and
+skills: changing those materialized resources safely prevents resume, while
+linked authentication rotation remains outside the durable fingerprint.
 
 `WithSpawn` replaces only the provider process. It does not restart the
 Agent-owned Tool runtime.
@@ -151,7 +159,7 @@ resource resolution, not while defining the Tool. It has these properties:
 - one process-local gateway with a separate immutable catalog selected by each
   Agent's bearer token, plus a separate SDK-owned execution profile per
   Agent/identity so different host processes cannot overwrite one another's
-provider configuration;
+  provider configuration;
 - `Agent.Close(ctx)` cancels admitted runs, closes provider processes to
   unblock them, drains them, reaps any late-created writer, removes isolated
   execution profiles, and only then revokes the Tool registration; a deadline

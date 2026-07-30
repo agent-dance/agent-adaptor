@@ -92,6 +92,25 @@ func TestUnselectedAnnotationsRemainAbsent(t *testing.T) {
 	}
 }
 
+func TestAnnotationsCanExplicitlyOverrideMCPTrueDefaults(t *testing.T) {
+	definition := tool.Define("local_update", "Update local state.", func(context.Context, struct{}) (struct{}, error) {
+		return struct{}{}, nil
+	}, tool.NonDestructive(), tool.ClosedWorld(), tool.Revision("v1"))
+	descriptor, err := definition.Descriptor()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if descriptor.Annotations.Destructive == nil || *descriptor.Annotations.Destructive {
+		t.Fatalf("Destructive = %#v, want explicit false", descriptor.Annotations.Destructive)
+	}
+	if descriptor.Annotations.OpenWorld == nil || *descriptor.Annotations.OpenWorld {
+		t.Fatalf("OpenWorld = %#v, want explicit false", descriptor.Annotations.OpenWorld)
+	}
+	if descriptor.Annotations.ReadOnly != nil || descriptor.Annotations.Idempotent != nil {
+		t.Fatalf("unselected annotations = %#v, want unspecified", descriptor.Annotations)
+	}
+}
+
 func TestDescriptorIsDeterministicAndDetached(t *testing.T) {
 	left := tool.Define("lookup", "Lookup.", func(context.Context, searchInput) (searchOutput, error) {
 		return searchOutput{Files: []string{"left"}}, nil

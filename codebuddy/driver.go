@@ -82,7 +82,7 @@ func (adapter) Descriptor() driver.Descriptor {
 		MCP:          driver.MCPCapability{Supported: true, Stdio: true, HTTP: true, SSE: true},
 		Instructions: driver.InstructionsCapability{Supported: true},
 		Workspace:    driver.WorkspaceCapability{Supported: true},
-		Process:      driver.ProcessCapability{Persistent: runtime.GOOS != "windows"},
+		Process:      driver.ProcessCapability{Persistent: true},
 		RunPolicyCaps: driver.RunPolicyCapabilities{
 			// CodeBuddy CLI has no controllable flag for web search or
 			// browser tooling (browser lives in the agent-browser plugin),

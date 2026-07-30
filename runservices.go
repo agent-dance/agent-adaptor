@@ -498,11 +498,26 @@ func (a *Agent) acquireRun(ctx context.Context, runID string, eff *RunSettings, 
 	}
 	// Attachments are resolved runtime state, not an out-of-band side list.
 	// Recompute after the final attachment so every Driver observes a
-	// fingerprint for the exact requested/ensured surface it receives.
+	// fingerprint for the exact requested/ensured surface it receives. Resolve
+	// the attachment-owned MCP subset as well: the outer service URL and
+	// ReuseKey cannot represent MCP key, transport, authentication-env, or
+	// required semantics on their own.
+	runtimeMCP, err := engine.ResolveMCPPayloadWithRuntime(
+		nil,
+		nil,
+		r.runtime.Ensured,
+		a.driver.Descriptor().MCP,
+	)
+	if err != nil {
+		cleanupCtx, cancel := runResourceCleanupContext(ctx)
+		releaseErr := r.release(cleanupCtx)
+		cancel()
+		return nil, errors.Join(err, releaseErr)
+	}
 	r.runtime.Fingerprint = engine.StableHash(
 		"adaptor/runtime-payload/v2",
 		a.driver.Descriptor().Type,
-		threadRuntimeCompatibility(r.runtime, ""),
+		threadRuntimeCompatibility(r.runtime, runtimeMCP.Fingerprint),
 	)
 
 	// 4. Event pumps start before the driver does, so no provider event
