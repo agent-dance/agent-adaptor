@@ -12,6 +12,7 @@ import (
 	"github.com/agent-dance/agent-adaptor/profile"
 	"github.com/agent-dance/agent-adaptor/skill"
 	"github.com/agent-dance/agent-adaptor/threadstore"
+	"github.com/agent-dance/agent-adaptor/tool"
 )
 
 // One option vocabulary, two scopes: the same WithX used in New(...) is the
@@ -66,6 +67,11 @@ type RunSettings struct {
 	policy    *Policy
 	approval  ApprovalHandler
 	spawn     bool
+
+	// effectiveProfile is an internal per-invocation execution projection.
+	// Public options cannot write it. Host-defined Tools use it to isolate
+	// provider-native MCP files without turning profile into a call option.
+	effectiveProfile *driver.ProfileSelection
 
 	// instructions is the extra instruction bundle handed to the driver.
 	// instructionsSet records an explicit write (even a clearing one), which
@@ -303,6 +309,7 @@ func (s RunSettings) clone() RunSettings {
 		out.configPatches = &cp
 	}
 	out.outputSchema = engine.CloneOutputSchema(s.outputSchema)
+	out.effectiveProfile = engine.CloneProfileSelection(s.effectiveProfile)
 	out.services = engine.CloneRuntimeServiceSpecs(s.services)
 	out.runServices = append([]RunServiceProvider(nil), s.runServices...)
 	return out
@@ -353,6 +360,12 @@ type AgentSettings struct {
 	// WithServices. Nil means declared services are not ensured and no
 	// endpoints are invented.
 	serviceManager ServiceManager
+
+	// tools is the Agent's immutable, host-defined capability set. A pointer
+	// preserves "unset" versus the explicit empty set installed by
+	// WithTools(); both result in no hosted runtime, while repeated
+	// construction options still obey whole-value replacement.
+	tools *[]tool.Definition
 }
 
 // SetThreadStore injects the thread storage backend (stateful conversations).
@@ -640,6 +653,23 @@ func WithServices(specs ...ServiceSpec) SharedOption {
 // Construction scope only.
 func WithServiceManager(m ServiceManager) Option {
 	return newOptionFunc(func(s *AgentSettings) { s.SetServiceManager(m) })
+}
+
+// WithTools installs the immutable host-defined Tool set owned by this Agent.
+// It is construction-scope only: Tools are a stable capability and
+// authorization surface, so passing WithTools to Run or Stream is a compile
+// error. Repeated WithTools options replace the whole set; WithTools() clears
+// an earlier declaration.
+//
+// Tool definitions and their schemas are validated before the Driver starts.
+// The SDK exposes them to provider CLIs through a private, authenticated local
+// runtime; applications do not need to configure MCP or manage another
+// lifecycle object. Agent.Close closes that runtime.
+func WithTools(definitions ...tool.Definition) Option {
+	return newOptionFunc(func(s *AgentSettings) {
+		cloned := append([]tool.Definition(nil), definitions...)
+		s.tools = &cloned
+	})
 }
 
 // WithRunServices attaches run-scoped service providers to every invocation:

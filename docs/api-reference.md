@@ -53,7 +53,7 @@ func (a *Agent) Close(ctx context.Context) error
 ```
 
 `Run` 是 `Stream`、消费完整事件流、再读取 `Result()` 的便捷形式。两者共享同一执行管线和相同的结果合同。
-`Close` 幂等停止该 Agent 的 Driver 所拥有的常驻进程；Close 开始后的 Agent/Thread 新运行返回 `ErrAgentClosed`。
+`Close` 幂等停止该 Agent 的 Driver 所拥有的常驻进程并关闭 Agent 自有的 Tool runtime；Close 开始后的 Agent/Thread 新运行返回 `ErrAgentClosed`。
 
 ## 3. 选项作用域
 
@@ -112,6 +112,7 @@ type SharedOption interface {
 | 函数 | 语义 |
 |---|---|
 | `WithThreadStore(threadstore.Store)` | 启用 Thread 持久化、续接与租约协调 |
+| `WithTools(...tool.Definition)` | 安装不可变的宿主定义 Tool 集合；整组替换，空调用显式清空 |
 | `WithEventBuffer(int)` | 设置每次执行的事件缓冲；默认 1024 |
 | `WithBlockingEvents()` | 事件发送改为阻塞、无丢弃模式 |
 | `WithProfile(profile.Selection)` | 选择 provider profile 策略 |
@@ -451,9 +452,30 @@ func (a *Agent) SelectSkills(ctx context.Context, keys []string) (SkillSnapshot,
 - `SyncProfile` 物化 Driver 支持的资源，并对不支持的资源如实报告。
 - `SelectSkills` 安装进程内 selection override；它不替宿主持久化用户偏好。
 
-## 11. skill、MCP 与 profile 词汇包
+## 11. tool、skill、MCP 与 profile 词汇包
 
-### 11.1 skill
+### 11.1 tool
+
+宿主定义 Tool 使用 typed Go handler，不暴露 MCP server、transport 或 credential：
+
+```go
+lookup := tool.Define(
+	"lookup_issue",
+	"Look up one issue by number.",
+	func(ctx context.Context, in LookupInput) (LookupOutput, error) {
+		return lookupIssue(ctx, in.Number)
+	},
+	tool.ReadOnly(),
+	tool.Idempotent(),
+	tool.Revision("lookup_issue/v1"),
+)
+
+agent := adaptor.New(driver, adaptor.WithTools(lookup))
+```
+
+输入和输出 schema 默认从 Go 类型及 tag 推导；`tool.InputSchemaJSON` 与 `tool.OutputSchemaJSON` 是标准 JSON Schema escape hatch。`tool.Reject(code, message)` 表示可安全展示给模型的预期失败；普通 error 与 panic 会被清洗。`WithTools` 仅用于构造期，最后一个选项整体替换此前集合。使用 Thread 时每个 Tool 必须提供稳定 `Revision`，并在行为语义变化时更新。Agent 在内部通过经过鉴权的 loopback MCP runtime 交付这些 Tool；内置 Driver 使用 SDK 自有的隔离执行 profile，避免并发宿主进程改写同一个原生 profile。这些实现机制都不进入调用方 API。完整合同见 [`tools.md`](./tools.md)。
+
+### 11.2 skill
 
 常用构造器：
 
@@ -470,7 +492,7 @@ skill.Require(value, reason)
 
 归档支持 zip、tar、tgz；`NewDefaultSkillMaterializer` 可配置 cache root、archive 大小、文件大小与条目数上限。skill 解析或物化失败会在 Driver 启动前返回错误。
 
-### 11.2 MCP
+### 11.3 MCP
 
 ```go
 adaptor.WithMCP(
@@ -482,7 +504,7 @@ adaptor.WithMCP(
 
 可选项：`mcp.Args`、`mcp.Env`、`mcp.WithHeader`、`mcp.WithHeaders`、`mcp.WithBearerTokenEnv`、`mcp.Required`。transport 与 option 不匹配时不会静默忽略，而是在启动前返回 MCP 配置错误。
 
-### 11.3 profile
+### 11.4 profile
 
 Profile selection：
 

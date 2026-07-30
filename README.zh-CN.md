@@ -107,7 +107,7 @@ branch := thread.Fork("tenant-42/issue-123/alternative")
 
 Thread key 是宿主拥有的不透明字符串。新的无关对话必须使用新的宿主 key；SDK 不提供主动重绑已有 key 的入口。Driver 的 resume 标识只属于 checkpoint 细节。持久化宿主可以实现 `threadstore.Store`；`memory.NewStore()` 适合单进程使用。
 
-Claude、CodeBuddy 和 Codex 对显式 Thread 默认跨轮复用 provider 进程。需要每轮或某一轮使用新进程时，在 Agent 构造处或调用处显式传入 `WithSpawn()`。宿主结束 Agent 生命周期时应关闭进程池：
+在 POSIX 平台上，Claude、CodeBuddy 和 Codex 对显式 Thread 默认跨轮复用 provider 进程；Windows 会如实声明为逐轮启动。需要每轮或某一轮使用新进程时，在 Agent 构造处或调用处显式传入 `WithSpawn()`。宿主结束 Agent 生命周期时应关闭进程池：
 
 ```go
 defer agent.Close(context.Background())
@@ -144,6 +144,47 @@ result, err := agent.Run(ctx, "评审这个改动",
 ```
 
 workspace manager、runtime service manager、skill provider、skill materializer、profile resources 和 run-scoped host services 都是可选扩展。一次基本执行不依赖这些能力。
+
+## 宿主自定义 Tools
+
+应用可以直接用 typed Go 函数扩展 Agent，无需自行构造或管理 MCP server：
+
+```go
+type SearchInput struct {
+	Query string `json:"query" jsonschema:"required"`
+}
+
+type SearchOutput struct {
+	Files []string `json:"files"`
+}
+
+searchRepo := tool.Define(
+	"search_repo",
+	"Search files in the current repository.",
+	func(ctx context.Context, in SearchInput) (SearchOutput, error) {
+		return search(ctx, in.Query)
+	},
+	tool.ReadOnly(),
+	tool.Idempotent(),
+	tool.Revision("search_repo/v1"),
+)
+
+agent := adaptor.New(
+	codex.Driver(codex.Config{}),
+	adaptor.WithTools(searchRepo),
+)
+defer agent.Close(context.Background())
+```
+
+`WithTools` 只能用于构造期，并整体替换 Tool 集合。默认根据 handler 的 Go
+类型推导 schema，也可以显式提供标准 JSON Schema。`tool.Reject(code, message)`
+表示可安全展示给模型的业务失败；普通 error 与 panic 会被净化。用于有状态
+Thread 的每个 Tool 都必须设置 `tool.Revision`，让 handler 行为进入续接兼容性。
+
+MCP 只是这套 API 的内部交付机制。已有或远程 MCP server 继续使用
+`WithMCP`。内置 Driver 会把 Tools 物化到 SDK 自有的隔离执行 profile，
+不会改写配置的原生 profile。生命周期、schema、错误、安全和 Thread 语义见
+[宿主自定义 Tools 合同](./docs/tools.md)。
 
 ## 结构化输出案例
 
@@ -250,7 +291,7 @@ synced, err := agent.SyncProfile(ctx)
 |---|---|
 | [`driver`](./driver) | Driver SPI 与 provider-facing 合同。 |
 | [`codex`](./codex)、[`claude`](./claude)、[`cursor`](./cursor)、[`codebuddy`](./codebuddy) | 内置 Driver 及其 Config 类型。 |
-| [`skill`](./skill)、[`mcp`](./mcp)、[`profile`](./profile) | 面向调用方的资源词汇。 |
+| [`tool`](./tool)、[`skill`](./skill)、[`mcp`](./mcp)、[`profile`](./profile) | 面向调用方的能力与资源词汇。 |
 | [`threadstore`](./threadstore)、[`memory`](./memory) | Thread 持久化合同与内存实现。 |
 | [`bridges`](./bridges) | SSE、AG-UI、A2A 与 subagent-stream 协议桥。 |
 | [`clients/a2a`](./clients/a2a) | 面向宿主的 A2A 客户端。 |
@@ -262,6 +303,7 @@ synced, err := agent.SyncProfile(ctx)
 - [`quickstart`](./examples/quickstart)：构造 Agent 并执行一次 prompt。
 - [`inspect`](./examples/inspect)：环境、模型、配额、schema、skills 与 profile 状态。
 - [`threads`](./examples/threads)：续接、只续不建、分叉和 checkpoint 审计。
+- [`tools`](./examples/tools)：向真实本地 provider 暴露 typed Go 函数，无需自行管理 MCP。
 - [`skills`](./examples/skills)：实时 skill 解析与物化。
 - [`profiles`](./examples/profiles)：provider profile resources 与同步。
 - [`streaming`](./examples/streaming)：typed Event 消费与取消。
@@ -281,6 +323,7 @@ Core 不提供 HTTP 或 gRPC server、队列、调度器、租户系统、鉴权
 - [文档地图](./docs/README.md)
 - [API reference](./docs/api-reference.md)
 - [Streaming 指南](./docs/streaming.md)
+- [宿主自定义 Tools](./docs/tools.md)
 - [结构化输出](./docs/structured-output.md)
 - [A2A 集成](./docs/a2a.md)
 - [公开错误](./docs/public-errors.md)

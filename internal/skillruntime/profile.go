@@ -31,14 +31,6 @@ type ProfileResolution struct {
 
 func ResolveProfile(opts ProfileResolveOptions) (ProfileResolution, error) {
 	bindings := append([]driver.EnvBinding(nil), opts.Bindings...)
-	if configured := ResolveBinding(bindings, opts.EnvVar); configured != "" {
-		dir, err := engine.NormalizeProfileDir(configured)
-		if err != nil {
-			return ProfileResolution{}, err
-		}
-		return ProfileResolution{Bindings: WithBinding(bindings, opts.EnvVar, dir), Profile: driver.AgentProfile{Supported: true, Dir: dir, EnvVar: opts.EnvVar, Source: driver.AgentProfileSourceBindingEnv}}, nil
-	}
-
 	selection := opts.Selection
 	if selection != nil {
 		switch selection.Mode {
@@ -82,6 +74,18 @@ func ResolveProfile(opts ProfileResolveOptions) (ProfileResolution, error) {
 		default:
 			return ProfileResolution{}, fmt.Errorf("unsupported profile mode %q", selection.Mode)
 		}
+	}
+
+	// An explicit profile selection is the nearer construction setting and
+	// therefore wins over a provider Config environment binding. This also
+	// lets the core route Agent-owned resources through an isolated execution
+	// profile without mutating the configured source profile.
+	if configured := ResolveBinding(bindings, opts.EnvVar); configured != "" {
+		dir, err := engine.NormalizeProfileDir(configured)
+		if err != nil {
+			return ProfileResolution{}, err
+		}
+		return ProfileResolution{Bindings: WithBinding(bindings, opts.EnvVar, dir), Profile: driver.AgentProfile{Supported: true, Dir: dir, EnvVar: opts.EnvVar, Source: driver.AgentProfileSourceBindingEnv}}, nil
 	}
 
 	if configured := strings.TrimSpace(os.Getenv(opts.EnvVar)); configured != "" {

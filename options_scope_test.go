@@ -14,6 +14,7 @@ import (
 	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/profile"
 	"github.com/agent-dance/agent-adaptor/skill"
+	"github.com/agent-dance/agent-adaptor/tool"
 )
 
 // ---- Positive scope assertions (compile-time) ----
@@ -49,6 +50,11 @@ var (
 	_ adaptor.Option = adaptor.WithProfile(profile.Default())
 	_ adaptor.Option = adaptor.WithWorkspaceManager(nil)
 	_ adaptor.Option = adaptor.WithServiceManager(nil)
+	_ adaptor.Option = adaptor.WithTools(tool.Define(
+		"noop",
+		"No-op tool used to prove construction-only option scope.",
+		func(context.Context, struct{}) (struct{}, error) { return struct{}{}, nil },
+	))
 
 	// Call-scope-only options.
 	_ adaptor.CallOption = adaptor.WithSchema[struct{}]()
@@ -80,6 +86,12 @@ var (
 //	    (missing method ApplyNew)
 //
 // fails symmetrically.
+
+func TestWithToolsIsNotACallOption(t *testing.T) {
+	if _, ok := any(adaptor.WithTools()).(adaptor.CallOption); ok {
+		t.Fatal("WithTools implemented CallOption; hosted Tools must remain construction-only")
+	}
+}
 
 // TestOptionMergeSemantics pins the one-sentence merge rule at the SPI
 // boundary: nearer scope wins; skills append; everything else

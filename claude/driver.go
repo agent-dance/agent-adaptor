@@ -79,7 +79,7 @@ func (adapter) Descriptor() driver.Descriptor {
 		MCP:          driver.MCPCapability{Supported: true, Stdio: true, HTTP: true, SSE: true},
 		Instructions: driver.InstructionsCapability{Supported: true},
 		Workspace:    driver.WorkspaceCapability{Supported: true},
-		Process:      driver.ProcessCapability{Persistent: true},
+		Process:      driver.ProcessCapability{Persistent: runtime.GOOS != "windows"},
 		RunPolicyCaps: driver.RunPolicyCapabilities{
 			Isolation: false, WebSearch: false, Browser: true,
 			// Interactive mode uses stdio permission prompting

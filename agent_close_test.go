@@ -56,6 +56,118 @@ func TestNilAgentCloseReturnsErrAgentClosed(t *testing.T) {
 	}
 }
 
+func TestAgentCloseStopsProviderBeforeOwnedToolRuntime(t *testing.T) {
+	processErr := errors.New("process close failed")
+	toolErr := errors.New("tool close failed")
+	d := &lifecycleTestDriver{
+		started:  make(chan struct{}),
+		release:  make(chan struct{}),
+		closeErr: processErr,
+	}
+	runtime := &lifecycleToolRuntime{
+		closed:   make(chan struct{}),
+		closeErr: toolErr,
+	}
+	agent := New(d)
+	agent.toolRuntime = runtime
+
+	done := make(chan error, 1)
+	go func() { done <- agent.Close(context.Background()) }()
+	<-d.started
+	select {
+	case <-runtime.closed:
+		t.Fatal("tool runtime closed before provider process cleanup completed")
+	default:
+	}
+	close(d.release)
+
+	err := <-done
+	if !errors.Is(err, processErr) || !errors.Is(err, toolErr) {
+		t.Fatalf("Close error = %v, want joined process and tool runtime errors", err)
+	}
+	select {
+	case <-runtime.closed:
+	default:
+		t.Fatal("tool runtime was not closed after provider process cleanup")
+	}
+	if err := agent.Close(context.Background()); !errors.Is(err, toolErr) {
+		t.Fatalf("idempotent Close = %v, want original joined error", err)
+	}
+	runtime.mu.Lock()
+	closeCalls := runtime.closeCalls
+	runtime.mu.Unlock()
+	if closeCalls != 1 {
+		t.Fatalf("tool runtime Close calls = %d, want 1", closeCalls)
+	}
+}
+
+func TestAgentCloseCancelsAndDrainsAcceptedRunsBeforeToolRuntime(t *testing.T) {
+	d := &drainingLifecycleDriver{
+		runStarted:  make(chan struct{}),
+		allowReturn: make(chan struct{}),
+		runReturned: make(chan struct{}),
+	}
+	runtime := &orderingToolRuntime{
+		runReturned: d.runReturned,
+		closed:      make(chan struct{}),
+	}
+	agent := New(d)
+	agent.toolRuntime = runtime
+
+	stream := agent.Stream(context.Background(), "block")
+	<-d.runStarted
+	if err := agent.Close(context.Background()); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	select {
+	case <-runtime.closed:
+	default:
+		t.Fatal("tool runtime was not closed")
+	}
+	if runtime.closedBeforeRunReturned {
+		t.Fatal("tool runtime closed before an accepted run drained")
+	}
+	if _, err := stream.Result(); !errors.Is(err, context.Canceled) {
+		t.Fatalf("accepted run result = %v, want context.Canceled", err)
+	}
+}
+
+func TestAgentCloseDeadlineLeavesCleanupRetryable(t *testing.T) {
+	d := &lifecycleTestDriver{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	runtime := &lifecycleToolRuntime{closed: make(chan struct{})}
+	agent := New(d)
+	agent.toolRuntime = runtime
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if err := agent.Close(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("bounded Close = %v, want deadline", err)
+	}
+	select {
+	case <-runtime.closed:
+		t.Fatal("partial Close revoked Tool runtime before provider cleanup")
+	default:
+	}
+	close(d.release)
+	if err := agent.Close(context.Background()); err != nil {
+		t.Fatalf("retry Close: %v", err)
+	}
+	select {
+	case <-runtime.closed:
+	default:
+		t.Fatal("retry Close did not finish Tool runtime cleanup")
+	}
+	d.mu.Lock()
+	calls := d.closeCalls
+	d.mu.Unlock()
+	if calls != 2 {
+		t.Fatalf("CloseProcesses calls = %d, want one timed-out attempt plus retry", calls)
+	}
+}
+
 type lifecycleTestDriver struct {
 	mu         sync.Mutex
 	started    chan struct{}
@@ -63,6 +175,64 @@ type lifecycleTestDriver struct {
 	closeErr   error
 	closeCalls int
 	runCalls   int
+	startOnce  sync.Once
+}
+
+type lifecycleToolRuntime struct {
+	mu         sync.Mutex
+	closed     chan struct{}
+	closeErr   error
+	closeCalls int
+}
+
+type drainingLifecycleDriver struct {
+	runStarted  chan struct{}
+	allowReturn chan struct{}
+	runReturned chan struct{}
+	closeOnce   sync.Once
+}
+
+func (*drainingLifecycleDriver) Descriptor() driver.Descriptor {
+	return driver.Descriptor{Type: "draining-lifecycle", Process: driver.ProcessCapability{Persistent: true}}
+}
+
+func (*drainingLifecycleDriver) ValidateConfig(any) error { return nil }
+
+func (d *drainingLifecycleDriver) Run(ctx context.Context, _ driver.Request, _ driver.EventSink) (driver.Response, error) {
+	close(d.runStarted)
+	<-ctx.Done()
+	<-d.allowReturn
+	close(d.runReturned)
+	return driver.Response{}, ctx.Err()
+}
+
+func (d *drainingLifecycleDriver) CloseProcesses(context.Context) error {
+	d.closeOnce.Do(func() { close(d.allowReturn) })
+	return nil
+}
+
+type orderingToolRuntime struct {
+	runReturned             chan struct{}
+	closed                  chan struct{}
+	closedBeforeRunReturned bool
+}
+
+func (r *orderingToolRuntime) Close(context.Context) error {
+	select {
+	case <-r.runReturned:
+	default:
+		r.closedBeforeRunReturned = true
+	}
+	close(r.closed)
+	return nil
+}
+
+func (r *lifecycleToolRuntime) Close(context.Context) error {
+	r.mu.Lock()
+	r.closeCalls++
+	r.mu.Unlock()
+	close(r.closed)
+	return r.closeErr
 }
 
 func (d *lifecycleTestDriver) Descriptor() driver.Descriptor {
@@ -85,7 +255,7 @@ func (d *lifecycleTestDriver) CloseProcesses(ctx context.Context) error {
 	d.mu.Lock()
 	d.closeCalls++
 	d.mu.Unlock()
-	close(d.started)
+	d.startOnce.Do(func() { close(d.started) })
 	select {
 	case <-d.release:
 		return d.closeErr

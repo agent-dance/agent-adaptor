@@ -866,6 +866,8 @@ func WithThreadStore(store threadstore.Store) Option
 
 func WithTimeout(d time.Duration) SharedOption
 
+func WithTools(definitions ...tool.Definition) Option
+
 func WithWorkspace(dir string) SharedOption
 
 func WithWorkspaceManager(m WorkspaceManager) Option

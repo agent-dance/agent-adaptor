@@ -107,7 +107,7 @@ branch := thread.Fork("tenant-42/issue-123/alternative")
 
 Thread keys are opaque strings owned by the host. A new unrelated conversation gets a new host key; the SDK does not rebind an existing key on request. Driver resume identifiers remain checkpoint details. Durable hosts can implement `threadstore.Store`; `memory.NewStore()` is intended for one process.
 
-Claude, CodeBuddy, and Codex reuse a provider process by default for successive turns of an explicit Thread. Use `WithSpawn()` at Agent construction or on one call to force fresh one-shot processes. Close the Agent to reap its process pool:
+On POSIX platforms, Claude, CodeBuddy, and Codex reuse a provider process by default for successive turns of an explicit Thread; Windows truthfully reports one-shot process capability. Use `WithSpawn()` at Agent construction or on one call to force fresh one-shot processes. Close the Agent to reap its process pool:
 
 ```go
 defer agent.Close(context.Background())
@@ -144,6 +144,51 @@ result, err := agent.Run(ctx, "Review this change",
 ```
 
 Workspace managers, runtime service managers, skill providers, skill materializers, profile resources, and run-scoped host services are optional construction or invocation extensions. None is required for a basic run.
+
+## Host-defined Tools
+
+Applications can extend an Agent with typed Go functions without constructing
+or managing an MCP server:
+
+```go
+type SearchInput struct {
+	Query string `json:"query" jsonschema:"required"`
+}
+
+type SearchOutput struct {
+	Files []string `json:"files"`
+}
+
+searchRepo := tool.Define(
+	"search_repo",
+	"Search files in the current repository.",
+	func(ctx context.Context, in SearchInput) (SearchOutput, error) {
+		return search(ctx, in.Query)
+	},
+	tool.ReadOnly(),
+	tool.Idempotent(),
+	tool.Revision("search_repo/v1"),
+)
+
+agent := adaptor.New(
+	codex.Driver(codex.Config{}),
+	adaptor.WithTools(searchRepo),
+)
+defer agent.Close(context.Background())
+```
+
+`WithTools` is construction-only and replaces the complete Tool set. Schemas
+are inferred from the handler's Go types; explicit standard JSON Schema
+overrides are available. `tool.Reject(code, message)` returns a safe,
+model-visible business failure, while ordinary errors and panics are sanitized.
+Use `tool.Revision` for every Tool used by a stateful Thread so handler behavior
+can participate in resume compatibility.
+
+MCP is an internal delivery mechanism for this API. Existing or remote MCP
+servers still use `WithMCP`. Built-in Drivers materialize Tools in an
+SDK-owned isolated execution profile, leaving the configured/native profile
+unchanged. See the [host-defined Tools contract](./docs/tools.md)
+for lifecycle, schema, error, security, and Thread semantics.
 
 ## Structured output example
 
@@ -252,7 +297,7 @@ synced, err := agent.SyncProfile(ctx)
 |---|---|
 | [`driver`](./driver) | Driver SPI and provider-facing contracts. |
 | [`codex`](./codex), [`claude`](./claude), [`cursor`](./cursor), [`codebuddy`](./codebuddy) | Built-in Drivers and their Config types. |
-| [`skill`](./skill), [`mcp`](./mcp), [`profile`](./profile) | Consumer resource vocabularies. |
+| [`tool`](./tool), [`skill`](./skill), [`mcp`](./mcp), [`profile`](./profile) | Consumer capability and resource vocabularies. |
 | [`threadstore`](./threadstore), [`memory`](./memory) | Thread persistence contract and in-memory implementation. |
 | [`bridges`](./bridges) | SSE, AG-UI, A2A, and subagent-stream protocol bridges. |
 | [`clients/a2a`](./clients/a2a) | Host-oriented A2A client. |
@@ -264,6 +309,7 @@ synced, err := agent.SyncProfile(ctx)
 - [`quickstart`](./examples/quickstart): construct an Agent and run one prompt.
 - [`inspect`](./examples/inspect): environment, models, quota, schema, skills, and profile state.
 - [`threads`](./examples/threads): continue, resume-only, fork, and checkpoint inspection.
+- [`tools`](./examples/tools): expose a typed Go function to a real local provider without managing MCP.
 - [`skills`](./examples/skills): live skill resolution and materialization.
 - [`profiles`](./examples/profiles): provider profile resources and synchronization.
 - [`streaming`](./examples/streaming): typed Event consumption and cancellation.
@@ -283,6 +329,7 @@ The core library does not provide an HTTP or gRPC server, queue, scheduler, tena
 - [Documentation map](./docs/README.md)
 - [API reference](./docs/api-reference.md)
 - [Streaming guide](./docs/streaming.md)
+- [Host-defined Tools](./docs/tools.md)
 - [Structured output](./docs/structured-output.md)
 - [A2A integration](./docs/a2a.md)
 - [Public errors](./docs/public-errors.md)

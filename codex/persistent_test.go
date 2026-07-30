@@ -16,8 +16,11 @@ import (
 	"testing"
 	"time"
 
+	adaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/internal/testutil"
+	"github.com/agent-dance/agent-adaptor/memory"
+	"github.com/agent-dance/agent-adaptor/tool"
 )
 
 const codexHelperEnv = "GO_WANT_AGENT_ADAPTOR_CODEX_HELPER"
@@ -30,6 +33,7 @@ func TestMain(m *testing.M) {
 }
 
 func TestPersistentCodexReusesAppServerAcrossTurns(t *testing.T) {
+	requireCodexPersistentPlatform(t)
 	a, req, spawnFile, _ := newPersistentCodexTest(t, "")
 	defer closeCodexTestAdapter(t, a)
 
@@ -46,7 +50,58 @@ func TestPersistentCodexReusesAppServerAcrossTurns(t *testing.T) {
 	}
 }
 
+func TestPersistentCodexAcceptsSharedHostedToolRuntime(t *testing.T) {
+	req := driver.Request{
+		Streaming: true,
+		Session:   &driver.SessionContext{EngineSessionID: "engine-tools"},
+		Runtime: driver.RuntimePayload{Ensured: []driver.RuntimeServiceRef{{
+			ID: "agent-adaptor-tools", Lifecycle: driver.RuntimeLifecycleShared,
+			MCP: &driver.MCPServerSpec{Key: "agent-adaptor-tools", Transport: driver.MCPTransportHTTP, URL: "http://127.0.0.1:12345/mcp"},
+		}}},
+	}
+	if !persistentEligible(Config{}, req) {
+		t.Fatal("shared hosted Tool runtime disabled Codex persistent reuse")
+	}
+	req.Runtime.Ensured[0].Lifecycle = driver.RuntimeLifecycleEphemeral
+	if persistentEligible(Config{}, req) {
+		t.Fatal("ephemeral runtime incorrectly remained persistent-eligible")
+	}
+}
+
+func TestPersistentCodexReusesAppServerWithHostDefinedTools(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("persistent process is POSIX-only")
+	}
+	lowLevel, req, spawnFile, _ := newPersistentCodexTest(t, "")
+	configured := configuredDriver{adapter: lowLevel.(adapter), cfg: req.Config.(Config)}
+	definition := tool.Define("echo", "Echo a value.", func(context.Context, struct{}) (struct{}, error) {
+		return struct{}{}, nil
+	}, tool.ReadOnly(), tool.Revision("echo/v1"))
+	agent := adaptor.New(configured,
+		adaptor.WithThreadStore(memory.NewStore()),
+		adaptor.WithTools(definition),
+	)
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		if err := agent.Close(ctx); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	}()
+	thread := agent.Thread("codex-tools-persistent")
+	if _, err := thread.Run(context.Background(), "one"); err != nil {
+		t.Fatalf("first turn: %v", err)
+	}
+	if _, err := thread.Run(context.Background(), "two"); err != nil {
+		t.Fatalf("second turn: %v", err)
+	}
+	if got := helperSpawnCount(t, spawnFile); got != 1 {
+		t.Fatalf("host-defined Tools disabled Codex persistent reuse; spawns=%d", got)
+	}
+}
+
 func TestPersistentCodexSignatureDriftRebuilds(t *testing.T) {
+	requireCodexPersistentPlatform(t)
 	for _, tc := range []struct {
 		name   string
 		mutate func(*testing.T, *driver.Request)
@@ -129,6 +184,7 @@ func TestCodexSettingsFingerprintIgnoresProviderSystemSkills(t *testing.T) {
 }
 
 func TestPersistentCodexFailureBeforePromptFallsBack(t *testing.T) {
+	requireCodexPersistentPlatform(t)
 	a, req, spawnFile, _ := newPersistentCodexTest(t, "fail_open_once")
 	defer closeCodexTestAdapter(t, a)
 
@@ -142,6 +198,7 @@ func TestPersistentCodexFailureBeforePromptFallsBack(t *testing.T) {
 }
 
 func TestPersistentCodexDoesNotReplayAfterTurnStart(t *testing.T) {
+	requireCodexPersistentPlatform(t)
 	a, req, spawnFile, _ := newPersistentCodexTest(t, "fail_after_prompt_once")
 	defer closeCodexTestAdapter(t, a)
 
@@ -181,6 +238,7 @@ func TestPersistentCodexOneShotHandoffWaitsForOldWriter(t *testing.T) {
 }
 
 func TestPersistentCodexCloseCancelAndIdleReapProcesses(t *testing.T) {
+	requireCodexPersistentPlatform(t)
 	t.Run("close is idempotent", func(t *testing.T) {
 		a, req, _, activeFile := newPersistentCodexTest(t, "")
 		_ = runCodexTurn(t, a, req)
@@ -261,6 +319,7 @@ func TestPersistentCodexRequiresStableSessionKey(t *testing.T) {
 }
 
 func TestPersistentCodexNativeSchemaUsesPerTurnFieldWithoutHandoff(t *testing.T) {
+	requireCodexPersistentPlatform(t)
 	a, req, spawnFile, _ := newPersistentCodexTest(t, "")
 	defer closeCodexTestAdapter(t, a)
 	first := runCodexTurn(t, a, req)
@@ -343,6 +402,13 @@ func newPersistentCodexTest(t *testing.T, mode string) (driver.Driver, driver.Re
 		},
 	}
 	return adapter{persistent: newPersistentPool()}, req, spawnFile, activeFile
+}
+
+func requireCodexPersistentPlatform(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("Codex persistent app-server transport is POSIX-only")
+	}
 }
 
 func runCodexTurn(t *testing.T, a driver.Driver, req driver.Request) driver.Response {

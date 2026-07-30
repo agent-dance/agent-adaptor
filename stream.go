@@ -140,7 +140,6 @@ func (a *Agent) openStream(ctx context.Context, opts []CallOption, threadKey str
 		cancel: cancel,
 		done:   make(chan struct{}),
 	}
-
 	if openErr := a.ensureOpen(); openErr != nil {
 		st.err = openErr
 		cancel()
@@ -156,6 +155,13 @@ func (a *Agent) openStream(ctx context.Context, opts []CallOption, threadKey str
 		close(st.done)
 		return st, eff, ctx, false
 	}
+	if a.toolConfigErr != nil {
+		st.err = fmt.Errorf("adaptor: run %s: %w", runID, a.toolConfigErr)
+		cancel()
+		sink.close()
+		close(st.done)
+		return st, eff, ctx, false
+	}
 	if configErr := a.driver.ValidateConfig(nil); configErr != nil {
 		st.err = fmt.Errorf("adaptor: run %s: %w", runID, &driver.InvalidDriverConfigError{
 			Driver: desc.Type,
@@ -166,8 +172,29 @@ func (a *Agent) openStream(ctx context.Context, opts []CallOption, threadKey str
 		close(st.done)
 		return st, eff, ctx, false
 	}
+	if toolsErr := a.validateHostedToolsPreflight(&eff, desc.MCP); toolsErr != nil {
+		st.err = fmt.Errorf("adaptor: run %s: %w", runID, toolsErr)
+		cancel()
+		sink.close()
+		close(st.done)
+		return st, eff, ctx, false
+	}
+	if profileErr := a.prepareHostedToolProfile(ctx, &eff); profileErr != nil {
+		st.err = fmt.Errorf("adaptor: run %s: %w", runID, profileErr)
+		cancel()
+		sink.close()
+		close(st.done)
+		return st, eff, ctx, false
+	}
 	if policyErr := validatePolicy(desc, eff.policy); policyErr != nil {
 		st.err = fmt.Errorf("adaptor: run %s: %w", runID, policyErr)
+		cancel()
+		sink.close()
+		close(st.done)
+		return st, eff, ctx, false
+	}
+	if openErr := a.registerRun(runID, cancel); openErr != nil {
+		st.err = openErr
 		cancel()
 		sink.close()
 		close(st.done)
