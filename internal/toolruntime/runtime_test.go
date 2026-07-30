@@ -104,6 +104,24 @@ func TestGatewaySharesEndpointAndRoutesBearerToImmutableCatalog(t *testing.T) {
 	}
 }
 
+func TestClosedNetworkErrorRecognizesLegacyWrappedListenerError(t *testing.T) {
+	legacy := &net.OpError{
+		Op:   "close",
+		Net:  "tcp4",
+		Addr: &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 43210},
+		Err:  errors.New(net.ErrClosed.Error()),
+	}
+	if errors.Is(legacy, net.ErrClosed) {
+		t.Fatal("fixture unexpectedly implements errors.Is; it no longer covers the legacy path")
+	}
+	if !isClosedNetworkError(legacy) {
+		t.Fatalf("legacy closed-listener error was not recognized: %v", legacy)
+	}
+	if isClosedNetworkError(errors.New("permission denied")) {
+		t.Fatal("unrelated listener error was classified as already closed")
+	}
+}
+
 func TestToolFailuresAreSanitizedAndDeadlinesPropagate(t *testing.T) {
 	config := testGatewayConfig()
 	config.handlerTimeout = 75 * time.Millisecond
