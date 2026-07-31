@@ -768,12 +768,15 @@ func (g *gateway) shutdownAndDrain(registration *registration, timeout time.Dura
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), timeout)
 	err := g.server.Shutdown(shutdownCtx)
 	cancel()
-	if errors.Is(err, http.ErrServerClosed) {
+	if errors.Is(err, http.ErrServerClosed) || isClosedNetworkError(err) {
 		err = nil
 	}
 	if err != nil {
 		closeErr := g.server.Close()
-		if closeErr != nil && !errors.Is(closeErr, http.ErrServerClosed) {
+		if errors.Is(closeErr, http.ErrServerClosed) || isClosedNetworkError(closeErr) {
+			closeErr = nil
+		}
+		if closeErr != nil {
 			err = errors.Join(err, closeErr)
 		}
 		// A bounded graceful-shutdown deadline is an internal transition to
