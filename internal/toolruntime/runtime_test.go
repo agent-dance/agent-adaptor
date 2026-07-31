@@ -138,6 +138,37 @@ func TestClosedNetworkErrorRecognizesLegacyWrappedListenerError(t *testing.T) {
 	}
 }
 
+func TestRuntimeCloseNormalizesPreclosedGatewayListener(t *testing.T) {
+	manager := newGatewayManager(testGatewayConfig())
+	runtime := newTestRuntime(t, manager, "echo", func(_ context.Context, input testInput) (testOutput, error) {
+		return testOutput{Value: input.Value}, nil
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := runtime.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	manager.mu.Lock()
+	gateway := manager.instance
+	manager.mu.Unlock()
+	if gateway == nil {
+		t.Fatal("Start did not publish a gateway")
+	}
+	if err := gateway.listener.Close(); err != nil {
+		t.Fatalf("preclose listener: %v", err)
+	}
+	select {
+	case <-gateway.serveDone:
+	case <-ctx.Done():
+		t.Fatalf("Serve did not observe preclosed listener: %v", ctx.Err())
+	}
+
+	if err := runtime.Close(ctx); err != nil {
+		t.Fatalf("Close after listener preclose: %v", err)
+	}
+}
+
 func TestToolFailuresAreSanitizedAndDeadlinesPropagate(t *testing.T) {
 	config := testGatewayConfig()
 	config.handlerTimeout = 75 * time.Millisecond

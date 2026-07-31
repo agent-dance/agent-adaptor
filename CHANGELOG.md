@@ -27,6 +27,8 @@ All notable changes to this project are documented in this file.
 - Preserved the concrete `ProfilePayload.Fingerprint` across Thread execution;
   only the separate session compatibility guard now normalizes Agent-owned
   ephemeral endpoint and credential-carrier allocations.
+- Normalized already-closed listener errors across both Tool gateway admission
+  fencing and HTTP shutdown so retry cleanup remains idempotent on Linux.
 
 ## [1.1.0] - 2026-07-31
 
