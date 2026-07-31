@@ -89,6 +89,9 @@
 //	        fingerprint (resume-guard doctrine in the SessionCodec godoc).
 //	SES-07  nil/zero codec inputs never panic.
 //	SES-08  (opt-in, WithSessionKeys) required keys survive the round-trip.
+//	SES-09  Resume and persistent-process guards use
+//	        ProfilePayload.SessionFingerprint(); exact Fingerprint and payload
+//	        remain authoritative for current-invocation materialization.
 //
 // Stream event timing (live; driver/events.go StreamKind, StreamPayload
 // field-usage table, Role; driver/driver.go EventSink):

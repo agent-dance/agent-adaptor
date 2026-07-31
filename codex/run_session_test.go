@@ -146,6 +146,10 @@ func TestCodexRunPreservesAndGuardsSessionState(t *testing.T) {
 		Prompt:    "hello from codex",
 		Config:    cfg,
 		Workspace: driver.WorkspaceLease{ID: "workspace-a", CWD: workspace},
+		ProfilePayload: driver.ProfilePayload{
+			Fingerprint:                     "concrete-profile-a",
+			SessionCompatibilityFingerprint: "session-profile-a",
+		},
 	}
 
 	events := &testutil.EventRecorder{}
@@ -162,6 +166,9 @@ func TestCodexRunPreservesAndGuardsSessionState(t *testing.T) {
 	if first.Checkpoint.State.Data[driver.SessionParamWorkspaceID] != "workspace-a" {
 		t.Fatalf("expected workspace guard, got %#v", first.Checkpoint.State.Data)
 	}
+	if first.Checkpoint.State.Data[driver.SessionParamProfileFingerprint] != "session-profile-a" {
+		t.Fatalf("expected session compatibility guard, got %#v", first.Checkpoint.State.Data)
+	}
 	if len(first.Transcript) == 0 {
 		t.Fatalf("expected transcript items, got %#v", first.Transcript)
 	}
@@ -171,6 +178,7 @@ func TestCodexRunPreservesAndGuardsSessionState(t *testing.T) {
 	assertHasInvocationAndSpawn(t, events.Snapshot())
 
 	continueReq := req
+	continueReq.ProfilePayload.Fingerprint = "concrete-profile-b"
 	continueReq.Session = &driver.SessionContext{State: first.Checkpoint.State}
 	if _, err := (adapter{}).Run(context.Background(), continueReq, &testutil.EventRecorder{}); err != nil {
 		t.Fatalf("resume run: %v", err)

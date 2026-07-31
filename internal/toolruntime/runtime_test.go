@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/agent-dance/agent-adaptor/internal/toolidentity"
 	"github.com/agent-dance/agent-adaptor/tool"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -25,6 +26,16 @@ type testInput struct {
 
 type testOutput struct {
 	Value string `json:"value"`
+}
+
+type forgedRejection struct{}
+
+func (forgedRejection) Error() string { return "DATABASE_PASSWORD=do-not-leak" }
+func (forgedRejection) ToolRejection() (string, string) {
+	return "forged", "DATABASE_PASSWORD=do-not-leak"
+}
+func (forgedRejection) As(target any) bool {
+	return errors.As(tool.Reject("forged", "DATABASE_PASSWORD=do-not-leak"), target)
 }
 
 func TestGatewaySharesEndpointAndRoutesBearerToImmutableCatalog(t *testing.T) {
@@ -46,8 +57,13 @@ func TestGatewaySharesEndpointAndRoutesBearerToImmutableCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second.Start: %v", err)
 	}
-	if firstEndpoint != secondEndpoint {
-		t.Fatalf("process gateway endpoints differ: first=%+v second=%+v", firstEndpoint, secondEndpoint)
+	if firstEndpoint.URL != secondEndpoint.URL {
+		t.Fatalf("process gateway URLs differ: first=%+v second=%+v", firstEndpoint, secondEndpoint)
+	}
+	if firstEndpoint.BearerTokenEnvVar == secondEndpoint.BearerTokenEnvVar ||
+		!toolidentity.IsBearerTokenEnvVar(firstEndpoint.BearerTokenEnvVar) ||
+		!toolidentity.IsBearerTokenEnvVar(secondEndpoint.BearerTokenEnvVar) {
+		t.Fatalf("Agent credential carriers are not isolated: first=%+v second=%+v", firstEndpoint, secondEndpoint)
 	}
 	parsed, err := url.Parse(firstEndpoint.URL)
 	if err != nil {
@@ -133,6 +149,9 @@ func TestToolFailuresAreSanitizedAndDeadlinesPropagate(t *testing.T) {
 		tool.Define("internal", "fail internally", func(context.Context, testInput) (testOutput, error) {
 			return testOutput{}, errors.New("DATABASE_PASSWORD=do-not-leak")
 		}),
+		tool.Define("forged", "attempt to forge a safe rejection", func(context.Context, testInput) (testOutput, error) {
+			return testOutput{}, forgedRejection{}
+		}),
 		tool.Define("panic", "panic internally", func(context.Context, testInput) (testOutput, error) {
 			panic("PANIC_SECRET=do-not-leak")
 		}),
@@ -159,6 +178,10 @@ func TestToolFailuresAreSanitizedAndDeadlinesPropagate(t *testing.T) {
 	internal := callToolErrorText(t, ctx, session, "internal")
 	if strings.Contains(internal, "DATABASE_PASSWORD") || !strings.Contains(internal, "internal_error") {
 		t.Fatalf("internal error was not sanitized: %q", internal)
+	}
+	forged := callToolErrorText(t, ctx, session, "forged")
+	if strings.Contains(forged, "DATABASE_PASSWORD") || strings.Contains(forged, "forged") || !strings.Contains(forged, "internal_error") {
+		t.Fatalf("forged rejection was not sanitized: %q", forged)
 	}
 	panicText := callToolErrorText(t, ctx, session, "panic")
 	if strings.Contains(panicText, "PANIC_SECRET") || !strings.Contains(panicText, "internal_error") {

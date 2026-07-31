@@ -108,6 +108,15 @@ func (a *Agent) executeInvocation(ctx context.Context, st *runStream, prompt str
 		}
 	}
 
+	// Hosted Tool profile resolution may call provider code and allocate an
+	// Agent-owned directory. Keep it inside lifecycle admission so Close sees,
+	// cancels, and drains the work before removing profiles and the Tool runtime.
+	// Thread-only contract checks stay ahead of this resource-producing phase.
+	if profileErr := a.prepareHostedToolProfile(ctx, eff); profileErr != nil {
+		resultErr = fmt.Errorf("adaptor: run %s: %w", st.runID, profileErr)
+		return
+	}
+
 	resources, resultErr = a.acquireRun(ctx, st.runID, eff, st.sink)
 	if resultErr != nil {
 		resultErr = fmt.Errorf("adaptor: run %s: %w", st.runID, resultErr)
@@ -245,7 +254,7 @@ func (a *Agent) threadInvocationFingerprint(identity driver.AgentIdentity, req d
 		req.Workspace,
 		runtimeCompatibility,
 		a.hostedToolProfileCompatibility(req.Profile),
-		req.ProfilePayload.Fingerprint,
+		req.ProfilePayload.SessionFingerprint(),
 		req.Skills.Fingerprint,
 		engine.InstructionFingerprint(req.Instructions),
 	)

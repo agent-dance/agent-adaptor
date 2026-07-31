@@ -269,6 +269,9 @@ func (d referenceDriver) Run(ctx context.Context, req driver.Request, sink drive
 		}
 		data[driver.SessionParamCWD] = cwd
 	}
+	if profileFingerprint := req.ProfilePayload.SessionFingerprint(); profileFingerprint != "" {
+		data[driver.SessionParamProfileFingerprint] = profileFingerprint
+	}
 	checkpoint := &driver.Checkpoint{
 		Valid: true,
 		State: &driver.SessionState{ResumeID: sessionID, DisplayID: sessionID, Data: data},

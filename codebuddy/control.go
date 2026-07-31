@@ -69,7 +69,7 @@ func (adapter) runControl(ctx context.Context, cfg Config, command string, req d
 		checkpoint.State.Data = map[string]string{
 			driver.SessionParamCWD:                prep.effectiveCWD,
 			driver.SessionParamWorkspaceID:        req.Workspace.ID,
-			driver.SessionParamProfileFingerprint: req.ProfilePayload.Fingerprint,
+			driver.SessionParamProfileFingerprint: req.ProfilePayload.SessionFingerprint(),
 		}
 	}
 	return driver.Response{

@@ -268,11 +268,14 @@ func TestClaudeRunPreservesAndGuardsSessionState(t *testing.T) {
 		Fingerprint: "bundle-b",
 	}
 	req := agentadaptor.Request{
-		Prompt:         "hello from claude",
-		Config:         cfg,
-		Workspace:      agentadaptor.WorkspaceLease{ID: "workspace-a", CWD: workspace},
-		Skills:         payloadA,
-		ProfilePayload: agentadaptor.ProfilePayload{Fingerprint: "profile-a"},
+		Prompt:    "hello from claude",
+		Config:    cfg,
+		Workspace: agentadaptor.WorkspaceLease{ID: "workspace-a", CWD: workspace},
+		Skills:    payloadA,
+		ProfilePayload: agentadaptor.ProfilePayload{
+			Fingerprint:                     "concrete-profile-a",
+			SessionCompatibilityFingerprint: "profile-a",
+		},
 	}
 
 	events := &testutil.EventRecorder{}
@@ -299,6 +302,7 @@ func TestClaudeRunPreservesAndGuardsSessionState(t *testing.T) {
 	assertInvocationArgsDoNotContain(t, events.Snapshot(), "--add-dir")
 
 	continueReq := req
+	continueReq.ProfilePayload.Fingerprint = "concrete-profile-b"
 	continueReq.Session = &agentadaptor.SessionContext{State: first.Checkpoint.State}
 	if _, err := (adapter{}).Run(context.Background(), continueReq, &testutil.EventRecorder{}); err != nil {
 		t.Fatalf("resume run: %v", err)
@@ -306,7 +310,7 @@ func TestClaudeRunPreservesAndGuardsSessionState(t *testing.T) {
 
 	rejectReq := req
 	rejectReq.Skills = payloadB
-	rejectReq.ProfilePayload = agentadaptor.ProfilePayload{Fingerprint: "profile-b"}
+	rejectReq.ProfilePayload = agentadaptor.ProfilePayload{Fingerprint: "concrete-profile-b", SessionCompatibilityFingerprint: "profile-b"}
 	rejectReq.Session = &agentadaptor.SessionContext{State: first.Checkpoint.State}
 	_, err = (adapter{}).Run(context.Background(), rejectReq, &testutil.EventRecorder{})
 	if !errors.Is(err, engine.ErrResumeRejected) {

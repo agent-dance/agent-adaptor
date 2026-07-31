@@ -365,7 +365,7 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 			return driver.Response{}, err
 		}
 	}
-	profileFingerprint := req.ProfilePayload.Fingerprint
+	profileFingerprint := req.ProfilePayload.SessionFingerprint()
 	effectiveBindings, err := effectiveCodexBindingsNoInitialize(cfg.CommonConfig, req.Profile, req.Agent)
 	if err != nil {
 		return driver.Response{}, err

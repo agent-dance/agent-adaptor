@@ -514,6 +514,12 @@ func (a *Agent) acquireRun(ctx context.Context, runID string, eff *RunSettings, 
 		cancel()
 		return nil, errors.Join(err, releaseErr)
 	}
+	if err := a.validateHostedToolMCPAuthIsolation(runtimeMCP); err != nil {
+		cleanupCtx, cancel := runResourceCleanupContext(ctx)
+		releaseErr := r.release(cleanupCtx)
+		cancel()
+		return nil, errors.Join(err, releaseErr)
+	}
 	r.runtime.Fingerprint = engine.StableHash(
 		"adaptor/runtime-payload/v2",
 		a.driver.Descriptor().Type,

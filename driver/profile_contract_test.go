@@ -26,3 +26,14 @@ func TestProfileContractsExcludeRemovedFields(t *testing.T) {
 		}
 	}
 }
+
+func TestProfilePayloadSessionFingerprintIsSeparateAndBackwardsCompatible(t *testing.T) {
+	payload := driver.ProfilePayload{Fingerprint: "concrete"}
+	if got := payload.SessionFingerprint(); got != "concrete" {
+		t.Fatalf("fallback SessionFingerprint = %q, want concrete", got)
+	}
+	payload.SessionCompatibilityFingerprint = "session-compatible"
+	if got := payload.SessionFingerprint(); got != "session-compatible" {
+		t.Fatalf("explicit SessionFingerprint = %q, want session-compatible", got)
+	}
+}

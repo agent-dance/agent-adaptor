@@ -240,6 +240,12 @@ An init/session announcement, partial output, a nested or guessed ID, a malforme
 
 `Descriptor.Sessions.SupportsResume=true` if and only if the Driver satisfies both construction-time contracts: it implements `SessionCodecProvider` and stably returns a non-nil, stably named codec; and it implements `SessionConfigFingerprinter` and stably returns a non-empty, cross-process deterministic fingerprint of the construction config. The latter must cover every provider-visible construction-time config value plus the codec/version contract; values that cannot be expressed stably must raise an error rather than be silently omitted. A public Thread invocation that is missing either contract is rejected with `adaptor.ErrThreadIncompatible` before acquiring the workspace/runtime/store lease or calling `Driver.Run`. The codec's nil/zero mapping, guard fingerprint, round-trip, and config fingerprint truthfulness must satisfy the `CAP-*` / `SES-*` clauses of `adaptertest`.
 
+`ProfilePayload.Fingerprint` always identifies the exact resolved profile desired
+state passed to the Driver. Resume and persistent-process guards use
+`ProfilePayload.SessionFingerprint()` instead. Core may normalize only its own
+ephemeral transport allocations in the session value; the Driver must still
+materialize the exact current MCP/profile payload on every resumed turn.
+
 There is no checkpoint exception for a failed run. Without a healthy checkpoint, core keeps the Thread's previous active record and does not allow a failed run to pollute resumable state.
 
 ## 10. HITL
@@ -304,6 +310,7 @@ The clause groups directly related to this contract are:
 - `RUN-*`: raw chunks, transcript items, core-owned `RunEvent.Seq`, and the transcript mirror.
 - `TRN-*`: field validity for each `TranscriptKind`.
 - `RSP-*`: checkpoint cleanliness, the Failure invariant, Output layering, codec round-trip, and official terminal JSON.
+- `SES-09`: exact profile materialization remains separate from the session compatibility guard.
 
 Beyond the suite, a Driver must itself cover, for each formal protocol path: success, non-zero exit, malformed protocol, missing checkpoint, missing terminal event, cancellation, and provider-specific parser lifecycles. Different transports such as the Codex CLI and app-server must each have their own contract tests; one path must not vouch for the other.
 

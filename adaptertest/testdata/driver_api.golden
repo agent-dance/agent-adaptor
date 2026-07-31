@@ -732,7 +732,13 @@ type ProfilePayload struct {
 	Config ProfileConfigPayload
 	Declared ProfileResourceDeclarations
 	Fingerprint string
+	SessionCompatibilityFingerprint string
 	Warnings []string
+}
+
+methodset ProfilePayload {
+	value SessionFingerprint() string
+	pointer SessionFingerprint() string
 }
 
 type ProfileReporter interface {
@@ -1434,6 +1440,8 @@ func (*InvalidPolicyError).Unwrap() error
 func (*PolicyCapabilityUnsupportedError).Error() string
 
 func (*PolicyCapabilityUnsupportedError).Unwrap() error
+
+func (ProfilePayload).SessionFingerprint() string
 
 func (ResolvedSkills).Keys() []string
 
