@@ -24,10 +24,8 @@ var (
 	ErrInvalidOutput = errors.New("agentadaptor: invalid tool output")
 )
 
-// rejectionError is intentionally private: applications only need the
-// provider-neutral Reject constructor. The exported ToolRejection method is a
-// narrow capability used by the internal runtime without adding a public
-// transport error type to the tool vocabulary.
+// rejectionError is intentionally private: only Reject can mint a rejection
+// trusted for model-visible delivery.
 type rejectionError struct {
 	code    string
 	message string
@@ -45,15 +43,6 @@ func (e *rejectionError) Error() string {
 		return e.code
 	}
 	return e.code + ": " + e.message
-}
-
-// ToolRejection exposes the already-normalized safe fields to the internal
-// delivery runtime. It is not a transport-specific contract.
-func (e *rejectionError) ToolRejection() (code, message string) {
-	if e == nil {
-		return "rejected", "tool request rejected"
-	}
-	return e.code, e.message
 }
 
 // Reject returns a typed, model-visible tool failure. Code should be a stable
@@ -74,4 +63,32 @@ func Reject(code, message string) error {
 		code:    code,
 		message: message,
 	}
+}
+
+// AsRejection reports whether err, or an error it wraps, was created by
+// [Reject]. Only the package-private rejection type is recognized; an ordinary
+// application error cannot opt into model-visible delivery by implementing a
+// public method with the same shape.
+func AsRejection(err error) (code, message string, ok bool) {
+	// Walk only standard unwrap contracts. Using errors.As here would let an
+	// unrelated error's custom As method manufacture the private target and
+	// cross the safe-delivery boundary.
+	pending := []error{err}
+	for inspected := 0; len(pending) > 0 && inspected < 100; inspected++ {
+		current := pending[len(pending)-1]
+		pending = pending[:len(pending)-1]
+		if current == nil {
+			continue
+		}
+		if rejection, trusted := current.(*rejectionError); trusted && rejection != nil {
+			return rejection.code, rejection.message, true
+		}
+		switch wrapped := current.(type) {
+		case interface{ Unwrap() []error }:
+			pending = append(pending, wrapped.Unwrap()...)
+		case interface{ Unwrap() error }:
+			pending = append(pending, wrapped.Unwrap())
+		}
+	}
+	return "", "", false
 }

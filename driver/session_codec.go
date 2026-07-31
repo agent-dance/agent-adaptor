@@ -11,8 +11,8 @@ const (
 	SessionParamCWD = "cwd"
 	// SessionParamWorkspaceID records the SDK workspace lease identifier.
 	SessionParamWorkspaceID = "workspace_id"
-	// SessionParamProfileFingerprint records the provider-visible effective
-	// profile resource fingerprint captured by a resumable session.
+	// SessionParamProfileFingerprint records the effective profile session
+	// compatibility fingerprint captured by a resumable session.
 	SessionParamProfileFingerprint = "profile_fingerprint"
 )
 
@@ -43,12 +43,14 @@ type SessionParams struct {
 // DisplayID and Values losslessly, and GuardFingerprint MUST be deterministic
 // across processes for equivalent canonical parameters.
 //
-// Built-in drivers hash the ProfilePayload.Fingerprint into the session
+// Built-in drivers store ProfilePayload.SessionFingerprint() in the session
 // params so that GuardFingerprint changes whenever MCP, skills, agents,
-// hooks, instructions, or structured config changes. A Run invocation that
-// supplies a resume ID whose GuardFingerprint no longer matches the current
-// profile payload MUST be rejected before provider launch with a dedicated
-// error.
+// hooks, instructions, or structured config changes. Core may normalize only
+// Agent-owned ephemeral transport allocation details in that value;
+// ProfilePayload.Fingerprint remains the exact provider-visible materialization
+// fingerprint. A Run invocation that supplies a resume ID whose
+// GuardFingerprint no longer matches the current session fingerprint MUST be
+// rejected before provider launch with a dedicated error.
 // This keeps provider-visible profile resources consistent with the session
 // they were captured for.
 type SessionCodec interface {

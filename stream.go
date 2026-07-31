@@ -179,13 +179,6 @@ func (a *Agent) openStream(ctx context.Context, opts []CallOption, threadKey str
 		close(st.done)
 		return st, eff, ctx, false
 	}
-	if profileErr := a.prepareHostedToolProfile(ctx, &eff); profileErr != nil {
-		st.err = fmt.Errorf("adaptor: run %s: %w", runID, profileErr)
-		cancel()
-		sink.close()
-		close(st.done)
-		return st, eff, ctx, false
-	}
 	if policyErr := validatePolicy(desc, eff.policy); policyErr != nil {
 		st.err = fmt.Errorf("adaptor: run %s: %w", runID, policyErr)
 		cancel()

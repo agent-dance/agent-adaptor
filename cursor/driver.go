@@ -329,7 +329,7 @@ func (adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSin
 	if command == "" {
 		command = "agent"
 	}
-	profileFingerprint := req.ProfilePayload.Fingerprint
+	profileFingerprint := req.ProfilePayload.SessionFingerprint()
 	bindings, err := effectiveCursorBindingsNoInitialize(cfg.CommonConfig, req.Profile)
 	if err != nil {
 		return driver.Response{}, err

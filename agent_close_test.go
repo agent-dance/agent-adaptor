@@ -12,7 +12,16 @@ import (
 	"time"
 
 	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/tool"
 )
+
+type closeTestToolInput struct {
+	Value string `json:"value" jsonschema:"required"`
+}
+
+type closeTestToolOutput struct {
+	Value string `json:"value"`
+}
 
 func TestHostedToolProfileAllocationIsPrivateAndAtomic(t *testing.T) {
 	source := t.TempDir()
@@ -66,6 +75,64 @@ func TestHostedToolProfileClaimSerializesFirstMaterialization(t *testing.T) {
 	}
 	if d.maxActive != 1 {
 		t.Fatalf("max concurrent GetProfile calls = %d, want 1", d.maxActive)
+	}
+}
+
+func TestAgentCloseBoundsAdmittedHostedToolProfileResolutionAndCleansAllocation(t *testing.T) {
+	d := &profileLockTestDriver{
+		profileDir:   t.TempDir(),
+		firstEntered: make(chan struct{}),
+		releaseFirst: make(chan struct{}),
+	}
+	agent := New(d, WithTools(tool.Define("echo", "Echo input.",
+		func(_ context.Context, input closeTestToolInput) (closeTestToolOutput, error) {
+			return closeTestToolOutput{Value: input.Value}, nil
+		},
+		tool.Revision("echo/v1"),
+	)))
+
+	stream := agent.Stream(context.Background(), "use echo")
+	run := stream.(*runStream)
+	select {
+	case <-d.firstEntered:
+	case <-run.done:
+		_, err := stream.Result()
+		t.Fatalf("run ended before profile resolution: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("profile resolution did not start")
+	}
+
+	closeCtx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	if err := agent.Close(closeCtx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Close while profile resolution is blocked = %v, want deadline", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("bounded Close took %v", elapsed)
+	}
+
+	close(d.releaseFirst)
+	_, _ = stream.Result()
+
+	agent.toolProfileMu.Lock()
+	var ownedDir string
+	for _, selection := range agent.toolProfileSelections {
+		ownedDir = selection.ownedDir
+		break
+	}
+	agent.toolProfileMu.Unlock()
+	if ownedDir == "" {
+		t.Fatal("admitted profile resolution did not record its owned directory")
+	}
+	if _, err := os.Stat(ownedDir); err != nil {
+		t.Fatalf("owned profile before Close retry: %v", err)
+	}
+	if err := agent.Close(context.Background()); err != nil {
+		t.Fatalf("Close retry: %v", err)
+	}
+	if _, err := os.Stat(ownedDir); !os.IsNotExist(err) {
+		t.Fatalf("owned profile after Close = %v, want removed", err)
 	}
 }
 

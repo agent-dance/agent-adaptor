@@ -98,8 +98,12 @@ if !issues.Exists(in.Key) {
 The code is a stable machine category and the message is safe to show to the
 model. Ordinary Go errors, schema-invalid outputs, and panics are treated as
 internal failures and are replaced with a generic message. Handler error text
-never becomes provider-visible by accident. Context cancellation and the
-runtime's bounded handler deadline cancel the handler context.
+never becomes provider-visible by accident. Only errors created by
+`tool.Reject` are trusted for model-visible delivery; implementing a lookalike
+method on an application error cannot opt into that path. `tool.AsRejection`
+recognizes a rejection (including through wrapping) without exposing its
+private concrete type. Context cancellation and the runtime's bounded handler
+deadline cancel the handler context.
 
 Annotations created with `ReadOnly`, `Destructive`, `NonDestructive`,
 `Idempotent`, `OpenWorld`, and `ClosedWorld` are behavioral hints. The paired
@@ -120,13 +124,17 @@ revision whenever handler behavior changes without a corresponding descriptor
 or schema change. A missing revision fails a Thread before the Driver starts.
 An unchanged catalog can resume the Thread and reuse a compatible persistent
 provider process; a changed catalog or revision safely produces a different
-compatibility identity. The concrete loopback URL remains part of MCP profile
-materialization, but its ephemeral port is replaced by the catalog fingerprint
-only for Thread and provider-session compatibility. Reconstructing an Agent
-after a host restart can therefore resume an unchanged Tool catalog while still
-rewriting the provider profile with the new real endpoint. The Driver SPI
-requires resumed invocations to refresh the complete current request rather
-than rely on cached MCP or profile bindings.
+compatibility identity. The concrete loopback URL and per-Agent bearer
+environment-variable name remain part of MCP/profile materialization. Only the
+separate session compatibility fingerprint replaces those ephemeral allocation
+details with the catalog fingerprint. `ProfilePayload.Fingerprint` therefore
+continues to identify the exact provider-visible payload, while
+`ProfilePayload.SessionFingerprint()` is the resume/persistent-process guard.
+Reconstructing an Agent after a host restart can resume an unchanged Tool
+catalog while still rewriting the provider profile with the new real endpoint
+and credential carrier. The Driver SPI requires resumed invocations to refresh
+the complete current request rather than rely on cached MCP or profile
+bindings.
 
 For the four built-in Drivers, the provider-native MCP file is written to an
 SDK-owned, Agent/identity-specific clone profile. The configured/native profile
@@ -151,7 +159,7 @@ resource resolution, not while defining the Tool. It has these properties:
 
 - numeric IPv4 loopback binding only;
 - authenticated Streamable HTTP with an Agent-specific high-entropy bearer
-  token;
+  token and an independently random per-Agent environment-variable name;
 - exact Host and Origin validation, request/header limits, bounded global
   concurrency, handler deadlines, panic recovery, and graceful shutdown;
 - secrets delivered only through the Driver subprocess environment, never in
@@ -183,6 +191,10 @@ server is appended through the existing runtime-service-to-MCP resolution
 path. A per-call `WithMCP()` clear does not remove construction-time Tools.
 Using the reserved hosted server key from an explicit MCP declaration is
 rejected before Driver launch rather than silently overriding either server.
+An explicit or runtime-published MCP server is also rejected if it aliases the
+private environment-variable name carrying this Agent's hosted Tool bearer
+token. The name is unpredictable per Agent, so a copied source profile cannot
+predeclare the alias either.
 Provider profile materialization applies the same fail-closed rule when that
 key already belongs to an external entry copied into the isolated execution
 profile. Ownership markers and rendered-content fingerprints ensure cleanup

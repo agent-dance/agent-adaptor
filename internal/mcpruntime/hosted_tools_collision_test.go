@@ -15,6 +15,8 @@ import (
 	"github.com/agent-dance/agent-adaptor/internal/toolidentity"
 )
 
+const hostedToolsTestBearerEnv = toolidentity.BearerTokenEnvVarPrefix + "0123456789ABCDEF0123456789ABCDEF"
+
 func TestHostedToolsRejectExternalReservedKeyAcrossProviderProfiles(t *testing.T) {
 	for _, driverType := range []string{"codex", "claude", "cursor", "codebuddy"} {
 		t.Run(driverType, func(t *testing.T) {
@@ -93,7 +95,7 @@ func TestHostedToolsMayReplaceItsOwnManagedStaleEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(raw) == "" || !containsAll(string(raw), "127.0.0.1:2", toolidentity.BearerTokenEnvVar) {
+	if string(raw) == "" || !containsAll(string(raw), "127.0.0.1:2", hostedToolsTestBearerEnv) {
 		t.Fatalf("managed hosted Tool endpoint was not updated: %s", raw)
 	}
 }
@@ -175,7 +177,7 @@ func hostedToolsPayload(endpoint string) driver.MCPPayload {
 		Key:               toolidentity.ServerKey,
 		Transport:         driver.MCPTransportHTTP,
 		URL:               endpoint,
-		BearerTokenEnvVar: toolidentity.BearerTokenEnvVar,
+		BearerTokenEnvVar: hostedToolsTestBearerEnv,
 		Required:          true,
 		RequiredReason:    toolidentity.RequiredReason,
 	}

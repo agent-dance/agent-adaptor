@@ -624,6 +624,10 @@ func checkLiveRun(t *testing.T, d driver.Driver, c *suiteConfig) {
 		Config:    c.config,
 		Streaming: true,
 		Metadata:  map[string]string{"adaptertest": "v1"},
+		ProfilePayload: driver.ProfilePayload{
+			Fingerprint:                     "adaptertest-profile-concrete",
+			SessionCompatibilityFingerprint: "adaptertest-profile-session",
+		},
 	}
 	if c.workspaceCWD != "" {
 		req.Workspace = driver.WorkspaceLease{ID: "adaptertest-ws", CWD: c.workspaceCWD}
@@ -645,6 +649,11 @@ func checkLiveRun(t *testing.T, d driver.Driver, c *suiteConfig) {
 	}
 
 	reportViolations(t, VerifyCheckpointCodec(d, &resp))
+	if resp.Checkpoint != nil && resp.Checkpoint.Valid && resp.Checkpoint.State != nil {
+		if got, want := resp.Checkpoint.State.Data[driver.SessionParamProfileFingerprint], req.ProfilePayload.SessionFingerprint(); got != want {
+			t.Errorf("SES-09: checkpoint profile fingerprint = %q, want current session compatibility fingerprint %q", got, want)
+		}
+	}
 }
 
 func checkLiveStructuredOutput(t *testing.T, d driver.Driver, desc driver.Descriptor, c *suiteConfig) {

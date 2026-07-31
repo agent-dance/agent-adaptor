@@ -21,8 +21,11 @@ type Driver interface {
 	// Request on every invocation, including a resumed provider conversation;
 	// it must refresh provider-visible profile, MCP, skill, instruction, and
 	// runtime bindings rather than relying on values cached by an earlier
-	// process or turn. A non-nil error is an infrastructure or execution error
-	// and makes any returned valid Checkpoint invalid.
+	// process or turn. Resume/persistent guards use
+	// req.ProfilePayload.SessionFingerprint(), while materialization continues
+	// to use the exact payload and Fingerprint. A non-nil error is an
+	// infrastructure or execution error and makes any returned valid Checkpoint
+	// invalid.
 	Run(ctx context.Context, req Request, sink EventSink) (Response, error)
 }
 

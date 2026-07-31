@@ -343,7 +343,7 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 	if command == "" {
 		command = "claude"
 	}
-	profileFingerprint := req.ProfilePayload.Fingerprint
+	profileFingerprint := req.ProfilePayload.SessionFingerprint()
 	bindings, err := effectiveClaudeBindingsNoInitialize(cfg.CommonConfig, req.Profile)
 	if err != nil {
 		return driver.Response{}, err
@@ -433,7 +433,7 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 		browser:   req.Policy.Browser == driver.FeatureAllow,
 		streaming: req.Streaming && !interactive, interactive: interactive,
 		resumeID: resumeID, engineID: persistentSessionKey(req), previousID: persistentPreviousSessionKey(req), prompt: rawPrompt,
-		profileFingerprint:  req.ProfilePayload.Fingerprint,
+		profileFingerprint:  req.ProfilePayload.SessionFingerprint(),
 		settingsFingerprint: claudeSettingsFingerprint(bindings, effectiveCWD, effectiveProfile.Dir),
 		commandFingerprint:  commandFileFingerprint(command),
 		gracePeriod:         cfg.GracePeriod,

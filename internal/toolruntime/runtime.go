@@ -34,10 +34,6 @@ const (
 	// catalog. A process-wide gateway lets concurrent Agents safely materialize
 	// the same URL into a shared provider profile.
 	ServerKey = toolidentity.ServerKey
-	// BearerTokenEnvVar is also process-wide. Provider subprocesses receive the
-	// Agent-specific value in their private environment; the gateway uses that
-	// value to select the corresponding immutable catalog.
-	BearerTokenEnvVar = toolidentity.BearerTokenEnvVar
 
 	defaultMaxRequestBodyBytes = 1 << 20
 	defaultMaxResponseBytes    = 4 << 20
@@ -73,6 +69,10 @@ type Runtime struct {
 	manager     *gatewayManager
 	catalog     *runtimeCatalog
 	fingerprint string
+	// bearerTokenEnvVar is a non-secret but unpredictable Agent registration
+	// name. Keeping it distinct across Agents prevents an unrelated MCP server
+	// from aliasing the hosted Tool credential carrier.
+	bearerTokenEnvVar string
 
 	mu           sync.Mutex
 	started      bool
@@ -114,11 +114,16 @@ func newRuntime(manager *gatewayManager, definitions []tool.Definition) (*Runtim
 	if err != nil {
 		return nil, err
 	}
+	bearerTokenEnvVar, err := newBearerTokenEnvVar()
+	if err != nil {
+		return nil, fmt.Errorf("create tool runtime credential name: %w", err)
+	}
 	return &Runtime{
-		manager:     manager,
-		catalog:     projection,
-		fingerprint: fingerprint,
-		closeDone:   make(chan struct{}),
+		manager:           manager,
+		catalog:           projection,
+		fingerprint:       fingerprint,
+		bearerTokenEnvVar: bearerTokenEnvVar,
+		closeDone:         make(chan struct{}),
 	}, nil
 }
 
@@ -158,6 +163,7 @@ func (r *Runtime) Start(ctx context.Context) (Endpoint, error) {
 		}
 		endpoint, registration, err := r.manager.register(ctx, token, r.catalog)
 		if err == nil {
+			endpoint.BearerTokenEnvVar = r.bearerTokenEnvVar
 			r.started = true
 			r.endpoint = endpoint
 			r.token = token
@@ -178,6 +184,24 @@ func newBearerToken() (string, error) {
 		return "", err
 	}
 	return base64.RawURLEncoding.EncodeToString(secret[:]), nil
+}
+
+func newBearerTokenEnvVar() (string, error) {
+	var suffix [16]byte
+	if _, err := rand.Read(suffix[:]); err != nil {
+		return "", err
+	}
+	return toolidentity.BearerTokenEnvVarPrefix + strings.ToUpper(hex.EncodeToString(suffix[:])), nil
+}
+
+// BearerTokenEnvVar returns this Agent registration's unpredictable,
+// non-secret credential carrier name. It is available before Start so MCP
+// declarations can be checked for aliasing before the listener is opened.
+func (r *Runtime) BearerTokenEnvVar() string {
+	if r == nil {
+		return ""
+	}
+	return r.bearerTokenEnvVar
 }
 
 // Endpoint returns the shared non-secret endpoint after Start.
@@ -394,12 +418,9 @@ func (c *runtimeCatalog) handler(name string) mcp.ToolHandlerFor[json.RawMessage
 		}
 		out, invokeErr := definition.Invoke(handlerCtx, slices.Clone(input))
 		if invokeErr != nil {
-			var rejection interface {
-				ToolRejection() (code, message string)
-			}
+			code, message, rejected := tool.AsRejection(invokeErr)
 			switch {
-			case errors.As(invokeErr, &rejection):
-				code, message := rejection.ToolRejection()
+			case rejected:
 				if validRejection(code, message) {
 					return failureResult(code, message), nil, nil
 				}
@@ -563,7 +584,7 @@ func newGateway(ctx context.Context, config gatewayConfig) (*gateway, error) {
 	address := listener.Addr().String()
 	gateway := &gateway{
 		config:        config,
-		endpoint:      Endpoint{URL: "http://" + address + "/mcp", BearerTokenEnvVar: BearerTokenEnvVar},
+		endpoint:      Endpoint{URL: "http://" + address + "/mcp"},
 		expectedHost:  address,
 		listener:      listener,
 		semaphore:     make(chan struct{}, config.maxConcurrent),

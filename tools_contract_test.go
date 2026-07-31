@@ -152,6 +152,52 @@ func TestWithToolsIsIndependentOfPerCallWithMCPClearAndDetectsCollision(t *testi
 	}
 }
 
+func TestWithToolsRejectsBearerEnvAliasingFromMCPAndRunServices(t *testing.T) {
+	fake := toolCapableFake()
+	agent := adaptor.New(fake, adaptor.WithTools(
+		hostedToolDefinition("echo", tool.Revision("echo/v1")),
+	))
+	t.Cleanup(func() { _ = agent.Close(context.Background()) })
+
+	if _, err := agent.Run(context.Background(), "learn resolved transport"); err != nil {
+		t.Fatalf("initial Run: %v", err)
+	}
+	ownedEnv := fake.request(t, 0).MCP.Servers[0].BearerTokenEnvVar
+	if ownedEnv == "" {
+		t.Fatal("hosted Tool request has no bearer environment variable")
+	}
+
+	_, err := agent.Run(context.Background(), "must reject explicit alias",
+		adaptor.WithMCP(mcp.HTTP("external", "https://example.com/mcp", mcp.WithBearerTokenEnv(ownedEnv))),
+	)
+	if !errors.Is(err, adaptor.ErrInvalidMCPConfig) {
+		t.Fatalf("explicit MCP alias error = %v, want ErrInvalidMCPConfig", err)
+	}
+
+	provider := &fakeProvider{
+		name: "external",
+		log:  &callLog{},
+		attachment: adaptor.RunAttachment{Services: []adaptor.ServiceRef{{
+			ID:   "external",
+			Name: "external",
+			URL:  "https://example.com/mcp",
+			MCP: &driver.MCPServerSpec{
+				Key:               "external-runtime",
+				Transport:         driver.MCPTransportHTTP,
+				URL:               "https://example.com/mcp",
+				BearerTokenEnvVar: ownedEnv,
+			},
+		}}},
+	}
+	_, err = agent.Run(context.Background(), "must reject runtime alias", adaptor.WithRunServices(provider))
+	if !errors.Is(err, adaptor.ErrInvalidMCPConfig) {
+		t.Fatalf("runtime MCP alias error = %v, want ErrInvalidMCPConfig", err)
+	}
+	if fake.runCount() != 1 {
+		t.Fatalf("driver runs = %d, want only initial run", fake.runCount())
+	}
+}
+
 func TestWithToolsRequiresDriverHTTPMCPSupportBeforeLaunch(t *testing.T) {
 	fake := newFakeDriver()
 	descriptor := fake.Descriptor()
@@ -241,14 +287,20 @@ func TestToolCatalogRevisionChangesThreadFingerprintAtStableEndpoint(t *testing.
 	}
 	second := fake.request(t, 1)
 
-	if first.MCP.Servers[0].URL != second.MCP.Servers[0].URL || first.MCP.Fingerprint != second.MCP.Fingerprint {
-		t.Fatal("process-wide hosted Tool connection changed; test requires stable MCP transport identity")
+	if first.MCP.Servers[0].URL != second.MCP.Servers[0].URL {
+		t.Fatal("process-wide hosted Tool URL changed; test requires one shared gateway")
+	}
+	if first.MCP.Servers[0].BearerTokenEnvVar == second.MCP.Servers[0].BearerTokenEnvVar || first.MCP.Fingerprint == second.MCP.Fingerprint {
+		t.Fatal("distinct Agents reused concrete hosted Tool credential transport identity")
 	}
 	if first.Runtime.Ensured[0].ReuseKey == second.Runtime.Ensured[0].ReuseKey {
 		t.Fatal("catalog revision did not change the deterministic runtime compatibility identity")
 	}
 	if first.Runtime.Fingerprint == second.Runtime.Fingerprint {
 		t.Fatal("final driver RuntimePayload fingerprint ignored the changed Tool attachment")
+	}
+	if first.ProfilePayload.SessionFingerprint() == second.ProfilePayload.SessionFingerprint() {
+		t.Fatal("catalog revision did not change the session compatibility fingerprint")
 	}
 	if second.Session == nil || second.Session.State != nil {
 		t.Fatalf("changed catalog resumed old provider state: %+v", second.Session)
@@ -324,8 +376,11 @@ func TestToolCatalogResumesThreadAcrossAgentRestartAndEphemeralPortChange(t *tes
 	if first.Runtime.Fingerprint == second.Runtime.Fingerprint {
 		t.Fatal("driver runtime fingerprint ignored the concrete endpoint change")
 	}
-	if first.ProfilePayload.Fingerprint != second.ProfilePayload.Fingerprint {
-		t.Fatal("semantic Tool profile compatibility changed with only the ephemeral port")
+	if first.ProfilePayload.Fingerprint == second.ProfilePayload.Fingerprint {
+		t.Fatal("concrete ProfilePayload fingerprint ignored the new endpoint or credential carrier")
+	}
+	if first.ProfilePayload.SessionFingerprint() != second.ProfilePayload.SessionFingerprint() {
+		t.Fatal("session Tool profile compatibility changed with only ephemeral transport allocation")
 	}
 	if second.Session == nil || second.Session.State == nil || second.Session.State.ResumeID == "" {
 		t.Fatalf("second request did not resume the stored provider session: %+v", second.Session)

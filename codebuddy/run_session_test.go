@@ -121,12 +121,15 @@ func TestCodeBuddyHeadlessRunProducesCheckpointAndArgs(t *testing.T) {
 		Model: "claude-sonnet-5",
 	}
 	req := driver.Request{
-		RunID:          "run-headless-1",
-		Prompt:         "hello from codebuddy",
-		Config:         cfg,
-		Workspace:      driver.WorkspaceLease{ID: "workspace-a", CWD: workspace},
-		Policy:         autoApprovePolicy(),
-		ProfilePayload: driver.ProfilePayload{Fingerprint: "profile-a"},
+		RunID:     "run-headless-1",
+		Prompt:    "hello from codebuddy",
+		Config:    cfg,
+		Workspace: driver.WorkspaceLease{ID: "workspace-a", CWD: workspace},
+		Policy:    autoApprovePolicy(),
+		ProfilePayload: driver.ProfilePayload{
+			Fingerprint:                     "concrete-profile-a",
+			SessionCompatibilityFingerprint: "profile-a",
+		},
 	}
 
 	events := &testutil.EventRecorder{}
@@ -191,11 +194,14 @@ func TestCodeBuddyHeadlessResumeAndGuard(t *testing.T) {
 		Model: "claude-sonnet-5",
 	}
 	base := driver.Request{
-		Prompt:         "hi",
-		Config:         cfg,
-		Workspace:      driver.WorkspaceLease{ID: "workspace-a", CWD: workspace},
-		Policy:         autoApprovePolicy(),
-		ProfilePayload: driver.ProfilePayload{Fingerprint: "profile-a"},
+		Prompt:    "hi",
+		Config:    cfg,
+		Workspace: driver.WorkspaceLease{ID: "workspace-a", CWD: workspace},
+		Policy:    autoApprovePolicy(),
+		ProfilePayload: driver.ProfilePayload{
+			Fingerprint:                     "concrete-profile-a",
+			SessionCompatibilityFingerprint: "profile-a",
+		},
 	}
 
 	first, err := (adapter{}).Run(context.Background(), base, &testutil.EventRecorder{})
@@ -205,6 +211,7 @@ func TestCodeBuddyHeadlessResumeAndGuard(t *testing.T) {
 
 	// Matching resume: passes the guard and forwards --resume <session>.
 	resume := base
+	resume.ProfilePayload.Fingerprint = "concrete-profile-b"
 	resume.Session = &driver.SessionContext{State: first.Checkpoint.State}
 	events := &testutil.EventRecorder{}
 	if _, err := (adapter{}).Run(context.Background(), resume, events); err != nil {
@@ -214,7 +221,7 @@ func TestCodeBuddyHeadlessResumeAndGuard(t *testing.T) {
 
 	// Profile fingerprint mismatch: resume is rejected.
 	reject := base
-	reject.ProfilePayload = driver.ProfilePayload{Fingerprint: "profile-b"}
+	reject.ProfilePayload = driver.ProfilePayload{Fingerprint: "concrete-profile-b", SessionCompatibilityFingerprint: "profile-b"}
 	reject.Session = &driver.SessionContext{State: first.Checkpoint.State}
 	if _, err := (adapter{}).Run(context.Background(), reject, &testutil.EventRecorder{}); !errors.Is(err, engine.ErrResumeRejected) {
 		t.Fatalf("expected ErrResumeRejected, got %v", err)

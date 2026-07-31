@@ -232,7 +232,7 @@ func RemoveHostedToolProfile(ctx context.Context, driverType, profileDir string)
 func isHostedToolServer(server driver.MCPServerSpec) bool {
 	return server.Key == toolidentity.ServerKey &&
 		server.Transport == driver.MCPTransportHTTP &&
-		server.BearerTokenEnvVar == toolidentity.BearerTokenEnvVar &&
+		toolidentity.IsBearerTokenEnvVar(server.BearerTokenEnvVar) &&
 		server.Required && server.RequiredReason == toolidentity.RequiredReason
 }
 

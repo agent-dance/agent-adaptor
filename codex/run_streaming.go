@@ -43,7 +43,7 @@ func buildAppServerOptions(
 ) (appserver.Options, error) {
 	effectiveCWD := chooseCWD(cfg.CommonConfig, req.Workspace)
 
-	if err := validateCodexSessionGuard(req, effectiveCWD, req.ProfilePayload.Fingerprint); err != nil {
+	if err := validateCodexSessionGuard(req, effectiveCWD, req.ProfilePayload.SessionFingerprint()); err != nil {
 		return appserver.Options{}, err
 	}
 
@@ -105,7 +105,7 @@ func finishAppServerResult(req driver.Request, result driver.Response, effective
 		}
 		result.Checkpoint.State.Data[driver.SessionParamCWD] = effectiveCWD
 		result.Checkpoint.State.Data[driver.SessionParamWorkspaceID] = req.Workspace.ID
-		result.Checkpoint.State.Data[driver.SessionParamProfileFingerprint] = req.ProfilePayload.Fingerprint
+		result.Checkpoint.State.Data[driver.SessionParamProfileFingerprint] = req.ProfilePayload.SessionFingerprint()
 	}
 
 	// Attach runtime-service reports: these are produced by the SDK

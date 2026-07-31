@@ -4,6 +4,30 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-07-31
+
+### Added
+
+- `tool.AsRejection` for recognizing wrapped errors created by `tool.Reject`
+  without exposing or trusting an application-implementable rejection type.
+- A separate `ProfilePayload.SessionCompatibilityFingerprint` and
+  `SessionFingerprint()` Driver SPI contract, keeping exact profile
+  materialization distinct from resumable-session compatibility.
+
+### Fixed
+
+- Moved hosted Tool profile resolution and allocation inside Agent lifecycle
+  admission so `Agent.Close(ctx)` remains bounded and retry cleanup cannot miss
+  a concurrently created private profile.
+- Prevented application errors from forging model-visible Tool rejections by
+  implementing the former public method shape.
+- Replaced the process-wide hosted Tool credential env name with an
+  unpredictable per-Agent name, and reject explicit or runtime-published MCP
+  servers that attempt to alias it.
+- Preserved the concrete `ProfilePayload.Fingerprint` across Thread execution;
+  only the separate session compatibility guard now normalizes Agent-owned
+  ephemeral endpoint and credential-carrier allocations.
+
 ## [1.1.0] - 2026-07-31
 
 ### Added

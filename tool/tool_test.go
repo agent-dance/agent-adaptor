@@ -287,13 +287,11 @@ func TestInvokePreservesHandlerErrorsCancellationAndRejection(t *testing.T) {
 	if err != rejectedErr {
 		t.Fatalf("rejection error = %v, want exact handler error", err)
 	}
-	var rejection interface {
-		ToolRejection() (code, message string)
-	}
-	if !errors.As(err, &rejection) {
+	code, message, ok := tool.AsRejection(err)
+	if !ok {
 		t.Fatalf("rejection type = %T", err)
 	}
-	if code, message := rejection.ToolRejection(); code != "not_found" || message != "No matching record." {
+	if code != "not_found" || message != "No matching record." {
 		t.Fatalf("rejection = (%q, %q)", code, message)
 	}
 
@@ -322,8 +320,7 @@ func TestInvokeRecoversPanicAndRejectsInvalidOutput(t *testing.T) {
 	if _, err := panics.Invoke(context.Background(), nil); err == nil || strings.Contains(err.Error(), "secret detail") {
 		t.Fatalf("panic error = %v, want recovered and sanitized", err)
 	} else {
-		var rejection interface{ ToolRejection() (string, string) }
-		if errors.As(err, &rejection) {
+		if _, _, ok := tool.AsRejection(err); ok {
 			t.Fatalf("panic classified as safe rejection: %v", err)
 		}
 	}
@@ -349,8 +346,7 @@ func TestInvokeRecoversJSONCodecPanics(t *testing.T) {
 		if err == nil || strings.Contains(err.Error(), "secret") {
 			t.Fatalf("%s error = %v, want recovered and sanitized", name, err)
 		}
-		var rejection interface{ ToolRejection() (string, string) }
-		if errors.As(err, &rejection) {
+		if _, _, ok := tool.AsRejection(err); ok {
 			t.Fatalf("%s panic classified as safe rejection: %v", name, err)
 		}
 	}
@@ -418,10 +414,10 @@ func TestRejectNormalizesSafeFields(t *testing.T) {
 		{code: strings.Repeat("x", 65), message: strings.Repeat("y", 4097), wantCode: "rejected", wantMessage: "tool request rejected"},
 	}
 	for _, test := range tests {
-		var rejection interface{ ToolRejection() (string, string) }
-		if err := tool.Reject(test.code, test.message); !errors.As(err, &rejection) {
-			t.Fatalf("Reject(%q, %q) type = %T", test.code, test.message, err)
-		} else if code, message := rejection.ToolRejection(); code != test.wantCode || message != test.wantMessage {
+		rejectionErr := tool.Reject(test.code, test.message)
+		if code, message, ok := tool.AsRejection(errors.Join(errors.New("wrapped"), rejectionErr)); !ok {
+			t.Fatalf("Reject(%q, %q) type = %T", test.code, test.message, rejectionErr)
+		} else if code != test.wantCode || message != test.wantMessage {
 			t.Fatalf("Reject(%q, %q) = (%q, %q), want (%q, %q)", test.code, test.message, code, message, test.wantCode, test.wantMessage)
 		}
 	}

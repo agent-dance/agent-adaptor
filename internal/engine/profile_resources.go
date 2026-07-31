@@ -104,15 +104,16 @@ func cloneProfileResources(resources ProfileResources) ProfileResources {
 
 func cloneProfilePayload(payload ProfilePayload) ProfilePayload {
 	return ProfilePayload{
-		Skills:       cloneResolvedSkills(payload.Skills),
-		MCP:          cloneMCPPayload(payload.MCP),
-		Agents:       cloneAgentPayload(payload.Agents),
-		Hooks:        cloneHookPayload(payload.Hooks),
-		Instructions: cloneInstructions(payload.Instructions),
-		Config:       cloneProfileConfigPayload(payload.Config),
-		Declared:     payload.Declared,
-		Fingerprint:  payload.Fingerprint,
-		Warnings:     cloneStrings(payload.Warnings),
+		Skills:                          cloneResolvedSkills(payload.Skills),
+		MCP:                             cloneMCPPayload(payload.MCP),
+		Agents:                          cloneAgentPayload(payload.Agents),
+		Hooks:                           cloneHookPayload(payload.Hooks),
+		Instructions:                    cloneInstructions(payload.Instructions),
+		Config:                          cloneProfileConfigPayload(payload.Config),
+		Declared:                        payload.Declared,
+		Fingerprint:                     payload.Fingerprint,
+		SessionCompatibilityFingerprint: payload.SessionCompatibilityFingerprint,
+		Warnings:                        cloneStrings(payload.Warnings),
 	}
 }
 
@@ -526,7 +527,18 @@ func buildProfilePayload(skills ResolvedSkills, mcp MCPPayload, agents AgentPayl
 		config.Fingerprint,
 		declared,
 	)
-	return ProfilePayload{Skills: cloneResolvedSkills(skills), MCP: cloneMCPPayload(mcp), Agents: cloneAgentPayload(agents), Hooks: cloneHookPayload(hooks), Instructions: cloneInstructions(instructions), Config: cloneProfileConfigPayload(config), Declared: declared, Fingerprint: fingerprint, Warnings: warnings}
+	return ProfilePayload{
+		Skills:                          cloneResolvedSkills(skills),
+		MCP:                             cloneMCPPayload(mcp),
+		Agents:                          cloneAgentPayload(agents),
+		Hooks:                           cloneHookPayload(hooks),
+		Instructions:                    cloneInstructions(instructions),
+		Config:                          cloneProfileConfigPayload(config),
+		Declared:                        declared,
+		Fingerprint:                     fingerprint,
+		SessionCompatibilityFingerprint: fingerprint,
+		Warnings:                        warnings,
+	}
 }
 
 // instructionFingerprint hashes the effective instruction bundle. It moved

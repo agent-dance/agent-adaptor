@@ -106,8 +106,11 @@ const (
 )
 
 // ProfilePayload is the driver-facing normalized profile desired state for a
-// single resolved invocation. Fingerprint covers every provider-visible
-// resource kind so drivers can use it as the session resume guard.
+// single resolved invocation. Fingerprint covers the exact provider-visible
+// resources in this request. SessionCompatibilityFingerprint is the separate
+// resume/persistent-process guard; core may normalize only Agent-owned,
+// ephemeral transport allocations there while retaining the exact payload and
+// Fingerprint for materialization.
 type ProfilePayload struct {
 	Skills       ResolvedSkills
 	MCP          MCPPayload
@@ -116,9 +119,21 @@ type ProfilePayload struct {
 	Instructions *InstructionsBundleRef
 	Config       ProfileConfigPayload
 
-	Declared    ProfileResourceDeclarations
-	Fingerprint string
-	Warnings    []string
+	Declared                        ProfileResourceDeclarations
+	Fingerprint                     string
+	SessionCompatibilityFingerprint string
+	Warnings                        []string
+}
+
+// SessionFingerprint returns the fingerprint Drivers must store in session
+// params and use for resume and persistent-process guards. The fallback keeps
+// manually constructed Request values and older hosts correct when they only
+// populate Fingerprint.
+func (p ProfilePayload) SessionFingerprint() string {
+	if p.SessionCompatibilityFingerprint != "" {
+		return p.SessionCompatibilityFingerprint
+	}
+	return p.Fingerprint
 }
 
 // ProfileResourceDeclarations records which optional profile resource kinds

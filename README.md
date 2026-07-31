@@ -316,9 +316,9 @@ agent := adaptor.New(
 defer agent.Close(context.Background())
 ```
 
-`WithTools` is construction-only and replaces the Tool set as a whole. Schemas are inferred from the handler's Go types by default, and an explicit standard JSON Schema can be supplied instead. `tool.Reject(code, message)` reports a business failure that is safe to show the model, while ordinary errors and panics are sanitized. Every Tool used by a stateful Thread needs a `tool.Revision` so that changes in handler behavior participate in resume compatibility.
+`WithTools` is construction-only and replaces the Tool set as a whole. Schemas are inferred from the handler's Go types by default, and an explicit standard JSON Schema can be supplied instead. `tool.Reject(code, message)` reports a business failure that is safe to show the model; only package-minted rejections pass that boundary, while ordinary errors, lookalikes, and panics are sanitized. Every Tool used by a stateful Thread needs a `tool.Revision` so that changes in handler behavior participate in resume compatibility.
 
-MCP is only the internal delivery mechanism here: existing or remote MCP servers still go through `WithMCP`, and built-in Drivers materialize Tools into an SDK-owned isolated profile, leaving the native profile you configured untouched. For lifecycle, schema, error, security, and Thread semantics see the [host-defined Tools contract](./docs/tools.md).
+MCP is only the internal delivery mechanism here: existing or remote MCP servers still go through `WithMCP`, and built-in Drivers materialize Tools into an SDK-owned isolated profile, leaving the native profile you configured untouched. Each Agent receives an unpredictable bearer-token environment-variable name, and another MCP server cannot alias that credential carrier. For lifecycle, schema, error, security, and Thread semantics see the [host-defined Tools contract](./docs/tools.md).
 
 ## Agent isolation
 

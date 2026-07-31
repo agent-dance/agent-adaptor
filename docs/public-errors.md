@@ -116,6 +116,9 @@ validated at the host-handler boundary.
 `tool.Reject(code, message)` is deliberately a constructor rather than an
 additional public error type. It marks an expected, model-visible Tool failure;
 all other handler errors and panics are sanitized by the internal runtime.
+`tool.AsRejection(err)` recognizes only errors minted by `tool.Reject`, even
+through wrapping; an application-defined error cannot forge safe-delivery
+status by implementing a similarly named method.
 
 ## Root Thread errors
 

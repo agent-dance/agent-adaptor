@@ -298,7 +298,7 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 		resumeID: resumeID, prompt: prep.prompt,
 		engineSessionID:     persistentSessionKey(req),
 		previousEngineID:    persistentPreviousSessionKey(req),
-		profileFingerprint:  req.ProfilePayload.Fingerprint,
+		profileFingerprint:  req.ProfilePayload.SessionFingerprint(),
 		settingsFingerprint: codeBuddySettingsFingerprint(prep.bindings, prep.effectiveCWD, prep.profileDir, cfg.ExtraArgs),
 		commandFingerprint:  commandFileFingerprint(command),
 		gracePeriod:         cfg.GracePeriod,
@@ -363,7 +363,7 @@ type runPrep struct {
 }
 
 func (a adapter) prepareRun(ctx context.Context, cfg Config, req driver.Request) (runPrep, error) {
-	profileFingerprint := req.ProfilePayload.Fingerprint
+	profileFingerprint := req.ProfilePayload.SessionFingerprint()
 	if err := validateCodeBuddySessionContext(req); err != nil {
 		return runPrep{}, err
 	}
@@ -445,7 +445,7 @@ func buildPersistentCodeBuddyResponse(req driver.Request, p *parser, raw driver.
 		checkpoint.State.Data = map[string]string{
 			driver.SessionParamCWD:                prep.effectiveCWD,
 			driver.SessionParamWorkspaceID:        req.Workspace.ID,
-			driver.SessionParamProfileFingerprint: req.ProfilePayload.Fingerprint,
+			driver.SessionParamProfileFingerprint: req.ProfilePayload.SessionFingerprint(),
 		}
 	}
 	return driver.Response{
@@ -511,7 +511,7 @@ func (adapter) runHeadless(ctx context.Context, cfg Config, command string, req 
 		checkpoint.State.Data = map[string]string{
 			driver.SessionParamCWD:                prep.effectiveCWD,
 			driver.SessionParamWorkspaceID:        req.Workspace.ID,
-			driver.SessionParamProfileFingerprint: req.ProfilePayload.Fingerprint,
+			driver.SessionParamProfileFingerprint: req.ProfilePayload.SessionFingerprint(),
 		}
 	}
 
