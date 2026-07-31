@@ -4,6 +4,8 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-07-31
+
 ### Added
 
 - Provider-neutral host-defined Tools through typed Go handlers,
@@ -27,6 +29,18 @@ All notable changes to this project are documented in this file.
   and drain phases, safely cleans Tool execution profiles, and leaves a timed
   out close retryable. The frozen root `With*` surface
   intentionally increases from 25 to 26 with `WithTools`.
+- The README and core usage documentation are now complete in English,
+  Simplified Chinese, German, Japanese, and Korean.
+
+### Fixed
+
+- Legacy closed-listener failures are now classified consistently during Tool
+  runtime shutdown.
+
+### Removed
+
+- Deprecated implementation files, migration plans, and stale pre-v1
+  references that no longer describe the v1 SDK contract.
 
 ## [1.0.0] - 2026-07-30
 
