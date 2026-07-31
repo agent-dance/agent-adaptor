@@ -1,10 +1,10 @@
-# Streaming 指南
+# Streaming guide
 
-本指南面向需要实时渲染文本、thinking、工具调用、运行状态或审批请求的宿主。最终 API 只有一条 typed `Event` 流：`Agent` 与 `Thread` 都通过 `Runner.Stream` 返回 `Stream`，运行结束后再从 `Stream.Result()` 取得权威结果。
+This guide is for hosts that need to render text, thinking, tool calls, run status, or approval requests in real time. The final API exposes a single typed `Event` stream: both `Agent` and `Thread` return a `Stream` from `Runner.Stream`, and the authoritative outcome is read from `Stream.Result()` after the run ends.
 
-完整公共类型见 [API reference](./api-reference.md)，审批策略见 [run policy](./run-policy.md)。
+The complete public types are listed in the [API reference](./api-reference.md), and the approval policy is described in [run policy](./run-policy.md).
 
-## 1. 一条执行管线，一条事件流
+## 1. One execution pipeline, one event stream
 
 ```go
 type Runner interface {
@@ -20,11 +20,11 @@ type Stream interface {
 }
 ```
 
-`Run` 严格等价于 `Stream`、持续 drain `Events()`、再调用 `Result()`。两者共享同一份选项合并、资源解析、Driver 调用、Thread 协调和结果归档逻辑。
+`Run` is strictly equivalent to calling `Stream`, draining `Events()` to completion, and then calling `Result()`. Both share the same option merging, resource resolution, Driver invocation, Thread coordination, and result archiving logic.
 
-调用 `Stream` 只表示宿主要观察实时事件，不等于强制某种 provider 协议。core 会根据已解析的调用、Driver 的 `StreamCapability` 和结构化输出兼容性选择 provider 传输；宿主没有额外的 streaming 开关。
+Calling `Stream` only states that the host wants to observe live events; it does not force any particular provider protocol. Core selects the provider transport from the resolved invocation, the Driver's `StreamCapability`, and structured-output compatibility; the host has no additional streaming switch.
 
-## 2. 最小消费示例
+## 2. Minimal consumer
 
 ```go
 package main
@@ -50,7 +50,7 @@ func main() {
 				fmt.Print(e.Text)
 			}
 		case adaptor.Thinking:
-			// 按需渲染 reasoning；不需要时忽略即可。
+			// Render reasoning when needed; simply ignore it otherwise.
 		case adaptor.ToolCall:
 			if e.Phase == adaptor.PhaseStart {
 				fmt.Printf("\n[tool %s]\n", e.Name)
@@ -73,59 +73,59 @@ func main() {
 }
 ```
 
-关键语义：
+Key semantics:
 
-- `Stream` 立即返回，`RunID()` 随即可用。
-- 启动前错误也通过同一个形状返回：`Events()` 关闭，`Result()` 返回错误。
-- 未取消的正常运行会在所有已接受的终局事件交付且 provider、runtime service 与 workspace 已释放后关闭 `Events()`。channel 关闭表示不会再有事件，此时 `Result()` 已经可用。
-- `Result()` 可并发、多次调用，返回一致结果。
-- 不关心的事件类型可以在 type switch 中省略，但 channel 仍必须持续 drain。
+- `Stream` returns immediately, and `RunID()` is available right away.
+- Pre-start errors use the same shape: `Events()` is closed and `Result()` returns the error.
+- A normal run that is not cancelled closes `Events()` after every accepted terminal event has been delivered and the provider, runtime services, and workspace have been released. A closed channel means no further events will arrive, and `Result()` is already available at that point.
+- `Result()` may be called concurrently and repeatedly, and returns a consistent outcome.
+- Event types you do not care about can be omitted from the type switch, but the channel must still be drained continuously.
 
-完整可运行示例见 [`examples/streaming`](../examples/streaming/main.go)；带 Thread 的交互示例见 [`examples/streaming/chat`](../examples/streaming/chat/main.go)。
+A complete runnable example is in [`examples/streaming`](../examples/streaming/main.go); an interactive example with a Thread is in [`examples/streaming/chat`](../examples/streaming/chat/main.go).
 
-## 3. Event 词汇与顺序
+## 3. Event vocabulary and ordering
 
-一次运行的所有语义和操作信号都在同一个 `<-chan adaptor.Event` 中：
+Every semantic and operational signal of a run arrives on the same `<-chan adaptor.Event`:
 
-| Event | 用途 |
+| Event | Purpose |
 |---|---|
-| `RunStarted` / `RunFinished` | 运行生命周期；最终成败仍以 `Stream.Result()` 为准 |
-| `TextDelta` | assistant 文本，`PhaseStart` / `PhaseContent` / `PhaseEnd` |
-| `Thinking` | reasoning 生命周期 |
-| `ToolCall` / `ToolResult` | 工具调用参数、边界与结果 |
-| `ProcessInfo` | 子进程 spawn、原始 stdout/stderr chunk |
-| `Notice` | invocation、runtime、step、transcript item、审批审计信息 |
-| `*ApprovalRequest` | 带 exactly-once responder 的宿主审批请求 |
-| `Dropped` | 默认背压下被丢弃增量的聚合报告 |
-| `SubagentUpdate` | delegation 的实时进度 |
+| `RunStarted` / `RunFinished` | Run lifecycle; the final success or failure is still decided by `Stream.Result()` |
+| `TextDelta` | Assistant text, with `PhaseStart` / `PhaseContent` / `PhaseEnd` |
+| `Thinking` | Reasoning lifecycle |
+| `ToolCall` / `ToolResult` | Tool call arguments, boundaries, and results |
+| `ProcessInfo` | Subprocess spawn and raw stdout/stderr chunks |
+| `Notice` | Invocation, runtime, step, transcript item, and approval audit information |
+| `*ApprovalRequest` | Host approval request with an exactly-once responder |
+| `Dropped` | Aggregated report of deltas discarded under the default backpressure policy |
+| `SubagentUpdate` | Live delegation progress |
 
-每个事件的 `Meta()` 返回 SDK 权威信封：
+The `Meta()` of every event returns the authoritative SDK envelope:
 
-- `RunID`：本次执行 ID。
-- `ThreadKey`：宿主提供的不透明 Thread key。
-- `Sequence`：SDK 在统一 sink 的接收顺序中分配，单次运行严格递增。
-- `Time`：SDK 接收事件的时间。
-- `Source`：可选的 provider/Driver 原始坐标；它不会覆盖 SDK 的权威字段。
+- `RunID`: the ID of this execution.
+- `ThreadKey`: the opaque Thread key supplied by the host.
+- `Sequence`: assigned by the SDK in the receive order of the unified sink; strictly increasing within a single run.
+- `Time`: the time at which the SDK received the event.
+- `Source`: optional raw provider/Driver coordinates; it never overrides the authoritative SDK fields.
 
-并发 producer 也由同一个 broker 串行化，因此 channel 接收顺序与 `EventMeta.Sequence` 一致。Bridge 可使用它作为单次运行内的 wire cursor，不应把 provider 序号提升为第二个权威顺序。需要跨多个运行持久化与恢复的 recorder 必须分配自己的 host-scoped cursor（`sessionrecorder.HostSeq`），因为每个新运行的 `EventMeta.Sequence` 都会重新开始。
+Concurrent producers are serialized by the same broker, so the channel receive order matches `EventMeta.Sequence`. A bridge may use it as a wire cursor within a single run, and should not promote provider sequence numbers into a second authoritative ordering. A recorder that needs to persist and resume across multiple runs must allocate its own host-scoped cursor (`sessionrecorder.HostSeq`), because `EventMeta.Sequence` restarts for every new run.
 
-## 4. Result、错误与取消
+## 4. Result, errors, and cancellation
 
-事件是进行中的观察，`Stream.Result()` 才是终局权威：
+Events are in-flight observations; `Stream.Result()` is the terminal authority:
 
-- 成功：返回 `*Result, nil`。
-- 业务失败：返回 `nil, *RunError`；部分或完整结果在 `RunError.Result`。
-- 基础设施失败：返回 `nil, error`，并保留 `errors.Is/As` 链。
+- Success: returns `*Result, nil`.
+- Business failure: returns `nil, *RunError`, with the partial or complete result in `RunError.Result`.
+- Infrastructure failure: returns `nil, error`, preserving the `errors.Is/As` chain.
 
-`Result.Text`、`Summary`、`Raw()`、`Transcript()` 与 `Services()` 是彼此独立的层。不要从某个 `RunFinished` 事件重建最终结果，也不要把实时 delta 自行拼成审计用 Raw 或 Transcript。
+`Result.Text`, `Summary`, `Raw()`, `Transcript()`, and `Services()` are independent layers. Do not rebuild the final result from a `RunFinished` event, and do not concatenate live deltas yourself into an audit-grade Raw or transcript.
 
-`Cancel()` 幂等，并会解除阻塞的事件发布、审批等待和运行 context。取消后可能仍有已缓冲事件可读；继续 range 到 `Events()` 关闭，再调用 `Result()` 可获得最终取消错误。
+`Cancel()` is idempotent and unblocks pending event publication, approval waits, and the run context. Buffered events may still be readable after cancellation; keep ranging until `Events()` closes, then call `Result()` to obtain the final cancellation error.
 
-如果消费者准备提前停止读事件，必须先调用 `Cancel()`。不能只停止 range 后直接等待 `Result()`：可靠事件或 blocking 模式可能正在等待 channel 空间。
+A consumer that plans to stop reading events early must call `Cancel()` first. It is not enough to stop ranging and then wait on `Result()`: reliable events or blocking mode may be waiting for channel space.
 
-## 5. 背压
+## 5. Backpressure
 
-默认普通事件 buffer 是 1024，可在构造 Agent 时调整；SDK 另行保留终局事件容量，不计入该数值：
+The default buffer for ordinary events is 1024 and can be adjusted when constructing the Agent; the SDK reserves separate capacity for terminal events, which does not count against that number:
 
 ```go
 ai := adaptor.New(
@@ -134,15 +134,15 @@ ai := adaptor.New(
 )
 ```
 
-默认策略只允许丢弃可重放或高频增量：
+The default policy only allows dropping replayable or high-frequency deltas:
 
-- `TextDelta`、`Thinking`、`ToolCall` 的 `PhaseContent`
+- `PhaseContent` of `TextDelta`, `Thinking`, and `ToolCall`
 - stdout/stderr `ProcessInfo`
 - `SubagentUpdate{Kind: SubagentDelta}`
 
-生命周期边界、审批、终局事件、tool result、transcript item 和 `Dropped` 本身是可靠事件。当发生丢弃时，SDK 会发出聚合 `Dropped`，其中 `Count`、`ByKind`、`FirstSequence`、`LastSequence`、`Reason` 和 `Source` 描述缺口。显式取消进入 abort teardown 后，可以放弃尚未进入 channel 的增量事件与待聚合 `Dropped`，但权威 `RunFinished` 使用独立保留容量，仍会作为最后一个事件交付。
+Lifecycle boundaries, approvals, terminal events, tool results, transcript items, and `Dropped` itself are reliable events. When a drop occurs, the SDK emits an aggregated `Dropped` whose `Count`, `ByKind`, `FirstSequence`, `LastSequence`, `Reason`, and `Source` describe the gap. Once an explicit cancellation enters abort teardown, deltas that have not yet entered the channel and a pending aggregated `Dropped` may be abandoned, but the authoritative `RunFinished` uses the separately reserved capacity and is still delivered as the last event.
 
-需要无损事件时使用 construction-scope 选项：
+Use the construction-scope option when lossless events are required:
 
 ```go
 ai := adaptor.New(
@@ -152,11 +152,11 @@ ai := adaptor.New(
 )
 ```
 
-未取消时，blocking 模式不会丢事件，但慢消费者会反压 Driver；取消会解除这些阻塞并进入 teardown。无论采用哪种策略，生产宿主都应持续 drain；断开或放弃消费时立即调用 `Cancel()`。
+Without cancellation, blocking mode never drops events, but a slow consumer applies backpressure to the Driver; cancellation releases those blocks and enters teardown. Whichever policy is used, production hosts should drain continuously and call `Cancel()` immediately when they disconnect or abandon consumption.
 
-## 6. Thread 上的流式对话
+## 6. Streaming conversations on a Thread
 
-`Thread` 与 `Agent` 实现同一个 `Runner`。有状态对话只多一层 Thread 协调，不会产生第二条流：
+`Thread` and `Agent` implement the same `Runner`. A stateful conversation only adds a Thread coordination layer; it does not create a second stream:
 
 ```go
 import "github.com/agent-dance/agent-adaptor/memory"
@@ -169,16 +169,16 @@ ai := adaptor.New(
 stream := ai.Thread("tenant-7/conversation-42").Stream(ctx, "Continue")
 defer stream.Cancel()
 for ev := range stream.Events() {
-	// 同一套 adaptor.Event。
+	// The same adaptor.Event vocabulary.
 }
 result, err := stream.Result()
 ```
 
-Thread key 是一个宿主提供的不透明字符串。宿主应原样持有它；不要自行拼接 provider session ID，也不要从事件中的 `Source.ThreadID` 推导消费者身份。
+The Thread key is an opaque string supplied by the host. Hosts should hold it verbatim; do not assemble provider session IDs yourself, and do not derive consumer identity from `Source.ThreadID` in events.
 
-## 7. 审批请求
+## 7. Approval requests
 
-没有安装 `OnApproval` callback 时，需人工回答的请求直接出现在同一事件流：
+Without an installed `OnApproval` callback, requests that need a human answer appear directly on the same event stream:
 
 ```go
 for ev := range stream.Events() {
@@ -194,13 +194,13 @@ for ev := range stream.Events() {
 }
 ```
 
-`Approve`、`Deny`、`Answer` exactly-once；重复、过期、Kind 不匹配或未绑定 responder 都会立即返回稳定错误。超时、拒绝与重试行为只由 `Policy.Approvals` 决定，bridge 不另建策略。
+`Approve`, `Deny`, and `Answer` are exactly-once; a duplicate, expired, kind-mismatched, or responder-less request returns a stable error immediately. Timeout, rejection, and retry behaviour is decided solely by `Policy.Approvals`; bridges do not build a second policy.
 
-不方便在事件循环中交互的宿主可通过 `adaptor.OnApproval` 安装 callback。两种消费方式共享同一个请求和结果合同。
+Hosts that cannot interact inside the event loop can install a callback with `adaptor.OnApproval`. Both consumption styles share the same request and outcome contract.
 
 ## 8. AG-UI bridge
 
-已有 AG-UI 传输层的宿主可直接翻译 `Stream`：
+A host that already has an AG-UI transport layer can translate a `Stream` directly:
 
 ```go
 import "github.com/agent-dance/agent-adaptor/bridges/agui"
@@ -209,25 +209,25 @@ stream := ai.Stream(ctx, prompt)
 defer stream.Cancel()
 
 for ev := range agui.EventsContext(ctx, stream) {
-	// ev 是 AG-UI events.Event，可写入 SSE、WebSocket 或 recorder。
+	// ev is an AG-UI events.Event; write it to SSE, a WebSocket, or a recorder.
 }
 ```
 
-`agui.EventsContext`：
+`agui.EventsContext`:
 
-- 保证 `RUN_STARTED` 位于输出开头。
-- 补齐并去重 text、thinking、tool-call 生命周期边界。
-- 在所有打开的生命周期关闭后，根据 `Stream.Result()` 生成唯一的 `RUN_FINISHED` 或 `RUN_ERROR`。
-- context 结束时取消底层 `Stream`，所有向下游的发送都可取消。
-- 将审批映射成可配置的 tool-call 或 custom 事件。
+- Guarantees that `RUN_STARTED` is the first item of the output.
+- Completes and deduplicates text, thinking, and tool-call lifecycle boundaries.
+- Produces exactly one `RUN_FINISHED` or `RUN_ERROR` from `Stream.Result()` after all open lifecycles are closed.
+- Cancels the underlying `Stream` when the context ends, and keeps every downstream send cancellable.
+- Maps approvals to configurable tool-call or custom events.
 
-没有 request-scoped context 的本地程序可使用 `agui.Events(stream)`；HTTP/WebSocket handler 应优先使用 `EventsContext`，避免客户端断开后 fan-out goroutine 滞留。
+Local programs without a request-scoped context can use `agui.Events(stream)`; HTTP/WebSocket handlers should prefer `EventsContext` to avoid leaking a fan-out goroutine after the client disconnects.
 
-AG-UI 输入 helper `RunAgentInput` 会提取最后一条非空 user 文本；`UserTurnEvents` 可构造规范的 user `TextDelta` 三元组。Driver 只产生 assistant 文本，`RoleUser` 仅由 bridge 或宿主合成。
+The AG-UI input helper `RunAgentInput` extracts the last non-empty user text; `UserTurnEvents` builds the canonical user `TextDelta` triple. Drivers only produce assistant text, and `RoleUser` is synthesized solely by a bridge or a host.
 
 ## 9. HTTP SSE bridge
 
-`sse.Handler` 接受任意 `adaptor.Runner`：
+`sse.Handler` accepts any `adaptor.Runner`:
 
 ```go
 import (
@@ -248,15 +248,15 @@ mux.Handle("/v1/chat", sse.Handler(ai, sse.Options{
 }))
 ```
 
-最终 `Options` 字段：
+The final `Options` fields:
 
-- `Protocol`：`sse.AGUI`（零值）或 `sse.Raw`。
-- `KeepAlivePing`：非零时写 SSE comment 以保持代理连接。
-- `CORSAllowedOrigin`：非空时写 CORS headers。
-- `WriteTimeout`：每次底层 Write/Flush 前重置 write deadline，默认 30 秒；它不是整帧或整次运行的总预算。不支持 deadline 的 `ResponseWriter` 透明回退。
-- `Options`：追加到每次 `Runner.Stream` 的 `[]adaptor.CallOption`。
+- `Protocol`: `sse.AGUI` (the zero value) or `sse.Raw`.
+- `KeepAlivePing`: when non-zero, writes an SSE comment to keep proxy connections alive.
+- `CORSAllowedOrigin`: when non-empty, writes CORS headers.
+- `WriteTimeout`: resets the write deadline before each underlying Write/Flush, defaulting to 30 seconds; it is not a budget for a whole frame or a whole run. A `ResponseWriter` without deadline support falls back transparently.
+- `Options`: `[]adaptor.CallOption` appended to every `Runner.Stream`.
 
-AG-UI 模式接收标准 `RunAgentInput`：
+AG-UI mode accepts the standard `RunAgentInput`:
 
 ```json
 {
@@ -268,25 +268,25 @@ AG-UI 模式接收标准 `RunAgentInput`：
 }
 ```
 
-Raw 模式接收：
+Raw mode accepts:
 
 ```json
 {"prompt":"Write a haiku","sessionKey":"conversation-42"}
 ```
 
-当 handler 收到 session identity 且 `Runner` 是带 Thread Store 的 `*adaptor.Agent` 时，它会绑定到 `Agent.Thread`。如果传入的本来就是 `*adaptor.Thread`，会保持宿主固定的 Thread。AG-UI 的 `threadId` 使用无碰撞 tuple 编码；Raw 的 `sessionKey` 原样保留。
+When the handler receives a session identity and the `Runner` is an `*adaptor.Agent` with a Thread Store, it binds to `Agent.Thread`. If the caller passed an `*adaptor.Thread` in the first place, the host-pinned Thread is kept. The AG-UI `threadId` uses a collision-free tuple encoding; the Raw `sessionKey` is preserved verbatim.
 
-客户端断开会取消 request context 和底层 `Stream`。Raw 帧使用 `EventMeta.Sequence` 作为 SSE `id`，支持读取 `Last-Event-ID` 作为后备游标；持久化 replay 仍由宿主负责。
+A client disconnect cancels the request context and the underlying `Stream`. Raw frames use `EventMeta.Sequence` as the SSE `id` and support reading `Last-Event-ID` as a fallback cursor; persistent replay remains the host's responsibility.
 
-SSE 是单向传输，审批请求只能作为信息帧发送。交互式审批应使用 `OnApproval`，或由宿主持有 live responder 并提供受鉴权的 companion endpoint。
+SSE is a one-way transport, so approval requests can only be sent as informational frames. Interactive approval should use `OnApproval`, or the host should hold the live responder and expose an authenticated companion endpoint.
 
-完整服务示例见 [`examples/web-chat`](../examples/web-chat/main.go)，AG-UI client 见 [`examples/web-chat/aguiclient`](../examples/web-chat/aguiclient/main.go)，CopilotKit 集成见 [`examples/web-chat/copilotkit`](../examples/web-chat/copilotkit/server.go)。
+A complete server example is in [`examples/web-chat`](../examples/web-chat/main.go), an AG-UI client in [`examples/web-chat/aguiclient`](../examples/web-chat/aguiclient/main.go), and a CopilotKit integration in [`examples/web-chat/copilotkit`](../examples/web-chat/copilotkit/server.go).
 
 ## 10. Driver streaming fidelity
 
-每个 `Runner` 都有 `Stream`；`driver.StreamCapability` 只描述 provider 原生事件的细粒度，不是另一个执行能力，也不是 A2A transport capability。
+Every `Runner` has `Stream`; `driver.StreamCapability` only describes the granularity of native provider events. It is neither another execution capability nor an A2A transport capability.
 
-当前内置 Driver 的声明：
+The declarations of the current built-in Drivers are:
 
 | Driver | Native | TokenLevel | Reasoning | ToolCallArgs | HITL |
 |---|---:|---:|---:|---:|---:|
@@ -295,12 +295,12 @@ SSE 是单向传输，审批请求只能作为信息帧发送。交互式审批�
 | Cursor | — | — | — | — | — |
 | CodeBuddy | ✓ | ✓ | ✓ | ✓ | ✓ |
 
-能力为 false 时，宿主仍然使用同一个 `Stream`。事件可能只有较粗粒度的 lifecycle、process、transcript 和最终结果；宿主不应因为 fidelity 较低而创建另一条调用路径。
+When a capability is false, the host still uses the same `Stream`. The events may only carry coarser lifecycle, process, transcript, and final result information; a host should not create another call path because fidelity is lower.
 
-当结构化输出 schema 与富事件 provider 传输不兼容时，core 可以选择兼容的批量 provider 传输，同时仍通过统一 `Event` channel 暴露运行过程。这一裁决不改变 `Run` 与 `Stream` 的公共语义。
+When a structured-output schema is incompatible with a rich-event provider transport, core may select a compatible batch provider transport while still exposing the run through the unified `Event` channel. This decision does not change the public semantics of `Run` and `Stream`.
 
-## 11. AG-UI 版本对齐
+## 11. AG-UI version alignment
 
-Go 侧通过 `go.mod` 固定 `github.com/ag-ui-protocol/ag-ui/sdks/community/go`；CopilotKit 示例通过 [`examples/web-chat/copilotkit/web/package-lock.json`](../examples/web-chat/copilotkit/web/package-lock.json) 固定 `@ag-ui/core`。两边版本坐标不同，升级任一侧都要重新验证事件 lifecycle 和 schema。
+The Go side pins `github.com/ag-ui-protocol/ag-ui/sdks/community/go` through `go.mod`; the CopilotKit example pins `@ag-ui/core` through [`examples/web-chat/copilotkit/web/package-lock.json`](../examples/web-chat/copilotkit/web/package-lock.json). The two version coordinates differ, so upgrading either side requires revalidating the event lifecycle and schema.
 
-`go test ./internal/aguiversion/...` 会校验两个 pin。主动升级时，同步更新 `internal/aguiversion/align_test.go` 中的期望版本，并复核 `bridges/agui` fixtures。
+`go test ./internal/aguiversion/...` verifies both pins. When upgrading deliberately, update the expected versions in `internal/aguiversion/align_test.go` and review the `bridges/agui` fixtures.

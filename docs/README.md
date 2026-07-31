@@ -6,7 +6,7 @@ The public v1 model is Agent, Thread, Stream, Event, Result, and Driver. Start w
 
 | Document | Purpose |
 |---|---|
-| [`../README.md`](../README.md) / [`../README.zh-CN.md`](../README.zh-CN.md) | Product overview, quick start, packages, and examples. |
+| [`../README.md`](../README.md), and its [`zh-CN`](../README.zh-CN.md), [`ja`](../README.ja.md), [`ko`](../README.ko.md), [`de`](../README.de.md) translations | Product overview, quick start, packages, and examples. |
 | [`../AGENTS.md`](../AGENTS.md) | Final architecture boundaries, invariants, and release gates. |
 | [`api-reference.md`](./api-reference.md) | Complete public API and option scopes. |
 | [`tools.md`](./tools.md) | Provider-neutral host-defined Tools, schemas, errors, lifecycle, security, and Thread compatibility. |

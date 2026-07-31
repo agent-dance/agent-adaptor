@@ -1,20 +1,20 @@
-# API 参考
+# API reference
 
-`agent-adaptor` 的根包名是 `adaptor`，导入路径保持不变：
+The root package of `agent-adaptor` is named `adaptor`, and the import path is unchanged:
 
 ```go
 import adaptor "github.com/agent-dance/agent-adaptor"
 ```
 
-公共 API 围绕六个名词组织：`Agent`、`Thread`、`Stream`、`Event`、`Result`、`Driver`。应用通常只需导入根包和一个 provider 包；只有扩展 Driver 时才直接导入 `driver`。
+The public API is organized around six nouns: `Agent`, `Thread`, `Stream`, `Event`, `Result`, and `Driver`. An application normally imports only the root package and one provider package; `driver` is imported directly only when extending a Driver.
 
-## 1. 构造 Agent
+## 1. Constructing an Agent
 
 ```go
 func New(d driver.Driver, opts ...Option) *Agent
 ```
 
-`New` 是应用侧的构造入口。它接收一个已经捕获配置的 Driver 和构造选项，返回可并发使用的 `*Agent`。
+`New` is the construction entry point on the application side. It takes a Driver that has already captured its configuration plus construction options, and returns an `*Agent` that is safe for concurrent use.
 
 ```go
 agent := adaptor.New(
@@ -23,9 +23,9 @@ agent := adaptor.New(
 )
 ```
 
-传入 nil Driver 属于启动期编程错误，`New` 会 panic。CLI 可用性、登录态和动态能力在执行或检查时返回错误，不在构造期间做环境 I/O。
+Passing a nil Driver is a startup-time programming error and `New` panics. CLI availability, login state, and dynamic capabilities are reported as errors during execution or inspection; no environment I/O happens during construction.
 
-多个 Agent 直接使用多个 Go 变量：
+Multiple Agents are simply multiple Go variables:
 
 ```go
 coder := adaptor.New(codex.Driver(codex.Config{Model: "gpt-5.4"}))
@@ -35,7 +35,7 @@ reviewer := adaptor.New(
 )
 ```
 
-## 2. Agent 与 Runner
+## 2. Agent and Runner
 
 ```go
 type Runner interface {
@@ -44,7 +44,7 @@ type Runner interface {
 }
 ```
 
-`*Agent` 与 `*Thread` 都实现 `Runner`。bridge、结构化输出和宿主装饰器应面向 `Runner` 编程，以便无状态和有状态执行使用同一合同。
+Both `*Agent` and `*Thread` implement `Runner`. Bridges, structured output, and host decorators should program against `Runner` so that stateless and stateful execution share one contract.
 
 ```go
 func (a *Agent) Run(ctx context.Context, prompt string, opts ...CallOption) (*Result, error)
@@ -52,12 +52,12 @@ func (a *Agent) Stream(ctx context.Context, prompt string, opts ...CallOption) S
 func (a *Agent) Close(ctx context.Context) error
 ```
 
-`Run` 是 `Stream`、消费完整事件流、再读取 `Result()` 的便捷形式。两者共享同一执行管线和相同的结果合同。
-`Close` 幂等停止该 Agent 的 Driver 所拥有的常驻进程并关闭 Agent 自有的 Tool runtime；Close 开始后的 Agent/Thread 新运行返回 `ErrAgentClosed`。
+`Run` is the convenience form of `Stream`, draining the full event stream, and then reading `Result()`. Both share the same execution pipeline and the same result contract.
+`Close` idempotently stops the persistent processes owned by this Agent's Driver and shuts down the Agent's own Tool runtime; new Agent/Thread runs started after Close begins return `ErrAgentClosed`.
 
-## 3. 选项作用域
+## 3. Option scopes
 
-选项接口用于在编译期限制使用位置：
+The option interfaces restrict where an option may be used at compile time:
 
 ```go
 type Option interface {
@@ -74,69 +74,69 @@ type SharedOption interface {
 }
 ```
 
-- `Option`：仅用于 `New`。
-- `CallOption`：仅用于 `Run` 或 `Stream`。
-- `SharedOption`：构造时设置 Agent 默认值，调用时只覆盖本次执行。
+- `Option`: only for `New`.
+- `CallOption`: only for `Run` or `Stream`.
+- `SharedOption`: sets the Agent default at construction, and overrides only the current execution at call time.
 
-总体合并规则是：调用处比构造处更近；skills 追加；其他选项按下表替换或合并。Agent 默认值不会被单次调用修改，因此并发调用不会互相污染。
+The overall merge rule is: the call site is nearer than the construction site; skills append; other options are replaced or merged as listed in the table below. Agent defaults are never modified by a single invocation, so concurrent invocations do not contaminate one another.
 
-### 3.1 双作用域选项
+### 3.1 Dual-scope options
 
-| 函数 | 语义 | 调用处合并规则 |
+| Function | Semantics | Call-site merge rule |
 |---|---|---|
-| `WithModel(string)` | provider 模型覆盖 | 非空值替换 |
-| `WithTimeout(time.Duration)` | 单次执行总时限 | 替换；超时匹配 `context.DeadlineExceeded` |
-| `WithSpawn()` | 强制使用新 provider 进程，不复用或留下常驻 writer | 替换默认进程模式 |
-| `WithInstructions(string)` | 附加指令文本 | 替换 |
-| `WithWorkspace(string)` | 基础工作目录 | 替换 |
-| `WithMetadata(key, value)` | 审计元数据 | 按 key 合并，同名 key 覆盖 |
-| `WithIdentity(Identity)` | 传给宿主 hook 与 Driver 的调用方身份 | 整体替换 |
-| `WithPolicy(Policy)` | sandbox、可选能力和审批策略 | 整体替换，不做字段级合并 |
-| `OnApproval(ApprovalHandler)` | HITL 回调 | 替换 |
-| `WithSkills(...SkillRef)` | skill 引用 | 追加；冲突 key 必须结构相同 |
-| `WithMCP(...mcp.Server)` | MCP server 集合 | 整组替换；空调用显式清空 |
-| `WithProfileResources(profile.Resources)` | profile 资源期望状态 | 各资源族按其合同合并 |
-| `WithWorkspaceSpec(WorkspaceSpec)` | workspace 供应策略 | 整体替换 |
-| `WithServices(...ServiceSpec)` | 声明式 runtime service 集合 | 整组替换；空调用显式清空 |
-| `WithRunServices(...RunServiceProvider)` | 每次执行附着的生态服务 | 追加，并按 provider 身份去重 |
+| `WithModel(string)` | provider model override | non-empty value replaces |
+| `WithTimeout(time.Duration)` | total deadline for one execution | replaces; a timeout matches `context.DeadlineExceeded` |
+| `WithSpawn()` | force a new provider process, reusing nothing and leaving no persistent writer | replaces the default process mode |
+| `WithInstructions(string)` | additional instruction text | replaces |
+| `WithWorkspace(string)` | base working directory | replaces |
+| `WithMetadata(key, value)` | audit metadata | merged by key; an identical key overwrites |
+| `WithIdentity(Identity)` | caller identity passed to host hooks and the Driver | replaced as a whole |
+| `WithPolicy(Policy)` | sandbox, optional features, and approval policy | replaced as a whole, with no field-level merge |
+| `OnApproval(ApprovalHandler)` | HITL callback | replaces |
+| `WithSkills(...SkillRef)` | skill references | appends; conflicting keys must be structurally identical |
+| `WithMCP(...mcp.Server)` | MCP server set | replaces the whole set; an empty call clears it explicitly |
+| `WithProfileResources(profile.Resources)` | desired state of profile resources | each resource family merges per its own contract |
+| `WithWorkspaceSpec(WorkspaceSpec)` | workspace provisioning strategy | replaced as a whole |
+| `WithServices(...ServiceSpec)` | declarative runtime service set | replaces the whole set; an empty call clears it explicitly |
+| `WithRunServices(...RunServiceProvider)` | ecosystem services attached per execution | appends, deduplicated by provider identity |
 
-`WithProfileResources` 的细分规则：
+Detailed rules for `WithProfileResources`:
 
-- `Skills` 追加。
-- 非 nil `MCP` 替换 MCP 集合；非 nil 空切片表示显式清空。
-- 非 nil `Agents`、`Hooks`、`Config` 分别替换对应资源族；非 nil 空切片表示显式声明为空。
-- 非 nil `Instructions` 替换指令资源。
+- `Skills` appends.
+- A non-nil `MCP` replaces the MCP set; a non-nil empty slice means an explicit clear.
+- Non-nil `Agents`, `Hooks`, and `Config` each replace the corresponding resource family; a non-nil empty slice means an explicit declaration of emptiness.
+- A non-nil `Instructions` replaces the instruction resource.
 
-### 3.2 仅构造选项
+### 3.2 Construction-only options
 
-| 函数 | 语义 |
+| Function | Semantics |
 |---|---|
-| `WithThreadStore(threadstore.Store)` | 启用 Thread 持久化、续接与租约协调 |
-| `WithTools(...tool.Definition)` | 安装不可变的宿主定义 Tool 集合；整组替换，空调用显式清空 |
-| `WithEventBuffer(int)` | 设置每次执行的事件缓冲；默认 1024 |
-| `WithBlockingEvents()` | 事件发送改为阻塞、无丢弃模式 |
-| `WithProfile(profile.Selection)` | 选择 provider profile 策略 |
-| `WithSkillProvider(skill.Provider)` | 解析 `skill.Key` 并可选提供 catalogue |
-| `WithSkillMaterializer(skill.Materializer)` | 覆盖非目录 skill 的物化方式 |
-| `WithWorkspaceManager(WorkspaceManager)` | 将 `WorkspaceSpec` 解析为实际 lease |
-| `WithServiceManager(ServiceManager)` | 确保和释放 `WithServices` 声明的服务 |
+| `WithThreadStore(threadstore.Store)` | enable Thread persistence, resumption, and lease coordination |
+| `WithTools(...tool.Definition)` | install the immutable host-defined Tool set; the whole set is replaced, and an empty call clears it explicitly |
+| `WithEventBuffer(int)` | set the per-execution event buffer; the default is 1024 |
+| `WithBlockingEvents()` | switch event delivery to blocking, no-drop mode |
+| `WithProfile(profile.Selection)` | select the provider profile strategy |
+| `WithSkillProvider(skill.Provider)` | resolve `skill.Key` and optionally supply a catalogue |
+| `WithSkillMaterializer(skill.Materializer)` | override how non-catalogue skills are materialized |
+| `WithWorkspaceManager(WorkspaceManager)` | resolve a `WorkspaceSpec` into an actual lease |
+| `WithServiceManager(ServiceManager)` | ensure and release the services declared by `WithServices` |
 
-将这些选项传给 `Run` 或 `Stream` 会编译失败。
+Passing these options to `Run` or `Stream` fails to compile.
 
-### 3.3 仅调用选项
+### 3.3 Call-only options
 
-| 函数 | 语义 |
+| Function | Semantics |
 |---|---|
-| `WithSchema[T](...SchemaOption)` | 从 Go 类型派生本次执行的 JSON Schema |
-| `WithSchemaJSON([]byte, ...SchemaOption)` | 使用调用方提供的 JSON Schema |
+| `WithSchema[T](...SchemaOption)` | derive the JSON Schema for this execution from a Go type |
+| `WithSchemaJSON([]byte, ...SchemaOption)` | use a caller-supplied JSON Schema |
 
-schema 属于一个具体问题，因此不能传给 `New`。
+A schema belongs to one concrete question, so it must not be passed to `New`.
 
-### 3.4 生态选项
+### 3.4 Ecosystem options
 
-`AgentSettings` 和 `RunSettings` 提供受控 setter，生态包可实现上述选项接口。setter 的 `Set*` 表示替换，`Add*` 表示追加。典型例子是 delegation service 发行自己的选项，并通过 `WithRunServices` 接入，而无需在根包增加业务词汇。
+`AgentSettings` and `RunSettings` expose controlled setters, so ecosystem packages can implement the option interfaces above. On a setter, `Set*` means replace and `Add*` means append. The typical example is a delegation service that issues its own options and hooks in through `WithRunServices`, without adding business vocabulary to the root package.
 
-## 4. Policy 与 Identity
+## 4. Policy and Identity
 
 ```go
 type Identity struct {
@@ -147,7 +147,7 @@ type Identity struct {
 }
 ```
 
-Identity 用于宿主提供的 skill、workspace、service 等组件做作用域隔离；库不会用它自动路由 Agent。`IdentityFromContext(ctx)` 可从运行期间传给宿主 hook 的 context 读取生效身份。
+Identity is used by host-supplied components such as skill, workspace, and service for scope isolation; the library never uses it to route Agents automatically. `IdentityFromContext(ctx)` reads the effective identity from the context handed to host hooks during a run.
 
 ```go
 type Policy struct {
@@ -158,23 +158,23 @@ type Policy struct {
 }
 ```
 
-Sandbox 值为 `SandboxInherit`、`ReadOnly`、`WorkspaceWrite`、`Unrestricted`。可选能力值为 `FeatureInherit`、`FeatureAllow`、`FeatureDeny`。
+Sandbox values are `SandboxInherit`, `ReadOnly`, `WorkspaceWrite`, and `Unrestricted`. Optional-feature values are `FeatureInherit`, `FeatureAllow`, and `FeatureDeny`.
 
-常用 Policy 预设：
+Common Policy presets:
 
 - `PolicyReadOnly`
 - `PolicyWorkspaceWrite`
 - `PolicyUnrestricted`
 
-`WithPolicy` 整体替换默认 Policy；需要单次只修改一个维度时，调用方应显式构造完整值。
+`WithPolicy` replaces the default Policy as a whole; a caller that wants to change a single dimension for one invocation must construct the complete value explicitly.
 
-零值 / Inherit 是跨 Driver 的可移植表达。任何显式 Sandbox、WebSearch 或 Browser 值都会在进程启动前严格检查 `Descriptor.RunPolicyCaps`；Driver 不支持时返回匹配 `ErrPolicyCapabilityUnsupported` 的 `*PolicyCapabilityUnsupportedError`，不会静默忽略。
+The zero value / Inherit is the portable expression across Drivers. Any explicit Sandbox, WebSearch, or Browser value is checked strictly against `Descriptor.RunPolicyCaps` before the process starts; when the Driver does not support it, a `*PolicyCapabilityUnsupportedError` matching `ErrPolicyCapabilityUnsupported` is returned rather than being silently ignored.
 
-审批 mode 遵循相同规则。显式 `ApprovalAsk`、`ApprovalAutoApprove`、`ApprovalAutoDeny` 或 `QuestionAutoDeny` 必须由对应 Kind 的 capability 声明支持，否则返回匹配 `ErrHumanDecisionModeUnsupported` 的 `*HumanDecisionModeUnsupportedError`。`ApprovalsAutoDeny` 要求 Permission、PlanReview、Question 三类都支持 auto-reject，因此不是跨 provider 的通用预设；Question 保持 `QuestionInherit` 时会使用库的保守默认 auto-deny，而不形成显式 capability 要求。
+Approval modes follow the same rule. An explicit `ApprovalAsk`, `ApprovalAutoApprove`, `ApprovalAutoDeny`, or `QuestionAutoDeny` must be supported by the capability declaration for the corresponding Kind, otherwise a `*HumanDecisionModeUnsupportedError` matching `ErrHumanDecisionModeUnsupported` is returned. `ApprovalsAutoDeny` requires auto-reject support for all three of Permission, PlanReview, and Question, so it is not a portable cross-provider preset; leaving Question at `QuestionInherit` uses the library's conservative auto-deny default instead of forming an explicit capability requirement.
 
 ## 5. Thread
 
-Thread 是带持久化续接能力的 `Runner`。Agent 默认无状态，使用 Thread 前必须通过 `WithThreadStore` 注入 store。Claude、CodeBuddy 和 Codex 对显式 Thread 默认允许常驻复用；Cursor 和直接 Agent 调用逐轮启动。
+A Thread is a `Runner` with persistent resumption. Agents are stateless by default, and a store must be injected through `WithThreadStore` before a Thread is used. Claude, CodeBuddy, and Codex allow persistent reuse for an explicit Thread by default; Cursor and direct Agent invocations start a process per turn.
 
 ```go
 func (a *Agent) Thread(key string, opts ...ThreadOption) *Thread
@@ -184,17 +184,17 @@ func (t *Thread) Checkpoint(ctx context.Context) (*Checkpoint, error)
 func ResumeOnly() ThreadOption
 ```
 
-动作语义：
+Action semantics:
 
-| 动作 | 语义 |
+| Action | Semantics |
 |---|---|
-| `agent.Thread(key)` | 有 active checkpoint 就续接，否则新建 |
-| `agent.Thread(key, ResumeOnly())` | 只允许续接；缺失或不兼容时返回错误 |
-| `parent.Fork(newKey)` | 首次执行从父 checkpoint 分叉；父 Thread 保持不变，目标 key 必须未占用 |
+| `agent.Thread(key)` | resume if an active checkpoint exists, otherwise create |
+| `agent.Thread(key, ResumeOnly())` | resumption only; returns an error when missing or incompatible |
+| `parent.Fork(newKey)` | the first execution forks from the parent checkpoint; the parent Thread stays unchanged and the target key must be unoccupied |
 
-key 是宿主自己的非空、不透明字符串；空 key 会 panic。新的无关对话必须由宿主分配新的 key，SDK 不提供同 key 主动重绑入口。`Checkpoint` 只用于审计和诊断，正常续接由 Thread 自动完成。
+The key is the host's own non-empty, opaque string; an empty key panics. A new unrelated conversation must be assigned a new key by the host; the SDK offers no entry point for deliberately rebinding the same key. `Checkpoint` is only for auditing and diagnostics; normal resumption is handled by the Thread automatically.
 
-主要错误均可用 `errors.Is` 判断：
+The main errors can all be matched with `errors.Is`:
 
 - `ErrThreadStoreRequired`
 - `ErrThreadNotFound`
@@ -205,9 +205,9 @@ key 是宿主自己的非空、不透明字符串；空 key 会 panic。新的�
 - `ErrThreadAlreadyExists`
 - `ErrResumeRejected`
 
-Thread store 只保存 provider resume checkpoint、兼容 fingerprint 和租约，不保存 UI 聊天记录。
+A Thread store holds only the provider resume checkpoint, the compatibility fingerprint, and leases; it does not hold UI chat history.
 
-### 5.1 provider 进程生命周期
+### 5.1 provider process lifecycle
 
 ```go
 agent := adaptor.New(
@@ -222,11 +222,11 @@ _, _ = thread.Run(ctx, "second")
 _, _ = thread.Run(ctx, "isolated", adaptor.WithSpawn())
 ```
 
-`WithSpawn()` 是双作用域选项：传给 `New` 时所有轮次默认为单次进程；传给 `Run`/`Stream` 时只覆盖本轮。配置/指纹漂移、native schema 等必须暂时切换进程形态时，Driver 在启动 replacement 前等待旧 writer 完整退出，并只在得到有效新 checkpoint 后预热。prompt 可能已经送达后的断线不会自动重放。
+`WithSpawn()` is a dual-scope option: passed to `New` it makes every turn default to a single-use process; passed to `Run`/`Stream` it overrides only that turn. When configuration/fingerprint drift, native schema, or similar reasons force a temporary change of process shape, the Driver waits for the old writer to exit completely before starting the replacement, and only warms up after obtaining a valid new checkpoint. A disconnection after the prompt may already have been delivered is never replayed automatically.
 
-Driver 通过 `Descriptor.Process.Persistent` 声明能力。声明为 true 的 Driver 必须实现 `driver.ProcessLifecycleDriver`，供 `Agent.Close` 有界回收全部进程组。
+A Driver declares the capability through `Descriptor.Process.Persistent`. A Driver that declares true must implement `driver.ProcessLifecycleDriver` so that `Agent.Close` can reclaim all process groups within a bounded time.
 
-## 6. Stream 与 Event
+## 6. Stream and Event
 
 ```go
 type Stream interface {
@@ -237,7 +237,7 @@ type Stream interface {
 }
 ```
 
-`Stream` 创建后立即返回，启动前错误也通过 `Result()` 返回；不会增加第二个 error 返回值。`Cancel` 幂等。调用者通常先消费 `Events()` 到关闭，再读取 `Result()`。
+`Stream` returns immediately after creation, and pre-start errors are also returned through `Result()`; there is no second error return value. `Cancel` is idempotent. Callers normally drain `Events()` until it closes and then read `Result()`.
 
 ```go
 stream := agent.Stream(ctx, prompt)
@@ -256,7 +256,7 @@ for ev := range stream.Events() {
 result, err := stream.Result()
 ```
 
-`Event` 是 sealed typed interface。每个事件的 `Meta()` 返回根包拥有的权威 envelope：
+`Event` is a sealed typed interface. Each event's `Meta()` returns the authoritative envelope owned by the root package:
 
 ```go
 type EventMeta struct {
@@ -269,33 +269,33 @@ type EventMeta struct {
 }
 ```
 
-`Sequence` 在一个 run 内严格递增。provider 自带的坐标保存在 `Source`，不会覆盖根包的顺序。
+`Sequence` increases strictly within one run. Coordinates supplied by the provider itself are kept in `Source` and never override the root package's ordering.
 
-事件族：
+Event families:
 
-| 类型 | 含义 |
+| Type | Meaning |
 |---|---|
-| `TextDelta` | assistant 文本；`PhaseStart` / `PhaseContent` / `PhaseEnd` |
-| `Thinking` | reasoning 文本生命周期 |
-| `ToolCall` | tool start、参数增量、end 生命周期 |
-| `ToolResult` | 完整 tool result |
-| `RunStarted` | 执行开始 |
-| `RunFinished` | 执行终局提示；权威结果仍以 `Stream.Result()` 为准 |
-| `ProcessInfo` | spawn、原始 stdout/stderr chunk |
-| `Notice` | invocation、lifecycle、runtime、step、transcript、approval 通知 |
-| `Dropped` | 背压丢弃聚合，含数量、种类、序号范围和原因 |
-| `SubagentUpdate` | delegation 子 Agent 的开始、增量和结束 |
-| `*ApprovalRequest` | 等待宿主应答的 HITL 请求 |
+| `TextDelta` | assistant text; `PhaseStart` / `PhaseContent` / `PhaseEnd` |
+| `Thinking` | reasoning text lifecycle |
+| `ToolCall` | tool start, argument deltas, and end lifecycle |
+| `ToolResult` | complete tool result |
+| `RunStarted` | execution started |
+| `RunFinished` | terminal hint for the execution; the authoritative result is still `Stream.Result()` |
+| `ProcessInfo` | spawn plus raw stdout/stderr chunks |
+| `Notice` | invocation, lifecycle, runtime, step, transcript, and approval notices |
+| `Dropped` | aggregated backpressure drops, with count, kinds, sequence range, and reason |
+| `SubagentUpdate` | start, deltas, and end of a delegation subagent |
+| `*ApprovalRequest` | a HITL request awaiting a host response |
 
-默认背压在缓冲满时丢弃合同允许丢弃的事件，并产生 `Dropped`。`WithBlockingEvents` 保证不丢弃，但慢消费者会反压 Driver；取消仍会解除阻塞。
+Default backpressure drops the events the contract allows to be dropped when the buffer is full, and produces a `Dropped`. `WithBlockingEvents` guarantees no drops, but a slow consumer then applies backpressure to the Driver; cancellation still unblocks it.
 
-`WithEventMeta` 仅供 bridge 和持久化 recorder 回放 typed Event。实时 sink 总会重写权威顺序。
+`WithEventMeta` is only for bridges and persistent recorders replaying typed Events. A live sink always rewrites the authoritative ordering.
 
 ## 7. Approval
 
-HITL 有两种消费方式，但共用同一个 `ApprovalRequest`。
+HITL has two consumption forms, but both share one `ApprovalRequest`.
 
-回调方式：
+Callback form:
 
 ```go
 adaptor.OnApproval(func(ctx context.Context, req *adaptor.ApprovalRequest) error {
@@ -308,7 +308,7 @@ adaptor.OnApproval(func(ctx context.Context, req *adaptor.ApprovalRequest) error
 })
 ```
 
-事件方式是在 `Stream.Events()` 中接收 `*ApprovalRequest`，保存请求对象并在其他 goroutine 调用它的应答方法。
+The event form receives `*ApprovalRequest` from `Stream.Events()`, keeps the request object, and calls its response methods from another goroutine.
 
 ```go
 func (r *ApprovalRequest) Approve(ctx context.Context) error
@@ -316,18 +316,18 @@ func (r *ApprovalRequest) Deny(ctx context.Context, reason string) error
 func (r *ApprovalRequest) Answer(ctx context.Context, option string) error
 ```
 
-Kinds：`ApprovalPermission`、`ApprovalPlanReview`、`ApprovalQuestion`。`Approve` 不适用于 Question，`Answer` 只适用于 Question，`Deny` 适用于所有 Kind。
+Kinds: `ApprovalPermission`, `ApprovalPlanReview`, `ApprovalQuestion`. `Approve` does not apply to a Question, `Answer` applies only to a Question, and `Deny` applies to every Kind.
 
-应答 exactly-once。主要错误：
+A response is exactly-once. The main errors:
 
 - `ErrApprovalResolved`
 - `ErrApprovalExpired`
 - `ErrApprovalKindMismatch`
 - `ErrApprovalUnavailable`
 
-策略通过 `Policy.Approvals` 配置：Permission 和 PlanReview 使用 `ApprovalMode`；Question 使用 `QuestionMode`；超时或拒绝后的动作使用 `FallbackAction`。零值采用保守默认值。所有显式 mode 都会按 Driver capability 做启动前严格校验。`ApproveAll()` 和 `DenyAll(reason)` 只处理已经通过 capability 校验并路由到 handler 的 Ask 请求。
+Policy is configured through `Policy.Approvals`: Permission and PlanReview use `ApprovalMode`; Question uses `QuestionMode`; the action after a timeout or rejection uses `FallbackAction`. The zero value takes conservative defaults. Every explicit mode is validated strictly against Driver capability before startup. `ApproveAll()` and `DenyAll(reason)` only handle Ask requests that have already passed capability validation and been routed to a handler.
 
-## 8. Result 与错误
+## 8. Result and errors
 
 ```go
 type Result struct {
@@ -341,7 +341,7 @@ type Result struct {
 }
 ```
 
-高频字段直接暴露；审计和大对象通过方法访问：
+Frequently used fields are exposed directly; audit data and large objects are reached through methods:
 
 ```go
 func (r *Result) Raw() RawStreams
@@ -350,18 +350,18 @@ func (r *Result) Services() []ServiceReport
 func (r *Result) Decode(v any) error
 ```
 
-分层语义：
+Layered semantics:
 
-- `Text` 只包含最终 assistant-facing 文本。
-- `Summary` 是可选的短摘要，不保证由每个 Driver 生成。
-- `Usage == nil` 表示 provider 未报告用量；非 nil 的零值表示已观察到用量且所有归一化计数明确为零。
-- `Raw().Stdout` 与 `Raw().Stderr` 是完整原始进程输出。
-- `Raw().Terminal` 保存 Driver 从官方协议识别出的终局事件名与精确 JSON；未识别到时为 nil。
-- `Transcript()` 是 Driver 从官方协议解析出的标准化条目，并返回深拷贝。
-- `Services()` 是实际确保或 Driver 观察到的 runtime service 报告，不回显秘密环境变量或 MCP 声明。
-- `Decode()` 优先解码已经校验的结构化输出；未请求 schema 时会尝试把 `Text` 当 JSON。
+- `Text` contains only the final assistant-facing text.
+- `Summary` is an optional short summary and is not guaranteed to be produced by every Driver.
+- `Usage == nil` means the provider reported no usage; a non-nil zero value means usage was observed and every normalized count is explicitly zero.
+- `Raw().Stdout` and `Raw().Stderr` are the complete raw process output.
+- `Raw().Terminal` holds the terminal event name and exact JSON that the Driver recognized from the official protocol; it is nil when nothing was recognized.
+- `Transcript()` holds the normalized items the Driver parsed from the official protocol, and returns a deep copy.
+- `Services()` holds reports of runtime services actually ensured or observed by the Driver; it does not echo secret environment variables or MCP declarations.
+- `Decode()` decodes already-validated structured output when available; when no schema was requested it attempts to treat `Text` as JSON.
 
-业务失败返回 `*RunError`，其中保留部分或完整 Result：
+A business failure returns a `*RunError`, which retains a partial or complete Result:
 
 ```go
 type RunError struct {
@@ -384,9 +384,9 @@ if err != nil {
 _ = res
 ```
 
-`errors.Is` 可匹配 `ErrApprovalDenied`、`ErrApprovalTimeout`、`ErrAgentFailed`、`ErrRunCancelled`、`ErrPolicyViolation`。启动前配置和策略错误可匹配 `ErrInvalidDriverConfig`、`ErrInvalidPolicy`、`ErrPolicyCapabilityUnsupported` 或 `ErrHumanDecisionModeUnsupported`。配置、资源解析、context 取消和其他基础设施错误也走同一个 `error` 判定面；相应 typed error 可通过 `errors.As` 读取 Driver、字段和值等诊断信息。
+`errors.Is` matches `ErrApprovalDenied`, `ErrApprovalTimeout`, `ErrAgentFailed`, `ErrRunCancelled`, and `ErrPolicyViolation`. Pre-start configuration and policy errors match `ErrInvalidDriverConfig`, `ErrInvalidPolicy`, `ErrPolicyCapabilityUnsupported`, or `ErrHumanDecisionModeUnsupported`. Configuration, resource resolution, context cancellation, and other infrastructure errors travel the same single `error` path; the corresponding typed errors expose diagnostics such as Driver, field, and value through `errors.As`.
 
-## 9. 结构化输出
+## 9. Structured output
 
 ```go
 func RunAs[T any](ctx context.Context, r Runner, prompt string, opts ...CallOption) (T, *Result, error)
@@ -394,7 +394,7 @@ func WithSchema[T any](opts ...SchemaOption) CallOption
 func WithSchemaJSON(schemaJSON []byte, opts ...SchemaOption) CallOption
 ```
 
-`RunAs` 接收任意 Runner，自动增加 `WithSchema[T]`、执行并解码。
+`RunAs` accepts any Runner, adds `WithSchema[T]` automatically, executes, and decodes.
 
 ```go
 type Review struct {
@@ -405,30 +405,32 @@ type Review struct {
 review, result, err := adaptor.RunAs[Review](ctx, reviewer, "review the diff")
 ```
 
-Schema options：
+Schema options:
 
-| 选项 | 语义 |
+| Option | Semantics |
 |---|---|
-| `SchemaName(string)` | provider-facing schema 名称 |
-| `SchemaDescription(string)` | schema 描述 |
-| `SchemaReturnInvalid()` | 校验失败时保留 invalid payload，而不是让执行失败 |
-| `SchemaInlineReferences()` | 内联 `$ref`；递归类型会报错 |
-| `SchemaAllowAdditionalProperties()` | 允许对象附加属性 |
-| `SchemaRequireExplicitTags()` | 仅 `jsonschema:"required"` 字段为 required |
-| `SchemaUseGoComments(base, path)` | 用 Go 注释生成描述 |
+| `SchemaName(string)` | provider-facing schema name |
+| `SchemaDescription(string)` | schema description |
+| `SchemaReturnInvalid()` | keep an invalid payload on validation failure instead of failing the execution |
+| `SchemaInlineReferences()` | inline `$ref`; a recursive type is an error |
+| `SchemaAllowAdditionalProperties()` | allow additional object properties |
+| `SchemaRequireExplicitTags()` | only `jsonschema:"required"` fields are required |
+| `SchemaUseGoComments(base, path)` | generate descriptions from Go comments |
 
-消费者不选择结构化输出模式。框架固定优先使用 provider 原生 JSON Schema；
-当前 transport 或 policy 不支持时，自动回退到 Prompt 加本地校验；两种机制都
-不可用才在进程启动前返回 `ErrStructuredOutputUnsupported`。无效 schema 匹配
-`ErrInvalidOutputSchema`，Driver 的 `Descriptor.StructuredOutput` 是能力真相源。
+Consumers do not choose a structured-output mode. The framework always prefers the
+provider's native JSON Schema; when the current transport or policy does not support
+it, it falls back automatically to Prompt plus local validation; only when neither
+mechanism is available does it return `ErrStructuredOutputUnsupported` before the
+process starts. An invalid schema matches `ErrInvalidOutputSchema`, and the Driver's
+`Descriptor.StructuredOutput` is the source of truth for the capability.
 
-## 10. Inspect 与 profile 状态
+## 10. Inspect and profile state
 
 ```go
 func (a *Agent) Inspect() Inspector
 ```
 
-Inspector 只有五个只读方法：
+Inspector has only five read-only methods:
 
 ```go
 func (in Inspector) Environment(ctx context.Context) (EnvironmentReport, error)
@@ -438,9 +440,9 @@ func (in Inspector) ConfigSchema(ctx context.Context) (*ConfigSchema, error)
 func (in Inspector) Skills(ctx context.Context) (SkillSnapshot, error)
 ```
 
-Driver 未实现相应 probe 时，Inspector 返回 descriptor fallback 或明确不可用的报告，不伪造成功。
+When the Driver does not implement the corresponding probe, Inspector returns a descriptor fallback or an explicitly unavailable report; it never fakes success.
 
-Profile 和 skill 的有状态动作直接挂在 Agent：
+The stateful actions for profile and skill hang directly off the Agent:
 
 ```go
 func (a *Agent) ProfileState(ctx context.Context) (ProfileSnapshot, error)
@@ -448,15 +450,15 @@ func (a *Agent) SyncProfile(ctx context.Context) (ProfileSnapshot, error)
 func (a *Agent) SelectSkills(ctx context.Context, keys []string) (SkillSnapshot, error)
 ```
 
-- `ProfileState` 只读取 desired 与 observed 状态。
-- `SyncProfile` 物化 Driver 支持的资源，并对不支持的资源如实报告。
-- `SelectSkills` 安装进程内 selection override；它不替宿主持久化用户偏好。
+- `ProfileState` only reads the desired and observed state.
+- `SyncProfile` materializes the resources the Driver supports, and reports unsupported resources truthfully.
+- `SelectSkills` installs an in-process selection override; it does not persist user preferences on the host's behalf.
 
-## 11. tool、skill、MCP 与 profile 词汇包
+## 11. The tool, skill, MCP, and profile vocabulary packages
 
 ### 11.1 tool
 
-宿主定义 Tool 使用 typed Go handler，不暴露 MCP server、transport 或 credential：
+Host-defined Tools use typed Go handlers and expose no MCP server, transport, or credential:
 
 ```go
 lookup := tool.Define(
@@ -473,11 +475,11 @@ lookup := tool.Define(
 agent := adaptor.New(driver, adaptor.WithTools(lookup))
 ```
 
-输入和输出 schema 默认从 Go 类型及 tag 推导；`tool.InputSchemaJSON` 与 `tool.OutputSchemaJSON` 是标准 JSON Schema escape hatch。`tool.Reject(code, message)` 表示可安全展示给模型的预期失败；普通 error 与 panic 会被清洗。`WithTools` 仅用于构造期，最后一个选项整体替换此前集合。使用 Thread 时每个 Tool 必须提供稳定 `Revision`，并在行为语义变化时更新。Agent 在内部通过经过鉴权的 loopback MCP runtime 交付这些 Tool；内置 Driver 使用 SDK 自有的隔离执行 profile，避免并发宿主进程改写同一个原生 profile。这些实现机制都不进入调用方 API。完整合同见 [`tools.md`](./tools.md)。
+Input and output schemas are inferred from the Go types and their tags by default; `tool.InputSchemaJSON` and `tool.OutputSchemaJSON` are the standard JSON Schema escape hatch. `tool.Reject(code, message)` reports an expected failure that is safe to show the model; ordinary errors and panics are sanitized. `WithTools` is construction-only, and the last option replaces the previous set as a whole. Every Tool used with a Thread must provide a stable `Revision` that is updated whenever its behavioral semantics change. The Agent delivers these Tools internally through an authenticated loopback MCP runtime; built-in Drivers use an SDK-owned isolated execution profile so that concurrent host processes never rewrite the same native profile. None of these mechanisms enter the caller-facing API. For the complete contract see [`tools.md`](./tools.md).
 
 ### 11.2 skill
 
-常用构造器：
+Common constructors:
 
 ```go
 skill.Dir(path)
@@ -488,9 +490,9 @@ skill.Key(key)
 skill.Require(value, reason)
 ```
 
-`WithSkills` 接受 `skill.Ref`。完整 Skill 值可直接使用；`skill.Key` 由 `WithSkillProvider` 注入的 `skill.Provider` 解析。实现 `skill.Catalog` 可让 `Inspect().Skills()` 枚举 catalogue。`skill.Set` 是静态 map-backed 实现。
+`WithSkills` accepts a `skill.Ref`. A complete Skill value can be used directly; a `skill.Key` is resolved by the `skill.Provider` injected through `WithSkillProvider`. Implementing `skill.Catalog` lets `Inspect().Skills()` enumerate the catalogue. `skill.Set` is the static map-backed implementation.
 
-归档支持 zip、tar、tgz；`NewDefaultSkillMaterializer` 可配置 cache root、archive 大小、文件大小与条目数上限。skill 解析或物化失败会在 Driver 启动前返回错误。
+Archives support zip, tar, and tgz; `NewDefaultSkillMaterializer` can configure the cache root and the limits on archive size, file size, and entry count. A skill resolution or materialization failure returns an error before the Driver starts.
 
 ### 11.3 MCP
 
@@ -502,11 +504,11 @@ adaptor.WithMCP(
 )
 ```
 
-可选项：`mcp.Args`、`mcp.Env`、`mcp.WithHeader`、`mcp.WithHeaders`、`mcp.WithBearerTokenEnv`、`mcp.Required`。transport 与 option 不匹配时不会静默忽略，而是在启动前返回 MCP 配置错误。
+Options: `mcp.Args`, `mcp.Env`, `mcp.WithHeader`, `mcp.WithHeaders`, `mcp.WithBearerTokenEnv`, `mcp.Required`. A mismatch between transport and option is not silently ignored; an MCP configuration error is returned before startup.
 
 ### 11.4 profile
 
-Profile selection：
+Profile selection:
 
 ```go
 profile.Default()
@@ -516,13 +518,13 @@ profile.CloneNative(dir, profile.LinkAuth())
 profile.CloneFrom(src, dst, profile.CopySettings(), profile.CopyMCP())
 ```
 
-clone options 包括 `CopySettings`、`CopyMCP`、`CopySkills`、`CopyAuth`、`LinkAuth`、`WithOptions`。OAuth CLI 通常应使用 `LinkAuth`，避免复制会轮转的 refresh token 状态。
+Clone options include `CopySettings`, `CopyMCP`, `CopySkills`, `CopyAuth`, `LinkAuth`, and `WithOptions`. An OAuth CLI should normally use `LinkAuth` to avoid copying refresh-token state that rotates.
 
-`profile.Resources` 可声明 `Skills`、`MCP`、`Agents`、`Hooks`、`Instructions`、`Config`，并通过 `WithProfileResources` 进入统一解析管线。
+`profile.Resources` can declare `Skills`, `MCP`, `Agents`, `Hooks`, `Instructions`, and `Config`, and enters the unified resolution pipeline through `WithProfileResources`.
 
-## 12. Workspace 与 runtime services
+## 12. Workspace and runtime services
 
-直接目录使用 `WithWorkspace(dir)`。需要策略化供应时使用：
+Use `WithWorkspace(dir)` for a direct directory. Use the following when policy-driven provisioning is needed:
 
 ```go
 adaptor.WithWorkspaceSpec(adaptor.SharedWorkspace{})
@@ -534,7 +536,7 @@ adaptor.WithWorkspaceSpec(adaptor.GitWorktreeWorkspace{
 adaptor.WithWorkspaceSpec(adaptor.DriverManagedWorkspace{})
 ```
 
-`WorkspaceManager`：
+`WorkspaceManager`:
 
 ```go
 type WorkspaceManager interface {
@@ -543,9 +545,9 @@ type WorkspaceManager interface {
 }
 ```
 
-未注入 manager 时，WorkspaceSpec 通过 passthrough manager 解析为基础目录；需要真正创建 worktree 或 sandbox 时必须提供 manager。
+Without an injected manager, a WorkspaceSpec resolves to the base directory through a passthrough manager; a manager must be supplied when a worktree or sandbox has to be created for real.
 
-声明式服务：
+Declarative services:
 
 ```go
 type ServiceManager interface {
@@ -555,9 +557,9 @@ type ServiceManager interface {
 }
 ```
 
-`WithServices` 只声明期望服务；没有 `WithServiceManager` 时声明不会虚构 endpoint。`ServiceRef.MCP` 是服务向本次执行发布 MCP 的类型化入口，`SecretEnv` 只进入 Driver 子进程，不进入 Result report。
+`WithServices` only declares the desired services; without `WithServiceManager` a declaration does not invent an endpoint. `ServiceRef.MCP` is the typed entry point through which a service publishes MCP to this execution, and `SecretEnv` reaches only the Driver subprocess, never the Result report.
 
-`RunServiceProvider` 用于 delegation、浏览器池等每次执行附着的动态服务：
+`RunServiceProvider` covers dynamic services attached per execution, such as delegation or a browser pool:
 
 ```go
 type RunServiceProvider interface {
@@ -566,9 +568,9 @@ type RunServiceProvider interface {
 }
 ```
 
-`RunAttachment` 可贡献 Services 和一条已经投影成根 Event 的 `RunEventSource`；这些事件直接进入同一 Stream。`RunStarted` / `RunFinished` 由 core 独占，event source 若提供这两种事件会被过滤。SDK 会先发布唯一的 `RunStarted`，在事件源完成 flush 且 run-scoped 资源释放后再发布唯一的 `RunFinished` 并关闭 Events。`DetachRun`、`ReleaseByRun` 和 workspace release 共享一个全局有界预算，但每一步都有公平子预算；任一 source/hook 超时不会阻止后续释放动作被调用。超时或释放错误会进入 `Result()` 的 error，不会被静默吞掉。
+A `RunAttachment` may contribute Services plus one `RunEventSource` already projected into root Events; those events enter the same Stream directly. `RunStarted` / `RunFinished` are owned exclusively by core, and an event source that emits either of them is filtered. The SDK publishes the single `RunStarted` first, and publishes the single `RunFinished` and closes Events only after the event sources have finished flushing and run-scoped resources have been released. `DetachRun`, `ReleaseByRun`, and workspace release share one global bounded budget, but each step has a fair sub-budget; a timeout in any one source/hook does not prevent later release actions from being invoked. A timeout or release error surfaces as the error from `Result()` and is never swallowed silently.
 
-## 13. threadstore 与 memory
+## 13. threadstore and memory
 
 ```go
 type Store interface {
@@ -580,32 +582,32 @@ type Store interface {
 }
 ```
 
-`Finalize` 必须原子完成 lease 校验、record 保存、旧 record 归档和 key 重绑；Fork 使用 `RequireKeyAbsent` 防止目标冲突。
+`Finalize` must atomically complete lease validation, record saving, archiving of the old record, and key rebinding; Fork uses `RequireKeyAbsent` to prevent a target conflict.
 
-`memory.NewStore()` 返回并发安全的单进程实现，适用于测试、本地工具和 demo。需要跨进程续接与协调的服务应实现持久化 Store。
+`memory.NewStore()` returns a concurrency-safe single-process implementation suitable for tests, local tools, and demos. A service that needs cross-process resumption and coordination must implement a persistent Store.
 
-## 14. 内置 provider Driver
+## 14. Built-in provider Drivers
 
-四个 provider 都采用同一形状：
+All four providers use the same shape:
 
 ```go
 func Driver(cfg Config) driver.Driver
 ```
 
-| 包 | Config 主要字段 |
+| Package | Main Config fields |
 |---|---|
-| `codex` | `CommonConfig`、`Model`、`ReasoningEffort`、`FastMode` |
-| `claude` | `CommonConfig`、`Model`、`Effort`、`MaxTurnsPerRun` |
-| `cursor` | `CommonConfig`、`Model`、`Mode` |
-| `codebuddy` | `CommonConfig`、`Model`、`Effort`、`PermissionMode`、`MaxTurnsPerRun` |
+| `codex` | `CommonConfig`, `Model`, `ReasoningEffort`, `FastMode` |
+| `claude` | `CommonConfig`, `Model`, `Effort`, `MaxTurnsPerRun` |
+| `cursor` | `CommonConfig`, `Model`, `Mode` |
+| `codebuddy` | `CommonConfig`, `Model`, `Effort`, `PermissionMode`, `MaxTurnsPerRun` |
 
-各包的 `CommonConfig` 都是 `driver.CommonConfig` 的别名，包含 `Command`、`CWD`、`Env`、instructions、prompt templates、workspace defaults、timeouts、grace period 与 extra args。Driver 构造器对配置做深拷贝快照，后续修改原切片或 map 不影响 Agent。
+The `CommonConfig` in each package is an alias of `driver.CommonConfig` and contains `Command`, `CWD`, `Env`, instructions, prompt templates, workspace defaults, timeouts, grace period, and extra args. A Driver constructor takes a deep-copied snapshot of the configuration, so later modification of the original slices or maps does not affect the Agent.
 
-provider-specific Config 表达 CLI 与 transport 配置；调用级 `WithModel` 等覆盖由根包统一解析。
+A provider-specific Config expresses CLI and transport configuration; call-level overrides such as `WithModel` are resolved uniformly by the root package.
 
-## 15. Driver SPI 与 adaptertest
+## 15. Driver SPI and adaptertest
 
-第三方 Driver 的最小合同：
+The minimal contract for a third-party Driver:
 
 ```go
 type Driver interface {
@@ -615,9 +617,9 @@ type Driver interface {
 }
 ```
 
-根包负责选项合并、Thread 协调、workspace/runtime/skill/MCP 解析和结果收口；Driver 负责 provider 配置校验、进程或协议执行、Transcript 解析和 checkpoint 提取。
+The root package is responsible for option merging, Thread coordination, workspace/runtime/skill/MCP resolution, and result consolidation; the Driver is responsible for provider configuration validation, process or protocol execution, Transcript parsing, and checkpoint extraction.
 
-可选 capability interfaces 包括：
+The optional capability interfaces include:
 
 - `EnvironmentProbe`
 - `ModelLister`
@@ -630,11 +632,11 @@ type Driver interface {
 - `SkillSupport`
 - `StreamSupport`
 
-`Descriptor` 的声明必须与实现接口和真实行为一致。声明 `Descriptor.Sessions.SupportsResume=true` 的 Driver 必须同时稳定提供 non-nil `SessionCodec` 与 non-empty、跨进程确定的 `SessionConfigFingerprint`；fingerprint 覆盖所有 provider 可见构造配置及 codec/version 合同，不能稳定 canonicalize 时必须报错。公共 Thread 在获取 workspace/runtime/store lease 或派发 Driver 前校验这两项，缺失或不稳定时返回可 `errors.Is(err, adaptor.ErrThreadIncompatible)` 判断的错误。
+A `Descriptor` declaration must match the implemented interfaces and the real behavior. A Driver that declares `Descriptor.Sessions.SupportsResume=true` must also stably supply both a non-nil `SessionCodec` and a non-empty, cross-process deterministic `SessionConfigFingerprint`; the fingerprint covers every provider-visible construction configuration plus the codec/version contract, and must return an error when it cannot be canonicalized stably. The public Thread validates both before acquiring a workspace/runtime/store lease or dispatching the Driver, and returns an error matching `errors.Is(err, adaptor.ErrThreadIncompatible)` when either is missing or unstable.
 
-Driver 发出的 stream sequence、时间戳和根 Event 顺序由 core 分配；Driver 的 `Response.Transcript` 必须与它发出的 transcript item 镜像一致。`Checkpoint.Valid` 只允许在干净成功、官方终局和可 round-trip resume ID 同时成立时设置。
+The stream sequence, timestamps, and root Event ordering for the events a Driver emits are assigned by core; a Driver's `Response.Transcript` must mirror the transcript items it emitted. `Checkpoint.Valid` may be set only when a clean success, an official terminal event, and a round-trippable resume ID all hold.
 
-一致性测试：
+Conformance testing:
 
 ```go
 func TestMyDriver(t *testing.T) {
@@ -644,14 +646,14 @@ func TestMyDriver(t *testing.T) {
 }
 ```
 
-`adaptertest.TestDriver` 检查 Driver/config、capability 真话性、structured output、session codec、session config fingerprint、event 生命周期、Transcript 镜像和 Response 不变量。真实 CLI 探针必须显式使用 `WithLiveRun`；默认测试不应产生外部或付费调用。
+`adaptertest.TestDriver` checks Driver/config, capability truthfulness, structured output, session codec, session config fingerprint, event lifecycle, Transcript mirroring, and Response invariants. A real CLI probe must use `WithLiveRun` explicitly; the default tests must not produce external or paid calls.
 
-`adaptertest.NewReferenceDriver` 是全内存合规参考实现；`VerifyOutcome`、`VerifyStreamSequence`、`VerifyRunEvents`、`VerifyTranscript`、`VerifyTranscriptMirror` 等函数可用于更细粒度测试。
+`adaptertest.NewReferenceDriver` is a fully in-memory conformant reference implementation; functions such as `VerifyOutcome`, `VerifyStreamSequence`, `VerifyRunEvents`, `VerifyTranscript`, and `VerifyTranscriptMirror` are available for finer-grained testing.
 
-## 16. 相关文档
+## 16. Related documents
 
-- [文档地图](./README.md)
-- [结构化输出](./structured-output.md)
+- [Documentation map](./README.md)
+- [Structured output](./structured-output.md)
 - [Streaming](./streaming.md)
 - [A2A bridge](./a2a.md)
-- [架构与发布合同](../AGENTS.md)
+- [Architecture and release contract](../AGENTS.md)
