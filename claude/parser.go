@@ -427,6 +427,9 @@ func (p *claudeParser) handleAssistantMessage(message map[string]any) {
 		case "tool_use":
 			name := claudeTopLevelString(block, "name")
 			id := claudeTopLevelString(block, "id", "tool_use_id")
+			if p.stream != nil {
+				p.stream.handleAssistantToolUse(block)
+			}
 			if kind, interactive := claudeInteractiveTools[name]; interactive && id != "" {
 				p.registerPendingHITL(id, name, kind, block["input"])
 			}

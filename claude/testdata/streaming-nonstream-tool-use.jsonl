@@ -1,0 +1,4 @@
+{"type":"system","subtype":"init","session_id":"sess-complete-tools","model":"claude-fixture"}
+{"type":"assistant","session_id":"sess-complete-tools","parent_tool_use_id":"tool-parent-explore","message":{"content":[{"type":"tool_use","id":"tool-read-1","name":"Read","input":{"file_path":"/tmp/a.go"}},{"type":"tool_use","id":"tool-grep-1","name":"Grep","input":{"pattern":"TODO","path":"/tmp"}}]}}
+{"type":"user","session_id":"sess-complete-tools","parent_tool_use_id":"tool-parent-explore","message":{"content":[{"type":"tool_result","tool_use_id":"tool-read-1","content":"package example"},{"type":"tool_result","tool_use_id":"tool-grep-1","content":"/tmp/a.go:1: TODO"}]}}
+{"type":"result","subtype":"success","session_id":"sess-complete-tools","result":"Explore finished."}

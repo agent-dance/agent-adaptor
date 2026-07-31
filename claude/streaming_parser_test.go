@@ -131,26 +131,23 @@ func TestStreamingToolFixture_ArgsFragmentsConcatenateToJSON(t *testing.T) {
 	p.finalize()
 
 	var argFragments strings.Builder
-	sawStart, sawEnd, sawResult := false, false, false
+	counts := map[agentadaptor.StreamKind]int{}
 	for _, pl := range sink.snapshot() {
+		if pl.ToolCallID != "tool-stream-1" {
+			continue
+		}
+		counts[pl.Kind]++
 		if pl.Kind == agentadaptor.StreamToolCallArgs {
 			argFragments.WriteString(pl.Delta)
 		}
-		if pl.Kind == agentadaptor.StreamToolCallStart && pl.ToolCallID == "tool-stream-1" {
-			sawStart = true
-		}
-		if pl.Kind == agentadaptor.StreamToolCallEnd && pl.ToolCallID == "tool-stream-1" {
-			sawEnd = true
-		}
-		if pl.Kind == agentadaptor.StreamToolCallResult && pl.ToolCallID == "tool-stream-1" {
-			sawResult = true
+		if pl.Kind == agentadaptor.StreamToolCallResult {
 			if pl.Result == nil || pl.Result["is_error"] != false {
 				t.Fatalf("tool result: %+v", pl.Result)
 			}
 		}
 	}
-	if !sawStart || !sawEnd || !sawResult {
-		t.Fatalf("tool lifecycle start=%v end=%v result=%v", sawStart, sawEnd, sawResult)
+	if counts[agentadaptor.StreamToolCallStart] != 1 || counts[agentadaptor.StreamToolCallEnd] != 1 || counts[agentadaptor.StreamToolCallResult] != 1 {
+		t.Fatalf("tool lifecycle must not duplicate full assistant replay: %+v", counts)
 	}
 
 	input := map[string]any{"path": "/tmp/x"}
@@ -163,6 +160,142 @@ func TestStreamingToolFixture_ArgsFragmentsConcatenateToJSON(t *testing.T) {
 	if !reflect.DeepEqual(gotObj, wantObj) {
 		t.Fatalf("args concat decode: got %#v want %#v (raw concat %q)", gotObj, wantObj, argFragments.String())
 	}
+}
+
+func TestStreamingCompleteAssistantToolUseEmitsLifecycle(t *testing.T) {
+	fixture := loadFixture(t, "streaming-nonstream-tool-use.jsonl")
+	sink := &streamSink{}
+	p := newClaudeParser(sink)
+	p.enableStreaming("run-complete-tools")
+
+	if err := p.onChunk("stdout", fixture, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	p.finalize()
+
+	want := map[string]struct {
+		name string
+		args map[string]any
+	}{
+		"tool-read-1": {
+			name: "Read",
+			args: map[string]any{"file_path": "/tmp/a.go"},
+		},
+		"tool-grep-1": {
+			name: "Grep",
+			args: map[string]any{"pattern": "TODO", "path": "/tmp"},
+		},
+	}
+	counts := map[string]map[agentadaptor.StreamKind]int{}
+	sequences := map[string][]agentadaptor.StreamKind{}
+	for _, pl := range sink.snapshot() {
+		expected, ok := want[pl.ToolCallID]
+		if !ok {
+			continue
+		}
+		if counts[pl.ToolCallID] == nil {
+			counts[pl.ToolCallID] = map[agentadaptor.StreamKind]int{}
+		}
+		counts[pl.ToolCallID][pl.Kind]++
+		switch pl.Kind {
+		case agentadaptor.StreamToolCallStart, agentadaptor.StreamToolCallEnd, agentadaptor.StreamToolCallResult:
+			sequences[pl.ToolCallID] = append(sequences[pl.ToolCallID], pl.Kind)
+		}
+		if pl.Kind == agentadaptor.StreamToolCallStart {
+			if pl.Name != expected.name || !reflect.DeepEqual(pl.Args, expected.args) {
+				t.Fatalf("tool start %s: got name=%q args=%#v want name=%q args=%#v", pl.ToolCallID, pl.Name, pl.Args, expected.name, expected.args)
+			}
+		}
+	}
+
+	for id := range want {
+		got := counts[id]
+		if got[agentadaptor.StreamToolCallStart] != 1 || got[agentadaptor.StreamToolCallEnd] != 1 || got[agentadaptor.StreamToolCallResult] != 1 {
+			t.Errorf("tool lifecycle %s: %+v", id, got)
+		}
+		if got[agentadaptor.StreamToolCallArgs] != 0 {
+			t.Errorf("complete tool use %s emitted synthetic args deltas: %+v", id, got)
+		}
+		wantSequence := []agentadaptor.StreamKind{
+			agentadaptor.StreamToolCallStart,
+			agentadaptor.StreamToolCallEnd,
+			agentadaptor.StreamToolCallResult,
+		}
+		if !reflect.DeepEqual(sequences[id], wantSequence) {
+			t.Errorf("tool lifecycle sequence %s: got %v want %v", id, sequences[id], wantSequence)
+		}
+	}
+}
+
+func TestStreamingMCPToolUseEmitsNamedArgumentDeltas(t *testing.T) {
+	fixture := loadFixture(t, "streaming-mcp-tool-use.jsonl")
+	sink := &streamSink{}
+	p := newClaudeParser(sink)
+	p.enableStreaming("run-mcp-tool")
+
+	if err := p.onChunk("stdout", fixture, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	p.finalize()
+
+	const (
+		toolCallID = "tool-mcp-1"
+		toolName   = "mcp__docs__search"
+	)
+	counts := map[agentadaptor.StreamKind]int{}
+	var argFragments strings.Builder
+	for _, pl := range sink.snapshot() {
+		if pl.ToolCallID != toolCallID {
+			continue
+		}
+		counts[pl.Kind]++
+		switch pl.Kind {
+		case agentadaptor.StreamToolCallStart:
+			if pl.Name != toolName || len(pl.Args) != 0 {
+				t.Fatalf("MCP start: name=%q args=%#v", pl.Name, pl.Args)
+			}
+		case agentadaptor.StreamToolCallArgs:
+			if pl.Name != toolName {
+				t.Fatalf("MCP args name: got %q want %q", pl.Name, toolName)
+			}
+			argFragments.WriteString(pl.Delta)
+		}
+	}
+
+	if counts[agentadaptor.StreamToolCallStart] != 1 || counts[agentadaptor.StreamToolCallEnd] != 1 || counts[agentadaptor.StreamToolCallResult] != 1 {
+		t.Fatalf("MCP tool lifecycle: %+v", counts)
+	}
+	want := map[string]any{"query": "streaming tool arguments", "limit": float64(5)}
+	if got := decodeJSONFlexible(argFragments.String()); !reflect.DeepEqual(got, want) {
+		t.Fatalf("MCP args: got %#v want %#v raw=%q", got, want, argFragments.String())
+	}
+}
+
+func TestStreamingToolStartCarriesUnwrappedInputSnapshot(t *testing.T) {
+	sink := &streamSink{}
+	p := newClaudeParser(sink)
+	p.enableStreaming("run-tool-snapshot")
+	p.stream.handleContentBlockStart(map[string]any{
+		"index": float64(0),
+		"content_block": map[string]any{
+			"type":  "tool_use",
+			"id":    "tool-snapshot-1",
+			"name":  "Agent",
+			"input": map[string]any{"subagent_type": "Explore"},
+		},
+	})
+
+	for _, pl := range sink.snapshot() {
+		if pl.Kind != agentadaptor.StreamToolCallStart {
+			continue
+		}
+		want := map[string]any{"subagent_type": "Explore"}
+		if !reflect.DeepEqual(pl.Args, want) {
+			t.Fatalf("tool start args: got %#v want %#v", pl.Args, want)
+		}
+		return
+	}
+	t.Fatal("missing tool-call start")
 }
 
 func decodeJSONFlexible(s string) map[string]any {

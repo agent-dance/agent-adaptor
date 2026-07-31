@@ -13,37 +13,41 @@ import (
 // API-shaped) into StreamPayload. It does not participate in checkpoint
 // construction; session capture stays in the main parser.
 type streamingState struct {
-	sink    agentadaptor.EventSink
-	runID   string
-	parser  *claudeParser
-	messageID   string
-	textStarted map[int]bool
-	blockKind   map[int]string
-	toolCallID  map[int]string
-	toolName    map[int]string
-	thinkingID  map[int]string
-	signatures  map[int]string
+	sink              agentadaptor.EventSink
+	runID             string
+	parser            *claudeParser
+	messageID         string
+	textStarted       map[int]bool
+	blockKind         map[int]string
+	toolCallID        map[int]string
+	toolName          map[int]string
+	emitToolLifecycle map[int]bool
+	emittedToolCalls  map[string]struct{}
+	thinkingID        map[int]string
+	signatures        map[int]string
 
-	runStarted       bool
-	finishedEmitted  bool
-	apiRetryHits     int
-	lastRetryWas5xx  bool
-	streamUsage      *agentadaptor.Usage
-	stopReason       string
-	numTurns         int
+	runStarted      bool
+	finishedEmitted bool
+	apiRetryHits    int
+	lastRetryWas5xx bool
+	streamUsage     *agentadaptor.Usage
+	stopReason      string
+	numTurns        int
 }
 
 func newStreamingState(sink agentadaptor.EventSink, runID string, p *claudeParser) *streamingState {
 	return &streamingState{
-		sink:        sink,
-		runID:       runID,
-		parser:      p,
-		textStarted: make(map[int]bool),
-		blockKind:   make(map[int]string),
-		toolCallID:  make(map[int]string),
-		toolName:    make(map[int]string),
-		thinkingID:  make(map[int]string),
-		signatures:  make(map[int]string),
+		sink:              sink,
+		runID:             runID,
+		parser:            p,
+		textStarted:       make(map[int]bool),
+		blockKind:         make(map[int]string),
+		toolCallID:        make(map[int]string),
+		toolName:          make(map[int]string),
+		emitToolLifecycle: make(map[int]bool),
+		emittedToolCalls:  make(map[string]struct{}),
+		thinkingID:        make(map[int]string),
+		signatures:        make(map[int]string),
 	}
 }
 
@@ -212,14 +216,17 @@ func (s *streamingState) handleContentBlockStart(event map[string]any) {
 		name := claudeTopLevelString(block, "name")
 		s.toolCallID[idx] = id
 		s.toolName[idx] = name
-		pl := s.basePayload()
-		pl.Kind = agentadaptor.StreamToolCallStart
-		pl.ToolCallID = id
-		pl.Name = name
-		if input := block["input"]; input != nil {
-			pl.Args = map[string]any{"input": input}
+		s.emitToolLifecycle[idx] = s.markToolCallEmitted(id)
+		if s.emitToolLifecycle[idx] {
+			pl := s.basePayload()
+			pl.Kind = agentadaptor.StreamToolCallStart
+			pl.ToolCallID = id
+			pl.Name = name
+			if input, ok := block["input"].(map[string]any); ok && len(input) > 0 {
+				pl.Args = cloneMapShallow(input)
+			}
+			s.emitStream(pl)
 		}
-		s.emitStream(pl)
 		// Interactive mode: register this tool_use with the parent parser
 		// so handleContentBlockDelta can accumulate input_json_delta and
 		// handleContentBlockStop can drive the HITL flow.
@@ -276,11 +283,14 @@ func (s *streamingState) handleContentBlockDelta(event map[string]any) {
 		if tid == "" {
 			tid = fmt.Sprintf("idx-%d", idx)
 		}
-		pl := s.basePayload()
-		pl.Kind = agentadaptor.StreamToolCallArgs
-		pl.ToolCallID = tid
-		pl.Delta = raw
-		s.emitStream(pl)
+		if s.emitToolLifecycle[idx] {
+			pl := s.basePayload()
+			pl.Kind = agentadaptor.StreamToolCallArgs
+			pl.ToolCallID = tid
+			pl.Name = s.toolName[idx]
+			pl.Delta = raw
+			s.emitStream(pl)
+		}
 		// Interactive mode: feed the partial_json into the accumulator so
 		// we have the complete tool_use input once content_block_stop hits.
 		if s.parser != nil {
@@ -327,7 +337,7 @@ func (s *streamingState) handleContentBlockStop(event map[string]any) {
 		}
 	case "tool_use":
 		tid := s.toolCallID[idx]
-		if tid != "" {
+		if tid != "" && s.emitToolLifecycle[idx] {
 			pl := s.basePayload()
 			pl.Kind = agentadaptor.StreamToolCallEnd
 			pl.ToolCallID = tid
@@ -357,8 +367,42 @@ func (s *streamingState) handleContentBlockStop(event map[string]any) {
 	delete(s.textStarted, idx)
 	delete(s.toolCallID, idx)
 	delete(s.toolName, idx)
+	delete(s.emitToolLifecycle, idx)
 	delete(s.thinkingID, idx)
 	delete(s.signatures, idx)
+}
+
+func (s *streamingState) handleAssistantToolUse(block map[string]any) {
+	id := claudeTopLevelString(block, "id", "tool_use_id")
+	if id == "" || !s.markToolCallEmitted(id) {
+		return
+	}
+
+	s.markRunStarted()
+	start := s.basePayload()
+	start.Kind = agentadaptor.StreamToolCallStart
+	start.ToolCallID = id
+	start.Name = claudeTopLevelString(block, "name")
+	if input, ok := block["input"].(map[string]any); ok && len(input) > 0 {
+		start.Args = cloneMapShallow(input)
+	}
+	s.emitStream(start)
+
+	end := s.basePayload()
+	end.Kind = agentadaptor.StreamToolCallEnd
+	end.ToolCallID = id
+	s.emitStream(end)
+}
+
+func (s *streamingState) markToolCallEmitted(id string) bool {
+	if id == "" {
+		return true
+	}
+	if _, ok := s.emittedToolCalls[id]; ok {
+		return false
+	}
+	s.emittedToolCalls[id] = struct{}{}
+	return true
 }
 
 func (s *streamingState) handleMessageDelta(event map[string]any) {
@@ -410,8 +454,8 @@ func (s *streamingState) handleUserToolResult(block map[string]any) {
 	pl.Kind = agentadaptor.StreamToolCallResult
 	pl.ToolCallID = id
 	pl.Result = map[string]any{
-		"text":      text,
-		"is_error":  isError,
+		"text":        text,
+		"is_error":    isError,
 		"tool_use_id": id,
 	}
 	s.emitStream(pl)
@@ -492,7 +536,7 @@ func (s *streamingState) finalize() {
 				s.emitStream(pl)
 			}
 		case "tool_use":
-			if tid := s.toolCallID[idx]; tid != "" {
+			if tid := s.toolCallID[idx]; tid != "" && s.emitToolLifecycle[idx] {
 				pl := s.basePayload()
 				pl.Kind = agentadaptor.StreamToolCallEnd
 				pl.ToolCallID = tid
@@ -511,6 +555,8 @@ func (s *streamingState) finalize() {
 	s.textStarted = nil
 	s.toolCallID = nil
 	s.toolName = nil
+	s.emitToolLifecycle = nil
+	s.emittedToolCalls = nil
 	s.thinkingID = nil
 	s.signatures = nil
 
