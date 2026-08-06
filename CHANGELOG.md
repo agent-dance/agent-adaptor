@@ -10,6 +10,11 @@ All notable changes to this project are documented in this file.
   third-party attribution for schema-derived material, contribution terms, and
   matching license notices across all README translations.
 
+### Fixed
+
+- Updated the CopilotKit example's `fast-uri` override to 3.1.5 so production
+  dependency audits no longer include GHSA-7p8r-x3mc-p8w7 at high severity.
+
 ## [1.1.1] - 2026-07-31
 
 ### Added
