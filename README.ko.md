@@ -541,3 +541,15 @@ synced, err := agent.SyncProfile(ctx)                // 설정 리소스를 명�
 - [실행 정책: sandbox, 승인, 타임아웃](./docs/run-policy.md)
 - [A2A 연동](./docs/a2a.md)
 - [공개 오류](./docs/public-errors.md)
+
+## 라이선스
+
+별도로 명시된 경우를 제외하면 이 저장소는
+[Apache License, Version 2.0](./LICENSE)에 따라 배포됩니다. 제3자 자료에는
+각 자료의 라이선스와 저작자 표시가 그대로 적용됩니다. 자세한 내용은
+[제3자 고지](./THIRD_PARTY_NOTICES.md)를 참조하십시오. 정식 조건은 `LICENSE`의
+영문 원문을 따릅니다.
+
+Codex, Claude, Cursor, CodeBuddy 및 기타 제품명은 각 권리자의 상표입니다.
+이 명칭은 지원되는 연동을 식별하기 위한 용도로만 사용되며, 이 프로젝트는 해당
+권리자와 제휴 관계가 없고 권리자의 보증을 받지 않습니다.

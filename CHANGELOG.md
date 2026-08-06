@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Licensed the project under the Apache License, Version 2.0, with a NOTICE,
+  third-party attribution for schema-derived material, contribution terms, and
+  matching license notices across all README translations.
+
 ## [1.1.1] - 2026-07-31
 
 ### Added

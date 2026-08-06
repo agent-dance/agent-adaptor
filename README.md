@@ -541,3 +541,13 @@ The core library does not provide an HTTP/gRPC server, queue, scheduler, multi-t
 - [Run policy: sandbox, approvals, timeouts](./docs/run-policy.md)
 - [A2A integration](./docs/a2a.md)
 - [Public errors](./docs/public-errors.md)
+
+## License
+
+Unless otherwise noted, this repository is licensed under the
+[Apache License, Version 2.0](./LICENSE). Third-party material retains its own
+license and attribution; see [Third-Party Notices](./THIRD_PARTY_NOTICES.md).
+
+Codex, Claude, Cursor, CodeBuddy, and other product names are trademarks of
+their respective owners. They are used only to identify supported integrations;
+this project is not affiliated with or endorsed by those owners.

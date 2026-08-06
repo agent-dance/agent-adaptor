@@ -541,3 +541,15 @@ synced, err := agent.SyncProfile(ctx)                // 設定リソースを明
 - [実行ポリシー：sandbox、承認、タイムアウト](./docs/run-policy.md)
 - [A2A 統合](./docs/a2a.md)
 - [公開エラー](./docs/public-errors.md)
+
+## ライセンス
+
+別途明記されている場合を除き、このリポジトリは
+[Apache License, Version 2.0](./LICENSE) の下で提供されます。第三者の素材には
+それぞれのライセンスと帰属表示が適用されます。詳しくは
+[第三者に関する通知](./THIRD_PARTY_NOTICES.md) を参照してください。正式な条件は
+`LICENSE` の英語本文に従います。
+
+Codex、Claude、Cursor、CodeBuddy、およびその他の製品名は、それぞれの権利者の
+商標です。これらの名称は対応する連携を示す目的でのみ使用しており、本プロジェクトは
+各権利者との提携関係になく、各権利者による推奨を受けるものでもありません。

@@ -541,3 +541,12 @@ synced, err := agent.SyncProfile(ctx)                // 显式物化配置资源
 - [执行策略：沙箱、审批、超时](./docs/run-policy.md)
 - [A2A 集成](./docs/a2a.md)
 - [公开错误](./docs/public-errors.md)
+
+## 许可证
+
+除另有说明外，本仓库采用 [Apache License 2.0](./LICENSE) 授权。第三方材料
+保留其各自的许可证与署名，详见[第三方声明](./THIRD_PARTY_NOTICES.md)。授权条款
+以 `LICENSE` 中的英文正文为准。
+
+Codex、Claude、Cursor、CodeBuddy 及其他产品名称均为其各自权利人的商标。
+本项目仅使用这些名称标识所支持的集成，与相关权利人不存在隶属或背书关系。

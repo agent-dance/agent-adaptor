@@ -541,3 +541,16 @@ Die Kernbibliothek stellt keinen HTTP-/gRPC-Server, keine Queue, keinen Schedule
 - [Ausführungsstrategie: sandbox, Genehmigungen, Timeouts](./docs/run-policy.md)
 - [A2A-Integration](./docs/a2a.md)
 - [Öffentliche Fehler](./docs/public-errors.md)
+
+## Lizenz
+
+Sofern nicht anders angegeben, steht dieses Repository unter der
+[Apache License, Version 2.0](./LICENSE). Materialien Dritter behalten ihre
+jeweiligen Lizenzen und Namensnennungen; siehe
+[Hinweise zu Drittmaterial](./THIRD_PARTY_NOTICES.md). Maßgeblich ist der
+englische Lizenztext in `LICENSE`.
+
+Codex, Claude, Cursor, CodeBuddy und andere Produktnamen sind Marken ihrer
+jeweiligen Inhaber. Sie werden ausschließlich zur Bezeichnung unterstützter
+Integrationen verwendet; dieses Projekt ist mit den Inhabern weder verbunden
+noch von ihnen unterstützt.
