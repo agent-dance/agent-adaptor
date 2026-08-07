@@ -208,7 +208,7 @@ branch := thread.Fork("tenant-42/issue-123/plan-b")               // 从当前�
 - **同一个 Thread 同时只有一次执行**，由租约保证，过期的执行不会覆盖新状态。
 - **续接前会校验兼容性**，Driver、模型、解析后的真实 workspace、配置、skills、MCP 都参与指纹计算，其中任何一项漂移都不会错误复用会话。
 - **失败不污染状态**，非零退出、协议错误、取消都不产生有效 checkpoint，之前健康的会话记录保持原样。
-- **常驻进程默认复用**，Claude、CodeBuddy、Codex 在显式 Thread 下跨轮复用同一个进程，某一轮或每一轮需要新进程时加 `adaptor.WithSpawn()`。Cursor 和无状态调用始终每轮启动新进程。`Close` 之后的执行返回 `ErrAgentClosed`。
+- **常驻进程默认复用**，在 Windows、macOS 和 Linux 上，Claude、CodeBuddy、Codex 都会在显式 Thread 下跨轮复用同一个进程；某一轮或每一轮需要新进程时加 `adaptor.WithSpawn()`。Cursor 和无状态调用始终每轮启动新进程。`Close` 之后的执行返回 `ErrAgentClosed`。
 
 单进程场景用 `memory.NewStore()`，需要持久化则实现 `threadstore.Store`。
 

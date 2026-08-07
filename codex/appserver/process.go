@@ -44,6 +44,10 @@ func Open(ctx context.Context, opts Options, sink driver.EventSink) (*Process, e
 		command = "codex"
 	}
 	args := append([]string{"app-server", "--listen", "stdio://"}, opts.ExtraArgs...)
+	command, args, err := processx.PrepareCommand(command, args)
+	if err != nil {
+		return nil, fmt.Errorf("codex app-server command: %w", err)
+	}
 	procCtx, cancel := context.WithCancel(context.Background())
 	cmd := exec.CommandContext(procCtx, command, args...)
 	processx.ConfigureCancellation(cmd)

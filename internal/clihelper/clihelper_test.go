@@ -32,14 +32,14 @@ func TestPrepareCommandWrapsBatchShimOnWindows(t *testing.T) {
 	if len(args) < 4 {
 		t.Fatalf("expected wrapped cmd args, got %#v", args)
 	}
-	if args[0] != "/d" || args[1] != "/s" || args[2] != "/c" {
-		t.Fatalf("expected cmd wrapper flags, got %#v", args[:3])
+	if args[0] != "/d" || args[1] != "/s" || args[2] != "/c" || args[3] != "call" {
+		t.Fatalf("expected cmd wrapper flags, got %#v", args[:4])
 	}
-	if !filepath.IsAbs(args[3]) || filepath.Ext(args[3]) != ".cmd" {
-		t.Fatalf("expected absolute .cmd path, got %q", args[3])
+	if !filepath.IsAbs(args[4]) || filepath.Ext(args[4]) != ".cmd" {
+		t.Fatalf("expected absolute .cmd path, got %q", args[4])
 	}
-	if args[4] != "arg-one" || args[5] != "arg-two" {
-		t.Fatalf("expected original command args to be preserved, got %#v", args[4:])
+	if args[5] != "arg-one" || args[6] != "arg-two" {
+		t.Fatalf("expected original command args to be preserved, got %#v", args[5:])
 	}
 }
 

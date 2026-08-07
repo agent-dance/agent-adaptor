@@ -174,7 +174,7 @@ Approval modes follow the same rule. An explicit `ApprovalAsk`, `ApprovalAutoApp
 
 ## 5. Thread
 
-A Thread is a `Runner` with persistent resumption. Agents are stateless by default, and a store must be injected through `WithThreadStore` before a Thread is used. Claude, CodeBuddy, and Codex allow persistent reuse for an explicit Thread by default; Cursor and direct Agent invocations start a process per turn.
+A Thread is a `Runner` with persistent resumption. Agents are stateless by default, and a store must be injected through `WithThreadStore` before a Thread is used. On Windows, macOS, and Linux, Claude, CodeBuddy, and Codex allow persistent reuse for an explicit Thread by default; Cursor and direct Agent invocations start a process per turn.
 
 ```go
 func (a *Agent) Thread(key string, opts ...ThreadOption) *Thread

@@ -1,10 +1,12 @@
 package codebuddy
 
 import (
+	"bufio"
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -14,9 +16,19 @@ import (
 
 	adaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/internal/testutil"
 	"github.com/agent-dance/agent-adaptor/memory"
 	"github.com/agent-dance/agent-adaptor/tool"
 )
+
+const codeBuddyPersistentHelperEnv = "GO_WANT_AGENT_ADAPTOR_CODEBUDDY_PERSISTENT_HELPER"
+
+func TestMain(m *testing.M) {
+	if os.Getenv(codeBuddyPersistentHelperEnv) == "1" {
+		os.Exit(runCodeBuddyPersistentHelper())
+	}
+	os.Exit(m.Run())
+}
 
 func TestPersistentCodeBuddyIsDefaultAndWithSpawnOptsOut(t *testing.T) {
 	fx := newPersistentCodeBuddyFixture(t, nil)
@@ -149,9 +161,7 @@ func TestPersistentCodeBuddyCloseCancellationAndIdleLifecycle(t *testing.T) {
 	if err := fx.agent.Close(ctx); err != nil {
 		t.Fatalf("second Close: %v", err)
 	}
-	if err := exec.Command("kill", "-0", strconv.Itoa(pid)).Run(); err == nil {
-		t.Fatalf("persistent pid %d still alive after Close", pid)
-	}
+	waitForCodeBuddyProcessExit(t, pid)
 	if _, err := fx.thread.Run(context.Background(), "closed"); !errors.Is(err, adaptor.ErrAgentClosed) {
 		t.Fatalf("run after close=%v, want ErrAgentClosed", err)
 	}
@@ -168,9 +178,7 @@ func TestPersistentCodeBuddyCloseCancellationAndIdleLifecycle(t *testing.T) {
 	if _, err := stream.Result(); !errors.Is(err, context.Canceled) {
 		t.Fatalf("Result error=%v want context.Canceled", err)
 	}
-	if err := exec.Command("kill", "-0", strconv.Itoa(blockedPID)).Run(); err == nil {
-		t.Fatalf("cancelled persistent pid %d still alive", blockedPID)
-	}
+	waitForCodeBuddyProcessExit(t, blockedPID)
 
 	oldTimeout := codeBuddyPersistentIdleTimeout
 	codeBuddyPersistentIdleTimeout = 30 * time.Millisecond
@@ -203,11 +211,23 @@ func newPersistentCodeBuddyFixture(t *testing.T, callerEnv []driver.EnvBinding) 
 
 func newPersistentCodeBuddyFixtureWithOptions(t *testing.T, callerEnv []driver.EnvBinding, opts ...adaptor.Option) *persistentCodeBuddyFixture {
 	t.Helper()
-	if runtime.GOOS == "windows" {
-		t.Skip("persistent process is POSIX-only")
-	}
 	root := t.TempDir()
-	command := filepath.Join(root, "fake-codebuddy")
+	command, err := os.Executable()
+	if err != nil {
+		t.Fatalf("test executable: %v", err)
+	}
+	helperExecutable := command
+	if runtime.GOOS == "windows" {
+		shimDir := filepath.Join(root, "shim dir")
+		if err := os.MkdirAll(shimDir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		command = filepath.Join(shimDir, "fake-codebuddy.cmd")
+		body := "@echo off\r\n\"%CODEBUDDY_PERSISTENT_HELPER_EXE%\" %*\r\nexit /b %errorlevel%\r\n"
+		if err := os.WriteFile(command, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	spawnFile := filepath.Join(root, "spawns")
 	pidFile := filepath.Join(root, "current-pid")
 	overlapFile := filepath.Join(root, "overlap")
@@ -215,58 +235,10 @@ func newPersistentCodeBuddyFixtureWithOptions(t *testing.T, callerEnv []driver.E
 	if err := os.MkdirAll(profileDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	script := `#!/bin/sh
-set -eu
-printf '%s\n' "$$" >> "$SPAWN_FILE"
-if [ -f "$PID_FILE" ]; then
-  old_pid=$(cat "$PID_FILE")
-  if [ "$old_pid" != "$$" ] && kill -0 "$old_pid" 2>/dev/null; then
-    printf 'overlap:%s:%s\n' "$old_pid" "$$" >> "$OVERLAP_FILE"
-  fi
-fi
-printf '%s' "$$" > "$PID_FILE"
-control=0
-structured=0
-for arg in "$@"; do
-  if [ "$arg" = '--input-format=stream-json' ]; then control=1; fi
-  if [ "$arg" = '--json-schema' ]; then structured=1; fi
-done
-emit_turn() {
-  printf '%s\n' '{"type":"system","subtype":"init","session_id":"codebuddy-persistent-session","model":"fake"}'
-  printf '%s\n' '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"ok"}}}'
-  printf '%s\n' '{"type":"assistant","session_id":"codebuddy-persistent-session","message":{"model":"fake","content":[{"type":"text","text":"ok"}]}}'
-  if [ "$structured" = 1 ]; then
-    printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"session_id":"codebuddy-persistent-session","result":"{\"value\":\"ok\"}","structured_output":{"value":"ok"}}'
-  else
-    printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"session_id":"codebuddy-persistent-session","result":"ok"}'
-  fi
-}
-if [ "$control" = 1 ]; then
-  while IFS= read -r frame; do
-    case "$frame" in
-      *agent-adaptor-initialize*)
-        printf '%s\n' '{"type":"control_response","response":{"subtype":"success","request_id":"agent-adaptor-initialize","response":{}}}'
-        ;;
-      *'"type":"user"'*)
-        if [ "${FAIL_AFTER_PERSISTENT_READ:-}" = 1 ]; then exit 23; fi
-        if [ "${BLOCK_AFTER_PERSISTENT_READ:-}" = 1 ]; then sleep 30; fi
-        emit_turn
-        ;;
-    esac
-  done
-  if [ "${STAY_AFTER_EOF:-}" = 1 ]; then
-    while :; do sleep 30; done
-  fi
-else
-  cat >/dev/null || true
-  emit_turn
-fi
-`
-	if err := os.WriteFile(command, []byte(script), 0o700); err != nil {
-		t.Fatal(err)
-	}
 	env := append([]driver.EnvBinding(nil), callerEnv...)
 	env = append(env,
+		driver.EnvBinding{Name: codeBuddyPersistentHelperEnv, Value: "1"},
+		driver.EnvBinding{Name: "CODEBUDDY_PERSISTENT_HELPER_EXE", Value: helperExecutable},
 		driver.EnvBinding{Name: "SPAWN_FILE", Value: spawnFile},
 		driver.EnvBinding{Name: "PID_FILE", Value: pidFile},
 		driver.EnvBinding{Name: "OVERLAP_FILE", Value: overlapFile},
@@ -353,4 +325,94 @@ func (f *persistentCodeBuddyFixture) close() {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	_ = f.agent.Close(ctx)
+}
+
+func runCodeBuddyPersistentHelper() int {
+	recordCodeBuddyPersistentHelperSpawn(
+		os.Getenv("SPAWN_FILE"),
+		os.Getenv("PID_FILE"),
+		os.Getenv("OVERLAP_FILE"),
+	)
+
+	control := false
+	structured := false
+	for _, arg := range os.Args[1:] {
+		control = control || arg == "--input-format=stream-json"
+		structured = structured || arg == "--json-schema"
+	}
+
+	writer := bufio.NewWriter(os.Stdout)
+	emitTurn := func() {
+		_, _ = fmt.Fprintln(writer, `{"type":"system","subtype":"init","session_id":"codebuddy-persistent-session","model":"fake"}`)
+		_, _ = fmt.Fprintln(writer, `{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"ok"}}}`)
+		_, _ = fmt.Fprintln(writer, `{"type":"assistant","session_id":"codebuddy-persistent-session","message":{"model":"fake","content":[{"type":"text","text":"ok"}]}}`)
+		if structured {
+			_, _ = fmt.Fprintln(writer, `{"type":"result","subtype":"success","is_error":false,"session_id":"codebuddy-persistent-session","result":"{\"value\":\"ok\"}","structured_output":{"value":"ok"}}`)
+		} else {
+			_, _ = fmt.Fprintln(writer, `{"type":"result","subtype":"success","is_error":false,"session_id":"codebuddy-persistent-session","result":"ok"}`)
+		}
+		_ = writer.Flush()
+	}
+
+	if !control {
+		_, _ = io.ReadAll(os.Stdin)
+		emitTurn()
+		return 0
+	}
+
+	scanner := bufio.NewScanner(os.Stdin)
+	scanner.Buffer(make([]byte, 4096), 4<<20)
+	for scanner.Scan() {
+		line := scanner.Text()
+		switch {
+		case strings.Contains(line, "agent-adaptor-initialize"):
+			_, _ = fmt.Fprintln(writer, `{"type":"control_response","response":{"subtype":"success","request_id":"agent-adaptor-initialize","response":{}}}`)
+			_ = writer.Flush()
+		case strings.Contains(line, `"type":"user"`):
+			if os.Getenv("FAIL_AFTER_PERSISTENT_READ") == "1" {
+				return 23
+			}
+			if os.Getenv("BLOCK_AFTER_PERSISTENT_READ") == "1" {
+				time.Sleep(30 * time.Second)
+			}
+			emitTurn()
+		}
+	}
+	if os.Getenv("STAY_AFTER_EOF") == "1" {
+		for {
+			time.Sleep(time.Hour)
+		}
+	}
+	return 0
+}
+
+func recordCodeBuddyPersistentHelperSpawn(spawnFile, pidFile, overlapFile string) {
+	pid := os.Getpid()
+	if raw, err := os.ReadFile(pidFile); err == nil {
+		if oldPID, parseErr := strconv.Atoi(strings.TrimSpace(string(raw))); parseErr == nil && oldPID != pid && testutil.ProcessAlive(oldPID) {
+			appendCodeBuddyPersistentHelperLine(overlapFile, fmt.Sprintf("overlap:%d:%d", oldPID, pid))
+		}
+	}
+	appendCodeBuddyPersistentHelperLine(spawnFile, strconv.Itoa(pid))
+	_ = os.WriteFile(pidFile, []byte(strconv.Itoa(pid)), 0o600)
+}
+
+func appendCodeBuddyPersistentHelperLine(path, line string) {
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return
+	}
+	_, _ = fmt.Fprintln(file, line)
+	_ = file.Close()
+}
+
+func waitForCodeBuddyProcessExit(t *testing.T, pid int) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for testutil.ProcessAlive(pid) && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if testutil.ProcessAlive(pid) {
+		t.Fatalf("persistent pid %d still alive", pid)
+	}
 }

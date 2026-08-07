@@ -4,6 +4,8 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [1.1.2] - 2026-08-07
+
 ### Added
 
 - Licensed the project under the Apache License, Version 2.0, with a NOTICE,
@@ -12,6 +14,10 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- Enabled the declared persistent-process behavior for Claude, CodeBuddy, and
+  Codex Threads on Windows, including shared `.cmd`/`.ps1` command preparation,
+  process-tree cancellation, single-writer handoff, and native Windows
+  lifecycle regression coverage.
 - Updated the CopilotKit example's `fast-uri` override to 3.1.5 so production
   dependency audits no longer include GHSA-7p8r-x3mc-p8w7 at high severity.
 

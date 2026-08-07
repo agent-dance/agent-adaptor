@@ -9,10 +9,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -68,9 +66,6 @@ func TestPersistentCodexAcceptsSharedHostedToolRuntime(t *testing.T) {
 }
 
 func TestPersistentCodexReusesAppServerWithHostDefinedTools(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("persistent process is POSIX-only")
-	}
 	lowLevel, req, spawnFile, _ := newPersistentCodexTest(t, "")
 	configured := configuredDriver{adapter: lowLevel.(adapter), cfg: req.Config.(Config)}
 	definition := tool.Define("echo", "Echo a value.", func(context.Context, struct{}) (struct{}, error) {
@@ -208,9 +203,6 @@ func TestPersistentCodexDoesNotReplayAfterTurnStart(t *testing.T) {
 }
 
 func TestPersistentCodexOneShotHandoffWaitsForOldWriter(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("process liveness probe uses POSIX signal 0")
-	}
 	a, req, spawnFile, _ := newPersistentCodexTest(t, "")
 	overlapFile := filepath.Join(filepath.Dir(spawnFile), "overlap.log")
 	defer closeCodexTestAdapter(t, a)
@@ -493,11 +485,7 @@ func helperActive(path string) bool {
 	if err != nil || pid <= 0 {
 		return false
 	}
-	process, err := os.FindProcess(pid)
-	if err != nil {
-		return false
-	}
-	return process.Signal(syscall.Signal(0)) == nil
+	return testutil.ProcessAlive(pid)
 }
 
 type helperRequest struct {

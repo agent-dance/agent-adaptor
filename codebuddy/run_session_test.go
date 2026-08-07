@@ -89,7 +89,8 @@ func fakeHeadlessCLI(t *testing.T, dir string) string {
 		"@echo off\r\nsetlocal\r\nset /p X=\r\n"+
 			"echo {\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"cb-sess\",\"model\":\"claude-haiku-4.5\"}\r\n"+
 			"echo {\"type\":\"assistant\",\"session_id\":\"cb-sess\",\"message\":{\"id\":\"m1\",\"content\":[{\"type\":\"text\",\"text\":\"HELLO\"}],\"model\":\"claude-haiku-4.5\",\"role\":\"assistant\"}}\r\n"+
-			"echo {\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"HELLO\",\"session_id\":\"cb-sess\",\"num_turns\":1,\"total_cost_usd\":0,\"usage\":{\"input_tokens\":10,\"output_tokens\":2}}\r\n",
+			"echo {\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"HELLO\",\"session_id\":\"cb-sess\",\"num_turns\":1,\"total_cost_usd\":0,\"usage\":{\"input_tokens\":10,\"output_tokens\":2}}\r\n"+
+			"exit /b 0\r\n",
 	)
 }
 
@@ -239,7 +240,8 @@ func TestCodeBuddyHeadlessStructuredOutput(t *testing.T) {
 		"#!/bin/sh\nset -eu\ncat >/dev/null 2>&1 || true\n"+
 			"printf '%s\\n' '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"{\\\"answer\\\":42}\",\"structured_output\":{\"answer\":42},\"session_id\":\"cb-json\",\"usage\":{\"input_tokens\":5,\"output_tokens\":1}}'\n",
 		"@echo off\r\nsetlocal\r\nset /p X=\r\n"+
-			"echo {\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"{\\\"answer\\\":42}\",\"structured_output\":{\"answer\":42},\"session_id\":\"cb-json\",\"usage\":{\"input_tokens\":5,\"output_tokens\":1}}\r\n",
+			"echo {\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"{\\\"answer\\\":42}\",\"structured_output\":{\"answer\":42},\"session_id\":\"cb-json\",\"usage\":{\"input_tokens\":5,\"output_tokens\":1}}\r\n"+
+			"exit /b 0\r\n",
 	)
 
 	cfg := Config{

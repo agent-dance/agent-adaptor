@@ -1,20 +1,33 @@
 package claude
 
 import (
+	"bufio"
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
-	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	adaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/internal/testutil"
 	"github.com/agent-dance/agent-adaptor/memory"
 	"github.com/agent-dance/agent-adaptor/tool"
 )
+
+const claudePersistentHelperEnv = "GO_WANT_AGENT_ADAPTOR_CLAUDE_PERSISTENT_HELPER"
+
+func TestMain(m *testing.M) {
+	if os.Getenv(claudePersistentHelperEnv) == "1" {
+		os.Exit(runClaudePersistentHelper())
+	}
+	os.Exit(m.Run())
+}
 
 func TestPersistentClaudeIsDefaultAndWithSpawnOptsOut(t *testing.T) {
 	fx := newPersistentClaudeFixture(t, nil)
@@ -143,11 +156,11 @@ func newPersistentClaudeFixture(t *testing.T, callerEnv []driver.EnvBinding) *pe
 
 func newPersistentClaudeFixtureWithOptions(t *testing.T, callerEnv []driver.EnvBinding, opts ...adaptor.Option) *persistentClaudeFixture {
 	t.Helper()
-	if runtime.GOOS == "windows" {
-		t.Skip("persistent process is POSIX-only")
-	}
 	root := t.TempDir()
-	command := filepath.Join(root, "fake-claude")
+	command, err := os.Executable()
+	if err != nil {
+		t.Fatalf("test executable: %v", err)
+	}
 	spawnFile := filepath.Join(root, "spawns")
 	pidFile := filepath.Join(root, "current-pid")
 	overlapFile := filepath.Join(root, "overlap")
@@ -155,42 +168,9 @@ func newPersistentClaudeFixtureWithOptions(t *testing.T, callerEnv []driver.EnvB
 	if err := os.MkdirAll(profileDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	script := `#!/bin/sh
-set -eu
-printf '%s\n' "$$" >> "$SPAWN_FILE"
-if [ -f "$PID_FILE" ]; then
-  old_pid=$(cat "$PID_FILE")
-  if [ "$old_pid" != "$$" ] && kill -0 "$old_pid" 2>/dev/null; then
-    printf 'overlap:%s:%s\n' "$old_pid" "$$" >> "$OVERLAP_FILE"
-  fi
-fi
-printf '%s' "$$" > "$PID_FILE"
-persistent=0
-previous=''
-for arg in "$@"; do
-  if [ "$previous" = '--input-format' ] && [ "$arg" = 'stream-json' ]; then persistent=1; fi
-  previous="$arg"
-done
-emit_turn() {
-  printf '%s\n' '{"type":"system","subtype":"init","session_id":"claude-persistent-session","model":"fake"}'
-  printf '%s\n' '{"type":"assistant","session_id":"claude-persistent-session","message":{"model":"fake","content":[{"type":"text","text":"ok"}]}}'
-  printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"session_id":"claude-persistent-session","result":"ok"}'
-}
-if [ "$persistent" = 1 ]; then
-  while IFS= read -r frame; do
-    if [ "${FAIL_AFTER_PERSISTENT_READ:-}" = 1 ]; then exit 23; fi
-    emit_turn
-  done
-else
-  cat >/dev/null || true
-  emit_turn
-fi
-`
-	if err := os.WriteFile(command, []byte(script), 0o700); err != nil {
-		t.Fatal(err)
-	}
 	env := append([]driver.EnvBinding(nil), callerEnv...)
 	env = append(env,
+		driver.EnvBinding{Name: claudePersistentHelperEnv, Value: "1"},
 		driver.EnvBinding{Name: "SPAWN_FILE", Value: spawnFile},
 		driver.EnvBinding{Name: "PID_FILE", Value: pidFile},
 		driver.EnvBinding{Name: "OVERLAP_FILE", Value: overlapFile},
@@ -249,4 +229,67 @@ func (f *persistentClaudeFixture) close() {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	_ = f.agent.Close(ctx)
+}
+
+func runClaudePersistentHelper() int {
+	recordPersistentHelperSpawn(
+		os.Getenv("SPAWN_FILE"),
+		os.Getenv("PID_FILE"),
+		os.Getenv("OVERLAP_FILE"),
+	)
+
+	writer := bufio.NewWriter(os.Stdout)
+	emitTurn := func() {
+		_, _ = fmt.Fprintln(writer, `{"type":"system","subtype":"init","session_id":"claude-persistent-session","model":"fake"}`)
+		_, _ = fmt.Fprintln(writer, `{"type":"assistant","session_id":"claude-persistent-session","message":{"model":"fake","content":[{"type":"text","text":"ok"}]}}`)
+		_, _ = fmt.Fprintln(writer, `{"type":"result","subtype":"success","is_error":false,"session_id":"claude-persistent-session","result":"ok"}`)
+		_ = writer.Flush()
+	}
+
+	if !claudePersistentInputMode(os.Args[1:]) {
+		_, _ = io.ReadAll(os.Stdin)
+		emitTurn()
+		return 0
+	}
+
+	scanner := bufio.NewScanner(os.Stdin)
+	scanner.Buffer(make([]byte, 4096), 4<<20)
+	for scanner.Scan() {
+		if os.Getenv("FAIL_AFTER_PERSISTENT_READ") == "1" {
+			return 23
+		}
+		emitTurn()
+	}
+	return 0
+}
+
+func claudePersistentInputMode(args []string) bool {
+	previous := ""
+	for _, arg := range args {
+		if previous == "--input-format" && arg == "stream-json" {
+			return true
+		}
+		previous = arg
+	}
+	return false
+}
+
+func recordPersistentHelperSpawn(spawnFile, pidFile, overlapFile string) {
+	pid := os.Getpid()
+	if raw, err := os.ReadFile(pidFile); err == nil {
+		if oldPID, parseErr := strconv.Atoi(strings.TrimSpace(string(raw))); parseErr == nil && oldPID != pid && testutil.ProcessAlive(oldPID) {
+			appendPersistentHelperLine(overlapFile, fmt.Sprintf("overlap:%d:%d", oldPID, pid))
+		}
+	}
+	appendPersistentHelperLine(spawnFile, strconv.Itoa(pid))
+	_ = os.WriteFile(pidFile, []byte(strconv.Itoa(pid)), 0o600)
+}
+
+func appendPersistentHelperLine(path, line string) {
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return
+	}
+	_, _ = fmt.Fprintln(file, line)
+	_ = file.Close()
 }

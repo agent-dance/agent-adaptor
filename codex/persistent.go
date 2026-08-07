@@ -11,7 +11,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -265,9 +264,6 @@ func (w *persistentWriter) preWarm(spec persistentSpec, sink driver.EventSink) e
 }
 
 func (p *persistentPool) open(ctx context.Context, spec persistentSpec, sink driver.EventSink) (*liveProcess, error) {
-	if runtime.GOOS == "windows" {
-		return nil, errPersistentFallback
-	}
 	p.mu.Lock()
 	if p.closed {
 		p.mu.Unlock()

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
-	"runtime"
 	"strings"
 
 	"github.com/agent-dance/agent-adaptor/driver"
@@ -287,7 +286,7 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 
 	var writer *persistentWriter
 	resumeID := codeBuddyResumeID(req)
-	if a.persistent != nil && persistentSessionKey(req) != "" && runtime.GOOS != "windows" {
+	if a.persistent != nil && persistentSessionKey(req) != "" {
 		writer = a.persistent.lockWriter(persistentWriterKey(req))
 		defer writer.release()
 	}

@@ -208,7 +208,7 @@ A few conventions:
 - **One Thread runs at most one invocation at a time**, guaranteed by a lease, so an expired run never overwrites newer state.
 - **Compatibility is checked before resuming**: the Driver, model, resolved workspace, configuration, skills, and MCP all feed the fingerprint, and drift in any one of them prevents an incorrect conversation reuse.
 - **Failures do not pollute state**: non-zero exits, protocol errors, and cancellations produce no valid checkpoint, so the previously healthy conversation record stays as it was.
-- **Persistent processes are reused by default**: Claude, CodeBuddy, and Codex reuse one process across turns of an explicit Thread. Add `adaptor.WithSpawn()` when one turn or every turn needs a fresh process. Cursor and stateless calls always start a new process per turn. Runs after `Close` return `ErrAgentClosed`.
+- **Persistent processes are reused by default**: on Windows, macOS, and Linux, Claude, CodeBuddy, and Codex reuse one process across turns of an explicit Thread. Add `adaptor.WithSpawn()` when one turn or every turn needs a fresh process. Cursor and stateless calls always start a new process per turn. Runs after `Close` return `ErrAgentClosed`.
 
 Use `memory.NewStore()` for single-process scenarios; implement `threadstore.Store` when you need durability.
 

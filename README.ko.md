@@ -208,7 +208,7 @@ branch := thread.Fork("tenant-42/issue-123/plan-b")               // 현재 진�
 - **같은 Thread에는 동시에 한 번의 실행만 있다.** lease로 보장하며, 만료된 실행이 새 상태를 덮어쓰지 않는다.
 - **이어가기 전에 호환성을 검증한다.** Driver, 모델, 해석된 실제 workspace, 설정, skills, MCP가 모두 fingerprint 계산에 참여하고, 그중 어느 하나라도 어긋나면 세션을 잘못 재사용하지 않는다.
 - **실패는 상태를 오염시키지 않는다.** 0이 아닌 종료, 프로토콜 오류, 취소는 유효한 checkpoint를 만들지 않으며, 이전의 건강한 세션 기록은 그대로 유지된다.
-- **상주 프로세스는 기본적으로 재사용한다.** Claude, CodeBuddy, Codex는 명시적인 Thread에서 턴을 넘어 같은 프로세스를 재사용하며, 특정 턴이나 매 턴에 새 프로세스가 필요하면 `adaptor.WithSpawn()`을 추가한다. Cursor와 무상태 호출은 항상 매 턴 새 프로세스를 시작한다. `Close` 이후의 실행은 `ErrAgentClosed`를 반환한다.
+- **상주 프로세스는 기본적으로 재사용한다.** Windows, macOS, Linux에서 Claude, CodeBuddy, Codex는 명시적인 Thread의 턴 사이에 같은 프로세스를 재사용하며, 특정 턴이나 매 턴에 새 프로세스가 필요하면 `adaptor.WithSpawn()`을 추가한다. Cursor와 무상태 호출은 항상 매 턴 새 프로세스를 시작한다. `Close` 이후의 실행은 `ErrAgentClosed`를 반환한다.
 
 단일 프로세스 시나리오에서는 `memory.NewStore()`를 쓰고, 영속화가 필요하면 `threadstore.Store`를 구현한다.
 

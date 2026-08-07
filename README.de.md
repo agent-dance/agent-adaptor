@@ -208,7 +208,7 @@ Einige Konventionen:
 - **In einem Thread läuft nur eine Ausführung gleichzeitig**, garantiert durch ein lease, sodass eine abgelaufene Ausführung neuen Zustand nicht überschreibt.
 - **Vor dem Fortsetzen wird die Kompatibilität geprüft**: Driver, Modell, der aufgelöste tatsächliche workspace, Konfiguration, skills und MCP gehen alle in die fingerprint-Berechnung ein, und driftet eine dieser Angaben, wird die Konversation nicht fälschlich weiterverwendet.
 - **Fehler verschmutzen den Zustand nicht**: Exits ungleich null, Protokollfehler und Abbrüche erzeugen keinen gültigen checkpoint, und der zuvor gesunde Konversationsdatensatz bleibt unverändert.
-- **Residente Prozesse werden standardmäßig weiterverwendet**: Claude, CodeBuddy und Codex nutzen bei einem expliziten Thread über Runden hinweg denselben Prozess; wenn eine bestimmte oder jede Runde einen neuen Prozess braucht, ergänzen Sie `adaptor.WithSpawn()`. Cursor und zustandslose Aufrufe starten immer pro Runde einen neuen Prozess. Ausführungen nach `Close` liefern `ErrAgentClosed`.
+- **Residente Prozesse werden standardmäßig weiterverwendet**: Unter Windows, macOS und Linux nutzen Claude, CodeBuddy und Codex bei einem expliziten Thread über Runden hinweg denselben Prozess; wenn eine bestimmte oder jede Runde einen neuen Prozess braucht, ergänzen Sie `adaptor.WithSpawn()`. Cursor und zustandslose Aufrufe starten immer pro Runde einen neuen Prozess. Ausführungen nach `Close` liefern `ErrAgentClosed`.
 
 Für Einzelprozess-Szenarien nehmen Sie `memory.NewStore()`; wird Persistenz gebraucht, implementieren Sie `threadstore.Store`.
 

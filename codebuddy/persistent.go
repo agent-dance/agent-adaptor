@@ -13,7 +13,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -387,11 +386,12 @@ func (p *persistentPool) evictIdle(lp *liveProcess) {
 }
 
 func (p *persistentPool) spawn(spec persistentSpec, sink driver.EventSink) (*liveProcess, error) {
-	if runtime.GOOS == "windows" {
-		return nil, errPersistentFallback
+	command, args, err := processx.PrepareCommand(spec.command, spec.spawnArgs())
+	if err != nil {
+		return nil, err
 	}
 	procCtx, cancel := context.WithCancel(context.Background())
-	cmd := exec.CommandContext(procCtx, spec.command, spec.spawnArgs()...)
+	cmd := exec.CommandContext(procCtx, command, args...)
 	processx.ConfigureCancellation(cmd)
 	if spec.cwd != "" {
 		cmd.Dir = spec.cwd

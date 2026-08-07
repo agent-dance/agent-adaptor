@@ -208,7 +208,7 @@ branch := thread.Fork("tenant-42/issue-123/plan-b")               // 現在の�
 - **同一の Thread では同時に 1 回の実行のみ**。これはリースによって保証され、期限切れの実行が新しい状態を上書きすることはない。
 - **継続の前に互換性を検証する**。Driver、モデル、解決後の実際の workspace、設定、skills、MCP がいずれも fingerprint の計算に参加し、そのうち 1 つでも変化していれば会話を誤って再利用することはない。
 - **失敗は状態を汚染しない**。非ゼロ終了、プロトコルエラー、キャンセルはいずれも有効な checkpoint を生成せず、それまでの健全な会話レコードはそのまま保たれる。
-- **常駐プロセスは既定で再利用される**。Claude、CodeBuddy、Codex は明示的な Thread のもとでターンをまたいで同一プロセスを再利用する。特定のターンあるいは毎ターン新しいプロセスが必要なら `adaptor.WithSpawn()` を追加する。Cursor とステートレスな呼び出しでは常にターンごとに新しいプロセスを起動する。`Close` 後の実行は `ErrAgentClosed` を返す。
+- **常駐プロセスは既定で再利用される**。Windows、macOS、Linux の各環境で、Claude、CodeBuddy、Codex は明示的な Thread のもとでターンをまたいで同一プロセスを再利用する。特定のターンあるいは毎ターン新しいプロセスが必要なら `adaptor.WithSpawn()` を追加する。Cursor とステートレスな呼び出しでは常にターンごとに新しいプロセスを起動する。`Close` 後の実行は `ErrAgentClosed` を返す。
 
 単一プロセスのシーンでは `memory.NewStore()` を使い、永続化が必要なら `threadstore.Store` を実装する。
 

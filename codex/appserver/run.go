@@ -81,6 +81,10 @@ func Run(ctx context.Context, opts Options, sink driver.EventSink) (driver.Respo
 		command = "codex"
 	}
 	args := append([]string{"app-server", "--listen", "stdio://"}, opts.ExtraArgs...)
+	command, args, err := processx.PrepareCommand(command, args)
+	if err != nil {
+		return driver.Response{}, fmt.Errorf("codex app-server command: %w", err)
+	}
 
 	processCtx, stopProcess := context.WithCancel(ctx)
 	defer stopProcess()

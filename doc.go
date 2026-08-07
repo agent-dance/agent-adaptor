@@ -23,10 +23,11 @@
 // Runner, so bridges and host integrations do not need separate stateful and
 // stateless paths.
 //
-// Built-in Drivers reuse one provider process across compatible Thread turns
-// by default when the provider supports it. WithSpawn forces a fresh process
-// for an Agent default or one call, and Agent.Close performs bounded,
-// idempotent cleanup of processes owned by that Agent.
+// On Windows, macOS, and Linux, built-in Drivers reuse one provider process
+// across compatible Thread turns by default when the provider supports it.
+// WithSpawn forces a fresh process for an Agent default or one call, and
+// Agent.Close performs bounded, idempotent cleanup of processes owned by that
+// Agent.
 //
 // Options have explicit scopes. Option applies at construction, CallOption
 // applies to one invocation, and SharedOption may be used in either place.
