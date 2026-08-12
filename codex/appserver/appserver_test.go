@@ -570,6 +570,51 @@ func TestRunStateQueuesNotificationsUntilRPCIdentitiesAreKnown(t *testing.T) {
 	}
 }
 
+func TestRunStateIgnoresRestoredTokenUsageFromPreviousTurn(t *testing.T) {
+	t.Parallel()
+	sink := &recordingSink{}
+	state := newRunState("run-resumed-usage", sink)
+
+	// Codex replays this persisted notification immediately after
+	// thread/resume, before turn/start returns the next turn identity.
+	state.onNotification(NotifyThreadTokenUsageUpdated, json.RawMessage(`{"threadId":"thread-resumed","turnId":"turn-previous","tokenUsage":{"last":{"inputTokens":1,"outputTokens":2,"cachedInputTokens":0,"reasoningOutputTokens":0},"total":{"inputTokens":101,"outputTokens":202,"cachedInputTokens":3,"reasoningOutputTokens":0}}}`))
+	state.setThread("thread-resumed")
+	state.setTurn("turn-current")
+
+	if err := state.protocolError(); err != nil {
+		t.Fatalf("restored previous-turn usage caused a protocol error: %v", err)
+	}
+	if result := state.snapshot(Options{}, "thread-resumed", "", "", 0, "", false); result.Usage != nil {
+		t.Fatalf("restored previous-turn usage contaminated current run: %#v", result.Usage)
+	}
+	for _, payload := range sink.streams {
+		if payload.Name == NotifyThreadTokenUsageUpdated {
+			t.Fatalf("restored previous-turn usage escaped to the current public stream: %+v", payload)
+		}
+	}
+
+	state.onNotification(NotifyThreadTokenUsageUpdated, json.RawMessage(`{"threadId":"thread-resumed","turnId":"turn-current","tokenUsage":{"last":{"inputTokens":4,"outputTokens":5,"cachedInputTokens":1,"reasoningOutputTokens":0},"total":{"inputTokens":14,"outputTokens":25,"cachedInputTokens":6,"reasoningOutputTokens":0}}}`))
+	state.onNotification(NotifyTurnCompleted, json.RawMessage(`{"threadId":"thread-resumed","turn":{"id":"turn-current","status":"completed"}}`))
+	result := state.snapshot(Options{}, "thread-resumed", "", "", 0, "", false)
+	if result.Usage == nil || result.Usage.InputTokens != 14 || result.Usage.OutputTokens != 25 || result.Usage.CachedInputTokens != 6 {
+		t.Fatalf("current-turn usage = %#v", result.Usage)
+	}
+	if result.Checkpoint == nil || !result.Checkpoint.Valid {
+		t.Fatalf("resumed run checkpoint = %#v", result.Checkpoint)
+	}
+}
+
+func TestRunStateStillRejectsTokenUsageFromAnotherThread(t *testing.T) {
+	t.Parallel()
+	state := newRunState("run-wrong-thread-usage", &recordingSink{})
+	state.setThread("thread-expected")
+	state.setTurn("turn-current")
+	state.onNotification(NotifyThreadTokenUsageUpdated, json.RawMessage(`{"threadId":"thread-wrong","turnId":"turn-previous","tokenUsage":{"last":{"inputTokens":1,"outputTokens":1,"cachedInputTokens":0,"reasoningOutputTokens":0},"total":{"inputTokens":1,"outputTokens":1,"cachedInputTokens":0,"reasoningOutputTokens":0}}}`))
+	if err := state.protocolError(); err == nil || !strings.Contains(err.Error(), "belongs to thread") {
+		t.Fatalf("protocol error = %v, want wrong-thread rejection", err)
+	}
+}
+
 func TestRunStateErrorNotificationIsNotTerminal(t *testing.T) {
 	t.Parallel()
 	state := newRunState("run-error", &recordingSink{})
@@ -885,6 +930,30 @@ func TestRunResumeRejectsProviderThreadIdentityChange(t *testing.T) {
 	}
 }
 
+func TestRunResumeAcceptsRestoredPreviousTurnTokenUsage(t *testing.T) {
+	fake := buildFakeAppserver(t)
+	sink := &recordingSink{}
+	result, err := Run(context.Background(), Options{
+		Command:        fake,
+		Env:            []driver.EnvBinding{{Name: "FAKE_APPSERVER_SCENARIO", Value: "resume-stale-token-usage"}},
+		ResumeThreadID: "thread-fake",
+	}, sink)
+	if err != nil {
+		t.Fatalf("Run resume with restored previous-turn usage: %v", err)
+	}
+	if result.Output != "hello from fake" || result.Checkpoint == nil || !result.Checkpoint.Valid {
+		t.Fatalf("resume result = %#v", result)
+	}
+	if result.Usage == nil || result.Usage.InputTokens != 7 || result.Usage.OutputTokens != 11 {
+		t.Fatalf("resume usage = %#v, want current turn/completed usage", result.Usage)
+	}
+	for _, payload := range sink.streams {
+		if payload.Name == NotifyThreadTokenUsageUpdated {
+			t.Fatalf("restored previous-turn usage escaped to current stream: %+v", payload)
+		}
+	}
+}
+
 func TestRunRejectsNotificationOutsideExpectedThreadAndTurn(t *testing.T) {
 	fake := buildFakeAppserver(t)
 	sink := &recordingSink{}
@@ -1050,6 +1119,9 @@ func main() {
 			}
 			currentThread = "thread-fake"
 			respond(req.ID, "{\"thread\":{\"id\":\"thread-fake\"}}")
+			if req.Method == "thread/resume" && scenario == "resume-stale-token-usage" {
+				write("{\"method\":\"thread/tokenUsage/updated\",\"params\":{\"threadId\":\"thread-fake\",\"turnId\":\"turn-previous\",\"tokenUsage\":{\"last\":{\"inputTokens\":1,\"outputTokens\":2,\"cachedInputTokens\":0,\"reasoningOutputTokens\":0},\"total\":{\"inputTokens\":101,\"outputTokens\":202,\"cachedInputTokens\":3,\"reasoningOutputTokens\":0}}}}")
+			}
 		case "thread/fork":
 			if scenario == "whitespace-thread-fork" {
 				respond(req.ID, "{\"thread\":{\"id\":\" \"}}")
@@ -1102,7 +1174,7 @@ func main() {
 			if status == "scope-mismatch" {
 				status = "completed"
 			}
-			if status == "success" || status == "" || status == "structured-valid" || status == "nonzero-after-terminal" || status == "malformed-item-live" {
+			if status == "success" || status == "" || status == "structured-valid" || status == "nonzero-after-terminal" || status == "malformed-item-live" || status == "resume-stale-token-usage" {
 				status = "completed"
 			}
 			errorField := ""
