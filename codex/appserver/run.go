@@ -414,8 +414,8 @@ func (s *runState) handleNotificationLocked(method string, params json.RawMessag
 	}
 	s.mu.Unlock()
 
-	deferred, err := s.bindNotificationScopeLocked(method, params)
-	if deferred {
+	deferred, ignored, err := s.bindNotificationScopeLocked(method, params)
+	if deferred || ignored {
 		return
 	}
 	if err != nil {
@@ -515,10 +515,10 @@ func (s *runState) flushPendingNotificationsLocked() {
 	}
 }
 
-func (s *runState) bindNotificationScopeLocked(method string, params json.RawMessage) (bool, error) {
+func (s *runState) bindNotificationScopeLocked(method string, params json.RawMessage) (deferred, ignored bool, err error) {
 	threadID, turnID, scoped, turnScoped, err := appServerNotificationScope(method, params)
 	if err != nil || !scoped {
-		return false, err
+		return false, false, err
 	}
 
 	s.mu.Lock()
@@ -528,15 +528,26 @@ func (s *runState) bindNotificationScopeLocked(method string, params json.RawMes
 			method: method,
 			params: append(json.RawMessage(nil), params...),
 		})
-		return true, nil
+		return true, false, nil
 	}
 	if threadID != s.threadID {
-		return false, fmt.Errorf("codex app-server notification %s belongs to thread %q, want %q", method, threadID, s.threadID)
+		return false, false, fmt.Errorf("codex app-server notification %s belongs to thread %q, want %q", method, threadID, s.threadID)
 	}
 	if turnScoped && turnID != s.turnID {
-		return false, fmt.Errorf("codex app-server notification %s belongs to turn %q, want %q", method, turnID, s.turnID)
+		// thread/resume replays the persisted token-usage snapshot before the
+		// next turn starts. It is correctly scoped to this thread but retains
+		// the previous turn ID, so it must not contaminate the new run's usage
+		// or trip the strict scope fence. All other cross-turn notifications
+		// remain protocol errors.
+		if method == NotifyThreadTokenUsageUpdated {
+			if err := validateAppServerNotification(method, params); err != nil {
+				return false, false, fmt.Errorf("decode %s: %w", method, err)
+			}
+			return false, true, nil
+		}
+		return false, false, fmt.Errorf("codex app-server notification %s belongs to turn %q, want %q", method, turnID, s.turnID)
 	}
-	return false, nil
+	return false, false, nil
 }
 
 func appServerNotificationScope(method string, params json.RawMessage) (threadID, turnID string, scoped, turnScoped bool, err error) {
