@@ -53,7 +53,7 @@ func (adapter) Descriptor() driver.Descriptor {
 		ConfigSchema: &driver.ConfigSchema{Fields: fields},
 		Sessions:     driver.SessionCapability{SupportsResume: true},
 		Skills:       driver.SkillCapability{Supported: true, Mode: driver.SkillSyncPersistent},
-		MCP:          driver.MCPCapability{Supported: true, Stdio: true, HTTP: true},
+		MCP:          driver.MCPCapability{Supported: true, Stdio: true, HTTP: true, ToolApprovals: true},
 		Instructions: driver.InstructionsCapability{Supported: true},
 		Workspace:    driver.WorkspaceCapability{Supported: true},
 		Process:      driver.ProcessCapability{Persistent: true},

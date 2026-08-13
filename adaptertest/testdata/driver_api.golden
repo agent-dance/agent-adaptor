@@ -601,6 +601,7 @@ type MCPCapability struct {
 	Stdio bool
 	HTTP bool
 	SSE bool
+	ToolApprovals bool
 }
 
 type MCPPayload struct {
@@ -620,6 +621,17 @@ type MCPServerSpec struct {
 	BearerTokenEnvVar string
 	Required bool
 	RequiredReason string
+	Tools map[string]MCPToolPolicy
+}
+
+const MCPToolApprovalApprove MCPToolApprovalMode = "approve"
+
+type MCPToolApprovalMode string
+
+const MCPToolApprovalPrompt MCPToolApprovalMode = "prompt"
+
+type MCPToolPolicy struct {
+	ApprovalMode MCPToolApprovalMode
 }
 
 type MCPTransport string

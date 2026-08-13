@@ -159,6 +159,30 @@ func TestConstructorsCopyCallerInputs(t *testing.T) {
 	}
 }
 
+func TestWithToolApprovalSetsExactPolicy(t *testing.T) {
+	server := mcp.HTTP("ui", "http://127.0.0.1/mcp",
+		mcp.WithToolApproval("ui_open", mcp.ToolApprovalApprove),
+		mcp.WithToolApproval("ui_close", mcp.ToolApprovalPrompt),
+	)
+	want := map[string]driver.MCPToolPolicy{
+		"ui_open":  {ApprovalMode: driver.MCPToolApprovalApprove},
+		"ui_close": {ApprovalMode: driver.MCPToolApprovalPrompt},
+	}
+	if !reflect.DeepEqual(server.Tools, want) {
+		t.Fatalf("Tools = %#v, want %#v", server.Tools, want)
+	}
+}
+
+func TestWithToolApprovalConflictingDuplicateFailsClosed(t *testing.T) {
+	server := mcp.HTTP("ui", "http://127.0.0.1/mcp",
+		mcp.WithToolApproval("ui_open", mcp.ToolApprovalApprove),
+		mcp.WithToolApproval("ui_open", mcp.ToolApprovalPrompt),
+	)
+	if got := server.Tools["ui_open"].ApprovalMode; got == mcp.ToolApprovalApprove || got == mcp.ToolApprovalPrompt {
+		t.Fatalf("conflicting duplicate silently selected %q", got)
+	}
+}
+
 func TestOptionOrdering(t *testing.T) {
 	got := mcp.Stdio("repo-tools", "npx",
 		mcp.Args("first"),

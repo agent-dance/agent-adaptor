@@ -97,7 +97,7 @@ func SyncResource(ctx context.Context, driverType, profileDir string, kind Profi
 	if err != nil {
 		return engine.ResourceSnapshot{}, err
 	}
-	desired, err := desiredServers(layout, payload.Servers)
+	desired, err := desiredServers(layout, payload)
 	if err != nil {
 		return engine.ResourceSnapshot{}, err
 	}
@@ -308,9 +308,9 @@ func writeStructuredRoot(layout providerLayout, root map[string]any) error {
 	}
 }
 
-func desiredServers(layout providerLayout, servers []driver.MCPServerSpec) (map[string]any, error) {
-	desired := make(map[string]any, len(servers))
-	for _, server := range servers {
+func desiredServers(layout providerLayout, payload driver.MCPPayload) (map[string]any, error) {
+	desired := make(map[string]any, len(payload.Servers))
+	for _, server := range payload.Servers {
 		if _, exists := desired[server.Key]; exists {
 			return nil, fmt.Errorf("mcp server %q is declared more than once", server.Key)
 		}
