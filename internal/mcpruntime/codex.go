@@ -29,7 +29,7 @@ func codexServerConfig(server driver.MCPServerSpec) (map[string]any, error) {
 		if len(server.Env) > 0 {
 			entry["env"] = cloneStringMapAny(server.Env)
 		}
-		return entry, nil
+		return codexToolApprovalConfig(entry, server.Tools), nil
 	case driver.MCPTransportHTTP:
 		if len(server.Headers) > 0 {
 			return nil, fmt.Errorf("%w: Codex MCP server %q does not support custom headers", engine.ErrInvalidMCPConfig, server.Key)
@@ -40,10 +40,22 @@ func codexServerConfig(server driver.MCPServerSpec) (map[string]any, error) {
 		if server.BearerTokenEnvVar != "" {
 			entry["bearer_token_env_var"] = server.BearerTokenEnvVar
 		}
-		return entry, nil
+		return codexToolApprovalConfig(entry, server.Tools), nil
 	default:
 		return nil, fmt.Errorf("%w: Codex MCP server %q does not support transport %q", engine.ErrMCPTransportUnsupported, server.Key, server.Transport)
 	}
+}
+
+func codexToolApprovalConfig(entry map[string]any, policies map[string]driver.MCPToolPolicy) map[string]any {
+	if len(policies) == 0 {
+		return entry
+	}
+	tools := make(map[string]any, len(policies))
+	for tool, policy := range policies {
+		tools[tool] = map[string]any{"approval_mode": string(policy.ApprovalMode)}
+	}
+	entry["tools"] = tools
+	return entry
 }
 
 func readTOMLObject(path string) (map[string]any, error) {

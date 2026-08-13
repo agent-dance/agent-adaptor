@@ -175,3 +175,52 @@ wire_api = "responses"
 		t.Fatalf("empty unmanaged MCP sync rewrote config:\n%s", got)
 	}
 }
+
+func TestSyncCodexProjectsExactToolApprovalsAndPrunesStaleAuthority(t *testing.T) {
+	codexHome := t.TempDir()
+	payload := agentadaptor.MCPPayload{
+		Servers: []agentadaptor.MCPServerSpec{{
+			Key: "yangxia-agent-ui", Transport: agentadaptor.MCPTransportHTTP,
+			URL: "http://127.0.0.1:21901/mcp", BearerTokenEnvVar: "YANGXIA_RUN_TOKEN",
+			Tools: map[string]agentadaptor.MCPToolPolicy{
+				"yangxia_ui_close":       {ApprovalMode: agentadaptor.MCPToolApprovalApprove},
+				"yangxia_ui_open":        {ApprovalMode: agentadaptor.MCPToolApprovalApprove},
+				"yangxia_ui_patch":       {ApprovalMode: agentadaptor.MCPToolApprovalApprove},
+				"yangxia_ui_wait_action": {ApprovalMode: agentadaptor.MCPToolApprovalApprove},
+			},
+		}},
+	}
+	if _, err := SyncResource(context.Background(), "codex", codexHome, ProfileKindDedicated, payload); err != nil {
+		t.Fatalf("sync Codex approvals: %v", err)
+	}
+	configPath := filepath.Join(codexHome, "config.toml")
+	raw, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	text := string(raw)
+	for tool := range payload.Servers[0].Tools {
+		if !strings.Contains(text, "[mcp_servers.yangxia-agent-ui.tools."+tool+"]") {
+			t.Fatalf("missing exact tool approval for %q:\n%s", tool, text)
+		}
+	}
+	if strings.Contains(text, "default_tools_approval_mode") || strings.Contains(text, "approval_policy") {
+		t.Fatalf("exact policy widened to server/global approval:\n%s", text)
+	}
+	if strings.Contains(text, "YANGXIA_SECRET_VALUE") {
+		t.Fatalf("secret value entered generated config:\n%s", text)
+	}
+
+	payload.Servers[0].Tools = nil
+	if _, err := SyncResource(context.Background(), "codex", codexHome, ProfileKindDedicated, payload); err != nil {
+		t.Fatalf("sync Codex without approvals: %v", err)
+	}
+	raw, err = os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read pruned config: %v", err)
+	}
+	text = string(raw)
+	if strings.Contains(text, ".tools.") || strings.Contains(text, "approval_mode") {
+		t.Fatalf("stale exact-tool authority survived sync:\n%s", text)
+	}
+}

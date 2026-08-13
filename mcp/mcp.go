@@ -17,6 +17,12 @@ type Server = driver.MCPServerSpec
 // consumer-facing name for [driver.MCPTransport].
 type Transport = driver.MCPTransport
 
+// ToolApprovalMode is the provider-neutral approval mode for an exact tool.
+type ToolApprovalMode = driver.MCPToolApprovalMode
+
+// ToolPolicy is one exact MCP tool's policy.
+type ToolPolicy = driver.MCPToolPolicy
+
 // Re-exported transport values so Server literals and field checks do not
 // need a driver import.
 const (
@@ -26,6 +32,13 @@ const (
 	TransportHTTP = driver.MCPTransportHTTP
 	// TransportSSE connects to an SSE-based MCP endpoint.
 	TransportSSE = driver.MCPTransportSSE
+)
+
+const (
+	// ToolApprovalPrompt preserves an approval prompt for the exact tool.
+	ToolApprovalPrompt = driver.MCPToolApprovalPrompt
+	// ToolApprovalApprove authorizes only the exact tool on this server.
+	ToolApprovalApprove = driver.MCPToolApprovalApprove
 )
 
 // Option customizes a Server produced by [Stdio], [HTTP], or [SSE].
@@ -156,6 +169,24 @@ func Required(reason string) Option {
 	return func(server *Server) {
 		server.Required = true
 		server.RequiredReason = reason
+	}
+}
+
+// WithToolApproval sets the approval mode for one exact tool on this server.
+// Repeating an equivalent declaration is idempotent. A conflicting duplicate
+// is retained as an invalid closed-enum value so normal validation fails the
+// run before driver launch rather than silently choosing an order-dependent
+// winner.
+func WithToolApproval(name string, mode ToolApprovalMode) Option {
+	return func(server *Server) {
+		if server.Tools == nil {
+			server.Tools = make(map[string]ToolPolicy, 1)
+		}
+		policy := ToolPolicy{ApprovalMode: mode}
+		if existing, ok := server.Tools[name]; ok && existing != policy {
+			policy.ApprovalMode = ToolApprovalMode("conflict")
+		}
+		server.Tools[name] = policy
 	}
 }
 

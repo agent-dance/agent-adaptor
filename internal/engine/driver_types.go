@@ -341,16 +341,20 @@ const (
 // --- MCP ------------------------------------------------------------------
 
 type (
-	MCPTransport  = driver.MCPTransport
-	MCPServerSpec = driver.MCPServerSpec
-	MCPPayload    = driver.MCPPayload
-	MCPCapability = driver.MCPCapability
+	MCPTransport        = driver.MCPTransport
+	MCPServerSpec       = driver.MCPServerSpec
+	MCPToolApprovalMode = driver.MCPToolApprovalMode
+	MCPToolPolicy       = driver.MCPToolPolicy
+	MCPPayload          = driver.MCPPayload
+	MCPCapability       = driver.MCPCapability
 )
 
 const (
-	MCPTransportStdio = driver.MCPTransportStdio
-	MCPTransportHTTP  = driver.MCPTransportHTTP
-	MCPTransportSSE   = driver.MCPTransportSSE
+	MCPTransportStdio      = driver.MCPTransportStdio
+	MCPTransportHTTP       = driver.MCPTransportHTTP
+	MCPTransportSSE        = driver.MCPTransportSSE
+	MCPToolApprovalPrompt  = driver.MCPToolApprovalPrompt
+	MCPToolApprovalApprove = driver.MCPToolApprovalApprove
 )
 
 // --- HITL decisions -------------------------------------------------------
