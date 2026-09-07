@@ -208,6 +208,7 @@ func checkDescriptor(t *testing.T, newDriver func() driver.Driver, d driver.Driv
 	if desc.DisplayName == "" {
 		t.Error("DRV-01: Descriptor().DisplayName is empty")
 	}
+	reportViolations(t, verifyDescriptorSnapshot(d))
 	if again := d.Descriptor(); !reflect.DeepEqual(again, desc) {
 		t.Error("DRV-02: Descriptor() is not deterministic across calls on the same instance")
 	}
@@ -642,7 +643,12 @@ func checkLiveRun(t *testing.T, d driver.Driver, c *suiteConfig) {
 	if support, ok := d.(driver.StreamSupport); ok {
 		reportViolations(t, VerifyStreamSequence(sink.Stream()))
 		reportViolations(t, VerifyStreamCapability(support.StreamCapability(), sink.Stream()))
+	} else {
+		// Observation facts retain SDK envelope authority without implying the
+		// optional rich text/tool protocol.
+		reportViolations(t, verifyObservationSequence(sink.Stream()))
 	}
+	reportViolations(t, verifyObservationSupport(d.Descriptor().Observation.Streaming, sink.Stream()))
 	reportViolations(t, VerifyTranscriptMirror(sink.Events(), resp.Transcript))
 	if resp.Output == "" {
 		t.Log("note: live run returned an empty Output")
@@ -695,6 +701,10 @@ func checkLiveStructuredOutput(t *testing.T, d driver.Driver, desc driver.Descri
 	if err != nil {
 		t.Fatalf("SO-02: native structured run failed: %v\nstderr tail: %s", err, rawStderrTail(&resp))
 	}
+	// Batch observation facts obey the same SDK envelope authority; they need
+	// not include rich run.started/run.finished frames.
+	reportViolations(t, verifyObservationSequence(sink.Stream()))
+	reportViolations(t, verifyObservationSupport(desc.Observation.Batch, sink.Stream()))
 	result := resp.StructuredOutput
 	if result == nil {
 		t.Fatal("SO-02: native run returned nil StructuredOutput; native enforcement must report the validated business value (StructuredOutput docs)")

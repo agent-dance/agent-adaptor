@@ -7,6 +7,14 @@ on:
     branches: [ "main" ]
   workflow_dispatch:
 
+# All automatic jobs are hermetic. Paid suites require their build tag plus
+# an explicit environment opt-in on a separately authorized runner.
+env:
+  AGENT_ADAPTOR_LIVE_CONFORMANCE: "0"
+  AGENT_ADAPTOR_E2E: "0"
+  AGENT_ADAPTOR_UPDATE_API_GOLDEN: "0"
+  GOTOOLCHAIN: local
+
 jobs:
   validate:
     runs-on: ubuntu-latest
@@ -23,7 +31,7 @@ jobs:
       run: go build -v ./...
 
     - name: Test
-      run: go test -v ./...
+      run: go test -count=1 -timeout=15m -v ./...
 
     - name: Vet
       run: go vet ./...
@@ -31,16 +39,28 @@ jobs:
     - name: Vulnerability scan
       run: go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
 
-    - name: Compile opt-in live suites without running paid CLIs
+    - name: Run hermetic provider tests with live build tags (paid probes disabled)
       env:
         AGENT_ADAPTOR_LIVE_CONFORMANCE: "0"
       run: |
-        go test -count=1 -tags=claude_live ./claude
-        go test -count=1 -tags=codebuddy_live ./codebuddy
-        go test -count=1 -tags=codex_live ./codex/...
+        go test -count=1 -timeout=10m -tags=claude_live ./claude
+        go test -count=1 -timeout=10m -tags=codebuddy_live ./codebuddy
+        go test -count=1 -timeout=10m -tags=codex_live ./codex/...
+        go test -count=1 -timeout=10m -tags=cursor_live ./cursor
 
-    - name: Repeat A2A tests
-      run: go test -count=20 ./clients/a2a ./bridges/a2a
+    - name: Parse all persistent-process BDD features (no live execution)
+      run: go test -count=1 -timeout=2m -tags=e2e ./e2e -run TestPersistentProcessBDDFeaturesParse
+
+    - name: Driver conformance and architecture contracts
+      run: |
+        go test -count=1 -timeout=5m ./adaptertest .
+        go test -count=1 -timeout=5m ./claude ./codebuddy ./codex ./cursor -run 'Test(Claude|CodeBuddy|Codex|Cursor)DriverConformance'
+
+    - name: S1 through S9
+      run: go test -count=1 -timeout=5m . ./bridges/a2a ./hosttools/a2adelegation -run 'TestScenarioS[1-9]|TestServiceTeamCollaborationS9'
+
+    - name: Repeat Thread, Event, Approval and A2A tests
+      run: go test -count=20 -timeout=30m . ./clients/a2a ./bridges/a2a ./hosttools/a2adelegation
 
   race:
     runs-on: ubuntu-latest
@@ -54,7 +74,7 @@ jobs:
         cache: true
 
     - name: Race tests
-      run: go test -race ./...
+      run: go test -race -count=1 -timeout=20m ./...
 
   fuzz:
     runs-on: ubuntu-latest
@@ -69,21 +89,53 @@ jobs:
 
     - name: Fuzz archive extraction
       run: |
-        go test ./internal/engine -run=^$ -fuzz=FuzzExtractZip -fuzztime=30s
-        go test ./internal/engine -run=^$ -fuzz=FuzzExtractTar -fuzztime=30s
-        go test ./internal/engine -run=^$ -fuzz=FuzzSniffArchiveFormat -fuzztime=30s
+        go test ./internal/engine -run=^$ -fuzz=FuzzExtractZip -fuzztime=30s -timeout=2m
+        go test ./internal/engine -run=^$ -fuzz=FuzzExtractTar -fuzztime=30s -timeout=2m
+        go test ./internal/engine -run=^$ -fuzz=FuzzSniffArchiveFormat -fuzztime=30s -timeout=2m
 
     - name: Fuzz provider protocol parsers
       run: |
-        go test ./claude -run='^$' -fuzz='^FuzzClaudeBatchParser$' -fuzztime=30s
-        go test ./cursor -run='^$' -fuzz='^FuzzCursorBatchParser$' -fuzztime=30s
-        go test ./codebuddy -run='^$' -fuzz='^FuzzCodeBuddyBatchParser$' -fuzztime=30s
-        go test ./codex -run='^$' -fuzz='^FuzzCodexBatchParser$' -fuzztime=30s
+        go test ./claude -run='^$' -fuzz='^FuzzClaudeBatchParser$' -fuzztime=30s -timeout=2m
+        go test ./cursor -run='^$' -fuzz='^FuzzCursorBatchParser$' -fuzztime=30s -timeout=2m
+        go test ./codebuddy -run='^$' -fuzz='^FuzzCodeBuddyBatchParser$' -fuzztime=30s -timeout=2m
+        go test ./codex -run='^$' -fuzz='^FuzzCodexBatchParser$' -fuzztime=30s -timeout=2m
 
     - name: Fuzz Codex app-server decoders
       run: |
-        go test ./codex/appserver -run='^$' -fuzz='^FuzzCodexAppserverNotificationDecoder$' -fuzztime=30s
-        go test ./codex/appserver -run='^$' -fuzz='^FuzzDecodeThreadItem$' -fuzztime=30s
+        go test ./codex/appserver -run='^$' -fuzz='^FuzzCodexAppserverNotificationDecoder$' -fuzztime=30s -timeout=2m
+        go test ./codex/appserver -run='^$' -fuzz='^FuzzDecodeThreadItem$' -fuzztime=30s -timeout=2m
+
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version-file: go.mod
+        cache: true
+    - name: Record native platform
+      shell: pwsh
+      run: |
+        go version
+        go env GOOS GOARCH GOROOT
+        $PSVersionTable
+        if ((go env GOOS) -ne "windows") { throw "Native Windows execution is required" }
+    - name: Full native Windows suite (paid probes disabled)
+      run: go test -count=1 -timeout=15m -v ./...
+    - name: Windows ownership, process and argument contracts
+      shell: pwsh
+      run: |
+        go test -count=1 -timeout=5m -v ./internal/hostedprofile ./internal/processx ./internal/clihelper ./internal/systemprompt ./adaptertest
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        go test -count=1 -timeout=2m -tags=e2e ./e2e -run TestPersistentProcessBDDFeaturesParse
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    - name: Run provider suites with all live build tags and closed environment gate
+      shell: pwsh
+      run: |
+        go test -count=1 -timeout=10m -tags=claude_live,codebuddy_live,codex_live,cursor_live ./claude ./codebuddy ./codex/... ./cursor
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   frontend:
     runs-on: ubuntu-latest

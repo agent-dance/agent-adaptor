@@ -32,6 +32,7 @@
 //	DRV-01  Descriptor().Type and DisplayName are non-empty.
 //	DRV-02  Descriptor() is deterministic across calls and across factory
 //	        instances (the descriptor is a static declaration).
+//	DRV-03  Descriptor returns independent mutable HITL matrices.
 //	CFG-01  ValidateConfig(nil) must not panic.
 //	CFG-02  ValidateConfig accepts the suite-supplied config.
 //	CFG-03  (opt-in, ExpectRejectForeignConfig) ValidateConfig rejects a
@@ -119,12 +120,38 @@
 //	EVT-08  hitl.requested / hitl.resolved carry their decision envelopes.
 //	EVT-09  Role is left at the zero value on every driver-emitted payload.
 //	EVT-10  Sequence, Seq, and Timestamp are left zero by drivers (the SDK
-//	        backfills them in EmitStream).
+//	        backfills them in EmitStream), including observation-only and
+//	        native batch payloads without rich run.* frames.
 //	EVT-11  every opened lifecycle is closed before run.finished.
 //	EVT-12  StreamCapability negatives hold: no tool_call.args when
 //	        ToolCallArgs=false, no reasoning.* when Reasoning=false, no
 //	        hitl.* when HITL=false.
 //	EVT-13  run.* frames leave MessageID and ToolCallID empty.
+//	EVT-14  Tool identity includes ScopeID; parents remain stable; complete
+//	        Args is not followed by ArgsDelta; results are not duplicated.
+//
+// Observations (driver/doc.go, driver/events.go; capability/todo godoc):
+//
+//	OBS-01  Emitted observations respect the resolved transport declaration.
+//	        Absence of facts never proves a declared capability was unused.
+//	OBS-02  Capability/Todo payloads match their kind and contain no second
+//	        semantic payload or unsafe generic fields.
+//	OBS-03  Capability values follow the closed provider evidence vocabulary,
+//	        UTF-8/size/time/duration rules and contain no invented host facts.
+//	        A parent cannot reference the same (ScopeID, InvocationID);
+//	        a matching parent ID in a different scope remains valid.
+//	OBS-04  Per-scope capability identity is stable, starts/terminals occur
+//	        once and every start closes before the provider terminal.
+//	OBS-05  Todo is a confirmed full ordered snapshot: non-nil empty clears,
+//	        IDs are unique and values obey the public leaf limits.
+//	OBS-06  Each scope starts at revision one; only changed snapshots advance.
+//
+// The public SDK terminal is independently finalized by core after cleanup
+// (R006); provider terminal checks here do not let a Driver decide that outcome.
+// These structural clauses cannot prove official protocol provenance, catalog
+// membership or model behavior; provider fixtures and gated live suites must
+// supply that evidence. MUST rules remain hard failures; SHOULD guidance is
+// not silently promoted to a stronger cross-provider requirement.
 //
 // Vendor-specific StreamKinds and RunEventTypes outside the declared enums
 // are tolerated for field validation, but no payload may follow a terminal.

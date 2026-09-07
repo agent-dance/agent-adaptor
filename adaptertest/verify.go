@@ -23,6 +23,25 @@ func violationf(clause, format string, args ...any) Violation {
 	return Violation{Clause: clause, Message: fmt.Sprintf(format, args...)}
 }
 
+// verifyStreamEnvelope checks SDK-owned fields without requiring the optional
+// rich run/text/tool lifecycle. All stream and observation verifiers share it.
+func verifyStreamEnvelope(payloads []driver.StreamPayload) []Violation {
+	var out []Violation
+	for i, p := range payloads {
+		if p.Sequence != 0 || p.Seq != 0 || !p.Timestamp.IsZero() {
+			out = append(out, violationf("EVT-10",
+				"payload %d (%s) carries driver-set Sequence=%d Seq=%d Timestamp=%v; Sequence/Seq/Timestamp are backfilled by the SDK (StreamPayload, EventSink.EmitStream docs)",
+				i, p.Kind, p.Sequence, p.Seq, p.Timestamp))
+		}
+		if p.Role != driver.RoleAssistant {
+			out = append(out, violationf("EVT-09",
+				"payload %d (%s) carries Role=%q; drivers MUST leave Role at the zero value on every Kind they emit (Role docs)",
+				i, p.Kind, p.Role))
+		}
+	}
+	return out
+}
+
 // VerifySessionCapability checks the declaration and support-interface half
 // of CAP-01 without starting a provider process. Resume support requires both
 // a stable, non-nil SessionCodec and a stable, non-empty construction-config
@@ -204,7 +223,7 @@ func structuredHITLMechanisms(c driver.StructuredOutputCapability) [2]structured
 	}
 }
 
-// knownStreamKind reports whether kind is one of the 19 normalized
+// knownStreamKind reports whether kind is one of the normalized
 // StreamKinds declared in driver/events.go. Vendor-specific kinds outside
 // that set are tolerated and skipped by the verifiers (StreamKind docs:
 // "Drivers may emit a subset"; the set is open for provider extensions).
@@ -216,7 +235,7 @@ func knownStreamKind(kind driver.StreamKind) bool {
 		driver.StreamToolCallStart, driver.StreamToolCallArgs, driver.StreamToolCallEnd, driver.StreamToolCallResult,
 		driver.StreamReasoningStart, driver.StreamReasoningContent, driver.StreamReasoningEnd,
 		driver.StreamHITLRequested, driver.StreamHITLResolved,
-		driver.StreamDropped:
+		driver.StreamDropped, driver.StreamCapabilityInvocation, driver.StreamTodoUpdated:
 		return true
 	}
 	return false
@@ -228,7 +247,7 @@ func knownStreamKind(kind driver.StreamKind) bool {
 // each clause is the godoc in package driver (StreamKind, StreamPayload,
 // Role, EventSink); see the package documentation for the catalogue.
 func VerifyStreamSequence(payloads []driver.StreamPayload) []Violation {
-	var out []Violation
+	out := verifyObservationSequence(payloads)
 
 	if len(payloads) > 0 && payloads[0].Kind != driver.StreamRunStarted {
 		out = append(out, violationf("EVT-01",
@@ -243,8 +262,9 @@ func VerifyStreamSequence(payloads []driver.StreamPayload) []Violation {
 	closedText := map[string]bool{}
 	openReasoning := map[string]bool{}
 	closedReasoning := map[string]bool{}
-	openTool := map[string]bool{}
-	closedTool := map[string]bool{}
+	type toolKey struct{ scope, id string }
+	openTool := map[toolKey]bool{}
+	closedTool := map[toolKey]bool{}
 	openStep := map[string]int{}
 
 	contentAfterTerminal := func(i int, kind driver.StreamKind) {
@@ -256,11 +276,7 @@ func VerifyStreamSequence(payloads []driver.StreamPayload) []Violation {
 	}
 
 	for i, p := range payloads {
-		if p.Sequence != 0 || p.Seq != 0 || !p.Timestamp.IsZero() {
-			out = append(out, violationf("EVT-10",
-				"payload %d (%s) carries driver-set Sequence=%d Seq=%d Timestamp=%v; Sequence/Seq/Timestamp are backfilled by the SDK (StreamPayload, EventSink.EmitStream docs)",
-				i, p.Kind, p.Sequence, p.Seq, p.Timestamp))
-		}
+		key := toolKey{p.ScopeID, p.ToolCallID}
 		if !knownStreamKind(p.Kind) {
 			if terminal {
 				out = append(out, violationf("EVT-02", "payload %d (%s) emitted after the terminal frame; terminal MUST be last", i, p.Kind))
@@ -269,11 +285,6 @@ func VerifyStreamSequence(payloads []driver.StreamPayload) []Violation {
 		}
 		if terminal && p.Kind == driver.StreamDropped {
 			out = append(out, violationf("EVT-02", "payload %d (%s) emitted after the terminal frame; terminal MUST be last", i, p.Kind))
-		}
-		if p.Role != driver.RoleAssistant {
-			out = append(out, violationf("EVT-09",
-				"payload %d (%s) carries Role=%q; drivers MUST leave Role at the zero value on every Kind they emit (Role docs)",
-				i, p.Kind, p.Role))
 		}
 
 		switch p.Kind {
@@ -392,10 +403,10 @@ func VerifyStreamSequence(payloads []driver.StreamPayload) []Violation {
 				out = append(out, violationf("EVT-05", "payload %d: tool_call.start requires ToolCallID and Name (got ToolCallID=%q Name=%q)", i, p.ToolCallID, p.Name))
 			}
 			if p.ToolCallID != "" {
-				if openTool[p.ToolCallID] || closedTool[p.ToolCallID] {
+				if openTool[key] || closedTool[key] {
 					out = append(out, violationf("EVT-05", "payload %d: tool_call.start reopens ToolCallID %q", i, p.ToolCallID))
 				} else {
-					openTool[p.ToolCallID] = true
+					openTool[key] = true
 				}
 			}
 
@@ -403,7 +414,7 @@ func VerifyStreamSequence(payloads []driver.StreamPayload) []Violation {
 			contentAfterTerminal(i, p.Kind)
 			if p.ToolCallID == "" {
 				out = append(out, violationf("EVT-05", "payload %d: tool_call.args without ToolCallID", i))
-			} else if !openTool[p.ToolCallID] {
+			} else if !openTool[key] {
 				out = append(out, violationf("EVT-05", "payload %d: tool_call.args for ToolCallID %q outside an open tool_call lifecycle", i, p.ToolCallID))
 			}
 			if p.Delta == "" {
@@ -413,18 +424,18 @@ func VerifyStreamSequence(payloads []driver.StreamPayload) []Violation {
 		case driver.StreamToolCallEnd:
 			if p.ToolCallID == "" {
 				out = append(out, violationf("EVT-05", "payload %d: tool_call.end without ToolCallID", i))
-			} else if !openTool[p.ToolCallID] {
+			} else if !openTool[key] {
 				out = append(out, violationf("EVT-05", "payload %d: tool_call.end for ToolCallID %q that is not open", i, p.ToolCallID))
 			} else {
-				delete(openTool, p.ToolCallID)
-				closedTool[p.ToolCallID] = true
+				delete(openTool, key)
+				closedTool[key] = true
 			}
 
 		case driver.StreamToolCallResult:
 			contentAfterTerminal(i, p.Kind)
 			if p.ToolCallID == "" {
 				out = append(out, violationf("EVT-05", "payload %d: tool_call.result without ToolCallID", i))
-			} else if !openTool[p.ToolCallID] && !closedTool[p.ToolCallID] {
+			} else if !openTool[key] && !closedTool[key] {
 				out = append(out, violationf("EVT-05", "payload %d: tool_call.result for unknown ToolCallID %q (no prior tool_call.start)", i, p.ToolCallID))
 			}
 
@@ -470,6 +481,9 @@ func VerifyStreamSequence(payloads []driver.StreamPayload) []Violation {
 			if p.HITLResolved == nil {
 				out = append(out, violationf("EVT-08", "payload %d: hitl.resolved without HITLResolved envelope", i))
 			}
+
+		case driver.StreamCapabilityInvocation, driver.StreamTodoUpdated:
+			contentAfterTerminal(i, p.Kind)
 
 		case driver.StreamDropped:
 			// Provider-side loss report. It obeys the same run.started-first
