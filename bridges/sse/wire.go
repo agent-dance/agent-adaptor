@@ -8,6 +8,8 @@
 // parent_tool_call_id. Meta.source retains every upstream source coordinate;
 // empty todo items explicitly clear the scope. These events preserve complete
 // UTF-8 content and are not subject to A2A's separate envelope size limit.
+// Raw approval frames own independent choice and nested detail snapshots;
+// retaining or editing a frame does not alter the live approval request.
 package sse
 
 import (

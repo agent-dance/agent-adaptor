@@ -496,8 +496,8 @@ func rawFrameBody(ev adaptor.Event) (string, any) {
 			"kind":          string(e.Kind),
 			"source":        e.Source,
 			"prompt":        e.Title,
-			"payload":       e.Details,
-			"choices":       e.Choices,
+			"payload":       approvalDetailsSnapshot(e.Details),
+			"choices":       append([]adaptor.Choice(nil), e.Choices...),
 			"tool_call_id":  e.ToolCallID,
 			"deadline":      e.Deadline,
 			"retry_attempt": e.Attempt,
@@ -573,4 +573,10 @@ func nonEmpty(value, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+// Snapshot descriptive data independently of the live approval request. The
+// map-carrying Event copy is local only, never published or made answerable.
+func approvalDetailsSnapshot(details map[string]any) map[string]any {
+	return adaptor.WithEventMeta(adaptor.Notice{Data: details}, adaptor.EventMeta{}).(adaptor.Notice).Data
 }

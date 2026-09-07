@@ -515,7 +515,7 @@ func (t *EventTranslator) approvalRequestLocked(req *adaptor.ApprovalRequest) []
 		"kind":          string(req.Kind),
 		"source":        req.Source,
 		"prompt":        req.Title,
-		"payload":       req.Details,
+		"payload":       approvalDetailsSnapshot(req.Details),
 		"choices":       choicesToJSON(req.Choices),
 		"tool_call_id":  req.ToolCallID,
 		"deadline":      req.Deadline,
@@ -772,4 +772,11 @@ func intFromAny(v any) int {
 		return int(n)
 	}
 	return 0
+}
+
+// CUSTOM events retain a value beyond Translate, so their approval payload
+// must own the same independent map snapshot as the other typed projections.
+// This intermediate map carrier is never published and has no responder.
+func approvalDetailsSnapshot(details map[string]any) map[string]any {
+	return adaptor.WithEventMeta(adaptor.Notice{Data: details}, adaptor.EventMeta{}).(adaptor.Notice).Data
 }

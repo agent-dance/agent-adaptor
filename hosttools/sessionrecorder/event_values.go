@@ -28,8 +28,21 @@ func cloneRecordedEvent(ev adaptor.Event) adaptor.Event {
 	if req, ok := cloned.(*adaptor.ApprovalRequest); ok && req != nil {
 		// Construct only public descriptive fields; even the memory backend is a
 		// historical record, never a second route to the live responder.
-		descriptive := &adaptor.ApprovalRequest{ID: req.ID, RunID: req.RunID, Kind: req.Kind, Title: req.Title, Source: req.Source, ToolCallID: req.ToolCallID, Choices: req.Choices, Details: req.Details, CreatedAt: req.CreatedAt, Deadline: req.Deadline, Attempt: req.Attempt}
+		descriptive := &adaptor.ApprovalRequest{
+			ID: req.ID, RunID: req.RunID, Kind: req.Kind, Title: req.Title,
+			Source: req.Source, ToolCallID: req.ToolCallID,
+			Choices:   append([]adaptor.Choice(nil), req.Choices...),
+			Details:   approvalDetailsSnapshot(req.Details),
+			CreatedAt: req.CreatedAt, Deadline: req.Deadline, Attempt: req.Attempt,
+		}
 		return adaptor.WithEventMeta(descriptive, req.Meta())
 	}
 	return cloned
+}
+
+// Give each approval description its own nested map snapshot using the public
+// map-carrying Event copy contract. This intermediate value is never published
+// and carries no responder.
+func approvalDetailsSnapshot(details map[string]any) map[string]any {
+	return adaptor.WithEventMeta(adaptor.Notice{Data: details}, adaptor.EventMeta{}).(adaptor.Notice).Data
 }

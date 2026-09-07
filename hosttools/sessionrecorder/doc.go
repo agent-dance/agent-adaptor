@@ -6,8 +6,9 @@
 // Recorded events retain scoped tool parents, CapabilityInvocation,
 // TodoUpdated (including an empty clear), and the complete EventMeta source
 // chain. Inputs, returned records, backend records and queries own independent
-// mutable values. Approval records contain descriptions only, including in
-// memory; they cannot answer a live request.
+// mutable values, including approval Choices and nested Details. Approval
+// records contain descriptions only, including in memory; they cannot answer
+// a live request.
 //
 // JSONL rejects unknown fields/kinds, duplicate JSON keys, invalid UTF-8,
 // unpaired Unicode escapes and invalid observation values as corrupt history.

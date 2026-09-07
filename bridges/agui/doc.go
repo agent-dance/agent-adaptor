@@ -14,5 +14,7 @@
 // ["tool", runID, scopeID, ID]; adapter.tool.parent precedes each tool start
 // because the native AG-UI tool shape has no scoped parent field. Consumers
 // must use that custom value to reconstruct parent graphs.
+// Approval CUSTOM events own independent choice and nested detail snapshots;
+// retaining or editing a translated event does not alter the live request.
 // RunError.Reason remains authoritative when Cause includes cancellation.
 package agui
