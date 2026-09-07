@@ -37,7 +37,9 @@ type Definition interface {
 
 	// Invoke is the provider-neutral runtime bridge. Applications normally do
 	// not call it directly; Agent-owned tool runtimes use it after routing a
-	// provider tool call to this Definition.
+	// provider tool call to this Definition. Invalid JSON, input schema, and
+	// Go input decoding failures match ErrInvalidInput and carry an
+	// AsRejection-compatible invalid_input correction without private details.
 	Invoke(ctx context.Context, input json.RawMessage) (json.RawMessage, error)
 
 	definition()
@@ -277,11 +279,20 @@ func (d *typedDefinition[In, Out]) compile() (*compiledDefinition, error) {
 			}
 			normalized, err := decodeAndValidateJSON(raw, inputValidator)
 			if err != nil {
-				return nil, fmt.Errorf("%w: %v", ErrInvalidInput, err)
+				if contextErr := ctx.Err(); contextErr != nil {
+					return nil, contextErr
+				}
+				return nil, invalidInputRejection(invalidInputMessage(err))
 			}
 			var in In
 			if err := json.Unmarshal(normalized, &in); err != nil {
-				return nil, fmt.Errorf("%w: decode Go input: %v", ErrInvalidInput, err)
+				if contextErr := ctx.Err(); contextErr != nil {
+					return nil, contextErr
+				}
+				return nil, invalidInputRejection("tool arguments cannot be decoded into the input type; check field types and formats, then retry")
+			}
+			if err := ctx.Err(); err != nil {
+				return nil, err
 			}
 			out, err := d.handler(ctx, in)
 			if err != nil {

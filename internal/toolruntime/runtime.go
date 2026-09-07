@@ -329,7 +329,9 @@ func newRuntimeCatalog(definitions []tool.Definition, config gatewayConfig) (cat
 			OutputSchema: json.RawMessage(slices.Clone(descriptor.OutputSchemaJSON)),
 			Annotations:  mcpAnnotations(descriptor),
 		}
-		mcp.AddTool[json.RawMessage, any](server, definition, catalog.handler(descriptor.Name))
+		// Definition.Invoke owns validation and safe input diagnostics. The
+		// generic SDK wrapper validates first and exposes its raw schema errors.
+		server.AddTool(definition, catalog.handler(descriptor.Name))
 	}
 	return catalog, fingerprint, nil
 }
@@ -399,14 +401,11 @@ func catalogFingerprint(descriptors []tool.Descriptor) (string, error) {
 	return "sha256:" + hex.EncodeToString(hash.Sum(nil)), nil
 }
 
-func (c *runtimeCatalog) handler(name string) mcp.ToolHandlerFor[json.RawMessage, any] {
-	return func(ctx context.Context, _ *mcp.CallToolRequest, input json.RawMessage) (
-		result *mcp.CallToolResult, output any, err error,
-	) {
+func (c *runtimeCatalog) handler(name string) mcp.ToolHandler {
+	return func(ctx context.Context, request *mcp.CallToolRequest) (result *mcp.CallToolResult, err error) {
 		defer func() {
 			if recover() != nil {
 				result = failureResult("internal_error", "Tool execution failed.")
-				output = nil
 				err = nil
 			}
 		}()
@@ -414,29 +413,32 @@ func (c *runtimeCatalog) handler(name string) mcp.ToolHandlerFor[json.RawMessage
 		defer cancel()
 		definition := c.byName[name]
 		if definition == nil {
-			return failureResult("internal_error", "Tool execution failed."), nil, nil
+			return failureResult("internal_error", "Tool execution failed."), nil
 		}
-		out, invokeErr := definition.Invoke(handlerCtx, slices.Clone(input))
+		out, invokeErr := definition.Invoke(handlerCtx, slices.Clone(request.Params.Arguments))
 		if invokeErr != nil {
 			code, message, rejected := tool.AsRejection(invokeErr)
 			switch {
 			case rejected:
 				if validRejection(code, message) {
-					return failureResult(code, message), nil, nil
+					return failureResult(code, message), nil
 				}
-				return failureResult("internal_error", "Tool execution failed."), nil, nil
+				return failureResult("internal_error", "Tool execution failed."), nil
 			case errors.Is(invokeErr, context.DeadlineExceeded), errors.Is(handlerCtx.Err(), context.DeadlineExceeded):
-				return failureResult("deadline_exceeded", "Tool execution timed out."), nil, nil
+				return failureResult("deadline_exceeded", "Tool execution timed out."), nil
 			case errors.Is(invokeErr, context.Canceled), errors.Is(handlerCtx.Err(), context.Canceled):
-				return failureResult("canceled", "Tool execution was canceled."), nil, nil
+				return failureResult("canceled", "Tool execution was canceled."), nil
 			default:
-				return failureResult("internal_error", "Tool execution failed."), nil, nil
+				return failureResult("internal_error", "Tool execution failed."), nil
 			}
 		}
 		if len(out) == 0 || !json.Valid(out) || len(out) > c.config.maxResponseBytes {
-			return failureResult("internal_error", "Tool execution failed."), nil, nil
+			return failureResult("internal_error", "Tool execution failed."), nil
 		}
-		return nil, json.RawMessage(slices.Clone(out)), nil
+		return &mcp.CallToolResult{
+			Content:           []mcp.Content{&mcp.TextContent{Text: string(out)}},
+			StructuredContent: json.RawMessage(slices.Clone(out)),
+		}, nil
 	}
 }
 
