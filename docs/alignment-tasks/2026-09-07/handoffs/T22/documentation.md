@@ -61,4 +61,4 @@ G05 可将以下证据说明合入 `docs/run-policy.md` 的主动预算/HITL、`
 
 不引入 exported PausableContext、逐字段零值继承 Policy、无健康证明的取消 checkpoint、按 size 信任 append 缓存、将 native append 拼入 user prompt、从 JSON 猜 provider 语义、桥层第二错误策略、依据父/本轮 limit 数值猜来源，也不把公开 HTTP CancelTask ack 冒充内部 drain 分类证据。
 
-严格 translation 分支还要求公开 StreamRecoveryError 的 TaskID 与该订阅实际最后观察 ID 相同，Cause 可 errors.As 到非 nil pinned upstream a2a.Error，Err 为 ErrInternalError、Message 为本装置精确 literal；拒绝普通同文案 Cause、额外 Details/custom control，只允许标准 ErrorInfo timestamp。每一份已观察 Task/status 都先检查 control 与冲突终态，不能只核对最后一帧。正反控制覆盖这些额外来源约束。
+严格 translation 分支只消费公开客户端合同：直接非 nil *clients/a2a.StreamRecoveryError、非 nil Cause、Cause.Error() 精确等于本装置 literal，TaskID 与该订阅实际最后观察 ID 相同。公开 SRE 携带 errors.New(精确文本) 是正控；顶层同文案普通 error、外层包装/join、超时、空 EOF、冲突终态仍是负控。每一份已观察 Task/status 的全部 Parts 都检查 failure control，实际尾消费、Result 完成与执行次数屏障不变。协调者在 G05 import 边界失败后撤回此前额外要求的上游具体类型/code/details/timestamp 检查：这些属于协议依赖的局部实现，不是 C02 公开 oracle 合同。只移除上述内部细节控制，不改生产、import guard、allowlist、公共 API，也不以反射或新 helper runtime 包绕过边界。

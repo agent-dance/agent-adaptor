@@ -32,4 +32,10 @@ F01 的尾消费/Result 完成/earlyResult/一次 Stream 屏障均通过，失�
 
 2026-09-08，协调者已验收 canonical22 replacement G04 `b2035bc793369fb8fefb9de229ff1dbd2b748853`，并授权正式重派。T22 的 5 个 owned 阶段提交已从旧 `2421fe4` 无冲突 rebase；原始 SHA、红日志与阶段报告保留历史身份。最终源/本片段提交后执行完整两条原验证（count=1 和 race count=20，仅加 JSON，600s 进程外 timeout），正式结果只使用 `evidence/T22-V01.jsonl`、`evidence/T22-V02.jsonl` 及实际当前 HEAD。随后生成逐项 result/evidence，并使用 canonical validator、external execution-state 与 --verify-git 核验。本任务不修改外部状态，也不宣称批次或平台/live 门禁关闭。
 
-严格 translation 分支还要求公开 StreamRecoveryError 的 TaskID 与该订阅实际最后观察 ID 相同，Cause 可 errors.As 到非 nil pinned upstream a2a.Error，Err 为 ErrInternalError、Message 为本装置精确 literal；拒绝普通同文案 Cause、额外 Details/custom control，只允许标准 ErrorInfo timestamp。每一份已观察 Task/status 都先检查 control 与冲突终态，不能只核对最后一帧。正反控制覆盖这些额外来源约束。
+严格 translation 分支只消费公开客户端合同：直接非 nil *clients/a2a.StreamRecoveryError、非 nil Cause、Cause.Error() 精确等于本装置 literal，TaskID 与该订阅实际最后观察 ID 相同。公开 SRE 携带 errors.New(精确文本) 是正控；顶层同文案普通 error、外层包装/join、超时、空 EOF、冲突终态仍是负控。每一份已观察 Task/status 的全部 Parts 都检查 failure control，实际尾消费、Result 完成与执行次数屏障不变。协调者在 G05 import 边界失败后撤回此前额外要求的上游具体类型/code/details/timestamp 检查：这些属于协议依赖的局部实现，不是 C02 公开 oracle 合同。只移除上述内部细节控制，不改生产、import guard、allowlist、公共 API，也不以反射或新 helper runtime 包绕过边界。
+
+## T22-QA-F03：上游 A2A 依赖越过局部包边界
+
+G05 集成 `9e12566c01b3626126ba85b035dcc2f5afe47126` 的既有 import guard 发现同类越界后，协调者重开 T22 attempt 2。T22 在未修改的 `2340e0894f9e3c5fd7405c383ca02c859435b830` 上独立运行 `go test -count=1 ./clients/a2a -run TestA2AImportsStayLocalized -json`，实际 exit 1，明确指出 `internal/testutil/alignmentpolicy/public_test.go` import `github.com/a2aproject/a2a-go/v2/a2a`；原日志为 `evidence/upstream-import-2340e08-red.jsonl` 与相邻 metadata。旧交付和证据完整保存在 `evidence/prior-2340e08/`，不作为返修后通过证据。
+
+修正只在 owned 测试中移除上游 a2a/errordetails imports 和具体类型/code/details/timestamp oracle 耦合，保留直接公开 SRE、精确 Cause 文本、最后观察 TaskID、所有帧/Parts 的 control 检查和 EOF+failed 替代。普通 error 作为精确公开 SRE 的 Cause 符合 C02 合同，已转为正控；顶层普通同文案 error 仍拒绝。协调者与 C02 已明确撤回原额外内部约束，因此退休对应四项内部细节控制，不缩小任何原 required 命令或公开场景。无 guard/allowlist/反射/生产/API 修改。最后提交后，在同一新 SHA 重跑原 V01、V02 race count20，并补跑上述 import guard；计数按实际外层与内层分别报告。
