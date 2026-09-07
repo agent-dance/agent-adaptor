@@ -23,7 +23,12 @@ func alignmentForbiddenImport(dir, imported string) bool {
 	}
 	target := strings.TrimPrefix(strings.TrimPrefix(imported, alignmentModule), "/")
 	provider := func(s string) bool {
-		return s == "claude" || s == "codex" || s == "cursor" || s == "codebuddy" || strings.HasPrefix(s, "codex/")
+		for _, name := range []string{"codex", "claude", "codebuddy", "cursor"} {
+			if s == name || strings.HasPrefix(s, name+"/") {
+				return true
+			}
+		}
+		return false
 	}
 	if dir == "driver" {
 		return target == "" || strings.HasPrefix(target, "internal/") || provider(target) || strings.HasPrefix(target, "bridges/") || strings.HasPrefix(target, "hosttools/")
@@ -377,6 +382,29 @@ func TestAlignmentArchitectureApprovedWithSurface(t *testing.T) {
 		}
 		if !found {
 			t.Error(fmt.Sprintf("approved option %s missing", required))
+		}
+	}
+}
+
+// Every provider owns its full package subtree. Similar prefixes are distinct
+// packages and must not be mistaken for provider implementations.
+func TestAlignmentArchitectureProviderBoundaryOracle(t *testing.T) {
+	for _, importer := range []string{"driver", "bridges/a2a", "hosttools/a2adelegation"} {
+		for _, provider := range []string{"codex", "claude", "codebuddy", "cursor"} {
+			for _, target := range []string{provider, provider + "/child", provider + "/child/nested"} {
+				t.Run(importer+"->"+target, func(t *testing.T) {
+					if !alignmentForbiddenImport(importer, alignmentModule+"/"+target) {
+						t.Fatalf("%s -> %s bypassed the provider package boundary", importer, target)
+					}
+				})
+			}
+			for _, target := range []string{provider + "ish", provider + "ish/child"} {
+				t.Run(importer+"->"+target, func(t *testing.T) {
+					if alignmentForbiddenImport(importer, alignmentModule+"/"+target) {
+						t.Fatalf("%s -> %s incorrectly classified a similar prefix as a provider", importer, target)
+					}
+				})
+			}
 		}
 	}
 }

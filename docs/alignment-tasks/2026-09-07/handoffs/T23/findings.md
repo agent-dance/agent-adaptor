@@ -24,3 +24,20 @@ process-tree cancellation and `.cmd` launch tests. The previous PowerShell check
 native executable and PowerShell actual Unicode/newline/quote argv round trips in
 `adaptertest/argv_windows_test.go`. They are Windows-only and remain unexecuted on
 this Darwin worker. Native T26 must run them; cross-compilation is compile evidence only.
+
+## T23-F06: provider subtree guard coverage
+
+Root review identified a guard blind spot at
+`45111c97b4087647b6cdaddfdc27d4a70defd158`: only Codex child packages were
+recognized as provider implementation imports. The independent oracle overlays
+that exact tracked source and adds 60 cases without changing the old predicate.
+Eighteen child/deep-child cases fail across Driver, bridge and hosttool importers;
+the run records 42 passing cases, 18 failing cases plus the failing parent, and
+zero skips. Evidence: `evidence/F06/{old.log,old.json,overlay.json,old-guard-with-oracle.go.txt}`.
+
+The scoped repair recognizes all four exact provider roots and each root plus
+`/` descendants. The committed oracle covers every root, child and nested child
+for all three importer classes, and allows each `providerish` root/child to
+prove prefix matching does not overreach. No runtime import violation was
+observed and no production/public API or golden changes are needed. This is
+an AGENTS dependency-boundary guard fix; final new-G04 acceptance remains pending.

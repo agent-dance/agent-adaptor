@@ -65,3 +65,9 @@ platform result is inferred from internal historical commits, fake fixtures,
 static test names or a successful compile. `findings.md` preserves G04 pre-R017
 coverage gaps and their exact owner/requirement links. New G04 acceptance must
 precede final T23 validation and G05's implementation freeze.
+
+
+T23-F06 follow-up: provider dependency guards uniformly cover Codex, Claude,
+CodeBuddy and Cursor roots and package subtrees. The negative oracle checks
+Driver/bridge/hosttool importers, while similar prefixes remain legal. This
+corrects a T23 guard blind spot; it is not a new runtime or public API change.
