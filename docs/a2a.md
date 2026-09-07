@@ -320,7 +320,8 @@ team, err := a2adelegation.NewService(a2adelegation.Config{
 	Agents: []a2adelegation.AgentRef{
 		a2adelegation.LocalNamed("plan", "Codex Planner", planner, a2adelegation.Policy{}),
 		a2adelegation.Remote("review", reviewCardURL, a2adelegation.Policy{
-			MaxTimeout: 2 * time.Minute,
+			MaxTimeout:                2 * time.Minute, // wall clock
+			MaxActiveExecutionTimeout: time.Minute,     // independent delegation budget
 		}),
 	},
 	ToolTimeout: 3 * time.Minute,
@@ -390,6 +391,24 @@ provide a fresh active budget for each Delegate, including continuations. The
 smallest positive bound wins; zero is unlimited and negatives fail before I/O.
 Retries share the same budget, Member Ask does not pause it, and Member Policy
 is not overwritten. See [timing, cancellation and cleanup](./run-policy.md#delegation-active-execution-budget).
+
+A host can also set a request budget on the existing component:
+
+```go
+delegated, err := team.Delegate(ctx, a2adelegation.DelegationRequest{
+    Agent: "review",
+    Prompt: "Review the proposed change",
+    Timeout: 90 * time.Second,
+    ActiveExecutionTimeout: 30 * time.Second,
+    Stream: true,
+})
+```
+
+With the policy above, this request gets 30 seconds of delegation active time
+and a 90-second wall-clock bound. This is an optional hosttool call; the target
+still executes through its public Runner. To join delegated facts into a leader
+run, install `team.Option()` before that run and consume its original Stream.
+Capability exposure remains a separate opt-in and supplies no authorization proof.
 
 ## Delegation artifact updates
 

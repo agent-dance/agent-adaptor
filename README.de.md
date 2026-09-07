@@ -23,7 +23,7 @@ Der Wechsel zu Claude Code bedeutet lediglich, den Driver in der Konstruktion au
 - **Strukturierte Ausgabe**: Sie definieren lediglich eine Go-Struktur und rufen `RunAs[T]` auf, um den Agent auszuführen und die Rückgabe auf ein vollständig gefülltes Objekt zu beschränken.
 - **Dekoration mehrerer Protokolle**: eingebaute Protokolldekoration wie A2A/AGUI verpackt einen Agent mit einer Zeile Code in einen Standard-Agent mit SSE- + AGUI-Streaming-Ausgabe; zusammen mit einem eigenen fachlichen Frontend oder Client entsteht daraus ein vollwertiger Agent-Dienst (ein lauffähiges CopilotKit-Frontend ist enthalten).
 - **Multi Agent**: unterstützt Team-Agent-Muster über Driver-Grenzen hinweg, etwa Codex als Leader Agent, der eigenständig einen Plan Agent (Codex), einen Coding Agent (Claude) und einen Reviewer Agent (Cursor) zur gemeinsamen Arbeit koordiniert, wobei aller Fortschritt und alle Ausgaben automatisch im Event-Stream des Leader Agent zusammenlaufen (siehe das Beispiel examples/showcases/team-agent-workflow).
-- **Agent-Isolation**: unterstützt das Kopieren der lokalen Agent-Konfiguration und des Anmeldestatus in ein eigenes Verzeichnis, sodass Änderungen den lokal genutzten Agent nicht beeinflussen. Wenn Sie also mehrere Codex-/Claude-Code-Instanzen parallel für die Entwicklung erzeugen oder unterschiedliche Rollen besetzen wollen, gelingt das mühelos.
+- **Agent-Isolation**: ausgewählte Konfiguration wird für parallele Agents in ein separates Profil geklont. Die bestehende AuthLink-Regel teilt deklarierte Anmeldedateien über Links, ohne Zugangsdaten zu kopieren. Provider-Änderungen an verknüpften Authentifizierungsdateien bleiben gemeinsam sichtbar.
 
 ## Installation
 
@@ -313,6 +313,19 @@ nutzt einen expliziten Store für Live-Abfragen nach exaktem Scope/RunID. A2A-
 Capability- und Todo-Freigabe benötigen eigene Opt-ins. Fehlende Beobachtungen
 beweisen weder fehlende Aufrufe noch eine vollständige Prüfung.
 
+Die Root-API hat einschließlich `WithEventMeta` 27 `With*`-Funktionen; der native
+Zusatz verwendet allein `WithAppendSystemPrompt`. Todo ergänzt ToolCall und
+Transcript und ist keine PlanReview-Freigabe. Capability-Aufzeichnung erfolgt
+nach bestem Bemühen und ist weder eine Autorisierungsentscheidung noch ein
+vollständiger Prüf- oder Abrechnungsnachweis. Ressourcenmaterialisierung, Annahme
+nativer Eingaben, formale Protokoll-Fixtures und echte Provider-Läufe sind getrennte Belege.
+
+Das [Offline-Beispiel](./examples/offline) läuft mit `go run ./examples/offline`.
+Ein geskripteter Fake-Driver zeigt Überschreiben/Löschen des Zusatzes,
+Freigabe-Events, leere Todo-Snapshots, Scope-Abfragen und Teilergebnisse nach
+Budgetüberschreitung. CLI, Zugangsdaten und Provider-Aufrufe sind nicht nötig;
+die Ausgabe bescheinigt keine erfolgreiche Live-Prüfung eines Providers.
+
 ## Host-definierte Tools
 
 Erweitern Sie einen Agent direkt mit typisierten Go-Funktionen, ohne selbst einen MCP-Server konstruieren und pflegen zu müssen:
@@ -384,7 +397,14 @@ implementer := adaptor.New(claude.Driver(claude.Config{}),
 
 Es gibt drei weitere Möglichkeiten: `profile.Native()` nutzt direkt die native Konfiguration des Rechners; `profile.Dedicated(dir)` verankert ein Verzeichnis, das Sie selbst verwalten; `profile.CloneFrom(src, dst, ...)` leitet aus einem Vorlagenverzeichnis ab. Das profile geht in den Konversations-fingerprint ein und kann deshalb nur eine Konstruktionsoption sein, nicht pro Aufruf gewechselt werden.
 
-Was aus den deklarierten Ressourcen tatsächlich materialisiert wurde und ob der Driver sie wirklich anerkennt, lesen Sie mit `agent.ProfileState(ctx)` und materialisieren Sie mit `agent.SyncProfile(ctx)`; beide berichten ausschließlich tatsächlich beobachtete Ergebnisse. Eine vollständige Demonstration zeigt das [`profiles`-Beispiel](./examples/profiles).
+Mit nichtleerem `WithTools` und explizitem `profile.Dedicated(source)` bleibt
+der eigene Ausführungs-Clone nach `Agent.Close` erhalten und von der bestehenden
+Quelle getrennt. Der Host verwaltet das endgültige Löschen der Historie.
+Native-/Clone-Auswahlen verwenden temporäre Hosted-Profile. Gelöschte historische
+Sitzungsdateien lassen sich nicht aus einer Resume-ID rekonstruieren; siehe
+[Eigentum, Konflikte und Wiederherstellung](./docs/tools.md#persistent-dedicated-profiles).
+
+`agent.ProfileState(ctx)` liest den gewünschten und beobachteten Ressourcenzustand; `agent.SyncProfile(ctx)` materialisiert die Ressourcen. Beides beweist keinen Aufruf durch den Provider. Den Ablauf zeigt das [`profiles`-Beispiel](./examples/profiles).
 
 ## Ergebnisse und Fehler
 

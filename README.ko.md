@@ -23,7 +23,7 @@ Claude Code로 바꾸려면 생성 코드의 Driver만 교체하면 되고, 나�
 - **구조화 출력**: Go 구조체를 정의하고 `RunAs[T]`를 호출하기만 하면, Agent를 실행하면서 데이터가 채워진 객체를 반환하도록 제약할 수 있다.
 - **다중 프로토콜 데코레이션**: A2A/AG-UI 등의 프로토콜 데코레이션이 내장되어 있어, 코드 한 줄로 Agent를 SSE + AG-UI 스트리밍 출력을 지원하는 표준 Agent로 감쌀 수 있다. 업무용 커스텀 프런트엔드나 클라이언트만 붙이면 완성된 Agent 서비스를 제공할 수 있다(실행 가능한 CopilotKit 프런트엔드 예제 포함).
 - **Multi Agent**: Driver를 넘나드는 Team Agent 모드를 지원한다. 예를 들어 Codex를 Leader Agent로 두고 Plan Agent(Codex), Coding Agent(Claude), Reviewer Agent(Cursor)를 자율적으로 제어해 협업으로 작업을 완료하며, 모든 진행 상황과 출력은 자동으로 Leader Agent의 이벤트 스트림에 집계된다(examples/showcases/team-agent-workflow 예제 참고).
-- **Agent 격리**: 로컬 머신의 Agent 설정과 로그인 상태를 독립 디렉터리로 복제해 실행할 수 있으므로, 변경이 로컬에서 사용 중인 Agent에 영향을 주지 않는다. 따라서 여러 Codex/Claude Code 인스턴스를 동시에 만들어 병렬로 개발하거나 서로 다른 역할을 맡길 때 손쉽게 처리할 수 있다.
+- **Agent 격리**: 선택한 설정을 별도 profile에 복제하여 여러 Agent를 병렬로 사용할 수 있다. 기존 AuthLink는 선언된 로그인 파일을 링크로 공유하며 인증 정보를 복사하지 않는다. provider의 링크된 인증 파일 갱신은 계속 공유된다.
 
 ## 설치
 
@@ -308,6 +308,17 @@ WithTimeout과 부모·승인 deadline은 계속 벽시계 기준이다. 예산�
 scope/RunID별 실행 중 이력을 조회할 수 있다. A2A capability/Todo 공개는 각각
 opt-in이다. 관측이 없다고 미실행 또는 완전한 감사 기록을 증명하지는 않는다.
 
+루트 API의 `With*` 함수는 `WithEventMeta`를 포함해 27개이며 네이티브 추가에는
+`WithAppendSystemPrompt`만 사용한다. Todo는 ToolCall 및 Transcript와 함께 제공되며
+PlanReview 승인과 다르다. 능력 기록은 최선의 관측 결과이며 권한 부여 결정이나 완전한
+감사·과금 증거가 아니다. 리소스 생성, 네이티브 입력 수락, 공식 프로토콜 fixture와 실제
+provider 실행은 각각 별도의 증거다.
+
+`go run ./examples/offline`으로 [오프라인 예제](./examples/offline)를 실행할 수 있다.
+스크립트형 fake Driver로 추가 값 덮어쓰기, 승인 이벤트, Todo 비우기, scope별 조회와
+예산 초과 후 부분 결과를 확인한다. CLI·인증 정보·provider 호출이 필요하지 않으며
+출력은 실제 provider 검증을 뜻하지 않는다.
+
 ## 호스트 정의 Tools
 
 typed Go 함수로 Agent에 능력을 바로 추가하며, MCP server를 직접 만들고 유지할 필요가 없다:
@@ -379,7 +390,13 @@ implementer := adaptor.New(claude.Driver(claude.Config{}),
 
 다른 세 가지 선택지도 있다. `profile.Native()`는 로컬 네이티브 설정을 그대로 쓴다. `profile.Dedicated(dir)`는 직접 관리하는 디렉터리에 고정한다. `profile.CloneFrom(src, dst, ...)`는 템플릿 디렉터리에서 파생한다. profile은 세션 fingerprint에 참여하므로 생성 시점 옵션만 될 수 있고, 호출마다 바꿀 수 없다.
 
-선언한 리소스가 실제로 무엇을 물화했는지, Driver가 정말 인식하는지는 `agent.ProfileState(ctx)`로 읽고 `agent.SyncProfile(ctx)`로 물화하며, 둘 다 실제 관찰 결과만 보고한다. 완전한 시연은 [`profiles` 예제](./examples/profiles)에 있다.
+비어 있지 않은 `WithTools`와 명시적 `profile.Dedicated(source)`를 함께 사용하면
+소유한 실행 clone은 `Agent.Close` 후에도 유지되고 기존 source와 분리된다.
+최종 이력 정리는 호스트가 담당한다. Native/clone 선택은 임시 hosted profile을 쓴다.
+삭제된 세션 파일은 resume ID로 복구할 수 없다.
+[소유권·충돌·복구](./docs/tools.md#persistent-dedicated-profiles)를 참고한다.
+
+`agent.ProfileState(ctx)`는 리소스의 desired/observed 상태를 읽고 `agent.SyncProfile(ctx)`는 리소스를 생성한다. 어느 작업도 provider가 리소스를 호출했다는 증거는 아니다. 전체 흐름은 [`profiles` 예제](./examples/profiles)를 참고한다.
 
 ## 결과와 오류
 

@@ -45,6 +45,10 @@ budget exhausted before Driver entry remains a wrapped typed timeout without
 inventing a Result; afterward it is the primary RunError when it wins the
 terminal race. Parent/approval deadlines and secondary causes stay distinct.
 
+For an executable partial-result example, run `go run ./examples/offline`.
+It uses a scripted Driver to exhaust a local active budget and reads the resulting
+`RunError.Result.Text` and `Raw()` without calling a provider.
+
 ## Agent lifecycle
 
 `ErrAgentClosed` means `Agent.Close` has started. New `Run`/`Stream` calls on

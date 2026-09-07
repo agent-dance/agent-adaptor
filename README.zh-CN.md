@@ -23,7 +23,7 @@ result, err := agent.Run(ctx, "修复失败的测试")
 - **结构化输出**：只需要定义 Go 结构体并调用 `RunAs[T]`，即可执行 Agent 并约束返回填好数据的对象。
 - **多协议修饰**：内置 A2A/AGUI 等协议修饰，一行代码即可将 Agent 包装为支持 SSE + AGUI 流式输出的标准 Agent，搭配业务自定义前端、客户端即可提供成熟 Agent 服务（自带可运行的 CopilotKit 前端示例）。
 - **Multi Agent**：支持跨 Driver 的 Team Agent 模式，如以 Codex 作为 Leader Agent 自主控制 Plan Agent（Codex）、Coding Agent（Claude）、Reviewer Agent（Cursor）协同完成工作，所有进度和输出均自动汇总到 Leader Agent 的事件流中（参考 examples/showcases/team-agent-workflow 示例）。
-- **Agent 隔离**：支持复制本机 Agent 配置和登录状态到独立目录运行，使修改不影响本机在用的 Agent。因此，当你需要同时创建多个 Codex/Claude Code 实例并行开发、或扮演不同角色时，可以轻而易举地做到。
+- **Agent 隔离**：将选定配置克隆到独立 profile，支持多个 Agent 并行使用。既有 AuthLink 策略通过链接共享声明的登录文件，不复制凭据；provider 对链接认证文件的更新仍共享。
 
 ## 安装
 
@@ -307,6 +307,15 @@ context 下成功。详见[预算与错误](./docs/run-policy.md#active-executio
 接入显式 Store，按准确 scope/RunID 查询；A2A 能力与 Todo 各自显式开启暴露。
 未观察到不表示未调用，也不表示审计记录完整。
 
+根包共有 27 个 `With*` 函数（包含 `WithEventMeta`）；原生追加仅增加
+`WithAppendSystemPrompt`。Todo 快照与 ToolCall、Transcript 并存，区别于
+PlanReview 审批。能力记录尽力保留已观察事实，不构成授权决定，也不保证完整审计
+或准确计费。资源物化、原生输入接受、正式协议 fixture 和真实 provider 运行是分别成立的证据。
+
+通过 `go run ./examples/offline` 运行[离线示例](./examples/offline)，实际演示追加覆盖、
+审批事件、Todo 清空、scope 查询和主动预算失败后的部分结果。它使用脚本化 fake
+Driver，无需 CLI、凭据或 provider 调用；输出不代表真实 provider 验收。
+
 ## 宿主自定义 Tools
 
 用 typed Go 函数直接给 Agent 加能力，不需要自己构造和维护 MCP server：
@@ -378,7 +387,12 @@ implementer := adaptor.New(claude.Driver(claude.Config{}),
 
 另外三种选择：`profile.Native()` 直接用本机原生配置；`profile.Dedicated(dir)` 钉在一个你自己管理的目录；`profile.CloneFrom(src, dst, ...)` 从模板目录派生。profile 参与会话指纹，所以它只能是构造期选项，不能按次调用切换。
 
-声明的资源到底物化了什么、Driver 是否真的认，用 `agent.ProfileState(ctx)` 读、`agent.SyncProfile(ctx)` 物化，两者都只报告实际观察结果。完整演示见 [`profiles` 示例](./examples/profiles)。
+非空 `WithTools` 配合显式 `profile.Dedicated(source)` 时，自有执行 clone 在
+`Agent.Close` 后保留，已有 source 与执行目录分离，历史清理由宿主管理。
+Native/clone 选择仍使用临时 hosted profile。已被删除的历史会话文件不能从
+resume ID 恢复；详见[所有权、冲突与恢复](./docs/tools.md#persistent-dedicated-profiles)。
+
+`agent.ProfileState(ctx)` 读取资源的 desired/observed 状态，`agent.SyncProfile(ctx)` 执行物化；二者均不证明 provider 已调用该资源。完整演示见 [`profiles` 示例](./examples/profiles)。
 
 ## 结果与错误
 

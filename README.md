@@ -23,7 +23,7 @@ Switching to Claude Code only means swapping the Driver in the constructor; the 
 - **Structured output**: define a Go struct, call `RunAs[T]`, and the agent runs under a constraint that returns a populated object.
 - **Multi-protocol decoration**: built-in A2A/AGUI decoration turns an Agent into a standard agent with SSE + AGUI streaming in one line, so a custom front end or client is all you need for a complete agent service (a runnable CopilotKit front end is included).
 - **Multi Agent**: cross-Driver team agents — for example Codex as the leader agent autonomously coordinating a Plan Agent (Codex), a Coding Agent (Claude), and a Reviewer Agent (Cursor), with all progress and output aggregated into the leader's event stream (see the examples/showcases/team-agent-workflow showcase).
-- **Agent isolation**: copy the machine's agent configuration and login state into a dedicated directory so changes never affect the agent you use locally. Running several Codex/Claude Code instances in parallel for concurrent development or different roles becomes trivial.
+- **Agent isolation**: clone selected configuration into a separate profile for concurrent Agents. The existing AuthLink policy shares declared login files through links; credentials are not copied. Provider updates to linked authentication remain shared.
 
 ## Install
 
@@ -312,6 +312,18 @@ For scoped live capability history, install an explicit Store through
 A2A capability/todo exposure is separately opt-in. Missing observations do not
 prove no invocation or complete audit coverage.
 
+The root API has 27 `With*` functions, including `WithEventMeta`; native append
+adds only `WithAppendSystemPrompt`. Todo snapshots coexist with ToolCall and
+Transcript, and are distinct from PlanReview approvals. Capability recording is
+best effort: facts are neither authorization decisions nor complete audit or
+billing evidence. Resource materialization, native input acceptance, formal
+protocol fixtures and actual live-provider observations are separate evidence.
+
+Try the executable [offline example](./examples/offline) with `go run ./examples/offline`.
+It uses a scripted fake Driver to demonstrate append overrides, approval events,
+Todo clearing, scoped recording and partial results after active timeout. No CLI,
+credentials or provider calls are needed; its output is not live certification.
+
 ## Host-defined Tools
 
 Extend an Agent with typed Go functions directly, without constructing or maintaining an MCP server yourself:
@@ -383,7 +395,13 @@ implementer := adaptor.New(claude.Driver(claude.Config{}),
 
 Three other choices exist: `profile.Native()` uses the machine's native configuration directly; `profile.Dedicated(dir)` pins a directory you manage yourself; `profile.CloneFrom(src, dst, ...)` derives from a template directory. A profile participates in the conversation fingerprint, so it can only be a construction option and cannot be switched per call.
 
-To see what declared resources actually materialized and whether the Driver truly accepts them, read with `agent.ProfileState(ctx)` and materialize with `agent.SyncProfile(ctx)`; both report only what was actually observed. See the [`profiles` example](./examples/profiles) for a full walkthrough.
+With nonempty `WithTools`, explicit `profile.Dedicated(source)` retains an owned
+execution clone across `Agent.Close`; the existing source stays separate. The
+host owns eventual history cleanup. Native/clone selections use temporary hosted
+profiles. Deleted historical session files cannot be recovered from a resume ID;
+see [ownership, conflicts and recovery](./docs/tools.md#persistent-dedicated-profiles).
+
+Read desired/observed resource state with `agent.ProfileState(ctx)` and materialize it with `agent.SyncProfile(ctx)`. These operations do not prove that the provider invoked a resource. See the [`profiles` example](./examples/profiles) for a full walkthrough.
 
 ## Results and errors
 

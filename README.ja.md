@@ -23,7 +23,7 @@ Claude Code に切り替えるには構築時の Driver を差し替えるだけ
 - **構造化出力**：Go の構造体を定義して `RunAs[T]` を呼ぶだけで、Agent を実行しつつデータの埋まったオブジェクトを返すよう制約できる。
 - **マルチプロトコル修飾**：A2A / AGUI などのプロトコル修飾を内蔵しており、1 行で Agent を SSE + AGUI ストリーミング出力対応の標準 Agent へラップできる。業務側のカスタムフロントエンドやクライアントと組み合わせれば、成熟した Agent サービスを提供できる（実行可能な CopilotKit フロントエンドのサンプル付き）。
 - **Multi Agent**：Driver をまたぐ Team Agent モードに対応。たとえば Codex を Leader Agent とし、Plan Agent（Codex）、Coding Agent（Claude）、Reviewer Agent（Cursor）を自律的に制御して協調作業させることができ、すべての進捗と出力は Leader Agent のイベントストリームへ自動的に集約される（examples/showcases/team-agent-workflow のサンプルを参照）。
-- **Agent の分離**：ローカルの Agent 設定とログイン状態を独立したディレクトリへ複製して実行でき、変更がローカルで使用中の Agent に影響しない。そのため、複数の Codex / Claude Code インスタンスを同時に作って並行開発したり、異なるロールを演じさせたりすることが容易にできる。
+- **Agent の分離**：選択した設定を独立した profile に複製し、複数の Agent を並行利用できます。既存の AuthLink は宣言されたログインファイルをリンクで共有し、認証情報をコピーしません。provider によるリンク先認証ファイルの更新は共有されます。
 
 ## インストール
 
@@ -307,6 +307,17 @@ Delegation は有損 UI bus より先に同じ observer へ事実を送り、呼
 で scope/RunID ごとの履歴を実行中に照会できます。A2A の capability/Todo 公開は
 個別の opt-in です。観測がないことは未実行や監査の完全性を証明しません。
 
+ルート API の `With*` 関数は `WithEventMeta` を含めて 27 個で、ネイティブ追加は
+`WithAppendSystemPrompt` だけです。Todo は ToolCall と Transcript に併存し、
+PlanReview 承認とは別です。能力記録はベストエフォートで、認可の判断や完全な監査・
+課金の証拠にはなりません。リソースの配置、ネイティブ入力の受理、正式プロトコルの
+fixture、実際の provider 実行はそれぞれ異なる証拠です。
+
+`go run ./examples/offline` で[オフライン例](./examples/offline)を実行できます。
+スクリプト化された fake Driver で追加の上書き、承認イベント、Todo のクリア、
+scope ごとの記録、予算超過後の部分結果を確認します。CLI・認証情報・provider 呼び出しは
+不要で、出力は実際の provider の検証結果ではありません。
+
 ## ホスト定義 Tools
 
 typed な Go 関数で直接 Agent に能力を追加でき、MCP server を自分で構築・保守する必要はない：
@@ -378,7 +389,13 @@ implementer := adaptor.New(claude.Driver(claude.Config{}),
 
 ほかに 3 つの選択肢がある：`profile.Native()` はローカルのネイティブ設定をそのまま使う。`profile.Dedicated(dir)` は自分で管理するディレクトリに固定する。`profile.CloneFrom(src, dst, ...)` はテンプレートディレクトリから派生させる。profile は会話の fingerprint に参加するため、構築時のオプションにしかなり得ず、呼び出しごとに切り替えることはできない。
 
-宣言したリソースが実際に何を実体化したのか、Driver が本当にそれを認識しているのかは、`agent.ProfileState(ctx)` で読み取り、`agent.SyncProfile(ctx)` で実体化する。いずれも実際に観測した結果のみを報告する。完全なデモは [`profiles` サンプル](./examples/profiles)を参照。
+空でない `WithTools` と明示的な `profile.Dedicated(source)` を組み合わせると、
+所有する実行 clone は `Agent.Close` 後も残り、既存 source とは分離されます。
+履歴の最終削除はホストの責任です。Native/clone 選択の hosted profile は一時的です。
+削除済みの履歴ファイルは resume ID から復元できません。
+[所有権・競合・復旧](./docs/tools.md#persistent-dedicated-profiles)を参照してください。
+
+`agent.ProfileState(ctx)` はリソースの desired/observed 状態を読み取り、`agent.SyncProfile(ctx)` は実体化を行います。どちらも provider がリソースを呼び出した証明にはなりません。完全なデモは [`profiles` サンプル](./examples/profiles)を参照してください。
 
 ## Result とエラー
 

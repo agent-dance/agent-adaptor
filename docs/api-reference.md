@@ -80,6 +80,11 @@ type SharedOption interface {
 
 The overall merge rule is: the call site is nearer than the construction site; skills append; other options are replaced or merged as listed in the table below. Agent defaults are never modified by a single invocation, so concurrent invocations do not contaminate one another.
 
+The root API has 27 `With*` functions, counting `WithEventMeta`. Native append
+adds exactly one option, `WithAppendSystemPrompt`; there is no separate default
+option or execution method. The [offline example](../examples/offline) exercises
+default, override and exact-empty clearing without a provider call.
+
 ### 3.1 Dual-scope options
 
 | Function | Semantics | Call-site merge rule |
@@ -771,7 +776,10 @@ owns capacity, persistence and authorization. Recorder/Agent.Close never closes
 a shared Store. The existing observer's 100ms/remaining-cleanup limit and
 per-run first-failure fence apply; a context-ignoring Store may still commit late,
 and no rollback is promised. Missing observations do not prove no invocation or
-complete audit/billing coverage.
+complete audit/billing coverage, and records are not authorization decisions.
+This is best-effort observation. Resource materialization and native input
+acceptance do not establish actual resource execution. For a complete runnable
+consumer, use `go run ./examples/offline`; its facts are explicitly synthetic.
 
 ## 13. threadstore and memory
 

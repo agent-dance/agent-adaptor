@@ -90,8 +90,8 @@ func main() {
 		fmt.Println()
 	}
 	if err != nil {
-		// One err, one verdict — a business failure is a typed *RunError that
-		// still carries whatever Result was produced.
+		// After Driver entry, any failure is a typed *RunError carrying
+		// the available Result; setup failures retain their wrapped identity.
 		var runErr *adaptor.RunError
 		if errors.As(err, &runErr) {
 			fmt.Fprintf(os.Stderr, "[run error %s]: %s\n", runErr.Reason, runErr.Message)

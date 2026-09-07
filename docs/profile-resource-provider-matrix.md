@@ -20,6 +20,23 @@ Cursor print only advertises MCP/custom-subagent facts, with Skill/Todo absent.
 See [native append limits](./api-reference.md#31-dual-scope-options) for the separate
 append channel and session guards.
 
+Use the following evidence distinctions when displaying a capability or writing
+an integration report:
+
+| Evidence | What it establishes | What it does not establish |
+|---|---|---|
+| `ProfileState` / `SyncProfile` observed state | A resource was found or materialized at the reported path/state | That the provider invoked or read it |
+| `NativeInputAccepted` | The formal provider handshake accepted the typed input | That a skill was read, run or obeyed |
+| `ProviderProtocol` invocation event | The stated operation and phase were observed and mapped to a unique catalog key | Authorization, complete audit/billing coverage or completion of all child work |
+| Formal parser / fake-process fixture | The SDK handles the supplied protocol and lifecycle case | That an installed provider emitted those frames in a live run |
+| Actual live-provider run | The recorded version, platform and particular observed scenario | Other transports, versions, platforms or unobserved scenarios |
+
+Capability recording is best effort. A missing observation has no negative
+execution meaning. The [offline example](../examples/offline) only demonstrates
+consumer behavior using scripted facts. Keep the historical research and smoke
+records below at their original evidence boundary; neither new code nor a newer
+fixture retroactively reruns them.
+
 ## CodeBuddy declared agents
 
 CodeBuddy 2.137.1's inspected loader reads `<profile>/agents/*.md` using YAML
