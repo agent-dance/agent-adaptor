@@ -22,11 +22,14 @@ import (
 	"time"
 
 	adaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/todo"
 )
 
 // EventRecord is one persisted unified event together with the HostSeq
 // assigned to it. It marshals to a stable JSON envelope (kind + authoritative
 // event metadata + event payload) and unmarshals back to the typed event.
+// Decode rejects unknown fields, duplicate keys and malformed observations.
+// It never reconstructs approval response authority.
 type EventRecord struct {
 	HostSeq    HostSeq
 	RecordedAt time.Time
@@ -51,11 +54,16 @@ type eventMetaWire struct {
 }
 
 type eventSourceMetaWire struct {
-	RunID     string    `json:"run_id,omitempty"`
-	ThreadID  string    `json:"thread_id,omitempty"`
-	TurnID    string    `json:"turn_id,omitempty"`
-	Sequence  uint64    `json:"sequence,omitempty"`
-	Timestamp time.Time `json:"timestamp,omitempty"`
+	ScopeID      string               `json:"scope_id,omitempty"`
+	ToolCallID   string               `json:"tool_call_id,omitempty"`
+	InvocationID string               `json:"invocation_id,omitempty"`
+	DelegationID string               `json:"delegation_id,omitempty"`
+	Upstream     *eventSourceMetaWire `json:"upstream,omitempty"`
+	RunID        string               `json:"run_id,omitempty"`
+	ThreadID     string               `json:"thread_id,omitempty"`
+	TurnID       string               `json:"turn_id,omitempty"`
+	Sequence     uint64               `json:"sequence,omitempty"`
+	Timestamp    time.Time            `json:"timestamp,omitempty"`
 }
 
 // MarshalJSON encodes the record as
@@ -63,6 +71,9 @@ type eventSourceMetaWire struct {
 func (r EventRecord) MarshalJSON() ([]byte, error) {
 	kind, payload, err := encodeEvent(r.Event)
 	if err != nil {
+		return nil, err
+	}
+	if err := validateEventSource(r.Event.Meta().Source); err != nil {
 		return nil, err
 	}
 	return json.Marshal(eventRecordWire{
@@ -77,11 +88,14 @@ func (r EventRecord) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON restores the typed event from the envelope.
 func (r *EventRecord) UnmarshalJSON(data []byte) error {
 	var wire eventRecordWire
-	if err := json.Unmarshal(data, &wire); err != nil {
+	if err := strictJSON(data, &wire); err != nil {
 		return err
 	}
 	ev, err := decodeEvent(wire.Kind, wire.Event)
 	if err != nil {
+		return err
+	}
+	if err := validateSource(wire.Meta.Source, 0); err != nil {
 		return err
 	}
 	r.HostSeq = wire.HostSeq
@@ -98,15 +112,7 @@ func eventMetaToWire(meta adaptor.EventMeta) eventMetaWire {
 		Time:      meta.Time,
 		TurnID:    meta.TurnID,
 	}
-	if meta.Source != nil {
-		wire.Source = &eventSourceMetaWire{
-			RunID:     meta.Source.RunID,
-			ThreadID:  meta.Source.ThreadID,
-			TurnID:    meta.Source.TurnID,
-			Sequence:  meta.Source.Sequence,
-			Timestamp: meta.Source.Timestamp,
-		}
-	}
+	wire.Source = sourceToWire(meta.Source)
 	return wire
 }
 
@@ -118,15 +124,7 @@ func (wire eventMetaWire) eventMeta() adaptor.EventMeta {
 		Time:      wire.Time,
 		TurnID:    wire.TurnID,
 	}
-	if wire.Source != nil {
-		meta.Source = &adaptor.EventSourceMeta{
-			RunID:     wire.Source.RunID,
-			ThreadID:  wire.Source.ThreadID,
-			TurnID:    wire.Source.TurnID,
-			Sequence:  wire.Source.Sequence,
-			Timestamp: wire.Source.Timestamp,
-		}
-	}
+	meta.Source = sourceFromWire(wire.Source)
 	return meta
 }
 
@@ -134,7 +132,9 @@ func (wire eventMetaWire) eventMeta() adaptor.EventMeta {
 // Implementations MUST be safe for concurrent use.
 type EventRecorder interface {
 	// Record appends an event under sessionKey and returns the record
-	// with the HostSeq it was assigned. HostSeq values strictly increase
+	// with the HostSeq it was assigned. Input, history and returned record are
+	// independent snapshots; approval descriptions have no responder.
+	// HostSeq values strictly increase
 	// within one sessionKey; a rejected backend write rolls the number
 	// back so a retry gets the same one.
 	Record(ctx context.Context, sessionKey string, ev adaptor.Event) (EventRecord, error)
@@ -253,16 +253,16 @@ func (r *eventRecorder) Record(ctx context.Context, sessionKey string, ev adapto
 	rec := EventRecord{
 		HostSeq:    next,
 		RecordedAt: r.clock(),
-		Event:      ev,
+		Event:      cloneRecordedEvent(ev),
 	}
-	if err := r.backend.Append(ctx, sessionKey, rec); err != nil {
+	if err := r.backend.Append(ctx, sessionKey, cloneRecord(rec)); err != nil {
 		// Roll back: the next Record call must retry the same HostSeq.
 		return EventRecord{}, err
 	}
 	st.lastSeq = next
 	st.history = append(st.history, rec)
 	st.updatedAt = rec.RecordedAt
-	return rec, nil
+	return cloneRecord(rec), nil
 }
 
 func (r *eventRecorder) Since(ctx context.Context, sessionKey string, afterHostSeq HostSeq) ([]EventRecord, error) {
@@ -286,7 +286,9 @@ func (r *eventRecorder) Since(ctx context.Context, sessionKey string, afterHostS
 		return nil, nil
 	}
 	out := make([]EventRecord, len(st.history)-idx)
-	copy(out, st.history[idx:])
+	for i, rec := range st.history[idx:] {
+		out[i] = cloneRecord(rec)
+	}
 	return out, nil
 }
 
@@ -362,7 +364,10 @@ func (r *eventRecorder) loadedSession(ctx context.Context, sessionKey string) (*
 	if err != nil {
 		return nil, err
 	}
-	st.history = records
+	st.history = make([]EventRecord, len(records))
+	for i, rec := range records {
+		st.history[i] = cloneRecord(rec)
+	}
 	if n := len(records); n > 0 {
 		st.lastSeq = records[n-1].HostSeq
 		st.updatedAt = records[n-1].RecordedAt
@@ -390,14 +395,16 @@ func (b *memoryEventBackend) Load(_ context.Context, key string) ([]EventRecord,
 		return nil, nil
 	}
 	out := make([]EventRecord, len(src))
-	copy(out, src)
+	for i, rec := range src {
+		out[i] = cloneRecord(rec)
+	}
 	return out, nil
 }
 
 func (b *memoryEventBackend) Append(_ context.Context, key string, r EventRecord) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.sessions[key] = append(b.sessions[key], r)
+	b.sessions[key] = append(b.sessions[key], cloneRecord(r))
 	return nil
 }
 
@@ -428,7 +435,7 @@ func (b *memoryEventBackend) Close() error { return nil }
 // Event envelope registry
 // ---------------------------------------------------------------------------
 
-// Wire kind tags for the 11 unified event types. Stable: backends persist
+// Wire kind tags for the sealed event family. Stable: backends persist
 // these strings.
 const (
 	eventKindTextDelta       = "text.delta"
@@ -442,19 +449,41 @@ const (
 	eventKindDropped         = "dropped"
 	eventKindSubagentUpdate  = "subagent.update"
 	eventKindApprovalRequest = "approval.request"
+	eventKindCapability      = "capability.invocation"
+	eventKindTodo            = "todo.updated"
 )
 
 func encodeEvent(ev adaptor.Event) (string, json.RawMessage, error) {
 	var kind string
 	switch typed := ev.(type) {
+	case adaptor.CapabilityInvocation:
+		if err := validateCapability(typed.Invocation); err != nil {
+			return "", nil, err
+		}
+		kind = eventKindCapability
+	case adaptor.TodoUpdated:
+		if typed.Snapshot.Items == nil {
+			typed.Snapshot.Items = []todo.Item{}
+			ev = typed
+		}
+		if err := validateTodo(typed.Snapshot); err != nil {
+			return "", nil, err
+		}
+		kind = eventKindTodo
+	case adaptor.ToolCall:
+		if err := validateParent(typed.ScopeID, typed.ParentScopeID, typed.ParentToolCallID, typed.ID); err != nil {
+			return "", nil, err
+		}
+		kind = eventKindToolCall
+	case adaptor.ToolResult:
+		if err := validateParent(typed.ScopeID, typed.ParentScopeID, typed.ParentToolCallID, typed.ID); err != nil {
+			return "", nil, err
+		}
+		kind = eventKindToolResult
 	case adaptor.TextDelta:
 		kind = eventKindTextDelta
 	case adaptor.Thinking:
 		kind = eventKindThinking
-	case adaptor.ToolCall:
-		kind = eventKindToolCall
-	case adaptor.ToolResult:
-		kind = eventKindToolResult
 	case adaptor.RunStarted:
 		kind = eventKindRunStarted
 	case adaptor.RunFinished:
@@ -490,9 +519,51 @@ func decodeEvent(kind string, payload json.RawMessage) (adaptor.Event, error) {
 		if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
 			return fmt.Errorf("sessionrecorder: %s record has no event payload", kind)
 		}
-		return json.Unmarshal(trimmed, v)
+		return strictJSON(trimmed, v)
 	}
 	switch kind {
+	case eventKindCapability:
+		var ev adaptor.CapabilityInvocation
+		if err := unmarshal(&ev); err != nil {
+			return nil, err
+		}
+		if err := requireFields(payload, "Invocation"); err != nil {
+			return nil, err
+		}
+		var raw map[string]json.RawMessage
+		_ = json.Unmarshal(payload, &raw)
+		if err := requireFields(raw["Invocation"], "InvocationID", "Ref", "Phase", "Evidence", "Source", "OccurredAt"); err != nil {
+			return nil, err
+		}
+		var invocation map[string]json.RawMessage
+		_ = json.Unmarshal(raw["Invocation"], &invocation)
+		if err := requireFields(invocation["Ref"], "Kind", "Key", "Operation"); err != nil {
+			return nil, err
+		}
+		return ev, validateCapability(ev.Invocation)
+	case eventKindTodo:
+		var ev adaptor.TodoUpdated
+		if err := unmarshal(&ev); err != nil {
+			return nil, err
+		}
+		if err := requireFields(payload, "Snapshot"); err != nil {
+			return nil, err
+		}
+		var raw map[string]json.RawMessage
+		_ = json.Unmarshal(payload, &raw)
+		if err := requireFields(raw["Snapshot"], "Items", "Source", "Revision", "OccurredAt"); err != nil {
+			return nil, err
+		}
+		var snapshot map[string]json.RawMessage
+		_ = json.Unmarshal(raw["Snapshot"], &snapshot)
+		var items []json.RawMessage
+		_ = json.Unmarshal(snapshot["Items"], &items)
+		for _, item := range items {
+			if err := requireFields(item, "ID", "Content", "Status", "SyntheticID"); err != nil {
+				return nil, err
+			}
+		}
+		return ev, validateTodo(ev.Snapshot)
 	case eventKindTextDelta:
 		var ev adaptor.TextDelta
 		return ev, unmarshal(&ev)
@@ -501,10 +572,16 @@ func decodeEvent(kind string, payload json.RawMessage) (adaptor.Event, error) {
 		return ev, unmarshal(&ev)
 	case eventKindToolCall:
 		var ev adaptor.ToolCall
-		return ev, unmarshal(&ev)
+		if err := unmarshal(&ev); err != nil {
+			return nil, err
+		}
+		return ev, validateParent(ev.ScopeID, ev.ParentScopeID, ev.ParentToolCallID, ev.ID)
 	case eventKindToolResult:
 		var ev adaptor.ToolResult
-		return ev, unmarshal(&ev)
+		if err := unmarshal(&ev); err != nil {
+			return nil, err
+		}
+		return ev, validateParent(ev.ScopeID, ev.ParentScopeID, ev.ParentToolCallID, ev.ID)
 	case eventKindRunStarted:
 		var ev adaptor.RunStarted
 		return ev, unmarshal(&ev)

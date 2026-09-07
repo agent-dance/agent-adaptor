@@ -162,6 +162,10 @@ func (t *EventTranslator) Translate(ev adaptor.Event) []aguievents.Event {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
+	if ev == nil {
+		return nil
+	}
+
 	// Post-terminal suppression (CopilotKit verifyEvents rejects traffic
 	// after RUN_FINISHED / RUN_ERROR).
 	if t.runFinish {
@@ -172,6 +176,11 @@ func (t *EventTranslator) Translate(ev adaptor.Event) []aguievents.Event {
 	}
 
 	meta := ev.Meta()
+	if !sourceDepthValid(meta.Source) {
+		meta.Source = nil
+		ev = adaptor.Notice{Kind: adaptor.NoticeRuntime, Data: map[string]any{"code": "relay_depth_exceeded"}}
+	}
+	ev = adaptor.WithEventMeta(ev, meta)
 	if meta.RunID != "" {
 		t.runID = meta.RunID
 	}
@@ -237,8 +246,8 @@ func (t *EventTranslator) CloseRun(err error) []aguievents.Event {
 // comes from RunError.Result; the terminal remains RUN_ERROR.
 //
 //   - err == nil → RUN_FINISHED;
-//   - errors.Is(err, context.Canceled) → RUN_ERROR code "run.cancelled";
 //   - *adaptor.RunError → RUN_ERROR code = string(RunError.Reason);
+//   - otherwise errors.Is(err, context.Canceled) → RUN_ERROR code "run.cancelled";
 //   - any other error → RUN_ERROR code "run.error".
 //
 // Idempotent: once the translator emitted a terminal event, all
@@ -274,11 +283,11 @@ func (t *EventTranslator) CloseResult(result *adaptor.Result, err error) []aguie
 	msg := err.Error()
 	var runErr *adaptor.RunError
 	switch {
-	case errors.Is(err, context.Canceled):
-		code = "run.cancelled"
 	case errors.As(err, &runErr):
 		code = string(runErr.Reason)
 		msg = defaultString(runErr.Message, msg)
+	case errors.Is(err, context.Canceled):
+		code = "run.cancelled"
 	}
 	opts := []aguievents.RunErrorOption{aguievents.WithErrorCode(code)}
 	if t.runID != "" {
@@ -305,6 +314,10 @@ func (t *EventTranslator) translateNonTerminalLocked(ev adaptor.Event) []aguieve
 		return t.textDeltaLocked(e)
 	case adaptor.Thinking:
 		return t.thinkingLocked(e)
+	case adaptor.CapabilityInvocation:
+		return []aguievents.Event{customEvent("adapter.capability.invocation", map[string]any{"kind": "capability.invocation", "meta": observationMeta(e.Meta()), "capability": capabilityValue(e.Invocation)})}
+	case adaptor.TodoUpdated:
+		return []aguievents.Event{customEvent("adapter.todo.updated", map[string]any{"kind": "todo.updated", "meta": observationMeta(e.Meta()), "todo": todoValue(e.Snapshot)})}
 	case adaptor.ToolCall:
 		return t.toolCallLocked(e)
 	case adaptor.ToolResult:
@@ -312,7 +325,8 @@ func (t *EventTranslator) translateNonTerminalLocked(ev adaptor.Event) []aguieve
 			return nil
 		}
 		content := toolResultContent(e.Result)
-		return []aguievents.Event{aguievents.NewToolCallResultEvent(e.ID+":result", e.ID, content)}
+		id := toolCardID(defaultString(e.Meta().RunID, t.runID), e.ScopeID, e.ID)
+		return []aguievents.Event{aguievents.NewToolCallResultEvent(id+":result", id, content)}
 	case adaptor.Notice:
 		return t.noticeLocked(e)
 	case adaptor.Dropped:
@@ -409,33 +423,37 @@ func (t *EventTranslator) toolCallLocked(e adaptor.ToolCall) []aguievents.Event 
 	if e.ID == "" {
 		return nil
 	}
+	id := toolCardID(defaultString(e.Meta().RunID, t.runID), e.ScopeID, e.ID)
+	start := func() []aguievents.Event {
+		return []aguievents.Event{toolParent(e), aguievents.NewToolCallStartEvent(id, defaultString(e.Name, "tool"))}
+	}
 	switch e.Phase {
 	case adaptor.PhaseStart:
-		if t.activeToolStart[e.ID] {
+		if t.activeToolStart[id] {
 			return nil
 		}
-		t.activeToolStart[e.ID] = true
-		out := []aguievents.Event{aguievents.NewToolCallStartEvent(e.ID, defaultString(e.Name, "tool"))}
+		t.activeToolStart[id] = true
+		out := start()
 		if e.Args != nil {
 			if encoded, err := json.Marshal(e.Args); err == nil {
-				out = append(out, aguievents.NewToolCallArgsEvent(e.ID, string(encoded)))
+				out = append(out, aguievents.NewToolCallArgsEvent(id, string(encoded)))
 			}
 		}
 		return out
 	case adaptor.PhaseEnd:
 		out := []aguievents.Event{}
-		if !t.activeToolStart[e.ID] {
+		if !t.activeToolStart[id] {
 			// An end-only snapshot is still meaningful when it carries the
 			// provider's complete result. Synthesize its missing opening edge.
 			if e.Result == nil {
 				return nil
 			}
-			out = append(out, aguievents.NewToolCallStartEvent(e.ID, defaultString(e.Name, "tool")))
+			out = append(out, start()...)
 		}
-		delete(t.activeToolStart, e.ID)
-		out = append(out, aguievents.NewToolCallEndEvent(e.ID))
+		delete(t.activeToolStart, id)
+		out = append(out, aguievents.NewToolCallEndEvent(id))
 		if e.Result != nil {
-			out = append(out, aguievents.NewToolCallResultEvent(e.ID+":result", e.ID, toolResultContent(e.Result)))
+			out = append(out, aguievents.NewToolCallResultEvent(id+":result", id, toolResultContent(e.Result)))
 		}
 		return out
 	default: // args delta
@@ -443,11 +461,11 @@ func (t *EventTranslator) toolCallLocked(e adaptor.ToolCall) []aguievents.Event 
 			return nil
 		}
 		out := []aguievents.Event{}
-		if !t.activeToolStart[e.ID] {
-			t.activeToolStart[e.ID] = true
-			out = append(out, aguievents.NewToolCallStartEvent(e.ID, defaultString(e.Name, "tool")))
+		if !t.activeToolStart[id] {
+			t.activeToolStart[id] = true
+			out = append(out, start()...)
 		}
-		return append(out, aguievents.NewToolCallArgsEvent(e.ID, e.ArgsDelta))
+		return append(out, aguievents.NewToolCallArgsEvent(id, e.ArgsDelta))
 	}
 }
 
@@ -497,7 +515,7 @@ func (t *EventTranslator) approvalRequestLocked(req *adaptor.ApprovalRequest) []
 		"kind":          string(req.Kind),
 		"source":        req.Source,
 		"prompt":        req.Title,
-		"payload":       req.Details,
+		"payload":       approvalDetailsSnapshot(req.Details),
 		"choices":       choicesToJSON(req.Choices),
 		"tool_call_id":  req.ToolCallID,
 		"deadline":      req.Deadline,
@@ -754,4 +772,11 @@ func intFromAny(v any) int {
 		return int(n)
 	}
 	return 0
+}
+
+// CUSTOM events retain a value beyond Translate, so their approval payload
+// must own the same independent map snapshot as the other typed projections.
+// This intermediate map carrier is never published and has no responder.
+func approvalDetailsSnapshot(details map[string]any) map[string]any {
+	return adaptor.WithEventMeta(adaptor.Notice{Data: details}, adaptor.EventMeta{}).(adaptor.Notice).Data
 }

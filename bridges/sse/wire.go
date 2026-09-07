@@ -2,6 +2,14 @@
 // Runner/Event/Result contracts. It deliberately owns only HTTP and SSE wire
 // translation; execution, thread coordination, and approval policy remain in
 // the adaptor core and host.
+//
+// Raw emits capability.invocation and todo.updated with meta and a snake_case
+// capability or todo value. Tool frames include scope_id, parent_scope_id and
+// parent_tool_call_id. Meta.source retains every upstream source coordinate;
+// empty todo items explicitly clear the scope. These events preserve complete
+// UTF-8 content and are not subject to A2A's separate envelope size limit.
+// Raw approval frames own independent choice and nested detail snapshots;
+// retaining or editing a frame does not alter the live approval request.
 package sse
 
 import (
