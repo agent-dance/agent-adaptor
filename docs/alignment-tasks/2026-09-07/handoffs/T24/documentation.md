@@ -1,10 +1,16 @@
 # T24 消费者文档与可执行示例交付
 
 T24 只拥有 task.json 明列的使用文档、五语言 README、examples 与本 handoff。
-初始编写基线为已验收的 G04 `2421fe470cf67b22697fef796b038c0be6e395c8`、canonical17
-C01–C04 与 R001–R016；R017 重新打开 G04 后继续独立编写。正式交付须迁移到协调者
-重新接受的 G04 并在最终源码 HEAD 执行原 validation，准确 base/head 只记录在随后
-生成的 result.json。历史基线的检查不会充当新基线验收。
+初始编写基线为历史 G04 `2421fe470cf67b22697fef796b038c0be6e395c8`、canonical17
+C01–C04 与 R001–R016。最终交付已迁移到重新验收的 G04
+`b2035bc793369fb8fefb9de229ff1dbd2b748853`，按 canonical22、C01–C04/frozen 与
+R001–R020 校对。原 validation 必须在最终源码 HEAD 实跑；准确 base/head 与结果
+记录在随后生成的 result.json。历史基线的检查不会充当新基线验收。
+
+当前 canonical 共有 43 个任务、96 条要求。B04 的七项独立任务全部由 G04 验收，
+同时执行上限仍是六项；T32 承担 W05-R05/W09-R11 的最终实施责任，原 T12 记录
+保留。R006 前的 95 条要求和 R019 前的 42 个任务是对应修订的历史计数，不改写为
+当前数量。T24 的四项 ownership requirement 与下方 13 W 文档映射保持不变。
 
 ## 本任务消费者增量
 
@@ -38,6 +44,9 @@ C01–C04 与 R001–R016；R017 重新打开 G04 后继续独立编写。正式
 所有 offline facts/raw 均显式标明演示数据，不认证 provider。CodeBuddy/Claude
 正式工具结果、Codex native input acceptance/spawn 与实际下游执行仍严格分开。
 profile matrix 的原研究版本、历史 PASS/auth/CLI 失败和时间边界没有改写。
+迁移保留了 G04 的 CodeBuddy loader/物化/原生文件名责任、正式 error 前收尾与
+重复 wrapper 的 typed/Raw 区分，以及 AG-UI 已发布快照深复制说明。RunError.Cause
+与 R016 同次流的分类边界保持原文；这些已实现的合同均不冒称本任务执行了 live。
 
 ## 13 个工作项的消费者文档映射
 
@@ -49,7 +58,7 @@ profile matrix 的原研究版本、历史 PASS/auth/CLI 失败和时间边界�
 | W02 Dedicated session files | docs/tools.md Threads/semantic revisions、Persistent Dedicated profiles；docs/api-reference.md §5/§9；docs/public-errors.md Hosted profile errors；五 README Agent isolation | source/clone 分离、已有 source、Agent.Close 后保留、所有权/冲突/离线恢复、失去历史无法重建；真实冷续接验收属于 provider live |
 | W03 A2A continuation | docs/a2a.md Streaming continuation and recovery | examples/a2a-server；历史 Task 不变成本轮问卷/终局、EOF 明确中断、显式 GetTask 恢复另有语义 |
 | W04 partial Result | docs/api-reference.md §8；docs/public-errors.md One execution error path；docs/streaming.md §4；五 README Results/errors | examples/offline budget、quickstart/streaming chat/showcase 注释；Driver entry 边界、原 Cause、无健康 checkpoint 不持久化 |
-| W05 nested tool parent | docs/streaming.md §3/Provider observation support；docs/streaming-adapter-contract.md §5；docs/a2a.md Capability/Todo/parent projection | 原 ToolCall/ToolResult/Transcript 保留 scope/parent；完整 Args 不再重复为 ArgsDelta，未知父不猜 |
+| W05 nested tool parent | docs/streaming.md §3/Provider observation support/§8 AG-UI bridge；docs/streaming-adapter-contract.md §5；docs/a2a.md Capability/Todo/parent projection | 原 ToolCall/ToolResult/Transcript 保留 scope/parent；完整 Args 不再重复为 ArgsDelta，未知父不猜；已发布 AG-UI snapshot/delta 独占嵌套数据 |
 | W06 schema + HITL | docs/structured-output.md Automatic capability negotiation、Claude schema and approvals；docs/run-policy.md Run errors/矩阵；docs/api-reference.md §9 | examples/structured-output 是需真实 CLI 的示例；Claude native Question/PlanReview、Permission prompt fallback、完整 effective Ask 与 raw 交互激活分开 |
 | W07 safe tool correction | docs/tools.md Schemas、Errors and cancellation；docs/public-errors.md Host-defined Tool errors；docs/api-reference.md §11.1 | examples/tools；invalid_input 保留 ErrInvalidInput 与安全 rejection，handler 未执行，不回显字段值/原错误 |
 | W08 artifact Parts | docs/a2a.md Delegation artifact updates | 一次更新 Parts 与最终累计值分开；Append/LastChunk、空终块、IncludeRemoteArtifacts/Raw 不暗开 |
@@ -107,5 +116,7 @@ HTTP 假夹具。Linux/Windows、付费/provider live 均未在 T24 执行，历
 
 T24-F01 的反例在 `0bf137f` 加入独立测试、尚未修改 fixture 时实际执行失败，
 记录为 `evidence/f01-red.{json,log}`；它是该旧 HEAD 加测试的开发证据，不是新 HEAD
-验证。`c225a9b`/`0bf137f` 阶段与原预验日志保留。修复 commit 后重新预验，仍须等
-重新接受的 G04 迁移后运行原完整 validation 才可生成正式 complete 报告。
+验证。`c225a9b`/`0bf137f`/`7da5821` 阶段与原预验日志保留。三个 owned commits 已
+迁移到上述 replacement G04；旧阶段的预验不复用为本次最终 HEAD 证据。最终原完整
+validation 与实际 offline 输出完成后，才生成正式报告并校验 schema、当前 canonical
+validator、external execution-state 与 Git 祖先/变更范围。
