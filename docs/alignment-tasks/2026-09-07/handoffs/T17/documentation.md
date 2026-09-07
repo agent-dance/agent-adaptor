@@ -89,3 +89,37 @@ covers both actual Driver.Run print branches, positive alias controls, symmetric
 invalid fields, and a pending terminal. G04 should merge this clarification into
 the Cursor observation subsection of docs/streaming.md and the same CHANGELOG
 entry. No public declaration, dependency, scope or golden changes were needed.
+
+R017 / attempt 3 adds TestAlignmentLiveCursorDedicatedToolsColdResume in
+cursor/alignment_live_cold_resume_test.go. It uses two public Agents, the same
+memory Store, Dedicated source, workspace, identity, Tool definition/revision
+and Thread key. A actually invokes the tool with a random nonce, saves a
+healthy provider checkpoint, and completes a bounded Close. B is constructed
+after that Close and calls Thread(key, ResumeOnly()) with a nonce-free prompt;
+its tool response is a fixed acknowledgement without access to historical
+nonce data. B must recall the nonce and actually use its new tool gateway while
+preserving provider session ID, store record and compatibility fingerprint.
+
+The test-only configured Driver wrapper forwards every real invocation without
+changing responses, events, transport or checkpoints. It captures resolved
+profile/MCP/session inputs only to check the retained hosted profile and original
+resume selector. The test identifies actual nonempty provider files under an
+exact session-ID directory in the isolated effective profile, hashes them before
+and after A.Close and immediately before B dispatch, and requires the files to
+remain present after B. Unknown or ambiguous file layouts fail the required live
+probe. It never creates session files or uses a test marker as session evidence.
+The original empty Dedicated source must remain unchanged. Gateway revocation,
+released listener, rotated endpoint/bearer/carrier, and rejection of the old
+bearer by the new gateway are asserted without logging credentials. Both Agents
+receive a bounded Close, including failure cleanup. Cursor continues to spawn
+per turn and gains no persistent/fork/Skills/Todos capability.
+
+G04 should add this scenario to the existing docs/streaming.md live inventory
+and CHANGELOG verification note; cursor/README-streaming.md carries its local
+contract. Existing print, MCP/Subagent, unsupported and cancellation live tests
+remain intact. This is fixture coverage only: gated compilation/canary checks
+do not certify a real session, tool invocation or provider version. No live,
+paid call, user-profile read, native Windows/Linux run or production change is
+part of attempt 3. B06 must run the new required scenario under both explicit
+live gates on the final implementation SHA. Pre-R017 reports/evidence remain
+archived in the untracked handoff evidence tree.

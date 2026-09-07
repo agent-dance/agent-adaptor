@@ -112,7 +112,20 @@ missing CLI or required formal evidence fails instead of being skipped.
 
 The live entry points cover print output and real resume, MCP plus a custom
 Subagent, cancellation with partial Result, and the append/skill/todo negative
-matrix. Each run captures CLI `--version` in the isolated environment. Native
+matrix. `TestAlignmentLiveCursorDedicatedToolsColdResume` additionally uses
+public Agent/Thread calls with the same store, Dedicated source, workspace,
+identity and tools across a successful bounded Agent.Close. Its second Agent
+uses ResumeOnly under the same key and must recall a first-turn random nonce
+without receiving it in the new prompt or tool response. Both turns require
+actual hosted-tool calls and healthy public checkpoints with the original
+provider session identity. The test checks nonempty provider session files in
+the effective isolated profile before/after Close and before the cold dispatch,
+plus gateway revocation and endpoint/credential rotation. The file probe uses
+the exact formal session ID as a directory name; unknown or ambiguous layouts
+fail rather than substitute an SDK checkpoint or marker file. A forwarding test
+Driver records only resolved inputs and delegates to the real configured Driver.
+Cursor still spawns each turn; this test adds no persistent-process claim.
+Each run captures CLI `--version` in the isolated environment. Native
 schema, interactive approvals, persistent-process and fork probes are not
 applicable. Example for an authorized isolated runner:
 
