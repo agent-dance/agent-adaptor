@@ -26,6 +26,9 @@ type runEventsBinding interface{ RunEventsBound(runID string) bool }
 // After draining the parent, Merge checks the optional RunEventsBound(string)
 // bool proof on bus. Missing/false proof adds ErrEventInjectionUnsupported to a
 // RunError retaining the complete parent Result and existing primary failure.
+// Its cause preserves the entire original error graph, including outer wrappers
+// and joined siblings. A bare deadline keeps ReasonDeadlineExceeded; an existing
+// RunError reason always takes precedence over secondary context errors.
 // Waiting until completion permits asynchronous attachment binding. Result is
 // cached for concurrent/repeated callers; callers must still drain Events.
 // Cancel and ctx cancellation cancel the parent and unblock outward sends;
@@ -82,7 +85,10 @@ func injectionFailure(runID string, result *adaptor.Result, parentErr error) (*a
 	if errors.As(parentErr, &runErr) && runErr != nil {
 		copied := *runErr
 		copied.Details = adaptor.WithEventMeta(adaptor.Notice{Data: runErr.Details}, adaptor.EventMeta{}).(adaptor.Notice).Data
-		copied.Cause = errors.Join(runErr.Cause, ErrEventInjectionUnsupported)
+		// Keep the whole original error graph, including outer wrappers and
+		// siblings of the selected RunError. parentErr points to the immutable
+		// parent, never to copied, so a direct RunError cannot create a cycle.
+		copied.Cause = errors.Join(parentErr, ErrEventInjectionUnsupported)
 		if copied.Result == nil {
 			copied.Result = result
 		}
@@ -97,6 +103,8 @@ func injectionFailure(runID string, result *adaptor.Result, parentErr error) (*a
 	reason := adaptor.ReasonInfrastructure
 	if errors.Is(parentErr, context.Canceled) {
 		reason = adaptor.ReasonCancelled
+	} else if errors.Is(parentErr, context.DeadlineExceeded) {
+		reason = adaptor.ReasonDeadlineExceeded
 	}
 	return nil, &adaptor.RunError{Reason: reason, Message: ErrEventInjectionUnsupported.Error(), Cause: errors.Join(parentErr, ErrEventInjectionUnsupported), Result: result}
 }

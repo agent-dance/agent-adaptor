@@ -1,6 +1,6 @@
 # T12: non-A2A event fidelity and transparent Merge
 
-Source base: `75332ea502b42ce40229840f3eae75c103b5a9f2` (G02, canonical manifest revision 12, R001–R011).
+Source base: `75332ea502b42ce40229840f3eae75c103b5a9f2` (G02 source base, revision 12 / R001–R011; attempt 2 validated against canonical revision 13).
 Requirements: W05-R05, W09-R11, W12-R09. This is the T12 implementation handoff; G03 must merge the central documentation before batch acceptance. It does not close W05/W09/W12 or provider/live verification.
 
 ## Public behavior and examples
@@ -31,7 +31,7 @@ A2A's envelope and safe-number limits do **not** apply to SSE, AG-UI or JSONL. T
 
 Previously `subagentstream.Merge` subscribed to a delegation bus, injected its mirrors, renumbered parent events and synthesized delegation terminals. This conflicted with the core sink's unique sequence and terminal authority. The published function signature and nil-bus passthrough remain. A non-nil bus now produces a transparent wrapper that never subscribes to or waits for the bus, injects mirrors, reassigns metadata, or creates terminal events.
 
-When the parent Events channel closes, Merge obtains and caches its Result and checks a private structural `RunEventsBound(runID string) bool` proof. A true historical proof preserves the parent Result/error exactly. Missing/false proof returns `nil, *adaptor.RunError` containing the complete available parent Result and `ErrEventInjectionUnsupported`. An existing RunError's primary reason/message/details remain intact; its cause is joined with the sentinel without mutating the parent error. Proof is checked after completion, so asynchronous attachment binding is allowed. Concurrent/repeated Result callers receive the same cached outcome.
+When the parent Events channel closes, Merge obtains and caches its Result and checks a private structural `RunEventsBound(runID string) bool` proof. A true historical proof preserves the parent Result/error exactly. Missing/false proof returns `nil, *adaptor.RunError` containing the complete available parent Result and `ErrEventInjectionUnsupported`. An existing RunError's primary reason/message/details remain intact; the entire original parent error graph is joined with the sentinel without mutating the parent error. This preserves `errors.Join` siblings, custom wrapper `Is`/`As` behavior, multi-`%w` causes and the original error identity. A direct RunError points only to the original immutable parent, never to its copied wrapper. Bare or wrapped `context.DeadlineExceeded` maps to `ReasonDeadlineExceeded`; existing RunError primary reasons retain precedence over secondary context errors. Proof is checked after completion, so asynchronous attachment binding is allowed. Concurrent/repeated Result callers receive the same cached outcome.
 
 Cancel immediately cancels the parent and unblocks wrapper sends, then drains the cancelled parent through closure to preserve its partial Result. The wrapper creates no extra RunFinished. A conforming parent's Cancel/Events/Result lifecycle remains necessary; the bridge cannot make an arbitrary non-closing Stream terminate.
 
@@ -72,3 +72,7 @@ Dependency selection: no new top-level require. Existing AG-UI protocol dependen
 A fixture-only first run at the G02 production base failed in all four packages: missing new events/parents/Source, recorder aliases, and Merge sequence replacement. The saved baseline failure log records the actual assertions. Final full T12 package tests, local race tests and vet evidence are generated after the source commit and identify that exact SHA, commands, counts, skips and exit statuses in result.json.
 
 This task runs on macOS arm64 with Go 1.26.5. Ordinary validation explicitly disables both live gates and golden updates. Local httptest loopback listeners require the authorized sandbox escalation; no remote provider is contacted. Linux/Windows, paid live, whole-repository release gates, T18 concrete integration and T21 independent verification are not claimed.
+
+## Attempt 2 independent-review repair
+
+Independent review of `2778effb89f952400bfd271f899ee1a4f74a8163` reproduced T12-F01 (lost outer wrapper/join error causes) and T12-F02 (bare deadline misclassified as infrastructure). The unchanged reviewer fixture was rerun before this repair and failed on all three outer-wrapper cases plus the deadline case. `merge_review_test.go` preserves those fixtures and strengthens original-error identity, secondary-deadline and primary-reason assertions. The repair affects only Merge error wrapping/classification, its contract tests and this fragment; no Event sequence, binding proof, Result field or execution entry changes. Required full package, race and vet commands are rerun on the final repair SHA, with attempt-1 evidence retained separately.
