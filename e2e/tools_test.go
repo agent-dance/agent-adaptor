@@ -52,17 +52,31 @@ type e2eToolOutput struct {
 }
 
 type toolE2EObservation struct {
-	Endpoint          string   `json:"endpoint"`
-	TokenHash         string   `json:"token_hash"`
-	Tools             []string `json:"tools"`
-	Result            string   `json:"result"`
-	Unauthorized      int      `json:"unauthorized_status"`
-	ResumeRequested   bool     `json:"resume_requested"`
-	BearerEnvironment string   `json:"bearer_environment"`
-	ProfileDir        string   `json:"profile_dir"`
+	Endpoint                 string   `json:"endpoint"`
+	TokenHash                string   `json:"token_hash"`
+	Tools                    []string `json:"tools"`
+	Result                   string   `json:"result"`
+	Unauthorized             int      `json:"unauthorized_status"`
+	ResumeRequested          bool     `json:"resume_requested"`
+	BearerEnvironment        string   `json:"bearer_environment"`
+	ProfileDir               string   `json:"profile_dir"`
+	SessionTurnsBefore       int      `json:"session_turns_before"`
+	PreviousCredentialStatus int      `json:"previous_credential_status"`
 }
 
 func TestHostDefinedToolsEndToEndThroughRealProviderProcess(t *testing.T) {
+	for _, persistent := range []bool{true, false} {
+		name := "temporary_clone"
+		if persistent {
+			name = "dedicated"
+		}
+		t.Run(name, func(t *testing.T) {
+			testHostDefinedToolsProfileLifecycle(t, persistent)
+		})
+	}
+}
+
+func testHostDefinedToolsProfileLifecycle(t *testing.T, persistent bool) {
 	executable, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -70,6 +84,18 @@ func TestHostDefinedToolsEndToEndThroughRealProviderProcess(t *testing.T) {
 	root := t.TempDir()
 	providerProfile := filepath.Join(root, "cursor-profile")
 	observationsPath := filepath.Join(root, "observations.jsonl")
+	if err := os.Mkdir(providerProfile, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(providerProfile, "source-marker"), []byte("host-owned source"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	selection := profile.Dedicated(providerProfile)
+	if !persistent {
+		// CloneFrom exercises the temporary hosted selection using only test
+		// directories. It never discovers the user's native Cursor profile.
+		selection = profile.CloneFrom(providerProfile, filepath.Join(root, "selected-profile"))
+	}
 
 	echo := tool.Define(
 		"host_echo",
@@ -92,7 +118,7 @@ func TestHostDefinedToolsEndToEndThroughRealProviderProcess(t *testing.T) {
 					{Name: toolE2EObservationEnv, Value: observationsPath},
 				},
 			}}),
-			adaptor.WithProfile(profile.Dedicated(providerProfile)),
+			adaptor.WithProfile(selection),
 			adaptor.WithThreadStore(store),
 			adaptor.WithTools(echo),
 		)
@@ -128,14 +154,9 @@ func TestHostDefinedToolsEndToEndThroughRealProviderProcess(t *testing.T) {
 		t.Fatalf("provider observations = %d, want 2", len(observations))
 	}
 	for index, observation := range observations {
-		if observation.Unauthorized != http.StatusUnauthorized {
-			t.Errorf("turn %d unauthorized status = %d", index+1, observation.Unauthorized)
-		}
-		if len(observation.Tools) != 1 || observation.Tools[0] != "host_echo" {
-			t.Errorf("turn %d tools/list = %v", index+1, observation.Tools)
-		}
-		if observation.BearerEnvironment == "" {
-			t.Errorf("turn %d did not resolve bearer environment reference", index+1)
+		assertToolE2EObservation(t, index+1, observation, []string{"host:first", "host:second"}[index])
+		if observation.SessionTurnsBefore != index {
+			t.Errorf("turn %d read %d prior session turns, want %d", index+1, observation.SessionTurnsBefore, index)
 		}
 	}
 	if observations[0].Endpoint != observations[1].Endpoint ||
@@ -153,9 +174,7 @@ func TestHostDefinedToolsEndToEndThroughRealProviderProcess(t *testing.T) {
 		t.Fatalf("Agent.Close: %v", err)
 	}
 	closed = true
-	if _, err := os.Stat(observations[0].ProfileDir); !os.IsNotExist(err) {
-		t.Fatalf("Agent.Close left isolated Tool profile %q: %v", observations[0].ProfileDir, err)
-	}
+	assertClosedToolE2EProfile(t, observations[0].ProfileDir, persistent, "first\nsecond\n")
 	if _, err := os.Stat(filepath.Join(providerProfile, "mcp.json")); !os.IsNotExist(err) {
 		t.Fatalf("source profile was polluted with hosted Tool MCP config: %v", err)
 	}
@@ -202,15 +221,81 @@ func TestHostDefinedToolsEndToEndThroughRealProviderProcess(t *testing.T) {
 	if restarted.Endpoint == observations[0].Endpoint || restarted.TokenHash == observations[0].TokenHash {
 		t.Fatalf("restarted Tool runtime identity was not renewed: before=%#v after=%#v", observations[0], restarted)
 	}
-	if restarted.ProfileDir == observations[0].ProfileDir || restarted.ProfileDir == providerProfile {
-		t.Fatalf("restarted isolated profile = %q", restarted.ProfileDir)
+	assertToolE2EObservation(t, 3, restarted, "host:third")
+	if restarted.BearerEnvironment == observations[0].BearerEnvironment {
+		t.Fatal("restarted Tool bearer environment carrier was not renewed")
+	}
+	if restarted.PreviousCredentialStatus != http.StatusUnauthorized {
+		t.Fatalf("new Tool endpoint accepted the old bearer: status %d", restarted.PreviousCredentialStatus)
+	}
+	if restarted.ProfileDir == providerProfile || (restarted.ProfileDir == observations[0].ProfileDir) != persistent {
+		t.Fatalf("restarted isolated profile = %q, prior = %q, persistent = %v", restarted.ProfileDir, observations[0].ProfileDir, persistent)
+	}
+	wantPriorTurns := 0
+	if persistent {
+		wantPriorTurns = 2
+	}
+	if restarted.SessionTurnsBefore != wantPriorTurns {
+		t.Fatalf("restarted provider read %d prior session turns, want %d", restarted.SessionTurnsBefore, wantPriorTurns)
 	}
 	if err := secondAgent.Close(ctx); err != nil {
 		t.Fatalf("second Agent.Close: %v", err)
 	}
 	secondClosed = true
-	if _, err := os.Stat(restarted.ProfileDir); !os.IsNotExist(err) {
-		t.Fatalf("second Agent.Close left isolated Tool profile %q: %v", restarted.ProfileDir, err)
+	assertClosedToolE2EProfile(t, restarted.ProfileDir, persistent, "first\nsecond\nthird\n")
+	entries, err := os.ReadDir(providerProfile)
+	if err != nil || len(entries) != 1 || entries[0].Name() != "source-marker" {
+		t.Fatalf("source profile was polluted: entries=%v, err=%v", entries, err)
+	}
+	marker, err := os.ReadFile(filepath.Join(providerProfile, "source-marker"))
+	if err != nil || string(marker) != "host-owned source" {
+		t.Fatalf("source marker changed: %q, %v", marker, err)
+	}
+}
+
+func assertToolE2EObservation(t *testing.T, turn int, observation toolE2EObservation, wantResult string) {
+	t.Helper()
+	if observation.Unauthorized != http.StatusUnauthorized {
+		t.Errorf("turn %d unauthorized status = %d", turn, observation.Unauthorized)
+	}
+	if len(observation.Tools) != 1 || observation.Tools[0] != "host_echo" {
+		t.Errorf("turn %d tools/list = %v", turn, observation.Tools)
+	}
+	if observation.BearerEnvironment == "" {
+		t.Errorf("turn %d did not resolve bearer environment reference", turn)
+	}
+	if observation.Result != wantResult {
+		t.Errorf("turn %d tools/call result = %q, want %q", turn, observation.Result, wantResult)
+	}
+}
+
+func assertClosedToolE2EProfile(t *testing.T, dir string, persistent bool, wantSession string) {
+	t.Helper()
+	if !persistent {
+		if _, err := os.Stat(dir); !os.IsNotExist(err) {
+			t.Fatalf("Agent.Close left temporary Tool profile %q: %v", dir, err)
+		}
+		return
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "projects", "host-tools-e2e-session.jsonl"))
+	if err != nil || string(data) != wantSession {
+		t.Fatalf("Agent.Close did not retain provider session: %q, %v", data, err)
+	}
+	data, err = os.ReadFile(filepath.Join(dir, "mcp.json"))
+	if os.IsNotExist(err) {
+		return
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		Servers map[string]json.RawMessage `json:"mcpServers"`
+	}
+	if err := json.Unmarshal(data, &config); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := config.Servers[hostedToolMCPKey]; exists {
+		t.Fatal("Agent.Close retained the owned hosted Tool MCP projection")
 	}
 }
 
@@ -299,16 +384,55 @@ func runToolProviderFixture() int {
 	if result == "" {
 		return 29
 	}
+	// The fixture's session artifact is deliberately outside configuration
+	// roots. Dedicated reconstruction must read both prior turns; the temporary
+	// selection intentionally starts with no retained local session file.
+	projectDir := filepath.Join(profileDir, "projects")
+	if err := os.MkdirAll(projectDir, 0o700); err != nil {
+		return 31
+	}
+	sessionPath := filepath.Join(projectDir, "host-tools-e2e-session.jsonl")
+	previousSession, err := os.ReadFile(sessionPath)
+	if err != nil && !os.IsNotExist(err) {
+		return 32
+	}
+	if err := os.WriteFile(sessionPath, append(previousSession, []byte(prompt+"\n")...), 0o600); err != nil {
+		return 33
+	}
+	// Keep the first credential only inside the isolated test directory so
+	// the replacement child can prove the new gateway rejects it. Neither the
+	// credential nor its carrier value is emitted in observations or logs.
+	previousCredentialStatus := 0
+	credentialPath := observationPath + ".bearer"
+	previousCredential, err := os.ReadFile(credentialPath)
+	if os.IsNotExist(err) {
+		if err := os.WriteFile(credentialPath, []byte(token), 0o600); err != nil {
+			return 34
+		}
+	} else if err != nil {
+		return 35
+	} else if string(previousCredential) != token {
+		request, _ := http.NewRequestWithContext(ctx, http.MethodPost, entry.URL, strings.NewReader(`{}`))
+		request.Header.Set("Authorization", "Bearer "+string(previousCredential))
+		response, err := http.DefaultClient.Do(request)
+		if err != nil {
+			return 36
+		}
+		previousCredentialStatus = response.StatusCode
+		response.Body.Close()
+	}
 	tokenDigest := sha256.Sum256([]byte(token))
 	observation := toolE2EObservation{
-		Endpoint:          entry.URL,
-		TokenHash:         hex.EncodeToString(tokenDigest[:]),
-		Tools:             toolNames,
-		Result:            result,
-		Unauthorized:      unauthorized,
-		ResumeRequested:   containsArgument(os.Args[1:], "--resume"),
-		BearerEnvironment: envName,
-		ProfileDir:        profileDir,
+		Endpoint:                 entry.URL,
+		TokenHash:                hex.EncodeToString(tokenDigest[:]),
+		Tools:                    toolNames,
+		Result:                   result,
+		Unauthorized:             unauthorized,
+		ResumeRequested:          containsArgument(os.Args[1:], "--resume"),
+		BearerEnvironment:        envName,
+		ProfileDir:               profileDir,
+		SessionTurnsBefore:       strings.Count(string(previousSession), "\n"),
+		PreviousCredentialStatus: previousCredentialStatus,
 	}
 	if err := appendToolE2EObservation(observationPath, observation); err != nil {
 		return 30
