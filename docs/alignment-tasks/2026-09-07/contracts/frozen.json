@@ -4,7 +4,7 @@
   "manifest_revision": 22,
   "code_baseline": "919f140f64f89c80933802840c8878681a85a4d9",
   "source_head": "e2f0620bdd6477e6fe16f6db5648093589342ca2",
-  "status": "G04_sources_reconciled_exact_commit_checks_external",
+  "status": "G05_sources_reconciled_exact_commit_checks_external",
   "contracts": [
     {
       "producer": "C01",
@@ -389,7 +389,8 @@
     "R019: T21 actual AG-UI stream serialization found aliased published toolCalls snapshots and a race. Supplemental T32 is executed by original T12 bridge owner from G03, owns only AG-UI snapshot repair paths, takes W09-R11 final implementation responsibility while T12 historical evidence is preserved. B04 seven independent tasks remain capped at six concurrent workers; G04 requires all seven. No requirement/history ID removed, no public API or dependency change; unchanged T21 full chain replays on replacement G04.",
     "R020: T20 additionally owns only internal/hostedprofile/alignment_release_lifecycle_test.go, using existing private post-OS-unlock close-failure seams for independent R007 evidence. No production/public API/dependency/DAG/requirement change; all original validation remains and one focused race command is added.",
     "R019 coverage clarification: the fixed T21 report maps the same AG-UI aliasing failure to W05-R05 as well as non-A2A W09-R11. Both final implementation responsibilities move from historical T12 to original-owner supplemental T32; IDs and independent T21 verifiers remain unchanged.",
-    "G04 replacement reconciliation canonical22: accepted T14-T19 and original bridge owner supplemental T32 merged; R017/R018/R019 defects and R020 independent QA scope recorded. Exact committed G04 gate and unchanged T21 counterexamples are external evidence, not inferred from this manifest. B05 must migrate before final validation; B06 remains distinct."
+    "G04 replacement reconciliation canonical22: accepted T14-T19 and original bridge owner supplemental T32 merged; R017/R018/R019 defects and R020 independent QA scope recorded. Exact committed G04 gate and unchanged T21 counterexamples are external evidence, not inferred from this manifest. B05 must migrate before final validation; B06 remains distinct.",
+    "G05 reconciliation canonical22: all T20–T24 final sources independently accepted and merged; full source gate must pass before implementation_head is frozen. Exact-SHA Linux/Windows/paid live evidence remains separate. Existing C02 public translation-error boundary clarified without runtime or requirement changes."
   ],
   "unmerged_related_branches": [
     {

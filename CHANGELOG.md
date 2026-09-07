@@ -6,6 +6,18 @@ All notable changes to this project are documented in this file.
 
 ### Added
 
+- An executable offline consumer example covers native append override/clear,
+  same-stream approval, confirmed Todo snapshots, scoped capability recording
+  and active-timeout partial Results. All five READMEs and usage references
+  describe the evidence and profile ownership contracts.
+- Independent lifecycle, protocol and policy regression fixtures exercise real
+  child processes, HTTP bridges, cross-Agent cold reconstruction, full audit
+  values, cancellation drains and post-unlock cleanup faults. These fixtures
+  do not certify real providers or native platforms.
+- Driver conformance clauses check observation lifecycles, scoped tool identity,
+  independent descriptor snapshots and core-owned event envelopes across rich, batch and
+  observation-only transports; negative controls cover invalid implementations.
+
 - `RunError.Cause`, `ReasonInfrastructure` and `ReasonDeadlineExceeded` preserve
   original error chains and available results after Driver entry.
 - Driver SPI per-kind `NativeHITL` / `PromptValidateHITL` matrices; nil keeps
@@ -108,6 +120,10 @@ All notable changes to this project are documented in this file.
   drain, while retaining RunError precedence and the single Result error verdict.
 
 ### Changed
+
+- CI explicitly runs uncached tests, race and repeated scenarios, nine bounded
+  fuzz targets, BDD parsing and native Windows checks while keeping automatic
+  paid/live gates closed and retaining security and frontend checks.
 
 - A2A failure status text uses safe category text instead of provider error bodies;
   existing explicit diagnostic exposure remains independent.

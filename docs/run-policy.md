@@ -386,3 +386,14 @@ the initial transport. Zero demand preserves the initial choice. An explicit Ask
 without schema is also preserved, including a third-party Driver whose initially
 selected batch transport legitimately supports it. Only required facts absent
 from every feasible candidate produce an observation_unavailable Notice.
+
+## Independent policy validation
+
+`go test -count=1 . -run TestAlignmentPolicy` uses independent clocks and
+barriers for overlapping Ask waits, selected-cause notification, lease renewal,
+the persistence boundary and whole-Policy replacement. Its public composition
+tests run real HTTP/Local paths and require complete event consumption before
+the single Result call. A producer closing its buffered channel or a remote
+cancel acknowledgement alone cannot prove that drain completed. The fixture
+also exercises formal fake-provider schema and native-append transports; it
+does not make a paid provider call.

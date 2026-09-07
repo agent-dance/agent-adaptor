@@ -324,3 +324,11 @@ against the same Thread store, resumes a third turn, and proves the source
 profile was never polluted. Temporary-profile fixtures verify endpoint and
 clone reclamation; Dedicated fixtures require a retained session-file nonce
 after clean reconstruction. They make no paid provider call.
+
+Independent lifecycle fixtures also verify exact authenticated old-token
+revocation, clean Dedicated reconstruction and bounded cleanup retry. Run
+`go test -race -count=10 ./internal/hostedprofile -run TestAlignmentReleaseLifecycle`
+to inject failure at the existing private close seams after actual OS unlock:
+a successor remains active, its files stay unchanged, and a third claimant
+remains excluded. This proves behavior under injected failures on the executing
+OS; it does not claim a real handle failure or native Windows ACL/sharing proof.

@@ -207,6 +207,28 @@ budget failures too. Summary remains the default; Raw, Transcript, Usage and
 provider terminal payload retain their independent exposure switches. Unknown
 Usage remains absent, while observed zero is retained.
 
+### Public cancellation and translation errors
+
+CancelTask may publish a canceled acknowledgement before the executor finishes
+draining its original Stream. That acknowledgement carries no derived failure
+control or budget limit and does not expose the later private classification.
+The executor still consumes the full event channel and reads Result once.
+
+Translation errors retain their infrastructure failure path. Depending on
+whether the protocol processor can produce a terminal Task, a client may receive
+a failed Task followed by EOF, or an observable `clients/a2a.StreamRecoveryError`
+whose TaskID identifies the same subscription's last observed task and whose
+cause preserves the projection failure. A later execution hint cannot turn this
+into success or invent a failure code/limit.
+
+The independent malformed-input fixtures require that precise failure source:
+their error branch allows nonterminal state or an already observed failed state,
+checks every observed status for a fabricated failure-control envelope, and
+rejects conflicting terminal states, unrelated errors and plain errors with the
+same text. Bare EOF without a failed terminal, cancellation or deadline does not
+satisfy these fixture oracles. Their exact cause literals identify their own
+invalid inputs; they are not a new universal API error-message contract.
+
 ### Result and exposure
 
 Successful `Stream.Result()` values produce the completed status and terminal artifacts. For `*adaptor.RunError`, the bridge first reads the primary `Reason`: explicit cancellation maps to canceled; approval denial/timeout and other failures map to failed even when their cause also matches a context error. Both retain the partial Result allowed by ExposurePolicy. Bare errors use the qualified same-stream terminal hint described above, otherwise the existing context/error fallback. The bridge never treats a non-nil execution error as success.

@@ -545,3 +545,17 @@ When a structured-output schema is incompatible with a rich-event provider trans
 The Go side pins `github.com/ag-ui-protocol/ag-ui/sdks/community/go` through `go.mod`; the CopilotKit example pins `@ag-ui/core` through [`examples/web-chat/copilotkit/web/package-lock.json`](../examples/web-chat/copilotkit/web/package-lock.json). The two version coordinates differ, so upgrading either side requires revalidating the event lifecycle and schema.
 
 `go test ./internal/aguiversion/...` verifies both pins. When upgrading deliberately, update the expected versions in `internal/aguiversion/align_test.go` and review the `bridges/agui` fixtures.
+
+## Independent regression validation
+
+`go test -count=1 ./e2e -run TestAlignmentLifecycle` exercises formal fake child
+processes through public Agent/Thread Run and Stream. Its independent literals
+check complete Raw, Transcript, Services and terminal payloads before comparing
+Run and Stream results. Result-only stdin closure, schema/HITL roundtrips,
+unhealthy checkpoint rejection and cleanup outcomes share the same pipeline.
+
+`go test -count=1 . -run TestAlignmentProtocol` composes the real parsers, HTTP
+bridges, Local/Remote delegation, observers and recorders. Retained AG-UI
+snapshots and concurrent serialization must remain independent of subsequent
+translation. Both suites use private fake processes and loopback services;
+passing them is not a real-provider or native-platform certification.

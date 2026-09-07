@@ -351,6 +351,27 @@ preserves source provenance and reports unrepresentable relay identity/depth.
 Only a successful binding establishes historical proof for transparent Merge.
 No helper, bridge or observer parses provider JSON or creates a second stream.
 
+### Conformance clauses for observations
+
+The executable clauses in [adaptertest godoc](../adaptertest/doc.go) apply to
+the resolved provider transport, independently of the consumer's Run/Stream verb:
+
+| Clause | Required behavior |
+|---|---|
+| DRV-03 | Descriptor calls return independent mutable HITL matrices. |
+| EVT-09 / EVT-10 | Every StreamPayload leaves Role, Sequence, Seq and Timestamp at their required zero values, including observation-only and batch payloads. |
+| EVT-14 | Tool identity includes ScopeID; explicit parents stay stable, complete Args are not followed by ArgsDelta, and results are unique. |
+| OBS-01 / OBS-02 | Facts respect the actual transport declaration and carry exactly their typed semantic payload, without unsafe generic fields. |
+| OBS-03 | Capability values follow the closed evidence, encoding, size, time and duration rules; a parent cannot be the same scoped invocation. |
+| OBS-04 | Each scoped capability starts and ends once, with stable identity and no open start at provider termination. |
+| OBS-05 / OBS-06 | Todo is a confirmed full ordered snapshot; non-nil empty clears, IDs are unique, and revisions start at one and advance only for changes. |
+
+Equal IDs in different scopes are distinct. Observation-only transports need
+no invented rich run frames. These checks cannot prove provider provenance,
+catalog attribution or model behavior; formal protocol fixtures and explicitly
+gated real-provider tests supply that evidence. Core still owns the final public
+outcome after resource cleanup. Existing MUST/SHOULD and SessionCodec laws remain.
+
 ## 12. `adaptertest` acceptance
 
 Every Driver must run the final conformance suite directly:

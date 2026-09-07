@@ -372,7 +372,7 @@ Delegation 通过 BindEvents 让 typed 事实先进入 core observer 再进入�
 
 R017 补齐真实冷续接与 Skill/Subagent 验证入口，禁用门不构成实际调用证据。R018 保证 CodeBuddy 物化的 native name 与 resolved catalog 逐字一致，安全 .md 文件名独立编码，SourcePath 保持原生内容责任；正式 error 前闭合未完成观察，完全相同的结果 wrapper 只投影一次 typed ToolResult，Raw/Transcript 仍完整。R019 要求已发布 AG-UI Subagent snapshot/delta 独占工具结构与嵌套 JSON 容器，后续翻译与消费者修改不能彼此改写；原 bridge owner 的 T32 和不变的独立 T21 反例共同验收。
 
-以上实施须由 G04 合流门禁确认；本段不代替外部精确 SHA 验收记录。T20–T24 独立跨层/文档验证和 T25–T30 平台/live 证据仍打开，不能以本批 worker 测试关闭这些要求。
+G04 已在精确合流提交验收上述生产修复。B05 的 T20–T24 已交付独立生命周期/协议/policy、Driver 一致性与架构守卫、CI 和五语言文档/离线示例；R020 的独立 post-unlock 故障注入不能代替原生 Windows 证据。HTTP 翻译错误允许明确 failed Task 或可观察基础设施错误，测试不得将单一调度形状写成更强合同，也不得接受任意错误。G05 仍须在合流后的精确 SHA 通过完整测试、vet 与任务包校验才可冻结 implementation_head。T25–T30 平台/live 证据和 G06 发布就绪判定独立保持，不能以 fixture、交叉编译或 CI 配置关闭。
 
 具体冻结设计、未支持边界、文件所有权和fixture见 `docs/alignment-tasks/2026-09-07/contracts/frozen.json`。合同冻结不代表代码已实现；后续同批godoc、合同测试、使用文档和CHANGELOG完成后才能关闭对应项。其他第14节既有保护继续有效。
 

@@ -286,3 +286,10 @@ quoting fail explicitly. Use a supported native executable or lossless PowerShel
 path. Cursor nonempty append remains unsupported before startup. See
 [carrier limits](./api-reference.md#31-dual-scope-options) and the existing capability
 matrix; append does not grant additional HITL/schema support.
+
+The independent `TestAlignmentLifecycle` e2e and `TestAlignmentPolicy` suites
+exercise native Question/PlanReview, Permission prompt fallback, ordinary
+no-schema Permission and the nil legacy matrices through actual decision sinks.
+They compare complete formal response correlation fields and final audit data,
+including failure/checkpoint behavior. These are fake-provider protocol tests;
+real CLI compatibility requires the separately authorized live suite.

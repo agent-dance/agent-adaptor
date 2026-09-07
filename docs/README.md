@@ -25,4 +25,15 @@ The public v1 model is Agent, Thread, Stream, Event, Result, and Driver. Start w
 | [`internal-history-alignment-plan-2026-09-07.md`](./internal-history-alignment-plan-2026-09-07.md) | Commit-by-commit comparison with the internal repository and a v1-compatible alignment plan, based on the branches fetched on September 7, 2026. |
 | [Alignment task dispatch package](./alignment-tasks/2026-09-07/README.md) | Seven gated batches with 43 task.json files, independent ownership, 96 traceable requirements, and dispatch validation. |
 
-2026-09-07 internal 对齐已进入分批实施；B00冻结规范见 [合同清单](alignment-tasks/2026-09-07/contracts/frozen.json)。新增API仍以各批实际合流验收为准。
+2026-09-07 internal 对齐的生产改动已通过 B04；B05 的独立跨层验证、Driver 一致性、CI 和文档示例由 G05 在合流提交上验收。冻结规范见 [合同清单](alignment-tasks/2026-09-07/contracts/frozen.json)，无需 CLI 的使用入口见 [offline 示例](../examples/offline/main.go)。T25–T30 必须使用 G05 冻结的同一提交补齐原生平台与真实 provider 证据；本页和 CI 配置不代替实际验收。
+
+## Contributor validation
+
+The [Go workflow](../.github/workflows/go.yml) keeps paid/live gates closed for
+automatic checks and defines native platform, race, repeated and fuzz jobs.
+The [B06 command list](./alignment-tasks/2026-09-07/handoffs/T23/b06-commands.md)
+and [entrypoint inventory](./alignment-tasks/2026-09-07/handoffs/T23/b06-inventory.json)
+give the exact required selections and isolated-profile prerequisites. Execute
+them on the same G05 frozen commit; configuration, test listing and cross-compiling
+do not prove native-platform or live-provider success. Real provider execution
+requires its separate authorization and both gates.

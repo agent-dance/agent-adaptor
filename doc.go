@@ -65,4 +65,9 @@
 // same Event stream. Every
 // admitted execution has one core lifecycle whose terminal reflects the final
 // Result and resource cleanup. Static pre-admission refusals have no lifecycle.
+//
+// The examples/offline program runs without a provider CLI or credentials. It
+// demonstrates append defaults and overrides, same-stream approvals, Todo
+// snapshots, scoped recording and active-budget partial results:
+// https://github.com/agent-dance/agent-adaptor/tree/main/examples/offline.
 package adaptor
