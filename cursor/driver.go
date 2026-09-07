@@ -19,6 +19,7 @@ import (
 	"github.com/agent-dance/agent-adaptor/internal/profilehooks"
 	"github.com/agent-dance/agent-adaptor/internal/profileinstructions"
 	"github.com/agent-dance/agent-adaptor/internal/profilesnapshot"
+	"github.com/agent-dance/agent-adaptor/internal/systemprompt"
 )
 
 // DriverType is the stable descriptor type for the built-in Cursor driver.
@@ -36,6 +37,9 @@ func (adapter) Descriptor() driver.Descriptor {
 	}
 	fields = append(fields, profileconfig.CapabilityFields(DriverType)...)
 	return driver.Descriptor{
+		// Both Request.Streaming values use the same print stream-json protocol.
+		Observation:  driver.ObservationCapabilities{Batch: driver.ObservationSupport{MCP: true, Subagents: true}, Streaming: driver.ObservationSupport{MCP: true, Subagents: true}},
+		SystemPrompt: driver.SystemPromptCapability{Append: false},
 		Type:         DriverType,
 		DisplayName:  "Cursor Agent",
 		Models:       cursorModels(),
@@ -317,6 +321,12 @@ func (adapter) SyncProfileResources(ctx context.Context, cfg any, _ driver.Agent
 }
 
 func (adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSink) (driver.Response, error) {
+	if err := systemprompt.Validate(DriverType, req.AppendSystemPrompt); err != nil {
+		return driver.Response{}, err
+	}
+	if req.AppendSystemPrompt != "" {
+		return driver.Response{}, &driver.SystemPromptUnsupportedError{Driver: DriverType, Reason: "unsupported_driver"}
+	}
 	if req.OutputSchema != nil && req.StructuredOutputSource == driver.StructuredOutputSourceNative {
 		return driver.Response{}, &driver.StructuredOutputUnsupportedError{Driver: DriverType, Reason: "Cursor CLI does not expose native JSON Schema output"}
 	}
@@ -407,6 +417,7 @@ func (adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSin
 	}
 
 	parser := newCursorParser(sink)
+	parser.configureCapabilities(req)
 	result, err := clihelper.Run(ctx, clihelper.CommandRequest{
 		Command: command,
 		Args:    args,
@@ -415,10 +426,8 @@ func (adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSin
 		Prompt:  prompt,
 		Observe: parser.onChunk,
 	}, sink)
-	if err != nil {
-		return driver.Response{}, err
-	}
 	parser.finalize()
+	parser.closeCapabilities(ctx.Err() != nil)
 	raw := driver.RawStreams{Stdout: result.RawStreams.Stdout, Stderr: result.RawStreams.Stderr, Terminal: parser.terminal}
 	if req.Session != nil && req.Session.State != nil && req.Session.State.ResumeID != "" &&
 		result.ExitCode != 0 && isCursorUnknownSessionError(raw.Stdout, raw.Stderr) {
@@ -430,7 +439,7 @@ func (adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSin
 			Code:    driver.FailureAgentError,
 			Message: parser.errorMessage,
 		}
-	} else if result.ExitCode == 0 && (parser.protocolMalformed || !parser.terminalSeen || !parser.terminalSuccess) {
+	} else if err == nil && ctx.Err() == nil && result.ExitCode == 0 && (parser.protocolMalformed || !parser.terminalSeen || !parser.terminalSuccess) {
 		message := "Cursor stream-json protocol ended without a successful terminal result"
 		if parser.protocolMalformed {
 			message = "Cursor stream-json protocol was malformed"
@@ -438,6 +447,9 @@ func (adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSin
 		failure = &driver.RunFailure{Code: driver.FailureAgentError, Message: message}
 	}
 	checkpoint := parser.checkpointForOutcome(result.ExitCode, result.Signal, result.TimedOut, failure)
+	if err != nil || ctx.Err() != nil {
+		checkpoint = nil
+	}
 	if checkpoint != nil && checkpoint.State != nil {
 		checkpoint.State.Data = map[string]string{
 			driver.SessionParamCWD:                effectiveCWD,
@@ -460,7 +472,7 @@ func (adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSin
 		Summary:         parser.finalSummary(),
 		RuntimeServices: driverutil.RuntimeReportsFromRefs(req.Runtime.Ensured, req.Agent),
 		Failure:         failure,
-	}, nil
+	}, err
 }
 
 // cursorSafeExtraArgs preserves provider-specific escape hatches while
