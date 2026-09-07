@@ -18,6 +18,7 @@ import (
 	"github.com/agent-dance/agent-adaptor/internal/profilehooks"
 	"github.com/agent-dance/agent-adaptor/internal/profileinstructions"
 	"github.com/agent-dance/agent-adaptor/internal/profilesnapshot"
+	"github.com/agent-dance/agent-adaptor/internal/systemprompt"
 )
 
 // DriverType is the stable descriptor type for the built-in CodeBuddy driver.
@@ -74,6 +75,8 @@ func (adapter) Descriptor() driver.Descriptor {
 	fields = append(fields, profileconfig.CapabilityFields(DriverType)...)
 	return driver.Descriptor{
 		Type:         DriverType,
+		SystemPrompt: driver.SystemPromptCapability{Append: true},
+		Observation:  driver.ObservationCapabilities{Streaming: driver.ObservationSupport{Skills: true, MCP: true, Subagents: true, Todos: true}},
 		DisplayName:  "CodeBuddy Code",
 		Models:       models(),
 		ConfigSchema: &driver.ConfigSchema{Fields: fields},
@@ -113,6 +116,9 @@ func (adapter) ValidateConfig(cfg any) error {
 	if !ok {
 		return errors.New("codebuddy driver requires codebuddy.Config")
 	}
+	if err := validateAppendConfig(config); err != nil {
+		return err
+	}
 	if config.PermissionMode != PermissionUnset {
 		if _, ok := validPermissionModes[config.PermissionMode]; !ok {
 			return fmt.Errorf("codebuddy: unsupported permission_mode %q", config.PermissionMode)
@@ -128,6 +134,9 @@ func (adapter) ValidateConfig(cfg any) error {
 
 func (adapter) CheckEnvironment(_ context.Context, cfg any) (driver.EnvironmentReport, error) {
 	config := readConfig(cfg)
+	if err := validateAppendConfig(config); err != nil {
+		return driver.EnvironmentReport{}, err
+	}
 	command := config.Command
 	if command == "" {
 		command = defaultCommand
@@ -270,6 +279,12 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 		command = defaultCommand
 	}
 
+	if err := systemprompt.ValidateInline(DriverType, req.AppendSystemPrompt); err != nil {
+		return driver.Response{}, err
+	}
+	if err := validateAppendConfig(cfg); err != nil {
+		return driver.Response{}, err
+	}
 	prep, err := a.prepareRun(ctx, cfg, req)
 	if err != nil {
 		return driver.Response{}, err
@@ -287,15 +302,11 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 
 	var writer *persistentWriter
 	resumeID := codeBuddyResumeID(req)
-	if a.persistent != nil && persistentSessionKey(req) != "" {
-		writer = a.persistent.lockWriter(persistentWriterKey(req))
-		defer writer.release()
-	}
 	spec := persistentSpec{
 		command: command, model: requestedModelFlag(cfg), effort: string(cfg.Effort),
 		extraArgs: append([]string(nil), cfg.ExtraArgs...),
 		cwd:       prep.effectiveCWD, env: appendCodeBuddyEntrypoint(prep.env),
-		resumeID: resumeID, prompt: prep.prompt,
+		resumeID: resumeID, prompt: prep.prompt, appendSystemPrompt: req.AppendSystemPrompt,
 		engineSessionID:     persistentSessionKey(req),
 		previousEngineID:    persistentPreviousSessionKey(req),
 		profileFingerprint:  req.ProfilePayload.SessionFingerprint(),
@@ -303,10 +314,30 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 		commandFingerprint:  commandFileFingerprint(command),
 		gracePeriod:         cfg.GracePeriod,
 	}
+	_, decisionCapable := sink.(driver.DecisionCapableSink)
+	usePersistent := a.persistent != nil && persistentSessionKey(req) != "" && !req.Spawn && persistentEligible(cfg, req) && decisionCapable
+	if !usePersistent {
+		executionArgs := buildExecArgs(cfg, req, headlessPermissionMode(cfg, req.Policy), controlRequested)
+		if !controlRequested {
+			executionArgs = append(executionArgs, prep.prompt)
+		}
+		if err := validateAppendCommandIfSet(req.AppendSystemPrompt, command, executionArgs); err != nil {
+			return driver.Response{}, err
+		}
+	}
+
+	if a.persistent != nil && persistentSessionKey(req) != "" {
+		if err := validateAppendCommandIfSet(req.AppendSystemPrompt, command, spec.spawnArgs()); err != nil {
+			return driver.Response{}, err
+		}
+		writer = a.persistent.lockWriter(persistentWriterKey(req))
+		defer writer.release()
+	}
 	if writer != nil && !req.Spawn && persistentEligible(cfg, req) {
 		decisionSink, ok := sink.(driver.DecisionCapableSink)
 		if ok {
 			p := newParser(sink)
+			p.configureObservations(ctx, req)
 			p.enablePersistentControl(ctx, decisionSink, req.RunID, req.Policy.HumanDecision, prep.prompt, resolveConfigDir(prep.bindings))
 			if req.Streaming {
 				p.enableStreaming(req.RunID)
@@ -469,6 +500,7 @@ func buildPersistentCodeBuddyResponse(req driver.Request, p *parser, raw driver.
 			driver.SessionParamProfileFingerprint: req.ProfilePayload.SessionFingerprint(),
 		}
 	}
+	checkpointAppend(checkpoint, req.AppendSystemPrompt)
 	raw.Terminal = p.terminal
 	usage := p.usage
 	if usage == nil && p.stream != nil {
@@ -492,6 +524,9 @@ func (adapter) runHeadless(ctx context.Context, cfg Config, command string, req 
 	args = append(args, prep.prompt)
 
 	p := newParser(sink)
+	if !(req.OutputSchema != nil && req.StructuredOutputSource == driver.StructuredOutputSourceNative) {
+		p.configureObservations(ctx, req)
+	}
 	if req.Streaming {
 		p.enableStreaming(req.RunID)
 	}
@@ -504,7 +539,10 @@ func (adapter) runHeadless(ctx context.Context, cfg Config, command string, req 
 		Observe: p.onChunk,
 	}
 
-	result, err := clihelper.Run(ctx, runReq, sink)
+	if err := validateAppendCommandIfSet(req.AppendSystemPrompt, command, args); err != nil {
+		return driver.Response{}, err
+	}
+	result, err := clihelper.Run(ctx, runReq, appendDiagnosticSink{sink})
 	if err != nil {
 		return driver.Response{}, err
 	}
@@ -543,6 +581,7 @@ func (adapter) runHeadless(ctx context.Context, cfg Config, command string, req 
 		}
 	}
 
+	checkpointAppend(checkpoint, req.AppendSystemPrompt)
 	return driver.Response{
 		Output:           p.buildOutput(),
 		RawStreams:       &raw,
@@ -567,6 +606,9 @@ func validateSessionGuard(req driver.Request, effectiveCWD, profileFingerprint s
 		return nil
 	}
 	data := req.Session.State.Data
+	if data[appendSystemPromptFingerprintKey] != systemprompt.Fingerprint(req.AppendSystemPrompt) {
+		return &engine.ResumeRejectedError{Reason: "append system prompt changed"}
+	}
 	if data[driver.SessionParamCWD] != "" && data[driver.SessionParamCWD] != effectiveCWD {
 		return &engine.ResumeRejectedError{Reason: "session working directory changed"}
 	}

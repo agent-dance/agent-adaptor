@@ -50,7 +50,7 @@ func TestCodeBuddyHeadlessRunPreservesUnclassifiedProcessOutcome(t *testing.T) {
 			res, err := (adapter{}).Run(ctx, driver.Request{
 				RunID:     "run-outcome",
 				Prompt:    "go",
-				Config:    Config{CommonConfig: CommonConfig{Command: command, CWD: home}},
+				Config:    Config{CommonConfig: CommonConfig{Command: command, CWD: home, Env: []driver.EnvBinding{{Name: "HOME", Value: home}, {Name: "USERPROFILE", Value: home}, {Name: "CODEBUDDY_CONFIG_DIR", Value: filepath.Join(home, "profile")}}}},
 				Workspace: driver.WorkspaceLease{CWD: home},
 				Policy:    autoApprovePolicy(),
 			}, sink)

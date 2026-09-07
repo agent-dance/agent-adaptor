@@ -20,6 +20,8 @@ import (
 
 	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/internal/processx"
+	"github.com/agent-dance/agent-adaptor/internal/systemprompt"
+	"runtime"
 )
 
 // errPersistentFallback is returned only while it is still safe to execute
@@ -42,10 +44,11 @@ type persistentSpec struct {
 	cwd       string
 	env       []driver.EnvBinding
 
-	resumeID         string
-	engineSessionID  string
-	previousEngineID string
-	prompt           string
+	resumeID           string
+	engineSessionID    string
+	previousEngineID   string
+	prompt             string
+	appendSystemPrompt string
 
 	profileFingerprint  string
 	settingsFingerprint string
@@ -63,6 +66,9 @@ func (s persistentSpec) spawnArgs() []string {
 	}
 	if s.effort != "" {
 		args = append(args, "--effort", s.effort)
+	}
+	if s.appendSystemPrompt != "" {
+		args = append(args, "--append-system-prompt", s.appendSystemPrompt)
 	}
 	return append(args, codeBuddySafeExtraArgs(s.extraArgs, true)...)
 }
@@ -83,6 +89,7 @@ func (s persistentSpec) sig() string {
 		s.profileFingerprint,
 		s.settingsFingerprint,
 		s.commandFingerprint,
+		systemprompt.Fingerprint(s.appendSystemPrompt),
 	)
 }
 
@@ -390,6 +397,12 @@ func (p *persistentPool) spawn(spec persistentSpec, sink driver.EventSink) (*liv
 	if err != nil {
 		return nil, err
 	}
+	if spec.appendSystemPrompt != "" {
+		if err := systemprompt.ValidateCommandLine(DriverType, command, args, runtime.GOOS); err != nil {
+			return nil, err
+		}
+	}
+
 	procCtx, cancel := context.WithCancel(context.Background())
 	cmd := exec.CommandContext(procCtx, command, args...)
 	processx.ConfigureCancellation(cmd)
@@ -844,7 +857,7 @@ func emitPersistentInvocation(sink driver.EventSink, spec persistentSpec) {
 		Timestamp: time.Now().UTC(),
 		Data: map[string]any{
 			"command":    spec.command,
-			"args":       append([]string(nil), spec.spawnArgs()...),
+			"args":       redactedAppendArgs(spec.spawnArgs()),
 			"cwd":        spec.cwd,
 			"env_keys":   persistentEnvKeys(spec.env),
 			"persistent": true,

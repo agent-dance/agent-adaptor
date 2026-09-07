@@ -41,6 +41,9 @@ func buildExecArgs(cfg Config, req driver.Request, permMode PermissionMode, inte
 	if cfg.MaxTurnsPerRun > 0 {
 		args = append(args, "--max-turns", strconv.Itoa(cfg.MaxTurnsPerRun))
 	}
+	if req.AppendSystemPrompt != "" {
+		args = append(args, "--append-system-prompt", req.AppendSystemPrompt)
+	}
 	args = append(args, codeBuddySafeExtraArgs(cfg.ExtraArgs, control)...)
 	return args
 }

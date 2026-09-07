@@ -17,13 +17,16 @@ type streamingState struct {
 	runID  string
 	parser *parser
 
-	messageID   string
-	textStarted map[int]bool
-	blockKind   map[int]string
-	toolCallID  map[int]string
-	toolName    map[int]string
-	thinkingID  map[int]string
-	signatures  map[int]string
+	messageID          string
+	textStarted        map[int]bool
+	blockKind          map[int]string
+	toolCallID         map[int]string
+	toolName           map[int]string
+	toolInput          map[int]*strings.Builder
+	initialToolInput   map[int]map[string]any
+	observationBlocked map[int]bool
+	thinkingID         map[int]string
+	signatures         map[int]string
 
 	runStarted      bool
 	finishedEmitted bool
@@ -39,16 +42,19 @@ type streamingState struct {
 
 func newStreamingState(sink driver.EventSink, runID string, p *parser) *streamingState {
 	return &streamingState{
-		sink:           sink,
-		runID:          runID,
-		parser:         p,
-		textStarted:    make(map[int]bool),
-		blockKind:      make(map[int]string),
-		toolCallID:     make(map[int]string),
-		toolName:       make(map[int]string),
-		thinkingID:     make(map[int]string),
-		signatures:     make(map[int]string),
-		usageByMessage: make(map[string]*driver.Usage),
+		sink:               sink,
+		runID:              runID,
+		parser:             p,
+		textStarted:        make(map[int]bool),
+		blockKind:          make(map[int]string),
+		toolCallID:         make(map[int]string),
+		toolName:           make(map[int]string),
+		toolInput:          make(map[int]*strings.Builder),
+		initialToolInput:   make(map[int]map[string]any),
+		observationBlocked: make(map[int]bool),
+		thinkingID:         make(map[int]string),
+		signatures:         make(map[int]string),
+		usageByMessage:     make(map[string]*driver.Usage),
 	}
 }
 
@@ -139,6 +145,13 @@ func httpStatusFromPayload(payload map[string]any) (int, bool) {
 
 func (s *streamingState) handleStreamEvent(rawLine string, outer map[string]any) {
 	s.markRunStarted()
+	if s.parser.observation != nil {
+		s.parser.observation.suppressed = observationParentUnproved(outer)
+		if s.parser.observation.suppressed {
+			s.parser.observationNotice("observation_parent_unavailable")
+		}
+		defer func() { s.parser.observation.suppressed = false }()
+	}
 	eventAny, ok := outer["event"]
 	if !ok {
 		s.emitStream(driver.StreamPayload{Name: "stream_event", Raw: outer})
@@ -195,10 +208,18 @@ func (s *streamingState) handleContentBlockStart(event map[string]any) {
 
 	switch bt {
 	case "tool_use":
-		id := topString(block, "id")
-		name := topString(block, "name")
+		id := exactString(block, "id")
+		name := exactString(block, "name")
 		s.toolCallID[idx] = id
 		s.toolName[idx] = name
+		delete(s.toolInput, idx)
+		s.initialToolInput[idx] = topObject(block, "input")
+		if o := s.parser.observation; o != nil {
+			s.observationBlocked[idx] = o.suppressed
+			if o.suppressed {
+				s.parser.observeToolUse(name, id, nil)
+			}
+		}
 		pl := s.basePayload()
 		pl.Kind = driver.StreamToolCallStart
 		pl.ToolCallID = id
@@ -249,7 +270,18 @@ func (s *streamingState) handleContentBlockDelta(event map[string]any) {
 		s.emitStream(pl)
 
 	case "input_json_delta":
+		if o := s.parser.observation; o != nil && o.suppressed {
+			// An unproved wrapper cannot supply arguments to the root block.
+			// Retain the original delta below, but invalidate its attribution
+			// through the stop and any later full wrapper for this call ID.
+			s.observationBlocked[idx] = true
+			s.parser.observeToolUse(s.toolName[idx], s.toolCallID[idx], nil)
+		}
 		raw := exactString(delta, "partial_json")
+		if s.toolInput[idx] == nil {
+			s.toolInput[idx] = &strings.Builder{}
+		}
+		s.toolInput[idx].WriteString(raw)
 		tid := s.toolCallID[idx]
 		if tid == "" {
 			tid = fmt.Sprintf("idx-%d", idx)
@@ -298,6 +330,16 @@ func (s *streamingState) handleContentBlockStop(event map[string]any) {
 			s.emitStream(pl)
 		}
 	case "tool_use":
+		input := s.initialToolInput[idx]
+		if buf := s.toolInput[idx]; buf != nil {
+			input = nil
+			if err := json.Unmarshal([]byte(buf.String()), &input); err != nil {
+				s.parser.observationNotice("observation_input_invalid")
+			}
+		}
+		if !s.observationBlocked[idx] {
+			s.parser.observeToolUse(s.toolName[idx], s.toolCallID[idx], input)
+		}
 		if tid := s.toolCallID[idx]; tid != "" {
 			pl := s.basePayload()
 			pl.Kind = driver.StreamToolCallEnd
@@ -321,6 +363,9 @@ func (s *streamingState) handleContentBlockStop(event map[string]any) {
 	delete(s.textStarted, idx)
 	delete(s.toolCallID, idx)
 	delete(s.toolName, idx)
+	delete(s.toolInput, idx)
+	delete(s.initialToolInput, idx)
+	delete(s.observationBlocked, idx)
 	delete(s.thinkingID, idx)
 	delete(s.signatures, idx)
 }
