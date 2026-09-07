@@ -1,6 +1,10 @@
 package driver
 
-import "time"
+import (
+	"github.com/agent-dance/agent-adaptor/capability"
+	"github.com/agent-dance/agent-adaptor/todo"
+	"time"
+)
 
 // RunEventType describes the category of a streamed RunEvent.
 //
@@ -102,21 +106,25 @@ const (
 // structured extensions. A field already captured by a struct member must not
 // be duplicated into Metadata or Data.
 type TranscriptItem struct {
-	Kind      TranscriptKind
-	Text      string
-	Delta     bool
-	ToolUseID string
-	ToolName  string
-	Input     any
-	IsError   bool
-	Model     string
-	SessionID string
-	Usage     *Usage
-	CostUSD   *float64
-	Subtype   string
-	Errors    []string
-	Metadata  map[string]string
-	Data      map[string]any
+	// ScopeID and parent coordinates identify tools without conflating nested IDs.
+	ScopeID          string
+	ParentScopeID    string
+	ParentToolCallID string
+	Kind             TranscriptKind
+	Text             string
+	Delta            bool
+	ToolUseID        string
+	ToolName         string
+	Input            any
+	IsError          bool
+	Model            string
+	SessionID        string
+	Usage            *Usage
+	CostUSD          *float64
+	Subtype          string
+	Errors           []string
+	Metadata         map[string]string
+	Data             map[string]any
 }
 
 // StreamKind enumerates the protocol-agnostic streaming events drivers emit
@@ -133,6 +141,10 @@ type TranscriptItem struct {
 type StreamKind string
 
 const (
+	// StreamCapabilityInvocation carries a normalized observed capability fact.
+	StreamCapabilityInvocation StreamKind = "capability.invocation"
+	// StreamTodoUpdated carries a confirmed full ordered snapshot.
+	StreamTodoUpdated StreamKind = "todo.updated"
 	// StreamRunStarted marks the beginning of a streamed run.
 	StreamRunStarted StreamKind = "run.started"
 	// StreamRunFinished marks normal completion of a streamed run.
@@ -226,15 +238,33 @@ const (
 //   - hitl.requested / hitl.resolved: HITLRequested / HITLResolved carry the
 //     normalized decision envelope; Raw may carry driver-specific payload.
 //   - stream.dropped: Raw["dropped_count"] reports the count.
+//   - capability.invocation: only Capability plus optional provider envelope
+//     coordinates; no Args, Result, Raw, HITL, Role or tool/text payload.
+//   - todo.updated: only Todo plus optional provider envelope coordinates.
+//     A confirmed empty Items slice clears the scope; unknown updates do not.
+//
+// ScopeID, ParentScopeID and ParentToolCallID preserve formal nested-tool
+// coordinates on tool events and TranscriptItem. An empty parent is unknown;
+// Drivers MUST NOT infer it from a name. A complete Args snapshot and the same
+// content as Args deltas MUST NOT both be emitted. All new observation values
+// are copied at receipt and are critical events under normal backpressure.
 //
 // Drivers MUST leave Sequence, Seq, and Timestamp at their zero values. Core
-// assigns all three monotonically/in receiver order in EmitStream; they have
-// one authority even when multiple driver goroutines emit concurrently.
+// stamps the public event with its receive Sequence and UTC receipt time;
+// there is one authority even when multiple driver goroutines emit concurrently.
 //
 // Sequence and Seq are reserved SPI placeholders. Drivers MUST leave both
 // zero; consumers use the single authoritative sequence in the root Event
 // metadata, which core assigns in receiver order.
 type StreamPayload struct {
+	// ScopeID and parent coordinates correlate nested tool calls within this run.
+	ScopeID          string
+	ParentScopeID    string
+	ParentToolCallID string
+	// Capability is populated only for StreamCapabilityInvocation.
+	Capability *capability.Invocation
+	// Todo is populated only for StreamTodoUpdated. Empty Items explicitly clears.
+	Todo       *todo.Snapshot
 	Kind       StreamKind
 	Sequence   uint64
 	Seq        uint64

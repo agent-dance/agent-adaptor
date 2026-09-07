@@ -606,12 +606,16 @@ func TestEventsCloseOnlyAfterRunServicesAreReleased(t *testing.T) {
 		t.Fatal("run service release did not start")
 	}
 
+	// Every admitted run starts its core envelope before resource teardown.
+	if _, ok := (<-stream.Events()).(adaptor.RunStarted); !ok {
+		t.Fatal("missing core RunStarted")
+	}
 	select {
-	case _, ok := <-stream.Events():
+	case ev, ok := <-stream.Events():
 		if !ok {
 			t.Fatal("Events closed before the run service was released")
 		}
-		t.Fatal("unexpected event while waiting for run service release")
+		t.Fatalf("premature event while waiting for run service release: %T", ev)
 	default:
 	}
 

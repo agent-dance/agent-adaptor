@@ -2,9 +2,14 @@ package adaptor
 
 import (
 	"maps"
+	"reflect"
 	"time"
 
+	"github.com/agent-dance/agent-adaptor/capability"
 	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/internal/capabilityobs"
+	"github.com/agent-dance/agent-adaptor/internal/todoobs"
+	"github.com/agent-dance/agent-adaptor/todo"
 )
 
 // One run produces one ordered stream of typed events. Semantic streaming
@@ -57,7 +62,16 @@ type EventMeta struct {
 
 // EventSourceMeta preserves provider/driver envelope coordinates without
 // allowing them to compete with the SDK's authoritative EventMeta fields.
+// Relay chains contain at most eight nodes, no cycles, and independent copies;
+// opaque coordinates preserve exact UTF-8 text and cannot contain controls.
 type EventSourceMeta struct {
+	// ScopeID, ToolCallID, InvocationID and DelegationID preserve immediate source coordinates.
+	ScopeID      string
+	ToolCallID   string
+	InvocationID string
+	DelegationID string
+	// Upstream retains the previous relay source; at most eight nodes are accepted.
+	Upstream *EventSourceMeta
 	// RunID is the provider-reported run identifier.
 	RunID string
 	// ThreadID is the provider-reported conversation identifier.
@@ -74,10 +88,7 @@ type eventMetaCarrier struct{ meta EventMeta }
 
 func (c eventMetaCarrier) Meta() EventMeta {
 	out := c.meta
-	if out.Source != nil {
-		source := *out.Source
-		out.Source = &source
-	}
+	out.Source = cloneEventSourceMeta(out.Source)
 	return out
 }
 
@@ -147,6 +158,10 @@ type Thinking struct {
 //   - PhaseEnd: closes the lifecycle; Result is populated when the driver
 //     attaches it to the end marker.
 type ToolCall struct {
+	// ScopeID is opaque; parent is (ParentScopeID, ParentToolCallID) within this run.
+	ScopeID          string
+	ParentScopeID    string
+	ParentToolCallID string
 	eventMetaCarrier
 	// ID is the tool-call correlation identifier.
 	ID string
@@ -164,6 +179,10 @@ type ToolCall struct {
 
 // ToolResult carries a completed tool result (StreamKind tool_call.result).
 type ToolResult struct {
+	// ScopeID is opaque; parent is (ParentScopeID, ParentToolCallID) within this run.
+	ScopeID          string
+	ParentScopeID    string
+	ParentToolCallID string
 	eventMetaCarrier
 	// ID correlates with the originating ToolCall.ID.
 	ID string
@@ -180,9 +199,9 @@ type RunStarted struct {
 	ThreadID string
 }
 
-// RunFinished marks the end of a streamed run. Translated from run.finished
-// (Failed == false, Usage populated when the driver reports it) and
-// run.error (Failed == true with the classified Reason / Message).
+// RunFinished is the unique core terminal, published after the final Result,
+// Thread commit and resource cleanup. Failed and Reason match the final Go
+// outcome; the provider terminal remains intact in Result.Raw().
 //
 // RunFinished is informational: the authoritative outcome — including the
 // full Result and the typed *RunError — always comes from Stream.Result().
@@ -278,11 +297,18 @@ type Notice struct {
 
 // Dropped is the aggregated backpressure marker: under the default drop
 // strategy, events discarded because the consumer was slow are counted and
-// surfaced as one Dropped event as soon as the channel has room again.
+// surfaced as one Dropped event as soon as the channel has room again. Pending
+// summaries precede the next critical event. Observation happens before either
+// user send can block. Cancellation/revocation may prevent an already numbered
+// critical event or summary from being delivered; all such events are counted
+// by kind in the final summary, followed by the unique RunFinished in separate
+// reserved slots. Consumers must treat dropped/cancelled state as incomplete.
 // See WithEventBuffer / WithBlockingEvents.
 type Dropped struct {
 	eventMetaCarrier
-	// Count is how many events were dropped since the previous marker.
+	// Count is the number of undelivered typed events, not business invocations.
+	// It includes a numbered but undelivered Dropped marker itself; its original
+	// losses remain counted until a summary reporting them is delivered.
 	Count int
 	// ByKind breaks Count down by the public event kind.
 	ByKind map[string]int
@@ -325,6 +351,23 @@ type SubagentUpdate struct {
 	Data map[string]any
 }
 
+// CapabilityInvocation is a confirmed safe fact. It is reliable during normal
+// execution and observed before user backpressure. Absence is not proof of non-use.
+type CapabilityInvocation struct {
+	eventMetaCarrier
+	Invocation capability.Invocation
+}
+
+// TodoUpdated carries a confirmed full ordered scope snapshot. Empty Items
+// explicitly clears the scope; it is a reliable event, not an ApprovalRequest.
+type TodoUpdated struct {
+	eventMetaCarrier
+	Snapshot todo.Snapshot
+}
+
+func (CapabilityInvocation) isEvent() {}
+func (TodoUpdated) isEvent()          {}
+
 // isEvent implementations seal the Event interface.
 func (TextDelta) isEvent()        {}
 func (Thinking) isEvent()         {}
@@ -354,8 +397,15 @@ func WithEventMeta(ev Event, meta EventMeta) Event {
 // stampEvent returns an event copy carrying the authoritative SDK envelope.
 // ApprovalRequest copies retain the shared exactly-once responder pointer.
 func stampEvent(ev Event, meta EventMeta) Event {
+	ev = cloneEventValue(ev)
 	c := eventMetaCarrier{meta: meta}
 	switch e := ev.(type) {
+	case CapabilityInvocation:
+		e.eventMetaCarrier = c
+		return e
+	case TodoUpdated:
+		e.eventMetaCarrier = c
+		return e
 	case TextDelta:
 		e.eventMetaCarrier = c
 		return e
@@ -402,6 +452,10 @@ func stampEvent(ev Event, meta EventMeta) Event {
 
 func eventKind(ev Event) string {
 	switch e := ev.(type) {
+	case CapabilityInvocation:
+		return "capability.invocation"
+	case TodoUpdated:
+		return "todo.updated"
 	case TextDelta:
 		return "text." + phaseKind(e.Phase)
 	case Thinking:
@@ -501,6 +555,16 @@ func eventFromRunEvent(ev driver.RunEvent) Event {
 // discriminated by Phase or by field population.
 func eventFromStreamPayload(p driver.StreamPayload) Event {
 	switch p.Kind {
+	case driver.StreamCapabilityInvocation:
+		if p.Capability != nil {
+			return CapabilityInvocation{Invocation: capabilityobs.Clone(*p.Capability)}
+		}
+		return nil
+	case driver.StreamTodoUpdated:
+		if p.Todo != nil {
+			return TodoUpdated{Snapshot: todoobs.Clone(*p.Todo)}
+		}
+		return nil
 	case driver.StreamRunStarted:
 		return RunStarted{RunID: p.RunID, ThreadID: p.ThreadID}
 	case driver.StreamRunFinished:
@@ -526,13 +590,13 @@ func eventFromStreamPayload(p driver.StreamPayload) Event {
 		return TextDelta{MessageID: p.MessageID, Role: p.Role, Phase: PhaseEnd}
 
 	case driver.StreamToolCallStart:
-		return ToolCall{ID: p.ToolCallID, Name: p.Name, Args: p.Args, Phase: PhaseStart}
+		return ToolCall{ScopeID: p.ScopeID, ParentScopeID: p.ParentScopeID, ParentToolCallID: p.ParentToolCallID, ID: p.ToolCallID, Name: p.Name, Args: p.Args, Phase: PhaseStart}
 	case driver.StreamToolCallArgs:
-		return ToolCall{ID: p.ToolCallID, ArgsDelta: p.Delta}
+		return ToolCall{ScopeID: p.ScopeID, ParentScopeID: p.ParentScopeID, ParentToolCallID: p.ParentToolCallID, ID: p.ToolCallID, ArgsDelta: p.Delta}
 	case driver.StreamToolCallEnd:
-		return ToolCall{ID: p.ToolCallID, Result: p.Result, Phase: PhaseEnd}
+		return ToolCall{ScopeID: p.ScopeID, ParentScopeID: p.ParentScopeID, ParentToolCallID: p.ParentToolCallID, ID: p.ToolCallID, Result: p.Result, Phase: PhaseEnd}
 	case driver.StreamToolCallResult:
-		return ToolResult{ID: p.ToolCallID, Result: p.Result}
+		return ToolResult{ScopeID: p.ScopeID, ParentScopeID: p.ParentScopeID, ParentToolCallID: p.ParentToolCallID, ID: p.ToolCallID, Result: p.Result}
 
 	case driver.StreamReasoningStart:
 		return Thinking{MessageID: p.MessageID, Phase: PhaseStart}
@@ -643,4 +707,72 @@ func numberValue(v any) int {
 // droppedCount extracts Raw["dropped_count"] from a stream.dropped payload.
 func droppedCount(raw map[string]any) int {
 	return numberValue(raw["dropped_count"])
+}
+
+// cloneEventValue gives every recipient independent mutable values. Approval
+// requests deliberately retain the one responder, never a second answer right.
+func cloneEventValue(ev Event) Event {
+	if ev == nil {
+		return nil
+	}
+	v := reflect.ValueOf(ev)
+	if v.Kind() == reflect.Pointer && v.IsNil() {
+		return nil
+	}
+	if _, ok := ev.(*ApprovalRequest); !ok {
+		if v.Kind() == reflect.Pointer {
+			if e, ok := v.Elem().Interface().(Event); ok {
+				return cloneEventValue(e)
+			}
+		}
+	}
+	cloneMap := func(m map[string]any) map[string]any {
+		if m == nil {
+			return nil
+		}
+		return cloneJSONValue(m).(map[string]any)
+	}
+	switch e := ev.(type) {
+	case CapabilityInvocation:
+		e.Invocation = capabilityobs.Clone(e.Invocation)
+		return e
+	case TodoUpdated:
+		e.Snapshot = todoobs.Clone(e.Snapshot)
+		return e
+	case ToolCall:
+		e.Args = cloneMap(e.Args)
+		e.Result = cloneMap(e.Result)
+		return e
+	case ToolResult:
+		e.Result = cloneMap(e.Result)
+		return e
+	case RunFinished:
+		if e.Usage != nil {
+			u := *e.Usage
+			e.Usage = &u
+		}
+		return e
+	case ProcessInfo:
+		e.Bytes = append([]byte(nil), e.Bytes...)
+		e.Metadata = maps.Clone(e.Metadata)
+		e.Data = cloneMap(e.Data)
+		return e
+	case Notice:
+		e.Metadata = maps.Clone(e.Metadata)
+		e.Data = cloneMap(e.Data)
+		if e.Item != nil {
+			v := cloneTranscript([]TranscriptItem{*e.Item})
+			e.Item = &v[0]
+		}
+		return e
+	case Dropped:
+		e.ByKind = maps.Clone(e.ByKind)
+		e.Details = cloneMap(e.Details)
+		return e
+	case SubagentUpdate:
+		e.Data = cloneMap(e.Data)
+		return e
+	default:
+		return ev
+	}
 }

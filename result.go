@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"reflect"
 	"strings"
 
 	"github.com/agent-dance/agent-adaptor/driver"
@@ -49,8 +50,9 @@ type Result struct {
 	// deliberately separate from Text.
 	Summary string
 	// Usage is normalized token/cost accounting. nil means the provider did
-	// not report usage; a non-nil zero value means usage was observed and all
-	// normalized metrics were explicitly zero.
+	// not report usage; a non-nil zero value means at least one valid usage
+	// metric was observed and the normalized values are all zero. Usage does
+	// not record whether each individual metric was present.
 	Usage *Usage
 	// Metadata is Driver-reported result metadata.
 	Metadata map[string]string
@@ -207,26 +209,61 @@ func cloneServiceReports(reports []ServiceReport) []ServiceReport {
 	return cloned
 }
 
+// cloneJSONValue preserves JSON-compatible Go container types without a
+// marshal round-trip (which would change numbers and concrete map/slice types).
 func cloneJSONValue(value any) any {
-	switch value := value.(type) {
-	case json.RawMessage:
-		return append(json.RawMessage(nil), value...)
-	case []byte:
-		return append([]byte(nil), value...)
-	case []any:
-		clone := make([]any, len(value))
-		for i := range value {
-			clone[i] = cloneJSONValue(value[i])
+	if value == nil {
+		return nil
+	}
+	return cloneJSONContainer(reflect.ValueOf(value), make(map[jsonContainerKey]reflect.Value)).Interface()
+}
+
+type jsonContainerKey struct {
+	typ    reflect.Type
+	ptr    uintptr
+	length int
+}
+
+func cloneJSONContainer(v reflect.Value, seen map[jsonContainerKey]reflect.Value) reflect.Value {
+	switch v.Kind() {
+	case reflect.Interface:
+		if v.IsNil() {
+			return v
 		}
-		return clone
-	case map[string]any:
-		clone := make(map[string]any, len(value))
-		for key, item := range value {
-			clone[key] = cloneJSONValue(item)
+		out := reflect.New(v.Type()).Elem()
+		out.Set(cloneJSONContainer(v.Elem(), seen))
+		return out
+	case reflect.Map, reflect.Slice:
+		if v.IsNil() {
+			return v
 		}
-		return clone
+		key := jsonContainerKey{v.Type(), v.Pointer(), v.Len()}
+		if prior, ok := seen[key]; ok {
+			return prior
+		}
+		if v.Kind() == reflect.Map {
+			out := reflect.MakeMapWithSize(v.Type(), v.Len())
+			seen[key] = out
+			iter := v.MapRange()
+			for iter.Next() {
+				out.SetMapIndex(iter.Key(), cloneJSONContainer(iter.Value(), seen))
+			}
+			return out
+		}
+		out := reflect.MakeSlice(v.Type(), v.Len(), v.Len())
+		seen[key] = out
+		for i := 0; i < v.Len(); i++ {
+			out.Index(i).Set(cloneJSONContainer(v.Index(i), seen))
+		}
+		return out
+	case reflect.Array:
+		out := reflect.New(v.Type()).Elem()
+		for i := 0; i < v.Len(); i++ {
+			out.Index(i).Set(cloneJSONContainer(v.Index(i), seen))
+		}
+		return out
 	default:
-		return value
+		return v
 	}
 }
 

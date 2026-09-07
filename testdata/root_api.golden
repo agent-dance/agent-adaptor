@@ -106,6 +106,15 @@ methodset CallOption {
 	value ApplyRun(*RunSettings)
 }
 
+type CapabilityInvocation struct {
+	Invocation capability.Invocation
+}
+
+methodset CapabilityInvocation {
+	value Meta() EventMeta
+	pointer Meta() EventMeta
+}
+
 type Checkpoint = driver.Checkpoint
 
 type Choice = driver.DecisionChoice
@@ -224,6 +233,11 @@ type EventMeta struct {
 }
 
 type EventSourceMeta struct {
+	ScopeID string
+	ToolCallID string
+	InvocationID string
+	DelegationID string
+	Upstream *EventSourceMeta
 	RunID string
 	ThreadID string
 	TurnID string
@@ -345,6 +359,11 @@ const NoticeTranscriptItem untyped string = "transcript.item"
 methodset Notice {
 	value Meta() EventMeta
 	pointer Meta() EventMeta
+}
+
+type ObservationDemand struct {
+	CapabilityInvocations bool
+	Todos bool
 }
 
 func OnApproval(h ApprovalHandler) SharedOption
@@ -524,6 +543,9 @@ const RoleUser Role = "user"
 func RunAs[T any](ctx context.Context, r Runner, prompt string, opts ...CallOption) (T, *Result, error)
 
 type RunAttachment struct {
+	Observation ObservationDemand
+	Observer RunEventObserver
+	BindEvents func(RunEventPublisher) error
 	Services []ServiceRef
 	Events RunEventSource
 }
@@ -540,6 +562,17 @@ methodset RunError {
 	pointer Error() string
 	pointer Unwrap() error
 }
+
+type RunEventInfo struct {
+	RunID string
+	ThreadKey string
+	Identity Identity
+	DriverType string
+}
+
+type RunEventObserver func(context.Context, RunEventInfo, Event) error
+
+type RunEventPublisher func(context.Context, Event) error
 
 type RunEventSource func(ctx context.Context, runID string) <-chan Event
 
@@ -797,7 +830,19 @@ methodset Thread {
 	pointer Stream(ctx context.Context, prompt string, opts ...CallOption) Stream
 }
 
+type TodoUpdated struct {
+	Snapshot todo.Snapshot
+}
+
+methodset TodoUpdated {
+	value Meta() EventMeta
+	pointer Meta() EventMeta
+}
+
 type ToolCall struct {
+	ScopeID string
+	ParentScopeID string
+	ParentToolCallID string
 	ID string
 	Name string
 	Args map[string]any
@@ -812,6 +857,9 @@ methodset ToolCall {
 }
 
 type ToolResult struct {
+	ScopeID string
+	ParentScopeID string
+	ParentToolCallID string
 	ID string
 	Result map[string]any
 }

@@ -16,9 +16,10 @@ import (
 // resolvedStructuredOutput is computed once after policy validation and before
 // any resources are acquired. Request assembly consumes the same decision.
 type resolvedStructuredOutput struct {
-	schema    *driver.OutputSchema
-	source    driver.StructuredOutputSource
-	streaming bool
+	schema     *driver.OutputSchema
+	source     driver.StructuredOutputSource
+	streaming  bool
+	candidates []transportCandidate
 }
 
 func (a *Agent) resolveStructuredOutput(desc driver.Descriptor, eff *RunSettings) (resolvedStructuredOutput, error) {
@@ -34,23 +35,29 @@ func (a *Agent) resolveStructuredOutput(desc driver.Descriptor, eff *RunSettings
 		policy = eff.policy.driverPolicy()
 	}
 	streaming := providerRichTransport(a.driver)
-	source, err := engine.ResolveStructuredOutputSource(desc, schema, streaming, policy)
-	// Filter each batch candidate independently: a precise matrix includes
-	// inherited Ask defaults, while a nil matrix retains legacy explicit-Ask
-	// semantics. No mechanism may discard its applicable interactive demand.
-	if err != nil && streaming {
+	source, initialErr := engine.ResolveStructuredOutputSource(desc, schema, streaming, policy)
+	candidates := []transportCandidate{}
+	if initialErr == nil {
+		candidates = append(candidates, transportCandidate{streaming: streaming, source: source})
+	}
+	// A batch alternative cannot silently silence any applicable Ask. This
+	// restriction applies to a switch from rich, not to legacy batch drivers.
+	if streaming {
 		batchDesc := desc
 		caps := &batchDesc.StructuredOutput
 		caps.JSONSchemaNative = caps.JSONSchemaNative && !engine.StructuredOutputHasHITLAsk(caps.NativeHITL, policy)
 		caps.JSONSchemaPromptValidate = caps.JSONSchemaPromptValidate && !engine.StructuredOutputHasHITLAsk(caps.PromptValidateHITL, policy)
-		if batchSource, batchErr := engine.ResolveStructuredOutputSource(batchDesc, schema, false, policy); batchErr == nil {
-			streaming, source, err = false, batchSource, nil
+		if schema != nil || !engine.StructuredOutputHasHITLAsk(nil, policy) {
+			if batchSource, batchErr := engine.ResolveStructuredOutputSource(batchDesc, schema, false, policy); batchErr == nil {
+				candidates = append(candidates, transportCandidate{streaming: false, source: batchSource})
+			}
 		}
 	}
-	if err != nil {
-		return resolvedStructuredOutput{}, err
+	if len(candidates) == 0 {
+		return resolvedStructuredOutput{}, initialErr
 	}
-	return resolvedStructuredOutput{schema: schema, source: source, streaming: streaming}, nil
+	selected := candidates[0]
+	return resolvedStructuredOutput{schema: schema, source: selected.source, streaming: selected.streaming, candidates: candidates}, nil
 }
 
 // resolvedRun is everything the invocation coordinator needs from one
@@ -84,8 +91,19 @@ func (a *Agent) resolveRun(ctx context.Context, runID, prompt string, eff *RunSe
 	// 3. Reuse the schema/transport decision made before resource acquisition;
 	// consumer Run and Stream share this exact resolved invocation.
 	schema := eff.resolvedOutput.schema
-	source := eff.resolvedOutput.source
-	providerStreaming := eff.resolvedOutput.streaming
+	demand := ObservationDemand{}
+	if res != nil {
+		demand = res.observation
+	}
+	chosen := eff.resolvedOutput.selectObservation(desc.Observation, demand)
+	source := chosen.source
+	providerStreaming := chosen.streaming
+	if res != nil && res.sink != nil {
+		unavailable := observationUnavailable(desc.Observation, eff.resolvedOutput.candidates, demand)
+		if len(unavailable) > 0 {
+			res.sink.push(Notice{Kind: NoticeRuntime, Data: map[string]any{"code": "observation_unavailable", "capabilities": unavailable}})
+		}
+	}
 	if schema != nil && source == driver.StructuredOutputSourcePromptValidate {
 		if instruction := engine.StructuredOutputPromptInstruction(schema); instruction != "" {
 			prompt = instruction + "\n\n" + prompt
@@ -170,6 +188,7 @@ func (a *Agent) resolveRun(ctx context.Context, runID, prompt string, eff *RunSe
 	req.OutputSchema = engine.CloneOutputSchema(schema)
 	req.StructuredOutputSource = source
 	req.Streaming = providerStreaming
+	req.Observation = driver.ObservationDemand{CapabilityInvocations: demand.CapabilityInvocations, Todos: demand.Todos}
 
 	return resolvedRun{
 		req:    req,
@@ -206,4 +225,70 @@ func (a *Agent) skillDefaultRefs(defaults []driver.SkillRef) []driver.SkillRef {
 		refs = append(refs, driver.SkillKey(key))
 	}
 	return refs
+}
+
+// Each candidate was proven before resource acquisition; attachments only rank
+// immutable candidates. Schema parsing and mechanism eligibility never rerun.
+type transportCandidate struct {
+	streaming bool
+	source    driver.StructuredOutputSource
+}
+
+func (r resolvedStructuredOutput) selectObservation(caps driver.ObservationCapabilities, demand ObservationDemand) transportCandidate {
+	selected := transportCandidate{r.streaming, r.source}
+	score := observationScore(caps, selected.streaming, demand)
+	for _, candidate := range r.candidates {
+		if next := observationScore(caps, candidate.streaming, demand); next > score {
+			score = next
+			selected = candidate
+		}
+	}
+	return selected
+}
+func observationScore(caps driver.ObservationCapabilities, streaming bool, demand ObservationDemand) int {
+	support := caps.Batch
+	if streaming {
+		support = caps.Streaming
+	}
+	score := 0
+	if demand.CapabilityInvocations {
+		for _, ok := range []bool{support.Skills, support.MCP, support.Subagents} {
+			if ok {
+				score++
+			}
+		}
+	}
+	if demand.Todos && support.Todos {
+		score++
+	}
+	return score
+}
+func observationUnavailable(caps driver.ObservationCapabilities, candidates []transportCandidate, demand ObservationDemand) []string {
+	var support driver.ObservationSupport
+	for _, candidate := range candidates {
+		available := caps.Batch
+		if candidate.streaming {
+			available = caps.Streaming
+		}
+		support.Skills = support.Skills || available.Skills
+		support.MCP = support.MCP || available.MCP
+		support.Subagents = support.Subagents || available.Subagents
+		support.Todos = support.Todos || available.Todos
+	}
+	out := []string{}
+	if demand.CapabilityInvocations {
+		if !support.Skills {
+			out = append(out, "skill")
+		}
+		if !support.MCP {
+			out = append(out, "mcp")
+		}
+		if !support.Subagents {
+			out = append(out, "subagent")
+		}
+	}
+	if demand.Todos && !support.Todos {
+		out = append(out, "todo")
+	}
+	return out
 }

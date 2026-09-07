@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/agent-dance/agent-adaptor/driver"
@@ -331,6 +332,41 @@ type RunServiceProvider interface {
 	DetachRun(ctx context.Context, runID string) error
 }
 
+// ObservationDemand requests formal facts independently from Run versus Stream.
+// Zero demand retains the default transport; unavailable facts produce a safe notice.
+type ObservationDemand struct {
+	CapabilityInvocations bool
+	Todos                 bool
+}
+
+// RunEventInfo is an immutable resolved envelope; observers receive a private copy.
+type RunEventInfo struct {
+	RunID      string
+	ThreadKey  string
+	Identity   Identity
+	DriverType string
+}
+
+// RunEventObserver receives only CapabilityInvocation and TodoUpdated before
+// user backpressure, sequentially in accepted order. Calls have a 100ms wall
+// bound, shortened by the remaining total cleanup budget during teardown.
+// First error, panic or timeout disables this observer for this run and
+// emits one safe notice without changing Result, approvals or checkpoints.
+// A callback must honor context before committing external writes; a late host
+// side effect cannot be rolled back. It must not synchronously wait on this run,
+// call its publisher, drain Events, call Result or Agent.Close. Shared stores
+// remain host-owned and are never closed by the SDK.
+type RunEventObserver func(context.Context, RunEventInfo, Event) error
+
+// RunEventPublisher delivers an authorized attachment's host/relayed facts to
+// the sole sink. Provider evidence, lifecycle and approval forgery are rejected.
+// The call context bounds waiting; it does not replace run cancellation. Once
+// revoked, calls immediately return context.Canceled, including calls already
+// blocked in the sink. Accepted but undelivered events remain in Dropped.
+// Callback-context reentry
+// and invalid input return the stable error text "adaptor: invalid run event".
+type RunEventPublisher func(context.Context, Event) error
+
 // RunAttachment is what one provider contributes to one run.
 //
 // Services are merged into the run's runtime payload and — for every ref
@@ -343,8 +379,17 @@ type RunServiceProvider interface {
 //
 // Events, when non-nil, is folded straight into the run's single event channel,
 // interleaved with the driver's own events — there is no second stream to merge
-// and no wrapper goroutine on the driver's hot path.
+// and a shared receive-order gate determines the order of all accepted events.
 type RunAttachment struct {
+	// Observation is OR-merged across attachments; it does not imply an observer.
+	Observation ObservationDemand
+	// Observer is optional and has no implicit transport demand.
+	Observer RunEventObserver
+	// BindEvents receives this run's publisher after all attachments and observers
+	// are installed, in registration order and before input pumps or Driver.Run.
+	// Failure is a pre-launch error with reverse teardown. A fact must use either
+	// this publisher or Events, never both; do not feed accepted facts back to Events.
+	BindEvents func(RunEventPublisher) error
 	// Services are the concrete endpoints this provider ensured for the run.
 	Services []ServiceRef
 	// Events optionally streams provider-side events into the run.
@@ -382,10 +427,18 @@ type runResources struct {
 	runtime        driver.RuntimePayload
 	runtimeEnsured bool
 
-	attached []RunServiceProvider
+	attached    []RunServiceProvider
+	observation ObservationDemand
+	sink        *eventSink
+	revoked     atomic.Bool
+	hardStop    chan struct{}
 
-	pumpCancel context.CancelFunc
-	pumpDone   chan struct{}
+	pumpCancel        context.CancelFunc
+	publisherOnce     sync.Once
+	publisherCtx      context.Context
+	publisherCancel   context.CancelFunc
+	pumpPublishCancel context.CancelFunc
+	pumpDone          chan struct{}
 }
 
 // acquireRun resolves the run's environment in dependency order and returns it
@@ -419,6 +472,7 @@ func (a *Agent) acquireRun(ctx context.Context, runID string, eff *RunSettings, 
 		identity:         identity,
 		workspaceManager: a.defaults.workspaceManager,
 		serviceManager:   a.defaults.serviceManager,
+		sink:             sink,
 	}
 	if a.toolProvider != nil {
 		if err := a.claimHostedToolProfile(ctx, identity, eff.effectiveProfile); err != nil {
@@ -475,6 +529,7 @@ func (a *Agent) acquireRun(ctx context.Context, runID string, eff *RunSettings, 
 	// 3. Provider attachments. The refs join the runtime payload in the
 	// same normalized shape a ServiceManager's would.
 	var sources []RunEventSource
+	var attachments []RunAttachment
 	for _, p := range providers {
 		att, err := p.AttachRun(ctx, runID)
 		if err != nil {
@@ -484,6 +539,9 @@ func (a *Agent) acquireRun(ctx context.Context, runID string, eff *RunSettings, 
 			return nil, errors.Join(err, releaseErr)
 		}
 		r.attached = append(r.attached, p)
+		attachments = append(attachments, att)
+		r.observation.CapabilityInvocations = r.observation.CapabilityInvocations || att.Observation.CapabilityInvocations
+		r.observation.Todos = r.observation.Todos || att.Observation.Todos
 		if len(att.Services) > 0 {
 			// Secrets are harvested from the raw refs before normalization:
 			// normalized refs deliberately carry no
@@ -526,6 +584,23 @@ func (a *Agent) acquireRun(ctx context.Context, runID string, eff *RunSettings, 
 		threadRuntimeCompatibility(r.runtime, runtimeMCP.Fingerprint),
 	)
 
+	observers := make([]RunEventObserver, len(attachments))
+	for i, att := range attachments {
+		observers[i] = att.Observer
+	}
+	sink.installObservers(ctx, RunEventInfo{RunID: runID, ThreadKey: sink.broker.threadKey, Identity: publicIdentity, DriverType: a.driver.Descriptor().Type}, observers)
+	for _, att := range attachments {
+		if att.BindEvents != nil {
+			if err := att.BindEvents(r.publisher()); err != nil {
+				r.revokePublisher()
+				sink.stopObservers()
+				cleanupCtx, cancel := runResourceCleanupContext(ctx)
+				releaseErr := r.release(cleanupCtx)
+				cancel()
+				return nil, errors.Join(err, releaseErr)
+			}
+		}
+	}
 	// 4. Event pumps start before the driver does, so no provider event
 	// published during the run can be missed.
 	r.startPumps(ctx, sink, sources)
@@ -544,10 +619,15 @@ func (r *runResources) startPumps(ctx context.Context, sink *eventSink, sources 
 	// Core's start event must win the first sequence before an attachment is
 	// allowed to publish. Its matching terminal is delayed until stopPumps
 	// has flushed every source.
+	r.sink = sink
 	sink.enableAuthoritativeLifecycle()
 	pumpCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	done := make(chan struct{})
 	r.pumpCancel, r.pumpDone = cancel, done
+	r.hardStop = make(chan struct{})
+	deliveryCtx, deliveryCancel := context.WithCancel(context.WithoutCancel(ctx))
+	r.pumpPublishCancel = deliveryCancel
+	publish := r.publisher()
 
 	var wg sync.WaitGroup
 	for _, src := range sources {
@@ -558,7 +638,17 @@ func (r *runResources) startPumps(ctx context.Context, sink *eventSink, sources 
 		wg.Add(1)
 		go func(ch <-chan Event) {
 			defer wg.Done()
-			for ev := range ch {
+			for {
+				var ev Event
+				select {
+				case <-r.hardStop:
+					return
+				case value, ok := <-ch:
+					if !ok {
+						return
+					}
+					ev = value
+				}
 				// Run services contribute activity inside the run envelope; they
 				// cannot open or close that envelope themselves. Filtering here
 				// keeps lifecycle uniqueness independent of provider correctness.
@@ -566,12 +656,13 @@ func (r *runResources) startPumps(ctx context.Context, sink *eventSink, sources 
 				case RunStarted, *RunStarted, RunFinished, *RunFinished:
 					continue
 				}
-				sink.push(ev)
+				_ = publish(deliveryCtx, ev)
 			}
 		}(ch)
 	}
 	go func() {
 		wg.Wait()
+		deliveryCancel()
 		close(done)
 	}()
 }
@@ -591,6 +682,9 @@ func (r *runResources) stopPumps(ctx context.Context) error {
 	case <-r.pumpDone:
 		return nil
 	case <-ctx.Done():
+		r.revokePublisher()
+		r.pumpPublishCancel()
+		close(r.hardStop)
 		return fmt.Errorf("stop run event sources: %w", ctx.Err())
 	}
 }
@@ -763,12 +857,24 @@ func (r *runResources) finish(ctx context.Context) error {
 	}
 	cleanupCtx, cancel := runResourceCleanupContext(ctx)
 	defer cancel()
+	if r.sink != nil {
+		deadline, _ := cleanupCtx.Deadline()
+		r.sink.limitObserverCleanup(deadline)
+	}
 	var pumpErr error
 	remaining := r.cleanupActionCount()
 	if r.pumpCancel != nil {
 		pumpCtx, pumpCancel := runResourceCleanupStepContext(cleanupCtx, remaining)
+		if r.sink != nil {
+			deadline, _ := pumpCtx.Deadline()
+			r.sink.limitObserverCleanup(deadline)
+		}
 		pumpErr = r.stopPumps(pumpCtx)
 		pumpCancel()
+	}
+	r.revokePublisher()
+	if r.sink != nil {
+		r.sink.stopObservers()
 	}
 	releaseErr := r.release(cleanupCtx)
 	return errors.Join(pumpErr, releaseErr)
@@ -907,6 +1013,40 @@ func boundedCleanupCall(ctx context.Context, call func(context.Context) error) e
 	case err := <-done:
 		return err
 	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (r *runResources) revokePublisher() {
+	r.revoked.Store(true)
+	r.publisherOnce.Do(func() { r.publisherCtx, r.publisherCancel = context.WithCancel(context.Background()) })
+	r.publisherCancel()
+}
+
+func (r *runResources) publisher() RunEventPublisher {
+	r.publisherOnce.Do(func() { r.publisherCtx, r.publisherCancel = context.WithCancel(context.Background()) })
+	return func(ctx context.Context, ev Event) error {
+		if r.revoked.Load() {
+			return context.Canceled
+		}
+		if ctx == nil || ctx.Value(observerContextKey{}) == r.sink {
+			return invalidRunEvent()
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if !validHostEvent(ev) {
+			return invalidRunEvent()
+		}
+		// Cancellation still permits a bounded parser/source tail. Broker abort
+		// counts accepted but undelivered events without waiting on the consumer.
+		callCtx, cancel := context.WithCancel(ctx)
+		stop := context.AfterFunc(r.publisherCtx, cancel)
+		defer func() { stop(); cancel() }()
+		r.sink.broker.publishGuarded(callCtx, cloneEventValue(ev), sourceMetaFromEvent(ev), func() bool { return !r.revoked.Load() })
+		if r.revoked.Load() {
+			return context.Canceled
+		}
 		return ctx.Err()
 	}
 }

@@ -19,6 +19,8 @@ import (
 	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/internal/engine"
 	"github.com/agent-dance/agent-adaptor/internal/mcpruntime"
+	"github.com/agent-dance/agent-adaptor/internal/profilestate"
+	"github.com/agent-dance/agent-adaptor/internal/skillruntime"
 	"github.com/agent-dance/agent-adaptor/internal/toolidentity"
 	"github.com/agent-dance/agent-adaptor/internal/toolruntime"
 	"github.com/agent-dance/agent-adaptor/tool"
@@ -185,6 +187,7 @@ type hostedToolProfileSelection struct {
 	ownedDir        string
 	persistent      *hostedprofile.Claim
 	projectionClean bool
+	runGate         *hostedProfileGate
 }
 
 type hostedToolProfileCompatibilityView struct {
@@ -295,6 +298,53 @@ func (a *Agent) prepareHostedToolProfile(ctx context.Context, eff *RunSettings) 
 	return nil
 }
 
+// lockHostedToolRun coordinates one actual execution directory. The Agent map
+// gate is released before waiting, so distinct isolated profiles can run together.
+func (a *Agent) lockHostedToolRun(ctx context.Context, selection *driver.ProfileSelection) (*hostedProfileGate, error) {
+	if a.toolProvider == nil || selection == nil {
+		return nil, nil
+	}
+	if err := a.toolProfileMu.LockContext(ctx); err != nil {
+		return nil, err
+	}
+	var gate *hostedProfileGate
+	var keys []string
+	for key, current := range a.toolProfileSelections {
+		if current.execution == nil || filepath.Clean(current.execution.Dir) != filepath.Clean(selection.Dir) {
+			continue
+		}
+		keys = append(keys, key)
+		if current.runGate != nil {
+			if gate != nil && gate != current.runGate {
+				a.toolProfileMu.Unlock()
+				return nil, fmt.Errorf("%w: inconsistent hosted profile coordination", profile.ErrUnsafe)
+			}
+			gate = current.runGate
+		}
+	}
+	if len(keys) > 0 {
+		if gate == nil {
+			gate = &hostedProfileGate{}
+		}
+		for _, key := range keys {
+			current := a.toolProfileSelections[key]
+			current.runGate = gate
+			a.toolProfileSelections[key] = current
+		}
+	}
+	a.toolProfileMu.Unlock()
+	if gate == nil {
+		if !mcpruntime.SupportsHostedToolProfile(a.driver.Descriptor().Type) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("%w: hosted profile selection not owned", profile.ErrUnsafe)
+	}
+	if err := gate.LockContext(ctx); err != nil {
+		return nil, err
+	}
+	return gate, nil
+}
+
 func (a *Agent) claimHostedToolProfile(ctx context.Context, identity driver.AgentIdentity, selection *driver.ProfileSelection) error {
 	if a == nil || a.toolProvider == nil {
 		return nil
@@ -357,16 +407,10 @@ func (a *Agent) claimHostedToolProfile(ctx context.Context, identity driver.Agen
 		selected.projectionClean = true
 		a.toolProfileSelections[selectedKey] = selected
 	}
-	materializedFingerprint, err := hostedToolMaterializedProfileFingerprint(driverType, absDir)
-	if err != nil {
-		return fmt.Errorf("fingerprint isolated hosted Tool profile: %w", err)
-	}
-	for selectionKey, selected := range a.toolProfileSelections {
-		if selected.execution == nil || filepath.Clean(selected.execution.Dir) != absDir {
-			continue
-		}
-		selected.compatibility.MaterializedFingerprint = materializedFingerprint
-		a.toolProfileSelections[selectionKey] = selected
+	// Early validation proves ownership and safety only; the immutable run view
+	// is captured after the sole ResolveSkills/InjectSkills phase.
+	if _, err := hostedToolProfileFingerprint(driverType, absDir, nil, false); err != nil {
+		return fmt.Errorf("validate isolated hosted Tool profile: %w", err)
 	}
 	if a.toolProfiles == nil {
 		a.toolProfiles = make(map[string]hostedToolProfileClaim)
@@ -376,21 +420,6 @@ func (a *Agent) claimHostedToolProfile(ctx context.Context, identity driver.Agen
 		return selected.persistent.BeginUse(ctx)
 	}
 	return nil
-}
-
-func (a *Agent) hostedToolProfileCompatibility(profile *driver.ProfileSelection) any {
-	if a == nil || profile == nil || strings.TrimSpace(profile.Dir) == "" {
-		return profile
-	}
-	wanted := filepath.Clean(profile.Dir)
-	a.toolProfileMu.Lock()
-	defer a.toolProfileMu.Unlock()
-	for _, selection := range a.toolProfileSelections {
-		if selection.execution != nil && filepath.Clean(selection.execution.Dir) == wanted {
-			return selection.compatibility
-		}
-	}
-	return profile
 }
 
 // cleanHostedToolProjections runs only after all admitted runs and provider
@@ -481,11 +510,22 @@ type hostedToolProfileFingerprintEntry struct {
 // Authentication files are deliberately excluded: they are linked rather
 // than copied, may rotate independently, and must never enter durable hashes.
 func hostedToolMaterializedProfileFingerprint(driverType, dir string) (string, error) {
+	return hostedToolResolvedProfileFingerprint(driverType, dir, nil)
+}
+
+func hostedToolResolvedProfileFingerprint(driverType, dir string, req *driver.Request) (string, error) {
+	return hostedToolProfileFingerprint(driverType, dir, req, true)
+}
+
+func hostedToolProfileFingerprint(driverType, dir string, req *driver.Request, readResolvedTargets bool) (string, error) {
 	roots := hostedprofile.ResourceRoots(driverType)
 	if roots == nil {
 		return "", fmt.Errorf("unsupported hosted profile driver %q", driverType)
 	}
 	mcpPath, mcpRaw, err := mcpruntime.HostedCompatibilityBaseline(driverType, dir)
+	if err == nil && req != nil {
+		mcpPath, mcpRaw, err = mcpruntime.ResolvedCompatibilityBaseline(driverType, dir, req.MCP)
+	}
 	if err != nil {
 		return "", err
 	}
@@ -507,6 +547,24 @@ func hostedToolMaterializedProfileFingerprint(driverType, dir string) (string, e
 		}
 		roots = append(roots, rel)
 	}
+	var skills *driver.ResolvedSkills
+	if req != nil {
+		skills = &req.Skills
+	}
+	// Hosted Claude, CodeBuddy and Cursor profiles use managed pruning.
+	// Codex retains healthy unselected skills and skips an empty payload.
+	pruneMode := skillruntime.ProfileSkillPruneManaged
+	if driverType == "codex" {
+		pruneMode = skillruntime.ProfileSkillPruneNone
+		if skills != nil && len(skills.Entries) > 0 {
+			pruneMode = skillruntime.ProfileSkillPruneBrokenManaged
+		}
+	}
+	view, err := skillruntime.CompatibilityTargets(dir, manifest, skills, pruneMode)
+	if err != nil {
+		return "", err
+	}
+	targets := view.Targets
 	root, err := os.OpenRoot(dir)
 	if err != nil {
 		return "", err
@@ -516,6 +574,9 @@ func hostedToolMaterializedProfileFingerprint(driverType, dir string) (string, e
 	seen := map[string]bool{}
 	var totalBytes int64
 	for _, name := range roots {
+		if _, projected := targets[filepath.ToSlash(name)]; projected || view.Pruned[filepath.ToSlash(name)] {
+			continue
+		}
 		if _, err := root.Lstat(name); os.IsNotExist(err) {
 			continue
 		} else if err != nil {
@@ -524,6 +585,12 @@ func hostedToolMaterializedProfileFingerprint(driverType, dir string) (string, e
 		err = fs.WalkDir(root.FS(), filepath.ToSlash(name), func(path string, d fs.DirEntry, walkErr error) error {
 			if walkErr != nil {
 				return walkErr
+			}
+			if _, projected := targets[path]; projected || view.Pruned[path] {
+				if d.IsDir() {
+					return fs.SkipDir
+				}
+				return nil
 			}
 			if seen[path] {
 				if d.IsDir() {
@@ -547,6 +614,9 @@ func hostedToolMaterializedProfileFingerprint(driverType, dir string) (string, e
 			if err != nil {
 				return err
 			}
+			if path == mcpPath {
+				return nil
+			}
 			if !info.Mode().IsRegular() {
 				return fmt.Errorf("%w: unverified linked profile resource", profile.ErrUnsafe)
 			}
@@ -558,9 +628,7 @@ func hostedToolMaterializedProfileFingerprint(driverType, dir string) (string, e
 			if totalBytes > 64<<20 {
 				return fmt.Errorf("profile resources exceed byte limit")
 			}
-			if path == mcpPath {
-				raw = mcpRaw
-			} else if strings.HasSuffix(path, ".json") {
+			if strings.HasSuffix(path, ".json") {
 				raw, err = mcpruntime.StrictProfileJSON(raw)
 			} else if strings.HasSuffix(path, ".toml") {
 				var v map[string]any
@@ -576,9 +644,6 @@ func hostedToolMaterializedProfileFingerprint(driverType, dir string) (string, e
 			if err != nil {
 				return err
 			}
-			if len(raw) == 0 && (strings.HasSuffix(path, ".json") || strings.HasSuffix(path, ".toml")) {
-				return nil
-			}
 			digest := sha256.Sum256(raw)
 			entries = append(entries, hostedToolProfileFingerprintEntry{Path: path, Mode: info.Mode().Perm(), Fingerprint: hex.EncodeToString(digest[:])})
 			if len(entries) > 20000 {
@@ -588,6 +653,66 @@ func hostedToolMaterializedProfileFingerprint(driverType, dir string) (string, e
 		})
 		if err != nil {
 			return "", err
+		}
+	}
+	{ // A missing MCP root has its materializer default mode, so cold views agree.
+		mode := fs.FileMode(0644)
+		if info, e := root.Lstat(mcpPath); e == nil {
+			mode = info.Mode().Perm()
+		} else if !os.IsNotExist(e) {
+			return "", e
+		}
+		digest := sha256.Sum256(mcpRaw)
+		entries = append(entries, hostedToolProfileFingerprintEntry{Path: mcpPath, Mode: mode, Fingerprint: hex.EncodeToString(digest[:])})
+	}
+	if len(targets) > 0 && !seen["skills"] {
+		entries = append(entries, hostedToolProfileFingerprintEntry{Path: "skills", Mode: fs.ModeDir | 0755, Fingerprint: "directory"})
+	}
+	for rel, source := range targets {
+		// Early ownership checks may encounter a valid managed link whose
+		// cache is rebuilt by the sole resolver later in this invocation.
+		if !readResolvedTargets {
+			continue
+		}
+		sourceRoot, e := os.OpenRoot(source)
+		if e != nil {
+			return "", e
+		}
+		e = fs.WalkDir(sourceRoot.FS(), ".", func(path string, d fs.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			info, e := sourceRoot.Lstat(path)
+			if e != nil {
+				return e
+			}
+			name := filepath.ToSlash(filepath.Join(rel, path))
+			seen[name] = true
+			if len(seen) > 20000 {
+				return fmt.Errorf("profile resources exceed entry limit")
+			}
+			if d.IsDir() {
+				entries = append(entries, hostedToolProfileFingerprintEntry{Path: name, Mode: info.Mode(), Fingerprint: "directory"})
+				return nil
+			}
+			if !info.Mode().IsRegular() {
+				return fmt.Errorf("%w: linked skill content", profile.ErrUnsafe)
+			}
+			raw, e := hostedprofile.ReadResourceFile(sourceRoot, path, (64<<20)-totalBytes)
+			if e != nil {
+				return e
+			}
+			totalBytes += int64(len(raw))
+			digest := sha256.Sum256(raw)
+			entries = append(entries, hostedToolProfileFingerprintEntry{Path: name, Mode: info.Mode().Perm(), Fingerprint: hex.EncodeToString(digest[:])})
+			return nil
+		})
+		closeErr := sourceRoot.Close()
+		if e != nil {
+			return "", e
+		}
+		if closeErr != nil {
+			return "", closeErr
 		}
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Path < entries[j].Path })
@@ -601,7 +726,54 @@ func (*hostedToolProvider) DetachRun(context.Context, string) error { return nil
 // sessions. The numeric loopback port is intentionally ephemeral across host
 // restarts: Drivers must still materialize the real req.MCP URL, while Thread
 // and provider session guards must see the stable catalog revision instead.
-func (a *Agent) stabilizeHostedToolCompatibility(req *driver.Request) string {
+func (a *Agent) stabilizeHostedToolCompatibility(ctx context.Context, req *driver.Request) (string, any, error) {
+	var view any = req.Profile
+	if a.toolProvider != nil && req.Profile != nil {
+		if err := a.toolProfileMu.LockContext(ctx); err != nil {
+			return "", nil, err
+		}
+		var selections []hostedToolProfileSelection
+		for _, selection := range a.toolProfileSelections {
+			selections = append(selections, selection)
+		}
+		a.toolProfileMu.Unlock()
+		for _, selection := range selections {
+			if selection.execution == nil || filepath.Clean(selection.execution.Dir) != filepath.Clean(req.Profile.Dir) {
+				continue
+			}
+			if selection.persistent != nil {
+				if err := selection.persistent.Validate(ctx); err != nil {
+					return "", nil, err
+				}
+			}
+			lock, err := profilestate.AcquireLock(ctx, req.Profile.Dir, profilestate.LockOptions{})
+			if err != nil {
+				return "", nil, err
+			}
+			fingerprint, err := hostedToolResolvedProfileFingerprint(a.driver.Descriptor().Type, req.Profile.Dir, req)
+			releaseErr := lock.Release()
+			if err != nil {
+				return "", nil, err
+			}
+			if releaseErr != nil {
+				return "", nil, releaseErr
+			}
+			snapshot := selection.compatibility
+			snapshot.Requested = engine.CloneProfileSelection(snapshot.Requested)
+			snapshot.MaterializedFingerprint = fingerprint
+			view = snapshot
+			break
+		}
+	}
+	mcpFingerprint := a.normalizeHostedToolMCPCompatibility(req)
+	if snapshot, ok := view.(hostedToolProfileCompatibilityView); ok {
+		req.ProfilePayload.Fingerprint = engine.StableHash("adaptor/resolved-profile/v1", req.ProfilePayload.Fingerprint, snapshot.MaterializedFingerprint)
+		req.ProfilePayload.SessionCompatibilityFingerprint = engine.StableHash("adaptor/resolved-profile-session/v1", req.ProfilePayload.SessionCompatibilityFingerprint, snapshot.MaterializedFingerprint)
+	}
+	return mcpFingerprint, view, nil
+}
+
+func (a *Agent) normalizeHostedToolMCPCompatibility(req *driver.Request) string {
 	if a == nil || req == nil || a.toolProvider == nil {
 		if req == nil {
 			return ""

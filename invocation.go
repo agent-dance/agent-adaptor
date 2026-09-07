@@ -46,6 +46,7 @@ func (a *Agent) startInvocation(ctx context.Context, prompt string, opts []CallO
 // call and the sole ThreadSessionPlan.Persist call in the root execution path.
 func (a *Agent) executeInvocation(ctx context.Context, st *runStream, prompt string, eff *RunSettings, target *invocationTarget) {
 	defer a.unregisterRun(st.runID)
+	st.sink.enableAuthoritativeLifecycle()
 	var (
 		resources       *runResources
 		plan            *engine.ThreadSessionPlan
@@ -131,6 +132,17 @@ func (a *Agent) executeInvocation(ctx context.Context, st *runStream, prompt str
 		return
 	}
 
+	// Lock the actual hosted execution directory through claim, resolution,
+	// immutable snapshot and Driver return; unrelated profiles remain independent.
+	profileGate, gateErr := a.lockHostedToolRun(ctx, eff.effectiveProfile)
+	if gateErr != nil {
+		resultErr = gateErr
+		return
+	}
+	if profileGate != nil {
+		defer profileGate.Unlock()
+	}
+
 	resources, resultErr = a.acquireRun(ctx, st.runID, eff, st.sink)
 	if resultErr != nil {
 		resultErr = fmt.Errorf("adaptor: run %s: %w", st.runID, resultErr)
@@ -148,10 +160,14 @@ func (a *Agent) executeInvocation(ctx context.Context, st *runStream, prompt str
 	if eff.identity != nil {
 		identity = eff.identity.driverIdentity()
 	}
+	mcpCompatibilityFingerprint, profileSnapshot, snapshotErr := a.stabilizeHostedToolCompatibility(ctx, &resolved.req)
+	if snapshotErr != nil {
+		resultErr = fmt.Errorf("adaptor: resolved profile snapshot: %w", snapshotErr)
+		return
+	}
 	fingerprint := ""
 	if target != nil {
-		mcpCompatibilityFingerprint := a.stabilizeHostedToolCompatibility(&resolved.req)
-		fingerprint = a.threadInvocationFingerprint(identity, resolved.req, threadContract, mcpCompatibilityFingerprint)
+		fingerprint = a.threadInvocationFingerprint(identity, resolved.req, threadContract, mcpCompatibilityFingerprint, profileSnapshot)
 		req := engine.SessionRequest{
 			Namespace: threadNamespace,
 			Key:       target.thread.key,
@@ -253,7 +269,7 @@ func (a *Agent) executeInvocation(ctx context.Context, st *runStream, prompt str
 // stable, secret-safe contract; the remaining values are the concrete request
 // handed to that same configured driver (including the acquired workspace and
 // runtime-service attachment payloads).
-func (a *Agent) threadInvocationFingerprint(identity driver.AgentIdentity, req driver.Request, contract threadDriverContract, mcpCompatibilityFingerprint string) string {
+func (a *Agent) threadInvocationFingerprint(identity driver.AgentIdentity, req driver.Request, contract threadDriverContract, mcpCompatibilityFingerprint string, profileSnapshot any) string {
 	runtimeCompatibility := threadRuntimeCompatibility(req.Runtime, mcpCompatibilityFingerprint)
 	a.normalizeHostedToolServiceCompatibility(&runtimeCompatibility)
 	// Hosted Tool normalization changes one URL after the generic view was
@@ -269,7 +285,8 @@ func (a *Agent) threadInvocationFingerprint(identity driver.AgentIdentity, req d
 		req.ModelOverride,
 		req.Workspace,
 		runtimeCompatibility,
-		a.hostedToolProfileCompatibility(req.Profile),
+		profileSnapshot,
+		req.Streaming,
 		req.ProfilePayload.SessionFingerprint(),
 		req.Skills.Fingerprint,
 		engine.InstructionFingerprint(req.Instructions),

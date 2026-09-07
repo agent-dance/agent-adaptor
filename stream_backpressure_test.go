@@ -37,9 +37,9 @@ func deltaOf(t *testing.T, ev adaptor.Event) string {
 }
 
 // TestDropModeAggregatesAndOrders pins count, single-marker aggregation, and
-// marker-before-next-event ordering. Buffer 2; e1..e5 emitted with no
-// consumer (e3..e5 dropped); after the consumer drains two, the next
-// emission must flush Dropped{3} BEFORE itself.
+// marker-before-next-event ordering. Buffer 2 holds core RunStarted and e1;
+// e2..e5 are dropped. After the consumer drains both, the next emission must
+// flush Dropped{4} before itself, and the core terminal remains last.
 func TestDropModeAggregatesAndOrders(t *testing.T) {
 	emitted := make(chan struct{})
 	drained := make(chan struct{})
@@ -49,8 +49,8 @@ func TestDropModeAggregatesAndOrders(t *testing.T) {
 		for n := 1; n <= 5; n++ {
 			_ = sink.EmitStream(numberedPayload(n))
 		}
-		close(emitted) // buffer now holds e1,e2; e3..e5 dropped
-		<-drained      // consumer took e1,e2
+		close(emitted) // buffer holds core start,e1; e2..e5 dropped
+		<-drained      // consumer took core start,e1
 		_ = sink.EmitStream(numberedPayload(6))
 		return driver.Response{Output: "ok"}, nil
 	}
@@ -61,8 +61,11 @@ func TestDropModeAggregatesAndOrders(t *testing.T) {
 	<-emitted
 	ev1 := <-st.Events()
 	ev2 := <-st.Events()
-	if got := deltaOf(t, ev1) + deltaOf(t, ev2); got != "e1e2" {
-		t.Fatalf("first two events = %q, want e1e2 (drops never reorder survivors)", got)
+	if _, ok := ev1.(adaptor.RunStarted); !ok || ev1.Meta().Sequence != 1 {
+		t.Fatal("missing authoritative start", ev1)
+	}
+	if got := deltaOf(t, ev2); got != "e1" || ev2.Meta().Sequence != 2 {
+		t.Fatal("start must occupy one normal slot", ev2)
 	}
 	close(drained)
 
@@ -74,19 +77,20 @@ func TestDropModeAggregatesAndOrders(t *testing.T) {
 		t.Fatalf("Result: %v", err)
 	}
 
-	if len(rest) != 2 {
-		t.Fatalf("want [Dropped e6], got %#v", rest)
+	if len(rest) != 3 {
+		t.Fatalf("want [Dropped e6 RunFinished], got %#v", rest)
 	}
 	drop, ok := rest[0].(adaptor.Dropped)
 	if !ok {
 		t.Fatalf("marker must precede the event that flushed it, got %#v", rest[0])
 	}
-	if drop.Count != 3 {
-		t.Errorf("Dropped.Count = %d, want 3 (aggregated, one marker)", drop.Count)
+	if drop.Count != 4 || drop.ByKind["text.content"] != 4 || drop.FirstSequence != 3 || drop.LastSequence != 6 {
+		t.Fatal("incomplete delta loss accounting", drop)
 	}
 	if got := deltaOf(t, rest[1]); got != "e6" {
 		t.Errorf("event after marker = %q, want e6", got)
 	}
+	assertBackpressureTerminal(t, rest[2], st.RunID(), 9)
 }
 
 // TestDropModeFlushesMarkerAtClose: drops with no further emission are
@@ -100,7 +104,7 @@ func TestDropModeFlushesMarkerAtClose(t *testing.T) {
 		for n := 1; n <= 6; n++ {
 			_ = sink.EmitStream(numberedPayload(n))
 		}
-		close(emitted) // buffer 4 holds e1..e4; e5,e6 dropped; nothing else emitted
+		close(emitted) // buffer 4 holds start,e1..e3; e4..e6 dropped
 		<-freed        // consumer freed a slot: the close-time flush fits
 		return driver.Response{Output: "ok"}, nil
 	}
@@ -108,6 +112,11 @@ func TestDropModeFlushesMarkerAtClose(t *testing.T) {
 	agent := adaptor.New(fake, adaptor.WithEventBuffer(4))
 	st := agent.Stream(context.Background(), "overflow-then-end")
 	<-emitted
+	if ev := <-st.Events(); ev.Meta().Sequence != 1 {
+		t.Fatal(ev)
+	} else if _, ok := ev.(adaptor.RunStarted); !ok {
+		t.Fatal("missing core start", ev)
+	}
 	first := deltaOf(t, <-st.Events())
 	if first != "e1" {
 		t.Fatalf("first event = %q, want e1", first)
@@ -119,17 +128,18 @@ func TestDropModeFlushesMarkerAtClose(t *testing.T) {
 		t.Fatalf("Result: %v", err)
 	}
 	if len(events) != 4 {
-		t.Fatalf("want e2..e4 + terminal Dropped, got %#v", events)
+		t.Fatalf("want e2,e3,Dropped,RunFinished, got %#v", events)
 	}
-	for n := 2; n <= 4; n++ {
+	for n := 2; n <= 3; n++ {
 		if got := deltaOf(t, events[n-2]); got != fmt.Sprintf("e%d", n) {
 			t.Errorf("events[%d] = %q, want e%d", n-2, got, n)
 		}
 	}
-	drop, ok := events[3].(adaptor.Dropped)
-	if !ok || drop.Count != 2 {
-		t.Errorf("terminal marker = %#v, want Dropped{2}", events[3])
+	drop, ok := events[2].(adaptor.Dropped)
+	if !ok || drop.Count != 3 || drop.FirstSequence != 5 || drop.LastSequence != 7 {
+		t.Errorf("terminal marker = %#v, want Dropped{3} covering e4..e6", events[2])
 	}
+	assertBackpressureTerminal(t, events[3], st.RunID(), 9)
 }
 
 // TestWithEventBufferSizes: a buffer big enough for the burst drops nothing.
@@ -147,11 +157,13 @@ func TestWithEventBufferSizes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Result: %v", err)
 	}
-	if len(events) != 6 {
-		t.Fatalf("want all 6 events, got %d: %#v", len(events), events)
+	if len(events) != 8 {
+		t.Fatalf("want start, all 6 deltas, terminal; got %d: %#v", len(events), events)
 	}
+	assertBackpressureStart(t, events[0])
+	assertBackpressureTerminal(t, events[7], events[0].Meta().RunID, 8)
 	for n := 1; n <= 6; n++ {
-		if got := deltaOf(t, events[n-1]); got != fmt.Sprintf("e%d", n) {
+		if got := deltaOf(t, events[n]); got != fmt.Sprintf("e%d", n) {
 			t.Errorf("events[%d] = %q, want e%d", n-1, got, n)
 		}
 	}
@@ -175,11 +187,13 @@ func TestBlockingEventsNeverDrop(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Result: %v", err)
 	}
-	if len(events) != total {
-		t.Fatalf("want %d events, got %d", total, len(events))
+	if len(events) != total+2 {
+		t.Fatalf("want %d events including core envelope, got %d", total+2, len(events))
 	}
+	assertBackpressureStart(t, events[0])
+	assertBackpressureTerminal(t, events[total+1], events[0].Meta().RunID, total+2)
 	for n := 1; n <= total; n++ {
-		if got := deltaOf(t, events[n-1]); got != fmt.Sprintf("e%d", n) {
+		if got := deltaOf(t, events[n]); got != fmt.Sprintf("e%d", n) {
 			t.Fatalf("events[%d] = %q, want e%d (blocking mode must preserve order)", n-1, got, n)
 		}
 	}
@@ -200,9 +214,11 @@ func TestEmitAfterRunEndIsNoop(t *testing.T) {
 	if err != nil || res.Text != "ok" {
 		t.Fatalf("run: res=%v err=%v", res, err)
 	}
-	if len(events) != 0 {
-		t.Fatalf("unexpected events: %#v", events)
+	if len(events) != 2 {
+		t.Fatalf("want only the core envelope: %#v", events)
 	}
+	assertBackpressureStart(t, events[0])
+	assertBackpressureTerminal(t, events[1], res.RunID, 2)
 
 	// The channel is closed now; both emit paths must be silent no-ops.
 	if err := captured.Emit(driver.RunEvent{Type: driver.RunEventLifecycle, Text: "late"}); err != nil {
@@ -210,5 +226,18 @@ func TestEmitAfterRunEndIsNoop(t *testing.T) {
 	}
 	if err := captured.EmitStream(numberedPayload(99)); err != nil {
 		t.Errorf("late EmitStream: %v", err)
+	}
+}
+
+func assertBackpressureStart(t *testing.T, ev adaptor.Event) {
+	t.Helper()
+	if _, ok := ev.(adaptor.RunStarted); !ok || ev.Meta().Sequence != 1 || ev.Meta().RunID == "" {
+		t.Fatal("invalid core start", ev)
+	}
+}
+func assertBackpressureTerminal(t *testing.T, ev adaptor.Event, runID string, sequence uint64) {
+	t.Helper()
+	if terminal, ok := ev.(adaptor.RunFinished); !ok || terminal.Failed || terminal.Meta().RunID != runID || terminal.Meta().Sequence != sequence {
+		t.Fatal("invalid core terminal", ev)
 	}
 }

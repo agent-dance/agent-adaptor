@@ -18,12 +18,14 @@ type eventBroker struct {
 	runID     string
 	threadKey string
 	blocking  bool
-	// normalCapacity is the consumer-configured event buffer. events has one
-	// additional physical slot reserved exclusively for the authoritative
-	// terminal event. Ordinary producers must never consume that slot.
+	// normalCapacity is the consumer-configured event buffer. events has two
+	// additional physical slots reserved for the final loss summary and
+	// authoritative terminal event. Ordinary producers must never consume those slots.
 	normalCapacity int
 
-	mu       sync.Mutex
+	// observe runs after stamping, before user enqueue, under this receive-order lock.
+	observe  func(Event) []Event
+	mu       eventPublicationGate
 	closed   bool
 	terminal bool
 	sequence uint64
@@ -45,11 +47,11 @@ func newEventBroker(runID, threadKey string, buffer int, blocking bool) *eventBr
 	if buffer <= 0 {
 		buffer = defaultEventBuffer
 	}
-	if buffer == int(^uint(0)>>1) {
+	if buffer > int(^uint(0)>>1)-2 {
 		panic("adaptor: event buffer is too large to reserve terminal capacity")
 	}
 	return &eventBroker{
-		events:         make(chan Event, buffer+1),
+		events:         make(chan Event, buffer+2),
 		runID:          runID,
 		threadKey:      threadKey,
 		blocking:       blocking,
@@ -64,12 +66,17 @@ func (b *eventBroker) publish(ev Event, source *EventSourceMeta) bool {
 }
 
 func (b *eventBroker) publishContext(ctx context.Context, ev Event, source *EventSourceMeta) bool {
+	return b.publishGuarded(ctx, ev, source, nil)
+}
+func (b *eventBroker) publishGuarded(ctx context.Context, ev Event, source *EventSourceMeta, valid func() bool) bool {
 	if ev == nil {
 		return true
 	}
-	b.mu.Lock()
+	if err := b.mu.LockContext(ctx); err != nil {
+		return false
+	}
 	defer b.mu.Unlock()
-	if b.closed || b.terminal {
+	if b.closed || b.terminal || (valid != nil && !valid()) {
 		return false
 	}
 	return b.publishLocked(ctx, ev, source)
@@ -91,21 +98,18 @@ func (b *eventBroker) publishTerminal(ev Event, source *EventSourceMeta) bool {
 	}
 	b.terminal = true
 
-	// On a normal completion, retain the existing guarantee that an aggregate
-	// Dropped marker precedes the terminal. Cancellation is different: abort
-	// must not wait for a consumer, and pending droppable deltas may be
-	// abandoned. The terminal itself is never abandoned.
-	if !b.abortedLocked() && b.dropped.count > 0 {
-		if !b.flushDroppedLocked(context.Background(), true) {
-			// The only normal failure is a concurrent abort. Discard the pending
-			// aggregate so the reserved terminal slot remains independently usable.
-			b.dropped = dropAggregate{}
-		}
+	// Two private slots preserve both the full cancellation loss summary and
+	// the terminal, even when the consumer never drains the normal buffer.
+	if b.dropped.count > 0 {
+		marker := b.dropMarkerLocked()
+		b.sequence = marker.Meta().Sequence
+		b.dropped = dropAggregate{}
+		b.events <- marker
 	}
 
 	ev = b.stampNextLocked(ev, source)
 	// Ordinary publication is capped at normalCapacity, while the physical
-	// channel has normalCapacity+1 slots. With b.mu held, no other sender can
+	// channel has normalCapacity+2 slots. With b.mu held, no other sender can
 	// consume the reserve and the consumer can only create more space; this
 	// non-blocking send is therefore guaranteed to succeed.
 	select {
@@ -121,43 +125,54 @@ func (b *eventBroker) publishTerminal(ev Event, source *EventSourceMeta) bool {
 
 // publishLocked performs one publication while b.mu is held.
 func (b *eventBroker) publishLocked(ctx context.Context, ev Event, source *EventSourceMeta) bool {
-	if b.abortedLocked() {
-		// Cancellation is an abort, not a second normal drain phase. Deltas
-		// are discarded; a late terminal/critical event may use already-free
-		// buffer space but is never allowed to block teardown.
-		if eventMayDrop(ev) {
-			return false
-		}
-		if len(b.events) >= b.normalCapacity {
-			return false
-		}
-		ev = b.stampNextLocked(ev, source)
-		b.events <- ev
-		return true
-	}
-
 	reliable := b.blocking || !eventMayDrop(ev)
-	// A pending marker must receive and be delivered with a lower sequence
-	// than the next surviving event. If it cannot fit in drop mode, stamp the
-	// current delta afterwards and add it to the same aggregate.
-	if b.dropped.count > 0 && !b.flushDroppedLocked(ctx, reliable) {
-		if !reliable {
+	var pendingMarker Event
+	if !b.abortedLocked() && b.dropped.count > 0 {
+		if reliable {
+			// Reserve both coordinates before observing the fact, but do not
+			// wait for any user send until that observation completes.
+			pendingMarker = b.dropMarkerLocked()
+			b.sequence = pendingMarker.Meta().Sequence
+		} else if !b.flushDroppedLocked(ctx, false) {
 			ev = b.stampNextLocked(ev, source)
 			b.recordDropLocked(ev)
+			return false
 		}
-		return false
 	}
 
 	ev = b.stampNextLocked(ev, source)
-	if reliable {
-		return b.sendLocked(ctx, ev)
+	var notices []Event
+	if b.observe != nil {
+		notices = b.observe(ev)
 	}
-	if len(b.events) >= b.normalCapacity {
+	if pendingMarker != nil {
+		if b.sendLocked(ctx, pendingMarker) {
+			b.dropped = dropAggregate{}
+		} else {
+			// Its original losses remain outstanding. The assigned summary
+			// event was also not delivered, so it has its own dropped count.
+			b.recordDropLocked(pendingMarker)
+		}
+	}
+	var sent bool
+	if b.abortedLocked() {
+		if !eventMayDrop(ev) && len(b.events) < b.normalCapacity {
+			b.events <- ev
+			sent = true
+		}
+	} else if reliable {
+		sent = b.sendLocked(ctx, ev)
+	} else if len(b.events) < b.normalCapacity {
+		b.events <- ev
+		sent = true
+	}
+	if !sent {
 		b.recordDropLocked(ev)
-		return false
 	}
-	b.events <- ev
-	return true
+	for _, notice := range notices {
+		b.publishLocked(ctx, notice, nil)
+	}
+	return sent
 }
 
 func (b *eventBroker) stampNextLocked(ev Event, source *EventSourceMeta) Event {
@@ -183,7 +198,7 @@ func (b *eventBroker) sendLocked(ctx context.Context, ev Event) bool {
 	// The public receive-only channel cannot notify the broker when a consumer
 	// drains one item. Recheck its length only on the saturated slow path; the
 	// mutex keeps producers ordered and the consumer can only lower len(events).
-	// This preserves one physical slot for the terminal without adding a second
+	// This preserves the two final publication slots without adding a second
 	// event queue or making cancellation wait for the consumer.
 	const probeInterval = time.Millisecond
 	timer := time.NewTimer(probeInterval)
@@ -226,24 +241,8 @@ func (b *eventBroker) flushDroppedLocked(ctx context.Context, reliable bool) boo
 	if b.dropped.count == 0 {
 		return true
 	}
-	markerSequence := b.sequence + 1
-	marker := stampEvent(Dropped{
-		Count:         b.dropped.count,
-		ByKind:        b.dropped.byKind,
-		FirstSequence: b.dropped.first,
-		LastSequence:  b.dropped.last,
-		Reason:        "slow_consumer",
-		Source:        "sdk.event_broker",
-		Details: map[string]any{
-			"buffer":   b.normalCapacity,
-			"strategy": "drop_deltas",
-		},
-	}, EventMeta{
-		RunID:     b.runID,
-		ThreadKey: b.threadKey,
-		Sequence:  markerSequence,
-		Time:      time.Now().UTC(),
-	})
+	marker := b.dropMarkerLocked()
+	markerSequence := marker.Meta().Sequence
 
 	var sent bool
 	if reliable {
@@ -305,5 +304,63 @@ func cloneEventSourceMeta(in *EventSourceMeta) *EventSourceMeta {
 		return nil
 	}
 	out := *in
+	seen := map[*EventSourceMeta]*EventSourceMeta{in: &out}
+	dst, src := &out, in
+	for src.Upstream != nil {
+		if prior, ok := seen[src.Upstream]; ok {
+			dst.Upstream = prior
+			break
+		}
+		next := *src.Upstream
+		dst.Upstream = &next
+		src = src.Upstream
+		dst = &next
+		seen[src] = dst
+	}
 	return &out
 }
+
+func (b *eventBroker) dropMarkerLocked() Event {
+	markerSequence := b.sequence + 1
+	return stampEvent(Dropped{
+		Count:         b.dropped.count,
+		ByKind:        b.dropped.byKind,
+		FirstSequence: b.dropped.first,
+		LastSequence:  b.dropped.last,
+		Reason:        "slow_consumer",
+		Source:        "sdk.event_broker",
+		Details: map[string]any{
+			"buffer":   b.normalCapacity,
+			"strategy": "drop_deltas",
+		},
+	}, EventMeta{
+		RunID:     b.runID,
+		ThreadKey: b.threadKey,
+		Sequence:  markerSequence,
+		Time:      time.Now().UTC(),
+	})
+
+}
+
+// eventPublicationGate permits a publisher to abandon its wait before its
+// event is accepted. Abort remains independent from this receive-order gate.
+type eventPublicationGate struct {
+	once  sync.Once
+	token chan struct{}
+}
+
+func (g *eventPublicationGate) LockContext(ctx context.Context) error {
+	g.once.Do(func() { g.token = make(chan struct{}, 1); g.token <- struct{}{} })
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-g.token:
+		if err := ctx.Err(); err != nil {
+			g.token <- struct{}{}
+			return err
+		}
+		return nil
+	}
+}
+func (g *eventPublicationGate) Lock()   { _ = g.LockContext(context.Background()) }
+func (g *eventPublicationGate) Unlock() { g.token <- struct{}{} }
