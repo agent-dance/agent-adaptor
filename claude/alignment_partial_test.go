@@ -206,3 +206,72 @@ func TestAlignmentClaudeInterleavedMessageUsage(t *testing.T) {
 		t.Fatalf("interleaved root/nested usage attribution: %#v", got)
 	}
 }
+
+func TestAlignmentClaudeUsageObservation(t *testing.T) {
+	frames := map[string]string{
+		"start":     `{"type":"stream_event","event":{"type":"message_start","message":{"id":"observed","usage":%s}}}`,
+		"delta":     `{"type":"stream_event","event":{"type":"message_delta","usage":%s}}`,
+		"assistant": `{"type":"assistant","message":{"id":"observed","usage":%s,"content":[]}}`,
+		"terminal":  `{"type":"result","subtype":"success","is_error":false,"session_id":"session-c04","result":"done","usage":%s}`,
+	}
+	for _, tc := range []struct {
+		name, usage string
+		want        *driver.Usage
+	}{
+		{"empty", `{}`, nil},
+		{"unknown_field", `{"unknown":0}`, nil},
+		{"string", `{"input_tokens":"unknown","output_tokens":"0","cache_read_input_tokens":"1"}`, nil},
+		{"negative", `{"input_tokens":-2,"output_tokens":-2,"cache_read_input_tokens":-2}`, nil},
+		{"fractional", `{"input_tokens":0.5,"output_tokens":0.5,"cache_read_input_tokens":0.5}`, nil},
+		{"out_of_range", `{"input_tokens":1e40,"output_tokens":1e40,"cache_read_input_tokens":1e40}`, nil},
+		{"null_bool", `{"input_tokens":null,"output_tokens":false,"cache_read_input_tokens":true}`, nil},
+		{"input_zero", `{"input_tokens":0}`, &driver.Usage{}},
+		{"output_zero", `{"output_tokens":0}`, &driver.Usage{}},
+		{"cached_zero", `{"cache_read_input_tokens":0}`, &driver.Usage{}},
+		{"positive", `{"input_tokens":10,"output_tokens":5,"cache_read_input_tokens":2}`, &driver.Usage{InputTokens: 10, OutputTokens: 5, CachedInputTokens: 2}},
+		{"valid_with_invalid", `{"input_tokens":2,"output_tokens":-1,"cache_read_input_tokens":"unknown"}`, &driver.Usage{InputTokens: 2}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for name, frame := range frames {
+				t.Run(name, func(t *testing.T) {
+					p := newClaudeParser(&streamSink{})
+					p.enableStreaming("usage-observation")
+					raw := fmt.Sprintf(frame, tc.usage) + "\n"
+					if err := p.onChunk("stdout", []byte(raw), time.Now()); err != nil {
+						t.Fatal(err)
+					}
+					p.finalize()
+					response, _ := buildClaudeResponse(driver.Request{}, p, driver.RawStreams{Stdout: raw}, -1, "", false, "", "", "", io.EOF)
+					if !reflect.DeepEqual(response.Usage, tc.want) {
+						t.Fatalf("wire usage %s: got %#v want %#v", tc.usage, response.Usage, tc.want)
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestAlignmentClaudeTerminalUsageAuthority(t *testing.T) {
+	for _, tc := range []struct {
+		name, usage string
+		want        driver.Usage
+	}{
+		{"invalid_falls_back", `{"input_tokens":0.5,"output_tokens":-2,"cache_read_input_tokens":"unknown"}`, driver.Usage{InputTokens: 30, OutputTokens: 15, CachedInputTokens: 6}},
+		{"explicit_zero_overrides", `{"input_tokens":0}`, driver.Usage{}},
+		{"valid_overrides", `{"input_tokens":42,"output_tokens":8,"cache_read_input_tokens":3}`, driver.Usage{InputTokens: 42, OutputTokens: 8, CachedInputTokens: 3}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := newClaudeParser(&streamSink{})
+			p.enableStreaming("terminal-usage")
+			raw := alignmentClaudeUsageFrames() + fmt.Sprintf(`{"type":"result","subtype":"success","is_error":false,"session_id":"session-c04","result":"done","usage":%s}`, tc.usage) + "\n"
+			if err := p.onChunk("stdout", []byte(raw), time.Now()); err != nil {
+				t.Fatal(err)
+			}
+			p.finalize()
+			got := p.observedUsage()
+			if got == nil || !reflect.DeepEqual(*got, tc.want) {
+				t.Fatalf("terminal authority: got %#v want %#v", got, tc.want)
+			}
+		})
+	}
+}

@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -540,9 +542,9 @@ func (p *claudeParser) handleResult(raw string, payload map[string]any, subtype 
 
 	usage := claudeTopLevelObject(payload, "usage")
 	if usage != nil {
-		input, okInput := claudeTopLevelInt(usage, "input_tokens")
-		cached, okCached := claudeTopLevelInt(usage, "cache_read_input_tokens")
-		output, okOutput := claudeTopLevelInt(usage, "output_tokens")
+		input, okInput := claudeUsageCounter(usage, "input_tokens")
+		cached, okCached := claudeUsageCounter(usage, "cache_read_input_tokens")
+		output, okOutput := claudeUsageCounter(usage, "output_tokens")
 		if okInput || okCached || okOutput {
 			if p.usage == nil {
 				p.usage = &driver.Usage{}
@@ -780,6 +782,27 @@ func claudeTopLevelInt(payload map[string]any, keys ...string) (int, bool) {
 		case int:
 			return value, true
 		case int64:
+			return int(value), true
+		}
+	}
+	return 0, false
+}
+
+// claudeUsageCounter is intentionally stricter than general protocol integer
+// conversion: unknown, negative, fractional and out-of-range counters are not
+// evidence of usage. Explicit zero is valid observed usage.
+func claudeUsageCounter(payload map[string]any, key string) (int, bool) {
+	switch value := payload[key].(type) {
+	case float64:
+		if value >= 0 && value < float64(uint(1)<<(strconv.IntSize-1)) && math.Trunc(value) == value {
+			return int(value), true
+		}
+	case int:
+		if value >= 0 {
+			return value, true
+		}
+	case int64:
+		if value >= 0 && value <= int64(^uint(0)>>1) {
 			return int(value), true
 		}
 	}

@@ -76,6 +76,10 @@ summed across distinct message IDs. Repeated cumulative deltas and assistant
 snapshots for one message contribute only its increase, including when root
 and nested messages interleave. No output or session ID alone makes an
 interrupted checkpoint valid.
+Usage remains absent until at least one formal counter contains a valid
+nonnegative integer. Empty or unknown counters, negative/fractional values and
+values outside the SDK integer range do not become observed zero. An invalid
+terminal usage object does not replace valid message usage; explicit zero does.
 The previous healthy Thread record stays unchanged, and a possibly delivered
 prompt is never automatically replayed.
 

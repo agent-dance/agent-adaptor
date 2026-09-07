@@ -25,6 +25,8 @@
 // errors remain inspectable without treating private cleanup as caller cancel.
 // Usage sums distinct formal messages and deduplicates their cumulative
 // reports; a terminal usage report, including zero, remains authoritative.
+// Usage is observed only when a formal counter is a nonnegative integer;
+// empty, unknown, fractional, negative or out-of-range counters do not imply zero.
 // Incomplete or failed runs cannot produce a healthy checkpoint.
 //
 // In bidirectional one-shot runs, a formal result or a terminal root assistant

@@ -368,6 +368,12 @@ func (s *streamingState) mergeAssistantUsage(message map[string]any, parent stri
 }
 
 func (s *streamingState) mergeUsageMap(key claudeUsageKey, u map[string]any) {
+	input, okInput := claudeUsageCounter(u, "input_tokens")
+	cached, okCached := claudeUsageCounter(u, "cache_read_input_tokens")
+	output, okOutput := claudeUsageCounter(u, "output_tokens")
+	if !okInput && !okCached && !okOutput {
+		return
+	}
 	if s.streamUsage == nil {
 		s.streamUsage = &driver.Usage{}
 	}
@@ -378,23 +384,23 @@ func (s *streamingState) mergeUsageMap(key claudeUsageKey, u map[string]any) {
 	}
 	// Message deltas and the eventual assistant snapshot repeat cumulative
 	// counters. Add only that message's increase to the run aggregate.
-	if v, ok := claudeTopLevelInt(u, "input_tokens"); ok {
-		if v > message.InputTokens {
-			s.streamUsage.InputTokens += v - message.InputTokens
-			message.InputTokens = v
+	if okInput {
+		if input > message.InputTokens {
+			s.streamUsage.InputTokens += input - message.InputTokens
+			message.InputTokens = input
 		}
 	}
-	if v, ok := claudeTopLevelInt(u, "cache_read_input_tokens"); ok {
-		if v > message.CachedInputTokens {
-			s.streamUsage.CachedInputTokens += v - message.CachedInputTokens
-			message.CachedInputTokens = v
+	if okCached {
+		if cached > message.CachedInputTokens {
+			s.streamUsage.CachedInputTokens += cached - message.CachedInputTokens
+			message.CachedInputTokens = cached
 		}
 	}
-	if v, ok := claudeTopLevelInt(u, "output_tokens"); ok {
+	if okOutput {
 		// message_delta.usage.output_tokens is cumulative along the message.
-		if v > message.OutputTokens {
-			s.streamUsage.OutputTokens += v - message.OutputTokens
-			message.OutputTokens = v
+		if output > message.OutputTokens {
+			s.streamUsage.OutputTokens += output - message.OutputTokens
+			message.OutputTokens = output
 		}
 	}
 }
