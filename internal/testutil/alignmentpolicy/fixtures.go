@@ -137,7 +137,7 @@ func (Codec) FromParams(p driver.SessionParams) *driver.SessionState {
 }
 func (Codec) GuardFingerprint(driver.SessionParams) string { return "t22-checkpoint-encoding-v1" }
 func Response() driver.Response {
-	return driver.Response{Output: "audited answer", Summary: "brief", Provider: "script", Model: "known", Metadata: map[string]string{"audit": "marker"}, RawStreams: &driver.RawStreams{Stdout: "formal stdout\n", Stderr: "formal stderr\n", Terminal: &driver.TerminalPayload{Event: "completed", JSON: []byte(`{"completed":true}`)}}, Transcript: []driver.TranscriptItem{{Kind: driver.TranscriptAssistant, Text: "audited answer"}}, Usage: &driver.Usage{InputTokens: 0, OutputTokens: 3}, Checkpoint: &driver.Checkpoint{Valid: true, State: &driver.SessionState{ResumeID: "healthy-t22"}}}
+	return driver.Response{RuntimeServices: []driver.RuntimeServiceReport{{ID: "observed-fixture", Name: "offline-service", Status: driver.RuntimeServiceStopped, Lifecycle: driver.RuntimeLifecycleEphemeral, Health: driver.RuntimeHealthUnknown, Metadata: map[string]string{"observation": "fixture-exit"}}}, Output: "audited answer", Summary: "brief", Provider: "script", Model: "known", Metadata: map[string]string{"audit": "marker"}, RawStreams: &driver.RawStreams{Stdout: "formal stdout\n", Stderr: "formal stderr\n", Terminal: &driver.TerminalPayload{Event: "completed", JSON: []byte(`{"completed":true}`)}}, Transcript: []driver.TranscriptItem{{Kind: driver.TranscriptAssistant, Text: "audited answer"}}, Usage: &driver.Usage{InputTokens: 0, OutputTokens: 3}, Checkpoint: &driver.Checkpoint{Valid: true, State: &driver.SessionState{ResumeID: "healthy-t22"}}}
 }
 
 type Store struct {

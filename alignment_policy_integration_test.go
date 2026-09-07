@@ -113,6 +113,13 @@ func t22Carrier(t *testing.T, r *Result, err error, reason FailureReason) *RunEr
 	if got.Text != "audited answer" || got.Summary != "brief" || got.Raw().Stdout != "formal stdout\n" || got.Raw().Stderr != "formal stderr\n" || got.Raw().Terminal == nil || string(got.Raw().Terminal.JSON) != `{"completed":true}` || len(got.Transcript()) != 1 || got.Usage == nil || got.Usage.InputTokens != 0 || got.Usage.OutputTokens != 3 || got.Model != "known" || got.Provider != "script" || got.Metadata["audit"] != "marker" {
 		t.Fatalf("partial audit lost: %#v raw=%#v", got, got.Raw())
 	}
+	if got.Raw().Terminal.Event != "completed" || got.Transcript()[0].Kind != driver.TranscriptAssistant || got.Transcript()[0].Text != "audited answer" {
+		t.Fatal("terminal/transcript content changed")
+	}
+	reports := got.Services()
+	if len(reports) != 1 || reports[0].ID != "observed-fixture" || reports[0].Name != "offline-service" || reports[0].Status != driver.RuntimeServiceStopped || reports[0].Lifecycle != driver.RuntimeLifecycleEphemeral || reports[0].Health != driver.RuntimeHealthUnknown || reports[0].Metadata["observation"] != "fixture-exit" {
+		t.Fatalf("observed partial service report lost: %#v", reports)
+	}
 	return re
 }
 
