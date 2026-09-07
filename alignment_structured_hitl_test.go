@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"sync/atomic"
@@ -91,9 +92,9 @@ func TestAlignmentStructuredHITLRunStreamEquivalence(t *testing.T) {
 		want      driver.StructuredOutputSource
 	}{
 		{"permission", adaptor.ApprovalPolicy{Permission: adaptor.ApprovalAsk}, driver.StructuredOutputSourcePromptValidate},
-		{"plan", adaptor.ApprovalPolicy{PlanReview: adaptor.ApprovalAsk}, driver.StructuredOutputSourceNative},
-		{"question", adaptor.ApprovalPolicy{Question: adaptor.QuestionAsk}, driver.StructuredOutputSourceNative},
-		{"mixed_native", adaptor.ApprovalPolicy{PlanReview: adaptor.ApprovalAsk, Question: adaptor.QuestionAsk}, driver.StructuredOutputSourceNative},
+		{"plan_inherits_permission", adaptor.ApprovalPolicy{PlanReview: adaptor.ApprovalAsk}, driver.StructuredOutputSourcePromptValidate},
+		{"question_inherits_permission", adaptor.ApprovalPolicy{Question: adaptor.QuestionAsk}, driver.StructuredOutputSourcePromptValidate},
+		{"mixed_native", adaptor.ApprovalPolicy{Permission: adaptor.ApprovalAutoApprove, PlanReview: adaptor.ApprovalAsk, Question: adaptor.QuestionAsk}, driver.StructuredOutputSourceNative},
 		{"mixed_prompt", adaptor.ApprovalPolicy{Permission: adaptor.ApprovalAsk, PlanReview: adaptor.ApprovalAsk, Question: adaptor.QuestionAsk}, driver.StructuredOutputSourcePromptValidate},
 	}
 	for _, tc := range tests {
@@ -179,6 +180,9 @@ func TestAlignmentStructuredHITLTransportCannotDropAsk(t *testing.T) {
 				d := alignmentHITLDriver(caps)
 				var approvals adaptor.ApprovalPolicy
 				switch kind {
+				case "none":
+					approvals.Permission = adaptor.ApprovalAutoApprove
+					approvals.PlanReview = adaptor.ApprovalAutoApprove
 				case "permission":
 					approvals.Permission = adaptor.ApprovalAsk
 				case "plan":
@@ -212,9 +216,9 @@ func TestAlignmentStructuredHITLCallPolicyReplacesDefaults(t *testing.T) {
 		want driver.StructuredOutputSource
 	}{
 		{nil, driver.StructuredOutputSourcePromptValidate},
-		{[]adaptor.CallOption{adaptor.WithPolicy(adaptor.Policy{Approvals: adaptor.ApprovalPolicy{Question: adaptor.QuestionAsk}})}, driver.StructuredOutputSourceNative},
+		{[]adaptor.CallOption{adaptor.WithPolicy(adaptor.Policy{Approvals: adaptor.ApprovalPolicy{Permission: adaptor.ApprovalAutoApprove, Question: adaptor.QuestionAsk}})}, driver.StructuredOutputSourceNative},
 		{nil, driver.StructuredOutputSourcePromptValidate},
-		{[]adaptor.CallOption{adaptor.WithPolicy(adaptor.Policy{})}, driver.StructuredOutputSourceNative},
+		{[]adaptor.CallOption{adaptor.WithPolicy(adaptor.Policy{})}, driver.StructuredOutputSourcePromptValidate},
 	} {
 		if _, err := agent.Run(context.Background(), "extract", append([]adaptor.CallOption{adaptor.WithSchema[projectMetadata]()}, tc.opts...)...); err != nil {
 			t.Fatal(err)
@@ -267,5 +271,176 @@ func TestAlignmentStructuredHITLNegotiatesOnceBeforeResources(t *testing.T) {
 	}
 	if len(log.snapshot()) == 0 {
 		t.Fatal("resource fixture was not exercised")
+	}
+}
+
+func TestAlignmentStructuredHITLInheritedAskUsesRealDecisionSink(t *testing.T) {
+	for _, path := range []string{"run", "stream"} {
+		for _, schema := range []bool{false, true} {
+			for _, tc := range []struct {
+				name                           string
+				permission, plan               adaptor.ApprovalMode
+				want                           driver.StructuredOutputSource
+				wantPermissionAsk, wantPlanAsk int
+			}{
+				{"permission_unset", adaptor.ApprovalInherit, adaptor.ApprovalAutoApprove, driver.StructuredOutputSourcePromptValidate, 1, 0},
+				{"plan_unset", adaptor.ApprovalAutoApprove, adaptor.ApprovalInherit, driver.StructuredOutputSourcePromptValidate, 0, 1},
+				{"both_unset", adaptor.ApprovalInherit, adaptor.ApprovalInherit, driver.StructuredOutputSourcePromptValidate, 1, 1},
+				{"both_explicit_approve", adaptor.ApprovalAutoApprove, adaptor.ApprovalAutoApprove, driver.StructuredOutputSourceNative, 0, 0},
+				{"permission_deny", adaptor.ApprovalAutoDeny, adaptor.ApprovalAutoApprove, driver.StructuredOutputSourceNative, 0, 0},
+				{"plan_deny", adaptor.ApprovalAutoApprove, adaptor.ApprovalAutoDeny, driver.StructuredOutputSourceNative, 0, 0},
+			} {
+				t.Run(fmt.Sprintf("%s/schema_%t/%s", path, schema, tc.name), func(t *testing.T) {
+					caps := alignmentHITLCaps(t)
+					caps.NativeHITL = &driver.StructuredOutputHITLCapability{Question: true}
+					d := alignmentHITLDriver(caps)
+					finish := d.runFunc
+					var kinds []adaptor.ApprovalKind
+					d.runFunc = func(ctx context.Context, req driver.Request, sink driver.EventSink) (driver.Response, error) {
+						decisions, ok := sink.(driver.DecisionCapableSink)
+						if !ok {
+							return driver.Response{}, errors.New("missing DecisionCapableSink")
+						}
+						for _, kind := range []driver.HumanDecisionKind{driver.HumanDecisionPermission, driver.HumanDecisionPlanReview, driver.HumanDecisionQuestion} {
+							res, err := decisions.RequestDecision(ctx, driver.DecisionRequest{Kind: kind, RequestID: string(kind), Prompt: "fixture actual approval", Source: "fixture:control_request"})
+							if err != nil {
+								return driver.Response{}, err
+							}
+							want := driver.DecisionApproved
+							if kind == driver.HumanDecisionQuestion {
+								want = driver.DecisionAnswered
+							}
+							if kind == driver.HumanDecisionPermission && tc.permission == adaptor.ApprovalAutoDeny || kind == driver.HumanDecisionPlanReview && tc.plan == adaptor.ApprovalAutoDeny {
+								want = driver.DecisionRejected
+							}
+							if res.Result != want {
+								return driver.Response{}, fmt.Errorf("decision %s = %s", kind, res.Result)
+							}
+						}
+						return finish(ctx, req, sink)
+					}
+					handler := func(ctx context.Context, req *adaptor.ApprovalRequest) error {
+						kinds = append(kinds, req.Kind)
+						if req.Kind == adaptor.ApprovalQuestion {
+							return req.Answer(ctx, "fixture answer")
+						}
+						return req.Approve(ctx)
+					}
+					agent := adaptor.New(d, adaptor.OnApproval(handler))
+					opts := []adaptor.CallOption{adaptor.WithPolicy(adaptor.Policy{Approvals: adaptor.ApprovalPolicy{Permission: tc.permission, PlanReview: tc.plan, Question: adaptor.QuestionAsk, OnReject: driver.FailureContinue}})}
+					wantSource := driver.StructuredOutputSource("")
+					if schema {
+						opts = append(opts, adaptor.WithSchema[projectMetadata]())
+						wantSource = tc.want
+					}
+					if err := runPath(t, agent, path, opts...); err != nil {
+						t.Fatal(err)
+					}
+					counts := map[adaptor.ApprovalKind]int{}
+					for _, kind := range kinds {
+						counts[kind]++
+					}
+					if counts[adaptor.ApprovalPermission] != tc.wantPermissionAsk || counts[adaptor.ApprovalPlanReview] != tc.wantPlanAsk || counts[adaptor.ApprovalQuestion] != 1 {
+						t.Fatalf("actual Ask kinds = %v", kinds)
+					}
+					if req := d.lastRequest(t); req.StructuredOutputSource != wantSource {
+						t.Fatalf("source=%s want=%s; real DecisionSink asked %v", req.StructuredOutputSource, wantSource, kinds)
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestAlignmentStructuredHITLZeroPolicyAndPerMechanismBatch(t *testing.T) {
+	for _, path := range []string{"run", "stream"} {
+		for _, tc := range []struct {
+			name      string
+			change    func(*driver.StructuredOutputCapability)
+			want      driver.StructuredOutputSource
+			streaming bool
+			reject    bool
+		}{
+			{"precise_inherited_ask", func(c *driver.StructuredOutputCapability) {
+				c.NativeHITL = &driver.StructuredOutputHITLCapability{Question: true}
+			}, driver.StructuredOutputSourcePromptValidate, true, false},
+			{"precise_inherited_ask_unsupported", func(c *driver.StructuredOutputCapability) {
+				c.NativeHITL = &driver.StructuredOutputHITLCapability{}
+				c.PromptValidateHITL = &driver.StructuredOutputHITLCapability{}
+			}, "", false, true},
+			{"nil_legacy", func(c *driver.StructuredOutputCapability) { c.NativeHITL = nil; c.PromptValidateHITL = nil }, driver.StructuredOutputSourceNative, true, false},
+			{"precise_ask_cannot_use_batch", func(c *driver.StructuredOutputCapability) { c.WorksWithStreaming = false }, "", false, true},
+			{"legacy_native_batch", func(c *driver.StructuredOutputCapability) { c.WorksWithStreaming = false; c.NativeHITL = nil }, driver.StructuredOutputSourceNative, false, false},
+			{"legacy_prompt_batch", func(c *driver.StructuredOutputCapability) { c.WorksWithStreaming = false; c.PromptValidateHITL = nil }, driver.StructuredOutputSourcePromptValidate, false, false},
+		} {
+			t.Run(path+"/"+tc.name, func(t *testing.T) {
+				caps := alignmentHITLCaps(t)
+				tc.change(&caps)
+				d := alignmentHITLDriver(caps)
+				log := &callLog{}
+				var actualAsk []adaptor.ApprovalKind
+				if tc.name == "precise_inherited_ask" {
+					finish := d.runFunc
+					d.runFunc = func(ctx context.Context, req driver.Request, sink driver.EventSink) (driver.Response, error) {
+						decisions, ok := sink.(driver.DecisionCapableSink)
+						if !ok {
+							return driver.Response{}, errors.New("missing DecisionCapableSink")
+						}
+						for _, kind := range []driver.HumanDecisionKind{driver.HumanDecisionPermission, driver.HumanDecisionPlanReview} {
+							response, err := decisions.RequestDecision(ctx, driver.DecisionRequest{Kind: kind, RequestID: string(kind), Prompt: "inherited zero-policy decision"})
+							if err != nil {
+								return driver.Response{}, err
+							}
+							if response.Result != driver.DecisionApproved {
+								return driver.Response{}, fmt.Errorf("decision = %s", response.Result)
+							}
+						}
+						return finish(ctx, req, sink)
+					}
+				}
+				agent := adaptor.New(d, adaptor.WithRunServices(&fakeProvider{name: "attachment", log: log}), adaptor.OnApproval(func(ctx context.Context, req *adaptor.ApprovalRequest) error {
+					actualAsk = append(actualAsk, req.Kind)
+					return req.Approve(ctx)
+				}))
+				err := runPath(t, agent, path, adaptor.WithSchema[projectMetadata](), adaptor.WithPolicy(adaptor.Policy{}))
+				if tc.reject {
+					if !errors.Is(err, adaptor.ErrStructuredOutputUnsupported) || len(log.snapshot()) != 0 || d.runCount() != 0 {
+						t.Fatalf("effective Ask rejection: err=%v log=%v calls=%d", err, log.snapshot(), d.runCount())
+					}
+					return
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				if req := d.lastRequest(t); req.StructuredOutputSource != tc.want || req.Streaming != tc.streaming {
+					t.Fatalf("source=%s streaming=%t want=%s/%t", req.StructuredOutputSource, req.Streaming, tc.want, tc.streaming)
+				}
+				if tc.name == "precise_inherited_ask" && !reflect.DeepEqual(actualAsk, []adaptor.ApprovalKind{adaptor.ApprovalPermission, adaptor.ApprovalPlanReview}) {
+					t.Fatalf("zero policy did not exercise inherited Ask: %v", actualAsk)
+				}
+				if got := d.Descriptor().StructuredOutput; !reflect.DeepEqual(got, caps) {
+					t.Fatal("batch filtering mutated Driver capability")
+				}
+			})
+		}
+	}
+}
+
+func TestAlignmentStructuredHITLInheritedAskCannotGrantOrdinaryCapability(t *testing.T) {
+	for _, kind := range []string{"permission", "plan"} {
+		t.Run(kind, func(t *testing.T) {
+			d := alignmentHITLDriver(alignmentHITLCaps(t))
+			if kind == "permission" {
+				d.descriptor.RunPolicyCaps.Permission.Ask = false
+			} else {
+				d.descriptor.RunPolicyCaps.PlanReview.Ask = false
+			}
+			log := &callLog{}
+			agent := adaptor.New(d, adaptor.WithRunServices(&fakeProvider{name: "attachment", log: log}))
+			_, err := agent.Run(context.Background(), "extract", adaptor.WithSchema[projectMetadata]())
+			if !errors.Is(err, adaptor.ErrStructuredOutputUnsupported) || d.runCount() != 0 || len(log.snapshot()) != 0 {
+				t.Fatalf("inherited Ask bypassed ordinary capability: err=%v calls=%d resources=%v", err, d.runCount(), log.snapshot())
+			}
+		})
 	}
 }

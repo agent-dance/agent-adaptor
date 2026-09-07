@@ -35,13 +35,15 @@ func (a *Agent) resolveStructuredOutput(desc driver.Descriptor, eff *RunSettings
 	}
 	streaming := providerRichTransport(a.driver)
 	source, err := engine.ResolveStructuredOutputSource(desc, schema, streaming, policy)
-	// Schema cannot sacrifice an effective Ask's interactive transport.
-	// With no such demand, a batch-only schema mechanism remains eligible.
-	asks := policy.HumanDecision.Permission == driver.HumanDecisionAsk ||
-		policy.HumanDecision.PlanReview == driver.HumanDecisionAsk ||
-		policy.HumanDecision.Question == driver.QuestionAsk
-	if err != nil && streaming && !asks {
-		if batchSource, batchErr := engine.ResolveStructuredOutputSource(desc, schema, false, policy); batchErr == nil {
+	// Filter each batch candidate independently: a precise matrix includes
+	// inherited Ask defaults, while a nil matrix retains legacy explicit-Ask
+	// semantics. No mechanism may discard its applicable interactive demand.
+	if err != nil && streaming {
+		batchDesc := desc
+		caps := &batchDesc.StructuredOutput
+		caps.JSONSchemaNative = caps.JSONSchemaNative && !engine.StructuredOutputHasHITLAsk(caps.NativeHITL, policy)
+		caps.JSONSchemaPromptValidate = caps.JSONSchemaPromptValidate && !engine.StructuredOutputHasHITLAsk(caps.PromptValidateHITL, policy)
+		if batchSource, batchErr := engine.ResolveStructuredOutputSource(batchDesc, schema, false, policy); batchErr == nil {
 			streaming, source, err = false, batchSource, nil
 		}
 	}

@@ -72,9 +72,11 @@
 //	       pipeline. Core selects native enforcement first and Prompt
 //	       validation as the fallback. Provider streaming additionally requires
 //	       WorksWithStreaming. A nil NativeHITL/PromptValidateHITL retains
-//	       WorksWithHITL for that mechanism; non-nil replaces it and requires
-//	       every effective Ask kind. Each true matrix field implies its own
-//	       JSONSchema* mechanism, WorksWithRun, and matching RunPolicyCaps Ask.
+//	       WorksWithHITL's explicit-Ask semantics for that mechanism; non-nil
+//	       requires every Ask kind after EffectiveHumanDecisionPolicy, including
+//	       inherited Permission/PlanReview Ask defaults. Each true matrix field
+//	       implies its JSONSchema* mechanism, WorksWithRun, and matching
+//	       RunPolicyCaps Ask.
 //	       Explicit false is not overridden by WorksWithHITL=true. Core does
 //	       not discard Ask transport requirements during batch fallback and
 //	       rejects unsupported combinations before acquiring resources.

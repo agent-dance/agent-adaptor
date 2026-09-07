@@ -266,7 +266,9 @@ type RuntimeCapability struct {
 
 // StructuredOutputHITLCapability declares which effective Ask kinds can
 // coexist with one structured-output mechanism. Every selected Ask kind MUST
-// be supported; non-Ask kinds impose no requirement. A true field MUST imply
+// be supported after EffectiveHumanDecisionPolicy materializes SDK defaults:
+// unset Permission and PlanReview are Ask, while unset Question is AutoReject.
+// Explicit non-Ask kinds impose no requirement. A true field MUST imply
 // the corresponding JSONSchema* mechanism, WorksWithRun, and the matching
 // Descriptor.RunPolicyCaps Ask capability. Schema support cannot grant an
 // otherwise unsupported approval mode.
@@ -303,13 +305,15 @@ type StructuredOutputCapability struct {
 
 	WorksWithRun       bool
 	WorksWithStreaming bool
-	// WorksWithHITL applies to effective Ask modes when the corresponding
-	// mechanism's HITL pointer is nil, preserving the original semantics.
+	// WorksWithHITL applies to explicitly requested Ask modes when the
+	// corresponding mechanism's HITL pointer is nil. This preserves the
+	// legacy behavior: unset fields alone do not require WorksWithHITL.
 	WorksWithHITL bool
 
 	// NativeHITL replaces WorksWithHITL for native enforcement when non-nil.
 	// An all-false value explicitly rejects every Ask combination, even if
-	// WorksWithHITL is true. Every effective Ask kind must be true.
+	// WorksWithHITL is true. Every effective Ask kind, including inherited
+	// defaults, must be true and supported by ordinary RunPolicyCaps.
 	NativeHITL *StructuredOutputHITLCapability
 	// PromptValidateHITL independently replaces WorksWithHITL for prompt
 	// validation under the same nil, explicit-false, and all-Ask rules.

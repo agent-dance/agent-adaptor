@@ -55,8 +55,8 @@ func resolveStructuredOutputSource(desc Descriptor, schema *OutputSchema, provid
 	}
 	caps := desc.StructuredOutput
 	transportOK := caps.WorksWithRun && (!providerStreaming || caps.WorksWithStreaming)
-	nativeOK := caps.JSONSchemaNative && transportOK && structuredHITLCompatible(caps.NativeHITL, caps.WorksWithHITL, policy)
-	promptOK := caps.JSONSchemaPromptValidate && transportOK && structuredHITLCompatible(caps.PromptValidateHITL, caps.WorksWithHITL, policy)
+	nativeOK := caps.JSONSchemaNative && transportOK && structuredHITLCompatible(caps.NativeHITL, caps.WorksWithHITL, policy, desc.RunPolicyCaps)
+	promptOK := caps.JSONSchemaPromptValidate && transportOK && structuredHITLCompatible(caps.PromptValidateHITL, caps.WorksWithHITL, policy, desc.RunPolicyCaps)
 
 	if nativeOK {
 		return StructuredOutputSourceNative, nil
@@ -67,13 +67,31 @@ func resolveStructuredOutputSource(desc Descriptor, schema *OutputSchema, provid
 	return "", &StructuredOutputUnsupportedError{Driver: desc.Type, Reason: structuredCapabilityReason(caps, providerStreaming, policy)}
 }
 
-func structuredHITLCompatible(matrix *driver.StructuredOutputHITLCapability, legacy bool, policy RunPolicy) bool {
+// structuredHITLPolicy preserves legacy explicit-value semantics for nil
+// matrices. Precise declarations opt into checking the actual sink defaults.
+func structuredHITLPolicy(matrix *driver.StructuredOutputHITLCapability, policy RunPolicy) driver.HumanDecisionPolicy {
 	if matrix == nil {
-		matrix = &driver.StructuredOutputHITLCapability{Permission: legacy, PlanReview: legacy, Question: legacy}
+		return policy.HumanDecision
 	}
-	return (policy.HumanDecision.Permission != HumanDecisionAsk || matrix.Permission) &&
-		(policy.HumanDecision.PlanReview != HumanDecisionAsk || matrix.PlanReview) &&
-		(policy.HumanDecision.Question != QuestionAsk || matrix.Question)
+	return driver.EffectiveHumanDecisionPolicy(policy.HumanDecision)
+}
+
+func structuredHITLCompatible(matrix *driver.StructuredOutputHITLCapability, legacy bool, policy RunPolicy, ordinary RunPolicyCapabilities) bool {
+	decisions := structuredHITLPolicy(matrix, policy)
+	if matrix == nil {
+		return legacy || !StructuredOutputHasHITLAsk(nil, policy)
+	}
+	return (decisions.Permission != HumanDecisionAsk || matrix.Permission && ordinary.Permission.Ask) &&
+		(decisions.PlanReview != HumanDecisionAsk || matrix.PlanReview && ordinary.PlanReview.Ask) &&
+		(decisions.Question != QuestionAsk || matrix.Question && ordinary.Question.Ask)
+}
+
+// StructuredOutputHasHITLAsk identifies a mechanism's applicable Ask demand
+// for transport negotiation. A non-nil matrix includes inherited SDK defaults;
+// nil retains the legacy explicit-Ask contract. It does not mutate policy.
+func StructuredOutputHasHITLAsk(matrix *driver.StructuredOutputHITLCapability, policy RunPolicy) bool {
+	decisions := structuredHITLPolicy(matrix, policy)
+	return decisions.Permission == HumanDecisionAsk || decisions.PlanReview == HumanDecisionAsk || decisions.Question == QuestionAsk
 }
 
 func structuredCapabilityReason(caps StructuredOutputCapability, providerStreaming bool, policy RunPolicy) string {
@@ -85,6 +103,9 @@ func structuredCapabilityReason(caps StructuredOutputCapability, providerStreami
 	case providerStreaming && !caps.WorksWithStreaming:
 		return "structured output is not supported by the selected provider streaming transport"
 	default:
+		if caps.NativeHITL != nil || caps.PromptValidateHITL != nil {
+			policy.HumanDecision = driver.EffectiveHumanDecisionPolicy(policy.HumanDecision)
+		}
 		var kinds []string
 		if policy.HumanDecision.Permission == HumanDecisionAsk {
 			kinds = append(kinds, "Permission")

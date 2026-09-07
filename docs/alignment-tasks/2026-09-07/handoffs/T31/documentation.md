@@ -4,9 +4,9 @@
 
 基线 `93ef44f24e63ce52ad29dce2b54ff28fa0503470` 中，`WorksWithHITL=false` 同时拒绝 native 和 prompt 两种机制。`alignment_structured_hitl_test.go` 的基线失败 fixture 通过 JSON 装载冻结的新声明，因此可在旧源码运行并重现 Permission Ask 没有自动 fallback；另一 fixture 证明拒绝前已经获取 workspace/runtime/provider attachment。原始失败日志位于交接 evidence，不属于发布验证成功记录。
 
-当前 SPI 新增真实 `driver.StructuredOutputHITLCapability{Permission, PlanReview, Question bool}`；`StructuredOutputCapability.NativeHITL` 与 `.PromptValidateHITL` 分别是该类型指针。每个非 nil 矩阵只替换本机制的 `WorksWithHITL` 判定：所有有效 Ask Kind 都必须为 true；全 false 明确拒绝，即使旧 bool 为 true。nil 保留旧 bool 的已发布语义；非 Ask 不读取相应字段；没有 schema 时不检查这些矩阵。普通 `RunPolicyCaps`、机制 `JSONSchema*`、`WorksWithRun` 与所选 transport 的 `WorksWithStreaming` 仍独立门控。
+当前 SPI 新增真实 `driver.StructuredOutputHITLCapability{Permission, PlanReview, Question bool}`；`StructuredOutputCapability.NativeHITL` 与 `.PromptValidateHITL` 分别是该类型指针。每个非 nil 矩阵只替换本机制的 `WorksWithHITL` 判定：先经 `driver.EffectiveHumanDecisionPolicy` 物化默认值，所有有效 Ask Kind 都必须为 true，且对应普通 `RunPolicyCaps.Ask` 为 true；全 false 明确拒绝，即使旧 bool 为 true。未设置的 Permission/PlanReview 会继承 Ask，Question 默认自动拒绝。nil 保留旧 bool 仅检查显式 Ask 的已发布语义，不因另一机制非 nil 而升级。显式非 Ask 不读取相应字段；没有 schema 时不检查这些矩阵。普通 `RunPolicyCaps`、机制 `JSONSchema*`、`WorksWithRun` 与所选 transport 的 `WorksWithStreaming` 仍独立门控。
 
-例如 fake Driver 宣告 native 支持 PlanReview/Question、prompt 支持三个 Kind，并保留旧 bool=false：Question Ask 选择 native；Permission Ask 或含 Permission 的混合 Ask 选择 prompt+本地校验。消费者仍只传 `WithSchema` 与 `WithPolicy`，不选择执行机制：
+例如 fake Driver 宣告 native 支持 PlanReview/Question、prompt 支持三个 Kind，并保留旧 bool=false：Question Ask 且 Permission 显式 AutoApprove 时可选择 native（PlanReview 可继承为所支持的 Ask）；Permission 未设置会继承 Ask，所以 Question Ask 单独出现时也选择 prompt+本地校验。Permission Ask 或含 Permission 的混合 Ask 选择 prompt+本地校验。消费者仍只传 `WithSchema` 与 `WithPolicy`，不选择执行机制：
 
 ```go
 res, err := adaptor.New(configuredDriver).Run(ctx, "extract project metadata",
@@ -19,11 +19,11 @@ res, err := adaptor.New(configuredDriver).Run(ctx, "extract project metadata",
 
 这里的 `configuredDriver` 必须真实声明对应能力；T31 未修改任何内置 Driver 声明。Claude 的 native+Question/PlanReview 与 Permission prompt fallback 由后批 T07 接线及验证，不在本批宣布 provider 组合可用。既有无 schema Permission Ask 不变。
 
-静态 schema/transport 协商现在在 `openStream` 中普通 policy 校验之后进行，先于 profile/workspace/runtime/skills/Thread lease；结果只保存在本次 `RunSettings` 私有状态中，clone 清空缓存，`wiring.resolveRun` 直接消费。native 优先，自动 prompt fallback；schema 不兼容 rich transport 时，只有没有有效 Ask 需求才可退到 batch。Run 与 Stream 请求和结构化结果一致；不支持或非法 schema 返回现有 typed error，资源及 Driver 都不启动。
+静态 schema/transport 协商现在在 `openStream` 中普通 policy 校验之后进行，先于 profile/workspace/runtime/skills/Thread lease；结果只保存在本次 `RunSettings` 私有状态中，clone 清空缓存，`wiring.resolveRun` 直接消费。native 优先，自动 prompt fallback；schema 不兼容 rich transport 时，按机制分别排除具有适用 Ask 需求的 batch 候选：精确矩阵包括继承 Ask，nil 候选保留显式 Ask 边界；仍由唯一 resolver 选择 native 优先或合法 prompt fallback。Run 与 Stream 请求和结构化结果一致；不支持或非法 schema 返回现有 typed error，资源及 Driver 都不启动。
 
 ## G01 必须合并的具体文档段落
 
-- `docs/structured-output.md` 的 “Automatic capability negotiation”：把 “before process launch” 加强为 “before acquiring run resources”；替换一律要求 WorksWithHITL 的段落为上面的逐机制 nil/显式矩阵规则；batch fallback 增加不能丢弃有效 Ask 的条件。内置能力表维持本批实际 provider 声明，不提前填入 T07 目标。
+- `docs/structured-output.md` 的 “Automatic capability negotiation”：明确 R005 默认值边界：采用新矩阵的驱动可能让原先未显式设置 Permission 的 schema 调用改走 prompt 或 unsupported，不能偷偷自动批准以维持 native；把 “before process launch” 加强为 “before acquiring run resources”；替换一律要求 WorksWithHITL 的段落为上面的逐机制 nil/显式矩阵规则；batch fallback 增加不能丢弃有效 Ask 的条件。内置能力表维持本批实际 provider 声明，不提前填入 T07 目标。
 - `docs/run-policy.md` 末尾 schema/HITL 兼容段落：schema 能力不授予普通 policy 不支持的 Ask；逐 Kind、混合 Ask 与机制 fallback 按上面的算法说明，保留无 schema 既有行为。
 - `docs/api-reference.md` structured-output 协商段落：同一调用在资源获取前确定 schema/source/transport；消费者仍只有 schema CallOption，无模式选择器。
 - `CHANGELOG.md` 本批 Added：Driver SPI 新的 per-kind HITL 真类型和两项可选指针，nil 兼容既有驱动。Fixed：schema+Ask 按机制固定协商，拒绝发生在资源前，不再通过 batch 降级丢弃 Ask；Run/Stream 一致。
@@ -45,4 +45,10 @@ Driver AST golden 精确增加两个指针字段和一个三字段真结构体�
 
 在 macOS arm64 运行 T31-V01 全部四包测试与 T31-V02 `-race -count=5` 专项，实际 SHA、命令、测试数量及允许 skip 由提交后的 result.json/evidence 记录。首次全包预跑受 sandbox loopback bind 限制，保留失败日志；按既有授权解除该限制后重跑完整原命令，不缩减包或次数。所有检查显式设置 live/E2E/API-golden 更新门为 0，不运行真实 provider CLI。
 
-本地行为 fixture 覆盖 1,296 组矩阵组合、transport/policy 独立门、Run/Stream 等价、逐调用 policy 整值覆盖、无 schema、无资源获取及仅一次协商。未在本任务执行 Linux/Windows 或付费 live；这些证据由后续专门任务提供。T31 完成只代表 SPI/core 交付，不代表整个 W06、G01 或发布门禁已关闭。
+本地行为 fixture 覆盖 7,776 组矩阵组合（包括 unset、Ask、AutoApprove、AutoDeny）、transport/policy 独立门、Run/Stream 等价、逐调用 policy 整值覆盖、无 schema、无资源获取及仅一次协商。未在本任务执行 Linux/Windows 或付费 live；这些证据由后续专门任务提供。T31 完成只代表 SPI/core 交付，不代表整个 W06、G01 或发布门禁已关闭。
+
+## Attempt 2 / R005 继承 Ask 返修
+
+首轮 `5433604535f6a6e0aa5a3d235b6c00ffe14a9beb` 曾通过640项普通与245项race测试，但审批 fixture 未真实发起请求，漏检了默认值语义。首轮 `result.attempt1.json` 与原始 evidence 保留，只代表当时测试结果，不构成最终验收。第二轮失败 fixture 的 `attempt2-inherited-ask-failure.jsonl` 记录：QuestionAsk+Permission/PlanReview unset 时 native 被错误选择，而实际 `DecisionCapableSink.RequestDecision` 仍向回调发出 Permission/PlanReview Ask。
+
+返修使用 R005 的逐机制精确/legacy 边界，并补实际 Permission/PlanReview/Question 应答：未设置与显式 AutoApprove/AutoDeny 对比，零 policy 下实际继承两个 Ask，schema absent 原行为，以及继承 Ask 缺失普通能力时资源前拒绝。AutoDeny fixture 使用既有 OnReject=Continue 来观察 Rejected 响应，不修改审批默认值或兜底策略。新增 AC04 的最终实跑证据单列 attempt2 日志；G01 必须按这些新证据重新审阅，首轮统计不能替代此次验收。
