@@ -11,10 +11,9 @@ import (
 )
 
 // claudeLiveGate decides whether the live conformance probes (EVT-*,
-// RUN-*, TRN-*, RSP-*, SO-02) run. They skip when the claude CLI is not in
-// PATH (the CI path), and even with the CLI present they stay opt-in via
-// AGENT_ADAPTOR_LIVE_CONFORMANCE=1, mirroring the claude_live build-tag
-// posture so plain `go test` never triggers a paid provider run.
+// RUN-*, TRN-*, RSP-*, SO-02) run. Both claude_live and explicit environment
+// opt-in are required. Once enabled, a missing CLI fails the required probe;
+// plain `go test` never triggers a paid provider run.
 func claudeLiveGate(t *testing.T) (bool, adaptertest.Option) {
 	t.Helper()
 	if !claudeLiveBuildEnabled || os.Getenv("AGENT_ADAPTOR_LIVE_CONFORMANCE") != "1" {

@@ -146,6 +146,25 @@ func TestAlignmentClaudeIncrementalWrapperDedupe(t *testing.T) {
 	}
 }
 
+func TestAlignmentClaudeBareResultAfterScopedCompletion(t *testing.T) {
+	p, sink := alignmentAdoptionParser(driver.Request{RunID: "late-replay"})
+	alignmentFeed(p, alignmentTool("p", "Agent", "", map[string]any{})+alignmentTool("q", "Agent", "", map[string]any{}))
+	for _, parent := range []string{"p", "q"} {
+		alignmentFeed(p, alignmentTool("same", "Read", parent, map[string]any{}))
+	}
+	alignmentFeed(p, alignmentToolResult("same", "p", false, nil))
+	// This can be a replay from p. The only unfinished candidate q is not
+	// enough evidence to assign a result without its parent coordinates.
+	alignmentFeed(p, `{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"same","content":"tool output","is_error":false}]}}`+"\n")
+	if len(alignmentKinds(sink, driver.StreamToolCallResult)) != 1 || !p.tools.notices["tool_result_ambiguous"] {
+		t.Fatal("bare replay was attributed to the remaining unfinished scope")
+	}
+	alignmentFeed(p, alignmentToolResult("same", "q", false, nil))
+	if len(alignmentKinds(sink, driver.StreamToolCallResult)) != 2 {
+		t.Fatal("explicitly scoped result lost after ambiguous replay")
+	}
+}
+
 func TestAlignmentClaudeCapabilityCatalog(t *testing.T) {
 	req := driver.Request{RunID: "catalog", Skills: driver.ResolvedSkills{Entries: []driver.ResolvedSkill{{Key: "skill/key", RuntimeName: "review"}}}, MCP: driver.MCPPayload{Servers: []driver.MCPServerSpec{{Key: "灵山 知识"}, {Key: "_srv_"}, {Key: "a.b"}, {Key: "a_b"}, {Key: "a"}, {Key: "a__b"}}}, ProfilePayload: driver.ProfilePayload{Agents: driver.AgentPayload{Agents: []driver.AgentSpec{{Key: "agent/key", RuntimeName: "planner"}}}}}
 	p, sink := alignmentAdoptionParser(req)
@@ -257,6 +276,7 @@ func TestAlignmentClaudeConfirmedTodos(t *testing.T) {
 	// must preserve the previous complete snapshot atomically.
 	invalidInputs := []any{
 		[]any{map[string]any{"content": "bad", "status": "unknown"}},
+		[]any{map[string]any{"id": 42, "content": "bad ID", "status": "pending"}},
 		[]any{map[string]any{"id": "same", "content": "a", "status": "pending"}, map[string]any{"id": "same", "content": "b", "status": "pending"}},
 		[]any{map[string]any{"content": strings.Repeat("界", 1366), "status": "pending"}},
 		nil,
@@ -273,6 +293,17 @@ func TestAlignmentClaudeConfirmedTodos(t *testing.T) {
 	snapshots = alignmentKinds(sink, driver.StreamTodoUpdated)
 	if len(snapshots) != 4 || snapshots[3].Todo.Items == nil || len(snapshots[3].Todo.Items) != 0 || snapshots[3].Todo.Revision != 4 {
 		t.Fatalf("clear=%+v", snapshots)
+	}
+}
+
+func TestAlignmentClaudeMalformedTodoFieldsPreserveTable(t *testing.T) {
+	p, sink := alignmentAdoptionParser(driver.Request{RunID: "malformed-task"})
+	alignmentFeed(p, alignmentTool("create", "TaskCreate", "", map[string]any{"subject": "keep"})+alignmentToolResult("create", "", false, map[string]any{"task": map[string]any{"id": "91"}}))
+	alignmentFeed(p, alignmentTool("delete", "TaskUpdate", "", map[string]any{"taskId": "91", "subject": 42, "status": "deleted"})+alignmentToolResult("delete", "", false, nil))
+	alignmentFeed(p, alignmentTool("invalid", "TaskCreate", "", map[string]any{"subject": "request"})+alignmentToolResult("invalid", "", false, map[string]any{"task": map[string]any{"id": "92", "subject": false}}))
+	snapshots := alignmentKinds(sink, driver.StreamTodoUpdated)
+	if len(snapshots) != 1 || snapshots[0].Todo.Items[0].ID != "91" || !p.tools.notices["todo_invalid"] {
+		t.Fatal("malformed task fields changed the last confirmed table")
 	}
 }
 

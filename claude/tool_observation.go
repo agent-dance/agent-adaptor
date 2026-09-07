@@ -249,25 +249,15 @@ func (p *claudeParser) observeToolResult(block, wrapper map[string]any, structur
 		}
 		call = o.calls[toolKey{scope.id, id}]
 	} else {
+		// A bare result could replay any earlier call. Completed calls remain
+		// candidates; selecting the only unfinished call would guess its scope.
 		for key, candidate := range o.calls {
-			if key.id == id && !candidate.resultSeen {
+			if key.id == id {
 				if call != nil {
 					p.observationNotice("tool_result_ambiguous")
 					return nil, true
 				}
 				call = candidate
-			}
-		}
-		// Replayed bare results are safe only if exactly one historic key matches.
-		if call == nil {
-			for key, candidate := range o.calls {
-				if key.id == id {
-					if call != nil {
-						p.observationNotice("tool_result_ambiguous")
-						return nil, true
-					}
-					call = candidate
-				}
 			}
 		}
 	}

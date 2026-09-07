@@ -68,7 +68,12 @@ func (p *claudeParser) observeTodo(call *observedTool, structured any) {
 			}
 			// Creation is confirmed by the successful result, not by local ordinal.
 			content := claudeExactString(call.input, "subject")
-			if subject, ok := task["subject"].(string); ok {
+			if value, exists := task["subject"]; exists {
+				subject, ok := value.(string)
+				if !ok {
+					p.observationNotice("todo_invalid")
+					return
+				}
 				content = subject
 			}
 			snapshot, err = table.Create(todo.Item{ID: id, Content: content, Status: todo.Pending, SyntheticID: synthetic}, todo.ToolResult, now)
@@ -83,6 +88,9 @@ func (p *claudeParser) observeTodo(call *observedTool, structured any) {
 					patch.Content = &value
 				}
 			}
+			if err != nil {
+				break
+			}
 			if raw, exists := call.input["status"]; exists {
 				value, ok := raw.(string)
 				if !ok {
@@ -95,9 +103,6 @@ func (p *claudeParser) observeTodo(call *observedTool, structured any) {
 					status := todo.Status(value)
 					patch.Status = &status
 				}
-			}
-			if success, exists := output["success"]; exists && success != true {
-				err = todoobs.ErrInvalid
 			}
 			if err == nil {
 				snapshot, err = table.Update(id, patch, todo.ToolResult, now)
@@ -151,6 +156,11 @@ func claudeTodoWrite(raw any, runID, scopeID string) ([]todo.Item, error) {
 		task, ok := entry.(map[string]any)
 		if !ok {
 			return nil, todoobs.ErrInvalid
+		}
+		if value, exists := task["id"]; exists {
+			if _, ok := value.(string); !ok {
+				return nil, todoobs.ErrInvalid
+			}
 		}
 		id := claudeExactString(task, "id")
 		synthetic := id == ""

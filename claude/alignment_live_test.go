@@ -22,6 +22,7 @@ import (
 	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/memory"
 	"github.com/agent-dance/agent-adaptor/profile"
+	"github.com/agent-dance/agent-adaptor/todo"
 	"github.com/agent-dance/agent-adaptor/tool"
 )
 
@@ -129,6 +130,9 @@ func TestAlignmentLiveNativeSchemaHITL(t *testing.T) {
 func TestAlignmentLiveToolsTodosAndNestedParent(t *testing.T) {
 	alignmentLiveGate(t)
 	cfg := alignmentLiveConfig(t, envOr("CLAUDE_MODEL_P3", "claude-haiku-4-5"))
+	if err := os.WriteFile(filepath.Join(cfg.CWD, "alignment.txt"), []byte("alignment nested read probe\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	echo := tool.Define("alignment_echo", "Return the supplied text", func(_ context.Context, in struct {
 		Text string `json:"text"`
 	}) (struct {
@@ -140,31 +144,47 @@ func TestAlignmentLiveToolsTodosAndNestedParent(t *testing.T) {
 	defer a.Close(context.Background())
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 	defer cancel()
-	st := a.Stream(ctx, "Call alignment_echo with text hello. Create a task using TaskCreate with subject alignment probe, update that exact task to completed with TaskUpdate, and read the full list with TaskList. Also launch an Agent subagent to use Read on a local file and report its result. Perform these tool calls, then reply done.")
-	var mcp, confirmed, nested bool
+	st := a.Stream(ctx, "Call alignment_echo with text hello. Create a task using TaskCreate with subject alignment probe, update that exact task to completed with TaskUpdate, and read the full list with TaskList. Also launch an Agent subagent to use Read on alignment.txt in the workspace and report its result. Perform these tool calls, then reply done.")
+	var mcp, confirmed bool
+	type callKey struct{ scope, id string }
+	starts, ends, results := map[callKey]int{}, map[callKey]int{}, map[callKey]int{}
 	for event := range st.Events() {
 		switch e := event.(type) {
 		case adaptor.CapabilityInvocation:
-			if e.Invocation.Ref.Kind == capability.MCP && e.Invocation.Phase == capability.Completed {
+			if e.Invocation.Ref.Kind == capability.MCP && e.Invocation.Ref.Operation == "alignment_echo" && e.Invocation.Phase == capability.Completed {
 				mcp = true
 			}
 		case adaptor.TodoUpdated:
 			for _, item := range e.Snapshot.Items {
-				if item.Content == "alignment probe" && !item.SyntheticID {
+				if item.Content == "alignment probe" && item.Status == todo.Completed && !item.SyntheticID {
 					confirmed = true
 				}
 			}
 		case adaptor.ToolCall:
 			if e.ParentToolCallID != "" && e.ScopeID != "" {
-				nested = true
+				key := callKey{e.ScopeID, e.ID}
+				if e.Phase == adaptor.PhaseStart {
+					starts[key]++
+				} else if e.Phase == adaptor.PhaseEnd {
+					ends[key]++
+				}
+			}
+		case adaptor.ToolResult:
+			if e.ParentToolCallID != "" && e.ScopeID != "" {
+				results[callKey{e.ScopeID, e.ID}]++
 			}
 		}
 	}
 	if _, err := st.Result(); err != nil {
 		t.Fatal(err)
 	}
-	if !mcp || !confirmed || !nested {
-		t.Fatalf("required provider facts missing: mcp=%t todo=%t nested=%t", mcp, confirmed, nested)
+	if !mcp || !confirmed || len(starts) == 0 {
+		t.Fatalf("required provider facts missing: mcp=%t todo=%t nested=%d", mcp, confirmed, len(starts))
+	}
+	for key, count := range starts {
+		if count != 1 || ends[key] != 1 || results[key] != 1 {
+			t.Fatalf("nested lifecycle not exactly once: start=%d end=%d result=%d", count, ends[key], results[key])
+		}
 	}
 }
 
@@ -185,7 +205,9 @@ func TestAlignmentLiveDedicatedToolResumeAfterClose(t *testing.T) {
 		Text string `json:"text"`
 	}) (struct {
 		Text string `json:"text"`
-	}, error) { return in, nil }, tool.ReadOnly())
+	}, error) {
+		return in, nil
+	}, tool.ReadOnly())
 	makeAgent := func() *adaptor.Agent {
 		return adaptor.New(claude.Driver(cfg), adaptor.WithThreadStore(store), adaptor.WithProfile(profile.Dedicated(dir)), adaptor.WithTools(echo), adaptor.WithPolicy(alignmentLivePolicy()))
 	}
