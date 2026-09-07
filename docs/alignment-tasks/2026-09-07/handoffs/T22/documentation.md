@@ -1,6 +1,6 @@
 # T22 独立 policy 组合验证片段
 
-T22 仅增加测试、离线协议装置和复验脚本，没有公共或生产语义变化，没有新增公共声明、依赖或 golden 更新。预期来自 AGENTS、冻结 C01–C04 和 R001–R016 的公开合同；测试不调用生产错误分类函数生成预期，不复制 owner 测试。R017 只改变待验收前置基线，不改变此处 27 个 requirement。
+T22 仅增加测试、离线协议装置和复验脚本，没有公共或生产语义变化，没有新增公共声明、依赖或 golden 更新。预期来自 AGENTS、冻结 C01–C04 和 R001–R016 的公开合同；测试不调用生产错误分类函数生成预期，不复制 owner 测试。canonical22 replacement G04 `b2035bc793369fb8fefb9de229ff1dbd2b748853` 已验收；T22 的 27 个 requirement 与公开合同保持不变，5 个阶段提交已无冲突迁移。
 
 ## 应合并的文档段落
 
@@ -47,15 +47,15 @@ G05 可将以下证据说明合入 `docs/run-policy.md` 的主动预算/HITL、`
 | W13-R06 | BudgetSealAndAtomicFinalize 九类场景、SelectedCauseNotificationGap 四种时序、PartialAndHealthyState |
 | W13-R07 | 内层 DelegationOwnBudgetAndKnownCancellation（初始化/Before/墙钟/负数/continuation），DelegationRecoveryKeepsBudgetAndRejectsStaleReplay（同一预算 context、旧 Task 不作本轮完成） |
 | W13-R08 | 上述内层 known 入参 TaskID、一次 detached ≤5s CancelTask、失败仅 safe diagnostic |
-| W13-R09 | 内层 R016HintQualification 16×HTTP/Local×Send/Stream、R016RealCoreSources 真实 pre-Driver 2×HTTP/Local×Send/Stream、CancellationAndTranslationDrain |
+| W13-R09 | 内层 R016HintQualification 16×HTTP/Local×Send/Stream、R016RealCoreSources 真实 pre-Driver 2×HTTP/Local×Send/Stream、CancellationAndTranslationDrain、DrainOracleConsumption 早读反向控制 |
 
 ## 执行与证据边界
 
 `run_checks.py` 只修改被启动子进程的环境；工具链、缓存与私有 HOME 路径由执行台架显式传入，拒绝非 Go 1.26.5。Go 测试使用 runtime.GOROOT 查找平台工具链，保持 GOTOOLCHAIN=local；每个外层进程仅构建一次外层调用的公共组合 binary，每次 count 仍重新运行该 binary，传播 race、递归守卫、40s 内层 timeout，保留完整 test2json 并拒绝零测试/skip/非零退出。唯一 TestMain 透明保留 m.Run exit code，等待同步子进程结束后只清理自身 MkdirTemp 编译目录。
 
-最终要求仍是原命令 `go test -count=1 . -run TestAlignmentPolicy` 与 `go test -race -count=20 . -run TestAlignmentPolicy`。可添加 `-json` 收集；外层超时由脚本进程边界施加，不改变原 Go 命令。正式 result 必须在新 G04 基线、全部源已提交的同一个 final HEAD 执行后生成，结果/evidence 不提交到它引用的 HEAD。
+最终要求仍是原命令 `go test -count=1 . -run TestAlignmentPolicy` 与 `go test -race -count=20 . -run TestAlignmentPolicy`。可添加 `-json` 收集；外层超时由脚本进程边界施加，不改变原 Go 命令。正式 result 在上述 replacement G04 基线、全部源已提交的同一个 final HEAD 执行后生成，最终日志为 `evidence/T22-V01.jsonl` 与 `evidence/T22-V02.jsonl`，内层 JSON 与二进制实际执行次数单独计数；结果/evidence 不提交到它引用的 HEAD。旧阶段日志仅保留历史反例与迁移前信息，不用于当前 acceptance。
 
-当前预验证运行于 macOS arm64，使用真实 Go 1.26.5、私有测试 HOME，provider override 已移除，三个门变量为 0。未执行 Linux/Windows 原生运行、paid/live、真实 CLI/凭据；装置报告的离线 Claude 版本字符串只是协议输入，绝不是 CLI live 版本证明。Windows 的模式断言仅覆盖该平台可观察权限，symlink 要求 runner 提供相应能力，不静默 skip。新 G04 与 T25/T26/T27 的原生/真实验证保持各自职责。
+本次任务执行台架为 macOS arm64，使用真实 Go 1.26.5、私有测试 HOME，provider override 已移除，三个门变量为 0。未执行 Linux/Windows 原生运行、paid/live、真实 CLI/凭据；装置报告的离线 Claude 版本字符串只是协议输入，绝不是 CLI live 版本证明。Windows 的模式断言仅覆盖该平台可观察权限，symlink 要求 runner 提供相应能力，不静默 skip。T25/T26/T27 的原生/真实验证保持各自职责。
 
 ## 不采用的旧行为
 

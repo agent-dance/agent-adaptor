@@ -1,6 +1,6 @@
 # T22 发现与证据边界
 
-截至阶段交付，未确认生产合同失败。测试仅在 ownership.allow 中实施，没有修复生产代码，没有删除 required 检查或增加 required skip。
+截至本次交付准备，未确认生产合同失败。测试仅在 ownership.allow 中实施，没有修复生产代码，没有删除 required 检查或增加 required skip。
 
 ## 原始 HTTP oracle 校准（非生产缺陷）
 
@@ -18,8 +18,8 @@
 
 修正仅涉及 owned 装置：将 producer 信号明确命名为 tailPublished；Result 同时验证该信号及 len(es)==0，发现早读写入 atomic earlyResult，而不只返回可能被 ACK 隐藏的 error；另在 Result 检查完成后关闭 resultDone。HTTP 用已有有限 context 等 resultDone 后直接断言 earlyResult=false 和各调用次数。Local 也复用相同直接断言，保留原 partial/cause/分类检查。装置反向控制同时要求未消费被拒绝、完整消费被接受、producer 关闭时 resultDone 仍未关闭。公开 CancelTask 和翻译错误 wire 预期完全不变。
 
-此修正补足此前阶段文档所称完整 drain 的证据缺口；原 cb4f44e 绿色不能作为修正后 oracle 通过。返修只做固定新阶段源的有限定向/race检查，日志单独保存；完整原 V01/V02 与正式 complete 仍等待新 G04 迁移。
+此修正补足此前阶段文档所称完整 drain 的证据缺口；原 cb4f44e 绿色不能作为修正后 oracle 通过。原返修已在 `66a86f345495f96109b52627f217989c115c9294` 完成有限定向/race 检查，日志单独保存；协调者逐行复核确认此 finding 可关闭。该旧阶段绿色不替代本次迁移后的完整原验证。
 
-## 阶段门禁状态
+## 当前交付基线与门禁
 
-R017 重新打开 G04，阶段源提交和旧基线预验证不能冒充正式 T22 complete。待协调者派发新 G04 SHA 后迁移本任务提交，在最终已提交 HEAD 重跑两条原验证（尤其 race count=20），生成逐项 result/evidence，并使用 canonical validator、external execution-state 与 --verify-git 核验。本任务不修改外部状态。
+2026-09-08，协调者已验收 canonical22 replacement G04 `b2035bc793369fb8fefb9de229ff1dbd2b748853`，并授权正式重派。T22 的 5 个 owned 阶段提交已从旧 `2421fe4` 无冲突 rebase；原始 SHA、红日志与阶段报告保留历史身份。最终源/本片段提交后执行完整两条原验证（count=1 和 race count=20，仅加 JSON，600s 进程外 timeout），正式结果只使用 `evidence/T22-V01.jsonl`、`evidence/T22-V02.jsonl` 及实际当前 HEAD。随后生成逐项 result/evidence，并使用 canonical validator、external execution-state 与 --verify-git 核验。本任务不修改外部状态，也不宣称批次或平台/live 门禁关闭。
