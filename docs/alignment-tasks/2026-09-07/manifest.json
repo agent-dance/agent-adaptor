@@ -243,7 +243,7 @@
       "batch_id": "B00",
       "phase": "gate",
       "path": "docs/alignment-tasks/2026-09-07/batches/00-contracts/gate/task.json",
-      "sha256": "77fd77d2942f7ce7a4a193f14e77918f59f7851d18ca4f95867d12dd3bb9b280"
+      "sha256": "56c0a5b907f76a18781a0cf768734a37babbf5f26d7e72fc1238616a4a29a54f"
     },
     {
       "id": "T01",
@@ -285,14 +285,14 @@
       "batch_id": "B01",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/01-critical-fixes/t31/task.json",
-      "sha256": "f1e461fd077c087352b43d560bbf503ed04cb61bddb185f1a8e4e8801ea08bbb"
+      "sha256": "1c4446a178d57bc8c7502ecb56514663404793513a74fe2bf183637dfd3d6da0"
     },
     {
       "id": "G01",
       "batch_id": "B01",
       "phase": "gate",
       "path": "docs/alignment-tasks/2026-09-07/batches/01-critical-fixes/gate/task.json",
-      "sha256": "20980a8ca699dc234414bcb5661788fecde327d512480793c4125f6c2a73a817"
+      "sha256": "2e1c0ba7a286955ef16f5e63b2441328a5527d45edf81813be0091766c255316"
     },
     {
       "id": "T06",
@@ -327,7 +327,7 @@
       "batch_id": "B02",
       "phase": "gate",
       "path": "docs/alignment-tasks/2026-09-07/batches/02-event-foundation/gate/task.json",
-      "sha256": "2f85ac87e4e370225f8b424b736d6217fa90b94910d724e10fb0079622b0e77c"
+      "sha256": "9ce737c67aedb38480a2caacb32550bf097baffb02ac1f16f8b786173c204c3e"
     },
     {
       "id": "T10",
@@ -362,7 +362,7 @@
       "batch_id": "B03",
       "phase": "gate",
       "path": "docs/alignment-tasks/2026-09-07/batches/03-core-and-wire/gate/task.json",
-      "sha256": "e4717e04c669a8177f4b49eccb5dfb0ad6616f94b24ee1cb82afec5fc7904837"
+      "sha256": "1346e0df00f39c20265ada0d4194f5807865182291da78cc9e701e759d518678"
     },
     {
       "id": "T14",
@@ -411,7 +411,7 @@
       "batch_id": "B04",
       "phase": "gate",
       "path": "docs/alignment-tasks/2026-09-07/batches/04-provider-adoption/gate/task.json",
-      "sha256": "d720d93023e6cbd6f05df644453da340f35022e4c0773b8882b428aae4ed3940"
+      "sha256": "110ca2b0744ebf91d59cb7504c5ec2738586d2d1dd635cc7a3b5f01cec0b7316"
     },
     {
       "id": "T20",
@@ -453,7 +453,7 @@
       "batch_id": "B05",
       "phase": "gate",
       "path": "docs/alignment-tasks/2026-09-07/batches/05-cross-layer-qa/gate/task.json",
-      "sha256": "8f6eeae3b33d8cc216159db62a9844049bafd52f43be9abf8074c9a2f2176535"
+      "sha256": "efa9ec0c2f8d0527720a84490c9c479f25c6eb09b99568d02fea6955ce7c38af"
     },
     {
       "id": "T25",

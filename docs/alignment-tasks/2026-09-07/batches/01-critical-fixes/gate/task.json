@@ -108,8 +108,10 @@
       "doc.go",
       "docs/README.md",
       "docs/a2a.md",
+      "docs/alignment-tasks/2026-09-07/**",
       "docs/alignment-tasks/2026-09-07/handoffs/G01/**",
       "docs/api-reference.md",
+      "docs/internal-history-alignment-plan-2026-09-07.md",
       "docs/profile-resource-provider-matrix.md",
       "docs/public-errors.md",
       "docs/run-policy.md",
@@ -125,7 +127,7 @@
       "execution-state"
     ],
     "shared_files_policy": "gate阶段串行，集中docs唯一writer；runtime代码修复退回原owner。",
-    "scope_expansion": "范围/图变更须记录新manifest版本并重新validate，不让任务静默扩大。"
+    "scope_expansion": "范围/图变更须记录新manifest版本并重新validate，不让任务静默扩大。 协调者对任务包/方案的编辑只用于有证据的版本化修订，须保留所有原要求ID并重跑校验；不得借此编辑未归属的运行代码。"
   },
   "execution": {
     "environment": "coordinator",
