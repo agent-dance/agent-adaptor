@@ -22,8 +22,6 @@ import (
 	"testing"
 	"time"
 
-	a2aproto "github.com/a2aproject/a2a-go/v2/a2a"
-	"github.com/a2aproject/a2a-go/v2/errordetails"
 	adaptor "github.com/agent-dance/agent-adaptor"
 	bridge "github.com/agent-dance/agent-adaptor/bridges/a2a"
 	"github.com/agent-dance/agent-adaptor/bridges/agui"
@@ -1254,9 +1252,9 @@ const (
 )
 
 // The real oversized ThreadKey cannot fit either the original event or its
-// loss projection. JSON-RPC maps that encoder error to an A2A internal error.
+// loss projection. The public client preserves the encoder error as Cause.
 // Recovery can observe the stored failed Task or race its persistence and
-// surface that exact typed error; neither outcome may adopt the drained hint.
+// surface StreamRecoveryError; neither outcome may adopt the drained hint.
 func apTranslationOutcome(observed []client.Event, transportError error, wantCause string) bool {
 	if wantCause != apTranslationEncodeError && wantCause != apTranslationInvalidError {
 		return false
@@ -1315,28 +1313,9 @@ func apTranslationOutcome(observed []client.Event, transportError error, wantCau
 	if !errors.As(transportError, &recovery) || recovery == nil || transportError != recovery || recovery.TaskID != taskID || recovery.Cause == nil {
 		return false
 	}
-	var remote *a2aproto.Error
-	if !errors.As(recovery.Cause, &remote) || remote == nil || recovery.Cause != remote || remote.Err != a2aproto.ErrInternalError || remote.Message != wantCause || len(remote.Details) != 0 {
-		return false
-	}
-	// The pinned JSON-RPC transport may attach its standard ErrorInfo timestamp,
-	// but cannot smuggle an adaptor failure code or limit through typed details.
-	if len(remote.TypedDetails) > 1 {
-		return false
-	}
-	for _, detail := range remote.TypedDetails {
-		if detail == nil || detail.TypeURL != "type.googleapis.com/google.rpc.ErrorInfo" || len(detail.Value) != 3 || detail.Value["reason"] != "INTERNAL_ERROR" || detail.Value["domain"] != "a2a-protocol.org" {
-			return false
-		}
-		metadata, ok := detail.Value["metadata"].(map[string]string)
-		if !ok || len(metadata) != 1 {
-			return false
-		}
-		if _, err := time.Parse(time.RFC3339, metadata["timestamp"]); err != nil {
-			return false
-		}
-	}
-	return true
+	// Cause is an error in the public client contract. Its concrete transport
+	// representation and private details are not part of this root QA oracle.
+	return recovery.Cause.Error() == wantCause
 }
 
 func apTranslationState(state client.TaskState) bool {
@@ -1369,33 +1348,19 @@ func TestAlignmentProtocolTranslationOutcomeOracle(t *testing.T) {
 	const taskID = "translation-task"
 	failed := client.TaskStatus{State: client.TaskStateFailed}
 	working := client.TaskStatus{State: client.TaskStateWorking}
-	cause := func() *a2aproto.Error {
-		return &a2aproto.Error{Err: a2aproto.ErrInternalError, Message: apTranslationEncodeError}
+	cause := func() error {
+		return errors.New(apTranslationEncodeError)
 	}
 	recovery := func(err error) *client.StreamRecoveryError {
 		return &client.StreamRecoveryError{TaskID: taskID, Cause: err}
 	}
-	typedCause := cause()
-	typedCause.TypedDetails = []*errordetails.Typed{{TypeURL: "type.googleapis.com/google.rpc.ErrorInfo", Value: map[string]any{
-		"reason": "INTERNAL_ERROR", "domain": "a2a-protocol.org", "metadata": map[string]string{"timestamp": "2026-09-08T00:00:00Z"},
-	}}}
-	wrongCode := cause()
-	wrongCode.Err = a2aproto.ErrInvalidParams
-	wrongMessage := cause()
-	wrongMessage.Message = "encode adapter stream status: invalid_payload"
-	extraMessage := cause()
-	extraMessage.Message += ": unrelated failure"
-	detailsControl := cause()
-	detailsControl.Details = map[string]any{"code": "active_execution_timeout", "limit_ms": 777000}
-	typedControl := cause()
-	typedControl.TypedDetails = []*errordetails.Typed{{TypeURL: "type.googleapis.com/google.rpc.ErrorInfo", Value: map[string]any{
-		"reason": "INTERNAL_ERROR", "domain": "a2a-protocol.org", "metadata": map[string]string{"timestamp": "2026-09-08T00:00:00Z", "limit_ms": "777000"},
-	}}}
+	wrongMessage := errors.New(apTranslationInvalidError)
+	extraMessage := errors.New(apTranslationEncodeError + ": unrelated failure")
 	statusControl := failed
 	statusControl.Message = &client.Message{Parts: []client.Part{{Kind: client.PartText, Text: "failure", Metadata: map[string]any{"agentadaptor.failure": map[string]any{"code": "cancelled"}}}}}
 	workingControl := working
 	workingControl.Message = statusControl.Message
-	var nilRemote *a2aproto.Error
+	var nilRecovery *client.StreamRecoveryError
 	for _, tc := range []struct {
 		name string
 		last client.TaskStatus
@@ -1405,7 +1370,6 @@ func TestAlignmentProtocolTranslationOutcomeOracle(t *testing.T) {
 	}{
 		{"failed-task-eof", failed, io.EOF, taskID, true},
 		{"typed-recovery", working, recovery(cause()), taskID, true},
-		{"typed-recovery-errorinfo", working, recovery(typedCause), taskID, true},
 		{"empty-task-recovery", client.TaskStatus{}, &client.StreamRecoveryError{Cause: cause()}, "", true},
 		{"wrapped-recovery", working, fmt.Errorf("read: %w", recovery(cause())), taskID, false},
 		{"nil-error", failed, nil, taskID, false},
@@ -1413,20 +1377,18 @@ func TestAlignmentProtocolTranslationOutcomeOracle(t *testing.T) {
 		{"no-event-eof", client.TaskStatus{}, io.EOF, "", false},
 		{"io-timeout", working, os.ErrDeadlineExceeded, taskID, false},
 		{"same-text-ordinary-error", working, errors.New(recovery(cause()).Error()), taskID, false},
-		{"bare-protocol-error", working, cause(), taskID, false},
-		{"same-text-ordinary-cause", working, recovery(errors.New(apTranslationEncodeError)), taskID, false},
+		{"bare-cause-error", working, cause(), taskID, false},
+		{"same-text-ordinary-cause", working, recovery(errors.New(apTranslationEncodeError)), taskID, true},
 		{"wrong-cause", working, recovery(wrongMessage), taskID, false},
 		{"cause-message-suffix", working, recovery(extraMessage), taskID, false},
-		{"wrong-protocol-code", working, recovery(wrongCode), taskID, false},
 		{"nil-cause", working, recovery(nil), taskID, false},
-		{"typed-nil-cause", working, recovery(nilRemote), taskID, false},
+		{"typed-nil-cause", working, recovery(nilRecovery), taskID, false},
+		{"typed-nil-recovery", working, nilRecovery, taskID, false},
 		{"wrong-task-id", working, recovery(cause()), "another-task", false},
 		{"no-observed-task-id", failed, io.EOF, "", false},
 		{"failed-task-with-recovery", failed, recovery(cause()), taskID, true},
 		{"status-control", statusControl, io.EOF, taskID, false},
 		{"recovery-status-control", workingControl, recovery(cause()), taskID, false},
-		{"cause-control", working, recovery(detailsControl), taskID, false},
-		{"typed-cause-control", working, recovery(typedControl), taskID, false},
 		{"deadline", working, context.DeadlineExceeded, taskID, false},
 		{"cancelled", working, context.Canceled, taskID, false},
 		{"recovery-deadline-cause", working, recovery(context.DeadlineExceeded), taskID, false},
@@ -1498,7 +1460,7 @@ func TestAlignmentProtocolTranslationOutcomeOracle(t *testing.T) {
 
 	t.Run("fixture-specific-cause", func(t *testing.T) {
 		observed := []client.Event{{Task: &client.Task{ID: taskID, Status: working}}}
-		invalid := &a2aproto.Error{Err: a2aproto.ErrInternalError, Message: apTranslationInvalidError}
+		invalid := errors.New(apTranslationInvalidError)
 		if !apTranslationOutcome(observed, recovery(invalid), apTranslationInvalidError) || apTranslationOutcome(observed, recovery(cause()), apTranslationInvalidError) || apTranslationOutcome(observed, recovery(invalid), apTranslationEncodeError) {
 			t.Fatal("oversized ThreadKey and unsafe Sequence causes became interchangeable")
 		}
