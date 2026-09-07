@@ -830,3 +830,31 @@ func TestT22LocalCancellationDrainsPartialCarrier(t *testing.T) {
 		t.Fatalf("local read/result/execute=%d/%d/%d", s.reads.Load(), s.resultReads.Load(), r.calls.Load())
 	}
 }
+
+// This fixture control must distinguish a published buffered tail from its
+// actual consumption. It intentionally exercises Result without draining in
+// the negative case; no production consumer or HTTP acknowledgement is used.
+func TestT22DrainOracleConsumption(t *testing.T) {
+	for _, consume := range []bool{false, true} {
+		t.Run(fmt.Sprintf("consume=%v", consume), func(t *testing.T) {
+			ctx, cancel := context.WithCancel(testContext(t))
+			defer cancel()
+			s := &drainStream{ctx: ctx, es: make(chan adaptor.Event, 2), started: make(chan struct{}), cancelSeen: make(chan struct{}), done: make(chan struct{})}
+			s.Events()
+			cancel()
+			tail := s.Events()
+			if consume {
+				for range tail {
+				}
+			}
+			_, err := s.Result()
+			t.Logf("consume=%v buffered=%d Events=%d Result=%d err=%v", consume, len(s.es), s.reads.Load(), s.resultReads.Load(), err)
+			if !consume && errors.Is(err, context.Canceled) {
+				t.Fatal("drain oracle accepted Result with an unread buffered tail")
+			}
+			if consume && !errors.Is(err, context.Canceled) {
+				t.Fatalf("fully drained Result rejected: %v", err)
+			}
+		})
+	}
+}
