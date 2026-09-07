@@ -60,3 +60,5 @@ G05 可将以下证据说明合入 `docs/run-policy.md` 的主动预算/HITL、`
 ## 不采用的旧行为
 
 不引入 exported PausableContext、逐字段零值继承 Policy、无健康证明的取消 checkpoint、按 size 信任 append 缓存、将 native append 拼入 user prompt、从 JSON 猜 provider 语义、桥层第二错误策略、依据父/本轮 limit 数值猜来源，也不把公开 HTTP CancelTask ack 冒充内部 drain 分类证据。
+
+严格 translation 分支还要求公开 StreamRecoveryError 的 TaskID 与该订阅实际最后观察 ID 相同，Cause 可 errors.As 到非 nil pinned upstream a2a.Error，Err 为 ErrInternalError、Message 为本装置精确 literal；拒绝普通同文案 Cause、额外 Details/custom control，只允许标准 ErrorInfo timestamp。每一份已观察 Task/status 都先检查 control 与冲突终态，不能只核对最后一帧。正反控制覆盖这些额外来源约束。

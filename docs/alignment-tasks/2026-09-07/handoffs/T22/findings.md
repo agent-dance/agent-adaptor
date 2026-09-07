@@ -31,3 +31,5 @@ F01 的尾消费/Result 完成/earlyResult/一次 Stream 屏障均通过，失�
 ## 当前交付基线与门禁
 
 2026-09-08，协调者已验收 canonical22 replacement G04 `b2035bc793369fb8fefb9de229ff1dbd2b748853`，并授权正式重派。T22 的 5 个 owned 阶段提交已从旧 `2421fe4` 无冲突 rebase；原始 SHA、红日志与阶段报告保留历史身份。最终源/本片段提交后执行完整两条原验证（count=1 和 race count=20，仅加 JSON，600s 进程外 timeout），正式结果只使用 `evidence/T22-V01.jsonl`、`evidence/T22-V02.jsonl` 及实际当前 HEAD。随后生成逐项 result/evidence，并使用 canonical validator、external execution-state 与 --verify-git 核验。本任务不修改外部状态，也不宣称批次或平台/live 门禁关闭。
+
+严格 translation 分支还要求公开 StreamRecoveryError 的 TaskID 与该订阅实际最后观察 ID 相同，Cause 可 errors.As 到非 nil pinned upstream a2a.Error，Err 为 ErrInternalError、Message 为本装置精确 literal；拒绝普通同文案 Cause、额外 Details/custom control，只允许标准 ErrorInfo timestamp。每一份已观察 Task/status 都先检查 control 与冲突终态，不能只核对最后一帧。正反控制覆盖这些额外来源约束。
