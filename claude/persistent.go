@@ -496,8 +496,8 @@ func (s persistentStderr) Write(chunk []byte) (int, error) {
 	}
 	n, err := s.lp.stderr.Write(chunk)
 	s.lp.activeMu.RLock()
+	defer s.lp.activeMu.RUnlock()
 	active := s.lp.active
-	s.lp.activeMu.RUnlock()
 	if active != nil && n > 0 {
 		ts := time.Now().UTC()
 		emitPersistentChunk(active.sink, "stderr", chunk[:n], ts)
@@ -575,12 +575,17 @@ func (lp *liveProcess) turn(ctx context.Context, prompt string, sink driver.Even
 		rr = <-done
 		rr.err = ctx.Err()
 	}
+	if rr.err != nil || !rr.result {
+		// Stop and drain the failed process before freezing this turn's Raw
+		// and parser state, including stderr already in flight.
+		_ = lp.terminateAndWait(context.Background())
+	}
 	parser.finalize()
 	raw := driver.RawStreams{
 		Stdout: rr.stdout,
 		Stderr: lp.stderr.since(stderrStart),
 	}
-	if !rr.result {
+	if rr.err != nil || !rr.result {
 		if rr.err == nil {
 			rr.err = io.ErrUnexpectedEOF
 		}

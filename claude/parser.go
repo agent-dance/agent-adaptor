@@ -654,6 +654,20 @@ func (p *claudeParser) finalSummary() string {
 	return ""
 }
 
+// observedUsage keeps a terminal usage report authoritative, including real
+// zero values. When no terminal usage is present, retain formal stream usage.
+func (p *claudeParser) observedUsage() *driver.Usage {
+	usage := p.usage
+	if usage == nil && p.stream != nil {
+		usage = p.stream.streamUsage
+	}
+	if usage == nil {
+		return nil
+	}
+	copy := *usage
+	return &copy
+}
+
 func (p *claudeParser) buildOutput() string {
 	return p.terminalResult
 }

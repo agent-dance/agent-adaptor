@@ -101,7 +101,9 @@ func (adapter) Descriptor() driver.Descriptor {
 			WorksWithRun:             true,
 			WorksWithStreaming:       true,
 			WorksWithHITL:            false,
-			Notes:                    "Native JSON Schema output supports print-mode streaming via --output-format stream-json --json-schema; interactive HITL combinations are still not advertised.",
+			NativeHITL:               &driver.StructuredOutputHITLCapability{PlanReview: true, Question: true},
+			PromptValidateHITL:       &driver.StructuredOutputHITLCapability{Permission: true, PlanReview: true, Question: true},
+			Notes:                    "Native schema supports Question/PlanReview Ask over bidirectional stream-json; effective Permission Ask selects prompt validation. The per-mechanism matrices replace the conservative WorksWithHITL summary, including inherited Ask defaults.",
 		},
 	}
 }
@@ -399,11 +401,6 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 	}
 
 	interactive := wantsInteractiveClaude(req.Policy.HumanDecision)
-	if req.OutputSchema != nil && req.StructuredOutputSource == driver.StructuredOutputSourceNative {
-		if interactive {
-			return driver.Response{}, &engine.StructuredOutputUnsupportedError{Driver: DriverType, Reason: "Claude native structured output is not supported with interactive HITL"}
-		}
-	}
 
 	args, err := buildClaudeExecArgs(cfg, req, interactive)
 	if err != nil {
@@ -452,12 +449,13 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 			bind = func(stdin interactiveStdin) { pparser.enableInteractive(ctx, decisionSink, stdin) }
 		}
 		praw, persistentErr := writer.run(ctx, chatSpec, sink, pparser, bind)
-		if persistentErr == nil {
-			praw.Terminal = pparser.terminal
-			return buildClaudeResponse(req, pparser, praw, 0, "", false, reportedModel, effectiveCWD, profileFingerprint)
-		}
 		if !errors.Is(persistentErr, errPersistentFallback) {
-			return driver.Response{}, persistentErr
+			exitCode := 0
+			if persistentErr != nil {
+				exitCode = -1
+			}
+			praw.Terminal = pparser.terminal
+			return buildClaudeResponse(req, pparser, praw, exitCode, "", errors.Is(persistentErr, context.DeadlineExceeded), reportedModel, effectiveCWD, profileFingerprint, persistentErr)
 		}
 	} else if writer != nil {
 		if err := writer.suspendAndWait(resumeID, persistentSessionKey(req), persistentPreviousSessionKey(req)); err != nil {
@@ -508,14 +506,13 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 	}
 
 	result, err := clihelper.Run(ctx, runReq, sink)
-	if err != nil {
-		return driver.Response{}, err
-	}
 	parser.finalize()
+	// Helper failures may follow observed protocol output. Build from that
+	// same parser before returning the original cause to the unified pipeline.
 	raw := driver.RawStreams{Stdout: result.RawStreams.Stdout, Stderr: result.RawStreams.Stderr, Terminal: parser.terminal}
-	driverResult, err := buildClaudeResponse(req, parser, raw, result.ExitCode, result.Signal, result.TimedOut, reportedModel, effectiveCWD, profileFingerprint)
+	driverResult, err := buildClaudeResponse(req, parser, raw, result.ExitCode, result.Signal, result.TimedOut, reportedModel, effectiveCWD, profileFingerprint, errors.Join(err, ctx.Err()))
 	if err != nil {
-		return driver.Response{}, err
+		return driverResult, err
 	}
 	if writer != nil && !req.Spawn && persistentPreWarmEligible(cfg, req) &&
 		driverResult.ExitCode == 0 && driverResult.Failure == nil &&
@@ -538,29 +535,29 @@ func buildClaudeResponse(
 	reportedModel string,
 	effectiveCWD string,
 	profileFingerprint string,
+	runErr error,
 ) (driver.Response, error) {
-	if parser.interactiveErr != nil {
-		failure := &driver.RunFailure{Code: driver.FailureAgentError, Message: parser.interactiveErr.Error()}
-		parser.completeStream(failure, exitCode, signal, timedOut)
-		return driver.Response{}, parser.interactiveErr
+	// Keep the original decision/transport cause separate from provider failure
+	// classification. Core owns context and infrastructure error attribution.
+	cause := errors.Join(parser.interactiveErr, runErr)
+	if cause == nil {
+		cause = validateClaudeForkOutcome(req, parser)
 	}
-	if err := validateClaudeForkOutcome(req, parser); err != nil {
-		parser.completeStream(&driver.RunFailure{Code: driver.FailureAgentError, Message: err.Error()}, exitCode, signal, timedOut)
-		return driver.Response{}, err
-	}
-	if req.Session != nil && req.Session.State != nil && strings.TrimSpace(req.Session.State.ResumeID) != "" &&
+	if cause == nil && req.Session != nil && req.Session.State != nil && strings.TrimSpace(req.Session.State.ResumeID) != "" &&
 		!parser.terminalSuccess && isClaudeResumeRejected(raw.Stdout, raw.Stderr, parser.errorMessage) {
 		reason := strings.TrimSpace(parser.errorMessage)
 		if reason == "" {
 			reason = "claude resume session " + strconv.Quote(req.Session.State.ResumeID) + " is unavailable"
 		}
-		err := &engine.ResumeRejectedError{Reason: reason}
-		parser.completeStream(&driver.RunFailure{Code: driver.FailureAgentError, Message: err.Error()}, exitCode, signal, timedOut)
-		return driver.Response{}, err
+		cause = &engine.ResumeRejectedError{Reason: reason}
 	}
-	failure := parser.failureForOutcome(exitCode, signal, timedOut)
+	outcomeExit := exitCode
+	if cause != nil && outcomeExit == 0 {
+		outcomeExit = -1
+	}
+	failure := parser.failureForOutcome(outcomeExit, signal, timedOut)
 	var structuredOutput *driver.StructuredOutput
-	if req.OutputSchema != nil {
+	if req.OutputSchema != nil && cause == nil {
 		if req.StructuredOutputSource == driver.StructuredOutputSourceNative {
 			structuredOutput = parser.structuredOutput
 		}
@@ -572,7 +569,7 @@ func buildClaudeResponse(
 			failure,
 		)
 	}
-	checkpoint := parser.checkpointForOutcome(exitCode, signal, timedOut, failure)
+	checkpoint := parser.checkpointForOutcome(outcomeExit, signal, timedOut, failure)
 	if checkpoint != nil && checkpoint.State != nil {
 		checkpoint.State.Data = map[string]string{
 			driver.SessionParamCWD:                effectiveCWD,
@@ -580,7 +577,11 @@ func buildClaudeResponse(
 			driver.SessionParamProfileFingerprint: profileFingerprint,
 		}
 	}
-	parser.completeStream(failure, exitCode, signal, timedOut)
+	streamFailure := failure
+	if streamFailure == nil && cause != nil {
+		streamFailure = &driver.RunFailure{Code: driver.FailureAgentError, Message: cause.Error()}
+	}
+	parser.completeStream(streamFailure, exitCode, signal, timedOut)
 
 	return driver.Response{
 		Output:           parser.buildOutput(),
@@ -589,7 +590,7 @@ func buildClaudeResponse(
 		ExitCode:         exitCode,
 		Signal:           signal,
 		TimedOut:         timedOut,
-		Usage:            parser.usage,
+		Usage:            parser.observedUsage(),
 		Checkpoint:       checkpoint,
 		Provider:         "anthropic",
 		Model:            reportedModel,
@@ -597,7 +598,7 @@ func buildClaudeResponse(
 		StructuredOutput: structuredOutput,
 		RuntimeServices:  driverutil.RuntimeReportsFromRefs(req.Runtime.Ensured, req.Agent),
 		Failure:          failure,
-	}, nil
+	}, cause
 }
 
 func persistentSessionKey(req driver.Request) string {
@@ -705,9 +706,9 @@ func validateClaudeSessionGuard(req driver.Request, effectiveCWD, profileFingerp
 }
 
 func buildClaudeExecArgs(cfg Config, req driver.Request, interactive bool) ([]string, error) {
-	// Common core. Native structured output supports two modes:
-	//   - non-streaming: final JSON result via --output-format json
-	//   - streaming: stream-json events + final structured_output/result event
+	// Native structured output keeps bidirectional stream-json whenever
+	// interactive control is required, independently of the rich-event flag.
+	// Non-interactive batch uses json; rich transport uses stream-json.
 	//
 	// Prompt-validated structured output and ordinary runs always stay on the
 	// existing stream-json path.
@@ -718,7 +719,7 @@ func buildClaudeExecArgs(cfg Config, req driver.Request, interactive bool) ([]st
 		if err != nil {
 			return nil, err
 		}
-		if req.Streaming {
+		if interactive || req.Streaming {
 			args = append(args, "--output-format", "stream-json", "--verbose", "--json-schema", string(schemaJSON))
 		} else {
 			args = append(args, "--output-format", "json", "--json-schema", string(schemaJSON))

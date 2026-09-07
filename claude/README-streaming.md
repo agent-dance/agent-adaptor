@@ -20,9 +20,32 @@ Agent runs. Ordinary Bash/Write/Edit permission requests use the same typed,
 exactly-once decision path; the CLI remains responsible for executing an
 approved tool.
 
-Native structured output uses Claude's `--json-schema`. Interactive HITL plus
-native schema output is rejected explicitly; prompt validation remains the
-portable combination.
+Native structured output uses Claude's `--json-schema`. Question and PlanReview
+Ask can share a bidirectional stream-json process with native schema output.
+Native schema does not advertise Permission Ask; core selects prompt validation
+for that combination, omitting `--json-schema` and validating final JSON text.
+The Driver executes the source resolved by core and does not change the policy.
+
+The precise per-mechanism matrices account for effective defaults: unset
+Permission and PlanReview inherit Ask. Setting only QuestionAsk therefore also
+requires Permission Ask support and selects prompt validation. To request native
+schema with Question/PlanReview Ask, the caller must explicitly choose a
+compatible Permission auto policy. This is a caller decision; the SDK never
+auto-approves Permission merely to retain native schema. `WorksWithHITL=false`
+remains a conservative legacy summary; the non-nil matrices describe each
+mechanism's actual supported kinds.
+
+Schema eligibility and control transport activation have distinct rules. A zero
+raw policy still uses the existing observational transport, while its effective
+Permission Ask excludes native schema and selects prompt validation. This does
+not prove that a Permission request occurred or was answered. Explicit Ask (or
+the existing auto decision settings requiring control) activates bidirectional
+stdin; ordinary Permission Ask without schema retains its existing behavior.
+
+Native schema remains a temporary process shape for Thread calls: the previous
+resident writer stops before this turn starts; a healthy checkpoint may then be
+prewarmed. `WithSpawn` suppresses registering or prewarming a resident writer.
+A Thread key alone does not imply that native schema rounds reuse one PID.
 
 A one-shot bidirectional run closes stdin exactly once when the parser sees a
 formal `type:result`, even if no `message_stop(end_turn)` preceded it. A terminal
@@ -38,10 +61,20 @@ The protocol parser maps official Claude stream-json frames to
 `driver.StreamPayload` values for text, thinking, tool calls, tool results,
 lifecycle, and HITL. The same parse pass builds the final Text, Summary, Raw
 streams and terminal payload, Transcript, Usage, failure, and checkpoint.
-Provider user frames are acknowledgements for the control transport; they are
-not replayed as assistant output. `ResultMessage.result` is the sole authority
+Provider user frames marked as replay are acknowledgements for the control
+transport; they are not replayed as assistant output. `ResultMessage.result` is the sole authority
 for final Text; intermediate assistant frames and deltas remain in the Event
 stream and Transcript.
+
+A resident disconnect, cancellation, deadline, or decision error preserves the
+same parser's available Raw stdout/stderr, terminal payload, Transcript, final
+text, Usage and service reports. `Run` and `Stream.Result` expose them through
+`RunError.Result`, and `errors.Is/As` retain the original cause. Partial assistant
+frames do not replace missing final Text. Terminal usage, including observed
+zero values, is authoritative; otherwise formally observed stream usage remains
+available. No output or session ID alone makes an interrupted checkpoint valid.
+The previous healthy Thread record stays unchanged, and a possibly delivered
+prompt is never automatically replayed.
 
 The complete Driver obligations and consumer behavior are documented in
 [`docs/streaming-adapter-contract.md`](../docs/streaming-adapter-contract.md)
