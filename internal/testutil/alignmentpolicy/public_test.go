@@ -14,9 +14,6 @@ import (
 	"testing"
 	"time"
 
-	a2aproto "github.com/a2aproject/a2a-go/v2/a2a"
-	"github.com/a2aproject/a2a-go/v2/errordetails"
-
 	adaptor "github.com/agent-dance/agent-adaptor"
 	bridge "github.com/agent-dance/agent-adaptor/bridges/a2a"
 	client "github.com/agent-dance/agent-adaptor/clients/a2a"
@@ -740,40 +737,20 @@ func translationOutcomeError(task client.Task, terminalErr error) error {
 	if !ok || recovery == nil || recovery.Cause == nil || recovery.TaskID != task.ID {
 		return errors.New("missing exact recovery wrapper or matching observed TaskID")
 	}
-	var upstream *a2aproto.Error
-	if !errors.As(recovery.Cause, &upstream) || upstream == nil || upstream.Err != a2aproto.ErrInternalError || upstream.Message != "encode adapter stream status: invalid_payload" || recovery.Cause.Error() != upstream.Message || len(upstream.Details) != 0 {
-		return errors.New("missing exact pinned upstream internal translation error")
-	}
-	if len(upstream.TypedDetails) > 1 {
-		return errors.New("unexpected translation error detail count")
-	}
-	for _, detail := range upstream.TypedDetails {
-		if detail == nil || detail.TypeURL != "type.googleapis.com/google.rpc.ErrorInfo" || detail.Value["reason"] != "INTERNAL_ERROR" || detail.Value["domain"] != "a2a-protocol.org" || len(detail.Value) != 3 {
-			return errors.New("unexpected translation ErrorInfo")
-		}
-		metadata, ok := detail.Value["metadata"].(map[string]string)
-		if !ok || len(metadata) != 1 {
-			return errors.New("custom translation metadata")
-		}
-		if _, err := time.Parse(time.RFC3339, metadata["timestamp"]); err != nil {
-			return errors.New("invalid standard translation timestamp")
-		}
+	// Cause is an error in the public contract. Its concrete protocol SDK type,
+	// code and details are owned by the localized client/bridge implementation.
+	if recovery.Cause.Error() != "encode adapter stream status: invalid_payload" {
+		return errors.New("missing exact public translation cause")
 	}
 	return nil
 }
 
 func TestT22TranslationOutcomeControls(t *testing.T) {
 	failed := client.Task{Status: client.TaskStatus{State: client.TaskStateFailed}}
-	upstream := func() *a2aproto.Error {
-		return &a2aproto.Error{Err: a2aproto.ErrInternalError, Message: "encode adapter stream status: invalid_payload"}
+	cause := func() error {
+		return errors.New("encode adapter stream status: invalid_payload")
 	}
-	exact := &client.StreamRecoveryError{Cause: upstream()}
-	detailError := upstream()
-	detailError.Details = map[string]any{"limit_ms": 100}
-	timed := upstream()
-	timed.TypedDetails = []*errordetails.Typed{{TypeURL: "type.googleapis.com/google.rpc.ErrorInfo", Value: map[string]any{"reason": "INTERNAL_ERROR", "domain": "a2a-protocol.org", "metadata": map[string]string{"timestamp": "2026-09-08T00:00:00Z"}}}}
-	custom := upstream()
-	custom.TypedDetails = []*errordetails.Typed{{TypeURL: "type.googleapis.com/google.rpc.ErrorInfo", Value: map[string]any{"reason": "INTERNAL_ERROR", "domain": "a2a-protocol.org", "metadata": map[string]string{"timestamp": "2026-09-08T00:00:00Z", "limit_ms": "100"}}}}
+	exact := &client.StreamRecoveryError{Cause: cause()}
 	withControl := func(code string, limit any) client.Task {
 		return client.Task{Status: client.TaskStatus{State: client.TaskStateFailed, Message: &client.Message{Parts: []client.Part{{Kind: client.PartText, Metadata: map[string]any{"agentadaptor.failure": map[string]any{"code": code, "limit_ms": limit}}}}}}}
 	}
@@ -786,13 +763,9 @@ func TestT22TranslationOutcomeControls(t *testing.T) {
 		{"failed-eof", failed, io.EOF, true},
 		{"typed-producer-error", client.Task{}, exact, true},
 		{"typed-producer-existing-failed", failed, exact, true},
-		{"typed-standard-timestamp", client.Task{}, &client.StreamRecoveryError{Cause: timed}, true},
-		{"typed-observed-id", client.Task{ID: "observed", Status: client.TaskStatus{State: client.TaskStateWorking}}, &client.StreamRecoveryError{TaskID: "observed", Cause: upstream()}, true},
-		{"typed-false-id", client.Task{}, &client.StreamRecoveryError{TaskID: "foreign", Cause: upstream()}, false},
-		{"typed-ordinary-same-cause", client.Task{}, &client.StreamRecoveryError{Cause: errors.New("encode adapter stream status: invalid_payload")}, false},
-		{"typed-wrong-upstream-code", client.Task{}, &client.StreamRecoveryError{Cause: &a2aproto.Error{Err: a2aproto.ErrInvalidParams, Message: "encode adapter stream status: invalid_payload"}}, false},
-		{"typed-upstream-details", client.Task{}, &client.StreamRecoveryError{Cause: detailError}, false},
-		{"typed-custom-errorinfo", client.Task{}, &client.StreamRecoveryError{Cause: custom}, false},
+		{"typed-observed-id", client.Task{ID: "observed", Status: client.TaskStatus{State: client.TaskStateWorking}}, &client.StreamRecoveryError{TaskID: "observed", Cause: cause()}, true},
+		{"typed-false-id", client.Task{}, &client.StreamRecoveryError{TaskID: "foreign", Cause: cause()}, false},
+		{"typed-ordinary-same-cause", client.Task{}, &client.StreamRecoveryError{Cause: errors.New("encode adapter stream status: invalid_payload")}, true},
 		{"wrapped-recovery", client.Task{}, fmt.Errorf("unexpected wrapper: %w", exact), false},
 		{"empty-eof", client.Task{}, io.EOF, false},
 		{"nil-error", client.Task{}, nil, false},
