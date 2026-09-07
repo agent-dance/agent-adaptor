@@ -643,6 +643,9 @@ func checkLiveRun(t *testing.T, d driver.Driver, c *suiteConfig) {
 	if support, ok := d.(driver.StreamSupport); ok {
 		reportViolations(t, VerifyStreamSequence(sink.Stream()))
 		reportViolations(t, VerifyStreamCapability(support.StreamCapability(), sink.Stream()))
+	} else {
+		// Observation facts do not imply the optional rich text/tool protocol.
+		reportViolations(t, verifyObservationSequence(sink.Stream()))
 	}
 	reportViolations(t, verifyObservationSupport(d.Descriptor().Observation.Streaming, sink.Stream()))
 	reportViolations(t, VerifyTranscriptMirror(sink.Events(), resp.Transcript))

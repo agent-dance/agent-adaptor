@@ -241,5 +241,11 @@ func verifyObservationSequence(payloads []driver.StreamPayload) []Violation {
 			}
 		}
 	}
+	for k := range invocations {
+		if !closed[k] {
+			out = append(out, violationf("OBS-04", "capability remains open when Driver.Run returns in scope %q", k.scope))
+		}
+	}
+
 	return out
 }

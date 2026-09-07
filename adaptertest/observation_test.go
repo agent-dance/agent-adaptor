@@ -151,3 +151,14 @@ func TestAlignmentDescriptorSnapshotOracle(t *testing.T) {
 		t.Fatalf("shared descriptor matrix accepted: %v", v)
 	}
 }
+
+func TestAlignmentObservationWithoutRichLifecycle(t *testing.T) {
+	p := alignmentObservationPayloads()
+	facts := []driver.StreamPayload{p[1], p[4]}
+	if v := verifyObservationSequence(facts); len(v) != 0 {
+		t.Fatal(v)
+	}
+	if v := verifyObservationSequence(facts[:1]); len(v) != 1 || v[0].Clause != "OBS-04" {
+		t.Fatalf("unclosed non-rich observation accepted: %v", v)
+	}
+}
