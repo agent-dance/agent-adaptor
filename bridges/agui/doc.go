@@ -6,6 +6,11 @@
 // SubagentUpdate lifecycles become AG-UI Activity messages with activityType
 // "subagent", allowing clients to render live delegated work outside the
 // parent assistant transcript.
+// Each Subagent activity snapshot and delta owns its tool list and nested
+// Args, Result and Error JSON containers. Later translation or CloseResult
+// does not mutate delivered events, so consumers may retain or serialize
+// them while translation continues. Consumer edits do not change the tracker.
+// Concrete JSON container types, numbers and nil/empty values are preserved.
 // CapabilityInvocation and TodoUpdated become CUSTOM events named
 // adapter.capability.invocation and adapter.todo.updated. Their values retain
 // the authoritative meta, nested source chain, parent coordinates and full
