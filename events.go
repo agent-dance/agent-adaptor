@@ -385,7 +385,8 @@ func (*ApprovalRequest) isEvent() {}
 // narrow replay hook for bridges and persistent event recorders, whose wire
 // envelope stores EventMeta separately from the typed event payload. A live
 // run's sink always overwrites restored coordinates with its own authoritative
-// run order before publication.
+// run order before publication. Approval copies isolate descriptive Choices and
+// Details JSON containers while retaining the live exactly-once responder.
 func WithEventMeta(ev Event, meta EventMeta) Event {
 	if ev == nil {
 		return nil
@@ -733,6 +734,11 @@ func cloneEventValue(ev Event) Event {
 		return cloneJSONValue(m).(map[string]any)
 	}
 	switch e := ev.(type) {
+	case *ApprovalRequest:
+		out := *e
+		out.Choices = append([]Choice(nil), e.Choices...)
+		out.Details = cloneMap(e.Details)
+		return &out
 	case CapabilityInvocation:
 		e.Invocation = capabilityobs.Clone(e.Invocation)
 		return e

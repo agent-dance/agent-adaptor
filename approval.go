@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
 	"sync"
 	"time"
 
@@ -150,6 +149,10 @@ var (
 // one of Approve / Deny / Answer resolves it. Late or duplicate responses
 // return ErrApprovalResolved; if nobody responds before Deadline, the
 // ApprovalPolicy timeout fallback applies.
+// Ask waits pause only the current run's active execution budget, before
+// queueing or invoking a handler. Concurrent requests hold independent tokens;
+// the last completed wait resumes timing. Approval Timeout and parent deadlines
+// remain wall-clock bounds. Automatic decisions never pause the active budget.
 type ApprovalRequest struct {
 	eventMetaCarrier
 	// ID identifies this request (unique per run, fresh per retry).
@@ -169,9 +172,13 @@ type ApprovalRequest struct {
 
 	// Choices are the renderable options of a Question request (question
 	// field group). Answer accepts one of the choice keys or free text.
+	// Construction and event copies own independent choice slices.
 	Choices []Choice
 
-	// Details carries driver-specific structured request data.
+	// Details carries driver-specific structured request data. Construction and
+	// event copies isolate JSON containers (maps, slices and arrays), including
+	// containers nested in interfaces; arbitrary pointer/struct objects are not
+	// recursively copied. Live copies retain the same exactly-once responder.
 	Details map[string]any
 
 	// CreatedAt is when the current approval attempt was created.
@@ -221,7 +228,7 @@ func newApprovalRequest(req driver.DecisionRequest) *ApprovalRequest {
 		Source:     req.Source,
 		ToolCallID: req.ToolCallID,
 		Choices:    append([]Choice(nil), req.Choices...),
-		Details:    maps.Clone(req.Payload),
+		Details:    cloneJSONValue(req.Payload).(map[string]any),
 		CreatedAt:  req.CreatedAt,
 		Deadline:   req.Deadline,
 		Attempt:    req.RetryAttempt,

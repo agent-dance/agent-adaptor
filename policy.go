@@ -2,6 +2,7 @@ package adaptor
 
 import (
 	"strconv"
+	"time"
 
 	"github.com/agent-dance/agent-adaptor/driver"
 )
@@ -42,8 +43,16 @@ const (
 // As an option value, Policy replaces as a whole ("nearer scope wins;
 // everything but skills replaces"): a call-site WithPolicy substitutes the
 // agent-default Policy entirely. Zero fields mean "inherit" at the driver
-// boundary, so an all-zero Policy defers every dimension to the driver.
+// boundary, except ActiveExecutionTimeout: zero means no active budget.
 type Policy struct {
+	// ActiveExecutionTimeout limits active time from resource preparation through
+	// final validation and the health check before Thread commit. Zero disables
+	// it; negative is invalid. The budget is sealed before atomic persistence;
+	// persistence still determines success using the original cancelable context.
+	// Each Ask attempt pauses this run before queueing/callback; overlapping Ask
+	// waits resume only after the last ends. Approvals and WithTimeout/parent
+	// deadlines remain wall-clock bounds. Cleanup is outside the active budget.
+	ActiveExecutionTimeout time.Duration
 	// Sandbox is the filesystem / process boundary strength.
 	Sandbox SandboxLevel
 	// WebSearch gates the provider's web-search capability.
@@ -92,6 +101,10 @@ func validatePolicy(desc driver.Descriptor, p *Policy) error {
 	}
 	invalid := func(field, value string) error {
 		return &driver.InvalidPolicyError{Driver: desc.Type, Field: field, Value: value}
+	}
+
+	if p.ActiveExecutionTimeout < 0 {
+		return invalid("Policy.ActiveExecutionTimeout", p.ActiveExecutionTimeout.String())
 	}
 
 	switch p.Sandbox {

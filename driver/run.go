@@ -77,9 +77,12 @@ type Request struct {
 	Profile        *ProfileSelection
 	Policy         RunPolicy
 	Instructions   *InstructionsBundleRef
-	Session        *SessionContext
-	Metadata       map[string]string
-	OutputSchema   *OutputSchema
+	// AppendSystemPrompt is the exact resolved native append text. Empty means
+	// no SDK override; a Driver MUST NOT substitute Prompt or Instructions.
+	AppendSystemPrompt string
+	Session            *SessionContext
+	Metadata           map[string]string
+	OutputSchema       *OutputSchema
 	// StructuredOutputSource is the mechanism selected by core after
 	// capability and transport negotiation. It is non-empty exactly when
 	// OutputSchema is non-nil; Drivers consume it but do not renegotiate it.
@@ -249,3 +252,7 @@ type ObservationDemand struct {
 	CapabilityInvocations bool
 	Todos                 bool
 }
+
+// FailureActiveExecutionTimeout reports exhaustion of the core-owned budget.
+// Drivers do not create a second timer or permit unhealthy checkpoints.
+const FailureActiveExecutionTimeout FailureCode = "active_execution_timeout"

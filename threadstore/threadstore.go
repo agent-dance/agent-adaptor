@@ -117,7 +117,12 @@ type FinalizeRequest struct {
 //   - Resolve: look up by internal ID or by thread key. A missing record is
 //     (nil, nil), not an error. Archived records require IncludeArchived.
 //   - Finalize: validate every held lease (owner+token, unexpired), then
-//     atomically save/archive/rebind.
+//     atomically save/archive/rebind. Check context before entering the atomic
+//     commit, including after waiting for backend locks. Cancellation before
+//     that boundary must not save/archive/rebind and retains its errors.Is/As
+//     cause. A healthy commit already completed is not rolled back if context
+//     cancellation or a delayed response occurs afterward. The return time is
+//     not a separate commit acknowledgement.
 //   - AcquireLease / RenewLease / ReleaseLease: exclusive-use coordination.
 //     Acquire fails with a BusyError while another owner holds an unexpired
 //     lease on target; acquiring an expired or self-owned lease succeeds.

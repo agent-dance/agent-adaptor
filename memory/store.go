@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"sync"
@@ -78,7 +79,10 @@ func (s *Store) recordByIDLocked(id string, includeArchived bool) *threadstore.R
 
 // Finalize persists the post-run record and performs archive/rebind
 // operations after validating all held leases.
-func (s *Store) Finalize(_ context.Context, req threadstore.FinalizeRequest) error {
+func (s *Store) Finalize(ctx context.Context, req threadstore.FinalizeRequest) error {
+	if err := ctx.Err(); err != nil {
+		return errors.Join(err, context.Cause(ctx))
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -96,6 +100,11 @@ func (s *Store) Finalize(_ context.Context, req threadstore.FinalizeRequest) err
 	}
 
 	copyRecord := cloneThreadRecord(req.Record)
+	// Cancellation while waiting for the mutex must not save/archive/rebind.
+	// This check is the cooperative entry to the atomic commit, not its return.
+	if err := ctx.Err(); err != nil {
+		return errors.Join(err, context.Cause(ctx))
+	}
 	s.records[copyRecord.ID] = copyRecord
 
 	if req.ArchiveOld && req.PreviousID != "" {
