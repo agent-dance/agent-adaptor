@@ -248,8 +248,8 @@ func (w *persistentWriter) run(ctx context.Context, spec persistentSpec, sink dr
 	return raw, nil
 }
 
-// suspendAndWait removes the live writer before terminating it and does not
-// return until cmd.Wait confirms the old process has exited. Callers hold the
+// suspendAndWait terminates the live writer and detaches it after cmd.Wait
+// confirms its exit and the append carrier is released. Callers hold the
 // matching persistentWriter for the entire temporary spawn, preventing a new
 // writer from appearing in the gap.
 func (w *persistentWriter) suspendAndWait(resumeID, engineID, previousID string) error {

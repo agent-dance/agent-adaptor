@@ -67,12 +67,17 @@ func claudeTuple(parts ...string) string {
 	return "aa1:" + base64.RawURLEncoding.EncodeToString(bytes.TrimSuffix(b.Bytes(), []byte{'\n'}))
 }
 
-func (p *claudeParser) wrapperScope(wrapper map[string]any) (toolScope, bool) {
+func claudeParentID(wrapper map[string]any) (string, bool) {
 	raw, exists := wrapper["parent_tool_use_id"]
 	if !exists || raw == nil {
-		return toolScope{}, true
+		return "", true
 	}
 	parent, ok := raw.(string)
+	return parent, ok
+}
+
+func (p *claudeParser) wrapperScope(wrapper map[string]any) (toolScope, bool) {
+	parent, ok := claudeParentID(wrapper)
 	if !ok {
 		p.observationNotice("parent_unresolved")
 		return toolScope{}, false

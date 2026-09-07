@@ -375,3 +375,41 @@ func TestAlignmentClaudeTodoUTF8Wire(t *testing.T) {
 		t.Fatal("invalid UTF-8 repaired into confirmed state")
 	}
 }
+
+func TestAlignmentClaudeUnresolvedParentDoesNotAlterRootMessage(t *testing.T) {
+	p, sink := alignmentAdoptionParser(driver.Request{RunID: "parent-message"})
+	stdin := &fakeStdin{}
+	p.interactive, p.stdin = true, stdin
+	alignmentFeed(p, `{"type":"stream_event","event":{"type":"message_start","message":{"id":"root","usage":{"input_tokens":10}}}}
+{"type":"stream_event","parent_tool_use_id":"unknown","event":{"type":"message_start","message":{"id":"nested","usage":{"input_tokens":20}}}}
+{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"text"}}}
+{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"root text"}}}
+{"type":"stream_event","parent_tool_use_id":42,"event":{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":999}}}
+{"type":"stream_event","parent_tool_use_id":42,"event":{"type":"message_stop"}}
+{"type":"assistant","parent_tool_use_id":42,"message":{"id":"invalid","usage":{"input_tokens":999},"content":[]}}
+`)
+	text := alignmentKinds(sink, driver.StreamTextStart)
+	usage := p.observedUsage()
+	if len(text) != 1 || text[0].MessageID != "root" || stdin.closed != 0 || usage == nil || usage.InputTokens != 30 || usage.OutputTokens != 0 {
+		t.Fatalf("unresolved parent changed root message: text=%+v stdin=%d usage=%+v", text, stdin.closed, usage)
+	}
+}
+
+func TestAlignmentClaudeScopedTextErrorTail(t *testing.T) {
+	p, sink := alignmentAdoptionParser(driver.Request{RunID: "text-tail"})
+	alignmentFeed(p, alignmentTool("p", "Agent", "", map[string]any{}))
+	for _, parent := range []string{"", "p"} {
+		for _, event := range []any{
+			map[string]any{"type": "message_start", "message": map[string]any{"id": "message-" + parent}},
+			map[string]any{"type": "content_block_start", "index": 0, "content_block": map[string]any{"type": "text"}},
+			map[string]any{"type": "content_block_delta", "index": 0, "delta": map[string]any{"type": "text_delta", "text": "content"}},
+		} {
+			alignmentFeed(p, alignmentJSON(map[string]any{"type": "stream_event", "parent_tool_use_id": parent, "event": event}))
+		}
+	}
+	p.completeStream(nil, -1, "", false)
+	starts, ends := alignmentKinds(sink, driver.StreamTextStart), alignmentKinds(sink, driver.StreamTextEnd)
+	if len(starts) != 2 || len(ends) != 2 || starts[0].MessageID != ends[0].MessageID || starts[1].MessageID != ends[1].MessageID {
+		t.Fatalf("scoped text tail lost message identity: %+v %+v", starts, ends)
+	}
+}

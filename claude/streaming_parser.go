@@ -21,7 +21,7 @@ type streamingState struct {
 	messageIDs   map[string]string
 	blockTools   map[claudeBlockKey]*observedTool
 	replayBlocks map[claudeBlockKey]bool
-	textStarted  map[claudeBlockKey]bool
+	textStarted  map[claudeBlockKey]string // message ID fixed at each text start
 	blockKind    map[claudeBlockKey]string
 	thinkingID   map[claudeBlockKey]string
 	signatures   map[claudeBlockKey]string
@@ -61,7 +61,7 @@ func newStreamingState(sink driver.EventSink, runID string, p *claudeParser) *st
 		parser:       p,
 		messageUsage: make(map[claudeUsageKey]*driver.Usage),
 		activeUsage:  make(map[string]claudeUsageKey),
-		textStarted:  make(map[claudeBlockKey]bool),
+		textStarted:  make(map[claudeBlockKey]string),
 		blockKind:    make(map[claudeBlockKey]string),
 		thinkingID:   make(map[claudeBlockKey]string),
 		signatures:   make(map[claudeBlockKey]string),
@@ -129,7 +129,11 @@ func (s *streamingState) handleStreamEvent(rawLine string, outer map[string]any)
 
 	// Nested subagent messages can end while the root is awaiting a tool
 	// response. Only root message state may close the run's stdin.
-	parent := claudeExactString(outer, "parent_tool_use_id")
+	parent, validParent := claudeParentID(outer)
+	if !validParent {
+		s.parser.observationNotice("parent_unresolved")
+		return
+	}
 	scope, resolved := s.parser.wrapperScope(outer)
 	s.scope = scope
 	s.messageID = s.messageIDs[scope.id]
@@ -140,7 +144,7 @@ func (s *streamingState) handleStreamEvent(rawLine string, outer map[string]any)
 		if rootMessage {
 			s.stopReason = ""
 		}
-		s.handleMessageStart(eventObj, parent)
+		s.handleMessageStart(eventObj, parent, resolved)
 	case "content_block_start":
 		if !resolved {
 			return
@@ -178,12 +182,12 @@ func (s *streamingState) handleStreamEvent(rawLine string, outer map[string]any)
 	}
 }
 
-func (s *streamingState) handleMessageStart(event map[string]any, parent string) {
+func (s *streamingState) handleMessageStart(event map[string]any, parent string, resolved bool) {
 	msg := claudeTopLevelObject(event, "message")
 	id := claudeTopLevelString(msg, "id")
 	key := s.usageKey(id, parent)
 	s.activeUsage[parent] = key
-	if id != "" {
+	if id != "" && resolved {
 		s.messageID = id
 		s.messageIDs[s.scope.id] = id
 	}
@@ -243,8 +247,8 @@ func (s *streamingState) handleContentBlockDelta(event map[string]any) {
 		if s.messageID == "" {
 			s.messageID = "msg"
 		}
-		if !s.textStarted[idx] {
-			s.textStarted[idx] = true
+		if s.textStarted[idx] == "" {
+			s.textStarted[idx] = s.messageID
 			pl := s.basePayload()
 			pl.Kind = driver.StreamTextStart
 			pl.MessageID = s.messageID
@@ -252,7 +256,7 @@ func (s *streamingState) handleContentBlockDelta(event map[string]any) {
 		}
 		pl := s.basePayload()
 		pl.Kind = driver.StreamTextContent
-		pl.MessageID = s.messageID
+		pl.MessageID = s.textStarted[idx]
 		pl.Delta = text
 		s.emitStream(pl)
 
@@ -297,10 +301,10 @@ func (s *streamingState) handleContentBlockStop(event map[string]any) {
 
 	switch bt {
 	case "text":
-		if s.textStarted[idx] && s.messageID != "" {
+		if messageID := s.textStarted[idx]; messageID != "" {
 			pl := s.basePayload()
 			pl.Kind = driver.StreamTextEnd
-			pl.MessageID = s.messageID
+			pl.MessageID = messageID
 			s.emitStream(pl)
 		}
 	case "tool_use":
@@ -435,10 +439,10 @@ func (s *streamingState) closeOpenLifecycles() {
 
 		switch bt {
 		case "text":
-			if s.textStarted[idx] && s.messageID != "" {
+			if messageID := s.textStarted[idx]; messageID != "" {
 				pl := s.basePayload()
 				pl.Kind = driver.StreamTextEnd
-				pl.MessageID = s.messageID
+				pl.MessageID = messageID
 				s.emitStream(pl)
 			}
 		case "tool_use":
