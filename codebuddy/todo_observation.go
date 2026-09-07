@@ -106,10 +106,6 @@ func (p *parser) confirmTodo(id string, call *observedCall, result map[string]an
 	case "TaskUpdate":
 		taskID := exactString(call.input, "taskId")
 		confirmed := call.input
-		if raw == nil && !strings.HasPrefix(resultText(result["content"]), "Updated task #"+taskID+" ") {
-			p.publishTodo(nil, todoobs.ErrInvalid)
-			return
-		}
 		if value, exists := raw["task"]; exists {
 			task, ok := value.(map[string]any)
 			if !ok || exactString(task, "id") != taskID {
@@ -117,6 +113,11 @@ func (p *parser) confirmTodo(id string, call *observedCall, result map[string]an
 				return
 			}
 			confirmed = task
+		} else if !confirmedTaskUpdateText(call.input, result["content"]) {
+			// Metadata presence is not proof. Without task/todos, only the
+			// exact official success rendering can confirm an input patch.
+			p.publishTodo(nil, todoobs.ErrInvalid)
+			return
 		}
 		patch := todoobs.Patch{}
 		if value, exists := confirmed["subject"]; exists {
@@ -174,4 +175,42 @@ func (p *parser) todoItems(raw any) ([]todo.Item, error) {
 		items = append(items, item)
 	}
 	return items, nil
+}
+
+// TaskUpdateTool.execute renders these provided fields in this fixed order.
+// Unknown additive input fields have no effect on the official rendering.
+func confirmedTaskUpdateText(input map[string]any, content any) bool {
+	fields := make([]string, 0, 8)
+	for _, field := range []string{"subject", "description", "activeForm", "owner", "metadata", "addBlocks", "addBlockedBy", "status"} {
+		value, exists := input[field]
+		if !exists {
+			continue
+		}
+		name := field
+		switch field {
+		case "metadata":
+			if _, ok := value.(map[string]any); !ok {
+				return false
+			}
+		case "addBlocks", "addBlockedBy":
+			if _, ok := value.([]any); !ok {
+				return false
+			}
+			if field == "addBlocks" {
+				name = "blocks"
+			} else {
+				name = "blockedBy"
+			}
+		default:
+			text, ok := value.(string)
+			if !ok {
+				return false
+			}
+			if text == "" {
+				continue
+			}
+		}
+		fields = append(fields, name)
+	}
+	return len(fields) != 0 && resultText(content) == "Updated task #"+exactString(input, "taskId")+" "+strings.Join(fields, ", ")
 }

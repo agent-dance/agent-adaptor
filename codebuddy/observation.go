@@ -125,13 +125,21 @@ func (o *observationState) resolveCapability(name string, input map[string]any) 
 	case "Skill":
 		kind = capability.Skill
 		operation = "activate"
-		runtimeName = exactString(input, "skill")
-		command := exactString(input, "command")
-		if runtimeName != "" && command != "" && runtimeName != command {
-			return capability.Ref{}, capabilityobs.ErrAmbiguous
-		}
-		if runtimeName == "" {
-			runtimeName = command
+		// Every present alias must independently be a valid exact name. An
+		// absent alias is optional; a malformed one cannot hide behind another.
+		for _, alias := range []string{"skill", "command"} {
+			value, exists := input[alias]
+			if !exists {
+				continue
+			}
+			candidate, ok := value.(string)
+			if !ok || !capabilityobs.ValidText(candidate, 2048, true) {
+				return capability.Ref{}, capabilityobs.ErrInvalid
+			}
+			if runtimeName != "" && runtimeName != candidate {
+				return capability.Ref{}, capabilityobs.ErrAmbiguous
+			}
+			runtimeName = candidate
 		}
 	case "Task", "Agent":
 		kind = capability.Subagent

@@ -270,6 +270,13 @@ func (s *streamingState) handleContentBlockDelta(event map[string]any) {
 		s.emitStream(pl)
 
 	case "input_json_delta":
+		if o := s.parser.observation; o != nil && o.suppressed {
+			// An unproved wrapper cannot supply arguments to the root block.
+			// Retain the original delta below, but invalidate its attribution
+			// through the stop and any later full wrapper for this call ID.
+			s.observationBlocked[idx] = true
+			s.parser.observeToolUse(s.toolName[idx], s.toolCallID[idx], nil)
+		}
 		raw := exactString(delta, "partial_json")
 		if s.toolInput[idx] == nil {
 			s.toolInput[idx] = &strings.Builder{}

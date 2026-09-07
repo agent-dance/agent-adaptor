@@ -25,11 +25,11 @@ CodeBuddy 原生追加独立传递为 `--append-system-prompt <原文>`，不写
 | batch JSON（原生 schema） | 未声明支持 | 未声明支持 | 未观察 |
 | stream-json，包括 control/常驻与非 partial 完整 wrapper | Skill.command/skill；MCP 精确 catalog 前缀；Task/Agent.subagent_type | 正式成功结果确认后的全量快照 | 不宣告父图支持 |
 
-consumer Run/Stream 均消费同一 resolved transport；不因为某次用了 Run 而禁止已正式观察到的事实。Catalog 来自最终 Request 的 Skills/MCP（含 hosted/runtime 已合入服务）/ProfilePayload.Agents；逐字精确、重复项去重、歧义永不选赢家。MCP 只接受 CodeBuddy 自身 `mcp__<server>__<operation>` 构造形式，枚举全部已知 server 前缀，保留 Unicode/下划线；不复制 Claude alias 规则。Skill init 列表、slash prompt 文本和审批允许均不证明调用完成。started/terminal 使用同一真实 tool ID，缺结果仅 Interrupted，明确取消为 Cancelled；Duration 未观察为 nil，OccurredAt 为识别时 UTC。
+consumer Run/Stream 均消费同一 resolved transport；不因为某次用了 Run 而禁止已正式观察到的事实。Catalog 来自最终 Request 的 Skills/MCP（含 hosted/runtime 已合入服务）/ProfilePayload.Agents；逐字精确、重复项去重、歧义永不选赢家。MCP 只接受 CodeBuddy 自身 `mcp__<server>__<operation>` 构造形式，枚举全部已知 server 前缀，保留 Unicode/下划线；不复制 Claude alias 规则。每个已出现的 Skill.skill/command 都须独立合法非空，两者同时出现必须逐字一致；不能以另一个有效字段遮掩 null、错误类型或空串，未知 additive 字段仍兼容。Skill init 列表、slash prompt 文本和审批允许均不证明调用完成。started/terminal 使用同一真实 tool ID，缺结果仅 Interrupted，明确取消为 Cancelled；Duration 未观察为 nil，OccurredAt 为识别时 UTC。
 
-TodoWrite 的已核实字段是 `newTodos`，其正式成功结果才确认输入列表。TaskCreate/TaskUpdate/TaskList 首选 `tool_result._meta.rawResponse.todos` 完整快照；TaskCreate 以 `rawResponse.task.id` 或精确正式成功文案取得真实 ID。已确认 task 对象缺 ID 时才用 `synthetic:` 无碰撞 run/scope/call tuple，明确 SyntheticID；不把本地创建计数当 TaskUpdate.taskId。没有 ID 的列表项使用 run/scope/snapshot/position tuple，仅为全量快照稳定展示坐标，绝不能被真实 taskId 更新命中。TaskUpdate 无完整列表时只更新本轮已知真实 ID；无 `_meta` 时仍须精确正式成功文案。新 run 不恢复本地表；相同快照不增 revision，首次空表为 revision 1 清空。失败/未知/畸形结果、未知状态、重复 ID、非法 UTF-8、超限内容均不部分更新旧表，并发安全 notice，Raw 与原工具/Transcript 不丢。
+TodoWrite 的已核实字段是 `newTodos`，其正式成功结果才确认输入列表。TaskCreate/TaskUpdate/TaskList 首选 `tool_result._meta.rawResponse.todos` 完整快照；TaskCreate 以 `rawResponse.task.id` 或精确正式成功文案取得真实 ID。已确认 task 对象缺 ID 时才用 `synthetic:` 无碰撞 run/scope/call tuple，明确 SyntheticID；不把本地创建计数当 TaskUpdate.taskId。没有 ID 的列表项使用 run/scope/snapshot/position tuple，仅为全量快照稳定展示坐标，绝不能被真实 taskId 更新命中。TaskUpdate 无完整列表时只更新本轮已知真实 ID：须有匹配 ID 的正式 task，或与本次输入字段逐项对应的精确官方成功文案。空/未知 `_meta.rawResponse` 对象本身不构成成功证据；无正式 task 时仍须同样的文案确认。文案按官方固定顺序拼接已提供更新字段，未知成功前缀/额外尾文均不能确认输入状态。新 run 不恢复本地表；相同快照不增 revision，首次空表为 revision 1 清空。失败/未知/畸形结果、未知状态、重复 ID、非法 UTF-8、超限内容均不部分更新旧表，并发安全 notice，Raw 与原工具/Transcript 不丢。
 
-CodeBuddy 2.137.1 的 user 结果 wrapper `parent_tool_use_id` 指向自身 call ID，不能把它当父关系。结果 wrapper 的该字段非空却不等于自身 tool_use_id、或类型畸形时，不确认根工具/任务结果。assistant/partial 的非空或畸形父字段缺少已核实图语义，观察时明确降级并隔离对应 ID，不合并入根 scope；不冒充完成了 Claude W05。没有观察事件不意味着没有调用，更不证明审计/计费完整。
+CodeBuddy 2.137.1 的 user 结果 wrapper `parent_tool_use_id` 指向自身 call ID，不能把它当父关系。结果 wrapper 的该字段非空却不等于自身 tool_use_id、或类型畸形时，不确认根工具/任务结果。assistant/partial 的非空或畸形父字段缺少已核实图语义，观察时明确降级并隔离对应 ID，不合并入根 scope；未证明父域的参数 delta 会使所在调用的观察失效直到 stop 及后续完整 wrapper，不利用该 delta 为根工具供参，原参数事件与 Raw 保留。不冒充完成了 Claude W05。没有观察事件不意味着没有调用，更不证明审计/计费完整。
 
 ## 合并位置与公共变化
 
