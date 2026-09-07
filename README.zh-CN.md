@@ -360,7 +360,7 @@ implementer := adaptor.New(claude.Driver(claude.Config{}),
 
 ## 结果与错误
 
-成功返回 `*Result, nil`。失败只走 Go 的 `error` 一条路：已经执行完但业务失败的，返回带上可用 `Result` 的 `*RunError`；基础设施类失败是普通的可包装 error。
+成功返回 `*Result, nil`。`Driver.Run` 进入后的全部失败返回 `nil, *RunError`，通过非 nil 的 `Result` 保留可用结果，通过 `Cause` 保留原错误链；`Reason` 是主原因。启动前错误仍是普通包装错误，失败只有 Go `error` 一个判定面。
 
 ```go
 result, err := agent.Run(ctx, prompt)

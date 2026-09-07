@@ -360,7 +360,7 @@ implementer := adaptor.New(claude.Driver(claude.Config{}),
 
 ## Result とエラー
 
-成功時は `*Result, nil` を返す。失敗は Go の `error` という 1 本の経路のみを通る：実行は完了したが業務的に失敗した場合は、利用可能な `Result` を伴う `*RunError` を返す。インフラ系の失敗は通常のラップ可能な error である。
+成功時は `*Result, nil` を返す。`Driver.Run` に入った後のすべての失敗は `nil, *RunError` を返し、非 nil の `Result` に取得済みの結果、`Cause` に元のエラーチェーンを保持する。`Reason` が主原因を示す。実行前の失敗は通常のラップされたエラーであり、失敗の判定は Go の `error` に一本化される。
 
 ```go
 result, err := agent.Run(ctx, prompt)

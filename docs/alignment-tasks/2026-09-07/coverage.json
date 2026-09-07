@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
   "plan": "docs/internal-history-alignment-plan-2026-09-07.md",
-  "plan_sha256": "96232fc8715b686e4d6d4cc85a61e0cc87d09a6b45c956f07792c8dad3b1d5ae",
+  "plan_sha256": "992b403657e3d1c06f88f249641cba4250d755f3860c88f0643d921d4364ee6e",
   "requirements": [
     {
       "id": "W01-R01",
@@ -144,7 +144,7 @@
       "id": "W02-R06",
       "work_item": "W02",
       "description": "完整 Thread compatibility 与 process signature 分离，不省略资源/model/Revision",
-      "implementation_owner": "T04",
+      "implementation_owner": "T06",
       "verification_tasks": [
         "T20",
         "T26",
@@ -1217,6 +1217,19 @@
       "closure_gate": "G06",
       "implementation_gate": "G05",
       "status": "planned"
+    },
+    {
+      "id": "W09-R14",
+      "work_item": "W09",
+      "description": "所有运行由唯一core sink在最终Result/cleanup后发布权威终局；Driver-only不得先报成功后最终Go error失败，原始provider终局仍完整保留",
+      "implementation_owner": "T06",
+      "verification_tasks": [
+        "T20",
+        "T21"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
     }
   ],
   "work_items": [
@@ -1257,7 +1270,8 @@
         "C01"
       ],
       "implementation_tasks": [
-        "T04"
+        "T04",
+        "T06"
       ],
       "independent_verification_tasks": [
         "T20",
@@ -1481,6 +1495,7 @@
         "T24"
       ],
       "independent_verification_tasks": [
+        "T20",
         "T21",
         "T25",
         "T27",
@@ -1504,7 +1519,8 @@
         "W09-R10",
         "W09-R11",
         "W09-R12",
-        "W09-R13"
+        "W09-R13",
+        "W09-R14"
       ],
       "status": "planned"
     },

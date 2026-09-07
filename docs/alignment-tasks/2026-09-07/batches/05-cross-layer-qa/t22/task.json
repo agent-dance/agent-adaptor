@@ -75,7 +75,7 @@
     },
     "plan": {
       "path": "docs/internal-history-alignment-plan-2026-09-07.md",
-      "sha256": "96232fc8715b686e4d6d4cc85a61e0cc87d09a6b45c956f07792c8dad3b1d5ae",
+      "sha256": "992b403657e3d1c06f88f249641cba4250d755f3860c88f0643d921d4364ee6e",
       "sections": [
         "W04",
         "W06",
@@ -87,7 +87,8 @@
     "required_reads": [
       "AGENTS.md",
       "docs/internal-history-alignment-plan-2026-09-07.md",
-      "docs/alignment-tasks/2026-09-07/README.md"
+      "docs/alignment-tasks/2026-09-07/README.md",
+      "docs/alignment-tasks/2026-09-07/amendments/R005.md"
     ],
     "dependency_artifacts": [
       {
@@ -154,7 +155,8 @@
   "implementation_steps": [
     "测试构造/调用 option scope、Policy 整值替换、append empty clear、unsupported 预检无资源、native schema 固定 fallback。",
     "fake clock/control fixtures 组合多重 Ask、重试、背压、timer 迟到、parent deadline、Close/lease/cleanup 与部分 Result cause。",
-    "验证工具安全 input rejection、外部 As 伪造、native prompt 不进入 user transcript/错误文本/secret payload。"
+    "验证工具安全 input rejection、外部 As 伪造、native prompt 不进入 user transcript/错误文本/secret payload。",
+    "R005独立回归：显式Ask与unset继承Ask都送入真实sink，非nil矩阵逐机制精确检查，nil仍旧bool，provider transport不消音Ask；覆盖Claude默认schema/QuestionAsk+Permission unset，防止只测试不发请求的fake响应。"
   ],
   "acceptance_criteria": [
     {

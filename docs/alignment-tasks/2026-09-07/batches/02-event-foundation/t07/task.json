@@ -47,7 +47,7 @@
     },
     "plan": {
       "path": "docs/internal-history-alignment-plan-2026-09-07.md",
-      "sha256": "96232fc8715b686e4d6d4cc85a61e0cc87d09a6b45c956f07792c8dad3b1d5ae",
+      "sha256": "992b403657e3d1c06f88f249641cba4250d755f3860c88f0643d921d4364ee6e",
       "sections": [
         "W04",
         "W06"
@@ -56,7 +56,8 @@
     "required_reads": [
       "AGENTS.md",
       "docs/internal-history-alignment-plan-2026-09-07.md",
-      "docs/alignment-tasks/2026-09-07/README.md"
+      "docs/alignment-tasks/2026-09-07/README.md",
+      "docs/alignment-tasks/2026-09-07/amendments/R005.md"
     ],
     "dependency_artifacts": [
       {
@@ -120,7 +121,8 @@
     "使用G01中T31已交付的逐Kind/机制capability与resolver，仅设置Claude真实矩阵并完成transport，不再次改core。",
     "基于 T01 与 T05，非 fallback 常驻错误先形成已有输出的 Response 再返回 cause，不提升 checkpoint。",
     "按 prompt-transport 合同开放 Question/PlanReview + native schema 双向 stream-json，按 resolved source 选参数；无 schema 的 Permission Ask 保持支持，native schema+Permission Ask 使用已声明的 prompt fallback。",
-    "添加双方 terminal/result/无 message_stop、拒绝/超时/非法 schema、Thread/WithSpawn、多轮和 partial output fixture；不要解析 raw 猜 final text。"
+    "添加双方 terminal/result/无 message_stop、拒绝/超时/非法 schema、Thread/WithSpawn、多轮和 partial output fixture；不要解析 raw 猜 final text。",
+    "R005：Claude设置新非nil矩阵后，schema候选检查继承后的Permission/PlanReview Ask；只设QuestionAsk不意味着其余Kind不存在。native支持需有效Permission策略兼容，否则prompt fallback/unsupported。文档和fixture明确普通schema/零policy可能受新精确矩阵影响，不偷偷自动批准Permission来维持native，不改变无schema默认行为。"
   ],
   "acceptance_criteria": [
     {

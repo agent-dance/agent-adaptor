@@ -59,7 +59,7 @@
     },
     "plan": {
       "path": "docs/internal-history-alignment-plan-2026-09-07.md",
-      "sha256": "96232fc8715b686e4d6d4cc85a61e0cc87d09a6b45c956f07792c8dad3b1d5ae",
+      "sha256": "992b403657e3d1c06f88f249641cba4250d755f3860c88f0643d921d4364ee6e",
       "sections": [
         "W01",
         "W02",
@@ -72,7 +72,8 @@
     "required_reads": [
       "AGENTS.md",
       "docs/internal-history-alignment-plan-2026-09-07.md",
-      "docs/alignment-tasks/2026-09-07/README.md"
+      "docs/alignment-tasks/2026-09-07/README.md",
+      "docs/alignment-tasks/2026-09-07/amendments/R007.md"
     ],
     "dependency_artifacts": [
       {
@@ -128,7 +129,8 @@
   "implementation_steps": [
     "在 native Windows runner 上 checkout G05 同一冻结 SHA，记录 go/OS 和工具壳信息；源码只读。",
     "验证 process tree取消、cmd/ps1路径、WithSpawn/常驻单 writer、Close、跨进程持久profile锁与崩溃释放、Unicode路径和inline/TOML参数。",
-    "普通 test 和 live compile 明确关闭付费；交叉编译不能代替运行证据。"
+    "普通 test 和 live compile 明确关闭付费；交叉编译不能代替运行证据。",
+    "R007独立验收释放线性化点：解锁前失败保留所有权，解锁后清理失败重试绝不写新owner状态；Windows实际长期锁句柄无delete sharing，持锁rename/delete失败，不用仅验证事后inode变化替代。"
   ],
   "acceptance_criteria": [
     {

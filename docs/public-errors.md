@@ -12,10 +12,11 @@ error. Error strings are diagnostics, not matching contracts.
 `Runner.Run` and `Stream.Result` use one verdict model:
 
 - success returns `*Result, nil`;
-- a completed business failure returns `*RunError`, whose `Result` retains
-  the available audit data;
-- configuration, context, process, protocol, store, and resource failures are
-  ordinary wrapped errors.
+- after `Driver.Run` has been entered, every failure returns `nil, *RunError`,
+  whose non-nil `Result` retains the available audit data and whose `Cause`
+  preserves original and secondary errors;
+- failures before that boundary, including configuration, resource preparation
+  and Thread acquisition, remain ordinary wrapped errors.
 
 ```go
 result, err := runner.Run(ctx, prompt)
@@ -23,7 +24,7 @@ if err != nil {
 	var runErr *adaptor.RunError
 	if errors.As(err, &runErr) {
 		result = runErr.Result
-		log.Printf("business failure %s: %s", runErr.Reason, runErr.Message)
+		log.Printf("run failure %s: %s", runErr.Reason, runErr.Message)
 		return err
 	}
 	return err
@@ -43,22 +44,32 @@ the Agent or any Thread derived from it fail with this sentinel and do not
 restart the Driver's process pool. `Close` itself is idempotent; its context
 error reports a bounded cleanup failure rather than changing this sentinel.
 
-## Root business failures
+## Root execution failures
 
 Every row is a `*adaptor.RunError`. `errors.As` exposes `Reason`, `Message`,
-`Details`, and the non-nil `Result`; `errors.Is` selects one category.
+`Details`, `Cause`, and the non-nil `Result`. `Reason` identifies the primary
+outcome; `errors.Is` can also match secondary errors in `Cause`.
 
 | Sentinel | `FailureReason` | Meaning |
 |---|---|---|
 | `ErrApprovalDenied` | `ReasonApprovalDenied` | A host or auto policy denied an approval and the fallback aborted. |
 | `ErrApprovalTimeout` | `ReasonApprovalTimeout` | An approval deadline elapsed and the fallback aborted. |
 | `ErrAgentFailed` | `ReasonAgentError` | The Driver classified an agent-level failure, such as a bad terminal protocol or non-zero exit. |
-| `ErrRunCancelled` | `ReasonCancelled` | The Driver returned a classified cancellation business failure. |
+| `ErrRunCancelled` | `ReasonCancelled` | Execution was canceled after Driver entry, or the Driver classified cancellation. |
 | `ErrPolicyViolation` | `ReasonPolicyViolation` | A completed invocation violated a run policy, including default fail-on-invalid structured output. |
 
-`context.Canceled` and `context.DeadlineExceeded` are infrastructure errors;
-they do not imply `ErrRunCancelled`. Likewise, malformed host policy values
-match `ErrInvalidPolicy`, not `ErrPolicyViolation`.
+`ReasonDeadlineExceeded` identifies an observed execution deadline and preserves
+`context.DeadlineExceeded`; `ReasonInfrastructure` identifies other unclassified
+transport, protocol, store or cleanup failures and preserves their typed cause.
+These two reasons add no new sentinels. A primary approval/provider failure can
+also match a cancellation or cleanup cause: bridges must inspect `Reason` first.
+Before Driver entry, a context error remains an ordinary error. Malformed host
+policy values match `ErrInvalidPolicy`, not `ErrPolicyViolation`.
+
+Cleanup can fail after a healthy checkpoint was atomically committed. Such a
+failure returns the Result and cleanup cause, retains the committed state, and
+does not roll back or repeat persistence. Interrupted or unhealthy executions
+otherwise preserve the preceding healthy checkpoint.
 
 Unknown Driver failure codes remain available as `RunError.Reason` but do not
 silently match one of the five sentinels above.
@@ -119,6 +130,25 @@ all other handler errors and panics are sanitized by the internal runtime.
 `tool.AsRejection(err)` recognizes only errors minted by `tool.Reject`, even
 through wrapping; an application-defined error cannot forge safe-delivery
 status by implementing a similarly named method.
+
+Invalid Tool arguments also carry the private `invalid_input` rejection, so
+`errors.Is(err, tool.ErrInvalidInput)` and `tool.AsRejection` both work. These
+corrections omit values, schemas and underlying validation errors; extra field
+names are bounded and escaped. Cancellation retains priority over a correction.
+
+## Hosted profile errors
+
+Package `profile` owns these categories for explicit Dedicated profiles with Tools:
+
+| Sentinel | Meaning |
+|---|---|
+| `profile.ErrInUse` | Another Agent/process holds the namespace ownership lock. |
+| `profile.ErrUnsafe` | Path, permissions, ownership records or file identity could not be verified. |
+| `profile.ErrRecoveryRequired` | A previous active generation lacks proof of clean writer and gateway shutdown. |
+| `profile.ErrUnsupportedFilesystem` | The filesystem cannot provide the required local lock/ownership guarantees. |
+
+An OS lock released by process exit does not authorize takeover of an active
+generation. See [profile lifetime and recovery](./tools.md#persistent-dedicated-profiles).
 
 ## Root Thread errors
 
@@ -228,7 +258,7 @@ recovery cause; it has no dedicated sentinel.
 with `Code`, `Message`, `Retryable`, `RemoteStatus`, and `Metadata`. It
 implements `error` but has no sentinel and no unwrap contract.
 
-The `profile`, `memory`, and bridge packages currently define no additional
+The `memory` and bridge packages currently define no additional
 SDK-owned stable error sentinels. They return documented standard errors,
 wrapped root/leaf errors, or external protocol-library errors as appropriate.
 

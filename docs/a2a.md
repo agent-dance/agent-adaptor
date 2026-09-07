@@ -88,7 +88,7 @@ The wire envelope preserves adaptor `EventMeta` plus provider source coordinates
 
 ### Result and exposure
 
-Successful `Stream.Result()` values produce the completed status and terminal artifacts. `*adaptor.RunError` produces a failed A2A task with the available partial Result; cancellation produces a canceled task. Infrastructure errors are mapped to failed terminal status. The bridge never treats a non-nil execution error as success.
+Successful `Stream.Result()` values produce the completed status and terminal artifacts. For `*adaptor.RunError`, the bridge first reads the primary `Reason`: explicit cancellation maps to canceled; approval denial/timeout and other failures map to failed even when their cause also matches a context error. Both retain the partial Result allowed by ExposurePolicy. Bare infrastructure errors map through the existing context/error rules. The bridge never treats a non-nil execution error as success.
 
 The default `agent-adaptor-result` artifact contains only the safe summary. `ExposurePolicy` must explicitly opt in to reasoning, tool calls, HITL, metadata, usage, provider terminal payload, transcript, or raw streams. Enabled diagnostics are sanitized before leaving the bridge.
 
@@ -103,6 +103,26 @@ Capability advertisement is strict:
 - an extended Agent Card requires both card advertisement and `ServerOptions.ExtendedAgentCard` with a static card or provider.
 
 Construction-time mismatches panic because they are host programming errors, not per-run failures.
+
+### Streaming continuation and recovery
+
+A full Task in a stream is persisted context: restore identity and artifacts,
+but await a current live status/message or an explicitly marked GetTask recovery.
+An old input-required/completed/failed Task cannot replay its questionnaire or
+end a new continuation. Snapshot-only EOF yields `stream_interrupted` in
+delegation and triggers bounded cancellation of the known remote task. Explicit
+Send/GetTask polling continues to use the complete Task as its result. Local
+loopback terminal events carry a live Status alongside the Task.
+
+Historical replay cannot overwrite artifacts updated live. Explicit GetTask
+recovery adopts a proven complete extension and preserves live content against
+a lagging prefix. Incomparable views use the complete query and report
+`subagent.stream.dropped` with `reason: artifact_recovery_conflict` and
+`resolution: recovered_snapshot`; diagnostics contain only fixed labels and
+the typed artifact ID, never payload or URL. Previously delivered live events
+remain available. Adjacent Text chunks compare as one only when their other
+attributes match; structured/file/metadata and mixed Parts retain exact
+boundaries. Conflicting views are never concatenated into invented content.
 
 ## Calling a remote A2A agent
 

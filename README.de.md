@@ -360,7 +360,7 @@ Was aus den deklarierten Ressourcen tatsächlich materialisiert wurde und ob der
 
 ## Ergebnisse und Fehler
 
-Erfolg gibt `*Result, nil` zurück. Ein Fehlschlag läuft ausschließlich über den einen Weg von Gos `error`: ein Lauf, der zwar durchgelaufen ist, aber fachlich fehlgeschlagen ist, liefert einen `*RunError` mit dem verfügbaren `Result`; Fehler auf Infrastrukturebene sind gewöhnliche, umhüllbare error-Werte.
+Erfolg liefert `*Result, nil`. Nach Eintritt in `Driver.Run` liefert jeder Fehler `nil, *RunError` mit dem verfügbaren, nicht-nil `Result` und der ursprünglichen Fehlerkette in `Cause`. `Reason` bezeichnet die Hauptursache; Fehler vor dem Aufruf bleiben gewöhnliche verpackte Fehler. Es gibt nur den Go-`error`-Pfad.
 
 ```go
 result, err := agent.Run(ctx, prompt)

@@ -114,20 +114,34 @@ all match `adaptor.ErrInvalidOutputSchema`.
 
 Every Driver declares `driver.Descriptor.StructuredOutput`. Consumers do not
 choose an enforcement mode. For every schema request, core applies one fixed
-rule before invoking the Driver:
+rule before acquiring run resources:
 
 1. use provider-native JSON Schema enforcement when the selected transport and
    policy support it;
 2. otherwise inject exact-JSON instructions and validate locally;
-3. fail before process launch only when neither mechanism is supported.
+3. fail before profile, workspace, runtime, skill or Thread lease acquisition
+   when neither mechanism is supported. The resolved schema, source and
+   transport are cached only for this invocation and reused by execution.
 
-Explicit approval `Ask` policies additionally require `WorksWithHITL` for the
-selected mechanism.
+The SPI has optional `NativeHITL` and `PromptValidateHITL` pointers to
+`StructuredOutputHITLCapability{Permission, PlanReview, Question bool}`. Each
+non-nil matrix checks all effective Ask kinds, including inherited Permission
+and PlanReview Ask; Question defaults to automatic denial. Every required kind
+also needs the ordinary `RunPolicyCaps` Ask capability. An all-false matrix
+rejects Ask even when the old bool is true. A nil matrix retains the legacy
+`WorksWithHITL` check for explicitly selected Ask, independently of the other
+mechanism. Non-Ask kinds and calls without schema do not use these matrix fields.
+
+Drivers adopting a matrix may cause a schema call with previously unset
+Permission to choose prompt validation or become unsupported. Core does not
+silently approve a question to preserve native enforcement.
 
 The consumer's choice between `Run` and `Stream` does not select the provider
 transport. The unified invocation pipeline prefers a Driver's rich transport,
 then negotiates its batch transport when structured output is not supported by
-that rich transport. A `Stream` therefore remains usable but may receive fewer
+that rich transport. Each batch candidate must preserve its applicable Ask
+requirements; it cannot disable approvals to make schema negotiation succeed.
+A `Stream` therefore remains usable but may receive fewer
 incremental provider events. If neither transport can honor the request, the
 run fails before the Driver is invoked with
 `adaptor.ErrStructuredOutputUnsupported`.
@@ -146,7 +160,7 @@ Current built-in declarations are:
 
 | Driver | Native schema | Prompt validation | Rich provider transport | Explicit HITL `Ask` |
 |---|---:|---:|---:|---:|
-| Codex | yes | yes | no; batch is negotiated | no |
+| Codex | yes | yes | yes; app-server and batch | no |
 | Claude | yes | yes | yes | no |
 | Cursor | no | yes | yes | no |
 | CodeBuddy | yes | yes | no; batch is negotiated | no |
@@ -193,6 +207,11 @@ if err != nil {
 	return err
 }
 ```
+
+On cancellation or another execution failure, `RunError.Result` retains any
+already-validated structured data. Core does not revalidate interrupted output
+and replace the original cause. If a schema was requested but validated data
+is absent, `Decode` fails; it never applies the no-schema Text convenience path.
 
 With `SchemaReturnInvalid`, the run returns `*Result, nil`, while
 `result.Decode(&value)` reports the validation diagnostics. This option changes

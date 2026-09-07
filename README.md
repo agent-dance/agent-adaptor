@@ -360,7 +360,7 @@ To see what declared resources actually materialized and whether the Driver trul
 
 ## Results and errors
 
-Success returns `*Result, nil`. Failure travels only through Go's `error`: a run that completed but failed on the business level returns a `*RunError` carrying whatever `Result` is available, while infrastructure failures are ordinary wrappable errors.
+Success returns `*Result, nil`. After `Driver.Run` is entered, every failure returns `nil, *RunError` with the available non-nil `Result` and original error chain in `Cause`. `Reason` is the primary outcome; pre-invocation failures remain ordinary wrapped errors. Both use the single Go `error` path.
 
 ```go
 result, err := agent.Run(ctx, prompt)

@@ -69,7 +69,7 @@ P0：已有流程可能挂起、真实会话丢失或续答提前终止，先修
 | W03 A2A 续答区分历史 Task 与 live 状态 | P0 | 缺失 | `8e35b12` | `clients/a2a`、`hosttools/a2adelegation` | 无 |
 | W04 中断错误保留部分结果，守住 checkpoint | P1 | 结果缺口；拒绝直接放宽 checkpoint | `126d610` | 三个常驻 Driver、`invocation.go` | 先定错误携带结果合同 |
 | W05 Claude 嵌套工具事件与父关联 | P1 | 部分 Transcript 已有；typed 工具事件缺失 | `3ea225a` | Claude parser、Event、bridges | 无 |
-| W06 Claude 原生 schema 与 Question/PlanReview 共存 | P1 | 当前自动回退，原生组合未开放 | `4261914` | Descriptor、参数构建、schema 协商 | W01 |
+| W06 Claude 原生 schema 与 Question/PlanReview 共存 | P1 | 基线 schema+Ask 预检拒绝；普通 Permission Ask 已支持 | `4261914` | Descriptor、参数构建、schema 协商 | W01 |
 | W07 工具输入错误给模型可安全修正的提示 | P1 | 缺失 | `64163ab` | `tool/tool.go`、tool runtime | 无 |
 | W08 A2A 实时制品保留 Parts | P1 | 完整最终制品已有 opt-in；实时精简投影缺失 | `3253009` | delegation DTO、映射、clone | 与 W03 协调 |
 | W09 Capability typed 观测及可选记录 | P2 | 缺失 | `1921636`、`9b1ce27`、`dab6933` | Driver、Event、可选 hosttool | 公共事件/扩展点设计冻结 |
@@ -363,7 +363,7 @@ W02 回滚不得删除已保留的真实 transcript；W04 回滚不能把中断�
 | A14 | `9b1ce27faa4e` | 2026-08-17 | fix(claude): resolve normalized MCP server names | Claude 标准化 MCP server 映射修复 → W09；不是通用 MCP transport 连接修复。 |
 | A15 | `dab6933b9159` | 2026-08-17 | fix(claude): normalize Unicode MCP server names | Unicode/下划线 MCP alias 与分隔歧义修复 → W09，必须与上一提交成组。 |
 | A16 | `126d610dfb6a` | 2026-08-17 | fix: 持久进程取消后保留可恢复会话 (merge request !1) | 中断部分结果应移植，首次取消直接 Valid checkpoint 不移植 → W04。 |
-| A17 | `426191444582` | 2026-08-17 | feat(claude): allow AskUserQuestion with native structured output | Claude 原生 schema + Question/PlanReview Ask → W06；Permission Ask 不随之开放。 |
+| A17 | `426191444582` | 2026-08-17 | feat(claude): allow AskUserQuestion with native structured output | Claude 原生 schema + Question/PlanReview Ask → W06；native schema+Permission Ask 不随之开放，普通 Permission Ask 保持。 |
 | A18 | `97b2c85c36fc` | 2026-08-17 | Merge tag 'v0.14.4' into release/v0.14.6 | 双父 merge：把 126d610 分支（含 relay/MCP 修复）并入 4261914；按父链去重，无独立新工作项。 |
 | A19 | `a68d907d1d12` | 2026-08-17 | Merge branch 'release/v0.14.6' into 'master' (merge request !2) | release/v0.14.6 集成 merge；承接上行集成，不把第一父增量再当一份独立修复。 |
 | A20 | `3ea225acea57` | 2026-08-18 | 补发 claude 嵌套子代理（如 Explore）中 tool_use 的 Stream 事件 (merge request !3) | 嵌套 assistant wrapper 的工具事件补发 → W05；另补真实父关联与去重。 |

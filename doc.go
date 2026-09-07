@@ -49,6 +49,7 @@
 // their own exactly-once responder, allowing either callbacks or interactive
 // hosts to approve, deny, or answer. Result separates assistant Text and
 // Summary from Raw process streams, Transcript entries, runtime Services, and
-// validated structured output. Business failures use RunError and retain the
-// partial Result; infrastructure failures remain ordinary wrapped errors.
+// validated structured output. After Driver.Run is entered, every failure uses
+// RunError with the available Result and the original error chain in Cause.
+// Pre-invocation failures remain ordinary wrapped errors.
 package adaptor

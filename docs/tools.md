@@ -65,6 +65,12 @@ output may be an object, array, scalar, or another JSON-compatible typed value.
 Inputs are validated before the handler runs, and outputs are validated before
 they cross the provider boundary.
 
+Direct `Definition.Invoke` and hosted MCP calls share the same Tool validation.
+The transport preserves validated JSON and does not apply schema defaults.
+A schema `default` is descriptive; omitted fields follow the Go input type.
+Omitted MCP arguments behave like `{}`; explicit `null` is invalid for an
+object input.
+
 Use `tool.InputSchemaJSON` or `tool.OutputSchemaJSON` when a schema is maintained
 outside Go:
 
@@ -84,6 +90,15 @@ construction or execution.
 
 ## Errors and cancellation
 
+Invalid JSON arguments, schema mismatches and Go decoding failures are rejected
+before the handler runs. The error matches `tool.ErrInvalidInput` and
+`tool.AsRejection` yields `invalid_input` with a safe correction. Extra-field
+hints quote the lexicographically first unconditional extra name, limited to
+64 UTF-8 bytes plus an ellipsis with control/non-printing characters escaped.
+Ambiguous `anyOf`/`oneOf` branches use a generic schema hint. Corrections omit
+argument values, schemas and original error text. Observed cancellation keeps
+priority and prevents handler invocation.
+
 Return `tool.Reject` for an expected failure the model can correct:
 
 ```go
@@ -98,8 +113,9 @@ if !issues.Exists(in.Key) {
 The code is a stable machine category and the message is safe to show to the
 model. Ordinary Go errors, schema-invalid outputs, and panics are treated as
 internal failures and are replaced with a generic message. Handler error text
-never becomes provider-visible by accident. Only errors created by
-`tool.Reject` are trusted for model-visible delivery; implementing a lookalike
+never becomes provider-visible by accident. Only the package-private rejection
+created by `tool.Reject` or SDK input validation is trusted for model-visible
+delivery; implementing a lookalike
 method on an application error cannot opt into that path. `tool.AsRejection`
 recognizes a rejection (including through wrapping) without exposing its
 private concrete type. Context cancellation and the runtime's bounded handler
@@ -137,17 +153,22 @@ the complete current request rather than rely on cached MCP or profile
 bindings.
 
 For the four built-in Drivers, the provider-native MCP file is written to an
-SDK-owned, Agent/identity-specific clone profile. The configured/native profile
+SDK-owned execution clone. Explicit Dedicated profiles with non-empty Tools
+select a persistent source/Driver/identity namespace; other selections retain
+per-Agent temporary clones. The configured/native profile
 is only the source for settings, skills, existing MCP declarations, and linked
 authentication files; it is never modified by `WithTools`. Explicit profile
 selection remains a construction concern, while the isolated execution clone
-is an internal safety boundary. Its random directory is normalized back to the
+is an internal safety boundary. Its execution directory is normalized back to the
 stable source-profile identity only for Thread compatibility, just like the
 ephemeral loopback port. This prevents two host processes from racing on one
 provider MCP file without weakening the concrete request passed to the Driver.
-The stable view also fingerprints the copied settings, MCP declarations, and
-skills: changing those materialized resources safely prevents resume, while
-linked authentication rotation remains outside the durable fingerprint.
+The compatibility view includes observed copied settings, MCP declarations and
+skills, while linked authentication rotation is outside the durable fingerprint.
+The final snapshot after dynamic skill resolution/injection is still an open
+R003 / W02-R06 integration item assigned to T06. Unproven skill links currently
+fail before execution; this batch does not claim complete dynamic-resource
+cold-resume compatibility.
 
 `WithSpawn` replaces only the provider process. It does not restart the
 Agent-owned Tool runtime.
@@ -169,9 +190,9 @@ resource resolution, not while defining the Tool. It has these properties:
   Agent/identity so different host processes cannot overwrite one another's
   provider configuration;
 - `Agent.Close(ctx)` cancels admitted runs, closes provider processes to
-  unblock them, drains them, reaps any late-created writer, removes isolated
-  execution profiles, and only then revokes the Tool registration; a deadline
-  leaves cleanup retryable instead of caching a partial close.
+  unblock them, drains them, reaps any late-created writer, removes proven-owned
+  MCP projections, revokes the Tool registration, then deletes temporary clones
+  or releases persistent ownership. Failed phases remain retryable.
 
 `Inspect().ProfileState` and `SyncProfile` continue to describe the configured
 source profile and its public desired resources. The private clone is created
@@ -182,6 +203,30 @@ tenant identity and does not replace application authorization. A handler
 captures the host services and authority it needs through its Go closure. It
 does not receive invented Run, Thread, workspace, identity, or policy metadata
 that the shared provider transport cannot prove.
+
+## Persistent Dedicated profiles
+
+When non-empty `WithTools` is combined with explicit `WithProfile(profile.Dedicated(source))`, supported built-in Drivers execute in a persistent sibling clone. The source must already exist and is read without calling a provider initializer. Its canonical source path, Driver type, and all four identity fields select a private namespace:
+
+`<canonical-source>.hosted-tools/v1/<sha256-framed-key>/profile`
+
+Thread keys never become directory names. Source path aliases resolve to the same ownership partition. Empty identity is a real shared partition; another Agent using it gets `profile.ErrInUse` immediately, including within the same OS process. Different ID, tenant, profile or name fields select distinct partitions.
+
+The first use copies settings, MCP and skills once and shares only declared provider auth files through the existing AuthLink policy. A normal close and a new Agent with the same configuration retain provider session files, and renew the hosted gateway URL, bearer token and environment carrier. Later source configuration changes do not overwrite the existing clone. New desired resources continue through the Driver's existing materialization pipeline.
+
+Native, Default, CloneFrom and CloneNative continue using per-Agent temporary hosted clones; Close removes those clones. Merely setting a provider environment variable does not opt into persistence. Explicit SyncProfile still targets the host-selected source and remains independent of WithTools execution cloning. Inspect/ProfileState acquire no hosted claim or gateway.
+
+Example: create Agent A with Dedicated+Tools+ThreadStore; run `a.Thread(key).Run`; close A successfully; create Agent B with the same Driver/source/identity/Tool revision/store; `b.Thread(key).Run` can read the retained local provider session. The regression fixture writes an unpredictable nonce in `projects/<provider-session-id>.jsonl`; resumption succeeds only after reading that file and matching its checkpoint nonce. Both Run and Stream cover this path.
+
+The SDK uses a persistent 0600 owner.lock with an exclusive OS lock, strict versioned ownership records and private directory permissions. It never unlinks/truncates/replaces owner.lock. Supported filesystem classes are local ext4/XFS/tmpfs, APFS/HFS+, NTFS/ReFS; unsupported/remote/unknown filesystems fail closed with `profile.ErrUnsupportedFilesystem`. Unix checks owner/mode/link identity. Windows uses protected current-user/System DACLs, verifies file IDs/reparse points, and holds a no-delete-sharing CreateFile handle with LockFileEx. Native Windows verification belongs to T26.
+
+`profile.ErrUnsafe` reports unverified ownership, paths, permissions or control records. `profile.ErrRecoveryRequired` means a previous active generation did not finish a clean shutdown. Kernel lock release on process exit alone does not prove its provider children exited. A new Agent refuses the dirty generation without changing state, sending a prompt or modifying the Thread store. There is no TTL-based takeover.
+
+Offline recovery: stop all hosts using the namespace; prove and wait for every provider process tree to exit through host process-management records; back up the complete namespace, including transcripts; acquire the same exclusive lock and verify markers/permissions; remove only proven-owned MCP projections using provider path, owner and rendered fingerprint; verify no old gateway remains usable; atomically change active to ready and unlock. If any proof is unavailable, retain active and the backup. Alternatively, once all users have stopped, move the entire namespace to an isolated backup and start a new namespace; this loses local session continuity and uses the existing resume-rejection policy. Never delete only owner.lock. Permanent historical-data deletion belongs to host maintenance after the same stop/backup/exclusive-ownership checks; Agent.Close is not a history deletion API.
+
+Close first closes admission and cancels runs. It preserves the first provider close to unblock cancellation, drains admitted runs, closes late-started writers, removes proven-owned hosted MCP projections, closes the gateway, then deletes temporary clones or releases persistent claims. Any failed phase remains retryable with a fresh context. A cleanup error before OS unlock retains exclusive ownership. After a successful OS unlock, a later handle-close failure retains only the pending cleanup phase: retry never touches the successor Agent's state. User-modified hosted entries are preserved under the existing rendered-fingerprint rule; their ownership records are dropped and gateway shutdown revokes the original token.
+
+Already deleted historical transcripts cannot be reconstructed from resume IDs. Continue-or-start retains its existing single safe resume-rejection fallback; ResumeOnly rejects and does not replace the healthy stored record. The opaque host key is unchanged.
 
 ## Existing MCP servers
 
@@ -233,11 +278,17 @@ Dependency selection:
 3. Its imports and types are localized to `internal/toolruntime`; public Tool,
    Driver, Event, and Result contracts do not expose SDK or MCP types.
 
+Persistent profile ownership uses the existing `golang.org/x/sys` v0.41.0 as a
+direct dependency. Its maintained OS lock, file-identity and ACL APIs improve
+the verified-handle boundary and stay inside `internal/hostedprofile`; no new
+version or public dependency type is introduced.
+
 The hermetic end-to-end test runs a real child process through the Cursor
 Driver. That fixture reads the isolated materialized provider MCP profile,
 resolves the bearer environment reference, performs MCP discovery/list/call,
 emits official provider stream records, and verifies unauthorized access. It
 then closes the Agent, forces a different loopback port, reconstructs an Agent
-against the same Thread store, resumes a third turn, proves the source profile
-was never polluted, and verifies both endpoints and isolated profiles are
-reclaimed. It makes no paid provider call.
+against the same Thread store, resumes a third turn, and proves the source
+profile was never polluted. Temporary-profile fixtures verify endpoint and
+clone reclamation; Dedicated fixtures require a retained session-file nonce
+after clean reconstruction. They make no paid provider call.

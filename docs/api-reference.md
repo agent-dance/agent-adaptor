@@ -361,7 +361,8 @@ Layered semantics:
 - `Services()` holds reports of runtime services actually ensured or observed by the Driver; it does not echo secret environment variables or MCP declarations.
 - `Decode()` decodes already-validated structured output when available; when no schema was requested it attempts to treat `Text` as JSON.
 
-A business failure returns a `*RunError`, which retains a partial or complete Result:
+Every failure after `Driver.Run` is entered returns `nil, *RunError`, retaining
+a non-nil partial or complete Result and the original error chain:
 
 ```go
 type RunError struct {
@@ -369,6 +370,7 @@ type RunError struct {
 	Message string
 	Details map[string]any
 	Result  *Result
+	Cause   error
 }
 ```
 
@@ -385,6 +387,13 @@ _ = res
 ```
 
 `errors.Is` matches `ErrApprovalDenied`, `ErrApprovalTimeout`, `ErrAgentFailed`, `ErrRunCancelled`, and `ErrPolicyViolation`. Pre-start configuration and policy errors match `ErrInvalidDriverConfig`, `ErrInvalidPolicy`, `ErrPolicyCapabilityUnsupported`, or `ErrHumanDecisionModeUnsupported`. Configuration, resource resolution, context cancellation, and other infrastructure errors travel the same single `error` path; the corresponding typed errors expose diagnostics such as Driver, field, and value through `errors.As`.
+
+`Reason` is the primary outcome; `Cause` may also match cancellation, deadline,
+store, transport or cleanup errors. `ReasonInfrastructure` and
+`ReasonDeadlineExceeded` cover unclassified infrastructure errors and deadlines
+after Driver entry. Pre-invocation failures remain ordinary wrapped errors.
+Cleanup after a healthy checkpoint commit reports failure with its Result while
+retaining the committed checkpoint. See [Public errors](./public-errors.md).
 
 ## 9. Structured output
 
@@ -421,8 +430,19 @@ Consumers do not choose a structured-output mode. The framework always prefers t
 provider's native JSON Schema; when the current transport or policy does not support
 it, it falls back automatically to Prompt plus local validation; only when neither
 mechanism is available does it return `ErrStructuredOutputUnsupported` before the
-process starts. An invalid schema matches `ErrInvalidOutputSchema`, and the Driver's
+run acquires workspace, profile, runtime services, skills or a Thread lease.
+The schema, source and transport are resolved once per invocation and reused by
+Run/Stream. Each optional SPI HITL matrix evaluates the effective Ask kinds for
+its mechanism; nil retains the legacy explicit-Ask bool. An invalid schema matches `ErrInvalidOutputSchema`, and the Driver's
 `Descriptor.StructuredOutput` is the source of truth for the capability.
+
+Explicit `profile.Dedicated(source)` with non-empty Tools retains provider
+session files in a private, exclusively owned sibling clone. Other selections
+remain temporary. `Agent.Close` releases ownership only after admitted writers,
+owned MCP projections and the gateway are closed; failures remain retryable.
+After successful OS unlock, handle-close retries cannot touch a successor
+generation. Dirty active generations require proven offline recovery; see
+[Tools profile lifetime](./tools.md#persistent-dedicated-profiles).
 
 ## 10. Inspect and profile state
 

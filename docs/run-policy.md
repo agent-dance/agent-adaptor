@@ -178,8 +178,8 @@ agent := adaptor.New(d,
 ```
 
 The callback must call exactly one of `Approve`, `Deny`, or `Answer` and then
-return nil. Returning an error aborts the invocation with that infrastructure
-error. A panic or a nil return without resolving the request is classified as
+return nil. Returning an error aborts the invocation with a `RunError` retaining
+that infrastructure cause and the available Result. A panic or a nil return without resolving the request is classified as
 an agent business failure. `ApproveAll()` and `DenyAll(reason)` provide common
 handlers; `ApproveAll` denies questions because it cannot synthesize an answer.
 
@@ -250,12 +250,16 @@ if err != nil {
 ```
 
 `RunError.Result` retains the available text, raw streams, transcript, usage,
-and service reports. Handler errors, process/protocol failures, and context
-cancellation remain ordinary wrapped infrastructure errors unless the Driver
-classifies them as a business failure. See [Public errors](./public-errors.md)
-for the complete matching matrix.
+and service reports. After Driver entry, handler, process/protocol, context,
+store and cleanup errors use the same carrier and preserve `Cause`. A primary
+approval failure can also match a secondary `context.Canceled`; use `Reason`
+for outcome mapping. Before Driver entry errors remain ordinary wrapped errors.
+See [Public errors](./public-errors.md) for the complete matching matrix.
 
-Structured output combined with an explicit `Ask` mode also requires the
-Driver's structured-output `WorksWithHITL` capability. The current built-in
-Drivers do not advertise that combination; see
-[Structured output](./structured-output.md).
+Structured output checks HITL independently for native and prompt validation.
+A non-nil `NativeHITL` or `PromptValidateHITL` matrix checks all effective Ask
+kinds, including inherited Permission/PlanReview Ask, and their ordinary policy
+capability. A nil matrix preserves the published explicit-Ask `WorksWithHITL`
+rule. Mixed Ask requirements must all fit one mechanism; automatic fallback
+cannot discard them. Without a schema these matrices have no effect. Built-in
+declarations remain listed in [Structured output](./structured-output.md).

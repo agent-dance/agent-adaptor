@@ -5,13 +5,13 @@
   "summary": {
     "work_item_count": 13,
     "history_commit_count": 45,
-    "requirement_count": 95,
+    "requirement_count": 96,
     "batch_count": 7,
     "parallel_task_count": 35,
     "gate_task_count": 7,
     "total_task_count": 42,
     "peak_parallelism": 6
   },
-  "manifest_sha256": "7b4ff4410c4719adc4ad78535b35f0239f6d0ad90641c0d9198eb922fd4afcf9",
+  "manifest_sha256": "f9f0653154dc45724ba212d61c66a27d768909e739ec7bd2cefb0383283df9ba",
   "errors": []
 }

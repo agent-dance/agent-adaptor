@@ -40,7 +40,7 @@
     },
     "plan": {
       "path": "docs/internal-history-alignment-plan-2026-09-07.md",
-      "sha256": "96232fc8715b686e4d6d4cc85a61e0cc87d09a6b45c956f07792c8dad3b1d5ae",
+      "sha256": "992b403657e3d1c06f88f249641cba4250d755f3860c88f0643d921d4364ee6e",
       "sections": [
         "W06"
       ]
@@ -48,7 +48,9 @@
     "required_reads": [
       "AGENTS.md",
       "docs/internal-history-alignment-plan-2026-09-07.md",
-      "docs/alignment-tasks/2026-09-07/README.md"
+      "docs/alignment-tasks/2026-09-07/README.md",
+      "docs/alignment-tasks/2026-09-07/amendments/R003.md",
+      "docs/alignment-tasks/2026-09-07/amendments/R005.md"
     ],
     "dependency_artifacts": [
       {
@@ -69,6 +71,7 @@
   "ownership": {
     "allow": [
       "adaptertest/doc.go",
+      "adaptertest/suite.go",
       "adaptertest/testdata/driver_api.golden",
       "adaptertest/verify.go",
       "adaptertest/verify_test.go",
@@ -77,6 +80,8 @@
       "driver/driver.go",
       "internal/engine/structured.go",
       "internal/engine/structured_hitl_test.go",
+      "options.go",
+      "stream.go",
       "wiring.go"
     ],
     "scope_match": "仅精确仓库相对文件或目录/**；任何未列路径不可写。",
@@ -116,7 +121,10 @@
     "唯一core resolver逐有效Ask Kind检查候选，native优先、自动prompt校验回退、均不可行才启动前失败；无schema不改变Permission Ask，RunPolicyCaps和transport仍独立门控。",
     "补全SPI godoc/负向合同，审阅driver AST golden；不新增模式选择器、不改Provider声明。",
     "覆盖mixed Ask、多机制/nil/显式全false、schema absent、Run/Stream resolved等价和预检无资源/Driver调用，向T07交付真实可用接口。",
-    "同步adaptertest的逐矩阵蕴含检查：true字段要求对应机制/WorksWithRun与普通Ask能力；T06后续接observation demand，本任务只保护已存在Ask的transport需求，不引用未来字段。"
+    "同步adaptertest的逐矩阵蕴含检查：true字段要求对应机制/WorksWithRun与普通Ask能力；T06后续接observation demand，本任务只保护已存在Ask的transport需求，不引用未来字段。",
+    "R003：在openStream的静态校验阶段完成唯一schema/transport预解析，保存在本次RunSettings私有字段，wiring只消费；所有必然unsupported/schema错误在profile/workspace/runtime/skill资源前返回。clone不得复制旧调用缓存。",
+    "R003：adaptertest/suite.go接入逐Kind能力蕴含验证；stream.go的Result godoc同步C02已冻结的执行后partial RunError/执行前普通错误边界，不依赖同批T05新符号。",
+    "R005/T31-F01：nonnull精确矩阵按driver.EffectiveHumanDecisionPolicy的完整有效Ask匹配，包括未设置的Permission/PlanReview继承；nil机制继续旧显式Ask+WorksWithHITL语义。逐机制判断可行transport，继承Ask不可被batch fallback消音；另一nil机制仍保留自己的legacy候选。无schema规则不变。检查对应普通Ask能力，不修改共享Descriptor或配置。"
   ],
   "acceptance_criteria": [
     {
@@ -133,6 +141,11 @@
       "id": "T31-AC03",
       "requirement": "新SPI字段真类型/godoc/golden完备，T07可从G01直接使用，无同批符号依赖。",
       "required": true
+    },
+    {
+      "id": "T31-AC04",
+      "required": true,
+      "requirement": "真实DecisionCapableSink.RequestDecision往返证明QuestionAsk+unset Permission/PlanReview不会选择未声明native；显式自动策略对比、schema零policy/non-nil矩阵、nil旧语义和逐机制transport fallback有测试，不能仅fake Driver返回结果。"
     }
   ],
   "validation": [

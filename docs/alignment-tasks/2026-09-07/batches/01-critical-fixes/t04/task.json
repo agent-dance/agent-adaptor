@@ -17,7 +17,6 @@
     "W02-R03",
     "W02-R04",
     "W02-R05",
-    "W02-R06",
     "W02-R07",
     "W02-R08"
   ],
@@ -47,7 +46,7 @@
     },
     "plan": {
       "path": "docs/internal-history-alignment-plan-2026-09-07.md",
-      "sha256": "96232fc8715b686e4d6d4cc85a61e0cc87d09a6b45c956f07792c8dad3b1d5ae",
+      "sha256": "992b403657e3d1c06f88f249641cba4250d755f3860c88f0643d921d4364ee6e",
       "sections": [
         "W02"
       ]
@@ -55,7 +54,9 @@
     "required_reads": [
       "AGENTS.md",
       "docs/internal-history-alignment-plan-2026-09-07.md",
-      "docs/alignment-tasks/2026-09-07/README.md"
+      "docs/alignment-tasks/2026-09-07/README.md",
+      "docs/alignment-tasks/2026-09-07/amendments/R003.md",
+      "docs/alignment-tasks/2026-09-07/amendments/R007.md"
     ],
     "dependency_artifacts": [
       {
@@ -120,22 +121,29 @@
     "普通验证显式关闭付费门，不访问真实 provider；live 任务须同时满足授权记录、build tag 和环境变量门。所有任务都不创建 tag、不发布 release、不自动推送/发送外部消息。"
   ],
   "implementation_steps": [
-    "严格实现 profile-lifecycle 合同的稳定目录/manifest/锁；这里只可采用 G00 已评估的依赖。",
+    "按R003分配实现 profile-lifecycle 合同的稳定目录/manifest/锁；这里只可采用 G00 已评估的依赖。",
     "首次物化与再打开分离，既有 transcript 不覆盖；source 不写入，身份隔离，目录/所有权不安全即 fail-closed。",
     "现有准入已包住资源准备，保持该边界；按 Close/drain→provider stop→MCP 去投影→gateway close→释放所有权的有界序列实现。",
-    "固定 endpoint/token 轮换和 profile compatibility，不让持久路径绕过完整 Thread fingerprint；只临时 clone 删除。",
-    "添加跨子进程竞争、崩溃退出、Close 重试、身份隔离和依赖真实会话文件的低层 fixture。"
+    "固定endpoint/token轮换与当前已观察实物的保守兼容性；完整resolved物化后fingerprint由B02 T06接线。T04不能排除未知资源以伪造兼容，保留既有完整声明维度；只临时clone删除。",
+    "添加跨子进程竞争、崩溃退出、Close 重试、身份隔离和依赖真实会话文件的低层 fixture。",
+    "R003：claim早于ResolveSkills/InjectSkills，不能声称其snapshot已覆盖动态resolved实物。交付可复用快照/claim能力及明确失败fixture给T06，冷续接主fixture先证明会话文件与MCP轮换，不把未证明skills场景记通过。W02-R06最终owner为T06，其余W02要求仍归T04。",
+    "R007：以成功OS unlock为不可逆所有权释放点；ready写入/解锁/lock句柄关闭/root句柄关闭分别记账，释放后仅清理剩余句柄，绝不重写state、重获锁或影响新generation。Windows长期owner.lock使用无FILE_SHARE_DELETE专用opener，不以临时ACL句柄或Root.OpenFile冒充。"
   ],
   "acceptance_criteria": [
     {
       "id": "T04-AC01",
-      "requirement": "两 Agent 冷重建保留 session 文件和安全新 endpoint，同目录并发有稳定冲突。",
+      "requirement": "无动态skill声明的两Agent冷重建确实依赖session文件并安全轮换endpoint；同目录并发稳定冲突。resolved skills完整兼容闭环按R003交T06，不在此提前宣称。",
       "required": true
     },
     {
       "id": "T04-AC02",
       "requirement": "Native/临时仍清理；symlink/篡改/权限失败不采用不误删，历史缺失记录只走原一次性 fallback。",
       "required": true
+    },
+    {
+      "id": "T04-AC03",
+      "required": true,
+      "requirement": "A解锁后句柄关闭失败→B接管active→A.Close重试不改变B state/generation/锁；解锁前失败仍锁拒绝B。Windows长期锁禁止rename/delete，正式platform fixture编译可用但实际Windows验收归T26。"
     }
   ],
   "validation": [
@@ -191,7 +199,6 @@
       "W02-R03",
       "W02-R04",
       "W02-R05",
-      "W02-R06",
       "W02-R07",
       "W02-R08"
     ],

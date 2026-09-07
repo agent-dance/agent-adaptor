@@ -48,6 +48,7 @@
     "W09-R10",
     "W09-R11",
     "W09-R12",
+    "W09-R14",
     "W10-R01",
     "W10-R02",
     "W10-R03",
@@ -98,7 +99,7 @@
     },
     "plan": {
       "path": "docs/internal-history-alignment-plan-2026-09-07.md",
-      "sha256": "96232fc8715b686e4d6d4cc85a61e0cc87d09a6b45c956f07792c8dad3b1d5ae",
+      "sha256": "992b403657e3d1c06f88f249641cba4250d755f3860c88f0643d921d4364ee6e",
       "sections": [
         "W03",
         "W05",
@@ -112,7 +113,8 @@
     "required_reads": [
       "AGENTS.md",
       "docs/internal-history-alignment-plan-2026-09-07.md",
-      "docs/alignment-tasks/2026-09-07/README.md"
+      "docs/alignment-tasks/2026-09-07/README.md",
+      "docs/alignment-tasks/2026-09-07/amendments/R006.md"
     ],
     "dependency_artifacts": [
       {
@@ -176,7 +178,8 @@
   "implementation_steps": [
     "公共 fake Driver→Agent→A2A→delegation→各 bridge/recorder 组合，覆盖真实 metadata/sequence/deep clone。",
     "搭建旧快照→live 状态→artifact 多更新→新问卷/完成、nested repeated IDs、no-store relay、observer-before-drop。",
-    "核验父关联、todo empty clear/final snapshot、capability exposure/超限/未知/恶意字段、不因新事件影响旧端。"
+    "核验父关联、todo empty clear/final snapshot、capability exposure/超限/未知/恶意字段、不因新事件影响旧端。",
+    "R006独立核验W09-R14：Driver先报告成功但后续cleanup/lease失败，带/不带RunService sources均由公共最终RunFinished映射同一最终RunError，原始provider Terminal/Transcript完整且无提前第二终局。"
   ],
   "acceptance_criteria": [
     {
@@ -267,6 +270,7 @@
       "W09-R10",
       "W09-R11",
       "W09-R12",
+      "W09-R14",
       "W10-R01",
       "W10-R02",
       "W10-R03",

@@ -31,10 +31,12 @@ PromptValidateHITL *StructuredOutputHITLCapability
 1. 先验证有效 `RunPolicy` 及每个 Kind 的 `RunPolicyCaps`。schema 能力不能授予普通 policy 本身不支持的 Ask。
 2. schema 为 nil 时 source 为空，不检查本节矩阵。所有已有无 schema 行为保持。
 3. 对 native / prompt 分别计算 eligibility：对应 `JSONSchema*` 为 true、`WorksWithRun` 为 true；resolved provider streaming 时还要求 `WorksWithStreaming`。
-4. 对每种机制取对应 HITL 指针：nil 沿用 `WorksWithHITL` 的原语义；非 nil 则**替代该机制**的粗粒度 HITL 判定。有效 Ask 集合中的所有 Kind 都必须为 true。非 Ask 不读取对应字段。非 nil 全 false 是显式不支持；不能被 `WorksWithHITL=true` 翻转。
+4. 对每种机制取对应 HITL 指针：nil 沿用 `WorksWithHITL` 仅检查显式 Ask 的原语义；非 nil 则**替代该机制**的粗粒度 HITL 判定，先用 `driver.EffectiveHumanDecisionPolicy` 解析默认 Permission/PlanReview Ask 和 Question 自动拒绝。该完整有效 Ask 集合中的所有 Kind 都必须为 true，普通 Ask 能力也必须支持。非 Ask 不读取对应字段。非 nil 全 false 是显式不支持；不能被 `WorksWithHITL=true` 翻转。
 5. 优先 native；不可用时 prompt + 本地校验；两者不可用才返回现有 `*driver.StructuredOutputUnsupportedError`。其 `Driver` 为 descriptor Type，`Reason` 给受控组合诊断，`errors.Is(err, driver.ErrStructuredOutputUnsupported)` 保持。
-6. transport 只由一次 resolved invocation 决定，Run 与 Stream 完全一致。batch fallback 只在没有必须保持 rich transport 的已解析需求时可用；不能为了 schema 丢掉 Ask、已请求的 capability/todo 观测。C03 的需求必须与本算法在唯一协商点求交集，不能派生第二管线。
+6. 静态 schema/source/transport 在普通 policy 校验后、任何 profile/workspace/runtime/skills/lease 获取前只解析一次，缓存仅属于本次调用，clone 必须清空；wiring 复用决定。transport 只由一次 resolved invocation 决定，Run 与 Stream 完全一致。batch fallback 按机制分别检查适用 Ask：非 nil 使用完整有效默认值，nil 保留旧显式边界；只在没有必须保持 rich transport 的已解析需求时可用；不能为了 schema 丢掉 Ask、已请求的 capability/todo 观测。C03 的需求必须与本算法在唯一协商点求交集，不能派生第二管线。
 7. Driver 只执行 `Request.StructuredOutputSource`，禁止重新决定机制或修改 `OutputSchema`。
+
+R005：Question Ask 未显式设置 Permission 时，Permission 会继承 Ask；Claude native Permission=false 因而不能只凭 Question=true 选 native。采用新矩阵允许此前隐式策略的 schema 调用变为 prompt 或 unsupported，禁止偷偷改成自动批准。真实 fixture 必须发起 DecisionSink 请求并核对回复，不能仅验证假 Response。
 
 `WorksWithHITL` 保留原字段及 nil 语义，便于既有第三方 Driver 不变。若新矩阵有 true，对应机制和 `WorksWithRun` MUST 为 true，且对应普通 `RunPolicyCaps` 支持 Ask；adaptertest/godoc 同步冻结这些蕴含关系。不把旧字段当成新矩阵的总开关。
 

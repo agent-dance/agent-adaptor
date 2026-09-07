@@ -114,14 +114,32 @@ Concurrent producers are serialized by the same broker, so the channel receive o
 Events are in-flight observations; `Stream.Result()` is the terminal authority:
 
 - Success: returns `*Result, nil`.
-- Business failure: returns `nil, *RunError`, with the partial or complete result in `RunError.Result`.
-- Infrastructure failure: returns `nil, error`, preserving the `errors.Is/As` chain.
+- After Driver entry, every failure returns `nil, *RunError`, with the non-nil partial or complete result in `RunError.Result` and original/secondary errors in `Cause`.
+- Before Driver entry, failure returns `nil, error`, preserving the `errors.Is/As` chain.
 
 `Result.Text`, `Summary`, `Raw()`, `Transcript()`, and `Services()` are independent layers. Do not rebuild the final result from a `RunFinished` event, and do not concatenate live deltas yourself into an audit-grade Raw or transcript.
 
 `Cancel()` is idempotent and unblocks pending event publication, approval waits, and the run context. Buffered events may still be readable after cancellation; keep ranging until `Events()` closes, then call `Result()` to obtain the final cancellation error.
 
 A consumer that plans to stop reading events early must call `Cancel()` first. It is not enough to stop ranging and then wait on `Result()`: reliable events or blocking mode may be waiting for channel space.
+
+For an entered execution, cancellation retains the available Text, Raw,
+Transcript, Usage and Services through `RunError.Result`. `Reason` identifies
+the primary outcome even if `Cause` also matches cancellation or cleanup.
+After Events closes, repeated concurrent `Result()` calls observe the same
+immutable result/error pair.
+
+Claude one-shot bidirectional transport closes stdin once on a formal
+`type:result`, even without a preceding terminal `message_stop`. Root assistant
+completion may also release input; `tool_use` and nested subagent completion
+keep it available for control responses. Resident Thread turns release only
+the turn handle. Output draining and process/checkpoint validation still finish
+before the Driver completes.
+
+The Driver-only envelope still has an open integration audit: a provider
+`RunFinished` may precede a later cleanup failure. `Stream.Result()` remains
+the final verdict. R006 / W09-R14 assigns core lifecycle reconciliation to
+T06, with independent T20/T21 verification; B01 does not close that gap.
 
 ## 5. Backpressure
 

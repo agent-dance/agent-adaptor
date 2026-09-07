@@ -360,7 +360,7 @@ implementer := adaptor.New(claude.Driver(claude.Config{}),
 
 ## 결과와 오류
 
-성공하면 `*Result, nil`을 반환한다. 실패는 Go의 `error` 한 경로만 탄다. 실행은 끝났지만 업무적으로 실패한 경우에는 사용 가능한 `Result`를 담은 `*RunError`를 반환하고, 인프라성 실패는 일반적인 래핑 가능한 error다.
+성공하면 `*Result, nil`을 반환한다. `Driver.Run` 진입 후 모든 실패는 `nil, *RunError`를 반환하며, nil이 아닌 `Result`에 관찰한 결과를, `Cause`에 원래 오류 체인을 보존한다. `Reason`은 주원인을 나타낸다. 실행 전 실패는 일반 래핑 오류이며, 실패 판정은 Go의 `error` 경로 하나만 사용한다.
 
 ```go
 result, err := agent.Run(ctx, prompt)

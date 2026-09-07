@@ -214,8 +214,9 @@ HITL 只通过 `ApprovalRequest` 表达：
 
 成功运行返回 `*Result, nil`。失败只走 Go 的 `error` 路径：
 
-- 业务失败返回 `*RunError`，其中携带本次运行的完整或可获得的部分 Result。
-- 基础设施失败返回可 `errors.Is/As` 的包装错误。
+- 以唯一 `driver.Run` 已进入为界，后续业务、取消、deadline、基础设施或清理失败均返回 `nil, *RunError`，其中 Result 非 nil 并保留可获得的审计数据；启动前错误仍为普通包装错误。
+- `RunError.Reason` 是主原因，`Cause` 保留原始及次要错误并可 `errors.Is/As`。审批或 provider 主因不得被其取消/清理次因覆盖。
+- 健康 checkpoint 已原子提交后才发生的清理失败保留已提交状态，报告基础设施主因及完整 Result；不得回滚或重复提交。
 - 不得在成功 Result 中再设置第二个 Failure 判定面。
 
 Result 分层合同：
@@ -352,7 +353,9 @@ Hosttools：
 
 ### 14.1 2026-09-07 internal 对齐重新打开项
 
-B00以固定源码和internal历史复核发现以下合同缺口，当前状态为待实施及验收：Dedicated+WithTools profile跨进程所有权与安全复用（T04/T20）；执行后取消、基础设施失败的完整部分Result/cause（T05/T20）；逐审批Kind的schema协商及Claude双向transport（T31/T07/T22）；subagentstream.Merge的序号权威与新增正式观测事实保真（T06/T12/T14–T18/T21）。A2A错误主原因优先级须由T03与T05同批验收。
+B01 已交付 Claude 一次性 stdin 终止、Tool 安全输入纠错、A2A continuation/完整制品恢复、Dedicated+WithTools 持久 profile 所有权、执行后部分 Result/cause 和 schema/HITL SPI 协商。T04 的 unlock 后清理不得再改接任者状态；Windows owner.lock 必须持有禁止 delete-sharing 的长期句柄。新非 nil schema 矩阵检查含默认 Permission/PlanReview Ask 的有效策略，nil 保留旧显式 Ask 语义。
+
+以下仍为打开项：最终已解析动态资源指纹（R003 / T06 / W02-R06）；所有执行的 core 最终生命周期归因，包括 Driver-only 提前成功后 cleanup 失败（R006 / T06 / W09-R14）；Claude schema/HITL 与 provider 部分输出（T07/T08）；subagentstream.Merge 和正式观测事实保真（T06/T12/T14–T18）。T20–T23 独立跨层验证和 T25–T30 平台/live 证据尚未完成，不能以本批 worker 测试关闭这些要求。
 
 具体冻结设计、未支持边界、文件所有权和fixture见 `docs/alignment-tasks/2026-09-07/contracts/frozen.json`。合同冻结不代表代码已实现；后续同批godoc、合同测试、使用文档和CHANGELOG完成后才能关闭对应项。其他第14节既有保护继续有效。
 

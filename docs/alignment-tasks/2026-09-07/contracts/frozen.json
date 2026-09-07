@@ -1,16 +1,16 @@
 {
   "schema_version": "1.0",
-  "gate": "G00",
-  "manifest_revision": 3,
+  "gate": "G01",
+  "manifest_revision": 8,
   "code_baseline": "919f140f64f89c80933802840c8878681a85a4d9",
   "source_head": "e2f0620bdd6477e6fe16f6db5648093589342ca2",
-  "status": "contract_frozen_implementation_pending",
+  "status": "contracts_reconciled_b01_implementation_integrated_later_work_pending",
   "contracts": [
     {
       "producer": "C01",
       "path": "docs/alignment-tasks/2026-09-07/contracts/profile-lifecycle.md",
-      "sha256": "0f265094912ea6169fe89902a1dfaedde5d1150984358d8d228593e3e2456964",
-      "version": "1.0-g00",
+      "sha256": "da63d99a2053ba6ea9010bd420650b0ecb8e04c46c7ec6a8e3caecd2af00439f",
+      "version": "1.1-g01",
       "interfaces": [
         "profile.ErrInUse/ErrUnsafe/ErrRecoveryRequired/ErrUnsupportedFilesystem",
         "Dedicated WithTools deterministic profile + owner lock",
@@ -79,8 +79,8 @@
     {
       "producer": "C04",
       "path": "docs/alignment-tasks/2026-09-07/contracts/prompt-transport.md",
-      "sha256": "4d3de0632ed81439c7a0bcddd6c8961fe3fa8e48a2c4a679c3b7aaa70f842131",
-      "version": "1.0-g00",
+      "sha256": "6ea68d5b4292c1dcfa7733f5b972177332d1808cc09c5f0c96f671c534b79f6c",
+      "version": "1.1-g01",
       "interfaces": [
         "WithAppendSystemPrompt SharedOption",
         "driver.Request.AppendSystemPrompt + Descriptor.SystemPrompt",
@@ -155,6 +155,7 @@
     ],
     "T31": [
       "adaptertest/doc.go",
+      "adaptertest/suite.go",
       "adaptertest/testdata/driver_api.golden",
       "adaptertest/verify.go",
       "adaptertest/verify_test.go",
@@ -163,12 +164,15 @@
       "driver/driver.go",
       "internal/engine/structured.go",
       "internal/engine/structured_hitl_test.go",
+      "options.go",
+      "stream.go",
       "wiring.go"
     ],
     "T06": [
       "adaptertest/testdata/driver_api.golden",
       "alignment_event_contract_test.go",
       "alignment_observer_test.go",
+      "alignment_profile_test.go",
       "capability/**",
       "docs/alignment-tasks/2026-09-07/handoffs/T06/**",
       "driver/doc.go",
@@ -182,14 +186,19 @@
       "internal/capabilityobs/**",
       "internal/engine/clone_exports.go",
       "internal/engine/driver_types.go",
+      "internal/mcpruntime/**",
+      "internal/skillruntime/**",
       "internal/todoobs/**",
+      "invocation.go",
       "options.go",
       "result.go",
       "runservices.go",
       "runservices_test.go",
       "sink.go",
+      "stream_contract_test.go",
       "testdata/root_api.golden",
       "todo/**",
+      "tools.go",
       "wiring.go"
     ],
     "T07": [
@@ -338,7 +347,11 @@
     "T31 supplies per-kind schema negotiation in B01; T07 consumes G01 code, T06 integrates later observation demand. Ordinary Permission Ask remains supported.",
     "T03 fixes A2A RunError reason priority using baseline symbols + errors.Join fixtures independently of same-batch T05 Cause.",
     "T12 uses private structural RunEventsBound interface with fakes; T18 later implements proof. No same-batch Go dependency.",
-    "All future public API is design only until corresponding code/tests/godoc and central docs gate pass. No live/platform claims from B00."
+    "All future public API is design only until corresponding code/tests/godoc and central docs gate pass. No live/platform claims from B00.",
+    "R003: T06 owns W02-R06 late immutable resolved-resource snapshot after unique skill injection; T04 early claim cannot close it.",
+    "R005: nonnil schema matrices include inherited Ask; nil legacy explicit-Ask semantics remain per mechanism.",
+    "R006: T06 owns W09-R14 core terminal authority for all runs after Result/cleanup; T20/T21 independently verify.",
+    "R007: successful OS unlock ends ownership; later close retry cannot mutate successor state; Windows lock handle forbids delete sharing."
   ],
   "unmerged_related_branches": [
     {
@@ -353,5 +366,6 @@
       "owner": "T14",
       "decision": "Preserve current stronger tool authorization boundary; no automatic merge."
     }
-  ]
+  ],
+  "previous_freeze_gate": "G00"
 }

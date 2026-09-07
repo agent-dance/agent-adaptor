@@ -4,6 +4,46 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- `RunError.Cause`, `ReasonInfrastructure` and `ReasonDeadlineExceeded` preserve
+  original error chains and available results after Driver entry.
+- Driver SPI per-kind `NativeHITL` / `PromptValidateHITL` matrices; nil keeps
+  legacy explicit-Ask compatibility, while precise matrices include effective
+  inherited Ask requirements.
+- Persistent Dedicated profiles with hosted Tools retain local provider session
+  files in an identity-partitioned namespace. Profile-owned errors report
+  contention, unsafe ownership, dirty generations and unsupported filesystems.
+
+### Fixed
+
+- Finish Claude result-only bidirectional one-shot runs by closing stdin once;
+  nested subagent completion cannot close the root control channel.
+- Deliver bounded safe `invalid_input` Tool corrections without argument values
+  or raw validator errors, including through the hosted MCP transport.
+- Await live A2A continuation outcomes instead of replayed Task terminal states;
+  recover complete artifact extensions after disconnection and explicitly report
+  incompatible recovery views without payload diagnostics.
+- Preserve partial Result and cause on cancellation, protocol/store/cleanup
+  failures, and preserve audit data across safe resume fallback. A2A outcome
+  mapping prioritizes RunError's primary Reason over joined context causes.
+- Resolve schema and transport once before run-resource acquisition; batch
+  fallback cannot discard the selected mechanism's applicable Ask requirements.
+- Keep profile cleanup retryable and never modify a successor generation after
+  OS unlock. Dirty active generations require proven offline recovery.
+
+### Changed
+
+- Execution errors after Driver entry now use `nil, *RunError` even for
+  infrastructure failures; callers can continue matching original causes with
+  `errors.Is/As`. Pre-invocation errors retain their existing wrapping.
+- Hosted Tool calls now share `Definition.Invoke` validation. Schema defaults
+  are descriptive and no longer implicitly inserted by the MCP wrapper;
+  omitted fields follow the Go input type, as with direct calls.
+- Clean Close retains Dedicated+Tools session files; other profile selections
+  continue to remove temporary clones. Previously deleted transcripts cannot
+  be recovered from resume identifiers alone.
+
 ## [1.1.2] - 2026-08-07
 
 ### Added

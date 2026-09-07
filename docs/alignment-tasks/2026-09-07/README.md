@@ -1,15 +1,15 @@
 # Internal 对齐任务派发包
 
-将[逐提交对齐方案](../../internal-history-alignment-plan-2026-09-07.md)拆为 **7 个批次、35 个并行工作任务、7 个串行验收任务，共 42 份 task.json**。覆盖原方案全部 **13 个 W 工作项、45 个历史提交和 95 条原子验收项**。单批最多并行 6 个任务。
+将[逐提交对齐方案](../../internal-history-alignment-plan-2026-09-07.md)拆为 **7 个批次、35 个并行工作任务、7 个串行验收任务，共 42 份 task.json**。覆盖原方案全部 **13 个 W 工作项、45 个历史提交和 96 条原子验收项**。单批最多并行 6 个任务。
 
-当前状态是 **已生成、未派发、未实施**。本包定义任务与验收要求；后续结果由派发器单独保存，不能将计划当成已通过的功能或发布证据。
+本包定义计划与验收要求，task.json 的 planned 状态不是实时执行状态。实际派发、提交、返修与验收证据由协调者在 `docs/alignment-execution/2026-09-07/` 单独保存；不能将计划或合同冻结当成已通过的功能或发布证据。
 
 ## 派发入口与文件
 
 | 文件 | 用途 |
 |---|---|
 | [manifest.json](manifest.json) | 唯一调度入口：批次顺序、任务路径与校验和、依赖门禁、集成顺序、基线。 |
-| [coverage.json](coverage.json) | 45 个提交的处置，以及 95 条要求的唯一实施 owner、独立 verifier、最终关闭门禁。 |
+| [coverage.json](coverage.json) | 45 个提交的处置，以及 96 条要求的唯一实施 owner、独立 verifier、最终关闭门禁。 |
 | [task.schema.json](task.schema.json) | 每份 task.json 的严格 JSON Schema，拒绝未知字段。 |
 | [result.schema.json](result.schema.json) | 交付格式：实际 SHA、测试、逐项证据、文档片段及剩余问题。 |
 | [execution-state.template.json](execution-state.template.json) | 外部执行状态模板；全部 planned，没有预填成功结果。 |
@@ -18,7 +18,7 @@
 
 每个任务位于 batches/批次/任务ID小写/task.json；批次验收任务位于该批次的 gate/task.json。任务 JSON 自包含原方案相关 W 节全文、固定源提交、必读文件、允许修改的路径、实施步骤、验收项、验证命令及交付格式。**必须传递完整 JSON，不能只传标题。**
 
-contracts/ 与 handoffs/ 是后续任务的产出路径，目前没有伪造的合同或完成报告。派发器必须向后续 worktree 提供前置 gate 已验收的产物。
+contracts/ 保存已审阅合同及版本化修订，handoffs/ 的源码提交包含局部文档片段。实际 result 与测试日志在所引用源码提交之外收集，派发器必须向后续 worktree 提供前置 gate 已验收的产物。
 
 ## 批次与并行边界
 
@@ -47,7 +47,7 @@ B00 → G00 → B01 → G01 → B02 → G02 → B03 → G03 → B04 → G04 → 
 
 ## 实际派发流程
 
-1. **准备 seed。** 代码基线为 919f140f64f89c80933802840c8878681a85a4d9，源仓库为 e2f0620bdd6477e6fe16f6db5648093589342ca2。开始实施时，在隔离的 codex/alignment-integration 分支把原方案、本任务包和 AGENTS 纳入 seed commit，记录真实 seed_head。当前尚未创建这个 commit。不要从不含本包的默认 main 直接派发，也不要 stash/reset 丢弃用户改动。
+1. **准备 seed。** 代码基线为 919f140f64f89c80933802840c8878681a85a4d9，源仓库为 e2f0620bdd6477e6fe16f6db5648093589342ca2。开始实施时，在隔离的 codex/alignment-integration 分支把原方案、本任务包和 AGENTS 纳入 seed commit，记录真实 seed_head。本次已创建 seed `bc0d421f9c0b1e80e529d1e843fe5d8396eab02f`，G00 交付 `93ef44f24e63ce52ad29dce2b54ff28fa0503470`。不要从不含本包的默认 main 直接派发，也不要 stash/reset 丢弃用户改动。
 2. **建立外部状态。** 复制 execution-state.template.json 到派发器数据目录，填入 seed SHA。task.json 始终描述计划，真实进展填外部 state/result，不能把计划的 status 改为 complete。
 3. **派发当前批 worker。** 从 manifest 读取 parallel_tasks，每个任务使用独立 worktree 和自己的 codex/alignment-任务ID 分支。同批任务共用一个 base：B00 用 seed，其余用上一 gate 实际交付的 head_sha。同时提供必读文档、固定源仓库 Git 对象和已验收合同。源路径是 hint，允许映射到只读 clone；不能假设 worktree 的 ../agent-adaptor-internal 一定存在。
 4. **收集交付。** worker 提交范围内的实施/测试/局部文档后，在实际 head 上运行检查，再生成 result.json。报告、日志和执行态由派发器收集，不塞进它们所引用的同一个源码 commit，避免 SHA 自引用。逐项验收 acceptance、任务对应的 requirements、validation 和实际 Git diff。
@@ -96,7 +96,7 @@ python3 docs/alignment-tasks/2026-09-07/validate.py \
 
 --verify-git 核对固定基线的 AGENTS 内容哈希；有 result 时还核对祖先关系、实际净 diff 与所报 commit。complete 报告必须带外部 state，才能检查前置任务和动态 base。blocked 报告允许缺少尚未获得的 SHA/检查结果，但必须说明缺项。
 
-校验器检查 JSON 结构、DAG、屏障、同批路径/资源冲突、前置产物归属、方案嵌入内容、45 提交覆盖、95 条要求映射、任务哈希和报告元数据。它不能判断全部 Go 符号依赖、断言是否充分、外部日志是否真实或 fixture 是否代表正式协议；这些由 G00、独立 QA、平台/live 证据和各批 gate 负责。gate 还须核对 artifact SHA256 与实际文件，不能将格式正确视为内容可信。
+校验器检查 JSON 结构、DAG、屏障、同批路径/资源冲突、前置产物归属、方案嵌入内容、45 提交覆盖、96 条要求映射、任务哈希和报告元数据。它不能判断全部 Go 符号依赖、断言是否充分、外部日志是否真实或 fixture 是否代表正式协议；这些由 G00、独立 QA、平台/live 证据和各批 gate 负责。gate 还须核对 artifact SHA256 与实际文件，不能将格式正确视为内容可信。
 
 附带 schema 是 Draft 2020-12；标准库校验器只实现本包使用的关键字。扩展 schema 关键字时须同时扩展校验器，或使用完整 JSON Schema 实现验证。
 
@@ -105,3 +105,13 @@ python3 docs/alignment-tasks/2026-09-07/validate.py \
 [R001](amendments/R001.md)：B00依据代码更正W06，新增B01 T31作为Claude的SPI/core前置；补齐T05取消断言的测试范围。95条原要求全部保留。
 
 [R002](amendments/R002.md)：T03提前修复A2A的RunError优先级与部分输出保留，使用基线符号保持同批独立。
+
+[R003](amendments/R003.md)：schema预检提前到资源前；动态resolved profile指纹由B02管线owner接线，95要求全部保留。
+
+[R004](amendments/R004.md)：同步W06总表/附录与已核实的schema/HITL基线事实。
+
+[R005](amendments/R005.md)：按完整有效Ask校验nonnull schema矩阵，保留nil旧语义；T31首轮独立审阅发现P1并返修。
+
+[R006](amendments/R006.md)：新增W09-R14关闭已实证的Driver-only终局权威矛盾；原95要求全部保留，现96条。
+
+[R007](amendments/R007.md)：精确区分profile解锁前后的Close重试，Windows长期锁禁止delete sharing。
