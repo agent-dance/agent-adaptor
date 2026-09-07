@@ -103,3 +103,5 @@ python3 docs/alignment-tasks/2026-09-07/validate.py \
 ## 执行期修订
 
 [R001](amendments/R001.md)：B00依据代码更正W06，新增B01 T31作为Claude的SPI/core前置；补齐T05取消断言的测试范围。95条原要求全部保留。
+
+[R002](amendments/R002.md)：T03提前修复A2A的RunError优先级与部分输出保留，使用基线符号保持同批独立。

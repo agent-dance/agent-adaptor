@@ -264,7 +264,7 @@
       "batch_id": "B01",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/01-critical-fixes/t03/task.json",
-      "sha256": "7db7602f52f99af3f948897de23504c3b21c5013883c99e0b22bb05f0ca9870d"
+      "sha256": "dfb4a2e0b28f2e84a8e455f7b2f6e02fc7c37c0a0b335cd8a2fa40e416bb4808"
     },
     {
       "id": "T04",
@@ -521,8 +521,9 @@
     "every_requirement_has_one_owner_and_independent_verifier": true,
     "no_same_batch_worker_dependency": true
   },
-  "revision": 2,
+  "revision": 3,
   "amendments": [
-    "docs/alignment-tasks/2026-09-07/amendments/R001.md"
+    "docs/alignment-tasks/2026-09-07/amendments/R001.md",
+    "docs/alignment-tasks/2026-09-07/amendments/R002.md"
   ]
 }

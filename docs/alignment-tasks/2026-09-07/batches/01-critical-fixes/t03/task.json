@@ -1,13 +1,13 @@
 {
   "schema_version": "1.0",
   "id": "T03",
-  "title": "修复 A2A continuation 的历史 Task 回放误终结",
+  "title": "修复 A2A continuation 历史回放与错误原因优先级",
   "batch_id": "B01",
   "phase": "parallel",
   "kind": "implementation",
   "priority": "P0",
   "status": "planned",
-  "objective": "修复 A2A continuation 的历史 Task 回放误终结。完成本任务范围并交付可核验结果，不代替其他任务或提前宣称整个 W 项完成。",
+  "objective": "修复流式 continuation 被历史Task误终结，以及RunError携带context原因时被误分类并丢失部分输出的回归；保留同步与polling权威结果语义。",
   "work_items": [
     "W03"
   ],
@@ -52,7 +52,9 @@
     "required_reads": [
       "AGENTS.md",
       "docs/internal-history-alignment-plan-2026-09-07.md",
-      "docs/alignment-tasks/2026-09-07/README.md"
+      "docs/alignment-tasks/2026-09-07/README.md",
+      "docs/alignment-tasks/2026-09-07/contracts/results-and-budget.md",
+      "docs/alignment-tasks/2026-09-07/amendments/R002.md"
     ],
     "dependency_artifacts": [
       {
@@ -67,6 +69,8 @@
   },
   "ownership": {
     "allow": [
+      "bridges/a2a/server.go",
+      "bridges/a2a/server_test.go",
       "clients/a2a/**",
       "docs/alignment-tasks/2026-09-07/handoffs/T03/**",
       "hosttools/a2adelegation/**"
@@ -105,7 +109,8 @@
   "implementation_steps": [
     "一起修 client 停流、delegator 收尾和 mapper：流 Task snapshot 仅身份/artifacts，不触发本轮问卷/终态。",
     "明确 continuation 与首次同步/polling/GetTask recovery：本轮 live Status/Message 才可结束，旧问卷 EOF 必须 stream_interrupted。",
-    "处理旧 completed/failed 快照、已回答 question 的恢复，保留后续制品和正确远端取消。"
+    "处理旧 completed/failed 快照、已回答 question 的恢复，保留后续制品和正确远端取消。",
+    "R002：bridge executor.Execute 与 Local finalTask 先 errors.As(*RunError)提取部分Result及主Reason，仅现有ReasonCancelled映射canceled；没有RunError才判断bare context。测试用fake Runner/Stream返回errors.Join(既有RunError,context.Canceled/DeadlineExceeded)，不依赖同批T05新增Cause或Reason。完整delegation failure code往返仍由T18完成。"
   ],
   "acceptance_criteria": [
     {
@@ -117,12 +122,17 @@
       "id": "T03-AC02",
       "requirement": "同步/轮询行为保持，客户端与 hosttool 规则一致，不把存盘回放伪造成 ApprovalRequest。",
       "required": true
+    },
+    {
+      "id": "T03-AC04",
+      "required": true,
+      "requirement": "bridge和Local对approval denied/timeout + joined cancellation保持failed与partial artifacts/text；explicit ReasonCancelled与bare context保持canceled，测试不依赖同批新符号。"
     }
   ],
   "validation": [
     {
       "id": "T03-V01",
-      "command": "go test -count=1 ./clients/a2a ./hosttools/a2adelegation",
+      "command": "go test -count=1 ./clients/a2a ./hosttools/a2adelegation ./bridges/a2a",
       "cwd": "repository_root",
       "environment": {
         "AGENT_ADAPTOR_LIVE_CONFORMANCE": "0",
@@ -136,7 +146,7 @@
     },
     {
       "id": "T03-V02",
-      "command": "go test -count=20 ./clients/a2a ./hosttools/a2adelegation",
+      "command": "go test -count=20 ./clients/a2a ./hosttools/a2adelegation ./bridges/a2a",
       "cwd": "repository_root",
       "environment": {
         "AGENT_ADAPTOR_LIVE_CONFORMANCE": "0",
