@@ -502,8 +502,8 @@ func (s *runState) handleNotificationLocked(method string, params json.RawMessag
 		// thread/tokenUsage/updated notifications that arrive right before
 		// turn/completed. We keep the latest snapshot so driver.Response
 		// reflects it even when turn/completed omits the usage field.
-		var body ThreadTokenUsageUpdatedNotification
-		if err := json.Unmarshal(params, &body); err != nil {
+		body, err := decodeThreadTokenUsage(params)
+		if err != nil {
 			s.recordProtocolError(fmt.Errorf("decode thread/tokenUsage/updated: %w", err))
 			return
 		}
@@ -648,7 +648,8 @@ func validateAppServerNotification(method string, params json.RawMessage) error 
 	case NotifyItemPlanDelta:
 		target = &PlanDeltaNotification{}
 	case NotifyThreadTokenUsageUpdated:
-		target = &ThreadTokenUsageUpdatedNotification{}
+		_, err := decodeThreadTokenUsage(params)
+		return err
 	case NotifyError:
 		target = &ErrorNotification{}
 	case NotifyItemStarted:

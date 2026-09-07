@@ -272,11 +272,7 @@ func (p *Process) RunTurn(ctx context.Context, opts Options, sink driver.EventSi
 			cancel()
 			err = ctx.Err()
 		case <-p.waitCh:
-			if p.waitErr != nil {
-				err = fmt.Errorf("codex app-server exited before turn completion: %w", p.waitErr)
-			} else {
-				err = errors.New("codex app-server exited before turn completion")
-			}
+			err = errors.New("codex app-server exited before turn completion")
 		case <-p.stream.ReadDone():
 			err = errors.New("codex app-server stdout ended before turn completion")
 		}
@@ -291,15 +287,38 @@ func (p *Process) RunTurn(ctx context.Context, opts Options, sink driver.EventSi
 			err = errors.New("codex app-server protocol ended without turn/completed")
 		}
 	}
+	// A terminal and process exit may become ready together. Any exit already
+	// observed before finalization must still participate in checkpoint health.
+	select {
+	case <-p.waitCh:
+		if p.waitErr != nil && err == nil {
+			err = errors.New("codex app-server process exited unsuccessfully")
+		}
+	default:
+	}
 
 	if err != nil {
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		err = errors.Join(err, p.TerminateAndWait(cleanupCtx))
 		cancel()
+		// ReadDone precedes Wait by design. The bounded cleanup join is where
+		// the real OS exit becomes available; retain it alongside the original
+		// protocol/context cause instead of returning only the earlier EOF.
+		select {
+		case <-p.waitCh:
+			if p.waitErr != nil {
+				err = errors.Join(err, fmt.Errorf("codex app-server wait: %w", p.waitErr))
+			}
+		default:
+		}
 	}
 	exitCode, signal, timedOut := 0, "", false
 	if err != nil {
 		exitCode = -1
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			exitCode = exitErr.ExitCode()
+		}
 		signal = err.Error()
 		timedOut = errors.Is(err, context.DeadlineExceeded)
 	}

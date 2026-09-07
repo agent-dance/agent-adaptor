@@ -44,11 +44,11 @@ Capability typed 数据只含冻结的安全字段，不带 arguments、result�
 
 Plan 使用原有 current thread/turn、响应前排队和 terminal fence。pending/inProgress/completed 精确映射，快照保持原顺序和原文。provider 无 step ID，因此使用确定性、无碰撞的 turn/position tuple synthetic ID，SyntheticID=true；不能当成 provider task identity。首次合法空表产生 revision 1，重复表不递增，合法 [] 清空。整表验证失败保留上一快照，发 `todo_invalid` notice；无效 UTF-8 或破损 surrogate 不修补成事实。实验性 plan delta 仍作为现有 opaque 事件/Raw，不产生 Todo，也不构成 PlanReview 审批。
 
-历史 tokenUsage 只有“同 thread、非当前 turn、通过正式 generated DTO 校验”的 replay 可作为 Raw 审计数据忽略。不会更新当前 Usage、Transcript、Todo、Capability 或 checkpoint；异 thread、其他旧 turn 通知和终局守卫没有放宽。child thread 元数据也不重绑定当前 run。
+Usage 必须具有正式 required last/total 与完整五项非负整数计数；缺对象、null、缺计数、小数或负数不伪造已观察零值。手写 presence 验证补足 generated value DTO 的缺失/零值区分，合法显式零仍支持。历史 tokenUsage 只有“同 thread、非当前 turn、通过正式 generated DTO 校验”的 replay 可作为 Raw 审计数据忽略。不会更新当前 Usage、Transcript、Todo、Capability 或 checkpoint；异 thread、其他旧 turn 通知和终局守卫没有放宽。child thread 元数据也不重绑定当前 run。
 
 ## 输出、生命周期与回归
 
-保留已有 persistentWriter 的部分 `result, persistentErr`，补齐同一 finishAppServerResult 的元数据/已观察 runtime 报告映射。exec helper 错误也先解析其已捕获完整 stdout/stderr 再返回原 cause；helper broken-pipe 后已到达的正式终局不丢。常驻 stdout reader 明确完成并排空剩余 Raw、stderr 后才 cmd.Wait，避免快速非零/畸形退出先关 StdoutPipe 导致尾帧丢失；一轮 app-server 同样保全畸形帧后的 Raw。常驻错误先有界回收再 snapshot，保全已观察 stdout/stderr、Text、Transcript、Usage 和正式终局。
+保留已有 persistentWriter 的部分 `result, persistentErr`，补齐同一 finishAppServerResult 的元数据/已观察 runtime 报告映射。exec helper 错误也先解析其已捕获完整 stdout/stderr 再返回原 cause；helper broken-pipe 后已到达的正式终局不丢。常驻 stdout reader 明确完成并排空剩余 Raw、stderr 后才 cmd.Wait，避免快速非零/畸形退出先关 StdoutPipe 导致尾帧丢失；一轮 app-server 同样保全畸形帧后的 Raw。常驻错误在有界回收后将已观察的真实 Wait/ExitError 与原 protocol/context cause 合并，保留 errors.As 和真实 ExitCode；不能让较早 ReadDone 的 EOF 提示掩盖进程错误。常驻错误先有界回收再 snapshot，保全已观察 stdout/stderr、Text、Transcript、Usage 和正式终局。
 
 失败、取消、畸形协议、缺终局、非零退出不产生健康 checkpoint；不能从 thread ID 推断健康，也不把输出保留改为错误后持久化。原健康 Thread record 仍由既有统一管线维持。成功 Run/Stream.Result 的 Text/Summary/Raw/Transcript/Usage 等价；schema/native structured output、MCP 权限/凭据/隔离、审批与单 writer 既有合同由完整 codex 包回归覆盖。
 

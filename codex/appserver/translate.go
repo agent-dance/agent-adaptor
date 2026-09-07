@@ -160,8 +160,7 @@ func (t *Translator) handleThreadTokenUsageUpdated(params json.RawMessage) {
 	// Cache the latest usage so handleTurnCompleted can attach it to
 	// StreamRunFinished. Also pass through the raw payload for bridges that
 	// want live token-meter rendering.
-	var body ThreadTokenUsageUpdatedNotification
-	if err := json.Unmarshal(params, &body); err == nil {
+	if body, err := decodeThreadTokenUsage(params); err == nil {
 		t.mu.Lock()
 		t.latestUsage = &driver.Usage{
 			InputTokens:       body.TokenUsage.Total.InputTokens,

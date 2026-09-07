@@ -3,6 +3,7 @@ package appserver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -376,6 +377,59 @@ func TestAlignmentProviderCancellationClosesPendingFacts(t *testing.T) {
 	caps, _ := alignmentFacts(sink)
 	if len(caps) != 2 || caps[1].Phase != capability.Cancelled || caps[1].ErrorCode != capability.RunCancelled {
 		t.Fatalf("provider cancellation facts=%#v", caps)
+	}
+}
+
+func TestAlignmentUsageRequiresCompleteObservedCounters(t *testing.T) {
+	zero := `{"cachedInputTokens":0,"inputTokens":0,"outputTokens":0,"reasoningOutputTokens":0,"totalTokens":0}`
+	complete := `{"last":` + zero + `,"total":` + zero + `}`
+	for _, tc := range []struct {
+		name, usage string
+		valid       bool
+	}{
+		{"explicit-zero", complete, true},
+		{"empty", `{}`, false},
+		{"null", `null`, false},
+		{"empty-breakdowns", `{"last":{},"total":{}}`, false},
+		{"missing-last", `{"total":` + zero + `}`, false},
+		{"null-counter", strings.Replace(complete, `"inputTokens":0`, `"inputTokens":null`, 1), false},
+		{"missing-counter", strings.Replace(complete, `"reasoningOutputTokens":0,`, ``, 1), false},
+		{"negative-counter", strings.Replace(complete, `"inputTokens":0`, `"inputTokens":-1`, 1), false},
+		{"fractional-counter", strings.Replace(complete, `"inputTokens":0`, `"inputTokens":1.5`, 1), false},
+	} {
+		for _, turn := range []string{"current", "historical"} {
+			t.Run(tc.name+"/"+turn, func(t *testing.T) {
+				s := newRunState("run", &recordingSink{})
+				s.setThread("thread")
+				s.setTurn("current")
+				s.onNotification(NotifyThreadTokenUsageUpdated, json.RawMessage(fmt.Sprintf(`{"threadId":"thread","turnId":%q,"tokenUsage":%s}`, turn, tc.usage)))
+				result := s.snapshot(Options{}, "thread", "audit", "", 0, "", false)
+				if (result.Usage != nil) != (tc.valid && turn == "current") || (s.protocolError() == nil) != tc.valid {
+					t.Fatalf("usage=%#v protocolError=%v valid=%t", result.Usage, s.protocolError(), tc.valid)
+				}
+			})
+		}
+	}
+}
+
+func TestAlignmentResidentWaitCause(t *testing.T) {
+	command := alignmentFixture(t)
+	opts := alignmentOptions(command, filepath.Join(t.TempDir(), "capture"))
+	opts.Env = append(opts.Env, driver.EnvBinding{Name: "ALIGNMENT_SCENARIO", Value: "nonzero"})
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	p, err := Open(ctx, opts, &recordingSink{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.TerminateAndWait(ctx)
+	result, sent, err := p.RunTurn(ctx, opts, &recordingSink{})
+	var actual, returned *exec.ExitError
+	if !errors.As(p.waitErr, &actual) || actual.ExitCode() != 9 {
+		t.Fatalf("fixture Wait did not observe exit 9: %v", p.waitErr)
+	}
+	if !sent || !errors.As(err, &returned) || returned.ExitCode() != 9 || result.Checkpoint != nil || result.Output != "answer" || result.RawStreams.Stderr != "fixture-stderr" {
+		t.Fatalf("lost Wait cause/partial: err=%v result=%#v", err, result)
 	}
 }
 
