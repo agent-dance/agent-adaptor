@@ -6,12 +6,14 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	adaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/codex"
+	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/memory"
 )
 
@@ -28,13 +30,13 @@ func TestAppServerHaiku(t *testing.T) {
 		t.Skip("set AGENT_ADAPTOR_LIVE_CONFORMANCE=1 in addition to -tags codex_live")
 	}
 	if _, err := exec.LookPath("codex"); err != nil {
-		t.Skip("codex CLI not in PATH")
+		t.Fatal("authorized live runner requires codex CLI")
 	}
 	workspace := t.TempDir()
 
 	agent := adaptor.New(
 		codex.Driver(codex.Config{
-			CommonConfig: codex.CommonConfig{CWD: workspace},
+			CommonConfig: codex.CommonConfig{CWD: workspace, Env: isolatedLiveBindings(t)},
 			Model:        "gpt-5.4",
 		}),
 		adaptor.WithThreadStore(memory.NewStore()),
@@ -165,12 +167,12 @@ func TestAppServerPersistentTwoTurns(t *testing.T) {
 		t.Skip("set AGENT_ADAPTOR_LIVE_CONFORMANCE=1 in addition to -tags codex_live")
 	}
 	if _, err := exec.LookPath("codex"); err != nil {
-		t.Skip("codex CLI not in PATH")
+		t.Fatal("authorized live runner requires codex CLI")
 	}
 	workspace := t.TempDir()
 	agent := adaptor.New(
 		codex.Driver(codex.Config{
-			CommonConfig: codex.CommonConfig{CWD: workspace},
+			CommonConfig: codex.CommonConfig{CWD: workspace, Env: isolatedLiveBindings(t)},
 			Model:        "gpt-5.4",
 		}),
 		adaptor.WithThreadStore(memory.NewStore()),
@@ -215,4 +217,25 @@ func TestAppServerPersistentTwoTurns(t *testing.T) {
 	if spawns != 1 {
 		t.Fatalf("two default Thread turns spawned %d app-server processes, want 1", spawns)
 	}
+}
+
+func isolatedLiveBindings(t *testing.T) []driver.EnvBinding {
+	t.Helper()
+	source := os.Getenv("AGENT_ADAPTOR_CODEX_LIVE_PROFILE")
+	if source == "" {
+		t.Fatal("AGENT_ADAPTOR_CODEX_LIVE_PROFILE must name an isolated authorized auth seed")
+	}
+	home := t.TempDir()
+	profile := filepath.Join(home, "profile")
+	if err := os.MkdirAll(profile, 0700); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(source, "auth.json"))
+	if err != nil {
+		t.Fatal("live auth seed unavailable")
+	}
+	if err := os.WriteFile(filepath.Join(profile, "auth.json"), data, 0600); err != nil {
+		t.Fatal("cannot create live profile")
+	}
+	return []driver.EnvBinding{{Name: "CODEX_HOME", Value: profile}, {Name: "HOME", Value: home}, {Name: "USERPROFILE", Value: home}}
 }

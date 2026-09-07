@@ -12,9 +12,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/agent-dance/agent-adaptor/capability"
 	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/internal/engine"
 	"github.com/agent-dance/agent-adaptor/internal/processx"
+	"github.com/agent-dance/agent-adaptor/internal/systemprompt"
 )
 
 // Options bundles the driver-provided inputs for a single run of the codex
@@ -38,6 +40,15 @@ type Options struct {
 
 	// Prompt is the user input for the single turn.
 	Prompt string
+
+	// AppendSystemPrompt is sent verbatim in every thread handshake, never as user input.
+	AppendSystemPrompt string
+	// SkillInputs are explicit native skill references selected by the driver.
+	SkillInputs []UserInput
+	// Resolved catalogs identify observed provider facts; declarations alone are not evidence.
+	ResolvedSkills []driver.ResolvedSkill
+	ResolvedMCP    []driver.MCPServerSpec
+	ResolvedAgents []driver.AgentSpec
 
 	// Thread controls whether this run starts, resumes, or forks a thread.
 	// ResumeThreadID and ForkThreadID are mutually exclusive. A fork returns a
@@ -75,6 +86,9 @@ type Options struct {
 func Run(ctx context.Context, opts Options, sink driver.EventSink) (driver.Response, error) {
 	if opts.ResumeThreadID != "" && opts.ForkThreadID != "" {
 		return driver.Response{}, errors.New("codex app-server: resume and fork thread ids are mutually exclusive")
+	}
+	if err := systemprompt.Validate("codex", opts.AppendSystemPrompt); err != nil {
+		return driver.Response{}, err
 	}
 	command := opts.Command
 	if command == "" {
@@ -140,7 +154,7 @@ func Run(ctx context.Context, opts Options, sink driver.EventSink) (driver.Respo
 	stream := newStdioStream(stdin, io.TeeReader(stdout, stdoutBuf))
 	client := NewClient(context.Background(), stream)
 
-	state := newRunState(opts.RunID, sink)
+	state := newRunState(opts.RunID, sink, opts)
 	// runState.onNotification forwards to the translator (so bridges see
 	// every payload) and then accumulates run-level state needed to shape
 	// the driver.Response.
@@ -151,15 +165,15 @@ func Run(ctx context.Context, opts Options, sink driver.EventSink) (driver.Respo
 	// ended, as required by os/exec's StdoutPipe contract. A bounded fallback
 	// cancels the configured process tree if a broken app-server ignores EOF.
 	shutdown := func() error {
+		deadline := time.AfterFunc(5*time.Second, stopProcess)
+		defer deadline.Stop()
 		_ = stdin.Close()
-		select {
-		case <-client.DisconnectNotify():
-		case <-time.After(5 * time.Second):
-			stopProcess()
-			<-client.DisconnectNotify()
-		}
-		waitErr := cmd.Wait()
+		<-stream.ReadDone()
+		// Decoder lookahead has already passed through the tee. Only unread
+		// bytes following a malformed frame remain to capture here.
+		_, _ = io.Copy(stdoutBuf, stdout)
 		<-stderrDone
+		waitErr := cmd.Wait()
 		_ = client.Close()
 		return waitErr
 	}
@@ -211,31 +225,33 @@ func Run(ctx context.Context, opts Options, sink driver.EventSink) (driver.Respo
 	// 2. thread start or resume.
 	if opts.ForkThreadID != "" {
 		resp, err := client.ThreadFork(ctx, ThreadForkParams{
-			ThreadID:       opts.ForkThreadID,
-			CWD:            opts.CWD,
-			Ephemeral:      opts.Ephemeral,
-			Sandbox:        opts.Sandbox,
-			Model:          opts.Model,
-			ServiceTier:    opts.ServiceTier,
-			ApprovalPolicy: opts.Approval,
+			DeveloperInstructions: opts.AppendSystemPrompt,
+			ThreadID:              opts.ForkThreadID,
+			CWD:                   opts.CWD,
+			Ephemeral:             opts.Ephemeral,
+			Sandbox:               opts.Sandbox,
+			Model:                 opts.Model,
+			ServiceTier:           opts.ServiceTier,
+			ApprovalPolicy:        opts.Approval,
 		})
 		if err != nil {
 			return finish(classifyThreadError(err, opts.ForkThreadID))
 		}
 		threadID = resp.Thread.ID
 	} else if opts.ResumeThreadID != "" {
-		resp, err := client.ThreadResume(ctx, ThreadResumeParams{ThreadID: opts.ResumeThreadID})
+		resp, err := client.ThreadResume(ctx, ThreadResumeParams{ThreadID: opts.ResumeThreadID, DeveloperInstructions: opts.AppendSystemPrompt})
 		if err != nil {
 			return finish(classifyThreadError(err, opts.ResumeThreadID))
 		}
 		threadID = resp.Thread.ID
 	} else {
 		resp, err := client.ThreadStart(ctx, ThreadStartParams{
-			CWD:         opts.CWD,
-			Ephemeral:   opts.Ephemeral,
-			Sandbox:     opts.Sandbox,
-			Model:       opts.Model,
-			ServiceTier: opts.ServiceTier,
+			DeveloperInstructions: opts.AppendSystemPrompt,
+			CWD:                   opts.CWD,
+			Ephemeral:             opts.Ephemeral,
+			Sandbox:               opts.Sandbox,
+			Model:                 opts.Model,
+			ServiceTier:           opts.ServiceTier,
 		})
 		if err != nil {
 			return finish(fmt.Errorf("codex app-server thread/start: %w", err))
@@ -254,7 +270,7 @@ func Run(ctx context.Context, opts Options, sink driver.EventSink) (driver.Respo
 	}
 	turnParams := TurnStartParams{
 		ThreadID:     threadID,
-		Input:        []UserInput{TextInput(opts.Prompt)},
+		Input:        append([]UserInput{TextInput(opts.Prompt)}, opts.SkillInputs...),
 		CWD:          opts.CWD,
 		Model:        opts.Model,
 		Effort:       opts.Effort,
@@ -300,9 +316,11 @@ func Run(ctx context.Context, opts Options, sink driver.EventSink) (driver.Respo
 // ---------------------------------------------------------------------------
 
 type runState struct {
-	translator *Translator
-	sink       driver.EventSink
-	notifyMu   sync.Mutex
+	translator     *Translator
+	observation    *observations
+	observationMCP map[string]capability.Ref
+	sink           driver.EventSink
+	notifyMu       sync.Mutex
 
 	mu             sync.Mutex
 	finalAgentText string
@@ -368,14 +386,22 @@ func (s *runState) setTurn(turnID string) {
 	s.turnID = turnID
 	s.mu.Unlock()
 	s.translator.SetTurn(turnID)
+	s.startPublic()
+	s.acceptSkillInputs()
 	s.flushPendingNotificationsLocked()
 }
 
-func newRunState(runID string, sink driver.EventSink) *runState {
+func newRunState(runID string, sink driver.EventSink, options ...Options) *runState {
+	var opts Options
+	if len(options) > 0 {
+		opts = options[0]
+	}
 	return &runState{
-		translator: NewTranslator(sink, runID),
-		sink:       sink,
-		done:       make(chan struct{}),
+		translator:     NewTranslator(sink, runID),
+		observation:    newObservations(opts),
+		observationMCP: make(map[string]capability.Ref),
+		sink:           sink,
+		done:           make(chan struct{}),
 	}
 }
 
@@ -414,6 +440,9 @@ func (s *runState) handleNotificationLocked(method string, params json.RawMessag
 	}
 	s.mu.Unlock()
 
+	if method == NotifyThreadStarted && s.observeChildThread(params) {
+		return
+	}
 	deferred, err := s.bindNotificationScopeLocked(method, params)
 	if deferred {
 		return
@@ -462,6 +491,8 @@ func (s *runState) handleNotificationLocked(method string, params json.RawMessag
 		if err := json.Unmarshal(params, &body); err != nil {
 			s.recordProtocolError(fmt.Errorf("decode item/agentMessage/delta: %w", err))
 		}
+	case NotifyTurnPlanUpdated:
+		s.observePlan(params)
 	case NotifyItemStarted:
 		s.absorbItem(params, true)
 	case NotifyItemCompleted:
@@ -471,8 +502,8 @@ func (s *runState) handleNotificationLocked(method string, params json.RawMessag
 		// thread/tokenUsage/updated notifications that arrive right before
 		// turn/completed. We keep the latest snapshot so driver.Response
 		// reflects it even when turn/completed omits the usage field.
-		var body ThreadTokenUsageUpdatedNotification
-		if err := json.Unmarshal(params, &body); err != nil {
+		body, err := decodeThreadTokenUsage(params)
+		if err != nil {
 			s.recordProtocolError(fmt.Errorf("decode thread/tokenUsage/updated: %w", err))
 			return
 		}
@@ -534,6 +565,12 @@ func (s *runState) bindNotificationScopeLocked(method string, params json.RawMes
 		return false, fmt.Errorf("codex app-server notification %s belongs to thread %q, want %q", method, threadID, s.threadID)
 	}
 	if turnScoped && turnID != s.turnID {
+		if method == NotifyThreadTokenUsageUpdated {
+			if err := validateAppServerNotification(method, params); err != nil {
+				return false, err
+			}
+			return true, nil
+		}
 		return false, fmt.Errorf("codex app-server notification %s belongs to turn %q, want %q", method, turnID, s.turnID)
 	}
 	return false, nil
@@ -558,7 +595,7 @@ func appServerNotificationScope(method string, params json.RawMessage) (threadID
 		NotifyItemAgentMessageDelta, NotifyItemReasoningTextDelta,
 		NotifyItemReasoningSummaryTextDelta, NotifyItemReasoningSummaryPartAdded,
 		NotifyItemCommandExecutionOutputDelta,
-		NotifyItemFileChangeOutputDelta, NotifyItemPlanDelta,
+		NotifyItemFileChangeOutputDelta, NotifyItemPlanDelta, NotifyTurnPlanUpdated,
 		NotifyThreadTokenUsageUpdated, NotifyError:
 		scoped = true
 		turnScoped = true
@@ -611,7 +648,8 @@ func validateAppServerNotification(method string, params json.RawMessage) error 
 	case NotifyItemPlanDelta:
 		target = &PlanDeltaNotification{}
 	case NotifyThreadTokenUsageUpdated:
-		target = &ThreadTokenUsageUpdatedNotification{}
+		_, err := decodeThreadTokenUsage(params)
+		return err
 	case NotifyError:
 		target = &ErrorNotification{}
 	case NotifyItemStarted:
@@ -691,7 +729,14 @@ func (s *runState) handleTurnCompleted(params json.RawMessage) {
 }
 
 func (s *runState) finishPublicResult(result driver.Response, runErr error) {
+	s.notifyMu.Lock()
 	s.startPublic()
+	observationErr := runErr
+	if result.Failure != nil && result.Failure.Code == driver.FailureCancelled {
+		observationErr = context.Canceled
+	}
+	s.closeObservations(observationErr)
+	s.notifyMu.Unlock()
 	if runErr != nil {
 		s.translator.FinishError(runErr)
 		return
@@ -728,6 +773,7 @@ func (s *runState) absorbItem(params json.RawMessage, started bool) {
 		}
 		rawItem = body.Item
 	}
+	s.observeItem(rawItem, started)
 	item, err := DecodeThreadItem(rawItem)
 	if err != nil {
 		s.recordProtocolError(err)

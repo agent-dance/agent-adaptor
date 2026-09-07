@@ -43,11 +43,15 @@ func (sessionCodec) FromParams(params driver.SessionParams) *driver.SessionState
 }
 
 func (sessionCodec) GuardFingerprint(params driver.SessionParams) string {
-	return guardHash(params.Values,
+	keys := []string{
 		driver.SessionParamCWD,
 		driver.SessionParamWorkspaceID,
 		driver.SessionParamProfileFingerprint,
-	)
+	}
+	if params.Values[appendSystemPromptFingerprintKey] != "" {
+		keys = append(keys, appendSystemPromptFingerprintKey)
+	}
+	return guardHash(params.Values, keys...)
 }
 
 func displayID(state *driver.SessionState) string {

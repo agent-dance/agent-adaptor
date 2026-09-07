@@ -262,7 +262,7 @@ func TestTranslatorDispatchCoreFlow(t *testing.T) {
 	tr.Dispatch(NotifyItemCompleted, json.RawMessage(`{"threadId":"t1","turnId":"turn-1","item":{"id":"msg-1","type":"agentMessage","text":"hello"}}`))
 
 	// token usage
-	tr.Dispatch(NotifyThreadTokenUsageUpdated, json.RawMessage(`{"threadId":"t1","turnId":"turn-1","tokenUsage":{"last":{"inputTokens":1,"outputTokens":2,"cachedInputTokens":0,"reasoningOutputTokens":0},"total":{"inputTokens":11,"outputTokens":22,"cachedInputTokens":3,"reasoningOutputTokens":0}}}`))
+	tr.Dispatch(NotifyThreadTokenUsageUpdated, json.RawMessage(`{"threadId":"t1","turnId":"turn-1","tokenUsage":{"last":{"inputTokens":1,"outputTokens":2,"cachedInputTokens":0,"reasoningOutputTokens":0,"totalTokens":3},"total":{"inputTokens":11,"outputTokens":22,"cachedInputTokens":3,"reasoningOutputTokens":0,"totalTokens":33}}}`))
 
 	// turn/completed WITHOUT body.Turn.Usage → should use cached usage
 	tr.Dispatch(NotifyTurnCompleted, json.RawMessage(`{"threadId":"t1","turn":{"id":"turn-1","status":"completed"}}`))

@@ -19,6 +19,7 @@ import (
 
 	"github.com/agent-dance/agent-adaptor/codex/appserver"
 	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/internal/systemprompt"
 )
 
 // errPersistentFallback is returned only while no user prompt has been sent
@@ -41,14 +42,19 @@ type persistentSpec struct {
 	fastMode  bool
 	extraArgs []string
 
-	resumeID     string
-	engineID     string
-	previousID   string
-	prompt       string
-	runID        string
-	approval     string
-	sandbox      string
-	outputSchema *driver.OutputSchema
+	resumeID           string
+	engineID           string
+	previousID         string
+	prompt             string
+	appendSystemPrompt string
+	skillInputs        []appserver.UserInput
+	resolvedSkills     []driver.ResolvedSkill
+	resolvedMCP        []driver.MCPServerSpec
+	resolvedAgents     []driver.AgentSpec
+	runID              string
+	approval           string
+	sandbox            string
+	outputSchema       *driver.OutputSchema
 
 	profileFingerprint  string
 	settingsFingerprint string
@@ -58,17 +64,18 @@ type persistentSpec struct {
 
 func (s persistentSpec) openOptions() appserver.Options {
 	return appserver.Options{
-		Command:        s.command,
-		ExtraArgs:      append([]string(nil), s.extraArgs...),
-		CWD:            s.cwd,
-		Env:            append([]driver.EnvBinding(nil), s.env...),
-		ClientName:     "agent-adaptor",
-		ClientVersion:  "v0",
-		ResumeThreadID: s.resumeID,
-		Ephemeral:      false,
-		Sandbox:        s.sandbox,
-		Model:          s.model,
-		ServiceTier:    persistentServiceTier(s.fastMode),
+		Command:            s.command,
+		AppendSystemPrompt: s.appendSystemPrompt,
+		ExtraArgs:          append([]string(nil), s.extraArgs...),
+		CWD:                s.cwd,
+		Env:                append([]driver.EnvBinding(nil), s.env...),
+		ClientName:         "agent-adaptor",
+		ClientVersion:      "v0",
+		ResumeThreadID:     s.resumeID,
+		Ephemeral:          false,
+		Sandbox:            s.sandbox,
+		Model:              s.model,
+		ServiceTier:        persistentServiceTier(s.fastMode),
 	}
 }
 
@@ -79,6 +86,10 @@ func (s persistentSpec) turnOptions() appserver.Options {
 	opts.Approval = s.approval
 	opts.Effort = s.effort
 	opts.OutputSchema = s.outputSchema
+	opts.SkillInputs = append([]appserver.UserInput(nil), s.skillInputs...)
+	opts.ResolvedSkills = s.resolvedSkills
+	opts.ResolvedMCP = s.resolvedMCP
+	opts.ResolvedAgents = s.resolvedAgents
 	return opts
 }
 
@@ -96,6 +107,7 @@ func persistentServiceTier(fast bool) string {
 func (s persistentSpec) sig() string {
 	return persistentHashStrings(
 		"codex_persistent_v1",
+		systemprompt.Fingerprint(s.appendSystemPrompt),
 		s.command,
 		s.cwd,
 		persistentHashStrings(codexPersistentEnv(s.env)...),

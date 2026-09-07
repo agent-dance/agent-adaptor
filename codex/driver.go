@@ -20,6 +20,7 @@ import (
 	"github.com/agent-dance/agent-adaptor/internal/profilehooks"
 	"github.com/agent-dance/agent-adaptor/internal/profileinstructions"
 	"github.com/agent-dance/agent-adaptor/internal/profilesnapshot"
+	"github.com/agent-dance/agent-adaptor/internal/systemprompt"
 )
 
 // DriverType is the stable descriptor type for the built-in Codex driver.
@@ -55,6 +56,8 @@ func (adapter) Descriptor() driver.Descriptor {
 		Skills:       driver.SkillCapability{Supported: true, Mode: driver.SkillSyncPersistent},
 		MCP:          driver.MCPCapability{Supported: true, Stdio: true, HTTP: true},
 		Instructions: driver.InstructionsCapability{Supported: true},
+		SystemPrompt: driver.SystemPromptCapability{Append: true},
+		Observation:  driver.ObservationCapabilities{Streaming: driver.ObservationSupport{Skills: true, MCP: true, Subagents: true, Todos: true}},
 		Workspace:    driver.WorkspaceCapability{Supported: true},
 		Process:      driver.ProcessCapability{Persistent: true},
 		RunPolicyCaps: driver.RunPolicyCapabilities{
@@ -86,7 +89,7 @@ func codexModels() []driver.ModelInfo {
 func (adapter) ValidateConfig(cfg any) error {
 	switch cfg.(type) {
 	case Config, *Config:
-		return nil
+		return validateCodexPromptArgs(readConfig(cfg).ExtraArgs)
 	default:
 		return errors.New("codex driver requires codex.Config")
 	}
@@ -94,6 +97,9 @@ func (adapter) ValidateConfig(cfg any) error {
 
 func (adapter) CheckEnvironment(_ context.Context, cfg any) (driver.EnvironmentReport, error) {
 	config := readConfig(cfg)
+	if err := validateCodexPromptArgs(config.ExtraArgs); err != nil {
+		return driver.EnvironmentReport{}, err
+	}
 	command := config.Command
 	if command == "" {
 		command = "codex"
@@ -348,6 +354,9 @@ func (adapter) StreamCapability() driver.StreamCapability {
 
 func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSink) (driver.Response, error) {
 	cfg := readConfig(req.Config)
+	if err := validateCodexAppend(req, cfg); err != nil {
+		return driver.Response{}, err
+	}
 	// Per-run WithModel overrides the configured model for this invocation only.
 	if m := strings.TrimSpace(req.ModelOverride); m != "" {
 		cfg.Model = m
@@ -355,6 +364,15 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 	command := cfg.Command
 	if command == "" {
 		command = "codex"
+	}
+	if req.AppendSystemPrompt != "" && !usesCodexAppServer(req) {
+		earlyArgs, err := codexExecArgs(req, cfg, "")
+		if err != nil {
+			return driver.Response{}, err
+		}
+		if err := validateCodexCommand(command, earlyArgs); err != nil {
+			return driver.Response{}, err
+		}
 	}
 	if err := validateCodexForkRequest(req); err != nil {
 		return driver.Response{}, err
@@ -441,6 +459,8 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 			extraArgs: append([]string(nil), appOpts.ExtraArgs...),
 			resumeID:  resumeID, engineID: persistentSessionKey(req), previousID: persistentPreviousSessionKey(req),
 			prompt: appOpts.Prompt, runID: req.RunID,
+			appendSystemPrompt: req.AppendSystemPrompt,
+			skillInputs:        appOpts.SkillInputs, resolvedSkills: appOpts.ResolvedSkills, resolvedMCP: appOpts.ResolvedMCP, resolvedAgents: appOpts.ResolvedAgents,
 			approval: appOpts.Approval, sandbox: appOpts.Sandbox, outputSchema: outputSchema,
 			profileFingerprint:  profileFingerprint,
 			settingsFingerprint: codexSettingsFingerprint(effectiveCodexHome, effectiveCWD),
@@ -454,7 +474,7 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 			return finishAppServerResult(req, result, effectiveCWD), nil
 		}
 		if !errors.Is(persistentErr, errPersistentFallback) {
-			return result, persistentErr
+			return finishAppServerResult(req, result, effectiveCWD), persistentErr
 		}
 	} else if writer != nil {
 		if err := writer.suspendAndWait(resumeID, persistentSessionKey(req), persistentPreviousSessionKey(req)); err != nil {
@@ -479,8 +499,7 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 		return result, nil
 	}
 
-	args := append(codexPolicyArgs(req.Policy), "exec", "--json")
-	var schemaTempDir string
+	var schemaTempDir, schemaPath string
 	if req.OutputSchema != nil && req.StructuredOutputSource == driver.StructuredOutputSourceNative {
 		if hasAnyArg(cfg.ExtraArgs, "--output-schema") {
 			return driver.Response{}, &engine.InvalidOutputSchemaError{Reason: "Codex ExtraArgs must not include --output-schema when SDK structured output is enabled"}
@@ -490,28 +509,21 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 			return driver.Response{}, err
 		}
 		defer os.RemoveAll(schemaTempDir)
-		schemaPath := filepath.Join(schemaTempDir, "schema.json")
+		schemaPath = filepath.Join(schemaTempDir, "schema.json")
 		if err := os.WriteFile(schemaPath, req.OutputSchema.SchemaJSON, 0o600); err != nil {
 			return driver.Response{}, err
 		}
-		args = append(args, "--output-schema", schemaPath)
 	}
-	if cfg.Model != "" {
-		args = append(args, "--model", cfg.Model)
-	}
-	if cfg.ReasoningEffort != "" {
-		args = append(args, "-c", "model_reasoning_effort="+string(cfg.ReasoningEffort))
-	}
-	if cfg.FastMode {
-		args = append(args, "-c", `service_tier="fast"`, "-c", "features.fast_mode=true")
-	}
-	args = append(args, filterCodexPolicyExtraArgs(cfg.ExtraArgs, req.Policy)...)
-	if req.Session != nil && req.Session.State != nil && req.Session.State.ResumeID != "" {
-		args = append(args, "resume", req.Session.State.ResumeID, "-")
-	} else {
-		args = append(args, "-")
+	args, err := codexExecArgs(req, cfg, schemaPath)
+	if err != nil {
+		return driver.Response{}, err
 	}
 
+	if req.AppendSystemPrompt != "" {
+		if err := validateCodexCommand(command, args); err != nil {
+			return driver.Response{}, err
+		}
+	}
 	prompt := req.Prompt
 	if runtimePrefix := driverutil.RuntimePromptPrefix(req.Runtime); runtimePrefix != "" {
 		prompt = runtimePrefix + "\n\n" + prompt
@@ -528,10 +540,7 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 		Env:     effectiveBindings,
 		Prompt:  prompt,
 		Observe: parser.onChunk,
-	}, sink)
-	if err != nil {
-		return driver.Response{}, err
-	}
+	}, codexPromptDiagnosticSink{sink})
 	parser.finalize()
 	raw := driver.RawStreams{Stdout: result.RawStreams.Stdout, Stderr: result.RawStreams.Stderr, Terminal: parser.terminal}
 	if req.Session != nil && req.Session.State != nil && req.Session.State.ResumeID != "" &&
@@ -546,7 +555,7 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 	if cfg.Model != "" {
 		provider = "openai"
 	}
-	cleanProcess := result.ExitCode == 0 && result.Signal == "" && !result.TimedOut
+	cleanProcess := err == nil && ctx.Err() == nil && result.ExitCode == 0 && result.Signal == "" && !result.TimedOut
 	expectedResumeID := codexExpectedResumeID(req.Session)
 	var failure *driver.RunFailure
 	if strings.TrimSpace(parser.errorMessage) != "" {
@@ -595,11 +604,15 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 		)
 	}
 	checkpoint := parser.checkpointForOutcome(result.ExitCode, result.Signal, result.TimedOut, failure)
+	if !cleanProcess {
+		checkpoint = nil
+	}
 	if checkpoint != nil && checkpoint.State != nil {
 		checkpoint.State.Data = map[string]string{
 			driver.SessionParamCWD:                effectiveCWD,
 			driver.SessionParamWorkspaceID:        req.Workspace.ID,
 			driver.SessionParamProfileFingerprint: profileFingerprint,
+			appendSystemPromptFingerprintKey:      systemprompt.Fingerprint(req.AppendSystemPrompt),
 		}
 	}
 
@@ -629,7 +642,7 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 		prewarm.outputSchema = nil
 		_ = writer.preWarm(prewarm, sink)
 	}
-	return driverResult, nil
+	return driverResult, err
 }
 
 // usesCodexAppServer selects the provider transport from invocation semantics.
@@ -670,6 +683,9 @@ func hasAnyArg(args []string, names ...string) bool {
 func validateCodexSessionGuard(req driver.Request, effectiveCWD, profileFingerprint string) error {
 	if req.Session == nil || req.Session.State == nil {
 		return nil
+	}
+	if req.Session.State.Data[appendSystemPromptFingerprintKey] != systemprompt.Fingerprint(req.AppendSystemPrompt) {
+		return &engine.ResumeRejectedError{Reason: "session append system prompt changed"}
 	}
 	if req.Session.State.Data[driver.SessionParamCWD] != "" && req.Session.State.Data[driver.SessionParamCWD] != effectiveCWD {
 		return &engine.ResumeRejectedError{Reason: "session working directory changed"}

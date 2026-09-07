@@ -11,19 +11,21 @@ import (
 
 	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/internal/processx"
+	"github.com/agent-dance/agent-adaptor/internal/systemprompt"
 )
 
 // Process owns one initialized app-server connection and one loaded Codex
 // thread. Callers must serialize RunTurn calls; Process also enforces that
 // rule so an accidental second writer cannot interleave JSON-RPC turns.
 type Process struct {
-	client   *Client
-	stream   *stdioStream
-	cmd      *exec.Cmd
-	cancel   context.CancelFunc
-	threadID string
-	stdout   *syncBuffer
-	stderr   *syncBuffer
+	client            *Client
+	stream            *stdioStream
+	cmd               *exec.Cmd
+	cancel            context.CancelFunc
+	threadID          string
+	appendFingerprint string
+	stdout            *syncBuffer
+	stderr            *syncBuffer
 
 	turnMu  sync.Mutex
 	closeMu sync.Mutex
@@ -38,6 +40,9 @@ type Process struct {
 func Open(ctx context.Context, opts Options, sink driver.EventSink) (*Process, error) {
 	if opts.ResumeThreadID != "" && opts.ForkThreadID != "" {
 		return nil, errors.New("codex app-server: resume and fork thread ids are mutually exclusive")
+	}
+	if err := systemprompt.Validate("codex", opts.AppendSystemPrompt); err != nil {
+		return nil, err
 	}
 	command := opts.Command
 	if command == "" {
@@ -102,8 +107,13 @@ func Open(ctx context.Context, opts Options, sink driver.EventSink) (*Process, e
 		stdout: stdoutBuf, stderr: stderrBuf, waitCh: make(chan struct{}),
 	}
 	go func() {
-		p.waitErr = cmd.Wait()
+		// StdoutPipe must be read before Wait closes its descriptor. A peer can
+		// exit immediately after writing the last frame, before its callback
+		// runs. Also preserve bytes beyond a malformed frame as audit-only Raw.
+		<-stream.ReadDone()
+		_, _ = io.Copy(stdoutBuf, stdout)
 		<-stderrDone
+		p.waitErr = cmd.Wait()
 		p.closeMu.Lock()
 		p.closed = true
 		p.closeMu.Unlock()
@@ -129,7 +139,8 @@ func Open(ctx context.Context, opts Options, sink driver.EventSink) (*Process, e
 	switch {
 	case opts.ForkThreadID != "":
 		resp, err := client.ThreadFork(ctx, ThreadForkParams{
-			ThreadID: opts.ForkThreadID, CWD: opts.CWD, Ephemeral: opts.Ephemeral,
+			DeveloperInstructions: opts.AppendSystemPrompt,
+			ThreadID:              opts.ForkThreadID, CWD: opts.CWD, Ephemeral: opts.Ephemeral,
 			Sandbox: opts.Sandbox, Model: opts.Model, ServiceTier: opts.ServiceTier,
 			ApprovalPolicy: opts.Approval,
 		})
@@ -138,14 +149,15 @@ func Open(ctx context.Context, opts Options, sink driver.EventSink) (*Process, e
 		}
 		threadID = resp.Thread.ID
 	case opts.ResumeThreadID != "":
-		resp, err := client.ThreadResume(ctx, ThreadResumeParams{ThreadID: opts.ResumeThreadID})
+		resp, err := client.ThreadResume(ctx, ThreadResumeParams{ThreadID: opts.ResumeThreadID, DeveloperInstructions: opts.AppendSystemPrompt})
 		if err != nil {
 			return fail(classifyThreadError(err, opts.ResumeThreadID))
 		}
 		threadID = resp.Thread.ID
 	default:
 		resp, err := client.ThreadStart(ctx, ThreadStartParams{
-			CWD: opts.CWD, Ephemeral: opts.Ephemeral, Sandbox: opts.Sandbox,
+			DeveloperInstructions: opts.AppendSystemPrompt,
+			CWD:                   opts.CWD, Ephemeral: opts.Ephemeral, Sandbox: opts.Sandbox,
 			Model: opts.Model, ServiceTier: opts.ServiceTier,
 		})
 		if err != nil {
@@ -157,6 +169,7 @@ func Open(ctx context.Context, opts Options, sink driver.EventSink) (*Process, e
 		return fail(errors.New("codex app-server returned an empty thread id"))
 	}
 	p.threadID = threadID
+	p.appendFingerprint = systemprompt.Fingerprint(opts.AppendSystemPrompt)
 	return p, nil
 }
 
@@ -211,20 +224,23 @@ func (p *Process) RunTurn(ctx context.Context, opts Options, sink driver.EventSi
 	if err := ctx.Err(); err != nil {
 		return result, false, err
 	}
+	if systemprompt.Fingerprint(opts.AppendSystemPrompt) != p.appendFingerprint {
+		return result, false, errors.New("codex app-server: session append system prompt changed")
+	}
 	if p.IsClosed() {
 		return result, false, errors.New("codex app-server process is closed")
 	}
 
 	stdoutStart := p.stdout.Len()
 	stderrStart := p.stderr.Len()
-	state := newRunState(opts.RunID, sink)
+	state := newRunState(opts.RunID, sink, opts)
 	state.setThread(p.threadID)
 	p.client.SetNotificationHandler(state.onNotification)
 	defer p.client.SetNotificationHandler(nil)
 
 	turnParams := TurnStartParams{
 		ThreadID:    p.threadID,
-		Input:       []UserInput{TextInput(opts.Prompt)},
+		Input:       append([]UserInput{TextInput(opts.Prompt)}, opts.SkillInputs...),
 		CWD:         opts.CWD,
 		Model:       opts.Model,
 		Effort:      opts.Effort,
@@ -256,12 +272,25 @@ func (p *Process) RunTurn(ctx context.Context, opts Options, sink driver.EventSi
 			cancel()
 			err = ctx.Err()
 		case <-p.waitCh:
-			if p.waitErr != nil {
-				err = fmt.Errorf("codex app-server exited before turn completion: %w", p.waitErr)
-			} else {
-				err = errors.New("codex app-server exited before turn completion")
-			}
+			err = errors.New("codex app-server exited before turn completion")
+		case <-p.stream.ReadDone():
+			err = errors.New("codex app-server stdout ended during resident turn")
 		}
+	}
+	// The select above may choose the terminal even when EOF is also ready.
+	// Observe reader completion separately before certifying this resident
+	// turn: EOF is known now, while the actual OS exit can still be pending.
+	readEnded := false
+	select {
+	case <-p.stream.ReadDone():
+		readEnded = true
+		if err == nil {
+			err = errors.New("codex app-server stdout ended during resident turn")
+		}
+	default:
+	}
+	if readErr := p.stream.ReadError(); readErr != nil {
+		err = errors.Join(err, fmt.Errorf("decode JSON-RPC stdout: %w", readErr))
 	}
 	if err == nil {
 		if protocolErr := state.protocolError(); protocolErr != nil {
@@ -270,10 +299,45 @@ func (p *Process) RunTurn(ctx context.Context, opts Options, sink driver.EventSi
 			err = errors.New("codex app-server protocol ended without turn/completed")
 		}
 	}
+	// A terminal and process exit may become ready together. Any exit already
+	// observed before finalization must still participate in checkpoint health.
+	select {
+	case <-p.waitCh:
+		if p.waitErr != nil && err == nil {
+			err = errors.New("codex app-server process exited unsuccessfully")
+		}
+	default:
+	}
 
+	if err != nil {
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		if readEnded && ctx.Err() == nil {
+			// Let a peer that already closed stdout finish draining stderr and
+			// exit naturally within the existing graceful-shutdown bound. An
+			// immediate kill would replace its real exit cause and audit tail.
+			err = errors.Join(err, p.CloseGracefully(cleanupCtx, 0))
+		} else {
+			err = errors.Join(err, p.TerminateAndWait(cleanupCtx))
+		}
+		cancel()
+		// ReadDone precedes Wait by design. The bounded cleanup join is where
+		// the real OS exit becomes available; retain it alongside the original
+		// protocol/context cause instead of returning only the earlier EOF.
+		select {
+		case <-p.waitCh:
+			if p.waitErr != nil {
+				err = errors.Join(err, fmt.Errorf("codex app-server wait: %w", p.waitErr))
+			}
+		default:
+		}
+	}
 	exitCode, signal, timedOut := 0, "", false
 	if err != nil {
 		exitCode = -1
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			exitCode = exitErr.ExitCode()
+		}
 		signal = err.Error()
 		timedOut = errors.Is(err, context.DeadlineExceeded)
 	}
