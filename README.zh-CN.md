@@ -251,7 +251,8 @@ Schema 从 Go 类型生成，优先走各家原生的 schema 约束。当前通�
 | 想控制什么 | 用什么 |
 |---|---|
 | 模型 | `WithModel` |
-| 系统提示词 | `WithInstructions` |
+| 附加指令 | `WithInstructions` |
+| 原生追加提示 | `WithAppendSystemPrompt` |
 | 工作目录 | `WithWorkspace`，隔离工作树用 `WithWorkspaceSpec` |
 | skills | `WithSkills` 配 `skill.Dir` / `skill.FS` / `skill.Inline` / `skill.Key` / `skill.Require` |
 | MCP | `WithMCP` 配 `mcp.Stdio` / `mcp.HTTP` / `mcp.SSE` |
@@ -284,6 +285,19 @@ result, err := agent.Run(ctx, "评审这个改动",
 codexReviewer := adaptor.New(codex.Driver(codex.Config{}), reviewerOptions...)
 claudeReviewer := adaptor.New(claude.Driver(claude.Config{}), reviewerOptions...)
 ```
+
+`WithAppendSystemPrompt` 是独立的原生追加通道，需要配置后的 Driver 声明
+SystemPrompt.Append。近处按原字节替换，空串清除；保留 provider 默认提示，
+不替代 `WithInstructions` 或用户 Prompt。
+
+`Policy.ActiveExecutionTimeout` 限制主动执行时间，仅本轮 Ask 等待暂停。
+零值无限、负值无效，WithPolicy 仍整值替换。WithTimeout、父 deadline 与审批
+deadline 继续按墙钟计时。预算在原子持久化前封账，Finalize 仍须在原可取消
+context 下成功。详见[预算与错误](./docs/run-policy.md#active-execution-budget)。
+
+实时能力历史由可选的 [`capabilityrecorder.Recorder.Option()`](./docs/api-reference.md#121-capability-recording)
+接入显式 Store，按准确 scope/RunID 查询；A2A 能力与 Todo 各自显式开启暴露。
+未观察到不表示未调用，也不表示审计记录完整。
 
 ## 宿主自定义 Tools
 

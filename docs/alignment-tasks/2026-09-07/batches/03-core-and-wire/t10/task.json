@@ -52,7 +52,7 @@
     },
     "plan": {
       "path": "docs/internal-history-alignment-plan-2026-09-07.md",
-      "sha256": "992b403657e3d1c06f88f249641cba4250d755f3860c88f0643d921d4364ee6e",
+      "sha256": "831c6b718e71f2645999613f70cb182d8ef333d864835f61288bed816e3b962a",
       "sections": [
         "W11",
         "W13"
@@ -62,7 +62,8 @@
       "AGENTS.md",
       "docs/internal-history-alignment-plan-2026-09-07.md",
       "docs/alignment-tasks/2026-09-07/README.md",
-      "docs/alignment-tasks/2026-09-07/amendments/R011.md"
+      "docs/alignment-tasks/2026-09-07/amendments/R011.md",
+      "docs/alignment-tasks/2026-09-07/amendments/R012.md"
     ],
     "dependency_artifacts": [
       {
@@ -83,13 +84,14 @@
     ],
     "embedded_plan_sections": {
       "W11": "### W11：追加 provider-native system prompt\n\n**来源与差距。** internal `8ffe22a` 最终使用带 Append 语义的名字；当前只有 `WithInstructions`，二者不是同一通道。其实现采用 Claude `--append-system-prompt-file`、CodeBuddy `--append-system-prompt`、Codex exec `developer_instructions` 与 app-server `developerInstructions`，Cursor 非空请求 fail-closed。这些是 internal 固定提交的实现选择，实施时仍需核验目标 CLI 版本。\n\n**公共方案。** 仅增加一个 `WithAppendSystemPrompt(string) SharedOption`，构造与调用共用；近处替换、空串清除。增加 Driver Request 字段和 append 能力声明、结构化 unsupported error。仅 append，保留 provider 默认提示词；不再加 `WithDefaultAppendSystemPrompt`，不增加 Config 镜像字段，不拼入用户 Prompt，也不降级为 Instructions。\n\n**工程细节。** 内容进入 Thread compatibility 和 persistent startup signature，两者都要覆盖；Codex start/resume/fork 对应正式字段都核对，不能恢复时漏传。它不是 profile 资源，不写入 profile manifest。Claude 文件采用 owned、0600、内容校验和安全原子物化；internal 缓存仅比较同名文件 size 的判断需强化，避免同长度篡改和 symlink。CodeBuddy inline 长度、Windows argv 限制、Codex TOML 编码与 ExtraArgs 冲突启动前校验，缓存/文件清理有明确归属。\n\n**验收。** 默认、call override、空串清除、中文/换行/引号/TOML 字符、超长文本、Cursor unsupported、构造 Inspect 一致、Run/Stream 一致、Thread 配置变化拒绝/安全重建、常驻签名变化先停后起、恢复无漏传。更新 root/SPI golden、API reference、各 Driver godoc、examples、README 翻译与 CHANGELOG；With* 数量变更显式记录，不能绕过冻结守卫。",
-      "W13": "### W13：暂停人工等待期间的主动执行预算\n\n**来源与差距。** internal `e2f0620` 增加 PausableContext、RunPolicy.ActiveExecutionTimeout、Ask 暂停与 A2A 错误映射。当前 `stream.go:openStream` 的 WithTimeout 是整体墙钟；`Policy` 是整值替换；delegator 的 Timeout 也是墙钟。\n\n**公共方案。** 在现有 `Policy` 增加 `ActiveExecutionTimeout time.Duration`，不新增平行执行动词。最终 Policy 的零值表示无主动预算、正值表示限额、负值在启动前拒绝；call `WithPolicy` 仍整值替换构造 Policy。不能带回 internal 的“0 继承字段、负数关闭”的逐字段合并。`WithTimeout` 和 parent deadline 继续是绝对墙钟上限。\n\n计时器实现放私有包，默认不把通用 `PausableContext/WithPausableTimeout` 铺到根包。预算从准备资源前开始；只有唯一 approval sink 进入 Ask 等待时暂停自己的 run，自动批准/拒绝不暂停，审批自身 Timeout 仍按墙钟。等待开始前的背压边界要明确，不能让已经发出的审批卡仍消耗整个主动预算。多个并发 Ask 使用 token/refcount 配对，最后一个等待结束才恢复，避免 internal 单一 paused bool 过早恢复。\n\n用单调时间和 timer generation 处理迟到回调；所有成功/拒绝/超时/panic/取消出口恢复或终止计时。pause 不阻断 parent Cancel、Agent.Close、lease 续期和清理。嵌套 Member 不自动暂停 Leader，也不能自行改变 parent context。\n\n**错误与 A2A。** 增加稳定 active-execution-timeout sentinel、failure reason 和安全 Limit 详情，保留原错误可匹配性，复用 W04 部分结果。审批拒绝/超时、用户取消、外部 deadline、预算耗尽明确区分；并发终止以已确定的原因优先，不能由 cleanup 覆盖。预算耗尽不让 checkpoint 有效。\n\ndelegation 保留已发布 `Timeout` 的墙钟含义；另在该可选 hosttool 的请求/策略中增加主动预算字段，不能把同一个字段悄悄改义。每次 Delegate/continuation 分配新预算，传输重试和 recovery 不重置本次预算。已知 TaskID（包括入参携带）时用有界 detached context 尽力 CancelTask；取消失败为诊断，不覆盖主因。bridge 仅翻译安全 code/limit，不自行决定重试，也不把其他 metadata 绕过 ExposurePolicy。\n\n**验收。** fake-clock 40ms 执行 + 300ms Ask + 50ms 执行仍未耗尽 100ms 预算；再执行 10ms 才超时。覆盖重叠 Ask、retry、父 deadline、外层取消、初始化耗时、timer callback race、Close、lease renewal、旧 Task 回放、远端错误 code 往返和 partial Result。更新 Policy、Approval、errors godoc、root golden、run-policy、A2A 文档。"
+      "W13": "### W13：暂停人工等待期间的主动执行预算\n\n**来源与差距。** internal `e2f0620` 增加 PausableContext、RunPolicy.ActiveExecutionTimeout、Ask 暂停与 A2A 错误映射。当前 `stream.go:openStream` 的 WithTimeout 是整体墙钟；`Policy` 是整值替换；delegator 的 Timeout 也是墙钟。\n\n**公共方案。** 在现有 `Policy` 增加 `ActiveExecutionTimeout time.Duration`，不新增平行执行动词。最终 Policy 的零值表示无主动预算、正值表示限额、负值在启动前拒绝；call `WithPolicy` 仍整值替换构造 Policy。不能带回 internal 的“0 继承字段、负数关闭”的逐字段合并。`WithTimeout` 和 parent deadline 继续是绝对墙钟上限。\n\n计时器实现放私有包，默认不把通用 `PausableContext/WithPausableTimeout` 铺到根包。预算从准备资源前开始；只有唯一 approval sink 进入 Ask 等待时暂停自己的 run，自动批准/拒绝不暂停，审批自身 Timeout 仍按墙钟。等待开始前的背压边界要明确，不能让已经发出的审批卡仍消耗整个主动预算。多个并发 Ask 使用 token/refcount 配对，最后一个等待结束才恢复，避免 internal 单一 paused bool 过早恢复。\n\nR012 明确计时结束：包含 Driver 返回后的 schema 和健康/lease 复核，在唯一原子持久化前结算并封账；无状态成功在同等健康判定点封账。Finalize 与返回延迟不扣主动预算，但仍决定最终成功且使用原可取消 context；封账前已耗尽即拒绝持久化，已封账的迟到 timer 不得重写 outcome。Store 已提交而延迟返回没有通用回滚或提交确认，因此不将返回时间冒充原子提交点。\n\n用单调时间和 timer generation 处理迟到回调；所有成功/拒绝/超时/panic/取消出口恢复或终止计时。pause 不阻断 parent Cancel、Agent.Close、lease 续期和清理。嵌套 Member 不自动暂停 Leader，也不能自行改变 parent context。\n\n**错误与 A2A。** 增加稳定 active-execution-timeout sentinel、failure reason 和安全 Limit 详情，保留原错误可匹配性，复用 W04 部分结果。审批拒绝/超时、用户取消、外部 deadline、预算耗尽明确区分；并发终止以已确定的原因优先，不能由 cleanup 覆盖。预算耗尽不让 checkpoint 有效。\n\ndelegation 保留已发布 `Timeout` 的墙钟含义；另在该可选 hosttool 的请求/策略中增加主动预算字段，不能把同一个字段悄悄改义。每次 Delegate/continuation 分配新预算，传输重试和 recovery 不重置本次预算。已知 TaskID（包括入参携带）时用有界 detached context 尽力 CancelTask；取消失败为诊断，不覆盖主因。bridge 仅翻译安全 code/limit，不自行决定重试，也不把其他 metadata 绕过 ExposurePolicy。\n\n**验收。** fake-clock 40ms 执行 + 300ms Ask + 50ms 执行仍未耗尽 100ms 预算；再执行 10ms 才超时。覆盖重叠 Ask、retry、父 deadline、外层取消、初始化耗时、timer callback race、Close、lease renewal、旧 Task 回放、远端错误 code 往返和 partial Result。更新 Policy、Approval、errors godoc、root golden、run-policy、A2A 文档。"
     }
   },
   "ownership": {
     "allow": [
       "adaptertest/testdata/driver_api.golden",
       "alignment_active_budget_test.go",
+      "alignment_approval_snapshot_test.go",
       "alignment_budget_error_test.go",
       "alignment_prompt_contract_test.go",
       "approval.go",
@@ -100,6 +102,7 @@
       "driver/policy_errors.go",
       "driver/run.go",
       "errors.go",
+      "events.go",
       "inspect.go",
       "inspect_test.go",
       "internal/activebudget/**",
@@ -108,13 +111,17 @@
       "internal/engine/run_types.go",
       "internal/systemprompt/**",
       "invocation.go",
+      "memory/store.go",
+      "memory/store_test.go",
       "options.go",
       "options_scope_test.go",
       "policy.go",
       "policy_prelaunch_test.go",
+      "process_outcome_test.go",
       "sink.go",
       "stream.go",
       "testdata/root_api.golden",
+      "threadstore/threadstore.go",
       "wiring.go"
     ],
     "scope_match": "仅精确仓库相对文件或目录/**；任何未列路径不可写。",
@@ -154,7 +161,12 @@
     "实现 Policy.ActiveExecutionTimeout，零无限/正限额/负拒绝，整值替换；WithTimeout/parent deadline 不改义。",
     "在统一 openStream/approval sink 创建预算和 Ask 暂停 token/refcount，处理发送背压、重叠等待、retry、panic、cancel、Close/lease；私有 fake clock + generation。",
     "复用 T05 cause/部分结果路径与冻结的 A2A code/limit 详情，失败 checkpoint 仍无效；精确更新两 golden。",
-    "R011：扩展通过G02的fingerprint维度，不重新引入独立Request.Streaming布尔；append内容仍真实影响会话。临时schema/观测transport兼容转换不得重绑Thread，真正配置/codec/资源变化保留原guard。"
+    "R011：扩展通过G02的fingerprint维度，不重新引入独立Request.Streaming布尔；append内容仍真实影响会话。临时schema/观测transport兼容转换不得重绑Thread，真正配置/codec/资源变化保留原guard。",
+    "R012：健康候选在原子Persist前以FinishExecution线性化结算/封账，已失败或余额已尽零持久化；Finalize与返回延迟不扣主动预算但仍决定成功，用原可取消ctx。迟到timer无效，Stop不补造后到cause；验证提交后延迟返回、失败及parent取消。Delegate按其完成边界封账，不重置重试预算。",
+    "R012提交前取消：memory Finalize检查锁前及锁后第一写前ctx；等待锁期间已取消则不save/archive/rebind，threadstore godoc说明提交前协作和已提交不可回滚；仅更新此合同，不新增Store接口。",
+    "R012范围补充：process_outcome_test.go 仅将明确等待ctx.Done后才返回provider failure的旧测试改为C02先终止deadline主因，保留部分Text/Raw/provider terminal及原cause；增加provider已登记后取消的反向屏障对照，不以删测试或放宽结果保存关闭矛盾。",
+    "R013: 审批描述快照只复制 Choices 与 Details 的 JSON 容器，newApprovalRequest 与 cloneEventValue/WithEventMeta 不共享可变描述；live responder 指针仍共享同一个 exactly-once 状态。使用既有 cloneJSONValue，不扩大到任意指针/结构体对象图；T12 recorder replay 去 responder 的独立责任不变。",
+    "R014: 私有 Controller.SelectedCause() error 在锁内只读已选 cause，nil-safe、不重新看 parent、不改状态。timer在controller锁内确认耗尽/登记原因是先因；锁外取消通知尚未送达时，后到parent不能改写。core唯一终止记录按本轮expired身份读取selected cause并保留原cause，terminal→controller单向锁序，controller不得回调core。保留d623反例，新增TestAlignmentActiveBudget前缀的Stop屏障fixture和controller对照，V02/V03及完整最终V01–V04不得缩减。"
   ],
   "acceptance_criteria": [
     {
@@ -166,12 +178,22 @@
       "id": "T10-AC02",
       "requirement": "100ms 主动预算扣执行不扣 Ask，最后一个重叠 Ask 结束才恢复，parent deadline/Close 始终有效，归因和部分结果正确。",
       "required": true
+    },
+    {
+      "id": "T10-AC03",
+      "required": true,
+      "requirement": "R012预算封账与成功分离：余额到期但timer未调度时零Persist；封账后迟到timer/提交后延迟返回无active timeout；Finalize失败仍携带部分Result/原cause，parent/Close/lease继续有效。stateless、缺checkpoint、schema失败、已有主因和并发Ask release不被误判成功。 内置memory等待锁期间取消也不写入；Store context与已提交健康状态边界有godoc及锁屏障测试。"
+    },
+    {
+      "id": "T10-AC04",
+      "requirement": "R013 根审批描述隔离：真实 fake Driver 的嵌套 Payload、原请求、WithEventMeta 返回值及不同消费者互不污染；Permission/PlanReview/Question 描述副本共享同一 responder，竞答 exactly-once、过期/取消/零值仍稳定。原 G02 反例先实红，保留证据。",
+      "required": true
     }
   ],
   "validation": [
     {
       "id": "T10-V01",
-      "command": "go test -count=1 . ./driver ./adaptertest ./internal/activebudget ./internal/systemprompt",
+      "command": "go test -count=1 . ./driver ./adaptertest ./internal/activebudget ./internal/systemprompt ./memory ./threadstore",
       "cwd": "repository_root",
       "environment": {
         "AGENT_ADAPTOR_LIVE_CONFORMANCE": "0",
@@ -196,6 +218,34 @@
       "execution_condition": "assigned_environment_available",
       "must_execute_nonzero_tests": true,
       "evidence": "记录实际命令、head SHA、OS/Go/CLI版本、exit code和安全日志；失败/skip/零测试不算通过。 非零按本命令实际测试/子测试计数，fuzz按实际种子/执行样本计数；必需场景skip不得通过。普通任务显式禁用的live探针或合同确认不适用的probe可skip，须列明且不能拿它们充当验收证据；可添加-json/-v采集日志，不能缩小原命令选择范围。"
+    },
+    {
+      "id": "T10-V03",
+      "command": "go test -race -count=10 ./internal/activebudget ./memory",
+      "cwd": "repository_root",
+      "environment": {
+        "AGENT_ADAPTOR_LIVE_CONFORMANCE": "0",
+        "AGENT_ADAPTOR_E2E": "0",
+        "AGENT_ADAPTOR_UPDATE_API_GOLDEN": "0"
+      },
+      "required": true,
+      "execution_condition": "assigned_environment_available",
+      "must_execute_nonzero_tests": true,
+      "evidence": "记录实际命令、head SHA、OS/Go/CLI版本、exit code和安全日志；失败/skip/零测试不算通过。 非零按本命令实际测试/子测试计数，fuzz按实际种子/执行样本计数；必需场景skip不得通过。普通任务显式禁用的live探针或合同确认不适用的probe可skip，须列明且不能拿它们充当验收证据；可添加-json/-v采集日志，不能缩小原命令选择范围。"
+    },
+    {
+      "id": "T10-V04",
+      "command": "go test -race -count=10 . -run TestAlignmentApprovalSnapshot",
+      "cwd": "repository_root",
+      "environment": {
+        "AGENT_ADAPTOR_LIVE_CONFORMANCE": "0",
+        "AGENT_ADAPTOR_E2E": "0",
+        "AGENT_ADAPTOR_UPDATE_API_GOLDEN": "0"
+      },
+      "required": true,
+      "execution_condition": "after_implementation",
+      "must_execute_nonzero_tests": true,
+      "evidence": "R013 JSON 容器深拷贝与共享 responder exactly-once，各 Kind 固定最终 SHA；不计较早69d74f测试为最终通过。"
     }
   ],
   "documentation": {

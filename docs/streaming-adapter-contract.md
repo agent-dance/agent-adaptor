@@ -86,6 +86,26 @@ When `Streaming=false`:
 - It should still supply raw chunks, transcript items, and operational events through `EventSink.Emit`.
 - It must not switch to a different provider protocol on its own just because the application used `Runner.Stream`.
 
+### 3.1 Native append and active budget
+
+`Descriptor.SystemPrompt.Append` declares a native append channel, with false
+as the conservative default. `Request.AppendSystemPrompt` is one resolved exact
+string, separate from Prompt, Instructions and schema prompting. Drivers must
+preserve provider defaults, reject conflicting managed arguments before launch,
+and include the append hash in persistent startup signatures and checkpoint
+guards. Core validates invalid UTF-8/NUL and unsupported nonempty requests before
+resources and layers the hash over every existing Thread compatibility dimension.
+Empty append retains the old base fingerprint. Only the corresponding Driver
+owns native argv/file/RPC translation; an event or helper must not interpret it.
+
+Core owns `Policy.ActiveExecutionTimeout`; Drivers do not create a parallel
+timer or approval policy. `FailureActiveExecutionTimeout` is the SPI failure
+code, and unhealthy/expired work cannot produce a valid checkpoint. Ask pause
+tokens are managed by the unique decision sink before queueing/callback. Parent
+deadlines and lease renewal continue. Core settles the budget before atomic
+persistence; Finalize must still succeed with the original context. See
+[run policy](./run-policy.md#active-execution-budget).
+
 ## 4. `EventSink`
 
 ```go

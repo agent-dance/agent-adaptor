@@ -57,7 +57,7 @@ DelegationID string
 Upstream     *EventSourceMeta
 ```
 
-Source 代表立即上游的 envelope，不参与本 run 排序。嵌套 relay 将收到的 Meta 复制为本地 Source，收到的 Meta.Source 放 Source.Upstream；深度最多 8，超出产生 `relay_depth_exceeded` 降级，不能截掉中间层冒充完整来源。Meta.Source、Upstream、map、slice、Args、Result、todo Items、Duration 指针都递归深复制；observer、用户、EventBus、recorder、解码返回值各持有独立副本。Approval responder 不得因 clone 产生新答复权或新 exactly-once 状态。
+Source 代表立即上游的 envelope，不参与本 run 排序。嵌套 relay 将收到的 Meta 复制为本地 Source，收到的 Meta.Source 放 Source.Upstream；深度最多 8，超出产生 `relay_depth_exceeded` 降级，不能截掉中间层冒充完整来源。Meta.Source、Upstream、map、slice、Args、Result、todo Items、Duration 指针都递归深复制；observer、用户、EventBus、recorder、解码返回值各持有独立副本。Approval responder 不得因 clone 产生新答复权或新 exactly-once 状态。 R013 明确：Approval 的 Choices 与 Details 也属于描述快照，newApprovalRequest 与 WithEventMeta/事件复制均隔离其 JSON 容器；只有 live responder 指针共享。沿用既有 JSON 容器复制边界（interface/map/slice/array），不承诺复制任意 pointer/struct 对象图。recorder replay 必须另外移除 responder。
 
 ## 3. Capability 公开叶包与 Event / SPI
 
@@ -455,7 +455,7 @@ T18 对 `DelegationRequest`、`DelegationEvent` 追加 ScopeID/ParentScopeID（P
 
 RunEventsBound 是“本 bus 的该 run 曾通过 Service.BindEvents 成功绑定唯一 publisher”的单调证明。只由 Service 成功绑定后置真，普通 EventBus.Publish 不能置真。ClearRun/DetachRun 不撤回历史证明，保证缓冲父事件稍晚读取时仍可验证；该记录与已有 Service 结果同寿命，在 bus 对象释放时一起回收。未知 run 返回false；方法并发安全，不阻塞、不执行运行。绑定所服务的runID逐字比较。
 
-Merge 在后台透明发送父事件，保持Meta所有字段和terminal-last；父Events关闭后取得完整父Result，最后查询该证明。true 时原样返回父Result/error；false或不实现接口时返回nil与携带完整/partial Result的既存RunError：父成功时Reason=ReasonInfrastructure、Cause=ErrEventInjectionUnsupported、Result=父结果；父已为RunError时复制该错误并保留Reason/Message/Details/Result，Cause=errors.Join(原Cause,ErrEventInjectionUnsupported)，不修改父错误；其他父错误作为Cause与sentinel合并，不覆盖已确定原因。errors.Is必须仍匹配父cause及ErrEventInjectionUnsupported，不另增非nil Result+error返回约定。新增 sentinel 位于 `bridges/subagentstream/merge.go`，文本 `subagentstream: event injection requires a run service attachment`。只在父流完成后检查证明，避免立即Merge早于异步Attach时误拒。Merge从不订阅或等待bus，因此无双流等待闭环。Result并发/多次调用共享已缓存结果；用户仍须按Stream合同drain Events。
+Merge 在后台透明发送父事件，保持Meta所有字段和terminal-last；父Events关闭后取得完整父Result，最后查询该证明。true 时原样返回父Result/error；false或不实现接口时返回nil与携带完整/partial Result的既存RunError：父成功时Reason=ReasonInfrastructure、Cause=ErrEventInjectionUnsupported、Result=父结果；父已为RunError时复制该错误并保留Reason/Message/Details/Result，Cause保留完整原parentErr图并join ErrEventInjectionUnsupported（包含外层wrapper与joined sibling），不修改父错误、不指向新副本自身；其他父错误作为Cause与sentinel合并，不覆盖已确定原因。errors.Is必须仍匹配父cause及ErrEventInjectionUnsupported，不另增非nil Result+error返回约定。新增 sentinel 位于 `bridges/subagentstream/merge.go`，文本 `subagentstream: event injection requires a run service attachment`。只在父流完成后检查证明，避免立即Merge早于异步Attach时误拒。Merge从不订阅或等待bus，因此无双流等待闭环。Result并发/多次调用共享已缓存结果；用户仍须按Stream合同drain Events。
 
 Cancel直接调用parent.Cancel并解除自己的阻塞send；停止对外发送后仍drain已取消parent至关闭并通过既存RunError提取可用Result，不丢弃Raw/Transcript。普通终局事件只来自父流；取消时不制造额外RunFinished。桥配置错误不冒充provider业务失败，不创建HITL策略。用户迁移为在New/Run前装 `team.Option()`（Service.Option），随后直接消费原Stream；这是明确breaking行为修复，G00/T12须在批次文档记录，不能静默声称事后Merge仍保真。
 
@@ -544,3 +544,5 @@ Capability start见证的是一次调用/输入接受，不是成功完成。正
 公共变化按minor/API审阅处理，Merge行为修复必须单列breaking说明。Root golden只增加两Event、三关联字段、来源链和第6节的受限运行扩展声明；不增加With*计数。Driver golden增加两个StreamKind/payload字段、父字段及矩阵/需求；叶包与recorder由各自godoc/test冻结。所有Result输出层、HITL error唯一面、checkpoint与source解析边界保留。
 
 合同期验证限文档/任务图/签名状态机fixture静态审阅，不需要付费CLI、Windows或Linux runner。后续实现tests/live由表列owner和B05/B06验收；C03完成不表示W05/W09/W10/W12关闭，也不授权tag/push/release。
+
+G03 实现校核：A2A 新事实严格验证不反向扩大旧正文数值/可解析零时间限制；含新parent/source的旧事件独立校验保护字段。ThreadKey/flat ThreadID保留合法UTF-8及JSON转义字符，无单独2048-byte限额；明确列出的新ID上限和整个65536-byte上限不变。重复schema不能由foreign先出现绕过新kind拒绝；OccurredAt解码规范为等价UTC。T12 Merge非RunError deadline保留ReasonDeadlineExceeded，已有RunError主因优先，整个外层原错误图保持Is/As。实际delegate binding/publisher/domain映射仍由T18交付。

@@ -362,7 +362,11 @@ R011 要求 MCP writer 保留既有 regular 文件的实际权限；缺失文件
 
 Claude schema/HITL 与 Claude/CodeBuddy 常驻部分结果、真实 Wait cause、消息累计 Usage 已交付；Claude native 支持 PlanReview/Question Ask，Permission Ask 回退 Prompt。零 raw policy 的交互激活保持原语义，不伪造 Permission 往返。Delegation artifact Parts/Append/LastChunk、opt-in Raw、累计字节边界与深复制已交付。
 
-以下仍为打开项：append prompt/主动预算（T10/T14–T19）、subagentstream.Merge、桥接/recorder 及各 Driver 正式观测事实（T11–T18）。T20–T23 独立跨层验证和 T25–T30 平台/live 证据尚未完成，不能以本批 worker 测试关闭这些要求。
+B03 已交付单一 WithAppendSystemPrompt/Request/Descriptor/Inspect 合同和既有 fingerprint 上的原字节 hash，以及 Policy.ActiveExecutionTimeout。预算从资源准备前开始，Ask 每次请求在入队/回调前持有独立暂停 token，重叠等待最后释放才恢复；墙钟、Close、lease 继续。R012 在唯一原子 Persist 前结算封账，Finalize/返回延迟不扣主动时间但仍使用原可取消 context 决定成功；已健康提交不因之后取消回滚。R014 将计时器锁内已选原因与锁外取消通知分开，后到父取消不能覆盖已选本轮原因，继承同型 cause 不能冒充本轮超时；本轮先耗尽时 errors.As 首先得到本轮限额，同时保留父 cause 身份。原 Cause 和部分 Result 保留，根私有计时器不成为公共 API。
+
+B03 的 A2A capability/todo/parent wire 采用独立 opt-in、闭集/大小/编码校验、原 Meta 的安全 drop 或可观察基础设施错误，并保持旧正文/零时间兼容和 opaque key。SSE/AG-UI/session recorder 保留新 typed 事实与来源；AG-UI tool card 使用无碰撞 tuple。Merge 非 nil bus 只透明转发且要求完成后的绑定证明，保留全 parent error graph。可选 capabilityrecorder 用显式共享 Store、精确 scope/Sequence 查询与既有 observer 首错/迟到合同。R013 分离审批描述 JSON 容器副本和唯一 live responder；所有历史录制移除 responder。
+
+以下仍为打开项：provider 原生 append 参数/进程签名/checkpoint guard 与各 Driver 正式观测（T14–T17）、delegation publisher/域映射/主动预算及 A2A 预算 wire（T18–T19）。W11-R03 的 core/hash部分不替代B04的实际provider接线。T20–T23 独立跨层验证和 T25–T30 平台/live 证据尚未完成，不能以本批 worker 测试关闭这些要求。
 
 具体冻结设计、未支持边界、文件所有权和fixture见 `docs/alignment-tasks/2026-09-07/contracts/frozen.json`。合同冻结不代表代码已实现；后续同批godoc、合同测试、使用文档和CHANGELOG完成后才能关闭对应项。其他第14节既有保护继续有效。
 
@@ -381,7 +385,7 @@ Claude schema/HITL 与 Claude/CodeBuddy 常驻部分结果、真实 Wait cause�
 - Event 顺序、关闭、Cancel、blocking/drop 背压与 Approval exactly-once race 测试通过
 - Result 各层在 Run 与 Stream.Result 上逐字段等价
 - 所有 examples 编译，fake-driver 示例可执行
-- 根包 godoc 以六个核心名词开篇，26 个 `With*` 名与约 13 个核心概念组的心智负担目标达成；新增的 `WithTools` 是宿主定义能力的唯一根包入口，`WithSpawn` 是常驻进程默认语义的唯一显式反向开关；根包全部公共声明由 `testdata/root_api.golden` 的完整 AST golden 冻结
+- 根包 godoc 以六个核心名词开篇，27 个 `With*` 名与约 13 个核心概念组的心智负担目标达成；`WithAppendSystemPrompt` 是原生追加提示的唯一根包入口；新增的 `WithTools` 是宿主定义能力的唯一根包入口，`WithSpawn` 是常驻进程默认语义的唯一显式反向开关；根包全部公共声明由 `testdata/root_api.golden` 的完整 AST golden 冻结
 - README、文档地图、API reference、streaming、run policy、A2A、structured output 与代码一致
 - 无 TODO、无死代码、无临时 V1 后缀、无过期兼容入口
 - CHANGELOG 与实际 breaking changes 一致

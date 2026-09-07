@@ -15,7 +15,7 @@
   },
   "plan": {
     "path": "docs/internal-history-alignment-plan-2026-09-07.md",
-    "sha256": "992b403657e3d1c06f88f249641cba4250d755f3860c88f0643d921d4364ee6e"
+    "sha256": "831c6b718e71f2645999613f70cb182d8ef333d864835f61288bed816e3b962a"
   },
   "task_schema": "docs/alignment-tasks/2026-09-07/task.schema.json",
   "result_schema": "docs/alignment-tasks/2026-09-07/result.schema.json",
@@ -215,294 +215,294 @@
       "batch_id": "B00",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/00-contracts/c01/task.json",
-      "sha256": "0e57e19667d55284faa23bb178a0a667776dc337b913524529361f1ff46ed9d2"
+      "sha256": "d52583538bfef59841df5a1294610aa7d8e2d1740b8ff5e094acbda1b5b3add8"
     },
     {
       "id": "C02",
       "batch_id": "B00",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/00-contracts/c02/task.json",
-      "sha256": "e453c43aa765cae5254ddd5731f7751ac485f5b0eb85bcca0a6d4fd1a326bf85"
+      "sha256": "9f20bbd6575f52654916c3742cc917558b7a4fb4c0271961ebda70a70522dfdc"
     },
     {
       "id": "C03",
       "batch_id": "B00",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/00-contracts/c03/task.json",
-      "sha256": "c1288ca17fe0c11149a2dde660df73b48db69165ac85246241022ec903d8dfd0"
+      "sha256": "d32b4e27b12e101270f8c14909d778bc2412311c5d95a8fc704facbd5ff6be3c"
     },
     {
       "id": "C04",
       "batch_id": "B00",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/00-contracts/c04/task.json",
-      "sha256": "3eb1c6abe0f3b7524761d3f0f1b535a784341d86d770fe9554550c8d664d9756"
+      "sha256": "98dd4c1bc5aebee797efbb55f3e58ef4c92c04b645e3532523cbe6c729478118"
     },
     {
       "id": "G00",
       "batch_id": "B00",
       "phase": "gate",
       "path": "docs/alignment-tasks/2026-09-07/batches/00-contracts/gate/task.json",
-      "sha256": "861d105f6cb9007fcfc4ce4d25ab451465d6fa53fc289a1e336b70234e17178d"
+      "sha256": "1bbc20a67a05a6029491b8101f56452d5652f69835b28e5b40d3afccb74cc418"
     },
     {
       "id": "T01",
       "batch_id": "B01",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/01-critical-fixes/t01/task.json",
-      "sha256": "c41a3121fca1c771bfec5039689ba8bee4b47847b12c0efc87dcea4189023452"
+      "sha256": "c67e31f9699a864c4d34d6d979151bb8c1e4dd404a0668a8f79ac395a9f14151"
     },
     {
       "id": "T02",
       "batch_id": "B01",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/01-critical-fixes/t02/task.json",
-      "sha256": "0063b4d3690687b0251e2fb9f1cbe6de0d34d1b3f26e2bd26a3787ada1544e87"
+      "sha256": "ec7543a7b6dc7dff6b546a698c51bab43f1589dd5607f6de7f7ad827d2a226ab"
     },
     {
       "id": "T03",
       "batch_id": "B01",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/01-critical-fixes/t03/task.json",
-      "sha256": "829c59fc7dccea7f2178fbd5148e236d578aa95bc904e1ea781e27d95df1728d"
+      "sha256": "ea08e8e590441d295826070e9306998818a5b2951536ff2ebb863133b3320425"
     },
     {
       "id": "T04",
       "batch_id": "B01",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/01-critical-fixes/t04/task.json",
-      "sha256": "a9a5d72dbf0d4d15b0ab14ea8467b9eda57538411a774cd7eede72aec53bd8be"
+      "sha256": "d13eef2d3b88c5c793abfc4ff077e5b2affbb6145e320ee243b188b491719142"
     },
     {
       "id": "T05",
       "batch_id": "B01",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/01-critical-fixes/t05/task.json",
-      "sha256": "7098c30d301f47f1213b4db264a289d485dc7901886945021f87aa9863e12f5a"
+      "sha256": "06810376db9b1210559015daea50bd93a7a46a20677b3dd685733776d5c5770b"
     },
     {
       "id": "T31",
       "batch_id": "B01",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/01-critical-fixes/t31/task.json",
-      "sha256": "db71a58b52466e94aca93af5f0f91300da2eb87f5fb48f70a81ce5c6d28caf50"
+      "sha256": "40a724880c51e133870928c9785ca0c87465c5407b2b938c605f0397b7d49b14"
     },
     {
       "id": "G01",
       "batch_id": "B01",
       "phase": "gate",
       "path": "docs/alignment-tasks/2026-09-07/batches/01-critical-fixes/gate/task.json",
-      "sha256": "fc86bf3c5120762dba71599ac0a8c19925515a5528fa5b0ffebae3013bf74ad3"
+      "sha256": "dbb40eb5f45340405daf8a59892dea9f1754eced4ecdfa8b57c14c2720175267"
     },
     {
       "id": "T06",
       "batch_id": "B02",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/02-event-foundation/t06/task.json",
-      "sha256": "7ba634327db79e3519159d83116cedd70410dec2ea95fa972ec00a277238607c"
+      "sha256": "2a35e8c0f515cb2481290d99e3dfb46af865a47f485bae1255900f43353bff9f"
     },
     {
       "id": "T07",
       "batch_id": "B02",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/02-event-foundation/t07/task.json",
-      "sha256": "f280858457a49a8c007cf32b3b43a32898d07c5359d18cd2337ee54f96aec1e1"
+      "sha256": "9f6522dee3a0fccff5aeeecacd899469da89b29d5d4e0f8d05f56b6a86c0bf05"
     },
     {
       "id": "T08",
       "batch_id": "B02",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/02-event-foundation/t08/task.json",
-      "sha256": "5100eca3f50ce87cb23ae9877554eccef4d2a54578f861dc75217b00c4558ca2"
+      "sha256": "88beefef6e311802435a47e093b4f794e2f90d49a409bc65cb0c5f8da2690459"
     },
     {
       "id": "T09",
       "batch_id": "B02",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/02-event-foundation/t09/task.json",
-      "sha256": "358a46af56365c676649386fc12d2b90550ba2c0d67a572376f0bbf5bf5097c6"
+      "sha256": "2bd73b28e558fa299b155a863e03f32d4161ceb7a4e3a0c5eb8cda456df784fb"
     },
     {
       "id": "G02",
       "batch_id": "B02",
       "phase": "gate",
       "path": "docs/alignment-tasks/2026-09-07/batches/02-event-foundation/gate/task.json",
-      "sha256": "9e94c79533f6db2b9650a8a1c6fc1369badfc009f299f3b08f4963f3ee8f24c7"
+      "sha256": "24e99e07413aa74fe724a2d19e1360346ecb6d307085a6356dd8a5161ff54f01"
     },
     {
       "id": "T10",
       "batch_id": "B03",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/03-core-and-wire/t10/task.json",
-      "sha256": "9930266b3e34e158dcc5bab51f9b88a28833346955fa9bf7096c32c5571635a4"
+      "sha256": "80b1bd6c926d8b5439db7f97796448fb7c2f040e4fb54f51f5f6e7dcf040feaa"
     },
     {
       "id": "T11",
       "batch_id": "B03",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/03-core-and-wire/t11/task.json",
-      "sha256": "a2e197b9169c3bc1be2a3d952fd389d5cd67ea3cc7d852d3434d83cb3ae9d88d"
+      "sha256": "e391c8600c2fb843e49dae08f2aef8a2e497d4920e7a4b25fe39254b0cca5c7a"
     },
     {
       "id": "T12",
       "batch_id": "B03",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/03-core-and-wire/t12/task.json",
-      "sha256": "f28eeab178d016d8a0ec8b32327c453c574a9c184e1b688dacabed2d84be6a9b"
+      "sha256": "ef0cf1b4c435a1a7c66ee1332aeffaf3277adc4183048bc479c194fd67a77431"
     },
     {
       "id": "T13",
       "batch_id": "B03",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/03-core-and-wire/t13/task.json",
-      "sha256": "b0d37b5ace99db52d24f4ca6e27afc819a34eda940d0f0ead86391cc297d1055"
+      "sha256": "27f420058c2a28433a3c6378953e3c0fc386264ce2726e17465a961a498e0a7b"
     },
     {
       "id": "G03",
       "batch_id": "B03",
       "phase": "gate",
       "path": "docs/alignment-tasks/2026-09-07/batches/03-core-and-wire/gate/task.json",
-      "sha256": "1eceac81f479c0cd3a09fc3f738fe1e35c8c37317fd54ad11be4df75ceb802a9"
+      "sha256": "c2bdc1119d69da1324d99186626bdab2bf2460ec0a8c9ff64edf9101e77e2028"
     },
     {
       "id": "T14",
       "batch_id": "B04",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/04-provider-adoption/t14/task.json",
-      "sha256": "f3e2dad0597acdfb83c81e1a4278b06c2329def6c8a9ca6515d487abaa169048"
+      "sha256": "0ee085a76c8d9e03a1d26219e503e3322d9b7431725476fe4d1f3fcff85dbe3c"
     },
     {
       "id": "T15",
       "batch_id": "B04",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/04-provider-adoption/t15/task.json",
-      "sha256": "beb3f5a51408a14921152f5e428c731677b67c86e92c449bc81d5853fbf1f92a"
+      "sha256": "b915fbe403b6c3112ccf59572966f50fa52368040b1c4b150be6620222b7b8df"
     },
     {
       "id": "T16",
       "batch_id": "B04",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/04-provider-adoption/t16/task.json",
-      "sha256": "3e7a1d9a6538b0f06d043b929bdc2bfe04a4f8e73bfb82901e9d17733df8a7cc"
+      "sha256": "cc1fc5bb498021099b4d75008e65fd653ca68b2b1565499ea2a0eb8fd344095d"
     },
     {
       "id": "T17",
       "batch_id": "B04",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/04-provider-adoption/t17/task.json",
-      "sha256": "ef9a085eaa529ecf54af0da8d7c8d8167ca7dad15736a76329ca31305a96890b"
+      "sha256": "bb4031ea6dac925f6bba2f846ef4a379fdb52ecef823cacee3f06d96e5de002d"
     },
     {
       "id": "T18",
       "batch_id": "B04",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/04-provider-adoption/t18/task.json",
-      "sha256": "9b298ee80b5f71a3f63bbafe44599313ddc5bbb91d83a2143e3dc915dca142d2"
+      "sha256": "bd7a67a312d8c184ac1dec8683b6142a37c8bdd47c62cd2de935f7bae0e1f2fe"
     },
     {
       "id": "T19",
       "batch_id": "B04",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/04-provider-adoption/t19/task.json",
-      "sha256": "65da2dd37ee61c23e26720d29b8c89e6e875e68ddec797169cb814fd94d93aa1"
+      "sha256": "df0116a2a54b4a4f0e8d7cee531a22b7a414488e2ae84b39221a5e58d2c6dc12"
     },
     {
       "id": "G04",
       "batch_id": "B04",
       "phase": "gate",
       "path": "docs/alignment-tasks/2026-09-07/batches/04-provider-adoption/gate/task.json",
-      "sha256": "1b00b0048e9209bd3e92c601daae7de4251c397f9c01c28f4a576835c94dd242"
+      "sha256": "007b58d8947b26da47a293669b8a4d6c14384ac768c69bb4154b05dd85f40928"
     },
     {
       "id": "T20",
       "batch_id": "B05",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/05-cross-layer-qa/t20/task.json",
-      "sha256": "b56a60645f3db655adffe443f846aaa2f187d4bf992c0ad3ca59d779b4f6893b"
+      "sha256": "51e2bf0d05f463993bdc94318742e8414d4d4108351e85243e49947a22bb77d5"
     },
     {
       "id": "T21",
       "batch_id": "B05",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/05-cross-layer-qa/t21/task.json",
-      "sha256": "c68e955844c3ea818d6b188cc3f753e22ec9fffebbf19641303104f1b401cd69"
+      "sha256": "76009de3591086111adc94b1ebf40df6171792162c6a83d655334345160d7cd9"
     },
     {
       "id": "T22",
       "batch_id": "B05",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/05-cross-layer-qa/t22/task.json",
-      "sha256": "f275ae36112655ea38b39df1c4d37990d3f381c78d7559f479750ccbea0690b1"
+      "sha256": "3ce79e7d25d45fb7d406849452f62f3f9e624a058de010194ade74729315d7af"
     },
     {
       "id": "T23",
       "batch_id": "B05",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/05-cross-layer-qa/t23/task.json",
-      "sha256": "90d2b495d7b166929752024f4b2b3803bc85c37130160846a9fe3393485a4bdd"
+      "sha256": "1d8d9e6deb1351237e9a6f7cd97c3018235eeda0a300459afdc75c846b200621"
     },
     {
       "id": "T24",
       "batch_id": "B05",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/05-cross-layer-qa/t24/task.json",
-      "sha256": "e8ff463e835bb6e6a81a8e8b62c2e837bcf97ad7ad3e609d34faa8776f122c32"
+      "sha256": "d5379da26e004a8318d1e4a5275b598385033f0484f74ddd215c1c36dbee09f8"
     },
     {
       "id": "G05",
       "batch_id": "B05",
       "phase": "gate",
       "path": "docs/alignment-tasks/2026-09-07/batches/05-cross-layer-qa/gate/task.json",
-      "sha256": "f880d204b94289ff823a42d8b42cdfc56d45975abed1f34fd967f0a5ce099e92"
+      "sha256": "48332baf1b6e320bdf25d4c2aad1e1557645b6cc4db66c7e282a5bcdc5e66023"
     },
     {
       "id": "T25",
       "batch_id": "B06",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/06-platform-live/t25/task.json",
-      "sha256": "d8a799cc6ae01fd4f963501a8b832e615ec4a20b921dc47e1a0517ec2404eb39"
+      "sha256": "e5e55b73b4517bf10313b905677cdcb468df8db1ebd60f82bfc140102b31411a"
     },
     {
       "id": "T26",
       "batch_id": "B06",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/06-platform-live/t26/task.json",
-      "sha256": "df7b23526463f746cf2b0e5529ea716f1d8bed23f29e59ddcd5f38272ce56205"
+      "sha256": "4f0b631a679c8a1b063b508f8d34857790d9e758362792f557ff1e5cca6a232d"
     },
     {
       "id": "T27",
       "batch_id": "B06",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/06-platform-live/t27/task.json",
-      "sha256": "2334fa22de66d9f7f28b5c1aa08781cd4ca9435f2ee0e8420772087a231120f5"
+      "sha256": "eb0b64b2260980acdbba61143b54dedfc6ade5f8ccce59cce6256094d6e450a5"
     },
     {
       "id": "T28",
       "batch_id": "B06",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/06-platform-live/t28/task.json",
-      "sha256": "39178e69b430f3b35d7e3bee4b3aa8afb5d4b3400e7c53420761de1fbf8bc92f"
+      "sha256": "7b8deef008f6448cfd6caa739f5ee25841f95dd55bda49e1a414ba4e762a866f"
     },
     {
       "id": "T29",
       "batch_id": "B06",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/06-platform-live/t29/task.json",
-      "sha256": "109cc9dc2419fc5212aadea07d46ccd344ff701128d4055f18298e3c56e531ab"
+      "sha256": "ed7619e1473e9d0ddcd3b35b60ce1957ebcfd804468930e4086ee9e7b93da9ea"
     },
     {
       "id": "T30",
       "batch_id": "B06",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/06-platform-live/t30/task.json",
-      "sha256": "ae5a171945c5b97ba76963c6daf4b6ed35de6d0e46ab6c1620e43fbd6736325c"
+      "sha256": "42ca5d186233f153f114542b36b8973e96575754173727d04cb72ac8f29d8d68"
     },
     {
       "id": "G06",
       "batch_id": "B06",
       "phase": "gate",
       "path": "docs/alignment-tasks/2026-09-07/batches/06-platform-live/gate/task.json",
-      "sha256": "4f43693851e721b1ec6b5a3c50b65a8b8a0f67e6346395ae74d773cf1da8d47c"
+      "sha256": "30867713c1717fdaf9a3a23dfb2f9eaaca09a27bdad763db05462dbae9fb3d32"
     }
   ],
   "summary": {
@@ -521,7 +521,7 @@
     "every_requirement_has_one_owner_and_independent_verifier": true,
     "no_same_batch_worker_dependency": true
   },
-  "revision": 12,
+  "revision": 15,
   "amendments": [
     "docs/alignment-tasks/2026-09-07/amendments/R001.md",
     "docs/alignment-tasks/2026-09-07/amendments/R002.md",
@@ -533,6 +533,9 @@
     "docs/alignment-tasks/2026-09-07/amendments/R008.md",
     "docs/alignment-tasks/2026-09-07/amendments/R009.md",
     "docs/alignment-tasks/2026-09-07/amendments/R010.md",
-    "docs/alignment-tasks/2026-09-07/amendments/R011.md"
+    "docs/alignment-tasks/2026-09-07/amendments/R011.md",
+    "docs/alignment-tasks/2026-09-07/amendments/R012.md",
+    "docs/alignment-tasks/2026-09-07/amendments/R013.md",
+    "docs/alignment-tasks/2026-09-07/amendments/R014.md"
   ]
 }

@@ -251,7 +251,8 @@ Schema는 Go 타입에서 생성되며, 각 provider의 네이티브 schema 제�
 | 제어하려는 것 | 사용할 것 |
 |---|---|
 | 모델 | `WithModel` |
-| 시스템 프롬프트 | `WithInstructions` |
+| 추가 지침 | `WithInstructions` |
+| 네이티브 추가 | `WithAppendSystemPrompt` |
 | 작업 디렉터리 | `WithWorkspace`, 격리된 워크트리는 `WithWorkspaceSpec` |
 | skills | `WithSkills`에 `skill.Dir` / `skill.FS` / `skill.Inline` / `skill.Key` / `skill.Require` 조합 |
 | MCP | `WithMCP`에 `mcp.Stdio` / `mcp.HTTP` / `mcp.SSE` 조합 |
@@ -284,6 +285,20 @@ result, err := agent.Run(ctx, "이 변경을 리뷰해줘",
 codexReviewer := adaptor.New(codex.Driver(codex.Config{}), reviewerOptions...)
 claudeReviewer := adaptor.New(claude.Driver(claude.Config{}), reviewerOptions...)
 ```
+
+`WithAppendSystemPrompt`는 설정된 Driver의 SystemPrompt.Append 선언이 필요한
+별도 네이티브 추가 채널이다. 가까운 범위의 원본 바이트로 교체하고 빈 문자열로
+해제한다. provider 기본값, `WithInstructions`, 사용자 Prompt는 대체하지 않는다.
+
+`Policy.ActiveExecutionTimeout`은 해당 실행의 Ask 대기를 제외한 실행 시간을
+제한한다. 0은 무제한, 음수는 오류이며 WithPolicy는 전체 값을 교체한다.
+WithTimeout과 부모·승인 deadline은 계속 벽시계 기준이다. 예산은 원자적 저장 전에
+확정되며 Finalize는 원래 취소 가능한 context에서 성공해야 한다.
+[자세한 계약](./docs/run-policy.md#active-execution-budget)을 참고한다.
+
+명시적 Store를 받는 선택적 [`capabilityrecorder.Recorder.Option()`](./docs/api-reference.md#121-capability-recording)으로
+scope/RunID별 실행 중 이력을 조회할 수 있다. A2A capability/Todo 공개는 각각
+opt-in이다. 관측이 없다고 미실행 또는 완전한 감사 기록을 증명하지는 않는다.
 
 ## 호스트 정의 Tools
 

@@ -34,6 +34,11 @@
 // Per-call values override Agent defaults; skills append, while other settings
 // follow their documented replacement or merge rules.
 //
+// WithAppendSystemPrompt adds exact native append text only when the configured
+// Driver declares support; it never replaces Prompt or Instructions. Policy's
+// ActiveExecutionTimeout pauses for this run's Ask waits and seals before atomic
+// persistence; Finalize still determines success with the original context.
+//
 // Host-defined Tools use the provider-neutral tool package and the
 // construction-only WithTools option. The Agent owns their runtime for its
 // full lifetime; MCP delivery, authentication, and endpoint lifecycle remain
@@ -55,7 +60,9 @@
 //
 // CapabilityInvocation and TodoUpdated carry validated leaf vocabulary from
 // capability and todo. Optional RunAttachment observers see those facts before
-// user backpressure; attachment publishers join the same Event stream. Every
+// user backpressure; optional hosttools/capabilityrecorder provides scoped live
+// queries through an explicit host-owned Store. Attachment publishers join the
+// same Event stream. Every
 // admitted execution has one core lifecycle whose terminal reflects the final
 // Result and resource cleanup. Static pre-admission refusals have no lifecycle.
 package adaptor

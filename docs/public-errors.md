@@ -37,6 +37,14 @@ from `Stream.Result()` after its event channel closes. Programmer-contract
 violations documented as panics, such as constructing an Agent with a nil
 Driver or creating a Thread with an empty key, are not error sentinels.
 
+Native append validation returns ErrSystemPromptUnsupported and
+*SystemPromptUnsupportedError with controlled Driver/Reason diagnostics.
+Invalid UTF-8/NUL or unsupported nonempty append is rejected before resources.
+Active budget zero is unlimited, negative matches ErrInvalidPolicy. A positive
+budget exhausted before Driver entry remains a wrapped typed timeout without
+inventing a Result; afterward it is the primary RunError when it wins the
+terminal race. Parent/approval deadlines and secondary causes stay distinct.
+
 ## Agent lifecycle
 
 `ErrAgentClosed` means `Agent.Close` has started. New `Run`/`Stream` calls on
@@ -52,6 +60,7 @@ outcome; `errors.Is` can also match secondary errors in `Cause`.
 
 | Sentinel | `FailureReason` | Meaning |
 |---|---|---|
+| `ErrActiveExecutionTimeout` | `ReasonActiveExecutionTimeout` | Core active budget exhausted; `*ActiveExecutionTimeoutError.Limit` retains the local duration. |
 | `ErrApprovalDenied` | `ReasonApprovalDenied` | A host or auto policy denied an approval and the fallback aborted. |
 | `ErrApprovalTimeout` | `ReasonApprovalTimeout` | An approval deadline elapsed and the fallback aborted. |
 | `ErrAgentFailed` | `ReasonAgentError` | The Driver classified an agent-level failure, such as a bad terminal protocol or non-zero exit. |
@@ -72,7 +81,7 @@ does not roll back or repeat persistence. Interrupted or unhealthy executions
 otherwise preserve the preceding healthy checkpoint.
 
 Unknown Driver failure codes remain available as `RunError.Reason` but do not
-silently match one of the five sentinels above.
+silently match one of the listed sentinels above.
 
 Claude and CodeBuddy resident failures build available Response data from their
 formal parser before returning the cause, including partial/short-write failures
@@ -290,3 +299,20 @@ wrapped root/leaf errors, or external protocol-library errors as appropriate.
 
 See [Run policy](./run-policy.md), [Structured output](./structured-output.md),
 and [`AGENTS.md`](../AGENTS.md) for the associated behavioral contracts.
+
+## Optional observation and replay components
+
+capabilityrecorder.ErrStoreRequired rejects nil/typed-nil Store; ErrInvalidQuery
+rejects missing run scope or invalid pagination. Custom Store errors remain
+observable without fallback. Append observer failure uses the existing safe
+observation_disabled notice and leaves Result/HITL/checkpoint unchanged.
+
+subagentstream.ErrEventInjectionUnsupported means a non-nil Merge bus lacks a
+valid completed-run binding proof. Its RunError preserves the complete parent
+Result, primary Reason and original error graph, including outer wrappers and
+joined causes. It is not a second execution error channel.
+
+Session JSONL corrupt/invalid replay returns sessionrecorder.ErrJSONLEventLogCorrupt.
+Persistent append/write/sync errors remain visible; failed writes do not advance
+HostSeq or silently succeed in memory. Replayed approvals cannot answer live
+requests.

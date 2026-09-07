@@ -138,6 +138,14 @@ already feasible transport candidates. Current provider support remains whatever
 the configured Driver descriptor declares; the new event types alone promise no
 provider observation coverage.
 
+For live capability history, install
+[`capabilityrecorder.Recorder.Option()`](./api-reference.md#121-capability-recording).
+Query sees successful writes before user backpressure. Supply all exact scope
+fields and retain the last Sequence for polling: NextSequence=0 says only that
+no later row exists now. Store ownership, context compliance and the existing
+observer failure limit remain explicit; no implicit database or second stream
+is created.
+
 ## 4. Result, errors, and cancellation
 
 Events are in-flight observations; `Stream.Result()` is the terminal authority:
@@ -198,6 +206,12 @@ anonymous message boundary. No error path promotes an unhealthy checkpoint.
 Claude leaves Text empty without final assistant text; CodeBuddy preserves its
 formal partial-message fallback, while a terminal's legitimate empty text stays
 empty. Neither uses raw stdout as Text or invents Summary.
+
+`ReasonActiveExecutionTimeout`/`ErrActiveExecutionTimeout` report core active
+budget exhaustion; its typed error retains Limit. It is distinct from parent
+deadline and approval timeout. Ask pauses only its own run before queueing;
+the budget seals before atomic persistence, while Finalize remains cancellable
+and authoritative for success. See [run policy](./run-policy.md#active-execution-budget).
 
 ## 5. Backpressure
 
@@ -288,6 +302,12 @@ for ev := range stream.Events() {
 
 Hosts that cannot interact inside the event loop can install a callback with `adaptor.OnApproval`. Both consumption styles share the same request and outcome contract.
 
+Approval Choices and nested JSON Details are copied independently; live copies
+retain one responder. Recorded replay descriptions have no answer authority.
+Each Ask pauses active time before enqueue/callback, including event-queue
+backpressure; overlapping requests remain paused until the last ends. Parent
+deadlines, Close, lease renewal and approval deadlines continue.
+
 ## 8. AG-UI bridge
 
 A host that already has an AG-UI transport layer can translate a `Stream` directly:
@@ -314,6 +334,15 @@ for ev := range agui.EventsContext(ctx, stream) {
 Local programs without a request-scoped context can use `agui.Events(stream)`; HTTP/WebSocket handlers should prefer `EventsContext` to avoid leaking a fan-out goroutine after the client disconnects.
 
 The AG-UI input helper `RunAgentInput` extracts the last non-empty user text; `UserTurnEvents` builds the canonical user `TextDelta` triple. Drivers only produce assistant text, and `RoleUser` is synthesized solely by a bridge or a host.
+
+Capability and Todo become CUSTOM `adapter.capability.invocation` and
+`adapter.todo.updated`, with `kind`, `meta` and their closed payload. Empty Items
+remain an explicit clear. `adapter.tool.parent` precedes tool starts and retains
+original tool ID plus scope/parent coordinates. Tool card IDs are `aa1:` followed
+by unpadded base64url of compact UTF-8 JSON `["tool",runID,scopeID,ID]` (HTML
+escaping disabled). Clients using raw provider IDs must migrate to this tuple
+and consume the parent CUSTOM event. Source chains are copied, up to eight
+acyclic levels; invalid depth produces a safe explicit degradation notice.
 
 ## 9. HTTP SSE bridge
 
@@ -371,6 +400,36 @@ A client disconnect cancels the request context and the underlying `Stream`. Raw
 SSE is a one-way transport, so approval requests can only be sent as informational frames. Interactive approval should use `OnApproval`, or the host should hold the live responder and expose an authenticated companion endpoint.
 
 A complete server example is in [`examples/web-chat`](../examples/web-chat/main.go), an AG-UI client in [`examples/web-chat/aguiclient`](../examples/web-chat/aguiclient/main.go), and a CopilotKit integration in [`examples/web-chat/copilotkit`](../examples/web-chat/copilotkit/server.go).
+
+Raw SSE emits `capability.invocation` and `todo.updated`, retaining the Meta
+envelope, snake_case payload and tool parent/scope fields. Unknown duration is
+omitted; observed zero remains duration_ns=0. Approval frames and AG-UI CUSTOM
+approval details are independent snapshots. SSE/AG-UI and session JSONL retain
+native uint64 and complete typed values; A2A's 64KiB/safe-number limits do not
+apply to these local/native consumers.
+
+### Session recording and subagent streams
+
+Session JSONL retains its stable `{host_seq,recorded_at,kind,meta,event}` envelope,
+including capability/todo, source chains, parents and empty clears. Mutable
+input/history/query/backend values are copied; even memory-recorded approvals
+have no responder. Corrupt/invalid JSONL returns ErrJSONLEventLogCorrupt.
+Append/write/sync failure cannot silently create an in-memory success or advance
+HostSeq. Scope and typed payload validation do not truncate a full snapshot.
+
+`subagentstream.Merge` is now transparent: it never subscribes to the side bus,
+injects duplicate events, renumbers or synthesizes terminals. Nil bus returns
+the parent unchanged. For a non-nil bus, after draining the parent and reading
+its Result it requires the structural `RunEventsBound(runID) bool` proof.
+Absent/false proof returns a RunError carrying the complete parent result and
+ErrEventInjectionUnsupported, preserving the entire original error graph and
+primary Reason. Bare deadline remains ReasonDeadlineExceeded. Cancel cancels
+then drains the parent; concurrent Result calls receive one cached outcome.
+
+Install the delegation Service's Option before execution and consume the
+original Stream; never feed its UI mirror back into core. Concrete delegation
+publisher/binding adoption remains the separate provider-adoption workstream.
+A2A observation projection is explicitly opt-in; see [wire and exposure](./a2a.md).
 
 ## 10. Driver streaming fidelity
 

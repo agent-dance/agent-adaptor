@@ -230,6 +230,8 @@ Codex 结构化源限正式 `turn/plan/updated`；实验性文本 plan delta 不
 
 计时器实现放私有包，默认不把通用 `PausableContext/WithPausableTimeout` 铺到根包。预算从准备资源前开始；只有唯一 approval sink 进入 Ask 等待时暂停自己的 run，自动批准/拒绝不暂停，审批自身 Timeout 仍按墙钟。等待开始前的背压边界要明确，不能让已经发出的审批卡仍消耗整个主动预算。多个并发 Ask 使用 token/refcount 配对，最后一个等待结束才恢复，避免 internal 单一 paused bool 过早恢复。
 
+R012 明确计时结束：包含 Driver 返回后的 schema 和健康/lease 复核，在唯一原子持久化前结算并封账；无状态成功在同等健康判定点封账。Finalize 与返回延迟不扣主动预算，但仍决定最终成功且使用原可取消 context；封账前已耗尽即拒绝持久化，已封账的迟到 timer 不得重写 outcome。Store 已提交而延迟返回没有通用回滚或提交确认，因此不将返回时间冒充原子提交点。
+
 用单调时间和 timer generation 处理迟到回调；所有成功/拒绝/超时/panic/取消出口恢复或终止计时。pause 不阻断 parent Cancel、Agent.Close、lease 续期和清理。嵌套 Member 不自动暂停 Leader，也不能自行改变 parent context。
 
 **错误与 A2A。** 增加稳定 active-execution-timeout sentinel、failure reason 和安全 Limit 详情，保留原错误可匹配性，复用 W04 部分结果。审批拒绝/超时、用户取消、外部 deadline、预算耗尽明确区分；并发终止以已确定的原因优先，不能由 cleanup 覆盖。预算耗尽不让 checkpoint 有效。

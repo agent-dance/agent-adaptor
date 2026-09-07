@@ -87,6 +87,7 @@ The overall merge rule is: the call site is nearer than the construction site; s
 | `WithModel(string)` | provider model override | non-empty value replaces |
 | `WithTimeout(time.Duration)` | total deadline for one execution | replaces; a timeout matches `context.DeadlineExceeded` |
 | `WithSpawn()` | force a new provider process, reusing nothing and leaving no persistent writer | replaces the default process mode |
+| `WithAppendSystemPrompt(string)` | provider-native append text | replaces exact bytes; empty clears; requires Driver capability |
 | `WithInstructions(string)` | additional instruction text | replaces |
 | `WithWorkspace(string)` | base working directory | replaces |
 | `WithMetadata(key, value)` | audit metadata | merged by key; an identical key overwrites |
@@ -106,6 +107,30 @@ Detailed rules for `WithProfileResources`:
 - A non-nil `MCP` replaces the MCP set; a non-nil empty slice means an explicit clear.
 - Non-nil `Agents`, `Hooks`, and `Config` each replace the corresponding resource family; a non-nil empty slice means an explicit declaration of emptiness.
 - A non-nil `Instructions` replaces the instruction resource.
+
+`WithAppendSystemPrompt` preserves provider defaults and is independent of
+the user Prompt, `WithInstructions`, profiles and schema validation prompts.
+The closest value replaces; only an empty string clears. Whitespace, Unicode,
+quotes and line endings remain byte-for-byte. Invalid UTF-8, NUL or unsupported
+nonempty text fails before resources/Thread leases/Driver.Run with
+`ErrSystemPromptUnsupported` and `*SystemPromptUnsupportedError`. Diagnostics
+contain controlled reasons, never submitted text. The configured Driver's
+`Descriptor.SystemPrompt.Append` is authoritative; built-in provider adoption
+is tracked separately from the core option contract.
+
+```go
+// d is a configured Driver whose descriptor declares native append support.
+agent := adaptor.New(d, adaptor.WithAppendSystemPrompt("Use repo terminology.\n"))
+_, err := agent.Run(ctx, prompt, adaptor.WithAppendSystemPrompt("Answer in Chinese.\n"))
+_, err = agent.Run(ctx, prompt, adaptor.WithAppendSystemPrompt("")) // clear default
+_ = err
+```
+
+Exact append content adds a hash to every existing Thread compatibility
+dimension; empty append preserves the previous base fingerprint. Changed or
+cleared content rejects incompatible ResumeOnly/Fork. Continue-or-start replaces
+old state only after a new healthy checkpoint is saved. Per-turn transport and
+active budget values do not substitute for real session compatibility guards.
 
 ### 3.2 Construction-only options
 
@@ -151,6 +176,7 @@ Identity is used by host-supplied components such as skill, workspace, and servi
 
 ```go
 type Policy struct {
+	ActiveExecutionTimeout time.Duration
 	Sandbox   SandboxLevel
 	WebSearch FeatureLevel
 	Browser   FeatureLevel
@@ -168,9 +194,15 @@ Common Policy presets:
 
 `WithPolicy` replaces the default Policy as a whole; a caller that wants to change a single dimension for one invocation must construct the complete value explicitly.
 
-The zero value / Inherit is the portable expression across Drivers. Any explicit Sandbox, WebSearch, or Browser value is checked strictly against `Descriptor.RunPolicyCaps` before the process starts; when the Driver does not support it, a `*PolicyCapabilityUnsupportedError` matching `ErrPolicyCapabilityUnsupported` is returned rather than being silently ignored.
+For sandbox and optional features, zero / Inherit is the portable expression across Drivers. Any explicit Sandbox, WebSearch, or Browser value is checked strictly against `Descriptor.RunPolicyCaps` before the process starts; when the Driver does not support it, a `*PolicyCapabilityUnsupportedError` matching `ErrPolicyCapabilityUnsupported` is returned rather than being silently ignored.
 
 Approval modes follow the same rule. An explicit `ApprovalAsk`, `ApprovalAutoApprove`, `ApprovalAutoDeny`, or `QuestionAutoDeny` must be supported by the capability declaration for the corresponding Kind, otherwise a `*HumanDecisionModeUnsupportedError` matching `ErrHumanDecisionModeUnsupported` is returned. `ApprovalsAutoDeny` requires auto-reject support for all three of Permission, PlanReview, and Question, so it is not a portable cross-provider preset; leaving Question at `QuestionInherit` uses the library's conservative auto-deny default instead of forming an explicit capability requirement.
+
+`ActiveExecutionTimeout` is zero/unlimited, positive/limited or negative/invalid.
+Whole-value Policy replacement also applies to this field. Ask waits pause only
+this run; wall-clock limits and lease renewal continue. The budget is settled
+before atomic persistence; Finalize still determines success with the original
+context. See [the complete timing and failure contract](./run-policy.md#active-execution-budget).
 
 ## 5. Thread
 
@@ -329,6 +361,12 @@ A response is exactly-once. The main errors:
 
 Policy is configured through `Policy.Approvals`: Permission and PlanReview use `ApprovalMode`; Question uses `QuestionMode`; the action after a timeout or rejection uses `FallbackAction`. The zero value takes conservative defaults. Every explicit mode is validated strictly against Driver capability before startup. `ApproveAll()` and `DenyAll(reason)` only handle Ask requests that have already passed capability validation and been routed to a handler.
 
+Each request's Choices and nested JSON Details are independent descriptive
+snapshots. Live copies share a single responder; a recorded replay has none.
+Every Ask pauses active time before queueing or callback, and overlapping waits
+resume only after the last token ends. Timeout/retry remain `Policy.Approvals`
+wall-clock decisions; see [active budget](./run-policy.md#active-execution-budget).
+
 ## 8. Result and errors
 
 ```go
@@ -388,7 +426,10 @@ if err != nil {
 _ = res
 ```
 
-`errors.Is` matches `ErrApprovalDenied`, `ErrApprovalTimeout`, `ErrAgentFailed`, `ErrRunCancelled`, and `ErrPolicyViolation`. Pre-start configuration and policy errors match `ErrInvalidDriverConfig`, `ErrInvalidPolicy`, `ErrPolicyCapabilityUnsupported`, or `ErrHumanDecisionModeUnsupported`. Configuration, resource resolution, context cancellation, and other infrastructure errors travel the same single `error` path; the corresponding typed errors expose diagnostics such as Driver, field, and value through `errors.As`.
+`errors.Is` also matches `ErrActiveExecutionTimeout`, whose typed
+`*ActiveExecutionTimeoutError` preserves the exact local Limit. The primary
+Reason is `ReasonActiveExecutionTimeout`; later matching context causes do not
+replace it. `errors.Is` matches `ErrApprovalDenied`, `ErrApprovalTimeout`, `ErrAgentFailed`, `ErrRunCancelled`, and `ErrPolicyViolation`. Pre-start configuration and policy errors match `ErrInvalidDriverConfig`, `ErrInvalidPolicy`, `ErrPolicyCapabilityUnsupported`, or `ErrHumanDecisionModeUnsupported`. Configuration, resource resolution, context cancellation, and other infrastructure errors travel the same single `error` path; the corresponding typed errors expose diagnostics such as Driver, field, and value through `errors.As`.
 
 `Reason` is the primary outcome; `Cause` may also match cancellation, deadline,
 store, transport or cleanup errors. `ReasonInfrastructure` and
@@ -468,6 +509,10 @@ func (in Inspector) Skills(ctx context.Context) (SkillSnapshot, error)
 ```
 
 When the Driver does not implement the corresponding probe, Inspector returns a descriptor fallback or an explicitly unavailable report; it never fakes success.
+
+`Environment` also validates the Agent's configured append default through the
+same preflight rule; it neither creates append files nor executes the Driver.
+ConfigSchema and ProfileState do not gain a second append configuration view.
 
 The stateful actions for profile and skill hang directly off the Agent:
 
@@ -646,6 +691,55 @@ release share a bounded total budget with fair sub-budgets; one timeout does not
 skip later cleanup. Release errors remain observable through Result. Static
 pre-admission rejection keeps empty closed Events and an error.
 
+### 12.1 Capability recording
+
+`hosttools/capabilityrecorder` is an optional host component with an explicit
+Store. `Recorder.Option()` works at construction or per call using the existing
+run-service observer and capability demand. It adds no root query/execution API.
+
+```go
+store := capabilityrecorder.NewMemoryStore()
+recorder, err := capabilityrecorder.New(capabilityrecorder.Config{Store: store})
+if err != nil { return err }
+agent := adaptor.New(d,
+    adaptor.WithIdentity(adaptor.Identity{ID: "assistant", Tenant: "tenant"}),
+    recorder.Option(),
+)
+stream := agent.Stream(ctx, prompt)
+defer stream.Cancel()
+page, err := recorder.Query(ctx, capabilityrecorder.Query{
+    Scope: capabilityrecorder.Scope{
+        IdentityID: "assistant", Tenant: "tenant", RunID: stream.RunID(),
+    },
+    Limit: 100,
+})
+// Query may be empty while the run is active; still drain Events and read Result.
+_ = page
+_ = err
+```
+
+Scope compares IdentityID/Tenant/Profile/RunID verbatim without wildcard or
+delimiter concatenation. RunID is required. Limit 0 means 100; valid explicit
+limits are 1..1000. AfterSequence is exclusive, ordering is by authoritative
+Sequence, and gaps are normal. NextSequence is the last row only when more rows
+currently exist, otherwise zero. Zero does not mean the run finished: retain
+your last-read sequence for later polling.
+
+Append is atomically idempotent by `(Scope, Sequence)`; different values conflict
+without overwriting. Successful writes are immediately queryable, even before
+the corresponding user Event is delivered. Query and stored inputs have
+independent mutable values. Invalid queries or custom Store pages fail explicitly.
+The record stores only Scope, Sequence, Time and closed capability facts, never
+Todo, Thread key, prompt, args/results, Raw, credentials or error bodies.
+
+Nil/typed-nil Store yields ErrStoreRequired, with no implicit fallback.
+NewMemoryStore is process memory with no durability or retention limit; the host
+owns capacity, persistence and authorization. Recorder/Agent.Close never closes
+a shared Store. The existing observer's 100ms/remaining-cleanup limit and
+per-run first-failure fence apply; a context-ignoring Store may still commit late,
+and no rollback is promised. Missing observations do not prove no invocation or
+complete audit/billing coverage.
+
 ## 13. threadstore and memory
 
 ```go
@@ -658,7 +752,14 @@ type Store interface {
 }
 ```
 
-`Finalize` must atomically complete lease validation, record saving, archiving of the old record, and key rebinding; Fork uses `RequireKeyAbsent` to prevent a target conflict.
+`Finalize` must atomically complete lease validation, record saving, archiving
+of the old record, and key rebinding; Fork uses `RequireKeyAbsent` to prevent a
+target conflict. Check the original context before commit, including after
+acquiring locks. Memory Finalize checks before and after its mutex, so a canceled
+wait cannot write. A healthy completed commit is not rolled back by later
+cancellation or delayed return. The active budget seals before this call;
+Finalize still decides success. Store's error-only interface is not a commit
+acknowledgment protocol.
 
 `memory.NewStore()` returns a concurrency-safe single-process implementation suitable for tests, local tools, and demos. A service that needs cross-process resumption and coordination must implement a persistent Store.
 

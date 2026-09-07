@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
   "plan": "docs/internal-history-alignment-plan-2026-09-07.md",
-  "plan_sha256": "992b403657e3d1c06f88f249641cba4250d755f3860c88f0643d921d4364ee6e",
+  "plan_sha256": "831c6b718e71f2645999613f70cb182d8ef333d864835f61288bed816e3b962a",
   "requirements": [
     {
       "id": "W01-R01",
@@ -1110,7 +1110,7 @@
     {
       "id": "W13-R02",
       "work_item": "W13",
-      "description": "准备资源前计时、Ask暂停前的背压边界明确、auto resolve不暂停",
+      "description": "准备资源前计时、Ask暂停前的背压边界明确、auto resolve不暂停；R012健康候选在原子Persist前结算封账，Finalize/返回延迟不扣主动预算但仍须成功",
       "implementation_owner": "T10",
       "verification_tasks": [
         "T22"
@@ -1158,7 +1158,7 @@
     {
       "id": "W13-R06",
       "work_item": "W13",
-      "description": "active sentinel/cause/limit与审批/外部deadline/取消区分，部分Result保留checkpoint无效",
+      "description": "active sentinel/cause/limit与审批/外部deadline/取消区分，部分Result保留checkpoint无效；封账前耗尽零Persist，封账后迟到timer不能伪造active失败，Finalize错误与parent取消仍可观察",
       "implementation_owner": "T10",
       "verification_tasks": [
         "T22"

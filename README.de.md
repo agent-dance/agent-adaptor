@@ -251,7 +251,8 @@ Dasselbe Set an Optionen deckt die wesentliche Konfigurationsfläche aller Agent
 | Was Sie steuern wollen | Womit |
 |---|---|
 | Modell | `WithModel` |
-| System-Prompt | `WithInstructions` |
+| Zusätzliche Anweisungen | `WithInstructions` |
+| Native Ergänzung | `WithAppendSystemPrompt` |
 | Arbeitsverzeichnis | `WithWorkspace`, für isolierte Arbeitsbäume `WithWorkspaceSpec` |
 | skills | `WithSkills` mit `skill.Dir` / `skill.FS` / `skill.Inline` / `skill.Key` / `skill.Require` |
 | MCP | `WithMCP` mit `mcp.Stdio` / `mcp.HTTP` / `mcp.SSE` |
@@ -284,6 +285,23 @@ Dieselbe Konfiguration mit einem anderen Driver ergibt einen anderen Agent; unte
 codexReviewer := adaptor.New(codex.Driver(codex.Config{}), reviewerOptions...)
 claudeReviewer := adaptor.New(claude.Driver(claude.Config{}), reviewerOptions...)
 ```
+
+`WithAppendSystemPrompt` ist ein eigener nativer Ergänzungskanal und erfordert
+SystemPrompt.Append des konfigurierten Drivers. Der nähere Gültigkeitsbereich
+ersetzt die exakten Bytes; eine leere Zeichenfolge löscht den Wert. Provider-
+Vorgaben, `WithInstructions` und Benutzer-Prompt bleiben eigenständige Kanäle.
+
+`Policy.ActiveExecutionTimeout` zählt aktive Arbeit und pausiert nur während
+Ask-Anfragen dieses Laufs. Null bedeutet unbegrenzt, negative Werte sind ungültig;
+WithPolicy ersetzt weiterhin den gesamten Wert. WithTimeout sowie Eltern- und
+Freigabe-Deadlines messen weiterhin Echtzeit. Das Budget wird vor atomarer
+Persistenz abgeschlossen; Finalize muss mit dem ursprünglichen abbrechbaren
+Context erfolgreich sein. [Details](./docs/run-policy.md#active-execution-budget).
+
+Der optionale [`capabilityrecorder.Recorder.Option()`](./docs/api-reference.md#121-capability-recording)
+nutzt einen expliziten Store für Live-Abfragen nach exaktem Scope/RunID. A2A-
+Capability- und Todo-Freigabe benötigen eigene Opt-ins. Fehlende Beobachtungen
+beweisen weder fehlende Aufrufe noch eine vollständige Prüfung.
 
 ## Host-definierte Tools
 

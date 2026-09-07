@@ -251,7 +251,8 @@ Schema は Go の型から生成され、各社ネイティブの schema 制約�
 | 制御したいもの | 使うもの |
 |---|---|
 | モデル | `WithModel` |
-| システムプロンプト | `WithInstructions` |
+| 追加指示 | `WithInstructions` |
+| ネイティブ追加 | `WithAppendSystemPrompt` |
 | 作業ディレクトリ | `WithWorkspace`、分離されたワークツリーには `WithWorkspaceSpec` |
 | skills | `WithSkills` と `skill.Dir` / `skill.FS` / `skill.Inline` / `skill.Key` / `skill.Require` |
 | MCP | `WithMCP` と `mcp.Stdio` / `mcp.HTTP` / `mcp.SSE` |
@@ -284,6 +285,19 @@ result, err := agent.Run(ctx, "この変更をレビューして",
 codexReviewer := adaptor.New(codex.Driver(codex.Config{}), reviewerOptions...)
 claudeReviewer := adaptor.New(claude.Driver(claude.Config{}), reviewerOptions...)
 ```
+
+`WithAppendSystemPrompt` は独立したネイティブ追加チャネルで、設定済み Driver の
+SystemPrompt.Append 宣言が必要です。近いスコープがバイト列ごと置換し、空文字は
+解除します。provider の既定値、`WithInstructions`、ユーザー Prompt を置換しません。
+
+`Policy.ActiveExecutionTimeout` は同じ実行の Ask 待ちだけを除く時間制限です。
+ゼロは無制限、負値は無効で、WithPolicy は値全体を置換します。WithTimeout と
+親・承認 deadline は実時間のままです。予算は原子的永続化の前に確定し、Finalize
+は元の取消可能な context で成功する必要があります。[詳細](./docs/run-policy.md#active-execution-budget)。
+
+明示的 Store を持つ任意の [`capabilityrecorder.Recorder.Option()`](./docs/api-reference.md#121-capability-recording)
+で scope/RunID ごとの履歴を実行中に照会できます。A2A の capability/Todo 公開は
+個別の opt-in です。観測がないことは未実行や監査の完全性を証明しません。
 
 ## ホスト定義 Tools
 

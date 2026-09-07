@@ -251,7 +251,8 @@ The same set of options covers the main configuration surface of every agent:
 | What you want to control | What to use |
 |---|---|
 | Model | `WithModel` |
-| System prompt | `WithInstructions` |
+| Additional instructions | `WithInstructions` |
+| Native append | `WithAppendSystemPrompt` |
 | Working directory | `WithWorkspace`, or `WithWorkspaceSpec` for isolated work trees |
 | skills | `WithSkills` with `skill.Dir` / `skill.FS` / `skill.Inline` / `skill.Key` / `skill.Require` |
 | MCP | `WithMCP` with `mcp.Stdio` / `mcp.HTTP` / `mcp.SSE` |
@@ -284,6 +285,22 @@ The same configuration with a different Driver is a different Agent; when a Driv
 codexReviewer := adaptor.New(codex.Driver(codex.Config{}), reviewerOptions...)
 claudeReviewer := adaptor.New(claude.Driver(claude.Config{}), reviewerOptions...)
 ```
+
+`WithAppendSystemPrompt` is a separate, capability-gated native append channel:
+exact bytes replace at the nearer scope; an empty string clears. It preserves
+provider defaults and does not replace `WithInstructions` or the user prompt.
+Inspect the configured Driver's SystemPrompt.Append declaration before using it.
+
+`Policy.ActiveExecutionTimeout` limits active work and pauses for this run's Ask
+waits. Zero is unlimited; negative is invalid. WithPolicy replaces the whole
+value. WithTimeout and parent/approval deadlines still measure wall time. The
+budget seals before atomic persistence; Finalize remains cancellable and must
+succeed. See [timing and errors](./docs/run-policy.md#active-execution-budget).
+
+For scoped live capability history, install an explicit Store through
+[`capabilityrecorder.Recorder.Option()`](./docs/api-reference.md#121-capability-recording).
+A2A capability/todo exposure is separately opt-in. Missing observations do not
+prove no invocation or complete audit coverage.
 
 ## Host-defined Tools
 

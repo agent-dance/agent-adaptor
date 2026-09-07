@@ -9,6 +9,7 @@ to their native controls; it is never a list of CLI flags.
 
 ```go
 type Policy struct {
+	ActiveExecutionTimeout time.Duration
 	Sandbox   SandboxLevel
 	WebSearch FeatureLevel
 	Browser   FeatureLevel
@@ -18,6 +19,7 @@ type Policy struct {
 
 | Dimension | Values | Zero value |
 |---|---|---|
+| `ActiveExecutionTimeout` | nonnegative `time.Duration` | unlimited active time |
 | `Sandbox` | `ReadOnly`, `WorkspaceWrite`, `Unrestricted` | `SandboxInherit` |
 | `WebSearch` | `FeatureAllow`, `FeatureDeny` | `FeatureInherit` |
 | `Browser` | `FeatureAllow`, `FeatureDeny` | `FeatureInherit` |
@@ -45,8 +47,58 @@ result, err := agent.Run(ctx, prompt,
 )
 ```
 
-An all-zero `Policy` delegates the non-approval dimensions to the Driver and
-uses the SDK approval defaults.
+An all-zero `Policy` delegates sandbox and optional features to the Driver and
+uses the SDK approval defaults. Its active budget is unlimited.
+
+## Active execution budget
+
+`Policy.ActiveExecutionTimeout` is zero for unlimited active time, positive for
+a limit (including sub-millisecond values), and negative for an `ErrInvalidPolicy`
+preflight error. It is core-owned and does not require a provider capability.
+`WithPolicy` still replaces the whole value; a zero call-site Policy disables an
+Agent's budget. `WithTimeout`, parent deadlines and approval deadlines continue
+to measure wall-clock time.
+
+```go
+agent := adaptor.New(d, adaptor.WithPolicy(adaptor.Policy{
+    ActiveExecutionTimeout: 2 * time.Minute,
+}))
+result, err := agent.Run(ctx, prompt, adaptor.WithTimeout(10*time.Minute))
+```
+
+Timing starts before resource preparation and includes workspace/services,
+Thread acquisition, safe resume fallback, Driver execution, observers, schema
+validation and final health checks. A healthy candidate settles and permanently
+seals its budget immediately before the sole atomic Thread persistence call;
+stateless execution seals at the corresponding health check. The balance is
+checked even if an expired timer callback has not run. Exhaustion prevents
+persistence and preserves the preceding healthy checkpoint.
+
+Sealing establishes only budget health. Finalize must still succeed using the
+original cancellable context. Finalize work and delayed return, followed by
+cleanup, do not spend active time. A late timer cannot change a sealed outcome;
+parent cancellation, Finalize errors and cleanup failures remain observable.
+An already committed healthy checkpoint is not rolled back after later
+cancellation or failure. Error cleanup stops timing without inventing a new
+timeout.
+
+Each Ask attempt pauses its own run before approval/notice queueing or
+`OnApproval`, including waiting on a full event queue. Overlapping Ask requests
+have independent tokens: timing resumes only after the last ends. A retry ends
+the previous token and starts a new one; time between attempts counts. Automatic
+decisions do not pause. Approval deadlines, parent cancellation, `Agent.Close`
+and lease renewal remain active. A member's Ask does not pause its leader.
+
+After Driver entry, exhaustion returns `nil, *RunError` with primary
+`ReasonActiveExecutionTimeout`, available partial Result and
+`ErrActiveExecutionTimeout`. `errors.As` exposes `*ActiveExecutionTimeoutError`
+and its exact local `Limit`. Before Driver entry, the wrapped error retains the
+same identity without inventing a Result. The first confirmed terminal reason
+is authoritative, including a budget cause selected before its asynchronous
+cancellation notification. An inherited active-looking parent cause stays
+inspectable evidence; it does not mean this run exhausted its own budget.
+Inspect `RunError.Reason` before matching secondary context causes. Active exhaustion, approval timeout, parent deadline and explicit
+cancellation are distinct outcomes.
 
 ## Approval policy
 
@@ -102,6 +154,16 @@ renews the request ID and asks again up to `MaxRetries`. If the Driver does not
 advertise retry for that kind, the SDK emits one lifecycle `Notice` with
 `Data["warning"] == "human_decision_retry_unsupported"` and safely degrades to
 abort.
+
+Approval descriptions own their Choices and nested JSON Details. Live copies
+share one exactly-once responder; copying metadata does not create a second
+answer right. Historical recorder descriptions remove that responder.
+
+Optional capability recording uses the existing observer boundary: its first
+error/panic/timeout emits one safe notice and stops that observer for the run.
+It changes neither Result, HITL nor checkpoint policy. Custom Stores must honor
+callback cancellation before committing; the SDK cannot undo ignored-context
+side effects. See [scoped recording](./api-reference.md#121-capability-recording).
 
 ## Capability validation
 

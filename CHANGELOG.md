@@ -19,6 +19,14 @@ All notable changes to this project are documented in this file.
 - Opt-in live delegation artifact Parts and Append/LastChunk flags, preserving
   individual updates and complete final recovery.
 
+- Capability-gated `WithAppendSystemPrompt`, its exact-byte SharedOption and
+  Driver capability/request/error contract, independent of Prompt/Instructions.
+- Ask-aware `Policy.ActiveExecutionTimeout` and typed local timeout diagnostics.
+- Explicit-Store `hosttools/capabilityrecorder` with exact scoped live queries,
+  bounded pagination, atomic idempotence and host-owned shared Store lifetime.
+- Opt-in A2A capability/todo DataParts and parent/source fidelity, plus typed
+  SSE, AG-UI and session-recording projections.
+
 ### Fixed
 
 - Finish Claude result-only bidirectional one-shot runs by closing stdin once;
@@ -57,6 +65,17 @@ All notable changes to this project are documented in this file.
   enforce cumulative artifact byte limits before publication and report invalid
   content and compact-result count truncation with safe diagnostics.
 
+- Preserve the first confirmed terminal cause and distinguish active exhaustion,
+  parent deadlines and approval timeouts while retaining partial audit results.
+- Reject memory Finalize writes canceled while waiting for its mutex; retain
+  legitimately completed healthy commits after later cancellation.
+- Isolate approval descriptive Choices/JSON Details while retaining one live
+  responder; historical replay carries no responder. Preserve entire wrapped
+  parent error graphs in subagent-stream configuration failures.
+- Validate new A2A facts without breaking old args/raw/time compatibility;
+  reject duplicate schema, same-scope self-parent and unsafe encodings, preserve
+  opaque Thread keys, and normalize decoded occurrence times to UTC.
+
 ### Changed
 
 - Execution errors after Driver entry now use `nil, *RunError` even for
@@ -77,6 +96,19 @@ All notable changes to this project are documented in this file.
 - Consumers of admitted runs now receive a core RunStarted/RunFinished envelope
   even without run services. Static pre-admission refusals retain empty closed
   Events and an error from Result.
+
+- Active budget is settled and sealed before the sole atomic Thread persistence
+  call. Finalize/return delay and cleanup do not spend active time; original
+  context and Finalize errors still decide success. Whole Policy replacement
+  includes the budget; append changes contribute to existing compatibility.
+- `subagentstream.Merge` requires a completed-run binding proof for non-nil
+  buses and transparently preserves the parent sequence/terminal. Migrate to
+  a run-service attachment and the original Stream.
+- AG-UI tool card IDs use a run/scope/tool tuple; graph consumers must handle
+  `adapter.tool.parent`. A2A capability/todo exposure remains separately opt-in.
+- Root With-function count increases from 26 to 27 for the sole native append
+  option; the six nouns and Run/Stream execution model are unchanged.
+
 
 ## [1.1.2] - 2026-08-07
 

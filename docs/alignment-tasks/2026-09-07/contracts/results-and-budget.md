@@ -110,7 +110,7 @@ T10 在本轮现有管线内维护一个私有终止记录；不新增公共接�
 3. 一个观察点已经同时持有多个候选、尚无主因时，固定次序为：已作出 Abort 的 approval → 已锁定 context.Cause（预算/外部取消/deadline）→ Driver 正式 failure → lease/transport 基础设施错误 → provider-agnostic 非零退出归类。具体 cause 缺失才使用 generic ctx.Err；不得把包裹 active cause 的 Canceled 当成用户取消。
 4. 父 context 在 budget/Ask 回调提交前已经 Done，则先登记 parent 的真实 Cause；自定义 parent cause 仍可 Is/As，分类由 parent.Err 区分 Cancel/Deadline。一个已经成功响应的审批只结束该 Ask，不阻止后续预算耗尽。
 5. 所有终止路径都向最终错误保留已观察到的原始 cause；主 Reason 只存在一处。`errors.Is` 可同时匹配次因，所以 bridge/hosttool 必须先检查 carrier 的 Reason/Code，再使用 bare context fallback。
-6. 正常 Driver 返回后仍检查 renewal、结构化输出与 Thread commit；未完成这些步骤不能锁定成功。获得正常终局后 Stop 主动计时，再做有界 cleanup；cleanup 自身不能把已结束运行改成 active timeout。仅 cleanup 失败时将成功替换成 ReasonInfrastructure 并携带原 Result。
+6. 正常 Driver 返回后仍检查 renewal、结构化输出与 Thread commit；未完成这些步骤不能锁定成功。按 R012 在健康候选进入原子 Persist 前完成主动预算封账；Finalize 仍决定最终成功。失败路径 Stop 主动计时，再做有界 cleanup；cleanup 自身不能把已结束运行改成 active timeout。仅 cleanup 失败时将成功替换成 ReasonInfrastructure 并携带原 Result。
 
 T05 在尚无主动预算的 B01 使用既有 pending approval → Response.Failure → 原 error 的具体原因优先级，修复 Cause/Result 映射。T10 加入上述 first-terminal 记录并同步唯一 sink；不能只在 finalizeRun 最后根据 ctx.Err 覆盖已有原因。RunFinished/终局 Result/error 读取同一最终记录。资源准备中预算耗尽尚无RunError时，T10在其拥有的sink.go先匹配typed active cause再匹配generic context；T05的新Reason已由既有errors.As分支直接复制，无需提前修改sink.go。事件关闭发生在所有终局信息交付之后。
 
@@ -135,9 +135,13 @@ T05 在尚无主动预算的 B01 使用既有 pending approval → Response.Fail
 
 call `WithPolicy` 整值替换 Agent Policy。构造 `Policy{ActiveExecutionTimeout:100*time.Millisecond}` 后 call `WithPolicy(Policy{})` 清除主动预算，其他维度也按既有整体替换；绝不逐字段“0 继承、负值关闭”。预设 PolicyReadOnly/WorkspaceWrite/Unrestricted 的新字段为 0。没有额外 WithActiveExecutionTimeout。
 
-计时从完成静态准入/负值校验后、**首次资源准备之前**开始；包含 hosted-tool profile、workspace/runtime、skill/append 文件、Thread lease acquire、resume/recovery、安全 fallback、Driver 启动/运行、本轮 schema 终局处理和原子 Finalize。一个 invocation 不在任何重试点重置预算。WithTimeout 与 parent deadline 始终按整体墙钟计时；主动预算的 Deadline() 不伪装成固定到期时间，child context 只继承 parent 的真实 deadline。
+计时从完成静态准入/负值校验后、**首次资源准备之前**开始；包含 hosted-tool profile、workspace/runtime、skill/append 文件、Thread lease acquire、resume/recovery、安全 fallback、Driver 启动/运行、本轮 schema 终局处理及 lease/健康条件复核；按 R012 在进入唯一原子 Persist 前以 FinishExecution 封账，Finalize 及其返回延迟不扣主动预算。无状态成功在对应最终健康判定点封账；封账不等于运行成功，Finalize 失败仍保留部分 Result 并返回原错误。一个 invocation 不在任何重试点重置预算。WithTimeout 与 parent deadline 始终按整体墙钟计时；主动预算的 Deadline() 不伪装成固定到期时间，child context 只继承 parent 的真实 deadline。
 
 暂停只作用于明确持有的当前 run controller；不把 controller 放进 context.Value 再向上查找，不让 Member Ask 自动暂停 Leader、别的 Thread 或另一次 Delegate。预算不进入 Thread compatibility fingerprint、profile manifest 或常驻启动签名，因为它不改变 provider 会话环境；实际 prompt/Instructions/资源变化仍由原合同完整覆盖。
+
+R012：Finalize 使用原可取消 run context，禁止 detached 持久化；父取消/墙钟和 store 原子 lease 检查仍有效。没有提交确认接口时不能以调用返回时间推断提交时刻，已经原子提交的健康状态不回滚。必须测试提交后延迟返回跨过原预算、提交错误、封账前余额已尽但 timer 未执行、封账后迟到 callback，以及 parent 在提交前取消。
+
+R012 Store补充：Finalize必须在提交前检查context；内置memory在取得mutex前及锁内第一写前检查，等待锁期间取消不能写入。有效检查后进入原子提交临界阶段，完成的健康提交不因返回延迟中后到取消而回滚；这不是允许取消后新写失败checkpoint。T10新增memory/store.go、memory/store_test.go和threadstore/threadstore.go（godoc）范围，无公开接口变更。
 
 ## 6. 私有计时器 API、fake clock 与状态机
 
@@ -154,7 +158,9 @@ type Controller struct { /* 私有状态 */ }
 func New(parent context.Context, limit time.Duration, expired error, clock Clock) (context.Context, *Controller)
 func (b *Controller) Pause() (release func())
 func (b *Controller) Stop()
+func (b *Controller) FinishExecution() error
 func (b *Controller) Cancel(cause error)
+func (b *Controller) SelectedCause() error
 ```
 
 签名中的 struct 仅表示实现拥有私有字段，不是要提交空实现。`clock==nil` 使用 time.Now/time.AfterFunc；父 context 必须非 nil，limit 必须非负，正 limit 的 expired 必须非 nil，违反这些私有编程前置条件可以 panic；公共入口先完成结构化校验。New(0) 返回可取消 child 与无 timer controller。expired 由调用方传入 `&adaptor.ActiveExecutionTimeoutError{Limit:effectiveLimit}`，所以私有包无反向依赖。
@@ -165,7 +171,8 @@ func (b *Controller) Cancel(cause error)
 - paused → Pause：新增另一个唯一 token，不重复扣时、不重置预算；返回仅释放自己 token 的闭包。
 - release：并发/重复调用幂等；非最后 token 只移除自己；最后 token 才以 remaining 重新 arm，递增 generation。旧 token 不能解除新 token。所有停机后的 release/Pause 均为 no-op，Pause 仍返回可安全调用的非 nil release。
 - timer 回调携带 arm 时 generation。仅 running、token 数 0、generation 相等且 parent 未终止时生效；先按单调 now 重新核对余额，提前触发则重新 arm 剩余时间，已到限额才提交 expired。已停止但排队的旧回调一律忽略。
-- Stop 幂等，冻结 timer/token，不取消 child，不阻断仍在进行的父取消传播；用于已确定终局进入 cleanup。Cancel 幂等，先停止再 cancelCause(cause)；cause==nil 遵循 context.WithCancelCause 的 Canceled 语义，不能覆盖已发生 cause。
+- R012 FinishExecution 在同一短锁检查 parent/child cause，running 段按 Now 扣余额（paused 不扣）；已耗尽则取消为 expired 并返回 cause，否则永久封账、Stop timer、推进 generation、清 token。首次结果缓存，重复调用不重算。nil 只代表预算封账成功；parent 随后仍可取消。Core 必须将已有主因检查和封账在归因短临界区排序，方法不得回调 core；已有失败或返回 error 则不能 Persist。该方法用于最终健康候选，必须在 cleanup Stop 前调用；Stop先行后的晚到Finish/Fire不得补扣出新active cause，core不能借清理Stop跳过健康封账。
+- Stop 幂等，冻结 timer/token，不取消 child，不阻断仍在进行的父取消传播；仅用于已有失败或已封账后的 cleanup，不重新结算/生成后到预算错误。Cancel 幂等，先停止再 cancelCause(cause)；cause==nil 遵循 context.WithCancelCause 的 Canceled 语义，不能覆盖已发生 cause。
 - parent cancellation 始终通过标准 context 传播，无论 paused/Stop；watcher 负责停 timer 与释放引用，退出后无泄漏。锁内不执行外部 callback；Clock.AfterFunc 不同步 inline 调用回调，Timer.Stop 不能被当作“回调绝不再来”的保证。
 - 单调时间不能负向增加预算。fake clock 的 Advance 必须拒绝负数，时刻相同的 timer 按创建序处理；测试能保存已停止 callback 并手工 Fire，以验证 generation。fake API 为测试文件内 `newFakeClock()`、`Advance(d)`、`Fire(timerID)`、`Pending()`，不形成 runtime 公共 API。
 
@@ -205,7 +212,7 @@ DelegationError.Unwrap 返回 Cause，nil receiver 返回 nil。Code 是该 host
 
 新请求预算与政策上限均非负，负值在 BeforeDelegate/远端 I/O 前返回 `DelegationError{Code:"invalid_policy"}`；Registry.Register 拒绝负 MaxActiveExecutionTimeout，运行入口防御性再检查。有效主动预算为：请求>0、上限>0 时取 min；仅一个>0 时取该值；都0则无预算。新字段不使用旧 MaxTimeout 默认值，原 Timeout/MaxTimeout 的墙钟语义及默认合并保持。
 
-顺序固定为 registry 查找/验证 → 建立墙钟与主动预算 → BeforeDelegate 成功 → 外层 started 事实与唯一 terminal defer → discovery/card/Send/流/poll/recovery。BeforeDelegate 拒绝不产生“已调用”capability 事实；主动预算涵盖 BeforeDelegate、discovery、网络重试、读取、poll间隔和 recovery。AfterDelegate/CancelTask 是独立有界 cleanup；不在主预算中重新计时。
+顺序固定为 registry 查找/验证 → 建立墙钟与主动预算 → BeforeDelegate 成功 → 外层 started 事实与唯一 terminal defer → discovery/card/Send/流/poll/recovery。BeforeDelegate 拒绝不产生“已调用”capability 事实；主动预算涵盖 BeforeDelegate、discovery、网络重试、读取、poll间隔和 recovery。Delegate 结束候选按 R012 完成私有预算封账后，AfterDelegate/CancelTask 是独立有界 cleanup；不在主预算中重新计时，既有主 Code 仍先于后到原因。
 
 每次 Delegate（包括同 TaskID continuation）创建新预算；一个 Delegate 内传输重试、GetTask recovery、历史 Task 回放不重新 New。预算不跨 Task、Thread 或进程持久化，不通过任意请求 metadata 让远端改 core Policy。已知 TaskID 从 `req.Message.TaskID` 在调用开始播种，随后只由已确认同次远端响应更新。
 
@@ -327,3 +334,15 @@ C02 验收为签名、状态机、fixtures一致性审阅及任务包静态校�
 无需新增顶层 require。标准库 context/sync/time/errors 足够表达有界计时与 cause 链，fake clock 可局部注入并验证 timer race；没有跨协议解析职责或生命周期外包需求，因此本次新增依赖不会显著提高可靠性或降低维护面。私有实现局限 internal/activebudget，协议解析仍分别在 bridge/hosttool。
 
 拒绝 internal 的公开 PausableContext/WithPausableTimeout、单 paused bool、0继承/负数关闭的逐字段 Policy 合并、将 DelegationRequest.Timeout 偷换为主动预算、取消只凭 sent/session ID标记健康checkpoint、用 detached context写中断checkpoint、metadata任意limit直通、依据ctx.Err覆盖审批与已定主因。只采纳部分输出保留、单调timer/generation、Ask暂停及安全code投影的思想，按当前 v1 合同实现。
+
+## R014：已选主因与取消通知的线性化
+
+固定d623b718独立Stop屏障实证：onTimer在controller锁内确认余额耗尽、检查parent仍活动并登记本轮expired后，锁外cancel之前发生的parent取消可抢先锁定标准context.Cause，造成最终本轮active主因及cause丢失。此前child.Done先关闭的fixture不足以覆盖此窗口。
+
+Controller.SelectedCause() error只在同一锁中读取已选cause；nil receiver返回nil，未选择返回nil。它不根据当前parent重算，不修改状态，也不把未触发/尚未结算的余额视为已经选择。已有expireLocked/Cancel选择遵循first-selection，后续通知/Stop/Finish不得覆盖；parent在选择前已经Done仍先选parent真实cause。core/hosttool各自用本次expired对象身份区分本地选择与继承的同型原因，保留原cause而不伪造parent.Err。
+
+本轮controller选择是已有first-terminal合同的确认点，不能由稍后context传播调度改写。core唯一terminal短锁读取SelectedCause与已有主因并保存原cause；锁顺序只允许terminal→controller，controller锁内不得调用core回调、事件或宿主IO，cancel仍在锁外。标准child.Err/Cause仍服从Go context自身规则，SDK不会尝试改写它；公开Reason/终局与保存的Cause则必须保留已确认本轮预算。T18的每次Delegate使用同一规则，不让Leader传入的active cause冒充Member自身超时。
+
+Stop屏障反例、parent先Done、真实本轮先选、pre-Driver与多次Result/终局一致性由T10现有V02/V03范围回归，T22独立验收；没有新公开API、Timer或持久化入口。原d623所有通过和失败证据保留，新源码必须重跑最终必需检查。
+
+C02提交前校核补充：SelectedCause等于本轮expired时，即使child.Err仍nil，也已构成active候选；core不得把它隐藏在contextErr非nil分支中，最终Cause直接保留selected实例。FinishExecution首次结算以已有b.cause先于child.Err/context.Cause，防止后到parent占据标准child cause；已缓存finishErr仍最先返回。SelectedCause不扣时、不读parent、不从Stop合成新原因；parent选择前已Done仍按其Err归因，并非本地预算总是优先。

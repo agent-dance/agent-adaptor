@@ -1,10 +1,10 @@
 {
   "schema_version": "1.0",
-  "gate": "G02",
-  "manifest_revision": 12,
+  "gate": "G03",
+  "manifest_revision": 15,
   "code_baseline": "919f140f64f89c80933802840c8878681a85a4d9",
   "source_head": "e2f0620bdd6477e6fe16f6db5648093589342ca2",
-  "status": "contracts_reconciled_for_G02_later_work_pending",
+  "status": "implementation_reconciled_G03_checks_pending",
   "contracts": [
     {
       "producer": "C01",
@@ -22,8 +22,8 @@
     {
       "producer": "C02",
       "path": "docs/alignment-tasks/2026-09-07/contracts/results-and-budget.md",
-      "sha256": "9e592c47979c94e09709ae8d55b73654f25ed6f83bbdab9ec24690ef378d0fba",
-      "version": "1.0-g00",
+      "sha256": "40061fb30fd47d5a7f5dd6a95aca460c1addd89a1831eb545b1c6c8302798f47",
+      "version": "1.2-g03",
       "interfaces": [
         "RunError.Cause + stable primary Reason",
         "Policy.ActiveExecutionTimeout",
@@ -42,8 +42,8 @@
     {
       "producer": "C03",
       "path": "docs/alignment-tasks/2026-09-07/contracts/events-observation.md",
-      "sha256": "911a71827fb4a0e44d3f319af10b1ffad0090318ab4b1db2dbc0aef16703f5be",
-      "version": "1.3-g02",
+      "sha256": "b2588c3d140507459cbdd6240d43a4b84c6138f3e752527cd2863361bbce948e",
+      "version": "1.4-g03",
       "interfaces": [
         "capability/todo leaf types and root/SPI typed events",
         "run-bound publisher and capability/todo-only observer",
@@ -79,8 +79,8 @@
     {
       "producer": "C04",
       "path": "docs/alignment-tasks/2026-09-07/contracts/prompt-transport.md",
-      "sha256": "4ddfbbda2a09eb4698e2001a95a8ef5658fcf332d72b6ac17a8860f983997de6",
-      "version": "1.3-g02",
+      "sha256": "370a09fad047f58816ed4574ee2d641532809dcc8e0fee69fafdec95a010d074",
+      "version": "1.4-g03",
       "interfaces": [
         "WithAppendSystemPrompt SharedOption",
         "driver.Request.AppendSystemPrompt + Descriptor.SystemPrompt",
@@ -218,6 +218,7 @@
     "T10": [
       "adaptertest/testdata/driver_api.golden",
       "alignment_active_budget_test.go",
+      "alignment_approval_snapshot_test.go",
       "alignment_budget_error_test.go",
       "alignment_prompt_contract_test.go",
       "approval.go",
@@ -228,6 +229,7 @@
       "driver/policy_errors.go",
       "driver/run.go",
       "errors.go",
+      "events.go",
       "inspect.go",
       "inspect_test.go",
       "internal/activebudget/**",
@@ -236,13 +238,17 @@
       "internal/engine/run_types.go",
       "internal/systemprompt/**",
       "invocation.go",
+      "memory/store.go",
+      "memory/store_test.go",
       "options.go",
       "options_scope_test.go",
       "policy.go",
       "policy_prelaunch_test.go",
+      "process_outcome_test.go",
       "sink.go",
       "stream.go",
       "testdata/root_api.golden",
+      "threadstore/threadstore.go",
       "wiring.go"
     ],
     "T11": [
@@ -360,7 +366,13 @@
     "R010 admission boundary: every executeInvocation has a core lifecycle; existing openStream static rejection remains closed Events + Result error with no resources/Driver, including missing RunID.",
     "G02 implementation reconciliation: T06 final resource/prune snapshot and admitted core lifecycle delivered; source IO and unproved copied-tree prune fail closed. T07/T08 partial response/cause/usage and T09 artifact opt-in delivered; independent and platform/live gates remain pending.",
     "R011: preserve existing MCP regular-file modes; per-turn Streaming alone is not durable Thread identity. Real config/codec/environment compatibility and private process shape guards remain mandatory; replay unchanged G02 fixtures and full package checks.",
-    "R011 platform detail: synthetic missing-file mode uses the OS-observable representation of the unchanged writer default; existing Stat modes stay authoritative. Windows read-only/ACL protection and native verification remain separate; POSIX numeric fixtures cannot substitute."
+    "R011 platform detail: synthetic missing-file mode uses the OS-observable representation of the unchanged writer default; existing Stat modes stay authoritative. Windows read-only/ACL protection and native verification remain separate; POSIX numeric fixtures cannot substitute.",
+    "R012: FinishExecution seals active time before atomic persistence, separately from success. Exhausted balance cannot persist; committed-then-delayed Finalize is outside active time. Parent context and Finalize errors remain observable; cleanup Stop cannot invent a late timeout.",
+    "R012 memory Finalize checks context before and after acquiring its mutex, before first mutation; T10 owns exact store implementation/test plus threadstore godoc, no interface change. Completed healthy atomic commits are not rolled back after later cancellation.",
+    "R013: T10 additionally owns events.go and alignment_approval_snapshot_test.go for Approval descriptive JSON-container snapshots; approval.go already owned. Live copies retain one responder, recorder replay removes it. T22 independently verifies; no new API, task or requirement ID and no simultaneous owner conflict.",
+    "R014: private Controller.SelectedCause reads the already selected cause without recomputation; local expiry selection precedes asynchronous cancellation delivery. Core and Delegate retain selected local identity and first primary while inherited same-type causes stay evidence. No ownership/DAG/public API changes; T10/T22 original required checks preserved.",
+    "G03/C04 clarification: cancelled context precedes empty-text Materialize no-op; preserve cancellation cause, allocate nothing. Empty append clearing is unchanged. Current 709 implementation already follows this order; no code/ownership/DAG change or new validation run is claimed.",
+    "G03 reconciliation: native append core/hash and active budget with R012 seal/R014 selected cause, R013 Approval snapshots, A2A strict opt-in wire, non-A2A replay/Merge and optional capabilityrecorder delivered. T14-T19 provider/delegation adoption and B05/B06 verification remain open; no native/live evidence inferred."
   ],
   "unmerged_related_branches": [
     {
@@ -376,5 +388,5 @@
       "decision": "Preserve current stronger tool authorization boundary; no automatic merge."
     }
   ],
-  "previous_freeze_gate": "G01"
+  "previous_freeze_gate": "G02"
 }

@@ -86,11 +86,70 @@ Intermediate typed events use DataParts with schema `adapter.stream.v1`. The exp
 
 The wire envelope preserves adaptor `EventMeta` plus provider source coordinates, complete tool snapshots, approval fields, and detailed dropped-event markers. Unknown DataPart schemas remain protocol data; the bridge does not guess provider semantics.
 
+### Capability, Todo and parent projection
+
+```go
+server := a2a.NewServer(agent, a2a.ServerOptions{
+    AgentCard: card,
+    Exposure: a2a.ExposurePolicy{
+        IncludeCapabilityInvocations: true,
+        IncludeTodos: true,
+    },
+})
+```
+
+Both new switches default to false and are independent of tools, HITL,
+Transcript and diagnostics. Opt-out omits facts without revealing kind/key/count
+through a notice. Capability includes only closed identifiers, operation, phase,
+evidence, source enum, time/duration and error code, never args/result/Raw,
+credentials, prompt or error bodies. Todo is explicit content exposure: ordered
+Items preserve real/SyntheticID and status with existing inline-secret filtering;
+`items: []` clears the scope, while null/missing Items is invalid.
+
+Source/Upstream coordinates additionally require Diagnostics.IncludeMetadata;
+they do not replace authoritative Meta.RunID/Sequence/Time. Tool events retain
+ScopeID/ParentScopeID/ParentToolCallID. Both A2A request modes use the existing
+Runner.Stream and append a private observation-demand attachment after host
+options. It adds no Store, Observer, event source or second provider policy.
+
+`adapter.stream.v1` keeps its version/URI and adds optional capability/todo/parent
+and Source fields. New kinds have strict closed shapes, nonzero valid Meta,
+consistent optional flat mirrors, safe JSON integer coordinates, explicit UTF-8
+field limits and at most eight acyclic source nodes. Same-scope invocation
+self-parent is invalid; the same raw ID in another scope can be a valid parent.
+Occurrence timestamps decode to the equivalent UTC instant. Unknown duration
+and observed zero stay distinct. Never truncate a Todo and call it complete.
+
+The entire A2A envelope is at most 65536 bytes. RawMessage decoding validates
+original bytes for new kinds: duplicates (including a foreign schema followed
+by this schema), trailing values, invalid UTF-8 and unpaired surrogates fail.
+Map/DTO inputs validate structure before encoding, but cannot reconstruct
+duplicate keys already erased by an upstream decoder. Existing legacy args/raw
+large values and parseable zero timestamps retain their established compatibility;
+new parent/source protection is validated independently. Unknown kind in this
+schema yields matched=true with an error and no partial Event.
+
+Opaque ThreadKey and its flat ThreadID mirror preserve all legal UTF-8,
+including JSON-escaped LF/tab, without trimming or a 2048-byte key limit. Existing
+envelope coordinate length is bounded by the whole envelope. The explicitly
+limited invocation/tool/scope/parent-scope/delegation IDs retain 2048-byte limits;
+Source coordinate character rules remain unchanged.
+
+Invalid/oversized opted-in content becomes stream.dropped with the original
+Meta and no new sequence, provided that Meta itself is safely encodable. Its
+Raw is only dropped_count=1, source=a2a, a closed reason and validated event_kind
+(or unknown); no original payload/cause leaks. If even the original Meta cannot
+fit safely, the same executor cancels and drains the Stream, reads its actual
+Result/RunError.Result, emits permitted partial artifacts and returns an
+observable infrastructure error. It neither fabricates coordinates nor truncates
+the key/source chain. Old binary consumers must explicitly handle unsupported
+new kinds. Missing facts never prove no invocation or complete audit/billing.
+
 ### Result and exposure
 
 Successful `Stream.Result()` values produce the completed status and terminal artifacts. For `*adaptor.RunError`, the bridge first reads the primary `Reason`: explicit cancellation maps to canceled; approval denial/timeout and other failures map to failed even when their cause also matches a context error. Both retain the partial Result allowed by ExposurePolicy. Bare infrastructure errors map through the existing context/error rules. The bridge never treats a non-nil execution error as success.
 
-The default `agent-adaptor-result` artifact contains only the safe summary. `ExposurePolicy` must explicitly opt in to reasoning, tool calls, HITL, metadata, usage, provider terminal payload, transcript, or raw streams. Enabled diagnostics are sanitized before leaving the bridge.
+The default `agent-adaptor-result` artifact contains only the safe summary. `ExposurePolicy` must explicitly opt in to reasoning, tool calls, HITL, capability facts, Todo content, metadata, usage, provider terminal payload, transcript, or raw streams. Enabled diagnostics are sanitized before leaving the bridge.
 
 `ServerOptions.ResultBuilder` may append or replace terminal artifacts and override completed status text. It runs only after successful adaptor execution and cannot rewrite already emitted intermediate events.
 
@@ -240,7 +299,7 @@ The leader sees only registry keys, objectives, optional input, and bounded cons
 
 `Service.Result(runID, key)` returns the latest result for an Agent key. `Service.Results(runID)` is the latest-by-key map. `Service.Delegations(runID)` preserves every delegation in `DelegationStarted` acceptance order, including repeated calls to the same Agent. Recorded results remain readable after per-run sidecar teardown and after `Service.Close`.
 
-For lower-level integrations, `Registry`, `Delegator`, `EventBus`, and `MCPServer` remain independently usable. `StatusPartDecoder` can decode a host-owned A2A Status DataPart schema. The built-in `adapter.stream.v1` decoder preserves the event families currently supported by its codec and permitted by ExposurePolicy. New core event types do not imply corresponding A2A wire support; Capability/Todo wire support is tracked separately in T11.
+For lower-level integrations, `Registry`, `Delegator`, `EventBus`, and `MCPServer` remain independently usable. `StatusPartDecoder` can decode a host-owned A2A Status DataPart schema. The built-in `adapter.stream.v1` decoder preserves typed capability/todo and parent/source coordinates when permitted by ExposurePolicy. Concrete delegation publisher/domain adoption is a separate layer; the codec does not reinterpret provider JSON or automatically grant exposure.
 
 ## Delegation artifact updates
 

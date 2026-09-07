@@ -214,7 +214,7 @@ Validate 先拒绝非 UTF-8，再拒绝 NUL；随后 core 才校验非空请求�
 
 创建临时文件 → 写入完整原字节 → Sync/Close 成功 → 同目录原子发布 → Verify。权限、类型、链接及内容校验失败都在 prompt 交付前显式失败。Verify 比较完整 SHA-256、实际字节、regular file 身份、当前权限；对目录/文件的 symlink 或 Windows reparse point、同长度篡改、文件替换及不受控路径拒绝，不使用 `Stat.Size == len(text)` 缓存命中。使用目录约束打开/路径身份检查保证校验及删除不越出 owned root；安全边界不声称能防止同 UID 在校验之后任意写进程内存或拥有目录。
 
-空文本 Materialize 返回 `(nil,nil)`，nil handle 的 Path/Fingerprint 返回空串、Verify/Close 成功。File.Close 幂等；仅删除该 handle 的文件及其私有目录，失败可观察并可重试，不递归删除任何外部 profile。创建失败/取消清理已创建载体；Close/cleanup 的错误按既有主因合并而非覆盖。
+G03/C04澄清取消优先级：Materialize先检查context，已取消则返回取消错误并保留cause；context未取消时，空文本返回 `(nil,nil)` 且不创建资源，nil handle 的 Path/Fingerprint 返回空串、Verify/Close 成功。File.Close 幂等；仅删除该 handle 的文件及其私有目录，失败可观察并可重试，不递归删除任何外部 profile。创建失败/取消清理已创建载体；Close/cleanup 的错误按既有主因合并而非覆盖。
 
 一次性进程从 spawn 前至进程退出持有 File；常驻 liveProcess 从实际 spawn 至有界退出持有 File，不能在本轮 Run 返回时删掉仍被 writer 持有的载体。复用既有进程时无需重新物化；sig 由文本 hash 决定，与随机路径无关。replacement、idle、取消、Agent.Close 的退出清理均释放；退出未完成不能提前释放。崩溃残留仅是 OS 临时目录残留，本能力不自动遍历删除其它进程遗留目录，也不许把它变成持久 profile 清理。
 
