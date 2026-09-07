@@ -1,0 +1,17 @@
+{
+  "schema": "adapter.stream.v1",
+  "event": {
+    "kind": "todo.updated",
+    "meta": {
+      "run_id": "remote-r1",
+      "sequence": 9,
+      "time": "2026-09-07T00:00:01Z"
+    },
+    "todo": {
+      "items": [],
+      "source": "plan_update",
+      "revision": 2,
+      "occurred_at": "2026-09-07T00:00:01Z"
+    }
+  }
+}

@@ -1,0 +1,45 @@
+{
+  "encoding": "aa1: + base64url(no padding, compact JSON string array)",
+  "cases": [
+    {
+      "parts": [
+        "invocation",
+        "del-A",
+        "remote-r1",
+        "",
+        "call-1"
+      ],
+      "encoded": "aa1:WyJpbnZvY2F0aW9uIiwiZGVsLUEiLCJyZW1vdGUtcjEiLCIiLCJjYWxsLTEiXQ"
+    },
+    {
+      "parts": [
+        "invocation",
+        "del-B",
+        "remote-r1",
+        "",
+        "call-1"
+      ],
+      "encoded": "aa1:WyJpbnZvY2F0aW9uIiwiZGVsLUIiLCJyZW1vdGUtcjEiLCIiLCJjYWxsLTEiXQ"
+    },
+    {
+      "parts": [
+        "invocation",
+        "del-A:del-B",
+        "remote-r1",
+        "",
+        "call-1"
+      ],
+      "encoded": "aa1:WyJpbnZvY2F0aW9uIiwiZGVsLUE6ZGVsLUIiLCJyZW1vdGUtcjEiLCIiLCJjYWxsLTEiXQ"
+    },
+    {
+      "parts": [
+        "invocation",
+        "del-A del-B",
+        "remote-r1",
+        "",
+        "call-1"
+      ],
+      "encoded": "aa1:WyJpbnZvY2F0aW9uIiwiZGVsLUFcdTIwMjhkZWwtQiIsInJlbW90ZS1yMSIsIiIsImNhbGwtMSJd"
+    }
+  ]
+}
