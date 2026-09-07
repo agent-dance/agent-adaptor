@@ -14,7 +14,9 @@ Canonical 23 / R021，W04-R06 补充实施，基线为已验收 G04 `b2035bc7933
 
 `TestAlignmentCodeBuddyPersistentHandoffHealthy` 使用真实测试二进制常驻子进程；stderr callback 在正式 parser 消费前被明确屏障挂起，stdout terminal 只能在 callback 已登记后被解析。旧代码四个 Run/Stream × newline/无 newline 组合提前返回且缺 Transcript；新代码直到屏障释放才返回完整审计。有限负向等待用于确认已到达屏障后的 Result 尚未完成，不靠 sleep 或概率调度制造触发。下一轮与闲时 stderr 后，对首轮全部审计层做独立 JSON 内容快照比较；真实 helper ledger 验证每个 prompt 一次和同一常驻 writer，无重叠。
 
-`TestAlignmentCodeBuddyPersistentHandoffFailure` 覆盖 Run/Stream 下待处理 stderr 的取消和真实 exit23，验证完整部分审计、errors.Is/As、健康 store record 不变、失败后 replacement 以及不重放。已有全部 CodeBuddy 和 Partial race 测试继续验证 W04-R06 历史边界。
+屏障先累计已经接收的完整预期诊断，再阻塞其最后一个 callback，因此独立的正文/换行管道写入被拆成多个 chunk 时，Raw 断言也不包含尚未接收的字节。首次 race20 揭示的 fixture 前提错误及修正后固定 G04 生产代码的反例日志均保留。
+
+`TestAlignmentCodeBuddyPersistentHandoffFailure` 覆盖 Run/Stream 下待处理 stderr 的取消和真实 exit23，验证完整部分审计、errors.Is/As、健康 store record 不变、失败后 replacement 以及不重放。比较前先确认健康记录与 State 非空、记录 ID 和正式 session 正确，序列化错误显式失败，避免 missing record 的空值比较虚过。已有全部 CodeBuddy 和 Partial race 测试继续验证 W04-R06 历史边界。
 
 源码提交固定后执行完整包、Partial race×5、新 Handoff race×20 和 vet；每条命令使用 Go 1.26.5 的实际路径、隔离进程 HOME、三个 live/E2E/golden 门为 0，以及进程外 watchdog。实跑计数、环境、历史失败和哈希在外部 result/evidence 中。本地 macOS arm64 fake-process 证据不替代 T25 原生 Linux、Windows、live、G05 或发布门禁。
 

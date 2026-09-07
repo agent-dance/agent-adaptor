@@ -70,6 +70,9 @@ func runHandoffHelper() int {
 type handoffGate struct {
 	entered, release, terminal           chan struct{}
 	enterOnce, releaseOnce, terminalOnce sync.Once
+	mu                                   sync.Mutex
+	observed                             int
+	expected                             int
 }
 
 func newHandoffGate(hold bool) *handoffGate {
@@ -89,13 +92,22 @@ type handoffSink struct {
 
 func (s handoffSink) Emit(event driver.RunEvent) error {
 	if event.Type == driver.RunEventChunk && event.Stream == "stderr" {
-		s.gate.enterOnce.Do(func() {
-			close(s.gate.entered)
-			select {
-			case <-s.gate.release:
-			case <-s.ctx.Done():
-			}
-		})
+		// io.Copy can split the helper's separate body/newline writes. Wait
+		// until every byte asserted in Raw has actually been admitted; never
+		// block an earlier chunk and then count a still-unread future newline.
+		s.gate.mu.Lock()
+		s.gate.observed += len(event.Bytes)
+		complete := s.gate.observed >= s.gate.expected
+		s.gate.mu.Unlock()
+		if complete {
+			s.gate.enterOnce.Do(func() {
+				close(s.gate.entered)
+				select {
+				case <-s.gate.release:
+				case <-s.ctx.Done():
+				}
+			})
+		}
 	}
 	if event.Type == driver.RunEventChunk && event.Stream == "stdout" && isResultLine(string(event.Bytes)) {
 		// The terminal cannot overtake admission of the stderr callback. The
@@ -140,6 +152,12 @@ func newHandoffFixture(t *testing.T, newline bool, gates map[string]*handoffGate
 	env := []driver.EnvBinding{{Name: handoffHelperEnv, Value: "1"}, {Name: "HOME", Value: root}, {Name: "CODEBUDDY_CONFIG_DIR", Value: profile}, {Name: "SPAWN_FILE", Value: fx.spawnFile}, {Name: "PID_FILE", Value: fx.pidFile}, {Name: "OVERLAP_FILE", Value: fx.overlap}, {Name: "HANDOFF_PROMPTS", Value: prompts}}
 	if newline {
 		env = append(env, driver.EnvBinding{Name: "HANDOFF_NEWLINE", Value: "1"})
+	}
+	for prompt, gate := range gates {
+		gate.expected = len("stderr:" + prompt)
+		if newline {
+			gate.expected++
+		}
 	}
 	store := memory.NewStore()
 	d := handoffDriver{configuredDriver{adapter: adapter{persistent: fx.pool}, cfg: Config{CommonConfig: CommonConfig{Command: exe, CWD: root, Env: env, GracePeriod: 50 * time.Millisecond}}}, gates}
@@ -334,7 +352,16 @@ func TestAlignmentCodeBuddyPersistentHandoffFailure(t *testing.T) {
 				if e != nil {
 					t.Fatal(e)
 				}
-				before, _ := json.Marshal(record)
+				if record == nil || record.State == nil {
+					t.Fatal("healthy turn did not persist a checkpoint")
+				}
+				if record.ID == "" || record.Key != "handoff" || record.Status != threadstore.StatusActive || record.DriverType != DriverType || record.State.ResumeID != "codebuddy-persistent-session" {
+					t.Fatalf("unexpected healthy checkpoint: %+v state=%+v", record, record.State)
+				}
+				before, e := json.Marshal(record)
+				if e != nil {
+					t.Fatal(e)
+				}
 				runctx, stop := context.WithCancel(ctx)
 				defer stop()
 				done := handoffRun(runctx, fx.thread, mode, stream)
@@ -360,8 +387,17 @@ func TestAlignmentCodeBuddyPersistentHandoffFailure(t *testing.T) {
 				}
 				handoffAudit(t, re.Result, mode, false, false)
 				record, e = fx.store.Resolve(ctx, threadstore.Query{Key: "handoff"})
-				after, _ := json.Marshal(record)
-				if e != nil || string(before) != string(after) {
+				if e != nil {
+					t.Fatal(e)
+				}
+				if record == nil || record.State == nil {
+					t.Fatal("failed turn removed the healthy checkpoint")
+				}
+				after, e := json.Marshal(record)
+				if e != nil {
+					t.Fatal(e)
+				}
+				if string(before) != string(after) {
 					t.Error("failed callback handoff changed healthy checkpoint")
 				}
 				if snapshot != handoffSnapshot(t, healthy.result) {
