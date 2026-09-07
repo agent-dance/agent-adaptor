@@ -37,8 +37,9 @@ type Stream interface {
 	// Dropped marker when events were dropped, have been delivered).
 	Events() <-chan Event
 	// Result blocks until the run ends and returns the final outcome —
-	// exactly Run's contract: (*Result, nil) on success, (nil, *RunError)
-	// on business failure, (nil, error) on infrastructure failure.
+	// exactly Run's contract: (*Result, nil) on success. Failures after
+	// execution return (nil, *RunError), carrying the available partial Result
+	// and original cause; pre-execution failures return (nil, error).
 	// Result may be called multiple times and from any goroutine.
 	Result() (*Result, error)
 	// RunID returns the SDK-assigned execution identifier, available
@@ -186,6 +187,15 @@ func (a *Agent) openStream(ctx context.Context, opts []CallOption, threadKey str
 		close(st.done)
 		return st, eff, ctx, false
 	}
+	resolvedOutput, schemaErr := a.resolveStructuredOutput(desc, &eff)
+	if schemaErr != nil {
+		st.err = fmt.Errorf("adaptor: run %s: %w", runID, schemaErr)
+		cancel()
+		sink.close()
+		close(st.done)
+		return st, eff, ctx, false
+	}
+	eff.resolvedOutput = resolvedOutput
 	if openErr := a.registerRun(runID, cancel); openErr != nil {
 		st.err = openErr
 		cancel()

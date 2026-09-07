@@ -156,7 +156,52 @@ func VerifyStructuredOutputCapability(capability driver.StructuredOutputCapabili
 		out = append(out, violationf("SO-01",
 			"a structured-output mechanism is declared with WorksWithRun=false; structured output uses v1's single execution pipeline"))
 	}
+	for _, mechanism := range structuredHITLMechanisms(capability) {
+		matrix := mechanism.matrix
+		if matrix != nil && (matrix.Permission || matrix.PlanReview || matrix.Question) && (!mechanism.enabled || !capability.WorksWithRun) {
+			out = append(out, violationf("SO-01", "%s has a true Ask field without its JSONSchema mechanism and WorksWithRun", mechanism.name))
+		}
+	}
 	return out
+}
+
+// VerifyStructuredOutputDescriptor checks SO-01 including the cross-capability
+// implication: a true per-mechanism HITL kind also requires ordinary Ask support
+// in Descriptor.RunPolicyCaps. VerifyStructuredOutputCapability remains usable
+// for the standalone matrix; the suite uses this complete descriptor check.
+func VerifyStructuredOutputDescriptor(desc driver.Descriptor) []Violation {
+	out := VerifyStructuredOutputCapability(desc.StructuredOutput)
+	for _, mechanism := range structuredHITLMechanisms(desc.StructuredOutput) {
+		if mechanism.matrix == nil {
+			continue
+		}
+		for _, kind := range []struct {
+			name            string
+			structured, ask bool
+		}{
+			{"Permission", mechanism.matrix.Permission, desc.RunPolicyCaps.Permission.Ask},
+			{"PlanReview", mechanism.matrix.PlanReview, desc.RunPolicyCaps.PlanReview.Ask},
+			{"Question", mechanism.matrix.Question, desc.RunPolicyCaps.Question.Ask},
+		} {
+			if kind.structured && !kind.ask {
+				out = append(out, violationf("SO-01", "%s.%s=true requires RunPolicyCaps.%s.Ask", mechanism.name, kind.name, kind.name))
+			}
+		}
+	}
+	return out
+}
+
+type structuredHITLMechanism struct {
+	name    string
+	enabled bool
+	matrix  *driver.StructuredOutputHITLCapability
+}
+
+func structuredHITLMechanisms(c driver.StructuredOutputCapability) [2]structuredHITLMechanism {
+	return [2]structuredHITLMechanism{
+		{"NativeHITL", c.JSONSchemaNative, c.NativeHITL},
+		{"PromptValidateHITL", c.JSONSchemaPromptValidate, c.PromptValidateHITL},
+	}
 }
 
 // knownStreamKind reports whether kind is one of the 19 normalized

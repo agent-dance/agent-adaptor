@@ -278,7 +278,7 @@ func checkDeclarations(t *testing.T, newDriver func() driver.Driver, d driver.Dr
 	} else if desc.Skills.Mode == driver.SkillSyncEphemeral || desc.Skills.Mode == driver.SkillSyncPersistent {
 		t.Errorf("CAP-02: Skills.Supported=false but Mode=%q declares a sync mode", desc.Skills.Mode)
 	}
-	reportViolations(t, VerifyStructuredOutputCapability(desc.StructuredOutput))
+	reportViolations(t, VerifyStructuredOutputDescriptor(desc))
 }
 
 func checkEnvironmentProbe(t *testing.T, d driver.Driver, desc driver.Descriptor, c *suiteConfig) {

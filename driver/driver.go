@@ -264,6 +264,23 @@ type RuntimeCapability struct {
 	ReportsServices bool
 }
 
+// StructuredOutputHITLCapability declares which effective Ask kinds can
+// coexist with one structured-output mechanism. Every selected Ask kind MUST
+// be supported after EffectiveHumanDecisionPolicy materializes SDK defaults:
+// unset Permission and PlanReview are Ask, while unset Question is AutoReject.
+// Explicit non-Ask kinds impose no requirement. A true field MUST imply
+// the corresponding JSONSchema* mechanism, WorksWithRun, and the matching
+// Descriptor.RunPolicyCaps Ask capability. Schema support cannot grant an
+// otherwise unsupported approval mode.
+//
+// Drivers MUST return independent Descriptor snapshots, including these
+// pointers. Core reads the declarations without modifying them.
+type StructuredOutputHITLCapability struct {
+	Permission bool
+	PlanReview bool
+	Question   bool
+}
+
 // StructuredOutputCapability is a truthful matrix for structured-output
 // resolution. JSONSchemaNative means the driver can pass a schema through an
 // official provider/CLI surface and return the provider-produced value.
@@ -275,20 +292,32 @@ type RuntimeCapability struct {
 //
 // WorksWithStreaming applies only when Request.Streaming selects the
 // provider-native streaming transport; it does not describe the consumer
-// Stream method. WorksWithHITL applies when the effective policy contains an
-// Ask decision. Core always selects native enforcement when that mechanism is
-// eligible, otherwise prompt-validation when it is eligible, and rejects the
-// invocation before launch when neither works. Drivers consume the resolved
-// Request.StructuredOutputSource and must not renegotiate it. Every mechanism
-// additionally requires WorksWithStreaming when Request.Streaming is true and
-// WorksWithHITL when any effective decision mode is Ask.
+// Stream method. Core always selects eligible native enforcement first,
+// otherwise eligible prompt-validation, and rejects the invocation before
+// resource acquisition when neither works. Batch fallback cannot discard
+// effective Ask transport requirements. Drivers consume the resolved
+// Request.StructuredOutputSource and MUST NOT renegotiate it or modify
+// Request.OutputSchema. These declarations are capabilities, not selectors.
+// Without a requested schema, this matrix has no effect.
 type StructuredOutputCapability struct {
 	JSONSchemaNative         bool
 	JSONSchemaPromptValidate bool
 
 	WorksWithRun       bool
 	WorksWithStreaming bool
-	WorksWithHITL      bool
+	// WorksWithHITL applies to explicitly requested Ask modes when the
+	// corresponding mechanism's HITL pointer is nil. This preserves the
+	// legacy behavior: unset fields alone do not require WorksWithHITL.
+	WorksWithHITL bool
+
+	// NativeHITL replaces WorksWithHITL for native enforcement when non-nil.
+	// An all-false value explicitly rejects every Ask combination, even if
+	// WorksWithHITL is true. Every effective Ask kind, including inherited
+	// defaults, must be true and supported by ordinary RunPolicyCaps.
+	NativeHITL *StructuredOutputHITLCapability
+	// PromptValidateHITL independently replaces WorksWithHITL for prompt
+	// validation under the same nil, explicit-false, and all-Ask rules.
+	PromptValidateHITL *StructuredOutputHITLCapability
 
 	Notes string
 }

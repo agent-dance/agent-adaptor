@@ -70,8 +70,16 @@
 //	SO-01  WorksWith* flags require a declared JSONSchema* mechanism, and a
 //	       declared mechanism requires WorksWithRun for v1's one execution
 //	       pipeline. Core selects native enforcement first and Prompt
-//	       validation as the fallback. Provider streaming and effective HITL
-//	       Ask additionally require WorksWithStreaming and WorksWithHITL.
+//	       validation as the fallback. Provider streaming additionally requires
+//	       WorksWithStreaming. A nil NativeHITL/PromptValidateHITL retains
+//	       WorksWithHITL's explicit-Ask semantics for that mechanism; non-nil
+//	       requires every Ask kind after EffectiveHumanDecisionPolicy, including
+//	       inherited Permission/PlanReview Ask defaults. Each true matrix field
+//	       implies its JSONSchema* mechanism, WorksWithRun, and matching
+//	       RunPolicyCaps Ask.
+//	       Explicit false is not overridden by WorksWithHITL=true. Core does
+//	       not discard Ask transport requirements during batch fallback and
+//	       rejects unsupported combinations before acquiring resources.
 //	SO-02  (live, opt-in) a native structured run yields StructuredOutput with
 //	       Source=native, Valid=true and parseable RawJSON.
 //	SO-03  Suite guarantee: no probe requests a mechanism or transport shape

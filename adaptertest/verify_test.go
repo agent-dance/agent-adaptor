@@ -453,3 +453,48 @@ func TestVerifyTranscriptMirror(t *testing.T) {
 		t.Errorf("want RUN-04 for a diverging mirror, got %v", got)
 	}
 }
+
+func TestVerifyStructuredOutputHITLImplications(t *testing.T) {
+	for _, mechanism := range []string{"native", "prompt"} {
+		for _, kind := range []string{"permission", "plan", "question"} {
+			for _, missing := range []string{"none", "mechanism", "run", "ask"} {
+				t.Run(mechanism+"/"+kind+"/missing_"+missing, func(t *testing.T) {
+					matrix := &driver.StructuredOutputHITLCapability{}
+					policy := driver.RunPolicyCapabilities{}
+					switch kind {
+					case "permission":
+						matrix.Permission = true
+						policy.Permission.Ask = missing != "ask"
+					case "plan":
+						matrix.PlanReview = true
+						policy.PlanReview.Ask = missing != "ask"
+					case "question":
+						matrix.Question = true
+						policy.Question.Ask = missing != "ask"
+					}
+					caps := driver.StructuredOutputCapability{WorksWithRun: missing != "run"}
+					if mechanism == "native" {
+						caps.NativeHITL = matrix
+						caps.JSONSchemaNative = missing != "mechanism"
+					} else {
+						caps.PromptValidateHITL = matrix
+						caps.JSONSchemaPromptValidate = missing != "mechanism"
+					}
+					violations := VerifyStructuredOutputDescriptor(driver.Descriptor{StructuredOutput: caps, RunPolicyCaps: policy})
+					if clauseSet(violations)["SO-01"] != (missing != "none") {
+						t.Fatalf("violations=%v", violations)
+					}
+				})
+			}
+		}
+	}
+	for _, legacy := range []bool{false, true} {
+		caps := driver.StructuredOutputCapability{JSONSchemaNative: true, JSONSchemaPromptValidate: true, WorksWithRun: true, WorksWithHITL: legacy, NativeHITL: &driver.StructuredOutputHITLCapability{}, PromptValidateHITL: &driver.StructuredOutputHITLCapability{}}
+		if got := VerifyStructuredOutputDescriptor(driver.Descriptor{StructuredOutput: caps}); len(got) != 0 {
+			t.Fatalf("explicit false does not imply Ask: %v", got)
+		}
+	}
+	if got := VerifyStructuredOutputDescriptor(driver.Descriptor{}); len(got) != 0 {
+		t.Fatalf("nil/zero should remain valid: %v", got)
+	}
+}
