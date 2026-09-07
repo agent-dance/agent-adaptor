@@ -20,7 +20,7 @@ All names below begin with `TestAlignmentLifecycle`. They are new independent te
 | W04-R02 | RunStreamAuditEquivalence complete partial carrier fields; StructuredAuditEquivalence complete success/Decode fields |
 | W04-R03 | PartialProviders full record equality; UnhealthyCheckpoint nonzero/malformed/missing/terminal-nonzero |
 | W04-R04 | ApprovalSchema deny/timeout; FinalAuthority lease/cleanup and cause; DeadlinePreservesAudit |
-| W04-R05 | PartialProviders/claude; BootFailureBoundary/claude no replay after possible delivery |
+| W04-R05 | PartialProviders/claude; BootFailureBoundary/claude reads one actual prompt byte before failing, proving no replay after partial delivery |
 | W04-R06 | PartialProviders/codebuddy; UnhealthyCheckpoint/codebuddy; BootFailureBoundary/codebuddy one safe retry |
 | W04-R07 | PartialProviders/codex Run/Stream full public Raw/Transcript/Usage; DeadlinePreservesAudit; BootFailureBoundary/codex |
 | W06-R01 | ApprovalSchema Question/PlanReview actual request + native schema + control answer + terminal Decode |

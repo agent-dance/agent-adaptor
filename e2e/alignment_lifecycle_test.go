@@ -624,15 +624,22 @@ func TestAlignmentLifecycleBootFailureBoundary(t *testing.T) {
 			defer c()
 			r, e := a.Thread("boot").Run(ctx, "deliver-once")
 			if provider == "claude" {
-				// Claude sends its first frame without a provider initialization acknowledgement.
-				// The pipe may have accepted that prompt even though the peer died first; replay
-				// is forbidden. This public fixture cannot assert the private pre-write boundary.
+				// The child consumes one actual byte of the first prompt before failing.
+				// Delivery has begun; an automatic replacement must not replay it.
 				re := alignmentCarried(t, r, e)
 				if re.Reason != adaptor.ReasonAgentError {
 					t.Errorf("boot error=%v", e)
 				}
 				if len(f.wait(t, "start", 1)) != 1 {
-					t.Error("possibly delivered Claude prompt replayed")
+					t.Error("partially delivered Claude prompt replayed")
+				}
+				if len(f.wait(t, "partial-input", 1)) != 1 {
+					t.Error("fixture did not prove partial prompt delivery")
+				}
+				for _, entry := range f.logs(t) {
+					if entry.Kind == "prompt" {
+						t.Error("unexpected full prompt after partial delivery failure")
+					}
 				}
 				return
 			}

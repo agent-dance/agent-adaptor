@@ -111,6 +111,15 @@ func alignmentProvider(provider string) int {
 	defer alignmentAppend(alignmentLog{Kind: "exit"})
 	if os.Getenv("AA_T20_FAIL_BOOT") == "1" {
 		if e := os.Mkdir(os.Getenv("AA_T20_LOG")+".failed", 0700); e == nil {
+			if provider == "claude" {
+				// Claude has no initialization acknowledgement. Read an actual byte
+				// before failing so this is unambiguously past prompt delivery.
+				var first [1]byte
+				if _, e := io.ReadFull(os.Stdin, first[:]); e != nil {
+					return 72
+				}
+				alignmentAppend(alignmentLog{Kind: "partial-input"})
+			}
 			return 71
 		}
 	}
