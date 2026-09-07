@@ -25,7 +25,7 @@ func TestPendingApprovalFailureWinsConcurrentCancellation(t *testing.T) {
 		RawStreams: &driver.RawStreams{Stdout: "partial raw"},
 	}
 
-	res, err := finalizeRun("run-pending-priority", sink, resp, context.Canceled)
+	res, err := finalizeRun("run-pending-priority", sink, resp, context.Canceled, nil)
 	if res != nil {
 		t.Fatalf("Result = %#v, want nil", res)
 	}
@@ -33,8 +33,8 @@ func TestPendingApprovalFailureWinsConcurrentCancellation(t *testing.T) {
 	if !errors.As(err, &runErr) || !errors.Is(err, ErrApprovalDenied) {
 		t.Fatalf("error = %T %v, want approval *RunError", err, err)
 	}
-	if errors.Is(err, context.Canceled) {
-		t.Fatalf("pending approval failure was replaced by cancellation: %v", err)
+	if runErr.Reason != ReasonApprovalDenied || !errors.Is(err, context.Canceled) {
+		t.Fatalf("pending approval primary reason or cancellation cause lost: %v", err)
 	}
 	if runErr.Result == nil || runErr.Result.Text != "partial" || runErr.Result.Raw().Stdout != "partial raw" {
 		t.Fatalf("partial Result = %#v", runErr.Result)

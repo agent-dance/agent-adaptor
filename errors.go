@@ -1,6 +1,7 @@
 package adaptor
 
 import (
+	"context"
 	"errors"
 
 	"github.com/agent-dance/agent-adaptor/driver"
@@ -8,22 +9,8 @@ import (
 	"github.com/agent-dance/agent-adaptor/skill"
 )
 
-// Business failures are typed errors. A run that completed but
-// failed at the business level returns a *RunError carrying the full Result;
-// infrastructure failures (context cancellation, process crash, protocol
-// breakage) travel the same err path as plain wrapped errors. Hosts have one
-// verdict point:
-//
-//	res, err := agent.Run(ctx, prompt)
-//	if err != nil {
-//	    var runErr *adaptor.RunError
-//	    if errors.As(err, &runErr) {
-//	        // completed-but-failed: runErr.Reason, runErr.Result
-//	    }
-//	    return err // cancellation / crash / breakage: same path
-//	}
-
-// FailureReason classifies a business-level run failure.
+// FailureReason classifies the primary reason an execution failed. Additional
+// causes may match errors.Is without changing the primary Reason.
 type FailureReason string
 
 const (
@@ -35,12 +22,17 @@ const (
 	// ReasonAgentError: the driver classified an agent-level failure
 	// (bad protocol, non-zero exit, handler panic, ...).
 	ReasonAgentError FailureReason = "agent_error"
-	// ReasonCancelled: the run was cancelled after producing a classified
-	// business failure (as opposed to a bare context cancellation, which
-	// surfaces as a plain error wrapping ctx.Err()).
+	// ReasonCancelled means an execution was cancelled, including an explicit
+	// Cancel after Driver.Run was entered.
 	ReasonCancelled FailureReason = "cancelled"
 	// ReasonPolicyViolation means policy validation failed.
 	ReasonPolicyViolation FailureReason = "policy_violation"
+	// ReasonInfrastructure means execution, Thread coordination, or cleanup
+	// failed without a more specific primary reason. Cause preserves the error.
+	ReasonInfrastructure FailureReason = "infrastructure_error"
+	// ReasonDeadlineExceeded means the invocation's outer deadline elapsed
+	// after Driver.Run was entered. It matches context.DeadlineExceeded.
+	ReasonDeadlineExceeded FailureReason = "deadline_exceeded"
 )
 
 // Sentinels for errors.Is matching. Each RunError unwraps to the sentinel
@@ -57,17 +49,23 @@ var (
 	ErrApprovalTimeout = errors.New("adaptor: approval timed out")
 	// ErrAgentFailed matches driver-classified agent failures.
 	ErrAgentFailed = errors.New("adaptor: agent failed")
-	// ErrRunCancelled matches driver-classified cancellation failures.
+	// ErrRunCancelled matches cancelled executions, including explicit Cancel.
 	ErrRunCancelled = errors.New("adaptor: run cancelled")
 	// ErrPolicyViolation matches policy validation failures.
 	ErrPolicyViolation = errors.New("adaptor: policy violation")
 )
 
-// RunError is the typed error for a run that completed but failed at the
-// business level (approval denied / timed out, policy violation, agent
-// error). It follows the *exec.ExitError convention: the error carries the
-// full execution Result, so partial output, usage, and the transcript stay
-// accessible on the failure path.
+// RunError carries every failed execution's available Result once Driver.Run
+// has been entered, including cancellation, transport, Thread coordination,
+// and cleanup errors. Failures before Driver.Run retain their original wrapped
+// error types and do not create a RunError or a provider Result.
+//
+// Run and Stream.Result always return nil, error on failure. Use errors.As to
+// retrieve RunError.Result, and errors.Is/As to inspect Cause. Reason is the
+// authoritative primary classification; Cause may contain secondary errors.
+// A cleanup failure may follow an already committed healthy Thread checkpoint;
+// it neither rolls back that commit nor permits an unhealthy checkpoint.
+// The SDK stops modifying the error and Result before Events closes.
 type RunError struct {
 	// Reason classifies the failure.
 	Reason FailureReason
@@ -75,9 +73,12 @@ type RunError struct {
 	Message string
 	// Details carries driver-specific structured failure metadata.
 	Details map[string]any
-	// Result is the full result of the completed-but-failed run. It is
-	// always non-nil when the SDK returns a *RunError.
+	// Result contains all available execution output and audit information.
+	// It is always non-nil when the SDK returns a *RunError.
 	Result *Result
+	// Cause preserves original and secondary errors, possibly joined with
+	// errors.Join. It may be nil when only a classified failure was observed.
+	Cause error
 }
 
 // Error implements the error interface.
@@ -95,26 +96,29 @@ func (e *RunError) Error() string {
 	return msg
 }
 
-// Unwrap returns the sentinel matching Reason so that
-// errors.Is(err, adaptor.ErrApprovalDenied) and friends hold.
+// Unwrap joins the sentinel matching Reason with Cause, preserving both the
+// primary classification and original errors.Is/As identities. It returns nil
+// for a nil receiver or when neither a reason sentinel nor Cause is present.
 func (e *RunError) Unwrap() error {
 	if e == nil {
 		return nil
 	}
+	var sentinel error
 	switch e.Reason {
 	case ReasonApprovalDenied:
-		return ErrApprovalDenied
+		sentinel = ErrApprovalDenied
 	case ReasonApprovalTimeout:
-		return ErrApprovalTimeout
+		sentinel = ErrApprovalTimeout
 	case ReasonAgentError:
-		return ErrAgentFailed
+		sentinel = ErrAgentFailed
 	case ReasonCancelled:
-		return ErrRunCancelled
+		sentinel = ErrRunCancelled
 	case ReasonPolicyViolation:
-		return ErrPolicyViolation
-	default:
-		return nil
+		sentinel = ErrPolicyViolation
+	case ReasonDeadlineExceeded:
+		sentinel = context.DeadlineExceeded
 	}
+	return errors.Join(sentinel, e.Cause)
 }
 
 // Skill, MCP, and structured-output resolution failures happen before the

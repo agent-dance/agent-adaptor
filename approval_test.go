@@ -355,11 +355,11 @@ func TestApprovalHandlerErrorSurfacesVerbatim(t *testing.T) {
 		t.Fatalf("res = %+v, want nil", res)
 	}
 	if !errors.Is(err, cause) {
-		t.Fatalf("handler error must surface verbatim on the plain path, got %v", err)
+		t.Fatalf("handler error must retain its original cause, got %v", err)
 	}
 	var runErr *adaptor.RunError
-	if errors.As(err, &runErr) {
-		t.Errorf("handler error is not a business failure, got %+v", runErr)
+	if !errors.As(err, &runErr) || runErr.Reason != adaptor.ReasonInfrastructure || runErr.Result == nil || runErr.Result.Text != "partial output before failure" {
+		t.Errorf("handler error lost partial Result: %+v", runErr)
 	}
 }
 
@@ -684,13 +684,13 @@ func TestApprovalCancelDuringPending(t *testing.T) {
 			st.Cancel() // operator closes the tab mid-approval
 		}
 	}
-	_, err := st.Result()
+	res, err := st.Result()
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("want context.Canceled, got %v", err)
 	}
 	var runErr *adaptor.RunError
-	if errors.As(err, &runErr) {
-		t.Errorf("bare cancellation must stay a plain error (D1), got %+v", runErr)
+	if res != nil || !errors.As(err, &runErr) || runErr.Reason != adaptor.ReasonCancelled || runErr.Result == nil {
+		t.Errorf("cancelled execution must carry partial Result: res=%+v err=%+v", res, err)
 	}
 	if captured == nil {
 		t.Fatal("no *ApprovalRequest delivered")
