@@ -1,0 +1,223 @@
+{
+  "schema_version": "1.0",
+  "id": "T36",
+  "title": "修复 Codex RPC 关闭与响应派发的 pending 竞争",
+  "batch_id": "B05",
+  "phase": "parallel",
+  "kind": "implementation",
+  "priority": "P1",
+  "status": "planned",
+  "objective": "修复 Codex RPC 关闭与响应派发的 pending 竞争；原负责人关闭原生Linux反例，保留部分结果、取消cause、Raw完整与健康checkpoint合同。",
+  "work_items": [
+    "W04"
+  ],
+  "requirements_owned": [
+    "W04-R07"
+  ],
+  "requirements_verified": [],
+  "depends_on": [
+    "G04",
+    "C02"
+  ],
+  "base": {
+    "mode": "previous_batch_integrated_head",
+    "predecessor_gate": "G04",
+    "required_ancestor": "919f140f64f89c80933802840c8878681a85a4d9",
+    "verification_head_gate": null,
+    "bootstrap_required": true
+  },
+  "context": {
+    "repository": "agent-adaptor",
+    "source_repository_hint": "/Users/blurooo/project/agent-adaptor-internal",
+    "source_head": "e2f0620bdd6477e6fe16f6db5648093589342ca2",
+    "source_commits": [
+      "126d610dfb6afd2cca19661ab0a7c0b6f626b490"
+    ],
+    "source_read_rule": "用 git -C <实际internal仓库> show <固定sha>:<文件>；hint可由派发器映射到只读clone，不能依赖worktree的../相对位置或读取internal脏工作区。",
+    "authority": {
+      "path": "AGENTS.md",
+      "baseline_sha256": "82ab6e82530363daeb3a303708bebe913b7e1f661ccdd39812715925355338df"
+    },
+    "plan": {
+      "path": "docs/internal-history-alignment-plan-2026-09-07.md",
+      "sha256": "831c6b718e71f2645999613f70cb182d8ef333d864835f61288bed816e3b962a",
+      "sections": [
+        "W04"
+      ]
+    },
+    "required_reads": [
+      "AGENTS.md",
+      "docs/internal-history-alignment-plan-2026-09-07.md",
+      "docs/alignment-tasks/2026-09-07/README.md"
+    ],
+    "dependency_artifacts": [
+      {
+        "producer": "C02",
+        "path": "docs/alignment-tasks/2026-09-07/contracts/results-and-budget.md",
+        "version_source": "docs/alignment-tasks/2026-09-07/contracts/frozen.json"
+      },
+      {
+        "producer": "G00",
+        "path": "docs/alignment-tasks/2026-09-07/contracts/frozen.json",
+        "version_source": "G00 accepted contract manifest"
+      }
+    ],
+    "embedded_plan_sections": {
+      "W04": "### W04：保留中断后的输出，但不降低 checkpoint 健康要求\n\n**证据与差距。** internal `126d610` 同时做了“保留部分结果”和“错误后落 checkpoint”。当前 Claude、CodeBuddy 常驻分支遇到非 fallback 错误返回空 `driver.Response{}`；Codex 的 `persistentWriter.run` 和 Driver 上层已经保留 `result, persistentErr`，无需重复修复这两层。剩余公共缺口在 `invocation.go:finalizeRun`：它在无已分类 failure 的 context/基础设施 error 上返回普通包装，丢弃刚映射的 Result。\n\n**本期采用。** Driver 已观察到的 stdout/stderr、Transcript、Terminal、Usage 和文本不得因取消而丢弃：先构建部分 Response，再返回原始 error；在唯一 `finalizeRun` 中建立可通过 Go error 获取部分 Result 的合同。建议复用 `RunError.Result` 的携带能力并保留原始 cause 的 `errors.Is/As` 链；实施前同步明确“执行后基础设施包装错误携带部分 Result”的 godoc，避免把启动前配置错误包装成业务失败。仍返回 `nil, error`，不新增 Result.Failure 或第二个结果入口。具体公共错误声明随合同测试一起冻结。\n\n**本期不采用。** internal Codex 以 `sent && ctx.Err()!=nil && ThreadID!=\"\"` 直接设置 `Checkpoint.Valid=true`，Claude/CodeBuddy 的 session ID 保留也不能替代健康终局证明。当前 `invocationCanPersist` 和 parser 的成功终局检查继续保留：取消、非零退出、畸形协议、缺失终局都不持久化。首次中断没有 checkpoint 时，下轮新建是本期明确边界；已有健康 Thread record 保持原样。\n\n未来若 provider 官方协议能证明中断后的健康可续状态，单独提出 Driver/SessionCodec 能力和证据合同，补齐 lease/token/atomic finalize 与有界脱离取消的持久化测试，再申请改变当前合同；不能以“internal 已用过”代替证明。\n\n**验收。** 三个常驻 Driver 的交付前失败仅允许一次安全 fallback，交付后不重放；中断前输出逐字段可取；`errors.Is` 保留 context cancelled/deadline 与原 cause；Run 与 Stream.Result 等价；审批错误不被通用取消覆盖；无效 checkpoint 不修改 store，原健康记录保持一致。W13 必须复用此结果保留路径。重新打开 AGENTS §14 的错误路径 Result 映射审计子项。"
+    }
+  },
+  "ownership": {
+    "allow": [
+      "codex/appserver/client.go",
+      "codex/appserver/alignment_client_close_test.go",
+      "codex/appserver/doc.go",
+      "docs/alignment-tasks/2026-09-07/handoffs/T36/**"
+    ],
+    "scope_match": "仅精确仓库相对文件或目录/**；任何未列路径不可写。",
+    "exclusive_resources": [],
+    "shared_files_policy": "集中docs/CHANGELOG仅本批gate写；仅own allow含golden/mod的任务可改它们；不得越界修复。",
+    "scope_expansion": "先提交具体路径与原因给批次协调者；协调者更新版本/冲突检查并重排后重派，未授权范围不得修改。"
+  },
+  "execution": {
+    "environment": "local",
+    "isolation": "separate_git_worktree",
+    "branch": "codex/alignment-t36",
+    "same_batch_peer_artifacts": "禁止读取/依赖同批worker尚未验收的代码或输出；只消费前批已合入合同，公共Go符号不得由同批peer供应。",
+    "source_write_allowed": true,
+    "paid_live_authorization_required": false,
+    "live_build_tag": null,
+    "remote_push_allowed": false,
+    "release_tag_allowed": false,
+    "further_delegation": "不自动派发额外用户任务；若需要子任务由协调者纳入相同边界和覆盖检查。"
+  },
+  "invariants": [
+    "以 AGENTS.md 和固定对齐方案为准；源仓库只用 git show 固定提交读取，不修改 internal、不复制其旧架构或未提交 vision 内容。",
+    "保留六名词模型、唯一 New、Run/Stream、统一 resolved invocation/Thread 管线和 typed Event；不引入 SDK/Admin/Start/RunHandle/registry/default binding、平行语义 channel 或 root WithTeam。",
+    "Options 作用域编译约束不变；近处替换、skills 追加、Policy 整值替换；WithTimeout 仍墙钟，Thread 默认常驻，WithSpawn 本轮新进程。",
+    "完整 fingerprint、opaque Thread key、lease owner/token、单 writer、原子 Finalize 与失败不污染 checkpoint 均保留；交付后绝不自动重放。",
+    "仅 Driver 解释正式 provider 协议；shared helper 不猜 session/tool/todo/capability；nil/不支持能力明确失败，Inspect 使用构造配置。",
+    "一个 error 判定面；部分输出不得丢，Text/Summary/Raw/Transcript/Services/Usage/Decode 独立；Run 与 Stream.Result 等价。",
+    "保留 v1.1.1 Tool 凭据/权限/隔离、v1.1.2 Windows 常驻和已有安全更新；不得因源码旧而覆盖掉当前更强合同。",
+    "公共语义变更同时交付合同测试、局部 godoc 和 documentation.md 文档片段；集中使用文档/CHANGELOG 由本批 gate 在放行前合并，不能留到最终批才记录。",
+    "只有拥有对应文件的任务可改 root/Driver AST golden；先审阅新增声明再精确更新，禁止全局设置 golden 更新环境掩盖漂移。",
+    "只写 ownership.allow 指定路径，不顺手重构其他子系统；需要扩大范围时向批次协调者提交具体变更理由和路径，先消除同批冲突再重派本任务。",
+    "不写 TODO、空实现、未来才有的兼容 shim；先用失败可复现的 fixture 验证问题，再实现并验证；不得只满足实现本身的镜像测试。",
+    "普通验证显式关闭付费门，不访问真实 provider；live 任务须同时满足授权记录、build tag 和环境变量门。所有任务都不创建 tag、不发布 release、不自动推送/发送外部消息。"
+  ],
+  "implementation_steps": [
+    "必读当前R023与C02限定合同报告 /Users/blurooo/project/agent-adaptor/docs/alignment-execution/2026-09-07/findings/T25-F03-review/c02-contract.md，SHA256 c462e1f3ccfe1a3937e0275f46adc033e5a08cff52ee9cf838b0e8543604d33d；异机派发由协调者按此hash提供同一只读制品。核心约束完整内嵌：仅helper线性化终结或Client关闭协调；原同步FIFO/正式parser不变；ReadDone、RPC reader完成、stderr drain、OS Wait是不同阶段，不能用提前done跳过已读frame；不得提前关闭stdout截断Raw。关闭解除activeRPC/写阻塞，但不持被等待方所需锁、不在同步handler join自己；原单writer turnMu可保留。已成立approval/context/RPC/ExitError主因不能被secondary Close/EOF/killed覆盖；保留partial各层及Run/Stream映射，失败不落健康checkpoint，prompt交付后不重放。禁止依赖缓存修改、recover遮panic、quiet/sleep猜测或缩小验证。",
+    "读取R023与固定d94fd17 Linux V03原栈：TestAlignmentCodexStderrAdmission/cancel-held-terminal在已接收exact14之后，sourcegraph/jsonrpc2@v0.2.1 readMessages:235向已关闭pending.done发送。原T16负责人从G04 b2035bc基线修复；新T34取消fixture及所有原日志必须保留，不能改为skip/flaky重试。",
+    "生产修复局限Codex Client关闭协调：禁止外部Client.Close在原reader仍可派发response时直接调用jsonrpc2.Conn.Close。封闭新调用、解除本Client activeRPC等待并关闭自己拥有的ObjectStream，依赖pending收尾仍由唯一原同步reader遇EOF/协议错误完成。可用私有once-close stream wrapper防重复底层关闭；不得修改依赖/cache、反射unsafe访问pending或recover遮panic。",
+    "所有typed调用复用私有关闭感知辅助，单独Client.Close导致的中止映射原jsonrpc2.ErrClosed，已成立的caller context/RPC cause保持原样。Client.Close不join reader，避免notification同步handler或close/run锁下等自己；不得用全局大锁堵取消。原Process kill/grace/Wait/drain与one-shot共同通过Client修复，暂不改codec/process/run生产文件；若证明需要扩围先报告root。",
+    "新增TestAlignmentClientClose前缀确定性回归：真实固定依赖reader在ObjectStream解码响应后、返回前停住，关闭Client后释放该响应，旧实现应出现真实pending关闭冲突；新实现保留FIFO和reader唯一收尾。覆盖activeRPC取消/新调用拒绝、caller取消/错误cause、EOF/协议错误、从同步handler关闭不self-join、底层资源exactly-once、有界等待及无goroutine泄漏。不能仅fake出替代Response或自写JSONRPC。",
+    "完整Codex包和Alignment race继续覆盖Run/Stream、partial Raw/Transcript/Usage/Terminal、失败无checkpoint和单writer。G04 worker基线没有同批已验收T34测试时，不伪称本地执行了它；G05合流时保留T34全部源码并实际执行，T25在replacement同SHA fullrace再次实际验证其取消路径。无公共API/协议/依赖/generated/golden改变，局部godoc与handoff交给G05集中裁决。"
+  ],
+  "acceptance_criteria": [
+    {
+      "id": "T36-AC01",
+      "requirement": "旧pending响应/外部Close交错有固定原栈与真实依赖受控反例；新Client通过transport与activeRPC取消收尾，原同步reader唯一settle pending，不遮panic。",
+      "required": true
+    },
+    {
+      "id": "T36-AC02",
+      "requirement": "activeRPC/new-call、原caller/RPC错误、EOF/协议错误、FIFO、同步handler Close、底层exactly-once、有界退出均有回归；原部分Result/Raw/Usage/Terminal与checkpoint/drain合同保持。",
+      "required": true
+    },
+    {
+      "id": "T36-AC03",
+      "requirement": "精确四owned路径、无依赖或公共合同扩张；最终SHA四required通过，合流保留T34接收/取消场景并重验原G05/T25命令，T29live门禁保留。",
+      "required": true
+    }
+  ],
+  "validation": [
+    {
+      "id": "T36-V01",
+      "command": "go test -count=1 ./codex/...",
+      "cwd": "repository_root",
+      "environment": {
+        "AGENT_ADAPTOR_LIVE_CONFORMANCE": "0",
+        "AGENT_ADAPTOR_E2E": "0",
+        "AGENT_ADAPTOR_UPDATE_API_GOLDEN": "0"
+      },
+      "required": true,
+      "execution_condition": "assigned_environment_available",
+      "must_execute_nonzero_tests": true,
+      "evidence": "记录实际命令、head SHA、OS/Go/CLI版本、exit code和安全日志；失败/skip/零测试不算通过。 非零按本命令实际测试/子测试计数，fuzz按实际种子/执行样本计数；必需场景skip不得通过。普通任务显式禁用的live探针或合同确认不适用的probe可skip，须列明且不能拿它们充当验收证据；可添加-json/-v采集日志，不能缩小原命令选择范围。"
+    },
+    {
+      "id": "T36-V02",
+      "command": "go test -race -count=5 ./codex/... -run TestAlignment",
+      "cwd": "repository_root",
+      "environment": {
+        "AGENT_ADAPTOR_LIVE_CONFORMANCE": "0",
+        "AGENT_ADAPTOR_E2E": "0",
+        "AGENT_ADAPTOR_UPDATE_API_GOLDEN": "0"
+      },
+      "required": true,
+      "execution_condition": "assigned_environment_available",
+      "must_execute_nonzero_tests": true,
+      "evidence": "记录实际命令、head SHA、OS/Go/CLI版本、exit code和安全日志；失败/skip/零测试不算通过。 非零按本命令实际测试/子测试计数，fuzz按实际种子/执行样本计数；必需场景skip不得通过。普通任务显式禁用的live探针或合同确认不适用的probe可skip，须列明且不能拿它们充当验收证据；可添加-json/-v采集日志，不能缩小原命令选择范围。"
+    },
+    {
+      "id": "T36-V03",
+      "command": "go test -race -count=20 ./codex/appserver -run TestAlignmentClientClose",
+      "cwd": "repository_root",
+      "environment": {
+        "AGENT_ADAPTOR_LIVE_CONFORMANCE": "0",
+        "AGENT_ADAPTOR_E2E": "0",
+        "AGENT_ADAPTOR_UPDATE_API_GOLDEN": "0"
+      },
+      "required": true,
+      "execution_condition": "assigned_environment_available",
+      "must_execute_nonzero_tests": true,
+      "evidence": "记录实际命令、head SHA、OS/Go/CLI版本、exit code和安全日志；失败/skip/零测试不算通过。 非零按本命令实际测试/子测试计数，fuzz按实际种子/执行样本计数；必需场景skip不得通过。普通任务显式禁用的live探针或合同确认不适用的probe可skip，须列明且不能拿它们充当验收证据；可添加-json/-v采集日志，不能缩小原命令选择范围。"
+    },
+    {
+      "id": "T36-V04",
+      "command": "go vet ./codex/...",
+      "cwd": "repository_root",
+      "environment": {
+        "AGENT_ADAPTOR_LIVE_CONFORMANCE": "0",
+        "AGENT_ADAPTOR_E2E": "0",
+        "AGENT_ADAPTOR_UPDATE_API_GOLDEN": "0"
+      },
+      "required": true,
+      "execution_condition": "assigned_environment_available",
+      "must_execute_nonzero_tests": false,
+      "evidence": "记录实际命令、head SHA、OS/Go/CLI版本、exit code和安全日志；失败/skip/零测试不算通过。 非零按本命令实际测试/子测试计数，fuzz按实际种子/执行样本计数；必需场景skip不得通过。普通任务显式禁用的live探针或合同确认不适用的probe可skip，须列明且不能拿它们充当验收证据；可添加-json/-v采集日志，不能缩小原命令选择范围。"
+    }
+  ],
+  "documentation": {
+    "fragment": "docs/alignment-tasks/2026-09-07/handoffs/T36/documentation.md",
+    "contents": [
+      "公开语义前后变化和可复现例子",
+      "应合并到的godoc/使用文档/CHANGELOG具体段落",
+      "新增公共声明与golden理由",
+      "不采用的internal行为和原因",
+      "验证实跑/未跑的平台与live边界"
+    ],
+    "central_owner": "G05",
+    "must_integrate_before_batch_acceptance": true
+  },
+  "handoff": {
+    "result_path": "docs/alignment-tasks/2026-09-07/handoffs/T36/result.json",
+    "schema_path": "docs/alignment-tasks/2026-09-07/result.schema.json",
+    "evidence_dir": "docs/alignment-tasks/2026-09-07/handoffs/T36/evidence",
+    "failure_report": "docs/alignment-tasks/2026-09-07/handoffs/T36/findings.md",
+    "requirement_ids": [
+      "W04-R07"
+    ],
+    "commit_rule": "只提交本任务实施/局部godoc/测试与契约文件。源码commit完成并测试后生成result，记录实际head；result/evidence由派发器收集，不塞回所引用commit造成SHA自引用。"
+  },
+  "completion": {
+    "required": [
+      "所有必需acceptance/validation实际通过；verification任务不得以skip或零测试充数",
+      "所有owned/verified requirement逐条记录passed/failed/blocked及证据",
+      "工作树生产diff仅在allow范围；无TODO/未实现stub/旧API",
+      "按handoff schema报告真实base/head/commit/changed_files/测试/文档与remaining_items",
+      "本task通过只表示交付，不等于批次gate或整个work_item已关闭"
+    ],
+    "blocked_rule": "缺前置合同/runner/live授权时记录blocked与可执行缺项；发现合同违背或测试失败为needs_rework，向原owner提交最小复现，绝不声称完成或偷偷删工作项。"
+  },
+  "dispatch_prompt": "读取整个task.json和context.required_reads；确认基线和dependency_artifacts已由前批gate验收。只在隔离worktree按ownership实施implementation_steps，逐项满足acceptance_criteria、requirements_owned/verified与validation。严格遵守invariants，用handoff.result_path/schema交付真实结果；不要只根据标题工作，也不要提前执行本批gate或后批任务。"
+}

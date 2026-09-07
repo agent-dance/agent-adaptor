@@ -13,7 +13,6 @@
     "W06"
   ],
   "requirements_owned": [
-    "W04-R05",
     "W06-R01",
     "W06-R02",
     "W06-R04",
@@ -124,7 +123,8 @@
     "按 prompt-transport 合同开放 Question/PlanReview + native schema 双向 stream-json，按 resolved source 选参数；无 schema 的 Permission Ask 保持支持，native schema+Permission Ask 使用已声明的 prompt fallback。",
     "添加双方 terminal/result/无 message_stop、拒绝/超时/非法 schema、Thread/WithSpawn、多轮和 partial output fixture；不要解析 raw 猜 final text。",
     "R005：Claude设置新非nil矩阵后，schema候选检查继承后的Permission/PlanReview Ask；只设QuestionAsk不意味着其余Kind不存在。native支持需有效Permission策略兼容，否则prompt fallback/unsupported。文档和fixture明确普通schema/零policy可能受新精确矩阵影响，不偷偷自动批准Permission来维持native，不改变无schema默认行为。",
-    "R009：schema eligibility的effective Ask与Claude raw-policy interactive开启分开说明；零policy schema prompt/校验但保持observational、不新增AutoApprove；实际继承Permission往返用QuestionAsk+Permission unset并保留无schema对照。"
+    "R009：schema eligibility的effective Ask与Claude raw-policy interactive开启分开说明；零policy schema prompt/校验但保持observational、不新增AutoApprove；实际继承Permission往返用QuestionAsk+Permission unset并保留无schema对照。",
+    "R023：W04-R05最终实现改归原负责人执行的B05补充T35，关闭后续Linux生产关闭panic。原源码/验收及其他要求完整保留，不以历史通过冒充本反例已修复。"
   ],
   "acceptance_criteria": [
     {
@@ -186,7 +186,6 @@
     "evidence_dir": "docs/alignment-tasks/2026-09-07/handoffs/T07/evidence",
     "failure_report": "docs/alignment-tasks/2026-09-07/handoffs/T07/findings.md",
     "requirement_ids": [
-      "W04-R05",
       "W06-R01",
       "W06-R02",
       "W06-R04",

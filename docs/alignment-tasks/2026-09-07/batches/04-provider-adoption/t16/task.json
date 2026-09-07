@@ -15,7 +15,6 @@
     "W12"
   ],
   "requirements_owned": [
-    "W04-R07",
     "W09-R08",
     "W11-R07",
     "W12-R06"
@@ -141,7 +140,8 @@
     "todo 仅认正式 turn/plan/updated 全量；实验文本 delta 维持降级。只有 schema 确需更新才官方生成+go generate，记录版本，不手改 generated/schema。",
     "同时提供 codex_live build tag + AGENT_ADAPTOR_LIVE_CONFORMANCE=1 双门下的 TestAlignmentLive* 测试入口及 CLI/version 采集。普通测试不付费；为 B06 验证完整覆盖此前修复和当前实际支持/unsupported 边界，测试路径交 T23 汇总。",
     "核对本包既有 DriverConformance 的 live 分支也使用 build tag/env 双门及独立 profile/workspace；只有 CLI存在+env 的单门不足以通过最终门禁，不能沿用用户原目录执行。支持矩阵外的 probe 明确列为不适用，必需场景不得 skip。",
-    "R017：完整读取 amendments/R017.md。仅补原owner live fixture覆盖，普通检查不运行付费provider；补公开Agent/Thread + Dedicated + WithTools跨Agent.Close→新Agent ResumeOnly随机nonce和同会话证据；保持已有exec/appserver append、Skill native input接受、MCP/plan/collab断言。 原validation保持，源码先提交再final HEAD验证，缺真实环境仅留待B06不得声称通过。"
+    "R017：完整读取 amendments/R017.md。仅补原owner live fixture覆盖，普通检查不运行付费provider；补公开Agent/Thread + Dedicated + WithTools跨Agent.Close→新Agent ResumeOnly随机nonce和同会话证据；保持已有exec/appserver append、Skill native input接受、MCP/plan/collab断言。 原validation保持，源码先提交再final HEAD验证，缺真实环境仅留待B06不得声称通过。",
+    "R023：W04-R07最终实现改归原负责人执行的B05补充T36，关闭后续Linux生产关闭panic。原源码/验收及其他要求完整保留，不以历史通过冒充本反例已修复。"
   ],
   "acceptance_criteria": [
     {
@@ -208,7 +208,6 @@
     "evidence_dir": "docs/alignment-tasks/2026-09-07/handoffs/T16/evidence",
     "failure_report": "docs/alignment-tasks/2026-09-07/handoffs/T16/findings.md",
     "requirement_ids": [
-      "W04-R07",
       "W09-R08",
       "W11-R07",
       "W12-R06"

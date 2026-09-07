@@ -33,8 +33,6 @@
     "W04-R02",
     "W04-R03",
     "W04-R04",
-    "W04-R05",
-    "W04-R07",
     "W06-R01",
     "W06-R02",
     "W06-R03",
@@ -172,7 +170,8 @@
     "R010独立对照：executeInvocation准入后每轮唯一core start/terminal且cleanup主Reason一致；openStream静态拒绝保留空closed Events+Result error、无资源/Driver，不伪造执行生命周期。",
     "R011独立回归：已有MCP配置mode保持/真实外部mode变化可见；兼容rich→native schema batch→rich保持同一Thread active记录/正式resume/实际prewarm且每prompt一次，ResumeOnly不因Streaming布尔拒绝，真实配置/codec/资源不兼容仍受guard保护。",
     "R020 / QA-06: 利用现有 hostedprofile Claim.beforeLockClose/beforeRootClose 私有 seam，从真正 OS unlock 成功之后注入 close 故障；独立自建source/Initialize/BeginUse，持有 successor active barrier，断言旧 Release 重试不能写 state/marker/session 或释放新owner lock。所有等待/Close有限，不修改生产、不增加公共API、不把此证据视为原生Windows no-delete-sharing/DACL验证。",
-    "R021：W04-R06 的最终独立验证改由后续 B06 T25 原生 Linux 全量/race 承担，避免与 B05 T33 同批 owner 形成验证依赖；T20 原 fixture/命令及其历史反例全部保留，其余24项职责不变。"
+    "R021：W04-R06 的最终独立验证改由后续 B06 T25 原生 Linux 全量/race 承担，避免与 B05 T33 同批 owner 形成验证依赖；T20 原 fixture/命令及其历史反例全部保留，其余24项职责不变。",
+    "R023：W04-R05/R07最终独立验证转后批T25，T27/T29 live保留；T20现22项，原源码/fixture/命令/日志不改，仅重出当前metadata，历史24项报告归档。"
   ],
   "acceptance_criteria": [
     {
@@ -269,8 +268,6 @@
       "W04-R02",
       "W04-R03",
       "W04-R04",
-      "W04-R05",
-      "W04-R07",
       "W06-R01",
       "W06-R02",
       "W06-R03",
