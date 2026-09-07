@@ -12,6 +12,10 @@ import (
 	"time"
 
 	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/internal/hostedprofile"
+	"github.com/agent-dance/agent-adaptor/internal/mcpruntime"
+	"github.com/agent-dance/agent-adaptor/internal/toolidentity"
+	"github.com/agent-dance/agent-adaptor/profile"
 	"github.com/agent-dance/agent-adaptor/tool"
 )
 
@@ -306,8 +310,8 @@ func TestAgentCloseStopsProviderBeforeOwnedToolRuntime(t *testing.T) {
 	runtime.mu.Lock()
 	closeCalls := runtime.closeCalls
 	runtime.mu.Unlock()
-	if closeCalls != 1 {
-		t.Fatalf("tool runtime Close calls = %d, want 1", closeCalls)
+	if closeCalls != 2 {
+		t.Fatalf("tool runtime Close calls = %d, want 2 retry attempts", closeCalls)
 	}
 }
 
@@ -469,7 +473,11 @@ func (r *lifecycleToolRuntime) Close(context.Context) error {
 	r.mu.Lock()
 	r.closeCalls++
 	r.mu.Unlock()
-	close(r.closed)
+	select {
+	case <-r.closed:
+	default:
+		close(r.closed)
+	}
 	return r.closeErr
 }
 
@@ -499,5 +507,154 @@ func (d *lifecycleTestDriver) CloseProcesses(ctx context.Context) error {
 		return d.closeErr
 	case <-ctx.Done():
 		return ctx.Err()
+	}
+}
+
+func TestAlignmentProfileCloseRetryKeepsClaimUntilGatewayClosed(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "source")
+	if err := os.Mkdir(source, 0700); err != nil {
+		t.Fatal(err)
+	}
+	spec := hostedprofile.Spec{DriverType: "claude", SourceDir: source}
+	claim, err := hostedprofile.Acquire(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = claim.ReleaseClean(context.Background()) })
+	if err := claim.Initialize(context.Background(), func(context.Context, string) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(claim.Dir(), "session"), []byte("keep session"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := claim.BeginUse(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	failure := errors.New("gateway failure")
+	rt := &lifecycleToolRuntime{closed: make(chan struct{}), closeErr: failure}
+	a := New(&profileLockTestDriver{profileDir: source})
+	a.toolRuntime = rt
+	a.toolProfileSelections = map[string]hostedToolProfileSelection{"owned": {persistent: claim}}
+	if err := a.Close(context.Background()); !errors.Is(err, failure) {
+		t.Fatal(err)
+	}
+	if _, err := a.Run(context.Background(), "no new run"); !errors.Is(err, ErrAgentClosed) {
+		t.Fatal(err)
+	}
+	if _, err := hostedprofile.Acquire(context.Background(), spec); !errors.Is(err, profile.ErrInUse) {
+		t.Fatalf("gateway failure released claim: %v", err)
+	}
+	rt.closeErr = nil
+	if err := a.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	next, err := hostedprofile.Acquire(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer next.ReleaseUnused(context.Background())
+	if raw, err := os.ReadFile(filepath.Join(next.Dir(), "session")); err != nil || string(raw) != "keep session" {
+		t.Fatal("Close lost provider state")
+	}
+}
+
+func TestAlignmentProfileClaimWaitIsCancellationSafe(t *testing.T) {
+	gate := &hostedProfileGate{}
+	gate.Lock()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- gate.LockContext(ctx) }()
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("claim wait ignored cancellation")
+	}
+	gate.Unlock()
+}
+
+func TestAlignmentProfileCloseRetryProcessDrainAndProjection(t *testing.T) {
+	for _, stage := range []string{"process", "drain", "projection"} {
+		t.Run(stage, func(t *testing.T) {
+			source := filepath.Join(t.TempDir(), "source")
+			if err := os.Mkdir(source, 0700); err != nil {
+				t.Fatal(err)
+			}
+			spec := hostedprofile.Spec{DriverType: "claude", SourceDir: source}
+			claim, err := hostedprofile.Acquire(context.Background(), spec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = claim.ReleaseClean(context.Background()) })
+			if err := claim.Initialize(context.Background(), func(context.Context, string) error { return nil }); err != nil {
+				t.Fatal(err)
+			}
+			if err := claim.BeginUse(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			rt := &lifecycleToolRuntime{closed: make(chan struct{})}
+			a := New(&profileLockTestDriver{profileDir: source})
+			a.toolRuntime = rt
+			a.toolProfileSelections = map[string]hostedToolProfileSelection{"owned": {persistent: claim}}
+			a.toolProfiles = map[string]hostedToolProfileClaim{"owned": {driverType: "claude", dir: claim.Dir()}}
+			var fix func()
+			ctx := context.Background()
+			var cancel context.CancelFunc
+			switch stage {
+			case "process":
+				d := &lifecycleTestDriver{started: make(chan struct{}), release: make(chan struct{}), closeErr: errors.New("injected process failure")}
+				close(d.release)
+				a.driver = d
+				fix = func() { d.closeErr = nil }
+			case "drain":
+				a.activeDone = make(chan struct{})
+				ctx, cancel = context.WithTimeout(ctx, 10*time.Millisecond)
+				defer cancel()
+				fix = func() { close(a.activeDone) }
+			case "projection":
+				server := driver.MCPServerSpec{Key: toolidentity.ServerKey, Transport: driver.MCPTransportHTTP, URL: "http://127.0.0.1:1/mcp", BearerTokenEnvVar: toolidentity.BearerTokenEnvVarPrefix + strings.Repeat("A", 32), Required: true, RequiredReason: toolidentity.RequiredReason}
+				if _, err := mcpruntime.SyncResource(ctx, "claude", claim.Dir(), mcpruntime.ProfileKindHostManaged, driver.MCPPayload{Servers: []driver.MCPServerSpec{server}}); err != nil {
+					t.Fatal(err)
+				}
+				path := filepath.Join(claim.Dir(), ".claude.json")
+				raw, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte("{"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				fix = func() {
+					if err := os.WriteFile(path, raw, 0600); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			if err := a.Close(ctx); err == nil {
+				t.Fatal("injected Close phase succeeded")
+			}
+			select {
+			case <-rt.closed:
+				t.Fatal("gateway revoked before prior phase completed")
+			default:
+			}
+			if _, err := hostedprofile.Acquire(context.Background(), spec); !errors.Is(err, profile.ErrInUse) {
+				t.Fatalf("failed phase relinquished claim: %v", err)
+			}
+			fix()
+			if err := a.Close(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			next, err := hostedprofile.Acquire(context.Background(), spec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := next.ReleaseUnused(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }

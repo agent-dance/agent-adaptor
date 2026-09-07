@@ -20,4 +20,12 @@
 // empty MCP, sub-agent, hook, or config slices explicitly clear SDK-managed
 // entries. The truthful materialization report stays on the Agent surface
 // (ProfileState / SyncProfile).
+//
+// Dedicated plus host-defined Tools retains provider session files in an owned
+// sibling namespace. Only one Agent may own each Driver/source/identity partition.
+// ErrInUse reports a live owner; ErrRecoveryRequired reports an unclean generation,
+// which requires offline writer shutdown and verified repair before reuse. Unsafe
+// markers or permissions fail with ErrUnsafe; unsupported local locking or ACL
+// capabilities fail with ErrUnsupportedFilesystem. Agent.Close does not delete
+// persistent history. Hosts own permanent cleanup after stopping all users.
 package profile

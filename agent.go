@@ -51,7 +51,7 @@ type Agent struct {
 	toolProvider          RunServiceProvider
 	toolConfigErr         error
 	toolThreadErr         error
-	toolProfileMu         sync.Mutex
+	toolProfileMu         hostedProfileGate
 	toolProfiles          map[string]hostedToolProfileClaim
 	toolProfileSelections map[string]hostedToolProfileSelection
 
@@ -98,10 +98,10 @@ func New(d driver.Driver, opts ...Option) *Agent {
 // defaults are never mutated, so concurrent and successive runs do not
 // pollute each other.
 //
-// Business failures return *RunError carrying
-// the full Result; infrastructure failures (context cancellation/deadline,
-// process crash, protocol breakage) return plain wrapped errors. Both travel
-// the single err path.
+// After Driver.Run is entered, any failure returns nil and *RunError carrying
+// the available Result and original cause, including cancellation, deadlines,
+// process crashes and protocol errors. Failures before Driver.Run remain
+// ordinary wrapped errors supporting errors.Is/As. Both use the single err path.
 func (a *Agent) Run(ctx context.Context, prompt string, opts ...CallOption) (*Result, error) {
 	st := a.Stream(ctx, prompt, opts...)
 	for range st.Events() {
@@ -117,6 +117,11 @@ func (a *Agent) Run(ctx context.Context, prompt string, opts ...CallOption) (*Re
 // Agent-owned Tool runtime. It is idempotent; concurrent callers wait for the
 // first close attempt or return ctx.Err() when their own deadline wins.
 // Drivers without persistent-process support skip the process-close phase.
+// Dedicated profiles used with Tools retain provider session files. Their hosted
+// MCP entries are removed before the Tool gateway closes, and exclusive directory
+// ownership is released after writer, projection and gateway cleanup succeeds.
+// Later handle-close errors remain retryable without touching a successor owner.
+// Any cleanup error keeps Close retryable and all new runs rejected.
 func (a *Agent) Close(ctx context.Context) error {
 	if a == nil {
 		return ErrAgentClosed
@@ -212,7 +217,7 @@ func (a *Agent) closeAttempt(ctx context.Context, activeDone <-chan struct{}) (e
 	// Remove the native profile projection while its endpoint is still live.
 	// A failed removal leaves the runtime alive and Close retryable, avoiding a
 	// dead endpoint in a shared provider profile.
-	if profileErr := a.releaseHostedToolProfiles(ctx); profileErr != nil {
+	if profileErr := a.cleanHostedToolProjections(ctx); profileErr != nil {
 		return errors.Join(processErr, profileErr), false
 	}
 
@@ -223,7 +228,13 @@ func (a *Agent) closeAttempt(ctx context.Context, activeDone <-chan struct{}) (e
 	if ctx.Err() != nil {
 		return errors.Join(processErr, toolErr, ctx.Err()), false
 	}
-	return errors.Join(processErr, toolErr), true
+	if toolErr != nil {
+		return errors.Join(processErr, toolErr), false
+	}
+	if profileErr := a.releaseHostedToolProfiles(ctx); profileErr != nil {
+		return profileErr, false
+	}
+	return nil, true
 }
 
 type ownedToolRuntime interface {
