@@ -217,7 +217,13 @@ func newPersistentCodeBuddyFixtureWithOptions(t *testing.T, callerEnv []driver.E
 		t.Fatalf("test executable: %v", err)
 	}
 	helperExecutable := command
-	if runtime.GOOS == "windows" {
+	native := false
+	for _, binding := range callerEnv {
+		if binding.Name == "ALIGNMENT_CODEBUDDY_NATIVE_EXEC" && binding.Value == "1" {
+			native = true
+		}
+	}
+	if runtime.GOOS == "windows" && !native {
 		shimDir := filepath.Join(root, "shim dir")
 		if err := os.MkdirAll(shimDir, 0o700); err != nil {
 			t.Fatal(err)
@@ -328,6 +334,7 @@ func (f *persistentCodeBuddyFixture) close() {
 }
 
 func runCodeBuddyPersistentHelper() int {
+	alignmentRecordArgs()
 	recordCodeBuddyPersistentHelperSpawn(
 		os.Getenv("SPAWN_FILE"),
 		os.Getenv("PID_FILE"),
@@ -343,6 +350,9 @@ func runCodeBuddyPersistentHelper() int {
 
 	writer := bufio.NewWriter(os.Stdout)
 	emitTurn := func() {
+		if alignmentReplayObservation(writer) {
+			return
+		}
 		_, _ = fmt.Fprintln(writer, `{"type":"system","subtype":"init","session_id":"codebuddy-persistent-session","model":"fake"}`)
 		_, _ = fmt.Fprintln(writer, `{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"ok"}}}`)
 		_, _ = fmt.Fprintln(writer, `{"type":"assistant","session_id":"codebuddy-persistent-session","message":{"model":"fake","content":[{"type":"text","text":"ok"}]}}`)

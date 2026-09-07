@@ -26,8 +26,14 @@ func (adapter) runControl(ctx context.Context, cfg Config, command string, req d
 		return driver.Response{}, errControlSinkRequired
 	}
 
+	args := buildExecArgs(cfg, req, PermissionUnset, true)
+	if err := validateAppendCommandIfSet(req.AppendSystemPrompt, command, args); err != nil {
+		return driver.Response{}, err
+	}
+
 	stdin := clihelper.NewStdinController()
 	p := newParser(sink)
+	p.configureObservations(ctx, req)
 	p.enableControl(ctx, decisionSink, stdin, req.RunID, req.Policy.HumanDecision, prep.prompt)
 	p.control.configDir = resolveConfigDir(cfg.Env)
 	if req.Streaming {
@@ -42,12 +48,12 @@ func (adapter) runControl(ctx context.Context, cfg Config, command string, req d
 
 	result, err := clihelper.Run(ctx, clihelper.CommandRequest{
 		Command: command,
-		Args:    buildExecArgs(cfg, req, PermissionUnset, true),
+		Args:    args,
 		CWD:     prep.effectiveCWD,
 		Env:     append(prep.env, driver.EnvBinding{Name: "CODEBUDDY_CODE_ENTRYPOINT", Value: "sdk-py"}),
 		Observe: p.onChunk,
 		Stdin:   stdin,
-	}, sink)
+	}, appendDiagnosticSink{sink})
 	if err != nil {
 		return driver.Response{}, err
 	}
@@ -72,6 +78,7 @@ func (adapter) runControl(ctx context.Context, cfg Config, command string, req d
 			driver.SessionParamProfileFingerprint: req.ProfilePayload.SessionFingerprint(),
 		}
 	}
+	checkpointAppend(checkpoint, req.AppendSystemPrompt)
 	return driver.Response{
 		Output:          p.buildOutput(),
 		RawStreams:      &raw,

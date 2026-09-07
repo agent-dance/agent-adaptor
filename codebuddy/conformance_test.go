@@ -3,7 +3,6 @@ package codebuddy
 import (
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -11,22 +10,6 @@ import (
 	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/internal/engine"
 )
-
-// codebuddyLiveGate decides whether the live conformance probes (EVT-*,
-// RUN-*, TRN-*, RSP-*, SO-02) run. They skip when the codebuddy CLI is not
-// in PATH (the CI path), and even with the CLI present they stay opt-in
-// via AGENT_ADAPTOR_LIVE_CONFORMANCE=1, mirroring the codebuddy_live
-// build-tag posture so plain `go test` never triggers a paid provider run.
-func codebuddyLiveGate(t *testing.T) (bool, adaptertest.Option) {
-	t.Helper()
-	if _, err := exec.LookPath("codebuddy"); err != nil {
-		return false, adaptertest.SkipLiveRun("codebuddy CLI not in PATH")
-	}
-	if os.Getenv("AGENT_ADAPTOR_LIVE_CONFORMANCE") != "1" {
-		return false, adaptertest.SkipLiveRun("codebuddy CLI found; set AGENT_ADAPTOR_LIVE_CONFORMANCE=1 to run the live conformance probes")
-	}
-	return true, adaptertest.WithLiveRun("")
-}
 
 func TestCodeBuddyProfileInstructionMaterialization(t *testing.T) {
 	for _, tc := range []struct {
@@ -105,15 +88,13 @@ func TestCodeBuddyDriverConformance(t *testing.T) {
 
 	cfg := Config{Model: "claude-sonnet-5"}
 	cfg.CWD = workspace
-	if !live {
-		// Hermetic isolation ensures probes do not read or write the
-		// operator's real HOME or config directory.
-		t.Setenv("CODEBUDDY_CONFIG_DIR", "")
-		cfg.Env = []driver.EnvBinding{
-			{Name: "HOME", Value: home},
-			{Name: "USERPROFILE", Value: home},
-		}
+	// Both branches execute against private profile/workspace roots. The live
+	// tag helper copies only explicitly supplied authentication material.
+	profileDir := filepath.Join(home, "profile")
+	if live {
+		profileDir = codebuddyConformanceProfile(t)
 	}
+	cfg.Env = []driver.EnvBinding{{Name: "HOME", Value: home}, {Name: "USERPROFILE", Value: home}, {Name: "CODEBUDDY_CONFIG_DIR", Value: profileDir}}
 
 	opts := []adaptertest.Option{
 		adaptertest.WithConfig(cfg),

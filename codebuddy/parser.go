@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/agent-dance/agent-adaptor/driver"
 )
@@ -44,7 +45,8 @@ type parser struct {
 
 	pendingFailure *driver.RunFailure
 
-	runID string
+	observation *observationState
+	runID       string
 }
 
 func newParser(sink driver.EventSink) *parser {
@@ -126,6 +128,7 @@ func (p *parser) finalize() {
 func (p *parser) completeStream(failure *driver.RunFailure, exitCode int, signal string, timedOut bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.closeObservations()
 	if p.stream != nil {
 		p.stream.complete(failure, exitCode, signal, timedOut)
 	}
@@ -144,6 +147,12 @@ func (p *parser) processLine(stream string, line []byte, _ time.Time) {
 	}
 
 	if !strings.HasPrefix(trimmed, "{") {
+		p.emit(driver.TranscriptItem{Kind: driver.TranscriptStdout, Text: text})
+		return
+	}
+	if !utf8.Valid(line) {
+		p.protocolMalformed = true
+		p.observationNotice("observation_input_invalid")
 		p.emit(driver.TranscriptItem{Kind: driver.TranscriptStdout, Text: text})
 		return
 	}
@@ -193,6 +202,13 @@ func (p *parser) handlePayload(raw string, payload map[string]any) {
 		}
 		return
 	case "assistant":
+		if p.observation != nil {
+			p.observation.suppressed = observationParentUnproved(payload)
+			if p.observation.suppressed {
+				p.observationNotice("observation_parent_unavailable")
+			}
+			defer func() { p.observation.suppressed = false }()
+		}
 		p.handleAssistantMessage(topObject(payload, "message"))
 	case "user":
 		p.handleUserMessage(topObject(payload, "message"))
@@ -271,6 +287,7 @@ func (p *parser) handleAssistantMessage(message map[string]any) {
 		case "tool_use":
 			toolName := topString(block, "name")
 			input, _ := block["input"].(map[string]any)
+			p.observeToolUse(exactString(block, "name"), exactString(block, "id"), input)
 			p.captureControlPlan(toolName, input)
 			p.emit(driver.TranscriptItem{
 				Kind:      driver.TranscriptToolCall,
@@ -293,6 +310,7 @@ func (p *parser) handleUserMessage(message map[string]any) {
 			continue
 		}
 		if strings.ToLower(topString(block, "type")) == "tool_result" {
+			p.observeToolResult(block)
 			id := topString(block, "tool_use_id")
 			text := resultText(block["content"])
 			isError := false

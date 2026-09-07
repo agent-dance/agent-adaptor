@@ -21,13 +21,6 @@ import (
 	"github.com/agent-dance/agent-adaptor/memory"
 )
 
-func envOr(key, fallback string) string {
-	if value := strings.TrimSpace(os.Getenv(key)); value != "" {
-		return value
-	}
-	return fallback
-}
-
 func codebuddyCLIName() string { return "codebuddy" }
 
 func requireCodeBuddyCLI(t *testing.T) {
@@ -36,7 +29,24 @@ func requireCodeBuddyCLI(t *testing.T) {
 		t.Skip("set AGENT_ADAPTOR_LIVE_CONFORMANCE=1 in addition to -tags codebuddy_live")
 	}
 	if _, err := exec.LookPath(codebuddyCLIName()); err != nil {
-		t.Skipf("%s CLI not in PATH", codebuddyCLIName())
+		t.Fatalf("required live CLI %s unavailable", codebuddyCLIName())
+	}
+	root := t.TempDir()
+	for _, flag := range []string{"--version", "--help"} {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		cmd := exec.CommandContext(ctx, codebuddyCLIName(), flag)
+		cmd.Dir = root
+		cmd.Env = append(os.Environ(), "HOME="+root, "USERPROFILE="+root, "CODEBUDDY_CONFIG_DIR="+filepath.Join(root, "profile"))
+		output, err := cmd.Output()
+		cancel()
+		if err != nil {
+			t.Fatalf("required CLI %s: %v", flag, err)
+		}
+		if flag == "--version" {
+			t.Logf("CLI version: %s", strings.TrimSpace(string(output)))
+		} else if !strings.Contains(string(output), "--append-system-prompt") {
+			t.Fatal("CLI help does not advertise required native append")
+		}
 	}
 }
 
@@ -47,25 +57,24 @@ func liveModel() string { return "glm-5.2-ioa" }
 func isolatedConfigDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	home, err := os.UserHomeDir()
-	if err != nil {
-		t.Logf("isolatedConfigDir: resolve home: %v", err)
-		return dir
+	source := os.Getenv("CODEBUDDY_CONFIG_DIR_SOURCE")
+	if !filepath.IsAbs(source) {
+		t.Fatal("live tests require an explicit absolute CODEBUDDY_CONFIG_DIR_SOURCE authentication fixture")
 	}
-	source := envOr("CODEBUDDY_CONFIG_DIR_SOURCE", filepath.Join(home, ".codebuddy"))
-	for _, name := range []string{".credentials.json", "credentials.json", "settings.json"} {
+
+	for _, name := range []string{".credentials.json", "credentials.json"} {
 		payload, readErr := os.ReadFile(filepath.Join(source, name))
 		if readErr != nil {
 			continue
 		}
 		if writeErr := os.WriteFile(filepath.Join(dir, name), payload, 0o600); writeErr != nil {
-			t.Logf("isolatedConfigDir: copy %s: %v", name, writeErr)
+			t.Fatalf("copy explicit live authentication fixture: %v", writeErr)
 		}
 	}
 	return dir
 }
 
-func newLiveAgent(t *testing.T, cwd string, planMode bool) *adaptor.Agent {
+func newLiveAgent(t *testing.T, cwd string, planMode bool, opts ...adaptor.Option) *adaptor.Agent {
 	t.Helper()
 	cfg := Config{
 		CommonConfig: CommonConfig{
@@ -73,6 +82,7 @@ func newLiveAgent(t *testing.T, cwd string, planMode bool) *adaptor.Agent {
 			CWD:     cwd,
 			Env: []driver.EnvBinding{
 				{Name: "CODEBUDDY_CONFIG_DIR", Value: isolatedConfigDir(t)},
+				{Name: "HOME", Value: t.TempDir()}, {Name: "USERPROFILE", Value: t.TempDir()},
 			},
 		},
 		Model: liveModel(),
@@ -80,11 +90,16 @@ func newLiveAgent(t *testing.T, cwd string, planMode bool) *adaptor.Agent {
 	if planMode {
 		cfg.ExtraArgs = []string{"--permission-mode", "plan"}
 	}
-	return adaptor.New(
-		Driver(cfg),
-		adaptor.WithWorkspace(cwd),
-		adaptor.WithThreadStore(memory.NewStore()),
-	)
+	agentOpts := append([]adaptor.Option{adaptor.WithWorkspace(cwd), adaptor.WithThreadStore(memory.NewStore())}, opts...)
+	agent := adaptor.New(Driver(cfg), agentOpts...)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := agent.Close(ctx); err != nil {
+			t.Errorf("Agent.Close: %v", err)
+		}
+	})
+	return agent
 }
 
 var livePolicyHeadless = adaptor.Policy{
@@ -111,20 +126,20 @@ func logLiveEvents(t *testing.T, events []adaptor.Event) {
 		switch typed := event.(type) {
 		case adaptor.TextDelta:
 			if typed.Phase == adaptor.PhaseContent {
-				t.Logf("[text] %s", typed.Text)
+				t.Logf("[text] bytes=%d", len(typed.Text))
 			}
 		case adaptor.Thinking:
 			if typed.Phase == adaptor.PhaseContent {
-				t.Logf("[thinking] %s", typed.Text)
+				t.Logf("[thinking] bytes=%d", len(typed.Text))
 			}
 		case adaptor.ToolCall:
 			t.Logf("[tool] phase=%s name=%s id=%s", typed.Phase, typed.Name, typed.ID)
 		case adaptor.ProcessInfo:
-			t.Logf("[process] kind=%s text=%s bytes=%q", typed.Kind, typed.Text, truncateForLog(string(typed.Bytes)))
+			t.Logf("[process] kind=%s bytes=%d", typed.Kind, len(typed.Bytes))
 		case adaptor.RunFinished:
 			t.Logf("[finished] failed=%v usage=%+v", typed.Failed, typed.Usage)
 		case adaptor.Notice:
-			t.Logf("[notice] kind=%s text=%s", typed.Kind, truncateForLog(typed.Text))
+			t.Logf("[notice] kind=%s", typed.Kind)
 		case *adaptor.ApprovalRequest:
 			t.Logf("[approval] kind=%s source=%s title=%q", typed.Kind, typed.Source, truncateForLog(typed.Title))
 		}
@@ -139,7 +154,7 @@ func truncateForLog(value string) string {
 	return value[:max] + "…"
 }
 
-func TestCodeBuddyLiveHeadlessStreaming(t *testing.T) {
+func TestAlignmentLiveCodeBuddyHeadlessStreaming(t *testing.T) {
 	requireCodeBuddyCLI(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -179,7 +194,7 @@ func TestCodeBuddyLiveHeadlessStreaming(t *testing.T) {
 	}
 }
 
-func TestCodeBuddyLiveThreadResume(t *testing.T) {
+func TestAlignmentLiveCodeBuddyThreadResume(t *testing.T) {
 	requireCodeBuddyCLI(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
@@ -211,11 +226,11 @@ func TestCodeBuddyLiveThreadResume(t *testing.T) {
 		t.Fatalf("second turn: %v", err)
 	}
 	if !strings.Contains(strings.ToLower(second.Text), "banana") {
-		t.Logf("resume recall is model-dependent; result=%q", second.Text)
+		t.Fatal("required live resume lost the remembered token")
 	}
 }
 
-func TestCodeBuddyLivePersistentReuse(t *testing.T) {
+func TestAlignmentLiveCodeBuddyPersistentReuse(t *testing.T) {
 	requireCodeBuddyCLI(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -253,7 +268,7 @@ func TestCodeBuddyLivePersistentReuse(t *testing.T) {
 	}
 }
 
-func TestCodeBuddyLivePermissionApprove(t *testing.T) {
+func TestAlignmentLiveCodeBuddyPermissionApprove(t *testing.T) {
 	requireCodeBuddyCLI(t)
 	cwd := t.TempDir()
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
@@ -297,7 +312,7 @@ func TestCodeBuddyLivePermissionApprove(t *testing.T) {
 	}
 }
 
-func TestCodeBuddyLiveQuestionAnswered(t *testing.T) {
+func TestAlignmentLiveCodeBuddyQuestionAnswered(t *testing.T) {
 	requireCodeBuddyCLI(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
@@ -331,7 +346,7 @@ func TestCodeBuddyLiveQuestionAnswered(t *testing.T) {
 	}
 }
 
-func TestCodeBuddyLivePlanApprove(t *testing.T) {
+func TestAlignmentLiveCodeBuddyPlanApprove(t *testing.T) {
 	requireCodeBuddyCLI(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
@@ -365,7 +380,7 @@ func TestCodeBuddyLivePlanApprove(t *testing.T) {
 	}
 }
 
-func TestCodeBuddyLivePlanReject(t *testing.T) {
+func TestAlignmentLiveCodeBuddyPlanReject(t *testing.T) {
 	requireCodeBuddyCLI(t)
 	cwd := t.TempDir()
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
@@ -397,7 +412,7 @@ func TestCodeBuddyLivePlanReject(t *testing.T) {
 	}
 }
 
-func TestCodeBuddyLivePermissionReject(t *testing.T) {
+func TestAlignmentLiveCodeBuddyPermissionReject(t *testing.T) {
 	requireCodeBuddyCLI(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
@@ -415,7 +430,7 @@ func TestCodeBuddyLivePermissionReject(t *testing.T) {
 		}),
 	)
 	logLiveEvents(t, events)
-	if err != nil && !errors.Is(err, adaptor.ErrApprovalDenied) {
+	if !errors.Is(err, adaptor.ErrApprovalDenied) {
 		t.Fatalf("permission rejection error=%v", err)
 	}
 }
