@@ -333,6 +333,14 @@ for ev := range agui.EventsContext(ctx, stream) {
 
 Local programs without a request-scoped context can use `agui.Events(stream)`; HTTP/WebSocket handlers should prefer `EventsContext` to avoid leaking a fan-out goroutine after the client disconnects.
 
+Subagent Activity snapshots and deltas own their tool lists and nested
+Args/Result/Error JSON containers. A delivered `running` tool snapshot stays
+`running` after a later completion delta; consumers can retain or serialize it
+while translation continues. Consumer edits do not write back to the tracker.
+Concrete JSON container types, numeric values and nil/empty distinctions remain
+intact; translation and CloseResult keep the existing wire order and terminal
+semantics.
+
 The AG-UI input helper `RunAgentInput` extracts the last non-empty user text; `UserTurnEvents` builds the canonical user `TextDelta` triple. Drivers only produce assistant text, and `RoleUser` is synthesized solely by a bridge or a host.
 
 Capability and Todo become CUSTOM `adapter.capability.invocation` and
@@ -472,6 +480,13 @@ CodeBuddy preserves its own Unicode/underscore MCP naming. Its user-result
 parent_tool_use_id can refer to the call itself and is not a parent edge.
 Unproved or malformed partial parents cannot supply arguments or completion
 facts to the root, including a later full wrapper. Raw and original deltas remain.
+Incremental starts leave an empty protocol input object out of Args and preserve
+each actual ArgsDelta. Formal errors close pending capability facts before the
+run terminal. Identical full result wrapper replays publish one typed ToolResult;
+Raw and Transcript retain both copies. Different parents, IDs or payloads stay
+distinct. Declared CodeBuddy SubAgents use exact resolved runtime names in their
+native Markdown frontmatter; [materialization](./profile-resource-provider-matrix.md#codebuddy-declared-agents)
+by itself does not prove invocation.
 
 Claude and CodeBuddy Todo updates require confirmed successful results. Real
 provider task IDs are preserved; namespaced synthetic IDs are explicitly marked

@@ -87,7 +87,10 @@
   "ownership": {
     "allow": [
       "codebuddy/**",
-      "docs/alignment-tasks/2026-09-07/handoffs/T15/**"
+      "docs/alignment-tasks/2026-09-07/handoffs/T15/**",
+      "internal/profileagents/agents.go",
+      "internal/profileagents/codebuddy.go",
+      "internal/profileagents/codebuddy_test.go"
     ],
     "scope_match": "仅精确仓库相对文件或目录/**；任何未列路径不可写。",
     "exclusive_resources": [],
@@ -128,7 +131,9 @@
     "append prompt native inline 参数有长度/Windows/ExtraArgs 校验并进入 persistent signature，不混用户文本。",
     "Task ID 由正式结果/关联取得，失败请求不更新实际状态，跨 turn/嵌套分域、合法空列表能清空。",
     "同时提供 codebuddy_live build tag + AGENT_ADAPTOR_LIVE_CONFORMANCE=1 双门下的 TestAlignmentLive* 测试入口及 CLI/version 采集。普通测试不付费；为 B06 验证完整覆盖此前修复和当前实际支持/unsupported 边界，测试路径交 T23 汇总。",
-    "核对本包既有 DriverConformance 的 live 分支也使用 build tag/env 双门及独立 profile/workspace；只有 CLI存在+env 的单门不足以通过最终门禁，不能沿用用户原目录执行。支持矩阵外的 probe 明确列为不适用，必需场景不得 skip。"
+    "核对本包既有 DriverConformance 的 live 分支也使用 build tag/env 双门及独立 profile/workspace；只有 CLI存在+env 的单门不足以通过最终门禁，不能沿用用户原目录执行。支持矩阵外的 probe 明确列为不适用，必需场景不得 skip。",
+    "R017：完整读取 amendments/R017.md。仅补原owner live fixture覆盖，普通检查不运行付费provider；补 Dedicated+WithTools 跨Agent.Close→新Agent ResumeOnly 随机nonce及同会话证据；补真实Skill与canonical Subagent成功完成事实并保留MCP/Todo/clear原断言。 原validation保持，源码先提交再final HEAD验证，缺真实环境仅留待B06不得声称通过。",
+    "R018：以官方CodeBuddy2.137.1已固定包的CustomAgentsProductProvider/PathUtils/parseAgentFile为依据补Shared profileagents的CodeBuddy native agents物化；最小core映射name/description/instructions、准确<profile>/agents/<runtime>.md。可选字段只映射逐字段已核实loader支持的部分，未映射字段沿公开资源合同显式报告，不能暗套全部Claude语义；SourcePath/路径安全/atomic写/原provider行为保持。公开SyncProfile和Run的Agents+Skill+canonical catalog零CLI反例保留，新增真实fake进程整条Agent链路及helper正负合同测试；实际live仍等B06授权。只新增精确allow的三个helper文件路径与原codebuddy范围，不改公共API/golden/依赖；原V01/V02保持并新增helper V03/V04。"
   ],
   "acceptance_criteria": [
     {
@@ -139,6 +144,16 @@
     {
       "id": "T15-AC02",
       "requirement": "T08 partial 结果、WithSpawn/单 writer/native schema 边界全保留；prompt/todo 的单轮多轮与重放测试齐全。",
+      "required": true
+    },
+    {
+      "id": "T15-AC03",
+      "requirement": "R017指定真实协议用例存在、真实oracle与双门准确，已在最终源码编译并验证普通门不调用provider；实际live执行仍由B06授权验收。",
+      "required": true
+    },
+    {
+      "id": "T15-AC04",
+      "requirement": "R018公开Agents声明到CodeBuddy物化/执行catalog路径可达，精确官方文件格式有证据，原零CLI反例和helper/真实fake进程回归通过，无静默猜字段或削弱既有provider测试。",
       "required": true
     }
   ],
@@ -160,6 +175,34 @@
     {
       "id": "T15-V02",
       "command": "go test -race -count=5 ./codebuddy -run TestAlignment",
+      "cwd": "repository_root",
+      "environment": {
+        "AGENT_ADAPTOR_LIVE_CONFORMANCE": "0",
+        "AGENT_ADAPTOR_E2E": "0",
+        "AGENT_ADAPTOR_UPDATE_API_GOLDEN": "0"
+      },
+      "required": true,
+      "execution_condition": "assigned_environment_available",
+      "must_execute_nonzero_tests": true,
+      "evidence": "记录实际命令、head SHA、OS/Go/CLI版本、exit code和安全日志；失败/skip/零测试不算通过。 非零按本命令实际测试/子测试计数，fuzz按实际种子/执行样本计数；必需场景skip不得通过。普通任务显式禁用的live探针或合同确认不适用的probe可skip，须列明且不能拿它们充当验收证据；可添加-json/-v采集日志，不能缩小原命令选择范围。"
+    },
+    {
+      "id": "T15-V03",
+      "command": "go test -count=1 ./internal/profileagents",
+      "cwd": "repository_root",
+      "environment": {
+        "AGENT_ADAPTOR_LIVE_CONFORMANCE": "0",
+        "AGENT_ADAPTOR_E2E": "0",
+        "AGENT_ADAPTOR_UPDATE_API_GOLDEN": "0"
+      },
+      "required": true,
+      "execution_condition": "assigned_environment_available",
+      "must_execute_nonzero_tests": true,
+      "evidence": "记录实际命令、head SHA、OS/Go/CLI版本、exit code和安全日志；失败/skip/零测试不算通过。 非零按本命令实际测试/子测试计数，fuzz按实际种子/执行样本计数；必需场景skip不得通过。普通任务显式禁用的live探针或合同确认不适用的probe可skip，须列明且不能拿它们充当验收证据；可添加-json/-v采集日志，不能缩小原命令选择范围。"
+    },
+    {
+      "id": "T15-V04",
+      "command": "go test -race -count=10 ./internal/profileagents",
       "cwd": "repository_root",
       "environment": {
         "AGENT_ADAPTOR_LIVE_CONFORMANCE": "0",

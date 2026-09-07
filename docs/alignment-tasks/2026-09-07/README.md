@@ -1,6 +1,6 @@
 # Internal 对齐任务派发包
 
-将[逐提交对齐方案](../../internal-history-alignment-plan-2026-09-07.md)拆为 **7 个批次、35 个并行工作任务、7 个串行验收任务，共 42 份 task.json**。覆盖原方案全部 **13 个 W 工作项、45 个历史提交和 96 条原子验收项**。单批最多并行 6 个任务。
+将[逐提交对齐方案](../../internal-history-alignment-plan-2026-09-07.md)拆为 **7 个批次、36 个并行工作任务、7 个串行验收任务，共 43 份 task.json**。覆盖原方案全部 **13 个 W 工作项、45 个历史提交和 96 条原子验收项**。单批最多并行 6 个任务。
 
 本包定义计划与验收要求，task.json 的 planned 状态不是实时执行状态。实际派发、提交、返修与验收证据由协调者在 `docs/alignment-execution/2026-09-07/` 单独保存；不能将计划或合同冻结当成已通过的功能或发布证据。
 
@@ -28,13 +28,13 @@ contracts/ 保存已审阅合同及版本化修订，handoffs/ 的源码提交�
 | B01 关键修复 | T01 Claude stdin；T02 Tool 错误；T03 A2A continuation；T04 持久 profile；T05 公共部分 Result；T31 schema/HITL 协商 | 6 | G01 | 六条独立修复通道合流后的可运行基线。 |
 | B02 Event 基础 | T06 Event/observer/中立状态机；T07 Claude 部分结果与 schema；T08 CodeBuddy 部分结果；T09 实时 artifact Parts | 4 | G02 | 后续消费者可使用的真实接口及错误/制品保真基础。 |
 | B03 Core 与协议 | T10 append prompt/主动预算 core；T11 A2A 新事件；T12 其余桥与 recorder；T13 capability recorder | 4 | G03 | Driver 与 delegation 接入所需的 core 和 wire 合同。 |
-| B04 Provider 接入 | T14 Claude；T15 CodeBuddy；T16 Codex；T17 Cursor；T18 delegation；T19 A2A 预算错误映射 | 6 | G04 | 13 个 W 项完整实现的集成候选。 |
+| B04 Provider 接入 | T14 Claude；T15 CodeBuddy；T16 Codex；T17 Cursor；T18 delegation；T19 A2A 预算错误映射；T32 原 bridge owner 的 AG-UI 快照修复 | 最多 6 | G04 | 13 个 W 项完整实现的集成候选。 |
 | B05 跨层验收 | T20 生命周期；T21 协议与嵌套 A2A；T22 策略/错误组合；T23 conformance/CI；T24 文档/示例 | 5 | G05 | 已通过实现验收的冻结 SHA，供全部最终平台/live 检查共用。 |
 | B06 平台与 live | T25 Linux/race/fuzz；T26 原生 Windows；T27 Claude live；T28 CodeBuddy live；T29 Codex live；T30 Cursor live | 6 | G06 | 同一 SHA 上的平台、真实协议与最终验收证据。 |
 
 B00 → G00 → B01 → G01 → B02 → G02 → B03 → G03 → B04 → G04 → B05 → G05 → B06 → G06。
 
-同批的并行任务没有相互依赖，也没有交叉写文件。G00–G06 在对应 worker 完成后单独运行，不能作为“第 N 个并行任务”一起派发。批次屏障使下一批获得实际可用的接口，避免用尚未合入的 peer 分支补依赖。
+同批的并行任务没有相互依赖，也没有交叉写文件。max_parallelism 是同时执行上限；B04 七项任务按空闲槽派发，最多六项同时运行，G04 仍须等待全部七项验收。G00–G06 在对应 worker 完成后单独运行，不能作为“第 N 个并行任务”一起派发。批次屏障使下一批获得实际可用的接口，避免用尚未合入的 peer 分支补依赖。
 
 ### 拆分依据
 
@@ -115,3 +115,12 @@ python3 docs/alignment-tasks/2026-09-07/validate.py \
 [R006](amendments/R006.md)：新增W09-R14关闭已实证的Driver-only终局权威矛盾；原95要求全部保留，现96条。
 
 [R007](amendments/R007.md)：精确区分profile解锁前后的Close重试，Windows长期锁禁止delete sharing。
+
+
+[R017](amendments/R017.md)：补齐真实 cold-resume 和 Skill/Subagent 用例入口，禁用门只证明 fixture，不充当 live 通过。
+
+[R018](amendments/R018.md)：修复 CodeBuddy 公开 Agents 物化路径，原 owner 以官方 loader 与独立公开反例验收精确 runtime name 和安全 .md 文件名。
+
+[R019](amendments/R019.md)：原 T12 bridge 负责人以补充 T32 修复实际 AG-UI 已发布快照共享状态/race；W05-R05、W09-R11 最终责任显式转交，历史验收保留，G04 增加该独立任务并保持最多六并发。
+
+[R020](amendments/R020.md)：T20 利用既有 private post-unlock seam 增加独立 close 故障验收，精确新增一测试文件，不改生产与公共API。

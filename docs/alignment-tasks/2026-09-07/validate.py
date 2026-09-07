@@ -175,7 +175,7 @@ def package_errors(data, verify_files=True):
         check(len(set(workers)) == len(workers), batch["id"] + ": duplicate worker")
         check(set(batch["integration_order"]) == set(workers)
               and len(batch["integration_order"]) == len(workers), "integration order lost tasks")
-        check(batch["max_parallelism"] == len(workers), "parallelism mismatch")
+        check(1 <= batch["max_parallelism"] <= min(len(workers), 6), "parallelism cap must be between 1 and min(worker count, 6)")
         check(all(tid in tasks for tid in workers + [gate]), "batch references missing task")
         if not all(tid in tasks for tid in workers + [gate]):
             continue

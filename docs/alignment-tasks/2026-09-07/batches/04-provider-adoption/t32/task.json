@@ -1,29 +1,29 @@
 {
   "schema_version": "1.0",
-  "id": "T12",
-  "title": "接入 SSE、AG-UI、subagentstream 与 Event recorder",
-  "batch_id": "B03",
+  "id": "T32",
+  "title": "修复 AG-UI 已发布 Subagent 快照的共享状态与数据竞争",
+  "batch_id": "B04",
   "phase": "parallel",
   "kind": "implementation",
   "priority": "P1",
   "status": "planned",
-  "objective": "接入 SSE、AG-UI、subagentstream 与 Event recorder。完成本任务范围并交付可核验结果，不代替其他任务或提前宣称整个 W 项完成。",
+  "objective": "由原 T12 bridge 负责人修复 T21-F03 独立反例，确保已发布 AG-UI snapshot/delta 在后续翻译和并发序列化时保持不可变，补齐 W05-R05/W09-R11 最终实现验收。",
   "work_items": [
     "W05",
-    "W09",
-    "W12"
+    "W09"
   ],
   "requirements_owned": [
-    "W12-R09"
+    "W05-R05",
+    "W09-R11"
   ],
   "requirements_verified": [],
   "depends_on": [
-    "G02",
+    "G03",
     "C03"
   ],
   "base": {
     "mode": "previous_batch_integrated_head",
-    "predecessor_gate": "G02",
+    "predecessor_gate": "G03",
     "required_ancestor": "919f140f64f89c80933802840c8878681a85a4d9",
     "verification_head_gate": null,
     "bootstrap_required": true
@@ -49,8 +49,7 @@
       "sha256": "831c6b718e71f2645999613f70cb182d8ef333d864835f61288bed816e3b962a",
       "sections": [
         "W05",
-        "W09",
-        "W12"
+        "W09"
       ]
     },
     "required_reads": [
@@ -72,18 +71,15 @@
     ],
     "embedded_plan_sections": {
       "W05": "### W05：Claude 嵌套工具的 typed 生命周期与父关联\n\n**证据与差距。** internal `3ea225a` 从 assistant wrapper 取 `parent_tool_use_id`，为没有普通 `stream_event` 的子代理 tool_use 补 start/args/end。当前 `claude/parser.go` 只把 `message` 交给 `handleAssistantMessage`；有 TranscriptToolCall，但不保留 wrapper 父关系，也不为这一路径补 typed ToolCall。\n\n**实施。** parser 只认正式 wrapper 字段；以本轮、父调用、tool-use ID 形成内部关联和去重状态。为嵌套完整 tool_use 补一组生命周期，普通父工具仍走既有增量；结果按真实 tool-use ID 配对。typed `ToolCall`、必要时 `ToolResult`/Transcript 与 SPI 增加可选父关联字段，并在 A2A/SSE/AG-UI/subagentstream 与 recorder 逐层保留或声明降级。\n\ninternal 代码只用 parent ID 判定“是否嵌套”，所示新增 emitter 并未把 parent ID 放进输出字段，因此直接复制仍不能让宿主可靠构造树；本项要补齐。完整 Args 与 ArgsDelta 同时出现时按当前合同保证消费者不会重复拼接。\n\n**验收。** 主工具与嵌套工具混合、嵌套兄弟、相同 ID 的快照重放、缺 ID、并发、截断与异常收尾；每个工具 start/end exactly-once，parent 关系保留，终局之前全部关闭。不从名称“Explore”推断层级。更新 `driver/` godoc、adaptertest、root golden 和 streaming 文档。",
-      "W09": "### W09：Capability 调用观测，放在正确公共层\n\n**来源。** `1921636` 提供 Skill/MCP/Subagent 调用观测；`9b1ce27` 修复标准化 MCP server name；`dab6933` 处理 Unicode 和下划线分隔歧义。当前没有对应 typed 事件、Driver 字段或 recorder 查询合同。\n\n**实施方案。**\n\n1. 采用封闭 typed 事件：kind、canonical resource key、operation、invocation ID、phase、evidence、source、发生时间/耗时、安全 error code。typed Event 在根层由 Event 家族表达；Driver 事实合同留在 `driver/`，可共用的值词汇放独立公开叶包，任何公共字段不得指向 internal。\n2. Driver 从正式协议识别，基于本次 resolved Skill/MCP/profile Agent catalog 做精确映射。共用 tracker 只管理 catalog 和生命周期，provider-specific MCP name 规则移入 Claude 边界，不把 internal tracker 里的 Claude 特例复制成通用 helper 职责。\n3. Claude MCP server aliases 以已知 catalog 驱动，处理空格、标点、Unicode、开头/末尾下划线；冲突时拒绝归属。不能盲目按 `__` 拆分，更不能根据 tool name 的自然语言含义猜 Skill/Subagent。\n4. 提供可选 `hosttools/capabilityrecorder`，Store/Query 由该包和宿主拥有，不增加 Agent.Admin 或 Inspect 历史查询。通过既有 RunService 扩展机制发行组件 `Option()`；为实现接收事件，设计最小可选 attachment observer 字段或可选观察接口，在唯一 sink 接收后、用户背压丢弃之前投影。现有 RunAttachment 仅能提供输入 Events，**不能假装它已经支持观察输出**。\n5. observer 调用必须有明确并发/顺序、超时、panic、关闭和迟到事件合同；首次存储失败只关闭当前 run 的写入并产生一次安全 notice，不改变 Result/checkpoint/审批。Store 由宿主关闭，不让 Agent.Close 关闭共享 Store。\n6. 流选择与调用 Run/Stream 解耦；按 resolved observation 需求和 Driver 能力选择协议。无正式证据表示未观察到，不能宣告“从未调用”，也不宣告审计/计费完整性。\n\n**验收。** 四 Driver 正式 fixture、未知/歧义 catalog 不入库、Unicode MCP、重复 started/terminal、取消、观察中途实时 Query、store 超时/panic/失败、无 store 运行、并发 runs/identity 隔离、无 args/result/Raw/URL/header/env 泄露。Run 与 Stream 所观察事实一致，原 Result 不受观察失败影响。注意 internal workstream 曾有“立即 started”的旧文字，与后续 `7438d26` 冲突；以 W10 的最终顺序为准。",
-      "W12": "### W12：Todo/Plan 作为同一 Event 流中的快照\n\n**来源与差距。** internal `eb82ed3` 增加 `todo.updated`；当前没有此 typed Event。internal 自述仅实现 Claude/CodeBuddy streaming 和 Codex app-server，未实现 batch Transcript todo 或 Cursor print todo；不能把它描述成四 Driver 全覆盖。\n\n**公共方案。** 增加 `TodoUpdated` typed Event，携带全量有序快照、状态枚举、source/scope 和 `SyntheticID`；它属于 Event 家族，不是新执行概念，也不是 Approval PlanReview。原 ToolCall 和 Transcript 保留。对 Run 与 Stream 采用同一 resolved transport 协商，Driver 能力按实际 transport 如实声明。\n\n**必须修改 internal 的三个假设。**\n\n1. provider 识别留在各 parser。共享 table 只接收规范化的 create/update/replace 操作；不复制 `internal/todoobs.ApplyClaudeTaskTool` 对 provider JSON 和工具名的解释，也不反向 import 根包。\n2. 不能把每 run 的 `TaskCreate` 递增序号假装成 provider `TaskUpdate.taskId`：resume、嵌套、重放或已有任务都可错配。优先从正式结果取得真实 ID，合成 ID 明确标记，未知 ID 不猜；父工具/子代理拥有独立 scope。工具参数完成仅代表请求，不能在工具实际失败时报告成功状态。\n3. 合法空快照代表清空，不能静默丢弃导致 UI 永久保留旧计划；畸形/未知格式以明确可观察降级处理，保留 Raw。最终快照应为关键状态或通过等价的合并/补发保证终态可恢复，并完整报告 drop。\n\nCodex 结构化源限正式 `turn/plan/updated`；实验性文本 plan delta 不猜成 todo。Cursor 当前 print transport 保持 unsupported，不借本项切换整个 Driver 到 ACP。\n\n**验收。** create/update/replace/clear、错误工具调用、真实 ID、synthetic ID、同 Thread 多轮、嵌套 scope、重复快照、UTF-8 长度、取消/drop、A2A round-trip、AG-UI/SSE 映射或明确降级、session recorder 编解码、batch/stream 输出合同不变。A2A 文本内容继续受 v1 ExposurePolicy 过滤，不直接采用 internal“只截断，redact 全交宿主”的默认。更新 API/godoc/golden/streaming 文档。"
+      "W09": "### W09：Capability 调用观测，放在正确公共层\n\n**来源。** `1921636` 提供 Skill/MCP/Subagent 调用观测；`9b1ce27` 修复标准化 MCP server name；`dab6933` 处理 Unicode 和下划线分隔歧义。当前没有对应 typed 事件、Driver 字段或 recorder 查询合同。\n\n**实施方案。**\n\n1. 采用封闭 typed 事件：kind、canonical resource key、operation、invocation ID、phase、evidence、source、发生时间/耗时、安全 error code。typed Event 在根层由 Event 家族表达；Driver 事实合同留在 `driver/`，可共用的值词汇放独立公开叶包，任何公共字段不得指向 internal。\n2. Driver 从正式协议识别，基于本次 resolved Skill/MCP/profile Agent catalog 做精确映射。共用 tracker 只管理 catalog 和生命周期，provider-specific MCP name 规则移入 Claude 边界，不把 internal tracker 里的 Claude 特例复制成通用 helper 职责。\n3. Claude MCP server aliases 以已知 catalog 驱动，处理空格、标点、Unicode、开头/末尾下划线；冲突时拒绝归属。不能盲目按 `__` 拆分，更不能根据 tool name 的自然语言含义猜 Skill/Subagent。\n4. 提供可选 `hosttools/capabilityrecorder`，Store/Query 由该包和宿主拥有，不增加 Agent.Admin 或 Inspect 历史查询。通过既有 RunService 扩展机制发行组件 `Option()`；为实现接收事件，设计最小可选 attachment observer 字段或可选观察接口，在唯一 sink 接收后、用户背压丢弃之前投影。现有 RunAttachment 仅能提供输入 Events，**不能假装它已经支持观察输出**。\n5. observer 调用必须有明确并发/顺序、超时、panic、关闭和迟到事件合同；首次存储失败只关闭当前 run 的写入并产生一次安全 notice，不改变 Result/checkpoint/审批。Store 由宿主关闭，不让 Agent.Close 关闭共享 Store。\n6. 流选择与调用 Run/Stream 解耦；按 resolved observation 需求和 Driver 能力选择协议。无正式证据表示未观察到，不能宣告“从未调用”，也不宣告审计/计费完整性。\n\n**验收。** 四 Driver 正式 fixture、未知/歧义 catalog 不入库、Unicode MCP、重复 started/terminal、取消、观察中途实时 Query、store 超时/panic/失败、无 store 运行、并发 runs/identity 隔离、无 args/result/Raw/URL/header/env 泄露。Run 与 Stream 所观察事实一致，原 Result 不受观察失败影响。注意 internal workstream 曾有“立即 started”的旧文字，与后续 `7438d26` 冲突；以 W10 的最终顺序为准。"
     }
   },
   "ownership": {
     "allow": [
-      "bridges/agui/**",
-      "bridges/sse/**",
-      "bridges/subagentstream/**",
-      "docs/alignment-tasks/2026-09-07/handoffs/T12/**",
-      "hosttools/a2adelegation/service_s9_test.go",
-      "hosttools/sessionrecorder/**"
+      "bridges/agui/subagent.go",
+      "bridges/agui/alignment_snapshot_test.go",
+      "bridges/agui/doc.go",
+      "docs/alignment-tasks/2026-09-07/handoffs/T32/**"
     ],
     "scope_match": "仅精确仓库相对文件或目录/**；任何未列路径不可写。",
     "exclusive_resources": [],
@@ -93,7 +89,7 @@
   "execution": {
     "environment": "local",
     "isolation": "separate_git_worktree",
-    "branch": "codex/alignment-t12",
+    "branch": "codex/alignment-t32",
     "same_batch_peer_artifacts": "禁止读取/依赖同批worker尚未验收的代码或输出；只消费前批已合入合同，公共Go符号不得由同批peer供应。",
     "source_write_allowed": true,
     "paid_live_authorization_required": false,
@@ -117,32 +113,31 @@
     "普通验证显式关闭付费门，不访问真实 provider；live 任务须同时满足授权记录、build tag 和环境变量门。所有任务都不创建 tag、不发布 release、不自动推送/发送外部消息。"
   ],
   "implementation_steps": [
-    "依据 B02 的封闭 Event，实现四个消费者的 parent/capability/todo 编解码与深复制，不调用 engine 或直接派发 Driver。",
-    "协议支持时显式字段映射，否则产出已文档化的降级/custom typed 事件；不可 silent drop。",
-    "recorder 保留稳定 EventMeta 和新变体，JSONL 写失败不回落内存，回放不能得到假 responder。",
-    "R015/G03-F01: 仅迁移既有 S9 fixture 到 leader.New(...,team.Option()) 后直接消费原 Stream；同文件 fake Driver 如实声明 HTTP MCP capability。保持三成员顺序、delta、结果先于terminal、HasLine、Observe、Close全部原业务断言。只移除已消失Merge wrapper的等式或换原RunID非空/稳定检查；不得增加假绑定证明、放宽Merge拒绝、删/skip S9或提前实现T18生产publisher。保留372a465失败日志，最终完整重跑原V01及原补充T12-RACE/T12-VET和新增V03/V04。",
-    "R019: T12 历史 bridge/recorder 实现保留；W05-R05/W09-R11 的最终实现责任转交由同一原 bridge 负责人执行的 T32 补充修复。原完成报告按 canonical19 归档，不据此宣称新 AG-UI 快照反例已关闭。"
+    "先复现 T21-F03：正常 agui.Events 消费方收到 Event 后 json.Marshal，后续 tool_call.end 写入已发布 /toolCalls slice；原固定 b8d9ce6 的快照不变性与 8b52ce0 原 race 日志由协调者只读提供。不得修改 T21 原输入/断言、把消费者串行化或靠 lock 掩盖快照被修改。",
+    "仅在 AG-UI translator 边界复制发布值及所需输入容器；完整覆盖 snapshot、delta 的 toolCalls/Args/Result/Error 与嵌套 JSON 数据，确保以后 state 更新不修改已交付事件，消费方修改自己的事件也不回写内部状态。保留已有 wire 字段、空列表、顺序、terminal/flush、Raw 保真，不新增公共 API/依赖/策略。",
+    "用独立 public EventTranslator 与 Events 反例检查实际已返回对象：保存首份快照 JSON 后继续 start/args/result/end/CloseResult 比较不变；并发序列化交付结果与继续翻译应 race-free。覆盖嵌套 map/slice 并验证 typed 值及 nil/empty 语义未意外改变，不能仅检查浅层指针不同。",
+    "提交局部 godoc/documentation，完整运行原四 bridge/recorder 包命令、AG-UI 重复 race 与 vet。原 T12 的其余职责/历史验收保持可追溯；最终 G04 必须合入本提交，T21 在同一新 G04 重跑固定全链路回归。"
   ],
   "acceptance_criteria": [
     {
-      "id": "T12-AC01",
-      "requirement": "新旧事件 round-trip、序号/source、空 todo 清空、parent scope 和字节大小边界覆盖。",
+      "id": "T32-AC01",
+      "requirement": "固定原快照/race反例在旧实现失败；新 public snapshot/delta 返回对象在所有后续翻译与 CloseResult 后逐字段/JSON不变，并发真实序列化无race。",
       "required": true
     },
     {
-      "id": "T12-AC02",
-      "requirement": "取消/drop/结束顺序与旧 HITL 行为不变，持久 recorder 失败可观察。",
+      "id": "T32-AC02",
+      "requirement": "嵌套 Args/Result/Error、空列表、typed值及原 wire/event 顺序完整保留，消费方独占修改不回写translator；取消/flush/唯一terminal原合同通过。",
       "required": true
     },
     {
-      "id": "T12-AC04",
-      "requirement": "R015 S9采用运行前team.Option统一事件接入，全部既有业务断言保留并通过；未绑定Merge继续拒绝，T18生产接线仍独立。",
+      "id": "T32-AC03",
+      "requirement": "无公共API/依赖/golden更改；局部godoc和中央文档片段交付，所有原指定命令在最后提交通过，T21反例原日志保留。",
       "required": true
     }
   ],
   "validation": [
     {
-      "id": "T12-V01",
+      "id": "T32-V01",
       "command": "go test -count=1 ./bridges/sse ./bridges/agui ./bridges/subagentstream ./hosttools/sessionrecorder",
       "cwd": "repository_root",
       "environment": {
@@ -156,8 +151,8 @@
       "evidence": "记录实际命令、head SHA、OS/Go/CLI版本、exit code和安全日志；失败/skip/零测试不算通过。 非零按本命令实际测试/子测试计数，fuzz按实际种子/执行样本计数；必需场景skip不得通过。普通任务显式禁用的live探针或合同确认不适用的probe可skip，须列明且不能拿它们充当验收证据；可添加-json/-v采集日志，不能缩小原命令选择范围。"
     },
     {
-      "id": "T12-V03",
-      "command": "go test -count=1 ./hosttools/a2adelegation",
+      "id": "T32-V02",
+      "command": "go test -race -count=20 ./bridges/agui",
       "cwd": "repository_root",
       "environment": {
         "AGENT_ADAPTOR_LIVE_CONFORMANCE": "0",
@@ -170,8 +165,8 @@
       "evidence": "记录实际命令、head SHA、OS/Go/CLI版本、exit code和安全日志；失败/skip/零测试不算通过。 非零按本命令实际测试/子测试计数，fuzz按实际种子/执行样本计数；必需场景skip不得通过。普通任务显式禁用的live探针或合同确认不适用的probe可skip，须列明且不能拿它们充当验收证据；可添加-json/-v采集日志，不能缩小原命令选择范围。"
     },
     {
-      "id": "T12-V04",
-      "command": "go test -race -count=5 ./hosttools/a2adelegation -run TestServiceTeamCollaborationS9",
+      "id": "T32-V03",
+      "command": "go vet ./bridges/agui",
       "cwd": "repository_root",
       "environment": {
         "AGENT_ADAPTOR_LIVE_CONFORMANCE": "0",
@@ -180,12 +175,12 @@
       },
       "required": true,
       "execution_condition": "assigned_environment_available",
-      "must_execute_nonzero_tests": true,
+      "must_execute_nonzero_tests": false,
       "evidence": "记录实际命令、head SHA、OS/Go/CLI版本、exit code和安全日志；失败/skip/零测试不算通过。 非零按本命令实际测试/子测试计数，fuzz按实际种子/执行样本计数；必需场景skip不得通过。普通任务显式禁用的live探针或合同确认不适用的probe可skip，须列明且不能拿它们充当验收证据；可添加-json/-v采集日志，不能缩小原命令选择范围。"
     }
   ],
   "documentation": {
-    "fragment": "docs/alignment-tasks/2026-09-07/handoffs/T12/documentation.md",
+    "fragment": "docs/alignment-tasks/2026-09-07/handoffs/T32/documentation.md",
     "contents": [
       "公开语义前后变化和可复现例子",
       "应合并到的godoc/使用文档/CHANGELOG具体段落",
@@ -193,16 +188,17 @@
       "不采用的internal行为和原因",
       "验证实跑/未跑的平台与live边界"
     ],
-    "central_owner": "G03",
+    "central_owner": "G04",
     "must_integrate_before_batch_acceptance": true
   },
   "handoff": {
-    "result_path": "docs/alignment-tasks/2026-09-07/handoffs/T12/result.json",
+    "result_path": "docs/alignment-tasks/2026-09-07/handoffs/T32/result.json",
     "schema_path": "docs/alignment-tasks/2026-09-07/result.schema.json",
-    "evidence_dir": "docs/alignment-tasks/2026-09-07/handoffs/T12/evidence",
-    "failure_report": "docs/alignment-tasks/2026-09-07/handoffs/T12/findings.md",
+    "evidence_dir": "docs/alignment-tasks/2026-09-07/handoffs/T32/evidence",
+    "failure_report": "docs/alignment-tasks/2026-09-07/handoffs/T32/findings.md",
     "requirement_ids": [
-      "W12-R09"
+      "W05-R05",
+      "W09-R11"
     ],
     "commit_rule": "只提交本任务实施/局部godoc/测试与契约文件。源码commit完成并测试后生成result，记录实际head；result/evidence由派发器收集，不塞回所引用commit造成SHA自引用。"
   },

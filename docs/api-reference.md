@@ -352,6 +352,12 @@ Default backpressure drops the events the contract allows to be dropped when the
 
 `WithEventMeta` is only for bridges and persistent recorders replaying typed Events. A live sink always rewrites the authoritative ordering.
 
+The [AG-UI bridge](./streaming.md#8-ag-ui-bridge) gives each published Subagent
+Activity snapshot/delta independent tool lists and nested JSON values. Later
+translation and CloseResult cannot modify an event already delivered to a
+consumer, and consumer edits cannot modify the translator's state. Typed
+containers, numbers and nil/empty values retain their existing wire semantics.
+
 ## 7. Approval
 
 HITL has two consumption forms, but both share one `ApprovalRequest`.

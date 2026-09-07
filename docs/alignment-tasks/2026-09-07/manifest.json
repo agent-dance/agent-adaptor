@@ -23,7 +23,7 @@
   "dispatch_contract": {
     "input": "传递完整task.json，不仅title；提供源码checkout及required_reads、前置contract artifacts和固定只读internal clone。",
     "bootstrap": "先在隔离集成分支建立包含原方案/AGENTS/全任务包的seed commit并记录真实SHA。原始919f140须是祖先；不得stash/reset丢弃用户未提交内容。当前仅生成计划，不执行此commit。",
-    "parallelism": "同batch只有phase=parallel并发，各自从同一前批gate的实际集成SHA建立worktree；gate单独在所有worker验收后运行；不使用共享工作区。",
+    "parallelism": "同batch只有phase=parallel并发，各自从同一前批gate的实际集成SHA建立worktree；gate单独在所有worker验收后运行；不使用共享工作区。 max_parallelism 是同时运行上限，可小于任务数；空闲 slot 后才派下一项，所有任务仍必须在 gate 前验收。",
     "gates": "下一批必须使用上一gate给出的SHA，不能始终从919f140或默认main启动，也不能混用其他worker分支。",
     "reports": "handoff result/evidence在源码commit完成后产出，由dispatcher独立收集；execution-state是外部执行数据，不提交自引用的HEAD；不要伪造已完成报告。",
     "merge": "协调者在隔离integration_worktree按integration_order合流；自动合并成功仍必须跑gate合同与全量检查；runtime冲突返原owner。",
@@ -133,7 +133,7 @@
       "id": "B04",
       "directory": "04-provider-adoption",
       "title": "各 Driver 与 delegation 接入",
-      "purpose": "按 provider 目录各自单 writer；A2A 业务消费与桥错误映射依赖此前冻结的 code/DTO 独立实现。",
+      "purpose": "按 provider 目录各自单 writer；A2A 业务消费与桥错误映射依赖此前冻结的 code/DTO 独立实现。 R019 补充原 bridge owner 的 T32；七个独立工作项分槽执行，同时最多六项。",
       "depends_on_gate": "G03",
       "parallel_tasks": [
         "T14",
@@ -141,7 +141,8 @@
         "T16",
         "T17",
         "T18",
-        "T19"
+        "T19",
+        "T32"
       ],
       "max_parallelism": 6,
       "gate_task": "G04",
@@ -151,7 +152,8 @@
         "T16",
         "T17",
         "T18",
-        "T19"
+        "T19",
+        "T32"
       ],
       "same_batch_implementation_dependencies": false,
       "next_batch_requires_gate_acceptance": true
@@ -348,7 +350,7 @@
       "batch_id": "B03",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/03-core-and-wire/t12/task.json",
-      "sha256": "f8e7f0113d4a80bad1c73e67582eddd73d8cfe52ca4417e38c22b8a931ab71c1"
+      "sha256": "e3f2f6f3c3685ecfd547f8205df0a1c14770db95107ace8b1094dbf2938a6d2b"
     },
     {
       "id": "T13",
@@ -369,28 +371,28 @@
       "batch_id": "B04",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/04-provider-adoption/t14/task.json",
-      "sha256": "0ee085a76c8d9e03a1d26219e503e3322d9b7431725476fe4d1f3fcff85dbe3c"
+      "sha256": "75298979a1195e1d5499828d21fee26dcba3e62bf2702490780dc1266607f295"
     },
     {
       "id": "T15",
       "batch_id": "B04",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/04-provider-adoption/t15/task.json",
-      "sha256": "b915fbe403b6c3112ccf59572966f50fa52368040b1c4b150be6620222b7b8df"
+      "sha256": "c9daffaf587829903fecef2ce45f5fb952701b58b1633a6e803d6f0f2d96d394"
     },
     {
       "id": "T16",
       "batch_id": "B04",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/04-provider-adoption/t16/task.json",
-      "sha256": "cc1fc5bb498021099b4d75008e65fd653ca68b2b1565499ea2a0eb8fd344095d"
+      "sha256": "7caa334ff94bc2274cd3dd3147abf5e88950b56fc0fa28e9f9b6eec4acaf3875"
     },
     {
       "id": "T17",
       "batch_id": "B04",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/04-provider-adoption/t17/task.json",
-      "sha256": "bb4031ea6dac925f6bba2f846ef4a379fdb52ecef823cacee3f06d96e5de002d"
+      "sha256": "354eabe88aa4ad03ccb250afcbfd8c3cac5188731b624b14bbcc328a81170c6d"
     },
     {
       "id": "T18",
@@ -411,14 +413,14 @@
       "batch_id": "B04",
       "phase": "gate",
       "path": "docs/alignment-tasks/2026-09-07/batches/04-provider-adoption/gate/task.json",
-      "sha256": "007b58d8947b26da47a293669b8a4d6c14384ac768c69bb4154b05dd85f40928"
+      "sha256": "5aaefa397a9964b009babc4936a6c726117f1e925bd5aa30479b4de6226786f8"
     },
     {
       "id": "T20",
       "batch_id": "B05",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/05-cross-layer-qa/t20/task.json",
-      "sha256": "51e2bf0d05f463993bdc94318742e8414d4d4108351e85243e49947a22bb77d5"
+      "sha256": "eb702a4ac61713290182718c1f11a21854b9fbdd69004c8f3c8282bc2b74dc06"
     },
     {
       "id": "T21",
@@ -503,6 +505,13 @@
       "phase": "gate",
       "path": "docs/alignment-tasks/2026-09-07/batches/06-platform-live/gate/task.json",
       "sha256": "30867713c1717fdaf9a3a23dfb2f9eaaca09a27bdad763db05462dbae9fb3d32"
+    },
+    {
+      "id": "T32",
+      "batch_id": "B04",
+      "phase": "parallel",
+      "path": "docs/alignment-tasks/2026-09-07/batches/04-provider-adoption/t32/task.json",
+      "sha256": "dbc8656c090dcd12480959e741583385c70385724645735585e17f43aeab149c"
     }
   ],
   "summary": {
@@ -510,9 +519,9 @@
     "history_commit_count": 45,
     "requirement_count": 96,
     "batch_count": 7,
-    "parallel_task_count": 35,
+    "parallel_task_count": 36,
     "gate_task_count": 7,
-    "total_task_count": 42,
+    "total_task_count": 43,
     "peak_parallelism": 6
   },
   "verification": {
@@ -521,7 +530,7 @@
     "every_requirement_has_one_owner_and_independent_verifier": true,
     "no_same_batch_worker_dependency": true
   },
-  "revision": 17,
+  "revision": 22,
   "amendments": [
     "docs/alignment-tasks/2026-09-07/amendments/R001.md",
     "docs/alignment-tasks/2026-09-07/amendments/R002.md",
@@ -538,6 +547,10 @@
     "docs/alignment-tasks/2026-09-07/amendments/R013.md",
     "docs/alignment-tasks/2026-09-07/amendments/R014.md",
     "docs/alignment-tasks/2026-09-07/amendments/R015.md",
-    "docs/alignment-tasks/2026-09-07/amendments/R016.md"
+    "docs/alignment-tasks/2026-09-07/amendments/R016.md",
+    "docs/alignment-tasks/2026-09-07/amendments/R017.md",
+    "docs/alignment-tasks/2026-09-07/amendments/R018.md",
+    "docs/alignment-tasks/2026-09-07/amendments/R019.md",
+    "docs/alignment-tasks/2026-09-07/amendments/R020.md"
   ]
 }

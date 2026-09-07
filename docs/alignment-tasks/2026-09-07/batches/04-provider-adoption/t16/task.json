@@ -140,7 +140,8 @@
     "传 developer instructions 到 exec TOML 与 app-server start/resume/fork，内容和形态进入 signature/compatibility，不使用 baseInstructions 覆盖。",
     "todo 仅认正式 turn/plan/updated 全量；实验文本 delta 维持降级。只有 schema 确需更新才官方生成+go generate，记录版本，不手改 generated/schema。",
     "同时提供 codex_live build tag + AGENT_ADAPTOR_LIVE_CONFORMANCE=1 双门下的 TestAlignmentLive* 测试入口及 CLI/version 采集。普通测试不付费；为 B06 验证完整覆盖此前修复和当前实际支持/unsupported 边界，测试路径交 T23 汇总。",
-    "核对本包既有 DriverConformance 的 live 分支也使用 build tag/env 双门及独立 profile/workspace；只有 CLI存在+env 的单门不足以通过最终门禁，不能沿用用户原目录执行。支持矩阵外的 probe 明确列为不适用，必需场景不得 skip。"
+    "核对本包既有 DriverConformance 的 live 分支也使用 build tag/env 双门及独立 profile/workspace；只有 CLI存在+env 的单门不足以通过最终门禁，不能沿用用户原目录执行。支持矩阵外的 probe 明确列为不适用，必需场景不得 skip。",
+    "R017：完整读取 amendments/R017.md。仅补原owner live fixture覆盖，普通检查不运行付费provider；补公开Agent/Thread + Dedicated + WithTools跨Agent.Close→新Agent ResumeOnly随机nonce和同会话证据；保持已有exec/appserver append、Skill native input接受、MCP/plan/collab断言。 原validation保持，源码先提交再final HEAD验证，缺真实环境仅留待B06不得声称通过。"
   ],
   "acceptance_criteria": [
     {
@@ -151,6 +152,11 @@
     {
       "id": "T16-AC02",
       "requirement": "prompt 中文/转义/多轮/空清除/生成来源测试与 plan synthetic/clear/order/schema 验证通过。",
+      "required": true
+    },
+    {
+      "id": "T16-AC03",
+      "requirement": "R017指定真实协议用例存在、真实oracle与双门准确，已在最终源码编译并验证普通门不调用provider；实际live执行仍由B06授权验收。",
       "required": true
     }
   ],

@@ -41,6 +41,15 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- Isolate published AG-UI Subagent activity snapshots and nested tool values
+  from later translation and consumer edits; concurrent serialization no longer
+  races with tracker updates, and retained snapshots preserve their original status.
+- Materialize declared CodeBuddy SubAgents through its confirmed Markdown loader.
+  Preserve exact catalog names while encoding safe `.md` filenames separately;
+  reject unsupported inline fields and retain native SourcePath bytes.
+- Keep CodeBuddy incremental tool starts free of placeholder Args, close pending
+  observations before formal error terminals, and deduplicate identical typed
+  tool results while retaining complete Raw and Transcript replays.
 - Finish Claude result-only bidirectional one-shot runs by closing stdin once;
   nested subagent completion cannot close the root control channel.
 - Deliver bounded safe `invalid_input` Tool corrections without argument values

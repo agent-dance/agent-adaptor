@@ -370,6 +370,8 @@ B04 已交付四 Driver 的原生 append 支持/明确 unsupported、正式 capa
 
 Delegation 通过 BindEvents 让 typed 事实先进入 core observer 再进入有损 bus，真实历史 binding proof 在撤销后保留。relay 使用无碰撞可逆域，超长/超深显式保留丢弃原因与数量。每次 Delegate 独立主动预算，不改 Member Policy，Member Ask 不暂停 delegator；终局封账后才有界清理。A2A failure 只提升八项闭集与可信主预算 limit_ms；carrier Reason 第一，R016 只为 bare error 采用同一已排空 Stream 的唯一最后、Meta.RunID 匹配的失败分类，nil error 绝不因事件变失败。
 
+R017 补齐真实冷续接与 Skill/Subagent 验证入口，禁用门不构成实际调用证据。R018 保证 CodeBuddy 物化的 native name 与 resolved catalog 逐字一致，安全 .md 文件名独立编码，SourcePath 保持原生内容责任；正式 error 前闭合未完成观察，完全相同的结果 wrapper 只投影一次 typed ToolResult，Raw/Transcript 仍完整。R019 要求已发布 AG-UI Subagent snapshot/delta 独占工具结构与嵌套 JSON 容器，后续翻译与消费者修改不能彼此改写；原 bridge owner 的 T32 和不变的独立 T21 反例共同验收。
+
 以上实施须由 G04 合流门禁确认；本段不代替外部精确 SHA 验收记录。T20–T24 独立跨层/文档验证和 T25–T30 平台/live 证据仍打开，不能以本批 worker 测试关闭这些要求。
 
 具体冻结设计、未支持边界、文件所有权和fixture见 `docs/alignment-tasks/2026-09-07/contracts/frozen.json`。合同冻结不代表代码已实现；后续同批godoc、合同测试、使用文档和CHANGELOG完成后才能关闭对应项。其他第14节既有保护继续有效。

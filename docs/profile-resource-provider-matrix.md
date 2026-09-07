@@ -20,6 +20,27 @@ Cursor print only advertises MCP/custom-subagent facts, with Skill/Todo absent.
 See [native append limits](./api-reference.md#31-dual-scope-options) for the separate
 append channel and session guards.
 
+## CodeBuddy declared agents
+
+CodeBuddy 2.137.1's inspected loader reads `<profile>/agents/*.md` using YAML
+frontmatter and Markdown instructions. The SDK maps name/description/body,
+model, effort, permissionMode, tools/disallowedTools, skills and named mcpServers.
+Effort accepts minimal, low, medium, high, xhigh and max. Unmapped inline sandbox,
+agent-local hooks, Native data and invalid effort fail SyncProfile/Run explicitly.
+
+The native name matches the resolved RuntimeName (or default Key) exactly.
+Filesystem naming is separate: Unicode, case, separators, reserved names and
+extensions use an encoded filename with a `.md` suffix. SourcePath keeps its
+original bytes under a safe `.md` target; callers must supply native frontmatter
+whose name matches the resolved RuntimeName when the filename is encoded.
+SyncProfile does not rewrite native source contents.
+
+The [fixed loader evidence](./alignment-tasks/2026-09-07/handoffs/T15/agent-loader-evidence.md)
+records the installed distribution hash and exact field readers. Public
+SyncProfile and fake-process catalog tests establish materialization and parsing;
+only explicit live tests can establish actual model Skill/Subagent use. The
+three-provider research tables below retain their original historical scope.
+
 ## Research Scope
 
 Reviewed local tools:

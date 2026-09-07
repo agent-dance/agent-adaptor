@@ -7,11 +7,11 @@
     "history_commit_count": 45,
     "requirement_count": 96,
     "batch_count": 7,
-    "parallel_task_count": 35,
+    "parallel_task_count": 36,
     "gate_task_count": 7,
-    "total_task_count": 42,
+    "total_task_count": 43,
     "peak_parallelism": 6
   },
-  "manifest_sha256": "17dde28ffdf4f44d85b1b4957c1e3f4404a6f96f4aef4d4dcb51dd0c75aa5996",
+  "manifest_sha256": "1163433865321727303c3432d65756dd5b8f6972d6cdd2b321a027c47626820a",
   "errors": []
 }

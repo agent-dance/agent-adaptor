@@ -410,7 +410,7 @@
       "id": "W05-R05",
       "work_item": "W05",
       "description": "SSE/AGUI/subagentstream/recorder父关联保留或声明降级",
-      "implementation_owner": "T12",
+      "implementation_owner": "T32",
       "verification_tasks": [
         "T21",
         "T27"
@@ -750,7 +750,7 @@
       "id": "W09-R11",
       "work_item": "W09",
       "description": "非A2A bridge与recorder的新增Capability事件保留",
-      "implementation_owner": "T12",
+      "implementation_owner": "T32",
       "verification_tasks": [
         "T21"
       ],
@@ -1370,9 +1370,9 @@
       "implementation_tasks": [
         "T06",
         "T11",
-        "T12",
         "T14",
-        "T18"
+        "T18",
+        "T32"
       ],
       "independent_verification_tasks": [
         "T21",
@@ -1485,14 +1485,14 @@
       "implementation_tasks": [
         "T06",
         "T11",
-        "T12",
         "T13",
         "T14",
         "T15",
         "T16",
         "T17",
         "T18",
-        "T24"
+        "T24",
+        "T32"
       ],
       "independent_verification_tasks": [
         "T20",

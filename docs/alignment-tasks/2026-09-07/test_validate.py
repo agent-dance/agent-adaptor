@@ -69,6 +69,26 @@ class DispatchValidationTests(unittest.TestCase):
         self.assertTrue(validate.overlaps("claude/**", "claude/subdir/**"))
         self.assertTrue(validate.overlaps("CLAUDE/x.go", "claude/x.go"))
 
+    def test_parallelism_is_a_bounded_capacity(self):
+        batch = self.data["manifest"]["batches"][4]
+        self.assertEqual(len(batch["parallel_tasks"]), 7)
+        self.assertEqual(batch["max_parallelism"], 6)
+        self.assertEqual(validate.package_errors(self.data, verify_files=False), [])
+        batch["max_parallelism"] = 7
+        self.assert_package_rejects("parallelism cap")
+
+    def test_supplemental_repair_cannot_bypass_gate(self):
+        self.data["tasks"]["G04"]["depends_on"].remove("T32")
+        self.assert_package_rejects("wrong worker barrier")
+
+    def test_supplemental_repair_cannot_overlap_provider(self):
+        self.data["tasks"]["T32"]["ownership"]["allow"].append("codebuddy/parser.go")
+        self.assert_package_rejects("write overlap")
+
+    def test_reassigned_requirement_cannot_be_dropped(self):
+        self.data["tasks"]["T32"]["requirements_owned"].remove("W05-R05")
+        self.assert_package_rejects("owned requirements differ")
+
     def test_same_batch_dependency_rejected(self):
         self.data["tasks"]["T02"]["depends_on"].append("T01")
         self.assert_package_rejects("same-batch worker dependency")

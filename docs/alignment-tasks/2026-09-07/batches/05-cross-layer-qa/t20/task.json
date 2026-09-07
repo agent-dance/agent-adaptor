@@ -129,7 +129,8 @@
       "e2e/alignment_lifecycle_test.go",
       "e2e/alignment_process_fixture_test.go",
       "e2e/alignment_profile_test.go",
-      "internal/testutil/alignmentlifecycle/**"
+      "internal/testutil/alignmentlifecycle/**",
+      "internal/hostedprofile/alignment_release_lifecycle_test.go"
     ],
     "scope_match": "仅精确仓库相对文件或目录/**；任何未列路径不可写。",
     "exclusive_resources": [],
@@ -170,7 +171,8 @@
     "R006独立核验W09-R14：Driver先报告成功但后续cleanup/lease失败，带/不带RunService sources均由公共最终RunFinished映射同一最终RunError，原始provider Terminal/Transcript完整且无提前第二终局。",
     "R007独立验收释放线性化点：解锁前失败保留所有权，解锁后清理失败重试绝不写新owner状态；Windows实际长期锁句柄无delete sharing，持锁rename/delete失败，不用仅验证事后inode变化替代。",
     "R010独立对照：executeInvocation准入后每轮唯一core start/terminal且cleanup主Reason一致；openStream静态拒绝保留空closed Events+Result error、无资源/Driver，不伪造执行生命周期。",
-    "R011独立回归：已有MCP配置mode保持/真实外部mode变化可见；兼容rich→native schema batch→rich保持同一Thread active记录/正式resume/实际prewarm且每prompt一次，ResumeOnly不因Streaming布尔拒绝，真实配置/codec/资源不兼容仍受guard保护。"
+    "R011独立回归：已有MCP配置mode保持/真实外部mode变化可见；兼容rich→native schema batch→rich保持同一Thread active记录/正式resume/实际prewarm且每prompt一次，ResumeOnly不因Streaming布尔拒绝，真实配置/codec/资源不兼容仍受guard保护。",
+    "R020 / QA-06: 利用现有 hostedprofile Claim.beforeLockClose/beforeRootClose 私有 seam，从真正 OS unlock 成功之后注入 close 故障；独立自建source/Initialize/BeginUse，持有 successor active barrier，断言旧 Release 重试不能写 state/marker/session 或释放新owner lock。所有等待/Close有限，不修改生产、不增加公共API、不把此证据视为原生Windows no-delete-sharing/DACL验证。"
   ],
   "acceptance_criteria": [
     {
@@ -181,6 +183,11 @@
     {
       "id": "T20-AC02",
       "requirement": "无真实 CLI/付费调用，使用隔离临时 profile/workspace，不依赖个人环境。",
+      "required": true
+    },
+    {
+      "id": "T20-AC03-R020",
+      "requirement": "R007 post-unlock/close 故障由新增独立私有测试实跑，验证错误可观察、旧owner失去权限、successor资源和锁安全；原e2e两项命令保留并通过。",
       "required": true
     }
   ],
@@ -202,6 +209,20 @@
     {
       "id": "T20-V02",
       "command": "go test -race -count=10 ./e2e -run TestAlignment",
+      "cwd": "repository_root",
+      "environment": {
+        "AGENT_ADAPTOR_LIVE_CONFORMANCE": "0",
+        "AGENT_ADAPTOR_E2E": "0",
+        "AGENT_ADAPTOR_UPDATE_API_GOLDEN": "0"
+      },
+      "required": true,
+      "execution_condition": "assigned_environment_available",
+      "must_execute_nonzero_tests": true,
+      "evidence": "记录实际命令、head SHA、OS/Go/CLI版本、exit code和安全日志；失败/skip/零测试不算通过。 非零按本命令实际测试/子测试计数，fuzz按实际种子/执行样本计数；必需场景skip不得通过。普通任务显式禁用的live探针或合同确认不适用的probe可skip，须列明且不能拿它们充当验收证据；可添加-json/-v采集日志，不能缩小原命令选择范围。"
+    },
+    {
+      "id": "T20-V03",
+      "command": "go test -race -count=10 ./internal/hostedprofile -run TestAlignmentReleaseLifecycle",
       "cwd": "repository_root",
       "environment": {
         "AGENT_ADAPTOR_LIVE_CONFORMANCE": "0",

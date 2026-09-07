@@ -1,10 +1,10 @@
 {
   "schema_version": "1.0",
   "gate": "G04",
-  "manifest_revision": 17,
+  "manifest_revision": 22,
   "code_baseline": "919f140f64f89c80933802840c8878681a85a4d9",
   "source_head": "e2f0620bdd6477e6fe16f6db5648093589342ca2",
-  "status": "implementation_reconciled_G04_checks_pending",
+  "status": "G04_sources_reconciled_exact_commit_checks_external",
   "contracts": [
     {
       "producer": "C01",
@@ -296,7 +296,8 @@
       "e2e/alignment_lifecycle_test.go",
       "e2e/alignment_process_fixture_test.go",
       "e2e/alignment_profile_test.go",
-      "internal/testutil/alignmentlifecycle/**"
+      "internal/testutil/alignmentlifecycle/**",
+      "internal/hostedprofile/alignment_release_lifecycle_test.go"
     ],
     "T21": [
       "alignment_protocol_integration_test.go",
@@ -349,6 +350,12 @@
     ],
     "T30": [
       "docs/alignment-tasks/2026-09-07/handoffs/T30/**"
+    ],
+    "T32": [
+      "bridges/agui/subagent.go",
+      "bridges/agui/alignment_snapshot_test.go",
+      "bridges/agui/doc.go",
+      "docs/alignment-tasks/2026-09-07/handoffs/T32/**"
     ]
   },
   "coordination": [
@@ -376,7 +383,13 @@
     "G03 reconciliation: native append core/hash and active budget with R012 seal/R014 selected cause, R013 Approval snapshots, A2A strict opt-in wire, non-A2A replay/Merge and optional capabilityrecorder delivered. T14-T19 provider/delegation adoption and B05/B06 verification remain open; no native/live evidence inferred.",
     "R015: G03 full suite exposed obsolete S9 post-run Merge usage. T12 additionally owns only service_s9_test.go to migrate to pre-run team.Option and original Stream, keeping all business assertions. No fake binding proof or production T18 work; required S9/full hosttool validation added.",
     "R016: nonnil Result error remains the only failure decision. RunError carrier first; bare errors may reuse the same fully drained Stream unique last failed RunFinished closed Reason, attributed only by nonempty matching Meta.RunID. Invalid or absent hints retain prior bare fallback. T18 Local uses one Stream for Send/drain; T18/T19 remain independent. No core/public API/ownership/DAG/requirement changes; G03 accepted evidence unchanged.",
-    "G04 reconciliation: T14-T19 native append/formal observations, delegation binding/relay/active budget and safe A2A failure wire including R016 delivered; exact merged gate checks and B05/B06 verification remain distinct. Root/SPI golden and generated/schema unchanged in B04."
+    "G04 reconciliation: T14-T19 native append/formal observations, delegation binding/relay/active budget and safe A2A failure wire including R016 delivered; exact merged gate checks and B05/B06 verification remain distinct. Root/SPI golden and generated/schema unchanged in B04.",
+    "R017 is a live fixture coverage correction, with no public/runtime contract or ownership/DAG/requirement change. Preserve accepted G04 2421fe4 evidence, reopen T14-T17/G04, and rebase B05 final work to the next accepted G04 before original validations. Never count static/disabled live checks as real provider evidence.",
+    "R018 extends T15 only with internal/profileagents/agents.go, codebuddy.go, codebuddy_test.go to repair the publicly declared CodeBuddy Agents materialization path using fixed official loader evidence. No public vocabulary/dependency change; two helper validation commands supplement all original checks. G04 remains reopened and B05 final evidence must use its replacement accepted base.",
+    "R019: T21 actual AG-UI stream serialization found aliased published toolCalls snapshots and a race. Supplemental T32 is executed by original T12 bridge owner from G03, owns only AG-UI snapshot repair paths, takes W09-R11 final implementation responsibility while T12 historical evidence is preserved. B04 seven independent tasks remain capped at six concurrent workers; G04 requires all seven. No requirement/history ID removed, no public API or dependency change; unchanged T21 full chain replays on replacement G04.",
+    "R020: T20 additionally owns only internal/hostedprofile/alignment_release_lifecycle_test.go, using existing private post-OS-unlock close-failure seams for independent R007 evidence. No production/public API/dependency/DAG/requirement change; all original validation remains and one focused race command is added.",
+    "R019 coverage clarification: the fixed T21 report maps the same AG-UI aliasing failure to W05-R05 as well as non-A2A W09-R11. Both final implementation responsibilities move from historical T12 to original-owner supplemental T32; IDs and independent T21 verifiers remain unchanged.",
+    "G04 replacement reconciliation canonical22: accepted T14-T19 and original bridge owner supplemental T32 merged; R017/R018/R019 defects and R020 independent QA scope recorded. Exact committed G04 gate and unchanged T21 counterexamples are external evidence, not inferred from this manifest. B05 must migrate before final validation; B06 remains distinct."
   ],
   "unmerged_related_branches": [
     {

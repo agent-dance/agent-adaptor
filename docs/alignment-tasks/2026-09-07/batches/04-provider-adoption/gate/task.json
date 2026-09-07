@@ -25,7 +25,8 @@
     "T16",
     "T17",
     "T18",
-    "T19"
+    "T19",
+    "T32"
   ],
   "base": {
     "mode": "batch_integration",
@@ -162,7 +163,8 @@
     "按manifest.integration_order将任务commit合入隔离的集成分支，禁止worker直接写main；对冲突解释语义，不用ours/theirs覆盖。必须修实现时重开原owner任务并再验，gate不包揽未声明功能。",
     "逐任务合并documentation.md到相应集中文档、CHANGELOG及必要AGENTS/doc.go，保证公共语义与代码同批验收；审阅golden新增声明而不是单纯重新生成。",
     "核对该批requirements_owned/verified都有证据、依赖合同无漂移、既有高优先级不变量没被放宽；更新外部execution-state，仍未满足的W项保持open。",
-    "在合流后的实际SHA上执行本gate检查并记录，不把worker测试绿当成合流绿；只在gate accepted后给下一批发布准确base SHA。"
+    "在合流后的实际SHA上执行本gate检查并记录，不把worker测试绿当成合流绿；只在gate accepted后给下一批发布准确base SHA。",
+    "R019：等待原 bridge 负责人 T32 的 AG-UI 不可变快照修复及独立反例复核；合入后重跑原全部 gate 命令，新 G04 才是 B05 基线。"
   ],
   "acceptance_criteria": [
     {
