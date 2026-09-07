@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
   "gate": "G01",
-  "manifest_revision": 8,
+  "manifest_revision": 9,
   "code_baseline": "919f140f64f89c80933802840c8878681a85a4d9",
   "source_head": "e2f0620bdd6477e6fe16f6db5648093589342ca2",
   "status": "contracts_reconciled_b01_implementation_integrated_later_work_pending",
@@ -129,6 +129,7 @@
       "agent_close_test.go",
       "alignment_profile_test.go",
       "docs/alignment-tasks/2026-09-07/handoffs/T04/**",
+      "e2e/tools_test.go",
       "go.mod",
       "go.sum",
       "internal/hostedprofile/**",
@@ -351,7 +352,8 @@
     "R003: T06 owns W02-R06 late immutable resolved-resource snapshot after unique skill injection; T04 early claim cannot close it.",
     "R005: nonnil schema matrices include inherited Ask; nil legacy explicit-Ask semantics remain per mechanism.",
     "R006: T06 owns W09-R14 core terminal authority for all runs after Result/cleanup; T20/T21 independently verify.",
-    "R007: successful OS unlock ends ownership; later close retry cannot mutate successor state; Windows lock handle forbids delete sharing."
+    "R007: successful OS unlock ends ownership; later close retry cannot mutate successor state; Windows lock handle forbids delete sharing.",
+    "R008: T04 owns e2e/tools_test.go real-process Dedicated/temporary lifecycle fixture and full e2e package check; G01 retries exact final SHA."
   ],
   "unmerged_related_branches": [
     {
