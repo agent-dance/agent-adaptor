@@ -163,7 +163,12 @@ Claude one-shot bidirectional transport closes stdin once on a formal
 completion may also release input; `tool_use` and nested subagent completion
 keep it available for control responses. Resident Thread turns release only
 the turn handle. Output draining and process/checkpoint validation still finish
-before the Driver completes.
+before the Driver completes. Compatible per-turn rich/batch choices do not
+independently change Thread identity. A native schema temporary process may
+stop the old writer and prewarm its replacement using the same healthy checkpoint;
+the next compatible turn must actually reuse that writer. Real configuration,
+codec, environment and resource changes remain guarded, and WithSpawn never
+registers its temporary process as the next writer.
 
 Every admitted invocation receives exactly one core `RunStarted` and
 `RunFinished`, whether or not it has run services. Core determines the terminal

@@ -48,7 +48,11 @@ All notable changes to this project are documented in this file.
 - Isolate failed/timed-out observers and snapshot resolved hosted-profile resources
   after the unique skill resolver, including proven managed reconciliation,
   actual file modes and unknown settings; different profile directories can run
-  concurrently.
+  concurrently. Preserve existing MCP JSON/TOML file permissions during writes;
+  reject non-regular targets and inspection errors without widening permissions.
+- Keep compatible rich/schema/batch transitions on the same Thread checkpoint:
+  per-turn Streaming no longer forces a rebind or discards a valid prewarm, while
+  real configuration/codec/environment and private process signature guards remain.
 - Deep-copy delegation artifacts across subscribers, replay and result accessors;
   enforce cumulative artifact byte limits before publication and report invalid
   content and compact-result count truncation with safe diagnostics.

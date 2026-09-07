@@ -61,7 +61,8 @@
     "required_reads": [
       "AGENTS.md",
       "docs/internal-history-alignment-plan-2026-09-07.md",
-      "docs/alignment-tasks/2026-09-07/README.md"
+      "docs/alignment-tasks/2026-09-07/README.md",
+      "docs/alignment-tasks/2026-09-07/amendments/R011.md"
     ],
     "dependency_artifacts": [
       {
@@ -152,7 +153,8 @@
     "实现私有安全文本文件/内容校验与编码辅助和长度校验，Provider 仍决定具体参数；不写 profile manifest、不混入 user Prompt。",
     "实现 Policy.ActiveExecutionTimeout，零无限/正限额/负拒绝，整值替换；WithTimeout/parent deadline 不改义。",
     "在统一 openStream/approval sink 创建预算和 Ask 暂停 token/refcount，处理发送背压、重叠等待、retry、panic、cancel、Close/lease；私有 fake clock + generation。",
-    "复用 T05 cause/部分结果路径与冻结的 A2A code/limit 详情，失败 checkpoint 仍无效；精确更新两 golden。"
+    "复用 T05 cause/部分结果路径与冻结的 A2A code/limit 详情，失败 checkpoint 仍无效；精确更新两 golden。",
+    "R011：扩展通过G02的fingerprint维度，不重新引入独立Request.Streaming布尔；append内容仍真实影响会话。临时schema/观测transport兼容转换不得重绑Thread，真正配置/codec/资源变化保留原guard。"
   ],
   "acceptance_criteria": [
     {

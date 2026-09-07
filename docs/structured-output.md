@@ -248,10 +248,14 @@ With `SchemaReturnInvalid`, the run returns `*Result, nil`, while
 only the run verdict; it does not make invalid JSON decodable.
 
 `Run` and `Stream.Result` share the same negotiation, validation, and decode
-surface. The schema itself is not a separate Thread identity dimension. The
-finally selected provider transport is part of compatibility, so a schema or
-observation demand that changes transport follows normal Thread compatibility
-rules.
+surface. A schema or the per-turn Request.Streaming choice does not itself
+create a new Thread identity. Transports proven compatible by the same configured
+Driver/SessionCodec continue the same healthy checkpoint, including returning
+from a temporary schema process to a prewarmed resident process. Actual changes
+to configuration, checkpoint encoding or session environment still require the
+existing configuration fingerprint, codec and Driver guards; process startup
+signatures continue to check the real argv/environment. A transport hint cannot
+replace these checks or force an otherwise compatible Thread to rebind.
 
 ## Security and dependencies
 

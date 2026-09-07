@@ -358,6 +358,8 @@ B01 已交付 Claude 一次性 stdin 终止、Tool 安全输入纠错、A2A cont
 
 B02 已交付最终 resolved profile 快照（R003 / W02-R06）、所有准入执行的 core 最终生命周期（R006 / W09-R14）、typed Capability/Todo、observer/publisher 及可行 transport 候选评分。静态 openStream 拒绝保留无资源/Driver 的空 closed Events；准入后公共终局必须在最终 Result/error 与 cleanup 后决定。最终 profile 视图与正式 managed prune 一致；未能证明的 copied tree prune 和 IO 错误稳定拒绝，不得把用户内容从摘要中抹去。Usage 的非 nil 零值只表示观察到有效用量且归一化数值均零，当前类型不证明每个字段都显式出现。
 
+R011 要求 MCP writer 保留既有 regular 文件的实际权限；缺失文件快照采用平台可观察的默认值，实际 writer 默认仍为 0644。兼容 transport 的逐轮 Streaming 选择不单独进入持久 Thread 身份；真实配置、codec、资源环境与 Driver 进程形态检查继续有效。
+
 Claude schema/HITL 与 Claude/CodeBuddy 常驻部分结果、真实 Wait cause、消息累计 Usage 已交付；Claude native 支持 PlanReview/Question Ask，Permission Ask 回退 Prompt。零 raw policy 的交互激活保持原语义，不伪造 Permission 往返。Delegation artifact Parts/Append/LastChunk、opt-in Raw、累计字节边界与深复制已交付。
 
 以下仍为打开项：append prompt/主动预算（T10/T14–T19）、subagentstream.Merge、桥接/recorder 及各 Driver 正式观测事实（T11–T18）。T20–T23 独立跨层验证和 T25–T30 平台/live 证据尚未完成，不能以本批 worker 测试关闭这些要求。

@@ -299,7 +299,7 @@
       "batch_id": "B02",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/02-event-foundation/t06/task.json",
-      "sha256": "c474a85f5061fd28192053c3ed5d1320b8addb84c756ebe0324cb24723daf746"
+      "sha256": "7ba634327db79e3519159d83116cedd70410dec2ea95fa972ec00a277238607c"
     },
     {
       "id": "T07",
@@ -334,7 +334,7 @@
       "batch_id": "B03",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/03-core-and-wire/t10/task.json",
-      "sha256": "baa7ed6cc78c95b571d62d10342ca8c92eba740df939062c843e54a4036ce9c8"
+      "sha256": "9930266b3e34e158dcc5bab51f9b88a28833346955fa9bf7096c32c5571635a4"
     },
     {
       "id": "T11",
@@ -418,7 +418,7 @@
       "batch_id": "B05",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/05-cross-layer-qa/t20/task.json",
-      "sha256": "93b417c7e6d4e0b8e927b79f677976bde5ffa680fc626ce2b3963abf6d883bd1"
+      "sha256": "b56a60645f3db655adffe443f846aaa2f187d4bf992c0ad3ca59d779b4f6893b"
     },
     {
       "id": "T21",
@@ -432,7 +432,7 @@
       "batch_id": "B05",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/05-cross-layer-qa/t22/task.json",
-      "sha256": "a8849ecdc5d705864a910c477f2f9614333ca6400bf0cf7ceb9e905043af6caf"
+      "sha256": "f275ae36112655ea38b39df1c4d37990d3f381c78d7559f479750ccbea0690b1"
     },
     {
       "id": "T23",
@@ -521,7 +521,7 @@
     "every_requirement_has_one_owner_and_independent_verifier": true,
     "no_same_batch_worker_dependency": true
   },
-  "revision": 11,
+  "revision": 12,
   "amendments": [
     "docs/alignment-tasks/2026-09-07/amendments/R001.md",
     "docs/alignment-tasks/2026-09-07/amendments/R002.md",
@@ -532,6 +532,7 @@
     "docs/alignment-tasks/2026-09-07/amendments/R007.md",
     "docs/alignment-tasks/2026-09-07/amendments/R008.md",
     "docs/alignment-tasks/2026-09-07/amendments/R009.md",
-    "docs/alignment-tasks/2026-09-07/amendments/R010.md"
+    "docs/alignment-tasks/2026-09-07/amendments/R010.md",
+    "docs/alignment-tasks/2026-09-07/amendments/R011.md"
   ]
 }

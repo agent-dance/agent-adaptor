@@ -73,7 +73,8 @@
       "docs/alignment-tasks/2026-09-07/amendments/R003.md",
       "docs/alignment-tasks/2026-09-07/amendments/R006.md",
       "docs/alignment-tasks/2026-09-07/amendments/R009.md",
-      "docs/alignment-tasks/2026-09-07/amendments/R010.md"
+      "docs/alignment-tasks/2026-09-07/amendments/R010.md",
+      "docs/alignment-tasks/2026-09-07/amendments/R011.md"
     ],
     "dependency_artifacts": [
       {
@@ -174,7 +175,8 @@
     "提供 fake Driver/RunService 可运行的端到端事件/observer 合同测试，不留空 stub；root/Driver golden 逐项更新。",
     "R006：所有Driver-only及带RunServices运行统一由core持有RunStarted/RunFinished最终权威，不能只在startPumps有event sources时启用。Driver终局是可保留的provider协议事实，不能提前作为公共run最终成功；在最终Result/error含lease/cleanup已确定后一次发布终局，保留Raw/Terminal/Transcript，取消/drop/block与observer收尾均有界。T10未来预算归因接入该唯一终局机制。",
     "R009：资源前一次normalize并冻结可行schema/source/transport候选；AttachRun后仅需求评分选择一次最终候选，不能重跑resolver/物化或消音Ask。保留无需求原选择、初始batch合法Ask及真实StreamSupport边界，零schema显式Ask切换也必须验证。",
-    "R010：更新stream_backpressure_test.go的旧空流/计数假设，显式核对core唯一start/terminal与buffer占用；保留marker-before-critical、聚合范围/count、blocking不丢、关闭后no-op与资源释放后才终局，原V01完整验收。"
+    "R010：更新stream_backpressure_test.go的旧空流/计数假设，显式核对core唯一start/terminal与buffer占用；保留marker-before-critical、聚合范围/count、blocking不丢、关闭后no-op与资源释放后才终局，原V01完整验收。",
+    "R011：MCP JSON/TOML writer保留existing regular mode，新文件仍默认，非regular/IO稳定拒绝；Thread fingerprint不无条件哈希单轮Request.Streaming，保留真实配置/codec/环境/资源维度和Driver进程兼容检查。以G02原Codex/CodeBuddy失败测试不改期望复验。"
   ],
   "acceptance_criteria": [
     {
@@ -205,6 +207,11 @@
     {
       "id": "T06-AC06",
       "requirement": "资源前schema无效/无可行机制零资源；晚到Observation只选择已验证候选，保持一次normalize/最终dispatch，覆盖无schema显式Ask、nil/精确矩阵继承Ask、无demand原选择、初选batch合法Ask及不可用安全Notice。",
+      "required": true
+    },
+    {
+      "id": "T06-AC07",
+      "requirement": "Codex WithTools现有0600配置不被MCP writer改权限且实际复用；CodeBuddy兼容rich/native batch/rich保持同一active记录/正式resume、预热及每prompt一次；ResumeOnly不因Streaming位拒绝。真实配置/资源mode漂移仍拒绝，IO/nonregular显式失败；原G02两例与所有必需检查在最终SHA通过。",
       "required": true
     }
   ],
@@ -240,6 +247,20 @@
     {
       "id": "T06-V03",
       "command": "go test -race -count=5 . -run TestAlignmentProfile",
+      "cwd": "repository_root",
+      "environment": {
+        "AGENT_ADAPTOR_LIVE_CONFORMANCE": "0",
+        "AGENT_ADAPTOR_E2E": "0",
+        "AGENT_ADAPTOR_UPDATE_API_GOLDEN": "0"
+      },
+      "required": true,
+      "execution_condition": "assigned_environment_available",
+      "must_execute_nonzero_tests": true,
+      "evidence": "记录实际命令、head SHA、OS/Go/CLI版本、exit code和安全日志；失败/skip/零测试不算通过。 非零按本命令实际测试/子测试计数，fuzz按实际种子/执行样本计数；必需场景skip不得通过。普通任务显式禁用的live探针或合同确认不适用的probe可skip，须列明且不能拿它们充当验收证据；可添加-json/-v采集日志，不能缩小原命令选择范围。"
+    },
+    {
+      "id": "T06-V04",
+      "command": "go test -count=1 ./codex ./codebuddy",
       "cwd": "repository_root",
       "environment": {
         "AGENT_ADAPTOR_LIVE_CONFORMANCE": "0",

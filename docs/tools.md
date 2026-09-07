@@ -177,7 +177,15 @@ view projects only proven managed replacements/prunes from the resolved sources,
 without resolving or writing resources again; unrelated resources remain included.
 A copied tree's source-path marker alone cannot prove its contents or modes: an
 unprovable planned prune fails with profile.ErrUnsafe instead of hiding that tree
-from the snapshot. Read failures are not treated as missing paths.
+from the snapshot. Read failures are not treated as missing paths. MCP JSON/TOML writes preserve
+an existing regular file's permissions, while new files retain the materializer
+default. Non-regular targets and inspection errors fail explicitly, so an SDK
+rewrite neither changes a 0600 file to 0644 nor hides real external mode drift.
+A not-yet-created file's snapshot uses the platform-observable form of that
+unchanged default. On Windows, Go reports the read-only/writeable attribute as
+0444/0666 rather than POSIX owner/group bits; this does not change ACLs or write
+permissions. If the OS refuses replacement of a read-only file, the error remains
+observable without temporarily widening its permissions.
 Ordinary MCP overwrite/prune requires the existing manifest's exact provider/path/
 rendered-content proof. Unknown fields or same-key changes cannot be erased by
 projecting desired configuration. Authentication/session data and only proven
@@ -185,7 +193,10 @@ Agent-owned volatile MCP allocations remain excluded or normalized as documented
 
 The per-run digest contributes to the Thread guard, concrete ProfilePayload
 fingerprint and stable SessionCompatibilityFingerprint, together with all original
-configuration/environment dimensions and final transport. It is never cached as
+configuration/codec/environment dimensions. A compatible per-turn transport
+choice is not independently hashed into Thread identity; actual process shape
+still follows the Driver's private signature and session guard. The digest is
+never cached as
 a mutable Agent-wide compatibility value. A coordination gate for the actual
 execution.Dir spans claim, unique resolution, snapshot and Driver execution;
 different isolated directories can run concurrently, while runs sharing one

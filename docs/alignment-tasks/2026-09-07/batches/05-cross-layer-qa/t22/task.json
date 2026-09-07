@@ -89,7 +89,8 @@
       "docs/internal-history-alignment-plan-2026-09-07.md",
       "docs/alignment-tasks/2026-09-07/README.md",
       "docs/alignment-tasks/2026-09-07/amendments/R005.md",
-      "docs/alignment-tasks/2026-09-07/amendments/R009.md"
+      "docs/alignment-tasks/2026-09-07/amendments/R009.md",
+      "docs/alignment-tasks/2026-09-07/amendments/R011.md"
     ],
     "dependency_artifacts": [
       {
@@ -158,7 +159,8 @@
     "fake clock/control fixtures 组合多重 Ask、重试、背压、timer 迟到、parent deadline、Close/lease/cleanup 与部分 Result cause。",
     "验证工具安全 input rejection、外部 As 伪造、native prompt 不进入 user transcript/错误文本/secret payload。",
     "R005独立回归：显式Ask与unset继承Ask都送入真实sink，非nil矩阵逐机制精确检查，nil仍旧bool，provider transport不消音Ask；覆盖Claude默认schema/QuestionAsk+Permission unset，防止只测试不发请求的fake响应。",
-    "R009独立对照：schema静态候选在资源前验证，AttachRun晚需求仅选最终可行transport；无schema Ask不能为观测被消音，初始batch合法Ask不退化。Claude零raw policy保留observational，真实继承Permission用明确启交互的QuestionAsk验证，不把schema eligibility当已发审批证据。"
+    "R009独立对照：schema静态候选在资源前验证，AttachRun晚需求仅选最终可行transport；无schema Ask不能为观测被消音，初始batch合法Ask不退化。Claude零raw policy保留observational，真实继承Permission用明确启交互的QuestionAsk验证，不把schema eligibility当已发审批证据。",
+    "R011独立回归：已有MCP配置mode保持/真实外部mode变化可见；兼容rich→native schema batch→rich保持同一Thread active记录/正式resume/实际prewarm且每prompt一次，ResumeOnly不因Streaming布尔拒绝，真实配置/codec/资源不兼容仍受guard保护。"
   ],
   "acceptance_criteria": [
     {

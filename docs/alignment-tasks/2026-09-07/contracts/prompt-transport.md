@@ -72,6 +72,8 @@ R009：schema eligibility 使用完整有效默认 Ask；本节 interactive 保�
 
 SDK 管理的 transport/schema/permission/session/model 参数仍按当前 `withoutManagedClaudeArgs` 规则移除 ExtraArgs 重复项，再由 resolved invocation 发出唯一值。不得照搬 internal 的 `OutputSchema.Mode` 或 `WorksWithStart`。加入 append 后，§7 的提示通道冲突单独 fail-closed。
 
+R011：每轮 Request.Streaming 不单独构成持久 Thread 身份。正式可兼容的临时 schema/观测 transport 转换必须沿同一健康 checkpoint 续接并复用对应 prewarm；构造配置、codec/version 和真实环境/资源维度的 guard 不变，实际进程签名/eligibility 继续区分启动形态。不得为了守住错误的布尔fingerprint把原三进程fixture改成四进程。
+
 当前 Claude native schema 是本轮临时进程形态，`persistentEligible` 对 native 保持 false。Thread 调用先有界停止旧 writer，再完成本轮新进程；本轮进程不进入常驻池。之后允许的 prewarm 使用同一 append 内容和同一健康 checkpoint，`WithSpawn` 不把本轮进程注册为 writer。测试必须覆盖“有 Thread”与“实际复用常驻”的区别，不能仅凭 Thread 测试名宣称 native 多轮使用同一 PID。
 
 T07 fixture 必须包含以下可逐字段比较的 NDJSON（JSON 编碼和字段顺序可变，语义不变），并使用已有正式 parser：

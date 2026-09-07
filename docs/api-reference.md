@@ -436,7 +436,10 @@ run acquires workspace, profile, runtime services, skills or a Thread lease.
 Core normalizes schema once and freezes feasible transport/source candidates before
 resource acquisition. Later attachment observation demand selects only among
 those candidates, without re-normalization, materialization or Driver dispatch.
-Run and Stream use the same final selection. Each optional SPI HITL matrix evaluates the effective Ask kinds for
+Run and Stream use the same final selection. A compatible per-turn transport
+choice does not itself rebind the Thread. Actual configuration, codec and session
+environment changes still require their existing guards; temporary schema runs
+retain the single-writer and healthy-checkpoint prewarm rules. Each optional SPI HITL matrix evaluates the effective Ask kinds for
 its mechanism; nil retains the legacy explicit-Ask bool. An invalid schema matches `ErrInvalidOutputSchema`, and the Driver's
 `Descriptor.StructuredOutput` is the source of truth for the capability.
 
