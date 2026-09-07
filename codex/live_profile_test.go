@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -67,5 +68,41 @@ func TestAlignmentLiveGateDisabledWithoutBuildTag(t *testing.T) {
 	live, _ := codexLiveGate(t)
 	if live {
 		t.Fatal("environment bypassed build tag")
+	}
+}
+
+// A discoverable CLI must remain unexecuted when either live gate is absent.
+// The canary has no provider behavior and cannot read an authentication seed.
+func TestAlignmentLiveGateCanary(t *testing.T) {
+	bin := t.TempDir()
+	name := "codex"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	build := exec.CommandContext(ctx, "go", "build", "-o", filepath.Join(bin, name), "./testdata/live-gate-canary")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build gate canary: %v\n%s", err, output)
+	}
+	marker := filepath.Join(bin, "invoked")
+	t.Setenv("PATH", bin)
+	t.Setenv("AGENT_ADAPTOR_CODEX_CANARY_FILE", marker)
+	t.Setenv("AGENT_ADAPTOR_CODEX_LIVE_PROFILE", filepath.Join(bin, "absent-auth-seed"))
+	if _, err := exec.LookPath("codex"); err != nil {
+		t.Fatal("gate canary is not discoverable")
+	}
+	t.Setenv("AGENT_ADAPTOR_LIVE_CONFORMANCE", "0")
+	if live, _ := codexLiveGate(t); live {
+		t.Fatal("disabled environment enabled live")
+	}
+	if !codexLiveCompiled {
+		t.Setenv("AGENT_ADAPTOR_LIVE_CONFORMANCE", "1")
+		if live, _ := codexLiveGate(t); live {
+			t.Fatal("environment bypassed absent build tag")
+		}
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatal("disabled live gate invoked a CLI")
 	}
 }
