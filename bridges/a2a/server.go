@@ -290,14 +290,10 @@ func (e *executor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext)
 
 	drained:
 		// 4. Project exactly one terminal outcome. Business failures carry
-		// their Result in *RunError; cancellation and infrastructure failures
-		// are plain wrapped errors.
+		// their partial Result and authoritative Reason in *RunError. Inspect that
+		// carrier before context causes, which may be secondary to a failure.
 		res, runErr := stream.Result()
 		if runErr != nil {
-			if errors.Is(runErr, context.Canceled) {
-				yield(canceledStatus(execCtx, runErr), nil)
-				return
-			}
 			var re *adaptor.RunError
 			if errors.As(runErr, &re) {
 				for _, ev := range defaultTerminalArtifacts(execCtx, re.Result, e.exposure) {
@@ -305,8 +301,16 @@ func (e *executor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext)
 						return
 					}
 				}
+				if re.Reason == adaptor.ReasonCancelled {
+					yield(canceledStatus(execCtx, re), nil)
+					return
+				}
 				msg := failureMessage(execCtx, defaultString(re.Message, re.Error()), failureDetails(re, e.exposure))
 				yield(a2aproto.NewStatusUpdateEvent(execCtx, a2aproto.TaskStateFailed, msg), nil)
+				return
+			}
+			if errors.Is(runErr, context.Canceled) {
+				yield(canceledStatus(execCtx, runErr), nil)
 				return
 			}
 			msg := failureMessage(execCtx, runErr.Error(), map[string]any{"layer": "wait"})

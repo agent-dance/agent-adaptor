@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"reflect"
 	"strings"
 
 	bridgea2a "github.com/agent-dance/agent-adaptor/bridges/a2a"
@@ -48,13 +49,15 @@ func (m *eventMapper) Map(event clienta2a.Event) []DelegationEvent {
 	if !m.started {
 		out = append(out, m.Started(event.TaskID, event.ContextID))
 	}
+	if persistedTaskEvent(event) {
+		if event.RecoveredState {
+			return append(out, m.taskEvents(*event.Task)...)
+		}
+		return append(out, m.taskSnapshotEvents(*event.Task)...)
+	}
 	switch event.Kind {
 	case clienta2a.EventStatus:
 		out = append(out, m.statusEvents(event.TaskID, event.ContextID, event.Status)...)
-	case clienta2a.EventTask:
-		if event.Task != nil {
-			out = append(out, m.taskEvents(*event.Task)...)
-		}
 	case clienta2a.EventMessage:
 		if event.Message != nil {
 			out = append(out, m.messageEvents(*event.Message)...)
@@ -66,14 +69,75 @@ func (m *eventMapper) Map(event clienta2a.Event) []DelegationEvent {
 	case clienta2a.EventTerminal:
 		if event.Status != nil {
 			out = append(out, m.statusEvents(event.TaskID, event.ContextID, event.Status)...)
-		} else if event.Task != nil && event.Task.Status.State != "" {
-			out = append(out, m.statusEvents(event.Task.ID, event.Task.ContextID, &event.Task.Status)...)
+
 		}
 		if event.Message != nil {
 			out = append(out, m.messageEvents(*event.Message)...)
 		}
 	}
 	return out
+}
+
+// Stream snapshots never decode status parts or publish an old question.
+func persistedTaskEvent(event clienta2a.Event) bool {
+	return event.Task != nil && event.Status == nil && event.Message == nil
+}
+
+func (m *eventMapper) taskSnapshotEvents(task clienta2a.Task) []DelegationEvent {
+	var out []DelegationEvent
+	for _, artifact := range task.Artifacts {
+		out = append(out, m.artifactEvents(clienta2a.Event{TaskID: task.ID, ContextID: task.ContextID, Artifact: &artifact})...)
+	}
+	return out
+}
+
+// A recovered query is authoritative only when it advances past the streamed
+// history. An unchanged question cannot become a new approval request.
+func staleRecoveredTask(task clienta2a.Task, snapshot *clienta2a.Task, continuation bool) bool {
+	if snapshot == nil || snapshot.ID != task.ID {
+		return continuation && task.Status.State == clienta2a.TaskStateInputRequired
+	}
+	if task.Status.State != snapshot.Status.State {
+		return false
+	}
+	old, current := snapshot.Status.Message, task.Status.Message
+	if current == nil {
+		return true
+	}
+	if old == nil {
+		return false
+	}
+	if old.ID != "" && old.ID == current.ID {
+		return true
+	}
+	return reflect.DeepEqual(old.Parts, current.Parts)
+}
+
+// Retain snapshot artifacts and later updates, following A2A append semantics.
+func mergeStreamArtifact(task *clienta2a.Task, artifact clienta2a.Artifact, appendParts bool) {
+	for i := range task.Artifacts {
+		if artifact.ID != "" && task.Artifacts[i].ID == artifact.ID {
+			if appendParts {
+				previous := task.Artifacts[i]
+				if artifact.Name == "" {
+					artifact.Name = previous.Name
+				}
+				if artifact.Description == "" {
+					artifact.Description = previous.Description
+				}
+				if artifact.Extensions == nil {
+					artifact.Extensions = previous.Extensions
+				}
+				if artifact.Metadata == nil {
+					artifact.Metadata = previous.Metadata
+				}
+				artifact.Parts = append(append([]clienta2a.Part(nil), task.Artifacts[i].Parts...), artifact.Parts...)
+			}
+			task.Artifacts[i] = artifact
+			return
+		}
+	}
+	task.Artifacts = append(task.Artifacts, artifact)
 }
 
 func (m *eventMapper) taskEvents(task clienta2a.Task) []DelegationEvent {

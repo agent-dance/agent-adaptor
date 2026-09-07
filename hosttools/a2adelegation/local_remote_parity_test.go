@@ -142,7 +142,7 @@ func isTerminalKind(kind a2adelegation.DelegationEventKind) bool {
 // generated from the same script the local Runner executes: an agent card
 // with streaming enabled, and a SendStreamingMessage SSE stream of one
 // working status, one adapter.stream.v1 status frame per text lifecycle
-// event, and a terminal task.
+// event, and a live terminal status. GetTask supplies the final task.
 func remoteParityServer(t *testing.T, script parityScript) *httptest.Server {
 	t.Helper()
 	var srv *httptest.Server
@@ -165,6 +165,17 @@ func remoteParityServer(t *testing.T, script parityScript) *httptest.Server {
 			}
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			if req.Method == "GetTask" {
+				final, _ := json.Marshal(script.final)
+				state := "TASK_STATE_COMPLETED"
+				if script.fail {
+					state = "TASK_STATE_FAILED"
+					final = []byte(`""`)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				fmt.Fprintf(w, `{"jsonrpc":"2.0","id":"1","result":{"id":"task-1","contextId":"ctx-1","status":{"state":%q},"history":[{"messageId":"task-1:final","role":"ROLE_AGENT","taskId":"task-1","contextId":"ctx-1","parts":[{"text":%s}]}]}}`, state, final)
 				return
 			}
 			if req.Method != "SendStreamingMessage" {
@@ -213,15 +224,11 @@ func parityWireFrames(t *testing.T, script parityScript) []string {
 		seq++
 		frames = append(frames, statusFrame(seq, map[string]any{"kind": "text.end", "sequence": seq, "message_id": "m1"}))
 	}
+	state := "TASK_STATE_COMPLETED"
 	if script.fail {
-		frames = append(frames, rpc(`{"task":{"id":"task-1","contextId":"ctx-1","status":{"state":"TASK_STATE_FAILED"}}}`))
-	} else {
-		finalMsg, err := json.Marshal(script.final)
-		if err != nil {
-			t.Fatalf("marshal final text: %v", err)
-		}
-		frames = append(frames, rpc(fmt.Sprintf(`{"task":{"id":"task-1","contextId":"ctx-1","status":{"state":"TASK_STATE_COMPLETED"},"history":[{"messageId":"task-1:final","role":"ROLE_AGENT","taskId":"task-1","contextId":"ctx-1","parts":[{"text":%s}]}]}}`, finalMsg)))
+		state = "TASK_STATE_FAILED"
 	}
+	frames = append(frames, rpc(fmt.Sprintf(`{"statusUpdate":{"taskId":"task-1","contextId":"ctx-1","status":{"state":%q}}}`, state)))
 	return frames
 }
 

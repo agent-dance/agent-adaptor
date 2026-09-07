@@ -354,3 +354,34 @@ func adapterStreamStatusEvent(event bridgea2a.AdapterStreamEventV1) clienta2a.Ev
 		},
 	}
 }
+
+func TestAlignmentSnapshotDoesNotReplayApproval(t *testing.T) {
+	for _, kind := range []clienta2a.EventKind{clienta2a.EventTask, clienta2a.EventTerminal} {
+		t.Run(string(kind), func(t *testing.T) {
+			mapper := newEventMapper(DelegationEvent{RunID: "run", DelegationID: "delegation", AgentKey: "fixture"})
+			request := func(id string) clienta2a.Event {
+				return adapterStreamStatusEvent(bridgea2a.AdapterStreamEventV1{Kind: string(driver.StreamHITLRequested), HITL: map[string]any{"request_id": id, "decision_kind": string(driver.HumanDecisionQuestion), "request": map[string]any{"prompt": "choose"}}})
+			}
+			old := request("answered")
+			snapshot := clienta2a.Task{ID: "same-task", ContextID: "same-context", Status: *old.Status}
+			snapshot.Status.State = clienta2a.TaskStateInputRequired
+			for _, ev := range mapper.Map(clienta2a.Event{Kind: kind, Task: &snapshot, TaskID: snapshot.ID, ContextID: snapshot.ContextID}) {
+				if ev.Name == "hitl.requested" {
+					t.Fatalf("replayed old approval: %+v", ev)
+				}
+			}
+			found := 0
+			for _, ev := range mapper.Map(request("new")) {
+				if ev.Name == "hitl.requested" {
+					found++
+					if ev.Raw["request_id"] != "new" {
+						t.Fatalf("approval=%+v", ev)
+					}
+				}
+			}
+			if found != 1 {
+				t.Fatalf("new approval count=%d", found)
+			}
+		})
+	}
+}
