@@ -141,10 +141,9 @@ func TestClaudeInteractive_PermissionAsk(t *testing.T) {
 
 func newInteractiveAgent(t *testing.T, model string) *adaptor.Agent {
 	t.Helper()
-	return adaptor.New(claude.Driver(claude.Config{
-		CommonConfig: claude.CommonConfig{CWD: t.TempDir(), Command: claudeCLIName()},
-		Model:        model,
-	}))
+	a := adaptor.New(claude.Driver(alignmentLiveConfig(t, model)))
+	t.Cleanup(func() { _ = a.Close(context.Background()) })
+	return a
 }
 
 func interactivePolicy(plan adaptor.ApprovalMode, question adaptor.QuestionMode) adaptor.SharedOption {
@@ -163,14 +162,19 @@ func requireInteractiveCLI(t *testing.T) {
 	}
 	cmd := claudeCLIName()
 	if _, err := exec.LookPath(cmd); err != nil {
-		t.Skipf("%s not in PATH", cmd)
+		t.Fatalf("authorized live run requires %s in PATH", cmd)
 	}
-	help, err := exec.Command(cmd, "--help").CombinedOutput()
+	helpCommand := exec.Command(cmd, "--help")
+	helpCommand.Env = os.Environ()
+	for _, binding := range alignmentLiveConfig(t, "").Env {
+		helpCommand.Env = append(helpCommand.Env, binding.Name+"="+binding.Value)
+	}
+	help, err := helpCommand.CombinedOutput()
 	if err != nil {
-		t.Skipf("%s --help failed: %v", cmd, err)
+		t.Fatalf("%s --help failed: %v", cmd, err)
 	}
 	if !strings.Contains(string(help), "--replay-user-messages") {
-		t.Skipf("%s does not support --replay-user-messages", cmd)
+		t.Fatalf("%s does not support --replay-user-messages", cmd)
 	}
 }
 

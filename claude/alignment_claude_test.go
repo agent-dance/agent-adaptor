@@ -38,6 +38,20 @@ func runAlignmentClaudeHelper() int {
 	for _, arg := range os.Args[1:] {
 		native = native || arg == "--json-schema"
 	}
+	appendPath := ""
+	for i, arg := range os.Args[1:] {
+		if arg == "--append-system-prompt-file" && i+2 < len(os.Args) {
+			appendPath = os.Args[i+2]
+		}
+	}
+	if os.Getenv("APPEND_RECORD") != "" {
+		raw, err := os.ReadFile(appendPath)
+		if appendPath != "" && err != nil {
+			return 35
+		}
+		record, _ := json.Marshal(map[string]string{"path": appendPath, "text": string(raw)})
+		appendPersistentHelperLine(os.Getenv("APPEND_RECORD"), string(record))
+	}
 	interactive := claudePersistentInputMode(os.Args[1:])
 	reader := bufio.NewReader(os.Stdin)
 	if os.Getenv("ALIGNMENT_PARTIAL_WRITE") == "1" {
@@ -68,6 +82,14 @@ func runAlignmentClaudeHelper() int {
 		} else {
 			raw, _ := io.ReadAll(reader)
 			prompt = string(raw)
+		}
+		if appendPath != "" {
+			if _, err := os.ReadFile(appendPath); err != nil {
+				return 36
+			}
+		}
+		if os.Getenv("ADOPTION_FRAMES") != "" {
+			fmt.Fprint(os.Stdout, os.Getenv("ADOPTION_FRAMES"))
 		}
 		fmt.Fprintln(os.Stdout, alignmentClaudeInit)
 		if strings.Contains(prompt, "multiple-usage") {
