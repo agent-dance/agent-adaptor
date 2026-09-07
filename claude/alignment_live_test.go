@@ -207,7 +207,7 @@ func TestAlignmentLiveDedicatedToolResumeAfterClose(t *testing.T) {
 		Text string `json:"text"`
 	}, error) {
 		return in, nil
-	}, tool.ReadOnly())
+	}, tool.ReadOnly(), tool.Revision("alignment-echo/v1"))
 	makeAgent := func() *adaptor.Agent {
 		return adaptor.New(claude.Driver(cfg), adaptor.WithThreadStore(store), adaptor.WithProfile(profile.Dedicated(dir)), adaptor.WithTools(echo), adaptor.WithPolicy(alignmentLivePolicy()))
 	}
