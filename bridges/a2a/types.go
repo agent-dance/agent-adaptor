@@ -270,6 +270,14 @@ type ExposurePolicy struct {
 	// gated by Diagnostics.
 	IncludeHITL bool
 
+	// IncludeCapabilityInvocations explicitly exposes validated capability facts.
+	// The default is false, independently of tool and diagnostic exposure.
+	// Absence of facts never proves that no capability was invoked.
+	IncludeCapabilityInvocations bool
+	// IncludeTodos explicitly exposes full confirmed todo content, with existing
+	// inline-secret filtering. The default is false; this does not enable tools.
+	IncludeTodos bool
+
 	// Diagnostics controls additional, sanitized diagnostic fields.
 	Diagnostics DiagnosticsPolicy
 }

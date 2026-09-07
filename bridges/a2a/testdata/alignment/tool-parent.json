@@ -1,0 +1,19 @@
+{
+  "schema": "adapter.stream.v1",
+  "event": {
+    "kind": "tool_call.start",
+    "tool_call_id": "child-x",
+    "scope_id": "child-scope",
+    "parent_scope_id": "",
+    "parent_tool_call_id": "parent-p",
+    "name": "Read",
+    "args": {
+      "file_path": "example.go"
+    },
+    "meta": {
+      "run_id": "remote-r1",
+      "sequence": 10,
+      "time": "2026-09-07T00:00:02Z"
+    }
+  }
+}
