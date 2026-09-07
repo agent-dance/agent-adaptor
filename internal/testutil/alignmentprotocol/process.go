@@ -3,6 +3,7 @@ package alignmentprotocol
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -18,32 +19,78 @@ func init() {
 	os.Exit(child())
 }
 func child() int {
+	var interactive *json.Decoder
 	switch os.Getenv("T21_PROVIDER") {
 	case "codex":
 		return codex()
 	case "cursor": // Cursor's print prompt is argv, with no stdin protocol.
 	default:
-		rich := false
-		for _, a := range os.Args {
-			if a == "stream-json" {
-				rich = true
+		bidirectional := false
+		for _, arg := range os.Args {
+			if arg == "--input-format" || arg == "--input-format=stream-json" {
+				bidirectional = true
 			}
 		}
-		if rich && os.Getenv("T21_INPUT_NDJSON") == "1" {
-			if _, e := bufio.NewReader(os.Stdin).ReadString('\n'); e != nil {
-				return 21
+		if bidirectional {
+			interactive = json.NewDecoder(os.Stdin)
+			for {
+				var input map[string]any
+				if interactive.Decode(&input) != nil {
+					return 21
+				}
+				if input["type"] == "user" {
+					break
+				}
+				if input["type"] == "control_request" {
+					if err := json.NewEncoder(os.Stdout).Encode(map[string]any{"type": "control_response", "response": map[string]any{"subtype": "success", "request_id": input["request_id"], "response": map[string]any{}}}); err != nil {
+						return 22
+					}
+				}
 			}
-		} else {
-			if _, e := io.Copy(io.Discard, os.Stdin); e != nil {
-				return 22
-			}
+		} else if _, e := io.Copy(io.Discard, os.Stdin); e != nil {
+			return 22
 		}
 	}
 	b, e := os.ReadFile(os.Getenv("T21_PROTOCOL"))
 	if e != nil {
 		return 23
 	}
-	fmt.Fprint(os.Stdout, string(b))
+	if interactive == nil {
+		fmt.Fprint(os.Stdout, string(b))
+	} else {
+		lines := bufio.NewScanner(bytes.NewReader(b))
+		for lines.Scan() {
+			line := lines.Text()
+			fmt.Fprintln(os.Stdout, line)
+			var payload map[string]any
+			if json.Unmarshal([]byte(line), &payload) == nil && payload["type"] == "control_request" {
+				var answer struct {
+					Type     string `json:"type"`
+					Response struct {
+						RequestID string `json:"request_id"`
+						Response  struct {
+							Behavior  string `json:"behavior"`
+							Allowed   bool   `json:"allowed"`
+							ToolUseID string `json:"tool_use_id"`
+						} `json:"response"`
+					} `json:"response"`
+				}
+				if interactive.Decode(&answer) != nil || answer.Type != "control_response" || answer.Response.RequestID != payload["request_id"] {
+					return 25
+				}
+				if os.Getenv("T21_PROVIDER") == "codebuddy" {
+					if !answer.Response.Response.Allowed || answer.Response.Response.ToolUseID != "control-id" {
+						return 25
+					}
+				} else if answer.Response.Response.Behavior != "allow" {
+					return 25
+				}
+			}
+		}
+		if lines.Err() != nil {
+			return 26
+		}
+	}
 	fmt.Fprint(os.Stderr, "t21 private stderr")
 	return 0
 }

@@ -122,7 +122,6 @@ func (p apAttachment) DetachRun(c context.Context, id string) error {
 // lifecycle creation. Counters prove bridges execute only one Stream and read
 // its Result after that same channel closes.
 type apRunner struct {
-	beforeReturn                                             func(context.Context)
 	preEvents                                                []adaptor.Event
 	waitCancel                                               bool
 	id                                                       string
@@ -130,16 +129,14 @@ type apRunner struct {
 	result                                                   *adaptor.Result
 	err                                                      error
 	streamCalls, runCalls, resultCalls, earlyResult, cancels atomic.Int32
-	gate                                                     <-chan struct{}
 	cancelled                                                chan struct{}
-	closed                                                   chan struct{}
 }
 
 func (r *apRunner) Run(context.Context, string, ...adaptor.CallOption) (*adaptor.Result, error) {
 	r.runCalls.Add(1)
 	return nil, errors.New("T21: parallel Run invoked")
 }
-func (r *apRunner) Stream(ctx context.Context, _ string, _ ...adaptor.CallOption) adaptor.Stream {
+func (r *apRunner) Stream(_ context.Context, _ string, _ ...adaptor.CallOption) adaptor.Stream {
 	r.streamCalls.Add(1)
 	s := &apStream{owner: r, ch: make(chan adaptor.Event, len(r.events)), done: make(chan struct{})}
 	go func() {
@@ -149,24 +146,13 @@ func (r *apRunner) Stream(ctx context.Context, _ string, _ ...adaptor.CallOption
 		if r.waitCancel {
 			<-r.cancelled
 		}
-		if r.gate != nil {
-			select {
-			case <-r.gate:
-			case <-ctx.Done():
-			}
-		}
+
 		for _, e := range r.events {
 			s.ch <- e
 		}
 		close(s.done)
 		close(s.ch)
-		if r.closed != nil {
-			close(r.closed)
-		}
 	}()
-	if r.beforeReturn != nil {
-		r.beforeReturn(ctx)
-	}
 	return s
 }
 
@@ -217,19 +203,13 @@ func apAssertCalls(t *testing.T, r *apRunner) {
 	}
 }
 
-type apCancelKey struct{}
-
 func apServer(t *testing.T, r adaptor.Runner, ex bridge.ExposurePolicy, builder bridge.ResultBuilder) (*client.Client, string) {
 	t.Helper()
 	mux := http.NewServeMux()
 	h := httptest.NewServer(mux)
 	t.Cleanup(h.Close)
 	b := bridge.NewServer(r, bridge.ServerOptions{AgentCard: bridge.AgentCard{Name: "T21", Version: "fixture", URL: h.URL + "/rpc"}, Exposure: ex, ResultBuilder: builder})
-	mux.Handle("/rpc", http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		c, cancel := context.WithCancel(req.Context())
-		defer cancel()
-		b.Handler().ServeHTTP(w, req.WithContext(context.WithValue(c, apCancelKey{}, cancel)))
-	}))
+	mux.Handle("/rpc", b.Handler())
 	mux.Handle("/.well-known/agent-card.json", b.AgentCardHandler())
 	c := client.New(client.Options{AgentCardURL: h.URL + "/.well-known/agent-card.json", HTTPClient: h.Client()})
 	t.Cleanup(func() { _ = c.Close() })
@@ -271,6 +251,12 @@ func apClientDrain(t *testing.T, c *client.Client, ctx context.Context) (client.
 }
 func apFailure(t *testing.T, status client.TaskStatus, want string) {
 	t.Helper()
+	if want == "unknown-carrier" {
+		if status.State != client.TaskStateFailed || strings.Contains(apJSON(status), "agentadaptor.failure") {
+			t.Fatal("unknown carrier repaired from event hint")
+		}
+		return
+	}
 	if want == "" {
 		if status.State != client.TaskStateCompleted {
 			t.Fatalf("not success: %+v", status)
@@ -329,6 +315,8 @@ func TestAlignmentProtocolTerminalQualification(t *testing.T) {
 		{"not-last", "run", append(valid("p"), apMeta(adaptor.Notice{Text: "after"}, "run", 2)), bare, "active_execution_timeout"},
 		{"nil-error", "run", valid("p"), nil, ""},
 		{"carrier-first", "run", []adaptor.Event{apFinish("run", "p", "active_execution_timeout", true, 1)}, &adaptor.RunError{Reason: adaptor.ReasonApprovalDenied, Result: &adaptor.Result{Text: "partial kept", Summary: "safe summary"}, Cause: bare}, "approval_denied"},
+		{"carrier-unknown", "run", valid("p"), &adaptor.RunError{Reason: "future", Result: &adaptor.Result{Text: "partial kept", Summary: "safe summary"}, Cause: bare}, "unknown-carrier"},
+		{"carrier-empty", "run", valid("p"), &adaptor.RunError{Result: &adaptor.Result{Text: "partial kept", Summary: "safe summary"}, Cause: bare}, "unknown-carrier"},
 	}
 	for _, tc := range cases {
 		for _, path := range []string{"http-send", "http-stream", "local-send", "local-stream"} {
@@ -985,76 +973,96 @@ func TestAlignmentProtocolObserverIsolationAndDrop(t *testing.T) {
 			apLifecycle(t, events, nil)
 		})
 	}
-	t.Run("cancel-critical-drop", func(t *testing.T) {
-		ctx := apContext(t)
-		accepted := make(chan adaptor.Event, 1)
-		releaseObserver := make(chan struct{})
-		service := apAttachment{attach: func(context.Context, string) (adaptor.RunAttachment, error) {
-			return adaptor.RunAttachment{Observer: func(_ context.Context, _ adaptor.RunEventInfo, e adaptor.Event) error {
+	for _, eventKind := range []string{"capability.invocation", "todo.updated"} {
+		t.Run("cancel-"+eventKind, func(t *testing.T) {
+			ctx := apContext(t)
+			accepted := make(chan adaptor.Event, 1)
+			releaseObserver := make(chan struct{})
+			service := apAttachment{attach: func(context.Context, string) (adaptor.RunAttachment, error) {
+				return adaptor.RunAttachment{Observer: func(_ context.Context, _ adaptor.RunEventInfo, e adaptor.Event) error {
+					if eventKind == "todo.updated" {
+						if _, ok := e.(adaptor.TodoUpdated); !ok {
+							return nil
+						}
+					} else {
+						if _, ok := e.(adaptor.CapabilityInvocation); !ok {
+							return nil
+						}
+					}
+					select {
+					case accepted <- e:
+						<-releaseObserver
+					default:
+					}
+					return nil
+				}}, nil
+			}}
+			a := apProvider(t, "claude", apClaudeFrames(), adaptor.WithEventBuffer(1), adaptor.WithBlockingEvents(), adaptor.WithRunServices(service))
+			s := a.Stream(ctx, "cancel")
+			var fact adaptor.Event
+			// Drain through process/tool markers until a fact is accepted, then stop
+			// consuming. Observer and cancellation barriers avoid wall-clock guesses.
+		loop:
+			for {
 				select {
-				case accepted <- e:
-					<-releaseObserver
-				default:
+				case fact = <-accepted:
+					break loop
+				case _, ok := <-s.Events():
+					if !ok {
+						t.Fatal("closed before fact")
+					}
+				case <-ctx.Done():
+					t.Fatal(ctx.Err())
 				}
-				return nil
-			}}, nil
-		}}
-		a := apProvider(t, "claude", apClaudeFrames(), adaptor.WithEventBuffer(1), adaptor.WithBlockingEvents(), adaptor.WithRunServices(service))
-		s := a.Stream(ctx, "cancel")
-		var fact adaptor.Event
-		// Drain through process/tool markers until a fact is accepted, then stop
-		// consuming. Observer and cancellation barriers avoid wall-clock guesses.
-	loop:
-		for {
+			}
+			s.Cancel()
+			s.Cancel()
+			close(releaseObserver)
+			// Keep the buffer saturated until cancellation completes. Result is
+			// allowed concurrently and Cancel must release every blocked sender.
+			finished := make(chan struct{})
+			go func() { _, _ = s.Result(); close(finished) }()
 			select {
-			case fact = <-accepted:
-				break loop
-			case _, ok := <-s.Events():
-				if !ok {
-					t.Fatal("closed before fact")
-				}
+			case <-finished:
 			case <-ctx.Done():
-				t.Fatal(ctx.Err())
+				t.Fatal("cancel did not unblock saturated stream")
 			}
-		}
-		s.Cancel()
-		s.Cancel()
-		close(releaseObserver)
-		events, r, err := apDrain(s)
-		if r != nil || err == nil {
-			t.Fatalf("cancel outcome %v/%v", r, err)
-		}
-		if fact.Meta().Sequence == 0 {
-			t.Fatal("observer before stamp")
-		}
-		var re *adaptor.RunError
-		if !errors.As(err, &re) || re.Result == nil {
-			t.Fatal("partial carrier missing")
-		}
-		if len(events) == 0 {
-			t.Fatal("cancel tail lost")
-		}
-		terminal, ok := events[len(events)-1].(adaptor.RunFinished)
-		if !ok || !terminal.Failed {
-			t.Fatal("cancel terminal lost")
-		}
-		dropCount := 0
-		for _, e := range events {
-			if d, ok := e.(adaptor.Dropped); ok {
-				dropCount += d.ByKind["capability.invocation"]
-				sum := 0
-				for _, n := range d.ByKind {
-					sum += n
-				}
-				if sum != d.Count || d.FirstSequence == 0 || d.LastSequence < d.FirstSequence {
-					t.Fatal("incomplete drop accounting")
+			events, r, err := apDrain(s)
+			if r != nil || err == nil {
+				t.Fatalf("cancel outcome %v/%v", r, err)
+			}
+			if fact.Meta().Sequence == 0 {
+				t.Fatal("observer before stamp")
+			}
+			var re *adaptor.RunError
+			if !errors.As(err, &re) || re.Result == nil {
+				t.Fatal("partial carrier missing")
+			}
+			if len(events) == 0 {
+				t.Fatal("cancel tail lost")
+			}
+			terminal, ok := events[len(events)-1].(adaptor.RunFinished)
+			if !ok || !terminal.Failed {
+				t.Fatal("cancel terminal lost")
+			}
+			dropCount := 0
+			for _, e := range events {
+				if d, ok := e.(adaptor.Dropped); ok {
+					dropCount += d.ByKind[eventKind]
+					sum := 0
+					for _, n := range d.ByKind {
+						sum += n
+					}
+					if sum != d.Count || d.FirstSequence == 0 || d.LastSequence < d.FirstSequence {
+						t.Fatal("incomplete drop accounting")
+					}
 				}
 			}
-		}
-		if dropCount == 0 {
-			t.Fatal("accepted capability was not accounted after cancel barrier")
-		}
-	})
+			if dropCount == 0 {
+				t.Fatal("accepted critical fact was not accounted after cancel barrier")
+			}
+		})
+	}
 }
 
 func TestAlignmentProtocolEveryDrain(t *testing.T) {
@@ -1379,7 +1387,8 @@ func TestAlignmentProtocolOtherProviders(t *testing.T) {
 }
 
 // Hand-written closed wire payload: no production encoder supplies expected
-// values. Every invalid case crosses A2A decode and delegation's real mapper.
+// values. Raw-byte invalid cases are tested at the public decoder boundary;
+// representable structural negatives also cross real HTTP and delegation below.
 const apCapabilityWire = `{"schema":"adapter.stream.v1","event":{"kind":"capability.invocation","meta":{"run_id":"wire-run","sequence":1,"time":"2026-09-07T00:00:00Z"},"capability":{"invocation_id":"i","kind":"mcp","key":"safe","operation":"read","phase":"started","evidence":"provider_protocol","source":"provider","occurred_at":"2026-09-07T00:00:00Z"}}}`
 const apTodoWire = `{"schema":"adapter.stream.v1","event":{"kind":"todo.updated","meta":{"run_id":"wire-run","sequence":2,"time":"2026-09-07T00:00:00Z"},"todo":{"items":[],"source":"plan_update","revision":1,"occurred_at":"2026-09-07T00:00:00Z"}}}`
 
@@ -2492,5 +2501,180 @@ func TestAlignmentProtocolPartialWrappers(t *testing.T) {
 				apLifecycle(t, events, err)
 			})
 		}
+	}
+}
+
+func TestAlignmentProtocolTodoWholeSnapshots(t *testing.T) {
+	frames := `{"type":"system","subtype":"init","session_id":"t21-session"}` + "\n"
+	for _, v := range []struct{ call, id, subject string }{{"c1", "real-B", "second alphabetically"}, {"c2", "real-A", "first alphabetically"}, {"c3", "", "synthetic"}} {
+		frames += apTool(v.call, "TaskCreate", "", map[string]any{"subject": v.subject})
+		var reply any
+		if v.id != "" {
+			reply = map[string]any{"task": map[string]any{"id": v.id}}
+		}
+		frames += apToolResult(v.call, "", false, reply)
+	}
+	frames += apTool("update-B", "TaskUpdate", "", map[string]any{"taskId": "real-B", "status": "completed"}) + apToolResult("update-B", "", false, nil)
+	frames += apTool("reject-local-index", "TaskUpdate", "", map[string]any{"taskId": "3", "status": "completed"}) + apToolResult("reject-local-index", "", false, nil)
+	frames += apTool("clear", "TodoWrite", "", map[string]any{"todos": []any{}}) + apToolResult("clear", "", false, nil) + apTerminal
+	a := apProvider(t, "claude", frames)
+	events, r, e := apDrain(a.Stream(apContext(t), "ordered todo"))
+	if e != nil || r == nil {
+		t.Fatal(e)
+	}
+	_, snapshots := apFacts(events)
+	if len(snapshots) != 5 {
+		t.Fatalf("snapshots=%d", len(snapshots))
+	}
+	for n, v := range snapshots {
+		if v.Snapshot.Revision != uint64(n+1) || v.Snapshot.Items == nil {
+			t.Fatal("revision or clear shape")
+		}
+		if n < 4 {
+			wantCount := n + 1
+			if wantCount > 3 {
+				wantCount = 3
+			}
+			if len(v.Snapshot.Items) != wantCount || v.Snapshot.Items[0].ID != "real-B" {
+				t.Fatal("snapshot not full or order changed")
+			}
+			if n > 0 && v.Snapshot.Items[1].ID != "real-A" {
+				t.Fatal("creation order sorted")
+			}
+		}
+	}
+	synthetic := snapshots[2].Snapshot.Items[2]
+	if !synthetic.SyntheticID || synthetic.ID != "synthetic:"+apTuple(events[0].Meta().RunID, "", "c3") {
+		t.Fatalf("synthetic ID=%q", synthetic.ID)
+	}
+	if snapshots[3].Snapshot.Items[0].Status != todo.Completed || snapshots[3].Snapshot.Items[1].Status != todo.Pending || snapshots[3].Snapshot.Items[2].Status != todo.Pending || len(snapshots[4].Snapshot.Items) != 0 {
+		t.Fatal("update changed unrelated items or clear lost")
+	}
+	c, _ := apServer(t, a, bridge.ExposurePolicy{IncludeTodos: true}, nil)
+	task, wire := apClientDrain(t, c, apContext(t))
+	if task.Status.State != client.TaskStateCompleted {
+		t.Fatal(task.Status)
+	}
+	_, roundtrip := apFacts(apDecodeEvents(t, wire))
+	if len(roundtrip) != 5 || len(roundtrip[3].Snapshot.Items) != 3 || roundtrip[3].Snapshot.Items[0].Status != todo.Completed || len(roundtrip[4].Snapshot.Items) != 0 {
+		t.Fatal("A2A full snapshots truncated")
+	}
+}
+
+func TestAlignmentProtocolOutgoingLoss(t *testing.T) {
+	at := time.Date(2026, 9, 7, 0, 0, 0, 0, time.UTC)
+	for _, kind := range []string{"capability-key", "todo-count", "sequence"} {
+		t.Run(kind, func(t *testing.T) {
+			var ev adaptor.Event = adaptor.CapabilityInvocation{Invocation: capability.Invocation{InvocationID: "i", Ref: capability.Ref{Kind: capability.MCP, Key: "safe", Operation: "read"}, Phase: capability.Started, Source: capability.Provider, Evidence: capability.ProviderProtocol, OccurredAt: at}}
+			seq := uint64(1)
+			if kind == "capability-key" {
+				v := ev.(adaptor.CapabilityInvocation)
+				v.Invocation.Ref.Key = strings.Repeat("T21_PRIVATE", 60)
+				ev = v
+			}
+			if kind == "todo-count" {
+				items := make([]todo.Item, 129)
+				for i := range items {
+					items[i] = todo.Item{ID: fmt.Sprint(i), Content: "T21_PRIVATE", Status: todo.Pending}
+				}
+				ev = adaptor.TodoUpdated{Snapshot: todo.Snapshot{Items: items, Source: todo.PlanUpdate, Revision: 1, OccurredAt: at}}
+			}
+			if kind == "sequence" {
+				seq = 9007199254740992
+			}
+			ev = apMeta(ev, "wire", seq)
+			r := &apRunner{id: "wire", events: []adaptor.Event{ev}, result: &adaptor.Result{Text: "safe"}}
+			c, _ := apServer(t, r, bridge.ExposurePolicy{IncludeCapabilityInvocations: true, IncludeTodos: true}, nil)
+			task, wire := apClientDrain(t, c, apContext(t))
+			if kind == "sequence" {
+				if task.Status.State != client.TaskStateFailed {
+					t.Fatal("unencodable coordinates silently repaired")
+				}
+				return
+			}
+			if task.Status.State != client.TaskStateCompleted {
+				t.Fatal("semantic loss changed business success")
+			}
+			count := 0
+			for _, e := range wire {
+				if e.Status == nil || e.Status.Message == nil {
+					continue
+				}
+				for _, p := range e.Status.Message.Parts {
+					if p.Kind != client.PartData {
+						continue
+					}
+					payload := apJSON(p.Data)
+					if strings.Contains(payload, "T21_PRIVATE") {
+						t.Fatal("invalid payload exposed")
+					}
+					if strings.Contains(payload, `"kind":"stream.dropped"`) {
+						count++
+						if !strings.Contains(payload, `"dropped_count":1`) || !strings.Contains(payload, `"event_kind"`) {
+							t.Fatal("unsafe or incomplete wire loss")
+						}
+					}
+				}
+			}
+			if count != 1 {
+				t.Fatalf("loss count=%d", count)
+			}
+			apAssertCalls(t, r)
+		})
+	}
+}
+
+func TestAlignmentProtocolCodeBuddyControl(t *testing.T) {
+	frames := `{"type":"system","subtype":"init","session_id":"t21-session"}` + "\n" + apTool("control-id", "mcp__知识_库__search", "", map[string]any{"query": "fixture"})
+	frames += apJSON(map[string]any{"type": "control_request", "request_id": "permission-21", "request": map[string]any{"subtype": "can_use_tool", "tool_name": "mcp__知识_库__search", "tool_use_id": "control-id", "input": map[string]any{"query": "fixture"}}}) + "\n"
+	frames += apToolResult("control-id", "", false, nil) + apToolResult("control-id", "", false, nil) + apTerminal
+	var approvals atomic.Int32
+	a := apProvider(t, "codebuddy", frames, adaptor.WithPolicy(adaptor.Policy{Approvals: adaptor.ApprovalPolicy{Permission: adaptor.ApprovalAsk}}), adaptor.OnApproval(func(ctx context.Context, r *adaptor.ApprovalRequest) error { approvals.Add(1); return r.Approve(ctx) }))
+	events, result, e := apDrain(a.Stream(apContext(t), "control protocol"))
+	if e != nil || result == nil || approvals.Load() != 1 {
+		t.Fatalf("real control response: count=%d err=%v", approvals.Load(), e)
+	}
+	caps, _ := apFacts(events)
+	if len(caps) != 2 || caps[0].Invocation.Phase != capability.Started || caps[1].Invocation.Phase != capability.Completed || caps[1].Invocation.Evidence != capability.ProviderProtocol {
+		t.Fatal("control/wrapper replay duplicated observation")
+	}
+	if result.Raw().Stdout != `{"response":{"request_id":"agent-adaptor-initialize","response":{},"subtype":"success"},"type":"control_response"}`+"\n"+frames || result.Raw().Terminal == nil {
+		t.Fatal("control raw/terminal lost")
+	}
+	apLifecycle(t, events, nil)
+}
+
+func TestAlignmentProtocolArtifactRecoveryReconciliation(t *testing.T) {
+	for _, tc := range []struct {
+		name, query, want string
+		conflict          bool
+	}{{"extension", "alphabet", "alphabet", false}, {"lagging", "a", "alpha", false}, {"conflict", "different", "different", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := &apWirePeer{streaming: true, broken: true, frames: [][]any{{apArtifact([]any{map[string]any{"text": "alpha"}}, false, true)}}, task: apWireTask("TASK_STATE_COMPLETED", "new-terminal", "complete", []any{map[string]any{"text": tc.query}})}
+			out, e, events := apPeerDelegate(t, p, delegation.DelegationRequest{IncludeRemoteArtifacts: true}, delegation.Policy{})
+			if e != nil || len(out.RemoteArtifacts) != 1 || out.RemoteArtifacts[0].Parts[0].Text != tc.want {
+				t.Fatalf("reconciliation: %v artifacts=%v", e, out.RemoteArtifacts)
+			}
+			conflicts := 0
+			live := 0
+			for _, event := range events {
+				if event.Artifact != nil && len(event.Artifact.Parts) > 0 && event.Artifact.Parts[0].Text == "alpha" {
+					live++
+				}
+				if event.Kind == delegation.DelegationStreamDropped && event.Raw["reason"] == "artifact_recovery_conflict" {
+					conflicts++
+					if len(event.Raw) != 2 || event.Raw["resolution"] != "recovered_snapshot" {
+						t.Fatal("conflict leaked content or lacked resolution")
+					}
+				}
+			}
+			expected := 0
+			if tc.conflict {
+				expected = 1
+			}
+			if conflicts != expected || live == 0 || p.streamCalls.Load() != 1 || p.getCalls.Load() == 0 {
+				t.Fatalf("conflicts=%d live=%d", conflicts, live)
+			}
+		})
 	}
 }
