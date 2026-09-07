@@ -99,7 +99,7 @@ func TestOuterCancellationKeepsContextIdentityWithoutProviderFailure(t *testing.
 	}
 }
 
-func TestProviderFailureWinsConcurrentCancellationAndPreservesResult(t *testing.T) {
+func TestParentDeadlinePrecedesProviderFailureAndPreservesResult(t *testing.T) {
 	fake := newFakeDriver()
 	fake.runFunc = func(ctx context.Context, _ driver.Request, _ driver.EventSink) (driver.Response, error) {
 		<-ctx.Done()
@@ -107,7 +107,7 @@ func TestProviderFailureWinsConcurrentCancellationAndPreservesResult(t *testing.
 			Output:     "provider partial",
 			ExitCode:   -1,
 			TimedOut:   true,
-			RawStreams: &driver.RawStreams{Stdout: "provider raw"},
+			RawStreams: &driver.RawStreams{Stdout: "provider raw", Terminal: &driver.TerminalPayload{Event: "official-result", JSON: []byte(`{"failed":true}`)}},
 			Failure: &driver.RunFailure{
 				Code:    driver.FailureAgentError,
 				Message: "official provider terminal failure",
@@ -117,10 +117,10 @@ func TestProviderFailureWinsConcurrentCancellationAndPreservesResult(t *testing.
 
 	_, err := adaptor.New(fake).Run(context.Background(), "go", adaptor.WithTimeout(20*time.Millisecond))
 	var runErr *adaptor.RunError
-	if !errors.As(err, &runErr) || !errors.Is(err, adaptor.ErrAgentFailed) {
-		t.Fatalf("error = %T %v, want provider *RunError", err, err)
+	if !errors.As(err, &runErr) || runErr.Reason != adaptor.ReasonDeadlineExceeded || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("error = %T %v, want deadline *RunError", err, err)
 	}
-	if runErr.Message != "official provider terminal failure" || runErr.Result == nil || runErr.Result.Raw().Stdout != "provider raw" {
+	if runErr.Result == nil || runErr.Result.Text != "provider partial" || runErr.Result.Raw().Stdout != "provider raw" || runErr.Result.Raw().Terminal == nil || string(runErr.Result.Raw().Terminal.JSON) != `{"failed":true}` {
 		t.Fatalf("provider failure/result = %#v", runErr)
 	}
 }

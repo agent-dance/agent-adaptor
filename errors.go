@@ -3,6 +3,7 @@ package adaptor
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/mcp"
@@ -33,11 +34,15 @@ const (
 	// ReasonDeadlineExceeded means the invocation's outer deadline elapsed
 	// after Driver.Run was entered. It matches context.DeadlineExceeded.
 	ReasonDeadlineExceeded FailureReason = "deadline_exceeded"
+	// ReasonActiveExecutionTimeout means the active budget was exhausted.
+	ReasonActiveExecutionTimeout FailureReason = "active_execution_timeout"
 )
 
 // Sentinels for errors.Is matching. Each RunError unwraps to the sentinel
 // matching its Reason.
 var (
+	// ErrActiveExecutionTimeout matches an exhausted active execution budget.
+	ErrActiveExecutionTimeout = errors.New("adaptor: active execution timeout")
 	// ErrAgentClosed is returned by an Agent or any Thread derived from it
 	// after Agent.Close has begun.
 	ErrAgentClosed = errors.New("adaptor: agent closed")
@@ -115,6 +120,8 @@ func (e *RunError) Unwrap() error {
 		sentinel = ErrRunCancelled
 	case ReasonPolicyViolation:
 		sentinel = ErrPolicyViolation
+	case ReasonActiveExecutionTimeout:
+		sentinel = ErrActiveExecutionTimeout
 	case ReasonDeadlineExceeded:
 		sentinel = context.DeadlineExceeded
 	}
@@ -155,6 +162,8 @@ var (
 	// cannot honor structured output through either supported mechanism.
 	// Unwrap to *StructuredOutputUnsupportedError for Driver diagnostics.
 	ErrStructuredOutputUnsupported = driver.ErrStructuredOutputUnsupported
+	// ErrSystemPromptUnsupported identifies an unavailable or unsafe append channel.
+	ErrSystemPromptUnsupported = driver.ErrSystemPromptUnsupported
 	// ErrInvalidDriverConfig: Driver.ValidateConfig rejected the Driver's
 	// captured construction-time configuration before launch.
 	ErrInvalidDriverConfig = driver.ErrInvalidDriverConfig
@@ -178,6 +187,8 @@ type (
 	InvalidOutputSchemaError = driver.InvalidOutputSchemaError
 	// StructuredOutputUnsupportedError reports a capability-matrix miss.
 	StructuredOutputUnsupportedError = driver.StructuredOutputUnsupportedError
+	// SystemPromptUnsupportedError contains safe append-channel diagnostics.
+	SystemPromptUnsupportedError = driver.SystemPromptUnsupportedError
 	// InvalidDriverConfigError reports a rejected captured Driver config.
 	InvalidDriverConfigError = driver.InvalidDriverConfigError
 	// InvalidPolicyError reports one out-of-domain Policy field.
@@ -209,3 +220,18 @@ func failureReason(code driver.FailureCode) FailureReason {
 		return FailureReason(code)
 	}
 }
+
+// ActiveExecutionTimeoutError preserves the effective positive local limit.
+// It carries no prompt, path, provider payload or arbitrary metadata.
+type ActiveExecutionTimeoutError struct{ Limit time.Duration }
+
+// Error returns a safe description, including a nil receiver.
+func (e *ActiveExecutionTimeoutError) Error() string {
+	if e == nil {
+		return ErrActiveExecutionTimeout.Error()
+	}
+	return ErrActiveExecutionTimeout.Error() + ": limit=" + e.Limit.String()
+}
+
+// Unwrap exposes ErrActiveExecutionTimeout for errors.Is.
+func (e *ActiveExecutionTimeoutError) Unwrap() error { return ErrActiveExecutionTimeout }

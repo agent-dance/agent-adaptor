@@ -1,6 +1,7 @@
 package driver
 
 import (
+	"errors"
 	"reflect"
 	"time"
 )
@@ -176,3 +177,25 @@ func cloneNativeReflect(value reflect.Value) reflect.Value {
 		return value
 	}
 }
+
+// ErrSystemPromptUnsupported identifies an unavailable or unsafe native append channel.
+var ErrSystemPromptUnsupported = errors.New("agentadaptor: system prompt unsupported by driver")
+
+// SystemPromptUnsupportedError contains safe static diagnostics, never prompt text.
+// Built-in reasons are unsupported_driver, invalid_utf8, nul_byte, inline_limit,
+// command_line_limit, unsafe_shell_argument, and conflicting_extra_args.
+type SystemPromptUnsupportedError struct {
+	Driver string
+	Reason string
+}
+
+// Error implements error, including a nil receiver.
+func (e *SystemPromptUnsupportedError) Error() string {
+	if e == nil {
+		return ErrSystemPromptUnsupported.Error()
+	}
+	return ErrSystemPromptUnsupported.Error() + ": driver=" + e.Driver + " reason=" + e.Reason
+}
+
+// Unwrap exposes the stable unsupported identity, including a nil receiver.
+func (e *SystemPromptUnsupportedError) Unwrap() error { return ErrSystemPromptUnsupported }

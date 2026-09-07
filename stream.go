@@ -3,8 +3,10 @@ package adaptor
 import (
 	"context"
 	"fmt"
+	"github.com/agent-dance/agent-adaptor/internal/activebudget"
 
 	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/internal/systemprompt"
 )
 
 // Stream is the small interface representing one running invocation. One
@@ -58,6 +60,7 @@ type runStream struct {
 	sink   *eventSink
 	cancel context.CancelFunc
 	done   chan struct{}
+	budget *activebudget.Controller
 	res    *Result
 	err    error
 }
@@ -70,11 +73,11 @@ func (s *runStream) Cancel() {
 	if s == nil {
 		return
 	}
-	if s.sink != nil {
-		s.sink.abort()
-	}
 	if s.cancel != nil {
 		s.cancel()
+	}
+	if s.sink != nil {
+		s.sink.abort()
 	}
 }
 
@@ -187,6 +190,13 @@ func (a *Agent) openStream(ctx context.Context, opts []CallOption, threadKey str
 		close(st.done)
 		return st, eff, ctx, false
 	}
+	if appendErr := validateAppendSystemPrompt(desc, eff.appendSystemPrompt); appendErr != nil {
+		st.err = fmt.Errorf("adaptor: run %s: %w", runID, appendErr)
+		cancel()
+		sink.close()
+		close(st.done)
+		return st, eff, ctx, false
+	}
 	resolvedOutput, schemaErr := a.resolveStructuredOutput(desc, &eff)
 	if schemaErr != nil {
 		st.err = fmt.Errorf("adaptor: run %s: %w", runID, schemaErr)
@@ -196,6 +206,10 @@ func (a *Agent) openStream(ctx context.Context, opts []CallOption, threadKey str
 		return st, eff, ctx, false
 	}
 	eff.resolvedOutput = resolvedOutput
+	sink.terminal.ctx = ctx
+	underlyingCancel := cancel
+	cancel = func() { sink.recordCancellation(ctx); underlyingCancel() }
+	st.cancel = cancel
 	if openErr := a.registerRun(runID, cancel); openErr != nil {
 		st.err = openErr
 		cancel()
@@ -208,9 +222,20 @@ func (a *Agent) openStream(ctx context.Context, opts []CallOption, threadKey str
 	go func() {
 		select {
 		case <-ctx.Done():
+			sink.recordContext(ctx)
 			sink.abort()
 		case <-sink.broker.done:
 		}
 	}()
 	return st, eff, ctx, true
+}
+
+func validateAppendSystemPrompt(desc driver.Descriptor, text string) error {
+	if err := systemprompt.Validate(desc.Type, text); err != nil {
+		return err
+	}
+	if text != "" && !desc.SystemPrompt.Append {
+		return &driver.SystemPromptUnsupportedError{Driver: desc.Type, Reason: "unsupported_driver"}
+	}
+	return nil
 }

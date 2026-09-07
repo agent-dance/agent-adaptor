@@ -11,6 +11,7 @@ import (
 
 	"github.com/agent-dance/agent-adaptor/capability"
 	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/internal/activebudget"
 	"github.com/agent-dance/agent-adaptor/internal/capabilityobs"
 	"github.com/agent-dance/agent-adaptor/internal/todoobs"
 )
@@ -44,9 +45,10 @@ type eventSink struct {
 	retryMu     sync.Mutex
 	retryWarned map[driver.HumanDecisionKind]struct{}
 
-	// decisionSerial enforces one in-flight approval request at a time.
-	decisionSerial sync.Mutex
-	decSeq         atomic.Uint64
+	// Each approval has its own token and responder; no lock spans human wait.
+	decSeq   atomic.Uint64
+	budget   *activebudget.Controller
+	terminal invocationTerminal
 
 	// outstanding tracks unanswered event-form requests so close() can
 	// expire them (a response after run end fails fast).
@@ -269,6 +271,9 @@ func (s *eventSink) completeAuthoritativeLifecycle(res *Result, runErr error) {
 		case errors.As(runErr, &business):
 			terminal.Reason = business.Reason
 			terminal.Message = business.Message
+		case errors.Is(runErr, ErrActiveExecutionTimeout):
+			terminal.Reason = ReasonActiveExecutionTimeout
+			terminal.Message = "active execution budget exhausted"
 		case errors.Is(runErr, context.DeadlineExceeded):
 			terminal.Reason = ReasonDeadlineExceeded
 			terminal.Message = "run deadline exceeded"
@@ -352,8 +357,14 @@ func sourceMetaFromEvent(ev Event) *EventSourceMeta {
 
 func (s *eventSink) setPendingFailure(f *driver.RunFailure) {
 	s.failMu.Lock()
-	defer s.failMu.Unlock()
-	s.failure = f
+	if s.failure == nil {
+		s.failure = f
+	}
+	s.failMu.Unlock()
+	s.recordOutcome(nil, f, nil, nil)
+	if s.budget != nil {
+		s.budget.Cancel(errApprovalAbort)
+	}
 }
 
 func (s *eventSink) pendingFailure() *driver.RunFailure {
@@ -376,17 +387,15 @@ func (s *eventSink) pendingFailure() *driver.RunFailure {
 //   - (_, err): the run must end; the failure context is already recorded
 //     and is overlaid onto the driver response by the stream pipeline.
 func (s *eventSink) RequestDecision(ctx context.Context, req driver.DecisionRequest) (driver.DecisionResponse, error) {
-	s.decisionSerial.Lock()
-	defer s.decisionSerial.Unlock()
-
 	req = s.normalizeRequest(req)
 	kind := req.Kind
 
 	// Policy short-circuit: auto modes resolve without asking anyone.
 	if resp, decided := s.tryAutoResolve(req); decided {
 		s.pushRequestedNotice(req)
+		out, err := s.applyAutoResolve(req, resp)
 		s.pushResolvedNotice(req, resp, time.Now().UTC())
-		return s.applyAutoResolve(req, resp)
+		return out, err
 	}
 
 	var attempts int
@@ -395,14 +404,15 @@ func (s *eventSink) RequestDecision(ctx context.Context, req driver.DecisionRequ
 		req.RetryAttempt = attempts - 1
 
 		resp, decision, runErr := s.dispatchOnce(ctx, req)
-		s.pushResolvedNotice(req, resp, time.Now().UTC())
 
 		switch decision {
 		case driver.DecisionApproved, driver.DecisionAnswered:
+			s.pushResolvedNotice(req, resp, time.Now().UTC())
 			return resp, nil
 
 		case driver.DecisionRejected:
 			out, abortErr := s.applyFailureAction(req, resp, attempts, kind, s.policy.OnReject, driver.FailureReject, driver.DecisionRejected)
+			s.pushResolvedNotice(req, resp, time.Now().UTC())
 			if abortErr == nil && out.retry {
 				req = s.renewForRetry(req)
 				continue
@@ -412,6 +422,7 @@ func (s *eventSink) RequestDecision(ctx context.Context, req driver.DecisionRequ
 		case driver.DecisionTimedOut:
 			timedOut := driver.DecisionResponse{RequestID: req.RequestID, Result: driver.DecisionTimedOut}
 			out, abortErr := s.applyFailureAction(req, timedOut, attempts, kind, s.policy.OnTimeout, driver.FailureTimeout, driver.DecisionTimedOut)
+			s.pushResolvedNotice(req, resp, time.Now().UTC())
 			if abortErr == nil && out.retry {
 				req = s.renewForRetry(req)
 				continue
@@ -419,13 +430,14 @@ func (s *eventSink) RequestDecision(ctx context.Context, req driver.DecisionRequ
 			return out.resp, abortErr
 
 		default: // DecisionAborted (ctx cancelled, handler error/panic, run end)
-			// The abort cause travels as the error itself: a handler error surfaces verbatim on the plain
-			// error path; a context cancellation stays a bare ctx error;
-			// panic / unresolved-return already recorded an agent-error
-			// failure. No synthesized failure here.
+			// Preserve the original handler/context cause. Finalization adds
+			// the one partial Result carrier; panic/unresolved handlers have
+			// already registered their more specific failure.
 			if runErr == nil {
 				runErr = errApprovalAbort
 			}
+			s.recordOutcome(ctx, nil, runErr, nil)
+			s.pushResolvedNotice(req, resp, time.Now().UTC())
 			return resp, runErr
 		}
 	}
@@ -486,13 +498,34 @@ func (s *eventSink) applyAutoResolve(req driver.DecisionRequest, resp driver.Dec
 
 // dispatchOnce runs one ask attempt under the request deadline: callback
 // form when OnApproval is installed, event form otherwise.
+var errApprovalDeadline = errors.New("adaptor: approval attempt deadline")
+
 func (s *eventSink) dispatchOnce(ctx context.Context, req driver.DecisionRequest) (driver.DecisionResponse, driver.DecisionResult, error) {
+	release := s.budget.Pause()
+	defer release()
+	if ctx.Err() != nil {
+		return driver.DecisionResponse{RequestID: req.RequestID, Result: driver.DecisionAborted}, driver.DecisionAborted, errors.Join(ctx.Err(), context.Cause(ctx))
+	}
 	dctx, cancel := withDecisionDeadline(ctx, req.Deadline)
 	defer cancel()
+	var resp driver.DecisionResponse
+	var result driver.DecisionResult
+	var err error
 	if s.handler != nil {
-		return s.runHandler(dctx, req)
+		resp, result, err = s.runHandler(dctx, req)
+	} else {
+		resp, result, err = s.runEventDispatch(dctx, req)
 	}
-	return s.runEventDispatch(dctx, req)
+	// Only this attempt's own wall-clock timer can produce DecisionTimedOut.
+	// Parent deadline/custom cause/active exhaustion retain their real identity.
+	if result != driver.DecisionApproved && result != driver.DecisionAnswered && ctx.Err() != nil {
+		s.recordContext(ctx)
+		return driver.DecisionResponse{RequestID: req.RequestID, Result: driver.DecisionAborted}, driver.DecisionAborted, errors.Join(err, ctx.Err(), context.Cause(ctx))
+	}
+	if result == driver.DecisionAborted && context.Cause(dctx) == errApprovalDeadline {
+		return driver.DecisionResponse{RequestID: req.RequestID, Result: driver.DecisionTimedOut}, driver.DecisionTimedOut, nil
+	}
+	return resp, result, err
 }
 
 // runHandler is form A: invoke the OnApproval callback with a live request.
@@ -500,7 +533,13 @@ func (s *eventSink) dispatchOnce(ctx context.Context, req driver.DecisionRequest
 // the run; a panic or an unresolved return is an agent error.
 func (s *eventSink) runHandler(ctx context.Context, req driver.DecisionRequest) (driver.DecisionResponse, driver.DecisionResult, error) {
 	ar := newApprovalRequest(req)
-	s.pushRequestedNotice(req)
+	if !s.pushRequestedNoticeContext(ctx, req) {
+		ar.expire()
+		if context.Cause(ctx) == errApprovalDeadline {
+			return driver.DecisionResponse{RequestID: req.RequestID, Result: driver.DecisionTimedOut}, driver.DecisionTimedOut, nil
+		}
+		return driver.DecisionResponse{RequestID: req.RequestID, Result: driver.DecisionAborted}, driver.DecisionAborted, errors.Join(ctx.Err(), context.Cause(ctx))
+	}
 
 	outcome := make(chan error, 1)
 	panicked := make(chan string, 1)
@@ -515,12 +554,18 @@ func (s *eventSink) runHandler(ctx context.Context, req driver.DecisionRequest) 
 
 	select {
 	case msg := <-panicked:
+		if ctx.Err() != nil {
+			return decisionContextEnded(ctx, req, ar)
+		}
 		ar.expire()
 		err := fmt.Errorf("approval handler panic: %s", msg)
 		s.setPendingFailure(&driver.RunFailure{Code: driver.FailureAgentError, Message: err.Error()})
 		return driver.DecisionResponse{RequestID: req.RequestID, Result: driver.DecisionAborted}, driver.DecisionAborted, err
 
 	case err := <-outcome:
+		if ctx.Err() != nil {
+			return decisionContextEnded(ctx, req, ar)
+		}
 		if err != nil {
 			ar.expire()
 			return driver.DecisionResponse{RequestID: req.RequestID, Result: driver.DecisionAborted}, driver.DecisionAborted, err
@@ -541,11 +586,22 @@ func (s *eventSink) runHandler(ctx context.Context, req driver.DecisionRequest) 
 			resp.RequestID = req.RequestID
 			return resp, resp.Result, nil
 		}
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		if context.Cause(ctx) == errApprovalDeadline {
 			return driver.DecisionResponse{RequestID: req.RequestID, Result: driver.DecisionTimedOut}, driver.DecisionTimedOut, nil
 		}
 		return driver.DecisionResponse{RequestID: req.RequestID, Result: driver.DecisionAborted}, driver.DecisionAborted, ctx.Err()
 	}
+}
+
+func decisionContextEnded(ctx context.Context, req driver.DecisionRequest, ar *ApprovalRequest) (driver.DecisionResponse, driver.DecisionResult, error) {
+	if resp, ok := ar.expire(); ok {
+		resp.RequestID = req.RequestID
+		return resp, resp.Result, nil
+	}
+	if context.Cause(ctx) == errApprovalDeadline {
+		return driver.DecisionResponse{RequestID: req.RequestID, Result: driver.DecisionTimedOut}, driver.DecisionTimedOut, nil
+	}
+	return driver.DecisionResponse{RequestID: req.RequestID, Result: driver.DecisionAborted}, driver.DecisionAborted, errors.Join(ctx.Err(), context.Cause(ctx))
 }
 
 // runEventDispatch is form B: enqueue the live *ApprovalRequest on the
@@ -557,6 +613,11 @@ func (s *eventSink) runEventDispatch(ctx context.Context, req driver.DecisionReq
 	ar := newApprovalRequest(req)
 
 	s.outstandingMu.Lock()
+	if _, duplicate := s.outstanding[ar.ID]; duplicate {
+		s.outstandingMu.Unlock()
+		ar.expire()
+		return driver.DecisionResponse{RequestID: req.RequestID, Result: driver.DecisionAborted}, driver.DecisionAborted, errors.New("adaptor: duplicate outstanding approval request ID")
+	}
 	s.outstanding[ar.ID] = ar
 	s.outstandingMu.Unlock()
 	defer func() {
@@ -572,7 +633,7 @@ func (s *eventSink) runEventDispatch(ctx context.Context, req driver.DecisionReq
 			resp.RequestID = req.RequestID
 			return resp, resp.Result, nil
 		}
-		if ctx.Err() != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		if ctx.Err() != nil && context.Cause(ctx) == errApprovalDeadline {
 			return driver.DecisionResponse{RequestID: req.RequestID, Result: driver.DecisionTimedOut}, driver.DecisionTimedOut, nil
 		}
 		if ctx.Err() != nil {
@@ -587,7 +648,7 @@ func (s *eventSink) runEventDispatch(ctx context.Context, req driver.DecisionReq
 			resp.RequestID = req.RequestID
 			return resp, resp.Result, nil
 		}
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		if context.Cause(ctx) == errApprovalDeadline {
 			return driver.DecisionResponse{RequestID: req.RequestID, Result: driver.DecisionTimedOut}, driver.DecisionTimedOut, nil
 		}
 		if ctx.Err() != nil {
@@ -605,7 +666,7 @@ func (s *eventSink) runEventDispatch(ctx context.Context, req driver.DecisionReq
 			resp.RequestID = req.RequestID
 			return resp, resp.Result, nil
 		}
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		if context.Cause(ctx) == errApprovalDeadline {
 			return driver.DecisionResponse{RequestID: req.RequestID, Result: driver.DecisionTimedOut}, driver.DecisionTimedOut, nil
 		}
 		return driver.DecisionResponse{RequestID: req.RequestID, Result: driver.DecisionAborted}, driver.DecisionAborted, ctx.Err()
@@ -758,7 +819,7 @@ func withDecisionDeadline(ctx context.Context, deadline time.Time) (context.Cont
 	if deadline.IsZero() {
 		return context.WithCancel(ctx)
 	}
-	return context.WithDeadline(ctx, deadline)
+	return context.WithDeadlineCause(ctx, deadline, errApprovalDeadline)
 }
 
 // pushRequestedNotice broadcasts an approval request that does NOT appear
@@ -766,7 +827,13 @@ func withDecisionDeadline(ctx context.Context, deadline time.Time) (context.Cont
 // paths). In event form the *ApprovalRequest event itself is the request
 // signal.
 func (s *eventSink) pushRequestedNotice(req driver.DecisionRequest) {
-	s.push(Notice{
+	s.push(requestedNotice(req))
+}
+func (s *eventSink) pushRequestedNoticeContext(ctx context.Context, req driver.DecisionRequest) bool {
+	return s.broker.publishContext(ctx, requestedNotice(req), nil)
+}
+func requestedNotice(req driver.DecisionRequest) Notice {
+	return Notice{
 		Kind: NoticeApprovalRequested,
 		Text: req.Prompt,
 		Data: map[string]any{
@@ -781,7 +848,7 @@ func (s *eventSink) pushRequestedNotice(req driver.DecisionRequest) {
 			"default_result": string(req.DefaultDecision),
 			"attempt":        req.RetryAttempt,
 		},
-	})
+	}
 }
 
 // pushResolvedNotice broadcasts exactly one outcome for every approval
@@ -1016,4 +1083,119 @@ func (s *eventSink) observeEvent(ev Event) []Event {
 		}
 	}
 	return notices
+}
+
+// invocationTerminal is the sole first-terminal record. Its mutex covers only
+// candidate comparison and copying, never Driver code, events, callbacks or IO.
+type invocationTerminal struct {
+	mu      sync.Mutex
+	ctx     context.Context
+	reason  FailureReason
+	message string
+	details map[string]any
+	cause   error
+	ended   bool
+}
+type terminalOutcome struct {
+	reason  FailureReason
+	message string
+	details map[string]any
+	cause   error
+}
+
+func (s *eventSink) bindBudget(ctx context.Context, budget *activebudget.Controller) {
+	s.budget = budget
+	s.terminal.mu.Lock()
+	s.terminal.ctx = ctx
+	s.terminal.mu.Unlock()
+	context.AfterFunc(ctx, func() { s.recordContext(ctx); s.abort() })
+}
+func (s *eventSink) recordContext(ctx context.Context) {
+	if ctx == nil || ctx.Err() == nil {
+		return
+	}
+	s.recordOutcome(ctx, nil, nil, nil)
+}
+func (s *eventSink) recordCancellation(ctx context.Context) {
+	if ctx.Err() != nil {
+		s.recordContext(ctx)
+		return
+	}
+	s.recordOutcome(nil, nil, context.Canceled, nil)
+}
+func (s *eventSink) recordOutcome(ctx context.Context, failure *driver.RunFailure, err, coordination error) {
+	t := &s.terminal
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	s.recordOutcomeLocked(ctx, failure, err, coordination)
+}
+func (s *eventSink) recordOutcomeLocked(ctx context.Context, failure *driver.RunFailure, err, coordination error) {
+	t := &s.terminal
+	if t.ended {
+		return
+	}
+	if ctx == nil {
+		ctx = t.ctx
+	}
+	var contextErr, errorCause error
+	if ctx != nil && ctx.Err() != nil {
+		contextErr = ctx.Err()
+		errorCause = context.Cause(ctx)
+	}
+	t.cause = errors.Join(t.cause, err, coordination, contextErr, errorCause)
+	if t.reason != "" {
+		return
+	}
+	switch {
+	case contextErr != nil:
+		switch {
+		case errors.Is(errorCause, ErrActiveExecutionTimeout):
+			t.reason, t.message = ReasonActiveExecutionTimeout, "active execution budget exhausted"
+		case contextErr == context.DeadlineExceeded:
+			t.reason, t.message = ReasonDeadlineExceeded, "execution deadline exceeded"
+		default:
+			t.reason, t.message = ReasonCancelled, "execution cancelled"
+		}
+	case failure != nil:
+		t.reason, t.message, t.details = failureReason(failure.Code), failure.Message, maps.Clone(failure.Metadata)
+	case coordination != nil:
+		t.reason, t.message = ReasonInfrastructure, "Thread coordination failed"
+	case err != nil:
+		switch {
+		case errors.Is(err, ErrActiveExecutionTimeout):
+			t.reason, t.message = ReasonActiveExecutionTimeout, "active execution budget exhausted"
+		case errors.Is(err, context.DeadlineExceeded):
+			t.reason, t.message = ReasonDeadlineExceeded, "execution deadline exceeded"
+		case errors.Is(err, context.Canceled):
+			t.reason, t.message = ReasonCancelled, "execution cancelled"
+		default:
+			t.reason, t.message = ReasonInfrastructure, "execution failed"
+		}
+	}
+}
+func (s *eventSink) finishTerminal() {
+	s.terminal.mu.Lock()
+	s.terminal.ended = true
+	s.terminal.mu.Unlock()
+}
+func (s *eventSink) terminalSnapshot() terminalOutcome {
+	s.terminal.mu.Lock()
+	defer s.terminal.mu.Unlock()
+	return terminalOutcome{s.terminal.reason, s.terminal.message, maps.Clone(s.terminal.details), s.terminal.cause}
+}
+
+// finishExecution orders the health seal against every concrete terminal
+// candidate. The budget mutex never calls back here, so the lock order is one-way.
+func (s *eventSink) finishExecution(ctx context.Context) error {
+	s.terminal.mu.Lock()
+	defer s.terminal.mu.Unlock()
+	s.recordOutcomeLocked(ctx, nil, nil, nil)
+	if s.terminal.reason != "" {
+		return errors.Join(errApprovalAbort, s.terminal.cause)
+	}
+	err := s.budget.FinishExecution()
+	if err != nil {
+		s.recordOutcomeLocked(ctx, nil, err, nil)
+	}
+	return err
 }

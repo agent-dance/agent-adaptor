@@ -10,7 +10,9 @@ import (
 	"time"
 
 	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/internal/activebudget"
 	"github.com/agent-dance/agent-adaptor/internal/engine"
+	"github.com/agent-dance/agent-adaptor/internal/systemprompt"
 )
 
 const invocationCleanupTimeout = 5 * time.Second
@@ -61,12 +63,21 @@ func (a *Agent) executeInvocation(ctx context.Context, st *runStream, prompt str
 	)
 
 	defer func() {
+		if st.budget != nil {
+			st.budget.Stop()
+		}
+		st.sink.recordContext(ctx)
+		if !driverEntered && ctx.Err() != nil {
+			resultErr = errors.Join(resultErr, ctx.Err(), context.Cause(ctx))
+		}
 		if plan != nil {
 			plan.StopLeaseRenewal()
 			if renewErr := plan.RenewalError(); renewErr != nil && !errors.Is(coordinationErr, renewErr) {
 				coordinationErr = errors.Join(coordinationErr, target.thread.threadError(renewErr))
 			}
 		}
+		st.sink.recordOutcome(ctx, response.Failure, resultErr, coordinationErr)
+		st.sink.finishTerminal()
 		// Every exit after dispatch maps the same accumulated Response exactly
 		// once, including failed fallback preparation and Thread finalization.
 		if driverEntered {
@@ -104,6 +115,9 @@ func (a *Agent) executeInvocation(ctx context.Context, st *runStream, prompt str
 		st.sink.close()
 		close(st.done)
 		st.cancel()
+		if st.budget != nil {
+			st.budget.Cancel(nil)
+		}
 	}()
 
 	if target != nil {
@@ -122,6 +136,14 @@ func (a *Agent) executeInvocation(ctx context.Context, st *runStream, prompt str
 			return
 		}
 	}
+
+	// Timing starts after static Thread checks and before the first resource.
+	var limit time.Duration
+	if eff.policy != nil {
+		limit = eff.policy.ActiveExecutionTimeout
+	}
+	ctx, st.budget = activebudget.New(ctx, limit, &ActiveExecutionTimeoutError{Limit: limit}, eff.budgetTiming.clock)
+	st.sink.bindBudget(ctx, st.budget)
 
 	// Hosted Tool profile resolution may call provider code and allocate an
 	// Agent-owned directory. Keep it inside lifecycle admission so Close sees,
@@ -189,12 +211,15 @@ func (a *Agent) executeInvocation(ctx context.Context, st *runStream, prompt str
 			resultErr = fmt.Errorf("adaptor: thread %q: internal: no session plan", target.thread.key)
 			return
 		}
-		plan.StartLeaseRenewal(ctx, st.cancel)
+		plan.StartLeaseRenewal(ctx, func() {
+			st.sink.recordOutcome(ctx, nil, nil, plan.RenewalError())
+			st.cancel()
+		})
 	}
 
 	request := resolved.req
 	for {
-		if driverEntered && ctx.Err() != nil {
+		if ctx.Err() != nil && (driverEntered || errors.Is(context.Cause(ctx), ErrActiveExecutionTimeout)) {
 			resultErr = errors.Join(resultErr, ctx.Err(), context.Cause(ctx))
 			return
 		}
@@ -227,6 +252,8 @@ func (a *Agent) executeInvocation(ctx context.Context, st *runStream, prompt str
 			}
 		}
 
+		st.sink.recordOutcome(ctx, response.Failure, resultErr, nil)
+
 		if plan != nil {
 			plan.StopLeaseRenewal()
 			if renewErr := plan.RenewalError(); renewErr != nil {
@@ -241,7 +268,16 @@ func (a *Agent) executeInvocation(ctx context.Context, st *runStream, prompt str
 			)
 		}
 
+		// Structured validation may create a new concrete failure after Run.
+		st.sink.recordOutcome(ctx, response.Failure, resultErr, nil)
+		if plan == nil && resultErr == nil && response.Failure == nil && st.sink.pendingFailure() == nil {
+			resultErr = st.sink.finishExecution(ctx)
+		}
 		if plan != nil && invocationCanPersist(ctx, a.driver, response, resultErr, st.sink.pendingFailure()) {
+			if sealErr := st.sink.finishExecution(ctx); sealErr != nil {
+				resultErr = sealErr
+				return
+			}
 			// Architectural invariant: this is the only Thread persistence point.
 			if _, persistErr := plan.Persist(ctx, identity, a.driver, fingerprint, response.Checkpoint); persistErr != nil {
 				coordinationErr = target.thread.threadError(persistErr)
@@ -279,7 +315,7 @@ func (a *Agent) threadInvocationFingerprint(identity driver.AgentIdentity, req d
 	// Streaming is this turn's delivery choice. Incompatible checkpoint or
 	// session environments remain guarded by the configured Driver/codec and
 	// the resolved resource dimensions below, not by this per-turn boolean.
-	return engine.StableHash(
+	base := engine.StableHash(
 		"adaptor/thread-invocation/v1",
 		a.driver.Descriptor().Type,
 		contract.codecName,
@@ -293,6 +329,10 @@ func (a *Agent) threadInvocationFingerprint(identity driver.AgentIdentity, req d
 		req.Skills.Fingerprint,
 		engine.InstructionFingerprint(req.Instructions),
 	)
+	if req.AppendSystemPrompt == "" {
+		return base
+	}
+	return engine.StableHash("adaptor/thread-append-system-prompt/v1", base, systemprompt.Fingerprint(req.AppendSystemPrompt))
 }
 
 type threadDriverContract struct {
@@ -506,6 +546,9 @@ func classifyInvocationOutcome(ctx context.Context, resp driver.Response, runErr
 func finalizeRun(runID string, sink *eventSink, resp driver.Response, err, coordinationErr error) (*Result, error) {
 	pending := sink.pendingFailure()
 	res := resultFromResponse(runID, resp)
+	if outcome := sink.terminalSnapshot(); outcome.reason != "" {
+		return nil, &RunError{Reason: outcome.reason, Message: outcome.message, Details: maps.Clone(outcome.details), Result: res, Cause: errors.Join(outcome.cause, err, coordinationErr)}
+	}
 	failure := resp.Failure
 	if pending != nil {
 		failure = pending
@@ -524,6 +567,8 @@ func finalizeRun(runID string, sink *eventSink, resp driver.Response, err, coord
 	if err != nil {
 		reason, message := ReasonInfrastructure, "execution failed"
 		switch {
+		case errors.Is(err, ErrActiveExecutionTimeout):
+			reason, message = ReasonActiveExecutionTimeout, "active execution budget exhausted"
 		case errors.Is(err, context.DeadlineExceeded):
 			reason, message = ReasonDeadlineExceeded, "execution deadline exceeded"
 		case errors.Is(err, context.Canceled):

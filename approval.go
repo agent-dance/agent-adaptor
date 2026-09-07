@@ -150,6 +150,10 @@ var (
 // one of Approve / Deny / Answer resolves it. Late or duplicate responses
 // return ErrApprovalResolved; if nobody responds before Deadline, the
 // ApprovalPolicy timeout fallback applies.
+// Ask waits pause only the current run's active execution budget, before
+// queueing or invoking a handler. Concurrent requests hold independent tokens;
+// the last completed wait resumes timing. Approval Timeout and parent deadlines
+// remain wall-clock bounds. Automatic decisions never pause the active budget.
 type ApprovalRequest struct {
 	eventMetaCarrier
 	// ID identifies this request (unique per run, fresh per retry).

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/internal/activebudget"
 	"github.com/agent-dance/agent-adaptor/internal/engine"
 	"github.com/agent-dance/agent-adaptor/mcp"
 	"github.com/agent-dance/agent-adaptor/profile"
@@ -59,14 +60,16 @@ type SharedOption interface {
 // Add* appends). The root package's own options go through the same methods
 // so the extension surface stays self-validating.
 type RunSettings struct {
-	model     string
-	timeout   time.Duration
-	workspace string
-	metadata  map[string]string
-	identity  *Identity
-	policy    *Policy
-	approval  ApprovalHandler
-	spawn     bool
+	model              string
+	timeout            time.Duration
+	workspace          string
+	metadata           map[string]string
+	identity           *Identity
+	policy             *Policy
+	approval           ApprovalHandler
+	spawn              bool
+	appendSystemPrompt string
+	budgetTiming       budgetTiming // private deterministic-clock test seam
 
 	// effectiveProfile is an internal per-invocation execution projection.
 	// Public options cannot write it. Host-defined Tools use it to isolate
@@ -129,6 +132,8 @@ type RunSettings struct {
 	runServices []RunServiceProvider
 }
 
+type budgetTiming struct{ clock activebudget.Clock }
+
 // SetModel replaces the effective model for the target scope. Empty and
 // whitespace-only values mean no override, matching the Driver Request
 // contract and preventing an all-space model name from reaching providers.
@@ -140,6 +145,10 @@ func (s *RunSettings) SetTimeout(d time.Duration) { s.timeout = d }
 
 // SetSpawn forces a fresh provider process for the target scope.
 func (s *RunSettings) SetSpawn() { s.spawn = true }
+
+// SetAppendSystemPrompt replaces the provider-native append channel. Only an
+// empty string clears it; all valid UTF-8 bytes, including whitespace, are preserved.
+func (s *RunSettings) SetAppendSystemPrompt(text string) { s.appendSystemPrompt = text }
 
 // SetInstructions replaces the extra instruction text handed to the driver
 // and declares the instructions resource as host-managed. Empty text clears
@@ -438,6 +447,14 @@ func WithTimeout(d time.Duration) SharedOption {
 // drivers without persistent-process support already spawn regardless.
 func WithSpawn() SharedOption {
 	return sharedOptionFunc(func(s *RunSettings) { s.SetSpawn() })
+}
+
+// WithAppendSystemPrompt appends text to the provider's native system prompt,
+// preserving its defaults. It replaces this channel at each scope; an empty
+// string clears the Agent default. It never changes Prompt or Instructions.
+// Unsupported drivers and invalid UTF-8/NUL fail before resource acquisition.
+func WithAppendSystemPrompt(text string) SharedOption {
+	return sharedOptionFunc(func(s *RunSettings) { s.SetAppendSystemPrompt(text) })
 }
 
 // WithInstructions supplies extra instruction text alongside the prompt.

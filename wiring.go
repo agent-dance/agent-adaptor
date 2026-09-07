@@ -179,6 +179,7 @@ func (a *Agent) resolveRun(ctx context.Context, runID, prompt string, eff *RunSe
 	// overlaid. The payloads are single-use values built above, so direct
 	// assignment preserves the pipeline's defensive-copy guarantees.
 	req := buildRequest(runID, prompt, eff)
+	req.AppendSystemPrompt = eff.appendSystemPrompt
 	res.applyRequest(&req)
 	req.Instructions = instructions
 	req.Skills = engine.CloneResolvedSkills(skillPayload)

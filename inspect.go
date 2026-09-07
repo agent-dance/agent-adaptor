@@ -191,6 +191,9 @@ func (a *Agent) Inspect() Inspector { return Inspector{agent: a} }
 // informational "noop" check — visible, not invented.
 func (in Inspector) Environment(ctx context.Context) (EnvironmentReport, error) {
 	a := in.agent
+	if err := validateAppendSystemPrompt(a.driver.Descriptor(), a.defaults.appendSystemPrompt); err != nil {
+		return EnvironmentReport{}, err
+	}
 	if probe, ok := a.driver.(driver.EnvironmentProbe); ok {
 		return probe.CheckEnvironment(ctx, nil)
 	}

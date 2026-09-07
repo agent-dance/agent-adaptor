@@ -198,6 +198,7 @@ type Descriptor struct {
 	Skills SkillCapability
 	MCP MCPCapability
 	Instructions InstructionsCapability
+	SystemPrompt SystemPromptCapability
 	Workspace WorkspaceCapability
 	Process ProcessCapability
 	RunPolicyCaps RunPolicyCapabilities
@@ -275,6 +276,8 @@ var ErrPolicyCapabilityUnsupported error
 
 var ErrStructuredOutputUnsupported error
 
+var ErrSystemPromptUnsupported error
+
 type EventSink interface {
 	Emit(event RunEvent) error
 	EmitStream(payload StreamPayload) error
@@ -290,6 +293,8 @@ const FailureAbort FailureAction = "abort"
 type FailureAction string
 
 const FailureActionUnset FailureAction = ""
+
+const FailureActiveExecutionTimeout FailureCode = "active_execution_timeout"
 
 const FailureAgentError FailureCode = "agent_error"
 
@@ -840,6 +845,7 @@ type Request struct {
 	Profile *ProfileSelection
 	Policy RunPolicy
 	Instructions *InstructionsBundleRef
+	AppendSystemPrompt string
 	Session *SessionContext
 	Metadata map[string]string
 	OutputSchema *OutputSchema
@@ -1350,6 +1356,20 @@ methodset StructuredOutputUnsupportedError {
 	pointer Unwrap() error
 }
 
+type SystemPromptCapability struct {
+	Append bool
+}
+
+type SystemPromptUnsupportedError struct {
+	Driver string
+	Reason string
+}
+
+methodset SystemPromptUnsupportedError {
+	pointer Error() string
+	pointer Unwrap() error
+}
+
 type TerminalPayload struct {
 	Event string
 	JSON json.RawMessage
@@ -1495,3 +1515,7 @@ func (*SessionConfigFingerprintError).Error() string
 func (*StructuredOutputUnsupportedError).Error() string
 
 func (*StructuredOutputUnsupportedError).Unwrap() error
+
+func (*SystemPromptUnsupportedError).Error() string
+
+func (*SystemPromptUnsupportedError).Unwrap() error

@@ -212,6 +212,8 @@ type Descriptor struct {
 	MCP MCPCapability
 	// Instructions declares explicit instruction-bundle support.
 	Instructions InstructionsCapability
+	// SystemPrompt declares provider-native append support. Zero means unsupported.
+	SystemPrompt SystemPromptCapability
 	// Workspace declares support for SDK-resolved workspaces.
 	Workspace WorkspaceCapability
 	// Process declares the provider process lifecycle supported by this driver.
@@ -239,6 +241,11 @@ type SkillCapability struct {
 	Supported bool
 	Mode      SkillSyncMode
 }
+
+// SystemPromptCapability describes an additional native system-prompt channel.
+// Append MUST preserve provider defaults, remain separate from Prompt and
+// Instructions, and be rejected before launch when unsupported.
+type SystemPromptCapability struct{ Append bool }
 
 // InstructionsCapability declares whether the driver accepts explicit
 // instruction bundles in addition to the prompt.

@@ -5,7 +5,9 @@ package memory
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"sync"
 	"testing"
 	"time"
 
@@ -284,4 +286,64 @@ func TestStoreFinalizeRequireKeyAbsentIsAtomicAndPreservesRawKey(t *testing.T) {
 	if leaked, err := store.Resolve(ctx, threadstore.Query{ID: "second", IncludeArchived: true}); err != nil || leaked != nil {
 		t.Fatalf("rejected child was partially saved: record=%#v err=%v", leaked, err)
 	}
+}
+
+// A canceled request must not save, archive, or rebind an existing key, even
+// if cancellation happens while waiting for the Store's atomic commit lock.
+func TestFinalizeCancellationBeforeCommit(t *testing.T) {
+	for _, waiting := range []bool{false, true} {
+		t.Run(fmt.Sprint(waiting), func(t *testing.T) {
+			s := NewStore()
+			ctx := context.Background()
+			old := threadstore.Record{ID: "old", Key: "key", Status: threadstore.StatusActive}
+			if err := s.Finalize(ctx, threadstore.FinalizeRequest{Record: old, Key: "key", RebindActive: true}); err != nil {
+				t.Fatal(err)
+			}
+			parent, cancel := context.WithCancelCause(ctx)
+			cause := errors.New("cancel before commit")
+			req := threadstore.FinalizeRequest{Record: threadstore.Record{ID: "new", Key: "key", Status: threadstore.StatusActive}, PreviousID: "old", Key: "key", ArchiveOld: true, RebindActive: true}
+			var err error
+			if waiting {
+				s.mu.Lock()
+				seen := make(chan struct{})
+				checked := &finalizeBarrierContext{Context: parent, checked: seen}
+				done := make(chan error, 1)
+				go func() { done <- s.Finalize(checked, req) }()
+				// The production pre-lock context check is the barrier. The old
+				// implementation ignores context entirely, so use a bounded failure.
+				select {
+				case <-seen:
+				case <-time.After(100 * time.Millisecond):
+				}
+				cancel(cause)
+				s.mu.Unlock()
+				err = <-done
+			} else {
+				cancel(cause)
+				err = s.Finalize(parent, req)
+			}
+			if !errors.Is(err, context.Canceled) || !errors.Is(err, cause) {
+				t.Fatalf("Finalize cancellation=%v", err)
+			}
+			rec, _ := s.Resolve(ctx, threadstore.Query{Key: "key"})
+			if rec == nil || rec.ID != "old" || rec.Status != threadstore.StatusActive {
+				t.Fatalf("old key changed: %#v", rec)
+			}
+			if got, _ := s.Resolve(ctx, threadstore.Query{ID: "new", IncludeArchived: true}); got != nil {
+				t.Fatal("canceled Finalize saved new record")
+			}
+		})
+	}
+}
+
+type finalizeBarrierContext struct {
+	context.Context
+	checked chan struct{}
+	once    sync.Once
+}
+
+func (c *finalizeBarrierContext) Err() error {
+	err := c.Context.Err()
+	c.once.Do(func() { close(c.checked) })
+	return err
 }

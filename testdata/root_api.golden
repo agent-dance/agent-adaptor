@@ -1,3 +1,12 @@
+type ActiveExecutionTimeoutError struct {
+	Limit time.Duration
+}
+
+methodset ActiveExecutionTimeoutError {
+	pointer Error() string
+	pointer Unwrap() error
+}
+
 type Agent struct {
 	// no exported fields
 }
@@ -12,6 +21,7 @@ methodset AgentSettings {
 	pointer AddRunServiceProvider(p RunServiceProvider)
 	pointer AddSkills(refs ...github.com/agent-dance/agent-adaptor/skill.Ref)
 	pointer SetAgents(specs []github.com/agent-dance/agent-adaptor/driver.AgentSpec)
+	pointer SetAppendSystemPrompt(text string)
 	pointer SetApprovalHandler(h ApprovalHandler)
 	pointer SetBlockingEvents()
 	pointer SetConfigPatches(patches []github.com/agent-dance/agent-adaptor/driver.ProfileConfigPatch)
@@ -154,6 +164,8 @@ type EnvironmentCheck = driver.EnvironmentCheck
 
 type EnvironmentReport = driver.EnvironmentReport
 
+var ErrActiveExecutionTimeout error
+
 var ErrAgentClosed error
 
 var ErrAgentFailed error
@@ -203,6 +215,8 @@ var ErrSkillNotFound error
 var ErrSkillSourceMissing error
 
 var ErrStructuredOutputUnsupported error
+
+var ErrSystemPromptUnsupported error
 
 var ErrThreadAlreadyExists error
 
@@ -385,6 +399,7 @@ const PhaseEnd Phase = "end"
 const PhaseStart Phase = "start"
 
 type Policy struct {
+	ActiveExecutionTimeout time.Duration
 	Sandbox SandboxLevel
 	WebSearch FeatureLevel
 	Browser FeatureLevel
@@ -489,6 +504,8 @@ type QuotaReport = driver.QuotaReport
 type RawStreams = driver.RawStreams
 
 const ReadOnly SandboxLevel = "read_only"
+
+const ReasonActiveExecutionTimeout FailureReason = "active_execution_timeout"
 
 const ReasonAgentError FailureReason = "agent_error"
 
@@ -608,6 +625,7 @@ methodset RunSettings {
 	pointer AddRunServiceProvider(p RunServiceProvider)
 	pointer AddSkills(refs ...github.com/agent-dance/agent-adaptor/skill.Ref)
 	pointer SetAgents(specs []github.com/agent-dance/agent-adaptor/driver.AgentSpec)
+	pointer SetAppendSystemPrompt(text string)
 	pointer SetApprovalHandler(h ApprovalHandler)
 	pointer SetConfigPatches(patches []github.com/agent-dance/agent-adaptor/driver.ProfileConfigPatch)
 	pointer SetHooks(specs []github.com/agent-dance/agent-adaptor/driver.HookSpec)
@@ -785,6 +803,13 @@ methodset SubagentUpdate {
 	pointer Meta() EventMeta
 }
 
+type SystemPromptUnsupportedError = driver.SystemPromptUnsupportedError
+
+methodset SystemPromptUnsupportedError {
+	pointer Error() string
+	pointer Unwrap() error
+}
+
 type TerminalPayload = driver.TerminalPayload
 
 type TextDelta struct {
@@ -875,6 +900,8 @@ const Unrestricted SandboxLevel = "unrestricted"
 
 type Usage = driver.Usage
 
+func WithAppendSystemPrompt(text string) SharedOption
+
 func WithBlockingEvents() Option
 
 func WithEventBuffer(n int) Option
@@ -961,6 +988,10 @@ methodset WorkspaceSpec {
 
 const WorkspaceWrite SandboxLevel = "workspace_write"
 
+func (*ActiveExecutionTimeoutError).Error() string
+
+func (*ActiveExecutionTimeoutError).Unwrap() error
+
 func (*Agent).Close(ctx context.Context) error
 
 func (*Agent).Inspect() Inspector
@@ -1026,6 +1057,8 @@ func (*RunSettings).AddRunServiceProvider(p RunServiceProvider)
 func (*RunSettings).AddSkills(refs ...skill.Ref)
 
 func (*RunSettings).SetAgents(specs []driver.AgentSpec)
+
+func (*RunSettings).SetAppendSystemPrompt(text string)
 
 func (*RunSettings).SetApprovalHandler(h ApprovalHandler)
 
