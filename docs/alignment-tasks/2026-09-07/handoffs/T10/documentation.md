@@ -237,6 +237,14 @@ for Driver and pre-Driver paths, a controller selected-cause/Finish control, and
 binding versus Cancel/Close race coverage. The precise local propagation red
 fixture produced four failed test/subtest outcomes before repair. Final evidence
 belongs to the later committed SHA, not either earlier candidate.
+Attempt 2 also preserves the rejected 709f2de evidence. Its independent
+same-type-parent variant exposed error-chain ordering: after the local 100ms
+budget wins, a later parent's ActiveExecutionTimeoutError with a 777s limit
+must remain reachable by identity without hiding the primary 100ms value from
+errors.As. Driver and pre-Driver Stop-barrier variants now check that ordering,
+and the reverse parent-first variants retain Cancelled and the original parent
+typed instance. The local pre-repair race run recorded nine failed test/subtest
+outcomes over three repetitions; final-SHA logs establish the repaired result.
 
 Required commands retain their complete scopes and repetitions:
 

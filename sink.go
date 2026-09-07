@@ -1156,10 +1156,7 @@ func (s *eventSink) recordOutcomeLocked(ctx context.Context, failure *driver.Run
 	selected := s.budget.SelectedCause()
 	t.cause = errors.Join(t.cause, selected)
 	ownExpiry := t.expired != nil && selected == t.expired
-	if ownExpiry {
-		errorCause = selected
-		t.cause = errors.Join(t.cause, contextErr, errorCause)
-	} else if t.parent != nil && t.parent.Err() != nil {
+	if !ownExpiry && t.parent != nil && t.parent.Err() != nil {
 		contextErr, errorCause = t.parent.Err(), context.Cause(t.parent)
 		t.cause = errors.Join(t.cause, contextErr, errorCause)
 	}
@@ -1169,6 +1166,10 @@ func (s *eventSink) recordOutcomeLocked(ctx context.Context, failure *driver.Run
 	switch {
 	case ownExpiry:
 		t.reason, t.message = ReasonActiveExecutionTimeout, "active execution budget exhausted"
+		// A later parent may carry the same error type. Keep the selected
+		// primary instance first for errors.As, retaining all secondary causes.
+		// This runs only when selecting the primary, never over an older reason.
+		t.cause = errors.Join(selected, t.cause)
 	case contextErr != nil:
 		switch {
 		case contextErr == context.DeadlineExceeded:

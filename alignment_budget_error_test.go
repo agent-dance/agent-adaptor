@@ -850,67 +850,94 @@ func (t *alignmentSelectionTimer) Stop() bool {
 }
 
 func TestAlignmentActiveBudgetSelectedExpiryBeforeChildCancellation(t *testing.T) {
-	for _, preparation := range []bool{false, true} {
-		t.Run(fmt.Sprint(preparation), func(t *testing.T) {
-			c := &alignmentSelectionClock{alignmentClock: newAlignmentClock(), stopping: make(chan struct{}), release: make(chan struct{})}
-			parent, cancel := context.WithCancel(context.Background())
-			defer cancel()
-			entered := make(chan context.Context, 1)
-			finishWork, advanced := make(chan struct{}), make(chan struct{})
-			d := brokerTestDriver{run: func(ctx context.Context, _ driver.Request, _ driver.EventSink) (driver.Response, error) {
-				if preparation {
-					t.Error("preparation cancellation reached Driver")
-				}
-				entered <- ctx
-				<-finishWork
-				return alignmentBudgetPartial(), ctx.Err()
-			}}
-			opts := []Option{sharedOptionFunc(func(s *RunSettings) { s.budgetTiming.clock = c }), WithPolicy(Policy{ActiveExecutionTimeout: 100 * time.Millisecond})}
-			if preparation {
-				opts = append(opts, WithRunServices(alignmentBudgetService{attach: func(ctx context.Context) (RunAttachment, error) {
+	for _, tc := range []struct {
+		name        string
+		parentCause error
+		parentFirst bool
+	}{
+		{name: "plain_parent"},
+		{name: "same_type_parent", parentCause: &ActiveExecutionTimeoutError{Limit: 777 * time.Second}},
+		{name: "same_type_parent_first", parentCause: &ActiveExecutionTimeoutError{Limit: 777 * time.Second}, parentFirst: true},
+	} {
+		for _, preparation := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/preparation_%t", tc.name, preparation), func(t *testing.T) {
+				c := &alignmentSelectionClock{alignmentClock: newAlignmentClock(), stopping: make(chan struct{}), release: make(chan struct{})}
+				parent, cancel := context.WithCancelCause(context.Background())
+				defer cancel(nil)
+				entered := make(chan context.Context, 1)
+				finishWork, advanced := make(chan struct{}), make(chan struct{})
+				d := brokerTestDriver{run: func(ctx context.Context, _ driver.Request, _ driver.EventSink) (driver.Response, error) {
+					if preparation {
+						t.Error("preparation cancellation reached Driver")
+					}
 					entered <- ctx
 					<-finishWork
-					return RunAttachment{}, ctx.Err()
-				}}))
-			}
-			st := New(d, opts...).Stream(parent, "selected before propagation")
-			runctx := <-entered
-			c.enabled.Store(true)
-			go func() { c.advance(100 * time.Millisecond); close(advanced) }()
-			// The timer has confirmed expiry and saved its cause while parent
-			// was healthy; its Stop call holds propagation at a precise barrier.
-			<-c.stopping
-			cancel()
-			<-runctx.Done()
-			close(c.release)
-			<-advanced
-			close(finishWork)
-			var terminal RunFinished
-			for event := range st.Events() {
-				if end, ok := event.(RunFinished); ok {
-					terminal = end
+					return alignmentBudgetPartial(), ctx.Err()
+				}}
+				opts := []Option{sharedOptionFunc(func(s *RunSettings) { s.budgetTiming.clock = c }), WithPolicy(Policy{ActiveExecutionTimeout: 100 * time.Millisecond})}
+				if preparation {
+					opts = append(opts, WithRunServices(alignmentBudgetService{attach: func(ctx context.Context) (RunAttachment, error) {
+						entered <- ctx
+						<-finishWork
+						return RunAttachment{}, ctx.Err()
+					}}))
 				}
-			}
-			res, err := st.Result()
-			if !preparation {
-				alignmentBudgetCarrier(t, res, err, ReasonActiveExecutionTimeout)
-			} else {
-				var re *RunError
-				if res != nil || errors.As(err, &re) {
-					t.Fatal("pre-dispatch failure fabricated a Result", res, err)
+				st := New(d, opts...).Stream(parent, "selected before propagation")
+				runctx := <-entered
+				wantReason := ReasonActiveExecutionTimeout
+				wantLimit := 100 * time.Millisecond
+				if tc.parentFirst {
+					cancel(tc.parentCause)
+					<-runctx.Done()
+					c.advance(100 * time.Millisecond)
+					wantReason, wantLimit = ReasonCancelled, 777*time.Second
+				} else {
+					c.enabled.Store(true)
+					go func() { c.advance(100 * time.Millisecond); close(advanced) }()
+					// The timer has confirmed expiry and saved its cause while parent
+					// was healthy; its Stop call holds propagation at a precise barrier.
+					<-c.stopping
+					cancel(tc.parentCause)
+					<-runctx.Done()
+					close(c.release)
+					<-advanced
 				}
-			}
-			var limit *ActiveExecutionTimeoutError
-			if terminal.Reason != ReasonActiveExecutionTimeout || !errors.As(err, &limit) || limit.Limit != 100*time.Millisecond {
-				t.Fatal("selected budget cause lost during propagation", terminal.Reason, err)
-			}
-			for range 3 {
-				again, againErr := st.Result()
-				if again != res || againErr != err {
-					t.Fatal("Result changed after terminal")
+				close(finishWork)
+				var terminal RunFinished
+				terminals := 0
+				for event := range st.Events() {
+					if end, ok := event.(RunFinished); ok {
+						terminal = end
+						terminals++
+					}
 				}
-			}
-		})
+				res, err := st.Result()
+				if !preparation {
+					alignmentBudgetCarrier(t, res, err, wantReason)
+				} else {
+					var re *RunError
+					if res != nil || errors.As(err, &re) {
+						t.Fatal("pre-dispatch failure fabricated a Result", res, err)
+					}
+				}
+				var limit *ActiveExecutionTimeoutError
+				if terminals != 1 || terminal.Reason != wantReason || !errors.As(err, &limit) || limit.Limit != wantLimit {
+					t.Fatal("selected budget cause lost during propagation", terminal.Reason, err)
+				}
+				if tc.parentCause != nil && !errors.Is(err, tc.parentCause) {
+					t.Fatal("parent original cause identity lost", err)
+				}
+				if tc.parentFirst && limit != tc.parentCause {
+					t.Fatal("parent-first typed cause identity changed", limit)
+				}
+				for range 3 {
+					again, againErr := st.Result()
+					if again != res || againErr != err {
+						t.Fatal("Result changed after terminal")
+					}
+				}
+			})
+		}
 	}
 }
 

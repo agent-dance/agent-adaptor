@@ -63,6 +63,17 @@
   failing tests/subtests (Driver/preparation and controller), followed by repaired
   race coverage. Historical 69d74f8 and d623b71 evidence remains archived.
 
+- **T10-F09, P1, resolved (attempt 2; W13-R06).** Independent review of 709f2de
+  confirmed that a later parent's same-typed 777s cause preceded the already
+  selected local 100ms primary in errors.As, although Reason was correct. The
+  terminal record now puts its selected primary instance first only at primary
+  selection, preserving older reasons and the entire original secondary graph.
+  Pre-Driver wrapping also keeps the terminal cause first. Timer-Stop barriers
+  cover both execution stages and parent-first reverse controls; all preserve
+  the parent pointer through errors.Is. The local race red run produced 9 failed
+  test/subtest outcomes across three repetitions, with the 709f2de report and
+  full validation logs retained in `evidence/prior-709f2de`.
+
 Evidence of final repairs is the committed-source test suite and final-SHA V01,
 V02, V03 and V04 logs listed in result.json. Built-in provider startup signatures and
 Windows native/live execution are outside this core implementation; the delivery
