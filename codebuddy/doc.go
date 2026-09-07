@@ -51,6 +51,7 @@
 // run does not inherit a local task cache.
 //
 // CodeBuddy's user result wrapper parent_tool_use_id can equal its own call
-// ID, so this driver does not claim parent graph observation. Unproved nested
+// ID, so this driver does not claim parent graph observation. Foreign or
+// malformed result parent fields cannot complete a root call. Unproved nested
 // assistant/partial wrappers are not merged into the root observation scope.
 package codebuddy

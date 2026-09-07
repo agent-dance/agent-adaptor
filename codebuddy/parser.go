@@ -211,7 +211,7 @@ func (p *parser) handlePayload(raw string, payload map[string]any) {
 		}
 		p.handleAssistantMessage(topObject(payload, "message"))
 	case "user":
-		p.handleUserMessage(topObject(payload, "message"))
+		p.handleUserMessage(topObject(payload, "message"), payload)
 	case "result":
 		p.handleResult(raw, payload, subtype)
 	case "error":
@@ -299,7 +299,7 @@ func (p *parser) handleAssistantMessage(message map[string]any) {
 	}
 }
 
-func (p *parser) handleUserMessage(message map[string]any) {
+func (p *parser) handleUserMessage(message, wrapper map[string]any) {
 	content, ok := message["content"].([]any)
 	if !ok {
 		return
@@ -310,7 +310,7 @@ func (p *parser) handleUserMessage(message map[string]any) {
 			continue
 		}
 		if strings.ToLower(topString(block, "type")) == "tool_result" {
-			p.observeToolResult(block)
+			p.observeToolResult(block, wrapper)
 			id := topString(block, "tool_use_id")
 			text := resultText(block["content"])
 			isError := false

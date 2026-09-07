@@ -29,7 +29,7 @@ consumer Run/Stream 均消费同一 resolved transport；不因为某次用了 R
 
 TodoWrite 的已核实字段是 `newTodos`，其正式成功结果才确认输入列表。TaskCreate/TaskUpdate/TaskList 首选 `tool_result._meta.rawResponse.todos` 完整快照；TaskCreate 以 `rawResponse.task.id` 或精确正式成功文案取得真实 ID。已确认 task 对象缺 ID 时才用 `synthetic:` 无碰撞 run/scope/call tuple，明确 SyntheticID；不把本地创建计数当 TaskUpdate.taskId。没有 ID 的列表项使用 run/scope/snapshot/position tuple，仅为全量快照稳定展示坐标，绝不能被真实 taskId 更新命中。TaskUpdate 无完整列表时只更新本轮已知真实 ID；无 `_meta` 时仍须精确正式成功文案。新 run 不恢复本地表；相同快照不增 revision，首次空表为 revision 1 清空。失败/未知/畸形结果、未知状态、重复 ID、非法 UTF-8、超限内容均不部分更新旧表，并发安全 notice，Raw 与原工具/Transcript 不丢。
 
-CodeBuddy 2.137.1 的 user 结果 wrapper `parent_tool_use_id` 指向自身 call ID，不能把它当父关系。assistant/partial 的非空或畸形父字段缺少已核实图语义，观察时明确降级并隔离对应 ID，不合并入根 scope；不冒充完成了 Claude W05。没有观察事件不意味着没有调用，更不证明审计/计费完整。
+CodeBuddy 2.137.1 的 user 结果 wrapper `parent_tool_use_id` 指向自身 call ID，不能把它当父关系。结果 wrapper 的该字段非空却不等于自身 tool_use_id、或类型畸形时，不确认根工具/任务结果。assistant/partial 的非空或畸形父字段缺少已核实图语义，观察时明确降级并隔离对应 ID，不合并入根 scope；不冒充完成了 Claude W05。没有观察事件不意味着没有调用，更不证明审计/计费完整。
 
 ## 合并位置与公共变化
 

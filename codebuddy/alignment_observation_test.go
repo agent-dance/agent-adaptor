@@ -299,3 +299,18 @@ func TestAlignmentObservationUnprovedNestedPartialDoesNotRebindRootID(t *testing
 		t.Fatalf("unproved nested result completed root call %#v", facts)
 	}
 }
+
+func TestAlignmentObservationRejectsUnprovedResultParent(t *testing.T) {
+	rec := &testutil.EventRecorder{}
+	p := newParser(rec)
+	p.configureObservations(context.Background(), alignmentObservationRequest())
+	alignmentFeed(t, p, alignmentCall("Skill", "s", `{"skill":" review "}`), alignmentCall("TaskCreate", "c", `{"subject":"task"}`))
+	skillResult := strings.Replace(alignmentResult("s", `"ok"`, false, ""), `"parent_tool_use_id":"s"`, `"parent_tool_use_id":"foreign"`, 1)
+	taskResult := strings.Replace(alignmentResult("c", `"ok"`, false, `{"task":{"id":"91","subject":"task","status":"pending"}}`), `"parent_tool_use_id":"c"`, `"parent_tool_use_id":false`, 1)
+	alignmentFeed(t, p, skillResult, taskResult)
+	p.completeStream(nil, 0, "", false)
+	facts := alignmentCapabilities(rec)
+	if len(facts) != 2 || facts[1].Phase != capability.Interrupted || len(alignmentTodos(rec)) != 0 || !alignmentNotice(rec, "observation_parent_unavailable") {
+		t.Fatalf("unproved result parent was attributed to root: facts=%#v todos=%#v", facts, alignmentTodos(rec))
+	}
+}

@@ -162,7 +162,7 @@ func (o *observationState) resolveCapability(name string, input map[string]any) 
 	key, err := o.catalog.Lookup(kind, runtimeName)
 	return capability.Ref{Kind: kind, Key: key, Operation: operation}, err
 }
-func (p *parser) observeToolResult(block map[string]any) {
+func (p *parser) observeToolResult(block, wrapper map[string]any) {
 	o := p.observation
 	if o == nil || o.suppressed {
 		return
@@ -171,6 +171,17 @@ func (p *parser) observeToolResult(block map[string]any) {
 	call := o.calls[id]
 	if call == nil || call.conflicted {
 		return
+	}
+	// In this protocol the result wrapper identifies the result's own call,
+	// not a parent graph. A foreign or malformed value cannot complete root.
+	if value := wrapper["parent_tool_use_id"]; value != nil {
+		parent, ok := value.(string)
+		if !ok || parent != "" && parent != id {
+			call.conflicted = true
+			o.unresolvedIDs[id] = true
+			p.observationNotice("observation_parent_unavailable")
+			return
+		}
 	}
 	if call.result != nil {
 		if !reflect.DeepEqual(call.result, block) {
