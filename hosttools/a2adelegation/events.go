@@ -35,11 +35,14 @@ func NewEventBus(replayLimit int) *EventBus {
 
 // Publish accepts one event and returns whether it entered the bus. Events
 // without RunID and duplicate terminal events are rejected. Subscriber
-// backpressure is summarized as DelegationStreamDropped.
+// backpressure is summarized as DelegationStreamDropped. Publish copies nested
+// payloads before returning; replay and every subscriber receive separate copies.
+// Callers must not mutate the input concurrently with Publish.
 func (b *EventBus) Publish(ev DelegationEvent) bool {
 	if b == nil || ev.RunID == "" {
 		return false
 	}
+	ev = cloneDelegationEvent(ev)
 	if ev.Time.IsZero() {
 		ev.Time = time.Now().UTC()
 	}
@@ -64,7 +67,7 @@ func (b *EventBus) Publish(ev DelegationEvent) bool {
 		b.replay[ev.RunID] = buf
 	}
 	for ch := range b.subscribers[ev.RunID] {
-		deliverSubscriber(ch, ev)
+		deliverSubscriber(ch, cloneDelegationEvent(ev))
 	}
 	return true
 }
@@ -113,6 +116,11 @@ func backpressureEvent(current DelegationEvent, dropped []DelegationEvent) Deleg
 	event.Kind = DelegationStreamDropped
 	event.Sequence = 0
 	event.Delta = ""
+	event.Text = ""
+	event.StatusParts = nil
+	event.Error = nil
+	event.Append = false
+	event.LastChunk = false
 	event.Args = nil
 	event.Result = nil
 	event.Artifact = nil
@@ -165,7 +173,7 @@ func (b *EventBus) SubscribeRun(ctx context.Context, runID string) <-chan Delega
 	replay := append([]DelegationEvent(nil), b.replay[runID]...)
 	out := make(chan DelegationEvent, len(replay)+subscriberBuffer)
 	for _, ev := range replay {
-		out <- ev
+		out <- cloneDelegationEvent(ev)
 	}
 	if b.subscribers[runID] == nil {
 		b.subscribers[runID] = map[chan DelegationEvent]struct{}{}
@@ -198,4 +206,45 @@ func isTerminal(kind DelegationEventKind) bool {
 	default:
 		return false
 	}
+}
+
+// Every ownership boundary uses this copy, including terminal buffering and
+// host decoder output, so replay/observers cannot mutate mapper state.
+func cloneDelegationEvent(in DelegationEvent) DelegationEvent {
+	out := in
+	out.Args = cloneAnyValue(in.Args)
+	out.Result = cloneAnyValue(in.Result)
+	out.Raw = cloneAnyMap(in.Raw)
+	out.StatusParts = clonePartProjection(in.StatusParts)
+	if in.Artifact != nil {
+		artifact := cloneDelegationArtifact(*in.Artifact)
+		out.Artifact = &artifact
+	}
+	if in.Error != nil {
+		err := *in.Error
+		err.Metadata = cloneAnyMap(in.Error.Metadata)
+		out.Error = &err
+	}
+	return out
+}
+
+func cloneDelegationArtifact(in DelegationArtifact) DelegationArtifact {
+	out := in
+	out.Metadata = cloneAnyMap(in.Metadata)
+	out.Parts = clonePartProjection(in.Parts)
+	return out
+}
+
+func clonePartProjection(in []RemotePart) []RemotePart {
+	if in == nil {
+		return nil
+	}
+	out := make([]RemotePart, len(in))
+	for i, part := range in {
+		out[i] = part
+		out[i].Raw = append([]byte(nil), part.Raw...)
+		out[i].Data = cloneAnyValue(part.Data)
+		out[i].Metadata = cloneAnyMap(part.Metadata)
+	}
+	return out
 }

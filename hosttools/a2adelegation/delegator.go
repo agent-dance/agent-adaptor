@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -253,6 +254,8 @@ func (r *delegationRun) delegateStreaming(ctx context.Context, client A2AClient,
 	defer stream.Close()
 	// 2. Track remote identity and mapper state for recovery and lifecycle closure.
 	mapper := newEventMapper(baseEvent, r.statusDecoders...)
+	mapper.includeRemoteArtifacts = includeRemoteArtifacts
+	mapper.maxArtifactBytes = spec.Policy.MaxArtifactBytes
 	var currentTask clienta2a.Task
 	var snapshot *clienta2a.Task
 	lastTaskID := send.Message.TaskID
@@ -304,8 +307,17 @@ func (r *delegationRun) delegateStreaming(ctx context.Context, client A2AClient,
 	}
 	interruptedResult := func(derr *DelegationError) (DelegationResult, error) {
 		currentTask.Status = clienta2a.TaskStatus{State: clienta2a.TaskStateFailed}
+		// Preserve permitted partial artifacts without letting interruption bypass
+		// the content boundary used by successful completion.
+		allowed := make([]clienta2a.Artifact, 0, len(currentTask.Artifacts))
+		for _, artifact := range currentTask.Artifacts {
+			if policyErrorForTask(clienta2a.Task{Artifacts: []clienta2a.Artifact{artifact}}, spec.Policy) == nil {
+				allowed = append(allowed, artifact)
+			}
+		}
+		currentTask.Artifacts = allowed
 		result := resultFromTask(baseResult, currentTask, includeRemoteArtifacts)
-		result.Artifacts = limitArtifacts(result.Artifacts, maxArtifacts)
+		result.Artifacts = r.limitResultArtifacts(baseEvent, result.Artifacts, maxArtifacts)
 		result.Error = derr
 		return result, derr
 	}
@@ -450,6 +462,8 @@ func (r *delegationRun) delegatePolling(ctx context.Context, client A2AClient, s
 		return baseResult, derr
 	}
 	mapper := newEventMapper(baseEvent, r.statusDecoders...)
+	mapper.includeRemoteArtifacts = includeRemoteArtifacts
+	mapper.maxArtifactBytes = spec.Policy.MaxArtifactBytes
 	r.publish(mapper.Started(task.ID, task.ContextID))
 	for _, ev := range mapper.taskEvents(task) {
 		r.publish(ev)
@@ -535,7 +549,7 @@ func (d *Delegator) publish(ev DelegationEvent) {
 	d.publishMu.Lock()
 	defer d.publishMu.Unlock()
 	if d.beforePublish != nil {
-		d.beforePublish(ev)
+		d.beforePublish(cloneDelegationEvent(ev))
 	}
 	d.Bus.Publish(ev)
 }
@@ -564,7 +578,7 @@ type terminalEventBuffer struct {
 func (b *terminalEventBuffer) publish(ev DelegationEvent) {
 	if isTerminal(ev.Kind) {
 		if b.terminal == nil {
-			copyEvent := ev
+			copyEvent := cloneDelegationEvent(ev)
 			b.terminal = &copyEvent
 		}
 		return
@@ -573,7 +587,7 @@ func (b *terminalEventBuffer) publish(ev DelegationEvent) {
 }
 
 func (b *terminalEventBuffer) replace(ev DelegationEvent) {
-	copyEvent := ev
+	copyEvent := cloneDelegationEvent(ev)
 	b.terminal = &copyEvent
 }
 
@@ -700,7 +714,7 @@ func (r *delegationRun) finishTask(baseEvent DelegationEvent, baseResult Delegat
 	if task.Status.State == clienta2a.TaskStateInputRequired && policy.AllowInputRequired {
 		result.Error = nil
 	}
-	result.Artifacts = limitArtifacts(result.Artifacts, maxArtifacts)
+	result.Artifacts = r.limitResultArtifacts(baseEvent, result.Artifacts, maxArtifacts)
 	r.publishAll(mapper.terminalEventsForState(task.ID, task.ContextID, task.Status.State, task.Raw))
 	return result, terminalError(task.Status.State, policy)
 }
@@ -709,11 +723,12 @@ func policyErrorForTask(task clienta2a.Task, policy DelegationPolicy) *Delegatio
 	if derr := policyErrorForState(task.Status.State, policy); derr != nil {
 		return derr
 	}
-	if policy.MaxArtifactBytes <= 0 {
-		return nil
-	}
 	for _, artifact := range task.Artifacts {
-		if artifactKnownBytes(artifact) > policy.MaxArtifactBytes {
+		size := artifactKnownBytes(artifact)
+		if size == math.MaxInt64 {
+			return &DelegationError{Code: "artifact_invalid", Message: "remote artifact contains unencodable data", RemoteStatus: string(task.Status.State)}
+		}
+		if policy.MaxArtifactBytes > 0 && size > policy.MaxArtifactBytes {
 			return &DelegationError{Code: "artifact_too_large", Message: "remote artifact exceeds max artifact byte policy", RemoteStatus: string(task.Status.State), Metadata: map[string]any{"artifact_id": artifact.ID, "max_bytes": policy.MaxArtifactBytes}}
 		}
 	}
@@ -727,17 +742,57 @@ func policyErrorForState(state clienta2a.TaskState, policy DelegationPolicy) *De
 	return nil
 }
 
+// Size covers content and the optional raw/metadata projection; it never
+// fetches URL contents. Unencodable data fails closed even without a byte limit.
 func artifactKnownBytes(artifact clienta2a.Artifact) int64 {
 	var total int64
+	addJSON := func(value any) {
+		raw, err := json.Marshal(value)
+		if err != nil {
+			total = math.MaxInt64
+			return
+		}
+		total = addArtifactBytes(total, int64(len(raw)))
+	}
 	for _, part := range artifact.Parts {
-		total += int64(len(part.Text) + len(part.Raw) + len(part.URL) + len(part.MediaType) + len(part.Filename))
+		for _, n := range []int{len(part.Text), len(part.Raw), len(part.URL), len(part.MediaType), len(part.Filename)} {
+			total = addArtifactBytes(total, int64(n))
+		}
 		if part.Data != nil {
-			if raw, err := json.Marshal(part.Data); err == nil {
-				total += int64(len(raw))
-			}
+			addJSON(part.Data)
+		}
+		if len(part.Metadata) > 0 {
+			addJSON(part.Metadata)
 		}
 	}
+	if len(artifact.Metadata) > 0 {
+		addJSON(artifact.Metadata)
+	}
+	if len(artifact.Raw) > 0 {
+		addJSON(artifact.Raw)
+	}
+	for _, ext := range artifact.Extensions {
+		total = addArtifactBytes(total, int64(len(ext)))
+	}
 	return total
+}
+
+func addArtifactBytes(left, right int64) int64 {
+	if right > math.MaxInt64-left {
+		return math.MaxInt64
+	}
+	return left + right
+}
+
+func (r *delegationRun) limitResultArtifacts(base DelegationEvent, artifacts []DelegationArtifact, max *int) []DelegationArtifact {
+	limited := limitArtifacts(artifacts, max)
+	if len(limited) < len(artifacts) {
+		ev := base
+		ev.Kind = DelegationStreamDropped
+		ev.Raw = map[string]any{"reason": "artifact_result_limit", "omitted_count": len(artifacts) - len(limited), "max_artifacts": *max}
+		r.publish(ev)
+	}
+	return limited
 }
 
 func limitArtifacts(artifacts []DelegationArtifact, max *int) []DelegationArtifact {
@@ -786,7 +841,7 @@ func cloneA2APart(part clienta2a.Part) clienta2a.Part {
 		Kind:      part.Kind,
 		Text:      part.Text,
 		Raw:       append([]byte(nil), part.Raw...),
-		Data:      part.Data,
+		Data:      cloneAnyValue(part.Data),
 		URL:       part.URL,
 		MediaType: part.MediaType,
 		Filename:  part.Filename,
@@ -810,8 +865,7 @@ func cloneDelegationResult(in DelegationResult) DelegationResult {
 	if in.Artifacts != nil {
 		out.Artifacts = make([]DelegationArtifact, len(in.Artifacts))
 		for i, artifact := range in.Artifacts {
-			out.Artifacts[i] = artifact
-			out.Artifacts[i].Metadata = cloneAnyMap(artifact.Metadata)
+			out.Artifacts[i] = cloneDelegationArtifact(artifact)
 		}
 	}
 	out.Messages = append([]DelegationMessage(nil), in.Messages...)
@@ -822,15 +876,7 @@ func cloneDelegationResult(in DelegationResult) DelegationResult {
 			out.RemoteArtifacts[i].Extensions = append([]string(nil), artifact.Extensions...)
 			out.RemoteArtifacts[i].Metadata = cloneAnyMap(artifact.Metadata)
 			out.RemoteArtifacts[i].Raw = cloneAnyMap(artifact.Raw)
-			if artifact.Parts != nil {
-				out.RemoteArtifacts[i].Parts = make([]RemotePart, len(artifact.Parts))
-			}
-			for j, part := range artifact.Parts {
-				out.RemoteArtifacts[i].Parts[j] = part
-				out.RemoteArtifacts[i].Parts[j].Raw = append([]byte(nil), part.Raw...)
-				out.RemoteArtifacts[i].Parts[j].Data = cloneAnyValue(part.Data)
-				out.RemoteArtifacts[i].Parts[j].Metadata = cloneAnyMap(part.Metadata)
-			}
+			out.RemoteArtifacts[i].Parts = clonePartProjection(artifact.Parts)
 		}
 	}
 	out.RawTask = cloneAnyMap(in.RawTask)
@@ -845,5 +891,17 @@ func cloneDelegationResult(in DelegationResult) DelegationResult {
 			out.Metadata[k] = cloneAnyValue(v)
 		}
 	}
+	return out
+}
+
+func cloneA2AArtifact(in clienta2a.Artifact) clienta2a.Artifact {
+	out := in
+	out.Parts = make([]clienta2a.Part, len(in.Parts))
+	for i, part := range in.Parts {
+		out.Parts[i] = cloneA2APart(part)
+	}
+	out.Extensions = append([]string(nil), in.Extensions...)
+	out.Metadata = cloneAnyMap(in.Metadata)
+	out.Raw = cloneAnyMap(in.Raw)
 	return out
 }
