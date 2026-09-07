@@ -287,7 +287,9 @@ func alignmentAuditJSON(v any) string {
 	return string(data)
 }
 func alignmentAudit(text, summary, provider, model string, raw driver.RawStreams, usage *driver.Usage, transcript []driver.TranscriptItem, services []driver.RuntimeServiceReport) alignmentPublicAudit {
-	audit := alignmentPublicAudit{Text: text, Summary: summary, Provider: provider, Model: model, Stdout: raw.Stdout, Stderr: raw.Stderr, Usage: alignmentAuditJSON(usage), Transcript: alignmentAuditJSON(transcript), Services: alignmentAuditJSON(services)}
+	// Core collects service reports into an empty list when none were observed.
+	// Compare the entire report sequence; nil and empty both contain zero reports.
+	audit := alignmentPublicAudit{Text: text, Summary: summary, Provider: provider, Model: model, Stdout: raw.Stdout, Stderr: raw.Stderr, Usage: alignmentAuditJSON(usage), Transcript: alignmentAuditJSON(transcript), Services: alignmentAuditJSON(append([]driver.RuntimeServiceReport{}, services...))}
 	if raw.Terminal != nil {
 		audit.TerminalEvent, audit.TerminalJSON = raw.Terminal.Event, string(raw.Terminal.JSON)
 	}

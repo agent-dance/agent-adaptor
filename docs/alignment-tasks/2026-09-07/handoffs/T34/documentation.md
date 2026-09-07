@@ -14,6 +14,8 @@
 | `codex.TestAlignmentPartialResultAndPublicEquivalence` 全部 8 个原场景 | 真实 configuredDriver 的 test-local wrapper 保留原 optional interfaces，仅在唯一 Run 返回前保存同一 Response；公开 Agent/Thread × healthy/nonzero/malformed/cancel 的 Stream 和 Run 各自核对捕获值 | Raw stdout/stderr 与 terminal JSON 逐字、Transcript/Usage/Services 全值、Text/Summary/Provider/Model 一致；真实 Driver cause 可 Is；每次只派发一次；Usage 非 nil 0/2；正式健康 terminal；失败 carrier/checkpoint/cancel 原断言保留 |
 | 同一公开矩阵的重复 Result 与下一次 Run | 以独立字符串快照保留首次公开全部审计层 | 多次 Result 和后续健康/失败 Run 均不改变首次成功或部分 Result；one-shot 及失败 Run/Stream 继续 exact `fixture-stderr`，仅健康 resident 的跨 pipe exact 前提由第一行承担 |
 
+Services 比较保留全部报告值与顺序；Driver nil 与 core 空列表均表示零报告，因此统一零报告序列表示。Usage 的未观察 nil 与正式零值仍严格区分，Raw/Terminal 原始字节不规范化。
+
 测试控制连接只存在于 testdata child 和测试文件，使用 loopback 与有界 deadline。成功条件来自生产 buffer 实际字节值，不来自 child write ACK、sleep、quiet window、EOF 或杀健康进程。receipt 循环仅检查精确条件并让出调度，context 到期是失败边界；所有控制连接在失败/父 context 取消时关闭，随后有界回收真实 child。取消子例真实停止被取消的进程，不把其退出当健康接收证据。
 
 原 root `TestRunAndStreamResultAllLayersAreEquivalent`、`TestResultFromResponseDeepCopiesAuditLayers`、`TestAlignmentPartialResultOutcomeMatrix` 保持不变，继续为独立全仓门禁提供输出转换/错误矩阵覆盖；T34 不用未执行的 root 测试冒充其四项检查。
