@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 
 	"github.com/agent-dance/agent-adaptor/internal/hostedprofile"
-	"github.com/agent-dance/agent-adaptor/internal/profilestate"
 )
 
 func readJSONObject(path string) (map[string]any, error) {
@@ -36,5 +35,5 @@ func writeJSONObject(path string, payload map[string]any) error {
 		return err
 	}
 	raw = append(raw, '\n')
-	return profilestate.AtomicWriteFile(path, raw, 0o644)
+	return writeProfileConfig(path, raw)
 }

@@ -8,7 +8,6 @@ import (
 
 	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/internal/engine"
-	"github.com/agent-dance/agent-adaptor/internal/profilestate"
 	toml "github.com/pelletier/go-toml/v2"
 )
 
@@ -73,5 +72,5 @@ func writeTOMLObject(path string, root map[string]any) error {
 		return err
 	}
 	raw = append(raw, '\n')
-	return profilestate.AtomicWriteFile(path, raw, 0o644)
+	return writeProfileConfig(path, raw)
 }

@@ -16,6 +16,7 @@ import (
 	"github.com/agent-dance/agent-adaptor/capability"
 	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/memory"
+	"github.com/agent-dance/agent-adaptor/threadstore"
 	"github.com/agent-dance/agent-adaptor/todo"
 )
 
@@ -602,5 +603,104 @@ func TestAlignmentObserverDirectPublisherRevocationUnblocksCleanup(t *testing.T)
 	}
 	if last, ok := events[2].(adaptor.RunFinished); !ok || last.Failed {
 		t.Fatal(events)
+	}
+}
+
+func TestAlignmentObserverCompatibleTransportKeepsThread(t *testing.T) {
+	for _, stream := range []bool{false, true} {
+		for _, reason := range []string{"schema", "observation"} {
+			for _, resumeOnly := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%v/%s/resume=%v", stream, reason, resumeOnly), func(t *testing.T) {
+					d := &configuredSessionFake{sessionFake: newSessionFake("transport"), configFingerprint: "stable-config"}
+					d.streamCaps = driver.StreamCapability{Native: true}
+					desc := d.Descriptor()
+					desc.StructuredOutput = driver.StructuredOutputCapability{JSONSchemaNative: true, JSONSchemaPromptValidate: true, WorksWithRun: true}
+					desc.Observation.Batch = driver.ObservationSupport{Todos: true}
+					d.descriptor = &desc
+					run := d.runFunc
+					d.runFunc = func(ctx context.Context, req driver.Request, sink driver.EventSink) (driver.Response, error) {
+						response, err := run(ctx, req, sink)
+						response.Output = `{"answer":42}`
+						if req.OutputSchema != nil {
+							response.StructuredOutput = &driver.StructuredOutput{RawJSON: json.RawMessage(response.Output)}
+						}
+						return response, err
+					}
+					store := memory.NewStore()
+					p := observerProvider(adaptor.RunAttachment{})
+					a := adaptor.New(d, adaptor.WithThreadStore(store), adaptor.WithRunServices(p))
+					t.Cleanup(func() { _ = a.Close(context.Background()) })
+					engineID, resumeID := "", ""
+					for i, prompt := range []string{"warm", "temporary", "after"} {
+						th := a.Thread("transport")
+						if i > 0 && resumeOnly {
+							th = a.Thread("transport", adaptor.ResumeOnly())
+						}
+						var opts []adaptor.CallOption
+						p.attachment.Observation = adaptor.ObservationDemand{}
+						if i == 1 {
+							if reason == "schema" {
+								opts = append(opts, alignmentSchema())
+							} else {
+								p.attachment.Observation.Todos = true
+							}
+						}
+						var result *adaptor.Result
+						var err error
+						if stream {
+							s := th.Stream(context.Background(), prompt, opts...)
+							for range s.Events() {
+							}
+							result, err = s.Result()
+						} else {
+							result, err = th.Run(context.Background(), prompt, opts...)
+						}
+						if err != nil {
+							t.Fatalf("compatible %s turn: %v", prompt, err)
+						}
+						if i == 1 && reason == "schema" {
+							var decoded struct {
+								Answer int `json:"answer"`
+							}
+							if err := result.Decode(&decoded); err != nil || decoded.Answer != 42 {
+								t.Fatal("schema result", err)
+							}
+						}
+						req := d.request(t, i)
+						if req.Prompt != prompt || req.Streaming != (i != 1) {
+							t.Fatalf("wrong dispatch: %q rich=%v", req.Prompt, req.Streaming)
+						}
+						if req.Session == nil {
+							t.Fatal("no session")
+						}
+						if i == 0 {
+							engineID = req.Session.EngineSessionID
+						} else if req.Session.EngineSessionID != engineID || req.Session.PreviousID != "" || req.Session.State == nil || req.Session.State.ResumeID != resumeID {
+							t.Fatal("compatible transport rebound the active record", req.Session)
+						}
+						record, err := store.Resolve(context.Background(), threadstore.Query{ID: engineID})
+						if err != nil || record == nil || record.Status != threadstore.StatusActive || record.State == nil {
+							t.Fatal("healthy active record lost", err)
+						}
+						if i == 0 {
+							resumeID = record.State.ResumeID
+						} else if record.State.ResumeID != resumeID {
+							t.Fatal("resume state replaced")
+						}
+					}
+					if d.runCount() != 3 {
+						t.Fatal("prompt replayed", d.runCount())
+					}
+					// A real construction/codec environment change is still a durable guard.
+					d.configFingerprint = "changed-config"
+					if _, err := a.Thread("transport", adaptor.ResumeOnly()).Run(context.Background(), "must-not-dispatch"); !errors.Is(err, adaptor.ErrThreadIncompatible) {
+						t.Fatal("configuration drift accepted", err)
+					}
+					if d.runCount() != 3 {
+						t.Fatal("incompatible prompt dispatched")
+					}
+				})
+			}
+		}
 	}
 }

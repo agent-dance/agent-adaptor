@@ -101,6 +101,9 @@ type Request struct {
 	// has resolved the invocation. It is not derived from whether the consumer
 	// called Agent.Run or Agent.Stream: both consumer methods share one Event
 	// pipeline, and either may use a batch or streaming provider transport.
+	// This per-turn choice does not by itself change Thread identity. Actual
+	// checkpoint or session-environment incompatibility must remain expressed
+	// by the configured Driver fingerprint, SessionCodec, and resume guards.
 	// Drivers that implement StreamSupport should use their declared native
 	// transport when this field is true.
 	//

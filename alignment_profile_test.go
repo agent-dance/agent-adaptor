@@ -864,3 +864,54 @@ func TestAlignmentProfileDeferredPruneRejectsCopiedDrift(t *testing.T) {
 		}
 	}
 }
+
+func TestAlignmentProfileMCPWriterPreservesMode(t *testing.T) {
+	for _, stream := range []bool{false, true} {
+		for _, mode := range []os.FileMode{0400, 0600} {
+			t.Run(fmt.Sprintf("%v/%04o", stream, mode), func(t *testing.T) {
+				source := alignmentSource(t)
+				sourceConfig := filepath.Join(source, ".claude.json")
+				original := []byte(`{"unknown":{"label":"preserve"}}`)
+				if err := os.WriteFile(sourceConfig, original, mode); err != nil {
+					t.Fatal(err)
+				}
+				d := newAlignmentProfileDriver(source)
+				a := alignmentAgent(d, source, adaptor.WithThreadStore(memory.NewStore()))
+				t.Cleanup(func() { _ = a.Close(context.Background()) })
+				if _, err := alignmentCall(t, a.Thread("mode"), context.Background(), stream); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := alignmentCall(t, a.Thread("mode", adaptor.ResumeOnly()), context.Background(), stream); err != nil {
+					t.Fatal("writer changed profile compatibility", err)
+				}
+				first, second := d.request(t, 0), d.request(t, 1)
+				if first.Session.EngineSessionID != second.Session.EngineSessionID || second.Session.PreviousID != "" || second.Session.State == nil {
+					t.Fatal("unchanged profile did not resume")
+				}
+				config := filepath.Join(first.Profile.Dir, ".claude.json")
+				for _, path := range []string{sourceConfig, config} {
+					info, err := os.Lstat(path)
+					if err != nil || info.Mode().Perm() != mode {
+						t.Fatal("configuration permissions changed", err)
+					}
+					raw, err := os.ReadFile(path)
+					if err != nil || !strings.Contains(string(raw), "preserve") {
+						t.Fatal("unknown configuration overwritten", err)
+					}
+					if path == sourceConfig && string(raw) != string(original) {
+						t.Fatal("source configuration modified")
+					}
+				}
+				if err := os.Chmod(config, 0640); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := alignmentCall(t, a.Thread("mode", adaptor.ResumeOnly()), context.Background(), stream); !errors.Is(err, adaptor.ErrThreadIncompatible) {
+					t.Fatal("actual permission drift must reject resume", err)
+				}
+				if d.runCount() != 2 {
+					t.Fatal("permission drift reached Driver", d.runCount())
+				}
+			})
+		}
+	}
+}
