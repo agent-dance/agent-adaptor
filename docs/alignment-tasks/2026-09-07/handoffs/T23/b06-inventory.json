@@ -1,0 +1,352 @@
+{
+  "source_baseline": "2421fe470cf67b22697fef796b038c0be6e395c8",
+  "meaning": "Executable command and source-selector inventory; not a platform/live pass. R017 fixture additions require refreshing against accepted G04.",
+  "checks": [
+    {
+      "task": "T25",
+      "id": "T25-V01",
+      "command": "go test -count=1 ./...",
+      "environment": {
+        "AGENT_ADAPTOR_LIVE_CONFORMANCE": "0",
+        "AGENT_ADAPTOR_E2E": "0",
+        "AGENT_ADAPTOR_UPDATE_API_GOLDEN": "0"
+      }
+    },
+    {
+      "task": "T25",
+      "id": "T25-V02",
+      "command": "go vet ./...",
+      "environment": {
+        "AGENT_ADAPTOR_LIVE_CONFORMANCE": "0",
+        "AGENT_ADAPTOR_E2E": "0",
+        "AGENT_ADAPTOR_UPDATE_API_GOLDEN": "0"
+      }
+    },
+    {
+      "task": "T25",
+      "id": "T25-V03",
+      "command": "go test -race -count=1 ./...",
+      "environment": {
+        "AGENT_ADAPTOR_LIVE_CONFORMANCE": "0",
+        "AGENT_ADAPTOR_E2E": "0",
+        "AGENT_ADAPTOR_UPDATE_API_GOLDEN": "0"
+      }
+    },
+    {
+      "task": "T25",
+      "id": "T25-V04",
+      "command": "go test -count=20 . ./clients/a2a ./bridges/a2a ./hosttools/a2adelegation",
+      "environment": {
+        "AGENT_ADAPTOR_LIVE_CONFORMANCE": "0",
+        "AGENT_ADAPTOR_E2E": "0",
+        "AGENT_ADAPTOR_UPDATE_API_GOLDEN": "0"
+      }
+    },
+    {
+      "task": "T25",
+      "id": "T25-V05",
+      "command": "go test -count=1 . ./bridges/a2a ./hosttools/a2adelegation -run 'TestScenarioS[1-9]|TestServiceTeamCollaborationS9'",
+      "environment": {
+        "AGENT_ADAPTOR_LIVE_CONFORMANCE": "0",
+        "AGENT_ADAPTOR_E2E": "0",
+        "AGENT_ADAPTOR_UPDATE_API_GOLDEN": "0"
+      }
+    },
+    {
+      "task": "T25",
+      "id": "T25-V06",
+      "command": "go test -count=1 ./claude ./codebuddy ./codex ./cursor -run 'Test(Claude|CodeBuddy|Codex|Cursor)DriverConformance'",
+      "environment": {
+        "AGENT_ADAPTOR_LIVE_CONFORMANCE": "0",
+        "AGENT_ADAPTOR_E2E": "0",
+        "AGENT_ADAPTOR_UPDATE_API_GOLDEN": "0"
+      }
+    },
+    {
+      "task": "T25",
+      "id": "T25-V07",
+      "command": "go test ./internal/engine -run '^$' -fuzz '^FuzzExtractZip$' -fuzztime=30s",
+      "environment": {
+        "AGENT_ADAPTOR_LIVE_CONFORMANCE": "0",
+        "AGENT_ADAPTOR_E2E": "0",
+        "AGENT_ADAPTOR_UPDATE_API_GOLDEN": "0"
+      }
+    },
+    {
+      "task": "T25",
+      "id": "T25-V08",
+      "command": "go test ./internal/engine -run '^$' -fuzz '^FuzzExtractTar$' -fuzztime=30s",
+      "environment": {
+        "AGENT_ADAPTOR_LIVE_CONFORMANCE": "0",
+        "AGENT_ADAPTOR_E2E": "0",
+        "AGENT_ADAPTOR_UPDATE_API_GOLDEN": "0"
+      }
+    },
+    {
+      "task": "T25",
+      "id": "T25-V09",
+      "command": "go test ./internal/engine -run '^$' -fuzz '^FuzzSniffArchiveFormat$' -fuzztime=30s",
+      "environment": {
+        "AGENT_ADAPTOR_LIVE_CONFORMANCE": "0",
+        "AGENT_ADAPTOR_E2E": "0",
+        "AGENT_ADAPTOR_UPDATE_API_GOLDEN": "0"
+      }
+    },
+    {
+      "task": "T25",
+      "id": "T25-V10",
+      "command": "go test ./claude -run '^$' -fuzz '^FuzzClaudeBatchParser$' -fuzztime=30s",
+      "environment": {
+        "AGENT_ADAPTOR_LIVE_CONFORMANCE": "0",
+        "AGENT_ADAPTOR_E2E": "0",
+        "AGENT_ADAPTOR_UPDATE_API_GOLDEN": "0"
+      }
+    },
+    {
+      "task": "T25",
+      "id": "T25-V11",
+      "command": "go test ./cursor -run '^$' -fuzz '^FuzzCursorBatchParser$' -fuzztime=30s",
+      "environment": {
+        "AGENT_ADAPTOR_LIVE_CONFORMANCE": "0",
+        "AGENT_ADAPTOR_E2E": "0",
+        "AGENT_ADAPTOR_UPDATE_API_GOLDEN": "0"
+      }
+    },
+    {
+      "task": "T25",
+      "id": "T25-V12",
+      "command": "go test ./codebuddy -run '^$' -fuzz '^FuzzCodeBuddyBatchParser$' -fuzztime=30s",
+      "environment": {
+        "AGENT_ADAPTOR_LIVE_CONFORMANCE": "0",
+        "AGENT_ADAPTOR_E2E": "0",
+        "AGENT_ADAPTOR_UPDATE_API_GOLDEN": "0"
+      }
+    },
+    {
+      "task": "T25",
+      "id": "T25-V13",
+      "command": "go test ./codex -run '^$' -fuzz '^FuzzCodexBatchParser$' -fuzztime=30s",
+      "environment": {
+        "AGENT_ADAPTOR_LIVE_CONFORMANCE": "0",
+        "AGENT_ADAPTOR_E2E": "0",
+        "AGENT_ADAPTOR_UPDATE_API_GOLDEN": "0"
+      }
+    },
+    {
+      "task": "T25",
+      "id": "T25-V14",
+      "command": "go test ./codex/appserver -run '^$' -fuzz '^FuzzCodexAppserverNotificationDecoder$' -fuzztime=30s",
+      "environment": {
+        "AGENT_ADAPTOR_LIVE_CONFORMANCE": "0",
+        "AGENT_ADAPTOR_E2E": "0",
+        "AGENT_ADAPTOR_UPDATE_API_GOLDEN": "0"
+      }
+    },
+    {
+      "task": "T25",
+      "id": "T25-V15",
+      "command": "go test ./codex/appserver -run '^$' -fuzz '^FuzzDecodeThreadItem$' -fuzztime=30s",
+      "environment": {
+        "AGENT_ADAPTOR_LIVE_CONFORMANCE": "0",
+        "AGENT_ADAPTOR_E2E": "0",
+        "AGENT_ADAPTOR_UPDATE_API_GOLDEN": "0"
+      }
+    },
+    {
+      "task": "T26",
+      "id": "T26-V01",
+      "command": "go test -count=1 ./...",
+      "environment": {
+        "AGENT_ADAPTOR_LIVE_CONFORMANCE": "0",
+        "AGENT_ADAPTOR_E2E": "0",
+        "AGENT_ADAPTOR_UPDATE_API_GOLDEN": "0"
+      }
+    },
+    {
+      "task": "T27",
+      "id": "T27-V01",
+      "command": "go test -count=1 -tags=claude_live ./claude -run TestAlignmentLive",
+      "environment": {
+        "AGENT_ADAPTOR_LIVE_CONFORMANCE": "1",
+        "AGENT_ADAPTOR_E2E": "0",
+        "AGENT_ADAPTOR_UPDATE_API_GOLDEN": "0"
+      }
+    },
+    {
+      "task": "T27",
+      "id": "T27-V02",
+      "command": "go test -count=1 -tags=claude_live ./claude -run TestClaudeDriverConformance",
+      "environment": {
+        "AGENT_ADAPTOR_LIVE_CONFORMANCE": "1",
+        "AGENT_ADAPTOR_E2E": "0",
+        "AGENT_ADAPTOR_UPDATE_API_GOLDEN": "0"
+      }
+    },
+    {
+      "task": "T28",
+      "id": "T28-V01",
+      "command": "go test -count=1 -tags=codebuddy_live ./codebuddy -run TestAlignmentLive",
+      "environment": {
+        "AGENT_ADAPTOR_LIVE_CONFORMANCE": "1",
+        "AGENT_ADAPTOR_E2E": "0",
+        "AGENT_ADAPTOR_UPDATE_API_GOLDEN": "0"
+      }
+    },
+    {
+      "task": "T28",
+      "id": "T28-V02",
+      "command": "go test -count=1 -tags=codebuddy_live ./codebuddy -run TestCodeBuddyDriverConformance",
+      "environment": {
+        "AGENT_ADAPTOR_LIVE_CONFORMANCE": "1",
+        "AGENT_ADAPTOR_E2E": "0",
+        "AGENT_ADAPTOR_UPDATE_API_GOLDEN": "0"
+      }
+    },
+    {
+      "task": "T29",
+      "id": "T29-V01",
+      "command": "go test -count=1 -tags=codex_live ./codex/... -run TestAlignmentLive",
+      "environment": {
+        "AGENT_ADAPTOR_LIVE_CONFORMANCE": "1",
+        "AGENT_ADAPTOR_E2E": "0",
+        "AGENT_ADAPTOR_UPDATE_API_GOLDEN": "0"
+      }
+    },
+    {
+      "task": "T29",
+      "id": "T29-V02",
+      "command": "go test -count=1 -tags=codex_live ./codex -run TestCodexDriverConformance",
+      "environment": {
+        "AGENT_ADAPTOR_LIVE_CONFORMANCE": "1",
+        "AGENT_ADAPTOR_E2E": "0",
+        "AGENT_ADAPTOR_UPDATE_API_GOLDEN": "0"
+      }
+    },
+    {
+      "task": "T30",
+      "id": "T30-V01",
+      "command": "go test -count=1 -tags=cursor_live ./cursor -run TestAlignmentLive",
+      "environment": {
+        "AGENT_ADAPTOR_LIVE_CONFORMANCE": "1",
+        "AGENT_ADAPTOR_E2E": "0",
+        "AGENT_ADAPTOR_UPDATE_API_GOLDEN": "0"
+      }
+    },
+    {
+      "task": "T30",
+      "id": "T30-V02",
+      "command": "go test -count=1 -tags=cursor_live ./cursor -run TestCursorDriverConformance",
+      "environment": {
+        "AGENT_ADAPTOR_LIVE_CONFORMANCE": "1",
+        "AGENT_ADAPTOR_E2E": "0",
+        "AGENT_ADAPTOR_UPDATE_API_GOLDEN": "0"
+      }
+    }
+  ],
+  "live_test_roots": {
+    "claude": [
+      {
+        "name": "TestAlignmentLiveAppendAndThread",
+        "path": "claude/alignment_live_test.go"
+      },
+      {
+        "name": "TestAlignmentLiveCancellationPreservesPartialResult",
+        "path": "claude/alignment_live_test.go"
+      },
+      {
+        "name": "TestAlignmentLiveDedicatedToolResumeAfterClose",
+        "path": "claude/alignment_live_test.go"
+      },
+      {
+        "name": "TestAlignmentLiveExistingStreamingAndApproval",
+        "path": "claude/alignment_live_test.go"
+      },
+      {
+        "name": "TestAlignmentLiveNativeSchemaHITL",
+        "path": "claude/alignment_live_test.go"
+      },
+      {
+        "name": "TestAlignmentLiveToolsTodosAndNestedParent",
+        "path": "claude/alignment_live_test.go"
+      }
+    ],
+    "codebuddy": [
+      {
+        "name": "TestAlignmentLiveCodeBuddyCapabilityAndTodoResults",
+        "path": "codebuddy/alignment_live_test.go"
+      },
+      {
+        "name": "TestAlignmentLiveCodeBuddyHeadlessStreaming",
+        "path": "codebuddy/run_live_test.go"
+      },
+      {
+        "name": "TestAlignmentLiveCodeBuddyNativeAppendAndResume",
+        "path": "codebuddy/alignment_live_test.go"
+      },
+      {
+        "name": "TestAlignmentLiveCodeBuddyPermissionApprove",
+        "path": "codebuddy/run_live_test.go"
+      },
+      {
+        "name": "TestAlignmentLiveCodeBuddyPermissionReject",
+        "path": "codebuddy/run_live_test.go"
+      },
+      {
+        "name": "TestAlignmentLiveCodeBuddyPersistentReuse",
+        "path": "codebuddy/run_live_test.go"
+      },
+      {
+        "name": "TestAlignmentLiveCodeBuddyPlanApprove",
+        "path": "codebuddy/run_live_test.go"
+      },
+      {
+        "name": "TestAlignmentLiveCodeBuddyPlanReject",
+        "path": "codebuddy/run_live_test.go"
+      },
+      {
+        "name": "TestAlignmentLiveCodeBuddyQuestionAnswered",
+        "path": "codebuddy/run_live_test.go"
+      },
+      {
+        "name": "TestAlignmentLiveCodeBuddyThreadResume",
+        "path": "codebuddy/run_live_test.go"
+      }
+    ],
+    "codex": [
+      {
+        "name": "TestAlignmentLiveCancellationAndAppendRebind",
+        "path": "codex/alignment_live_test.go"
+      },
+      {
+        "name": "TestAlignmentLiveNativeAppend",
+        "path": "codex/alignment_live_test.go"
+      },
+      {
+        "name": "TestAlignmentLiveObservationAndPersistent",
+        "path": "codex/alignment_live_test.go"
+      },
+      {
+        "name": "TestAlignmentLiveSubagentCatalog",
+        "path": "codex/alignment_live_test.go"
+      }
+    ],
+    "cursor": [
+      {
+        "name": "TestAlignmentLiveCursorCancelPartial",
+        "path": "cursor/alignment_live_test.go"
+      },
+      {
+        "name": "TestAlignmentLiveCursorCapabilities",
+        "path": "cursor/alignment_live_test.go"
+      },
+      {
+        "name": "TestAlignmentLiveCursorPrintResume",
+        "path": "cursor/alignment_live_test.go"
+      },
+      {
+        "name": "TestAlignmentLiveCursorUnsupportedAppend",
+        "path": "cursor/alignment_live_test.go"
+      }
+    ]
+  }
+}
