@@ -1,6 +1,6 @@
 # T21 45 项独立覆盖映射
 
-所有测试名均加 `TestAlignmentProtocol` 前缀。此表描述断言归属，不预填通过；实际结果只取同一 HEAD 完整 V01/V02 JSON。F01/F02 未经 owner 修复重放前，W09-R07 保持 failed。已有 owner/G04 证据不计入新测试数。
+所有测试名均加 `TestAlignmentProtocol` 前缀。此表描述断言归属，不预填通过；实际结果只取同一 HEAD 完整 V01/V02 JSON。F01/F02 未经 owner 修复重放前，W09-R07 保持 failed；F03 的 AG-UI 已发布快照被修改及 race 使 W05-R05 保持 failed。已有 owner/G04 证据不计入新测试数。
 
 | Requirement | 新增独立入口 | 核验内容 |
 |---|---|---|
@@ -14,7 +14,7 @@
 | W05-R02 | FormalClaude / PartialWrappers(claude) | 兄弟 scope 相同工具 ID、完整 wrapper 重放、裸结果歧义、缺 ID/未知 parent、partial+wrapper、异常关闭、Transcript 父关联。 |
 | W05-R03 | FormalClaude / PartialWrappers(claude) | 兄弟 scope 相同工具 ID、完整 wrapper 重放、裸结果歧义、缺 ID/未知 parent、partial+wrapper、异常关闭、Transcript 父关联。 |
 | W05-R04 | FormalClaude / InboundNegativeRelay | 正式父关系经过真实 A2A DTO，unknown kind 通过真实 remote mapper 发 dropped。 |
-| W05-R05 | FormalClaude / ServiceRelay | 同一真实事件回放 SSE、AG-UI，实际 Merge 与重开 JSONL 比较父关联。 |
+| W05-R05 | FormalClaude / ServiceRelay | 同一真实事件回放 SSE、AG-UI，实际 Merge 与重开 JSONL 比较父关联；AG-UI 同步保留输出快照与异步序列化均核验，F03 未关闭。 |
 | W05-R06 | ServiceRelay | 真实 Local/Remote/nested-Remote Service 保留 caller 与实际父工具 scope。 |
 | W08-R01 | ContinuationArtifacts | 实时多 Part 类型、替换/Append/LastChunk 与最终有序聚合独立断言。 |
 | W08-R02 | ContinuationArtifacts | 实时多 Part 类型、替换/Append/LastChunk 与最终有序聚合独立断言。 |

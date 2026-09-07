@@ -731,6 +731,26 @@ func apOtherBridges(t *testing.T, events []adaptor.Event, r *adaptor.Result) {
 	if !directTools && !strings.Contains(encoded, `"parentToolCallId":"host-tool"`) {
 		t.Fatal("AGUI delegation parent missing")
 	}
+	// Keep each public translation result alive while translating the next
+	// real core events. Earlier output must remain the snapshot it represented,
+	// even when the consumer serializes it after the run has finished.
+	translator := agui.NewEventTranslator()
+	type snapshot struct {
+		event any
+		json  string
+	}
+	var snapshots []snapshot
+	for _, e := range events {
+		for _, translated := range translator.Translate(e) {
+			snapshots = append(snapshots, snapshot{event: translated, json: apJSON(translated)})
+		}
+	}
+	translator.CloseResult(r, nil)
+	for i, snapshot := range snapshots {
+		if got := apJSON(snapshot.event); got != snapshot.json {
+			t.Errorf("AGUI published snapshot %d mutated: before=%s after=%s", i, snapshot.json, got)
+		}
+	}
 	raw := httptest.NewRecorder()
 	sse.Handler(&apRunner{id: id, events: events, result: r}, sse.Options{Protocol: sse.Raw}).ServeHTTP(raw, httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"prompt":"replay"}`)))
 	body := raw.Body.String()

@@ -1,6 +1,6 @@
 # T21 独立生产发现
 
-本文件记录固定旧 G04 base `2421fe470cf67b22697fef796b038c0be6e395c8` 上的独立发现。QA 复现代码提交 `b2f7b9293906b9feca27806b61fb0ebabc89eb13`，只增加 T21 测试和私有 fixture，无生产修改。两项已于 2026-09-07 交 root，再由既有 T15 owner 处理；修复重放前保持 open，不把其他绿项视为关闭证明。
+本文件记录固定旧 G04 base `2421fe470cf67b22697fef796b038c0be6e395c8` 上的独立发现。F01/F02 的 QA 复现代码提交 `b2f7b9293906b9feca27806b61fb0ebabc89eb13`；F03 首次完整 race 红日志对应 `8b52ce06bdd34eeff1315cc3e897db950ed000a5`。均只增加 T21 测试和私有 fixture，无生产修改。三项已于 2026-09-07 交 root；修复重放前保持 open，不把其他绿项视为关闭证明。
 
 ## T21-F01 — CodeBuddy 增量工具起始同时携带占位 Args
 
@@ -23,6 +23,31 @@
 - 定位：`codebuddy/parser.go` completeStream 调用 closeObservations；`codebuddy/streaming_parser.go` 早先 error terminal 已置 finishedEmitted，后续 emitStream 拒绝收尾事实。
 - 不变复现选择器：`TestAlignmentProtocolPartialWrappers/codebuddy/abnormal=true`。
 - 协议字节：`evidence/F02-error-protocol.jsonl`，SHA256 `7860d1a0f006409d247cf8bf21bf8c79aa0edee733afd428f5f6da56a6b1a8bb`。
+
+## T21-F03 — AG-UI 已发布工具快照仍被后续翻译修改
+
+- 归属：`bridges/agui/subagent.go`；跨层 W05-R05 验证失败。
+- 固定复现：`8b52ce06bdd34eeff1315cc3e897db950ed000a5`，完整原 V02 加 `-json`：`go test -race -count=20 . -run TestAlignmentProtocol -json`，进程外 900 秒 watchdog，未触发超时。
+- 输入链：手写正式 Claude nested tool/wrapper bytes → 真实 Claude Driver parser → 公共 Agent → Service Local → 实际 parent Agent 的 SubagentUpdate → 公开 `agui.Events`。消费者收到输出后只调用标准库 `json.Marshal`，没有修改输入或输出值。
+- C03 §1 要求 map/slice/Args/Result 递归深复制，AGENTS §7/§11 要求稳定事件与协议保真。期望已经发布的活动 patch 保持该时刻的工具状态，正常序列化无需与内部 translator 协調。
+- 实际：`subagentActivityState.apply` 把 `s.content.ToolCalls` 直接作为 JSONPatchOperation.Value 返回；下一条 args/result/end 修改同一 backing slice 中的 `Args`/`Result`/`Status`。首次 race 读栈为 root QA 的 `apJSON:58 → apOtherBridges:713 → ServiceRelay:922`，写栈为 `bridges/agui/subagent.go:164 → :82 → events.go:335/:224/:137`。同一完整日志还记录 map 内容的读写竞争。
+- 首次完整 race 块：`evidence/F03-AGUI-first-race.txt`，SHA256 `c1f59f6aa9715e96bb9d32f61caac615422d358bd0a48c3fff6b1b81206c8ada`。完整 V02 日志：`evidence/oldbase-V02.jsonl`，SHA256 `351711959cec836f76c5d264a2213527f96d1f3f2acfd84e00740eec454ebe90`。
+- 后续 QA 在原 `agui.Events` 消费检查之后追加同步 snapshot 检查：同一批真实 core 事件逐条进入公开 EventTranslator，保存每个输出及当时的 JSON，全部翻译/CloseResult 后再比较。此断言不制造 core 事件，不串行化或移除原异步消费者，不靠 race 调度证明快照不变。
+
+## 原不变 fixture 的后续 CodeBuddy 重放问题
+
+T15 owner 在修复 F01/F02 后报告：同一个 normal fixture 中两份精确相同的 `tool_result` 仍产生两条 typed ToolResult；root 已授权它在 CodeBuddy 范围修复。该控制是本任务最初的明确意图：同 `(scope,id)` 与同完整 payload 重放只发一条 typed result，Raw/Transcript 保留两份原文。`TestAlignmentProtocolPartialWrappers` 的输入和 `results == 1` 原断言不变。本任务尚未在 root 验收的修复合流 SHA 上重放；不把 owner 报告计为新增独立通过数，也不把它冒称当前旧树中越过 F01 早期失败的新红结果。
+
+## 旧 base 的完整预验证
+
+`8b52ce06bdd34eeff1315cc3e897db950ed000a5` 的原完整 V01/V02 均实际执行且无 skip、无 timeout：
+
+| 原检查（实际均仅追加 -json） | Exit | Pass / Fail / Skip（含 parent/subtest） | Leaf pass / fail / skip |
+|---|---:|---:|---:|
+| `go test -count=1 . -run TestAlignmentProtocol` | 1 | 189 / 3 / 0 | 172 / 2 / 0 |
+| `go test -race -count=20 . -run TestAlignmentProtocol` | 1 | 3778 / 62 / 0 | 3439 / 41 / 0 |
+
+V01 完成 192 项；V02 完成 3840 项（20 轮），不是 3840 个不同测试。V01 仅 CodeBuddy 两个子项及 parent 失败；V02 另有 ServiceRelay/local 及 parent 的 race 失败。V01 日志 SHA256 `f6509f0a37f32c9063bbcbb88d4753155eb1647537a287aef60e45870d009ab4`。完整 argv、私有环境、OS/Go、耗时、计数和日志 hash 在 `evidence/oldbase-V01-command.json` 与 `evidence/oldbase-V02-command.json`。这些结果只证明所列固定旧 SHA；追加同步断言与本文件后必须重新执行，不能移用作最终 HEAD 证据。
 
 ## 固定复现、环境及日志
 

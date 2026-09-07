@@ -16,7 +16,7 @@ R016 公开观察边界：真实 HTTP Send/SendStream 和 Local/Remote 正常路
 
 私有 executor Cancel-drain 分类补充只引用已接受的 T19/C02/G04 archive：G04 `2421fe470cf67b22697fef796b038c0be6e395c8`，T19 `075887499a1966ed4d08681bd837a4fcbfa1c650`，archive SHA256 `399a38c3673ef0ea6b430797f2f1f3f26c7f8f49f891303537b9330adefb728f`，外部 `findings/G04-composition/review.md` 记录已提交 owner barrier `TestAlignmentR016EveryDrainPath/cancel` race10 20 个 parent/child pass。此引用不是本任务新增独立证明，不计入 T21 pass 数；root 已确认无需新增不存在的 executor 公共入口或 unsafe。
 
-集中合并目标由 G05 唯一写入：`docs/a2a.md` 的 continuation、制品、最小暴露、取消 ack 与预算小节；`docs/streaming.md` 的父 scope、完整 Todo、observer/Dropped 小节；`CHANGELOG.md` 的验证记录。现有公共语义不变，无新增 godoc/AST golden 理由。CodeBuddy 两条正式 partial-wrapper 生产发现独立写入 `findings.md`，由 T15 修复，不能把测试绿色以外的主张写成已完成。
+集中合并目标由 G05 唯一写入：`docs/a2a.md` 的 continuation、制品、最小暴露、取消 ack 与预算小节；`docs/streaming.md` 的父 scope、完整 Todo、observer/Dropped 小节；`CHANGELOG.md` 的验证记录。现有公共语义不变，无新增 godoc/AST golden 理由。CodeBuddy 两条正式 partial-wrapper 生产发现和 AG-UI 已发布快照被修改的 race 独立写入 `findings.md`，交 root 分派原 owner 修复，不能把测试绿色以外的主张写成已完成。
 
 未采用 internal 的旧 SDK/binding、跨 scope 裸 ID 配对、Args 与 ArgsDelta 重复拼接、从 stdout/声明猜 capability/todo、历史 Task 充当本轮终态、成功文本与失败双判定面、失败 checkpoint 宽松保存。独立预期不调用生产 encoder/namespace helper，不计 owner 已有测试为新证据。
 
