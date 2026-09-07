@@ -1,10 +1,10 @@
 {
   "schema_version": "1.0",
   "gate": "G03",
-  "manifest_revision": 15,
+  "manifest_revision": 16,
   "code_baseline": "919f140f64f89c80933802840c8878681a85a4d9",
   "source_head": "e2f0620bdd6477e6fe16f6db5648093589342ca2",
-  "status": "implementation_reconciled_G03_checks_pending",
+  "status": "implementation_reconciled_G03_attempt2_checks_pending",
   "contracts": [
     {
       "producer": "C01",
@@ -260,6 +260,7 @@
       "bridges/sse/**",
       "bridges/subagentstream/**",
       "docs/alignment-tasks/2026-09-07/handoffs/T12/**",
+      "hosttools/a2adelegation/service_s9_test.go",
       "hosttools/sessionrecorder/**"
     ],
     "T13": [
@@ -372,7 +373,8 @@
     "R013: T10 additionally owns events.go and alignment_approval_snapshot_test.go for Approval descriptive JSON-container snapshots; approval.go already owned. Live copies retain one responder, recorder replay removes it. T22 independently verifies; no new API, task or requirement ID and no simultaneous owner conflict.",
     "R014: private Controller.SelectedCause reads the already selected cause without recomputation; local expiry selection precedes asynchronous cancellation delivery. Core and Delegate retain selected local identity and first primary while inherited same-type causes stay evidence. No ownership/DAG/public API changes; T10/T22 original required checks preserved.",
     "G03/C04 clarification: cancelled context precedes empty-text Materialize no-op; preserve cancellation cause, allocate nothing. Empty append clearing is unchanged. Current 709 implementation already follows this order; no code/ownership/DAG change or new validation run is claimed.",
-    "G03 reconciliation: native append core/hash and active budget with R012 seal/R014 selected cause, R013 Approval snapshots, A2A strict opt-in wire, non-A2A replay/Merge and optional capabilityrecorder delivered. T14-T19 provider/delegation adoption and B05/B06 verification remain open; no native/live evidence inferred."
+    "G03 reconciliation: native append core/hash and active budget with R012 seal/R014 selected cause, R013 Approval snapshots, A2A strict opt-in wire, non-A2A replay/Merge and optional capabilityrecorder delivered. T14-T19 provider/delegation adoption and B05/B06 verification remain open; no native/live evidence inferred.",
+    "R015: G03 full suite exposed obsolete S9 post-run Merge usage. T12 additionally owns only service_s9_test.go to migrate to pre-run team.Option and original Stream, keeping all business assertions. No fake binding proof or production T18 work; required S9/full hosttool validation added."
   ],
   "unmerged_related_branches": [
     {

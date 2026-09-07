@@ -348,7 +348,7 @@
       "batch_id": "B03",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/03-core-and-wire/t12/task.json",
-      "sha256": "ef0cf1b4c435a1a7c66ee1332aeffaf3277adc4183048bc479c194fd67a77431"
+      "sha256": "f8e7f0113d4a80bad1c73e67582eddd73d8cfe52ca4417e38c22b8a931ab71c1"
     },
     {
       "id": "T13",
@@ -521,7 +521,7 @@
     "every_requirement_has_one_owner_and_independent_verifier": true,
     "no_same_batch_worker_dependency": true
   },
-  "revision": 15,
+  "revision": 16,
   "amendments": [
     "docs/alignment-tasks/2026-09-07/amendments/R001.md",
     "docs/alignment-tasks/2026-09-07/amendments/R002.md",
@@ -536,6 +536,7 @@
     "docs/alignment-tasks/2026-09-07/amendments/R011.md",
     "docs/alignment-tasks/2026-09-07/amendments/R012.md",
     "docs/alignment-tasks/2026-09-07/amendments/R013.md",
-    "docs/alignment-tasks/2026-09-07/amendments/R014.md"
+    "docs/alignment-tasks/2026-09-07/amendments/R014.md",
+    "docs/alignment-tasks/2026-09-07/amendments/R015.md"
   ]
 }

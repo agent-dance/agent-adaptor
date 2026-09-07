@@ -84,6 +84,7 @@
       "bridges/sse/**",
       "bridges/subagentstream/**",
       "docs/alignment-tasks/2026-09-07/handoffs/T12/**",
+      "hosttools/a2adelegation/service_s9_test.go",
       "hosttools/sessionrecorder/**"
     ],
     "scope_match": "仅精确仓库相对文件或目录/**；任何未列路径不可写。",
@@ -120,7 +121,8 @@
   "implementation_steps": [
     "依据 B02 的封闭 Event，实现四个消费者的 parent/capability/todo 编解码与深复制，不调用 engine 或直接派发 Driver。",
     "协议支持时显式字段映射，否则产出已文档化的降级/custom typed 事件；不可 silent drop。",
-    "recorder 保留稳定 EventMeta 和新变体，JSONL 写失败不回落内存，回放不能得到假 responder。"
+    "recorder 保留稳定 EventMeta 和新变体，JSONL 写失败不回落内存，回放不能得到假 responder。",
+    "R015/G03-F01: 仅迁移既有 S9 fixture 到 leader.New(...,team.Option()) 后直接消费原 Stream；同文件 fake Driver 如实声明 HTTP MCP capability。保持三成员顺序、delta、结果先于terminal、HasLine、Observe、Close全部原业务断言。只移除已消失Merge wrapper的等式或换原RunID非空/稳定检查；不得增加假绑定证明、放宽Merge拒绝、删/skip S9或提前实现T18生产publisher。保留372a465失败日志，最终完整重跑原V01及原补充T12-RACE/T12-VET和新增V03/V04。"
   ],
   "acceptance_criteria": [
     {
@@ -132,12 +134,45 @@
       "id": "T12-AC02",
       "requirement": "取消/drop/结束顺序与旧 HITL 行为不变，持久 recorder 失败可观察。",
       "required": true
+    },
+    {
+      "id": "T12-AC04",
+      "requirement": "R015 S9采用运行前team.Option统一事件接入，全部既有业务断言保留并通过；未绑定Merge继续拒绝，T18生产接线仍独立。",
+      "required": true
     }
   ],
   "validation": [
     {
       "id": "T12-V01",
       "command": "go test -count=1 ./bridges/sse ./bridges/agui ./bridges/subagentstream ./hosttools/sessionrecorder",
+      "cwd": "repository_root",
+      "environment": {
+        "AGENT_ADAPTOR_LIVE_CONFORMANCE": "0",
+        "AGENT_ADAPTOR_E2E": "0",
+        "AGENT_ADAPTOR_UPDATE_API_GOLDEN": "0"
+      },
+      "required": true,
+      "execution_condition": "assigned_environment_available",
+      "must_execute_nonzero_tests": true,
+      "evidence": "记录实际命令、head SHA、OS/Go/CLI版本、exit code和安全日志；失败/skip/零测试不算通过。 非零按本命令实际测试/子测试计数，fuzz按实际种子/执行样本计数；必需场景skip不得通过。普通任务显式禁用的live探针或合同确认不适用的probe可skip，须列明且不能拿它们充当验收证据；可添加-json/-v采集日志，不能缩小原命令选择范围。"
+    },
+    {
+      "id": "T12-V03",
+      "command": "go test -count=1 ./hosttools/a2adelegation",
+      "cwd": "repository_root",
+      "environment": {
+        "AGENT_ADAPTOR_LIVE_CONFORMANCE": "0",
+        "AGENT_ADAPTOR_E2E": "0",
+        "AGENT_ADAPTOR_UPDATE_API_GOLDEN": "0"
+      },
+      "required": true,
+      "execution_condition": "assigned_environment_available",
+      "must_execute_nonzero_tests": true,
+      "evidence": "记录实际命令、head SHA、OS/Go/CLI版本、exit code和安全日志；失败/skip/零测试不算通过。 非零按本命令实际测试/子测试计数，fuzz按实际种子/执行样本计数；必需场景skip不得通过。普通任务显式禁用的live探针或合同确认不适用的probe可skip，须列明且不能拿它们充当验收证据；可添加-json/-v采集日志，不能缩小原命令选择范围。"
+    },
+    {
+      "id": "T12-V04",
+      "command": "go test -race -count=5 ./hosttools/a2adelegation -run TestServiceTeamCollaborationS9",
       "cwd": "repository_root",
       "environment": {
         "AGENT_ADAPTOR_LIVE_CONFORMANCE": "0",
