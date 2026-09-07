@@ -1,5 +1,26 @@
 # T23 fixture coverage findings
 
+Current inventory baseline: accepted replacement G04
+`b2035bc793369fb8fefb9de229ff1dbd2b748853` (canonical22, 43 tasks / 96 requirements,
+maximum six concurrent workers). The five original R017 fixture coverage gaps
+are closed in the accepted source. No provider live scenario has been executed
+by T23; B06 still owns that evidence on the eventual G05 implementation HEAD.
+
+| Closed finding | Accepted fixture root | Required evidence in the fixture |
+|---|---|---|
+| T23-F01 | `codebuddy/alignment_live_resume_test.go:TestAlignmentLiveCodeBuddyDedicatedToolsResumeAfterClose` | Tool-generated first-turn nonce unavailable from the second tool/prompt; same Thread/session/profile; retained native history; bounded Close and new gateway credentials, with old bearer rejection. |
+| T23-F02 | `codex/alignment_cold_live_test.go:TestAlignmentLiveDedicatedToolResumeAfterClose` | Two actual MCP completions; same session and retained/appended native rollout; no nonce in second prompt/tool; closed old listener and new endpoint/carrier. |
+| T23-F03 | `cursor/alignment_live_cold_resume_test.go:TestAlignmentLiveCursorDedicatedToolsColdResume` | Public cold ResumeOnly, actual tool calls, nonce recall without reinjection; retained native session files and store identity; rotated endpoint/carrier/token and old token rejection. Cursor remains spawn-per-turn. |
+| T23-F04 | `claude/alignment_catalog_live_test.go:TestAlignmentLiveDeclaredSkillAndSubagentCompleted` | Materialized declared resources, exact canonical Skill/Subagent refs, ProviderProtocol Started/Completed and successful scoped tool result joined to formal Transcript input. |
+| T23-F05 | `codebuddy/alignment_live_test.go:TestAlignmentLiveCodeBuddyCapabilityAndTodoResults` | Exact canonical Skill/Subagent ProviderProtocol Started/Completed joined to successful tool events and Transcript through `alignmentRequireCatalogInvocation`; prior MCP/Todo assertions retained. |
+
+`b06-inventory.json` records source hashes for these accepted fixtures. F06 and
+C03-QA01/02 were independently reviewed by root and are closed after their
+unchanged fixes were replayed onto this baseline. Original red evidence and
+its original SHA remain below; final checks are recorded at the final T23 HEAD.
+
+## Historical pre-R017 fixture review
+
 Reviewed base: `2421fe470cf67b22697fef796b038c0be6e395c8` (G04 before R017).
 These are missing validation evidence/fixtures, not observed live failures.
 No paid/live command or credential read was performed. R017 is coordinated in
@@ -16,7 +37,7 @@ external `decisions/R017-live-fixture-coverage.md`; only root updates that state
 The existing Claude cold fixture is `TestAlignmentLiveDedicatedToolResumeAfterClose`.
 All corrections keep build-tag/environment gates and isolate credentials. Missing CLI,
 authentication, quota or required provider evidence cannot become a passing skip.
-T23 will inventory the accepted replacement G04 fixtures before final handoff.
+The replacement inventory above now identifies each accepted correction.
 
 Native Windows already has ownership DACL/reparse/long-held no-delete-sharing,
 process-tree cancellation and `.cmd` launch tests. The previous PowerShell check in
@@ -40,7 +61,8 @@ The scoped repair recognizes all four exact provider roots and each root plus
 for all three importer classes, and allows each `providerish` root/child to
 prove prefix matching does not overreach. No runtime import violation was
 observed and no production/public API or golden changes are needed. This is
-an AGENTS dependency-boundary guard fix; final new-G04 acceptance remains pending.
+an AGENTS dependency-boundary guard fix. It is now included on replacement G04;
+the original old/new guard logs retain their historical SHA.
 
 ## C03-QA01 / C03-QA02: independent observation verifier review
 
@@ -67,6 +89,7 @@ entries actually returning PASS for each invalid SDK-owned coordinate.
   coordinate must fail with EVT-10; valid zero-coordinate facts without run.*
   frames must pass. These child processes never invoke a provider CLI.
 
-This remains a scoped stage repair on the pre-R017 base. Migration to an
-accepted replacement G04 and original full final validation remain required;
-the evidence is not a formal T23 result or native/live acceptance.
+Those original red/green logs describe the pre-R017 stage only. The four owned
+T23 commits have now been replayed unchanged onto accepted replacement G04;
+the final handoff records fresh original validation at the final source HEAD.
+Historical logs never substitute for that validation or native/live acceptance.

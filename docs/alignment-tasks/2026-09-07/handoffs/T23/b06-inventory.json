@@ -1,6 +1,6 @@
 {
-  "source_baseline": "2421fe470cf67b22697fef796b038c0be6e395c8",
-  "meaning": "Executable command and source-selector inventory; not a platform/live pass. R017 fixture additions require refreshing against accepted G04.",
+  "source_baseline": "b2035bc793369fb8fefb9de229ff1dbd2b748853",
+  "meaning": "Executable command/source-selector inventory against accepted replacement G04, canonical22. R017 fixture coverage is closed; native platform and live execution are not claimed.",
   "checks": [
     {
       "task": "T25",
@@ -254,6 +254,10 @@
         "path": "claude/alignment_live_test.go"
       },
       {
+        "name": "TestAlignmentLiveDeclaredSkillAndSubagentCompleted",
+        "path": "claude/alignment_catalog_live_test.go"
+      },
+      {
         "name": "TestAlignmentLiveDedicatedToolResumeAfterClose",
         "path": "claude/alignment_live_test.go"
       },
@@ -274,6 +278,10 @@
       {
         "name": "TestAlignmentLiveCodeBuddyCapabilityAndTodoResults",
         "path": "codebuddy/alignment_live_test.go"
+      },
+      {
+        "name": "TestAlignmentLiveCodeBuddyDedicatedToolsResumeAfterClose",
+        "path": "codebuddy/alignment_live_resume_test.go"
       },
       {
         "name": "TestAlignmentLiveCodeBuddyHeadlessStreaming",
@@ -318,6 +326,10 @@
         "path": "codex/alignment_live_test.go"
       },
       {
+        "name": "TestAlignmentLiveDedicatedToolResumeAfterClose",
+        "path": "codex/alignment_cold_live_test.go"
+      },
+      {
         "name": "TestAlignmentLiveNativeAppend",
         "path": "codex/alignment_live_test.go"
       },
@@ -340,6 +352,10 @@
         "path": "cursor/alignment_live_test.go"
       },
       {
+        "name": "TestAlignmentLiveCursorDedicatedToolsColdResume",
+        "path": "cursor/alignment_live_cold_resume_test.go"
+      },
+      {
         "name": "TestAlignmentLiveCursorPrintResume",
         "path": "cursor/alignment_live_test.go"
       },
@@ -348,5 +364,80 @@
         "path": "cursor/alignment_live_test.go"
       }
     ]
-  }
+  },
+  "canonical_revision": 22,
+  "task_count": 43,
+  "requirement_count": 96,
+  "max_parallelism": 6,
+  "gate_test_roots": {
+    "codex": [
+      {
+        "name": "TestAlignmentLiveGateCanary",
+        "path": "codex/live_profile_test.go"
+      },
+      {
+        "name": "TestAlignmentLiveGateDisabledWithoutBuildTag",
+        "path": "codex/live_profile_test.go"
+      }
+    ]
+  },
+  "live_root_counts": {
+    "claude": 7,
+    "codebuddy": 11,
+    "codex": 5,
+    "cursor": 5
+  },
+  "gate_tests_meaning": "Hermetic gate/canary tests selected by TestAlignmentLive names; these never count as provider-scenario passes.",
+  "r017_closures": [
+    {
+      "finding": "T23-F01",
+      "owner": "T15",
+      "requirement": "W02-R08",
+      "path": "codebuddy/alignment_live_resume_test.go",
+      "test": "TestAlignmentLiveCodeBuddyDedicatedToolsResumeAfterClose",
+      "assertions": "Real tool-generated nonce withheld from second tool/prompt; same Thread/provider ID/profile; native session file retained across both Close calls; new endpoint/carrier/token and old bearer rejection.",
+      "status": "fixture_coverage_closed_live_unexecuted",
+      "source_sha256": "d19a3b450db13c83af1acbe338896f9edb51f461d5ba59a47727007a31cac9e9"
+    },
+    {
+      "finding": "T23-F02",
+      "owner": "T16",
+      "requirement": "W02-R08",
+      "path": "codex/alignment_cold_live_test.go",
+      "test": "TestAlignmentLiveDedicatedToolResumeAfterClose",
+      "assertions": "Two real MCP completions, same healthy session, native rollout retained and appended after cold resume; nonce absent from second prompt/tool; closed old listener and rotated endpoint/carrier.",
+      "status": "fixture_coverage_closed_live_unexecuted",
+      "source_sha256": "70d8651b227449d72ee2825df1ce65ed057d113227d303a68e69c8c6c7b2d4b7"
+    },
+    {
+      "finding": "T23-F03",
+      "owner": "T17",
+      "requirement": "W02-R08",
+      "path": "cursor/alignment_live_cold_resume_test.go",
+      "test": "TestAlignmentLiveCursorDedicatedToolsColdResume",
+      "assertions": "Public Dedicated+WithTools Close/ResumeOnly, actual calls with no second-turn nonce replay; stable store/session/profile and retained nonempty native session files; rotated endpoint/carrier/token and old token unauthorized.",
+      "status": "fixture_coverage_closed_live_unexecuted",
+      "source_sha256": "5c13af5c4463b8be9459cc181776c2aa2b1c68c4610ab67bd2589e0e6cd8bf44"
+    },
+    {
+      "finding": "T23-F04",
+      "owner": "T14",
+      "requirement": "W09-R06",
+      "path": "claude/alignment_catalog_live_test.go",
+      "test": "TestAlignmentLiveDeclaredSkillAndSubagentCompleted",
+      "assertions": "Materialized declared Skill/Subagent; exact canonical refs, ProviderProtocol Started/Completed, successful scoped tool result and matching official Transcript input.",
+      "status": "fixture_coverage_closed_live_unexecuted",
+      "source_sha256": "83ea239626d6b43410c66e28952261a4446f447cef80f8eef3dad055559af06f"
+    },
+    {
+      "finding": "T23-F05",
+      "owner": "T15",
+      "requirement": "W09-R07",
+      "path": "codebuddy/alignment_live_test.go",
+      "test": "TestAlignmentLiveCodeBuddyCapabilityAndTodoResults",
+      "assertions": "Materialized catalog; exact canonical Skill/Subagent refs and ProviderProtocol Started/Completed joined with successful real tool event and Transcript via alignmentRequireCatalogInvocation; existing MCP/Todo checks retained.",
+      "status": "fixture_coverage_closed_live_unexecuted",
+      "source_sha256": "ce0960ffcf476272b4f8114752cdcd833af81d0304dd6694d5e1c32ac2962e88"
+    }
+  ]
 }

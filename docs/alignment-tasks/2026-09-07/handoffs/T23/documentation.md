@@ -45,7 +45,12 @@ passes, with permitted opt-in skips listed separately, remain necessary.
 Targets: CHANGELOG validation/infrastructure notes and contributor CI guidance.
 `b06-commands.md` and `b06-inventory.json` enumerate exact T25–T30 commands,
 platform/profile prerequisites, existing named live scenarios and the R017
-coverage corrections. `check_go_json.py` refuses empty execution, missing named
+coverage corrections accepted at replacement G04 `b2035bc793369fb8fefb9de229ff1dbd2b748853`.
+Canonical22 has 43 tasks, 96 requirements and a six-worker ceiling, including
+the original bridge owner's T32 supplement. The refreshed live inventory has
+28 real-provider roots (7 Claude, 11 CodeBuddy, 5 Codex, 5 Cursor); two separately
+listed Codex gate canaries do not count as provider execution.
+`check_go_json.py` refuses empty execution, missing named
 passes, failed tests/packages and any skip not explicitly listed by exact ID.
 Test selection/listing, disabled paid probes and compilation are evidence of
 availability only, never real Linux/Windows/provider acceptance.
@@ -63,8 +68,10 @@ golden and single invocation architecture guards are preserved unchanged.
 No paid provider or user credential is accessed by T23. No live capability or
 platform result is inferred from internal historical commits, fake fixtures,
 static test names or a successful compile. `findings.md` preserves G04 pre-R017
-coverage gaps and their exact owner/requirement links. New G04 acceptance must
-precede final T23 validation and G05's implementation freeze.
+coverage gaps and their exact owner/requirement links, with each accepted
+replacement fixture recorded as coverage closed. T23 source commits were
+migrated to the accepted replacement G04 before fresh final validation.
+G05 still owns implementation freeze and B06 owns native/live execution.
 
 
 T23-F06 follow-up: provider dependency guards uniformly cover Codex, Claude,

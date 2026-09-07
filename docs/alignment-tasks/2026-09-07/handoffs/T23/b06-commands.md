@@ -2,8 +2,11 @@
 
 All B06 reports must use the same G05 `implementation_head`. This document and
 `b06-inventory.json` are entrypoint inventories, not Linux/Windows/live results.
-R017 coverage findings are in `findings.md`; no required missing fixture may be
-replaced with a skip. Run each task.json command below unchanged in scope/count.
+Inventory baseline: accepted replacement G04 `b2035bc793369fb8fefb9de229ff1dbd2b748853`,
+canonical22: 43 tasks, 96 requirements, at most six concurrent workers (including
+the R019 T32 supplement). R017 fixture coverage gaps are closed at this baseline;
+`findings.md` preserves the original gaps and their exact replacement roots.
+Required scenarios must execute successfully; a skip cannot replace them. Run each task.json command below unchanged in scope/count.
 Adding `-json -timeout=30m` is allowed; retain the command process exit code.
 
 ## Native platform and environment evidence
@@ -90,6 +93,7 @@ is allowed only as explicitly disabled evidence; it does not satisfy T27–T30.
 
 - `TestAlignmentLiveAppendAndThread` (claude/alignment_live_test.go)
 - `TestAlignmentLiveCancellationPreservesPartialResult` (claude/alignment_live_test.go)
+- `TestAlignmentLiveDeclaredSkillAndSubagentCompleted` (claude/alignment_catalog_live_test.go)
 - `TestAlignmentLiveDedicatedToolResumeAfterClose` (claude/alignment_live_test.go)
 - `TestAlignmentLiveExistingStreamingAndApproval` (claude/alignment_live_test.go)
 - `TestAlignmentLiveNativeSchemaHITL` (claude/alignment_live_test.go)
@@ -98,6 +102,7 @@ is allowed only as explicitly disabled evidence; it does not satisfy T27–T30.
 ### codebuddy
 
 - `TestAlignmentLiveCodeBuddyCapabilityAndTodoResults` (codebuddy/alignment_live_test.go)
+- `TestAlignmentLiveCodeBuddyDedicatedToolsResumeAfterClose` (codebuddy/alignment_live_resume_test.go)
 - `TestAlignmentLiveCodeBuddyHeadlessStreaming` (codebuddy/run_live_test.go)
 - `TestAlignmentLiveCodeBuddyNativeAppendAndResume` (codebuddy/alignment_live_test.go)
 - `TestAlignmentLiveCodeBuddyPermissionApprove` (codebuddy/run_live_test.go)
@@ -111,6 +116,7 @@ is allowed only as explicitly disabled evidence; it does not satisfy T27–T30.
 ### codex
 
 - `TestAlignmentLiveCancellationAndAppendRebind` (codex/alignment_live_test.go)
+- `TestAlignmentLiveDedicatedToolResumeAfterClose` (codex/alignment_cold_live_test.go)
 - `TestAlignmentLiveNativeAppend` (codex/alignment_live_test.go)
 - `TestAlignmentLiveObservationAndPersistent` (codex/alignment_live_test.go)
 - `TestAlignmentLiveSubagentCatalog` (codex/alignment_live_test.go)
@@ -119,6 +125,7 @@ is allowed only as explicitly disabled evidence; it does not satisfy T27–T30.
 
 - `TestAlignmentLiveCursorCancelPartial` (cursor/alignment_live_test.go)
 - `TestAlignmentLiveCursorCapabilities` (cursor/alignment_live_test.go)
+- `TestAlignmentLiveCursorDedicatedToolsColdResume` (cursor/alignment_live_cold_resume_test.go)
 - `TestAlignmentLiveCursorPrintResume` (cursor/alignment_live_test.go)
 - `TestAlignmentLiveCursorUnsupportedAppend` (cursor/alignment_live_test.go)
 
@@ -127,9 +134,13 @@ nonce/control and resume/WithSpawn (Codex exec plus app-server start/resume/fork
 formal provider observations and full/clear Todo where declared, partial cancellation
 with unchanged healthy checkpoint, explicit Dedicated hosted-tool cross-Agent nonce
 resume, and Claude native schema plus actual Question/PlanReview approval roundtrip.
-Cursor uses print batch/stream resume and explicit unsupported checks. R017 adds the
-missing CodeBuddy/Codex/Cursor cold fixtures and Claude/CodeBuddy catalog facts; the
-accepted new G04 inventory must be refreshed before G05 freezes.
+Cursor uses print batch/stream resume and explicit unsupported checks. The accepted
+R017 additions above supply CodeBuddy/Codex/Cursor cold fixtures and Claude/CodeBuddy
+formal catalog completion facts. This is source/entry coverage; all 28 real-provider
+roots (Claude 7, CodeBuddy 11, Codex 5, Cursor 5) still require authorized B06 execution.
+Codex also selects `TestAlignmentLiveGateCanary` and
+`TestAlignmentLiveGateDisabledWithoutBuildTag` in `codex/live_profile_test.go`;
+these two hermetic gate tests never count as real-provider scenario successes.
 
 S1–S9 are selected by T25-V05, all four conformance roots by T25-V06; each root
 must have an actual pass record. BDD syntax remains a non-live execution:
