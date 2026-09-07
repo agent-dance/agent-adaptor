@@ -111,6 +111,23 @@ func main() {
 				output(map[string]any{"id": req.ID, "error": map[string]any{"code": -32000, "message": "fixture rejected"}})
 				continue
 			}
+			if scenario == "terminal-eof" {
+				// A terminal can be queued before the start response, while EOF
+				// is already visible and the real process exit remains pending.
+				notify("item/completed", scoped("item", map[string]any{"id": "answer", "type": "agentMessage", "text": "answer"}))
+				notify("turn/completed", map[string]any{"threadId": thread, "turn": map[string]any{"id": turn, "status": "completed"}})
+				reply(map[string]any{"turn": map[string]any{"id": turn, "status": "inProgress"}})
+				_ = os.Stdout.Close()
+				deadline := time.Now().Add(4 * time.Second)
+				for time.Now().Before(deadline) {
+					if _, err := os.Stat(os.Getenv("ALIGNMENT_RELEASE")); err == nil {
+						fmt.Fprint(os.Stderr, "post-eof-stderr")
+						os.Exit(7)
+					}
+					time.Sleep(time.Millisecond)
+				}
+				os.Exit(9)
+			}
 			// Exercise notification-before-response ordering on the real RPC path.
 			notify("turn/plan/updated", scoped("plan", []any{map[string]any{"step": "中文 plan", "status": "pending"}}))
 			reply(map[string]any{"turn": map[string]any{"id": turn, "status": "inProgress"}})

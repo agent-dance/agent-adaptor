@@ -433,6 +433,58 @@ func TestAlignmentResidentWaitCause(t *testing.T) {
 	}
 }
 
+type alignmentEOFSink struct {
+	recordingSink
+	process  *Process
+	release  string
+	released chan error
+}
+
+func (s *alignmentEOFSink) Emit(event driver.RunEvent) error {
+	if event.Item != nil && event.Item.Kind == driver.TranscriptResult {
+		select {
+		case <-s.process.stream.ReadDone():
+		case <-time.After(2 * time.Second):
+			return errors.New("fixture never observed stdout EOF")
+		}
+		// Only the ordinary transcript callback is synchronized. The fake
+		// releases its own process later, without mutating production state.
+		go func() {
+			time.Sleep(25 * time.Millisecond)
+			s.released <- os.WriteFile(s.release, []byte("release"), 0600)
+		}()
+	}
+	return s.recordingSink.Emit(event)
+}
+
+func TestAlignmentTerminalEOFWaitsForObservedExit(t *testing.T) {
+	command := alignmentFixture(t)
+	opts := alignmentOptions(command, filepath.Join(t.TempDir(), "capture"))
+	sink := &alignmentEOFSink{release: filepath.Join(t.TempDir(), "release"), released: make(chan error, 1)}
+	opts.Env = append(opts.Env, driver.EnvBinding{Name: "ALIGNMENT_SCENARIO", Value: "terminal-eof"}, driver.EnvBinding{Name: "ALIGNMENT_RELEASE", Value: sink.release})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	p, err := Open(ctx, opts, sink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.TerminateAndWait(ctx)
+	sink.process = p
+	result, sent, err := p.RunTurn(ctx, opts, sink)
+	select {
+	case releaseErr := <-sink.released:
+		if releaseErr != nil {
+			t.Fatal(releaseErr)
+		}
+	case <-ctx.Done():
+		t.Fatal("fixture terminal/EOF barrier was not reached")
+	}
+	var exitErr *exec.ExitError
+	if !sent || !errors.As(err, &exitErr) || exitErr.ExitCode() != 7 || result.ExitCode != 7 || result.Checkpoint != nil || result.Output != "answer" || result.RawStreams.Terminal == nil || result.RawStreams.Stderr != "post-eof-stderr" {
+		t.Fatalf("known EOF returned before real exit/drain: err=%v result=%#v", err, result)
+	}
+}
+
 func TestAlignmentPlanRejectsBrokenUnicode(t *testing.T) {
 	for _, plan := range []string{`[{"step":"\ud800","status":"pending"}]`, `[{"step":"\udc00","status":"pending"}]`, `[{"step":"` + string([]byte{0xff}) + `","status":"pending"}]`} {
 		sink := &recordingSink{}

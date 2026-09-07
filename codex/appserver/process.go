@@ -274,8 +274,20 @@ func (p *Process) RunTurn(ctx context.Context, opts Options, sink driver.EventSi
 		case <-p.waitCh:
 			err = errors.New("codex app-server exited before turn completion")
 		case <-p.stream.ReadDone():
-			err = errors.New("codex app-server stdout ended before turn completion")
+			err = errors.New("codex app-server stdout ended during resident turn")
 		}
+	}
+	// The select above may choose the terminal even when EOF is also ready.
+	// Observe reader completion separately before certifying this resident
+	// turn: EOF is known now, while the actual OS exit can still be pending.
+	readEnded := false
+	select {
+	case <-p.stream.ReadDone():
+		readEnded = true
+		if err == nil {
+			err = errors.New("codex app-server stdout ended during resident turn")
+		}
+	default:
 	}
 	if readErr := p.stream.ReadError(); readErr != nil {
 		err = errors.Join(err, fmt.Errorf("decode JSON-RPC stdout: %w", readErr))
@@ -299,7 +311,14 @@ func (p *Process) RunTurn(ctx context.Context, opts Options, sink driver.EventSi
 
 	if err != nil {
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-		err = errors.Join(err, p.TerminateAndWait(cleanupCtx))
+		if readEnded && ctx.Err() == nil {
+			// Let a peer that already closed stdout finish draining stderr and
+			// exit naturally within the existing graceful-shutdown bound. An
+			// immediate kill would replace its real exit cause and audit tail.
+			err = errors.Join(err, p.CloseGracefully(cleanupCtx, 0))
+		} else {
+			err = errors.Join(err, p.TerminateAndWait(cleanupCtx))
+		}
 		cancel()
 		// ReadDone precedes Wait by design. The bounded cleanup join is where
 		// the real OS exit becomes available; retain it alongside the original
