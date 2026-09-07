@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -454,6 +455,10 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 			if persistentErr != nil {
 				exitCode = -1
 			}
+			var processErr *persistentRunError
+			if errors.As(persistentErr, &processErr) {
+				exitCode = processErr.exitCode
+			}
 			praw.Terminal = pparser.terminal
 			return buildClaudeResponse(req, pparser, praw, exitCode, "", errors.Is(persistentErr, context.DeadlineExceeded), reportedModel, effectiveCWD, profileFingerprint, persistentErr)
 		}
@@ -556,6 +561,15 @@ func buildClaudeResponse(
 		outcomeExit = -1
 	}
 	failure := parser.failureForOutcome(outcomeExit, signal, timedOut)
+	var processErr *persistentRunError
+	if failure == nil && errors.As(runErr, &processErr) && processErr.providerExit {
+		// Core's process fallback only runs without a Driver error. Preserve
+		// the real ExitError cause while explicitly classifying this observed
+		// provider exit; transport/decision/host cancellation keeps priority.
+		failure = &driver.RunFailure{Code: driver.FailureAgentError,
+			Message:  fmt.Sprintf("claude process exited unsuccessfully: exit code %d", processErr.exitCode),
+			Metadata: map[string]any{"exit_code": processErr.exitCode}}
+	}
 	var structuredOutput *driver.StructuredOutput
 	if req.OutputSchema != nil && cause == nil {
 		if req.StructuredOutputSource == driver.StructuredOutputSourceNative {

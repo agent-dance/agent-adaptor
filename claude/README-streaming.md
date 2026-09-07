@@ -71,8 +71,11 @@ same parser's available Raw stdout/stderr, terminal payload, Transcript, final
 text, Usage and service reports. `Run` and `Stream.Result` expose them through
 `RunError.Result`, and `errors.Is/As` retain the original cause. Partial assistant
 frames do not replace missing final Text. Terminal usage, including observed
-zero values, is authoritative; otherwise formally observed stream usage remains
-available. No output or session ID alone makes an interrupted checkpoint valid.
+zero values, is authoritative; otherwise formally observed message usage is
+summed across distinct message IDs. Repeated cumulative deltas and assistant
+snapshots for one message contribute only its increase, including when root
+and nested messages interleave. No output or session ID alone makes an
+interrupted checkpoint valid.
 The previous healthy Thread record stays unchanged, and a possibly delivered
 prompt is never automatically replayed.
 
@@ -81,6 +84,13 @@ its caller context active. The resident reader drains the available stdout and
 stderr before returning the original decision error, and a buffered success
 result cannot register that aborted process for reuse or validate a checkpoint.
 Normal result-only turns keep resident stdin available for the next turn.
+
+A short stdin write, even after only one accepted byte, follows the same
+stop/drain/finalize path and cannot trigger replay. Buffered stdout and a final
+stderr line without a newline remain available. An observed provider nonzero
+exit retains its original `*exec.ExitError` in the cause chain and is classified
+as an agent error when no earlier decision, transport or caller cancellation
+ended the turn. Process cleanup does not manufacture caller cancellation.
 
 The complete Driver obligations and consumer behavior are documented in
 [`docs/streaming-adapter-contract.md`](../docs/streaming-adapter-contract.md)

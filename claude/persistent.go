@@ -474,14 +474,26 @@ type liveProcess struct {
 	activeMu sync.RWMutex
 	active   *persistentTurnObserver
 
-	stateMu  sync.Mutex
-	closed   bool
-	idle     *time.Timer
-	waitOnce sync.Once
-	waitCh   chan struct{}
-	waitErr  error
-	grace    time.Duration
+	stateMu    sync.Mutex
+	closed     bool
+	terminated bool
+	idle       *time.Timer
+	waitOnce   sync.Once
+	waitCh     chan struct{}
+	waitErr    error
+	grace      time.Duration
 }
+
+// persistentRunError retains the real Wait cause separately from whether a
+// provider exit, rather than a host/transport abort, ended the turn.
+type persistentRunError struct {
+	cause        error
+	exitCode     int
+	providerExit bool
+}
+
+func (e *persistentRunError) Error() string { return e.cause.Error() }
+func (e *persistentRunError) Unwrap() error { return e.cause }
 
 type persistentTurnObserver struct {
 	sink   driver.EventSink
@@ -530,22 +542,25 @@ func (lp *liveProcess) turn(ctx context.Context, prompt string, sink driver.Even
 
 	n, writeErr := io.WriteString(lp.stdin, frame)
 	promptSent := n > 0
-	if writeErr != nil {
-		return driver.RawStreams{Stderr: lp.stderr.since(stderrStart)}, promptSent, writeErr
+	if writeErr == nil && n != len(frame) {
+		writeErr = io.ErrShortWrite
 	}
-	if n != len(frame) {
-		return driver.RawStreams{Stderr: lp.stderr.since(stderrStart)}, promptSent, io.ErrShortWrite
+	if writeErr != nil {
+		// Even one accepted byte makes replay unsafe. Stop the child and use
+		// the normal reader/finalizer to preserve output already in its pipes.
+		lp.signalTerminate()
 	}
 
 	type readResult struct {
-		stdout string
-		err    error
-		result bool
+		stdout   string
+		err      error
+		result   bool
+		cleanEOF bool
 	}
 	done := make(chan readResult, 1)
 	go func() {
 		var raw strings.Builder
-		var abortErr error
+		abortErr := writeErr
 		for {
 			line, readErr := lp.stdout.ReadString('\n')
 			if len(line) > 0 {
@@ -569,7 +584,7 @@ func (lp *liveProcess) turn(ctx context.Context, prompt string, sink driver.Even
 				}
 			}
 			if readErr != nil {
-				done <- readResult{stdout: raw.String(), err: errors.Join(abortErr, readErr)}
+				done <- readResult{stdout: raw.String(), err: errors.Join(abortErr, readErr), cleanEOF: readErr == io.EOF && abortErr == nil}
 				return
 			}
 		}
@@ -585,8 +600,25 @@ func (lp *liveProcess) turn(ctx context.Context, prompt string, sink driver.Even
 	}
 	if rr.err != nil || !rr.result {
 		// Stop and drain the failed process before freezing this turn's Raw
-		// and parser state, including stderr already in flight.
-		_ = lp.terminateAndWait(context.Background())
+		// and parser state, including stderr already in flight. EOF may be
+		// the child's own exit: let Wait observe it before forcing a kill.
+		if lp.cmd != nil {
+			_ = lp.gracefulStop(context.Background())
+			lp.stateMu.Lock()
+			terminated := lp.terminated
+			lp.stateMu.Unlock()
+			if lp.waitErr != nil {
+				var exitErr *exec.ExitError
+				exitCode := -1
+				if errors.As(lp.waitErr, &exitErr) {
+					exitCode = exitErr.ExitCode()
+				}
+				rr.err = &persistentRunError{
+					cause: errors.Join(rr.err, lp.waitErr), exitCode: exitCode,
+					providerExit: exitErr != nil && rr.cleanEOF && !terminated && ctx.Err() == nil,
+				}
+			}
+		}
 	}
 	parser.finalize()
 	raw := driver.RawStreams{
@@ -631,7 +663,23 @@ func (lp *liveProcess) isClosed() bool {
 
 func (lp *liveProcess) signalTerminate() {
 	lp.beginClose()
-	if lp.cancel != nil {
+	lp.stateMu.Lock()
+	if lp.terminated {
+		lp.stateMu.Unlock()
+		return
+	}
+	lp.terminated = true
+	lp.stateMu.Unlock()
+	select {
+	case <-lp.waitCh:
+		return
+	default:
+	}
+	if lp.cmd != nil && lp.cmd.Cancel != nil {
+		// Kill the process group without canceling its private context. Wait
+		// must retain the actual process error, not manufacture host Cancel.
+		_ = lp.cmd.Cancel()
+	} else if lp.cancel != nil {
 		lp.cancel()
 	}
 }
@@ -655,6 +703,9 @@ func (lp *liveProcess) startWait() {
 	lp.waitOnce.Do(func() {
 		go func() {
 			lp.waitErr = lp.cmd.Wait()
+			if lp.cancel != nil {
+				lp.cancel()
+			}
 			lp.pool.mu.Lock()
 			delete(lp.pool.all, lp)
 			lp.pool.mu.Unlock()
@@ -696,14 +747,10 @@ func (lp *liveProcess) gracefulStop(ctx context.Context) error {
 	case <-lp.waitCh:
 		return nil
 	case <-ctx.Done():
-		if lp.cancel != nil {
-			lp.cancel()
-		}
+		lp.signalTerminate()
 		return ctx.Err()
 	case <-timer.C:
-		if lp.cancel != nil {
-			lp.cancel()
-		}
+		lp.signalTerminate()
 	}
 	select {
 	case <-lp.waitCh:

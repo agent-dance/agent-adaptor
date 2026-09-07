@@ -40,6 +40,15 @@ func runAlignmentClaudeHelper() int {
 	}
 	interactive := claudePersistentInputMode(os.Args[1:])
 	reader := bufio.NewReader(os.Stdin)
+	if os.Getenv("ALIGNMENT_PARTIAL_WRITE") == "1" {
+		if _, err := reader.ReadByte(); err != nil {
+			return 31
+		}
+		fmt.Fprint(os.Stderr, "observed diagnostic without newline")
+		fmt.Fprint(os.Stdout, alignmentClaudePartial+"\n")
+		_, _ = io.Copy(io.Discard, reader)
+		return 0
+	}
 	for {
 		var prompt string
 		if interactive {
@@ -61,6 +70,15 @@ func runAlignmentClaudeHelper() int {
 			prompt = string(raw)
 		}
 		fmt.Fprintln(os.Stdout, alignmentClaudeInit)
+		if strings.Contains(prompt, "multiple-usage") {
+			fmt.Fprint(os.Stdout, alignmentClaudeUsageFrames())
+			if strings.Contains(prompt, "terminal-zero") {
+				fmt.Fprintln(os.Stdout, alignmentClaudeTerminal)
+				continue
+			}
+			fmt.Fprint(os.Stderr, "exit diagnostic without newline")
+			return 23
+		}
 		if strings.Contains(prompt, "resident-abort") {
 			fmt.Fprintln(os.Stderr, "abort stderr")
 			// One atomic pipe write makes the post-request bytes available

@@ -293,6 +293,9 @@ func (p *claudeParser) handlePayload(raw string, payload map[string]any) {
 		return
 	case "assistant":
 		message := claudeTopLevelObject(payload, "message")
+		if p.stream != nil {
+			p.stream.mergeAssistantUsage(message, claudeTopLevelString(payload, "parent_tool_use_id"))
+		}
 		p.handleAssistantMessage(message)
 	case "user":
 		message := claudeTopLevelObject(payload, "message")

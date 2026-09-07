@@ -21,6 +21,10 @@
 // Errors preserve the available formal protocol output and original cause for
 // RunError.Result. A decision-sink error stops a resident writer even when the
 // caller context remains active; available output is drained before returning.
+// Short stdin writes use the same drain/finalize path. Observed process exit
+// errors remain inspectable without treating private cleanup as caller cancel.
+// Usage sums distinct formal messages and deduplicates their cumulative
+// reports; a terminal usage report, including zero, remains authoritative.
 // Incomplete or failed runs cannot produce a healthy checkpoint.
 //
 // In bidirectional one-shot runs, a formal result or a terminal root assistant
