@@ -12,7 +12,7 @@
 | T21-F02 | resolved；同一 T15 修复 | CodeBuddy 正式 error 前交付未闭合 Capability Interrupted，原部分审计保留。 |
 | T21-F03 | resolved；T32 `9fd655c553551e8a0103743de99d37ba81ce0652` | 真实 ServiceRelay 的异步 AG-UI 消费与同步已发布快照不变性。 |
 
-本任务三个 QA 提交完整 rebase 到上述 replacement G04 时，测试与 helper 字节和旧 `b8d9ce6` 相同；`2139534abd5e54a04731511ac07777eb60b0cb9a` 的完整 V01/V02 为 192/3840 pass，0 fail/skip/race，原结果保留在 `evidence/final-V01-command.json`、`evidence/final-V02-command.json`。随后仅校准下节记录的不可编码 Meta HTTP oracle，并补充人工 oracle 控制；正式 provider/快照 fixture 和断言不变。最新完整原 V01/V02 在最后提交后重新运行，实际 HEAD、结果与 hash 在事后 `result.json`、`evidence/translation-V01-command.json`、`evidence/translation-V02-command.json` 中报告。root focused、owner 检查与任何阶段结果均不替代最新完整验证。
+本任务三个 QA 提交完整 rebase 到上述 replacement G04 时，测试与 helper 字节和旧 `b8d9ce6` 相同；`2139534abd5e54a04731511ac07777eb60b0cb9a` 的完整 V01/V02 为 192/3840 pass，0 fail/skip/race，原结果保留在 `evidence/final-V01-command.json`、`evidence/final-V02-command.json`。随后仅校准下节记录的不可编码 Meta HTTP oracle，并补充人工 oracle 控制；正式 provider/快照 fixture 和断言不变。最新完整原 V01/V02 在最后提交后重新运行，实际 HEAD、结果与 hash 在事后 `result.json`、`evidence/calibrated-V01-command.json`、`evidence/calibrated-V02-command.json` 中报告。root focused、owner 检查与任何阶段结果均不替代最新完整验证。
 
 ## T21-QA01 — 不可编码 Meta 的 HTTP 形状校准
 
@@ -24,6 +24,8 @@ T21 `2139534` 只有同型静态风险，没有该分支实跑红日志；原 19
 - `OutgoingLoss/sequence`：原 `Sequence=9007199254740992` 无法用安全 JSON 整数表示，正常投影与 loss 投影均失败；固定 cause 为 `encode adapter stream status: invalid_payload`。该分支单独完整消费 HTTP，普通 `apClientDrain` 不放宽。
 
 两个 cause 分别从正式 encoder 校验和 pinned JSON-RPC Error→公开 client wrapper 边界静态确定；不得互换、contains 匹配或接受任意 error。允许真实 failed Task/status+精确 EOF，或当前 client 直接返回、TaskID 与最后已观察坐标一致（无 Task 可空）的 StreamRecoveryError：Cause 必须是非 nil 的上游公开 A2A Error，Err=ErrInternalError、Message 精确匹配本 fixture，无额外 Details/control，TypedDetails 只允许标准 ErrorInfo timestamp。每次检查所有已观察 Task/status 的所有 Parts、metadata 与 Raw 镜像，不能用后一个安全状态遮盖早先假 code/limit 或其他终态。
+
+完整 Task 默认是历史快照：已经观察到 failed 历史 Task 后，精确 SRE 仍然合法；不能把它误当 live 终局。live failed Status 与明确 RecoveredState 才是已确认终局，EOF 通过、后续 SRE 拒绝。该差异有正/负控。首次校准 `f75f11aa8dedbb7b5fdd482e93d7b965e10444c6` 的 V01 240 pass 后，root 复核发现历史 failed Task 被错拒，故停止当时已启动的 V02：原完整 argv、1661 个已完成 pass、0 fail/skip、Go 进程 SIGTERM exit -15（外层 Python exit 241）保留在 `evidence/translation-V02-command.json` 和原日志；这是被新源码取代的中断阶段，不算完整 V02 通过。修正后从头重跑全部原 V01/V02。
 
 新增 `TranslationOutcomeOracle` 以手写公共 DTO/error 做两形状正控及普通同文案 error、错误/nil cause、错误上游 code、后缀/子串、deadline、TaskID 错配、夹带 control 和其他终态负控。这些是独立 oracle 控制，不是实际 HTTP 的 StreamRecoveryError 分支证据。真实 HTTP 每次形状由 `translation HTTP outcome` 日志记录，最终报告按实跑计数；没有观察到的分支只保持静态依据与人工正控说明。
 

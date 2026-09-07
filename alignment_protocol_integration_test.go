@@ -1263,6 +1263,7 @@ func apTranslationOutcome(observed []client.Event, transportError error, wantCau
 	}
 	var last client.TaskStatus
 	var taskID string
+	var liveTerminal bool
 	for _, event := range observed {
 		// Inspect every public projection, including every Part and the Raw
 		// mirrors, so an earlier control cannot disappear behind a later status.
@@ -1285,6 +1286,9 @@ func apTranslationOutcome(observed []client.Event, transportError error, wantCau
 			if !apTranslationState(last.State) {
 				return false
 			}
+			if event.RecoveredState && last.State == client.TaskStateFailed {
+				liveTerminal = true
+			}
 		}
 		if event.TaskID != "" {
 			taskID = event.TaskID
@@ -1294,12 +1298,17 @@ func apTranslationOutcome(observed []client.Event, transportError error, wantCau
 			if !apTranslationState(last.State) {
 				return false
 			}
+			if last.State == client.TaskStateFailed {
+				liveTerminal = true
+			}
 		}
 	}
 	if transportError == io.EOF {
 		return last.State == client.TaskStateFailed && taskID != ""
 	}
-	if last.State != client.TaskStateUnspecified && last.State != client.TaskStateSubmitted && last.State != client.TaskStateWorking {
+	// A full Task is historical unless explicitly recovered. Its failed state
+	// cannot turn a later exact recovery error into an incompatible live outcome.
+	if liveTerminal || (last.State != client.TaskStateUnspecified && !apTranslationState(last.State)) {
 		return false
 	}
 	var recovery *client.StreamRecoveryError
@@ -1413,7 +1422,7 @@ func TestAlignmentProtocolTranslationOutcomeOracle(t *testing.T) {
 		{"typed-nil-cause", working, recovery(nilRemote), taskID, false},
 		{"wrong-task-id", working, recovery(cause()), "another-task", false},
 		{"no-observed-task-id", failed, io.EOF, "", false},
-		{"failed-task-with-recovery", failed, recovery(cause()), taskID, false},
+		{"failed-task-with-recovery", failed, recovery(cause()), taskID, true},
 		{"status-control", statusControl, io.EOF, taskID, false},
 		{"recovery-status-control", workingControl, recovery(cause()), taskID, false},
 		{"cause-control", working, recovery(detailsControl), taskID, false},
@@ -1492,6 +1501,16 @@ func TestAlignmentProtocolTranslationOutcomeOracle(t *testing.T) {
 		invalid := &a2aproto.Error{Err: a2aproto.ErrInternalError, Message: apTranslationInvalidError}
 		if !apTranslationOutcome(observed, recovery(invalid), apTranslationInvalidError) || apTranslationOutcome(observed, recovery(cause()), apTranslationInvalidError) || apTranslationOutcome(observed, recovery(invalid), apTranslationEncodeError) {
 			t.Fatal("oversized ThreadKey and unsafe Sequence causes became interchangeable")
+		}
+	})
+	t.Run("live-failed-is-terminal", func(t *testing.T) {
+		for _, event := range []client.Event{
+			{TaskID: taskID, Status: &failed},
+			{Task: &client.Task{ID: taskID, Status: failed}, RecoveredState: true},
+		} {
+			if !apTranslationOutcome([]client.Event{event}, io.EOF, apTranslationEncodeError) || apTranslationOutcome([]client.Event{event}, recovery(cause()), apTranslationEncodeError) {
+				t.Fatal("live failed Status/recovered Task was treated as a historical snapshot")
+			}
 		}
 	})
 

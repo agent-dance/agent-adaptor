@@ -18,6 +18,8 @@ R016 公开观察边界：真实 HTTP Send/SendStream 和 Local/Remote 正常路
 
 TranslationOutcomeOracle 的正控是人工公共类型输入，仅证明 oracle 接受两种合法形状并拒绝错误类型、cause、TaskID、终态、早先/后部 Part control 与 deadline；不能描述为实际 HTTP 必然跑到了 StreamRecoveryError 分支。两个真实 HTTP translation 用例在日志中记录各次实际观察形状，完整验证数量与分支覆盖据此报告。C02 此次复核只静态推导了 T21 的同型风险；T21 旧 `2139534` 全绿属于保留的阶段证据，不证明唯一 HTTP 表示。
 
+历史 failed Task 快照后仍可能得到同源 SRE；完整 Task 自身不能冒充 live 终局。live failed Status 或明确 RecoveredState 后则要求正常结束，不接受第二个 SRE。正/负控明确区分这三个来源。
+
 私有 executor Cancel-drain 分类补充只引用已接受的 T19/C02/G04 archive：G04 `2421fe470cf67b22697fef796b038c0be6e395c8`，T19 `075887499a1966ed4d08681bd837a4fcbfa1c650`，archive SHA256 `399a38c3673ef0ea6b430797f2f1f3f26c7f8f49f891303537b9330adefb728f`，外部 `findings/G04-composition/review.md` 记录已提交 owner barrier `TestAlignmentR016EveryDrainPath/cancel` race10 20 个 parent/child pass。此引用不是本任务新增独立证明，不计入 T21 pass 数；root 已确认无需新增不存在的 executor 公共入口或 unsafe。
 
 集中合并目标由 G05 唯一写入：`docs/a2a.md` 的 continuation、制品、最小暴露、取消 ack 与预算小节；`docs/streaming.md` 的父 scope、完整 Todo、observer/Dropped 小节；`CHANGELOG.md` 的验证记录。现有公共语义不变，无新增 godoc/AST golden 理由。CodeBuddy 两条正式 partial-wrapper 生产发现和 AG-UI 已发布快照被修改的 race 保留在 `findings.md`，由原 owner T15/T32 修复；不变反例随完整检查重放，修复来源与历史红证据分别记录。
