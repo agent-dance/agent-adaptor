@@ -1,6 +1,6 @@
 # T15 CodeBuddy provider adoption
 
-本任务基于已接受 G03 `926dbbf90a98d35416cdbbc6e376c7bbdc5da084`，仅修改 `codebuddy/` 与本 handoff。承担 W09-R07、W11-R06、W12-R05；不宣称 W09/W11/W12、G04 或发布门禁整体完成。
+本任务基于已接受 G03 `926dbbf90a98d35416cdbbc6e376c7bbdc5da084`，修改 `codebuddy/` 与本 handoff；R018 另精确授权 `internal/profileagents/agents.go`、`codebuddy.go`、`codebuddy_test.go`。承担 W09-R07、W11-R06、W12-R05；不宣称 W09/W11/W12、G04 或发布门禁整体完成。
 
 ## 使用语义与示例
 
@@ -55,3 +55,15 @@ CodeBuddy 2.137.1 的 user 结果 wrapper `parent_tool_use_id` 指向自身 call
 所有真实测试统一 `TestAlignmentLiveCodeBuddy*`，位于 `codebuddy_live` build tag；既有 DriverConformance live 分支也由独立带 tag helper + `AGENT_ADAPTOR_LIVE_CONFORMANCE=1` 门控。启用后缺 CLI 不 skip，版本/help 必须采集；仅从显式绝对 `CODEBUDDY_CONFIG_DIR_SOURCE` 认证 fixture 复制两个 credentials 文件到私有目录，不复制 settings/MCP，不默认采用用户 profile。运行目录和 HOME 私有。B06/T28 使用 `go test -tags codebuddy_live -count=1 -timeout 30m ./codebuddy -run 'TestAlignmentLive|TestCodeBuddyDriverConformance'`，要求授权、认证与同一 G05 SHA；本批只在 env=0 验证入口编译/禁用，没有 native Linux/Windows 或 live 通过声明。
 
 live 入口含既有 streaming/Thread/persistent/Permission/Question/PlanReview，新增随机 append 标记有/无对照、同内容复用/WithSpawn/清除 guard、hosted MCP 工具完成、真实 task ID 与 todo 清空。未知 capability/父图、batch observation 和 native schema+control HITL 的未支持边界按文档明确，不用 skip 冒充已支持通过。Native Windows argv/进程树与 Linux race/fuzz 留既定 B06 门禁。
+
+## R017 / R018 / T21 追加交付
+
+公开 `WithProfileResources(profile.Resources{Agents: ..., Skills: ...})` 原来会在 CodeBuddy `SyncProfile` 的 helper layout 处返回 unsupported，使已声明 Subagent catalog 无法经正常构造到达 provider。本次将 CodeBuddy 分派到独立渲染器，生成 `<profile>/agents/<runtime-name>.md`：YAML name/description 与正文 instructions；仅映射官方 loader 已核实的 model、effort、permissionMode、tools/disallowedTools、skills、mcpServers 名称。effort 限 minimal/low/medium/high/xhigh/max。未映射的 inline SandboxMode、Hooks、Native 和非法 effort 明确返回 error，不当作 warning 后继续。SourcePath 原字节路径、既有 atomic reconcile/外部文件冲突拒绝和其他 provider 分派保持。字段出处、精确安装包 SHA 与提取位置见 `agent-loader-evidence.md`。应合并到 profile resources 使用文档与 CHANGELOG 的 CodeBuddy Agent materialization 条目。
+
+`TestAlignmentCodeBuddyAgentsSyncWithoutCLI` 用完整公开 Config/Dedicated/Skills/Agents 构造、可执行 canary 证明 SyncProfile 零 CLI；原 unsupported 红输出保留。`TestAlignmentCodeBuddyPublicMaterializedCatalogExecution` 由实际 fake 子进程先读取物化后的 Skill/Agent 文件，再重放正式 partial/full wrapper/result，公开 Event 与 Transcript 必须以真实 ID 连接到精确 canonical key 的 ProviderProtocol Started/Completed。该 fixture 证明 SDK 物化到解析的链路，不代表真实 CLI/model 采用。
+
+`TestAlignmentLiveCodeBuddyDedicatedToolsResumeAfterClose` 增补 R017：A 的真实 hosted tool callback 生成随机 nonce，保存健康正式 session/checkpoint；有界 Close 后，新 B 使用相同配置、store、Dedicated source、identity、key 与 WithTools，以 ResumeOnly 召回原 nonce。第二 prompt 和第二 callback 均不携带 nonce；host store 不保存 nonce。两轮正式 result.session_id、store ID/fingerprint、owned execution profile 和实际 provider JSONL 历史文件保持；B gateway URL/凭据环境名/凭据值轮换，A listener 已停止、旧 bearer 被 B 拒绝。测试只读记录真实 resolved request，不修改请求、不提供虚构 catalog/result；两次执行均经过公开 Agent/Thread 管线。
+
+`TestAlignmentLiveCodeBuddyCapabilityAndTodoResults` 保留原 MCP 完成、真实 task ID、TodoWrite 清空、terminal 断言，另明确物化并实际调用独立 runtime-name 的 Skill/SubAgent，要求精确 canonical key、ProviderProtocol、成功 Completed 与 tool/Transcript ID 对照；hosted echo 必须实际执行 callback。失败或缺少事实在启用双门后直接失败，不能以物化或自述替代执行。原 append/resume/HITL 测试全部保留。
+
+T21 固定原协议反例要求增量 tool start 的 Args=nil、两个真实 ArgsDelta 各一次、wrapper 不重新 start；正式 error 的未完成 capability 在 RunFinished 前 Interrupted 闭合，完整 error Raw/Transcript/partial 保持。同 ID、同 parent、同完整原 payload 的结果 wrapper 重放仅投影一次 typed ToolResult；完整 Raw 与 Transcript 两份仍保留，父字段/ID/payload 不同不折叠。该第三条红例与 T21 已直接核对，不是 G03/G04 中央去重差异。对应 owned 原帧回归与原红日志均保留。R017 双门用例编译成功与 env=0 skip 只证明门控，不计 live 通过；真实 Dedicated 冷续接、模型 Skill/SubAgent、native 平台验证仍在 B06 授权后执行。

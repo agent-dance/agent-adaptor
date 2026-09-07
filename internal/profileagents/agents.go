@@ -100,7 +100,7 @@ func layout(driverType, profileDir string) (string, string, error) {
 	switch driverType {
 	case "codex":
 		return filepath.Join(profileDir, "agents"), ".toml", nil
-	case "claude", "cursor":
+	case "claude", "cursor", "codebuddy":
 		return filepath.Join(profileDir, "agents"), ".md", nil
 	default:
 		return "", "", fmt.Errorf("profile agents are unsupported by driver %q", driverType)
@@ -139,6 +139,8 @@ func render(driverType string, spec driver.AgentSpec, name string) (string, erro
 		return renderMarkdown(spec, name, true), nil
 	case "cursor":
 		return renderMarkdown(spec, name, false), nil
+	case "codebuddy":
+		return renderCodeBuddy(spec, name)
 	default:
 		return "", fmt.Errorf("profile agents are unsupported by driver %q", driverType)
 	}
@@ -241,6 +243,8 @@ func unsupportedFields(driverType string, spec driver.AgentSpec) []string {
 		if len(spec.Hooks) > 0 {
 			warnings = append(warnings, "agent-local hooks are not mapped for Claude agents")
 		}
+	case "codebuddy":
+		warnings = append(warnings, codeBuddyUnsupportedFields(spec)...)
 	case "cursor":
 		if strings.TrimSpace(spec.Model) != "" ||
 			strings.TrimSpace(spec.ReasoningEffort) != "" ||

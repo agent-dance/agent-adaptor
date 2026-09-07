@@ -24,6 +24,12 @@ import (
 const codeBuddyPersistentHelperEnv = "GO_WANT_AGENT_ADAPTOR_CODEBUDDY_PERSISTENT_HELPER"
 
 func TestMain(m *testing.M) {
+	if marker := os.Getenv("ALIGNMENT_CODEBUDDY_PROFILE_CANARY"); marker != "" {
+		if err := os.WriteFile(marker, []byte("unexpected CLI access"), 0600); err != nil {
+			os.Exit(98)
+		}
+		os.Exit(99)
+	}
 	if os.Getenv(codeBuddyPersistentHelperEnv) == "1" {
 		os.Exit(runCodeBuddyPersistentHelper())
 	}

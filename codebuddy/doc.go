@@ -41,8 +41,21 @@
 // must agree exactly; unknown additive fields do not affect attribution.
 // Ambiguous or unknown names are not attributed. Tool results confirm
 // completion; unconfirmed calls close as interrupted or explicitly cancelled.
+// Incremental tool starts leave Args nil and retain each formal ArgsDelta.
+// Formal errors close pending invocation facts before the run terminal.
+// Identical result wrapper replays publish one typed ToolResult; original
+// Raw and Transcript retain both copies. Different parents/payloads stay distinct.
 // Batch JSON has no capability or todo observation support. No event proves
 // audit completeness or the absence of an unobserved call.
+//
+// Declared profile SubAgents materialize as agents/<runtime-name>.md using
+// CodeBuddy's YAML frontmatter and Markdown instructions. Core fields plus
+// model, effort, permissionMode, tools/disallowedTools, skills and named
+// mcpServers use the confirmed native loader format. Unmapped inline sandbox,
+// hooks and Native fields fail SyncProfile/Run explicitly; SourcePath retains
+// the existing native-file escape. Materialization alone is not execution
+// evidence: canonical Subagent and Skill facts still require formal tool use
+// and a successful matching result.
 //
 // CodeBuddy 2.137.1 TodoWrite confirms newTodos only after its official success
 // result. TaskCreate/TaskUpdate/TaskList prefer tool_result._meta.rawResponse's
