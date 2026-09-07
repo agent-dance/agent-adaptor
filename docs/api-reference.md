@@ -288,6 +288,10 @@ _, _ = thread.Run(ctx, "isolated", adaptor.WithSpawn())
 
 `WithSpawn()` is a dual-scope option: passed to `New` it makes every turn default to a single-use process; passed to `Run`/`Stream` it overrides only that turn. When configuration/fingerprint drift, native schema, or similar reasons force a temporary change of process shape, the Driver waits for the old writer to exit completely before starting the replacement, and only warms up after obtaining a valid new checkpoint. A disconnection after the prompt may already have been delivered is never replayed automatically.
 
+CodeBuddy completes the current turn’s admitted stderr callbacks before returning
+its Result. The returned Raw and Transcript remain stable through idle output and
+later reuse; a healthy turn does not wait for the resident process to exit.
+
 A Driver declares the capability through `Descriptor.Process.Persistent`. A Driver that declares true must implement `driver.ProcessLifecycleDriver` so that `Agent.Close` can reclaim all process groups within a bounded time.
 
 ## 6. Stream and Event

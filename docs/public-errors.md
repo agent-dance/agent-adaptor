@@ -95,6 +95,11 @@ when there is no more specific failure; caller cancellation/deadline and prior
 approval/provider failures keep priority over cleanup causes. Internal process
 termination is not evidence that the caller canceled.
 
+CodeBuddy completes already admitted stderr callbacks before publishing either
+a successful Result or a RunError partial Result. Cancellation and process exit
+retain their original causes while the parser audit is finalized; the completed
+Result is not subsequently changed by idle stderr or another resident turn.
+
 Usage is retained only from formal valid observations. Per-message cumulative
 increments are aggregated without replay double-counting; authoritative terminal
 zero remains observed zero. Absent/invalid counts do not invent non-nil zero

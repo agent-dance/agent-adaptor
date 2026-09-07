@@ -53,6 +53,9 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- Join admitted CodeBuddy resident stderr callbacks before finalizing a turn,
+  preventing parser/Transcript races and mutation of returned audit data. Preserve
+  cancellation and process-exit causes, healthy checkpoints and single-writer reuse.
 - Isolate published AG-UI Subagent activity snapshots and nested tool values
   from later translation and consumer edits; concurrent serialization no longer
   races with tracker updates, and retained snapshots preserve their original status.

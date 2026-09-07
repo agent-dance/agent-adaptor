@@ -101,6 +101,11 @@
         "producer": "T24",
         "path": "docs/alignment-tasks/2026-09-07/handoffs/T24/result.json",
         "version_source": "实际worker交付head及证据"
+      },
+      {
+        "producer": "T33",
+        "path": "docs/alignment-tasks/2026-09-07/handoffs/T33/result.json",
+        "version_source": "实际worker交付head及证据；R021补充任务"
       }
     ],
     "embedded_plan_sections": {}

@@ -374,6 +374,8 @@ R017 补齐真实冷续接与 Skill/Subagent 验证入口，禁用门不构成�
 
 G04 已在精确合流提交验收上述生产修复。B05 的 T20–T24 已交付独立生命周期/协议/policy、Driver 一致性与架构守卫、CI 和五语言文档/离线示例；R020 的独立 post-unlock 故障注入不能代替原生 Windows 证据。HTTP 翻译错误允许明确 failed Task 或可观察基础设施错误，测试不得将单一调度形状写成更强合同，也不得接受任意错误。G05 仍须在合流后的精确 SHA 通过完整测试、vet 与任务包校验才可冻结 implementation_head。T25–T30 平台/live 证据和 G06 发布就绪判定独立保持，不能以 fixture、交叉编译或 CI 配置关闭。
 
+R021：原生 Linux 验收曾发现 CodeBuddy 健康常驻轮次返回 Transcript 时，已登记 stderr callback 仍在追加 parser 数据。原 T08 负责人通过 B05 补充任务 T33 修复：原始字节与 callback 归属在同一交接锁下确定，卸下本轮 observer 后在锁外等待已登记 callback 完成，才 finalize 和构造 Response。不得等待健康常驻进程整体退出，不得将闲时或下一轮字节补写进已返回 Result；取消/非零退出仍保留原始 cause、部分审计、单 writer 和健康 checkpoint。W04-R06 最终实现归 T33，独立复验归 T25 与 T28；旧失败和所有 96 项保留，G05 与 B06 均须重新验收新 SHA。
+
 具体冻结设计、未支持边界、文件所有权和fixture见 `docs/alignment-tasks/2026-09-07/contracts/frozen.json`。合同冻结不代表代码已实现；后续同批godoc、合同测试、使用文档和CHANGELOG完成后才能关闭对应项。其他第14节既有保护继续有效。
 
 ## 15. 发布门禁

@@ -208,6 +208,13 @@ Internal process cleanup does not fabricate caller cancellation. Claude decision
 sink errors also stop and drain the resident writer without requiring the caller
 to cancel it, and a buffered terminal cannot make that failed writer reusable.
 
+CodeBuddy resident turns complete all stderr callbacks admitted to that turn
+before finalizing the parser and publishing Result. Raw-byte capture and callback
+ownership share the same handoff boundary. Already observed diagnostics remain in
+Raw and Transcript; later idle or next-turn bytes cannot mutate a returned Result.
+A healthy turn does not wait for the resident process itself to exit, and this
+boundary does not infer ownership of future bytes from another pipe.
+
 Without authoritative terminal usage, observed formal messages contribute their
 cumulative increments once, with repeated snapshots deduplicated. Valid terminal
 zero is authoritative; absent or entirely invalid counts do not invent observed
