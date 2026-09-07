@@ -22,10 +22,14 @@ type alignmentPartialWriter struct {
 	lp       *liveProcess
 	cause    error
 	upstream io.WriteCloser
+	onWrite  func()
 }
 
 func (w alignmentPartialWriter) Write(b []byte) (int, error) {
 	_, _ = (persistentStderr{lp: w.lp}).Write([]byte("observed diagnostic without newline"))
+	if w.onWrite != nil {
+		w.onWrite()
+	}
 	if w.upstream != nil {
 		n, err := w.upstream.Write(b[:1])
 		return n, errors.Join(err, w.cause)
@@ -86,6 +90,25 @@ func TestAlignmentCodeBuddyPartialMultipleMessageUsage(t *testing.T) {
 	}
 }
 
+func TestAlignmentCodeBuddyPartialShortWriteObservesHostCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancelCause(context.Background())
+	defer cancel(nil)
+	hostCause := errors.New("host canceled during prompt write")
+	writeCause := errors.New("prompt write failed")
+	lp := &liveProcess{initialized: true, stderr: &lockedBuffer{}, stdout: bufio.NewReader(strings.NewReader("buffered diagnostic\n"))}
+	lp.stdin = alignmentPartialWriter{lp: lp, cause: writeCause, onWrite: func() { cancel(hostCause) }}
+	p := newParser(nil)
+	p.control = &controlState{}
+	raw, sent, err := lp.turn(ctx, "prompt", nil, p)
+	if !sent || !errors.Is(err, writeCause) || !errors.Is(err, context.Canceled) || !errors.Is(err, hostCause) {
+		t.Fatalf("write/context causes lost: sent=%v err=%v", sent, err)
+	}
+	resp := buildPersistentCodeBuddyResponse(driver.Request{}, p, raw, runPrep{}, err)
+	if resp.Failure != nil || resp.Checkpoint != nil || raw.Stdout != "buffered diagnostic\n" {
+		t.Fatalf("host cancellation lost partial output or formed checkpoint: %#v", resp)
+	}
+}
+
 func TestAlignmentCodeBuddyPartialShortWriteWaitsWithoutReplay(t *testing.T) {
 	store := memory.NewStore()
 	fx := newPersistentCodeBuddyFixtureWithOptions(t, nil, adaptor.WithThreadStore(store))
@@ -102,6 +125,9 @@ func TestAlignmentCodeBuddyPartialShortWriteWaitsWithoutReplay(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	result, err := fx.thread.Run(ctx, "partially delivered")
+	if ctx.Err() != nil {
+		t.Fatalf("fixture host context ended: %v", ctx.Err())
+	}
 	var runErr *adaptor.RunError
 	if result != nil || !errors.As(err, &runErr) || !errors.Is(err, cause) || runErr.Reason != adaptor.ReasonInfrastructure {
 		t.Fatalf("partial write outcome = %#v, %v", result, err)

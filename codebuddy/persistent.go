@@ -621,6 +621,12 @@ func (lp *liveProcess) turn(ctx context.Context, prompt string, sink driver.Even
 		}
 	}
 	p.finalize()
+	// Write can fail before the read select, and a completed read can race
+	// host cancellation. Observe the actual run context on this common exit,
+	// independently of the private process context used for lifecycle cleanup.
+	if ctx.Err() != nil {
+		rr.err = errors.Join(rr.err, ctx.Err(), context.Cause(ctx))
+	}
 	raw := driver.RawStreams{Stdout: rr.stdout, Stderr: lp.stderr.since(stderrStart)}
 	if !rr.result {
 		if rr.err == nil {
