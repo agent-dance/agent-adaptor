@@ -286,8 +286,10 @@ type ExposurePolicy struct {
 //
 // All enabled fields are sanitized before they leave the bridge.
 type DiagnosticsPolicy struct {
-	// IncludeMetadata exposes Result metadata, RunError details, and provider
-	// source coordinates on streamed events.
+	// IncludeMetadata exposes Result metadata, known-reason RunError details,
+	// and provider source coordinates on streamed events. Failure details stay
+	// under metadata and cannot override the safe code or typed limit_ms.
+	// This does not expose error bodies as status text.
 	IncludeMetadata bool
 	// IncludeUsage exposes observed token usage. Unobserved usage remains
 	// omitted; an observed zero value is preserved.
