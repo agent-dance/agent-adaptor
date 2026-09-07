@@ -28,7 +28,8 @@
     "W09-R13",
     "W11-R09",
     "W12-R11",
-    "W13-R10"
+    "W13-R10",
+    "W04-R06"
   ],
   "depends_on": [
     "G05"
@@ -156,7 +157,8 @@
     "运行全量 test/vet/race、Thread/lease/fork/checkpoint/Event/Approval/A2A 重复场景及 S1-S9、四 adaptertest。",
     "执行当前 CI 9 个 fuzz target 各 30s，附 seed 失败记录；examples/fake driver与live关闭状态可核查。",
     "若无 Linux runner 或有失败，状态 blocked/needs_rework，不以本地 macOS 测试代替。",
-    "独立核对G05冻结源码的公共符号、capability/todo未观察边界与多语言使用文档一致，给T24文档要求提供独立验收证据。"
+    "独立核对G05冻结源码的公共符号、capability/todo未观察边界与多语言使用文档一致，给T24文档要求提供独立验收证据。",
+    "R021：独立验证 W04-R06/T33 的 CodeBuddy stderr 回调与 Result 交接；保留旧43e6ba3 Linux原V03红日志，在replacement G05同一冻结SHA从头执行全部15原命令与3补充。原e2e lifecycle fixture、并发形态和断言不得修改；新callback/handoff回归也须实际执行。"
   ],
   "acceptance_criteria": [
     {
@@ -403,7 +405,8 @@
       "W09-R13",
       "W11-R09",
       "W12-R11",
-      "W13-R10"
+      "W13-R10",
+      "W04-R06"
     ],
     "commit_rule": "只提交本任务实施/局部godoc/测试与契约文件。源码commit完成并测试后生成result，记录实际head；result/evidence由派发器收集，不塞回所引用commit造成SHA自引用。"
   },

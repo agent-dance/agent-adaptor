@@ -1,25 +1,27 @@
 {
   "schema_version": "1.0",
-  "id": "T08",
-  "title": "修复 CodeBuddy 中断部分结果并保留重建合同",
-  "batch_id": "B02",
+  "id": "T33",
+  "title": "修复 CodeBuddy 常驻轮次 stderr 回调与 Result 交接竞争",
+  "batch_id": "B05",
   "phase": "parallel",
   "kind": "implementation",
   "priority": "P1",
   "status": "planned",
-  "objective": "修复 CodeBuddy 中断部分结果并保留重建合同。完成本任务范围并交付可核验结果，不代替其他任务或提前宣称整个 W 项完成。",
+  "objective": "由原 T08 部分结果负责人修复 T25 原生 Linux race 反例；已接收 stderr callback 在本轮 finalize/Response 之前完成，已返回结果不再被旧 producer 修改，保持完整审计及健康 checkpoint 边界。",
   "work_items": [
     "W04"
   ],
-  "requirements_owned": [],
+  "requirements_owned": [
+    "W04-R06"
+  ],
   "requirements_verified": [],
   "depends_on": [
-    "G01",
+    "G04",
     "C02"
   ],
   "base": {
     "mode": "previous_batch_integrated_head",
-    "predecessor_gate": "G01",
+    "predecessor_gate": "G04",
     "required_ancestor": "919f140f64f89c80933802840c8878681a85a4d9",
     "verification_head_gate": null,
     "bootstrap_required": true
@@ -66,8 +68,10 @@
   },
   "ownership": {
     "allow": [
-      "codebuddy/**",
-      "docs/alignment-tasks/2026-09-07/handoffs/T08/**"
+      "codebuddy/persistent.go",
+      "codebuddy/alignment_persistent_handoff_test.go",
+      "codebuddy/doc.go",
+      "docs/alignment-tasks/2026-09-07/handoffs/T33/**"
     ],
     "scope_match": "仅精确仓库相对文件或目录/**；任何未列路径不可写。",
     "exclusive_resources": [],
@@ -77,7 +81,7 @@
   "execution": {
     "environment": "local",
     "isolation": "separate_git_worktree",
-    "branch": "codex/alignment-t08",
+    "branch": "codex/alignment-t33",
     "same_batch_peer_artifacts": "禁止读取/依赖同批worker尚未验收的代码或输出；只消费前批已合入合同，公共Go符号不得由同批peer供应。",
     "source_write_allowed": true,
     "paid_live_authorization_required": false,
@@ -101,26 +105,32 @@
     "普通验证显式关闭付费门，不访问真实 provider；live 任务须同时满足授权记录、build tag 和环境变量门。所有任务都不创建 tag、不发布 release、不自动推送/发送外部消息。"
   ],
   "implementation_steps": [
-    "让常驻非 fallback 错误保留 parser 正式结果与完整 Raw，再返回原 error。",
-    "复核已有 partial-message 重建、terminal 文本权威、空 final text、bounded Summary，不能从 internal 倒退成拼接全部 assistant。",
-    "测试交付前 fallback/交付后不重放、取消/非零/缺失或畸形终局，checkpoint 仍按成功合同产生。",
-    "R021：原 T08 canonical22 实施及验收完整归档。W04-R06 最终实现责任转交同一原负责人执行的 B05 T33，关闭后续 Linux stderr/Result 交接 race；历史 T08 不据此宣称新反例已修复。"
+    "从已验收 G04 b2035bc793369fb8fefb9de229ff1dbd2b748853 独立实现。T25 在旧 G05 43e6ba3 的原 Linux full race 发现 healthy Thread.Run 中 stderr onChunk 向 p.transcript 追加，与 buildPersistentCodeBuddyResponse 返回同一 slice 并发。完整旧日志由协调者提供；不改 T20/T25 fixture、断言、命令或消费者并发形态。",
+    "仅在 CodeBuddy 常驻 transport 建立每轮 callback 登记与收尾屏障：先在同一同步边界内登记/关闭本轮入口并确定 Raw 范围，等待此前已接收 callback 完成，再 finalize 和现有 Response 构建。不得在可能阻塞的 sink/parser 调用期间持有阻塞 Close/新轮的全局锁；取消必须有界。健康常驻不等待整个进程退出。",
+    "不能仅给单次字段读取加锁而继续丢失已接收 stderr、让已发布 Transcript/Raw/Terminal/Usage 后续改变，或改变 stderr 正式解析职责。保留失败路径已有进程 Wait/drain、唯一 writer、交付前一次 fallback、交付后不重放、部分 Result/cause、原健康 checkpoint 不被失败污染。",
+    "新增 TestAlignmentCodeBuddyPersistentHandoff 前缀的确定性回归：callback 已登记而 parser 尚未消费时 terminal 到达，旧实现必须提前返回或丢审计，新实现释放后保留完整逐字段证据；覆盖 newline/无newline、Run/Stream、连续健康复用结果不变、取消/失败与单writer。用有界真实进程和明确屏障，不能靠 sleep 或浅指针比较。",
+    "只交付精确 owned 文件与局部 godoc/文档片段，先提交再执行全部原 CodeBuddy 包/Partial race 命令及新增 handoff race20/vet。T25 在新 G05 冻结后重跑原 Linux 全部15命令和3补充，独立关闭 W04-R06；旧 T08/T20 验收及 T25 红日志完整保留。"
   ],
   "acceptance_criteria": [
     {
-      "id": "T08-AC01",
-      "requirement": "错误路径 response 有完整可用部分输出，RunError 可经 T05 取出。",
+      "id": "T33-AC01",
+      "requirement": "旧实现的确定性 callback/terminal 交接反例失败；新实现先完成已登记 callback 再发布完整 Result，真实并发 race20 无竞争。",
       "required": true
     },
     {
-      "id": "T08-AC02",
-      "requirement": "已覆盖 CodeBuddy 重建/常驻/WithSpawn/单 writer 与 Summary 语义不退化。",
+      "id": "T33-AC02",
+      "requirement": "Run/Stream、newline/partial stderr、连续健康复用、取消/失败后审计保留、checkpoint安全、单writer与不重放均有有界回归；已返回结果逐字段不变。",
+      "required": true
+    },
+    {
+      "id": "T33-AC03",
+      "requirement": "无公共API/依赖/golden/协议语义变更，最终SHA全部指定命令通过；局部godoc与中央片段说明观察边界，原Linux红日志保留，独立T25新SHA验收不得省略。",
       "required": true
     }
   ],
   "validation": [
     {
-      "id": "T08-V01",
+      "id": "T33-V01",
       "command": "go test -count=1 ./codebuddy",
       "cwd": "repository_root",
       "environment": {
@@ -134,7 +144,7 @@
       "evidence": "记录实际命令、head SHA、OS/Go/CLI版本、exit code和安全日志；失败/skip/零测试不算通过。 非零按本命令实际测试/子测试计数，fuzz按实际种子/执行样本计数；必需场景skip不得通过。普通任务显式禁用的live探针或合同确认不适用的probe可skip，须列明且不能拿它们充当验收证据；可添加-json/-v采集日志，不能缩小原命令选择范围。"
     },
     {
-      "id": "T08-V02",
+      "id": "T33-V02",
       "command": "go test -race -count=5 ./codebuddy -run TestAlignmentCodeBuddyPartial",
       "cwd": "repository_root",
       "environment": {
@@ -146,10 +156,38 @@
       "execution_condition": "assigned_environment_available",
       "must_execute_nonzero_tests": true,
       "evidence": "记录实际命令、head SHA、OS/Go/CLI版本、exit code和安全日志；失败/skip/零测试不算通过。 非零按本命令实际测试/子测试计数，fuzz按实际种子/执行样本计数；必需场景skip不得通过。普通任务显式禁用的live探针或合同确认不适用的probe可skip，须列明且不能拿它们充当验收证据；可添加-json/-v采集日志，不能缩小原命令选择范围。"
+    },
+    {
+      "id": "T33-V03",
+      "command": "go test -race -count=20 ./codebuddy -run TestAlignmentCodeBuddyPersistentHandoff",
+      "cwd": "repository_root",
+      "environment": {
+        "AGENT_ADAPTOR_LIVE_CONFORMANCE": "0",
+        "AGENT_ADAPTOR_E2E": "0",
+        "AGENT_ADAPTOR_UPDATE_API_GOLDEN": "0"
+      },
+      "required": true,
+      "execution_condition": "assigned_environment_available",
+      "must_execute_nonzero_tests": true,
+      "evidence": "记录实际命令、head SHA、OS/Go/CLI版本、exit code和安全日志；失败/skip/零测试不算通过。 非零按本命令实际测试/子测试计数，fuzz按实际种子/执行样本计数；必需场景skip不得通过。普通任务显式禁用的live探针或合同确认不适用的probe可skip，须列明且不能拿它们充当验收证据；可添加-json/-v采集日志，不能缩小原命令选择范围。"
+    },
+    {
+      "id": "T33-V04",
+      "command": "go vet ./codebuddy",
+      "cwd": "repository_root",
+      "environment": {
+        "AGENT_ADAPTOR_LIVE_CONFORMANCE": "0",
+        "AGENT_ADAPTOR_E2E": "0",
+        "AGENT_ADAPTOR_UPDATE_API_GOLDEN": "0"
+      },
+      "required": true,
+      "execution_condition": "assigned_environment_available",
+      "must_execute_nonzero_tests": false,
+      "evidence": "记录实际命令、head SHA、OS/Go/CLI版本、exit code和安全日志；失败/skip/零测试不算通过。 非零按本命令实际测试/子测试计数，fuzz按实际种子/执行样本计数；必需场景skip不得通过。普通任务显式禁用的live探针或合同确认不适用的probe可skip，须列明且不能拿它们充当验收证据；可添加-json/-v采集日志，不能缩小原命令选择范围。"
     }
   ],
   "documentation": {
-    "fragment": "docs/alignment-tasks/2026-09-07/handoffs/T08/documentation.md",
+    "fragment": "docs/alignment-tasks/2026-09-07/handoffs/T33/documentation.md",
     "contents": [
       "公开语义前后变化和可复现例子",
       "应合并到的godoc/使用文档/CHANGELOG具体段落",
@@ -157,15 +195,17 @@
       "不采用的internal行为和原因",
       "验证实跑/未跑的平台与live边界"
     ],
-    "central_owner": "G02",
+    "central_owner": "G05",
     "must_integrate_before_batch_acceptance": true
   },
   "handoff": {
-    "result_path": "docs/alignment-tasks/2026-09-07/handoffs/T08/result.json",
+    "result_path": "docs/alignment-tasks/2026-09-07/handoffs/T33/result.json",
     "schema_path": "docs/alignment-tasks/2026-09-07/result.schema.json",
-    "evidence_dir": "docs/alignment-tasks/2026-09-07/handoffs/T08/evidence",
-    "failure_report": "docs/alignment-tasks/2026-09-07/handoffs/T08/findings.md",
-    "requirement_ids": [],
+    "evidence_dir": "docs/alignment-tasks/2026-09-07/handoffs/T33/evidence",
+    "failure_report": "docs/alignment-tasks/2026-09-07/handoffs/T33/findings.md",
+    "requirement_ids": [
+      "W04-R06"
+    ],
     "commit_rule": "只提交本任务实施/局部godoc/测试与契约文件。源码commit完成并测试后生成result，记录实际head；result/evidence由派发器收集，不塞回所引用commit造成SHA自引用。"
   },
   "completion": {

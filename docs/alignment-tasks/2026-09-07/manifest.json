@@ -162,23 +162,25 @@
       "id": "B05",
       "directory": "05-cross-layer-qa",
       "title": "跨层验收与文档收口",
-      "purpose": "生产功能已合流；QA 独立重建场景，conformance/CI 与 examples/docs 独立负责。",
+      "purpose": "生产功能已合流；QA 独立重建场景，conformance/CI 与 examples/docs 独立负责。 R021 增补原部分结果 owner 的独立 CodeBuddy 交接修复，由后批 Linux 验证关闭。",
       "depends_on_gate": "G04",
       "parallel_tasks": [
         "T20",
         "T21",
         "T22",
         "T23",
-        "T24"
+        "T24",
+        "T33"
       ],
-      "max_parallelism": 5,
+      "max_parallelism": 6,
       "gate_task": "G05",
       "integration_order": [
         "T20",
         "T21",
         "T22",
         "T23",
-        "T24"
+        "T24",
+        "T33"
       ],
       "same_batch_implementation_dependencies": false,
       "next_batch_requires_gate_acceptance": true
@@ -315,7 +317,7 @@
       "batch_id": "B02",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/02-event-foundation/t08/task.json",
-      "sha256": "88beefef6e311802435a47e093b4f794e2f90d49a409bc65cb0c5f8da2690459"
+      "sha256": "6861bcc2d6f6175057cb456a3238a076c8225fb470bdcc830bfa2e31fdf3ff7b"
     },
     {
       "id": "T09",
@@ -420,7 +422,7 @@
       "batch_id": "B05",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/05-cross-layer-qa/t20/task.json",
-      "sha256": "eb702a4ac61713290182718c1f11a21854b9fbdd69004c8f3c8282bc2b74dc06"
+      "sha256": "e79092db1daf6bb7a7a16fe44861b8a25b3b38eb131c88cfdbf61c33f9a347f9"
     },
     {
       "id": "T21",
@@ -455,14 +457,14 @@
       "batch_id": "B05",
       "phase": "gate",
       "path": "docs/alignment-tasks/2026-09-07/batches/05-cross-layer-qa/gate/task.json",
-      "sha256": "48332baf1b6e320bdf25d4c2aad1e1557645b6cc4db66c7e282a5bcdc5e66023"
+      "sha256": "4ad8862aa3e3f570a3f4f3eeee49cad94c3d0e12f47d74c7f14b7f987b7dee97"
     },
     {
       "id": "T25",
       "batch_id": "B06",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/06-platform-live/t25/task.json",
-      "sha256": "e5e55b73b4517bf10313b905677cdcb468df8db1ebd60f82bfc140102b31411a"
+      "sha256": "50f05a95a17cfd835a8c1a9abe0aaf94128e3d3069ce8cdd051627365013a4ea"
     },
     {
       "id": "T26",
@@ -512,6 +514,13 @@
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/04-provider-adoption/t32/task.json",
       "sha256": "dbc8656c090dcd12480959e741583385c70385724645735585e17f43aeab149c"
+    },
+    {
+      "id": "T33",
+      "batch_id": "B05",
+      "phase": "parallel",
+      "path": "docs/alignment-tasks/2026-09-07/batches/05-cross-layer-qa/t33/task.json",
+      "sha256": "ff358d46ba36c0cf920e1ea94f658b76957d0bdda2b3ce932610b0c0bb8a6448"
     }
   ],
   "summary": {
@@ -519,9 +528,9 @@
     "history_commit_count": 45,
     "requirement_count": 96,
     "batch_count": 7,
-    "parallel_task_count": 36,
+    "parallel_task_count": 37,
     "gate_task_count": 7,
-    "total_task_count": 43,
+    "total_task_count": 44,
     "peak_parallelism": 6
   },
   "verification": {
@@ -530,7 +539,7 @@
     "every_requirement_has_one_owner_and_independent_verifier": true,
     "no_same_batch_worker_dependency": true
   },
-  "revision": 22,
+  "revision": 23,
   "amendments": [
     "docs/alignment-tasks/2026-09-07/amendments/R001.md",
     "docs/alignment-tasks/2026-09-07/amendments/R002.md",
@@ -551,6 +560,7 @@
     "docs/alignment-tasks/2026-09-07/amendments/R017.md",
     "docs/alignment-tasks/2026-09-07/amendments/R018.md",
     "docs/alignment-tasks/2026-09-07/amendments/R019.md",
-    "docs/alignment-tasks/2026-09-07/amendments/R020.md"
+    "docs/alignment-tasks/2026-09-07/amendments/R020.md",
+    "docs/alignment-tasks/2026-09-07/amendments/R021.md"
   ]
 }

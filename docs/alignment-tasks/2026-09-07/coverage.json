@@ -332,9 +332,9 @@
       "id": "W04-R06",
       "work_item": "W04",
       "description": "CodeBuddy 常驻错误保留 Response，既有partial重建与terminal/Summary合同不倒退",
-      "implementation_owner": "T08",
+      "implementation_owner": "T33",
       "verification_tasks": [
-        "T20",
+        "T25",
         "T28"
       ],
       "closure_gate": "G06",
@@ -1334,8 +1334,8 @@
       "implementation_tasks": [
         "T05",
         "T07",
-        "T08",
-        "T16"
+        "T16",
+        "T33"
       ],
       "independent_verification_tasks": [
         "T20",

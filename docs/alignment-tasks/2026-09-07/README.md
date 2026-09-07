@@ -1,6 +1,6 @@
 # Internal 对齐任务派发包
 
-将[逐提交对齐方案](../../internal-history-alignment-plan-2026-09-07.md)拆为 **7 个批次、36 个并行工作任务、7 个串行验收任务，共 43 份 task.json**。覆盖原方案全部 **13 个 W 工作项、45 个历史提交和 96 条原子验收项**。单批最多并行 6 个任务。
+将[逐提交对齐方案](../../internal-history-alignment-plan-2026-09-07.md)拆为 **7 个批次、37 个并行工作任务、7 个串行验收任务，共 44 份 task.json**。覆盖原方案全部 **13 个 W 工作项、45 个历史提交和 96 条原子验收项**。单批最多并行 6 个任务。
 
 本包定义计划与验收要求，task.json 的 planned 状态不是实时执行状态。实际派发、提交、返修与验收证据由协调者在 `docs/alignment-execution/2026-09-07/` 单独保存；不能将计划或合同冻结当成已通过的功能或发布证据。
 
@@ -29,7 +29,7 @@ contracts/ 保存已审阅合同及版本化修订，handoffs/ 的源码提交�
 | B02 Event 基础 | T06 Event/observer/中立状态机；T07 Claude 部分结果与 schema；T08 CodeBuddy 部分结果；T09 实时 artifact Parts | 4 | G02 | 后续消费者可使用的真实接口及错误/制品保真基础。 |
 | B03 Core 与协议 | T10 append prompt/主动预算 core；T11 A2A 新事件；T12 其余桥与 recorder；T13 capability recorder | 4 | G03 | Driver 与 delegation 接入所需的 core 和 wire 合同。 |
 | B04 Provider 接入 | T14 Claude；T15 CodeBuddy；T16 Codex；T17 Cursor；T18 delegation；T19 A2A 预算错误映射；T32 原 bridge owner 的 AG-UI 快照修复 | 最多 6 | G04 | 13 个 W 项完整实现的集成候选。 |
-| B05 跨层验收 | T20 生命周期；T21 协议与嵌套 A2A；T22 策略/错误组合；T23 conformance/CI；T24 文档/示例 | 5 | G05 | 已通过实现验收的冻结 SHA，供全部最终平台/live 检查共用。 |
+| B05 跨层验收 | T20 生命周期；T21 协议与嵌套 A2A；T22 策略/错误组合；T23 conformance/CI；T24 文档/示例；T33 原部分结果 owner 的 CodeBuddy 交接修复 | 6 | G05 | 已通过实现验收的冻结 SHA，供全部最终平台/live 检查共用。 |
 | B06 平台与 live | T25 Linux/race/fuzz；T26 原生 Windows；T27 Claude live；T28 CodeBuddy live；T29 Codex live；T30 Cursor live | 6 | G06 | 同一 SHA 上的平台、真实协议与最终验收证据。 |
 
 B00 → G00 → B01 → G01 → B02 → G02 → B03 → G03 → B04 → G04 → B05 → G05 → B06 → G06。
@@ -124,3 +124,5 @@ python3 docs/alignment-tasks/2026-09-07/validate.py \
 [R019](amendments/R019.md)：原 T12 bridge 负责人以补充 T32 修复实际 AG-UI 已发布快照共享状态/race；W05-R05、W09-R11 最终责任显式转交，历史验收保留，G04 增加该独立任务并保持最多六并发。
 
 [R020](amendments/R020.md)：T20 利用既有 private post-unlock seam 增加独立 close 故障验收，精确新增一测试文件，不改生产与公共API。
+
+[R021](amendments/R021.md)：原 T08 负责人以 B05 T33 修复原生 Linux 的 CodeBuddy stderr/Result race；W04-R06 最终实施与后批独立验证显式改派，保留旧源码/fixture/证据，G05 重新冻结后完整重验 B06。
