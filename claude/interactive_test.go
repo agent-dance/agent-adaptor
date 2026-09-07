@@ -78,11 +78,11 @@ func TestInteractiveDecisionErrorAbortsDriverUnchanged(t *testing.T) {
 	sink := newFakeInteractiveSink(func(agentadaptor.DecisionRequest) (agentadaptor.DecisionResponse, error) {
 		return agentadaptor.DecisionResponse{}, wantErr
 	})
-	_, err := (adapter{}).Run(context.Background(), agentadaptor.Request{
+	response, err := (adapter{}).Run(context.Background(), agentadaptor.Request{
 		RunID:     "run-decision-abort",
 		Streaming: true,
 		Prompt:    "run pwd",
-		Config:    Config{CommonConfig: CommonConfig{Command: command, CWD: home}},
+		Config:    Config{CommonConfig: CommonConfig{Command: command, CWD: home, Env: []agentadaptor.EnvBinding{{Name: "CLAUDE_CONFIG_DIR", Value: home}, {Name: "HOME", Value: home}}}},
 		Workspace: agentadaptor.WorkspaceLease{ID: "workspace", CWD: home},
 		Policy: agentadaptor.RunPolicy{HumanDecision: agentadaptor.HumanDecisionPolicy{
 			Permission: agentadaptor.HumanDecisionAsk,
@@ -90,6 +90,9 @@ func TestInteractiveDecisionErrorAbortsDriverUnchanged(t *testing.T) {
 	}, sink)
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("Run error = %v, want original RequestDecision error %v", err, wantErr)
+	}
+	if response.RawStreams == nil || response.RawStreams.Terminal == nil || response.Output != "must not override approval error" || len(response.Transcript) == 0 || response.Checkpoint != nil {
+		t.Fatalf("decision error cleared/validated the formal partial response: %#v", response)
 	}
 	assertClaudeStreamTerminal(t, sink.events, agentadaptor.StreamRunError)
 }

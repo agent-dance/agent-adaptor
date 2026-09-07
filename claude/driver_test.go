@@ -447,6 +447,8 @@ func TestParseClaudeResultStructuredOutput(t *testing.T) {
 	}
 }
 
+// Zero policy uses the precise matrix: inherited Permission Ask excludes
+// native schema, so the fixture supplies JSON final text for prompt validation.
 func TestClaudeStreamingStructuredOutputEndToEnd(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", "")
 	home := t.TempDir()
@@ -464,9 +466,9 @@ printf '%s\n' '{"type":"stream_event","session_id":"sess-structured","event":{"t
 printf '%s\n' '{"type":"stream_event","session_id":"sess-structured","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"done"}}}'
 printf '%s\n' '{"type":"stream_event","session_id":"sess-structured","event":{"type":"content_block_stop","index":0}}'
 printf '%s\n' '{"type":"assistant","session_id":"sess-structured","message":{"model":"claude-fixture","content":[{"type":"text","text":"done"}]}}'
-printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"session_id":"sess-structured","structured_output":{"project_name":"agent-adaptor"},"result":"done"}'
+printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"session_id":"sess-structured","structured_output":{"project_name":"agent-adaptor"},"result":"{\"project_name\":\"agent-adaptor\"}"}'
 `,
-		"@echo off\r\nmore > nul\r\necho {\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"sess-structured\",\"model\":\"claude-fixture\"}\r\necho {\"type\":\"stream_event\",\"session_id\":\"sess-structured\",\"event\":{\"type\":\"message_start\",\"message\":{\"id\":\"msg-1\"}}}\r\necho {\"type\":\"stream_event\",\"session_id\":\"sess-structured\",\"event\":{\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\"}}}\r\necho {\"type\":\"stream_event\",\"session_id\":\"sess-structured\",\"event\":{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"done\"}}}\r\necho {\"type\":\"stream_event\",\"session_id\":\"sess-structured\",\"event\":{\"type\":\"content_block_stop\",\"index\":0}}\r\necho {\"type\":\"assistant\",\"session_id\":\"sess-structured\",\"message\":{\"model\":\"claude-fixture\",\"content\":[{\"type\":\"text\",\"text\":\"done\"}]}}\r\necho {\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"session_id\":\"sess-structured\",\"structured_output\":{\"project_name\":\"agent-adaptor\"},\"result\":\"done\"}\r\n",
+		"@echo off\r\nmore > nul\r\necho {\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"sess-structured\",\"model\":\"claude-fixture\"}\r\necho {\"type\":\"stream_event\",\"session_id\":\"sess-structured\",\"event\":{\"type\":\"message_start\",\"message\":{\"id\":\"msg-1\"}}}\r\necho {\"type\":\"stream_event\",\"session_id\":\"sess-structured\",\"event\":{\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\"}}}\r\necho {\"type\":\"stream_event\",\"session_id\":\"sess-structured\",\"event\":{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"done\"}}}\r\necho {\"type\":\"stream_event\",\"session_id\":\"sess-structured\",\"event\":{\"type\":\"content_block_stop\",\"index\":0}}\r\necho {\"type\":\"assistant\",\"session_id\":\"sess-structured\",\"message\":{\"model\":\"claude-fixture\",\"content\":[{\"type\":\"text\",\"text\":\"done\"}]}}\r\necho {\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"session_id\":\"sess-structured\",\"structured_output\":{\"project_name\":\"agent-adaptor\"},\"result\":\"{\\\"project_name\\\":\\\"agent-adaptor\\\"}\"}\r\n",
 	)
 	agent := adaptor.New(Driver(Config{
 		CommonConfig: CommonConfig{
@@ -496,7 +498,7 @@ printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"session_id
 	if err := result.Decode(&structured); err != nil || structured["project_name"] != "agent-adaptor" {
 		t.Fatalf("Decode = (%#v, %v), want project_name=agent-adaptor", structured, err)
 	}
-	if result.Text != "done" || !strings.Contains(result.Raw().Stdout, `"structured_output"`) {
+	if result.Text != `{"project_name":"agent-adaptor"}` || !strings.Contains(result.Raw().Stdout, `"structured_output"`) {
 		t.Fatalf("result = %#v", result)
 	}
 	seenText := false
@@ -545,7 +547,7 @@ func TestClaudeNativeStructuredOutputValidationPrecedesCheckpoint(t *testing.T) 
 		RunID:                  "run-invalid-structured",
 		Streaming:              true,
 		Prompt:                 "extract project metadata",
-		Config:                 Config{CommonConfig: CommonConfig{Command: command, CWD: home}},
+		Config:                 Config{CommonConfig: CommonConfig{Command: command, CWD: home, Env: []agentadaptor.EnvBinding{{Name: "CLAUDE_CONFIG_DIR", Value: home}, {Name: "HOME", Value: home}}}},
 		Workspace:              agentadaptor.WorkspaceLease{ID: "workspace", CWD: home},
 		StructuredOutputSource: agentadaptor.StructuredOutputSourceNative,
 		OutputSchema: &agentadaptor.OutputSchema{
@@ -607,7 +609,7 @@ func TestClaudeDirectStreamTerminalMatchesFrozenProtocolOutcome(t *testing.T) {
 				RunID:     "run-frozen-outcome",
 				Streaming: true,
 				Prompt:    "test",
-				Config:    Config{CommonConfig: CommonConfig{Command: command, CWD: home}},
+				Config:    Config{CommonConfig: CommonConfig{Command: command, CWD: home, Env: []agentadaptor.EnvBinding{{Name: "CLAUDE_CONFIG_DIR", Value: home}, {Name: "HOME", Value: home}}}},
 				Workspace: agentadaptor.WorkspaceLease{ID: "workspace", CWD: home},
 			}, sink)
 			if err != nil {

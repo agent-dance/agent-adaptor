@@ -11,6 +11,24 @@
 // Configuration validation and CLI availability checks occur when the agent
 // runs or is inspected.
 //
+// Native schema supports Question/PlanReview Ask over bidirectional stream-json.
+// Effective Permission Ask (including an unset Permission) selects prompt
+// validation through core's per-mechanism capability matrix. A zero raw policy
+// retains observational transport; the driver never changes it to auto-approve
+// Permission. Native schema Thread turns use a temporary process after stopping
+// any resident writer; WithSpawn suppresses subsequent resident prewarming.
+//
+// Errors preserve the available formal protocol output and original cause for
+// RunError.Result. A decision-sink error stops a resident writer even when the
+// caller context remains active; available output is drained before returning.
+// Short stdin writes use the same drain/finalize path. Observed process exit
+// errors remain inspectable without treating private cleanup as caller cancel.
+// Usage sums distinct formal messages and deduplicates their cumulative
+// reports; a terminal usage report, including zero, remains authoritative.
+// Usage is observed only when a formal counter is a nonnegative integer;
+// empty, unknown, fractional, negative or out-of-range counters do not imply zero.
+// Incomplete or failed runs cannot produce a healthy checkpoint.
+//
 // In bidirectional one-shot runs, a formal result or a terminal root assistant
 // message closes host input exactly once, allowing the CLI to finish even if
 // it omits message_stop. Tool-use and nested message stops keep input available.

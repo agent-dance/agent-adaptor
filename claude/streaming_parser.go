@@ -26,21 +26,31 @@ type streamingState struct {
 	runStarted      bool
 	finishedEmitted bool
 	streamUsage     *driver.Usage
+	messageUsage    map[claudeUsageKey]*driver.Usage
+	activeUsage     map[string]claudeUsageKey
+	anonymousUsage  uint64
 	stopReason      string
 	terminalPayload map[string]any
 }
 
+type claudeUsageKey struct {
+	id        string
+	anonymous uint64
+}
+
 func newStreamingState(sink driver.EventSink, runID string, p *claudeParser) *streamingState {
 	return &streamingState{
-		sink:        sink,
-		runID:       runID,
-		parser:      p,
-		textStarted: make(map[int]bool),
-		blockKind:   make(map[int]string),
-		toolCallID:  make(map[int]string),
-		toolName:    make(map[int]string),
-		thinkingID:  make(map[int]string),
-		signatures:  make(map[int]string),
+		sink:         sink,
+		runID:        runID,
+		parser:       p,
+		messageUsage: make(map[claudeUsageKey]*driver.Usage),
+		activeUsage:  make(map[string]claudeUsageKey),
+		textStarted:  make(map[int]bool),
+		blockKind:    make(map[int]string),
+		toolCallID:   make(map[int]string),
+		toolName:     make(map[int]string),
+		thinkingID:   make(map[int]string),
+		signatures:   make(map[int]string),
 	}
 }
 
@@ -105,14 +115,15 @@ func (s *streamingState) handleStreamEvent(rawLine string, outer map[string]any)
 
 	// Nested subagent messages can end while the root is awaiting a tool
 	// response. Only root message state may close the run's stdin.
-	rootMessage := claudeTopLevelString(outer, "parent_tool_use_id") == ""
+	parent := claudeTopLevelString(outer, "parent_tool_use_id")
+	rootMessage := parent == ""
 	evType := strings.ToLower(asString(eventObj["type"]))
 	switch evType {
 	case "message_start":
 		if rootMessage {
 			s.stopReason = ""
 		}
-		s.handleMessageStart(eventObj)
+		s.handleMessageStart(eventObj, parent)
 	case "content_block_start":
 		s.handleContentBlockStart(eventObj)
 	case "content_block_delta":
@@ -127,7 +138,7 @@ func (s *streamingState) handleStreamEvent(rawLine string, outer map[string]any)
 				}
 			}
 		}
-		s.handleMessageDelta(eventObj)
+		s.handleMessageDelta(eventObj, parent)
 	case "message_stop":
 		// See onAssistantMessageStop: close interactive stdin after a
 		// terminal model turn so the CLI can exit and unblock the host.
@@ -141,15 +152,17 @@ func (s *streamingState) handleStreamEvent(rawLine string, outer map[string]any)
 	}
 }
 
-func (s *streamingState) handleMessageStart(event map[string]any) {
+func (s *streamingState) handleMessageStart(event map[string]any, parent string) {
 	msg := claudeTopLevelObject(event, "message")
 	id := claudeTopLevelString(msg, "id")
+	key := s.usageKey(id)
+	s.activeUsage[parent] = key
 	if id != "" {
 		s.messageID = id
 	}
 	if msg != nil {
 		if usage := claudeTopLevelObject(msg, "usage"); usage != nil {
-			s.mergeUsageMap(usage)
+			s.mergeUsageMap(key, usage)
 		}
 	}
 }
@@ -317,35 +330,77 @@ func (s *streamingState) handleContentBlockStop(event map[string]any) {
 	delete(s.signatures, idx)
 }
 
-func (s *streamingState) handleMessageDelta(event map[string]any) {
+func (s *streamingState) handleMessageDelta(event map[string]any, parent string) {
+	key, ok := s.activeUsage[parent]
+	if !ok {
+		key = s.usageKey("")
+		s.activeUsage[parent] = key
+	}
 	if u := claudeTopLevelObject(event, "usage"); u != nil {
-		s.mergeUsageMap(u)
+		s.mergeUsageMap(key, u)
 	}
 	if md, ok := event["delta"].(map[string]any); ok {
 		if u := claudeTopLevelObject(md, "usage"); u != nil {
-			s.mergeUsageMap(u)
+			s.mergeUsageMap(key, u)
 		}
 	}
 }
 
-func (s *streamingState) mergeUsageMap(u map[string]any) {
+func (s *streamingState) usageKey(id string) claudeUsageKey {
+	if id != "" {
+		return claudeUsageKey{id: id}
+	}
+	s.anonymousUsage++
+	return claudeUsageKey{anonymous: s.anonymousUsage}
+}
+
+func (s *streamingState) mergeAssistantUsage(message map[string]any, parent string) {
+	u := claudeTopLevelObject(message, "usage")
+	if u == nil {
+		return
+	}
+	id := claudeTopLevelString(message, "id")
+	key, ok := s.activeUsage[parent]
+	if id != "" || !ok {
+		key = s.usageKey(id)
+	}
+	s.mergeUsageMap(key, u)
+}
+
+func (s *streamingState) mergeUsageMap(key claudeUsageKey, u map[string]any) {
+	input, okInput := claudeUsageCounter(u, "input_tokens")
+	cached, okCached := claudeUsageCounter(u, "cache_read_input_tokens")
+	output, okOutput := claudeUsageCounter(u, "output_tokens")
+	if !okInput && !okCached && !okOutput {
+		return
+	}
 	if s.streamUsage == nil {
 		s.streamUsage = &driver.Usage{}
 	}
-	if v, ok := claudeTopLevelInt(u, "input_tokens"); ok {
-		if v > s.streamUsage.InputTokens {
-			s.streamUsage.InputTokens = v
+	message := s.messageUsage[key]
+	if message == nil {
+		message = &driver.Usage{}
+		s.messageUsage[key] = message
+	}
+	// Message deltas and the eventual assistant snapshot repeat cumulative
+	// counters. Add only that message's increase to the run aggregate.
+	if okInput {
+		if input > message.InputTokens {
+			s.streamUsage.InputTokens += input - message.InputTokens
+			message.InputTokens = input
 		}
 	}
-	if v, ok := claudeTopLevelInt(u, "cache_read_input_tokens"); ok {
-		if v > s.streamUsage.CachedInputTokens {
-			s.streamUsage.CachedInputTokens = v
+	if okCached {
+		if cached > message.CachedInputTokens {
+			s.streamUsage.CachedInputTokens += cached - message.CachedInputTokens
+			message.CachedInputTokens = cached
 		}
 	}
-	if v, ok := claudeTopLevelInt(u, "output_tokens"); ok {
+	if okOutput {
 		// message_delta.usage.output_tokens is cumulative along the message.
-		if v > s.streamUsage.OutputTokens {
-			s.streamUsage.OutputTokens = v
+		if output > message.OutputTokens {
+			s.streamUsage.OutputTokens += output - message.OutputTokens
+			message.OutputTokens = output
 		}
 	}
 }

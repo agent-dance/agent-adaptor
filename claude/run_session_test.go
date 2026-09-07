@@ -64,7 +64,7 @@ func TestClaudeForkRequiresDistinctChildCheckpoint(t *testing.T) {
 			)
 			resp, err := (adapter{}).Run(context.Background(), agentadaptor.Request{
 				Prompt:    "fork",
-				Config:    Config{CommonConfig: CommonConfig{Command: command, CWD: home}},
+				Config:    Config{CommonConfig: CommonConfig{Command: command, CWD: home, Env: []agentadaptor.EnvBinding{{Name: "CLAUDE_CONFIG_DIR", Value: home}, {Name: "HOME", Value: home}}}},
 				Workspace: agentadaptor.WorkspaceLease{ID: "workspace", CWD: home},
 				Session: &agentadaptor.SessionContext{
 					Mode:  agentadaptor.SessionFork,
@@ -122,10 +122,14 @@ func TestClaudeRunPreservesUnclassifiedProcessOutcome(t *testing.T) {
 			}
 			res, err := (adapter{}).Run(ctx, agentadaptor.Request{
 				Prompt:    "go",
-				Config:    Config{CommonConfig: CommonConfig{Command: command, CWD: home}},
+				Config:    Config{CommonConfig: CommonConfig{Command: command, CWD: home, Env: []agentadaptor.EnvBinding{{Name: "CLAUDE_CONFIG_DIR", Value: home}, {Name: "HOME", Value: home}}}},
 				Workspace: agentadaptor.WorkspaceLease{CWD: home},
 			}, sink)
-			if err != nil {
+			if tc.cancel {
+				if !errors.Is(err, context.Canceled) {
+					t.Fatalf("Driver.Run lost cancellation cause: %v", err)
+				}
+			} else if err != nil {
 				t.Fatalf("Driver.Run error = %v", err)
 			}
 			if res.ExitCode == 0 || res.Failure != nil || res.Checkpoint != nil {
@@ -181,7 +185,7 @@ func TestClaudeRunCleanProtocolFailuresAreStructured(t *testing.T) {
 			command := testutil.WriteCommand(t, home, "fake-claude-clean-protocol", tc.posixBody, tc.windowsBody)
 			resp, err := (adapter{}).Run(context.Background(), agentadaptor.Request{
 				Prompt:    "hello",
-				Config:    Config{CommonConfig: CommonConfig{Command: command, CWD: home}},
+				Config:    Config{CommonConfig: CommonConfig{Command: command, CWD: home, Env: []agentadaptor.EnvBinding{{Name: "CLAUDE_CONFIG_DIR", Value: home}, {Name: "HOME", Value: home}}}},
 				Workspace: agentadaptor.WorkspaceLease{ID: "workspace", CWD: home},
 			}, &testutil.EventRecorder{})
 			if err != nil {
@@ -206,7 +210,7 @@ func TestClaudeRunClassifiesProviderResumeRejection(t *testing.T) {
 	)
 	base := agentadaptor.Request{
 		Prompt:    "continue",
-		Config:    Config{CommonConfig: CommonConfig{Command: command, CWD: home}},
+		Config:    Config{CommonConfig: CommonConfig{Command: command, CWD: home, Env: []agentadaptor.EnvBinding{{Name: "CLAUDE_CONFIG_DIR", Value: home}, {Name: "HOME", Value: home}}}},
 		Workspace: agentadaptor.WorkspaceLease{ID: "workspace", CWD: home},
 	}
 	resumed := base

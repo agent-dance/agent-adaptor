@@ -107,7 +107,7 @@ func TestAlignmentStdinResultOnly(t *testing.T) {
 				}
 				req.StructuredOutputSource = driver.StructuredOutputSourceNative
 			}
-			response, err := buildClaudeResponse(req, parser, raw, process.ExitCode, process.Signal, process.TimedOut, "", cfg.CWD, "")
+			response, err := buildClaudeResponse(req, parser, raw, process.ExitCode, process.Signal, process.TimedOut, "", cfg.CWD, "", nil)
 			if err != nil {
 				t.Fatal(err)
 			}

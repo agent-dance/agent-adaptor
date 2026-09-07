@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -293,6 +295,9 @@ func (p *claudeParser) handlePayload(raw string, payload map[string]any) {
 		return
 	case "assistant":
 		message := claudeTopLevelObject(payload, "message")
+		if p.stream != nil {
+			p.stream.mergeAssistantUsage(message, claudeTopLevelString(payload, "parent_tool_use_id"))
+		}
 		p.handleAssistantMessage(message)
 	case "user":
 		message := claudeTopLevelObject(payload, "message")
@@ -537,9 +542,9 @@ func (p *claudeParser) handleResult(raw string, payload map[string]any, subtype 
 
 	usage := claudeTopLevelObject(payload, "usage")
 	if usage != nil {
-		input, okInput := claudeTopLevelInt(usage, "input_tokens")
-		cached, okCached := claudeTopLevelInt(usage, "cache_read_input_tokens")
-		output, okOutput := claudeTopLevelInt(usage, "output_tokens")
+		input, okInput := claudeUsageCounter(usage, "input_tokens")
+		cached, okCached := claudeUsageCounter(usage, "cache_read_input_tokens")
+		output, okOutput := claudeUsageCounter(usage, "output_tokens")
 		if okInput || okCached || okOutput {
 			if p.usage == nil {
 				p.usage = &driver.Usage{}
@@ -654,6 +659,20 @@ func (p *claudeParser) finalSummary() string {
 	return ""
 }
 
+// observedUsage keeps a terminal usage report authoritative, including real
+// zero values. When no terminal usage is present, retain formal stream usage.
+func (p *claudeParser) observedUsage() *driver.Usage {
+	usage := p.usage
+	if usage == nil && p.stream != nil {
+		usage = p.stream.streamUsage
+	}
+	if usage == nil {
+		return nil
+	}
+	copy := *usage
+	return &copy
+}
+
 func (p *claudeParser) buildOutput() string {
 	return p.terminalResult
 }
@@ -763,6 +782,27 @@ func claudeTopLevelInt(payload map[string]any, keys ...string) (int, bool) {
 		case int:
 			return value, true
 		case int64:
+			return int(value), true
+		}
+	}
+	return 0, false
+}
+
+// claudeUsageCounter is intentionally stricter than general protocol integer
+// conversion: unknown, negative, fractional and out-of-range counters are not
+// evidence of usage. Explicit zero is valid observed usage.
+func claudeUsageCounter(payload map[string]any, key string) (int, bool) {
+	switch value := payload[key].(type) {
+	case float64:
+		if value >= 0 && value < float64(uint(1)<<(strconv.IntSize-1)) && math.Trunc(value) == value {
+			return int(value), true
+		}
+	case int:
+		if value >= 0 {
+			return value, true
+		}
+	case int64:
+		if value >= 0 && value <= int64(^uint(0)>>1) {
 			return int(value), true
 		}
 	}
@@ -1268,6 +1308,11 @@ func decodeAskUserQuestionOptions(raw []any) []driver.DecisionChoice {
 }
 
 func (p *claudeParser) handleInteractiveControlRequest(payload map[string]any) bool {
+	if p.interactiveErr != nil {
+		// A failed decision aborts the invocation. Draining stdout must not
+		// ask the host again for another buffered provider control request.
+		return true
+	}
 	requestID := claudeTopLevelString(payload, "request_id")
 	request := claudeTopLevelObject(payload, "request")
 	if requestID == "" || request == nil {
@@ -1312,6 +1357,14 @@ func (p *claudeParser) handleInteractiveControlRequest(payload map[string]any) b
 	}
 }
 
+// interactiveFailure lets the resident transport observe a sink abort after
+// onChunk releases the parser lock. The caller's context need not be canceled.
+func (p *claudeParser) interactiveFailure() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.interactiveErr
+}
+
 func (p *claudeParser) resolveInteractiveDecision(requestID string, req driver.DecisionRequest) bool {
 	resp, err := p.interactiveSink.RequestDecision(p.interactiveCtx, req)
 	if err != nil {
@@ -1319,8 +1372,9 @@ func (p *claudeParser) resolveInteractiveDecision(requestID string, req driver.D
 			p.interactiveErr = err
 		}
 		// The sink contract says a non-nil decision error aborts the Driver
-		// run. Closing stdin releases the CLI without converting the abort into
-		// a synthetic provider denial that a later success could overwrite.
+		// run. Closing one-shot stdin releases its CLI; the resident reader
+		// observes interactiveFailure and stops its writer. Neither path
+		// converts this into a provider denial or depends on caller cancel.
 		p.closeInteractiveStdin()
 		return true
 	}
