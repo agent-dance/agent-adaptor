@@ -72,4 +72,4 @@ _ = result.Text
 
 必需命令为 `go test -count=1 .` 与 `go test -race -count=5 . -run TestAlignmentPartialResult`；提交后实际 SHA、测试/子测试数量、日志与环境见同目录 result.json/evidence。环境为 macOS arm64、Go 1.26.5，live/E2E/API golden 更新门均为 0；未运行真实 provider、Linux/Windows、全仓发布门禁或付费调用。原 sandbox 禁止 loopback，根包的 WithTools fixture 使用会话已授权的本地权限复跑。
 
-发现并交协调者跟踪的**基线已有**边界：Driver-only envelope 会立即发布 provider RunFinished；之后 cleanup 失败的最终 Go error 无法改写该事件。`evidence/lifecycle_repro.go` 及基线 overlay/当前日志可复现：两边都是 success terminal 后返回 cleanup error；T05 当前额外保留部分 Result。根包 merged lifecycle 已用本次 carrier 主归因并有测试，不能据此声称全局 terminal 唯一权威已实现。协调者明确将 Driver-only envelope 统一归属后续 T06，再由 T10 接入预算终局归因；T05 不修改 sink.go 或 Event 管线。
+发现并交协调者跟踪的**基线已有**边界：Driver-only envelope 会立即发布 provider RunFinished；之后 cleanup 失败的最终 Go error 无法改写该事件。`evidence/lifecycle_repro.go` 及基线 overlay/当前日志可复现：两边都是 success terminal 后返回 cleanup error；T05 当前额外保留部分 Result。根包 merged lifecycle 已用本次 carrier 主归因并有测试，不能据此声称全局 terminal 唯一权威已实现。协调者通过 **R006 / W09-R14** 明确由 B02 T06 统一 Driver-only envelope，T20/T21 独立验证，再由 T10 接入预算终局归因；T05 不修改 sink.go 或 Event 管线，不将该缺口记作由 T05 关闭。
