@@ -630,7 +630,7 @@ func TestT22R016CancellationAndTranslationDrain(t *testing.T) {
 			cancelled := false
 			for {
 				e, err := stream.Recv()
-				t.Logf("drain event: %#v err=%v", e, err)
+				t.Logf("drain event: %#v err=%T %v", e, err, err)
 				if e.Status != nil {
 					b, _ := json.Marshal(e.Status)
 					t.Logf("drain status: %s", b)
@@ -680,13 +680,11 @@ func TestT22R016CancellationAndTranslationDrain(t *testing.T) {
 				t.Fatalf("read/result/execute=%d/%d/%d", s.reads.Load(), s.resultReads.Load(), r.calls.Load())
 			}
 			if translate {
-				// The public protocol converts executor errors to a failed Task.
-				// R016 does not authorize the tail hint to replace that path.
-				if !errors.Is(terminalErr, io.EOF) || task.Status.State != client.TaskStateFailed {
-					t.Fatalf("translation outcome=%#v %v", task, terminalErr)
-				}
-				if code, limit := control(task); code != "" || limit != nil {
-					t.Fatalf("translation synthesized control=%s/%v", code, limit)
+				// The pinned protocol SDK can return its failed Task or preserve
+				// the producer error. Both remain independent infrastructure
+				// paths; a RunFinished hint cannot manufacture their outcome.
+				if err := translationOutcomeError(task, terminalErr); err != nil {
+					t.Fatalf("translation outcome=%#v %T %v: %v", task, terminalErr, terminalErr, err)
 				}
 			} else {
 				if !errors.Is(terminalErr, io.EOF) {
@@ -700,6 +698,93 @@ func TestT22R016CancellationAndTranslationDrain(t *testing.T) {
 				if code, limit := control(task); code != "" || limit != nil {
 					t.Fatalf("cancel acknowledgement gained control=%s/%v", code, limit)
 				}
+			}
+		})
+	}
+}
+
+// This is a handwritten assertion for the intentionally malformed Sequence
+// fixture. It never classifies a production outcome or generates an expected
+// code by calling a production classification helper.
+func translationOutcomeError(task client.Task, terminalErr error) error {
+	if task.Status.Message != nil {
+		for _, part := range task.Status.Message.Parts {
+			if _, present := part.Metadata["agentadaptor.failure"]; present {
+				return errors.New("translation synthesized a failure control envelope")
+			}
+		}
+	}
+	if errors.Is(terminalErr, context.Canceled) || errors.Is(terminalErr, context.DeadlineExceeded) {
+		return errors.New("cancellation or deadline is not the injected translation failure")
+	}
+	if terminalErr == io.EOF && task.Status.State == client.TaskStateFailed {
+		return nil
+	}
+	var recovery *client.StreamRecoveryError
+	if !errors.As(terminalErr, &recovery) || recovery == nil || recovery.Cause == nil || recovery.Cause.Error() != "encode adapter stream status: invalid_payload" {
+		return errors.New("missing exact typed translation failure")
+	}
+	switch task.Status.State {
+	case client.TaskStateUnspecified, client.TaskStateSubmitted, client.TaskStateWorking, client.TaskStateInputRequired, client.TaskStateAuthRequired, client.TaskStateFailed:
+		return nil
+	default:
+		return errors.New("translation error accompanied a conflicting task state")
+	}
+}
+
+func TestT22TranslationOutcomeControls(t *testing.T) {
+	failed := client.Task{Status: client.TaskStatus{State: client.TaskStateFailed}}
+	exact := &client.StreamRecoveryError{Cause: errors.New("encode adapter stream status: invalid_payload")}
+	withControl := func(code string, limit any) client.Task {
+		return client.Task{Status: client.TaskStatus{State: client.TaskStateFailed, Message: &client.Message{Parts: []client.Part{{Kind: client.PartText, Metadata: map[string]any{"agentadaptor.failure": map[string]any{"code": code, "limit_ms": limit}}}}}}}
+	}
+	cases := []struct {
+		name string
+		task client.Task
+		err  error
+		ok   bool
+	}{
+		{"failed-eof", failed, io.EOF, true},
+		{"typed-producer-error", client.Task{}, exact, true},
+		{"typed-producer-existing-failed", failed, exact, true},
+		{"empty-eof", client.Task{}, io.EOF, false},
+		{"nil-error", client.Task{}, nil, false},
+		{"failed-nil-error", failed, nil, false},
+		{"ordinary-same-message", client.Task{}, errors.New("encode adapter stream status: invalid_payload"), false},
+		{"deadline", client.Task{}, context.DeadlineExceeded, false},
+		{"cancel", client.Task{}, context.Canceled, false},
+		{"typed-nil-cause", client.Task{}, &client.StreamRecoveryError{}, false},
+		{"typed-wrong-source", client.Task{}, &client.StreamRecoveryError{Cause: errors.New("unrelated invalid_payload")}, false},
+		{"typed-eof-cause", client.Task{}, &client.StreamRecoveryError{Cause: io.EOF}, false},
+		{"typed-deadline-cause", client.Task{}, &client.StreamRecoveryError{Cause: context.DeadlineExceeded}, false},
+		{"typed-plus-cancel", client.Task{}, errors.Join(exact, context.Canceled), false},
+		{"wrapped-eof", failed, fmt.Errorf("unrelated failure: %w", io.EOF), false},
+		{"failed-fake-code", withControl("approval_denied", nil), io.EOF, false},
+		{"typed-fake-code", withControl("active_execution_timeout", nil), exact, false},
+		{"failed-fake-limit", withControl("", float64(100)), io.EOF, false},
+		{"typed-fake-limit", withControl("", float64(100)), exact, false},
+		{"empty-control", withControl("", nil), io.EOF, false},
+		{"malformed-control", client.Task{Status: client.TaskStatus{State: client.TaskStateFailed, Message: &client.Message{Parts: []client.Part{{Metadata: map[string]any{"agentadaptor.failure": 7}}}}}}, exact, false},
+	}
+	for _, state := range []client.TaskState{client.TaskStateCompleted, client.TaskStateCanceled, client.TaskStateRejected, "unknown"} {
+		task := client.Task{Status: client.TaskStatus{State: state}}
+		cases = append(cases, struct {
+			name string
+			task client.Task
+			err  error
+			ok   bool
+		}{"eof-state-" + string(state), task, io.EOF, false}, struct {
+			name string
+			task client.Task
+			err  error
+			ok   bool
+		}{"typed-state-" + string(state), task, exact, false})
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := translationOutcomeError(tc.task, tc.err)
+			if (err == nil) != tc.ok {
+				t.Fatalf("oracle accepted=%v want=%v outcome=%#v %T %v: %v", err == nil, tc.ok, tc.task, tc.err, tc.err, err)
 			}
 		})
 	}
