@@ -170,7 +170,7 @@ func (c *Claim) Validate(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if c.released || c.unlocked {
+	if c.root == nil || c.lock == nil || c.released || c.unlocked {
 		return unsafe("released claim", nil)
 	}
 	for _, p := range []struct {
@@ -244,7 +244,7 @@ func (c *Claim) BeginUse(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if c.released || c.unlocked || c.closing || c.state.Phase == "unseeded" {
+	if c.root == nil || c.lock == nil || c.released || c.unlocked || c.closing || c.state.Phase == "unseeded" {
 		return unsafe("claim not ready", nil)
 	}
 	if c.activationComplete {
@@ -304,6 +304,9 @@ func (c *Claim) ReleaseClean(ctx context.Context) error {
 func (c *Claim) release(ctx context.Context, clean bool) error {
 	if c.released {
 		return nil
+	}
+	if !c.unlocked && (c.root == nil || c.lock == nil) {
+		return unsafe("invalid claim", nil)
 	}
 	if err := ctx.Err(); err != nil {
 		return err

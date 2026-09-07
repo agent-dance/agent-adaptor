@@ -595,3 +595,31 @@ func TestOversizedControlMarkerIsRejected(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestInvalidClaimMethodsFailWithoutBlocking(t *testing.T) {
+	ctx := context.Background()
+	for _, c := range []*Claim{nil, {}} {
+		for name, fn := range map[string]func() error{"validate": func() error { return c.Validate(ctx) }, "initialize": func() error { return c.Initialize(ctx, seedTest) }, "begin": func() error { return c.BeginUse(ctx) }} {
+			t.Run(name, func(t *testing.T) {
+				if err := fn(); !errors.Is(err, profile.ErrUnsafe) {
+					t.Fatalf("invalid claim accepted: %v", err)
+				}
+			})
+		}
+		if c != nil {
+			if err := c.ReleaseUnused(ctx); !errors.Is(err, profile.ErrUnsafe) {
+				t.Fatal(err)
+			}
+			if err := c.ReleaseClean(ctx); !errors.Is(err, profile.ErrUnsafe) {
+				t.Fatal(err)
+			}
+		} else {
+			if err := c.ReleaseUnused(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if err := c.ReleaseClean(ctx); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+}

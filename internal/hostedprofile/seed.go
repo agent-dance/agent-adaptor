@@ -62,7 +62,7 @@ func (c *Claim) Initialize(ctx context.Context, seed func(context.Context, strin
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if c.released {
+	if c.root == nil || c.lock == nil || c.released || c.unlocked || c.closing {
 		return unsafe("released claim", nil)
 	}
 	if c.state.Phase != "unseeded" {

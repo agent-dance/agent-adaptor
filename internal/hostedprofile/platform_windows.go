@@ -117,12 +117,19 @@ func validateObject(f *os.File, dir bool) error {
 		return profile.ErrUnsafe
 	}
 	acl, _, err := sd.DACL()
-	if err != nil || acl == nil || acl.AceCount != 2 {
+	if err != nil || acl == nil {
 		return profile.ErrUnsafe
 	}
 	system, err := windows.StringToSid("S-1-5-18")
 	if err != nil {
 		return err
+	}
+	expected := uint16(2)
+	if current.Equals(system) {
+		expected = 1
+	}
+	if acl.AceCount != expected {
+		return profile.ErrUnsafe
 	}
 	seenUser, seenSystem := false, false
 	for index := uint32(0); index < uint32(acl.AceCount); index++ {
@@ -136,6 +143,9 @@ func validateObject(f *os.File, dir bool) error {
 		sid := (*windows.SID)(stdunsafe.Pointer(&ace.SidStart))
 		if sid.Equals(current) {
 			seenUser = true
+			if sid.Equals(system) {
+				seenSystem = true
+			}
 		} else if sid.Equals(system) {
 			seenSystem = true
 		} else {
@@ -152,7 +162,11 @@ func secureObject(f *os.File, dir bool) error {
 	if err != nil {
 		return err
 	}
-	sd, err := windows.SecurityDescriptorFromString("D:P(A;;FA;;;" + sid.String() + ")(A;;FA;;;SY)")
+	sddl := "D:P(A;;FA;;;" + sid.String() + ")"
+	if sid.String() != "S-1-5-18" {
+		sddl += "(A;;FA;;;SY)"
+	}
+	sd, err := windows.SecurityDescriptorFromString(sddl)
 	if err != nil {
 		return err
 	}
@@ -169,7 +183,7 @@ func secureObject(f *os.File, dir bool) error {
 	if err != nil {
 		return err
 	}
-	h, err := windows.CreateFile(p, windows.READ_CONTROL|windows.WRITE_DAC|windows.FILE_READ_ATTRIBUTES, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, nil, windows.OPEN_EXISTING, windows.FILE_FLAG_OPEN_REPARSE_POINT|windows.FILE_FLAG_BACKUP_SEMANTICS, 0)
+	h, err := windows.CreateFile(p, windows.READ_CONTROL|windows.WRITE_DAC|windows.WRITE_OWNER|windows.FILE_READ_ATTRIBUTES, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, nil, windows.OPEN_EXISTING, windows.FILE_FLAG_OPEN_REPARSE_POINT|windows.FILE_FLAG_BACKUP_SEMANTICS, 0)
 	if err != nil {
 		return err
 	}
@@ -185,7 +199,7 @@ func secureObject(f *os.File, dir bool) error {
 	if old.VolumeSerialNumber != now.VolumeSerialNumber || old.FileIndexHigh != now.FileIndexHigh || old.FileIndexLow != now.FileIndexLow || now.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
 		return profile.ErrUnsafe
 	}
-	if err := windows.SetSecurityInfo(h, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, acl, nil); err != nil {
+	if err := windows.SetSecurityInfo(h, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, sid, nil, acl, nil); err != nil {
 		return err
 	}
 	return validateObject(f, dir)
