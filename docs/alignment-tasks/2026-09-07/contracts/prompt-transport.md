@@ -33,7 +33,7 @@ PromptValidateHITL *StructuredOutputHITLCapability
 3. 对 native / prompt 分别计算 eligibility：对应 `JSONSchema*` 为 true、`WorksWithRun` 为 true；resolved provider streaming 时还要求 `WorksWithStreaming`。
 4. 对每种机制取对应 HITL 指针：nil 沿用 `WorksWithHITL` 仅检查显式 Ask 的原语义；非 nil 则**替代该机制**的粗粒度 HITL 判定，先用 `driver.EffectiveHumanDecisionPolicy` 解析默认 Permission/PlanReview Ask 和 Question 自动拒绝。该完整有效 Ask 集合中的所有 Kind 都必须为 true，普通 Ask 能力也必须支持。非 Ask 不读取对应字段。非 nil 全 false 是显式不支持；不能被 `WorksWithHITL=true` 翻转。
 5. 优先 native；不可用时 prompt + 本地校验；两者不可用才返回现有 `*driver.StructuredOutputUnsupportedError`。其 `Driver` 为 descriptor Type，`Reason` 给受控组合诊断，`errors.Is(err, driver.ErrStructuredOutputUnsupported)` 保持。
-6. 静态 schema/source/transport 在普通 policy 校验后、任何 profile/workspace/runtime/skills/lease 获取前只解析一次，缓存仅属于本次调用，clone 必须清空；wiring 复用决定。transport 只由一次 resolved invocation 决定，Run 与 Stream 完全一致。batch fallback 按机制分别检查适用 Ask：非 nil 使用完整有效默认值，nil 保留旧显式边界；只在没有必须保持 rich transport 的已解析需求时可用；不能为了 schema 丢掉 Ask、已请求的 capability/todo 观测。C03 的需求必须与本算法在唯一协商点求交集，不能派生第二管线。
+6. 按 R009，普通 policy 校验后、任何资源获取前仅一次 normalize 并预验证真实 schema/source/transport 候选，非法 schema/所有候选不可行立即失败；AttachRun 后只对候选按 observation demand 选一次最终 transport，不重跑 resolver/物化。缓存仅属于本次调用，clone 必须清空，提示指令只在最终选择后应用。transport 仍属于同一 resolved invocation，Run 与 Stream 完全一致。batch fallback 按机制分别检查适用 Ask：非 nil 使用完整有效默认值，nil 保留旧显式边界；只在没有必须保持 rich transport 的已解析需求时可用；不能为了 schema 丢掉 Ask、已请求的 capability/todo 观测。C03 的需求必须与本算法在唯一协商点求交集，不能派生第二管线。
 7. Driver 只执行 `Request.StructuredOutputSource`，禁止重新决定机制或修改 `OutputSchema`。
 
 R005：Question Ask 未显式设置 Permission 时，Permission 会继承 Ask；Claude native Permission=false 因而不能只凭 Question=true 选 native。采用新矩阵允许此前隐式策略的 schema 调用变为 prompt 或 unsupported，禁止偷偷改成自动批准。真实 fixture 必须发起 DecisionSink 请求并核对回复，不能仅验证假 Response。
@@ -58,6 +58,8 @@ StructuredOutput: driver.StructuredOutputCapability{
 `WorksWithHITL=false` 是给旧读者的保守摘要；Notes MUST 解释精确矩阵。T07 不修改其它 Driver 能力；不宣称 Permission native 已被验证。所有组合均使用现有 `ApprovalRequest` / `DecisionCapableSink`、既有 policy timeout/retry/abort 规则；不新增审批 channel、Risk、fallback 审批策略。
 
 ## 3. Claude 参数、状态机及正式 fixture（T07）
+
+R009：schema eligibility 使用完整有效默认 Ask；本节 interactive 保留 raw policy 的既有开启规则。零 raw policy schema 可选择 prompt 校验但仍 observational，不能声称实际 Permission 应答或新增 AutoApprove。真实继承 Permission fixture 使用 QuestionAsk+Permission unset，并保留无 schema 对照。
 
 `native := req.OutputSchema != nil && req.StructuredOutputSource == driver.StructuredOutputSourceNative`；`interactive := wantsInteractiveClaude(req.Policy.HumanDecision)`；`useStreamJSON := interactive || req.Streaming`。以下 argv 均是独立数组元素，例子不表示通过 shell 拼接：
 

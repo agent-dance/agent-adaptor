@@ -114,7 +114,8 @@
       "AGENTS.md",
       "docs/internal-history-alignment-plan-2026-09-07.md",
       "docs/alignment-tasks/2026-09-07/README.md",
-      "docs/alignment-tasks/2026-09-07/amendments/R006.md"
+      "docs/alignment-tasks/2026-09-07/amendments/R006.md",
+      "docs/alignment-tasks/2026-09-07/amendments/R010.md"
     ],
     "dependency_artifacts": [
       {
@@ -179,7 +180,8 @@
     "公共 fake Driver→Agent→A2A→delegation→各 bridge/recorder 组合，覆盖真实 metadata/sequence/deep clone。",
     "搭建旧快照→live 状态→artifact 多更新→新问卷/完成、nested repeated IDs、no-store relay、observer-before-drop。",
     "核验父关联、todo empty clear/final snapshot、capability exposure/超限/未知/恶意字段、不因新事件影响旧端。",
-    "R006独立核验W09-R14：Driver先报告成功但后续cleanup/lease失败，带/不带RunService sources均由公共最终RunFinished映射同一最终RunError，原始provider Terminal/Transcript完整且无提前第二终局。"
+    "R006独立核验W09-R14：Driver先报告成功但后续cleanup/lease失败，带/不带RunService sources均由公共最终RunFinished映射同一最终RunError，原始provider Terminal/Transcript完整且无提前第二终局。",
+    "R010独立对照：executeInvocation准入后每轮唯一core start/terminal且cleanup主Reason一致；openStream静态拒绝保留空closed Events+Result error、无资源/Driver，不伪造执行生命周期。"
   ],
   "acceptance_criteria": [
     {

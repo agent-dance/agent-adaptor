@@ -280,14 +280,16 @@ Event families:
 | `ToolCall` | tool start, argument deltas, and end lifecycle |
 | `ToolResult` | complete tool result |
 | `RunStarted` | execution started |
-| `RunFinished` | terminal hint for the execution; the authoritative result is still `Stream.Result()` |
+| `RunFinished` | sole core terminal, reflecting final Result/error after cleanup |
 | `ProcessInfo` | spawn plus raw stdout/stderr chunks |
 | `Notice` | invocation, lifecycle, runtime, step, transcript, and approval notices |
 | `Dropped` | aggregated backpressure drops, with count, kinds, sequence range, and reason |
 | `SubagentUpdate` | start, deltas, and end of a delegation subagent |
+| `CapabilityInvocation` | validated `capability.Invocation` with explicit evidence |
+| `TodoUpdated` | full ordered `todo.Snapshot` for a scope |
 | `*ApprovalRequest` | a HITL request awaiting a host response |
 
-Default backpressure drops the events the contract allows to be dropped when the buffer is full, and produces a `Dropped`. `WithBlockingEvents` guarantees no drops, but a slow consumer then applies backpressure to the Driver; cancellation still unblocks it.
+Default backpressure drops the events the contract allows to be dropped when the buffer is full, and produces a `Dropped`. `WithBlockingEvents` preserves events during normal execution, while a slow consumer applies backpressure to the Driver. Cancellation or publisher revocation unblocks sends and reports numbered undelivered events in the final Dropped.
 
 `WithEventMeta` is only for bridges and persistent recorders replaying typed Events. A live sink always rewrites the authoritative ordering.
 
@@ -354,7 +356,7 @@ Layered semantics:
 
 - `Text` contains only the final assistant-facing text.
 - `Summary` is an optional short summary and is not guaranteed to be produced by every Driver.
-- `Usage == nil` means the provider reported no usage; a non-nil zero value means usage was observed and every normalized count is explicitly zero.
+- `Usage == nil` means no valid usage was observed; a non-nil zero value means at least one valid metric was observed and all normalized values are zero. This type does not track individual field presence.
 - `Raw().Stdout` and `Raw().Stderr` are the complete raw process output.
 - `Raw().Terminal` holds the terminal event name and exact JSON that the Driver recognized from the official protocol; it is nil when nothing was recognized.
 - `Transcript()` holds the normalized items the Driver parsed from the official protocol, and returns a deep copy.
@@ -431,8 +433,10 @@ provider's native JSON Schema; when the current transport or policy does not sup
 it, it falls back automatically to Prompt plus local validation; only when neither
 mechanism is available does it return `ErrStructuredOutputUnsupported` before the
 run acquires workspace, profile, runtime services, skills or a Thread lease.
-The schema, source and transport are resolved once per invocation and reused by
-Run/Stream. Each optional SPI HITL matrix evaluates the effective Ask kinds for
+Core normalizes schema once and freezes feasible transport/source candidates before
+resource acquisition. Later attachment observation demand selects only among
+those candidates, without re-normalization, materialization or Driver dispatch.
+Run and Stream use the same final selection. Each optional SPI HITL matrix evaluates the effective Ask kinds for
 its mechanism; nil retains the legacy explicit-Ask bool. An invalid schema matches `ErrInvalidOutputSchema`, and the Driver's
 `Descriptor.StructuredOutput` is the source of truth for the capability.
 
@@ -588,7 +592,56 @@ type RunServiceProvider interface {
 }
 ```
 
-A `RunAttachment` may contribute Services plus one `RunEventSource` already projected into root Events; those events enter the same Stream directly. `RunStarted` / `RunFinished` are owned exclusively by core, and an event source that emits either of them is filtered. The SDK publishes the single `RunStarted` first, and publishes the single `RunFinished` and closes Events only after the event sources have finished flushing and run-scoped resources have been released. `DetachRun`, `ReleaseByRun`, and workspace release share one global bounded budget, but each step has a fair sub-budget; a timeout in any one source/hook does not prevent later release actions from being invoked. A timeout or release error surfaces as the error from `Result()` and is never swallowed silently.
+```go
+type ObservationDemand struct {
+    CapabilityInvocations bool
+    Todos bool
+}
+type RunEventInfo struct {
+    RunID string
+    ThreadKey string
+    Identity Identity
+    DriverType string
+}
+type RunEventObserver func(context.Context, RunEventInfo, Event) error
+type RunEventPublisher func(context.Context, Event) error
+type RunAttachment struct {
+    Observation ObservationDemand
+    Observer RunEventObserver
+    BindEvents func(RunEventPublisher) error
+    Services []ServiceRef
+    Events RunEventSource
+}
+```
+
+Observation demand is OR-merged across attachments; an Observer alone adds no
+demand. After all attachments and observers are installed, BindEvents receives
+the run publisher in registration order, before event sources or Driver.Run.
+Binding failure preserves its original error and unwinds resources in reverse.
+Publish each fact through BindEvents or Events, never both.
+
+The publisher accepts Host/HostLifecycle and Relay/Relayed capability evidence,
+typed Todo, SubagentUpdate, Notice and Dropped. Provider evidence, run lifecycle,
+approvals, typed nil and invalid fields return `adaptor: invalid run event`.
+Callback-context reentry is rejected immediately. The supplied context bounds
+waiting; run cancellation/revocation also releases accepted but blocked sends.
+After revocation, publishing returns context.Canceled. Numbered undelivered
+facts remain accounted for in Dropped.
+
+Observers see only validated Capability/Todo before user backpressure, in run
+receive and attachment order. Each call has a 100ms limit, additionally bounded
+by remaining cleanup time; first error/panic/timeout disables only that observer
+and emits one safe observation_disabled Notice. No Result, approval or checkpoint
+verdict changes. See [streaming](./streaming.md) for non-reentrancy, host-store
+ownership and loss semantics.
+
+Every admitted invocation has one core RunStarted/RunFinished. Sources supplying
+those events are filtered. Teardown flushes sources, revokes publishers and stops
+observation before Detach/resources, then determines the final Result/error,
+publishes the terminal and closes Events. DetachRun, ReleaseByRun and workspace
+release share a bounded total budget with fair sub-budgets; one timeout does not
+skip later cleanup. Release errors remain observable through Result. Static
+pre-admission rejection keeps empty closed Events and an error.
 
 ## 13. threadstore and memory
 

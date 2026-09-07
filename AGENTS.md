@@ -53,6 +53,7 @@ github.com/agent-dance/agent-adaptor          package adaptor
 ├── codex/ claude/ cursor/ codebuddy/          各驱动 Config 与 Driver(Config)
 ├── tool/                                      宿主定义 Tool 词汇
 ├── skill/                                     skill 词汇与来源
+├── capability/ todo/                          安全观测与已确认快照叶词汇
 ├── mcp/                                       MCP 声明
 ├── profile/                                   profile 与资源声明
 ├── threadstore/ memory/                       Thread 持久化合同与内存实现
@@ -355,7 +356,11 @@ Hosttools：
 
 B01 已交付 Claude 一次性 stdin 终止、Tool 安全输入纠错、A2A continuation/完整制品恢复、Dedicated+WithTools 持久 profile 所有权、执行后部分 Result/cause 和 schema/HITL SPI 协商。T04 的 unlock 后清理不得再改接任者状态；Windows owner.lock 必须持有禁止 delete-sharing 的长期句柄。新非 nil schema 矩阵检查含默认 Permission/PlanReview Ask 的有效策略，nil 保留旧显式 Ask 语义。
 
-以下仍为打开项：最终已解析动态资源指纹（R003 / T06 / W02-R06）；所有执行的 core 最终生命周期归因，包括 Driver-only 提前成功后 cleanup 失败（R006 / T06 / W09-R14）；Claude schema/HITL 与 provider 部分输出（T07/T08）；subagentstream.Merge 和正式观测事实保真（T06/T12/T14–T18）。T20–T23 独立跨层验证和 T25–T30 平台/live 证据尚未完成，不能以本批 worker 测试关闭这些要求。
+B02 已交付最终 resolved profile 快照（R003 / W02-R06）、所有准入执行的 core 最终生命周期（R006 / W09-R14）、typed Capability/Todo、observer/publisher 及可行 transport 候选评分。静态 openStream 拒绝保留无资源/Driver 的空 closed Events；准入后公共终局必须在最终 Result/error 与 cleanup 后决定。最终 profile 视图与正式 managed prune 一致；未能证明的 copied tree prune 和 IO 错误稳定拒绝，不得把用户内容从摘要中抹去。Usage 的非 nil 零值只表示观察到有效用量且归一化数值均零，当前类型不证明每个字段都显式出现。
+
+Claude schema/HITL 与 Claude/CodeBuddy 常驻部分结果、真实 Wait cause、消息累计 Usage 已交付；Claude native 支持 PlanReview/Question Ask，Permission Ask 回退 Prompt。零 raw policy 的交互激活保持原语义，不伪造 Permission 往返。Delegation artifact Parts/Append/LastChunk、opt-in Raw、累计字节边界与深复制已交付。
+
+以下仍为打开项：append prompt/主动预算（T10/T14–T19）、subagentstream.Merge、桥接/recorder 及各 Driver 正式观测事实（T11–T18）。T20–T23 独立跨层验证和 T25–T30 平台/live 证据尚未完成，不能以本批 worker 测试关闭这些要求。
 
 具体冻结设计、未支持边界、文件所有权和fixture见 `docs/alignment-tasks/2026-09-07/contracts/frozen.json`。合同冻结不代表代码已实现；后续同批godoc、合同测试、使用文档和CHANGELOG完成后才能关闭对应项。其他第14节既有保护继续有效。
 

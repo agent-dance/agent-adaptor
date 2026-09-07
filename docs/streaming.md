@@ -96,8 +96,10 @@ Every semantic and operational signal of a run arrives on the same `<-chan adapt
 | `ProcessInfo` | Subprocess spawn and raw stdout/stderr chunks |
 | `Notice` | Invocation, runtime, step, transcript item, and approval audit information |
 | `*ApprovalRequest` | Host approval request with an exactly-once responder |
-| `Dropped` | Aggregated report of deltas discarded under the default backpressure policy |
+| `Dropped` | Aggregated loss report, including numbered undelivered events during cancellation or revocation |
 | `SubagentUpdate` | Live delegation progress |
+| `CapabilityInvocation` | Validated capability invocation facts from explicit evidence |
+| `TodoUpdated` | Confirmed full ordered todo snapshot within a scope |
 
 The `Meta()` of every event returns the authoritative SDK envelope:
 
@@ -108,6 +110,33 @@ The `Meta()` of every event returns the authoritative SDK envelope:
 - `Source`: optional raw provider/Driver coordinates; it never overrides the authoritative SDK fields.
 
 Concurrent producers are serialized by the same broker, so the channel receive order matches `EventMeta.Sequence`. A bridge may use it as a wire cursor within a single run, and should not promote provider sequence numbers into a second authoritative ordering. A recorder that needs to persist and resume across multiple runs must allocate its own host-scoped cursor (`sessionrecorder.HostSeq`), because `EventMeta.Sequence` restarts for every new run.
+
+Capability facts use canonical catalog keys, explicit operation/phase/evidence,
+UTC occurrence time and optional reliable duration. `Duration=nil` means unknown;
+a pointer to zero means observed zero. Skill activation and subagent spawn are
+explicit operations. Absence of observations is not proof that no capability ran.
+Todo events are confirmed full ordered snapshots, not PlanReview requests; an
+empty snapshot clears its scope and SyntheticID identifies a synthesized ID.
+ToolCall, ToolResult and TranscriptItem retain ScopeID, ParentScopeID and
+ParentToolCallID. Source Upstream accepts at most eight acyclic levels. Mutable
+payloads are independently copied at publication, observation and result access.
+
+Run-service attachments can install a [RunEventObserver](./api-reference.md#12-workspace-and-runtime-services)
+for Capability/Todo only. Observers run in receive/registration order before user
+backpressure, including before delivery of an earlier Dropped marker. Each call
+has a 100ms wall limit, shortened by remaining cleanup time. The first error,
+panic or timeout disables that observer for this run and emits one safe
+observation_disabled Notice; the error text is withheld and Result/HITL/checkpoint
+are unchanged. A late nil return cannot reactivate it. Other observers continue.
+
+Callbacks must honor context before external writes and cannot synchronously
+wait on the same run, call its publisher, drain Events, call Result or Agent.Close.
+The SDK cannot undo a host store's late write or kill arbitrary Go callbacks;
+a timed-out observer receives no new calls. Shared stores remain host-owned.
+Observation demand is separate from installing an observer and selects only
+already feasible transport candidates. Current provider support remains whatever
+the configured Driver descriptor declares; the new event types alone promise no
+provider observation coverage.
 
 ## 4. Result, errors, and cancellation
 
@@ -136,10 +165,34 @@ keep it available for control responses. Resident Thread turns release only
 the turn handle. Output draining and process/checkpoint validation still finish
 before the Driver completes.
 
-The Driver-only envelope still has an open integration audit: a provider
-`RunFinished` may precede a later cleanup failure. `Stream.Result()` remains
-the final verdict. R006 / W09-R14 assigns core lifecycle reconciliation to
-T06, with independent T20/T21 verification; B01 does not close that gap.
+Every admitted invocation receives exactly one core `RunStarted` and
+`RunFinished`, whether or not it has run services. Core determines the terminal
+Failed/Reason only after final Result formation, source flush, observer shutdown,
+lease and resource release. A provider success followed by Detach failure thus
+ends with an infrastructure terminal and `RunError` retaining the provider's
+Raw.Terminal and Transcript. Events close after that terminal. Static refusals
+before admission (such as invalid configuration/schema/policy or a closed Agent)
+retain empty closed Events and a Result error, without acquiring resources,
+calling the Driver or inventing a started event/RunID.
+
+Claude and CodeBuddy resident failures retain available protocol observations
+through `RunError.Result`. Short or partial prompt writes still stop and drain
+stdout/stderr, including an unterminated stderr tail, and never replay accepted
+input. EOF and an observed `*exec.ExitError` remain reachable in Cause; a natural
+positive exit code is agent_error unless a more specific outcome already exists.
+Internal process cleanup does not fabricate caller cancellation. Claude decision
+sink errors also stop and drain the resident writer without requiring the caller
+to cancel it, and a buffered terminal cannot make that failed writer reusable.
+
+Without authoritative terminal usage, observed formal messages contribute their
+cumulative increments once, with repeated snapshots deduplicated. Valid terminal
+zero is authoritative; absent or entirely invalid counts do not invent observed
+zero. CodeBuddy requires a formal message ID and preserves the existing
+cache_read_input_tokens/cached_input_tokens mapping. Claude can use a formal
+anonymous message boundary. No error path promotes an unhealthy checkpoint.
+Claude leaves Text empty without final assistant text; CodeBuddy preserves its
+formal partial-message fallback, while a terminal's legitimate empty text stays
+empty. Neither uses raw stdout as Text or invents Summary.
 
 ## 5. Backpressure
 
@@ -158,7 +211,21 @@ The default policy only allows dropping replayable or high-frequency deltas:
 - stdout/stderr `ProcessInfo`
 - `SubagentUpdate{Kind: SubagentDelta}`
 
-Lifecycle boundaries, approvals, terminal events, tool results, transcript items, and `Dropped` itself are reliable events. When a drop occurs, the SDK emits an aggregated `Dropped` whose `Count`, `ByKind`, `FirstSequence`, `LastSequence`, `Reason`, and `Source` describe the gap. Once an explicit cancellation enters abort teardown, deltas that have not yet entered the channel and a pending aggregated `Dropped` may be abandoned, but the authoritative `RunFinished` uses the separately reserved capacity and is still delivered as the last event.
+Lifecycle boundaries, approvals, tool results, transcript items, CapabilityInvocation,
+TodoUpdated and Dropped are reliable during normal backpressure. An aggregated
+`Dropped` reports Count, ByKind, FirstSequence, LastSequence, Reason and Source.
+Cancellation or publisher revocation releases blocking sends; every numbered
+but undelivered event is included in the final loss report, including an earlier
+Dropped marker that itself never reached the channel. Two independent reserved
+slots deliver that final Dropped and then RunFinished without requiring a consumer
+to make space. Count measures undelivered typed events, not business operations.
+
+For example, with buffer=1: RunStarted seq1 fills the buffer, delta seq2 is dropped,
+and pending Dropped seq3 precedes Todo seq4. The observer sees the Todo before
+any user-send wait. Cancellation without draining yields final Dropped seq5 with
+Count=3, ByKind={text.content:1,dropped:1,todo.updated:1}, FirstSequence=2 and
+LastSequence=4, followed by RunFinished seq6. A delivered earlier marker is not
+counted again. Consumers should mark projections incomplete after loss.
 
 Use the construction-scope option when lossless events are required:
 

@@ -317,7 +317,7 @@ C02 Ask token 在观察/用户入队或 OnApproval 调用之前建立，最后 r
  Observation ObservationDemand
 ```
 
-需求按全部 attachments OR 合并，不改变既有 Option 近处覆盖/skills追加/Policy整值替换。最终 schema/policy/native prompt/observation 共同解析一次 transport；仍只有 `Request.Streaming`。先在符合硬 policy/native prompt且至少支持一种schema机制的transport中保留观测：CapabilityInvocations计Skills/MCP/Subagents三个位，Todos一位，选择满足需求位数最多者，平分则保留既存选择。随后在选定transport按C04原生schema→prompt加本地校验协商；不能仅为batch原生schema放弃可交付的rich事实。如果构造配置明确锁定transport，则不覆盖它。各项在所有可行transport都不支持时，仍运行并在Driver启动前发一次 `NoticeRuntime`，Data=`{"code":"observation_unavailable","capabilities":["skill","mcp","subagent","todo"]}`（只列未支持且被请求的项）。不假报空快照或零次调用。第三方零值 Descriptor 明确未声明，不推测支持。
+需求按全部 attachments OR 合并，不改变既有 Option 近处覆盖/skills追加/Policy整值替换。按 R009，资源前一次 normalize 并冻结符合 policy/schema 的真实 transport 候选及其 source；AttachRun 后合并 observation 需求，只有一次最终选择并写入 `Request.Streaming`，不再 normalize/调用 resolver 或物化。在这些候选中保留观测：CapabilityInvocations计Skills/MCP/Subagents三个位，Todos一位，选择满足需求位数最多者，平分则保留既存选择。每个候选预先按 C04 原生 schema→prompt 加本地校验冻结 source，最终选中后才应用相应提示指令；不能仅为batch原生schema放弃可交付的rich事实。遵守配置捕获后的既有 StreamSupport/StreamCapability 和原 providerRichTransport 初选，不从零能力推测 rich，不新增锁定 SPI。观测不能通过新增 batch 候选消音有或无 schema 的适用 Ask；原初选 batch 的合法 Ask 保持。各项在所有可行transport都不支持时，仍运行并在Driver启动前发一次 `NoticeRuntime`，Data=`{"code":"observation_unavailable","capabilities":["skill","mcp","subagent","todo"]}`（只列未支持且被请求的项）。不假报空快照或零次调用。第三方零值 Descriptor 明确未声明，不推测支持。
 
 Observer/demand/publisher 的对象地址不参与会话 fingerprint；被选 transport、真实 catalog、resource/env/session 兼容维度参与既存 canonical fingerprint 和常驻启动签名。不能为观测绕过单 writer 或交付后自动重放；能力探针与执行观察同一构造配置。T06在wiring/runservices交付并接入真实negotiation，B02 fake Driver端到端测试立即可执行；T10只扩展同一个resolver的native prompt/budget输入，不能另建pipeline或在Driver再协商。
 

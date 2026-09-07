@@ -89,7 +89,8 @@
       "docs/internal-history-alignment-plan-2026-09-07.md",
       "docs/alignment-tasks/2026-09-07/README.md",
       "docs/alignment-tasks/2026-09-07/amendments/R006.md",
-      "docs/alignment-tasks/2026-09-07/amendments/R007.md"
+      "docs/alignment-tasks/2026-09-07/amendments/R007.md",
+      "docs/alignment-tasks/2026-09-07/amendments/R010.md"
     ],
     "dependency_artifacts": [
       {
@@ -166,7 +167,8 @@
     "组合 result-only stdin、常驻/WithSpawn、审批+schema、中断部分结果、Close 超时重试和旧 checkpoint 不污染。",
     "发现失败提交复现与归属，禁止在 QA task 偷改生产逻辑；gate 必须重开原 owner 并重跑受影响验收。",
     "R006独立核验W09-R14：Driver先报告成功但后续cleanup/lease失败，带/不带RunService sources均由公共最终RunFinished映射同一最终RunError，原始provider Terminal/Transcript完整且无提前第二终局。",
-    "R007独立验收释放线性化点：解锁前失败保留所有权，解锁后清理失败重试绝不写新owner状态；Windows实际长期锁句柄无delete sharing，持锁rename/delete失败，不用仅验证事后inode变化替代。"
+    "R007独立验收释放线性化点：解锁前失败保留所有权，解锁后清理失败重试绝不写新owner状态；Windows实际长期锁句柄无delete sharing，持锁rename/delete失败，不用仅验证事后inode变化替代。",
+    "R010独立对照：executeInvocation准入后每轮唯一core start/terminal且cleanup主Reason一致；openStream静态拒绝保留空closed Events+Result error、无资源/Driver，不伪造执行生命周期。"
   ],
   "acceptance_criteria": [
     {

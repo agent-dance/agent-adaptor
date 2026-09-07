@@ -14,6 +14,10 @@ All notable changes to this project are documented in this file.
 - Persistent Dedicated profiles with hosted Tools retain local provider session
   files in an identity-partitioned namespace. Profile-owned errors report
   contention, unsafe ownership, dirty generations and unsupported filesystems.
+- Typed capability invocation and todo snapshot events, parent/scope coordinates,
+  and optional per-run observers, publishers and observation demand.
+- Opt-in live delegation artifact Parts and Append/LastChunk flags, preserving
+  individual updates and complete final recovery.
 
 ### Fixed
 
@@ -27,10 +31,27 @@ All notable changes to this project are documented in this file.
 - Preserve partial Result and cause on cancellation, protocol/store/cleanup
   failures, and preserve audit data across safe resume fallback. A2A outcome
   mapping prioritizes RunError's primary Reason over joined context causes.
-- Resolve schema and transport once before run-resource acquisition; batch
-  fallback cannot discard the selected mechanism's applicable Ask requirements.
+- Normalize schema and validate transport/source candidates once before resource
+  acquisition. Late observation demand selects only among those candidates and
+  cannot discard applicable Ask requirements or repeat resource resolution.
 - Keep profile cleanup retryable and never modify a successor generation after
   OS unlock. Dirty active generations require proven offline recovery.
+- Preserve Claude and CodeBuddy resident partial output, formal transcripts,
+  stdout/stderr tails, observed message usage and original process Wait errors,
+  including early prompt-write failures; never replay delivered input or promote
+  an unhealthy checkpoint. Claude decision abort now stops and drains its writer.
+- Keep absent/invalid Claude usage distinct from observed zero, and aggregate
+  per-message cumulative usage without counting repeated snapshots twice.
+- Reconcile every admitted run's sole public terminal with the final Result and
+  cleanup outcome. Preserve all numbered but undelivered events in the final
+  drop report and unblock run publishers during teardown.
+- Isolate failed/timed-out observers and snapshot resolved hosted-profile resources
+  after the unique skill resolver, including proven managed reconciliation,
+  actual file modes and unknown settings; different profile directories can run
+  concurrently.
+- Deep-copy delegation artifacts across subscribers, replay and result accessors;
+  enforce cumulative artifact byte limits before publication and report invalid
+  content and compact-result count truncation with safe diagnostics.
 
 ### Changed
 
@@ -43,6 +64,15 @@ All notable changes to this project are documented in this file.
 - Clean Close retains Dedicated+Tools session files; other profile selections
   continue to remove temporary clones. Previously deleted transcripts cannot
   be recovered from resume identifiers alone.
+- Claude native schema supports Question and PlanReview Ask; Permission Ask uses
+  prompt validation. Effective inherited Ask makes zero-policy schema calls use
+  prompt validation, while existing raw-policy interactive activation is unchanged.
+- Default artifact events now expose an omission marker instead of original
+  protocol Raw. Full Parts and artifact Raw require IncludeRemoteArtifacts;
+  byte accounting now includes metadata and protocol Raw.
+- Consumers of admitted runs now receive a core RunStarted/RunFinished envelope
+  even without run services. Static pre-admission refusals retain empty closed
+  Events and an error from Result.
 
 ## [1.1.2] - 2026-08-07
 

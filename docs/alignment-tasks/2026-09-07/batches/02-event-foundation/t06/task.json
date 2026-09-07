@@ -71,7 +71,9 @@
       "docs/alignment-tasks/2026-09-07/README.md",
       "docs/alignment-tasks/2026-09-07/contracts/profile-lifecycle.md",
       "docs/alignment-tasks/2026-09-07/amendments/R003.md",
-      "docs/alignment-tasks/2026-09-07/amendments/R006.md"
+      "docs/alignment-tasks/2026-09-07/amendments/R006.md",
+      "docs/alignment-tasks/2026-09-07/amendments/R009.md",
+      "docs/alignment-tasks/2026-09-07/amendments/R010.md"
     ],
     "dependency_artifacts": [
       {
@@ -125,6 +127,7 @@
       "runservices.go",
       "runservices_test.go",
       "sink.go",
+      "stream_backpressure_test.go",
       "stream_contract_test.go",
       "testdata/root_api.golden",
       "todo/**",
@@ -169,7 +172,9 @@
     "实现只接受规范化操作的中立 catalog/tracker/table；绝不 import root 或认识 Claude 工具 JSON。合法空 snapshot 清空、synthetic ID 和去重可测试。",
     "实现 observation demand 的统一 resolved 协商扩展点，供无需 Store 的 bridge 使用；provider 能力未接入前保持真实 unsupported/未观察。",
     "提供 fake Driver/RunService 可运行的端到端事件/observer 合同测试，不留空 stub；root/Driver golden 逐项更新。",
-    "R006：所有Driver-only及带RunServices运行统一由core持有RunStarted/RunFinished最终权威，不能只在startPumps有event sources时启用。Driver终局是可保留的provider协议事实，不能提前作为公共run最终成功；在最终Result/error含lease/cleanup已确定后一次发布终局，保留Raw/Terminal/Transcript，取消/drop/block与observer收尾均有界。T10未来预算归因接入该唯一终局机制。"
+    "R006：所有Driver-only及带RunServices运行统一由core持有RunStarted/RunFinished最终权威，不能只在startPumps有event sources时启用。Driver终局是可保留的provider协议事实，不能提前作为公共run最终成功；在最终Result/error含lease/cleanup已确定后一次发布终局，保留Raw/Terminal/Transcript，取消/drop/block与observer收尾均有界。T10未来预算归因接入该唯一终局机制。",
+    "R009：资源前一次normalize并冻结可行schema/source/transport候选；AttachRun后仅需求评分选择一次最终候选，不能重跑resolver/物化或消音Ask。保留无需求原选择、初始batch合法Ask及真实StreamSupport边界，零schema显式Ask切换也必须验证。",
+    "R010：更新stream_backpressure_test.go的旧空流/计数假设，显式核对core唯一start/terminal与buffer占用；保留marker-before-critical、聚合范围/count、blocking不丢、关闭后no-op与资源释放后才终局，原V01完整验收。"
   ],
   "acceptance_criteria": [
     {
@@ -196,6 +201,11 @@
       "id": "T06-AC05",
       "required": true,
       "requirement": "Driver-only先发provider成功后cleanup/lease失败时公共最终RunFinished与Go error主Reason一致；success/error/cancel、无sources/带sources、Run/Stream、满buffer/drop/block、observer失效均一终局且terminal-last，不丢provider原始终局。"
+    },
+    {
+      "id": "T06-AC06",
+      "requirement": "资源前schema无效/无可行机制零资源；晚到Observation只选择已验证候选，保持一次normalize/最终dispatch，覆盖无schema显式Ask、nil/精确矩阵继承Ask、无demand原选择、初选batch合法Ask及不可用安全Notice。",
+      "required": true
     }
   ],
   "validation": [

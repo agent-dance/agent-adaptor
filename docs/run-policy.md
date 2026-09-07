@@ -144,7 +144,7 @@ Current built-in approval declarations are:
 | Driver | Permission | Plan review | Question | Retry |
 |---|---|---|---|---:|
 | Codex | auto-approve | none | none | no |
-| Claude | auto-approve, auto-deny | ask, auto-approve, auto-deny | ask, auto-deny | no |
+| Claude | ask, auto-approve, auto-deny | ask, auto-approve, auto-deny | ask, auto-deny | no |
 | Cursor | auto-approve | none | none | no |
 | CodeBuddy | ask, auto-approve, auto-deny | ask, auto-approve, auto-deny | ask, auto-deny | no |
 
@@ -263,3 +263,23 @@ capability. A nil matrix preserves the published explicit-Ask `WorksWithHITL`
 rule. Mixed Ask requirements must all fit one mechanism; automatic fallback
 cannot discard them. Without a schema these matrices have no effect. Built-in
 declarations remain listed in [Structured output](./structured-output.md).
+
+
+Claude native schema permits Question and PlanReview Ask; Permission Ask uses
+prompt validation. Inherited Permission Ask therefore makes a zero-policy
+schema call use prompt validation. Raw zero-policy transport remains observational;
+that schema decision does not activate interaction or authorize a permission.
+Explicit QuestionAsk with unset Permission uses bidirectional transport and can
+handle a real inherited Permission request. Native-compatible explicit policy
+and temporary Thread process behavior are detailed in the structured-output
+reference. A custom DecisionCapableSink error aborts and drains the Claude writer
+even if the caller context remains live; it does not create a separate policy.
+
+Observation demand cannot override approval feasibility. Core first validates
+transport/source candidates using captured Driver configuration, then OR-merges
+attachment demand and scores only those candidates. Skill/MCP/Subagent support
+each contribute one point for capability demand, and Todo one point; ties keep
+the initial transport. Zero demand preserves the initial choice. An explicit Ask
+without schema is also preserved, including a third-party Driver whose initially
+selected batch transport legitimately supports it. Only required facts absent
+from every feasible candidate produce an observation_unavailable Notice.

@@ -52,4 +52,10 @@
 // validated structured output. After Driver.Run is entered, every failure uses
 // RunError with the available Result and the original error chain in Cause.
 // Pre-invocation failures remain ordinary wrapped errors.
+//
+// CapabilityInvocation and TodoUpdated carry validated leaf vocabulary from
+// capability and todo. Optional RunAttachment observers see those facts before
+// user backpressure; attachment publishers join the same Event stream. Every
+// admitted execution has one core lifecycle whose terminal reflects the final
+// Result and resource cleanup. Static pre-admission refusals have no lifecycle.
 package adaptor

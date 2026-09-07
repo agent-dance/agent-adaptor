@@ -23,6 +23,6 @@ The public v1 model is Agent, Thread, Stream, Event, Result, and Driver. Start w
 | Document | Purpose |
 |---|---|
 | [`internal-history-alignment-plan-2026-09-07.md`](./internal-history-alignment-plan-2026-09-07.md) | Commit-by-commit comparison with the internal repository and a v1-compatible alignment plan, based on the branches fetched on September 7, 2026. |
-| [Alignment task dispatch package](./alignment-tasks/2026-09-07/README.md) | Seven gated batches with 41 task.json files, independent ownership, 95 traceable requirements, and dispatch validation. |
+| [Alignment task dispatch package](./alignment-tasks/2026-09-07/README.md) | Seven gated batches with 42 task.json files, independent ownership, 96 traceable requirements, and dispatch validation. |
 
 2026-09-07 internal 对齐已进入分批实施；B00冻结规范见 [合同清单](alignment-tasks/2026-09-07/contracts/frozen.json)。新增API仍以各批实际合流验收为准。

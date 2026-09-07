@@ -196,7 +196,30 @@ A single parse of the official protocol must form all of these layers together:
 - `RuntimeServices`: service reports the Driver actually observed; host declarations must not be echoed back as evidence of success.
 - `Failure`: a structured business failure; the terminal outcome is still returned through core's Go error path.
 
-When `Run` returns a non-nil error, any `Checkpoint.Valid=true` is treated as invalid. Core currently returns this case as an infrastructure/execution error and does not expose the partial `Response` returned alongside it as an application `Result`; necessary diagnostics must be preserved in the wrappable error and in already published events, and a Driver must not rely on the partial `Response` as an error audit surface. Structured business failures should use `Response.Failure`, from which core forms a `RunError` carrying a `Result`.
+When Driver `Run` returns an error, any accompanying `Checkpoint.Valid=true` is
+invalid. Return the available `Response` alongside the original cause: core maps
+its output, Raw, terminal payload, Transcript, Usage and observed services into
+`RunError.Result`, and preserves the error in `RunError.Cause`. Public execution
+returns `nil, *RunError`; `Response.Failure` uses the same carrier. Do not discard
+partial protocol observations just because the execution failed. Pre-Driver
+failures retain their ordinary wrapping. A cleanup failure after an already
+committed healthy checkpoint does not undo that commit.
+
+Public lifecycle events are core-owned for every admitted invocation. Driver
+terminal frames remain required protocol observations, and their raw payload
+remains in Result; they cannot announce public success before source flush,
+observer shutdown and resource cleanup. The final core RunFinished reflects the
+same Result/error returned to the caller. Static pre-admission rejection has no
+Driver run and retains an empty closed stream.
+
+`StreamCapabilityInvocation` and `StreamTodoUpdated` carry validated leaf
+`capability.Invocation` and `todo.Snapshot` facts. Parent scope/tool coordinates
+and at most eight acyclic upstream source levels preserve provenance; raw
+provider sequence values never replace core Sequence. Descriptor observation
+support is truthful per transport, with zero meaning unsupported. Only formal
+provider parsers may produce provider evidence; shared trackers cannot guess
+capabilities from arbitrary JSON. [Streaming](./streaming.md) defines the host
+observer and loss semantics.
 
 ## 8. Raw and the provider terminal
 

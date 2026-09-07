@@ -113,15 +113,17 @@ all match `adaptor.ErrInvalidOutputSchema`.
 ## Automatic capability negotiation
 
 Every Driver declares `driver.Descriptor.StructuredOutput`. Consumers do not
-choose an enforcement mode. For every schema request, core applies one fixed
-rule before acquiring run resources:
+choose an enforcement mode. Core normalizes schema once before run resources,
+then freezes feasible transport candidates and each candidate's mechanism:
 
-1. use provider-native JSON Schema enforcement when the selected transport and
-   policy support it;
-2. otherwise inject exact-JSON instructions and validate locally;
-3. fail before profile, workspace, runtime, skill or Thread lease acquisition
-   when neither mechanism is supported. The resolved schema, source and
-   transport are cached only for this invocation and reused by execution.
+1. prefer provider-native JSON Schema when that transport and policy support it;
+2. otherwise select prompt instructions plus local validation;
+3. reject before profile, workspace, runtime, skill or Thread lease acquisition
+   if no candidate can honor the request.
+
+After service attachment, observation demand selects only among these candidates.
+Only then are any selected prompt-schema instructions assembled. No schema
+normalization, resource resolution or materialization is repeated.
 
 The SPI has optional `NativeHITL` and `PromptValidateHITL` pointers to
 `StructuredOutputHITLCapability{Permission, PlanReview, Question bool}`. Each
@@ -137,14 +139,15 @@ Permission to choose prompt validation or become unsupported. Core does not
 silently approve a question to preserve native enforcement.
 
 The consumer's choice between `Run` and `Stream` does not select the provider
-transport. The unified invocation pipeline prefers a Driver's rich transport,
-then negotiates its batch transport when structured output is not supported by
-that rich transport. Each batch candidate must preserve its applicable Ask
-requirements; it cannot disable approvals to make schema negotiation succeed.
-A `Stream` therefore remains usable but may receive fewer
-incremental provider events. If neither transport can honor the request, the
-run fails before the Driver is invoked with
-`adaptor.ErrStructuredOutputUnsupported`.
+transport. Initial selection uses the captured Driver configuration and its
+StreamSupport/StreamCapability/providerRichTransport contract. When rich is
+available, core may also validate batch as a candidate; it never invents rich
+support from a zero descriptor. Each candidate preserves applicable Ask, even
+for an explicit Ask without schema. Attachment demand scores only these feasible
+candidates, with ties and zero demand preserving the initial selection. A Stream
+can therefore use batch and receive fewer provider deltas while retaining the
+same public execution contract. If no candidate honors schema, execution fails
+before resources with `adaptor.ErrStructuredOutputUnsupported`.
 
 Hosts may inspect the public Driver descriptor for diagnostics, but there is no
 structured-output choice to expose in their UI:
@@ -161,7 +164,7 @@ Current built-in declarations are:
 | Driver | Native schema | Prompt validation | Rich provider transport | Explicit HITL `Ask` |
 |---|---:|---:|---:|---:|
 | Codex | yes | yes | yes; app-server and batch | no |
-| Claude | yes | yes | yes | no |
+| Claude | yes | yes | yes | native Question/PlanReview; Permission uses prompt |
 | Cursor | no | yes | yes | no |
 | CodeBuddy | yes | yes | no; batch is negotiated | no |
 
@@ -180,6 +183,33 @@ only that last assistant value to the shared schema validator. A top-level
 structured output. Missing or failed terminals, malformed protocols, nonzero
 exits, signals, timeouts, and business failures cannot yield a native
 structured-output candidate.
+
+## Claude schema and approvals
+
+Claude declares NativeHITL={Permission:false, PlanReview:true, Question:true}
+and PromptValidateHITL={Permission:true, PlanReview:true, Question:true}.
+WorksWithHITL remains conservatively false; each precise matrix takes precedence
+for its own mechanism. Ordinary Permission Ask without schema remains supported.
+
+| Raw policy | Schema choice | Interactive activation |
+|---|---|---|
+| Zero policy | Prompt; inherited Permission/PlanReview Ask | Existing observational transport |
+| QuestionAsk, Permission unset | Prompt; inherited Permission Ask | Bidirectional, including real Permission requests |
+| PermissionAutoApprove, QuestionAsk | Native; inherited PlanReview Ask supported | Bidirectional |
+| PermissionAutoApprove, PlanReviewAsk | Native | Bidirectional |
+
+This does not silently approve permissions or alter the raw-policy rule that
+activates interactive transport. For native schema with questions, explicitly
+set Permission to ApprovalAutoApprove and Question to QuestionAsk, and answer
+through OnApproval or the typed request event as usual. Zero-policy tests are
+not evidence of a Permission round-trip.
+
+Native interactive Claude runs retain stream-json input/output and the same
+control-response stdin even when the resolved Request.Streaming is false.
+On Thread, native schema uses a temporary process shape: the old writer exits
+before replacement, and only a healthy result may prewarm a resident writer.
+WithSpawn suppresses registration/prewarm. It does not promise PID reuse across
+native rounds.
 
 ## Decode and failure behavior
 
@@ -218,8 +248,10 @@ With `SchemaReturnInvalid`, the run returns `*Result, nil`, while
 only the run verdict; it does not make invalid JSON decodable.
 
 `Run` and `Stream.Result` share the same negotiation, validation, and decode
-surface. Changing an output schema does not change Thread compatibility or
-split an otherwise compatible conversation.
+surface. The schema itself is not a separate Thread identity dimension. The
+finally selected provider transport is part of compatibility, so a schema or
+observation demand that changes transport follows normal Thread compatibility
+rules.
 
 ## Security and dependencies
 

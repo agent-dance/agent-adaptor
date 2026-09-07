@@ -74,6 +74,20 @@ otherwise preserve the preceding healthy checkpoint.
 Unknown Driver failure codes remain available as `RunError.Reason` but do not
 silently match one of the five sentinels above.
 
+Claude and CodeBuddy resident failures build available Response data from their
+formal parser before returning the cause, including partial/short-write failures
+and stderr tails. EOF does not replace an observed original *exec.ExitError:
+both remain reachable with errors.Is/As. A natural positive exit has agent_error
+when there is no more specific failure; caller cancellation/deadline and prior
+approval/provider failures keep priority over cleanup causes. Internal process
+termination is not evidence that the caller canceled.
+
+Usage is retained only from formal valid observations. Per-message cumulative
+increments are aggregated without replay double-counting; authoritative terminal
+zero remains observed zero. Absent/invalid counts do not invent non-nil zero
+Usage. Error paths do not validate incomplete schema output as a replacement
+failure or upgrade unhealthy checkpoints.
+
 ## Root pre-invocation errors
 
 These failures occur before `Driver.Run` is invoked. The root variables are

@@ -1,16 +1,16 @@
 {
   "schema_version": "1.0",
-  "gate": "G01",
-  "manifest_revision": 9,
+  "gate": "G02",
+  "manifest_revision": 11,
   "code_baseline": "919f140f64f89c80933802840c8878681a85a4d9",
   "source_head": "e2f0620bdd6477e6fe16f6db5648093589342ca2",
-  "status": "contracts_reconciled_b01_implementation_integrated_later_work_pending",
+  "status": "contracts_reconciled_for_G02_later_work_pending",
   "contracts": [
     {
       "producer": "C01",
       "path": "docs/alignment-tasks/2026-09-07/contracts/profile-lifecycle.md",
-      "sha256": "da63d99a2053ba6ea9010bd420650b0ecb8e04c46c7ec6a8e3caecd2af00439f",
-      "version": "1.1-g01",
+      "sha256": "97145229db14704b015b24181bbdc59d736e7c7c276101e85cc277773d19eb67",
+      "version": "1.2-g02",
       "interfaces": [
         "profile.ErrInUse/ErrUnsafe/ErrRecoveryRequired/ErrUnsupportedFilesystem",
         "Dedicated WithTools deterministic profile + owner lock",
@@ -42,8 +42,8 @@
     {
       "producer": "C03",
       "path": "docs/alignment-tasks/2026-09-07/contracts/events-observation.md",
-      "sha256": "0e41bfc1c6274740b8edc874d71332f1db3f3a4c9bb57cd25b076927ace8a1ba",
-      "version": "1.0-g00",
+      "sha256": "38feab5ff7dfb26b1ca3231903f685e61d8cd8677ca1d7277243be7ef5062ab2",
+      "version": "1.2-g02",
       "interfaces": [
         "capability/todo leaf types and root/SPI typed events",
         "run-bound publisher and capability/todo-only observer",
@@ -79,8 +79,8 @@
     {
       "producer": "C04",
       "path": "docs/alignment-tasks/2026-09-07/contracts/prompt-transport.md",
-      "sha256": "6ea68d5b4292c1dcfa7733f5b972177332d1808cc09c5f0c96f671c534b79f6c",
-      "version": "1.1-g01",
+      "sha256": "dde37b22cb31be91348f6363198e4e3c4e1c0134cf8fbc4d41daabdd00cb34de",
+      "version": "1.2-g02",
       "interfaces": [
         "WithAppendSystemPrompt SharedOption",
         "driver.Request.AppendSystemPrompt + Descriptor.SystemPrompt",
@@ -196,6 +196,7 @@
       "runservices.go",
       "runservices_test.go",
       "sink.go",
+      "stream_backpressure_test.go",
       "stream_contract_test.go",
       "testdata/root_api.golden",
       "todo/**",
@@ -353,7 +354,11 @@
     "R005: nonnil schema matrices include inherited Ask; nil legacy explicit-Ask semantics remain per mechanism.",
     "R006: T06 owns W09-R14 core terminal authority for all runs after Result/cleanup; T20/T21 independently verify.",
     "R007: successful OS unlock ends ownership; later close retry cannot mutate successor state; Windows lock handle forbids delete sharing.",
-    "R008: T04 owns e2e/tools_test.go real-process Dedicated/temporary lifecycle fixture and full e2e package check; G01 retries exact final SHA."
+    "R008: T04 owns e2e/tools_test.go real-process Dedicated/temporary lifecycle fixture and full e2e package check; G01 retries exact final SHA.",
+    "R009: one pre-resource schema normalization and eligible transport/source candidate set, late attachment demand only selects final candidate; preserve raw Claude interaction defaults and actual Ask transport constraints.",
+    "R010: T06 owns stream_backpressure_test.go to preserve backpressure invariants with the R006 core lifecycle envelope; no production scope or coverage change.",
+    "R010 admission boundary: every executeInvocation has a core lifecycle; existing openStream static rejection remains closed Events + Result error with no resources/Driver, including missing RunID.",
+    "G02 implementation reconciliation: T06 final resource/prune snapshot and admitted core lifecycle delivered; source IO and unproved copied-tree prune fail closed. T07/T08 partial response/cause/usage and T09 artifact opt-in delivered; independent and platform/live gates remain pending."
   ],
   "unmerged_related_branches": [
     {
@@ -369,5 +374,5 @@
       "decision": "Preserve current stronger tool authorization boundary; no automatic merge."
     }
   ],
-  "previous_freeze_gate": "G00"
+  "previous_freeze_gate": "G01"
 }
