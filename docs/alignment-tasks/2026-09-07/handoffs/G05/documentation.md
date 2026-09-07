@@ -7,8 +7,8 @@ merged in manifest order; worker evidence remains external and immutable.
 | Worker | Accepted source SHA | Final checks |
 |---|---|---|
 | T20 | `2d50f024c5c51d7c8c8d55dce11c92988748cf37` | T20-V01, T20-V02, T20-V03 |
-| T21 | `b9c15e5a02fbf39e67cccbf6fec18d76d84515d9` | T21-V01, T21-V02 |
-| T22 | `2340e0894f9e3c5fd7405c383ca02c859435b830` | T22-V01, T22-V02 |
+| T21 | `5096368c1188b537f1f1c25d4c9ee2cd42cb0a26` | T21-V01, T21-V02 |
+| T22 | `3dcd8626a1342ce7b548440db8bf2780a954589c` | T22-V01, T22-V02 |
 | T23 | `1d92e2673e3f17ad674b3b074e565727a8befaf1` | T23-V01, T23-V02, T23-CONFORMANCE, T23-VET, T23-GATE-CLAUDE, T23-GATE-CODEBUDDY, T23-GATE-CODEX, T23-GATE-CURSOR, T23-WINDOWS-COMPILE, T23-EXAMPLE |
 | T24 | `849f8334e376d4719167afa31706b4dea22b8cce` | T24-V01, T24-OFFLINE |
 
@@ -39,3 +39,5 @@ T25–T30 must all verify that same frozen SHA without source commits. The
 available Linux runner may execute only after G05 acceptance; missing native
 Windows or paid authorization is recorded as missing, never converted to pass.
 No push, tag, release, paid call or final release readiness is authorized here.
+
+G05 attempt 1 at 9e12566c01b3626126ba85b035dcc2f5afe47126 failed the existing A2A import-localization guard. Original owners repaired T21/T22 QA imports and reran all original checks plus the unchanged guard. C02 confirmed that public StreamRecoveryError.Cause promises error semantics, not an upstream concrete type/code/details representation. Those extra coordinator assertions were removed; exact fixture Cause text, matching TaskID, every-frame controls, terminal distinctions and independent drain/Result barriers remain. No production/API, dependency allowlist or original command scope changed. The failed gate and prior worker evidence remain archived externally. This replacement source still requires its own complete G05 gate before freezing.
