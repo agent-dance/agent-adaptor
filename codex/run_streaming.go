@@ -8,6 +8,7 @@ import (
 	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/internal/driverutil"
 	"github.com/agent-dance/agent-adaptor/internal/profileinstructions"
+	"github.com/agent-dance/agent-adaptor/internal/systemprompt"
 )
 
 // runAppServer handles provider-streaming invocations and SessionFork. Forks
@@ -69,15 +70,20 @@ func buildAppServerOptions(
 	model, effort, serviceTier := codexAppServerConfigProjection(cfg)
 
 	opts := appserver.Options{
-		Command:        command,
-		ExtraArgs:      extraArgs,
-		CWD:            effectiveCWD,
-		Env:            effectiveBindings,
-		ClientName:     "agent-adaptor",
-		ClientVersion:  "v0",
-		Prompt:         prompt,
-		ResumeThreadID: resumeID,
-		ForkThreadID:   forkID,
+		Command:            command,
+		ExtraArgs:          extraArgs,
+		CWD:                effectiveCWD,
+		Env:                effectiveBindings,
+		ClientName:         "agent-adaptor",
+		ClientVersion:      "v0",
+		Prompt:             prompt,
+		AppendSystemPrompt: req.AppendSystemPrompt,
+		SkillInputs:        codexExplicitSkillInputs(req.Prompt, req.Skills.Entries),
+		ResolvedSkills:     append([]driver.ResolvedSkill(nil), req.Skills.Entries...),
+		ResolvedMCP:        append([]driver.MCPServerSpec(nil), req.MCP.Servers...),
+		ResolvedAgents:     append([]driver.AgentSpec(nil), req.ProfilePayload.Agents.Agents...),
+		ResumeThreadID:     resumeID,
+		ForkThreadID:       forkID,
 		// Keep app-server threads persistent so any checkpoint returned to a
 		// Thread remains resumable after this subprocess exits. Stateless Agent
 		// runs simply ignore the checkpoint.
@@ -103,6 +109,7 @@ func finishAppServerResult(req driver.Request, result driver.Response, effective
 		if result.Checkpoint.State.Data == nil {
 			result.Checkpoint.State.Data = map[string]string{}
 		}
+		result.Checkpoint.State.Data[appendSystemPromptFingerprintKey] = systemprompt.Fingerprint(req.AppendSystemPrompt)
 		result.Checkpoint.State.Data[driver.SessionParamCWD] = effectiveCWD
 		result.Checkpoint.State.Data[driver.SessionParamWorkspaceID] = req.Workspace.ID
 		result.Checkpoint.State.Data[driver.SessionParamProfileFingerprint] = req.ProfilePayload.SessionFingerprint()

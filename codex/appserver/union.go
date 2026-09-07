@@ -55,12 +55,14 @@ type InitializeResponse struct {
 // ThreadStartParams matches the v2 ThreadStartParams schema. All fields are
 // optional per the codex protocol; we only set the ones the adapter needs.
 type ThreadStartParams struct {
-	CWD         string          `json:"cwd,omitempty"`
-	Ephemeral   bool            `json:"ephemeral,omitempty"`
-	Sandbox     string          `json:"sandbox,omitempty"`
-	Model       string          `json:"model,omitempty"`
-	ServiceTier string          `json:"serviceTier,omitempty"`
-	Extras      json.RawMessage `json:"-"`
+	// DeveloperInstructions appends to the native developer instruction channel.
+	DeveloperInstructions string          `json:"developerInstructions,omitempty"`
+	CWD                   string          `json:"cwd,omitempty"`
+	Ephemeral             bool            `json:"ephemeral,omitempty"`
+	Sandbox               string          `json:"sandbox,omitempty"`
+	Model                 string          `json:"model,omitempty"`
+	ServiceTier           string          `json:"serviceTier,omitempty"`
+	Extras                json.RawMessage `json:"-"`
 }
 
 // ThreadRef is the minimal surface of the server's Thread object exposed
@@ -80,7 +82,9 @@ type ThreadStartResponse struct {
 
 // ThreadResumeParams is the payload for the "thread/resume" request.
 type ThreadResumeParams struct {
-	ThreadID string `json:"threadId"`
+	// DeveloperInstructions appends to the native developer instruction channel.
+	DeveloperInstructions string `json:"developerInstructions,omitempty"`
+	ThreadID              string `json:"threadId"`
 }
 
 // ThreadResumeResponse is the reply to thread/resume.
@@ -91,13 +95,15 @@ type ThreadResumeResponse struct {
 // ThreadForkParams is the official v2 thread/fork request. Forking creates a
 // new provider thread from ThreadID; the parent thread remains unchanged.
 type ThreadForkParams struct {
-	ThreadID       string `json:"threadId"`
-	CWD            string `json:"cwd,omitempty"`
-	Ephemeral      bool   `json:"ephemeral,omitempty"`
-	Sandbox        string `json:"sandbox,omitempty"`
-	Model          string `json:"model,omitempty"`
-	ServiceTier    string `json:"serviceTier,omitempty"`
-	ApprovalPolicy string `json:"approvalPolicy,omitempty"`
+	// DeveloperInstructions appends to the native developer instruction channel.
+	DeveloperInstructions string `json:"developerInstructions,omitempty"`
+	ThreadID              string `json:"threadId"`
+	CWD                   string `json:"cwd,omitempty"`
+	Ephemeral             bool   `json:"ephemeral,omitempty"`
+	Sandbox               string `json:"sandbox,omitempty"`
+	Model                 string `json:"model,omitempty"`
+	ServiceTier           string `json:"serviceTier,omitempty"`
+	ApprovalPolicy        string `json:"approvalPolicy,omitempty"`
 }
 
 // ThreadForkResponse is the reply to thread/fork. Thread.ID is the new child
@@ -116,8 +122,8 @@ type ThreadStartedNotificationBody struct {
 // turn/start & turn/interrupt
 // ---------------------------------------------------------------------------
 
-// TurnStartParams matches the v2 TurnStartParams schema. The adapter always
-// attaches a text-only input; richer UserInput variants are future work.
+// TurnStartParams matches the v2 TurnStartParams schema. The adapter
+// attaches the original text and any explicitly selected typed skill inputs.
 type TurnStartParams struct {
 	ThreadID       string          `json:"threadId"`
 	Input          []UserInput     `json:"input"`
@@ -219,8 +225,8 @@ type ItemCompletedNotificationBody struct {
 // UserInput — discriminated union on "type"
 // ---------------------------------------------------------------------------
 
-// UserInputKind enumerates the variants of UserInput the adapter emits. Only
-// the "text" variant is wired today; image variants round-trip via Extras.
+// UserInputKind enumerates the variants of UserInput the adapter emits. The driver emits
+// text and explicit skill references; other variants are not automatically selected.
 type UserInputKind string
 
 const (

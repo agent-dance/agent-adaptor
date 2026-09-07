@@ -63,6 +63,8 @@ const (
 	NotifyItemFileChangeOutputDelta = "item/fileChange/outputDelta"
 	// NotifyItemPlanDelta carries plan text deltas.
 	NotifyItemPlanDelta = "item/plan/delta"
+	// NotifyTurnPlanUpdated carries an official complete plan snapshot.
+	NotifyTurnPlanUpdated = "turn/plan/updated"
 	// NotifyError carries a server-side error notification.
 	NotifyError = "error"
 )

@@ -11,19 +11,21 @@ import (
 
 	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/internal/processx"
+	"github.com/agent-dance/agent-adaptor/internal/systemprompt"
 )
 
 // Process owns one initialized app-server connection and one loaded Codex
 // thread. Callers must serialize RunTurn calls; Process also enforces that
 // rule so an accidental second writer cannot interleave JSON-RPC turns.
 type Process struct {
-	client   *Client
-	stream   *stdioStream
-	cmd      *exec.Cmd
-	cancel   context.CancelFunc
-	threadID string
-	stdout   *syncBuffer
-	stderr   *syncBuffer
+	client            *Client
+	stream            *stdioStream
+	cmd               *exec.Cmd
+	cancel            context.CancelFunc
+	threadID          string
+	appendFingerprint string
+	stdout            *syncBuffer
+	stderr            *syncBuffer
 
 	turnMu  sync.Mutex
 	closeMu sync.Mutex
@@ -38,6 +40,9 @@ type Process struct {
 func Open(ctx context.Context, opts Options, sink driver.EventSink) (*Process, error) {
 	if opts.ResumeThreadID != "" && opts.ForkThreadID != "" {
 		return nil, errors.New("codex app-server: resume and fork thread ids are mutually exclusive")
+	}
+	if err := systemprompt.Validate("codex", opts.AppendSystemPrompt); err != nil {
+		return nil, err
 	}
 	command := opts.Command
 	if command == "" {
@@ -129,7 +134,8 @@ func Open(ctx context.Context, opts Options, sink driver.EventSink) (*Process, e
 	switch {
 	case opts.ForkThreadID != "":
 		resp, err := client.ThreadFork(ctx, ThreadForkParams{
-			ThreadID: opts.ForkThreadID, CWD: opts.CWD, Ephemeral: opts.Ephemeral,
+			DeveloperInstructions: opts.AppendSystemPrompt,
+			ThreadID:              opts.ForkThreadID, CWD: opts.CWD, Ephemeral: opts.Ephemeral,
 			Sandbox: opts.Sandbox, Model: opts.Model, ServiceTier: opts.ServiceTier,
 			ApprovalPolicy: opts.Approval,
 		})
@@ -138,14 +144,15 @@ func Open(ctx context.Context, opts Options, sink driver.EventSink) (*Process, e
 		}
 		threadID = resp.Thread.ID
 	case opts.ResumeThreadID != "":
-		resp, err := client.ThreadResume(ctx, ThreadResumeParams{ThreadID: opts.ResumeThreadID})
+		resp, err := client.ThreadResume(ctx, ThreadResumeParams{ThreadID: opts.ResumeThreadID, DeveloperInstructions: opts.AppendSystemPrompt})
 		if err != nil {
 			return fail(classifyThreadError(err, opts.ResumeThreadID))
 		}
 		threadID = resp.Thread.ID
 	default:
 		resp, err := client.ThreadStart(ctx, ThreadStartParams{
-			CWD: opts.CWD, Ephemeral: opts.Ephemeral, Sandbox: opts.Sandbox,
+			DeveloperInstructions: opts.AppendSystemPrompt,
+			CWD:                   opts.CWD, Ephemeral: opts.Ephemeral, Sandbox: opts.Sandbox,
 			Model: opts.Model, ServiceTier: opts.ServiceTier,
 		})
 		if err != nil {
@@ -157,6 +164,7 @@ func Open(ctx context.Context, opts Options, sink driver.EventSink) (*Process, e
 		return fail(errors.New("codex app-server returned an empty thread id"))
 	}
 	p.threadID = threadID
+	p.appendFingerprint = systemprompt.Fingerprint(opts.AppendSystemPrompt)
 	return p, nil
 }
 
@@ -211,20 +219,23 @@ func (p *Process) RunTurn(ctx context.Context, opts Options, sink driver.EventSi
 	if err := ctx.Err(); err != nil {
 		return result, false, err
 	}
+	if systemprompt.Fingerprint(opts.AppendSystemPrompt) != p.appendFingerprint {
+		return result, false, errors.New("codex app-server: session append system prompt changed")
+	}
 	if p.IsClosed() {
 		return result, false, errors.New("codex app-server process is closed")
 	}
 
 	stdoutStart := p.stdout.Len()
 	stderrStart := p.stderr.Len()
-	state := newRunState(opts.RunID, sink)
+	state := newRunState(opts.RunID, sink, opts)
 	state.setThread(p.threadID)
 	p.client.SetNotificationHandler(state.onNotification)
 	defer p.client.SetNotificationHandler(nil)
 
 	turnParams := TurnStartParams{
 		ThreadID:    p.threadID,
-		Input:       []UserInput{TextInput(opts.Prompt)},
+		Input:       append([]UserInput{TextInput(opts.Prompt)}, opts.SkillInputs...),
 		CWD:         opts.CWD,
 		Model:       opts.Model,
 		Effort:      opts.Effort,
@@ -271,6 +282,11 @@ func (p *Process) RunTurn(ctx context.Context, opts Options, sink driver.EventSi
 		}
 	}
 
+	if err != nil {
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		err = errors.Join(err, p.TerminateAndWait(cleanupCtx))
+		cancel()
+	}
 	exitCode, signal, timedOut := 0, "", false
 	if err != nil {
 		exitCode = -1

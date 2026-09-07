@@ -10,4 +10,29 @@
 // Configuration validation and transport availability checks occur when the
 // agent runs or is inspected. The appserver subpackage contains the typed
 // Codex app-server transport used when that transport is selected.
+//
+// adaptor.WithAppendSystemPrompt uses the native developer instruction channel:
+// exec/exec resume receive a TOML developer_instructions override; app-server
+// start/resume/fork receive developerInstructions. Empty clears the SDK default.
+// Exec accepts at most 32768 UTF-8 bytes and validates the prepared command line;
+// app-server has no SDK inline limit. The text is visible in exec OS argv but is
+// redacted from SDK invocation diagnostics. Raw provider output stays complete.
+// ExtraArgs cannot override any native system/developer instruction source.
+// Append content participates in Thread compatibility and resident signatures.
+//
+// Observation support is transport-specific: exec reports no capability or todo
+// facts. App-server reports exact catalog-matched MCP lifecycles, accepted typed
+// skill inputs selected by explicit $name references, and spawn operations only
+// when an official child role and current-turn collab receiver match. Skill
+// NativeInputAccepted completion proves acceptance of the input, not execution
+// or reading of its contents. Declarations and ordinary text are not evidence.
+// Subagent spawn completion proves the spawn operation, not the child task's
+// eventual success. Unknown/ambiguous identities stay unobserved. No parent tool
+// association is fabricated when the official protocol has none.
+//
+// Official turn/plan/updated produces complete ordered todo snapshots, including
+// clears. IDs identify synthetic turn/position slots, never provider task IDs.
+// Malformed plans leave the prior snapshot unchanged with a safe notice. Current
+// thread/turn and terminal fences apply; experimental plan deltas remain opaque.
+// Valid historical token-usage replay for the same thread is audit-only Raw.
 package codex

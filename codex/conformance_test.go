@@ -11,17 +11,15 @@ import (
 )
 
 // codexLiveGate decides whether the live conformance probes (EVT-*,
-// RUN-*, TRN-*, RSP-*, SO-02) run. They skip when the codex CLI is not in
-// PATH (the CI path), and even with the CLI present they stay opt-in via
-// AGENT_ADAPTOR_LIVE_CONFORMANCE=1, mirroring the codex_live build-tag
-// posture so plain `go test` never triggers a paid provider run.
+// RUN-*, TRN-*, RSP-*, SO-02) run. Both the build tag and environment gate
+// are required; once enabled, a missing CLI is a failed prerequisite.
 func codexLiveGate(t *testing.T) (bool, adaptertest.Option) {
 	t.Helper()
-	if _, err := exec.LookPath("codex"); err != nil {
-		return false, adaptertest.SkipLiveRun("codex CLI not in PATH")
+	if !codexLiveCompiled || os.Getenv("AGENT_ADAPTOR_LIVE_CONFORMANCE") != "1" {
+		return false, adaptertest.SkipLiveRun("requires codex_live build tag and AGENT_ADAPTOR_LIVE_CONFORMANCE=1")
 	}
-	if os.Getenv("AGENT_ADAPTOR_LIVE_CONFORMANCE") != "1" {
-		return false, adaptertest.SkipLiveRun("codex CLI found; set AGENT_ADAPTOR_LIVE_CONFORMANCE=1 to run the live conformance probes")
+	if _, err := exec.LookPath("codex"); err != nil {
+		t.Fatal("authorized live runner requires codex CLI")
 	}
 	return true, adaptertest.WithLiveRun("")
 }
@@ -39,7 +37,10 @@ func TestCodexDriverConformance(t *testing.T) {
 
 	cfg := Config{Model: "gpt-5.4"}
 	cfg.CWD = workspace
-	if !live {
+	if live {
+		cfg = alignmentLiveConfig(t)
+		cfg.CWD = workspace
+	} else {
 		// Hermetic isolation ensures probes do not read or write the
 		// operator's real HOME.
 		cfg.Env = []driver.EnvBinding{
@@ -65,6 +66,7 @@ func TestCodexDriverConformance(t *testing.T) {
 			driver.SessionParamCWD,
 			driver.SessionParamWorkspaceID,
 			driver.SessionParamProfileFingerprint,
+			appendSystemPromptFingerprintKey,
 		),
 		adaptertest.WithWorkspace(workspace),
 		adaptertest.WithExpectedDetectedModel("gpt-5.4"),
