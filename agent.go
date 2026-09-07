@@ -98,10 +98,10 @@ func New(d driver.Driver, opts ...Option) *Agent {
 // defaults are never mutated, so concurrent and successive runs do not
 // pollute each other.
 //
-// Business failures return *RunError carrying
-// the full Result; infrastructure failures (context cancellation/deadline,
-// process crash, protocol breakage) return plain wrapped errors. Both travel
-// the single err path.
+// After Driver.Run is entered, any failure returns nil and *RunError carrying
+// the available Result and original cause, including cancellation, deadlines,
+// process crashes and protocol errors. Failures before Driver.Run remain
+// ordinary wrapped errors supporting errors.Is/As. Both use the single err path.
 func (a *Agent) Run(ctx context.Context, prompt string, opts ...CallOption) (*Result, error) {
 	st := a.Stream(ctx, prompt, opts...)
 	for range st.Events() {

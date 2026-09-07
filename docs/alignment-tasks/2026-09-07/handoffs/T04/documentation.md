@@ -45,6 +45,8 @@ Suggested T06 fixture: a dynamically resolved skill source changes after one run
 - Reject concurrent or unsafe profile adoption and unclean active generations with profile-owned errors. Keep failed Close phases retryable and never overwrite a successor generation after unlock.
 - Preserve private source profiles and renew hosted credentials across clean Agent reconstruction. Do not claim recovery of transcripts already removed by older versions.
 
+Run godoc also follows frozen C02: after Driver.Run entry, failures return nil and RunError carrying the available Result/cause; startup errors remain ordinary errors.Is/As-compatible wrappers. Its implementation belongs to same-batch T05 and was not changed here.
+
 Public declarations added only in `profile/errors.go`: ErrInUse, ErrUnsafe, ErrRecoveryRequired, ErrUnsupportedFilesystem. No root/SPI API declarations or golden changes. Dedicated/profile package and Agent.Close godoc are updated locally.
 
 ## Dependency decision
