@@ -24,6 +24,14 @@ Native structured output uses Claude's `--json-schema`. Interactive HITL plus
 native schema output is rejected explicitly; prompt validation remains the
 portable combination.
 
+A one-shot bidirectional run closes stdin exactly once when the parser sees a
+formal `type:result`, even if no `message_stop(end_turn)` preceded it. A terminal
+root message can also close stdin. Empty or `tool_use` stop reasons and nested
+subagent messages keep input open for control responses. Resident Thread turns
+release only their per-turn handle; the underlying stdin remains open for the
+next turn. A result does not bypass draining stdout/stderr or the final process
+and checkpoint checks.
+
 ## Event and result contract
 
 The protocol parser maps official Claude stream-json frames to

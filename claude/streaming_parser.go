@@ -103,9 +103,15 @@ func (s *streamingState) handleStreamEvent(rawLine string, outer map[string]any)
 		return
 	}
 
+	// Nested subagent messages can end while the root is awaiting a tool
+	// response. Only root message state may close the run's stdin.
+	rootMessage := claudeTopLevelString(outer, "parent_tool_use_id") == ""
 	evType := strings.ToLower(asString(eventObj["type"]))
 	switch evType {
 	case "message_start":
+		if rootMessage {
+			s.stopReason = ""
+		}
 		s.handleMessageStart(eventObj)
 	case "content_block_start":
 		s.handleContentBlockStart(eventObj)
@@ -114,11 +120,18 @@ func (s *streamingState) handleStreamEvent(rawLine string, outer map[string]any)
 	case "content_block_stop":
 		s.handleContentBlockStop(eventObj)
 	case "message_delta":
+		if rootMessage {
+			if delta := claudeTopLevelObject(eventObj, "delta"); delta != nil {
+				if reason := claudeTopLevelString(delta, "stop_reason"); reason != "" {
+					s.stopReason = reason
+				}
+			}
+		}
 		s.handleMessageDelta(eventObj)
 	case "message_stop":
 		// See onAssistantMessageStop: close interactive stdin after a
 		// terminal model turn so the CLI can exit and unblock the host.
-		if s.parser != nil {
+		if rootMessage && s.parser != nil {
 			s.parser.onAssistantMessageStop(s.stopReason)
 		}
 	default:
@@ -129,7 +142,6 @@ func (s *streamingState) handleStreamEvent(rawLine string, outer map[string]any)
 }
 
 func (s *streamingState) handleMessageStart(event map[string]any) {
-	s.stopReason = ""
 	msg := claudeTopLevelObject(event, "message")
 	id := claudeTopLevelString(msg, "id")
 	if id != "" {
@@ -306,11 +318,6 @@ func (s *streamingState) handleContentBlockStop(event map[string]any) {
 }
 
 func (s *streamingState) handleMessageDelta(event map[string]any) {
-	if d, ok := event["delta"].(map[string]any); ok {
-		if sr := claudeTopLevelString(d, "stop_reason"); sr != "" {
-			s.stopReason = sr
-		}
-	}
 	if u := claudeTopLevelObject(event, "usage"); u != nil {
 		s.mergeUsageMap(u)
 	}
