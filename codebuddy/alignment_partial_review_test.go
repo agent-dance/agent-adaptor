@@ -171,6 +171,30 @@ func TestAlignmentCodeBuddyPartialUsageSnapshotsDeduplicate(t *testing.T) {
 			want: &driver.Usage{InputTokens: 30, OutputTokens: 15, CachedInputTokens: 6},
 		},
 		{
+			name: "cached input alias snapshots accumulate without double counting",
+			protocol: `{"type":"stream_event","event":{"type":"message_start","message":{"id":"one","usage":{"cached_input_tokens":2}}}}
+{"type":"stream_event","event":{"type":"message_delta","usage":{"cached_input_tokens":4}}}
+{"type":"stream_event","event":{"type":"message_delta","usage":{"cached_input_tokens":4}}}
+{"type":"stream_event","event":{"type":"message_delta","usage":{"cache_read_input_tokens":4,"cached_input_tokens":99}}}
+{"type":"stream_event","event":{"type":"message_delta","usage":{"cache_read_input_tokens":5,"cached_input_tokens":99}}}
+{"type":"stream_event","event":{"type":"message_stop"}}
+{"type":"stream_event","event":{"type":"message_start","message":{"id":"two","usage":{"cached_input_tokens":3}}}}
+`,
+			want: &driver.Usage{CachedInputTokens: 8},
+		},
+		{
+			name:     "cache read zero takes precedence over cached input alias",
+			protocol: `{"type":"stream_event","event":{"type":"message_start","message":{"id":"zero","usage":{"cache_read_input_tokens":0,"cached_input_tokens":99}}}}`,
+			want:     &driver.Usage{},
+		},
+		{
+			name: "invalid cached input alias is not inferred",
+			protocol: `{"type":"stream_event","event":{"type":"message_start","message":{"id":"invalid","usage":{"cached_input_tokens":-1}}}}
+{"type":"stream_event","event":{"type":"message_delta","usage":{"cached_input_tokens":1.5}}}
+{"type":"stream_event","event":{"type":"message_delta","usage":{"cached_input_tokens":"2"}}}
+`,
+		},
+		{
 			name:     "observed zero",
 			protocol: `{"type":"stream_event","event":{"type":"message_start","message":{"id":"zero","usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0}}}}`,
 			want:     &driver.Usage{},

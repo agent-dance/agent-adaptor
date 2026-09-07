@@ -349,7 +349,7 @@ func (s *streamingState) mergeUsageMap(u map[string]any) {
 		return
 	}
 	input, inputOK := codeBuddyUsageCounter(u, "input_tokens")
-	cached, cachedOK := codeBuddyUsageCounter(u, "cache_read_input_tokens")
+	cached, cachedOK := codeBuddyUsageCounter(u, "cache_read_input_tokens", "cached_input_tokens")
 	output, outputOK := codeBuddyUsageCounter(u, "output_tokens")
 	if !inputOK && !cachedOK && !outputOK {
 		return
@@ -376,19 +376,27 @@ func (s *streamingState) mergeUsageMap(u map[string]any) {
 	}
 }
 
-func codeBuddyUsageCounter(usage map[string]any, field string) (int, bool) {
-	value, ok := topInt(usage, field)
-	if !ok || value < 0 {
-		return 0, false
+func codeBuddyUsageCounter(usage map[string]any, fields ...string) (int, bool) {
+	for _, field := range fields {
+		value, ok := topInt(usage, field)
+		if !ok {
+			continue
+		}
+		if value < 0 {
+			return 0, false
+		}
+		// As with topInt, the first numeric field is authoritative, including
+		// zero. Aliases represent the same counter and are never added together.
+		switch original := usage[field].(type) {
+		case float64:
+			return value, float64(value) == original
+		case int64:
+			return value, int64(value) == original
+		default:
+			return value, true
+		}
 	}
-	switch original := usage[field].(type) {
-	case float64:
-		return value, float64(value) == original
-	case int64:
-		return value, int64(value) == original
-	default:
-		return value, true
-	}
+	return 0, false
 }
 
 func (s *streamingState) handleUserToolResult(block map[string]any) {

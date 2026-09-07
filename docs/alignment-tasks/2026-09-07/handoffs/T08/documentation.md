@@ -6,7 +6,7 @@ Source-Internal-Commits: `126d610dfb6afd2cca19661ab0a7c0b6f626b490`。工作项 
 
 以前，CodeBuddy 常驻进程在 prompt 交付后发生取消、deadline 或断流时，Driver 返回空 Response。即使正式 partial-message 已有文本，T05 的公共 RunError carrier 也无法恢复 Driver 丢掉的数据。
 
-现在，常驻非 fallback 结果统一由同一个正式 parser 构建 Response，并保留 transport/context cause。`Thread.Run` 和 `Thread.Stream().Result()` 的失败返回仍为 `nil, error`；用 `errors.As` 取得 `*adaptor.RunError`，从其 `Result` 读取可用的 Text、Raw stdout/stderr/正式 Terminal、Transcript、Usage、Model、Provider、Metadata 与 Services。partial-message 中已观察到的 Usage 在尚无终局聚合用量时按正式 message ID 求和；同一 message 的累计 counter 更新及重放只计新增差额。没有可归属的 message ID 或没有合法、非负整数计数时，不推测用量。正式终局用量仍优先，已观察零值不会变成 nil。未观察到的 runtime service 不产生成功报告。
+现在，常驻非 fallback 结果统一由同一个正式 parser 构建 Response，并保留 transport/context cause。`Thread.Run` 和 `Thread.Stream().Result()` 的失败返回仍为 `nil, error`；用 `errors.As` 取得 `*adaptor.RunError`，从其 `Result` 读取可用的 Text、Raw stdout/stderr/正式 Terminal、Transcript、Usage、Model、Provider、Metadata 与 Services。partial-message 中已观察到的 Usage 在尚无终局聚合用量时按正式 message ID 求和；同一 message 的累计 counter 更新及重放只计新增差额。继续识别既有 `cache_read_input_tokens` / `cached_input_tokens` 明确字段映射；前者的数值（包括零）优先，别名只表示同一个计数，不重复相加。没有可归属的 message ID 或没有合法、非负整数计数时，不推测用量。正式终局用量仍优先，已观察零值不会变成 nil。未观察到的 runtime service 不产生成功报告。
 
 ```go
 result, err := thread.Run(ctx, "work")
@@ -47,7 +47,7 @@ _ = result.Text
 
 ## 验证与边界
 
-本地为 macOS arm64 / Go 1.26.5，使用本测试二进制的 CodeBuddy 协议子进程，未调用真实 provider。失败历史包括修复前空结果、缺少 partial Usage，以及失败终局后 Raw stdout 尾部丢失。attempt1 独立复审又实际复现了提前 Write 失败未收尾、不同 message 用量误取最大值和实际 ExitError 丢失；attempt2 补入对应回归，不将原包级测试通过当作这些合同已成立的依据。测试覆盖 Run/Stream 逐字段等价、取消/deadline/非零/缺终局/畸形 JSON/畸形终局/正式 provider error、首次中断不落 checkpoint、原健康 record 不变、replacement 单 writer、提前 Write 错误保真、同 message 累计去重，以及终局文本/Summary/零用量合同；既有包级测试继续覆盖 WithSpawn、重建、预热和安全 fallback。
+本地为 macOS arm64 / Go 1.26.5，使用本测试二进制的 CodeBuddy 协议子进程，未调用真实 provider。失败历史包括修复前空结果、缺少 partial Usage，以及失败终局后 Raw stdout 尾部丢失。attempt1 独立复审又实际复现了提前 Write 失败未收尾、不同 message 用量误取最大值和实际 ExitError 丢失；attempt2 补入对应回归，不将原包级测试通过当作这些合同已成立的依据。测试覆盖 Run/Stream 逐字段等价、取消/deadline/非零/缺终局/畸形 JSON/畸形终局/正式 provider error、首次中断不落 checkpoint、原健康 record 不变、replacement 单 writer、提前 Write 错误保真、同 message 累计与缓存字段别名去重，以及终局文本/Summary/零用量合同；既有包级测试继续覆盖 WithSpawn、重建、预热和安全 fallback。
 
 必需验证为 `go test -count=1 ./codebuddy` 和 `go test -race -count=5 ./codebuddy -run TestAlignmentCodeBuddyPartial`，在源码固定 SHA 后执行，真实计数与日志由同目录的外部 result/evidence 记录。沙箱阻止的 loopback listener / profile lock 用已授权的受审查本地执行重跑，保留原失败历史。live/E2E/golden 更新环境门全程关闭。
 
