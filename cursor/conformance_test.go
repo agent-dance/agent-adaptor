@@ -1,29 +1,84 @@
 package cursor
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	adaptertest "github.com/agent-dance/agent-adaptor/adaptertest"
 	"github.com/agent-dance/agent-adaptor/driver"
 )
 
-// cursorLiveGate decides whether the live conformance probes (EVT-*,
-// RUN-*, TRN-*, RSP-*) run. They skip when the Cursor `agent` CLI is not
-// in PATH (the CI path), and even with the CLI present they stay opt-in
-// via AGENT_ADAPTOR_LIVE_CONFORMANCE=1 so plain `go test` never triggers a
-// paid provider run.
+// Both the build tag and environment opt-in are required. Once explicitly
+// enabled, unavailable CLI/auth is a failing required probe, not a skip.
 func cursorLiveGate(t *testing.T) (bool, adaptertest.Option) {
 	t.Helper()
-	if _, err := exec.LookPath("agent"); err != nil {
-		return false, adaptertest.SkipLiveRun("agent CLI not in PATH")
+	if !cursorLiveBuild || os.Getenv("AGENT_ADAPTOR_LIVE_CONFORMANCE") != "1" {
+		return false, adaptertest.SkipLiveRun("requires cursor_live build tag and AGENT_ADAPTOR_LIVE_CONFORMANCE=1")
 	}
-	if os.Getenv("AGENT_ADAPTOR_LIVE_CONFORMANCE") != "1" {
-		return false, adaptertest.SkipLiveRun("agent CLI found; set AGENT_ADAPTOR_LIVE_CONFORMANCE=1 to run the live conformance probes")
+	command := os.Getenv("AGENT_ADAPTOR_CURSOR_COMMAND")
+	if command == "" {
+		command = "agent"
+	}
+	if _, err := exec.LookPath(command); err != nil {
+		t.Fatal("Cursor live conformance enabled but CLI unavailable")
 	}
 	return true, adaptertest.WithLiveRun("")
+}
+
+// Profiles are always freshly isolated. B06 supplies an API key through its
+// approved environment; this test never reads/copies the operator profile.
+func cursorIsolatedConfig(t *testing.T, live bool) Config {
+	t.Helper()
+	home := t.TempDir()
+	workspace := filepath.Join(home, "workspace")
+	if err := os.MkdirAll(workspace, 0700); err != nil {
+		t.Fatal(err)
+	}
+	cfg := Config{Model: "gpt-5", CommonConfig: CommonConfig{CWD: workspace, Env: []driver.EnvBinding{{Name: "HOME", Value: home}, {Name: "USERPROFILE", Value: home}, {Name: "CURSOR_HOME", Value: filepath.Join(home, "cursor")}}}}
+	if live {
+		cfg.Command = os.Getenv("AGENT_ADAPTOR_CURSOR_COMMAND")
+		if cfg.Command == "" {
+			cfg.Command = "agent"
+		}
+		if model := os.Getenv("AGENT_ADAPTOR_CURSOR_MODEL"); model != "" {
+			cfg.Model = model
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		command := exec.CommandContext(ctx, cfg.Command, "--version")
+		command.Dir = workspace
+		command.Env = os.Environ()
+		for _, binding := range cfg.Env {
+			command.Env = append(command.Env, binding.Name+"="+binding.Value)
+		}
+		version, err := command.Output()
+		if err != nil {
+			t.Fatal("Cursor --version failed in isolated live environment")
+		}
+		if len(version) == 0 || len(version) > 4096 {
+			t.Fatal("invalid Cursor version response")
+		}
+		t.Logf("Cursor CLI version: %s; isolated HOME/profile/workspace; model=%s", strings.TrimSpace(string(version)), cfg.Model)
+	}
+	return cfg
+}
+
+func TestAlignmentCursorLiveRequiresBothGates(t *testing.T) {
+	t.Setenv("AGENT_ADAPTOR_LIVE_CONFORMANCE", "0")
+	if live, _ := cursorLiveGate(t); live {
+		t.Fatal("environment gate bypass")
+	}
+	if !cursorLiveBuild {
+		t.Setenv("AGENT_ADAPTOR_LIVE_CONFORMANCE", "1")
+		if live, _ := cursorLiveGate(t); live {
+			t.Fatal("build tag gate bypass")
+		}
+	}
 }
 
 // TestCursorDriverConformance runs the SPI conformance suite against the
@@ -33,23 +88,8 @@ func cursorLiveGate(t *testing.T) (bool, adaptertest.Option) {
 // JSONSchemaNative, and the suite never sends an undeclared mode (SO-03).
 func TestCursorDriverConformance(t *testing.T) {
 	live, liveOpt := cursorLiveGate(t)
-	home := t.TempDir()
-	workspace := filepath.Join(home, "workspace")
-	if err := os.MkdirAll(workspace, 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	cfg := Config{Model: "gpt-5"}
-	cfg.CWD = workspace
-	if !live {
-		// Hermetic isolation ensures probes do not read or write the
-		// operator's real HOME or Cursor home.
-		t.Setenv("CURSOR_HOME", "")
-		cfg.Env = []driver.EnvBinding{
-			{Name: "HOME", Value: home},
-			{Name: "USERPROFILE", Value: home},
-		}
-	}
+	cfg := cursorIsolatedConfig(t, live)
+	workspace := cfg.CWD
 
 	opts := []adaptertest.Option{
 		adaptertest.WithConfig(cfg),
@@ -70,7 +110,7 @@ func TestCursorDriverConformance(t *testing.T) {
 			driver.SessionParamProfileFingerprint,
 		),
 		adaptertest.WithWorkspace(workspace),
-		adaptertest.WithExpectedDetectedModel("gpt-5"),
+		adaptertest.WithExpectedDetectedModel(cfg.Model),
 		adaptertest.WithRequiredConfigFields("command", "cwd", "model"),
 		adaptertest.ExpectRejectForeignConfig(),
 		liveOpt,

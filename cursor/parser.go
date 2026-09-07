@@ -7,7 +7,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
+	"github.com/agent-dance/agent-adaptor/capability"
 	"github.com/agent-dance/agent-adaptor/driver"
 )
 
@@ -20,6 +22,8 @@ type cursorParser struct {
 	mu sync.Mutex
 
 	sink driver.EventSink
+
+	capabilities *cursorCapabilityObservation
 
 	stdoutLine bytes.Buffer
 	stderrLine bytes.Buffer
@@ -92,6 +96,11 @@ func (p *cursorParser) processLine(stream string, line []byte, _ time.Time) {
 		return
 	}
 
+	if !utf8.ValidString(text) {
+		p.protocolMalformed = true
+		p.emit(driver.TranscriptItem{Kind: driver.TranscriptStdout, Text: text})
+		return
+	}
 	if !strings.HasPrefix(trimmed, "{") {
 		p.emit(driver.TranscriptItem{Kind: driver.TranscriptStdout, Text: text})
 		return
@@ -200,12 +209,14 @@ func (p *cursorParser) handleToolCall(payload map[string]any, subtype string) bo
 	if subtype != "started" && subtype != "completed" {
 		return false
 	}
-	callID := cursorString(payload, "call_id")
+	callID := cursorExactString(payload, "call_id")
 	name, call, ok := cursorNestedToolCall(payload)
 	if !ok || callID == "" {
 		p.protocolMalformed = true
 		return false
 	}
+
+	p.observeCapability(callID, name, subtype, call)
 
 	args := call["args"]
 	if subtype == "started" {
@@ -290,6 +301,9 @@ func cursorToolResultIsError(result any) bool {
 	envelope, ok := result.(map[string]any)
 	if !ok {
 		return false
+	}
+	if phase, _, observed := cursorCapabilityResult(envelope); observed {
+		return phase == capability.Failed
 	}
 	_, failure := envelope["failure"]
 	_, errored := envelope["error"]
