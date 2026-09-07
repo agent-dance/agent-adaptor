@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"strconv"
 	"syscall"
@@ -21,6 +22,28 @@ func record(v any) {
 	}
 }
 func output(v any) { _ = json.NewEncoder(os.Stdout).Encode(v) }
+
+// admissionControl is used only by the stderr receipt tests. Its acknowledgments
+// describe child actions; only the test's actual Process.stderr buffer proves
+// parent receipt. Connection deadlines bound failures, never establish readiness.
+type admissionControl struct {
+	conn    net.Conn
+	decoder *json.Decoder
+	encoder *json.Encoder
+}
+
+func (c *admissionControl) phase(stage string, turn int, n int, err error) bool {
+	detail := ""
+	if err != nil {
+		detail = err.Error()
+	}
+	return c.encoder.Encode(map[string]any{"stage": stage, "turn": turn, "n": n, "error": detail}) == nil
+}
+func (c *admissionControl) await(command string) bool {
+	var got string
+	return c.decoder.Decode(&got) == nil && got == command
+}
+
 func main() {
 	alive := 0
 	if b, err := os.ReadFile(os.Getenv("ALIGNMENT_CAPTURE")); err == nil {
@@ -70,6 +93,16 @@ func main() {
 		}
 		output(map[string]any{"type": "turn.completed", "usage": map[string]any{"input_tokens": 0, "output_tokens": 2}})
 		return
+	}
+	var admission *admissionControl
+	if scenario == "stderr-admission" {
+		conn, err := net.DialTimeout("tcp", os.Getenv("ALIGNMENT_ADMISSION"), 5*time.Second)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		_ = conn.SetDeadline(time.Now().Add(15 * time.Second))
+		admission = &admissionControl{conn: conn, decoder: json.NewDecoder(conn), encoder: json.NewEncoder(conn)}
 	}
 	decoder := json.NewDecoder(bufio.NewReader(os.Stdin))
 	thread := ""
@@ -132,7 +165,12 @@ func main() {
 			notify("turn/plan/updated", scoped("plan", []any{map[string]any{"step": "中文 plan", "status": "pending"}}))
 			reply(map[string]any{"turn": map[string]any{"id": turn, "status": "inProgress"}})
 			notify("turn/started", map[string]any{"threadId": thread, "turn": map[string]any{"id": turn, "status": "inProgress"}})
-			fmt.Fprint(os.Stderr, "fixture-stderr")
+			n, writeErr := fmt.Fprint(os.Stderr, "fixture-stderr")
+			if admission != nil {
+				if !admission.phase("turn-written", turnN, n, writeErr) || !admission.await("terminal") {
+					return
+				}
+			}
 			if scenario == "facts" {
 				item := map[string]any{"id": "mcp-1", "type": "mcpToolCall", "server": "中文__server", "tool": "_read", "arguments": map[string]any{"token": "dummy-secret"}, "status": "inProgress"}
 				notify("item/started", scoped("item", item))
@@ -166,6 +204,17 @@ func main() {
 				notify("thread/tokenUsage/updated", map[string]any{"threadId": thread, "turnId": "turn-1", "tokenUsage": map[string]any{"total": map[string]any{"inputTokens": 999, "outputTokens": 999, "cachedInputTokens": 0, "reasoningOutputTokens": 0, "totalTokens": 1998}, "last": map[string]any{"inputTokens": 999, "outputTokens": 999, "cachedInputTokens": 0, "reasoningOutputTokens": 0, "totalTokens": 1998}}})
 			}
 			notify("turn/completed", map[string]any{"threadId": thread, "turn": map[string]any{"id": turn, "status": "completed", "usage": map[string]any{"inputTokens": 0, "outputTokens": 2}}})
+			if admission != nil {
+				// The future idle write cannot occur until after the test has inspected
+				// the published result and explicitly releases it.
+				if !admission.phase("idle-held", turnN, 0, nil) || !admission.await("idle") {
+					return
+				}
+				n, writeErr := fmt.Fprint(os.Stderr, "future-idle-stderr")
+				if !admission.phase("idle-written", turnN, n, writeErr) || !admission.await("next") {
+					return
+				}
+			}
 		}
 	}
 }
