@@ -540,14 +540,15 @@ func TestT22DelegationOwnBudgetAndKnownCancellation(t *testing.T) {
 // The first select has already evaluated Events while the context is healthy;
 // therefore the explicit CancelTask case must pass through the drain path.
 type drainStream struct {
-	ctx                        context.Context
-	translate                  bool
-	es                         chan adaptor.Event
-	started, cancelSeen, done  chan struct{}
-	first, cancelled, released sync.Once
-	reads                      atomic.Int32
-	resultReads                atomic.Int32
-	err                        error
+	ctx                                            context.Context
+	translate                                      bool
+	es                                             chan adaptor.Event
+	started, cancelSeen, tailPublished, resultDone chan struct{}
+	first, cancelled, released, resultFinished     sync.Once
+	reads                                          atomic.Int32
+	resultReads                                    atomic.Int32
+	earlyResult                                    atomic.Bool
+	err                                            error
 }
 
 func (s *drainStream) RunID() string { return "drain-run" }
@@ -566,7 +567,7 @@ func (s *drainStream) Events() <-chan adaptor.Event {
 		s.released.Do(func() {
 			s.es <- hint("drain-run", "provider-other", true, adaptor.ReasonApprovalDenied)
 			close(s.es)
-			close(s.done)
+			close(s.tailPublished)
 		})
 	}
 	return s.es
@@ -574,23 +575,43 @@ func (s *drainStream) Events() <-chan adaptor.Event {
 func (s *drainStream) Cancel() { s.cancelled.Do(func() { close(s.cancelSeen) }) }
 func (s *drainStream) Result() (*adaptor.Result, error) {
 	s.resultReads.Add(1)
+	defer s.resultFinished.Do(func() { close(s.resultDone) })
+	// tailPublished proves producer closure, not consumer progress. The tail
+	// is buffered deliberately, so Result must also observe an empty channel.
 	select {
-	case <-s.done:
-		if s.err != nil {
-			return nil, s.err
+	case <-s.tailPublished:
+		if len(s.es) == 0 {
+			if s.err != nil {
+				return nil, s.err
+			}
+			return nil, context.Canceled
 		}
-		return nil, context.Canceled
 	default:
-		return nil, errors.New("Result read before full drain")
+	}
+	// Record a test-observable violation: public CancelTask ACK/EOF can hide
+	// the returned error, so integrations must inspect this flag directly.
+	s.earlyResult.Store(true)
+	return nil, errors.New("Result read before full drain")
+}
+func (s *drainStream) awaitResult(t *testing.T, ctx context.Context) {
+	t.Helper()
+	select {
+	case <-s.resultDone:
+	case <-ctx.Done():
+		t.Fatal("Result call did not complete after drain")
+	}
+	if s.earlyResult.Load() {
+		t.Fatal("consumer called Result before consuming the closed event channel")
 	}
 }
+
 func TestT22R016CancellationAndTranslationDrain(t *testing.T) {
 	for _, translate := range []bool{false, true} {
 		t.Run(fmt.Sprintf("translation=%v", translate), func(t *testing.T) {
 			ctx := testContext(t)
 			holder := make(chan *drainStream, 1)
 			r := &fixedRunner{makeStream: func(runCtx context.Context) adaptor.Stream {
-				s := &drainStream{ctx: runCtx, translate: translate, es: make(chan adaptor.Event, 2), started: make(chan struct{}), cancelSeen: make(chan struct{}), done: make(chan struct{})}
+				s := &drainStream{ctx: runCtx, translate: translate, es: make(chan adaptor.Event, 2), started: make(chan struct{}), cancelSeen: make(chan struct{}), tailPublished: make(chan struct{}), resultDone: make(chan struct{})}
 				if translate {
 					s.es <- adaptor.WithEventMeta(adaptor.TextDelta{Text: "text", Phase: adaptor.PhaseContent, Role: adaptor.RoleAssistant}, adaptor.EventMeta{RunID: "drain-run", Sequence: 1 << 54})
 				}
@@ -654,11 +675,7 @@ func TestT22R016CancellationAndTranslationDrain(t *testing.T) {
 					t.Fatal("missing stream")
 				}
 			}
-			select {
-			case <-s.done:
-			case <-ctx.Done():
-				t.Fatal("tail not drained")
-			}
+			s.awaitResult(t, ctx)
 			if s.reads.Load() < 2 || s.resultReads.Load() != 1 || r.calls.Load() != 1 {
 				t.Fatalf("read/result/execute=%d/%d/%d", s.reads.Load(), s.resultReads.Load(), r.calls.Load())
 			}
@@ -773,7 +790,7 @@ func TestT22LocalCancellationDrainsPartialCarrier(t *testing.T) {
 	carrier := &adaptor.RunError{Reason: adaptor.ReasonApprovalDenied, Result: &adaptor.Result{Text: "local partial text", Summary: "local partial summary"}, Cause: errors.Join(context.Canceled, marker)}
 	holder := make(chan *drainStream, 1)
 	r := &fixedRunner{makeStream: func(ctx context.Context) adaptor.Stream {
-		s := &drainStream{ctx: ctx, es: make(chan adaptor.Event, 2), started: make(chan struct{}), cancelSeen: make(chan struct{}), done: make(chan struct{}), err: carrier}
+		s := &drainStream{ctx: ctx, es: make(chan adaptor.Event, 2), started: make(chan struct{}), cancelSeen: make(chan struct{}), tailPublished: make(chan struct{}), resultDone: make(chan struct{}), err: carrier}
 		holder <- s
 		return s
 	}}
@@ -821,11 +838,7 @@ func TestT22LocalCancellationDrainsPartialCarrier(t *testing.T) {
 	if !strings.Contains(string(b), "local partial text") {
 		t.Fatalf("local partial projection missing: %s", b)
 	}
-	select {
-	case <-s.done:
-	default:
-		t.Fatal("local result before drain close")
-	}
+	s.awaitResult(t, testContext(t))
 	if s.reads.Load() < 2 || s.resultReads.Load() != 1 || r.calls.Load() != 1 {
 		t.Fatalf("local read/result/execute=%d/%d/%d", s.reads.Load(), s.resultReads.Load(), r.calls.Load())
 	}
@@ -839,7 +852,7 @@ func TestT22DrainOracleConsumption(t *testing.T) {
 		t.Run(fmt.Sprintf("consume=%v", consume), func(t *testing.T) {
 			ctx, cancel := context.WithCancel(testContext(t))
 			defer cancel()
-			s := &drainStream{ctx: ctx, es: make(chan adaptor.Event, 2), started: make(chan struct{}), cancelSeen: make(chan struct{}), done: make(chan struct{})}
+			s := &drainStream{ctx: ctx, es: make(chan adaptor.Event, 2), started: make(chan struct{}), cancelSeen: make(chan struct{}), tailPublished: make(chan struct{}), resultDone: make(chan struct{})}
 			s.Events()
 			cancel()
 			tail := s.Events()
@@ -847,8 +860,28 @@ func TestT22DrainOracleConsumption(t *testing.T) {
 				for range tail {
 				}
 			}
+			// Closing the producer and draining the tail must not pretend that
+			// the consumer has already entered/completed Result.
+			select {
+			case <-s.tailPublished:
+			default:
+				t.Fatal("tail was not published")
+			}
+			select {
+			case <-s.resultDone:
+				t.Fatal("producer publication closed the Result barrier")
+			default:
+			}
 			_, err := s.Result()
-			t.Logf("consume=%v buffered=%d Events=%d Result=%d err=%v", consume, len(s.es), s.reads.Load(), s.resultReads.Load(), err)
+			select {
+			case <-s.resultDone:
+			default:
+				t.Fatal("Result completion barrier remained open")
+			}
+			if s.earlyResult.Load() == consume {
+				t.Fatalf("direct early-read flag=%v consume=%v", s.earlyResult.Load(), consume)
+			}
+			t.Logf("consume=%v buffered=%d Events=%d Result=%d early=%v err=%v", consume, len(s.es), s.reads.Load(), s.resultReads.Load(), s.earlyResult.Load(), err)
 			if !consume && errors.Is(err, context.Canceled) {
 				t.Fatal("drain oracle accepted Result with an unread buffered tail")
 			}
