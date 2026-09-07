@@ -456,14 +456,15 @@ type liveProcess struct {
 	activeMu sync.RWMutex
 	active   *persistentTurnObserver
 
-	stateMu     sync.Mutex
-	closed      bool
-	initialized bool
-	idle        *time.Timer
-	waitOnce    sync.Once
-	waitCh      chan struct{}
-	waitErr     error
-	grace       time.Duration
+	stateMu       sync.Mutex
+	closed        bool
+	initialized   bool
+	idle          *time.Timer
+	waitOnce      sync.Once
+	terminateOnce sync.Once
+	waitCh        chan struct{}
+	waitErr       error
+	grace         time.Duration
 }
 
 type persistentTurnObserver struct {
@@ -668,9 +669,16 @@ func (lp *liveProcess) isClosed() bool {
 
 func (lp *liveProcess) signalTerminate() {
 	lp.beginClose()
-	if lp.cancel != nil {
-		lp.cancel()
-	}
+	lp.terminateOnce.Do(func() {
+		if lp.cmd != nil && lp.cmd.Cancel != nil {
+			// Stop the configured process group without canceling its private
+			// CommandContext. Otherwise a clean exit racing shutdown can make
+			// Wait report context.Canceled even though the host run is active.
+			_ = lp.cmd.Cancel()
+		} else if lp.cancel != nil {
+			lp.cancel()
+		}
+	})
 }
 
 func (lp *liveProcess) beginClose() {
@@ -692,6 +700,9 @@ func (lp *liveProcess) startWait() {
 	lp.waitOnce.Do(func() {
 		go func() {
 			lp.waitErr = lp.cmd.Wait()
+			if lp.cancel != nil {
+				lp.cancel()
+			}
 			lp.pool.mu.Lock()
 			delete(lp.pool.all, lp)
 			lp.pool.mu.Unlock()

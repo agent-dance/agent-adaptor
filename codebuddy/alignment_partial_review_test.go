@@ -111,9 +111,8 @@ func TestAlignmentCodeBuddyPartialShortWriteWaitsWithoutReplay(t *testing.T) {
 	default:
 		t.Fatal("partial write returned before waiting for the failed process")
 	}
-	var exitErr *exec.ExitError
-	if !errors.As(err, &exitErr) || exitErr != lp.waitErr {
-		t.Fatalf("shutdown ExitError not retained: wait=%v returned=%v", lp.waitErr, err)
+	if lp.waitErr != nil && !errors.Is(err, lp.waitErr) {
+		t.Fatalf("observed shutdown error not retained: wait=%v returned=%v", lp.waitErr, err)
 	}
 	if got := runErr.Result.Raw().Stderr; got != "observed diagnostic without newline" {
 		t.Errorf("already observed stderr = %q", got)

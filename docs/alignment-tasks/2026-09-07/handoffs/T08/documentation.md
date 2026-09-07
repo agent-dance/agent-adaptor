@@ -25,7 +25,7 @@ if err != nil {
 _ = result.Text
 ```
 
-失败进程退出时先排空 stdout，再等待 stderr copy 完成并 finalize parser，保留失败终局之后的原始诊断和没有换行的 stderr 尾部。初始化或复用 prompt 的 Write 提前失败也进入同一收尾，不能因 `n > 0, error` 丢掉已经观察到的诊断。断流保留原 EOF；如果 `Wait` 还取得真实 `*exec.ExitError`，错误链同时保留该原始对象，Response 使用实际退出码。没有更具体主因时，已观察的正非零退出报告 AgentError；context 取消/deadline 与已确认的审批/provider failure 不被进程收尾次因覆盖。停止故障 writer 导致的 signal 只作为次因，不伪造未观察到的进程状态。
+失败进程退出时先排空 stdout，再等待 stderr copy 完成并 finalize parser，保留失败终局之后的原始诊断和没有换行的 stderr 尾部。初始化或复用 prompt 的 Write 提前失败也进入同一收尾，不能因 `n > 0, error` 丢掉已经观察到的诊断。断流保留原 EOF；如果 `Wait` 还取得真实 `*exec.ExitError`，错误链同时保留该原始对象，Response 使用实际退出码。没有更具体主因时，已观察的正非零退出报告 AgentError；context 取消/deadline 与已确认的审批/provider failure 不被进程收尾次因覆盖。故障 writer 的进程树终止只执行一次，私有 CommandContext 在 Wait 后释放，避免内部清理产生宿主并未请求的取消主因。停止故障 writer 导致的 signal 只作为次因，不伪造未观察到的进程状态。
 
 无正式终局时仍使用既有 partial-message 重建和最后一段 assistant 文本；有成功终局时以其 result 文本为准，包括合法空文本，不拼接全部 assistant frame。CodeBuddy 没有独立、有界的正式 summary 字段，所以 Summary 继续为空。任意 stdout JSON 的 text/session 字段不会变成 assistant Text 或 checkpoint。
 
