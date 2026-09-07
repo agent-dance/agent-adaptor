@@ -114,9 +114,20 @@ Concurrent producers are serialized by the same broker, so the channel receive o
 Capability facts use canonical catalog keys, explicit operation/phase/evidence,
 UTC occurrence time and optional reliable duration. `Duration=nil` means unknown;
 a pointer to zero means observed zero. Skill activation and subagent spawn are
-explicit operations. Absence of observations is not proof that no capability ran.
+explicit operations. Recording is best effort: absence of observations is not
+proof that no capability ran, and records do not establish authorization, complete
+audit coverage or billing completeness. A completed operation proves only its
+stated evidence (for example, accepted input or a spawn), not all downstream work.
 Todo events are confirmed full ordered snapshots, not PlanReview requests; an
 empty snapshot clears its scope and SyntheticID identifies a synthesized ID.
+Todo is an additional projection: original ToolCall/ToolResult events and
+Transcript entries remain available under their existing contracts. It never
+authorizes work or answers an ApprovalRequest. A UI replaces the entire
+`(event.Meta().RunID, snapshot.ScopeID)` list for each snapshot; revisions restart
+with a new run. After Dropped/cancellation it marks the view incomplete instead
+of interpreting missing updates as success. The executable
+[offline consumer](../examples/offline/main.go) demonstrates full/empty snapshots,
+approval response and scoped recording in one stream.
 ToolCall, ToolResult and TranscriptItem retain ScopeID, ParentScopeID and
 ParentToolCallID. Source Upstream accepts at most eight acyclic levels. Mutable
 payloads are independently copied at publication, observation and result access.

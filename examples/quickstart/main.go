@@ -2,8 +2,8 @@
 // one Result.
 //
 // The whole SDK surface used here is three names — adaptor.New, agent.Run,
-// res.Text — plus the single err verdict: a business failure arrives as a
-// typed *adaptor.RunError that still carries the full Result.
+// res.Text — plus the single err verdict: after Driver entry, every failure
+// arrives as a typed *adaptor.RunError carrying the available Result and Cause.
 //
 // Usage:
 //
@@ -56,8 +56,8 @@ func main() {
 	})
 }
 
-// checkRun is the D1 verdict in one place: business failures are typed and
-// still carry the Result; everything else is a plain wrapped error.
+// checkRun uses the single error verdict. Every failure after Driver entry
+// carries the available Result; startup rejection remains a wrapped error.
 func checkRun(err error, what string) {
 	if err == nil {
 		return

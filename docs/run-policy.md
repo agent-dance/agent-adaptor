@@ -100,6 +100,19 @@ inspectable evidence; it does not mean this run exhausted its own budget.
 Inspect `RunError.Reason` before matching secondary context causes. Active exhaustion, approval timeout, parent deadline and explicit
 cancellation are distinct outcomes.
 
+The executable [offline example](../examples/offline) answers a Question on the
+same Event stream and then exhausts a separate 25ms budget while preserving
+partial output. It uses a fake Driver and is runnable without credentials:
+
+```bash
+go run ./examples/offline
+```
+
+Its `WithPolicy(Policy{ActiveExecutionTimeout: ...})` replaces the complete
+construction Policy, including approvals. To change only the budget while
+retaining chosen sandbox/approval values, copy the host's Policy value, change
+its budget field, and supply that complete value. There is no fieldwise inheritance.
+
 ## Delegation active execution budget
 
 The optional hosttool owns DelegationRequest.ActiveExecutionTimeout and

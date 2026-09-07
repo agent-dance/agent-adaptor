@@ -332,7 +332,10 @@ describes actual transports. Drivers alone recognize official fields and map
 unique resolved catalog keys. Complete arguments and real deltas are not replayed
 twice; tool description end is distinct from result-confirmed completion.
 Todo snapshots require confirmed protocol evidence, including explicit clear,
-and synthetic display IDs cannot stand in for provider task identity.
+and synthetic display IDs cannot stand in for provider task identity. These
+projections coexist with original tool events and Transcript; Todo is not a
+PlanReview approval. Capability observation is best effort, not an authorization
+decision or a complete audit/billing record. Missing facts do not prove non-use.
 
 Codex NativeInputAccepted means the formal typed input was accepted, not that
 the resource executed. Its current thread/turn and terminal fences remain;

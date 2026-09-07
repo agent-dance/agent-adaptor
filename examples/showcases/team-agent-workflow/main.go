@@ -224,9 +224,8 @@ func run(opts options) error {
 		}
 	}
 
-	// One err, one judgement. A business failure is a *adaptor.RunError that
-	// still carries the complete Result; infrastructure failures travel the
-	// same return.
+	// One error verdict: after Driver entry, every failure is a RunError
+	// carrying the available Result and Cause. Setup failures remain wrapped.
 	res, err := stream.Result()
 	if err != nil {
 		var runErr *adaptor.RunError
