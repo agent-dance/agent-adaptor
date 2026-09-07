@@ -2,9 +2,11 @@
 
 本任务只增加外部 `adaptor_test` 集成测试和凭据隔离的子进程 fixture。没有公共声明、生产实现、依赖、golden 或执行入口变化。测试前缀全部为 `TestAlignmentProtocol`；所有权只限本任务 allow。最终通过状态以事后 result/evidence 的实际 SHA 为准，此片段不能替代门禁报告。
 
-独立 oracle 起始于 C01–C04/canonical17 及 R001–R016 冻结合同中的字段与手写正式 NDJSON/JSON-RPC bytes，最终按 canonical22/R001–R020 和 replacement G04 复核；没有修改原输入或削弱断言。Claude、CodeBuddy、Cursor 与 Codex app-server 全部通过真实 Driver parser → 公共 Agent；A2A 采用真实 Handler/AgentCardHandler/HTTP client，再与 Service Local/Remote、嵌套 Service、subagentstream、SSE、AG-UI、JSONL sessionrecorder 和 capabilityrecorder 组合。普通 fixture 的 CLI Command 是当前测试 binary 的私有 init，不启动真实 provider。
+独立 oracle 起始于 C01–C04/canonical17 及 R001–R016 冻结合同中的字段与手写正式 NDJSON/JSON-RPC bytes，最终按 canonical22/R001–R020 和 replacement G04 复核。正式 provider、AG-UI 快照和生命周期 fixture/断言保持；不可编码 Meta 的 HTTP 形状按 C02 只读复核校准，详见 findings.md。Claude、CodeBuddy、Cursor 与 Codex app-server 全部通过真实 Driver parser → 公共 Agent；A2A 采用真实 Handler/AgentCardHandler/HTTP client，再与 Service Local/Remote、嵌套 Service、subagentstream、SSE、AG-UI、JSONL sessionrecorder 和 capabilityrecorder 组合。普通 fixture 的 CLI Command 是当前测试 binary 的私有 init，不启动真实 provider。
 
 `apRunner` 明确表示第三方公开 Runner，用于协议资格、取消、错误和出站恶意值边界；其人工终局不作为 core 生命周期证据。core 的开始/唯一末尾终局另由真实 Agent 的静态拒绝、准入准备失败、正式 parser、cleanup 屏障、Thread lease release 失败证明。原 error/Result/Cause 不因 bridge hint 重写。手写独立 A2A peer 只用于第三方 continuation/recovery 输入，不冒称我们的 Handler 实现。
+
+第三方 fixture 的 drain audit 同时要求 producer 在事件 channel 关闭后完成，以及缓冲尾事件已经消费；只见 producer done 不足以证明 drain。独立 Result 完成屏障在次数/earlyResult 核验前有界等待；DrainOracle 保留未消费尾事件负控和完整消费正控。此 QA 校准不修改公共 Stream 合同。
 
 可复现行为示例：同一个 TaskID 连续三轮，旧 input-required/completed/failed Task 快照只能恢复身份和制品；新 Status 才能产生新问卷/结束。制品逐更新保留 Text/Data/inline bytes/URL、Append/LastChunk；显式 recovery 合并已证明的扩展、保留较旧前缀，对不兼容快照发安全 conflict 降级。Local/Remote 在真实父工具 scope、重复 invocation ID、Source/Upstream 与本地 Sequence 上保留相同合同。
 
@@ -12,7 +14,9 @@
 
 A2A capability/todo 分别显式 opt-in，Tool/diagnostics 开关不能隐式开启。无远端 Store 也必须按 observation demand 使用正式事实。closed wire 的未知字段/枚举/非法内容/大小上限在边界可见降级，不能原样泄漏非法字段。raw decoder 可检验原 bytes 的 duplicate key/UTF-8/surrogate；已解码 map 只能证明结构值合法，不能声称恢复原字节审计。旧 wire 兼容与 unknown kind 明确 dropped 分开验证。
 
-R016 公开观察边界：真实 HTTP Send/SendStream 和 Local/Remote 正常路径校验同一次 Stream、非 nil carrier 优先、末尾唯一合格 hint、nil error 成功、所有非法 hint 保持原 bare fallback。真实准备期四组父 cause/本轮预算通过公开 Agent 触发，不能用手造 RunError 代替。公开 CancelTask 可先给 legacy canceled ack；本测试对其证明一次 Stream、幂等 Cancel、完整 drain 后一次 Result、无伪造 limit。HTTP handler 请求取消与独立执行上下文不同，不能从 EOF/ack 推断 executor 最后私有分类。翻译失败仍是 failed Task，不被后续 hint 改成 cancelled/active。Local cancel-drain 另验证部分文本与原 cause。
+R016 公开观察边界：真实 HTTP Send/SendStream 和 Local/Remote 正常路径校验同一次 Stream、非 nil carrier 优先、末尾唯一合格 hint、nil error 成功、所有非法 hint 保持原 bare fallback。真实准备期四组父 cause/本轮预算通过公开 Agent 触发，不能用手造 RunError 代替。公开 CancelTask 可先给 legacy canceled ack；本测试对其证明一次 Stream、幂等 Cancel、完整 drain 后一次 Result、无伪造 limit。HTTP handler 请求取消与独立执行上下文不同，不能从 EOF/ack 推断 executor 最后私有分类。翻译失败保持可观察协议失败：可以是实际 failed Task/status 后的 EOF，也可以是携带同源安全翻译 cause 的 StreamRecoveryError，不能被尾 hint 改成 cancelled/active。超长 ThreadKey 仅接受 payload_too_large，超安全整数的 Sequence 仅接受 invalid_payload；两者完整消息前缀都是 `encode adapter stream status: `，并核验上游 typed internal error、最后观察 TaskID（未观察时为空）、所有 Task/status/Part/Raw 中无假 control 或 limit。normal、CancelTask ACK、可编码 dropped 的成功路径不采用此二选一。Local cancel-drain 另验证部分文本与原 cause。
+
+TranslationOutcomeOracle 的正控是人工公共类型输入，仅证明 oracle 接受两种合法形状并拒绝错误类型、cause、TaskID、终态、早先/后部 Part control 与 deadline；不能描述为实际 HTTP 必然跑到了 StreamRecoveryError 分支。两个真实 HTTP translation 用例在日志中记录各次实际观察形状，完整验证数量与分支覆盖据此报告。C02 此次复核只静态推导了 T21 的同型风险；T21 旧 `2139534` 全绿属于保留的阶段证据，不证明唯一 HTTP 表示。
 
 私有 executor Cancel-drain 分类补充只引用已接受的 T19/C02/G04 archive：G04 `2421fe470cf67b22697fef796b038c0be6e395c8`，T19 `075887499a1966ed4d08681bd837a4fcbfa1c650`，archive SHA256 `399a38c3673ef0ea6b430797f2f1f3f26c7f8f49f891303537b9330adefb728f`，外部 `findings/G04-composition/review.md` 记录已提交 owner barrier `TestAlignmentR016EveryDrainPath/cancel` race10 20 个 parent/child pass。此引用不是本任务新增独立证明，不计入 T21 pass 数；root 已确认无需新增不存在的 executor 公共入口或 unsafe。
 

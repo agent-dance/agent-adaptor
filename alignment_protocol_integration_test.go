@@ -22,6 +22,8 @@ import (
 	"testing"
 	"time"
 
+	a2aproto "github.com/a2aproject/a2a-go/v2/a2a"
+	"github.com/a2aproject/a2a-go/v2/errordetails"
 	adaptor "github.com/agent-dance/agent-adaptor"
 	bridge "github.com/agent-dance/agent-adaptor/bridges/a2a"
 	"github.com/agent-dance/agent-adaptor/bridges/agui"
@@ -120,7 +122,7 @@ func (p apAttachment) DetachRun(c context.Context, id string) error {
 
 // apRunner is an explicit third-party Runner fixture, never evidence of core
 // lifecycle creation. Counters prove bridges execute only one Stream and read
-// its Result after that same channel closes.
+// its Result after that same channel closes and its buffered tail is consumed.
 type apRunner struct {
 	preEvents                                                []adaptor.Event
 	waitCancel                                               bool
@@ -130,6 +132,13 @@ type apRunner struct {
 	err                                                      error
 	streamCalls, runCalls, resultCalls, earlyResult, cancels atomic.Int32
 	cancelled                                                chan struct{}
+	resultDone                                               chan struct{}
+	resultInit, resultFinish                                 sync.Once
+}
+
+func (r *apRunner) resultBarrier() <-chan struct{} {
+	r.resultInit.Do(func() { r.resultDone = make(chan struct{}) })
+	return r.resultDone
 }
 
 func (r *apRunner) Run(context.Context, string, ...adaptor.CallOption) (*adaptor.Result, error) {
@@ -137,6 +146,7 @@ func (r *apRunner) Run(context.Context, string, ...adaptor.CallOption) (*adaptor
 	return nil, errors.New("T21: parallel Run invoked")
 }
 func (r *apRunner) Stream(_ context.Context, _ string, _ ...adaptor.CallOption) adaptor.Stream {
+	r.resultBarrier()
 	r.streamCalls.Add(1)
 	s := &apStream{owner: r, ch: make(chan adaptor.Event, len(r.events)), done: make(chan struct{})}
 	go func() {
@@ -150,8 +160,8 @@ func (r *apRunner) Stream(_ context.Context, _ string, _ ...adaptor.CallOption) 
 		for _, e := range r.events {
 			s.ch <- e
 		}
-		close(s.done)
 		close(s.ch)
+		close(s.done)
 	}()
 	return s
 }
@@ -175,9 +185,9 @@ func (s *apStream) Cancel() {
 }
 func (s *apStream) Result() (*adaptor.Result, error) {
 	s.owner.resultCalls.Add(1)
-	select {
-	case <-s.done:
-	default:
+	defer s.owner.resultFinish.Do(func() { close(s.owner.resultDone) })
+	<-s.done
+	if len(s.ch) != 0 {
 		s.owner.earlyResult.Add(1)
 	}
 	return s.owner.result, s.owner.err
@@ -198,6 +208,13 @@ func apDrain(s adaptor.Stream) ([]adaptor.Event, *adaptor.Result, error) {
 }
 func apAssertCalls(t *testing.T, r *apRunner) {
 	t.Helper()
+	deadline := time.NewTimer(2 * time.Second)
+	defer deadline.Stop()
+	select {
+	case <-r.resultBarrier():
+	case <-deadline.C:
+		t.Fatalf("Result did not complete: Stream/Run/Result/early=%d/%d/%d/%d", r.streamCalls.Load(), r.runCalls.Load(), r.resultCalls.Load(), r.earlyResult.Load())
+	}
 	if r.streamCalls.Load() != 1 || r.runCalls.Load() != 0 || r.resultCalls.Load() != 1 || r.earlyResult.Load() != 0 {
 		t.Fatalf("Stream/Run/Result/early=%d/%d/%d/%d", r.streamCalls.Load(), r.runCalls.Load(), r.resultCalls.Load(), r.earlyResult.Load())
 	}
@@ -1117,6 +1134,7 @@ func TestAlignmentProtocolEveryDrain(t *testing.T) {
 			}
 			defer s.Close()
 			var last client.TaskStatus
+			var translationEvents []client.Event
 			var transportError error
 			cancelSent := false
 			for {
@@ -1124,6 +1142,9 @@ func TestAlignmentProtocolEveryDrain(t *testing.T) {
 				if err != nil {
 					transportError = err
 					break
+				}
+				if mode == "translation-error" {
+					translationEvents = append(translationEvents, e)
 				}
 				if e.Task != nil {
 					last = e.Task.Status
@@ -1149,7 +1170,7 @@ func TestAlignmentProtocolEveryDrain(t *testing.T) {
 					last = *e.Status
 				}
 			}
-			if !errors.Is(transportError, io.EOF) {
+			if mode != "translation-error" && !errors.Is(transportError, io.EOF) {
 				t.Fatal(transportError)
 			}
 			// A canceled HTTP context may close the response before the executor's
@@ -1159,12 +1180,10 @@ func TestAlignmentProtocolEveryDrain(t *testing.T) {
 					t.Fatal("cancellation fabricated success")
 				}
 			} else if mode == "translation-error" {
-				if last.State != client.TaskStateFailed {
-					t.Fatalf("translation failure overwritten: %s", last.State)
+				if !apTranslationOutcome(translationEvents, transportError, apTranslationEncodeError) {
+					t.Fatalf("unexpected translation outcome: state=%s status=%s error=%T %v", last.State, apJSON(last), transportError, transportError)
 				}
-				if strings.Contains(apJSON(last), "active_execution_timeout") || strings.Contains(apJSON(last), "777") {
-					t.Fatal("drained hint replaced translation failure")
-				}
+				t.Logf("translation HTTP outcome: eof=%v error=%T", transportError == io.EOF, transportError)
 			} else {
 				want := "cancelled"
 				if mode == "builder-error" {
@@ -1172,16 +1191,6 @@ func TestAlignmentProtocolEveryDrain(t *testing.T) {
 				}
 				apFailure(t, last, want)
 			}
-			deadline := time.NewTimer(2 * time.Second)
-			defer deadline.Stop()
-			for r.resultCalls.Load() != 1 {
-				select {
-				case <-deadline.C:
-					t.Fatalf("executor did not finish drain: stream=%d cancel=%d result=%d", r.streamCalls.Load(), r.cancels.Load(), r.resultCalls.Load())
-				case <-time.After(time.Millisecond):
-				}
-			}
-
 			apAssertCalls(t, r)
 			if mode == "server-cancel" || mode == "translation-error" {
 				if r.cancels.Load() != 1 {
@@ -1190,6 +1199,302 @@ func TestAlignmentProtocolEveryDrain(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestAlignmentProtocolDrainOracle(t *testing.T) {
+	for _, consume := range []bool{false, true} {
+		t.Run(fmt.Sprintf("consume-tail=%v", consume), func(t *testing.T) {
+			ctx := apContext(t)
+			result := &adaptor.Result{Text: "partial"}
+			r := &apRunner{id: "drain-oracle", events: []adaptor.Event{
+				apMeta(adaptor.TextDelta{Text: "tail"}, "drain-oracle", 1),
+				apFinish("drain-oracle", "provider", "cancelled", true, 2),
+			}, result: result, err: context.Canceled}
+			stream := r.Stream(ctx, "oracle").(*apStream)
+			select {
+			case <-stream.done:
+			case <-ctx.Done():
+				t.Fatal("producer did not complete")
+			}
+			if len(stream.ch) != 2 {
+				t.Fatal("fixture did not retain its buffered tail")
+			}
+			if consume {
+				for range stream.Events() {
+				}
+			}
+			got, err := stream.Result()
+			if got != result || err != context.Canceled {
+				t.Fatal("drain audit changed original Result/error")
+			}
+			select {
+			case <-r.resultBarrier():
+			default:
+				t.Fatal("Result audit completion barrier missing")
+			}
+			wantEarly := int32(1)
+			if consume {
+				wantEarly = 0
+			}
+			if r.earlyResult.Load() != wantEarly || r.streamCalls.Load() != 1 || r.runCalls.Load() != 0 || r.resultCalls.Load() != 1 {
+				t.Fatalf("buffered tail audit: early=%d want=%d", r.earlyResult.Load(), wantEarly)
+			}
+			for range stream.Events() {
+			}
+			if consume {
+				apAssertCalls(t, r)
+			}
+		})
+	}
+}
+
+const (
+	apTranslationEncodeError  = "encode adapter stream status: payload_too_large"
+	apTranslationInvalidError = "encode adapter stream status: invalid_payload"
+)
+
+// The real oversized ThreadKey cannot fit either the original event or its
+// loss projection. JSON-RPC maps that encoder error to an A2A internal error.
+// Recovery can observe the stored failed Task or race its persistence and
+// surface that exact typed error; neither outcome may adopt the drained hint.
+func apTranslationOutcome(observed []client.Event, transportError error, wantCause string) bool {
+	if wantCause != apTranslationEncodeError && wantCause != apTranslationInvalidError {
+		return false
+	}
+	var last client.TaskStatus
+	var taskID string
+	for _, event := range observed {
+		// Inspect every public projection, including every Part and the Raw
+		// mirrors, so an earlier control cannot disappear behind a later status.
+		raw, err := json.Marshal(event)
+		if err != nil {
+			return false
+		}
+		var value any
+		if json.Unmarshal(raw, &value) != nil || apTranslationControl(value) {
+			return false
+		}
+		if event.Task != nil {
+			if event.Task.ID != "" && event.TaskID != "" && event.Task.ID != event.TaskID {
+				return false
+			}
+			if event.Task.ID != "" {
+				taskID = event.Task.ID
+			}
+			last = event.Task.Status
+			if !apTranslationState(last.State) {
+				return false
+			}
+		}
+		if event.TaskID != "" {
+			taskID = event.TaskID
+		}
+		if event.Status != nil {
+			last = *event.Status
+			if !apTranslationState(last.State) {
+				return false
+			}
+		}
+	}
+	if transportError == io.EOF {
+		return last.State == client.TaskStateFailed && taskID != ""
+	}
+	if last.State != client.TaskStateUnspecified && last.State != client.TaskStateSubmitted && last.State != client.TaskStateWorking {
+		return false
+	}
+	var recovery *client.StreamRecoveryError
+	if !errors.As(transportError, &recovery) || recovery == nil || transportError != recovery || recovery.TaskID != taskID || recovery.Cause == nil {
+		return false
+	}
+	var remote *a2aproto.Error
+	if !errors.As(recovery.Cause, &remote) || remote == nil || recovery.Cause != remote || remote.Err != a2aproto.ErrInternalError || remote.Message != wantCause || len(remote.Details) != 0 {
+		return false
+	}
+	// The pinned JSON-RPC transport may attach its standard ErrorInfo timestamp,
+	// but cannot smuggle an adaptor failure code or limit through typed details.
+	if len(remote.TypedDetails) > 1 {
+		return false
+	}
+	for _, detail := range remote.TypedDetails {
+		if detail == nil || detail.TypeURL != "type.googleapis.com/google.rpc.ErrorInfo" || len(detail.Value) != 3 || detail.Value["reason"] != "INTERNAL_ERROR" || detail.Value["domain"] != "a2a-protocol.org" {
+			return false
+		}
+		metadata, ok := detail.Value["metadata"].(map[string]string)
+		if !ok || len(metadata) != 1 {
+			return false
+		}
+		if _, err := time.Parse(time.RFC3339, metadata["timestamp"]); err != nil {
+			return false
+		}
+	}
+	return true
+}
+
+func apTranslationState(state client.TaskState) bool {
+	return state == client.TaskStateSubmitted || state == client.TaskStateWorking || state == client.TaskStateFailed
+}
+
+func apTranslationControl(value any) bool {
+	switch v := value.(type) {
+	case map[string]any:
+		for key, child := range v {
+			switch key {
+			case "agentadaptor.failure", "code", "limit", "limit_ms":
+				return true
+			}
+			if apTranslationControl(child) {
+				return true
+			}
+		}
+	case []any:
+		for _, child := range v {
+			if apTranslationControl(child) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func TestAlignmentProtocolTranslationOutcomeOracle(t *testing.T) {
+	const taskID = "translation-task"
+	failed := client.TaskStatus{State: client.TaskStateFailed}
+	working := client.TaskStatus{State: client.TaskStateWorking}
+	cause := func() *a2aproto.Error {
+		return &a2aproto.Error{Err: a2aproto.ErrInternalError, Message: apTranslationEncodeError}
+	}
+	recovery := func(err error) *client.StreamRecoveryError {
+		return &client.StreamRecoveryError{TaskID: taskID, Cause: err}
+	}
+	typedCause := cause()
+	typedCause.TypedDetails = []*errordetails.Typed{{TypeURL: "type.googleapis.com/google.rpc.ErrorInfo", Value: map[string]any{
+		"reason": "INTERNAL_ERROR", "domain": "a2a-protocol.org", "metadata": map[string]string{"timestamp": "2026-09-08T00:00:00Z"},
+	}}}
+	wrongCode := cause()
+	wrongCode.Err = a2aproto.ErrInvalidParams
+	wrongMessage := cause()
+	wrongMessage.Message = "encode adapter stream status: invalid_payload"
+	extraMessage := cause()
+	extraMessage.Message += ": unrelated failure"
+	detailsControl := cause()
+	detailsControl.Details = map[string]any{"code": "active_execution_timeout", "limit_ms": 777000}
+	typedControl := cause()
+	typedControl.TypedDetails = []*errordetails.Typed{{TypeURL: "type.googleapis.com/google.rpc.ErrorInfo", Value: map[string]any{
+		"reason": "INTERNAL_ERROR", "domain": "a2a-protocol.org", "metadata": map[string]string{"timestamp": "2026-09-08T00:00:00Z", "limit_ms": "777000"},
+	}}}
+	statusControl := failed
+	statusControl.Message = &client.Message{Parts: []client.Part{{Kind: client.PartText, Text: "failure", Metadata: map[string]any{"agentadaptor.failure": map[string]any{"code": "cancelled"}}}}}
+	workingControl := working
+	workingControl.Message = statusControl.Message
+	var nilRemote *a2aproto.Error
+	for _, tc := range []struct {
+		name string
+		last client.TaskStatus
+		err  error
+		id   string
+		want bool
+	}{
+		{"failed-task-eof", failed, io.EOF, taskID, true},
+		{"typed-recovery", working, recovery(cause()), taskID, true},
+		{"typed-recovery-errorinfo", working, recovery(typedCause), taskID, true},
+		{"empty-task-recovery", client.TaskStatus{}, &client.StreamRecoveryError{Cause: cause()}, "", true},
+		{"wrapped-recovery", working, fmt.Errorf("read: %w", recovery(cause())), taskID, false},
+		{"nil-error", failed, nil, taskID, false},
+		{"bare-eof", working, io.EOF, taskID, false},
+		{"no-event-eof", client.TaskStatus{}, io.EOF, "", false},
+		{"io-timeout", working, os.ErrDeadlineExceeded, taskID, false},
+		{"same-text-ordinary-error", working, errors.New(recovery(cause()).Error()), taskID, false},
+		{"bare-protocol-error", working, cause(), taskID, false},
+		{"same-text-ordinary-cause", working, recovery(errors.New(apTranslationEncodeError)), taskID, false},
+		{"wrong-cause", working, recovery(wrongMessage), taskID, false},
+		{"cause-message-suffix", working, recovery(extraMessage), taskID, false},
+		{"wrong-protocol-code", working, recovery(wrongCode), taskID, false},
+		{"nil-cause", working, recovery(nil), taskID, false},
+		{"typed-nil-cause", working, recovery(nilRemote), taskID, false},
+		{"wrong-task-id", working, recovery(cause()), "another-task", false},
+		{"no-observed-task-id", failed, io.EOF, "", false},
+		{"failed-task-with-recovery", failed, recovery(cause()), taskID, false},
+		{"status-control", statusControl, io.EOF, taskID, false},
+		{"recovery-status-control", workingControl, recovery(cause()), taskID, false},
+		{"cause-control", working, recovery(detailsControl), taskID, false},
+		{"typed-cause-control", working, recovery(typedControl), taskID, false},
+		{"deadline", working, context.DeadlineExceeded, taskID, false},
+		{"cancelled", working, context.Canceled, taskID, false},
+		{"recovery-deadline-cause", working, recovery(context.DeadlineExceeded), taskID, false},
+		{"joined-deadline", working, errors.Join(recovery(cause()), context.DeadlineExceeded), taskID, false},
+		{"joined-eof-deadline", failed, errors.Join(io.EOF, context.DeadlineExceeded), taskID, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var observed []client.Event
+			if tc.last.State != client.TaskStateUnspecified || tc.id != "" {
+				observed = []client.Event{{Task: &client.Task{ID: tc.id, Status: tc.last}}}
+			}
+			if got := apTranslationOutcome(observed, tc.err, apTranslationEncodeError); got != tc.want {
+				t.Fatalf("accepted=%v want=%v state=%s error=%T %v", got, tc.want, tc.last.State, tc.err, tc.err)
+			}
+		})
+	}
+	for _, state := range []client.TaskState{client.TaskStateCompleted, client.TaskStateCanceled, client.TaskStateInputRequired, client.TaskStateRejected, client.TaskStateUnspecified, "invented"} {
+		t.Run("other-state-"+string(state), func(t *testing.T) {
+			last := client.TaskStatus{State: state}
+			observed := []client.Event{{Task: &client.Task{ID: taskID, Status: last}}}
+			if apTranslationOutcome(observed, io.EOF, apTranslationEncodeError) || apTranslationOutcome(observed, recovery(cause()), apTranslationEncodeError) {
+				t.Fatal("other terminal/unknown state accepted as the expected translation failure")
+			}
+		})
+	}
+	for _, placement := range []string{"task-metadata", "task-raw", "second-status-part", "status-message-metadata", "status-raw", "earlier-status"} {
+		t.Run("observed-control-"+placement, func(t *testing.T) {
+			control := map[string]any{"agentadaptor.failure": map[string]any{"code": "active_execution_timeout", "limit_ms": 777000}}
+			safe := client.Part{Kind: client.PartText, Text: "safe"}
+			bad := client.Part{Kind: client.PartText, Text: "failure", Metadata: control}
+			event := client.Event{Task: &client.Task{ID: taskID, Status: working}}
+			switch placement {
+			case "task-metadata":
+				event.Task.Metadata = control
+			case "task-raw":
+				event.Task.Raw = map[string]any{"metadata": control}
+			case "second-status-part", "earlier-status":
+				event.Task.Status.Message = &client.Message{Parts: []client.Part{safe, bad}}
+			case "status-message-metadata":
+				event.Status = &client.TaskStatus{State: client.TaskStateWorking, Message: &client.Message{Metadata: control}}
+			case "status-raw":
+				event.Status = &working
+				event.Raw = map[string]any{"status": map[string]any{"message": map[string]any{"parts": []any{map[string]any{"text": "safe"}, map[string]any{"metadata": control}}}}}
+			}
+			observed := []client.Event{event}
+			if apTranslationOutcome(observed, recovery(cause()), apTranslationEncodeError) {
+				t.Fatal("error branch accepted an observed control")
+			}
+			observed = append(observed, client.Event{TaskID: taskID, Status: &failed})
+			if apTranslationOutcome(observed, io.EOF, apTranslationEncodeError) {
+				t.Fatal("later failed status hid an earlier control")
+			}
+		})
+	}
+	t.Run("last-observed-task-id", func(t *testing.T) {
+		observed := []client.Event{{Task: &client.Task{ID: "earlier", Status: working}}, {TaskID: taskID, Status: &working}}
+		if !apTranslationOutcome(observed, recovery(cause()), apTranslationEncodeError) || apTranslationOutcome(observed, &client.StreamRecoveryError{TaskID: "earlier", Cause: cause()}, apTranslationEncodeError) {
+			t.Fatal("recovery error was not matched to the last observed task ID")
+		}
+	})
+	t.Run("earlier-other-terminal", func(t *testing.T) {
+		for _, state := range []client.TaskState{client.TaskStateCompleted, client.TaskStateCanceled, client.TaskStateInputRequired} {
+			observed := []client.Event{{Task: &client.Task{ID: taskID, Status: client.TaskStatus{State: state}}}, {TaskID: taskID, Status: &failed}}
+			if apTranslationOutcome(observed, io.EOF, apTranslationEncodeError) || apTranslationOutcome(observed[:1], recovery(cause()), apTranslationEncodeError) {
+				t.Fatal("expected failure hid an earlier replacement terminal")
+			}
+		}
+	})
+
+	t.Run("fixture-specific-cause", func(t *testing.T) {
+		observed := []client.Event{{Task: &client.Task{ID: taskID, Status: working}}}
+		invalid := &a2aproto.Error{Err: a2aproto.ErrInternalError, Message: apTranslationInvalidError}
+		if !apTranslationOutcome(observed, recovery(invalid), apTranslationInvalidError) || apTranslationOutcome(observed, recovery(cause()), apTranslationInvalidError) || apTranslationOutcome(observed, recovery(invalid), apTranslationEncodeError) {
+			t.Fatal("oversized ThreadKey and unsafe Sequence causes became interchangeable")
+		}
+	})
+
 }
 
 func TestAlignmentProtocolCoreTerminal(t *testing.T) {
@@ -2605,13 +2910,33 @@ func TestAlignmentProtocolOutgoingLoss(t *testing.T) {
 			ev = apMeta(ev, "wire", seq)
 			r := &apRunner{id: "wire", events: []adaptor.Event{ev}, result: &adaptor.Result{Text: "safe"}}
 			c, _ := apServer(t, r, bridge.ExposurePolicy{IncludeCapabilityInvocations: true, IncludeTodos: true}, nil)
-			task, wire := apClientDrain(t, c, apContext(t))
 			if kind == "sequence" {
-				if task.Status.State != client.TaskStateFailed {
-					t.Fatal("unencodable coordinates silently repaired")
+				ctx := apContext(t)
+				stream, err := c.SendStream(ctx, apSendReq())
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer stream.Close()
+				var observed []client.Event
+				for {
+					event, recvErr := stream.RecvContext(ctx)
+					if recvErr != nil {
+						err = recvErr
+						break
+					}
+					observed = append(observed, event)
+				}
+				if !apTranslationOutcome(observed, err, apTranslationInvalidError) {
+					t.Fatalf("unencodable Sequence outcome: events=%s error=%T %v", apJSON(observed), err, err)
+				}
+				t.Logf("translation HTTP outcome: eof=%v error=%T", err == io.EOF, err)
+				apAssertCalls(t, r)
+				if r.cancels.Load() != 1 {
+					t.Fatal("translation Cancel not idempotent")
 				}
 				return
 			}
+			task, wire := apClientDrain(t, c, apContext(t))
 			if task.Status.State != client.TaskStateCompleted {
 				t.Fatal("semantic loss changed business success")
 			}

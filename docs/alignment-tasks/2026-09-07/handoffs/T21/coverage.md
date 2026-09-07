@@ -30,7 +30,7 @@
 | W09-R07 | OtherProviders(codebuddy) / CodeBuddyControl / PartialWrappers(codebuddy) | 正式 headless/control/partial 路径；保留 F01/F02 与精确重复 tool_result 的原输入和断言，完整检查复验修复。 |
 | W09-R08 | OtherProviders(codex) | 真实 app-server initialize/thread/turn、MCP/plan 明确字段、重放去重、foreign scope 拒绝且保留 Raw。 |
 | W09-R09 | OtherProviders(cursor) | 真实 print 明确 MCP 字段；unknown 无事实；Todo unavailable 不伪造空快照。 |
-| W09-R10 | FormalClaude / WireValidation / InboundNegativeRelay / OutgoingLoss | 默认最小暴露、独立 opt-in、closed wire 大小/字段/UTF-8/整数、双侧安全 dropped。 |
+| W09-R10 | FormalClaude / WireValidation / InboundNegativeRelay / OutgoingLoss / TranslationOutcomeOracle | 默认最小暴露、独立 opt-in、closed wire 大小/字段/UTF-8/整数、双侧安全 dropped；不可编码 Meta 限定同源基础设施失败两形状。 |
 | W09-R11 | FormalClaude / ServiceRelay | SSE/AG-UI/Merge 与实际 JSONL 重开保留 Capability。 |
 | W09-R12 | ServiceRelay / HookAndDuplicateDomains | Host+HostLifecycle started/terminal 经绑定 publisher 与 core 唯一 Event 管线。 |
 | W09-R14 | CoreTerminal / LeaseTerminal / RealPreparationCauses | 实际 parser success 后 cleanup/lease 失败，sources 有/无；唯一末尾 RunFinished 与最终 error 同因，原 terminal/transcript 完整。 |
@@ -48,6 +48,6 @@
 | W12-R10 | ServiceRelay | Local/Remote/nested scoped Todo 与最终 clear 保留。 |
 | W13-R07 | DelegationBudgets | Timeout 保持墙钟；独立 active 字段；同 Task 三次新预算；慢 recovery 不重置本次预算。 |
 | W13-R08 | DelegationBudgets | 入参 TaskID 在首响应前可用；真实 HTTP CancelTask 采用未取消且 <=5s deadline；失败只为 remote_cancel 诊断。 |
-| W13-R09 | TerminalQualification / EveryDrain / LocalCancelDrain / RealPreparationCauses | carrier 优先/资格反向/唯一 error 判定/真实 pre-Driver 原因来源/安全 code-limit/部分结果/取消和翻译 drain。 |
+| W13-R09 | TerminalQualification / EveryDrain / LocalCancelDrain / RealPreparationCauses / TranslationOutcomeOracle / DrainOracle | carrier 优先/资格反向/唯一 error 判定/真实 pre-Driver 原因来源/安全 code-limit/部分结果/取消和翻译 drain；翻译两形状以原 cause 精确判断，人工 oracle 控制与真实 HTTP 分支覆盖分开报告；producer done 且缓冲尾消费后才通过 drain audit，Result 完成屏障有界等待。 |
 
 AC01：两种新事件的正式 parser→Agent→A2A→Service/非 A2A bridge/JSONL 闭环与结构负向。AC02：repetition/cancel/drop/EOF/bad payload/Local-Remote 明确断言。AC03：R016 公开正常与取消/翻译边界；私有 Cancel collector 只引用 documentation.md 中固定 archive，不计新增独立数。

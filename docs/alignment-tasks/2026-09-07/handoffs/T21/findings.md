@@ -12,7 +12,30 @@
 | T21-F02 | resolved；同一 T15 修复 | CodeBuddy 正式 error 前交付未闭合 Capability Interrupted，原部分审计保留。 |
 | T21-F03 | resolved；T32 `9fd655c553551e8a0103743de99d37ba81ce0652` | 真实 ServiceRelay 的异步 AG-UI 消费与同步已发布快照不变性。 |
 
-本任务三个 QA 提交已完整 rebase 到上述 replacement G04；测试与 helper 字节和旧 `b8d9ce6` 相同。T21 完整原 V01/V02 在最后文档提交后重新运行，其实际结果、HEAD、日志及 hash 只在事后 `result.json`、`evidence/final-V01-command.json`、`evidence/final-V02-command.json` 中报告。root focused 复验、原 owner 检查与旧基线红/绿结果均不替代这两项完整验证。
+本任务三个 QA 提交完整 rebase 到上述 replacement G04 时，测试与 helper 字节和旧 `b8d9ce6` 相同；`2139534abd5e54a04731511ac07777eb60b0cb9a` 的完整 V01/V02 为 192/3840 pass，0 fail/skip/race，原结果保留在 `evidence/final-V01-command.json`、`evidence/final-V02-command.json`。随后仅校准下节记录的不可编码 Meta HTTP oracle，并补充人工 oracle 控制；正式 provider/快照 fixture 和断言不变。最新完整原 V01/V02 在最后提交后重新运行，实际 HEAD、结果与 hash 在事后 `result.json`、`evidence/translation-V01-command.json`、`evidence/translation-V02-command.json` 中报告。root focused、owner 检查与任何阶段结果均不替代最新完整验证。
+
+## T21-QA01 — 不可编码 Meta 的 HTTP 形状校准
+
+C02 只读复核 `external findings/T22-review/translation-outcome-review.md`（SHA256 `449a68260344aaae5dfa965934cd9a858be074a15746b6b9db0f005b1e189d9d`）确认：pinned a2a-go v2.3.1 的 processor 可能在 producer 已返回 translation error 后才建立/保存 Task。processorResult 已有 failed Task 时可恢复为 Task+EOF；否则客户端公开返回 StreamRecoveryError。R016 与公开 A2A 文档只要求可观察基础设施失败，未承诺唯一 wire 形状。这是 QA oracle 修正，不是新增生产发现或公共合同变更。
+
+T21 `2139534` 只有同型静态风险，没有该分支实跑红日志；原 192/3840 全绿证据保留。逐项扫描当前 owned 文件的故意不可编码 Meta HTTP 路径，需校准的恰为：
+
+- `EveryDrain/translation-error`：原 84000-byte UTF-8 ThreadKey 使原事件和保留坐标的 dropped envelope 均超过 65536 bytes；固定安全 cause 为 `encode adapter stream status: payload_too_large`。
+- `OutgoingLoss/sequence`：原 `Sequence=9007199254740992` 无法用安全 JSON 整数表示，正常投影与 loss 投影均失败；固定 cause 为 `encode adapter stream status: invalid_payload`。该分支单独完整消费 HTTP，普通 `apClientDrain` 不放宽。
+
+两个 cause 分别从正式 encoder 校验和 pinned JSON-RPC Error→公开 client wrapper 边界静态确定；不得互换、contains 匹配或接受任意 error。允许真实 failed Task/status+精确 EOF，或当前 client 直接返回、TaskID 与最后已观察坐标一致（无 Task 可空）的 StreamRecoveryError：Cause 必须是非 nil 的上游公开 A2A Error，Err=ErrInternalError、Message 精确匹配本 fixture，无额外 Details/control，TypedDetails 只允许标准 ErrorInfo timestamp。每次检查所有已观察 Task/status 的所有 Parts、metadata 与 Raw 镜像，不能用后一个安全状态遮盖早先假 code/limit 或其他终态。
+
+新增 `TranslationOutcomeOracle` 以手写公共 DTO/error 做两形状正控及普通同文案 error、错误/nil cause、错误上游 code、后缀/子串、deadline、TaskID 错配、夹带 control 和其他终态负控。这些是独立 oracle 控制，不是实际 HTTP 的 StreamRecoveryError 分支证据。真实 HTTP 每次形状由 `translation HTTP outcome` 日志记录，最终报告按实跑计数；没有观察到的分支只保持静态依据与人工正控说明。
+
+normal、CancelTask ACK、builder-error、完整 drain 后 Result1、一次 Stream/Cancel 和所有原正式协议、快照、race 断言保持。capability-key/todo-count 的 loss 可以编码，仍须 Completed+一条完整 Dropped；其他 `WireValidation` 负向属于公开 decoder 输入，不是 HTTP translation error，没有扩用二形状 oracle。
+
+## T21-QA02 — 独立 drain oracle 必须辨别缓冲尾事件
+
+root 对 `2139534` 的 fixture 复核发现：apStream producer 先 close(done) 再 close(ch)，Result 只观察 done，因此 producer 已结束但缓冲尾事件尚未消费时也可能被当作完整 drain。旧检查全绿不能证明 oracle 能辨别该错误；这也是 QA 台架修正，不是生产问题。
+
+现在先关闭事件 channel，再公布 producer done；Result 等待该完成信号并独立检查 channel 缓冲长度，未消费尾事件必须递增 earlyResult。Result 的 audit 完成通过单独 resultBarrier 公布；所有 apAssertCalls（包括真实 HTTP CancelTask ACK 后的路径）先有界等待该屏障，再读取次数和 earlyResult，不再用轮询 resultCalls/producer close 代替完成。没有固定 sleep。
+
+新增 DrainOracle 两控：同一第三方公开 Stream fixture 已关闭 producer 且缓冲两条尾事件时，提前 Result 必须被识别；完整消费两条及 channel 关闭后 Result 则通过。两控仍保留原部分 Result 指针、原 error 与 Stream1/Run0/Result1。原 provider frames、业务预期及公共 core 终局判断不变；此人工 fixture 只证明 QA 观察能力，不冒称 core 行为。
 
 ## T21-F01 — CodeBuddy 增量工具起始同时携带占位 Args
 
