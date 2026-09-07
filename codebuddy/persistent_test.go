@@ -369,6 +369,9 @@ func runCodeBuddyPersistentHelper() int {
 			_, _ = fmt.Fprintln(writer, `{"type":"control_response","response":{"subtype":"success","request_id":"agent-adaptor-initialize","response":{}}}`)
 			_ = writer.Flush()
 		case strings.Contains(line, `"type":"user"`):
+			if handled, exitCode := emitAlignmentCodeBuddyPartialTurn(writer, line); handled {
+				return exitCode
+			}
 			if os.Getenv("FAIL_AFTER_PERSISTENT_READ") == "1" {
 				return 23
 			}

@@ -313,12 +313,8 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 				p.enableOutputReconstruction(req.RunID)
 			}
 			raw, persistentErr := writer.run(ctx, spec, sink, p)
-			if persistentErr == nil {
-				raw.Terminal = p.terminal
-				return buildPersistentCodeBuddyResponse(req, p, raw, prep), nil
-			}
 			if !errors.Is(persistentErr, errPersistentFallback) {
-				return driver.Response{}, persistentErr
+				return buildPersistentCodeBuddyResponse(req, p, raw, prep, persistentErr), persistentErr
 			}
 		} else if controlRequested {
 			return driver.Response{}, errControlSinkRequired
@@ -436,10 +432,18 @@ func (a adapter) prepareRun(ctx context.Context, cfg Config, req driver.Request)
 	}, nil
 }
 
-func buildPersistentCodeBuddyResponse(req driver.Request, p *parser, raw driver.RawStreams, prep runPrep) driver.Response {
-	failure := p.failureForOutcome(0)
-	p.completeStream(failure, 0, "", false)
-	checkpoint := p.checkpointForOutcome(0, "", false, failure)
+func buildPersistentCodeBuddyResponse(req driver.Request, p *parser, raw driver.RawStreams, prep runPrep, runErr error) driver.Response {
+	exitCode := 0
+	if runErr != nil {
+		// A failed control turn has no successful process outcome. Preserve the
+		// original transport cause without inventing an OS signal or allowing
+		// even an observed success terminal to certify this checkpoint.
+		exitCode = -1
+	}
+	timedOut := errors.Is(runErr, context.DeadlineExceeded)
+	failure := p.failureForOutcome(exitCode)
+	p.completeStream(failure, exitCode, "", timedOut)
+	checkpoint := p.checkpointForOutcome(exitCode, "", timedOut, failure)
 	if checkpoint != nil && checkpoint.State != nil {
 		checkpoint.State.Data = map[string]string{
 			driver.SessionParamCWD:                prep.effectiveCWD,
@@ -447,9 +451,16 @@ func buildPersistentCodeBuddyResponse(req driver.Request, p *parser, raw driver.
 			driver.SessionParamProfileFingerprint: req.ProfilePayload.SessionFingerprint(),
 		}
 	}
+	raw.Terminal = p.terminal
+	usage := p.usage
+	if usage == nil && p.stream != nil {
+		// Partial-message usage remains an observation even when a terminal
+		// result carrying aggregate usage never arrives.
+		usage = p.stream.streamUsage
+	}
 	return driver.Response{
 		Output: p.buildOutput(), RawStreams: &raw, Transcript: p.transcript,
-		ExitCode: 0, Usage: p.usage, Checkpoint: checkpoint,
+		ExitCode: exitCode, TimedOut: timedOut, Usage: usage, Checkpoint: checkpoint,
 		Metadata: p.outputMetadata(), Provider: "codebuddy", Model: prep.reportedModel,
 		Summary:         p.finalSummary(),
 		RuntimeServices: driverutil.RuntimeReportsFromRefs(req.Runtime.Ensured, req.Agent),

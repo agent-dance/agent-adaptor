@@ -598,11 +598,25 @@ func (lp *liveProcess) turn(ctx context.Context, prompt string, sink driver.Even
 		rr = <-done
 		rr.err = ctx.Err()
 	}
-	p.finalize()
 	sent, writeErr := ctrl.status()
 	if rr.err == nil {
 		rr.err = writeErr
 	}
+	if rr.err != nil || (rr.result && p.failureForOutcome(0) != nil) {
+		// This writer cannot be reused. Stop it, then drain stdout before Wait
+		// closes the pipe, retaining any diagnostics after a failed terminal.
+		lp.signalTerminate()
+		if tail, _ := io.ReadAll(lp.stdout); len(tail) > 0 {
+			rr.stdout += string(tail)
+			ts := time.Now().UTC()
+			emitPersistentChunk(sink, "stdout", tail, ts)
+			_ = p.onChunk("stdout", tail, ts)
+		}
+		// Wait for stderr's copy to finish before freezing Raw and flushing
+		// the parser's final unterminated diagnostic line.
+		_ = lp.terminateAndWait(context.Background())
+	}
+	p.finalize()
 	raw := driver.RawStreams{Stdout: rr.stdout, Stderr: lp.stderr.since(stderrStart)}
 	if !rr.result {
 		if rr.err == nil {
