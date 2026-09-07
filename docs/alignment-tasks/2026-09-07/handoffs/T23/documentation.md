@@ -71,3 +71,12 @@ T23-F06 follow-up: provider dependency guards uniformly cover Codex, Claude,
 CodeBuddy and Cursor roots and package subtrees. The negative oracle checks
 Driver/bridge/hosttool importers, while similar prefixes remain legal. This
 corrects a T23 guard blind spot; it is not a new runtime or public API change.
+
+C03-QA01/02 follow-up: capability parents cannot reference their own scoped
+invocation identity; equal IDs in different scopes remain legal. The shared
+private envelope check enforces zero Sequence/Seq/Timestamp and the existing
+Role rule for rich, observation-only and native batch payloads. Observation-only
+Drivers still need no rich run.* frames. Independent suite-entry oracles use
+an in-memory Driver, preserving the distinction between verifier coverage and
+real provider evidence. Merge these clarifications with OBS-03 / EVT-10 in the
+conformance guide; exported declarations and runtime behavior are unchanged.

@@ -41,3 +41,32 @@ for all three importer classes, and allows each `providerish` root/child to
 prove prefix matching does not overreach. No runtime import violation was
 observed and no production/public API or golden changes are needed. This is
 an AGENTS dependency-boundary guard fix; final new-G04 acceptance remains pending.
+
+## C03-QA01 / C03-QA02: independent observation verifier review
+
+External `findings/T23-review/independent-review.md` fixed the reviewed stage at
+`6e8644a1c4d90b29b24147b4f7e15956aeb656d2`. These are T23 QA verifier gaps,
+not observed provider or live failures. The original verifier was executed at
+that exact HEAD with only additional test oracles supplied through a Go overlay.
+Evidence: `evidence/C03-QA/{old.json,old.log,overlay.json,old-verifier-oracle.go.txt}`.
+The run exited 1 with 10 passes, 17 failures and zero skips: 11 leaf failures
+and six failing ancestors. Valid controls passed. Logs preserve the old suite
+entries actually returning PASS for each invalid SDK-owned coordinate.
+
+- **C03-QA01 / OBS-03:** `validCapability` passed an empty own ID to the
+  parent validator. Same-scope and root-scope self-parent invocations were
+  accepted. It now passes `InvocationID`; cross-scope equal IDs and same-scope
+  different IDs remain valid. Todo has no invocation identity and is unchanged.
+- **C03-QA02 / EVT-10:** the non-rich `checkLiveRun` path and native batch
+  `checkLiveStructuredOutput` path accepted nonzero Sequence, Seq or Timestamp.
+  A shared private envelope verifier now runs through the common observation
+  verifier for rich, non-rich and batch paths. Existing EVT-09 role authority
+  uses the same path; rich lifecycle checks remain in `VerifyStreamSequence`.
+  Independent negative tests invoke both real suite entry points in bounded
+  child test processes using an in-memory Driver without StreamSupport. Each
+  coordinate must fail with EVT-10; valid zero-coordinate facts without run.*
+  frames must pass. These child processes never invoke a provider CLI.
+
+This remains a scoped stage repair on the pre-R017 base. Migration to an
+accepted replacement G04 and original full final validation remain required;
+the evidence is not a formal T23 result or native/live acceptance.

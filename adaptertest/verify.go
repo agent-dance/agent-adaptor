@@ -23,6 +23,25 @@ func violationf(clause, format string, args ...any) Violation {
 	return Violation{Clause: clause, Message: fmt.Sprintf(format, args...)}
 }
 
+// verifyStreamEnvelope checks SDK-owned fields without requiring the optional
+// rich run/text/tool lifecycle. All stream and observation verifiers share it.
+func verifyStreamEnvelope(payloads []driver.StreamPayload) []Violation {
+	var out []Violation
+	for i, p := range payloads {
+		if p.Sequence != 0 || p.Seq != 0 || !p.Timestamp.IsZero() {
+			out = append(out, violationf("EVT-10",
+				"payload %d (%s) carries driver-set Sequence=%d Seq=%d Timestamp=%v; Sequence/Seq/Timestamp are backfilled by the SDK (StreamPayload, EventSink.EmitStream docs)",
+				i, p.Kind, p.Sequence, p.Seq, p.Timestamp))
+		}
+		if p.Role != driver.RoleAssistant {
+			out = append(out, violationf("EVT-09",
+				"payload %d (%s) carries Role=%q; drivers MUST leave Role at the zero value on every Kind they emit (Role docs)",
+				i, p.Kind, p.Role))
+		}
+	}
+	return out
+}
+
 // VerifySessionCapability checks the declaration and support-interface half
 // of CAP-01 without starting a provider process. Resume support requires both
 // a stable, non-nil SessionCodec and a stable, non-empty construction-config
@@ -258,16 +277,6 @@ func VerifyStreamSequence(payloads []driver.StreamPayload) []Violation {
 
 	for i, p := range payloads {
 		key := toolKey{p.ScopeID, p.ToolCallID}
-		if p.Sequence != 0 || p.Seq != 0 || !p.Timestamp.IsZero() {
-			out = append(out, violationf("EVT-10",
-				"payload %d (%s) carries driver-set Sequence=%d Seq=%d Timestamp=%v; Sequence/Seq/Timestamp are backfilled by the SDK (StreamPayload, EventSink.EmitStream docs)",
-				i, p.Kind, p.Sequence, p.Seq, p.Timestamp))
-		}
-		if p.Role != driver.RoleAssistant {
-			out = append(out, violationf("EVT-09",
-				"payload %d (%s) carries Role=%q; drivers MUST leave Role at the zero value on every Kind they emit (Role docs)",
-				i, p.Kind, p.Role))
-		}
 		if !knownStreamKind(p.Kind) {
 			if terminal {
 				out = append(out, violationf("EVT-02", "payload %d (%s) emitted after the terminal frame; terminal MUST be last", i, p.Kind))

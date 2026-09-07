@@ -120,7 +120,8 @@
 //	EVT-08  hitl.requested / hitl.resolved carry their decision envelopes.
 //	EVT-09  Role is left at the zero value on every driver-emitted payload.
 //	EVT-10  Sequence, Seq, and Timestamp are left zero by drivers (the SDK
-//	        backfills them in EmitStream).
+//	        backfills them in EmitStream), including observation-only and
+//	        native batch payloads without rich run.* frames.
 //	EVT-11  every opened lifecycle is closed before run.finished.
 //	EVT-12  StreamCapability negatives hold: no tool_call.args when
 //	        ToolCallArgs=false, no reasoning.* when Reasoning=false, no
@@ -137,6 +138,8 @@
 //	        semantic payload or unsafe generic fields.
 //	OBS-03  Capability values follow the closed provider evidence vocabulary,
 //	        UTF-8/size/time/duration rules and contain no invented host facts.
+//	        A parent cannot reference the same (ScopeID, InvocationID);
+//	        a matching parent ID in a different scope remains valid.
 //	OBS-04  Per-scope capability identity is stable, starts/terminals occur
 //	        once and every start closes before the provider terminal.
 //	OBS-05  Todo is a confirmed full ordered snapshot: non-nil empty clears,

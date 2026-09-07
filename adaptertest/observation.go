@@ -82,7 +82,7 @@ func observationParent(scope, parentScope, parentID, id string) bool {
 }
 func validCapability(v capability.Invocation) bool {
 	if !observationString(v.InvocationID, 2048, true, false) || !observationString(v.Ref.Key, 512, true, false) || !observationString(v.Ref.Operation, 256, true, false) ||
-		!observationParent(v.ScopeID, v.ParentScopeID, v.ParentToolCallID, "") || !observationTime(v.OccurredAt) {
+		!observationParent(v.ScopeID, v.ParentScopeID, v.ParentToolCallID, v.InvocationID) || !observationTime(v.OccurredAt) {
 		return false
 	}
 	switch v.Ref.Kind {
@@ -149,7 +149,9 @@ func validTodo(v todo.Snapshot) bool {
 }
 
 func verifyObservationSequence(payloads []driver.StreamPayload) []Violation {
-	var out []Violation
+	// Envelope authority applies to every transport, including observation-only
+	// drivers without StreamSupport and native structured-output batch runs.
+	out := verifyStreamEnvelope(payloads)
 	type key struct{ scope, id string }
 	invocations := map[key]capability.Invocation{}
 	closed := map[key]bool{}

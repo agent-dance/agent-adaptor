@@ -644,7 +644,8 @@ func checkLiveRun(t *testing.T, d driver.Driver, c *suiteConfig) {
 		reportViolations(t, VerifyStreamSequence(sink.Stream()))
 		reportViolations(t, VerifyStreamCapability(support.StreamCapability(), sink.Stream()))
 	} else {
-		// Observation facts do not imply the optional rich text/tool protocol.
+		// Observation facts retain SDK envelope authority without implying the
+		// optional rich text/tool protocol.
 		reportViolations(t, verifyObservationSequence(sink.Stream()))
 	}
 	reportViolations(t, verifyObservationSupport(d.Descriptor().Observation.Streaming, sink.Stream()))
@@ -700,6 +701,8 @@ func checkLiveStructuredOutput(t *testing.T, d driver.Driver, desc driver.Descri
 	if err != nil {
 		t.Fatalf("SO-02: native structured run failed: %v\nstderr tail: %s", err, rawStderrTail(&resp))
 	}
+	// Batch observation facts obey the same SDK envelope authority; they need
+	// not include rich run.started/run.finished frames.
 	reportViolations(t, verifyObservationSequence(sink.Stream()))
 	reportViolations(t, verifyObservationSupport(desc.Observation.Batch, sink.Stream()))
 	result := resp.StructuredOutput
