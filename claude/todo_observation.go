@@ -97,7 +97,7 @@ func (p *claudeParser) observeTodo(call *observedTool, structured any) {
 					err = todoobs.ErrInvalid
 				} else {
 					if value == "deleted" {
-						snapshot, err = deleteClaudeTask(table, id, now)
+						snapshot, err = deleteClaudeTask(table, id, patch.Content, now)
 						break
 					}
 					status := todo.Status(value)
@@ -172,13 +172,21 @@ func claudeTodoWrite(raw any, runID, scopeID string) ([]todo.Item, error) {
 	return items, nil
 }
 
-func deleteClaudeTask(table *todoobs.Table, id string, at time.Time) (*todo.Snapshot, error) {
+func deleteClaudeTask(table *todoobs.Table, id string, subject *string, at time.Time) (*todo.Snapshot, error) {
 	snapshot, ok := table.Snapshot()
 	if !ok {
 		return nil, todoobs.ErrUnknownID
 	}
 	for i, item := range snapshot.Items {
 		if item.ID == id && !item.SyntheticID {
+			// Deletion must not bypass validation of other supplied fields.
+			// Validate the candidate clone before changing the real table.
+			if subject != nil {
+				snapshot.Items[i].Content = *subject
+				if err := todoobs.Validate(snapshot); err != nil {
+					return nil, err
+				}
+			}
 			return table.Replace(append(snapshot.Items[:i], snapshot.Items[i+1:]...), todo.ToolResult, at)
 		}
 	}

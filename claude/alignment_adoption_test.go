@@ -307,6 +307,33 @@ func TestAlignmentClaudeMalformedTodoFieldsPreserveTable(t *testing.T) {
 	}
 }
 
+func TestAlignmentClaudeDeletedTaskValidatesProvidedSubject(t *testing.T) {
+	for _, tc := range []struct {
+		name, subject string
+		valid         bool
+	}{
+		{"empty", "", false},
+		{"control", "bad\x00subject", false},
+		{"carriage-return", "bad\rsubject", false},
+		{"utf8-over-limit", strings.Repeat("界", 1366), false},
+		{"valid", "confirmed\n删除\tready", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p, sink := alignmentAdoptionParser(driver.Request{RunID: "delete-subject"})
+			alignmentFeed(p, alignmentTool("create", "TaskCreate", "", map[string]any{"subject": "keep"})+alignmentToolResult("create", "", false, map[string]any{"task": map[string]any{"id": "real-91"}}))
+			alignmentFeed(p, alignmentTool("delete", "TaskUpdate", "", map[string]any{"taskId": "real-91", "subject": tc.subject, "status": "deleted"})+alignmentToolResult("delete", "", false, nil))
+			snapshots := alignmentKinds(sink, driver.StreamTodoUpdated)
+			if tc.valid {
+				if len(snapshots) != 2 || snapshots[1].Todo.Revision != 2 || len(snapshots[1].Todo.Items) != 0 || p.tools.notices["todo_invalid"] {
+					t.Fatalf("valid subject prevented deletion: %+v", snapshots)
+				}
+			} else if len(snapshots) != 1 || snapshots[0].Todo.Revision != 1 || snapshots[0].Todo.Items[0].ID != "real-91" || !p.tools.notices["todo_invalid"] {
+				t.Fatal("invalid subject bypassed whole-operation validation through deletion")
+			}
+		})
+	}
+}
+
 func TestAlignmentClaudeTodoResumeScopeAndFullList(t *testing.T) {
 	for _, runID := range []string{"turn-1", "turn-2"} {
 		p, sink := alignmentAdoptionParser(driver.Request{RunID: runID})
