@@ -175,15 +175,15 @@ fake fixture：limit=100ms；Advance(40ms)；p=Pause()；Advance(300ms)；p()；
 
 ## 7. Ask、背压与 observer 的精确边界
 
-只在唯一 approval sink 已解析模式为 Ask、准备开始**一个 attempt**时申请 Pause token，紧接注册 defer release。token 先于审批 observer/notice、ApprovalRequest 入队、OnApproval callback 和等待响应；因此已经对用户发出的审批卡不消耗主动预算，队列已满时也由墙钟审批 deadline 约束。自动批准/拒绝从不申请 token。
+只在唯一 approval sink 已解析模式为 Ask、准备开始**一个 attempt**时申请 Pause token，紧接注册 defer release。token 先于审批 notice、ApprovalRequest 入队、OnApproval callback 和等待响应；因此已经对用户发出的审批卡不消耗主动预算，队列已满时也由墙钟审批 deadline 约束。自动批准/拒绝从不申请 token。
 
-一次 Ask 生命周期：规范化/选择模式（计时）→ 申请 token → 创建审批独立墙钟 deadline → observer/入队或 handler → 等待且 exactly-once 取响应/expire → release token → resolved notice、fallback/Retry 策略处理（计时）。每个 retry 重新生成既有 RequestID/deadline，重新申请独立 token；attempt 间处理不暂停，不重置总预算。请求已经过期也必须有界退出并释放 token。
+一次 Ask 生命周期：规范化/选择模式（计时）→ 申请 token → 创建审批独立墙钟 deadline → 入队或 handler → 等待且 exactly-once 取响应/expire → release token → resolved notice、fallback/Retry 策略处理（计时）。每个 retry 重新生成既有 RequestID/deadline，重新申请独立 token；attempt 间处理不暂停，不重置总预算。请求已经过期也必须有界退出并释放 token。
 
 父 run context Done 与审批本地 timer 必须分别检查；只有本地审批 deadline 实际先到且 parent 尚未结束，才是 DecisionTimedOut。外部 deadline 保持 ReasonDeadlineExceeded，不能流入 OnTimeout fallback。panic、handler error、返回未应答、拒绝、超时、Cancel、broker abort、运行结束各出口必须 release 或 Stop；迟到应答只按既有 ErrApprovalResolved/错误 kind 合同失败。
 
-短锁仅保护归因/注册/序号。现有 `decisionSerial` 不得覆盖入队、observer 或 handler/人工等待；T10 调整为支持多个并发 Ask，outstanding 以唯一 RequestID 隔离。第二个请求即使排队进入同一 broker，也拥有自己的 token；一个请求结束不能恢复另一个仍在等待的请求。
+短锁仅保护归因/注册/序号。现有 `decisionSerial` 不得覆盖入队或 handler/人工等待；T10 调整为支持多个并发 Ask，outstanding 以唯一 RequestID 隔离。第二个请求即使排队进入同一 broker，也拥有自己的 token；一个请求结束不能恢复另一个仍在等待的请求。
 
-与 C03 的协调顺序已经由 root 确认：唯一 sink 完成事件序列化后、用户 drop 之前调用 observer；调用 observer 不持有会被其等待路径再次获取的锁。非 Ask 的 observer 处理仍消耗预算；Ask token 内的 observer/入队属于暂停段。observer 自身仍遵循 C03 的独立有界超时/panic/failure 合同，不能把 observer 失败变成 run 主失败。Pause 不暂停 lease renewal、父 Cancel、Agent.Close、清理或 observer 的墙钟超时。
+G00统一裁决：C03的observer只接收CapabilityInvocation/TodoUpdated，不接收ApprovalRequest或审批notice，因此不存在“审批observer”。Ask入队与人工handler属于暂停段；Capability/Todo observer在唯一sink分配Meta后、用户drop前执行，若当时没有未结束Ask则计入主动预算，若另一个并发Ask持有token则随整轮暂停。observer独立100ms墙钟限制不暂停；错误/panic不改变run主结果。Pause不暂停lease renewal、父Cancel、Agent.Close或清理。
 
 Close 开始后新 Agent/Thread 运行稳定 ErrAgentClosed；已准入运行被 Close 取消时按已锁定原因结束，没有更早原因则 ReasonCancelled + context.Canceled。无需为已运行 Close 添加新执行错误类别。T10 可在既有 stream/cancel 接线内完成；不要求修改 agent.go 的公共 Close API。
 

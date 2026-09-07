@@ -1,0 +1,357 @@
+{
+  "schema_version": "1.0",
+  "gate": "G00",
+  "manifest_revision": 3,
+  "code_baseline": "919f140f64f89c80933802840c8878681a85a4d9",
+  "source_head": "e2f0620bdd6477e6fe16f6db5648093589342ca2",
+  "status": "contract_frozen_implementation_pending",
+  "contracts": [
+    {
+      "producer": "C01",
+      "path": "docs/alignment-tasks/2026-09-07/contracts/profile-lifecycle.md",
+      "sha256": "0f265094912ea6169fe89902a1dfaedde5d1150984358d8d228593e3e2456964",
+      "version": "1.0-g00",
+      "interfaces": [
+        "profile.ErrInUse/ErrUnsafe/ErrRecoveryRequired/ErrUnsupportedFilesystem",
+        "Dedicated WithTools deterministic profile + owner lock",
+        "Agent.Close owns release after writer/gateway shutdown"
+      ],
+      "fixtures": [],
+      "dependency_decision": "Existing golang.org/x/sys v0.41.0 becomes direct only in T04; native OS locking, fail-closed filesystem checks."
+    },
+    {
+      "producer": "C02",
+      "path": "docs/alignment-tasks/2026-09-07/contracts/results-and-budget.md",
+      "sha256": "9e592c47979c94e09709ae8d55b73654f25ed6f83bbdab9ec24690ef378d0fba",
+      "version": "1.0-g00",
+      "interfaces": [
+        "RunError.Cause + stable primary Reason",
+        "Policy.ActiveExecutionTimeout",
+        "private activebudget controller",
+        "DelegationRequest.ActiveExecutionTimeout + MaxActiveExecutionTimeout",
+        "agentadaptor.failure closed code/limit_ms"
+      ],
+      "fixtures": [
+        {
+          "path": "docs/alignment-tasks/2026-09-07/handoffs/C02/fixtures/budget-wire.json",
+          "sha256": "0dedf90a29a60fb4005d642cde29b89123e6da71ca43bee861e5704f340bb03c"
+        }
+      ],
+      "dependency_decision": "Standard library timers/context/errors; no new runtime framework."
+    },
+    {
+      "producer": "C03",
+      "path": "docs/alignment-tasks/2026-09-07/contracts/events-observation.md",
+      "sha256": "0e41bfc1c6274740b8edc874d71332f1db3f3a4c9bb57cd25b076927ace8a1ba",
+      "version": "1.0-g00",
+      "interfaces": [
+        "capability/todo leaf types and root/SPI typed events",
+        "run-bound publisher and capability/todo-only observer",
+        "Observation demand/capability transport matrix",
+        "adapter.stream.v1 strict opt-in DTO",
+        "hosttools/capabilityrecorder",
+        "Merge transparent sequence with bound publisher proof"
+      ],
+      "fixtures": [
+        {
+          "path": "docs/alignment-tasks/2026-09-07/handoffs/C03/fixtures/capability-start.json",
+          "sha256": "b6379729b06097620a2d4bae8647c08dc8f3a2d971cdc9386020dad84a472202"
+        },
+        {
+          "path": "docs/alignment-tasks/2026-09-07/handoffs/C03/fixtures/capability-terminal-zero-duration.json",
+          "sha256": "55b9c2ad878432b47b23485c75f87285b8ff956c8bce5db2af08599d17e5bd49"
+        },
+        {
+          "path": "docs/alignment-tasks/2026-09-07/handoffs/C03/fixtures/relay-domains.json",
+          "sha256": "5269ce7315d9f04b52bbe0392302f546702fa7d873ef79234af2b72f7fbe6758"
+        },
+        {
+          "path": "docs/alignment-tasks/2026-09-07/handoffs/C03/fixtures/todo-clear.json",
+          "sha256": "19debb49dfb6518f7a7c207363faebc6b004965572b3aee5cabbf540035a2933"
+        },
+        {
+          "path": "docs/alignment-tasks/2026-09-07/handoffs/C03/fixtures/tool-parent.json",
+          "sha256": "5d3e152d83e2af836280652587aeeb495de1ebd06a5bf189bf33d6307842959c"
+        }
+      ],
+      "dependency_decision": "Standard library trackers and existing protocol dependencies; no new top-level require."
+    },
+    {
+      "producer": "C04",
+      "path": "docs/alignment-tasks/2026-09-07/contracts/prompt-transport.md",
+      "sha256": "4d3de0632ed81439c7a0bcddd6c8961fe3fa8e48a2c4a679c3b7aaa70f842131",
+      "version": "1.0-g00",
+      "interfaces": [
+        "WithAppendSystemPrompt SharedOption",
+        "driver.Request.AppendSystemPrompt + Descriptor.SystemPrompt",
+        "per-kind StructuredOutputHITLCapability matrices",
+        "private internal/systemprompt materialization/argv safety"
+      ],
+      "fixtures": [],
+      "dependency_decision": "Reuse existing TOML and official Codex schema fields; no generated edits or new dependency."
+    }
+  ],
+  "ownership": {
+    "C01": [
+      "docs/alignment-tasks/2026-09-07/contracts/profile-lifecycle.md",
+      "docs/alignment-tasks/2026-09-07/handoffs/C01/**"
+    ],
+    "C02": [
+      "docs/alignment-tasks/2026-09-07/contracts/results-and-budget.md",
+      "docs/alignment-tasks/2026-09-07/handoffs/C02/**"
+    ],
+    "C03": [
+      "docs/alignment-tasks/2026-09-07/contracts/events-observation.md",
+      "docs/alignment-tasks/2026-09-07/handoffs/C03/**"
+    ],
+    "C04": [
+      "docs/alignment-tasks/2026-09-07/contracts/prompt-transport.md",
+      "docs/alignment-tasks/2026-09-07/handoffs/C04/**"
+    ],
+    "T01": [
+      "claude/**",
+      "docs/alignment-tasks/2026-09-07/handoffs/T01/**"
+    ],
+    "T02": [
+      "docs/alignment-tasks/2026-09-07/handoffs/T02/**",
+      "internal/toolruntime/**",
+      "tool/**"
+    ],
+    "T03": [
+      "bridges/a2a/server.go",
+      "bridges/a2a/server_test.go",
+      "clients/a2a/**",
+      "docs/alignment-tasks/2026-09-07/handoffs/T03/**",
+      "hosttools/a2adelegation/**"
+    ],
+    "T04": [
+      "agent.go",
+      "agent_close_test.go",
+      "alignment_profile_test.go",
+      "docs/alignment-tasks/2026-09-07/handoffs/T04/**",
+      "go.mod",
+      "go.sum",
+      "internal/hostedprofile/**",
+      "internal/mcpruntime/**",
+      "internal/skillruntime/**",
+      "profile/**",
+      "tools.go",
+      "tools_contract_test.go"
+    ],
+    "T05": [
+      "alignment_partial_result_test.go",
+      "approval_test.go",
+      "docs/alignment-tasks/2026-09-07/handoffs/T05/**",
+      "errors.go",
+      "invocation.go",
+      "process_outcome_internal_test.go",
+      "process_outcome_test.go",
+      "result.go",
+      "result_output_correctness_test.go",
+      "result_output_internal_test.go",
+      "runerror_test.go",
+      "stream_contract_test.go",
+      "testdata/root_api.golden"
+    ],
+    "T31": [
+      "adaptertest/doc.go",
+      "adaptertest/testdata/driver_api.golden",
+      "adaptertest/verify.go",
+      "adaptertest/verify_test.go",
+      "alignment_structured_hitl_test.go",
+      "docs/alignment-tasks/2026-09-07/handoffs/T31/**",
+      "driver/driver.go",
+      "internal/engine/structured.go",
+      "internal/engine/structured_hitl_test.go",
+      "wiring.go"
+    ],
+    "T06": [
+      "adaptertest/testdata/driver_api.golden",
+      "alignment_event_contract_test.go",
+      "alignment_observer_test.go",
+      "capability/**",
+      "docs/alignment-tasks/2026-09-07/handoffs/T06/**",
+      "driver/doc.go",
+      "driver/driver.go",
+      "driver/events.go",
+      "driver/run.go",
+      "driver/runtime.go",
+      "event_broker.go",
+      "event_broker_correctness_test.go",
+      "events.go",
+      "internal/capabilityobs/**",
+      "internal/engine/clone_exports.go",
+      "internal/engine/driver_types.go",
+      "internal/todoobs/**",
+      "options.go",
+      "result.go",
+      "runservices.go",
+      "runservices_test.go",
+      "sink.go",
+      "testdata/root_api.golden",
+      "todo/**",
+      "wiring.go"
+    ],
+    "T07": [
+      "claude/**",
+      "docs/alignment-tasks/2026-09-07/handoffs/T07/**"
+    ],
+    "T08": [
+      "codebuddy/**",
+      "docs/alignment-tasks/2026-09-07/handoffs/T08/**"
+    ],
+    "T09": [
+      "docs/alignment-tasks/2026-09-07/handoffs/T09/**",
+      "hosttools/a2adelegation/**"
+    ],
+    "T10": [
+      "adaptertest/testdata/driver_api.golden",
+      "alignment_active_budget_test.go",
+      "alignment_budget_error_test.go",
+      "alignment_prompt_contract_test.go",
+      "approval.go",
+      "docs/alignment-tasks/2026-09-07/handoffs/T10/**",
+      "driver/config.go",
+      "driver/driver.go",
+      "driver/policy.go",
+      "driver/policy_errors.go",
+      "driver/run.go",
+      "errors.go",
+      "inspect.go",
+      "inspect_test.go",
+      "internal/activebudget/**",
+      "internal/engine/driver_types.go",
+      "internal/engine/preparation_exports.go",
+      "internal/engine/run_types.go",
+      "internal/systemprompt/**",
+      "invocation.go",
+      "options.go",
+      "options_scope_test.go",
+      "policy.go",
+      "policy_prelaunch_test.go",
+      "sink.go",
+      "stream.go",
+      "testdata/root_api.golden",
+      "wiring.go"
+    ],
+    "T11": [
+      "bridges/a2a/**",
+      "docs/alignment-tasks/2026-09-07/handoffs/T11/**"
+    ],
+    "T12": [
+      "bridges/agui/**",
+      "bridges/sse/**",
+      "bridges/subagentstream/**",
+      "docs/alignment-tasks/2026-09-07/handoffs/T12/**",
+      "hosttools/sessionrecorder/**"
+    ],
+    "T13": [
+      "docs/alignment-tasks/2026-09-07/handoffs/T13/**",
+      "hosttools/capabilityrecorder/**"
+    ],
+    "T14": [
+      "claude/**",
+      "docs/alignment-tasks/2026-09-07/handoffs/T14/**"
+    ],
+    "T15": [
+      "codebuddy/**",
+      "docs/alignment-tasks/2026-09-07/handoffs/T15/**"
+    ],
+    "T16": [
+      "codex/**",
+      "docs/alignment-tasks/2026-09-07/handoffs/T16/**"
+    ],
+    "T17": [
+      "cursor/**",
+      "docs/alignment-tasks/2026-09-07/handoffs/T17/**"
+    ],
+    "T18": [
+      "docs/alignment-tasks/2026-09-07/handoffs/T18/**",
+      "hosttools/a2adelegation/**"
+    ],
+    "T19": [
+      "bridges/a2a/**",
+      "docs/alignment-tasks/2026-09-07/handoffs/T19/**"
+    ],
+    "T20": [
+      "docs/alignment-tasks/2026-09-07/handoffs/T20/**",
+      "e2e/alignment_lifecycle_test.go",
+      "e2e/alignment_process_fixture_test.go",
+      "e2e/alignment_profile_test.go",
+      "internal/testutil/alignmentlifecycle/**"
+    ],
+    "T21": [
+      "alignment_protocol_integration_test.go",
+      "docs/alignment-tasks/2026-09-07/handoffs/T21/**",
+      "internal/testutil/alignmentprotocol/**"
+    ],
+    "T22": [
+      "alignment_policy_integration_test.go",
+      "docs/alignment-tasks/2026-09-07/handoffs/T22/**",
+      "internal/testutil/alignmentpolicy/**"
+    ],
+    "T23": [
+      ".github/workflows/**",
+      "adaptertest/**",
+      "alignment_architecture_test.go",
+      "docs/alignment-tasks/2026-09-07/handoffs/T23/**"
+    ],
+    "T24": [
+      "README.de.md",
+      "README.ja.md",
+      "README.ko.md",
+      "README.md",
+      "README.zh-CN.md",
+      "docs/a2a.md",
+      "docs/alignment-tasks/2026-09-07/handoffs/T24/**",
+      "docs/api-reference.md",
+      "docs/profile-resource-provider-matrix.md",
+      "docs/public-errors.md",
+      "docs/run-policy.md",
+      "docs/streaming-adapter-contract.md",
+      "docs/streaming.md",
+      "docs/structured-output.md",
+      "docs/tools.md",
+      "examples/**"
+    ],
+    "T25": [
+      "docs/alignment-tasks/2026-09-07/handoffs/T25/**"
+    ],
+    "T26": [
+      "docs/alignment-tasks/2026-09-07/handoffs/T26/**"
+    ],
+    "T27": [
+      "docs/alignment-tasks/2026-09-07/handoffs/T27/**"
+    ],
+    "T28": [
+      "docs/alignment-tasks/2026-09-07/handoffs/T28/**"
+    ],
+    "T29": [
+      "docs/alignment-tasks/2026-09-07/handoffs/T29/**"
+    ],
+    "T30": [
+      "docs/alignment-tasks/2026-09-07/handoffs/T30/**"
+    ]
+  },
+  "coordination": [
+    "Only CapabilityInvocation/TodoUpdated invoke observer; C02 wording reconciled to C03. Ask tokens pause execution budget before queue/callback, observer wallclock stays bounded.",
+    "T31 supplies per-kind schema negotiation in B01; T07 consumes G01 code, T06 integrates later observation demand. Ordinary Permission Ask remains supported.",
+    "T03 fixes A2A RunError reason priority using baseline symbols + errors.Join fixtures independently of same-batch T05 Cause.",
+    "T12 uses private structural RunEventsBound interface with fakes; T18 later implements proof. No same-batch Go dependency.",
+    "All future public API is design only until corresponding code/tests/godoc and central docs gate pass. No live/platform claims from B00."
+  ],
+  "unmerged_related_branches": [
+    {
+      "ref": "origin/codex/fix-resume-stale-token-usage",
+      "head": "6432e5e4f727bb27c08f55ebd75c5b1707d8569a",
+      "owner": "T16",
+      "decision": "Coordinate new-turn usage fences from fixed evidence; do not merge automatically."
+    },
+    {
+      "ref": "origin/codex/run-scoped-mcp-tool-approval",
+      "head": "12a1ad12be4a2cf882e0db8b5b2ddb37b841d3f3",
+      "owner": "T14",
+      "decision": "Preserve current stronger tool authorization boundary; no automatic merge."
+    }
+  ]
+}

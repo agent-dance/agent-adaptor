@@ -350,6 +350,12 @@ Hosttools：
 
 若代码、godoc、测试或权威文档对上述任一合同出现矛盾，必须重新打开对应审计项；单纯“测试通过”不能替代合同修复。
 
+### 14.1 2026-09-07 internal 对齐重新打开项
+
+B00以固定源码和internal历史复核发现以下合同缺口，当前状态为待实施及验收：Dedicated+WithTools profile跨进程所有权与安全复用（T04/T20）；执行后取消、基础设施失败的完整部分Result/cause（T05/T20）；逐审批Kind的schema协商及Claude双向transport（T31/T07/T22）；subagentstream.Merge的序号权威与新增正式观测事实保真（T06/T12/T14–T18/T21）。A2A错误主原因优先级须由T03与T05同批验收。
+
+具体冻结设计、未支持边界、文件所有权和fixture见 `docs/alignment-tasks/2026-09-07/contracts/frozen.json`。合同冻结不代表代码已实现；后续同批godoc、合同测试、使用文档和CHANGELOG完成后才能关闭对应项。其他第14节既有保护继续有效。
+
 ## 15. 发布门禁
 
 发布前必须全部满足：
