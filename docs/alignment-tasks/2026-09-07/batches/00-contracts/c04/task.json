@@ -37,7 +37,7 @@
     },
     "plan": {
       "path": "docs/internal-history-alignment-plan-2026-09-07.md",
-      "sha256": "73f4b596937160462cfef370f7600aa7a2a2b1b78d9d2861f4d7f2202bf4a6f8",
+      "sha256": "96232fc8715b686e4d6d4cc85a61e0cc87d09a6b45c956f07792c8dad3b1d5ae",
       "sections": [
         "W06",
         "W11"
@@ -50,7 +50,7 @@
     ],
     "dependency_artifacts": [],
     "embedded_plan_sections": {
-      "W06": "### W06：Claude 原生结构化输出与交互审批共存\n\n**证据与差距。** 当前 `claude/driver.go` 声明 `WorksWithHITL=false`，native schema + interactive 会拒绝；core 可自动选择 Prompt + 本地校验，因此不是完全“不支持结构化输出”。internal `4261914` 开放 Question/PlanReview 与 `stream-json + --json-schema + --permission-prompt-tool stdio` 的同次执行组合。\n\n**实施。** 在 W01 后按当前 Request 的 resolved `StructuredOutputSource` 选择 transport：interactive native 必须保持双向 stream-json；更新 Descriptor 和冲突参数校验。保留 Permission Ask 当前明确 unsupported，不把一个粗粒度 bool 扩张为所有 HITL 组合。无 native 能力的组合仍按 core 固定 fallback 规则处理，不引入模式选择器。\n\n**验收。** Question Ask、PlanReview Ask 与 schema 成功；回答/拒绝/超时；只有 result 的结束；非法结构化结果；调用 Run/Stream 与 Thread/WithSpawn；stdout、terminal payload、结构化数据和 checkpoint 同次解析一致。验证当前支持的 CLI 版本后再宣告能力；internal 的测试结果不视为本仓库 live 证据。更新 structured-output、run-policy 和 Claude 文档。",
+      "W06": "### W06：Claude 原生结构化输出与交互审批共存\n\n**证据与差距。** B00 执行期复核确认：Claude 的 WorksWithHITL=false 在 core 同时否决 native 与 prompt 两种机制，schema+Ask 实际预启动拒绝；无 schema 的 Permission Ask 已有正式支持。原记录声称当前自动 fallback 是错误的。internal `4261914` 开放 Question/PlanReview 与 `stream-json + --json-schema + --permission-prompt-tool stdio` 的同次执行组合。\n\n**实施。** 在 W01 后按当前 Request 的 resolved `StructuredOutputSource` 选择 transport：interactive native 必须保持双向 stream-json；更新 Descriptor 和冲突参数校验。保留无 schema 的 Permission Ask。按审批 Kind 分别声明 native/prompt 能力，非 nil 矩阵替代本机制的 WorksWithHITL，nil保留旧语义；native schema+Permission Ask 不宣告支持时自动选择已支持的 Prompt+本地校验。先修复 SPI/core 协商，再接 Claude transport。无 native 能力的组合仍按 core 固定 fallback 规则处理，不引入模式选择器。\n\n**验收。** Question Ask、PlanReview Ask 与 schema 成功；回答/拒绝/超时；只有 result 的结束；非法结构化结果；调用 Run/Stream 与 Thread/WithSpawn；stdout、terminal payload、结构化数据和 checkpoint 同次解析一致。验证当前支持的 CLI 版本后再宣告能力；internal 的测试结果不视为本仓库 live 证据。更新 structured-output、run-policy 和 Claude 文档。",
       "W11": "### W11：追加 provider-native system prompt\n\n**来源与差距。** internal `8ffe22a` 最终使用带 Append 语义的名字；当前只有 `WithInstructions`，二者不是同一通道。其实现采用 Claude `--append-system-prompt-file`、CodeBuddy `--append-system-prompt`、Codex exec `developer_instructions` 与 app-server `developerInstructions`，Cursor 非空请求 fail-closed。这些是 internal 固定提交的实现选择，实施时仍需核验目标 CLI 版本。\n\n**公共方案。** 仅增加一个 `WithAppendSystemPrompt(string) SharedOption`，构造与调用共用；近处替换、空串清除。增加 Driver Request 字段和 append 能力声明、结构化 unsupported error。仅 append，保留 provider 默认提示词；不再加 `WithDefaultAppendSystemPrompt`，不增加 Config 镜像字段，不拼入用户 Prompt，也不降级为 Instructions。\n\n**工程细节。** 内容进入 Thread compatibility 和 persistent startup signature，两者都要覆盖；Codex start/resume/fork 对应正式字段都核对，不能恢复时漏传。它不是 profile 资源，不写入 profile manifest。Claude 文件采用 owned、0600、内容校验和安全原子物化；internal 缓存仅比较同名文件 size 的判断需强化，避免同长度篡改和 symlink。CodeBuddy inline 长度、Windows argv 限制、Codex TOML 编码与 ExtraArgs 冲突启动前校验，缓存/文件清理有明确归属。\n\n**验收。** 默认、call override、空串清除、中文/换行/引号/TOML 字符、超长文本、Cursor unsupported、构造 Inspect 一致、Run/Stream 一致、Thread 配置变化拒绝/安全重建、常驻签名变化先停后起、恢复无漏传。更新 root/SPI golden、API reference、各 Driver godoc、examples、README 翻译与 CHANGELOG；With* 数量变更显式记录，不能绕过冻结守卫。"
     }
   },
@@ -91,11 +91,12 @@
     "普通验证显式关闭付费门，不访问真实 provider；live 任务须同时满足授权记录、build tag 和环境变量门。所有任务都不创建 tag、不发布 release、不自动推送/发送外部消息。"
   ],
   "implementation_steps": [
-    "基于当前 core 自动 schema 协商与 internal 4261914/8ffe22a，定 Claude interactive/native 参数组合，Permission Ask 继续 unsupported。",
+    "基于当前 core 自动 schema 协商与 internal 4261914/8ffe22a，定 Claude interactive/native 参数组合，无 schema 的 Permission Ask 保持支持，native schema+Permission Ask 不虚报支持。",
     "固定唯一 WithAppendSystemPrompt SharedOption、Driver Request/Descriptor/unsupported error、空串清除和覆盖规则。",
     "明确 Instructions 与 native append 分离，按构造配置/Inspect/Thread fingerprint/process signature 全链路覆盖。",
     "冻结三 Driver native transport 参数、Codex start/resume/fork 的字段、缓存所有权/内容校验、inline 长度/TOML/Windows/ExtraArgs 冲突；Cursor fail-closed。",
-    "给出 CLI/schema 版本证据需求与 fixture，不把旧文档声称的能力当成当前 live 已验证。"
+    "给出 CLI/schema 版本证据需求与 fixture，不把旧文档声称的能力当成当前 live 已验证。",
+    "G00勘误：普通Permission Ask已支持，schema+Ask当前无fallback；由新增B01 T31先实现SPI/core，B02 T07接Claude。"
   ],
   "acceptance_criteria": [
     {

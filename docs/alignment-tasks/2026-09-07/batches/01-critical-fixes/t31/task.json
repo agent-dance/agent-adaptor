@@ -1,25 +1,23 @@
 {
   "schema_version": "1.0",
-  "id": "T01",
-  "title": "修复 Claude result 终局的一次性 stdin 关闭",
+  "id": "T31",
+  "title": "修复逐审批类型的结构化输出固定协商",
   "batch_id": "B01",
   "phase": "parallel",
   "kind": "implementation",
-  "priority": "P0",
+  "priority": "P1",
   "status": "planned",
-  "objective": "修复 Claude result 终局的一次性 stdin 关闭。完成本任务范围并交付可核验结果，不代替其他任务或提前宣称整个 W 项完成。",
+  "objective": "按G00的W06勘误先交付SPI/core的逐Kind native/prompt协商，保持已有Permission Ask与固定fallback，为下一批Claude提供可用接口。",
   "work_items": [
-    "W01"
+    "W06"
   ],
   "requirements_owned": [
-    "W01-R01",
-    "W01-R02",
-    "W01-R03",
-    "W01-R04"
+    "W06-R03"
   ],
   "requirements_verified": [],
   "depends_on": [
-    "G00"
+    "G00",
+    "C04"
   ],
   "base": {
     "mode": "previous_batch_integrated_head",
@@ -33,9 +31,7 @@
     "source_repository_hint": "/Users/blurooo/project/agent-adaptor-internal",
     "source_head": "e2f0620bdd6477e6fe16f6db5648093589342ca2",
     "source_commits": [
-      "eefcaef35621e6bbfb3e2e859edf4aadc4e38a5d",
-      "a88eacdb4818c75df44caeec39bbb74062e58c53",
-      "d01a086e5145566b7313b83ca88bb525f1d3675b"
+      "426191444582f9fbbe951dbd8b54c1004464262c"
     ],
     "source_read_rule": "用 git -C <实际internal仓库> show <固定sha>:<文件>；hint可由派发器映射到只读clone，不能依赖worktree的../相对位置或读取internal脏工作区。",
     "authority": {
@@ -46,7 +42,7 @@
       "path": "docs/internal-history-alignment-plan-2026-09-07.md",
       "sha256": "96232fc8715b686e4d6d4cc85a61e0cc87d09a6b45c956f07792c8dad3b1d5ae",
       "sections": [
-        "W01"
+        "W06"
       ]
     },
     "required_reads": [
@@ -56,19 +52,29 @@
     ],
     "dependency_artifacts": [
       {
+        "producer": "C04",
+        "path": "docs/alignment-tasks/2026-09-07/contracts/prompt-transport.md",
+        "version_source": "docs/alignment-tasks/2026-09-07/contracts/frozen.json"
+      },
+      {
         "producer": "G00",
         "path": "docs/alignment-tasks/2026-09-07/contracts/frozen.json",
         "version_source": "G00 accepted contract manifest"
       }
     ],
     "embedded_plan_sections": {
-      "W01": "### W01：Claude 收到 type:result 后结束一次性 stdin\n\n**证据与差距。** internal `eefcaef` 为 `handleResult` 增加关闭 stdin，`a88eacd` 去掉提取后重复的 guard，`d01a086` 合入。当前 `claude/parser.go` 的 `handleResult` 没有该动作；`onAssistantMessageStop` 仅在非空且非 `tool_use` 的 stop reason 后关闭。只收到终局 `result`、没有此前 `message_stop(end_turn)` 时，双向 print 进程可能继续等待 stdin。\n\n**实施。** 提取 parser 私有的终局 stdin 关闭函数，让 `message_stop` 与正式 `type:result` 共用；关闭 exactly-once。一次性 `WithSpawn` 和无状态 interactive 路径真正关闭输入；常驻 turn 的 stdin 适配器仍保持“不关闭底层进程输入”的合同。不可把 `tool_use`、中间消息或嵌套工具终局当作整个 run 终局。\n\n**验收。** 只发 result 的成功/失败/native schema fixture 都有界退出；`message_stop + result` 只关闭一次；`tool_use` 后仍能接收应答；常驻第二轮可执行；末尾 stdout、Terminal、Transcript、RunFinished 均保留。取消与终局并发不阻塞。更新 `claude/README-streaming.md`、`docs/streaming.md`、CHANGELOG。"
+      "W06": "### W06：Claude 原生结构化输出与交互审批共存\n\n**证据与差距。** B00 执行期复核确认：Claude 的 WorksWithHITL=false 在 core 同时否决 native 与 prompt 两种机制，schema+Ask 实际预启动拒绝；无 schema 的 Permission Ask 已有正式支持。原记录声称当前自动 fallback 是错误的。internal `4261914` 开放 Question/PlanReview 与 `stream-json + --json-schema + --permission-prompt-tool stdio` 的同次执行组合。\n\n**实施。** 在 W01 后按当前 Request 的 resolved `StructuredOutputSource` 选择 transport：interactive native 必须保持双向 stream-json；更新 Descriptor 和冲突参数校验。保留无 schema 的 Permission Ask。按审批 Kind 分别声明 native/prompt 能力，非 nil 矩阵替代本机制的 WorksWithHITL，nil保留旧语义；native schema+Permission Ask 不宣告支持时自动选择已支持的 Prompt+本地校验。先修复 SPI/core 协商，再接 Claude transport。无 native 能力的组合仍按 core 固定 fallback 规则处理，不引入模式选择器。\n\n**验收。** Question Ask、PlanReview Ask 与 schema 成功；回答/拒绝/超时；只有 result 的结束；非法结构化结果；调用 Run/Stream 与 Thread/WithSpawn；stdout、terminal payload、结构化数据和 checkpoint 同次解析一致。验证当前支持的 CLI 版本后再宣告能力；internal 的测试结果不视为本仓库 live 证据。更新 structured-output、run-policy 和 Claude 文档。"
     }
   },
   "ownership": {
     "allow": [
-      "claude/**",
-      "docs/alignment-tasks/2026-09-07/handoffs/T01/**"
+      "adaptertest/testdata/driver_api.golden",
+      "alignment_structured_hitl_test.go",
+      "docs/alignment-tasks/2026-09-07/handoffs/T31/**",
+      "driver/driver.go",
+      "internal/engine/structured.go",
+      "internal/engine/structured_hitl_test.go",
+      "wiring.go"
     ],
     "scope_match": "仅精确仓库相对文件或目录/**；任何未列路径不可写。",
     "exclusive_resources": [],
@@ -78,7 +84,7 @@
   "execution": {
     "environment": "local",
     "isolation": "separate_git_worktree",
-    "branch": "codex/alignment-t01",
+    "branch": "codex/alignment-t31",
     "same_batch_peer_artifacts": "禁止读取/依赖同批worker尚未验收的代码或输出；只消费前批已合入合同，公共Go符号不得由同批peer供应。",
     "source_write_allowed": true,
     "paid_live_authorization_required": false,
@@ -102,26 +108,33 @@
     "普通验证显式关闭付费门，不访问真实 provider；live 任务须同时满足授权记录、build tag 和环境变量门。所有任务都不创建 tag、不发布 release、不自动推送/发送外部消息。"
   ],
   "implementation_steps": [
-    "构建只有 type:result、无 message_stop 的成功/失败/native schema fixture，使修复前的等待可被有界测试发现。",
-    "由 handleResult 与 onAssistantMessageStop 共用 exactly-once close helper，保持 tool_use/中间帧输入开放。",
-    "核实常驻 stdin 适配器 Close 不关闭进程底层输入；保留第二轮、末尾 Raw/terminal/transcript 和取消行为。"
+    "用fake Driver复现WorksWithHITL=false同时否决native/prompt的问题，不运行真实CLI。",
+    "按C04冻结driver.StructuredOutputHITLCapability{Permission,PlanReview,Question bool}及NativeHITL/PromptValidateHITL指针；非nil只替代本机制的WorksWithHITL，nil保留已发布语义。",
+    "唯一core resolver逐有效Ask Kind检查候选，native优先、自动prompt校验回退、均不可行才启动前失败；无schema不改变Permission Ask，RunPolicyCaps和transport仍独立门控。",
+    "补全SPI godoc/负向合同，审阅driver AST golden；不新增模式选择器、不改Provider声明。",
+    "覆盖mixed Ask、多机制/nil/显式全false、schema absent、Run/Stream resolved等价和预检无资源/Driver调用，向T07交付真实可用接口。"
   ],
   "acceptance_criteria": [
     {
-      "id": "T01-AC01",
-      "requirement": "一次性成功/失败/schema result 都有界退出，重复终局只关闭一次。",
+      "id": "T31-AC01",
+      "requirement": "逐Kind/机制矩阵、nil旧语义、native优先/prompt回退、均不支持预检均可执行验证。",
       "required": true
     },
     {
-      "id": "T01-AC02",
-      "requirement": "tool_use 可回答，常驻第二轮可跑，Cancel 与终局竞态无死锁/事件尾丢失。",
+      "id": "T31-AC02",
+      "requirement": "已有无schema Permission Ask不受影响，调用入口不决定transport，消费者/SPI无模式选择器。",
+      "required": true
+    },
+    {
+      "id": "T31-AC03",
+      "requirement": "新SPI字段真类型/godoc/golden完备，T07可从G01直接使用，无同批符号依赖。",
       "required": true
     }
   ],
   "validation": [
     {
-      "id": "T01-V01",
-      "command": "go test -count=1 ./claude",
+      "id": "T31-V01",
+      "command": "go test -count=1 . ./driver ./internal/engine ./adaptertest",
       "cwd": "repository_root",
       "environment": {
         "AGENT_ADAPTOR_LIVE_CONFORMANCE": "0",
@@ -134,8 +147,8 @@
       "evidence": "记录实际命令、head SHA、OS/Go/CLI版本、exit code和安全日志；失败/skip/零测试不算通过。 非零按本命令实际测试/子测试计数，fuzz按实际种子/执行样本计数；必需场景skip不得通过。普通任务显式禁用的live探针或合同确认不适用的probe可skip，须列明且不能拿它们充当验收证据；可添加-json/-v采集日志，不能缩小原命令选择范围。"
     },
     {
-      "id": "T01-V02",
-      "command": "go test -race -count=5 ./claude -run TestAlignmentStdin",
+      "id": "T31-V02",
+      "command": "go test -race -count=5 . ./internal/engine -run TestAlignmentStructuredHITL",
       "cwd": "repository_root",
       "environment": {
         "AGENT_ADAPTOR_LIVE_CONFORMANCE": "0",
@@ -149,7 +162,7 @@
     }
   ],
   "documentation": {
-    "fragment": "docs/alignment-tasks/2026-09-07/handoffs/T01/documentation.md",
+    "fragment": "docs/alignment-tasks/2026-09-07/handoffs/T31/documentation.md",
     "contents": [
       "公开语义前后变化和可复现例子",
       "应合并到的godoc/使用文档/CHANGELOG具体段落",
@@ -161,15 +174,12 @@
     "must_integrate_before_batch_acceptance": true
   },
   "handoff": {
-    "result_path": "docs/alignment-tasks/2026-09-07/handoffs/T01/result.json",
+    "result_path": "docs/alignment-tasks/2026-09-07/handoffs/T31/result.json",
     "schema_path": "docs/alignment-tasks/2026-09-07/result.schema.json",
-    "evidence_dir": "docs/alignment-tasks/2026-09-07/handoffs/T01/evidence",
-    "failure_report": "docs/alignment-tasks/2026-09-07/handoffs/T01/findings.md",
+    "evidence_dir": "docs/alignment-tasks/2026-09-07/handoffs/T31/evidence",
+    "failure_report": "docs/alignment-tasks/2026-09-07/handoffs/T31/findings.md",
     "requirement_ids": [
-      "W01-R01",
-      "W01-R02",
-      "W01-R03",
-      "W01-R04"
+      "W06-R03"
     ],
     "commit_rule": "只提交本任务实施/局部godoc/测试与契约文件。源码commit完成并测试后生成result，记录实际head；result/evidence由派发器收集，不塞回所引用commit造成SHA自引用。"
   },

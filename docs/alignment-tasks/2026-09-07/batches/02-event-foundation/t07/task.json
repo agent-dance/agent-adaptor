@@ -16,7 +16,6 @@
     "W04-R05",
     "W06-R01",
     "W06-R02",
-    "W06-R03",
     "W06-R04",
     "W06-R05"
   ],
@@ -48,7 +47,7 @@
     },
     "plan": {
       "path": "docs/internal-history-alignment-plan-2026-09-07.md",
-      "sha256": "73f4b596937160462cfef370f7600aa7a2a2b1b78d9d2861f4d7f2202bf4a6f8",
+      "sha256": "96232fc8715b686e4d6d4cc85a61e0cc87d09a6b45c956f07792c8dad3b1d5ae",
       "sections": [
         "W04",
         "W06"
@@ -78,7 +77,7 @@
     ],
     "embedded_plan_sections": {
       "W04": "### W04：保留中断后的输出，但不降低 checkpoint 健康要求\n\n**证据与差距。** internal `126d610` 同时做了“保留部分结果”和“错误后落 checkpoint”。当前 Claude、CodeBuddy 常驻分支遇到非 fallback 错误返回空 `driver.Response{}`；Codex 的 `persistentWriter.run` 和 Driver 上层已经保留 `result, persistentErr`，无需重复修复这两层。剩余公共缺口在 `invocation.go:finalizeRun`：它在无已分类 failure 的 context/基础设施 error 上返回普通包装，丢弃刚映射的 Result。\n\n**本期采用。** Driver 已观察到的 stdout/stderr、Transcript、Terminal、Usage 和文本不得因取消而丢弃：先构建部分 Response，再返回原始 error；在唯一 `finalizeRun` 中建立可通过 Go error 获取部分 Result 的合同。建议复用 `RunError.Result` 的携带能力并保留原始 cause 的 `errors.Is/As` 链；实施前同步明确“执行后基础设施包装错误携带部分 Result”的 godoc，避免把启动前配置错误包装成业务失败。仍返回 `nil, error`，不新增 Result.Failure 或第二个结果入口。具体公共错误声明随合同测试一起冻结。\n\n**本期不采用。** internal Codex 以 `sent && ctx.Err()!=nil && ThreadID!=\"\"` 直接设置 `Checkpoint.Valid=true`，Claude/CodeBuddy 的 session ID 保留也不能替代健康终局证明。当前 `invocationCanPersist` 和 parser 的成功终局检查继续保留：取消、非零退出、畸形协议、缺失终局都不持久化。首次中断没有 checkpoint 时，下轮新建是本期明确边界；已有健康 Thread record 保持原样。\n\n未来若 provider 官方协议能证明中断后的健康可续状态，单独提出 Driver/SessionCodec 能力和证据合同，补齐 lease/token/atomic finalize 与有界脱离取消的持久化测试，再申请改变当前合同；不能以“internal 已用过”代替证明。\n\n**验收。** 三个常驻 Driver 的交付前失败仅允许一次安全 fallback，交付后不重放；中断前输出逐字段可取；`errors.Is` 保留 context cancelled/deadline 与原 cause；Run 与 Stream.Result 等价；审批错误不被通用取消覆盖；无效 checkpoint 不修改 store，原健康记录保持一致。W13 必须复用此结果保留路径。重新打开 AGENTS §14 的错误路径 Result 映射审计子项。",
-      "W06": "### W06：Claude 原生结构化输出与交互审批共存\n\n**证据与差距。** 当前 `claude/driver.go` 声明 `WorksWithHITL=false`，native schema + interactive 会拒绝；core 可自动选择 Prompt + 本地校验，因此不是完全“不支持结构化输出”。internal `4261914` 开放 Question/PlanReview 与 `stream-json + --json-schema + --permission-prompt-tool stdio` 的同次执行组合。\n\n**实施。** 在 W01 后按当前 Request 的 resolved `StructuredOutputSource` 选择 transport：interactive native 必须保持双向 stream-json；更新 Descriptor 和冲突参数校验。保留 Permission Ask 当前明确 unsupported，不把一个粗粒度 bool 扩张为所有 HITL 组合。无 native 能力的组合仍按 core 固定 fallback 规则处理，不引入模式选择器。\n\n**验收。** Question Ask、PlanReview Ask 与 schema 成功；回答/拒绝/超时；只有 result 的结束；非法结构化结果；调用 Run/Stream 与 Thread/WithSpawn；stdout、terminal payload、结构化数据和 checkpoint 同次解析一致。验证当前支持的 CLI 版本后再宣告能力；internal 的测试结果不视为本仓库 live 证据。更新 structured-output、run-policy 和 Claude 文档。"
+      "W06": "### W06：Claude 原生结构化输出与交互审批共存\n\n**证据与差距。** B00 执行期复核确认：Claude 的 WorksWithHITL=false 在 core 同时否决 native 与 prompt 两种机制，schema+Ask 实际预启动拒绝；无 schema 的 Permission Ask 已有正式支持。原记录声称当前自动 fallback 是错误的。internal `4261914` 开放 Question/PlanReview 与 `stream-json + --json-schema + --permission-prompt-tool stdio` 的同次执行组合。\n\n**实施。** 在 W01 后按当前 Request 的 resolved `StructuredOutputSource` 选择 transport：interactive native 必须保持双向 stream-json；更新 Descriptor 和冲突参数校验。保留无 schema 的 Permission Ask。按审批 Kind 分别声明 native/prompt 能力，非 nil 矩阵替代本机制的 WorksWithHITL，nil保留旧语义；native schema+Permission Ask 不宣告支持时自动选择已支持的 Prompt+本地校验。先修复 SPI/core 协商，再接 Claude transport。无 native 能力的组合仍按 core 固定 fallback 规则处理，不引入模式选择器。\n\n**验收。** Question Ask、PlanReview Ask 与 schema 成功；回答/拒绝/超时；只有 result 的结束；非法结构化结果；调用 Run/Stream 与 Thread/WithSpawn；stdout、terminal payload、结构化数据和 checkpoint 同次解析一致。验证当前支持的 CLI 版本后再宣告能力；internal 的测试结果不视为本仓库 live 证据。更新 structured-output、run-policy 和 Claude 文档。"
     }
   },
   "ownership": {
@@ -118,8 +117,9 @@
     "普通验证显式关闭付费门，不访问真实 provider；live 任务须同时满足授权记录、build tag 和环境变量门。所有任务都不创建 tag、不发布 release、不自动推送/发送外部消息。"
   ],
   "implementation_steps": [
+    "使用G01中T31已交付的逐Kind/机制capability与resolver，仅设置Claude真实矩阵并完成transport，不再次改core。",
     "基于 T01 与 T05，非 fallback 常驻错误先形成已有输出的 Response 再返回 cause，不提升 checkpoint。",
-    "按 prompt-transport 合同开放 Question/PlanReview + native schema 双向 stream-json，按 resolved source 选参数；Permission Ask 仍 unsupported。",
+    "按 prompt-transport 合同开放 Question/PlanReview + native schema 双向 stream-json，按 resolved source 选参数；无 schema 的 Permission Ask 保持支持，native schema+Permission Ask 使用已声明的 prompt fallback。",
     "添加双方 terminal/result/无 message_stop、拒绝/超时/非法 schema、Thread/WithSpawn、多轮和 partial output fixture；不要解析 raw 猜 final text。"
   ],
   "acceptance_criteria": [
@@ -185,7 +185,6 @@
       "W04-R05",
       "W06-R01",
       "W06-R02",
-      "W06-R03",
       "W06-R04",
       "W06-R05"
     ],

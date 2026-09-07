@@ -145,9 +145,9 @@ internal 代码只用 parent ID 判定“是否嵌套”，所示新增 emitter 
 
 ### W06：Claude 原生结构化输出与交互审批共存
 
-**证据与差距。** 当前 `claude/driver.go` 声明 `WorksWithHITL=false`，native schema + interactive 会拒绝；core 可自动选择 Prompt + 本地校验，因此不是完全“不支持结构化输出”。internal `4261914` 开放 Question/PlanReview 与 `stream-json + --json-schema + --permission-prompt-tool stdio` 的同次执行组合。
+**证据与差距。** B00 执行期复核确认：Claude 的 WorksWithHITL=false 在 core 同时否决 native 与 prompt 两种机制，schema+Ask 实际预启动拒绝；无 schema 的 Permission Ask 已有正式支持。原记录声称当前自动 fallback 是错误的。internal `4261914` 开放 Question/PlanReview 与 `stream-json + --json-schema + --permission-prompt-tool stdio` 的同次执行组合。
 
-**实施。** 在 W01 后按当前 Request 的 resolved `StructuredOutputSource` 选择 transport：interactive native 必须保持双向 stream-json；更新 Descriptor 和冲突参数校验。保留 Permission Ask 当前明确 unsupported，不把一个粗粒度 bool 扩张为所有 HITL 组合。无 native 能力的组合仍按 core 固定 fallback 规则处理，不引入模式选择器。
+**实施。** 在 W01 后按当前 Request 的 resolved `StructuredOutputSource` 选择 transport：interactive native 必须保持双向 stream-json；更新 Descriptor 和冲突参数校验。保留无 schema 的 Permission Ask。按审批 Kind 分别声明 native/prompt 能力，非 nil 矩阵替代本机制的 WorksWithHITL，nil保留旧语义；native schema+Permission Ask 不宣告支持时自动选择已支持的 Prompt+本地校验。先修复 SPI/core 协商，再接 Claude transport。无 native 能力的组合仍按 core 固定 fallback 规则处理，不引入模式选择器。
 
 **验收。** Question Ask、PlanReview Ask 与 schema 成功；回答/拒绝/超时；只有 result 的结束；非法结构化结果；调用 Run/Stream 与 Thread/WithSpawn；stdout、terminal payload、结构化数据和 checkpoint 同次解析一致。验证当前支持的 CLI 版本后再宣告能力；internal 的测试结果不视为本仓库 live 证据。更新 structured-output、run-policy 和 Claude 文档。
 

@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
   "plan": "docs/internal-history-alignment-plan-2026-09-07.md",
-  "plan_sha256": "73f4b596937160462cfef370f7600aa7a2a2b1b78d9d2861f4d7f2202bf4a6f8",
+  "plan_sha256": "96232fc8715b686e4d6d4cc85a61e0cc87d09a6b45c956f07792c8dad3b1d5ae",
   "requirements": [
     {
       "id": "W01-R01",
@@ -449,7 +449,7 @@
     {
       "id": "W06-R02",
       "work_item": "W06",
-      "description": "interactive 按 resolved source 保持双向stream-json，Permission Ask不虚报支持",
+      "description": "interactive按resolved source保持双向stream-json；无schema的Permission Ask保持支持，native schema+Permission Ask不虚报支持",
       "implementation_owner": "T07",
       "verification_tasks": [
         "T20",
@@ -463,8 +463,8 @@
     {
       "id": "W06-R03",
       "work_item": "W06",
-      "description": "不支持组合保持core自动Prompt fallback，无模式选择器",
-      "implementation_owner": "T07",
+      "description": "core按逐Kind/机制能力完成native优先及自动Prompt fallback；nil沿用旧语义，无模式选择器，无schema不影响Permission Ask",
+      "implementation_owner": "T31",
       "verification_tasks": [
         "T20",
         "T22",
@@ -1387,7 +1387,8 @@
         "C04"
       ],
       "implementation_tasks": [
-        "T07"
+        "T07",
+        "T31"
       ],
       "independent_verification_tasks": [
         "T20",

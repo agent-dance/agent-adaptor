@@ -43,7 +43,7 @@
     },
     "plan": {
       "path": "docs/internal-history-alignment-plan-2026-09-07.md",
-      "sha256": "73f4b596937160462cfef370f7600aa7a2a2b1b78d9d2861f4d7f2202bf4a6f8",
+      "sha256": "96232fc8715b686e4d6d4cc85a61e0cc87d09a6b45c956f07792c8dad3b1d5ae",
       "sections": [
         "W04"
       ]
@@ -72,6 +72,7 @@
   "ownership": {
     "allow": [
       "alignment_partial_result_test.go",
+      "approval_test.go",
       "docs/alignment-tasks/2026-09-07/handoffs/T05/**",
       "errors.go",
       "invocation.go",
@@ -81,6 +82,7 @@
       "result_output_correctness_test.go",
       "result_output_internal_test.go",
       "runerror_test.go",
+      "stream_contract_test.go",
       "testdata/root_api.golden"
     ],
     "scope_match": "仅精确仓库相对文件或目录/**；任何未列路径不可写。",

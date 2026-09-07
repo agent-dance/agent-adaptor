@@ -10,10 +10,11 @@
   "objective": "仅在本批全部worker通过且合流SHA验证后放行，逐条保存未完成工作项；不把并行分支的局部成功当成整体完成。",
   "work_items": [
     "W01",
-    "W07",
-    "W03",
     "W02",
-    "W04"
+    "W03",
+    "W04",
+    "W06",
+    "W07"
   ],
   "requirements_owned": [],
   "requirements_verified": [],
@@ -22,7 +23,8 @@
     "T02",
     "T03",
     "T04",
-    "T05"
+    "T05",
+    "T31"
   ],
   "base": {
     "mode": "batch_integration",
@@ -43,13 +45,14 @@
     },
     "plan": {
       "path": "docs/internal-history-alignment-plan-2026-09-07.md",
-      "sha256": "73f4b596937160462cfef370f7600aa7a2a2b1b78d9d2861f4d7f2202bf4a6f8",
+      "sha256": "96232fc8715b686e4d6d4cc85a61e0cc87d09a6b45c956f07792c8dad3b1d5ae",
       "sections": [
         "W01",
-        "W07",
-        "W03",
         "W02",
-        "W04"
+        "W03",
+        "W04",
+        "W06",
+        "W07"
       ]
     },
     "required_reads": [
@@ -83,6 +86,11 @@
       {
         "producer": "T05",
         "path": "docs/alignment-tasks/2026-09-07/handoffs/T05/result.json",
+        "version_source": "实际worker交付head及证据"
+      },
+      {
+        "producer": "T31",
+        "path": "docs/alignment-tasks/2026-09-07/handoffs/T31/result.json",
         "version_source": "实际worker交付head及证据"
       }
     ],

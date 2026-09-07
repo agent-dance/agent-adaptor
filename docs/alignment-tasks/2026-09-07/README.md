@@ -1,6 +1,6 @@
 # Internal 对齐任务派发包
 
-将[逐提交对齐方案](../../internal-history-alignment-plan-2026-09-07.md)拆为 **7 个批次、34 个并行工作任务、7 个串行验收任务，共 41 份 task.json**。覆盖原方案全部 **13 个 W 工作项、45 个历史提交和 95 条原子验收项**。单批最多并行 6 个任务。
+将[逐提交对齐方案](../../internal-history-alignment-plan-2026-09-07.md)拆为 **7 个批次、35 个并行工作任务、7 个串行验收任务，共 42 份 task.json**。覆盖原方案全部 **13 个 W 工作项、45 个历史提交和 95 条原子验收项**。单批最多并行 6 个任务。
 
 当前状态是 **已生成、未派发、未实施**。本包定义任务与验收要求；后续结果由派发器单独保存，不能将计划当成已通过的功能或发布证据。
 
@@ -25,7 +25,7 @@ contracts/ 与 handoffs/ 是后续任务的产出路径，目前没有伪造的�
 | 批次 | 可并发任务 | 并发数 | 放行任务 | 放行后获得 |
 |---|---|---:|---|---|
 | B00 合同冻结 | C01 profile 生命周期；C02 部分结果与主动预算；C03 Event/观察/relay/todo；C04 native prompt/schema | 4 | G00 | 精确 Go/wire 合同、目录与锁策略、接口文件分配和冻结清单。 |
-| B01 关键修复 | T01 Claude stdin；T02 Tool 错误；T03 A2A continuation；T04 持久 profile；T05 公共部分 Result | 5 | G01 | 五条独立修复通道合流后的可运行基线。 |
+| B01 关键修复 | T01 Claude stdin；T02 Tool 错误；T03 A2A continuation；T04 持久 profile；T05 公共部分 Result；T31 schema/HITL 协商 | 6 | G01 | 六条独立修复通道合流后的可运行基线。 |
 | B02 Event 基础 | T06 Event/observer/中立状态机；T07 Claude 部分结果与 schema；T08 CodeBuddy 部分结果；T09 实时 artifact Parts | 4 | G02 | 后续消费者可使用的真实接口及错误/制品保真基础。 |
 | B03 Core 与协议 | T10 append prompt/主动预算 core；T11 A2A 新事件；T12 其余桥与 recorder；T13 capability recorder | 4 | G03 | Driver 与 delegation 接入所需的 core 和 wire 合同。 |
 | B04 Provider 接入 | T14 Claude；T15 CodeBuddy；T16 Codex；T17 Cursor；T18 delegation；T19 A2A 预算错误映射 | 6 | G04 | 13 个 W 项完整实现的集成候选。 |
@@ -99,3 +99,7 @@ python3 docs/alignment-tasks/2026-09-07/validate.py \
 校验器检查 JSON 结构、DAG、屏障、同批路径/资源冲突、前置产物归属、方案嵌入内容、45 提交覆盖、95 条要求映射、任务哈希和报告元数据。它不能判断全部 Go 符号依赖、断言是否充分、外部日志是否真实或 fixture 是否代表正式协议；这些由 G00、独立 QA、平台/live 证据和各批 gate 负责。gate 还须核对 artifact SHA256 与实际文件，不能将格式正确视为内容可信。
 
 附带 schema 是 Draft 2020-12；标准库校验器只实现本包使用的关键字。扩展 schema 关键字时须同时扩展校验器，或使用完整 JSON Schema 实现验证。
+
+## 执行期修订
+
+[R001](amendments/R001.md)：B00依据代码更正W06，新增B01 T31作为Claude的SPI/core前置；补齐T05取消断言的测试范围。95条原要求全部保留。
