@@ -29,6 +29,7 @@ func decodeCapability(v *AdapterCapabilityInvocationV1) capability.Invocation {
 		ScopeID: v.ScopeID, ParentScopeID: v.ParentScopeID, ParentToolCallID: v.ParentToolCallID, ErrorCode: capability.ErrorCode(v.ErrorCode),
 	}
 	out.OccurredAt, _ = time.Parse(time.RFC3339Nano, v.OccurredAt)
+	out.OccurredAt = out.OccurredAt.UTC()
 	if v.DurationNS != nil {
 		d := time.Duration(*v.DurationNS)
 		out.Duration = &d
@@ -52,6 +53,7 @@ func decodeTodo(v *AdapterTodoSnapshotV1) todo.Snapshot {
 		ScopeID: v.ScopeID, ParentScopeID: v.ParentScopeID, ParentToolCallID: v.ParentToolCallID,
 	}
 	out.OccurredAt, _ = time.Parse(time.RFC3339Nano, v.OccurredAt)
+	out.OccurredAt = out.OccurredAt.UTC()
 	for i, item := range v.Items {
 		out.Items[i] = todo.Item{ID: item.ID, Content: item.Content, Status: todo.Status(item.Status), SyntheticID: item.SyntheticID}
 	}

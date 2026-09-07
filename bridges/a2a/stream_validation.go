@@ -25,11 +25,12 @@ var (
 // duplicate-key evidence, but must not let Marshal repair invalid UTF-8.
 func decodeAdapterStreamEventWire(data any) (AdapterStreamEventV1, bool, error) {
 	var raw []byte
-	var inputErr error
+	var inputErr, legacyInputErr error
 	if original, ok := data.(json.RawMessage); ok {
 		raw = original
 	} else {
 		inputErr = validStructuredJSON(reflect.ValueOf(data), 0)
+		legacyInputErr = validLegacyStructuredFields(data)
 		var err error
 		raw, err = json.Marshal(data)
 		if err != nil {
@@ -56,9 +57,6 @@ func decodeAdapterStreamEventWire(data any) (AdapterStreamEventV1, bool, error) 
 	if len(raw) > adapterStreamMaxBytes {
 		return AdapterStreamEventV1{}, true, errAdapterSize
 	}
-	if inputErr != nil {
-		return AdapterStreamEventV1{}, true, errAdapterPayload
-	}
 	var envelope AdapterStreamEnvelopeV1
 	if err := json.Unmarshal(raw, &envelope); err != nil {
 		return AdapterStreamEventV1{}, true, errAdapterPayload
@@ -73,9 +71,17 @@ func decodeAdapterStreamEventWire(data any) (AdapterStreamEventV1, bool, error) 
 	if err := json.Unmarshal(raw, &shape); err != nil {
 		return AdapterStreamEventV1{}, true, errAdapterPayload
 	}
-	e, _ := shape["event"].(map[string]any)
-	strict := observationKind(envelope.Event.Kind) || hasNewWireFields(e)
-	if strict {
+	newFields := false
+	for key, value := range shape {
+		if strings.EqualFold(key, "event") {
+			event, _ := value.(map[string]any)
+			newFields = newFields || hasNewWireFields(event)
+		}
+	}
+	if observationKind(envelope.Event.Kind) {
+		if inputErr != nil {
+			return AdapterStreamEventV1{}, true, errAdapterPayload
+		}
 		value, err := strictJSON(raw)
 		if err != nil {
 			return AdapterStreamEventV1{}, true, err
@@ -86,6 +92,22 @@ func decodeAdapterStreamEventWire(data any) (AdapterStreamEventV1, bool, error) 
 		}
 		if err := validateWireShape(object, envelope.Event); err != nil {
 			return AdapterStreamEventV1{}, true, err
+		}
+	} else if newFields {
+		if legacyInputErr != nil {
+			return AdapterStreamEventV1{}, true, errAdapterPayload
+		}
+		protected, newSource, err := legacySecurityShape(raw)
+		if err != nil {
+			return AdapterStreamEventV1{}, true, err
+		}
+		if err := validateWireShape(protected, envelope.Event); err != nil {
+			return AdapterStreamEventV1{}, true, err
+		}
+		if newSource {
+			if err := validateSource(envelope.Event.Meta.Source); err != nil {
+				return AdapterStreamEventV1{}, true, err
+			}
 		}
 	}
 	if err := validateAdapterEvent(envelope.Event); err != nil {
@@ -108,11 +130,17 @@ func adapterSchemaRecognized(raw []byte) bool {
 			return false
 		}
 		if key == "schema" {
-			var schema string
-			if d.Decode(&schema) != nil {
+			var value json.RawMessage
+			if d.Decode(&value) != nil {
 				return false
 			}
-			return schema == AdapterStreamSchemaV1
+			var schema string
+			if json.Unmarshal(value, &schema) == nil && schema == AdapterStreamSchemaV1 {
+				return true
+			}
+			// A foreign first declaration must not hide a later matching one.
+			// Strict observation decoding rejects the duplicate declaration.
+			continue
 		}
 		var skip json.RawMessage
 		if d.Decode(&skip) != nil {
@@ -126,16 +154,30 @@ func observationKind(kind string) bool {
 	return kind == "capability.invocation" || kind == "todo.updated"
 }
 func hasNewWireFields(e map[string]any) bool {
-	for _, key := range []string{"capability", "todo", "scope_id", "parent_scope_id", "parent_tool_call_id"} {
-		if _, ok := e[key]; ok {
-			return true
+	for key := range e {
+		for _, name := range []string{"capability", "todo", "scope_id", "parent_scope_id", "parent_tool_call_id"} {
+			if strings.EqualFold(key, name) {
+				return true
+			}
 		}
 	}
-	meta, _ := e["meta"].(map[string]any)
-	source, _ := meta["source"].(map[string]any)
-	for _, key := range []string{"scope_id", "tool_call_id", "invocation_id", "delegation_id", "upstream"} {
-		if _, ok := source[key]; ok {
-			return true
+	for key, value := range e {
+		if !strings.EqualFold(key, "meta") {
+			continue
+		}
+		meta, _ := value.(map[string]any)
+		for key, value := range meta {
+			if !strings.EqualFold(key, "source") {
+				continue
+			}
+			source, _ := value.(map[string]any)
+			for key := range source {
+				for _, name := range sourceWireFields {
+					if strings.EqualFold(key, name) {
+						return true
+					}
+				}
+			}
 		}
 	}
 	return false
@@ -181,18 +223,14 @@ func validStructuredJSON(v reflect.Value, depth int) error {
 		}
 	case reflect.Float32, reflect.Float64:
 		n := v.Float()
-		if math.IsNaN(n) || math.IsInf(n, 0) || (math.Trunc(n) == n && math.Abs(n) > float64(maxA2AJSONInteger)) {
+		if math.IsNaN(n) || math.IsInf(n, 0) {
 			return errAdapterPayload
 		}
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		n := v.Int()
-		if n < -int64(maxA2AJSONInteger) || n > int64(maxA2AJSONInteger) {
-			return errAdapterPayload
-		}
-	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		if v.Uint() > maxA2AJSONInteger {
-			return errAdapterPayload
-		}
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		// Coordinate/duration/revision bounds belong to their typed fields.
+		// Legacy tool and diagnostic payload numbers retain their old behavior.
+
 	case reflect.Bool:
 	default:
 		return errAdapterPayload
@@ -444,7 +482,7 @@ func validateSourceShape(value any, depth int) error {
 }
 
 func wireText(value string, required bool, limit int, content bool) bool {
-	if (required && value == "") || len(value) > limit || !utf8.ValidString(value) {
+	if (required && value == "") || (limit > 0 && len(value) > limit) || !utf8.ValidString(value) {
 		return false
 	}
 	for _, r := range value {
@@ -478,24 +516,36 @@ func enum(value string, values ...string) bool {
 	return false
 }
 func validateWireCoordinates(e AdapterStreamEventV1) error {
-	for _, v := range []string{e.RunID, e.ThreadID, e.TurnID} {
-		if !wireText(v, false, 2048, false) {
+	for _, v := range []string{e.RunID, e.TurnID} {
+		if !wireText(v, false, 0, false) {
 			return errAdapterPayload
 		}
 	}
-	if e.Sequence > maxA2AJSONInteger || !wireTime(e.Timestamp, false) {
+	if !utf8.ValidString(e.ThreadID) {
+		return errAdapterPayload
+	}
+	timeValid := legacyWireTime
+	if observationKind(e.Kind) {
+		timeValid = func(value string) bool { return wireTime(value, false) }
+	}
+	if e.Sequence > maxA2AJSONInteger || !timeValid(e.Timestamp) {
 		return errAdapterPayload
 	}
 	if m := e.Meta; m != nil {
-		for _, v := range []string{m.RunID, m.ThreadKey, m.TurnID} {
-			if !wireText(v, false, 2048, false) {
+		for _, v := range []string{m.RunID, m.TurnID} {
+			if !wireText(v, false, 0, false) {
 				return errAdapterPayload
 			}
 		}
-		if m.Sequence > maxA2AJSONInteger || !wireTime(m.Time, false) {
+		if !utf8.ValidString(m.ThreadKey) || m.Sequence > maxA2AJSONInteger || !timeValid(m.Time) {
 			return errAdapterPayload
 		}
-		return validateSource(m.Source)
+		if observationKind(e.Kind) || typedNewSource(m.Source) {
+			return validateSource(m.Source)
+		}
+		if m.Source != nil && (m.Source.Sequence > maxA2AJSONInteger || !legacyWireTime(m.Source.Timestamp)) {
+			return errAdapterPayload
+		}
 	}
 	return nil
 }
@@ -507,15 +557,26 @@ func validateAdapterEvent(e AdapterStreamEventV1) error {
 	if !supportedAdapterStreamKind(e.Kind) {
 		return errAdapterKind
 	}
-	if !wireTime(e.Timestamp, false) {
+	newKind := observationKind(e.Kind)
+	timeValid := legacyWireTime
+	if newKind {
+		timeValid = func(value string) bool { return wireTime(value, false) }
+	}
+	if !timeValid(e.Timestamp) {
 		return errAdapterPayload
 	}
 	if e.Meta != nil {
-		if !wireTime(e.Meta.Time, false) {
+		if !timeValid(e.Meta.Time) {
 			return errAdapterPayload
 		}
-		if err := validateSource(e.Meta.Source); err != nil {
-			return err
+		if newKind || typedNewSource(e.Meta.Source) {
+			if err := validateSource(e.Meta.Source); err != nil {
+				return err
+			}
+		} else if e.Meta.Source != nil {
+			if e.Meta.Source.Sequence > maxA2AJSONInteger || !legacyWireTime(e.Meta.Source.Timestamp) {
+				return errAdapterPayload
+			}
 		}
 	}
 	if e.ScopeID != "" || e.ParentScopeID != "" || e.ParentToolCallID != "" {
@@ -533,13 +594,16 @@ func validateAdapterEvent(e AdapterStreamEventV1) error {
 		return errAdapterPayload
 	}
 	m := e.Meta
-	if m == nil || !wireText(m.RunID, true, 2048, false) || m.Sequence == 0 || m.Sequence > maxA2AJSONInteger || !wireTime(m.Time, true) {
+	if m == nil || !wireText(m.RunID, true, 0, false) || m.Sequence == 0 || m.Sequence > maxA2AJSONInteger || !wireTime(m.Time, true) {
 		return errAdapterPayload
 	}
-	for _, v := range []string{m.ThreadKey, m.TurnID, e.RunID, e.ThreadID, e.TurnID} {
-		if !wireText(v, false, 2048, false) {
+	for _, v := range []string{m.TurnID, e.RunID, e.TurnID} {
+		if !wireText(v, false, 0, false) {
 			return errAdapterPayload
 		}
+	}
+	if !utf8.ValidString(m.ThreadKey) || !utf8.ValidString(e.ThreadID) {
+		return errAdapterPayload
 	}
 	if (e.RunID != "" && e.RunID != m.RunID) || (e.Sequence != 0 && e.Sequence != m.Sequence) || (e.TurnID != "" && e.TurnID != m.TurnID) || (e.ThreadID != "" && (m.ThreadKey == "" || e.ThreadID != m.ThreadKey)) {
 		return errAdapterPayload
@@ -569,7 +633,12 @@ func validateSource(source *AdapterEventSourceMetaV1) error {
 			return errAdapterDepth
 		}
 		seen[s] = true
-		for _, v := range []string{s.RunID, s.ThreadID, s.TurnID, s.ScopeID, s.ToolCallID, s.InvocationID, s.DelegationID} {
+		for _, v := range []string{s.RunID, s.ThreadID, s.TurnID} {
+			if !wireText(v, false, 0, false) {
+				return errAdapterPayload
+			}
+		}
+		for _, v := range []string{s.ScopeID, s.ToolCallID, s.InvocationID, s.DelegationID} {
 			if !wireText(v, false, 2048, false) {
 				return errAdapterPayload
 			}
@@ -581,7 +650,7 @@ func validateSource(source *AdapterEventSourceMetaV1) error {
 	return nil
 }
 func validateCapability(c *AdapterCapabilityInvocationV1) error {
-	if c == nil || !wireText(c.InvocationID, true, 2048, false) || !wireText(c.Key, true, 512, false) || !wireText(c.Operation, true, 256, false) || !wireParents(c.ScopeID, c.ParentScopeID, c.ParentToolCallID, "") || !wireTime(c.OccurredAt, true) {
+	if c == nil || !wireText(c.InvocationID, true, 2048, false) || !wireText(c.Key, true, 512, false) || !wireText(c.Operation, true, 256, false) || !wireParents(c.ScopeID, c.ParentScopeID, c.ParentToolCallID, c.InvocationID) || !wireTime(c.OccurredAt, true) {
 		return errAdapterPayload
 	}
 	if !enum(c.Kind, "skill", "mcp", "subagent") || !enum(c.Phase, "started", "completed", "failed", "cancelled", "interrupted") || !enum(c.ErrorCode, "", "tool_failed", "run_cancelled", "run_interrupted", "protocol_error", "delegation_failed") {

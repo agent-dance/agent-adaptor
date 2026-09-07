@@ -171,9 +171,13 @@ type AdapterTodoSnapshotV1 struct {
 // Invalid or unknown events from this schema return matched=true and an error,
 // with no partial Event. RawMessage input is checked without re-marshaling, so
 // duplicate keys, invalid UTF-8, unpaired surrogates and trailing values cannot
-// be repaired. Already decoded maps have lost their original byte evidence.
+// be repaired in the new closed shapes. Added parent/source fields on legacy
+// kinds are checked independently of their existing tool/diagnostic payloads.
+// Legacy optional zero times keep their published semantics. Already decoded
+// maps have lost their original byte evidence. OccurredAt values decode to UTC.
 // The complete envelope is limited to 64 KiB and JSON-safe integer coordinates;
-// source chains have at most eight nodes. Returned values own their copies.
+// source chains have at most eight nodes. Opaque Thread keys retain all valid
+// UTF-8 content and have no separate byte cap. Returned values own their copies.
 func DecodeAdapterEventV1(data any) (decoded adaptor.Event, matched bool, err error) {
 	event, matched, err := decodeAdapterStreamEventWire(data)
 	if err != nil || !matched {

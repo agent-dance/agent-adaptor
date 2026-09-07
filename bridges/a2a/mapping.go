@@ -318,7 +318,7 @@ func encodeAdapterStreamDrop(event AdapterStreamEventV1, cause error) (map[strin
 	// A loss projection retains the complete original coordinates. Invalid or
 	// oversized metadata cannot be repaired without inventing a different event;
 	// propagate a safe infrastructure error through the existing executor instead.
-	if err := validateWireCoordinates(drop); err != nil {
+	if err := validateWireCoordinates(event); err != nil {
 		return nil, err
 	}
 	return encodeAdapterStreamEvent(drop)

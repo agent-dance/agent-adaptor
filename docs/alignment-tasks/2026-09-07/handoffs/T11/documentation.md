@@ -26,15 +26,15 @@ Source/Upstream 的远端坐标额外受 `Diagnostics.IncludeMetadata` 控制，
 
 ## wire 验证与错误
 
-`adapter.stream.v1` 名字及 URI 保持不变，新增可选 `scope_id`、`parent_scope_id`、`parent_tool_call_id`、`capability`、`todo` 与 Source 的 scope/tool/invocation/delegation/upstream 字段。Capability/Todo 只能携带自己的内层语义值；外层 parent/工具/HITL/Raw 不得混入。新 kind 必须有合法非零 Meta；若 flat 字段出现，必须与 Meta 相符。
+`adapter.stream.v1` 名字及 URI 保持不变，新增可选 `scope_id`、`parent_scope_id`、`parent_tool_call_id`、`capability`、`todo` 与 Source 的 scope/tool/invocation/delegation/upstream 字段。Capability/Todo 只能携带自己的内层语义值；外层 parent/工具/HITL/Raw 不得混入。新 kind 必须有合法非零 Meta；若 flat 字段出现，必须与 Meta 相符。Capability 的父引用不能指向同 scope 的自身 invocation ID，相同裸 ID 位于不同 scope 时仍可合法引用。
 
-encode/decode 均校验封闭枚举、字段/类型、ID/Content UTF-8 字节界限、控制字符、RFC3339Nano 非零时间、JSON-safe 整数、8 节点 Source 和整个 envelope 的 65536 字节上限。时间出站归一为 UTC。Duration nil 与真实 0 分别保留。Todo 不截列表或内容以伪造完整快照。
+Capability/Todo 的 encode/decode 均校验封闭枚举、字段/类型、明确列出的 ID/Content UTF-8 字节界限、控制字符、RFC3339Nano 非零时间、JSON-safe 坐标/计数、8 节点 Source 和整个 envelope 的 65536 字节上限。合法带时区的 OccurredAt 解码为等价时刻的 UTC 公共值，时间出站也归一为 UTC。Duration nil 与真实 0 分别保留。Todo 不截列表或内容以伪造完整快照。
 
-`DecodeAdapterEventV1(json.RawMessage(raw))` 直接检查原 bytes，拒绝重复 JSON key、额外顶层值、非法 UTF-8 与不配对 surrogate。map/DTO 输入先检查结构值 UTF-8/类型，不能让 json.Marshal 修复坏字节；已经被客户端 decode 的 map 无法追溯原 bytes 的重复 key，不能声称原始字节审计完整。旧 wire 仍能读取；本 schema 的未知 kind/非法值返回 matched=true,error 且无部分 Event。旧二进制不会自动理解新 kind；下游必须明确处理 unsupported/dropped，不能吞错。
+`DecodeAdapterEventV1(json.RawMessage(raw))` 对新 kind 直接检查原 bytes，拒绝重复 JSON key、额外顶层值、非法 UTF-8 与不配对 surrogate；即使第一次 schema 宣告为 foreign、后来才为 adapter.stream.v1，也以匹配但非法的重复宣告拒绝。新 kind 的 map/DTO 输入先检查结构值 UTF-8/类型，不能让 json.Marshal 修复坏字节；已经被客户端 decode 的 map 无法追溯原 bytes 的重复 key，不能声称原始字节审计完整。旧 wire 维持已发布兼容：旧 args/raw 中的大数和可解析零时间不因新事实规则被拒绝，RawMessage 与 map 对同一结构值给出一致结果。旧 kind 增加 parent/source 字段时，只对这些新增安全字段做严格校验，不将新解析规则套到无关的旧正文；新 source 的显式零时间、非法 UTF-8/字段及过长 scope 仍拒绝。本 schema 的未知 kind/非法值返回 matched=true,error 且无部分 Event。旧二进制不会自动理解新 kind；下游必须明确处理 unsupported/dropped，不能吞错。
 
 opt-in 后，内容非法或总量超限时，以原 Meta 投影一份 `stream.dropped`，不新分配 Sequence。Raw 为四字段闭集：`dropped_count:1`、`reason`（invalid_payload/payload_too_large/unsupported_event_kind/relay_depth_exceeded）、`source:"a2a"`、`event_kind`（已验证 kind 或 unknown）。不回显 cause 或非法 payload。decoder 将已验证的 event_kind 保留在 Dropped.Details["event_kind"]。
 
-若 Meta 本身无法安全保留（例如过长 opaque ThreadKey、unsafe sequence、环或超过 8 节点的 Source），不截 key、不丢来源、不伪造序号来凑一个 drop。私有 translator 把安全编码错误交回同一 executor；取消并 drain 原 Stream，读取原 Result/RunError.Result，保留 ExposurePolicy 允许的部分 artifacts，然后走既有基础设施 error 路径。这一分支有 translator→executor 的实际 fixture，包括部分 RunError；未另建 error/HITL 策略。
+ThreadKey 与 flat ThreadID mirror 保留全部合法 UTF-8 内容，包括 LF/tab 等被 JSON 正常转义的字符；不 trim、规范化或施加 2048 字节限额。既有 envelope 坐标的长度由整个 64 KiB envelope 限制；明确约定的 InvocationID/tool ID/ScopeID/ParentScopeID/DelegationID 的 2048 字节限额不变，Source 坐标的无控制字符规则不放宽。若 Meta 本身无法安全保留（例如原坐标使完整安全 drop 也超过 64 KiB、unsafe sequence、环或超过 8 节点的 Source），不截 key、不丢来源、不伪造序号来凑一个 drop。私有 translator 把安全编码错误交回同一 executor；取消并 drain 原 Stream，读取原 Result/RunError.Result，保留 ExposurePolicy 允许的部分 artifacts，然后走既有基础设施 error 路径。这一分支有 translator→executor 的实际 fixture，包括部分 RunError；未另建 error/HITL 策略。
 
 ## 新声明与冻结
 
@@ -52,4 +52,4 @@ opt-in 后，内容非法或总量超限时，以原 Meta 投影一份 `stream.d
 
 G02 base 先跑冻结 fixture，capability/todo unsupported 和 parent 丢失均实际失败，日志单独保存在 handoff evidence。修复覆盖默认 exposure、无 Store Run/Stream/executor、旧 fixtures、empty clear、UTF-8/time/枚举/长度/64KiB、safe drop 与基础设施错误、深复制和 parent。
 
-最终源码 SHA 上必须实跑 task 指定 `go test -count=1 ./bridges/a2a` 和 `go test -count=20 ./bridges/a2a`；实际命令、次数、exit、skip、SHA 与日志哈希由随后生成的 result.json 记录。普通检查显式关闭 LIVE_CONFORMANCE/E2E/UPDATE_API_GOLDEN，使用 Go 1.26.5 和本机 macOS loopback fixture，不调用真实 provider。未声明 Linux/Windows、付费 live 或发布门禁通过。
+Attempt 2 纳入独立评审 F01–F05 的原断言，保留修复前失败证据；增加旧正文与新 parent/source 混合、长 Source 坐标、opaque ThreadKey 转义及不碰撞回归。最终源码 SHA 上必须实跑 task 指定 `go test -count=1 ./bridges/a2a` 和 `go test -count=20 ./bridges/a2a`；实际命令、次数、exit、skip、SHA 与日志哈希由随后生成的 result.json 记录。普通检查显式关闭 LIVE_CONFORMANCE/E2E/UPDATE_API_GOLDEN，使用 Go 1.26.5 和本机 macOS loopback fixture，不调用真实 provider。未声明 Linux/Windows、付费 live 或发布门禁通过。
