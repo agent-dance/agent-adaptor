@@ -455,7 +455,7 @@ func TestSendStreamTreatsInputRequiredAsExecutionFinal(t *testing.T) {
 	}
 }
 
-func TestSendStreamIgnoresLateTerminalAfterFirstFinal(t *testing.T) {
+func TestSendStreamKeepsReadingAfterCompletedSnapshot(t *testing.T) {
 	t.Parallel()
 
 	var srv *httptest.Server
@@ -494,11 +494,14 @@ func TestSendStreamIgnoresLateTerminalAfterFirstFinal(t *testing.T) {
 	defer stream.Close()
 
 	events := collectStreamEvents(t, stream)
-	if len(events) != 1 {
-		t.Fatalf("event count = %d, want 1", len(events))
+	if len(events) != 2 {
+		t.Fatalf("event count = %d, want 2", len(events))
 	}
 	if events[0].Kind != EventTerminal || events[0].Task == nil || events[0].Task.Status.State != TaskStateCompleted {
 		t.Fatalf("terminal event = %+v", events[0])
+	}
+	if events[1].Status == nil || events[1].Status.State != TaskStateFailed {
+		t.Fatalf("missing live failed terminal: %+v", events)
 	}
 }
 

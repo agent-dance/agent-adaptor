@@ -1,7 +1,10 @@
 package a2a_test
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -142,5 +145,59 @@ func TestThreadByContextIDMintedContextStillThreads(t *testing.T) {
 	req := fake.request(t, 0)
 	if req.Session == nil || req.Session.Mode != driver.SessionContinueOrStart {
 		t.Fatalf("session = %+v, want thread-coordinated mode %q", req.Session, driver.SessionContinueOrStart)
+	}
+}
+
+type alignmentOutcomeRunner struct{ err error }
+
+func (r alignmentOutcomeRunner) Run(context.Context, string, ...adaptor.CallOption) (*adaptor.Result, error) {
+	return nil, r.err
+}
+func (r alignmentOutcomeRunner) Stream(context.Context, string, ...adaptor.CallOption) adaptor.Stream {
+	events := make(chan adaptor.Event)
+	close(events)
+	return &alignmentOutcomeStream{events: events, err: r.err}
+}
+
+type alignmentOutcomeStream struct {
+	events chan adaptor.Event
+	err    error
+}
+
+func (s *alignmentOutcomeStream) Events() <-chan adaptor.Event     { return s.events }
+func (s *alignmentOutcomeStream) Result() (*adaptor.Result, error) { return nil, s.err }
+func (s *alignmentOutcomeStream) RunID() string                    { return "fixture" }
+func (s *alignmentOutcomeStream) Cancel()                          {}
+
+func TestAlignmentServerPrimaryReasonAndPartialResult(t *testing.T) {
+	for _, reason := range []adaptor.FailureReason{adaptor.ReasonApprovalDenied, adaptor.ReasonApprovalTimeout, adaptor.ReasonCancelled, ""} {
+		for _, cause := range []error{context.Canceled, context.DeadlineExceeded} {
+			t.Run(fmt.Sprintf("%s/%v", reason, cause), func(t *testing.T) {
+				runErr := cause
+				want := "TASK_STATE_FAILED"
+				if cause == context.Canceled {
+					want = "TASK_STATE_CANCELED"
+				}
+				if reason != "" {
+					runErr = errors.Join(&adaptor.RunError{Reason: reason, Message: "primary failure", Result: &adaptor.Result{Text: "partial", Summary: "partial summary"}}, cause)
+					want = "TASK_STATE_FAILED"
+					if reason == adaptor.ReasonCancelled {
+						want = "TASK_STATE_CANCELED"
+					}
+				}
+				srv := a2a.NewServer(alignmentOutcomeRunner{err: runErr}, a2a.ServerOptions{AgentCard: testCard()})
+				envelope := decodeTask(t, postRPC(t, srv.Handler(), `{"jsonrpc":"2.0","id":"1","method":"SendMessage","params":{"message":{"messageId":"m1","role":"ROLE_USER","parts":[{"text":"fixture"}]}}}`))
+				task := envelope.Result.Task
+				if envelope.Error != nil || task == nil || task.Status.State != want {
+					t.Fatalf("task=%+v error=%+v want=%s", task, envelope.Error, want)
+				}
+				if reason != "" {
+					artifact := findTaskArtifact(t, task.Artifacts, a2a.ArtifactAgentAdaptorResult)
+					if artifact.Parts[0].Data["summary"] != "partial summary" {
+						t.Fatalf("partial result=%+v", artifact)
+					}
+				}
+			})
+		}
 	}
 }

@@ -79,7 +79,8 @@ func (c *localClient) Send(ctx context.Context, req clienta2a.SendRequest) (clie
 
 // SendStream executes the runner via Stream and returns an A2AStream that
 // replays the run as A2A events: an initial working status, one status
-// update per projected adapter.stream.v1 frame, and a terminal Task.
+// update per projected adapter.stream.v1 frame, and a live terminal Status
+// accompanied by the final Task.
 func (c *localClient) SendStream(ctx context.Context, req clienta2a.SendRequest) (A2AStream, error) {
 	taskID, contextID := c.newTaskIdentity(req)
 	// The runner stream must outlive this call but die with the delegation:
@@ -145,26 +146,33 @@ func (c *localClient) storeTask(task clienta2a.Task) {
 }
 
 // finalTask folds the runner outcome into a terminal A2A task. Business
-// failures (*adaptor.RunError) and infrastructure errors map to failed;
-// context cancellation maps to canceled; success carries the final text as
+// failures use the authoritative RunError.Reason before secondary context
+// causes; explicit cancellation maps to canceled. Partial text survives all
+// RunError outcomes. Bare context errors retain their existing canceled mapping.
+// Success carries the final text as
 // a single agent message so resultFromTask lifts it into Summary/Messages.
 func (c *localClient) finalTask(taskID, contextID string, res *adaptor.Result, runErr error) clienta2a.Task {
 	task := clienta2a.Task{ID: taskID, ContextID: contextID}
 	var finalText string
+	var runFail *adaptor.RunError
 	switch {
 	case runErr == nil:
 		task.Status = clienta2a.TaskStatus{State: clienta2a.TaskStateCompleted}
 		if res != nil {
 			finalText = res.Text
 		}
+	case errors.As(runErr, &runFail):
+		task.Status = clienta2a.TaskStatus{State: clienta2a.TaskStateFailed}
+		if runFail.Reason == adaptor.ReasonCancelled {
+			task.Status.State = clienta2a.TaskStateCanceled
+		}
+		if runFail.Result != nil {
+			finalText = runFail.Result.Text
+		}
 	case errors.Is(runErr, context.Canceled) || errors.Is(runErr, context.DeadlineExceeded):
 		task.Status = clienta2a.TaskStatus{State: clienta2a.TaskStateCanceled}
 	default:
 		task.Status = clienta2a.TaskStatus{State: clienta2a.TaskStateFailed}
-		var runFail *adaptor.RunError
-		if errors.As(runErr, &runFail) && runFail.Result != nil {
-			finalText = runFail.Result.Text
-		}
 	}
 	if finalText != "" {
 		task.Messages = []clienta2a.Message{{
@@ -272,7 +280,7 @@ func (s *localA2AStream) RecvContext(ctx context.Context) (clienta2a.Event, erro
 	}
 }
 
-// finalEvent folds Stream.Result into the terminal Task event.
+// finalEvent folds Stream.Result into a live terminal Status with its Task.
 func (s *localA2AStream) finalEvent() (clienta2a.Event, error) {
 	s.sentFinal = true
 	res, runErr := s.stream.Result()
@@ -282,6 +290,7 @@ func (s *localA2AStream) finalEvent() (clienta2a.Event, error) {
 		TaskID:    s.taskID,
 		ContextID: s.contextID,
 		Task:      &task,
+		Status:    &task.Status,
 	}, nil
 }
 

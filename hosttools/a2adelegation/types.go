@@ -66,8 +66,10 @@ const (
 	DelegationArtifactCreated DelegationEventKind = "subagent.artifact"
 	// DelegationCustom carries a host-decoded custom status event.
 	DelegationCustom DelegationEventKind = "subagent.custom"
-	// DelegationStreamDropped summarizes delegated events lost to a sequence
-	// gap, unsupported schema, or local EventBus backpressure.
+	// DelegationStreamDropped reports sequence gaps, unsupported schema,
+	// artifact recovery conflicts, or local EventBus backpressure. A recovery
+	// conflict reports only safe reason and resolution labels; the original
+	// live event history and the complete queried artifact remain available.
 	DelegationStreamDropped DelegationEventKind = "subagent.stream.dropped"
 	// DelegationInputRequired reports that the remote task needs more input.
 	DelegationInputRequired DelegationEventKind = "subagent.input_required"

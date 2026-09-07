@@ -25,7 +25,9 @@ var delegationIDCounter atomic.Uint64
 // must unblock an in-flight Recv. Implementations may additionally provide
 // RecvContext(context.Context) for native cancellation.
 type A2AStream interface {
-	// Recv blocks until the next event. Close must unblock any in-flight Recv.
+	// Recv blocks until the next event. Full Task snapshots are historical;
+	// live Status/Message or explicit RecoveredState identify current outcomes.
+	// Close must unblock any in-flight Recv.
 	Recv() (clienta2a.Event, error)
 	Close() error
 }
@@ -251,8 +253,38 @@ func (r *delegationRun) delegateStreaming(ctx context.Context, client A2AClient,
 	defer stream.Close()
 	// 2. Track remote identity and mapper state for recovery and lifecycle closure.
 	mapper := newEventMapper(baseEvent, r.statusDecoders...)
-	var lastTask clienta2a.Task
-	lastTaskID := ""
+	var currentTask clienta2a.Task
+	var snapshot *clienta2a.Task
+	lastTaskID := send.Message.TaskID
+	liveArtifacts := make(map[string]bool)
+	// Historical replay restores only artifacts not updated live. Explicit
+	// GetTask recovery uses a separate reconciliation rule below.
+	restoreArtifacts := func(artifacts []clienta2a.Artifact) []clienta2a.Artifact {
+		var restored []clienta2a.Artifact
+		for _, artifact := range artifacts {
+			if liveArtifacts[artifact.ID] {
+				continue
+			}
+			mergeStreamArtifact(&currentTask, artifact, false)
+			restored = append(restored, artifact)
+		}
+		return restored
+	}
+	recoverArtifacts := func(artifacts []clienta2a.Artifact) {
+		for _, artifact := range artifacts {
+			if reconcileRecoveredArtifact(&currentTask, artifact, liveArtifacts[artifact.ID]) {
+				// The complete query is authoritative when neither content
+				// view is a prefix. Report the conflict without payload data.
+				event := mapper.base
+				event.Kind = DelegationStreamDropped
+				event.RemoteTaskID = currentTask.ID
+				event.RemoteContextID = currentTask.ContextID
+				event.RemoteArtifactID = artifact.ID
+				event.Raw = map[string]any{"reason": "artifact_recovery_conflict", "resolution": "recovered_snapshot"}
+				r.publish(event)
+			}
+		}
+	}
 	cancelResult := func() (DelegationResult, error) {
 		r.publishAll(mapper.closeOpen(lastTaskID, send.ContextID))
 		if lastTaskID != "" {
@@ -269,6 +301,13 @@ func (r *delegationRun) delegateStreaming(ctx context.Context, client A2AClient,
 		if lastTaskID != "" {
 			r.cancelRemoteTask(ctx, client, lastTaskID, send.Tenant, baseEvent)
 		}
+	}
+	interruptedResult := func(derr *DelegationError) (DelegationResult, error) {
+		currentTask.Status = clienta2a.TaskStatus{State: clienta2a.TaskStateFailed}
+		result := resultFromTask(baseResult, currentTask, includeRemoteArtifacts)
+		result.Artifacts = limitArtifacts(result.Artifacts, maxArtifacts)
+		result.Error = derr
+		return result, derr
 	}
 	// 3. Receive and publish ordered events until a protocol terminal is observed.
 	for {
@@ -287,8 +326,9 @@ func (r *delegationRun) delegateStreaming(ctx context.Context, client A2AClient,
 				return cancelResult()
 			}
 			if lastTaskID != "" {
-				if recovered, ok := r.recoverTask(ctx, client, lastTaskID, send.Tenant, send.HistoryLength); ok {
-					lastTask = recovered
+				if recovered, ok := r.recoverTask(ctx, client, lastTaskID, send.Tenant, send.HistoryLength); ok && !staleRecoveredTask(recovered, snapshot, send.Message.TaskID != "") {
+					recoverArtifacts(recovered.Artifacts)
+					recovered.Artifacts = currentTask.Artifacts
 					for _, ev := range mapper.taskEvents(recovered) {
 						r.publish(ev)
 					}
@@ -299,70 +339,81 @@ func (r *delegationRun) delegateStreaming(ctx context.Context, client A2AClient,
 			derr := &DelegationError{Code: "stream_interrupted", Message: err.Error(), Retryable: true}
 			r.publishAll(mapper.closeOpen(lastTaskID, send.ContextID))
 			r.publish(failedEvent(baseEvent, derr))
-			baseResult.Status = "failed"
-			baseResult.Error = derr
-			return baseResult, derr
+			return interruptedResult(derr)
 		}
 		if event.TaskID != "" {
 			lastTaskID = event.TaskID
+			currentTask.ID = event.TaskID
+		}
+		if event.ContextID != "" {
+			currentTask.ContextID = event.ContextID
 		}
 		if event.Message != nil && event.Message.TaskID != "" {
 			lastTaskID = event.Message.TaskID
+			currentTask.ID = event.Message.TaskID
 		}
 		if event.Task != nil {
-			lastTask = *event.Task
 			lastTaskID = event.Task.ID
-		}
-		for _, ev := range mapper.Map(event) {
-			r.publish(ev)
-		}
-		if event.Message != nil && event.Kind == clienta2a.EventTerminal {
-			baseResult.RemoteTaskID = event.TaskID
-			baseResult.RemoteContextID = event.ContextID
-			baseResult.Status = "completed"
-			baseResult.Summary = textFromMessage(*event.Message)
-			if baseResult.Summary != "" {
-				baseResult.Messages = append(baseResult.Messages, DelegationMessage{Role: event.Message.Role, Text: baseResult.Summary})
+			currentTask.ID = event.Task.ID
+			currentTask.ContextID = event.Task.ContextID
+			if persistedTaskEvent(event) {
+				if event.RecoveredState {
+					if staleRecoveredTask(*event.Task, snapshot, send.Message.TaskID != "") {
+						break
+					}
+					recovered := *event.Task
+					recoverArtifacts(recovered.Artifacts)
+					recovered.Artifacts = currentTask.Artifacts
+					event.Task = &recovered
+					r.publishAll(mapper.Map(event))
+					return r.finishTask(baseEvent, baseResult, recovered, spec.Policy, maxArtifacts, includeRemoteArtifacts, mapper)
+				}
+				snapshot = event.Task
+				projected := *event.Task
+				projected.Artifacts = restoreArtifacts(event.Task.Artifacts)
+				event.Task = &projected
+				r.publishAll(mapper.Map(event))
+				continue
 			}
-			r.publishAll(mapper.terminalEventsForState(event.TaskID, event.ContextID, clienta2a.TaskStateCompleted, event.Raw))
-			return baseResult, nil
+			recoverArtifacts(event.Task.Artifacts)
+			currentTask.Messages = event.Task.Messages
 		}
-		if event.Task != nil && executionFinalState(event.Task.Status.State) {
-			return r.finishTask(baseEvent, baseResult, *event.Task, spec.Policy, maxArtifacts, includeRemoteArtifacts, mapper)
+		if event.Artifact != nil {
+			liveArtifacts[event.Artifact.ID] = true
+			mergeStreamArtifact(&currentTask, *event.Artifact, event.Append)
+		}
+		r.publishAll(mapper.Map(event))
+		if event.Message != nil && (event.Kind == clienta2a.EventTerminal || event.Kind == clienta2a.EventMessage) {
+			currentTask.Raw = event.Raw
+			currentTask.Status = clienta2a.TaskStatus{State: clienta2a.TaskStateCompleted}
+			currentTask.Messages = []clienta2a.Message{*event.Message}
+			return r.finishTask(baseEvent, baseResult, currentTask, spec.Policy, maxArtifacts, includeRemoteArtifacts, mapper)
 		}
 		if event.Status != nil && executionFinalState(event.Status.State) {
-			task, ok := r.recoverTask(ctx, client, event.TaskID, send.Tenant, send.HistoryLength)
-			if ok {
-				return r.finishTask(baseEvent, baseResult, task, spec.Policy, maxArtifacts, includeRemoteArtifacts, mapper)
+			// GetTask can fill in final artifacts/history, but cannot replace a
+			// live status or questionnaire with a stale persisted outcome.
+			if recovered, ok := r.recoverTask(ctx, client, lastTaskID, send.Tenant, send.HistoryLength); ok &&
+				recovered.Status.State == event.Status.State && !staleRecoveredTask(recovered, snapshot, send.Message.TaskID != "") {
+				currentTask.Messages = recovered.Messages
+				recoverArtifacts(recovered.Artifacts)
+				currentTask.Status = recovered.Status
 			}
-			baseResult.RemoteTaskID = event.TaskID
-			baseResult.RemoteContextID = event.ContextID
-			baseResult.Status = statusFromState(event.Status.State)
-			if derr := policyErrorForState(event.Status.State, spec.Policy); derr != nil {
-				r.publishAll(mapper.closeOpen(event.TaskID, event.ContextID))
-				r.publish(failedEvent(baseEvent, derr))
-				baseResult.Status = "failed"
-				baseResult.Error = derr
-				return baseResult, derr
+			currentTask.Raw = event.Raw
+			currentTask.Status.State = event.Status.State
+			currentTask.Status.Timestamp = event.Status.Timestamp
+			if event.Status.Message != nil {
+				currentTask.Status.Message = event.Status.Message
 			}
-			r.publishAll(mapper.terminalEventsForState(event.TaskID, event.ContextID, event.Status.State, event.Raw))
-			if baseResult.Status != "completed" {
-				baseResult.Error = &DelegationError{Code: errorCodeFromState(event.Status.State), Message: "remote task did not complete successfully", RemoteStatus: string(event.Status.State)}
-			}
-			return baseResult, terminalError(event.Status.State, spec.Policy)
+			return r.finishTask(baseEvent, baseResult, currentTask, spec.Policy, maxArtifacts, includeRemoteArtifacts, mapper)
 		}
 	}
-	// 4. Recover a final task snapshot or fail an incomplete stream explicitly.
-	if lastTask.ID != "" && executionFinalState(lastTask.Status.State) {
-		return r.finishTask(baseEvent, baseResult, lastTask, spec.Policy, maxArtifacts, includeRemoteArtifacts, mapper)
-	}
+	// EOF without a live terminal (including old completed/failed snapshots)
+	// is interrupted. Servers returning only Task results must use Send/polling.
 	cancelKnownTask()
 	derr := &DelegationError{Code: "stream_interrupted", Message: "remote stream ended before terminal state", Retryable: true}
 	r.publishAll(mapper.closeOpen(lastTaskID, send.ContextID))
 	r.publish(failedEvent(baseEvent, derr))
-	baseResult.Status = "failed"
-	baseResult.Error = derr
-	return baseResult, derr
+	return interruptedResult(derr)
 }
 
 type streamRecv struct {

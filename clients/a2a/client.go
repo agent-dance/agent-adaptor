@@ -96,6 +96,9 @@ func (c *Client) Send(ctx context.Context, req SendRequest) (Task, error) {
 }
 
 // SendStream sends one message and returns its ordered stream of A2A events.
+// Full Task frames restore identity/artifacts; only live Status/Message or an
+// explicit recovery query can end this execution. Task-only servers should
+// be consumed with Send and GetTask polling.
 func (c *Client) SendStream(ctx context.Context, req SendRequest) (*Stream, error) {
 	upstreamReq, err := upstreamSendRequest(req)
 	if err != nil {
@@ -106,6 +109,9 @@ func (c *Client) SendStream(ctx context.Context, req SendRequest) (*Stream, erro
 		return nil, err
 	}
 	taskID := req.TaskID
+	if taskID == "" {
+		taskID = req.Message.TaskID
+	}
 	streamCtx, cancel := context.WithCancel(ctx)
 	seq := up.SendStreamingMessage(streamCtx, upstreamReq)
 	return c.startStream(streamCtx, cancel, taskID, seq), nil
@@ -429,10 +435,11 @@ func (c *Client) startStream(streamCtx context.Context, cancel context.CancelFun
 		defer close(out)
 		lastTaskID := taskID
 		state := streamState{}
+		var snapshot *Task
 		seq(func(ev a2aproto.Event, err error) bool {
 			if err != nil {
 				if state.canRecover() {
-					if recovered, ok := c.tryRecover(streamCtx, lastTaskID); ok {
+					if recovered, ok := c.tryRecover(streamCtx, lastTaskID); ok && !staleRecovery(*recovered.Task, snapshot, taskID != "") {
 						out <- streamItem{event: recovered}
 						return false
 					}
@@ -450,6 +457,9 @@ func (c *Client) startStream(streamCtx context.Context, cancel context.CancelFun
 			}
 			if event.TaskID != "" {
 				lastTaskID = event.TaskID
+			}
+			if persistedTaskSnapshot(event) {
+				snapshot = event.Task
 			}
 			emit, keepReading := state.accept(event)
 			if !emit {
@@ -482,6 +492,8 @@ type streamState struct {
 	finalSeen bool
 }
 
+// accept stops only for live Status/Message or an explicit GetTask recovery.
+// Historical full Task snapshots remain visible without ending the stream.
 func (s *streamState) accept(event Event) (emit bool, keepReading bool) {
 	if s.finalSeen {
 		return false, false

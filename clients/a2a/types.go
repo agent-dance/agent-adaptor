@@ -241,7 +241,9 @@ type Artifact struct {
 type Event struct {
 	// Kind identifies the event payload and lifecycle meaning.
 	Kind EventKind
-	// Task contains a full task snapshot for task events.
+	// Task contains a full task snapshot. In a stream, it restores identity
+	// and artifacts only; its historical status does not end the current turn.
+	// Live Status/Message and explicit RecoveredState carry current outcomes.
 	Task *Task
 	// Message contains a message event payload.
 	Message *Message
@@ -257,7 +259,9 @@ type Event struct {
 	Append bool
 	// LastChunk reports that an artifact update is complete.
 	LastChunk bool
-	// RecoveredState reports that the terminal event was reconstructed with GetTask.
+	// RecoveredState reports an explicit GetTask recovery after a stream error.
+	// It is distinct from an ordinary streamed Task snapshot. Recovery rejects
+	// unchanged historical terminal states and previously answered questions.
 	RecoveredState bool
 	// Raw preserves the normalized protocol event.
 	Raw map[string]any
