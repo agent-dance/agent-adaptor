@@ -88,7 +88,8 @@ G05 合流时请：
 
 ## 验证纪律
 
-原必需检查保持完整：`go test -count=1 ./examples/...`（只添加 -json 与有限 timeout）。
+原必需检查保持完整：`go test -count=1 ./examples/...`（仅可添加 -json/-v，
+由进程外 timeout 保证有界；带 Go -timeout 的预检查单列，不替代原 validation）。
 另执行 `go run ./examples/offline`，输出应与 Example 的具名行为一致。实际非零数量、
 允许 skip、退出码、OS/Go、base/head、日志 SHA256 在最终 commit 后的 result/evidence
 记录，不写入本源码 commit 制造 SHA 自引用。
