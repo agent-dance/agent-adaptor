@@ -70,7 +70,7 @@ func (t *subagentTracker) translate(update adaptor.SubagentUpdate) []aguievents.
 	var out []aguievents.Event
 	if state == nil {
 		state = t.start(id, update)
-		out = append(out, aguievents.NewActivitySnapshotEvent(id, subagentActivityType, state.content))
+		out = append(out, aguievents.NewActivitySnapshotEvent(id, subagentActivityType, state.content.snapshot()))
 		if update.Kind == adaptor.SubagentStarted {
 			return out
 		}
@@ -120,7 +120,7 @@ func (s *subagentActivityState) apply(update adaptor.SubagentUpdate) []aguievent
 	kind := subagentString(update.Data, "kind")
 	var ops []aguievents.JSONPatchOperation
 	add := func(path string, value any) {
-		ops = append(ops, aguievents.JSONPatchOperation{Op: "add", Path: path, Value: value})
+		ops = append(ops, aguievents.JSONPatchOperation{Op: "add", Path: path, Value: snapshotSubagentValue(value)})
 	}
 
 	switch kind {
@@ -236,12 +236,40 @@ func (t *subagentTracker) flush(err error) []aguievents.Event {
 		state.content.DurationMS = max(now.Sub(state.started).Milliseconds(), 0)
 		out = append(out, aguievents.NewActivityDeltaEvent(id, subagentActivityType, []aguievents.JSONPatchOperation{
 			{Op: "add", Path: "/status", Value: state.content.Status},
-			{Op: "add", Path: "/error", Value: state.content.Error},
+			{Op: "add", Path: "/error", Value: snapshotSubagentValue(state.content.Error)},
 			{Op: "add", Path: "/updatedAt", Value: state.content.UpdatedAt},
 			{Op: "add", Path: "/durationMs", Value: state.content.DurationMS},
 		}))
 	}
 	return out
+}
+
+// Publication gives the consumer ownership of every mutable JSON container.
+// Copy our private content structs explicitly; the public Event copy contract
+// handles nested maps/slices/arrays without a JSON round trip or type changes.
+func (content subagentActivity) snapshot() subagentActivity {
+	content.ToolCalls = snapshotSubagentValue(content.ToolCalls).([]subagentToolCall)
+	content.Result = snapshotSubagentValue(content.Result)
+	content.Error = snapshotSubagentValue(content.Error)
+	return content
+}
+
+func snapshotSubagentValue(value any) any {
+	if calls, ok := value.([]subagentToolCall); ok {
+		if calls == nil {
+			return []subagentToolCall(nil)
+		}
+		out := make([]subagentToolCall, len(calls))
+		for i, call := range calls {
+			out[i] = call
+			out[i].Args = snapshotSubagentValue(call.Args).(map[string]any)
+			out[i].Result = snapshotSubagentValue(call.Result)
+		}
+		return out
+	}
+	// This map carrier is only a local copy operation, never a published Event.
+	copy := adaptor.WithEventMeta(adaptor.Notice{Data: map[string]any{"value": value}}, adaptor.EventMeta{}).(adaptor.Notice)
+	return copy.Data["value"]
 }
 
 func subagentID(update adaptor.SubagentUpdate) string {
