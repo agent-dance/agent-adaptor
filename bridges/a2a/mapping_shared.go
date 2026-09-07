@@ -63,6 +63,7 @@ func defaultString(value, fallback string) string {
 
 func (p ExposurePolicy) hasStreamingDiagnostics() bool {
 	return p.IncludeReasoning || p.IncludeToolCalls || p.IncludeHITL ||
+		p.IncludeCapabilityInvocations || p.IncludeTodos ||
 		p.Diagnostics.IncludeMetadata || p.Diagnostics.IncludeUsage ||
 		p.Diagnostics.IncludeProviderResult || p.Diagnostics.IncludeTranscript ||
 		p.Diagnostics.IncludeRawStreams

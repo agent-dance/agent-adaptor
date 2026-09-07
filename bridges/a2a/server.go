@@ -234,6 +234,7 @@ func (e *executor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext)
 		}
 		callOpts := append([]adaptor.CallOption(nil), e.options...)
 		callOpts = append(callOpts, promptOpts...)
+		callOpts = append(callOpts, observationOptions(e.exposure)...)
 
 		// 2. Register cancellation before starting the run.
 		runCtx, cancelRunCtx := context.WithCancel(ctx)
@@ -285,6 +286,12 @@ func (e *executor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext)
 						return
 					}
 				}
+				if translator.err != nil {
+					stream.Cancel()
+					for range stream.Events() {
+					}
+					goto drained
+				}
 			}
 		}
 
@@ -293,6 +300,20 @@ func (e *executor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext)
 		// their partial Result and authoritative Reason in *RunError. Inspect that
 		// carrier before context causes, which may be secondary to a failure.
 		res, runErr := stream.Result()
+		if translator.err != nil {
+			partial := res
+			var re *adaptor.RunError
+			if errors.As(runErr, &re) {
+				partial = re.Result
+			}
+			for _, ev := range defaultTerminalArtifacts(execCtx, partial, e.exposure) {
+				if !yield(ev, nil) {
+					return
+				}
+			}
+			yield(nil, translator.err)
+			return
+		}
 		if runErr != nil {
 			var re *adaptor.RunError
 			if errors.As(runErr, &re) {

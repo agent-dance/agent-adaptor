@@ -6,6 +6,7 @@ package a2a
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -26,6 +27,7 @@ type streamTranslator struct {
 	runID    string
 	threadID string
 	seq      uint64
+	err      error
 }
 
 func newStreamTranslator(info a2aproto.TaskInfoProvider, exposure ExposurePolicy) *streamTranslator {
@@ -94,6 +96,7 @@ func (t *streamTranslator) Translate(ev adaptor.Event) []a2aproto.Event {
 		event := AdapterStreamEventV1{
 			ToolCallID: e.ID, Name: e.Name, Delta: e.ArgsDelta,
 			Args: e.Args, Result: e.Result,
+			ScopeID: e.ScopeID, ParentScopeID: e.ParentScopeID, ParentToolCallID: e.ParentToolCallID,
 		}
 		switch e.Phase {
 		case adaptor.PhaseStart:
@@ -113,8 +116,19 @@ func (t *streamTranslator) Translate(ev adaptor.Event) []a2aproto.Event {
 			Kind:       "tool_call.result",
 			ToolCallID: e.ID,
 			Result:     e.Result,
+			ScopeID:    e.ScopeID, ParentScopeID: e.ParentScopeID, ParentToolCallID: e.ParentToolCallID,
 		})
 
+	case adaptor.CapabilityInvocation:
+		if !t.exposure.IncludeCapabilityInvocations {
+			return nil
+		}
+		return t.emit(ev, AdapterStreamEventV1{Kind: "capability.invocation", Capability: encodeCapability(e.Invocation)})
+	case adaptor.TodoUpdated:
+		if !t.exposure.IncludeTodos {
+			return nil
+		}
+		return t.emit(ev, AdapterStreamEventV1{Kind: "todo.updated", Todo: encodeTodo(e.Snapshot)})
 	case *adaptor.ApprovalRequest:
 		if !t.exposure.IncludeHITL || e == nil {
 			return nil
@@ -193,9 +207,21 @@ func (t *streamTranslator) emit(source adaptor.Event, event AdapterStreamEventV1
 		event.Timestamp = meta.Time.UTC().Format(time.RFC3339Nano)
 	}
 	event.Meta = adapterEventMeta(meta, t.exposure.Diagnostics.IncludeMetadata)
+	// New facts have only the actual SDK envelope as identity authority; a
+	// remembered provider lifecycle ThreadID cannot substitute for ThreadKey.
+	if observationKind(event.Kind) {
+		event.RunID = meta.RunID
+		event.Sequence = meta.Sequence
+		event.ThreadID = meta.ThreadKey
+		event.TurnID = meta.TurnID
+	}
 	data, err := encodeAdapterStreamEvent(event)
 	if err != nil {
-		data = encodeAdapterStreamDrop(event, err)
+		data, err = encodeAdapterStreamDrop(event, err)
+		if err != nil {
+			t.err = fmt.Errorf("encode adapter stream status: %w", err)
+			return nil
+		}
 	}
 	msg := a2aproto.NewMessageForTask(a2aproto.MessageRoleAgent, t.info, dataPart(data))
 	return []a2aproto.Event{a2aproto.NewStatusUpdateEvent(t.info, a2aproto.TaskStateWorking, msg)}
@@ -212,15 +238,10 @@ func adapterEventMeta(meta adaptor.EventMeta, includeSource bool) *AdapterEventM
 	if !meta.Time.IsZero() {
 		out.Time = meta.Time.UTC().Format(time.RFC3339Nano)
 	}
-	if includeSource && meta.Source != nil {
-		out.Source = &AdapterEventSourceMetaV1{
-			RunID: meta.Source.RunID, ThreadID: meta.Source.ThreadID,
-			TurnID: meta.Source.TurnID, Sequence: meta.Source.Sequence,
-		}
-		if !meta.Source.Timestamp.IsZero() {
-			out.Source.Timestamp = meta.Source.Timestamp.UTC().Format(time.RFC3339Nano)
-		}
+	if includeSource {
+		out.Source = encodeSource(meta.Source)
 	}
+
 	return out
 }
 
@@ -229,6 +250,21 @@ func adapterEventMeta(meta adaptor.EventMeta, includeSource bool) *AdapterEventM
 // sanitization on args/result/hitl/raw, the 64KiB envelope cap, and the
 // marshal→unmarshal JSON normalization.
 func encodeAdapterStreamEvent(event AdapterStreamEventV1) (map[string]any, error) {
+	if err := validateAdapterEvent(event); err != nil {
+		return nil, err
+	}
+	// Validate content before filtering; redaction cannot repair malformed facts.
+	if event.Todo != nil {
+		copySnapshot := *event.Todo
+		copySnapshot.Items = append([]AdapterTodoItemV1{}, event.Todo.Items...)
+		for i := range copySnapshot.Items {
+			copySnapshot.Items[i].Content = redactInlineSecrets(copySnapshot.Items[i].Content)
+		}
+		event.Todo = &copySnapshot
+		if err := validateTodo(event.Todo); err != nil {
+			return nil, err
+		}
+	}
 	event.Delta = redactInlineSecrets(event.Delta)
 	if len(event.Args) > 0 {
 		event.Args = sanitizeRemoteMap(event.Args)
@@ -248,7 +284,12 @@ func encodeAdapterStreamEvent(event AdapterStreamEventV1) (map[string]any, error
 		return nil, fmt.Errorf("marshal adapter stream status: %w", err)
 	}
 	if len(raw) > adapterStreamMaxBytes {
-		return nil, fmt.Errorf("adapter stream status exceeds %d bytes", adapterStreamMaxBytes)
+		return nil, errAdapterSize
+	}
+	if observationKind(event.Kind) {
+		if _, _, err := decodeAdapterStreamEventWire(json.RawMessage(raw)); err != nil {
+			return nil, err
+		}
 	}
 	var data map[string]any
 	if err := json.Unmarshal(raw, &data); err != nil {
@@ -259,26 +300,28 @@ func encodeAdapterStreamEvent(event AdapterStreamEventV1) (map[string]any, error
 
 // encodeAdapterStreamDrop is the fallback frame when an event cannot be
 // encoded (marshal failure or size cap).
-func encodeAdapterStreamDrop(event AdapterStreamEventV1, cause error) map[string]any {
-	dropped := AdapterStreamEnvelopeV1{Schema: AdapterStreamSchemaV1, Event: AdapterStreamEventV1{
-		Kind: "stream.dropped", Sequence: event.Sequence,
-		RunID: event.RunID, ThreadID: event.ThreadID, TurnID: event.TurnID,
-		Timestamp: event.Timestamp, Meta: event.Meta,
-		Raw: map[string]any{
-			"dropped_kind": event.Kind, "dropped_count": 1, "reason": cause.Error(),
-		},
-	}}
-	raw, err := json.Marshal(dropped)
-	if err == nil {
-		var normalized map[string]any
-		if json.Unmarshal(raw, &normalized) == nil {
-			return normalized
+func encodeAdapterStreamDrop(event AdapterStreamEventV1, cause error) (map[string]any, error) {
+	reason := "invalid_payload"
+	for _, known := range []error{errAdapterSize, errAdapterKind, errAdapterDepth} {
+		if errors.Is(cause, known) {
+			reason = known.Error()
+			break
 		}
 	}
-	return map[string]any{"schema": AdapterStreamSchemaV1, "event": map[string]any{
-		"kind": "stream.dropped", "sequence": event.Sequence,
-		"raw": map[string]any{"dropped_kind": event.Kind, "dropped_count": 1, "reason": cause.Error()},
-	}}
+	kind := event.Kind
+	if !supportedAdapterStreamKind(kind) {
+		kind = "unknown"
+	}
+	drop := AdapterStreamEventV1{Kind: "stream.dropped", Sequence: event.Sequence, RunID: event.RunID,
+		ThreadID: event.ThreadID, TurnID: event.TurnID, Timestamp: event.Timestamp, Meta: event.Meta,
+		Raw: map[string]any{"dropped_count": 1, "reason": reason, "source": "a2a", "event_kind": kind}}
+	// A loss projection retains the complete original coordinates. Invalid or
+	// oversized metadata cannot be repaired without inventing a different event;
+	// propagate a safe infrastructure error through the existing executor instead.
+	if err := validateWireCoordinates(drop); err != nil {
+		return nil, err
+	}
+	return encodeAdapterStreamEvent(drop)
 }
 
 // hitlRequestedArtifact projects a live *ApprovalRequest (full fidelity:
