@@ -1,6 +1,6 @@
 # T06：事件、观察入口与最终资源指纹
 
-以 G01 `0adb8355378b0d1c0457119f96da470f4c33366a`、C03、R003/R006/R009/R010 为边界。此片段由 G02 在本批验收前合入集中使用文档和 CHANGELOG。仅 T06 范围交付；provider 正式 parser、各 bridge wire、recorder、预算与 profile 后续验证分别由其 owner 完成。
+以 G01 `0adb8355378b0d1c0457119f96da470f4c33366a`、C03、R003/R006/R009/R010/R011 为边界。此片段由 G02 在本批验收前合入集中使用文档和 CHANGELOG。仅 T06 范围交付；provider 正式 parser、各 bridge wire、recorder、预算与 profile 后续验证分别由其 owner 完成。
 
 ## 合入 docs/streaming.md：typed 事实及收尾
 
@@ -34,11 +34,15 @@ AttachRun 的晚到 observation demand 只对已验证候选评分，CapabilityI
 
 早期 claim 只验证所有权、安全树及已有 managed symlink 的精确 manifest/source-path 证明；允许合法 skill 缓存稍后由唯一 resolver 重建。唯一 ResolveSkills/InjectSkills 完成后、Thread fingerprint/store/Driver 之前，在本轮持有不可变最终 snapshot：实际 resource 文件内容和模式、已证明 symlink 指向的 resolved source 内容、ordinary MCP、未知附加配置。最终 IO、安全或锁释放错误显式返回，绝不 warning 后继续。
 
-内置 Driver 的 InjectSkills 可把实际 profile reconciliation 推迟到 Run；最终 snapshot 因此读取本轮已物化的 resolved source，构造带所有权证明的预期目标视图，不再运行 resolver 或自行写资源。投影视图复用正式 reconciler 的只读 prune eligibility：Claude/CodeBuddy 的 hosted profile 与 Cursor 使用 PruneManaged，Codex 保留健康未选项并仅剪除 broken managed（空 payload 保持不操作）。同 key 改 runtime name 也投影正式旧目标删除。只有精确 manifest/source 证明成立的待删除 symlink 从实际树与 source 读取中一起排除；复制树 marker 不能证明当前内容/权限，准备剪除这种树时显式 ErrUnsafe，保留的复制树仍按实际内容读取。未知及用户资源保守纳入；逐目标 Lstat 区分 NotExist 与 IO 失败，不能把宽松 discovery 的缺项当删除证明。普通 MCP 同 key 覆盖/剪除只有在现值与 manifest 的 provider/path/rendered fingerprint 一致时允许；被改写、未知字段或缺少证明不得被 desired 投影抹平。
+内置 Driver 的 InjectSkills 可把实际 profile reconciliation 推迟到 Run；最终 snapshot 因此读取本轮已物化的 resolved source，构造带所有权证明的预期目标视图，不再运行 resolver 或自行写资源。投影视图复用正式 reconciler 的只读 prune eligibility：Claude/CodeBuddy 的 hosted profile 与 Cursor 使用 PruneManaged，Codex 保留健康未选项并仅剪除 broken managed（空 payload 保持不操作）。同 key 改 runtime name 也投影正式旧目标删除。只有精确 manifest/source 证明成立的待删除 symlink 从实际树与 source 读取中一起排除；复制树 marker 不能证明当前内容/权限，准备剪除这种树时显式 ErrUnsafe，保留的复制树仍按实际内容读取。未知及用户资源保守纳入；逐目标 Lstat 区分 NotExist 与 IO 失败，不能把宽松 discovery 的缺项当删除证明。MCP JSON/TOML writer 保留已存在 regular 配置文件的实际权限（包括 0400/0600），新文件的物理 writer 仍传入默认 0644；缺失文件的纯 snapshot 默认使用该平台 Stat 的可观察表示（Windows 0666、POSIX 0644），不对已有模式做归一化；非 regular 或 IO 错误显式失败，不通过权限归一化消除漂移。权限测试以平台实际 Stat 表示为准，POSIX 保持精确位断言；Windows 检查可观察 readonly 属性变化，若 OS 拒绝替换只读文件则保留原权限/字节并返回错误，不临时放宽 readonly/ACL。普通 MCP 同 key 覆盖/剪除只有在现值与 manifest 的 provider/path/rendered fingerprint 一致时允许；被改写、未知字段或缺少证明不得被 desired 投影抹平。
 
-一次执行的 materialized digest 同时进入 Thread fingerprint、具体 ProfilePayload.Fingerprint 和稳定 SessionCompatibilityFingerprint。只规范化已证明属于本 Agent 的 hosted MCP 端口/凭据载体；真实 endpoint/env 仍传给 Driver 并影响具体进程配置。模型、identity、Driver 配置、workspace、skills/instructions/MCP、runtime 与 SessionCodec 原有维度均保留，并加入最终 transport。按真实 execution.Dir 的 hosted profile 协调锁覆盖 claim/唯一解析至 Driver 返回，防止同 Agent 不同 Thread 的共享 profile 被并发改写；全局 map 锁只保护登记/复制，不同 identity 的不同隔离目录可独立并发运行；每轮 snapshot 不写回共享兼容缓存。T04 的跨进程所有权、随机 nonce 会话验证、Close 次序与目录删除边界保留。
+一次执行的 materialized digest 同时进入 Thread fingerprint、具体 ProfilePayload.Fingerprint 和稳定 SessionCompatibilityFingerprint。只规范化已证明属于本 Agent 的 hosted MCP 端口/凭据载体；真实 endpoint/env 仍传给 Driver 并影响具体进程配置。模型、identity、Driver 配置、workspace、skills/instructions/MCP、runtime 与 SessionCodec 原有维度均保留。R011 明确 Request.Streaming 只表示本轮交付选择，不作为额外持久 Thread 身份；真实 transport 若改变 checkpoint 编码或会话环境，仍由既有 SessionConfigFingerprinter、SessionCodec 参数及 Driver 启动前 guard 表达。Driver eligibility、真实 argv/env 和私有进程 signature 不削弱。按真实 execution.Dir 的 hosted profile 协调锁覆盖 claim/唯一解析至 Driver 返回，防止同 Agent 不同 Thread 的共享 profile 被并发改写；全局 map 锁只保护登记/复制，不同 identity 的不同隔离目录可独立并发运行；每轮 snapshot 不写回共享兼容缓存。T04 的跨进程所有权、随机 nonce 会话验证、Close 次序与目录删除边界保留。
 
 可复现：运行 `TestAlignmentProfileDynamicResolvedSnapshot` 与 `TestAlignmentProfileDeferredMaterializerColdSnapshot`。A 的 Driver 写 session 文件与随机 nonce → Close → B 使用同声明/实际内容及旧 Thread key 真正读取原文件续接；同路径内容变化拒绝 ResumeOnly；缓存删除后本轮 resolver 重建可继续。TestAlignmentProfileDeferredPruneSnapshot 覆盖同 Agent、同目录 alpha→beta→beta ResumeOnly 及反复切换，用户 skill 保留且内容漂移仍拒绝续接；内部对照直接比较投影视图与正式 reconciler 的 link/rename/broken/none/用户树行为，并拒绝合法 marker 下复制树内容/权限漂移。另有 mode/unknown-config/IO/managed-link/ordinary-MCP 同key篡改/不同Thread并发测试；都走真实统一 Run/Stream 管线。
+
+兼容 rich→临时 schema batch→rich 或 observation demand 引起的 transport 切换保持同一 active record 和健康 resume state，ResumeOnly 不因布尔值变化拒绝，每个 prompt 只派发一次。临时轮仍按原 provider 合同停止旧 writer、执行一次并预热下一轮；WithSpawn 不注册常驻 writer。真实构造配置、资源内容或权限变化继续拒绝。G02 原 Codex WithTools 一次 spawn 和 CodeBuddy persistent + one-shot + prewarm 共三次 spawn 断言原样保留，V04 在最终 SHA 跑完整两个 provider 包。
+
+权限表示依据 Go 1.26.5 `src/os/types_windows.go:177–182`（readonly 0444 / writable 0666）及 `src/os/file.go:636–640`（Windows Chmod 只使用 0200 位）。私有纯 helper 覆盖 Windows/POSIX 合成默认与已有实物优先；这不是 chmod 0666，也不改变 ACL。Windows 分支仅按源码及纯 fixture 校验，本机没有执行原生 Windows 验收。
 
 ## 新增公共声明与 internal 取舍
 
@@ -54,4 +58,4 @@ Usage 的非 nil 零值表示至少观察到一项有效 usage、归一化值均
 
 ## 验证范围
 
-本机 macOS arm64，fake Driver、正式资源 reconciler、loopback MCP、临时 profile/store。源码 SHA 固定后的完整必需命令与实际子测试计数见 result.json/evidence：V01 全指定包；V02 observer race×5；V03 profile race×5。所有命令显式关闭 live/E2E/API golden 自动更新。未执行真实 provider、付费 live、独立 Linux/Windows 平台验收、整个批次/发布 gate；不据本交付宣称其通过。
+本机 macOS arm64，fake Driver、正式资源 reconciler、loopback MCP、临时 profile/store。源码 SHA 固定后的完整必需命令与实际子测试计数见 result.json/evidence：V01 全指定包；V02 observer race×5；V03 profile race×5；V04 完整 codex/codebuddy 包。所有命令显式关闭 live/E2E/API golden 自动更新。未执行真实 provider、付费 live、独立 Linux/Windows 平台验收、整个批次/发布 gate；不据本交付宣称其通过。

@@ -276,6 +276,9 @@ func (a *Agent) threadInvocationFingerprint(identity driver.AgentIdentity, req d
 	// sorted. Re-sort so an ephemeral port cannot indirectly change collection
 	// order when other runtime services are present.
 	sortThreadRuntimeCompatibility(&runtimeCompatibility)
+	// Streaming is this turn's delivery choice. Incompatible checkpoint or
+	// session environments remain guarded by the configured Driver/codec and
+	// the resolved resource dimensions below, not by this per-turn boolean.
 	return engine.StableHash(
 		"adaptor/thread-invocation/v1",
 		a.driver.Descriptor().Type,
@@ -286,7 +289,6 @@ func (a *Agent) threadInvocationFingerprint(identity driver.AgentIdentity, req d
 		req.Workspace,
 		runtimeCompatibility,
 		profileSnapshot,
-		req.Streaming,
 		req.ProfilePayload.SessionFingerprint(),
 		req.Skills.Fingerprint,
 		engine.InstructionFingerprint(req.Instructions),

@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -859,6 +860,88 @@ func TestAlignmentProfileDeferredPruneRejectsCopiedDrift(t *testing.T) {
 				}
 				if _, err := os.Lstat(file); err != nil {
 					t.Fatal("copied skill was deleted", err)
+				}
+			})
+		}
+	}
+}
+
+func TestAlignmentProfileMCPWriterPreservesMode(t *testing.T) {
+	for _, stream := range []bool{false, true} {
+		for _, mode := range []os.FileMode{0400, 0600} {
+			t.Run(fmt.Sprintf("%v/%04o", stream, mode), func(t *testing.T) {
+				source := alignmentSource(t)
+				sourceConfig := filepath.Join(source, ".claude.json")
+				original := []byte(`{"unknown":{"label":"preserve"}}`)
+				if err := os.WriteFile(sourceConfig, original, mode); err != nil {
+					t.Fatal(err)
+				}
+				originalInfo, err := os.Lstat(sourceConfig)
+				if err != nil {
+					t.Fatal(err)
+				}
+				observedMode := originalInfo.Mode().Perm()
+				if runtime.GOOS != "windows" && observedMode != mode {
+					t.Fatalf("POSIX fixture mode: got %04o want %04o", observedMode, mode)
+				}
+				d := newAlignmentProfileDriver(source)
+				a := alignmentAgent(d, source, adaptor.WithThreadStore(memory.NewStore()))
+				t.Cleanup(func() { _ = a.Close(context.Background()) })
+				if _, err := alignmentCall(t, a.Thread("mode"), context.Background(), stream); err != nil {
+					if runtime.GOOS != "windows" || observedMode&0200 != 0 || !errors.Is(err, os.ErrPermission) || d.runCount() != 1 {
+						t.Fatal(err)
+					}
+					config := filepath.Join(d.request(t, 0).Profile.Dir, ".claude.json")
+					for _, path := range []string{sourceConfig, config} {
+						info, statErr := os.Lstat(path)
+						raw, readErr := os.ReadFile(path)
+						if statErr != nil || readErr != nil || info.Mode().Perm() != observedMode || string(raw) != string(original) {
+							t.Fatal("readonly rejection changed configuration", statErr, readErr)
+						}
+					}
+					t.Log("Windows refused readonly replacement; permission and content preserved")
+					return
+				}
+				if _, err := alignmentCall(t, a.Thread("mode", adaptor.ResumeOnly()), context.Background(), stream); err != nil {
+					t.Fatal("writer changed profile compatibility", err)
+				}
+				first, second := d.request(t, 0), d.request(t, 1)
+				if first.Session.EngineSessionID != second.Session.EngineSessionID || second.Session.PreviousID != "" || second.Session.State == nil {
+					t.Fatal("unchanged profile did not resume")
+				}
+				config := filepath.Join(first.Profile.Dir, ".claude.json")
+				for _, path := range []string{sourceConfig, config} {
+					info, err := os.Lstat(path)
+					if err != nil || info.Mode().Perm() != observedMode {
+						t.Fatal("configuration permissions changed", err)
+					}
+					raw, err := os.ReadFile(path)
+					if err != nil || !strings.Contains(string(raw), "preserve") {
+						t.Fatal("unknown configuration overwritten", err)
+					}
+					if path == sourceConfig && string(raw) != string(original) {
+						t.Fatal("source configuration modified")
+					}
+				}
+				driftMode := os.FileMode(0640)
+				if runtime.GOOS == "windows" {
+					driftMode = 0400
+					if observedMode&0200 == 0 {
+						driftMode = 0600
+					}
+				}
+				if err := os.Chmod(config, driftMode); err != nil {
+					t.Fatal(err)
+				}
+				driftInfo, err := os.Lstat(config)
+				if err != nil || driftInfo.Mode().Perm() == observedMode {
+					t.Fatal("fixture did not create observable permission drift", err)
+				}
+				if _, err := alignmentCall(t, a.Thread("mode", adaptor.ResumeOnly()), context.Background(), stream); !errors.Is(err, adaptor.ErrThreadIncompatible) {
+					t.Fatal("actual permission drift must reject resume", err)
+				}
+				if d.runCount() != 2 {
+					t.Fatal("permission drift reached Driver", d.runCount())
 				}
 			})
 		}
