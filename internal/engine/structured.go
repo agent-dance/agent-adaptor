@@ -8,6 +8,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/agent-dance/agent-adaptor/driver"
 	santhoshjsonschema "github.com/santhosh-tekuri/jsonschema/v6"
 )
 
@@ -53,25 +54,9 @@ func resolveStructuredOutputSource(desc Descriptor, schema *OutputSchema, provid
 		return "", nil
 	}
 	caps := desc.StructuredOutput
-	hitlAsk := policy.HumanDecision.Permission == HumanDecisionAsk ||
-		policy.HumanDecision.PlanReview == HumanDecisionAsk ||
-		policy.HumanDecision.Question == QuestionAsk
-
-	nativeOK := caps.JSONSchemaNative && caps.WorksWithRun
-	if nativeOK && providerStreaming && !caps.WorksWithStreaming {
-		nativeOK = false
-	}
-	if nativeOK && hitlAsk && !caps.WorksWithHITL {
-		nativeOK = false
-	}
-
-	promptOK := caps.JSONSchemaPromptValidate && caps.WorksWithRun
-	if promptOK && providerStreaming && !caps.WorksWithStreaming {
-		promptOK = false
-	}
-	if promptOK && hitlAsk && !caps.WorksWithHITL {
-		promptOK = false
-	}
+	transportOK := caps.WorksWithRun && (!providerStreaming || caps.WorksWithStreaming)
+	nativeOK := caps.JSONSchemaNative && transportOK && structuredHITLCompatible(caps.NativeHITL, caps.WorksWithHITL, policy)
+	promptOK := caps.JSONSchemaPromptValidate && transportOK && structuredHITLCompatible(caps.PromptValidateHITL, caps.WorksWithHITL, policy)
 
 	if nativeOK {
 		return StructuredOutputSourceNative, nil
@@ -79,10 +64,19 @@ func resolveStructuredOutputSource(desc Descriptor, schema *OutputSchema, provid
 	if promptOK {
 		return StructuredOutputSourcePromptValidate, nil
 	}
-	return "", &StructuredOutputUnsupportedError{Driver: desc.Type, Reason: structuredCapabilityReason(caps, providerStreaming, hitlAsk)}
+	return "", &StructuredOutputUnsupportedError{Driver: desc.Type, Reason: structuredCapabilityReason(caps, providerStreaming, policy)}
 }
 
-func structuredCapabilityReason(caps StructuredOutputCapability, providerStreaming, hitlAsk bool) string {
+func structuredHITLCompatible(matrix *driver.StructuredOutputHITLCapability, legacy bool, policy RunPolicy) bool {
+	if matrix == nil {
+		matrix = &driver.StructuredOutputHITLCapability{Permission: legacy, PlanReview: legacy, Question: legacy}
+	}
+	return (policy.HumanDecision.Permission != HumanDecisionAsk || matrix.Permission) &&
+		(policy.HumanDecision.PlanReview != HumanDecisionAsk || matrix.PlanReview) &&
+		(policy.HumanDecision.Question != QuestionAsk || matrix.Question)
+}
+
+func structuredCapabilityReason(caps StructuredOutputCapability, providerStreaming bool, policy RunPolicy) string {
 	switch {
 	case !caps.JSONSchemaNative && !caps.JSONSchemaPromptValidate:
 		return "neither native nor prompt-validation JSON Schema output is supported"
@@ -90,12 +84,18 @@ func structuredCapabilityReason(caps StructuredOutputCapability, providerStreami
 		return "structured output is not supported by the execution pipeline"
 	case providerStreaming && !caps.WorksWithStreaming:
 		return "structured output is not supported by the selected provider streaming transport"
-	case hitlAsk && !caps.WorksWithHITL:
-		return "structured output is not supported with HITL Ask modes"
-	case caps.Notes != "":
-		return caps.Notes
 	default:
-		return "unsupported structured output capability combination"
+		var kinds []string
+		if policy.HumanDecision.Permission == HumanDecisionAsk {
+			kinds = append(kinds, "Permission")
+		}
+		if policy.HumanDecision.PlanReview == HumanDecisionAsk {
+			kinds = append(kinds, "PlanReview")
+		}
+		if policy.HumanDecision.Question == QuestionAsk {
+			kinds = append(kinds, "Question")
+		}
+		return "no structured-output mechanism supports all effective HITL Ask kinds: " + strings.Join(kinds, ", ")
 	}
 }
 

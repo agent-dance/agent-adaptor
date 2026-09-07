@@ -1289,10 +1289,18 @@ type StructuredOutputCapability struct {
 	WorksWithRun bool
 	WorksWithStreaming bool
 	WorksWithHITL bool
+	NativeHITL *StructuredOutputHITLCapability
+	PromptValidateHITL *StructuredOutputHITLCapability
 	Notes string
 }
 
 const StructuredOutputFailRun StructuredOutputInvalidPolicy = "fail_run"
+
+type StructuredOutputHITLCapability struct {
+	Permission bool
+	PlanReview bool
+	Question bool
+}
 
 type StructuredOutputInvalidPolicy string
 

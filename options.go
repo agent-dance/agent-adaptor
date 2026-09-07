@@ -105,6 +105,9 @@ type RunSettings struct {
 	outputSchema    *driver.OutputSchema
 	outputSchemaErr error
 
+	// resolvedOutput is private per-invocation preflight state, never a default.
+	resolvedOutput resolvedStructuredOutput
+
 	// workspaceSpec selects the workspace provisioning strategy. It
 	// replaces as a whole value and, together with WithWorkspaceManager,
 	// switches the run from direct WithWorkspace(dir) lease synthesis to
@@ -309,6 +312,7 @@ func (s RunSettings) clone() RunSettings {
 		out.configPatches = &cp
 	}
 	out.outputSchema = engine.CloneOutputSchema(s.outputSchema)
+	out.resolvedOutput = resolvedStructuredOutput{}
 	out.effectiveProfile = engine.CloneProfileSelection(s.effectiveProfile)
 	out.services = engine.CloneRuntimeServiceSpecs(s.services)
 	out.runServices = append([]RunServiceProvider(nil), s.runServices...)

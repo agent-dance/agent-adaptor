@@ -13,6 +13,44 @@ import (
 // schema errors, prepares instructions, negotiates structured output, resolves
 // MCP and skills, and assembles the profile payload before Driver.Run starts.
 
+// resolvedStructuredOutput is computed once after policy validation and before
+// any resources are acquired. Request assembly consumes the same decision.
+type resolvedStructuredOutput struct {
+	schema    *driver.OutputSchema
+	source    driver.StructuredOutputSource
+	streaming bool
+}
+
+func (a *Agent) resolveStructuredOutput(desc driver.Descriptor, eff *RunSettings) (resolvedStructuredOutput, error) {
+	if eff.outputSchemaErr != nil {
+		return resolvedStructuredOutput{}, eff.outputSchemaErr
+	}
+	schema, err := engine.NormalizeOutputSchema(eff.outputSchema)
+	if err != nil {
+		return resolvedStructuredOutput{}, err
+	}
+	var policy driver.RunPolicy
+	if eff.policy != nil {
+		policy = eff.policy.driverPolicy()
+	}
+	streaming := providerRichTransport(a.driver)
+	source, err := engine.ResolveStructuredOutputSource(desc, schema, streaming, policy)
+	// Schema cannot sacrifice an effective Ask's interactive transport.
+	// With no such demand, a batch-only schema mechanism remains eligible.
+	asks := policy.HumanDecision.Permission == driver.HumanDecisionAsk ||
+		policy.HumanDecision.PlanReview == driver.HumanDecisionAsk ||
+		policy.HumanDecision.Question == driver.QuestionAsk
+	if err != nil && streaming && !asks {
+		if batchSource, batchErr := engine.ResolveStructuredOutputSource(desc, schema, false, policy); batchErr == nil {
+			streaming, source, err = false, batchSource, nil
+		}
+	}
+	if err != nil {
+		return resolvedStructuredOutput{}, err
+	}
+	return resolvedStructuredOutput{schema: schema, source: source, streaming: streaming}, nil
+}
+
 // resolvedRun is everything the invocation coordinator needs from one
 // resolution: the request itself and the normalized schema + negotiated
 // source for post-run structured output finalization.
@@ -22,26 +60,16 @@ type resolvedRun struct {
 	source driver.StructuredOutputSource
 }
 
-// resolveRun resolves one invocation. Every failure here is a pre-launch
-// failure: the driver is never started, and the error surfaces through the
-// stream's Result() (or Run's error return) with the engine sentinel chain
-// intact (ErrInvalidOutputSchema, ErrMCPTransportUnsupported,
+// resolveRun assembles one invocation after static schema/policy preflight.
+// Every remaining failure is pre-launch: the driver is never started, and
+// Result preserves the engine sentinel chain (ErrMCPTransportUnsupported,
 // ErrSkillNotFound, ...).
 func (a *Agent) resolveRun(ctx context.Context, runID, prompt string, eff *RunSettings, res *runResources) (resolvedRun, error) {
-	// 1. Schema construction failures recorded at option-build time fail
-	// the run before anything else.
-	if eff.outputSchemaErr != nil {
-		return resolvedRun{}, eff.outputSchemaErr
-	}
 	desc := a.driver.Descriptor()
 
 	var identity driver.AgentIdentity
 	if eff.identity != nil {
 		identity = eff.identity.driverIdentity()
-	}
-	var policy driver.RunPolicy
-	if eff.policy != nil {
-		policy = eff.policy.driverPolicy()
 	}
 
 	// 2. Instructions: normalize whitespace, path/content exclusivity, and
@@ -51,27 +79,11 @@ func (a *Agent) resolveRun(ctx context.Context, runID, prompt string, eff *RunSe
 		return resolvedRun{}, err
 	}
 
-	// 3. Structured output and provider transport: consumer Run and Stream
-	// both use the SDK's unified Event pipeline, so neither public method
-	// chooses the provider protocol. Prefer the driver's richer native
-	// transport only when StreamSupport advertises one; if a requested
-	// schema cannot be honored there, negotiate the batch transport instead.
-	schema, err := engine.NormalizeOutputSchema(eff.outputSchema)
-	if err != nil {
-		return resolvedRun{}, err
-	}
-	providerStreaming := providerRichTransport(a.driver)
-	source, err := engine.ResolveStructuredOutputSource(desc, schema, providerStreaming, policy)
-	if err != nil && providerStreaming {
-		batchSource, batchErr := engine.ResolveStructuredOutputSource(desc, schema, false, policy)
-		if batchErr == nil {
-			providerStreaming = false
-			source, err = batchSource, nil
-		}
-	}
-	if err != nil {
-		return resolvedRun{}, err
-	}
+	// 3. Reuse the schema/transport decision made before resource acquisition;
+	// consumer Run and Stream share this exact resolved invocation.
+	schema := eff.resolvedOutput.schema
+	source := eff.resolvedOutput.source
+	providerStreaming := eff.resolvedOutput.streaming
 	if schema != nil && source == driver.StructuredOutputSourcePromptValidate {
 		if instruction := engine.StructuredOutputPromptInstruction(schema); instruction != "" {
 			prompt = instruction + "\n\n" + prompt
