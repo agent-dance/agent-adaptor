@@ -11,6 +11,33 @@
 // github.com/a2aproject/a2a-go/v2/a2asrv for protocol handling; hosts remain
 // responsible for HTTP routing, auth middleware, TLS, tenancy, and durability.
 //
+// Failed runs use safe category text and, for a known primary reason, a closed
+// control object in Text Part.Metadata["agentadaptor.failure"]. Codes are
+// active_execution_timeout, approval_denied, approval_timeout, cancelled,
+// deadline_exceeded, agent_error, policy_violation, and infrastructure_error.
+// Only cancelled maps to canceled; the other codes map to failed. RunError.Reason
+// takes precedence over secondary cancellation, deadline, and budget causes.
+// Unknown carrier reasons remain failed with generic text and no promoted control
+// object. For bare errors, a fully drained Stream may supply a classification
+// hint: its only RunFinished must be last, Failed, have a known reason, and carry
+// a nonempty Meta.RunID matching the Stream.RunID captured on return. The provider
+// RunID in the event body may differ or be empty. Duplicate terminals (including
+// pointer forms), trailing events and invalid coordinates disable the hint.
+// Absent or invalid hints retain the bare active/cancel/deadline fallback.
+// Normal, cancellation and translation-error drains collect identically, but
+// independent bridge errors still take precedence. A hint never changes the
+// original error graph, creates a Result, or makes a successful Result fail.
+//
+// An active failure may include limit_ms from its positive typed
+// ActiveExecutionTimeoutError.Limit. It is ceil(Limit / time.Millisecond), in
+// 1..9223372036855; absent or invalid limits stay absent. RunError.Details never
+// supplies control fields. Diagnostics.IncludeMetadata may add sanitized details
+// under a separate metadata member for known reasons. Error messages and causes
+// never become status text, even with diagnostics enabled. Partial Result
+// artifacts precede the terminal status and retain the existing exposure gates;
+// safe code/limit fields do not enable Raw, Transcript, Usage or provider payloads.
+// This is status metadata, not a new adapter.stream.v1 event or retry policy.
+//
 // Inbound prompt extraction defaults to the last non-empty text part. Hosts can
 // provide a PromptBuilder to support domain-specific message, file, or data-part
 // projection without changing the SDK core.

@@ -58,13 +58,14 @@ func TestNewServerDefaultExposureOmitsDiagnostics(t *testing.T) {
 }
 
 // Lifecycle anchor: a business failure (driver Response.Failure) surfaces as
-// TASK_STATE_FAILED with the failure message preserved from *adaptor.RunError.
+// TASK_STATE_FAILED with a safe category message; private provider text stays local.
 func TestNewServerBusinessFailureMapsToFailedTask(t *testing.T) {
 	t.Parallel()
 
 	fake := &scriptedDriver{run: func(int, driver.Request, driver.EventSink) (driver.Response, error) {
 		return driver.Response{
-			Output: "partial",
+			Output:  "partial",
+			Summary: "safe partial summary",
 			Failure: &driver.RunFailure{
 				Code:    driver.FailureAgentError,
 				Message: "boom",
@@ -82,8 +83,12 @@ func TestNewServerBusinessFailureMapsToFailedTask(t *testing.T) {
 	if task == nil || task.Status.State != "TASK_STATE_FAILED" {
 		t.Fatalf("task = %+v", task)
 	}
-	if task.Status.Message == nil || len(task.Status.Message.Parts) == 0 || task.Status.Message.Parts[0].Text != "boom" {
+	if task.Status.Message == nil || len(task.Status.Message.Parts) == 0 || task.Status.Message.Parts[0].Text != "agent run failed" {
 		t.Fatalf("failure message = %+v", task.Status.Message)
+	}
+	artifact := findTaskArtifact(t, task.Artifacts, a2a.ArtifactAgentAdaptorResult)
+	if artifact.Parts[0].Data["summary"] != "safe partial summary" {
+		t.Fatalf("partial artifact = %+v", artifact)
 	}
 }
 

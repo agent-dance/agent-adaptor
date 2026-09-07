@@ -456,18 +456,3 @@ func defaultTerminalArtifacts(info a2aproto.TaskInfoProvider, result *adaptor.Re
 	ev.Artifact.Name = ArtifactAgentAdaptorResult
 	return []a2aproto.Event{ev}
 }
-
-// failureDetails exposes the typed FailureReason; Details ride the metadata
-// opt-in.
-func failureDetails(re *adaptor.RunError, exposure ExposurePolicy) map[string]any {
-	if re == nil {
-		return nil
-	}
-	out := map[string]any{"code": string(re.Reason)}
-	if exposure.Diagnostics.IncludeMetadata {
-		if metadata := sanitizeRemoteMap(re.Details); len(metadata) > 0 {
-			out["metadata"] = metadata
-		}
-	}
-	return out
-}

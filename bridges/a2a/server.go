@@ -253,13 +253,14 @@ func (e *executor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext)
 			return
 		}
 		if runCtx.Err() != nil {
-			yield(canceledStatus(execCtx, runCtx.Err()), nil)
+			yield(failureStatus(execCtx, runCtx.Err(), e.exposure, ""), nil)
 			return
 		}
 
 		// Stream never fails to start: startup problems close the event
 		// channel immediately and surface through Result() below.
 		stream := target.Stream(runCtx, prompt, callOpts...)
+		hint := terminalHint{runID: stream.RunID()}
 		defer stream.Cancel()
 		e.store(execCtx.TaskID, stream)
 		defer e.delete(execCtx.TaskID)
@@ -273,13 +274,15 @@ func (e *executor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext)
 				// Cancellation is a request to stop, not a second terminal
 				// authority. Drain the now-cancelled stream and let Result()
 				// classify the one terminal status below.
-				for range stream.Events() {
+				for ev := range stream.Events() {
+					hint.observe(ev)
 				}
 				goto drained
 			case ev, ok := <-stream.Events():
 				if !ok {
 					goto drained
 				}
+				hint.observe(ev)
 				for _, out := range translator.Translate(ev) {
 					if !yield(out, nil) {
 						stream.Cancel()
@@ -288,7 +291,8 @@ func (e *executor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext)
 				}
 				if translator.err != nil {
 					stream.Cancel()
-					for range stream.Events() {
+					for ev := range stream.Events() {
+						hint.observe(ev)
 					}
 					goto drained
 				}
@@ -296,6 +300,7 @@ func (e *executor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext)
 		}
 
 	drained:
+		hint.closed = true
 		// 4. Project exactly one terminal outcome. Business failures carry
 		// their partial Result and authoritative Reason in *RunError. Inspect that
 		// carrier before context causes, which may be secondary to a failure.
@@ -303,7 +308,7 @@ func (e *executor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext)
 		if translator.err != nil {
 			partial := res
 			var re *adaptor.RunError
-			if errors.As(runErr, &re) {
+			if errors.As(runErr, &re) && re != nil {
 				partial = re.Result
 			}
 			for _, ev := range defaultTerminalArtifacts(execCtx, partial, e.exposure) {
@@ -316,37 +321,25 @@ func (e *executor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext)
 		}
 		if runErr != nil {
 			var re *adaptor.RunError
-			if errors.As(runErr, &re) {
+			if errors.As(runErr, &re) && re != nil {
 				for _, ev := range defaultTerminalArtifacts(execCtx, re.Result, e.exposure) {
 					if !yield(ev, nil) {
 						return
 					}
 				}
-				if re.Reason == adaptor.ReasonCancelled {
-					yield(canceledStatus(execCtx, re), nil)
-					return
-				}
-				msg := failureMessage(execCtx, defaultString(re.Message, re.Error()), failureDetails(re, e.exposure))
-				yield(a2aproto.NewStatusUpdateEvent(execCtx, a2aproto.TaskStateFailed, msg), nil)
-				return
 			}
-			if errors.Is(runErr, context.Canceled) {
-				yield(canceledStatus(execCtx, runErr), nil)
-				return
-			}
-			msg := failureMessage(execCtx, runErr.Error(), map[string]any{"layer": "wait"})
-			yield(a2aproto.NewStatusUpdateEvent(execCtx, a2aproto.TaskStateFailed, msg), nil)
+			yield(failureStatus(execCtx, runErr, e.exposure, hint.reason()), nil)
 			return
 		}
 		built, err := e.buildResult(ctx, req, res)
 		if err != nil {
-			msg := failureMessage(execCtx, err.Error(), map[string]any{"layer": "result_builder"})
+			msg := failureMessage(execCtx, failureText(adaptor.ReasonInfrastructure), map[string]any{"code": string(adaptor.ReasonInfrastructure)})
 			yield(a2aproto.NewStatusUpdateEvent(execCtx, a2aproto.TaskStateFailed, msg), nil)
 			return
 		}
 		artifacts, err := terminalArtifacts(execCtx, res, e.exposure, built)
 		if err != nil {
-			msg := failureMessage(execCtx, err.Error(), map[string]any{"layer": "result_builder"})
+			msg := failureMessage(execCtx, failureText(adaptor.ReasonInfrastructure), map[string]any{"code": string(adaptor.ReasonInfrastructure)})
 			yield(a2aproto.NewStatusUpdateEvent(execCtx, a2aproto.TaskStateFailed, msg), nil)
 			return
 		}
@@ -424,14 +417,6 @@ func completedStatusText(result *adaptor.Result, built BuiltResult) string {
 		return ""
 	}
 	return result.Text
-}
-
-func canceledStatus(info a2aproto.TaskInfoProvider, cause error) *a2aproto.TaskStatusUpdateEvent {
-	msg := "task cancelled"
-	if cause != nil {
-		msg = cause.Error()
-	}
-	return a2aproto.NewStatusUpdateEvent(info, a2aproto.TaskStateCanceled, failureMessage(info, msg, map[string]any{"code": string(adaptor.ReasonCancelled)}))
 }
 
 func defaultPrompt(_ context.Context, req InboundRequest) (string, []adaptor.CallOption, error) {
