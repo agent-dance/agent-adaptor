@@ -16,7 +16,10 @@ var (
 	ErrInvalidDefinition = errors.New("agentadaptor: invalid tool definition")
 
 	// ErrInvalidInput identifies arguments that do not satisfy a tool's input
-	// schema or cannot be decoded into its Go input type.
+	// schema or cannot be decoded into its Go input type. Invalid argument
+	// failures from Definition.Invoke also carry an invalid_input rejection
+	// recognized by AsRejection; a nil context is a host programming error and
+	// does not carry a model-visible correction.
 	ErrInvalidInput = errors.New("agentadaptor: invalid tool input")
 
 	// ErrInvalidOutput identifies a handler result that does not satisfy its
