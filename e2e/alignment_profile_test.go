@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -13,6 +14,7 @@ import (
 	"reflect"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -46,7 +48,12 @@ func TestAlignmentLifecycleProfileColdResume(t *testing.T) {
 			if first.Profile == f.profile || first.Carrier == "" || first.TokenHash == "" || first.Endpoint == "" {
 				t.Fatalf("incomplete isolated profile observation: %+v", first)
 			}
-			if e := a.Close(ctx); e != nil {
+			oldToken, err := os.ReadFile(filepath.Join(f.log+".credentials", first.TokenHash))
+			if err != nil || len(oldToken) == 0 {
+				t.Fatal("private old credential missing")
+			}
+			alignmentGatewayCredential(t, first.Endpoint, string(oldToken), true)
+			if e := alignmentClose(t, a, ctx); e != nil {
 				t.Fatal(e)
 			}
 			session := filepath.Join(first.Profile, "projects", "session-t20.jsonl")
@@ -88,14 +95,8 @@ func TestAlignmentLifecycleProfileColdResume(t *testing.T) {
 			if _, err := os.Stat(filepath.Join(f.profile, "mcp.json")); !os.IsNotExist(err) {
 				t.Error("source polluted")
 			}
-			req, _ := http.NewRequestWithContext(ctx, http.MethodPost, first.Endpoint, strings.NewReader(`{}`))
-			if resp, err := http.DefaultClient.Do(req); err == nil {
-				resp.Body.Close()
-				if resp.StatusCode != http.StatusUnauthorized {
-					t.Errorf("old endpoint remained usable: %d", resp.StatusCode)
-				}
-			}
-			if e = next.Close(ctx); e != nil {
+			alignmentGatewayCredential(t, first.Endpoint, string(oldToken), false)
+			if e = alignmentClose(t, next, ctx); e != nil {
 				t.Fatal(e)
 			}
 			raw, e := os.ReadFile(filepath.Join(second.Profile, "mcp.json"))
@@ -106,6 +107,53 @@ func TestAlignmentLifecycleProfileColdResume(t *testing.T) {
 				t.Error("owned projection survived Close")
 			}
 		})
+	}
+}
+
+// A timeout is not revocation evidence. The exact formerly accepted credential
+// must now be explicitly rejected, or its loopback listener must refuse connection.
+func alignmentGatewayCredential(t *testing.T, endpoint, token string, accepted bool) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(`{"jsonrpc":"2.0","id":77,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"t20","version":"1"}}}`))
+	if err != nil {
+		t.Fatal("invalid fixture endpoint")
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	transport := &http.Transport{Proxy: nil}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Transport: transport, Timeout: 2 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	resp, err := client.Do(req)
+	if err != nil {
+		if !accepted && errors.Is(err, syscall.ECONNREFUSED) {
+			return
+		}
+		t.Fatalf("credential probe did not establish expected state accepted=%v: %v", accepted, err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		t.Fatal("credential probe response did not complete")
+	}
+	if !accepted {
+		if resp.StatusCode != http.StatusUnauthorized && resp.StatusCode != http.StatusForbidden {
+			t.Fatalf("old authenticated endpoint remains available: status %d", resp.StatusCode)
+		}
+		return
+	}
+	var reply struct {
+		Result struct {
+			ProtocolVersion string `json:"protocolVersion"`
+		}
+		Error json.RawMessage
+	}
+	// This gateway uses JSON responses for initialize; success proves this token
+	// was actually accepted before Close, not merely present in a carrier.
+	if resp.StatusCode != http.StatusOK || json.Unmarshal(body, &reply) != nil || reply.Result.ProtocolVersion == "" || len(reply.Error) != 0 {
+		t.Fatalf("old credential never authenticated: status %d", resp.StatusCode)
 	}
 }
 
@@ -135,7 +183,7 @@ func alignmentContender() int {
 		_, _ = os.Stdin.Read(one[:])
 		return 0
 	}
-	defer a.Close(ctx)
+	defer alignmentCloseContext(a, context.Background())
 	if errors.Is(e, profile.ErrInUse) {
 		fmt.Println("in-use")
 		return 0
@@ -194,7 +242,7 @@ func TestAlignmentLifecycleProfileOwnership(t *testing.T) {
 			}
 		}
 	}
-	if e := a.Close(ctx); e != nil {
+	if e := alignmentClose(t, a, ctx); e != nil {
 		t.Fatal(e)
 	}
 	if _, e := b.Run(ctx, "successor"); e != nil {
@@ -205,7 +253,7 @@ func TestAlignmentLifecycleProfileOwnership(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if e = a.Close(ctx); e != nil {
+	if e = alignmentClose(t, a, ctx); e != nil {
 		t.Fatal(e)
 	}
 	after, _ := os.ReadFile(state)
@@ -237,7 +285,7 @@ func TestAlignmentLifecycleProfileUnsafeAndModes(t *testing.T) {
 			}
 			entry := f.wait(t, "prompt", 1)[0]
 			before, _ := store.Resolve(ctx, threadstore.Query{Key: "guard"})
-			if e := a.Close(ctx); e != nil {
+			if e := alignmentClose(t, a, ctx); e != nil {
 				t.Fatal(e)
 			}
 			want := profile.ErrUnsafe
@@ -265,9 +313,6 @@ func TestAlignmentLifecycleProfileUnsafeAndModes(t *testing.T) {
 					t.Fatal(e)
 				}
 			case "permissions":
-				if runtime.GOOS == "windows" {
-					t.Log("POSIX mode branch replaced by observable read-only rejection; DACL native gate remains T26")
-				}
 				if e := os.Chmod(filepath.Join(filepath.Dir(entry.Profile), "owner.json"), 0644); e != nil {
 					t.Fatal(e)
 				}
@@ -328,7 +373,7 @@ func TestAlignmentLifecycleProfileTemporaryCleanup(t *testing.T) {
 			if entry.Profile == native || entry.Profile == f.profile {
 				t.Error("temporary selection used source directly")
 			}
-			if e := a.Close(ctx); e != nil {
+			if e := alignmentClose(t, a, ctx); e != nil {
 				t.Fatal(e)
 			}
 			if _, e := os.Stat(entry.Profile); !os.IsNotExist(e) {
@@ -355,7 +400,7 @@ func TestAlignmentLifecycleProfileMissingSession(t *testing.T) {
 	}
 	entry := f.wait(t, "prompt", 1)[0]
 	before, _ := store.Resolve(ctx, threadstore.Query{Key: "history"})
-	if e := a.Close(ctx); e != nil {
+	if e := alignmentClose(t, a, ctx); e != nil {
 		t.Fatal(e)
 	}
 	if e := os.Remove(filepath.Join(entry.Profile, "projects", "session-t20.jsonl")); e != nil {
@@ -411,7 +456,7 @@ func TestAlignmentLifecycleProfileCloseCleanupRetry(t *testing.T) {
 	if e = os.Mkdir(path, 0700); e != nil {
 		t.Fatal(e)
 	}
-	if e = a.Close(ctx); e == nil {
+	if e = alignmentClose(t, a, ctx); e == nil {
 		t.Fatal("unowned projection cleanup was not rejected")
 	}
 	if _, e = a.Run(ctx, "closed"); !errors.Is(e, adaptor.ErrAgentClosed) {
@@ -427,7 +472,7 @@ func TestAlignmentLifecycleProfileCloseCleanupRetry(t *testing.T) {
 	if e = os.WriteFile(path, original, 0600); e != nil {
 		t.Fatal(e)
 	}
-	if e = a.Close(ctx); e != nil {
+	if e = alignmentClose(t, a, ctx); e != nil {
 		t.Fatalf("retry: %v", e)
 	}
 	if _, e = b.Run(ctx, "successor"); e != nil {
@@ -466,7 +511,7 @@ func TestAlignmentLifecycleProfileMCPModePreserved(t *testing.T) {
 	if _, e := a.Thread("mode", adaptor.ResumeOnly()).Run(ctx, "second"); e != nil {
 		t.Fatal(e)
 	}
-	if e = a.Close(ctx); e != nil {
+	if e = alignmentClose(t, a, ctx); e != nil {
 		t.Fatal(e)
 	}
 	after, e := os.ReadFile(source)

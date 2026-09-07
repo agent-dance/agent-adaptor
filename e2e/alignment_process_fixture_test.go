@@ -13,6 +13,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -170,17 +171,28 @@ func alignmentProvider(provider string) int {
 			if json.Unmarshal(scanner.Bytes(), &response) != nil || response["type"] != "control_response" {
 				return 73
 			}
+			// Hand-written expected wire is deliberately separate from request construction.
+			// Exact map equality also rejects invented question_type or other extra fields.
+			expectedInput := `{"file_path":"README.md"}`
+			if name == "AskUserQuestion" {
+				expectedInput = `{"questions":[{"question":"Destination?","header":"Target","multiSelect":false,"options":[{"label":"docs","description":"docs"},{"label":"src","description":"src"}]}],"answers":{"Destination?":"docs"}}`
+			} else if name == "ExitPlanMode" {
+				expectedInput = `{"plan":"check docs"}`
+			}
+			var expected map[string]any
+			if json.Unmarshal([]byte(`{"type":"control_response","response":{"subtype":"success","request_id":"t20-approval","response":{"behavior":"allow","toolUseID":"t20-tool","updatedInput":`+expectedInput+`}}}`), &expected) != nil {
+				return 79
+			}
+			if !reflect.DeepEqual(response, expected) {
+				fmt.Fprintln(os.Stderr, "t20-invalid-approval-wire")
+				return 79
+			}
 			body := alignmentObject(alignmentObject(response["response"])["response"])
 			alignmentAppend(alignmentLog{Kind: "answer", Prompt: alignmentText(body["behavior"])})
 			if body["behavior"] != "allow" {
 				return 74
 			}
-			if name == "AskUserQuestion" && alignmentObject(alignmentObject(body["updatedInput"])["answers"])["Destination?"] != "docs" {
-				return 79
-			}
-			if name == "ExitPlanMode" && alignmentObject(body["updatedInput"])["plan"] != "check docs" {
-				return 79
-			}
+
 		}
 		if strings.Contains(prompt, "partial") || (strings.Contains(prompt, "nonzero") && !strings.Contains(prompt, "terminal-nonzero")) || strings.Contains(prompt, "malformed") || strings.Contains(prompt, "missing") {
 			alignmentEmit(map[string]any{"type": "stream_event", "event": map[string]any{"type": "message_start", "message": map[string]any{"id": "partial-t20", "usage": map[string]any{"input_tokens": 7, "output_tokens": 3}}}})
@@ -304,8 +316,17 @@ func alignmentDiskSession(prof, prompt, resume string, entry *alignmentLog) erro
 		if strings.HasPrefix(h, "Bearer ${env:") {
 			name := strings.TrimSuffix(strings.TrimPrefix(h, "Bearer ${env:"), "}")
 			entry.Carrier = name
-			hash := sha256.Sum256([]byte(os.Getenv(name)))
+			token := os.Getenv(name)
+			hash := sha256.Sum256([]byte(token))
 			entry.TokenHash = hex.EncodeToString(hash[:])
+			// Credentials use a private control file; the event ledger only holds a digest.
+			secretDir := os.Getenv("AA_T20_LOG") + ".credentials"
+			if e := os.MkdirAll(secretDir, 0700); e != nil {
+				return e
+			}
+			if e := os.WriteFile(filepath.Join(secretDir, entry.TokenHash), []byte(token), 0600); e != nil {
+				return e
+			}
 		}
 	}
 	path := filepath.Join(prof, "projects", "session-t20.jsonl")
@@ -439,7 +460,7 @@ func (f *alignmentFixture) agent(t *testing.T, opts ...adaptor.Option) *adaptor.
 	t.Cleanup(func() {
 		ctx, c := context.WithTimeout(context.Background(), 4*time.Second)
 		defer c()
-		if e := a.Close(ctx); e != nil {
+		if e := alignmentClose(t, a, ctx); e != nil {
 			t.Errorf("cleanup Close: %v", e)
 		}
 	})

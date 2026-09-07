@@ -18,14 +18,70 @@ import (
 	"github.com/agent-dance/agent-adaptor/threadstore"
 )
 
+// Local watchdogs do not rely on the SDK honoring cancellation during a regression.
+const alignmentWaitLimit = 8 * time.Second
+
 func alignmentDrain(t *testing.T, s adaptor.Stream) (*adaptor.Result, error, []adaptor.Event) {
 	t.Helper()
+	return alignmentCollect(t, s, nil)
+}
+func alignmentCollect(t *testing.T, s adaptor.Stream, visit func(adaptor.Event)) (*adaptor.Result, error, []adaptor.Event) {
+	t.Helper()
+	timer := time.NewTimer(alignmentWaitLimit)
+	defer timer.Stop()
 	var events []adaptor.Event
-	for e := range s.Events() {
-		events = append(events, e)
+	for {
+		select {
+		case event, open := <-s.Events():
+			if !open {
+				goto result
+			}
+			events = append(events, event)
+			if visit != nil {
+				visit(event)
+			}
+		case <-timer.C:
+			go s.Cancel()
+			t.Fatal("local watchdog: Events did not close")
+		}
 	}
-	r, e := s.Result()
-	return r, e, events
+result:
+	type outcome struct {
+		result *adaptor.Result
+		err    error
+	}
+	done := make(chan outcome, 1)
+	go func() { r, e := s.Result(); done <- outcome{r, e} }()
+	select {
+	case out := <-done:
+		return out.result, out.err, events
+	case <-timer.C:
+		go s.Cancel()
+		t.Fatal("local watchdog: Result did not return after Events closed")
+		return nil, nil, events
+	}
+}
+func alignmentClose(t *testing.T, a *adaptor.Agent, parent context.Context) error {
+	t.Helper()
+	return alignmentCloseContext(a, parent)
+}
+func alignmentCloseContext(a *adaptor.Agent, parent context.Context) error {
+	ctx, cancel := context.WithTimeout(parent, 4*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- a.Close(ctx) }()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(5 * time.Second):
+		return errors.New("local watchdog: Agent.Close did not return")
+	}
+}
+func alignmentCleanupAgent(t *testing.T, a *adaptor.Agent) {
+	t.Helper()
+	if err := alignmentClose(t, a, context.Background()); err != nil {
+		t.Errorf("cleanup Close: %v", err)
+	}
 }
 func alignmentEnvelope(t *testing.T, events []adaptor.Event, id string, reason adaptor.FailureReason) {
 	t.Helper()
@@ -108,7 +164,7 @@ func TestAlignmentLifecycleResultOnly(t *testing.T) {
 				}
 				if streaming {
 					alignmentEnvelope(t, events, s.RunID(), reason)
-					again, againErr := s.Result()
+					again, againErr, _ := alignmentDrain(t, s)
 					if (again == nil) != (err != nil) || againErr != err {
 						t.Error("Result not stable")
 					}
@@ -297,12 +353,14 @@ func TestAlignmentLifecycleApprovalSchema(t *testing.T) {
 					policy.Permission = adaptor.ApprovalAsk
 				}
 				s := a.Thread("approval").Stream(ctx, "ask-"+kind, adaptor.WithSpawn(), adaptor.WithPolicy(adaptor.Policy{Approvals: policy}), adaptor.WithSchemaJSON([]byte(alignmentSchema)))
-				var events []adaptor.Event
 				requests := 0
-				for event := range s.Events() {
-					events = append(events, event)
+				r, e, events := alignmentCollect(t, s, func(event adaptor.Event) {
 					if req, ok := event.(*adaptor.ApprovalRequest); ok {
 						requests++
+						wantKind := map[string]adaptor.ApprovalKind{"question": adaptor.ApprovalQuestion, "plan": adaptor.ApprovalPlanReview, "permission": adaptor.ApprovalPermission}[kind]
+						if req.Kind != wantKind {
+							t.Errorf("Kind=%s want=%s", req.Kind, wantKind)
+						}
 						var e error
 						switch outcome {
 						case "allow":
@@ -318,8 +376,7 @@ func TestAlignmentLifecycleApprovalSchema(t *testing.T) {
 							t.Errorf("respond: %v", e)
 						}
 					}
-				}
-				r, e := s.Result()
+				})
 				reason := adaptor.FailureReason("")
 				if outcome == "allow" {
 					if e != nil {
@@ -386,7 +443,10 @@ func (d *alignmentAuditDriver) Run(ctx context.Context, req driver.Request, sink
 			return nil
 		}
 		return &driver.StructuredOutput{Format: driver.OutputFormatJSONSchema, Source: driver.StructuredOutputSourceNative, RawJSON: json.RawMessage(`{"value":"ok"}`), Valid: true}
-	}(), Output: "audit-text", Summary: "audit-summary", Model: "audit-model", Provider: "audit-provider", Metadata: map[string]string{"safe": "observed"}, Usage: &driver.Usage{InputTokens: 17, OutputTokens: 9}, RawStreams: &driver.RawStreams{Stdout: "audit-stdout\n", Stderr: "audit-stderr\n", Terminal: &driver.TerminalPayload{Event: "result", JSON: json.RawMessage(`{"success":true}`)}}, Transcript: []driver.TranscriptItem{{Kind: driver.TranscriptAssistant, Text: "audit-text"}, {Kind: driver.TranscriptResult, Text: "audit-summary"}}, RuntimeServices: []driver.RuntimeServiceReport{{ID: "observed-service", Status: driver.RuntimeServiceRunning}}, Checkpoint: &driver.Checkpoint{Valid: true, State: &driver.SessionState{ResumeID: "audit-session"}}}, d.err
+	}(), Output: "audit-text", Summary: "audit-summary", Model: "audit-model", Provider: "audit-provider", Metadata: map[string]string{"safe": "observed"}, Usage: &driver.Usage{InputTokens: 17, OutputTokens: 9}, RawStreams: &driver.RawStreams{Stdout: "audit-stdout\n", Stderr: "audit-stderr\n", Terminal: &driver.TerminalPayload{Event: "result", JSON: json.RawMessage(`{"success":true}`)}}, Transcript: []driver.TranscriptItem{
+		{Kind: driver.TranscriptAssistant, ScopeID: "scope-a", ParentScopeID: "parent-a", ParentToolCallID: "parent-tool", Text: "audit-text", Model: "audit-model", SessionID: "audit-session", Metadata: map[string]string{"origin": "protocol"}, Data: map[string]any{"segments": []any{"one", "two"}}},
+		{Kind: driver.TranscriptResult, Text: "audit-summary", Subtype: "success", Usage: &driver.Usage{InputTokens: 17, OutputTokens: 9}, CostUSD: func() *float64 { v := 0.125; return &v }(), Metadata: map[string]string{"terminal": "observed"}},
+	}, RuntimeServices: []driver.RuntimeServiceReport{{ID: "observed-service", Name: "fixture service", URL: "http://127.0.0.1:7654", Status: driver.RuntimeServiceRunning, Lifecycle: driver.RuntimeLifecycleEphemeral, ReuseKey: "service-reuse", Command: "fixture-command", CWD: "fixture-workspace", Port: 7654, OwnerAgentID: "audit-owner", Health: driver.RuntimeHealthHealthy, Metadata: map[string]string{"probe": "passed"}}}, Checkpoint: &driver.Checkpoint{Valid: true, State: &driver.SessionState{ResumeID: "audit-session"}}}, d.err
 }
 
 type alignmentCodec struct{}
@@ -407,17 +467,30 @@ func (alignmentCodec) FromParams(p driver.SessionParams) *driver.SessionState {
 func (alignmentCodec) GuardFingerprint(driver.SessionParams) string { return "t20-guard" }
 
 type alignmentCleanup struct {
-	entered, release chan struct{}
-	err              error
+	entered, release         chan struct{}
+	err                      error
+	enteredOnce, releaseOnce sync.Once
+}
+
+func (w *alignmentCleanup) unblock() {
+	if w.release != nil {
+		w.releaseOnce.Do(func() { close(w.release) })
+	}
 }
 
 func (w *alignmentCleanup) Resolve(context.Context, adaptor.WorkspaceRequest) (adaptor.WorkspaceLease, error) {
 	return adaptor.WorkspaceLease{CWD: ".", Fingerprint: "t20-workspace"}, nil
 }
-func (w *alignmentCleanup) Release(context.Context, adaptor.WorkspaceLease, adaptor.WorkspaceReleaseMode) error {
+func (w *alignmentCleanup) Release(ctx context.Context, _ adaptor.WorkspaceLease, _ adaptor.WorkspaceReleaseMode) error {
 	if w.entered != nil {
-		close(w.entered)
-		<-w.release
+		w.enteredOnce.Do(func() { close(w.entered) })
+		select {
+		case <-w.release:
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(alignmentWaitLimit):
+			return errors.New("local watchdog: cleanup release barrier")
+		}
 	}
 	return w.err
 }
@@ -458,7 +531,7 @@ func TestAlignmentLifecycleFinalAuthority(t *testing.T) {
 					opts = append(opts, adaptor.WithRunServices(alignmentSource{}))
 				}
 				a := adaptor.New(d, opts...)
-				defer a.Close(context.Background())
+				defer alignmentCleanupAgent(t, a)
 				ctx, c := alignmentContext(t)
 				defer c()
 				th := a.Thread("authority")
@@ -477,6 +550,7 @@ func TestAlignmentLifecycleFinalAuthority(t *testing.T) {
 				}
 				w.entered = make(chan struct{})
 				w.release = make(chan struct{})
+				defer w.unblock()
 				s := th.Stream(ctx, "second")
 				var mu sync.Mutex
 				var events []adaptor.Event
@@ -494,8 +568,9 @@ func TestAlignmentLifecycleFinalAuthority(t *testing.T) {
 				}()
 				select {
 				case <-w.entered:
-				case <-ctx.Done():
-					t.Fatal("cleanup not entered")
+				case <-time.After(alignmentWaitLimit):
+					go s.Cancel()
+					t.Fatal("local watchdog: cleanup not entered")
 				}
 				mu.Lock()
 				for _, e := range events {
@@ -504,8 +579,13 @@ func TestAlignmentLifecycleFinalAuthority(t *testing.T) {
 					}
 				}
 				mu.Unlock()
-				close(w.release)
-				<-done
+				w.unblock()
+				select {
+				case <-done:
+				case <-time.After(alignmentWaitLimit):
+					go s.Cancel()
+					t.Fatal("local watchdog: final result did not return")
+				}
 				re := alignmentCarried(t, r, err)
 				if re.Reason != adaptor.ReasonInfrastructure {
 					t.Errorf("reason=%s", re.Reason)
@@ -531,7 +611,16 @@ func TestAlignmentLifecycleFinalAuthority(t *testing.T) {
 }
 func alignmentAuditFields(t *testing.T, r *adaptor.Result) {
 	t.Helper()
-	if r.Text != "audit-text" || r.Summary != "audit-summary" || r.Model != "audit-model" || r.Provider != "audit-provider" || r.Usage == nil || *r.Usage != (adaptor.Usage{InputTokens: 17, OutputTokens: 9}) || r.Metadata["safe"] != "observed" || r.Raw().Stdout != "audit-stdout\n" || r.Raw().Stderr != "audit-stderr\n" || r.Raw().Terminal == nil || string(r.Raw().Terminal.JSON) != `{"success":true}` || len(r.Transcript()) != 2 || len(r.Services()) != 1 {
+	cost := 0.125
+	// Independent expected values use public Result vocabulary and are never derived
+	// from the fixture Response, actual Result, or the production conversion helper.
+	wantTranscript := []adaptor.TranscriptItem{
+		{Kind: "assistant", ScopeID: "scope-a", ParentScopeID: "parent-a", ParentToolCallID: "parent-tool", Text: "audit-text", Model: "audit-model", SessionID: "audit-session", Metadata: map[string]string{"origin": "protocol"}, Data: map[string]any{"segments": []any{"one", "two"}}},
+		{Kind: "result", Text: "audit-summary", Subtype: "success", Usage: &adaptor.Usage{InputTokens: 17, OutputTokens: 9}, CostUSD: &cost, Metadata: map[string]string{"terminal": "observed"}},
+	}
+	wantServices := []adaptor.ServiceReport{{ID: "observed-service", Name: "fixture service", URL: "http://127.0.0.1:7654", Status: "running", Lifecycle: "ephemeral", ReuseKey: "service-reuse", Command: "fixture-command", CWD: "fixture-workspace", Port: 7654, OwnerAgentID: "audit-owner", Health: "healthy", Metadata: map[string]string{"probe": "passed"}}}
+	wantRaw := adaptor.RawStreams{Stdout: "audit-stdout\n", Stderr: "audit-stderr\n", Terminal: &adaptor.TerminalPayload{Event: "result", JSON: json.RawMessage(`{"success":true}`)}}
+	if r.Text != "audit-text" || r.Summary != "audit-summary" || r.Model != "audit-model" || r.Provider != "audit-provider" || r.Usage == nil || *r.Usage != (adaptor.Usage{InputTokens: 17, OutputTokens: 9}) || !reflect.DeepEqual(r.Metadata, map[string]string{"safe": "observed"}) || !reflect.DeepEqual(r.Raw(), wantRaw) || !reflect.DeepEqual(r.Transcript(), wantTranscript) || !reflect.DeepEqual(r.Services(), wantServices) {
 		t.Errorf("audit fields lost: %+v raw=%+v tr=%+v services=%+v", r, r.Raw(), r.Transcript(), r.Services())
 	}
 }
@@ -539,7 +628,7 @@ func TestAlignmentLifecycleRunStreamAuditEquivalence(t *testing.T) {
 	cause := errors.New("transport")
 	d := &alignmentAuditDriver{err: cause}
 	a := adaptor.New(d)
-	defer a.Close(context.Background())
+	defer alignmentCleanupAgent(t, a)
 	ctx, c := alignmentContext(t)
 	defer c()
 	r, e := a.Run(ctx, "x")
@@ -563,7 +652,7 @@ func TestAlignmentLifecycleRunStreamAuditEquivalence(t *testing.T) {
 func TestAlignmentLifecycleStaticRejection(t *testing.T) {
 	d := &alignmentAuditDriver{}
 	a := adaptor.New(d)
-	defer a.Close(context.Background())
+	defer alignmentCleanupAgent(t, a)
 	ctx, c := alignmentContext(t)
 	defer c()
 	s := a.Stream(ctx, "x", adaptor.WithPolicy(adaptor.Policy{ActiveExecutionTimeout: -1}))
@@ -708,13 +797,16 @@ func (d *alignmentCloseDriver) CloseProcesses(ctx context.Context) error {
 func TestAlignmentLifecycleCloseDeadlineRetry(t *testing.T) {
 	d := &alignmentCloseDriver{permit: make(chan struct{})}
 	a := adaptor.New(d, adaptor.WithThreadStore(memory.NewStore()))
+	var permitOnce sync.Once
+	release := func() { permitOnce.Do(func() { close(d.permit) }) }
+	defer func() { release(); alignmentCleanupAgent(t, a) }()
 	ctx, c := alignmentContext(t)
 	defer c()
 	if _, e := a.Thread("close").Run(ctx, "healthy"); e != nil {
 		t.Fatal(e)
 	}
 	short, stop := context.WithTimeout(ctx, 20*time.Millisecond)
-	e := a.Close(short)
+	e := alignmentClose(t, a, short)
 	stop()
 	if !errors.Is(e, context.DeadlineExceeded) {
 		t.Errorf("Close bound error=%v", e)
@@ -726,11 +818,11 @@ func TestAlignmentLifecycleCloseDeadlineRetry(t *testing.T) {
 			t.Errorf("Close reopened admission result=%v err=%v events=%d", result, err, len(events))
 		}
 	}
-	close(d.permit)
-	if e = a.Close(ctx); e != nil {
+	release()
+	if e = alignmentClose(t, a, ctx); e != nil {
 		t.Fatal(e)
 	}
-	if e = a.Close(ctx); e != nil {
+	if e = alignmentClose(t, a, ctx); e != nil {
 		t.Fatal(e)
 	}
 	if d.calls.Load() != 1 {
@@ -743,7 +835,7 @@ func TestAlignmentLifecycleStructuredAuditEquivalence(t *testing.T) {
 	a := adaptor.New(d)
 	ctx, c := alignmentContext(t)
 	defer c()
-	defer a.Close(ctx)
+	defer alignmentCleanupAgent(t, a)
 	r, e := a.Run(ctx, "schema", adaptor.WithSchemaJSON([]byte(alignmentSchema)))
 	if e != nil {
 		t.Fatal(e)
@@ -821,7 +913,7 @@ func TestAlignmentLifecycleAdmissionBoundary(t *testing.T) {
 			a := adaptor.New(d, adaptor.WithRunServices(p))
 			ctx, c := alignmentContext(t)
 			defer c()
-			defer a.Close(ctx)
+			defer alignmentCleanupAgent(t, a)
 			var opts []adaptor.CallOption
 			if static {
 				opts = append(opts, adaptor.WithSchemaJSON([]byte(`{"type":`)))
@@ -875,5 +967,173 @@ func TestAlignmentLifecycleTerminalCancellationRace(t *testing.T) {
 				t.Error("terminal cancellation replayed prompt")
 			}
 		})
+	}
+}
+
+func TestAlignmentLifecyclePermissionWithoutSchema(t *testing.T) {
+	for _, method := range []string{"Run", "Stream"} {
+		t.Run(method, func(t *testing.T) {
+			f := newAlignmentFixture(t, "claude")
+			a := f.agent(t)
+			ctx, cancel := alignmentContext(t)
+			defer cancel()
+			var requests atomic.Int32
+			opts := []adaptor.CallOption{adaptor.WithSpawn(), adaptor.WithPolicy(adaptor.Policy{Approvals: adaptor.ApprovalPolicy{Permission: adaptor.ApprovalAsk, PlanReview: adaptor.ApprovalAutoApprove}}), adaptor.OnApproval(func(ctx context.Context, req *adaptor.ApprovalRequest) error {
+				requests.Add(1)
+				if req.Kind != adaptor.ApprovalPermission || req.ToolCallID != "t20-tool" {
+					return errors.New("unexpected Permission request identity")
+				}
+				return req.Approve(ctx)
+			})}
+			var r *adaptor.Result
+			var err error
+			if method == "Run" {
+				r, err = a.Run(ctx, "ask-permission", opts...)
+			} else {
+				s := a.Stream(ctx, "ask-permission", opts...)
+				var events []adaptor.Event
+				r, err, events = alignmentDrain(t, s)
+				alignmentEnvelope(t, events, s.RunID(), "")
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if requests.Load() != 1 || r.Raw().Terminal == nil || r.Raw().Terminal.Event != "result" {
+				t.Fatal("ordinary Permission roundtrip lost")
+			}
+			if len(f.wait(t, "answer", 1)) != 1 || f.wait(t, "prompt", 1)[0].Native {
+				t.Fatal("unexpected answer count/native schema without schema")
+			}
+		})
+	}
+}
+
+type alignmentLegacyHITLDriver struct {
+	works, policyAsk, requestDecision bool
+	calls                             atomic.Int32
+	sources                           chan driver.StructuredOutputSource
+}
+
+func (d *alignmentLegacyHITLDriver) Descriptor() driver.Descriptor {
+	return driver.Descriptor{Type: "t20-legacy-hitl", RunPolicyCaps: driver.RunPolicyCapabilities{Permission: driver.HumanDecisionSupport{Ask: d.policyAsk}}, StructuredOutput: driver.StructuredOutputCapability{JSONSchemaNative: true, JSONSchemaPromptValidate: true, WorksWithRun: true, WorksWithStreaming: true, WorksWithHITL: d.works}}
+}
+func (*alignmentLegacyHITLDriver) ValidateConfig(any) error { return nil }
+func (*alignmentLegacyHITLDriver) StreamCapability() driver.StreamCapability {
+	return driver.StreamCapability{Native: true, HITL: true}
+}
+func (d *alignmentLegacyHITLDriver) Run(ctx context.Context, req driver.Request, sink driver.EventSink) (driver.Response, error) {
+	d.calls.Add(1)
+	d.sources <- req.StructuredOutputSource
+	if err := sink.EmitStream(driver.StreamPayload{Kind: driver.StreamRunStarted}); err != nil {
+		return driver.Response{}, err
+	}
+	if d.requestDecision {
+		decisions, ok := sink.(driver.DecisionCapableSink)
+		if !ok {
+			return driver.Response{}, errors.New("decision sink missing")
+		}
+		reply, err := decisions.RequestDecision(ctx, driver.DecisionRequest{RequestID: "legacy-permission", Kind: driver.HumanDecisionPermission, Source: "t20", ToolCallID: "legacy-tool", Prompt: "Allow fixture read?"})
+		if err != nil {
+			return driver.Response{}, err
+		}
+		if reply.RequestID != "legacy-permission" || reply.Result != driver.DecisionApproved {
+			return driver.Response{}, errors.New("legacy decision reply mismatch")
+		}
+	}
+	if err := sink.EmitStream(driver.StreamPayload{Kind: driver.StreamRunFinished}); err != nil {
+		return driver.Response{}, err
+	}
+	response := driver.Response{Output: `{"value":"ok"}`}
+	if req.OutputSchema != nil {
+		response.StructuredOutput = &driver.StructuredOutput{Format: driver.OutputFormatJSONSchema, Source: req.StructuredOutputSource, RawJSON: json.RawMessage(`{"value":"ok"}`), Valid: true}
+	}
+	return response, nil
+}
+func TestAlignmentLifecycleLegacyHITLMatrix(t *testing.T) {
+	cases := []struct {
+		name                               string
+		works, explicit, policyAsk, schema bool
+		wantErr                            error
+		source                             driver.StructuredOutputSource
+	}{
+		{"explicit-legacy-true", true, true, true, true, nil, driver.StructuredOutputSourceNative},
+		{"explicit-legacy-false", false, true, true, true, driver.ErrStructuredOutputUnsupported, ""},
+		{"unset-legacy-false", false, false, true, true, nil, driver.StructuredOutputSourceNative},
+		{"unset-legacy-true", true, false, true, true, nil, driver.StructuredOutputSourceNative},
+		{"ordinary-policy-first", true, true, false, true, driver.ErrHumanDecisionModeUnsupported, ""},
+		{"no-schema-legacy-false", false, true, true, false, nil, ""},
+	}
+	for _, tc := range cases {
+		for _, method := range []string{"Run", "Stream"} {
+			t.Run(tc.name+"/"+method, func(t *testing.T) {
+				d := &alignmentLegacyHITLDriver{works: tc.works, policyAsk: tc.policyAsk, requestDecision: tc.explicit, sources: make(chan driver.StructuredOutputSource, 1)}
+				resource := &alignmentAdmissionProbe{}
+				a := adaptor.New(d, adaptor.WithRunServices(resource))
+				defer alignmentCleanupAgent(t, a)
+				ctx, cancel := alignmentContext(t)
+				defer cancel()
+				var answered atomic.Int32
+				opts := []adaptor.CallOption{adaptor.OnApproval(func(ctx context.Context, req *adaptor.ApprovalRequest) error {
+					answered.Add(1)
+					if req.Kind != adaptor.ApprovalPermission || req.ToolCallID != "legacy-tool" {
+						return errors.New("legacy public approval mismatch")
+					}
+					return req.Approve(ctx)
+				})}
+				if tc.explicit {
+					opts = append(opts, adaptor.WithPolicy(adaptor.Policy{Approvals: adaptor.ApprovalPolicy{Permission: adaptor.ApprovalAsk}}))
+				}
+				if tc.schema {
+					opts = append(opts, adaptor.WithSchemaJSON([]byte(alignmentSchema)))
+				}
+				var r *adaptor.Result
+				var err error
+				var events []adaptor.Event
+				var id string
+				if method == "Run" {
+					r, err = a.Run(ctx, "legacy", opts...)
+				} else {
+					s := a.Stream(ctx, "legacy", opts...)
+					id = s.RunID()
+					r, err, events = alignmentDrain(t, s)
+				}
+				if tc.wantErr != nil {
+					if r != nil || !errors.Is(err, tc.wantErr) || d.calls.Load() != 0 || resource.calls.Load() != 0 || len(events) != 0 || answered.Load() != 0 {
+						t.Fatalf("static rejection result=%v err=%v driver=%d resources=%d approvals=%d events=%d", r, err, d.calls.Load(), resource.calls.Load(), answered.Load(), len(events))
+					}
+					return
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				if d.calls.Load() != 1 || resource.calls.Load() != 1 {
+					t.Fatalf("invocation count driver=%d resource=%d", d.calls.Load(), resource.calls.Load())
+				}
+				select {
+				case actual := <-d.sources:
+					if actual != tc.source {
+						t.Errorf("resolved source=%s want=%s", actual, tc.source)
+					}
+				default:
+					t.Fatal("Driver source missing")
+				}
+				wantAnswers := int32(0)
+				if tc.explicit {
+					wantAnswers = 1
+				}
+				if answered.Load() != wantAnswers {
+					t.Errorf("approvals=%d want=%d", answered.Load(), wantAnswers)
+				}
+				if tc.schema {
+					var value struct{ Value string }
+					if err := r.Decode(&value); err != nil || value.Value != "ok" {
+						t.Fatal("legacy schema output lost")
+					}
+				}
+				if method == "Stream" {
+					alignmentEnvelope(t, events, id, "")
+				}
+			})
+		}
 	}
 }
