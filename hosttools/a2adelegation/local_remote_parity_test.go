@@ -215,20 +215,26 @@ func parityWireFrames(t *testing.T, script parityScript) []string {
 		rpc(`{"statusUpdate":{"taskId":"task-1","contextId":"ctx-1","status":{"state":"TASK_STATE_WORKING"}}}`),
 	}
 	if len(script.deltas) > 0 {
+		// The real Local core consumes RunStarted and the unsupported-observation
+		// Notice before the first text frame. Keep original source sequences.
 		seq := uint64(1)
-		frames = append(frames, statusFrame(seq, map[string]any{"kind": "text.start", "sequence": seq, "message_id": "m1"}))
+		frames = append(frames, statusFrame(seq, map[string]any{"kind": "text.start", "sequence": seq + 2, "message_id": "m1"}))
 		for _, delta := range script.deltas {
 			seq++
-			frames = append(frames, statusFrame(seq, map[string]any{"kind": "text.content", "sequence": seq, "message_id": "m1", "delta": delta}))
+			frames = append(frames, statusFrame(seq, map[string]any{"kind": "text.content", "sequence": seq + 2, "message_id": "m1", "delta": delta}))
 		}
 		seq++
-		frames = append(frames, statusFrame(seq, map[string]any{"kind": "text.end", "sequence": seq, "message_id": "m1"}))
+		frames = append(frames, statusFrame(seq, map[string]any{"kind": "text.end", "sequence": seq + 2, "message_id": "m1"}))
 	}
 	state := "TASK_STATE_COMPLETED"
 	if script.fail {
 		state = "TASK_STATE_FAILED"
 	}
-	frames = append(frames, rpc(fmt.Sprintf(`{"statusUpdate":{"taskId":"task-1","contextId":"ctx-1","status":{"state":%q}}}`, state)))
+	if script.fail {
+		frames = append(frames, rpc(`{"statusUpdate":{"taskId":"task-1","contextId":"ctx-1","status":{"state":"TASK_STATE_FAILED","message":{"role":"ROLE_AGENT","parts":[{"text":"agent execution failed","metadata":{"agentadaptor.failure":{"code":"agent_error"}}}]}}}}`))
+	} else {
+		frames = append(frames, rpc(fmt.Sprintf(`{"statusUpdate":{"taskId":"task-1","contextId":"ctx-1","status":{"state":%q}}}`, state)))
+	}
 	return frames
 }
 
@@ -307,6 +313,7 @@ func TestLocalRemoteParitySuccess(t *testing.T) {
 	// adapter.stream.v1 profile yields started → status(working) →
 	// (status+decoded) per frame → status(completed) → finished.
 	wantKinds := []a2adelegation.DelegationEventKind{
+		a2adelegation.DelegationCapabilityInvocation,
 		a2adelegation.DelegationStarted,
 		a2adelegation.DelegationStatus,
 		a2adelegation.DelegationStatus, a2adelegation.DelegationTextStart,
@@ -314,6 +321,7 @@ func TestLocalRemoteParitySuccess(t *testing.T) {
 		a2adelegation.DelegationStatus, a2adelegation.DelegationTextDelta,
 		a2adelegation.DelegationStatus, a2adelegation.DelegationTextEnd,
 		a2adelegation.DelegationStatus,
+		a2adelegation.DelegationCapabilityInvocation,
 		a2adelegation.DelegationFinished,
 	}
 	if len(local.shapes) != len(wantKinds) {
@@ -356,16 +364,18 @@ func TestLocalRemoteParityFailure(t *testing.T) {
 	if !errors.As(local.err, &localDErr) || !errors.As(remote.err, &remoteDErr) {
 		t.Fatalf("errs not *DelegationError: local=%T remote=%T", local.err, remote.err)
 	}
-	if localDErr.Code != remoteDErr.Code || localDErr.Code != "remote_failed" {
-		t.Errorf("error codes: local=%q remote=%q, want both remote_failed", localDErr.Code, remoteDErr.Code)
+	if localDErr.Code != remoteDErr.Code || localDErr.Code != "agent_error" {
+		t.Errorf("error codes: local=%q remote=%q, want both agent_error", localDErr.Code, remoteDErr.Code)
 	}
 	if !reflect.DeepEqual(local.shapes, remote.shapes) {
 		t.Fatalf("event shapes diverge:\nlocal:  %s\nremote: %s", dumpShapes(local.shapes), dumpShapes(remote.shapes))
 	}
 	wantKinds := []a2adelegation.DelegationEventKind{
+		a2adelegation.DelegationCapabilityInvocation,
 		a2adelegation.DelegationStarted,
 		a2adelegation.DelegationStatus,
 		a2adelegation.DelegationStatus,
+		a2adelegation.DelegationCapabilityInvocation,
 		a2adelegation.DelegationFailed,
 	}
 	if len(local.shapes) != len(wantKinds) {

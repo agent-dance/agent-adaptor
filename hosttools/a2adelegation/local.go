@@ -52,14 +52,15 @@ type localClient struct {
 
 	taskSeq atomic.Uint64
 
-	mu    sync.Mutex
-	tasks map[string]clienta2a.Task
+	mu       sync.Mutex
+	tasks    map[string]clienta2a.Task
+	failures map[string]*DelegationError
 }
 
 var _ A2AClient = (*localClient)(nil)
 
 func newLocalClient(key string, runner Runner) *localClient {
-	return &localClient{key: key, runner: runner, tasks: make(map[string]clienta2a.Task)}
+	return &localClient{key: key, runner: runner, tasks: make(map[string]clienta2a.Task), failures: map[string]*DelegationError{}}
 }
 
 // AgentCard returns the synthetic card; the Delegator overlays the spec's
@@ -68,11 +69,18 @@ func (c *localClient) AgentCard(ctx context.Context) (clienta2a.AgentCard, error
 	return *localAgentCard(c.key), nil
 }
 
-// Send executes the runner to completion (non-streaming path).
+// Send drains one Runner.Stream and then reads that same Stream.Result.
+// A qualified final RunFinished can classify a bare error only after closure;
+// it cannot create failure or override a non-nil RunError carrier.
 func (c *localClient) Send(ctx context.Context, req clienta2a.SendRequest) (clienta2a.Task, error) {
 	taskID, contextID := c.newTaskIdentity(req)
-	res, runErr := c.runner.Run(ctx, promptFromMessage(req.Message))
-	task := c.finalTask(taskID, contextID, res, runErr)
+	stream := c.runner.Stream(ctx, promptFromMessage(req.Message), adaptor.WithRunServices(localObservationDemand{}))
+	hint := terminalReason{runID: stream.RunID()}
+	for ev := range stream.Events() {
+		hint.observe(ev)
+	}
+	res, runErr := stream.Result()
+	task := c.finalTask(taskID, contextID, res, runErr, hint.reason())
 	c.storeTask(task)
 	return task, nil
 }
@@ -87,12 +95,13 @@ func (c *localClient) SendStream(ctx context.Context, req clienta2a.SendRequest)
 	// receiveA2AStream cancels via stream close + ctx, and the Delegator's
 	// timeout context is the ctx we get here.
 	runCtx, cancel := context.WithCancel(ctx)
-	stream := c.runner.Stream(runCtx, promptFromMessage(req.Message))
+	stream := c.runner.Stream(runCtx, promptFromMessage(req.Message), adaptor.WithRunServices(localObservationDemand{}))
 	ls := &localA2AStream{
 		client:    c,
 		taskID:    taskID,
 		contextID: contextID,
 		stream:    stream,
+		hint:      terminalReason{runID: stream.RunID()},
 		cancel:    cancel,
 	}
 	c.storeTask(clienta2a.Task{
@@ -148,31 +157,29 @@ func (c *localClient) storeTask(task clienta2a.Task) {
 // finalTask folds the runner outcome into a terminal A2A task. Business
 // failures use the authoritative RunError.Reason before secondary context
 // causes; explicit cancellation maps to canceled. Partial text survives all
-// RunError outcomes. Bare context errors retain their existing canceled mapping.
+// RunError outcomes. Bare cancellation maps to canceled; bare deadline maps to failed.
 // Success carries the final text as
 // a single agent message so resultFromTask lifts it into Summary/Messages.
-func (c *localClient) finalTask(taskID, contextID string, res *adaptor.Result, runErr error) clienta2a.Task {
+func (c *localClient) finalTask(taskID, contextID string, res *adaptor.Result, runErr error, hint string) clienta2a.Task {
 	task := clienta2a.Task{ID: taskID, ContextID: contextID}
-	var finalText string
 	var runFail *adaptor.RunError
-	switch {
-	case runErr == nil:
-		task.Status = clienta2a.TaskStatus{State: clienta2a.TaskStateCompleted}
-		if res != nil {
-			finalText = res.Text
-		}
-	case errors.As(runErr, &runFail):
-		task.Status = clienta2a.TaskStatus{State: clienta2a.TaskStateFailed}
-		if runFail.Reason == adaptor.ReasonCancelled {
-			task.Status.State = clienta2a.TaskStateCanceled
-		}
-		if runFail.Result != nil {
-			finalText = runFail.Result.Text
-		}
-	case errors.Is(runErr, context.Canceled) || errors.Is(runErr, context.DeadlineExceeded):
-		task.Status = clienta2a.TaskStatus{State: clienta2a.TaskStateCanceled}
-	default:
-		task.Status = clienta2a.TaskStatus{State: clienta2a.TaskStateFailed}
+	if errors.As(runErr, &runFail) && runFail != nil && runFail.Result != nil {
+		res = runFail.Result
+	}
+	var finalText string
+	if res != nil {
+		finalText = res.Text
+	}
+	task.Status = clienta2a.TaskStatus{State: clienta2a.TaskStateCompleted}
+	if runErr != nil {
+		failure := rootFailureHint(runErr, hint)
+		task.Status = failureStatus(failure)
+		c.mu.Lock()
+		c.failures[taskID] = failure
+		c.mu.Unlock()
+	}
+	if res != nil && res.Summary != "" {
+		task.Artifacts = []clienta2a.Artifact{{ID: bridgea2a.ArtifactAgentAdaptorResult, Name: bridgea2a.ArtifactAgentAdaptorResult, Parts: []clienta2a.Part{{Kind: clienta2a.PartData, Data: map[string]any{"summary": res.Summary}}}}}
 	}
 	if finalText != "" {
 		task.Messages = []clienta2a.Message{{
@@ -210,9 +217,11 @@ type localA2AStream struct {
 	stream    adaptor.Stream
 	cancel    context.CancelFunc
 
+	hint        terminalReason
 	seq         uint64
 	sentInitial bool
 	sentFinal   bool
+	pending     []clienta2a.Event
 	closeOnce   sync.Once
 }
 
@@ -239,6 +248,11 @@ func (s *localA2AStream) RecvContext(ctx context.Context) (clienta2a.Event, erro
 			Status:    &status,
 		}, nil
 	}
+	if len(s.pending) > 0 {
+		ev := s.pending[0]
+		s.pending = s.pending[1:]
+		return ev, nil
+	}
 	if s.sentFinal {
 		return clienta2a.Event{}, io.EOF
 	}
@@ -250,12 +264,15 @@ func (s *localA2AStream) RecvContext(ctx context.Context) (clienta2a.Event, erro
 			if !ok {
 				return s.finalEvent()
 			}
+			s.hint.observe(ev)
 			frame, matched := adapterStreamFrame(ev)
 			if !matched {
 				continue
 			}
 			s.seq++
-			frame["sequence"] = s.seq
+			if _, ok := frame["sequence"]; !ok {
+				frame["sequence"] = s.seq
+			}
 			envelope := map[string]any{
 				"schema": bridgea2a.AdapterStreamSchemaV1,
 				"event":  frame,
@@ -284,14 +301,15 @@ func (s *localA2AStream) RecvContext(ctx context.Context) (clienta2a.Event, erro
 func (s *localA2AStream) finalEvent() (clienta2a.Event, error) {
 	s.sentFinal = true
 	res, runErr := s.stream.Result()
-	task := s.client.finalTask(s.taskID, s.contextID, res, runErr)
-	return clienta2a.Event{
-		Kind:      clienta2a.EventTerminal,
-		TaskID:    s.taskID,
-		ContextID: s.contextID,
-		Task:      &task,
-		Status:    &task.Status,
-	}, nil
+	task := s.client.finalTask(s.taskID, s.contextID, res, runErr, s.hint.reason())
+	for i := range task.Artifacts {
+		artifact := cloneA2AArtifact(task.Artifacts[i])
+		s.pending = append(s.pending, clienta2a.Event{Kind: clienta2a.EventArtifact, TaskID: task.ID, ContextID: task.ContextID, Artifact: &artifact, LastChunk: true})
+	}
+	s.pending = append(s.pending, clienta2a.Event{Kind: clienta2a.EventTerminal, TaskID: s.taskID, ContextID: s.contextID, Task: &task, Status: &task.Status})
+	ev := s.pending[0]
+	s.pending = s.pending[1:]
+	return ev, nil
 }
 
 // Close cancels the underlying runner stream. Idempotent.
@@ -308,7 +326,15 @@ func (s *localA2AStream) Close() error {
 // are the driver SPI StreamKind values — exactly what the remote bridge emits
 // and what adapterStreamStatusDecoder understands, which is what makes Local
 // and Remote event sequences comparable.
-func adapterStreamFrame(ev adaptor.Event) (map[string]any, bool) {
+func adapterStreamFrame(ev adaptor.Event) (frame map[string]any, matched bool) {
+	defer func() {
+		if matched {
+			setLocalMeta(frame, ev.Meta())
+		}
+	}()
+	if v, ok := encodeLocalFact(ev); ok {
+		return v, true
+	}
 	switch e := ev.(type) {
 	case adaptor.TextDelta:
 		if e.Role == adaptor.RoleUser {
@@ -344,7 +370,7 @@ func adapterStreamFrame(ev adaptor.Event) (map[string]any, bool) {
 		}
 		return frame, true
 	case adaptor.ToolCall:
-		frame := map[string]any{"tool_call_id": e.ID}
+		frame := map[string]any{"tool_call_id": e.ID, "scope_id": e.ScopeID, "parent_scope_id": e.ParentScopeID, "parent_tool_call_id": e.ParentToolCallID}
 		switch e.Phase {
 		case adaptor.PhaseStart:
 			frame["kind"] = string(driver.StreamToolCallStart)
@@ -366,7 +392,7 @@ func adapterStreamFrame(ev adaptor.Event) (map[string]any, bool) {
 		}
 		return frame, true
 	case adaptor.ToolResult:
-		frame := map[string]any{"tool_call_id": e.ID, "kind": string(driver.StreamToolCallResult)}
+		frame := map[string]any{"tool_call_id": e.ID, "kind": string(driver.StreamToolCallResult), "scope_id": e.ScopeID, "parent_scope_id": e.ParentScopeID, "parent_tool_call_id": e.ParentToolCallID}
 		if len(e.Result) > 0 {
 			frame["result"] = e.Result
 		}
@@ -377,4 +403,38 @@ func adapterStreamFrame(ev adaptor.Event) (map[string]any, bool) {
 		// semantic stream only.
 		return nil, false
 	}
+}
+
+type localObservationDemand struct{}
+
+func (localObservationDemand) AttachRun(context.Context, string) (adaptor.RunAttachment, error) {
+	return adaptor.RunAttachment{Observation: adaptor.ObservationDemand{CapabilityInvocations: true, Todos: true}}, nil
+}
+func (localObservationDemand) DetachRun(context.Context, string) error { return nil }
+func (s *localA2AStream) cancelledTask(ctx context.Context) (clienta2a.Task, error) {
+	s.stream.Cancel()
+	for {
+		select {
+		case ev, ok := <-s.stream.Events():
+			if !ok {
+				res, err := s.stream.Result()
+				return s.client.finalTask(s.taskID, s.contextID, res, err, s.hint.reason()), err
+			}
+			s.hint.observe(ev)
+		case <-ctx.Done():
+			return clienta2a.Task{}, ctx.Err()
+		}
+	}
+}
+
+func (c *localClient) taskFailure(id string) *DelegationError {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	d := c.failures[id]
+	if d == nil {
+		return nil
+	}
+	copy := *d
+	copy.Metadata = cloneAnyMap(d.Metadata)
+	return &copy
 }

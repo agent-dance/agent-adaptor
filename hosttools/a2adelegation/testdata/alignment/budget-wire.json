@@ -1,0 +1,263 @@
+{
+  "contract_version": 1,
+  "namespace": "agentadaptor.failure",
+  "accepted": [
+    {
+      "id": "active-limit",
+      "state": "failed",
+      "failure": {
+        "code": "active_execution_timeout",
+        "limit_ms": 100
+      },
+      "code": "active_execution_timeout",
+      "limit_ms": 100
+    },
+    {
+      "id": "active_execution_timeout",
+      "state": "failed",
+      "failure": {
+        "code": "active_execution_timeout"
+      },
+      "code": "active_execution_timeout"
+    },
+    {
+      "id": "approval_denied",
+      "state": "failed",
+      "failure": {
+        "code": "approval_denied"
+      },
+      "code": "approval_denied"
+    },
+    {
+      "id": "approval_timeout",
+      "state": "failed",
+      "failure": {
+        "code": "approval_timeout"
+      },
+      "code": "approval_timeout"
+    },
+    {
+      "id": "cancelled",
+      "state": "canceled",
+      "failure": {
+        "code": "cancelled"
+      },
+      "code": "cancelled"
+    },
+    {
+      "id": "deadline_exceeded",
+      "state": "failed",
+      "failure": {
+        "code": "deadline_exceeded"
+      },
+      "code": "deadline_exceeded"
+    },
+    {
+      "id": "agent_error",
+      "state": "failed",
+      "failure": {
+        "code": "agent_error"
+      },
+      "code": "agent_error"
+    },
+    {
+      "id": "policy_violation",
+      "state": "failed",
+      "failure": {
+        "code": "policy_violation"
+      },
+      "code": "policy_violation"
+    },
+    {
+      "id": "infrastructure_error",
+      "state": "failed",
+      "failure": {
+        "code": "infrastructure_error"
+      },
+      "code": "infrastructure_error"
+    },
+    {
+      "id": "min-limit",
+      "state": "failed",
+      "failure": {
+        "code": "active_execution_timeout",
+        "limit_ms": 1
+      },
+      "code": "active_execution_timeout",
+      "limit_ms": 1
+    },
+    {
+      "id": "max-limit",
+      "state": "failed",
+      "failure": {
+        "code": "active_execution_timeout",
+        "limit_ms": 9223372036855
+      },
+      "code": "active_execution_timeout",
+      "limit_ms": 9223372036855
+    },
+    {
+      "id": "metadata-cannot-override",
+      "state": "failed",
+      "failure": {
+        "code": "active_execution_timeout",
+        "limit_ms": 100,
+        "metadata": {
+          "code": "cancelled",
+          "limit_ms": 1
+        }
+      },
+      "code": "active_execution_timeout",
+      "limit_ms": 100
+    }
+  ],
+  "not_promoted": [
+    {
+      "id": "zero",
+      "state": "failed",
+      "failure": {
+        "code": "active_execution_timeout",
+        "limit_ms": 0
+      },
+      "code": "remote_failed",
+      "diagnostic": "failure_payload_invalid"
+    },
+    {
+      "id": "negative",
+      "state": "failed",
+      "failure": {
+        "code": "active_execution_timeout",
+        "limit_ms": -1
+      },
+      "code": "remote_failed",
+      "diagnostic": "failure_payload_invalid"
+    },
+    {
+      "id": "fraction",
+      "state": "failed",
+      "failure": {
+        "code": "active_execution_timeout",
+        "limit_ms": 1.5
+      },
+      "code": "remote_failed",
+      "diagnostic": "failure_payload_invalid"
+    },
+    {
+      "id": "string",
+      "state": "failed",
+      "failure": {
+        "code": "active_execution_timeout",
+        "limit_ms": "100"
+      },
+      "code": "remote_failed",
+      "diagnostic": "failure_payload_invalid"
+    },
+    {
+      "id": "boolean",
+      "state": "failed",
+      "failure": {
+        "code": "active_execution_timeout",
+        "limit_ms": true
+      },
+      "code": "remote_failed",
+      "diagnostic": "failure_payload_invalid"
+    },
+    {
+      "id": "overflow",
+      "state": "failed",
+      "failure": {
+        "code": "active_execution_timeout",
+        "limit_ms": 9223372036856
+      },
+      "code": "remote_failed",
+      "diagnostic": "failure_payload_invalid"
+    },
+    {
+      "id": "extra-control",
+      "state": "failed",
+      "failure": {
+        "code": "active_execution_timeout",
+        "limit_ms": 100,
+        "token": "secret"
+      },
+      "code": "remote_failed",
+      "diagnostic": "failure_payload_invalid"
+    },
+    {
+      "id": "limit-on-approval",
+      "state": "failed",
+      "failure": {
+        "code": "approval_denied",
+        "limit_ms": 100
+      },
+      "code": "remote_failed",
+      "diagnostic": "failure_payload_invalid"
+    },
+    {
+      "id": "old-spi-code",
+      "state": "failed",
+      "failure": {
+        "code": "decision_timeout"
+      },
+      "code": "remote_failed",
+      "diagnostic": "failure_payload_invalid"
+    },
+    {
+      "id": "state-mismatch",
+      "state": "canceled",
+      "failure": {
+        "code": "active_execution_timeout",
+        "limit_ms": 100
+      },
+      "code": "remote_cancelled",
+      "diagnostic": "failure_payload_invalid"
+    }
+  ],
+  "duration_projection": [
+    {
+      "limit_ns": 1,
+      "limit_ms": 1
+    },
+    {
+      "limit_ns": 100000000,
+      "limit_ms": 100
+    },
+    {
+      "limit_ns": 100000001,
+      "limit_ms": 101
+    },
+    {
+      "limit_ns": 9223372036854775807,
+      "limit_ms": 9223372036855
+    }
+  ],
+  "fake_clock_trace": [
+    {
+      "action": "advance",
+      "ms": 40
+    },
+    {
+      "action": "pause",
+      "token": "A"
+    },
+    {
+      "action": "advance",
+      "ms": 300
+    },
+    {
+      "action": "release",
+      "token": "A"
+    },
+    {
+      "action": "advance",
+      "ms": 50,
+      "expired": false
+    },
+    {
+      "action": "advance",
+      "ms": 10,
+      "expired": true,
+      "limit_ms": 100
+    }
+  ]
+}

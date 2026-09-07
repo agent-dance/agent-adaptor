@@ -25,7 +25,10 @@ import (
 	"strings"
 	"time"
 
+	adaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/capability"
 	clienta2a "github.com/agent-dance/agent-adaptor/clients/a2a"
+	"github.com/agent-dance/agent-adaptor/todo"
 )
 
 // ProtocolA2A identifies the A2A transport used by remote and local-loopback
@@ -39,6 +42,10 @@ const DelegateToolName = "delegate_to_agent"
 type DelegationEventKind string
 
 const (
+	// DelegationCapabilityInvocation carries a validated host or relayed fact.
+	DelegationCapabilityInvocation DelegationEventKind = "capability.invocation"
+	// DelegationTodoUpdated carries a full snapshot, including an empty clear.
+	DelegationTodoUpdated DelegationEventKind = "todo.updated"
 	// DelegationStarted reports that the target accepted the delegated task.
 	DelegationStarted DelegationEventKind = "subagent.started"
 	// DelegationStatus carries an A2A task status update.
@@ -103,11 +110,14 @@ type RemoteAgentSpec struct {
 // DelegationPolicy bounds remote execution and controls transport behavior.
 // Zero timeout, polling, count, and artifact values select Delegator defaults.
 type DelegationPolicy struct {
-	MaxTimeout         time.Duration
-	AllowInputRequired bool
-	RequireStreaming   bool
-	PollInterval       time.Duration
-	MaxPolls           int
+	MaxTimeout time.Duration
+	// MaxActiveExecutionTimeout bounds active time independently of MaxTimeout.
+	// Zero imposes no active ceiling; negative values are invalid.
+	MaxActiveExecutionTimeout time.Duration
+	AllowInputRequired        bool
+	RequireStreaming          bool
+	PollInterval              time.Duration
+	MaxPolls                  int
 	// MaxArtifactBytes caps each cumulative artifact before event publication
 	// and final projection. It counts part strings, inline bytes, JSON Data,
 	// part/artifact metadata, protocol Raw and extension strings; remote URLs
@@ -138,6 +148,9 @@ func NewRegistry(specs ...RemoteAgentSpec) (*Registry, error) {
 
 // Register validates and adds one target. Duplicate keys are rejected.
 func (r *Registry) Register(spec RemoteAgentSpec) error {
+	if spec.Policy.MaxActiveExecutionTimeout < 0 {
+		return &DelegationError{Code: "invalid_policy", Message: "active execution timeout must be nonnegative"}
+	}
 	if r.agents == nil {
 		r.agents = map[string]RemoteAgentSpec{}
 	}
@@ -188,7 +201,10 @@ func (r *Registry) Keys() []string {
 // events to the leader run; Agent selects a Registry key. Message, when set,
 // takes precedence over Prompt/Objective/Context and Artifacts.
 type DelegationRequest struct {
-	RunID            string
+	RunID string
+	// ScopeID is the caller scope; ParentScopeID is the actual parent tool scope.
+	ScopeID          string
+	ParentScopeID    string
 	ParentToolCallID string
 	ContextID        string
 	Agent            string
@@ -207,10 +223,14 @@ type DelegationRequest struct {
 	MaxArtifacts  *int
 	HistoryLength *int
 	Timeout       time.Duration
-	Stream        bool
-	Tenant        string
-	Metadata      map[string]any
-	StageContext  DelegationStageContext
+	// ActiveExecutionTimeout budgets this Delegate, including Before and recovery.
+	// Zero means no request ceiling; the positive policy ceiling still applies.
+	// It never changes a Local Runner Policy or pauses a parent budget.
+	ActiveExecutionTimeout time.Duration
+	Stream                 bool
+	Tenant                 string
+	Metadata               map[string]any
+	StageContext           DelegationStageContext
 }
 
 // InputArtifact is a model-facing reference supplied to a delegated task.
@@ -283,7 +303,10 @@ type StatusPartDecoder interface {
 // Identity and remote coordinates are separate from the semantic payload so a
 // host can correlate leader tool calls, delegation attempts, and A2A objects.
 type DelegationEvent struct {
-	RunID            string
+	RunID string
+	// ScopeID is the caller scope; ParentScopeID is the actual parent tool scope.
+	ScopeID          string
+	ParentScopeID    string
 	ParentToolCallID string
 	DelegationID     string
 	AgentKey         string
@@ -297,14 +320,19 @@ type DelegationEvent struct {
 	RemoteToolCallID string
 	Sequence         uint64
 
-	Kind     DelegationEventKind
-	Name     string
-	Role     string
-	Delta    string
-	Text     string
-	ToolName string
-	Args     any
-	Result   any
+	// Capability and Todo are independent snapshots; Source is the immediate
+	// upstream envelope with its previous source preserved in Upstream.
+	Capability *capability.Invocation
+	Todo       *todo.Snapshot
+	Source     *adaptor.EventSourceMeta
+	Kind       DelegationEventKind
+	Name       string
+	Role       string
+	Delta      string
+	Text       string
+	ToolName   string
+	Args       any
+	Result     any
 	// Artifact carries the current update. When full content was not requested,
 	// Raw contains only parts_omitted=remote_artifacts_not_requested instead of
 	// the original artifact protocol payload. Over-limit/invalid updates use
@@ -351,6 +379,8 @@ type DelegationMessage struct {
 // DelegationError is a stable host-facing error with optional A2A status and
 // retry metadata.
 type DelegationError struct {
+	// Cause preserves the original error graph; Code remains the primary cause.
+	Cause        error          `json:"-"`
 	Code         string         `json:"code"`
 	Message      string         `json:"message"`
 	Retryable    bool           `json:"retryable,omitempty"`
@@ -370,6 +400,14 @@ func (e *DelegationError) Error() string {
 		return e.Code
 	}
 	return "delegation failed"
+}
+
+// Unwrap retains original errors for errors.Is/As, including partial RunError.
+func (e *DelegationError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Cause
 }
 
 // DelegationLifecycleHook observes one resolved delegation before remote I/O

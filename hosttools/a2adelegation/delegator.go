@@ -14,7 +14,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	adaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/capability"
 	clienta2a "github.com/agent-dance/agent-adaptor/clients/a2a"
+	"github.com/agent-dance/agent-adaptor/internal/activebudget"
 )
 
 const remoteCancelTimeout = 5 * time.Second
@@ -66,6 +69,9 @@ type Delegator struct {
 	// before their Started event becomes visible to EventBus subscribers.
 	publishMu     sync.Mutex
 	beforePublish func(DelegationEvent)
+	publishRun    func(context.Context, DelegationEvent) error
+	recordFinal   func(DelegationRequest, DelegationResult)
+	budgetClock   activebudget.Clock
 }
 
 // DelegatorOption configures a Delegator during construction.
@@ -97,12 +103,27 @@ func NewDelegator(registry *Registry, bus *EventBus, opts ...DelegatorOption) *D
 
 type delegationRun struct {
 	*Delegator
-	publishEvent func(DelegationEvent)
+	publishEvent   func(DelegationEvent)
+	ctx            context.Context
+	parent         context.Context
+	budget         *activebudget.Controller
+	expired        *adaptor.ActiveExecutionTimeoutError
+	client         A2AClient
+	taskID, tenant string
+	cancelWanted   bool
+	mapper         *eventMapper
 }
 
 // Delegate executes one curated Local or Remote target, publishes ordered
 // DelegationEvent values, and returns its structured terminal result. Failure
-// returns both the available result and a *DelegationError.
+// returns both the available result and a *DelegationError. Each call owns a
+// fresh ActiveExecutionTimeout budget; transport retries and recovery share
+// that budget. Timeout retains its absolute wall-clock meaning. Member Policy
+// is unchanged, and Member approval waits do not pause the delegator's budget.
+// BeforeDelegate must succeed with a healthy context before invocation facts
+// start. AfterDelegate runs after budget settlement and determines the single
+// terminal fact. Known-task cancellation and AfterDelegate have independent
+// five-second bounds; cleanup failures never replace an established primary.
 func (d *Delegator) Delegate(ctx context.Context, req DelegationRequest) (out DelegationResult, err error) {
 	if d == nil {
 		return DelegationResult{}, &DelegationError{Code: "configuration_error", Message: "delegation registry is required"}
@@ -115,77 +136,175 @@ func (d *Delegator) Delegate(ctx context.Context, req DelegationRequest) (out De
 	baseEvent := DelegationEvent{
 		RunID:            req.RunID,
 		ParentToolCallID: req.ParentToolCallID,
-		DelegationID:     delegationID,
-		AgentKey:         req.Agent,
-		AgentName:        req.Agent,
-		Protocol:         ProtocolA2A,
+		ScopeID:          req.ScopeID, ParentScopeID: req.ParentScopeID,
+		DelegationID: delegationID,
+		AgentKey:     req.Agent,
+		AgentName:    req.Agent,
+		Protocol:     ProtocolA2A,
 	}
 	if d.Registry == nil {
 		derr := &DelegationError{Code: "configuration_error", Message: "delegation registry is required"}
-		d.publish(failedEvent(baseEvent, derr))
+		derr.Cause = errors.Join(derr.Cause, d.publishContext(ctx, failedEvent(baseEvent, derr)))
 		return DelegationResult{DelegationID: delegationID, Agent: req.Agent, RemoteProtocol: ProtocolA2A, Status: "failed", Error: derr}, derr
 	}
 	spec, ok := d.Registry.Lookup(req.Agent)
 	if !ok {
 		derr := &DelegationError{Code: "agent_not_found", Message: fmt.Sprintf("remote agent %q is not registered", req.Agent)}
-		d.publish(failedEvent(baseEvent, derr))
+		derr.Cause = errors.Join(derr.Cause, d.publishContext(ctx, failedEvent(baseEvent, derr)))
 		return DelegationResult{DelegationID: delegationID, Agent: req.Agent, RemoteProtocol: ProtocolA2A, Status: "failed", Error: derr}, derr
 	}
 	baseEvent.AgentKey = spec.Key
 	baseEvent.AgentName = displayName(spec)
 	baseResult := DelegationResult{DelegationID: delegationID, Agent: spec.Key, RemoteProtocol: ProtocolA2A, Status: "running"}
-	// 2. Apply the timeout and lifecycle hooks before any remote I/O.
+	if req.ActiveExecutionTimeout < 0 || spec.Policy.MaxActiveExecutionTimeout < 0 {
+		derr := &DelegationError{Code: "invalid_policy", Message: "active execution timeout must be nonnegative"}
+		derr.Cause = errors.Join(derr.Cause, d.publishContext(ctx, failedEvent(baseEvent, derr)))
+		return ensureDelegationError(baseResult, derr), derr
+	}
 	timeout := clampTimeout(req.Timeout, spec.Policy.MaxTimeout)
 	if timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
-	publisher := &terminalEventBuffer{parent: d}
-	run := &delegationRun{Delegator: d, publishEvent: publisher.publish}
-	defer publisher.flush()
-	if d.LifecycleHook != nil {
-		if hookErr := d.LifecycleHook.BeforeDelegate(ctx, BeforeDelegation{
-			DelegationID: delegationID,
-			AgentSpec:    spec,
-			Request:      cloneDelegationRequest(req),
-		}); hookErr != nil {
-			derr := lifecycleHookError("workflow_before_failed", hookErr)
-			run.publish(failedEvent(baseEvent, derr))
-			baseResult.Status = "failed"
-			baseResult.Error = derr
-			return baseResult, derr
+	parent := ctx
+	limit := clampTimeout(req.ActiveExecutionTimeout, spec.Policy.MaxActiveExecutionTimeout)
+	expired := &adaptor.ActiveExecutionTimeoutError{Limit: limit}
+	ctx, budget := activebudget.New(parent, limit, expired, d.budgetClock)
+	defer budget.Cancel(context.Canceled)
+	publisher := &terminalEventBuffer{parent: d, ctx: ctx}
+	run := &delegationRun{Delegator: d, publishEvent: publisher.publish, ctx: ctx, parent: parent, budget: budget, expired: expired, tenant: spec.Tenant}
+	if req.Tenant != "" {
+		run.tenant = req.Tenant
+	}
+	if req.Message != nil {
+		run.taskID = req.Message.TaskID
+	}
+	started := false
+	var startTime time.Time
+	defer func() {
+		// Finish and primary selection precede detached cleanup. SelectedCause
+		// uses this controller's expired identity, never an inherited Leader limit.
+		if primary := run.complete(err); primary != nil {
+			err = primary
+			out = ensureDelegationError(out, primary)
+			publisher.replace(failedEvent(baseEvent, primary))
 		}
-		defer func() {
+		budget.Stop()
+		if publisher.err != nil && err != nil {
+			cp := *delegationErr(err)
+			cp.Cause = errors.Join(cp.Cause, publisher.err)
+			err = &cp
+			out.Error = &cp
+		}
+		if publisher.err != nil && err == nil {
+			err = &DelegationError{Code: "infrastructure_error", Message: "run event publication failed", Cause: publisher.err}
+			out = ensureDelegationError(out, err.(*DelegationError))
+		}
+		if ctx.Err() != nil || run.budget.SelectedCause() == expired {
+			run.cancelWanted = true
+		}
+		if run.cancelWanted && run.taskID != "" {
+			if run.client == nil {
+				run.client = d.clientFor(spec)
+			}
+			if run.client != nil {
+				run.cancelKnown(ctx, &out)
+			}
+		}
+		if started && d.LifecycleHook != nil {
 			afterCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), lifecycleHookTimeout)
-			defer cancel()
-			if hookErr := d.LifecycleHook.AfterDelegate(afterCtx, AfterDelegation{
-				DelegationID: delegationID,
-				AgentSpec:    spec,
-				Request:      cloneDelegationRequest(req),
-				Result:       cloneDelegationResult(out),
-				Err:          err,
-			}); hookErr != nil {
-				derr := lifecycleHookError("workflow_after_failed", hookErr)
+			payload := AfterDelegation{DelegationID: delegationID, AgentSpec: cloneRemoteAgentSpec(spec), Request: cloneDelegationRequest(req), Result: cloneDelegationResult(out), Err: err}
+			hookErr := boundedHook(afterCtx, func() error { return d.LifecycleHook.AfterDelegate(afterCtx, payload) })
+			cancel()
+			if hookErr != nil {
 				if err == nil {
-					out = ensureDelegationError(out, derr)
-					terminal := failedEvent(baseEvent, derr)
-					if terminal.Kind == DelegationCancelled {
-						out.Status = "cancelled"
-					} else {
-						out.Status = "failed"
-					}
+					derr := lifecycleHookError("workflow_after_failed", hookErr)
 					err = derr
-					publisher.replace(terminal)
-				} else if out.Error == nil {
-					out.Error = derr
+					out = ensureDelegationError(out, derr)
+				} else {
+					derr := delegationErr(err)
+					cp := *derr
+					cp.Cause = errors.Join(derr.Cause, hookErr)
+					err = &cp
+					out.Error = &cp
 				}
 			}
-		}()
+		}
+		if d.recordFinal != nil {
+			d.recordFinal(req, cloneDelegationResult(out))
+		}
+		// Tail publication has an independent bound, and the core revocation
+		// fence still rejects events after Detach. No EventBus replay feeds it.
+		tailCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), lifecycleHookTimeout)
+		defer cancel()
+		publisher.ctx = tailCtx
+		if started {
+			v := outerInvocation(baseEvent, capability.Completed, time.Now())
+			elapsed := time.Since(startTime)
+			v.Duration = &elapsed
+			if err != nil {
+				v.Phase = capability.Failed
+				v.ErrorCode = capability.DelegationFailed
+				if out.Error != nil && out.Error.Code == "cancelled" {
+					v.Phase = capability.Cancelled
+					v.ErrorCode = capability.RunCancelled
+				}
+			}
+			ev := baseEvent
+			ev.Kind = DelegationCapabilityInvocation
+			ev.Capability = &v
+			publisher.publish(ev)
+		}
+		if err != nil {
+			terminal := failedEvent(baseEvent, out.Error)
+			terminal.RemoteTaskID = out.RemoteTaskID
+			publisher.replace(terminal)
+		}
+		publisher.flush()
+		if publisher.err != nil && !errors.Is(err, publisher.err) {
+			derr := &DelegationError{Code: "infrastructure_error", Message: "run event publication failed", Cause: publisher.err}
+			if err != nil {
+				cp := *delegationErr(err)
+				cp.Cause = errors.Join(cp.Cause, publisher.err)
+				derr = &cp
+			}
+			out = ensureDelegationError(out, derr)
+			err = derr
+			if d.recordFinal != nil {
+				d.recordFinal(req, cloneDelegationResult(out))
+			}
+		}
+	}()
+	if d.LifecycleHook != nil {
+		beforeCtx, beforeCancel := context.WithTimeout(ctx, lifecycleHookTimeout)
+		payload := BeforeDelegation{DelegationID: delegationID, AgentSpec: cloneRemoteAgentSpec(spec), Request: cloneDelegationRequest(req)}
+		hookErr := boundedHook(beforeCtx, func() error { return d.LifecycleHook.BeforeDelegate(beforeCtx, payload) })
+		beforeCancel()
+		if hookErr != nil {
+			derr := lifecycleHookError("workflow_before_failed", hookErr)
+			run.publish(failedEvent(baseEvent, derr))
+			return ensureDelegationError(baseResult, derr), derr
+		}
+	}
+	if derr := run.contextFailure(); derr != nil {
+		return ensureDelegationError(baseResult, derr), derr
+	}
+	started = true
+	startTime = time.Now()
+	value := outerInvocation(baseEvent, capability.Started, startTime)
+	outer := baseEvent
+	outer.Kind = DelegationCapabilityInvocation
+	outer.Capability = &value
+	run.publish(outer)
+	if publisher.err != nil {
+		derr := &DelegationError{Code: "infrastructure_error", Message: "run event publication failed", Cause: publisher.err}
+		return ensureDelegationError(baseResult, derr), derr
 	}
 
 	// 3. Resolve the remote card and enforce host policy before sending work.
 	client := d.clientFor(spec)
+	run.client = client
 	if client == nil {
 		derr := &DelegationError{Code: "configuration_error", Message: "remote agent requires AgentCardURL for default A2A execution; configure Delegator.NewClient for static AgentCard-only specs"}
 		run.publish(failedEvent(baseEvent, derr))
@@ -195,11 +314,14 @@ func (d *Delegator) Delegate(ctx context.Context, req DelegationRequest) (out De
 	}
 	card, err := client.AgentCard(ctx)
 	if err != nil && spec.AgentCard == nil {
-		derr := &DelegationError{Code: "agent_unavailable", Message: err.Error(), Retryable: true}
+		derr := &DelegationError{Code: "agent_unavailable", Message: err.Error(), Retryable: true, Cause: err}
 		run.publish(failedEvent(baseEvent, derr))
 		baseResult.Status = "failed"
 		baseResult.Error = derr
 		return baseResult, derr
+	}
+	if derr := run.contextFailure(); derr != nil {
+		return ensureDelegationError(baseResult, derr), derr
 	}
 	if spec.AgentCard != nil {
 		card = *spec.AgentCard
@@ -242,8 +364,12 @@ func (r *delegationRun) delegateStreaming(ctx context.Context, client A2AClient,
 	// 1. Open the stream, falling back to polling only when policy allows it.
 	stream, err := client.SendStream(ctx, send)
 	if err != nil {
+		if ctx.Err() != nil {
+			derr := r.contextFailure()
+			return ensureDelegationError(baseResult, derr), derr
+		}
 		if spec.Policy.RequireStreaming {
-			derr := &DelegationError{Code: "stream_unavailable", Message: err.Error(), Retryable: true}
+			derr := &DelegationError{Code: "stream_unavailable", Message: err.Error(), Retryable: true, Cause: err}
 			r.publish(failedEvent(baseEvent, derr))
 			baseResult.Status = "failed"
 			baseResult.Error = derr
@@ -253,7 +379,7 @@ func (r *delegationRun) delegateStreaming(ctx context.Context, client A2AClient,
 	}
 	defer stream.Close()
 	// 2. Track remote identity and mapper state for recovery and lifecycle closure.
-	mapper := newEventMapper(baseEvent, r.statusDecoders...)
+	mapper := r.eventMapper(baseEvent)
 	mapper.includeRemoteArtifacts = includeRemoteArtifacts
 	mapper.maxArtifactBytes = spec.Policy.MaxArtifactBytes
 	var currentTask clienta2a.Task
@@ -290,16 +416,32 @@ func (r *delegationRun) delegateStreaming(ctx context.Context, client A2AClient,
 	}
 	cancelResult := func() (DelegationResult, error) {
 		r.publishAll(mapper.closeOpen(lastTaskID, send.ContextID))
-		if lastTaskID != "" {
-			r.cancelRemote(ctx, client, lastTaskID, send.Tenant, baseEvent)
-		} else {
-			r.publish(cancelledEvent(baseEvent, ""))
+		r.taskID = lastTaskID
+		r.cancelWanted = true
+		derr := r.contextFailure()
+		if derr == nil {
+			derr = &DelegationError{Code: "cancelled", Message: "execution cancelled", Cause: ctx.Err(), Retryable: true}
 		}
-		derr := &DelegationError{Code: "cancelled", Message: ctx.Err().Error(), Retryable: true}
-		baseResult.Status = "cancelled"
-		baseResult.Error = derr
-		return baseResult, derr
+		currentTask.ID = lastTaskID
+		if local, ok := stream.(*localA2AStream); ok {
+			r.budget.Stop()
+			cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), lifecycleHookTimeout)
+			task, cause := local.cancelledTask(cleanup)
+			cancel()
+			if task.ID != "" {
+				currentTask = task
+				lastTaskID = task.ID
+				r.taskID = task.ID
+			}
+			derr.Cause = errors.Join(derr.Cause, cause)
+		}
+		result := partialTaskResult(baseResult, currentTask, spec.Policy, includeRemoteArtifacts)
+		result.Artifacts = r.limitResultArtifacts(baseEvent, result.Artifacts, maxArtifacts)
+		result = ensureDelegationError(result, derr)
+		r.publish(failedEvent(baseEvent, derr))
+		return result, derr
 	}
+
 	cancelKnownTask := func() {
 		if lastTaskID != "" {
 			r.cancelRemoteTask(ctx, client, lastTaskID, send.Tenant, baseEvent)
@@ -348,13 +490,14 @@ func (r *delegationRun) delegateStreaming(ctx context.Context, client A2AClient,
 				}
 				cancelKnownTask()
 			}
-			derr := &DelegationError{Code: "stream_interrupted", Message: err.Error(), Retryable: true}
+			derr := &DelegationError{Code: "stream_interrupted", Message: err.Error(), Retryable: true, Cause: err}
 			r.publishAll(mapper.closeOpen(lastTaskID, send.ContextID))
 			r.publish(failedEvent(baseEvent, derr))
 			return interruptedResult(derr)
 		}
 		if event.TaskID != "" {
 			lastTaskID = event.TaskID
+			r.taskID = lastTaskID
 			currentTask.ID = event.TaskID
 		}
 		if event.ContextID != "" {
@@ -362,10 +505,12 @@ func (r *delegationRun) delegateStreaming(ctx context.Context, client A2AClient,
 		}
 		if event.Message != nil && event.Message.TaskID != "" {
 			lastTaskID = event.Message.TaskID
+			r.taskID = lastTaskID
 			currentTask.ID = event.Message.TaskID
 		}
 		if event.Task != nil {
 			lastTaskID = event.Task.ID
+			r.taskID = lastTaskID
 			currentTask.ID = event.Task.ID
 			currentTask.ContextID = event.Task.ContextID
 			if persistedTaskEvent(event) {
@@ -455,15 +600,16 @@ func (r *delegationRun) delegatePolling(ctx context.Context, client A2AClient, s
 	send.ReturnImmediately = true
 	task, err := client.Send(ctx, send)
 	if err != nil {
-		derr := &DelegationError{Code: "agent_unavailable", Message: err.Error(), Retryable: true}
+		derr := &DelegationError{Code: "agent_unavailable", Message: err.Error(), Retryable: true, Cause: err}
 		r.publish(failedEvent(baseEvent, derr))
 		baseResult.Status = "failed"
 		baseResult.Error = derr
 		return baseResult, derr
 	}
-	mapper := newEventMapper(baseEvent, r.statusDecoders...)
+	mapper := r.eventMapper(baseEvent)
 	mapper.includeRemoteArtifacts = includeRemoteArtifacts
 	mapper.maxArtifactBytes = spec.Policy.MaxArtifactBytes
+	r.taskID = task.ID
 	r.publish(mapper.Started(task.ID, task.ContextID))
 	for _, ev := range mapper.taskEvents(task) {
 		r.publish(ev)
@@ -485,14 +631,20 @@ func (r *delegationRun) delegatePolling(ctx context.Context, client A2AClient, s
 		select {
 		case <-ctx.Done():
 			r.publishAll(mapper.closeOpen(task.ID, task.ContextID))
-			r.cancelRemote(ctx, client, task.ID, send.Tenant, baseEvent)
-			derr := &DelegationError{Code: "cancelled", Message: ctx.Err().Error(), Retryable: true}
-			baseResult.Status = "cancelled"
-			baseResult.Error = derr
-			return baseResult, derr
+			r.taskID = task.ID
+			r.cancelWanted = true
+			derr := r.contextFailure()
+			result := partialTaskResult(baseResult, task, spec.Policy, includeRemoteArtifacts)
+			return ensureDelegationError(result, derr), derr
+
 		case <-ticker.C:
 		}
-		task, err = client.GetTask(ctx, clienta2a.GetTaskRequest{TaskID: task.ID, Tenant: send.Tenant, HistoryLength: send.HistoryLength})
+		next, getErr := client.GetTask(ctx, clienta2a.GetTaskRequest{TaskID: task.ID, Tenant: send.Tenant, HistoryLength: send.HistoryLength})
+		err = getErr
+		if err == nil {
+			task = next
+			r.taskID = task.ID
+		}
 		if err != nil {
 			continue
 		}
@@ -507,9 +659,9 @@ func (r *delegationRun) delegatePolling(ctx context.Context, client A2AClient, s
 	derr := &DelegationError{Code: "remote_timeout", Message: "remote task did not finish before timeout", Retryable: true, RemoteStatus: string(task.Status.State)}
 	r.publishAll(mapper.closeOpen(task.ID, task.ContextID))
 	r.publish(failedEvent(baseEvent, derr))
-	baseResult.Status = "failed"
-	baseResult.Error = derr
-	return baseResult, derr
+	result := partialTaskResult(baseResult, task, spec.Policy, includeRemoteArtifacts)
+	result.Artifacts = r.limitResultArtifacts(baseEvent, result.Artifacts, maxArtifacts)
+	return ensureDelegationError(result, derr), derr
 }
 
 func (d *Delegator) recoverTask(ctx context.Context, client A2AClient, taskID, tenant string, historyLength *int) (clienta2a.Task, bool) {
@@ -520,48 +672,38 @@ func (d *Delegator) recoverTask(ctx context.Context, client A2AClient, taskID, t
 	return task, err == nil && executionFinalState(task.Status.State)
 }
 
-func (r *delegationRun) cancelRemote(ctx context.Context, client A2AClient, taskID, tenant string, base DelegationEvent) {
-	r.cancelRemoteTask(ctx, client, taskID, tenant, base)
-	r.publish(cancelledEvent(base, taskID))
-}
-
-func cancelledEvent(base DelegationEvent, taskID string) DelegationEvent {
-	ev := base
-	ev.Kind = DelegationCancelled
-	ev.RemoteTaskID = taskID
-	ev.Status = "cancelled"
-	return ev
-}
-
-func (d *Delegator) cancelRemoteTask(ctx context.Context, client A2AClient, taskID, tenant string, base DelegationEvent) {
-	if taskID == "" {
-		return
+func (r *delegationRun) cancelRemoteTask(ctx context.Context, client A2AClient, taskID, tenant string, base DelegationEvent) {
+	if taskID != "" {
+		r.taskID = taskID
+		r.client = client
+		r.tenant = tenant
+		r.cancelWanted = true
 	}
-	cancelCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), remoteCancelTimeout)
-	defer cancel()
-	_, _ = client.CancelTask(cancelCtx, clienta2a.CancelTaskRequest{TaskID: taskID, Tenant: tenant, Metadata: map[string]any{"reason": "parent_cancelled", "delegation_id": base.DelegationID}})
 }
 
-func (d *Delegator) publish(ev DelegationEvent) {
-	if d == nil || d.Bus == nil || ev.RunID == "" {
-		return
+func (d *Delegator) publishContext(ctx context.Context, ev DelegationEvent) error {
+	if d == nil || ev.RunID == "" {
+		return nil
 	}
 	d.publishMu.Lock()
 	defer d.publishMu.Unlock()
+	ev = cloneDelegationEvent(ev)
+	if d.publishRun != nil {
+		if err := d.publishRun(ctx, ev); err != nil {
+			return err
+		}
+	}
 	if d.beforePublish != nil {
 		d.beforePublish(cloneDelegationEvent(ev))
 	}
-	d.Bus.Publish(ev)
+	if d.Bus != nil {
+		d.Bus.Publish(ev)
+	}
+	return nil
 }
 
 func (r *delegationRun) publish(ev DelegationEvent) {
-	if r != nil && r.publishEvent != nil {
-		r.publishEvent(ev)
-		return
-	}
-	if r != nil {
-		r.Delegator.publish(ev)
-	}
+	r.publishEvent(ev)
 }
 
 func (r *delegationRun) publishAll(events []DelegationEvent) {
@@ -573,6 +715,8 @@ func (r *delegationRun) publishAll(events []DelegationEvent) {
 type terminalEventBuffer struct {
 	parent   *Delegator
 	terminal *DelegationEvent
+	ctx      context.Context
+	err      error
 }
 
 func (b *terminalEventBuffer) publish(ev DelegationEvent) {
@@ -583,7 +727,9 @@ func (b *terminalEventBuffer) publish(ev DelegationEvent) {
 		}
 		return
 	}
-	b.parent.publish(ev)
+	if err := b.parent.publishContext(b.ctx, ev); err != nil && b.err == nil {
+		b.err = err
+	}
 }
 
 func (b *terminalEventBuffer) replace(ev DelegationEvent) {
@@ -595,7 +741,9 @@ func (b *terminalEventBuffer) flush() {
 	if b == nil || b.parent == nil || b.terminal == nil {
 		return
 	}
-	b.parent.publish(*b.terminal)
+	if err := b.parent.publishContext(b.ctx, *b.terminal); err != nil && b.err == nil {
+		b.err = err
+	}
 }
 
 func (d *Delegator) clientFor(spec RemoteAgentSpec) A2AClient {
@@ -716,6 +864,19 @@ func (r *delegationRun) finishTask(baseEvent DelegationEvent, baseResult Delegat
 	}
 	result.Artifacts = r.limitResultArtifacts(baseEvent, result.Artifacts, maxArtifacts)
 	r.publishAll(mapper.terminalEventsForState(task.ID, task.ContextID, task.Status.State, task.Raw))
+	derr, invalid := failureFromStatus(task.Status)
+	if invalid {
+		derr = &DelegationError{Code: errorCodeFromState(task.Status.State), Message: "remote task failed", RemoteStatus: string(task.Status.State), Metadata: map[string]any{"failure_payload_invalid": true}}
+	}
+	if local, ok := r.client.(*localClient); ok {
+		if localFailure := local.taskFailure(task.ID); localFailure != nil {
+			derr = localFailure
+		}
+	}
+	if derr != nil {
+		result.Error = derr
+		return result, derr
+	}
 	return result, terminalError(task.Status.State, policy)
 }
 
@@ -820,7 +981,7 @@ func lifecycleHookError(code string, err error) *DelegationError {
 	if err == nil {
 		return nil
 	}
-	return &DelegationError{Code: code, Message: err.Error()}
+	return &DelegationError{Code: code, Message: err.Error(), Cause: err}
 }
 
 func cloneA2AMessage(msg clienta2a.Message) clienta2a.Message {

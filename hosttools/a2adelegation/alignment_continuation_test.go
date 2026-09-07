@@ -146,10 +146,15 @@ func TestAlignmentLocalPrimaryReasonAndPartialResult(t *testing.T) {
 				t.Run(fmt.Sprintf("%s/%v/stream=%v", reason, cause, streaming), func(t *testing.T) {
 					err := cause
 					want := clienta2a.TaskStateCanceled
+					if cause == context.DeadlineExceeded {
+						want = clienta2a.TaskStateFailed
+					}
 					if reason != "" {
 						err = errors.Join(&adaptor.RunError{Reason: reason, Result: &adaptor.Result{Text: "partial"}}, cause)
 						if reason != adaptor.ReasonCancelled {
 							want = clienta2a.TaskStateFailed
+						} else {
+							want = clienta2a.TaskStateCanceled
 						}
 					}
 					c := newLocalClient("fixture", alignmentOutcomeRunner{err: err})

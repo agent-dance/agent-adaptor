@@ -42,6 +42,10 @@ func TestHosttoolsDoNotImportInternalPackages(t *testing.T) {
 		filepath.Join(repoRoot, "hosttools", "sessionrecorder"),
 	}
 	forEachProductionImport(t, packages, func(path, importPath string) {
+		// C02 freezes a neutral timer shared by core and delegation. No engine/SPI dispatch is permitted.
+		if filepath.Base(filepath.Dir(path)) == "a2adelegation" && importPath == "github.com/agent-dance/agent-adaptor/internal/activebudget" {
+			return
+		}
 		if strings.Contains(importPath, "/internal/") {
 			t.Fatalf("%s crosses an internal package boundary via %s", path, importPath)
 		}

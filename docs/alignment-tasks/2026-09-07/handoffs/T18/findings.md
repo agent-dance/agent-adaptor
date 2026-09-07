@@ -1,0 +1,23 @@
+# T18 findings
+
+No unresolved owned implementation finding remains after local verification. Package checks and TestAlignment race runs are repeated on the final committed SHA in result.json; intermediate failures below remain evidence rather than being overwritten.
+
+- F01 (resolved, W10-R05/W12-R10): baseline-relay.log reproduces accepted-G03 decoding zero cap/todo facts while claiming the schema matched. Closed typed decoding, source domains, lifecycle and clear snapshots now have executable tests.
+- F02 (resolved, W10-R04): Service previously fed core from a lossy EventBus subscription and lacked real RunEventsBound history. Unique BindEvents publisher and Events=nil now precede bus delivery; 82-fact bus saturation, observer timeout/failure isolation, real recorder/Merge, teardown proof and old-publisher rejection are tested.
+- F03 (resolved, W13-R07): old context wrapping obscured primary error and no independent Delegate active bound existed. Neutral accepted activebudget controller now provides FinishExecution/SelectedCause with own-object identity, own-first typed Limit and retained inherited parent graph. Member Ask, retry/recovery/continuation, cleanup and partial root error have executable coverage.
+- F04 (resolved, boundary): accepted-G03 import guard rejected the neutral controller dependency required by C02. Root authorized the exact a2adelegation→internal/activebudget exception. baseline-import-guard.log reproduces the original guard failure; package godoc explains the clock-only dependency. All other internal/engine bans and public type boundaries remain intact.
+- F05 (resolved, assertion migration): original red outputs in implementation-3/4/6.log record deadline, event cardinality and Local/Remote sequence/code assumptions. The individual old-assumption→C02/C03→new-oracle matrix is in documentation.md. No S9 assertion was edited. Existing Parts/continuation tests remain whole, and full-stream new-fact tests strengthen single-publication/sequence/primary-cause checks.
+- Environment: implementation-2.log records sandbox-only loopback bind rejection. Authorized fake-loopback escalation removed this environment obstruction; no live provider or network service was used.
+
+Intermediate compile/test mistakes (implementation-1 unused import, implementation-5 external-test import cycle) were corrected in owned files. These are not represented as platform or contract acceptance. Gate review, centralized documentation merge and B06 native/live acceptance belong to root and downstream tasks.
+
+- F06 (resolved, R016/W13-R07/AC03): the newly frozen canonical17 boundary exposed a real G03 pre-Driver parent CancelCause(active777s) that Local had classified as active. baseline-r016.log preserves Send and SendStream failures. The independent same-Stream closed-terminal collector now classifies it as cancelled/no-limit, preserves the bare original graph, and passes the finite qualification/carrier/error-only/cancel-drain matrix. The pre-R016 evidence is not claimed to cover R016.
+
+## Attempt 2 — independent C03 review
+
+- T18-review-F01 (resolved, W10-R05): mapping.go re-cloned decoded.Raw after mapRelay, erasing the safe diagnostic on tuple expansion and source-depth overflow. Original independent fixture was reproduced without edits (2 pass/6 fail across both findings), then all original assertions passed after preserving the mapped Raw. The unchanged reason/count assertions now run under TestAlignment.
+- T18-review-F02 (resolved, W13-R07): active carrier Code was correct but the whole-error errors.As could select an earlier joined parent Limit. Extraction is now restricted to carrier.Cause; the original full graph remains Cause. Original parent-first/carrier-first Local Send/SendStream assertions pass. New invalid-first/nil/missing-limit cases prove the code does not borrow a parent or later valid limit, while preserving partial Result and one Stream execution.
+
+- Root dead-code review (resolved): removed the unused cancelRemote/cancelledEvent pair superseded by cancelWanted plus the single completion defer. The live cancelRemoteTask paths remain unchanged. No mirror tests were added.
+
+- T18-review-F03 (resolved, W13-R07/AC02): C02's unmodified independent Wire07 fixture reproduced decimal-integer and exponent-integer json.Number rejection under race3. Exact decimal normalization now accepts 100.0/1e2 as 100 and rejects fractional tails, malformed literals, huge exponents and values beyond the frozen maximum without float rounding or exponent-sized allocation. Original red/green and extended real-Delegate boundary regression logs are retained in attempt2. C02/C03 confirmed the remaining finite review groups passed; no contract or ownership expansion was required.

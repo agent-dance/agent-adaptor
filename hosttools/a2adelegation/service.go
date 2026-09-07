@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	adaptor "github.com/agent-dance/agent-adaptor"
 	clienta2a "github.com/agent-dance/agent-adaptor/clients/a2a"
 )
 
@@ -89,6 +90,7 @@ type Service struct {
 	delegations       map[string][]DelegationResult
 	delegationIndexes map[string]map[string]int
 	observers         map[string]context.CancelFunc
+	publishers        map[string]adaptor.RunEventPublisher
 	wg                sync.WaitGroup
 }
 
@@ -108,6 +110,7 @@ func NewService(cfg Config) (*Service, error) {
 		delegations:       map[string][]DelegationResult{},
 		delegationIndexes: map[string]map[string]int{},
 		observers:         map[string]context.CancelFunc{},
+		publishers:        map[string]adaptor.RunEventPublisher{},
 	}
 	registry, err := NewRegistry()
 	if err != nil {
@@ -149,6 +152,8 @@ func NewService(cfg Config) (*Service, error) {
 	s.bus = NewEventBus(replay)
 	s.delegator = NewDelegator(registry, s.bus, opts...)
 	s.delegator.beforePublish = s.recordPublishedEvent
+	s.delegator.publishRun = s.publishRun
+	s.delegator.recordFinal = func(req DelegationRequest, result DelegationResult) { s.recordResult(req.RunID, result.Agent, result) }
 	s.delegator.LifecycleHook = &serviceHook{service: s}
 	s.delegator.NewClient = s.clientFactory
 	if cfg.NewID != nil {
@@ -195,8 +200,8 @@ func (s *Service) clientFactory(spec RemoteAgentSpec) A2AClient {
 // Sidecar.BearerToken. Agent integrations should prefer Option or
 // adaptor.WithRunServices, which publishes the typed MCP declaration safely.
 func (s *Service) EnsureSidecar(runID string) (Sidecar, error) {
-	runID = strings.TrimSpace(runID)
-	if runID == "" {
+
+	if strings.TrimSpace(runID) == "" {
 		return Sidecar{}, &DelegationError{Code: "configuration_error", Message: "run id is required for a delegation sidecar"}
 	}
 	s.mu.Lock()
@@ -228,7 +233,7 @@ func (s *Service) Delegate(ctx context.Context, req DelegationRequest) (Delegati
 	if req.Tenant == "" {
 		req.Tenant = s.cfg.Tenant
 	}
-	s.observeRunLocked(strings.TrimSpace(req.RunID))
+	s.observeRunLocked(req.RunID)
 	s.mu.Unlock()
 	return s.delegator.Delegate(ctx, req)
 }
@@ -242,7 +247,7 @@ func (s *Service) Delegate(ctx context.Context, req DelegationRequest) (Delegati
 func (s *Service) Result(runID, key string) (DelegationResult, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	res, ok := s.results[strings.TrimSpace(runID)][strings.TrimSpace(key)]
+	res, ok := s.results[runID][strings.TrimSpace(key)]
 	if !ok {
 		return DelegationResult{}, false
 	}
@@ -253,7 +258,7 @@ func (s *Service) Result(runID, key string) (DelegationResult, bool) {
 func (s *Service) Results(runID string) map[string]DelegationResult {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	byKey := s.results[strings.TrimSpace(runID)]
+	byKey := s.results[runID]
 	if len(byKey) == 0 {
 		return nil
 	}
@@ -273,7 +278,7 @@ func (s *Service) Results(runID string) map[string]DelegationResult {
 func (s *Service) Delegations(runID string) []DelegationResult {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	recorded := s.delegations[strings.TrimSpace(runID)]
+	recorded := s.delegations[runID]
 	if len(recorded) == 0 {
 		return nil
 	}
@@ -301,13 +306,16 @@ func (s *Service) Delegator() *Delegator { return s.delegator }
 // bus state. Recorded results are kept so hosts can read them after the run
 // ends; they are released with the Service.
 func (s *Service) ReleaseRun(runID string) error {
-	runID = strings.TrimSpace(runID)
+
 	if runID == "" {
 		return nil
 	}
 	s.mu.Lock()
 	sc := s.sidecars[runID]
 	delete(s.sidecars, runID)
+	if _, bound := s.publishers[runID]; bound {
+		s.publishers[runID] = nil
+	}
 	cancel := s.observers[runID]
 	delete(s.observers, runID)
 	s.mu.Unlock()
@@ -332,6 +340,9 @@ func (s *Service) Close() error {
 		return nil
 	}
 	s.closed = true
+	for id := range s.publishers {
+		s.publishers[id] = nil
+	}
 	sidecars := s.sidecars
 	s.sidecars = map[string]*runSidecar{}
 	observers := s.observers
@@ -356,7 +367,7 @@ func (s *Service) Close() error {
 // recordResult stores the final result of one delegation, keyed by run and
 // agent. Called from the lifecycle hook before the terminal event flushes.
 func (s *Service) recordResult(runID, key string, result DelegationResult) {
-	runID = strings.TrimSpace(runID)
+
 	key = strings.TrimSpace(key)
 	if runID == "" || key == "" {
 		return
@@ -399,7 +410,7 @@ func (s *Service) recordPublishedEvent(event DelegationEvent) {
 	if event.Kind != DelegationStarted {
 		return
 	}
-	runID := strings.TrimSpace(event.RunID)
+	runID := event.RunID
 	if runID == "" || event.DelegationID == "" {
 		return
 	}
@@ -461,9 +472,35 @@ func (h *serviceHook) BeforeDelegate(ctx context.Context, before BeforeDelegatio
 }
 
 func (h *serviceHook) AfterDelegate(ctx context.Context, after AfterDelegation) error {
-	h.service.recordResult(after.Request.RunID, after.AgentSpec.Key, after.Result)
+
 	if hook := h.service.cfg.Hook; hook != nil {
 		return hook.AfterDelegate(ctx, after)
 	}
 	return nil
+}
+
+func (s *Service) bindRun(runID string, publisher adaptor.RunEventPublisher) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed || publisher == nil || runID == "" {
+		return &DelegationError{Code: "configuration_error", Message: "run event publisher unavailable"}
+	}
+	if _, exists := s.publishers[runID]; exists {
+		return &DelegationError{Code: "configuration_error", Message: "run event publisher already bound"}
+	}
+	s.publishers[runID] = publisher
+	s.bus.markRunBound(runID)
+	return nil
+}
+func (s *Service) publishRun(ctx context.Context, ev DelegationEvent) error {
+	s.mu.Lock()
+	publisher, bound := s.publishers[ev.RunID]
+	s.mu.Unlock()
+	if !bound {
+		return nil
+	}
+	if publisher == nil {
+		return context.Canceled
+	}
+	return publisher(ctx, coreDelegationEvent(ev))
 }

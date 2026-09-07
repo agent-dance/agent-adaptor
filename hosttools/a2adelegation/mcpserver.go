@@ -533,14 +533,16 @@ func (s *MCPServer) handleCustomToolCall(r *http.Request, req rpcRequest, tool T
 }
 
 func ensureDelegationError(out DelegationResult, err error) DelegationResult {
-	if out.Status == "" {
-		out.Status = "failed"
+	if err == nil {
+		return out
+	}
+	out.Error = delegationErr(err)
+	out.Status = "failed"
+	if out.Error.Code == "cancelled" || out.Error.Code == "remote_cancelled" {
+		out.Status = "cancelled"
 	}
 	if out.RemoteProtocol == "" {
 		out.RemoteProtocol = ProtocolA2A
-	}
-	if out.Error == nil {
-		out.Error = delegationErr(err)
 	}
 	return out
 }
@@ -550,7 +552,7 @@ func delegationErr(err error) *DelegationError {
 	if errors.As(err, &derr) {
 		return derr
 	}
-	return &DelegationError{Code: "delegation_error", Message: err.Error()}
+	return &DelegationError{Code: "delegation_error", Message: err.Error(), Cause: err}
 }
 
 type rpcRequest struct {
