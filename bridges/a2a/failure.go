@@ -11,8 +11,9 @@ import (
 
 // failureStatus translates the existing error outcome; it never chooses a new
 // execution outcome. A carrier's primary Reason wins over all matching causes,
-// including a typed active budget inherited from another run.
-func failureStatus(info a2aproto.TaskInfoProvider, err error, exposure ExposurePolicy) *a2aproto.TaskStatusUpdateEvent {
+// including a typed active budget inherited from another run. A qualified final
+// hint only classifies bare errors; the caller already established failure.
+func failureStatus(info a2aproto.TaskInfoProvider, err error, exposure ExposurePolicy, hint adaptor.FailureReason) *a2aproto.TaskStatusUpdateEvent {
 	var re *adaptor.RunError
 	var reason adaptor.FailureReason
 	var details map[string]any
@@ -21,6 +22,8 @@ func failureStatus(info a2aproto.TaskInfoProvider, err error, exposure ExposureP
 		details = failureDetails(re, exposure)
 	} else {
 		switch {
+		case knownFailureReason(hint):
+			reason = hint
 		case errors.Is(err, adaptor.ErrActiveExecutionTimeout):
 			reason = adaptor.ReasonActiveExecutionTimeout
 		case errors.Is(err, context.Canceled), errors.Is(err, adaptor.ErrRunCancelled):
@@ -28,7 +31,7 @@ func failureStatus(info a2aproto.TaskInfoProvider, err error, exposure ExposureP
 		case errors.Is(err, context.DeadlineExceeded):
 			reason = adaptor.ReasonDeadlineExceeded
 		}
-		details = failureDetails(&adaptor.RunError{Reason: reason, Cause: err}, exposure)
+		details = failureControl(reason, err, nil, exposure)
 	}
 	state := a2aproto.TaskStateFailed
 	if reason == adaptor.ReasonCancelled {
@@ -45,18 +48,29 @@ func failureDetails(re *adaptor.RunError, exposure ExposurePolicy) map[string]an
 	if re == nil {
 		return nil
 	}
-	switch re.Reason {
+	return failureControl(re.Reason, re.Cause, re.Details, exposure)
+}
+
+func knownFailureReason(reason adaptor.FailureReason) bool {
+	switch reason {
 	case adaptor.ReasonActiveExecutionTimeout, adaptor.ReasonApprovalDenied,
 		adaptor.ReasonApprovalTimeout, adaptor.ReasonCancelled,
 		adaptor.ReasonDeadlineExceeded, adaptor.ReasonAgentError,
 		adaptor.ReasonPolicyViolation, adaptor.ReasonInfrastructure:
+		return true
 	default:
+		return false
+	}
+}
+
+func failureControl(reason adaptor.FailureReason, cause error, details map[string]any, exposure ExposurePolicy) map[string]any {
+	if !knownFailureReason(reason) {
 		return nil
 	}
-	out := map[string]any{"code": string(re.Reason)}
-	if re.Reason == adaptor.ReasonActiveExecutionTimeout {
+	out := map[string]any{"code": string(reason)}
+	if reason == adaptor.ReasonActiveExecutionTimeout {
 		var budget *adaptor.ActiveExecutionTimeoutError
-		if errors.As(re.Cause, &budget) && budget != nil && budget.Limit > 0 {
+		if errors.As(cause, &budget) && budget != nil && budget.Limit > 0 {
 			ms := budget.Limit / time.Millisecond
 			if budget.Limit%time.Millisecond != 0 {
 				ms++
@@ -65,7 +79,7 @@ func failureDetails(re *adaptor.RunError, exposure ExposurePolicy) map[string]an
 		}
 	}
 	if exposure.Diagnostics.IncludeMetadata {
-		if metadata := sanitizeRemoteMap(re.Details); len(metadata) > 0 {
+		if metadata := sanitizeRemoteMap(details); len(metadata) > 0 {
 			out["metadata"] = metadata
 		}
 	}

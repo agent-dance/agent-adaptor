@@ -253,13 +253,14 @@ func (e *executor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext)
 			return
 		}
 		if runCtx.Err() != nil {
-			yield(failureStatus(execCtx, runCtx.Err(), e.exposure), nil)
+			yield(failureStatus(execCtx, runCtx.Err(), e.exposure, ""), nil)
 			return
 		}
 
 		// Stream never fails to start: startup problems close the event
 		// channel immediately and surface through Result() below.
 		stream := target.Stream(runCtx, prompt, callOpts...)
+		hint := terminalHint{runID: stream.RunID()}
 		defer stream.Cancel()
 		e.store(execCtx.TaskID, stream)
 		defer e.delete(execCtx.TaskID)
@@ -273,13 +274,15 @@ func (e *executor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext)
 				// Cancellation is a request to stop, not a second terminal
 				// authority. Drain the now-cancelled stream and let Result()
 				// classify the one terminal status below.
-				for range stream.Events() {
+				for ev := range stream.Events() {
+					hint.observe(ev)
 				}
 				goto drained
 			case ev, ok := <-stream.Events():
 				if !ok {
 					goto drained
 				}
+				hint.observe(ev)
 				for _, out := range translator.Translate(ev) {
 					if !yield(out, nil) {
 						stream.Cancel()
@@ -288,7 +291,8 @@ func (e *executor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext)
 				}
 				if translator.err != nil {
 					stream.Cancel()
-					for range stream.Events() {
+					for ev := range stream.Events() {
+						hint.observe(ev)
 					}
 					goto drained
 				}
@@ -296,6 +300,7 @@ func (e *executor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext)
 		}
 
 	drained:
+		hint.closed = true
 		// 4. Project exactly one terminal outcome. Business failures carry
 		// their partial Result and authoritative Reason in *RunError. Inspect that
 		// carrier before context causes, which may be secondary to a failure.
@@ -323,7 +328,7 @@ func (e *executor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext)
 					}
 				}
 			}
-			yield(failureStatus(execCtx, runErr, e.exposure), nil)
+			yield(failureStatus(execCtx, runErr, e.exposure, hint.reason()), nil)
 			return
 		}
 		built, err := e.buildResult(ctx, req, res)

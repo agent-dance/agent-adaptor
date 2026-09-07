@@ -17,7 +17,16 @@
 // deadline_exceeded, agent_error, policy_violation, and infrastructure_error.
 // Only cancelled maps to canceled; the other codes map to failed. RunError.Reason
 // takes precedence over secondary cancellation, deadline, and budget causes.
-// Unknown reasons remain failed with generic text and no promoted control object.
+// Unknown carrier reasons remain failed with generic text and no promoted control
+// object. For bare errors, a fully drained Stream may supply a classification
+// hint: its only RunFinished must be last, Failed, have a known reason, and carry
+// a nonempty Meta.RunID matching the Stream.RunID captured on return. The provider
+// RunID in the event body may differ or be empty. Duplicate terminals (including
+// pointer forms), trailing events and invalid coordinates disable the hint.
+// Absent or invalid hints retain the bare active/cancel/deadline fallback.
+// Normal, cancellation and translation-error drains collect identically, but
+// independent bridge errors still take precedence. A hint never changes the
+// original error graph, creates a Result, or makes a successful Result fail.
 //
 // An active failure may include limit_ms from its positive typed
 // ActiveExecutionTimeoutError.Limit. It is ceil(Limit / time.Millisecond), in
