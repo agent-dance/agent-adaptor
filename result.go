@@ -50,8 +50,9 @@ type Result struct {
 	// deliberately separate from Text.
 	Summary string
 	// Usage is normalized token/cost accounting. nil means the provider did
-	// not report usage; a non-nil zero value means usage was observed and all
-	// normalized metrics were explicitly zero.
+	// not report usage; a non-nil zero value means at least one valid usage
+	// metric was observed and the normalized values are all zero. Usage does
+	// not record whether each individual metric was present.
 	Usage *Usage
 	// Metadata is Driver-reported result metadata.
 	Metadata map[string]string

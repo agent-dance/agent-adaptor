@@ -256,6 +256,19 @@ func profileSkillTargetCanBeManaged(target string, installed InstalledSkillTarge
 }
 
 func pruneManagedProfileSkillPath(skillsHome string, entry profilestate.ManifestEntry, installed map[string]InstalledSkillTarget, managedRoots []string) (bool, error) {
+	remove, err := managedProfileSkillPathCanBePruned(skillsHome, entry, installed, managedRoots)
+	if err != nil || !remove {
+		return false, err
+	}
+	if err := os.RemoveAll(entry.Path); err != nil && !os.IsNotExist(err) {
+		return false, err
+	}
+	return true, nil
+}
+
+// managedProfileSkillPathCanBePruned is shared with the immutable pre-Run
+// compatibility view. It proves eligibility without changing the filesystem.
+func managedProfileSkillPathCanBePruned(skillsHome string, entry profilestate.ManifestEntry, installed map[string]InstalledSkillTarget, managedRoots []string) (bool, error) {
 	if strings.TrimSpace(entry.Path) == "" {
 		return false, nil
 	}
@@ -267,13 +280,25 @@ func pruneManagedProfileSkillPath(skillsHome string, entry profilestate.Manifest
 	if ok && !installedSkillMatchesManifest(installedEntry, entry, managedRoots) {
 		return false, nil
 	}
-	if err := os.RemoveAll(entry.Path); err != nil && !os.IsNotExist(err) {
-		return false, err
-	}
 	return true, nil
 }
 
 func pruneBrokenManagedProfileSkillPath(skillsHome string, entry profilestate.ManifestEntry, installed map[string]InstalledSkillTarget, managedRoots []string) (bool, bool, error) {
+	remove, stillManaged, err := brokenManagedProfileSkillPathCanBePruned(skillsHome, entry, installed, managedRoots)
+	if err != nil || !remove {
+		return false, stillManaged, err
+	}
+	removePath := os.Remove
+	if _, exists := installed[runtimeNameFromPath(entry.Path)]; !exists {
+		removePath = os.RemoveAll
+	}
+	if err := removePath(entry.Path); err != nil && !os.IsNotExist(err) {
+		return false, stillManaged, err
+	}
+	return true, false, nil
+}
+
+func brokenManagedProfileSkillPathCanBePruned(skillsHome string, entry profilestate.ManifestEntry, installed map[string]InstalledSkillTarget, managedRoots []string) (bool, bool, error) {
 	if strings.TrimSpace(entry.Path) == "" {
 		return false, false, nil
 	}
@@ -283,9 +308,6 @@ func pruneBrokenManagedProfileSkillPath(skillsHome string, entry profilestate.Ma
 	runtimeName := runtimeNameFromPath(entry.Path)
 	installedEntry, ok := installed[runtimeName]
 	if !ok {
-		if err := os.RemoveAll(entry.Path); err != nil && !os.IsNotExist(err) {
-			return false, false, err
-		}
 		return true, false, nil
 	}
 	if !installedSkillMatchesManifest(installedEntry, entry, managedRoots) {
@@ -304,10 +326,7 @@ func pruneBrokenManagedProfileSkillPath(skillsHome string, entry profilestate.Ma
 		} else if !os.IsNotExist(err) {
 			return false, true, err
 		}
-		if err := os.Remove(entry.Path); err != nil && !os.IsNotExist(err) {
-			return false, true, err
-		}
-		return true, false, nil
+		return true, true, nil
 	}
 	return false, true, nil
 }

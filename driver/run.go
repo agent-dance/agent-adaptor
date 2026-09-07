@@ -47,8 +47,9 @@ type RawStreams struct {
 // Usage is normalized token/cost accounting reported by drivers when the
 // provider protocol exposes it. Individual values may legitimately be zero.
 // A nil *Usage on Response, TranscriptItem, or a terminal event means usage
-// was not observed; a non-nil zero Usage means the provider explicitly
-// reported zero for every normalized metric.
+// was not observed; a non-nil zero Usage means at least one valid usage metric
+// was observed and the normalized values are all zero. Usage does not record
+// whether each individual metric was present.
 type Usage struct {
 	InputTokens        int
 	OutputTokens       int

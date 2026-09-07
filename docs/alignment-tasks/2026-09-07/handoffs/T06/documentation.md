@@ -34,17 +34,19 @@ AttachRun 的晚到 observation demand 只对已验证候选评分，CapabilityI
 
 早期 claim 只验证所有权、安全树及已有 managed symlink 的精确 manifest/source-path 证明；允许合法 skill 缓存稍后由唯一 resolver 重建。唯一 ResolveSkills/InjectSkills 完成后、Thread fingerprint/store/Driver 之前，在本轮持有不可变最终 snapshot：实际 resource 文件内容和模式、已证明 symlink 指向的 resolved source 内容、ordinary MCP、未知附加配置。最终 IO、安全或锁释放错误显式返回，绝不 warning 后继续。
 
-内置 Driver 的 InjectSkills 可把实际 profile reconciliation 推迟到 Run；最终 snapshot 因此读取本轮已物化的 resolved source，构造带所有权证明的预期目标视图，不再运行 resolver 或自行写资源。已 materialize 的复制树仍按实际内容读取；未知资源保守纳入。普通 MCP 同 key 覆盖/剪除只有在现值与 manifest 的 provider/path/rendered fingerprint 一致时允许；被改写、未知字段或缺少证明不得被 desired 投影抹平。
+内置 Driver 的 InjectSkills 可把实际 profile reconciliation 推迟到 Run；最终 snapshot 因此读取本轮已物化的 resolved source，构造带所有权证明的预期目标视图，不再运行 resolver 或自行写资源。投影视图复用正式 reconciler 的只读 prune eligibility：Claude/CodeBuddy 的 hosted profile 与 Cursor 使用 PruneManaged，Codex 保留健康未选项并仅剪除 broken managed（空 payload 保持不操作）。同 key 改 runtime name 也投影正式旧目标删除。只有精确 manifest/source 证明成立的待删除 symlink 从实际树与 source 读取中一起排除；复制树 marker 不能证明当前内容/权限，准备剪除这种树时显式 ErrUnsafe，保留的复制树仍按实际内容读取。未知及用户资源保守纳入；逐目标 Lstat 区分 NotExist 与 IO 失败，不能把宽松 discovery 的缺项当删除证明。普通 MCP 同 key 覆盖/剪除只有在现值与 manifest 的 provider/path/rendered fingerprint 一致时允许；被改写、未知字段或缺少证明不得被 desired 投影抹平。
 
 一次执行的 materialized digest 同时进入 Thread fingerprint、具体 ProfilePayload.Fingerprint 和稳定 SessionCompatibilityFingerprint。只规范化已证明属于本 Agent 的 hosted MCP 端口/凭据载体；真实 endpoint/env 仍传给 Driver 并影响具体进程配置。模型、identity、Driver 配置、workspace、skills/instructions/MCP、runtime 与 SessionCodec 原有维度均保留，并加入最终 transport。按真实 execution.Dir 的 hosted profile 协调锁覆盖 claim/唯一解析至 Driver 返回，防止同 Agent 不同 Thread 的共享 profile 被并发改写；全局 map 锁只保护登记/复制，不同 identity 的不同隔离目录可独立并发运行；每轮 snapshot 不写回共享兼容缓存。T04 的跨进程所有权、随机 nonce 会话验证、Close 次序与目录删除边界保留。
 
-可复现：运行 `TestAlignmentProfileDynamicResolvedSnapshot` 与 `TestAlignmentProfileDeferredMaterializerColdSnapshot`。A 的 Driver 写 session 文件与随机 nonce → Close → B 使用同声明/实际内容及旧 Thread key 真正读取原文件续接；同路径内容变化拒绝 ResumeOnly；缓存删除后本轮 resolver 重建可继续。另有 mode/unknown-config/IO/managed-link/ordinary-MCP 同key篡改/不同Thread并发测试；都走真实统一 Run/Stream 管线。
+可复现：运行 `TestAlignmentProfileDynamicResolvedSnapshot` 与 `TestAlignmentProfileDeferredMaterializerColdSnapshot`。A 的 Driver 写 session 文件与随机 nonce → Close → B 使用同声明/实际内容及旧 Thread key 真正读取原文件续接；同路径内容变化拒绝 ResumeOnly；缓存删除后本轮 resolver 重建可继续。TestAlignmentProfileDeferredPruneSnapshot 覆盖同 Agent、同目录 alpha→beta→beta ResumeOnly 及反复切换，用户 skill 保留且内容漂移仍拒绝续接；内部对照直接比较投影视图与正式 reconciler 的 link/rename/broken/none/用户树行为，并拒绝合法 marker 下复制树内容/权限漂移。另有 mode/unknown-config/IO/managed-link/ordinary-MCP 同key篡改/不同Thread并发测试；都走真实统一 Run/Stream 管线。
 
 ## 新增公共声明与 internal 取舍
 
 root/Driver AST golden 增量逐项审阅：仅 C03 冻结的 parent/source 字段、两类 typed Event、ObservationDemand、RunEventInfo/Observer/Publisher、RunAttachment 扩展、driver ObservationCapabilities/Support/Request 及两个 StreamKind。capability 与 todo 是公开叶词汇包，内部 catalog/tracker/table 无 root/provider 依赖；无新增 module dependency。
 
 不照搬历史 internal helper 对 Claude Unicode/下划线 alias、tool JSON、Todo 本地自增 ID 的解释，也不根据墙钟猜耗时、忽略空快照、回显参数/结果/自由错误。Catalog 冲突 tombstone 与 tracker exactly-once、table 原子 create/update/replace/clear 只接受规范化事实；provider parser 必须将状态变更与发布顺序串行化。
+
+Usage 的非 nil 零值表示至少观察到一项有效 usage、归一化值均为零；当前类型不表达每个字段是否出现，不能据此声称 provider 明确报告每项为零。
 
 ## 合入 CHANGELOG
 

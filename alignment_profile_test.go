@@ -740,3 +740,127 @@ func TestAlignmentProfileCloseCancelsWriterAndWaiter(t *testing.T) {
 		t.Fatal("waiter dispatched after Close", d.runCount())
 	}
 }
+
+func TestAlignmentProfileDeferredPruneSnapshot(t *testing.T) {
+	for _, stream := range []bool{false, true} {
+		t.Run(fmt.Sprint(stream), func(t *testing.T) {
+			source := alignmentSource(t)
+			userSkill := filepath.Join(source, "skills", "user")
+			if err := os.MkdirAll(userSkill, 0755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(userSkill, "SKILL.md"), []byte("user content"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			m := &alignmentMaterializer{dir: t.TempDir(), contents: map[string]string{"alpha": "A", "beta": "B"}}
+			d := &alignmentSkillProfileDriver{alignmentProfileDriver: newAlignmentProfileDriver(source), deferred: true}
+			run := d.runFunc
+			d.runFunc = func(ctx context.Context, req driver.Request, sink driver.EventSink) (driver.Response, error) {
+				_, err := skillruntime.ReconcileProfileSkills(ctx, skillruntime.ProfileSkillReconcileOptions{ProfileDir: req.Profile.Dir, SkillsHome: filepath.Join(req.Profile.Dir, "skills"), Payload: req.Skills, ConflictMode: skillruntime.ProfileSkillConflictError, PruneMode: skillruntime.ProfileSkillPruneManaged})
+				if err != nil {
+					return driver.Response{}, err
+				}
+				return run(ctx, req, sink)
+			}
+			a := alignmentAgent(d, source, adaptor.WithThreadStore(memory.NewStore()), adaptor.WithSkillMaterializer(m))
+			t.Cleanup(func() { _ = a.Close(context.Background()) })
+			call := func(th *adaptor.Thread, key string) error {
+				opt := adaptor.WithSkills(skill.Skill{Key: key, Source: skill.PathSource{Path: "declaration-only"}})
+				if stream {
+					s := th.Stream(context.Background(), key, opt)
+					for range s.Events() {
+					}
+					_, err := s.Result()
+					return err
+				}
+				_, err := th.Run(context.Background(), key, opt)
+				return err
+			}
+			if err := call(a.Thread("alpha"), "alpha"); err != nil {
+				t.Fatal("initial alpha", err)
+			}
+			if err := call(a.Thread("beta"), "beta"); err != nil {
+				t.Fatal("initial beta", err)
+			}
+			if err := call(a.Thread("beta", adaptor.ResumeOnly()), "beta"); err != nil {
+				t.Fatal("unchanged beta after normal managed prune must resume", err)
+			}
+			if err := call(a.Thread("alpha", adaptor.ResumeOnly()), "alpha"); err != nil {
+				t.Fatal("alpha resumes after beta was pruned", err)
+			}
+			if err := call(a.Thread("beta", adaptor.ResumeOnly()), "beta"); err != nil {
+				t.Fatal("beta resumes after alpha was pruned again", err)
+			}
+			path := filepath.Join(d.request(t, 0).Profile.Dir, "skills", "user", "SKILL.md")
+			if raw, err := os.ReadFile(path); err != nil || string(raw) != "user content" {
+				t.Fatal("unmanaged user skill changed", err)
+			}
+			if err := os.WriteFile(path, []byte("changed user content"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := call(a.Thread("beta", adaptor.ResumeOnly()), "beta"); !errors.Is(err, adaptor.ErrThreadIncompatible) {
+				t.Fatal("user skill drift disappeared from fingerprint", err)
+			}
+			if m.calls.Load() != 6 || d.runCount() != 5 {
+				t.Fatal(m.calls.Load(), d.runCount())
+			}
+		})
+	}
+}
+
+func TestAlignmentProfileDeferredPruneRejectsCopiedDrift(t *testing.T) {
+	for _, stream := range []bool{false, true} {
+		for _, drift := range []string{"content", "mode"} {
+			t.Run(fmt.Sprintf("%v/%s", stream, drift), func(t *testing.T) {
+				source := alignmentSource(t)
+				m := &alignmentMaterializer{dir: t.TempDir(), contents: map[string]string{"alpha": "A", "beta": "B"}}
+				d := &alignmentSkillProfileDriver{alignmentProfileDriver: newAlignmentProfileDriver(source), deferred: true}
+				run := d.runFunc
+				d.runFunc = func(ctx context.Context, req driver.Request, sink driver.EventSink) (driver.Response, error) {
+					_, err := skillruntime.ReconcileProfileSkills(ctx, skillruntime.ProfileSkillReconcileOptions{ProfileDir: req.Profile.Dir, SkillsHome: filepath.Join(req.Profile.Dir, "skills"), Payload: req.Skills, ConflictMode: skillruntime.ProfileSkillConflictError, PruneMode: skillruntime.ProfileSkillPruneManaged})
+					if err != nil {
+						return driver.Response{}, err
+					}
+					return run(ctx, req, sink)
+				}
+				store := newObservingStore()
+				a := alignmentAgent(d, source, adaptor.WithThreadStore(store), adaptor.WithSkillMaterializer(m))
+				t.Cleanup(func() { _ = a.Close(context.Background()) })
+				if _, err := alignmentCall(t, a.Thread("alpha"), context.Background(), stream, adaptor.WithSkills(skill.Skill{Key: "alpha", Source: skill.PathSource{Path: "declaration-only"}})); err != nil {
+					t.Fatal(err)
+				}
+				before := store.callCount()
+				target := filepath.Join(d.request(t, 0).Profile.Dir, "skills", "alpha")
+				if err := os.Remove(target); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Mkdir(target, 0755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(target, ".agent-adaptor-source-path"), []byte(filepath.Join(m.dir, "alpha")), 0600); err != nil {
+					t.Fatal(err)
+				}
+				file := filepath.Join(target, "SKILL.md")
+				if err := os.WriteFile(file, []byte("A"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				if drift == "content" {
+					if err := os.WriteFile(filepath.Join(target, "user-note"), []byte("keep"), 0600); err != nil {
+						t.Fatal(err)
+					}
+				} else if err := os.Chmod(file, 0700); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := alignmentCall(t, a.Thread("beta"), context.Background(), stream, adaptor.WithSkills(skill.Skill{Key: "beta", Source: skill.PathSource{Path: "declaration-only"}})); !errors.Is(err, profile.ErrUnsafe) {
+					t.Fatal("copied drift must fail before Driver prune", err)
+				}
+				if d.runCount() != 1 || store.callCount() != before || m.calls.Load() != 2 {
+					t.Fatal("unsafe snapshot reached store/Driver or repeated resolver", d.runCount(), store.callCount(), m.calls.Load())
+				}
+				if _, err := os.Lstat(file); err != nil {
+					t.Fatal("copied skill was deleted", err)
+				}
+			})
+		}
+	}
+}

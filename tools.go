@@ -551,10 +551,20 @@ func hostedToolProfileFingerprint(driverType, dir string, req *driver.Request, r
 	if req != nil {
 		skills = &req.Skills
 	}
-	targets, err := skillruntime.CompatibilityTargets(dir, manifest, skills)
+	// Hosted Claude, CodeBuddy and Cursor profiles use managed pruning.
+	// Codex retains healthy unselected skills and skips an empty payload.
+	pruneMode := skillruntime.ProfileSkillPruneManaged
+	if driverType == "codex" {
+		pruneMode = skillruntime.ProfileSkillPruneNone
+		if skills != nil && len(skills.Entries) > 0 {
+			pruneMode = skillruntime.ProfileSkillPruneBrokenManaged
+		}
+	}
+	view, err := skillruntime.CompatibilityTargets(dir, manifest, skills, pruneMode)
 	if err != nil {
 		return "", err
 	}
+	targets := view.Targets
 	root, err := os.OpenRoot(dir)
 	if err != nil {
 		return "", err
@@ -564,7 +574,7 @@ func hostedToolProfileFingerprint(driverType, dir string, req *driver.Request, r
 	seen := map[string]bool{}
 	var totalBytes int64
 	for _, name := range roots {
-		if _, projected := targets[filepath.ToSlash(name)]; projected {
+		if _, projected := targets[filepath.ToSlash(name)]; projected || view.Pruned[filepath.ToSlash(name)] {
 			continue
 		}
 		if _, err := root.Lstat(name); os.IsNotExist(err) {
@@ -576,7 +586,7 @@ func hostedToolProfileFingerprint(driverType, dir string, req *driver.Request, r
 			if walkErr != nil {
 				return walkErr
 			}
-			if _, projected := targets[path]; projected {
+			if _, projected := targets[path]; projected || view.Pruned[path] {
 				if d.IsDir() {
 					return fs.SkipDir
 				}
