@@ -1282,6 +1282,11 @@ func decodeAskUserQuestionOptions(raw []any) []driver.DecisionChoice {
 }
 
 func (p *claudeParser) handleInteractiveControlRequest(payload map[string]any) bool {
+	if p.interactiveErr != nil {
+		// A failed decision aborts the invocation. Draining stdout must not
+		// ask the host again for another buffered provider control request.
+		return true
+	}
 	requestID := claudeTopLevelString(payload, "request_id")
 	request := claudeTopLevelObject(payload, "request")
 	if requestID == "" || request == nil {
@@ -1326,6 +1331,14 @@ func (p *claudeParser) handleInteractiveControlRequest(payload map[string]any) b
 	}
 }
 
+// interactiveFailure lets the resident transport observe a sink abort after
+// onChunk releases the parser lock. The caller's context need not be canceled.
+func (p *claudeParser) interactiveFailure() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.interactiveErr
+}
+
 func (p *claudeParser) resolveInteractiveDecision(requestID string, req driver.DecisionRequest) bool {
 	resp, err := p.interactiveSink.RequestDecision(p.interactiveCtx, req)
 	if err != nil {
@@ -1333,8 +1346,9 @@ func (p *claudeParser) resolveInteractiveDecision(requestID string, req driver.D
 			p.interactiveErr = err
 		}
 		// The sink contract says a non-nil decision error aborts the Driver
-		// run. Closing stdin releases the CLI without converting the abort into
-		// a synthetic provider denial that a later success could overwrite.
+		// run. Closing one-shot stdin releases its CLI; the resident reader
+		// observes interactiveFailure and stops its writer. Neither path
+		// converts this into a provider denial or depends on caller cancel.
 		p.closeInteractiveStdin()
 		return true
 	}

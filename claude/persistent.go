@@ -545,23 +545,31 @@ func (lp *liveProcess) turn(ctx context.Context, prompt string, sink driver.Even
 	done := make(chan readResult, 1)
 	go func() {
 		var raw strings.Builder
+		var abortErr error
 		for {
 			line, readErr := lp.stdout.ReadString('\n')
 			if len(line) > 0 {
 				raw.WriteString(line)
 				ts := time.Now().UTC()
 				emitPersistentChunk(sink, "stdout", []byte(line), ts)
-				if err := parser.onChunk("stdout", []byte(line), ts); err != nil {
-					done <- readResult{stdout: raw.String(), err: err}
-					return
+				parseErr := parser.onChunk("stdout", []byte(line), ts)
+				if abortErr == nil {
+					abortErr = errors.Join(parseErr, parser.interactiveFailure())
+					if abortErr != nil {
+						// Close() on a normal turn handle deliberately keeps
+						// resident stdin open. A decision error is different:
+						// stop this writer, then drain even buffered terminal
+						// bytes before returning the original abort cause.
+						lp.signalTerminate()
+					}
 				}
-				if isResultLine(line) {
+				if isResultLine(line) && abortErr == nil {
 					done <- readResult{stdout: raw.String(), result: true}
 					return
 				}
 			}
 			if readErr != nil {
-				done <- readResult{stdout: raw.String(), err: readErr}
+				done <- readResult{stdout: raw.String(), err: errors.Join(abortErr, readErr)}
 				return
 			}
 		}
@@ -573,7 +581,7 @@ func (lp *liveProcess) turn(ctx context.Context, prompt string, sink driver.Even
 	case <-ctx.Done():
 		lp.signalTerminate()
 		rr = <-done
-		rr.err = ctx.Err()
+		rr.err = errors.Join(rr.err, ctx.Err())
 	}
 	if rr.err != nil || !rr.result {
 		// Stop and drain the failed process before freezing this turn's Raw

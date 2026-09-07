@@ -19,7 +19,9 @@
 // any resident writer; WithSpawn suppresses subsequent resident prewarming.
 //
 // Errors preserve the available formal protocol output and original cause for
-// RunError.Result. Incomplete or failed runs cannot produce a healthy checkpoint.
+// RunError.Result. A decision-sink error stops a resident writer even when the
+// caller context remains active; available output is drained before returning.
+// Incomplete or failed runs cannot produce a healthy checkpoint.
 //
 // In bidirectional one-shot runs, a formal result or a terminal root assistant
 // message closes host input exactly once, allowing the CLI to finish even if

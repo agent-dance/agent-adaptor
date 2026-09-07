@@ -76,6 +76,12 @@ available. No output or session ID alone makes an interrupted checkpoint valid.
 The previous healthy Thread record stays unchanged, and a possibly delivered
 prompt is never automatically replayed.
 
+A `DecisionCapableSink` error also stops a resident writer when the sink leaves
+its caller context active. The resident reader drains the available stdout and
+stderr before returning the original decision error, and a buffered success
+result cannot register that aborted process for reuse or validate a checkpoint.
+Normal result-only turns keep resident stdin available for the next turn.
+
 The complete Driver obligations and consumer behavior are documented in
 [`docs/streaming-adapter-contract.md`](../docs/streaming-adapter-contract.md)
 and [`docs/streaming.md`](../docs/streaming.md).

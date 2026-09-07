@@ -61,6 +61,18 @@ func runAlignmentClaudeHelper() int {
 			prompt = string(raw)
 		}
 		fmt.Fprintln(os.Stdout, alignmentClaudeInit)
+		if strings.Contains(prompt, "resident-abort") {
+			fmt.Fprintln(os.Stderr, "abort stderr")
+			// One atomic pipe write makes the post-request bytes available
+			// before the host callback aborts. The reader must drain them.
+			frames := `{"type":"stream_event","event":{"type":"message_start","message":{"id":"abort","usage":{"input_tokens":7,"output_tokens":2}}}}` + "\n" + alignmentClaudePartial + "\n" + alignmentClaudeQuestion + "\n"
+			if strings.Contains(prompt, "terminal") {
+				frames += alignmentClaudeTerminal + "\n"
+			}
+			fmt.Fprint(os.Stdout, frames)
+			_, _ = io.Copy(io.Discard, reader)
+			return 0
+		}
 		if strings.Contains(prompt, "partial-") {
 			fmt.Fprintln(os.Stderr, "partial stderr")
 			fmt.Fprintln(os.Stdout, `{"type":"stream_event","event":{"type":"message_start","message":{"id":"partial","usage":{"input_tokens":7,"output_tokens":2}}}}`)
@@ -659,5 +671,137 @@ func TestAlignmentClaudeNativeDecisionSinkDenial(t *testing.T) {
 				t.Fatalf("continued denial lost healthy terminal: %#v", response)
 			}
 		})
+	}
+}
+
+// This is a legal DecisionCapableSink: a returned error aborts the invocation,
+// but it does not own (and need not cancel) the caller's context.
+type alignmentClaudeAbortSink struct {
+	*fakeInteractiveSink
+	onRaw func(driver.RunEvent)
+}
+
+func (s *alignmentClaudeAbortSink) Emit(event driver.RunEvent) error {
+	if s.onRaw != nil {
+		s.onRaw(event)
+	}
+	return nil
+}
+
+type alignmentClaudeDecisionError struct{}
+
+func (*alignmentClaudeDecisionError) Error() string { return "host decision aborted" }
+
+func TestAlignmentClaudeResidentDecisionAbort(t *testing.T) {
+	for _, terminal := range []bool{false, true} {
+		modes := []string{"no-context-cancel", "cancel-in-decision"}
+		if terminal {
+			modes = append(modes, "cancel-during-drain")
+		}
+		for _, mode := range modes {
+			t.Run(fmt.Sprintf("terminal_%t/%s", terminal, mode), func(t *testing.T) {
+				f := newAlignmentClaudeFixture(t, true)
+				d := configuredDriver{adapter: adapter{persistent: f.pool}, cfg: f.cfg}
+				defer d.CloseProcesses(context.Background())
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				cause := &alignmentClaudeDecisionError{}
+				asked := make(chan struct{})
+				sink := &alignmentClaudeAbortSink{fakeInteractiveSink: newFakeInteractiveSink(func(driver.DecisionRequest) (driver.DecisionResponse, error) {
+					close(asked)
+					if mode == "cancel-in-decision" {
+						cancel()
+					}
+					return driver.DecisionResponse{}, cause
+				})}
+				if mode == "cancel-during-drain" {
+					sink.onRaw = func(event driver.RunEvent) {
+						if strings.Contains(string(event.Bytes), `"type":"result"`) {
+							cancel()
+						}
+					}
+				}
+				type outcome struct {
+					response driver.Response
+					err      error
+				}
+				done := make(chan outcome, 1)
+				prompt := "resident-abort"
+				if terminal {
+					prompt += "-terminal"
+				}
+				go func() {
+					response, err := d.Run(ctx, driver.Request{RunID: "resident-abort", Prompt: prompt, Streaming: true,
+						Workspace: driver.WorkspaceLease{CWD: f.root}, Session: &driver.SessionContext{EngineSessionID: "abort-thread"},
+						Policy: driver.RunPolicy{HumanDecision: driver.HumanDecisionPolicy{Permission: driver.HumanDecisionAutoApprove, Question: driver.QuestionAsk}}}, sink)
+					done <- outcome{response, err}
+				}()
+				select {
+				case <-asked:
+				case got := <-done:
+					t.Fatalf("no real decision: %v", got.err)
+				case <-time.After(5 * time.Second):
+					cancel()
+					t.Fatal("provider never requested decision")
+				}
+				var got outcome
+				blocked := false
+				select {
+				case got = <-done:
+				case <-time.After(1500 * time.Millisecond):
+					blocked = true
+					cancel()
+					select {
+					case got = <-done:
+					case <-time.After(5 * time.Second):
+						t.Fatal("resident failed to exit even after cleanup cancellation")
+					}
+				}
+				if blocked {
+					t.Fatalf("resident blocked after DecisionSink error until caller cancellation: original=%t err=%v", errors.Is(got.err, cause), got.err)
+				}
+				if mode == "no-context-cancel" && (ctx.Err() != nil || errors.Is(got.err, context.Canceled)) {
+					t.Fatalf("abort invented caller cancellation: ctx=%v err=%v", ctx.Err(), got.err)
+				}
+				if mode != "no-context-cancel" && !errors.Is(got.err, context.Canceled) {
+					t.Fatalf("context race cause lost: %v", got.err)
+				}
+				var typed *alignmentClaudeDecisionError
+				if !errors.Is(got.err, cause) || !errors.As(got.err, &typed) || typed != cause {
+					t.Fatalf("original decision cause lost: %v", got.err)
+				}
+				response := got.response
+				if response.Checkpoint != nil || response.RawStreams == nil || !strings.Contains(response.RawStreams.Stdout, alignmentClaudePartial) || !strings.Contains(response.RawStreams.Stdout, alignmentClaudeQuestion) || response.RawStreams.Stderr != "abort stderr\n" || len(response.Transcript) < 3 || response.Usage == nil {
+					t.Fatalf("abort lost partial response or accepted checkpoint: %#v", response)
+				}
+				if terminal {
+					if response.RawStreams.Terminal == nil || string(response.RawStreams.Terminal.JSON) != alignmentClaudeTerminal || response.Output != "完成" || response.Usage.InputTokens != 0 {
+						t.Fatalf("buffered terminal was not drained: %#v", response)
+					}
+				} else if response.RawStreams.Terminal != nil || response.Output != "" || response.Usage.InputTokens != 7 {
+					t.Fatalf("missing terminal was fabricated: %#v", response)
+				}
+				if len(sink.requests) != 1 || len(f.lines(t, "SPAWN_FILE")) != 1 || len(f.lines(t, "REPLIES_FILE")) != 0 || f.pool.lookup("session-c04") != nil {
+					t.Fatal("aborted resident was replayed, answered or reused")
+				}
+			})
+		}
+	}
+}
+
+func TestAlignmentClaudeResidentDecisionSuccessKeepsInput(t *testing.T) {
+	f := newAlignmentClaudeFixture(t, true)
+	a := f.agent(adaptor.WithThreadStore(memory.NewStore()), adaptor.WithPolicy(alignmentClaudePolicy()), adaptor.OnApproval(alignmentClaudeApprove))
+	defer a.Close(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	for i := 0; i < 2; i++ {
+		result, err := a.Thread("resident-success").Run(ctx, "question plan")
+		if err != nil || result.Raw().Terminal == nil {
+			t.Fatalf("resident round %d: %#v %v", i, result, err)
+		}
+	}
+	if len(f.lines(t, "SPAWN_FILE")) != 1 || len(f.lines(t, "REPLIES_FILE")) != 4 || f.pool.lookup("session-c04") == nil {
+		t.Fatal("normal terminal closed/replaced resident stdin")
 	}
 }
