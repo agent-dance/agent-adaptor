@@ -23,6 +23,9 @@ import (
 const claudePersistentHelperEnv = "GO_WANT_AGENT_ADAPTOR_CLAUDE_PERSISTENT_HELPER"
 
 func TestMain(m *testing.M) {
+	if os.Getenv(alignmentStdinHelperEnv) != "" {
+		os.Exit(runAlignmentStdinHelper())
+	}
 	if os.Getenv(claudePersistentHelperEnv) == "1" {
 		os.Exit(runClaudePersistentHelper())
 	}

@@ -94,11 +94,9 @@ type claudeParser struct {
 // clihelper.StdinController.
 type interactiveStdin interface {
 	Write(frame []byte) error
-	// Close signals no further frames (EOF on the subprocess stdin). The
-	// trpc stream-json driver often keeps the child alive waiting for
-	// another NDJSON line; closing is required after the last assistant
-	// message of a one-shot run so the CLI can emit the terminal
-	// type:result and exit, which unblocks the host HTTP /agent request.
+	// Close ends this turn's host input. One-shot transports deliver EOF so
+	// the child can finish after a terminal assistant message or result.
+	// The resident transport keeps the underlying process input open.
 	Close() error
 }
 
@@ -583,6 +581,10 @@ func (p *claudeParser) handleResult(raw string, payload map[string]any, subtype 
 	if p.stream != nil {
 		p.stream.handleResultTerminal(payload)
 	}
+	// A formal result (including native structured output) can arrive without
+	// message_stop. Release one-shot stdin while the helper drains all output
+	// and waits for the actual process outcome before finalizing the run.
+	p.closeInteractiveStdin()
 }
 
 func claudeFormalEvent(eventType string) bool {
@@ -822,22 +824,27 @@ func (p *claudeParser) enableInteractive(ctx context.Context, sink driver.Decisi
 // onAssistantMessageStop is invoked from the streaming state when the
 // Anthropic stream_event sequence emits message_stop, after the last
 // message_delta (which set stop_reason). In interactive mode the
-// CLI will otherwise block reading stdin: closing stdin after a non
-// tool_use turn lets the process flush type:result and exit so the
-// host's /agent run can end and the UI can leave the busy state.
+// CLI may otherwise block reading stdin. A terminal root message lets a
+// one-shot process flush type:result and exit.
 func (p *claudeParser) onAssistantMessageStop(stopReason string) {
-	if !p.interactive || p.stdin == nil {
-		return
-	}
 	// A tool_use stop means the model is waiting for a control_request
 	// response; keep stdin open.
 	if stopReason == "" || stopReason == "tool_use" {
 		return
 	}
+	p.closeInteractiveStdin()
+}
+
+// closeInteractiveStdin consumes the turn's input handle exactly once. Callers
+// hold p.mu. Resident turns bind nonClosingStdin, so releasing their handle does
+// not close the process input needed by the next turn.
+func (p *claudeParser) closeInteractiveStdin() {
+	if !p.interactive || p.stdin == nil {
+		return
+	}
 	stdin := p.stdin
-	_ = stdin.Close()
-	// One-shot per run: avoid a duplicate message_stop re-closing.
 	p.stdin = nil
+	_ = stdin.Close()
 }
 
 // registerPendingHITL records an interactive tool_use frame so the parser can
@@ -1314,9 +1321,7 @@ func (p *claudeParser) resolveInteractiveDecision(requestID string, req driver.D
 		// The sink contract says a non-nil decision error aborts the Driver
 		// run. Closing stdin releases the CLI without converting the abort into
 		// a synthetic provider denial that a later success could overwrite.
-		if p.stdin != nil {
-			_ = p.stdin.Close()
-		}
+		p.closeInteractiveStdin()
 		return true
 	}
 	response := buildInteractiveControlResponse(req, resp)
@@ -1330,9 +1335,7 @@ func (p *claudeParser) commitInteractiveControlResponse(requestID string, respon
 	if err := p.writeInteractiveControlResponse(requestID, response); err != nil {
 		// Closing stdin releases a CLI that would otherwise wait forever for a
 		// response which the host can no longer deliver.
-		if p.stdin != nil {
-			_ = p.stdin.Close()
-		}
+		p.closeInteractiveStdin()
 		if p.interactiveCtx == nil || p.interactiveCtx.Err() == nil {
 			p.pendingFailure = &driver.RunFailure{
 				Code:    driver.FailureAgentError,
@@ -1535,10 +1538,7 @@ func (p *claudeParser) trackInteractiveInterrupt(requestID string, response map[
 	if interrupt, _ := response["interrupt"].(bool); !interrupt {
 		return
 	}
-	if p.stdin != nil {
-		_ = p.stdin.Close()
-		p.stdin = nil
-	}
+	p.closeInteractiveStdin()
 }
 
 type questionAnswerEntry struct {
