@@ -2,6 +2,7 @@ package a2adelegation
 
 import (
 	"context"
+	"github.com/agent-dance/agent-adaptor/todo"
 	"sync"
 	"time"
 )
@@ -17,6 +18,7 @@ type EventBus struct {
 	replay      map[string][]DelegationEvent
 	replayLimit int
 	terminal    map[string]map[string]struct{}
+	bound       map[string]bool
 }
 
 // NewEventBus constructs an EventBus. replayLimit is the maximum retained
@@ -30,6 +32,7 @@ func NewEventBus(replayLimit int) *EventBus {
 		replay:      map[string][]DelegationEvent{},
 		replayLimit: replayLimit,
 		terminal:    map[string]map[string]struct{}{},
+		bound:       map[string]bool{},
 	}
 }
 
@@ -124,6 +127,9 @@ func backpressureEvent(current DelegationEvent, dropped []DelegationEvent) Deleg
 	event.Args = nil
 	event.Result = nil
 	event.Artifact = nil
+	event.Capability = nil
+	event.Todo = nil
+	event.Source = nil
 	event.Raw = map[string]any{
 		"reason":        "event_bus_backpressure",
 		"dropped_count": len(dropped),
@@ -212,6 +218,23 @@ func isTerminal(kind DelegationEventKind) bool {
 // host decoder output, so replay/observers cannot mutate mapper state.
 func cloneDelegationEvent(in DelegationEvent) DelegationEvent {
 	out := in
+	if in.Capability != nil {
+		v := *in.Capability
+		if v.Duration != nil {
+			d := *v.Duration
+			v.Duration = &d
+		}
+		out.Capability = &v
+	}
+	if in.Todo != nil {
+		v := *in.Todo
+		v.Items = append(v.Items[:0:0], v.Items...)
+		if v.Items == nil {
+			v.Items = make([]todo.Item, 0)
+		}
+		out.Todo = &v
+	}
+	out.Source = cloneSource(in.Source)
 	out.Args = cloneAnyValue(in.Args)
 	out.Result = cloneAnyValue(in.Result)
 	out.Raw = cloneAnyMap(in.Raw)
@@ -247,4 +270,24 @@ func clonePartProjection(in []RemotePart) []RemotePart {
 		out[i].Metadata = cloneAnyMap(part.Metadata)
 	}
 	return out
+}
+
+// RunEventsBound reports the monotonic proof that this exact run ID has been
+// successfully bound by Service to the core publisher. Publish/ClearRun never
+// create or erase it; it lives as long as the bus and recorded results.
+func (b *EventBus) RunEventsBound(runID string) bool {
+	if b == nil {
+		return false
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.bound[runID]
+}
+func (b *EventBus) markRunBound(runID string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.bound == nil {
+		b.bound = map[string]bool{}
+	}
+	b.bound[runID] = true
 }

@@ -32,6 +32,7 @@ func delegationEventFromAdapterEvent(decoded adaptor.Event) (DelegationEvent, bo
 		Sequence: meta.Sequence,
 		Time:     meta.Time,
 		Raw:      map[string]any{},
+		Source:   &adaptor.EventSourceMeta{RunID: meta.RunID, ThreadID: meta.ThreadKey, TurnID: meta.TurnID, Sequence: meta.Sequence, Timestamp: meta.Time, Upstream: cloneSource(meta.Source)},
 	}
 	if meta.RunID != "" {
 		event.Raw["member_run_id"] = meta.RunID
@@ -66,6 +67,9 @@ func delegationEventFromAdapterEvent(decoded adaptor.Event) (DelegationEvent, bo
 		}
 	}
 
+	if meta.RunID == "" {
+		event.Source = nil
+	}
 	switch typed := decoded.(type) {
 	case adaptor.TextDelta:
 		event.RemoteMessageID = typed.MessageID
@@ -77,6 +81,9 @@ func delegationEventFromAdapterEvent(decoded adaptor.Event) (DelegationEvent, bo
 		event.Delta = typed.Text
 		event.Kind = delegationReasoningKind(typed.Phase)
 	case adaptor.ToolCall:
+		event.ScopeID = typed.ScopeID
+		event.ParentScopeID = typed.ParentScopeID
+		event.ParentToolCallID = typed.ParentToolCallID
 		event.RemoteToolCallID = typed.ID
 		event.ToolName = typed.Name
 		event.Args = cloneAnyMap(typed.Args)
@@ -84,9 +91,26 @@ func delegationEventFromAdapterEvent(decoded adaptor.Event) (DelegationEvent, bo
 		event.Result = cloneAnyMap(typed.Result)
 		event.Kind = delegationToolCallKind(typed.Phase)
 	case adaptor.ToolResult:
+		event.ScopeID = typed.ScopeID
+		event.ParentScopeID = typed.ParentScopeID
+		event.ParentToolCallID = typed.ParentToolCallID
 		event.RemoteToolCallID = typed.ID
 		event.Result = cloneAnyMap(typed.Result)
 		event.Kind = DelegationToolCallResult
+	case adaptor.CapabilityInvocation:
+		v := typed.Invocation
+		event.Capability = &v
+		event.Kind = DelegationCapabilityInvocation
+		event.ScopeID = v.ScopeID
+		event.ParentScopeID = v.ParentScopeID
+		event.ParentToolCallID = v.ParentToolCallID
+	case adaptor.TodoUpdated:
+		v := typed.Snapshot
+		event.Todo = &v
+		event.Kind = DelegationTodoUpdated
+		event.ScopeID = v.ScopeID
+		event.ParentScopeID = v.ParentScopeID
+		event.ParentToolCallID = v.ParentToolCallID
 	case adaptor.Dropped:
 		event.Kind = DelegationStreamDropped
 		event.Raw["dropped_count"] = typed.Count

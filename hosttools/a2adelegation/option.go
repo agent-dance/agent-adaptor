@@ -73,8 +73,11 @@ func (o runServiceOption) ApplyRun(settings *adaptor.RunSettings) {
 var _ adaptor.RunServiceProvider = (*Service)(nil)
 
 // AttachRun starts (or reuses) this run's MCP sidecar and publishes it as a
-// runtime service carrying a typed MCP declaration, plus the delegation event
-// source for the run. It is the RunServiceProvider half of Option().
+// runtime service carrying a typed MCP declaration. BindEvents installs the
+// unique run publisher and Events remains nil. Core acceptance and its bounded
+// observers precede the lossy component EventBus; replay never feeds core.
+// CapabilityInvocation and TodoUpdated retain their typed public Event shape.
+// It is the RunServiceProvider half of Option().
 //
 // A failure here is a pre-launch failure: the leader driver never starts,
 // which is the correct outcome — a leader whose delegate_to_agent endpoint
@@ -85,15 +88,16 @@ func (s *Service) AttachRun(_ context.Context, runID string) (adaptor.RunAttachm
 		return adaptor.RunAttachment{}, err
 	}
 	return adaptor.RunAttachment{
-		Services: []adaptor.ServiceRef{sidecarServiceRef(sidecar)},
-		Events:   s.runEvents,
+		Services:   []adaptor.ServiceRef{sidecarServiceRef(sidecar)},
+		BindEvents: func(p adaptor.RunEventPublisher) error { return s.bindRun(runID, p) },
 	}, nil
 }
 
 // DetachRun shuts the run's sidecar down, stops its observer, and clears the
 // run's bus state — ReleaseRun, reached through the SDK's teardown instead of
 // a host-written defer. Recorded results survive, so team.Result(runID, key)
-// still answers after the run ends.
+// still answers after the run ends. Historical RunEventsBound proof remains
+// true, but the detached publisher rejects subsequent publication.
 func (s *Service) DetachRun(_ context.Context, runID string) error {
 	return s.ReleaseRun(runID)
 }
@@ -131,51 +135,6 @@ func sidecarServiceRef(sidecar Sidecar) adaptor.ServiceRef {
 	}
 }
 
-// runEvents is the attachment's Event source: every delegation event
-// published for the run is projected onto adaptor.SubagentUpdate and delivered
-// on a channel the SDK folds into the leader's own event stream.
-//
-// Cancellation contract (the SDK drains this channel to closure before it
-// closes the run's event channel): when ctx ends, whatever the bus has already
-// delivered is flushed before the channel closes. That is what keeps a
-// terminal SubagentUpdate from being clipped by teardown — delegation
-// terminals are published while the delegate_to_agent tool call is still in
-// flight, so they are in the subscription buffer by the time the leader's
-// driver returns.
-func (s *Service) runEvents(ctx context.Context, runID string) <-chan adaptor.Event {
-	out := make(chan adaptor.Event, subscriberBuffer)
-	source := s.Bus().SubscribeRun(ctx, runID)
-	go func() {
-		defer close(out)
-		for {
-			select {
-			case ev, ok := <-source:
-				if !ok {
-					return
-				}
-				out <- SubagentEvent(ev)
-			case <-ctx.Done():
-				// Flush, then close. Sends stay blocking on purpose:
-				// the SDK's pump only stops when out closes, so it
-				// cannot deadlock, and a non-blocking send here would
-				// drop exactly the terminal events that matter.
-				for {
-					select {
-					case ev, ok := <-source:
-						if !ok {
-							return
-						}
-						out <- SubagentEvent(ev)
-					default:
-						return
-					}
-				}
-			}
-		}
-	}()
-	return out
-}
-
 // SubagentEvent projects one DelegationEvent onto the adaptor Event vocabulary.
 // DelegationEventKinds collapse onto the three SubagentUpdate kinds (started,
 // delta, and finished). Data preserves the stable kind, status, remote
@@ -183,6 +142,7 @@ func (s *Service) runEvents(ctx context.Context, runID string) <-chan adaptor.Ev
 // and StatusParts intentionally remain on the component-level EventBus and do
 // not enter the leader's core Event stream.
 func SubagentEvent(ev DelegationEvent) adaptor.SubagentUpdate {
+	ev = cloneDelegationEvent(ev)
 	update := adaptor.SubagentUpdate{
 		Agent: ev.AgentKey,
 		Kind:  adaptor.SubagentDelta,
@@ -201,6 +161,8 @@ func SubagentEvent(ev DelegationEvent) adaptor.SubagentUpdate {
 		"agent_name":          ev.AgentName,
 		"delegation_id":       ev.DelegationID,
 		"parent_tool_call_id": ev.ParentToolCallID,
+		"scope_id":            ev.ScopeID,
+		"parent_scope_id":     ev.ParentScopeID,
 		"remote_protocol":     ev.Protocol,
 		"remote_task_id":      ev.RemoteTaskID,
 		"remote_context_id":   ev.RemoteContextID,
@@ -213,6 +175,15 @@ func SubagentEvent(ev DelegationEvent) adaptor.SubagentUpdate {
 		"text":                ev.Text,
 		"args":                ev.Args,
 		"result":              ev.Result,
+	}
+	if ev.Capability != nil {
+		data["capability"] = ev.Capability
+	}
+	if ev.Todo != nil {
+		data["todo"] = ev.Todo
+	}
+	if ev.Kind == DelegationStreamDropped {
+		data["drop"] = cloneAnyMap(ev.Raw)
 	}
 	if ev.Sequence != 0 {
 		data["sequence"] = ev.Sequence

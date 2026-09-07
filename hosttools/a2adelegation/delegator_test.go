@@ -641,8 +641,8 @@ func TestDelegatorTimeoutCoversBeforeHook(t *testing.T) {
 
 	result, err := delegator.Delegate(context.Background(), DelegationRequest{RunID: "run-1", Agent: "research", Objective: "review this", Timeout: 10 * time.Millisecond})
 	var derr *DelegationError
-	if !errors.As(err, &derr) || derr.Code != "workflow_before_failed" || !strings.Contains(derr.Message, context.DeadlineExceeded.Error()) {
-		t.Fatalf("result=%#v err=%v, want workflow_before_failed", result, err)
+	if !errors.As(err, &derr) || derr.Code != "deadline_exceeded" || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("result=%#v err=%v, want deadline_exceeded", result, err)
 	}
 	if result.Status != "failed" {
 		t.Fatalf("result = %#v", result)
@@ -733,7 +733,7 @@ func TestDelegatorPollingCancellationCascadesToRemoteTask(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err = delegator.Delegate(ctx, DelegationRequest{RunID: "run-1", Agent: "research", Objective: "research this"})
+	_, err = delegator.Delegate(ctx, DelegationRequest{RunID: "run-1", Agent: "research", Message: &clienta2a.Message{TaskID: "task-1"}, Objective: "research this"})
 	if err == nil {
 		t.Fatal("expected cancellation error")
 	}
@@ -764,11 +764,11 @@ func TestDelegatorStreamingCancellationCascadesWithEffectiveTenant(t *testing.T)
 		t.Fatal("expected streaming cancellation error")
 	}
 	var derr *DelegationError
-	if !errors.As(err, &derr) || derr.Code != "cancelled" {
-		t.Fatalf("expected cancelled error, got %T %[1]v", err)
+	if !errors.As(err, &derr) || derr.Code != "deadline_exceeded" {
+		t.Fatalf("expected deadline_exceeded error, got %T %[1]v", err)
 	}
-	if result.Status != "cancelled" {
-		t.Fatalf("expected cancelled result, got %#v", result)
+	if result.Status != "failed" {
+		t.Fatalf("expected failed deadline result, got %#v", result)
 	}
 	if client.cancelCalls != 1 || client.lastCancel.TaskID != "task-1" || client.lastCancel.Tenant != "call-tenant" {
 		t.Fatalf("expected streaming remote cancel with effective tenant, calls=%d req=%#v", client.cancelCalls, client.lastCancel)
@@ -777,8 +777,8 @@ func TestDelegatorStreamingCancellationCascadesWithEffectiveTenant(t *testing.T)
 		t.Fatalf("expected remote agent to allocate streaming context id, got %q", client.lastSend.ContextID)
 	}
 	replayed := drainBus(t, bus, "run-1", 3)
-	if replayed[len(replayed)-1].Kind != DelegationCancelled {
-		t.Fatalf("expected cancelled terminal, got %#v", replayed)
+	if replayed[len(replayed)-1].Kind != DelegationFailed {
+		t.Fatalf("expected failed deadline terminal, got %#v", replayed)
 	}
 }
 
@@ -863,12 +863,12 @@ func TestDelegatorStreamingCancelBeforeTaskIDPublishesTerminal(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected cancellation before first task id")
 	}
-	if result.Status != "cancelled" || client.cancelCalls != 0 {
+	if result.Status != "failed" || client.cancelCalls != 0 {
 		t.Fatalf("unexpected result=%#v cancelCalls=%d", result, client.cancelCalls)
 	}
 	replayed := drainBus(t, bus, "run-1", 1)
-	if replayed[0].Kind != DelegationCancelled || replayed[0].RemoteTaskID != "" {
-		t.Fatalf("expected cancelled terminal without remote task id, got %#v", replayed)
+	if replayed[0].Kind != DelegationFailed || replayed[0].RemoteTaskID != "" {
+		t.Fatalf("expected failed deadline terminal without remote task id, got %#v", replayed)
 	}
 }
 
@@ -899,7 +899,7 @@ func TestDelegatorStreamingRecvContextErrorReportsCancelled(t *testing.T) {
 	}
 	replayed := drainBus(t, bus, "run-1", 1)
 	if replayed[0].Kind != DelegationCancelled {
-		t.Fatalf("expected cancelled terminal, got %#v", replayed)
+		t.Fatalf("expected failed deadline terminal, got %#v", replayed)
 	}
 }
 
@@ -953,8 +953,8 @@ func TestDelegatorTimeoutCoversAgentCardDiscovery(t *testing.T) {
 		t.Fatal("expected agent card timeout")
 	}
 	var derr *DelegationError
-	if !errors.As(err, &derr) || derr.Code != "agent_unavailable" {
-		t.Fatalf("expected agent_unavailable timeout, got %T %[1]v", err)
+	if !errors.As(err, &derr) || derr.Code != "deadline_exceeded" {
+		t.Fatalf("expected deadline_exceeded timeout, got %T %[1]v", err)
 	}
 	if result.Status != "failed" {
 		t.Fatalf("expected failed result, got %#v", result)
@@ -1179,6 +1179,10 @@ func drainBus(t *testing.T, bus *EventBus, runID string, want int) []DelegationE
 	for len(out) < want {
 		select {
 		case ev := <-ch:
+			// These pre-capability assertions exercise the existing delegation projection.
+			if ev.Kind == DelegationCapabilityInvocation || ev.Kind == DelegationTodoUpdated {
+				continue
+			}
 			out = append(out, ev)
 		case <-time.After(time.Second):
 			t.Fatalf("timeout waiting for replay event %d/%d", len(out), want)

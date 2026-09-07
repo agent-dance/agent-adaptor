@@ -25,6 +25,8 @@ type eventMapper struct {
 	lastSequence           uint64
 	seenStatusData         map[string]struct{}
 	seenStatusText         map[string]struct{}
+	seenRemote             map[remoteCoordinate][]DelegationEvent
+	remoteSequence         map[string]uint64
 }
 
 func newEventMapper(base DelegationEvent, decoders ...StatusPartDecoder) *eventMapper {
@@ -38,6 +40,7 @@ func newEventMapper(base DelegationEvent, decoders ...StatusPartDecoder) *eventM
 		statusDecoders:   statusDecoders,
 		seenStatusData:   map[string]struct{}{},
 		seenStatusText:   map[string]struct{}{},
+		seenRemote:       map[remoteCoordinate][]DelegationEvent{}, remoteSequence: map[string]uint64{},
 	}
 }
 
@@ -245,7 +248,7 @@ func (m *eventMapper) statusEvents(taskID, contextID string, status *clienta2a.T
 	}
 	message := *status.Message
 	out = append(out, m.statusPartEvents(taskID, contextID, message)...)
-	if m.streamProfile != bridgea2a.AdapterStreamSchemaV1 {
+	if m.streamProfile != bridgea2a.AdapterStreamSchemaV1 && !hasFailureControl(message) {
 		out = append(out, m.statusTextEvents(taskID, contextID, message)...)
 	}
 	return out
@@ -275,11 +278,37 @@ func (m *eventMapper) statusPartEvents(taskID, contextID string, message clienta
 			}
 			m.seenStatusData[fingerprint] = struct{}{}
 			if err != nil {
-				out = append(out, m.droppedEvent(taskID, contextID, profile, 0, map[string]any{"reason": err.Error()}))
+				out = append(out, m.droppedEvent(taskID, contextID, profile, 0, map[string]any{"reason": "invalid_payload"}))
 				break
 			}
 			sequence := firstStatusSequence(decoded)
-			if sequence != 0 {
+			formal := len(decoded) > 0 && decoded[0].Source != nil && decoded[0].Source.RunID != ""
+			if formal && sequence != 0 {
+				runID := decoded[0].Source.RunID
+				key := remoteCoordinate{runID, sequence}
+				if old, exists := m.seenRemote[key]; exists {
+					if !reflect.DeepEqual(old, decoded) {
+						out = append(out, m.droppedEvent(taskID, contextID, profile, 0, map[string]any{"reason": "invalid_payload", "dropped_count": 1}))
+					}
+					break
+				}
+				copies := make([]DelegationEvent, len(decoded))
+				for i := range decoded {
+					copies[i] = cloneDelegationEvent(decoded[i])
+				}
+				m.seenRemote[key] = copies
+				last := m.remoteSequence[runID]
+				if last != 0 && sequence > last+1 {
+					out = append(out, m.droppedEvent(taskID, contextID, profile, 0, map[string]any{"dropped_count": sequence - last - 1, "first_missing": last + 1, "last_missing": sequence - 1}))
+				}
+				if sequence > last {
+					m.remoteSequence[runID] = sequence
+				}
+				if sequence > m.lastSequence {
+					m.lastSequence = sequence
+				}
+			}
+			if sequence != 0 && !formal {
 				if sequence <= m.lastSequence {
 					break
 				}
@@ -335,7 +364,7 @@ func (m *eventMapper) completeStatusDelegationEvent(
 ) DelegationEvent {
 	ev := cloneDelegationEvent(decoded)
 	ev.RunID = m.base.RunID
-	ev.ParentToolCallID = m.base.ParentToolCallID
+	ev = mapRelay(ev, m.base)
 	ev.DelegationID = m.base.DelegationID
 	ev.AgentKey = m.base.AgentKey
 	ev.AgentName = m.base.AgentName
@@ -607,7 +636,7 @@ func resultFromTask(base DelegationResult, task clienta2a.Task, includeRemoteArt
 			}
 		}
 	}
-	if task.Status.Message != nil {
+	if task.Status.Message != nil && !hasFailureControl(*task.Status.Message) {
 		text := textFromMessage(*task.Status.Message)
 		if text != "" {
 			if !hasDelegationMessage(base.Messages, task.Status.Message.Role, text) {
@@ -765,4 +794,20 @@ func firstMediaType(parts []clienta2a.Part) string {
 		}
 	}
 	return ""
+}
+
+type remoteCoordinate struct {
+	runID    string
+	sequence uint64
+}
+
+func hasFailureControl(message clienta2a.Message) bool {
+	for _, part := range message.Parts {
+		if part.Kind == clienta2a.PartText {
+			if _, ok := part.Metadata["agentadaptor.failure"]; ok {
+				return true
+			}
+		}
+	}
+	return false
 }
