@@ -194,6 +194,8 @@ type StreamCapability struct {
 // to validate host requests before launching a driver; hosts can use it to
 // disable unsupported UI controls instead of discovering failures late.
 type Descriptor struct {
+	// Observation truthfully describes formal evidence available per transport.
+	Observation ObservationCapabilities
 	// Type is the stable provider/driver identifier.
 	Type string
 	// DisplayName is the human-readable driver name.
@@ -357,4 +359,19 @@ type ConfigField struct {
 	Options     []ConfigOption
 	Group       string
 	Meta        map[string]string
+}
+
+// ObservationSupport describes formal evidence, not configured capabilities.
+// Zero values declare unsupported observation; absence of facts never proves non-use.
+type ObservationSupport struct {
+	Skills    bool
+	MCP       bool
+	Subagents bool
+	Todos     bool
+}
+
+// ObservationCapabilities describes the evidence exposed by each transport.
+type ObservationCapabilities struct {
+	Batch     ObservationSupport
+	Streaming ObservationSupport
 }

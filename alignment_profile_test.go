@@ -7,23 +7,27 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/agent-dance/agent-adaptor/internal/engine"
-	"github.com/agent-dance/agent-adaptor/internal/profilestate"
-	"github.com/agent-dance/agent-adaptor/internal/toolidentity"
 	"net"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	adaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/internal/engine"
 	"github.com/agent-dance/agent-adaptor/internal/mcpruntime"
+	"github.com/agent-dance/agent-adaptor/internal/profilestate"
 	"github.com/agent-dance/agent-adaptor/internal/skillruntime"
+	"github.com/agent-dance/agent-adaptor/internal/toolidentity"
+	"github.com/agent-dance/agent-adaptor/mcp"
 	"github.com/agent-dance/agent-adaptor/memory"
 	"github.com/agent-dance/agent-adaptor/profile"
+	"github.com/agent-dance/agent-adaptor/skill"
 	"github.com/agent-dance/agent-adaptor/tool"
 )
 
@@ -368,5 +372,371 @@ func TestAlignmentProfileMaterializedDriftIsConservative(t *testing.T) {
 	}
 	if d.runCount() != 1 {
 		t.Fatal("incompatible state dispatched")
+	}
+}
+
+// A dynamic provider keeps its declaration/path stable while the actual source changes.
+type alignmentDynamicSkills struct {
+	dir     string
+	content string
+	calls   int
+}
+
+func (p *alignmentDynamicSkills) GetSkills(_ context.Context, _ []string) (map[string]driver.Skill, error) {
+	p.calls++
+	if err := os.MkdirAll(p.dir, 0700); err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(filepath.Join(p.dir, "SKILL.md"), []byte(p.content), 0600); err != nil {
+		return nil, err
+	}
+	return map[string]driver.Skill{"dynamic": {Key: "dynamic", Source: skill.PathSource{Path: p.dir}}}, nil
+}
+
+type alignmentSkillProfileDriver struct {
+	*alignmentProfileDriver
+	deferred    bool
+	afterInject func(driver.ResolvedSkills, *driver.ProfileSelection) error
+}
+
+func (d *alignmentSkillProfileDriver) ListSkills(context.Context, any, driver.ResolvedSkills, []string, []driver.Skill, *driver.ProfileSelection) (driver.SkillSnapshot, error) {
+	return driver.SkillSnapshot{}, nil
+}
+func (d *alignmentSkillProfileDriver) SyncSkills(context.Context, any, driver.ResolvedSkills, []string, []driver.Skill, *driver.ProfileSelection) (driver.SkillSnapshot, error) {
+	return driver.SkillSnapshot{}, nil
+}
+func (d *alignmentSkillProfileDriver) InjectSkills(ctx context.Context, _ any, p driver.ResolvedSkills, s *driver.ProfileSelection) error {
+	if d.deferred {
+		return nil
+	}
+	_, err := skillruntime.ReconcileProfileSkills(ctx, skillruntime.ProfileSkillReconcileOptions{ProfileDir: s.Dir, SkillsHome: filepath.Join(s.Dir, "skills"), Payload: p, ConflictMode: skillruntime.ProfileSkillConflictError, PruneMode: skillruntime.ProfileSkillPruneManaged})
+	if err == nil && d.afterInject != nil {
+		err = d.afterInject(p, s)
+	}
+	return err
+}
+func TestAlignmentProfileDynamicResolvedSnapshot(t *testing.T) {
+	for _, stream := range []bool{false, true} {
+		t.Run(fmt.Sprint(stream), func(t *testing.T) {
+			source := alignmentSource(t)
+			provider := &alignmentDynamicSkills{dir: t.TempDir(), content: "first"}
+			store := memory.NewStore()
+			makeAgent := func() (*adaptor.Agent, *alignmentSkillProfileDriver) {
+				d := &alignmentSkillProfileDriver{alignmentProfileDriver: newAlignmentProfileDriver(source)}
+				a := adaptor.New(d, adaptor.WithProfile(profile.Dedicated(source)), adaptor.WithThreadStore(store), adaptor.WithTools(hostedToolDefinition("echo", tool.Revision("v1"))), adaptor.WithSkillProvider(provider), adaptor.WithSkills(driver.SkillKey("dynamic")))
+				t.Cleanup(func() { _ = a.Close(context.Background()) })
+				return a, d
+			}
+			first, _ := makeAgent()
+			if _, err := alignmentCall(t, first.Thread("dynamic"), context.Background(), stream); err != nil {
+				t.Fatal(err)
+			}
+			if err := first.Close(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			second, d := makeAgent()
+			if _, err := alignmentCall(t, second.Thread("dynamic", adaptor.ResumeOnly()), context.Background(), stream); err != nil {
+				t.Fatalf("same resolved contents must cold resume: %v", err)
+			}
+			if d.request(t, 0).Session.State == nil {
+				t.Fatal("cold request lost checkpoint")
+			}
+			provider.content = "changed"
+			_, err := alignmentCall(t, second.Thread("dynamic", adaptor.ResumeOnly()), context.Background(), stream)
+			if !errors.Is(err, adaptor.ErrThreadIncompatible) {
+				t.Fatalf("changed actual skill contents must reject resume: %v", err)
+			}
+			if provider.calls != 3 || d.runCount() != 1 {
+				t.Fatalf("resolver/dispatch counts=%d/%d", provider.calls, d.runCount())
+			}
+		})
+	}
+}
+
+type alignmentMaterializer struct {
+	dir      string
+	contents map[string]string
+	calls    atomic.Int32
+}
+
+func (m *alignmentMaterializer) Materialize(_ context.Context, s skill.Skill) (string, error) {
+	m.calls.Add(1)
+	dir := filepath.Join(m.dir, s.Key)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return "", err
+	}
+	return dir, os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(m.contents[s.Key]), 0600)
+}
+
+func TestAlignmentProfileDeferredMaterializerColdSnapshot(t *testing.T) {
+	for _, stream := range []bool{false, true} {
+		t.Run(fmt.Sprint(stream), func(t *testing.T) {
+			source := alignmentSource(t)
+			store := memory.NewStore()
+			materializer := &alignmentMaterializer{dir: t.TempDir(), contents: map[string]string{"dynamic": "one"}}
+			makeAgent := func() (*adaptor.Agent, *alignmentSkillProfileDriver) {
+				d := &alignmentSkillProfileDriver{alignmentProfileDriver: newAlignmentProfileDriver(source), deferred: true}
+				run := d.runFunc
+				d.runFunc = func(ctx context.Context, req driver.Request, sink driver.EventSink) (driver.Response, error) {
+					_, err := skillruntime.ReconcileProfileSkills(ctx, skillruntime.ProfileSkillReconcileOptions{ProfileDir: req.Profile.Dir, SkillsHome: filepath.Join(req.Profile.Dir, "skills"), Payload: req.Skills, ConflictMode: skillruntime.ProfileSkillConflictError, PruneMode: skillruntime.ProfileSkillPruneManaged})
+					if err != nil {
+						return driver.Response{}, err
+					}
+					return run(ctx, req, sink)
+				}
+				a := alignmentAgent(d, source, adaptor.WithThreadStore(store), adaptor.WithSkillMaterializer(materializer), adaptor.WithSkills(skill.Skill{Key: "dynamic", Source: skill.PathSource{Path: "declaration-only"}}))
+				t.Cleanup(func() { _ = a.Close(context.Background()) })
+				return a, d
+			}
+			first, d1 := makeAgent()
+			if _, err := alignmentCall(t, first.Thread("deferred"), context.Background(), stream); err != nil {
+				t.Fatal(err)
+			}
+			if err := first.Close(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			second, d2 := makeAgent()
+			if _, err := alignmentCall(t, second.Thread("deferred", adaptor.ResumeOnly()), context.Background(), stream); err != nil {
+				t.Fatal("cold deferred materialization", err)
+			}
+			if d1.request(t, 0).ProfilePayload.SessionFingerprint() != d2.request(t, 0).ProfilePayload.SessionFingerprint() {
+				t.Fatal("cold process guard changed")
+			}
+			if err := os.RemoveAll(filepath.Join(materializer.dir, "dynamic")); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := alignmentCall(t, second.Thread("deferred", adaptor.ResumeOnly()), context.Background(), stream); err != nil {
+				t.Fatal("resolver could not restore evicted cache", err)
+			}
+			materializer.contents["dynamic"] = "changed"
+			if _, err := alignmentCall(t, second.Thread("deferred", adaptor.ResumeOnly()), context.Background(), stream); !errors.Is(err, adaptor.ErrThreadIncompatible) {
+				t.Fatal("materializer content drift", err)
+			}
+			if materializer.calls.Load() != 4 || d2.runCount() != 2 {
+				t.Fatal(materializer.calls.Load(), d2.runCount())
+			}
+		})
+	}
+}
+
+func TestAlignmentProfileFinalSnapshotRejectsDriftAndIO(t *testing.T) {
+	for _, stream := range []bool{false, true} {
+		for _, mode := range []string{"mode", "configuration", "linked-content", "missing-content", "invalid-json"} {
+			t.Run(fmt.Sprintf("%s/%v", mode, stream), func(t *testing.T) {
+				source := alignmentSource(t)
+				store := newObservingStore()
+				provider := &alignmentDynamicSkills{dir: t.TempDir(), content: "same"}
+				d := &alignmentSkillProfileDriver{alignmentProfileDriver: newAlignmentProfileDriver(source)}
+				a := alignmentAgent(d, source, adaptor.WithThreadStore(store), adaptor.WithSkillProvider(provider), adaptor.WithSkills(skill.Key("dynamic")))
+				t.Cleanup(func() { _ = a.Close(context.Background()) })
+				if _, err := alignmentCall(t, a.Thread("drift"), context.Background(), stream); err != nil {
+					t.Fatal(err)
+				}
+				before := store.callCount()
+				d.afterInject = func(_ driver.ResolvedSkills, s *driver.ProfileSelection) error {
+					switch mode {
+					case "mode":
+						return os.Chmod(filepath.Join(provider.dir, "SKILL.md"), 0700)
+					case "configuration":
+						return os.WriteFile(filepath.Join(s.Dir, "settings.json"), []byte(`{"unknown":{"enabled":true}}`), 0600)
+					case "linked-content":
+						return os.Symlink(filepath.Join(provider.dir, "SKILL.md"), filepath.Join(provider.dir, "unsafe"))
+					case "missing-content":
+						return os.RemoveAll(provider.dir)
+					default:
+						return os.WriteFile(filepath.Join(s.Dir, "settings.json"), []byte(`{"bad":`), 0600)
+					}
+				}
+				_, err := alignmentCall(t, a.Thread("drift", adaptor.ResumeOnly()), context.Background(), stream)
+				if err == nil || d.runCount() != 1 {
+					t.Fatal("unsafe resolved view dispatched", err)
+				}
+				if mode == "mode" || mode == "configuration" {
+					if !errors.Is(err, adaptor.ErrThreadIncompatible) {
+						t.Fatal(err)
+					}
+				} else if store.callCount() != before {
+					t.Fatal("snapshot IO failure touched Thread store")
+				}
+				if provider.calls != 2 {
+					t.Fatal("resolver reran", provider.calls)
+				}
+			})
+		}
+	}
+}
+
+func TestAlignmentProfileConcurrentThreadSnapshots(t *testing.T) {
+	source := alignmentSource(t)
+	store := memory.NewStore()
+	m := &alignmentMaterializer{dir: t.TempDir(), contents: map[string]string{"alpha": "A", "beta": "B"}}
+	d := &alignmentSkillProfileDriver{alignmentProfileDriver: newAlignmentProfileDriver(source)}
+	a := alignmentAgent(d, source, adaptor.WithThreadStore(store), adaptor.WithSkillMaterializer(m))
+	t.Cleanup(func() { _ = a.Close(context.Background()) })
+	var wg sync.WaitGroup
+	for round := 0; round < 2; round++ {
+		for _, key := range []string{"alpha", "beta"} {
+			wg.Add(1)
+			go func(key string) {
+				defer wg.Done()
+				th := a.Thread(key)
+				if round == 1 {
+					th = a.Thread(key, adaptor.ResumeOnly())
+				}
+				if _, err := th.Run(context.Background(), key, adaptor.WithSkills(skill.Skill{Key: key, Source: skill.PathSource{Path: "declaration-only"}})); err != nil {
+					t.Error(err)
+				}
+			}(key)
+		}
+		wg.Wait()
+	}
+	if m.calls.Load() != 4 || d.runCount() != 4 {
+		t.Fatal(m.calls.Load(), d.runCount())
+	}
+	for i := 0; i < 4; i++ {
+		req := d.request(t, i)
+		if len(req.Skills.Entries) != 1 || req.Skills.Entries[0].Key != req.Prompt {
+			t.Fatal("different Thread resource snapshot crossed", req.Prompt, req.Skills)
+		}
+	}
+}
+
+func TestAlignmentProfileDeclaredMCPOwnershipProof(t *testing.T) {
+	for _, mode := range []string{"tamper", "missing-proof", "unknown-field"} {
+		t.Run(mode, func(t *testing.T) {
+			source := alignmentSource(t)
+			d := newAlignmentProfileDriver(source)
+			store := newObservingStore()
+			a := alignmentAgent(d, source, adaptor.WithThreadStore(store), adaptor.WithMCP(mcp.Server{Key: "ordinary", Transport: mcp.TransportHTTP, URL: "https://example.invalid/mcp"}))
+			t.Cleanup(func() { _ = a.Close(context.Background()) })
+			if _, err := a.Thread("mcp-proof").Run(context.Background(), "first"); err != nil {
+				t.Fatal(err)
+			}
+			dir := d.request(t, 0).Profile.Dir
+			if mode == "missing-proof" {
+				manifest, err := profilestate.LoadManifest(dir)
+				if err != nil {
+					t.Fatal(err)
+				}
+				entry, ok := manifest.Entry("mcp", "ordinary")
+				if !ok {
+					t.Fatal("missing fixture MCP entry")
+				}
+				delete(entry.Metadata, "rendered_fingerprint")
+				manifest.Set(entry)
+				if err := profilestate.SaveManifest(dir, manifest); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				path := filepath.Join(dir, ".claude.json")
+				raw, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var root map[string]any
+				if err := json.Unmarshal(raw, &root); err != nil {
+					t.Fatal(err)
+				}
+				entry := root["mcpServers"].(map[string]any)["ordinary"].(map[string]any)
+				if mode == "tamper" {
+					entry["url"] = "https://changed.invalid/mcp"
+				} else {
+					entry["unknown"] = "unproved"
+				}
+				raw, _ = json.Marshal(root)
+				if err := os.WriteFile(path, raw, 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			before := store.callCount()
+			if _, err := a.Thread("mcp-proof", adaptor.ResumeOnly()).Run(context.Background(), "second"); !errors.Is(err, profile.ErrUnsafe) {
+				t.Fatal("ordinary same-key modification was normalized", err)
+			}
+			if store.callCount() != before || d.runCount() != 1 {
+				t.Fatal("unproved MCP reached store or Driver")
+			}
+		})
+	}
+}
+
+func TestAlignmentProfileDistinctIdentitiesRunIndependently(t *testing.T) {
+	source := alignmentSource(t)
+	d := newAlignmentProfileDriver(source)
+	entered := make(chan driver.Request, 2)
+	release := make(chan struct{})
+	var once sync.Once
+	unblock := func() { once.Do(func() { close(release) }) }
+	defer unblock()
+	run := d.runFunc
+	d.runFunc = func(ctx context.Context, req driver.Request, sink driver.EventSink) (driver.Response, error) {
+		entered <- req
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return driver.Response{}, ctx.Err()
+		}
+		return run(ctx, req, sink)
+	}
+	a := alignmentAgent(d, source)
+	t.Cleanup(func() { _ = a.Close(context.Background()) })
+	streams := []adaptor.Stream{a.Stream(context.Background(), "first", adaptor.WithIdentity(adaptor.Identity{ID: "one"})), a.Stream(context.Background(), "second", adaptor.WithIdentity(adaptor.Identity{ID: "two"}))}
+	defer func() {
+		for _, s := range streams {
+			s.Cancel()
+		}
+	}()
+	var reqs []driver.Request
+	for len(reqs) < 2 {
+		select {
+		case req := <-entered:
+			reqs = append(reqs, req)
+		case <-time.After(time.Second):
+			t.Fatal("unrelated hosted profiles serialized")
+		}
+	}
+	if reqs[0].Profile.Dir == reqs[1].Profile.Dir {
+		t.Fatal("distinct identity profiles not isolated")
+	}
+	unblock()
+	for _, s := range streams {
+		for range s.Events() {
+		}
+		if _, err := s.Result(); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestAlignmentProfileCloseCancelsWriterAndWaiter(t *testing.T) {
+	source := alignmentSource(t)
+	d := newAlignmentProfileDriver(source)
+	entered := make(chan struct{})
+	d.runFunc = func(ctx context.Context, _ driver.Request, _ driver.EventSink) (driver.Response, error) {
+		close(entered)
+		<-ctx.Done()
+		return driver.Response{}, ctx.Err()
+	}
+	a := alignmentAgent(d, source)
+	t.Cleanup(func() { _ = a.Close(context.Background()) })
+	first := a.Stream(context.Background(), "writer")
+	<-entered
+	second := a.Stream(context.Background(), "waiter")
+	if _, ok := (<-second.Events()).(adaptor.RunStarted); !ok {
+		t.Fatal("waiter not admitted")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := a.Close(ctx); err != nil {
+		t.Fatal("Close could not cancel profile gate", err)
+	}
+	for _, st := range []adaptor.Stream{first, second} {
+		for range st.Events() {
+		}
+		if _, err := st.Result(); !errors.Is(err, context.Canceled) {
+			t.Fatal(err)
+		}
+	}
+	if d.runCount() != 1 {
+		t.Fatal("waiter dispatched after Close", d.runCount())
 	}
 }

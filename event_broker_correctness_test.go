@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -144,10 +145,13 @@ func TestEventBrokerAbortNeverFlushesDroppedAfterTerminal(t *testing.T) {
 	for event := range b.events {
 		events = append(events, event)
 	}
-	if len(events) != 1 {
-		t.Fatalf("events after drain = %+v, want terminal only", events)
+	if len(events) != 2 {
+		t.Fatalf("events after drain = %+v, want Dropped then terminal", events)
 	}
-	if _, ok := events[0].(RunFinished); !ok {
+	if d, ok := events[0].(Dropped); !ok || d.Count != 1 || d.FirstSequence != 3 || d.LastSequence != 3 {
+		t.Fatal("cancel loss summary", events[0])
+	}
+	if _, ok := events[1].(RunFinished); !ok {
 		t.Fatalf("event = %T, want RunFinished", events[0])
 	}
 }
@@ -183,19 +187,23 @@ func TestEventBrokerFullBufferAbortReservesTerminalAndSealsLateEvents(t *testing
 	for event := range b.events {
 		events = append(events, event)
 	}
-	if len(events) != 2 {
-		t.Fatalf("events = %+v, want RunStarted and RunFinished", events)
+	if len(events) != 3 {
+		t.Fatalf("events = %+v, want RunStarted, Dropped and RunFinished", events)
 	}
 	if _, ok := events[0].(RunStarted); !ok {
 		t.Fatalf("events[0] = %T, want RunStarted", events[0])
 	}
-	terminal, ok := events[1].(RunFinished)
+	drop, ok := events[1].(Dropped)
+	if !ok || drop.Count != 1 || drop.ByKind["text.content"] != 1 || drop.FirstSequence != 2 || drop.LastSequence != 2 {
+		t.Fatalf("loss summary=%#v", events[1])
+	}
+	terminal, ok := events[2].(RunFinished)
 	if !ok || !terminal.Failed {
 		t.Fatalf("events[1] = %#v, want failed RunFinished", events[1])
 	}
-	if events[0].Meta().Sequence != 1 || events[1].Meta().Sequence != 3 {
-		t.Fatalf("sequences = %d, %d, want 1, 3 including the dropped delta gap",
-			events[0].Meta().Sequence, events[1].Meta().Sequence)
+	if events[0].Meta().Sequence != 1 || events[2].Meta().Sequence != 4 {
+		t.Fatalf("sequences = %d, %d, want 1, 4 including the dropped delta gap",
+			events[0].Meta().Sequence, events[2].Meta().Sequence)
 	}
 }
 
@@ -236,10 +244,13 @@ func TestEventBrokerBlockingAbortReleasesPublisherWithoutUsingTerminalReserve(t 
 	for event := range b.events {
 		events = append(events, event)
 	}
-	if len(events) != 2 {
-		t.Fatalf("events = %+v, want RunStarted and RunFinished", events)
+	if len(events) != 3 {
+		t.Fatalf("events = %+v, want RunStarted, Dropped and RunFinished", events)
 	}
-	if _, ok := events[1].(RunFinished); !ok {
+	if drop, ok := events[1].(Dropped); !ok || drop.Count != 1 || drop.ByKind["notice.lifecycle"] != 1 {
+		t.Fatalf("loss summary=%#v", events[1])
+	}
+	if _, ok := events[2].(RunFinished); !ok {
 		t.Fatalf("last event = %T, want RunFinished", events[1])
 	}
 }
@@ -572,7 +583,11 @@ func TestRunServicePumpShutdownIsBoundedForNonClosingSource(t *testing.T) {
 	// broken pump is still alive. Its subsequent event must be rejected by the
 	// broker barrier rather than appearing after RunFinished.
 	sink.completeAuthoritativeLifecycle(&Result{RunID: "run-stuck-source"}, err)
-	providerEvents <- Notice{Kind: NoticeLifecycle, Text: "late-after-terminal"}
+	select {
+	case providerEvents <- Notice{Kind: NoticeLifecycle, Text: "late-after-terminal"}:
+		t.Fatal("timed-out pump still accepts events")
+	default:
+	}
 	close(providerEvents)
 	select {
 	case <-r.pumpDone:
@@ -698,4 +713,92 @@ func testDecisionRequest(id string, kind ApprovalKind) driver.DecisionRequest {
 		CreatedAt: time.Now().UTC(),
 		Deadline:  time.Now().UTC().Add(time.Minute),
 	}
+}
+
+// A source that flushes a critical fact into a full buffer must consume only
+// its cleanup share, even when the user never drains or cancels the stream.
+func TestAlignmentObserverSourceCleanupCancelsPublication(t *testing.T) {
+	sink := newEventSink(eventSinkConfig{runID: "bounded-source", buffer: 1, blocking: true})
+	r := &runResources{runID: "bounded-source"}
+	sent := make(chan struct{})
+	r.startPumps(context.Background(), sink, []RunEventSource{func(context.Context, string) <-chan Event {
+		source := make(chan Event)
+		go func() { defer close(source); source <- Notice{Kind: NoticeRuntime}; close(sent) }()
+		return source
+	}})
+	<-sent
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	err := r.stopPumps(ctx)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() { sink.stopObservers(); sink.completeAuthoritativeLifecycle(nil, err); sink.close(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("source cleanup wedged the publication gate")
+	}
+	events := []Event{}
+	for ev := range sink.events {
+		events = append(events, ev)
+	}
+	if len(events) != 3 {
+		t.Fatalf("events=%#v", events)
+	}
+	if d, ok := events[1].(Dropped); !ok || d.Count != 1 || d.ByKind["notice.runtime"] != 1 {
+		t.Fatal(events[1])
+	}
+	if e, ok := events[2].(RunFinished); !ok || !e.Failed {
+		t.Fatal(events[2])
+	}
+}
+
+func TestAlignmentObserverCleanupBudgetIsNotRenewed(t *testing.T) {
+	sink := newEventSink(eventSinkConfig{runID: "budget", buffer: 10})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var calls atomic.Int32
+	sink.installObservers(ctx, RunEventInfo{}, []RunEventObserver{func(ctx context.Context, _ RunEventInfo, _ Event) error {
+		calls.Add(1)
+		<-ctx.Done()
+		return ctx.Err()
+	}})
+	sink.limitObserverCleanup(time.Now().Add(15 * time.Millisecond))
+	start := time.Now()
+	for i := 0; i < 3; i++ {
+		sink.push(TodoUpdated{})
+	}
+	sink.stopObservers()
+	if calls.Load() != 1 || time.Since(start) > 90*time.Millisecond {
+		t.Fatal("cleanup budget renewed", calls.Load(), time.Since(start))
+	}
+	sink.close()
+}
+
+func TestAlignmentProfileGateSharesActualPath(t *testing.T) {
+	selection := &driver.ProfileSelection{Dir: t.TempDir()}
+	other := &driver.ProfileSelection{Dir: t.TempDir()}
+	a := &Agent{toolProvider: &hostedToolProvider{}, toolProfileSelections: map[string]hostedToolProfileSelection{
+		"first": {execution: selection}, "same-path-second-key": {execution: selection}, "other": {execution: other},
+	}}
+	gate, err := a.lockHostedToolRun(context.Background(), selection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer gate.Unlock()
+	if a.toolProfileSelections["first"].runGate != a.toolProfileSelections["same-path-second-key"].runGate {
+		t.Fatal("same directory got two gates")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Millisecond)
+	defer cancel()
+	if _, err := a.lockHostedToolRun(ctx, selection); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatal("same profile waiter not cancellation safe", err)
+	}
+	independent, err := a.lockHostedToolRun(context.Background(), other)
+	if err != nil {
+		t.Fatal(err)
+	}
+	independent.Unlock()
 }

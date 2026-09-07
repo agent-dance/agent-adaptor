@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/internal/engine"
 	"github.com/agent-dance/agent-adaptor/internal/hostedprofile"
 	"github.com/agent-dance/agent-adaptor/internal/profilestate"
@@ -140,4 +141,73 @@ func ReadHostedManifest(dir string) (profilestate.Manifest, error) {
 		return profilestate.Manifest{}, fmt.Errorf("%w: profile manifest version", profile.ErrUnsafe)
 	}
 	return m, nil
+}
+
+// ResolvedCompatibilityBaseline projects declared MCP with SyncResource's
+// overlay semantics. Pruning requires the prior rendered bytes and exact
+// provider path; unknown or modified entries remain in the compatibility view.
+func ResolvedCompatibilityBaseline(driverType, dir string, payload driver.MCPPayload) (string, []byte, error) {
+	path, raw, err := HostedCompatibilityBaseline(driverType, dir)
+	if err != nil {
+		return "", nil, err
+	}
+	l, err := layoutFor(driverType, dir)
+	if err != nil {
+		return "", nil, err
+	}
+	root := map[string]any{}
+	if len(raw) > 0 {
+		if err := hostedprofile.DecodeJSON(raw, &root, false); err != nil {
+			return "", nil, err
+		}
+	}
+	current, err := sectionMap(root, l.field)
+	if err != nil {
+		return "", nil, err
+	}
+	m, err := ReadHostedManifest(dir)
+	if err != nil {
+		return "", nil, err
+	}
+	servers := make([]driver.MCPServerSpec, 0, len(payload.Servers))
+	for _, s := range payload.Servers {
+		if s.Key != toolidentity.ServerKey {
+			servers = append(servers, s)
+		}
+	}
+	desired, err := desiredServers(l, servers)
+	if err != nil {
+		return "", nil, err
+	}
+	for _, e := range m.KindEntries(resourceKind) {
+		if _, keep := desired[e.Key]; keep {
+			continue
+		}
+		if value, exists := current[e.Key]; exists && filepath.Clean(e.Path) == l.path && e.Metadata["provider"] == driverType && e.Metadata["rendered_fingerprint"] == renderedServerFingerprint(value) {
+			delete(current, e.Key)
+		}
+	}
+	for key, value := range desired {
+		if actual, exists := current[key]; exists {
+			prior, managed := m.Entry(resourceKind, key)
+			if managed {
+				if filepath.Clean(prior.Path) != l.path || prior.Metadata["provider"] != driverType || prior.Metadata["rendered_fingerprint"] != renderedServerFingerprint(actual) {
+					return "", nil, fmt.Errorf("%w: declared MCP entry lacks current ownership proof", profile.ErrUnsafe)
+				}
+			} else if renderedServerFingerprint(actual) != renderedServerFingerprint(value) {
+				return "", nil, fmt.Errorf("%w: declared MCP key conflicts with external configuration", engine.ErrInvalidMCPConfig)
+			}
+		}
+		current[key] = value
+	}
+	if len(current) == 0 {
+		delete(root, l.field)
+	} else {
+		root[l.field] = current
+	}
+	if len(root) == 0 {
+		return path, nil, nil
+	}
+	raw, err = json.Marshal(root)
+	return path, raw, err
 }

@@ -62,6 +62,8 @@ type Usage struct {
 // MCP payloads have been resolved, and policy has been validated against the
 // descriptor.
 type Request struct {
+	// Observation is the resolved OR of attachment demand; Streaming is already negotiated.
+	Observation    ObservationDemand
 	RunID          string
 	Prompt         string
 	Config         any
@@ -235,4 +237,11 @@ func (f *RunFailure) IsRejected() bool {
 // on the outer context, which is returned by Run or Stream.Result. nil-safe.
 func (f *RunFailure) IsTimedOut() bool {
 	return f != nil && f.Code == FailureTimeout
+}
+
+// ObservationDemand requests the richest feasible formal facts. Drivers do not
+// renegotiate transport or fabricate empty evidence when a request is unsupported.
+type ObservationDemand struct {
+	CapabilityInvocations bool
+	Todos                 bool
 }

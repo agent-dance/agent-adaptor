@@ -189,6 +189,7 @@ const DefaultHumanDecisionMaxRetries untyped int = 3
 const DefaultHumanDecisionTimeout time.Duration = 30000000000
 
 type Descriptor struct {
+	Observation ObservationCapabilities
 	Type string
 	DisplayName string
 	Models []ModelInfo
@@ -659,6 +660,23 @@ type NativeConfigPatch struct {
 	Values map[string]any
 }
 
+type ObservationCapabilities struct {
+	Batch ObservationSupport
+	Streaming ObservationSupport
+}
+
+type ObservationDemand struct {
+	CapabilityInvocations bool
+	Todos bool
+}
+
+type ObservationSupport struct {
+	Skills bool
+	MCP bool
+	Subagents bool
+	Todos bool
+}
+
 type OutputFormat string
 
 const OutputFormatJSONSchema OutputFormat = "json_schema"
@@ -809,6 +827,7 @@ type RawStreams struct {
 }
 
 type Request struct {
+	Observation ObservationDemand
 	RunID string
 	Prompt string
 	Config any
@@ -1205,6 +1224,8 @@ type StreamCapability struct {
 	HITL bool
 }
 
+const StreamCapabilityInvocation StreamKind = "capability.invocation"
+
 const StreamDropped StreamKind = "stream.dropped"
 
 const StreamHITLRequested StreamKind = "hitl.requested"
@@ -1214,6 +1235,11 @@ const StreamHITLResolved StreamKind = "hitl.resolved"
 type StreamKind string
 
 type StreamPayload struct {
+	ScopeID string
+	ParentScopeID string
+	ParentToolCallID string
+	Capability *capability.Invocation
+	Todo *todo.Snapshot
 	Kind StreamKind
 	Sequence uint64
 	Seq uint64
@@ -1264,6 +1290,8 @@ const StreamTextContent StreamKind = "text.content"
 const StreamTextEnd StreamKind = "text.end"
 
 const StreamTextStart StreamKind = "text.start"
+
+const StreamTodoUpdated StreamKind = "todo.updated"
 
 const StreamToolCallArgs StreamKind = "tool_call.args"
 
@@ -1334,6 +1362,9 @@ const TranscriptFailure TranscriptKind = "failure"
 const TranscriptInit TranscriptKind = "init"
 
 type TranscriptItem struct {
+	ScopeID string
+	ParentScopeID string
+	ParentToolCallID string
 	Kind TranscriptKind
 	Text string
 	Delta bool

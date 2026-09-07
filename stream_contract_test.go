@@ -92,6 +92,9 @@ func TestStreamTranslationCoversAllKinds(t *testing.T) {
 		return ev
 	}
 
+	if e, ok := next().(adaptor.RunStarted); !ok || e.RunID != res.RunID || e.Meta().Sequence != 1 {
+		t.Fatalf("core start=%#v", events[i-1])
+	}
 	// --- RunEvent translations ---
 	if e, ok := next().(adaptor.ProcessInfo); !ok || e.Kind != adaptor.ProcessSpawn || e.Text != "codex --json" {
 		t.Errorf("spawn → ProcessInfo{spawn}, got %#v", events[i-1])
@@ -119,9 +122,6 @@ func TestStreamTranslationCoversAllKinds(t *testing.T) {
 	}
 
 	// --- StreamPayload translations ---
-	if e, ok := next().(adaptor.RunStarted); !ok || e.RunID != "prov-run" || e.ThreadID != "th-1" {
-		t.Errorf("run.started → RunStarted, got %#v", events[i-1])
-	}
 	if e, ok := next().(adaptor.Notice); !ok || e.Kind != adaptor.NoticeStep || e.Text != "plan" || e.Data["phase"] != "started" {
 		t.Errorf("step.started → Notice{step/started}, got %#v", events[i-1])
 	}
@@ -296,8 +296,11 @@ func TestStreamCancel(t *testing.T) {
 	st.Cancel() // idempotent
 
 	events, res, err := collect(st)
-	if len(events) != 0 {
-		t.Errorf("no events expected, got %#v", events)
+	if len(events) != 2 {
+		t.Fatalf("want core started/finished, got %#v", events)
+	}
+	if final, ok := events[1].(adaptor.RunFinished); !ok || !final.Failed || final.Reason != adaptor.ReasonCancelled {
+		t.Fatalf("cancel terminal=%#v", events[1])
 	}
 	if res != nil {
 		t.Errorf("cancelled run must not return a Result, got %+v", res)
@@ -312,7 +315,7 @@ func TestStreamCancel(t *testing.T) {
 }
 
 // TestStreamInfraError: a driver crash surfaces on Result() as a RunError
-// retaining the cause after the (empty) event stream closes.
+// retaining the cause after the core lifecycle event stream closes.
 func TestStreamInfraError(t *testing.T) {
 	fake := newFakeDriver()
 	sentinel := errors.New("process exploded")
@@ -320,8 +323,11 @@ func TestStreamInfraError(t *testing.T) {
 	agent := adaptor.New(fake)
 
 	events, res, err := collect(agent.Stream(context.Background(), "boom"))
-	if len(events) != 0 || res != nil {
-		t.Errorf("events=%v res=%v, want none", events, res)
+	if len(events) != 2 || res != nil {
+		t.Fatalf("want nil result and core started/finished, got %v %v", res, events)
+	}
+	if final, ok := events[1].(adaptor.RunFinished); !ok || !final.Failed || final.Reason != adaptor.ReasonInfrastructure {
+		t.Fatalf("infrastructure terminal=%#v", events[1])
 	}
 	if !errors.Is(err, sentinel) {
 		t.Fatalf("want wrapped driver error, got %v", err)
