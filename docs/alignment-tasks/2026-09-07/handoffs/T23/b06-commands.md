@@ -6,8 +6,11 @@ Inventory baseline: accepted replacement G04 `b2035bc793369fb8fefb9de229ff1dbd2b
 canonical22: 43 tasks, 96 requirements, at most six concurrent workers (including
 the R019 T32 supplement). R017 fixture coverage gaps are closed at this baseline;
 `findings.md` preserves the original gaps and their exact replacement roots.
-Required scenarios must execute successfully; a skip cannot replace them. Run each task.json command below unchanged in scope/count.
-Adding `-json -timeout=30m` is allowed; retain the command process exit code.
+Required scenarios must execute successfully; a skip cannot replace them. Run
+each task.json command below unchanged in scope/count. Only `-json` and/or `-v`
+may be added to required Go test commands. Bound execution with a process-external
+watchdog and record its limit and the command process exit code. Do not add a Go
+`-timeout` flag to the canonical required command or replace its test selection.
 
 ## Native platform and environment evidence
 
@@ -55,9 +58,15 @@ T25 fuzz commands each run for 30 seconds and must show actual seed/sample
 execution. Their `-run ^$` deliberately excludes ordinary tests and is not a
 zero-execution success rule. Record target, duration and samples separately.
 
-T25/T26 also execute (not merely compile) `go run ./examples/threads/codec` and
-`go test -count=1 ./examples/...`; T24 may supply an additional runnable fake-driver
-example at G05. Never execute the live quickstart or smoke runner as a fake example.
+T25/T26 also execute these offline supplements at the frozen G05 HEAD:
+
+- `go run ./examples/threads/codec`
+- `go run ./examples/offline` (the accepted T24 offline example, integrated at G05)
+- `go test -count=1 ./examples/...`
+
+These execute in addition to every original T25/T26 command above. Record each
+actual execution and exit code; compiling an example does not replace running it.
+Never execute the live quickstart or smoke runner as a fake example.
 
 Native Windows mandatory named roots (all in the full T26 suite):
 

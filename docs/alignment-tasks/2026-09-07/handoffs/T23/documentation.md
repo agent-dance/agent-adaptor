@@ -50,6 +50,11 @@ Canonical22 has 43 tasks, 96 requirements and a six-worker ceiling, including
 the original bridge owner's T32 supplement. The refreshed live inventory has
 28 real-provider roots (7 Claude, 11 CodeBuddy, 5 Codex, 5 Cursor); two separately
 listed Codex gate canaries do not count as provider execution.
+Required B06 Go test commands permit only added `-json`/`-v`; a process-external
+watchdog supplies the bound without adding a Go timeout flag or changing the
+canonical selection/count. T25/T26 additionally run the accepted T24
+`go run ./examples/offline`, retaining the codec run, example package checks
+and every original platform command at the frozen G05 HEAD.
 `check_go_json.py` refuses empty execution, missing named
 passes, failed tests/packages and any skip not explicitly listed by exact ID.
 Test selection/listing, disabled paid probes and compilation are evidence of

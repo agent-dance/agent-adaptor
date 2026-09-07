@@ -439,5 +439,25 @@
       "status": "fixture_coverage_closed_live_unexecuted",
       "source_sha256": "ce0960ffcf476272b4f8114752cdcd833af81d0304dd6694d5e1c32ac2962e88"
     }
-  ]
+  ],
+  "required_command_augmentation": {
+    "permitted_go_test_flags": [
+      "-json",
+      "-v"
+    ],
+    "timeout_policy": "Use a bounded process-external watchdog; record its limit and the original command process exit code. Do not add a Go -timeout flag or alter canonical scope/count/race/run/fuzz settings."
+  },
+  "supplemental_offline_checks": {
+    "tasks": [
+      "T25",
+      "T26"
+    ],
+    "commands": [
+      "go run ./examples/threads/codec",
+      "go run ./examples/offline",
+      "go test -count=1 ./examples/..."
+    ],
+    "execution_head": "Same frozen G05 implementation_head as original platform checks; examples/offline is the accepted T24 contribution integrated at G05.",
+    "meaning": "Additional actual offline execution; preserve every original task command and codec run. No T23 execution of the T24 example is claimed."
+  }
 }
