@@ -3,6 +3,9 @@ package adaptor
 import (
 	"context"
 	"errors"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -801,4 +804,32 @@ func TestAlignmentProfileGateSharesActualPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	independent.Unlock()
+}
+
+func TestAlignmentProfileMCPDefaultMode(t *testing.T) {
+	for _, tc := range []struct {
+		platform string
+		missing  fs.FileMode
+	}{
+		{"windows", 0666}, {"linux", 0644}, {"darwin", 0644},
+	} {
+		t.Run(tc.platform, func(t *testing.T) {
+			if got := hostedToolMCPMode(tc.platform, nil); got != tc.missing {
+				t.Fatalf("absent file mode: got %04o want %04o", got, tc.missing)
+			}
+			for _, requested := range []fs.FileMode{0400, 0600, 0640} {
+				path := filepath.Join(t.TempDir(), "actual-config")
+				if err := os.WriteFile(path, nil, requested); err != nil {
+					t.Fatal(err)
+				}
+				info, err := os.Lstat(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got := hostedToolMCPMode(tc.platform, info); got != info.Mode().Perm() {
+					t.Fatalf("existing mode was normalized: got %04o want observed %04o", got, info.Mode().Perm())
+				}
+			}
+		})
+	}
 }

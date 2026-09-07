@@ -12,6 +12,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -656,12 +657,11 @@ func hostedToolProfileFingerprint(driverType, dir string, req *driver.Request, r
 		}
 	}
 	{ // A missing MCP root has its materializer default mode, so cold views agree.
-		mode := fs.FileMode(0644)
-		if info, e := root.Lstat(mcpPath); e == nil {
-			mode = info.Mode().Perm()
-		} else if !os.IsNotExist(e) {
+		info, e := root.Lstat(mcpPath)
+		if e != nil && !os.IsNotExist(e) {
 			return "", e
 		}
+		mode := hostedToolMCPMode(runtime.GOOS, info)
 		digest := sha256.Sum256(mcpRaw)
 		entries = append(entries, hostedToolProfileFingerprintEntry{Path: mcpPath, Mode: mode, Fingerprint: hex.EncodeToString(digest[:])})
 	}
@@ -717,6 +717,19 @@ func hostedToolProfileFingerprint(driverType, dir string, req *driver.Request, r
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Path < entries[j].Path })
 	return engine.StableHash("adaptor/hosted-tool-materialized-profile/v2", driverType, entries), nil
+}
+
+// hostedToolMCPMode predicts only the absent file's observable mode. Go's
+// Windows Stat reports 0666 for a writable file created with the writer's 0644
+// default; existing modes are always authoritative, independent of platform.
+func hostedToolMCPMode(goos string, info fs.FileInfo) fs.FileMode {
+	if info != nil {
+		return info.Mode().Perm()
+	}
+	if goos == "windows" {
+		return 0666
+	}
+	return 0644
 }
 
 func (*hostedToolProvider) DetachRun(context.Context, string) error { return nil }

@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/agent-dance/agent-adaptor/driver"
@@ -39,21 +40,48 @@ func TestResourceWriterPreservesModeAndUnknownConfiguration(t *testing.T) {
 						t.Fatal(err)
 					}
 				}
+				probe := layout.path
+				requestedMode := mode
+				if mode == 0 {
+					requestedMode = 0644
+					probe = filepath.Join(t.TempDir(), "default-mode")
+					if err := os.WriteFile(probe, nil, requestedMode); err != nil {
+						t.Fatal(err)
+					}
+				}
+				beforeInfo, err := os.Lstat(probe)
+				if err != nil {
+					t.Fatal(err)
+				}
+				want := beforeInfo.Mode().Perm()
+				if runtime.GOOS != "windows" && want != requestedMode {
+					t.Fatalf("POSIX fixture mode: got %04o want %04o", want, requestedMode)
+				}
 				for _, endpoint := range []string{"https://example.invalid/one", "https://example.invalid/two"} {
 					payload := driver.MCPPayload{Servers: []driver.MCPServerSpec{{Key: "ordinary", Transport: driver.MCPTransportHTTP, URL: endpoint}}}
-					if _, err := SyncResource(context.Background(), provider, dir, ProfileKindHostManaged, payload); err != nil {
-						t.Fatal(err)
+					before, readErr := os.ReadFile(layout.path)
+					if readErr != nil && !os.IsNotExist(readErr) {
+						t.Fatal(readErr)
+					}
+					_, syncErr := SyncResource(context.Background(), provider, dir, ProfileKindHostManaged, payload)
+					readonlyRejected := runtime.GOOS == "windows" && want&0200 == 0 && errors.Is(syncErr, fs.ErrPermission)
+					if syncErr != nil && !readonlyRejected {
+						t.Fatal(syncErr)
 					}
 					info, err := os.Lstat(layout.path)
 					if err != nil {
 						t.Fatal(err)
 					}
-					want := mode
-					if want == 0 {
-						want = 0644
-					}
 					if info.Mode().Perm() != want {
 						t.Fatalf("existing permission changed: got %04o want %04o", info.Mode().Perm(), want)
+					}
+					if readonlyRejected {
+						after, err := os.ReadFile(layout.path)
+						if err != nil || string(after) != string(before) {
+							t.Fatal("readonly rejection changed original bytes", err)
+						}
+						t.Log("Windows refused readonly replacement; permission and content preserved")
+						continue
 					}
 					root, err := readStructuredRoot(layout)
 					if err != nil {
