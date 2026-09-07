@@ -86,7 +86,7 @@ identity.ID, identity.TenantID, identity.ProfileID, identity.Name
 - source/auth 是既有 `AuthLink` 的特定例外：仅 provider 已声明的 auth 文件可链接到 canonical source 对应 auth 文件；重开时核对链接身份，禁止把 auth 例外扩成目录/配置/manifest 例外。SDK 不读取认证内容入 fingerprint；provider OAuth 通过共享 auth 文件自行更新是原有 AuthLink 语义。
 - SDK 写入所有控制文件前后验证对象身份；OS 锁保护遵守本合同的进程，私有权限隔离其他 OS 用户，不声称隔离恶意同账号或管理员在持锁期间任意替换整棵树。
 
-新 namespace/key 用相同父目录下独占创建的私有 staging，写齐 marker 并 Sync 后以不可覆盖已有非空目录的 rename 发布；竞争 loser 只删除自己本次持有、已核对 generation 的 staging，然后验证 winner 目录。已有无 marker 目录稳定拒绝，不“补标记”，不删除。初始化中断后仅 unseeded 状态且 marker 匹配的 `.seed-<generation>` 可在持锁下安全清理；已存在 profile 或 unknown staging 不能当空目录重种。
+新 namespace/key 用相同父目录下独占创建的私有 staging，写齐 marker 并 Sync 后以不可覆盖已有非空目录的 rename 发布；竞争 loser 只删除自己本次持有、已核对 generation 的 staging，然后验证 winner 目录。已有无 marker 目录稳定拒绝，不“补标记”，不删除。每个 `.seed-<generation>` 在 seed callback 前写入 0600 的 `.agent-adaptor-seed-owner.json`，其封闭字段为 `version:1`、`key_hash:string`、`generation:string`；仅匹配 key/目录 generation 的 staging 可在持锁下清理。该 marker 在初始化成功后删除，不进入 provider 资源指纹。初始化中断后仅 unseeded 状态且 marker 匹配的 staging 可清理；已存在 profile 或 unknown staging 不能当空目录重种。
 
 ## 4. 专用锁与依赖决定
 
@@ -146,10 +146,10 @@ func (c *Claim) ReleaseClean(ctx context.Context) error
 
 正常首次/重建的唯一操作顺序：
 
-1. 在既有准入内校验工具/MCP config；只读解析 Dedicated source；确定 key 并获取 claim。
+1. 在既有准入内校验工具/MCP config；只读解析 Dedicated source；确定 key 并获取 claim。Acquire 成功立即注册到 Agent 的 claim map，早于 Initialize/BeginUse 等可能失败的写操作；后续失败仍由 Close 找到并释放，不能丢失已锁句柄。
 2. 验证路径/manifest/权限；拒绝 active 旧 generation。首次调用 Initialize，重开只验证既有 seed 与 profile，禁止覆写 transcript。
 3. 先检查并移除可证明 SDK-owned 的旧 hosted MCP 投影。原资源 manifest 的 owner、provider 路径与 rendered fingerprint 必须全部一致；不明/冲突 key 返回既有 InvalidMCPConfig，篡改控制载体返回 ErrUnsafe。去投影失败不启动新 endpoint。
-4. BeginUse durable active 后注册到 Agent claim map；通过现有 runtime attachment 生成本 Agent 的 endpoint/token/env carrier，再由唯一 resolved request 传给 Driver。
+4. 已注册 claim 的 BeginUse durable active 后，通过现有 runtime attachment 生成本 Agent 的 endpoint/token/env carrier，再由唯一 resolved request 传给 Driver。BeginUse 写入/Sync 不确定时保留 claim 和不确定 active 状态，Close 在证明没有 provider/gateway 使用或已完成全部退出后重试安全清理；不把该错误路径冒充未写过状态而直接放弃句柄。
 5. claim/兼容性读取必须与物化相互协调；完整 Thread compatibility 计算完毕后才允许 Driver。provider parser/checkpoint 语义不变。正常重建能获取 ready claim，本身已经证明前 owner 的正常 Close 完成；旧 active 绝不冒充这个证明。
 
 Close 的确定顺序：先关闭准入并 cancel → 保留现有第一次 CloseProcesses 以解除 Run 阻塞 → drain → 第二次幂等 CloseProcesses 回收晚启动 writer → 移除 owned MCP 投影 → 关闭 gateway → 删除 owned 临时 clone / 为持久 claim ReleaseClean → complete。第一次进程回收是 drain 的辅助手段，不是绕过 drain 的权限。任何非 nil 的进程回收、去投影、gateway Close、写 ready 或释放错误都返回 `complete=false`，下一次 Close 使用新的 context 重试；包括非 context 的 gateway 错误。
