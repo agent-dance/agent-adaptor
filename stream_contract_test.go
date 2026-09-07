@@ -279,7 +279,7 @@ func TestRunIsStreamPlusDrain(t *testing.T) {
 }
 
 // TestStreamCancel pins Cancel(): the run ends, Events() closes, and the
-// outcome is a plain infrastructure cancellation (not a *RunError).
+// outcome is a cancellation RunError carrying its available Result and cause.
 func TestStreamCancel(t *testing.T) {
 	fake := newFakeDriver()
 	started := make(chan struct{})
@@ -306,13 +306,13 @@ func TestStreamCancel(t *testing.T) {
 		t.Fatalf("want context.Canceled, got %v", err)
 	}
 	var runErr *adaptor.RunError
-	if errors.As(err, &runErr) {
-		t.Errorf("bare cancellation must not be a *RunError (D1), got %+v", runErr)
+	if !errors.As(err, &runErr) || runErr.Reason != adaptor.ReasonCancelled || runErr.Result == nil {
+		t.Errorf("cancelled execution lost its partial Result: %+v", runErr)
 	}
 }
 
-// TestStreamInfraError: a driver crash surfaces on Result() as a plain
-// wrapped error after the (empty) event stream closes.
+// TestStreamInfraError: a driver crash surfaces on Result() as a RunError
+// retaining the cause after the (empty) event stream closes.
 func TestStreamInfraError(t *testing.T) {
 	fake := newFakeDriver()
 	sentinel := errors.New("process exploded")
@@ -325,5 +325,9 @@ func TestStreamInfraError(t *testing.T) {
 	}
 	if !errors.Is(err, sentinel) {
 		t.Fatalf("want wrapped driver error, got %v", err)
+	}
+	var runErr *adaptor.RunError
+	if !errors.As(err, &runErr) || runErr.Reason != adaptor.ReasonInfrastructure || runErr.Result == nil {
+		t.Fatalf("infrastructure error lost partial Result: %+v", runErr)
 	}
 }

@@ -32,9 +32,9 @@ type (
 // flat; audit surfaces are gathered behind Raw() / Transcript() / Services();
 // structured output decodes via Decode.
 //
-// A run that completed but failed at the business level does not return a
-// Result directly — it returns a *RunError whose Result field carries this
-// same value (see RunError).
+// After Driver.Run is entered, a failed run returns nil, *RunError whose
+// Result carries all available output, including partial output on cancellation
+// and infrastructure failure. Pre-execution failures do not create a Result.
 type Result struct {
 	// RunID is the SDK-assigned execution identifier.
 	RunID string

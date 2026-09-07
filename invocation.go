@@ -47,42 +47,56 @@ func (a *Agent) startInvocation(ctx context.Context, prompt string, opts []CallO
 func (a *Agent) executeInvocation(ctx context.Context, st *runStream, prompt string, eff *RunSettings, target *invocationTarget) {
 	defer a.unregisterRun(st.runID)
 	var (
-		resources      *runResources
-		plan           *engine.ThreadSessionPlan
-		threadContract threadDriverContract
-		result         *Result
-		resultErr      error
+		resources       *runResources
+		plan            *engine.ThreadSessionPlan
+		threadContract  threadDriverContract
+		result          *Result
+		resultErr       error
+		response        driver.Response
+		driverEntered   bool
+		coordinationErr error
+		fallbackErr     error
+		schemaRequested bool
 	)
 
 	defer func() {
+		if plan != nil {
+			plan.StopLeaseRenewal()
+			if renewErr := plan.RenewalError(); renewErr != nil && !errors.Is(coordinationErr, renewErr) {
+				coordinationErr = errors.Join(coordinationErr, target.thread.threadError(renewErr))
+			}
+		}
+		// Every exit after dispatch maps the same accumulated Response exactly
+		// once, including failed fallback preparation and Thread finalization.
+		if driverEntered {
+			// Interrupted schema runs cannot use Decode's schema-less Text
+			// fallback. Mark missing data unavailable without validating output
+			// or replacing the execution's original cause.
+			if schemaRequested && response.StructuredOutput == nil {
+				response.StructuredOutput = &driver.StructuredOutput{ValidationErrors: []string{"structured output was not validated before execution ended"}}
+			}
+			if resultErr != nil || coordinationErr != nil || response.Failure != nil || st.sink.pendingFailure() != nil {
+				resultErr = errors.Join(resultErr, fallbackErr)
+			}
+			result, resultErr = finalizeRun(st.runID, st.sink, response, resultErr, coordinationErr)
+		}
 		// Stop renewal before releasing leases. ReleaseContext remains bounded
 		// even for a broken store and its error is part of the observable run
 		// outcome instead of disappearing in a defer.
 		if plan != nil {
-			plan.StopLeaseRenewal()
 			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), invocationCleanupTimeout)
 			releaseErr := plan.ReleaseContext(cleanupCtx)
 			cancel()
 			if releaseErr != nil {
 				releaseErr = target.thread.threadError(releaseErr)
-				if resultErr == nil {
-					result = nil
-					resultErr = releaseErr
-				} else {
-					resultErr = errors.Join(resultErr, releaseErr)
-				}
+				result, resultErr = appendInvocationCleanupError(result, resultErr, releaseErr)
 			}
 		}
 
 		backfillRunServices(resources, result, resultErr)
 		if teardownErr := resources.finish(ctx); teardownErr != nil {
 			teardownErr = fmt.Errorf("adaptor: run %s teardown: %w", st.runID, teardownErr)
-			if resultErr == nil {
-				result = nil
-				resultErr = teardownErr
-			} else {
-				resultErr = errors.Join(resultErr, teardownErr)
-			}
+			result, resultErr = appendInvocationCleanupError(result, resultErr, teardownErr)
 		}
 		st.res, st.err = result, resultErr
 		st.sink.completeAuthoritativeLifecycle(result, resultErr)
@@ -128,6 +142,7 @@ func (a *Agent) executeInvocation(ctx context.Context, st *runStream, prompt str
 		resultErr = fmt.Errorf("adaptor: run %s: %w", st.runID, err)
 		return
 	}
+	schemaRequested = resolved.schema != nil
 
 	var identity driver.AgentIdentity
 	if eff.identity != nil {
@@ -163,71 +178,72 @@ func (a *Agent) executeInvocation(ctx context.Context, st *runStream, prompt str
 
 	request := resolved.req
 	for {
+		if driverEntered && ctx.Err() != nil {
+			resultErr = errors.Join(resultErr, ctx.Err(), context.Cause(ctx))
+			return
+		}
 		if plan != nil {
 			request.Session = plan.DriverSession(a.driver)
 		}
 		// Architectural invariant: this is the only Driver.Run call in the
 		// root execution pipeline. Retry changes only the prepared session
 		// context.
-		response, runErr := a.driver.Run(ctx, request, st.sink)
+		driverEntered = true
+		attempt, runErr := a.driver.Run(ctx, request, st.sink)
+		response = mergeInvocationAudit(response, attempt)
+		// The Driver owns protocol classification; core fills an unclassified
+		// abnormal process outcome while retaining specific approval/provider
+		// failures and every observed context cause.
+		response, resultErr = classifyInvocationOutcome(ctx, response, runErr, st.sink.pendingFailure())
 
-		if plan != nil && runErr != nil {
+		if plan != nil && resultErr != nil {
 			var rejected *engine.ResumeRejectedError
-			if errors.As(runErr, &rejected) {
-				if plan.Reused() && plan.Mode() == driver.SessionContinueOrStart {
+			if errors.As(resultErr, &rejected) {
+				if plan.Reused() && plan.Mode() == driver.SessionContinueOrStart && ctx.Err() == nil && st.sink.pendingFailure() == nil {
 					if freshErr := plan.PrepareFresh(ctx, a.driver.Descriptor().Type, fingerprint); freshErr != nil {
-						resultErr = target.thread.threadError(freshErr)
+						coordinationErr = target.thread.threadError(freshErr)
 						return
 					}
+					fallbackErr = resultErr
 					continue
 				}
-				runErr = fmt.Errorf("%w: %w", ErrResumeRejected, runErr)
+				resultErr = fmt.Errorf("%w: %w", ErrResumeRejected, resultErr)
 			}
 		}
 
 		if plan != nil {
 			plan.StopLeaseRenewal()
 			if renewErr := plan.RenewalError(); renewErr != nil {
-				resultErr = target.thread.threadError(renewErr)
+				coordinationErr = target.thread.threadError(renewErr)
 				return
 			}
 		}
 
-		// A process helper reports an executed command's outcome as Response
-		// data so the Driver can first apply its provider-specific protocol
-		// classification. Close the remaining gap exactly once, here at the
-		// common invocation boundary: an unclassified abnormal process outcome
-		// must never become a successful stateless run or a persisted Thread.
-		// Provider and approval failures remain authoritative; bare outer-context
-		// cancellation keeps the public infrastructure-error identity.
-		response, runErr = classifyInvocationOutcome(ctx, response, runErr, st.sink.pendingFailure())
-
-		if runErr == nil {
+		if resultErr == nil && st.sink.pendingFailure() == nil {
 			response.StructuredOutput, response.Failure = engine.FinalizeStructuredOutput(
 				resolved.schema, resolved.source, response.Output, response.StructuredOutput, response.Failure,
 			)
 		}
 
-		if plan != nil && invocationCanPersist(ctx, a.driver, response, runErr, st.sink.pendingFailure()) {
+		if plan != nil && invocationCanPersist(ctx, a.driver, response, resultErr, st.sink.pendingFailure()) {
 			// Architectural invariant: this is the only Thread persistence point.
 			if _, persistErr := plan.Persist(ctx, identity, a.driver, fingerprint, response.Checkpoint); persistErr != nil {
-				resultErr = target.thread.threadError(persistErr)
+				coordinationErr = target.thread.threadError(persistErr)
 				return
 			}
 			target.thread.markEstablished()
-		} else if plan != nil && runErr == nil && response.Failure == nil && st.sink.pendingFailure() == nil {
+		} else if plan != nil && resultErr == nil && response.Failure == nil && st.sink.pendingFailure() == nil {
 			// A nominally successful Thread run must prove it is both healthy
 			// and resumable. Failed/cancelled/business-failure runs simply skip
 			// persistence, preserving the previous healthy active record.
 			if cancelErr := ctx.Err(); cancelErr != nil {
-				resultErr = fmt.Errorf("adaptor: run %s: %w", st.runID, cancelErr)
+				resultErr = errors.Join(cancelErr, context.Cause(ctx))
 				return
 			}
-			resultErr = target.thread.threadError(engine.ErrSessionCheckpointMissing)
+			coordinationErr = target.thread.threadError(engine.ErrSessionCheckpointMissing)
 			return
 		}
 
-		result, resultErr = finalizeRun(st.runID, st.sink, response, runErr)
 		return
 	}
 }
@@ -430,6 +446,9 @@ func invocationCanPersist(ctx context.Context, d driver.Driver, resp driver.Resp
 // provider or approval failure exists, convert that audit data into a
 // structured business failure so resultFromResponse can preserve all of it.
 func classifyInvocationOutcome(ctx context.Context, resp driver.Response, runErr error, pending *driver.RunFailure) (driver.Response, error) {
+	if ctx.Err() != nil {
+		runErr = errors.Join(runErr, ctx.Err(), context.Cause(ctx))
+	}
 	if resp.Failure != nil || pending != nil {
 		return resp, runErr
 	}
@@ -465,7 +484,7 @@ func classifyInvocationOutcome(ctx context.Context, resp driver.Response, runErr
 	return resp, nil
 }
 
-func finalizeRun(runID string, sink *eventSink, resp driver.Response, err error) (*Result, error) {
+func finalizeRun(runID string, sink *eventSink, resp driver.Response, err, coordinationErr error) (*Result, error) {
 	pending := sink.pendingFailure()
 	res := resultFromResponse(runID, resp)
 	failure := resp.Failure
@@ -476,22 +495,76 @@ func finalizeRun(runID string, sink *eventSink, resp driver.Response, err error)
 	// specific than a concurrent process/context error. Preserve that verdict
 	// and its partial Result instead of replacing it with a generic wrapper.
 	if failure != nil {
-		return nil, runErrorFromFailure(failure, res)
+		runErr := runErrorFromFailure(failure, res)
+		runErr.Cause = errors.Join(err, coordinationErr)
+		return nil, runErr
+	}
+	if coordinationErr != nil {
+		return nil, &RunError{Reason: ReasonInfrastructure, Message: "Thread coordination failed", Result: res, Cause: errors.Join(err, coordinationErr)}
 	}
 	if err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return nil, fmt.Errorf("adaptor: run %s: %w", runID, err)
+		reason, message := ReasonInfrastructure, "execution failed"
+		switch {
+		case errors.Is(err, context.DeadlineExceeded):
+			reason, message = ReasonDeadlineExceeded, "execution deadline exceeded"
+		case errors.Is(err, context.Canceled):
+			reason, message = ReasonCancelled, "execution cancelled"
 		}
 		if errors.Is(err, errApprovalAbort) {
-			return nil, &RunError{
-				Reason:  ReasonAgentError,
-				Message: "approval aborted the run",
-				Result:  res,
-			}
+			reason, message = ReasonAgentError, "approval aborted the run"
 		}
-		return nil, fmt.Errorf("adaptor: run %s: %w", runID, err)
+		return nil, &RunError{Reason: reason, Message: message, Result: res, Cause: err}
 	}
 	return res, nil
+}
+
+// Cleanup is secondary to an already classified execution failure. A healthy
+// success can become an infrastructure failure, retaining its committed Result.
+// Pre-dispatch errors have no Result and keep their existing wrapped identity.
+func appendInvocationCleanupError(res *Result, err, cleanup error) (*Result, error) {
+	if runErr, ok := err.(*RunError); ok {
+		runErr.Cause = errors.Join(runErr.Cause, cleanup)
+		return nil, runErr
+	}
+	if res != nil {
+		return nil, &RunError{Reason: ReasonInfrastructure, Message: "execution cleanup failed", Result: res, Cause: cleanup}
+	}
+	return nil, errors.Join(err, cleanup)
+}
+
+// A safe resume rejection can precede one fresh attempt in the same invocation.
+// Retain audit observations from both attempts; execution health and checkpoint
+// always belong solely to the latest attempt. No provider payload is parsed here.
+func mergeInvocationAudit(previous, current driver.Response) driver.Response {
+	if previous.RawStreams != nil {
+		raw := cloneRawStreams(*previous.RawStreams)
+		if current.RawStreams != nil {
+			raw.Stdout += current.RawStreams.Stdout
+			raw.Stderr += current.RawStreams.Stderr
+			if current.RawStreams.Terminal != nil {
+				raw.Terminal = cloneTerminalPayload(current.RawStreams.Terminal)
+			}
+		}
+		current.RawStreams = &raw
+	}
+	current.Transcript = append(cloneTranscript(previous.Transcript), current.Transcript...)
+	if previous.Usage != nil {
+		usage := *previous.Usage
+		if current.Usage != nil {
+			usage.InputTokens += current.Usage.InputTokens
+			usage.OutputTokens += current.Usage.OutputTokens
+			usage.CachedInputTokens += current.Usage.CachedInputTokens
+			usage.EstimatedCostMilli += current.Usage.EstimatedCostMilli
+		}
+		current.Usage = &usage
+	}
+	current.RuntimeServices = mergeServiceReports(previous.RuntimeServices, current.RuntimeServices)
+	if previous.Metadata != nil {
+		metadata := maps.Clone(previous.Metadata)
+		maps.Copy(metadata, current.Metadata)
+		current.Metadata = metadata
+	}
+	return current
 }
 
 func runErrorFromFailure(f *driver.RunFailure, res *Result) *RunError {

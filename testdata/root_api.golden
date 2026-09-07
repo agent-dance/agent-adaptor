@@ -479,6 +479,10 @@ const ReasonApprovalTimeout FailureReason = "approval_timeout"
 
 const ReasonCancelled FailureReason = "cancelled"
 
+const ReasonDeadlineExceeded FailureReason = "deadline_exceeded"
+
+const ReasonInfrastructure FailureReason = "infrastructure_error"
+
 const ReasonPolicyViolation FailureReason = "policy_violation"
 
 type ResourceSnapshot struct {
@@ -529,6 +533,7 @@ type RunError struct {
 	Message string
 	Details map[string]any
 	Result *Result
+	Cause error
 }
 
 methodset RunError {

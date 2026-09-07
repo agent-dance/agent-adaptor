@@ -94,8 +94,8 @@ func TestOuterCancellationKeepsContextIdentityWithoutProviderFailure(t *testing.
 		t.Fatalf("error = %T %v, want context.DeadlineExceeded", err, err)
 	}
 	var runErr *adaptor.RunError
-	if errors.As(err, &runErr) {
-		t.Fatalf("bare outer cancellation became RunError: %#v", runErr)
+	if !errors.As(err, &runErr) || runErr.Reason != adaptor.ReasonDeadlineExceeded || runErr.Result == nil || runErr.Result.Text != "partial" || runErr.Result.Raw().Stdout != "before cancellation" {
+		t.Fatalf("outer deadline lost partial Result: %#v", runErr)
 	}
 }
 

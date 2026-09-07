@@ -1,9 +1,8 @@
 package adaptor_test
 
 // Table-driven errors.Is / errors.As coverage of the
-// three error paths — business failure (*RunError with sentinel + carried
-// Result), context cancellation/deadline, and process crash. One err, one
-// verdict point.
+// pre-execution errors and executed failures, including business failure,
+// cancellation/deadline and process crash. One err, one verdict point.
 
 import (
 	"context"
@@ -23,12 +22,12 @@ func TestRunErrorPaths(t *testing.T) {
 		setup func(f *fakeDriver)
 		run   func(t *testing.T, agent *adaptor.Agent) error
 
-		// Business-failure expectations (wantRunError == true).
+		// Executed-failure expectations (wantRunError == true).
 		wantRunError bool
 		wantReason   adaptor.FailureReason
 		wantSentinel error
 
-		// Infrastructure expectations (wantRunError == false).
+		// Original cause, when the fixture returns one.
 		wantIs error
 	}
 
@@ -90,7 +89,7 @@ func TestRunErrorPaths(t *testing.T) {
 			wantSentinel: adaptor.ErrPolicyViolation,
 		},
 
-		// --- Path 2: context cancellation / deadline → plain error ---
+		// --- Path 2: admitted Driver observes cancellation or deadline ---
 		{
 			name:  "context/cancelled",
 			setup: func(f *fakeDriver) { f.blockUntilCancelled() },
@@ -101,7 +100,10 @@ func TestRunErrorPaths(t *testing.T) {
 				_, err := agent.Run(ctx, "do the thing")
 				return err
 			},
-			wantIs: context.Canceled,
+			wantIs:       context.Canceled,
+			wantRunError: true,
+			wantReason:   adaptor.ReasonCancelled,
+			wantSentinel: adaptor.ErrRunCancelled,
 		},
 		{
 			name:  "context/deadline via WithTimeout",
@@ -112,15 +114,19 @@ func TestRunErrorPaths(t *testing.T) {
 					adaptor.WithTimeout(20*time.Millisecond))
 				return err
 			},
-			wantIs: context.DeadlineExceeded,
+			wantIs:       context.DeadlineExceeded,
+			wantRunError: true,
+			wantReason:   adaptor.ReasonDeadlineExceeded,
 		},
 
-		// --- Path 3: process crash → plain error wrapping the cause ---
+		// --- Path 3: process crash → carrier wrapping the cause ---
 		{
-			name:   "infrastructure/process crash",
-			setup:  func(f *fakeDriver) { f.err = crashErr },
-			run:    plainRun,
-			wantIs: crashErr,
+			name:         "infrastructure/process crash",
+			setup:        func(f *fakeDriver) { f.err = crashErr },
+			run:          plainRun,
+			wantIs:       crashErr,
+			wantRunError: true,
+			wantReason:   adaptor.ReasonInfrastructure,
 		},
 	}
 
@@ -145,17 +151,17 @@ func TestRunErrorPaths(t *testing.T) {
 				if runErr.Reason != c.wantReason {
 					t.Errorf("Reason = %q, want %q", runErr.Reason, c.wantReason)
 				}
-				if !errors.Is(err, c.wantSentinel) {
+				if c.wantSentinel != nil && !errors.Is(err, c.wantSentinel) {
 					t.Errorf("errors.Is(err, %v) = false", c.wantSentinel)
 				}
 				// The completed-but-failed run keeps its full Result.
 				if runErr.Result == nil {
 					t.Fatal("RunError.Result is nil — partial results must survive the failure path")
 				}
-				if runErr.Result.Text != "partial output before failure" {
+				if c.wantIs == nil && runErr.Result.Text != "partial output before failure" {
 					t.Errorf("RunError.Result.Text = %q", runErr.Result.Text)
 				}
-				if runErr.Result.Summary == "" || runErr.Result.RunID == "" {
+				if (c.wantIs == nil && runErr.Result.Summary == "") || runErr.Result.RunID == "" {
 					t.Errorf("RunError.Result missing audit fields: %+v", runErr.Result)
 				}
 				// Exactly one sentinel matches: no cross-talk.
@@ -168,10 +174,9 @@ func TestRunErrorPaths(t *testing.T) {
 						t.Errorf("errors.Is unexpectedly matched %v", sentinel)
 					}
 				}
-			} else {
-				if !errors.Is(err, c.wantIs) {
-					t.Errorf("errors.Is(err, %v) = false (err = %v)", c.wantIs, err)
-				}
+			}
+			if c.wantIs != nil && !errors.Is(err, c.wantIs) {
+				t.Errorf("errors.Is(err, %v) = false (err = %v)", c.wantIs, err)
 			}
 		})
 	}
