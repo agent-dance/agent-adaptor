@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"math"
 	"reflect"
 	"strings"
 
@@ -12,14 +13,18 @@ import (
 )
 
 type eventMapper struct {
-	base           DelegationEvent
-	started        bool
-	openMessage    string
-	statusDecoders []StatusPartDecoder
-	streamProfile  string
-	lastSequence   uint64
-	seenStatusData map[string]struct{}
-	seenStatusText map[string]struct{}
+	includeRemoteArtifacts bool
+	maxArtifactBytes       int64
+	boundedArtifacts       map[string]clienta2a.Artifact
+	artifactBlocked        map[string]string
+	base                   DelegationEvent
+	started                bool
+	openMessage            string
+	statusDecoders         []StatusPartDecoder
+	streamProfile          string
+	lastSequence           uint64
+	seenStatusData         map[string]struct{}
+	seenStatusText         map[string]struct{}
 }
 
 func newEventMapper(base DelegationEvent, decoders ...StatusPartDecoder) *eventMapper {
@@ -27,10 +32,12 @@ func newEventMapper(base DelegationEvent, decoders ...StatusPartDecoder) *eventM
 	statusDecoders := []StatusPartDecoder{adapterStreamStatusDecoder{}}
 	statusDecoders = append(statusDecoders, decoders...)
 	return &eventMapper{
-		base:           base,
-		statusDecoders: statusDecoders,
-		seenStatusData: map[string]struct{}{},
-		seenStatusText: map[string]struct{}{},
+		base:             cloneDelegationEvent(base),
+		boundedArtifacts: make(map[string]clienta2a.Artifact),
+		artifactBlocked:  make(map[string]string),
+		statusDecoders:   statusDecoders,
+		seenStatusData:   map[string]struct{}{},
+		seenStatusText:   map[string]struct{}{},
 	}
 }
 
@@ -117,6 +124,7 @@ func staleRecoveredTask(task clienta2a.Task, snapshot *clienta2a.Task, continuat
 
 // Retain snapshot artifacts and later updates, following A2A append semantics.
 func mergeStreamArtifact(task *clienta2a.Task, artifact clienta2a.Artifact, appendParts bool) {
+	artifact = cloneA2AArtifact(artifact)
 	for i := range task.Artifacts {
 		if artifact.ID != "" && task.Artifacts[i].ID == artifact.ID {
 			if appendParts {
@@ -325,7 +333,7 @@ func (m *eventMapper) completeStatusDelegationEvent(
 	taskID, contextID, messageID, profile string,
 	decoded DelegationEvent,
 ) DelegationEvent {
-	ev := decoded
+	ev := cloneDelegationEvent(decoded)
 	ev.RunID = m.base.RunID
 	ev.ParentToolCallID = m.base.ParentToolCallID
 	ev.DelegationID = m.base.DelegationID
@@ -443,6 +451,44 @@ func (m *eventMapper) messageEvents(msg clienta2a.Message) []DelegationEvent {
 
 func (m *eventMapper) artifactEvents(event clienta2a.Event) []DelegationEvent {
 	artifact := *event.Artifact
+	// Evaluate cumulative append content, but publish only the actual update.
+	candidate := artifact
+	reason := ""
+	if event.Append && artifact.ID != "" {
+		reason = m.artifactBlocked[artifact.ID]
+		if previous, ok := m.boundedArtifacts[artifact.ID]; ok {
+			task := clienta2a.Task{Artifacts: []clienta2a.Artifact{previous}}
+			mergeStreamArtifact(&task, artifact, true)
+			candidate = task.Artifacts[0]
+		}
+	}
+	size := artifactKnownBytes(candidate)
+	if size == math.MaxInt64 {
+		reason = "artifact_invalid"
+	} else if m.maxArtifactBytes > 0 && size > m.maxArtifactBytes {
+		reason = "artifact_too_large"
+	}
+	if reason != "" {
+		if artifact.ID != "" {
+			m.artifactBlocked[artifact.ID] = reason
+			delete(m.boundedArtifacts, artifact.ID)
+		}
+		ev := m.base
+		ev.Kind = DelegationStreamDropped
+		ev.RemoteTaskID, ev.RemoteContextID, ev.RemoteArtifactID = event.TaskID, event.ContextID, artifact.ID
+		ev.Raw = map[string]any{"reason": reason}
+		if reason == "artifact_too_large" {
+			ev.Raw["max_bytes"] = m.maxArtifactBytes
+		}
+		return []DelegationEvent{ev}
+	}
+	if artifact.ID != "" {
+		delete(m.artifactBlocked, artifact.ID)
+		if m.maxArtifactBytes > 0 {
+			m.boundedArtifacts[artifact.ID] = cloneA2AArtifact(candidate)
+		}
+	}
+
 	return []DelegationEvent{m.artifactCreatedEvent(event, artifact)}
 }
 
@@ -452,6 +498,7 @@ func (m *eventMapper) artifactCreatedEvent(event clienta2a.Event, artifact clien
 	ev.RemoteTaskID = event.TaskID
 	ev.RemoteContextID = event.ContextID
 	ev.RemoteArtifactID = artifact.ID
+	ev.Append, ev.LastChunk = event.Append, event.LastChunk
 	ev.Artifact = &DelegationArtifact{
 		ID:          artifact.ID,
 		Name:        artifact.Name,
@@ -460,7 +507,12 @@ func (m *eventMapper) artifactCreatedEvent(event clienta2a.Event, artifact clien
 		MediaType:   firstMediaType(artifact.Parts),
 		Metadata:    cloneAnyMap(artifact.Metadata),
 	}
-	ev.Raw = artifact.Raw
+	if m.includeRemoteArtifacts {
+		ev.Artifact.Parts = cloneRemoteParts(artifact.Parts)
+		ev.Raw = cloneAnyMap(artifact.Raw)
+	} else if len(artifact.Parts) > 0 || len(artifact.Raw) > 0 {
+		ev.Raw = map[string]any{"parts_omitted": "remote_artifacts_not_requested"}
+	}
 	return ev
 }
 
@@ -526,7 +578,7 @@ func (m *eventMapper) terminalForState(taskID, contextID string, state clienta2a
 	ev.RemoteTaskID = taskID
 	ev.RemoteContextID = contextID
 	ev.Status = string(state)
-	ev.Raw = raw
+	ev.Raw = cloneAnyMap(raw)
 	switch state {
 	case clienta2a.TaskStateCompleted:
 		ev.Kind = DelegationFinished
@@ -612,7 +664,7 @@ func cloneRemoteParts(parts []clienta2a.Part) []RemotePart {
 			Kind:      part.Kind,
 			Text:      part.Text,
 			Raw:       append([]byte(nil), part.Raw...),
-			Data:      part.Data,
+			Data:      cloneAnyValue(part.Data),
 			URL:       part.URL,
 			MediaType: part.MediaType,
 			Filename:  part.Filename,

@@ -21,6 +21,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"reflect"
 	"strings"
 	"time"
 
@@ -107,7 +108,14 @@ type DelegationPolicy struct {
 	RequireStreaming   bool
 	PollInterval       time.Duration
 	MaxPolls           int
-	MaxArtifactBytes   int64
+	// MaxArtifactBytes caps each cumulative artifact before event publication
+	// and final projection. It counts part strings, inline bytes, JSON Data,
+	// part/artifact metadata, protocol Raw and extension strings; remote URLs
+	// are counted as strings and never fetched. Zero imposes no byte ceiling.
+	// Invalid JSON data is rejected even without a ceiling. A rejected update
+	// emits DelegationStreamDropped without content; an invalid/oversized final
+	// artifact fails with artifact_invalid/artifact_too_large.
+	MaxArtifactBytes int64
 }
 
 // Registry stores host-curated remote target specifications by stable key.
@@ -180,23 +188,29 @@ func (r *Registry) Keys() []string {
 // events to the leader run; Agent selects a Registry key. Message, when set,
 // takes precedence over Prompt/Objective/Context and Artifacts.
 type DelegationRequest struct {
-	RunID                  string
-	ParentToolCallID       string
-	ContextID              string
-	Agent                  string
-	Objective              string
-	Prompt                 string
-	Context                string
-	Message                *clienta2a.Message
-	Artifacts              []InputArtifact
+	RunID            string
+	ParentToolCallID string
+	ContextID        string
+	Agent            string
+	Objective        string
+	Prompt           string
+	Context          string
+	Message          *clienta2a.Message
+	Artifacts        []InputArtifact
+	// IncludeRemoteArtifacts includes full Parts in artifact events and full
+	// RemoteArtifacts in the result. It does not enable remote bridge exposure;
+	// content withheld by the remote ExposurePolicy remains unavailable.
 	IncludeRemoteArtifacts bool
-	MaxArtifacts           *int
-	HistoryLength          *int
-	Timeout                time.Duration
-	Stream                 bool
-	Tenant                 string
-	Metadata               map[string]any
-	StageContext           DelegationStageContext
+	// MaxArtifacts limits compact final Artifacts only. Omitted entries are
+	// reported by DelegationStreamDropped with reason artifact_result_limit;
+	// live updates and explicitly requested RemoteArtifacts remain complete.
+	MaxArtifacts  *int
+	HistoryLength *int
+	Timeout       time.Duration
+	Stream        bool
+	Tenant        string
+	Metadata      map[string]any
+	StageContext  DelegationStageContext
 }
 
 // InputArtifact is a model-facing reference supplied to a delegated task.
@@ -216,8 +230,13 @@ type DelegationStageContext struct {
 }
 
 // DelegationArtifact is the compact artifact projection returned to the
-// leader and emitted in DelegationArtifactCreated events.
+// leader and emitted in DelegationArtifactCreated events. Final Artifacts stay
+// compact; full final content is available only in RemoteArtifacts.
 type DelegationArtifact struct {
+	// Parts contains only this update's ordered parts, not accumulated content.
+	// It is populated in events only when IncludeRemoteArtifacts is true and
+	// the artifact fits MaxArtifactBytes. Parts is independent of protocol Raw.
+	Parts       []RemotePart   `json:"parts,omitempty"`
 	ID          string         `json:"id,omitempty"`
 	Name        string         `json:"name,omitempty"`
 	Description string         `json:"description,omitempty"`
@@ -237,7 +256,9 @@ type RemoteArtifact struct {
 	Raw         map[string]any `json:"raw,omitempty"`
 }
 
-// RemotePart preserves one part of an opt-in RemoteArtifact.
+// RemotePart preserves one part of an opt-in remote artifact projection.
+// Raw contains inline file bytes, not a guessed provider protocol payload.
+// Data and Metadata retain decoded protocol values with independent copies.
 type RemotePart struct {
 	Kind      clienta2a.PartKind `json:"kind,omitempty"`
 	Text      string             `json:"text,omitempty"`
@@ -284,8 +305,16 @@ type DelegationEvent struct {
 	ToolName string
 	Args     any
 	Result   any
+	// Artifact carries the current update. When full content was not requested,
+	// Raw contains only parts_omitted=remote_artifacts_not_requested instead of
+	// the original artifact protocol payload. Over-limit/invalid updates use
+	// DelegationStreamDropped with a safe reason and no artifact content.
 	Artifact *DelegationArtifact
-	Status   string
+	// Append appends Parts to the same ArtifactID; false replaces its content.
+	// LastChunk closes that artifact update sequence, not the delegation.
+	Append    bool
+	LastChunk bool
+	Status    string
 	// StatusParts preserves the remote A2A status message parts for hosts that
 	// consume structured status data.
 	StatusParts []RemotePart
@@ -416,23 +445,83 @@ func cloneAnyMap(in map[string]any) map[string]any {
 	return out
 }
 
-// cloneAnyValue copies the JSON-shaped values carried in public metadata and
-// raw protocol fields. Unknown immutable/scalar values are safe to share;
-// the mutable map, slice, and byte forms produced by encoding/json are copied
-// recursively so accessors cannot mutate Service-owned records.
+// cloneAnyValue copies JSON-shaped values without re-encoding or interpreting
+// their contents. Named maps/slices, RawMessage, arrays and exported struct
+// fields are included so host decoders have the same isolation as JSON input.
 func cloneAnyValue(value any) any {
-	switch value := value.(type) {
-	case map[string]any:
-		return cloneAnyMap(value)
-	case []any:
-		out := make([]any, len(value))
-		for i := range value {
-			out[i] = cloneAnyValue(value[i])
+	if value == nil {
+		return nil
+	}
+	return cloneValue(reflect.ValueOf(value), make(map[cloneVisit]reflect.Value)).Interface()
+}
+
+type cloneVisit struct {
+	typ    reflect.Type
+	kind   reflect.Kind
+	ptr    uintptr
+	length int
+}
+
+func cloneValue(v reflect.Value, seen map[cloneVisit]reflect.Value) reflect.Value {
+	switch v.Kind() {
+	case reflect.Interface:
+		if v.IsNil() {
+			return reflect.Zero(v.Type())
+		}
+		out := reflect.New(v.Type()).Elem()
+		out.Set(cloneValue(v.Elem(), seen))
+		return out
+	case reflect.Map, reflect.Slice, reflect.Pointer:
+		if v.IsNil() {
+			return reflect.Zero(v.Type())
+		}
+		key := cloneVisit{typ: v.Type(), kind: v.Kind(), ptr: v.Pointer()}
+		if v.Kind() == reflect.Slice {
+			key.length = v.Len()
+		}
+		if out, ok := seen[key]; ok {
+			return out
+		}
+		var out reflect.Value
+		switch v.Kind() {
+		case reflect.Map:
+			out = reflect.MakeMapWithSize(v.Type(), v.Len())
+			seen[key] = out
+			iter := v.MapRange()
+			for iter.Next() {
+				out.SetMapIndex(iter.Key(), cloneValue(iter.Value(), seen))
+			}
+		case reflect.Slice:
+			out = reflect.MakeSlice(v.Type(), v.Len(), v.Len())
+			seen[key] = out
+			for i := 0; i < v.Len(); i++ {
+				out.Index(i).Set(cloneValue(v.Index(i), seen))
+			}
+		case reflect.Pointer:
+			out = reflect.New(v.Type().Elem())
+			if out.Type() != v.Type() {
+				out = out.Convert(v.Type())
+			}
+			seen[key] = out
+			out.Elem().Set(cloneValue(v.Elem(), seen))
 		}
 		return out
-	case []byte:
-		return append([]byte(nil), value...)
+	case reflect.Array:
+		out := reflect.New(v.Type()).Elem()
+		for i := 0; i < v.Len(); i++ {
+			out.Index(i).Set(cloneValue(v.Index(i), seen))
+		}
+		return out
+	case reflect.Struct:
+		out := reflect.New(v.Type()).Elem()
+		out.Set(v)
+		for i := 0; i < v.NumField(); i++ {
+			if v.Type().Field(i).IsExported() {
+				out.Field(i).Set(cloneValue(v.Field(i), seen))
+			}
+		}
+		return out
 	default:
-		return value
+		return v
 	}
 }
