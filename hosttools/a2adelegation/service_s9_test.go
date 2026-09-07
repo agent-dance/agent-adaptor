@@ -4,7 +4,7 @@ package a2adelegation_test
 // A fake leader driver reaches the Service's per-run MCP sidecar over real
 // HTTP (bearer auth, JSON-RPC tools/call), delegates to three Local roles
 // backed by scripted fake drivers, and the delegation events converge onto
-// the leader's own stream through subagentstream.Merge. Assertions cover:
+// the leader's own stream through team.Option(). Assertions cover:
 // event confluence (per-agent ordering, projected kinds, delta fidelity),
 // result recording (team.Result + HasLine, recorded before the terminal
 // event is visible), the Observe tap, and Close draining. No sleeps: all
@@ -23,7 +23,6 @@ import (
 	"time"
 
 	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/bridges/subagentstream"
 	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/hosttools/a2adelegation"
 )
@@ -74,7 +73,10 @@ type mcpLeaderDriver struct {
 }
 
 func (d *mcpLeaderDriver) Descriptor() driver.Descriptor {
-	return driver.Descriptor{Type: "fake-leader", DisplayName: "fake leader"}
+	return driver.Descriptor{
+		Type: "fake-leader", DisplayName: "fake leader",
+		MCP: driver.MCPCapability{Supported: true, HTTP: true},
+	}
 }
 
 func (d *mcpLeaderDriver) ValidateConfig(any) error { return nil }
@@ -206,20 +208,19 @@ func TestServiceTeamCollaborationS9(t *testing.T) {
 			{agent: "review", objective: "review the implementation"},
 		},
 		output: "team workflow complete",
-	})
+	}, team.Option())
 
 	ctx := context.Background()
 	stream := leader.Stream(ctx, "coordinate the team")
-	merged := subagentstream.Merge(ctx, stream, team.Bus())
-	if merged.RunID() != stream.RunID() {
-		t.Fatalf("merged.RunID() = %q, want %q", merged.RunID(), stream.RunID())
+	runID := stream.RunID()
+	if runID == "" {
+		t.Fatal("stream.RunID() is empty")
 	}
-	runID := merged.RunID()
 
 	var leaderText strings.Builder
 	perAgent := map[string][]adaptor.SubagentUpdate{}
 	var agentOrder []string
-	for ev := range merged.Events() {
+	for ev := range stream.Events() {
 		switch e := ev.(type) {
 		case adaptor.TextDelta:
 			leaderText.WriteString(e.Text)
@@ -239,9 +240,12 @@ func TestServiceTeamCollaborationS9(t *testing.T) {
 		}
 	}
 
-	res, err := merged.Result()
+	res, err := stream.Result()
 	if err != nil {
-		t.Fatalf("merged.Result: %v", err)
+		t.Fatalf("stream.Result: %v", err)
+	}
+	if stream.RunID() != runID {
+		t.Fatalf("stream.RunID() = %q after completion, want %q", stream.RunID(), runID)
 	}
 	if res.Text != "team workflow complete" {
 		t.Errorf("leader result text = %q, want %q", res.Text, "team workflow complete")

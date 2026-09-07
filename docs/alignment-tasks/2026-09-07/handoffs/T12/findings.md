@@ -1,0 +1,7 @@
+# T12 attempt 3 — R015 / G03-F01
+
+G03's first fixed integration (`372a46588382e3d083d70a90f7de4546427cf185`) failed only `TestServiceTeamCollaborationS9`: the fixture constructed the leader without `team.Option()` and attempted post-start event injection with Merge. Merge correctly returned `ErrEventInjectionUnsupported`. The gate's original full log is preserved as `evidence/attempt3-g03-before-repair.log`; the same failure on the unchanged T12 head (`3769ffde2bc65df43c198ee82d171e6770f304a8`) is preserved as `evidence/attempt3-before-repair.jsonl`.
+
+The fixture now installs the existing run service with `team.Option()` before execution and consumes the original Stream directly. Its HTTP sidecar fake declares the supported HTTP MCP transport. Only the obsolete wrapper identity comparison changed to checking the original RunID is nonempty and stable. Three-member ordering, update phases, deltas, result visibility before terminal, HasLine, Observe and Close assertions are preserved. The migrated single-scenario check passed in `evidence/attempt3-after-repair.jsonl`.
+
+Scope is the single authorized S9 fixture and local handoff documentation. There are no production code changes, new public declarations, skips, fake `RunEventsBound` methods, altered Merge rules or T18 implementation. Final-SHA full checks and exact counts are recorded in result.json and attempt3 evidence after the source commit; earlier attempts remain available for independent review.
