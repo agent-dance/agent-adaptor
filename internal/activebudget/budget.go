@@ -187,6 +187,19 @@ func (b *Controller) Stop() {
 	b.stopLocked()
 }
 
+// SelectedCause returns only the cause already selected under the controller
+// mutex. It does not settle time, inspect the parent, or change any state; an
+// unselected or nil controller returns nil. Selection can precede propagation
+// to the standard child context, whose own cause remains independently fixed.
+func (b *Controller) SelectedCause() error {
+	if b == nil {
+		return nil
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.cause
+}
+
 // Cancel stops timing and cancels once with the first selected cause. Parent
 // cancellation and budget expiry remain visible through context.Cause.
 func (b *Controller) Cancel(cause error) {
@@ -225,10 +238,10 @@ func (b *Controller) FinishExecution() error {
 	}
 	b.finished = true
 	switch {
-	case b.ctx.Err() != nil:
-		b.finishErr = context.Cause(b.ctx)
 	case b.cause != nil:
 		b.finishErr = b.cause
+	case b.ctx.Err() != nil:
+		b.finishErr = context.Cause(b.ctx)
 	case b.parent.Err() != nil:
 		// A parent's AfterFunc delivery may lag its authoritative Done/Err.
 		// Reject the seal even while cancellation has not reached the child.

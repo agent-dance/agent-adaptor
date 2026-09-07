@@ -1109,8 +1109,8 @@ type terminalOutcome struct {
 }
 
 func (s *eventSink) bindBudget(ctx context.Context, budget *activebudget.Controller, expired *ActiveExecutionTimeoutError) {
-	s.budget = budget
 	s.terminal.mu.Lock()
+	s.budget = budget
 	s.terminal.parent = s.terminal.ctx
 	s.terminal.ctx = ctx
 	s.terminal.expired = expired
@@ -1150,12 +1150,14 @@ func (s *eventSink) recordOutcomeLocked(ctx context.Context, failure *driver.Run
 		errorCause = context.Cause(ctx)
 	}
 	t.cause = errors.Join(t.cause, err, coordination, contextErr, errorCause)
-	// Cause identity distinguishes this controller's selected expiry from an
-	// inherited active-looking parent cause. Its cancellation may precede the
-	// core AfterFunc notification, including when the parent cancels afterwards.
-	ownExpiry := t.expired != nil && t.ctx != nil && context.Cause(t.ctx) == t.expired
+	// Selection precedes cancellation propagation. Read the controller's own
+	// locked selection, not whichever cause reached the standard child first.
+	// The lock order is terminal -> controller; the controller never calls core.
+	selected := s.budget.SelectedCause()
+	t.cause = errors.Join(t.cause, selected)
+	ownExpiry := t.expired != nil && selected == t.expired
 	if ownExpiry {
-		contextErr, errorCause = t.ctx.Err(), t.expired
+		errorCause = selected
 		t.cause = errors.Join(t.cause, contextErr, errorCause)
 	} else if t.parent != nil && t.parent.Err() != nil {
 		contextErr, errorCause = t.parent.Err(), context.Cause(t.parent)
@@ -1165,10 +1167,10 @@ func (s *eventSink) recordOutcomeLocked(ctx context.Context, failure *driver.Run
 		return
 	}
 	switch {
+	case ownExpiry:
+		t.reason, t.message = ReasonActiveExecutionTimeout, "active execution budget exhausted"
 	case contextErr != nil:
 		switch {
-		case ownExpiry:
-			t.reason, t.message = ReasonActiveExecutionTimeout, "active execution budget exhausted"
 		case contextErr == context.DeadlineExceeded:
 			t.reason, t.message = ReasonDeadlineExceeded, "execution deadline exceeded"
 		default:

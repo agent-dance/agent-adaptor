@@ -1,7 +1,7 @@
 # T10 documentation fragment for G03
 
-This fragment covers the T10 core delivery against canonical revision 14,
-including R011, R012 and R013. G03 must integrate the user-facing paragraphs below
+This fragment covers the T10 core delivery against canonical revision 15,
+including R011, R012, R013 and R014. G03 must integrate the user-facing paragraphs below
 before batch acceptance. Provider implementation and native/live verification
 remain assigned to their later owners; this core delivery does not assert that
 any built-in Driver already supports native append.
@@ -113,6 +113,13 @@ Cancelled/DeadlineExceeded, while the original cause remains inspectable.
 Conversely, a confirmed local budget expiry remains authoritative if the parent's
 cancellation notification is delivered afterwards. Sealing checks the direct
 parent state even when its AfterFunc cancellation delivery to the child lags.
+R014 fixes the earlier boundary too: the controller's locked cause selection is
+the confirmation point, before the lock-free context notification. A later parent
+may legitimately win the standard context cause while the run's primary Reason
+remains the already-selected local expiry; both causes remain inspectable. The
+private SelectedCause method only reads that existing selection and cannot charge
+time or infer a new parent cause. Core reads and binds its controller under the
+terminal lock, with a one-way terminal-to-controller lock order.
 
 R013 clarification for the Approval and Event sections: constructing an
 ApprovalRequest and copying it with WithEventMeta creates independent Choices
@@ -225,6 +232,11 @@ the same regression's local pre-repair red run (11 failures). The committed
 regression derives from that independent fixture, covering all three approval
 Kinds via callback/event, nested containers, 24 concurrent responder copies,
 positive/deny, kind mismatch, nil/zero values and cancellation expiry.
+R014 preserves the prior d623b71 evidence and adds a timer-Stop propagation barrier
+for Driver and pre-Driver paths, a controller selected-cause/Finish control, and
+binding versus Cancel/Close race coverage. The precise local propagation red
+fixture produced four failed test/subtest outcomes before repair. Final evidence
+belongs to the later committed SHA, not either earlier candidate.
 
 Required commands retain their complete scopes and repetitions:
 

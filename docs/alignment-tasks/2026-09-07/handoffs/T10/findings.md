@@ -51,6 +51,17 @@
   fixture is retained in activebudget tests. The two reported defects (plus
   pre-dispatch and nested variants) produced 9 local red test/subtest outcomes
   before repair, recorded in `evidence/budget-review-local-red.jsonl`.
+- **T10-F08, P1, resolved (R014; W13-R04/R06).** Independent review of d623b71
+  reopened F06's narrower selection-to-propagation window. A timer Stop barrier
+  confirms the controller already selected its local expiry before a parent
+  cancellation wins the standard child cause. The new read-only SelectedCause
+  preserves that selected instance; core registers it even while child.Err is
+  nil, and pre-dispatch errors retain it without a fabricated Result. First
+  FinishExecution now preserves a selected cause before consulting child.Err.
+  Controller binding/read shares the terminal mutex, with explicit binding/cancel
+  race coverage. `evidence/selection-gap-local-red.jsonl` records four local
+  failing tests/subtests (Driver/preparation and controller), followed by repaired
+  race coverage. Historical 69d74f8 and d623b71 evidence remains archived.
 
 Evidence of final repairs is the committed-source test suite and final-SHA V01,
 V02, V03 and V04 logs listed in result.json. Built-in provider startup signatures and

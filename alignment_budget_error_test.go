@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -823,5 +824,121 @@ func TestAlignmentActiveBudgetOwnExpiryBeforeParentNotification(t *testing.T) {
 	alignmentBudgetCarrier(t, res, err, ReasonActiveExecutionTimeout)
 	if !errors.Is(err, lateParent) {
 		t.Fatal("late parent evidence lost")
+	}
+}
+
+type alignmentSelectionClock struct {
+	*alignmentClock
+	enabled           atomic.Bool
+	once              sync.Once
+	stopping, release chan struct{}
+}
+type alignmentSelectionTimer struct {
+	activebudget.Timer
+	clock *alignmentSelectionClock
+}
+
+func (c *alignmentSelectionClock) AfterFunc(d time.Duration, fn func()) activebudget.Timer {
+	return &alignmentSelectionTimer{Timer: c.alignmentClock.AfterFunc(d, fn), clock: c}
+}
+func (t *alignmentSelectionTimer) Stop() bool {
+	stopped := t.Timer.Stop()
+	if t.clock.enabled.Load() {
+		t.clock.once.Do(func() { close(t.clock.stopping); <-t.clock.release })
+	}
+	return stopped
+}
+
+func TestAlignmentActiveBudgetSelectedExpiryBeforeChildCancellation(t *testing.T) {
+	for _, preparation := range []bool{false, true} {
+		t.Run(fmt.Sprint(preparation), func(t *testing.T) {
+			c := &alignmentSelectionClock{alignmentClock: newAlignmentClock(), stopping: make(chan struct{}), release: make(chan struct{})}
+			parent, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			entered := make(chan context.Context, 1)
+			finishWork, advanced := make(chan struct{}), make(chan struct{})
+			d := brokerTestDriver{run: func(ctx context.Context, _ driver.Request, _ driver.EventSink) (driver.Response, error) {
+				if preparation {
+					t.Error("preparation cancellation reached Driver")
+				}
+				entered <- ctx
+				<-finishWork
+				return alignmentBudgetPartial(), ctx.Err()
+			}}
+			opts := []Option{sharedOptionFunc(func(s *RunSettings) { s.budgetTiming.clock = c }), WithPolicy(Policy{ActiveExecutionTimeout: 100 * time.Millisecond})}
+			if preparation {
+				opts = append(opts, WithRunServices(alignmentBudgetService{attach: func(ctx context.Context) (RunAttachment, error) {
+					entered <- ctx
+					<-finishWork
+					return RunAttachment{}, ctx.Err()
+				}}))
+			}
+			st := New(d, opts...).Stream(parent, "selected before propagation")
+			runctx := <-entered
+			c.enabled.Store(true)
+			go func() { c.advance(100 * time.Millisecond); close(advanced) }()
+			// The timer has confirmed expiry and saved its cause while parent
+			// was healthy; its Stop call holds propagation at a precise barrier.
+			<-c.stopping
+			cancel()
+			<-runctx.Done()
+			close(c.release)
+			<-advanced
+			close(finishWork)
+			var terminal RunFinished
+			for event := range st.Events() {
+				if end, ok := event.(RunFinished); ok {
+					terminal = end
+				}
+			}
+			res, err := st.Result()
+			if !preparation {
+				alignmentBudgetCarrier(t, res, err, ReasonActiveExecutionTimeout)
+			} else {
+				var re *RunError
+				if res != nil || errors.As(err, &re) {
+					t.Fatal("pre-dispatch failure fabricated a Result", res, err)
+				}
+			}
+			var limit *ActiveExecutionTimeoutError
+			if terminal.Reason != ReasonActiveExecutionTimeout || !errors.As(err, &limit) || limit.Limit != 100*time.Millisecond {
+				t.Fatal("selected budget cause lost during propagation", terminal.Reason, err)
+			}
+			for range 3 {
+				again, againErr := st.Result()
+				if again != res || againErr != err {
+					t.Fatal("Result changed after terminal")
+				}
+			}
+		})
+	}
+}
+
+func TestAlignmentActiveBudgetBindingCancellationRace(t *testing.T) {
+	for range 100 {
+		parent, cancel := context.WithCancel(context.Background())
+		expired := &ActiveExecutionTimeoutError{Limit: time.Second}
+		ctx, budget := activebudget.New(parent, time.Second, expired, newAlignmentClock())
+		s := newEventSink(eventSinkConfig{})
+		s.terminal.ctx = parent
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		wg.Go(func() { <-start; s.bindBudget(ctx, budget, expired) })
+		wg.Go(func() {
+			<-start
+			// Cancel/Agent.Close register through this same path while the
+			// execution goroutine may still be binding its new controller.
+			s.recordCancellation(parent)
+			cancel()
+			s.recordContext(parent)
+		})
+		close(start)
+		wg.Wait()
+		s.recordContext(ctx)
+		if got := s.terminalSnapshot(); got.reason != ReasonCancelled {
+			t.Error("binding race changed cancellation reason", got.reason)
+		}
+		budget.Cancel(nil)
+		s.close()
 	}
 }

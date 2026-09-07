@@ -364,3 +364,64 @@ func TestBudgetFinishObservesAlreadyCancelledParent(t *testing.T) {
 		t.Errorf("FinishExecution=%v with parent.Err=%v: already-cancelled parent must reject the seal", err, p.Err())
 	}
 }
+
+func TestBudgetSelectedExpiryPrecedesChildCause(t *testing.T) {
+	parent, cancelParent := context.WithCancel(context.Background())
+	defer cancelParent()
+	c := newFakeClock()
+	ctx, b := New(parent, 100*time.Millisecond, errBudget, c)
+	defer b.Cancel(nil)
+	// Delay only the lock-free notification after the controller selected its
+	// own expiry. The standard child remains free to receive parent cancellation.
+	selected, propagate := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	contextCancel := b.cancel
+	b.cancel = func(cause error) {
+		once.Do(func() { close(selected) })
+		<-propagate
+		contextCancel(cause)
+	}
+	advanced := make(chan struct{})
+	go func() { c.Advance(100 * time.Millisecond); close(advanced) }()
+	<-selected
+	if ctx.Err() != nil {
+		t.Error("fixture failed to hold child propagation")
+	}
+	if b.SelectedCause() != errBudget {
+		t.Error("selected cause was hidden until context propagation")
+	}
+	cancelParent()
+	<-ctx.Done()
+	close(propagate)
+	<-advanced
+	if err := b.FinishExecution(); !errors.Is(err, errBudget) {
+		t.Fatalf("selected own expiry replaced by child cause: %v", err)
+	}
+	if b.SelectedCause() != errBudget || b.FinishExecution() != errBudget {
+		t.Fatal("selection or cached finish changed after parent notification")
+	}
+}
+
+func TestBudgetSelectedCauseDoesNotRecompute(t *testing.T) {
+	var nilBudget *Controller
+	if nilBudget.SelectedCause() != nil {
+		t.Fatal("nil controller selected a cause")
+	}
+	c := newFakeClock()
+	parent, cancel := context.WithCancel(context.Background())
+	_, b := New(parent, 100*time.Millisecond, errBudget, c)
+	defer b.Cancel(nil)
+	defer cancel()
+	// The clock is past the limit but neither a callback nor a seal ran.
+	c.mu.Lock()
+	c.now = c.now.Add(time.Hour)
+	c.mu.Unlock()
+	if b.SelectedCause() != nil {
+		t.Fatal("reading selection charged previously unsettled time")
+	}
+	b.Stop()
+	cancel()
+	if b.SelectedCause() != nil {
+		t.Fatal("reading selection inferred a new parent/Stop cause")
+	}
+}

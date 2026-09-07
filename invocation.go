@@ -78,6 +78,12 @@ func (a *Agent) executeInvocation(ctx context.Context, st *runStream, prompt str
 		}
 		st.sink.recordOutcome(ctx, response.Failure, resultErr, coordinationErr)
 		st.sink.finishTerminal()
+		if !driverEntered {
+			// The controller may select expiry before parent cancellation wins
+			// the standard child cause. Preserve that selected evidence without
+			// fabricating a pre-dispatch Result/RunError.
+			resultErr = errors.Join(resultErr, st.sink.terminalSnapshot().cause)
+		}
 		// Every exit after dispatch maps the same accumulated Response exactly
 		// once, including failed fallback preparation and Thread finalization.
 		if driverEntered {
