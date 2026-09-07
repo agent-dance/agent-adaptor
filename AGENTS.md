@@ -376,6 +376,8 @@ G04 已在精确合流提交验收上述生产修复。B05 的 T20–T24 已交�
 
 R021：原生 Linux 验收曾发现 CodeBuddy 健康常驻轮次返回 Transcript 时，已登记 stderr callback 仍在追加 parser 数据。原 T08 负责人通过 B05 补充任务 T33 修复：原始字节与 callback 归属在同一交接锁下确定，卸下本轮 observer 后在锁外等待已登记 callback 完成，才 finalize 和构造 Response。不得等待健康常驻进程整体退出，不得将闲时或下一轮字节补写进已返回 Result；取消/非零退出仍保留原始 cause、部分审计、单 writer 和健康 checkpoint。W04-R06 最终实现归 T33，独立复验归 T25 与 T28；旧失败和所有 96 项保留，G05 与 B06 均须重新验收新 SHA。
 
+R022：Codex 健康常驻测试不得把子进程 stderr 写入和独立 stdout 终局的顺序，误认为宿主已接收 stderr 的证明。已观察字节必须完整保留；真实子进程与同一捕获缓冲区的接收 gate 验证 exact Raw，公开路径独立验证同一 Response 的逐字段映射及 Run/Stream/结果冻结。one-shot 与失败 drain 的 exact stderr、正式 Usage/Terminal、cause/checkpoint 继续严格。补充 T34 只改测试与局部文档；原生产代码和 W04-R07 的 T16/T20/T29 责任不变。原未打印字段的 Linux 失败不倒填原因，同型实值复现与可达读前反例分开归档；G05 与全部 B06 用新 SHA 重验。
+
 具体冻结设计、未支持边界、文件所有权和fixture见 `docs/alignment-tasks/2026-09-07/contracts/frozen.json`。合同冻结不代表代码已实现；后续同批godoc、合同测试、使用文档和CHANGELOG完成后才能关闭对应项。其他第14节既有保护继续有效。
 
 ## 15. 发布门禁

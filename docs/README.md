@@ -23,9 +23,9 @@ The public v1 model is Agent, Thread, Stream, Event, Result, and Driver. Start w
 | Document | Purpose |
 |---|---|
 | [`internal-history-alignment-plan-2026-09-07.md`](./internal-history-alignment-plan-2026-09-07.md) | Commit-by-commit comparison with the internal repository and a v1-compatible alignment plan, based on the branches fetched on September 7, 2026. |
-| [Alignment task dispatch package](./alignment-tasks/2026-09-07/README.md) | Seven gated batches with 44 task.json files, independent ownership, 96 traceable requirements, and dispatch validation. |
+| [Alignment task dispatch package](./alignment-tasks/2026-09-07/README.md) | Seven gated batches with 45 task.json files, independent ownership, 96 traceable requirements, and dispatch validation. |
 
-2026-09-07 internal 对齐的生产改动已通过 B04；B05 的独立跨层验证、Driver 一致性、CI、文档示例与 R021 原负责人补充修复由 G05 在合流提交上验收。原生 Linux 曾发现 CodeBuddy 常驻轮次交接 race，旧 G05 证据保留，所有 B06 验收必须使用修复后的新冻结提交。冻结规范见 [合同清单](alignment-tasks/2026-09-07/contracts/frozen.json)，无需 CLI 的使用入口见 [offline 示例](../examples/offline/main.go)。T25–T30 必须使用 G05 冻结的同一提交补齐原生平台与真实 provider 证据；本页和 CI 配置不代替实际验收。
+2026-09-07 internal 对齐的生产改动已通过 B04；B05 的独立跨层验证、Driver 一致性、CI、文档示例与 R021 常驻回调修复和 R022 接收同步验证由 G05 在合流提交上验收。原生 Linux 曾发现 CodeBuddy 常驻轮次交接 race，旧 G05 证据保留，所有 B06 验收必须使用修复后的新冻结提交。冻结规范见 [合同清单](alignment-tasks/2026-09-07/contracts/frozen.json)，无需 CLI 的使用入口见 [offline 示例](../examples/offline/main.go)。T25–T30 必须使用 G05 冻结的同一提交补齐原生平台与真实 provider 证据；本页和 CI 配置不代替实际验收。
 
 ## Contributor validation
 

@@ -53,6 +53,8 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- Synchronize Codex resident audit tests on actual stderr receipt and separately
+  verify complete public result mapping and immutability across later turns.
 - Join admitted CodeBuddy resident stderr callbacks before finalizing a turn,
   preventing parser/Transcript races and mutation of returned audit data. Preserve
   cancellation and process-exit causes, healthy checkpoints and single-writer reuse.

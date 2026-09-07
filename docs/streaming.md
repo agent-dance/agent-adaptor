@@ -215,6 +215,13 @@ Raw and Transcript; later idle or next-turn bytes cannot mutate a returned Resul
 A healthy turn does not wait for the resident process itself to exit, and this
 boundary does not infer ownership of future bytes from another pipe.
 
+For Codex resident turns, a provider write to stderr and a terminal on stdout
+do not order the host’s reads across those separate pipes. Already observed
+stderr must be preserved byte for byte in Raw, and a returned Result remains
+stable through later idle output and another turn. A completed stdout terminal
+alone does not establish that bytes from stderr have been received. One-shot
+and failed resident paths retain their bounded process/drain completion checks.
+
 Without authoritative terminal usage, observed formal messages contribute their
 cumulative increments once, with repeated snapshots deduplicated. Valid terminal
 zero is authoritative; absent or entirely invalid counts do not invent observed

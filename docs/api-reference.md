@@ -292,6 +292,11 @@ CodeBuddy completes the current turn’s admitted stderr callbacks before return
 its Result. The returned Raw and Transcript remain stable through idle output and
 later reuse; a healthy turn does not wait for the resident process to exit.
 
+Codex also captures resident stderr independently from stdout. The provider’s
+stdout terminal is not a receipt acknowledgment for another pipe; bytes already
+observed by the host must remain complete in Raw and cannot change after Result
+returns. One-shot and failed resident cleanup retain their drain guarantees.
+
 A Driver declares the capability through `Descriptor.Process.Persistent`. A Driver that declares true must implement `driver.ProcessLifecycleDriver` so that `Agent.Close` can reclaim all process groups within a bounded time.
 
 ## 6. Stream and Event

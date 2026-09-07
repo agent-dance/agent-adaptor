@@ -1,7 +1,7 @@
 # G05 independent QA and documentation integration
 
-All six workers use accepted replacement G04 b2035bc793369fb8fefb9de229ff1dbd2b748853,
-canonical23 / C01–C04 / R001–R021. The following accepted source commits are
+All seven workers use accepted replacement G04 b2035bc793369fb8fefb9de229ff1dbd2b748853,
+canonical24 / C01–C04 / R001–R022. The following accepted source commits are
 merged in manifest order; worker evidence remains external and immutable.
 
 | Worker | Accepted source SHA | Final checks |
@@ -12,6 +12,7 @@ merged in manifest order; worker evidence remains external and immutable.
 | T23 | `1d92e2673e3f17ad674b3b074e565727a8befaf1` | T23-V01, T23-V02, T23-CONFORMANCE, T23-VET, T23-GATE-CLAUDE, T23-GATE-CODEBUDDY, T23-GATE-CODEX, T23-GATE-CURSOR, T23-WINDOWS-COMPILE, T23-EXAMPLE |
 | T24 | `849f8334e376d4719167afa31706b4dea22b8cce` | T24-V01, T24-OFFLINE |
 | T33 | `8bf830acd006a83b765b5eab2dc2e027427f2870` | T33-V01, T33-V02, T33-V03, T33-V04 |
+| T34 | `e61058d5eec14803b92efda644e4ff1b081e7f1f` | T34-V01, T34-V02, T34-V03, T34-V04 |
 
 T20 contributes independent complete wire/audit literals, actual fake processes,
 bounded lifecycle/cleanup barriers and R020 successor-ownership fault injection.
@@ -46,3 +47,9 @@ G05 attempt 1 at 9e12566c01b3626126ba85b035dcc2f5afe47126 failed the existing A2
 R021 preserves the previously accepted G05 43e6ba3d90016b1a4b267408ccd200a950041369 and its native Linux T25 full-race failure. The stack proves an admitted CodeBuddy stderr parser callback could append Transcript while the healthy turn returned it. Original T08 owner delivered supplemental T33 on the unchanged G04 base. The lock now determines Raw capture and callback ownership together, and callbacks finish outside that lock before parser finalize/Response. Healthy resident reuse, cancellation, exit causes, checkpoint integrity and no replay remain. Independent C02/C03 review and deterministic old-code counterexamples supplement all four final worker checks. The first fixture incorrectly assumed a later newline was already admitted; its failed race20 and corrected full-admission old-code red remain evidence.
 
 W04-R06 final ownership moves to T33 and independent verification to T25/T28. T20 reissues metadata for its remaining 24 rows on the unchanged source/check SHA; its original 25-row report remains historical. There are still 96 requirements and 45 history commits, now 44 tasks. T23’s canonical22 inventory remains a historical baseline. This third G05 attempt freezes only after its own original commands pass; T25 must rerun all 15 Linux checks and three supplements, and all B06 reports must use the new exact SHA.
+
+R022 preserves G05 attempt 3 at45cada4315a6a338071452995918d2292e2c9b28 (4533 full-suite passes, validator/vet) and the subsequent original T25 native Linux V01 failure (4531 passes, leaf+parent failures,14 permitted skips). The original combined stderr/Usage assertion did not print its missing field; no historical value is invented. A separate fatal-only fullcount5 diagnostic reproduced empty stderr with correct Usage0/2. A before-firstRead counterexample and same-production-buffer [0,14) receipt control demonstrate why provider cross-pipe write order is not a host receipt guarantee. C02 independently verified source/patch/phase/hash evidence.
+
+Original T16 owner delivered QA-only supplemental T34: actual child/capture receipt, strict Raw audit, same Response/public Result mapping and stable old results are separate executable evidence. One-shot/failure exact stderr and formal Usage/Terminal/cause/checkpoint obligations remain. Diagnostic process.go instrumentation was never merged; final Codex production, public API, generated/schema and dependencies remain unchanged. W04-R07 owner T16 and verifiers T20/T29 stay unchanged; T34 makes no independent requirement claim. The package contains45tasks/96requirements/45history commits at capacity6.
+
+This fourth G05 attempt still requires its own exact-SHA original validator/fulltest/vet. Once accepted, every B06 report uses that replacement frozen SHA and T25 reruns all15original Linux commands plus3supplements. Prior passes and failed diagnostics are historical evidence, never final native acceptance. Missing Windows/live prerequisites remain open and release readiness remains false.
