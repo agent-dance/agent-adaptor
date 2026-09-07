@@ -481,8 +481,9 @@ type liveProcess struct {
 }
 
 type persistentTurnObserver struct {
-	sink   driver.EventSink
-	parser *parser
+	sink      driver.EventSink
+	parser    *parser
+	callbacks sync.WaitGroup
 }
 
 type persistentStderr struct{ lp *liveProcess }
@@ -491,11 +492,18 @@ func (s persistentStderr) Write(chunk []byte) (int, error) {
 	if s.lp == nil {
 		return len(chunk), nil
 	}
-	n, err := s.lp.stderr.Write(chunk)
 	s.lp.activeMu.RLock()
+	// Raw capture, turn attribution and callback admission share the same
+	// boundary as turn start/end. A callback must register before releasing
+	// this lock, but host/parser calls must never run while holding it.
+	n, err := s.lp.stderr.Write(chunk)
 	active := s.lp.active
+	if active != nil && n > 0 {
+		active.callbacks.Add(1)
+	}
 	s.lp.activeMu.RUnlock()
 	if active != nil && n > 0 {
+		defer active.callbacks.Done()
 		ts := time.Now().UTC()
 		emitPersistentChunk(active.sink, "stderr", chunk[:n], ts)
 		_ = active.parser.onChunk("stderr", chunk[:n], ts)
@@ -547,15 +555,11 @@ func (lp *liveProcess) turn(ctx context.Context, prompt string, sink driver.Even
 	ctrl := &persistentControlStdin{lp: lp}
 	p.control.stdin = ctrl
 
-	stderrStart := lp.stderr.len()
+	observer := &persistentTurnObserver{sink: sink, parser: p}
 	lp.activeMu.Lock()
-	lp.active = &persistentTurnObserver{sink: sink, parser: p}
+	stderrStart := lp.stderr.len()
+	lp.active = observer
 	lp.activeMu.Unlock()
-	defer func() {
-		lp.activeMu.Lock()
-		lp.active = nil
-		lp.activeMu.Unlock()
-	}()
 
 	lp.stateMu.Lock()
 	initialized := lp.initialized
@@ -633,6 +637,15 @@ func (lp *liveProcess) turn(ctx context.Context, prompt string, sink driver.Even
 			rr.err = errors.Join(rr.err, waitErr, lp.waitErr)
 		}
 	}
+	// The stdout reader is finished, and a failed process has also completed
+	// its stderr copy above. Close this turn's callback admission and freeze
+	// its Raw range before waiting, so idle/later bytes cannot join this turn.
+	// Healthy resident processes stay alive; only admitted callbacks are joined.
+	lp.activeMu.Lock()
+	lp.active = nil
+	stderr := lp.stderr.since(stderrStart)
+	lp.activeMu.Unlock()
+	observer.callbacks.Wait()
 	p.finalize()
 	// Write can fail before the read select, and a completed read can race
 	// host cancellation. Observe the actual run context on this common exit,
@@ -640,7 +653,7 @@ func (lp *liveProcess) turn(ctx context.Context, prompt string, sink driver.Even
 	if ctx.Err() != nil {
 		rr.err = errors.Join(rr.err, ctx.Err(), context.Cause(ctx))
 	}
-	raw := driver.RawStreams{Stdout: rr.stdout, Stderr: lp.stderr.since(stderrStart)}
+	raw := driver.RawStreams{Stdout: rr.stdout, Stderr: stderr}
 	if !rr.result {
 		if rr.err == nil {
 			rr.err = io.ErrUnexpectedEOF

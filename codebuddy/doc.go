@@ -11,6 +11,14 @@
 // Configuration validation and CLI availability checks occur when the agent
 // runs or is inspected.
 //
+// A persistent turn closes stderr callback admission and waits for callbacks
+// already admitted to that turn before finalizing its parser and returning its
+// result. Raw stderr and parser attribution use the same turn boundary, so an
+// admitted unterminated diagnostic is finalized exactly once. Healthy turns
+// keep the resident process alive. Diagnostics received while no turn is active
+// are not retroactively assigned to a completed or subsequent result; separate
+// stdout/stderr pipes do not prove attribution of future provider bytes.
+//
 // Interrupted persistent turns preserve the official protocol's available
 // text, transcript, usage, and raw streams in the failed run's RunError.Result.
 // The original transport or context error remains reachable with errors.Is/As.
