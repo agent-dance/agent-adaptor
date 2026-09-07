@@ -100,6 +100,34 @@ inspectable evidence; it does not mean this run exhausted its own budget.
 Inspect `RunError.Reason` before matching secondary context causes. Active exhaustion, approval timeout, parent deadline and explicit
 cancellation are distinct outcomes.
 
+## Delegation active execution budget
+
+The optional hosttool owns DelegationRequest.ActiveExecutionTimeout and
+DelegationPolicy.MaxActiveExecutionTimeout, separately from Timeout/MaxTimeout.
+Zero means no active bound; negative values fail before BeforeDelegate or I/O.
+Use the smaller positive request/maximum, or the only positive value. A 100ms
+request and 200ms maximum therefore allow 100ms. Existing wall-clock defaults
+and clamping are unchanged.
+
+Each Delegate call, including a continuation with the same TaskID, starts a
+fresh private budget. BeforeDelegate, discovery, retries, streaming, polling and
+recovery share it. FinishExecution seals the first selected outcome before
+cleanup. AfterDelegate and best-effort CancelTask each receive an independent
+five-second context. A known input TaskID remains cancellable even if no new I/O
+started; cleanup failures add a safe secondary diagnostic.
+
+A Member's Ask pauses only the Member's budget. The delegator keeps spending its
+own active time, and does not inject WithPolicy into the Member. Parent limits,
+Member limits, wall-clock Timeout and approval deadlines remain independent.
+
+DelegationError.Code selects the primary outcome; Cause and Unwrap preserve the
+local original error graph and RunError's partial Result. Local Send and
+SendStream consume one Runner.Stream each, with the same terminal classification
+rules. Remote failures use the closed wire controls in the
+[A2A failure contract](./a2a.md#stable-failure-classification). Only a trustworthy
+positive primary typed limit is projected, rounded up to milliseconds; unrelated
+parent limits cannot replace it. A missing limit is unknown, not zero.
+
 ## Approval policy
 
 `ApprovalPolicy` contains three routing modes and the common fallback rules:

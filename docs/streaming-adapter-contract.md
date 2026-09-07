@@ -325,6 +325,29 @@ The rules are simple:
 - Do not close the sink; the channel lifecycle is owned exclusively by core.
 - Do not ignore helper/sink errors that may signal cancellation.
 
+## Formal observations and runtime publishers
+
+The [provider observation matrix](./streaming.md#provider-observation-support)
+describes actual transports. Drivers alone recognize official fields and map
+unique resolved catalog keys. Complete arguments and real deltas are not replayed
+twice; tool description end is distinct from result-confirmed completion.
+Todo snapshots require confirmed protocol evidence, including explicit clear,
+and synthetic display IDs cannot stand in for provider task identity.
+
+Codex NativeInputAccepted means the formal typed input was accepted, not that
+the resource executed. Its current thread/turn and terminal fences remain;
+formally valid historical same-thread usage may be audit-only, without updating
+current Usage or checkpoint. Required usage field presence distinguishes missing
+from explicit zero. Known stdout EOF must enter bounded drain/process settlement
+before a resident turn claims health, preserving observed Wait errors and Raw;
+a connected resident turn does not wait for process exit.
+
+Delegation is a public Runner consumer. Its bound publisher enters the same sink
+and observer path before the lossy component bus, carries safe typed facts once,
+preserves source provenance and reports unrepresentable relay identity/depth.
+Only a successful binding establishes historical proof for transparent Merge.
+No helper, bridge or observer parses provider JSON or creates a second stream.
+
 ## 12. `adaptertest` acceptance
 
 Every Driver must run the final conformance suite directly:
@@ -344,7 +367,7 @@ func TestMyDriverConformance(t *testing.T) {
 }
 ```
 
-Every hermetic clause that applies to that Descriptor, to the implemented optional interfaces, and to explicit opt-ins is executed, covering Driver/config, capability truthfulness, the structured-output matrix, SessionCodec, and SessionConfigFingerprinter; optional capabilities that do not apply are explicitly skipped. Real provider execution is enabled explicitly through `WithLiveRun` and is protected by the provider package's dual gate of CLI availability and environment variables, so ordinary CI must not produce paid calls.
+Every hermetic clause that applies to that Descriptor, to the implemented optional interfaces, and to explicit opt-ins is executed, covering Driver/config, capability truthfulness, the structured-output matrix, SessionCodec, and SessionConfigFingerprinter; optional capabilities that do not apply are explicitly skipped. Real provider execution is enabled explicitly through `WithLiveRun` and is protected by the provider package's explicit live build tag and environment gate; enabled required probes fail when CLI or evidence is missing, so ordinary CI must not produce paid calls.
 
 The clause groups directly related to this contract are:
 

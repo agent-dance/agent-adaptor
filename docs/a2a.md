@@ -145,9 +145,71 @@ observable infrastructure error. It neither fabricates coordinates nor truncates
 the key/source chain. Old binary consumers must explicitly handle unsupported
 new kinds. Missing facts never prove no invocation or complete audit/billing.
 
+### Stable failure classification
+
+The failure verdict comes only from the same drained Stream.Result error.
+Known failure controls live at **Text Part.Metadata["agentadaptor.failure"]**,
+not a DataPart, Task metadata or a new adapter.stream.v1 event kind:
+
+| Primary code | A2A state | Safe status text |
+|---|---|---|
+| active_execution_timeout | failed | active execution budget exhausted |
+| approval_denied | failed | approval denied |
+| approval_timeout | failed | approval timed out |
+| cancelled | canceled | task cancelled |
+| deadline_exceeded | failed | execution deadline exceeded |
+| agent_error | failed | agent run failed |
+| policy_violation | failed | execution policy violated |
+| infrastructure_error | failed | execution infrastructure failed |
+
+RunError.Reason always takes precedence, even when empty or unknown. An unknown
+carrier uses safe generic failure text without promoting a control object.
+Provider error bodies and Cause.Error never become status text. Existing explicit
+IncludeMetadata may add a sanitized metadata child object; it cannot replace
+the top-level code or limit_ms. Translator and ResultBuilder failures keep their
+own bridge error path.
+
+Only bare errors can reuse a terminal classification from the same stream: its
+fixed RunID and terminal Meta.RunID must be nonempty and equal; exactly one typed
+RunFinished must be the last event, Failed=true, with one of these eight reasons,
+followed by full channel closure. Provider RunFinished.RunID is not the envelope
+identity. A duplicate (including a nil pointer), trailing event, wrong identity,
+unknown reason or incomplete drain invalidates the hint and keeps the old bare
+error fallback. A nil Result error never becomes failure because of an event.
+This also covers cancellation and translation-error drains without another
+execution or error channel. For example, a pre-Driver parent cancellation may
+retain a typed parent budget cause while core's terminal reason is cancelled;
+the projection is cancelled, not a new local active-budget exhaustion.
+
+The only other control is optional limit_ms for primary active_execution_timeout:
+
+```json
+{"code":"active_execution_timeout","limit_ms":100}
+```
+
+It comes from the first typed timeout in carrier.Cause, provided its Limit is
+positive; without a carrier the same check uses the original bare error. Outer joined parent budgets
+and arbitrary Details cannot supply the carrier's limit. Missing/invalid first
+typed limits are not replaced with a later parent's value. Encoding rounds up
+using division/remainder: 1ns becomes 1ms; the maximum is 9223372036855ms.
+
+Delegation accepts only finite positive integral values in that range, applying
+the same mathematical domain to json.Number, int64 and safe float64 values.
+Integral decimal/exponent forms such as 100.0 and 1e2 are valid; strings, booleans,
+nonzero fractions, out-of-range values and extra control fields are not. Unknown
+codes, conflicting controls or code/state mismatch keep a remote failure with
+a safe failure_payload_invalid diagnostic. An absent limit preserves the active
+category without inventing a typed duration. Conversion to nanoseconds saturates
+before multiplication; it does not change the receiver's local budget.
+
+Allowed partial Result artifacts precede terminal status for cancellation and
+budget failures too. Summary remains the default; Raw, Transcript, Usage and
+provider terminal payload retain their independent exposure switches. Unknown
+Usage remains absent, while observed zero is retained.
+
 ### Result and exposure
 
-Successful `Stream.Result()` values produce the completed status and terminal artifacts. For `*adaptor.RunError`, the bridge first reads the primary `Reason`: explicit cancellation maps to canceled; approval denial/timeout and other failures map to failed even when their cause also matches a context error. Both retain the partial Result allowed by ExposurePolicy. Bare infrastructure errors map through the existing context/error rules. The bridge never treats a non-nil execution error as success.
+Successful `Stream.Result()` values produce the completed status and terminal artifacts. For `*adaptor.RunError`, the bridge first reads the primary `Reason`: explicit cancellation maps to canceled; approval denial/timeout and other failures map to failed even when their cause also matches a context error. Both retain the partial Result allowed by ExposurePolicy. Bare errors use the qualified same-stream terminal hint described above, otherwise the existing context/error fallback. The bridge never treats a non-nil execution error as success.
 
 The default `agent-adaptor-result` artifact contains only the safe summary. `ExposurePolicy` must explicitly opt in to reasoning, tool calls, HITL, capability facts, Todo content, metadata, usage, provider terminal payload, transcript, or raw streams. Enabled diagnostics are sanitized before leaving the bridge.
 
@@ -293,13 +355,41 @@ the workflow role.
 leader := adaptor.New(leaderDriver, adaptor.WithRunServices(team))
 ```
 
-`Service` implements `adaptor.RunServiceProvider`. For each run it publishes a typed `ServiceRef.MCP` declaration, carries the bearer token only through `SecretEnv`, injects `SubagentUpdate` into the leader's existing Event channel, and tears the sidecar down during normal run cleanup. There is no separate subagent bus in the Runner API, and MCP declarations are never inferred from stringly metadata.
+`Service` implements `adaptor.RunServiceProvider`. For each run it publishes a typed `ServiceRef.MCP` declaration, carries the bearer token only through `SecretEnv`, binds a publisher for SubagentUpdate and typed capability/todo facts in the leader's existing Event channel, and tears the sidecar down during normal run cleanup. There is no separate subagent bus in the Runner API, and MCP declarations are never inferred from stringly metadata.
 
 The leader sees only registry keys, objectives, optional input, and bounded constraints. It never receives endpoint URLs or credentials. Unknown tool fields and attempts to provide `endpoint_url` are rejected.
 
 `Service.Result(runID, key)` returns the latest result for an Agent key. `Service.Results(runID)` is the latest-by-key map. `Service.Delegations(runID)` preserves every delegation in `DelegationStarted` acceptance order, including repeated calls to the same Agent. Recorded results remain readable after per-run sidecar teardown and after `Service.Close`.
 
-For lower-level integrations, `Registry`, `Delegator`, `EventBus`, and `MCPServer` remain independently usable. `StatusPartDecoder` can decode a host-owned A2A Status DataPart schema. The built-in `adapter.stream.v1` decoder preserves typed capability/todo and parent/source coordinates when permitted by ExposurePolicy. Concrete delegation publisher/domain adoption is a separate layer; the codec does not reinterpret provider JSON or automatically grant exposure.
+For lower-level integrations, `Registry`, `Delegator`, `EventBus`, and `MCPServer` remain independently usable. `StatusPartDecoder` can decode a host-owned A2A Status DataPart schema. The built-in `adapter.stream.v1` decoder preserves typed capability/todo and parent/source coordinates when permitted by ExposurePolicy. Service.AttachRun binds one publisher with Events=nil. Cloned facts reach the
+core sink and bounded observers before the lossy EventBus; capability/todo are
+not duplicated as SubagentUpdate. The codec never interprets provider JSON or
+grants exposure. Config.Observe remains a lossy UI callback.
+
+Successful binding establishes exact historical RunEventsBound proof. Detach
+and ClearRun retain proof and revoke the old publisher; later calls return
+context.Canceled. Mere attachment, Publish or a failed bind is not proof.
+Merge stays transparent and can recognize a genuinely bound stream after teardown.
+
+Relay scope/tool/invocation IDs use distinct, reversible JSON-array/Base64 tuple
+domains. Source retains original run/sequence/time/thread/turn and parent/scope
+coordinates, including the upstream chain; the receiving core owns its envelope
+sequence. ParentToolCallID uses the corresponding actual parent scope. Replay
+deduplicates identical run/sequence payloads; conflicting reuse explicitly drops.
+An encoded identity over 2048 bytes or a ninth source level produces a safe drop
+with reason/count, without truncation or hashing. Request and event ScopeID and
+ParentScopeID retain the host's real parent coordinates.
+
+Outer capability Started follows a successful healthy BeforeDelegate and precedes
+I/O. One terminal follows primary settlement, AfterDelegate and result recording;
+a failed AfterDelegate cannot leave an earlier Completed fact. Publisher rejection
+remains an observable primary infrastructure error or a secondary cause.
+
+DelegationRequest.ActiveExecutionTimeout and policy MaxActiveExecutionTimeout
+provide a fresh active budget for each Delegate, including continuations. The
+smallest positive bound wins; zero is unlimited and negatives fail before I/O.
+Retries share the same budget, Member Ask does not pause it, and Member Policy
+is not overwritten. See [timing, cancellation and cleanup](./run-policy.md#delegation-active-execution-budget).
 
 ## Delegation artifact updates
 

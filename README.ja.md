@@ -290,6 +290,14 @@ claudeReviewer := adaptor.New(claude.Driver(claude.Config{}), reviewerOptions...
 SystemPrompt.Append 宣言が必要です。近いスコープがバイト列ごと置換し、空文字は
 解除します。provider の既定値、`WithInstructions`、ユーザー Prompt を置換しません。
 
+Claude は所有する 0600 ファイル、CodeBuddy はネイティブ argv、Codex は exec TOML
+または app-server RPC の developer instructions を使用します。Cursor は空でない追加を拒否します。
+CodeBuddy と Codex exec は 32768 UTF-8 バイトまでで、最終コマンドも検証します。
+[制限](./docs/api-reference.md#31-dual-scope-options)と[観測表](./docs/streaming.md#provider-observation-support)を参照してください。
+Codex の typed skill 入力の受理は実行の証明ではなく、Cursor の観測は MCP とカスタム子エージェントです。
+Delegation は有損 UI bus より先に同じ observer へ事実を送り、呼び出しごとの
+[独立した予算](./docs/run-policy.md#delegation-active-execution-budget)を持ちます。
+
 `Policy.ActiveExecutionTimeout` は同じ実行の Ask 待ちだけを除く時間制限です。
 ゼロは無制限、負値は無効で、WithPolicy は値全体を置換します。WithTimeout と
 親・承認 deadline は実時間のままです。予算は原子的永続化の前に確定し、Finalize

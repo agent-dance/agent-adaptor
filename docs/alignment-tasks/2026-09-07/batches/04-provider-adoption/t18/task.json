@@ -144,7 +144,8 @@
     "预算终止以 detached 有界 CancelTask 尽力停止，错误仅诊断；消费 C02 的既定 wire code，不依赖同批 T19 新增任何 Go 符号。",
     "把 parent/capability/todo 三种新 wire 事件解码到 delegation typed 数据，Local/Remote 和 Service/recorder 全链路保留；todo 的空快照/scope 与 drop 不得在 hosttool 中丢失。",
     "R012：Delegate完成候选复用FinishExecution封账，先保留既有Code/原cause，余额已尽不能抢先成功；AfterDelegate/CancelTask仍独立有界cleanup，旧timer/晚到回调不能改终局。不修改Thread持久化、不重置本次重试/recovery预算。",
-    "R014: 复用Controller.SelectedCause读取本次Delegate已选原因，内部选中耗尽与锁外context取消通知之间父取消不能改写先因；仅本次expired身份代表本次预算，继承Leader的同型cause按parent.Err分类并保留证据。既有Code优先、Finish封账/Stop不补算及单向锁序保持，不创建第二timer。"
+    "R014: 复用Controller.SelectedCause读取本次Delegate已选原因，内部选中耗尽与锁外context取消通知之间父取消不能改写先因；仅本次expired身份代表本次预算，继承Leader的同型cause按parent.Err分类并保留证据。既有Code优先、Finish封账/Stop不补算及单向锁序保持，不创建第二timer。",
+    "R016：完整读取 C02 results-and-budget.md 的终局提示条款和 R016-01至09有限验收。失败仍只由同一次 Stream.Result() error 判断；非nil RunError carrier第一。bare error仅复用非空匹配Meta.RunID、Failed=true、闭集Reason、唯一且最后且完整drain关闭的RunFinished，正文provider RunID可不同/为空；无效提示保持原bare fallback。正常/Cancel/翻译失败drain同收集，独立bridge错误不被提示覆盖，不重新执行，不改error/cause/Result。Local.Send与SendStream各只调用一次Runner.Stream并drain，不能Run后再Stream；远端只读封闭wire；Delegate自身先定Code/预算优先级不被Local子提示改写。独立完成R016有限表的Local对照，使用TestAlignment前缀纳入原V01/V02全包与race10；无需读取T19代码。"
   ],
   "acceptance_criteria": [
     {
@@ -155,6 +156,11 @@
     {
       "id": "T18-AC02",
       "requirement": "cancel/deadline/approval/active timeout code 往返独立；W03 历史问卷不误结束，W08 Parts 深复制与 Local/Remote 一致。",
+      "required": true
+    },
+    {
+      "id": "T18-AC03",
+      "requirement": "R016同Stream终局提示资格、carrier优先、唯一error判定、父cause来源与无提示fallback按本任务责任验证；所有原必需检查保留。",
       "required": true
     }
   ],

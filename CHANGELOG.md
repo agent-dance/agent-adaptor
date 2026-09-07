@@ -27,6 +27,18 @@ All notable changes to this project are documented in this file.
 - Opt-in A2A capability/todo DataParts and parent/source fidelity, plus typed
   SSE, AG-UI and session-recording projections.
 
+- Native append delivery for Claude owned files, CodeBuddy inline argv and Codex
+  exec/app-server developer instructions, with checkpoint/process guards and
+  reserved override validation; Cursor explicitly rejects nonempty append.
+- Formal provider capability/Todo observations with resolved catalog attribution,
+  scoped result-confirmed lifecycle and explicit unavailable transports. Codex
+  typed skill input acceptance is distinct from execution.
+- Delegation request/policy active budgets, Cause/Unwrap, typed capability/Todo
+  and source/scope fields, and exact RunEventsBound proof. Bound facts enter core
+  observers before the component's lossy EventBus.
+- A2A Text Part failure controls with eight closed codes and optional positive
+  primary limit_ms, retaining allowed partial artifacts before terminal status.
+
 ### Fixed
 
 - Finish Claude result-only bidirectional one-shot runs by closing stdin once;
@@ -76,8 +88,23 @@ All notable changes to this project are documented in this file.
   reject duplicate schema, same-scope self-parent and unsafe encodings, preserve
   opaque Thread keys, and normalize decoded occurrence times to UTC.
 
+- Reject malformed present provider aliases, unproved parent deltas and task
+  updates without formal confirmation; preserve prior snapshots on invalid input.
+- Preserve Codex partial output and observed Wait causes on failed process paths,
+  settle known stdout EOF before checkpoint health, and distinguish missing
+  token-usage fields from observed zero without weakening thread/turn fences.
+- Preserve relay drop reason/count and isolate a carrier's active limit from
+  outer parent budgets; validate integral decimal/exponent wire numbers exactly.
+- Classify bare errors from a qualified same-stream final core reason after full
+  drain, while retaining RunError precedence and the single Result error verdict.
+
 ### Changed
 
+- A2A failure status text uses safe category text instead of provider error bodies;
+  existing explicit diagnostic exposure remains independent.
+- All built-in live entries require a build tag and environment gate; enabled
+  required probes fail on missing CLI/evidence and use isolated profiles.
+  Hermetic fixture passes do not certify native platforms or paid providers.
 - Execution errors after Driver entry now use `nil, *RunError` even for
   infrastructure failures; callers can continue matching original causes with
   `errors.Is/As`. Pre-invocation errors retain their existing wrapping.

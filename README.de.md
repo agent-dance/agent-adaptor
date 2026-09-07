@@ -291,6 +291,16 @@ SystemPrompt.Append des konfigurierten Drivers. Der nähere Gültigkeitsbereich
 ersetzt die exakten Bytes; eine leere Zeichenfolge löscht den Wert. Provider-
 Vorgaben, `WithInstructions` und Benutzer-Prompt bleiben eigenständige Kanäle.
 
+Claude nutzt eine eigene 0600-Datei, CodeBuddy native argv und Codex Developer-
+Anweisungen über exec-TOML oder app-server-RPC. Cursor weist nichtleere Ergänzungen
+zurück. CodeBuddy und Codex exec erlauben höchstens 32768 UTF-8-Bytes und prüfen
+den endgültigen Befehl: [Grenzen](./docs/api-reference.md#31-dual-scope-options).
+[Capability/Todo-Beobachtungen](./docs/streaming.md#provider-observation-support)
+hängen vom tatsächlichen Protokoll ab. Codex bestätigt die Annahme typisierter
+Skill-Eingaben, nicht deren Ausführung; Cursor beobachtet MCP und eigene Subagents.
+Delegation liefert Fakten vor dem verlustbehafteten UI-Bus an denselben Observer
+und besitzt ein eigenes [Budget pro Aufruf](./docs/run-policy.md#delegation-active-execution-budget).
+
 `Policy.ActiveExecutionTimeout` zählt aktive Arbeit und pausiert nur während
 Ask-Anfragen dieses Laufs. Null bedeutet unbegrenzt, negative Werte sind ungültig;
 WithPolicy ersetzt weiterhin den gesamten Wert. WithTimeout sowie Eltern- und

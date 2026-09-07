@@ -226,7 +226,7 @@ Delegator 不拥有 root approval sink，因此不会根据远端 status/工具�
 
 ### 9.1 封闭语义与编码
 
-安全控制字段仅 `code` 与可选 `limit_ms`；现有显式 metadata opt-in 仍可增加经 ExposurePolicy 过滤的 `metadata` 对象，但不得把它提升为控制字段。code 以 RunError.Reason 或 bare-error 的具体原因产生。必须先选择主 Reason，再检查次因；审批原因 + Cause(Canceled) 仍为 failed 审批，不为 canceled。
+安全控制字段仅 `code` 与可选 `limit_ms`；现有显式 metadata opt-in 仍可增加经 ExposurePolicy 过滤的 `metadata` 对象，但不得把它提升为控制字段。code 优先以非 nil RunError.Reason 产生；bare error 按 R016 复用同 Stream 合格的最终分类提示，提示不可用时才用本节原 bare fallback。必须先选择主 Reason，再检查次因；审批原因 + Cause(Canceled) 仍为 failed 审批，不为 canceled。
 
 | root Reason / bare cause | status.state | code | limit_ms | T18 Code / Retryable |
 |---|---|---|---|---|
@@ -346,3 +346,37 @@ Controller.SelectedCause() error只在同一锁中读取已选cause；nil receiv
 Stop屏障反例、parent先Done、真实本轮先选、pre-Driver与多次Result/终局一致性由T10现有V02/V03范围回归，T22独立验收；没有新公开API、Timer或持久化入口。原d623所有通过和失败证据保留，新源码必须重跑最终必需检查。
 
 C02提交前校核补充：SelectedCause等于本轮expired时，即使child.Err仍nil，也已构成active候选；core不得把它隐藏在contextErr非nil分支中，最终Cause直接保留selected实例。FinishExecution首次结算以已有b.cause先于child.Err/context.Cause，防止后到parent占据标准child cause；已缓存finishErr仍最先返回。SelectedCause不扣时、不读parent、不从Stop合成新原因；parent选择前已Done仍按其Err归因，并非本地预算总是优先。
+
+## R016：同一次已关闭 Stream 的终局分类提示
+
+1. **失败与否只由 Stream.Result() 的 error 决定。** 必须完整消费同一个 Stream 至 Events 关闭，再读取 Result。`err == nil` 时忽略任何失败事件，不因事件制造 error/失败状态；不得重跑 Runner 或另开 Stream 补证据。
+2. `errors.As(err,&re) && re != nil` 时，既有 RunError.Reason 始终第一；未知或空 carrier Reason 也不让事件/次因改写成另一个具体主因。其 Result/Cause 原对象及 Is/As 图继续保留。
+3. 仅 `err != nil` 且没有上述非 nil RunError，bridge 和 T18 Local 可以使用同一次 Stream 的最终 `RunFinished.Reason` 作为已有失败的分类提示。它不是第二个失败判定面，不构造或替换返回的 RunError/Result。
+4. 可用提示必须同时满足：
+   - Stream 返回时取得的 `Stream.RunID()` 非空；事件 `Meta().RunID` 非空并逐字相等。**不要求 RunFinished.RunID 正文相等或非空**，不使用 provider ID、ThreadID、Source、时间戳或 Message 文本猜归属。
+   - 这是 typed `adaptor.RunFinished`，`Failed == true`，Reason 属于现有八项闭集：active_execution_timeout、approval_denied、approval_timeout、cancelled、deadline_exceeded、agent_error、policy_violation、infrastructure_error。
+   - 整条已消费流中只有一个 RunFinished，且其后没有任何 Event，随后 Events 正常关闭。两个相同终局也不算唯一；不取“最后一个赢”。归属不匹配、非 Failed、未知/空 Reason、重复/冲突、终局后还有事件或未完成 drain 均使提示不可用。指针形式如被接受，须与值形式同等校验并拒绝 nil，不能绕过计数。
+5. 提示不可用/不存在的第三方 bare 错误保留 C02 现有 fallback，不把无提示当成功或新诊断错误。提示可用时先固定该 Reason，再按 C02 安全字段投影；仅主 Reason 为 active 才可从原 error 的可信正 typed 主预算提取 limit_ms。主 Cancelled/Deadline/approval 即使 Cause 中有父 active，也不输出 limit_ms。不删原父 cause，不用 Limit 大小或 Is 遍历顺序猜来源；无可信 typed Limit 仍省略。
+6. 提示只保留闭集 Reason 和资格状态，不传 RunFinished.Message、Usage、正文 ID 或任意 metadata。状态正文/部分 artifacts/曝光开关仍按 C02/T11，事件本身不另产生 A2A terminal status。现有协议投影错误、ResultBuilder 错误等独立 bridge 失败不由此提示覆盖。
+7. **正常、Cancel drain、翻译失败后的 drain 使用同一收集逻辑**，在事件过滤/投影前记录候选；提前在中间事件上锁定提示不合法。bbd 的 `server.go:276–277` 与 `290–291` 两段空 `for range stream.Events()` 必须收集而不是丢弃。只在内存更新有界状态，不在锁内执行 handler/IO；不增加等待通道、阻塞策略或第二 terminal emitter。
+8. T18 仅在真实 Local Runner 的 typed Stream 中收集提示，不从远端 Task/status/adapter payload 猜 provider 主因。Local 的 Send 与 SendStream 都必须基于**同一次 Runner.Stream**消费完整事件并读取 Result（Send 可内部 drain），不能先 Run 再 Stream；这仍遵守 Run≡Stream+drain 的现有 Runner 合同。远端仍消费 C02 封闭 wire；T18 已选本次 Delegate 主 Code/预算/cleanup优先级不因 Local 子运行提示改写。
+
+建议实现只是各自目录内的 O(1) 私有收集器：固定 stream ID、终局计数（可饱和到2）、是否最后项、候选 Reason/有效性。读取流的同一执行 goroutine 更新；关闭后才查询资格。不冻结 helper 名称/签名，不共享同批源码或新增公共声明。
+
+
+### 有限验收责任
+
+| ID | 精确输入/安排 | 必须结果 |
+|---|---|---|
+| R016-01 | **真实 G03 core** 的 pre-Driver RunService 中 parent 先 CancelCause(ActiveError777s)；未推进本轮预算 | Driver0、nil Result、无RunError；同Stream最终Failed/ReasonCancelled，bridge真实HTTP为canceled/cancelled且无limit；原父Is/As证据保留。T18 Local用同一公开形状独立覆盖。 |
+| R016-02 | 对照真实已选本轮 active 后父 Cancel；pre-Driver原型，或复用已接受T10输出形状 | 最终active、有可信本轮100ms时limit=100，父777次因不抢主值；无typed则没有limit。不重新执行全部T10计时矩阵。 |
+| R016-03 | 收到的合法最后终局Meta.RunID匹配，正文RunID为不同provider值；再测空正文ID | 提示仍可用，不能错误要求三处RunID一致。另做Meta为空/不同、Stream.ID为空反向，回原bare fallback。 |
+| R016-04 | carrier approval + Canceled，但事件提示active；carrier未知/空reason但事件提示known | 非nil RunError始终优先，保留carrier部分Result与cause；事件不能“修正”carrier。 |
+| R016-05 | err=nil，事件Failed=true且闭集Reason | 成功，不制造错误/失败终局；Result照原合同投影。 |
+| R016-06 | bare error搭配缺终局、Failed=false、空/未知Reason、两个相同/冲突终局、终局后普通Event | 提示不可用，回原fallback，不首个/末个任选，不变成功。有限表格，不扩全排列。 |
+| R016-07 | 正常消费路径、明确先触发runCtx.Done再让fake Stream交出最终事件的Cancel-drain屏障 | 两条路径分类一致；Cancel仍幂等、有界、能drain；不得因为空for-range丢掉最终Reason。翻译失败drain也收集，但原翻译错误仍维持其基础设施路径。 |
+| R016-08 | 同一error+合法hint分别走Send/SendStream，partial carrier对照；T18独立Local Send/SendStream | server两种请求仍各一次Runner.Stream、同code/state；无额外执行、无假Result；partial在终态前保留。T18不得依赖T19新helper。 |
+| R016-09 | 第三方bare typedactive+Canceled但没有合格RunFinished | 原bare active fallback保持（既有冻结HTTP fixture仍全绿）；不把R016变成全面context-first。 |
+
+
+T18、T19在各自既有目录独立实现，T21负责跨层协议投影，T22负责真实预算/父取消来源对照；G04在实际双边合流后组合验证。没有新增公开API、core执行入口、同批源码依赖或error判定面。历史G03验收不变；本节验收尚待实施，不借原288pass冒充新增场景通过。

@@ -105,7 +105,8 @@
   "implementation_steps": [
     "基于已合入的 B03 core cause 与 C02 code/limit fixture，翻译 active budget failure。",
     "安全 limit/code 可跨进程稳定读取，但不能因此透出任意 metadata；审批/用户取消/parent deadline/业务失败保留现有分类。",
-    "本任务不改 delegation、不发明 retry 策略，仅针对已有 Runner/Event/Result/errors 做映射和反向 fixture。"
+    "本任务不改 delegation、不发明 retry 策略，仅针对已有 Runner/Event/Result/errors 做映射和反向 fixture。",
+    "R016：完整读取 C02 results-and-budget.md 的终局提示条款和 R016-01至09有限验收。失败仍只由同一次 Stream.Result() error 判断；非nil RunError carrier第一。bare error仅复用非空匹配Meta.RunID、Failed=true、闭集Reason、唯一且最后且完整drain关闭的RunFinished，正文provider RunID可不同/为空；无效提示保持原bare fallback。正常/Cancel/翻译失败drain同收集，独立bridge错误不被提示覆盖，不重新执行，不改error/cause/Result。保存bbd3574 attempt1/原288独立pass证据，新R016真实pre-Driver parentActive-first反例留红；在现有目录内独立收集/投影，真实Handler→Send/SendStream和取消drain屏障验证R016有限表。新增TestAlignment前缀纳入原V01/V02全包及count20，原安全wire fixture不改写；不依赖T18 helper。"
   ],
   "acceptance_criteria": [
     {
@@ -116,6 +117,11 @@
     {
       "id": "T19-AC02",
       "requirement": "其余 error/status 与 W03 continuation、B03 Event wire 回归通过；与 T18 不共享源码或新 Go 符号。",
+      "required": true
+    },
+    {
+      "id": "T19-AC03",
+      "requirement": "R016同Stream终局提示资格、carrier优先、唯一error判定、父cause来源与无提示fallback按本任务责任验证；所有原必需检查保留。",
       "required": true
     }
   ],

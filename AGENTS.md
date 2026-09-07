@@ -69,7 +69,7 @@ github.com/agent-dance/agent-adaptor          package adaptor
 - `internal/engine` 不得 import 根包。
 - `driver` 不得依赖根包或具体 provider 包。
 - `tool`、`skill`、`mcp`、`profile`、`threadstore` 不得反向 import 根包。
-- bridges 与 hosttools 只能消费公开 `Runner`、`Stream`、`Event`、`Result` 等合同，不得调用内部 engine 或直接派发 Driver。
+- bridges 与 hosttools 只能消费公开 `Runner`、`Stream`、`Event`、`Result` 等执行合同，不得调用内部 engine 或直接派发 Driver。唯一精确实现依赖例外是 `hosttools/a2adelegation -> internal/activebudget` 的中立私有计时器复用；它不解析 provider、不派发执行，公共签名不得泄露该类型，其他 internal 依赖仍禁止。
 - 公共类型不得通过 alias、字段或方法签名泄露 `internal/*` 类型。
 
 ## 4. 唯一构造语义
@@ -366,7 +366,11 @@ B03 已交付单一 WithAppendSystemPrompt/Request/Descriptor/Inspect 合同和�
 
 B03 的 A2A capability/todo/parent wire 采用独立 opt-in、闭集/大小/编码校验、原 Meta 的安全 drop 或可观察基础设施错误，并保持旧正文/零时间兼容和 opaque key。SSE/AG-UI/session recorder 保留新 typed 事实与来源；AG-UI tool card 使用无碰撞 tuple。Merge 非 nil bus 只透明转发且要求完成后的绑定证明，保留全 parent error graph。可选 capabilityrecorder 用显式共享 Store、精确 scope/Sequence 查询与既有 observer 首错/迟到合同。R013 分离审批描述 JSON 容器副本和唯一 live responder；所有历史录制移除 responder。
 
-以下仍为打开项：provider 原生 append 参数/进程签名/checkpoint guard 与各 Driver 正式观测（T14–T17）、delegation publisher/域映射/主动预算及 A2A 预算 wire（T18–T19）。W11-R03 的 core/hash部分不替代B04的实际provider接线。T20–T23 独立跨层验证和 T25–T30 平台/live 证据尚未完成，不能以本批 worker 测试关闭这些要求。
+B04 已交付四 Driver 的原生 append 支持/明确 unsupported、正式 capability/Todo 观测与实际 transport 声明。追加原文的字节 hash 同时进入进程/codec/checkpoint guard；未知 alias/父域/任务结果不得变成执行事实。Codex typed skill 输入接受、资源物化与实际执行须区别；缺失 Usage 不得变成观察到的零，已知 stdout EOF 必须有界收尾后判断健康。
+
+Delegation 通过 BindEvents 让 typed 事实先进入 core observer 再进入有损 bus，真实历史 binding proof 在撤销后保留。relay 使用无碰撞可逆域，超长/超深显式保留丢弃原因与数量。每次 Delegate 独立主动预算，不改 Member Policy，Member Ask 不暂停 delegator；终局封账后才有界清理。A2A failure 只提升八项闭集与可信主预算 limit_ms；carrier Reason 第一，R016 只为 bare error 采用同一已排空 Stream 的唯一最后、Meta.RunID 匹配的失败分类，nil error 绝不因事件变失败。
+
+以上实施须由 G04 合流门禁确认；本段不代替外部精确 SHA 验收记录。T20–T24 独立跨层/文档验证和 T25–T30 平台/live 证据仍打开，不能以本批 worker 测试关闭这些要求。
 
 具体冻结设计、未支持边界、文件所有权和fixture见 `docs/alignment-tasks/2026-09-07/contracts/frozen.json`。合同冻结不代表代码已实现；后续同批godoc、合同测试、使用文档和CHANGELOG完成后才能关闭对应项。其他第14节既有保护继续有效。
 

@@ -181,7 +181,8 @@
     "搭建旧快照→live 状态→artifact 多更新→新问卷/完成、nested repeated IDs、no-store relay、observer-before-drop。",
     "核验父关联、todo empty clear/final snapshot、capability exposure/超限/未知/恶意字段、不因新事件影响旧端。",
     "R006独立核验W09-R14：Driver先报告成功但后续cleanup/lease失败，带/不带RunService sources均由公共最终RunFinished映射同一最终RunError，原始provider Terminal/Transcript完整且无提前第二终局。",
-    "R010独立对照：executeInvocation准入后每轮唯一core start/terminal且cleanup主Reason一致；openStream静态拒绝保留空closed Events+Result error、无资源/Driver，不伪造执行生命周期。"
+    "R010独立对照：executeInvocation准入后每轮唯一core start/terminal且cleanup主Reason一致；openStream静态拒绝保留空closed Events+Result error、无资源/Driver，不伪造执行生命周期。",
+    "R016：完整读取 C02 results-and-budget.md 的终局提示条款和 R016-01至09有限验收。失败仍只由同一次 Stream.Result() error 判断；非nil RunError carrier第一。bare error仅复用非空匹配Meta.RunID、Failed=true、闭集Reason、唯一且最后且完整drain关闭的RunFinished，正文provider RunID可不同/为空；无效提示保持原bare fallback。正常/Cancel/翻译失败drain同收集，独立bridge错误不被提示覆盖，不重新执行，不改error/cause/Result。以公开Runner/真实A2A Handler/client及Local/Remote独立覆盖R016-03至09协议资格、取消drain、单次执行、partial与封闭wire；TestAlignmentProtocol前缀纳入原验证，不修改provider/bridge生产源码。"
   ],
   "acceptance_criteria": [
     {
@@ -192,6 +193,11 @@
     {
       "id": "T21-AC02",
       "requirement": "重复/取消/drop/EOF/坏 payload 与本地远端一致性有明确断言，发现归属写入 findings，不修生产代码。",
+      "required": true
+    },
+    {
+      "id": "T21-AC03",
+      "requirement": "R016同Stream终局提示资格、carrier优先、唯一error判定、父cause来源与无提示fallback按本任务责任验证；所有原必需检查保留。",
       "required": true
     }
   ],

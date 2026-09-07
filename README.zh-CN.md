@@ -290,6 +290,14 @@ claudeReviewer := adaptor.New(claude.Driver(claude.Config{}), reviewerOptions...
 SystemPrompt.Append。近处按原字节替换，空串清除；保留 provider 默认提示，
 不替代 `WithInstructions` 或用户 Prompt。
 
+Claude 通过自有 0600 文件追加，CodeBuddy 使用原生 argv，Codex 使用 exec TOML
+或 app-server RPC 的 developer instructions；Cursor 拒绝非空追加。CodeBuddy 与
+Codex exec 的原文上限为 32768 UTF-8 字节，并检查最终命令，详见[原生限制](./docs/api-reference.md#31-dual-scope-options)。
+[能力与 Todo 事实](./docs/streaming.md#provider-observation-support)取决于实际协议；
+Codex 接受 typed skill 输入不证明实际执行，Cursor 只提供 MCP/自定义子代理观测。
+Delegation 的 typed 事实先进入同一 observer 再进入有损 UI bus，每次调用有独立的
+[主动预算](./docs/run-policy.md#delegation-active-execution-budget)。
+
 `Policy.ActiveExecutionTimeout` 限制主动执行时间，仅本轮 Ask 等待暂停。
 零值无限、负值无效，WithPolicy 仍整值替换。WithTimeout、父 deadline 与审批
 deadline 继续按墙钟计时。预算在原子持久化前封账，Finalize 仍须在原可取消

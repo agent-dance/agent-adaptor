@@ -164,7 +164,8 @@
     "R011独立回归：已有MCP配置mode保持/真实外部mode变化可见；兼容rich→native schema batch→rich保持同一Thread active记录/正式resume/实际prewarm且每prompt一次，ResumeOnly不因Streaming布尔拒绝，真实配置/codec/资源不兼容仍受guard保护。",
     "R012独立验证：预算在原子Persist前结算封账，余额到期但timer未调度时零Finalize；封账后旧timer及已提交后延迟返回无active timeout，Finalize失败保留部分Result，原parent ctx提交前取消不写入，合法已提交后取消不回滚。加入TestAlignmentPolicy前缀以进入既定重复/race检查；不修改实现。",
     "独立复核 R013 审批描述快照：Choices/嵌套 JSON Details 在来源、WithEventMeta 副本与消费者间不共享可变容器，但所有 live 副本共享 responder。三 Kind 竞答、过期/取消、零值与 T12 descriptive replay 去 responder 分别验证；不能仅通过复制 struct 判断隔离。",
-    "独立验证R014：Controller已选本轮expiry但锁外cancel尚未执行时，以Timer.Stop屏障引入后到parent取消，仍保留本轮active主因/精确Limit/唯一terminal；反向parent先Done、继承同型typed cause和pre-Driver分支均为对照，不能只测child.Done已关闭的较晚窗口。"
+    "独立验证R014：Controller已选本轮expiry但锁外cancel尚未执行时，以Timer.Stop屏障引入后到parent取消，仍保留本轮active主因/精确Limit/唯一terminal；反向parent先Done、继承同型typed cause和pre-Driver分支均为对照，不能只测child.Done已关闭的较晚窗口。",
+    "R016：完整读取 C02 results-and-budget.md 的终局提示条款和 R016-01至09有限验收。失败仍只由同一次 Stream.Result() error 判断；非nil RunError carrier第一。bare error仅复用非空匹配Meta.RunID、Failed=true、闭集Reason、唯一且最后且完整drain关闭的RunFinished，正文provider RunID可不同/为空；无效提示保持原bare fallback。正常/Cancel/翻译失败drain同收集，独立bridge错误不被提示覆盖，不重新执行，不改error/cause/Result。用真实core pre-Driver RunService重建R016-01父CancelCause(ActiveError777s)先于本轮耗尽，与R016-02本轮先选active对照，核对唯一终局、保留Is/As、Local/Remote分类和Limit来源；纳入TestAlignmentPolicy原验证。不以Is顺序/Limit大小猜来源，不扩大重跑全T10矩阵。"
   ],
   "acceptance_criteria": [
     {
@@ -175,6 +176,11 @@
     {
       "id": "T22-AC02",
       "requirement": "误用输入在分配资源前失败；Run/Stream 结果/cause 逐字段一致，不给 checkpoint 放行。",
+      "required": true
+    },
+    {
+      "id": "T22-AC03",
+      "requirement": "R016同Stream终局提示资格、carrier优先、唯一error判定、父cause来源与无提示fallback按本任务责任验证；所有原必需检查保留。",
       "required": true
     }
   ],

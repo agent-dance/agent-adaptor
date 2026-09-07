@@ -290,6 +290,14 @@ claudeReviewer := adaptor.New(claude.Driver(claude.Config{}), reviewerOptions...
 별도 네이티브 추가 채널이다. 가까운 범위의 원본 바이트로 교체하고 빈 문자열로
 해제한다. provider 기본값, `WithInstructions`, 사용자 Prompt는 대체하지 않는다.
 
+Claude는 소유한 0600 파일, CodeBuddy는 네이티브 argv, Codex는 exec TOML 또는
+app-server RPC의 developer instructions를 사용한다. Cursor는 빈 값이 아닌 추가를 거부한다.
+CodeBuddy와 Codex exec는 32768 UTF-8 바이트까지 허용하며 최종 명령도 검사한다.
+[제한](./docs/api-reference.md#31-dual-scope-options)과 [관측 표](./docs/streaming.md#provider-observation-support)를 참고한다.
+Codex의 typed skill 입력 수락은 실행 증명이 아니며 Cursor는 MCP와 사용자 정의 하위 agent를 관측한다.
+Delegation은 손실 가능한 UI bus보다 먼저 같은 observer에 사실을 전달하고 호출마다
+[독립된 예산](./docs/run-policy.md#delegation-active-execution-budget)을 갖는다.
+
 `Policy.ActiveExecutionTimeout`은 해당 실행의 Ask 대기를 제외한 실행 시간을
 제한한다. 0은 무제한, 음수는 오류이며 WithPolicy는 전체 값을 교체한다.
 WithTimeout과 부모·승인 deadline은 계속 벽시계 기준이다. 예산은 원자적 저장 전에

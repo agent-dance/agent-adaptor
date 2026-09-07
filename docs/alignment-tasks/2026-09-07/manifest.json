@@ -397,14 +397,14 @@
       "batch_id": "B04",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/04-provider-adoption/t18/task.json",
-      "sha256": "bd7a67a312d8c184ac1dec8683b6142a37c8bdd47c62cd2de935f7bae0e1f2fe"
+      "sha256": "0524c0be862383940459dac26af3863d89aebee819cd288bcff1068daf929e3e"
     },
     {
       "id": "T19",
       "batch_id": "B04",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/04-provider-adoption/t19/task.json",
-      "sha256": "df0116a2a54b4a4f0e8d7cee531a22b7a414488e2ae84b39221a5e58d2c6dc12"
+      "sha256": "9a4b16f9f271e4f79766a437c5e1a39b9045fbfa55c69a541165aff56140fe9b"
     },
     {
       "id": "G04",
@@ -425,14 +425,14 @@
       "batch_id": "B05",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/05-cross-layer-qa/t21/task.json",
-      "sha256": "76009de3591086111adc94b1ebf40df6171792162c6a83d655334345160d7cd9"
+      "sha256": "d26eb90b3081541ef51e1538e26dfdf6381cb54cd69cfcbde7dd606f16de8d83"
     },
     {
       "id": "T22",
       "batch_id": "B05",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/05-cross-layer-qa/t22/task.json",
-      "sha256": "3ce79e7d25d45fb7d406849452f62f3f9e624a058de010194ade74729315d7af"
+      "sha256": "d63812ed7ed43402cdc6b4a9dbf42531b9d902f9e676ee926463a49776020596"
     },
     {
       "id": "T23",
@@ -521,7 +521,7 @@
     "every_requirement_has_one_owner_and_independent_verifier": true,
     "no_same_batch_worker_dependency": true
   },
-  "revision": 16,
+  "revision": 17,
   "amendments": [
     "docs/alignment-tasks/2026-09-07/amendments/R001.md",
     "docs/alignment-tasks/2026-09-07/amendments/R002.md",
@@ -537,6 +537,7 @@
     "docs/alignment-tasks/2026-09-07/amendments/R012.md",
     "docs/alignment-tasks/2026-09-07/amendments/R013.md",
     "docs/alignment-tasks/2026-09-07/amendments/R014.md",
-    "docs/alignment-tasks/2026-09-07/amendments/R015.md"
+    "docs/alignment-tasks/2026-09-07/amendments/R015.md",
+    "docs/alignment-tasks/2026-09-07/amendments/R016.md"
   ]
 }

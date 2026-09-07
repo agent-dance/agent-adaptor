@@ -2,6 +2,24 @@
 
 > Status: v1 contract and provider-capability reference. This file records the research evidence behind the final public profile-resource surface for Codex, Claude Code, and Cursor. The contract uses portable host intent where possible, typed extended capabilities where providers expose a stable native surface, explicit fallback or unsupported states where they do not, and provider-native escape hatches for the long tail.
 
+## Materialization and invocation evidence
+
+The historical CLI versions below remain research records, not current release
+certification. ProfileState/SyncProfile describe desired/observed materialization;
+that does not prove use. The [current observation matrix](./streaming.md#provider-observation-support)
+is a separate contract backed by formal parser and fake-process fixtures.
+
+Codex app-server developerInstructions is the native append carrier for
+thread/start, resume and fork; exec uses developer_instructions TOML argv. An
+accepted typed skill input records NativeInputAccepted, not resource execution.
+Formal mcpToolCall and spawn collab receiver plus child role establish scoped
+catalog facts; turn/plan/updated supplies full synthetic-ID snapshots. These
+fields come from checked-in official schema; generated/schema files were not
+hand-edited for adoption. Claude and CodeBuddy confirm formal tool results;
+Cursor print only advertises MCP/custom-subagent facts, with Skill/Todo absent.
+See [native append limits](./api-reference.md#31-dual-scope-options) for the separate
+append channel and session guards.
+
 ## Research Scope
 
 Reviewed local tools:

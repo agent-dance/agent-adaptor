@@ -1,10 +1,10 @@
 {
   "schema_version": "1.0",
-  "gate": "G03",
-  "manifest_revision": 16,
+  "gate": "G04",
+  "manifest_revision": 17,
   "code_baseline": "919f140f64f89c80933802840c8878681a85a4d9",
   "source_head": "e2f0620bdd6477e6fe16f6db5648093589342ca2",
-  "status": "implementation_reconciled_G03_attempt2_checks_pending",
+  "status": "implementation_reconciled_G04_checks_pending",
   "contracts": [
     {
       "producer": "C01",
@@ -22,8 +22,8 @@
     {
       "producer": "C02",
       "path": "docs/alignment-tasks/2026-09-07/contracts/results-and-budget.md",
-      "sha256": "40061fb30fd47d5a7f5dd6a95aca460c1addd89a1831eb545b1c6c8302798f47",
-      "version": "1.2-g03",
+      "sha256": "017ce9319625e252a7615e60eee9c8721df2045896ff8b2f06822b89bfd40460",
+      "version": "1.3-r016-pending-g04",
       "interfaces": [
         "RunError.Cause + stable primary Reason",
         "Policy.ActiveExecutionTimeout",
@@ -374,7 +374,9 @@
     "R014: private Controller.SelectedCause reads the already selected cause without recomputation; local expiry selection precedes asynchronous cancellation delivery. Core and Delegate retain selected local identity and first primary while inherited same-type causes stay evidence. No ownership/DAG/public API changes; T10/T22 original required checks preserved.",
     "G03/C04 clarification: cancelled context precedes empty-text Materialize no-op; preserve cancellation cause, allocate nothing. Empty append clearing is unchanged. Current 709 implementation already follows this order; no code/ownership/DAG change or new validation run is claimed.",
     "G03 reconciliation: native append core/hash and active budget with R012 seal/R014 selected cause, R013 Approval snapshots, A2A strict opt-in wire, non-A2A replay/Merge and optional capabilityrecorder delivered. T14-T19 provider/delegation adoption and B05/B06 verification remain open; no native/live evidence inferred.",
-    "R015: G03 full suite exposed obsolete S9 post-run Merge usage. T12 additionally owns only service_s9_test.go to migrate to pre-run team.Option and original Stream, keeping all business assertions. No fake binding proof or production T18 work; required S9/full hosttool validation added."
+    "R015: G03 full suite exposed obsolete S9 post-run Merge usage. T12 additionally owns only service_s9_test.go to migrate to pre-run team.Option and original Stream, keeping all business assertions. No fake binding proof or production T18 work; required S9/full hosttool validation added.",
+    "R016: nonnil Result error remains the only failure decision. RunError carrier first; bare errors may reuse the same fully drained Stream unique last failed RunFinished closed Reason, attributed only by nonempty matching Meta.RunID. Invalid or absent hints retain prior bare fallback. T18 Local uses one Stream for Send/drain; T18/T19 remain independent. No core/public API/ownership/DAG/requirement changes; G03 accepted evidence unchanged.",
+    "G04 reconciliation: T14-T19 native append/formal observations, delegation binding/relay/active budget and safe A2A failure wire including R016 delivered; exact merged gate checks and B05/B06 verification remain distinct. Root/SPI golden and generated/schema unchanged in B04."
   ],
   "unmerged_related_branches": [
     {
@@ -390,5 +392,5 @@
       "decision": "Preserve current stronger tool authorization boundary; no automatic merge."
     }
   ],
-  "previous_freeze_gate": "G02"
+  "previous_freeze_gate": "G03"
 }

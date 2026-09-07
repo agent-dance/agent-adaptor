@@ -278,8 +278,14 @@ recovery cause; it has no dedicated sentinel.
 | `sessionrecorder.ErrJSONLEventLogCorrupt` | A malformed, truncated, or inconsistent JSONL audit log could not be replayed faithfully. |
 
 `hosttools/a2adelegation.DelegationError` is a typed remote/business failure
-with `Code`, `Message`, `Retryable`, `RemoteStatus`, and `Metadata`. It
-implements `error` but has no sentinel and no unwrap contract.
+with `Code`, `Message`, `Retryable`, `RemoteStatus`, `Metadata` and `Cause`.
+Code is authoritative; Unwrap exposes Cause, which is excluded from JSON. Local
+failures retain original wrapped/joined causes and RunError's partial Result.
+Remote errors promote only the [closed A2A controls](./a2a.md#stable-failure-classification).
+A valid active code without limit matches ErrActiveExecutionTimeout but invents
+no typed Limit. A positive wire limit rounds up to milliseconds and saturates
+on conversion to nanoseconds. Unknown/invalid controls remain safe remote
+failures. Parent context/active causes cannot override the primary Code.
 
 The `memory` and bridge packages currently define no additional
 SDK-owned stable error sentinels. They return documented standard errors,

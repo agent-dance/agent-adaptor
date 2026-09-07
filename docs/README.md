@@ -10,11 +10,11 @@ The public v1 model is Agent, Thread, Stream, Event, Result, and Driver. Start w
 | [`../AGENTS.md`](../AGENTS.md) | Final architecture boundaries, invariants, and release gates. |
 | [`api-reference.md`](./api-reference.md) | Complete public API and option scopes. |
 | [`tools.md`](./tools.md) | Provider-neutral host-defined Tools, schemas, errors, lifecycle, security, and Thread compatibility. |
-| [`streaming.md`](./streaming.md) | Unified Event consumption, active budgets, scoped capability recording, replay, AG-UI, and SSE. |
+| [`streaming.md`](./streaming.md) | Unified Events, actual provider observation support, scoped recording, bound delegation facts, replay, AG-UI and SSE. |
 | [`streaming-adapter-contract.md`](./streaming-adapter-contract.md) | Streaming and event obligations for Driver authors. |
 | [`structured-output.md`](./structured-output.md) | Typed and JSON-schema output. |
-| [`a2a.md`](./a2a.md) | A2A bridge, client, delegation, and exposure policy. |
-| [`run-policy.md`](./run-policy.md) | Sandbox, feature, approval, active/wall-clock timeout, fallback, and retry policy. |
+| [`a2a.md`](./a2a.md) | A2A bridge/client, closed failure controls, delegation binding/relay, and exposure policy. |
+| [`run-policy.md`](./run-policy.md) | Sandbox, approval, independent run/delegation budgets, wall-clock limits, fallback and retry policy. |
 | [`public-errors.md`](./public-errors.md) | Public sentinels, typed errors, and `errors.Is` / `errors.As` guidance. |
 | [`profile-resource-provider-matrix.md`](./profile-resource-provider-matrix.md) | Provider support and materialization behavior for profile resources. |
 

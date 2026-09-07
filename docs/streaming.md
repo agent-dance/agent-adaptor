@@ -427,9 +427,75 @@ primary Reason. Bare deadline remains ReasonDeadlineExceeded. Cancel cancels
 then drains the parent; concurrent Result calls receive one cached outcome.
 
 Install the delegation Service's Option before execution and consume the
-original Stream; never feed its UI mirror back into core. Concrete delegation
-publisher/binding adoption remains the separate provider-adoption workstream.
+original Stream; never feed its UI mirror back into core. Delegation Service.AttachRun installs BindEvents with Events=nil. The bound
+publisher enters the core sink and its bounded synchronous observers before the
+lossy EventBus. Config.Observe is a UI callback, not the recorder source.
+RunEventsBound is exact historical proof of successful binding; detach revokes
+publication but keeps proof for transparent Merge after teardown. Attach alone,
+ordinary Publish or failed binding cannot establish that proof.
 A2A observation projection is explicitly opt-in; see [wire and exposure](./a2a.md).
+
+## Provider observation support
+
+Observation support follows the actual negotiated protocol, independently of
+the consumer's Run/Stream choice and the StreamCapability fidelity table.
+
+| Actual provider transport | Skills | MCP | Subagents | Todo/plan |
+|---|---|---|---|---|
+| Claude stream-json, control and resident | Formal Skill call | Exact resolved catalog | Formal Agent/Task call, scoped parent evidence | Successful formal task results and full snapshots |
+| Claude batch JSON | Unavailable | Unavailable | Unavailable | Unavailable |
+| CodeBuddy stream-json, control and resident | Formal skill/command | Exact resolved catalog | Formal Task/Agent call; no parent graph | Successful formal task results and full snapshots |
+| CodeBuddy batch JSON | Unavailable | Unavailable | Unavailable | Unavailable |
+| Codex app-server, one-shot and resident | Typed input accepted | Formal mcpToolCall | Formal spawn plus unique child role/catalog | Full turn/plan/updated snapshot |
+| Codex exec JSONL | Unavailable | Unavailable | Unavailable | Unavailable |
+| Cursor print stream-json | Unavailable | Formal result and exact catalog | Formal custom-agent result/catalog | Unavailable |
+
+Cursor uses print stream-json for both Request.Streaming values, so both
+Observation descriptor branches expose MCP/Subagents. This does not declare a
+separate terminal-JSON transport or fine-grained StreamSupport. Cursor Usage
+remains nil when its formal protocol has no numeric usage evidence.
+
+Capability keys come from the final resolved catalog. Each known alias must be
+valid on its own; an invalid present alias cannot be hidden by another valid
+field. Unknown or ambiguous references produce a safe notice without guessed
+facts. A result confirms Completed/Failed; a pending call ends Interrupted, or
+Cancelled when cancellation is observed. Unobserved duration stays nil.
+
+Claude identifies tool calls by run/scope/call tuple. Complete input is carried
+once in start.Args; partial frames carry only actual deltas. Tool description
+closure does not prove execution. Parent wrappers and message IDs partition
+usage/text; a bare result needs a unique historical scope, even when one call
+already completed. Claude's MCP aliases follow its exact encoding, including
+Unicode and underscore ambiguity checks.
+
+CodeBuddy preserves its own Unicode/underscore MCP naming. Its user-result
+parent_tool_use_id can refer to the call itself and is not a parent edge.
+Unproved or malformed partial parents cannot supply arguments or completion
+facts to the root, including a later full wrapper. Raw and original deltas remain.
+
+Claude and CodeBuddy Todo updates require confirmed successful results. Real
+provider task IDs are preserved; namespaced synthetic IDs are explicitly marked
+and cannot be matched as real TaskUpdate targets. TodoWrite replaces the full
+table, including empty; CodeBuddy uses its formal newTodos field. CodeBuddy
+TaskUpdate without a full list requires a matching formal task or the exact
+official success rendering for the requested fields. Empty/unknown rawResponse
+metadata proves nothing. Invalid snapshots leave the old table unchanged;
+replayed snapshots do not increment revision. A new run has no invented task cache.
+
+Codex explicit $skill inputs produce NativeInputAccepted only after turn/start
+accepts the typed input. Completed means that input acceptance completed, not
+that the skill was read or its work finished. Subagent spawn completion likewise
+does not certify the child's final work. Plan steps have synthetic turn/position
+IDs, preserve order and text, and include first-empty/clear snapshots. Plan deltas
+do not become Todo or PlanReview. Current thread/turn and terminal fences remain;
+only formally valid same-thread historical token usage may be retained in Raw
+without altering current state. Missing/null/invalid usage fields never become
+observed zero; complete explicit zero remains valid.
+
+Resource materialization, native input acceptance and observed invocation are
+different evidence. No observed fact does not prove absence of execution or
+complete audit coverage. Formal fixture tests are not a current live-provider
+certification.
 
 ## 10. Driver streaming fidelity
 

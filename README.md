@@ -291,6 +291,16 @@ exact bytes replace at the nearer scope; an empty string clears. It preserves
 provider defaults and does not replace `WithInstructions` or the user prompt.
 Inspect the configured Driver's SystemPrompt.Append declaration before using it.
 
+Claude uses an owned 0600 append file, CodeBuddy native inline argv, and Codex
+developer instructions via exec TOML or app-server RPC. Cursor rejects nonempty
+append. CodeBuddy and Codex exec limit inline text to 32768 UTF-8 bytes and check
+the final command; see [native limits](./docs/api-reference.md#31-dual-scope-options).
+Formal [capability/Todo observations](./docs/streaming.md#provider-observation-support)
+depend on the actual transport. Codex typed skill acceptance does not certify
+execution; Cursor exposes MCP/custom subagents, not Skill/Todo. Delegation binds
+typed facts into the same observer path before its lossy UI bus and has an
+independent [per-call budget](./docs/run-policy.md#delegation-active-execution-budget).
+
 `Policy.ActiveExecutionTimeout` limits active work and pauses for this run's Ask
 waits. Zero is unlimited; negative is invalid. WithPolicy replaces the whole
 value. WithTimeout and parent/approval deadlines still measure wall time. The

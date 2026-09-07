@@ -115,8 +115,35 @@ quotes and line endings remain byte-for-byte. Invalid UTF-8, NUL or unsupported
 nonempty text fails before resources/Thread leases/Driver.Run with
 `ErrSystemPromptUnsupported` and `*SystemPromptUnsupportedError`. Diagnostics
 contain controlled reasons, never submitted text. The configured Driver's
-`Descriptor.SystemPrompt.Append` is authoritative; built-in provider adoption
-is tracked separately from the core option contract.
+`Descriptor.SystemPrompt.Append` is authoritative. The built-in carriers are:
+
+| Driver / actual transport | Native append carrier | Limits and lifecycle |
+|---|---|---|
+| Claude stream-json / batch | `--append-system-prompt-file` | Owned 0600 file outside profile/workspace; verified for each spawn and retained for the resident process lifetime. |
+| CodeBuddy stream-json / batch | `--append-system-prompt` argv | At most 32768 UTF-8 bytes; validate the complete executable/argv on Windows, including cmd-shim safety. |
+| Codex exec JSONL / resume | `-c developer_instructions=<TOML string>` | At most 32768 UTF-8 bytes and final executable/argv validation. |
+| Codex app-server | `developerInstructions` in thread/start, resume and fork | Same field for one-shot and resident handshakes; no SDK inline-argv size limit. |
+| Cursor print stream-json | Unsupported | Nonempty append fails before resources or launch; an empty call override still clears a default. |
+
+CodeBuddy and Codex exec carry text in OS-visible argv. SDK-generated invocation
+diagnostics redact the managed value; provider-originated Raw remains complete.
+CodeBuddy's nonempty append uses the final Windows command limits: 32767 UTF-16
+units including the terminator for native/PowerShell, 8191 for cmd. Unsafe cmd
+metacharacters, quotes or line breaks fail explicitly. These checks do not turn
+an old empty-append cmd invocation into a new lossless quoting guarantee.
+
+Claude and CodeBuddy reject all four system/append prompt flags in ExtraArgs,
+even when SDK append is empty. Codex rejects config overrides of
+`developer_instructions`, `instructions`, `base_instructions`,
+`model_instructions_file` and `experimental_instructions_file`; unrelated valid
+overrides remain available. Inspect and direct Driver validation use the same rule.
+
+Content hashes participate in both checkpoint guards and resident process
+signatures; all existing configuration/environment dimensions remain. Equal
+content may reuse a writer. Changed/cleared content must pass normal Thread
+compatibility, and replacement waits for bounded old-writer shutdown. WithSpawn
+and schema prewarm retain the resolved append value. A Claude carrier is deleted
+only after its process exits; failed cleanup remains observable and retryable.
 
 ```go
 // d is a configured Driver whose descriptor declares native append support.

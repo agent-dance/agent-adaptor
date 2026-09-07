@@ -272,3 +272,17 @@ The implementation localizes two maintained libraries behind standard
 
 No third-party schema type appears in the public API, and provider-specific
 flags remain inside their Driver packages.
+
+
+## Native append with structured output
+
+The resolved native append channel follows a schema-selected transport and its
+prewarm/replacement process, retaining normal Thread compatibility. It never
+becomes the schema validation prompt. Claude keeps its existing native
+Question/PlanReview and prompt-fallback Permission rules. CodeBuddy native schema
+still cannot share its control HITL transport. Nonempty CodeBuddy append validates
+the whole Windows argv; cmd-shim combinations containing unsafe JSON/schema
+quoting fail explicitly. Use a supported native executable or lossless PowerShell
+path. Cursor nonempty append remains unsupported before startup. See
+[carrier limits](./api-reference.md#31-dual-scope-options) and the existing capability
+matrix; append does not grant additional HITL/schema support.
