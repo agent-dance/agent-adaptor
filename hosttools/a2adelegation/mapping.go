@@ -374,7 +374,8 @@ func (m *eventMapper) completeStatusDelegationEvent(
 	if ev.RemoteMessageID == "" {
 		ev.RemoteMessageID = messageID
 	}
-	ev.Raw = cloneAnyMap(decoded.Raw)
+	// mapRelay may replace payload provenance with a safe loss diagnostic.
+	// Keep its cloned Raw so the reason/count survive this context completion.
 	if ev.Raw == nil {
 		ev.Raw = map[string]any{}
 	}

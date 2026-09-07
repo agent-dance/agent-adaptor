@@ -672,19 +672,6 @@ func (d *Delegator) recoverTask(ctx context.Context, client A2AClient, taskID, t
 	return task, err == nil && executionFinalState(task.Status.State)
 }
 
-func (r *delegationRun) cancelRemote(ctx context.Context, client A2AClient, taskID, tenant string, base DelegationEvent) {
-	r.cancelRemoteTask(ctx, client, taskID, tenant, base)
-	r.publish(cancelledEvent(base, taskID))
-}
-
-func cancelledEvent(base DelegationEvent, taskID string) DelegationEvent {
-	ev := base
-	ev.Kind = DelegationCancelled
-	ev.RemoteTaskID = taskID
-	ev.Status = "cancelled"
-	return ev
-}
-
 func (r *delegationRun) cancelRemoteTask(ctx context.Context, client A2AClient, taskID, tenant string, base DelegationEvent) {
 	if taskID != "" {
 		r.taskID = taskID

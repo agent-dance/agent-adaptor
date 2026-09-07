@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+	"strconv"
+	"strings"
 	"time"
 
 	adaptor "github.com/agent-dance/agent-adaptor"
@@ -66,11 +68,7 @@ func parseMilliseconds(v any) (int64, bool) {
 	var n int64
 	switch v := v.(type) {
 	case json.Number:
-		var err error
-		n, err = v.Int64()
-		if err != nil {
-			return 0, false
-		}
+		return parseJSONMilliseconds(v)
 	case int:
 		n = int64(v)
 	case int64:
@@ -85,6 +83,54 @@ func parseMilliseconds(v any) (int64, bool) {
 	}
 	return n, n >= 1 && n <= maxBudgetMilliseconds
 }
+
+// parseJSONMilliseconds checks the decimal value exactly, without float
+// rounding or allocating an integer proportional to an untrusted exponent.
+// Work and storage are linear in the already-received literal's length.
+func parseJSONMilliseconds(value json.Number) (int64, bool) {
+	raw := value.String()
+	if len(raw) == 0 || raw[0] < '0' || raw[0] > '9' || !json.Valid([]byte(raw)) {
+		return 0, false
+	}
+	mantissa := raw
+	exponent := int64(0)
+	if i := strings.IndexAny(raw, "eE"); i >= 0 {
+		var err error
+		exponent, err = strconv.ParseInt(raw[i+1:], 10, 64)
+		if err != nil {
+			return 0, false
+		}
+		mantissa = raw[:i]
+	}
+	// A valid nonzero value in this domain has at most thirteen digits.
+	// An exponent beyond the literal's size cannot be offset by its mantissa.
+	if exponent > int64(len(raw))+13 || exponent < -int64(len(raw)) {
+		return 0, false
+	}
+	fraction := 0
+	if i := strings.IndexByte(mantissa, '.'); i >= 0 {
+		fraction = len(mantissa) - i - 1
+	}
+	digits := strings.TrimLeft(strings.ReplaceAll(mantissa, ".", ""), "0")
+	if digits == "" {
+		return 0, false
+	}
+	trimmed := strings.TrimRight(digits, "0")
+	exponent += int64(len(digits) - len(trimmed) - fraction)
+	digits = trimmed
+	if exponent < 0 || int64(len(digits))+exponent > 13 {
+		return 0, false
+	}
+	n, err := strconv.ParseInt(digits, 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	for ; exponent > 0; exponent-- {
+		n *= 10
+	}
+	return n, n >= 1 && n <= maxBudgetMilliseconds
+}
+
 func budgetDuration(ms int64) time.Duration {
 	if ms > math.MaxInt64/int64(time.Millisecond) {
 		return time.Duration(math.MaxInt64)
@@ -164,7 +210,11 @@ func rootFailureHint(err error, hint string) *DelegationError {
 	}
 	var re *adaptor.RunError
 	code := ""
+	limitSource := err
 	if errors.As(err, &re) && re != nil {
+		// The carrier owns its primary limit. Outer joined causes remain evidence
+		// in Cause, but cannot supply a different budget or fill a missing limit.
+		limitSource = re.Cause
 		code = string(re.Reason)
 		if !failureCodeKnown(code) {
 			code = "remote_failed"
@@ -189,7 +239,7 @@ func rootFailureHint(err error, hint string) *DelegationError {
 	}
 	if code == "active_execution_timeout" {
 		var limit *adaptor.ActiveExecutionTimeoutError
-		if errors.As(err, &limit) && limit != nil && limit.Limit > 0 {
+		if errors.As(limitSource, &limit) && limit != nil && limit.Limit > 0 {
 			d.Metadata = map[string]any{"limit_ms": milliseconds(limit.Limit)}
 		}
 	}
