@@ -108,3 +108,15 @@ and [`docs/streaming.md`](../docs/streaming.md).
 - `go test -tags=claude_live -run '^$' ./claude` compile-checks the live suite.
   Running a live test additionally requires its explicit environment-variable
   gate, an installed Claude CLI, and an authenticated local profile.
+
+## Scoped tools, capability facts and confirmed todos
+
+Claude stream-json/control/resident turns reconcile partial frames and full assistant wrappers into one scoped tool lifecycle. `ScopeID`, `ParentScopeID` and `ParentToolCallID` come from formal parent wrappers and uniquely known calls. Complete start Args never repeat as ArgsDelta. End closes the call description; a matching tool_result supplies execution evidence. Missing/ambiguous parents or result IDs produce safe notices, and Raw is preserved.
+
+Capabilities use the final resolved catalog and exact provider fields. MCP names enumerate exact catalog aliases and operation splits without trimming underscores or selecting longest prefixes; ambiguity means unavailable. Skill/Agent names mentioned in text or init catalogs are not evidence. A call without a formal result is Interrupted, even after successful run completion.
+
+TaskCreate uses the user wrapper's `tool_use_result.task.id`, with explicitly synthetic IDs when a successful create lacks an ID. TaskUpdate uses real observed IDs; TaskList restores the full table. TodoWrite and successful deletes can clear the table, including the first empty snapshot. Updates require successful tool results; bad input and failed results preserve old state. Tables are isolated per run and nested scope. Batch JSON declares observation unsupported.
+
+`WithAppendSystemPrompt` delivers exact bytes using a verified private `--append-system-prompt-file`. Empty clears the default; files are held until their actual process exits, including resident/prewarm paths, and are not profile resources. Session compatibility and process signatures include the content hash. The four system/append ExtraArgs flags are reserved and rejected. SDK diagnostics do not copy append content; provider Raw is still complete.
+
+Live tests require both `-tags=claude_live` and `AGENT_ADAPTOR_LIVE_CONFORMANCE=1`, including DriverConformance, and always use private HOME/profile/workspace. `TestAlignmentLive*` is the B06 entry for current protocol/native verification; hermetic fixture passes are not paid/live or Windows evidence.

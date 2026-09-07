@@ -3,6 +3,7 @@ package claude
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/agent-dance/agent-adaptor/driver"
@@ -12,16 +13,18 @@ import (
 // API-shaped) into StreamPayload. It does not participate in checkpoint
 // construction; session capture stays in the main parser.
 type streamingState struct {
-	sink        driver.EventSink
-	runID       string
-	parser      *claudeParser
-	messageID   string
-	textStarted map[int]bool
-	blockKind   map[int]string
-	toolCallID  map[int]string
-	toolName    map[int]string
-	thinkingID  map[int]string
-	signatures  map[int]string
+	sink         driver.EventSink
+	runID        string
+	parser       *claudeParser
+	messageID    string
+	scope        toolScope
+	messageIDs   map[string]string
+	blockTools   map[claudeBlockKey]*observedTool
+	replayBlocks map[claudeBlockKey]bool
+	textStarted  map[claudeBlockKey]bool
+	blockKind    map[claudeBlockKey]string
+	thinkingID   map[claudeBlockKey]string
+	signatures   map[claudeBlockKey]string
 
 	runStarted      bool
 	finishedEmitted bool
@@ -33,7 +36,17 @@ type streamingState struct {
 	terminalPayload map[string]any
 }
 
+type claudeBlockKey struct {
+	scope string
+	index int
+}
+
+func (s *streamingState) blockIndex(event map[string]any) claudeBlockKey {
+	return claudeBlockKey{s.scope.id, intFromAny(event["index"])}
+}
+
 type claudeUsageKey struct {
+	parent    string
 	id        string
 	anonymous uint64
 }
@@ -41,16 +54,17 @@ type claudeUsageKey struct {
 func newStreamingState(sink driver.EventSink, runID string, p *claudeParser) *streamingState {
 	return &streamingState{
 		sink:         sink,
+		messageIDs:   map[string]string{},
+		blockTools:   map[claudeBlockKey]*observedTool{},
+		replayBlocks: map[claudeBlockKey]bool{},
 		runID:        runID,
 		parser:       p,
 		messageUsage: make(map[claudeUsageKey]*driver.Usage),
 		activeUsage:  make(map[string]claudeUsageKey),
-		textStarted:  make(map[int]bool),
-		blockKind:    make(map[int]string),
-		toolCallID:   make(map[int]string),
-		toolName:     make(map[int]string),
-		thinkingID:   make(map[int]string),
-		signatures:   make(map[int]string),
+		textStarted:  make(map[claudeBlockKey]bool),
+		blockKind:    make(map[claudeBlockKey]string),
+		thinkingID:   make(map[claudeBlockKey]string),
+		signatures:   make(map[claudeBlockKey]string),
 	}
 }
 
@@ -115,7 +129,10 @@ func (s *streamingState) handleStreamEvent(rawLine string, outer map[string]any)
 
 	// Nested subagent messages can end while the root is awaiting a tool
 	// response. Only root message state may close the run's stdin.
-	parent := claudeTopLevelString(outer, "parent_tool_use_id")
+	parent := claudeExactString(outer, "parent_tool_use_id")
+	scope, resolved := s.parser.wrapperScope(outer)
+	s.scope = scope
+	s.messageID = s.messageIDs[scope.id]
 	rootMessage := parent == ""
 	evType := strings.ToLower(asString(eventObj["type"]))
 	switch evType {
@@ -125,10 +142,19 @@ func (s *streamingState) handleStreamEvent(rawLine string, outer map[string]any)
 		}
 		s.handleMessageStart(eventObj, parent)
 	case "content_block_start":
+		if !resolved {
+			return
+		}
 		s.handleContentBlockStart(eventObj)
 	case "content_block_delta":
+		if !resolved {
+			return
+		}
 		s.handleContentBlockDelta(eventObj)
 	case "content_block_stop":
+		if !resolved {
+			return
+		}
 		s.handleContentBlockStop(eventObj)
 	case "message_delta":
 		if rootMessage {
@@ -155,10 +181,11 @@ func (s *streamingState) handleStreamEvent(rawLine string, outer map[string]any)
 func (s *streamingState) handleMessageStart(event map[string]any, parent string) {
 	msg := claudeTopLevelObject(event, "message")
 	id := claudeTopLevelString(msg, "id")
-	key := s.usageKey(id)
+	key := s.usageKey(id, parent)
 	s.activeUsage[parent] = key
 	if id != "" {
 		s.messageID = id
+		s.messageIDs[s.scope.id] = id
 	}
 	if msg != nil {
 		if usage := claudeTopLevelObject(msg, "usage"); usage != nil {
@@ -168,7 +195,7 @@ func (s *streamingState) handleMessageStart(event map[string]any, parent string)
 }
 
 func (s *streamingState) handleContentBlockStart(event map[string]any) {
-	idx := intFromAny(event["index"])
+	idx := s.blockIndex(event)
 	block := claudeTopLevelObject(event, "content_block")
 	if block == nil {
 		return
@@ -178,26 +205,16 @@ func (s *streamingState) handleContentBlockStart(event map[string]any) {
 
 	switch bt {
 	case "tool_use":
-		id := claudeTopLevelString(block, "id")
-		name := claudeTopLevelString(block, "name")
-		s.toolCallID[idx] = id
-		s.toolName[idx] = name
-		pl := s.basePayload()
-		pl.Kind = driver.StreamToolCallStart
-		pl.ToolCallID = id
-		pl.Name = name
-		if input := block["input"]; input != nil {
-			pl.Args = map[string]any{"input": input}
-		}
-		s.emitStream(pl)
-		// Interactive mode: register this tool_use with the parent parser
-		// so handleContentBlockDelta can accumulate input_json_delta and
-		// handleContentBlockStop can drive the HITL flow.
-		if s.parser != nil {
-			s.parser.interactiveOnToolUseStart(idx, name, id)
+		id, name := claudeExactString(block, "id"), claudeExactString(block, "name")
+		input, _ := block["input"].(map[string]any)
+		call, fresh := s.parser.startTool(s.scope, id, name, input, len(input) == 0)
+		s.blockTools[idx] = call
+		s.replayBlocks[idx] = !fresh
+		if fresh && s.scope.id == "" {
+			s.parser.interactiveOnToolUseStart(idx.index, name, id)
 		}
 	case "thinking":
-		thID := fmt.Sprintf("thinking-%d", idx)
+		thID := fmt.Sprintf("thinking-%s-%d", idx.scope, idx.index)
 		s.thinkingID[idx] = thID
 		pl := s.basePayload()
 		pl.Kind = driver.StreamReasoningStart
@@ -211,7 +228,7 @@ func (s *streamingState) handleContentBlockStart(event map[string]any) {
 }
 
 func (s *streamingState) handleContentBlockDelta(event map[string]any) {
-	idx := intFromAny(event["index"])
+	idx := s.blockIndex(event)
 	delta, _ := event["delta"].(map[string]any)
 	if delta == nil {
 		return
@@ -241,19 +258,11 @@ func (s *streamingState) handleContentBlockDelta(event map[string]any) {
 
 	case "input_json_delta":
 		raw := claudeExactString(delta, "partial_json")
-		tid := s.toolCallID[idx]
-		if tid == "" {
-			tid = fmt.Sprintf("idx-%d", idx)
+		if !s.replayBlocks[idx] {
+			s.parser.appendToolArgs(s.blockTools[idx], raw)
 		}
-		pl := s.basePayload()
-		pl.Kind = driver.StreamToolCallArgs
-		pl.ToolCallID = tid
-		pl.Delta = raw
-		s.emitStream(pl)
-		// Interactive mode: feed the partial_json into the accumulator so
-		// we have the complete tool_use input once content_block_stop hits.
-		if s.parser != nil {
-			s.parser.interactiveOnToolUseDelta(idx, raw)
+		if s.scope.id == "" {
+			s.parser.interactiveOnToolUseDelta(idx.index, raw)
 		}
 
 	case "thinking_delta":
@@ -263,7 +272,7 @@ func (s *streamingState) handleContentBlockDelta(event map[string]any) {
 		}
 		thID := s.thinkingID[idx]
 		if thID == "" {
-			thID = fmt.Sprintf("thinking-%d", idx)
+			thID = fmt.Sprintf("thinking-%s-%d", idx.scope, idx.index)
 			s.thinkingID[idx] = thID
 		}
 		pl := s.basePayload()
@@ -283,7 +292,7 @@ func (s *streamingState) handleContentBlockDelta(event map[string]any) {
 }
 
 func (s *streamingState) handleContentBlockStop(event map[string]any) {
-	idx := intFromAny(event["index"])
+	idx := s.blockIndex(event)
 	bt := strings.ToLower(s.blockKind[idx])
 
 	switch bt {
@@ -295,19 +304,14 @@ func (s *streamingState) handleContentBlockStop(event map[string]any) {
 			s.emitStream(pl)
 		}
 	case "tool_use":
-		tid := s.toolCallID[idx]
-		if tid != "" {
-			pl := s.basePayload()
-			pl.Kind = driver.StreamToolCallEnd
-			pl.ToolCallID = tid
-			s.emitStream(pl)
+		if !s.replayBlocks[idx] {
+			s.parser.endTool(s.blockTools[idx])
 		}
-		// Interactive mode: tool_use input is now complete. Hand off to
-		// the parser so it can trigger RequestDecision + inject a user
-		// tool_result via stdin.
-		if s.parser != nil {
-			s.parser.interactiveOnToolUseStop(idx)
+		if s.scope.id == "" {
+			s.parser.interactiveOnToolUseStop(idx.index)
 		}
+		delete(s.blockTools, idx)
+		delete(s.replayBlocks, idx)
 	case "thinking":
 		thID := s.thinkingID[idx]
 		if thID != "" {
@@ -324,8 +328,6 @@ func (s *streamingState) handleContentBlockStop(event map[string]any) {
 
 	delete(s.blockKind, idx)
 	delete(s.textStarted, idx)
-	delete(s.toolCallID, idx)
-	delete(s.toolName, idx)
 	delete(s.thinkingID, idx)
 	delete(s.signatures, idx)
 }
@@ -333,7 +335,7 @@ func (s *streamingState) handleContentBlockStop(event map[string]any) {
 func (s *streamingState) handleMessageDelta(event map[string]any, parent string) {
 	key, ok := s.activeUsage[parent]
 	if !ok {
-		key = s.usageKey("")
+		key = s.usageKey("", parent)
 		s.activeUsage[parent] = key
 	}
 	if u := claudeTopLevelObject(event, "usage"); u != nil {
@@ -346,12 +348,12 @@ func (s *streamingState) handleMessageDelta(event map[string]any, parent string)
 	}
 }
 
-func (s *streamingState) usageKey(id string) claudeUsageKey {
+func (s *streamingState) usageKey(id, parent string) claudeUsageKey {
 	if id != "" {
-		return claudeUsageKey{id: id}
+		return claudeUsageKey{id: id, parent: parent}
 	}
 	s.anonymousUsage++
-	return claudeUsageKey{anonymous: s.anonymousUsage}
+	return claudeUsageKey{anonymous: s.anonymousUsage, parent: parent}
 }
 
 func (s *streamingState) mergeAssistantUsage(message map[string]any, parent string) {
@@ -362,7 +364,7 @@ func (s *streamingState) mergeAssistantUsage(message map[string]any, parent stri
 	id := claudeTopLevelString(message, "id")
 	key, ok := s.activeUsage[parent]
 	if id != "" || !ok {
-		key = s.usageKey(id)
+		key = s.usageKey(id, parent)
 	}
 	s.mergeUsageMap(key, u)
 }
@@ -405,24 +407,6 @@ func (s *streamingState) mergeUsageMap(key claudeUsageKey, u map[string]any) {
 	}
 }
 
-func (s *streamingState) handleUserToolResult(block map[string]any) {
-	id := claudeTopLevelString(block, "tool_use_id")
-	text := claudeResultText(block["content"])
-	isError := false
-	if v, ok := block["is_error"].(bool); ok {
-		isError = v
-	}
-	pl := s.basePayload()
-	pl.Kind = driver.StreamToolCallResult
-	pl.ToolCallID = id
-	pl.Result = map[string]any{
-		"text":        text,
-		"is_error":    isError,
-		"tool_use_id": id,
-	}
-	s.emitStream(pl)
-}
-
 func (s *streamingState) handleResultTerminal(payload map[string]any) {
 	// A result frame is provider evidence, not the final SDK outcome. More
 	// stdout, process failure, HITL failure, fork validation, or structured
@@ -436,10 +420,16 @@ func (s *streamingState) handleErrorTerminal(payload map[string]any) {
 }
 
 func (s *streamingState) closeOpenLifecycles() {
-	pending := make([]int, 0, len(s.blockKind))
+	pending := make([]claudeBlockKey, 0, len(s.blockKind))
 	for idx := range s.blockKind {
 		pending = append(pending, idx)
 	}
+	sort.Slice(pending, func(i, j int) bool {
+		if pending[i].scope == pending[j].scope {
+			return pending[i].index < pending[j].index
+		}
+		return pending[i].scope < pending[j].scope
+	})
 	for _, idx := range pending {
 		bt := strings.ToLower(s.blockKind[idx])
 
@@ -452,12 +442,7 @@ func (s *streamingState) closeOpenLifecycles() {
 				s.emitStream(pl)
 			}
 		case "tool_use":
-			if tid := s.toolCallID[idx]; tid != "" {
-				pl := s.basePayload()
-				pl.Kind = driver.StreamToolCallEnd
-				pl.ToolCallID = tid
-				s.emitStream(pl)
-			}
+			// Parser closes tools in their accepted start order across all scopes.
 		case "thinking":
 			if thID := s.thinkingID[idx]; thID != "" {
 				pl := s.basePayload()
@@ -469,8 +454,6 @@ func (s *streamingState) closeOpenLifecycles() {
 	}
 	s.blockKind = nil
 	s.textStarted = nil
-	s.toolCallID = nil
-	s.toolName = nil
 	s.thinkingID = nil
 	s.signatures = nil
 }

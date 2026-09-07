@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/agent-dance/agent-adaptor/driver"
 )
@@ -42,6 +43,7 @@ type claudeParser struct {
 	protocolMalformed bool
 
 	stream *streamingState
+	tools  *toolObservation
 
 	runID  string
 	policy driver.HumanDecisionPolicy
@@ -182,6 +184,7 @@ func (p *claudeParser) completeStream(failure *driver.RunFailure, exitCode int, 
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.stream != nil {
+		p.closeToolObservations(nil)
 		p.stream.complete(failure, exitCode, signal, timedOut)
 	}
 }
@@ -213,7 +216,7 @@ func (p *claudeParser) processLine(stream string, line []byte, _ time.Time) {
 		return
 	}
 	var payload map[string]any
-	if err := json.Unmarshal([]byte(trimmed), &payload); err != nil {
+	if err := json.Unmarshal([]byte(trimmed), &payload); err != nil || !utf8.ValidString(trimmed) {
 		p.protocolMalformed = true
 		p.emit(driver.TranscriptItem{
 			Kind: driver.TranscriptStdout,
@@ -296,12 +299,12 @@ func (p *claudeParser) handlePayload(raw string, payload map[string]any) {
 	case "assistant":
 		message := claudeTopLevelObject(payload, "message")
 		if p.stream != nil {
-			p.stream.mergeAssistantUsage(message, claudeTopLevelString(payload, "parent_tool_use_id"))
+			p.stream.mergeAssistantUsage(message, claudeExactString(payload, "parent_tool_use_id"))
 		}
-		p.handleAssistantMessage(message)
+		p.handleAssistantWrapper(message, payload)
 	case "user":
 		message := claudeTopLevelObject(payload, "message")
-		p.handleUserMessage(message)
+		p.handleUserWrapper(message, payload)
 	case "result":
 		p.handleResult(raw, payload, subtype)
 	case "error":
@@ -388,7 +391,11 @@ func (p *claudeParser) maybeCaptureSession(payload map[string]any) {
 	}
 }
 
-func (p *claudeParser) handleAssistantMessage(message map[string]any) {
+func (p *claudeParser) handleAssistantWrapper(message, wrapper map[string]any) {
+	scope, resolved := toolScope{}, true
+	if p.stream != nil {
+		scope, resolved = p.wrapperScope(wrapper)
+	}
 	if len(message) == 0 {
 		return
 	}
@@ -427,8 +434,12 @@ func (p *claudeParser) handleAssistantMessage(message map[string]any) {
 		case "tool_use":
 			name := claudeTopLevelString(block, "name")
 			id := claudeTopLevelString(block, "id")
-			if kind, interactive := claudeInteractiveTools[name]; interactive && id != "" {
+			if kind, interactive := claudeInteractiveTools[name]; interactive && id != "" && resolved && scope.id == "" {
 				p.registerPendingHITL(id, name, kind, block["input"])
+			}
+			if p.stream != nil {
+				p.completeToolWrapper(block, scope, resolved)
+				continue
 			}
 			p.emit(driver.TranscriptItem{
 				Kind:      driver.TranscriptToolCall,
@@ -440,10 +451,20 @@ func (p *claudeParser) handleAssistantMessage(message map[string]any) {
 	}
 }
 
-func (p *claudeParser) handleUserMessage(message map[string]any) {
+func (p *claudeParser) handleUserWrapper(message, wrapper map[string]any) {
 	content, ok := message["content"].([]any)
 	if !ok {
 		return
+	}
+	resultCount := 0
+	for _, raw := range content {
+		if block, ok := raw.(map[string]any); ok && block["type"] == "tool_result" {
+			resultCount++
+		}
+	}
+	var structured any
+	if resultCount == 1 {
+		structured = wrapper["tool_use_result"]
 	}
 	for _, raw := range content {
 		block, ok := raw.(map[string]any)
@@ -458,17 +479,30 @@ func (p *claudeParser) handleUserMessage(message map[string]any) {
 			if v, ok := block["is_error"].(bool); ok {
 				isError = v
 			}
+			var call *observedTool
 			if p.stream != nil {
-				p.stream.handleUserToolResult(block)
+				var publish bool
+				call, publish = p.observeToolResult(block, wrapper, structured)
+				if !publish {
+					continue
+				}
 			}
 			// Resolve any pending HITL tool_use_id against this tool_result.
-			p.resolveHITLOnToolResult(id, text, isError)
-			p.emit(driver.TranscriptItem{
+			if p.stream == nil || call != nil && call.scope.id == "" {
+				p.resolveHITLOnToolResult(id, text, isError)
+			}
+			item := driver.TranscriptItem{
 				Kind:      driver.TranscriptToolResult,
 				ToolUseID: id,
 				Text:      text,
 				IsError:   isError,
-			})
+			}
+			if call != nil {
+				item.ScopeID = call.scope.id
+				item.ParentScopeID = call.scope.parentScope
+				item.ParentToolCallID = call.scope.parentID
+			}
+			p.emit(item)
 			continue
 		}
 		text := claudeTopLevelString(block, "text")
@@ -889,10 +923,10 @@ func (p *claudeParser) closeInteractiveStdin() {
 
 // registerPendingHITL records an interactive tool_use frame so the parser can
 // pair it with a subsequent tool_result. Must be called from within
-// handleAssistantMessage / handleContentBlockStart where p.mu is already held.
+// handleAssistantWrapper / handleContentBlockStart where p.mu is already held.
 func (p *claudeParser) registerPendingHITL(toolUseID, toolName string, kind driver.HumanDecisionKind, input any) {
 	// Interactive mode handles tool_use via interactiveOnToolUseStart
-	// on the streaming path; the batch handleAssistantMessage path would
+	// on the streaming path; the batch handleAssistantWrapper path would
 	// double-register and pollute pendingHITL. Skip.
 	if p.interactive {
 		return

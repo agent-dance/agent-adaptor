@@ -1,0 +1,39 @@
+# T14 Claude provider adoption
+
+G04 must integrate these notes before accepting B04. This task owns Claude code, local godoc/tests and this fragment only. It does not close W05/W09/W11/W12 or the B06 live gate.
+
+## Public behavior and example
+
+Claude stream-json (including control and resident turns) now emits scoped ToolCall start/args/end and ToolResult from formal tool-use wrappers and partial frames. Identity is `(RunID, ScopeID, ID)`, with both parent coordinates retained in typed events and Transcript. Complete snapshots place the complete input in start.Args and emit no duplicate ArgsDelta. Incremental calls start with nil Args, emit real fragments once, and reconcile the assistant snapshot without replaying it. End closes the description; only a tool_result confirms execution. Unclosed descriptions close in start order on termination. Unknown/ambiguous parents or results produce safe runtime notices and preserve protocol Raw, without guessed tree edges. Message usage remains partitioned by parent and message ID, including identical IDs in separate parents.
+
+The final resolved skill/MCP/profile-agent catalog supplies canonical capability keys. Formal Skill.skill, Agent/Task.subagent_type and MCP tool names can establish a started fact. A matching tool_result establishes Completed/Failed; cancellation produces Cancelled, and unconfirmed calls finish Interrupted even when the run succeeds. No duration is invented from wall clocks. Unknown catalogs do not produce facts. MCP server aliases use exact original names and one underscore per non-ASCII identifier rune; all exact `mcp__<known alias>__<operation>` candidates are considered, including leading/trailing underscores. Operations are preserved byte for byte, including leading underscores. Alias collisions or multiple server/operation splits are unavailable. Shortened/merged separator spellings without a unique exact encoding are not guessed from old internal fixtures.
+
+TodoUpdated is a full ordered, confirmed per-run/per-scope snapshot. TaskCreate uses `tool_use_result.task.id` from the corresponding user wrapper; successful creation without that ID uses a namespaced `synthetic:` ID. TaskUpdate never matches local ordinals or synthetic items. TaskList's formal `tasks` output restores a full table, including after resume; TaskUpdate deletion removes an observed real ID. TodoWrite replaces the full table, including first and subsequent empty arrays. Request completion or permission approval does not commit a Todo. Invalid status/content/IDs/length or failed tools preserve the previous table with a safe notice; replay does not increase revision. Batch JSON advertises none of these observations. Observation demand selects a feasible existing transport through core; no new option or execution path was introduced.
+
+```go
+agent := adaptor.New(claude.Driver(claude.Config{Model: "claude-haiku-4-5"}),
+    adaptor.WithAppendSystemPrompt("Use concise Chinese answers."))
+result, err := agent.Run(ctx, "Summarize the change")
+// Override this call only; an exact empty string clears the default.
+result, err = agent.Run(ctx, "Summarize the change", adaptor.WithAppendSystemPrompt(""))
+```
+
+Native append uses an owned 0600 file outside profile/workspace via `--append-system-prompt-file`. Each actual spawn verifies a new carrier, including prewarm. Resident reuse keeps its existing carrier until process exit; bounded replacement waits for old exit and file cleanup. Close reports carrier cleanup failures and retries without deleting unrelated files. Append's raw-byte hash participates in persistent signatures and checkpoint guards; random paths and per-turn resume IDs do not. Old absent append keys retain empty semantics. ResumeOnly rejects changed/cleared text before spawning; default Thread runs use existing atomic safe rebind. All four system/append ExtraArgs flags, detached or `=`, are rejected even with empty SDK append. Append never enters prompt, instructions, profile resources or SDK diagnostics. Provider-originated Raw remains complete.
+
+## Integration targets
+
+- `docs/streaming.md`: Claude scoped lifecycle, capability and confirmed Todo facts; safe notices and exact catalog mapping; batch unsupported.
+- `docs/streaming-adapter-contract.md`: Claude-specific formal parser evidence and no observed duration default.
+- `docs/api-reference.md` and README language variants: WithAppendSystemPrompt example and native file/clearing behavior. No additional With* name in this task (the core option was frozen in B03).
+- `docs/structured-output.md` and `docs/run-policy.md`: existing native Question/PlanReview and prompt-fallback Permission matrices remain unchanged; temporary native schema turns retain append on prewarm.
+- CHANGELOG: Claude nested parent/dedupe/usage preservation; capability and Todo adoption; native append file/session/process lifecycle; live conformance now requires both tag and env and always private HOME/profile/workspace.
+
+No root or SPI declarations/goldens changed. No new dependency: existing neutral capabilityobs/todoobs/systemprompt helpers and standard-library protocol decoding suffice; provider recognition stays within Claude.
+
+## Evidence and limits
+
+Initial failing fixtures reproduced lost child parent association and accepted hidden system-prompt ExtraArgs. Hermetic fixtures cover lifecycle replay, cross-scope ambiguity, concurrent dispatch/error tails, exact Unicode catalog collisions, real/synthetic IDs, unsuccessful and malformed results, clear/full-list/resume scopes, native bytes, multi-turn reuse/WithSpawn/prewarm, checkpoint guards, Close retry and public observer/Result equivalence. Original T01/T07 tests remain intact.
+
+Formal schema references consulted: [Claude tool-result protocol](https://platform.claude.com/docs/en/agents-and-tools/tool-use/handle-tool-calls), [Claude SDK todo tracking](https://code.claude.com/docs/en/agent-sdk/todo-tracking), and the frozen C04 CLI reference. These support fixture shape; no current CLI/provider execution is inferred. Historical internal commits are read-only references, not live evidence. Rejected internal behaviors include Args plus duplicate delta, rootless parent inference, wall-clock guessed duration, slash-input/init-catalog pseudo-calls, sequential TaskCreate IDs, args-only successful todo updates, empty-table drops, unsafe size-only append caching and relaxed session compatibility.
+
+B06 entries: `go test -count=1 -tags=claude_live ./claude -run TestAlignmentLive` with `AGENT_ADAPTOR_LIVE_CONFORMANCE=1`. Entry tests collect CLI version, use private HOME/CLAUDE_CONFIG_DIR/workspace and runner-provided credentials, and fail on missing required protocol/tools. Append nonce control/Thread/WithSpawn, native schema Question/PlanReview, hosted MCP/Todo/nested tools and existing streaming/Permission scenarios are covered. Existing conformance also has a build-tag gate. This batch runs only disabled env=0 compilation/gating checks; paid/live, native Windows and Linux evidence remain B06 responsibilities. Actual commands/counts/platform details are in result.json and evidence generated after the implementation commit.

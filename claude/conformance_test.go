@@ -17,11 +17,11 @@ import (
 // posture so plain `go test` never triggers a paid provider run.
 func claudeLiveGate(t *testing.T) (bool, adaptertest.Option) {
 	t.Helper()
-	if _, err := exec.LookPath("claude"); err != nil {
-		return false, adaptertest.SkipLiveRun("claude CLI not in PATH")
+	if !claudeLiveBuildEnabled || os.Getenv("AGENT_ADAPTOR_LIVE_CONFORMANCE") != "1" {
+		return false, adaptertest.SkipLiveRun("requires claude_live build tag and AGENT_ADAPTOR_LIVE_CONFORMANCE=1")
 	}
-	if os.Getenv("AGENT_ADAPTOR_LIVE_CONFORMANCE") != "1" {
-		return false, adaptertest.SkipLiveRun("claude CLI found; set AGENT_ADAPTOR_LIVE_CONFORMANCE=1 to run the live conformance probes")
+	if _, err := exec.LookPath("claude"); err != nil {
+		t.Fatal("authorized live conformance requires the Claude CLI")
 	}
 	return true, adaptertest.WithLiveRun("")
 }
@@ -39,15 +39,10 @@ func TestClaudeDriverConformance(t *testing.T) {
 
 	cfg := Config{Model: "claude-sonnet-4"}
 	cfg.CWD = workspace
-	if !live {
-		// Hermetic isolation ensures probes do not read or write the
-		// operator's real HOME or config directory.
-		t.Setenv("CLAUDE_CONFIG_DIR", "")
-		cfg.Env = []driver.EnvBinding{
-			{Name: "HOME", Value: home},
-			{Name: "USERPROFILE", Value: home},
-		}
-	}
+	// Live and hermetic probes both use a private home. Live credentials must
+	// be supplied by the authorized runner through provider environment values.
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	cfg.Env = []driver.EnvBinding{{Name: "HOME", Value: home}, {Name: "USERPROFILE", Value: home}, {Name: "CLAUDE_CONFIG_DIR", Value: filepath.Join(home, ".claude")}}
 
 	opts := []adaptertest.Option{
 		adaptertest.WithConfig(cfg),

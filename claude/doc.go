@@ -35,4 +35,16 @@
 // Resident Thread turns release only their per-turn input handle; the process
 // remains available for the next turn. Output is drained and checkpoint health
 // is checked against the process outcome before the final event is emitted.
+//
+// Stream-json emits formal scoped tool lifecycles, exact-catalog capability
+// facts, and confirmed Todo snapshots. A tool description End is not execution
+// success; tool_result confirms changes. Unknown or ambiguous identifiers are
+// observed as safe notices, with Raw preserved. Batch JSON does not advertise
+// capability or Todo observations.
+//
+// adaptor.WithAppendSystemPrompt uses Claude's native append-file argument.
+// The verified private file lives as long as its actual process, including
+// resident reuse and prewarm; Close reports retryable owned-file cleanup errors.
+// The content hash participates in session guards and startup signatures.
+// System/append ExtraArgs overrides are rejected even when append is empty.
 package claude

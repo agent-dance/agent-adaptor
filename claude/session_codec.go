@@ -43,11 +43,12 @@ func (sessionCodec) FromParams(params driver.SessionParams) *driver.SessionState
 }
 
 func (sessionCodec) GuardFingerprint(params driver.SessionParams) string {
-	return guardHash(params.Values,
-		driver.SessionParamCWD,
-		driver.SessionParamWorkspaceID,
-		driver.SessionParamProfileFingerprint,
-	)
+	keys := []string{driver.SessionParamCWD, driver.SessionParamWorkspaceID, driver.SessionParamProfileFingerprint}
+	// Absence is the historical empty append contract, preserving old guards.
+	if params.Values[appendSystemPromptFingerprintKey] != "" {
+		keys = append(keys, appendSystemPromptFingerprintKey)
+	}
+	return guardHash(params.Values, keys...)
 }
 
 func displayID(state *driver.SessionState) string {

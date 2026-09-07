@@ -23,6 +23,7 @@ import (
 	"github.com/agent-dance/agent-adaptor/internal/profileinstructions"
 	"github.com/agent-dance/agent-adaptor/internal/profilesnapshot"
 	"github.com/agent-dance/agent-adaptor/internal/skillruntime"
+	"github.com/agent-dance/agent-adaptor/internal/systemprompt"
 )
 
 // jsonMarshalInteractive is a pin-point JSON encoder used only for the few
@@ -80,6 +81,8 @@ func (adapter) Descriptor() driver.Descriptor {
 		Instructions: driver.InstructionsCapability{Supported: true},
 		Workspace:    driver.WorkspaceCapability{Supported: true},
 		Process:      driver.ProcessCapability{Persistent: true},
+		SystemPrompt: driver.SystemPromptCapability{Append: true},
+		Observation:  driver.ObservationCapabilities{Streaming: driver.ObservationSupport{Skills: true, MCP: true, Subagents: true, Todos: true}},
 		RunPolicyCaps: driver.RunPolicyCapabilities{
 			Isolation: false, WebSearch: false, Browser: true,
 			// Interactive mode uses stdio permission prompting
@@ -112,7 +115,7 @@ func (adapter) Descriptor() driver.Descriptor {
 func (adapter) ValidateConfig(cfg any) error {
 	switch cfg.(type) {
 	case Config, *Config:
-		return nil
+		return validateClaudeAppend(readConfig(cfg), "")
 	default:
 		return errors.New("claude driver requires claude.Config")
 	}
@@ -120,6 +123,9 @@ func (adapter) ValidateConfig(cfg any) error {
 
 func (adapter) CheckEnvironment(_ context.Context, cfg any) (driver.EnvironmentReport, error) {
 	config := readConfig(cfg)
+	if err := validateClaudeAppend(config, ""); err != nil {
+		return driver.EnvironmentReport{}, err
+	}
 	command := config.Command
 	if command == "" {
 		command = "claude"
@@ -334,6 +340,9 @@ func (adapter) SyncProfileResources(ctx context.Context, cfg any, _ driver.Agent
 
 func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSink) (driver.Response, error) {
 	cfg := readConfig(req.Config)
+	if err := validateClaudeAppend(cfg, req.AppendSystemPrompt); err != nil {
+		return driver.Response{}, err
+	}
 	if err := validateClaudeSessionRequest(req); err != nil {
 		return driver.Response{}, err
 	}
@@ -423,7 +432,8 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 		defer writer.release()
 	}
 	chatSpec := persistentSpec{
-		command: command, model: modelFlag, effort: string(cfg.Effort),
+		appendSystemPrompt: req.AppendSystemPrompt,
+		command:            command, model: modelFlag, effort: string(cfg.Effort),
 		extraArgs: append([]string(nil), withoutManagedClaudeArgs(cfg.ExtraArgs)...),
 		cwd:       effectiveCWD, env: append([]driver.EnvBinding(nil), effectiveEnv...),
 		skipPerms: req.Policy.HumanDecision.Permission == driver.HumanDecisionAutoApprove,
@@ -440,6 +450,7 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 		pparser.setHITLContext(req.RunID, req.Policy.HumanDecision)
 		if req.Streaming || interactive {
 			pparser.enableStreaming(req.RunID)
+			pparser.configureObservations(req)
 		}
 		var bind interactiveBinder
 		if interactive {
@@ -477,8 +488,14 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 		// and resolutions still travel through the same decision-capable Event
 		// sink used by every Agent.Run and Agent.Stream invocation.
 		parser.enableStreaming(req.RunID)
+		parser.configureObservations(req)
 	}
 
+	args, appendFile, err := prepareClaudeAppend(ctx, command, args, req.AppendSystemPrompt)
+	if err != nil {
+		return driver.Response{}, err
+	}
+	// clihelper joins the process before returning; cleanup is merged into the outcome.
 	runReq := clihelper.CommandRequest{
 		Command: command,
 		Args:    args,
@@ -493,7 +510,7 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 		// protocol envelope.
 		initial, err := encodeInteractiveUserFrame(rawPrompt)
 		if err != nil {
-			return driver.Response{}, err
+			return driver.Response{}, errors.Join(err, appendFile.Close())
 		}
 		runReq.Prompt = initial
 		runReq.Stdin = clihelper.NewStdinController()
@@ -503,7 +520,7 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 		// injected back via stdin.Write.
 		ic, ok := sink.(driver.DecisionCapableSink)
 		if !ok {
-			return driver.Response{}, errClaudeInteractiveSinkRequired
+			return driver.Response{}, errors.Join(errClaudeInteractiveSinkRequired, appendFile.Close())
 		}
 		parser.enableInteractive(ctx, ic, runReq.Stdin)
 	} else {
@@ -511,6 +528,7 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 	}
 
 	result, err := clihelper.Run(ctx, runReq, sink)
+	err = errors.Join(err, appendFile.Close())
 	parser.finalize()
 	// Helper failures may follow observed protocol output. Build from that
 	// same parser before returning the original cause to the unified pipeline.
@@ -590,11 +608,15 @@ func buildClaudeResponse(
 			driver.SessionParamWorkspaceID:        req.Workspace.ID,
 			driver.SessionParamProfileFingerprint: profileFingerprint,
 		}
+		if fingerprint := systemprompt.Fingerprint(req.AppendSystemPrompt); fingerprint != "" {
+			checkpoint.State.Data[appendSystemPromptFingerprintKey] = fingerprint
+		}
 	}
 	streamFailure := failure
 	if streamFailure == nil && cause != nil {
 		streamFailure = &driver.RunFailure{Code: driver.FailureAgentError, Message: cause.Error()}
 	}
+	parser.closeObservations(cause)
 	parser.completeStream(streamFailure, exitCode, signal, timedOut)
 
 	return driver.Response{
@@ -707,6 +729,9 @@ func validateClaudeSessionGuard(req driver.Request, effectiveCWD, profileFingerp
 	if req.Session == nil || req.Session.State == nil {
 		return nil
 	}
+	if req.Session.State.Data[appendSystemPromptFingerprintKey] != systemprompt.Fingerprint(req.AppendSystemPrompt) {
+		return &engine.ResumeRejectedError{Reason: "session append system prompt changed"}
+	}
 	if req.Session.State.Data[driver.SessionParamCWD] != "" && req.Session.State.Data[driver.SessionParamCWD] != effectiveCWD {
 		return &engine.ResumeRejectedError{Reason: "session working directory changed"}
 	}
@@ -720,6 +745,9 @@ func validateClaudeSessionGuard(req driver.Request, effectiveCWD, profileFingerp
 }
 
 func buildClaudeExecArgs(cfg Config, req driver.Request, interactive bool) ([]string, error) {
+	if err := validateClaudeAppend(cfg, req.AppendSystemPrompt); err != nil {
+		return nil, err
+	}
 	// Native structured output keeps bidirectional stream-json whenever
 	// interactive control is required, independently of the rich-event flag.
 	// Non-interactive batch uses json; rich transport uses stream-json.

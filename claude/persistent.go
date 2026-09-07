@@ -22,6 +22,7 @@ import (
 
 	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/internal/processx"
+	"github.com/agent-dance/agent-adaptor/internal/systemprompt"
 )
 
 // errPersistentFallback is intentionally returned only when the persistent
@@ -50,20 +51,21 @@ func (nonClosingStdin) Close() error { return nil }
 // persistentSpec contains only process-start and per-turn data derived by the
 // adapter. The pool never reaches back into DriverRunRequest or SDK defaults.
 type persistentSpec struct {
-	command     string
-	model       string
-	effort      string
-	extraArgs   []string
-	cwd         string
-	env         []driver.EnvBinding
-	skipPerms   bool
-	browser     bool
-	streaming   bool
-	interactive bool
-	resumeID    string
-	engineID    string
-	previousID  string
-	prompt      string
+	appendSystemPrompt string
+	command            string
+	model              string
+	effort             string
+	extraArgs          []string
+	cwd                string
+	env                []driver.EnvBinding
+	skipPerms          bool
+	browser            bool
+	streaming          bool
+	interactive        bool
+	resumeID           string
+	engineID           string
+	previousID         string
+	prompt             string
 
 	profileFingerprint  string
 	settingsFingerprint string
@@ -107,6 +109,7 @@ func (s persistentSpec) sig() string {
 	env := persistentEnv(ensureRootSandboxEnv(args, s.env))
 	return hashStrings(
 		"claude_persistent_v2",
+		systemprompt.Fingerprint(s.appendSystemPrompt),
 		s.command,
 		s.model,
 		s.effort,
@@ -196,21 +199,29 @@ func (w *persistentWriter) run(ctx context.Context, spec persistentSpec, sink dr
 	}
 	emitPersistentInvocation(sink, spec)
 	if previous := w.pool.lookupEngine(spec.previousID); previous != nil {
+		if err := previous.terminateAndWait(context.Background()); err != nil {
+			return driver.RawStreams{}, err
+		}
 		w.pool.detach(previous)
-		_ = previous.terminateAndWait(context.Background())
 	}
 
 	lp := w.pool.lookup(spec.resumeID)
 	if lp != nil && (lp.sig != spec.sig() || lp.isClosed()) {
+		if err := lp.terminateAndWait(context.Background()); err != nil {
+			return driver.RawStreams{}, err
+		}
 		w.pool.detach(lp)
-		_ = lp.terminateAndWait(context.Background())
 		lp = nil
 	}
 	if lp == nil {
 		var err error
 		lp, err = w.pool.spawnLive(spec, sink)
 		if err != nil {
-			return driver.RawStreams{}, errPersistentFallback
+			var preparation *appendPreparationError
+			if errors.As(err, &preparation) {
+				return driver.RawStreams{}, err
+			}
+			return driver.RawStreams{}, errors.Join(errPersistentFallback, err)
 		}
 	}
 
@@ -255,8 +266,11 @@ func (w *persistentWriter) suspendAndWait(resumeID, engineID, previousID string)
 	if lp == nil {
 		return nil
 	}
+	if err := lp.terminateAndWait(context.Background()); err != nil {
+		return err
+	}
 	w.pool.detach(lp)
-	return lp.terminateAndWait(context.Background())
+	return nil
 }
 
 // preWarm starts the normal chat-shaped process with the newest checkpoint
@@ -407,8 +421,18 @@ func (p *persistentPool) evictIdle(lp *liveProcess) {
 	_ = lp.terminateAndWait(ctx)
 }
 
-func (p *persistentPool) spawn(spec persistentSpec, sink driver.EventSink) (*liveProcess, error) {
-	command, args, err := processx.PrepareCommand(spec.command, spec.spawnArgs())
+func (p *persistentPool) spawn(spec persistentSpec, sink driver.EventSink) (_ *liveProcess, resultErr error) {
+	spawnArgs, appendFile, err := prepareClaudeAppend(context.Background(), spec.command, spec.spawnArgs(), spec.appendSystemPrompt)
+	if err != nil {
+		return nil, &appendPreparationError{err}
+	}
+	owned := true
+	defer func() {
+		if owned {
+			resultErr = errors.Join(resultErr, appendFile.Close())
+		}
+	}()
+	command, args, err := processx.PrepareCommand(spec.command, spawnArgs)
 	if err != nil {
 		return nil, err
 	}
@@ -431,16 +455,17 @@ func (p *persistentPool) spawn(spec persistentSpec, sink driver.EventSink) (*liv
 		return nil, err
 	}
 	lp := &liveProcess{
-		pool:   p,
-		sig:    spec.sig(),
-		key:    spec.resumeID,
-		cmd:    cmd,
-		cancel: cancel,
-		stdin:  stdin,
-		stdout: bufio.NewReaderSize(stdout, 1<<20),
-		stderr: &lockedBuffer{},
-		grace:  spec.gracePeriod,
-		waitCh: make(chan struct{}),
+		appendFile: appendFile,
+		pool:       p,
+		sig:        spec.sig(),
+		key:        spec.resumeID,
+		cmd:        cmd,
+		cancel:     cancel,
+		stdin:      stdin,
+		stdout:     bufio.NewReaderSize(stdout, 1<<20),
+		stderr:     &lockedBuffer{},
+		grace:      spec.gracePeriod,
+		waitCh:     make(chan struct{}),
 	}
 	cmd.Stderr = persistentStderr{lp: lp}
 	if err := cmd.Start(); err != nil {
@@ -456,14 +481,16 @@ func (p *persistentPool) spawn(spec persistentSpec, sink driver.EventSink) (*liv
 			"persistent": true,
 		},
 	})
+	owned = false
 	return lp, nil
 }
 
 type liveProcess struct {
-	pool      *persistentPool
-	sig       string
-	key       string
-	engineKey string
+	appendFile *systemprompt.File
+	pool       *persistentPool
+	sig        string
+	key        string
+	engineKey  string
 
 	cmd    *exec.Cmd
 	cancel context.CancelFunc
@@ -603,7 +630,8 @@ func (lp *liveProcess) turn(ctx context.Context, prompt string, sink driver.Even
 		// and parser state, including stderr already in flight. EOF may be
 		// the child's own exit: let Wait observe it before forcing a kill.
 		if lp.cmd != nil {
-			_ = lp.gracefulStop(context.Background())
+			cleanupErr := lp.gracefulStop(context.Background())
+			rr.err = errors.Join(rr.err, cleanupErr)
 			lp.stateMu.Lock()
 			terminated := lp.terminated
 			lp.stateMu.Unlock()
@@ -707,7 +735,9 @@ func (lp *liveProcess) startWait() {
 				lp.cancel()
 			}
 			lp.pool.mu.Lock()
-			delete(lp.pool.all, lp)
+			if lp.appendFile == nil {
+				delete(lp.pool.all, lp)
+			}
 			lp.pool.mu.Unlock()
 			close(lp.waitCh)
 		}()
@@ -715,6 +745,8 @@ func (lp *liveProcess) startWait() {
 }
 
 func (lp *liveProcess) terminateAndWait(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 	if lp == nil {
 		return nil
 	}
@@ -725,13 +757,15 @@ func (lp *liveProcess) terminateAndWait(ctx context.Context) error {
 		// The process is deliberately killed as part of handoff/eviction, so an
 		// ExitError (typically "signal: killed") is expected. The contract here
 		// is confirmation of exit, not a successful CLI status.
-		return nil
+		return lp.closeAppendFile()
 	case <-ctx.Done():
 		return ctx.Err()
 	}
 }
 
 func (lp *liveProcess) gracefulStop(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 	if lp == nil {
 		return nil
 	}
@@ -745,7 +779,7 @@ func (lp *liveProcess) gracefulStop(ctx context.Context) error {
 	defer timer.Stop()
 	select {
 	case <-lp.waitCh:
-		return nil
+		return lp.closeAppendFile()
 	case <-ctx.Done():
 		lp.signalTerminate()
 		return ctx.Err()
@@ -754,10 +788,20 @@ func (lp *liveProcess) gracefulStop(ctx context.Context) error {
 	}
 	select {
 	case <-lp.waitCh:
-		return nil
+		return lp.closeAppendFile()
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+func (lp *liveProcess) closeAppendFile() error {
+	if err := lp.appendFile.Close(); err != nil {
+		return err
+	}
+	lp.pool.mu.Lock()
+	delete(lp.pool.all, lp)
+	lp.pool.mu.Unlock()
+	return nil
 }
 
 func emitPersistentInvocation(sink driver.EventSink, spec persistentSpec) {

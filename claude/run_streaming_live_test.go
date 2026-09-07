@@ -22,7 +22,7 @@ func requireClaudeCLI(t *testing.T) {
 		t.Skip("set AGENT_ADAPTOR_LIVE_CONFORMANCE=1 in addition to -tags claude_live")
 	}
 	if _, err := exec.LookPath("claude"); err != nil {
-		t.Skip("claude CLI not in PATH")
+		t.Fatal("authorized live run requires claude CLI in PATH")
 	}
 }
 
@@ -148,5 +148,8 @@ func newStreamingAgent(t *testing.T, withThreads bool) *adaptor.Agent {
 	if withThreads {
 		options = append(options, adaptor.WithThreadStore(memory.NewStore()))
 	}
-	return adaptor.New(claude.Driver(claude.Config{Model: "claude-haiku-4"}), options...)
+	cfg := alignmentLiveConfig(t, "claude-haiku-4")
+	a := adaptor.New(claude.Driver(cfg), options...)
+	t.Cleanup(func() { _ = a.Close(context.Background()) })
+	return a
 }
