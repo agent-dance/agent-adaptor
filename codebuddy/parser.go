@@ -318,7 +318,7 @@ func (p *parser) handleUserMessage(message, wrapper map[string]any) {
 				isError = v
 			}
 			if p.stream != nil {
-				p.stream.handleUserToolResult(block)
+				p.stream.handleUserToolResult(block, wrapper)
 			}
 			p.emit(driver.TranscriptItem{Kind: driver.TranscriptToolResult, ToolUseID: id, Text: text, IsError: isError})
 			continue

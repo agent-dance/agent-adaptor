@@ -7,7 +7,10 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -77,18 +80,39 @@ func TestAlignmentLiveCodeBuddyNativeAppendAndResume(t *testing.T) {
 }
 func TestAlignmentLiveCodeBuddyCapabilityAndTodoResults(t *testing.T) {
 	requireCodeBuddyCLI(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
+	var actualEcho atomic.Int32
 	definition := tool.Define("alignment_echo", "Return the supplied text for the acceptance check.", func(_ context.Context, input struct {
 		Text string `json:"text"`
 	}) (string, error) {
+		if input.Text == "VERIFY" {
+			actualEcho.Add(1)
+		}
 		return input.Text, nil
 	}, tool.ReadOnly(), tool.Revision("alignment-t15/v1"))
-	agent := newLiveAgent(t, t.TempDir(), false, adaptor.WithTools(definition))
-	observer := &alignmentObservationService{events: map[string][]adaptor.Event{}}
-	result, events, err := collectLiveStream(ctx, agent, "Call alignment_echo with text VERIFY. Then use TaskCreate to create a task named acceptance check, TaskUpdate to complete that exact task ID, and TaskList to confirm the full list. Finish by clearing the todo list using TodoWrite with oldTodos containing the observed list and newTodos=[]. Do not merely describe these operations.", adaptor.WithRunServices(observer), adaptor.WithPolicy(livePolicyHeadless))
+	agent := newLiveAgent(t, t.TempDir(), false, adaptor.WithTools(definition), adaptor.WithProfileResources(alignmentCatalogResources()), adaptor.WithBlockingEvents())
+	// Public SyncProfile materializes the declared catalog. This alone cannot
+	// satisfy the execution assertions below.
+	snapshot, err := agent.SyncProfile(ctx)
 	if err != nil {
 		t.Fatal(err)
+	}
+	for path, want := range map[string]string{filepath.Join("agents", alignmentCatalogAgentName+".md"): "SUBAGENT_COMPLETED", filepath.Join("skills", alignmentCatalogSkillName, "SKILL.md"): "SKILL_ACTIVATED"} {
+		raw, err := os.ReadFile(filepath.Join(snapshot.Profile.Dir, path))
+		if err != nil || !strings.Contains(string(raw), want) {
+			t.Fatalf("declared live catalog did not materialize: %s: %v", path, err)
+		}
+	}
+	observer := &alignmentObservationService{events: map[string][]adaptor.Event{}}
+	result, events, err := collectLiveStream(ctx, agent, "Use the Skill tool to activate "+alignmentCatalogSkillName+". Then use Task or Agent with subagent_type "+alignmentCatalogAgentName+" and wait for its completed result. Call alignment_echo with text VERIFY. Then use TaskCreate to create a task named acceptance check, TaskUpdate to complete that exact task ID, and TaskList to confirm the full list. Finish by clearing the todo list using TodoWrite with oldTodos containing the observed list and newTodos=[]. Do not merely describe these operations.", adaptor.WithRunServices(observer), adaptor.WithPolicy(livePolicyHeadless))
+	if err != nil {
+		t.Fatal(err)
+	}
+	alignmentRequireCatalogInvocation(t, events, result, capability.Ref{Kind: capability.Skill, Key: alignmentCatalogSkillKey, Operation: "activate"}, alignmentCatalogSkillName)
+	alignmentRequireCatalogInvocation(t, events, result, capability.Ref{Kind: capability.Subagent, Key: alignmentCatalogAgentKey, Operation: "spawn"}, alignmentCatalogAgentName)
+	if actualEcho.Load() == 0 {
+		t.Fatal("hosted MCP tool did not execute its real callback")
 	}
 	completed, actualID, cleared := false, false, false
 	for _, event := range events {

@@ -34,6 +34,21 @@ func alignmentReplayObservation(writer *bufio.Writer) bool {
 	if err != nil {
 		os.Exit(97)
 	}
+	if marker := os.Getenv("ALIGNMENT_CODEBUDDY_CATALOG_VERIFIED"); marker != "" {
+		root := os.Getenv("CODEBUDDY_CONFIG_DIR")
+		for path, want := range map[string]string{
+			filepath.Join("agents", alignmentCatalogAgentName+".md"):       "SUBAGENT_COMPLETED",
+			filepath.Join("skills", alignmentCatalogSkillName, "SKILL.md"): "SKILL_ACTIVATED",
+		} {
+			content, err := os.ReadFile(filepath.Join(root, path))
+			if err != nil || !strings.Contains(string(content), want) {
+				os.Exit(96)
+			}
+		}
+		if err := os.WriteFile(marker, []byte("materialized catalog verified"), 0600); err != nil {
+			os.Exit(95)
+		}
+	}
 	_, _ = writer.Write(raw)
 	_ = writer.Flush()
 	return true

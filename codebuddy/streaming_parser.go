@@ -1,6 +1,7 @@
 package codebuddy
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -25,6 +26,7 @@ type streamingState struct {
 	toolInput          map[int]*strings.Builder
 	initialToolInput   map[int]map[string]any
 	observationBlocked map[int]bool
+	toolResults        map[[32]byte]struct{}
 	thinkingID         map[int]string
 	signatures         map[int]string
 
@@ -224,7 +226,11 @@ func (s *streamingState) handleContentBlockStart(event map[string]any) {
 		pl.Kind = driver.StreamToolCallStart
 		pl.ToolCallID = id
 		pl.Name = name
-		if input := block["input"]; input != nil {
+		// The formal empty object opens an incremental argument stream; it is
+		// not a completed argument snapshot. Preserve subsequent deltas only.
+		input := block["input"]
+		object, isObject := input.(map[string]any)
+		if input != nil && !(isObject && len(object) == 0) {
 			pl.Args = map[string]any{"input": input}
 		}
 		s.emitStream(pl)
@@ -444,7 +450,22 @@ func codeBuddyUsageCounter(usage map[string]any, fields ...string) (int, bool) {
 	return 0, false
 }
 
-func (s *streamingState) handleUserToolResult(block map[string]any) {
+func (s *streamingState) handleUserToolResult(block, wrapper map[string]any) {
+	// Only identical official wrappers/blocks with a real ID are replays.
+	// The full wrapper includes its parent field, so an unproved or different
+	// scope cannot suppress a root result. Raw and Transcript keep both copies.
+	if exactString(block, "tool_use_id") != "" {
+		if raw, err := json.Marshal([]any{wrapper, block}); err == nil {
+			key := sha256.Sum256(raw)
+			if _, seen := s.toolResults[key]; seen {
+				return
+			}
+			if s.toolResults == nil {
+				s.toolResults = make(map[[32]byte]struct{})
+			}
+			s.toolResults[key] = struct{}{}
+		}
+	}
 	id := topString(block, "tool_use_id")
 	text := resultText(block["content"])
 	isError := false
@@ -564,6 +585,9 @@ func (s *streamingState) emitErrorTerminal(failure *driver.RunFailure, raw map[s
 		return
 	}
 	s.markRunStarted()
+	// Close observed invocations before the terminal seals the core sink.
+	// Tracker.Close is idempotent when parser completion reaches it again.
+	s.parser.closeObservations()
 	s.closeOpenLifecycles()
 	s.emitStream(driver.StreamPayload{Kind: driver.StreamRunError, Error: failure, Raw: raw})
 }
