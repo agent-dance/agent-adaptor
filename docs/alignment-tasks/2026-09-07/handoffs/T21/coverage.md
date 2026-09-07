@@ -1,6 +1,6 @@
 # T21 45 项独立覆盖映射
 
-所有测试名均加 `TestAlignmentProtocol` 前缀。此表描述断言归属，不预填通过；实际结果只取同一 HEAD 完整 V01/V02 JSON。F01/F02 未经 owner 修复重放前，W09-R07 保持 failed；F03 的 AG-UI 已发布快照被修改及 race 使 W05-R05 保持 failed。已有 owner/G04 证据不计入新测试数。
+所有测试名均加 `TestAlignmentProtocol` 前缀。此表描述断言归属，不预填通过；实际结果只取同一 HEAD 完整 V01/V02 JSON。旧基线 W09-R07 的 F01/F02 与 W05-R05 的 F03 已由原 owner 修复并经 root 在 replacement G04 不变复验，详见 findings.md；T21 最终完整检查仍保留全部原断言。已有 owner/G04 证据不计入新测试数。
 
 | Requirement | 新增独立入口 | 核验内容 |
 |---|---|---|
@@ -14,7 +14,7 @@
 | W05-R02 | FormalClaude / PartialWrappers(claude) | 兄弟 scope 相同工具 ID、完整 wrapper 重放、裸结果歧义、缺 ID/未知 parent、partial+wrapper、异常关闭、Transcript 父关联。 |
 | W05-R03 | FormalClaude / PartialWrappers(claude) | 兄弟 scope 相同工具 ID、完整 wrapper 重放、裸结果歧义、缺 ID/未知 parent、partial+wrapper、异常关闭、Transcript 父关联。 |
 | W05-R04 | FormalClaude / InboundNegativeRelay | 正式父关系经过真实 A2A DTO，unknown kind 通过真实 remote mapper 发 dropped。 |
-| W05-R05 | FormalClaude / ServiceRelay | 同一真实事件回放 SSE、AG-UI，实际 Merge 与重开 JSONL 比较父关联；AG-UI 同步保留输出快照与异步序列化均核验，F03 未关闭。 |
+| W05-R05 | FormalClaude / ServiceRelay | 同一真实事件回放 SSE、AG-UI，实际 Merge 与重开 JSONL 比较父关联；AG-UI 同步保留输出快照与异步序列化均核验，保留 F03 原不变反例。 |
 | W05-R06 | ServiceRelay | 真实 Local/Remote/nested-Remote Service 保留 caller 与实际父工具 scope。 |
 | W08-R01 | ContinuationArtifacts | 实时多 Part 类型、替换/Append/LastChunk 与最终有序聚合独立断言。 |
 | W08-R02 | ContinuationArtifacts | 实时多 Part 类型、替换/Append/LastChunk 与最终有序聚合独立断言。 |
@@ -27,7 +27,7 @@
 | W09-R04 | ServiceRelay / RecorderOwnership | 运行中立即查询、完整 identity/RunID 精确隔离、分页与独立副本。 |
 | W09-R05 | RecorderOwnership / ObserverIsolationAndDrop | 共享 Store 每失败 run 首错停写，健康 run 不受影响，安全 notice、成功 Result 保持，Agent.Close 不关闭 Store。 |
 | W09-R06 | FormalClaude / PartialWrappers(claude) | Unicode/下划线 catalog、ambiguous/unknown 不猜、正式 scoped wrapper 与 partial 去重。 |
-| W09-R07 | OtherProviders(codebuddy) / CodeBuddyControl / PartialWrappers(codebuddy) | 正式 headless/control/partial 路径；F01/F02 未修复前本项 failed，其他路径通过不关闭发现。 |
+| W09-R07 | OtherProviders(codebuddy) / CodeBuddyControl / PartialWrappers(codebuddy) | 正式 headless/control/partial 路径；保留 F01/F02 与精确重复 tool_result 的原输入和断言，完整检查复验修复。 |
 | W09-R08 | OtherProviders(codex) | 真实 app-server initialize/thread/turn、MCP/plan 明确字段、重放去重、foreign scope 拒绝且保留 Raw。 |
 | W09-R09 | OtherProviders(cursor) | 真实 print 明确 MCP 字段；unknown 无事实；Todo unavailable 不伪造空快照。 |
 | W09-R10 | FormalClaude / WireValidation / InboundNegativeRelay / OutgoingLoss | 默认最小暴露、独立 opt-in、closed wire 大小/字段/UTF-8/整数、双侧安全 dropped。 |

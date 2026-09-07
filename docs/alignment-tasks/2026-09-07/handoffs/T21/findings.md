@@ -1,6 +1,18 @@
 # T21 独立生产发现
 
-本文件记录固定旧 G04 base `2421fe470cf67b22697fef796b038c0be6e395c8` 上的独立发现。F01/F02 的 QA 复现代码提交 `b2f7b9293906b9feca27806b61fb0ebabc89eb13`；F03 首次完整 race 红日志对应 `8b52ce06bdd34eeff1315cc3e897db950ed000a5`。均只增加 T21 测试和私有 fixture，无生产修改。三项已于 2026-09-07 交 root；修复重放前保持 open，不把其他绿项视为关闭证明。
+本文件保留固定旧 G04 base `2421fe470cf67b22697fef796b038c0be6e395c8` 上的独立发现和原红证据。F01/F02 的 QA 复现代码提交 `b2f7b9293906b9feca27806b61fb0ebabc89eb13`；F03 首次完整 race 红日志对应 `8b52ce06bdd34eeff1315cc3e897db950ed000a5`。T21 只增加测试和私有 fixture，无生产修改。
+
+## 修复与不变反例复验记录
+
+三项生产发现在 replacement G04 `b2035bc793369fb8fefb9de229ff1dbd2b748853` 中已修复，由 root 在该精确 SHA 的固定 archive 上原样叠加 T21 `b8d9ce6b763739854bffe3226e560006061a8376` 测试文件及 helper 重放确认：`PartialWrappers` 与 `ServiceRelay` count1 为 9 pass、race10 为 90 pass，均无 fail/skip/race。该数量是 root 复验，不计入 T21 新增独立执行数。root 的外部 `handoffs/G04/coordinator-review.json` 记录接受状态、精确 SHA 和原 fixture hash 不变。
+
+| 发现 | 状态与修复来源 | 不变独立复现 |
+|---|---|---|
+| T21-F01 | resolved；T15 `9ef1ca39a3033700574e4b08cdccccd538d91283` | CodeBuddy normal partial start.Args=nil，原 delta 与完整 wrapper 去重。 |
+| T21-F02 | resolved；同一 T15 修复 | CodeBuddy 正式 error 前交付未闭合 Capability Interrupted，原部分审计保留。 |
+| T21-F03 | resolved；T32 `9fd655c553551e8a0103743de99d37ba81ce0652` | 真实 ServiceRelay 的异步 AG-UI 消费与同步已发布快照不变性。 |
+
+本任务三个 QA 提交已完整 rebase 到上述 replacement G04；测试与 helper 字节和旧 `b8d9ce6` 相同。T21 完整原 V01/V02 在最后文档提交后重新运行，其实际结果、HEAD、日志及 hash 只在事后 `result.json`、`evidence/final-V01-command.json`、`evidence/final-V02-command.json` 中报告。root focused 复验、原 owner 检查与旧基线红/绿结果均不替代这两项完整验证。
 
 ## T21-F01 — CodeBuddy 增量工具起始同时携带占位 Args
 
@@ -26,7 +38,7 @@
 
 ## T21-F03 — AG-UI 已发布工具快照仍被后续翻译修改
 
-- 归属：`bridges/agui/subagent.go`；跨层 W05-R05 验证失败。
+- 历史归属：`bridges/agui/subagent.go`；旧基线跨层 W05-R05 验证失败；R019/canonical22 将 W05-R05、W09-R11 的最终修复 owner 归于原 bridge owner T32。
 - 固定复现：`8b52ce06bdd34eeff1315cc3e897db950ed000a5`，完整原 V02 加 `-json`：`go test -race -count=20 . -run TestAlignmentProtocol -json`，进程外 900 秒 watchdog，未触发超时。
 - 输入链：手写正式 Claude nested tool/wrapper bytes → 真实 Claude Driver parser → 公共 Agent → Service Local → 实际 parent Agent 的 SubagentUpdate → 公开 `agui.Events`。消费者收到输出后只调用标准库 `json.Marshal`，没有修改输入或输出值。
 - C03 §1 要求 map/slice/Args/Result 递归深复制，AGENTS §7/§11 要求稳定事件与协议保真。期望已经发布的活动 patch 保持该时刻的工具状态，正常序列化无需与内部 translator 协調。
@@ -36,7 +48,7 @@
 
 ## 原不变 fixture 的后续 CodeBuddy 重放问题
 
-T15 owner 在修复 F01/F02 后报告：同一个 normal fixture 中两份精确相同的 `tool_result` 仍产生两条 typed ToolResult；root 已授权它在 CodeBuddy 范围修复。该控制是本任务最初的明确意图：同 `(scope,id)` 与同完整 payload 重放只发一条 typed result，Raw/Transcript 保留两份原文。`TestAlignmentProtocolPartialWrappers` 的输入和 `results == 1` 原断言不变。本任务尚未在 root 验收的修复合流 SHA 上重放；不把 owner 报告计为新增独立通过数，也不把它冒称当前旧树中越过 F01 早期失败的新红结果。
+T15 owner 在修复 F01/F02 后报告：同一个 normal fixture 中两份精确相同的 `tool_result` 仍产生两条 typed ToolResult；root 授权它在 CodeBuddy 范围修复。该控制是本任务最初的明确意图：同 `(scope,id)` 与同完整 payload 重放只发一条 typed result，Raw/Transcript 保留两份原文。`TestAlignmentProtocolPartialWrappers` 的输入和 `results == 1` 原断言不变。该后续问题也已由上表同一 T15 修复，并经 root 在 replacement G04 上不变复验；本任务完整最终检查仍包含原断言。不把 owner 报告计为新增独立通过数，也不将旧树中 F01 的早期失败冒称成另一份独立 typed-result 红结果。
 
 ## 旧 base 的完整预验证
 
