@@ -246,7 +246,13 @@ func TestAlignmentObserverCancelCountsAcceptedSnapshotBeforeTerminal(t *testing.
 	for _, blocking := range []bool{false, true} {
 		t.Run(fmt.Sprint(blocking), func(t *testing.T) {
 			accepted := make(chan struct{})
-			p := observerProvider(adaptor.RunAttachment{Observer: func(context.Context, adaptor.RunEventInfo, adaptor.Event) error { close(accepted); return nil }})
+			p := observerProvider(adaptor.RunAttachment{Observer: func(ctx context.Context, _ adaptor.RunEventInfo, _ adaptor.Event) error {
+				// SDK cancels this child context after consuming the successful
+				// callback result. Signal then, not inside the callback before
+				// return, so the test cancels only after observation completes.
+				go func() { <-ctx.Done(); close(accepted) }()
+				return nil
+			}})
 			d := newFakeDriver()
 			d.runFunc = func(ctx context.Context, req driver.Request, sink driver.EventSink) (driver.Response, error) {
 				if !blocking {
