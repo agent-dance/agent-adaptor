@@ -48,8 +48,13 @@
 // Batch JSON has no capability or todo observation support. No event proves
 // audit completeness or the absence of an unobserved call.
 //
-// Declared profile SubAgents materialize as agents/<runtime-name>.md using
-// CodeBuddy's YAML frontmatter and Markdown instructions. Core fields plus
+// Declared profile SubAgents materialize as agents/*.md using CodeBuddy's
+// YAML frontmatter and Markdown instructions. The native name exactly matches
+// the resolved catalog; nonportable filenames are encoded separately, including
+// Unicode, case, separators, reserved names and extension-bearing names. Native
+// SourcePath bytes are retained under a .md target; callers must supply a
+// native name matching the resolved RuntimeName when the filename is encoded.
+// SyncProfile does not rewrite native frontmatter. Core fields plus
 // model, effort, permissionMode, tools/disallowedTools, skills and named
 // mcpServers use the confirmed native loader format. Unmapped inline sandbox,
 // hooks and Native fields fail SyncProfile/Run explicitly; SourcePath retains

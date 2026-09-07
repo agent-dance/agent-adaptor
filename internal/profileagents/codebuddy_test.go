@@ -2,6 +2,9 @@ package profileagents
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -98,5 +101,48 @@ func TestAlignmentCodeBuddyAgentSourceAndConflict(t *testing.T) {
 	raw, err = os.ReadFile(external)
 	if err != nil || string(raw) != "external" {
 		t.Fatal("external conflict changed bytes")
+	}
+}
+
+func TestAlignmentCodeBuddyAgentNameAndFileSeparation(t *testing.T) {
+	root := t.TempDir()
+	names := []string{"reviewer", "ReviewAgent", "reviewagent", "审查Agent", "catalog/default", "reviewer.json", "../escape", "con", strings.Repeat("a", 300), fmt.Sprintf("agent~%x", sha256.Sum256([]byte("ReviewAgent")))}
+	specs := make([]driver.AgentSpec, 0, len(names))
+	for _, name := range names {
+		specs = append(specs, driver.AgentSpec{Key: name, RuntimeName: name, Instructions: "exact role"})
+	}
+	if _, err := Sync(context.Background(), "codebuddy", root, driver.AgentPayload{Agents: specs}); err != nil {
+		t.Fatal(err)
+	}
+	paths, err := filepath.Glob(filepath.Join(root, "agents", "*.md"))
+	if err != nil || len(paths) != len(names) {
+		t.Fatalf("native files collided or extension changed: %v %v", paths, err)
+	}
+	seen := map[string]bool{}
+	for _, path := range paths {
+		if len(filepath.Base(path)) > 128 {
+			t.Fatal("unsafe long native filename")
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, line := range strings.Split(string(raw), "\n") {
+			if strings.HasPrefix(line, "name: ") {
+				var name string
+				if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "name: ")), &name); err != nil {
+					t.Fatal(err)
+				}
+				seen[name] = true
+			}
+		}
+	}
+	for _, name := range names {
+		if !seen[name] {
+			t.Fatalf("exact catalog name changed: %q", name)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, "agents", "reviewer.md")); err != nil {
+		t.Fatal("simple native filename changed")
 	}
 }

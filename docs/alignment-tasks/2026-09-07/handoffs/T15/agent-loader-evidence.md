@@ -20,7 +20,7 @@
 
 | SDK 已有声明 | CodeBuddy frontmatter / body | 决策 |
 |---|---|---|
-| RuntimeName / Key | name 与 `<runtime>.md` | 继承既有 helper 规范化、路径安全与 canonical catalog key；fixture 使用显式不同 key/runtime name。 |
+| RuntimeName / Key | name 与独立安全 `.md` 文件名 | name 保留 resolved RuntimeName 的 Unicode/大小写/扩展及默认 Key；简单可移植名保持原文件名，其他使用 agent~SHA256；文件编码不改变 catalog。 |
 | Description / Instructions | description / Markdown 正文 | 最小 portable core；既有空值默认说明与 trim 保持。 |
 | Model | model | loader `ed.model?.trim()`，生成 models/declaredModel。 |
 | ReasoningEffort | effort | loader normalizeReasoningEffort；minimal/low/medium/high/xhigh/max，未知值 Go error。 |
@@ -36,3 +36,7 @@ CodeBuddy renderer 局部化在 `internal/profileagents/codebuddy.go`，`agents.
 公开零 CLI 红例：533398e 的 `adaptor.New(codebuddy.Driver(Config{Command: executable, Env: private HOME/USERPROFILE + CLI canary}), WithProfile(Dedicated(privateRoot)), WithProfileResources(Skills+Agents)).SyncProfile(ctx)` 返回 `profile agents are unsupported by driver "codebuddy"`，canary touches=0。原源码快照与红日志保留于 `evidence/attempt-3/subagent-materialization-canary.go.txt` 和 `materialization-canary-before/`。实际 fake 子进程在修复后读取生成的两个资源文件，再输出正式 partial/wrapper/result，公开 canonical ProviderProtocol Skill/Subagent 事实与 Tool/Transcript 同 ID 完成。
 
 SessionStore 的文件证据只用于 live oracle：相同 session ID 必须指向同一实际 JSONL 历史文件并含第一轮真实 tool 随机 nonce。第二 Agent 的 prompt/callback/store 不补回 nonce，不能以 SPI Resume 状态回显替代历史召回。
+
+独立复核修正：53dbc0d 原代码复用 shared agentName/runtimeFileName 的小写/ASCII化/扩展处理，导致 Unicode/case/default key 与 catalog 不一致，.json/.txt 不被正式 `.md` scanner 读取。原 C01 fixture SHA256 `9df5cd2c44972d73aa317ae34f38c68bfe1bf480d92138a19ad5cec50a3ae51e` 在 owner 原样 overlay 重现 2 pass / 5 子项 fail。修复只增加 CodeBuddy name/file 分支；旧 provider helper 不动。SourcePath 保持原始内容而目标统一 .md。
+
+SourcePath 原生身份责任：helper 不解析/重写原生 frontmatter；显式 name 须与 resolved RuntimeName 对应。未写 name 时官方退到文件 basename；编码文件名场景不能依赖这个 fallback 获得原 catalog identity。`.md` 物化与字节保留仅证明 loader 可读，不宣称任意原生文件均能关联 canonical key。编码前缀 `agent~` 位于简单名称允许字符集之外，caller 同前缀名称也会编码，避免文件命名空间冲突。

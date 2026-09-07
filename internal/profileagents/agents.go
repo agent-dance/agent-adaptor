@@ -110,6 +110,13 @@ func layout(driverType, profileDir string) (string, string, error) {
 func directoryEntry(driverType string, spec driver.AgentSpec, ext string) (profilereconcile.DirectoryEntry, error) {
 	name := agentName(spec)
 	runtimeName := runtimeFileName(spec, ext)
+	if driverType == "codebuddy" {
+		var err error
+		name, runtimeName, err = codeBuddyAgentNames(spec)
+		if err != nil {
+			return profilereconcile.DirectoryEntry{}, err
+		}
+	}
 	entry := profilereconcile.DirectoryEntry{
 		Key:         spec.Key,
 		RuntimeName: runtimeName,

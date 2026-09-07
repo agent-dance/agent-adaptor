@@ -1,11 +1,42 @@
 package profileagents
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/agent-dance/agent-adaptor/driver"
 )
+
+// Native identity must match the resolved catalog exactly. File naming is a
+// separate concern: every target is a portable .md path, including SourcePath.
+func codeBuddyAgentNames(spec driver.AgentSpec) (string, string, error) {
+	name := strings.TrimSpace(spec.RuntimeName)
+	if name == "" {
+		name = strings.TrimSpace(spec.Key)
+	}
+	if name == "" || !utf8.ValidString(name) || strings.ContainsRune(name, 0) {
+		return "", "", fmt.Errorf("CodeBuddy agent %q: invalid runtime name", spec.Key)
+	}
+	portable := len(name) <= 120
+	for _, ch := range name {
+		if !(ch >= 'a' && ch <= 'z' || ch >= '0' && ch <= '9' || ch == '-' || ch == '_') {
+			portable = false
+		}
+	}
+	switch name {
+	case "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8", "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9":
+		portable = false
+	}
+	filename := name
+	if !portable {
+		// '~' is excluded from the unchanged simple-name branch, so encoded
+		// names cannot collide with a caller-supplied simple file basename.
+		filename = fmt.Sprintf("agent~%x", sha256.Sum256([]byte(name)))
+	}
+	return name, filename + ".md", nil
+}
 
 // CodeBuddy 2.137.1 CustomAgentsProductProvider scans <profile>/agents/*.md.
 // parseAgentFile reads these frontmatter fields and uses the Markdown body as
