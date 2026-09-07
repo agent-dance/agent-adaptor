@@ -547,6 +547,7 @@ type drainStream struct {
 	first, cancelled, released sync.Once
 	reads                      atomic.Int32
 	resultReads                atomic.Int32
+	err                        error
 }
 
 func (s *drainStream) RunID() string { return "drain-run" }
@@ -575,6 +576,9 @@ func (s *drainStream) Result() (*adaptor.Result, error) {
 	s.resultReads.Add(1)
 	select {
 	case <-s.done:
+		if s.err != nil {
+			return nil, s.err
+		}
 		return nil, context.Canceled
 	default:
 		return nil, errors.New("Result read before full drain")
@@ -659,18 +663,26 @@ func TestT22R016CancellationAndTranslationDrain(t *testing.T) {
 				t.Fatalf("read/result/execute=%d/%d/%d", s.reads.Load(), s.resultReads.Load(), r.calls.Load())
 			}
 			if translate {
-				var pe *client.ProtocolError
-				if !errors.As(terminalErr, &pe) {
-					t.Fatalf("translation failure replaced by hint: %v", terminalErr)
+				// The public protocol converts executor errors to a failed Task.
+				// R016 does not authorize the tail hint to replace that path.
+				if !errors.Is(terminalErr, io.EOF) || task.Status.State != client.TaskStateFailed {
+					t.Fatalf("translation outcome=%#v %v", task, terminalErr)
 				}
-				if code, _ := control(task); code == "approval_denied" {
-					t.Fatal("hint replaced independent translation error")
+				if code, limit := control(task); code != "" || limit != nil {
+					t.Fatalf("translation synthesized control=%s/%v", code, limit)
 				}
 			} else {
 				if !errors.Is(terminalErr, io.EOF) {
 					t.Fatal(terminalErr)
 				}
-				assertTask(t, task, "approval_denied", false)
+				// CancelTask's existing public acknowledgement closes its HTTP
+				// subscription before the executor's separate drain classification.
+				if task.Status.State != client.TaskStateCanceled {
+					t.Fatalf("cancel acknowledgement=%#v", task)
+				}
+				if code, limit := control(task); code != "" || limit != nil {
+					t.Fatalf("cancel acknowledgement gained control=%s/%v", code, limit)
+				}
 			}
 		})
 	}
@@ -751,5 +763,70 @@ func TestT22DelegationRecoveryKeepsBudgetAndRejectsStaleReplay(t *testing.T) {
 				t.Fatal("old input-required replay invented active timeout")
 			}
 		})
+	}
+}
+
+func TestT22LocalCancellationDrainsPartialCarrier(t *testing.T) {
+	parent, cancel := context.WithCancel(testContext(t))
+	defer cancel()
+	marker := errors.New("local partial cause")
+	carrier := &adaptor.RunError{Reason: adaptor.ReasonApprovalDenied, Result: &adaptor.Result{Text: "local partial text", Summary: "local partial summary"}, Cause: errors.Join(context.Canceled, marker)}
+	holder := make(chan *drainStream, 1)
+	r := &fixedRunner{makeStream: func(ctx context.Context) adaptor.Stream {
+		s := &drainStream{ctx: ctx, es: make(chan adaptor.Event, 2), started: make(chan struct{}), cancelSeen: make(chan struct{}), done: make(chan struct{}), err: carrier}
+		holder <- s
+		return s
+	}}
+	team, err := delegation.NewService(delegation.Config{Agents: []delegation.AgentRef{delegation.Local("member", r, delegation.Policy{})}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer team.Close()
+	type outcome struct {
+		r delegation.DelegationResult
+		e error
+	}
+	finished := make(chan outcome, 1)
+	go func() {
+		r, e := team.Delegate(parent, delegation.DelegationRequest{RunID: "leader", Agent: "member", Prompt: "cancel local", Stream: true})
+		finished <- outcome{r, e}
+	}()
+	var s *drainStream
+	select {
+	case s = <-holder:
+	case <-parent.Done():
+		t.Fatal("local Stream not started")
+	}
+	select {
+	case <-s.started:
+	case <-parent.Done():
+		t.Fatal("local event reader not started")
+	}
+	cancel()
+	var out outcome
+	select {
+	case out = <-finished:
+	case <-time.After(2 * time.Second):
+		t.Fatal("local cancel deadlocked")
+	}
+	var de *delegation.DelegationError
+	var original *adaptor.RunError
+	if !errors.As(out.e, &de) || de.Code != "cancelled" || de.Metadata["limit_ms"] != nil || !errors.Is(out.e, marker) || !errors.As(out.e, &original) || original != carrier {
+		t.Fatalf("local primary/carrier=%#v %v", out.r, out.e)
+	}
+	if original.Result.Text != "local partial text" || original.Result.Summary != "local partial summary" {
+		t.Fatal("partial carrier changed")
+	}
+	b, _ := json.Marshal(out.r)
+	if !strings.Contains(string(b), "local partial text") {
+		t.Fatalf("local partial projection missing: %s", b)
+	}
+	select {
+	case <-s.done:
+	default:
+		t.Fatal("local result before drain close")
+	}
+	if s.reads.Load() < 2 || s.resultReads.Load() != 1 || r.calls.Load() != 1 {
+		t.Fatalf("local read/result/execute=%d/%d/%d", s.reads.Load(), s.resultReads.Load(), r.calls.Load())
 	}
 }

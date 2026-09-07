@@ -346,6 +346,9 @@ func TestAlignmentPolicyRetryExpiryAndBackpressure(t *testing.T) {
 			defer cancel()
 			d.RunFunc = func(ctx context.Context, _ driver.Request, s driver.EventSink) (driver.Response, error) {
 				_, err := s.(driver.DecisionCapableSink).RequestDecision(ctx, driver.DecisionRequest{Kind: driver.HumanDecisionPermission})
+				if mode == "auto" && len(c.Stops) != 0 {
+					t.Error("automatic approval paused the active timer")
+				}
 				if err == nil {
 					c.Advance(100 * time.Millisecond)
 				}
@@ -1110,110 +1113,123 @@ func t22FormalCommand(t *testing.T) string {
 func TestAlignmentPolicyClaudeFormalSchema(t *testing.T) {
 	for _, mode := range []string{"question", "plan", "permission", "zero-policy", "invalid", "deny", "timeout"} {
 		for _, thread := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%s/thread=%v", mode, thread), func(t *testing.T) {
-				dir := t.TempDir()
-				receipt := filepath.Join(dir, "receipt.json")
-				d := claude.Driver(claude.Config{CommonConfig: claude.CommonConfig{Command: t22FormalCommand(t), CWD: dir, Env: []driver.EnvBinding{{Name: "T22_RECEIPT", Value: receipt}}}})
-				store := qa.NewStore()
-				policy := Policy{Approvals: ApprovalPolicy{Permission: ApprovalAutoApprove, PlanReview: ApprovalAutoApprove, Question: QuestionAsk, Timeout: 20 * time.Millisecond}}
-				scenario := mode
-				switch mode {
-				case "plan":
-					policy.Approvals.PlanReview = ApprovalAsk
-				case "permission":
-					policy.Approvals.Permission = ApprovalInherit
-				case "zero-policy":
-					policy = Policy{}
-				case "deny", "timeout":
-					scenario = "question"
-				}
-				var asks atomic.Int32
-				a := New(d, WithThreadStore(store), WithProfile(profile.Dedicated(filepath.Join(dir, "profile"))), WithPolicy(policy), WithAppendSystemPrompt("NATIVE_SECRET_甲\n\"乙\""), OnApproval(func(ctx context.Context, r *ApprovalRequest) error {
-					asks.Add(1)
+			for _, streaming := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/thread=%v/stream=%v", mode, thread, streaming), func(t *testing.T) {
+					dir := t.TempDir()
+					receipt := filepath.Join(dir, "receipt.json")
+					d := claude.Driver(claude.Config{CommonConfig: claude.CommonConfig{Command: t22FormalCommand(t), CWD: dir, Env: []driver.EnvBinding{{Name: "T22_RECEIPT", Value: receipt}}}})
+					store := qa.NewStore()
+					policy := Policy{Approvals: ApprovalPolicy{Permission: ApprovalAutoApprove, PlanReview: ApprovalAutoApprove, Question: QuestionAsk, Timeout: 20 * time.Millisecond}}
+					scenario := mode
 					switch mode {
+					case "plan":
+						policy.Approvals.PlanReview = ApprovalAsk
+					case "permission":
+						policy.Approvals.Permission = ApprovalInherit
+					case "zero-policy":
+						policy = Policy{}
+					case "deny", "timeout":
+						scenario = "question"
+					}
+					var asks atomic.Int32
+					a := New(d, WithThreadStore(store), WithProfile(profile.Dedicated(filepath.Join(dir, "profile"))), WithPolicy(policy), WithAppendSystemPrompt("NATIVE_SECRET_甲\n\"乙\""), OnApproval(func(ctx context.Context, r *ApprovalRequest) error {
+						asks.Add(1)
+						switch mode {
+						case "deny":
+							return r.Deny(ctx, "fixture denied")
+						case "timeout":
+							<-ctx.Done()
+							return ctx.Err()
+						}
+						if r.Kind == ApprovalQuestion {
+							return r.Answer(ctx, "docs")
+						}
+						return r.Approve(ctx)
+					}))
+					defer a.Close(t22Context(t))
+					var runner Runner = a
+					if thread {
+						runner = a.Thread("claude/formal")
+					}
+					opts := []CallOption{WithSpawn(), WithSchemaJSON([]byte(`{"type":"object","properties":{"ok":{"type":"boolean"}},"required":["ok"],"additionalProperties":false}`))}
+					var s Stream
+					var es []Event
+					var r *Result
+					var err error
+					if streaming {
+						s = runner.Stream(t22Context(t), "SCENARIO="+scenario, opts...)
+						es, r, err = t22Drain(s)
+					} else {
+						r, err = runner.Run(t22Context(t), "SCENARIO="+scenario, opts...)
+					}
+					reason := FailureReason("")
+					switch mode {
+					case "invalid":
+						reason = ReasonPolicyViolation
 					case "deny":
-						return r.Deny(ctx, "fixture denied")
+						reason = ReasonApprovalDenied
 					case "timeout":
-						<-ctx.Done()
-						return ctx.Err()
+						reason = ReasonApprovalTimeout
 					}
-					if r.Kind == ApprovalQuestion {
-						return r.Answer(ctx, "docs")
+					if reason != "" {
+						var re *RunError
+						if r != nil || !errors.As(err, &re) || re.Reason != reason || re.Result == nil {
+							t.Fatalf("formal failure=%#v %v carrier=%#v", r, err, re)
+						}
+						r = re.Result
+						if store.Finalizes.Load() != 0 {
+							t.Fatal("formal failure persisted checkpoint")
+						}
+					} else {
+						if err != nil || r == nil {
+							t.Fatalf("formal success=%#v %v", r, err)
+						}
+						var out struct {
+							OK bool `json:"ok"`
+						}
+						if err = r.Decode(&out); err != nil || !out.OK {
+							t.Fatalf("formal structured decode=%#v %v", out, err)
+						}
+						if r.Raw().Terminal == nil || !strings.Contains(r.Raw().Stdout, `"type":"result"`) || r.Usage == nil || r.Usage.InputTokens != 0 || r.Usage.OutputTokens != 0 {
+							t.Fatalf("formal output layers lost %#v", r)
+						}
+						if thread && store.Finalizes.Load() != 1 {
+							t.Fatal("healthy formal checkpoint missing")
+						}
+						raw, err := os.ReadFile(receipt)
+						if err != nil {
+							t.Fatal(err)
+						}
+						var v map[string]any
+						if err = json.Unmarshal(raw, &v); err != nil {
+							t.Fatal(err)
+						}
+						args, _ := json.Marshal(v["args"])
+						native := strings.Contains(string(args), "--json-schema")
+						interactive := strings.Contains(string(args), "--permission-prompt-tool")
+						wantNative := mode != "permission" && mode != "zero-policy"
+						if native != wantNative || interactive != (mode != "zero-policy") || (v["response"] != nil) != (mode != "zero-policy") {
+							t.Fatalf("formal argv/control mismatch %s receipt=%s", mode, raw)
+						}
+						if v["append"] != "NATIVE_SECRET_甲\n\"乙\"" || strings.Contains(fmt.Sprint(v["prompt"]), "NATIVE_SECRET") {
+							t.Fatal("append entered user channel or lost bytes")
+						}
+						if strings.Contains(fmt.Sprint(r.Transcript()), "NATIVE_SECRET") || strings.Contains(fmt.Sprint(r.Metadata), "NATIVE_SECRET") {
+							t.Fatal("append leaked into semantic audit")
+						}
 					}
-					return r.Approve(ctx)
-				}))
-				defer a.Close(t22Context(t))
-				var runner Runner = a
-				if thread {
-					runner = a.Thread("claude/formal")
-				}
-				s := runner.Stream(t22Context(t), "SCENARIO="+scenario, WithSpawn(), WithSchemaJSON([]byte(`{"type":"object","properties":{"ok":{"type":"boolean"}},"required":["ok"],"additionalProperties":false}`)))
-				es, r, err := t22Drain(s)
-				reason := FailureReason("")
-				switch mode {
-				case "invalid":
-					reason = ReasonPolicyViolation
-				case "deny":
-					reason = ReasonApprovalDenied
-				case "timeout":
-					reason = ReasonApprovalTimeout
-				}
-				if reason != "" {
-					var re *RunError
-					if r != nil || !errors.As(err, &re) || re.Reason != reason || re.Result == nil {
-						t.Fatalf("formal failure=%#v %v carrier=%#v", r, err, re)
+					if mode == "zero-policy" {
+						if asks.Load() != 0 {
+							t.Fatal("zero raw policy synthesized interaction")
+						}
+					} else if asks.Load() != 1 {
+						t.Fatalf("formal request count=%d", asks.Load())
 					}
-					r = re.Result
-					if store.Finalizes.Load() != 0 {
-						t.Fatal("formal failure persisted checkpoint")
+					if streaming {
+						t22Terminal(t, es, s.RunID(), reason)
 					}
-				} else {
-					if err != nil || r == nil {
-						t.Fatalf("formal success=%#v %v", r, err)
-					}
-					var out struct {
-						OK bool `json:"ok"`
-					}
-					if err = r.Decode(&out); err != nil || !out.OK {
-						t.Fatalf("formal structured decode=%#v %v", out, err)
-					}
-					if r.Raw().Terminal == nil || !strings.Contains(r.Raw().Stdout, `"type":"result"`) || r.Usage == nil || r.Usage.InputTokens != 0 || r.Usage.OutputTokens != 0 {
-						t.Fatalf("formal output layers lost %#v", r)
-					}
-					if thread && store.Finalizes.Load() != 1 {
-						t.Fatal("healthy formal checkpoint missing")
-					}
-					raw, err := os.ReadFile(receipt)
-					if err != nil {
-						t.Fatal(err)
-					}
-					var v map[string]any
-					if err = json.Unmarshal(raw, &v); err != nil {
-						t.Fatal(err)
-					}
-					args, _ := json.Marshal(v["args"])
-					native := strings.Contains(string(args), "--json-schema")
-					interactive := strings.Contains(string(args), "--permission-prompt-tool")
-					wantNative := mode != "permission" && mode != "zero-policy"
-					if native != wantNative || interactive != (mode != "zero-policy") || (v["response"] != nil) != (mode != "zero-policy") {
-						t.Fatalf("formal argv/control mismatch %s receipt=%s", mode, raw)
-					}
-					if v["append"] != "NATIVE_SECRET_甲\n\"乙\"" || strings.Contains(fmt.Sprint(v["prompt"]), "NATIVE_SECRET") {
-						t.Fatal("append entered user channel or lost bytes")
-					}
-					if strings.Contains(fmt.Sprint(r.Transcript()), "NATIVE_SECRET") || strings.Contains(fmt.Sprint(r.Metadata), "NATIVE_SECRET") {
-						t.Fatal("append leaked into semantic audit")
-					}
-				}
-				if mode == "zero-policy" {
-					if asks.Load() != 0 {
-						t.Fatal("zero raw policy synthesized interaction")
-					}
-				} else if asks.Load() != 1 {
-					t.Fatalf("formal request count=%d", asks.Load())
-				}
-				t22Terminal(t, es, s.RunID(), reason)
-			})
+				})
+			}
 		}
 	}
 }
@@ -1468,6 +1484,30 @@ func TestAlignmentPolicyResidentSchemaPrewarm(t *testing.T) {
 	}
 	if ids["spawn"] == ids["after-spawn"] {
 		t.Fatal("WithSpawn registered a resident writer")
+	}
+	if _, err := a.Thread("resident").Run(t22Context(t), "append-changed", WithAppendSystemPrompt("startup beta")); err != nil {
+		t.Fatal(err)
+	}
+	changed, _ := store.Resolve(context.Background(), threadstore.Query{Key: "resident"})
+	if changed.ID == after.ID {
+		t.Fatal("append compatibility change reused old active record")
+	}
+	seen := 0
+	var lastArgs string
+	for _, row := range read() {
+		if row["kind"] == "start" {
+			b, _ := json.Marshal(row["args"])
+			lastArgs = string(b)
+		}
+		if row["kind"] == "prompt" && row["prompt"] == "append-changed" {
+			seen++
+			if row["pid"] == ids["after-spawn"] || !strings.Contains(lastArgs, "startup beta") || strings.Contains(lastArgs, "startup alpha") {
+				t.Fatalf("append startup signature did not replace writer: %#v args=%s", row, lastArgs)
+			}
+		}
+	}
+	if seen != 1 {
+		t.Fatalf("append change delivered prompt %d times", seen)
 	}
 	if err := a.Close(t22Context(t)); err != nil {
 		t.Fatal(err)
