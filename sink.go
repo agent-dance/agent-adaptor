@@ -267,10 +267,13 @@ func (s *eventSink) completeAuthoritativeLifecycle(res *Result, runErr error) {
 	terminal.Message = ""
 	if runErr != nil {
 		var business *RunError
+		outcome := s.terminalSnapshot()
 		switch {
 		case errors.As(runErr, &business):
 			terminal.Reason = business.Reason
 			terminal.Message = business.Message
+		case outcome.reason != "":
+			terminal.Reason, terminal.Message = outcome.reason, outcome.message
 		case errors.Is(runErr, ErrActiveExecutionTimeout):
 			terminal.Reason = ReasonActiveExecutionTimeout
 			terminal.Message = "active execution budget exhausted"
@@ -1090,6 +1093,8 @@ func (s *eventSink) observeEvent(ev Event) []Event {
 type invocationTerminal struct {
 	mu      sync.Mutex
 	ctx     context.Context
+	parent  context.Context
+	expired *ActiveExecutionTimeoutError
 	reason  FailureReason
 	message string
 	details map[string]any
@@ -1103,10 +1108,12 @@ type terminalOutcome struct {
 	cause   error
 }
 
-func (s *eventSink) bindBudget(ctx context.Context, budget *activebudget.Controller) {
+func (s *eventSink) bindBudget(ctx context.Context, budget *activebudget.Controller, expired *ActiveExecutionTimeoutError) {
 	s.budget = budget
 	s.terminal.mu.Lock()
+	s.terminal.parent = s.terminal.ctx
 	s.terminal.ctx = ctx
+	s.terminal.expired = expired
 	s.terminal.mu.Unlock()
 	context.AfterFunc(ctx, func() { s.recordContext(ctx); s.abort() })
 }
@@ -1143,13 +1150,24 @@ func (s *eventSink) recordOutcomeLocked(ctx context.Context, failure *driver.Run
 		errorCause = context.Cause(ctx)
 	}
 	t.cause = errors.Join(t.cause, err, coordination, contextErr, errorCause)
+	// Cause identity distinguishes this controller's selected expiry from an
+	// inherited active-looking parent cause. Its cancellation may precede the
+	// core AfterFunc notification, including when the parent cancels afterwards.
+	ownExpiry := t.expired != nil && t.ctx != nil && context.Cause(t.ctx) == t.expired
+	if ownExpiry {
+		contextErr, errorCause = t.ctx.Err(), t.expired
+		t.cause = errors.Join(t.cause, contextErr, errorCause)
+	} else if t.parent != nil && t.parent.Err() != nil {
+		contextErr, errorCause = t.parent.Err(), context.Cause(t.parent)
+		t.cause = errors.Join(t.cause, contextErr, errorCause)
+	}
 	if t.reason != "" {
 		return
 	}
 	switch {
 	case contextErr != nil:
 		switch {
-		case errors.Is(errorCause, ErrActiveExecutionTimeout):
+		case ownExpiry:
 			t.reason, t.message = ReasonActiveExecutionTimeout, "active execution budget exhausted"
 		case contextErr == context.DeadlineExceeded:
 			t.reason, t.message = ReasonDeadlineExceeded, "execution deadline exceeded"

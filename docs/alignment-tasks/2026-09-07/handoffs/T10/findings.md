@@ -37,6 +37,21 @@
   `evidence/C01-baseline-snapshot-red.log`,
   `evidence/approval-snapshot-local-red.jsonl`, and final V04.
 
+- **T10-F06, P1, resolved (W13-R05/R06).** C02's independent review found that an
+  inherited ActiveExecutionTimeoutError caused the current run to report its own
+  active expiry, even though its fake clock never advanced. The root now
+  distinguishes its private expiry object from inherited causes, including
+  pre-dispatch terminal events and nested members. A terminal-notification lock
+  barrier also proves own expiry before parent cancellation remains active even
+  if the outer watcher registers first. Parent causes remain secondary evidence.
+- **T10-F07, P1, resolved (W13-R02/R04/R06).** A lawful delayed parent AfterFunc
+  can leave the budget child uncanceled after the parent's Err is set.
+  FinishExecution now checks the direct parent before sealing, preserving prior
+  selected child/controller causes. The independent deferred-parent barrier
+  fixture is retained in activebudget tests. The two reported defects (plus
+  pre-dispatch and nested variants) produced 9 local red test/subtest outcomes
+  before repair, recorded in `evidence/budget-review-local-red.jsonl`.
+
 Evidence of final repairs is the committed-source test suite and final-SHA V01,
 V02, V03 and V04 logs listed in result.json. Built-in provider startup signatures and
 Windows native/live execution are outside this core implementation; the delivery

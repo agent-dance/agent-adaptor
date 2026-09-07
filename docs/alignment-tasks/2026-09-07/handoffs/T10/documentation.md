@@ -106,6 +106,14 @@ Consumers must select `RunError.Reason` before generic `errors.Is(ctx error)`
 checks, because multiple causes may match. Approval timeout, parent deadline,
 explicit cancellation and active exhaustion are distinct reasons.
 
+An inherited parent cause may itself be an ActiveExecutionTimeoutError (for
+example, a leader's budget canceling a nested member). Its type alone does not
+mean the current run exhausted its own budget: the parent Err determines
+Cancelled/DeadlineExceeded, while the original cause remains inspectable.
+Conversely, a confirmed local budget expiry remains authoritative if the parent's
+cancellation notification is delivered afterwards. Sealing checks the direct
+parent state even when its AfterFunc cancellation delivery to the child lags.
+
 R013 clarification for the Approval and Event sections: constructing an
 ApprovalRequest and copying it with WithEventMeta creates independent Choices
 and Details descriptions. Details copies JSON containers recursively, including

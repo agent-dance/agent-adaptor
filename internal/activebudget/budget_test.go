@@ -311,3 +311,56 @@ func TestBudgetFinishExecution(t *testing.T) {
 		}
 	})
 }
+
+// A valid parent whose registered AfterFunc has been scheduled but cannot yet
+// deliver its callback. This deterministically models parent-to-child scheduler
+// delay without modifying the controller or relying on a sleep race.
+type alignmentDeferredParent struct {
+	mu            sync.Mutex
+	done, deliver chan struct{}
+	err           error
+	wg            sync.WaitGroup
+}
+
+func (*alignmentDeferredParent) Deadline() (time.Time, bool) { return time.Time{}, false }
+func (p *alignmentDeferredParent) Done() <-chan struct{}     { return p.done }
+func (p *alignmentDeferredParent) Err() error                { p.mu.Lock(); defer p.mu.Unlock(); return p.err }
+func (*alignmentDeferredParent) Value(any) any               { return nil }
+func (p *alignmentDeferredParent) AfterFunc(fn func()) func() bool {
+	var mu sync.Mutex
+	active := true
+	p.wg.Go(func() {
+		<-p.done
+		<-p.deliver
+		mu.Lock()
+		run := active
+		active = false
+		mu.Unlock()
+		if run {
+			fn()
+		}
+	})
+	return func() bool { mu.Lock(); defer mu.Unlock(); was := active; active = false; return was }
+}
+func (p *alignmentDeferredParent) cancel() {
+	p.mu.Lock()
+	p.err = context.Canceled
+	close(p.done)
+	p.mu.Unlock()
+}
+
+func TestBudgetFinishObservesAlreadyCancelledParent(t *testing.T) {
+	p := &alignmentDeferredParent{done: make(chan struct{}), deliver: make(chan struct{})}
+	c := newFakeClock()
+	ctx, b := New(p, 100*time.Millisecond, errBudget, c)
+	defer func() { close(p.deliver); p.wg.Wait(); b.Cancel(nil) }()
+	c.Advance(40 * time.Millisecond)
+	p.cancel()
+	if ctx.Err() != nil {
+		t.Fatal("fixture lost the deliberate parent-delivery barrier")
+	}
+	err := b.FinishExecution()
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("FinishExecution=%v with parent.Err=%v: already-cancelled parent must reject the seal", err, p.Err())
+	}
+}

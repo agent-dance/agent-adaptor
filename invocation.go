@@ -142,8 +142,9 @@ func (a *Agent) executeInvocation(ctx context.Context, st *runStream, prompt str
 	if eff.policy != nil {
 		limit = eff.policy.ActiveExecutionTimeout
 	}
-	ctx, st.budget = activebudget.New(ctx, limit, &ActiveExecutionTimeoutError{Limit: limit}, eff.budgetTiming.clock)
-	st.sink.bindBudget(ctx, st.budget)
+	expired := &ActiveExecutionTimeoutError{Limit: limit}
+	ctx, st.budget = activebudget.New(ctx, limit, expired, eff.budgetTiming.clock)
+	st.sink.bindBudget(ctx, st.budget, expired)
 
 	// Hosted Tool profile resolution may call provider code and allocate an
 	// Agent-owned directory. Keep it inside lifecycle admission so Close sees,

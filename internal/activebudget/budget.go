@@ -229,6 +229,10 @@ func (b *Controller) FinishExecution() error {
 		b.finishErr = context.Cause(b.ctx)
 	case b.cause != nil:
 		b.finishErr = b.cause
+	case b.parent.Err() != nil:
+		// A parent's AfterFunc delivery may lag its authoritative Done/Err.
+		// Reject the seal even while cancellation has not reached the child.
+		b.finishErr = context.Cause(b.parent)
 	case b.stopped: // Error/cleanup Stop must not create a late budget cause.
 	case b.enabled && len(b.tokens) == 0:
 		elapsed := b.elapsedLocked()

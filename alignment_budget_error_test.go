@@ -602,7 +602,8 @@ func TestAlignmentActiveBudgetMemberDoesNotPauseLeader(t *testing.T) {
 		return ctx.Err()
 	}))
 	leader := New(brokerTestDriver{run: func(ctx context.Context, _ driver.Request, _ driver.EventSink) (driver.Response, error) {
-		_, err := member.Run(ctx, "nested")
+		res, err := member.Run(ctx, "nested")
+		alignmentBudgetCarrier(t, res, err, ReasonCancelled)
 		return alignmentBudgetPartial(), err
 	}}, alignmentClockOption(leaderClock), WithPolicy(Policy{ActiveExecutionTimeout: 100 * time.Millisecond}))
 	res, err := leader.Run(context.Background(), "lead")
@@ -727,5 +728,100 @@ func TestAlignmentActiveBudgetHandlerReturnsOwnDeadline(t *testing.T) {
 		if errors.Is(err, ErrActiveExecutionTimeout) {
 			t.Fatal("Ask deadline consumed paused budget")
 		}
+	}
+}
+
+func TestAlignmentActiveBudgetParentCauseIdentity(t *testing.T) {
+	for _, kind := range []string{"cancel", "deadline"} {
+		for _, stage := range []string{"preparation", "driver", "Ask"} {
+			t.Run(kind+"/"+stage, func(t *testing.T) {
+				foreign := &ActiveExecutionTimeoutError{Limit: 777 * time.Second}
+				var parent context.Context
+				var stop context.CancelFunc
+				trigger := func() {}
+				want := ReasonCancelled
+				if kind == "cancel" {
+					var cancel context.CancelCauseFunc
+					parent, cancel = context.WithCancelCause(context.Background())
+					trigger = func() { cancel(foreign) }
+					stop = func() { cancel(nil) }
+				} else {
+					parent, stop = context.WithDeadlineCause(context.Background(), time.Now().Add(100*time.Millisecond), foreign)
+					want = ReasonDeadlineExceeded
+				}
+				defer stop()
+				c := newAlignmentClock() // Never advanced: this run cannot exhaust its budget.
+				d := brokerTestDriver{run: func(ctx context.Context, _ driver.Request, sink driver.EventSink) (driver.Response, error) {
+					if stage == "Ask" {
+						_, err := sink.(driver.DecisionCapableSink).RequestDecision(ctx, driver.DecisionRequest{Kind: driver.HumanDecisionPermission})
+						return alignmentBudgetPartial(), err
+					}
+					trigger()
+					<-ctx.Done()
+					return alignmentBudgetPartial(), ctx.Err()
+				}}
+				opts := []Option{alignmentClockOption(c), WithPolicy(Policy{ActiveExecutionTimeout: 100 * time.Millisecond})}
+				if stage == "preparation" {
+					opts = append(opts, WithRunServices(alignmentBudgetService{attach: func(ctx context.Context) (RunAttachment, error) {
+						trigger()
+						<-ctx.Done()
+						return RunAttachment{}, ctx.Err()
+					}}))
+				}
+				if stage == "Ask" {
+					opts = append(opts, OnApproval(func(ctx context.Context, _ *ApprovalRequest) error {
+						trigger()
+						<-ctx.Done()
+						return ctx.Err()
+					}))
+				}
+				st := New(d, opts...).Stream(parent, "inherited cause")
+				var terminal RunFinished
+				for event := range st.Events() {
+					if end, ok := event.(RunFinished); ok {
+						terminal = end
+					}
+				}
+				res, err := st.Result()
+				if stage != "preparation" {
+					alignmentBudgetCarrier(t, res, err, want)
+				}
+				if terminal.Reason != want || !errors.Is(err, foreign) {
+					t.Fatalf("parent cause became own expiry: terminal=%s want=%s error=%v", terminal.Reason, want, err)
+				}
+			})
+		}
+	}
+}
+
+func TestAlignmentActiveBudgetOwnExpiryBeforeParentNotification(t *testing.T) {
+	parent, cancel := context.WithCancelCause(context.Background())
+	defer cancel(nil)
+	lateParent := errors.New("later parent cancellation")
+	c := newAlignmentClock()
+	d := brokerTestDriver{run: func(ctx context.Context, _ driver.Request, supplied driver.EventSink) (driver.Response, error) {
+		sink := supplied.(*eventSink)
+		// Fence only core notification, not controller time/cancellation. The
+		// own budget wins before the parent's watcher can register anything.
+		sink.terminal.mu.Lock()
+		c.advance(100 * time.Millisecond)
+		if ctx.Err() == nil || context.Cause(ctx) != sink.terminal.expired {
+			t.Error("own expiry did not select the authoritative child cause")
+		}
+		cancel(lateParent)
+		sink.terminal.mu.Unlock()
+		return alignmentBudgetPartial(), errors.Join(ctx.Err(), lateParent)
+	}}
+	a := New(d, alignmentClockOption(c), WithPolicy(Policy{ActiveExecutionTimeout: 100 * time.Millisecond}))
+	st := a.Stream(parent, "expiry before parent notification")
+	for event := range st.Events() {
+		if end, ok := event.(RunFinished); ok && end.Reason != ReasonActiveExecutionTimeout {
+			t.Errorf("late parent notification rewrote terminal: %s", end.Reason)
+		}
+	}
+	res, err := st.Result()
+	alignmentBudgetCarrier(t, res, err, ReasonActiveExecutionTimeout)
+	if !errors.Is(err, lateParent) {
+		t.Fatal("late parent evidence lost")
 	}
 }
