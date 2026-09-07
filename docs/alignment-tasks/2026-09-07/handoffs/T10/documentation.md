@@ -1,7 +1,7 @@
 # T10 documentation fragment for G03
 
-This fragment covers the T10 core delivery against canonical revision 13,
-including R011 and R012. G03 must integrate the user-facing paragraphs below
+This fragment covers the T10 core delivery against canonical revision 14,
+including R011, R012 and R013. G03 must integrate the user-facing paragraphs below
 before batch acceptance. Provider implementation and native/live verification
 remain assigned to their later owners; this core delivery does not assert that
 any built-in Driver already supports native append.
@@ -106,6 +106,18 @@ Consumers must select `RunError.Reason` before generic `errors.Is(ctx error)`
 checks, because multiple causes may match. Approval timeout, parent deadline,
 explicit cancellation and active exhaustion are distinct reasons.
 
+R013 clarification for the Approval and Event sections: constructing an
+ApprovalRequest and copying it with WithEventMeta creates independent Choices
+and Details descriptions. Details copies JSON containers recursively, including
+interface-held maps, slices and arrays; it does not promise deep copying arbitrary
+pointer/struct object graphs. Mutating one consumer's description cannot alter
+the Driver's request, another consumer's description or an original Question's
+choice classification. Live copies still share the run-owned responder: only one
+Approve/Deny/Answer succeeds, Kind checks use its original kind, and cancellation
+or expiry makes every copy unavailable for a new response. Recorder replay has
+the separate responsibility to remove the responder; live event copying does
+not strip response authority.
+
 ## Store contract: API reference §13
 
 Finalize checks cancellation before its atomic commit, including after acquiring
@@ -185,7 +197,9 @@ capability/request/error contract; add the Ask-aware Policy active budget and
 typed timeout error. Unreleased / Fixed: distinguish parent deadline from an
 approval's own timeout, preserve first confirmed terminal reason with partial
 results and secondary causes, and prevent memory Finalize writes after
-cancellation while waiting for its mutex. Unreleased / Changed: record the
+cancellation while waiting for its mutex. Also record R013's independent
+approval description snapshots with preserved exactly-once response authority.
+Unreleased / Changed: record the
 explicit budget seal before atomic persistence, whole-value Policy semantics
 and append compatibility behavior. Provider-specific support claims belong to
 the later validated provider changes.
@@ -198,6 +212,11 @@ the missing append/budget contract, parent-deadline classification and memory's
 canceled Finalize writes before the corresponding fixes. Final committed-SHA
 command logs, executed pass/subtest counts, actual skips and artifact SHA-256
 values are recorded in the adjacent result.json/evidence handoff after commit.
+R013 also retains C01's fixed-G02 public red fixture evidence (11 failures) and
+the same regression's local pre-repair red run (11 failures). The committed
+regression derives from that independent fixture, covering all three approval
+Kinds via callback/event, nested containers, 24 concurrent responder copies,
+positive/deny, kind mismatch, nil/zero values and cancellation expiry.
 
 Required commands retain their complete scopes and repetitions:
 
@@ -205,6 +224,7 @@ Required commands retain their complete scopes and repetitions:
 go test -count=1 . ./driver ./adaptertest ./internal/activebudget ./internal/systemprompt ./memory ./threadstore
 go test -race -count=10 . -run TestAlignmentActiveBudget
 go test -race -count=10 ./internal/activebudget ./memory
+go test -race -count=10 . -run TestAlignmentApprovalSnapshot
 ```
 
 Windows command-line tests are pure mapping tests; any Windows cross-compilation

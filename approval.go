@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
 	"sync"
 	"time"
 
@@ -173,9 +172,13 @@ type ApprovalRequest struct {
 
 	// Choices are the renderable options of a Question request (question
 	// field group). Answer accepts one of the choice keys or free text.
+	// Construction and event copies own independent choice slices.
 	Choices []Choice
 
-	// Details carries driver-specific structured request data.
+	// Details carries driver-specific structured request data. Construction and
+	// event copies isolate JSON containers (maps, slices and arrays), including
+	// containers nested in interfaces; arbitrary pointer/struct objects are not
+	// recursively copied. Live copies retain the same exactly-once responder.
 	Details map[string]any
 
 	// CreatedAt is when the current approval attempt was created.
@@ -225,7 +228,7 @@ func newApprovalRequest(req driver.DecisionRequest) *ApprovalRequest {
 		Source:     req.Source,
 		ToolCallID: req.ToolCallID,
 		Choices:    append([]Choice(nil), req.Choices...),
-		Details:    maps.Clone(req.Payload),
+		Details:    cloneJSONValue(req.Payload).(map[string]any),
 		CreatedAt:  req.CreatedAt,
 		Deadline:   req.Deadline,
 		Attempt:    req.RetryAttempt,

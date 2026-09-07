@@ -25,7 +25,19 @@
   barrier against the terminal mutex and retains cancellation as a secondary
   cause. No global “context always wins” rule was introduced.
 
+- **T10-F05, P1, resolved (R013; existing C03 descriptive snapshot contract).**
+  C01's fixed-G02 public fixture and the local pre-repair repetition each failed
+  11 tests/subtests: newApprovalRequest shared nested Payload containers, while
+  WithEventMeta shared Choices/Details across consumers. Question choice-key
+  mutation even changed the original live Answer classification. The constructor
+  and event clone now copy only the existing JSON-container domain; the responder
+  pointer remains shared. The fixture covers three Kinds, callback/Stream,
+  competing responders, mismatch, nil/zero values and cancel-expiry. Evidence:
+  `evidence/C01-baseline-snapshot-red.json`,
+  `evidence/C01-baseline-snapshot-red.log`,
+  `evidence/approval-snapshot-local-red.jsonl`, and final V04.
+
 Evidence of final repairs is the committed-source test suite and final-SHA V01,
-V02 and V03 logs listed in result.json. Built-in provider startup signatures and
+V02, V03 and V04 logs listed in result.json. Built-in provider startup signatures and
 Windows native/live execution are outside this core implementation; the delivery
 does not claim those later contracts have passed.
