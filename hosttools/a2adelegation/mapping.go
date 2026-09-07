@@ -142,6 +142,79 @@ func mergeStreamArtifact(task *clienta2a.Task, artifact clienta2a.Artifact, appe
 	task.Artifacts = append(task.Artifacts, artifact)
 }
 
+// reconcileRecoveredArtifact distinguishes an explicit complete query from
+// historical replay. A proven extension replaces live content; a lagging prefix
+// cannot roll it back. Incomparable content uses the complete query and reports
+// a conflict, leaving previously published live events intact.
+func reconcileRecoveredArtifact(task *clienta2a.Task, recovered clienta2a.Artifact, observedLive bool) (conflict bool) {
+	if observedLive {
+		for _, observed := range task.Artifacts {
+			if observed.ID != recovered.ID {
+				continue
+			}
+			liveParts := coalescedArtifactText(observed.Parts)
+			queryParts := coalescedArtifactText(recovered.Parts)
+			if artifactPartsPrefix(liveParts, queryParts) {
+				break
+			}
+			if artifactPartsPrefix(queryParts, liveParts) {
+				return false
+			}
+			conflict = true
+			break
+		}
+	}
+	mergeStreamArtifact(task, recovered, false)
+	return conflict
+}
+
+// Coalesce only adjacent text with identical non-text fields. JSON data, file
+// references, inline bytes, metadata and mixed-part boundaries are not guessed.
+func coalescedArtifactText(parts []clienta2a.Part) []clienta2a.Part {
+	out := make([]clienta2a.Part, 0, len(parts))
+	for i := 0; i < len(parts); {
+		part := parts[i]
+		i++
+		if part.Kind == clienta2a.PartText {
+			var text strings.Builder
+			text.WriteString(part.Text)
+			for i < len(parts) && sameArtifactTextAttributes(part, parts[i]) {
+				text.WriteString(parts[i].Text)
+				i++
+			}
+			part.Text = text.String()
+		}
+		out = append(out, part)
+	}
+	return out
+}
+
+func sameArtifactTextAttributes(left, right clienta2a.Part) bool {
+	if left.Kind != clienta2a.PartText || right.Kind != clienta2a.PartText {
+		return false
+	}
+	left.Text, right.Text = "", ""
+	return reflect.DeepEqual(left, right)
+}
+
+// Inputs are text-coalesced views. Only a final text part may be an unfinished
+// prefix within a part; every preceding or non-text part must match exactly.
+func artifactPartsPrefix(prefix, whole []clienta2a.Part) bool {
+	if len(prefix) > len(whole) {
+		return false
+	}
+	for i, part := range prefix {
+		if reflect.DeepEqual(part, whole[i]) {
+			continue
+		}
+		if i == len(prefix)-1 && sameArtifactTextAttributes(part, whole[i]) && strings.HasPrefix(whole[i].Text, part.Text) {
+			return true
+		}
+		return false
+	}
+	return true
+}
+
 func (m *eventMapper) taskEvents(task clienta2a.Task) []DelegationEvent {
 	out := []DelegationEvent{}
 	if task.Status.State != "" {

@@ -257,8 +257,8 @@ func (r *delegationRun) delegateStreaming(ctx context.Context, client A2AClient,
 	var snapshot *clienta2a.Task
 	lastTaskID := send.Message.TaskID
 	liveArtifacts := make(map[string]bool)
-	// Queries and historical replay may lag behind live artifact updates.
-	// Restore their other artifacts without rolling back observed content.
+	// Historical replay restores only artifacts not updated live. Explicit
+	// GetTask recovery uses a separate reconciliation rule below.
 	restoreArtifacts := func(artifacts []clienta2a.Artifact) []clienta2a.Artifact {
 		var restored []clienta2a.Artifact
 		for _, artifact := range artifacts {
@@ -269,6 +269,21 @@ func (r *delegationRun) delegateStreaming(ctx context.Context, client A2AClient,
 			restored = append(restored, artifact)
 		}
 		return restored
+	}
+	recoverArtifacts := func(artifacts []clienta2a.Artifact) {
+		for _, artifact := range artifacts {
+			if reconcileRecoveredArtifact(&currentTask, artifact, liveArtifacts[artifact.ID]) {
+				// The complete query is authoritative when neither content
+				// view is a prefix. Report the conflict without payload data.
+				event := mapper.base
+				event.Kind = DelegationStreamDropped
+				event.RemoteTaskID = currentTask.ID
+				event.RemoteContextID = currentTask.ContextID
+				event.RemoteArtifactID = artifact.ID
+				event.Raw = map[string]any{"reason": "artifact_recovery_conflict", "resolution": "recovered_snapshot"}
+				r.publish(event)
+			}
+		}
 	}
 	cancelResult := func() (DelegationResult, error) {
 		r.publishAll(mapper.closeOpen(lastTaskID, send.ContextID))
@@ -312,7 +327,7 @@ func (r *delegationRun) delegateStreaming(ctx context.Context, client A2AClient,
 			}
 			if lastTaskID != "" {
 				if recovered, ok := r.recoverTask(ctx, client, lastTaskID, send.Tenant, send.HistoryLength); ok && !staleRecoveredTask(recovered, snapshot, send.Message.TaskID != "") {
-					restoreArtifacts(recovered.Artifacts)
+					recoverArtifacts(recovered.Artifacts)
 					recovered.Artifacts = currentTask.Artifacts
 					for _, ev := range mapper.taskEvents(recovered) {
 						r.publish(ev)
@@ -341,13 +356,13 @@ func (r *delegationRun) delegateStreaming(ctx context.Context, client A2AClient,
 			lastTaskID = event.Task.ID
 			currentTask.ID = event.Task.ID
 			currentTask.ContextID = event.Task.ContextID
-			restored := restoreArtifacts(event.Task.Artifacts)
 			if persistedTaskEvent(event) {
 				if event.RecoveredState {
 					if staleRecoveredTask(*event.Task, snapshot, send.Message.TaskID != "") {
 						break
 					}
 					recovered := *event.Task
+					recoverArtifacts(recovered.Artifacts)
 					recovered.Artifacts = currentTask.Artifacts
 					event.Task = &recovered
 					r.publishAll(mapper.Map(event))
@@ -355,11 +370,12 @@ func (r *delegationRun) delegateStreaming(ctx context.Context, client A2AClient,
 				}
 				snapshot = event.Task
 				projected := *event.Task
-				projected.Artifacts = restored
+				projected.Artifacts = restoreArtifacts(event.Task.Artifacts)
 				event.Task = &projected
 				r.publishAll(mapper.Map(event))
 				continue
 			}
+			recoverArtifacts(event.Task.Artifacts)
 			currentTask.Messages = event.Task.Messages
 		}
 		if event.Artifact != nil {
@@ -379,7 +395,7 @@ func (r *delegationRun) delegateStreaming(ctx context.Context, client A2AClient,
 			if recovered, ok := r.recoverTask(ctx, client, lastTaskID, send.Tenant, send.HistoryLength); ok &&
 				recovered.Status.State == event.Status.State && !staleRecoveredTask(recovered, snapshot, send.Message.TaskID != "") {
 				currentTask.Messages = recovered.Messages
-				restoreArtifacts(recovered.Artifacts)
+				recoverArtifacts(recovered.Artifacts)
 				currentTask.Status = recovered.Status
 			}
 			currentTask.Raw = event.Raw

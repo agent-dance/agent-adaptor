@@ -10,7 +10,7 @@
 
 纯流 EOF 没有新 live 终局时，hosttool 返回 `DelegationError.Code == "stream_interrupted"`，保留已收到的制品，并对已知远端任务执行现有的有界取消。客户端仍按其协议接口返回 EOF；应用不能把最后一个历史 Task 的状态自行提升为成功。仅发送完整 Task 的服务端应采用明确 Send/GetTask 轮询模式，不静默猜测流终局。
 
-流中 snapshot、后续 artifact 与 append 内容汇总为最终制品；一旦某 ArtifactID 接收到 live 更新，历史回放和可能滞后的 GetTask 只补其他 ID，不能覆写或重新发布该 ID 的旧内容。新的 live 问题、Message 和 terminal Raw 保留。Local loopback 在终局 Task 旁携带 live Status，使用同一 delegator 规则。
+流中 snapshot、后续 artifact 与 append 内容汇总为最终制品；一旦某 ArtifactID 接收到 live 更新，历史回放只补其他 ID，不能覆写或重新发布该 ID 的旧内容。显式 GetTask 使用独立规则：可证明查询内容是已观察内容的完整扩展时采用查询视图；查询只是滞后前缀时保留 live 视图；两者无法比较时采用完整查询视图，同时发出已有 `DelegationStreamDropped`，其诊断只有 `reason=artifact_recovery_conflict`、`resolution=recovered_snapshot` 和 typed artifact ID，不包含正文、URL 或任意 Raw。已发布的 live 事件历史保留，不伪造 Parts 拼接。比较只合并其他字段完全相同的相邻 Text，并允许最后一个 Text 是字符串前缀；结构化数据、文件引用、inline bytes、metadata 和混合 Parts 边界必须精确匹配。新的 live 问题、Message 和 terminal Raw 保留。Local loopback 在终局 Task 旁携带 live Status，使用同一 delegator 规则。
 
 桥与 Local 均先 `errors.As` 提取既有 `*adaptor.RunError`，按其主 `Reason` 判状态并保留允许投影的 partial Result。`errors.Join(&RunError{Reason: ReasonApprovalDenied/ReasonApprovalTimeout, Result: partial}, context.Canceled/DeadlineExceeded)` 仍为 failed；显式 `ReasonCancelled` 为 canceled，并保留 partial artifacts/text。无 RunError 才使用既有 bare context 分支。T03 保留原有 bare deadline 区别：bridge failed，Local canceled；完整 deadline/approval/budget failure code 的闭集往返由 T18/T19 负责，本交付不声称 W13 已完成。
 
@@ -32,9 +32,14 @@
 
 > For example, `old input-required Task → working → artifact → completed Status` completes with the later artifact; `old question Task → new input-required Status` presents only the new question. A historical input-required/completed/failed Task followed by EOF has no current terminal outcome. Delegation reports `stream_interrupted` and performs its bounded cancellation of the known task; it does not replay the old question. Servers that return only full Tasks should be consumed through explicit Send/GetTask polling. Continuations keep the same remote TaskID while each call consumes only its current live outcomes.
 
+追加显式恢复制品的规则：
+
+> Historical Task replay never replaces an artifact already updated live. Explicit GetTask recovery reconciles complete artifact content separately: a proven extension supplies the complete query view, while a lagging prefix preserves the observed live view. If neither view is a prefix, the complete query view is returned and `subagent.stream.dropped` reports `artifact_recovery_conflict` with `resolution: recovered_snapshot`. That diagnostic contains no payload, URL, or arbitrary Raw content; previously delivered live events remain available. Comparison joins adjacent Text parts only when their other fields match, and otherwise preserves exact structured/file/metadata and mixed-part boundaries. It never fabricates a combined artifact from conflicting views.
+
 ### CHANGELOG.md — 当前未发布修复条目
 
 - Fix A2A continuations ending on historical Task snapshots: retain identity and artifacts, await current live status/message, and reject stale questionnaire recovery or snapshot-only EOF.
+- Recover complete artifact extensions after partial streaming; keep live content against stale prefixes and explicitly report incompatible recovery views without exposing payload diagnostics.
 - Preserve synchronous/polling Task results and Local/Remote parity by giving Local terminal outcomes an explicit live Status.
 - Prefer RunError's primary Reason over joined context causes in the A2A bridge and Local delegation; preserve allowed partial artifacts/text for failed and canceled runs.
 
@@ -48,6 +53,6 @@
 
 ## 验证与边界
 
-首先在未修改生产代码的基线上运行 `TestAlignment*` fake/loopback fixtures，取得 47 个失败测试/子测试的可复现证据；随后实施并验证全部三个 A2A 包。协调者预审另补两类负例，并在首次实施提交上复现失败：相同文案但不同正式 MessageID 的新问卷恢复，以及旧 snapshot → live append → 旧 snapshot 重播 / 滞后 GetTask。修复后新增覆盖旧三种终局快照、live 新问卷与真实 HITL payload、EOF、显式恢复、stale GetTask、同 TaskID 三轮 answer、append 制品、同步/polling，以及 bridge/Local 的 joined errors。
+首先在未修改生产代码的基线上运行 `TestAlignment*` fake/loopback fixtures，取得 47 个失败测试/子测试的可复现证据；随后实施并验证全部三个 A2A 包。协调者预审另补两类负例，并在首次实施提交上复现失败：相同文案但不同正式 MessageID 的新问卷恢复，以及旧 snapshot → live append → 旧 snapshot 重播 / 滞后 GetTask。第二次验收发现全量查询被一律忽略会截断完整恢复制品；在 `b25883f` 上先用文本、结构化、文件、混合 Parts 三入口夹具复现 28 个失败测试/子测试，再按独立 recovery 规则修复。attempt 1 原报告和日志保留，attempt 2 证据单独保存。修复后新增覆盖旧三种终局快照、live 新问卷与真实 HITL payload、EOF、显式恢复、stale GetTask、同 TaskID 三轮 answer、append 制品、同步/polling，以及 bridge/Local 的 joined errors。
 
 交付源码提交后，重新运行 task.json 的完整 `go test -count=1` 与 `go test -count=20` 三包命令，并补同范围 `go test -race -count=1`。实际 SHA、计数、退出码与日志在 result.json 中；日志不加入被测试源码提交，避免 SHA 自引用。执行环境为 macOS，三项 live/E2E/API golden 环境门均为 0。没有执行真实 provider CLI、付费/live 测试、Linux/Windows 发布验证、push 或 tag。
