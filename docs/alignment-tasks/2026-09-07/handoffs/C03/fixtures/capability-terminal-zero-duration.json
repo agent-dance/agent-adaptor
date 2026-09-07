@@ -1,0 +1,22 @@
+{
+  "schema": "adapter.stream.v1",
+  "event": {
+    "kind": "capability.invocation",
+    "meta": {
+      "run_id": "remote-r1",
+      "sequence": 8,
+      "time": "2026-09-07T00:00:00Z"
+    },
+    "capability": {
+      "invocation_id": "call-1",
+      "kind": "mcp",
+      "key": "knowledge",
+      "operation": "search",
+      "phase": "completed",
+      "evidence": "provider_protocol",
+      "source": "provider",
+      "occurred_at": "2026-09-07T00:00:00Z",
+      "duration_ns": 0
+    }
+  }
+}
