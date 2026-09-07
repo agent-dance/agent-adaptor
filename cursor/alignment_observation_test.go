@@ -438,3 +438,27 @@ func TestAlignmentCursorInvalidUTF8CannotBecomeCatalogEvidence(t *testing.T) {
 		t.Fatal("invalid UTF-8 was repaired into valid evidence")
 	}
 }
+
+func TestAlignmentCursorFormalSpellingsAndStartConflict(t *testing.T) {
+	for _, args := range []string{`{"providerIdentifier":"知识__库","toolName":"search__中文"}`, `{"serverIdentifier":"知识__库","providerIdentifier":"user-other-alias","name":"search__中文"}`} {
+		_, s := alignmentCursorParse(t, alignmentCursorCatalog(), alignmentCursorFrame("x", "started", "mcpToolCall", args, "")+alignmentCursorFrame("x", "completed", "mcpToolCall", args, `{"success":true}`), false)
+		f := s.facts()
+		if len(f) != 2 || f[1].Phase != capability.Completed || f[0].Ref.Key != "知识__库" || f[0].Ref.Operation != "search__中文" {
+			t.Fatalf("formal spelling=%+v", f)
+		}
+	}
+	changed := strings.ReplaceAll(alignmentCursorMCPArgs, "DO_NOT_PROJECT", "changed arguments")
+	_, s := alignmentCursorParse(t, alignmentCursorCatalog(), alignmentCursorFrame("x", "started", "mcpToolCall", alignmentCursorMCPArgs, "")+alignmentCursorFrame("x", "started", "mcpToolCall", changed, ""), false)
+	if len(s.facts()) != 2 {
+		t.Fatalf("conflicting start republished: %+v", s.facts())
+	}
+	conflicts := 0
+	for _, e := range s.events {
+		if e.Data["reason"] == "lifecycle_conflict" {
+			conflicts++
+		}
+	}
+	if conflicts != 1 {
+		t.Fatalf("conflicting arguments were silently accepted: %d", conflicts)
+	}
+}
