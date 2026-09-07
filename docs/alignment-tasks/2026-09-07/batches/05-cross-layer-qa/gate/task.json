@@ -31,7 +31,8 @@
     "T22",
     "T23",
     "T24",
-    "T33"
+    "T33",
+    "T34"
   ],
   "base": {
     "mode": "batch_integration",
@@ -106,6 +107,11 @@
         "producer": "T33",
         "path": "docs/alignment-tasks/2026-09-07/handoffs/T33/result.json",
         "version_source": "实际worker交付head及证据；R021补充任务"
+      },
+      {
+        "producer": "T34",
+        "path": "docs/alignment-tasks/2026-09-07/handoffs/T34/result.json",
+        "version_source": "R022实际QA交付head及证据"
       }
     ],
     "embedded_plan_sections": {}
@@ -176,7 +182,8 @@
     "核对该批requirements_owned/verified都有证据、依赖合同无漂移、既有高优先级不变量没被放宽；更新外部execution-state，仍未满足的W项保持open。",
     "在合流后的实际SHA上执行本gate检查并记录，不把worker测试绿当成合流绿；只在gate accepted后给下一批发布准确base SHA。",
     "额外冻结implementation_head供B06所有任务共用；从T23收集展开后的live/平台非零测试命令，并确认T14-T17已写对应双门TestAlignmentLive入口。G05仅实现已验收，不等于live/平台发布就绪。",
-    "R021：追加原 T08 owner 的独立 T33，等待全部六项最终交付；保留旧43e6ba3已验收gate与T25Linux红历史，合入后重跑全部原G05命令并冻结新SHA，所有B06证据按新SHA重新生成。T20未变源码检查可保持原SHA证据，仅按新coverage重出交付metadata。"
+    "R021：追加原 T08 owner 的独立 T33，等待全部六项最终交付；保留旧43e6ba3已验收gate与T25Linux红历史，合入后重跑全部原G05命令并冻结新SHA，所有B06证据按新SHA重新生成。T20未变源码检查可保持原SHA证据，仅按新coverage重出交付metadata。",
+    "R022：接受原T16负责人补充T34的接收同步QA修复，保持所有原要求owner/verifier及原命令；G05依赖本批全部七项，最多六并发。旧45cada43验收与T25-F02失败保留，合流后重新冻结，B06所有原检查用新SHA。"
   ],
   "acceptance_criteria": [
     {

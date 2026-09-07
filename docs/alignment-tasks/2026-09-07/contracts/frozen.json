@@ -1,10 +1,10 @@
 {
   "schema_version": "1.0",
   "gate": "G05",
-  "manifest_revision": 23,
+  "manifest_revision": 24,
   "code_baseline": "919f140f64f89c80933802840c8878681a85a4d9",
   "source_head": "e2f0620bdd6477e6fe16f6db5648093589342ca2",
-  "status": "R021_reconciled_pending_exact_G05_checks",
+  "status": "R022_Codex_stderr_admission_QA_pending",
   "contracts": [
     {
       "producer": "C01",
@@ -362,6 +362,13 @@
       "codebuddy/alignment_persistent_handoff_test.go",
       "codebuddy/doc.go",
       "docs/alignment-tasks/2026-09-07/handoffs/T33/**"
+    ],
+    "T34": [
+      "codex/alignment_prompt_test.go",
+      "codex/testdata/alignment-provider/main.go",
+      "codex/appserver/alignment_stderr_boundary_test.go",
+      "codex/doc.go",
+      "docs/alignment-tasks/2026-09-07/handoffs/T34/**"
     ]
   },
   "coordination": [
@@ -399,7 +406,8 @@
     "G05 reconciliation canonical22: all T20–T24 final sources independently accepted and merged; full source gate must pass before implementation_head is frozen. Exact-SHA Linux/Windows/paid live evidence remains separate. Existing C02 public translation-error boundary clarified without runtime or requirement changes.",
     "G05-F01: first merged gate correctly rejected T21/T22 QA upstream imports outside localized A2A packages. Original owners restore public-only StreamRecoveryError Cause/TaskID oracles; C02 confirms no upstream concrete representation is promised. Existing import guard and all original validations remain; prior failed gate retained, replacement exact-SHA full gate required. No contract/requirement/ownership amendment.",
     "R021: native Linux T25 at43e6ba3 found persistent CodeBuddy stderr parser append racing returned Transcript on a healthy turn. Supplemental B05 T33 by original T08 owner uses G04 base and disjoint exact paths. W04-R06 final implementation owner moves T08→T33 and independent verifier T20→T25 (T28 live retained), preserving96IDs and historical reports. G05 reopens; all B06 must use replacement frozen SHA; no API/dependency/protocol or command weakening.",
-    "G05 replacement canonical23: T33 joins admitted CodeBuddy stderr callbacks before parser finalize/Response, retaining failure causes and healthy checkpoints. C02/C03 independent reviews and four exact-source worker commands preserve original red logs. All six B05 workers accepted; this source still requires a new exact-SHA G05 gate and fresh B06 evidence. No public API, dependency, golden, generated schema or original validation command changes."
+    "G05 replacement canonical23: T33 joins admitted CodeBuddy stderr callbacks before parser finalize/Response, retaining failure causes and healthy checkpoints. C02/C03 independent reviews and four exact-source worker commands preserve original red logs. All six B05 workers accepted; this source still requires a new exact-SHA G05 gate and fresh B06 evidence. No public API, dependency, golden, generated schema or original validation command changes.",
+    "R022: native Linux T25-F02 at45cada43 exposed a healthy resident Codex fixture cross-pipe receipt assumption. Isolated unchanged-predicate diagnostics reproduced empty stderr with correct formal Usage; separate before-first-Read and same-buffer receipt controls establish the missing fixture prerequisite. Original T16 owner supplemental T34 relocates exact Raw oracle to an explicit parent admission gate and preserves public conversion/failure/usage/terminal/stability coverage. QA/docs only, no production/API change or requirement owner/verifier change. G05 reopens; B05 seven tasks at capacity6; B06 uses replacement same SHA."
   ],
   "unmerged_related_branches": [
     {
