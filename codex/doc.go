@@ -35,4 +35,12 @@
 // Malformed plans leave the prior snapshot unchanged with a safe notice. Current
 // thread/turn and terminal fences apply; experimental plan deltas remain opaque.
 // Valid historical token-usage replay for the same thread is audit-only Raw.
+//
+// A resident turn snapshots the stdout and stderr received for that turn.
+// Stdout terminal delivery does not acknowledge receipt on the independent
+// stderr pipe. Bytes already received are preserved exactly; future unframed
+// stderr is not inferred from the terminal and cannot amend a returned Result.
+// One-shot and failed-process cleanup also drain the process streams within
+// their shutdown bounds. A healthy connected resident remains available for
+// the next turn without waiting for process exit.
 package codex
