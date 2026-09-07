@@ -462,3 +462,69 @@ func TestAlignmentCursorFormalSpellingsAndStartConflict(t *testing.T) {
 		t.Fatalf("conflicting arguments were silently accepted: %d", conflicts)
 	}
 }
+
+// Every present known alias must be valid independently; a valid second name
+// cannot repair a malformed first one. Unknown additive fields remain opaque.
+func TestAlignmentCursorMCPOperationAliases(t *testing.T) {
+	for _, tc := range []struct {
+		name, fields string
+		observe      bool
+	}{
+		{"name only", `"name":"read"`, true},
+		{"toolName only", `"toolName":"read"`, true},
+		{"same aliases", `"toolName":"read","name":"read"`, true},
+		{"different aliases", `"toolName":"write","name":"read"`, false},
+		{"numeric toolName", `"toolName":17,"name":"read"`, false},
+		{"empty toolName", `"toolName":"","name":"read"`, false},
+		{"null toolName", `"toolName":null,"name":"read"`, false},
+		{"object toolName", `"toolName":{},"name":"read"`, false},
+		{"boolean toolName", `"toolName":true,"name":"read"`, false},
+		{"numeric name", `"toolName":"read","name":17`, false},
+		{"empty name", `"toolName":"read","name":""`, false},
+		{"null name", `"toolName":"read","name":null`, false},
+		{"unknown additive field", `"toolName":"read","futureOperation":17`, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := `{"serverIdentifier":"知识__库",` + tc.fields + `}`
+			body := alignmentCursorFrame("alias-call", "started", "mcpToolCall", args, "") + alignmentCursorFrame("alias-call", "completed", "mcpToolCall", args, `{"success":true}`) + alignmentCursorTerminal
+			cfg, home := alignmentCursorCommand(t, body, 0)
+			for _, streaming := range []bool{false, true} {
+				req := alignmentCursorCatalog()
+				req.Streaming = streaming
+				req.Prompt = "unchanged"
+				req.Workspace = driver.WorkspaceLease{CWD: home}
+				sink := &alignmentCursorSink{}
+				response, err := Driver(cfg).Run(context.Background(), req, sink)
+				if err != nil || response.Failure != nil || response.Checkpoint == nil || !response.Checkpoint.Valid || response.RawStreams == nil || response.RawStreams.Stdout != body || response.RawStreams.Terminal == nil || response.Output != "done" || len(response.Transcript) != 4 {
+					t.Fatalf("streaming=%t changed unrelated output: response=%+v err=%v", streaming, response, err)
+				}
+				facts := sink.facts()
+				if tc.observe {
+					if len(facts) != 2 || facts[0].Phase != capability.Started || facts[1].Phase != capability.Completed || facts[0].Ref.Operation != "read" {
+						t.Fatalf("streaming=%t valid aliases=%+v", streaming, facts)
+					}
+				} else {
+					if len(facts) != 0 {
+						t.Fatalf("streaming=%t malformed alias accepted: %+v", streaming, facts)
+					}
+					notices := 0
+					for _, e := range sink.events {
+						if e.Data["reason"] == "invalid_reference" {
+							notices++
+						}
+					}
+					if notices != 1 {
+						t.Fatalf("streaming=%t invalid alias notice count=%d", streaming, notices)
+					}
+				}
+			}
+		})
+	}
+	valid := `{"serverIdentifier":"知识__库","toolName":"read"}`
+	invalid := `{"serverIdentifier":"知识__库","toolName":null,"name":"read"}`
+	_, sink := alignmentCursorParse(t, alignmentCursorCatalog(), alignmentCursorFrame("pending", "started", "mcpToolCall", valid, "")+alignmentCursorFrame("pending", "completed", "mcpToolCall", invalid, `{"success":true}`), false)
+	facts := sink.facts()
+	if len(facts) != 2 || facts[1].Phase != capability.Interrupted {
+		t.Fatalf("malformed terminal alias closed pending call successfully: %+v", facts)
+	}
+}

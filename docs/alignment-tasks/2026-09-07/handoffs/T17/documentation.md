@@ -77,3 +77,15 @@ environment gate closed. No actual CLI/version/auth/profile probe, paid call,
 native Windows or Linux test is claimed. B06 retains those gates on the final
 frozen implementation SHA. Final command results and real source SHA are recorded
 outside the referenced commit in result.json and evidence/.
+
+Attempt 2 closes independent finding T17-F01: when `toolName` was present but
+numeric, null or empty, a valid `name` incorrectly hid the malformed field.
+Both recognized operation aliases now independently require valid, nonempty
+strings before equality checking. A malformed alias yields a safe
+invalid_reference notice and no observed call; a malformed completion cannot
+complete an already started call. Unrelated additive fields, Raw, Transcript,
+terminal and healthy checkpoint behavior remain unchanged. The owned regression
+covers both actual Driver.Run print branches, positive alias controls, symmetric
+invalid fields, and a pending terminal. G04 should merge this clarification into
+the Cursor observation subsection of docs/streaming.md and the same CHANGELOG
+entry. No public declaration, dependency, scope or golden changes were needed.

@@ -64,10 +64,13 @@ func (p *cursorParser) observeCapability(id, variant, subtype string, call map[s
 		if _, present := args["serverIdentifier"]; !present {
 			name = cursorExactString(args, "providerIdentifier")
 		}
-		operation = cursorExactString(args, "toolName")
-		if other, present := args["name"]; present {
-			text, ok := other.(string)
-			if !ok || operation != "" && operation != text {
+		for _, field := range []string{"toolName", "name"} {
+			value, present := args[field]
+			if !present {
+				continue
+			}
+			text, ok := value.(string)
+			if !ok || !capabilityobs.ValidText(text, 256, true) || operation != "" && operation != text {
 				p.capabilityNotice("invalid_reference")
 				return
 			}

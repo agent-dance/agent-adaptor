@@ -58,7 +58,9 @@ The parser recognizes only these exact, catalog-resolved references:
 - `mcpToolCall.args.serverIdentifier` maps to the resolved MCP server key;
   `providerIdentifier` is the fixture-proven older spelling, used only when
   `serverIdentifier` is absent. `toolName` or `name` supplies the operation;
-  conflicting spellings are rejected. Names are compared without trimming,
+  each present spelling must independently be a valid, nonempty string before
+  their equality is checked. A malformed known spelling cannot be treated as
+  absent, while unknown additive fields remain opaque. Names are compared without trimming,
   normalization, underscore splitting, or prefix matching.
 - `taskToolCall.args.subagentType.custom.name` maps to a unique resolved profile
   agent RuntimeName and emits its canonical Key with operation `spawn`.
