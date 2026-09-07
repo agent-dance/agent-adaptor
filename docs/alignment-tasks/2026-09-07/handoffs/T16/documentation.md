@@ -81,4 +81,6 @@ R017 新用例固定同一真实 store、Dedicated source、workspace、四字�
 
 `TestAlignmentLiveGateCanary` 使用本地 Go canary executable 检查 env=0 与缺 build tag 两种拒绝路径；canary 不实现 provider 协议且若被调用会写标记并非零退出。最终 tag/env=0 检查还把同一 canary 放在 PATH 首位，记录未调用标记。这些只是最终源的编译与双门入口证据，R017 未运行真实 provider，不关闭 B06 live 验收，也不重开已独立关闭的 T16-F01/F02/F03 生产 finding。
 
+同范围静态检查还补齐旧 ObservationAndPersistent 工具的稳定 Revision，使它满足既有 Thread+WithTools 前置合同；否则 tools.go 会在 provider 启动前返回 Thread incompatible。仅补 fixture 声明，原 Skill/MCP/plan/nonce/单进程断言全部保留，不修改生产语义。
+
 B06 只有另获授权才可执行：`AGENT_ADAPTOR_LIVE_CONFORMANCE=1 AGENT_ADAPTOR_CODEX_LIVE_PROFILE=<explicit-isolated-auth-seed> go test -tags=codex_live -count=1 ./codex/... -run 'TestAlignmentLive|TestCodexDriverConformance|TestAppServer'`。helper 只从明确授权的隔离 seed 复制 auth.json 到新的 0600 临时 profile，记录 CLI --version，并使用新 workspace；绝不推断或复用用户原目录。本批只以 env=0 编译这些入口，不产生 provider 请求；普通无 tag 即使 env=1 仍不会开启 live。Windows native、Linux native/race 全局门和真实 live 仍由 B06 在指定 head 执行，不把本地 fixture 或禁用 probe 当作通过证据。

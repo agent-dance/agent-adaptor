@@ -78,7 +78,7 @@ func TestAlignmentLiveObservationAndPersistent(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	nonce := alignmentNonce(t)
-	probe := tool.Define("alignment_probe", "Return the alignment marker.", func(context.Context, struct{}) (string, error) { return nonce, nil }, tool.ReadOnly())
+	probe := tool.Define("alignment_probe", "Return the alignment marker.", func(context.Context, struct{}) (string, error) { return nonce, nil }, tool.ReadOnly(), tool.Revision("alignment-probe/v1"))
 	a := adaptor.New(Driver(cfg), adaptor.WithThreadStore(memory.NewStore()), adaptor.WithPolicy(adaptor.Policy{Approvals: adaptor.ApprovalPolicy{Permission: adaptor.ApprovalAutoApprove}}), adaptor.WithSkills(skill.Inline("review", "---\nname: review\ndescription: Alignment skill.\n---\nUse the alignment_probe tool when asked.")), adaptor.WithTools(probe))
 	defer a.Close(context.Background())
 	thread := a.Thread("alignment-live")
