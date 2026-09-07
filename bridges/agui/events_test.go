@@ -580,10 +580,10 @@ func TestEventTranslatorPreservesCompleteToolSnapshots(t *testing.T) {
 		ID: "tool", Name: "shell", Phase: adaptor.PhaseStart,
 		Args: map[string]any{"cmd": "go test", "count": 2},
 	})
-	if len(events) != 2 || events[0].Type() != aguievents.EventTypeToolCallStart || events[1].Type() != aguievents.EventTypeToolCallArgs {
+	if len(events) != 3 || events[0].Type() != aguievents.EventTypeCustom || events[1].Type() != aguievents.EventTypeToolCallStart || events[2].Type() != aguievents.EventTypeToolCallArgs {
 		t.Fatalf("start snapshot = %v", typesOf(events))
 	}
-	args := events[1].(*aguievents.ToolCallArgsEvent)
+	args := events[2].(*aguievents.ToolCallArgsEvent)
 	var decoded map[string]any
 	if err := json.Unmarshal([]byte(args.Delta), &decoded); err != nil || decoded["cmd"] != "go test" {
 		t.Fatalf("args delta = %q, decoded=%#v err=%v", args.Delta, decoded, err)
@@ -606,7 +606,7 @@ func TestEventTranslatorPreservesCompleteToolSnapshots(t *testing.T) {
 	_ = tr.Translate(adaptor.RunStarted{RunID: "run", ThreadID: "thread"})
 	events = tr.Translate(adaptor.ToolCall{ID: "end-only", Name: "search", Phase: adaptor.PhaseEnd, Result: map[string]any{"text": "found"}})
 	if got := typesOf(events); !reflect.DeepEqual(got, []aguievents.EventType{
-		aguievents.EventTypeToolCallStart, aguievents.EventTypeToolCallEnd, aguievents.EventTypeToolCallResult,
+		aguievents.EventTypeCustom, aguievents.EventTypeToolCallStart, aguievents.EventTypeToolCallEnd, aguievents.EventTypeToolCallResult,
 	}) {
 		t.Fatalf("end-only result lifecycle = %v", got)
 	}

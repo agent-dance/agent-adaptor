@@ -381,6 +381,18 @@ func parseLastEventID(raw string) (uint64, bool) {
 // rawFrameFor picks the event name + JSON body for one unified event.
 // Returns a nil body to drop the frame.
 func rawFrameFor(ev adaptor.Event) (string, any) {
+	if req, ok := ev.(*adaptor.ApprovalRequest); ok && req == nil {
+		return "", nil
+	}
+	if ev != nil {
+		meta := ev.Meta()
+		if !sourceDepthValid(meta.Source) {
+			meta.Source = nil
+			ev = adaptor.WithEventMeta(adaptor.Notice{Kind: adaptor.NoticeRuntime, Data: map[string]any{"code": "relay_depth_exceeded"}}, meta)
+		} else {
+			ev = adaptor.WithEventMeta(ev, meta)
+		}
+	}
 	name, body := rawFrameBody(ev)
 	if body == nil {
 		return name, nil
@@ -418,8 +430,13 @@ func rawFrameBody(ev adaptor.Event) (string, any) {
 			"text":       e.Text,
 			"phase":      string(e.Phase),
 		}
+	case adaptor.CapabilityInvocation:
+		return "capability.invocation", map[string]any{"capability": capabilityValue(e.Invocation)}
+	case adaptor.TodoUpdated:
+		return "todo.updated", map[string]any{"todo": todoValue(e.Snapshot)}
 	case adaptor.ToolCall:
 		return "tool_call", map[string]any{
+			"scope_id": e.ScopeID, "parent_scope_id": e.ParentScopeID, "parent_tool_call_id": e.ParentToolCallID,
 			"tool_call_id": e.ID,
 			"name":         e.Name,
 			"args":         e.Args,
@@ -428,7 +445,7 @@ func rawFrameBody(ev adaptor.Event) (string, any) {
 			"phase":        string(e.Phase),
 		}
 	case adaptor.ToolResult:
-		return "tool_call.result", map[string]any{"tool_call_id": e.ID, "result": e.Result}
+		return "tool_call.result", map[string]any{"tool_call_id": e.ID, "result": e.Result, "scope_id": e.ScopeID, "parent_scope_id": e.ParentScopeID, "parent_tool_call_id": e.ParentToolCallID}
 	case adaptor.ProcessInfo:
 		return "process." + e.Kind, map[string]any{
 			"kind":     e.Kind,
@@ -495,11 +512,7 @@ func rawEventMeta(meta adaptor.EventMeta) map[string]any {
 		"sequence": meta.Sequence, "time": meta.Time, "turn_id": meta.TurnID,
 	}
 	if meta.Source != nil {
-		out["source"] = map[string]any{
-			"run_id": meta.Source.RunID, "thread_id": meta.Source.ThreadID,
-			"turn_id": meta.Source.TurnID, "sequence": meta.Source.Sequence,
-			"timestamp": meta.Source.Timestamp,
-		}
+		out["source"] = sourceValue(meta.Source)
 	}
 	return out
 }

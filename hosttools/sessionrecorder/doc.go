@@ -3,6 +3,19 @@
 // a cursor that stays monotonic across runs. EventRecorder,
 // NewMemoryEventBackend, and NewJSONLEventBackend form the typed Event API.
 //
+// Recorded events retain scoped tool parents, CapabilityInvocation,
+// TodoUpdated (including an empty clear), and the complete EventMeta source
+// chain. Inputs, returned records, backend records and queries own independent
+// mutable values. Approval records contain descriptions only, including in
+// memory; they cannot answer a live request.
+//
+// JSONL rejects unknown fields/kinds, duplicate JSON keys, invalid UTF-8,
+// unpaired Unicode escapes and invalid observation values as corrupt history.
+// It retains complete valid snapshots, full uint64 cursors and durations;
+// A2A's safe-number and 64 KiB limits do not apply to this private format.
+// An append failure is returned without advancing HostSeq or adding a cached
+// record; durable storage never silently falls back to memory.
+//
 // # Placement
 //
 // This package lives under hosttools because:
