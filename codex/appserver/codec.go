@@ -26,20 +26,23 @@ import (
 // client which spawned a goroutine per message and reordered under mutex
 // contention.
 type stdioStream struct {
-	stdin   io.WriteCloser
-	decoder *json.Decoder
-	enc     *json.Encoder
-	wmu     sync.Mutex
-	rmu     sync.Mutex
-	readErr error
+	stdin    io.WriteCloser
+	decoder  *json.Decoder
+	enc      *json.Encoder
+	wmu      sync.Mutex
+	rmu      sync.Mutex
+	readErr  error
+	readDone chan struct{}
+	readOnce sync.Once
 }
 
 // newStdioStream returns an ObjectStream bound to a subprocess's I/O.
 func newStdioStream(stdin io.WriteCloser, stdout io.Reader) *stdioStream {
 	return &stdioStream{
-		stdin:   stdin,
-		decoder: json.NewDecoder(stdout),
-		enc:     json.NewEncoder(stdin),
+		stdin:    stdin,
+		decoder:  json.NewDecoder(stdout),
+		enc:      json.NewEncoder(stdin),
+		readDone: make(chan struct{}),
 	}
 }
 
@@ -53,8 +56,16 @@ func (s *stdioStream) ReadObject(v interface{}) error {
 		}
 		s.rmu.Unlock()
 	}
+	if err != nil {
+		s.readOnce.Do(func() { close(s.readDone) })
+	}
 	return err
 }
+
+// ReadDone closes after the sole decoder has stopped reading. Unlike the
+// JSON-RPC connection's DisconnectNotify, closing stdin or Client.Close does
+// not signal this until already-written stdout has reached the decoder.
+func (s *stdioStream) ReadDone() <-chan struct{} { return s.readDone }
 
 // ReadError returns the first non-EOF JSON decoding error observed by the
 // inbound reader. It is safe to call after DisconnectNotify closes.

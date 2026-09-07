@@ -107,8 +107,13 @@ func Open(ctx context.Context, opts Options, sink driver.EventSink) (*Process, e
 		stdout: stdoutBuf, stderr: stderrBuf, waitCh: make(chan struct{}),
 	}
 	go func() {
-		p.waitErr = cmd.Wait()
+		// StdoutPipe must be read before Wait closes its descriptor. A peer can
+		// exit immediately after writing the last frame, before its callback
+		// runs. Also preserve bytes beyond a malformed frame as audit-only Raw.
+		<-stream.ReadDone()
+		_, _ = io.Copy(stdoutBuf, stdout)
 		<-stderrDone
+		p.waitErr = cmd.Wait()
 		p.closeMu.Lock()
 		p.closed = true
 		p.closeMu.Unlock()
@@ -272,7 +277,12 @@ func (p *Process) RunTurn(ctx context.Context, opts Options, sink driver.EventSi
 			} else {
 				err = errors.New("codex app-server exited before turn completion")
 			}
+		case <-p.stream.ReadDone():
+			err = errors.New("codex app-server stdout ended before turn completion")
 		}
+	}
+	if readErr := p.stream.ReadError(); readErr != nil {
+		err = errors.Join(err, fmt.Errorf("decode JSON-RPC stdout: %w", readErr))
 	}
 	if err == nil {
 		if protocolErr := state.protocolError(); protocolErr != nil {

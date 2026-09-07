@@ -48,7 +48,7 @@ Plan 使用原有 current thread/turn、响应前排队和 terminal fence。pend
 
 ## 输出、生命周期与回归
 
-保留已有 persistentWriter 的部分 `result, persistentErr`，补齐同一 finishAppServerResult 的元数据/已观察 runtime 报告映射。exec helper 错误也先解析其已捕获完整 stdout/stderr 再返回原 cause；helper broken-pipe 后已到达的正式终局不丢。常驻错误先有界回收再 snapshot，保全已观察 stdout/stderr、Text、Transcript、Usage 和正式终局。
+保留已有 persistentWriter 的部分 `result, persistentErr`，补齐同一 finishAppServerResult 的元数据/已观察 runtime 报告映射。exec helper 错误也先解析其已捕获完整 stdout/stderr 再返回原 cause；helper broken-pipe 后已到达的正式终局不丢。常驻 stdout reader 明确完成并排空剩余 Raw、stderr 后才 cmd.Wait，避免快速非零/畸形退出先关 StdoutPipe 导致尾帧丢失；一轮 app-server 同样保全畸形帧后的 Raw。常驻错误先有界回收再 snapshot，保全已观察 stdout/stderr、Text、Transcript、Usage 和正式终局。
 
 失败、取消、畸形协议、缺终局、非零退出不产生健康 checkpoint；不能从 thread ID 推断健康，也不把输出保留改为错误后持久化。原健康 Thread record 仍由既有统一管线维持。成功 Run/Stream.Result 的 Text/Summary/Raw/Transcript/Usage 等价；schema/native structured output、MCP 权限/凭据/隔离、审批与单 writer 既有合同由完整 codex 包回归覆盖。
 

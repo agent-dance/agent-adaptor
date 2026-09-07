@@ -165,15 +165,15 @@ func Run(ctx context.Context, opts Options, sink driver.EventSink) (driver.Respo
 	// ended, as required by os/exec's StdoutPipe contract. A bounded fallback
 	// cancels the configured process tree if a broken app-server ignores EOF.
 	shutdown := func() error {
+		deadline := time.AfterFunc(5*time.Second, stopProcess)
+		defer deadline.Stop()
 		_ = stdin.Close()
-		select {
-		case <-client.DisconnectNotify():
-		case <-time.After(5 * time.Second):
-			stopProcess()
-			<-client.DisconnectNotify()
-		}
-		waitErr := cmd.Wait()
+		<-stream.ReadDone()
+		// Decoder lookahead has already passed through the tee. Only unread
+		// bytes following a malformed frame remain to capture here.
+		_, _ = io.Copy(stdoutBuf, stdout)
 		<-stderrDone
+		waitErr := cmd.Wait()
 		_ = client.Close()
 		return waitErr
 	}
