@@ -16,6 +16,7 @@ import (
 	"github.com/agent-dance/agent-adaptor/internal/engine"
 	"github.com/agent-dance/agent-adaptor/internal/profilestate"
 	"github.com/agent-dance/agent-adaptor/internal/toolidentity"
+	"github.com/agent-dance/agent-adaptor/profile"
 )
 
 const resourceKind = string(engine.ProfileResourceMCP)
@@ -110,12 +111,12 @@ func SyncResource(ctx context.Context, driverType, profileDir string, kind Profi
 	}
 	for _, server := range payload.Servers {
 		metadata := map[string]string{
-			"provider":  layout.driverType,
-			"transport": string(server.Transport),
+			"provider":             layout.driverType,
+			"transport":            string(server.Transport),
+			"rendered_fingerprint": renderedServerFingerprint(desired[server.Key]),
 		}
 		if isHostedToolServer(server) {
 			metadata["owner"] = toolidentity.ManifestOwner
-			metadata["rendered_fingerprint"] = renderedServerFingerprint(desired[server.Key])
 		}
 		manifest.Set(profilestate.ManifestEntry{
 			Kind:        resourceKind,
@@ -190,13 +191,22 @@ func RemoveHostedToolProfile(ctx context.Context, driverType, profileDir string)
 	if err != nil {
 		return err
 	}
+	for _, path := range []string{layout.path, filepath.Join(profileDir, profilestate.ManifestName)} {
+		if info, err := os.Lstat(path); err == nil {
+			if !info.Mode().IsRegular() {
+				return fmt.Errorf("%w: non-regular hosted profile control", profile.ErrUnsafe)
+			}
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+	}
 	lock, err := profilestate.AcquireLock(ctx, profileDir, profilestate.LockOptions{StaleAfter: 10 * time.Minute})
 	if err != nil {
 		return err
 	}
 	defer lock.Release()
 
-	manifest, err := profilestate.LoadManifest(profileDir)
+	manifest, err := ReadHostedManifest(profileDir)
 	if err != nil {
 		return err
 	}

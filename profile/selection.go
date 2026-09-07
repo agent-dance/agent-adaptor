@@ -55,7 +55,12 @@ func Native() Selection {
 }
 
 // Dedicated pins the agent to a specific profile/home directory. Use it when
-// a host manages isolated operator profiles itself.
+// a host manages isolated operator profiles itself. With non-empty adaptor.WithTools,
+// built-in Drivers execute in a persistent sibling clone partitioned by Driver,
+// canonical source and complete identity. The source must already exist. Close
+// preserves provider sessions, revokes hosted MCP credentials and releases the
+// exclusive claim; Native and Clone selections keep temporary hosted clones.
+// A crashed active generation returns ErrRecoveryRequired until offline recovery.
 func Dedicated(dir string) Selection {
 	return Selection{Mode: driver.ProfileModeDedicated, Dir: dir}
 }

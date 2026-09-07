@@ -209,9 +209,15 @@ func copyNamedEntriesIfMissing(sourceRoot, targetRoot string, names []string) er
 }
 
 func copyPathIfMissing(source, target string) error {
-	info, err := os.Stat(source)
+	info, err := os.Lstat(source)
 	if err != nil {
 		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("clone resource must not be a symlink: %s", source)
+	}
+	if !info.IsDir() && !info.Mode().IsRegular() {
+		return fmt.Errorf("clone resource must be regular: %s", source)
 	}
 	if info.IsDir() {
 		entries, err := os.ReadDir(source)

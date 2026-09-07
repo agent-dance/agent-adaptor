@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/agent-dance/agent-adaptor/internal/hostedprofile"
 	"github.com/agent-dance/agent-adaptor/internal/profilestate"
 )
 
@@ -20,7 +21,7 @@ func readJSONObject(path string) (map[string]any, error) {
 	if len(raw) == 0 {
 		return payload, nil
 	}
-	if err := json.Unmarshal(raw, &payload); err != nil {
+	if err := hostedprofile.DecodeJSON(raw, &payload, false); err != nil {
 		return nil, err
 	}
 	return payload, nil
