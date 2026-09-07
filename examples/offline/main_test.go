@@ -59,6 +59,7 @@ func TestOfflineRunAndStreamAgree(t *testing.T) {
 	var sizes []int
 	var last adaptor.Event
 	var sequence uint64
+	var starts, finishes int
 	for event := range stream.Events() {
 		if meta := event.Meta(); meta.RunID != stream.RunID() || meta.Sequence <= sequence {
 			t.Fatalf("invalid event coordinates: %#v after %d", meta, sequence)
@@ -68,6 +69,12 @@ func TestOfflineRunAndStreamAgree(t *testing.T) {
 		if event, ok := event.(adaptor.TodoUpdated); ok {
 			revisions = append(revisions, event.Snapshot.Revision)
 			sizes = append(sizes, len(event.Snapshot.Items))
+		}
+		switch event.(type) {
+		case adaptor.RunStarted:
+			starts++
+		case adaptor.RunFinished:
+			finishes++
 		}
 		last = event
 	}
@@ -83,6 +90,9 @@ func TestOfflineRunAndStreamAgree(t *testing.T) {
 	}
 	if terminal, ok := last.(adaptor.RunFinished); !ok || terminal.Failed {
 		t.Fatalf("last event = %#v", last)
+	}
+	if starts != 1 || finishes != 1 {
+		t.Fatalf("consumer lifecycle counts = %d started, %d finished", starts, finishes)
 	}
 	again, err := stream.Result()
 	if err != nil || again != fromStream {

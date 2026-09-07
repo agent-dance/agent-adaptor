@@ -18,6 +18,12 @@ C01–C04 与 R001–R016；R017 重新打开 G04 后继续独立编写。正式
 - 可执行 Example 精确核对输出，另一个实际 SDK 管线测试核对 Run/Stream 文本/摘要、
   回调应答、Todo 清空/Revision、唯一运行序号、末尾终局与重复 Result。
   原 examples 全包测试保留，不以编译或零测试替代实际执行。
+- T24-F01 补齐教学 Driver 的 SPI 生命周期：Streaming=true 的所有脚本由同一个
+  Run 实现发布 provider 首尾；review 的 capability 与文本生命周期在正常、拒答、
+  取消及发送失败时均尝试一次收尾，保留原错误与 cleanup 错误。失败的 sink 不保证
+  交付，示例不会通过重发制造重复终局。core 仍独占最终消费者 RunFinished。
+  独立录制器直接调用该 Driver，以 adaptertest.VerifyStreamSequence 和 capability
+  配对断言验证上述路径；SDK 测试另断言消费者只有一对运行首尾。原输出保持。
 - examples/README 区分 offline、纯 codec、只读 Inspect、资源物化和真实 CLI/main；
   quickstart/streaming chat/showcase 注释同步 Driver entry 后所有失败均有 RunError，
   启动前错误仍为原包装。没有修改这些 live 示例的业务流程或缩减其断言。
@@ -98,3 +104,8 @@ G05 合流时请：
 环境变量；固定 Go 1.26.5/GOROOT/GOTOOLCHAIN=local 与既定共享缓存，三项 paid/live/
 golden 门为 0。不执行真实 CLI/version/auth 探针；本机 loopback 仅用于原 examples
 HTTP 假夹具。Linux/Windows、付费/provider live 均未在 T24 执行，历史研究记录保持。
+
+T24-F01 的反例在 `0bf137f` 加入独立测试、尚未修改 fixture 时实际执行失败，
+记录为 `evidence/f01-red.{json,log}`；它是该旧 HEAD 加测试的开发证据，不是新 HEAD
+验证。`c225a9b`/`0bf137f` 阶段与原预验日志保留。修复 commit 后重新预验，仍须等
+重新接受的 G04 迁移后运行原完整 validation 才可生成正式 complete 报告。
