@@ -15,6 +15,7 @@ func TestAlignmentStreamSnapshotsAndRecovery(t *testing.T) {
 		name, stale, live, recovered string
 		broken                       bool
 		newQuestion                  bool
+		sameText                     bool
 		want                         int
 		wantError                    bool
 	}{
@@ -26,6 +27,7 @@ func TestAlignmentStreamSnapshotsAndRecovery(t *testing.T) {
 		{name: "old completed then EOF", stale: "TASK_STATE_COMPLETED", want: 1},
 		{name: "broken then recovered completed", stale: "TASK_STATE_INPUT_REQUIRED", broken: true, recovered: "TASK_STATE_COMPLETED", want: 2},
 		{name: "broken continuation without history cannot invent question", broken: true, recovered: "TASK_STATE_INPUT_REQUIRED", wantError: true},
+		{name: "recovered new message ID with repeated text", stale: "TASK_STATE_INPUT_REQUIRED", broken: true, recovered: "TASK_STATE_INPUT_REQUIRED", newQuestion: true, sameText: true, want: 2},
 		{name: "broken then recovered new question", stale: "TASK_STATE_INPUT_REQUIRED", broken: true, recovered: "TASK_STATE_INPUT_REQUIRED", newQuestion: true, want: 2},
 		{name: "broken cannot recover old question", stale: "TASK_STATE_INPUT_REQUIRED", broken: true, recovered: "TASK_STATE_INPUT_REQUIRED", want: 1, wantError: true},
 	} {
@@ -53,7 +55,10 @@ func TestAlignmentStreamSnapshotsAndRecovery(t *testing.T) {
 				case "GetTask":
 					task := taskJSON(tc.recovered)
 					if tc.newQuestion {
-						task = strings.ReplaceAll(strings.ReplaceAll(task, "msg-agent", "new-question"), "done", "new question")
+						task = strings.ReplaceAll(task, "msg-agent", "new-question")
+						if !tc.sameText {
+							task = strings.ReplaceAll(task, "done", "new question")
+						}
 					}
 					writeRPCResult(t, w, task)
 				default:

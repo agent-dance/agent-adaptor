@@ -280,3 +280,94 @@ func TestAlignmentSyncAndPollingTasksRemainAuthoritative(t *testing.T) {
 		})
 	}
 }
+
+func TestAlignmentRecoverySameTextNewMessageID(t *testing.T) {
+	old := alignmentQuestion("same text")
+	old.Message.ID = "old-message"
+	next := alignmentQuestion("same text")
+	next.Message.ID = "new-message"
+	card := clienta2a.AgentCard{Name: "fixture", Capabilities: clienta2a.Capabilities{Streaming: true}}
+	registry, err := NewRegistry(RemoteAgentSpec{Key: "fixture", AgentCard: &card, Policy: DelegationPolicy{AllowInputRequired: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := clienta2a.Task{ID: "same-task", Status: old}
+	recovered := clienta2a.Task{ID: snapshot.ID, Status: next}
+	s := &fakeA2AStream{events: make(chan streamRecv, 2), closed: make(chan struct{})}
+	s.events <- streamRecv{event: clienta2a.Event{Kind: clienta2a.EventTask, Task: &snapshot, TaskID: snapshot.ID}}
+	s.events <- streamRecv{err: errors.New("broken stream")}
+	close(s.events)
+	client := &fakeA2AClient{card: card, stream: s, getTasks: []clienta2a.Task{recovered}}
+	bus := NewEventBus(32)
+	d := NewDelegator(registry, bus, WithStatusPartDecoder(testStatusPartDecoder{}))
+	d.NewClient = func(RemoteAgentSpec) A2AClient { return client }
+	result, err := d.Delegate(context.Background(), DelegationRequest{RunID: "run", Agent: "fixture", Message: &clienta2a.Message{Role: "user", TaskID: snapshot.ID, Parts: []clienta2a.Part{{Kind: clienta2a.PartText, Text: "answer"}}}})
+	if err != nil || result.Status != "input_required" {
+		t.Fatalf("new question rejected: result=%+v err=%v", result, err)
+	}
+	questions := 0
+	for _, ev := range drainAvailableBus(t, bus, "run") {
+		if ev.Result == "same text" {
+			questions++
+		}
+	}
+	if questions != 1 || client.cancelCalls != 0 {
+		t.Fatalf("questions=%d cancel=%d", questions, client.cancelCalls)
+	}
+}
+
+func TestAlignmentLiveArtifactsSurviveHistoryAndRecovery(t *testing.T) {
+	for _, end := range []string{"live status", "transport recovery", "marked recovery"} {
+		t.Run(end, func(t *testing.T) {
+			artifact := clienta2a.Artifact{ID: "notes", Name: "notes.md", Parts: []clienta2a.Part{{Kind: clienta2a.PartText, Text: "first"}}}
+			snapshot := clienta2a.Task{ID: "task", ContextID: "context", Status: alignmentQuestion("old"), Artifacts: []clienta2a.Artifact{artifact}}
+			recovered := snapshot
+			recovered.Status = clienta2a.TaskStatus{State: clienta2a.TaskStateCompleted}
+			s := &fakeA2AStream{events: make(chan streamRecv, 4), closed: make(chan struct{})}
+			history := clienta2a.Event{Kind: clienta2a.EventTask, Task: &snapshot, TaskID: snapshot.ID, ContextID: snapshot.ContextID}
+			s.events <- streamRecv{event: history}
+			s.events <- streamRecv{event: clienta2a.Event{Kind: clienta2a.EventArtifact, TaskID: snapshot.ID, ContextID: snapshot.ContextID, Artifact: &clienta2a.Artifact{ID: "notes", Parts: []clienta2a.Part{{Kind: clienta2a.PartText, Text: "second"}}}, Append: true, LastChunk: true}}
+			s.events <- streamRecv{event: history}
+			switch end {
+			case "live status":
+				s.events <- streamRecv{event: clienta2a.Event{Kind: clienta2a.EventTerminal, TaskID: snapshot.ID, ContextID: snapshot.ContextID, Status: &recovered.Status}}
+			case "transport recovery":
+				s.events <- streamRecv{err: errors.New("broken")}
+			case "marked recovery":
+				s.events <- streamRecv{event: clienta2a.Event{Kind: clienta2a.EventTerminal, TaskID: snapshot.ID, ContextID: snapshot.ContextID, Task: &recovered, RecoveredState: true}}
+			}
+			close(s.events)
+			card := clienta2a.AgentCard{Name: "fixture", Capabilities: clienta2a.Capabilities{Streaming: true}}
+			registry, err := NewRegistry(RemoteAgentSpec{Key: "fixture", AgentCard: &card})
+			if err != nil {
+				t.Fatal(err)
+			}
+			client := &fakeA2AClient{card: card, stream: s, getTasks: []clienta2a.Task{recovered}}
+			bus := NewEventBus(32)
+			d := NewDelegator(registry, bus)
+			d.NewClient = func(RemoteAgentSpec) A2AClient { return client }
+			result, err := d.Delegate(context.Background(), DelegationRequest{RunID: "run", Agent: "fixture", Objective: "answer", IncludeRemoteArtifacts: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(result.RemoteArtifacts) != 1 || len(result.RemoteArtifacts[0].Parts) != 2 || result.RemoteArtifacts[0].Parts[1].Text != "second" {
+				t.Fatalf("live appended artifact overwritten: %+v", result.RemoteArtifacts)
+			}
+			// Snapshot replay must not publish a replacement after the live update.
+			events := drainAvailableBus(t, bus, "run")
+			artifacts := 0
+			for _, ev := range events {
+				if ev.Kind == DelegationArtifactCreated {
+					artifacts++
+				}
+			}
+			want := 2
+			if end != "live status" {
+				want = 3
+			} // Explicit recovery may publish the merged final artifact.
+			if artifacts != want {
+				t.Fatalf("historical artifact replayed: count=%d events=%+v", artifacts, events)
+			}
+		})
+	}
+}

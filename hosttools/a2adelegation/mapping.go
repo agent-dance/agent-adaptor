@@ -107,8 +107,10 @@ func staleRecoveredTask(task clienta2a.Task, snapshot *clienta2a.Task, continuat
 	if old == nil {
 		return false
 	}
-	if old.ID != "" && old.ID == current.ID {
-		return true
+	// Distinct formal message IDs identify distinct questions, even when
+	// their wording/parts repeat. Compare content only without both IDs.
+	if old.ID != "" && current.ID != "" {
+		return old.ID == current.ID
 	}
 	return reflect.DeepEqual(old.Parts, current.Parts)
 }
