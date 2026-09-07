@@ -17,3 +17,10 @@ The public v1 model is Agent, Thread, Stream, Event, Result, and Driver. Start w
 | [`run-policy.md`](./run-policy.md) | Sandbox, feature, approval, timeout, fallback, and retry policy. |
 | [`public-errors.md`](./public-errors.md) | Public sentinels, typed errors, and `errors.Is` / `errors.As` guidance. |
 | [`profile-resource-provider-matrix.md`](./profile-resource-provider-matrix.md) | Provider support and materialization behavior for profile resources. |
+
+## Implementation planning
+
+| Document | Purpose |
+|---|---|
+| [`internal-history-alignment-plan-2026-09-07.md`](./internal-history-alignment-plan-2026-09-07.md) | Commit-by-commit comparison with the internal repository and a v1-compatible alignment plan, based on the branches fetched on September 7, 2026. |
+| [Alignment task dispatch package](./alignment-tasks/2026-09-07/README.md) | Seven gated batches with 41 task.json files, independent ownership, 95 traceable requirements, and dispatch validation. |

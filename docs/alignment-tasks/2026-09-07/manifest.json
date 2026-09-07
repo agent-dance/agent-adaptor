@@ -1,0 +1,515 @@
+{
+  "schema_version": "1.0",
+  "id": "internal-alignment-2026-09-07",
+  "status": "planned_not_dispatched",
+  "language": "zh-CN",
+  "repository": {
+    "path_hint": "/Users/blurooo/project/agent-adaptor",
+    "code_baseline": "919f140f64f89c80933802840c8878681a85a4d9",
+    "source_path_hint": "/Users/blurooo/project/agent-adaptor-internal",
+    "source_head": "e2f0620bdd6477e6fe16f6db5648093589342ca2"
+  },
+  "authority": {
+    "path": "AGENTS.md",
+    "baseline_sha256": "82ab6e82530363daeb3a303708bebe913b7e1f661ccdd39812715925355338df"
+  },
+  "plan": {
+    "path": "docs/internal-history-alignment-plan-2026-09-07.md",
+    "sha256": "73f4b596937160462cfef370f7600aa7a2a2b1b78d9d2861f4d7f2202bf4a6f8"
+  },
+  "task_schema": "docs/alignment-tasks/2026-09-07/task.schema.json",
+  "result_schema": "docs/alignment-tasks/2026-09-07/result.schema.json",
+  "coverage": "docs/alignment-tasks/2026-09-07/coverage.json",
+  "dispatch_contract": {
+    "input": "传递完整task.json，不仅title；提供源码checkout及required_reads、前置contract artifacts和固定只读internal clone。",
+    "bootstrap": "先在隔离集成分支建立包含原方案/AGENTS/全任务包的seed commit并记录真实SHA。原始919f140须是祖先；不得stash/reset丢弃用户未提交内容。当前仅生成计划，不执行此commit。",
+    "parallelism": "同batch只有phase=parallel并发，各自从同一前批gate的实际集成SHA建立worktree；gate单独在所有worker验收后运行；不使用共享工作区。",
+    "gates": "下一批必须使用上一gate给出的SHA，不能始终从919f140或默认main启动，也不能混用其他worker分支。",
+    "reports": "handoff result/evidence在源码commit完成后产出，由dispatcher独立收集；execution-state是外部执行数据，不提交自引用的HEAD；不要伪造已完成报告。",
+    "merge": "协调者在隔离integration_worktree按integration_order合流；自动合并成功仍必须跑gate合同与全量检查；runtime冲突返原owner。",
+    "scope_changes": "唯一协调者版本化变更task/manifest、重新校验冲突与覆盖后重派；禁止worker自行越界，禁止以删除requirement解决问题。",
+    "rework": "gate失败重开原implementation_owner并给出最小复现；新实现SHA使受影响下游验证失效，按依赖重跑。独立验证不能只由原作者签字。",
+    "completion": "worker complete不等于W项complete；G05是实现验收，G06是平台/live证据闭环。缺授权/环境只阻塞对应验证，不能报发布就绪。",
+    "external_actions": "本包不授权付费live、remote push或release/tag；live以实际后续派发授权记录+build tag+env双门为准。"
+  },
+  "batches": [
+    {
+      "id": "B00",
+      "directory": "00-contracts",
+      "title": "合同冻结与范围确认",
+      "purpose": "把跨组件接口、文件所有权、错误/目录/协议边界冻结成可执行契约；不启动实现。",
+      "depends_on_gate": null,
+      "parallel_tasks": [
+        "C01",
+        "C02",
+        "C03",
+        "C04"
+      ],
+      "max_parallelism": 4,
+      "gate_task": "G00",
+      "integration_order": [
+        "C01",
+        "C02",
+        "C03",
+        "C04"
+      ],
+      "same_batch_implementation_dependencies": false,
+      "next_batch_requires_gate_acceptance": true
+    },
+    {
+      "id": "B01",
+      "directory": "01-critical-fixes",
+      "title": "既有流程与错误路径修复",
+      "purpose": "隔离 Claude stdin、Tool 输入错误、A2A 续答、profile 所有权、公共部分结果五条写入通道。",
+      "depends_on_gate": "G00",
+      "parallel_tasks": [
+        "T01",
+        "T02",
+        "T03",
+        "T04",
+        "T05"
+      ],
+      "max_parallelism": 5,
+      "gate_task": "G01",
+      "integration_order": [
+        "T01",
+        "T02",
+        "T03",
+        "T04",
+        "T05"
+      ],
+      "same_batch_implementation_dependencies": false,
+      "next_batch_requires_gate_acceptance": true
+    },
+    {
+      "id": "B02",
+      "directory": "02-event-foundation",
+      "title": "Event 基础与独立保真修复",
+      "purpose": "先完成 typed Event/观察接入和中立状态机；并行修复两个 Driver 部分结果与实时制品。",
+      "depends_on_gate": "G01",
+      "parallel_tasks": [
+        "T06",
+        "T07",
+        "T08",
+        "T09"
+      ],
+      "max_parallelism": 4,
+      "gate_task": "G02",
+      "integration_order": [
+        "T06",
+        "T07",
+        "T08",
+        "T09"
+      ],
+      "same_batch_implementation_dependencies": false,
+      "next_batch_requires_gate_acceptance": true
+    },
+    {
+      "id": "B03",
+      "directory": "03-core-and-wire",
+      "title": "Core 预算提示与协议消费者",
+      "purpose": "core 接好 append prompt/主动预算；其余任务只消费前批已冻结 Event，避免同批接口依赖。",
+      "depends_on_gate": "G02",
+      "parallel_tasks": [
+        "T10",
+        "T11",
+        "T12",
+        "T13"
+      ],
+      "max_parallelism": 4,
+      "gate_task": "G03",
+      "integration_order": [
+        "T10",
+        "T11",
+        "T12",
+        "T13"
+      ],
+      "same_batch_implementation_dependencies": false,
+      "next_batch_requires_gate_acceptance": true
+    },
+    {
+      "id": "B04",
+      "directory": "04-provider-adoption",
+      "title": "各 Driver 与 delegation 接入",
+      "purpose": "按 provider 目录各自单 writer；A2A 业务消费与桥错误映射依赖此前冻结的 code/DTO 独立实现。",
+      "depends_on_gate": "G03",
+      "parallel_tasks": [
+        "T14",
+        "T15",
+        "T16",
+        "T17",
+        "T18",
+        "T19"
+      ],
+      "max_parallelism": 6,
+      "gate_task": "G04",
+      "integration_order": [
+        "T14",
+        "T15",
+        "T16",
+        "T17",
+        "T18",
+        "T19"
+      ],
+      "same_batch_implementation_dependencies": false,
+      "next_batch_requires_gate_acceptance": true
+    },
+    {
+      "id": "B05",
+      "directory": "05-cross-layer-qa",
+      "title": "跨层验收与文档收口",
+      "purpose": "生产功能已合流；QA 独立重建场景，conformance/CI 与 examples/docs 独立负责。",
+      "depends_on_gate": "G04",
+      "parallel_tasks": [
+        "T20",
+        "T21",
+        "T22",
+        "T23",
+        "T24"
+      ],
+      "max_parallelism": 5,
+      "gate_task": "G05",
+      "integration_order": [
+        "T20",
+        "T21",
+        "T22",
+        "T23",
+        "T24"
+      ],
+      "same_batch_implementation_dependencies": false,
+      "next_batch_requires_gate_acceptance": true
+    },
+    {
+      "id": "B06",
+      "directory": "06-platform-live",
+      "title": "平台及真实协议证据",
+      "purpose": "在同一冻结实现 SHA 上收集 Linux、Windows 和四 provider live 证据；不在验证分支改生产代码。",
+      "depends_on_gate": "G05",
+      "parallel_tasks": [
+        "T25",
+        "T26",
+        "T27",
+        "T28",
+        "T29",
+        "T30"
+      ],
+      "max_parallelism": 6,
+      "gate_task": "G06",
+      "integration_order": [
+        "T25",
+        "T26",
+        "T27",
+        "T28",
+        "T29",
+        "T30"
+      ],
+      "same_batch_implementation_dependencies": false,
+      "next_batch_requires_gate_acceptance": true
+    }
+  ],
+  "tasks": [
+    {
+      "id": "C01",
+      "batch_id": "B00",
+      "phase": "parallel",
+      "path": "docs/alignment-tasks/2026-09-07/batches/00-contracts/c01/task.json",
+      "sha256": "9795a287c3c4c84f4ba1054ca06aff66c718e4c89637d587454961b354989f3c"
+    },
+    {
+      "id": "C02",
+      "batch_id": "B00",
+      "phase": "parallel",
+      "path": "docs/alignment-tasks/2026-09-07/batches/00-contracts/c02/task.json",
+      "sha256": "7603b8ea441fda280813d6427dca1b84b864d37497a8af5c5f1a0d184ec62c87"
+    },
+    {
+      "id": "C03",
+      "batch_id": "B00",
+      "phase": "parallel",
+      "path": "docs/alignment-tasks/2026-09-07/batches/00-contracts/c03/task.json",
+      "sha256": "ab79f351759092541fc8b87b4fa491c57bb32e9b0ce61063418a82460ca18a93"
+    },
+    {
+      "id": "C04",
+      "batch_id": "B00",
+      "phase": "parallel",
+      "path": "docs/alignment-tasks/2026-09-07/batches/00-contracts/c04/task.json",
+      "sha256": "163b33da046a9681435fad0e374688890a391cb0b481212b0f66e89807dbc49e"
+    },
+    {
+      "id": "G00",
+      "batch_id": "B00",
+      "phase": "gate",
+      "path": "docs/alignment-tasks/2026-09-07/batches/00-contracts/gate/task.json",
+      "sha256": "ac7ffd1dabd32bd5a38540b04dd36702996524021eebb9f90878a413bc20dc2c"
+    },
+    {
+      "id": "T01",
+      "batch_id": "B01",
+      "phase": "parallel",
+      "path": "docs/alignment-tasks/2026-09-07/batches/01-critical-fixes/t01/task.json",
+      "sha256": "357ca8b3872838dee360a228f52177e957b4b67004f133464722df49ed4b95f0"
+    },
+    {
+      "id": "T02",
+      "batch_id": "B01",
+      "phase": "parallel",
+      "path": "docs/alignment-tasks/2026-09-07/batches/01-critical-fixes/t02/task.json",
+      "sha256": "3941ec5f117e89ba9d331f440b18e226c25dec7e86d570b00f41038d5372b54d"
+    },
+    {
+      "id": "T03",
+      "batch_id": "B01",
+      "phase": "parallel",
+      "path": "docs/alignment-tasks/2026-09-07/batches/01-critical-fixes/t03/task.json",
+      "sha256": "b0ca9c06e8b959d7497a0b3dd1987263071c909cd1c2f156d29dc180bcf0919e"
+    },
+    {
+      "id": "T04",
+      "batch_id": "B01",
+      "phase": "parallel",
+      "path": "docs/alignment-tasks/2026-09-07/batches/01-critical-fixes/t04/task.json",
+      "sha256": "34022d373b1389045a71f2d1f03df5cafea12b65a66267bda46794443fc2475e"
+    },
+    {
+      "id": "T05",
+      "batch_id": "B01",
+      "phase": "parallel",
+      "path": "docs/alignment-tasks/2026-09-07/batches/01-critical-fixes/t05/task.json",
+      "sha256": "890ac599db3cdc1fbd87b9cd8677519f553cd912ac926c6a055a9a245c59064e"
+    },
+    {
+      "id": "G01",
+      "batch_id": "B01",
+      "phase": "gate",
+      "path": "docs/alignment-tasks/2026-09-07/batches/01-critical-fixes/gate/task.json",
+      "sha256": "4c9473504c72b0f1bbff888808a1cc8ec2b48fdd0382052ea4a2b56ce125b719"
+    },
+    {
+      "id": "T06",
+      "batch_id": "B02",
+      "phase": "parallel",
+      "path": "docs/alignment-tasks/2026-09-07/batches/02-event-foundation/t06/task.json",
+      "sha256": "f42e1a00c33d9b06ebb97b67dd3d0d7f80d779ed19ab9afc14e3b696c68cc329"
+    },
+    {
+      "id": "T07",
+      "batch_id": "B02",
+      "phase": "parallel",
+      "path": "docs/alignment-tasks/2026-09-07/batches/02-event-foundation/t07/task.json",
+      "sha256": "a46691525cc8a26bc9bf5002e439147a1b28f0817d887e5617e55a60ee9621e1"
+    },
+    {
+      "id": "T08",
+      "batch_id": "B02",
+      "phase": "parallel",
+      "path": "docs/alignment-tasks/2026-09-07/batches/02-event-foundation/t08/task.json",
+      "sha256": "351578c2eec4dc20cbbd00637e97f1d2e5a70b897b8ada61db0521deb92b5df2"
+    },
+    {
+      "id": "T09",
+      "batch_id": "B02",
+      "phase": "parallel",
+      "path": "docs/alignment-tasks/2026-09-07/batches/02-event-foundation/t09/task.json",
+      "sha256": "6a6c92eaf3b06f0ead2826942387f8a2643a30f64fa2833f7562cd7a8aa47351"
+    },
+    {
+      "id": "G02",
+      "batch_id": "B02",
+      "phase": "gate",
+      "path": "docs/alignment-tasks/2026-09-07/batches/02-event-foundation/gate/task.json",
+      "sha256": "0f6aadecb4672b728baecb36ebfae322c159c27ff345d5deaa71371d2ce47bed"
+    },
+    {
+      "id": "T10",
+      "batch_id": "B03",
+      "phase": "parallel",
+      "path": "docs/alignment-tasks/2026-09-07/batches/03-core-and-wire/t10/task.json",
+      "sha256": "55687f858e7cad2f7a29408ddf76ee3167fdc443d2ccf5a0dc16aec6153d5047"
+    },
+    {
+      "id": "T11",
+      "batch_id": "B03",
+      "phase": "parallel",
+      "path": "docs/alignment-tasks/2026-09-07/batches/03-core-and-wire/t11/task.json",
+      "sha256": "7c1f32ff05b0032d590a86d91369066a7c957ef6d44d32f9bc8386e32efc7f0e"
+    },
+    {
+      "id": "T12",
+      "batch_id": "B03",
+      "phase": "parallel",
+      "path": "docs/alignment-tasks/2026-09-07/batches/03-core-and-wire/t12/task.json",
+      "sha256": "aea0ae962537f87867741a2cefd11b2efb9b7db2b14bba9750a893d547c0434c"
+    },
+    {
+      "id": "T13",
+      "batch_id": "B03",
+      "phase": "parallel",
+      "path": "docs/alignment-tasks/2026-09-07/batches/03-core-and-wire/t13/task.json",
+      "sha256": "b2b9cb3baacea6e1e5ed17532fad8ce5c57f01dee0b7a48d0db5af5ac7120cc6"
+    },
+    {
+      "id": "G03",
+      "batch_id": "B03",
+      "phase": "gate",
+      "path": "docs/alignment-tasks/2026-09-07/batches/03-core-and-wire/gate/task.json",
+      "sha256": "40312a861e2147842185d9fed3b78045e6460daf57a8da9f4a7e179e74ec8076"
+    },
+    {
+      "id": "T14",
+      "batch_id": "B04",
+      "phase": "parallel",
+      "path": "docs/alignment-tasks/2026-09-07/batches/04-provider-adoption/t14/task.json",
+      "sha256": "83f9fed2de0cf8a9371a41a090dab7b2920bdede7df415ace926cbadf7cd5582"
+    },
+    {
+      "id": "T15",
+      "batch_id": "B04",
+      "phase": "parallel",
+      "path": "docs/alignment-tasks/2026-09-07/batches/04-provider-adoption/t15/task.json",
+      "sha256": "f2500c5d1f5acadf7d54bc4ed6fa0b01d7e2499c1e4394d4d0213145c93037f7"
+    },
+    {
+      "id": "T16",
+      "batch_id": "B04",
+      "phase": "parallel",
+      "path": "docs/alignment-tasks/2026-09-07/batches/04-provider-adoption/t16/task.json",
+      "sha256": "1918ac37387ebc0c04f3b84e95a12aa7d8b45c7015c8834280c7dcb639f5d31c"
+    },
+    {
+      "id": "T17",
+      "batch_id": "B04",
+      "phase": "parallel",
+      "path": "docs/alignment-tasks/2026-09-07/batches/04-provider-adoption/t17/task.json",
+      "sha256": "c347b85a6ca91f6a00916209ae3f6f2064b37d62b11f8e19b475358762f1afb2"
+    },
+    {
+      "id": "T18",
+      "batch_id": "B04",
+      "phase": "parallel",
+      "path": "docs/alignment-tasks/2026-09-07/batches/04-provider-adoption/t18/task.json",
+      "sha256": "d9117fc89e10059ee749fededd32cb33c0c06d5e6962c6a4b6c4001d4cd4df27"
+    },
+    {
+      "id": "T19",
+      "batch_id": "B04",
+      "phase": "parallel",
+      "path": "docs/alignment-tasks/2026-09-07/batches/04-provider-adoption/t19/task.json",
+      "sha256": "f96fce7ed50d142592e87ea86a782be5033a8ab6686d03d5910499d8ce51d0f3"
+    },
+    {
+      "id": "G04",
+      "batch_id": "B04",
+      "phase": "gate",
+      "path": "docs/alignment-tasks/2026-09-07/batches/04-provider-adoption/gate/task.json",
+      "sha256": "d154b23702c89b973b7fc493f271e32ea475be923869b81458d4dc936ac08698"
+    },
+    {
+      "id": "T20",
+      "batch_id": "B05",
+      "phase": "parallel",
+      "path": "docs/alignment-tasks/2026-09-07/batches/05-cross-layer-qa/t20/task.json",
+      "sha256": "9656ca46f673b6b9ca38a3bd55321b60fba23426b840a998b454ec0b3faceb09"
+    },
+    {
+      "id": "T21",
+      "batch_id": "B05",
+      "phase": "parallel",
+      "path": "docs/alignment-tasks/2026-09-07/batches/05-cross-layer-qa/t21/task.json",
+      "sha256": "3a724e7f676160ee54544b665bcf0770f4747aaa7dcf55725e3b2645979175d6"
+    },
+    {
+      "id": "T22",
+      "batch_id": "B05",
+      "phase": "parallel",
+      "path": "docs/alignment-tasks/2026-09-07/batches/05-cross-layer-qa/t22/task.json",
+      "sha256": "9fbbdd21db4483a43437b0507e0c8552805dc2b97c3eaef8b6be853b81bd6b09"
+    },
+    {
+      "id": "T23",
+      "batch_id": "B05",
+      "phase": "parallel",
+      "path": "docs/alignment-tasks/2026-09-07/batches/05-cross-layer-qa/t23/task.json",
+      "sha256": "998994698b3118fb0dec854fe690cd06a732098cb3ed697fa61ba7697991e594"
+    },
+    {
+      "id": "T24",
+      "batch_id": "B05",
+      "phase": "parallel",
+      "path": "docs/alignment-tasks/2026-09-07/batches/05-cross-layer-qa/t24/task.json",
+      "sha256": "ccc89f4580c2d3d4dba3b7af02c7e717760c880478a6c664bb1a831abf4cc3f4"
+    },
+    {
+      "id": "G05",
+      "batch_id": "B05",
+      "phase": "gate",
+      "path": "docs/alignment-tasks/2026-09-07/batches/05-cross-layer-qa/gate/task.json",
+      "sha256": "3e50d430bcb023e311f77e0a8f5bfb14b369581e86b4d88fb060c258c73a8c44"
+    },
+    {
+      "id": "T25",
+      "batch_id": "B06",
+      "phase": "parallel",
+      "path": "docs/alignment-tasks/2026-09-07/batches/06-platform-live/t25/task.json",
+      "sha256": "a9596378c6ef80afb90a7273d0f89badafbfe7602ab32ae3c926869379ecbe99"
+    },
+    {
+      "id": "T26",
+      "batch_id": "B06",
+      "phase": "parallel",
+      "path": "docs/alignment-tasks/2026-09-07/batches/06-platform-live/t26/task.json",
+      "sha256": "3adc6ba98c41b5e814715f5ed18743b773f6af3f435bceeca66af060779fd22e"
+    },
+    {
+      "id": "T27",
+      "batch_id": "B06",
+      "phase": "parallel",
+      "path": "docs/alignment-tasks/2026-09-07/batches/06-platform-live/t27/task.json",
+      "sha256": "afb93705143d8c86939debc72532afd2bb940b54bad9481905b56135ef925add"
+    },
+    {
+      "id": "T28",
+      "batch_id": "B06",
+      "phase": "parallel",
+      "path": "docs/alignment-tasks/2026-09-07/batches/06-platform-live/t28/task.json",
+      "sha256": "b4d7e578be9d762299274320d3db2986bdbc685a9e9948b6774dbbcbccb06ec6"
+    },
+    {
+      "id": "T29",
+      "batch_id": "B06",
+      "phase": "parallel",
+      "path": "docs/alignment-tasks/2026-09-07/batches/06-platform-live/t29/task.json",
+      "sha256": "c8add0a00a131a7e697e688ce2b239b9e20804d31607b41933a515c5b7381aa8"
+    },
+    {
+      "id": "T30",
+      "batch_id": "B06",
+      "phase": "parallel",
+      "path": "docs/alignment-tasks/2026-09-07/batches/06-platform-live/t30/task.json",
+      "sha256": "54361fd271acb427382492d6b825e4950c884537edac167c0a24037984bdb070"
+    },
+    {
+      "id": "G06",
+      "batch_id": "B06",
+      "phase": "gate",
+      "path": "docs/alignment-tasks/2026-09-07/batches/06-platform-live/gate/task.json",
+      "sha256": "ab37fdf9074091a703a55e333fa5b476eb000bf76824909f17b9af38eab33a0c"
+    }
+  ],
+  "summary": {
+    "work_item_count": 13,
+    "history_commit_count": 45,
+    "requirement_count": 95,
+    "batch_count": 7,
+    "parallel_task_count": 34,
+    "gate_task_count": 7,
+    "total_task_count": 41,
+    "peak_parallelism": 6
+  },
+  "verification": {
+    "command": "python3 docs/alignment-tasks/2026-09-07/validate.py",
+    "strict_same_phase_write_overlap": true,
+    "every_requirement_has_one_owner_and_independent_verifier": true,
+    "no_same_batch_worker_dependency": true
+  }
+}

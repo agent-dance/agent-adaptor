@@ -1,0 +1,421 @@
+{
+  "schema_version": "1.0",
+  "id": "T25",
+  "title": "取得 Linux 全量、race、重复场景与 fuzz 证据",
+  "batch_id": "B06",
+  "phase": "parallel",
+  "kind": "platform_verification",
+  "priority": "P1",
+  "status": "planned",
+  "objective": "取得 Linux 全量、race、重复场景与 fuzz 证据。完成本任务范围并交付可核验结果，不代替其他任务或提前宣称整个 W 项完成。",
+  "work_items": [
+    "W01",
+    "W02",
+    "W03",
+    "W04",
+    "W05",
+    "W06",
+    "W07",
+    "W08",
+    "W09",
+    "W10",
+    "W11",
+    "W12",
+    "W13"
+  ],
+  "requirements_owned": [],
+  "requirements_verified": [
+    "W09-R13",
+    "W11-R09",
+    "W12-R11",
+    "W13-R10"
+  ],
+  "depends_on": [
+    "G05"
+  ],
+  "base": {
+    "mode": "frozen_verification_head",
+    "predecessor_gate": "G05",
+    "required_ancestor": "919f140f64f89c80933802840c8878681a85a4d9",
+    "verification_head_gate": "G05",
+    "bootstrap_required": true
+  },
+  "context": {
+    "repository": "agent-adaptor",
+    "source_repository_hint": "/Users/blurooo/project/agent-adaptor-internal",
+    "source_head": "e2f0620bdd6477e6fe16f6db5648093589342ca2",
+    "source_commits": [
+      "eefcaef35621e6bbfb3e2e859edf4aadc4e38a5d",
+      "a88eacdb4818c75df44caeec39bbb74062e58c53",
+      "d01a086e5145566b7313b83ca88bb525f1d3675b",
+      "ca571fbed8454e482560b481a3aa6853e9d174df",
+      "8e35b123af693b1a922d9d53b879692d04e00795",
+      "126d610dfb6afd2cca19661ab0a7c0b6f626b490",
+      "3ea225acea572830100381a5c180dd86f295a70d",
+      "426191444582f9fbbe951dbd8b54c1004464262c",
+      "64163ab67ecf109d196da10a4cbac8943d8e6eff",
+      "3253009054681a499fd693329486d0fe3279d843",
+      "1921636510ced4c830c0287fe68d41218f1ed185",
+      "9b1ce27faa4e46ba6a213210eaffc8748b327bdb",
+      "dab6933b9159894c36fa78b8367c6bc572227621",
+      "51d12bd143ae3be553673bca2d16db08e3bffb9f",
+      "7438d2633ef7063a02c9208c96fdd2dab3d2f01a",
+      "8ffe22a2a29c0b72e6c993d7774ffb54ac15c010",
+      "eb82ed36eaf6339b00860b5506a683e6dbd74765",
+      "e2f0620bdd6477e6fe16f6db5648093589342ca2"
+    ],
+    "source_read_rule": "用 git -C <实际internal仓库> show <固定sha>:<文件>；hint可由派发器映射到只读clone，不能依赖worktree的../相对位置或读取internal脏工作区。",
+    "authority": {
+      "path": "AGENTS.md",
+      "baseline_sha256": "82ab6e82530363daeb3a303708bebe913b7e1f661ccdd39812715925355338df"
+    },
+    "plan": {
+      "path": "docs/internal-history-alignment-plan-2026-09-07.md",
+      "sha256": "73f4b596937160462cfef370f7600aa7a2a2b1b78d9d2861f4d7f2202bf4a6f8",
+      "sections": [
+        "W01",
+        "W02",
+        "W03",
+        "W04",
+        "W05",
+        "W06",
+        "W07",
+        "W08",
+        "W09",
+        "W10",
+        "W11",
+        "W12",
+        "W13"
+      ]
+    },
+    "required_reads": [
+      "AGENTS.md",
+      "docs/internal-history-alignment-plan-2026-09-07.md",
+      "docs/alignment-tasks/2026-09-07/README.md"
+    ],
+    "dependency_artifacts": [
+      {
+        "producer": "G00",
+        "path": "docs/alignment-tasks/2026-09-07/contracts/frozen.json",
+        "version_source": "G00 accepted contract manifest"
+      }
+    ],
+    "embedded_plan_sections": {
+      "W01": "### W01：Claude 收到 type:result 后结束一次性 stdin\n\n**证据与差距。** internal `eefcaef` 为 `handleResult` 增加关闭 stdin，`a88eacd` 去掉提取后重复的 guard，`d01a086` 合入。当前 `claude/parser.go` 的 `handleResult` 没有该动作；`onAssistantMessageStop` 仅在非空且非 `tool_use` 的 stop reason 后关闭。只收到终局 `result`、没有此前 `message_stop(end_turn)` 时，双向 print 进程可能继续等待 stdin。\n\n**实施。** 提取 parser 私有的终局 stdin 关闭函数，让 `message_stop` 与正式 `type:result` 共用；关闭 exactly-once。一次性 `WithSpawn` 和无状态 interactive 路径真正关闭输入；常驻 turn 的 stdin 适配器仍保持“不关闭底层进程输入”的合同。不可把 `tool_use`、中间消息或嵌套工具终局当作整个 run 终局。\n\n**验收。** 只发 result 的成功/失败/native schema fixture 都有界退出；`message_stop + result` 只关闭一次；`tool_use` 后仍能接收应答；常驻第二轮可执行；末尾 stdout、Terminal、Transcript、RunFinished 均保留。取消与终局并发不阻塞。更新 `claude/README-streaming.md`、`docs/streaming.md`、CHANGELOG。",
+      "W02": "### W02：保留真实 hosted-tool provider 会话文件\n\n**证据与差距。** 当前 `tools.go:prepareHostedToolProfile` 对所有选择都 `MkdirTemp`；`releaseHostedToolProfiles` 删除全部 owned clone。`e2e/tools_test.go` 验证了 fake provider 的重建和 endpoint 变化，但 fake checkpoint 可续不证明真实 CLI 的会话文件存在。internal `ca571fb` 指出 Dedicated + Tools 下 Claude 的 transcript 随临时 profile 删除，冷重建 resume 失败。\n\n**不能照搬的部分。** internal 直接使用 `<profile>.hosted-tools` sibling；它不能充分证明当前 v1 要求的 Agent/identity 隔离、跨进程单 writer 和目录所有权。当前删除函数只允许临时目录直接子目录，也不能简单扩宽为“任何路径都可删”。\n\n**实施方案。**\n\n1. 仅对显式 Dedicated 选择启用持久 hosted-tool clone，Native/临时选择保持现有生命周期并明确文档化。稳定位置采用 Dedicated sibling 下按 Driver、canonical source、完整 identity 无碰撞编码后求 hash 的命名空间；不把 host Thread key 拼成目录名。\n2. clone 带 SDK 所有权标记、版本、源目录身份。已有目录要验证标记、权限和非符号链接边界；不能仅因目录存在就采用，也不能重新复制源 profile 覆盖已有 transcript。\n3. 对共享执行 profile 引入有界、跨进程可验证的独占所有权。Agent 持有期间另一 Agent 使用同一执行目录必须明确冲突；不能只靠进程内 mutex 或不同 Thread 的 store lease。原 Agent 进程退出并释放所有权后才能接力。锁只服务于可选 profile 功能，不新增宿主数据库或通用锁服务。\n4. 重建时更新本 Agent 的 MCP endpoint/env carrier；先结束旧 writer，再写新投影、启动进程。保留现有 source 不写入、保留 MCP key/凭据冲突 fail-closed、随机 token 与私有权限。\n5. Close 顺序仍为准入关闭、取消/drain、Driver 回收、移除 owned MCP 投影、关闭 gateway、释放目录所有权。持久 clone 的 provider 会话文件保留；临时 clone 删除。不得留下可用的旧 gateway/token 投影。\n6. Thread compatibility 使用稳定的语义身份；process signature 使用实际 endpoint 和物化内容。持久目录不等于忽略 Tools Revision、模型、skills/MCP/instructions 或配置漂移。\n\n**迁移。** 已被旧版本删除的 transcript 无法凭 store 中的 resume ID 恢复。原 Thread 遇到 provider resume reject 时继续使用现有一次性安全 fallback；不能宣布“自动修复历史会话”，不能修改宿主 key。持久 profile 的清理归属要写入 `docs/tools.md`，不能让 `Agent.Close` 同时承诺“保留”和“删除”。\n\n**验收。** Agent A 真实写入 session 文件 → Close → Agent B 同配置/identity/Thread key 续接；endpoint/token 轮换而会话保留。覆盖两进程抢同目录、不同 identity、篡改标记、符号链接、旧 MCP 载体、Close 超时重试和 native 临时清理。先用严格依赖 session 文件的 provider fixture，再做显式授权 live 验证。重新打开 AGENTS §14 的 Thread/profile 兼容审计子项。",
+      "W03": "### W03：A2A 历史 Task 快照不结束续答\n\n**证据与差距。** 当前 `clients/a2a/execution_state.go:executionFinalEvent` 会把 `EventTask` 的 `input-required` 视为执行结束；`hosttools/a2adelegation/delegator.go:delegateStreaming` 同样可由 `event.Task` 或 EOF 后的 `lastTask` 结束，mapper 会重放其旧 status/question。internal `8e35b12` 修改了这三个位置。\n\n**实施。** 流式接收中明确区分完整 Task 快照与 live Status/Message。快照只恢复 TaskID、ContextID 与已存在 artifacts，不生成本轮新问卷或终态；本轮终态以 live Status/Message 为准。同步 Send、GetTask、polling 的完整 Task 仍可作为权威结果，不能把流语义套到所有查询。\n\n同时修正 client 停流条件、delegator 收尾条件、mapper 状态转换，避免只修其中一层。EOF 的历史 `input-required` 不能冒充新问卷；无新 live 终态应显式 `stream_interrupted`。真正断流后的 GetTask 恢复要区别“主动补查结果”与“原流回放”，并避免重新采用已回答的同一问题。\n\n**需超越 internal 的边界。** internal `canFinishFromLastTask` 仍允许某些已结束 Task 在 EOF 收尾，其提交说明“只认 live 终态”比实现更严格。实施时把首次请求、continuation、显式 recovery 分开写合同：continuation 不凭旧 completed/failed 快照误结束；兼容仅返回完整 Task 的服务端时，采用有明确模式的同步/轮询路径，不静默猜测。\n\n**验收。** 旧 question → working → completed；旧 question → 新 question；旧 question → EOF；快照后错误并恢复；首次同步 Task；polling；同一 TaskID 的多轮 answer。旧问卷不再发给 ApprovalRequest，不误取消远端，不丢后续 artifact。重复运行 client/bridge/delegation 用例并进行 race 检查。更新 `docs/a2a.md`。",
+      "W04": "### W04：保留中断后的输出，但不降低 checkpoint 健康要求\n\n**证据与差距。** internal `126d610` 同时做了“保留部分结果”和“错误后落 checkpoint”。当前 Claude、CodeBuddy 常驻分支遇到非 fallback 错误返回空 `driver.Response{}`；Codex 的 `persistentWriter.run` 和 Driver 上层已经保留 `result, persistentErr`，无需重复修复这两层。剩余公共缺口在 `invocation.go:finalizeRun`：它在无已分类 failure 的 context/基础设施 error 上返回普通包装，丢弃刚映射的 Result。\n\n**本期采用。** Driver 已观察到的 stdout/stderr、Transcript、Terminal、Usage 和文本不得因取消而丢弃：先构建部分 Response，再返回原始 error；在唯一 `finalizeRun` 中建立可通过 Go error 获取部分 Result 的合同。建议复用 `RunError.Result` 的携带能力并保留原始 cause 的 `errors.Is/As` 链；实施前同步明确“执行后基础设施包装错误携带部分 Result”的 godoc，避免把启动前配置错误包装成业务失败。仍返回 `nil, error`，不新增 Result.Failure 或第二个结果入口。具体公共错误声明随合同测试一起冻结。\n\n**本期不采用。** internal Codex 以 `sent && ctx.Err()!=nil && ThreadID!=\"\"` 直接设置 `Checkpoint.Valid=true`，Claude/CodeBuddy 的 session ID 保留也不能替代健康终局证明。当前 `invocationCanPersist` 和 parser 的成功终局检查继续保留：取消、非零退出、畸形协议、缺失终局都不持久化。首次中断没有 checkpoint 时，下轮新建是本期明确边界；已有健康 Thread record 保持原样。\n\n未来若 provider 官方协议能证明中断后的健康可续状态，单独提出 Driver/SessionCodec 能力和证据合同，补齐 lease/token/atomic finalize 与有界脱离取消的持久化测试，再申请改变当前合同；不能以“internal 已用过”代替证明。\n\n**验收。** 三个常驻 Driver 的交付前失败仅允许一次安全 fallback，交付后不重放；中断前输出逐字段可取；`errors.Is` 保留 context cancelled/deadline 与原 cause；Run 与 Stream.Result 等价；审批错误不被通用取消覆盖；无效 checkpoint 不修改 store，原健康记录保持一致。W13 必须复用此结果保留路径。重新打开 AGENTS §14 的错误路径 Result 映射审计子项。",
+      "W05": "### W05：Claude 嵌套工具的 typed 生命周期与父关联\n\n**证据与差距。** internal `3ea225a` 从 assistant wrapper 取 `parent_tool_use_id`，为没有普通 `stream_event` 的子代理 tool_use 补 start/args/end。当前 `claude/parser.go` 只把 `message` 交给 `handleAssistantMessage`；有 TranscriptToolCall，但不保留 wrapper 父关系，也不为这一路径补 typed ToolCall。\n\n**实施。** parser 只认正式 wrapper 字段；以本轮、父调用、tool-use ID 形成内部关联和去重状态。为嵌套完整 tool_use 补一组生命周期，普通父工具仍走既有增量；结果按真实 tool-use ID 配对。typed `ToolCall`、必要时 `ToolResult`/Transcript 与 SPI 增加可选父关联字段，并在 A2A/SSE/AG-UI/subagentstream 与 recorder 逐层保留或声明降级。\n\ninternal 代码只用 parent ID 判定“是否嵌套”，所示新增 emitter 并未把 parent ID 放进输出字段，因此直接复制仍不能让宿主可靠构造树；本项要补齐。完整 Args 与 ArgsDelta 同时出现时按当前合同保证消费者不会重复拼接。\n\n**验收。** 主工具与嵌套工具混合、嵌套兄弟、相同 ID 的快照重放、缺 ID、并发、截断与异常收尾；每个工具 start/end exactly-once，parent 关系保留，终局之前全部关闭。不从名称“Explore”推断层级。更新 `driver/` godoc、adaptertest、root golden 和 streaming 文档。",
+      "W06": "### W06：Claude 原生结构化输出与交互审批共存\n\n**证据与差距。** 当前 `claude/driver.go` 声明 `WorksWithHITL=false`，native schema + interactive 会拒绝；core 可自动选择 Prompt + 本地校验，因此不是完全“不支持结构化输出”。internal `4261914` 开放 Question/PlanReview 与 `stream-json + --json-schema + --permission-prompt-tool stdio` 的同次执行组合。\n\n**实施。** 在 W01 后按当前 Request 的 resolved `StructuredOutputSource` 选择 transport：interactive native 必须保持双向 stream-json；更新 Descriptor 和冲突参数校验。保留 Permission Ask 当前明确 unsupported，不把一个粗粒度 bool 扩张为所有 HITL 组合。无 native 能力的组合仍按 core 固定 fallback 规则处理，不引入模式选择器。\n\n**验收。** Question Ask、PlanReview Ask 与 schema 成功；回答/拒绝/超时；只有 result 的结束；非法结构化结果；调用 Run/Stream 与 Thread/WithSpawn；stdout、terminal payload、结构化数据和 checkpoint 同次解析一致。验证当前支持的 CLI 版本后再宣告能力；internal 的测试结果不视为本仓库 live 证据。更新 structured-output、run-policy 和 Claude 文档。",
+      "W07": "### W07：模型可修正的 Tool 输入错误\n\n**证据与差距。** 当前 `tool/tool.go` 的输入 schema/Go 解码失败只包装 `ErrInvalidInput`；toolruntime 仅把 SDK 私有 `tool.Reject` 作为模型可见错误，输入错误缺少可修正原因。internal `64163ab` 增加 `invalidInputRejection`，以 `errors.Join(ErrInvalidInput, Reject(\"invalid_input\", safeMessage))` 同时保留 Go sentinel 和安全反馈。\n\n**实施。** 采用这个错误分层。无效 JSON 只给语法提示；schema 失败给必填/类型/值域提示；通过既有 jsonschema 库的结构化 `AdditionalProperties` 类型识别额外字段。不得返回底层 error、完整 schema、字段值或 handler 错误。字段名也是不可信输入，增加长度、控制字符、引号/换行处理及确定性顺序，不能照搬无界回显第一个 key。Go 解码失败不应一律谎报“JSON 语法错误”，需单独给安全类型提示。\n\n**验收。** extra key、required、类型、enum、畸形 JSON、嵌套对象、超长/恶意 key；handler 在失败时未执行；`errors.Is(ErrInvalidInput)` 和 `tool.AsRejection` 同时成立；任意实现 `As` 的外部 error 不能伪造 rejection；输出校验/业务 panic 的细节仍不泄露。更新 `docs/tools.md` 与 tool godoc。无需新增依赖。",
+      "W08": "### W08：A2A 每次 artifact 更新保留完整 Parts\n\n**证据与差距。** 当前 `RemoteArtifact.Parts` 和 `IncludeRemoteArtifacts` 已支持最终完整投影；`DelegationArtifact` 只有 ID/URI/MediaType 等精简字段，`artifactCreatedEvent` 丢掉 Text/Data/多 Part。internal `3253009` 为实时 DelegationArtifact 增加 `Parts` 并调用 `cloneRemoteParts`。\n\n**实施。** additive 增加可选 `Parts []RemotePart`，映射每次实际更新的 parts，沿既有 Append/LastChunk 语义透传。不是另建 artifact 流，也不是把每轮更新误当完整最终累计值。同步检查 resultFromTask、cloneDelegationResult、event clone/EventBus/Service recorder 的深复制；internal 的小 patch 不能代替这些链路检查。\n\n保持既有 `IncludeRemoteArtifacts` 与 ExposurePolicy 最小暴露：明确区分可展示的 parts 和原始 Raw/metadata，不能因新字段让默认精简结果突然暴露鉴权或隐藏正文。更新来源和最终结果要有一致的过滤决定；被过滤/超限要有可见降级语义。\n\n**验收。** 同一 ArtifactID 多次更新、Append、LastChunk、多 Text/Data/File Parts、URI 与 inline bytes、上限、源对象后续修改不影响已发事件；最终汇总无重复。W03 回放只恢复 artifacts，不重放问卷。更新 `docs/a2a.md`、hosttool DTO godoc。",
+      "W09": "### W09：Capability 调用观测，放在正确公共层\n\n**来源。** `1921636` 提供 Skill/MCP/Subagent 调用观测；`9b1ce27` 修复标准化 MCP server name；`dab6933` 处理 Unicode 和下划线分隔歧义。当前没有对应 typed 事件、Driver 字段或 recorder 查询合同。\n\n**实施方案。**\n\n1. 采用封闭 typed 事件：kind、canonical resource key、operation、invocation ID、phase、evidence、source、发生时间/耗时、安全 error code。typed Event 在根层由 Event 家族表达；Driver 事实合同留在 `driver/`，可共用的值词汇放独立公开叶包，任何公共字段不得指向 internal。\n2. Driver 从正式协议识别，基于本次 resolved Skill/MCP/profile Agent catalog 做精确映射。共用 tracker 只管理 catalog 和生命周期，provider-specific MCP name 规则移入 Claude 边界，不把 internal tracker 里的 Claude 特例复制成通用 helper 职责。\n3. Claude MCP server aliases 以已知 catalog 驱动，处理空格、标点、Unicode、开头/末尾下划线；冲突时拒绝归属。不能盲目按 `__` 拆分，更不能根据 tool name 的自然语言含义猜 Skill/Subagent。\n4. 提供可选 `hosttools/capabilityrecorder`，Store/Query 由该包和宿主拥有，不增加 Agent.Admin 或 Inspect 历史查询。通过既有 RunService 扩展机制发行组件 `Option()`；为实现接收事件，设计最小可选 attachment observer 字段或可选观察接口，在唯一 sink 接收后、用户背压丢弃之前投影。现有 RunAttachment 仅能提供输入 Events，**不能假装它已经支持观察输出**。\n5. observer 调用必须有明确并发/顺序、超时、panic、关闭和迟到事件合同；首次存储失败只关闭当前 run 的写入并产生一次安全 notice，不改变 Result/checkpoint/审批。Store 由宿主关闭，不让 Agent.Close 关闭共享 Store。\n6. 流选择与调用 Run/Stream 解耦；按 resolved observation 需求和 Driver 能力选择协议。无正式证据表示未观察到，不能宣告“从未调用”，也不宣告审计/计费完整性。\n\n**验收。** 四 Driver 正式 fixture、未知/歧义 catalog 不入库、Unicode MCP、重复 started/terminal、取消、观察中途实时 Query、store 超时/panic/失败、无 store 运行、并发 runs/identity 隔离、无 args/result/Raw/URL/header/env 泄露。Run 与 Stream 所观察事实一致，原 Result 不受观察失败影响。注意 internal workstream 曾有“立即 started”的旧文字，与后续 `7438d26` 冲突；以 W10 的最终顺序为准。",
+      "W10": "### W10：远端嵌套 Capability 沿现有 A2A 事件流透传\n\n**来源与差距。** `51d12bd` 增加安全 capability relay，`7438d26` 把 started 移到 BeforeDelegate 成功之后。当前 A2A `adapter.stream.v1` 不接受 capability kind，delegation 也没有对应安全观察路径。\n\n**实施。** 扩充当前版本化 DTO 的可选 capability 字段，编解码都验证封闭字段、长度、UTF-8、时间和 64 KiB 上限；不在 bridge 重新识别工具。保留当前 `EventMeta` 权威序号，remote source 坐标只作来源。无远端 Store 也可 relay；用既有执行/扩展点传递需求，不恢复 `WithCapabilityInvocationRelay + WithoutStreaming + StreamEvents` 三套旧入口。\n\n顺序固定为 registry 解析 → 有界预算/BeforeDelegate 成功 → 观察外层 started 并安装唯一 terminal defer → 远端 I/O。before hook 拒绝不伪造调用事实。远端事实在本地可丢弃 EventBus 之前安全投影；不同 DelegationID 对相同远端 invocation ID 做无碰撞域隔离，started/terminal ID 保持一致。Local Runner delegation 也走同一公开 Event 合同。\n\n**暴露裁决。** internal 默认不受 IncludeToolCalls 约束，不可直接作为 v1 默认。建议 capability 采用专用显式 exposure 控制，默认关闭，因为资源 key/source 也可能暴露内部能力目录；开启后只传安全闭集字段。旧 client 遇到新 kind 有明确 unsupported/dropped 事件，新 client 可读旧 wire。\n\n**验收。** 无远端 store、有/无本地 recorder、EventBus 满、observer 失败、before hook 拒绝、双层远端相同 ID、超限/畸形 payload、默认 exposure 无外泄、Local/Remote 一致。更新 A2A 文档和 Driver/hosttool 观测合同。",
+      "W11": "### W11：追加 provider-native system prompt\n\n**来源与差距。** internal `8ffe22a` 最终使用带 Append 语义的名字；当前只有 `WithInstructions`，二者不是同一通道。其实现采用 Claude `--append-system-prompt-file`、CodeBuddy `--append-system-prompt`、Codex exec `developer_instructions` 与 app-server `developerInstructions`，Cursor 非空请求 fail-closed。这些是 internal 固定提交的实现选择，实施时仍需核验目标 CLI 版本。\n\n**公共方案。** 仅增加一个 `WithAppendSystemPrompt(string) SharedOption`，构造与调用共用；近处替换、空串清除。增加 Driver Request 字段和 append 能力声明、结构化 unsupported error。仅 append，保留 provider 默认提示词；不再加 `WithDefaultAppendSystemPrompt`，不增加 Config 镜像字段，不拼入用户 Prompt，也不降级为 Instructions。\n\n**工程细节。** 内容进入 Thread compatibility 和 persistent startup signature，两者都要覆盖；Codex start/resume/fork 对应正式字段都核对，不能恢复时漏传。它不是 profile 资源，不写入 profile manifest。Claude 文件采用 owned、0600、内容校验和安全原子物化；internal 缓存仅比较同名文件 size 的判断需强化，避免同长度篡改和 symlink。CodeBuddy inline 长度、Windows argv 限制、Codex TOML 编码与 ExtraArgs 冲突启动前校验，缓存/文件清理有明确归属。\n\n**验收。** 默认、call override、空串清除、中文/换行/引号/TOML 字符、超长文本、Cursor unsupported、构造 Inspect 一致、Run/Stream 一致、Thread 配置变化拒绝/安全重建、常驻签名变化先停后起、恢复无漏传。更新 root/SPI golden、API reference、各 Driver godoc、examples、README 翻译与 CHANGELOG；With* 数量变更显式记录，不能绕过冻结守卫。",
+      "W12": "### W12：Todo/Plan 作为同一 Event 流中的快照\n\n**来源与差距。** internal `eb82ed3` 增加 `todo.updated`；当前没有此 typed Event。internal 自述仅实现 Claude/CodeBuddy streaming 和 Codex app-server，未实现 batch Transcript todo 或 Cursor print todo；不能把它描述成四 Driver 全覆盖。\n\n**公共方案。** 增加 `TodoUpdated` typed Event，携带全量有序快照、状态枚举、source/scope 和 `SyntheticID`；它属于 Event 家族，不是新执行概念，也不是 Approval PlanReview。原 ToolCall 和 Transcript 保留。对 Run 与 Stream 采用同一 resolved transport 协商，Driver 能力按实际 transport 如实声明。\n\n**必须修改 internal 的三个假设。**\n\n1. provider 识别留在各 parser。共享 table 只接收规范化的 create/update/replace 操作；不复制 `internal/todoobs.ApplyClaudeTaskTool` 对 provider JSON 和工具名的解释，也不反向 import 根包。\n2. 不能把每 run 的 `TaskCreate` 递增序号假装成 provider `TaskUpdate.taskId`：resume、嵌套、重放或已有任务都可错配。优先从正式结果取得真实 ID，合成 ID 明确标记，未知 ID 不猜；父工具/子代理拥有独立 scope。工具参数完成仅代表请求，不能在工具实际失败时报告成功状态。\n3. 合法空快照代表清空，不能静默丢弃导致 UI 永久保留旧计划；畸形/未知格式以明确可观察降级处理，保留 Raw。最终快照应为关键状态或通过等价的合并/补发保证终态可恢复，并完整报告 drop。\n\nCodex 结构化源限正式 `turn/plan/updated`；实验性文本 plan delta 不猜成 todo。Cursor 当前 print transport 保持 unsupported，不借本项切换整个 Driver 到 ACP。\n\n**验收。** create/update/replace/clear、错误工具调用、真实 ID、synthetic ID、同 Thread 多轮、嵌套 scope、重复快照、UTF-8 长度、取消/drop、A2A round-trip、AG-UI/SSE 映射或明确降级、session recorder 编解码、batch/stream 输出合同不变。A2A 文本内容继续受 v1 ExposurePolicy 过滤，不直接采用 internal“只截断，redact 全交宿主”的默认。更新 API/godoc/golden/streaming 文档。",
+      "W13": "### W13：暂停人工等待期间的主动执行预算\n\n**来源与差距。** internal `e2f0620` 增加 PausableContext、RunPolicy.ActiveExecutionTimeout、Ask 暂停与 A2A 错误映射。当前 `stream.go:openStream` 的 WithTimeout 是整体墙钟；`Policy` 是整值替换；delegator 的 Timeout 也是墙钟。\n\n**公共方案。** 在现有 `Policy` 增加 `ActiveExecutionTimeout time.Duration`，不新增平行执行动词。最终 Policy 的零值表示无主动预算、正值表示限额、负值在启动前拒绝；call `WithPolicy` 仍整值替换构造 Policy。不能带回 internal 的“0 继承字段、负数关闭”的逐字段合并。`WithTimeout` 和 parent deadline 继续是绝对墙钟上限。\n\n计时器实现放私有包，默认不把通用 `PausableContext/WithPausableTimeout` 铺到根包。预算从准备资源前开始；只有唯一 approval sink 进入 Ask 等待时暂停自己的 run，自动批准/拒绝不暂停，审批自身 Timeout 仍按墙钟。等待开始前的背压边界要明确，不能让已经发出的审批卡仍消耗整个主动预算。多个并发 Ask 使用 token/refcount 配对，最后一个等待结束才恢复，避免 internal 单一 paused bool 过早恢复。\n\n用单调时间和 timer generation 处理迟到回调；所有成功/拒绝/超时/panic/取消出口恢复或终止计时。pause 不阻断 parent Cancel、Agent.Close、lease 续期和清理。嵌套 Member 不自动暂停 Leader，也不能自行改变 parent context。\n\n**错误与 A2A。** 增加稳定 active-execution-timeout sentinel、failure reason 和安全 Limit 详情，保留原错误可匹配性，复用 W04 部分结果。审批拒绝/超时、用户取消、外部 deadline、预算耗尽明确区分；并发终止以已确定的原因优先，不能由 cleanup 覆盖。预算耗尽不让 checkpoint 有效。\n\ndelegation 保留已发布 `Timeout` 的墙钟含义；另在该可选 hosttool 的请求/策略中增加主动预算字段，不能把同一个字段悄悄改义。每次 Delegate/continuation 分配新预算，传输重试和 recovery 不重置本次预算。已知 TaskID（包括入参携带）时用有界 detached context 尽力 CancelTask；取消失败为诊断，不覆盖主因。bridge 仅翻译安全 code/limit，不自行决定重试，也不把其他 metadata 绕过 ExposurePolicy。\n\n**验收。** fake-clock 40ms 执行 + 300ms Ask + 50ms 执行仍未耗尽 100ms 预算；再执行 10ms 才超时。覆盖重叠 Ask、retry、父 deadline、外层取消、初始化耗时、timer callback race、Close、lease renewal、旧 Task 回放、远端错误 code 往返和 partial Result。更新 Policy、Approval、errors godoc、root golden、run-policy、A2A 文档。"
+    }
+  },
+  "ownership": {
+    "allow": [
+      "docs/alignment-tasks/2026-09-07/handoffs/T25/**"
+    ],
+    "scope_match": "仅精确仓库相对文件或目录/**；任何未列路径不可写。",
+    "exclusive_resources": [],
+    "shared_files_policy": "集中docs/CHANGELOG仅本批gate写；仅own allow含golden/mod的任务可改它们；不得越界修复。",
+    "scope_expansion": "先提交具体路径与原因给批次协调者；协调者更新版本/冲突检查并重排后重派，未授权范围不得修改。"
+  },
+  "execution": {
+    "environment": "linux",
+    "isolation": "separate_git_worktree",
+    "branch": "codex/alignment-t25",
+    "same_batch_peer_artifacts": "禁止读取/依赖同批worker尚未验收的代码或输出；只消费前批已合入合同，公共Go符号不得由同批peer供应。",
+    "source_write_allowed": false,
+    "paid_live_authorization_required": false,
+    "live_build_tag": null,
+    "remote_push_allowed": false,
+    "release_tag_allowed": false,
+    "further_delegation": "不自动派发额外用户任务；若需要子任务由协调者纳入相同边界和覆盖检查。"
+  },
+  "invariants": [
+    "以 AGENTS.md 和固定对齐方案为准；源仓库只用 git show 固定提交读取，不修改 internal、不复制其旧架构或未提交 vision 内容。",
+    "保留六名词模型、唯一 New、Run/Stream、统一 resolved invocation/Thread 管线和 typed Event；不引入 SDK/Admin/Start/RunHandle/registry/default binding、平行语义 channel 或 root WithTeam。",
+    "Options 作用域编译约束不变；近处替换、skills 追加、Policy 整值替换；WithTimeout 仍墙钟，Thread 默认常驻，WithSpawn 本轮新进程。",
+    "完整 fingerprint、opaque Thread key、lease owner/token、单 writer、原子 Finalize 与失败不污染 checkpoint 均保留；交付后绝不自动重放。",
+    "仅 Driver 解释正式 provider 协议；shared helper 不猜 session/tool/todo/capability；nil/不支持能力明确失败，Inspect 使用构造配置。",
+    "一个 error 判定面；部分输出不得丢，Text/Summary/Raw/Transcript/Services/Usage/Decode 独立；Run 与 Stream.Result 等价。",
+    "保留 v1.1.1 Tool 凭据/权限/隔离、v1.1.2 Windows 常驻和已有安全更新；不得因源码旧而覆盖掉当前更强合同。",
+    "公共语义变更同时交付合同测试、局部 godoc 和 documentation.md 文档片段；集中使用文档/CHANGELOG 由本批 gate 在放行前合并，不能留到最终批才记录。",
+    "只有拥有对应文件的任务可改 root/Driver AST golden；先审阅新增声明再精确更新，禁止全局设置 golden 更新环境掩盖漂移。",
+    "只写 ownership.allow 指定路径，不顺手重构其他子系统；需要扩大范围时向批次协调者提交具体变更理由和路径，先消除同批冲突再重派本任务。",
+    "不写 TODO、空实现、未来才有的兼容 shim；先用失败可复现的 fixture 验证问题，再实现并验证；不得只满足实现本身的镜像测试。",
+    "普通验证显式关闭付费门，不访问真实 provider；live 任务须同时满足授权记录、build tag 和环境变量门。所有任务都不创建 tag、不发布 release、不自动推送/发送外部消息。"
+  ],
+  "implementation_steps": [
+    "使用 G05 指定的同一冻结 code SHA，在 Linux 记录 go版本/系统/准确执行命令，源码只读。",
+    "运行全量 test/vet/race、Thread/lease/fork/checkpoint/Event/Approval/A2A 重复场景及 S1-S9、四 adaptertest。",
+    "执行当前 CI 9 个 fuzz target 各 30s，附 seed 失败记录；examples/fake driver与live关闭状态可核查。",
+    "若无 Linux runner 或有失败，状态 blocked/needs_rework，不以本地 macOS 测试代替。",
+    "独立核对G05冻结源码的公共符号、capability/todo未观察边界与多语言使用文档一致，给T24文档要求提供独立验收证据。"
+  ],
+  "acceptance_criteria": [
+    {
+      "id": "T25-AC01",
+      "requirement": "所有必须检查有 exit code、日志路径、SHA、target/时长，不能用 cached、skipped 或零测试算通过。",
+      "required": true
+    },
+    {
+      "id": "T25-AC02",
+      "requirement": "发现的 failure 交原 owner 重开，验证任务不改实现或自动释放 gate。",
+      "required": true
+    }
+  ],
+  "validation": [
+    {
+      "id": "T25-V01",
+      "command": "go test -count=1 ./...",
+      "cwd": "repository_root",
+      "environment": {
+        "AGENT_ADAPTOR_LIVE_CONFORMANCE": "0",
+        "AGENT_ADAPTOR_E2E": "0",
+        "AGENT_ADAPTOR_UPDATE_API_GOLDEN": "0"
+      },
+      "required": true,
+      "execution_condition": "assigned_environment_available",
+      "must_execute_nonzero_tests": true,
+      "evidence": "记录实际命令、head SHA、OS/Go/CLI版本、exit code和安全日志；失败/skip/零测试不算通过。 非零按本命令实际测试/子测试计数，fuzz按实际种子/执行样本计数；必需场景skip不得通过。普通任务显式禁用的live探针或合同确认不适用的probe可skip，须列明且不能拿它们充当验收证据；可添加-json/-v采集日志，不能缩小原命令选择范围。"
+    },
+    {
+      "id": "T25-V02",
+      "command": "go vet ./...",
+      "cwd": "repository_root",
+      "environment": {
+        "AGENT_ADAPTOR_LIVE_CONFORMANCE": "0",
+        "AGENT_ADAPTOR_E2E": "0",
+        "AGENT_ADAPTOR_UPDATE_API_GOLDEN": "0"
+      },
+      "required": true,
+      "execution_condition": "assigned_environment_available",
+      "must_execute_nonzero_tests": false,
+      "evidence": "记录实际命令、head SHA、OS/Go/CLI版本、exit code和安全日志；失败/skip/零测试不算通过。 非零按本命令实际测试/子测试计数，fuzz按实际种子/执行样本计数；必需场景skip不得通过。普通任务显式禁用的live探针或合同确认不适用的probe可skip，须列明且不能拿它们充当验收证据；可添加-json/-v采集日志，不能缩小原命令选择范围。"
+    },
+    {
+      "id": "T25-V03",
+      "command": "go test -race -count=1 ./...",
+      "cwd": "repository_root",
+      "environment": {
+        "AGENT_ADAPTOR_LIVE_CONFORMANCE": "0",
+        "AGENT_ADAPTOR_E2E": "0",
+        "AGENT_ADAPTOR_UPDATE_API_GOLDEN": "0"
+      },
+      "required": true,
+      "execution_condition": "assigned_environment_available",
+      "must_execute_nonzero_tests": true,
+      "evidence": "记录实际命令、head SHA、OS/Go/CLI版本、exit code和安全日志；失败/skip/零测试不算通过。 非零按本命令实际测试/子测试计数，fuzz按实际种子/执行样本计数；必需场景skip不得通过。普通任务显式禁用的live探针或合同确认不适用的probe可skip，须列明且不能拿它们充当验收证据；可添加-json/-v采集日志，不能缩小原命令选择范围。"
+    },
+    {
+      "id": "T25-V04",
+      "command": "go test -count=20 . ./clients/a2a ./bridges/a2a ./hosttools/a2adelegation",
+      "cwd": "repository_root",
+      "environment": {
+        "AGENT_ADAPTOR_LIVE_CONFORMANCE": "0",
+        "AGENT_ADAPTOR_E2E": "0",
+        "AGENT_ADAPTOR_UPDATE_API_GOLDEN": "0"
+      },
+      "required": true,
+      "execution_condition": "assigned_environment_available",
+      "must_execute_nonzero_tests": true,
+      "evidence": "记录实际命令、head SHA、OS/Go/CLI版本、exit code和安全日志；失败/skip/零测试不算通过。 非零按本命令实际测试/子测试计数，fuzz按实际种子/执行样本计数；必需场景skip不得通过。普通任务显式禁用的live探针或合同确认不适用的probe可skip，须列明且不能拿它们充当验收证据；可添加-json/-v采集日志，不能缩小原命令选择范围。"
+    },
+    {
+      "id": "T25-V05",
+      "command": "go test -count=1 . ./bridges/a2a ./hosttools/a2adelegation -run 'TestScenarioS[1-9]|TestServiceTeamCollaborationS9'",
+      "cwd": "repository_root",
+      "environment": {
+        "AGENT_ADAPTOR_LIVE_CONFORMANCE": "0",
+        "AGENT_ADAPTOR_E2E": "0",
+        "AGENT_ADAPTOR_UPDATE_API_GOLDEN": "0"
+      },
+      "required": true,
+      "execution_condition": "assigned_environment_available",
+      "must_execute_nonzero_tests": true,
+      "evidence": "记录实际命令、head SHA、OS/Go/CLI版本、exit code和安全日志；失败/skip/零测试不算通过。 非零按本命令实际测试/子测试计数，fuzz按实际种子/执行样本计数；必需场景skip不得通过。普通任务显式禁用的live探针或合同确认不适用的probe可skip，须列明且不能拿它们充当验收证据；可添加-json/-v采集日志，不能缩小原命令选择范围。"
+    },
+    {
+      "id": "T25-V06",
+      "command": "go test -count=1 ./claude ./codebuddy ./codex ./cursor -run 'Test(Claude|CodeBuddy|Codex|Cursor)DriverConformance'",
+      "cwd": "repository_root",
+      "environment": {
+        "AGENT_ADAPTOR_LIVE_CONFORMANCE": "0",
+        "AGENT_ADAPTOR_E2E": "0",
+        "AGENT_ADAPTOR_UPDATE_API_GOLDEN": "0"
+      },
+      "required": true,
+      "execution_condition": "assigned_environment_available",
+      "must_execute_nonzero_tests": true,
+      "evidence": "记录实际命令、head SHA、OS/Go/CLI版本、exit code和安全日志；失败/skip/零测试不算通过。 非零按本命令实际测试/子测试计数，fuzz按实际种子/执行样本计数；必需场景skip不得通过。普通任务显式禁用的live探针或合同确认不适用的probe可skip，须列明且不能拿它们充当验收证据；可添加-json/-v采集日志，不能缩小原命令选择范围。"
+    },
+    {
+      "id": "T25-V07",
+      "command": "go test ./internal/engine -run '^$' -fuzz '^FuzzExtractZip$' -fuzztime=30s",
+      "cwd": "repository_root",
+      "environment": {
+        "AGENT_ADAPTOR_LIVE_CONFORMANCE": "0",
+        "AGENT_ADAPTOR_E2E": "0",
+        "AGENT_ADAPTOR_UPDATE_API_GOLDEN": "0"
+      },
+      "required": true,
+      "execution_condition": "assigned_environment_available",
+      "must_execute_nonzero_tests": true,
+      "evidence": "记录实际命令、head SHA、OS/Go/CLI版本、exit code和安全日志；失败/skip/零测试不算通过。 非零按本命令实际测试/子测试计数，fuzz按实际种子/执行样本计数；必需场景skip不得通过。普通任务显式禁用的live探针或合同确认不适用的probe可skip，须列明且不能拿它们充当验收证据；可添加-json/-v采集日志，不能缩小原命令选择范围。"
+    },
+    {
+      "id": "T25-V08",
+      "command": "go test ./internal/engine -run '^$' -fuzz '^FuzzExtractTar$' -fuzztime=30s",
+      "cwd": "repository_root",
+      "environment": {
+        "AGENT_ADAPTOR_LIVE_CONFORMANCE": "0",
+        "AGENT_ADAPTOR_E2E": "0",
+        "AGENT_ADAPTOR_UPDATE_API_GOLDEN": "0"
+      },
+      "required": true,
+      "execution_condition": "assigned_environment_available",
+      "must_execute_nonzero_tests": true,
+      "evidence": "记录实际命令、head SHA、OS/Go/CLI版本、exit code和安全日志；失败/skip/零测试不算通过。 非零按本命令实际测试/子测试计数，fuzz按实际种子/执行样本计数；必需场景skip不得通过。普通任务显式禁用的live探针或合同确认不适用的probe可skip，须列明且不能拿它们充当验收证据；可添加-json/-v采集日志，不能缩小原命令选择范围。"
+    },
+    {
+      "id": "T25-V09",
+      "command": "go test ./internal/engine -run '^$' -fuzz '^FuzzSniffArchiveFormat$' -fuzztime=30s",
+      "cwd": "repository_root",
+      "environment": {
+        "AGENT_ADAPTOR_LIVE_CONFORMANCE": "0",
+        "AGENT_ADAPTOR_E2E": "0",
+        "AGENT_ADAPTOR_UPDATE_API_GOLDEN": "0"
+      },
+      "required": true,
+      "execution_condition": "assigned_environment_available",
+      "must_execute_nonzero_tests": true,
+      "evidence": "记录实际命令、head SHA、OS/Go/CLI版本、exit code和安全日志；失败/skip/零测试不算通过。 非零按本命令实际测试/子测试计数，fuzz按实际种子/执行样本计数；必需场景skip不得通过。普通任务显式禁用的live探针或合同确认不适用的probe可skip，须列明且不能拿它们充当验收证据；可添加-json/-v采集日志，不能缩小原命令选择范围。"
+    },
+    {
+      "id": "T25-V10",
+      "command": "go test ./claude -run '^$' -fuzz '^FuzzClaudeBatchParser$' -fuzztime=30s",
+      "cwd": "repository_root",
+      "environment": {
+        "AGENT_ADAPTOR_LIVE_CONFORMANCE": "0",
+        "AGENT_ADAPTOR_E2E": "0",
+        "AGENT_ADAPTOR_UPDATE_API_GOLDEN": "0"
+      },
+      "required": true,
+      "execution_condition": "assigned_environment_available",
+      "must_execute_nonzero_tests": true,
+      "evidence": "记录实际命令、head SHA、OS/Go/CLI版本、exit code和安全日志；失败/skip/零测试不算通过。 非零按本命令实际测试/子测试计数，fuzz按实际种子/执行样本计数；必需场景skip不得通过。普通任务显式禁用的live探针或合同确认不适用的probe可skip，须列明且不能拿它们充当验收证据；可添加-json/-v采集日志，不能缩小原命令选择范围。"
+    },
+    {
+      "id": "T25-V11",
+      "command": "go test ./cursor -run '^$' -fuzz '^FuzzCursorBatchParser$' -fuzztime=30s",
+      "cwd": "repository_root",
+      "environment": {
+        "AGENT_ADAPTOR_LIVE_CONFORMANCE": "0",
+        "AGENT_ADAPTOR_E2E": "0",
+        "AGENT_ADAPTOR_UPDATE_API_GOLDEN": "0"
+      },
+      "required": true,
+      "execution_condition": "assigned_environment_available",
+      "must_execute_nonzero_tests": true,
+      "evidence": "记录实际命令、head SHA、OS/Go/CLI版本、exit code和安全日志；失败/skip/零测试不算通过。 非零按本命令实际测试/子测试计数，fuzz按实际种子/执行样本计数；必需场景skip不得通过。普通任务显式禁用的live探针或合同确认不适用的probe可skip，须列明且不能拿它们充当验收证据；可添加-json/-v采集日志，不能缩小原命令选择范围。"
+    },
+    {
+      "id": "T25-V12",
+      "command": "go test ./codebuddy -run '^$' -fuzz '^FuzzCodeBuddyBatchParser$' -fuzztime=30s",
+      "cwd": "repository_root",
+      "environment": {
+        "AGENT_ADAPTOR_LIVE_CONFORMANCE": "0",
+        "AGENT_ADAPTOR_E2E": "0",
+        "AGENT_ADAPTOR_UPDATE_API_GOLDEN": "0"
+      },
+      "required": true,
+      "execution_condition": "assigned_environment_available",
+      "must_execute_nonzero_tests": true,
+      "evidence": "记录实际命令、head SHA、OS/Go/CLI版本、exit code和安全日志；失败/skip/零测试不算通过。 非零按本命令实际测试/子测试计数，fuzz按实际种子/执行样本计数；必需场景skip不得通过。普通任务显式禁用的live探针或合同确认不适用的probe可skip，须列明且不能拿它们充当验收证据；可添加-json/-v采集日志，不能缩小原命令选择范围。"
+    },
+    {
+      "id": "T25-V13",
+      "command": "go test ./codex -run '^$' -fuzz '^FuzzCodexBatchParser$' -fuzztime=30s",
+      "cwd": "repository_root",
+      "environment": {
+        "AGENT_ADAPTOR_LIVE_CONFORMANCE": "0",
+        "AGENT_ADAPTOR_E2E": "0",
+        "AGENT_ADAPTOR_UPDATE_API_GOLDEN": "0"
+      },
+      "required": true,
+      "execution_condition": "assigned_environment_available",
+      "must_execute_nonzero_tests": true,
+      "evidence": "记录实际命令、head SHA、OS/Go/CLI版本、exit code和安全日志；失败/skip/零测试不算通过。 非零按本命令实际测试/子测试计数，fuzz按实际种子/执行样本计数；必需场景skip不得通过。普通任务显式禁用的live探针或合同确认不适用的probe可skip，须列明且不能拿它们充当验收证据；可添加-json/-v采集日志，不能缩小原命令选择范围。"
+    },
+    {
+      "id": "T25-V14",
+      "command": "go test ./codex/appserver -run '^$' -fuzz '^FuzzCodexAppserverNotificationDecoder$' -fuzztime=30s",
+      "cwd": "repository_root",
+      "environment": {
+        "AGENT_ADAPTOR_LIVE_CONFORMANCE": "0",
+        "AGENT_ADAPTOR_E2E": "0",
+        "AGENT_ADAPTOR_UPDATE_API_GOLDEN": "0"
+      },
+      "required": true,
+      "execution_condition": "assigned_environment_available",
+      "must_execute_nonzero_tests": true,
+      "evidence": "记录实际命令、head SHA、OS/Go/CLI版本、exit code和安全日志；失败/skip/零测试不算通过。 非零按本命令实际测试/子测试计数，fuzz按实际种子/执行样本计数；必需场景skip不得通过。普通任务显式禁用的live探针或合同确认不适用的probe可skip，须列明且不能拿它们充当验收证据；可添加-json/-v采集日志，不能缩小原命令选择范围。"
+    },
+    {
+      "id": "T25-V15",
+      "command": "go test ./codex/appserver -run '^$' -fuzz '^FuzzDecodeThreadItem$' -fuzztime=30s",
+      "cwd": "repository_root",
+      "environment": {
+        "AGENT_ADAPTOR_LIVE_CONFORMANCE": "0",
+        "AGENT_ADAPTOR_E2E": "0",
+        "AGENT_ADAPTOR_UPDATE_API_GOLDEN": "0"
+      },
+      "required": true,
+      "execution_condition": "assigned_environment_available",
+      "must_execute_nonzero_tests": true,
+      "evidence": "记录实际命令、head SHA、OS/Go/CLI版本、exit code和安全日志；失败/skip/零测试不算通过。 非零按本命令实际测试/子测试计数，fuzz按实际种子/执行样本计数；必需场景skip不得通过。普通任务显式禁用的live探针或合同确认不适用的probe可skip，须列明且不能拿它们充当验收证据；可添加-json/-v采集日志，不能缩小原命令选择范围。"
+    }
+  ],
+  "documentation": {
+    "fragment": "docs/alignment-tasks/2026-09-07/handoffs/T25/documentation.md",
+    "contents": [
+      "公开语义前后变化和可复现例子",
+      "应合并到的godoc/使用文档/CHANGELOG具体段落",
+      "新增公共声明与golden理由",
+      "不采用的internal行为和原因",
+      "验证实跑/未跑的平台与live边界"
+    ],
+    "central_owner": "G06",
+    "must_integrate_before_batch_acceptance": true
+  },
+  "handoff": {
+    "result_path": "docs/alignment-tasks/2026-09-07/handoffs/T25/result.json",
+    "schema_path": "docs/alignment-tasks/2026-09-07/result.schema.json",
+    "evidence_dir": "docs/alignment-tasks/2026-09-07/handoffs/T25/evidence",
+    "failure_report": "docs/alignment-tasks/2026-09-07/handoffs/T25/findings.md",
+    "requirement_ids": [
+      "W09-R13",
+      "W11-R09",
+      "W12-R11",
+      "W13-R10"
+    ],
+    "commit_rule": "只提交本任务实施/局部godoc/测试与契约文件。源码commit完成并测试后生成result，记录实际head；result/evidence由派发器收集，不塞回所引用commit造成SHA自引用。"
+  },
+  "completion": {
+    "required": [
+      "所有必需acceptance/validation实际通过；verification任务不得以skip或零测试充数",
+      "所有owned/verified requirement逐条记录passed/failed/blocked及证据",
+      "工作树生产diff仅在allow范围；无TODO/未实现stub/旧API",
+      "按handoff schema报告真实base/head/commit/changed_files/测试/文档与remaining_items",
+      "本task通过只表示交付，不等于批次gate或整个work_item已关闭"
+    ],
+    "blocked_rule": "缺前置合同/runner/live授权时记录blocked与可执行缺项；发现合同违背或测试失败为needs_rework，向原owner提交最小复现，绝不声称完成或偷偷删工作项。"
+  },
+  "dispatch_prompt": "读取整个task.json和context.required_reads；确认基线和dependency_artifacts已由前批gate验收。只在隔离worktree按ownership实施implementation_steps，逐项满足acceptance_criteria、requirements_owned/verified与validation。严格遵守invariants，用handoff.result_path/schema交付真实结果；不要只根据标题工作，也不要提前执行本批gate或后批任务。"
+}

@@ -1,0 +1,190 @@
+{
+  "schema_version": "1.0",
+  "id": "T03",
+  "title": "修复 A2A continuation 的历史 Task 回放误终结",
+  "batch_id": "B01",
+  "phase": "parallel",
+  "kind": "implementation",
+  "priority": "P0",
+  "status": "planned",
+  "objective": "修复 A2A continuation 的历史 Task 回放误终结。完成本任务范围并交付可核验结果，不代替其他任务或提前宣称整个 W 项完成。",
+  "work_items": [
+    "W03"
+  ],
+  "requirements_owned": [
+    "W03-R01",
+    "W03-R02",
+    "W03-R03",
+    "W03-R04",
+    "W03-R05",
+    "W03-R06"
+  ],
+  "requirements_verified": [],
+  "depends_on": [
+    "G00"
+  ],
+  "base": {
+    "mode": "previous_batch_integrated_head",
+    "predecessor_gate": "G00",
+    "required_ancestor": "919f140f64f89c80933802840c8878681a85a4d9",
+    "verification_head_gate": null,
+    "bootstrap_required": true
+  },
+  "context": {
+    "repository": "agent-adaptor",
+    "source_repository_hint": "/Users/blurooo/project/agent-adaptor-internal",
+    "source_head": "e2f0620bdd6477e6fe16f6db5648093589342ca2",
+    "source_commits": [
+      "8e35b123af693b1a922d9d53b879692d04e00795"
+    ],
+    "source_read_rule": "用 git -C <实际internal仓库> show <固定sha>:<文件>；hint可由派发器映射到只读clone，不能依赖worktree的../相对位置或读取internal脏工作区。",
+    "authority": {
+      "path": "AGENTS.md",
+      "baseline_sha256": "82ab6e82530363daeb3a303708bebe913b7e1f661ccdd39812715925355338df"
+    },
+    "plan": {
+      "path": "docs/internal-history-alignment-plan-2026-09-07.md",
+      "sha256": "73f4b596937160462cfef370f7600aa7a2a2b1b78d9d2861f4d7f2202bf4a6f8",
+      "sections": [
+        "W03"
+      ]
+    },
+    "required_reads": [
+      "AGENTS.md",
+      "docs/internal-history-alignment-plan-2026-09-07.md",
+      "docs/alignment-tasks/2026-09-07/README.md"
+    ],
+    "dependency_artifacts": [
+      {
+        "producer": "G00",
+        "path": "docs/alignment-tasks/2026-09-07/contracts/frozen.json",
+        "version_source": "G00 accepted contract manifest"
+      }
+    ],
+    "embedded_plan_sections": {
+      "W03": "### W03：A2A 历史 Task 快照不结束续答\n\n**证据与差距。** 当前 `clients/a2a/execution_state.go:executionFinalEvent` 会把 `EventTask` 的 `input-required` 视为执行结束；`hosttools/a2adelegation/delegator.go:delegateStreaming` 同样可由 `event.Task` 或 EOF 后的 `lastTask` 结束，mapper 会重放其旧 status/question。internal `8e35b12` 修改了这三个位置。\n\n**实施。** 流式接收中明确区分完整 Task 快照与 live Status/Message。快照只恢复 TaskID、ContextID 与已存在 artifacts，不生成本轮新问卷或终态；本轮终态以 live Status/Message 为准。同步 Send、GetTask、polling 的完整 Task 仍可作为权威结果，不能把流语义套到所有查询。\n\n同时修正 client 停流条件、delegator 收尾条件、mapper 状态转换，避免只修其中一层。EOF 的历史 `input-required` 不能冒充新问卷；无新 live 终态应显式 `stream_interrupted`。真正断流后的 GetTask 恢复要区别“主动补查结果”与“原流回放”，并避免重新采用已回答的同一问题。\n\n**需超越 internal 的边界。** internal `canFinishFromLastTask` 仍允许某些已结束 Task 在 EOF 收尾，其提交说明“只认 live 终态”比实现更严格。实施时把首次请求、continuation、显式 recovery 分开写合同：continuation 不凭旧 completed/failed 快照误结束；兼容仅返回完整 Task 的服务端时，采用有明确模式的同步/轮询路径，不静默猜测。\n\n**验收。** 旧 question → working → completed；旧 question → 新 question；旧 question → EOF；快照后错误并恢复；首次同步 Task；polling；同一 TaskID 的多轮 answer。旧问卷不再发给 ApprovalRequest，不误取消远端，不丢后续 artifact。重复运行 client/bridge/delegation 用例并进行 race 检查。更新 `docs/a2a.md`。"
+    }
+  },
+  "ownership": {
+    "allow": [
+      "clients/a2a/**",
+      "docs/alignment-tasks/2026-09-07/handoffs/T03/**",
+      "hosttools/a2adelegation/**"
+    ],
+    "scope_match": "仅精确仓库相对文件或目录/**；任何未列路径不可写。",
+    "exclusive_resources": [],
+    "shared_files_policy": "集中docs/CHANGELOG仅本批gate写；仅own allow含golden/mod的任务可改它们；不得越界修复。",
+    "scope_expansion": "先提交具体路径与原因给批次协调者；协调者更新版本/冲突检查并重排后重派，未授权范围不得修改。"
+  },
+  "execution": {
+    "environment": "local",
+    "isolation": "separate_git_worktree",
+    "branch": "codex/alignment-t03",
+    "same_batch_peer_artifacts": "禁止读取/依赖同批worker尚未验收的代码或输出；只消费前批已合入合同，公共Go符号不得由同批peer供应。",
+    "source_write_allowed": true,
+    "paid_live_authorization_required": false,
+    "live_build_tag": null,
+    "remote_push_allowed": false,
+    "release_tag_allowed": false,
+    "further_delegation": "不自动派发额外用户任务；若需要子任务由协调者纳入相同边界和覆盖检查。"
+  },
+  "invariants": [
+    "以 AGENTS.md 和固定对齐方案为准；源仓库只用 git show 固定提交读取，不修改 internal、不复制其旧架构或未提交 vision 内容。",
+    "保留六名词模型、唯一 New、Run/Stream、统一 resolved invocation/Thread 管线和 typed Event；不引入 SDK/Admin/Start/RunHandle/registry/default binding、平行语义 channel 或 root WithTeam。",
+    "Options 作用域编译约束不变；近处替换、skills 追加、Policy 整值替换；WithTimeout 仍墙钟，Thread 默认常驻，WithSpawn 本轮新进程。",
+    "完整 fingerprint、opaque Thread key、lease owner/token、单 writer、原子 Finalize 与失败不污染 checkpoint 均保留；交付后绝不自动重放。",
+    "仅 Driver 解释正式 provider 协议；shared helper 不猜 session/tool/todo/capability；nil/不支持能力明确失败，Inspect 使用构造配置。",
+    "一个 error 判定面；部分输出不得丢，Text/Summary/Raw/Transcript/Services/Usage/Decode 独立；Run 与 Stream.Result 等价。",
+    "保留 v1.1.1 Tool 凭据/权限/隔离、v1.1.2 Windows 常驻和已有安全更新；不得因源码旧而覆盖掉当前更强合同。",
+    "公共语义变更同时交付合同测试、局部 godoc 和 documentation.md 文档片段；集中使用文档/CHANGELOG 由本批 gate 在放行前合并，不能留到最终批才记录。",
+    "只有拥有对应文件的任务可改 root/Driver AST golden；先审阅新增声明再精确更新，禁止全局设置 golden 更新环境掩盖漂移。",
+    "只写 ownership.allow 指定路径，不顺手重构其他子系统；需要扩大范围时向批次协调者提交具体变更理由和路径，先消除同批冲突再重派本任务。",
+    "不写 TODO、空实现、未来才有的兼容 shim；先用失败可复现的 fixture 验证问题，再实现并验证；不得只满足实现本身的镜像测试。",
+    "普通验证显式关闭付费门，不访问真实 provider；live 任务须同时满足授权记录、build tag 和环境变量门。所有任务都不创建 tag、不发布 release、不自动推送/发送外部消息。"
+  ],
+  "implementation_steps": [
+    "一起修 client 停流、delegator 收尾和 mapper：流 Task snapshot 仅身份/artifacts，不触发本轮问卷/终态。",
+    "明确 continuation 与首次同步/polling/GetTask recovery：本轮 live Status/Message 才可结束，旧问卷 EOF 必须 stream_interrupted。",
+    "处理旧 completed/failed 快照、已回答 question 的恢复，保留后续制品和正确远端取消。"
+  ],
+  "acceptance_criteria": [
+    {
+      "id": "T03-AC01",
+      "requirement": "旧 question→working→completed、旧→新 question、旧→EOF、错误补查、多轮同 TaskID 均有回归。",
+      "required": true
+    },
+    {
+      "id": "T03-AC02",
+      "requirement": "同步/轮询行为保持，客户端与 hosttool 规则一致，不把存盘回放伪造成 ApprovalRequest。",
+      "required": true
+    }
+  ],
+  "validation": [
+    {
+      "id": "T03-V01",
+      "command": "go test -count=1 ./clients/a2a ./hosttools/a2adelegation",
+      "cwd": "repository_root",
+      "environment": {
+        "AGENT_ADAPTOR_LIVE_CONFORMANCE": "0",
+        "AGENT_ADAPTOR_E2E": "0",
+        "AGENT_ADAPTOR_UPDATE_API_GOLDEN": "0"
+      },
+      "required": true,
+      "execution_condition": "assigned_environment_available",
+      "must_execute_nonzero_tests": true,
+      "evidence": "记录实际命令、head SHA、OS/Go/CLI版本、exit code和安全日志；失败/skip/零测试不算通过。 非零按本命令实际测试/子测试计数，fuzz按实际种子/执行样本计数；必需场景skip不得通过。普通任务显式禁用的live探针或合同确认不适用的probe可skip，须列明且不能拿它们充当验收证据；可添加-json/-v采集日志，不能缩小原命令选择范围。"
+    },
+    {
+      "id": "T03-V02",
+      "command": "go test -count=20 ./clients/a2a ./hosttools/a2adelegation",
+      "cwd": "repository_root",
+      "environment": {
+        "AGENT_ADAPTOR_LIVE_CONFORMANCE": "0",
+        "AGENT_ADAPTOR_E2E": "0",
+        "AGENT_ADAPTOR_UPDATE_API_GOLDEN": "0"
+      },
+      "required": true,
+      "execution_condition": "assigned_environment_available",
+      "must_execute_nonzero_tests": true,
+      "evidence": "记录实际命令、head SHA、OS/Go/CLI版本、exit code和安全日志；失败/skip/零测试不算通过。 非零按本命令实际测试/子测试计数，fuzz按实际种子/执行样本计数；必需场景skip不得通过。普通任务显式禁用的live探针或合同确认不适用的probe可skip，须列明且不能拿它们充当验收证据；可添加-json/-v采集日志，不能缩小原命令选择范围。"
+    }
+  ],
+  "documentation": {
+    "fragment": "docs/alignment-tasks/2026-09-07/handoffs/T03/documentation.md",
+    "contents": [
+      "公开语义前后变化和可复现例子",
+      "应合并到的godoc/使用文档/CHANGELOG具体段落",
+      "新增公共声明与golden理由",
+      "不采用的internal行为和原因",
+      "验证实跑/未跑的平台与live边界"
+    ],
+    "central_owner": "G01",
+    "must_integrate_before_batch_acceptance": true
+  },
+  "handoff": {
+    "result_path": "docs/alignment-tasks/2026-09-07/handoffs/T03/result.json",
+    "schema_path": "docs/alignment-tasks/2026-09-07/result.schema.json",
+    "evidence_dir": "docs/alignment-tasks/2026-09-07/handoffs/T03/evidence",
+    "failure_report": "docs/alignment-tasks/2026-09-07/handoffs/T03/findings.md",
+    "requirement_ids": [
+      "W03-R01",
+      "W03-R02",
+      "W03-R03",
+      "W03-R04",
+      "W03-R05",
+      "W03-R06"
+    ],
+    "commit_rule": "只提交本任务实施/局部godoc/测试与契约文件。源码commit完成并测试后生成result，记录实际head；result/evidence由派发器收集，不塞回所引用commit造成SHA自引用。"
+  },
+  "completion": {
+    "required": [
+      "所有必需acceptance/validation实际通过；verification任务不得以skip或零测试充数",
+      "所有owned/verified requirement逐条记录passed/failed/blocked及证据",
+      "工作树生产diff仅在allow范围；无TODO/未实现stub/旧API",
+      "按handoff schema报告真实base/head/commit/changed_files/测试/文档与remaining_items",
+      "本task通过只表示交付，不等于批次gate或整个work_item已关闭"
+    ],
+    "blocked_rule": "缺前置合同/runner/live授权时记录blocked与可执行缺项；发现合同违背或测试失败为needs_rework，向原owner提交最小复现，绝不声称完成或偷偷删工作项。"
+  },
+  "dispatch_prompt": "读取整个task.json和context.required_reads；确认基线和dependency_artifacts已由前批gate验收。只在隔离worktree按ownership实施implementation_steps，逐项满足acceptance_criteria、requirements_owned/verified与validation。严格遵守invariants，用handoff.result_path/schema交付真实结果；不要只根据标题工作，也不要提前执行本批gate或后批任务。"
+}

@@ -1,0 +1,156 @@
+{
+  "schema_version": "1.0",
+  "id": "C01",
+  "title": "冻结 Dedicated hosted-tool profile 的所有权与恢复合同",
+  "batch_id": "B00",
+  "phase": "parallel",
+  "kind": "contract",
+  "priority": "P0",
+  "status": "planned",
+  "objective": "冻结 Dedicated hosted-tool profile 的所有权与恢复合同。完成本任务范围并交付可核验结果，不代替其他任务或提前宣称整个 W 项完成。",
+  "work_items": [
+    "W02"
+  ],
+  "requirements_owned": [],
+  "requirements_verified": [],
+  "depends_on": [],
+  "base": {
+    "mode": "previous_batch_integrated_head",
+    "predecessor_gate": null,
+    "required_ancestor": "919f140f64f89c80933802840c8878681a85a4d9",
+    "verification_head_gate": null,
+    "bootstrap_required": true
+  },
+  "context": {
+    "repository": "agent-adaptor",
+    "source_repository_hint": "/Users/blurooo/project/agent-adaptor-internal",
+    "source_head": "e2f0620bdd6477e6fe16f6db5648093589342ca2",
+    "source_commits": [
+      "ca571fbed8454e482560b481a3aa6853e9d174df"
+    ],
+    "source_read_rule": "用 git -C <实际internal仓库> show <固定sha>:<文件>；hint可由派发器映射到只读clone，不能依赖worktree的../相对位置或读取internal脏工作区。",
+    "authority": {
+      "path": "AGENTS.md",
+      "baseline_sha256": "82ab6e82530363daeb3a303708bebe913b7e1f661ccdd39812715925355338df"
+    },
+    "plan": {
+      "path": "docs/internal-history-alignment-plan-2026-09-07.md",
+      "sha256": "73f4b596937160462cfef370f7600aa7a2a2b1b78d9d2861f4d7f2202bf4a6f8",
+      "sections": [
+        "W02"
+      ]
+    },
+    "required_reads": [
+      "AGENTS.md",
+      "docs/internal-history-alignment-plan-2026-09-07.md",
+      "docs/alignment-tasks/2026-09-07/README.md"
+    ],
+    "dependency_artifacts": [],
+    "embedded_plan_sections": {
+      "W02": "### W02：保留真实 hosted-tool provider 会话文件\n\n**证据与差距。** 当前 `tools.go:prepareHostedToolProfile` 对所有选择都 `MkdirTemp`；`releaseHostedToolProfiles` 删除全部 owned clone。`e2e/tools_test.go` 验证了 fake provider 的重建和 endpoint 变化，但 fake checkpoint 可续不证明真实 CLI 的会话文件存在。internal `ca571fb` 指出 Dedicated + Tools 下 Claude 的 transcript 随临时 profile 删除，冷重建 resume 失败。\n\n**不能照搬的部分。** internal 直接使用 `<profile>.hosted-tools` sibling；它不能充分证明当前 v1 要求的 Agent/identity 隔离、跨进程单 writer 和目录所有权。当前删除函数只允许临时目录直接子目录，也不能简单扩宽为“任何路径都可删”。\n\n**实施方案。**\n\n1. 仅对显式 Dedicated 选择启用持久 hosted-tool clone，Native/临时选择保持现有生命周期并明确文档化。稳定位置采用 Dedicated sibling 下按 Driver、canonical source、完整 identity 无碰撞编码后求 hash 的命名空间；不把 host Thread key 拼成目录名。\n2. clone 带 SDK 所有权标记、版本、源目录身份。已有目录要验证标记、权限和非符号链接边界；不能仅因目录存在就采用，也不能重新复制源 profile 覆盖已有 transcript。\n3. 对共享执行 profile 引入有界、跨进程可验证的独占所有权。Agent 持有期间另一 Agent 使用同一执行目录必须明确冲突；不能只靠进程内 mutex 或不同 Thread 的 store lease。原 Agent 进程退出并释放所有权后才能接力。锁只服务于可选 profile 功能，不新增宿主数据库或通用锁服务。\n4. 重建时更新本 Agent 的 MCP endpoint/env carrier；先结束旧 writer，再写新投影、启动进程。保留现有 source 不写入、保留 MCP key/凭据冲突 fail-closed、随机 token 与私有权限。\n5. Close 顺序仍为准入关闭、取消/drain、Driver 回收、移除 owned MCP 投影、关闭 gateway、释放目录所有权。持久 clone 的 provider 会话文件保留；临时 clone 删除。不得留下可用的旧 gateway/token 投影。\n6. Thread compatibility 使用稳定的语义身份；process signature 使用实际 endpoint 和物化内容。持久目录不等于忽略 Tools Revision、模型、skills/MCP/instructions 或配置漂移。\n\n**迁移。** 已被旧版本删除的 transcript 无法凭 store 中的 resume ID 恢复。原 Thread 遇到 provider resume reject 时继续使用现有一次性安全 fallback；不能宣布“自动修复历史会话”，不能修改宿主 key。持久 profile 的清理归属要写入 `docs/tools.md`，不能让 `Agent.Close` 同时承诺“保留”和“删除”。\n\n**验收。** Agent A 真实写入 session 文件 → Close → Agent B 同配置/identity/Thread key 续接；endpoint/token 轮换而会话保留。覆盖两进程抢同目录、不同 identity、篡改标记、符号链接、旧 MCP 载体、Close 超时重试和 native 临时清理。先用严格依赖 session 文件的 provider fixture，再做显式授权 live 验证。重新打开 AGENTS §14 的 Thread/profile 兼容审计子项。"
+    }
+  },
+  "ownership": {
+    "allow": [
+      "docs/alignment-tasks/2026-09-07/contracts/profile-lifecycle.md",
+      "docs/alignment-tasks/2026-09-07/handoffs/C01/**"
+    ],
+    "scope_match": "仅精确仓库相对文件或目录/**；任何未列路径不可写。",
+    "exclusive_resources": [],
+    "shared_files_policy": "集中docs/CHANGELOG仅本批gate写；仅own allow含golden/mod的任务可改它们；不得越界修复。",
+    "scope_expansion": "先提交具体路径与原因给批次协调者；协调者更新版本/冲突检查并重排后重派，未授权范围不得修改。"
+  },
+  "execution": {
+    "environment": "local",
+    "isolation": "separate_git_worktree",
+    "branch": "codex/alignment-c01",
+    "same_batch_peer_artifacts": "禁止读取/依赖同批worker尚未验收的代码或输出；只消费前批已合入合同，公共Go符号不得由同批peer供应。",
+    "source_write_allowed": true,
+    "paid_live_authorization_required": false,
+    "live_build_tag": null,
+    "remote_push_allowed": false,
+    "release_tag_allowed": false,
+    "further_delegation": "不自动派发额外用户任务；若需要子任务由协调者纳入相同边界和覆盖检查。"
+  },
+  "invariants": [
+    "以 AGENTS.md 和固定对齐方案为准；源仓库只用 git show 固定提交读取，不修改 internal、不复制其旧架构或未提交 vision 内容。",
+    "保留六名词模型、唯一 New、Run/Stream、统一 resolved invocation/Thread 管线和 typed Event；不引入 SDK/Admin/Start/RunHandle/registry/default binding、平行语义 channel 或 root WithTeam。",
+    "Options 作用域编译约束不变；近处替换、skills 追加、Policy 整值替换；WithTimeout 仍墙钟，Thread 默认常驻，WithSpawn 本轮新进程。",
+    "完整 fingerprint、opaque Thread key、lease owner/token、单 writer、原子 Finalize 与失败不污染 checkpoint 均保留；交付后绝不自动重放。",
+    "仅 Driver 解释正式 provider 协议；shared helper 不猜 session/tool/todo/capability；nil/不支持能力明确失败，Inspect 使用构造配置。",
+    "一个 error 判定面；部分输出不得丢，Text/Summary/Raw/Transcript/Services/Usage/Decode 独立；Run 与 Stream.Result 等价。",
+    "保留 v1.1.1 Tool 凭据/权限/隔离、v1.1.2 Windows 常驻和已有安全更新；不得因源码旧而覆盖掉当前更强合同。",
+    "公共语义变更同时交付合同测试、局部 godoc 和 documentation.md 文档片段；集中使用文档/CHANGELOG 由本批 gate 在放行前合并，不能留到最终批才记录。",
+    "只有拥有对应文件的任务可改 root/Driver AST golden；先审阅新增声明再精确更新，禁止全局设置 golden 更新环境掩盖漂移。",
+    "只写 ownership.allow 指定路径，不顺手重构其他子系统；需要扩大范围时向批次协调者提交具体变更理由和路径，先消除同批冲突再重派本任务。",
+    "不写 TODO、空实现、未来才有的兼容 shim；先用失败可复现的 fixture 验证问题，再实现并验证；不得只满足实现本身的镜像测试。",
+    "普通验证显式关闭付费门，不访问真实 provider；live 任务须同时满足授权记录、build tag 和环境变量门。所有任务都不创建 tag、不发布 release、不自动推送/发送外部消息。"
+  ],
+  "implementation_steps": [
+    "重读 tools.go、agent.go、profile selection/materializer 与 internal ca571fb，绘制当前 Close/clone 生命周期。",
+    "确定稳定目录 key 的无碰撞编码、ownership manifest、权限/非 symlink 边界、首次 clone 与已有 transcript 保留规则。",
+    "确定跨进程独占、持有期、冲突错误、崩溃释放、Close 超时重试和 endpoint/token 轮换规则；不能只靠 Thread lease。",
+    "评估现有锁能力；若需新依赖，写三项依赖选型及精确版本，记录公开错误声明；本任务不改 go.mod。",
+    "产出可直接实施的目录/错误/锁状态机、文件分配、测试 fixture 与迁移规则，不把选型留给各 worker 自行决定。"
+  ],
+  "acceptance_criteria": [
+    {
+      "id": "C01-AC01",
+      "requirement": "contract 明确 Dedicated 持久、Native/临时清理、历史已删除 transcript 不可凭 resume ID 重建。",
+      "required": true
+    },
+    {
+      "id": "C01-AC02",
+      "requirement": "选定且可测试的跨平台所有权方案，覆盖两个 Agent/进程抢同 profile 与不同 identity。",
+      "required": true
+    },
+    {
+      "id": "C01-AC03",
+      "requirement": "给出 T04 唯一可实施的操作顺序、依赖结论和失败行为，不能有待选的核心方案。",
+      "required": true
+    }
+  ],
+  "validation": [
+    {
+      "id": "C01-V01",
+      "command": "python3 docs/alignment-tasks/2026-09-07/validate.py",
+      "cwd": "repository_root",
+      "environment": {},
+      "required": true,
+      "execution_condition": "always",
+      "must_execute_nonzero_tests": false,
+      "evidence": "验证任务图/范围/完整性；另附本 contract 的具体签名、状态机与fixture一致性审阅记录。 非零按本命令实际测试/子测试计数，fuzz按实际种子/执行样本计数；必需场景skip不得通过。普通任务显式禁用的live探针或合同确认不适用的probe可skip，须列明且不能拿它们充当验收证据；可添加-json/-v采集日志，不能缩小原命令选择范围。"
+    }
+  ],
+  "documentation": {
+    "fragment": "docs/alignment-tasks/2026-09-07/handoffs/C01/documentation.md",
+    "contents": [
+      "公开语义前后变化和可复现例子",
+      "应合并到的godoc/使用文档/CHANGELOG具体段落",
+      "新增公共声明与golden理由",
+      "不采用的internal行为和原因",
+      "验证实跑/未跑的平台与live边界"
+    ],
+    "central_owner": "G00",
+    "must_integrate_before_batch_acceptance": true
+  },
+  "handoff": {
+    "result_path": "docs/alignment-tasks/2026-09-07/handoffs/C01/result.json",
+    "schema_path": "docs/alignment-tasks/2026-09-07/result.schema.json",
+    "evidence_dir": "docs/alignment-tasks/2026-09-07/handoffs/C01/evidence",
+    "failure_report": "docs/alignment-tasks/2026-09-07/handoffs/C01/findings.md",
+    "requirement_ids": [],
+    "commit_rule": "只提交本任务实施/局部godoc/测试与契约文件。源码commit完成并测试后生成result，记录实际head；result/evidence由派发器收集，不塞回所引用commit造成SHA自引用。"
+  },
+  "completion": {
+    "required": [
+      "所有必需acceptance/validation实际通过；verification任务不得以skip或零测试充数",
+      "所有owned/verified requirement逐条记录passed/failed/blocked及证据",
+      "工作树生产diff仅在allow范围；无TODO/未实现stub/旧API",
+      "按handoff schema报告真实base/head/commit/changed_files/测试/文档与remaining_items",
+      "本task通过只表示交付，不等于批次gate或整个work_item已关闭"
+    ],
+    "blocked_rule": "缺前置合同/runner/live授权时记录blocked与可执行缺项；发现合同违背或测试失败为needs_rework，向原owner提交最小复现，绝不声称完成或偷偷删工作项。"
+  },
+  "dispatch_prompt": "读取整个task.json和context.required_reads；确认基线和dependency_artifacts已由前批gate验收。只在隔离worktree按ownership实施implementation_steps，逐项满足acceptance_criteria、requirements_owned/verified与validation。严格遵守invariants，用handoff.result_path/schema交付真实结果；不要只根据标题工作，也不要提前执行本批gate或后批任务。"
+}

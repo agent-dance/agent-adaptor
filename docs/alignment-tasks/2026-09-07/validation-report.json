@@ -1,0 +1,17 @@
+{
+  "status": "passed",
+  "scope": "dispatch_package_and_supplied_handoff_metadata_only",
+  "implementation_executed": false,
+  "summary": {
+    "work_item_count": 13,
+    "history_commit_count": 45,
+    "requirement_count": 95,
+    "batch_count": 7,
+    "parallel_task_count": 34,
+    "gate_task_count": 7,
+    "total_task_count": 41,
+    "peak_parallelism": 6
+  },
+  "manifest_sha256": "5321cc144c34a55136aaaf63a037990c5e4eee34ae24d6e96c1f27752e262868",
+  "errors": []
+}

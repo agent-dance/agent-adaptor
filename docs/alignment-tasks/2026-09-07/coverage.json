@@ -1,0 +1,2249 @@
+{
+  "schema_version": "1.0",
+  "plan": "docs/internal-history-alignment-plan-2026-09-07.md",
+  "plan_sha256": "73f4b596937160462cfef370f7600aa7a2a2b1b78d9d2861f4d7f2202bf4a6f8",
+  "requirements": [
+    {
+      "id": "W01-R01",
+      "work_item": "W01",
+      "description": "result-only 成功/失败/native schema 一次性输入有界关闭",
+      "implementation_owner": "T01",
+      "verification_tasks": [
+        "T20",
+        "T27"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W01-R02",
+      "work_item": "W01",
+      "description": "message_stop 与 result 共用 exactly-once close，tool_use 输入保持可应答",
+      "implementation_owner": "T01",
+      "verification_tasks": [
+        "T20",
+        "T27"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W01-R03",
+      "work_item": "W01",
+      "description": "常驻 stdin 不被关闭，第二轮继续执行",
+      "implementation_owner": "T01",
+      "verification_tasks": [
+        "T20",
+        "T27"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W01-R04",
+      "work_item": "W01",
+      "description": "末尾 Raw/Terminal/Transcript/RunFinished 不丢，取消并发不死锁",
+      "implementation_owner": "T01",
+      "verification_tasks": [
+        "T20",
+        "T27"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W02-R01",
+      "work_item": "W02",
+      "description": "稳定无碰撞 Driver/source/identity 目录且只 Dedicated 持久",
+      "implementation_owner": "T04",
+      "verification_tasks": [
+        "T20",
+        "T26",
+        "T27",
+        "T28",
+        "T29",
+        "T30"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W02-R02",
+      "work_item": "W02",
+      "description": "所有权 manifest/权限/非 symlink 验证，已有 transcript 不覆盖",
+      "implementation_owner": "T04",
+      "verification_tasks": [
+        "T20",
+        "T26",
+        "T27",
+        "T28",
+        "T29",
+        "T30"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W02-R03",
+      "work_item": "W02",
+      "description": "跨进程独占、明确冲突、崩溃释放和不同 identity 隔离",
+      "implementation_owner": "T04",
+      "verification_tasks": [
+        "T20",
+        "T26",
+        "T27",
+        "T28",
+        "T29",
+        "T30"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W02-R04",
+      "work_item": "W02",
+      "description": "关闭准入→drain→provider退出→owned MCP去投影→gateway关闭→释放所有权",
+      "implementation_owner": "T04",
+      "verification_tasks": [
+        "T20",
+        "T26",
+        "T27",
+        "T28",
+        "T29",
+        "T30"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W02-R05",
+      "work_item": "W02",
+      "description": "endpoint/token安全轮换，source profile不污染、秘密不泄露",
+      "implementation_owner": "T04",
+      "verification_tasks": [
+        "T20",
+        "T26",
+        "T27",
+        "T28",
+        "T29",
+        "T30"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W02-R06",
+      "work_item": "W02",
+      "description": "完整 Thread compatibility 与 process signature 分离，不省略资源/model/Revision",
+      "implementation_owner": "T04",
+      "verification_tasks": [
+        "T20",
+        "T26",
+        "T27",
+        "T28",
+        "T29",
+        "T30"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W02-R07",
+      "work_item": "W02",
+      "description": "Native/临时清理，Close超时重试不误删持久数据",
+      "implementation_owner": "T04",
+      "verification_tasks": [
+        "T20",
+        "T26",
+        "T27",
+        "T28",
+        "T29",
+        "T30"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W02-R08",
+      "work_item": "W02",
+      "description": "跨 Agent冷重建确实依赖会话文件，历史已删文件只用原resume reject fallback",
+      "implementation_owner": "T04",
+      "verification_tasks": [
+        "T20",
+        "T26",
+        "T27",
+        "T28",
+        "T29",
+        "T30"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W03-R01",
+      "work_item": "W03",
+      "description": "client 不因 EventTask 历史快照停止读取",
+      "implementation_owner": "T03",
+      "verification_tasks": [
+        "T21"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W03-R02",
+      "work_item": "W03",
+      "description": "delegator/mapper同步修正，回放仅恢复身份与制品、不发旧问卷",
+      "implementation_owner": "T03",
+      "verification_tasks": [
+        "T21"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W03-R03",
+      "work_item": "W03",
+      "description": "continuation 只认本轮 live Status/Message，旧 completed/failed也不能误结束",
+      "implementation_owner": "T03",
+      "verification_tasks": [
+        "T21"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W03-R04",
+      "work_item": "W03",
+      "description": "旧问卷后EOF无新终态时 stream_interrupted",
+      "implementation_owner": "T03",
+      "verification_tasks": [
+        "T21"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W03-R05",
+      "work_item": "W03",
+      "description": "同步/polling/GetTask recovery 与流快照分开，已回答问题不复活",
+      "implementation_owner": "T03",
+      "verification_tasks": [
+        "T21"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W03-R06",
+      "work_item": "W03",
+      "description": "多轮同TaskID继续接收制品/新问题，远端取消时机正确",
+      "implementation_owner": "T03",
+      "verification_tasks": [
+        "T21"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W04-R01",
+      "work_item": "W04",
+      "description": "公共执行后 error 保留部分 Result 与原 cause，启动前错误不混成业务失败",
+      "implementation_owner": "T05",
+      "verification_tasks": [
+        "T20",
+        "T22"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W04-R02",
+      "work_item": "W04",
+      "description": "唯一 finalizeRun和error判定面，Run/Stream逐字段等价",
+      "implementation_owner": "T05",
+      "verification_tasks": [
+        "T20",
+        "T22"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W04-R03",
+      "work_item": "W04",
+      "description": "取消/非零/协议错/缺checkpoint不持久化，旧健康record不污染",
+      "implementation_owner": "T05",
+      "verification_tasks": [
+        "T20",
+        "T22"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W04-R04",
+      "work_item": "W04",
+      "description": "审批/lease/cleanup与context并发时原因明确且不清空可用审计",
+      "implementation_owner": "T05",
+      "verification_tasks": [
+        "T20",
+        "T22"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W04-R05",
+      "work_item": "W04",
+      "description": "Claude 常驻错误保留 Response而非空值，交付前后fallback边界不变",
+      "implementation_owner": "T07",
+      "verification_tasks": [
+        "T20",
+        "T27"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W04-R06",
+      "work_item": "W04",
+      "description": "CodeBuddy 常驻错误保留 Response，既有partial重建与terminal/Summary合同不倒退",
+      "implementation_owner": "T08",
+      "verification_tasks": [
+        "T20",
+        "T28"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W04-R07",
+      "work_item": "W04",
+      "description": "Codex 已有部分Response贯穿公共错误，无重复改写，Raw/Usage/terminal不丢",
+      "implementation_owner": "T16",
+      "verification_tasks": [
+        "T20",
+        "T29"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W05-R01",
+      "work_item": "W05",
+      "description": "公开/SPI tool与Transcript父关联/scope、权威EventMeta与深复制合同",
+      "implementation_owner": "T06",
+      "verification_tasks": [
+        "T21",
+        "T27"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W05-R02",
+      "work_item": "W05",
+      "description": "Claude wrapper正式parent字段补nested start/args/end和真实result配对",
+      "implementation_owner": "T14",
+      "verification_tasks": [
+        "T21",
+        "T27"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W05-R03",
+      "work_item": "W05",
+      "description": "主/嵌套/兄弟/重放/缺ID/并发/异常关闭去重，Args与delta不重复拼接",
+      "implementation_owner": "T14",
+      "verification_tasks": [
+        "T21",
+        "T27"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W05-R04",
+      "work_item": "W05",
+      "description": "A2A父关联wire保留与旧端明确降级",
+      "implementation_owner": "T11",
+      "verification_tasks": [
+        "T21",
+        "T27"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W05-R05",
+      "work_item": "W05",
+      "description": "SSE/AGUI/subagentstream/recorder父关联保留或声明降级",
+      "implementation_owner": "T12",
+      "verification_tasks": [
+        "T21",
+        "T27"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W05-R06",
+      "work_item": "W05",
+      "description": "delegation Local/Remote/Service 父关联不丢",
+      "implementation_owner": "T18",
+      "verification_tasks": [
+        "T21",
+        "T27"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W06-R01",
+      "work_item": "W06",
+      "description": "Question/PlanReview Ask + native schema同次执行",
+      "implementation_owner": "T07",
+      "verification_tasks": [
+        "T20",
+        "T22",
+        "T27"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W06-R02",
+      "work_item": "W06",
+      "description": "interactive 按 resolved source 保持双向stream-json，Permission Ask不虚报支持",
+      "implementation_owner": "T07",
+      "verification_tasks": [
+        "T20",
+        "T22",
+        "T27"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W06-R03",
+      "work_item": "W06",
+      "description": "不支持组合保持core自动Prompt fallback，无模式选择器",
+      "implementation_owner": "T07",
+      "verification_tasks": [
+        "T20",
+        "T22",
+        "T27"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W06-R04",
+      "work_item": "W06",
+      "description": "result-only/回答/拒绝/timeout/无效schema/Thread/WithSpawn多轮矩阵",
+      "implementation_owner": "T07",
+      "verification_tasks": [
+        "T20",
+        "T22",
+        "T27"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W06-R05",
+      "work_item": "W06",
+      "description": "同次正式解析保留Raw/Terminal/structured结果与健康checkpoint",
+      "implementation_owner": "T07",
+      "verification_tasks": [
+        "T20",
+        "T22",
+        "T27"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W07-R01",
+      "work_item": "W07",
+      "description": "ErrInvalidInput 与 SDK私有 safe rejection同时成立",
+      "implementation_owner": "T02",
+      "verification_tasks": [
+        "T22"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W07-R02",
+      "work_item": "W07",
+      "description": "JSON语法/schema/Go解码准确分层，handler失败前不执行",
+      "implementation_owner": "T02",
+      "verification_tasks": [
+        "T22"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W07-R03",
+      "work_item": "W07",
+      "description": "额外key回显有界、UTF-8/控制字符/引号处理且确定性",
+      "implementation_owner": "T02",
+      "verification_tasks": [
+        "T22"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W07-R04",
+      "work_item": "W07",
+      "description": "无schema/值/底层error/handler输出泄露，external As不能伪造",
+      "implementation_owner": "T02",
+      "verification_tasks": [
+        "T22"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W07-R05",
+      "work_item": "W07",
+      "description": "required/type/enum/嵌套/畸形/恶意超长输入完整回归",
+      "implementation_owner": "T02",
+      "verification_tasks": [
+        "T22"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W08-R01",
+      "work_item": "W08",
+      "description": "DelegationArtifact Parts保留实时Text/Data/File等多Part",
+      "implementation_owner": "T09",
+      "verification_tasks": [
+        "T21"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W08-R02",
+      "work_item": "W08",
+      "description": "同ArtifactID多次更新与Append/LastChunk语义正确",
+      "implementation_owner": "T09",
+      "verification_tasks": [
+        "T21"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W08-R03",
+      "work_item": "W08",
+      "description": "event/result/EventBus/Service所有clone路径深复制",
+      "implementation_owner": "T09",
+      "verification_tasks": [
+        "T21"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W08-R04",
+      "work_item": "W08",
+      "description": "最终聚合不重复、旧Task回放不发问卷",
+      "implementation_owner": "T09",
+      "verification_tasks": [
+        "T21"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W08-R05",
+      "work_item": "W08",
+      "description": "IncludeRemoteArtifacts/ExposurePolicy/大小上限与可见降级保持",
+      "implementation_owner": "T09",
+      "verification_tasks": [
+        "T21"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W09-R01",
+      "work_item": "W09",
+      "description": "公开叶包值和typed Event/SPI闭集，public不泄露internal",
+      "implementation_owner": "T06",
+      "verification_tasks": [
+        "T21"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W09-R02",
+      "work_item": "W09",
+      "description": "唯一sink在用户drop前观察，observer有界/非重入/失败/panic/迟到合同",
+      "implementation_owner": "T06",
+      "verification_tasks": [
+        "T21"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W09-R03",
+      "work_item": "W09",
+      "description": "resolved demand与入口解耦，catalog/tracker中立不识别provider JSON",
+      "implementation_owner": "T06",
+      "verification_tasks": [
+        "T21"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W09-R04",
+      "work_item": "W09",
+      "description": "hosttool Store/Query实时可见、分页/精确筛选/identity/RunID范围",
+      "implementation_owner": "T13",
+      "verification_tasks": [
+        "T21"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W09-R05",
+      "work_item": "W09",
+      "description": "per-run首错停写、safe notice、失败不影响Result/HITL/checkpoint，共享Store由宿主关闭",
+      "implementation_owner": "T13",
+      "verification_tasks": [
+        "T21"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W09-R06",
+      "work_item": "W09",
+      "description": "Claude严格协议与Unicode/下划线MCP catalog映射，歧义不猜",
+      "implementation_owner": "T14",
+      "verification_tasks": [
+        "T21",
+        "T27"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W09-R07",
+      "work_item": "W09",
+      "description": "CodeBuddy正式协议观测/control与partial去重",
+      "implementation_owner": "T15",
+      "verification_tasks": [
+        "T21",
+        "T28"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W09-R08",
+      "work_item": "W09",
+      "description": "Codex正式协议观测且thread/turn scope fence不放宽",
+      "implementation_owner": "T16",
+      "verification_tasks": [
+        "T21",
+        "T29"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W09-R09",
+      "work_item": "W09",
+      "description": "Cursor print正式证据观测，无字段则未观察不虚构",
+      "implementation_owner": "T17",
+      "verification_tasks": [
+        "T21",
+        "T30"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W09-R10",
+      "work_item": "W09",
+      "description": "A2A安全Capability字段/默认暴露/上限校验",
+      "implementation_owner": "T11",
+      "verification_tasks": [
+        "T21"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W09-R11",
+      "work_item": "W09",
+      "description": "非A2A bridge与recorder的新增Capability事件保留",
+      "implementation_owner": "T12",
+      "verification_tasks": [
+        "T21"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W09-R12",
+      "work_item": "W09",
+      "description": "hosttool自有生命周期产生的Capability经统一公共入口投影",
+      "implementation_owner": "T18",
+      "verification_tasks": [
+        "T21"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W09-R13",
+      "work_item": "W09",
+      "description": "文档说明best-effort、未观察不等于未调用、非审计/计费/授权证据",
+      "implementation_owner": "T24",
+      "verification_tasks": [
+        "T25"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W10-R01",
+      "work_item": "W10",
+      "description": "无远端Store的relay使用既有入口/observer demand，64KiB/UTF8/枚举校验",
+      "implementation_owner": "T11",
+      "verification_tasks": [
+        "T21"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W10-R02",
+      "work_item": "W10",
+      "description": "显式默认最小exposure、旧端unsupported/dropped与新端兼容旧wire",
+      "implementation_owner": "T11",
+      "verification_tasks": [
+        "T21"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W10-R03",
+      "work_item": "W10",
+      "description": "BeforeDelegate成功后才started并安装唯一terminal defer，且早于远端I/O",
+      "implementation_owner": "T18",
+      "verification_tasks": [
+        "T21"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W10-R04",
+      "work_item": "W10",
+      "description": "安全事实先observer再EventBus，EventBus背压不倒流丢记录",
+      "implementation_owner": "T18",
+      "verification_tasks": [
+        "T21"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W10-R05",
+      "work_item": "W10",
+      "description": "remote invocation ID在不同delegation域无碰撞，Source/时间保留",
+      "implementation_owner": "T18",
+      "verification_tasks": [
+        "T21"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W10-R06",
+      "work_item": "W10",
+      "description": "Local/Remote/嵌套hosttool一致，hook拒绝/观察失败不伪造事实或改变业务结果",
+      "implementation_owner": "T18",
+      "verification_tasks": [
+        "T21"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W11-R01",
+      "work_item": "W11",
+      "description": "一个WithAppendSystemPrompt SharedOption，近处替换空串清除",
+      "implementation_owner": "T10",
+      "verification_tasks": [
+        "T22"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W11-R02",
+      "work_item": "W11",
+      "description": "Request/Descriptor/Inspect使用构造配置，unsupported在资源/进程前",
+      "implementation_owner": "T10",
+      "verification_tasks": [
+        "T22"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W11-R03",
+      "work_item": "W11",
+      "description": "Thread fingerprint和startup signature都覆盖文本，不替换Instructions或user Prompt",
+      "implementation_owner": "T10",
+      "verification_tasks": [
+        "T22"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W11-R04",
+      "work_item": "W11",
+      "description": "owned文件/0600/内容校验/原子物化/明确清理，不依size或symlink信任缓存",
+      "implementation_owner": "T10",
+      "verification_tasks": [
+        "T22"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W11-R05",
+      "work_item": "W11",
+      "description": "Claude native append file传输与多轮/签名/冲突校验",
+      "implementation_owner": "T14",
+      "verification_tasks": [
+        "T27"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W11-R06",
+      "work_item": "W11",
+      "description": "CodeBuddy native inline及Windows/长度/ExtraArgs边界",
+      "implementation_owner": "T15",
+      "verification_tasks": [
+        "T26",
+        "T28"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W11-R07",
+      "work_item": "W11",
+      "description": "Codex exec TOML与app-server start/resume/fork字段/编码一致",
+      "implementation_owner": "T16",
+      "verification_tasks": [
+        "T29"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W11-R08",
+      "work_item": "W11",
+      "description": "Cursor非空append明确unsupported，空值兼容",
+      "implementation_owner": "T17",
+      "verification_tasks": [
+        "T30"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W11-R09",
+      "work_item": "W11",
+      "description": "最终API/godoc/多语言README/examples和With*数量说明",
+      "implementation_owner": "T24",
+      "verification_tasks": [
+        "T25"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W12-R01",
+      "work_item": "W12",
+      "description": "TodoUpdated全量有序typed快照与状态/scope/source/synthetic字段",
+      "implementation_owner": "T06",
+      "verification_tasks": [
+        "T21"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W12-R02",
+      "work_item": "W12",
+      "description": "中立create/update/replace table不解析provider JSON、不import根",
+      "implementation_owner": "T06",
+      "verification_tasks": [
+        "T21"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W12-R03",
+      "work_item": "W12",
+      "description": "合法空快照清空、无效输入可见降级、关键最终快照及完整Dropped",
+      "implementation_owner": "T06",
+      "verification_tasks": [
+        "T21"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W12-R04",
+      "work_item": "W12",
+      "description": "Claude实际TaskID关联/工具结果确认/失败不报成功/resume嵌套分域去重",
+      "implementation_owner": "T14",
+      "verification_tasks": [
+        "T27"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W12-R05",
+      "work_item": "W12",
+      "description": "CodeBuddy实际TaskID/control与wrapper去重/空表清空",
+      "implementation_owner": "T15",
+      "verification_tasks": [
+        "T28"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W12-R06",
+      "work_item": "W12",
+      "description": "Codex仅turn/plan/updated结构化来源，synthetic IDs标明，实验文本不猜",
+      "implementation_owner": "T16",
+      "verification_tasks": [
+        "T29"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W12-R07",
+      "work_item": "W12",
+      "description": "Cursor print保持todo unsupported，不改ACP/常驻",
+      "implementation_owner": "T17",
+      "verification_tasks": [
+        "T30"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W12-R08",
+      "work_item": "W12",
+      "description": "A2A Todo DTO/exposure/大小限制/空快照保真",
+      "implementation_owner": "T11",
+      "verification_tasks": [
+        "T21"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W12-R09",
+      "work_item": "W12",
+      "description": "SSE/AGUI/subagentstream/recorder Todo映射或显式降级",
+      "implementation_owner": "T12",
+      "verification_tasks": [
+        "T21"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W12-R10",
+      "work_item": "W12",
+      "description": "delegation Local/Remote todo scope/clear/final snapshot不丢",
+      "implementation_owner": "T18",
+      "verification_tasks": [
+        "T21"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W12-R11",
+      "work_item": "W12",
+      "description": "说明ToolCall和Transcript并存，Todo非PlanReview，真实transport能力矩阵",
+      "implementation_owner": "T24",
+      "verification_tasks": [
+        "T25"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W13-R01",
+      "work_item": "W13",
+      "description": "Policy字段零无限/正限/负拒绝、整值替换，WithTimeout/parent deadline不改义",
+      "implementation_owner": "T10",
+      "verification_tasks": [
+        "T22"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W13-R02",
+      "work_item": "W13",
+      "description": "准备资源前计时、Ask暂停前的背压边界明确、auto resolve不暂停",
+      "implementation_owner": "T10",
+      "verification_tasks": [
+        "T22"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W13-R03",
+      "work_item": "W13",
+      "description": "并发Ask用token/refcount，retry/panic/拒绝/timeout/取消成对释放",
+      "implementation_owner": "T10",
+      "verification_tasks": [
+        "T22"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W13-R04",
+      "work_item": "W13",
+      "description": "私有单调clock/generation处理迟到timer，不把PausableContext引入根",
+      "implementation_owner": "T10",
+      "verification_tasks": [
+        "T22"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W13-R05",
+      "work_item": "W13",
+      "description": "pause不阻断parent/Close/lease/cleanup，Member不自动暂停Leader",
+      "implementation_owner": "T10",
+      "verification_tasks": [
+        "T22"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W13-R06",
+      "work_item": "W13",
+      "description": "active sentinel/cause/limit与审批/外部deadline/取消区分，部分Result保留checkpoint无效",
+      "implementation_owner": "T10",
+      "verification_tasks": [
+        "T22"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W13-R07",
+      "work_item": "W13",
+      "description": "delegation单独active字段、每Delegate新预算，重试/recovery不重置，旧Timeout墙钟不变",
+      "implementation_owner": "T18",
+      "verification_tasks": [
+        "T21",
+        "T22"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W13-R08",
+      "work_item": "W13",
+      "description": "known TaskID从入参种下，detached有界CancelTask失败仅诊断",
+      "implementation_owner": "T18",
+      "verification_tasks": [
+        "T21",
+        "T22"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W13-R09",
+      "work_item": "W13",
+      "description": "A2A安全code/limit映射与exposure，桥不增加重试/HITL策略",
+      "implementation_owner": "T19",
+      "verification_tasks": [
+        "T21",
+        "T22"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    },
+    {
+      "id": "W13-R10",
+      "work_item": "W13",
+      "description": "公开Policy/Approval/errors/预算与A2A用法文档和示例",
+      "implementation_owner": "T24",
+      "verification_tasks": [
+        "T25"
+      ],
+      "closure_gate": "G06",
+      "implementation_gate": "G05",
+      "status": "planned"
+    }
+  ],
+  "work_items": [
+    {
+      "id": "W01",
+      "plan_section": "W01",
+      "source_commits": [
+        "eefcaef35621e6bbfb3e2e859edf4aadc4e38a5d",
+        "a88eacdb4818c75df44caeec39bbb74062e58c53",
+        "d01a086e5145566b7313b83ca88bb525f1d3675b"
+      ],
+      "contract_tasks": [],
+      "implementation_tasks": [
+        "T01"
+      ],
+      "independent_verification_tasks": [
+        "T20",
+        "T27"
+      ],
+      "documentation_task": "T24",
+      "implementation_closure_gate": "G05",
+      "final_closure_gate": "G06",
+      "requirement_ids": [
+        "W01-R01",
+        "W01-R02",
+        "W01-R03",
+        "W01-R04"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "W02",
+      "plan_section": "W02",
+      "source_commits": [
+        "ca571fbed8454e482560b481a3aa6853e9d174df"
+      ],
+      "contract_tasks": [
+        "C01"
+      ],
+      "implementation_tasks": [
+        "T04"
+      ],
+      "independent_verification_tasks": [
+        "T20",
+        "T26",
+        "T27",
+        "T28",
+        "T29",
+        "T30"
+      ],
+      "documentation_task": "T24",
+      "implementation_closure_gate": "G05",
+      "final_closure_gate": "G06",
+      "requirement_ids": [
+        "W02-R01",
+        "W02-R02",
+        "W02-R03",
+        "W02-R04",
+        "W02-R05",
+        "W02-R06",
+        "W02-R07",
+        "W02-R08"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "W03",
+      "plan_section": "W03",
+      "source_commits": [
+        "8e35b123af693b1a922d9d53b879692d04e00795"
+      ],
+      "contract_tasks": [],
+      "implementation_tasks": [
+        "T03"
+      ],
+      "independent_verification_tasks": [
+        "T21"
+      ],
+      "documentation_task": "T24",
+      "implementation_closure_gate": "G05",
+      "final_closure_gate": "G06",
+      "requirement_ids": [
+        "W03-R01",
+        "W03-R02",
+        "W03-R03",
+        "W03-R04",
+        "W03-R05",
+        "W03-R06"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "W04",
+      "plan_section": "W04",
+      "source_commits": [
+        "126d610dfb6afd2cca19661ab0a7c0b6f626b490"
+      ],
+      "contract_tasks": [
+        "C02"
+      ],
+      "implementation_tasks": [
+        "T05",
+        "T07",
+        "T08",
+        "T16"
+      ],
+      "independent_verification_tasks": [
+        "T20",
+        "T22",
+        "T27",
+        "T28",
+        "T29"
+      ],
+      "documentation_task": "T24",
+      "implementation_closure_gate": "G05",
+      "final_closure_gate": "G06",
+      "requirement_ids": [
+        "W04-R01",
+        "W04-R02",
+        "W04-R03",
+        "W04-R04",
+        "W04-R05",
+        "W04-R06",
+        "W04-R07"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "W05",
+      "plan_section": "W05",
+      "source_commits": [
+        "3ea225acea572830100381a5c180dd86f295a70d"
+      ],
+      "contract_tasks": [
+        "C03"
+      ],
+      "implementation_tasks": [
+        "T06",
+        "T11",
+        "T12",
+        "T14",
+        "T18"
+      ],
+      "independent_verification_tasks": [
+        "T21",
+        "T27"
+      ],
+      "documentation_task": "T24",
+      "implementation_closure_gate": "G05",
+      "final_closure_gate": "G06",
+      "requirement_ids": [
+        "W05-R01",
+        "W05-R02",
+        "W05-R03",
+        "W05-R04",
+        "W05-R05",
+        "W05-R06"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "W06",
+      "plan_section": "W06",
+      "source_commits": [
+        "426191444582f9fbbe951dbd8b54c1004464262c"
+      ],
+      "contract_tasks": [
+        "C04"
+      ],
+      "implementation_tasks": [
+        "T07"
+      ],
+      "independent_verification_tasks": [
+        "T20",
+        "T22",
+        "T27"
+      ],
+      "documentation_task": "T24",
+      "implementation_closure_gate": "G05",
+      "final_closure_gate": "G06",
+      "requirement_ids": [
+        "W06-R01",
+        "W06-R02",
+        "W06-R03",
+        "W06-R04",
+        "W06-R05"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "W07",
+      "plan_section": "W07",
+      "source_commits": [
+        "64163ab67ecf109d196da10a4cbac8943d8e6eff"
+      ],
+      "contract_tasks": [],
+      "implementation_tasks": [
+        "T02"
+      ],
+      "independent_verification_tasks": [
+        "T22"
+      ],
+      "documentation_task": "T24",
+      "implementation_closure_gate": "G05",
+      "final_closure_gate": "G06",
+      "requirement_ids": [
+        "W07-R01",
+        "W07-R02",
+        "W07-R03",
+        "W07-R04",
+        "W07-R05"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "W08",
+      "plan_section": "W08",
+      "source_commits": [
+        "3253009054681a499fd693329486d0fe3279d843"
+      ],
+      "contract_tasks": [],
+      "implementation_tasks": [
+        "T09"
+      ],
+      "independent_verification_tasks": [
+        "T21"
+      ],
+      "documentation_task": "T24",
+      "implementation_closure_gate": "G05",
+      "final_closure_gate": "G06",
+      "requirement_ids": [
+        "W08-R01",
+        "W08-R02",
+        "W08-R03",
+        "W08-R04",
+        "W08-R05"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "W09",
+      "plan_section": "W09",
+      "source_commits": [
+        "1921636510ced4c830c0287fe68d41218f1ed185",
+        "9b1ce27faa4e46ba6a213210eaffc8748b327bdb",
+        "dab6933b9159894c36fa78b8367c6bc572227621"
+      ],
+      "contract_tasks": [
+        "C03"
+      ],
+      "implementation_tasks": [
+        "T06",
+        "T11",
+        "T12",
+        "T13",
+        "T14",
+        "T15",
+        "T16",
+        "T17",
+        "T18",
+        "T24"
+      ],
+      "independent_verification_tasks": [
+        "T21",
+        "T25",
+        "T27",
+        "T28",
+        "T29",
+        "T30"
+      ],
+      "documentation_task": "T24",
+      "implementation_closure_gate": "G05",
+      "final_closure_gate": "G06",
+      "requirement_ids": [
+        "W09-R01",
+        "W09-R02",
+        "W09-R03",
+        "W09-R04",
+        "W09-R05",
+        "W09-R06",
+        "W09-R07",
+        "W09-R08",
+        "W09-R09",
+        "W09-R10",
+        "W09-R11",
+        "W09-R12",
+        "W09-R13"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "W10",
+      "plan_section": "W10",
+      "source_commits": [
+        "51d12bd143ae3be553673bca2d16db08e3bffb9f",
+        "7438d2633ef7063a02c9208c96fdd2dab3d2f01a"
+      ],
+      "contract_tasks": [
+        "C03"
+      ],
+      "implementation_tasks": [
+        "T11",
+        "T18"
+      ],
+      "independent_verification_tasks": [
+        "T21"
+      ],
+      "documentation_task": "T24",
+      "implementation_closure_gate": "G05",
+      "final_closure_gate": "G06",
+      "requirement_ids": [
+        "W10-R01",
+        "W10-R02",
+        "W10-R03",
+        "W10-R04",
+        "W10-R05",
+        "W10-R06"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "W11",
+      "plan_section": "W11",
+      "source_commits": [
+        "8ffe22a2a29c0b72e6c993d7774ffb54ac15c010"
+      ],
+      "contract_tasks": [
+        "C04"
+      ],
+      "implementation_tasks": [
+        "T10",
+        "T14",
+        "T15",
+        "T16",
+        "T17",
+        "T24"
+      ],
+      "independent_verification_tasks": [
+        "T22",
+        "T25",
+        "T26",
+        "T27",
+        "T28",
+        "T29",
+        "T30"
+      ],
+      "documentation_task": "T24",
+      "implementation_closure_gate": "G05",
+      "final_closure_gate": "G06",
+      "requirement_ids": [
+        "W11-R01",
+        "W11-R02",
+        "W11-R03",
+        "W11-R04",
+        "W11-R05",
+        "W11-R06",
+        "W11-R07",
+        "W11-R08",
+        "W11-R09"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "W12",
+      "plan_section": "W12",
+      "source_commits": [
+        "eb82ed36eaf6339b00860b5506a683e6dbd74765"
+      ],
+      "contract_tasks": [
+        "C03"
+      ],
+      "implementation_tasks": [
+        "T06",
+        "T11",
+        "T12",
+        "T14",
+        "T15",
+        "T16",
+        "T17",
+        "T18",
+        "T24"
+      ],
+      "independent_verification_tasks": [
+        "T21",
+        "T25",
+        "T27",
+        "T28",
+        "T29",
+        "T30"
+      ],
+      "documentation_task": "T24",
+      "implementation_closure_gate": "G05",
+      "final_closure_gate": "G06",
+      "requirement_ids": [
+        "W12-R01",
+        "W12-R02",
+        "W12-R03",
+        "W12-R04",
+        "W12-R05",
+        "W12-R06",
+        "W12-R07",
+        "W12-R08",
+        "W12-R09",
+        "W12-R10",
+        "W12-R11"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "W13",
+      "plan_section": "W13",
+      "source_commits": [
+        "e2f0620bdd6477e6fe16f6db5648093589342ca2"
+      ],
+      "contract_tasks": [
+        "C02"
+      ],
+      "implementation_tasks": [
+        "T10",
+        "T18",
+        "T19",
+        "T24"
+      ],
+      "independent_verification_tasks": [
+        "T21",
+        "T22",
+        "T25"
+      ],
+      "documentation_task": "T24",
+      "implementation_closure_gate": "G05",
+      "final_closure_gate": "G06",
+      "requirement_ids": [
+        "W13-R01",
+        "W13-R02",
+        "W13-R03",
+        "W13-R04",
+        "W13-R05",
+        "W13-R06",
+        "W13-R07",
+        "W13-R08",
+        "W13-R09",
+        "W13-R10"
+      ],
+      "status": "planned"
+    }
+  ],
+  "history": [
+    {
+      "ledger_id": "A01",
+      "commit": "15b620a9a531d72f3791042aa240a990defcd82b",
+      "date": "2026-07-23",
+      "subject": "feat: agent-adaptor Go SDK",
+      "disposition": "base_snapshot",
+      "work_items": [],
+      "decision": "共同内容快照；与 c9a0bb8 tree 相等，不作为增量移植。",
+      "verification_owner": "T23"
+    },
+    {
+      "ledger_id": "A02",
+      "commit": "e36c59b2b980bf45d0d5b2a262f2a3b7c5b7741f",
+      "date": "2026-07-28",
+      "subject": "feat: add opt-in Claude persistent processes",
+      "disposition": "preserve_existing",
+      "work_items": [],
+      "decision": "常驻主能力已覆盖；保留当前默认 Thread 常驻和完整兼容 fingerprint，不搬入 opt-in/宽松资源兼容。",
+      "verification_owner": "T23"
+    },
+    {
+      "ledger_id": "A03",
+      "commit": "bcaeec18f3e68905eb5a32d3e4762ed3df9595b8",
+      "date": "2026-07-28",
+      "subject": "feat: close SDK persistent process pools",
+      "disposition": "preserve_existing",
+      "work_items": [],
+      "decision": "已覆盖于 Agent.Close 及准入、取消/drain、重试清理；不恢复 SDK.Close。",
+      "verification_owner": "T23"
+    },
+    {
+      "ledger_id": "A04",
+      "commit": "456e03eb23cc3a5ff3aeabcb98eba09267c1368e",
+      "date": "2026-07-28",
+      "subject": "feat: add opt-in CodeBuddy persistent processes",
+      "disposition": "preserve_existing",
+      "work_items": [],
+      "decision": "CodeBuddy 常驻/control 已覆盖；当前 persistent/control 测试验证默认复用和 WithSpawn。",
+      "verification_owner": "T23"
+    },
+    {
+      "ledger_id": "A05",
+      "commit": "0985324984c1e91ff0bdb7db7613acf5f680cdd0",
+      "date": "2026-07-28",
+      "subject": "feat: reuse Codex app-server across streaming turns",
+      "disposition": "preserve_existing",
+      "work_items": [],
+      "decision": "Codex app-server 常驻、接力与 idle/Close 已覆盖；保持当前 Raw/terminal 协议合同。",
+      "verification_owner": "T23"
+    },
+    {
+      "ledger_id": "A06",
+      "commit": "1b2de5bb015c8f011fbddbb6df5cbc5a0d3f94ec",
+      "date": "2026-07-28",
+      "subject": "feat: pass Codex output schemas through app-server turns",
+      "disposition": "preserve_existing",
+      "work_items": [],
+      "decision": "已覆盖：每轮 OutputSchema 与 TestPersistentCodexNativeSchemaUsesPerTurnFieldWithoutHandoff。",
+      "verification_owner": "T23"
+    },
+    {
+      "ledger_id": "A07",
+      "commit": "6a1e51577a8633382c3a20ae171fa245055b89cf",
+      "date": "2026-07-28",
+      "subject": "test: define real CLI persistent-process BDD features",
+      "disposition": "preserve_existing",
+      "work_items": [],
+      "decision": "15 个真实 CLI feature 基础已在当前 e2e；保留最终 Thread 语义，新增用例按各 W 项补齐。",
+      "verification_owner": "T23"
+    },
+    {
+      "ledger_id": "A08",
+      "commit": "75ce05da0bbb40a5bf3c3f8089e45f275175c8f6",
+      "date": "2026-07-28",
+      "subject": "fix: reconstruct CodeBuddy control output from partial events",
+      "disposition": "preserve_existing",
+      "work_items": [],
+      "decision": "已覆盖：enableOutputReconstruction 与对应测试；当前终局 Text/Summary 规则优先。",
+      "verification_owner": "T23"
+    },
+    {
+      "ledger_id": "A09",
+      "commit": "6bfa5ed8e6031d786eb484b9ea1345ed34dae6f6",
+      "date": "2026-07-28",
+      "subject": "test: execute persistent-process BDD against real CLIs",
+      "disposition": "preserve_existing",
+      "work_items": [],
+      "decision": "BDD runner/steps/world/Godog 已覆盖，双门保留；不是仅有 feature 文本。",
+      "verification_owner": "T23"
+    },
+    {
+      "ledger_id": "A10",
+      "commit": "803abc127ffe149e69889984a3829492be848dbe",
+      "date": "2026-08-04",
+      "subject": "feat: support host-defined tools",
+      "disposition": "align",
+      "work_items": [
+        "W02",
+        "W07"
+      ],
+      "decision": "WithTools、schema、profile 隔离与依赖已覆盖；后续实际缺口分别 W02/W07，不整包替换。",
+      "verification_owner": "G06"
+    },
+    {
+      "ledger_id": "A11",
+      "commit": "1921636510ced4c830c0287fe68d41218f1ed185",
+      "date": "2026-08-04",
+      "subject": "feat: add capability invocation observability",
+      "disposition": "align",
+      "work_items": [
+        "W09"
+      ],
+      "decision": "新增 capability 观测，当前缺失 → W09；其 Admin/store 根 API 不移植。",
+      "verification_owner": "G06"
+    },
+    {
+      "ledger_id": "A12",
+      "commit": "51d12bd143ae3be553673bca2d16db08e3bffb9f",
+      "date": "2026-08-05",
+      "subject": "feat(a2a): relay nested capability invocations",
+      "disposition": "align",
+      "work_items": [
+        "W09",
+        "W10"
+      ],
+      "decision": "新增嵌套 A2A capability relay，当前缺失 → W10，依赖 W09。",
+      "verification_owner": "G06"
+    },
+    {
+      "ledger_id": "A13",
+      "commit": "7438d2633ef7063a02c9208c96fdd2dab3d2f01a",
+      "date": "2026-08-14",
+      "subject": "fix(a2a): observe delegation after lifecycle begin",
+      "disposition": "align",
+      "work_items": [
+        "W10"
+      ],
+      "decision": "before lifecycle hook 成功后再观察 started → W10 的必需顺序测试。",
+      "verification_owner": "G06"
+    },
+    {
+      "ledger_id": "A14",
+      "commit": "9b1ce27faa4e46ba6a213210eaffc8748b327bdb",
+      "date": "2026-08-17",
+      "subject": "fix(claude): resolve normalized MCP server names",
+      "disposition": "align",
+      "work_items": [
+        "W09"
+      ],
+      "decision": "Claude 标准化 MCP server 映射修复 → W09；不是通用 MCP transport 连接修复。",
+      "verification_owner": "G06"
+    },
+    {
+      "ledger_id": "A15",
+      "commit": "dab6933b9159894c36fa78b8367c6bc572227621",
+      "date": "2026-08-17",
+      "subject": "fix(claude): normalize Unicode MCP server names",
+      "disposition": "align",
+      "work_items": [
+        "W09"
+      ],
+      "decision": "Unicode/下划线 MCP alias 与分隔歧义修复 → W09，必须与上一提交成组。",
+      "verification_owner": "G06"
+    },
+    {
+      "ledger_id": "A16",
+      "commit": "126d610dfb6afd2cca19661ab0a7c0b6f626b490",
+      "date": "2026-08-17",
+      "subject": "fix: 持久进程取消后保留可恢复会话 (merge request !1)",
+      "disposition": "align",
+      "work_items": [
+        "W04"
+      ],
+      "decision": "中断部分结果应移植，首次取消直接 Valid checkpoint 不移植 → W04。",
+      "verification_owner": "G06"
+    },
+    {
+      "ledger_id": "A17",
+      "commit": "426191444582f9fbbe951dbd8b54c1004464262c",
+      "date": "2026-08-17",
+      "subject": "feat(claude): allow AskUserQuestion with native structured output",
+      "disposition": "align",
+      "work_items": [
+        "W06"
+      ],
+      "decision": "Claude 原生 schema + Question/PlanReview Ask → W06；Permission Ask 不随之开放。",
+      "verification_owner": "G06"
+    },
+    {
+      "ledger_id": "A18",
+      "commit": "97b2c85c36fc5740b2bd5c018984b5e2dd1d6d05",
+      "date": "2026-08-17",
+      "subject": "Merge tag 'v0.14.4' into release/v0.14.6",
+      "disposition": "merge_duplicate",
+      "work_items": [],
+      "decision": "双父 merge：把 126d610 分支（含 relay/MCP 修复）并入 4261914；按父链去重，无独立新工作项。",
+      "verification_owner": "T23"
+    },
+    {
+      "ledger_id": "A19",
+      "commit": "a68d907d1d125f6009fe4937542bba46a5338ad9",
+      "date": "2026-08-17",
+      "subject": "Merge branch 'release/v0.14.6' into 'master' (merge request !2)",
+      "disposition": "merge_duplicate",
+      "work_items": [],
+      "decision": "release/v0.14.6 集成 merge；承接上行集成，不把第一父增量再当一份独立修复。",
+      "verification_owner": "T23"
+    },
+    {
+      "ledger_id": "A20",
+      "commit": "3ea225acea572830100381a5c180dd86f295a70d",
+      "date": "2026-08-18",
+      "subject": "补发 claude 嵌套子代理（如 Explore）中 tool_use 的 Stream 事件 (merge request !3)",
+      "disposition": "align",
+      "work_items": [
+        "W05"
+      ],
+      "decision": "嵌套 assistant wrapper 的工具事件补发 → W05；另补真实父关联与去重。",
+      "verification_owner": "G06"
+    },
+    {
+      "ledger_id": "A21",
+      "commit": "ca571fbed8454e482560b481a3aa6853e9d174df",
+      "date": "2026-08-18",
+      "subject": "fix: 持久化 dedicated hosted tool profile (merge request !4)",
+      "disposition": "align",
+      "work_items": [
+        "W02"
+      ],
+      "decision": "Dedicated hosted-tool clone 持久化 → W02；强化 identity、跨进程所有权和清理边界。",
+      "verification_owner": "G06"
+    },
+    {
+      "ledger_id": "A22",
+      "commit": "eefcaef35621e6bbfb3e2e859edf4aadc4e38a5d",
+      "date": "2026-08-21",
+      "subject": "refine",
+      "disposition": "align",
+      "work_items": [
+        "W01"
+      ],
+      "decision": "Claude result 关闭 interactive stdin 的主实现与 Phase3 测试 → W01。",
+      "verification_owner": "G06"
+    },
+    {
+      "ledger_id": "A23",
+      "commit": "a88eacdb4818c75df44caeec39bbb74062e58c53",
+      "date": "2026-08-21",
+      "subject": "refine",
+      "disposition": "align",
+      "work_items": [
+        "W01"
+      ],
+      "decision": "移除提取函数后的重复 guard；W01 采用最终差异。",
+      "verification_owner": "G06"
+    },
+    {
+      "ledger_id": "A24",
+      "commit": "d01a086e5145566b7313b83ca88bb525f1d3675b",
+      "date": "2026-08-24",
+      "subject": "Merge branch 'fix/claude-stdin-on-type-result' into 'master' (merge request !5)",
+      "disposition": "align",
+      "work_items": [
+        "W01"
+      ],
+      "decision": "合入 eefcaef/a88eacd 的 merge；已逐父核对，W01 不重复实施。",
+      "verification_owner": "G06"
+    },
+    {
+      "ledger_id": "A25",
+      "commit": "3253009054681a499fd693329486d0fe3279d843",
+      "date": "2026-08-25",
+      "subject": "一次 a2a 调用流程中支持多次上报制品 (merge request !6)",
+      "disposition": "align",
+      "work_items": [
+        "W08"
+      ],
+      "decision": "实时 DelegationArtifact.Parts → W08；最终 full remote artifact 已存在，不误报全部缺失。",
+      "verification_owner": "G06"
+    },
+    {
+      "ledger_id": "A26",
+      "commit": "8ffe22a2a29c0b72e6c993d7774ffb54ac15c010",
+      "date": "2026-08-25",
+      "subject": "feat: 支持宿主定义系统提示词 (merge request !7)",
+      "disposition": "align",
+      "work_items": [
+        "W11"
+      ],
+      "decision": "append system prompt 多 Driver 支持 → W11；采用单一 SharedOption 和当前 fingerprint 规则。",
+      "verification_owner": "G06"
+    },
+    {
+      "ledger_id": "A27",
+      "commit": "64163ab67ecf109d196da10a4cbac8943d8e6eff",
+      "date": "2026-08-28",
+      "subject": "当工具调用 json 传入某个不支持的 key 时，可返回具体原因 (merge request !8)",
+      "disposition": "align",
+      "work_items": [
+        "W07"
+      ],
+      "decision": "工具输入错误的 safe rejection → W07；补字段名边界与正确 Go 解码提示。",
+      "verification_owner": "G06"
+    },
+    {
+      "ledger_id": "A28",
+      "commit": "eb82ed36eaf6339b00860b5506a683e6dbd74765",
+      "date": "2026-08-31",
+      "subject": "归一化 plan/todo 为 todo.updated 事件 (merge request !9)",
+      "disposition": "align",
+      "work_items": [
+        "W12"
+      ],
+      "decision": "todo/plan 标准化与 A2A DTO → W12；修正 ID 猜测、空快照和 helper 协议职责。",
+      "verification_owner": "G06"
+    },
+    {
+      "ledger_id": "A29",
+      "commit": "8e35b123af693b1a922d9d53b879692d04e00795",
+      "date": "2026-09-03",
+      "subject": "修复 A2A 续答时将历史问卷回放误判为本轮结束 (merge request !10)",
+      "disposition": "align",
+      "work_items": [
+        "W03"
+      ],
+      "decision": "A2A 续答不受历史问卷 Task 快照截断 → W03。",
+      "verification_owner": "G06"
+    },
+    {
+      "ledger_id": "A30",
+      "commit": "e2f0620bdd6477e6fe16f6db5648093589342ca2",
+      "date": "2026-09-04",
+      "subject": "feat: 新增 Run 级可暂停主动执行超时预算 (merge request !11)",
+      "disposition": "align",
+      "work_items": [
+        "W13"
+      ],
+      "decision": "主动执行预算、Ask 暂停、A2A 错误映射 → W13；不搬逐字段 policy 合并或改义旧 Timeout。",
+      "verification_owner": "G06"
+    },
+    {
+      "ledger_id": "B01",
+      "commit": "f972c102dce2d2de370d44bb13190d453a219b34",
+      "date": "2026-08-17",
+      "subject": "fix: 持久进程取消后保留可恢复会话",
+      "disposition": "align",
+      "work_items": [
+        "W04"
+      ],
+      "decision": "126d610 / W04；取消 checkpoint/部分结果原始实现，最终改动文件内容相同。",
+      "verification_owner": "G06"
+    },
+    {
+      "ledger_id": "B02",
+      "commit": "5d2b5de8af1a336f43a9e0f34f91965c0e6b5f0b",
+      "date": "2026-08-17",
+      "subject": "refine",
+      "disposition": "align",
+      "work_items": [
+        "W05"
+      ],
+      "decision": "3ea225a / W05；嵌套工具补发原实现，含 fixture/streaming 测试。",
+      "verification_owner": "G06"
+    },
+    {
+      "ledger_id": "B03",
+      "commit": "98f41c7949ccac5ddfe61c93a0d336ee39a76244",
+      "date": "2026-08-17",
+      "subject": "Merge branch 'master' into fix/claude-nested-subagent-tool-stream",
+      "disposition": "align",
+      "work_items": [
+        "W05"
+      ],
+      "decision": "3ea225a / W05；把 master 合入嵌套工具分支；该 tip 的 5 个变更文件与集成提交一致。",
+      "verification_owner": "G06"
+    },
+    {
+      "ledger_id": "B04",
+      "commit": "0c0f32fe6eb6b27c87441ef896c0e0b78b5ddb56",
+      "date": "2026-08-17",
+      "subject": "fix: 持久化 dedicated hosted tool profile",
+      "disposition": "align",
+      "work_items": [
+        "W02"
+      ],
+      "decision": "ca571fb / W02；持久 hosted-tool profile 原实现和跨重建回归。",
+      "verification_owner": "G06"
+    },
+    {
+      "ledger_id": "B05",
+      "commit": "b11e05235ca94e6fd02f2ffa71b18ea97373dc46",
+      "date": "2026-08-24",
+      "subject": "test",
+      "disposition": "align",
+      "work_items": [
+        "W08"
+      ],
+      "decision": "3253009 / W08；虽题为 test，实际增加 Parts 字段、映射、测试与设计文档。",
+      "verification_owner": "G06"
+    },
+    {
+      "ledger_id": "B06",
+      "commit": "f16fb20aaf8df3455b5bef7a8e0681d93cbc3167",
+      "date": "2026-08-24",
+      "subject": "test",
+      "disposition": "align",
+      "work_items": [
+        "W08"
+      ],
+      "decision": "3253009 / W08；修订 artifact 文档；该分支最终 4 文件与集成提交一致。",
+      "verification_owner": "G06"
+    },
+    {
+      "ledger_id": "B07",
+      "commit": "954aa68cd91108ca644bb044e808d3061d880daa",
+      "date": "2026-08-25",
+      "subject": "feat: 支持宿主定义系统提示词",
+      "disposition": "align",
+      "work_items": [
+        "W11"
+      ],
+      "decision": "8ffe22a / W11；系统提示词初版，多 Driver 参数/协议/测试/文档。",
+      "verification_owner": "G06"
+    },
+    {
+      "ledger_id": "B08",
+      "commit": "6943d2adddfee68164ad3cf37b499acf4615ebc2",
+      "date": "2026-08-25",
+      "subject": "refactor(system-prompt): 把 append 语义写进公共 API 的名字",
+      "disposition": "align",
+      "work_items": [
+        "W11"
+      ],
+      "decision": "8ffe22a / W11；重命名为 Append；不能移植初版覆盖含义不清的名字。",
+      "verification_owner": "G06"
+    },
+    {
+      "ledger_id": "B09",
+      "commit": "38e0e8c2d055a6e90f940d7dd1ac2bcafa485d04",
+      "date": "2026-08-25",
+      "subject": "fix(claude): buildClaudeExecArgs 拆分以满足函数长度规范",
+      "disposition": "align",
+      "work_items": [
+        "W11"
+      ],
+      "decision": "8ffe22a / W11；拆分 Claude 输出参数构建并调整测试；最终 30 文件一致。",
+      "verification_owner": "G06"
+    },
+    {
+      "ledger_id": "B10",
+      "commit": "89231087ddb33070a7b0bee116012a5470cef785",
+      "date": "2026-08-28",
+      "subject": "test",
+      "disposition": "align",
+      "work_items": [
+        "W07"
+      ],
+      "decision": "64163ab / W07；虽题为 test，实际实现 invalidInputRejection 与 runtime 测试。",
+      "verification_owner": "G06"
+    },
+    {
+      "ledger_id": "B11",
+      "commit": "f5fbb147847356c46e83aa74caad584da283ac86",
+      "date": "2026-08-28",
+      "subject": "test",
+      "disposition": "align",
+      "work_items": [
+        "W07"
+      ],
+      "decision": "64163ab / W07；补 runtime 边界测试并微调错误文本；最终 2 文件一致。",
+      "verification_owner": "G06"
+    },
+    {
+      "ledger_id": "B12",
+      "commit": "a2f2b0b7e5c89ffeb47bd328f6a88f25c378c453",
+      "date": "2026-08-31",
+      "subject": "refine",
+      "disposition": "align",
+      "work_items": [
+        "W12"
+      ],
+      "decision": "eb82ed3 / W12；todo 初始实现：三个 Driver、快照表、A2A DTO/decoder 和文档。",
+      "verification_owner": "G06"
+    },
+    {
+      "ledger_id": "B13",
+      "commit": "2e5f411673be31431554fb3fd5c8447196df2124",
+      "date": "2026-08-31",
+      "subject": "refine",
+      "disposition": "align",
+      "work_items": [
+        "W12"
+      ],
+      "decision": "eb82ed3 / W12；补 CodeBuddy 非 partial wrapper/去重路径、A2A 往返测试及合同说明。",
+      "verification_owner": "G06"
+    },
+    {
+      "ledger_id": "B14",
+      "commit": "8ea34b47089d85052fa7cb54ab97156dbf5eaa4c",
+      "date": "2026-08-31",
+      "subject": "refine",
+      "disposition": "align",
+      "work_items": [
+        "W12"
+      ],
+      "decision": "eb82ed3 / W12；Codex plan snapshot 初始化微调；最终 23 文件一致。",
+      "verification_owner": "G06"
+    },
+    {
+      "ledger_id": "B15",
+      "commit": "ac62c1921a367366ccfae3b82e7761980a7bc38a",
+      "date": "2026-09-03",
+      "subject": "fix: 续轮流忽略存盘 Task 快照，只认 live Status 终态",
+      "disposition": "align",
+      "work_items": [
+        "W03"
+      ],
+      "decision": "8e35b12 / W03；续答 Task snapshot 修复原提交；最终 7 文件一致。",
+      "verification_owner": "G06"
+    }
+  ],
+  "preserved_baselines": [
+    {
+      "name": "Thread默认常驻/WithSpawn/单writer/Windows进程树",
+      "owner": "T23",
+      "final_gate": "G06",
+      "status": "planned"
+    },
+    {
+      "name": "Agent.Close准入/drain/有界重试",
+      "owner": "T23",
+      "final_gate": "G06",
+      "status": "planned"
+    },
+    {
+      "name": "Codex每轮原生schema与当前scope fence",
+      "owner": "T23",
+      "final_gate": "G06",
+      "status": "planned"
+    },
+    {
+      "name": "CodeBuddy partial重建和terminal/Summary权威",
+      "owner": "T23",
+      "final_gate": "G06",
+      "status": "planned"
+    },
+    {
+      "name": "15个BDD feature/双门及S1-S9",
+      "owner": "T23",
+      "final_gate": "G06",
+      "status": "planned"
+    },
+    {
+      "name": "WithTools隔离/安全rejection/完整fingerprint/已修安全依赖",
+      "owner": "T23",
+      "final_gate": "G06",
+      "status": "planned"
+    }
+  ],
+  "non_adopted_behaviors": [
+    "internal取消后仅凭session/thread ID把checkpoint标Valid",
+    "资源变化只换进程却省略Thread compatibility维度",
+    "Policy 0字段继承/负数禁用的逐字段merge",
+    "把既有delegation.Timeout从墙钟改义",
+    "根SDK/Admin/Start/RunHandle/多channel/WithTeam",
+    "shared helper解释provider工具JSON或按TaskCreate序号猜真实ID",
+    "无界schema错误或未过滤artifact/capability/todo暴露"
+  ],
+  "additional_target_branches": [
+    {
+      "branch": "origin/codex/fix-resume-stale-token-usage",
+      "commit": "6432e5e",
+      "coordination_owner": "G00",
+      "auto_merge": false
+    },
+    {
+      "branch": "origin/codex/run-scoped-mcp-tool-approval",
+      "commit": "12a1ad1",
+      "coordination_owner": "G00",
+      "auto_merge": false
+    }
+  ]
+}

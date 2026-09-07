@@ -1,0 +1,774 @@
+{
+  "schema_version": "1.0",
+  "manifest_id": "internal-alignment-2026-09-07",
+  "seed_head": null,
+  "implementation_head": null,
+  "release_readiness": false,
+  "note": "模板，不是执行记录；复制到派发器状态目录后填真实SHA/报告。本文件没有预先完成任何任务。",
+  "tasks": {
+    "C01": {
+      "status": "planned",
+      "attempt": 0,
+      "base_head": null,
+      "head_sha": null,
+      "result_artifact": null
+    },
+    "C02": {
+      "status": "planned",
+      "attempt": 0,
+      "base_head": null,
+      "head_sha": null,
+      "result_artifact": null
+    },
+    "C03": {
+      "status": "planned",
+      "attempt": 0,
+      "base_head": null,
+      "head_sha": null,
+      "result_artifact": null
+    },
+    "C04": {
+      "status": "planned",
+      "attempt": 0,
+      "base_head": null,
+      "head_sha": null,
+      "result_artifact": null
+    },
+    "G00": {
+      "status": "planned",
+      "attempt": 0,
+      "base_head": null,
+      "head_sha": null,
+      "result_artifact": null
+    },
+    "T01": {
+      "status": "planned",
+      "attempt": 0,
+      "base_head": null,
+      "head_sha": null,
+      "result_artifact": null
+    },
+    "T02": {
+      "status": "planned",
+      "attempt": 0,
+      "base_head": null,
+      "head_sha": null,
+      "result_artifact": null
+    },
+    "T03": {
+      "status": "planned",
+      "attempt": 0,
+      "base_head": null,
+      "head_sha": null,
+      "result_artifact": null
+    },
+    "T04": {
+      "status": "planned",
+      "attempt": 0,
+      "base_head": null,
+      "head_sha": null,
+      "result_artifact": null
+    },
+    "T05": {
+      "status": "planned",
+      "attempt": 0,
+      "base_head": null,
+      "head_sha": null,
+      "result_artifact": null
+    },
+    "G01": {
+      "status": "planned",
+      "attempt": 0,
+      "base_head": null,
+      "head_sha": null,
+      "result_artifact": null
+    },
+    "T06": {
+      "status": "planned",
+      "attempt": 0,
+      "base_head": null,
+      "head_sha": null,
+      "result_artifact": null
+    },
+    "T07": {
+      "status": "planned",
+      "attempt": 0,
+      "base_head": null,
+      "head_sha": null,
+      "result_artifact": null
+    },
+    "T08": {
+      "status": "planned",
+      "attempt": 0,
+      "base_head": null,
+      "head_sha": null,
+      "result_artifact": null
+    },
+    "T09": {
+      "status": "planned",
+      "attempt": 0,
+      "base_head": null,
+      "head_sha": null,
+      "result_artifact": null
+    },
+    "G02": {
+      "status": "planned",
+      "attempt": 0,
+      "base_head": null,
+      "head_sha": null,
+      "result_artifact": null
+    },
+    "T10": {
+      "status": "planned",
+      "attempt": 0,
+      "base_head": null,
+      "head_sha": null,
+      "result_artifact": null
+    },
+    "T11": {
+      "status": "planned",
+      "attempt": 0,
+      "base_head": null,
+      "head_sha": null,
+      "result_artifact": null
+    },
+    "T12": {
+      "status": "planned",
+      "attempt": 0,
+      "base_head": null,
+      "head_sha": null,
+      "result_artifact": null
+    },
+    "T13": {
+      "status": "planned",
+      "attempt": 0,
+      "base_head": null,
+      "head_sha": null,
+      "result_artifact": null
+    },
+    "G03": {
+      "status": "planned",
+      "attempt": 0,
+      "base_head": null,
+      "head_sha": null,
+      "result_artifact": null
+    },
+    "T14": {
+      "status": "planned",
+      "attempt": 0,
+      "base_head": null,
+      "head_sha": null,
+      "result_artifact": null
+    },
+    "T15": {
+      "status": "planned",
+      "attempt": 0,
+      "base_head": null,
+      "head_sha": null,
+      "result_artifact": null
+    },
+    "T16": {
+      "status": "planned",
+      "attempt": 0,
+      "base_head": null,
+      "head_sha": null,
+      "result_artifact": null
+    },
+    "T17": {
+      "status": "planned",
+      "attempt": 0,
+      "base_head": null,
+      "head_sha": null,
+      "result_artifact": null
+    },
+    "T18": {
+      "status": "planned",
+      "attempt": 0,
+      "base_head": null,
+      "head_sha": null,
+      "result_artifact": null
+    },
+    "T19": {
+      "status": "planned",
+      "attempt": 0,
+      "base_head": null,
+      "head_sha": null,
+      "result_artifact": null
+    },
+    "G04": {
+      "status": "planned",
+      "attempt": 0,
+      "base_head": null,
+      "head_sha": null,
+      "result_artifact": null
+    },
+    "T20": {
+      "status": "planned",
+      "attempt": 0,
+      "base_head": null,
+      "head_sha": null,
+      "result_artifact": null
+    },
+    "T21": {
+      "status": "planned",
+      "attempt": 0,
+      "base_head": null,
+      "head_sha": null,
+      "result_artifact": null
+    },
+    "T22": {
+      "status": "planned",
+      "attempt": 0,
+      "base_head": null,
+      "head_sha": null,
+      "result_artifact": null
+    },
+    "T23": {
+      "status": "planned",
+      "attempt": 0,
+      "base_head": null,
+      "head_sha": null,
+      "result_artifact": null
+    },
+    "T24": {
+      "status": "planned",
+      "attempt": 0,
+      "base_head": null,
+      "head_sha": null,
+      "result_artifact": null
+    },
+    "G05": {
+      "status": "planned",
+      "attempt": 0,
+      "base_head": null,
+      "head_sha": null,
+      "result_artifact": null
+    },
+    "T25": {
+      "status": "planned",
+      "attempt": 0,
+      "base_head": null,
+      "head_sha": null,
+      "result_artifact": null
+    },
+    "T26": {
+      "status": "planned",
+      "attempt": 0,
+      "base_head": null,
+      "head_sha": null,
+      "result_artifact": null
+    },
+    "T27": {
+      "status": "planned",
+      "attempt": 0,
+      "base_head": null,
+      "head_sha": null,
+      "result_artifact": null
+    },
+    "T28": {
+      "status": "planned",
+      "attempt": 0,
+      "base_head": null,
+      "head_sha": null,
+      "result_artifact": null
+    },
+    "T29": {
+      "status": "planned",
+      "attempt": 0,
+      "base_head": null,
+      "head_sha": null,
+      "result_artifact": null
+    },
+    "T30": {
+      "status": "planned",
+      "attempt": 0,
+      "base_head": null,
+      "head_sha": null,
+      "result_artifact": null
+    },
+    "G06": {
+      "status": "planned",
+      "attempt": 0,
+      "base_head": null,
+      "head_sha": null,
+      "result_artifact": null
+    }
+  },
+  "requirements": {
+    "W01-R01": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W01-R02": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W01-R03": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W01-R04": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W02-R01": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W02-R02": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W02-R03": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W02-R04": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W02-R05": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W02-R06": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W02-R07": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W02-R08": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W03-R01": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W03-R02": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W03-R03": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W03-R04": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W03-R05": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W03-R06": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W04-R01": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W04-R02": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W04-R03": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W04-R04": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W04-R05": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W04-R06": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W04-R07": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W05-R01": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W05-R02": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W05-R03": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W05-R04": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W05-R05": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W05-R06": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W06-R01": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W06-R02": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W06-R03": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W06-R04": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W06-R05": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W07-R01": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W07-R02": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W07-R03": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W07-R04": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W07-R05": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W08-R01": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W08-R02": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W08-R03": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W08-R04": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W08-R05": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W09-R01": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W09-R02": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W09-R03": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W09-R04": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W09-R05": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W09-R06": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W09-R07": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W09-R08": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W09-R09": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W09-R10": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W09-R11": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W09-R12": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W09-R13": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W10-R01": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W10-R02": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W10-R03": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W10-R04": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W10-R05": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W10-R06": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W11-R01": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W11-R02": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W11-R03": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W11-R04": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W11-R05": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W11-R06": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W11-R07": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W11-R08": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W11-R09": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W12-R01": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W12-R02": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W12-R03": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W12-R04": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W12-R05": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W12-R06": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W12-R07": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W12-R08": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W12-R09": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W12-R10": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W12-R11": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W13-R01": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W13-R02": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W13-R03": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W13-R04": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W13-R05": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W13-R06": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W13-R07": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W13-R08": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W13-R09": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    },
+    "W13-R10": {
+      "implementation": "pending",
+      "independent_verification": "pending",
+      "evidence": []
+    }
+  }
+}

@@ -1,0 +1,160 @@
+{
+  "schema_version": "1.0",
+  "id": "C04",
+  "title": "冻结 append prompt 与 Claude schema/HITL transport 合同",
+  "batch_id": "B00",
+  "phase": "parallel",
+  "kind": "contract",
+  "priority": "P1",
+  "status": "planned",
+  "objective": "冻结 append prompt 与 Claude schema/HITL transport 合同。完成本任务范围并交付可核验结果，不代替其他任务或提前宣称整个 W 项完成。",
+  "work_items": [
+    "W06",
+    "W11"
+  ],
+  "requirements_owned": [],
+  "requirements_verified": [],
+  "depends_on": [],
+  "base": {
+    "mode": "previous_batch_integrated_head",
+    "predecessor_gate": null,
+    "required_ancestor": "919f140f64f89c80933802840c8878681a85a4d9",
+    "verification_head_gate": null,
+    "bootstrap_required": true
+  },
+  "context": {
+    "repository": "agent-adaptor",
+    "source_repository_hint": "/Users/blurooo/project/agent-adaptor-internal",
+    "source_head": "e2f0620bdd6477e6fe16f6db5648093589342ca2",
+    "source_commits": [
+      "426191444582f9fbbe951dbd8b54c1004464262c",
+      "8ffe22a2a29c0b72e6c993d7774ffb54ac15c010"
+    ],
+    "source_read_rule": "用 git -C <实际internal仓库> show <固定sha>:<文件>；hint可由派发器映射到只读clone，不能依赖worktree的../相对位置或读取internal脏工作区。",
+    "authority": {
+      "path": "AGENTS.md",
+      "baseline_sha256": "82ab6e82530363daeb3a303708bebe913b7e1f661ccdd39812715925355338df"
+    },
+    "plan": {
+      "path": "docs/internal-history-alignment-plan-2026-09-07.md",
+      "sha256": "73f4b596937160462cfef370f7600aa7a2a2b1b78d9d2861f4d7f2202bf4a6f8",
+      "sections": [
+        "W06",
+        "W11"
+      ]
+    },
+    "required_reads": [
+      "AGENTS.md",
+      "docs/internal-history-alignment-plan-2026-09-07.md",
+      "docs/alignment-tasks/2026-09-07/README.md"
+    ],
+    "dependency_artifacts": [],
+    "embedded_plan_sections": {
+      "W06": "### W06：Claude 原生结构化输出与交互审批共存\n\n**证据与差距。** 当前 `claude/driver.go` 声明 `WorksWithHITL=false`，native schema + interactive 会拒绝；core 可自动选择 Prompt + 本地校验，因此不是完全“不支持结构化输出”。internal `4261914` 开放 Question/PlanReview 与 `stream-json + --json-schema + --permission-prompt-tool stdio` 的同次执行组合。\n\n**实施。** 在 W01 后按当前 Request 的 resolved `StructuredOutputSource` 选择 transport：interactive native 必须保持双向 stream-json；更新 Descriptor 和冲突参数校验。保留 Permission Ask 当前明确 unsupported，不把一个粗粒度 bool 扩张为所有 HITL 组合。无 native 能力的组合仍按 core 固定 fallback 规则处理，不引入模式选择器。\n\n**验收。** Question Ask、PlanReview Ask 与 schema 成功；回答/拒绝/超时；只有 result 的结束；非法结构化结果；调用 Run/Stream 与 Thread/WithSpawn；stdout、terminal payload、结构化数据和 checkpoint 同次解析一致。验证当前支持的 CLI 版本后再宣告能力；internal 的测试结果不视为本仓库 live 证据。更新 structured-output、run-policy 和 Claude 文档。",
+      "W11": "### W11：追加 provider-native system prompt\n\n**来源与差距。** internal `8ffe22a` 最终使用带 Append 语义的名字；当前只有 `WithInstructions`，二者不是同一通道。其实现采用 Claude `--append-system-prompt-file`、CodeBuddy `--append-system-prompt`、Codex exec `developer_instructions` 与 app-server `developerInstructions`，Cursor 非空请求 fail-closed。这些是 internal 固定提交的实现选择，实施时仍需核验目标 CLI 版本。\n\n**公共方案。** 仅增加一个 `WithAppendSystemPrompt(string) SharedOption`，构造与调用共用；近处替换、空串清除。增加 Driver Request 字段和 append 能力声明、结构化 unsupported error。仅 append，保留 provider 默认提示词；不再加 `WithDefaultAppendSystemPrompt`，不增加 Config 镜像字段，不拼入用户 Prompt，也不降级为 Instructions。\n\n**工程细节。** 内容进入 Thread compatibility 和 persistent startup signature，两者都要覆盖；Codex start/resume/fork 对应正式字段都核对，不能恢复时漏传。它不是 profile 资源，不写入 profile manifest。Claude 文件采用 owned、0600、内容校验和安全原子物化；internal 缓存仅比较同名文件 size 的判断需强化，避免同长度篡改和 symlink。CodeBuddy inline 长度、Windows argv 限制、Codex TOML 编码与 ExtraArgs 冲突启动前校验，缓存/文件清理有明确归属。\n\n**验收。** 默认、call override、空串清除、中文/换行/引号/TOML 字符、超长文本、Cursor unsupported、构造 Inspect 一致、Run/Stream 一致、Thread 配置变化拒绝/安全重建、常驻签名变化先停后起、恢复无漏传。更新 root/SPI golden、API reference、各 Driver godoc、examples、README 翻译与 CHANGELOG；With* 数量变更显式记录，不能绕过冻结守卫。"
+    }
+  },
+  "ownership": {
+    "allow": [
+      "docs/alignment-tasks/2026-09-07/contracts/prompt-transport.md",
+      "docs/alignment-tasks/2026-09-07/handoffs/C04/**"
+    ],
+    "scope_match": "仅精确仓库相对文件或目录/**；任何未列路径不可写。",
+    "exclusive_resources": [],
+    "shared_files_policy": "集中docs/CHANGELOG仅本批gate写；仅own allow含golden/mod的任务可改它们；不得越界修复。",
+    "scope_expansion": "先提交具体路径与原因给批次协调者；协调者更新版本/冲突检查并重排后重派，未授权范围不得修改。"
+  },
+  "execution": {
+    "environment": "local",
+    "isolation": "separate_git_worktree",
+    "branch": "codex/alignment-c04",
+    "same_batch_peer_artifacts": "禁止读取/依赖同批worker尚未验收的代码或输出；只消费前批已合入合同，公共Go符号不得由同批peer供应。",
+    "source_write_allowed": true,
+    "paid_live_authorization_required": false,
+    "live_build_tag": null,
+    "remote_push_allowed": false,
+    "release_tag_allowed": false,
+    "further_delegation": "不自动派发额外用户任务；若需要子任务由协调者纳入相同边界和覆盖检查。"
+  },
+  "invariants": [
+    "以 AGENTS.md 和固定对齐方案为准；源仓库只用 git show 固定提交读取，不修改 internal、不复制其旧架构或未提交 vision 内容。",
+    "保留六名词模型、唯一 New、Run/Stream、统一 resolved invocation/Thread 管线和 typed Event；不引入 SDK/Admin/Start/RunHandle/registry/default binding、平行语义 channel 或 root WithTeam。",
+    "Options 作用域编译约束不变；近处替换、skills 追加、Policy 整值替换；WithTimeout 仍墙钟，Thread 默认常驻，WithSpawn 本轮新进程。",
+    "完整 fingerprint、opaque Thread key、lease owner/token、单 writer、原子 Finalize 与失败不污染 checkpoint 均保留；交付后绝不自动重放。",
+    "仅 Driver 解释正式 provider 协议；shared helper 不猜 session/tool/todo/capability；nil/不支持能力明确失败，Inspect 使用构造配置。",
+    "一个 error 判定面；部分输出不得丢，Text/Summary/Raw/Transcript/Services/Usage/Decode 独立；Run 与 Stream.Result 等价。",
+    "保留 v1.1.1 Tool 凭据/权限/隔离、v1.1.2 Windows 常驻和已有安全更新；不得因源码旧而覆盖掉当前更强合同。",
+    "公共语义变更同时交付合同测试、局部 godoc 和 documentation.md 文档片段；集中使用文档/CHANGELOG 由本批 gate 在放行前合并，不能留到最终批才记录。",
+    "只有拥有对应文件的任务可改 root/Driver AST golden；先审阅新增声明再精确更新，禁止全局设置 golden 更新环境掩盖漂移。",
+    "只写 ownership.allow 指定路径，不顺手重构其他子系统；需要扩大范围时向批次协调者提交具体变更理由和路径，先消除同批冲突再重派本任务。",
+    "不写 TODO、空实现、未来才有的兼容 shim；先用失败可复现的 fixture 验证问题，再实现并验证；不得只满足实现本身的镜像测试。",
+    "普通验证显式关闭付费门，不访问真实 provider；live 任务须同时满足授权记录、build tag 和环境变量门。所有任务都不创建 tag、不发布 release、不自动推送/发送外部消息。"
+  ],
+  "implementation_steps": [
+    "基于当前 core 自动 schema 协商与 internal 4261914/8ffe22a，定 Claude interactive/native 参数组合，Permission Ask 继续 unsupported。",
+    "固定唯一 WithAppendSystemPrompt SharedOption、Driver Request/Descriptor/unsupported error、空串清除和覆盖规则。",
+    "明确 Instructions 与 native append 分离，按构造配置/Inspect/Thread fingerprint/process signature 全链路覆盖。",
+    "冻结三 Driver native transport 参数、Codex start/resume/fork 的字段、缓存所有权/内容校验、inline 长度/TOML/Windows/ExtraArgs 冲突；Cursor fail-closed。",
+    "给出 CLI/schema 版本证据需求与 fixture，不把旧文档声称的能力当成当前 live 已验证。"
+  ],
+  "acceptance_criteria": [
+    {
+      "id": "C04-AC01",
+      "requirement": "提供 T07/T10/T14/T15/T16/T17 一致可用的具体字段/函数/错误和 per-provider 参数样例。",
+      "required": true
+    },
+    {
+      "id": "C04-AC02",
+      "requirement": "不引入 mode 选择器/默认选项镜像，不省略 Thread 的严格兼容维度。",
+      "required": true
+    },
+    {
+      "id": "C04-AC03",
+      "requirement": "预期 root With* 变更和 SPI/godoc/生成文件范围列清楚。",
+      "required": true
+    }
+  ],
+  "validation": [
+    {
+      "id": "C04-V01",
+      "command": "python3 docs/alignment-tasks/2026-09-07/validate.py",
+      "cwd": "repository_root",
+      "environment": {},
+      "required": true,
+      "execution_condition": "always",
+      "must_execute_nonzero_tests": false,
+      "evidence": "验证任务图/范围/完整性；另附本 contract 的具体签名、状态机与fixture一致性审阅记录。 非零按本命令实际测试/子测试计数，fuzz按实际种子/执行样本计数；必需场景skip不得通过。普通任务显式禁用的live探针或合同确认不适用的probe可skip，须列明且不能拿它们充当验收证据；可添加-json/-v采集日志，不能缩小原命令选择范围。"
+    }
+  ],
+  "documentation": {
+    "fragment": "docs/alignment-tasks/2026-09-07/handoffs/C04/documentation.md",
+    "contents": [
+      "公开语义前后变化和可复现例子",
+      "应合并到的godoc/使用文档/CHANGELOG具体段落",
+      "新增公共声明与golden理由",
+      "不采用的internal行为和原因",
+      "验证实跑/未跑的平台与live边界"
+    ],
+    "central_owner": "G00",
+    "must_integrate_before_batch_acceptance": true
+  },
+  "handoff": {
+    "result_path": "docs/alignment-tasks/2026-09-07/handoffs/C04/result.json",
+    "schema_path": "docs/alignment-tasks/2026-09-07/result.schema.json",
+    "evidence_dir": "docs/alignment-tasks/2026-09-07/handoffs/C04/evidence",
+    "failure_report": "docs/alignment-tasks/2026-09-07/handoffs/C04/findings.md",
+    "requirement_ids": [],
+    "commit_rule": "只提交本任务实施/局部godoc/测试与契约文件。源码commit完成并测试后生成result，记录实际head；result/evidence由派发器收集，不塞回所引用commit造成SHA自引用。"
+  },
+  "completion": {
+    "required": [
+      "所有必需acceptance/validation实际通过；verification任务不得以skip或零测试充数",
+      "所有owned/verified requirement逐条记录passed/failed/blocked及证据",
+      "工作树生产diff仅在allow范围；无TODO/未实现stub/旧API",
+      "按handoff schema报告真实base/head/commit/changed_files/测试/文档与remaining_items",
+      "本task通过只表示交付，不等于批次gate或整个work_item已关闭"
+    ],
+    "blocked_rule": "缺前置合同/runner/live授权时记录blocked与可执行缺项；发现合同违背或测试失败为needs_rework，向原owner提交最小复现，绝不声称完成或偷偷删工作项。"
+  },
+  "dispatch_prompt": "读取整个task.json和context.required_reads；确认基线和dependency_artifacts已由前批gate验收。只在隔离worktree按ownership实施implementation_steps，逐项满足acceptance_criteria、requirements_owned/verified与validation。严格遵守invariants，用handoff.result_path/schema交付真实结果；不要只根据标题工作，也不要提前执行本批gate或后批任务。"
+}

@@ -1,0 +1,261 @@
+{
+  "schema_version": "1.0",
+  "id": "G00",
+  "title": "合同冻结与范围确认：集成验收与放行",
+  "batch_id": "B00",
+  "phase": "gate",
+  "kind": "integration_gate",
+  "priority": "P0",
+  "status": "planned",
+  "objective": "仅在本批全部worker通过且合流SHA验证后放行，逐条保存未完成工作项；不把并行分支的局部成功当成整体完成。",
+  "work_items": [
+    "W02",
+    "W04",
+    "W13",
+    "W05",
+    "W09",
+    "W10",
+    "W12",
+    "W06",
+    "W11"
+  ],
+  "requirements_owned": [],
+  "requirements_verified": [],
+  "depends_on": [
+    "C01",
+    "C02",
+    "C03",
+    "C04"
+  ],
+  "base": {
+    "mode": "batch_integration",
+    "predecessor_gate": null,
+    "required_ancestor": "919f140f64f89c80933802840c8878681a85a4d9",
+    "verification_head_gate": null,
+    "bootstrap_required": true
+  },
+  "context": {
+    "repository": "agent-adaptor",
+    "source_repository_hint": "/Users/blurooo/project/agent-adaptor-internal",
+    "source_head": "e2f0620bdd6477e6fe16f6db5648093589342ca2",
+    "source_commits": [],
+    "source_read_rule": "source只读；以source commit而非脏工作区为准。",
+    "authority": {
+      "path": "AGENTS.md",
+      "baseline_sha256": "82ab6e82530363daeb3a303708bebe913b7e1f661ccdd39812715925355338df"
+    },
+    "plan": {
+      "path": "docs/internal-history-alignment-plan-2026-09-07.md",
+      "sha256": "73f4b596937160462cfef370f7600aa7a2a2b1b78d9d2861f4d7f2202bf4a6f8",
+      "sections": [
+        "W02",
+        "W04",
+        "W13",
+        "W05",
+        "W09",
+        "W10",
+        "W12",
+        "W06",
+        "W11"
+      ]
+    },
+    "required_reads": [
+      "AGENTS.md",
+      "docs/internal-history-alignment-plan-2026-09-07.md",
+      "docs/alignment-tasks/2026-09-07/README.md",
+      "docs/alignment-tasks/2026-09-07/manifest.json",
+      "docs/alignment-tasks/2026-09-07/coverage.json"
+    ],
+    "dependency_artifacts": [
+      {
+        "producer": "C01",
+        "path": "docs/alignment-tasks/2026-09-07/handoffs/C01/result.json",
+        "version_source": "实际worker交付head及证据"
+      },
+      {
+        "producer": "C02",
+        "path": "docs/alignment-tasks/2026-09-07/handoffs/C02/result.json",
+        "version_source": "实际worker交付head及证据"
+      },
+      {
+        "producer": "C03",
+        "path": "docs/alignment-tasks/2026-09-07/handoffs/C03/result.json",
+        "version_source": "实际worker交付head及证据"
+      },
+      {
+        "producer": "C04",
+        "path": "docs/alignment-tasks/2026-09-07/handoffs/C04/result.json",
+        "version_source": "实际worker交付head及证据"
+      }
+    ],
+    "embedded_plan_sections": {}
+  },
+  "ownership": {
+    "allow": [
+      "AGENTS.md",
+      "CHANGELOG.md",
+      "README.de.md",
+      "README.ja.md",
+      "README.ko.md",
+      "README.md",
+      "README.zh-CN.md",
+      "doc.go",
+      "docs/README.md",
+      "docs/a2a.md",
+      "docs/alignment-tasks/2026-09-07/contracts/**",
+      "docs/alignment-tasks/2026-09-07/handoffs/G00/**",
+      "docs/api-reference.md",
+      "docs/profile-resource-provider-matrix.md",
+      "docs/public-errors.md",
+      "docs/run-policy.md",
+      "docs/streaming-adapter-contract.md",
+      "docs/streaming.md",
+      "docs/structured-output.md",
+      "docs/tools.md"
+    ],
+    "scope_match": "精确文件或目录/**；gate可合并worker已审阅commit，但不直接越权编辑其生产代码。",
+    "exclusive_resources": [
+      "integration-branch",
+      "central-documentation",
+      "execution-state"
+    ],
+    "shared_files_policy": "gate阶段串行，集中docs唯一writer；runtime代码修复退回原owner。",
+    "scope_expansion": "范围/图变更须记录新manifest版本并重新validate，不让任务静默扩大。"
+  },
+  "execution": {
+    "environment": "coordinator",
+    "isolation": "integration_worktree",
+    "branch": "codex/alignment-integration",
+    "same_batch_peer_artifacts": "gate在全部worker完成后才读其报告和commit。",
+    "source_write_allowed": false,
+    "paid_live_authorization_required": false,
+    "live_build_tag": null,
+    "remote_push_allowed": false,
+    "release_tag_allowed": false,
+    "further_delegation": "失败重开原owner或经manifest修订增加有ID任务；不得丢失原覆盖。"
+  },
+  "invariants": [
+    "以 AGENTS.md 和固定对齐方案为准；源仓库只用 git show 固定提交读取，不修改 internal、不复制其旧架构或未提交 vision 内容。",
+    "保留六名词模型、唯一 New、Run/Stream、统一 resolved invocation/Thread 管线和 typed Event；不引入 SDK/Admin/Start/RunHandle/registry/default binding、平行语义 channel 或 root WithTeam。",
+    "Options 作用域编译约束不变；近处替换、skills 追加、Policy 整值替换；WithTimeout 仍墙钟，Thread 默认常驻，WithSpawn 本轮新进程。",
+    "完整 fingerprint、opaque Thread key、lease owner/token、单 writer、原子 Finalize 与失败不污染 checkpoint 均保留；交付后绝不自动重放。",
+    "仅 Driver 解释正式 provider 协议；shared helper 不猜 session/tool/todo/capability；nil/不支持能力明确失败，Inspect 使用构造配置。",
+    "一个 error 判定面；部分输出不得丢，Text/Summary/Raw/Transcript/Services/Usage/Decode 独立；Run 与 Stream.Result 等价。",
+    "保留 v1.1.1 Tool 凭据/权限/隔离、v1.1.2 Windows 常驻和已有安全更新；不得因源码旧而覆盖掉当前更强合同。",
+    "公共语义变更同时交付合同测试、局部 godoc 和 documentation.md 文档片段；集中使用文档/CHANGELOG 由本批 gate 在放行前合并，不能留到最终批才记录。",
+    "只有拥有对应文件的任务可改 root/Driver AST golden；先审阅新增声明再精确更新，禁止全局设置 golden 更新环境掩盖漂移。",
+    "只写 ownership.allow 指定路径，不顺手重构其他子系统；需要扩大范围时向批次协调者提交具体变更理由和路径，先消除同批冲突再重派本任务。",
+    "不写 TODO、空实现、未来才有的兼容 shim；先用失败可复现的 fixture 验证问题，再实现并验证；不得只满足实现本身的镜像测试。",
+    "普通验证显式关闭付费门，不访问真实 provider；live 任务须同时满足授权记录、build tag 和环境变量门。所有任务都不创建 tag、不发布 release、不自动推送/发送外部消息。"
+  ],
+  "implementation_steps": [
+    "确认seed包含AGENTS/固定方案/全任务包且原工作区用户改动保留；记录源码919f140基线、source e2f0620、45提交清单及当前未合并6432e5e/12a1ad1状态，不自动合并。",
+    "合并四份合同，统一公共包/字段名、Event/Request/Descriptor/observer、错误cause和A2A wire fixture，解决跨合同冲突；关键选择必须落定。",
+    "审阅拟新增公共语义是否符合AGENTS；遇到真正矛盾先修合同/任务边界，不让后续worker自己裁决；本批不实现运行代码。",
+    "输出contracts/frozen.json，逐个contract记录SHA256、具体API/fixture版本、scope分配和依赖选型；不能只有“文档已看”的勾选。",
+    "核验后续所有同批文件互斥、无同批符号依赖、required_inputs由前批交付；发布B01已包含合同的实际集成SHA。"
+  ],
+  "acceptance_criteria": [
+    {
+      "id": "G00-AC01",
+      "requirement": "所有直接依赖complete且required检查passed、无skip/越界/未处理findings。",
+      "required": true
+    },
+    {
+      "id": "G00-AC02",
+      "requirement": "合流SHA和测试证据匹配，集中文档与契约/golden一致，requirements状态可追溯。",
+      "required": true
+    },
+    {
+      "id": "G00-AC03",
+      "requirement": "产出准确下一批base或最终readiness；没有把外部授权缺失转换为通过。",
+      "required": true
+    }
+  ],
+  "validation": [
+    {
+      "id": "G00-V01",
+      "command": "python3 docs/alignment-tasks/2026-09-07/validate.py",
+      "cwd": "repository_root",
+      "environment": {
+        "AGENT_ADAPTOR_LIVE_CONFORMANCE": "0",
+        "AGENT_ADAPTOR_E2E": "0",
+        "AGENT_ADAPTOR_UPDATE_API_GOLDEN": "0"
+      },
+      "required": true,
+      "execution_condition": "after_all_workers_accepted",
+      "must_execute_nonzero_tests": false,
+      "evidence": "记录本批最终合流head、命令、exit code、日志；B06还应逐报告核对同一冻结SHA。"
+    },
+    {
+      "id": "G00-V02",
+      "command": "git status --short --branch",
+      "cwd": "repository_root",
+      "environment": {
+        "AGENT_ADAPTOR_LIVE_CONFORMANCE": "0",
+        "AGENT_ADAPTOR_E2E": "0",
+        "AGENT_ADAPTOR_UPDATE_API_GOLDEN": "0"
+      },
+      "required": true,
+      "execution_condition": "after_all_workers_accepted",
+      "must_execute_nonzero_tests": false,
+      "evidence": "记录本批最终合流head、命令、exit code、日志；B06还应逐报告核对同一冻结SHA。"
+    },
+    {
+      "id": "G00-V03",
+      "command": "go test -count=1 ./...",
+      "cwd": "repository_root",
+      "environment": {
+        "AGENT_ADAPTOR_LIVE_CONFORMANCE": "0",
+        "AGENT_ADAPTOR_E2E": "0",
+        "AGENT_ADAPTOR_UPDATE_API_GOLDEN": "0"
+      },
+      "required": true,
+      "execution_condition": "after_all_workers_accepted",
+      "must_execute_nonzero_tests": true,
+      "evidence": "记录本批最终合流head、命令、exit code、日志；B06还应逐报告核对同一冻结SHA。"
+    },
+    {
+      "id": "G00-V04",
+      "command": "go vet ./...",
+      "cwd": "repository_root",
+      "environment": {
+        "AGENT_ADAPTOR_LIVE_CONFORMANCE": "0",
+        "AGENT_ADAPTOR_E2E": "0",
+        "AGENT_ADAPTOR_UPDATE_API_GOLDEN": "0"
+      },
+      "required": true,
+      "execution_condition": "after_all_workers_accepted",
+      "must_execute_nonzero_tests": false,
+      "evidence": "记录本批最终合流head、命令、exit code、日志；B06还应逐报告核对同一冻结SHA。"
+    }
+  ],
+  "documentation": {
+    "fragment": "docs/alignment-tasks/2026-09-07/handoffs/G00/documentation.md",
+    "contents": [
+      "逐worker文档片段合并记录",
+      "公共合同与golden审阅",
+      "本批验收与未关闭项",
+      "实际执行/未执行的发布门禁"
+    ],
+    "central_owner": "G00",
+    "must_integrate_before_batch_acceptance": true
+  },
+  "handoff": {
+    "result_path": "docs/alignment-tasks/2026-09-07/handoffs/G00/result.json",
+    "schema_path": "docs/alignment-tasks/2026-09-07/result.schema.json",
+    "evidence_dir": "docs/alignment-tasks/2026-09-07/handoffs/G00/evidence",
+    "failure_report": "docs/alignment-tasks/2026-09-07/handoffs/G00/findings.md",
+    "requirement_ids": [],
+    "commit_rule": "合并生产/文档后记录已测试的实际head，再生成外部gate结果/执行态；报告不自引用未来commit。"
+  },
+  "completion": {
+    "required": [
+      "依赖任务全部可接受、gate命令实跑通过",
+      "中央文档与所有公共语义同批完成",
+      "下一批base=head_sha，或B06 release_readiness真实且不触发发布"
+    ],
+    "blocked_rule": "缺报告/失败/无授权/不同SHA时blocked或needs_rework；重开对应owner，保留所有原ID与依赖。"
+  },
+  "dispatch_prompt": "这是本批串行gate，不是并行实现任务。等depends_on全部交付后，按manifest顺序集成并核验路径、逐条验收、集中docs/golden与合流测试。写真实gate result供下一批读取；失败重开原owner，不静默绕过，不创建tag。"
+}

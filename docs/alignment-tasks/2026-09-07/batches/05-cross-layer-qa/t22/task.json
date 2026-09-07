@@ -1,0 +1,260 @@
+{
+  "schema_version": "1.0",
+  "id": "T22",
+  "title": "独立验证选项、错误和主动预算组合",
+  "batch_id": "B05",
+  "phase": "parallel",
+  "kind": "verification",
+  "priority": "P1",
+  "status": "planned",
+  "objective": "独立验证选项、错误和主动预算组合。完成本任务范围并交付可核验结果，不代替其他任务或提前宣称整个 W 项完成。",
+  "work_items": [
+    "W04",
+    "W06",
+    "W07",
+    "W11",
+    "W13"
+  ],
+  "requirements_owned": [],
+  "requirements_verified": [
+    "W04-R01",
+    "W04-R02",
+    "W04-R03",
+    "W04-R04",
+    "W06-R01",
+    "W06-R02",
+    "W06-R03",
+    "W06-R04",
+    "W06-R05",
+    "W07-R01",
+    "W07-R02",
+    "W07-R03",
+    "W07-R04",
+    "W07-R05",
+    "W11-R01",
+    "W11-R02",
+    "W11-R03",
+    "W11-R04",
+    "W13-R01",
+    "W13-R02",
+    "W13-R03",
+    "W13-R04",
+    "W13-R05",
+    "W13-R06",
+    "W13-R07",
+    "W13-R08",
+    "W13-R09"
+  ],
+  "depends_on": [
+    "G04",
+    "C02",
+    "C04"
+  ],
+  "base": {
+    "mode": "previous_batch_integrated_head",
+    "predecessor_gate": "G04",
+    "required_ancestor": "919f140f64f89c80933802840c8878681a85a4d9",
+    "verification_head_gate": null,
+    "bootstrap_required": true
+  },
+  "context": {
+    "repository": "agent-adaptor",
+    "source_repository_hint": "/Users/blurooo/project/agent-adaptor-internal",
+    "source_head": "e2f0620bdd6477e6fe16f6db5648093589342ca2",
+    "source_commits": [
+      "126d610dfb6afd2cca19661ab0a7c0b6f626b490",
+      "426191444582f9fbbe951dbd8b54c1004464262c",
+      "64163ab67ecf109d196da10a4cbac8943d8e6eff",
+      "8ffe22a2a29c0b72e6c993d7774ffb54ac15c010",
+      "e2f0620bdd6477e6fe16f6db5648093589342ca2"
+    ],
+    "source_read_rule": "用 git -C <实际internal仓库> show <固定sha>:<文件>；hint可由派发器映射到只读clone，不能依赖worktree的../相对位置或读取internal脏工作区。",
+    "authority": {
+      "path": "AGENTS.md",
+      "baseline_sha256": "82ab6e82530363daeb3a303708bebe913b7e1f661ccdd39812715925355338df"
+    },
+    "plan": {
+      "path": "docs/internal-history-alignment-plan-2026-09-07.md",
+      "sha256": "73f4b596937160462cfef370f7600aa7a2a2b1b78d9d2861f4d7f2202bf4a6f8",
+      "sections": [
+        "W04",
+        "W06",
+        "W07",
+        "W11",
+        "W13"
+      ]
+    },
+    "required_reads": [
+      "AGENTS.md",
+      "docs/internal-history-alignment-plan-2026-09-07.md",
+      "docs/alignment-tasks/2026-09-07/README.md"
+    ],
+    "dependency_artifacts": [
+      {
+        "producer": "C02",
+        "path": "docs/alignment-tasks/2026-09-07/contracts/results-and-budget.md",
+        "version_source": "docs/alignment-tasks/2026-09-07/contracts/frozen.json"
+      },
+      {
+        "producer": "C04",
+        "path": "docs/alignment-tasks/2026-09-07/contracts/prompt-transport.md",
+        "version_source": "docs/alignment-tasks/2026-09-07/contracts/frozen.json"
+      },
+      {
+        "producer": "G00",
+        "path": "docs/alignment-tasks/2026-09-07/contracts/frozen.json",
+        "version_source": "G00 accepted contract manifest"
+      }
+    ],
+    "embedded_plan_sections": {
+      "W04": "### W04：保留中断后的输出，但不降低 checkpoint 健康要求\n\n**证据与差距。** internal `126d610` 同时做了“保留部分结果”和“错误后落 checkpoint”。当前 Claude、CodeBuddy 常驻分支遇到非 fallback 错误返回空 `driver.Response{}`；Codex 的 `persistentWriter.run` 和 Driver 上层已经保留 `result, persistentErr`，无需重复修复这两层。剩余公共缺口在 `invocation.go:finalizeRun`：它在无已分类 failure 的 context/基础设施 error 上返回普通包装，丢弃刚映射的 Result。\n\n**本期采用。** Driver 已观察到的 stdout/stderr、Transcript、Terminal、Usage 和文本不得因取消而丢弃：先构建部分 Response，再返回原始 error；在唯一 `finalizeRun` 中建立可通过 Go error 获取部分 Result 的合同。建议复用 `RunError.Result` 的携带能力并保留原始 cause 的 `errors.Is/As` 链；实施前同步明确“执行后基础设施包装错误携带部分 Result”的 godoc，避免把启动前配置错误包装成业务失败。仍返回 `nil, error`，不新增 Result.Failure 或第二个结果入口。具体公共错误声明随合同测试一起冻结。\n\n**本期不采用。** internal Codex 以 `sent && ctx.Err()!=nil && ThreadID!=\"\"` 直接设置 `Checkpoint.Valid=true`，Claude/CodeBuddy 的 session ID 保留也不能替代健康终局证明。当前 `invocationCanPersist` 和 parser 的成功终局检查继续保留：取消、非零退出、畸形协议、缺失终局都不持久化。首次中断没有 checkpoint 时，下轮新建是本期明确边界；已有健康 Thread record 保持原样。\n\n未来若 provider 官方协议能证明中断后的健康可续状态，单独提出 Driver/SessionCodec 能力和证据合同，补齐 lease/token/atomic finalize 与有界脱离取消的持久化测试，再申请改变当前合同；不能以“internal 已用过”代替证明。\n\n**验收。** 三个常驻 Driver 的交付前失败仅允许一次安全 fallback，交付后不重放；中断前输出逐字段可取；`errors.Is` 保留 context cancelled/deadline 与原 cause；Run 与 Stream.Result 等价；审批错误不被通用取消覆盖；无效 checkpoint 不修改 store，原健康记录保持一致。W13 必须复用此结果保留路径。重新打开 AGENTS §14 的错误路径 Result 映射审计子项。",
+      "W06": "### W06：Claude 原生结构化输出与交互审批共存\n\n**证据与差距。** 当前 `claude/driver.go` 声明 `WorksWithHITL=false`，native schema + interactive 会拒绝；core 可自动选择 Prompt + 本地校验，因此不是完全“不支持结构化输出”。internal `4261914` 开放 Question/PlanReview 与 `stream-json + --json-schema + --permission-prompt-tool stdio` 的同次执行组合。\n\n**实施。** 在 W01 后按当前 Request 的 resolved `StructuredOutputSource` 选择 transport：interactive native 必须保持双向 stream-json；更新 Descriptor 和冲突参数校验。保留 Permission Ask 当前明确 unsupported，不把一个粗粒度 bool 扩张为所有 HITL 组合。无 native 能力的组合仍按 core 固定 fallback 规则处理，不引入模式选择器。\n\n**验收。** Question Ask、PlanReview Ask 与 schema 成功；回答/拒绝/超时；只有 result 的结束；非法结构化结果；调用 Run/Stream 与 Thread/WithSpawn；stdout、terminal payload、结构化数据和 checkpoint 同次解析一致。验证当前支持的 CLI 版本后再宣告能力；internal 的测试结果不视为本仓库 live 证据。更新 structured-output、run-policy 和 Claude 文档。",
+      "W07": "### W07：模型可修正的 Tool 输入错误\n\n**证据与差距。** 当前 `tool/tool.go` 的输入 schema/Go 解码失败只包装 `ErrInvalidInput`；toolruntime 仅把 SDK 私有 `tool.Reject` 作为模型可见错误，输入错误缺少可修正原因。internal `64163ab` 增加 `invalidInputRejection`，以 `errors.Join(ErrInvalidInput, Reject(\"invalid_input\", safeMessage))` 同时保留 Go sentinel 和安全反馈。\n\n**实施。** 采用这个错误分层。无效 JSON 只给语法提示；schema 失败给必填/类型/值域提示；通过既有 jsonschema 库的结构化 `AdditionalProperties` 类型识别额外字段。不得返回底层 error、完整 schema、字段值或 handler 错误。字段名也是不可信输入，增加长度、控制字符、引号/换行处理及确定性顺序，不能照搬无界回显第一个 key。Go 解码失败不应一律谎报“JSON 语法错误”，需单独给安全类型提示。\n\n**验收。** extra key、required、类型、enum、畸形 JSON、嵌套对象、超长/恶意 key；handler 在失败时未执行；`errors.Is(ErrInvalidInput)` 和 `tool.AsRejection` 同时成立；任意实现 `As` 的外部 error 不能伪造 rejection；输出校验/业务 panic 的细节仍不泄露。更新 `docs/tools.md` 与 tool godoc。无需新增依赖。",
+      "W11": "### W11：追加 provider-native system prompt\n\n**来源与差距。** internal `8ffe22a` 最终使用带 Append 语义的名字；当前只有 `WithInstructions`，二者不是同一通道。其实现采用 Claude `--append-system-prompt-file`、CodeBuddy `--append-system-prompt`、Codex exec `developer_instructions` 与 app-server `developerInstructions`，Cursor 非空请求 fail-closed。这些是 internal 固定提交的实现选择，实施时仍需核验目标 CLI 版本。\n\n**公共方案。** 仅增加一个 `WithAppendSystemPrompt(string) SharedOption`，构造与调用共用；近处替换、空串清除。增加 Driver Request 字段和 append 能力声明、结构化 unsupported error。仅 append，保留 provider 默认提示词；不再加 `WithDefaultAppendSystemPrompt`，不增加 Config 镜像字段，不拼入用户 Prompt，也不降级为 Instructions。\n\n**工程细节。** 内容进入 Thread compatibility 和 persistent startup signature，两者都要覆盖；Codex start/resume/fork 对应正式字段都核对，不能恢复时漏传。它不是 profile 资源，不写入 profile manifest。Claude 文件采用 owned、0600、内容校验和安全原子物化；internal 缓存仅比较同名文件 size 的判断需强化，避免同长度篡改和 symlink。CodeBuddy inline 长度、Windows argv 限制、Codex TOML 编码与 ExtraArgs 冲突启动前校验，缓存/文件清理有明确归属。\n\n**验收。** 默认、call override、空串清除、中文/换行/引号/TOML 字符、超长文本、Cursor unsupported、构造 Inspect 一致、Run/Stream 一致、Thread 配置变化拒绝/安全重建、常驻签名变化先停后起、恢复无漏传。更新 root/SPI golden、API reference、各 Driver godoc、examples、README 翻译与 CHANGELOG；With* 数量变更显式记录，不能绕过冻结守卫。",
+      "W13": "### W13：暂停人工等待期间的主动执行预算\n\n**来源与差距。** internal `e2f0620` 增加 PausableContext、RunPolicy.ActiveExecutionTimeout、Ask 暂停与 A2A 错误映射。当前 `stream.go:openStream` 的 WithTimeout 是整体墙钟；`Policy` 是整值替换；delegator 的 Timeout 也是墙钟。\n\n**公共方案。** 在现有 `Policy` 增加 `ActiveExecutionTimeout time.Duration`，不新增平行执行动词。最终 Policy 的零值表示无主动预算、正值表示限额、负值在启动前拒绝；call `WithPolicy` 仍整值替换构造 Policy。不能带回 internal 的“0 继承字段、负数关闭”的逐字段合并。`WithTimeout` 和 parent deadline 继续是绝对墙钟上限。\n\n计时器实现放私有包，默认不把通用 `PausableContext/WithPausableTimeout` 铺到根包。预算从准备资源前开始；只有唯一 approval sink 进入 Ask 等待时暂停自己的 run，自动批准/拒绝不暂停，审批自身 Timeout 仍按墙钟。等待开始前的背压边界要明确，不能让已经发出的审批卡仍消耗整个主动预算。多个并发 Ask 使用 token/refcount 配对，最后一个等待结束才恢复，避免 internal 单一 paused bool 过早恢复。\n\n用单调时间和 timer generation 处理迟到回调；所有成功/拒绝/超时/panic/取消出口恢复或终止计时。pause 不阻断 parent Cancel、Agent.Close、lease 续期和清理。嵌套 Member 不自动暂停 Leader，也不能自行改变 parent context。\n\n**错误与 A2A。** 增加稳定 active-execution-timeout sentinel、failure reason 和安全 Limit 详情，保留原错误可匹配性，复用 W04 部分结果。审批拒绝/超时、用户取消、外部 deadline、预算耗尽明确区分；并发终止以已确定的原因优先，不能由 cleanup 覆盖。预算耗尽不让 checkpoint 有效。\n\ndelegation 保留已发布 `Timeout` 的墙钟含义；另在该可选 hosttool 的请求/策略中增加主动预算字段，不能把同一个字段悄悄改义。每次 Delegate/continuation 分配新预算，传输重试和 recovery 不重置本次预算。已知 TaskID（包括入参携带）时用有界 detached context 尽力 CancelTask；取消失败为诊断，不覆盖主因。bridge 仅翻译安全 code/limit，不自行决定重试，也不把其他 metadata 绕过 ExposurePolicy。\n\n**验收。** fake-clock 40ms 执行 + 300ms Ask + 50ms 执行仍未耗尽 100ms 预算；再执行 10ms 才超时。覆盖重叠 Ask、retry、父 deadline、外层取消、初始化耗时、timer callback race、Close、lease renewal、旧 Task 回放、远端错误 code 往返和 partial Result。更新 Policy、Approval、errors godoc、root golden、run-policy、A2A 文档。"
+    }
+  },
+  "ownership": {
+    "allow": [
+      "alignment_policy_integration_test.go",
+      "docs/alignment-tasks/2026-09-07/handoffs/T22/**",
+      "internal/testutil/alignmentpolicy/**"
+    ],
+    "scope_match": "仅精确仓库相对文件或目录/**；任何未列路径不可写。",
+    "exclusive_resources": [],
+    "shared_files_policy": "集中docs/CHANGELOG仅本批gate写；仅own allow含golden/mod的任务可改它们；不得越界修复。",
+    "scope_expansion": "先提交具体路径与原因给批次协调者；协调者更新版本/冲突检查并重排后重派，未授权范围不得修改。"
+  },
+  "execution": {
+    "environment": "local",
+    "isolation": "separate_git_worktree",
+    "branch": "codex/alignment-t22",
+    "same_batch_peer_artifacts": "禁止读取/依赖同批worker尚未验收的代码或输出；只消费前批已合入合同，公共Go符号不得由同批peer供应。",
+    "source_write_allowed": true,
+    "paid_live_authorization_required": false,
+    "live_build_tag": null,
+    "remote_push_allowed": false,
+    "release_tag_allowed": false,
+    "further_delegation": "不自动派发额外用户任务；若需要子任务由协调者纳入相同边界和覆盖检查。"
+  },
+  "invariants": [
+    "以 AGENTS.md 和固定对齐方案为准；源仓库只用 git show 固定提交读取，不修改 internal、不复制其旧架构或未提交 vision 内容。",
+    "保留六名词模型、唯一 New、Run/Stream、统一 resolved invocation/Thread 管线和 typed Event；不引入 SDK/Admin/Start/RunHandle/registry/default binding、平行语义 channel 或 root WithTeam。",
+    "Options 作用域编译约束不变；近处替换、skills 追加、Policy 整值替换；WithTimeout 仍墙钟，Thread 默认常驻，WithSpawn 本轮新进程。",
+    "完整 fingerprint、opaque Thread key、lease owner/token、单 writer、原子 Finalize 与失败不污染 checkpoint 均保留；交付后绝不自动重放。",
+    "仅 Driver 解释正式 provider 协议；shared helper 不猜 session/tool/todo/capability；nil/不支持能力明确失败，Inspect 使用构造配置。",
+    "一个 error 判定面；部分输出不得丢，Text/Summary/Raw/Transcript/Services/Usage/Decode 独立；Run 与 Stream.Result 等价。",
+    "保留 v1.1.1 Tool 凭据/权限/隔离、v1.1.2 Windows 常驻和已有安全更新；不得因源码旧而覆盖掉当前更强合同。",
+    "公共语义变更同时交付合同测试、局部 godoc 和 documentation.md 文档片段；集中使用文档/CHANGELOG 由本批 gate 在放行前合并，不能留到最终批才记录。",
+    "只有拥有对应文件的任务可改 root/Driver AST golden；先审阅新增声明再精确更新，禁止全局设置 golden 更新环境掩盖漂移。",
+    "只写 ownership.allow 指定路径，不顺手重构其他子系统；需要扩大范围时向批次协调者提交具体变更理由和路径，先消除同批冲突再重派本任务。",
+    "不写 TODO、空实现、未来才有的兼容 shim；先用失败可复现的 fixture 验证问题，再实现并验证；不得只满足实现本身的镜像测试。",
+    "普通验证显式关闭付费门，不访问真实 provider；live 任务须同时满足授权记录、build tag 和环境变量门。所有任务都不创建 tag、不发布 release、不自动推送/发送外部消息。"
+  ],
+  "implementation_steps": [
+    "测试构造/调用 option scope、Policy 整值替换、append empty clear、unsupported 预检无资源、native schema 固定 fallback。",
+    "fake clock/control fixtures 组合多重 Ask、重试、背压、timer 迟到、parent deadline、Close/lease/cleanup 与部分 Result cause。",
+    "验证工具安全 input rejection、外部 As 伪造、native prompt 不进入 user transcript/错误文本/secret payload。"
+  ],
+  "acceptance_criteria": [
+    {
+      "id": "T22-AC01",
+      "requirement": "100ms预算示例/overlap Ask/parent isolation 与错误优先级表逐项有证据。",
+      "required": true
+    },
+    {
+      "id": "T22-AC02",
+      "requirement": "误用输入在分配资源前失败；Run/Stream 结果/cause 逐字段一致，不给 checkpoint 放行。",
+      "required": true
+    }
+  ],
+  "validation": [
+    {
+      "id": "T22-V01",
+      "command": "go test -count=1 . -run TestAlignmentPolicy",
+      "cwd": "repository_root",
+      "environment": {
+        "AGENT_ADAPTOR_LIVE_CONFORMANCE": "0",
+        "AGENT_ADAPTOR_E2E": "0",
+        "AGENT_ADAPTOR_UPDATE_API_GOLDEN": "0"
+      },
+      "required": true,
+      "execution_condition": "assigned_environment_available",
+      "must_execute_nonzero_tests": true,
+      "evidence": "记录实际命令、head SHA、OS/Go/CLI版本、exit code和安全日志；失败/skip/零测试不算通过。 非零按本命令实际测试/子测试计数，fuzz按实际种子/执行样本计数；必需场景skip不得通过。普通任务显式禁用的live探针或合同确认不适用的probe可skip，须列明且不能拿它们充当验收证据；可添加-json/-v采集日志，不能缩小原命令选择范围。"
+    },
+    {
+      "id": "T22-V02",
+      "command": "go test -race -count=20 . -run TestAlignmentPolicy",
+      "cwd": "repository_root",
+      "environment": {
+        "AGENT_ADAPTOR_LIVE_CONFORMANCE": "0",
+        "AGENT_ADAPTOR_E2E": "0",
+        "AGENT_ADAPTOR_UPDATE_API_GOLDEN": "0"
+      },
+      "required": true,
+      "execution_condition": "assigned_environment_available",
+      "must_execute_nonzero_tests": true,
+      "evidence": "记录实际命令、head SHA、OS/Go/CLI版本、exit code和安全日志；失败/skip/零测试不算通过。 非零按本命令实际测试/子测试计数，fuzz按实际种子/执行样本计数；必需场景skip不得通过。普通任务显式禁用的live探针或合同确认不适用的probe可skip，须列明且不能拿它们充当验收证据；可添加-json/-v采集日志，不能缩小原命令选择范围。"
+    }
+  ],
+  "documentation": {
+    "fragment": "docs/alignment-tasks/2026-09-07/handoffs/T22/documentation.md",
+    "contents": [
+      "公开语义前后变化和可复现例子",
+      "应合并到的godoc/使用文档/CHANGELOG具体段落",
+      "新增公共声明与golden理由",
+      "不采用的internal行为和原因",
+      "验证实跑/未跑的平台与live边界"
+    ],
+    "central_owner": "G05",
+    "must_integrate_before_batch_acceptance": true
+  },
+  "handoff": {
+    "result_path": "docs/alignment-tasks/2026-09-07/handoffs/T22/result.json",
+    "schema_path": "docs/alignment-tasks/2026-09-07/result.schema.json",
+    "evidence_dir": "docs/alignment-tasks/2026-09-07/handoffs/T22/evidence",
+    "failure_report": "docs/alignment-tasks/2026-09-07/handoffs/T22/findings.md",
+    "requirement_ids": [
+      "W04-R01",
+      "W04-R02",
+      "W04-R03",
+      "W04-R04",
+      "W06-R01",
+      "W06-R02",
+      "W06-R03",
+      "W06-R04",
+      "W06-R05",
+      "W07-R01",
+      "W07-R02",
+      "W07-R03",
+      "W07-R04",
+      "W07-R05",
+      "W11-R01",
+      "W11-R02",
+      "W11-R03",
+      "W11-R04",
+      "W13-R01",
+      "W13-R02",
+      "W13-R03",
+      "W13-R04",
+      "W13-R05",
+      "W13-R06",
+      "W13-R07",
+      "W13-R08",
+      "W13-R09"
+    ],
+    "commit_rule": "只提交本任务实施/局部godoc/测试与契约文件。源码commit完成并测试后生成result，记录实际head；result/evidence由派发器收集，不塞回所引用commit造成SHA自引用。"
+  },
+  "completion": {
+    "required": [
+      "所有必需acceptance/validation实际通过；verification任务不得以skip或零测试充数",
+      "所有owned/verified requirement逐条记录passed/failed/blocked及证据",
+      "工作树生产diff仅在allow范围；无TODO/未实现stub/旧API",
+      "按handoff schema报告真实base/head/commit/changed_files/测试/文档与remaining_items",
+      "本task通过只表示交付，不等于批次gate或整个work_item已关闭"
+    ],
+    "blocked_rule": "缺前置合同/runner/live授权时记录blocked与可执行缺项；发现合同违背或测试失败为needs_rework，向原owner提交最小复现，绝不声称完成或偷偷删工作项。"
+  },
+  "dispatch_prompt": "读取整个task.json和context.required_reads；确认基线和dependency_artifacts已由前批gate验收。只在隔离worktree按ownership实施implementation_steps，逐项满足acceptance_criteria、requirements_owned/verified与validation。严格遵守invariants，用handoff.result_path/schema交付真实结果；不要只根据标题工作，也不要提前执行本批gate或后批任务。"
+}

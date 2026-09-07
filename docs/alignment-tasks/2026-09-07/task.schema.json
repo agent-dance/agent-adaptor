@@ -1,0 +1,632 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "agent-adaptor alignment task 1.0",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(C[0-9]{2}|T[0-9]{2}|G[0-9]{2})$"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "batch_id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^B0[0-6]$"
+    },
+    "phase": {
+      "enum": [
+        "parallel",
+        "gate"
+      ]
+    },
+    "kind": {
+      "enum": [
+        "contract",
+        "implementation",
+        "verification",
+        "documentation",
+        "platform_verification",
+        "live_verification",
+        "integration_gate"
+      ]
+    },
+    "priority": {
+      "enum": [
+        "P0",
+        "P1",
+        "P2"
+      ]
+    },
+    "status": {
+      "const": "planned"
+    },
+    "objective": {
+      "type": "string",
+      "minLength": 1
+    },
+    "work_items": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^W(0[1-9]|1[0-3])$"
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "requirements_owned": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^W(0[1-9]|1[0-3])-R[0-9]{2}$"
+      },
+      "minItems": 0,
+      "uniqueItems": true
+    },
+    "requirements_verified": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^W(0[1-9]|1[0-3])-R[0-9]{2}$"
+      },
+      "minItems": 0,
+      "uniqueItems": true
+    },
+    "depends_on": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^(C[0-9]{2}|T[0-9]{2}|G[0-9]{2})$"
+      },
+      "minItems": 0,
+      "uniqueItems": true
+    },
+    "base": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "enum": [
+            "previous_batch_integrated_head",
+            "frozen_verification_head",
+            "batch_integration"
+          ]
+        },
+        "predecessor_gate": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^(C[0-9]{2}|T[0-9]{2}|G[0-9]{2})$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "required_ancestor": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "verification_head_gate": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^(C[0-9]{2}|T[0-9]{2}|G[0-9]{2})$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "bootstrap_required": {
+          "const": true
+        }
+      },
+      "required": [
+        "mode",
+        "predecessor_gate",
+        "required_ancestor",
+        "verification_head_gate",
+        "bootstrap_required"
+      ],
+      "additionalProperties": false
+    },
+    "context": {
+      "type": "object",
+      "properties": {
+        "repository": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_repository_hint": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_head": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "source_commits": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[0-9a-f]{40}$"
+          },
+          "minItems": 0,
+          "uniqueItems": true
+        },
+        "source_read_rule": {
+          "type": "string",
+          "minLength": 1
+        },
+        "authority": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\\\]+$"
+            },
+            "baseline_sha256": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          },
+          "required": [
+            "path",
+            "baseline_sha256"
+          ],
+          "additionalProperties": false
+        },
+        "plan": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\\\]+$"
+            },
+            "sha256": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "sections": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^W(0[1-9]|1[0-3])$"
+              },
+              "minItems": 1,
+              "uniqueItems": true
+            }
+          },
+          "required": [
+            "path",
+            "sha256",
+            "sections"
+          ],
+          "additionalProperties": false
+        },
+        "required_reads": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\\\]+$"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "dependency_artifacts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "producer": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^(C[0-9]{2}|T[0-9]{2}|G[0-9]{2})$"
+              },
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\\\]+$"
+              },
+              "version_source": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "producer",
+              "path",
+              "version_source"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0
+        },
+        "embedded_plan_sections": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "repository",
+        "source_repository_hint",
+        "source_head",
+        "source_commits",
+        "source_read_rule",
+        "authority",
+        "plan",
+        "required_reads",
+        "dependency_artifacts",
+        "embedded_plan_sections"
+      ],
+      "additionalProperties": false
+    },
+    "ownership": {
+      "type": "object",
+      "properties": {
+        "allow": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\\\]+$"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "scope_match": {
+          "type": "string",
+          "minLength": 1
+        },
+        "exclusive_resources": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 0,
+          "uniqueItems": true
+        },
+        "shared_files_policy": {
+          "type": "string",
+          "minLength": 1
+        },
+        "scope_expansion": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "allow",
+        "scope_match",
+        "exclusive_resources",
+        "shared_files_policy",
+        "scope_expansion"
+      ],
+      "additionalProperties": false
+    },
+    "execution": {
+      "type": "object",
+      "properties": {
+        "environment": {
+          "enum": [
+            "local",
+            "linux",
+            "windows",
+            "authorized_live",
+            "coordinator"
+          ]
+        },
+        "isolation": {
+          "enum": [
+            "separate_git_worktree",
+            "integration_worktree"
+          ]
+        },
+        "branch": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^codex/"
+        },
+        "same_batch_peer_artifacts": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_write_allowed": {
+          "type": "boolean"
+        },
+        "paid_live_authorization_required": {
+          "type": "boolean"
+        },
+        "live_build_tag": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "remote_push_allowed": {
+          "const": false
+        },
+        "release_tag_allowed": {
+          "const": false
+        },
+        "further_delegation": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "environment",
+        "isolation",
+        "branch",
+        "same_batch_peer_artifacts",
+        "source_write_allowed",
+        "paid_live_authorization_required",
+        "live_build_tag",
+        "remote_push_allowed",
+        "release_tag_allowed",
+        "further_delegation"
+      ],
+      "additionalProperties": false
+    },
+    "invariants": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 10,
+      "uniqueItems": true
+    },
+    "implementation_steps": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 3
+    },
+    "acceptance_criteria": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "requirement": {
+            "type": "string",
+            "minLength": 1
+          },
+          "required": {
+            "const": true
+          }
+        },
+        "required": [
+          "id",
+          "requirement",
+          "required"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 2
+    },
+    "validation": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "command": {
+            "type": "string",
+            "minLength": 1
+          },
+          "cwd": {
+            "enum": [
+              "repository_root"
+            ]
+          },
+          "environment": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "execution_condition": {
+            "type": "string",
+            "minLength": 1
+          },
+          "must_execute_nonzero_tests": {
+            "type": "boolean"
+          },
+          "evidence": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "id",
+          "command",
+          "cwd",
+          "environment",
+          "required",
+          "execution_condition",
+          "must_execute_nonzero_tests",
+          "evidence"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1
+    },
+    "documentation": {
+      "type": "object",
+      "properties": {
+        "fragment": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\\\]+$"
+        },
+        "contents": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1
+        },
+        "central_owner": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(C[0-9]{2}|T[0-9]{2}|G[0-9]{2})$"
+        },
+        "must_integrate_before_batch_acceptance": {
+          "const": true
+        }
+      },
+      "required": [
+        "fragment",
+        "contents",
+        "central_owner",
+        "must_integrate_before_batch_acceptance"
+      ],
+      "additionalProperties": false
+    },
+    "handoff": {
+      "type": "object",
+      "properties": {
+        "result_path": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\\\]+$"
+        },
+        "schema_path": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\\\]+$"
+        },
+        "evidence_dir": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\\\]+$"
+        },
+        "failure_report": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\\\]+$"
+        },
+        "requirement_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^W(0[1-9]|1[0-3])-R[0-9]{2}$"
+          },
+          "minItems": 0,
+          "uniqueItems": true
+        },
+        "commit_rule": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "result_path",
+        "schema_path",
+        "evidence_dir",
+        "failure_report",
+        "requirement_ids",
+        "commit_rule"
+      ],
+      "additionalProperties": false
+    },
+    "completion": {
+      "type": "object",
+      "properties": {
+        "required": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 3
+        },
+        "blocked_rule": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "required",
+        "blocked_rule"
+      ],
+      "additionalProperties": false
+    },
+    "dispatch_prompt": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "required": [
+    "schema_version",
+    "id",
+    "title",
+    "batch_id",
+    "phase",
+    "kind",
+    "priority",
+    "status",
+    "objective",
+    "work_items",
+    "requirements_owned",
+    "requirements_verified",
+    "depends_on",
+    "base",
+    "context",
+    "ownership",
+    "execution",
+    "invariants",
+    "implementation_steps",
+    "acceptance_criteria",
+    "validation",
+    "documentation",
+    "handoff",
+    "completion",
+    "dispatch_prompt"
+  ],
+  "additionalProperties": false
+}
