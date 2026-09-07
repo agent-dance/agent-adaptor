@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os/exec"
 	"regexp"
 	"strings"
 
@@ -434,16 +435,33 @@ func (a adapter) prepareRun(ctx context.Context, cfg Config, req driver.Request)
 
 func buildPersistentCodeBuddyResponse(req driver.Request, p *parser, raw driver.RawStreams, prep runPrep, runErr error) driver.Response {
 	exitCode := 0
+	var exitErr *exec.ExitError
 	if runErr != nil {
 		// A failed control turn has no successful process outcome. Preserve the
 		// original transport cause without inventing an OS signal or allowing
 		// even an observed success terminal to certify this checkpoint.
 		exitCode = -1
+		if errors.As(runErr, &exitErr) {
+			exitCode = exitErr.ExitCode()
+		}
 	}
 	timedOut := errors.Is(runErr, context.DeadlineExceeded)
 	failure := p.failureForOutcome(exitCode)
+	if failure == nil && exitErr != nil && exitCode > 0 &&
+		!errors.Is(runErr, context.Canceled) && !timedOut {
+		// An actual nonzero process exit is a provider execution failure.
+		// A signal caused by stopping a broken writer is only a secondary
+		// cause; it must not replace the original transport/context reason.
+		failure = &driver.RunFailure{
+			Code: driver.FailureAgentError, Message: fmt.Sprintf("codebuddy process exited with code %d", exitCode),
+			Metadata: map[string]any{"exit_code": exitCode},
+		}
+	}
 	p.completeStream(failure, exitCode, "", timedOut)
 	checkpoint := p.checkpointForOutcome(exitCode, "", timedOut, failure)
+	if runErr != nil {
+		checkpoint = nil
+	}
 	if checkpoint != nil && checkpoint.State != nil {
 		checkpoint.State.Data = map[string]string{
 			driver.SessionParamCWD:                prep.effectiveCWD,

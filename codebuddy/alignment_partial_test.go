@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -265,6 +266,11 @@ func assertAlignmentCodeBuddyPartial(t *testing.T, result *adaptor.Result, err e
 	case "malformed_terminal":
 		if runErr.Reason != adaptor.ReasonAgentError {
 			t.Errorf("malformed terminal reason = %q", runErr.Reason)
+		}
+	case "nonzero":
+		var exitErr *exec.ExitError
+		if runErr.Reason != adaptor.ReasonAgentError || !errors.As(err, &exitErr) || exitErr.ExitCode() != 23 || !errors.Is(err, io.EOF) {
+			t.Errorf("observed nonzero process outcome/cause lost: reason=%q err=%v", runErr.Reason, err)
 		}
 	default:
 		if mode == "provider_error" && runErr.Reason != adaptor.ReasonAgentError {

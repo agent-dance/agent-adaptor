@@ -546,57 +546,54 @@ func (lp *liveProcess) turn(ctx context.Context, prompt string, sink driver.Even
 	lp.stateMu.Lock()
 	initialized := lp.initialized
 	lp.stateMu.Unlock()
-	if initialized {
-		p.control.userStarted = true
-		if err := ctrl.Write(encodeControlUser(prompt)); err != nil {
-			sent, _ := ctrl.status()
-			return driver.RawStreams{Stderr: lp.stderr.since(stderrStart)}, sent, err
-		}
-	} else if err := ctrl.Write(mustEncodeControlInitialize()); err != nil {
-		return driver.RawStreams{Stderr: lp.stderr.since(stderrStart)}, false, err
-	}
-
 	type readResult struct {
 		stdout string
 		err    error
 		result bool
 	}
-	done := make(chan readResult, 1)
-	go func() {
-		var raw strings.Builder
-		for {
-			line, readErr := lp.stdout.ReadString('\n')
-			if len(line) > 0 {
-				raw.WriteString(line)
-				ts := time.Now().UTC()
-				emitPersistentChunk(sink, "stdout", []byte(line), ts)
-				if err := p.onChunk("stdout", []byte(line), ts); err != nil {
-					done <- readResult{stdout: raw.String(), err: err}
-					return
-				}
-				if _, writeErr := ctrl.status(); writeErr != nil {
-					done <- readResult{stdout: raw.String(), err: writeErr}
-					return
-				}
-				if isResultLine(line) {
-					done <- readResult{stdout: raw.String(), result: true}
-					return
-				}
-			}
-			if readErr != nil {
-				done <- readResult{stdout: raw.String(), err: readErr}
-				return
-			}
-		}
-	}()
-
 	var rr readResult
-	select {
-	case rr = <-done:
-	case <-ctx.Done():
-		lp.signalTerminate()
-		rr = <-done
-		rr.err = ctx.Err()
+	if initialized {
+		p.control.userStarted = true
+		rr.err = ctrl.Write(encodeControlUser(prompt))
+	} else {
+		rr.err = ctrl.Write(mustEncodeControlInitialize())
+	}
+	if rr.err == nil {
+		done := make(chan readResult, 1)
+		go func() {
+			var raw strings.Builder
+			for {
+				line, readErr := lp.stdout.ReadString('\n')
+				if len(line) > 0 {
+					raw.WriteString(line)
+					ts := time.Now().UTC()
+					emitPersistentChunk(sink, "stdout", []byte(line), ts)
+					if err := p.onChunk("stdout", []byte(line), ts); err != nil {
+						done <- readResult{stdout: raw.String(), err: err}
+						return
+					}
+					if _, writeErr := ctrl.status(); writeErr != nil {
+						done <- readResult{stdout: raw.String(), err: writeErr}
+						return
+					}
+					if isResultLine(line) {
+						done <- readResult{stdout: raw.String(), result: true}
+						return
+					}
+				}
+				if readErr != nil {
+					done <- readResult{stdout: raw.String(), err: readErr}
+					return
+				}
+			}
+		}()
+		select {
+		case rr = <-done:
+		case <-ctx.Done():
+			lp.signalTerminate()
+			rr = <-done
+			rr.err = errors.Join(rr.err, ctx.Err())
+		}
 	}
 	sent, writeErr := ctrl.status()
 	if rr.err == nil {
@@ -606,15 +603,21 @@ func (lp *liveProcess) turn(ctx context.Context, prompt string, sink driver.Even
 		// This writer cannot be reused. Stop it, then drain stdout before Wait
 		// closes the pipe, retaining any diagnostics after a failed terminal.
 		lp.signalTerminate()
-		if tail, _ := io.ReadAll(lp.stdout); len(tail) > 0 {
+		tail, drainErr := io.ReadAll(lp.stdout)
+		if len(tail) > 0 {
 			rr.stdout += string(tail)
 			ts := time.Now().UTC()
 			emitPersistentChunk(sink, "stdout", tail, ts)
 			_ = p.onChunk("stdout", tail, ts)
 		}
+		rr.err = errors.Join(rr.err, drainErr)
 		// Wait for stderr's copy to finish before freezing Raw and flushing
-		// the parser's final unterminated diagnostic line.
-		_ = lp.terminateAndWait(context.Background())
+		// the parser's final unterminated diagnostic line. The read/write
+		// cause and the actual observed process failure are both audit data.
+		if lp.cmd != nil {
+			waitErr := lp.terminateAndWait(context.Background())
+			rr.err = errors.Join(rr.err, waitErr, lp.waitErr)
+		}
 	}
 	p.finalize()
 	raw := driver.RawStreams{Stdout: rr.stdout, Stderr: lp.stderr.since(stderrStart)}

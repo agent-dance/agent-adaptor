@@ -30,6 +30,8 @@ type streamingState struct {
 	apiRetryHits    int
 	lastRetryWas5xx bool
 	streamUsage     *driver.Usage
+	usageMessageID  string
+	usageByMessage  map[string]*driver.Usage
 	stopReason      string
 	numTurns        int
 	terminalPayload map[string]any
@@ -37,15 +39,16 @@ type streamingState struct {
 
 func newStreamingState(sink driver.EventSink, runID string, p *parser) *streamingState {
 	return &streamingState{
-		sink:        sink,
-		runID:       runID,
-		parser:      p,
-		textStarted: make(map[int]bool),
-		blockKind:   make(map[int]string),
-		toolCallID:  make(map[int]string),
-		toolName:    make(map[int]string),
-		thinkingID:  make(map[int]string),
-		signatures:  make(map[int]string),
+		sink:           sink,
+		runID:          runID,
+		parser:         p,
+		textStarted:    make(map[int]bool),
+		blockKind:      make(map[int]string),
+		toolCallID:     make(map[int]string),
+		toolName:       make(map[int]string),
+		thinkingID:     make(map[int]string),
+		signatures:     make(map[int]string),
+		usageByMessage: make(map[string]*driver.Usage),
 	}
 }
 
@@ -159,7 +162,7 @@ func (s *streamingState) handleStreamEvent(rawLine string, outer map[string]any)
 	case "message_delta":
 		s.handleMessageDelta(eventObj)
 	case "message_stop":
-		// no interactive stdin to close in headless mode
+		s.usageMessageID = ""
 	default:
 		cp := cloneMapShallow(outer)
 		cp["_stream_raw_line"] = rawLine
@@ -170,6 +173,7 @@ func (s *streamingState) handleStreamEvent(rawLine string, outer map[string]any)
 func (s *streamingState) handleMessageStart(event map[string]any) {
 	s.stopReason = ""
 	msg := topObject(event, "message")
+	s.usageMessageID = topString(msg, "id")
 	if id := topString(msg, "id"); id != "" {
 		s.messageID = id
 	}
@@ -338,17 +342,52 @@ func (s *streamingState) handleMessageDelta(event map[string]any) {
 }
 
 func (s *streamingState) mergeUsageMap(u map[string]any) {
+	// Usage updates are cumulative within one formal message, while distinct
+	// message IDs contribute independently to this turn. Without a message ID
+	// there is no reliable scope for attributing or deduplicating a counter.
+	if s.usageMessageID == "" {
+		return
+	}
+	input, inputOK := codeBuddyUsageCounter(u, "input_tokens")
+	cached, cachedOK := codeBuddyUsageCounter(u, "cache_read_input_tokens")
+	output, outputOK := codeBuddyUsageCounter(u, "output_tokens")
+	if !inputOK && !cachedOK && !outputOK {
+		return
+	}
 	if s.streamUsage == nil {
 		s.streamUsage = &driver.Usage{}
 	}
-	if v, ok := topInt(u, "input_tokens"); ok && v > s.streamUsage.InputTokens {
-		s.streamUsage.InputTokens = v
+	message := s.usageByMessage[s.usageMessageID]
+	if message == nil {
+		message = &driver.Usage{}
+		s.usageByMessage[s.usageMessageID] = message
 	}
-	if v, ok := topInt(u, "cache_read_input_tokens", "cached_input_tokens"); ok && v > s.streamUsage.CachedInputTokens {
-		s.streamUsage.CachedInputTokens = v
+	if inputOK && input > message.InputTokens {
+		s.streamUsage.InputTokens += input - message.InputTokens
+		message.InputTokens = input
 	}
-	if v, ok := topInt(u, "output_tokens"); ok && v > s.streamUsage.OutputTokens {
-		s.streamUsage.OutputTokens = v
+	if cachedOK && cached > message.CachedInputTokens {
+		s.streamUsage.CachedInputTokens += cached - message.CachedInputTokens
+		message.CachedInputTokens = cached
+	}
+	if outputOK && output > message.OutputTokens {
+		s.streamUsage.OutputTokens += output - message.OutputTokens
+		message.OutputTokens = output
+	}
+}
+
+func codeBuddyUsageCounter(usage map[string]any, field string) (int, bool) {
+	value, ok := topInt(usage, field)
+	if !ok || value < 0 {
+		return 0, false
+	}
+	switch original := usage[field].(type) {
+	case float64:
+		return value, float64(value) == original
+	case int64:
+		return value, int64(value) == original
+	default:
+		return value, true
 	}
 }
 
