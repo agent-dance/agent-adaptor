@@ -169,8 +169,11 @@ func (s *stdinController) signalReady() {
 // goroutine returned. After markDone, writers see ErrStdinClosed.
 func (s *stdinController) markDone() {
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	// Writer completion and process Wait are independent finishers. Keep
+	// notification under the same lock; closed alone may only mean Close
+	// stopped new input while accepted frames are still draining.
 	s.closed = true
-	s.mu.Unlock()
 	select {
 	case <-s.done:
 	default:
