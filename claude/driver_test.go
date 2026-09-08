@@ -2,6 +2,7 @@ package claude
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -537,27 +538,40 @@ printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"session_id
 
 func TestClaudeNativeStructuredOutputValidationPrecedesCheckpoint(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", "")
-	home := t.TempDir()
-	command := testutil.WriteCommand(t, home, "fake-claude-invalid-structured",
-		"#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"session_id\":\"structured-invalid\",\"result\":\"done\",\"structured_output\":{\"project_name\":42}}'\n",
-		"@echo off\r\nmore > nul\r\necho {\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"session_id\":\"structured-invalid\",\"result\":\"done\",\"structured_output\":{\"project_name\":42}}\r\n",
-	)
+	// Native schema JSON is unsafe through cmd.exe quoting. Use the native test
+	// executable and inspect the actual argv it received on every platform.
+	fixture := newAlignmentClaudeFixture(t, false)
+	const schema = `{"type":"object","properties":{"project_name":{"type":"string"}},"required":["project_name"],"additionalProperties":false}`
 	sink := &streamSink{}
 	resp, err := (adapter{}).Run(context.Background(), agentadaptor.Request{
 		RunID:                  "run-invalid-structured",
 		Streaming:              true,
-		Prompt:                 "extract project metadata",
-		Config:                 Config{CommonConfig: CommonConfig{Command: command, CWD: home, Env: []agentadaptor.EnvBinding{{Name: "CLAUDE_CONFIG_DIR", Value: home}, {Name: "HOME", Value: home}}}},
-		Workspace:              agentadaptor.WorkspaceLease{ID: "workspace", CWD: home},
+		Prompt:                 "invalid-project-metadata",
+		Config:                 fixture.cfg,
+		Workspace:              agentadaptor.WorkspaceLease{ID: "workspace", CWD: fixture.root},
 		StructuredOutputSource: agentadaptor.StructuredOutputSourceNative,
 		OutputSchema: &agentadaptor.OutputSchema{
 			Format:     agentadaptor.OutputFormatJSONSchema,
-			SchemaJSON: []byte(`{"type":"object","properties":{"project_name":{"type":"string"}},"required":["project_name"],"additionalProperties":false}`),
+			SchemaJSON: []byte(schema),
 			OnInvalid:  agentadaptor.StructuredOutputFailRun,
 		},
 	}, sink)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
+	}
+	lines := fixture.lines(t, "ARGS_FILE")
+	var args []string
+	if len(lines) != 1 || json.Unmarshal([]byte(lines[0]), &args) != nil {
+		t.Fatalf("native argument receipt missing: %q", lines)
+	}
+	nativeSchema := ""
+	for i, arg := range args {
+		if arg == "--json-schema" && i+1 < len(args) {
+			nativeSchema = args[i+1]
+		}
+	}
+	if nativeSchema != schema || resp.StructuredOutput == nil || string(resp.StructuredOutput.RawJSON) != `{"project_name":42}` {
+		t.Fatalf("native schema or invalid provider value changed: args=%q output=%+v", args, resp.StructuredOutput)
 	}
 	if resp.StructuredOutput == nil || resp.StructuredOutput.Valid {
 		t.Fatalf("StructuredOutput = %#v, want invalid", resp.StructuredOutput)

@@ -446,7 +446,7 @@ func (d *alignmentAuditDriver) Run(ctx context.Context, req driver.Request, sink
 	}(), Output: "audit-text", Summary: "audit-summary", Model: "audit-model", Provider: "audit-provider", Metadata: map[string]string{"safe": "observed"}, Usage: &driver.Usage{InputTokens: 17, OutputTokens: 9}, RawStreams: &driver.RawStreams{Stdout: "audit-stdout\n", Stderr: "audit-stderr\n", Terminal: &driver.TerminalPayload{Event: "result", JSON: json.RawMessage(`{"success":true}`)}}, Transcript: []driver.TranscriptItem{
 		{Kind: driver.TranscriptAssistant, ScopeID: "scope-a", ParentScopeID: "parent-a", ParentToolCallID: "parent-tool", Text: "audit-text", Model: "audit-model", SessionID: "audit-session", Metadata: map[string]string{"origin": "protocol"}, Data: map[string]any{"segments": []any{"one", "two"}}},
 		{Kind: driver.TranscriptResult, Text: "audit-summary", Subtype: "success", Usage: &driver.Usage{InputTokens: 17, OutputTokens: 9}, CostUSD: func() *float64 { v := 0.125; return &v }(), Metadata: map[string]string{"terminal": "observed"}},
-	}, RuntimeServices: []driver.RuntimeServiceReport{{ID: "observed-service", Name: "fixture service", URL: "http://127.0.0.1:7654", Status: driver.RuntimeServiceRunning, Lifecycle: driver.RuntimeLifecycleEphemeral, ReuseKey: "service-reuse", Command: "fixture-command", CWD: "fixture-workspace", Port: 7654, OwnerAgentID: "audit-owner", Health: driver.RuntimeHealthHealthy, Metadata: map[string]string{"probe": "passed"}}}, Checkpoint: &driver.Checkpoint{Valid: true, State: &driver.SessionState{ResumeID: "audit-session"}}}, d.err
+	}, RuntimeServices: []driver.RuntimeServiceReport{{ID: "observed-service", Name: "fixture service", URL: "http://127.0.0.1:7654", Status: driver.RuntimeServiceRunning, Lifecycle: driver.RuntimeLifecycleEphemeral, ReuseKey: "service-reuse", Command: "fixture-command", CWD: "fixture-workspace", Port: 7654, OwnerAgentID: "audit-owner", Health: driver.RuntimeHealthHealthy, Metadata: map[string]string{"probe": "passed"}}}, Checkpoint: &driver.Checkpoint{Valid: true, State: &driver.SessionState{ResumeID: "audit-session", Data: map[string]string{"audit-turn": req.Prompt}}}}, d.err
 }
 
 type alignmentCodec struct{}
@@ -508,14 +508,19 @@ func (alignmentSource) DetachRun(context.Context, string) error { return nil }
 
 type alignmentLeaseFailure struct {
 	*memory.Store
-	fail atomic.Bool
+	fail    atomic.Bool
+	commits atomic.Int32
 }
 
 func (s *alignmentLeaseFailure) Finalize(ctx context.Context, r threadstore.FinalizeRequest) error {
 	if s.fail.Load() {
 		return &threadstore.LeaseLostError{Target: r.Key}
 	}
-	return s.Store.Finalize(ctx, r)
+	if err := s.Store.Finalize(ctx, r); err != nil {
+		return err
+	}
+	s.commits.Add(1)
+	return nil
 }
 
 func TestAlignmentLifecycleFinalAuthority(t *testing.T) {
@@ -543,6 +548,9 @@ func TestAlignmentLifecycleFinalAuthority(t *testing.T) {
 					t.Fatalf("healthy result=%v err=%v", rr, e)
 				}
 				before, _ := store.Resolve(ctx, threadstore.Query{Key: "authority"})
+				if before == nil || before.State == nil || before.State.Data["audit-turn"] != "healthy" || store.commits.Load() != 1 {
+					t.Fatal("first healthy checkpoint did not commit")
+				}
 				if failure == "lease" {
 					store.fail.Store(true)
 				} else {
@@ -599,10 +607,13 @@ func TestAlignmentLifecycleFinalAuthority(t *testing.T) {
 				alignmentAuditFields(t, re.Result)
 				alignmentEnvelope(t, events, s.RunID(), re.Reason)
 				after, _ := store.Resolve(ctx, threadstore.Query{Key: "authority"})
-				if failure == "lease" && !reflect.DeepEqual(before, after) {
+				if failure == "lease" && (!reflect.DeepEqual(before, after) || store.commits.Load() != 1) {
 					t.Error("failed lease altered healthy record")
 				}
-				if failure == "cleanup" && (after == nil || after.ID != before.ID || after.UpdatedAt.Equal(before.UpdatedAt)) {
+				// Two fast commits can share a Windows wall-clock timestamp. The
+				// successful Finalize count and actual second-turn state prove the
+				// committed checkpoint survived cleanup failure without rollback.
+				if failure == "cleanup" && (after == nil || after.ID != before.ID || after.State == nil || after.State.Data["audit-turn"] != "second" || store.commits.Load() != 2) {
 					t.Error("healthy committed state was rolled back")
 				}
 			})

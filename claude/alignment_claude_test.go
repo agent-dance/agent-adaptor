@@ -152,6 +152,8 @@ func runAlignmentClaudeHelper() int {
 			terminal = strings.Replace(terminal, `"result":"完成"`, `"result":"{\"directory\":\"docs\"}"`, 1)
 		}
 		switch {
+		case strings.Contains(prompt, "invalid-project-metadata"):
+			terminal = strings.Replace(terminal, `"structured_output":{"directory":"docs"}`, `"structured_output":{"project_name":42}`, 1)
 		case strings.Contains(prompt, "invalid"):
 			terminal = strings.ReplaceAll(terminal, `"directory":"docs"`, `"directory":1`)
 		case strings.Contains(prompt, "missing"):

@@ -6,8 +6,11 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"runtime"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	adaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/driver"
@@ -349,9 +352,20 @@ func TestToolCatalogResumesThreadAcrossAgentRestartAndEphemeralPortChange(t *tes
 	}
 	portGuard, err := net.Listen("tcp4", parsed.Host)
 	if err != nil {
-		t.Fatalf("reserve former endpoint %q: %v", parsed.Host, err)
+		// Windows may reserve a closed listener's address during TIME_WAIT.
+		// That already prevents reuse, but must not hide a still-live gateway.
+		const wsaAddressInUse = syscall.Errno(10048)
+		if runtime.GOOS != "windows" || !errors.Is(err, wsaAddressInUse) {
+			t.Fatalf("reserve former endpoint %q: %v", parsed.Host, err)
+		}
+		if conn, dialErr := net.DialTimeout("tcp4", parsed.Host, time.Second); dialErr == nil {
+			conn.Close()
+			t.Fatal("former gateway still accepts connections after Agent.Close")
+		}
+		t.Log("Windows still reserves the closed address; require a real different second endpoint below")
+	} else {
+		defer portGuard.Close()
 	}
-	defer portGuard.Close()
 
 	secondDriver := newSessionFake("tools-restart")
 	secondDescriptor := secondDriver.Descriptor()

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -233,6 +234,11 @@ func TestAlignmentCursorDriverTransportAndOutput(t *testing.T) {
 		t.Fatalf("actual print matrix=%+v", caps)
 	}
 	var outputs []driver.Response
+	wantStderr := "fixture stderr\n"
+	if runtime.GOOS == "windows" {
+		// The .cmd fixture's echo writes CRLF; Raw must preserve those bytes.
+		wantStderr = "fixture stderr\r\n"
+	}
 	for _, streaming := range []bool{false, true} {
 		req := alignmentCursorCatalog()
 		req.Prompt = "original"
@@ -243,11 +249,30 @@ func TestAlignmentCursorDriverTransportAndOutput(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(s.facts()) != 2 || r.RawStreams.Stdout != body || r.RawStreams.Stderr != "fixture stderr\n" || r.Output != "正文" || r.Summary != "" || r.RawStreams.Terminal == nil || r.Checkpoint == nil || r.Usage != nil {
+		if len(s.facts()) != 2 || r.RawStreams.Stdout != body || r.RawStreams.Stderr != wantStderr || r.Output != "正文" || r.Summary != "" || r.RawStreams.Terminal == nil || r.Checkpoint == nil || r.Usage != nil {
 			t.Fatalf("response=%+v facts=%+v", r, s.facts())
 		}
 		outputs = append(outputs, r)
 	}
+	// Independent stdout/stderr pipes can interleave differently on either OS.
+	// Preserve the order within each pipe and compare every item and raw byte;
+	// no provider protocol item is sorted or removed from the comparison.
+	separate := func(items []driver.TranscriptItem) (stdout, stderr []driver.TranscriptItem) {
+		for _, item := range items {
+			if item.Kind == driver.TranscriptStderr {
+				stderr = append(stderr, item)
+			} else {
+				stdout = append(stdout, item)
+			}
+		}
+		return stdout, stderr
+	}
+	firstStdout, firstStderr := separate(outputs[0].Transcript)
+	secondStdout, secondStderr := separate(outputs[1].Transcript)
+	if len(firstStderr) != 1 || firstStderr[0].Text != "fixture stderr" || !reflect.DeepEqual(firstStderr, secondStderr) {
+		t.Fatalf("stderr transcript changed: first=%+v second=%+v", firstStderr, secondStderr)
+	}
+	outputs[0].Transcript, outputs[1].Transcript = firstStdout, secondStdout
 	if !reflect.DeepEqual(outputs[0], outputs[1]) {
 		t.Fatal("SPI streaming flag changed output")
 	}
@@ -425,7 +450,17 @@ func TestAlignmentCursorCancelClosesObservedCallAndRetainsPartial(t *testing.T) 
 func TestAlignmentCursorLaunchErrorKeepsInfrastructureCause(t *testing.T) {
 	cfg := Config{CommonConfig: CommonConfig{Command: filepath.Join(t.TempDir(), "missing-command"), Env: []driver.EnvBinding{{Name: "CURSOR_HOME", Value: t.TempDir()}}}}
 	r, err := Driver(cfg).Run(context.Background(), driver.Request{}, &alignmentCursorSink{})
-	if !errors.Is(err, os.ErrNotExist) || r.Failure != nil || r.Checkpoint != nil {
+	want := error(os.ErrNotExist)
+	if runtime.GOOS == "windows" {
+		// Windows resolves executable extensions before CreateProcess and returns
+		// exec.ErrNotFound; Unix reports the missing path from process launch.
+		want = exec.ErrNotFound
+		var lookup *exec.Error
+		if !errors.As(err, &lookup) || lookup.Name != cfg.Command {
+			t.Fatalf("missing executable identity lost: %v", err)
+		}
+	}
+	if !errors.Is(err, want) || r.Failure != nil || r.Checkpoint != nil {
 		t.Fatalf("launch outcome=%+v err=%v", r, err)
 	}
 }
