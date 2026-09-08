@@ -28,7 +28,8 @@ type File struct {
 }
 
 // Materialize atomically publishes and verifies a 0600 file in a new private
-// 0700 directory. The returned handle must outlive its actual provider process.
+// 0700 directory. Windows uses protected creator/LocalSystem DACLs for the
+// equivalent privacy. The handle must outlive its actual provider process.
 func Materialize(ctx context.Context, text string) (_ *File, resultErr error) {
 	if err := ctx.Err(); err != nil {
 		return nil, errors.Join(err, context.Cause(ctx))
@@ -39,7 +40,7 @@ func Materialize(ctx context.Context, text string) (_ *File, resultErr error) {
 	if err := Validate("", text); err != nil {
 		return nil, err
 	}
-	dir, err := os.MkdirTemp(os.TempDir(), "agent-adaptor-append-*")
+	dir, err := makePrivateDirectory()
 	if err != nil {
 		return nil, fmt.Errorf("create append directory: %w", err)
 	}
@@ -69,8 +70,14 @@ func Materialize(ctx context.Context, text string) (_ *File, resultErr error) {
 	if err != nil {
 		return nil, err
 	}
-	f.root, err = os.OpenRoot(dir)
+	// Open through the held parent. On Windows this uses a delete-sharing
+	// directory handle, so our own anchor cannot prevent removal or rename.
+	// Keep it open through removal rather than releasing the anchor early.
+	f.root, err = f.parent.OpenRoot(filepath.Base(dir))
 	if err != nil {
+		return nil, err
+	}
+	if err := f.verifyDirectory(); err != nil {
 		return nil, err
 	}
 	temp, err := f.root.OpenFile(".pending", os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
@@ -84,6 +91,9 @@ func Materialize(ctx context.Context, text string) (_ *File, resultErr error) {
 			}
 		}
 	}()
+	if err := protectFile(temp); err != nil {
+		return nil, errors.Join(err, temp.Close())
+	}
 	chmodErr := temp.Chmod(0o600)
 	_, writeErr := temp.WriteString(text)
 	syncErr := temp.Sync()
@@ -129,7 +139,16 @@ func (f *File) verifyDirectory() error {
 	if f.dirInfo == nil || unsafeInfo(info) || !info.IsDir() || !os.SameFile(f.dirInfo, info) || info.Mode().Perm() != f.dirInfo.Mode().Perm() {
 		return fmt.Errorf("append directory identity or permissions changed: %w", os.ErrPermission)
 	}
-	return nil
+	if f.root != nil {
+		held, err := f.root.Stat(".")
+		if err != nil {
+			return err
+		}
+		if !os.SameFile(f.dirInfo, held) {
+			return fmt.Errorf("append directory anchor changed: %w", os.ErrPermission)
+		}
+	}
+	return verifyPrivateObject(f.dir, f.dirInfo, true)
 }
 func (f *File) verifyIdentity() error {
 	info, err := f.root.Lstat(f.name)
@@ -139,11 +158,11 @@ func (f *File) verifyIdentity() error {
 	if f.fileInfo == nil || unsafeInfo(info) || !info.Mode().IsRegular() || !os.SameFile(f.fileInfo, info) {
 		return fmt.Errorf("append file identity changed: %w", os.ErrPermission)
 	}
-	return nil
+	return verifyPrivateObject(f.Path(), f.fileInfo, false)
 }
 
 // Verify checks directory/file identity, link type, platform-observed modes,
-// full bytes and SHA-256. Same-length changes and replacement files fail closed.
+// Windows owner/DACL, full bytes and SHA-256. Same-length changes and replacement files fail closed.
 func (f *File) Verify(ctx context.Context) error {
 	if f == nil {
 		return nil
