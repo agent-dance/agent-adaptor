@@ -94,7 +94,12 @@ type NotificationHandler func(method string, params json.RawMessage)
 //   - No "jsonrpc":"2.0" strictness — codex app-server omits the marker
 //     on many frames, so no tolerant codec is needed.
 type Client struct {
-	conn *jsonrpc2.Conn
+	conn   *jsonrpc2.Conn
+	stream *ownedObjectStream
+
+	callsMu  sync.Mutex
+	calls    map[*clientCall]struct{}
+	sendGate chan struct{}
 
 	handlerMu sync.RWMutex
 	handler   NotificationHandler
@@ -106,9 +111,9 @@ type Client struct {
 // producing the stream (usually by spawning
 // `codex app-server --listen stdio://` and handing over its stdio).
 func NewClient(ctx context.Context, stream jsonrpc2.ObjectStream) *Client {
-	c := &Client{}
+	c := &Client{stream: &ownedObjectStream{ObjectStream: stream}, calls: make(map[*clientCall]struct{}), sendGate: make(chan struct{}, 1)}
 	h := &connHandler{client: c}
-	c.conn = jsonrpc2.NewConn(ctx, stream, h)
+	c.conn = jsonrpc2.NewConn(ctx, c.stream, h)
 	return c
 }
 
@@ -121,17 +126,28 @@ func (c *Client) SetNotificationHandler(h NotificationHandler) {
 	c.handler = h
 }
 
-// Close tears down the client. It is safe to call multiple times.
+// Close rejects new calls, releases active RPC waiters, and closes the owned
+// transport. It is safe to call multiple times, including from a notification
+// handler. It does not wait for the reader or the subprocess to exit.
 func (c *Client) Close() error {
 	if c.closed.Swap(true) {
 		return nil
 	}
-	return c.conn.Close()
+	// The pinned Conn.Close closes pending channels without removing them;
+	// an already decoded response could still send to one. Only the original
+	// synchronous reader may settle that state, when it reaches EOF/read error.
+	c.callsMu.Lock()
+	for call := range c.calls {
+		call.cancel(errClientShutdown)
+	}
+	c.callsMu.Unlock()
+	return c.stream.Close()
 }
 
 // DisconnectNotify is closed after the JSON-RPC reader reaches EOF or a
-// protocol/transport error. Waiting for it before snapshotting captured stdout
-// guarantees the reader has consumed every available inbound byte.
+// protocol/transport error, rather than when Close is requested. It does not
+// prove that process stdout/stderr tails were drained or OS Wait completed;
+// the process owner retains those separate joins before its final snapshot.
 func (c *Client) DisconnectNotify() <-chan struct{} {
 	return c.conn.DisconnectNotify()
 }
@@ -143,7 +159,7 @@ func (c *Client) DisconnectNotify() <-chan struct{} {
 // Initialize performs the "initialize" handshake.
 func (c *Client) Initialize(ctx context.Context, params InitializeParams) (*InitializeResponse, error) {
 	var resp InitializeResponse
-	if err := c.conn.Call(ctx, MethodInitialize, params, &resp); err != nil {
+	if err := c.call(ctx, MethodInitialize, params, &resp); err != nil {
 		return nil, wrapRPCErr(MethodInitialize, err)
 	}
 	return &resp, nil
@@ -152,13 +168,13 @@ func (c *Client) Initialize(ctx context.Context, params InitializeParams) (*Init
 // NotifyInitialized sends the "initialized" notification that completes
 // the handshake.
 func (c *Client) NotifyInitialized(ctx context.Context) error {
-	return c.conn.Notify(ctx, MethodInitialized, map[string]any{})
+	return c.notify(ctx, MethodInitialized, map[string]any{})
 }
 
 // ThreadStart creates a new thread.
 func (c *Client) ThreadStart(ctx context.Context, params ThreadStartParams) (*ThreadStartResponse, error) {
 	var resp ThreadStartResponse
-	if err := c.conn.Call(ctx, MethodThreadStart, params, &resp); err != nil {
+	if err := c.call(ctx, MethodThreadStart, params, &resp); err != nil {
 		return nil, wrapRPCErr(MethodThreadStart, err)
 	}
 	if strings.TrimSpace(resp.Thread.ID) == "" {
@@ -170,7 +186,7 @@ func (c *Client) ThreadStart(ctx context.Context, params ThreadStartParams) (*Th
 // ThreadResume resumes an existing thread by id.
 func (c *Client) ThreadResume(ctx context.Context, params ThreadResumeParams) (*ThreadResumeResponse, error) {
 	var resp ThreadResumeResponse
-	if err := c.conn.Call(ctx, MethodThreadResume, params, &resp); err != nil {
+	if err := c.call(ctx, MethodThreadResume, params, &resp); err != nil {
 		return nil, wrapRPCErr(MethodThreadResume, err)
 	}
 	if strings.TrimSpace(resp.Thread.ID) == "" {
@@ -185,7 +201,7 @@ func (c *Client) ThreadResume(ctx context.Context, params ThreadResumeParams) (*
 // ThreadFork creates a new child thread from an existing parent thread id.
 func (c *Client) ThreadFork(ctx context.Context, params ThreadForkParams) (*ThreadForkResponse, error) {
 	var resp ThreadForkResponse
-	if err := c.conn.Call(ctx, MethodThreadFork, params, &resp); err != nil {
+	if err := c.call(ctx, MethodThreadFork, params, &resp); err != nil {
 		return nil, wrapRPCErr(MethodThreadFork, err)
 	}
 	if strings.TrimSpace(resp.Thread.ID) == "" {
@@ -201,7 +217,7 @@ func (c *Client) ThreadFork(ctx context.Context, params ThreadForkParams) (*Thre
 // the server has acknowledged the request (not once the turn completes).
 func (c *Client) TurnStart(ctx context.Context, params TurnStartParams) (*TurnStartResponse, error) {
 	var resp TurnStartResponse
-	if err := c.conn.Call(ctx, MethodTurnStart, params, &resp); err != nil {
+	if err := c.call(ctx, MethodTurnStart, params, &resp); err != nil {
 		return nil, wrapRPCErr(MethodTurnStart, err)
 	}
 	if strings.TrimSpace(resp.Turn.ID) == "" {
@@ -213,7 +229,7 @@ func (c *Client) TurnStart(ctx context.Context, params TurnStartParams) (*TurnSt
 // TurnInterrupt cancels an in-flight turn.
 func (c *Client) TurnInterrupt(ctx context.Context, params TurnInterruptParams) error {
 	var resp TurnInterruptResponse
-	if err := c.conn.Call(ctx, MethodTurnInterrupt, params, &resp); err != nil {
+	if err := c.call(ctx, MethodTurnInterrupt, params, &resp); err != nil {
 		return wrapRPCErr(MethodTurnInterrupt, err)
 	}
 	return nil
@@ -222,6 +238,165 @@ func (c *Client) TurnInterrupt(ctx context.Context, params TurnInterruptParams) 
 // ---------------------------------------------------------------------------
 // Internals
 // ---------------------------------------------------------------------------
+
+// ownedObjectStream preserves the original stream and serial reader while
+// making explicit transport shutdown and the later reader shutdown share one
+// resource release. Close never takes a write lock: it must unblock a writer.
+type ownedObjectStream struct {
+	jsonrpc2.ObjectStream
+	closing  atomic.Bool
+	once     sync.Once
+	closeErr error
+	attempt  *writeAttempt
+}
+
+func (s *ownedObjectStream) Close() error {
+	s.closing.Store(true)
+	s.once.Do(func() { s.closeErr = s.ObjectStream.Close() })
+	return s.closeErr
+}
+func (s *ownedObjectStream) WriteObject(v interface{}) error {
+	if s.closing.Load() {
+		return jsonrpc2.ErrClosed
+	}
+	err := s.ObjectStream.WriteObject(v)
+	if s.attempt != nil {
+		s.attempt.err = err
+	}
+	if err != nil && s.closing.Load() {
+		return errors.Join(err, jsonrpc2.ErrClosed)
+	}
+	return err
+}
+
+// All outbound operations hold sendGate only through the synchronous send.
+// Its attempt is private to that operation, including a server-request reply.
+// The pinned sender may replace the actual write error with ErrClosed on EOF;
+// the attempt preserves that evidence without attaching it to another call.
+type writeAttempt struct {
+	err error
+}
+
+type clientCall struct {
+	cancel context.CancelCauseFunc
+}
+
+var errClientShutdown = errors.New("appserver: client shutdown")
+
+func callerContextError(ctx context.Context) error {
+	err := ctx.Err()
+	if err != nil && context.Cause(ctx) != err {
+		return errors.Join(err, context.Cause(ctx))
+	}
+	return err
+}
+
+// A Client close cancels only our wait, never the Conn's pending channels. The
+// original reader can still finish an in-flight response and drain in FIFO order.
+func (c *Client) beginCall(ctx context.Context) (context.Context, func(), error) {
+	if err := callerContextError(ctx); err != nil {
+		return nil, nil, err
+	}
+	callCtx, cancel := context.WithCancelCause(ctx)
+	call := &clientCall{cancel: cancel}
+	c.callsMu.Lock()
+	if c.closed.Load() {
+		// Caller cancellation can become established while registration waits.
+		// This unregistered child cannot carry our private shutdown cause.
+		err := callerContextError(callCtx)
+		c.callsMu.Unlock()
+		cancel(nil)
+		if err != nil {
+			return nil, nil, err
+		}
+		return nil, nil, jsonrpc2.ErrClosed
+	}
+	c.calls[call] = struct{}{}
+	c.callsMu.Unlock()
+	return callCtx, func() {
+		c.callsMu.Lock()
+		delete(c.calls, call)
+		c.callsMu.Unlock()
+		cancel(nil)
+	}, nil
+}
+
+func rpcContextError(ctx context.Context) error {
+	if ctx.Err() != nil && context.Cause(ctx) == errClientShutdown {
+		return jsonrpc2.ErrClosed
+	}
+	return callerContextError(ctx)
+}
+
+// send never holds the gate while waiting for a response or closing transport.
+// Every Conn write entry uses this gate, including replies from its sole reader.
+func (c *Client) send(ctx context.Context, send func() error) error {
+	select {
+	case c.sendGate <- struct{}{}:
+	case <-ctx.Done():
+		return rpcContextError(ctx)
+	}
+	defer func() { <-c.sendGate }()
+	if err := rpcContextError(ctx); err != nil {
+		return err
+	}
+	if c.closed.Load() {
+		return jsonrpc2.ErrClosed
+	}
+	attempt := &writeAttempt{}
+	c.stream.attempt = attempt
+	defer func() { c.stream.attempt = nil }()
+	err := send()
+	if err != nil {
+		return errors.Join(rpcContextError(ctx), err, attempt.err)
+	}
+	return nil
+}
+
+func (c *Client) call(ctx context.Context, method string, params, result any) error {
+	callCtx, finish, err := c.beginCall(ctx)
+	if err != nil {
+		return err
+	}
+	defer finish()
+	var waiter jsonrpc2.Waiter
+	err = c.send(callCtx, func() error {
+		var err error
+		waiter, err = c.conn.DispatchCall(callCtx, method, params)
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	err = waiter.Wait(callCtx, result)
+	if callCtx.Err() != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, jsonrpc2.ErrClosed)) {
+		// The private cause distinguishes our shutdown from a caller that
+		// deliberately cancels with ErrClosed. A formal RPC error stays intact.
+		if context.Cause(callCtx) == errClientShutdown {
+			return jsonrpc2.ErrClosed
+		}
+		return errors.Join(callerContextError(callCtx), err)
+	}
+	return err
+}
+func (c *Client) notify(ctx context.Context, method string, params any) error {
+	callCtx, finish, err := c.beginCall(ctx)
+	if err != nil {
+		return err
+	}
+	defer finish()
+	return c.send(callCtx, func() error { return c.conn.Notify(callCtx, method, params) })
+}
+func (c *Client) rejectRequest(ctx context.Context, conn *jsonrpc2.Conn, id jsonrpc2.ID, rpcErr *jsonrpc2.Error) error {
+	callCtx, finish, err := c.beginCall(ctx)
+	if err != nil {
+		return err
+	}
+	defer finish()
+	// NewConn starts its reader before NewClient can publish c.conn. The
+	// synchronous handler already has the initialized connection in its argument.
+	return c.send(callCtx, func() error { return conn.ReplyWithError(callCtx, id, rpcErr) })
+}
 
 // connHandler implements jsonrpc2.Handler. It is the single place where
 // inbound frames are observed: notifications are forwarded to the
@@ -238,7 +413,7 @@ func (h *connHandler) Handle(ctx context.Context, conn *jsonrpc2.Conn, req *json
 		// requests, but it must reply to avoid leaking a pending request on
 		// the peer. Respond with "method not found" so the server fails fast
 		// instead of blocking.
-		_ = conn.ReplyWithError(ctx, req.ID, &jsonrpc2.Error{
+		_ = h.client.rejectRequest(ctx, conn, req.ID, &jsonrpc2.Error{
 			Code:    jsonrpc2.CodeMethodNotFound,
 			Message: fmt.Sprintf("agent-adaptor does not accept server-initiated request %q", req.Method),
 		})

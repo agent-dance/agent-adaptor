@@ -25,5 +25,18 @@
 //     subprocess lifecycle for a single Run.
 //   - translate.go — notification → StreamPayload mapping.
 //
+// Client.Close stops new RPC calls, releases active waiters, and closes its
+// owned transport once. The original synchronous reader alone settles pending
+// responses on EOF/read error, so an in-flight response cannot race an external
+// pending-channel close. Notification FIFO and server-request rejection remain
+// on that reader. Close can be called from a notification handler without
+// waiting for itself. Caller cancellation and RPC errors retain their causes;
+// a client-only shutdown remains recognizable through IsDisconnected.
+//
+// Logical client shutdown, reader disconnect, raw-stream drain, and OS process
+// exit are separate boundaries. Process owners retain their bounded shutdown,
+// full Raw capture and actual Wait joins; failed/cancelled turns gain no healthy
+// checkpoint. Healthy resident turns do not wait for process exit.
+//
 // Protocol upgrades follow the generation procedure in generate.go.
 package appserver
