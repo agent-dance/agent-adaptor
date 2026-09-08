@@ -24,6 +24,14 @@ type CompatibilityView struct {
 // materializes or resolves skills. Unowned trees remain ordinary resources for the caller.
 func CompatibilityTargets(dir string, manifest profilestate.Manifest, payload *driver.ResolvedSkills, pruneMode ProfileSkillPruneMode) (CompatibilityView, error) {
 	home := filepath.Join(dir, "skills")
+	// On Windows, inspecting a child of a regular file reports the same
+	// absence error as a missing child. Prove the parent before treating any
+	// managed child as absent, including when no payload is being projected.
+	if info, err := os.Lstat(home); err != nil && !os.IsNotExist(err) {
+		return CompatibilityView{}, err
+	} else if err == nil && !info.IsDir() {
+		return CompatibilityView{}, fmt.Errorf("%w: skills home is not a directory", profile.ErrUnsafe)
+	}
 	view := CompatibilityView{Targets: map[string]string{}, Pruned: map[string]bool{}}
 	targets := view.Targets
 	for _, entry := range manifest.KindEntries(profileSkillManifestKind) {

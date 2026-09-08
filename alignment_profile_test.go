@@ -537,7 +537,31 @@ func TestAlignmentProfileFinalSnapshotRejectsDriftAndIO(t *testing.T) {
 				d.afterInject = func(_ driver.ResolvedSkills, s *driver.ProfileSelection) error {
 					switch mode {
 					case "mode":
-						return os.Chmod(filepath.Join(provider.dir, "SKILL.md"), 0700)
+						path := filepath.Join(provider.dir, "SKILL.md")
+						before, err := os.Stat(path)
+						if err != nil {
+							return err
+						}
+						t.Cleanup(func() {
+							if err := os.Chmod(path, before.Mode().Perm()); err != nil {
+								t.Error("restore skill permissions", err)
+							}
+						})
+						changedMode := os.FileMode(0700)
+						if runtime.GOOS == "windows" {
+							changedMode = 0400 // Readonly is an observable, enforced file mode on Windows.
+						}
+						if err := os.Chmod(path, changedMode); err != nil {
+							return err
+						}
+						after, err := os.Stat(path)
+						if err != nil {
+							return err
+						}
+						if before.Mode().Perm() == after.Mode().Perm() {
+							return errors.New("fixture did not change the observed skill permissions")
+						}
+						return nil
 					case "configuration":
 						return os.WriteFile(filepath.Join(s.Dir, "settings.json"), []byte(`{"unknown":{"enabled":true}}`), 0600)
 					case "linked-content":
@@ -886,7 +910,19 @@ func TestAlignmentProfileMCPWriterPreservesMode(t *testing.T) {
 				}
 				d := newAlignmentProfileDriver(source)
 				a := alignmentAgent(d, source, adaptor.WithThreadStore(memory.NewStore()))
-				t.Cleanup(func() { _ = a.Close(context.Background()) })
+				var config string
+				t.Cleanup(func() {
+					// Intentional readonly drift must be repaired before the MCP
+					// writer can remove its owned projection and release the claim.
+					if config != "" {
+						if err := os.Chmod(config, observedMode); err != nil {
+							t.Error("restore configuration permissions", err)
+						}
+					}
+					if err := a.Close(context.Background()); err != nil {
+						t.Error("release profile ownership", err)
+					}
+				})
 				if _, err := alignmentCall(t, a.Thread("mode"), context.Background(), stream); err != nil {
 					if runtime.GOOS != "windows" || observedMode&0200 != 0 || !errors.Is(err, os.ErrPermission) || d.runCount() != 1 {
 						t.Fatal(err)
@@ -909,7 +945,7 @@ func TestAlignmentProfileMCPWriterPreservesMode(t *testing.T) {
 				if first.Session.EngineSessionID != second.Session.EngineSessionID || second.Session.PreviousID != "" || second.Session.State == nil {
 					t.Fatal("unchanged profile did not resume")
 				}
-				config := filepath.Join(first.Profile.Dir, ".claude.json")
+				config = filepath.Join(first.Profile.Dir, ".claude.json")
 				for _, path := range []string{sourceConfig, config} {
 					info, err := os.Lstat(path)
 					if err != nil || info.Mode().Perm() != observedMode {
@@ -942,6 +978,21 @@ func TestAlignmentProfileMCPWriterPreservesMode(t *testing.T) {
 				}
 				if d.runCount() != 2 {
 					t.Fatal("permission drift reached Driver", d.runCount())
+				}
+				if err := os.Chmod(config, observedMode); err != nil {
+					t.Fatal(err)
+				}
+				if err := a.Close(context.Background()); err != nil {
+					t.Fatal("restored projection did not release ownership", err)
+				}
+				next := alignmentAgent(newAlignmentProfileDriver(source), source)
+				t.Cleanup(func() {
+					if err := next.Close(context.Background()); err != nil {
+						t.Error(err)
+					}
+				})
+				if _, err := alignmentCall(t, next, context.Background(), stream); err != nil {
+					t.Fatal("successor could not acquire the released profile", err)
 				}
 			})
 		}

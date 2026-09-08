@@ -128,7 +128,7 @@ func alignmentGatewayCredential(t *testing.T, endpoint, token string, accepted b
 	client := &http.Client{Transport: transport, Timeout: 2 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	resp, err := client.Do(req)
 	if err != nil {
-		if !accepted && errors.Is(err, syscall.ECONNREFUSED) {
+		if !accepted && alignmentConnectionRefused(runtime.GOOS, err) {
 			return
 		}
 		t.Fatalf("credential probe did not establish expected state accepted=%v: %v", accepted, err)
@@ -154,6 +154,36 @@ func alignmentGatewayCredential(t *testing.T, endpoint, token string, accepted b
 	// was actually accepted before Close, not merely present in a carrier.
 	if resp.StatusCode != http.StatusOK || json.Unmarshal(body, &reply) != nil || reply.Result.ProtocolVersion == "" || len(reply.Error) != 0 {
 		t.Fatalf("old credential never authenticated: status %d", resp.StatusCode)
+	}
+}
+
+func alignmentConnectionRefused(goos string, err error) bool {
+	// Go's Windows socket errors retain the Winsock code, not the portable
+	// syscall.ECONNREFUSED value. Only explicit refusal proves revocation;
+	// timeout, cancellation and arbitrary transport errors remain failures.
+	const wsaConnectionRefused = syscall.Errno(10061) // WSAECONNREFUSED
+	return errors.Is(err, syscall.ECONNREFUSED) || (goos == "windows" && errors.Is(err, wsaConnectionRefused))
+}
+
+func TestAlignmentLifecycleProfileCredentialRefusalOracle(t *testing.T) {
+	for _, tc := range []struct {
+		name, goos string
+		err        error
+		want       bool
+	}{
+		{"posix-refused", "linux", fmt.Errorf("dial: %w", syscall.ECONNREFUSED), true},
+		{"winsock-refused", "windows", fmt.Errorf("connectex: %w", syscall.Errno(10061)), true},
+		{"foreign-code", "linux", syscall.Errno(10061), false},
+		{"timeout", "windows", context.DeadlineExceeded, false},
+		{"cancelled", "windows", context.Canceled, false},
+		{"error-text", "windows", errors.New("connection refused"), false},
+		{"other-socket-error", "windows", syscall.Errno(10060), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := alignmentConnectionRefused(tc.goos, tc.err); got != tc.want {
+				t.Fatalf("refusal=%v want=%v: %v", got, tc.want, tc.err)
+			}
+		})
 	}
 }
 
