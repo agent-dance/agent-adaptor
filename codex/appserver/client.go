@@ -301,8 +301,14 @@ func (c *Client) beginCall(ctx context.Context) (context.Context, func(), error)
 	call := &clientCall{cancel: cancel}
 	c.callsMu.Lock()
 	if c.closed.Load() {
+		// Caller cancellation can become established while registration waits.
+		// This unregistered child cannot carry our private shutdown cause.
+		err := callerContextError(callCtx)
 		c.callsMu.Unlock()
 		cancel(nil)
+		if err != nil {
+			return nil, nil, err
+		}
 		return nil, nil, jsonrpc2.ErrClosed
 	}
 	c.calls[call] = struct{}{}

@@ -22,6 +22,18 @@ type alignmentRPCFrame struct {
 	release <-chan struct{}
 }
 
+type alignmentRPCParentContext struct {
+	context.Context
+	childCreated chan struct{}
+	once         sync.Once
+}
+
+func (c *alignmentRPCParentContext) Done() <-chan struct{} {
+	// WithCancelCause has created its child when it first asks for parent Done.
+	c.once.Do(func() { close(c.childCreated) })
+	return c.Context.Done()
+}
+
 // This is a half-close stream, like the real stdio codec: Close releases writes
 // but cannot retract a response already decoded from the independent reader.
 // The pinned jsonrpc2.Conn still decodes/distributes every request and response.
@@ -371,6 +383,47 @@ func TestAlignmentClientClose(t *testing.T) {
 		cancel(cause)
 		if err := alignmentRPCWait(t, ctx, call); !IsDisconnected(err) || errors.Is(err, context.Canceled) || errors.Is(err, cause) {
 			t.Fatalf("later cancellation relabelled completed close: %v", err)
+		}
+		alignmentRPCFinish(t, ctx, client, s)
+	})
+	t.Run("caller-cancel-before-registration-and-close", func(t *testing.T) {
+		ctx, client, s := alignmentRPCSetup(t, nil)
+		parent, cancel := context.WithCancelCause(ctx)
+		defer cancel(nil)
+		observed := &alignmentRPCParentContext{Context: parent, childCreated: make(chan struct{})}
+		client.callsMu.Lock()
+		locked := true
+		defer func() {
+			if locked {
+				client.callsMu.Unlock()
+			}
+		}()
+		call := alignmentRPCCall(observed, client)
+		alignmentRPCWait(t, ctx, observed.childCreated)
+		cause := errors.New("caller cancelled before registration and Close")
+		cancel(cause)
+		closed := make(chan error, 1)
+		go func() { closed <- client.Close() }()
+		for !client.closed.Load() {
+			select {
+			case <-ctx.Done():
+				t.Fatal(ctx.Err())
+			default:
+				runtime.Gosched()
+			}
+		}
+		client.callsMu.Unlock()
+		locked = false
+		if err := alignmentRPCWait(t, ctx, call); !errors.Is(err, context.Canceled) || !errors.Is(err, cause) || IsDisconnected(err) {
+			t.Fatalf("closed admission erased an established caller cause: %v", err)
+		}
+		if err := alignmentRPCWait(t, ctx, closed); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case raw := <-s.writes:
+			t.Fatalf("unregistered operation wrote: %s", raw)
+		default:
 		}
 		alignmentRPCFinish(t, ctx, client, s)
 	})
