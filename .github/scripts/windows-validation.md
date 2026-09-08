@@ -14,6 +14,10 @@ An additional Windows regression repeats the received-turn cancellation and
 public partial-result scenarios 20 times; both exact test roots must pass every
 iteration. This supplements the original commands after a native cancellation
 failure exposed an unbound, already received turn/start response.
+A separate Cursor check repeats the public Run/Stream comparison, Driver output
+comparison and deterministic equivalence controls 20 times. All three exact roots
+must pass without skips. It checks each pipe's complete ordered content across
+independent runs while retaining exact event-to-Result order within each run.
 Process-external deadlines do not change test counts or Go test timeout flags.
 Private HOME, USERPROFILE, APPDATA, caches and temporary directories prevent
 implicit use of provider profiles. Paid live, E2E and golden-update gates stay off.

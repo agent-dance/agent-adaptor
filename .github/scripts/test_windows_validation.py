@@ -6,7 +6,7 @@ import unittest
 from unittest import mock
 import subprocess
 
-from windows_validation import CANCELLATION_REQUIRED, audit_cancellation_repetitions, audit_events, audit_example, execute_check
+from windows_validation import CANCELLATION_REQUIRED, CURSOR_REQUIRED, audit_cancellation_repetitions, audit_repetitions, audit_events, audit_example, execute_check
 
 
 def event(action, test="TestRequired"):
@@ -17,6 +17,17 @@ def event(action, test="TestRequired"):
 
 
 class EvidenceTests(unittest.TestCase):
+    def test_cursor_repetitions_require_all_three_exact_roots_twenty_times(self):
+        records = [{"Action": action, "Package": name.split(":")[0], "Test": name.split(":")[1]}
+                   for name in CURSOR_REQUIRED for _ in range(20) for action in ("run", "pass")]
+        self.assertTrue(audit_repetitions(records, CURSOR_REQUIRED)["accepted"])
+        self.assertFalse(audit_repetitions(records[:-2], CURSOR_REQUIRED)["accepted"])
+        substituted = [dict(row, Test="TestOther") if row["Test"] == "TestAlignmentCursorResultEquivalenceControls" else row
+                       for row in records]
+        self.assertFalse(audit_repetitions(substituted, CURSOR_REQUIRED)["accepted"])
+        skipped = [dict(row, Action="skip") if row["Action"] == "pass" else row for row in records]
+        self.assertFalse(audit_repetitions(skipped, CURSOR_REQUIRED)["accepted"])
+
     def test_cancellation_repetitions_require_both_exact_roots_twenty_times(self):
         records = [{"Action": action, "Package": name.split(":")[0], "Test": name.split(":")[1]}
                    for name in CANCELLATION_REQUIRED for _ in range(20) for action in ("run", "pass")]
