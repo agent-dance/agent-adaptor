@@ -116,6 +116,18 @@ class DispatchValidationTests(unittest.TestCase):
         self.data["tasks"]["T21"]["work_items"].remove("W13")
         self.assert_package_rejects("verifier lacks source work item")
 
+    def test_work_item_verifier_index_cannot_omit_assigned_task(self):
+        item = next(w for w in self.data["coverage"]["work_items"] if w["id"] == "W04")
+        item["independent_verification_tasks"] = [
+            tid for tid in item["independent_verification_tasks"] if tid != "T25"
+        ]
+        self.assert_package_rejects("W04: verifier index differs")
+
+    def test_work_item_verifier_index_cannot_invent_task(self):
+        item = next(w for w in self.data["coverage"]["work_items"] if w["id"] == "W04")
+        item["independent_verification_tasks"].append("T26")
+        self.assert_package_rejects("W04: verifier index differs")
+
     def test_lost_history_commit(self):
         self.data["coverage"]["history"].pop()
         self.assert_package_rejects("history commit missing")

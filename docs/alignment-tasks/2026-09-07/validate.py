@@ -251,6 +251,7 @@ def package_errors(data, verify_files=True):
         matched = [r for r in requirements if r["work_item"] == item["id"]]
         check(bool(matched) and set(item["requirement_ids"]) == {r["id"] for r in matched}, item["id"] + ": incomplete requirements")
         check(set(item["implementation_tasks"]) == {r["implementation_owner"] for r in matched}, item["id"] + ": owner index differs")
+        check(set(item["independent_verification_tasks"]) == {v for r in matched for v in r["verification_tasks"]}, item["id"] + ": verifier index differs")
         check(item["documentation_task"] == "T24" and item["final_closure_gate"] == "G06", item["id"] + ": missing closure")
     ledger = dict(re.findall(r"^\| ([AB]\d{2}) \| \x60([0-9a-f]{12})\x60 \|", plan_text, re.M))
     history = coverage["history"]

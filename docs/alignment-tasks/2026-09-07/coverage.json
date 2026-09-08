@@ -1340,6 +1340,7 @@
       "independent_verification_tasks": [
         "T20",
         "T22",
+        "T25",
         "T27",
         "T28",
         "T29"
