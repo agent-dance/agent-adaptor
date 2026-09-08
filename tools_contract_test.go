@@ -361,6 +361,8 @@ func TestToolCatalogResumesThreadAcrossAgentRestartAndEphemeralPortChange(t *tes
 		if conn, dialErr := net.DialTimeout("tcp4", parsed.Host, time.Second); dialErr == nil {
 			conn.Close()
 			t.Fatal("former gateway still accepts connections after Agent.Close")
+		} else if !errors.Is(dialErr, syscall.Errno(10061)) { // WSAECONNREFUSED
+			t.Fatalf("former gateway did not refuse connections after Agent.Close: %v", dialErr)
 		}
 		t.Log("Windows still reserves the closed address; require a real different second endpoint below")
 	} else {
