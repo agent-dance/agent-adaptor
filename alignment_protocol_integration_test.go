@@ -457,14 +457,10 @@ func apProvider(t *testing.T, kind, frames string, options ...adaptor.Option) *a
 	if err = os.WriteFile(protocol, []byte(frames), 0600); err != nil {
 		t.Fatal(err)
 	}
-	// Only generated absolute paths reach this shim; shell quoting is explicit.
-	quote := func(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'" }
-	command := filepath.Join(dir, "provider.sh")
-	if err = os.WriteFile(command, []byte("#!/bin/sh\nexec "+quote(exe)+" \"$@\"\n"), 0700); err != nil {
-		t.Fatal(err)
-	}
+	// The fixture's env-gated init handles provider argv and stdin before the
+	// test harness starts. Execute that native binary directly on every OS.
 	env := []driver.EnvBinding{{Name: "AGENT_ADAPTOR_T21_PRIVATE_CHILD", Value: "fixture-v1"}, {Name: "T21_PROVIDER", Value: kind}, {Name: "T21_PROTOCOL", Value: protocol}, {Name: "HOME", Value: dir}, {Name: "USERPROFILE", Value: dir}, {Name: "XDG_CONFIG_HOME", Value: dir}, {Name: "GORACE", Value: "atexit_sleep_ms=0"}}
-	common := driver.CommonConfig{Command: command, CWD: dir, Env: env}
+	common := driver.CommonConfig{Command: exe, CWD: dir, Env: env}
 	var d driver.Driver
 	switch kind {
 	case "claude":
