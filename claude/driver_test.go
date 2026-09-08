@@ -565,12 +565,20 @@ func TestClaudeNativeStructuredOutputValidationPrecedesCheckpoint(t *testing.T) 
 		t.Fatalf("native argument receipt missing: %q", lines)
 	}
 	nativeSchema := ""
+	schemaFlags := 0
 	for i, arg := range args {
 		if arg == "--json-schema" && i+1 < len(args) {
 			nativeSchema = args[i+1]
+			schemaFlags++
 		}
 	}
-	if nativeSchema != schema || resp.StructuredOutput == nil || string(resp.StructuredOutput.RawJSON) != `{"project_name":42}` {
+	var wantSchema, gotSchema any
+	if err := json.Unmarshal([]byte(schema), &wantSchema); err != nil {
+		t.Fatalf("fixture schema: %v", err)
+	}
+	// Driver schema normalization may reorder JSON object keys. The native
+	// argument must retain the complete schema as one argument.
+	if schemaFlags != 1 || json.Unmarshal([]byte(nativeSchema), &gotSchema) != nil || !reflect.DeepEqual(gotSchema, wantSchema) || resp.StructuredOutput == nil || string(resp.StructuredOutput.RawJSON) != `{"project_name":42}` {
 		t.Fatalf("native schema or invalid provider value changed: args=%q output=%+v", args, resp.StructuredOutput)
 	}
 	if resp.StructuredOutput == nil || resp.StructuredOutput.Valid {
