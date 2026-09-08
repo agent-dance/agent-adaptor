@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -38,7 +39,11 @@ func TestAlignmentAppendCapabilityAndConflictPreflight(t *testing.T) {
 
 func alignmentCodexFixture(t *testing.T) string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "fixture")
+	name := "fixture"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	path := filepath.Join(t.TempDir(), name)
 	cmd := exec.Command("go", "build", "-o", path, "testdata/alignment-provider/main.go")
 	if b, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("build: %v %s", err, b)
@@ -70,7 +75,7 @@ func alignmentCapture(t *testing.T, path string) []map[string]json.RawMessage {
 
 func TestAlignmentExecAppendWireAndGuard(t *testing.T) {
 	command := alignmentCodexFixture(t)
-	for _, text := range []string{"", "甲\n\"乙\"\\\t\r\n🙂 ", strings.Repeat("x", 32768)} {
+	for _, text := range []string{"", "甲\n\"乙\"\\\t\r\n🙂 ", strings.Repeat("x", 30000), strings.Repeat("x", 32768)} {
 		for _, resume := range []bool{false, true} {
 			t.Run(fmt.Sprintf("bytes-%d/resume-%v", len(text), resume), func(t *testing.T) {
 				cfg, capture := alignmentCodexConfig(t, command, "")
@@ -82,6 +87,22 @@ func TestAlignmentExecAppendWireAndGuard(t *testing.T) {
 				}
 				sink := &testutil.EventRecorder{}
 				result, err := (adapter{}).Run(context.Background(), req, sink)
+				// The native Windows limit includes the executable, quoting and
+				// all arguments. A 32768-byte ASCII append exceeds it even though
+				// the append alone still satisfies the transport's inline limit.
+				if runtime.GOOS == "windows" && len(text) == 32768 {
+					var unsupported *driver.SystemPromptUnsupportedError
+					if !errors.As(err, &unsupported) || unsupported.Reason != "command_line_limit" {
+						t.Fatalf("command line limit: %v", err)
+					}
+					if !reflect.DeepEqual(result, driver.Response{}) || len(sink.Snapshot()) != 0 {
+						t.Fatalf("command line limit admitted execution: %#v", result)
+					}
+					if _, err := os.Stat(capture); !errors.Is(err, os.ErrNotExist) {
+						t.Fatalf("command line limit spawned: %v", err)
+					}
+					return
+				}
 				if err != nil || result.Failure != nil || result.Checkpoint == nil {
 					t.Fatalf("run: %v %#v", err, result)
 				}
@@ -247,14 +268,15 @@ func TestAlignmentPersistentAppendAndCodec(t *testing.T) {
 }
 
 func TestAlignmentSkillInputSelection(t *testing.T) {
-	skills := []driver.ResolvedSkill{{Key: "review", RuntimeName: "review", SourcePath: "/skills/review"}}
+	skillPath := filepath.Join(t.TempDir(), "skills", "review")
+	skills := []driver.ResolvedSkill{{Key: "review", RuntimeName: "review", SourcePath: skillPath}}
 	if inputs := codexExplicitSkillInputs("catalog only", skills); len(inputs) != 0 {
 		t.Fatal("auto activation")
 	}
-	if inputs := codexExplicitSkillInputs("Use $review, $unknown x$review $review.", skills); len(inputs) != 1 || inputs[0].Path != "/skills/review/SKILL.md" {
+	if inputs := codexExplicitSkillInputs("Use $review, $unknown x$review $review.", skills); len(inputs) != 1 || inputs[0].Path != filepath.Join(skillPath, "SKILL.md") {
 		t.Fatalf("inputs: %#v", inputs)
 	}
-	skills = append(skills, driver.ResolvedSkill{Key: "other", RuntimeName: "review", SourcePath: "/other"})
+	skills = append(skills, driver.ResolvedSkill{Key: "other", RuntimeName: "review", SourcePath: filepath.Join(t.TempDir(), "other")})
 	if len(codexExplicitSkillInputs("$review", skills)) != 0 {
 		t.Fatal("ambiguous name activated")
 	}

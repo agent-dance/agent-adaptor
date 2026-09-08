@@ -10,8 +10,9 @@ import (
 	"net"
 	"os"
 	"strconv"
-	"syscall"
 	"time"
+
+	"github.com/agent-dance/agent-adaptor/internal/testutil"
 )
 
 func record(v any) {
@@ -45,6 +46,11 @@ func (c *admissionControl) await(command string) bool {
 }
 
 func main() {
+	// Require a working native liveness probe before asserting no overlap.
+	if !testutil.ProcessAlive(os.Getpid()) {
+		fmt.Fprintln(os.Stderr, "fixture process liveness probe failed")
+		os.Exit(2)
+	}
 	alive := 0
 	if b, err := os.ReadFile(os.Getenv("ALIGNMENT_CAPTURE")); err == nil {
 		for _, line := range bytes.Split(b, []byte("\n")) {
@@ -53,7 +59,7 @@ func main() {
 				PID   int
 			}
 			if json.Unmarshal(line, &old) == nil && old.Event == "start" {
-				if process, err := os.FindProcess(old.PID); err == nil && process.Signal(syscall.Signal(0)) == nil {
+				if testutil.ProcessAlive(old.PID) {
 					alive++
 				}
 			}
