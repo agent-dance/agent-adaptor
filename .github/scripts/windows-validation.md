@@ -3,9 +3,10 @@
 The `Windows alignment verification` workflow runs on pushes to
 `codex/windows-validation-*`. It uses Windows Server 2022 and the exact Go
 version from the SDK's `go.mod`. The controller branch contains the workflow and
-collector; a second checkout pins the SDK to the G05 source SHA in the workflow.
-Both revisions are recorded. This preserves the existing Linux/Windows same-SHA
-acceptance requirement when only the CI collector changes.
+collector; a second checkout pins the SDK to the exact triggering commit.
+Both revisions are recorded. The initial frozen G05 source failed native Windows,
+so each repaired candidate now runs both Windows and all 18 original T25 Linux
+checks. Earlier source acceptance is never inherited by a changed candidate.
 
 The original `go test -count=1 ./...` runs with only `-json` added. The codec and
 offline examples run as programs, followed by `go test -count=1 ./examples/...`.
