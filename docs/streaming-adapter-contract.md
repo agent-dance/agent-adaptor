@@ -120,7 +120,9 @@ type EventSink interface {
 
 Both end up on the same public `Event` channel; they are not two host streams. A Driver must not retain the sink, and must not call it after `Run` returns.
 
-Before `Run` returns it must wait for every parser, reader, stderr collector, and notification goroutine to exit. On context cancellation it should stop the provider, unblock stdin/reader waits, and reclaim goroutines as quickly as possible. Any goroutine that keeps emitting after `Run` returns violates the lifecycle contract.
+Before `Run` returns, close admission to this invocation, finish every already admitted callback that can mutate its Response or use its sink, and join goroutines owned by the invocation before freezing its result. A persistent transport reader may remain alive after that handoff; later idle or next-turn output must neither mutate the old Result nor emit to its sink. Already read in-flight output belonging to the current invocation cannot be relabeled as future output to avoid this completion boundary. On context cancellation, stop the provider, unblock stdin and reader waits, and complete the existing bounded process/drain cleanup. No producer may emit to a completed invocation.
+
+Shared process input has separate transitions: `Close` stops accepting input while a healthy writer drains accepted frames in FIFO order; terminal completion releases blocked writers. Both writer completion and process exit may publish the same terminal notification, which must be idempotent. Neither transition interprets provider payloads, failure reasons, or checkpoints.
 
 ## 5. `StreamPayload` lifecycle
 

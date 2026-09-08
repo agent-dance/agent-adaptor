@@ -1,7 +1,7 @@
 # G05 independent QA and documentation integration
 
-All seven workers use accepted replacement G04 b2035bc793369fb8fefb9de229ff1dbd2b748853,
-canonical24 / C01–C04 / R001–R022. The following accepted source commits are
+All nine workers use accepted replacement G04 b2035bc793369fb8fefb9de229ff1dbd2b748853,
+canonical25 / C01–C04 / R001–R023. The following accepted source commits are
 merged in manifest order; worker evidence remains external and immutable.
 
 | Worker | Accepted source SHA | Final checks |
@@ -13,6 +13,8 @@ merged in manifest order; worker evidence remains external and immutable.
 | T24 | `849f8334e376d4719167afa31706b4dea22b8cce` | T24-V01, T24-OFFLINE |
 | T33 | `8bf830acd006a83b765b5eab2dc2e027427f2870` | T33-V01, T33-V02, T33-V03, T33-V04 |
 | T34 | `e61058d5eec14803b92efda644e4ff1b081e7f1f` | T34-V01, T34-V02, T34-V03, T34-V04 |
+| T35 | `c2db9c5a16325095f8550fbfd03d50d55ace162c` | T35-V01, T35-V02, T35-V03, T35-V04 |
+| T36 | `d09398d0b11d602b3e64c09ec6ce7a411c10c47f` | T36-V01, T36-V02, T36-V03, T36-V04 |
 
 T20 contributes independent complete wire/audit literals, actual fake processes,
 bounded lifecycle/cleanup barriers and R020 successor-ownership fault injection.
@@ -53,3 +55,11 @@ R022 preserves G05 attempt 3 at45cada4315a6a338071452995918d2292e2c9b28 (4533 fu
 Original T16 owner delivered QA-only supplemental T34: actual child/capture receipt, strict Raw audit, same Response/public Result mapping and stable old results are separate executable evidence. One-shot/failure exact stderr and formal Usage/Terminal/cause/checkpoint obligations remain. Diagnostic process.go instrumentation was never merged; final Codex production, public API, generated/schema and dependencies remain unchanged. W04-R07 owner T16 and verifiers T20/T29 stay unchanged; T34 makes no independent requirement claim. The package contains45tasks/96requirements/45history commits at capacity6.
 
 This fourth G05 attempt still requires its own exact-SHA original validator/fulltest/vet. Once accepted, every B06 report uses that replacement frozen SHA and T25 reruns all15original Linux commands plus3supplements. Prior passes and failed diagnostics are historical evidence, never final native acceptance. Missing Windows/live prerequisites remain open and release readiness remains false.
+
+R023 preserves G05 attempt4 at d94fd17a24f3710a079c79b6932b99a85af6e911 (4536full-suite passes/14permitted skips,validator/vet), then original native Linux T25attempt3 V03 fullrace two package panics: shared stdin doubleclose and Codex pending RPC send-after-close. Original log SHA1146c3d9c717cd740646fc3269956f24c5d89bff8c96852011fc9e7e54554b4a contains4109namedpasses/0namedfailterminals/12observedskips and12interruptedtests; packagepanic is failure, not absent evidence of failure. The remaining15commands were never executed.
+
+Original owners delivered T35/T36 under disjoint exact scopes from G04. T35 synchronizes the complete terminal notification without conflating Close/drain and markDone. T36 preserves pinned JSONRPC and synchronous reader settlement through its client transport/active-wait close boundary. New close fixtures, original causes, partial audit, FIFO, bounded cleanup, and checkpoint safety were reviewed independently. T34 QA source remains intact; its cancel-held-terminal case is exercised only when actually present in the merged source. No publicAPI,dependency,golden,generated/schema change.
+
+W04-R05 finalowner T35 and W04-R07 T36; independent verification T25 plus original T27/T29 live. T20 attempt3 metadata retains22current rows and unchanged source/commands/evidence; historic24row report archived. All96IDs and45history objects remain unchanged; canonical25 contains47tasks, B05 nine tasks at capacity6.
+
+This fifth G05 attempt requires its own exact final source validator/fulltest/vet. All B06 reports must migrate to the replacement source; T25 reruns all15original Linux commands plus3supplements, without previous-head substitution. Windows/live prerequisites and release readiness remain separately unresolved.

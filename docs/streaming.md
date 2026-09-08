@@ -222,6 +222,14 @@ stable through later idle output and another turn. A completed stdout terminal
 alone does not establish that bytes from stderr have been received. One-shot
 and failed resident paths retain their bounded process/drain completion checks.
 
+Cancellation and shutdown preserve the same audit boundaries. Shared process
+stdin completion is safe when writer completion and process exit overlap. Closing
+input stops new writes while a healthy writer drains accepted frames in FIFO order;
+terminal completion releases blocked writes even after input was closed. Codex
+closes its owned transport and interrupts pending RPC waits without closing pending
+response channels concurrently with the reader. Its normal process cleanup still
+drains captured output and retains the original cancellation or protocol cause.
+
 Without authoritative terminal usage, observed formal messages contribute their
 cumulative increments once, with repeated snapshots deduplicated. Valid terminal
 zero is authoritative; absent or entirely invalid counts do not invent observed

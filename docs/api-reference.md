@@ -297,6 +297,12 @@ stdout terminal is not a receipt acknowledgment for another pipe; bytes already
 observed by the host must remain complete in Raw and cannot change after Result
 returns. One-shot and failed resident cleanup retain their drain guarantees.
 
+Closing a Codex app-server client interrupts pending RPC waits while the original
+reader retains responsibility for processing its responses and ending the connection.
+Process cleanup still drains captured output, preserves the caller’s error cause,
+and cannot turn cancellation into a healthy checkpoint. Shared stdin completion
+is idempotent when writer completion and process exit arrive together.
+
 A Driver declares the capability through `Descriptor.Process.Persistent`. A Driver that declares true must implement `driver.ProcessLifecycleDriver` so that `Agent.Close` can reclaim all process groups within a bounded time.
 
 ## 6. Stream and Event

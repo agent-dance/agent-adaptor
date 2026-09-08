@@ -100,6 +100,13 @@ a successful Result or a RunError partial Result. Cancellation and process exit
 retain their original causes while the parser audit is finalized; the completed
 Result is not subsequently changed by idle stderr or another resident turn.
 
+Shared stdin termination is idempotent when writer completion and process exit
+arrive together. Codex client shutdown interrupts pending RPC waits while its
+original reader completes response settlement. These repairs prevent lifecycle
+panics from bypassing the existing partial Result path; caller, approval and
+protocol causes retain their established priority. They add no second failure
+field and do not make interrupted checkpoints healthy.
+
 Usage is retained only from formal valid observations. Per-message cumulative
 increments are aggregated without replay double-counting; authoritative terminal
 zero remains observed zero. Absent/invalid counts do not invent non-nil zero

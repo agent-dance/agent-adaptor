@@ -53,6 +53,9 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- Make shared process stdin completion idempotent across writer and process exit.
+- Close Codex RPC clients without racing response delivery; preserve cancellation
+  causes, partial audit output, and bounded process cleanup.
 - Synchronize Codex resident audit tests on actual stderr receipt and separately
   verify complete public result mapping and immutability across later turns.
 - Join admitted CodeBuddy resident stderr callbacks before finalizing a turn,
