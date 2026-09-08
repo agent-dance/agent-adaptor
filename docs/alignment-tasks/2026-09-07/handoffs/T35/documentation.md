@@ -56,6 +56,12 @@ sentinel. No installed provider, external network, or sleep-based ordering is
 required. Existing Claude approval denial/timeout/cancel/Continue and resident
 partial/cause/checkpoint tests are retained unchanged.
 
+The child fixture's input phase also waits on a bounded context and notices Run
+returning before readiness. Failure cleanup releases the controller and joins its
+input goroutine. The cancellation oracle requires a nil helper error alongside
+the canceled caller context and recorded killed-process outcome; an unrelated
+helper error cannot satisfy that case.
+
 The final report records the four required commands, their exact source SHA,
 Go/OS/environment, exit codes, counts, allowed skips, and hashed logs. Local
 execution uses native macOS arm64 and the installed Go 1.26.5 binary with private

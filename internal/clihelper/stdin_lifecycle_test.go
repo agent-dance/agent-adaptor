@@ -212,14 +212,47 @@ func TestStdinLifecycleProcess(t *testing.T) {
 					}}, &captureSink{})
 				completed <- outcome{result, err}
 			}()
+			var got outcome
+			haveOutcome := false
 			if mode == "writer_first" {
-				for _, frame := range []string{"frame-one\n", "frame-two\n", "frame-three\n"} {
-					if err := ctrl.Write([]byte(frame)); err != nil {
-						t.Fatal(err)
+				inputErr := make(chan error, 1)
+				inputStopped := make(chan struct{})
+				go func() {
+					defer close(inputStopped)
+					for _, frame := range []string{"frame-one\n", "frame-two\n", "frame-three\n"} {
+						if err := ctrl.Write([]byte(frame)); err != nil {
+							inputErr <- err
+							return
+						}
 					}
+					inputErr <- ctrl.Close()
+				}()
+				t.Cleanup(func() {
+					cancel()
+					ctrl.markDone()
+					select {
+					case <-inputStopped:
+					case <-time.After(3 * time.Second):
+						t.Error("input goroutine did not terminate after cleanup")
+					}
+				})
+				select {
+				case <-inputStopped:
+				case got = <-completed:
+					haveOutcome = true
+					// Run may return before signalReady (for example, a failed
+					// cmd.Start). Release the fixture's before-ready input wait.
+					ctrl.markDone()
+				case <-ctx.Done():
+					t.Fatal("input did not finish before context ended")
 				}
-				if err := ctrl.Close(); err != nil {
-					t.Fatal(err)
+				select {
+				case <-inputStopped:
+				case <-ctx.Done():
+					t.Fatal("input did not terminate after Run returned")
+				}
+				if err := <-inputErr; err != nil {
+					t.Fatalf("input failed: %v; Run error: %v", err, got.err)
 				}
 			}
 			if mode == "cancel" {
@@ -232,11 +265,12 @@ func TestStdinLifecycleProcess(t *testing.T) {
 					t.Fatal("no observed output before cancellation")
 				}
 			}
-			var got outcome
-			select {
-			case got = <-completed:
-			case <-time.After(6 * time.Second):
-				t.Fatal("Run did not terminate")
+			if !haveOutcome {
+				select {
+				case got = <-completed:
+				case <-time.After(6 * time.Second):
+					t.Fatal("Run did not terminate")
+				}
 			}
 			assertStdinLifecycleDone(t, ctrl)
 			wantOut := "prompt-first\n"
@@ -256,7 +290,7 @@ func TestStdinLifecycleProcess(t *testing.T) {
 					t.Fatalf("observer cause lost: %v", got.err)
 				}
 			case "cancel":
-				if !errors.Is(ctx.Err(), context.Canceled) || got.result.TimedOut || (got.result.ExitCode == 0 && got.result.Signal == "") {
+				if got.err != nil || !errors.Is(ctx.Err(), context.Canceled) || got.result.TimedOut || (got.result.ExitCode == 0 && got.result.Signal == "") {
 					t.Fatalf("cancel outcome: %#v %v", got.result, got.err)
 				}
 			}
