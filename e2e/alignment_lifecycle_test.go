@@ -766,23 +766,93 @@ func TestAlignmentLifecycleDeadlinePreservesAudit(t *testing.T) {
 		t.Run(provider, func(t *testing.T) {
 			f := newAlignmentFixture(t, provider)
 			a := f.agent(t)
-			ctx, c := alignmentContext(t)
+			// The call below owns the deadline under test. A parent deadline or
+			// watchdog must never become its accepted failure cause.
+			ctx, c := context.WithCancel(context.Background())
 			defer c()
 			th := a.Thread("deadline")
-			if _, e := th.Run(ctx, "warm"); e != nil {
-				t.Fatal(e)
+			warmCtx, cancelWarm := context.WithTimeout(ctx, alignmentWaitLimit)
+			defer cancelWarm()
+			warmDone := make(chan error, 1)
+			go func() { _, e := th.Run(warmCtx, "warm"); warmDone <- e }()
+			select {
+			case e := <-warmDone:
+				if e != nil {
+					t.Fatal(e)
+				}
+			case <-time.After(alignmentWaitLimit):
+				t.Fatal("local watchdog: deadline audit warm did not return")
 			}
-			s := th.Stream(ctx, "partial", adaptor.WithTimeout(250*time.Millisecond))
-			f.wait(t, "barrier", 1)
-			r, e, events := alignmentDrain(t, s)
+			cancelWarm()
+			starts := f.wait(t, "start", 1)
+			if len(starts) != 1 {
+				t.Fatalf("warm starts=%d want one resident", len(starts))
+			}
+			const callLimit = 5 * time.Second
+			started := time.Now()
+			s := th.Stream(ctx, "partial-deadline", adaptor.WithTimeout(callLimit))
+			defer func() {
+				if t.Failed() {
+					t.Logf("deadline fixture ledger: %+v", f.logs(t))
+				}
+			}()
+			var observedAfter time.Duration
+			observed := false
+			// Consume immediately. A producer ledger write is not proof that the
+			// SDK parsed partial audit before its real call deadline expired.
+			r, e, events := alignmentCollect(t, s, func(event adaptor.Event) {
+				notice, ok := event.(adaptor.Notice)
+				if ok && notice.Kind == adaptor.NoticeTranscriptItem && notice.Item != nil && notice.Item.Kind == driver.TranscriptAssistant && notice.Item.Text == "partial-text" && !notice.Item.Delta && !observed {
+					observed = true
+					observedAfter = time.Since(started)
+				}
+			})
+			elapsed := time.Since(started)
 			re := alignmentCarried(t, r, e)
-			if re.Reason != adaptor.ReasonDeadlineExceeded || !errors.Is(e, context.DeadlineExceeded) {
+			if re.Reason != adaptor.ReasonDeadlineExceeded || !errors.Is(e, context.DeadlineExceeded) || ctx.Err() != nil {
 				t.Errorf("deadline identity=%v", e)
 			}
-			if !strings.Contains(re.Result.Raw().Stdout, "partial-text") || len(re.Result.Transcript()) == 0 {
-				t.Error("deadline lost partial audit")
+			if !observed || observedAfter >= callLimit || elapsed < callLimit {
+				t.Errorf("deadline ordering: observed=%v at=%s elapsed=%s callLimit=%s", observed, observedAfter, elapsed, callLimit)
+			}
+			out := re.Result
+			raw := out.Raw()
+			wantText := "partial-text"
+			if provider == "claude" {
+				wantText = ""
+			}
+			if !strings.Contains(raw.Stdout, "partial-text") || raw.Stderr != "t20-stderr\n" || raw.Terminal != nil || out.Text != wantText || len(out.Transcript()) == 0 {
+				t.Errorf("deadline lost partial audit: result=%+v raw=%+v", out, raw)
+			}
+			if out.Usage == nil || out.Usage.InputTokens != 7 || out.Usage.OutputTokens != 3 {
+				t.Errorf("deadline usage=%+v", out.Usage)
+			}
+			assistant := false
+			for _, item := range out.Transcript() {
+				assistant = assistant || item.Kind == driver.TranscriptAssistant && item.Text == "partial-text" && !item.Delta
+			}
+			if !assistant {
+				t.Errorf("deadline assistant transcript missing: %+v", out.Transcript())
+			}
+			prompts, barriers, spawns := 0, 0, 0
+			for _, entry := range f.logs(t) {
+				switch entry.Kind {
+				case "start":
+					spawns++
+				case "barrier":
+					barriers++
+				case "prompt":
+					prompts++
+					if entry.PID != starts[0].PID {
+						t.Errorf("deadline prompt PID=%d want warm resident=%d", entry.PID, starts[0].PID)
+					}
+				}
+			}
+			if prompts != 2 || barriers != 1 || spawns != 1 {
+				t.Errorf("deadline delivery: prompts=%d barriers=%d spawns=%d", prompts, barriers, spawns)
 			}
 			alignmentEnvelope(t, events, s.RunID(), re.Reason)
+			t.Logf("partial observed after %s; real WithTimeout=%s; elapsed=%s; resident PID=%d", observedAfter.Round(time.Millisecond), callLimit, elapsed.Round(time.Millisecond), starts[0].PID)
 		})
 	}
 }

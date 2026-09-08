@@ -89,6 +89,13 @@ func alignmentEmit(v any) {
 		panic(e)
 	}
 }
+func alignmentDeadlineDelay(prompt string) {
+	if strings.Contains(prompt, "partial-deadline") {
+		// Exercise delayed first output without depending on host scheduling.
+		// This exceeds the old 250ms deadline only in the deadline audit case.
+		time.Sleep(750 * time.Millisecond)
+	}
+}
 func alignmentObject(v any) map[string]any { m, _ := v.(map[string]any); return m }
 func alignmentText(v any) string           { s, _ := v.(string); return s }
 
@@ -147,6 +154,7 @@ func alignmentProvider(provider string) int {
 			}
 		}
 		alignmentAppend(entry)
+		alignmentDeadlineDelay(prompt)
 		alignmentEmit(map[string]any{"type": "system", "subtype": "init", "session_id": session, "model": "fixture-model"})
 		fmt.Fprintln(os.Stderr, "t20-stderr")
 		if strings.Contains(prompt, "ask-") {
@@ -384,6 +392,7 @@ func alignmentCodex(prof string) int {
 				prompt += alignmentText(alignmentObject(v)["text"])
 			}
 			alignmentAppend(alignmentLog{Kind: "prompt", Prompt: prompt, Profile: prof})
+			alignmentDeadlineDelay(prompt)
 			reply(map[string]any{"turn": map[string]any{"id": turn, "status": "inProgress", "items": []any{}}})
 			notify("turn/started", map[string]any{"threadId": "session-t20", "turn": map[string]any{"id": turn, "status": "inProgress", "items": []any{}}})
 			text := "answer-text"
