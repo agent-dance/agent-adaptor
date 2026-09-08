@@ -1,0 +1,59 @@
+name: Windows alignment verification
+
+on:
+  push:
+    branches: ["codex/windows-validation-*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # The controller may evolve independently; the SDK under test stays frozen.
+  T26_SOURCE_SHA: a2d92b2bfa31ff847e4d0cc534cefac7610ff468
+  AGENT_ADAPTOR_LIVE_CONFORMANCE: "0"
+  AGENT_ADAPTOR_E2E: "0"
+  AGENT_ADAPTOR_UPDATE_API_GOLDEN: "0"
+  GOTOOLCHAIN: local
+  PYTHONDONTWRITEBYTECODE: "1"
+
+jobs:
+  windows:
+    name: T26 native Windows
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - name: Preserve committed bytes in both checkouts
+        shell: pwsh
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+        with:
+          path: controller
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.T26_SOURCE_SHA }}
+          path: source
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: source/go.mod
+          cache: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate evidence collector
+        run: python -B -m unittest discover -s controller/.github/scripts -p test_windows_validation.py -v
+      - name: Run original T26 commands and audit results
+        shell: pwsh
+        run: |
+          python -B controller/.github/scripts/windows_validation.py --source source --expected-head "$env:T26_SOURCE_SHA" --output "$env:RUNNER_TEMP/t26-evidence" --private-root "$env:RUNNER_TEMP/t26-private"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Retain evidence even when verification fails
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: t26-windows-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/t26-evidence
+          if-no-files-found: error
+          retention-days: 30
