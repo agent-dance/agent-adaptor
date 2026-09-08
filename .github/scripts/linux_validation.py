@@ -17,6 +17,22 @@ import traceback
 
 from windows_validation import audit_events, audit_example, output_of, read_events, snapshot, write_json
 
+MODULE = "github.com/agent-dance/agent-adaptor"
+SCENARIOS = {
+    MODULE + ":TestScenarioS1OneShotTask",
+    MODULE + ":TestScenarioS2MultiAgentPipeline",
+    MODULE + ":TestScenarioS3WebChatApprovalCard",
+    MODULE + ":TestScenarioS4BatchWorkerDualScope",
+    MODULE + ":TestScenarioS5IssueTriage",
+    MODULE + "/bridges/a2a:TestScenarioS6PublishAgentOverA2A",
+    MODULE + ":TestScenarioS7OnboardingWizard",
+    MODULE + ":TestScenarioS8TenantIsolatedProfile",
+    MODULE + "/hosttools/a2adelegation:TestServiceTeamCollaborationS9",
+}
+CONFORMANCE = {MODULE + "/" + provider + ":Test" + name + "DriverConformance"
+               for provider, name in (("claude", "Claude"), ("codebuddy", "CodeBuddy"),
+                                      ("codex", "Codex"), ("cursor", "Cursor"))}
+
 
 def audit_test(check_id, records, allowed, argv):
     audit = audit_events(records, allowed_skips=allowed)
@@ -28,10 +44,12 @@ def audit_test(check_id, records, allowed, argv):
         audit["accepted"] &= bool(roots) and all(count == 20 for count in roots.values())
     if check_id == "T25-V05":
         audit["scenario_roots"] = roots
-        audit["accepted"] &= len(roots) == 9
+        audit["missing_scenarios"] = sorted(SCENARIOS - roots.keys())
+        audit["accepted"] &= not audit["missing_scenarios"]
     if check_id == "T25-V06":
         audit["conformance_roots"] = roots
-        audit["accepted"] &= len(roots) == 4
+        audit["missing_conformance"] = sorted(CONFORMANCE - roots.keys())
+        audit["accepted"] &= not audit["missing_conformance"]
     if "-fuzz" in argv:
         counts = [int(m) for event in records for m in re.findall(r"execs: (\d+)", event.get("Output", ""))]
         audit["active_fuzz_samples"] = max(counts or [0])

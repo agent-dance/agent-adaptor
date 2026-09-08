@@ -124,11 +124,16 @@ contain controlled reasons, never submitted text. The configured Driver's
 
 | Driver / actual transport | Native append carrier | Limits and lifecycle |
 |---|---|---|
-| Claude stream-json / batch | `--append-system-prompt-file` | Owned 0600 file outside profile/workspace; verified for each spawn and retained for the resident process lifetime. |
+| Claude stream-json / batch | `--append-system-prompt-file` | Private owned file outside profile/workspace; verified for each spawn and retained for the resident process lifetime. |
 | CodeBuddy stream-json / batch | `--append-system-prompt` argv | At most 32768 UTF-8 bytes; validate the complete executable/argv on Windows, including cmd-shim safety. |
 | Codex exec JSONL / resume | `-c developer_instructions=<TOML string>` | At most 32768 UTF-8 bytes and final executable/argv validation. |
 | Codex app-server | `developerInstructions` in thread/start, resume and fork | Same field for one-shot and resident handshakes; no SDK inline-argv size limit. |
 | Cursor print stream-json | Unsupported | Nonempty append fails before resources or launch; an empty call override still clears a default. |
+
+Claude's private carrier uses a 0700 directory and 0600 file on POSIX. On Windows,
+protected DACLs restrict access to the creating user and LocalSystem. Ownership,
+file identity, ACL changes, reparse points and hard links are checked before use
+or cleanup; cleanup retains its directory anchor until removal succeeds.
 
 CodeBuddy and Codex exec carry text in OS-visible argv. SDK-generated invocation
 diagnostics redact the managed value; provider-originated Raw remains complete.

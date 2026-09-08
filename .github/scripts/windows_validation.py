@@ -21,6 +21,9 @@ import traceback
 
 PREFIX = "github.com/agent-dance/agent-adaptor/"
 MANDATORY = {
+    # These native safety tests must PASS. They are never allowed skips.
+    PREFIX + "internal/systemprompt:TestWindowsFilePrivateACLAndOwnership",
+    PREFIX + "internal/systemprompt:TestWindowsFileRejectsHardlink",
     PREFIX + "internal/hostedprofile:TestWindowsPrivateDACLAndTamperedDACL",
     PREFIX + "internal/hostedprofile:TestWindowsReparseProfileRejected",
     PREFIX + "internal/hostedprofile:TestWindowsOwnershipLockForbidsRenameAndDelete",

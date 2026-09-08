@@ -61,7 +61,7 @@ jobs:
   linux:
     name: T25 same-candidate Linux regression
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
         with:

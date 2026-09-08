@@ -53,6 +53,13 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- Keep Windows append-prompt directories removable while retaining the directory
+  identity anchor; create private owner/System DACLs and reject ACL drift,
+  reparse points and hard links before use or cleanup.
+- Preserve cold profile resumption on Windows when deferred skills become real
+  directories, and reject a managed skills parent replaced by an ordinary file.
+- Run protocol and argument fixtures as native Windows executables; retain
+  per-stream audit order without assuming stdout/stderr arrival order.
 - Make shared process stdin completion idempotent across writer and process exit.
 - Close Codex RPC clients without racing response delivery; preserve cancellation
   causes, partial audit output, and bounded process cleanup.
