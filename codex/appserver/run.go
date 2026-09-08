@@ -159,6 +159,7 @@ func Run(ctx context.Context, opts Options, sink driver.EventSink) (driver.Respo
 	// every payload) and then accumulates run-level state needed to shape
 	// the driver.Response.
 	client.SetNotificationHandler(state.onNotification)
+	client.setTurnStartHandler(state.observeTurnStartResponse)
 
 	// shutdown closes only the child's stdin first, allowing the JSON-RPC
 	// reader to drain stdout to EOF. cmd.Wait runs only after that reader has
@@ -182,6 +183,7 @@ func Run(ctx context.Context, opts Options, sink driver.EventSink) (driver.Respo
 	turnID := ""
 	finish := func(primary error) (driver.Response, error) {
 		waitErr := shutdown()
+		state.bindReceivedTurn()
 		if readErr := stream.ReadError(); readErr != nil {
 			state.recordProtocolError(fmt.Errorf("decode JSON-RPC stdout: %w", readErr))
 		}
@@ -332,6 +334,7 @@ type runState struct {
 	protocolErr    error
 	threadID       string
 	turnID         string
+	receivedTurnID string
 	pending        []pendingNotification
 	publicClosed   bool
 	publicStarted  bool
@@ -368,6 +371,34 @@ func (s *runState) setThread(threadID string) {
 	s.mu.Unlock()
 	s.translator.SetThread(threadID)
 	s.flushPendingNotificationsLocked()
+}
+
+// Only the correlated turn/start response for this loaded thread can confirm
+// an identity. The reader records it without changing callback execution order.
+func (s *runState) observeTurnStartResponse(threadID, turnID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.threadID == "" || s.threadID != threadID {
+		return
+	}
+	if s.receivedTurnID != "" && s.receivedTurnID != turnID {
+		s.recordProtocolErrorLocked(errors.New("RPC confirmed conflicting turn identities"))
+		return
+	}
+	s.receivedTurnID = turnID
+}
+
+// After the existing reader/process join, recover only a formally confirmed
+// identity lost by a cancelled RPC waiter. Keep the normal successful setTurn
+// path and never infer identity from notifications or raw stdout.
+func (s *runState) bindReceivedTurn() {
+	s.mu.Lock()
+	turnID := s.receivedTurnID
+	unbound := s.turnID == ""
+	s.mu.Unlock()
+	if unbound && turnID != "" {
+		s.setTurn(turnID)
+	}
 }
 
 func (s *runState) setTurn(turnID string) {

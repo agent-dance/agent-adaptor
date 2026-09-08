@@ -38,5 +38,14 @@
 // full Raw capture and actual Wait joins; failed/cancelled turns gain no healthy
 // checkpoint. Healthy resident turns do not wait for process exit.
 //
+// A successful turn/start response records the current thread's turn identity
+// at the synchronous reader boundary, even when cancellation has already
+// released the RPC waiter. After the existing shutdown drain and process join,
+// the owner retains the confirmed turn's partial text, usage and transcript.
+// The normal successful callback order is unchanged. Unmatched, failed or
+// malformed responses never bind identity; notifications still pass the same
+// thread/turn fence. Cancellation keeps its original cause and cannot create
+// a healthy checkpoint or trigger prompt replay. No additional wait is added.
+//
 // Protocol upgrades follow the generation procedure in generate.go.
 package appserver
