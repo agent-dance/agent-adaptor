@@ -53,6 +53,9 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- Preserve Codex partial Text, Transcript and Usage when cancellation wins the
+  turn/start RPC wait after its matching response has already been received;
+  retain response/turn identity checks and the original cancellation cause.
 - Keep Windows append-prompt directories removable while retaining the directory
   identity anchor; create private owner/System DACLs and reject ACL drift,
   reparse points and hard links before use or cleanup.

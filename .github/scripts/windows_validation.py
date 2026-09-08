@@ -20,6 +20,10 @@ import time
 import traceback
 
 PREFIX = "github.com/agent-dance/agent-adaptor/"
+CANCELLATION_REQUIRED = {
+    PREFIX + "codex/appserver:TestAlignmentCancelledTurnStartDrainsConfirmedAudit",
+    PREFIX + "e2e:TestAlignmentLifecyclePartialProviders",
+}
 MANDATORY = {
     # These native safety tests must PASS. They are never allowed skips.
     PREFIX + "internal/systemprompt:TestWindowsFilePrivateACLAndOwnership",
@@ -34,7 +38,7 @@ MANDATORY = {
     PREFIX + "internal/clihelper:TestPrepareCommandWrapsBatchShimOnWindows",
     PREFIX + "internal/clihelper:TestPrepareCommandWrapsPowerShellScriptOnWindows",
     PREFIX + "internal/clihelper:TestMergeEnvSynthesizesWindowsRuntimeVariables",
-}
+} | CANCELLATION_REQUIRED
 
 
 def write_json(path, value):
@@ -114,6 +118,15 @@ def read_events(log):
     return records
 
 
+def audit_cancellation_repetitions(records):
+    audit = audit_events(records, CANCELLATION_REQUIRED)
+    passes = collections.Counter(event.get("Package", "") + ":" + event.get("Test", "")
+                                 for event in records if event.get("Action") == "pass")
+    audit["required_repeat_passes"] = {name: passes[name] for name in sorted(CANCELLATION_REQUIRED)}
+    audit["accepted"] &= all(count == 20 for count in audit["required_repeat_passes"].values())
+    return audit
+
+
 def audit_example(check_id, log):
     text = log.read_text(encoding="utf-8")
     if check_id == "T26-X01":
@@ -185,7 +198,9 @@ def execute_check(check_id, command, limit, go, source, expected, env, out, init
                 detail["log_sha256"] = hashlib.sha256(log.read_bytes()).hexdigest()
                 if command[0] == "test":
                     allowed = json.loads((out / "allowed-skips.json").read_text(encoding="utf-8"))
-                    detail["test_audit"] = audit_events(read_events(log), MANDATORY if check_id == "T26-V01" else (), allowed)
+                    records = read_events(log)
+                    detail["test_audit"] = (audit_cancellation_repetitions(records) if check_id == "T26-X04"
+                                            else audit_events(records, MANDATORY if check_id == "T26-V01" else (), allowed))
                     observed = detail["test_audit"]["accepted"]
                 else:
                     detail["example_observed"] = audit_example(check_id, log) if detail["exit_code"] == 0 else False
@@ -262,6 +277,8 @@ def run(args):
             ("T26-X01", ["run", "./examples/threads/codec"], 180),
             ("T26-X02", ["run", "./examples/offline"], 180),
             ("T26-X03", ["test", "-json", "-count=1", "./examples/..."], 600),
+            ("T26-X04", ["test", "-json", "-count=20", "./codex/appserver", "./e2e", "-run",
+                         "^(TestAlignmentCancelledTurnStartDrainsConfirmedAudit|TestAlignmentLifecyclePartialProviders)$"], 600),
         ]
         for check_id, command, limit in commands:
             print("Running " + check_id + ": go " + " ".join(command), flush=True)
@@ -278,7 +295,7 @@ def run(args):
     except Exception:
         (out / "failure.txt").write_text(traceback.format_exc(), encoding="utf-8")
         write_json(out / "summary.json", {"status": "failed", "tested_head": args.expected_head,
-                   "completed_checks": len(checks), "required_checks": 4})
+                   "completed_checks": len(checks), "required_checks": 5})
         traceback.print_exc()
         return 1
     finally:

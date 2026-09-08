@@ -10,6 +10,10 @@ checks. Earlier source acceptance is never inherited by a changed candidate.
 
 The original `go test -count=1 ./...` runs with only `-json` added. The codec and
 offline examples run as programs, followed by `go test -count=1 ./examples/...`.
+An additional Windows regression repeats the received-turn cancellation and
+public partial-result scenarios 20 times; both exact test roots must pass every
+iteration. This supplements the original commands after a native cancellation
+failure exposed an unbound, already received turn/start response.
 Process-external deadlines do not change test counts or Go test timeout flags.
 Private HOME, USERPROFILE, APPDATA, caches and temporary directories prevent
 implicit use of provider profiles. Paid live, E2E and golden-update gates stay off.

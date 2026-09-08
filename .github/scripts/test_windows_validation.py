@@ -6,7 +6,7 @@ import unittest
 from unittest import mock
 import subprocess
 
-from windows_validation import audit_events, audit_example, execute_check
+from windows_validation import CANCELLATION_REQUIRED, audit_cancellation_repetitions, audit_events, audit_example, execute_check
 
 
 def event(action, test="TestRequired"):
@@ -17,6 +17,13 @@ def event(action, test="TestRequired"):
 
 
 class EvidenceTests(unittest.TestCase):
+    def test_cancellation_repetitions_require_both_exact_roots_twenty_times(self):
+        records = [{"Action": action, "Package": name.split(":")[0], "Test": name.split(":")[1]}
+                   for name in CANCELLATION_REQUIRED for _ in range(20) for action in ("run", "pass")]
+        self.assertTrue(audit_cancellation_repetitions(records)["accepted"])
+        self.assertFalse(audit_cancellation_repetitions(records[:-2])["accepted"])
+        self.assertFalse(audit_cancellation_repetitions([event("run"), event("pass")])["accepted"])
+
     def test_no_tests_is_not_success(self):
         self.assertFalse(audit_events([event("pass", None)])["accepted"])
 

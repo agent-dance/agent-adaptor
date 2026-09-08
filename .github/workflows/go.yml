@@ -134,7 +134,7 @@ jobs:
     - name: Run provider suites with all live build tags and closed environment gate
       shell: pwsh
       run: |
-        go test -count=1 -timeout=10m -tags=claude_live,codebuddy_live,codex_live,cursor_live ./claude ./codebuddy ./codex/... ./cursor
+        go test -count=1 -timeout=10m "-tags=claude_live,codebuddy_live,codex_live,cursor_live" ./claude ./codebuddy ./codex/... ./cursor
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   frontend:
