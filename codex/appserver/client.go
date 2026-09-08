@@ -381,13 +381,15 @@ func (c *Client) notify(ctx context.Context, method string, params any) error {
 	defer finish()
 	return c.send(callCtx, func() error { return c.conn.Notify(callCtx, method, params) })
 }
-func (c *Client) rejectRequest(ctx context.Context, id jsonrpc2.ID, rpcErr *jsonrpc2.Error) error {
+func (c *Client) rejectRequest(ctx context.Context, conn *jsonrpc2.Conn, id jsonrpc2.ID, rpcErr *jsonrpc2.Error) error {
 	callCtx, finish, err := c.beginCall(ctx)
 	if err != nil {
 		return err
 	}
 	defer finish()
-	return c.send(callCtx, func() error { return c.conn.ReplyWithError(callCtx, id, rpcErr) })
+	// NewConn starts its reader before NewClient can publish c.conn. The
+	// synchronous handler already has the initialized connection in its argument.
+	return c.send(callCtx, func() error { return conn.ReplyWithError(callCtx, id, rpcErr) })
 }
 
 // connHandler implements jsonrpc2.Handler. It is the single place where
@@ -405,7 +407,7 @@ func (h *connHandler) Handle(ctx context.Context, conn *jsonrpc2.Conn, req *json
 		// requests, but it must reply to avoid leaking a pending request on
 		// the peer. Respond with "method not found" so the server fails fast
 		// instead of blocking.
-		_ = h.client.rejectRequest(ctx, req.ID, &jsonrpc2.Error{
+		_ = h.client.rejectRequest(ctx, conn, req.ID, &jsonrpc2.Error{
 			Code:    jsonrpc2.CodeMethodNotFound,
 			Message: fmt.Sprintf("agent-adaptor does not accept server-initiated request %q", req.Method),
 		})

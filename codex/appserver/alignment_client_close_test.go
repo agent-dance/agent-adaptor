@@ -195,6 +195,37 @@ func alignmentRPCFinish(t *testing.T, ctx context.Context, client *Client, s *al
 }
 
 func TestAlignmentClientClose(t *testing.T) {
+	t.Run("server-request-before-client-connection-publication", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+		s := &alignmentRPCStream{ctx: ctx, frames: make(chan alignmentRPCFrame, 16), writes: make(chan json.RawMessage, 16), closed: make(chan struct{}), readDone: make(chan struct{})}
+		// Match NewClient's initialized private state before its NewConn call
+		// returns and c.conn is published. The actual dependency owns the reader.
+		client := &Client{stream: &ownedObjectStream{ObjectStream: s}, calls: make(map[*clientCall]struct{}), sendGate: make(chan struct{}, 1)}
+		afterReply := make(chan struct{})
+		client.SetNotificationHandler(func(string, json.RawMessage) { close(afterReply) })
+		conn := jsonrpc2.NewConn(context.Background(), client.stream, &connHandler{client: client})
+		t.Cleanup(func() {
+			_ = client.Close()
+			cancel()
+			cleanup, stop := context.WithTimeout(context.Background(), time.Second)
+			defer stop()
+			alignmentRPCWait(t, cleanup, s.readDone)
+			alignmentRPCWait(t, cleanup, conn.DisconnectNotify())
+		})
+		s.frames <- alignmentRPCFrame{raw: `{"id":55,"method":"item/tool/requestApproval","params":{}}`}
+		s.frames <- alignmentRPCFrame{raw: `{"method":"after-reply","params":{}}`}
+		var response jsonrpc2.Response
+		if err := json.Unmarshal(alignmentRPCWait(t, ctx, s.writes), &response); err != nil || response.ID.Num != 55 || response.Error == nil || response.Error.Code != jsonrpc2.CodeMethodNotFound || response.Result != nil {
+			t.Fatalf("early server-request rejection: %+v err=%v", response, err)
+		}
+		alignmentRPCWait(t, ctx, afterReply)
+		if client.conn != nil {
+			t.Fatal("test accidentally published Client.conn before the early request")
+		}
+		client.conn = conn
+		alignmentRPCFinish(t, ctx, client, s)
+	})
+
 	t.Run("response-pending", func(t *testing.T) {
 		ctx, client, s := alignmentRPCSetup(t, nil)
 		call := alignmentRPCCall(ctx, client)
