@@ -10,12 +10,19 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httptrace"
+	"net/url"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	a2aproto "github.com/a2aproject/a2a-go/v2/a2a"
 )
 
+// Parallel network fixtures supply their server's HTTP client so each owns its
+// transport. httptest.Server.Close also cleans the global default transport;
+// borrowing that pool would let unrelated fixture cleanup affect these tests.
 func TestAgentCardFetchValidateAndCache(t *testing.T) {
 	t.Parallel()
 
@@ -44,7 +51,7 @@ func TestAgentCardFetchValidateAndCache(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := New(Options{AgentCardURL: srv.URL})
+	client := New(Options{AgentCardURL: srv.URL, HTTPClient: srv.Client()})
 	first, err := client.AgentCard(context.Background())
 	if err != nil {
 		t.Fatalf("AgentCard() error = %v", err)
@@ -112,7 +119,7 @@ func TestSendGetCancelAndStreamPreserveStructuredTask(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := New(Options{AgentCardURL: srv.URL})
+	client := New(Options{AgentCardURL: srv.URL, HTTPClient: srv.Client()})
 	ctx := context.Background()
 	task, err := client.Send(ctx, SendRequest{Message: UserText("review this")})
 	if err != nil {
@@ -221,7 +228,7 @@ func TestSendReturnImmediatelySupportsGetTaskPollingFallback(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := New(Options{AgentCardURL: srv.URL})
+	client := New(Options{AgentCardURL: srv.URL, HTTPClient: srv.Client()})
 	started, err := client.Send(context.Background(), SendRequest{
 		Message:           UserText("poll me"),
 		Tenant:            "tenant-a",
@@ -274,7 +281,7 @@ func TestClientClassifiesProtocolErrors(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := New(Options{AgentCardURL: srv.URL})
+	client := New(Options{AgentCardURL: srv.URL, HTTPClient: srv.Client()})
 	_, err := client.GetTask(context.Background(), GetTaskRequest{TaskID: "missing"})
 	if err == nil {
 		t.Fatal("GetTask() error = nil")
@@ -335,7 +342,7 @@ func TestStreamCloseCancelsUpstreamRequest(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := New(Options{AgentCardURL: srv.URL})
+	client := New(Options{AgentCardURL: srv.URL, HTTPClient: srv.Client()})
 	stream, err := client.SendStream(context.Background(), SendRequest{Message: UserText("stream")})
 	if err != nil {
 		t.Fatalf("SendStream() error = %v", err)
@@ -388,7 +395,7 @@ func TestSendStreamTreatsMessageAsExecutionFinal(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := New(Options{AgentCardURL: srv.URL})
+	client := New(Options{AgentCardURL: srv.URL, HTTPClient: srv.Client()})
 	stream, err := client.SendStream(context.Background(), SendRequest{Message: UserText("stream")})
 	if err != nil {
 		t.Fatalf("SendStream() error = %v", err)
@@ -436,7 +443,7 @@ func TestSendStreamTreatsInputRequiredAsExecutionFinal(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := New(Options{AgentCardURL: srv.URL})
+	client := New(Options{AgentCardURL: srv.URL, HTTPClient: srv.Client()})
 	stream, err := client.SendStream(context.Background(), SendRequest{Message: UserText("stream")})
 	if err != nil {
 		t.Fatalf("SendStream() error = %v", err)
@@ -486,7 +493,7 @@ func TestSendStreamKeepsReadingAfterCompletedSnapshot(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := New(Options{AgentCardURL: srv.URL})
+	client := New(Options{AgentCardURL: srv.URL, HTTPClient: srv.Client()})
 	stream, err := client.SendStream(context.Background(), SendRequest{Message: UserText("stream")})
 	if err != nil {
 		t.Fatalf("SendStream() error = %v", err)
@@ -540,7 +547,7 @@ func TestSendStreamRecoversExecutionFinalTask(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := New(Options{AgentCardURL: srv.URL})
+	client := New(Options{AgentCardURL: srv.URL, HTTPClient: srv.Client()})
 	stream, err := client.SendStream(context.Background(), SendRequest{Message: UserText("stream")})
 	if err != nil {
 		t.Fatalf("SendStream() error = %v", err)
@@ -594,7 +601,7 @@ func TestSendStreamRecoveryFailsForNonFinalTask(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := New(Options{AgentCardURL: srv.URL})
+	client := New(Options{AgentCardURL: srv.URL, HTTPClient: srv.Client()})
 	stream, err := client.SendStream(context.Background(), SendRequest{Message: UserText("stream")})
 	if err != nil {
 		t.Fatalf("SendStream() error = %v", err)
@@ -660,7 +667,7 @@ func TestClientRejectsCrossOriginBearerByDefault(t *testing.T) {
 	}))
 	defer card.Close()
 
-	client := New(Options{AgentCardURL: card.URL, Auth: BearerToken("secret")})
+	client := New(Options{AgentCardURL: card.URL, Auth: BearerToken("secret"), HTTPClient: card.Client()})
 	_, err := client.Send(context.Background(), SendRequest{Message: UserText("review this")})
 	if !errors.Is(err, ErrUntrustedOrigin) {
 		t.Fatalf("Send() error = %v, want ErrUntrustedOrigin", err)
@@ -709,6 +716,7 @@ func TestClientAllowsTrustedCrossOriginBearerWithOptIn(t *testing.T) {
 
 	client := New(Options{
 		AgentCardURL:       card.URL,
+		HTTPClient:         card.Client(),
 		Auth:               BearerToken("secret"),
 		TrustedAuthOrigins: []string{protocol.URL},
 	})
@@ -727,18 +735,123 @@ func TestClientAllowsTrustedCrossOriginBearerWithOptIn(t *testing.T) {
 
 func TestClientDoesNotLeakBearerOnCrossOriginRedirect(t *testing.T) {
 	t.Parallel()
+	card, requests := newBearerRedirectFixture(t)
+	client := New(Options{AgentCardURL: card.URL, Auth: BearerToken("secret"), HTTPClient: card.Client()})
+	task, err := client.Send(context.Background(), SendRequest{Message: UserText("review this")})
+	if err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+	assertBearerRedirectResult(t, task, requests)
+}
 
-	redirectedAuth := make(chan string, 1)
+// This control is deliberately serial: closing a foreign httptest.Server also
+// closes idle connections in http.DefaultTransport. No global is replaced.
+func TestHTTPFixtureTransportIsolation(t *testing.T) {
+	for _, isolated := range []bool{false, true} {
+		t.Run(fmt.Sprintf("isolated=%t", isolated), func(t *testing.T) {
+			card, requests := newBearerRedirectFixture(t)
+			opts := Options{AgentCardURL: card.URL, Auth: BearerToken("secret")}
+			if isolated {
+				opts.HTTPClient = card.Client()
+			}
+			client := New(opts)
+			if _, err := client.AgentCard(context.Background()); err != nil {
+				t.Fatalf("warm discovery connection: %v", err)
+			}
+			foreign := httptest.NewServer(http.NotFoundHandler())
+			defer foreign.Close()
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			idle := make(chan error, 1)
+			release := make(chan struct{})
+			connections := make(chan httptrace.GotConnInfo, 2)
+			var firstIdle atomic.Bool
+			ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
+				GotConn: func(info httptrace.GotConnInfo) { connections <- info },
+				PutIdleConn: func(err error) {
+					if !firstIdle.CompareAndSwap(false, true) {
+						return
+					}
+					// A POST's empty 307 response enters the idle pool before
+					// Transport delivers its response. Hold that exact window.
+					idle <- err
+					select {
+					case <-release:
+					case <-ctx.Done():
+					}
+				},
+			})
+			type outcome struct {
+				task Task
+				err  error
+			}
+			done := make(chan outcome, 1)
+			go func() {
+				task, err := client.Send(ctx, SendRequest{Message: UserText("review this")})
+				done <- outcome{task, err}
+			}()
+			select {
+			case err := <-idle:
+				if err != nil {
+					t.Fatalf("put redirect connection idle: %v", err)
+				}
+			case <-ctx.Done():
+				t.Fatal("POST did not reach the empty-response idle barrier")
+			}
+			info := <-connections
+			if !info.Reused {
+				t.Fatal("POST did not reuse the warmed discovery connection")
+			}
+			foreign.Close()
+			if isolated {
+				close(release)
+			} else {
+				defer close(release)
+			}
+			var got outcome
+			select {
+			case got = <-done:
+			case <-ctx.Done():
+				t.Fatal("Send did not finish after the controlled foreign Close")
+			}
+			if isolated {
+				if got.err != nil {
+					t.Fatalf("isolated Send() error = %v", got.err)
+				}
+				assertBearerRedirectResult(t, got.task, requests)
+				t.Log("isolated: reused POST survived foreign Close; redirected POST completed without Authorization")
+			} else {
+				var requestError *url.Error
+				if !errors.As(got.err, &requestError) || requestError.Op != "Post" || requestError.URL != card.URL+"/a2a" ||
+					!strings.Contains(requestError.Err.Error(), "HTTP/1.x transport connection broken: http: CloseIdleConnections called") {
+					t.Fatalf("shared Send() error = %v, want the original POST CloseIdleConnections failure", got.err)
+				}
+				if len(requests) != 1 {
+					t.Fatalf("shared request count = %d, want only the original POST", len(requests))
+				}
+				t.Logf("shared: reused POST failed after foreign Close: %v", got.err)
+			}
+		})
+	}
+}
+
+type bearerRedirectRequest struct {
+	redirected bool
+	method     string
+	rpcMethod  string
+	auth       string
+}
+
+func newBearerRedirectFixture(t *testing.T) (*httptest.Server, <-chan bearerRedirectRequest) {
+	t.Helper()
+	requests := make(chan bearerRedirectRequest, 4)
 
 	var redirected *httptest.Server
 	redirected = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		redirectedAuth <- r.Header.Get("Authorization")
-		if method := readRPCMethod(t, r); method != "SendMessage" {
-			t.Fatalf("redirected method = %q, want SendMessage", method)
-		}
+		requests <- bearerRedirectRequest{true, r.Method, readRPCMethod(t, r), r.Header.Get("Authorization")}
 		writeRPCResult(t, w, `{"task":`+taskJSON("TASK_STATE_COMPLETED")+`}`)
 	}))
-	defer redirected.Close()
+	t.Cleanup(redirected.Close)
 
 	var card *httptest.Server
 	card = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -755,24 +868,31 @@ func TestClientDoesNotLeakBearerOnCrossOriginRedirect(t *testing.T) {
 				"skills":[{"id":"chat","name":"Chat","description":"chat","tags":["chat"]}]
 			}`, card.URL+"/a2a")
 		case "/a2a":
+			requests <- bearerRedirectRequest{false, r.Method, readRPCMethod(t, r), r.Header.Get("Authorization")}
 			http.Redirect(w, r, redirected.URL+"/a2a", http.StatusTemporaryRedirect)
 		default:
 			http.NotFound(w, r)
 		}
 	}))
-	defer card.Close()
+	t.Cleanup(card.Close)
+	return card, requests
+}
 
-	client := New(Options{AgentCardURL: card.URL, Auth: BearerToken("secret")})
-	if _, err := client.Send(context.Background(), SendRequest{Message: UserText("review this")}); err != nil {
-		t.Fatalf("Send() error = %v", err)
+func assertBearerRedirectResult(t *testing.T, task Task, requests <-chan bearerRedirectRequest) {
+	t.Helper()
+	if task.ID != "task-1" || task.Status.State != TaskStateCompleted {
+		t.Fatalf("Send() task = %+v, want task-1 completed", task)
 	}
-	select {
-	case got := <-redirectedAuth:
-		if got != "" {
-			t.Fatalf("redirected Authorization = %q, want empty", got)
+	if len(requests) != 2 {
+		t.Fatalf("request count = %d, want one original and one redirected POST", len(requests))
+	}
+	for _, want := range []bearerRedirectRequest{
+		{false, http.MethodPost, "SendMessage", "Bearer secret"},
+		{true, http.MethodPost, "SendMessage", ""},
+	} {
+		if got := <-requests; got != want {
+			t.Fatalf("request = %+v, want %+v", got, want)
 		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("redirected protocol request did not arrive")
 	}
 }
 
