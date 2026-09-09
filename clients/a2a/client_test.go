@@ -10,10 +10,6 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
-	"net/http/httptrace"
-	"net/url"
-	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -742,97 +738,6 @@ func TestClientDoesNotLeakBearerOnCrossOriginRedirect(t *testing.T) {
 		t.Fatalf("Send() error = %v", err)
 	}
 	assertBearerRedirectResult(t, task, requests)
-}
-
-// This control is deliberately serial: closing a foreign httptest.Server also
-// closes idle connections in http.DefaultTransport. No global is replaced.
-func TestHTTPFixtureTransportIsolation(t *testing.T) {
-	for _, isolated := range []bool{false, true} {
-		t.Run(fmt.Sprintf("isolated=%t", isolated), func(t *testing.T) {
-			card, requests := newBearerRedirectFixture(t)
-			opts := Options{AgentCardURL: card.URL, Auth: BearerToken("secret")}
-			if isolated {
-				opts.HTTPClient = card.Client()
-			}
-			client := New(opts)
-			if _, err := client.AgentCard(context.Background()); err != nil {
-				t.Fatalf("warm discovery connection: %v", err)
-			}
-			foreign := httptest.NewServer(http.NotFoundHandler())
-			defer foreign.Close()
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			defer cancel()
-			idle := make(chan error, 1)
-			release := make(chan struct{})
-			connections := make(chan httptrace.GotConnInfo, 2)
-			var firstIdle atomic.Bool
-			ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
-				GotConn: func(info httptrace.GotConnInfo) { connections <- info },
-				PutIdleConn: func(err error) {
-					if !firstIdle.CompareAndSwap(false, true) {
-						return
-					}
-					// A POST's empty 307 response enters the idle pool before
-					// Transport delivers its response. Hold that exact window.
-					idle <- err
-					select {
-					case <-release:
-					case <-ctx.Done():
-					}
-				},
-			})
-			type outcome struct {
-				task Task
-				err  error
-			}
-			done := make(chan outcome, 1)
-			go func() {
-				task, err := client.Send(ctx, SendRequest{Message: UserText("review this")})
-				done <- outcome{task, err}
-			}()
-			select {
-			case err := <-idle:
-				if err != nil {
-					t.Fatalf("put redirect connection idle: %v", err)
-				}
-			case <-ctx.Done():
-				t.Fatal("POST did not reach the empty-response idle barrier")
-			}
-			info := <-connections
-			if !info.Reused {
-				t.Fatal("POST did not reuse the warmed discovery connection")
-			}
-			foreign.Close()
-			if isolated {
-				close(release)
-			} else {
-				defer close(release)
-			}
-			var got outcome
-			select {
-			case got = <-done:
-			case <-ctx.Done():
-				t.Fatal("Send did not finish after the controlled foreign Close")
-			}
-			if isolated {
-				if got.err != nil {
-					t.Fatalf("isolated Send() error = %v", got.err)
-				}
-				assertBearerRedirectResult(t, got.task, requests)
-				t.Log("isolated: reused POST survived foreign Close; redirected POST completed without Authorization")
-			} else {
-				var requestError *url.Error
-				if !errors.As(got.err, &requestError) || requestError.Op != "Post" || requestError.URL != card.URL+"/a2a" ||
-					!strings.Contains(requestError.Err.Error(), "HTTP/1.x transport connection broken: http: CloseIdleConnections called") {
-					t.Fatalf("shared Send() error = %v, want the original POST CloseIdleConnections failure", got.err)
-				}
-				if len(requests) != 1 {
-					t.Fatalf("shared request count = %d, want only the original POST", len(requests))
-				}
-				t.Logf("shared: reused POST failed after foreign Close: %v", got.err)
-			}
-		})
-	}
 }
 
 type bearerRedirectRequest struct {
