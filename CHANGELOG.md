@@ -53,6 +53,10 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- Synchronize the concurrent delegation history test with real Driver admission
+  and consumed Started events; separately cover loss under a slow UI subscriber
+  while retaining every completed Service record and its accepted order.
+
 - Upgrade the AG-UI example build tool to Vite 6.4.3 with compatible security
   patches, and audit its build dependencies at the existing high threshold.
 
