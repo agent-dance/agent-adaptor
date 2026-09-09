@@ -151,6 +151,42 @@ func TestServiceDelegationsConcurrentPublishAndQuery(t *testing.T) {
 	}
 }
 
+func TestServiceDelegationsSlowSubscriberIsNotHistory(t *testing.T) {
+	svc := newUnitService(t)
+	const runID, count = "run-slow-subscriber", 8
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	events := svc.Bus().SubscribeRun(ctx, runID)
+	var delegates sync.WaitGroup
+	delegates.Add(count)
+	for i := 0; i < count; i++ {
+		go func(i int) {
+			defer delegates.Done()
+			if _, err := svc.Delegate(context.Background(), a2adelegation.DelegationRequest{
+				RunID: runID, Agent: "echo", Objective: fmt.Sprintf("slow consumer %d", i),
+			}); err != nil {
+				t.Errorf("Delegate(%d): %v", i, err)
+			}
+		}(i)
+	}
+	// Deliberately schedule the subscriber only after all real publications.
+	delegates.Wait()
+	started, dropped := 0, 0
+	for len(events) > 0 {
+		event := <-events
+		if event.Kind == a2adelegation.DelegationStarted {
+			started++
+		}
+		if event.Kind == a2adelegation.DelegationStreamDropped {
+			dropped++
+		}
+	}
+	t.Logf("started=%d drop_notices=%d history=%d", started, dropped, len(svc.Delegations(runID)))
+	if started != count {
+		t.Fatalf("slow subscriber did not observe every DelegationStarted event: got %d want %d", started, count)
+	}
+}
+
 func TestServiceDelegationsLocalRemoteParity(t *testing.T) {
 	script := parityScript{deltas: []string{"hello ", "world"}, final: "hello world\nPARITY_DONE"}
 	localSvc, err := a2adelegation.NewService(a2adelegation.Config{
