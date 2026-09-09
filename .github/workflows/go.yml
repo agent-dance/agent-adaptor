@@ -143,6 +143,12 @@ jobs:
         go test -count=20 -timeout=10m -v . -run '^TestAlignmentProfileDistinctIdentitiesRunIndependently$'
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+    - name: Repeat parallel A2A HTTP client contracts on native Windows
+      shell: pwsh
+      run: |
+        go test -count=20 -timeout=10m -v ./clients/a2a
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
   frontend:
     runs-on: ubuntu-latest
     steps:

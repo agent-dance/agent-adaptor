@@ -53,6 +53,9 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- Give parallel A2A HTTP test clients independent transports while preserving
+  real redirect and bearer checks; repeat the client contracts on native Windows.
+
 - Synchronize the concurrent delegation history test with real Driver admission
   and consumed Started events; separately cover loss under a slow UI subscriber
   while retaining every completed Service record and its accepted order.
