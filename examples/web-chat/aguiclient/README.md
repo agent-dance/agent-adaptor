@@ -35,7 +35,7 @@ Go backend (agent-adaptor + bridges/sse)
 
 ## 先决条件
 
-- Go 1.26.5+
+- Go 1.26.8+
 - Node.js 20+ 与 npm / pnpm
 - 任选其一：**Codex**、**Claude Code**、**Cursor Agent** 本机 CLI，且已登录；Cursor 没有 token-level assistant delta 时会显示一次终局 `Result.Text`
 

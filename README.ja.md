@@ -31,7 +31,7 @@ Claude Code に切り替えるには構築時の Driver を差し替えるだけ
 go get github.com/agent-dance/agent-adaptor
 ```
 
-Go 1.26.5 以上が必要。
+Go 1.26.8 以上が必要。
 
 重要：**実行時には対応する Agent がインストール済みかつログイン済みである必要がある**
 

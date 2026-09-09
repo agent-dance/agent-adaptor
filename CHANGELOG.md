@@ -53,6 +53,14 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- Patch CopilotKit example production dependencies and retain the existing high/critical
+  audit gate, framework versions and official npm registry sources. Document remaining
+  lower-severity and development dependency findings separately.
+
+- Raise the minimum Go toolchain from 1.26.5 to 1.26.8 to include standard-library
+  security fixes. SDK consumers must update their toolchain; the Go 1.26 language
+  series and module dependency versions remain unchanged.
+
 - Preserve Codex partial Text, Transcript and Usage when cancellation wins the
   turn/start RPC wait after its matching response has already been received;
   retain response/turn identity checks and the original cancellation cause.

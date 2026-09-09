@@ -31,7 +31,7 @@ result, err := agent.Run(ctx, "修复失败的测试")
 go get github.com/agent-dance/agent-adaptor
 ```
 
-需要 Go 1.26.5 及以上。
+需要 Go 1.26.8 及以上。
 
 重要：**运行时需要对应的 Agent 已安装并完成登录**
 

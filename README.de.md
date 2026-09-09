@@ -31,7 +31,7 @@ Der Wechsel zu Claude Code bedeutet lediglich, den Driver in der Konstruktion au
 go get github.com/agent-dance/agent-adaptor
 ```
 
-Erfordert Go 1.26.5 oder neuer.
+Erfordert Go 1.26.8 oder neuer.
 
 Wichtig: **zur Laufzeit muss der entsprechende Agent installiert und angemeldet sein**
 
