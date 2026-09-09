@@ -180,3 +180,7 @@ jobs:
     - name: Audit CopilotKit production dependencies
       run: npm audit --omit=dev --audit-level=high
       working-directory: examples/web-chat/copilotkit/web
+
+    - name: Audit all CopilotKit dependencies including build tools
+      run: npm audit --audit-level=high
+      working-directory: examples/web-chat/copilotkit/web

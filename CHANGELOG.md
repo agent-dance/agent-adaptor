@@ -53,8 +53,10 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
-- Patch CopilotKit example production dependencies and retain the existing high/critical
-  audit gate, framework versions and official npm registry sources. Document remaining
+- Patch CopilotKit example production dependencies, including sharp native image
+  libraries, and affected build/lint dependencies. Retain the existing high/critical
+  production audit gate, framework versions and official npm registry sources. Also
+  enforce the same threshold for build/lint dependencies. Document remaining
   lower-severity and development dependency findings separately.
 
 - Raise the minimum Go toolchain from 1.26.5 to 1.26.8 to include standard-library

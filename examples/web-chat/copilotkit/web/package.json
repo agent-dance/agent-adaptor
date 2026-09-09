@@ -30,7 +30,7 @@
     "@modelcontextprotocol/sdk": "1.30.0",
     "dompurify": "3.4.15",
     "fast-uri": "3.1.7",
-    "hono": "4.12.34",
+    "hono": "4.13.7",
     "ip-address": "10.3.1",
     "mermaid": "11.16.1",
     "postcss": "8.5.23",
@@ -40,7 +40,11 @@
     "body-parser@^1.0.0": "1.20.8",
     "uuid@^11.0.0": "11.1.1",
     "phoenix": "1.8.13",
-    "body-parser@^2.0.0": "2.3.0"
+    "body-parser@^2.0.0": "2.3.0",
+    "sharp@^0.35.0": "0.35.4",
+    "brace-expansion@^1.0.0": "1.1.18",
+    "brace-expansion@^5.0.0": "5.0.9",
+    "js-yaml@^4.0.0": "4.3.2"
   },
   "engines": {
     "node": ">=20"

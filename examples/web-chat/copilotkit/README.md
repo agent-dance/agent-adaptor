@@ -73,11 +73,13 @@ Browser
 
 前端固定使用 CopilotKit 1.63.2 与 `next@16.3.0-preview.8`，React 保持 18.3.1。
 本轮安全修复更新 fast-uri、nanoid、DOMPurify、Hono、Mermaid、qs、Phoenix，
-并对 Hono Node adapter、body-parser 和 uuid 的既有主版本分别固定修复版本。
+并对 Hono Node adapter、body-parser、uuid 和 sharp 的既有版本范围分别固定修复版本。
+sharp 的配套原生图像库随之更新，开发依赖 brace-expansion 与 js-yaml 也固定安全补丁。
 qs 延续已有全局 override：6.16.0 超出 Express 的 `~6.14.0` 声明范围，
 其兼容性必须由实际安装与构建验证，不能仅凭 semver 声称兼容。
 lockfile 只保存 npm 官方 registry URL；CI 使用 Node.js 22，执行 fresh `npm ci`、
-lint、build 与 `npm audit --omit=dev --audit-level=high`，审计阈值不变。
+lint、build、`npm audit --omit=dev --audit-level=high`，以及新增的
+`npm audit --audit-level=high` 全量审计，high 阈值不变。
 
 安全扫描按实际日期和 lockfile 记录结果。旧 AI SDK provider-utils 与 Runtime 的
 uuid 10 仍有低、中等级报告；开发依赖也须单独记录，不能把生产门禁通过表述为

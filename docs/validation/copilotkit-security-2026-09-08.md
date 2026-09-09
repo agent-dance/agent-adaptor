@@ -15,7 +15,7 @@ Existing override slots receive these updates:
 | --- | --- | --- |
 | DOMPurify | 3.4.12 | 3.4.15 |
 | fast-uri | 3.1.5 | 3.1.7 |
-| Hono | 4.12.32 | 4.12.34 |
+| Hono | 4.12.32 | 4.13.7 |
 | Mermaid | 11.16.0 | 11.16.1 |
 | qs | 6.15.3 | 6.16.0 |
 
@@ -23,7 +23,13 @@ Additional selectors constrain patches to the existing dependency major:
 `nanoid@^3.0.0` → 3.3.18, `@hono/node-server@^1.0.0` → 1.19.17,
 `body-parser@^1.0.0` → 1.20.8, `body-parser@^2.0.0` → 2.3.0,
 `uuid@^11.0.0` → 11.1.1, and Phoenix → 1.8.13. Runtime's uuid 10 dependency
-is not forced to uuid 11. These new selectors satisfy the affected parent ranges.
+is not forced to uuid 11. The follow-up native CI scan also identified
+[the sharp/libheif advisory](https://github.com/advisories/GHSA-rgj7-g3m4-5g8c).
+`sharp@^0.35.0` is fixed to 0.35.4, within Next's declared `^0.35.3` range;
+its matching native image packages update with it. The framework version stays
+unchanged. Development dependency patches use `brace-expansion@^1.0.0` → 1.1.18,
+`brace-expansion@^5.0.0` → 5.0.9 and `js-yaml@^4.0.0` → 4.3.2.
+These new selectors satisfy the affected parent ranges.
 The existing global qs override is an explicit exception: both the old override
 and 6.16.0 exceed Express's declared `~6.14.0` range. Actual installation, lint
 and production build remain required; semver alone cannot establish compatibility.
@@ -45,9 +51,9 @@ npm audit --omit=dev --audit-level=high
 npm audit --audit-level=high
 ```
 
-The last command is a supplemental full dependency-tree audit, including build
-and lint dependencies; it is recorded separately from the existing production
-CI gate. Neither command suppresses advisories or changes severity thresholds.
+The last command adds a separate full dependency-tree CI audit, including build
+and lint dependencies, after the existing production gate. Neither command
+suppresses advisories or lowers the existing high severity threshold.
 The coordinator records command exits, package-lock SHA256, tool versions and
 raw audit JSON in `docs/alignment-execution/2026-09-07/security-validation/`.
 Acceptance requires new full CI and native Windows/Linux evidence on the
