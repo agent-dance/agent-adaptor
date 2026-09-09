@@ -36,8 +36,13 @@ Go backend (agent-adaptor + bridges/sse)
 ## 先决条件
 
 - Go 1.26.8+
-- Node.js 20+ 与 npm / pnpm
+- Node.js 20 或 22+ 与 npm / pnpm
 - 任选其一：**Codex**、**Claude Code**、**Cursor Agent** 本机 CLI，且已登录；Cursor 没有 token-level assistant delta 时会显示一次终局 `Result.Text`
+
+前端构建使用 Vite 6.4.3，React 与 AG-UI client 版本保持不变。PostCSS、nanoid
+与 Browserslist 固定兼容安全补丁。CI 使用 Node 22，执行 fresh `npm ci`、
+TypeScript/生产构建、生产审计及包含开发依赖的全量审计，均保持 high 阈值。
+[依赖决策与验证范围](../../../docs/validation/aguiclient-security-2026-09-09.md)记录迁移和剩余报告。
 
 ## 跑起来
 

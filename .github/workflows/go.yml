@@ -137,6 +137,12 @@ jobs:
         go test -count=1 -timeout=10m "-tags=claude_live,codebuddy_live,codex_live,cursor_live" ./claude ./codebuddy ./codex/... ./cursor
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+    - name: Repeat independent profile concurrency on native Windows
+      shell: pwsh
+      run: |
+        go test -count=20 -timeout=10m -v . -run '^TestAlignmentProfileDistinctIdentitiesRunIndependently$'
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
   frontend:
     runs-on: ubuntu-latest
     steps:
@@ -161,6 +167,10 @@ jobs:
 
     - name: Audit AG-UI production dependencies
       run: npm audit --omit=dev --audit-level=high
+      working-directory: examples/web-chat/aguiclient/web
+
+    - name: Audit all AG-UI dependencies including build tools
+      run: npm audit --audit-level=high
       working-directory: examples/web-chat/aguiclient/web
 
     - name: Install CopilotKit dependencies

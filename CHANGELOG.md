@@ -53,6 +53,13 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- Upgrade the AG-UI example build tool to Vite 6.4.3 with compatible security
+  patches, and audit its build dependencies at the existing high threshold.
+
+- Verify independent profile concurrency through held Driver admission barriers,
+  with bounded diagnostics and cleanup; native Windows CI repeats the contract
+  twenty times without imposing a one-second cold profile setup deadline.
+
 - Patch CopilotKit example production dependencies, including sharp native image
   libraries, and affected build/lint dependencies. Retain the existing high/critical
   production audit gate, framework versions and official npm registry sources. Also
