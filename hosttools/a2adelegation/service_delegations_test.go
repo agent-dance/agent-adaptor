@@ -10,6 +10,7 @@ import (
 	"time"
 
 	adaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/hosttools/a2adelegation"
 )
 
@@ -80,21 +81,63 @@ func TestServiceDelegationsPreservesStartedOrderAndRepeatedAgents(t *testing.T) 
 }
 
 func TestServiceDelegationsConcurrentPublishAndQuery(t *testing.T) {
-	svc := newUnitService(t)
 	const (
 		runID = "run-concurrent"
 		count = 8
 	)
 
-	subCtx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	events := svc.Bus().SubscribeRun(subCtx, runID)
+	outputAllowed := make(chan struct{})
+	driversEntered := make(chan struct{}, count)
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(outputAllowed) }) }
+	svc, err := a2adelegation.NewService(a2adelegation.Config{
+		Agents: []a2adelegation.AgentRef{
+			a2adelegation.Local("echo", adaptor.New(&delegationStartedGateDriver{
+				scriptedRoleDriver: scriptedRoleDriver{kind: "ordered-concurrent", final: "done"},
+				outputAllowed:      outputAllowed,
+				entered:            driversEntered,
+			}), a2adelegation.Policy{}),
+		},
+		ToolTimeout: 42 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	defer svc.Close()
+	events := svc.Bus().SubscribeRun(ctx, runID)
 	started := make(chan []string, 1)
+	collectorDone := make(chan struct{})
 	go func() {
+		defer close(collectorDone)
+		// Force the subscriber to start late even in a fast local run. All
+		// eight real Driver calls must be parked before consuming any event.
+		for i := 0; i < count; i++ {
+			select {
+			case <-driversEntered:
+			case <-ctx.Done():
+				return
+			}
+		}
 		ids := make([]string, 0, count)
 		for event := range events {
 			if event.Kind == a2adelegation.DelegationStarted {
 				ids = append(ids, event.DelegationID)
+				// Query while all producers are still in flight. The bus is a
+				// lossy UI view, so hold their remaining output until all Started
+				// events have actually been consumed. Each event must already
+				// have its running history entry in the same accepted order.
+				entries := svc.Delegations(runID)
+				if len(entries) < len(ids) {
+					t.Errorf("history has %d entries after %d Started events", len(entries), len(ids))
+				} else {
+					for i, id := range ids {
+						if entries[i].DelegationID != id || entries[i].Status != "running" {
+							t.Errorf("in-flight history[%d] = %+v, want id=%q status=running", i, entries[i], id)
+						}
+					}
+				}
 				if len(ids) == count {
 					started <- ids
 					return
@@ -104,40 +147,38 @@ func TestServiceDelegationsConcurrentPublishAndQuery(t *testing.T) {
 	}()
 
 	var delegates sync.WaitGroup
+	defer func() {
+		cancel()
+		release()
+		delegates.Wait()
+		<-collectorDone
+	}()
 	delegates.Add(count)
 	for i := 0; i < count; i++ {
 		go func(i int) {
 			defer delegates.Done()
-			if _, err := svc.Delegate(context.Background(), a2adelegation.DelegationRequest{
+			if _, err := svc.Delegate(ctx, a2adelegation.DelegationRequest{
 				RunID: runID, Agent: "echo", Objective: fmt.Sprintf("concurrent %d", i),
 			}); err != nil {
 				t.Errorf("Delegate(%d): %v", i, err)
 			}
+			// Also query while other delegates may be recording their results.
+			for _, entry := range svc.Delegations(runID) {
+				if entry.Status != "running" && entry.Status != "completed" {
+					t.Errorf("concurrent result status = %q", entry.Status)
+				}
+			}
 		}(i)
 	}
-
-	queryDone := make(chan struct{})
-	go func() {
-		defer close(queryDone)
-		for {
-			entries := svc.Delegations(runID)
-			for i := range entries {
-				_ = entries[i].Status
-			}
-			if len(entries) == count {
-				return
-			}
-		}
-	}()
-	delegates.Wait()
-	<-queryDone
 
 	var accepted []string
 	select {
 	case accepted = <-started:
-	case <-time.After(5 * time.Second):
+	case <-ctx.Done():
 		t.Fatal("did not observe every DelegationStarted event")
 	}
+	release()
+	delegates.Wait()
 	recorded := svc.Delegations(runID)
 	gotIDs := make([]string, len(recorded))
 	for i := range recorded {
@@ -151,10 +192,30 @@ func TestServiceDelegationsConcurrentPublishAndQuery(t *testing.T) {
 	}
 }
 
+type delegationStartedGateDriver struct {
+	scriptedRoleDriver
+	outputAllowed <-chan struct{}
+	entered       chan<- struct{}
+}
+
+func (d *delegationStartedGateDriver) Run(ctx context.Context, req driver.Request, sink driver.EventSink) (driver.Response, error) {
+	select {
+	case d.entered <- struct{}{}:
+	case <-ctx.Done():
+		return driver.Response{}, ctx.Err()
+	}
+	select {
+	case <-d.outputAllowed:
+		return d.scriptedRoleDriver.Run(ctx, req, sink)
+	case <-ctx.Done():
+		return driver.Response{}, ctx.Err()
+	}
+}
+
 func TestServiceDelegationsSlowSubscriberIsNotHistory(t *testing.T) {
 	svc := newUnitService(t)
 	const runID, count = "run-slow-subscriber", 8
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	events := svc.Bus().SubscribeRun(ctx, runID)
 	var delegates sync.WaitGroup
@@ -162,7 +223,7 @@ func TestServiceDelegationsSlowSubscriberIsNotHistory(t *testing.T) {
 	for i := 0; i < count; i++ {
 		go func(i int) {
 			defer delegates.Done()
-			if _, err := svc.Delegate(context.Background(), a2adelegation.DelegationRequest{
+			if _, err := svc.Delegate(ctx, a2adelegation.DelegationRequest{
 				RunID: runID, Agent: "echo", Objective: fmt.Sprintf("slow consumer %d", i),
 			}); err != nil {
 				t.Errorf("Delegate(%d): %v", i, err)
@@ -178,12 +239,26 @@ func TestServiceDelegationsSlowSubscriberIsNotHistory(t *testing.T) {
 			started++
 		}
 		if event.Kind == a2adelegation.DelegationStreamDropped {
+			if event.Raw["reason"] != "event_bus_backpressure" {
+				t.Errorf("unexpected drop source: %+v", event.Raw)
+			}
 			dropped++
 		}
 	}
 	t.Logf("started=%d drop_notices=%d history=%d", started, dropped, len(svc.Delegations(runID)))
-	if started != count {
-		t.Fatalf("slow subscriber did not observe every DelegationStarted event: got %d want %d", started, count)
+	if started >= count || dropped == 0 {
+		t.Fatalf("slow-consumer control did not exercise lossy delivery: started=%d drops=%d", started, dropped)
+	}
+	recorded := svc.Delegations(runID)
+	if len(recorded) != count {
+		t.Fatalf("lossy subscriber changed history: got %d want %d", len(recorded), count)
+	}
+	seen := make(map[string]bool, count)
+	for _, entry := range recorded {
+		if entry.DelegationID == "" || seen[entry.DelegationID] || entry.Status != "completed" {
+			t.Errorf("incomplete or duplicate history: %+v", entry)
+		}
+		seen[entry.DelegationID] = true
 	}
 }
 
