@@ -463,7 +463,7 @@
       "batch_id": "B05",
       "phase": "gate",
       "path": "docs/alignment-tasks/2026-09-07/batches/05-cross-layer-qa/gate/task.json",
-      "sha256": "d39dcd39e9214c64c1972137302961378819715b889e15cd40df904114a62a80"
+      "sha256": "18c88918aedcdc33c64e389ae7ac790989c941c16ab48b6cc6163b775e7d72de"
     },
     {
       "id": "T25",
@@ -566,7 +566,7 @@
     "every_requirement_has_one_owner_and_independent_verifier": true,
     "no_same_batch_worker_dependency": true
   },
-  "revision": 25,
+  "revision": 26,
   "amendments": [
     "docs/alignment-tasks/2026-09-07/amendments/R001.md",
     "docs/alignment-tasks/2026-09-07/amendments/R002.md",
@@ -590,6 +590,7 @@
     "docs/alignment-tasks/2026-09-07/amendments/R020.md",
     "docs/alignment-tasks/2026-09-07/amendments/R021.md",
     "docs/alignment-tasks/2026-09-07/amendments/R022.md",
-    "docs/alignment-tasks/2026-09-07/amendments/R023.md"
+    "docs/alignment-tasks/2026-09-07/amendments/R023.md",
+    "docs/alignment-tasks/2026-09-07/amendments/R027.md"
   ]
 }

@@ -53,6 +53,10 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- Make the cold-resume regression prove gateway closure before successor
+  admission and reserve the old address, retaining strict credential/profile
+  rotation checks even when the OS would reuse an ephemeral port.
+
 - Publish private Windows append files by renaming their original handle within
   the same directory, avoiding Server 2022 sharing conflicts without releasing
   the lifetime directory pin. Reject existing targets and preserve cleanup retries.

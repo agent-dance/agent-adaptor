@@ -246,3 +246,7 @@ G00 必须在本批中央文档重新打开 AGENTS §14 的 Thread/profile 兼�
 未物化 skills 目录的投影采用目标平台实际可观察的模式：POSIX 0755，Windows 可写目录 0777。目录物化本身不能改变冷续接 fingerprint。检视 managed child 之前先验证 skills 父路径；父路径存在但不是目录必须 errors.Is(profile.ErrUnsafe)，不能借 Windows 子路径的 not-exist 错误把外部内容当缺失。原有配置严格解析及非配置资产原字节边界继续有效。
 
 R025 依赖选型：`golang.org/x/sys` 从 v0.41.0 升到 v0.44.0，保留既有私有 OS 边界。官方维护的 Windows API 包修复 `NewNTUnicodeString` 超长输入的整数溢出；本项目私有文件创建存在直接调用，Windows 源码扫描确认可达。升级无需新依赖或公共 API，最低 Go 1.25 与项目 1.26.8 兼容；继续采用官方修复，不复制易漂移的 OS 绑定实现。当前调用的固定短名与漏洞长输入触发条件分别陈述，不能把静态可达等同于已证明可利用。原生权限、锁、清理与进程测试仍须在新 SHA 验收。
+
+## R027：冷续接的网络身份验收
+
+断言首个网关关闭须在第二个网关启动前完成；Close后保留释放地址，固定本夹具要求的URL差异。不能在新网关可能复用地址后，仅以TCP可连接认定旧网关存活。保留真实session nonce、profile/manifest、URL/env/token轮换断言；Windows只有地址占用10048且连接拒绝10061可按已关闭处理，其他错误均失败，原100ms限额不变。未关闭listener负例须稳定失败。原CI日志无监听器归属信息，确定性复用反例与实际原失败分别留档；无生产gateway行为变更。

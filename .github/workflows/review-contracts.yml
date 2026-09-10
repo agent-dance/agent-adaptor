@@ -45,3 +45,5 @@ jobs:
         run: go test -count=3 -timeout=5m -v ./codex/appserver -run '^TestAlignment(ResidentEOFHealth|TerminalEOFWaitsForObservedExit|ResidentWaitCause)$'
       - name: Deterministic approval deadline and paused active budget
         run: go test -count=100 -timeout=5m -v . -run '^TestAlignmentActiveBudgetHandlerReturnsOwnDeadline$'
+      - name: Cold profile resume and listener closure controls
+        run: go test -count=20 -timeout=5m -v . -run '^TestAlignmentProfile(DedicatedColdResume|ClosedGatewayReservationRejectsLiveListener)$'

@@ -386,6 +386,8 @@ R025：全量 CI 整合保留 R024 五项修复及 Windows append 全生命周�
 
 R026：06a1828 的 windows-latest 全量/权限回归通过后，独立 Windows Server 2022 验收发现 append 的 Root.Rename 触发 sharing violation。私有 .pending 必须保留创建句柄直至发布，Windows 使用 RootDirectory=NULL 和简单 basename 的同目录正式 rename，不释放目录 lifetime pin、不回退路径移动、不覆盖既存目标。helper 在成功及失败均关闭 pending 句柄，主错与 Close 次因保留，取消及后续 cleanup 可重试。新增发布/冲突/原字节/文件身份/handle关闭/pin负例必须在两个原生 Windows 版本通过，旧失败留档，新 SHA 重跑 G05/T25/T26。80c7cb1 后续只修夹具：Windows File.Stat 的已关闭句柄精确验证 ERROR_INVALID_HANDLE；篡改/恢复使用独立同目录 NT rename，硬链接在另一个测试目录创建并核对实际 link count=2，不能以无法注入攻击当通过。
 
+R027：冷续接夹具必须在接任网关启动前证明旧监听器关闭并固定端口变化；第二轮后TCP可连接不能证明旧网关仍活跃。保留原session/URL/env/token/manifest断言、100ms限额和Windows精确10048+10061边界，并以未关闭listener反例验收。原74c650a失败没有监听器归属轨迹，确定性端口复用反例不能倒填原因。任务包revision26将用户明确授权的post-review修复以42条精确路径纳入G05整合验收；原47任务、96要求、9依赖、G04真实基线及验证命令不变，禁止自设base或删diff绕过。
+
 具体冻结设计、未支持边界、文件所有权和fixture见 `docs/alignment-tasks/2026-09-07/contracts/frozen.json`。合同冻结不代表代码已实现；后续同批godoc、合同测试、使用文档和CHANGELOG完成后才能关闭对应项。其他第14节既有保护继续有效。
 
 ## 15. 发布门禁

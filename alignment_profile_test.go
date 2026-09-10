@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -116,6 +117,19 @@ func TestAlignmentProfileDedicatedColdResume(t *testing.T) {
 			if err := first.Close(context.Background()); err != nil {
 				t.Fatal(err)
 			}
+			endpoint, err := url.Parse(r1.MCP.Servers[0].URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Reserve the released address before another gateway can reuse it.
+			// This proves closure and makes the later URL-rotation check strict.
+			portGuard, err := alignmentReserveClosedGateway(endpoint.Host)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if portGuard != nil {
+				t.Cleanup(func() { _ = portGuard.Close() })
+			}
 			files, err := os.ReadDir(filepath.Join(r1.Profile.Dir, "projects"))
 			if err != nil || len(files) != 1 {
 				t.Fatalf("Close removed provider session: entries=%d err=%v", len(files), err)
@@ -127,14 +141,6 @@ func TestAlignmentProfileDedicatedColdResume(t *testing.T) {
 			r2 := secondD.request(t, 0)
 			if r2.Profile.Dir != r1.Profile.Dir || r2.Session == nil || r2.Session.State == nil || r2.Session.State.ResumeID+".jsonl" != files[0].Name() {
 				t.Fatal("cold run did not read the original session")
-			}
-			endpoint, err := url.Parse(r1.MCP.Servers[0].URL)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if conn, err := net.DialTimeout("tcp", endpoint.Host, 100*time.Millisecond); err == nil {
-				conn.Close()
-				t.Fatal("old endpoint remains reachable")
 			}
 			entries, err := os.ReadDir(source)
 			if err != nil || len(entries) != 0 {
@@ -152,6 +158,48 @@ func TestAlignmentProfileDedicatedColdResume(t *testing.T) {
 				t.Fatal("credentials did not rotate")
 			}
 		})
+	}
+}
+
+func alignmentReserveClosedGateway(address string) (net.Listener, error) {
+	guard, err := net.Listen("tcp4", address)
+	if err == nil {
+		return guard, nil
+	}
+	// Windows can reserve a closed address during TIME_WAIT. Only that exact
+	// bind error plus explicit connection refusal proves the listener is gone;
+	// timeout, cancellation and unrelated network errors must still fail.
+	const wsaAddressInUse = syscall.Errno(10048)
+	const wsaConnectionRefused = syscall.Errno(10061)
+	if runtime.GOOS != "windows" || !errors.Is(err, wsaAddressInUse) {
+		return nil, fmt.Errorf("reserve former gateway address %q: %w", address, err)
+	}
+	conn, dialErr := net.DialTimeout("tcp4", address, 100*time.Millisecond)
+	if dialErr == nil {
+		return nil, errors.Join(fmt.Errorf("former gateway still accepts connections after Close: %w", err), conn.Close())
+	}
+	if !errors.Is(dialErr, wsaConnectionRefused) {
+		return nil, fmt.Errorf("former gateway did not refuse connections after Close: %w", dialErr)
+	}
+	return nil, nil
+}
+
+func TestAlignmentProfileClosedGatewayReservationRejectsLiveListener(t *testing.T) {
+	live, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer live.Close()
+	guard, err := alignmentReserveClosedGateway(live.Addr().String())
+	if guard != nil {
+		defer guard.Close()
+	}
+	want := syscall.EADDRINUSE
+	if runtime.GOOS == "windows" {
+		want = syscall.Errno(10048) // WSAEADDRINUSE
+	}
+	if !errors.Is(err, want) {
+		t.Fatalf("closure check for a listener that was never closed = %v, want %v", err, want)
 	}
 }
 
