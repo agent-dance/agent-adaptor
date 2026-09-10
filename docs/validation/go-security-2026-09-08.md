@@ -34,7 +34,8 @@ The separate frontend failure in that log is outside this Go patch.
 fixes on August 13, 1.26.7 HTTP fixes on August 19, and 1.26.8 on September 1.
 Version 1.26.8 is the latest stable 1.26 patch in the official download listing
 checked on September 8. It includes the earlier security and HTTP fixes plus
-later compiler/runtime and platform fixes. This change does not move to Go 1.27.
+later compiler/runtime and platform fixes. The consumer minimum stays on Go 1.26;
+the later CI selection described below is independent of that minimum.
 
 ## Compiler requirement and CI selection
 
@@ -45,10 +46,13 @@ consumers using an older toolchain must upgrade to at least 1.26.8. With
 a replacement. With automatic toolchain selection enabled, Go may obtain a
 suitable toolchain. The Go language version remains 1.26.
 
-The existing `.github/workflows/go.yml` jobs use `actions/setup-go@v5` with
-`go-version-file: go.mod`; `windows-validation.yml` uses `source/go.mod` for its
-checked-out source. They therefore select the updated version without a workflow
-edit. Their existing `GOTOOLCHAIN=local` and closed paid-test gates remain intact.
+The `minimum-go` job uses `actions/setup-go@v5` with `go-version-file: go.mod`
+and runs the complete test suite and vet on the declared consumer minimum.
+Other Go jobs and the Review contracts workflow use `.github/go-version`;
+Windows/Linux platform acceptance reads `source/.github/go-version` from its
+exact source checkout. The CI version is pinned to official Go 1.27.1 for the
+fuzz shutdown fix below. `GOTOOLCHAIN=local` and closed paid-test gates remain
+intact; no dependency or public API requires Go 1.27.
 
 ## Reproduction and evidence boundary
 
@@ -123,3 +127,30 @@ Before/after logs, exact commands, tool versions and SHA256 manifests are retain
 in the task-private `agent-adaptor-ci-dependencies-20260910` evidence directory
 for coordinator archival. The failed pre-upgrade Windows scan is retained along
 with the passing scans; historical acceptance records are not rewritten.
+
+## September 10 fuzz coordinator shutdown repair
+
+Candidate `75a84c8b7a62e4bcdcca2fe9e2e31c8670d0fcb9` passed the ordinary Go
+workflow and native T26, but the independent T25-V09 command failed after
+30 seconds and 847,052 fuzz executions with only `context deadline exceeded`.
+T25-V01 through V08 passed. The failure produced no crash input and did not
+change source bytes; the failed run remains part of the evidence.
+
+[Go issue 75804](https://github.com/golang/go/issues/75804) describes the
+coordinator race matching that output. On Go 1.26.8, the parent context can
+publish its deadline before canceling its child. The coordinator's `stop`
+function recognizes the child error but can retain the parent's deadline error
+as a failure during that interval. The
+[official Go 1.27.1 implementation](https://github.com/golang/go/blob/go1.27.1/src/internal/fuzz/fuzz.go)
+also recognizes `ctx.Err()` before stopping workers. This is a framework
+termination path, not an archive parser error. The original CI log does not
+record the internal scheduling; the mechanism and upstream fix are independent
+evidence, not a retrospectively captured trace of that run.
+
+CI and both platform collectors now use the official Go 1.27.1 distribution,
+released September 1 in the [Go release history](https://go.dev/doc/devel/release).
+The minimum supported Go version remains 1.26.8 and receives separate full tests
+and vet. No local toolchain patch, deadline-error filter, automatic retry,
+execution-count substitute or shorter fuzz budget is used in acceptance. Every
+original T25 command, including all 30-second fuzz targets, must pass on the new
+exact SHA.

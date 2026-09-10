@@ -192,7 +192,8 @@
       "sink.go",
       "tools.go",
       "tools_contract_test.go",
-      "tools_profile_assets_test.go"
+      "tools_profile_assets_test.go",
+      ".github/go-version"
     ],
     "scope_match": "精确文件或目录/**；gate可合并worker已审阅commit，但不直接越权编辑其生产代码。",
     "exclusive_resources": [

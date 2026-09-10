@@ -16,6 +16,21 @@ env:
   GOTOOLCHAIN: local
 
 jobs:
+  minimum-go:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up minimum supported Go
+      uses: actions/setup-go@v5
+      with:
+        go-version-file: go.mod
+        cache: true
+    - name: Test and vet the minimum supported toolchain
+      run: |
+        go version
+        go test -count=1 -timeout=15m ./...
+        go vet ./...
+
   validate:
     runs-on: ubuntu-latest
     steps:
@@ -24,7 +39,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version-file: go.mod
+        go-version-file: .github/go-version
         cache: true
 
     - name: Build
@@ -70,7 +85,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version-file: go.mod
+        go-version-file: .github/go-version
         cache: true
 
     - name: Race tests
@@ -84,7 +99,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version-file: go.mod
+        go-version-file: .github/go-version
         cache: true
 
     - name: Fuzz archive extraction
@@ -113,7 +128,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version-file: go.mod
+        go-version-file: .github/go-version
         cache: true
     - name: Record native platform
       shell: pwsh

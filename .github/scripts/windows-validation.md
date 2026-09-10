@@ -2,7 +2,11 @@
 
 The `Windows alignment verification` workflow runs on pushes to
 `codex/windows-validation-*` and `codex/review-fixes-*`. It uses Windows Server 2022 and the exact Go
-version from the SDK's `go.mod`. The controller branch contains the workflow and
+version from the SDK's `.github/go-version`. This CI toolchain includes Go's
+official fix for fuzz deadline shutdown (issue 75804); `go.mod` still declares
+the minimum consumer toolchain, tested separately by the `minimum-go` CI job.
+The original 30-second fuzz budgets and failure checks are unchanged.
+The controller branch contains the workflow and
 collector; a second checkout pins the SDK to the exact triggering commit.
 Both revisions are recorded. The initial frozen G05 source failed native Windows,
 so each repaired candidate now runs both Windows and all 18 original T25 Linux

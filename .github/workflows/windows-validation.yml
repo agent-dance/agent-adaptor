@@ -37,7 +37,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@v5
         with:
-          go-version-file: source/go.mod
+          go-version-file: source/.github/go-version
           cache: false
       - uses: actions/setup-python@v5
         with:
@@ -74,7 +74,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@v5
         with:
-          go-version-file: source/go.mod
+          go-version-file: source/.github/go-version
           cache: false
       - uses: actions/setup-python@v5
         with:

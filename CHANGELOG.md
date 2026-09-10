@@ -87,6 +87,9 @@ All notable changes to this project are documented in this file.
   security fixes. SDK consumers must update their toolchain; the Go 1.26 language
   series remains unchanged. Upgrade `golang.org/x/sys` to v0.44.0 for the
   Windows `NewNTUnicodeString` security fix and scan native Windows reachability.
+- Use official Go 1.27.1 for CI and platform acceptance, including the upstream
+  fuzz deadline shutdown fix (golang/go#75804). Keep the consumer minimum at
+  Go 1.26.8, verify it with full tests and vet, and retain the original fuzz budgets.
 
 - Preserve Codex partial Text, Transcript and Usage when cancellation wins the
   turn/start RPC wait after its matching response has already been received;

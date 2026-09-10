@@ -390,6 +390,8 @@ R027：冷续接夹具必须在接任网关启动前证明旧监听器关闭并�
 
 具体冻结设计、未支持边界、文件所有权和fixture见 `docs/alignment-tasks/2026-09-07/contracts/frozen.json`。合同冻结不代表代码已实现；后续同批godoc、合同测试、使用文档和CHANGELOG完成后才能关闭对应项。其他第14节既有保护继续有效。
 
+R028：Go 1.26.8 的 fuzz 协调器存在官方75804父deadline与child取消竞态，75a84c8 的原T25-V09在30秒/847052样本后报deadline失败。原日志未含内部调度轨迹，独立受控机制复现不得倒填为原run轨迹。CI及T25/T26统一使用包含官方修复的Go1.27.1，由 `.github/go-version` 固定；go.mod最低1.26.8不变，新增minimum-go全量test/vet。原30秒fuzz命令、失败检查及live门保持，禁止工具链私有补丁、吞deadline或重试刷绿。revision27只精确追加CI版本文件的G05验收所有权，新SHA重跑全部门禁。
+
 ## 15. 发布门禁
 
 发布前必须全部满足：
