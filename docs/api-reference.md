@@ -130,6 +130,10 @@ contain controlled reasons, never submitted text. The configured Driver's
 | Codex app-server | `developerInstructions` in thread/start, resume and fork | Same field for one-shot and resident handshakes; no SDK inline-argv size limit. |
 | Cursor print stream-json | Unsupported | Nonempty append fails before resources or launch; an empty call override still clears a default. |
 
+On Windows, publication renames the original private file handle within its
+existing directory. The directory remains pinned throughout publication and
+cleanup; an existing destination is rejected without replacing its bytes.
+
 CodeBuddy and Codex exec carry text in OS-visible argv. SDK-generated invocation
 diagnostics redact the managed value; provider-originated Raw remains complete.
 CodeBuddy's nonempty append uses the final Windows command limits: 32767 UTF-16

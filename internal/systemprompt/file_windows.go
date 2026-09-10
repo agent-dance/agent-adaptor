@@ -81,7 +81,7 @@ func createPrivateWindowsObject(parent *os.File, name string, dir bool) (*os.Fil
 	}
 	attributes.Length = uint32(unsafe.Sizeof(attributes))
 	options := uint32(windows.FILE_SYNCHRONOUS_IO_NONALERT | windows.FILE_OPEN_REPARSE_POINT | windows.FILE_NON_DIRECTORY_FILE)
-	access := uint32(windows.FILE_GENERIC_READ | windows.FILE_GENERIC_WRITE)
+	access := uint32(windows.FILE_GENERIC_READ | windows.FILE_GENERIC_WRITE | windows.DELETE)
 	if dir {
 		options &^= windows.FILE_NON_DIRECTORY_FILE
 		options |= windows.FILE_DIRECTORY_FILE
@@ -98,6 +98,45 @@ func createPrivateWindowsObject(parent *os.File, name string, dir bool) (*os.Fil
 		return nil, &os.PathError{Op: "create private append object", Path: filepath.Join(parent.Name(), name), Err: err}
 	}
 	return os.NewFile(uintptr(handle), filepath.Join(parent.Name(), name)), nil
+}
+
+// publishPrivatePending consumes the pending handle, including on failure.
+func publishPrivatePending(file *os.File, _ *os.Root, name string) (resultErr error) {
+	defer func() { resultErr = errors.Join(resultErr, file.Close()) }()
+	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, `\/:`) {
+		return os.ErrInvalid
+	}
+	encoded, err := windows.UTF16FromString(name)
+	if err != nil {
+		return err
+	}
+	// A same-directory rename uses a NULL RootDirectory and a simple basename.
+	// Supplying the directory handle makes Windows open the target directory
+	// again, which can conflict with our lifetime DELETE pin on Server 2022.
+	// Rename the original pending handle without releasing either identity pin.
+	// FILE_RENAME_INFORMATION layout, including its trailing UTF-16 buffer:
+	// https://learn.microsoft.com/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_rename_information
+	type renameInformation struct {
+		ReplaceIfExists uint32
+		RootDirectory   windows.Handle
+		FileNameLength  uint32
+		FileName        [1]uint16
+	}
+	var layout renameInformation
+	buffer := make([]byte, int(unsafe.Sizeof(layout))+len(encoded)*2)
+	info := (*renameInformation)(unsafe.Pointer(&buffer[0]))
+	info.FileNameLength = uint32((len(encoded) - 1) * 2)
+	copy(unsafe.Slice(&info.FileName[0], len(encoded)), encoded)
+	// Zero ReplaceIfExists rejects a conflicting file rather than replacing it.
+	err = windows.NtSetInformationFile(windows.Handle(file.Fd()), &windows.IO_STATUS_BLOCK{},
+		&buffer[0], uint32(len(buffer)), windows.FileRenameInformation)
+	if status, ok := err.(windows.NTStatus); ok {
+		err = status.Errno()
+	}
+	if err != nil {
+		return &os.LinkError{Op: "publish private append", Old: file.Name(), New: name, Err: err}
+	}
+	return nil
 }
 
 func removePrivateDirectory(f *File) error {

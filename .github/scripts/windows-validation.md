@@ -28,9 +28,10 @@ tracked bytes against their committed Git blobs before and after every command.
 The explicit skip policy documents only existing Windows-inapplicable fixtures,
 disabled live probes and declared unsupported probes; it cannot satisfy a required
 test. DACL, reparse-point, lock-sharing, process-tree and native argv tests stay
-mandatory. The five `TestWindowsAppend*` roots require private creation, DACL
+mandatory. The six `TestWindowsAppend*` roots require private creation, DACL
 drift rejection, the complete lifetime pin and retryable cleanup, trusted owner
-checks and hard-link rejection; their subtests may not skip. Windows runner privileges must allow the existing symlink/DACL tests;
+checks, hard-link rejection, and same-directory atomic publication without
+releasing the directory pin or overwriting a conflicting target; their subtests may not skip. Windows runner privileges must allow the existing symlink/DACL tests;
 an unavailable prerequisite or failed assertion fails verification.
 
 Actions artifacts retain raw logs, command exits/counts, OS/Go/PowerShell versions,

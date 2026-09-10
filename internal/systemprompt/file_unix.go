@@ -24,6 +24,14 @@ func makePrivatePending(_ *os.File, root *os.Root) (*os.File, error) {
 	return root.OpenFile(".pending", os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 }
 
+// publishPrivatePending consumes the pending handle, including on failure.
+func publishPrivatePending(file *os.File, root *os.Root, name string) error {
+	if err := file.Close(); err != nil {
+		return err
+	}
+	return root.Rename(".pending", name)
+}
+
 func removePrivateDirectory(f *File) error {
 	if f.parent != nil {
 		return f.parent.Remove(filepath.Base(f.dir))

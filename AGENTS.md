@@ -384,6 +384,8 @@ R024：2026-09-10 main 审查补充约束：skill 附件及非配置 manifest �
 
 R025：全量 CI 整合保留 R024 五项修复及 Windows append 全生命周期禁止 delete-sharing 的 pin。deferred skills 使用平台实际可观察 mode，skills 父路径为普通文件必须明确失败。Codex 取消与 turn/start 应答竞态只以唯一 RPC reader 已接收且 ID 匹配的正式应答绑定 turn，并在既有 drain 后恢复同轮审计，保留取消 cause 且不提交失败 checkpoint。审批 own-deadline 测试须先证明 Ask pending 暂停主动预算，再推进受控墙钟；不得用迟到 handler 推进共享时钟或放宽主因断言。测试跨进程 pipe 只分别要求完整有序，跨 pipe 顺序须有实际接收证明；并发 fixture 使用真实准入/消费屏障。Go 最低补丁为 1.26.8，前端生产及全依赖树保持 high 审计阈值。新的同 SHA 全量及原生 CI 证据不能继承旧候选结论，T27–T30 live 与 G06 仍单独判定。
 
+R026：06a1828 的 windows-latest 全量/权限回归通过后，独立 Windows Server 2022 验收发现 append 的 Root.Rename 触发 sharing violation。私有 .pending 必须保留创建句柄直至发布，Windows 使用 RootDirectory=NULL 和简单 basename 的同目录正式 rename，不释放目录 lifetime pin、不回退路径移动、不覆盖既存目标。helper 在成功及失败均关闭 pending 句柄，主错与 Close 次因保留，取消及后续 cleanup 可重试。新增发布/冲突/原字节/文件身份/handle关闭/pin负例必须在两个原生 Windows 版本通过，旧失败留档，新 SHA 重跑 G05/T25/T26。
+
 具体冻结设计、未支持边界、文件所有权和fixture见 `docs/alignment-tasks/2026-09-07/contracts/frozen.json`。合同冻结不代表代码已实现；后续同批godoc、合同测试、使用文档和CHANGELOG完成后才能关闭对应项。其他第14节既有保护继续有效。
 
 ## 15. 发布门禁

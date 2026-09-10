@@ -53,6 +53,10 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- Publish private Windows append files by renaming their original handle within
+  the same directory, avoiding Server 2022 sharing conflicts without releasing
+  the lifetime directory pin. Reject existing targets and preserve cleanup retries.
+
 - Give parallel A2A HTTP test clients independent transports while preserving
   real redirect and bearer checks; repeat the client contracts on native Windows.
 

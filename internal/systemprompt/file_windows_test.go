@@ -136,6 +136,91 @@ func TestWindowsAppendPrivateCreationUnderSharedTemp(t *testing.T) {
 	}
 }
 
+func TestWindowsAppendPublishKeepsPinsAndRejectsConflict(t *testing.T) {
+	for _, conflict := range []bool{false, true} {
+		name := "publish"
+		if conflict {
+			name = "existing-target"
+		}
+		t.Run(name, func(t *testing.T) {
+			directory, err := makePrivateDirectory()
+			if err != nil {
+				t.Fatal(err)
+			}
+			target := filepath.Join(directory.Name(), "published.txt")
+			defer func() {
+				os.Remove(filepath.Join(directory.Name(), ".pending"))
+				os.Remove(target)
+				directory.Close()
+				os.Remove(directory.Name())
+			}()
+			pending, err := makePrivatePending(directory, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer pending.Close()
+			if _, err := pending.WriteString("complete private bytes\n甲"); err != nil {
+				t.Fatal(err)
+			}
+			if err := pending.Sync(); err != nil {
+				t.Fatal(err)
+			}
+			before, err := pending.Stat()
+			if err != nil {
+				t.Fatal(err)
+			}
+			var targetBefore os.FileInfo
+			if conflict {
+				if err := os.WriteFile(target, []byte("existing bytes"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				targetBefore, err = os.Stat(target)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			assertPinned := func() {
+				t.Helper()
+				if err := os.Rename(directory.Name(), directory.Name()+"-moved"); !errors.Is(err, windows.ERROR_SHARING_VIOLATION) {
+					t.Fatalf("directory pin was lost: %v", err)
+				}
+			}
+			assertPinned()
+			err = publishPrivatePending(pending, nil, "published.txt")
+			if conflict {
+				if !errors.Is(err, os.ErrExist) {
+					t.Fatalf("existing destination was not rejected: %v", err)
+				}
+				if got, err := os.ReadFile(target); err != nil || string(got) != "existing bytes" {
+					t.Fatalf("conflicting destination changed: %q, %v", got, err)
+				}
+				targetAfter, err := os.Stat(target)
+				if err != nil || !os.SameFile(targetBefore, targetAfter) {
+					t.Fatalf("conflicting destination identity changed: %v", err)
+				}
+				if got, err := os.ReadFile(pending.Name()); err != nil || string(got) != "complete private bytes\n甲" {
+					t.Fatalf("failed publication changed pending bytes: %q, %v", got, err)
+				}
+			} else {
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got, err := os.ReadFile(target); err != nil || string(got) != "complete private bytes\n甲" {
+					t.Fatalf("publication bytes: %q, %v", got, err)
+				}
+				after, err := os.Stat(target)
+				if err != nil || !os.SameFile(before, after) {
+					t.Fatalf("publication changed file identity: %v", err)
+				}
+			}
+			if _, err := pending.Stat(); !errors.Is(err, os.ErrClosed) {
+				t.Fatalf("publication did not consume pending handle: %v", err)
+			}
+			assertPinned()
+		})
+	}
+}
+
 func TestWindowsAppendDACLChangesRejected(t *testing.T) {
 	for _, object := range []string{"directory", "file"} {
 		for _, change := range []string{"world-read", "unprotected", "null-dacl"} {

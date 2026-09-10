@@ -101,15 +101,14 @@ func Materialize(ctx context.Context, text string) (result *File, resultErr erro
 	_, writeErr := temp.WriteString(text)
 	syncErr := temp.Sync()
 	info, statErr := temp.Stat()
-	closeErr := temp.Close()
-	if err := errors.Join(writeErr, syncErr, statErr, closeErr); err != nil {
-		return nil, err
+	if err := errors.Join(writeErr, syncErr, statErr); err != nil {
+		return nil, errors.Join(err, temp.Close())
 	}
 	f.fileInfo = info
 	if err := ctx.Err(); err != nil {
-		return nil, errors.Join(err, context.Cause(ctx))
+		return nil, errors.Join(err, context.Cause(ctx), temp.Close())
 	}
-	if err := f.root.Rename(".pending", f.name); err != nil {
+	if err := publishPrivatePending(temp, f.root, f.name); err != nil {
 		return nil, err
 	}
 	if err := f.Verify(ctx); err != nil {

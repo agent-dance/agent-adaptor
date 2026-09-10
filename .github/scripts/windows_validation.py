@@ -32,6 +32,7 @@ CURSOR_REQUIRED = {
 MANDATORY = {
     # These native safety tests must PASS. They are never allowed skips.
     PREFIX + "internal/systemprompt:TestWindowsAppendPrivateCreationUnderSharedTemp",
+    PREFIX + "internal/systemprompt:TestWindowsAppendPublishKeepsPinsAndRejectsConflict",
     PREFIX + "internal/systemprompt:TestWindowsAppendDACLChangesRejected",
     PREFIX + "internal/systemprompt:TestWindowsAppendLifetimePinAndCleanupRetry",
     PREFIX + "internal/systemprompt:TestWindowsAppendOwnerAndTrustedAdministrators",
