@@ -124,6 +124,8 @@ jobs:
         if ((go env GOOS) -ne "windows") { throw "Native Windows execution is required" }
     - name: Full native Windows suite (paid probes disabled)
       run: go test -count=1 -timeout=15m -v ./...
+    - name: Scan native Windows dependency reachability
+      run: go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
     - name: Windows ownership, process and argument contracts
       shell: pwsh
       run: |
@@ -134,7 +136,19 @@ jobs:
     - name: Run provider suites with all live build tags and closed environment gate
       shell: pwsh
       run: |
-        go test -count=1 -timeout=10m -tags=claude_live,codebuddy_live,codex_live,cursor_live ./claude ./codebuddy ./codex/... ./cursor
+        go test -count=1 -timeout=10m "-tags=claude_live,codebuddy_live,codex_live,cursor_live" ./claude ./codebuddy ./codex/... ./cursor
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+    - name: Repeat independent profile concurrency on native Windows
+      shell: pwsh
+      run: |
+        go test -count=20 -timeout=10m -v . -run '^TestAlignmentProfileDistinctIdentitiesRunIndependently$'
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+    - name: Repeat parallel A2A HTTP client contracts on native Windows
+      shell: pwsh
+      run: |
+        go test -count=20 -timeout=10m -v ./clients/a2a
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   frontend:
@@ -163,6 +177,10 @@ jobs:
       run: npm audit --omit=dev --audit-level=high
       working-directory: examples/web-chat/aguiclient/web
 
+    - name: Audit all AG-UI dependencies including build tools
+      run: npm audit --audit-level=high
+      working-directory: examples/web-chat/aguiclient/web
+
     - name: Install CopilotKit dependencies
       run: npm ci
       working-directory: examples/web-chat/copilotkit/web
@@ -179,4 +197,8 @@ jobs:
 
     - name: Audit CopilotKit production dependencies
       run: npm audit --omit=dev --audit-level=high
+      working-directory: examples/web-chat/copilotkit/web
+
+    - name: Audit all CopilotKit dependencies including build tools
+      run: npm audit --audit-level=high
       working-directory: examples/web-chat/copilotkit/web

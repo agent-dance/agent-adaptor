@@ -16,6 +16,9 @@ import (
 	a2aproto "github.com/a2aproject/a2a-go/v2/a2a"
 )
 
+// Parallel network fixtures supply their server's HTTP client so each owns its
+// transport. httptest.Server.Close also cleans the global default transport;
+// borrowing that pool would let unrelated fixture cleanup affect these tests.
 func TestAgentCardFetchValidateAndCache(t *testing.T) {
 	t.Parallel()
 
@@ -44,7 +47,7 @@ func TestAgentCardFetchValidateAndCache(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := New(Options{AgentCardURL: srv.URL})
+	client := New(Options{AgentCardURL: srv.URL, HTTPClient: srv.Client()})
 	first, err := client.AgentCard(context.Background())
 	if err != nil {
 		t.Fatalf("AgentCard() error = %v", err)
@@ -112,7 +115,7 @@ func TestSendGetCancelAndStreamPreserveStructuredTask(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := New(Options{AgentCardURL: srv.URL})
+	client := New(Options{AgentCardURL: srv.URL, HTTPClient: srv.Client()})
 	ctx := context.Background()
 	task, err := client.Send(ctx, SendRequest{Message: UserText("review this")})
 	if err != nil {
@@ -221,7 +224,7 @@ func TestSendReturnImmediatelySupportsGetTaskPollingFallback(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := New(Options{AgentCardURL: srv.URL})
+	client := New(Options{AgentCardURL: srv.URL, HTTPClient: srv.Client()})
 	started, err := client.Send(context.Background(), SendRequest{
 		Message:           UserText("poll me"),
 		Tenant:            "tenant-a",
@@ -274,7 +277,7 @@ func TestClientClassifiesProtocolErrors(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := New(Options{AgentCardURL: srv.URL})
+	client := New(Options{AgentCardURL: srv.URL, HTTPClient: srv.Client()})
 	_, err := client.GetTask(context.Background(), GetTaskRequest{TaskID: "missing"})
 	if err == nil {
 		t.Fatal("GetTask() error = nil")
@@ -335,7 +338,7 @@ func TestStreamCloseCancelsUpstreamRequest(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := New(Options{AgentCardURL: srv.URL})
+	client := New(Options{AgentCardURL: srv.URL, HTTPClient: srv.Client()})
 	stream, err := client.SendStream(context.Background(), SendRequest{Message: UserText("stream")})
 	if err != nil {
 		t.Fatalf("SendStream() error = %v", err)
@@ -388,7 +391,7 @@ func TestSendStreamTreatsMessageAsExecutionFinal(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := New(Options{AgentCardURL: srv.URL})
+	client := New(Options{AgentCardURL: srv.URL, HTTPClient: srv.Client()})
 	stream, err := client.SendStream(context.Background(), SendRequest{Message: UserText("stream")})
 	if err != nil {
 		t.Fatalf("SendStream() error = %v", err)
@@ -436,7 +439,7 @@ func TestSendStreamTreatsInputRequiredAsExecutionFinal(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := New(Options{AgentCardURL: srv.URL})
+	client := New(Options{AgentCardURL: srv.URL, HTTPClient: srv.Client()})
 	stream, err := client.SendStream(context.Background(), SendRequest{Message: UserText("stream")})
 	if err != nil {
 		t.Fatalf("SendStream() error = %v", err)
@@ -486,7 +489,7 @@ func TestSendStreamKeepsReadingAfterCompletedSnapshot(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := New(Options{AgentCardURL: srv.URL})
+	client := New(Options{AgentCardURL: srv.URL, HTTPClient: srv.Client()})
 	stream, err := client.SendStream(context.Background(), SendRequest{Message: UserText("stream")})
 	if err != nil {
 		t.Fatalf("SendStream() error = %v", err)
@@ -540,7 +543,7 @@ func TestSendStreamRecoversExecutionFinalTask(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := New(Options{AgentCardURL: srv.URL})
+	client := New(Options{AgentCardURL: srv.URL, HTTPClient: srv.Client()})
 	stream, err := client.SendStream(context.Background(), SendRequest{Message: UserText("stream")})
 	if err != nil {
 		t.Fatalf("SendStream() error = %v", err)
@@ -594,7 +597,7 @@ func TestSendStreamRecoveryFailsForNonFinalTask(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := New(Options{AgentCardURL: srv.URL})
+	client := New(Options{AgentCardURL: srv.URL, HTTPClient: srv.Client()})
 	stream, err := client.SendStream(context.Background(), SendRequest{Message: UserText("stream")})
 	if err != nil {
 		t.Fatalf("SendStream() error = %v", err)
@@ -660,7 +663,7 @@ func TestClientRejectsCrossOriginBearerByDefault(t *testing.T) {
 	}))
 	defer card.Close()
 
-	client := New(Options{AgentCardURL: card.URL, Auth: BearerToken("secret")})
+	client := New(Options{AgentCardURL: card.URL, Auth: BearerToken("secret"), HTTPClient: card.Client()})
 	_, err := client.Send(context.Background(), SendRequest{Message: UserText("review this")})
 	if !errors.Is(err, ErrUntrustedOrigin) {
 		t.Fatalf("Send() error = %v, want ErrUntrustedOrigin", err)
@@ -709,6 +712,7 @@ func TestClientAllowsTrustedCrossOriginBearerWithOptIn(t *testing.T) {
 
 	client := New(Options{
 		AgentCardURL:       card.URL,
+		HTTPClient:         card.Client(),
 		Auth:               BearerToken("secret"),
 		TrustedAuthOrigins: []string{protocol.URL},
 	})
@@ -727,18 +731,32 @@ func TestClientAllowsTrustedCrossOriginBearerWithOptIn(t *testing.T) {
 
 func TestClientDoesNotLeakBearerOnCrossOriginRedirect(t *testing.T) {
 	t.Parallel()
+	card, requests := newBearerRedirectFixture(t)
+	client := New(Options{AgentCardURL: card.URL, Auth: BearerToken("secret"), HTTPClient: card.Client()})
+	task, err := client.Send(context.Background(), SendRequest{Message: UserText("review this")})
+	if err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+	assertBearerRedirectResult(t, task, requests)
+}
 
-	redirectedAuth := make(chan string, 1)
+type bearerRedirectRequest struct {
+	redirected bool
+	method     string
+	rpcMethod  string
+	auth       string
+}
+
+func newBearerRedirectFixture(t *testing.T) (*httptest.Server, <-chan bearerRedirectRequest) {
+	t.Helper()
+	requests := make(chan bearerRedirectRequest, 4)
 
 	var redirected *httptest.Server
 	redirected = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		redirectedAuth <- r.Header.Get("Authorization")
-		if method := readRPCMethod(t, r); method != "SendMessage" {
-			t.Fatalf("redirected method = %q, want SendMessage", method)
-		}
+		requests <- bearerRedirectRequest{true, r.Method, readRPCMethod(t, r), r.Header.Get("Authorization")}
 		writeRPCResult(t, w, `{"task":`+taskJSON("TASK_STATE_COMPLETED")+`}`)
 	}))
-	defer redirected.Close()
+	t.Cleanup(redirected.Close)
 
 	var card *httptest.Server
 	card = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -755,24 +773,31 @@ func TestClientDoesNotLeakBearerOnCrossOriginRedirect(t *testing.T) {
 				"skills":[{"id":"chat","name":"Chat","description":"chat","tags":["chat"]}]
 			}`, card.URL+"/a2a")
 		case "/a2a":
+			requests <- bearerRedirectRequest{false, r.Method, readRPCMethod(t, r), r.Header.Get("Authorization")}
 			http.Redirect(w, r, redirected.URL+"/a2a", http.StatusTemporaryRedirect)
 		default:
 			http.NotFound(w, r)
 		}
 	}))
-	defer card.Close()
+	t.Cleanup(card.Close)
+	return card, requests
+}
 
-	client := New(Options{AgentCardURL: card.URL, Auth: BearerToken("secret")})
-	if _, err := client.Send(context.Background(), SendRequest{Message: UserText("review this")}); err != nil {
-		t.Fatalf("Send() error = %v", err)
+func assertBearerRedirectResult(t *testing.T, task Task, requests <-chan bearerRedirectRequest) {
+	t.Helper()
+	if task.ID != "task-1" || task.Status.State != TaskStateCompleted {
+		t.Fatalf("Send() task = %+v, want task-1 completed", task)
 	}
-	select {
-	case got := <-redirectedAuth:
-		if got != "" {
-			t.Fatalf("redirected Authorization = %q, want empty", got)
+	if len(requests) != 2 {
+		t.Fatalf("request count = %d, want one original and one redirected POST", len(requests))
+	}
+	for _, want := range []bearerRedirectRequest{
+		{false, http.MethodPost, "SendMessage", "Bearer secret"},
+		{true, http.MethodPost, "SendMessage", ""},
+	} {
+		if got := <-requests; got != want {
+			t.Fatalf("request = %+v, want %+v", got, want)
 		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("redirected protocol request did not arrive")
 	}
 }
 

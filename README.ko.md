@@ -31,7 +31,7 @@ Claude Code로 바꾸려면 생성 코드의 Driver만 교체하면 되고, 나�
 go get github.com/agent-dance/agent-adaptor
 ```
 
-Go 1.26.5 이상이 필요하다.
+Go 1.26.8 이상이 필요하다.
 
 중요: **실행 시점에 해당 Agent가 이미 설치되어 있고 로그인이 완료되어 있어야 한다**
 

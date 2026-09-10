@@ -1181,7 +1181,14 @@ func TestAlignmentPolicyClaudeFormalSchema(t *testing.T) {
 					if reason != "" {
 						var re *RunError
 						if r != nil || !errors.As(err, &re) || re.Reason != reason || re.Result == nil {
-							t.Fatalf("formal failure=%#v %v carrier=%#v", r, err, re)
+							cause := err
+							if re != nil {
+								cause = re.Cause
+								if re.Result != nil {
+									t.Logf("formal fixture partial raw=%+v", re.Result.Raw())
+								}
+							}
+							t.Fatalf("formal failure=%#v %v carrier=%#v cause=%v", r, err, re, cause)
 						}
 						r = re.Result
 						if store.Finalizes.Load() != 0 {
@@ -1189,7 +1196,15 @@ func TestAlignmentPolicyClaudeFormalSchema(t *testing.T) {
 						}
 					} else {
 						if err != nil || r == nil {
-							t.Fatalf("formal success=%#v %v", r, err)
+							cause := err
+							var re *RunError
+							if errors.As(err, &re) {
+								cause = re.Cause
+								if re.Result != nil {
+									t.Logf("formal fixture partial raw=%+v", re.Result.Raw())
+								}
+							}
+							t.Fatalf("formal success=%#v %v cause=%v", r, err, cause)
 						}
 						var out struct {
 							OK bool `json:"ok"`

@@ -53,6 +53,42 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- Give parallel A2A HTTP test clients independent transports while preserving
+  real redirect and bearer checks; repeat the client contracts on native Windows.
+
+- Synchronize the concurrent delegation history test with real Driver admission
+  and consumed Started events; separately cover loss under a slow UI subscriber
+  while retaining every completed Service record and its accepted order.
+
+- Upgrade the AG-UI example build tool to Vite 6.4.3 with compatible security
+  patches, and audit its build dependencies at the existing high threshold.
+
+- Verify independent profile concurrency through held Driver admission barriers,
+  with bounded diagnostics and cleanup; native Windows CI repeats the contract
+  twenty times without imposing a one-second cold profile setup deadline.
+
+- Patch CopilotKit example production dependencies, including sharp native image
+  libraries, and affected build/lint dependencies. Retain the existing high/critical
+  production audit gate, framework versions and official npm registry sources. Also
+  enforce the same threshold for build/lint dependencies. Document remaining
+  lower-severity and development dependency findings separately.
+
+- Raise the minimum Go toolchain from 1.26.5 to 1.26.8 to include standard-library
+  security fixes. SDK consumers must update their toolchain; the Go 1.26 language
+  series remains unchanged. Upgrade `golang.org/x/sys` to v0.44.0 for the
+  Windows `NewNTUnicodeString` security fix and scan native Windows reachability.
+
+- Preserve Codex partial Text, Transcript and Usage when cancellation wins the
+  turn/start RPC wait after its matching response has already been received;
+  retain response/turn identity checks and the original cancellation cause.
+- Preserve cold profile resumption on Windows when deferred skills become real
+  directories, and reject a managed skills parent replaced by an ordinary file.
+- Run protocol and argument fixtures as native Windows executables; retain
+  per-stream audit order without assuming stdout/stderr arrival order.
+- Make the approval-deadline regression deterministic: independently prove the
+  pending Ask pauses active time before advancing its own deadline, retaining
+  strict timeout classification and late-handler behavior.
+
 - Fingerprint skill attachments and other non-configuration profile resources
   as exact bytes; JSON arrays/scalars and malformed example assets no longer
   prevent hosted Tools from starting. Known configuration stays strictly checked.

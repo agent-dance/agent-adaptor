@@ -114,6 +114,13 @@ func runAlignmentClaudeHelper() int {
 			return 0
 		}
 		if strings.Contains(prompt, "partial-") {
+			if delay := os.Getenv("ALIGNMENT_PARTIAL_OUTPUT_DELAY"); delay != "" {
+				duration, err := time.ParseDuration(delay)
+				if err != nil {
+					return 37
+				}
+				time.Sleep(duration)
+			}
 			fmt.Fprintln(os.Stderr, "partial stderr")
 			fmt.Fprintln(os.Stdout, `{"type":"stream_event","event":{"type":"message_start","message":{"id":"partial","usage":{"input_tokens":7,"output_tokens":2}}}}`)
 			fmt.Fprintln(os.Stdout, alignmentClaudePartial)
@@ -152,6 +159,8 @@ func runAlignmentClaudeHelper() int {
 			terminal = strings.Replace(terminal, `"result":"完成"`, `"result":"{\"directory\":\"docs\"}"`, 1)
 		}
 		switch {
+		case strings.Contains(prompt, "invalid-project-metadata"):
+			terminal = strings.Replace(terminal, `"structured_output":{"directory":"docs"}`, `"structured_output":{"project_name":42}`, 1)
 		case strings.Contains(prompt, "invalid"):
 			terminal = strings.ReplaceAll(terminal, `"directory":"docs"`, `"directory":1`)
 		case strings.Contains(prompt, "missing"):
@@ -402,9 +411,24 @@ func TestAlignmentClaudeSchemaMatrix(t *testing.T) {
 }
 
 func TestAlignmentClaudePersistentPartial(t *testing.T) {
-	for _, mode := range []string{"partial-eof", "partial-cancel", "partial-deadline"} {
-		t.Run(mode, func(t *testing.T) {
+	for _, tc := range []struct {
+		name, mode  string
+		outputDelay time.Duration
+	}{
+		{name: "partial-eof", mode: "partial-eof"},
+		{name: "partial-cancel", mode: "partial-cancel"},
+		{name: "partial-deadline", mode: "partial-deadline"},
+		// Deliberately exceed the former shared 600ms caller deadline before
+		// emitting partial frames. Host scheduling must not decide EOF/cancel.
+		{name: "partial-eof-delayed-output", mode: "partial-eof", outputDelay: 750 * time.Millisecond},
+		{name: "partial-cancel-delayed-output", mode: "partial-cancel", outputDelay: 750 * time.Millisecond},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mode := tc.mode
 			f := newAlignmentClaudeFixture(t, true)
+			if tc.outputDelay != 0 {
+				f.cfg.Env = append(f.cfg.Env, driver.EnvBinding{Name: "ALIGNMENT_PARTIAL_OUTPUT_DELAY", Value: tc.outputDelay.String()})
+			}
 			store := memory.NewStore()
 			a := f.agent(adaptor.WithThreadStore(store))
 			defer a.Close(context.Background())
@@ -416,12 +440,35 @@ func TestAlignmentClaudePersistentPartial(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), 600*time.Millisecond)
+			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
+			// EOF comes from provider exit; cancellation comes from the observed
+			// ready frame below. This watchdog only bounds a broken test and must
+			// never count as either expected outcome.
+			watchdogExpired := make(chan struct{})
+			watchdog := time.AfterFunc(30*time.Second, func() {
+				close(watchdogExpired)
+				cancel()
+			})
+			defer watchdog.Stop()
+			if mode == "partial-deadline" {
+				// Only this case exercises a real caller deadline. Leave room for
+				// fixture frames on a busy host; readiness remains mandatory.
+				deadlineCtx, deadlineCancel := context.WithTimeout(ctx, 5*time.Second)
+				defer deadlineCancel()
+				ctx = deadlineCtx
+			}
 			stream := th.Stream(ctx, mode)
 			sawReady := false
+			var stdout strings.Builder
 			for event := range stream.Events() {
-				if p, ok := event.(adaptor.ProcessInfo); ok && strings.Contains(string(p.Bytes), "partial_ready") {
+				p, ok := event.(adaptor.ProcessInfo)
+				if !ok || p.Kind != adaptor.ProcessStdout {
+					continue
+				}
+				// Process chunks need not align with the complete readiness frame.
+				stdout.Write(p.Bytes)
+				if !sawReady && strings.Contains(stdout.String(), `{"type":"system","subtype":"partial_ready"}`+"\n") {
 					sawReady = true
 					if mode == "partial-cancel" {
 						stream.Cancel()
@@ -430,17 +477,22 @@ func TestAlignmentClaudePersistentPartial(t *testing.T) {
 				}
 			}
 			result, err := stream.Result()
+			select {
+			case <-watchdogExpired:
+				t.Fatalf("partial fixture watchdog expired: mode=%s ready=%t err=%v", mode, sawReady, err)
+			default:
+			}
 			partial := alignmentClaudeResult(t, result, err)
 			if err == nil {
 				t.Fatal("interrupted provider succeeded")
 			}
-			if mode == "partial-cancel" && (!sawReady || !errors.Is(err, context.Canceled)) {
+			if mode == "partial-cancel" && (!sawReady || ctx.Err() != nil || !errors.Is(err, context.Canceled)) {
 				t.Fatalf("cancel cause lost: %v", err)
 			}
-			if mode == "partial-deadline" && (!sawReady || !errors.Is(err, context.DeadlineExceeded)) {
+			if mode == "partial-deadline" && (!sawReady || ctx.Err() != context.DeadlineExceeded || !errors.Is(err, context.DeadlineExceeded)) {
 				t.Fatalf("deadline cause lost: %v", err)
 			}
-			if mode == "partial-eof" && (!errors.Is(err, io.EOF) || partial.Raw().Terminal == nil) {
+			if mode == "partial-eof" && (ctx.Err() != nil || !errors.Is(err, io.EOF) || partial.Raw().Terminal == nil) {
 				t.Fatalf("EOF/terminal lost: %v raw=%#v", err, partial.Raw())
 			}
 			if !strings.Contains(partial.Raw().Stdout, alignmentClaudePartial) || partial.Raw().Stderr != "partial stderr\n" || len(partial.Transcript()) < 3 || partial.Usage == nil || partial.Usage.InputTokens != 7 || partial.Text != "" {

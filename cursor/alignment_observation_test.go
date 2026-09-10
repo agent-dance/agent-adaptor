@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -233,6 +234,11 @@ func TestAlignmentCursorDriverTransportAndOutput(t *testing.T) {
 		t.Fatalf("actual print matrix=%+v", caps)
 	}
 	var outputs []driver.Response
+	wantStderr := "fixture stderr\n"
+	if runtime.GOOS == "windows" {
+		// The .cmd fixture's echo writes CRLF; Raw must preserve those bytes.
+		wantStderr = "fixture stderr\r\n"
+	}
 	for _, streaming := range []bool{false, true} {
 		req := alignmentCursorCatalog()
 		req.Prompt = "original"
@@ -243,13 +249,150 @@ func TestAlignmentCursorDriverTransportAndOutput(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(s.facts()) != 2 || r.RawStreams.Stdout != body || r.RawStreams.Stderr != "fixture stderr\n" || r.Output != "正文" || r.Summary != "" || r.RawStreams.Terminal == nil || r.Checkpoint == nil || r.Usage != nil {
+		if len(s.facts()) != 2 || r.RawStreams.Stdout != body || r.RawStreams.Stderr != wantStderr || r.Output != "正文" || r.Summary != "" || r.RawStreams.Terminal == nil || r.Checkpoint == nil || r.Usage != nil {
 			t.Fatalf("response=%+v facts=%+v", r, s.facts())
 		}
 		outputs = append(outputs, r)
 	}
+	// Independent stdout/stderr pipes can interleave differently on either OS.
+	// Preserve the order within each pipe and compare every item and raw byte;
+	// no provider protocol item is sorted or removed from the comparison.
+	firstStdout, firstStderr := alignmentCursorTranscriptPipes(outputs[0].Transcript)
+	secondStdout, secondStderr := alignmentCursorTranscriptPipes(outputs[1].Transcript)
+	if len(firstStderr) != 1 || firstStderr[0].Text != "fixture stderr" || !reflect.DeepEqual(firstStderr, secondStderr) {
+		t.Fatalf("stderr transcript changed: first=%+v second=%+v", firstStderr, secondStderr)
+	}
+	outputs[0].Transcript, outputs[1].Transcript = firstStdout, secondStdout
 	if !reflect.DeepEqual(outputs[0], outputs[1]) {
 		t.Fatal("SPI streaming flag changed output")
+	}
+}
+
+// Independent executions may observe different interleavings of two pipes.
+// Every item and its position within its own pipe remain part of equivalence.
+func alignmentCursorTranscriptPipes(items []driver.TranscriptItem) (stdout, stderr []driver.TranscriptItem) {
+	for _, item := range items {
+		if item.Kind == driver.TranscriptStderr {
+			stderr = append(stderr, item)
+		} else {
+			stdout = append(stdout, item)
+		}
+	}
+	return stdout, stderr
+}
+
+func alignmentCursorResultsEquivalent(a, b *adaptor.Result) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	var aDecoded, bDecoded any
+	aDecodeErr, bDecodeErr := a.Decode(&aDecoded), b.Decode(&bDecoded)
+	aStdout, aStderr := alignmentCursorTranscriptPipes(a.Transcript())
+	bStdout, bStderr := alignmentCursorTranscriptPipes(b.Transcript())
+	return a.Text == b.Text && a.Summary == b.Summary && a.Model == b.Model && a.Provider == b.Provider &&
+		reflect.DeepEqual(a.Usage, b.Usage) && reflect.DeepEqual(a.Metadata, b.Metadata) &&
+		reflect.DeepEqual(a.Raw(), b.Raw()) && reflect.DeepEqual(aStdout, bStdout) && reflect.DeepEqual(aStderr, bStderr) &&
+		reflect.DeepEqual(a.Services(), b.Services()) && reflect.DeepEqual(aDecoded, bDecoded) && reflect.DeepEqual(aDecodeErr, bDecodeErr)
+}
+
+// This fixture only passes an independently built Response through the public
+// Result mapping. It launches no provider or process and applies no reordering.
+type alignmentCursorResultFixture struct{ response driver.Response }
+
+func (alignmentCursorResultFixture) Descriptor() driver.Descriptor {
+	return driver.Descriptor{Type: "cursor-equivalence-fixture", StructuredOutput: driver.StructuredOutputCapability{JSONSchemaNative: true, WorksWithRun: true, WorksWithHITL: true}}
+}
+func (alignmentCursorResultFixture) ValidateConfig(any) error { return nil }
+func (f alignmentCursorResultFixture) Run(context.Context, driver.Request, driver.EventSink) (driver.Response, error) {
+	return f.response, nil
+}
+
+func TestAlignmentCursorResultEquivalenceControls(t *testing.T) {
+	fixture := func() driver.Response {
+		item := func(kind driver.TranscriptKind, text string) driver.TranscriptItem {
+			cost := 0.125
+			return driver.TranscriptItem{ScopeID: "scope", ParentScopeID: "parent", ParentToolCallID: "parent-tool", Kind: kind, Text: text, Delta: true, ToolUseID: "call", ToolName: "tool", Input: map[string]any{"arg": "value"}, IsError: true, Model: "model", SessionID: "session", Usage: &driver.Usage{InputTokens: 7}, CostUSD: &cost, Subtype: "subtype", Errors: []string{"detail"}, Metadata: map[string]string{"origin": "provider"}, Data: map[string]any{"payload": "value"}}
+		}
+		return driver.Response{Output: "text", Summary: "summary", Model: "model", Provider: "cursor", Metadata: map[string]string{"key": "value"}, Usage: &driver.Usage{InputTokens: 7},
+			RawStreams:       &driver.RawStreams{Stdout: "first\nsecond\n", Stderr: "warning one\nwarning two\n", Terminal: &driver.TerminalPayload{Event: "result", JSON: json.RawMessage(`{"result":"text"}`)}},
+			Transcript:       []driver.TranscriptItem{item(driver.TranscriptToolCall, "first"), item(driver.TranscriptResult, "second"), item(driver.TranscriptStderr, "warning one"), item(driver.TranscriptStderr, "warning two")},
+			StructuredOutput: &driver.StructuredOutput{Valid: true, RawJSON: json.RawMessage(`{"answer":"value"}`)},
+			RuntimeServices:  []driver.RuntimeServiceReport{{ID: "observed", Status: driver.RuntimeServiceRunning, Metadata: map[string]string{"probe": "ok"}}},
+		}
+	}
+	result := func(t *testing.T, response driver.Response) *adaptor.Result {
+		t.Helper()
+		a := adaptor.New(alignmentCursorResultFixture{response: response})
+		defer a.Close(context.Background())
+		r, err := a.Run(context.Background(), "fixture", adaptor.WithSchemaJSON([]byte(`{"type":"object","properties":{"answer":{"type":"string"}},"required":["answer"]}`)))
+		if err != nil {
+			var re *adaptor.RunError
+			if !errors.Is(err, adaptor.ErrPolicyViolation) || !errors.As(err, &re) || re.Result == nil {
+				t.Fatal(err)
+			}
+			r = re.Result
+		}
+		return r
+	}
+	cases := []struct {
+		name   string
+		change func(*driver.Response)
+		equal  bool
+	}{
+		{"identical", func(*driver.Response) {}, true},
+		{"cross-pipe-interleaving", func(r *driver.Response) {
+			v := r.Transcript
+			r.Transcript = []driver.TranscriptItem{v[2], v[0], v[3], v[1]}
+		}, true},
+		{"stdout-order", func(r *driver.Response) { r.Transcript[0], r.Transcript[1] = r.Transcript[1], r.Transcript[0] }, false},
+		{"stderr-order", func(r *driver.Response) { r.Transcript[2], r.Transcript[3] = r.Transcript[3], r.Transcript[2] }, false},
+		{"missing-stdout-item", func(r *driver.Response) { r.Transcript = r.Transcript[1:] }, false},
+		{"missing-stderr-item", func(r *driver.Response) { r.Transcript = r.Transcript[:3] }, false},
+		{"duplicate-item", func(r *driver.Response) { r.Transcript = append(r.Transcript, r.Transcript[3]) }, false},
+		{"stdout-byte", func(r *driver.Response) { r.RawStreams.Stdout = strings.TrimSuffix(r.RawStreams.Stdout, "\n") }, false},
+		{"stderr-byte", func(r *driver.Response) { r.RawStreams.Stderr = strings.TrimSuffix(r.RawStreams.Stderr, "\n") }, false},
+		{"terminal-json", func(r *driver.Response) { r.RawStreams.Terminal.JSON = json.RawMessage(`{"result":"changed"}`) }, false},
+		{"terminal-event", func(r *driver.Response) { r.RawStreams.Terminal.Event = "changed" }, false},
+		{"text", func(r *driver.Response) { r.Output = "changed" }, false},
+		{"summary", func(r *driver.Response) { r.Summary = "changed" }, false},
+		{"model", func(r *driver.Response) { r.Model = "changed" }, false},
+		{"provider", func(r *driver.Response) { r.Provider = "changed" }, false},
+		{"usage", func(r *driver.Response) { r.Usage = nil }, false},
+		{"metadata", func(r *driver.Response) { r.Metadata["key"] = "changed" }, false},
+		{"services", func(r *driver.Response) { r.RuntimeServices[0].Metadata["probe"] = "changed" }, false},
+		{"structured-value", func(r *driver.Response) { r.StructuredOutput.RawJSON = json.RawMessage(`{"answer":"changed"}`) }, false},
+		{"structured-error", func(r *driver.Response) { r.StructuredOutput.RawJSON = json.RawMessage(`{"answer":42}`) }, false},
+	}
+	// The complete TranscriptItem field surface is exercised on both pipes.
+	// A newly added field must first be populated in the fixture, not ignored.
+	for _, index := range []int{0, 2} {
+		item := reflect.ValueOf(fixture().Transcript[index])
+		for field := 0; field < item.NumField(); field++ {
+			if item.Field(field).IsZero() {
+				t.Fatalf("oracle fixture omits TranscriptItem.%s", item.Type().Field(field).Name)
+			}
+			cases = append(cases, struct {
+				name   string
+				change func(*driver.Response)
+				equal  bool
+			}{
+				name:   "item-" + strconv.Itoa(index) + "-" + item.Type().Field(field).Name,
+				change: func(r *driver.Response) { v := reflect.ValueOf(&r.Transcript[index]).Elem().Field(field); v.SetZero() },
+			})
+		}
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			left, right := fixture(), fixture()
+			tc.change(&right)
+			a, b := result(t, left), result(t, right)
+			if a.RunID == "" || b.RunID == "" || a.RunID == b.RunID {
+				t.Fatal("controls require two distinct execution identities")
+			}
+			if got := alignmentCursorResultsEquivalent(a, b); got != tc.equal {
+				t.Fatalf("equivalent=%t want=%t: first=%+v second=%+v", got, tc.equal, a, b)
+			}
+		})
 	}
 }
 
@@ -284,9 +427,22 @@ func TestAlignmentCursorPublicRunStreamDemandAndClear(t *testing.T) {
 		} else {
 			stream := a.Stream(context.Background(), "original", adaptor.WithAppendSystemPrompt(""))
 			var unavailable []string
+			var items []driver.TranscriptItem
+			var sequence uint64
 			for event := range stream.Events() {
+				meta := event.Meta()
+				if meta.RunID != stream.RunID() || meta.Sequence <= sequence {
+					t.Fatalf("single-run receive order changed: previous=%d meta=%+v", sequence, meta)
+				}
+				sequence = meta.Sequence
 				switch e := event.(type) {
 				case adaptor.Notice:
+					if e.Kind == adaptor.NoticeTranscriptItem {
+						if e.Item == nil {
+							t.Fatal("transcript notice lost its item")
+						}
+						items = append(items, *e.Item)
+					}
 					if e.Data["code"] == "observation_unavailable" {
 						unavailable, _ = e.Data["capabilities"].([]string)
 					}
@@ -295,6 +451,11 @@ func TestAlignmentCursorPublicRunStreamDemandAndClear(t *testing.T) {
 				}
 			}
 			r, err = stream.Result()
+			// Within one execution, preserve the actual merged receive order.
+			// The cross-run pipe partition is deliberately not used here.
+			if r == nil || len(items) == 0 || !reflect.DeepEqual(items, r.Transcript()) {
+				t.Fatalf("single-run transcript order/content changed: events=%+v result=%+v err=%v", items, r, err)
+			}
 			if !reflect.DeepEqual(unavailable, []string{"skill", "todo"}) {
 				t.Fatalf("missing demand=%+v", unavailable)
 			}
@@ -315,7 +476,10 @@ func TestAlignmentCursorPublicRunStreamDemandAndClear(t *testing.T) {
 		facts = append(facts, normalized)
 		results = append(results, r)
 	}
-	if !reflect.DeepEqual(facts[0], facts[1]) || !reflect.DeepEqual(results[0].Raw(), results[1].Raw()) || !reflect.DeepEqual(results[0].Transcript(), results[1].Transcript()) || results[0].Text != results[1].Text || results[0].Summary != "" || results[0].Usage != nil {
+	if results[0].RunID == "" || results[1].RunID == "" || results[0].RunID == results[1].RunID {
+		t.Fatal("Run and Stream must retain distinct execution identities")
+	}
+	if !reflect.DeepEqual(facts[0], facts[1]) || !alignmentCursorResultsEquivalent(results[0], results[1]) || results[0].Summary != "" || results[0].Usage != nil {
 		t.Fatalf("Run/Stream divergence: %+v %+v", results[0], results[1])
 	}
 	if runtime.GOOS != "windows" {
@@ -425,7 +589,17 @@ func TestAlignmentCursorCancelClosesObservedCallAndRetainsPartial(t *testing.T) 
 func TestAlignmentCursorLaunchErrorKeepsInfrastructureCause(t *testing.T) {
 	cfg := Config{CommonConfig: CommonConfig{Command: filepath.Join(t.TempDir(), "missing-command"), Env: []driver.EnvBinding{{Name: "CURSOR_HOME", Value: t.TempDir()}}}}
 	r, err := Driver(cfg).Run(context.Background(), driver.Request{}, &alignmentCursorSink{})
-	if !errors.Is(err, os.ErrNotExist) || r.Failure != nil || r.Checkpoint != nil {
+	want := error(os.ErrNotExist)
+	if runtime.GOOS == "windows" {
+		// Windows resolves executable extensions before CreateProcess and returns
+		// exec.ErrNotFound; Unix reports the missing path from process launch.
+		want = exec.ErrNotFound
+		var lookup *exec.Error
+		if !errors.As(err, &lookup) || lookup.Name != cfg.Command {
+			t.Fatalf("missing executable identity lost: %v", err)
+		}
+	}
+	if !errors.Is(err, want) || r.Failure != nil || r.Checkpoint != nil {
 		t.Fatalf("launch outcome=%+v err=%v", r, err)
 	}
 }

@@ -673,7 +673,13 @@ func hostedToolProfileFingerprint(driverType, dir string, req *driver.Request, r
 		entries = append(entries, hostedToolProfileFingerprintEntry{Path: mcpPath, Mode: mode, Fingerprint: hex.EncodeToString(digest[:])})
 	}
 	if len(targets) > 0 && !seen["skills"] {
-		entries = append(entries, hostedToolProfileFingerprintEntry{Path: "skills", Mode: fs.ModeDir | 0755, Fingerprint: "directory"})
+		mode := fs.ModeDir | 0755
+		if runtime.GOOS == "windows" {
+			// MkdirAll(0755) creates a writable directory; Go observes its
+			// Windows attributes as 0777, not POSIX permission bits.
+			mode = fs.ModeDir | 0777
+		}
+		entries = append(entries, hostedToolProfileFingerprintEntry{Path: "skills", Mode: mode, Fingerprint: "directory"})
 	}
 	for rel, source := range targets {
 		// Early ownership checks may encounter a valid managed link whose

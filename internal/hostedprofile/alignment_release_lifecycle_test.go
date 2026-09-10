@@ -155,7 +155,27 @@ func TestAlignmentReleaseLifecycle(t *testing.T) {
 			case <-time.After(4 * time.Second):
 				t.Fatal("successor active barrier not reached")
 			}
-			paths := []string{filepath.Join(filepath.Dir(next.Dir()), "state.json"), filepath.Join(filepath.Dir(next.Dir()), "owner.json"), filepath.Join(filepath.Dir(next.Dir()), "seed.json"), filepath.Join(filepath.Dir(next.Dir()), "owner.lock"), filepath.Join(next.Dir(), "session.jsonl")}
+			paths := []string{filepath.Join(filepath.Dir(next.Dir()), "state.json"), filepath.Join(filepath.Dir(next.Dir()), "owner.json"), filepath.Join(filepath.Dir(next.Dir()), "seed.json"), filepath.Join(next.Dir(), "session.jsonl")}
+			lockPath := filepath.Join(filepath.Dir(next.Dir()), "owner.lock")
+			// Windows byte-range locks forbid ReadFile through another handle.
+			// The lock is empty: held-handle identity/size/mode plus the real
+			// contender below prove it was neither replaced nor unlocked.
+			lockInfo := func() os.FileInfo {
+				f, err := os.Open(lockPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				info, statErr := f.Stat()
+				closeErr := f.Close()
+				if statErr != nil || closeErr != nil {
+					t.Fatal(statErr, closeErr)
+				}
+				return info
+			}
+			lockBefore := lockInfo()
+			if !lockBefore.Mode().IsRegular() || lockBefore.Size() != 0 {
+				t.Fatal("invalid ownership lock fixture")
+			}
 			before := make(map[string][]byte)
 			for _, path := range paths {
 				b, err := os.ReadFile(path)
@@ -164,7 +184,7 @@ func TestAlignmentReleaseLifecycle(t *testing.T) {
 				}
 				before[path] = b
 			}
-			if !bytes.Contains(before[paths[0]], []byte(`"phase":"active"`)) || !bytes.Equal(before[paths[4]], append(append([]byte{}, nonce...), []byte("\nsuccessor-active")...)) {
+			if !bytes.Contains(before[paths[0]], []byte(`"phase":"active"`)) || !bytes.Equal(before[paths[3]], append(append([]byte{}, nonce...), []byte("\nsuccessor-active")...)) {
 				t.Fatal("successor has not published the independent active state/session")
 			}
 			var illegalWrites atomic.Int32
@@ -190,6 +210,10 @@ func TestAlignmentReleaseLifecycle(t *testing.T) {
 				if err != nil || !bytes.Equal(b, before[path]) {
 					t.Errorf("old release changed successor file %s: %v", filepath.Base(path), err)
 				}
+			}
+			lockAfter := lockInfo()
+			if !os.SameFile(lockBefore, lockAfter) || lockAfter.Size() != 0 || lockBefore.Mode() != lockAfter.Mode() || !lockBefore.ModTime().Equal(lockAfter.ModTime()) {
+				t.Error("old release changed the successor ownership lock")
 			}
 			if err := alignmentClaimCall(t, next.Validate); err != nil {
 				t.Fatalf("successor no longer valid: %v", err)

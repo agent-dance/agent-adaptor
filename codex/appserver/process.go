@@ -238,7 +238,11 @@ func (p *Process) RunTurn(ctx context.Context, opts Options, sink driver.EventSi
 	state := newRunState(opts.RunID, sink, opts)
 	state.setThread(p.threadID)
 	p.client.SetNotificationHandler(state.onNotification)
-	defer p.client.SetNotificationHandler(nil)
+	p.client.setTurnStartHandler(state.observeTurnStartResponse)
+	defer func() {
+		p.client.SetNotificationHandler(nil)
+		p.client.setTurnStartHandler(nil)
+	}()
 
 	turnParams := TurnStartParams{
 		ThreadID:    p.threadID,
@@ -320,6 +324,7 @@ func (p *Process) RunTurn(ctx context.Context, opts Options, sink driver.EventSi
 		// protocol/context cause instead of returning only the earlier EOF.
 		select {
 		case <-p.waitCh:
+			state.bindReceivedTurn()
 			if p.waitErr != nil {
 				err = errors.Join(err, fmt.Errorf("codex app-server wait: %w", p.waitErr))
 			}

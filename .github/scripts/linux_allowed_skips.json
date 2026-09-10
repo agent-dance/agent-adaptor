@@ -1,0 +1,16 @@
+{
+  "github.com/agent-dance/agent-adaptor/claude:TestClaudeDriverConformance/live_run": "Live environment gate explicitly disabled",
+  "github.com/agent-dance/agent-adaptor/claude:TestClaudeDriverConformance/live_structured_output": "Live environment gate explicitly disabled",
+  "github.com/agent-dance/agent-adaptor/codebuddy:TestCodeBuddyDriverConformance/live_run": "Live environment gate explicitly disabled",
+  "github.com/agent-dance/agent-adaptor/codebuddy:TestCodeBuddyDriverConformance/live_structured_output": "Live environment gate explicitly disabled",
+  "github.com/agent-dance/agent-adaptor/codebuddy:TestCodeBuddyDriverConformance/quota": "Descriptor explicitly declares quota probe unsupported",
+  "github.com/agent-dance/agent-adaptor/codex:TestCodexDriverConformance/live_run": "Live environment gate explicitly disabled",
+  "github.com/agent-dance/agent-adaptor/codex:TestCodexDriverConformance/live_structured_output": "Live environment gate explicitly disabled",
+  "github.com/agent-dance/agent-adaptor/cursor:TestCursorDriverConformance/live_run": "Live environment gate explicitly disabled",
+  "github.com/agent-dance/agent-adaptor/cursor:TestCursorDriverConformance/live_structured_output": "Live environment gate explicitly disabled",
+  "github.com/agent-dance/agent-adaptor/cursor:TestCursorDriverConformance/stream_capability": "Cursor print descriptor has no streaming capability",
+  "github.com/agent-dance/agent-adaptor/internal/hostedprofile:TestClaimSubprocessHelper": "Subprocess helper skips in its parent; real ownership/process tests must pass",
+  "github.com/agent-dance/agent-adaptor/internal/clihelper:TestPrepareCommandWrapsBatchShimOnWindows": "Windows-only fixture; mandatory on the Windows job.",
+  "github.com/agent-dance/agent-adaptor/internal/clihelper:TestPrepareCommandWrapsPowerShellScriptOnWindows": "Windows-only fixture; mandatory on the Windows job.",
+  "github.com/agent-dance/agent-adaptor/internal/clihelper:TestMergeEnvSynthesizesWindowsRuntimeVariables": "Windows-only fixture; mandatory on the Windows job."
+}

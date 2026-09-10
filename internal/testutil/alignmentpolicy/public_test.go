@@ -173,6 +173,9 @@ func TestT22R016HintQualification(t *testing.T) {
 	}{
 		{"different-body", "r", []adaptor.Event{hint("r", "provider-other", true, adaptor.ReasonCancelled)}, bare, "cancelled", false},
 		{"empty-body", "r", []adaptor.Event{hint("r", "", true, adaptor.ReasonCancelled)}, bare, "cancelled", false},
+		// The ACK-first drain fixture has a scheduling barrier. Independently
+		// keep the competing drained failure's actual classification strict.
+		{"qualified-approval", "r", []adaptor.Event{hint("r", "provider-other", true, adaptor.ReasonApprovalDenied)}, context.Canceled, "approval_denied", false},
 		{"missing-meta", "r", []adaptor.Event{hint("", "r", true, adaptor.ReasonCancelled)}, bare, "active_execution_timeout", true},
 		{"foreign-meta", "r", []adaptor.Event{hint("other", "r", true, adaptor.ReasonCancelled)}, bare, "active_execution_timeout", true},
 		{"empty-stream", "", []adaptor.Event{hint("r", "r", true, adaptor.ReasonCancelled)}, bare, "active_execution_timeout", true},
@@ -549,6 +552,9 @@ type drainStream struct {
 	resultReads                                    atomic.Int32
 	earlyResult                                    atomic.Bool
 	err                                            error
+	resultRelease                                  <-chan struct{}
+	resultWaitCtx                                  context.Context
+	resultWaitEntered                              chan struct{}
 }
 
 func (s *drainStream) RunID() string { return "drain-run" }
@@ -581,6 +587,20 @@ func (s *drainStream) Result() (*adaptor.Result, error) {
 	select {
 	case <-s.tailPublished:
 		if len(s.es) == 0 {
+			// A cancellation request and the drained execution compete to
+			// publish the protocol terminal. The ACK-first fixture releases
+			// this return only after its subscriber observes canceled. Keep
+			// the full-drain check above this gate so it cannot hide early Result.
+			if s.resultRelease != nil {
+				if s.resultWaitEntered != nil {
+					close(s.resultWaitEntered)
+				}
+				select {
+				case <-s.resultRelease:
+				case <-s.resultWaitCtx.Done():
+					return nil, s.resultWaitCtx.Err()
+				}
+			}
 			if s.err != nil {
 				return nil, s.err
 			}
@@ -609,16 +629,23 @@ func TestT22R016CancellationAndTranslationDrain(t *testing.T) {
 	for _, translate := range []bool{false, true} {
 		t.Run(fmt.Sprintf("translation=%v", translate), func(t *testing.T) {
 			ctx := testContext(t)
+			ackObserved := make(chan struct{})
+			var releaseResult sync.Once
+			release := func() { releaseResult.Do(func() { close(ackObserved) }) }
 			holder := make(chan *drainStream, 1)
 			r := &fixedRunner{makeStream: func(runCtx context.Context) adaptor.Stream {
 				s := &drainStream{ctx: runCtx, translate: translate, es: make(chan adaptor.Event, 2), started: make(chan struct{}), cancelSeen: make(chan struct{}), tailPublished: make(chan struct{}), resultDone: make(chan struct{})}
 				if translate {
 					s.es <- adaptor.WithEventMeta(adaptor.TextDelta{Text: "text", Phase: adaptor.PhaseContent, Role: adaptor.RoleAssistant}, adaptor.EventMeta{RunID: "drain-run", Sequence: 1 << 54})
+				} else {
+					s.resultRelease, s.resultWaitCtx = ackObserved, ctx
 				}
 				holder <- s
 				return s
 			}}
 			c := remote(t, r)
+			// Release before remote's cleanup closes its server on a failed test.
+			t.Cleanup(release)
 			stream, err := c.SendStream(ctx, request())
 			if err != nil {
 				t.Fatal(err)
@@ -628,6 +655,11 @@ func TestT22R016CancellationAndTranslationDrain(t *testing.T) {
 			var terminalErr error
 			var s *drainStream
 			cancelled := false
+			type cancelResult struct {
+				task client.Task
+				err  error
+			}
+			cancelDone := make(chan cancelResult, 1)
 			for {
 				e, err := stream.Recv()
 				t.Logf("drain event: %#v err=%T %v", e, err, err)
@@ -653,6 +685,13 @@ func TestT22R016CancellationAndTranslationDrain(t *testing.T) {
 						t.Fatal(err)
 					}
 				}
+				if !translate && task.Status.State == client.TaskStateCanceled {
+					// The protocol consumer broadcasts this terminal before it
+					// waits for the execution producer to finish. Observing this
+					// frame therefore releases Result without waiting for CancelTask
+					// to return and creating a producer/consumer wait cycle.
+					release()
+				}
 				if !translate && !cancelled && task.ID != "" {
 					select {
 					case s = <-holder:
@@ -667,9 +706,11 @@ func TestT22R016CancellationAndTranslationDrain(t *testing.T) {
 					if s.ctx.Err() != nil {
 						t.Fatal("premature cancellation")
 					}
-					if _, err := c.CancelTask(ctx, client.CancelTaskRequest{TaskID: task.ID}); err != nil {
-						t.Fatal(err)
-					}
+					id := task.ID
+					go func() {
+						ack, err := c.CancelTask(ctx, client.CancelTaskRequest{TaskID: id})
+						cancelDone <- cancelResult{task: ack, err: err}
+					}()
 					cancelled = true
 				}
 			}
@@ -692,6 +733,20 @@ func TestT22R016CancellationAndTranslationDrain(t *testing.T) {
 					t.Fatalf("translation outcome=%#v %T %v: %v", task, terminalErr, terminalErr, err)
 				}
 			} else {
+				select {
+				case ack := <-cancelDone:
+					if ack.err != nil {
+						t.Fatal(ack.err)
+					}
+					if ack.task.ID != task.ID || ack.task.Status.State != client.TaskStateCanceled {
+						t.Fatalf("CancelTask acknowledgement=%#v stream=%#v", ack.task, task)
+					}
+					if code, limit := control(ack.task); code != "" || limit != nil {
+						t.Fatalf("CancelTask acknowledgement gained control=%s/%v", code, limit)
+					}
+				case <-ctx.Done():
+					t.Fatal("CancelTask did not finish after observed acknowledgement and drain")
+				}
 				if !errors.Is(terminalErr, io.EOF) {
 					t.Fatal(terminalErr)
 				}
@@ -992,6 +1047,64 @@ func TestT22DrainOracleConsumption(t *testing.T) {
 			}
 			if consume && !errors.Is(err, context.Canceled) {
 				t.Fatalf("fully drained Result rejected: %v", err)
+			}
+		})
+	}
+}
+
+// The ACK ordering seam must not postpone or hide the negative drain oracle.
+// The successful control reaches the seam only after consuming the closed tail.
+func TestT22DrainOracleResultBarrier(t *testing.T) {
+	for _, consume := range []bool{false, true} {
+		t.Run(fmt.Sprintf("consume=%v", consume), func(t *testing.T) {
+			watch := testContext(t)
+			ctx, cancel := context.WithCancel(watch)
+			defer cancel()
+			release := make(chan struct{})
+			var once sync.Once
+			unblock := func() { once.Do(func() { close(release) }) }
+			defer unblock()
+			entered := make(chan struct{})
+			s := &drainStream{ctx: ctx, es: make(chan adaptor.Event, 2), started: make(chan struct{}), cancelSeen: make(chan struct{}), tailPublished: make(chan struct{}), resultDone: make(chan struct{}), resultRelease: release, resultWaitCtx: watch, resultWaitEntered: entered}
+			s.Events()
+			cancel()
+			tail := s.Events()
+			if consume {
+				for range tail {
+				}
+			}
+			finished := make(chan error, 1)
+			go func() {
+				_, err := s.Result()
+				finished <- err
+			}()
+			if consume {
+				select {
+				case <-entered:
+				case <-watch.Done():
+					t.Fatal("fully drained Result did not enter its ordering seam")
+				}
+				select {
+				case <-s.resultDone:
+					t.Fatal("Result completed before the ordering seam was released")
+				default:
+				}
+				unblock()
+			}
+			select {
+			case err := <-finished:
+				if s.earlyResult.Load() == consume || errors.Is(err, context.Canceled) != consume {
+					t.Fatalf("consume=%v early=%v err=%v", consume, s.earlyResult.Load(), err)
+				}
+			case <-watch.Done():
+				t.Fatal("ordering seam hid an early Result or failed to release a drained Result")
+			}
+			if !consume {
+				select {
+				case <-entered:
+					t.Fatal("early Result reached the ordering seam")
+				default:
+				}
 			}
 		})
 	}

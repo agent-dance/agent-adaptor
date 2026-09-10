@@ -103,6 +103,7 @@ type Client struct {
 
 	handlerMu sync.RWMutex
 	handler   NotificationHandler
+	turnStart func(threadID, turnID string)
 	closed    atomic.Bool
 }
 
@@ -113,7 +114,7 @@ type Client struct {
 func NewClient(ctx context.Context, stream jsonrpc2.ObjectStream) *Client {
 	c := &Client{stream: &ownedObjectStream{ObjectStream: stream}, calls: make(map[*clientCall]struct{}), sendGate: make(chan struct{}, 1)}
 	h := &connHandler{client: c}
-	c.conn = jsonrpc2.NewConn(ctx, c.stream, h)
+	c.conn = jsonrpc2.NewConn(ctx, c.stream, h, jsonrpc2.OnRecv(c.observeTurnStartResponse))
 	return c
 }
 
@@ -124,6 +125,35 @@ func (c *Client) SetNotificationHandler(h NotificationHandler) {
 	c.handlerMu.Lock()
 	defer c.handlerMu.Unlock()
 	c.handler = h
+}
+
+// The process owner serializes turns and retains this binding through its
+// existing reader/process cleanup join. A cancelled RPC waiter must not discard
+// a successful response that the sole reader observes during that same drain.
+func (c *Client) setTurnStartHandler(handler func(threadID, turnID string)) {
+	c.handlerMu.Lock()
+	defer c.handlerMu.Unlock()
+	c.turnStart = handler
+}
+
+func (c *Client) observeTurnStartResponse(req *jsonrpc2.Request, resp *jsonrpc2.Response) {
+	// OnRecv supplies the original matched request, not a guessed method or an
+	// uncorrelated notification. Unsolicited, failed and malformed replies never
+	// bind an execution identity or release its queued semantic notifications.
+	if req == nil || resp == nil || req.Notif || req.Method != MethodTurnStart || req.ID != resp.ID || req.Params == nil || resp.Error != nil || resp.Result == nil {
+		return
+	}
+	var params struct{ ThreadID string }
+	var result TurnStartResponse
+	if json.Unmarshal(*req.Params, &params) != nil || strings.TrimSpace(params.ThreadID) == "" || json.Unmarshal(*resp.Result, &result) != nil || strings.TrimSpace(result.Turn.ID) == "" {
+		return
+	}
+	c.handlerMu.RLock()
+	handler := c.turnStart
+	c.handlerMu.RUnlock()
+	if handler != nil {
+		handler(params.ThreadID, result.Turn.ID)
+	}
 }
 
 // Close rejects new calls, releases active RPC waiters, and closes the owned

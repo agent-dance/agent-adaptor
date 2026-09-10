@@ -382,3 +382,9 @@ C02提交前校核补充：SelectedCause等于本轮expired时，即使child.Err
 
 
 T18、T19在各自既有目录独立实现，T21负责跨层协议投影，T22负责真实预算/父取消来源对照；G04在实际双边合流后组合验证。没有新增公开API、core执行入口、同批源码依赖或error判定面。历史G03验收不变；本节验收尚待实施，不借原288pass冒充新增场景通过。
+
+## R025：取消审计与确定性审批验收
+
+Codex turn/start 的正式成功 response 已被唯一 RPC reader 接收、且 RPC ID 与 thread/turn 身份匹配时，即使 caller 取消先结束等待，也须在既有 reader/进程 drain 后保留该轮正式 Text、Transcript、Usage 与 Raw。未知、错误、未收到或身份不匹配的 response 不构成绑定证据；失败仍保留原取消 cause 且无有效 checkpoint。
+
+Own-deadline 审批测试分别控制主动时间和墙钟：先在 Ask pending 时验证暂停，再推进原来的 1ms 审批 deadline，严格得到 approval_timeout。迟到 callback 不得推进用于证明 pending Ask 的共享假时钟；生产 first-terminal、迟到 handler 和已有 error graph 合同不变。

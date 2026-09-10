@@ -192,6 +192,10 @@ unchanged default. On Windows, Go reports the read-only/writeable attribute as
 0444/0666 rather than POSIX owner/group bits; this does not change ACLs or write
 permissions. If the OS refuses replacement of a read-only file, the error remains
 observable without temporarily widening its permissions.
+Deferred skills directories likewise use the platform's observed directory mode,
+so materialization does not itself change a cold-resume fingerprint. A managed
+skills parent that exists as an ordinary file fails explicitly; it is not treated
+as an absent skills directory.
 Ordinary MCP overwrite/prune requires the existing manifest's exact provider/path/
 rendered-content proof. Unknown fields or same-key changes cannot be erased by
 projecting desired configuration. Authentication/session data and only proven

@@ -1,6 +1,6 @@
 module github.com/agent-dance/agent-adaptor
 
-go 1.26.5
+go 1.26.8
 
 require (
 	github.com/a2aproject/a2a-go/v2 v2.3.1
@@ -11,7 +11,7 @@ require (
 	github.com/pelletier/go-toml/v2 v2.3.0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
 	github.com/sourcegraph/jsonrpc2 v0.2.1
-	golang.org/x/sys v0.41.0
+	golang.org/x/sys v0.44.0
 )
 
 require (

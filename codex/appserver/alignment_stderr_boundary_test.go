@@ -182,7 +182,11 @@ func alignmentAssertAdmissionResult(t *testing.T, p *Process, got alignmentAdmis
 }
 
 func TestAlignmentCodexStderrAdmission(t *testing.T) {
-	command := filepath.Join(t.TempDir(), "fixture")
+	name := "fixture"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	command := filepath.Join(t.TempDir(), name)
 	buildCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if b, err := exec.CommandContext(buildCtx, "go", "build", "-o", command, "../testdata/alignment-provider/main.go").CombinedOutput(); err != nil {

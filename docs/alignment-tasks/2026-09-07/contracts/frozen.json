@@ -4,26 +4,26 @@
   "manifest_revision": 25,
   "code_baseline": "919f140f64f89c80933802840c8878681a85a4d9",
   "source_head": "e2f0620bdd6477e6fe16f6db5648093589342ca2",
-  "status": "R024_reconciled_pending_exact_G05_checks",
+  "status": "R025_reconciled_pending_exact_G05_checks",
   "contracts": [
     {
       "producer": "C01",
       "path": "docs/alignment-tasks/2026-09-07/contracts/profile-lifecycle.md",
-      "sha256": "69ac364bb2537629bdc9f60fda78592bea86ba3bc3a8bed101f03eebb213fe56",
-      "version": "1.2-g02-r024",
+      "sha256": "e4f760ad41c9e630932c90a0a345ed41bc25a29c471c2ee156cc0e17d861dd7a",
+      "version": "1.2-g02-r024-r025",
       "interfaces": [
         "profile.ErrInUse/ErrUnsafe/ErrRecoveryRequired/ErrUnsupportedFilesystem",
         "Dedicated WithTools deterministic profile + owner lock",
         "Agent.Close owns release after writer/gateway shutdown"
       ],
       "fixtures": [],
-      "dependency_decision": "Existing golang.org/x/sys v0.41.0 becomes direct only in T04; native OS locking, fail-closed filesystem checks."
+      "dependency_decision": "Existing direct golang.org/x/sys upgraded from v0.41.0 to v0.44.0 for the Windows NewNTUnicodeString security fix; official maintained OS bindings remain in private platform boundaries, compatible with Go1.26.8; native safety contracts revalidated."
     },
     {
       "producer": "C02",
       "path": "docs/alignment-tasks/2026-09-07/contracts/results-and-budget.md",
-      "sha256": "373945923722273eace488d508b6fa832786c755d7b9fab320d67024d88abeb2",
-      "version": "1.3-r016-pending-g04-r024",
+      "sha256": "36c13ae084aa209e7d56e0a42e1c5ef81c9a21e6284bf96a544f7293a16164bd",
+      "version": "1.3-r016-pending-g04-r024-r025",
       "interfaces": [
         "RunError.Cause + stable primary Reason",
         "Policy.ActiveExecutionTimeout",
@@ -422,7 +422,8 @@
     "G05 replacement canonical24: all seven B05 workers accepted, T34 QA-only receipt/mapping/stability coverage reconciled under C02 and independent review. No Codex production or original owner/verifier change. Old45cada Linux failure and all diagnostics retained; this source still requires exact G05 and fresh B06 validation.",
     "R023: d94fd17 native Linux fullrace revealed clihelper markDone doubleclose and sourcegraph/jsonrpc2 pending response send-after-close. Original T07/T16 owners receive disjoint B05 T35/T36 from G04. Final W04-R05/R07 owners move to T35/T36, independent T20→T25, liveT27/T29 retained. Preserve96IDs/45history,47tasks andcapacity6. Two production requirements andG05 reopen; allB06 need replacement SHA. No dependency/API/validation weakening; T34 QA remains intact.",
     "G05 replacement canonical25: nineB05workers accepted including T35 sharedstdin and T36 CodexClient production close repairs. Original-owner source/cause/FIFO/Raw/checkpoint scope preserved; T20 metadata22,96requirementIDs/45history retained. Earlier d94 fullrace panics archived. This source still needs exactG05 validation followed by allB06sameSHA; no automatic release.",
-    "R024: five main-review regressions reconciled in contracts: opaque skill assets, Codex literal overrides and clean EOF, observed approval causes, and protected Windows append DACLs. New exact-SHA checks and native Windows evidence remain required; prior G05/G06 evidence is not reused."
+    "R024: five main-review regressions reconciled in contracts: opaque skill assets, Codex literal overrides and clean EOF, observed approval causes, and protected Windows append DACLs. New exact-SHA checks and native Windows evidence remain required; prior G05/G06 evidence is not reused.",
+    "R025: integrate reviewed native Windows fixes without reverting R024; retain formally received Codex turn audit during cancellation, platform-observed profile modes and unsafe parent rejection, and deterministic approval deadline QA. Toolchain/frontend security gates retain their thresholds, including platform-specific vulnerability scanning. All G05/T25/T26 evidence must be regenerated on the final candidate; live T27-T30 and G06 remain separate."
   ],
   "unmerged_related_branches": [
     {

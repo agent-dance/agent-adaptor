@@ -537,7 +537,31 @@ func TestAlignmentProfileFinalSnapshotRejectsDriftAndIO(t *testing.T) {
 				d.afterInject = func(_ driver.ResolvedSkills, s *driver.ProfileSelection) error {
 					switch mode {
 					case "mode":
-						return os.Chmod(filepath.Join(provider.dir, "SKILL.md"), 0700)
+						path := filepath.Join(provider.dir, "SKILL.md")
+						before, err := os.Stat(path)
+						if err != nil {
+							return err
+						}
+						t.Cleanup(func() {
+							if err := os.Chmod(path, before.Mode().Perm()); err != nil {
+								t.Error("restore skill permissions", err)
+							}
+						})
+						changedMode := os.FileMode(0700)
+						if runtime.GOOS == "windows" {
+							changedMode = 0400 // Readonly is an observable, enforced file mode on Windows.
+						}
+						if err := os.Chmod(path, changedMode); err != nil {
+							return err
+						}
+						after, err := os.Stat(path)
+						if err != nil {
+							return err
+						}
+						if before.Mode().Perm() == after.Mode().Perm() {
+							return errors.New("fixture did not change the observed skill permissions")
+						}
+						return nil
 					case "configuration":
 						return os.WriteFile(filepath.Join(s.Dir, "settings.json"), []byte(`{"unknown":{"enabled":true}}`), 0600)
 					case "linked-content":
@@ -662,15 +686,22 @@ func TestAlignmentProfileDeclaredMCPOwnershipProof(t *testing.T) {
 
 func TestAlignmentProfileDistinctIdentitiesRunIndependently(t *testing.T) {
 	source := alignmentSource(t)
+	// Cold profile preparation may include slow filesystem/permission work.
+	// Concurrency is proved by the release barrier, not a per-entry latency.
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
 	d := newAlignmentProfileDriver(source)
 	entered := make(chan driver.Request, 2)
 	release := make(chan struct{})
 	var once sync.Once
 	unblock := func() { once.Do(func() { close(release) }) }
-	defer unblock()
 	run := d.runFunc
 	d.runFunc = func(ctx context.Context, req driver.Request, sink driver.EventSink) (driver.Response, error) {
-		entered <- req
+		select {
+		case entered <- req:
+		case <-ctx.Done():
+			return driver.Response{}, ctx.Err()
+		}
 		select {
 		case <-release:
 		case <-ctx.Done():
@@ -679,31 +710,83 @@ func TestAlignmentProfileDistinctIdentitiesRunIndependently(t *testing.T) {
 		return run(ctx, req, sink)
 	}
 	a := alignmentAgent(d, source)
-	t.Cleanup(func() { _ = a.Close(context.Background()) })
-	streams := []adaptor.Stream{a.Stream(context.Background(), "first", adaptor.WithIdentity(adaptor.Identity{ID: "one"})), a.Stream(context.Background(), "second", adaptor.WithIdentity(adaptor.Identity{ID: "two"}))}
-	defer func() {
+	type completion struct {
+		index int
+		err   error
+	}
+	finished := make(chan completion, 2)
+	completed := make(map[int]error)
+	var streams []adaptor.Stream
+	var reqs []driver.Request
+	diagnostics := func() string {
+		var arrivals []string
+		for _, req := range reqs {
+			arrivals = append(arrivals, fmt.Sprintf("identity=%q profile=%q", req.Agent.ID, req.Profile.Dir))
+		}
+		return fmt.Sprintf("entered=%d/2 [%s], completed=%v", len(reqs), strings.Join(arrivals, "; "), completed)
+	}
+	t.Cleanup(func() {
+		cancel()
+		unblock()
 		for _, s := range streams {
 			s.Cancel()
 		}
-	}()
-	var reqs []driver.Request
+		cleanup, stop := context.WithTimeout(context.Background(), 5*time.Second)
+		defer stop()
+		if err := a.Close(cleanup); err != nil {
+			t.Errorf("Close after profile concurrency check: %v; %s", err, diagnostics())
+		}
+		for len(completed) < len(streams) {
+			select {
+			case done := <-finished:
+				completed[done.index] = done.err
+			case <-cleanup.Done():
+				t.Errorf("drain after cancellation: %v; %s", cleanup.Err(), diagnostics())
+				return
+			}
+		}
+		if t.Failed() {
+			t.Logf("after cancellation and drain: %s", diagnostics())
+		}
+	})
+	for i, call := range []struct{ prompt, identity string }{{"first", "one"}, {"second", "two"}} {
+		stream := a.Stream(ctx, call.prompt, adaptor.WithIdentity(adaptor.Identity{ID: call.identity}))
+		streams = append(streams, stream)
+		go func() {
+			// Drain from the start so reliable events cannot obstruct preparation.
+			for range stream.Events() {
+			}
+			_, err := stream.Result()
+			finished <- completion{index: i, err: err}
+		}()
+	}
 	for len(reqs) < 2 {
 		select {
 		case req := <-entered:
 			reqs = append(reqs, req)
-		case <-time.After(time.Second):
-			t.Fatal("unrelated hosted profiles serialized")
+		case done := <-finished:
+			completed[done.index] = done.err
+			t.Fatalf("run %d ended before both Driver entries: %v; %s", done.index, done.err, diagnostics())
+		case <-ctx.Done():
+			t.Fatalf("watchdog waiting for both Driver entries: %v; %s", ctx.Err(), diagnostics())
 		}
 	}
-	if reqs[0].Profile.Dir == reqs[1].Profile.Dir {
-		t.Fatal("distinct identity profiles not isolated")
+	if err := ctx.Err(); err != nil {
+		t.Fatalf("watchdog expired before release: %v; %s", err, diagnostics())
+	}
+	if reqs[0].Agent.ID == reqs[1].Agent.ID || reqs[0].Profile.Dir == "" || reqs[1].Profile.Dir == "" || reqs[0].Profile.Dir == reqs[1].Profile.Dir {
+		t.Fatalf("distinct identity profiles not isolated: %s", diagnostics())
 	}
 	unblock()
-	for _, s := range streams {
-		for range s.Events() {
-		}
-		if _, err := s.Result(); err != nil {
-			t.Fatal(err)
+	for len(completed) < len(streams) {
+		select {
+		case done := <-finished:
+			completed[done.index] = done.err
+			if done.err != nil {
+				t.Errorf("run %d failed after release: %v; %s", done.index, done.err, diagnostics())
+			}
+		case <-ctx.Done():
+			t.Fatalf("watchdog waiting for Results after release: %v; %s", ctx.Err(), diagnostics())
 		}
 	}
 }
@@ -886,7 +969,19 @@ func TestAlignmentProfileMCPWriterPreservesMode(t *testing.T) {
 				}
 				d := newAlignmentProfileDriver(source)
 				a := alignmentAgent(d, source, adaptor.WithThreadStore(memory.NewStore()))
-				t.Cleanup(func() { _ = a.Close(context.Background()) })
+				var config string
+				t.Cleanup(func() {
+					// Intentional readonly drift must be repaired before the MCP
+					// writer can remove its owned projection and release the claim.
+					if config != "" {
+						if err := os.Chmod(config, observedMode); err != nil {
+							t.Error("restore configuration permissions", err)
+						}
+					}
+					if err := a.Close(context.Background()); err != nil {
+						t.Error("release profile ownership", err)
+					}
+				})
 				if _, err := alignmentCall(t, a.Thread("mode"), context.Background(), stream); err != nil {
 					if runtime.GOOS != "windows" || observedMode&0200 != 0 || !errors.Is(err, os.ErrPermission) || d.runCount() != 1 {
 						t.Fatal(err)
@@ -909,7 +1004,7 @@ func TestAlignmentProfileMCPWriterPreservesMode(t *testing.T) {
 				if first.Session.EngineSessionID != second.Session.EngineSessionID || second.Session.PreviousID != "" || second.Session.State == nil {
 					t.Fatal("unchanged profile did not resume")
 				}
-				config := filepath.Join(first.Profile.Dir, ".claude.json")
+				config = filepath.Join(first.Profile.Dir, ".claude.json")
 				for _, path := range []string{sourceConfig, config} {
 					info, err := os.Lstat(path)
 					if err != nil || info.Mode().Perm() != observedMode {
@@ -942,6 +1037,21 @@ func TestAlignmentProfileMCPWriterPreservesMode(t *testing.T) {
 				}
 				if d.runCount() != 2 {
 					t.Fatal("permission drift reached Driver", d.runCount())
+				}
+				if err := os.Chmod(config, observedMode); err != nil {
+					t.Fatal(err)
+				}
+				if err := a.Close(context.Background()); err != nil {
+					t.Fatal("restored projection did not release ownership", err)
+				}
+				next := alignmentAgent(newAlignmentProfileDriver(source), source)
+				t.Cleanup(func() {
+					if err := next.Close(context.Background()); err != nil {
+						t.Error(err)
+					}
+				})
+				if _, err := alignmentCall(t, next, context.Background(), stream); err != nil {
+					t.Fatal("successor could not acquire the released profile", err)
 				}
 			})
 		}

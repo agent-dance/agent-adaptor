@@ -28,7 +28,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.26.8'
+          go-version-file: go.mod
           cache: true
       - name: Record exact source and native platform
         run: |
@@ -43,3 +43,5 @@ jobs:
         run: go test -count=3 -timeout=5m -v ./codex -run '^TestAlignment(ConfigConflictForms|UnrelatedConfigValueFallback)$'
       - name: Codex terminal, EOF and actual exit health
         run: go test -count=3 -timeout=5m -v ./codex/appserver -run '^TestAlignment(ResidentEOFHealth|TerminalEOFWaitsForObservedExit|ResidentWaitCause)$'
+      - name: Deterministic approval deadline and paused active budget
+        run: go test -count=100 -timeout=5m -v . -run '^TestAlignmentActiveBudgetHandlerReturnsOwnDeadline$'

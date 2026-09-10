@@ -39,7 +39,7 @@ func TestAlignmentWindowsNativeArgvRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	expected := []string{"甲\n\"乙\"", "space value", `trailing \\`, "emoji 😀", ""}
-	args := append([]string{"-test.run=^TestAlignmentWindowsArgvHelper$", "--alignment-argv"}, expected...)
+	args := append([]string{"-test.run=^TestAlignmentWindowsArgvHelper$", "--", "--alignment-argv"}, expected...)
 	alignmentWindowsArgv(t, binary, args, expected, true)
 }
 func TestAlignmentWindowsPowerShellArgvRoundTrip(t *testing.T) {

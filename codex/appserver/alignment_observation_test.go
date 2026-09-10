@@ -132,10 +132,35 @@ func TestAlignmentAppServerWire(t *testing.T) {
 		}
 	}
 	t.Run("large-app-server", func(t *testing.T) {
-		opts := alignmentOptions(command, filepath.Join(t.TempDir(), "capture"))
+		capture := filepath.Join(t.TempDir(), "capture")
+		opts := alignmentOptions(command, capture)
 		opts.AppendSystemPrompt = strings.Repeat("字", 12000)
-		if _, err := Run(context.Background(), opts, &recordingSink{}); err != nil {
+		result, err := Run(context.Background(), opts, &recordingSink{})
+		if err != nil || result.Failure != nil || result.Checkpoint == nil || !result.Checkpoint.Valid || result.Output != "answer" {
+			t.Fatalf("large app-server payload: %v %#v", err, result)
+		}
+		data, err := os.ReadFile(capture)
+		if err != nil {
 			t.Fatal(err)
+		}
+		found := false
+		for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+			var frame struct {
+				Method string
+				Params struct{ DeveloperInstructions string }
+			}
+			if err := json.Unmarshal([]byte(line), &frame); err != nil {
+				t.Fatal(err)
+			}
+			if frame.Method == "thread/start" {
+				found = true
+				if frame.Params.DeveloperInstructions != opts.AppendSystemPrompt {
+					t.Fatal("large app-server payload changed")
+				}
+			}
+		}
+		if !found {
+			t.Fatal("missing large app-server handshake")
 		}
 	})
 	t.Run("rpc-facts", func(t *testing.T) {

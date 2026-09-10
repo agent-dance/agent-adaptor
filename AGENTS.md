@@ -382,6 +382,8 @@ R023：原生 Linux 又在 Claude 审批拒绝和 Codex 取消时发现生产关
 
 R024：2026-09-10 main 审查补充约束：skill 附件及非配置 manifest 资源按原字节计算指纹，不能按扩展名强制解析为配置对象；Codex 无关 config override 保留官方 literal-string fallback，reserved 提示键仍拒绝；成功终局后的 stdout EOF 先有界 drain/Wait，再根据真实退出与协议状态判断健康。已接收审批 error/panic 在取消竞态下保留 cause，既有主因、fallback 和迟到 handler 边界不变。Windows append 私有目录必须在创建时建立受保护 DACL，文件在写入提示前保护，并验证 owner/ACL；Chmod 模式位和交叉编译不能代替原生权限证据。修复后的精确 SHA 仍须独立验收，不沿用旧 G05/G06 结论。
 
+R025：全量 CI 整合保留 R024 五项修复及 Windows append 全生命周期禁止 delete-sharing 的 pin。deferred skills 使用平台实际可观察 mode，skills 父路径为普通文件必须明确失败。Codex 取消与 turn/start 应答竞态只以唯一 RPC reader 已接收且 ID 匹配的正式应答绑定 turn，并在既有 drain 后恢复同轮审计，保留取消 cause 且不提交失败 checkpoint。审批 own-deadline 测试须先证明 Ask pending 暂停主动预算，再推进受控墙钟；不得用迟到 handler 推进共享时钟或放宽主因断言。测试跨进程 pipe 只分别要求完整有序，跨 pipe 顺序须有实际接收证明；并发 fixture 使用真实准入/消费屏障。Go 最低补丁为 1.26.8，前端生产及全依赖树保持 high 审计阈值。新的同 SHA 全量及原生 CI 证据不能继承旧候选结论，T27–T30 live 与 G06 仍单独判定。
+
 具体冻结设计、未支持边界、文件所有权和fixture见 `docs/alignment-tasks/2026-09-07/contracts/frozen.json`。合同冻结不代表代码已实现；后续同批godoc、合同测试、使用文档和CHANGELOG完成后才能关闭对应项。其他第14节既有保护继续有效。
 
 ## 15. 发布门禁

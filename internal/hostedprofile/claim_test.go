@@ -438,15 +438,21 @@ func TestValidateDetectsCachedDirectoryAndGenerationTampering(t *testing.T) {
 			case "lock":
 				path = filepath.Join(filepath.Dir(c.Dir()), "owner.lock")
 			}
-			original, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatal(err)
-			}
 			if kind == "lock" && runtime.GOOS == "windows" {
 				if err := os.Rename(path, path+"-old"); err == nil {
 					t.Fatal("Windows allowed owned lock replacement")
 				}
+				if err := os.Remove(path); err == nil {
+					t.Fatal("Windows allowed owned lock removal")
+				}
+				if err := c.Validate(context.Background()); err != nil {
+					t.Fatal("rejected replacement changed ownership", err)
+				}
 				return
+			}
+			original, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
 			}
 			if kind == "lock" {
 				if err := os.Rename(path, path+"-old"); err != nil {

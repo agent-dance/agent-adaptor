@@ -206,12 +206,30 @@ func TestCompatibilityRejectsManagedPathIOFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, probeErr := os.Lstat(filepath.Join(home, "alpha"))
-	if probeErr == nil || os.IsNotExist(probeErr) {
-		t.Fatal("fixture must produce an inspection failure, not absence", probeErr)
+	if probeErr == nil {
+		t.Fatal("child of a regular file unexpectedly exists")
 	}
+	// Windows reports ERROR_PATH_NOT_FOUND for a non-directory parent, so
+	// child inspection alone cannot distinguish this corruption from absence.
 	_, err = CompatibilityTargets(dir, manifest, &driver.ResolvedSkills{}, ProfileSkillPruneManaged)
-	var pathErr *os.PathError
-	if !errors.As(err, &pathErr) || !errors.Is(err, probeErr.(*os.PathError).Err) {
-		t.Fatal("inspection error was erased by prune", err)
+	if !errors.Is(err, profile.ErrUnsafe) {
+		t.Fatal("invalid skills home was erased by prune", err)
+	}
+	if raw, err := os.ReadFile(home); err != nil || string(raw) != "invalid parent" {
+		t.Fatal("compatibility inspection changed the invalid parent", err)
+	}
+}
+
+func TestCompatibilityDistinguishesMissingAndInvalidSkillsHome(t *testing.T) {
+	dir := t.TempDir()
+	manifest := profilestate.Manifest{}
+	if _, err := CompatibilityTargets(dir, manifest, nil, ProfileSkillPruneManaged); err != nil {
+		t.Fatal("absent skills home must remain valid", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "skills"), []byte("not a directory"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CompatibilityTargets(dir, manifest, nil, ProfileSkillPruneManaged); !errors.Is(err, profile.ErrUnsafe) {
+		t.Fatal("invalid skills home must fail even before a managed entry is inspected", err)
 	}
 }

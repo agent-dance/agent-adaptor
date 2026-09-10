@@ -1,0 +1,20 @@
+{
+  "github.com/agent-dance/agent-adaptor/claude:TestClaudeDriverConformance/live_run": "Live environment gate explicitly disabled",
+  "github.com/agent-dance/agent-adaptor/claude:TestClaudeDriverConformance/live_structured_output": "Live environment gate explicitly disabled",
+  "github.com/agent-dance/agent-adaptor/codebuddy:TestCodeBuddyDriverConformance/live_run": "Live environment gate explicitly disabled",
+  "github.com/agent-dance/agent-adaptor/codebuddy:TestCodeBuddyDriverConformance/live_structured_output": "Live environment gate explicitly disabled",
+  "github.com/agent-dance/agent-adaptor/codebuddy:TestCodeBuddyDriverConformance/quota": "Descriptor explicitly declares quota probe unsupported",
+  "github.com/agent-dance/agent-adaptor/codex:TestCodexDriverConformance/live_run": "Live environment gate explicitly disabled",
+  "github.com/agent-dance/agent-adaptor/codex:TestCodexDriverConformance/live_structured_output": "Live environment gate explicitly disabled",
+  "github.com/agent-dance/agent-adaptor/cursor:TestCursorDriverConformance/live_run": "Live environment gate explicitly disabled",
+  "github.com/agent-dance/agent-adaptor/cursor:TestCursorDriverConformance/live_structured_output": "Live environment gate explicitly disabled",
+  "github.com/agent-dance/agent-adaptor/cursor:TestCursorDriverConformance/stream_capability": "Cursor print descriptor has no streaming capability",
+  "github.com/agent-dance/agent-adaptor/cursor:TestCursorRunUsesCurrentForceFlagForAutoApprove": "Existing fixture uses a POSIX shell and explicitly skips on Windows",
+  "github.com/agent-dance/agent-adaptor/internal/clihelper:TestRun_LongLivedStdinForwardsFrames": "Existing shell-script fixture explicitly skips on Windows; required native process and stdin fixtures still execute",
+  "github.com/agent-dance/agent-adaptor/internal/clihelper:TestRun_LegacyPromptPathUnchanged": "Existing shell-script fixture explicitly skips on Windows",
+  "github.com/agent-dance/agent-adaptor/internal/clihelper:TestRun_EmptyPromptFastExitDoesNotRaceStdinClose": "Existing shell-script fixture explicitly skips on Windows",
+  "github.com/agent-dance/agent-adaptor/internal/hostedprofile:TestUnsafeOwnership/world-directory": "POSIX mode-bit oracle is inapplicable; Windows DACL and reparse roots are mandatory",
+  "github.com/agent-dance/agent-adaptor/internal/hostedprofile:TestUnsafeOwnership/world-marker": "POSIX mode-bit oracle is inapplicable; Windows DACL and reparse roots are mandatory",
+  "github.com/agent-dance/agent-adaptor/internal/hostedprofile:TestClaimSubprocessHelper": "Subprocess helper skips in its parent; real ownership/process tests must pass",
+  "github.com/agent-dance/agent-adaptor/examples/showcases/team-agent-workflow:TestStartAllScriptWiresTeamBackendToCopilotKit": "Existing showcase shell fixture explicitly skips on Windows"
+}

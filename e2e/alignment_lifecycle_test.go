@@ -446,7 +446,7 @@ func (d *alignmentAuditDriver) Run(ctx context.Context, req driver.Request, sink
 	}(), Output: "audit-text", Summary: "audit-summary", Model: "audit-model", Provider: "audit-provider", Metadata: map[string]string{"safe": "observed"}, Usage: &driver.Usage{InputTokens: 17, OutputTokens: 9}, RawStreams: &driver.RawStreams{Stdout: "audit-stdout\n", Stderr: "audit-stderr\n", Terminal: &driver.TerminalPayload{Event: "result", JSON: json.RawMessage(`{"success":true}`)}}, Transcript: []driver.TranscriptItem{
 		{Kind: driver.TranscriptAssistant, ScopeID: "scope-a", ParentScopeID: "parent-a", ParentToolCallID: "parent-tool", Text: "audit-text", Model: "audit-model", SessionID: "audit-session", Metadata: map[string]string{"origin": "protocol"}, Data: map[string]any{"segments": []any{"one", "two"}}},
 		{Kind: driver.TranscriptResult, Text: "audit-summary", Subtype: "success", Usage: &driver.Usage{InputTokens: 17, OutputTokens: 9}, CostUSD: func() *float64 { v := 0.125; return &v }(), Metadata: map[string]string{"terminal": "observed"}},
-	}, RuntimeServices: []driver.RuntimeServiceReport{{ID: "observed-service", Name: "fixture service", URL: "http://127.0.0.1:7654", Status: driver.RuntimeServiceRunning, Lifecycle: driver.RuntimeLifecycleEphemeral, ReuseKey: "service-reuse", Command: "fixture-command", CWD: "fixture-workspace", Port: 7654, OwnerAgentID: "audit-owner", Health: driver.RuntimeHealthHealthy, Metadata: map[string]string{"probe": "passed"}}}, Checkpoint: &driver.Checkpoint{Valid: true, State: &driver.SessionState{ResumeID: "audit-session"}}}, d.err
+	}, RuntimeServices: []driver.RuntimeServiceReport{{ID: "observed-service", Name: "fixture service", URL: "http://127.0.0.1:7654", Status: driver.RuntimeServiceRunning, Lifecycle: driver.RuntimeLifecycleEphemeral, ReuseKey: "service-reuse", Command: "fixture-command", CWD: "fixture-workspace", Port: 7654, OwnerAgentID: "audit-owner", Health: driver.RuntimeHealthHealthy, Metadata: map[string]string{"probe": "passed"}}}, Checkpoint: &driver.Checkpoint{Valid: true, State: &driver.SessionState{ResumeID: "audit-session", Data: map[string]string{"audit-turn": req.Prompt}}}}, d.err
 }
 
 type alignmentCodec struct{}
@@ -508,14 +508,19 @@ func (alignmentSource) DetachRun(context.Context, string) error { return nil }
 
 type alignmentLeaseFailure struct {
 	*memory.Store
-	fail atomic.Bool
+	fail    atomic.Bool
+	commits atomic.Int32
 }
 
 func (s *alignmentLeaseFailure) Finalize(ctx context.Context, r threadstore.FinalizeRequest) error {
 	if s.fail.Load() {
 		return &threadstore.LeaseLostError{Target: r.Key}
 	}
-	return s.Store.Finalize(ctx, r)
+	if err := s.Store.Finalize(ctx, r); err != nil {
+		return err
+	}
+	s.commits.Add(1)
+	return nil
 }
 
 func TestAlignmentLifecycleFinalAuthority(t *testing.T) {
@@ -543,6 +548,9 @@ func TestAlignmentLifecycleFinalAuthority(t *testing.T) {
 					t.Fatalf("healthy result=%v err=%v", rr, e)
 				}
 				before, _ := store.Resolve(ctx, threadstore.Query{Key: "authority"})
+				if before == nil || before.State == nil || before.State.Data["audit-turn"] != "healthy" || store.commits.Load() != 1 {
+					t.Fatal("first healthy checkpoint did not commit")
+				}
 				if failure == "lease" {
 					store.fail.Store(true)
 				} else {
@@ -599,10 +607,13 @@ func TestAlignmentLifecycleFinalAuthority(t *testing.T) {
 				alignmentAuditFields(t, re.Result)
 				alignmentEnvelope(t, events, s.RunID(), re.Reason)
 				after, _ := store.Resolve(ctx, threadstore.Query{Key: "authority"})
-				if failure == "lease" && !reflect.DeepEqual(before, after) {
+				if failure == "lease" && (!reflect.DeepEqual(before, after) || store.commits.Load() != 1) {
 					t.Error("failed lease altered healthy record")
 				}
-				if failure == "cleanup" && (after == nil || after.ID != before.ID || after.UpdatedAt.Equal(before.UpdatedAt)) {
+				// Two fast commits can share a Windows wall-clock timestamp. The
+				// successful Finalize count and actual second-turn state prove the
+				// committed checkpoint survived cleanup failure without rollback.
+				if failure == "cleanup" && (after == nil || after.ID != before.ID || after.State == nil || after.State.Data["audit-turn"] != "second" || store.commits.Load() != 2) {
 					t.Error("healthy committed state was rolled back")
 				}
 			})
@@ -755,23 +766,93 @@ func TestAlignmentLifecycleDeadlinePreservesAudit(t *testing.T) {
 		t.Run(provider, func(t *testing.T) {
 			f := newAlignmentFixture(t, provider)
 			a := f.agent(t)
-			ctx, c := alignmentContext(t)
+			// The call below owns the deadline under test. A parent deadline or
+			// watchdog must never become its accepted failure cause.
+			ctx, c := context.WithCancel(context.Background())
 			defer c()
 			th := a.Thread("deadline")
-			if _, e := th.Run(ctx, "warm"); e != nil {
-				t.Fatal(e)
+			warmCtx, cancelWarm := context.WithTimeout(ctx, alignmentWaitLimit)
+			defer cancelWarm()
+			warmDone := make(chan error, 1)
+			go func() { _, e := th.Run(warmCtx, "warm"); warmDone <- e }()
+			select {
+			case e := <-warmDone:
+				if e != nil {
+					t.Fatal(e)
+				}
+			case <-time.After(alignmentWaitLimit):
+				t.Fatal("local watchdog: deadline audit warm did not return")
 			}
-			s := th.Stream(ctx, "partial", adaptor.WithTimeout(250*time.Millisecond))
-			f.wait(t, "barrier", 1)
-			r, e, events := alignmentDrain(t, s)
+			cancelWarm()
+			starts := f.wait(t, "start", 1)
+			if len(starts) != 1 {
+				t.Fatalf("warm starts=%d want one resident", len(starts))
+			}
+			const callLimit = 5 * time.Second
+			started := time.Now()
+			s := th.Stream(ctx, "partial-deadline", adaptor.WithTimeout(callLimit))
+			defer func() {
+				if t.Failed() {
+					t.Logf("deadline fixture ledger: %+v", f.logs(t))
+				}
+			}()
+			var observedAfter time.Duration
+			observed := false
+			// Consume immediately. A producer ledger write is not proof that the
+			// SDK parsed partial audit before its real call deadline expired.
+			r, e, events := alignmentCollect(t, s, func(event adaptor.Event) {
+				notice, ok := event.(adaptor.Notice)
+				if ok && notice.Kind == adaptor.NoticeTranscriptItem && notice.Item != nil && notice.Item.Kind == driver.TranscriptAssistant && notice.Item.Text == "partial-text" && !notice.Item.Delta && !observed {
+					observed = true
+					observedAfter = time.Since(started)
+				}
+			})
+			elapsed := time.Since(started)
 			re := alignmentCarried(t, r, e)
-			if re.Reason != adaptor.ReasonDeadlineExceeded || !errors.Is(e, context.DeadlineExceeded) {
+			if re.Reason != adaptor.ReasonDeadlineExceeded || !errors.Is(e, context.DeadlineExceeded) || ctx.Err() != nil {
 				t.Errorf("deadline identity=%v", e)
 			}
-			if !strings.Contains(re.Result.Raw().Stdout, "partial-text") || len(re.Result.Transcript()) == 0 {
-				t.Error("deadline lost partial audit")
+			if !observed || observedAfter >= callLimit || elapsed < callLimit {
+				t.Errorf("deadline ordering: observed=%v at=%s elapsed=%s callLimit=%s", observed, observedAfter, elapsed, callLimit)
+			}
+			out := re.Result
+			raw := out.Raw()
+			wantText := "partial-text"
+			if provider == "claude" {
+				wantText = ""
+			}
+			if !strings.Contains(raw.Stdout, "partial-text") || raw.Stderr != "t20-stderr\n" || raw.Terminal != nil || out.Text != wantText || len(out.Transcript()) == 0 {
+				t.Errorf("deadline lost partial audit: result=%+v raw=%+v", out, raw)
+			}
+			if out.Usage == nil || out.Usage.InputTokens != 7 || out.Usage.OutputTokens != 3 {
+				t.Errorf("deadline usage=%+v", out.Usage)
+			}
+			assistant := false
+			for _, item := range out.Transcript() {
+				assistant = assistant || item.Kind == driver.TranscriptAssistant && item.Text == "partial-text" && !item.Delta
+			}
+			if !assistant {
+				t.Errorf("deadline assistant transcript missing: %+v", out.Transcript())
+			}
+			prompts, barriers, spawns := 0, 0, 0
+			for _, entry := range f.logs(t) {
+				switch entry.Kind {
+				case "start":
+					spawns++
+				case "barrier":
+					barriers++
+				case "prompt":
+					prompts++
+					if entry.PID != starts[0].PID {
+						t.Errorf("deadline prompt PID=%d want warm resident=%d", entry.PID, starts[0].PID)
+					}
+				}
+			}
+			if prompts != 2 || barriers != 1 || spawns != 1 {
+				t.Errorf("deadline delivery: prompts=%d barriers=%d spawns=%d", prompts, barriers, spawns)
 			}
 			alignmentEnvelope(t, events, s.RunID(), re.Reason)
+			t.Logf("partial observed after %s; real WithTimeout=%s; elapsed=%s; resident PID=%d", observedAfter.Round(time.Millisecond), callLimit, elapsed.Round(time.Millisecond), starts[0].PID)
 		})
 	}
 }

@@ -67,19 +67,25 @@ Browser
 
 ## 前置条件
 
-- Go 1.26.5+
+- Go 1.26.8+
 - Node.js 20+ + npm
 - 选用的 `codex` / `claude` / `cursor` CLI 已安装、已登录，并且 `--help` 可运行
 
-前端依赖固定使用 CopilotKit 1.63.2 与 `next@16.3.0-preview.8`。选择该
-Next preview 是因为截至冻结日最新 stable 16.2.12 仍落在已公开的 high
-advisory 范围内；同时以局部 `overrides` 将 Hono、PostCSS、fast-uri 提升到
-兼容的安全补丁版本，并更新 MCP SDK、DOMPurify、Mermaid 等仍在兼容范围内的
-传递依赖。lockfile 只保存 npm 官方 registry URL，CI 会执行 fresh `npm ci`、
-lint、build 与 `npm audit --omit=dev --audit-level=high`。冻结时 production tree
-没有 high/critical；剩余 moderate/low 来自 CopilotKit Runtime 尚未接受的
-`@hono/node-server`/`uuid` major 以及暂无已发布修复的上游链路，因此没有用
-`npm audit fix --force` 或不兼容的全局 override 掩盖风险。
+前端固定使用 CopilotKit 1.63.2 与 `next@16.3.0-preview.8`，React 保持 18.3.1。
+本轮安全修复更新 fast-uri、nanoid、DOMPurify、Hono、Mermaid、qs、Phoenix，
+并对 Hono Node adapter、body-parser、uuid 和 sharp 的既有版本范围分别固定修复版本。
+sharp 的配套原生图像库随之更新，开发依赖 brace-expansion 与 js-yaml 也固定安全补丁。
+qs 延续已有全局 override：6.16.0 超出 Express 的 `~6.14.0` 声明范围，
+其兼容性必须由实际安装与构建验证，不能仅凭 semver 声称兼容。
+lockfile 只保存 npm 官方 registry URL；CI 使用 Node.js 22，执行 fresh `npm ci`、
+lint、build、`npm audit --omit=dev --audit-level=high`，以及新增的
+`npm audit --audit-level=high` 全量审计，high 阈值不变。
+
+安全扫描按实际日期和 lockfile 记录结果。旧 AI SDK provider-utils 与 Runtime 的
+uuid 10 仍有低、中等级报告；开发依赖也须单独记录，不能把生产门禁通过表述为
+“全部依赖零漏洞”。本示例通过 `HttpAgent` 连接 Go 后端，没有配置这些旧 AI SDK
+provider adapters；这不等价于证明整个依赖树没有可达风险。详见
+[本轮依赖决策与验证边界](../../../docs/validation/copilotkit-security-2026-09-08.md)。
 
 ## 后端 HTTP 端点
 

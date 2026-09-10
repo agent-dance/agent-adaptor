@@ -9,6 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/agent-dance/agent-adaptor/capability"
@@ -714,22 +715,50 @@ func TestAlignmentActiveBudgetResumeFallbackSharesRemaining(t *testing.T) {
 }
 
 func TestAlignmentActiveBudgetHandlerReturnsOwnDeadline(t *testing.T) {
-	for i := 0; i < 10; i++ {
+	synctest.Test(t, func(t *testing.T) {
 		c := newAlignmentClock()
+		entered := make(chan context.Context, 1)
+		handlerReturned := make(chan error, 1)
 		a := New(brokerTestDriver{run: func(ctx context.Context, _ driver.Request, sink driver.EventSink) (driver.Response, error) {
 			_, err := sink.(driver.DecisionCapableSink).RequestDecision(ctx, driver.DecisionRequest{Kind: driver.HumanDecisionPermission})
 			return alignmentBudgetPartial(), err
 		}}, alignmentClockOption(c), WithPolicy(Policy{ActiveExecutionTimeout: 100 * time.Millisecond, Approvals: ApprovalPolicy{Timeout: time.Millisecond}}), OnApproval(func(ctx context.Context, _ *ApprovalRequest) error {
-			c.advance(time.Hour)
+			entered <- ctx
 			<-ctx.Done()
+			handlerReturned <- ctx.Err()
 			return ctx.Err()
 		}))
-		res, err := a.Run(context.Background(), "own approval deadline")
+		stream := a.Stream(context.Background(), "own approval deadline")
+		defer stream.Cancel()
+		askCtx := <-entered
+		synctest.Wait()
+
+		// Prove pause accounting while the approval is still pending. Bubble
+		// wall time cannot advance while this test goroutine is runnable, and
+		// the handler never advances the shared clock after its wait has ended.
+		if askCtx.Err() != nil {
+			t.Fatalf("approval ended before the paused-budget check: %v", askCtx.Err())
+		}
+		c.advance(time.Hour)
+		synctest.Wait()
+		if askCtx.Err() != nil {
+			t.Fatalf("pending Ask consumed active budget: %v", context.Cause(askCtx))
+		}
+
+		// Separately trigger the unchanged one-millisecond approval deadline.
+		time.Sleep(time.Millisecond)
+		synctest.Wait()
+		if returned := <-handlerReturned; returned != context.DeadlineExceeded || context.Cause(askCtx) != errApprovalDeadline {
+			t.Fatalf("handler deadline = %v, cause = %v", returned, context.Cause(askCtx))
+		}
+		for range stream.Events() {
+		}
+		res, err := stream.Result()
 		alignmentBudgetCarrier(t, res, err, ReasonApprovalTimeout)
 		if errors.Is(err, ErrActiveExecutionTimeout) {
 			t.Fatal("Ask deadline consumed paused budget")
 		}
-	}
+	})
 }
 
 func TestAlignmentActiveBudgetParentCauseIdentity(t *testing.T) {
