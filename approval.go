@@ -100,7 +100,9 @@ var ApprovalsAutoDeny = ApprovalPolicy{
 // ApprovalHandler is the callback form (form A) of approval consumption,
 // installed with OnApproval. The handler must resolve the request — call
 // Approve, Deny, or Answer — and return nil, or return an error to abort
-// the run.
+// the run. Errors already received when cancellation wins remain in a failing
+// RunError's cause without replacing its selected reason. Late callbacks are
+// not awaited and cannot modify a finalized result.
 type ApprovalHandler func(ctx context.Context, req *ApprovalRequest) error
 
 // ApproveAll returns a ready-made handler that approves every Permission

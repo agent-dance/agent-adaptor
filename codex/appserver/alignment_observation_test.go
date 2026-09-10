@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -22,6 +23,9 @@ import (
 func alignmentFixture(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "fixture")
+	if runtime.GOOS == "windows" {
+		path += ".exe"
+	}
 	cmd := exec.Command("go", "build", "-o", path, "../testdata/alignment-provider/main.go")
 	if b, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("fixture build: %v %s", err, b)
@@ -435,13 +439,19 @@ func TestAlignmentResidentWaitCause(t *testing.T) {
 
 type alignmentEOFSink struct {
 	recordingSink
-	process  *Process
-	release  string
-	released chan error
+	process       *Process
+	release       string
+	released      chan error
+	triggerKind   driver.TranscriptKind
+	beforeRelease func()
 }
 
 func (s *alignmentEOFSink) Emit(event driver.RunEvent) error {
-	if event.Item != nil && event.Item.Kind == driver.TranscriptResult {
+	trigger := s.triggerKind
+	if trigger == "" {
+		trigger = driver.TranscriptResult
+	}
+	if event.Item != nil && event.Item.Kind == trigger {
 		select {
 		case <-s.process.stream.ReadDone():
 		case <-time.After(2 * time.Second):
@@ -451,10 +461,106 @@ func (s *alignmentEOFSink) Emit(event driver.RunEvent) error {
 		// releases its own process later, without mutating production state.
 		go func() {
 			time.Sleep(25 * time.Millisecond)
+			if s.beforeRelease != nil {
+				s.beforeRelease()
+			}
 			s.released <- os.WriteFile(s.release, []byte("release"), 0600)
 		}()
 	}
 	return s.recordingSink.Emit(event)
+}
+
+func TestAlignmentResidentEOFHealth(t *testing.T) {
+	command := alignmentFixture(t)
+	for _, tc := range []struct {
+		name, status string
+		malformed    bool
+		cancel       bool
+		wantError    bool
+		wantFailure  bool
+	}{
+		{name: "completed", status: "completed"},
+		{name: "missing-terminal", status: "missing", wantError: true},
+		{name: "malformed-tail", status: "completed", malformed: true, wantError: true},
+		{name: "provider-failed", status: "failed", wantFailure: true},
+		{name: "provider-interrupted", status: "interrupted", wantFailure: true},
+		{name: "cancel-during-drain", status: "completed", cancel: true, wantError: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			opts := alignmentOptions(command, filepath.Join(t.TempDir(), "capture"))
+			sink := &alignmentEOFSink{release: filepath.Join(t.TempDir(), "release"), released: make(chan error, 1), triggerKind: driver.TranscriptAssistant}
+			opts.Env = append(opts.Env,
+				driver.EnvBinding{Name: "ALIGNMENT_SCENARIO", Value: "terminal-eof"},
+				driver.EnvBinding{Name: "ALIGNMENT_RELEASE", Value: sink.release},
+				driver.EnvBinding{Name: "ALIGNMENT_EOF_EXIT", Value: "0"},
+				driver.EnvBinding{Name: "ALIGNMENT_EOF_TERMINAL", Value: tc.status},
+			)
+			if tc.malformed {
+				opts.Env = append(opts.Env, driver.EnvBinding{Name: "ALIGNMENT_EOF_MALFORMED", Value: "1"})
+			}
+			deadlineCtx, deadlineCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer deadlineCancel()
+			ctx, cancel := context.WithCancelCause(deadlineCtx)
+			defer cancel(nil)
+			p, err := Open(ctx, opts, sink)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer p.TerminateAndWait(deadlineCtx)
+			sink.process = p
+			cancelCause := errors.New("host canceled during EOF drain")
+			if tc.cancel {
+				sink.beforeRelease = func() {
+					// Observe actual transport shutdown before canceling. The peer
+					// stays alive until release, so this gates the bounded drain.
+					for !p.client.closed.Load() {
+						select {
+						case <-deadlineCtx.Done():
+							return
+						case <-time.After(time.Millisecond):
+						}
+					}
+					cancel(cancelCause)
+				}
+			}
+			result, sent, err := p.RunTurn(ctx, opts, sink)
+			select {
+			case releaseErr := <-sink.released:
+				if releaseErr != nil {
+					t.Fatal(releaseErr)
+				}
+			case <-deadlineCtx.Done():
+				t.Fatal("EOF fixture was not released")
+			}
+			select {
+			case <-p.Done():
+			default:
+				t.Fatal("result preceded actual exit/drain")
+			}
+			if !sent || p.waitErr != nil || result.Output != "answer" || result.RawStreams == nil || result.RawStreams.Stderr != "post-eof-stderr" {
+				t.Fatalf("clean peer audit lost: sent=%t wait=%v err=%v result=%#v", sent, p.waitErr, err, result)
+			}
+			if (err != nil) != tc.wantError {
+				t.Fatalf("error=%v wantError=%t", err, tc.wantError)
+			}
+			if tc.wantFailure && result.Failure == nil {
+				t.Fatal("provider failure was lost")
+			}
+			if tc.cancel && (!errors.Is(err, context.Canceled) || !errors.Is(err, cancelCause)) {
+				t.Fatalf("caller cancellation cause lost: %v", err)
+			}
+			if tc.malformed && (!strings.Contains(result.RawStreams.Stdout, "{broken") || !strings.Contains(err.Error(), "decode JSON-RPC stdout")) {
+				t.Fatalf("malformed protocol cause/audit lost: %v %#v", err, result.RawStreams)
+			}
+			if tc.wantError || tc.wantFailure {
+				if result.Checkpoint != nil {
+					t.Fatal("unhealthy turn produced checkpoint")
+				}
+			} else if result.Checkpoint == nil || !result.Checkpoint.Valid || result.ExitCode != 0 || result.Failure != nil || result.RawStreams.Terminal == nil {
+				t.Fatalf("successful clean EOF was rejected: err=%v result=%#v", err, result)
+			}
+		})
+	}
 }
 
 func TestAlignmentTerminalEOFWaitsForObservedExit(t *testing.T) {

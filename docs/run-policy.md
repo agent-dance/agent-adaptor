@@ -286,6 +286,13 @@ that infrastructure cause and the available Result. A panic or a nil return with
 an agent business failure. `ApproveAll()` and `DenyAll(reason)` provide common
 handlers; `ApproveAll` denies questions because it cannot synthesize an answer.
 
+If cancellation or an approval timeout races with an already received callback
+error or panic, the existing terminal/fallback policy still decides the outcome.
+On failure, the received error remains in `RunError.Cause` for `errors.Is/As`;
+it cannot replace an already selected primary reason. The SDK does not wait for
+a callback that ignores cancellation, and a late callback cannot amend a result
+that has already been finalized.
+
 ## Event responder form
 
 Without an `OnApproval` handler, an `Ask` request is a reliable event on the

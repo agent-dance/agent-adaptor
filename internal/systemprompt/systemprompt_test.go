@@ -184,8 +184,18 @@ func TestFileLinksAndDirectoryReplacement(t *testing.T) {
 		defer f.Close()
 		dir := filepath.Dir(f.Path())
 		moved := dir + "-moved"
-		if err := os.Rename(dir, moved); err != nil {
-			t.Fatal(err)
+		renameErr := os.Rename(dir, moved)
+		if runtime.GOOS == "windows" {
+			if renameErr == nil {
+				t.Fatal("live private directory allowed replacement")
+			}
+			if err := f.Verify(ctx); err != nil {
+				t.Fatal("rejected replacement changed private directory", err)
+			}
+			return
+		}
+		if renameErr != nil {
+			t.Fatal(renameErr)
 		}
 		if err := os.Mkdir(dir, 0o700); err != nil {
 			t.Fatal(err)
@@ -288,8 +298,18 @@ func TestFileDirectorySymlinkAndMode(t *testing.T) {
 	defer f.Close()
 	dir := filepath.Dir(f.Path())
 	moved := dir + "-moved"
-	if err := os.Rename(dir, moved); err != nil {
-		t.Fatal(err)
+	renameErr := os.Rename(dir, moved)
+	if runtime.GOOS == "windows" {
+		if renameErr == nil {
+			t.Fatal("live private directory allowed symlink replacement")
+		}
+		if err := f.Verify(ctx); err != nil {
+			t.Fatal("rejected symlink replacement changed private directory", err)
+		}
+		return
+	}
+	if renameErr != nil {
+		t.Fatal(renameErr)
 	}
 	if err := os.Symlink(moved, dir); err != nil {
 		t.Fatal(err)

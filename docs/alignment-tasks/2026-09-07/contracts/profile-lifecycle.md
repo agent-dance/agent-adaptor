@@ -13,6 +13,8 @@
 5. 异常退出释放 OS 锁，不证明 provider 子进程已退出。上一 generation 标记 `active` 时，新 Agent 返回 `profile.ErrRecoveryRequired`，不发送 prompt、不改 Thread store、不重放、不清除 marker。§6 定义离线恢复。此安全边界经协调者确认，不宣称无条件自动崩溃恢复。
 6. 旧版本已经删除的 transcript 不能从 resume ID 重建。保留既有 continue-or-start 的一次安全 resume-reject fallback；`ResumeOnly()` 保持拒绝语义，宿主 key 逐字保留。
 
+R024（2026-09-10）澄清：资源快照只对闭集 provider 配置文件应用 JSON/TOML 对象规范化。skills 附件和其他 manifest 资源按原始字节取指纹，不因扩展名强制解析；合法数组、标量及刻意畸形的示例内容不得阻断 WithTools。附件任意字节变化必须改变兼容指纹；真正配置文件的重复键、畸形内容仍明确失败。
+
 唯一公共新增声明落在 `profile/errors.go`，使用真实 sentinel，不做 root alias：
 
 ```go

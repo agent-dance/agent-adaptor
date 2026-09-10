@@ -53,6 +53,18 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- Fingerprint skill attachments and other non-configuration profile resources
+  as exact bytes; JSON arrays/scalars and malformed example assets no longer
+  prevent hosted Tools from starting. Known configuration stays strictly checked.
+- Preserve Codex's literal-string config override syntax while still rejecting
+  reserved system-prompt keys and malformed assignments before execution.
+- Decide Codex resident checkpoint health after bounded EOF drain and actual
+  Wait: a successful terminal followed by exit zero remains successful.
+- Retain already received approval callback errors and panics when cancellation
+  wins, without changing terminal priority, timeout fallback or late callbacks.
+- Protect Claude append files with private Windows DACLs at creation and before
+  writing prompt bytes, and verify their owner and access permissions.
+
 - Make shared process stdin completion idempotent across writer and process exit.
 - Close Codex RPC clients without racing response delivery; preserve cancellation
   causes, partial audit output, and bounded process cleanup.

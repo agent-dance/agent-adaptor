@@ -14,6 +14,7 @@ import (
 // cache, provider profile, or other handle's file is adopted or recursively removed.
 type File struct {
 	mu          sync.Mutex
+	directory   *os.File
 	parent      *os.Root
 	root        *os.Root
 	dir         string
@@ -27,9 +28,10 @@ type File struct {
 	closed      bool
 }
 
-// Materialize atomically publishes and verifies a 0600 file in a new private
-// 0700 directory. The returned handle must outlive its actual provider process.
-func Materialize(ctx context.Context, text string) (_ *File, resultErr error) {
+// Materialize atomically publishes and verifies a private file and directory
+// (0600/0700 on POSIX, protected private ACLs on Windows). The returned
+// handle must outlive its actual provider process.
+func Materialize(ctx context.Context, text string) (result *File, resultErr error) {
 	if err := ctx.Err(); err != nil {
 		return nil, errors.Join(err, context.Cause(ctx))
 	}
@@ -39,41 +41,46 @@ func Materialize(ctx context.Context, text string) (_ *File, resultErr error) {
 	if err := Validate("", text); err != nil {
 		return nil, err
 	}
-	dir, err := os.MkdirTemp(os.TempDir(), "agent-adaptor-append-*")
+	directory, err := makePrivateDirectory()
 	if err != nil {
 		return nil, fmt.Errorf("create append directory: %w", err)
 	}
-	f := &File{dir: dir, text: text, fingerprint: Fingerprint(text)}
+	dir := directory.Name()
+	f := &File{directory: directory, dir: dir, text: text, fingerprint: Fingerprint(text)}
 	f.name = f.fingerprint + ".txt"
 	// OpenRoot keeps all later file operations confined to the owned directory.
 	defer func() {
 		if resultErr != nil {
 			resultErr = errors.Join(resultErr, f.Close())
+			result = nil
 		}
 	}()
-	f.dirInfo, err = os.Lstat(dir)
+	f.dirInfo, err = directory.Stat()
 	if err != nil {
 		return nil, err
 	}
 	if err := os.Chmod(dir, 0o700); err != nil {
 		return nil, err
 	}
-	f.dirInfo, err = os.Lstat(dir)
+	f.dirInfo, err = directory.Stat()
 	if err != nil {
 		return nil, err
 	}
 	if !f.dirInfo.IsDir() || unsafeInfo(f.dirInfo) {
 		return nil, fmt.Errorf("unsafe append directory: %w", os.ErrPermission)
 	}
+	if err := f.verifyDirectory(); err != nil {
+		return nil, err
+	}
 	f.parent, err = os.OpenRoot(filepath.Dir(dir))
 	if err != nil {
 		return nil, err
 	}
-	f.root, err = os.OpenRoot(dir)
+	f.root, err = f.parent.OpenRoot(filepath.Base(dir))
 	if err != nil {
 		return nil, err
 	}
-	temp, err := f.root.OpenFile(".pending", os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	temp, err := makePrivatePending(directory, f.root)
 	if err != nil {
 		return nil, err
 	}
@@ -84,12 +91,18 @@ func Materialize(ctx context.Context, text string) (_ *File, resultErr error) {
 			}
 		}
 	}()
-	chmodErr := temp.Chmod(0o600)
+	// Do not write even the first prompt byte if permissions cannot be proven.
+	if err := temp.Chmod(0o600); err != nil {
+		return nil, errors.Join(err, temp.Close())
+	}
+	if err := verifyPrivateObject(temp, false); err != nil {
+		return nil, errors.Join(err, temp.Close())
+	}
 	_, writeErr := temp.WriteString(text)
 	syncErr := temp.Sync()
 	info, statErr := temp.Stat()
 	closeErr := temp.Close()
-	if err := errors.Join(chmodErr, writeErr, syncErr, statErr, closeErr); err != nil {
+	if err := errors.Join(writeErr, syncErr, statErr, closeErr); err != nil {
 		return nil, err
 	}
 	f.fileInfo = info
@@ -122,7 +135,7 @@ func (f *File) Fingerprint() string {
 }
 
 func (f *File) verifyDirectory() error {
-	info, err := os.Lstat(f.dir)
+	info, err := privateDirectoryInfo(f.dir)
 	if err != nil {
 		return err
 	}
@@ -142,8 +155,8 @@ func (f *File) verifyIdentity() error {
 	return nil
 }
 
-// Verify checks directory/file identity, link type, platform-observed modes,
-// full bytes and SHA-256. Same-length changes and replacement files fail closed.
+// Verify checks directory/file identity, link type, platform permissions and
+// owner, full bytes and SHA-256. Changes and replacement files fail closed.
 func (f *File) Verify(ctx context.Context) error {
 	if f == nil {
 		return nil
@@ -166,12 +179,16 @@ func (f *File) Verify(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if err := verifyPrivateObject(file, false); err != nil {
+		return errors.Join(err, file.Close())
+	}
 	info, statErr := file.Stat()
 	// Bound reads by expected bytes + 1 so a corrupted file cannot force an
 	// unbounded allocation. The byte comparison detects truncated/grown content.
 	data, readErr := io.ReadAll(io.LimitReader(file, int64(len(f.text))+1))
+	permissionErr := verifyPrivateObject(file, false)
 	closeErr := file.Close()
-	if err := errors.Join(statErr, readErr, closeErr); err != nil {
+	if err := errors.Join(statErr, readErr, permissionErr, closeErr); err != nil {
 		return err
 	}
 	if !os.SameFile(f.fileInfo, info) || unsafeInfo(info) || !info.Mode().IsRegular() || info.Mode().Perm() != f.fileInfo.Mode().Perm() || string(data) != f.text || Fingerprint(string(data)) != f.fingerprint {
@@ -214,14 +231,8 @@ func (f *File) Close() error {
 			}
 			f.fileRemoved = true
 		}
-		if f.parent != nil {
-			if err := f.parent.Remove(filepath.Base(f.dir)); err != nil {
-				return err
-			}
-		} else {
-			if err := os.Remove(f.dir); err != nil {
-				return err
-			}
+		if err := removePrivateDirectory(f); err != nil {
+			return err
 		}
 		f.dirRemoved = true
 	}
@@ -231,6 +242,13 @@ func (f *File) Close() error {
 			errs = append(errs, err)
 		} else {
 			f.root = nil
+		}
+	}
+	if f.directory != nil {
+		if err := f.directory.Close(); err != nil {
+			errs = append(errs, err)
+		} else {
+			f.directory = nil
 		}
 	}
 	if f.parent != nil {

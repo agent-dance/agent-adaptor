@@ -142,6 +142,18 @@ even when SDK append is empty. Codex rejects config overrides of
 `developer_instructions`, `instructions`, `base_instructions`,
 `model_instructions_file` and `experimental_instructions_file`; unrelated valid
 overrides remain available. Inspect and direct Driver validation use the same rule.
+Codex accepts unquoted string values such as `-c model_reasoning_effort=high`:
+when its value is not valid TOML, the provider treats it as a literal string.
+The SDK does not mistake that fallback for a malformed override; a missing key
+or assignment remains invalid.
+
+Claude's temporary carrier uses owner-only POSIX permissions or a protected
+Windows DACL. Windows directory protection is established at creation and file
+protection before writing any prompt bytes; verification checks ownership and
+access permissions as well as file identity and content. Shared temporary
+directory ACLs are not inherited as access grants to other users. A directory
+handle prevents replacement until the actual provider exits; cleanup deletes
+that same owned directory through its handle and retains protection on failure.
 
 Content hashes participate in both checkpoint guards and resident process
 signatures; all existing configuration/environment dimensions remain. Equal

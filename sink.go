@@ -557,17 +557,17 @@ func (s *eventSink) runHandler(ctx context.Context, req driver.DecisionRequest) 
 
 	select {
 	case msg := <-panicked:
+		err := fmt.Errorf("approval handler panic: %s", msg)
 		if ctx.Err() != nil {
-			return decisionContextEnded(ctx, req, ar)
+			return s.decisionContextEnded(ctx, req, ar, err)
 		}
 		ar.expire()
-		err := fmt.Errorf("approval handler panic: %s", msg)
 		s.setPendingFailure(&driver.RunFailure{Code: driver.FailureAgentError, Message: err.Error()})
 		return driver.DecisionResponse{RequestID: req.RequestID, Result: driver.DecisionAborted}, driver.DecisionAborted, err
 
 	case err := <-outcome:
 		if ctx.Err() != nil {
-			return decisionContextEnded(ctx, req, ar)
+			return s.decisionContextEnded(ctx, req, ar, err)
 		}
 		if err != nil {
 			ar.expire()
@@ -596,7 +596,17 @@ func (s *eventSink) runHandler(ctx context.Context, req driver.DecisionRequest) 
 	}
 }
 
-func decisionContextEnded(ctx context.Context, req driver.DecisionRequest, ar *ApprovalRequest) (driver.DecisionResponse, driver.DecisionResult, error) {
+func (s *eventSink) decisionContextEnded(ctx context.Context, req driver.DecisionRequest, ar *ApprovalRequest, observed error) (driver.DecisionResponse, driver.DecisionResult, error) {
+	// The receiver already observed the handler outcome. Retain its cause
+	// without turning an existing response or a continuing timeout into a
+	// failure. A handler that settles after this receiver exits is not awaited.
+	if observed != nil {
+		s.terminal.mu.Lock()
+		if !s.terminal.ended {
+			s.terminal.cause = errors.Join(s.terminal.cause, observed)
+		}
+		s.terminal.mu.Unlock()
+	}
 	if resp, ok := ar.expire(); ok {
 		resp.RequestID = req.RequestID
 		return resp, resp.Result, nil
@@ -604,7 +614,7 @@ func decisionContextEnded(ctx context.Context, req driver.DecisionRequest, ar *A
 	if context.Cause(ctx) == errApprovalDeadline {
 		return driver.DecisionResponse{RequestID: req.RequestID, Result: driver.DecisionTimedOut}, driver.DecisionTimedOut, nil
 	}
-	return driver.DecisionResponse{RequestID: req.RequestID, Result: driver.DecisionAborted}, driver.DecisionAborted, errors.Join(ctx.Err(), context.Cause(ctx))
+	return driver.DecisionResponse{RequestID: req.RequestID, Result: driver.DecisionAborted}, driver.DecisionAborted, errors.Join(ctx.Err(), context.Cause(ctx), observed)
 }
 
 // runEventDispatch is form B: enqueue the live *ApprovalRequest on the

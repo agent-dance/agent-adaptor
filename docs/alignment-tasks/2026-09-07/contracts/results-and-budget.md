@@ -12,6 +12,8 @@
 - 基线 A2A server 与 Local loopback 先判断 `errors.Is(context.Canceled)`；新 carrier 允许同时匹配具体失败与其派生取消后，必须先读权威 Reason，防止审批/预算失败变成 canceled。
 - 重新打开 AGENTS §14 的“错误路径 Result 映射”审计子项。C02 仅关闭合同设计；T05、provider 实现、T10、独立验证和相关 gate 才提供功能关闭证据。
 
+R024（2026-09-10）澄清：唯一审批 sink 已收到 handler error/panic 后才观察到取消或本次审批超时时，继续按既有主因和 fallback 决定结果，并在失败的 Cause 图中保留已收到的错误。不得用该次因覆盖已选择的主因，不得等待尚未完成的 handler，也不得让迟到返回改写封存 Result。超时继续和已经合法应答的既有决定仍保留。
+
 ## 2. 冻结的公共 Go 增量
 
 以下声明是实施签名，不是新增的第三方 SPI alias。所有既有字段、方法与 reason 保留。

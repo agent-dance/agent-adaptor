@@ -43,6 +43,9 @@
 // capability or Todo observations.
 //
 // adaptor.WithAppendSystemPrompt uses Claude's native append-file argument.
+// The carrier uses private POSIX modes or protected Windows DACLs; directory
+// protection exists at creation and file protection precedes writing prompt
+// bytes. Verification checks owner/access protection, identity and full content.
 // The verified private file lives as long as its actual process, including
 // resident reuse and prewarm; Close reports retryable owned-file cleanup errors.
 // The content hash participates in session guards and startup signatures.

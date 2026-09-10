@@ -148,13 +148,25 @@ func main() {
 				// A terminal can be queued before the start response, while EOF
 				// is already visible and the real process exit remains pending.
 				notify("item/completed", scoped("item", map[string]any{"id": "answer", "type": "agentMessage", "text": "answer"}))
-				notify("turn/completed", map[string]any{"threadId": thread, "turn": map[string]any{"id": turn, "status": "completed"}})
+				status := os.Getenv("ALIGNMENT_EOF_TERMINAL")
+				if status == "" {
+					status = "completed"
+				}
+				if status != "missing" {
+					notify("turn/completed", map[string]any{"threadId": thread, "turn": map[string]any{"id": turn, "status": status}})
+				}
 				reply(map[string]any{"turn": map[string]any{"id": turn, "status": "inProgress"}})
+				if os.Getenv("ALIGNMENT_EOF_MALFORMED") == "1" {
+					fmt.Println("{broken")
+				}
 				_ = os.Stdout.Close()
 				deadline := time.Now().Add(4 * time.Second)
 				for time.Now().Before(deadline) {
 					if _, err := os.Stat(os.Getenv("ALIGNMENT_RELEASE")); err == nil {
 						fmt.Fprint(os.Stderr, "post-eof-stderr")
+						if os.Getenv("ALIGNMENT_EOF_EXIT") == "0" {
+							return
+						}
 						os.Exit(7)
 					}
 					time.Sleep(time.Millisecond)

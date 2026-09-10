@@ -215,6 +215,8 @@ func (p *Process) IsClosed() bool {
 // RunTurn sends exactly one prompt on the loaded thread. promptSent becomes
 // true immediately before turn/start because an RPC error cannot prove the
 // peer did not receive the request; callers must not replay in that case.
+// An observed stdout EOF is joined with the actual process exit before a
+// successful terminal can certify its checkpoint.
 func (p *Process) RunTurn(ctx context.Context, opts Options, sink driver.EventSink) (result driver.Response, promptSent bool, err error) {
 	if p == nil {
 		return result, false, errors.New("codex app-server process is nil")
@@ -272,9 +274,7 @@ func (p *Process) RunTurn(ctx context.Context, opts Options, sink driver.EventSi
 			cancel()
 			err = ctx.Err()
 		case <-p.waitCh:
-			err = errors.New("codex app-server exited before turn completion")
 		case <-p.stream.ReadDone():
-			err = errors.New("codex app-server stdout ended during resident turn")
 		}
 	}
 	// The select above may choose the terminal even when EOF is also ready.
@@ -284,9 +284,6 @@ func (p *Process) RunTurn(ctx context.Context, opts Options, sink driver.EventSi
 	select {
 	case <-p.stream.ReadDone():
 		readEnded = true
-		if err == nil {
-			err = errors.New("codex app-server stdout ended during resident turn")
-		}
 	default:
 	}
 	if readErr := p.stream.ReadError(); readErr != nil {
@@ -303,13 +300,11 @@ func (p *Process) RunTurn(ctx context.Context, opts Options, sink driver.EventSi
 	// observed before finalization must still participate in checkpoint health.
 	select {
 	case <-p.waitCh:
-		if p.waitErr != nil && err == nil {
-			err = errors.New("codex app-server process exited unsuccessfully")
-		}
+		readEnded = true
 	default:
 	}
 
-	if err != nil {
+	if err != nil || readEnded {
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		if readEnded && ctx.Err() == nil {
 			// Let a peer that already closed stdout finish draining stderr and
@@ -331,6 +326,9 @@ func (p *Process) RunTurn(ctx context.Context, opts Options, sink driver.EventSi
 		default:
 		}
 	}
+	// A healthy terminal may race cancellation during the bounded exit/drain.
+	// The process's private context cannot decide the caller's run outcome.
+	err = errors.Join(err, callerContextError(ctx))
 	exitCode, signal, timedOut := 0, "", false
 	if err != nil {
 		exitCode = -1

@@ -1,0 +1,45 @@
+name: Review contracts
+
+on:
+  push:
+    branches: ["main", "codex/**"]
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  AGENT_ADAPTOR_LIVE_CONFORMANCE: "0"
+  AGENT_ADAPTOR_E2E: "0"
+  AGENT_ADAPTOR_UPDATE_API_GOLDEN: "0"
+  GOTOOLCHAIN: local
+
+jobs:
+  regressions:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.8'
+          cache: true
+      - name: Record exact source and native platform
+        run: |
+          git rev-parse HEAD
+          go version
+          go env GOOS GOARCH
+      - name: Private append files and native access controls
+        run: go test -count=3 -timeout=5m -v ./internal/systemprompt
+      - name: Opaque profile resources and approval error graphs
+        run: go test -count=3 -timeout=5m -v . -run '^Test(HostedProfile(SkillAssetsKeepExactBytes|ConfigurationRemainsStructured)|Approval(ReceivedHandlerCauseSurvivesCancellation|ReceivedHandlerCausePreservesTimeoutDecision|LateHandlerDoesNotAlterCancelledResult))$'
+      - name: Codex override syntax and reserved keys
+        run: go test -count=3 -timeout=5m -v ./codex -run '^TestAlignment(ConfigConflictForms|UnrelatedConfigValueFallback)$'
+      - name: Codex terminal, EOF and actual exit health
+        run: go test -count=3 -timeout=5m -v ./codex/appserver -run '^TestAlignment(ResidentEOFHealth|TerminalEOFWaitsForObservedExit|ResidentWaitCause)$'

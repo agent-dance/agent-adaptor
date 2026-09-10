@@ -4,13 +4,13 @@
   "manifest_revision": 25,
   "code_baseline": "919f140f64f89c80933802840c8878681a85a4d9",
   "source_head": "e2f0620bdd6477e6fe16f6db5648093589342ca2",
-  "status": "R023_reconciled_pending_exact_G05_checks",
+  "status": "R024_reconciled_pending_exact_G05_checks",
   "contracts": [
     {
       "producer": "C01",
       "path": "docs/alignment-tasks/2026-09-07/contracts/profile-lifecycle.md",
-      "sha256": "97145229db14704b015b24181bbdc59d736e7c7c276101e85cc277773d19eb67",
-      "version": "1.2-g02",
+      "sha256": "69ac364bb2537629bdc9f60fda78592bea86ba3bc3a8bed101f03eebb213fe56",
+      "version": "1.2-g02-r024",
       "interfaces": [
         "profile.ErrInUse/ErrUnsafe/ErrRecoveryRequired/ErrUnsupportedFilesystem",
         "Dedicated WithTools deterministic profile + owner lock",
@@ -22,8 +22,8 @@
     {
       "producer": "C02",
       "path": "docs/alignment-tasks/2026-09-07/contracts/results-and-budget.md",
-      "sha256": "017ce9319625e252a7615e60eee9c8721df2045896ff8b2f06822b89bfd40460",
-      "version": "1.3-r016-pending-g04",
+      "sha256": "373945923722273eace488d508b6fa832786c755d7b9fab320d67024d88abeb2",
+      "version": "1.3-r016-pending-g04-r024",
       "interfaces": [
         "RunError.Cause + stable primary Reason",
         "Policy.ActiveExecutionTimeout",
@@ -79,8 +79,8 @@
     {
       "producer": "C04",
       "path": "docs/alignment-tasks/2026-09-07/contracts/prompt-transport.md",
-      "sha256": "370a09fad047f58816ed4574ee2d641532809dcc8e0fee69fafdec95a010d074",
-      "version": "1.4-g03",
+      "sha256": "d1dfb93c394c42049e7dec5760f08c92807ff560a42aa41e191276b3f0c4251e",
+      "version": "1.4-g03-r024",
       "interfaces": [
         "WithAppendSystemPrompt SharedOption",
         "driver.Request.AppendSystemPrompt + Descriptor.SystemPrompt",
@@ -421,7 +421,8 @@
     "R022: native Linux T25-F02 at45cada43 exposed a healthy resident Codex fixture cross-pipe receipt assumption. Isolated unchanged-predicate diagnostics reproduced empty stderr with correct formal Usage; separate before-first-Read and same-buffer receipt controls establish the missing fixture prerequisite. Original T16 owner supplemental T34 relocates exact Raw oracle to an explicit parent admission gate and preserves public conversion/failure/usage/terminal/stability coverage. QA/docs only, no production/API change or requirement owner/verifier change. G05 reopens; B05 seven tasks at capacity6; B06 uses replacement same SHA.",
     "G05 replacement canonical24: all seven B05 workers accepted, T34 QA-only receipt/mapping/stability coverage reconciled under C02 and independent review. No Codex production or original owner/verifier change. Old45cada Linux failure and all diagnostics retained; this source still requires exact G05 and fresh B06 validation.",
     "R023: d94fd17 native Linux fullrace revealed clihelper markDone doubleclose and sourcegraph/jsonrpc2 pending response send-after-close. Original T07/T16 owners receive disjoint B05 T35/T36 from G04. Final W04-R05/R07 owners move to T35/T36, independent T20→T25, liveT27/T29 retained. Preserve96IDs/45history,47tasks andcapacity6. Two production requirements andG05 reopen; allB06 need replacement SHA. No dependency/API/validation weakening; T34 QA remains intact.",
-    "G05 replacement canonical25: nineB05workers accepted including T35 sharedstdin and T36 CodexClient production close repairs. Original-owner source/cause/FIFO/Raw/checkpoint scope preserved; T20 metadata22,96requirementIDs/45history retained. Earlier d94 fullrace panics archived. This source still needs exactG05 validation followed by allB06sameSHA; no automatic release."
+    "G05 replacement canonical25: nineB05workers accepted including T35 sharedstdin and T36 CodexClient production close repairs. Original-owner source/cause/FIFO/Raw/checkpoint scope preserved; T20 metadata22,96requirementIDs/45history retained. Earlier d94 fullrace panics archived. This source still needs exactG05 validation followed by allB06sameSHA; no automatic release.",
+    "R024: five main-review regressions reconciled in contracts: opaque skill assets, Codex literal overrides and clean EOF, observed approval causes, and protected Windows append DACLs. New exact-SHA checks and native Windows evidence remain required; prior G05/G06 evidence is not reused."
   ],
   "unmerged_related_branches": [
     {

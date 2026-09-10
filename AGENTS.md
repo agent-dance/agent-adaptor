@@ -380,6 +380,8 @@ R022：Codex 健康常驻测试不得把子进程 stderr 写入和独立 stdout 
 
 R023：原生 Linux 又在 Claude 审批拒绝和 Codex 取消时发现生产关闭 panic。共享 stdin 的 writer 与进程退出均可合法终结，done 的检查和关闭必须在同一同步边界内幂等执行；Close 停止接收并保留健康 FIFO drain，不能因此跳过终结通知。Codex 外部 Close 不得与唯一 RPC reader 竞争关闭 pending；关闭自有 transport 并解除 active RPC 等待，保持 caller/RPC 主因、正式 FIFO、完整 Raw drain、失败无 checkpoint，禁止 handler 自等待或 recover 掩盖 panic。补充 T35/T36 由原 T07/T16 负责人实施，W04-R05/R07 最终 owner 改为 T35/T36、独立 verifier 为 T25 加原 T27/T29 live，T20 仍保留全部原测试但当前独立职责为22项。两处真实panic与中断测试均保留，替换 G05 后全部 B06 同一新 SHA 重验。
 
+R024：2026-09-10 main 审查补充约束：skill 附件及非配置 manifest 资源按原字节计算指纹，不能按扩展名强制解析为配置对象；Codex 无关 config override 保留官方 literal-string fallback，reserved 提示键仍拒绝；成功终局后的 stdout EOF 先有界 drain/Wait，再根据真实退出与协议状态判断健康。已接收审批 error/panic 在取消竞态下保留 cause，既有主因、fallback 和迟到 handler 边界不变。Windows append 私有目录必须在创建时建立受保护 DACL，文件在写入提示前保护，并验证 owner/ACL；Chmod 模式位和交叉编译不能代替原生权限证据。修复后的精确 SHA 仍须独立验收，不沿用旧 G05/G06 结论。
+
 具体冻结设计、未支持边界、文件所有权和fixture见 `docs/alignment-tasks/2026-09-07/contracts/frozen.json`。合同冻结不代表代码已实现；后续同批godoc、合同测试、使用文档和CHANGELOG完成后才能关闭对应项。其他第14节既有保护继续有效。
 
 ## 15. 发布门禁

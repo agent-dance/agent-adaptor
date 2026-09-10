@@ -148,7 +148,7 @@ func TestAlignmentExecAppendWireAndGuard(t *testing.T) {
 
 func TestAlignmentConfigConflictForms(t *testing.T) {
 	for _, key := range []string{"developer_instructions", "instructions", "base_instructions", "model_instructions_file", "experimental_instructions_file"} {
-		for _, args := range [][]string{{"-c", key + `="hidden"`}, {"-c" + key + `="hidden"`}, {"-c=" + key + `="hidden"`}, {"--config=" + key + `="hidden"`}, {"--config", ` "` + key + `" = "hidden"`}, {"-c", `'` + key + `' = "hidden"`}} {
+		for _, args := range [][]string{{"-c", key + `="hidden"`}, {"-c" + key + `="hidden"`}, {"-c=" + key + `="hidden"`}, {"--config=" + key + `="hidden"`}, {"--config", ` "` + key + `" = "hidden"`}, {"-c", `'` + key + `' = "hidden"`}, {"-c", key + "=hidden"}, {"--config", `"` + key + `" = [hidden`}, {"-c", key + ".nested=hidden"}} {
 			t.Run(strings.Join(args, "/"), func(t *testing.T) {
 				if err := validateCodexPromptArgs(args); !errors.Is(err, driver.ErrSystemPromptUnsupported) || strings.Contains(err.Error(), "hidden") {
 					t.Fatalf("unsafe conflict: %v", err)
@@ -156,7 +156,7 @@ func TestAlignmentConfigConflictForms(t *testing.T) {
 			})
 		}
 	}
-	for _, args := range [][]string{{"-c"}, {"--config="}, {"-c", "not valid"}, {"-c", `x="unterminated`}} {
+	for _, args := range [][]string{{"-c"}, {"--config="}, {"-c", "not valid"}, {"-c", " = high"}, {"-c", `"unterminated=high`}, {"-c", "[table]\nvalue=high"}} {
 		var invalid *driver.InvalidDriverConfigError
 		if err := validateCodexPromptArgs(args); !errors.As(err, &invalid) {
 			t.Fatalf("invalid: %v", err)
@@ -164,6 +164,41 @@ func TestAlignmentConfigConflictForms(t *testing.T) {
 	}
 	if err := validateCodexPromptArgs([]string{"--skip-git-repo-check", "-c", `'unrelated.key' = "value"`}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestAlignmentUnrelatedConfigValueFallback(t *testing.T) {
+	for _, override := range []string{
+		"model_reasoning_effort=high",
+		`"model_reasoning_effort" = high`,
+		"custom_key=[literal",
+		"custom_key={literal",
+		`custom_key="unterminated`,
+		"custom_key=",
+		"custom_key=line one\nline two",
+		`custom_key=https://example.test/?key=value`,
+		`'unrelated.key'=literal`,
+	} {
+		t.Run(override, func(t *testing.T) {
+			args := []string{"-c", override}
+			cfg := Config{CommonConfig: CommonConfig{ExtraArgs: args}}
+			d := Driver(cfg)
+			if err := d.(interface{ ValidateConfig(any) error }).ValidateConfig(nil); err != nil {
+				t.Fatalf("provider literal fallback rejected: %v", err)
+			}
+			for _, streaming := range []bool{false, true} {
+				if err := validateCodexAppend(driver.Request{Streaming: streaming}, cfg); err != nil {
+					t.Fatalf("run preflight rejected literal: %v", err)
+				}
+			}
+			if got, err := codexAppServerExtraArgs(args, driver.RunPolicy{}); err != nil || !reflect.DeepEqual(got, args) {
+				t.Fatalf("app-server changed literal: args=%q err=%v", got, err)
+			}
+			got, err := codexExecArgs(driver.Request{}, cfg, "")
+			if err != nil || len(got) < 3 || !reflect.DeepEqual(got[len(got)-3:], []string{"-c", override, "-"}) {
+				t.Fatalf("exec changed literal: args=%q err=%v", got, err)
+			}
+		})
 	}
 }
 

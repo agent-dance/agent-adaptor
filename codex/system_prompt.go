@@ -14,7 +14,8 @@ import (
 const appendSystemPromptFingerprintKey = "append_system_prompt_fingerprint"
 
 // Validate every override before profile I/O, including hidden defaults when
-// the SDK append is empty. TOML decoding handles quoted/dotted keys faithfully.
+// the SDK append is empty. Normalize only the key: Codex accepts any RHS by
+// falling back to a literal string when its TOML value parser rejects it.
 func validateCodexPromptArgs(args []string) error {
 	for i := 0; i < len(args); i++ {
 		base, value, inline := splitCodexArg(args[i])
@@ -28,8 +29,12 @@ func validateCodexPromptArgs(args []string) error {
 			}
 			value = args[i]
 		}
+		key, _, hasValue := strings.Cut(value, "=")
+		if !hasValue || strings.TrimSpace(key) == "" || strings.ContainsAny(key, "\r\n") {
+			return invalidCodexConfigOverride()
+		}
 		var decoded map[string]any
-		if err := toml.Unmarshal([]byte(value), &decoded); err != nil || len(decoded) != 1 {
+		if err := toml.Unmarshal([]byte(key+"=true"), &decoded); err != nil || len(decoded) != 1 {
 			return invalidCodexConfigOverride()
 		}
 		for key := range decoded {

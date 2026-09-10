@@ -212,6 +212,8 @@ Validate 先拒绝非 UTF-8，再拒绝 NUL；随后 core 才校验非空请求�
 
 **Claude 文件：** 每次实际 spawn 才 Materialize；创建 `os.TempDir()` 下随机 SDK 私有直属目录 `agent-adaptor-append-*`，0700；文件以内容 hash 命名，0600。目录和文件都由本次 File handle 唯一拥有，既不在 provider profile，也不在用户工作目录。不采用全局持久缓存，无跨 Agent/进程共享文件，因此不需要另一个跨进程锁。拥有证明是当前 handle 保存的目录/文件身份，不能凭可伪造文件名就接管或删除其它目录。
 
+R024（2026-09-10）Windows 澄清：0700/0600 表达私有访问边界，不能用 Windows Chmod 的只读位代替。目录创建时必须提供受保护的私有 DACL，文件写入提示前完成保护和验证；不得存在先继承共享访问再收紧的接管窗口。禁止 delete-sharing 的目录创建句柄保留到实际 provider 退出后的 File.Close；清理按该同一目录句柄删除，失败时保留 pin 以便安全重试。Verify 同时核对真实 owner、DACL 和既有身份/reparse/完整字节约束。POSIX 权限语义不变；Windows 验收必须在原生 runner 实际执行 ACL 继承和篡改反例。
+
 创建临时文件 → 写入完整原字节 → Sync/Close 成功 → 同目录原子发布 → Verify。权限、类型、链接及内容校验失败都在 prompt 交付前显式失败。Verify 比较完整 SHA-256、实际字节、regular file 身份、当前权限；对目录/文件的 symlink 或 Windows reparse point、同长度篡改、文件替换及不受控路径拒绝，不使用 `Stat.Size == len(text)` 缓存命中。使用目录约束打开/路径身份检查保证校验及删除不越出 owned root；安全边界不声称能防止同 UID 在校验之后任意写进程内存或拥有目录。
 
 G03/C04澄清取消优先级：Materialize先检查context，已取消则返回取消错误并保留cause；context未取消时，空文本返回 `(nil,nil)` 且不创建资源，nil handle 的 Path/Fingerprint 返回空串、Verify/Close 成功。File.Close 幂等；仅删除该 handle 的文件及其私有目录，失败可观察并可重试，不递归删除任何外部 profile。创建失败/取消清理已创建载体；Close/cleanup 的错误按既有主因合并而非覆盖。
@@ -225,6 +227,10 @@ G03/C04澄清取消优先级：Materialize先检查context，已取消则返回�
 当前 Windows `.cmd/.bat` 经 `cmd.exe /d /s /c call` 运行，有 shell 再解释；本项不修改共享 processx 的既有启动语义。对内联文本含 CR/LF、`"`、`%`、`!`、`^`、`&`、`|`、`<`、`>`、`(`、`)` 的 cmd shim 以 `unsafe_shell_argument` 在启动前拒绝；不得尝试用普通 Windows argv quoting 声称能够无损越过二次 cmd 解析。原生 executable/可证明无损的 PowerShell 路径仍必须通过中文/换行/引号 round-trip；原生 Windows 验证由 T26 执行，跨编译不算。
 
 **冲突：** Claude/CodeBuddy 的 ExtraArgs 一律拒绝 `--system-prompt`、`--system-prompt-file`、`--append-system-prompt`、`--append-system-prompt-file` 的 detached/`=` 形式（即使此次 append 为空，防止 hidden default 绕过清除）。Codex 拒绝 `-c`/`--config`（含 attached/`=`）中 TOML key 归一化后等于 `developer_instructions`、`instructions`、`base_instructions`、`model_instructions_file`、`experimental_instructions_file` 的 override；解析 quoted key/空白，不能只 HasPrefix。解析无效的 config override 以现有 InvalidDriverConfig 明确失败，不能吞掉。保留无关 ExtraArgs，不把任何替换提示参数设为新公共模式。所有拒绝先于物化、writer 启动和 prompt 交付；配置捕获/Inspect 保持同一决定。
+
+R024 澄清上述“无效”：缺少赋值符或键等无效 override 仍拒绝；RHS 的 TOML 解析失败遵循 Codex 官方 literal-string fallback，不是整个 override 无效。`model_reasoning_effort=high`、以 `[`/`{` 开头的字符串值均不能仅因严格 TOML 解析失败而拒绝。reserved key 的归一化与防绕过检查不放宽。
+
+R024 常驻终局澄清：已知 stdout EOF 先触发有界 drain/Wait，再用正式成功终局、协议状态和实际退出码判断健康。成功终局之后正常退出 0 保留成功 Result/checkpoint；缺终局、坏协议、非零退出和取消仍失败。健康且仍连接的进程不等待整体退出，已交付 prompt 仍禁止自动重放。
 
 追加文本不可新增进入 metadata、notice、tool/capability/todo、A2A wire、recorder 索引。CodeBuddy/Codex exec 的 OS argv 可见性是选定原生 transport 的限制，要在使用文档说明；SDK 不额外复制到事件诊断。provider 实际写出的 Raw 仍按完整 Raw 合同保留，不能为此偷偷截断审计输出。
 

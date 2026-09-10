@@ -18,6 +18,8 @@
 // app-server has no SDK inline limit. The text is visible in exec OS argv but is
 // redacted from SDK invocation diagnostics. Raw provider output stays complete.
 // ExtraArgs cannot override any native system/developer instruction source.
+// Unrelated config overrides retain Codex's literal-string fallback when the
+// value is not TOML, including unquoted values such as model_reasoning_effort=high.
 // Append content participates in Thread compatibility and resident signatures.
 //
 // Observation support is transport-specific: exec reports no capability or todo
@@ -43,4 +45,8 @@
 // One-shot and failed-process cleanup also drain the process streams within
 // their shutdown bounds. A healthy connected resident remains available for
 // the next turn without waiting for process exit.
+// If stdout has ended, bounded drain/Wait precedes the health decision. A formal
+// successful terminal followed by a clean exit preserves its checkpoint; EOF
+// without a successful terminal, malformed protocol, cancellation or a nonzero
+// exit cannot produce a healthy checkpoint.
 package codex

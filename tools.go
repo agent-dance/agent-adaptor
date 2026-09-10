@@ -523,6 +523,13 @@ func hostedToolProfileFingerprint(driverType, dir string, req *driver.Request, r
 	if roots == nil {
 		return "", fmt.Errorf("unsupported hosted profile driver %q", driverType)
 	}
+	// Only the provider's explicit configuration files have JSON/TOML object
+	// semantics. Skill attachments and other manifest resources are opaque bytes,
+	// even when their names have those extensions (including invalid examples).
+	configFiles := make(map[string]bool, len(roots))
+	for _, path := range roots {
+		configFiles[path] = strings.HasSuffix(path, ".json") || strings.HasSuffix(path, ".toml")
+	}
 	mcpPath, mcpRaw, err := mcpruntime.HostedCompatibilityBaseline(driverType, dir)
 	if err == nil && req != nil {
 		mcpPath, mcpRaw, err = mcpruntime.ResolvedCompatibilityBaseline(driverType, dir, req.MCP)
@@ -629,9 +636,9 @@ func hostedToolProfileFingerprint(driverType, dir string, req *driver.Request, r
 			if totalBytes > 64<<20 {
 				return fmt.Errorf("profile resources exceed byte limit")
 			}
-			if strings.HasSuffix(path, ".json") {
+			if configFiles[path] && strings.HasSuffix(path, ".json") {
 				raw, err = mcpruntime.StrictProfileJSON(raw)
-			} else if strings.HasSuffix(path, ".toml") {
+			} else if configFiles[path] && strings.HasSuffix(path, ".toml") {
 				var v map[string]any
 				err = toml.Unmarshal(raw, &v)
 				if err == nil {

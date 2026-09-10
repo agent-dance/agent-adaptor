@@ -172,6 +172,12 @@ by that resolver. The final snapshot includes actual contents and modes, resolve
 skill source contents, ordinary MCP and unknown settings. Unproven links and
 unsafe or unreadable final resources fail explicitly.
 
+Only the provider's known configuration files are normalized as JSON/TOML
+objects. Skill attachments and other manifest resources are fingerprinted as
+exact bytes, regardless of extension: JSON arrays/scalars and intentionally
+malformed example files remain valid skill assets. Any byte change in those
+assets changes compatibility; malformed provider configuration still fails.
+
 A Driver may defer physical profile reconciliation until Run. Its compatibility
 view projects only proven managed replacements/prunes from the resolved sources,
 without resolving or writing resources again; unrelated resources remain included.
