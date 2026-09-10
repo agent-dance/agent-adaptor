@@ -280,3 +280,5 @@ R024 常驻终局澄清：已知 stdout EOF 先触发有界 drain/Wait，再用�
 06a1828 在 windows-latest 通过后，Server 2022 的原生完整测试在 Root.Rename 报 sharing violation。Windows 将 .pending 的原始私有创建句柄保留至写入、Sync、Stat 及发布前取消检查结束，以 RootDirectory=NULL、简单 basename、ReplaceIfExists=false 执行官方同目录 rename；不得关闭 directory pin 规避冲突。发布 helper 所有返回路径均消费 pending handle，保持主因和 Close 次因；失败的目标原字节/身份不变，目录在 helper 返回后仍禁止替换。原 DACL、owner、link、identity、取消 stages 和 cleanup retry 合同不变。
 
 依据 [Microsoft FILE_RENAME_INFORMATION](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_rename_information) 的 RootDirectory 与同目录 simple-name 合同；旧 OS 内部实现差异不作为免测理由。Review contracts 同时覆盖 windows-latest 和 windows-2022，T26 必测包含新增成功及目标冲突负例。
+
+R026 夹具复验：Windows File.Stat 已关闭时返回 ERROR_INVALID_HANDLE；应核对该精确 native 错误。替换/恢复原文件的攻击夹具使用独立同目录 NT rename（不得调用生产 publish helper），不释放 directory pin；硬链接放在另一个测试目录并核对实际 NumberOfLinks=2 与原字节后再验证拒绝。目标父目录共享冲突不构成完成攻击注入的证据。

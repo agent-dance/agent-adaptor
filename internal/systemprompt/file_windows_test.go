@@ -213,7 +213,9 @@ func TestWindowsAppendPublishKeepsPinsAndRejectsConflict(t *testing.T) {
 					t.Fatalf("publication changed file identity: %v", err)
 				}
 			}
-			if _, err := pending.Stat(); !errors.Is(err, os.ErrClosed) {
+			// Windows File.Stat calls GetFileType on its invalidated native
+			// handle; its precise closed-handle error is ERROR_INVALID_HANDLE.
+			if _, err := pending.Stat(); !errors.Is(err, windows.ERROR_INVALID_HANDLE) {
 				t.Fatalf("publication did not consume pending handle: %v", err)
 			}
 			assertPinned()
@@ -364,11 +366,26 @@ func TestWindowsAppendHardLinkRejected(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer f.Close()
-	link := filepath.Join(filepath.Dir(f.Path()), "second-link")
+	// Place the second name in a separate directory. Server 2022's hard-link
+	// target open would otherwise conflict with the intentionally pinned parent.
+	link := filepath.Join(t.TempDir(), "second-link")
 	if err := os.Link(f.Path(), link); err != nil {
 		t.Fatal(err)
 	}
 	defer os.Remove(link)
+	file, err := os.Open(f.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var info windows.ByHandleFileInformation
+	statErr := windows.GetFileInformationByHandle(windows.Handle(file.Fd()), &info)
+	closeErr := file.Close()
+	if err := errors.Join(statErr, closeErr); err != nil || info.NumberOfLinks != 2 {
+		t.Fatalf("hard-link fixture did not create two names: links=%d, %v", info.NumberOfLinks, err)
+	}
+	if data, err := os.ReadFile(link); err != nil || string(data) != "private text" {
+		t.Fatalf("hard-link fixture changed bytes: %q, %v", data, err)
+	}
 	if err := f.Verify(context.Background()); !errors.Is(err, os.ErrPermission) {
 		t.Fatalf("multiply-linked append file accepted: %v", err)
 	}

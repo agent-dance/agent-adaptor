@@ -56,6 +56,8 @@ All notable changes to this project are documented in this file.
 - Publish private Windows append files by renaming their original handle within
   the same directory, avoiding Server 2022 sharing conflicts without releasing
   the lifetime directory pin. Reject existing targets and preserve cleanup retries.
+  Native tampering fixtures retain actual replacement and hard-link checks under
+  that pin, and assert the precise Windows closed-handle error.
 
 - Give parallel A2A HTTP test clients independent transports while preserving
   real redirect and bearer checks; repeat the client contracts on native Windows.

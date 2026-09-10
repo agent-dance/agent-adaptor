@@ -114,7 +114,7 @@ func TestFileReplacementAndCloseRetry(t *testing.T) {
 	}
 	defer f.Close()
 	moved := filepath.Join(filepath.Dir(f.Path()), "original-moved")
-	if err := os.Rename(f.Path(), moved); err != nil {
+	if err := renameTestFile(f.Path(), moved); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(f.Path(), []byte("original"), 0o600); err != nil {
@@ -132,7 +132,7 @@ func TestFileReplacementAndCloseRetry(t *testing.T) {
 	if err := os.Remove(f.Path()); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Rename(moved, f.Path()); err != nil {
+	if err := renameTestFile(moved, f.Path()); err != nil {
 		t.Fatal(err)
 	}
 	// An unknown sibling causes an observable, retryable close failure.
@@ -158,7 +158,7 @@ func TestFileLinksAndDirectoryReplacement(t *testing.T) {
 		}
 		defer f.Close()
 		moved := filepath.Join(filepath.Dir(f.Path()), "moved")
-		if err := os.Rename(f.Path(), moved); err != nil {
+		if err := renameTestFile(f.Path(), moved); err != nil {
 			t.Fatal(err)
 		}
 		if err := os.Symlink(moved, f.Path()); err != nil {
@@ -170,8 +170,12 @@ func TestFileLinksAndDirectoryReplacement(t *testing.T) {
 		if err := f.Close(); err == nil {
 			t.Fatal("symlink removed/adopted")
 		}
-		os.Remove(f.Path())
-		os.Rename(moved, f.Path())
+		if err := os.Remove(f.Path()); err != nil {
+			t.Fatal(err)
+		}
+		if err := renameTestFile(moved, f.Path()); err != nil {
+			t.Fatal(err)
+		}
 		if err := f.Close(); err != nil {
 			t.Fatal(err)
 		}

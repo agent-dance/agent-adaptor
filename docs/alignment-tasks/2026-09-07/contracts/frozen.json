@@ -79,7 +79,7 @@
     {
       "producer": "C04",
       "path": "docs/alignment-tasks/2026-09-07/contracts/prompt-transport.md",
-      "sha256": "2245c4e520cb3b3ae4b9315934f2c046869573be534818e9b88eed1bd0144d6f",
+      "sha256": "e35514c4252ea799752976a7e45c124e17bfa32f8142599a727d16fc2e08f2fe",
       "version": "1.4-g03-r024-r026",
       "interfaces": [
         "WithAppendSystemPrompt SharedOption",
