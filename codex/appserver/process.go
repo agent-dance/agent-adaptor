@@ -244,23 +244,7 @@ func (p *Process) RunTurn(ctx context.Context, opts Options, sink driver.EventSi
 		p.client.setTurnStartHandler(nil)
 	}()
 
-	turnParams := TurnStartParams{
-		ThreadID:    p.threadID,
-		Input:       append([]UserInput{TextInput(opts.Prompt)}, opts.SkillInputs...),
-		CWD:         opts.CWD,
-		Model:       opts.Model,
-		Effort:      opts.Effort,
-		ServiceTier: opts.ServiceTier,
-	}
-	if opts.OutputSchema != nil {
-		turnParams.OutputSchema = append([]byte(nil), opts.OutputSchema.SchemaJSON...)
-	}
-	if opts.Approval != "" {
-		turnParams.ApprovalPolicy = opts.Approval
-	}
-	if opts.Sandbox != "" {
-		turnParams.SandboxPolicy = sandboxPolicyFor(opts.Sandbox)
-	}
+	turnParams := turnStartParams(opts, p.threadID)
 
 	promptSent = true
 	turn, startErr := p.client.TurnStart(ctx, turnParams)

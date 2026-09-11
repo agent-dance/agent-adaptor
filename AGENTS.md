@@ -392,6 +392,8 @@ R027：冷续接夹具必须在接任网关启动前证明旧监听器关闭并�
 
 R028：Go 1.26.8 的 fuzz 协调器存在官方75804父deadline与child取消竞态，75a84c8 的原T25-V09在30秒/847052样本后报deadline失败。原日志未含内部调度轨迹，独立受控机制复现不得倒填为原run轨迹。CI及T25/T26统一使用包含官方修复的Go1.27.1，由 `.github/go-version` 固定；go.mod最低1.26.8不变，新增minimum-go全量test/vet。原30秒fuzz命令、失败检查及live门保持，禁止工具链私有补丁、吞deadline或重试刷绿。revision27只精确追加CI版本文件的G05验收所有权，新SHA重跑全部门禁。
 
+R029：合入main前的可读性/结构清理以已验收dd3859e为基线，将既有私有职责拆入六个生产文件，保持公共API及ASTgolden、错误/生命周期、profile fingerprint、安全边界和live门。声明token审计和函数移动只说明改动范围，不能代替行为验收；独立测试保留，仅将无生产调用的terminal helper原JSON正文fixture迁至公开Delegate poll/stream路径。任务包revision28以24条精确新增路径覆盖本次29个源/测试/报告文件，47任务、96要求、全部owner/verifier、9个G05依赖及原命令保持。用户docs/README.md修改不在本次清理范围；旧dd3859e及更早验收/失败记录不得重标为新候选通过。实际新SHA须重新完成G05/T25/T26后才冻结，T27–T30与G06仍独立阻塞。
+
 ## 15. 发布门禁
 
 发布前必须全部满足：

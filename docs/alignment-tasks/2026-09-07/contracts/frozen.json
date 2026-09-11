@@ -1,10 +1,10 @@
 {
   "schema_version": "1.0",
   "gate": "G05",
-  "manifest_revision": 27,
+  "manifest_revision": 28,
   "code_baseline": "919f140f64f89c80933802840c8878681a85a4d9",
   "source_head": "e2f0620bdd6477e6fe16f6db5648093589342ca2",
-  "status": "R028_reconciled_pending_exact_G05_checks",
+  "status": "R029_reconciled_pending_exact_G05_checks",
   "contracts": [
     {
       "producer": "C01",
@@ -426,7 +426,8 @@
     "R025: integrate reviewed native Windows fixes without reverting R024; retain formally received Codex turn audit during cancellation, platform-observed profile modes and unsafe parent rejection, and deterministic approval deadline QA. Toolchain/frontend security gates retain their thresholds, including platform-specific vulnerability scanning. All G05/T25/T26 evidence must be regenerated on the final candidate; live T27-T30 and G06 remain separate.",
     "R026: native Server2022 caught Root.Rename sharing conflicts despite windows-latest success. Rename the original private pending handle with NULL RootDirectory and a simple basename; retain lifetime directory pin, reject destination replacement, and close pending on every outcome. Add explicit native success/conflict/identity/closed-handle/pin controls and require both Windows versions plus fresh same-SHA G05/T25/T26; preserve earlier failed evidence.",
     "R027: cold-resume fixture proves closure before successor admission and reserves the former port; strict Windows refusal and live-listener negative control retain original timeout and session/credential/manifest assertions. G05 integrates explicitly user-authorized post-review fixes through42 exact added paths; revision26 preserves47tasks,96requirements,9dependencies and original commands. Actual G04 base and all failed candidate evidence retained; fresh exact-SHA gates required.",
-    "R028: official Go1.27.1 fixes upstream75804 fuzz parent-deadline shutdown race; all acceptance uses .github/go-version, consumer minimum1.26.8 remains separately covered by full tests/vet. No private toolchain patch, deadline filtering, retries or shorter/count-based fuzz acceptance. Revision27 adds only the exact CI version-file scope; preserve75a84c8 failure and independent mechanism evidence, revalidate all final-SHA gates."
+    "R028: official Go1.27.1 fixes upstream75804 fuzz parent-deadline shutdown race; all acceptance uses .github/go-version, consumer minimum1.26.8 remains separately covered by full tests/vet. No private toolchain patch, deadline filtering, retries or shorter/count-based fuzz acceptance. Revision27 adds only the exact CI version-file scope; preserve75a84c8 failure and independent mechanism evidence, revalidate all final-SHA gates.",
+    "R029: user-authorized pre-merge readability/structure cleanup from accepted dd3859e moves private declarations into six focused production files and preserves public API, error/lifecycle behavior, profile fingerprint, safety boundaries and live gates. G05 adds24 exact paths to cover the29 reviewed source/test/report paths; no owner/verifier,47-task/96-requirement graph,9 dependencies or original commands change. Coordinator declaration-token audit496 unchanged/8 explicit modifications/3 new helpers/0 deletions is scope evidence, not functional acceptance. Independent tests remain; only the unused terminal-helper fixture body moves to public Delegate poll/stream coverage. Previous exact-SHA passes/failures remain history; a new candidate must pass original G05/T25/T26 before freezing. T27–T30/G06 remain blocked."
   ],
   "unmerged_related_branches": [
     {

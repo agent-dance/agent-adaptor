@@ -144,66 +144,43 @@ func (a *Agent) openStream(ctx context.Context, opts []CallOption, threadKey str
 		cancel: cancel,
 		done:   make(chan struct{}),
 	}
-	if openErr := a.ensureOpen(); openErr != nil {
-		st.err = openErr
-		cancel()
+	// Every preflight rejection returns the same empty, closed stream. Keep
+	// its teardown together so a new validation cannot forget cancellation.
+	reject := func(err error) (*runStream, RunSettings, context.Context, bool) {
+		st.err = err
+		st.cancel()
 		sink.close()
 		close(st.done)
 		return st, eff, ctx, false
+	}
+	if openErr := a.ensureOpen(); openErr != nil {
+		return reject(openErr)
 	}
 
 	if idErr != nil {
-		st.err = fmt.Errorf("adaptor: generate run id: %w", idErr)
-		cancel()
-		sink.close()
-		close(st.done)
-		return st, eff, ctx, false
+		return reject(fmt.Errorf("adaptor: generate run id: %w", idErr))
 	}
 	if a.toolConfigErr != nil {
-		st.err = fmt.Errorf("adaptor: run %s: %w", runID, a.toolConfigErr)
-		cancel()
-		sink.close()
-		close(st.done)
-		return st, eff, ctx, false
+		return reject(fmt.Errorf("adaptor: run %s: %w", runID, a.toolConfigErr))
 	}
 	if configErr := a.driver.ValidateConfig(nil); configErr != nil {
-		st.err = fmt.Errorf("adaptor: run %s: %w", runID, &driver.InvalidDriverConfigError{
+		return reject(fmt.Errorf("adaptor: run %s: %w", runID, &driver.InvalidDriverConfigError{
 			Driver: desc.Type,
 			Cause:  configErr,
-		})
-		cancel()
-		sink.close()
-		close(st.done)
-		return st, eff, ctx, false
+		}))
 	}
 	if toolsErr := a.validateHostedToolsPreflight(&eff, desc.MCP); toolsErr != nil {
-		st.err = fmt.Errorf("adaptor: run %s: %w", runID, toolsErr)
-		cancel()
-		sink.close()
-		close(st.done)
-		return st, eff, ctx, false
+		return reject(fmt.Errorf("adaptor: run %s: %w", runID, toolsErr))
 	}
 	if policyErr := validatePolicy(desc, eff.policy); policyErr != nil {
-		st.err = fmt.Errorf("adaptor: run %s: %w", runID, policyErr)
-		cancel()
-		sink.close()
-		close(st.done)
-		return st, eff, ctx, false
+		return reject(fmt.Errorf("adaptor: run %s: %w", runID, policyErr))
 	}
 	if appendErr := validateAppendSystemPrompt(desc, eff.appendSystemPrompt); appendErr != nil {
-		st.err = fmt.Errorf("adaptor: run %s: %w", runID, appendErr)
-		cancel()
-		sink.close()
-		close(st.done)
-		return st, eff, ctx, false
+		return reject(fmt.Errorf("adaptor: run %s: %w", runID, appendErr))
 	}
 	resolvedOutput, schemaErr := a.resolveStructuredOutput(desc, &eff)
 	if schemaErr != nil {
-		st.err = fmt.Errorf("adaptor: run %s: %w", runID, schemaErr)
-		cancel()
-		sink.close()
-		close(st.done)
-		return st, eff, ctx, false
+		return reject(fmt.Errorf("adaptor: run %s: %w", runID, schemaErr))
 	}
 	eff.resolvedOutput = resolvedOutput
 	sink.terminal.ctx = ctx
@@ -211,11 +188,7 @@ func (a *Agent) openStream(ctx context.Context, opts []CallOption, threadKey str
 	cancel = func() { sink.recordCancellation(ctx); underlyingCancel() }
 	st.cancel = cancel
 	if openErr := a.registerRun(runID, cancel); openErr != nil {
-		st.err = openErr
-		cancel()
-		sink.close()
-		close(st.done)
-		return st, eff, ctx, false
+		return reject(openErr)
 	}
 	// Parent cancellation has the same unblocking guarantees as Cancel().
 	// A successful normal close ends the watcher through broker.done.

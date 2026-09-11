@@ -508,8 +508,8 @@ func TestAlignmentCursorCapabilityReferenceConflictAndBounds(t *testing.T) {
 		p.observeCapability(strconv.Itoa(i), "mcpToolCall", "started", map[string]any{"args": args})
 	}
 	p.closeCapabilities(false)
-	if len(p.capabilities.refs) != cursorObservationLimit || len(s.facts()) != cursorObservationLimit*2 {
-		t.Fatalf("unbounded tracker: %d", len(p.capabilities.refs))
+	if len(p.capabilities.calls) != cursorObservationLimit || len(s.facts()) != cursorObservationLimit*2 {
+		t.Fatalf("unbounded tracker: %d", len(p.capabilities.calls))
 	}
 	count := 0
 	for _, e := range s.events {

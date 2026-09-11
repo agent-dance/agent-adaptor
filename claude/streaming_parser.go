@@ -13,18 +13,17 @@ import (
 // API-shaped) into StreamPayload. It does not participate in checkpoint
 // construction; session capture stays in the main parser.
 type streamingState struct {
-	sink         driver.EventSink
-	runID        string
-	parser       *claudeParser
-	messageID    string
-	scope        toolScope
-	messageIDs   map[string]string
-	blockTools   map[claudeBlockKey]*observedTool
-	replayBlocks map[claudeBlockKey]bool
-	textStarted  map[claudeBlockKey]string // message ID fixed at each text start
-	blockKind    map[claudeBlockKey]string
-	thinkingID   map[claudeBlockKey]string
-	signatures   map[claudeBlockKey]string
+	sink        driver.EventSink
+	runID       string
+	parser      *claudeParser
+	messageID   string
+	scope       toolScope
+	messageIDs  map[string]string
+	blockTools  map[claudeBlockKey]claudeToolBlock
+	textStarted map[claudeBlockKey]string // message ID fixed at each text start
+	blockKind   map[claudeBlockKey]string
+	thinkingID  map[claudeBlockKey]string
+	signatures  map[claudeBlockKey]string
 
 	runStarted      bool
 	finishedEmitted bool
@@ -41,6 +40,11 @@ type claudeBlockKey struct {
 	index int
 }
 
+type claudeToolBlock struct {
+	call   *observedTool
+	replay bool
+}
+
 func (s *streamingState) blockIndex(event map[string]any) claudeBlockKey {
 	return claudeBlockKey{s.scope.id, intFromAny(event["index"])}
 }
@@ -55,8 +59,7 @@ func newStreamingState(sink driver.EventSink, runID string, p *claudeParser) *st
 	return &streamingState{
 		sink:         sink,
 		messageIDs:   map[string]string{},
-		blockTools:   map[claudeBlockKey]*observedTool{},
-		replayBlocks: map[claudeBlockKey]bool{},
+		blockTools:   map[claudeBlockKey]claudeToolBlock{},
 		runID:        runID,
 		parser:       p,
 		messageUsage: make(map[claudeUsageKey]*driver.Usage),
@@ -212,8 +215,7 @@ func (s *streamingState) handleContentBlockStart(event map[string]any) {
 		id, name := claudeExactString(block, "id"), claudeExactString(block, "name")
 		input, _ := block["input"].(map[string]any)
 		call, fresh := s.parser.startTool(s.scope, id, name, input, len(input) == 0)
-		s.blockTools[idx] = call
-		s.replayBlocks[idx] = !fresh
+		s.blockTools[idx] = claudeToolBlock{call: call, replay: !fresh}
 		if fresh && s.scope.id == "" {
 			s.parser.interactiveOnToolUseStart(idx.index, name, id)
 		}
@@ -262,8 +264,8 @@ func (s *streamingState) handleContentBlockDelta(event map[string]any) {
 
 	case "input_json_delta":
 		raw := claudeExactString(delta, "partial_json")
-		if !s.replayBlocks[idx] {
-			s.parser.appendToolArgs(s.blockTools[idx], raw)
+		if block := s.blockTools[idx]; !block.replay {
+			s.parser.appendToolArgs(block.call, raw)
 		}
 		if s.scope.id == "" {
 			s.parser.interactiveOnToolUseDelta(idx.index, raw)
@@ -308,14 +310,13 @@ func (s *streamingState) handleContentBlockStop(event map[string]any) {
 			s.emitStream(pl)
 		}
 	case "tool_use":
-		if !s.replayBlocks[idx] {
-			s.parser.endTool(s.blockTools[idx])
+		if block := s.blockTools[idx]; !block.replay {
+			s.parser.endTool(block.call)
 		}
 		if s.scope.id == "" {
 			s.parser.interactiveOnToolUseStop(idx.index)
 		}
 		delete(s.blockTools, idx)
-		delete(s.replayBlocks, idx)
 	case "thinking":
 		thID := s.thinkingID[idx]
 		if thID != "" {

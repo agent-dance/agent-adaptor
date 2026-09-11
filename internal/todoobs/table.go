@@ -4,7 +4,7 @@ package todoobs
 
 import (
 	"errors"
-	"reflect"
+	"slices"
 	"sync"
 	"time"
 	"unicode"
@@ -126,7 +126,7 @@ func (t *Table) replace(items []todo.Item, source todo.Source, at time.Time) (*t
 		return nil, ErrInvalid
 	}
 	items = append([]todo.Item{}, items...)
-	if t.observed && t.snapshot.Source == source && reflect.DeepEqual(t.snapshot.Items, items) {
+	if t.observed && t.snapshot.Source == source && slices.Equal(t.snapshot.Items, items) {
 		return nil, nil
 	}
 	if t.snapshot.Revision == ^uint64(0) {

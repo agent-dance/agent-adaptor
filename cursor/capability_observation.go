@@ -16,15 +16,19 @@ import (
 const cursorObservationLimit = 4096
 
 type cursorCapabilityObservation struct {
-	catalog     *capabilityobs.Catalog
-	tracker     *capabilityobs.Tracker
-	refs        map[string]capability.Ref
-	startHashes map[string][32]byte
-	notices     map[string]bool
+	catalog *capabilityobs.Catalog
+	tracker *capabilityobs.Tracker
+	calls   map[string]cursorCapabilityCall
+	notices map[string]bool
+}
+
+type cursorCapabilityCall struct {
+	ref       capability.Ref
+	startHash [32]byte
 }
 
 func (p *cursorParser) configureCapabilities(req driver.Request) {
-	p.capabilities = &cursorCapabilityObservation{tracker: capabilityobs.NewTracker(), refs: map[string]capability.Ref{}, notices: map[string]bool{}, startHashes: map[string][32]byte{}}
+	p.capabilities = &cursorCapabilityObservation{tracker: capabilityobs.NewTracker(), calls: map[string]cursorCapabilityCall{}, notices: map[string]bool{}}
 	if len(req.MCP.Servers)+len(req.ProfilePayload.Agents.Agents) > cursorObservationLimit {
 		p.capabilityNotice("catalog_limit")
 		return
@@ -97,11 +101,12 @@ func (p *cursorParser) observeCapability(id, variant, subtype string, call map[s
 	if subtype == "started" {
 		canonical, _ := json.Marshal(args)
 		digest := sha256.Sum256(canonical)
-		if old, exists := c.startHashes[id]; exists && old != digest {
+		old, exists := c.calls[id]
+		if exists && old.startHash != digest {
 			p.capabilityNotice("lifecycle_conflict")
 			return
 		}
-		if _, exists := c.refs[id]; !exists && len(c.refs) >= cursorObservationLimit {
+		if !exists && len(c.calls) >= cursorObservationLimit {
 			p.capabilityNotice("invocation_limit")
 			return
 		}
@@ -110,14 +115,13 @@ func (p *cursorParser) observeCapability(id, variant, subtype string, call map[s
 			p.capabilityNotice("lifecycle_conflict")
 			return
 		}
-		c.refs[id] = ref
-		c.startHashes[id] = digest
+		c.calls[id] = cursorCapabilityCall{ref: ref, startHash: digest}
 		p.emitCapability(value)
 		return
 	}
 	// A terminal must correlate to the exact previously accepted identity.
 	// Missing, changed or ambiguous catalog evidence cannot close another call.
-	if old, exists := c.refs[id]; !exists || old != ref {
+	if old, exists := c.calls[id]; !exists || old.ref != ref {
 		p.capabilityNotice("unresolved_terminal")
 		return
 	}

@@ -11,24 +11,20 @@ import (
 )
 
 // streamingState maps CodeBuddy stream-json stream_event frames (Anthropic
-// Messages API-shaped) into StreamPayload. It is a copy of the Claude
-// streaming mapper with the interactive HITL hooks removed.
+// Messages API-shaped) into StreamPayload. Its tool attribution and message
+// usage rules belong to CodeBuddy's formal protocol.
 type streamingState struct {
 	sink   driver.EventSink
 	runID  string
 	parser *parser
 
-	messageID          string
-	textStarted        map[int]bool
-	blockKind          map[int]string
-	toolCallID         map[int]string
-	toolName           map[int]string
-	toolInput          map[int]*strings.Builder
-	initialToolInput   map[int]map[string]any
-	observationBlocked map[int]bool
-	toolResults        map[[32]byte]struct{}
-	thinkingID         map[int]string
-	signatures         map[int]string
+	messageID   string
+	textStarted map[int]bool
+	blockKind   map[int]string
+	toolBlocks  map[int]codeBuddyToolBlock
+	toolResults map[[32]byte]struct{}
+	thinkingID  map[int]string
+	signatures  map[int]string
 
 	runStarted      bool
 	finishedEmitted bool
@@ -42,21 +38,24 @@ type streamingState struct {
 	terminalPayload map[string]any
 }
 
+type codeBuddyToolBlock struct {
+	id, name           string
+	initialInput       map[string]any
+	deltas             *strings.Builder
+	observationBlocked bool
+}
+
 func newStreamingState(sink driver.EventSink, runID string, p *parser) *streamingState {
 	return &streamingState{
-		sink:               sink,
-		runID:              runID,
-		parser:             p,
-		textStarted:        make(map[int]bool),
-		blockKind:          make(map[int]string),
-		toolCallID:         make(map[int]string),
-		toolName:           make(map[int]string),
-		toolInput:          make(map[int]*strings.Builder),
-		initialToolInput:   make(map[int]map[string]any),
-		observationBlocked: make(map[int]bool),
-		thinkingID:         make(map[int]string),
-		signatures:         make(map[int]string),
-		usageByMessage:     make(map[string]*driver.Usage),
+		sink:           sink,
+		runID:          runID,
+		parser:         p,
+		textStarted:    make(map[int]bool),
+		blockKind:      make(map[int]string),
+		toolBlocks:     make(map[int]codeBuddyToolBlock),
+		thinkingID:     make(map[int]string),
+		signatures:     make(map[int]string),
+		usageByMessage: make(map[string]*driver.Usage),
 	}
 }
 
@@ -212,16 +211,14 @@ func (s *streamingState) handleContentBlockStart(event map[string]any) {
 	case "tool_use":
 		id := exactString(block, "id")
 		name := exactString(block, "name")
-		s.toolCallID[idx] = id
-		s.toolName[idx] = name
-		delete(s.toolInput, idx)
-		s.initialToolInput[idx] = topObject(block, "input")
+		tool := codeBuddyToolBlock{id: id, name: name, initialInput: topObject(block, "input")}
 		if o := s.parser.observation; o != nil {
-			s.observationBlocked[idx] = o.suppressed
+			tool.observationBlocked = o.suppressed
 			if o.suppressed {
 				s.parser.observeToolUse(name, id, nil)
 			}
 		}
+		s.toolBlocks[idx] = tool
 		pl := s.basePayload()
 		pl.Kind = driver.StreamToolCallStart
 		pl.ToolCallID = id
@@ -276,19 +273,21 @@ func (s *streamingState) handleContentBlockDelta(event map[string]any) {
 		s.emitStream(pl)
 
 	case "input_json_delta":
+		tool := s.toolBlocks[idx]
 		if o := s.parser.observation; o != nil && o.suppressed {
 			// An unproved wrapper cannot supply arguments to the root block.
 			// Retain the original delta below, but invalidate its attribution
 			// through the stop and any later full wrapper for this call ID.
-			s.observationBlocked[idx] = true
-			s.parser.observeToolUse(s.toolName[idx], s.toolCallID[idx], nil)
+			tool.observationBlocked = true
+			s.parser.observeToolUse(tool.name, tool.id, nil)
 		}
 		raw := exactString(delta, "partial_json")
-		if s.toolInput[idx] == nil {
-			s.toolInput[idx] = &strings.Builder{}
+		if tool.deltas == nil {
+			tool.deltas = &strings.Builder{}
 		}
-		s.toolInput[idx].WriteString(raw)
-		tid := s.toolCallID[idx]
+		tool.deltas.WriteString(raw)
+		s.toolBlocks[idx] = tool
+		tid := tool.id
 		if tid == "" {
 			tid = fmt.Sprintf("idx-%d", idx)
 		}
@@ -336,17 +335,18 @@ func (s *streamingState) handleContentBlockStop(event map[string]any) {
 			s.emitStream(pl)
 		}
 	case "tool_use":
-		input := s.initialToolInput[idx]
-		if buf := s.toolInput[idx]; buf != nil {
+		tool := s.toolBlocks[idx]
+		input := tool.initialInput
+		if buf := tool.deltas; buf != nil {
 			input = nil
 			if err := json.Unmarshal([]byte(buf.String()), &input); err != nil {
 				s.parser.observationNotice("observation_input_invalid")
 			}
 		}
-		if !s.observationBlocked[idx] {
-			s.parser.observeToolUse(s.toolName[idx], s.toolCallID[idx], input)
+		if !tool.observationBlocked {
+			s.parser.observeToolUse(tool.name, tool.id, input)
 		}
-		if tid := s.toolCallID[idx]; tid != "" {
+		if tid := tool.id; tid != "" {
 			pl := s.basePayload()
 			pl.Kind = driver.StreamToolCallEnd
 			pl.ToolCallID = tid
@@ -367,11 +367,7 @@ func (s *streamingState) handleContentBlockStop(event map[string]any) {
 
 	delete(s.blockKind, idx)
 	delete(s.textStarted, idx)
-	delete(s.toolCallID, idx)
-	delete(s.toolName, idx)
-	delete(s.toolInput, idx)
-	delete(s.initialToolInput, idx)
-	delete(s.observationBlocked, idx)
+	delete(s.toolBlocks, idx)
 	delete(s.thinkingID, idx)
 	delete(s.signatures, idx)
 }
@@ -557,7 +553,7 @@ func (s *streamingState) closeOpenLifecycles() {
 				s.emitStream(pl)
 			}
 		case "tool_use":
-			if tid := s.toolCallID[idx]; tid != "" {
+			if tid := s.toolBlocks[idx].id; tid != "" {
 				pl := s.basePayload()
 				pl.Kind = driver.StreamToolCallEnd
 				pl.ToolCallID = tid
@@ -574,8 +570,9 @@ func (s *streamingState) closeOpenLifecycles() {
 	}
 	s.blockKind = nil
 	s.textStarted = nil
-	s.toolCallID = nil
-	s.toolName = nil
+	// Keep the buffer map writable for unbound deltas drained after a retry
+	// terminal, while forgetting every completed block's identity and input.
+	clear(s.toolBlocks)
 	s.thinkingID = nil
 	s.signatures = nil
 }

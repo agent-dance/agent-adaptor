@@ -238,17 +238,8 @@ func (p *claudeParser) observeToolResult(block, wrapper map[string]any, structur
 	}
 	o := p.observations()
 	var call *observedTool
-	parent, hasParent := wrapper["parent_tool_use_id"]
-	if hasParent {
-		parentID, valid := parent.(string)
-		if parent == nil {
-			valid = true
-		}
-		if !valid {
-			p.observationNotice("parent_unresolved")
-			return nil, true
-		}
-		scope, resolved := p.toolScope(parentID)
+	if _, hasParent := wrapper["parent_tool_use_id"]; hasParent {
+		scope, resolved := p.wrapperScope(wrapper)
 		if !resolved {
 			return nil, true
 		}

@@ -46,6 +46,7 @@ type observations struct {
 	table       *todoobs.Table
 	skills      []UserInput
 	skillPaths  map[string]string
+	mcp         map[string]capability.Ref
 	children    map[string]childRole
 	collab      map[string]*collabObservation
 	collabOrder []string
@@ -74,7 +75,17 @@ func newObservations(opts Options) *observations {
 	}
 	catalog, _ := capabilityobs.NewCatalog(entries)
 	table, _ := todoobs.NewTable(todoobs.Scope{})
-	return &observations{catalog: catalog, tracker: capabilityobs.NewTracker(), table: table, skills: append([]UserInput(nil), opts.SkillInputs...), skillPaths: paths, children: make(map[string]childRole), collab: make(map[string]*collabObservation), notices: make(map[string]bool)}
+	return &observations{
+		catalog:    catalog,
+		tracker:    capabilityobs.NewTracker(),
+		table:      table,
+		skills:     append([]UserInput(nil), opts.SkillInputs...),
+		skillPaths: paths,
+		mcp:        make(map[string]capability.Ref),
+		children:   make(map[string]childRole),
+		collab:     make(map[string]*collabObservation),
+		notices:    make(map[string]bool),
+	}
 }
 
 func (s *runState) observationNotice(code string) {
@@ -140,7 +151,7 @@ func (s *runState) observeItem(raw json.RawMessage, started bool) {
 			return
 		}
 		if started {
-			if _, exists := s.observationMCP[item.ID]; !exists && len(s.observationMCP) >= 4096 {
+			if _, exists := s.observation.mcp[item.ID]; !exists && len(s.observation.mcp) >= 4096 {
 				s.observationNotice("capability_limit")
 				return
 			}
@@ -170,15 +181,15 @@ func (s *runState) observeItem(raw json.RawMessage, started bool) {
 			// A terminal cannot silently change the identity established by start.
 			// Tracker.Start validates this against the stored lifecycle without emitting
 			// an extra start on a valid replay; absent starts stay unobserved.
-			if prior, ok := s.observationMCP[item.ID]; !ok || prior != (capability.Ref{Kind: capability.MCP, Key: key, Operation: body.Tool}) {
+			if prior, ok := s.observation.mcp[item.ID]; !ok || prior != (capability.Ref{Kind: capability.MCP, Key: key, Operation: body.Tool}) {
 				s.observationNotice("capability_unresolved")
 				return
 			}
 			s.terminalCapability(item.ID, phase, code, duration)
 		}
 		if started {
-			if _, exists := s.observationMCP[item.ID]; !exists {
-				s.observationMCP[item.ID] = capability.Ref{Kind: capability.MCP, Key: key, Operation: body.Tool}
+			if _, exists := s.observation.mcp[item.ID]; !exists {
+				s.observation.mcp[item.ID] = capability.Ref{Kind: capability.MCP, Key: key, Operation: body.Tool}
 			}
 		}
 		return

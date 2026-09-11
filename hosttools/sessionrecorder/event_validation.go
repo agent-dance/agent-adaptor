@@ -123,18 +123,21 @@ func validateJSONStrings(data []byte) error {
 	}
 	return nil
 }
-func requireFields(raw []byte, fields ...string) error {
+
+// requiredObject decodes once and retains the fields for nested validation.
+// strictJSON has already checked the complete event's syntax and closed shape.
+func requiredObject(raw []byte, fields ...string) (map[string]json.RawMessage, error) {
 	var values map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &values); err != nil {
-		return err
+		return nil, err
 	}
 	for _, field := range fields {
 		value := bytes.TrimSpace(values[field])
 		if len(value) == 0 || bytes.Equal(value, []byte("null")) {
-			return fmt.Errorf("sessionrecorder: required %s field missing or null", field)
+			return nil, fmt.Errorf("sessionrecorder: required %s field missing or null", field)
 		}
 	}
-	return nil
+	return values, nil
 }
 func validText(value string, min, max int, content bool) bool {
 	if len(value) < min || len(value) > max || !utf8.ValidString(value) {

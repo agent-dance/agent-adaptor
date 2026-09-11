@@ -193,7 +193,31 @@
       "tools.go",
       "tools_contract_test.go",
       "tools_profile_assets_test.go",
-      ".github/go-version"
+      ".github/go-version",
+      "claude/alignment_block_state_test.go",
+      "claude/streaming_parser.go",
+      "claude/tool_observation.go",
+      "codebuddy/alignment_block_state_test.go",
+      "codebuddy/streaming_parser.go",
+      "codex/appserver/observation.go",
+      "cursor/capability_observation.go",
+      "docs/validation/pre-merge-cleanup-2026-09-11.md",
+      "hosttools/a2adelegation/delegator.go",
+      "hosttools/a2adelegation/mapping.go",
+      "hosttools/a2adelegation/mapping_test.go",
+      "hosttools/sessionrecorder/event_validation.go",
+      "hosttools/sessionrecorder/event_values.go",
+      "hosttools/sessionrecorder/recorder.go",
+      "internal/capabilityobs/tracker.go",
+      "internal/todoobs/table.go",
+      "invocation.go",
+      "invocation_fingerprint.go",
+      "sink_approval.go",
+      "sink_observation.go",
+      "sink_outcome.go",
+      "stream.go",
+      "tools_profile.go",
+      "tools_profile_snapshot.go"
     ],
     "scope_match": "精确文件或目录/**；gate可合并worker已审阅commit，但不直接越权编辑其生产代码。",
     "exclusive_resources": [
@@ -240,7 +264,8 @@
     "R021：追加原 T08 owner 的独立 T33，等待全部六项最终交付；保留旧43e6ba3已验收gate与T25Linux红历史，合入后重跑全部原G05命令并冻结新SHA，所有B06证据按新SHA重新生成。T20未变源码检查可保持原SHA证据，仅按新coverage重出交付metadata。",
     "R022：接受原T16负责人补充T34的接收同步QA修复，保持所有原要求owner/verifier及原命令；G05依赖本批全部七项，最多六并发。旧45cada43验收与T25-F02失败保留，合流后重新冻结，B06所有原检查用新SHA。",
     "R023：等待全部九个B05任务（容量仍6）；T35/T36精确独立文件，T20仅22项metadata重验。合并原owner两个生产关闭修复，保留T33/T34全部回归，中央合同/doc/changelog后在新SHA重跑原3commands，B06整批换同一冻结SHA。旧d94fd17报告与两处panic绝不覆盖。",
-    "R027 post-review验收：按本会话用户“全部修复”和“按建议处理全量CI”的授权，核对精确新增范围内的评审/平台/安全修复及失败到修复证据，再在最终合流SHA执行原G05命令。范围扩展只承接这些已审阅修复的整合验收，不允许gate增加无关生产修改；原9依赖及owner责任保持。"
+    "R027 post-review验收：按本会话用户“全部修复”和“按建议处理全量CI”的授权，核对精确新增范围内的评审/平台/安全修复及失败到修复证据，再在最终合流SHA执行原G05命令。范围扩展只承接这些已审阅修复的整合验收，不允许gate增加无关生产修改；原9依赖及owner责任保持。",
+    "R029 pre-merge清理验收：承接用户对合入main前提高可读性/合理性并保持功能质量的授权，核对本修订列明的精确路径、声明token审计与独立反例；六个生产文件拆分和三处私有helper调整不得改变公共API、错误/生命周期、profile fingerprint、安全边界或live门。保留独立测试，仅将无生产调用的terminal helper测试正文迁至公开Delegate poll/stream路径。dd3859e的已通过证据仅为清理基线，最终新SHA须重跑原G05/T25/T26命令后才能封账；原9依赖、owner/verifier、G04真实base和完整diff不变。"
   ],
   "acceptance_criteria": [
     {

@@ -443,22 +443,13 @@ func (r *delegationRun) delegateStreaming(ctx context.Context, client A2AClient,
 	}
 
 	cancelKnownTask := func() {
-		if lastTaskID != "" {
-			r.cancelRemoteTask(ctx, client, lastTaskID, send.Tenant, baseEvent)
-		}
+		r.scheduleRemoteCancel(client, lastTaskID, send.Tenant)
 	}
 	interruptedResult := func(derr *DelegationError) (DelegationResult, error) {
 		currentTask.Status = clienta2a.TaskStatus{State: clienta2a.TaskStateFailed}
 		// Preserve permitted partial artifacts without letting interruption bypass
 		// the content boundary used by successful completion.
-		allowed := make([]clienta2a.Artifact, 0, len(currentTask.Artifacts))
-		for _, artifact := range currentTask.Artifacts {
-			if policyErrorForTask(clienta2a.Task{Artifacts: []clienta2a.Artifact{artifact}}, spec.Policy) == nil {
-				allowed = append(allowed, artifact)
-			}
-		}
-		currentTask.Artifacts = allowed
-		result := resultFromTask(baseResult, currentTask, includeRemoteArtifacts)
+		result := partialTaskResult(baseResult, currentTask, spec.Policy, includeRemoteArtifacts)
 		result.Artifacts = r.limitResultArtifacts(baseEvent, result.Artifacts, maxArtifacts)
 		result.Error = derr
 		return result, derr
@@ -483,9 +474,7 @@ func (r *delegationRun) delegateStreaming(ctx context.Context, client A2AClient,
 				if recovered, ok := r.recoverTask(ctx, client, lastTaskID, send.Tenant, send.HistoryLength); ok && !staleRecoveredTask(recovered, snapshot, send.Message.TaskID != "") {
 					recoverArtifacts(recovered.Artifacts)
 					recovered.Artifacts = currentTask.Artifacts
-					for _, ev := range mapper.taskEvents(recovered) {
-						r.publish(ev)
-					}
+					r.publishAll(mapper.taskEvents(recovered))
 					return r.finishTask(baseEvent, baseResult, recovered, spec.Policy, maxArtifacts, includeRemoteArtifacts, mapper)
 				}
 				cancelKnownTask()
@@ -611,9 +600,7 @@ func (r *delegationRun) delegatePolling(ctx context.Context, client A2AClient, s
 	mapper.maxArtifactBytes = spec.Policy.MaxArtifactBytes
 	r.taskID = task.ID
 	r.publish(mapper.Started(task.ID, task.ContextID))
-	for _, ev := range mapper.taskEvents(task) {
-		r.publish(ev)
-	}
+	r.publishAll(mapper.taskEvents(task))
 	if executionFinalState(task.Status.State) {
 		return r.finishTask(baseEvent, baseResult, task, spec.Policy, maxArtifacts, includeRemoteArtifacts, mapper)
 	}
@@ -640,22 +627,17 @@ func (r *delegationRun) delegatePolling(ctx context.Context, client A2AClient, s
 		case <-ticker.C:
 		}
 		next, getErr := client.GetTask(ctx, clienta2a.GetTaskRequest{TaskID: task.ID, Tenant: send.Tenant, HistoryLength: send.HistoryLength})
-		err = getErr
-		if err == nil {
-			task = next
-			r.taskID = task.ID
-		}
-		if err != nil {
+		if getErr != nil {
 			continue
 		}
-		for _, ev := range mapper.taskEvents(task) {
-			r.publish(ev)
-		}
+		task = next
+		r.taskID = task.ID
+		r.publishAll(mapper.taskEvents(task))
 		if executionFinalState(task.Status.State) {
 			return r.finishTask(baseEvent, baseResult, task, spec.Policy, maxArtifacts, includeRemoteArtifacts, mapper)
 		}
 	}
-	r.cancelRemoteTask(ctx, client, task.ID, send.Tenant, baseEvent)
+	r.scheduleRemoteCancel(client, task.ID, send.Tenant)
 	derr := &DelegationError{Code: "remote_timeout", Message: "remote task did not finish before timeout", Retryable: true, RemoteStatus: string(task.Status.State)}
 	r.publishAll(mapper.closeOpen(task.ID, task.ContextID))
 	r.publish(failedEvent(baseEvent, derr))
@@ -672,7 +654,8 @@ func (d *Delegator) recoverTask(ctx context.Context, client A2AClient, taskID, t
 	return task, err == nil && executionFinalState(task.Status.State)
 }
 
-func (r *delegationRun) cancelRemoteTask(ctx context.Context, client A2AClient, taskID, tenant string, base DelegationEvent) {
+// Cancellation runs during bounded cleanup, after the active budget is settled.
+func (r *delegationRun) scheduleRemoteCancel(client A2AClient, taskID, tenant string) {
 	if taskID != "" {
 		r.taskID = taskID
 		r.client = client

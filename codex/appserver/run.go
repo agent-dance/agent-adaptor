@@ -12,7 +12,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/agent-dance/agent-adaptor/capability"
 	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/internal/engine"
 	"github.com/agent-dance/agent-adaptor/internal/processx"
@@ -266,25 +265,7 @@ func Run(ctx context.Context, opts Options, sink driver.EventSink) (driver.Respo
 	}
 
 	// 3. turn/start.
-	var outputSchema json.RawMessage
-	if opts.OutputSchema != nil {
-		outputSchema = append(json.RawMessage(nil), opts.OutputSchema.SchemaJSON...)
-	}
-	turnParams := TurnStartParams{
-		ThreadID:     threadID,
-		Input:        append([]UserInput{TextInput(opts.Prompt)}, opts.SkillInputs...),
-		CWD:          opts.CWD,
-		Model:        opts.Model,
-		Effort:       opts.Effort,
-		ServiceTier:  opts.ServiceTier,
-		OutputSchema: outputSchema,
-	}
-	if opts.Approval != "" {
-		turnParams.ApprovalPolicy = opts.Approval
-	}
-	if opts.Sandbox != "" {
-		turnParams.SandboxPolicy = sandboxPolicyFor(opts.Sandbox)
-	}
+	turnParams := turnStartParams(opts, threadID)
 	turn, err := client.TurnStart(ctx, turnParams)
 	if err != nil {
 		return finish(fmt.Errorf("codex app-server turn/start: %w", err))
@@ -318,11 +299,10 @@ func Run(ctx context.Context, opts Options, sink driver.EventSink) (driver.Respo
 // ---------------------------------------------------------------------------
 
 type runState struct {
-	translator     *Translator
-	observation    *observations
-	observationMCP map[string]capability.Ref
-	sink           driver.EventSink
-	notifyMu       sync.Mutex
+	translator  *Translator
+	observation *observations
+	sink        driver.EventSink
+	notifyMu    sync.Mutex
 
 	mu             sync.Mutex
 	finalAgentText string
@@ -428,11 +408,10 @@ func newRunState(runID string, sink driver.EventSink, options ...Options) *runSt
 		opts = options[0]
 	}
 	return &runState{
-		translator:     NewTranslator(sink, runID),
-		observation:    newObservations(opts),
-		observationMCP: make(map[string]capability.Ref),
-		sink:           sink,
-		done:           make(chan struct{}),
+		translator:  NewTranslator(sink, runID),
+		observation: newObservations(opts),
+		sink:        sink,
+		done:        make(chan struct{}),
 	}
 }
 
@@ -1135,6 +1114,29 @@ func classifyThreadError(err error, threadID string) error {
 		}
 	}
 	return err
+}
+
+// Both process lifecycles send the same resolved turn options. Keep mutable
+// input and schema slices private to the request sent to the RPC client.
+func turnStartParams(opts Options, threadID string) TurnStartParams {
+	params := TurnStartParams{
+		ThreadID:    threadID,
+		Input:       append([]UserInput{TextInput(opts.Prompt)}, opts.SkillInputs...),
+		CWD:         opts.CWD,
+		Model:       opts.Model,
+		Effort:      opts.Effort,
+		ServiceTier: opts.ServiceTier,
+	}
+	if opts.OutputSchema != nil {
+		params.OutputSchema = append(json.RawMessage(nil), opts.OutputSchema.SchemaJSON...)
+	}
+	if opts.Approval != "" {
+		params.ApprovalPolicy = opts.Approval
+	}
+	if opts.Sandbox != "" {
+		params.SandboxPolicy = sandboxPolicyFor(opts.Sandbox)
+	}
+	return params
 }
 
 func sandboxPolicyFor(kind string) *SandboxPolicy {

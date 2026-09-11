@@ -190,6 +190,13 @@ All notable changes to this project are documented in this file.
 
 ### Changed
 
+- Separate core event delivery, approvals, observation, terminal outcomes and
+  hosted-profile ownership/fingerprinting into focused private files. Consolidate
+  equivalent rejection cleanup, error classification, turn request mapping and
+  provider tool-block state; remove unused delegation terminal helpers and
+  redundant recorder decoding/copying. Public API, protocols, safety boundaries
+  and independent regression gates remain unchanged.
+
 - CI explicitly runs uncached tests, race and repeated scenarios, nine bounded
   fuzz targets, BDD parsing and native Windows checks while keeping automatic
   paid/live gates closed and retaining security and frontend checks.

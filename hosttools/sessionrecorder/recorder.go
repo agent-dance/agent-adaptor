@@ -527,17 +527,15 @@ func decodeEvent(kind string, payload json.RawMessage) (adaptor.Event, error) {
 		if err := unmarshal(&ev); err != nil {
 			return nil, err
 		}
-		if err := requireFields(payload, "Invocation"); err != nil {
+		raw, err := requiredObject(payload, "Invocation")
+		if err != nil {
 			return nil, err
 		}
-		var raw map[string]json.RawMessage
-		_ = json.Unmarshal(payload, &raw)
-		if err := requireFields(raw["Invocation"], "InvocationID", "Ref", "Phase", "Evidence", "Source", "OccurredAt"); err != nil {
+		invocation, err := requiredObject(raw["Invocation"], "InvocationID", "Ref", "Phase", "Evidence", "Source", "OccurredAt")
+		if err != nil {
 			return nil, err
 		}
-		var invocation map[string]json.RawMessage
-		_ = json.Unmarshal(raw["Invocation"], &invocation)
-		if err := requireFields(invocation["Ref"], "Kind", "Key", "Operation"); err != nil {
+		if _, err := requiredObject(invocation["Ref"], "Kind", "Key", "Operation"); err != nil {
 			return nil, err
 		}
 		return ev, validateCapability(ev.Invocation)
@@ -546,20 +544,20 @@ func decodeEvent(kind string, payload json.RawMessage) (adaptor.Event, error) {
 		if err := unmarshal(&ev); err != nil {
 			return nil, err
 		}
-		if err := requireFields(payload, "Snapshot"); err != nil {
+		raw, err := requiredObject(payload, "Snapshot")
+		if err != nil {
 			return nil, err
 		}
-		var raw map[string]json.RawMessage
-		_ = json.Unmarshal(payload, &raw)
-		if err := requireFields(raw["Snapshot"], "Items", "Source", "Revision", "OccurredAt"); err != nil {
+		snapshot, err := requiredObject(raw["Snapshot"], "Items", "Source", "Revision", "OccurredAt")
+		if err != nil {
 			return nil, err
 		}
-		var snapshot map[string]json.RawMessage
-		_ = json.Unmarshal(raw["Snapshot"], &snapshot)
 		var items []json.RawMessage
-		_ = json.Unmarshal(snapshot["Items"], &items)
+		if err := json.Unmarshal(snapshot["Items"], &items); err != nil {
+			return nil, err
+		}
 		for _, item := range items {
-			if err := requireFields(item, "ID", "Content", "Status", "SyntheticID"); err != nil {
+			if _, err := requiredObject(item, "ID", "Content", "Status", "SyntheticID"); err != nil {
 				return nil, err
 			}
 		}

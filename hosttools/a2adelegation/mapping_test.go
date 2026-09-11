@@ -1,6 +1,7 @@
 package a2adelegation
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -98,26 +99,64 @@ func TestEventMapperClosesTextBeforeTerminal(t *testing.T) {
 	}
 }
 
-func TestEventMapperTaskTerminalCarriesFinalText(t *testing.T) {
-	mapper := newEventMapper(DelegationEvent{RunID: "run-1", DelegationID: "del-1", AgentKey: "plan"})
-	events := mapper.terminalEvents(clienta2a.Event{Task: &clienta2a.Task{
-		ID: "task-1", ContextID: "ctx-1",
-		Status: clienta2a.TaskStatus{State: clienta2a.TaskStateCompleted},
-		Messages: []clienta2a.Message{{
-			Role:  "agent",
-			Parts: []clienta2a.Part{{Kind: clienta2a.PartText, Text: `{"filename":"PLAN.md"}`}},
-		}},
-	}})
-	if len(events) != 1 || events[0].Kind != DelegationFinished {
-		t.Fatalf("terminal events = %#v", events)
-	}
-	terminal := events[0]
-	if terminal.Text != `{"filename":"PLAN.md"}` {
-		t.Fatalf("terminal text = %q", terminal.Text)
-	}
-	result, ok := terminal.Result.(map[string]any)
-	if !ok || result["status"] != "completed" || result["text"] != terminal.Text {
-		t.Fatalf("terminal result = %#v", terminal.Result)
+// Final Task text belongs to the returned result; the bus carries completion.
+// Exercise both real delegation paths rather than a separate terminal mapper.
+func TestDelegatorTaskCompletionPreservesFinalText(t *testing.T) {
+	const finalText = `{"filename":"PLAN.md"}`
+	for _, mode := range []string{"polling", "streaming"} {
+		t.Run(mode, func(t *testing.T) {
+			task := clienta2a.Task{
+				ID: "task-1", ContextID: "ctx-1",
+				Status: clienta2a.TaskStatus{State: clienta2a.TaskStateCompleted},
+				Messages: []clienta2a.Message{{
+					Role:  "agent",
+					Parts: []clienta2a.Part{{Kind: clienta2a.PartText, Text: finalText}},
+				}},
+			}
+			card := clienta2a.AgentCard{Capabilities: clienta2a.Capabilities{Streaming: mode == "streaming"}}
+			client := &fakeA2AClient{card: card, sendTask: task}
+			if mode == "streaming" {
+				stream := &fakeA2AStream{events: make(chan streamRecv, 1), closed: make(chan struct{})}
+				stream.events <- streamRecv{event: clienta2a.Event{Kind: clienta2a.EventTerminal, TaskID: task.ID, ContextID: task.ContextID, Task: &task, Status: &task.Status}}
+				close(stream.events)
+				client.stream = stream
+			}
+			registry, err := NewRegistry(RemoteAgentSpec{Key: "plan", AgentCard: &card})
+			if err != nil {
+				t.Fatal(err)
+			}
+			bus := NewEventBus(16)
+			delegator := NewDelegator(registry, bus)
+			delegator.NewClient = func(RemoteAgentSpec) A2AClient { return client }
+			result, err := delegator.Delegate(context.Background(), DelegationRequest{RunID: "run-1", Agent: "plan", Prompt: "make a plan"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Status != "completed" || result.Summary != finalText || len(result.Messages) != 1 || result.Messages[0].Role != "agent" || result.Messages[0].Text != finalText {
+				t.Fatalf("final task text = %#v", result)
+			}
+			if result.RemoteTaskID != task.ID || result.RemoteContextID != task.ContextID {
+				t.Fatalf("result identity = %#v", result)
+			}
+			if client.sendCalls+client.streamCalls != 1 || client.cancelCalls != 0 {
+				t.Fatalf("execution counts: send=%d stream=%d cancel=%d", client.sendCalls, client.streamCalls, client.cancelCalls)
+			}
+			terminals := 0
+			for _, ev := range drainAvailableBus(t, bus, "run-1") {
+				switch ev.Kind {
+				case DelegationFinished:
+					terminals++
+					if ev.Status != string(clienta2a.TaskStateCompleted) || ev.RemoteTaskID != task.ID || ev.RemoteContextID != task.ContextID {
+						t.Fatalf("terminal identity/status = %#v", ev)
+					}
+				case DelegationFailed, DelegationCancelled, DelegationInputRequired:
+					t.Fatalf("unexpected terminal = %#v", ev)
+				}
+			}
+			if terminals != 1 {
+				t.Fatalf("completed terminal count = %d", terminals)
+			}
+		})
 	}
 }
 

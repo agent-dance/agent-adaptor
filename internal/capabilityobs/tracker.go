@@ -28,20 +28,31 @@ func NewTracker() *Tracker {
 	return &Tracker{values: map[Key]capability.Invocation{}, starts: map[Key]capability.Invocation{}}
 }
 func ValidParent(scope, parentScope, parentID, id string) bool {
-	return ValidText(scope, 2048, false) && ValidText(parentScope, 2048, false) && ValidText(parentID, 2048, false) && (parentID != "" || parentScope == "") && !(parentID != "" && scope == parentScope && id == parentID)
+	if !ValidText(scope, 2048, false) || !ValidText(parentScope, 2048, false) || !ValidText(parentID, 2048, false) {
+		return false
+	}
+	if parentID == "" {
+		return parentScope == ""
+	}
+	return scope != parentScope || id != parentID
 }
 func ValidTime(at time.Time) bool {
 	_, off := at.Zone()
 	return !at.IsZero() && at.Year() >= 1 && at.Year() <= 9999 && off == 0
 }
 func Validate(v capability.Invocation) error {
-	if !ValidKind(v.Ref.Kind) || !ValidText(v.Ref.Key, 512, true) || !ValidText(v.Ref.Operation, 256, true) || !ValidText(v.InvocationID, 2048, true) || !ValidParent(v.ScopeID, v.ParentScopeID, v.ParentToolCallID, v.InvocationID) || !ValidTime(v.OccurredAt) {
+	if !ValidKind(v.Ref.Kind) || !ValidText(v.Ref.Key, 512, true) || !ValidText(v.Ref.Operation, 256, true) {
+		return ErrInvalid
+	}
+	if !ValidText(v.InvocationID, 2048, true) || !ValidParent(v.ScopeID, v.ParentScopeID, v.ParentToolCallID, v.InvocationID) || !ValidTime(v.OccurredAt) {
 		return ErrInvalid
 	}
 	if v.Ref.Kind == capability.Skill && v.Ref.Operation != "activate" || v.Ref.Kind == capability.Subagent && v.Ref.Operation != "spawn" {
 		return ErrInvalid
 	}
-	if !(v.Source == capability.Provider && (v.Evidence == capability.ProviderProtocol || v.Evidence == capability.NativeInputAccepted) || v.Source == capability.Host && v.Evidence == capability.HostLifecycle || v.Source == capability.Relay && v.Evidence == capability.Relayed) {
+	if !(v.Source == capability.Provider && (v.Evidence == capability.ProviderProtocol || v.Evidence == capability.NativeInputAccepted) ||
+		v.Source == capability.Host && v.Evidence == capability.HostLifecycle ||
+		v.Source == capability.Relay && v.Evidence == capability.Relayed) {
 		return ErrInvalid
 	}
 	switch v.Phase {
@@ -57,9 +68,7 @@ func Validate(v capability.Invocation) error {
 	default:
 		return ErrInvalid
 	}
-	switch v.ErrorCode {
-	case "", capability.ToolFailed, capability.RunCancelled, capability.RunInterrupted, capability.ProtocolError, capability.DelegationFailed:
-	default:
+	if !validErrorCode(v.ErrorCode) {
 		return ErrInvalid
 	}
 	if v.Duration != nil && *v.Duration < 0 {
@@ -67,6 +76,16 @@ func Validate(v capability.Invocation) error {
 	}
 	return nil
 }
+
+func validErrorCode(code capability.ErrorCode) bool {
+	switch code {
+	case "", capability.ToolFailed, capability.RunCancelled, capability.RunInterrupted, capability.ProtocolError, capability.DelegationFailed:
+		return true
+	default:
+		return false
+	}
+}
+
 func Clone(v capability.Invocation) capability.Invocation {
 	if v.Duration != nil {
 		d := *v.Duration
@@ -140,9 +159,7 @@ func (t *Tracker) Close(phase capability.Phase, code capability.ErrorCode, at ti
 	if !ValidTime(at) {
 		return nil, ErrInvalid
 	}
-	switch code {
-	case "", capability.ToolFailed, capability.RunCancelled, capability.RunInterrupted, capability.ProtocolError, capability.DelegationFailed:
-	default:
+	if !validErrorCode(code) {
 		return nil, ErrInvalid
 	}
 	t.mu.Lock()
