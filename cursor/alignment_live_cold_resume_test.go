@@ -4,8 +4,10 @@ package cursor
 
 import (
 	"context"
+	"crypto/md5"
 	"crypto/sha256"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"maps"
@@ -121,37 +123,30 @@ func alignmentCursorFileHashes(root string) (map[string][32]byte, error) {
 	return hashes, err
 }
 
-// The session identity comes exclusively from the formal public checkpoint.
-// Find its exact directory name below the isolated effective profile, then
-// require actual nonempty provider files. Unknown layouts fail the live probe;
-// an SDK checkpoint or a test-written marker cannot replace this evidence.
-func alignmentCursorSessionFiles(root, sessionID string) (string, map[string][32]byte, error) {
+// The installed 2026.07.23 print/resume state module addresses chats under
+// the official config root, partitioned by MD5(path.resolve(cwd)). Projects
+// under the separate data root also contain session-named transcript folders;
+// those audit copies are not the SQLite conversation store used for resume.
+func alignmentCursorSessionFiles(root, cwd, sessionID string) (string, map[string][32]byte, error) {
 	if sessionID == "" || sessionID == "." || filepath.Base(sessionID) != sessionID {
 		return "", nil, errors.New("session identity cannot address an isolated session directory")
 	}
-	dir, entries := "", 0
-	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return errors.New("cannot locate isolated provider session files")
-		}
-		entries++
-		if entries > 4096 || entry.Type()&os.ModeSymlink != 0 {
-			return errors.New("isolated session search exceeds bounds or contains a symlink")
-		}
-		if entry.IsDir() && entry.Name() == sessionID {
-			if dir != "" {
-				return errors.New("ambiguous isolated session directory")
-			}
-			dir = path
-			return filepath.SkipDir
-		}
-		return nil
-	})
+	absolute, err := filepath.Abs(cwd)
 	if err != nil {
 		return "", nil, err
 	}
-	if dir == "" {
-		return "", nil, errors.New("provider session file layout is not supported by the live fixture")
+	shard := fmt.Sprintf("%x", md5.Sum([]byte(absolute)))
+	dir := root
+	for _, name := range []string{"chats", shard, sessionID} {
+		dir = filepath.Join(dir, name)
+		info, err := os.Lstat(dir)
+		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return "", nil, errors.New("formal Cursor chat directory is missing or unsafe")
+		}
+	}
+	database, err := os.Lstat(filepath.Join(dir, "store.db"))
+	if err != nil || !database.Mode().IsRegular() || database.Size() == 0 {
+		return "", nil, errors.New("formal Cursor SQLite session store is missing or empty")
 	}
 	hashes, err := alignmentCursorFileHashes(dir)
 	if err != nil || len(hashes) == 0 {
@@ -254,7 +249,7 @@ func TestAlignmentLiveCursorDedicatedToolsColdResume(t *testing.T) {
 	if err != nil || record1 == nil || record1.State == nil || record1.State.ResumeID != cp1.State.ResumeID {
 		t.Fatal("first checkpoint was not saved under the public Thread key")
 	}
-	sessionDir, files, err := alignmentCursorSessionFiles(d1.profile, cp1.State.ResumeID)
+	sessionDir, files, err := alignmentCursorSessionFiles(d1.profile, cfg.CWD, cp1.State.ResumeID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -305,7 +300,7 @@ func TestAlignmentLiveCursorDedicatedToolsColdResume(t *testing.T) {
 	if status, err := alignmentCursorGatewayStatus(d2.server.URL, d1.token); err != nil || status != http.StatusUnauthorized {
 		t.Fatal("new gateway did not explicitly reject the old bearer credential")
 	}
-	_, secondFiles, err := alignmentCursorSessionFiles(d2.profile, cp2.State.ResumeID)
+	_, secondFiles, err := alignmentCursorSessionFiles(d2.profile, cfg.CWD, cp2.State.ResumeID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -325,21 +320,21 @@ func TestAlignmentLiveCursorDedicatedToolsColdResume(t *testing.T) {
 func TestAlignmentCursorColdResumeFileProbe(t *testing.T) {
 	root := t.TempDir()
 	const sessionID = "provider-session"
-	if _, _, err := alignmentCursorSessionFiles(root, sessionID); err == nil {
+	if _, _, err := alignmentCursorSessionFiles(root, root, sessionID); err == nil {
 		t.Fatal("missing provider directory accepted")
 	}
-	dir := filepath.Join(root, "chats", sessionID)
+	dir := filepath.Join(root, "chats", fmt.Sprintf("%x", md5.Sum([]byte(root))), sessionID)
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := alignmentCursorSessionFiles(root, sessionID); err == nil {
+	if _, _, err := alignmentCursorSessionFiles(root, root, sessionID); err == nil {
 		t.Fatal("empty provider directory accepted")
 	}
 	file := filepath.Join(dir, "store.db")
 	if err := os.WriteFile(file, []byte("first"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	actualDir, before, err := alignmentCursorSessionFiles(root, sessionID)
+	actualDir, before, err := alignmentCursorSessionFiles(root, root, sessionID)
 	if err != nil || actualDir != dir || len(before) != 1 {
 		t.Fatal("nonempty exact directory was not identified")
 	}
@@ -353,8 +348,11 @@ func TestAlignmentCursorColdResumeFileProbe(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, "other", sessionID), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := alignmentCursorSessionFiles(root, sessionID); err == nil {
-		t.Fatal("ambiguous session directory accepted")
+	if actual, _, err := alignmentCursorSessionFiles(root, root, sessionID); err != nil || actual != dir {
+		t.Fatal("unrelated audit directory confused formal chat store", err)
+	}
+	if _, _, err := alignmentCursorSessionFiles(root, filepath.Join(root, "other-workspace"), sessionID); err == nil {
+		t.Fatal("another workspace shard satisfied chat evidence")
 	}
 	if err := os.Symlink(file, filepath.Join(dir, "link")); err != nil {
 		t.Fatal(err)

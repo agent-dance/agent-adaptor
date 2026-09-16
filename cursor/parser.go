@@ -210,6 +210,12 @@ func (p *cursorParser) handleToolCall(payload map[string]any, subtype string) bo
 		return false
 	}
 	callID := cursorExactString(payload, "call_id")
+	if normalized, ok := cursorProtocolCallID(callID); ok {
+		callID = normalized
+	} else {
+		p.protocolMalformed = true
+		return false
+	}
 	name, call, ok := cursorNestedToolCall(payload)
 	if !ok || callID == "" {
 		p.protocolMalformed = true

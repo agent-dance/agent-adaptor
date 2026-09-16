@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -15,6 +16,7 @@ import (
 	adaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/capability"
 	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/memory"
 	"github.com/agent-dance/agent-adaptor/profile"
 	"github.com/agent-dance/agent-adaptor/tool"
 )
@@ -126,21 +128,74 @@ func TestAlignmentLiveCursorUnsupportedAppend(t *testing.T) {
 
 func TestAlignmentLiveCursorCancelPartial(t *testing.T) {
 	cfg := alignmentCursorLiveConfig(t)
-	a := adaptor.New(Driver(cfg), adaptor.WithWorkspace(cfg.CWD))
-	defer a.Close(context.Background())
+	// A new private workspace has no trust decision. These are explicit fixture
+	// prerequisites, not a production permission-policy override.
+	cfg.ExtraArgs = append(cfg.ExtraArgs, "--trust", "--stream-partial-output")
+	a := adaptor.New(Driver(cfg), adaptor.WithWorkspace(cfg.CWD), adaptor.WithThreadStore(memory.NewStore()))
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if err := a.Close(ctx); err != nil {
+			t.Errorf("bounded Close failed (%T)", err)
+		}
+	}()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
-	stream := a.Stream(ctx, "Write a detailed numbered explanation of 200 elementary arithmetic facts. Do not call tools.")
+	th := a.Thread("cursor-live-cancel")
+	if _, err := th.Run(ctx, "Remember this word: arithmetic. Reply only READY. Do not call tools."); err != nil {
+		t.Fatalf("healthy warmup failed (%T)", err)
+	}
+	healthy, err := th.Checkpoint(ctx)
+	if err != nil {
+		t.Fatal("healthy checkpoint missing")
+	}
+	stream := th.Stream(ctx, "Write a detailed numbered explanation of 200 elementary arithmetic facts. Do not call tools.")
 	cancelled := false
+	partial := ""
+	started := time.Now()
 	for event := range stream.Events() {
-		if e, ok := event.(adaptor.TextDelta); ok && e.Text != "" && !cancelled {
+		if notice, ok := event.(adaptor.Notice); ok && notice.Meta().RunID == stream.RunID() && notice.Kind == adaptor.NoticeTranscriptItem && notice.Item != nil && notice.Item.Kind == driver.TranscriptAssistant && notice.Item.Text != "" && !cancelled {
+			partial = notice.Item.Text
 			cancelled = true
+			started = time.Now()
 			stream.Cancel()
 		}
 	}
 	r, err := stream.Result()
 	var failure *adaptor.RunError
-	if !cancelled || r != nil || !errors.Is(err, context.Canceled) || !errors.As(err, &failure) || failure.Result == nil || failure.Result.Raw().Stdout == "" || len(failure.Result.Transcript()) == 0 {
+	if !cancelled || r != nil || !errors.Is(err, context.Canceled) || !errors.As(err, &failure) || failure.Reason != adaptor.ReasonCancelled || failure.Result == nil {
 		t.Fatalf("live cancel/partial contract failed: cancelled=%t errorType=%T", cancelled, err)
+	}
+	if time.Since(started) > 15*time.Second {
+		t.Fatal("cancellation teardown exceeded 15 seconds")
+	}
+	raw := failure.Result.Raw()
+	if raw.Stdout == "" || raw.Terminal != nil {
+		t.Fatal("cancel must preserve partial stdout before a successful terminal")
+	}
+	observed := false
+	for _, item := range failure.Result.Transcript() {
+		observed = observed || item.Kind == driver.TranscriptAssistant && item.Text == partial
+	}
+	if !observed || !strings.Contains(failure.Result.Text, partial) {
+		t.Fatal("cancel lost the actually received assistant fragment")
+	}
+	after, err := th.Checkpoint(ctx)
+	if err != nil || !reflect.DeepEqual(healthy, after) {
+		t.Fatal("cancel replaced the previous healthy checkpoint")
+	}
+}
+
+// An untrusted private workspace must fail before model output. This controls
+// the prerequisite independently from cancellation and never accepts an
+// arbitrary RunError as proof that cancellation occurred.
+func TestAlignmentLiveCursorWorkspaceTrustRequired(t *testing.T) {
+	cfg := alignmentCursorLiveConfig(t)
+	cfg.ExtraArgs = nil
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	r, err := Driver(cfg).Run(ctx, driver.Request{Prompt: "Reply READY. Do not use tools.", Workspace: driver.WorkspaceLease{CWD: cfg.CWD}}, &alignmentCursorSink{})
+	if err != nil || r.ExitCode != 1 || r.Checkpoint != nil || r.RawStreams == nil || r.RawStreams.Stdout != "" || !strings.Contains(r.RawStreams.Stderr, "Workspace Trust Required") {
+		t.Fatalf("untrusted workspace control failed: exit=%d errorType=%T", r.ExitCode, err)
 	}
 }

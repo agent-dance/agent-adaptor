@@ -6,11 +6,10 @@ import (
 	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/internal/engine"
 	"github.com/agent-dance/agent-adaptor/internal/mcpruntime"
-	"github.com/agent-dance/agent-adaptor/internal/skillruntime"
 )
 
 func canonicalSharedCursorHome(bindings []driver.EnvBinding) string {
-	return filepath.Join(skillruntime.ResolveHome(bindings), ".cursor")
+	return filepath.Join(cursorUserHome(bindings), ".cursor")
 }
 
 func cursorProfileAndKind(config driver.CommonConfig, selection *driver.ProfileSelection) (driver.AgentProfile, engine.ProfileKind) {

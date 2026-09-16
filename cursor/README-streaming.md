@@ -59,9 +59,14 @@ The parser recognizes only these exact, catalog-resolved references:
   `providerIdentifier` is the fixture-proven older spelling, used only when
   `serverIdentifier` is absent. `toolName` or `name` supplies the operation;
   each present spelling must independently be a valid, nonempty string before
-  their equality is checked. A malformed known spelling cannot be treated as
-  absent, while unknown additive fields remain opaque. Names are compared without trimming,
-  normalization, underscore splitting, or prefix matching.
+  consistency is checked. The installed 2026.07.23 print path also emits
+  `name = serverIdentifier + "-" + toolName`. That exact redundant label is
+  accepted only with a valid nonempty `serverIdentifier`; a present
+  `providerIdentifier` must agree. The operation remains `toolName`, and
+  server/operation identity never comes from splitting the label. A malformed
+  known spelling cannot be treated as absent; unknown additive fields remain
+  opaque. Plain equal aliases and the name-only/toolName-only fixtures remain
+  supported.
 - `taskToolCall.args.subagentType.custom.name` maps to a unique resolved profile
   agent RuntimeName and emits its canonical Key with operation `spawn`.
 - Only official `tool_call.started` and `tool_call.completed` envelopes with
@@ -78,7 +83,14 @@ print protocol does not establish them. State and replay tombstones are bounded
 at 4096 invocations per run; catalog entries have the same limit. A safe,
 once-per-reason runtime notice reports rejected or unrecognized observations.
 These notices contain no protocol body, tool arguments, or result contents.
-Raw and the existing tool Transcript remain intact.
+Raw retains original bytes. The formal opaque `call_id` can contain LF.
+Safe IDs outside the reserved `cursor:call-id:` domain keep their spelling;
+all other nonempty valid UTF-8 IDs are represented as that prefix plus
+unpadded URL-base64 of the complete original ID. Reserved-domain literals are
+encoded too, so no literal can collide with an encoded ID. Safe IDs are bounded
+at 2048 bytes and IDs needing encoding at 1400 bytes. Transcript tool-use IDs
+and capability lifecycle IDs use the same normalization; no component is
+trimmed, split, or guessed into parent identity.
 
 Skill synchronization remains supported, while **skill invocation observation
 is unsupported**: a `/review` prompt or user echo does not prove activation.
@@ -121,8 +133,11 @@ actual hosted-tool calls and healthy public checkpoints with the original
 provider session identity. The test checks nonempty provider session files in
 the effective isolated profile before/after Close and before the cold dispatch,
 plus gateway revocation and endpoint/credential rotation. The file probe uses
-the exact formal session ID as a directory name; unknown or ambiguous layouts
-fail rather than substitute an SDK checkpoint or marker file. A forwarding test
+the installed print/resume module's exact config-root path:
+`chats/md5(path.resolve(cwd))/sessionID/store.db`. It requires real nonempty
+regular database files and rejects links. Same-ID project transcript folders
+are audit copies, not the source used for resume. Unknown layouts fail rather
+than substitute an SDK checkpoint or marker file. A forwarding test
 Driver records only resolved inputs and delegates to the real configured Driver.
 Cursor still spawns each turn; this test adds no persistent-process claim.
 Each run captures CLI `--version` in the isolated environment. Native
@@ -134,5 +149,83 @@ AGENT_ADAPTOR_LIVE_CONFORMANCE=1 go test -count=1 -tags=cursor_live ./cursor \
   -run 'TestCursorDriverConformance|TestAlignmentLiveCursor'
 ```
 
-T17 supplies these tests but does not run real providers or paid calls. macOS
-fixture results are not native Windows/Linux or live acceptance evidence.
+Ordinary CI leaves the environment gate closed. Live runners must be explicitly
+authorized and supply isolated authentication. Local macOS diagnostic passes
+do not substitute for final integration live or native Windows/Linux gates.
+
+## Native roots, selected profiles and isolated resource delivery
+
+The installed `2026.07.23-e383d2b` CLI implements three independent roots.
+`CURSOR_HOME` is an SDK selector and is not a CLI input. Config bindings follow
+the same explicit-empty and fallback semantics during Inspect and Run.
+
+| Selection | CLI config and resumable chats | CLI project data/transcripts | User MCP/skills/hooks and profile agents |
+|---|---|---|---|
+| Native | `CURSOR_CONFIG_DIR`, then `XDG_CONFIG_HOME/cursor`, then `HOME/.cursor` | `CURSOR_DATA_DIR`, then `HOME/.cursor` | actual `HOME/.cursor`; agents through a temporary agents-only plugin |
+| SDK `CURSOR_HOME`, Dedicated, Clone | selected profile directory | selected profile directory | selected source projected per invocation |
+
+Native preserves HOME. Its Profile.Dir reports the resource root; config and
+auth probes use the actual separate config root. A clone from that Native root
+copies requested MCP/skills from the resource root and settings/auth from the
+config root; it never imports chats, projects or history. `IncludeSettings`
+with AuthNone copies only the installed CLI's recognized static configuration
+fields, excluding authentication, cache/history and unknown fields. AuthLink
+and AuthCopy retain their explicit existing mixed-file selection semantics.
+
+An isolated invocation owns this layout:
+
+```text
+selected-profile/
+  cli-config.json, chats/, projects/       # persistent provider sources/state
+  mcp.json, hooks.json, skills/, agents/   # resolved SDK resource sources
+  .agent-adaptor-home/
+    .agent-adaptor-owner
+    cursor-run-<random>/                   # this invocation's HOME/USERPROFILE
+      .agent-adaptor-owner
+      .cursor/{mcp.json,hooks.json,skills/}
+      agents-plugin/agents/               # only --plugin-dir payload
+```
+
+The empty parent and ownership marker publish atomically without replacement.
+Runs have distinct projections, so no extra shared writer/lock is introduced.
+The plugin basename is always `agents-plugin`, independent of random run ID.
+Native MCP bytes are copied unchanged, preserving the official `${env:NAME}`
+expansion; the agents plugin never duplicates MCP. Only top-level skill links
+whose targets match this invocation's resolved skill sources may be copied;
+unknown links and special nodes fail. Copy bounds are 4096 entries, 64 levels,
+8 MiB per file and 32 MiB total. Directory reads use fixed 64-entry batches.
+
+Directories/files are owner-only on Unix; Windows creates and validates
+protected owner/SYSTEM DACLs before writing. Reuse verifies directory type,
+permissions and marker identity/content. Cleanup remains anchored to held
+roots, checks ownership and directory identity, never follows links, and is
+bounded by 16384 entries, 64 levels and a 15-second cancellation deadline.
+Failures are observable; post-execution cleanup failure preserves the partial
+Response/Raw/Transcript/terminal but removes its checkpoint. Cancellation and
+launch failure clean their own run projection. Persistent chats remain after
+Close. Native source directories are never projection cleanup targets.
+
+Official config/data/resource paths are pinned before any resource sync;
+runtime credential contributions cannot redirect them, and ExtraArgs cannot
+replace `--data-dir` or `--plugin-dir`. Read-only resolution creates no execution
+HOME. Random projection paths never enter stable compatibility fingerprints.
+The Driver guard hashes canonical config JSON (only formal `authInfo` is
+excluded; unknown fields and caches remain), plus sorted actual agents/hooks
+paths, content and permission modes. It excludes dynamic hosted MCP endpoint
+and credential values owned by the existing resolved invocation contract.
+Missing proofs in old checkpoints reject before launch with ErrResumeRejected;
+ResumeOnly preserves the old healthy store, and continue-or-start retains the
+existing single safe fresh fallback. This guard does not copy unknown settings
+into an AuthNone clone.
+
+The cancellation fixture explicitly trusts its own temporary workspace and
+uses official `--stream-partial-output`. It cancels only after a same-RunID,
+nonempty formal assistant `NoticeTranscriptItem` actually arrives. That print
+contract does not require public TextDelta. It checks cancellation reason and
+cause, observed partial Raw/Text/Transcript, bounded teardown and unchanged
+healthy checkpoint. `TestAlignmentLiveCursorWorkspaceTrustRequired` retains
+the original untrusted-workspace refusal as a separate negative control.
+`TestAlignmentLiveCursorDedicatedResourceIsolation` first proves private Native
+MCP/skill access, then requires selected MCP/skill/subagent access while the old
+Native MCP stays live but receives no new requests and old-only nonces stay out
+of the result. This confirms resource delivery, not skill invocation telemetry.

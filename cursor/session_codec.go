@@ -8,6 +8,12 @@ import (
 	"github.com/agent-dance/agent-adaptor/driver"
 )
 
+const (
+	cursorSessionConfigDir   = "cursor_config_dir"
+	cursorSessionDataDir     = "cursor_data_dir"
+	cursorSessionResourceDir = "cursor_resource_dir"
+)
+
 type sessionCodec struct{}
 
 func (adapter) SessionCodec() driver.SessionCodec {
@@ -47,6 +53,7 @@ func (sessionCodec) GuardFingerprint(params driver.SessionParams) string {
 		driver.SessionParamCWD,
 		driver.SessionParamWorkspaceID,
 		driver.SessionParamProfileFingerprint,
+		cursorSessionConfigDir, cursorSessionDataDir, cursorSessionResourceDir, cursorSessionConfigState, cursorSessionResourceState,
 	)
 }
 

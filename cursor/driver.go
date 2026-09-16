@@ -3,6 +3,7 @@ package cursor
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -19,6 +20,7 @@ import (
 	"github.com/agent-dance/agent-adaptor/internal/profilehooks"
 	"github.com/agent-dance/agent-adaptor/internal/profileinstructions"
 	"github.com/agent-dance/agent-adaptor/internal/profilesnapshot"
+	"github.com/agent-dance/agent-adaptor/internal/skillruntime"
 	"github.com/agent-dance/agent-adaptor/internal/systemprompt"
 )
 
@@ -113,6 +115,7 @@ func (adapter) CheckEnvironment(_ context.Context, cfg any) (driver.EnvironmentR
 			Hint:    "Run Cursor Agent once, use a profile option, or point CURSOR_HOME at the target operator profile.",
 		})
 	}
+	checks = append(checks, driver.EnvironmentCheck{Code: "cursor_config_directory", Level: "info", Message: "Cursor CLI configuration directory.", Detail: resolveCursorConfigDir(bindings)}, driver.EnvironmentCheck{Code: "cursor_data_directory", Level: "info", Message: "Cursor CLI session data directory.", Detail: resolveCursorDataDir(bindings)}, driver.EnvironmentCheck{Code: "cursor_resource_directory", Level: "info", Message: "Cursor SDK resource directory.", Detail: cursorHome})
 	checks = append(checks, cursorAuthChecks(bindings)...)
 	checks = append(checks, cursorConfigChecks(bindings)...)
 	return driverutil.SummarizeEnvironment(DriverType, checks), nil
@@ -154,8 +157,9 @@ func (adapter) GetProfile(_ context.Context, cfg any, _ driver.AgentIdentity, pr
 }
 
 func cursorConfigCandidates(bindings []driver.EnvBinding) []string {
-	home := resolveCursorHome(bindings)
+	home := resolveCursorConfigDir(bindings)
 	return []string{
+		filepath.Join(home, "cli-config.json"),
 		filepath.Join(home, "config.json"),
 		filepath.Join(home, "settings.json"),
 		filepath.Join(home, "argv.json"),
@@ -258,7 +262,7 @@ func (adapter) SnapshotProfileResources(_ context.Context, cfg any, _ driver.Age
 	}
 	snapshot = profileconfig.WithSnapshotResource(snapshot, mcpSnapshot)
 	if payload.Declared.Config {
-		snapshot = profileconfig.WithSnapshotResource(snapshot, profileconfig.Snapshot(DriverType, effectiveProfile.Dir, payload.Config, false))
+		snapshot = profileconfig.WithSnapshotResource(snapshot, profileconfig.Snapshot(DriverType, resolveCursorConfigDir(bindings), payload.Config, false))
 	}
 	if payload.Declared.Instructions {
 		snapshot = profileconfig.WithSnapshotResource(snapshot, profileinstructions.Snapshot(DriverType, effectiveProfile.Dir, payload.Instructions, false))
@@ -290,7 +294,7 @@ func (adapter) SyncProfileResources(ctx context.Context, cfg any, _ driver.Agent
 	snapshot := profilesnapshot.Build(DriverType, effectiveProfile, kind, payload, skills, true)
 	snapshot = profileconfig.WithSnapshotResource(snapshot, mcpSnapshot)
 	if payload.Declared.Config {
-		configSnapshot, err := profileconfig.SyncNativePatches(ctx, DriverType, effectiveProfile.Dir, payload.Config)
+		configSnapshot, err := profileconfig.SyncNativePatches(ctx, DriverType, resolveCursorConfigDir(bindings), payload.Config)
 		if err != nil {
 			return engine.ProfileSnapshot{}, err
 		}
@@ -320,7 +324,7 @@ func (adapter) SyncProfileResources(ctx context.Context, cfg any, _ driver.Agent
 	return snapshot, nil
 }
 
-func (adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSink) (driver.Response, error) {
+func (adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSink) (response driver.Response, returnErr error) {
 	if err := systemprompt.Validate(DriverType, req.AppendSystemPrompt); err != nil {
 		return driver.Response{}, err
 	}
@@ -345,7 +349,7 @@ func (adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSin
 		return driver.Response{}, err
 	}
 	effectiveCWD := chooseCWD(cfg.CommonConfig, req.Workspace)
-	if err := validateCursorSessionGuard(req, effectiveCWD, profileFingerprint); err != nil {
+	if err := validateCursorSessionGuard(ctx, req, effectiveCWD, profileFingerprint, bindings); err != nil {
 		return driver.Response{}, err
 	}
 	if req.Session != nil && req.Session.Mode == driver.SessionFork {
@@ -363,12 +367,21 @@ func (adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSin
 	if err != nil {
 		return driver.Response{}, err
 	}
+	// Runtime services may contribute credentials, but cannot redirect the
+	// profile selected and materialized for this invocation.
+	for _, name := range []string{"CURSOR_HOME", "CURSOR_CONFIG_DIR", "CURSOR_DATA_DIR", "HOME", "USERPROFILE", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME"} {
+		for _, binding := range bindings {
+			if binding.Name == name {
+				effectiveEnv = skillruntime.WithBinding(effectiveEnv, name, binding.Value)
+			}
+		}
+	}
 	effectiveProfile, profileKind := cursorProfileAndKind(cfg.CommonConfig, req.Profile)
 	if _, err := mcpruntime.SyncResource(ctx, DriverType, effectiveProfile.Dir, profileKind, req.MCP); err != nil {
 		return driver.Response{}, err
 	}
 	if req.ProfilePayload.Declared.Config {
-		if _, err := profileconfig.SyncNativePatches(ctx, DriverType, effectiveProfile.Dir, req.ProfilePayload.Config); err != nil {
+		if _, err := profileconfig.SyncNativePatches(ctx, DriverType, resolveCursorConfigDir(bindings), req.ProfilePayload.Config); err != nil {
 			return driver.Response{}, err
 		}
 	}
@@ -393,7 +406,29 @@ func (adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSin
 		return driver.Response{}, err
 	}
 
+	// Retain the source snapshot that this invocation actually projects. A
+	// later external edit must reject the next resume, not bless a new source
+	// merely because it appeared while the provider was already running.
+	resourceState, err := cursorResourceState(ctx, effectiveProfile.Dir)
+	if err != nil {
+		return driver.Response{}, err
+	}
+
+	effectiveEnv, pluginDir, cleanup, err := prepareCursorProjection(ctx, effectiveProfile.Dir, cursorIsolatedProfile(cfg.CommonConfig, req.Profile), req.Skills, effectiveEnv)
+	if err != nil {
+		return driver.Response{}, err
+	}
+	defer func() {
+		if err := cleanup(); err != nil {
+			response.Checkpoint = nil
+			returnErr = errors.Join(returnErr, fmt.Errorf("cursor projection cleanup: %w", err))
+		}
+	}()
 	args := []string{"-p", "--output-format", "stream-json", "--workspace", effectiveCWD}
+	if pluginDir != "" {
+		args = append(args, "--plugin-dir", pluginDir)
+	}
+
 	if req.Session != nil && req.Session.State != nil && req.Session.State.ResumeID != "" {
 		args = append(args, "--resume", req.Session.State.ResumeID)
 	}
@@ -451,10 +486,22 @@ func (adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSin
 		checkpoint = nil
 	}
 	if checkpoint != nil && checkpoint.State != nil {
-		checkpoint.State.Data = map[string]string{
-			driver.SessionParamCWD:                effectiveCWD,
-			driver.SessionParamWorkspaceID:        req.Workspace.ID,
-			driver.SessionParamProfileFingerprint: profileFingerprint,
+		configState, guardErr := cursorConfigState(bindings)
+		if guardErr != nil {
+			err = errors.Join(err, guardErr)
+			checkpoint = nil
+		}
+		if checkpoint != nil {
+			checkpoint.State.Data = map[string]string{
+				driver.SessionParamCWD:                effectiveCWD,
+				driver.SessionParamWorkspaceID:        req.Workspace.ID,
+				driver.SessionParamProfileFingerprint: profileFingerprint,
+				cursorSessionConfigDir:                resolveCursorConfigDir(bindings),
+				cursorSessionDataDir:                  resolveCursorDataDir(bindings),
+				cursorSessionResourceDir:              resolveCursorHome(bindings),
+				cursorSessionConfigState:              configState,
+				cursorSessionResourceState:            resourceState,
+			}
 		}
 	}
 
@@ -482,6 +529,8 @@ func cursorSafeExtraArgs(extra []string) []string {
 	blockedValues := map[string]struct{}{
 		"--output-format": {},
 		"--workspace":     {},
+		"--data-dir":      {},
+		"--plugin-dir":    {},
 		"--resume":        {},
 		"--model":         {},
 		"-m":              {},
@@ -520,7 +569,7 @@ func isCursorUnknownSessionError(stdout, stderr string) bool {
 	return cursorUnknownSessionErrorRE.MatchString(stdout + "\n" + stderr)
 }
 
-func validateCursorSessionGuard(req driver.Request, effectiveCWD, profileFingerprint string) error {
+func validateCursorSessionGuard(ctx context.Context, req driver.Request, effectiveCWD, profileFingerprint string, bindings ...[]driver.EnvBinding) error {
 	if req.Session == nil || req.Session.State == nil {
 		return nil
 	}
@@ -532,6 +581,35 @@ func validateCursorSessionGuard(req driver.Request, effectiveCWD, profileFingerp
 	}
 	if req.Session.State.Data[driver.SessionParamProfileFingerprint] != "" && req.Session.State.Data[driver.SessionParamProfileFingerprint] != profileFingerprint {
 		return &engine.ResumeRejectedError{Reason: "profile resources changed"}
+	}
+	if len(bindings) > 0 {
+		for _, key := range []string{cursorSessionConfigDir, cursorSessionDataDir, cursorSessionResourceDir, cursorSessionConfigState, cursorSessionResourceState} {
+			if req.Session.State.Data[key] == "" {
+				return &engine.ResumeRejectedError{Reason: "Cursor checkpoint predates authoritative profile directory guards"}
+			}
+		}
+		if old := req.Session.State.Data[cursorSessionConfigState]; old != "" {
+			current, err := cursorConfigState(bindings[0])
+			if err != nil {
+				return err
+			}
+			if current != old {
+				return &engine.ResumeRejectedError{Reason: "Cursor native configuration changed"}
+			}
+		}
+		resourceState, err := cursorResourceState(ctx, resolveCursorHome(bindings[0]))
+		if err != nil {
+			return err
+		}
+		if resourceState != req.Session.State.Data[cursorSessionResourceState] {
+			return &engine.ResumeRejectedError{Reason: "Cursor native agents/hooks changed"}
+		}
+		actual := map[string]string{cursorSessionConfigDir: resolveCursorConfigDir(bindings[0]), cursorSessionDataDir: resolveCursorDataDir(bindings[0]), cursorSessionResourceDir: resolveCursorHome(bindings[0])}
+		for key, value := range actual {
+			if old := req.Session.State.Data[key]; old != "" && old != value {
+				return &engine.ResumeRejectedError{Reason: "Cursor profile directory changed: " + key}
+			}
+		}
 	}
 	return nil
 }

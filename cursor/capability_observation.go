@@ -68,17 +68,32 @@ func (p *cursorParser) observeCapability(id, variant, subtype string, call map[s
 		if _, present := args["serverIdentifier"]; !present {
 			name = cursorExactString(args, "providerIdentifier")
 		}
-		for _, field := range []string{"toolName", "name"} {
-			value, present := args[field]
-			if !present {
-				continue
-			}
-			text, ok := value.(string)
-			if !ok || !capabilityobs.ValidText(text, 256, true) || operation != "" && operation != text {
+		tool, hasTool, validTool := cursorOperationField(args, "toolName")
+		full, hasName, validName := cursorOperationField(args, "name")
+		if !validTool || !validName {
+			p.capabilityNotice("invalid_reference")
+			return
+		}
+		operation = tool
+		if !hasTool {
+			operation = full
+		}
+		if hasTool && hasName && full != tool {
+			// Newer official frames carry the qualified tool label in name.
+			// This validates redundant fields; it never splits a string to
+			// derive either component of the capability identity.
+			server := cursorExactString(args, "serverIdentifier")
+			if server == "" || full != server+"-"+tool {
 				p.capabilityNotice("invalid_reference")
 				return
 			}
-			operation = text
+			if alias, present := args["providerIdentifier"]; present {
+				value, ok := alias.(string)
+				if !ok || value != server {
+					p.capabilityNotice("invalid_reference")
+					return
+				}
+			}
 		}
 	case "taskToolCall":
 		kind = capability.Subagent
@@ -230,4 +245,17 @@ func (p *cursorParser) closeCapabilities(cancelled bool) {
 	for i := range values {
 		p.emitCapability(&values[i])
 	}
+}
+
+func cursorOperationField(args map[string]any, field string) (text string, present bool, valid bool) {
+	value, present := args[field]
+	if !present {
+		return "", false, true
+	}
+	text, ok := value.(string)
+	limit := 256
+	if field == "name" {
+		limit = 2048 + 1 + 256
+	} // exact qualified server label; operation still has its own 256-byte bound
+	return text, true, ok && capabilityobs.ValidText(text, limit, true)
 }

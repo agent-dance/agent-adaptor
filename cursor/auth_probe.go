@@ -20,19 +20,11 @@ type cursorAuthInfo struct {
 }
 
 func effectiveCursorBindings(config driver.CommonConfig, selection *driver.ProfileSelection) ([]driver.EnvBinding, error) {
-	profile, err := resolveCursorProfileWithOptions(config, selection, false)
-	if err != nil {
-		return nil, err
-	}
-	return skillruntime.WithBinding(config.Env, "CURSOR_HOME", profile.Dir), nil
+	return cursorBindings(config, selection, false)
 }
 
 func effectiveCursorBindingsNoInitialize(config driver.CommonConfig, selection *driver.ProfileSelection) ([]driver.EnvBinding, error) {
-	profile, err := resolveCursorProfileWithOptions(config, selection, true)
-	if err != nil {
-		return nil, err
-	}
-	return skillruntime.WithBinding(config.Env, "CURSOR_HOME", profile.Dir), nil
+	return cursorBindings(config, selection, true)
 }
 
 func resolveCursorHome(bindings []driver.EnvBinding) string {
@@ -42,7 +34,7 @@ func resolveCursorHome(bindings []driver.EnvBinding) string {
 	if configured := strings.TrimSpace(os.Getenv("CURSOR_HOME")); configured != "" {
 		return filepath.Clean(configured)
 	}
-	return filepath.Join(skillruntime.ResolveHome(bindings), ".cursor")
+	return filepath.Join(cursorUserHome(bindings), ".cursor")
 }
 
 func resolveCursorProfile(config driver.CommonConfig, selection *driver.ProfileSelection) (driver.AgentProfile, error) {
@@ -50,19 +42,20 @@ func resolveCursorProfile(config driver.CommonConfig, selection *driver.ProfileS
 }
 
 func resolveCursorProfileWithOptions(config driver.CommonConfig, selection *driver.ProfileSelection, skipInitialize bool) (driver.AgentProfile, error) {
-	resolution, err := skillruntime.ResolveProfile(skillruntime.ProfileResolveOptions{
+	opts := skillruntime.ProfileResolveOptions{
 		Bindings:         config.Env,
 		Selection:        selection,
 		EnvVar:           "CURSOR_HOME",
-		DefaultDir:       filepath.Join(skillruntime.ResolveHome(config.Env), ".cursor"),
-		NativeSharedDir:  filepath.Join(skillruntime.ResolveHome(config.Env), ".cursor"),
+		DefaultDir:       filepath.Join(cursorUserHome(config.Env), ".cursor"),
+		NativeSharedDir:  filepath.Join(cursorUserHome(config.Env), ".cursor"),
 		DedicatedSubdirs: []string{"skills"},
 		SettingsFiles:    []string{"config.json", "settings.json"},
 		MCPFiles:         []string{"mcp.json"},
 		SkillsDirs:       []string{"skills"},
 		AuthFiles:        []string{"cli-config.json", "auth.json", "credentials.json"},
 		SkipInitialize:   skipInitialize,
-	})
+	}
+	resolution, err := resolveCursorProfileRoots(opts, config)
 	if err != nil {
 		return driver.AgentProfile{}, err
 	}
@@ -80,7 +73,10 @@ func cursorProfile(config driver.CommonConfig, selection *driver.ProfileSelectio
 }
 
 func cursorAuthChecks(bindings []driver.EnvBinding) []driver.EnvironmentCheck {
-	checks := make([]driver.EnvironmentCheck, 0, 2)
+	checks := make([]driver.EnvironmentCheck, 0, 3)
+	if _, source := driverutil.ResolvedEnvValue(bindings, "CURSOR_AUTH_TOKEN"); source != "" {
+		checks = append(checks, driver.EnvironmentCheck{Code: "cursor_auth_token_present", Level: "info", Message: "CURSOR_AUTH_TOKEN is available for Cursor authentication.", Detail: authSourceDetail(source)})
+	}
 	if _, source := driverutil.ResolvedEnvValue(bindings, "CURSOR_API_KEY"); source != "" {
 		checks = append(checks, driver.EnvironmentCheck{
 			Code:    "cursor_api_key_present",
@@ -154,7 +150,7 @@ func cursorAuthChecks(bindings []driver.EnvBinding) []driver.EnvironmentCheck {
 }
 
 func readCursorAuthInfo(bindings []driver.EnvBinding) (*cursorAuthInfo, error) {
-	configPath := filepath.Join(resolveCursorHome(bindings), "cli-config.json")
+	configPath := filepath.Join(resolveCursorConfigDir(bindings), "cli-config.json")
 	payload, err := configprobe.ReadJSONObject(configPath)
 	if err != nil {
 		if isNotExist(err) {

@@ -39,8 +39,9 @@ func cursorIsolatedConfig(t *testing.T, live bool) Config {
 	if err := os.MkdirAll(workspace, 0700); err != nil {
 		t.Fatal(err)
 	}
-	cfg := Config{Model: "gpt-5", CommonConfig: CommonConfig{CWD: workspace, Env: []driver.EnvBinding{{Name: "HOME", Value: home}, {Name: "USERPROFILE", Value: home}, {Name: "CURSOR_HOME", Value: filepath.Join(home, "cursor")}}}}
+	cfg := Config{Model: "gpt-5.2", CommonConfig: CommonConfig{CWD: workspace, Env: []driver.EnvBinding{{Name: "HOME", Value: home}, {Name: "USERPROFILE", Value: home}, {Name: "CURSOR_HOME", Value: filepath.Join(home, "cursor")}}}}
 	if live {
+		cfg.ExtraArgs = []string{"--trust"}
 		cfg.Command = os.Getenv("AGENT_ADAPTOR_CURSOR_COMMAND")
 		if cfg.Command == "" {
 			cfg.Command = "agent"
@@ -108,6 +109,8 @@ func TestCursorDriverConformance(t *testing.T) {
 			driver.SessionParamCWD,
 			driver.SessionParamWorkspaceID,
 			driver.SessionParamProfileFingerprint,
+			cursorSessionConfigDir, cursorSessionDataDir, cursorSessionResourceDir,
+			cursorSessionConfigState, cursorSessionResourceState,
 		),
 		adaptertest.WithWorkspace(workspace),
 		adaptertest.WithExpectedDetectedModel(cfg.Model),

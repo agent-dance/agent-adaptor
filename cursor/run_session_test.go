@@ -161,6 +161,8 @@ func TestCursorSafeExtraArgsCannotReplaceResolvedInvocation(t *testing.T) {
 	got := cursorSafeExtraArgs([]string{
 		"--output-format", "text",
 		"--workspace=/other",
+		"--data-dir", "/other-data",
+		"--data-dir=/another-data",
 		"--resume", "other-session",
 		"--model", "other-model",
 		"--mode=ask",
