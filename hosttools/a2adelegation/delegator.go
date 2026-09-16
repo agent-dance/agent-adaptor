@@ -622,6 +622,7 @@ func (r *delegationRun) delegatePolling(ctx context.Context, client A2AClient, s
 			r.cancelWanted = true
 			derr := r.contextFailure()
 			result := partialTaskResult(baseResult, task, spec.Policy, includeRemoteArtifacts)
+			result.Artifacts = r.limitResultArtifacts(baseEvent, result.Artifacts, maxArtifacts)
 			return ensureDelegationError(result, derr), derr
 
 		case <-ticker.C:
