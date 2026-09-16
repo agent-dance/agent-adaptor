@@ -9,7 +9,7 @@ import subprocess
 from windows_validation import MANDATORY, CANCELLATION_REQUIRED, CURSOR_REQUIRED, audit_cancellation_repetitions, audit_repetitions, audit_events, audit_example, execute_check
 
 
-# Independent R033 inventory: omissions in the collector cannot omit the oracle.
+# Independent R033 and approved T17 follow-up inventory: omissions in the collector cannot omit the oracle.
 CURSOR_PROFILE_ROOTS = {
     "github.com/agent-dance/agent-adaptor/cursor:" + name for name in (
         "TestCursorWindowsProjectionCreatesProtectedObjectsAndRejectsChangedACL",
@@ -21,6 +21,8 @@ CURSOR_PROFILE_ROOTS = {
         "TestCursorProjectionIsPerRunBoundedAndPreservesSources",
         "TestCursorProjectionRejectsForeignOwnershipLinksAndCancellation",
         "TestCursorProjectionSizeLimitAndSourceSymlinks",
+        "TestCursorWindowsOfficialEnvironmentNamesAreCaseInsensitive",
+        "TestCursorProjectionSnapshotTracksDeliveredBytes",
     )
 }
 
@@ -34,7 +36,7 @@ def event(action, test="TestRequired"):
 
 class EvidenceTests(unittest.TestCase):
     def test_cursor_profile_roots_are_mandatory_without_skip_exemptions(self):
-        self.assertEqual(len(CURSOR_PROFILE_ROOTS), 9)
+        self.assertEqual(len(CURSOR_PROFILE_ROOTS), 11)
         self.assertTrue(CURSOR_PROFILE_ROOTS <= MANDATORY)
         allowed = json.loads(Path(__file__).with_name("windows_allowed_skips.json").read_text(encoding="utf-8"))
         self.assertFalse(MANDATORY & set(allowed))

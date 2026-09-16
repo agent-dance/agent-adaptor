@@ -40,6 +40,8 @@ CURSOR_PROFILE_REQUIRED = {
     PREFIX + "cursor:TestCursorProjectionIsPerRunBoundedAndPreservesSources",
     PREFIX + "cursor:TestCursorProjectionRejectsForeignOwnershipLinksAndCancellation",
     PREFIX + "cursor:TestCursorProjectionSizeLimitAndSourceSymlinks",
+    PREFIX + "cursor:TestCursorWindowsOfficialEnvironmentNamesAreCaseInsensitive",
+    PREFIX + "cursor:TestCursorProjectionSnapshotTracksDeliveredBytes",
 }
 MANDATORY = {
     # These native safety tests must PASS. They are never allowed skips.
