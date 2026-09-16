@@ -134,3 +134,5 @@ python3 docs/alignment-tasks/2026-09-07/validate.py \
 [R030](amendments/R030.md)：九项 live 问题由六个原 owner 在共同准备 SHA 的独立 worktree 返修；[rework.json](rework.json) 收窄本轮写域，原 DAG/要求不变。派发前另运行 `python3 -B -m unittest discover -s docs/alignment-tasks/2026-09-07 -p test_rework.py -v`。新候选完整重验 G05/B06 后才可通过 G06。
 
 [R031](amendments/R031.md)：保留原九 finding，登记三个诊断中新增条目及既有 owner/check，明确 Claude 旧记录兼容边界和最终同 SHA 验收。
+
+[R032](amendments/R032.md)：澄清安全回退合法协议反例，追加原T18的polling取消制品数量限制修复；补充任务不增加并发上限。

@@ -398,6 +398,8 @@ R030：2026-09-16 的真实验证重新打开九项问题：Claude Permission/co
 
 R031：完整合入审查另打开 MERGE-F01：安全 resume-reject 后 fresh attempt 必须重置 Driver 终局/source/坐标边界，不能丢 fresh 事件或保留旧 provider terminal；同 attempt 迟到抑制、累计审计和唯一公共终局不变。原 T06 窄域实施、非作者反例复验。R030 返修保持原九 finding，并追加 T29-E02（Codex 私有 Git workspace 前提）、T30-F03（Cursor print 实际 assistant Notice 取消 oracle）、T30-F04（正式 opaque call ID 无碰撞编码），沿原 owner/check 验收。Claude 指纹只排除已证完整 version13 六字段初始化组合，未知/未完成状态和真实配置仍参与；旧 completed-bundle hash 记录允许保守拒绝 ResumeOnly，保留健康状态并沿唯一 continue-or-start 原子替换。CodeBuddy Question 选择不能被双 AutoApprove 短路，native JSON 只解释完整顶层正式记录且第一 terminal 必须最后。adaptertest live success 同时要求健康结果与明确请求值，普通失败 SPI 合同不变。所有修复、中央文档与精确任务范围入新 S 后，G05 与全部 B06 同 S 重新验收，有限诊断与独立静态审查不关闭 live/G06。
 
+R032：MERGE-F01 的合法协议反例与非合同压力记录分开，不能夸大旧Usage。MERGE-F02 要求 polling 取消/超时部分结果与其余路径同样应用 MaxArtifacts 和可观察丢弃；完整RemoteArtifacts opt-in及错误主因不变。原T18独立窄域修复，原verifier复验，仍最多六并发；原G05/B06同S门禁保持。
+
 ## 15. 发布门禁
 
 发布前必须全部满足：

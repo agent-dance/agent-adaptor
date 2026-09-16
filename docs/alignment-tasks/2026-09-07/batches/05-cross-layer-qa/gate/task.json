@@ -78,7 +78,8 @@
       "docs/alignment-tasks/2026-09-07/README.md",
       "docs/alignment-tasks/2026-09-07/manifest.json",
       "docs/alignment-tasks/2026-09-07/coverage.json",
-      "docs/alignment-tasks/2026-09-07/amendments/R031.md"
+      "docs/alignment-tasks/2026-09-07/amendments/R031.md",
+      "docs/alignment-tasks/2026-09-07/amendments/R032.md"
     ],
     "dependency_artifacts": [
       {
@@ -240,7 +241,9 @@
       "codex/internal/livetest/profile_test.go",
       "codex/live_profile_test.go",
       "codex/live_route_probe_test.go",
-      "tools_profile_snapshot_test.go"
+      "tools_profile_snapshot_test.go",
+      "hosttools/a2adelegation/alignment_polling_artifact_limit_test.go",
+      "alignment_resume_fallback_test.go"
     ],
     "scope_match": "精确文件或目录/**；gate可合并worker已审阅commit，但不直接越权编辑其生产代码。",
     "exclusive_resources": [
@@ -289,7 +292,8 @@
     "R023：等待全部九个B05任务（容量仍6）；T35/T36精确独立文件，T20仅22项metadata重验。合并原owner两个生产关闭修复，保留T33/T34全部回归，中央合同/doc/changelog后在新SHA重跑原3commands，B06整批换同一冻结SHA。旧d94fd17报告与两处panic绝不覆盖。",
     "R027 post-review验收：按本会话用户“全部修复”和“按建议处理全量CI”的授权，核对精确新增范围内的评审/平台/安全修复及失败到修复证据，再在最终合流SHA执行原G05命令。范围扩展只承接这些已审阅修复的整合验收，不允许gate增加无关生产修改；原9依赖及owner责任保持。",
     "R029 pre-merge清理验收：承接用户对合入main前提高可读性/合理性并保持功能质量的授权，核对本修订列明的精确路径、声明token审计与独立反例；六个生产文件拆分和三处私有helper调整不得改变公共API、错误/生命周期、profile fingerprint、安全边界或live门。保留独立测试，仅将无生产调用的terminal helper测试正文迁至公开Delegate poll/stream路径。dd3859e的已通过证据仅为清理基线，最终新SHA须重跑原G05/T25/T26命令后才能封账；原9依赖、owner/verifier、G04真实base和完整diff不变。",
-    "R031：核对 R030 六路返修及新增 T29-E02/T30-F03/T30-F04 的原 owner 提交和非作者审查；完整原47任务/96要求/45处置/9依赖与历史G04 base保持。以精确实际新增路径承接本次集成，中央合同和文档进入最终 S 后原三命令全验，T25–T30 全部用同一 S；旧证据保留，不以有限诊断关闭 live。"
+    "R031：核对 R030 六路返修及新增 T29-E02/T30-F03/T30-F04 的原 owner 提交和非作者审查；完整原47任务/96要求/45处置/9依赖与历史G04 base保持。以精确实际新增路径承接本次集成，中央合同和文档进入最终 S 后原三命令全验，T25–T30 全部用同一 S；旧证据保留，不以有限诊断关闭 live。",
+    "R032：保留 MERGE-F01 合法 SPI 反例及单列的非合同压力控制；追加原T18负责的MERGE-F02窄域返修，等待非作者接受。六路原返修与补充worker均进入最终S，原G05九依赖、完整G04 diff及全部B06同S验收不变。"
   ],
   "acceptance_criteria": [
     {
