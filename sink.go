@@ -150,6 +150,19 @@ func (s *eventSink) enableAuthoritativeLifecycle() {
 	s.push(RunStarted{RunID: s.runID})
 }
 
+// beginFreshDriverAttempt is called only after safe fallback preparation has
+// succeeded and the previous Driver.Run has returned. Provider coordinates and
+// its terminal fence belong to one attempt; the public envelope, approvals,
+// observers, budget and accumulated Response remain owned by the invocation.
+func (s *eventSink) beginFreshDriverAttempt() {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	s.providerRunID = ""
+	s.providerThreadID = ""
+	s.driverTerminal = nil
+	s.terminalSource = nil
+}
+
 // captureDriverLifecycle suppresses duplicate Driver run-envelope events
 // while the core owns the merged lifecycle. Non-lifecycle payloads continue
 // through the broker immediately. The terminal is retained as a source of
@@ -162,6 +175,11 @@ func (s *eventSink) captureDriverLifecycle(p driver.StreamPayload, source *Event
 	defer s.lifecycleMu.Unlock()
 	if !s.lifecycleActive {
 		return false
+	}
+	if s.driverTerminal != nil {
+		// Even a late run.started cannot reopen this attempt or change its
+		// coordinates. Only the invocation's successful PrepareFresh can.
+		return true
 	}
 	switch p.Kind {
 	case driver.StreamRunStarted:
@@ -184,7 +202,7 @@ func (s *eventSink) captureDriverLifecycle(p driver.StreamPayload, source *Event
 		}
 		return true
 	default:
-		return s.driverTerminal != nil
+		return false
 	}
 }
 

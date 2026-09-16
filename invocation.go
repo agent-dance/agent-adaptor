@@ -251,6 +251,7 @@ func (a *Agent) executeInvocation(ctx context.Context, st *runStream, prompt str
 						return
 					}
 					fallbackErr = resultErr
+					st.sink.beginFreshDriverAttempt()
 					continue
 				}
 				resultErr = fmt.Errorf("%w: %w", ErrResumeRejected, resultErr)
