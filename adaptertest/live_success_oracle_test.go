@@ -119,7 +119,7 @@ type liveSuccessOracleDriver struct {
 }
 
 func (d liveSuccessOracleDriver) Descriptor() driver.Descriptor {
-	return driver.Descriptor{Type: "live-oracle", Sessions: driver.SessionCapability{SupportsResume: strings.HasPrefix(d.scenario, "resume-")}, StructuredOutput: driver.StructuredOutputCapability{JSONSchemaNative: true, WorksWithRun: true}}
+	return driver.Descriptor{Type: "live-oracle", DisplayName: "Live success oracle", Sessions: driver.SessionCapability{SupportsResume: strings.HasPrefix(d.scenario, "resume-")}, StructuredOutput: driver.StructuredOutputCapability{JSONSchemaNative: true, WorksWithRun: true}}
 }
 func (liveSuccessOracleDriver) ValidateConfig(any) error { return nil }
 func (d liveSuccessOracleDriver) Run(_ context.Context, req driver.Request, sink driver.EventSink) (driver.Response, error) {
@@ -203,13 +203,28 @@ func (d liveSuccessOracleDriver) Run(_ context.Context, req driver.Request, sink
 
 type liveSuccessOracleResumeDriver struct{ liveSuccessOracleDriver }
 
+var _ driver.SessionConfigFingerprinter = liveSuccessOracleResumeDriver{}
+var _ driver.SessionCodecProvider = liveSuccessOracleResumeDriver{}
+
 func (d liveSuccessOracleResumeDriver) SessionCodec() driver.SessionCodec {
 	if d.scenario == "resume-codec" {
 		return nil
 	}
 	return NewReferenceDriver(ReferenceConfig{}).(driver.SessionCodecProvider).SessionCodec()
 }
-func (liveSuccessOracleResumeDriver) SessionConfigFingerprint() string { return "oracle-config" }
+func (liveSuccessOracleResumeDriver) SessionConfigFingerprint() (string, error) {
+	return "oracle-config", nil
+}
+
+func TestLiveSuccessResumeDriverContract(t *testing.T) {
+	factory := func() driver.Driver {
+		calls := 0
+		return liveSuccessOracleResumeDriver{liveSuccessOracleDriver{scenario: "resume-success", calls: &calls}}
+	}
+	d := factory()
+	checkDescriptor(t, factory, d, d.Descriptor())
+	checkDeclarations(t, factory, d, d.Descriptor())
+}
 
 func TestLiveSuccessDoesNotChangeFailureSPI(t *testing.T) {
 	for _, resp := range []driver.Response{{ExitCode: 1}, {Signal: "SIGTERM"}, {TimedOut: true}, {Failure: &driver.RunFailure{Code: driver.FailureAgentError}}, {}} {
