@@ -20,6 +20,16 @@ Agent runs. Ordinary Bash/Write/Edit permission requests use the same typed,
 exactly-once decision path; the CLI remains responsible for executing an
 approved tool.
 
+`Ask` handles permission requests emitted by Claude; it does not make every
+tool invocation require approval. The CLI can allow a read-only Bash command
+such as `echo` without emitting `can_use_tool`. A host that needs an explicit
+boundary must configure a matching native `permissions.ask` rule in its chosen
+profile. Sandboxed Bash auto-allow can bypass ask rules, so the live Permission
+fixture disables `sandbox.autoAllowBashIfSandboxed` in its private profile.
+The fixture requires an actual control request, one callback, the matching
+successful tool result and final text. See the official
+[permission rules](https://code.claude.com/docs/en/permissions).
+
 Native structured output uses Claude's `--json-schema`. Question and PlanReview
 Ask can share a bidirectional stream-json process with native schema output.
 Native schema does not advertise Permission Ask; core selects prompt validation

@@ -153,6 +153,10 @@ func runAlignmentClaudeHelper() int {
 				return 32
 			}
 			appendPersistentHelperLine(os.Getenv("REPLIES_FILE"), strings.TrimSpace(line))
+			if strings.Contains(prompt, "permission-eof") {
+				fmt.Fprintln(os.Stderr, "provider stopped after permission response")
+				return 23
+			}
 		}
 		terminal := alignmentClaudeTerminal
 		if !native {
@@ -530,11 +534,14 @@ func TestAlignmentClaudeInteractiveNativeArgs(t *testing.T) {
 }
 
 func TestAlignmentClaudeApprovalFailures(t *testing.T) {
-	for _, kind := range []string{"question", "plan"} {
+	for _, kind := range []string{"question", "plan", "permission"} {
 		for _, action := range []string{"deny", "timeout", "cancel", "deny-continue", "timeout-continue"} {
 			t.Run(kind+"/"+action, func(t *testing.T) {
 				f := newAlignmentClaudeFixture(t, false)
 				policy := alignmentClaudePolicy()
+				if kind == "permission" {
+					policy.Approvals.Permission = adaptor.ApprovalAsk
+				}
 				policy.Approvals.Timeout = 40 * time.Millisecond
 				if action == "deny-continue" {
 					policy.Approvals.OnReject = adaptor.FallbackContinue
@@ -547,20 +554,26 @@ func TestAlignmentClaudeApprovalFailures(t *testing.T) {
 				th := a.Thread("approval-errors")
 				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 				defer cancel()
-				schema := adaptor.WithSchemaJSON([]byte(alignmentClaudeSchema))
+				opts := []adaptor.CallOption{adaptor.WithSpawn()}
+				if kind != "permission" {
+					opts = append(opts, adaptor.WithSchemaJSON([]byte(alignmentClaudeSchema)))
+				}
 				// Establish a healthy record with the identical schema/policy fingerprint.
-				if _, err := th.Run(ctx, "finish", schema, adaptor.WithSpawn()); err != nil {
+				if _, err := th.Run(ctx, "finish", opts...); err != nil {
 					t.Fatal(err)
 				}
 				before, err := th.Checkpoint(ctx)
 				if err != nil {
 					t.Fatal(err)
 				}
-				stream := th.Stream(ctx, kind, schema, adaptor.WithSpawn())
+				stream := th.Stream(ctx, kind, opts...)
 				var request *adaptor.ApprovalRequest
 				for event := range stream.Events() {
 					if r, ok := event.(*adaptor.ApprovalRequest); ok {
 						request = r
+						if kind == "permission" && r.Kind != adaptor.ApprovalPermission {
+							t.Fatalf("ordinary permission kind = %s", r.Kind)
+						}
 						if strings.HasPrefix(action, "deny") {
 							if err := r.Deny(ctx, "try a smaller plan"); err != nil {
 								t.Fatal(err)
@@ -580,7 +593,11 @@ func TestAlignmentClaudeApprovalFailures(t *testing.T) {
 					t.Fatal("expired responder accepted a duplicate")
 				}
 				if strings.HasSuffix(action, "continue") {
-					if err != nil || result.Text != "完成" {
+					wantText := "完成"
+					if kind == "permission" {
+						wantText = `{"directory":"docs"}`
+					}
+					if err != nil || result.Text != wantText {
 						t.Fatalf("continue failed: %v %#v", err, result)
 					}
 					replies := f.lines(t, "REPLIES_FILE")
@@ -616,6 +633,72 @@ func TestAlignmentClaudeApprovalFailures(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestAlignmentClaudePermissionDoesNotInventRequest(t *testing.T) {
+	f := newAlignmentClaudeFixture(t, false)
+	// The official CLI can return these real tool facts without a permission
+	// request. Parsing them must not manufacture an answerable approval.
+	frames := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"allowed-bash","name":"Bash","input":{"command":"echo permission-ok"}}]}}` + "\n" +
+		`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"allowed-bash","content":"permission-ok","is_error":false}]}}` + "\n"
+	f.cfg.Env = append(f.cfg.Env, driver.EnvBinding{Name: "ADOPTION_FRAMES", Value: frames})
+	a := f.agent(adaptor.WithPolicy(adaptor.Policy{Approvals: adaptor.ApprovalPolicy{Permission: adaptor.ApprovalAsk}}))
+	defer a.Close(context.Background())
+	calls := 0
+	result, err := a.Run(context.Background(), "finish", adaptor.OnApproval(func(ctx context.Context, req *adaptor.ApprovalRequest) error {
+		calls++
+		return req.Approve(ctx)
+	}))
+	if err != nil || calls != 0 || len(f.lines(t, "REPLIES_FILE")) != 0 {
+		t.Fatalf("tool-only facts caused permission response: calls=%d error=%v", calls, err)
+	}
+	if !strings.Contains(result.Raw().Stdout, frames) || result.Raw().Terminal == nil {
+		t.Fatal("auto-allowed tool facts lost their original audit")
+	}
+}
+
+func TestAlignmentClaudePermissionProviderStopsAfterApprove(t *testing.T) {
+	f := newAlignmentClaudeFixture(t, false)
+	a := f.agent(adaptor.WithThreadStore(memory.NewStore()), adaptor.WithPolicy(adaptor.Policy{Approvals: adaptor.ApprovalPolicy{Permission: adaptor.ApprovalAsk}}))
+	defer a.Close(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	th := a.Thread("permission-provider-exit")
+	if _, err := th.Run(ctx, "finish", adaptor.WithSpawn()); err != nil {
+		t.Fatal(err)
+	}
+	before, err := th.Checkpoint(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	result, err := th.Run(ctx, "permission-eof", adaptor.WithSpawn(), adaptor.OnApproval(func(ctx context.Context, req *adaptor.ApprovalRequest) error {
+		calls++
+		if req.Kind != adaptor.ApprovalPermission {
+			return fmt.Errorf("unexpected approval kind: %s", req.Kind)
+		}
+		return req.Approve(ctx)
+	}))
+	var runErr *adaptor.RunError
+	if result != nil || !errors.As(err, &runErr) || runErr.Reason != adaptor.ReasonAgentError || runErr.Details["exit_code"] != 23 || !errors.Is(err, adaptor.ErrAgentFailed) || ctx.Err() != nil || calls != 1 {
+		t.Fatalf("early provider exit: callbacks=%d result=%v error=%v", calls, result, err)
+	}
+	partial := runErr.Result
+	if partial == nil || !strings.Contains(partial.Raw().Stdout, alignmentClaudePermission) || !strings.Contains(partial.Raw().Stderr, "provider stopped after permission response") || partial.Raw().Terminal != nil || len(partial.Transcript()) == 0 {
+		t.Fatal("early provider exit lost partial audit or invented a terminal")
+	}
+	replies := f.lines(t, "REPLIES_FILE")
+	if len(replies) != 1 {
+		t.Fatalf("permission wire replies=%d", len(replies))
+	}
+	reply := decodeControlResponseFrame(t, []byte(replies[0]))
+	if reply.RequestID != "permission-c04" || reply.Behavior != "allow" || reply.ToolUseID != "tool-permission-c04" || reply.UpdatedInput["command"] != "pwd" {
+		t.Fatalf("permission wire response: %#v", reply)
+	}
+	after, err := th.Checkpoint(ctx)
+	if err != nil || !reflect.DeepEqual(before, after) {
+		t.Fatalf("provider exit changed healthy checkpoint: %v", err)
 	}
 }
 

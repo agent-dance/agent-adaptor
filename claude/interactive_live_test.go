@@ -4,9 +4,12 @@ package claude_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -113,11 +116,29 @@ func TestClaudeInteractive_QuestionAnswered(t *testing.T) {
 
 func TestClaudeInteractive_PermissionAsk(t *testing.T) {
 	requireInteractiveCLI(t)
-	agent := newInteractiveAgent(t, "")
+	cfg := alignmentLiveConfig(t, "")
+	// A harmless echo is normally allowed without a can_use_tool request.
+	// Establish a real provider permission boundary in this private profile.
+	// Disable sandbox auto-allow so it cannot bypass the explicit ask rule.
+	for _, binding := range cfg.Env {
+		if binding.Name != "CLAUDE_CONFIG_DIR" {
+			continue
+		}
+		if err := os.MkdirAll(binding.Value, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(binding.Value, "settings.json"), []byte(`{"permissions":{"ask":["Bash(echo permission-ok)"]},"sandbox":{"autoAllowBashIfSandboxed":false}}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	agent := adaptor.New(claude.Driver(cfg))
+	t.Cleanup(func() { _ = agent.Close(context.Background()) })
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	var seen adaptor.ApprovalKind
-	result, err := agent.Run(ctx,
+	var approvals int
+	var approvedToolID string
+	stream := agent.Stream(ctx,
 		"Use the Bash tool exactly once to run `echo permission-ok`. Then reply with exactly PERMISSION_OK and nothing else.",
 		adaptor.WithPolicy(adaptor.Policy{Approvals: adaptor.ApprovalPolicy{
 			Permission: adaptor.ApprovalAsk,
@@ -125,15 +146,44 @@ func TestClaudeInteractive_PermissionAsk(t *testing.T) {
 		}}),
 		adaptor.OnApproval(func(ctx context.Context, req *adaptor.ApprovalRequest) error {
 			seen = req.Kind
-			return req.Approve(ctx)
+			approvals++
+			approvedToolID = req.ToolCallID
+			t.Logf("permission callback kind=%s request=%s tool=%s", req.Kind, req.ID, req.ToolCallID)
+			if err := req.Approve(ctx); err != nil {
+				return err
+			}
+			if err := req.Approve(ctx); !errors.Is(err, adaptor.ErrApprovalResolved) {
+				return fmt.Errorf("duplicate permission response = %v, want ErrApprovalResolved", err)
+			}
+			return nil
 		}),
 	)
+	for event := range stream.Events() {
+		if notice, ok := event.(adaptor.Notice); ok && notice.Kind == adaptor.NoticeInvocation {
+			t.Logf("permission invocation args=%v", notice.Data["args"])
+		}
+	}
+	result, err := stream.Result()
+	if result != nil {
+		encoded, marshalErr := json.Marshal(struct {
+			Raw        any `json:"raw"`
+			Transcript any `json:"transcript"`
+		}{result.Raw(), result.Transcript()})
+		if marshalErr != nil {
+			t.Fatal(marshalErr)
+		}
+		t.Logf("permission protocol=%s", encoded)
+	}
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	if seen != adaptor.ApprovalPermission {
 		t.Fatalf("approval kind = %q, want permission", seen)
 	}
+	if approvals != 1 {
+		t.Fatalf("permission callbacks = %d, want exactly one", approvals)
+	}
+	assertLivePermissionProtocol(t, result, approvedToolID)
 	if !strings.Contains(result.Text, "PERMISSION_OK") {
 		t.Fatalf("final Text = %q, want permission result", result.Text)
 	}

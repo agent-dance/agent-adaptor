@@ -43,3 +43,40 @@ Formal schema references consulted: [Claude tool-result protocol](https://platfo
 B06 entries: `go test -count=1 -tags=claude_live ./claude -run TestAlignmentLive` with `AGENT_ADAPTOR_LIVE_CONFORMANCE=1`. Entry tests collect CLI version, use private HOME/CLAUDE_CONFIG_DIR/workspace and runner-provided credentials, and fail on missing required protocol/tools. Append nonce control/Thread/WithSpawn, native schema Question/PlanReview, hosted MCP/Todo/nested tools and existing streaming/Permission scenarios are covered. Existing conformance also has a build-tag gate. This batch runs only disabled env=0 compilation/gating checks; paid/live, native Windows and Linux evidence remain B06 responsibilities. Actual commands/counts/platform details are in result.json and evidence generated after the implementation commit.
 
 R017 adds `TestAlignmentLiveDeclaredSkillAndSubagentCompleted` in `claude/alignment_catalog_live_test.go`. It declares distinct canonical keys `alignment/catalog/skill-proof` and `alignment/catalog/subagent-proof`, with explicit provider runtime names, and materializes their Skill/Agent files in a private Dedicated profile before the run. The skill source is a private directory, so preparation does not use the operator's skill cache. File checks establish setup only: success requires exact canonical refs, Provider/ProviderProtocol evidence, a matching Started→Completed invocation, a successful same-scope ToolResult, and the exact runtime input in formal Transcript. NativeInputAccepted, declarations, assistant claims, wrong keys, missing completions, or failed calls do not satisfy the oracle. Existing MCP/Todo/nested and Dedicated cross-Agent scenarios are unchanged. This closes a live-fixture coverage gap only; no production behavior is changed and no live success is claimed before authorized B06 execution.
+
+## R030: ordinary Permission fixture precondition
+
+T27-F01 was reproduced with official Claude Code 2.1.159 using the original
+`echo permission-ok` prompt and Permission Ask policy. The formal stream showed
+the actual Bash call, its successful result and `PERMISSION_OK`, but no
+`control_request`; argv contained the expected bidirectional stdio flags and
+did not bypass permissions. The CLI allowed the harmless command without
+requesting host approval. This diagnostic establishes the cause of the new
+reproduction; the original T27 log did not retain enough protocol to prove it.
+
+Only this fixture now writes an exact `permissions.ask` rule for
+`Bash(echo permission-ok)` into its private settings.json and disables sandbox
+auto-allow. The prompt, policy, one-minute context and original Kind/final-text
+assertions remain. It uses the same Stream pipeline as Run to retain invocation
+argv, and also requires exactly one callback, rejection of a duplicate Approve,
+one formal `can_use_tool` request, exact tool ID/input correlation, a successful
+tool result, complete Transcript and a successful terminal. A second limited
+diagnostic observed `decision_reason_type=rule` and passed this oracle.
+
+Hermetic tests reject the original auto-allowed protocol as approval evidence,
+prove tool facts alone do not manufacture an ApprovalRequest, and extend the
+existing failure table with nil-schema Permission deny/timeout/cancel/continue
+and duplicate-response cases. Provider exit after accepting the allow response
+retains its nonzero-exit classification and partial audit while preserving the
+previous healthy checkpoint. Existing native Question/PlanReview, Permission
+schema fallback and resident Wait-cause tests remain unchanged.
+
+There is no production, public API, capability, schema negotiation or golden
+change. Integration should add the callback precondition explanation to the
+HITL section of docs/run-policy.md and record the fixture correction and stricter
+oracle in CHANGELOG. These two authorized diagnostics used only private
+HOME/profile/workspace and minimal in-memory credential environment values;
+they are not the full T27 acceptance. The final original T27-V01/V02 matrix,
+including T06's cold-resume repair and T23's stricter conformance, still requires
+the common frozen integration SHA. Ordinary checks retain all three disabled
+gates. External R030 reports and redacted logs are kept outside the commit.
