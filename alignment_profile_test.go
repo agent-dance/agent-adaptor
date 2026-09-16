@@ -10,7 +10,9 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"sync"
@@ -30,6 +32,7 @@ import (
 	"github.com/agent-dance/agent-adaptor/memory"
 	"github.com/agent-dance/agent-adaptor/profile"
 	"github.com/agent-dance/agent-adaptor/skill"
+	"github.com/agent-dance/agent-adaptor/threadstore"
 	"github.com/agent-dance/agent-adaptor/tool"
 )
 
@@ -1103,5 +1106,171 @@ func TestAlignmentProfileMCPWriterPreservesMode(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// This fixture writes the exact completed bootstrap shape observed in the
+// official Claude 2.1.159 diagnostic, while its session still depends on an
+// unpredictable nonce stored in the real execution profile.
+func alignmentBootstrapDriver(source string) *alignmentProfileDriver {
+	d := newAlignmentProfileDriver(source)
+	run := d.runFunc
+	d.runFunc = func(ctx context.Context, req driver.Request, sink driver.EventSink) (driver.Response, error) {
+		response, err := run(ctx, req, sink)
+		if err != nil {
+			return response, err
+		}
+		path := filepath.Join(req.Profile.Dir, ".claude.json")
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return response, err
+		}
+		var config map[string]any
+		if err := json.Unmarshal(raw, &config); err != nil {
+			return response, err
+		}
+		for key, value := range map[string]any{"firstStartTime": "2026-09-16T01:02:03.456Z", "userID": strings.Repeat("a", 64), "seenNotifications": map[string]any{}, "migrationVersion": 13, "opusProMigrationComplete": true, "sonnet1m45MigrationComplete": true} {
+			config[key] = value
+		}
+		raw, err = json.Marshal(config)
+		if err != nil {
+			return response, err
+		}
+		return response, os.WriteFile(path, raw, 0644)
+	}
+	return d
+}
+
+type alignmentBootstrapTransfer struct {
+	Record      threadstore.Record
+	ProfileDir  string
+	Endpoint    string
+	Carrier     string
+	TokenDigest string
+}
+
+func TestAlignmentProfileClaudeBootstrapProcess(t *testing.T) {
+	const childEnv = "AGENT_ADAPTOR_T06_BOOTSTRAP_CHILD"
+	if source := os.Getenv(childEnv); source != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		store := memory.NewStore()
+		d := alignmentBootstrapDriver(source)
+		a := alignmentAgent(d, source, adaptor.WithThreadStore(store))
+		defer a.Close(context.Background())
+		if _, err := alignmentCall(t, a.Thread("bootstrap"), ctx, os.Getenv(childEnv+"_STREAM") == "1"); err != nil {
+			t.Fatal(err)
+		}
+		req := d.request(t, 0)
+		transfer := alignmentBootstrapTransfer{Record: *activeRecord(t, store, "bootstrap"), ProfileDir: req.Profile.Dir, Endpoint: req.MCP.Servers[0].URL, Carrier: req.MCP.Servers[0].BearerTokenEnvVar, TokenDigest: engine.StableHash(req.Runtime.SecretEnv[0].Value)}
+		if err := a.Close(ctx); err != nil {
+			t.Fatal(err)
+		}
+		raw, err := json.Marshal(transfer)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(os.Getenv(childEnv+"_STATE"), raw, 0600); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	for _, stream := range []bool{false, true} {
+		t.Run(fmt.Sprint("stream=", stream), func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			source := alignmentSource(t)
+			statePath := filepath.Join(t.TempDir(), "record.json")
+			command := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestAlignmentProfileClaudeBootstrapProcess$", "-test.v")
+			useStream := "0"
+			if stream {
+				useStream = "1"
+			}
+			command.Env = append(os.Environ(), childEnv+"="+source, childEnv+"_STATE="+statePath, childEnv+"_STREAM="+useStream)
+			if output, err := command.CombinedOutput(); err != nil {
+				t.Fatalf("first process: %v\n%s", err, output)
+			}
+			raw, err := os.ReadFile(statePath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var saved alignmentBootstrapTransfer
+			if err := json.Unmarshal(raw, &saved); err != nil {
+				t.Fatal(err)
+			}
+			endpoint, err := url.Parse(saved.Endpoint)
+			if err != nil {
+				t.Fatal(err)
+			}
+			guard, err := alignmentReserveClosedGateway(endpoint.Host)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if guard != nil {
+				defer guard.Close()
+			}
+			store := memory.NewStore()
+			if err := store.Finalize(ctx, threadstore.FinalizeRequest{Record: saved.Record, Key: saved.Record.Key, RebindActive: true}); err != nil {
+				t.Fatal(err)
+			}
+			d := alignmentBootstrapDriver(source)
+			a := alignmentAgent(d, source, adaptor.WithThreadStore(store))
+			defer a.Close(context.Background())
+			if _, err := alignmentCall(t, a.Thread("bootstrap", adaptor.ResumeOnly()), ctx, stream); err != nil {
+				t.Fatalf("second process cold resume: %v", err)
+			}
+			req := d.request(t, 0)
+			if req.Profile.Dir != saved.ProfileDir || req.Session == nil || req.Session.State == nil || req.Session.State.ResumeID != saved.Record.State.ResumeID || req.Session.State.Data["nonce"] != saved.Record.State.Data["nonce"] {
+				t.Fatal("resumption did not read the original provider session")
+			}
+			if req.MCP.Servers[0].URL == saved.Endpoint || req.MCP.Servers[0].BearerTokenEnvVar == saved.Carrier || engine.StableHash(req.Runtime.SecretEnv[0].Value) == saved.TokenDigest {
+				t.Fatal("gateway credentials failed to rotate")
+			}
+			healthy := activeRecord(t, store, "bootstrap")
+			path := filepath.Join(req.Profile.Dir, ".claude.json")
+			original, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var config map[string]any
+			if err := json.Unmarshal(original, &config); err != nil {
+				t.Fatal(err)
+			}
+			config["model"] = "changed-model"
+			changed, err := json.Marshal(config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, changed, 0644); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := alignmentCall(t, a.Thread("bootstrap", adaptor.ResumeOnly()), ctx, stream); !errors.Is(err, adaptor.ErrThreadIncompatible) {
+				t.Fatalf("real config drift result=%v", err)
+			}
+			if d.runCount() != 1 || !reflect.DeepEqual(healthy, activeRecord(t, store, "bootstrap")) {
+				t.Fatal("config mismatch entered Driver or changed healthy checkpoint")
+			}
+			if err := os.WriteFile(path, original, 0644); err != nil {
+				t.Fatal(err)
+			}
+			failure := errors.New("fixture provider failed after bootstrap")
+			run := d.runFunc
+			d.runFunc = func(context.Context, driver.Request, driver.EventSink) (driver.Response, error) {
+				return driver.Response{Output: "partial", Checkpoint: &driver.Checkpoint{Valid: true, State: &driver.SessionState{ResumeID: "unhealthy"}}}, failure
+			}
+			if _, err := alignmentCall(t, a.Thread("bootstrap", adaptor.ResumeOnly()), ctx, stream); !errors.Is(err, failure) {
+				t.Fatalf("provider failure lost: %v", err)
+			}
+			if !reflect.DeepEqual(healthy, activeRecord(t, store, "bootstrap")) {
+				t.Fatal("failed bootstrap run polluted healthy checkpoint")
+			}
+			d.runFunc = run
+			if _, err := alignmentCall(t, a.Thread("bootstrap", adaptor.ResumeOnly()), ctx, stream); err != nil {
+				t.Fatal(err)
+			}
+			if entries, err := os.ReadDir(source); err != nil || len(entries) != 0 {
+				t.Fatal("source profile was modified")
+			}
+		})
 	}
 }

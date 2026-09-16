@@ -11,7 +11,9 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/internal/engine"
@@ -61,6 +63,12 @@ func hostedToolProfileFingerprint(driverType, dir string, req *driver.Request, r
 	}
 	if err != nil {
 		return "", err
+	}
+	if driverType == "claude" && mcpPath == ".claude.json" {
+		mcpRaw, err = canonicalClaudeBootstrapConfig(mcpRaw)
+		if err != nil {
+			return "", err
+		}
 	}
 	manifest, err := mcpruntime.ReadHostedManifest(dir)
 	if err != nil {
@@ -245,6 +253,69 @@ func hostedToolProfileFingerprint(driverType, dir string, req *driver.Request, r
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Path < entries[j].Path })
 	return engine.StableHash("adaptor/hosted-tool-materialized-profile/v2", driverType, entries), nil
+}
+
+// canonicalClaudeBootstrapConfig recognizes only the complete bootstrap state
+// emitted by the official Claude 2.1.159 CLI (migrationVersion exactly 13).
+// Its completed migration markers, installation ID/time and notification counts
+// do not identify a conversation. This is not a generic metadata exclusion:
+// incomplete/unknown migration states remain authoritative, and every other
+// field, actual settings file, MCP ownership proof and file mode is preserved.
+// The pure view never writes this state back or executes a migration. A newer
+// CLI's completion version needs separate evidence before becoming compatible.
+func canonicalClaudeBootstrapConfig(raw []byte) ([]byte, error) {
+	if len(raw) == 0 {
+		return raw, nil
+	}
+	var value map[string]any
+	if err := hostedprofile.DecodeJSON(raw, &value, false); err != nil {
+		return nil, err
+	}
+	if !completedClaudeBootstrap(value) {
+		return raw, nil
+	}
+	for _, key := range []string{"firstStartTime", "userID", "seenNotifications", "migrationVersion", "opusProMigrationComplete", "sonnet1m45MigrationComplete"} {
+		delete(value, key)
+	}
+	if len(value) == 0 {
+		return nil, nil
+	}
+	return json.Marshal(value)
+}
+
+func completedClaudeBootstrap(value map[string]any) bool {
+	version, ok := value["migrationVersion"].(json.Number)
+	if !ok || version != "13" || value["opusProMigrationComplete"] != true || value["sonnet1m45MigrationComplete"] != true {
+		return false
+	}
+	started, ok := value["firstStartTime"].(string)
+	if !ok || !strings.HasSuffix(started, "Z") {
+		return false
+	}
+	if _, err := time.Parse(time.RFC3339Nano, started); err != nil {
+		return false
+	}
+	id, ok := value["userID"].(string)
+	if !ok || len(id) != 64 || strings.ToLower(id) != id {
+		return false
+	}
+	if _, err := hex.DecodeString(id); err != nil {
+		return false
+	}
+	notifications, ok := value["seenNotifications"].(map[string]any)
+	if !ok {
+		return false
+	}
+	for _, count := range notifications {
+		number, ok := count.(json.Number)
+		if !ok {
+			return false
+		}
+		if _, err := strconv.ParseUint(string(number), 10, 53); err != nil {
+			return false
+		}
+	}
+	return true
 }
 
 // Only explicit provider configuration files reach this function. Attachments
