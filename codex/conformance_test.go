@@ -39,7 +39,7 @@ func TestCodexDriverConformance(t *testing.T) {
 	cfg.CWD = workspace
 	if live {
 		cfg = alignmentLiveConfig(t)
-		cfg.CWD = workspace
+		workspace = cfg.CWD
 	} else {
 		// Hermetic isolation ensures probes do not read or write the
 		// operator's real HOME.
@@ -69,7 +69,7 @@ func TestCodexDriverConformance(t *testing.T) {
 			appendSystemPromptFingerprintKey,
 		),
 		adaptertest.WithWorkspace(workspace),
-		adaptertest.WithExpectedDetectedModel("gpt-5.4"),
+		adaptertest.WithExpectedDetectedModel(cfg.Model),
 		adaptertest.WithRequiredConfigFields("command", "cwd", "model"),
 		adaptertest.ExpectRejectForeignConfig(),
 		liveOpt,

@@ -6,13 +6,13 @@ import (
 	"context"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	adaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/codex"
+	"github.com/agent-dance/agent-adaptor/codex/internal/livetest"
 	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/memory"
 )
@@ -32,13 +32,10 @@ func TestAppServerHaiku(t *testing.T) {
 	if _, err := exec.LookPath("codex"); err != nil {
 		t.Fatal("authorized live runner requires codex CLI")
 	}
-	workspace := t.TempDir()
+	cfg := isolatedLiveConfig(t)
 
 	agent := adaptor.New(
-		codex.Driver(codex.Config{
-			CommonConfig: codex.CommonConfig{CWD: workspace, Env: isolatedLiveBindings(t)},
-			Model:        "gpt-5.4",
-		}),
+		codex.Driver(cfg),
 		adaptor.WithThreadStore(memory.NewStore()),
 		adaptor.WithPolicy(adaptor.Policy{
 			Sandbox: adaptor.ReadOnly,
@@ -169,14 +166,11 @@ func TestAppServerPersistentTwoTurns(t *testing.T) {
 	if _, err := exec.LookPath("codex"); err != nil {
 		t.Fatal("authorized live runner requires codex CLI")
 	}
-	workspace := t.TempDir()
+	cfg := isolatedLiveConfig(t)
 	agent := adaptor.New(
-		codex.Driver(codex.Config{
-			CommonConfig: codex.CommonConfig{CWD: workspace, Env: isolatedLiveBindings(t)},
-			Model:        "gpt-5.4",
-		}),
+		codex.Driver(cfg),
 		adaptor.WithThreadStore(memory.NewStore()),
-		adaptor.WithWorkspace(workspace),
+		adaptor.WithWorkspace(cfg.CWD),
 		adaptor.WithPolicy(adaptor.Policy{
 			Sandbox: adaptor.ReadOnly,
 			Approvals: adaptor.ApprovalPolicy{
@@ -219,23 +213,18 @@ func TestAppServerPersistentTwoTurns(t *testing.T) {
 	}
 }
 
-func isolatedLiveBindings(t *testing.T) []driver.EnvBinding {
+func isolatedLiveConfig(t *testing.T) codex.Config {
 	t.Helper()
-	source := os.Getenv("AGENT_ADAPTOR_CODEX_LIVE_PROFILE")
-	if source == "" {
-		t.Fatal("AGENT_ADAPTOR_CODEX_LIVE_PROFILE must name an isolated authorized auth seed")
+	if os.Getenv("AGENT_ADAPTOR_LIVE_CONFORMANCE") != "1" {
+		t.Fatal("live profile requested without environment gate")
 	}
-	home := t.TempDir()
-	profile := filepath.Join(home, "profile")
-	if err := os.MkdirAll(profile, 0700); err != nil {
+	p, err := livetest.Prepare(os.Getenv("AGENT_ADAPTOR_CODEX_LIVE_PROFILE"), os.Getenv(livetest.RouteEnv), t.TempDir())
+	if err != nil {
 		t.Fatal(err)
 	}
-	data, err := os.ReadFile(filepath.Join(source, "auth.json"))
-	if err != nil {
-		t.Fatal("live auth seed unavailable")
+	model := os.Getenv("AGENT_ADAPTOR_CODEX_LIVE_MODEL")
+	if model == "" {
+		model = "gpt-5.4"
 	}
-	if err := os.WriteFile(filepath.Join(profile, "auth.json"), data, 0600); err != nil {
-		t.Fatal("cannot create live profile")
-	}
-	return []driver.EnvBinding{{Name: "CODEX_HOME", Value: profile}, {Name: "HOME", Value: home}, {Name: "USERPROFILE", Value: home}}
+	return codex.Config{CommonConfig: codex.CommonConfig{CWD: p.Workspace, ExtraArgs: p.ExtraArgs, Env: []driver.EnvBinding{{Name: "CODEX_HOME", Value: p.Directory}, {Name: "HOME", Value: p.Home}, {Name: "USERPROFILE", Value: p.Home}}}, Model: model}
 }

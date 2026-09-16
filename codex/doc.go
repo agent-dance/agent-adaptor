@@ -49,4 +49,16 @@
 // successful terminal followed by a clean exit preserves its checkpoint; EOF
 // without a successful terminal, malformed protocol, cancellation or a nonzero
 // exit cannot produce a healthy checkpoint.
+//
+// Repository live tests require both the codex_live build tag and
+// AGENT_ADAPTOR_LIVE_CONFORMANCE=1. The authorized runner supplies an isolated
+// AGENT_ADAPTOR_CODEX_LIVE_PROFILE containing only auth.json OPENAI_API_KEY and
+// an explicit AGENT_ADAPTOR_CODEX_LIVE_ROUTE_FILE. The latter is version-1 JSON
+// with model_provider, name, base_url, wire_api="responses", and
+// requires_openai_auth=true. Unknown fields/auth modes fail before launch;
+// absent routing never silently selects the default endpoint. The shared test
+// helper passes the selected route through official ExtraArgs overrides to
+// both transports and initializes an empty private Git workspace. It does not
+// copy native configuration, MCP, instructions, history, or other credentials.
+// These restricted inputs are a test fixture contract, not a Driver limitation.
 package codex
