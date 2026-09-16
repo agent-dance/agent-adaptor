@@ -142,3 +142,5 @@ python3 docs/alignment-tasks/2026-09-07/validate.py \
 [R034](amendments/R034.md)：整合全部已审查返修、目录/续接/制品合同和11项Cursor Windows必过测试；最终同SHA门禁待执行。
 
 [R035](amendments/R035.md)：保留首次完整G05失败，三项原owner窄域返修后重新冻结同SHA验收。
+
+[R036](amendments/R036.md)：三项窄域返修与中央文档同步，保留首轮G05失败；新候选须完整同SHA重验。

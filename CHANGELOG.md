@@ -53,6 +53,10 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- Continue checking formal Codex child-role evidence for known identities when
+  the 128-entry tracking table is full. Matching replays remain idempotent;
+  conflicting roles prevent pending spawn completion. New identities beyond
+  the bound remain unobserved.
 - Align Cursor selected profiles with its actual config, data and HOME resource
   roots. Dedicated/Clone and legacy `CURSOR_HOME` deliver selected MCP, skills,
   hooks and agents through owned per-run projections without importing unrelated

@@ -540,7 +540,10 @@ replayed snapshots do not increment revision. A new run has no invented task cac
 Codex explicit $skill inputs produce NativeInputAccepted only after turn/start
 accepts the typed input. Completed means that input acceptance completed, not
 that the skill was read or its work finished. Subagent spawn completion likewise
-does not certify the child's final work. Plan steps have synthetic turn/position
+does not certify the child's final work. Conflicting formal child roles prevent
+pending spawn completion, including when the 128-identity table is full. The
+limit applies only to new identities; matching role replays remain idempotent.
+Plan steps have synthetic turn/position
 IDs, preserve order and text, and include first-empty/clear snapshots. Plan deltas
 do not become Todo or PlanReview. Current thread/turn and terminal fences remain;
 only formally valid same-thread historical token usage may be retained in Raw

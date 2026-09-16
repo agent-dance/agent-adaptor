@@ -65,3 +65,13 @@ W04-R05 finalowner T35 and W04-R07 T36; independent verification T25 plus origin
 This fifth G05 attempt requires its own exact final source validator/fulltest/vet. All B06 reports must migrate to the replacement source; T25 reruns all15original Linux commands plus3supplements, without previous-head substitution. Windows/live prerequisites and release readiness remain separately unresolved.
 
 G05-R023-A01: the fifth candidate 9e566a69819745fb74dfd844dcc9c8736a7e9b19 passed its original validator, 4576 full-suite tests (14 permitted skips), and vet. Independent static traceability review then found that W04’s aggregate verifier index omitted T25, although W04-R05/R06/R07 and the dispatched tasks already assigned it correctly. The gate was not accepted. The aggregate is repaired and a validator guard with missing/extra-verifier fault-injection tests now enforces consistency across all work items. All 96 requirement objects, 45 history objects, task scopes, task hashes, DAG and original commands are unchanged; canonical25 is retained because this corrects a redundant index, not dispatch scope. The original green checks and two pre-fix validator regression failures remain archived. This sixth G05 attempt must pass all original checks at its new exact SHA before B06 proceeds.
+
+## R036: post-G05 repairs
+
+The original Cursor fallback fixtures now isolate inherited official root variables.
+The temporary-profile E2E proves pre-spawn ResumeOnly refusal with unchanged
+healthy state, followed by exactly one fresh provider and atomic replacement;
+Dedicated retains cross-Agent session files and identity. Codex identity capacity
+limits new children without suppressing known-child role conflicts. All original
+checks and independent red evidence remain. Implementation review does not
+replace complete G05 and all same-S platform/live gates.
