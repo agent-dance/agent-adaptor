@@ -102,14 +102,6 @@ func newLiveAgent(t *testing.T, cwd string, planMode bool, opts ...adaptor.Optio
 	return agent
 }
 
-var livePolicyHeadless = adaptor.Policy{
-	Sandbox: adaptor.Unrestricted,
-	Approvals: adaptor.ApprovalPolicy{
-		Permission: adaptor.ApprovalAutoApprove,
-		PlanReview: adaptor.ApprovalAutoApprove,
-	},
-}
-
 func collectLiveStream(ctx context.Context, runner adaptor.Runner, prompt string, opts ...adaptor.CallOption) (*adaptor.Result, []adaptor.Event, error) {
 	stream := runner.Stream(ctx, prompt, opts...)
 	events := make([]adaptor.Event, 0, 32)
@@ -338,6 +330,7 @@ func TestAlignmentLiveCodeBuddyQuestionAnswered(t *testing.T) {
 	if err != nil {
 		t.Fatalf("question run: %v", err)
 	}
+	logLiveQuestionProtocol(t, result)
 	if calls != 1 {
 		t.Fatalf("question callback calls=%d, want 1", calls)
 	}

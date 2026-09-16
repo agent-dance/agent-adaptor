@@ -14,7 +14,8 @@ import (
 // or plan-only approval (AutoApprove). Headless `-p` mode has no way to
 // surface or apply a policy to a specific tool/plan/question decision.
 //
-// Permission AutoApprove alone, or Permission+PlanReview AutoApprove, keeps
+// Permission AutoApprove alone, or Permission+PlanReview AutoApprove without an
+// explicit Question policy, keeps
 // the run on the headless engine, where bypassPermissions grants the requested
 // positive decisions without requiring a bidirectional decision sink.
 func wantsControlTransport(p driver.HumanDecisionPolicy) bool {
@@ -28,7 +29,9 @@ func wantsControlTransport(p driver.HumanDecisionPolicy) bool {
 	case driver.HumanDecisionAutoApprove:
 		// Plan-only approval cannot use blanket bypass without broadening an
 		// inherited or restrictive permission policy.
-		return p.Permission != driver.HumanDecisionAutoApprove
+		if p.Permission != driver.HumanDecisionAutoApprove {
+			return true
+		}
 	}
 	switch p.Question {
 	case driver.QuestionAsk, driver.QuestionAutoReject:

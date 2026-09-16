@@ -11,8 +11,8 @@ import (
 	"github.com/agent-dance/agent-adaptor/driver"
 )
 
-// parser consumes raw stdout/stderr chunks from a CodeBuddy CLI stream-json
-// run and produces the normalized outputs required by the adapter contract.
+// parser consumes CodeBuddy stdout/stderr. Stream-json is framed by line;
+// explicitly selected native JSON output is decoded as a complete document.
 type parser struct {
 	mu sync.Mutex
 
@@ -20,6 +20,7 @@ type parser struct {
 
 	stdoutLine bytes.Buffer
 	stderrLine bytes.Buffer
+	nativeJSON bool
 
 	transcript        []driver.TranscriptItem
 	assistantText     []string
@@ -92,6 +93,9 @@ func (p *parser) onChunk(stream string, chunk []byte, ts time.Time) error {
 		buf = &p.stderrLine
 	}
 	buf.Write(chunk)
+	if stream != "stderr" && p.nativeJSON {
+		return nil
+	}
 	for {
 		idx := bytes.IndexByte(buf.Bytes(), '\n')
 		if idx < 0 {
@@ -112,7 +116,11 @@ func (p *parser) finalize() {
 	if p.stdoutLine.Len() > 0 {
 		remaining := append([]byte(nil), p.stdoutLine.Bytes()...)
 		p.stdoutLine.Reset()
-		p.processLine("stdout", remaining, time.Now().UTC())
+		if p.nativeJSON {
+			p.processNativeJSON(remaining)
+		} else {
+			p.processLine("stdout", remaining, time.Now().UTC())
+		}
 	}
 	if p.stderrLine.Len() > 0 {
 		remaining := append([]byte(nil), p.stderrLine.Bytes()...)

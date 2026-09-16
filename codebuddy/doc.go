@@ -56,6 +56,17 @@
 // Batch JSON has no capability or todo observation support. No event proves
 // audit completeness or the absence of an unobserved call.
 //
+// Native schema output uses --print --output-format json --json-schema. The
+// driver decodes the complete JSON document, including CodeBuddy 2.151.0's
+// top-level history array followed by its ResultMessage. Single-result and
+// newline-object outputs remain supported. Nested values cannot supply a
+// terminal, and any record after the first terminal invalidates the outcome.
+// Raw retains the full document; native values and healthy checkpoints require
+// a successful final result, clean process exit and local schema validation.
+// Question Ask/AutoReject selects control transport even when Permission and
+// PlanReview are both AutoApprove. Automatic permission approval does not
+// answer a Question on behalf of the host.
+//
 // Declared profile SubAgents materialize as agents/*.md using CodeBuddy's
 // YAML frontmatter and Markdown instructions. The native name exactly matches
 // the resolved catalog; nonportable filenames are encoded separately, including

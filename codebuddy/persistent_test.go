@@ -385,6 +385,9 @@ func runCodeBuddyPersistentHelper() int {
 			_, _ = fmt.Fprintln(writer, `{"type":"control_response","response":{"subtype":"success","request_id":"agent-adaptor-initialize","response":{}}}`)
 			_ = writer.Flush()
 		case strings.Contains(line, `"type":"user"`):
+			if os.Getenv("ALIGNMENT_CODEBUDDY_QUESTION") == "1" {
+				return alignmentQuestionControlTurn(writer, scanner)
+			}
 			if handled, exitCode := emitAlignmentCodeBuddyPartialTurn(writer, line); handled {
 				return exitCode
 			}

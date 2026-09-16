@@ -71,3 +71,15 @@ T21 固定原协议反例要求增量 tool start 的 Args=nil、两个真实 Arg
 C01 固定 53dbc0d 的 R018 独立反例揭示 shared agentName/runtimeFileName 会改写 runtime 或输出非 .md。本次 CodeBuddy 分支独立计算精确 native name 与安全文件名：小写 ASCII 字母/数字/短横线/下划线且长度不超 120、非 Windows 保留设备名时维持 `<name>.md`；其余名称生成 `agent~<SHA256(name)>.md`，`~` 与简单分支字母表分离。所有目标强制 .md，包括 SourcePath 的 .txt 原件；原件 bytes 不改。catalog、frontmatter 名称完全一致，路径编码不反向改写资源身份。原 7 个独立子项及大小写、Unicode、默认 key、扩展、SourcePath、路径/保留名/长名称控制均保留。
 
 SourcePath 仍是 native escape：SyncProfile 不改写/验证原生 frontmatter。调用方须让原生 name 对应 resolved RuntimeName，尤其编码文件名时不能省略 name 后依赖 basename fallback；物化保留字节不等于任意 native 文件都能产生 canonical 调用事实。散列前缀含 `~`，简单文件名字母表排除该字符，因此 caller 提供 `agent~<hash>` 自身也进入编码分支，不与其他名称的编码路径共用命名空间。
+
+## R030 / 2026-09-16 live 返修
+
+T28-F01 的六个 headless live 场景此前显式请求 CodeBuddy 不支持的 `Sandbox: Unrestricted`，因此在启动前正确失败。共享测试 policy 改为 `SandboxInherit`，Permission/PlanReview AutoApprove 和所有业务断言保持。普通测试使用同一个 policy 验证实际 fake 子进程执行，并证明显式 Unrestricted、ReadOnly、WorkspaceWrite 仍返回 `ErrPolicyCapabilityUnsupported`、启动数为零。没有改变 Descriptor.Isolation。
+
+T28-F02 是 transport 选择的提前返回：Permission 与 PlanReview 均 AutoApprove 时忽略 QuestionAsk/AutoReject。现在继续检查 Question，再决定是否走 headless。既有 plan-only 批准与双 AutoApprove、Question 未设置的行为不变。原组合有 unit 和公开 Agent→真实 fake 子进程→正式 control_request→恰好一次 Question 回调→updatedInput.answers→正式结果的回归。原 live Question prompt、模型和 ANSWER=Go 断言未改；有限真实诊断已观察 AskUserQuestion 的正式控制请求及成功回答。应合并到 HITL/run-policy 文档与 CHANGELOG 的 CodeBuddy Question 修复条目。
+
+T28-F03 的真实 stdout 已包含合法 native `structured_output: {"ok":true}`，CLI exit=0；旧 Driver 把漂亮排版数组逐行解析，错误判成 malformed。CodeBuddy **2.151.0** 安装包 `dist/codebuddy-headless.js` SHA256 `1cbb9546fbeb4e719c4f18e4fe8c9f716b5d0fa5aa9d8fbbdf9cfa915cba8555` 的 `LLMView.render` 为 outputFormat=json 调用 `toSerializableArray`；后者把过滤后的顶层 history records 与唯一 ResultMessage 依次组成数组（UTF-8 解码后字符偏移 3159382、3163633）。`ResultMessageUtils` 在字符偏移 3169895 附近把 session.structuredOutput 写入正式 `structured_output`。外部证据 `official-2.151.0-protocol.json` 记录精确搜索片段、偏移和包版本；来源是只读安装包，不涉及登录文件。
+
+修复仅在明确选择的 native JSON transport 收齐 stdout 后解析完整顶层 document/array。普通 stream-json 按原行 framing，既有 native 单结果对象和严格逐行对象兼容保留。顶层数组只处理其直接记录，不递归寻找 session、terminal 或 structured_output；嵌套值/文本不能提供终局。第一正式 terminal 的原始 JSON 保留，任何后续对象、第二 result/error、标量或未知记录都使协议失败，不能再次恢复健康。截断、非法 UTF-8、额外 document、非对象项、缺字段、provider refusal、非零退出、schema 无效均不得产生有效 native 值或健康 checkpoint。完整 stdout/stderr 保留，未支持的 history 格式保留为带原 payload 的 TranscriptSystem，不猜测 capability/Todo；正式 Result/Usage 由原 parser 统一处理。应合并到 structured-output、CodeBuddy 使用文档及 CHANGELOG。
+
+本轮没有新增公共字段、依赖或 golden 变动。普通验证始终关闭 live/E2E/golden-update；有限诊断使用私有 HOME/profile、只读 access token 的内存投影、匹配的官方认证 route，清除失效 API key，认证源前后只在内存比较且未修改。原失败证据保留。返修分支的有限真实调用与普通检查不替代最终合流 SHA 上 T28 原完整 11 项 live/conformance 或 B06 原生平台验收；实际结果由外部 R030 rework_attempt 报告记录，不能沿用旧 handoff 的未运行声明或通过结论。

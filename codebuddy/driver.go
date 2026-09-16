@@ -524,7 +524,8 @@ func (adapter) runHeadless(ctx context.Context, cfg Config, command string, req 
 	args = append(args, prep.prompt)
 
 	p := newParser(sink)
-	if !(req.OutputSchema != nil && req.StructuredOutputSource == driver.StructuredOutputSourceNative) {
+	p.nativeJSON = req.OutputSchema != nil && req.StructuredOutputSource == driver.StructuredOutputSourceNative
+	if !p.nativeJSON {
 		p.configureObservations(ctx, req)
 	}
 	if req.Streaming {
