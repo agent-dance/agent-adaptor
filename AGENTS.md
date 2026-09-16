@@ -394,6 +394,8 @@ R028：Go 1.26.8 的 fuzz 协调器存在官方75804父deadline与child取消竞
 
 R029：合入main前的可读性/结构清理以已验收dd3859e为基线，将既有私有职责拆入六个生产文件，保持公共API及ASTgolden、错误/生命周期、profile fingerprint、安全边界和live门。声明token审计和函数移动只说明改动范围，不能代替行为验收；独立测试保留，仅将无生产调用的terminal helper原JSON正文fixture迁至公开Delegate poll/stream路径。任务包revision28以24条精确新增路径覆盖本次29个源/测试/报告文件，47任务、96要求、全部owner/verifier、9个G05依赖及原命令保持。用户docs/README.md修改不在本次清理范围；旧dd3859e及更早验收/失败记录不得重标为新候选通过。实际新SHA须重新完成G05/T25/T26后才冻结，T27–T30与G06仍独立阻塞。
 
+R030：2026-09-16 的真实验证重新打开九项问题：Claude Permission/cold resume、CodeBuddy Sandbox fixture/Question/native schema、Codex 最小路由投影、Cursor config/data 根与取消前提、共享 live success oracle。六个原 owner 按 rework.json 的独立写域返修；不删除原 47 任务、96 要求或 45 处置。未知根因不宣称已修复，合法失败 Response 不作为 live 成功，真实配置指纹/单 writer/审批/部分审计/健康 checkpoint 合同继续有效。修复合流后 G05 与全部 B06 必须使用同一新 SHA；R030 只授权返修，不表示 G06 已通过。
+
 ## 15. 发布门禁
 
 发布前必须全部满足：

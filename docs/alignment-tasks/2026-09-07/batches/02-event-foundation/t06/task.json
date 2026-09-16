@@ -74,7 +74,10 @@
       "docs/alignment-tasks/2026-09-07/amendments/R006.md",
       "docs/alignment-tasks/2026-09-07/amendments/R009.md",
       "docs/alignment-tasks/2026-09-07/amendments/R010.md",
-      "docs/alignment-tasks/2026-09-07/amendments/R011.md"
+      "docs/alignment-tasks/2026-09-07/amendments/R011.md",
+      "docs/alignment-tasks/2026-09-07/amendments/R030.md",
+      "docs/merge-readiness-plan-2026-09-16.md",
+      "docs/alignment-tasks/2026-09-07/rework.json"
     ],
     "dependency_artifacts": [
       {
@@ -133,7 +136,14 @@
       "testdata/root_api.golden",
       "todo/**",
       "tools.go",
-      "wiring.go"
+      "wiring.go",
+      "invocation_fingerprint.go",
+      "tools_profile_snapshot.go",
+      "tools_profile_snapshot_test.go",
+      "tools_profile.go",
+      "internal/hostedprofile/seed.go",
+      "internal/hostedprofile/seed_test.go",
+      "alignment_profile_assets_test.go"
     ],
     "scope_match": "仅精确仓库相对文件或目录/**；任何未列路径不可写。",
     "exclusive_resources": [],
@@ -176,7 +186,8 @@
     "R006：所有Driver-only及带RunServices运行统一由core持有RunStarted/RunFinished最终权威，不能只在startPumps有event sources时启用。Driver终局是可保留的provider协议事实，不能提前作为公共run最终成功；在最终Result/error含lease/cleanup已确定后一次发布终局，保留Raw/Terminal/Transcript，取消/drop/block与observer收尾均有界。T10未来预算归因接入该唯一终局机制。",
     "R009：资源前一次normalize并冻结可行schema/source/transport候选；AttachRun后仅需求评分选择一次最终候选，不能重跑resolver/物化或消音Ask。保留无需求原选择、初始batch合法Ask及真实StreamSupport边界，零schema显式Ask切换也必须验证。",
     "R010：更新stream_backpressure_test.go的旧空流/计数假设，显式核对core唯一start/terminal与buffer占用；保留marker-before-critical、聚合范围/count、blocking不丢、关闭后no-op与资源释放后才终局，原V01完整验收。",
-    "R011：MCP JSON/TOML writer保留existing regular mode，新文件仍默认，非regular/IO稳定拒绝；Thread fingerprint不无条件哈希单轮Request.Streaming，保留真实配置/codec/环境/资源维度和Driver进程兼容检查。以G02原Codex/CodeBuddy失败测试不改期望复验。"
+    "R011：MCP JSON/TOML writer保留existing regular mode，新文件仍默认，非regular/IO稳定拒绝；Thread fingerprint不无条件哈希单轮Request.Streaming，保留真实配置/codec/环境/资源维度和Driver进程兼容检查。以G02原Codex/CodeBuddy失败测试不改期望复验。",
+    "R030 T27-F02：W02-R06/W02-R08；确定变更分量，修复同配置冷续接，保留所有真实配置漂移拒绝与健康 checkpoint 保护。"
   ],
   "acceptance_criteria": [
     {
@@ -212,6 +223,11 @@
     {
       "id": "T06-AC07",
       "requirement": "Codex WithTools现有0600配置不被MCP writer改权限且实际复用；CodeBuddy兼容rich/native batch/rich保持同一active记录/正式resume、预热及每prompt一次；ResumeOnly不因Streaming位拒绝。真实配置/资源mode漂移仍拒绝，IO/nonregular显式失败；原G02两例与所有必需检查在最终SHA通过。",
+      "required": true
+    },
+    {
+      "id": "T06-AC08",
+      "requirement": "R030 T27-F02：W02-R06/W02-R08；确定变更分量，修复同配置冷续接，保留所有真实配置漂移拒绝与健康 checkpoint 保护。 独立复验 T27-V01，保留所有原验证；未通过前不得关闭该项。",
       "required": true
     }
   ],

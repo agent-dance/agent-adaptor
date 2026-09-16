@@ -59,7 +59,10 @@
     "required_reads": [
       "AGENTS.md",
       "docs/internal-history-alignment-plan-2026-09-07.md",
-      "docs/alignment-tasks/2026-09-07/README.md"
+      "docs/alignment-tasks/2026-09-07/README.md",
+      "docs/alignment-tasks/2026-09-07/amendments/R030.md",
+      "docs/merge-readiness-plan-2026-09-16.md",
+      "docs/alignment-tasks/2026-09-07/rework.json"
     ],
     "dependency_artifacts": [
       {
@@ -133,7 +136,10 @@
     "同时提供 codebuddy_live build tag + AGENT_ADAPTOR_LIVE_CONFORMANCE=1 双门下的 TestAlignmentLive* 测试入口及 CLI/version 采集。普通测试不付费；为 B06 验证完整覆盖此前修复和当前实际支持/unsupported 边界，测试路径交 T23 汇总。",
     "核对本包既有 DriverConformance 的 live 分支也使用 build tag/env 双门及独立 profile/workspace；只有 CLI存在+env 的单门不足以通过最终门禁，不能沿用用户原目录执行。支持矩阵外的 probe 明确列为不适用，必需场景不得 skip。",
     "R017：完整读取 amendments/R017.md。仅补原owner live fixture覆盖，普通检查不运行付费provider；补 Dedicated+WithTools 跨Agent.Close→新Agent ResumeOnly 随机nonce及同会话证据；补真实Skill与canonical Subagent成功完成事实并保留MCP/Todo/clear原断言。 原validation保持，源码先提交再final HEAD验证，缺真实环境仅留待B06不得声称通过。",
-    "R018：以官方CodeBuddy2.137.1已固定包的CustomAgentsProductProvider/PathUtils/parseAgentFile为依据补Shared profileagents的CodeBuddy native agents物化；最小core映射name/description/instructions、准确<profile>/agents/<runtime>.md。可选字段只映射逐字段已核实loader支持的部分，未映射字段沿公开资源合同显式报告，不能暗套全部Claude语义；SourcePath/路径安全/atomic写/原provider行为保持。公开SyncProfile和Run的Agents+Skill+canonical catalog零CLI反例保留，新增真实fake进程整条Agent链路及helper正负合同测试；实际live仍等B06授权。只新增精确allow的三个helper文件路径与原codebuddy范围，不改公共API/golden/依赖；原V01/V02保持并新增helper V03/V04。"
+    "R018：以官方CodeBuddy2.137.1已固定包的CustomAgentsProductProvider/PathUtils/parseAgentFile为依据补Shared profileagents的CodeBuddy native agents物化；最小core映射name/description/instructions、准确<profile>/agents/<runtime>.md。可选字段只映射逐字段已核实loader支持的部分，未映射字段沿公开资源合同显式报告，不能暗套全部Claude语义；SourcePath/路径安全/atomic写/原provider行为保持。公开SyncProfile和Run的Agents+Skill+canonical catalog零CLI反例保留，新增真实fake进程整条Agent链路及helper正负合同测试；实际live仍等B06授权。只新增精确allow的三个helper文件路径与原codebuddy范围，不改公共API/golden/依赖；原V01/V02保持并新增helper V03/V04。",
+    "R030 T28-F01：修复不受支持 Sandbox 的 fixture 前提，六项真正执行，显式不支持的隔离继续拒绝。",
+    "R030 T28-F02：T28-AC01；正式 Question 调用、一次回调和 Answer 返回，禁止宿主伪造。",
+    "R030 T28-F03：T28-AC01；native schema 正式输出及有效值，保留失败 cause/terminal 脱敏诊断。"
   ],
   "acceptance_criteria": [
     {
@@ -154,6 +160,21 @@
     {
       "id": "T15-AC04",
       "requirement": "R018公开Agents声明到CodeBuddy物化/执行catalog路径可达，精确官方文件格式有证据，原零CLI反例和helper/真实fake进程回归通过，无静默猜字段或削弱既有provider测试。",
+      "required": true
+    },
+    {
+      "id": "T15-AC05",
+      "requirement": "R030 T28-F01：修复不受支持 Sandbox 的 fixture 前提，六项真正执行，显式不支持的隔离继续拒绝。 独立复验 T28-V01，保留所有原验证；未通过前不得关闭该项。",
+      "required": true
+    },
+    {
+      "id": "T15-AC06",
+      "requirement": "R030 T28-F02：T28-AC01；正式 Question 调用、一次回调和 Answer 返回，禁止宿主伪造。 独立复验 T28-V01，保留所有原验证；未通过前不得关闭该项。",
+      "required": true
+    },
+    {
+      "id": "T15-AC07",
+      "requirement": "R030 T28-F03：T28-AC01；native schema 正式输出及有效值，保留失败 cause/terminal 脱敏诊断。 独立复验 T28-V02，保留所有原验证；未通过前不得关闭该项。",
       "required": true
     }
   ],

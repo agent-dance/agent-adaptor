@@ -1,0 +1,157 @@
+{
+  "revision": "R030",
+  "source_base": "1c49823fafd2a057be4b0fc6dd96a563e957e2e9",
+  "prepared_base": "external_dispatch_prepared_head",
+  "max_parallelism": 6,
+  "historical_task_count": 47,
+  "historical_requirement_count": 96,
+  "historical_commit_count": 45,
+  "historical_g05_dependencies": [
+    "T20",
+    "T21",
+    "T22",
+    "T23",
+    "T24",
+    "T33",
+    "T34",
+    "T35",
+    "T36"
+  ],
+  "lanes": [
+    {
+      "owner": "T06",
+      "task": "docs/alignment-tasks/2026-09-07/batches/02-event-foundation/t06/task.json",
+      "allow": [
+        "invocation_fingerprint.go",
+        "tools_profile_snapshot.go",
+        "alignment_profile_test.go",
+        "tools_profile_snapshot_test.go",
+        "docs/alignment-tasks/2026-09-07/handoffs/T06/**",
+        "tools_profile.go",
+        "internal/hostedprofile/seed.go",
+        "internal/hostedprofile/seed_test.go",
+        "alignment_profile_assets_test.go"
+      ],
+      "findings": [
+        {
+          "id": "T27-F02",
+          "check": "T27-V01",
+          "contract": "W02-R06/W02-R08；确定变更分量，修复同配置冷续接，保留所有真实配置漂移拒绝与健康 checkpoint 保护。"
+        }
+      ]
+    },
+    {
+      "owner": "T14",
+      "task": "docs/alignment-tasks/2026-09-07/batches/04-provider-adoption/t14/task.json",
+      "allow": [
+        "claude/**",
+        "docs/alignment-tasks/2026-09-07/handoffs/T14/**"
+      ],
+      "findings": [
+        {
+          "id": "T27-F01",
+          "check": "T27-V01",
+          "contract": "W06-R02/W06-R03；正式 Permission 请求/响应和 exactly-once 回调，先区分测试前提与解析错误。"
+        }
+      ]
+    },
+    {
+      "owner": "T15",
+      "task": "docs/alignment-tasks/2026-09-07/batches/04-provider-adoption/t15/task.json",
+      "allow": [
+        "codebuddy/**",
+        "internal/profileagents/agents.go",
+        "internal/profileagents/codebuddy.go",
+        "internal/profileagents/codebuddy_test.go",
+        "docs/alignment-tasks/2026-09-07/handoffs/T15/**"
+      ],
+      "findings": [
+        {
+          "id": "T28-F01",
+          "check": "T28-V01",
+          "contract": "修复不受支持 Sandbox 的 fixture 前提，六项真正执行，显式不支持的隔离继续拒绝。"
+        },
+        {
+          "id": "T28-F02",
+          "check": "T28-V01",
+          "contract": "T28-AC01；正式 Question 调用、一次回调和 Answer 返回，禁止宿主伪造。"
+        },
+        {
+          "id": "T28-F03",
+          "check": "T28-V02",
+          "contract": "T28-AC01；native schema 正式输出及有效值，保留失败 cause/terminal 脱敏诊断。"
+        }
+      ]
+    },
+    {
+      "owner": "T16",
+      "task": "docs/alignment-tasks/2026-09-07/batches/04-provider-adoption/t16/task.json",
+      "allow": [
+        "codex/**",
+        "docs/alignment-tasks/2026-09-07/handoffs/T16/**"
+      ],
+      "findings": [
+        {
+          "id": "T29-E01",
+          "check": "T29-V01",
+          "contract": "最小受限官方路由输入用于 exec/app-server；全量 T29-V01/V02 和原十二要求，禁止复制完整用户 config。"
+        }
+      ]
+    },
+    {
+      "owner": "T17",
+      "task": "docs/alignment-tasks/2026-09-07/batches/04-provider-adoption/t17/task.json",
+      "allow": [
+        "cursor/**",
+        "docs/alignment-tasks/2026-09-07/handoffs/T17/**"
+      ],
+      "findings": [
+        {
+          "id": "T30-F01",
+          "check": "T30-V01",
+          "contract": "W02-R01/R03/R06/R08、W09-R09；官方 config/data 根、实际资源、Inspect/fingerprint/session 同步。"
+        },
+        {
+          "id": "T30-U01",
+          "check": "T30-V01",
+          "contract": "T30-AC01；取消前提用正式 cause 定位，执行后取消保留 Raw/Transcript/旧健康 checkpoint。"
+        }
+      ]
+    },
+    {
+      "owner": "T23",
+      "task": "docs/alignment-tasks/2026-09-07/batches/05-cross-layer-qa/t23/task.json",
+      "allow": [
+        "adaptertest/**",
+        ".github/workflows/**",
+        "alignment_architecture_test.go",
+        "docs/alignment-tasks/2026-09-07/handoffs/T23/**"
+      ],
+      "findings": [
+        {
+          "id": "T30-F02",
+          "check": "T30-V02",
+          "contract": "T30-AC01；live success 拒绝退出/信号/timeout/Failure/Go error，验证请求结果且保留通用 VerifyOutcome 合法失败合同。"
+        }
+      ]
+    }
+  ],
+  "integration_order": [
+    "T23",
+    "T06",
+    "T14",
+    "T15",
+    "T16",
+    "T17"
+  ],
+  "final_gates": [
+    "G05",
+    "T25",
+    "T26",
+    "T27",
+    "T28",
+    "T29",
+    "T30",
+    "G06"
+  ]
+}

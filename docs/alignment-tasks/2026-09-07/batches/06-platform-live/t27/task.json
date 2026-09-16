@@ -105,7 +105,8 @@
     "required_reads": [
       "AGENTS.md",
       "docs/internal-history-alignment-plan-2026-09-07.md",
-      "docs/alignment-tasks/2026-09-07/README.md"
+      "docs/alignment-tasks/2026-09-07/README.md",
+      "docs/alignment-tasks/2026-09-07/amendments/R030.md"
     ],
     "dependency_artifacts": [
       {
@@ -188,7 +189,8 @@
     "按 T23 输出的逐条非零测试命令运行；本 JSON 命令名是必须实现的测试入口约定，若最终 suite 采用别名须在 G05 完整展开并记录，不得用 -run 无匹配测试报绿。",
     "验证当前 provider 真实支持的 work_items，尤其 transcript 文件恢复、原生 prompt、schema/HITL、工具/plan 正式字段；不能把 fixture 成功或历史 CLI 记录当 live 证据。",
     "明确区分 supported/unsupported/未观察：Cursor native prompt/todo 必须维持 unsupported；任何无法证明的能力关闭或回 owner 修改矩阵。",
-    "安全保存 CLI/schema版本、脱敏 event/terminal摘要、命令/exit code/测试数量；不存鉴权/prompt秘密，不创建 tag。"
+    "安全保存 CLI/schema版本、脱敏 event/terminal摘要、命令/exit code/测试数量；不存鉴权/prompt秘密，不创建 tag。",
+    "R030：原选择器、次数、逐测试 context 和全部断言不变；包级 timeout 只覆盖完整串行矩阵预算，必须使用包含六路返修的 G05 同一最终 SHA。"
   ],
   "acceptance_criteria": [
     {
@@ -205,7 +207,7 @@
   "validation": [
     {
       "id": "T27-V01",
-      "command": "go test -count=1 -tags=claude_live ./claude -run TestAlignmentLive",
+      "command": "go test -timeout=45m -count=1 -tags=claude_live ./claude -run TestAlignmentLive",
       "cwd": "repository_root",
       "environment": {
         "AGENT_ADAPTOR_LIVE_CONFORMANCE": "1",
@@ -219,7 +221,7 @@
     },
     {
       "id": "T27-V02",
-      "command": "go test -count=1 -tags=claude_live ./claude -run TestClaudeDriverConformance",
+      "command": "go test -timeout=20m -count=1 -tags=claude_live ./claude -run TestClaudeDriverConformance",
       "cwd": "repository_root",
       "environment": {
         "AGENT_ADAPTOR_LIVE_CONFORMANCE": "1",

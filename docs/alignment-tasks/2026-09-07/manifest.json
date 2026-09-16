@@ -309,7 +309,7 @@
       "batch_id": "B02",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/02-event-foundation/t06/task.json",
-      "sha256": "2a35e8c0f515cb2481290d99e3dfb46af865a47f485bae1255900f43353bff9f"
+      "sha256": "8c80387f214d99c84c97cac8599e726c3991c12ed33f3575372563033eb6f86a"
     },
     {
       "id": "T07",
@@ -379,28 +379,28 @@
       "batch_id": "B04",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/04-provider-adoption/t14/task.json",
-      "sha256": "75298979a1195e1d5499828d21fee26dcba3e62bf2702490780dc1266607f295"
+      "sha256": "264894c42be85cbbac9ebb6ff4fc66e63ca8b48a4747ea9a3e26b664f66ecdbb"
     },
     {
       "id": "T15",
       "batch_id": "B04",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/04-provider-adoption/t15/task.json",
-      "sha256": "c9daffaf587829903fecef2ce45f5fb952701b58b1633a6e803d6f0f2d96d394"
+      "sha256": "ed44146c693358c0c5546ff6f40edf6f937a5e4a5fb4d847f5aad5785af93f75"
     },
     {
       "id": "T16",
       "batch_id": "B04",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/04-provider-adoption/t16/task.json",
-      "sha256": "c0daacb767fff645425f424dafc4721a5f3cf91a142f5d0705ccb0807721a4a0"
+      "sha256": "81eaa772ad3e11db404784d9521a894cd1b931a4309b041df918a642022a6f03"
     },
     {
       "id": "T17",
       "batch_id": "B04",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/04-provider-adoption/t17/task.json",
-      "sha256": "354eabe88aa4ad03ccb250afcbfd8c3cac5188731b624b14bbcc328a81170c6d"
+      "sha256": "d937d9ff452e86118c17fdf6db0769dc363847af0555f0397d315305a1b34b32"
     },
     {
       "id": "T18",
@@ -449,7 +449,7 @@
       "batch_id": "B05",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/05-cross-layer-qa/t23/task.json",
-      "sha256": "1d8d9e6deb1351237e9a6f7cd97c3018235eeda0a300459afdc75c846b200621"
+      "sha256": "d1ec6b20ffbc2f997341ea8f9775a4bce61a36099ed4745e20bf81ba74102d69"
     },
     {
       "id": "T24",
@@ -463,7 +463,7 @@
       "batch_id": "B05",
       "phase": "gate",
       "path": "docs/alignment-tasks/2026-09-07/batches/05-cross-layer-qa/gate/task.json",
-      "sha256": "f84dfd356f9b09b49614b1d941ad0ef37c625457685d99daef9424c7d689845f"
+      "sha256": "fb793fb0834b2cf07c19281e613b5de77c1105de4fcf31bbce1736e0fac32863"
     },
     {
       "id": "T25",
@@ -484,28 +484,28 @@
       "batch_id": "B06",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/06-platform-live/t27/task.json",
-      "sha256": "eb0b64b2260980acdbba61143b54dedfc6ade5f8ccce59cce6256094d6e450a5"
+      "sha256": "2a61478cdc1d603a4e88e550e47bcb80098a775d339b2d43a510c7f9e726c642"
     },
     {
       "id": "T28",
       "batch_id": "B06",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/06-platform-live/t28/task.json",
-      "sha256": "7b8deef008f6448cfd6caa739f5ee25841f95dd55bda49e1a414ba4e762a866f"
+      "sha256": "c084621fbb51963aa8c03e64914216a11a36a17aa042965e761b47984cf0916b"
     },
     {
       "id": "T29",
       "batch_id": "B06",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/06-platform-live/t29/task.json",
-      "sha256": "ed7619e1473e9d0ddcd3b35b60ce1957ebcfd804468930e4086ee9e7b93da9ea"
+      "sha256": "f96bdc2b3dc56b4face33e734935d42b4ca3afc255b0dfd9e750f0d44bc0cc06"
     },
     {
       "id": "T30",
       "batch_id": "B06",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/06-platform-live/t30/task.json",
-      "sha256": "42ca5d186233f153f114542b36b8973e96575754173727d04cb72ac8f29d8d68"
+      "sha256": "3bdb92dbca54de9ab9f23a43dc037b19e945a690c525149e011608a900d82028"
     },
     {
       "id": "G06",
@@ -566,7 +566,7 @@
     "every_requirement_has_one_owner_and_independent_verifier": true,
     "no_same_batch_worker_dependency": true
   },
-  "revision": 28,
+  "revision": 29,
   "amendments": [
     "docs/alignment-tasks/2026-09-07/amendments/R001.md",
     "docs/alignment-tasks/2026-09-07/amendments/R002.md",
@@ -593,6 +593,7 @@
     "docs/alignment-tasks/2026-09-07/amendments/R023.md",
     "docs/alignment-tasks/2026-09-07/amendments/R027.md",
     "docs/alignment-tasks/2026-09-07/amendments/R028.md",
-    "docs/alignment-tasks/2026-09-07/amendments/R029.md"
+    "docs/alignment-tasks/2026-09-07/amendments/R029.md",
+    "docs/alignment-tasks/2026-09-07/amendments/R030.md"
   ]
 }

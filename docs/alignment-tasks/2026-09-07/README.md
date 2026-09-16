@@ -130,3 +130,5 @@ python3 docs/alignment-tasks/2026-09-07/validate.py \
 [R022](amendments/R022.md)：B05补充T34纠正Codex stderr跨pipe测试前提，七项分配保持最多六并发；精确接收断言与公开转换双层验证，原96项owner/verifier不变。
 
 [R023](amendments/R023.md)：原T07/T16分别以B05 T35/T36修复Linux发现的stdin/RPC关闭panic；B05九任务容量6，G05重验、后批同SHA独立验证，全部旧证据与96项保持。
+
+[R030](amendments/R030.md)：九项 live 问题由六个原 owner 在共同准备 SHA 的独立 worktree 返修；[rework.json](rework.json) 收窄本轮写域，原 DAG/要求不变。派发前另运行 `python3 -B -m unittest discover -s docs/alignment-tasks/2026-09-07 -p test_rework.py -v`。新候选完整重验 G05/B06 后才可通过 G06。
