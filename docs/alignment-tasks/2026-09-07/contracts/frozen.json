@@ -1,16 +1,16 @@
 {
   "schema_version": "1.0",
   "gate": "G05",
-  "manifest_revision": 28,
+  "manifest_revision": 30,
   "code_baseline": "919f140f64f89c80933802840c8878681a85a4d9",
   "source_head": "e2f0620bdd6477e6fe16f6db5648093589342ca2",
-  "status": "R029_reconciled_pending_exact_G05_checks",
+  "status": "R031_repair_scope_frozen_pending_remaining_implementation_and_exact_G05",
   "contracts": [
     {
       "producer": "C01",
       "path": "docs/alignment-tasks/2026-09-07/contracts/profile-lifecycle.md",
-      "sha256": "5358a4a4101c5d1a7a7287328e2406dadf64a98023ebea92fb5a14fdc24344e7",
-      "version": "1.2-g02-r024-r025-r027",
+      "sha256": "7c60d6c5db7576d6ed2799c8ccc286d76e443fbe7ff0b151e5d48c6e86c00c83",
+      "version": "1.2-g02-r024-r025-r027-r031",
       "interfaces": [
         "profile.ErrInUse/ErrUnsafe/ErrRecoveryRequired/ErrUnsupportedFilesystem",
         "Dedicated WithTools deterministic profile + owner lock",
@@ -201,7 +201,15 @@
       "testdata/root_api.golden",
       "todo/**",
       "tools.go",
-      "wiring.go"
+      "wiring.go",
+      "invocation_fingerprint.go",
+      "tools_profile_snapshot.go",
+      "tools_profile_snapshot_test.go",
+      "tools_profile.go",
+      "internal/hostedprofile/seed.go",
+      "internal/hostedprofile/seed_test.go",
+      "alignment_profile_assets_test.go",
+      "alignment_resume_fallback_test.go"
     ],
     "T07": [
       "claude/**",
@@ -427,7 +435,9 @@
     "R026: native Server2022 caught Root.Rename sharing conflicts despite windows-latest success. Rename the original private pending handle with NULL RootDirectory and a simple basename; retain lifetime directory pin, reject destination replacement, and close pending on every outcome. Add explicit native success/conflict/identity/closed-handle/pin controls and require both Windows versions plus fresh same-SHA G05/T25/T26; preserve earlier failed evidence.",
     "R027: cold-resume fixture proves closure before successor admission and reserves the former port; strict Windows refusal and live-listener negative control retain original timeout and session/credential/manifest assertions. G05 integrates explicitly user-authorized post-review fixes through42 exact added paths; revision26 preserves47tasks,96requirements,9dependencies and original commands. Actual G04 base and all failed candidate evidence retained; fresh exact-SHA gates required.",
     "R028: official Go1.27.1 fixes upstream75804 fuzz parent-deadline shutdown race; all acceptance uses .github/go-version, consumer minimum1.26.8 remains separately covered by full tests/vet. No private toolchain patch, deadline filtering, retries or shorter/count-based fuzz acceptance. Revision27 adds only the exact CI version-file scope; preserve75a84c8 failure and independent mechanism evidence, revalidate all final-SHA gates.",
-    "R029: user-authorized pre-merge readability/structure cleanup from accepted dd3859e moves private declarations into six focused production files and preserves public API, error/lifecycle behavior, profile fingerprint, safety boundaries and live gates. G05 adds24 exact paths to cover the29 reviewed source/test/report paths; no owner/verifier,47-task/96-requirement graph,9 dependencies or original commands change. Coordinator declaration-token audit496 unchanged/8 explicit modifications/3 new helpers/0 deletions is scope evidence, not functional acceptance. Independent tests remain; only the unused terminal-helper fixture body moves to public Delegate poll/stream coverage. Previous exact-SHA passes/failures remain history; a new candidate must pass original G05/T25/T26 before freezing. T27–T30/G06 remain blocked."
+    "R029: user-authorized pre-merge readability/structure cleanup from accepted dd3859e moves private declarations into six focused production files and preserves public API, error/lifecycle behavior, profile fingerprint, safety boundaries and live gates. G05 adds24 exact paths to cover the29 reviewed source/test/report paths; no owner/verifier,47-task/96-requirement graph,9 dependencies or original commands change. Coordinator declaration-token audit496 unchanged/8 explicit modifications/3 new helpers/0 deletions is scope evidence, not functional acceptance. Independent tests remain; only the unused terminal-helper fixture body moves to public Delegate poll/stream coverage. Previous exact-SHA passes/failures remain history; a new candidate must pass original G05/T25/T26 before freezing. T27–T30/G06 remain blocked.",
+    "R030: user-approved six-lane original-owner live repairs from 1c49823 preserve 47 tasks, 96 requirements, 45 history dispositions and G05 nine dependencies. Explicit package timeout budgets preserve original selectors/counts/context limits. Common prepared base and independently reviewed rework attempts remain distinct from historical DAG delivery; all final gates require a new identical source SHA.",
+    "R031: retain original nine findings and add T29-E02/T30-F03/T30-F04 plus independently reproduced MERGE-F01 safe-fallback event loss. T06 completed Claude version13 bootstrap has a closed pure normalization and conservative old-hash migration boundary. CodeBuddy Question/native JSON and adaptertest live success retain normal SPI/partial-audit contracts. Remaining Cursor and core fallback repairs need original-owner implementation and independent review before exact G05/B06; no live readiness is asserted."
   ],
   "unmerged_related_branches": [
     {

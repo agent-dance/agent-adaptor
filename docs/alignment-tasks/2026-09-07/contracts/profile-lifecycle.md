@@ -250,3 +250,11 @@ R025 依赖选型：`golang.org/x/sys` 从 v0.41.0 升到 v0.44.0，保留既有
 ## R027：冷续接的网络身份验收
 
 断言首个网关关闭须在第二个网关启动前完成；Close后保留释放地址，固定本夹具要求的URL差异。不能在新网关可能复用地址后，仅以TCP可连接认定旧网关存活。保留真实session nonce、profile/manifest、URL/env/token轮换断言；Windows只有地址占用10048且连接拒绝10061可按已关闭处理，其他错误均失败，原100ms限额不变。未关闭listener负例须稳定失败。原CI日志无监听器归属信息，确定性复用反例与实际原失败分别留档；无生产gateway行为变更。
+
+## R031：Claude 已完成初始化的闭集视图
+
+Claude 2.1.159 首次健康执行在 `.claude.json` 写入已完成初始化六字段，曾使空 profile 的既有健康记录在新 Agent 的 `ResumeOnly` 前被错误判为配置变化。T06 只对完整已验证组合做纯指纹视图归一化：migrationVersion 恰为 13；opusProMigrationComplete 与 sonnet1m45MigrationComplete 均为 true；firstStartTime 为 UTC RFC3339 时间；userID 为64位小写十六进制安装标识；seenNotifications 为非负且处于 JavaScript 精确整数范围的计数 map。六字段缺一、错型、未完成、旧版本或未知新版本均不排除。该安装标识不是用户账户身份或 session selector。
+
+只移除上述顶层完整组合。真实 settings/model、projects、未知/嵌套字段、外部 MCP、manifest 所有权、资源内容和权限继续权威；CLI migration 若实际修改配置仍然不兼容。core 不执行 migration、不改写文件、不递归推测 provider 语义。空初始化基线的原 hash 保持；历史记录若原 hash 已包含这组完成元数据，则可能保守拒绝 ResumeOnly。健康记录和会话文件保持，continue-or-start 只能沿原流程在新的健康 checkpoint 原子提交后替换。禁止增加 legacy hash 候选、绕过 lease/store 或默默重写旧记录。
+
+跨进程 Run/Stream 正反例与原版真实 CLI 的有限前后诊断支持此闭集；它们不替代合流 S 的 T27 全矩阵及原生 Linux/Windows 验收。

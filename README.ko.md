@@ -398,6 +398,8 @@ implementer := adaptor.New(claude.Driver(claude.Config{}),
 
 `agent.ProfileState(ctx)`는 리소스의 desired/observed 상태를 읽고 `agent.SyncProfile(ctx)`는 리소스를 생성한다. 어느 작업도 provider가 리소스를 호출했다는 증거는 아니다. 전체 흐름은 [`profiles` 예제](./examples/profiles)를 참고한다.
 
+provider별 설정 디렉터리와 재시작 후 대화 재개 시 호환성 범위는 [provider 참고 문서](./docs/profile-resource-provider-matrix.md#provider-version-and-resumption-boundaries)를 참고한다.
+
 ## 결과와 오류
 
 성공하면 `*Result, nil`을 반환한다. `Driver.Run` 진입 후 모든 실패는 `nil, *RunError`를 반환하며, nil이 아닌 `Result`에 관찰한 결과를, `Cause`에 원래 오류 체인을 보존한다. `Reason`은 주원인을 나타낸다. 실행 전 실패는 일반 래핑 오류이며, 실패 판정은 Go의 `error` 경로 하나만 사용한다.

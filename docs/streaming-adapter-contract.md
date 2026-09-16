@@ -395,6 +395,19 @@ func TestMyDriverConformance(t *testing.T) {
 
 Every hermetic clause that applies to that Descriptor, to the implemented optional interfaces, and to explicit opt-ins is executed, covering Driver/config, capability truthfulness, the structured-output matrix, SessionCodec, and SessionConfigFingerprinter; optional capabilities that do not apply are explicitly skipped. Real provider execution is enabled explicitly through `WithLiveRun` and is protected by the provider package's explicit live build tag and environment gate; enabled required probes fail when CLI or evidence is missing, so ordinary CI must not produce paid calls.
 
+The live probes add success requirements to the ordinary SPI outcome rules:
+`LIV-01` rejects Go errors, nonzero exit, signals, timeout and provider Failure;
+`LIV-02` checks the default prompt's exact trimmed `OK` response; `LIV-03` requires
+a valid checkpoint and codec round-trip only when resume is supported. A custom
+`WithLivePrompt` keeps its own output semantics; use
+`WithLiveExpectedOutput` for an explicit expected text, including an intentional
+empty string. `SO-02` requires native validated output containing exactly one
+`{"ok":true}` object, without duplicate/extra keys or trailing data. Optional
+decoded Value, when present, must agree. Diagnostics report bounded status,
+presence, byte counts and hashes without echoing raw provider payload or errors.
+These success probes do not change `VerifyOutcome`: a correctly represented
+failed or empty response remains legal under the general Driver SPI.
+
 The clause groups directly related to this contract are:
 
 - `CAP-10`: `StreamCapability` determinism.

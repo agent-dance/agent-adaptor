@@ -274,6 +274,22 @@ No third-party schema type appears in the public API, and provider-specific
 flags remain inside their Driver packages.
 
 
+## CodeBuddy native JSON framing
+
+CodeBuddy's selected native JSON transport parses complete output, including the
+official 2.151.0 top-level history array whose last element is the result record.
+Existing single-object and strict newline-object forms remain accepted. Only
+direct records supply the formal `structured_output`; embedded text or nested
+objects cannot provide a terminal. The first terminal must be last. Truncation,
+invalid UTF-8, extra documents/records, provider failure or nonzero exit cannot
+produce a healthy checkpoint or valid native output. Full stdout/stderr and the
+first formal terminal remain available for audit. The stream-json transport keeps
+its existing line framing.
+
+The live native-schema probe requests the exact object `{"ok":true}` and verifies
+both native validation and that value; a successful exit or `Valid` flag alone is
+insufficient. This probe is separate from the public schema fallback policy.
+
 ## Native append with structured output
 
 The resolved native append channel follows a schema-selected transport and its

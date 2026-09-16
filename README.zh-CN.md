@@ -394,6 +394,8 @@ resume ID 恢复；详见[所有权、冲突与恢复](./docs/tools.md#persisten
 
 `agent.ProfileState(ctx)` 读取资源的 desired/observed 状态，`agent.SyncProfile(ctx)` 执行物化；二者均不证明 provider 已调用该资源。完整演示见 [`profiles` 示例](./examples/profiles)。
 
+各 provider 的配置目录和冷续接兼容边界见[provider 参考](./docs/profile-resource-provider-matrix.md#provider-version-and-resumption-boundaries)。
+
 ## 结果与错误
 
 成功返回 `*Result, nil`。`Driver.Run` 进入后的全部失败返回 `nil, *RunError`，通过非 nil 的 `Result` 保留可用结果，通过 `Cause` 保留原错误链；`Reason` 是主原因。启动前错误仍是普通包装错误，失败只有 Go `error` 一个判定面。

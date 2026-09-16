@@ -53,6 +53,27 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- Keep Claude hosted-Tool cold resumption compatible after the CLI completes its
+  known version-13 bootstrap. The pure fingerprint view excludes only the entire
+  validated six-field initialization bundle; actual settings, unknown fields,
+  permissions and incomplete/unknown migrations remain authoritative. Old records
+  that included that completed bundle in their hash may conservatively reject
+  `ResumeOnly`; session files and healthy checkpoints remain intact, and the
+  existing continue-or-start policy controls atomic replacement.
+- Preserve CodeBuddy Question Ask/AutoDeny when Permission and PlanReview both
+  auto-approve. Parse native JSON output as complete top-level history/result
+  records, including the official 2.151.0 array form, while retaining strict
+  malformed-output rejection, terminal ordering, raw audit and checkpoint guards.
+- Require healthy outcomes and the requested value in adaptertest live success
+  probes. The default text probe checks `OK`; native schema checks the exact
+  `{"ok":true}` object. Custom prompts retain their own semantics and can opt in
+  to `adaptertest.WithLiveExpectedOutput`. Ordinary SPI failure responses remain
+  valid, and resume checkpoint checks apply only to resume-capable Drivers.
+- Establish live-test prerequisites explicitly: Claude Permission uses a private
+  exact ask rule, CodeBuddy leaves unsupported isolation unspecified, and Codex
+  exec/app-server share a restricted provider route and isolated Git workspace.
+  These fixture repairs do not certify the final platform/provider matrix.
+
 - Make the cold-resume regression prove gateway closure before successor
   admission and reserve the old address, retaining strict credential/profile
   rotation checks even when the OS would reuse an ephemeral port.

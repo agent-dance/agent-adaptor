@@ -397,6 +397,8 @@ implementer := adaptor.New(claude.Driver(claude.Config{}),
 
 `agent.ProfileState(ctx)` はリソースの desired/observed 状態を読み取り、`agent.SyncProfile(ctx)` は実体化を行います。どちらも provider がリソースを呼び出した証明にはなりません。完全なデモは [`profiles` サンプル](./examples/profiles)を参照してください。
 
+provider ごとの設定ディレクトリと再起動後の会話再開に関する互換性の範囲は、[provider リファレンス](./docs/profile-resource-provider-matrix.md#provider-version-and-resumption-boundaries)を参照してください。
+
 ## Result とエラー
 
 成功時は `*Result, nil` を返す。`Driver.Run` に入った後のすべての失敗は `nil, *RunError` を返し、非 nil の `Result` に取得済みの結果、`Cause` に元のエラーチェーンを保持する。`Reason` が主原因を示す。実行前の失敗は通常のラップされたエラーであり、失敗の判定は Go の `error` に一本化される。

@@ -403,6 +403,8 @@ see [ownership, conflicts and recovery](./docs/tools.md#persistent-dedicated-pro
 
 Read desired/observed resource state with `agent.ProfileState(ctx)` and materialize it with `agent.SyncProfile(ctx)`. These operations do not prove that the provider invoked a resource. See the [`profiles` example](./examples/profiles) for a full walkthrough.
 
+Provider-specific profile directories and cold-resume compatibility limits are documented in the [provider reference](./docs/profile-resource-provider-matrix.md#provider-version-and-resumption-boundaries).
+
 ## Results and errors
 
 Success returns `*Result, nil`. After `Driver.Run` is entered, every failure returns `nil, *RunError` with the available non-nil `Result` and original error chain in `Cause`. `Reason` is the primary outcome; pre-invocation failures remain ordinary wrapped errors. Both use the single Go `error` path.

@@ -77,7 +77,8 @@
       "docs/alignment-tasks/2026-09-07/amendments/R011.md",
       "docs/alignment-tasks/2026-09-07/amendments/R030.md",
       "docs/merge-readiness-plan-2026-09-16.md",
-      "docs/alignment-tasks/2026-09-07/rework.json"
+      "docs/alignment-tasks/2026-09-07/rework.json",
+      "docs/alignment-tasks/2026-09-07/amendments/R031.md"
     ],
     "dependency_artifacts": [
       {
@@ -143,7 +144,8 @@
       "tools_profile.go",
       "internal/hostedprofile/seed.go",
       "internal/hostedprofile/seed_test.go",
-      "alignment_profile_assets_test.go"
+      "alignment_profile_assets_test.go",
+      "alignment_resume_fallback_test.go"
     ],
     "scope_match": "仅精确仓库相对文件或目录/**；任何未列路径不可写。",
     "exclusive_resources": [],
@@ -187,7 +189,8 @@
     "R009：资源前一次normalize并冻结可行schema/source/transport候选；AttachRun后仅需求评分选择一次最终候选，不能重跑resolver/物化或消音Ask。保留无需求原选择、初始batch合法Ask及真实StreamSupport边界，零schema显式Ask切换也必须验证。",
     "R010：更新stream_backpressure_test.go的旧空流/计数假设，显式核对core唯一start/terminal与buffer占用；保留marker-before-critical、聚合范围/count、blocking不丢、关闭后no-op与资源释放后才终局，原V01完整验收。",
     "R011：MCP JSON/TOML writer保留existing regular mode，新文件仍默认，非regular/IO稳定拒绝；Thread fingerprint不无条件哈希单轮Request.Streaming，保留真实配置/codec/环境/资源维度和Driver进程兼容检查。以G02原Codex/CodeBuddy失败测试不改期望复验。",
-    "R030 T27-F02：W02-R06/W02-R08；确定变更分量，修复同配置冷续接，保留所有真实配置漂移拒绝与健康 checkpoint 保护。"
+    "R030 T27-F02：W02-R06/W02-R08；确定变更分量，修复同配置冷续接，保留所有真实配置漂移拒绝与健康 checkpoint 保护。",
+    "R031 MERGE-F01：同一公开 Thread 在安全 resume-reject 后最多一次 fresh fallback，必须建立新的 Driver attempt 生命周期边界，清除旧 terminal/source/坐标而保留完整累计审计；fresh 文本/工具/typed事实可交付，最终唯一公共终局来自最后结果和资源清理，同 attempt terminal 后迟到payload继续禁止。完整验证有/无RunServices、Run/Stream、fresh成功/失败、ResumeOnly和checkpoint原子性。"
   ],
   "acceptance_criteria": [
     {
@@ -228,6 +231,11 @@
     {
       "id": "T06-AC08",
       "requirement": "R030 T27-F02：W02-R06/W02-R08；确定变更分量，修复同配置冷续接，保留所有真实配置漂移拒绝与健康 checkpoint 保护。 独立复验 T27-V01，保留所有原验证；未通过前不得关闭该项。",
+      "required": true
+    },
+    {
+      "id": "T06-AC09",
+      "requirement": "R031 MERGE-F01：同一公开 Thread 在安全 resume-reject 后最多一次 fresh fallback，必须建立新的 Driver attempt 生命周期边界，清除旧 terminal/source/坐标而保留完整累计审计；fresh 文本/工具/typed事实可交付，最终唯一公共终局来自最后结果和资源清理，同 attempt terminal 后迟到payload继续禁止。完整验证有/无RunServices、Run/Stream、fresh成功/失败、ResumeOnly和checkpoint原子性。",
       "required": true
     }
   ],

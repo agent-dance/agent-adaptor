@@ -1,5 +1,5 @@
 {
-  "revision": "R030",
+  "revision": "R031",
   "source_base": "1c49823fafd2a057be4b0fc6dd96a563e957e2e9",
   "prepared_base": "external_dispatch_prepared_head",
   "max_parallelism": 6,
@@ -30,13 +30,21 @@
         "tools_profile.go",
         "internal/hostedprofile/seed.go",
         "internal/hostedprofile/seed_test.go",
-        "alignment_profile_assets_test.go"
+        "alignment_profile_assets_test.go",
+        "sink.go",
+        "invocation.go",
+        "alignment_resume_fallback_test.go"
       ],
       "findings": [
         {
           "id": "T27-F02",
           "check": "T27-V01",
           "contract": "W02-R06/W02-R08；确定变更分量，修复同配置冷续接，保留所有真实配置漂移拒绝与健康 checkpoint 保护。"
+        },
+        {
+          "id": "MERGE-F01",
+          "check": "T06-V01",
+          "contract": "R031 MERGE-F01：同一公开 Thread 在安全 resume-reject 后最多一次 fresh fallback，必须建立新的 Driver attempt 生命周期边界，清除旧 terminal/source/坐标而保留完整累计审计；fresh 文本/工具/typed事实可交付，最终唯一公共终局来自最后结果和资源清理，同 attempt terminal 后迟到payload继续禁止。完整验证有/无RunServices、Run/Stream、fresh成功/失败、ResumeOnly和checkpoint原子性。"
         }
       ]
     },
@@ -95,6 +103,11 @@
           "id": "T29-E01",
           "check": "T29-V01",
           "contract": "最小受限官方路由输入用于 exec/app-server；全量 T29-V01/V02 和原十二要求，禁止复制完整用户 config。"
+        },
+        {
+          "id": "T29-E02",
+          "check": "T29-V01",
+          "contract": "Codex exec/app-server 的同一私有 live workspace 通过有界 git init --template= 满足正式信任前提；隔离继承 Git 配置，不给 app-server 注入 exec-only bypass。原 T29-V01/V02 同 S 复验。"
         }
       ]
     },
@@ -115,6 +128,16 @@
           "id": "T30-U01",
           "check": "T30-V01",
           "contract": "T30-AC01；取消前提用正式 cause 定位，执行后取消保留 Raw/Transcript/旧健康 checkpoint。"
+        },
+        {
+          "id": "T30-F03",
+          "check": "T30-V01",
+          "contract": "Cursor print 取消由本轮实际非空 assistant NoticeTranscriptItem 触发，不把不存在的 rich TextDelta 当前提；context.Canceled/ReasonCancelled、部分 Raw/Transcript、旧健康 checkpoint 和有界退出断言保持。"
+        },
+        {
+          "id": "T30-F04",
+          "check": "T30-V01",
+          "contract": "正式 opaque call ID 的控制字符形态采用无碰撞、稳定的 capability 身份编码，start/result/parent 一致，安全原名不能与编码名碰撞；Raw/Transcript 原文不改。"
         }
       ]
     },

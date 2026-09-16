@@ -406,6 +406,8 @@ Sitzungsdateien lassen sich nicht aus einer Resume-ID rekonstruieren; siehe
 
 `agent.ProfileState(ctx)` liest den gewünschten und beobachteten Ressourcenzustand; `agent.SyncProfile(ctx)` materialisiert die Ressourcen. Beides beweist keinen Aufruf durch den Provider. Den Ablauf zeigt das [`profiles`-Beispiel](./examples/profiles).
 
+Providerspezifische Profilverzeichnisse und Kompatibilitätsgrenzen beim Fortsetzen nach einem Neustart beschreibt die [Provider-Referenz](./docs/profile-resource-provider-matrix.md#provider-version-and-resumption-boundaries).
+
 ## Ergebnisse und Fehler
 
 Erfolg liefert `*Result, nil`. Nach Eintritt in `Driver.Run` liefert jeder Fehler `nil, *RunError` mit dem verfügbaren, nicht-nil `Result` und der ursprünglichen Fehlerkette in `Cause`. `Reason` bezeichnet die Hauptursache; Fehler vor dem Aufruf bleiben gewöhnliche verpackte Fehler. Es gibt nur den Go-`error`-Pfad.

@@ -62,7 +62,8 @@
       "docs/alignment-tasks/2026-09-07/README.md",
       "docs/alignment-tasks/2026-09-07/amendments/R030.md",
       "docs/merge-readiness-plan-2026-09-16.md",
-      "docs/alignment-tasks/2026-09-07/rework.json"
+      "docs/alignment-tasks/2026-09-07/rework.json",
+      "docs/alignment-tasks/2026-09-07/amendments/R031.md"
     ],
     "dependency_artifacts": [
       {
@@ -134,7 +135,9 @@
     "核对本包既有 DriverConformance 的 live 分支也使用 build tag/env 双门及独立 profile/workspace；只有 CLI存在+env 的单门不足以通过最终门禁，不能沿用用户原目录执行。支持矩阵外的 probe 明确列为不适用，必需场景不得 skip。",
     "R017：完整读取 amendments/R017.md。仅补原owner live fixture覆盖，普通检查不运行付费provider；补公开Agent/Thread + Dedicated + WithTools跨Agent.Close→新Agent ResumeOnly随机nonce和同会话证据；不增persistent/fork/Skills/Todos能力，保持既有print/MCP/Subagent/cancel/unsupported断言。 原validation保持，源码先提交再final HEAD验证，缺真实环境仅留待B06不得声称通过。",
     "R030 T30-F01：W02-R01/R03/R06/R08、W09-R09；官方 config/data 根、实际资源、Inspect/fingerprint/session 同步。",
-    "R030 T30-U01：T30-AC01；取消前提用正式 cause 定位，执行后取消保留 Raw/Transcript/旧健康 checkpoint。"
+    "R030 T30-U01：T30-AC01；取消前提用正式 cause 定位，执行后取消保留 Raw/Transcript/旧健康 checkpoint。",
+    "R031 T30-F03：Cursor print 取消由本轮实际非空 assistant NoticeTranscriptItem 触发，不把不存在的 rich TextDelta 当前提；context.Canceled/ReasonCancelled、部分 Raw/Transcript、旧健康 checkpoint 和有界退出断言保持。",
+    "R031 T30-F04：正式 opaque call ID 的控制字符形态采用无碰撞、稳定的 capability 身份编码，start/result/parent 一致，安全原名不能与编码名碰撞；Raw/Transcript 原文不改。"
   ],
   "acceptance_criteria": [
     {
@@ -160,6 +163,16 @@
     {
       "id": "T17-AC05",
       "requirement": "R030 T30-U01：T30-AC01；取消前提用正式 cause 定位，执行后取消保留 Raw/Transcript/旧健康 checkpoint。 独立复验 T30-V01，保留所有原验证；未通过前不得关闭该项。",
+      "required": true
+    },
+    {
+      "id": "T17-AC06",
+      "requirement": "R031 T30-F03：Cursor print 取消由本轮实际非空 assistant NoticeTranscriptItem 触发，不把不存在的 rich TextDelta 当前提；context.Canceled/ReasonCancelled、部分 Raw/Transcript、旧健康 checkpoint 和有界退出断言保持。",
+      "required": true
+    },
+    {
+      "id": "T17-AC07",
+      "requirement": "R031 T30-F04：正式 opaque call ID 的控制字符形态采用无碰撞、稳定的 capability 身份编码，start/result/parent 一致，安全原名不能与编码名碰撞；Raw/Transcript 原文不改。",
       "required": true
     }
   ],

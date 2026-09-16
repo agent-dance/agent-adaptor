@@ -178,6 +178,23 @@ exact bytes, regardless of extension: JSON arrays/scalars and intentionally
 malformed example files remain valid skill assets. Any byte change in those
 assets changes compatibility; malformed provider configuration still fails.
 
+Claude's completed CLI initialization has one closed exception in this pure
+compatibility view. For the official 2.1.159 bootstrap, all six top-level fields
+must form the validated completed bundle: `migrationVersion` exactly 13, both
+`opusProMigrationComplete` and `sonnet1m45MigrationComplete` true, a UTC
+`firstStartTime`, a 64-character lowercase hexadecimal installation `userID`,
+and a map of nonnegative integer `seenNotifications` counters. Only that complete
+bundle is excluded. Missing, malformed, incomplete, older or unknown-version
+states remain part of the fingerprint. Real model/settings migrations, projects,
+unknown fields, external MCP, resource bytes and permissions still change it.
+This does not rewrite configuration or execute a provider migration.
+
+The prior empty-profile hash is unchanged. A historical checkpoint whose old
+hash included that completed bundle can instead fail `ResumeOnly` conservatively.
+The SDK retains its healthy record and session files; the existing
+continue-or-start policy may atomically replace the record after a new healthy
+checkpoint. There is no alternate legacy hash or automatic store rewrite.
+
 A Driver may defer physical profile reconciliation until Run. Its compatibility
 view projects only proven managed replacements/prunes from the resolved sources,
 without resolving or writing resources again; unrelated resources remain included.

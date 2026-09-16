@@ -37,6 +37,20 @@ consumer behavior using scripted facts. Keep the historical research and smoke
 records below at their original evidence boundary; neither new code nor a newer
 fixture retroactively reruns them.
 
+## Provider version and resumption boundaries
+
+The September repair fixtures cover Claude 2.1.159 initialization and explicit
+Permission rules, CodeBuddy 2.151.0 native JSON framing, and Codex 0.153.4 live-test
+route/workspace prerequisites. These are protocol compatibility observations,
+not an assertion that every scenario or newer CLI version has passed the release
+gate. Final acceptance must record the exact source, CLI, model and platform.
+
+Claude hosted-Tool compatibility excludes only its validated, fully completed
+version-13 bootstrap bundle. Historical records which hashed that bundle can
+conservatively reject `ResumeOnly`; see the precise
+[fingerprint and migration boundary](./tools.md#threads-and-semantic-revisions).
+Actual resource and configuration drift remains incompatible.
+
 ## CodeBuddy declared agents
 
 CodeBuddy 2.137.1's inspected loader reads `<profile>/agents/*.md` using YAML

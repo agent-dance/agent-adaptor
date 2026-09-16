@@ -77,7 +77,8 @@
       "docs/internal-history-alignment-plan-2026-09-07.md",
       "docs/alignment-tasks/2026-09-07/README.md",
       "docs/alignment-tasks/2026-09-07/manifest.json",
-      "docs/alignment-tasks/2026-09-07/coverage.json"
+      "docs/alignment-tasks/2026-09-07/coverage.json",
+      "docs/alignment-tasks/2026-09-07/amendments/R031.md"
     ],
     "dependency_artifacts": [
       {
@@ -218,7 +219,28 @@
       "stream.go",
       "tools_profile.go",
       "tools_profile_snapshot.go",
-      "docs/merge-readiness-plan-2026-09-16.md"
+      "docs/merge-readiness-plan-2026-09-16.md",
+      "claude/README-streaming.md",
+      "claude/alignment_permission_test.go",
+      "claude/interactive_live_test.go",
+      "codebuddy/alignment_live_policy_test.go",
+      "codebuddy/alignment_native_json_test.go",
+      "codebuddy/alignment_question_policy_test.go",
+      "codebuddy/driver.go",
+      "codebuddy/engine.go",
+      "codebuddy/live_protocol_test.go",
+      "codebuddy/native_json.go",
+      "codebuddy/parser.go",
+      "codebuddy/persistent_test.go",
+      "codebuddy/run_live_test.go",
+      "codex/alignment_live_routing_test.go",
+      "codex/appserver/run_live_test.go",
+      "codex/conformance_test.go",
+      "codex/internal/livetest/profile.go",
+      "codex/internal/livetest/profile_test.go",
+      "codex/live_profile_test.go",
+      "codex/live_route_probe_test.go",
+      "tools_profile_snapshot_test.go"
     ],
     "scope_match": "精确文件或目录/**；gate可合并worker已审阅commit，但不直接越权编辑其生产代码。",
     "exclusive_resources": [
@@ -266,7 +288,8 @@
     "R022：接受原T16负责人补充T34的接收同步QA修复，保持所有原要求owner/verifier及原命令；G05依赖本批全部七项，最多六并发。旧45cada43验收与T25-F02失败保留，合流后重新冻结，B06所有原检查用新SHA。",
     "R023：等待全部九个B05任务（容量仍6）；T35/T36精确独立文件，T20仅22项metadata重验。合并原owner两个生产关闭修复，保留T33/T34全部回归，中央合同/doc/changelog后在新SHA重跑原3commands，B06整批换同一冻结SHA。旧d94fd17报告与两处panic绝不覆盖。",
     "R027 post-review验收：按本会话用户“全部修复”和“按建议处理全量CI”的授权，核对精确新增范围内的评审/平台/安全修复及失败到修复证据，再在最终合流SHA执行原G05命令。范围扩展只承接这些已审阅修复的整合验收，不允许gate增加无关生产修改；原9依赖及owner责任保持。",
-    "R029 pre-merge清理验收：承接用户对合入main前提高可读性/合理性并保持功能质量的授权，核对本修订列明的精确路径、声明token审计与独立反例；六个生产文件拆分和三处私有helper调整不得改变公共API、错误/生命周期、profile fingerprint、安全边界或live门。保留独立测试，仅将无生产调用的terminal helper测试正文迁至公开Delegate poll/stream路径。dd3859e的已通过证据仅为清理基线，最终新SHA须重跑原G05/T25/T26命令后才能封账；原9依赖、owner/verifier、G04真实base和完整diff不变。"
+    "R029 pre-merge清理验收：承接用户对合入main前提高可读性/合理性并保持功能质量的授权，核对本修订列明的精确路径、声明token审计与独立反例；六个生产文件拆分和三处私有helper调整不得改变公共API、错误/生命周期、profile fingerprint、安全边界或live门。保留独立测试，仅将无生产调用的terminal helper测试正文迁至公开Delegate poll/stream路径。dd3859e的已通过证据仅为清理基线，最终新SHA须重跑原G05/T25/T26命令后才能封账；原9依赖、owner/verifier、G04真实base和完整diff不变。",
+    "R031：核对 R030 六路返修及新增 T29-E02/T30-F03/T30-F04 的原 owner 提交和非作者审查；完整原47任务/96要求/45处置/9依赖与历史G04 base保持。以精确实际新增路径承接本次集成，中央合同和文档进入最终 S 后原三命令全验，T25–T30 全部用同一 S；旧证据保留，不以有限诊断关闭 live。"
   ],
   "acceptance_criteria": [
     {

@@ -385,6 +385,18 @@ and temporary Thread process behavior are detailed in the structured-output
 reference. A custom DecisionCapableSink error aborts and drains the Claude writer
 even if the caller context remains live; it does not create a separate policy.
 
+CodeBuddy also selects its control transport for an explicit Question Ask or
+automatic denial when Permission and PlanReview both auto-approve. Those two
+auto-approve choices do not suppress Question handling. Native schema still
+requires the separately declared compatible transport; transport selection cannot
+discard an effective Ask requirement to keep native output.
+
+Permission Ask only answers requests actually emitted by the provider. A CLI may
+automatically allow a harmless command. Claude's live Permission fixture therefore
+uses an exact private `Bash(echo permission-ok)` ask rule and disables sandbox
+auto-allow for that fixture, then verifies the formal request, response, tool result
+and final result. A callback count alone does not establish provider approval.
+
 Observation demand cannot override approval feasibility. Core first validates
 transport/source candidates using captured Driver configuration, then OR-merges
 attachment demand and scores only those candidates. Skill/MCP/Subagent support
