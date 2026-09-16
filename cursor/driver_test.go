@@ -75,8 +75,7 @@ func TestParseCheckpointAcceptsSessionOnlyPayload(t *testing.T) {
 }
 
 func TestDetectModelFallsBackToCursorConfigFile(t *testing.T) {
-	t.Setenv("CURSOR_HOME", "")
-	home := t.TempDir()
+	home := cursorPathTestEnvironment(t)
 	configDir := filepath.Join(home, ".cursor")
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
 		t.Fatalf("mkdir config dir: %v", err)
@@ -179,8 +178,7 @@ func TestGetProfileUsesProcessEnvForCursorWhenUnset(t *testing.T) {
 }
 
 func TestGetProfileCloneCanShareNativeCursorAuth(t *testing.T) {
-	t.Setenv("CURSOR_HOME", "")
-	home := t.TempDir()
+	home := cursorPathTestEnvironment(t)
 	nativeProfile := filepath.Join(home, ".cursor")
 	if err := os.MkdirAll(nativeProfile, 0o755); err != nil {
 		t.Fatalf("mkdir native profile: %v", err)
@@ -246,8 +244,7 @@ func TestConfigSchemaIncludesGroupsDefaultsAndOptions(t *testing.T) {
 }
 
 func TestCheckEnvironmentReportsConfigFileState(t *testing.T) {
-	t.Setenv("CURSOR_HOME", "")
-	home := t.TempDir()
+	home := cursorPathTestEnvironment(t)
 	configDir := filepath.Join(home, ".cursor")
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
 		t.Fatalf("mkdir config dir: %v", err)
