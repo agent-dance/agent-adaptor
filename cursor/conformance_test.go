@@ -30,7 +30,7 @@ func cursorLiveGate(t *testing.T) (bool, adaptertest.Option) {
 	return true, adaptertest.WithLiveRun("")
 }
 
-// Profiles are always freshly isolated. B06 supplies an API key through its
+// Profiles are always freshly isolated. B06 supplies an approved credential through its
 // approved environment; this test never reads/copies the operator profile.
 func cursorIsolatedConfig(t *testing.T, live bool) Config {
 	t.Helper()

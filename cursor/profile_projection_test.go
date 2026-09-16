@@ -215,3 +215,43 @@ func TestCursorPrivateHomePublicationNeverReplaces(t *testing.T) {
 		})
 	}
 }
+
+func TestCursorProjectionSnapshotTracksDeliveredBytes(t *testing.T) {
+	cursorPathTestEnvironment(t)
+	selected := t.TempDir()
+	cursorWrite(t, filepath.Join(selected, "agents", "planner.md"), "initial agent")
+	cursorWrite(t, filepath.Join(selected, "hooks.json"), `{"version":1,"hooks":{}}`)
+	before, err := cursorResourceState(context.Background(), selected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var delivered string
+	bindings, plugin, cleanup, err := prepareCursorProjection(context.Background(), selected, true, driver.ResolvedSkills{}, nil, &delivered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	if delivered != before {
+		t.Fatal("projection and preflight use different stable source keys")
+	}
+	cursorWrite(t, filepath.Join(selected, "agents", "planner.md"), "externally changed agent")
+	cursorWrite(t, filepath.Join(selected, "hooks.json"), `{"version":2,"hooks":{}}`)
+	changed, err := cursorResourceState(context.Background(), selected)
+	if err != nil || changed == delivered {
+		t.Fatal("source edit did not change current guard", err)
+	}
+	agent, err := os.ReadFile(filepath.Join(plugin, "agents", "planner.md"))
+	if err != nil || string(agent) != "initial agent" {
+		t.Fatal("projection did not retain delivered agent bytes", err)
+	}
+	hooks, err := os.ReadFile(filepath.Join(skillruntime.ResolveHome(bindings), ".cursor", "hooks.json"))
+	if err != nil || string(hooks) != `{"version":1,"hooks":{}}` {
+		t.Fatal("projection did not retain delivered hook bytes", err)
+	}
+	cursorWrite(t, filepath.Join(selected, "agents", "planner.md"), "initial agent")
+	cursorWrite(t, filepath.Join(selected, "hooks.json"), `{"version":1,"hooks":{}}`)
+	restored, err := cursorResourceState(context.Background(), selected)
+	if err != nil || restored != delivered {
+		t.Fatal("restored source did not agree with delivered snapshot", err)
+	}
+}

@@ -406,15 +406,10 @@ func (adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSin
 		return driver.Response{}, err
 	}
 
-	// Retain the source snapshot that this invocation actually projects. A
-	// later external edit must reject the next resume, not bless a new source
-	// merely because it appeared while the provider was already running.
-	resourceState, err := cursorResourceState(ctx, effectiveProfile.Dir)
-	if err != nil {
-		return driver.Response{}, err
-	}
-
-	effectiveEnv, pluginDir, cleanup, err := prepareCursorProjection(ctx, effectiveProfile.Dir, cursorIsolatedProfile(cfg.CommonConfig, req.Profile), req.Skills, effectiveEnv)
+	// The exact reads used for agents/hooks projection produce its guard;
+	// never reread sources after launch to bless an unrelated later edit.
+	var resourceState string
+	effectiveEnv, pluginDir, cleanup, err := prepareCursorProjection(ctx, effectiveProfile.Dir, cursorIsolatedProfile(cfg.CommonConfig, req.Profile), req.Skills, effectiveEnv, &resourceState)
 	if err != nil {
 		return driver.Response{}, err
 	}
@@ -570,6 +565,9 @@ func isCursorUnknownSessionError(stdout, stderr string) bool {
 }
 
 func validateCursorSessionGuard(ctx context.Context, req driver.Request, effectiveCWD, profileFingerprint string, bindings ...[]driver.EnvBinding) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if req.Session == nil || req.Session.State == nil {
 		return nil
 	}

@@ -26,7 +26,7 @@ const cursorPrivateHomeOwner = "agent-adaptor/cursor-empty-home/v1\n"
 
 func cursorEnv(bindings []driver.EnvBinding, name string) string {
 	for i := len(bindings) - 1; i >= 0; i-- {
-		if bindings[i].Name == name {
+		if bindings[i].Name == name || runtime.GOOS == "windows" && strings.EqualFold(bindings[i].Name, name) {
 			return bindings[i].Value
 		}
 	}

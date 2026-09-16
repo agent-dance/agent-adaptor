@@ -72,9 +72,11 @@ gate; local cross-compilation is only compile evidence.
 
 Stable guards include config/data/resource source paths, canonical config
 (excluding only formal `authInfo`; unknown fields and caches remain guarded),
-and sorted agents/hooks source paths/content/modes. The static source snapshot
-is taken for the invocation before projection; subsequent external edits do not
-silently bless a new source. Runtime services cannot redirect roots. Random
+and sorted agents/hooks source paths/content/modes. The same reads that copy agents/hooks produce the static source snapshot;
+subsequent external edits do not silently bless a new source. Native agents
+use that copied snapshot; Native hooks stay at the official HOME location and
+have a prelaunch source guard, not a claim to freeze external filesystem edits
+before the CLI's own later read. Runtime services cannot redirect roots. Random
 HOME/plugin paths and dynamic hosted MCP credentials do not enter guards.
 Old checkpoints missing any new proof reject before launch with
 ErrResumeRejected; ResumeOnly preserves old healthy state, while normal
@@ -114,3 +116,28 @@ Independent review found and regression-tested concurrent first publication,
 Native runtime HOME redirection, legacy-empty selection, replacement marker,
 exclusive directory publication and Windows ACL boundaries. T04's final
 independent report is authoritative for its own review, not this handoff.
+
+The first frozen review at `6ab9273` passed six independent fixtures but found
+that a separate pre-copy agents/hooks hash read did not prove the bytes actually
+projected. The follow-up binds hashing to the same copy reads and stable source
+relative keys; an owned regression edits/restores the source after projection
+and proves that the delivered snapshot remains authoritative. The prior SHA's
+checks remain archived and do not stand in for the follow-up SHA's checks.
+
+Review subitems under T30-F01 are preserved separately:
+
+- **review F02:** independent source-hash/copy reads were not bound. The hash
+  now comes from the same copied bytes and source-relative mode/path keys;
+  `TestCursorProjectionSnapshotTracksDeliveredBytes` proves edited/restored
+  source cannot replace the delivered snapshot.
+- **review F03:** a FIFO at cli-config.json could block open before the byte
+  limit and ignore cancellation. T04's fixed-6ab offline red fixture is in
+  `reviews/T17-profile/fifo-6ab9273`. Reads now resolve legitimate AuthLink,
+  require a bounded regular target, open nonblocking/no-follow on Unix (open
+  reparse point on Windows), and compare opened/path file identity.
+  `TestCursorConfigurationRejectsFIFOWithoutBlocking` and the regular AuthLink
+  counterexample exercise rejection and the preserved positive contract.
+- Windows explicit official environment names now use case-insensitive
+  last-wins matching, consistent with the native environment. The dedicated
+  Windows case/config/data/XDG test is required in native validation; Unix
+  retains case-sensitive matching. No shared environment helper changed.

@@ -385,3 +385,28 @@ func TestCursorAuthNoneNativeCloneCopiesOnlyFormalStaticSettings(t *testing.T) {
 		t.Fatal("AuthNone clone did not use static config projection")
 	}
 }
+
+func TestCursorConfigGuardAcceptsAuthLinkOnlyToRegularFile(t *testing.T) {
+	cursorPathTestEnvironment(t)
+	source, target := t.TempDir(), t.TempDir()
+	path := filepath.Join(source, "cli-config.json")
+	cursorWrite(t, path, `{"sandbox":{"mode":"disabled"},"authInfo":{"email":"private"}}`)
+	if err := os.Symlink(path, filepath.Join(target, "cli-config.json")); err != nil {
+		t.Skip("symlink unavailable")
+	}
+	before, err := cursorConfigState([]driver.EnvBinding{{Name: "CURSOR_CONFIG_DIR", Value: source}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	linked, err := cursorConfigState([]driver.EnvBinding{{Name: "CURSOR_CONFIG_DIR", Value: target}})
+	if err != nil || linked != before {
+		t.Fatal("legitimate AuthLink rejected", err)
+	}
+	os.Remove(path)
+	if err := os.Mkdir(path, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cursorConfigState([]driver.EnvBinding{{Name: "CURSOR_CONFIG_DIR", Value: target}}); err == nil {
+		t.Fatal("linked directory accepted as config")
+	}
+}

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/agent-dance/agent-adaptor/driver"
 	"golang.org/x/sys/windows"
 )
 
@@ -74,5 +75,26 @@ func TestCursorWindowsPrivateDescriptorRejectsWrongOwnerAndUnprotectedACL(t *tes
 		if err := validateCursorWindowsDescriptor(sd, false); err == nil {
 			t.Fatal("unsafe owner/DACL accepted")
 		}
+	}
+}
+
+func TestCursorWindowsOfficialEnvironmentNamesAreCaseInsensitive(t *testing.T) {
+	cursorPathTestEnvironment(t)
+	config, data, xdg := t.TempDir(), t.TempDir(), t.TempDir()
+	env := []driver.EnvBinding{{Name: "CURSOR_CONFIG_DIR", Value: t.TempDir()}, {Name: "cursor_config_dir", Value: config}, {Name: "cursor_data_dir", Value: data}, {Name: "xdg_config_home", Value: xdg}}
+	b, err := effectiveCursorBindingsNoInitialize(driver.CommonConfig{Env: env}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolveCursorConfigDir(b) != config || resolveCursorDataDir(b) != data {
+		t.Fatal("Windows explicit env lost last-wins case-insensitive selection")
+	}
+	env = append(env, driver.EnvBinding{Name: "cursor_config_dir", Value: ""})
+	b, err = effectiveCursorBindingsNoInitialize(driver.CommonConfig{Env: env}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolveCursorConfigDir(b) != filepath.Join(xdg, "cursor") {
+		t.Fatal("Windows lower-case XDG fallback was ignored")
 	}
 }

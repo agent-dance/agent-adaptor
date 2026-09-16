@@ -32,7 +32,7 @@ func cursorStaticConfig(bindings []driver.EnvBinding) ([]byte, error) {
 }
 
 func cursorConfiguration(bindings []driver.EnvBinding, guard bool) ([]byte, error) {
-	file, err := os.Open(filepath.Join(resolveCursorConfigDir(bindings), "cli-config.json"))
+	file, err := openCursorConfigFile(filepath.Join(resolveCursorConfigDir(bindings), "cli-config.json"))
 	values := map[string]json.RawMessage{}
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
@@ -79,4 +79,32 @@ func cursorConfiguration(bindings []driver.EnvBinding, guard bool) ([]byte, erro
 		return nil, err
 	}
 	return data, nil
+}
+
+// AuthLink is intentionally supported, but only when its fully resolved target
+// is regular. Nonblocking/no-follow platform opens also close the FIFO swap
+// window between inspection and opening; bounded reads alone cannot do that.
+func openCursorConfigFile(path string) (*os.File, error) {
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return nil, err
+	}
+	before, err := os.Lstat(resolved)
+	if err != nil {
+		return nil, err
+	}
+	if !before.Mode().IsRegular() || before.Size() > 1<<20 {
+		return nil, fmt.Errorf("cursor CLI configuration must be a bounded regular file")
+	}
+	f, err := openCursorRegularFile(resolved)
+	if err != nil {
+		return nil, err
+	}
+	opened, statErr := f.Stat()
+	current, pathErr := os.Lstat(resolved)
+	if statErr != nil || pathErr != nil || !opened.Mode().IsRegular() || !current.Mode().IsRegular() || !os.SameFile(before, opened) || !os.SameFile(before, current) {
+		f.Close()
+		return nil, fmt.Errorf("cursor CLI configuration identity changed")
+	}
+	return f, nil
 }

@@ -169,7 +169,9 @@ auth probes use the actual separate config root. A clone from that Native root
 copies requested MCP/skills from the resource root and settings/auth from the
 config root; it never imports chats, projects or history. `IncludeSettings`
 with AuthNone copies only the installed CLI's recognized static configuration
-fields, excluding authentication, cache/history and unknown fields. AuthLink
+fields, excluding authentication, cache/history and unknown fields. Mixed config
+reads require bounded regular files, with handle/path identity validation and
+nonblocking/no-follow opens; legitimate AuthLink targets remain supported. AuthLink
 and AuthCopy retain their explicit existing mixed-file selection semantics.
 
 An isolated invocation owns this layout:
@@ -211,7 +213,11 @@ replace `--data-dir` or `--plugin-dir`. Read-only resolution creates no executio
 HOME. Random projection paths never enter stable compatibility fingerprints.
 The Driver guard hashes canonical config JSON (only formal `authInfo` is
 excluded; unknown fields and caches remain), plus sorted actual agents/hooks
-paths, content and permission modes. It excludes dynamic hosted MCP endpoint
+paths, content and permission modes. The same reads that create the isolated
+agents/hooks projection produce its guard, using stable source-relative names.
+Native agents use their copied plugin snapshot; Native hooks have a prelaunch
+source guard and remain subject to external edits before the CLI's own read.
+It excludes dynamic hosted MCP endpoint
 and credential values owned by the existing resolved invocation contract.
 Missing proofs in old checkpoints reject before launch with ErrResumeRejected;
 ResumeOnly preserves the old healthy store, and continue-or-start retains the

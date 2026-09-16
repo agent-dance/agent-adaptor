@@ -24,7 +24,7 @@ const cursorProjectionOwner = "agent-adaptor/cursor-run-projection/v1\n"
 // session/config roots remain in the selected profile, outside this temporary
 // HOME. The parent profile coordinator owns persistent resource serialization;
 // unique run directories avoid introducing another writer or lock contract.
-func prepareCursorProjection(ctx context.Context, profileDir string, isolated bool, skills driver.ResolvedSkills, bindings []driver.EnvBinding) (out []driver.EnvBinding, pluginDir string, cleanup func() error, returnErr error) {
+func prepareCursorProjection(ctx context.Context, profileDir string, isolated bool, skills driver.ResolvedSkills, bindings []driver.EnvBinding, snapshot ...*string) (out []driver.EnvBinding, pluginDir string, cleanup func() error, returnErr error) {
 	parent := ""
 	if isolated {
 		if err := prepareCursorPrivateHome(profileDir); err != nil {
@@ -109,7 +109,7 @@ func prepareCursorProjection(ctx context.Context, profileDir string, isolated bo
 		return nil, "", cleanup, err
 	}
 	defer source.Close()
-	budget := &cursorProjectionBudget{ctx: ctx, profileDir: profileDir}
+	budget := &cursorProjectionBudget{ctx: ctx, profileDir: profileDir, static: map[string]string{}}
 	if isolated {
 		for _, name := range []string{"mcp.json", "hooks.json", "skills"} {
 			if err := copyCursorProjection(source, name, root, filepath.Join(".cursor", name), skills, budget); err != nil {
@@ -119,6 +119,21 @@ func prepareCursorProjection(ctx context.Context, profileDir string, isolated bo
 	}
 	if err := copyCursorProjection(source, "agents", root, filepath.Join("agents-plugin", "agents"), driver.ResolvedSkills{}, budget); err != nil {
 		return nil, "", cleanup, err
+	}
+	if !isolated {
+		// Native hooks remain at the official HOME path. This is a bounded
+		// prelaunch source guard; unlike the plugin agents it is not a
+		// frozen copy of bytes that the CLI will later read independently.
+		if err := copyCursorProjection(source, "hooks.json", nil, "hooks.json", driver.ResolvedSkills{}, budget); err != nil {
+			return nil, "", cleanup, err
+		}
+	}
+	state, err := cursorProjectionState(budget.static)
+	if err != nil {
+		return nil, "", cleanup, err
+	}
+	if len(snapshot) > 0 && snapshot[0] != nil {
+		*snapshot[0] = state
 	}
 	if _, err := root.Stat("agents-plugin"); err == nil {
 		pluginDir = filepath.Join(home, "agents-plugin")
@@ -206,8 +221,8 @@ func copyCursorProjection(source *os.Root, name string, target *os.Root, dest st
 		return copyCursorProjection(external, ".", target, dest, driver.ResolvedSkills{}, budget)
 	}
 	if info.IsDir() {
-		if budget.static != nil {
-			budget.static[filepath.ToSlash(dest)] = fmt.Sprintf("directory:%o", info.Mode().Perm())
+		if key := cursorStaticProjectionPath(dest); budget.static != nil && key != "" {
+			budget.static[key] = fmt.Sprintf("directory:%o", info.Mode().Perm())
 		}
 		if target != nil {
 			if err := cursorPrivateMkdirAll(target, dest); err != nil {
@@ -256,8 +271,8 @@ func copyCursorProjection(source *os.Root, name string, target *os.Root, dest st
 	if len(data) > 8<<20 || budget.bytes > 32<<20 {
 		return fmt.Errorf("cursor resource projection exceeds byte limit")
 	}
-	if budget.static != nil {
-		budget.static[filepath.ToSlash(dest)] = fmt.Sprintf("file:%o:%x", info.Mode().Perm(), sha256.Sum256(data))
+	if key := cursorStaticProjectionPath(dest); budget.static != nil && key != "" {
+		budget.static[key] = fmt.Sprintf("file:%o:%x", info.Mode().Perm(), sha256.Sum256(data))
 	}
 	if target == nil {
 		return nil
@@ -375,7 +390,11 @@ func cursorResourceState(ctx context.Context, profileDir string) (string, error)
 			}
 		}
 	}
-	data, err := json.Marshal(budget.static)
+	return cursorProjectionState(budget.static)
+}
+
+func cursorProjectionState(snapshot map[string]string) (string, error) {
+	data, err := json.Marshal(snapshot)
 	if err != nil {
 		return "", err
 	}
@@ -422,4 +441,17 @@ func cursorPrivateMkdirAll(root *os.Root, dir string) error {
 		}
 	}
 	return nil
+}
+
+// Normalize only our fixed projection layout to stable source-relative names.
+func cursorStaticProjectionPath(dest string) string {
+	name := filepath.ToSlash(dest)
+	if name == "hooks.json" || name == ".cursor/hooks.json" {
+		return "hooks.json"
+	}
+	name = strings.TrimPrefix(name, "agents-plugin/")
+	if name == "agents" || strings.HasPrefix(name, "agents/") {
+		return name
+	}
+	return ""
 }
