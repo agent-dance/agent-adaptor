@@ -92,3 +92,42 @@ Drivers still need no rich run.* frames. Independent suite-entry oracles use
 an in-memory Driver, preserving the distinction between verifier coverage and
 real provider evidence. Merge these clarifications with OBS-03 / EVT-10 in the
 conformance guide; exported declarations and runtime behavior are unchanged.
+
+
+## R030 / T30-F02 live success oracle repair
+
+The shared suite previously accepted a structurally valid failed Response as a
+successful live probe: nil Go error, exit 1, empty Output and no checkpoint could
+pass `live_run`. Generic `VerifyOutcome` still accepts correctly represented
+failures, as required by the Driver SPI. Only the two live success probes now
+require a healthy process outcome (no Go error, exit 0, no signal/timeout/Failure).
+A resume-capable Driver must also supply a healthy checkpoint that survives its
+SessionCodec; a Driver without resume support does not acquire that requirement.
+
+`WithLiveRun("")` retains the exact prompt `Reply with exactly: OK` and now checks
+for `OK`, ignoring surrounding whitespace. A nondefault prompt is still passed
+byte-for-byte and retains its prior application-defined text semantics, including
+an intentionally empty answer. `adaptertest.WithLiveExpectedOutput` is an optional
+suite-only expectation for those custom probes, independent of option order;
+its explicitly empty argument is meaningful and later expectations win. It adds
+no root option, Driver SPI field or consumer execution concept.
+
+The native schema probe must return exactly `{"ok":true}` with native source and
+Valid=true. RawJSON must encode the single requested object, with no duplicate
+or extra property or trailing document. If the optional decoded Value is present,
+it must encode the same business value. A nil Value remains legal under the SPI.
+Failure diagnostics preserve outcome flags, complete-byte lengths and SHA-256
+integrity for raw/terminal/structured layers while withholding provider text,
+identifiers, JSON keys/values and validation errors. Shared code never guesses
+provider-specific terminal semantics. Provider owners retain isolated diagnostic
+responsibility.
+
+Targets for the central documentation owner: conformance guide LIV-01–03/SO-02
+and CHANGELOG testing notes. Package godoc is synchronized here. Deterministic
+subprocess tests invoke the actual public TestDriver live entry points using an
+in-memory Driver, with independent positive/negative controls and a synthetic
+secret canary. Archived original failures demonstrate the old false successes;
+these fixtures are never represented as real provider execution. The four
+providers' final gated matrix must use the merged oracle at the same final SHA
+and is executed by non-authors under R030. This handoff does not claim that live
+matrix has passed or alter the prior canonical completion record.

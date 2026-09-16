@@ -215,6 +215,9 @@ func (d referenceDriver) Run(ctx context.Context, req driver.Request, sink drive
 	// Final assistant text; structured-output requests produce the exact
 	// JSON value instead (SO-02).
 	output := "Reference reply: " + req.Prompt
+	if req.Prompt == DefaultLivePrompt {
+		output = "OK"
+	}
 	var structured *driver.StructuredOutput
 	if req.OutputSchema != nil {
 		raw := json.RawMessage(`{"ok":true}`)

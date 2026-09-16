@@ -23,9 +23,11 @@
 // # Contract clause catalogue
 //
 // Every failure message carries one of the numbered clauses below. The
-// authority for each clause is the godoc in package driver (file noted per
-// group); clauses marked (opt-in) run only when the corresponding Option
-// is passed, and clauses marked (live) require WithLiveRun.
+// authority for SPI clauses is the godoc in package driver (file noted per
+// group). LIV clauses assert the requested live probe succeeded, beyond the
+// structural SPI rules that also apply to correctly represented failures.
+// Clauses marked (opt-in) run only when the corresponding Option is passed,
+// and clauses marked (live) require WithLiveRun.
 //
 // Core driver and config (driver/driver.go: Driver, Descriptor):
 //
@@ -82,7 +84,9 @@
 //	       not discard Ask transport requirements during batch fallback and
 //	       rejects unsupported combinations before acquiring resources.
 //	SO-02  (live, opt-in) a native structured run yields StructuredOutput with
-//	       Source=native, Valid=true and parseable RawJSON.
+//	       Source=native, Valid=true and RawJSON containing exactly the requested
+//	       object {"ok":true}, without extra/duplicate properties or trailing
+//	       documents. Value, when populated, must represent the same object.
 //	SO-03  Suite guarantee: no probe requests a mechanism or transport shape
 //	       the descriptor does not declare.
 //
@@ -169,7 +173,24 @@
 //	TRN-03  tool_result requires ToolUseID.
 //	TRN-04  Delta is allowed on assistant and thinking only.
 //
-// Response invariants (live; driver/run.go):
+// Live success probes (WithLiveRun and WithLiveStructuredOutput):
+//
+//	LIV-01  Both probes require no Go error, exit 0, no signal, no timeout and
+//	        no provider Failure. A legal failed Response cannot pass a probe
+//	        that specifically asks the provider to succeed.
+//	LIV-02  DefaultLivePrompt requires Output "OK", ignoring surrounding
+//	        whitespace. Custom prompts retain their exact bytes and existing
+//	        application-defined output semantics; WithLiveExpectedOutput adds
+//	        an optional trimmed comparison, including an explicit empty value.
+//	LIV-03  Resume-capable live success requires a valid resumable checkpoint
+//	        satisfying RSP-04. A Driver without resume support needs none.
+//
+// Live failures report clause identities and bounded status/byte-length/digest
+// diagnostics. Provider-controlled error text, stderr, identifiers and JSON
+// keys/values are withheld. Provider-specific diagnostics remain the owner's
+// responsibility; the shared suite does not interpret terminal protocols.
+//
+// Response invariants (successes and failures; driver/run.go):
 //
 //	RSP-01  Checkpoint.Valid=true requires State with a ResumeID and a clean
 //	        outcome (Driver.Run error nil, exit 0, no signal/timeout/Failure).

@@ -33,6 +33,7 @@ type suiteConfig struct {
 	rejectForeign        bool
 	syncSkillsProbe      bool
 	livePrompt           string
+	liveExpectedOutput   *string
 	liveTimeout          time.Duration
 	liveSkipReason       string
 	liveStructured       bool
@@ -91,7 +92,9 @@ func WithSyncSkillsProbe() Option { return func(c *suiteConfig) { c.syncSkillsPr
 // WithLiveRun enables the live execution probes (EVT-*, RUN-*, TRN-*,
 // RSP-*): the suite invokes Run against the real provider with prompt.
 // An empty prompt selects DefaultLivePrompt. Callers gate this on CLI
-// availability; see SkipLiveRun.
+// availability; see SkipLiveRun. DefaultLivePrompt requires Output "OK"
+// (apart from surrounding whitespace). A custom prompt is passed unchanged;
+// use WithLiveExpectedOutput to express its application-specific text result.
 func WithLiveRun(prompt string) Option {
 	return func(c *suiteConfig) {
 		if prompt == "" {
@@ -99,6 +102,17 @@ func WithLiveRun(prompt string) Option {
 		}
 		c.livePrompt = prompt
 	}
+}
+
+// WithLiveExpectedOutput additionally checks the live text probe's Output after
+// trimming surrounding whitespace, against output trimmed the same way. The
+// expected value may be empty, for a custom probe that intentionally has no text.
+// It does not change the prompt and is independent of WithLiveRun option order.
+// Without this option, DefaultLivePrompt requires OK; a custom prompt retains
+// its existing application-defined output semantics. This option affects only
+// live_run, not the fixed native structured-output probe or VerifyOutcome.
+func WithLiveExpectedOutput(output string) Option {
+	return func(c *suiteConfig) { c.liveExpectedOutput = &output }
 }
 
 // WithLiveRunTimeout overrides the live run deadline (default 5 minutes).
@@ -634,30 +648,32 @@ func checkLiveRun(t *testing.T, d driver.Driver, c *suiteConfig) {
 		req.Workspace = driver.WorkspaceLease{ID: "adaptertest-ws", CWD: c.workspaceCWD}
 	}
 	resp, err := d.Run(ctx, req, sink)
-	reportViolations(t, VerifyOutcome(&resp, err))
-	if err != nil {
-		t.Fatalf("live run failed: %v\nstderr tail: %s", err, rawStderrTail(&resp))
+	if !checkLiveSuccess(t, d, &resp, err) {
+		return
 	}
 
-	reportViolations(t, VerifyRunEvents(sink.Events()))
+	reportLiveViolations(t, VerifyRunEvents(sink.Events()))
 	if support, ok := d.(driver.StreamSupport); ok {
-		reportViolations(t, VerifyStreamSequence(sink.Stream()))
-		reportViolations(t, VerifyStreamCapability(support.StreamCapability(), sink.Stream()))
+		reportLiveViolations(t, VerifyStreamSequence(sink.Stream()))
+		reportLiveViolations(t, VerifyStreamCapability(support.StreamCapability(), sink.Stream()))
 	} else {
 		// Observation facts retain SDK envelope authority without implying the
 		// optional rich text/tool protocol.
-		reportViolations(t, verifyObservationSequence(sink.Stream()))
+		reportLiveViolations(t, verifyObservationSequence(sink.Stream()))
 	}
-	reportViolations(t, verifyObservationSupport(d.Descriptor().Observation.Streaming, sink.Stream()))
-	reportViolations(t, VerifyTranscriptMirror(sink.Events(), resp.Transcript))
-	if resp.Output == "" {
-		t.Log("note: live run returned an empty Output")
+	reportLiveViolations(t, verifyObservationSupport(d.Descriptor().Observation.Streaming, sink.Stream()))
+	reportLiveViolations(t, VerifyTranscriptMirror(sink.Events(), resp.Transcript))
+	expected := c.liveExpectedOutput
+	if expected == nil && c.livePrompt == DefaultLivePrompt {
+		value := "OK"
+		expected = &value
 	}
-
-	reportViolations(t, VerifyCheckpointCodec(d, &resp))
+	if expected != nil && strings.TrimSpace(resp.Output) != strings.TrimSpace(*expected) {
+		t.Error("LIV-02: live output did not match the explicitly requested probe result")
+	}
 	if resp.Checkpoint != nil && resp.Checkpoint.Valid && resp.Checkpoint.State != nil {
 		if got, want := resp.Checkpoint.State.Data[driver.SessionParamProfileFingerprint], req.ProfilePayload.SessionFingerprint(); got != want {
-			t.Errorf("SES-09: checkpoint profile fingerprint = %q, want current session compatibility fingerprint %q", got, want)
+			t.Error("SES-09: checkpoint profile fingerprint differs from the current session compatibility fingerprint")
 		}
 	}
 }
@@ -697,40 +713,12 @@ func checkLiveStructuredOutput(t *testing.T, d driver.Driver, desc driver.Descri
 		req.Workspace = driver.WorkspaceLease{ID: "adaptertest-ws-structured", CWD: c.workspaceCWD}
 	}
 	resp, err := d.Run(ctx, req, sink)
-	reportViolations(t, VerifyOutcome(&resp, err))
-	if err != nil {
-		t.Fatalf("SO-02: native structured run failed: %v\nstderr tail: %s", err, rawStderrTail(&resp))
+	if !checkLiveSuccess(t, d, &resp, err) {
+		return
 	}
 	// Batch observation facts obey the same SDK envelope authority; they need
 	// not include rich run.started/run.finished frames.
-	reportViolations(t, verifyObservationSequence(sink.Stream()))
-	reportViolations(t, verifyObservationSupport(desc.Observation.Batch, sink.Stream()))
-	result := resp.StructuredOutput
-	if result == nil {
-		t.Fatal("SO-02: native run returned nil StructuredOutput; native enforcement must report the validated business value (StructuredOutput docs)")
-	}
-	if result.Source != driver.StructuredOutputSourceNative {
-		t.Errorf("SO-02: StructuredOutput.Source = %q, want %q", result.Source, driver.StructuredOutputSourceNative)
-	}
-	if !result.Valid {
-		t.Errorf("SO-02: StructuredOutput.Valid = false (validation errors: %v)", result.ValidationErrors)
-	}
-	if len(result.RawJSON) == 0 || !json.Valid(result.RawJSON) {
-		t.Errorf("SO-02: StructuredOutput.RawJSON is not a valid JSON document: %q", string(result.RawJSON))
-	}
-}
-
-func rawStderrTail(resp *driver.Response) string {
-	if resp == nil || resp.RawStreams == nil {
-		return "(no raw streams)"
-	}
-	stderr := strings.TrimSpace(resp.RawStreams.Stderr)
-	if stderr == "" {
-		return "(empty)"
-	}
-	const max = 2000
-	if len(stderr) > max {
-		stderr = stderr[len(stderr)-max:]
-	}
-	return stderr
+	reportLiveViolations(t, verifyObservationSequence(sink.Stream()))
+	reportLiveViolations(t, verifyObservationSupport(desc.Observation.Batch, sink.Stream()))
+	checkLiveStructuredValue(t, resp.StructuredOutput)
 }
