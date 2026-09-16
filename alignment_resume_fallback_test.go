@@ -77,9 +77,16 @@ func alignmentCheckFallbackAttempt(t *testing.T, services, streaming bool, outco
 	rejected := &engine.ResumeRejectedError{Cause: rejectCause}
 	freshCause := errors.New("fresh provider failed")
 	d := newSessionFake("fallback")
+	d.streamCaps = driver.StreamCapability{Native: true}
+	descriptor := d.Descriptor()
+	descriptor.Observation.Streaming = driver.ObservationSupport{MCP: true, Todos: true}
+	d.descriptor = &descriptor
 	original := d.runFunc
 	var coreRunID string
 	d.runFunc = func(ctx context.Context, req driver.Request, sink driver.EventSink) (driver.Response, error) {
+		if !req.Streaming {
+			t.Error("fixture requires the declared rich transport for both Run and Stream")
+		}
 		emit := func(p driver.StreamPayload) {
 			t.Helper()
 			if err := sink.EmitStream(p); err != nil {
