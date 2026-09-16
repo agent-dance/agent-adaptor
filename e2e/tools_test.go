@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -12,8 +13,10 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -22,6 +25,7 @@ import (
 	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/memory"
 	"github.com/agent-dance/agent-adaptor/profile"
+	"github.com/agent-dance/agent-adaptor/threadstore"
 	"github.com/agent-dance/agent-adaptor/tool"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -38,6 +42,15 @@ const (
 // checkpoint creation; the child only performs the work a provider CLI would.
 func TestMain(m *testing.M) {
 	if os.Getenv(toolE2EHelperEnv) == "1" {
+		// Record entry before any provider work, including unsuccessful starts.
+		file, err := os.OpenFile(os.Getenv(toolE2EObservationEnv)+".spawns", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+		if err != nil {
+			os.Exit(40)
+		}
+		_, writeErr := file.WriteString("spawn\n")
+		if err := errors.Join(writeErr, file.Close()); err != nil {
+			os.Exit(41)
+		}
 		os.Exit(runToolProviderFixture())
 	}
 	os.Exit(m.Run())
@@ -57,6 +70,7 @@ type toolE2EObservation struct {
 	Tools                    []string `json:"tools"`
 	Result                   string   `json:"result"`
 	Unauthorized             int      `json:"unauthorized_status"`
+	SessionID                string   `json:"session_id"`
 	ResumeRequested          bool     `json:"resume_requested"`
 	BearerEnvironment        string   `json:"bearer_environment"`
 	ProfileDir               string   `json:"profile_dir"`
@@ -107,7 +121,7 @@ func testHostDefinedToolsProfileLifecycle(t *testing.T, persistent bool) {
 		tool.Idempotent(),
 		tool.Revision("host_echo/v1"),
 	)
-	store := memory.NewStore()
+	store := &toolE2EStore{Store: memory.NewStore()}
 	newAgent := func() *adaptor.Agent {
 		return adaptor.New(
 			cursor.Driver(cursor.Config{CommonConfig: cursor.CommonConfig{
@@ -145,8 +159,15 @@ func testHostDefinedToolsProfileLifecycle(t *testing.T, persistent bool) {
 	if first.Text != "host:first" || second.Text != "host:second" {
 		t.Fatalf("normal Result pipeline text = %q, %q", first.Text, second.Text)
 	}
-	if !hasToolTranscript(first) || !hasToolTranscript(second) {
-		t.Fatal("provider tool call did not reach the normal Transcript pipeline")
+	assertToolE2EResult(t, first, "first")
+	assertToolE2EResult(t, second, "second")
+	healthy, err := store.Resolve(ctx, threadstore.Query{Key: "host-tools-e2e"})
+	if err != nil || healthy == nil || healthy.State == nil {
+		t.Fatalf("healthy stored record: %v", err)
+	}
+	healthyCheckpoint, err := thread.Checkpoint(ctx)
+	if err != nil || !healthyCheckpoint.Valid || !reflect.DeepEqual(healthy.State, healthyCheckpoint.State) {
+		t.Fatalf("healthy checkpoint: %v", err)
 	}
 
 	observations := readToolE2EObservations(t, observationsPath)
@@ -163,6 +184,10 @@ func testHostDefinedToolsProfileLifecycle(t *testing.T, persistent bool) {
 		observations[0].TokenHash != observations[1].TokenHash {
 		t.Fatal("Agent-owned tool runtime identity changed between Thread turns")
 	}
+	if observations[0].SessionID == "" || observations[0].SessionID != observations[1].SessionID || observations[1].SessionID != healthy.State.ResumeID {
+		t.Fatal("same-Agent turns did not retain provider session identity")
+	}
+	assertToolE2ESpawns(t, observationsPath, 2)
 	if observations[0].ResumeRequested || !observations[1].ResumeRequested {
 		t.Fatalf("provider resume flags = %v, %v", observations[0].ResumeRequested, observations[1].ResumeRequested)
 	}
@@ -203,20 +228,64 @@ func testHostDefinedToolsProfileLifecycle(t *testing.T, persistent bool) {
 			_ = secondAgent.Close(context.Background())
 		}
 	})
+	if !persistent {
+		// A deleted temporary profile cannot recover its provider files from a
+		// stored resume ID. Prove rejection before any replacement child starts.
+		rejected, resumeErr := secondAgent.Thread("host-tools-e2e", adaptor.ResumeOnly()).Run(ctx, "must not dispatch")
+		if rejected != nil || !errors.Is(resumeErr, adaptor.ErrResumeRejected) {
+			t.Fatalf("temporary ResumeOnly must reject the missing profile before spawn: %v", resumeErr)
+		}
+		assertToolE2ESpawns(t, observationsPath, 2)
+		if got := len(readToolE2EObservations(t, observationsPath)); got != 2 {
+			t.Fatalf("ResumeOnly delivered provider work: %d observations", got)
+		}
+		after, err := store.Resolve(ctx, threadstore.Query{Key: "host-tools-e2e"})
+		if err != nil || !reflect.DeepEqual(healthy, after) {
+			t.Fatalf("ResumeOnly changed the healthy record: %v", err)
+		}
+		checkpoint, err := secondAgent.Thread("host-tools-e2e").Checkpoint(ctx)
+		if err != nil || !reflect.DeepEqual(healthyCheckpoint, checkpoint) {
+			t.Fatalf("ResumeOnly changed the healthy checkpoint: %v", err)
+		}
+		if len(store.committed()) != 2 {
+			t.Fatal("ResumeOnly finalized a record")
+		}
+	}
 	third, err := secondAgent.Thread("host-tools-e2e").Run(ctx, "third")
 	if err != nil {
 		t.Fatalf("cross-Agent Thread resume: %v", err)
 	}
-	if third.Text != "host:third" || !hasToolTranscript(third) {
-		t.Fatalf("cross-Agent Result = %#v", third)
-	}
+	assertToolE2EResult(t, third, "third")
+	assertToolE2ESpawns(t, observationsPath, 3)
 	observations = readToolE2EObservations(t, observationsPath)
 	if len(observations) != 3 {
 		t.Fatalf("provider observations after restart = %d, want 3", len(observations))
 	}
 	restarted := observations[2]
-	if !restarted.ResumeRequested {
-		t.Fatal("new Agent did not resume the existing Thread checkpoint")
+	if restarted.ResumeRequested != persistent {
+		t.Fatalf("cross-Agent resume = %v, want %v", restarted.ResumeRequested, persistent)
+	}
+	current, err := store.Resolve(ctx, threadstore.Query{Key: "host-tools-e2e"})
+	checkpoint, checkpointErr := secondAgent.Thread("host-tools-e2e").Checkpoint(ctx)
+	if err != nil || checkpointErr != nil || current == nil || current.Status != threadstore.StatusActive || current.State == nil || !checkpoint.Valid || !reflect.DeepEqual(current.State, checkpoint.State) || current.State.ResumeID != restarted.SessionID {
+		t.Fatalf("third checkpoint not persisted: %v / %v", err, checkpointErr)
+	}
+	commits := store.committed()
+	if len(commits) != 3 {
+		t.Fatalf("successful turns finalized %d times, want 3", len(commits))
+	}
+	last := commits[2]
+	if !reflect.DeepEqual(last.before, healthy) || !reflect.DeepEqual(last.after, current) {
+		t.Fatal("old healthy record changed before the single final commit")
+	}
+	if persistent {
+		if restarted.SessionID != healthy.State.ResumeID || current.ID != healthy.ID || last.archiveOld {
+			t.Fatal("Dedicated did not resume the same healthy session/record")
+		}
+	} else {
+		if restarted.SessionID == healthy.State.ResumeID || current.ID == healthy.ID || !last.archiveOld || !last.rebindActive || last.previousID != healthy.ID || last.archived == nil || last.archived.Status != threadstore.StatusArchived || !reflect.DeepEqual(last.archived.State, healthy.State) {
+			t.Fatal("temporary fresh checkpoint did not atomically save/archive/rebind the old healthy record")
+		}
 	}
 	if restarted.Endpoint == observations[0].Endpoint || restarted.TokenHash == observations[0].TokenHash {
 		t.Fatalf("restarted Tool runtime identity was not renewed: before=%#v after=%#v", observations[0], restarted)
@@ -303,12 +372,74 @@ func hasToolTranscript(result *adaptor.Result) bool {
 	if result == nil {
 		return false
 	}
+	call, response := false, false
 	for _, item := range result.Transcript() {
-		if item.Kind == driver.TranscriptToolCall || item.Kind == driver.TranscriptToolResult {
-			return true
+		call = call || item.Kind == driver.TranscriptToolCall
+		response = response || item.Kind == driver.TranscriptToolResult
+	}
+	return call && response
+}
+
+func assertToolE2EResult(t *testing.T, result *adaptor.Result, prompt string) {
+	t.Helper()
+	if result == nil || result.Text != "host:"+prompt || !hasToolTranscript(result) {
+		t.Fatalf("incomplete normal Result/Transcript for %s", prompt)
+	}
+	raw := result.Raw()
+	if raw.Terminal == nil || !strings.Contains(raw.Stdout, `"type":"tool_call"`) || !strings.Contains(raw.Stdout, `"result":"host:`+prompt+`"`) || raw.Stderr != "host-tools-e2e provider: "+prompt+"\n" {
+		t.Fatalf("incomplete Raw/terminal for %s", prompt)
+	}
+}
+
+func assertToolE2ESpawns(t *testing.T, path string, want int) {
+	t.Helper()
+	data, err := os.ReadFile(path + ".spawns")
+	if err != nil || string(data) != strings.Repeat("spawn\n", want) {
+		t.Fatalf("provider spawn count = %d, want %d (%v)", strings.Count(string(data), "\n"), want, err)
+	}
+}
+
+// Observe the public atomic Finalize boundary while delegating all persistence
+// and lease validation to the real memory store, without a second store model.
+type toolE2EStore struct {
+	*memory.Store
+	mu      sync.Mutex
+	commits []toolE2ECommit
+}
+type toolE2ECommit struct {
+	before, after, archived  *threadstore.Record
+	previousID               string
+	archiveOld, rebindActive bool
+}
+
+func (s *toolE2EStore) Finalize(ctx context.Context, req threadstore.FinalizeRequest) error {
+	before, err := s.Store.Resolve(ctx, threadstore.Query{Key: req.Key})
+	if err != nil {
+		return err
+	}
+	if err := s.Store.Finalize(ctx, req); err != nil {
+		return err
+	}
+	after, err := s.Store.Resolve(ctx, threadstore.Query{Key: req.Key})
+	if err != nil {
+		return err
+	}
+	var archived *threadstore.Record
+	if req.ArchiveOld {
+		archived, err = s.Store.Resolve(ctx, threadstore.Query{ID: req.PreviousID, IncludeArchived: true})
+		if err != nil {
+			return err
 		}
 	}
-	return false
+	s.mu.Lock()
+	s.commits = append(s.commits, toolE2ECommit{before: before, after: after, archived: archived, previousID: req.PreviousID, archiveOld: req.ArchiveOld, rebindActive: req.RebindActive})
+	s.mu.Unlock()
+	return nil
+}
+func (s *toolE2EStore) committed() []toolE2ECommit {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]toolE2ECommit(nil), s.commits...)
 }
 
 func runToolProviderFixture() int {
@@ -396,6 +527,17 @@ func runToolProviderFixture() int {
 	if err != nil && !os.IsNotExist(err) {
 		return 32
 	}
+	profileDigest := sha256.Sum256([]byte(profileDir))
+	sessionID := "host-tools-e2e-" + hex.EncodeToString(profileDigest[:16])
+	resumeID := ""
+	for i, argument := range os.Args[1:] {
+		if argument == "--resume" && i+2 < len(os.Args) {
+			resumeID = os.Args[i+2]
+		}
+	}
+	if (resumeID != "") != (len(previousSession) > 0) || resumeID != "" && resumeID != sessionID {
+		return 37
+	}
 	if err := os.WriteFile(sessionPath, append(previousSession, []byte(prompt+"\n")...), 0o600); err != nil {
 		return 33
 	}
@@ -428,6 +570,7 @@ func runToolProviderFixture() int {
 		Tools:                    toolNames,
 		Result:                   result,
 		Unauthorized:             unauthorized,
+		SessionID:                sessionID,
 		ResumeRequested:          containsArgument(os.Args[1:], "--resume"),
 		BearerEnvironment:        envName,
 		ProfileDir:               profileDir,
@@ -438,27 +581,28 @@ func runToolProviderFixture() int {
 		return 30
 	}
 
+	fmt.Fprintln(os.Stderr, "host-tools-e2e provider: "+prompt)
 	emitCursorFrame(map[string]any{
-		"type": "system", "subtype": "init", "session_id": "host-tools-e2e-session",
+		"type": "system", "subtype": "init", "session_id": sessionID,
 	})
 	emitCursorFrame(map[string]any{
-		"type": "tool_call", "subtype": "started", "session_id": "host-tools-e2e-session", "call_id": "call-1",
+		"type": "tool_call", "subtype": "started", "session_id": sessionID, "call_id": "call-1",
 		"tool_call": map[string]any{"hostedToolCall": map[string]any{"args": map[string]any{"value": prompt}}},
 	})
 	emitCursorFrame(map[string]any{
-		"type": "tool_call", "subtype": "completed", "session_id": "host-tools-e2e-session", "call_id": "call-1",
+		"type": "tool_call", "subtype": "completed", "session_id": sessionID, "call_id": "call-1",
 		"tool_call": map[string]any{"hostedToolCall": map[string]any{
 			"args":   map[string]any{"value": prompt},
 			"result": map[string]any{"success": map[string]any{"content": result}},
 		}},
 	})
 	emitCursorFrame(map[string]any{
-		"type": "assistant", "session_id": "host-tools-e2e-session",
+		"type": "assistant", "session_id": sessionID,
 		"message": map[string]any{"content": []any{map[string]any{"type": "text", "text": result}}},
 	})
 	emitCursorFrame(map[string]any{
 		"type": "result", "subtype": "success", "is_error": false,
-		"result": result, "session_id": "host-tools-e2e-session",
+		"result": result, "session_id": sessionID,
 	})
 	return 0
 }
