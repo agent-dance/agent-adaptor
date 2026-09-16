@@ -258,3 +258,28 @@ Claude 2.1.159 首次健康执行在 `.claude.json` 写入已完成初始化六�
 只移除上述顶层完整组合。真实 settings/model、projects、未知/嵌套字段、外部 MCP、manifest 所有权、资源内容和权限继续权威；CLI migration 若实际修改配置仍然不兼容。core 不执行 migration、不改写文件、不递归推测 provider 语义。空初始化基线的原 hash 保持；历史记录若原 hash 已包含这组完成元数据，则可能保守拒绝 ResumeOnly。健康记录和会话文件保持，continue-or-start 只能沿原流程在新的健康 checkpoint 原子提交后替换。禁止增加 legacy hash 候选、绕过 lease/store 或默默重写旧记录。
 
 跨进程 Run/Stream 正反例与原版真实 CLI 的有限前后诊断支持此闭集；它们不替代合流 S 的 T27 全矩阵及原生 Linux/Windows 验收。
+
+## R034：Cursor 正式根与投影快照
+
+上表固定根是共享 hosted profile 摘要的基线；Cursor Driver 另以正式路径与
+SessionCodec guard 补足 cli-config.json 和 agents/hooks，不能把整个混合配置文件
+当作无关 auth 忽略。config 根按 CURSOR_CONFIG_DIR → XDG_CONFIG_HOME/cursor →
+HOME/.cursor，data 根按 CURSOR_DATA_DIR → HOME/.cursor，资源根为实际HOME/.cursor。
+Native允许三根分离，Inspect如实报告；Dedicated/Clone/SDK CURSOR_HOME将官方
+config/data指向选中目录，资源经每轮独立私有HOME及agents-only插件交付。
+config-root/chats/md5(path.resolve(cwd))/sessionID/store.db 才是正式续接SQLite；
+同名project transcript目录不能替代它。
+
+配置guard仅排除正式authInfo，其余未知字段也参与；AuthNone clone的静态字段
+白名单只是seed策略，不放宽guard。配置读取必须有界regular、拒绝FIFO/设备与
+identity替换；合法AuthLink最终regular目标保留。Windows显式环境名按系统语义
+不区分大小写。agents/hooks投影的同次复制读取产生内容/path/mode摘要，不能先hash
+再独立读取一份内容；Native hooks保留启动前source guard，不宣称冻结CLI后续读取。
+
+私有根完整marker须原子no-replace发布；首次并发只观察完整根，每轮目录独立且
+清理核对owner及实际目录身份。Windows创建时使用protected owner/SYSTEM DACL并
+在写入/复用前验证，不能把chmod0700当ACL证明。未知链接/特殊节点拒绝，已解析且
+已证明的top-level managed skill link才允许复制。复制/遍历/清理有界，失败可观察；
+执行后的清理失败保留部分Response审计并撤销未提交checkpoint，不删persistent源。
+旧checkpoint缺少任一新证明时启动前ErrResumeRejected；ResumeOnly保持健康旧状态，
+正常continue-or-start仍仅按既定规则安全回退一次。

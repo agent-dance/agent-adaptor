@@ -186,7 +186,8 @@
     "为 Linux race/fuzz、Windows 常驻/profile/argv、禁用付费编译 live suite 设置可执行入口；保留原有安全/前端检查。",
     "检查构建 tag 与 env 双门、S1-S9、案例/fake driver运行入口；给最终四 live task 提供具体且非零测试命令清单，缺 fixture 时回 owner 补，不能只记一个 skip。",
     "R030 T30-F02：T30-AC01；live success 拒绝退出/信号/timeout/Failure/Go error，验证请求结果且保留通用 VerifyOutcome 合法失败合同。",
-    "R033：将T17新增Cursor目录隔离/原子发布/Windows ACL顶层正反例加入Windows collector必须PASS清单，并验证缺失或skip必拒绝。不得新增skip白名单或降低原T26矩阵；仅三个精确CI文件和own handoff。"
+    "R033：将T17新增Cursor目录隔离/原子发布/Windows ACL顶层正反例加入Windows collector必须PASS清单，并验证缺失或skip必拒绝。不得新增skip白名单或降低原T26矩阵；仅三个精确CI文件和own handoff。",
+    "R034：R033九项外加Windows环境大小写和实际交付snapshot两项，精确11项Cursor必过名；原21项保留总32项。Collector接受只证明门禁逻辑，原生T26通过后才满足T23-AC05的native证据。"
   ],
   "acceptance_criteria": [
     {

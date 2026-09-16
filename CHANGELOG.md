@@ -53,6 +53,26 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- Align Cursor selected profiles with its actual config, data and HOME resource
+  roots. Dedicated/Clone and legacy `CURSOR_HOME` deliver selected MCP, skills,
+  hooks and agents through owned per-run projections without importing unrelated
+  native resources. Preserve persistent chats, bounded cleanup and complete
+  failure audit; reject unsafe files, replacement directories and Windows ACL
+  changes. Native split roots remain supported and explicit Windows environment
+  names are case-insensitive.
+- Guard Cursor resumption with actual roots, static config and the agents/hooks
+  bytes used by the projection. Old checkpoints missing the new proofs reject
+  before launch; `ResumeOnly` retains healthy state and continue-or-start keeps
+  its one safe fallback. Preserve opaque official tool IDs with collision-free
+  normalization and accept only exact qualified MCP operation evidence.
+- Reset provider terminal/source/coordinates after successful safe resume
+  fallback preparation so a fresh attempt delivers its events. Keep one public
+  lifecycle, cumulative audit and same-attempt late-event suppression.
+- Apply `MaxArtifacts`, including explicit zero, to remote polling cancellation
+  and timeout partial results. Full opt-in `RemoteArtifacts`, cancellation causes
+  and bounded remote cancellation remain available; compact truncation emits the
+  same observable artifact-limit event as other result paths.
+
 - Keep Claude hosted-Tool cold resumption compatible after the CLI completes its
   known version-13 bootstrap. The pure fingerprint view excludes only the entire
   validated six-field initialization bundle; actual settings, unknown fields,

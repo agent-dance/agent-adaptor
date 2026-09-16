@@ -24,6 +24,13 @@ type Stream interface {
 
 Calling `Stream` only states that the host wants to observe live events; it does not force any particular provider protocol. Core selects the provider transport from the resolved invocation, the Driver's `StreamCapability`, and structured-output compatibility; the host has no additional streaming switch.
 
+When a Thread safely falls back from rejected resumption to a fresh provider
+attempt, the public Stream keeps its RunID, ordering and single lifecycle.
+Fresh text, tool and observation events remain deliverable; the rejected
+attempt's terminal and provider coordinates do not become the fresh terminal's
+source. Cumulative audit stays intact. Late payloads after a terminal remain
+suppressed within that same provider attempt.
+
 ## 2. Minimal consumer
 
 ```go

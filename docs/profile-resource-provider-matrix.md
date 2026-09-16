@@ -51,6 +51,32 @@ conservatively reject `ResumeOnly`; see the precise
 [fingerprint and migration boundary](./tools.md#threads-and-semantic-revisions).
 Actual resource and configuration drift remains incompatible.
 
+## Cursor roots and selected resources
+
+Cursor `2026.07.23-e383d2b` separates config, project data and native HOME
+resources. Native uses `CURSOR_CONFIG_DIR`, then `XDG_CONFIG_HOME/cursor`, then
+`HOME/.cursor` for config and resumable chats; `CURSOR_DATA_DIR` or `HOME/.cursor`
+for project transcripts; and actual `HOME/.cursor` for MCP/skills/hooks. The
+resumable SQLite store is under the config root, not the transcript directory.
+
+Dedicated, Clone and the SDK's legacy `CURSOR_HOME` pin both official roots to
+the selected profile. Per-run owned HOME resources and an agents-only plugin
+bring that selected profile into the existing print transport. Native preserves
+its HOME and valid split roots. `Inspect` reports these actual selections;
+config and auth probes use the config root. Clone `AuthNone` only copies the
+recognized static config fields, keeping authentication, history and unknown
+fields out of its seed.
+
+The Driver's session guard includes actual paths, static config and delivered
+agents/hooks snapshots. Only formal `authInfo` is excluded from the config guard;
+unknown fields remain authoritative. A guard predating those proofs can reject
+`ResumeOnly` without losing the previous record or files. The existing one-time
+safe continue-or-start fallback remains available. The complete layout, limits,
+AuthLink behavior and CLI evidence are in the
+[Cursor contract](../cursor/README-streaming.md#native-roots-selected-profiles-and-isolated-resource-delivery).
+These implementation and diagnostic records do not certify final native or live
+acceptance for an untested source SHA.
+
 ## CodeBuddy declared agents
 
 CodeBuddy 2.137.1's inspected loader reads `<profile>/agents/*.md` using YAML

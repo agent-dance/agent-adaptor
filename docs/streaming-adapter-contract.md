@@ -427,3 +427,20 @@ go vet ./adaptertest ./yourdriver/...
 ```
 
 Linux CI must additionally run race; key parsers and the archive parser run fuzz according to the repository convention.
+
+## Safe resume fallback and Cursor print identities
+
+A Driver attempt's terminal fence, terminal source and provider run/thread
+coordinates end with that attempt. Only successful safe fresh preparation can
+reset them. It keeps the public run envelope, cumulative audit, approval and
+observer ownership; even a late provider run.started cannot reopen a completed
+attempt. The regression explicitly declares native rich streaming and asserts
+the negotiated Request.Streaming value.
+
+Cursor print still exposes assistant transcript items through the existing
+Notice contract and does not advertise TextDelta streaming. Cancellation live
+checks act on an actually received same-run nonempty assistant item. Official
+opaque call IDs containing control characters use a collision-free reserved
+encoding shared by Transcript tool IDs and capability facts; Raw bytes stay
+unchanged. Qualified MCP labels are accepted only when equal to the explicit
+server identifier plus the explicit tool name, with every known alias validated.

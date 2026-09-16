@@ -402,6 +402,8 @@ R032：MERGE-F01 的合法协议反例与非合同压力记录分开，不能夸
 
 R033：Cursor新增私有HOME目录与Windows protected DACL、no-replace发布、并发首用、替换/链接/清理反例必须在原生Actions实际PASS。原T23仅精确扩三个CI文件，不扩大skip；原T30全矩阵纳入新增隔离与trust场景，包预算35m仅覆盖25.5m场景总和及有界清理，原逐场景时限不变。MERGE-F01的正式rich反例显式声明Native并断言Streaming，旧前提不足证据单列保留。
 
+R034：R030六路返修及MERGE-F01/F02已在各自精确worker SHA接受实施。Cursor正式config/data/HOME资源根、选中profile私有投影、同次copy的agents/hooks guard、FIFO/special文件拒绝和Windows环境大小写已交付；旧checkpoint缺证明按ResumeOnly保守拒绝及原安全fallback。仅authInfo排除config guard；Native hooks只承诺启动前source guard。T23原生Windows必过清单保留原21项并精确新增11项，共32项，不扩大skip。中央文档同步不代表最终G05/B06/G06通过；必须在完整同S重新验收，真实授权阻断不被文档伪造关闭。
+
 ## 15. 发布门禁
 
 发布前必须全部满足：

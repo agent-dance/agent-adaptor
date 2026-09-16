@@ -546,3 +546,12 @@ Capability start见证的是一次调用/输入接受，不是成功完成。正
 合同期验证限文档/任务图/签名状态机fixture静态审阅，不需要付费CLI、Windows或Linux runner。后续实现tests/live由表列owner和B05/B06验收；C03完成不表示W05/W09/W10/W12关闭，也不授权tag/push/release。
 
 G03 实现校核：A2A 新事实严格验证不反向扩大旧正文数值/可解析零时间限制；含新parent/source的旧事件独立校验保护字段。ThreadKey/flat ThreadID保留合法UTF-8及JSON转义字符，无单独2048-byte限额；明确列出的新ID上限和整个65536-byte上限不变。重复schema不能由foreign先出现绕过新kind拒绝；OccurredAt解码规范为等价UTC。T12 Merge非RunError deadline保留ReasonDeadlineExceeded，已有RunError主因优先，整个外层原错误图保持Is/As。实际delegate binding/publisher/domain映射仍由T18交付。
+
+## R034：安全回退的逐 attempt 终局边界
+
+MERGE-F01修复仅在原PrepareFresh成功后清除旧driverTerminal、terminalSource和
+provider run/thread坐标。fresh正式文本/tool/typed事实继续进入同一sink；公共RunID、
+Sequence、唯一生命周期、累计Raw/Transcript/Usage、observer、审批和预算归属不变。
+同attempt的terminal后任何rich payload（包括late run.started）仍被抑制。正式反例
+必须声明Native rich transport并逐Run断言Request.Streaming；旧未声明前提或非零
+Sequence压力记录不能充当正式合同证明，均作为历史单列保存。

@@ -229,6 +229,16 @@ execution.Dir spans claim, unique resolution, snapshot and Driver execution;
 different isolated directories can run concurrently, while runs sharing one
 profile cannot change each other's files midway through the snapshot.
 
+Cursor additionally guards its actual config/data/resource roots and native
+static configuration. A selected profile uses an owned per-run HOME projection;
+MCP/skills/hooks and the agents-only plugin come from that selected source while
+chat storage stays in the stable config root. The agents/hooks guard is computed
+from the actual copy reads; Native hooks have a pre-launch source guard because
+the CLI reads the original Native HOME. Old Cursor checkpoints missing the new
+proofs reject `ResumeOnly` before launch and retain healthy state. See the
+[Cursor directory and migration contract](../cursor/README-streaming.md#native-roots-selected-profiles-and-isolated-resource-delivery)
+for split Native roots, limits, cleanup and supported credential selection.
+
 `WithSpawn` replaces only the provider process. It does not restart the
 Agent-owned Tool runtime.
 

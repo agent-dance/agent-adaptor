@@ -117,8 +117,8 @@ Both existing `TestCursorDriverConformance` live probes and
 `AGENT_ADAPTOR_LIVE_CONFORMANCE=1`. Ordinary tests never invoke the real CLI,
 including when it is installed or that environment variable alone is set.
 Live tests allocate fresh HOME, USERPROFILE, CURSOR_HOME, and workspace paths,
-and never read/copy an operator profile. The authorized runner supplies API-key
-authentication through its environment, plus optional
+and never read/copy an operator profile. The authorized runner supplies approved
+credentials through its environment, plus optional
 `AGENT_ADAPTOR_CURSOR_COMMAND` and `AGENT_ADAPTOR_CURSOR_MODEL`. Once enabled,
 missing CLI or required formal evidence fails instead of being skipped.
 

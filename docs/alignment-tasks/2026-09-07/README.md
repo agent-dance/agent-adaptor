@@ -138,3 +138,5 @@ python3 docs/alignment-tasks/2026-09-07/validate.py \
 [R032](amendments/R032.md)：澄清安全回退合法协议反例，追加原T18的polling取消制品数量限制修复；补充任务不增加并发上限。
 
 [R033](amendments/R033.md)：Cursor新增Windows目录/ACL必过清单；T30完整矩阵包预算35m，逐场景时限不变。
+
+[R034](amendments/R034.md)：整合全部已审查返修、目录/续接/制品合同和11项Cursor Windows必过测试；最终同SHA门禁待执行。

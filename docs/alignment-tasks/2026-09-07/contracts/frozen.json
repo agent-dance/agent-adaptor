@@ -1,16 +1,16 @@
 {
   "schema_version": "1.0",
   "gate": "G05",
-  "manifest_revision": 32,
+  "manifest_revision": 33,
   "code_baseline": "919f140f64f89c80933802840c8878681a85a4d9",
   "source_head": "e2f0620bdd6477e6fe16f6db5648093589342ca2",
-  "status": "R033_native_gate_scope_and_budget_frozen_pending_final_integration",
+  "status": "R034_repair_implementation_integrated_pending_exact_G05_and_all_B06",
   "contracts": [
     {
       "producer": "C01",
       "path": "docs/alignment-tasks/2026-09-07/contracts/profile-lifecycle.md",
-      "sha256": "7c60d6c5db7576d6ed2799c8ccc286d76e443fbe7ff0b151e5d48c6e86c00c83",
-      "version": "1.2-g02-r024-r025-r027-r031",
+      "sha256": "23d336236fd54e6e3592e93f89d57d1fd7e04f60541adb9853a875989b8e07b2",
+      "version": "1.2-g02-r024-r025-r027-r031-r034",
       "interfaces": [
         "profile.ErrInUse/ErrUnsafe/ErrRecoveryRequired/ErrUnsupportedFilesystem",
         "Dedicated WithTools deterministic profile + owner lock",
@@ -22,8 +22,8 @@
     {
       "producer": "C02",
       "path": "docs/alignment-tasks/2026-09-07/contracts/results-and-budget.md",
-      "sha256": "36c13ae084aa209e7d56e0a42e1c5ef81c9a21e6284bf96a544f7293a16164bd",
-      "version": "1.3-r016-pending-g04-r024-r025",
+      "sha256": "23fff125b7270af380a99ce9ec0065169a9e4db83fa4799d9cf81c85d1efde48",
+      "version": "1.3-r016-pending-g04-r024-r025-r034",
       "interfaces": [
         "RunError.Cause + stable primary Reason",
         "Policy.ActiveExecutionTimeout",
@@ -42,8 +42,8 @@
     {
       "producer": "C03",
       "path": "docs/alignment-tasks/2026-09-07/contracts/events-observation.md",
-      "sha256": "b2588c3d140507459cbdd6240d43a4b84c6138f3e752527cd2863361bbce948e",
-      "version": "1.4-g03",
+      "sha256": "c7ace47701305135366197d808235a39fb62d6dbd5f789793c6c72edfa873d4c",
+      "version": "1.4-g03-r034",
       "interfaces": [
         "capability/todo leaf types and root/SPI typed events",
         "run-bound publisher and capability/todo-only observer",
@@ -442,7 +442,8 @@
     "R030: user-approved six-lane original-owner live repairs from 1c49823 preserve 47 tasks, 96 requirements, 45 history dispositions and G05 nine dependencies. Explicit package timeout budgets preserve original selectors/counts/context limits. Common prepared base and independently reviewed rework attempts remain distinct from historical DAG delivery; all final gates require a new identical source SHA.",
     "R031: retain original nine findings and add T29-E02/T30-F03/T30-F04 plus independently reproduced MERGE-F01 safe-fallback event loss. T06 completed Claude version13 bootstrap has a closed pure normalization and conservative old-hash migration boundary. CodeBuddy Question/native JSON and adaptertest live success retain normal SPI/partial-audit contracts. Remaining Cursor and core fallback repairs need original-owner implementation and independent review before exact G05/B06; no live readiness is asserted.",
     "R032: strict legal SPI controls confirm MERGE-F01 fresh-event/coordinate loss while Usage is a passing control; retain earlier noncontract stress evidence separately. Original T18 receives narrow MERGE-F02 polling cancellation MaxArtifacts repair, preserving complete opt-in RemoteArtifacts, drop observation and cause. Supplemental lane runs only with a free slot; original task graph and exact final-SHA gates remain unchanged.",
-    "R033: original T23 owns three precise CI collector files to require nine new Cursor native Windows tests; no skip expansion. T30-V01 package timeout becomes35m for unchanged25.5m scenario contexts plus bounded teardown, preserving selectors/count. Legal Native+Streaming MERGE-F01 evidence replaces no-contract inference without overwriting history. Exact final-S G05/B06/G06 remain pending."
+    "R033: original T23 owns three precise CI collector files to require nine new Cursor native Windows tests; no skip expansion. T30-V01 package timeout becomes35m for unchanged25.5m scenario contexts plus bounded teardown, preserving selectors/count. Legal Native+Streaming MERGE-F01 evidence replaces no-contract inference without overwriting history. Exact final-S G05/B06/G06 remain pending.",
+    "R034: integrate reviewed six repairs plus MERGE-F01/F02 and original T23 Windows gate; Cursor copies bind resource guard to actual delivered bytes, regular config reads reject FIFO, Windows env names follow OS case semantics. Eleven new native Cursor roots plus original21 must PASS, skip list unchanged. Central usage/contracts and CHANGELOG are aligned; API goldens and dependencies unchanged. Final source+docs S still needs G05 and complete T25–T30 before G06/merge readiness."
   ],
   "unmerged_related_branches": [
     {

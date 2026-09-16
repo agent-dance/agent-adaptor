@@ -388,3 +388,11 @@ T18、T19在各自既有目录独立实现，T21负责跨层协议投影，T22�
 Codex turn/start 的正式成功 response 已被唯一 RPC reader 接收、且 RPC ID 与 thread/turn 身份匹配时，即使 caller 取消先结束等待，也须在既有 reader/进程 drain 后保留该轮正式 Text、Transcript、Usage 与 Raw。未知、错误、未收到或身份不匹配的 response 不构成绑定证据；失败仍保留原取消 cause 且无有效 checkpoint。
 
 Own-deadline 审批测试分别控制主动时间和墙钟：先在 Ask pending 时验证暂停，再推进原来的 1ms 审批 deadline，严格得到 approval_timeout。迟到 callback 不得推进用于证明 pending Ask 的共享假时钟；生产 first-terminal、迟到 handler 和已有 error graph 合同不变。
+
+## R034：polling取消部分制品限制
+
+MERGE-F02要求polling的ctx.Done部分结果路径与正常、stream取消、poll耗尽一样调用
+既有限制器。MaxArtifacts=nil/0/正数的既有语义不变；compact Artifacts截断必须发
+artifact_result_limit和数量。IncludeRemoteArtifacts控制的完整远端制品不受compact
+计数限制，取消/deadline/主动预算主因、errors.Is链、部分数据及一次有界CancelTask
+保留。不得以删除部分结果来让旧基线反例报绿。
