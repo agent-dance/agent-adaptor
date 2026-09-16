@@ -29,6 +29,18 @@ CURSOR_REQUIRED = {
     PREFIX + "cursor:TestAlignmentCursorDriverTransportAndOutput",
     PREFIX + "cursor:TestAlignmentCursorResultEquivalenceControls",
 }
+CURSOR_PROFILE_REQUIRED = {
+    # R033: directory publication, per-run projection and native Windows ACLs.
+    PREFIX + "cursor:TestCursorWindowsProjectionCreatesProtectedObjectsAndRejectsChangedACL",
+    PREFIX + "cursor:TestCursorWindowsPrivateDescriptorRejectsWrongOwnerAndUnprotectedACL",
+    PREFIX + "cursor:TestCursorPrivateHomePublicationNeverReplaces",
+    PREFIX + "cursor:TestCursorProjectionConcurrentFirstUse",
+    PREFIX + "cursor:TestCursorProjectionCleanupRejectsReplacementAndLinks",
+    PREFIX + "cursor:TestCursorRuntimeRootsStaySelectedAndCleanupFailureRetainsResponse",
+    PREFIX + "cursor:TestCursorProjectionIsPerRunBoundedAndPreservesSources",
+    PREFIX + "cursor:TestCursorProjectionRejectsForeignOwnershipLinksAndCancellation",
+    PREFIX + "cursor:TestCursorProjectionSizeLimitAndSourceSymlinks",
+}
 MANDATORY = {
     # These native safety tests must PASS. They are never allowed skips.
     PREFIX + "internal/systemprompt:TestWindowsAppendPrivateCreationUnderSharedTemp",
@@ -47,7 +59,7 @@ MANDATORY = {
     PREFIX + "internal/clihelper:TestPrepareCommandWrapsBatchShimOnWindows",
     PREFIX + "internal/clihelper:TestPrepareCommandWrapsPowerShellScriptOnWindows",
     PREFIX + "internal/clihelper:TestMergeEnvSynthesizesWindowsRuntimeVariables",
-} | CANCELLATION_REQUIRED | CURSOR_REQUIRED
+} | CANCELLATION_REQUIRED | CURSOR_REQUIRED | CURSOR_PROFILE_REQUIRED
 
 
 def write_json(path, value):

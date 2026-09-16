@@ -38,6 +38,34 @@ checks, hard-link rejection, and same-directory atomic publication without
 releasing the directory pin or overwriting a conflicting target; their subtests may not skip. Windows runner privileges must allow the existing symlink/DACL tests;
 an unavailable prerequisite or failed assertion fails verification.
 
+R033 adds nine exact Cursor roots to the full T26 mandatory-pass inventory:
+
+- `TestCursorWindowsProjectionCreatesProtectedObjectsAndRejectsChangedACL`
+- `TestCursorWindowsPrivateDescriptorRejectsWrongOwnerAndUnprotectedACL`
+- `TestCursorPrivateHomePublicationNeverReplaces`
+- `TestCursorProjectionConcurrentFirstUse`
+- `TestCursorProjectionCleanupRejectsReplacementAndLinks`
+- `TestCursorRuntimeRootsStaySelectedAndCleanupFailureRetainsResponse`
+- `TestCursorProjectionIsPerRunBoundedAndPreservesSources`
+- `TestCursorProjectionRejectsForeignOwnershipLinksAndCancellation`
+- `TestCursorProjectionSizeLimitAndSourceSymlinks`
+
+Each identity is qualified by `github.com/agent-dance/agent-adaptor/cursor:`.
+Missing roots, an unmatched selector, a skip, or only a passing child cannot
+satisfy the required top-level pass. Their subtests have no skip exemptions.
+These checks cover private descriptor ownership/protected ACLs, publication
+without replacement, concurrent first use, projection bounds/source preservation,
+selected runtime roots and cleanup failures. The existing full T26 command and
+all supplemental checks remain unchanged; these nine roots do not change the
+three-root 20-iteration Cursor equivalence selector.
+
+Synthetic collector regressions reject each missing, skipped or child-only root
+through `execute_check("T26-V01", ...)`, while a complete set of exact passes is
+accepted. These regressions establish collector behavior only. Actual execution
+on the final frozen SDK commit in native Windows Actions is still required;
+Darwin checks or cross-compilation cannot establish ACL, publication or cleanup
+success. The skip allowlist is unchanged.
+
 Actions artifacts retain raw logs, command exits/counts, OS/Go/PowerShell versions,
 source hashes, collector revision and per-file SHA-256 hashes, including on failure.
 The coordinator must download and independently audit them before changing T26's

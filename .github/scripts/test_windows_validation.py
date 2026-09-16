@@ -6,7 +6,23 @@ import unittest
 from unittest import mock
 import subprocess
 
-from windows_validation import CANCELLATION_REQUIRED, CURSOR_REQUIRED, audit_cancellation_repetitions, audit_repetitions, audit_events, audit_example, execute_check
+from windows_validation import MANDATORY, CANCELLATION_REQUIRED, CURSOR_REQUIRED, audit_cancellation_repetitions, audit_repetitions, audit_events, audit_example, execute_check
+
+
+# Independent R033 inventory: omissions in the collector cannot omit the oracle.
+CURSOR_PROFILE_ROOTS = {
+    "github.com/agent-dance/agent-adaptor/cursor:" + name for name in (
+        "TestCursorWindowsProjectionCreatesProtectedObjectsAndRejectsChangedACL",
+        "TestCursorWindowsPrivateDescriptorRejectsWrongOwnerAndUnprotectedACL",
+        "TestCursorPrivateHomePublicationNeverReplaces",
+        "TestCursorProjectionConcurrentFirstUse",
+        "TestCursorProjectionCleanupRejectsReplacementAndLinks",
+        "TestCursorRuntimeRootsStaySelectedAndCleanupFailureRetainsResponse",
+        "TestCursorProjectionIsPerRunBoundedAndPreservesSources",
+        "TestCursorProjectionRejectsForeignOwnershipLinksAndCancellation",
+        "TestCursorProjectionSizeLimitAndSourceSymlinks",
+    )
+}
 
 
 def event(action, test="TestRequired"):
@@ -17,6 +33,54 @@ def event(action, test="TestRequired"):
 
 
 class EvidenceTests(unittest.TestCase):
+    def test_cursor_profile_roots_are_mandatory_without_skip_exemptions(self):
+        self.assertEqual(len(CURSOR_PROFILE_ROOTS), 9)
+        self.assertTrue(CURSOR_PROFILE_ROOTS <= MANDATORY)
+        allowed = json.loads(Path(__file__).with_name("windows_allowed_skips.json").read_text(encoding="utf-8"))
+        self.assertFalse(MANDATORY & set(allowed))
+        for name in allowed:
+            self.assertFalse(any(name == root or name.startswith(root + "/") for root in CURSOR_PROFILE_ROOTS))
+
+    def test_t26_full_check_requires_every_cursor_profile_root(self):
+        complete = [{"Action": action, "Package": name.split(":")[0], "Test": name.split(":")[1]}
+                    for name in sorted(MANDATORY | CURSOR_PROFILE_ROOTS) for action in ("run", "pass")]
+
+        def execute(records):
+            with tempfile.TemporaryDirectory() as directory:
+                out = Path(directory)
+                (out / "allowed-skips.json").write_text("{}", encoding="utf-8")
+                process = mock.Mock()
+                process.wait.return_value = 0
+                def start(*args, **kwargs):
+                    for row in records:
+                        kwargs["stdout"].write((json.dumps(row) + "\n").encode("utf-8"))
+                    return process
+                with mock.patch("windows_validation.snapshot", return_value={}), mock.patch("windows_validation.subprocess.Popen", side_effect=start):
+                    result = execute_check("T26-V01", ["test", "-json", "-count=1", "./..."], 1, "go", out, "frozen", {}, out, {})
+                self.assertEqual(json.loads((out / "T26-V01-command.json").read_text()), result)
+                self.assertEqual(result["exit_code"], 0)
+                return result
+
+        with self.subTest(case="all exact roots pass"):
+            result = execute(complete)
+            self.assertEqual(result["status"], "passed")
+            self.assertEqual(result["test_audit"]["missing_required_pass"], [])
+        for root in sorted(CURSOR_PROFILE_ROOTS):
+            package, name = root.split(":")
+            for mode in ("missing", "skipped", "child_only"):
+                with self.subTest(root=root, case=mode):
+                    records = []
+                    for row in complete:
+                        if row["Package"] != package or row["Test"] != name:
+                            records.append(row)
+                        elif mode == "skipped":
+                            records.append(dict(row, Action="skip") if row["Action"] == "pass" else row)
+                        elif mode == "child_only":
+                            records.append(dict(row, Test=name + "/child"))
+                    result = execute(records)
+                    self.assertEqual(result["status"], "failed")
+                    self.assertEqual(result["test_audit"]["missing_required_pass"], [root])
+
     def test_cursor_repetitions_require_all_three_exact_roots_twenty_times(self):
         records = [{"Action": action, "Package": name.split(":")[0], "Test": name.split(":")[1]}
                    for name in CURSOR_REQUIRED for _ in range(20) for action in ("run", "pass")]
