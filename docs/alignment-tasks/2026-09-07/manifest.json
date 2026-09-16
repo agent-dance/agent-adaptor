@@ -400,7 +400,7 @@
       "batch_id": "B04",
       "phase": "parallel",
       "path": "docs/alignment-tasks/2026-09-07/batches/04-provider-adoption/t17/task.json",
-      "sha256": "17bab7377a2f203a4269fb527271b403cd00204daeb85d7eeaaedd8c64499ee8"
+      "sha256": "388f6b75d40d8dee05848e7a6e1bd47426f5a4bf854194dbafa11f3daf9a7fa3"
     },
     {
       "id": "T18",
@@ -566,7 +566,7 @@
     "every_requirement_has_one_owner_and_independent_verifier": true,
     "no_same_batch_worker_dependency": true
   },
-  "revision": 35,
+  "revision": 36,
   "amendments": [
     "docs/alignment-tasks/2026-09-07/amendments/R001.md",
     "docs/alignment-tasks/2026-09-07/amendments/R002.md",
@@ -600,6 +600,7 @@
     "docs/alignment-tasks/2026-09-07/amendments/R033.md",
     "docs/alignment-tasks/2026-09-07/amendments/R034.md",
     "docs/alignment-tasks/2026-09-07/amendments/R035.md",
-    "docs/alignment-tasks/2026-09-07/amendments/R036.md"
+    "docs/alignment-tasks/2026-09-07/amendments/R036.md",
+    "docs/alignment-tasks/2026-09-07/amendments/R037.md"
   ]
 }

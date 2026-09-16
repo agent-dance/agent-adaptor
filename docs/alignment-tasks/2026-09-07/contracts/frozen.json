@@ -1,10 +1,10 @@
 {
   "schema_version": "1.0",
   "gate": "G05",
-  "manifest_revision": 35,
+  "manifest_revision": 36,
   "code_baseline": "919f140f64f89c80933802840c8878681a85a4d9",
   "source_head": "e2f0620bdd6477e6fe16f6db5648093589342ca2",
-  "status": "R036_repairs_delivered_final_same_SHA_gates_pending",
+  "status": "R037_native_windows_repair_open",
   "contracts": [
     {
       "producer": "C01",
@@ -445,7 +445,8 @@
     "R033: original T23 owns three precise CI collector files to require nine new Cursor native Windows tests; no skip expansion. T30-V01 package timeout becomes35m for unchanged25.5m scenario contexts plus bounded teardown, preserving selectors/count. Legal Native+Streaming MERGE-F01 evidence replaces no-contract inference without overwriting history. Exact final-S G05/B06/G06 remain pending.",
     "R034: integrate reviewed six repairs plus MERGE-F01/F02 and original T23 Windows gate; Cursor copies bind resource guard to actual delivered bytes, regular config reads reject FIFO, Windows env names follow OS case semantics. Eleven new native Cursor roots plus original21 must PASS, skip list unchanged. Central usage/contracts and CHANGELOG are aligned; API goldens and dependencies unchanged. Final source+docs S still needs G05 and complete T25–T30 before G06/merge readiness.",
     "R035: exact f7aa53c full G05 failed with three inherited-XDG Cursor fixture assumptions and temporary-profile cross-Agent resume assertion; retain all failed logs. Original T17 fixes isolation, original T04 proves temporary ResumeOnly rejection/preserved record plus one safe fresh fallback while Dedicated retains real resume. MERGE-F03 original T16 must check existing child-role conflict even at128-entry limit. Same new-S G05/all B06/G06 remain required; original coverage/graph unchanged.",
-    "R036: preserve failed f7aa53c attempt11; original T17 isolates only old fallback fixtures, T04 proves temporary missing-profile refusal and atomic one-fresh replacement while Dedicated resumes, T16 applies child capacity only to new identities without dropping conflicts. Exact new test paths enter G05 scope; root API/dependencies/generated stay unchanged. All original same-S platform/live commands and Windows32 mandatory cases remain required."
+    "R036: preserve failed f7aa53c attempt11; original T17 isolates only old fallback fixtures, T04 proves temporary missing-profile refusal and atomic one-fresh replacement while Dedicated resumes, T16 applies child capacity only to new identities without dropping conflicts. Exact new test paths enter G05 scope; root API/dependencies/generated stay unchanged. All original same-S platform/live commands and Windows32 mandatory cases remain required.",
+    "R037: nativeWindows29e569c lacks Native checkpoint with nil error; original T17 must diagnose actual exit/protocol/fixture, preserving all assertions and32mandatory. External Cursor V01 passed but runtime PID markers changed broad CLI hash; preserve stoppedV02 and repair external provenance only with formal marker evidence. Original same-new-S gates and full coverage remain."
   ],
   "unmerged_related_branches": [
     {

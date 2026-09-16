@@ -390,6 +390,8 @@ R027：冷续接夹具必须在接任网关启动前证明旧监听器关闭并�
 
 R036：三项返修交付后按新S重新验收。Cursor旧fixture复用既有隔离helper，官方路径/Windows矩阵不变。临时profile缺失时ResumeOnly在spawn前明确ErrResumeRejected且不改健康record/checkpoint，默认调用仅一次fresh并原子save/archive/rebind；Dedicated保持同session跨Agent续接。Codex128身份上限只约束新增ID，已知child的相同角色重放和冲突仍必须归并，pending spawn不能因容量丢失矛盾证据。原始失败、全部原检查和Windows32必过清单保留；独立实施验收不替代新S的G05/B06/G06。
 
+R037：原生Windows T26-F01在Native路径缺checkpoint的失败交原T17定位；原日志未输出exit/协议原因，不得推测当证据或放松健康断言。Dedicated失败部分审计、Runtime Env根保护和Windows32必过项保持。外部T30收集器须区别CLI真实程序字节与正式空PID运行标记；旧postflight停止及未执行V02保留，动态标记不证明回收。全部修复后用新S重验G05/B06/G06。
+
 具体冻结设计、未支持边界、文件所有权和fixture见 `docs/alignment-tasks/2026-09-07/contracts/frozen.json`。合同冻结不代表代码已实现；后续同批godoc、合同测试、使用文档和CHANGELOG完成后才能关闭对应项。其他第14节既有保护继续有效。
 
 R028：Go 1.26.8 的 fuzz 协调器存在官方75804父deadline与child取消竞态，75a84c8 的原T25-V09在30秒/847052样本后报deadline失败。原日志未含内部调度轨迹，独立受控机制复现不得倒填为原run轨迹。CI及T25/T26统一使用包含官方修复的Go1.27.1，由 `.github/go-version` 固定；go.mod最低1.26.8不变，新增minimum-go全量test/vet。原30秒fuzz命令、失败检查及live门保持，禁止工具链私有补丁、吞deadline或重试刷绿。revision27只精确追加CI版本文件的G05验收所有权，新SHA重跑全部门禁。

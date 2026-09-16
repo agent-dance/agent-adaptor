@@ -144,3 +144,5 @@ python3 docs/alignment-tasks/2026-09-07/validate.py \
 [R035](amendments/R035.md)：保留首次完整G05失败，三项原owner窄域返修后重新冻结同SHA验收。
 
 [R036](amendments/R036.md)：三项窄域返修与中央文档同步，保留首轮G05失败；新候选须完整同SHA重验。
+
+[R037](amendments/R037.md)：原生Windows首次暴露的Native checkpoint失败返原T17；外部Cursor CLI运行标记审计单独修订，原失败与全量门禁保留。

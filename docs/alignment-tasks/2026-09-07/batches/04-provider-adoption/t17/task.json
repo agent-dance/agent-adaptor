@@ -64,7 +64,8 @@
       "docs/merge-readiness-plan-2026-09-16.md",
       "docs/alignment-tasks/2026-09-07/rework.json",
       "docs/alignment-tasks/2026-09-07/amendments/R031.md",
-      "docs/alignment-tasks/2026-09-07/amendments/R035.md"
+      "docs/alignment-tasks/2026-09-07/amendments/R035.md",
+      "docs/alignment-tasks/2026-09-07/amendments/R037.md"
     ],
     "dependency_artifacts": [
       {
@@ -139,7 +140,8 @@
     "R030 T30-U01：T30-AC01；取消前提用正式 cause 定位，执行后取消保留 Raw/Transcript/旧健康 checkpoint。",
     "R031 T30-F03：Cursor print 取消由本轮实际非空 assistant NoticeTranscriptItem 触发，不把不存在的 rich TextDelta 当前提；context.Canceled/ReasonCancelled、部分 Raw/Transcript、旧健康 checkpoint 和有界退出断言保持。",
     "R031 T30-F04：正式 opaque call ID 的控制字符形态采用无碰撞、稳定的 capability 身份编码，start/result/parent 一致，安全原名不能与编码名碰撞；Raw/Transcript 原文不改。",
-    "R035 G05-F01：原Cursor HOME fallback/Native AuthLink三个fixture必须独立隔离CURSOR_CONFIG_DIR、CURSOR_DATA_DIR、XDG_CONFIG_HOME等宿主变量；保留官方XDG优先级的独立正反矩阵，不删除检测model/config/AuthLink断言，不改production以迁就旧fixture。"
+    "R035 G05-F01：原Cursor HOME fallback/Native AuthLink三个fixture必须独立隔离CURSOR_CONFIG_DIR、CURSOR_DATA_DIR、XDG_CONFIG_HOME等宿主变量；保留官方XDG优先级的独立正反矩阵，不删除检测model/config/AuthLink断言，不改production以迁就旧fixture。",
+    "R037 T26-F01：原生Windows Native_runtime_override没有checkpoint的真实失败必须定位到可观察exit/协议/cause；保留健康Native路径、禁止Runtime Env重定向、Dedicated清理失败的完整部分Response和失败无checkpoint。只能依据正式诊断修复fixture或生产原因，不得放宽成功checkpoint断言、删场景或扩大skip；全部Windows32项仍须实际PASS。"
   ],
   "acceptance_criteria": [
     {
@@ -180,6 +182,11 @@
     {
       "id": "T17-AC08",
       "requirement": "R035 G05-F01：原Cursor HOME fallback/Native AuthLink三个fixture必须独立隔离CURSOR_CONFIG_DIR、CURSOR_DATA_DIR、XDG_CONFIG_HOME等宿主变量；保留官方XDG优先级的独立正反矩阵，不删除检测model/config/AuthLink断言，不改production以迁就旧fixture。",
+      "required": true
+    },
+    {
+      "id": "T17-AC09",
+      "requirement": "R037 T26-F01：原生Windows Native_runtime_override没有checkpoint的真实失败必须定位到可观察exit/协议/cause；保留健康Native路径、禁止Runtime Env重定向、Dedicated清理失败的完整部分Response和失败无checkpoint。只能依据正式诊断修复fixture或生产原因，不得放宽成功checkpoint断言、删场景或扩大skip；全部Windows32项仍须实际PASS。",
       "required": true
     }
   ],

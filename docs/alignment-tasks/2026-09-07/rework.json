@@ -1,5 +1,5 @@
 {
-  "revision": "R035",
+  "revision": "R037",
   "source_base": "1c49823fafd2a057be4b0fc6dd96a563e957e2e9",
   "prepared_base": "external_dispatch_prepared_head",
   "max_parallelism": 6,
@@ -148,6 +148,11 @@
           "id": "G05-F01",
           "check": "T17-V01",
           "contract": "原Cursor HOME fallback/Native AuthLink三个fixture必须独立隔离CURSOR_CONFIG_DIR、CURSOR_DATA_DIR、XDG_CONFIG_HOME等宿主变量；保留官方XDG优先级的独立正反矩阵，不删除检测model/config/AuthLink断言，不改production以迁就旧fixture。"
+        },
+        {
+          "id": "T26-F01",
+          "check": "T26-V01",
+          "contract": "原生Windows Native_runtime_override没有checkpoint的真实失败必须定位到可观察exit/协议/cause；保留健康Native路径、禁止Runtime Env重定向、Dedicated清理失败的完整部分Response和失败无checkpoint。只能依据正式诊断修复fixture或生产原因，不得放宽成功checkpoint断言、删场景或扩大skip；全部Windows32项仍须实际PASS。"
         }
       ]
     },
