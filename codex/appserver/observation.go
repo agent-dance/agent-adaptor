@@ -291,7 +291,9 @@ func (s *runState) observeChildThread(params json.RawMessage) bool {
 	if role == "" {
 		role = body.Thread.Source.SubAgent.Spawn.Role
 	}
-	if len(s.observation.children) >= 128 {
+	// Capacity limits new identities, not evidence updates for known children.
+	// Replays must still merge conflicts when the table is full.
+	if _, exists := s.observation.children[body.Thread.ID]; !exists && len(s.observation.children) >= 128 {
 		s.observationNotice("capability_unresolved")
 		return true
 	}

@@ -30,7 +30,10 @@
 // or reading of its contents. Declarations and ordinary text are not evidence.
 // Subagent spawn completion proves the spawn operation, not the child task's
 // eventual success. Unknown/ambiguous identities stay unobserved. No parent tool
-// association is fabricated when the official protocol has none.
+// association is fabricated when the official protocol has none. For pending
+// spawns, conflicting child roles prevent completion even when identity tracking
+// is at capacity. Matching role replays are idempotent; new identities beyond
+// that bound remain unobserved.
 //
 // Official turn/plan/updated produces complete ordered todo snapshots, including
 // clears. IDs identify synthetic turn/position slots, never provider task IDs.
