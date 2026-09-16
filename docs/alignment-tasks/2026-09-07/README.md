@@ -136,3 +136,5 @@ python3 docs/alignment-tasks/2026-09-07/validate.py \
 [R031](amendments/R031.md)：保留原九 finding，登记三个诊断中新增条目及既有 owner/check，明确 Claude 旧记录兼容边界和最终同 SHA 验收。
 
 [R032](amendments/R032.md)：澄清安全回退合法协议反例，追加原T18的polling取消制品数量限制修复；补充任务不增加并发上限。
+
+[R033](amendments/R033.md)：Cursor新增Windows目录/ACL必过清单；T30完整矩阵包预算35m，逐场景时限不变。

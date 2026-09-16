@@ -1,5 +1,5 @@
 {
-  "revision": "R032",
+  "revision": "R033",
   "source_base": "1c49823fafd2a057be4b0fc6dd96a563e957e2e9",
   "prepared_base": "external_dispatch_prepared_head",
   "max_parallelism": 6,
@@ -148,7 +148,10 @@
         "adaptertest/**",
         ".github/workflows/**",
         "alignment_architecture_test.go",
-        "docs/alignment-tasks/2026-09-07/handoffs/T23/**"
+        "docs/alignment-tasks/2026-09-07/handoffs/T23/**",
+        ".github/scripts/windows_validation.py",
+        ".github/scripts/test_windows_validation.py",
+        ".github/scripts/windows-validation.md"
       ],
       "findings": [
         {

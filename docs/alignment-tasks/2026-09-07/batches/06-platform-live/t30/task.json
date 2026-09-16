@@ -73,7 +73,8 @@
       "AGENTS.md",
       "docs/internal-history-alignment-plan-2026-09-07.md",
       "docs/alignment-tasks/2026-09-07/README.md",
-      "docs/alignment-tasks/2026-09-07/amendments/R030.md"
+      "docs/alignment-tasks/2026-09-07/amendments/R030.md",
+      "docs/alignment-tasks/2026-09-07/amendments/R033.md"
     ],
     "dependency_artifacts": [
       {
@@ -152,7 +153,8 @@
     "验证当前 provider 真实支持的 work_items，尤其 transcript 文件恢复、原生 prompt、schema/HITL、工具/plan 正式字段；不能把 fixture 成功或历史 CLI 记录当 live 证据。",
     "明确区分 supported/unsupported/未观察：Cursor native prompt/todo 必须维持 unsupported；任何无法证明的能力关闭或回 owner 修改矩阵。",
     "安全保存 CLI/schema版本、脱敏 event/terminal摘要、命令/exit code/测试数量；不存鉴权/prompt秘密，不创建 tag。",
-    "R030：原选择器、次数、逐测试 context 和全部断言不变；包级 timeout 只覆盖完整串行矩阵预算，必须使用包含六路返修的 G05 同一最终 SHA。"
+    "R030：原选择器、次数、逐测试 context 和全部断言不变；包级 timeout 只覆盖完整串行矩阵预算，必须使用包含六路返修的 G05 同一最终 SHA。",
+    "R033：新增DedicatedResourceIsolation(7m)和WorkspaceTrustRequired(30s)纳入原完整TestAlignmentLive选择器，原两轮cold各4m、Print3m、Capabilities4m、Cancel3m等上下文不变；总场景25.5m加有界probe/Close，包预算35m只容纳完整矩阵，不放宽场景断言。"
   ],
   "acceptance_criteria": [
     {
@@ -169,7 +171,7 @@
   "validation": [
     {
       "id": "T30-V01",
-      "command": "go test -timeout=25m -count=1 -tags=cursor_live ./cursor -run TestAlignmentLive",
+      "command": "go test -timeout=35m -count=1 -tags=cursor_live ./cursor -run TestAlignmentLive",
       "cwd": "repository_root",
       "environment": {
         "AGENT_ADAPTOR_LIVE_CONFORMANCE": "1",

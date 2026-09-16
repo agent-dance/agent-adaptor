@@ -1,10 +1,10 @@
 {
   "schema_version": "1.0",
   "gate": "G05",
-  "manifest_revision": 31,
+  "manifest_revision": 32,
   "code_baseline": "919f140f64f89c80933802840c8878681a85a4d9",
   "source_head": "e2f0620bdd6477e6fe16f6db5648093589342ca2",
-  "status": "R032_review_repairs_pending_implementation_and_exact_G05",
+  "status": "R033_native_gate_scope_and_budget_frozen_pending_final_integration",
   "contracts": [
     {
       "producer": "C01",
@@ -321,7 +321,10 @@
       ".github/workflows/**",
       "adaptertest/**",
       "alignment_architecture_test.go",
-      "docs/alignment-tasks/2026-09-07/handoffs/T23/**"
+      "docs/alignment-tasks/2026-09-07/handoffs/T23/**",
+      ".github/scripts/windows_validation.py",
+      ".github/scripts/test_windows_validation.py",
+      ".github/scripts/windows-validation.md"
     ],
     "T24": [
       "README.de.md",
@@ -438,7 +441,8 @@
     "R029: user-authorized pre-merge readability/structure cleanup from accepted dd3859e moves private declarations into six focused production files and preserves public API, error/lifecycle behavior, profile fingerprint, safety boundaries and live gates. G05 adds24 exact paths to cover the29 reviewed source/test/report paths; no owner/verifier,47-task/96-requirement graph,9 dependencies or original commands change. Coordinator declaration-token audit496 unchanged/8 explicit modifications/3 new helpers/0 deletions is scope evidence, not functional acceptance. Independent tests remain; only the unused terminal-helper fixture body moves to public Delegate poll/stream coverage. Previous exact-SHA passes/failures remain history; a new candidate must pass original G05/T25/T26 before freezing. T27–T30/G06 remain blocked.",
     "R030: user-approved six-lane original-owner live repairs from 1c49823 preserve 47 tasks, 96 requirements, 45 history dispositions and G05 nine dependencies. Explicit package timeout budgets preserve original selectors/counts/context limits. Common prepared base and independently reviewed rework attempts remain distinct from historical DAG delivery; all final gates require a new identical source SHA.",
     "R031: retain original nine findings and add T29-E02/T30-F03/T30-F04 plus independently reproduced MERGE-F01 safe-fallback event loss. T06 completed Claude version13 bootstrap has a closed pure normalization and conservative old-hash migration boundary. CodeBuddy Question/native JSON and adaptertest live success retain normal SPI/partial-audit contracts. Remaining Cursor and core fallback repairs need original-owner implementation and independent review before exact G05/B06; no live readiness is asserted.",
-    "R032: strict legal SPI controls confirm MERGE-F01 fresh-event/coordinate loss while Usage is a passing control; retain earlier noncontract stress evidence separately. Original T18 receives narrow MERGE-F02 polling cancellation MaxArtifacts repair, preserving complete opt-in RemoteArtifacts, drop observation and cause. Supplemental lane runs only with a free slot; original task graph and exact final-SHA gates remain unchanged."
+    "R032: strict legal SPI controls confirm MERGE-F01 fresh-event/coordinate loss while Usage is a passing control; retain earlier noncontract stress evidence separately. Original T18 receives narrow MERGE-F02 polling cancellation MaxArtifacts repair, preserving complete opt-in RemoteArtifacts, drop observation and cause. Supplemental lane runs only with a free slot; original task graph and exact final-SHA gates remain unchanged.",
+    "R033: original T23 owns three precise CI collector files to require nine new Cursor native Windows tests; no skip expansion. T30-V01 package timeout becomes35m for unchanged25.5m scenario contexts plus bounded teardown, preserving selectors/count. Legal Native+Streaming MERGE-F01 evidence replaces no-contract inference without overwriting history. Exact final-S G05/B06/G06 remain pending."
   ],
   "unmerged_related_branches": [
     {

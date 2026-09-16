@@ -400,6 +400,8 @@ R031：完整合入审查另打开 MERGE-F01：安全 resume-reject 后 fresh at
 
 R032：MERGE-F01 的合法协议反例与非合同压力记录分开，不能夸大旧Usage。MERGE-F02 要求 polling 取消/超时部分结果与其余路径同样应用 MaxArtifacts 和可观察丢弃；完整RemoteArtifacts opt-in及错误主因不变。原T18独立窄域修复，原verifier复验，仍最多六并发；原G05/B06同S门禁保持。
 
+R033：Cursor新增私有HOME目录与Windows protected DACL、no-replace发布、并发首用、替换/链接/清理反例必须在原生Actions实际PASS。原T23仅精确扩三个CI文件，不扩大skip；原T30全矩阵纳入新增隔离与trust场景，包预算35m仅覆盖25.5m场景总和及有界清理，原逐场景时限不变。MERGE-F01的正式rich反例显式声明Native并断言Streaming，旧前提不足证据单列保留。
+
 ## 15. 发布门禁
 
 发布前必须全部满足：
