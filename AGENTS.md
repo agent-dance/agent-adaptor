@@ -404,6 +404,8 @@ R033：Cursor新增私有HOME目录与Windows protected DACL、no-replace发布�
 
 R034：R030六路返修及MERGE-F01/F02已在各自精确worker SHA接受实施。Cursor正式config/data/HOME资源根、选中profile私有投影、同次copy的agents/hooks guard、FIFO/special文件拒绝和Windows环境大小写已交付；旧checkpoint缺证明按ResumeOnly保守拒绝及原安全fallback。仅authInfo排除config guard；Native hooks只承诺启动前source guard。T23原生Windows必过清单保留原21项并精确新增11项，共32项，不扩大skip。中央文档同步不代表最终G05/B06/G06通过；必须在完整同S重新验收，真实授权阻断不被文档伪造关闭。
 
+R035：f7aa53c首轮完整G05未通过，重新打开G05-F01（Cursor旧fixture隔离真实XDG变量）、G05-F02（已删除临时profile只能安全拒绝/回退，Dedicated才证明保留文件跨Agentresume）及MERGE-F03（Codex child表容量不能跳过既存ID角色冲突）。原T17/T04/T16窄域返修，非作者复验；禁止改生产迁就fixture、删场景/断言或skip。全部同新S门禁重新验收，旧失败保留。
+
 ## 15. 发布门禁
 
 发布前必须全部满足：

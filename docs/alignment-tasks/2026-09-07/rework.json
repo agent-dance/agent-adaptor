@@ -1,5 +1,5 @@
 {
-  "revision": "R034",
+  "revision": "R035",
   "source_base": "1c49823fafd2a057be4b0fc6dd96a563e957e2e9",
   "prepared_base": "external_dispatch_prepared_head",
   "max_parallelism": 6,
@@ -108,6 +108,11 @@
           "id": "T29-E02",
           "check": "T29-V01",
           "contract": "Codex exec/app-server 的同一私有 live workspace 通过有界 git init --template= 满足正式信任前提；隔离继承 Git 配置，不给 app-server 注入 exec-only bypass。原 T29-V01/V02 同 S 复验。"
+        },
+        {
+          "id": "MERGE-F03",
+          "check": "T16-V01",
+          "contract": "Codex child角色表容量只约束新增ID；已登记ID到达128上限后仍必须检查重复/角色冲突，矛盾正式证据不能保留旧角色并报告Completed。保留独立127/128红绿、容量上界、相同role重放幂等、新ID安全拒绝及正式child/receiver双证明。"
         }
       ]
     },
@@ -138,6 +143,11 @@
           "id": "T30-F04",
           "check": "T30-V01",
           "contract": "正式 opaque call ID 的控制字符形态采用无碰撞、稳定的 capability 身份编码，start/result/parent 一致，安全原名不能与编码名碰撞；Raw/Transcript 原文不改。"
+        },
+        {
+          "id": "G05-F01",
+          "check": "T17-V01",
+          "contract": "原Cursor HOME fallback/Native AuthLink三个fixture必须独立隔离CURSOR_CONFIG_DIR、CURSOR_DATA_DIR、XDG_CONFIG_HOME等宿主变量；保留官方XDG优先级的独立正反矩阵，不删除检测model/config/AuthLink断言，不改production以迁就旧fixture。"
         }
       ]
     },
@@ -198,6 +208,23 @@
         }
       ],
       "dispatch": "Supplemental original-owner repair after an existing slot is free; total active implementation/review lanes remain at most six."
+    },
+    {
+      "owner": "T04",
+      "task": "docs/alignment-tasks/2026-09-07/batches/01-critical-fixes/t04/task.json",
+      "base": "external_dispatch_source_head",
+      "allow": [
+        "e2e/tools_test.go",
+        "docs/alignment-tasks/2026-09-07/handoffs/T04/**"
+      ],
+      "findings": [
+        {
+          "id": "G05-F02",
+          "check": "T04-V01",
+          "contract": "真实子进程E2E区分Dedicated会话文件保留的跨Agent续接，与已删除temporary profile的安全不兼容：后者ResumeOnly启动前拒绝且不改旧健康record，正常continue-or-start只启动一次fresh并原子提交。保留同Agent两轮resume、完整工具/MCP/Raw/Transcript、旧gateway/token撤销、私有源不污染及cleanup断言。"
+        }
+      ],
+      "dispatch": "Original owner narrow E2E fixture repair after final G05 failure; total implementation/review concurrency <=6."
     }
   ]
 }

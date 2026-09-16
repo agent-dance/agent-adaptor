@@ -67,7 +67,8 @@
       "docs/alignment-tasks/2026-09-07/amendments/R030.md",
       "docs/merge-readiness-plan-2026-09-16.md",
       "docs/alignment-tasks/2026-09-07/rework.json",
-      "docs/alignment-tasks/2026-09-07/amendments/R031.md"
+      "docs/alignment-tasks/2026-09-07/amendments/R031.md",
+      "docs/alignment-tasks/2026-09-07/amendments/R035.md"
     ],
     "dependency_artifacts": [
       {
@@ -147,7 +148,8 @@
     "R017：完整读取 amendments/R017.md。仅补原owner live fixture覆盖，普通检查不运行付费provider；补公开Agent/Thread + Dedicated + WithTools跨Agent.Close→新Agent ResumeOnly随机nonce和同会话证据；保持已有exec/appserver append、Skill native input接受、MCP/plan/collab断言。 原validation保持，源码先提交再final HEAD验证，缺真实环境仅留待B06不得声称通过。",
     "R023：W04-R07最终实现改归原负责人执行的B05补充T36，关闭后续Linux生产关闭panic。原源码/验收及其他要求完整保留，不以历史通过冒充本反例已修复。",
     "R030 T29-E01：最小受限官方路由输入用于 exec/app-server；全量 T29-V01/V02 和原十二要求，禁止复制完整用户 config。",
-    "R031 T29-E02：Codex exec/app-server 的同一私有 live workspace 通过有界 git init --template= 满足正式信任前提；隔离继承 Git 配置，不给 app-server 注入 exec-only bypass。原 T29-V01/V02 同 S 复验。"
+    "R031 T29-E02：Codex exec/app-server 的同一私有 live workspace 通过有界 git init --template= 满足正式信任前提；隔离继承 Git 配置，不给 app-server 注入 exec-only bypass。原 T29-V01/V02 同 S 复验。",
+    "R035 MERGE-F03：Codex child角色表容量只约束新增ID；已登记ID到达128上限后仍必须检查重复/角色冲突，矛盾正式证据不能保留旧角色并报告Completed。保留独立127/128红绿、容量上界、相同role重放幂等、新ID安全拒绝及正式child/receiver双证明。"
   ],
   "acceptance_criteria": [
     {
@@ -173,6 +175,11 @@
     {
       "id": "T16-AC05",
       "requirement": "R031 T29-E02：Codex exec/app-server 的同一私有 live workspace 通过有界 git init --template= 满足正式信任前提；隔离继承 Git 配置，不给 app-server 注入 exec-only bypass。原 T29-V01/V02 同 S 复验。",
+      "required": true
+    },
+    {
+      "id": "T16-AC06",
+      "requirement": "R035 MERGE-F03：Codex child角色表容量只约束新增ID；已登记ID到达128上限后仍必须检查重复/角色冲突，矛盾正式证据不能保留旧角色并报告Completed。保留独立127/128红绿、容量上界、相同role重放幂等、新ID安全拒绝及正式child/receiver双证明。",
       "required": true
     }
   ],

@@ -6,21 +6,22 @@ import validate
 EXPECTED = {
     'T06': {'T27-F02', 'MERGE-F01'}, 'T14': {'T27-F01'},
     'T15': {'T28-F01', 'T28-F02', 'T28-F03'},
-    'T16': {'T29-E01', 'T29-E02'},
-    'T17': {'T30-F01', 'T30-U01', 'T30-F03', 'T30-F04'},
+    'T16': {'T29-E01', 'T29-E02', 'MERGE-F03'},
+    'T17': {'T30-F01', 'T30-U01', 'T30-F03', 'T30-F04', 'G05-F01'},
     'T23': {'T30-F02'},
     'T18': {'MERGE-F02'},
+    'T04': {'G05-F02'},
 }
 
 
 def overlay_errors(overlay, package):
     errors = []
     lanes = overlay['lanes']
-    if len(lanes) != 6 or {l['owner'] for l in lanes} != set(EXPECTED) - {'T18'}:
+    if len(lanes) != 6 or {l['owner'] for l in lanes} != set(EXPECTED) - {'T18', 'T04'}:
         errors.append('six original owners required')
     followups = overlay.get('followups', [])
-    if len(followups) != 1 or {l['owner'] for l in followups} != {'T18'}:
-        errors.append('T18 review followup required')
+    if len(followups) != 2 or {l['owner'] for l in followups} != {'T18', 'T04'}:
+        errors.append('T18 and T04 review followups required')
     lanes = lanes + followups
     if overlay['max_parallelism'] != 6:
         errors.append('parallel capacity changed')
@@ -65,11 +66,15 @@ class ReworkTests(unittest.TestCase):
 
     def test_missing_followup_rejected(self):
         self.overlay['followups'] = []
-        self.assertIn('T18 review followup required', overlay_errors(self.overlay, self.package))
+        self.assertIn('T18 and T04 review followups required', overlay_errors(self.overlay, self.package))
 
     def test_missing_followup_finding_rejected(self):
         self.overlay['followups'][0]['findings'] = []
         self.assertIn('finding coverage: T18', overlay_errors(self.overlay, self.package))
+
+    def test_missing_t04_followup_finding_rejected(self):
+        self.overlay['followups'][1]['findings'] = []
+        self.assertIn('finding coverage: T04', overlay_errors(self.overlay, self.package))
 
     def test_missing_finding_rejected(self):
         self.overlay['lanes'][2]['findings'].pop()

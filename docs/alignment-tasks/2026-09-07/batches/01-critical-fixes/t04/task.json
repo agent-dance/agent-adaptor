@@ -57,7 +57,9 @@
       "docs/alignment-tasks/2026-09-07/README.md",
       "docs/alignment-tasks/2026-09-07/amendments/R003.md",
       "docs/alignment-tasks/2026-09-07/amendments/R007.md",
-      "docs/alignment-tasks/2026-09-07/amendments/R008.md"
+      "docs/alignment-tasks/2026-09-07/amendments/R008.md",
+      "docs/alignment-tasks/2026-09-07/amendments/R035.md",
+      "docs/alignment-tasks/2026-09-07/rework.json"
     ],
     "dependency_artifacts": [
       {
@@ -130,7 +132,8 @@
     "添加跨子进程竞争、崩溃退出、Close 重试、身份隔离和依赖真实会话文件的低层 fixture。",
     "R003：claim早于ResolveSkills/InjectSkills，不能声称其snapshot已覆盖动态resolved实物。交付可复用快照/claim能力及明确失败fixture给T06，冷续接主fixture先证明会话文件与MCP轮换，不把未证明skills场景记通过。W02-R06最终owner为T06，其余W02要求仍归T04。",
     "R007：以成功OS unlock为不可逆所有权释放点；ready写入/解锁/lock句柄关闭/root句柄关闭分别记账，释放后仅清理剩余句柄，绝不重写state、重获锁或影响新generation。Windows长期owner.lock使用无FILE_SHARE_DELETE专用opener，不以临时ACL句柄或Root.OpenFile冒充。",
-    "R008：同步真实子进程 Tools E2E fixture，显式存在且隔离的source；Dedicated持久路径与临时选择两种生命周期均验证，保留MCP/auth/endpoint与第三轮续接断言，不能改生产合同回避失败。"
+    "R008：同步真实子进程 Tools E2E fixture，显式存在且隔离的source；Dedicated持久路径与临时选择两种生命周期均验证，保留MCP/auth/endpoint与第三轮续接断言，不能改生产合同回避失败。",
+    "R035 G05-F02：真实子进程E2E区分Dedicated会话文件保留的跨Agent续接，与已删除temporary profile的安全不兼容：后者ResumeOnly启动前拒绝且不改旧健康record，正常continue-or-start只启动一次fresh并原子提交。保留同Agent两轮resume、完整工具/MCP/Raw/Transcript、旧gateway/token撤销、私有源不污染及cleanup断言。"
   ],
   "acceptance_criteria": [
     {
@@ -151,6 +154,11 @@
     {
       "id": "T04-AC04",
       "requirement": "真实子进程 Tools E2E 同时验证 Dedicated 持久与隔离临时生命周期、source不污染及网关凭据轮换/撤销，完整 e2e 包通过。",
+      "required": true
+    },
+    {
+      "id": "T04-AC05",
+      "requirement": "R035 G05-F02：真实子进程E2E区分Dedicated会话文件保留的跨Agent续接，与已删除temporary profile的安全不兼容：后者ResumeOnly启动前拒绝且不改旧健康record，正常continue-or-start只启动一次fresh并原子提交。保留同Agent两轮resume、完整工具/MCP/Raw/Transcript、旧gateway/token撤销、私有源不污染及cleanup断言。",
       "required": true
     }
   ],

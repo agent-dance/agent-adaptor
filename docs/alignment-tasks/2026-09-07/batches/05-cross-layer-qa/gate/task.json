@@ -81,7 +81,8 @@
       "docs/alignment-tasks/2026-09-07/amendments/R031.md",
       "docs/alignment-tasks/2026-09-07/amendments/R032.md",
       "docs/alignment-tasks/2026-09-07/amendments/R033.md",
-      "docs/alignment-tasks/2026-09-07/amendments/R034.md"
+      "docs/alignment-tasks/2026-09-07/amendments/R034.md",
+      "docs/alignment-tasks/2026-09-07/amendments/R035.md"
     ],
     "dependency_artifacts": [
       {
@@ -328,7 +329,8 @@
     "R031：核对 R030 六路返修及新增 T29-E02/T30-F03/T30-F04 的原 owner 提交和非作者审查；完整原47任务/96要求/45处置/9依赖与历史G04 base保持。以精确实际新增路径承接本次集成，中央合同和文档进入最终 S 后原三命令全验，T25–T30 全部用同一 S；旧证据保留，不以有限诊断关闭 live。",
     "R032：保留 MERGE-F01 合法 SPI 反例及单列的非合同压力控制；追加原T18负责的MERGE-F02窄域返修，等待非作者接受。六路原返修与补充worker均进入最终S，原G05九依赖、完整G04 diff及全部B06同S验收不变。",
     "R033：新增Cursor私有目录/ACL原生测试必须实际PASS且纳入collector覆盖；T30-V01包预算35m，原选择器和逐场景时限保持。",
-    "R034：整合所有原六路+MERGE-F01/F02和T23补充Windows gate实施，核Cursor最终同次复制/配置特殊文件/环境边界，记录真实第三方审阅范围；中央docs/godoc/CHANGELOG完成后冻结S，原G05命令、九依赖和G04全diff保持。所有B06证据须来自S，当前文档及implementation接受不作发布通过。"
+    "R034：整合所有原六路+MERGE-F01/F02和T23补充Windows gate实施，核Cursor最终同次复制/配置特殊文件/环境边界，记录真实第三方审阅范围；中央docs/godoc/CHANGELOG完成后冻结S，原G05命令、九依赖和G04全diff保持。所有B06证据须来自S，当前文档及implementation接受不作发布通过。",
+    "R035：f7aa53c首次全G05 V02失败（5008pass/14允许skip，三Cursor fixture和temporary profile E2E），原完整日志/source快照保持；追加MERGE-F03独立反例。等待T17/T04/T16原owner修复及非作者验收，所有源码/测试/文档形成新S后原G05和全部B06重新完整执行。"
   ],
   "acceptance_criteria": [
     {

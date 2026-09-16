@@ -140,3 +140,5 @@ python3 docs/alignment-tasks/2026-09-07/validate.py \
 [R033](amendments/R033.md)：Cursor新增Windows目录/ACL必过清单；T30完整矩阵包预算35m，逐场景时限不变。
 
 [R034](amendments/R034.md)：整合全部已审查返修、目录/续接/制品合同和11项Cursor Windows必过测试；最终同SHA门禁待执行。
+
+[R035](amendments/R035.md)：保留首次完整G05失败，三项原owner窄域返修后重新冻结同SHA验收。
