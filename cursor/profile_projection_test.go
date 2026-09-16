@@ -4,9 +4,11 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/internal/skillruntime"
@@ -132,22 +134,61 @@ func TestCursorRuntimeRootsStaySelectedAndCleanupFailureRetainsResponse(t *testi
 				cmd = "move /y \"%HOME%\\.agent-adaptor-owner\" \"%HOME%\\.owner-original\" >nul\r\necho agent-adaptor/cursor-run-projection/v1>\"%HOME%\\.agent-adaptor-owner\"\r\n"
 			}
 			terminal := `{"type":"result","subtype":"success","is_error":false,"result":"done","session_id":"root-test"}`
-			command := testutil.WriteCommand(t, t.TempDir(), "fake-cursor-projection",
-				"#!/bin/sh\ncat >/dev/null\nprintf '%s' \"$HOME\" > \"$CURSOR_TEST_OBSERVATION\"\n"+shell+"printf '%s\\n' '"+terminal+"'\n",
-				"@echo off\r\nset /p X=\r\n<nul set /p =%HOME%>\"%CURSOR_TEST_OBSERVATION%\"\r\n"+cmd+"echo "+terminal+"\r\n")
+			posixBody := "#!/bin/sh\ncat >/dev/null\nprintf '%s' \"$HOME\" > \"$CURSOR_TEST_OBSERVATION\"\n" + shell + "printf '%s\\n' '" + terminal + "'\n"
+			windowsBody := "@echo off\r\nset /p X=\r\n<nul set /p =%HOME%>\"%CURSOR_TEST_OBSERVATION%\"\r\n" + cmd + "echo " + terminal + "\r\n"
+			// This fixture promises a successful provider process. Printing a
+			// terminal alone does not establish cmd.exe's final errorlevel.
+			command := testutil.WriteCommand(t, t.TempDir(), "fake-cursor-projection", posixBody+"exit 0\n", windowsBody+"exit /b 0\r\n")
 			cfg := Config{CommonConfig: CommonConfig{Command: command, CWD: home, Env: []driver.EnvBinding{{Name: "CURSOR_TEST_OBSERVATION", Value: observation}}}}
 			req := driver.Request{Prompt: "go", Config: cfg, Workspace: driver.WorkspaceLease{CWD: home}, Runtime: driver.RuntimePayload{SecretEnv: []driver.EnvBinding{{Name: "HOME", Value: redirected}, {Name: "USERPROFILE", Value: redirected}, {Name: "CURSOR_CONFIG_DIR", Value: redirected}, {Name: "CURSOR_DATA_DIR", Value: redirected}}}}
 			if damage {
 				req.Profile = &driver.ProfileSelection{Mode: driver.ProfileModeDedicated, Dir: selected}
 			}
-			response, err := (adapter{}).Run(context.Background(), req, &testutil.EventRecorder{})
+			run := func(request driver.Request) (driver.Response, error) {
+				t.Helper()
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+				return (adapter{}).Run(ctx, request, &testutil.EventRecorder{})
+			}
+			logOutcome := func(label string, response driver.Response, err error) {
+				t.Helper()
+				t.Logf("%s: err=%v exit=%d signal=%q timed_out=%t failure=%+v checkpoint=%+v raw=%+v transcript=%+v",
+					label, err, response.ExitCode, response.Signal, response.TimedOut, response.Failure, response.Checkpoint, response.RawStreams, response.Transcript)
+			}
+			assertResponseLayers := func(response driver.Response) {
+				t.Helper()
+				if response.RawStreams == nil || !strings.Contains(response.RawStreams.Stdout, terminal) || response.RawStreams.Terminal == nil || response.Output != "done" || len(response.Transcript) == 0 {
+					t.Fatal("process/cleanup outcome lost response layers")
+				}
+			}
+			if runtime.GOOS == "windows" && !damage {
+				// Run the old script unchanged as a native counterexample. The
+				// historical CI log did not include exit/protocol evidence; this
+				// new observation must establish the hypothesis independently.
+				legacy := req
+				legacyConfig := cfg
+				legacyConfig.Command = testutil.WriteCommand(t, t.TempDir(), "fake-cursor-projection-legacy", posixBody, windowsBody)
+				legacy.Config = legacyConfig
+				response, err := run(legacy)
+				logOutcome("legacy Windows fixture", response, err)
+				if err != nil || response.ExitCode != 1 || response.Signal != "" || response.TimedOut || response.Failure != nil || response.Checkpoint != nil {
+					t.Fatal("legacy Windows script did not establish nonzero-exit checkpoint rejection")
+				}
+				assertResponseLayers(response)
+			}
+			response, err := run(req)
+			logOutcome("explicit-success fixture", response, err)
+			if response.ExitCode != 0 || response.Signal != "" || response.TimedOut || response.Failure != nil {
+				t.Fatal("fixture provider process did not finish successfully")
+			}
+			assertResponseLayers(response)
 			if damage {
 				if err == nil || !strings.Contains(err.Error(), "projection cleanup") || response.Checkpoint != nil {
 					t.Fatal("cleanup failure forged a healthy checkpoint", err)
 				}
 			} else {
-				if err != nil || response.Checkpoint == nil {
-					t.Fatal("Native execution failed", err)
+				if err != nil || response.Checkpoint == nil || !response.Checkpoint.Valid || response.Checkpoint.State == nil || response.Checkpoint.State.ResumeID != "root-test" {
+					t.Fatal("Native execution did not produce a healthy checkpoint", err)
 				}
 				actual, err := os.ReadFile(observation)
 				if err != nil || string(actual) != home {
@@ -156,9 +197,6 @@ func TestCursorRuntimeRootsStaySelectedAndCleanupFailureRetainsResponse(t *testi
 				if response.Checkpoint.State.Data[cursorSessionConfigDir] != filepath.Join(home, ".cursor") {
 					t.Fatal("runtime redirected config root")
 				}
-			}
-			if response.RawStreams == nil || !strings.Contains(response.RawStreams.Stdout, terminal) || response.RawStreams.Terminal == nil || response.Output != "done" || len(response.Transcript) == 0 {
-				t.Fatal("cleanup outcome lost response layers")
 			}
 		})
 	}
