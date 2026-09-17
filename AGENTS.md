@@ -414,6 +414,8 @@ R038：授权四provider完整live后，Claude在8db通过；CodeBuddy TerminalP
 
 R039：copied skill的来源marker不证明内容或权限；真实ManagedRoots下同名异源覆盖也须在compatibility和正式reconcile破坏前明确ErrUnsafe，不能用marker授权RemoveAll吞用户附件。same-source实际bytes/modes继续入hash，正式已证明symlink替换保持。原T06仅追加compatibility/profile_reconcile闭集修复，原反例与所有新S门禁保持。
 
+R040：Windows managed-clone alias误拒绝须以held profile/skills双目录SameFile证明修复，仅改clone只读manifest视图；错误父目录/替换/链接仍拒绝。CodeBuddy正式DeferExecuteTool MCP包装只由provider observer精确投影，不猜JSON或以callback代替正式Completed；cold失败分量未观察不倒填。两生命周期fixture按同步操作维护原8s上界、七身份持claim不变；专门Windows绿不能覆盖全量失败，新S全部原门禁重验。
+
 ## 15. 发布门禁
 
 发布前必须全部满足：

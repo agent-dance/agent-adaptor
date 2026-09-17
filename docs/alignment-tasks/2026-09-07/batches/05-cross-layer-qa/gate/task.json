@@ -84,7 +84,8 @@
       "docs/alignment-tasks/2026-09-07/amendments/R034.md",
       "docs/alignment-tasks/2026-09-07/amendments/R035.md",
       "docs/alignment-tasks/2026-09-07/amendments/R038.md",
-      "docs/alignment-tasks/2026-09-07/amendments/R039.md"
+      "docs/alignment-tasks/2026-09-07/amendments/R039.md",
+      "docs/alignment-tasks/2026-09-07/amendments/R040.md"
     ],
     "dependency_artifacts": [
       {
@@ -290,7 +291,13 @@
       "codebuddy/alignment_live_resume_test.go",
       "codebuddy/alignment_live_resume_terminal_test.go",
       "codebuddy/profile_error_test.go",
-      "internal/skillruntime/profile_reconcile.go"
+      "internal/skillruntime/profile_reconcile.go",
+      "codebuddy/observation.go",
+      "codebuddy/alignment_observation_test.go",
+      "codebuddy/alignment_public_observation_test.go",
+      "codebuddy/alignment_live_test.go",
+      "codebuddy/alignment_live_diagnostic_test.go",
+      "e2e/alignment_profile_test.go"
     ],
     "scope_match": "精确文件或目录/**；gate可合并worker已审阅commit，但不直接越权编辑其生产代码。",
     "exclusive_resources": [
@@ -346,7 +353,8 @@
     "R035：f7aa53c首次全G05 V02失败（5008pass/14允许skip，三Cursor fixture和temporary profile E2E），原完整日志/source快照保持；追加MERGE-F03独立反例。等待T17/T04/T16原owner修复及非作者验收，所有源码/测试/文档形成新S后原G05和全部B06重新完整执行。",
     "R036：三项原owner返修非作者接受后合流，完整source+中央文档冻结新S；重跑全部原G05，不沿用f7aa53c失败或只跑窄selector。原G04 base/九依赖/全部实际diff保留。",
     "R038：原T06/T15/T17精确共享profile/终局fixture/合成marker返修及非作者反例入最终S；保留8db全量G05/平台通过和四live真实成败、独立429诊断。原47任务96要求45处置、9依赖、G04基线、全部原命令/次数/skip和Windows32不变；所有新S门禁重验，G06通过后按用户授权发PR。",
-    "R039 T28-F05安全边界：真实ManagedRoots下，同key/runtimeName从A切到B不得仅凭copied目录来源marker删除实际内容/权限/用户附件；compatibility与正式reconcile均在破坏前ErrUnsafe。same-source保留实际复制树与hash，正式已证明symlink替换不受影响。marker-only clone不迁移含绝对Path的源manifest，目标manifest由正式reconcile建立；无新公共API/复制框架。"
+    "R039 T28-F05安全边界：真实ManagedRoots下，同key/runtimeName从A切到B不得仅凭copied目录来源marker删除实际内容/权限/用户附件；compatibility与正式reconcile均在破坏前ErrUnsafe。same-source保留实际复制树与hash，正式已证明symlink替换不受影响。marker-only clone不迁移含绝对Path的源manifest，目标manifest由正式reconcile建立；无新公共API/复制框架。",
+    "R040：原T06/T15/T20精确互斥返修、非作者复验后合流。dab G05/10绿1失败CI/两过两失败live分别归档，专门T26绿不能替代完整Windows。原47/96/45/9、G04、全部命令/skip/Windows32不变，新S全门禁重验。"
   ],
   "acceptance_criteria": [
     {

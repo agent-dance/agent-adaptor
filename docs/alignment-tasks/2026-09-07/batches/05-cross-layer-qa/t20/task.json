@@ -88,7 +88,8 @@
       "docs/alignment-tasks/2026-09-07/amendments/R006.md",
       "docs/alignment-tasks/2026-09-07/amendments/R007.md",
       "docs/alignment-tasks/2026-09-07/amendments/R010.md",
-      "docs/alignment-tasks/2026-09-07/amendments/R011.md"
+      "docs/alignment-tasks/2026-09-07/amendments/R011.md",
+      "docs/alignment-tasks/2026-09-07/amendments/R040.md"
     ],
     "dependency_artifacts": [
       {
@@ -171,7 +172,8 @@
     "R011独立回归：已有MCP配置mode保持/真实外部mode变化可见；兼容rich→native schema batch→rich保持同一Thread active记录/正式resume/实际prewarm且每prompt一次，ResumeOnly不因Streaming布尔拒绝，真实配置/codec/资源不兼容仍受guard保护。",
     "R020 / QA-06: 利用现有 hostedprofile Claim.beforeLockClose/beforeRootClose 私有 seam，从真正 OS unlock 成功之后注入 close 故障；独立自建source/Initialize/BeginUse，持有 successor active barrier，断言旧 Release 重试不能写 state/marker/session 或释放新owner lock。所有等待/Close有限，不修改生产、不增加公共API、不把此证据视为原生Windows no-delete-sharing/DACL验证。",
     "R021：W04-R06 的最终独立验证改由后续 B06 T25 原生 Linux 全量/race 承担，避免与 B05 T33 同批 owner 形成验证依赖；T20 原 fixture/命令及其历史反例全部保留，其余24项职责不变。",
-    "R023：W04-R05/R07最终独立验证转后批T25，T27/T29 live保留；T20现22项，原源码/fixture/命令/日志不改，仅重出当前metadata，历史24项报告归档。"
+    "R023：W04-R05/R07最终独立验证转后批T25，T27/T29 live保留；T20现22项，原源码/fixture/命令/日志不改，仅重出当前metadata，历史24项报告归档。",
+    "R040 CI-WIN-F03：保留Windows两生命周期deadline原失败及到达阶段，不推断未记录慢因。两场景共用8s是fixture工程预算；仅这两测试按同步操作给独立至多8s context、stage/elapsed诊断和明确父协作预算，global helper/SDK policy不改、无重试、七identity Agent仍同时持claim。不得以watchdog goroutine留下未join工作；父context非hard kill，原go test timeout/CI监督仍是测试进程边界。新S原生Windows完整及原重复验收必过。"
   ],
   "acceptance_criteria": [
     {
@@ -187,6 +189,11 @@
     {
       "id": "T20-AC03-R020",
       "requirement": "R007 post-unlock/close 故障由新增独立私有测试实跑，验证错误可观察、旧owner失去权限、successor资源和锁安全；原e2e两项命令保留并通过。",
+      "required": true
+    },
+    {
+      "id": "T20-AC04",
+      "requirement": "R040 CI-WIN-F03：保留Windows两生命周期deadline原失败及到达阶段，不推断未记录慢因。两场景共用8s是fixture工程预算；仅这两测试按同步操作给独立至多8s context、stage/elapsed诊断和明确父协作预算，global helper/SDK policy不改、无重试、七identity Agent仍同时持claim。不得以watchdog goroutine留下未join工作；父context非hard kill，原go test timeout/CI监督仍是测试进程边界。新S原生Windows完整及原重复验收必过。",
       "required": true
     }
   ],

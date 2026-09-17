@@ -152,3 +152,5 @@ python3 docs/alignment-tasks/2026-09-07/validate.py \
 [R039](amendments/R039.md)：来源marker不能授权copied技能同名异源覆盖；真实ManagedRoots反例及精确共享层返修。
 
 R038/R039 实现已由原负责人交付并独立复核：保留累计预算反例的首次失败，再以原反例验收修复；中央使用文档/godoc/CHANGELOG已对齐。此状态仅表示可合流实施，新的精确S仍须通过完整G05和B06/G06。
+
+[R040](amendments/R040.md)：dab原生Windows/full-CI与CodeBuddy失败保留；原T06/T15/T20精确返修，原门禁与持续授权保持。

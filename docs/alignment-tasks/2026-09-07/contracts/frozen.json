@@ -1,10 +1,10 @@
 {
   "schema_version": "1.0",
   "gate": "G05",
-  "manifest_revision": 38,
+  "manifest_revision": 39,
   "code_baseline": "919f140f64f89c80933802840c8878681a85a4d9",
   "source_head": "e2f0620bdd6477e6fe16f6db5648093589342ca2",
-  "status": "R039_implementation_reviewed_pending_new_exact_S_G05_and_B06",
+  "status": "R040_repairs_pending_independent_review_and_new_exact_S",
   "contracts": [
     {
       "producer": "C01",
@@ -449,7 +449,8 @@
     "R037: nativeWindows29e569c lacks Native checkpoint with nil error; original T17 must diagnose actual exit/protocol/fixture, preserving all assertions and32mandatory. External Cursor V01 passed but runtime PID markers changed broad CLI hash; preserve stoppedV02 and repair external provenance only with formal marker evidence. Original same-new-S gates and full coverage remain.",
     "R038: preserve complete8db four-provider matrix facts. T06 alone repairs strictly proven managed skill cloning and root profile error preservation; T15 owns TerminalPayload fixture and CodeBuddy GetProfile Go error; T17 changes synthetic public marker wording/diagnostic only. No writer overlap, arbitrary symlink widening, assertion weakening or retroactive historical causes. Later Codex429 diagnostic is an environment fact, not product repair. Same-new-S G05/all B06/G06 required; user authorized PR after completion only.",
     "R039 T28-F05安全边界：真实ManagedRoots下，同key/runtimeName从A切到B不得仅凭copied目录来源marker删除实际内容/权限/用户附件；compatibility与正式reconcile均在破坏前ErrUnsafe。same-source保留实际复制树与hash，正式已证明symlink替换不受影响。marker-only clone不迁移含绝对Path的源manifest，目标manifest由正式reconcile建立；无新公共API/复制框架。",
-    "R038/R039 delivery: original T15 terminal envelope and profile Go causes, T17 synthetic marker wording, and T06 strictly proved skill clone/copied-source refusal are independently reviewed and integrated. Retained managed trees share one validation budget; independent pure/mixed 66MiB counterexamples and entry regression preserve the first failed candidate. Source snapshots and retained-tree validation have separate64MiB/20000-entry budgets, not a claim about total destination size. Public docs/godoc/CHANGELOG agree. No public API/golden/dependency/generated change. Every final gate still requires the new combined S."
+    "R038/R039 delivery: original T15 terminal envelope and profile Go causes, T17 synthetic marker wording, and T06 strictly proved skill clone/copied-source refusal are independently reviewed and integrated. Retained managed trees share one validation budget; independent pure/mixed 66MiB counterexamples and entry regression preserve the first failed candidate. Source snapshots and retained-tree validation have separate64MiB/20000-entry budgets, not a claim about total destination size. Public docs/godoc/CHANGELOG agree. No public API/golden/dependency/generated change. Every final gate still requires the new combined S.",
+    "R040: retain dab original G05/11CI/8live facts. T06 proves held profile/skills aliases before clone-only read-view rebasing; T15 formal one-level deferred MCP observation and safe predicates only; T20 two synchronous per-operation fixtures, unchanged single-operation8s and simultaneous identity claims. No guessed JSON, broader cold-production repair, ownership weakening, changed skip/runner/model/endpoint or retroactive causes. Same-new-S G05/allB06/G06 before authorized PR."
   ],
   "unmerged_related_branches": [
     {

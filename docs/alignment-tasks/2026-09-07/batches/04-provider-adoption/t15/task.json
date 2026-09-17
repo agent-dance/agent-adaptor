@@ -63,7 +63,8 @@
       "docs/alignment-tasks/2026-09-07/amendments/R030.md",
       "docs/merge-readiness-plan-2026-09-16.md",
       "docs/alignment-tasks/2026-09-07/rework.json",
-      "docs/alignment-tasks/2026-09-07/amendments/R038.md"
+      "docs/alignment-tasks/2026-09-07/amendments/R038.md",
+      "docs/alignment-tasks/2026-09-07/amendments/R040.md"
     ],
     "dependency_artifacts": [
       {
@@ -142,7 +143,9 @@
     "R030 T28-F02：T28-AC01；正式 Question 调用、一次回调和 Answer 返回，禁止宿主伪造。",
     "R030 T28-F03：T28-AC01；native schema 正式输出及有效值，保留失败 cause/terminal 脱敏诊断。",
     "R038 T28-F04：cold-resume fixture必须读取TerminalPayload.Event和JSON，不把外层envelope当provider字段；保留原session/type/subtype/显式is_error=false、跨Agent资源/nonce/旧gateway全部断言。普通无live tag测试覆盖正负terminal，live仅安全字段诊断。",
-    "R038 T28-F06：CodeBuddy GetProfile通过现有resolveProfileWithOptions返回原Go error，保留errors.Is/As而非只stringify；只改profile报告边界，不改provider解析/CLI/审批/成功响应，验证Inspect/Clone与原错误语义。"
+    "R038 T28-F06：CodeBuddy GetProfile通过现有resolveProfileWithOptions返回原Go error，保留errors.Is/As而非只stringify；只改profile报告边界，不改provider解析/CLI/审批/成功响应，验证Inspect/Clone与原错误语义。",
+    "R040 T28-F07：cold A已通过证据保留，B联合失败未打印分量保持unknown；只加安全布尔/计数诊断及必要一次独立诊断，不放宽nonce不注入、精确Text、实际新callback、phase/Terminal、同session和资源轮换。cold生产修复须另以已证原因扩展精确范围。",
+    "R040 T28-F08：固定官方CodeBuddy 2.151.0的DeferExecuteTool/toolName/params封装MCP调用，零CLI反例仅证明观测缺口，不倒填本轮live路径。只在provider observer识别正式一层wrapper与catalog唯一MCP身份，外层Tool/Raw/Transcript原样；匹配真实成功result后才Completed，malformed/unknown/nested/error不得成功，不递归猜JSON。普通/public正负回归和原live事实保持。"
   ],
   "acceptance_criteria": [
     {
@@ -188,6 +191,16 @@
     {
       "id": "T15-AC09",
       "requirement": "R038 T28-F06：CodeBuddy GetProfile通过现有resolveProfileWithOptions返回原Go error，保留errors.Is/As而非只stringify；只改profile报告边界，不改provider解析/CLI/审批/成功响应，验证Inspect/Clone与原错误语义。",
+      "required": true
+    },
+    {
+      "id": "T15-AC10",
+      "requirement": "R040 T28-F07：cold A已通过证据保留，B联合失败未打印分量保持unknown；只加安全布尔/计数诊断及必要一次独立诊断，不放宽nonce不注入、精确Text、实际新callback、phase/Terminal、同session和资源轮换。cold生产修复须另以已证原因扩展精确范围。",
+      "required": true
+    },
+    {
+      "id": "T15-AC11",
+      "requirement": "R040 T28-F08：固定官方CodeBuddy 2.151.0的DeferExecuteTool/toolName/params封装MCP调用，零CLI反例仅证明观测缺口，不倒填本轮live路径。只在provider observer识别正式一层wrapper与catalog唯一MCP身份，外层Tool/Raw/Transcript原样；匹配真实成功result后才Completed，malformed/unknown/nested/error不得成功，不递归猜JSON。普通/public正负回归和原live事实保持。",
       "required": true
     }
   ],

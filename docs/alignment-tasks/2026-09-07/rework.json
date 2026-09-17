@@ -1,5 +1,5 @@
 {
-  "revision": "R039",
+  "revision": "R040",
   "source_base": "1c49823fafd2a057be4b0fc6dd96a563e957e2e9",
   "prepared_base": "external_dispatch_prepared_head",
   "max_parallelism": 6,
@@ -56,6 +56,11 @@
           "id": "T28-F05",
           "check": "T28-V01",
           "contract": "SyncProfile产生的合法SDK managed skill link须以正式manifest/source_hash/fingerprint与实际target证明后安全复制为普通树，使Native+WithTools可执行；任意用户链接、越界、替换、嵌套链接、特殊文件和冲突仍拒绝。不得删除IncludeSkills、换Dedicated迁就fixture或放宽托管所有权。core保留ProfileReporter返回的Go error和AgentProfile.Error事实；源不污染、真实配置fingerprint、完整审计与原单writer合同保持。 R039 T28-F05安全边界：真实ManagedRoots下，同key/runtimeName从A切到B不得仅凭copied目录来源marker删除实际内容/权限/用户附件；compatibility与正式reconcile均在破坏前ErrUnsafe。same-source保留实际复制树与hash，正式已证明symlink替换不受影响。marker-only clone不迁移含绝对Path的源manifest，目标manifest由正式reconcile建立；无新公共API/复制框架。"
+        },
+        {
+          "id": "CI-WIN-F02",
+          "check": "T06-V01",
+          "contract": "原生Windows Dedicated managed clone失败及同目录alias零CLI反例必须修复；旧profile root与held source、其直接skills父目录与held skills root均SameFile且叶目录非symlink后，才为clone构造私有只读manifest Path视图。直接绝对子项/唯一性/source_hash/fingerprint/实际link目标/held root与两次bounded快照继续校验；错profile/parent、替换、重复重定位、unknownlink拒绝。源manifest、canonical ownership和真实fingerprint不变，原Windows fixtures不得canonicalize或skip掩盖。"
         }
       ]
     },
@@ -109,6 +114,16 @@
           "id": "T28-F06",
           "check": "T15-V01",
           "contract": "CodeBuddy GetProfile通过现有resolveProfileWithOptions返回原Go error，保留errors.Is/As而非只stringify；只改profile报告边界，不改provider解析/CLI/审批/成功响应，验证Inspect/Clone与原错误语义。"
+        },
+        {
+          "id": "T28-F07",
+          "check": "T28-V01",
+          "contract": "cold A已通过证据保留，B联合失败未打印分量保持unknown；只加安全布尔/计数诊断及必要一次独立诊断，不放宽nonce不注入、精确Text、实际新callback、phase/Terminal、同session和资源轮换。cold生产修复须另以已证原因扩展精确范围。"
+        },
+        {
+          "id": "T28-F08",
+          "check": "T28-V01",
+          "contract": "固定官方CodeBuddy 2.151.0的DeferExecuteTool/toolName/params封装MCP调用，零CLI反例仅证明观测缺口，不倒填本轮live路径。只在provider observer识别正式一层wrapper与catalog唯一MCP身份，外层Tool/Raw/Transcript原样；匹配真实成功result后才Completed，malformed/unknown/nested/error不得成功，不递归猜JSON。普通/public正负回归和原live事实保持。"
         }
       ]
     },
@@ -261,6 +276,21 @@
         }
       ],
       "dispatch": "Original owner narrow E2E fixture repair after final G05 failure; total implementation/review concurrency <=6."
+    },
+    {
+      "owner": "T20",
+      "task": "docs/alignment-tasks/2026-09-07/batches/05-cross-layer-qa/t20/task.json",
+      "allow": [
+        "e2e/alignment_profile_test.go",
+        "docs/alignment-tasks/2026-09-07/handoffs/T20/**"
+      ],
+      "findings": [
+        {
+          "id": "CI-WIN-F03",
+          "check": "T20-V01",
+          "contract": "保留Windows两生命周期deadline原失败及到达阶段，不推断未记录慢因。两场景共用8s是fixture工程预算；仅这两测试按同步操作给独立至多8s context、stage/elapsed诊断和明确父协作预算，global helper/SDK policy不改、无重试、七identity Agent仍同时持claim。不得以watchdog goroutine留下未join工作；父context非hard kill，原go test timeout/CI监督仍是测试进程边界。新S原生Windows完整及原重复验收必过。"
+        }
+      ]
     }
   ]
 }
