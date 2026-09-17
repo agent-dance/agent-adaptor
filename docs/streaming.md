@@ -559,6 +559,15 @@ a bounded, read-only `thread/read` with `includeTurns=false`. The returned ID,
 direct parent and role must agree with the formal spawn and resolved catalog;
 conflicts cannot be repaired by later replays. Missing or unavailable metadata
 produces an observable unresolved capability, never a fabricated completion.
+Codex can report an unreadable session-metadata record while creating a new
+child. Only that specific official store error qualifies for one further
+metadata read after a healthy parent terminal; failed or interrupted parents
+and canceled or closing connections do not authorize recovery. Both attempts
+use the same strict identity checks. At most 128 receivers are admitted, with
+no more than two reads each and one final observation outcome per receiver.
+The original two-second total settlement budget, including cancellation and
+worker join, is shared by pending reads and recovery. The first error remains
+in Raw; a second unavailable response stays unresolved. No prompt is replayed.
 After an unanswered lookup is abandoned, that resident process stops issuing
 further optional metadata reads until it retires; formal thread announcements
 can still provide evidence. This bounds outstanding requests across turns.

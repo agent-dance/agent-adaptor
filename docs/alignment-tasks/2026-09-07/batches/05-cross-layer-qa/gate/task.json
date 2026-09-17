@@ -88,7 +88,8 @@
       "docs/alignment-tasks/2026-09-07/amendments/R040.md",
       "docs/alignment-tasks/2026-09-07/amendments/R041.md",
       "docs/alignment-tasks/2026-09-07/amendments/R042.md",
-      "docs/alignment-tasks/2026-09-07/amendments/R043.md"
+      "docs/alignment-tasks/2026-09-07/amendments/R043.md",
+      "docs/alignment-tasks/2026-09-07/amendments/R044.md"
     ],
     "dependency_artifacts": [
       {
@@ -320,7 +321,10 @@
       "codex/appserver/child_metadata.go",
       "codex/appserver/alignment_child_metadata_test.go",
       "codex/appserver/appserver_test.go",
-      "docs/alignment-tasks/2026-09-07/handoffs/T16/multiplex.md"
+      "docs/alignment-tasks/2026-09-07/handoffs/T16/multiplex.md",
+      "docs/alignment-tasks/2026-09-07/amendments/R044.md",
+      "codex/appserver/alignment_child_metadata_availability_test.go",
+      "docs/alignment-tasks/2026-09-07/handoffs/T16/metadata-availability.md"
     ],
     "scope_match": "精确文件或目录/**；gate可合并worker已审阅commit，但不直接越权编辑其生产代码。",
     "exclusive_resources": [

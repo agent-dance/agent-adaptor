@@ -392,6 +392,8 @@ R036：三项返修交付后按新S重新验收。Cursor旧fixture复用既有�
 
 R037：原生Windows T26-F01在Native路径缺checkpoint的失败交原T17定位；原日志未输出exit/协议原因，不得推测当证据或放松健康断言。Dedicated失败部分审计、Runtime Env根保护和Windows32必过项保持。外部T30收集器须区别CLI真实程序字节与正式空PID运行标记；旧postflight停止及未执行V02保留，动态标记不证明回收。全部修复后用新S重验G05/B06/G06。
 
+R044：正式关联的Codex metadata-only读取已观察到官方-32603/session metadata/`is empty`错误；其字面含义不是物理零字节。仅这一精确正式错误可让已准入receiver在健康父Completed后的owner决定点获得一次恢复，seal本身不放行，failed/interrupted、取消、known Close/EOF/Wait、abandoned及已拒绝/冲突身份不得恢复。保留128身份、每ID至多两次且一个最终worker结果，原1秒单查询、2秒总结算含100ms取消/join不延长；所有查询仍只读，不重放prompt或等待child完成。恢复后的ID/direct parent/role/catalog及既有粘滞冲突规则不变，首错Raw、真实cause、worker join、结果冻结与失败checkpoint边界保持。Codex联合谓词和Cursor warmup仅增强安全失败日志，原prompt/model/oracle/预算不变；本次新增nonce缺失与旧Cursor原因均不倒填。修复及中央合同合流后新S全部原G05/B06重验，补充诊断不关闭原矩阵/G06。
+
 具体冻结设计、未支持边界、文件所有权和fixture见 `docs/alignment-tasks/2026-09-07/contracts/frozen.json`。合同冻结不代表代码已实现；后续同批godoc、合同测试、使用文档和CHANGELOG完成后才能关闭对应项。其他第14节既有保护继续有效。
 
 R028：Go 1.26.8 的 fuzz 协调器存在官方75804父deadline与child取消竞态，75a84c8 的原T25-V09在30秒/847052样本后报deadline失败。原日志未含内部调度轨迹，独立受控机制复现不得倒填为原run轨迹。CI及T25/T26统一使用包含官方修复的Go1.27.1，由 `.github/go-version` 固定；go.mod最低1.26.8不变，新增minimum-go全量test/vet。原30秒fuzz命令、失败检查及live门保持，禁止工具链私有补丁、吞deadline或重试刷绿。revision27只精确追加CI版本文件的G05验收所有权，新SHA重跑全部门禁。

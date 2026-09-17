@@ -53,6 +53,13 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- Recover one optional Codex child-metadata read when the official store reports
+  that no readable session metadata exists. The additional read runs only after
+  a healthy parent terminal, within the existing metadata settlement budget; cancellation,
+  identity conflicts and unavailable evidence retain their original semantics.
+  Preserve the first error in Raw and never replay a prompt.
+- Include safe predicate and audit-presence details in Codex subagent and Cursor
+  warmup live-test failures, without logging provider text or changing assertions.
 - Isolate Codex app-server notifications from other threads in Raw audit data.
   Automatic child subscriptions can send turn/item events without a prior
   thread announcement; these events cannot alter the parent result or terminal.
