@@ -1,5 +1,7 @@
 # Codex 0.153.4 早到状态控制
 
+> 历史范围：下述早到 status 窄修及无 RPC 描述仅适用于 3dbabb34 / 948de5bf；后续正式 multiplex 修复的当前合同见 [multiplex.md](multiplex.md)。旧实现事实与外部红绿证据仍保留。
+
 固定官方 rust-v0.153.4 / 3d2ee51ca2d5db578f328aa75e20aa22c0197c9a 中，app-server/src/lib.rs 的 thread_created 分支进入 thread_processor.rs::try_attach_thread_listener；后者先调用 ThreadWatchManager::upsert_thread 发布全连接状态广播，再挂接线程 listener。因此不能将 thread/started 先于 thread/status/changed 作为 SDK 的强制前提。
 
 合法 foreign thread/status/changed 仅保留在 Raw，不登记 child、不绑定父/turn、不发布 Transcript、Usage、plan、capability 或终局。缺失/畸形状态和已知 child 身份冲突仍拒绝；其他 foreign thread/turn/item/error/usage/terminal fence 不变。Subagent 完成仍只由正式 child role、当前 spawn receiver 和唯一 resolved catalog 双证明支持。没有新增队列、状态表、RPC、等待或重放。

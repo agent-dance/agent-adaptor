@@ -60,8 +60,8 @@ func TestAlignmentChildRoleCapacity(t *testing.T) {
 					child("child-0", "reviewer", "")
 				}
 				s.closeObservations(nil)
-				if s.protocolError() != nil {
-					t.Fatalf("valid notification envelope rejected: %v", s.protocolError())
+				if (s.protocolError() != nil) != (want == capability.Interrupted) {
+					t.Fatalf("established identity conflict classification: %v", s.protocolError())
 				}
 				if s.threadID != "parent" || s.turnID != "turn" {
 					t.Fatal("child metadata changed current thread/turn")

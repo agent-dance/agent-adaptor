@@ -122,7 +122,13 @@ func TestAlignmentChildStatusValidation(t *testing.T) {
 				body = alignmentChildStatus(child, `{"type":"active","activeFlags":["guess"]}`)
 			}
 			s.onNotification(NotifyThreadStatusChanged, body)
-			if scenario == "unknown" || scenario == "overflow" {
+			if scenario == "conflicting-source-role" {
+				if s.protocolError() != nil || !s.observation.children[child].rejected || !s.observation.notices["capability_invalid"] {
+					t.Fatal("first invalid metadata not rejected as an unproven fact")
+				}
+				return
+			}
+			if scenario == "unknown" || scenario == "overflow" || scenario == "wrong-parent" {
 				// Official 0.153.4 broadcasts status before attaching child
 				// listeners; Raw-only control is not proof of child identity.
 				if _, known := s.observation.children[child]; known || s.protocolError() != nil || len(s.observation.children) > 128 {
@@ -143,7 +149,7 @@ func TestAlignmentChildStatusValidation(t *testing.T) {
 	}
 }
 
-func TestAlignmentChildStatusDoesNotRelaxOtherScope(t *testing.T) {
+func TestAlignmentChildStatusForeignScopeIsRawOnly(t *testing.T) {
 	for _, announced := range []bool{false, true} {
 		for _, method := range []string{NotifyTurnStarted, NotifyTurnCompleted, NotifyItemStarted, NotifyItemCompleted, NotifyItemAgentMessageDelta, NotifyTurnPlanUpdated, NotifyThreadTokenUsageUpdated, NotifyError} {
 			t.Run(fmt.Sprintf("announced-%v/%s", announced, method), func(t *testing.T) {
@@ -158,8 +164,8 @@ func TestAlignmentChildStatusDoesNotRelaxOtherScope(t *testing.T) {
 					t.Fatal("valid control poisoned parent")
 				}
 				s.onNotification(method, json.RawMessage(`{"threadId":"child","turnId":"turn","turn":{"id":"turn","status":"completed"}}`))
-				if s.protocolError() == nil || !strings.Contains(s.protocolError().Error(), "belongs to thread") {
-					t.Fatal("child turn/item/error/usage bypassed parent fence")
+				if s.protocolError() != nil || s.terminal != nil || s.usage != nil || s.finalAgentText != "" || len(s.transcript) != 1 {
+					t.Fatal("foreign scope poisoned or populated parent semantics")
 				}
 			})
 		}
@@ -199,13 +205,17 @@ func TestAlignmentChildStatusLateConflictingEvidence(t *testing.T) {
 				s.onNotification(NotifyThreadStarted, alignmentChildMetadata("child", "parent", "writer"))
 				s.onNotification(NotifyThreadStatusChanged, alignmentChildStatus("child", `{"type":"idle"}`))
 			}
-			if s.protocolError() == nil {
-				t.Fatal("late wrong-parent/conflict escaped")
+			if wrongParent {
+				if s.protocolError() != nil || len(s.observation.children) != 0 {
+					t.Fatal("unrelated announcement became child or parent error")
+				}
+			} else if s.protocolError() == nil {
+				t.Fatal("late established conflict escaped")
 			}
 			s.onNotification(NotifyTurnCompleted, json.RawMessage(`{"threadId":"parent","turn":{"id":"turn","status":"completed"}}`))
 			result := s.snapshot(Options{}, "parent", "raw", "", 0, "", false)
 			facts, _ := alignmentFacts(sink)
-			if result.Checkpoint != nil || len(facts) != 0 {
+			if (result.Checkpoint != nil) != wrongParent || len(facts) != 0 {
 				t.Fatal("later evidence erased failure or invented fact")
 			}
 		})
@@ -303,7 +313,7 @@ func TestAlignmentChildStatusBoundaries(t *testing.T) {
 		s := newRunState("run", &recordingSink{})
 		s.setThread("parent")
 		s.setTurn("turn")
-		s.onNotification(NotifyTurnCompleted, json.RawMessage(`{"threadId":"foreign","turn":{"id":"turn","status":"completed"}}`))
+		s.onNotification(NotifyTurnCompleted, json.RawMessage(`{"threadId":"parent","turn":{"id":"wrong-turn","status":"completed"}}`))
 		prior := s.protocolError()
 		s.onNotification(NotifyThreadStatusChanged, alignmentChildStatus("foreign", `{"type":"idle"}`))
 		s.onNotification(NotifyTurnCompleted, json.RawMessage(`{"threadId":"parent","turn":{"id":"turn","status":"completed"}}`))

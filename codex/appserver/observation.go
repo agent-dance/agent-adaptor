@@ -6,9 +6,11 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"reflect"
 	"strconv"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -39,18 +41,20 @@ type collabObservation struct {
 type childRole struct {
 	role     string
 	conflict bool
+	rejected bool // tombstone: never a proven child, never heal on replay
 }
 type observations struct {
-	catalog     *capabilityobs.Catalog
-	tracker     *capabilityobs.Tracker
-	table       *todoobs.Table
-	skills      []UserInput
-	skillPaths  map[string]string
-	mcp         map[string]capability.Ref
-	children    map[string]childRole
-	collab      map[string]*collabObservation
-	collabOrder []string
-	notices     map[string]bool
+	catalog         *capabilityobs.Catalog
+	tracker         *capabilityobs.Tracker
+	table           *todoobs.Table
+	skills          []UserInput
+	skillPaths      map[string]string
+	mcp             map[string]capability.Ref
+	children        map[string]childRole
+	metadataPending map[string]bool // present: already requested; true: not yet applied
+	collab          map[string]*collabObservation
+	collabOrder     []string
+	notices         map[string]bool
 }
 
 func newObservations(opts Options) *observations {
@@ -76,15 +80,16 @@ func newObservations(opts Options) *observations {
 	catalog, _ := capabilityobs.NewCatalog(entries)
 	table, _ := todoobs.NewTable(todoobs.Scope{})
 	return &observations{
-		catalog:    catalog,
-		tracker:    capabilityobs.NewTracker(),
-		table:      table,
-		skills:     append([]UserInput(nil), opts.SkillInputs...),
-		skillPaths: paths,
-		mcp:        make(map[string]capability.Ref),
-		children:   make(map[string]childRole),
-		collab:     make(map[string]*collabObservation),
-		notices:    make(map[string]bool),
+		catalog:         catalog,
+		tracker:         capabilityobs.NewTracker(),
+		table:           table,
+		skills:          append([]UserInput(nil), opts.SkillInputs...),
+		skillPaths:      paths,
+		mcp:             make(map[string]capability.Ref),
+		children:        make(map[string]childRole),
+		metadataPending: make(map[string]bool),
+		collab:          make(map[string]*collabObservation),
+		notices:         make(map[string]bool),
 	}
 }
 
@@ -244,8 +249,30 @@ func (s *runState) observeCollab(o *collabObservation) {
 	if o.conflict || len(c.ReceiverThreadIDs) != 1 {
 		return
 	}
-	child, ok := s.observation.children[c.ReceiverThreadIDs[0]]
-	if !ok || child.conflict {
+	receiver := c.ReceiverThreadIDs[0]
+	if strings.TrimSpace(receiver) == "" || receiver == s.threadID || s.observation.children[receiver].rejected {
+		return
+	}
+	waiting, requested := s.observation.metadataPending[receiver]
+	if waiting {
+		return
+	}
+	child, ok := s.observation.children[receiver]
+	if !ok || child.role == "" {
+		if !ok && len(s.observation.children) >= childMetadataLimit {
+			s.observationNotice("capability_unresolved")
+			return
+		}
+		if !requested && s.metadataReads != nil {
+			if s.metadataReads.admit(receiver) {
+				s.observation.metadataPending[receiver] = true
+			} else {
+				s.observationNotice("capability_unresolved")
+			}
+		}
+		return
+	}
+	if child.conflict {
 		return
 	}
 	key, ok := s.lookupCapability(capability.Subagent, child.role)
@@ -270,45 +297,88 @@ func (s *runState) observeCollab(o *collabObservation) {
 // This narrowly recognizes subordinate metadata; it never changes the active
 // thread/turn, emits that child's semantics or guesses a parent tool identity.
 func (s *runState) observeChildThread(params json.RawMessage) bool {
-	var body struct {
-		Thread struct {
-			ID        string `json:"id"`
-			AgentRole string `json:"agentRole"`
-			Source    struct {
-				SubAgent struct {
-					Spawn struct {
-						Parent string `json:"parent_thread_id"`
-						Role   string `json:"agent_role"`
-					} `json:"thread_spawn"`
-				} `json:"subAgent"`
-			} `json:"source"`
-		} `json:"thread"`
-	}
-	if json.Unmarshal(params, &body) != nil || body.Thread.ID == "" || body.Thread.ID == s.threadID || body.Thread.Source.SubAgent.Spawn.Parent != s.threadID {
+	return s.mergeChildMetadata(params, "")
+}
+
+// expected is nonempty only for a correlated metadata-only read. First invalid
+// optional evidence is sticky but does not fail the parent; contradictions of
+// an already accepted direct-child identity are immediate protocol failures.
+func (s *runState) mergeChildMetadata(params json.RawMessage, expected string) bool {
+	var body childMetadata
+	if !validObservationJSON(params) || json.Unmarshal(params, &body) != nil {
+		if expected != "" {
+			s.rejectChildMetadata(expected, "invalid")
+		}
 		return false
+	}
+	id := body.Thread.ID
+	if expected != "" && id == "" {
+		s.observationNotice("capability_unresolved")
+		return false
+	}
+	if expected != "" && id != expected {
+		s.rejectChildMetadata(expected, "identity")
+		return false
+	}
+	if strings.TrimSpace(id) == "" || id == s.threadID {
+		return false
+	}
+	parent := body.Thread.Source.SubAgent.Spawn.Parent
+	if parent != s.threadID {
+		old, known := s.observation.children[id]
+		if known && !old.rejected {
+			s.rejectChildMetadata(id, "parent")
+		} else if expected != "" {
+			if parent == "" {
+				s.observationNotice("capability_unresolved")
+			} else {
+				s.rejectChildMetadata(id, "parent")
+			}
+		}
+		return false
+	}
+	if s.observation.children[id].rejected {
+		return true
 	}
 	role := body.Thread.AgentRole
 	if role == "" {
 		role = body.Thread.Source.SubAgent.Spawn.Role
 	}
-	// Capacity limits new identities, not evidence updates for known children.
-	// Replays must still merge conflicts when the table is full.
-	if _, exists := s.observation.children[body.Thread.ID]; !exists && len(s.observation.children) >= 128 {
+	old, known := s.observation.children[id]
+	conflict := known && (old.conflict || (old.role != "" && role != "" && old.role != role))
+	conflict = conflict || (body.Thread.Source.SubAgent.Spawn.Role != "" && body.Thread.Source.SubAgent.Spawn.Role != role)
+	if conflict {
+		s.rejectChildMetadata(id, "role")
+		return true
+	}
+	if !known && len(s.observation.children) >= childMetadataLimit {
 		s.observationNotice("capability_unresolved")
 		return true
 	}
-	child := childRole{role: role}
-	if old, ok := s.observation.children[body.Thread.ID]; ok && (old.conflict || old.role != role) {
-		child.conflict = true
+	if role == "" {
+		role = old.role
 	}
-	if body.Thread.Source.SubAgent.Spawn.Role != "" && body.Thread.Source.SubAgent.Spawn.Role != role {
-		child.conflict = true
-	}
-	s.observation.children[body.Thread.ID] = child
+	s.observation.children[id] = childRole{role: role}
 	for _, id := range s.observation.collabOrder {
 		s.observeCollab(s.observation.collab[id])
 	}
 	return true
+}
+func (s *runState) rejectChildMetadata(id, reason string) {
+	if old, known := s.observation.children[id]; known {
+		if !old.rejected {
+			old.conflict = true
+			s.observation.children[id] = old
+			s.recordProtocolError(fmt.Errorf("codex app-server conflicting child %s metadata", reason))
+		}
+	} else if len(s.observation.children) < childMetadataLimit {
+		s.observation.children[id] = childRole{rejected: true}
+	} else {
+		// This table never deletes identities during the turn. Saturation also
+		// refuses a later valid replay of a new invalid ID we cannot tombstone.
+		s.observationNotice("capability_unresolved")
+	}
+	s.observationNotice("capability_invalid")
 }
 
 // The checked-in ThreadStatusChangedNotification schema defines a control

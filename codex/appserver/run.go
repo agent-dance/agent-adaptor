@@ -155,6 +155,9 @@ func Run(ctx context.Context, opts Options, sink driver.EventSink) (driver.Respo
 	client := NewClient(context.Background(), stream)
 
 	state := newRunState(opts.RunID, sink, opts)
+	if len(opts.ResolvedAgents) != 0 {
+		state.metadataReads = newChildMetadataReads(ctx, client)
+	}
 	// runState.onNotification forwards to the translator (so bridges see
 	// every payload) and then accumulates run-level state needed to shape
 	// the driver.Response.
@@ -182,8 +185,28 @@ func Run(ctx context.Context, opts Options, sink driver.EventSink) (driver.Respo
 	threadID := ""
 	turnID := ""
 	finish := func(primary error) (driver.Response, error) {
+		primary = errors.Join(primary, callerContextError(ctx))
+		if protocolErr := state.protocolError(); protocolErr != nil && !errors.Is(primary, protocolErr) {
+			primary = errors.Join(primary, protocolErr)
+		}
+		joined := state.metadataReads.settle(primary == nil && ctx.Err() == nil && state.protocolError() == nil)
+		if !joined {
+			primary = errors.Join(primary, errors.New("codex child metadata worker did not settle; closing transport"))
+			_ = client.Close()
+		}
+		cleanupCtx, cancelCleanup := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancelCleanup()
 		waitErr := shutdown()
+		if !joined {
+			joinErr := state.metadataReads.join(cleanupCtx)
+			primary = errors.Join(primary, joinErr)
+			joined = joinErr == nil
+		}
+		if joined {
+			primary = errors.Join(primary, callerContextError(ctx), state.applyChildMetadataResults())
+		}
 		state.bindReceivedTurn()
+		state.freezeChildMetadata()
 		if readErr := stream.ReadError(); readErr != nil {
 			state.recordProtocolError(fmt.Errorf("decode JSON-RPC stdout: %w", readErr))
 		}
@@ -199,10 +222,14 @@ func Run(ctx context.Context, opts Options, sink driver.EventSink) (driver.Respo
 			finalErr = protocolErr
 		} else if !state.hasTerminal() {
 			finalErr = fmt.Errorf("codex app-server protocol ended without turn/completed")
-		} else if waitFatal != nil {
-			finalErr = fmt.Errorf("codex app-server wait: %w", waitFatal)
+		}
+		if waitFatal != nil {
+			finalErr = errors.Join(finalErr, fmt.Errorf("codex app-server wait: %w", waitFatal))
 		}
 		result := state.snapshot(opts, threadID, stdoutBuf.String(), stderrBuf.String(), exitCode, signal, timedOut)
+		if finalErr != nil {
+			result.Checkpoint = nil
+		}
 		result = finalizeAppServerStructuredOutput(opts.OutputSchema, result)
 		// The official terminal is staged until the process outcome and native
 		// structured-output validation are known. This makes the final public
@@ -300,10 +327,12 @@ func Run(ctx context.Context, opts Options, sink driver.EventSink) (driver.Respo
 // ---------------------------------------------------------------------------
 
 type runState struct {
-	translator  *Translator
-	observation *observations
-	sink        driver.EventSink
-	notifyMu    sync.Mutex
+	translator     *Translator
+	observation    *observations
+	metadataReads  *childMetadataReads
+	metadataFrozen bool // protected by notifyMu; no late metadata may alter the snapshot
+	sink           driver.EventSink
+	notifyMu       sync.Mutex
 
 	mu             sync.Mutex
 	finalAgentText string
@@ -426,6 +455,41 @@ func (s *runState) onNotification(method string, params json.RawMessage) {
 }
 
 func (s *runState) handleNotificationLocked(method string, params json.RawMessage) {
+	// This connection is subscribed to multiple threads. Demultiplex before
+	// checking the selected parent's terminal; a child terminal is not a
+	// duplicate parent terminal. Foreign payload contents stay opaque Raw.
+	s.mu.Lock()
+	parent := s.threadID
+	s.mu.Unlock()
+	if parent != "" {
+		threadID, _, scoped, _, err := appServerNotificationScope(method, params)
+		if err != nil {
+			s.recordProtocolError(err)
+			return
+		}
+		if scoped && threadID != parent {
+			deferMetadata := false
+			if method == NotifyThreadStarted {
+				s.mu.Lock()
+				closed := s.publicClosed
+				deferMetadata = !closed && (s.turnID == "" || len(s.pending) != 0)
+				s.mu.Unlock()
+				if !closed && !deferMetadata && !s.metadataFrozen {
+					s.observeChildThread(params)
+				}
+			}
+			if !deferMetadata {
+				if child, known := s.observation.children[threadID]; known && child.conflict {
+					s.recordProtocolError(errors.New("codex app-server conflicting child identity"))
+				} else if method == NotifyThreadStatusChanged {
+					if err := validateThreadStatus(params); err != nil {
+						s.recordProtocolError(fmt.Errorf("decode thread/status/changed: %w", err))
+					}
+				}
+				return
+			}
+		}
+	}
 	// Once the official terminal has closed normalized semantics, trailing
 	// frames remain audit-only Raw stdout. A duplicate official terminal is a
 	// protocol violation; every other trailing frame is ignored here.
@@ -451,9 +515,6 @@ func (s *runState) handleNotificationLocked(method string, params json.RawMessag
 	}
 	s.mu.Unlock()
 
-	if method == NotifyThreadStarted && s.observeChildThread(params) {
-		return
-	}
 	deferred, err := s.bindNotificationScopeLocked(method, params)
 	if deferred {
 		return
@@ -469,6 +530,7 @@ func (s *runState) handleNotificationLocked(method string, params json.RawMessag
 	}
 	// turn/completed is the unique public terminal boundary.
 	if method == NotifyTurnCompleted {
+		s.metadataReads.seal()
 		s.mu.Lock()
 		s.publicClosed = true
 		s.mu.Unlock()
@@ -573,18 +635,7 @@ func (s *runState) bindNotificationScopeLocked(method string, params json.RawMes
 		return true, nil
 	}
 	if threadID != s.threadID {
-		// Codex 0.153.4 broadcasts status before attaching a new thread's
-		// listener. This control frame needs no child identity and stays Raw-only;
-		// it cannot authorize later foreign semantics or repair a known conflict.
-		if method == NotifyThreadStatusChanged {
-			if child, known := s.observation.children[threadID]; !known || !child.conflict {
-				if err := validateThreadStatus(params); err != nil {
-					return false, fmt.Errorf("decode thread/status/changed: %w", err)
-				}
-				return true, nil
-			}
-		}
-		return false, fmt.Errorf("codex app-server notification %s belongs to thread %q, want %q", method, threadID, s.threadID)
+		return false, errors.New("codex app-server unselected thread reached parent parser")
 	}
 	if turnScoped && turnID != s.turnID {
 		if method == NotifyThreadTokenUsageUpdated {

@@ -885,15 +885,15 @@ func TestRunResumeRejectsProviderThreadIdentityChange(t *testing.T) {
 	}
 }
 
-func TestRunRejectsNotificationOutsideExpectedThreadAndTurn(t *testing.T) {
+func TestRunForeignNotificationsCannotReplaceParentTerminal(t *testing.T) {
 	fake := buildFakeAppserver(t)
 	sink := &recordingSink{}
 	result, err := Run(context.Background(), Options{
 		Command: fake,
 		Env:     []driver.EnvBinding{{Name: "FAKE_APPSERVER_SCENARIO", Value: "scope-mismatch"}},
 	}, sink)
-	if err == nil || !strings.Contains(err.Error(), "belongs to thread") {
-		t.Fatalf("error = %v, want notification scope mismatch", err)
+	if err == nil || !strings.Contains(err.Error(), "without turn/completed") {
+		t.Fatalf("error = %v, want missing selected-parent terminal", err)
 	}
 	if result.Checkpoint != nil || result.Output != "" || result.RawStreams == nil || result.RawStreams.Stdout == "" {
 		t.Fatalf("scope mismatch result = %#v", result)
@@ -1112,6 +1112,7 @@ func main() {
 			frame := fmt.Sprintf("  {\"method\":\"turn/completed\",\"params\":{\"threadId\":%q,\"turn\":{\"id\":\"turn-fake\",\"status\":\"%s\"%s,\"usage\":{\"inputTokens\":7,\"outputTokens\":11}}}}", eventThread, status, errorField)
 			write(frame)
 			write("{\"method\":\"custom/after-terminal\",\"params\":{\"preserved\":true}}")
+			if scenario == "scope-mismatch" { return } // EOF proves no selected-parent terminal.
 			if scenario == "nonzero-after-terminal" {
 				_ = writer.Flush()
 				os.Exit(17)

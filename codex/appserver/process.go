@@ -27,11 +27,12 @@ type Process struct {
 	stdout            *syncBuffer
 	stderr            *syncBuffer
 
-	turnMu  sync.Mutex
-	closeMu sync.Mutex
-	closed  bool
-	waitCh  chan struct{}
-	waitErr error
+	metadataPaused bool // protected by turnMu; an abandoned read remains pending in jsonrpc2
+	turnMu         sync.Mutex
+	closeMu        sync.Mutex
+	closed         bool
+	waitCh         chan struct{}
+	waitErr        error
 }
 
 // Open spawns and initializes an app-server and starts or resumes one thread,
@@ -237,6 +238,9 @@ func (p *Process) RunTurn(ctx context.Context, opts Options, sink driver.EventSi
 	stderrStart := p.stderr.Len()
 	state := newRunState(opts.RunID, sink, opts)
 	state.setThread(p.threadID)
+	if !p.metadataPaused && len(opts.ResolvedAgents) != 0 {
+		state.metadataReads = newChildMetadataReads(ctx, p.client)
+	}
 	p.client.SetNotificationHandler(state.onNotification)
 	p.client.setTurnStartHandler(state.observeTurnStartResponse)
 	defer func() {
@@ -264,6 +268,17 @@ func (p *Process) RunTurn(ctx context.Context, opts Options, sink driver.EventSi
 		case <-p.waitCh:
 		case <-p.stream.ReadDone():
 		}
+	}
+	err = errors.Join(err, callerContextError(ctx))
+	if protocolErr := state.protocolError(); protocolErr != nil && !errors.Is(err, protocolErr) {
+		err = errors.Join(err, protocolErr)
+	}
+	metadataJoined := state.metadataReads.settle(err == nil && ctx.Err() == nil && state.protocolError() == nil)
+	if !metadataJoined {
+		err = errors.Join(err, errors.New("codex child metadata worker did not settle; closing transport"))
+	} else if state.metadataReads != nil {
+		p.metadataPaused = p.metadataPaused || state.metadataReads.abandoned
+		err = errors.Join(err, callerContextError(ctx), state.applyChildMetadataResults())
 	}
 	// The select above may choose the terminal even when EOF is also ready.
 	// Observe reader completion separately before certifying this resident
@@ -302,6 +317,14 @@ func (p *Process) RunTurn(ctx context.Context, opts Options, sink driver.EventSi
 		} else {
 			err = errors.Join(err, p.TerminateAndWait(cleanupCtx))
 		}
+		if !metadataJoined {
+			joinErr := state.metadataReads.join(cleanupCtx)
+			err = errors.Join(err, joinErr)
+			metadataJoined = joinErr == nil
+			if metadataJoined {
+				err = errors.Join(err, callerContextError(ctx), state.applyChildMetadataResults())
+			}
+		}
 		cancel()
 		// ReadDone precedes Wait by design. The bounded cleanup join is where
 		// the real OS exit becomes available; retain it alongside the original
@@ -314,6 +337,10 @@ func (p *Process) RunTurn(ctx context.Context, opts Options, sink driver.EventSi
 			}
 		default:
 		}
+	}
+	state.freezeChildMetadata()
+	if protocolErr := state.protocolError(); protocolErr != nil && !errors.Is(err, protocolErr) {
+		err = errors.Join(err, protocolErr)
 	}
 	// A healthy terminal may race cancellation during the bounded exit/drain.
 	// The process's private context cannot decide the caller's run outcome.

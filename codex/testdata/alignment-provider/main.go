@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/agent-dance/agent-adaptor/internal/testutil"
@@ -113,6 +114,11 @@ func main() {
 	decoder := json.NewDecoder(bufio.NewReader(os.Stdin))
 	thread := ""
 	turnN := 0
+	var lateMetadataID json.RawMessage
+	lateMetadataThread := ""
+	metadata := func(id, role string) map[string]any {
+		return map[string]any{"thread": map[string]any{"id": id, "agentRole": role, "source": map[string]any{"subAgent": map[string]any{"thread_spawn": map[string]any{"parent_thread_id": thread, "agent_role": role}}}}}
+	}
 	notify := func(method string, params any) { output(map[string]any{"method": method, "params": params}) }
 	for {
 		var req struct {
@@ -137,11 +143,28 @@ func main() {
 		case "thread/fork":
 			thread = "child-" + strconv.Itoa(os.Getpid())
 			reply(map[string]any{"thread": map[string]any{"id": thread}})
+		case "thread/read":
+			var id string
+			_ = json.Unmarshal(req.Params["threadId"], &id)
+			if scenario == "metadata-late" {
+				lateMetadataID = append(json.RawMessage(nil), req.ID...)
+				lateMetadataThread = id
+				continue
+			}
+			if scenario == "metadata" || scenario == "metadata-provider-failure" {
+				reply(metadata(id, "reviewer"))
+			} else {
+				output(map[string]any{"id": req.ID, "error": map[string]any{"code": -32601, "message": "metadata unavailable"}})
+			}
 		case "turn/interrupt":
 			reply(map[string]any{})
 			return
 		case "turn/start":
 			turnN++
+			if len(lateMetadataID) != 0 {
+				output(map[string]any{"id": lateMetadataID, "result": metadata(lateMetadataThread, "late-wrong-role")})
+				lateMetadataID = nil
+			}
 			turn := "turn-" + strconv.Itoa(turnN)
 			scoped := func(k string, v any) map[string]any {
 				return map[string]any{"threadId": thread, "turnId": turn, "itemId": "answer", k: v}
@@ -200,6 +223,21 @@ func main() {
 				notify("item/completed", scoped("item", collab))
 				notify("thread/status/changed", map[string]any{"threadId": "agent-child", "status": map[string]any{"type": "idle"}})
 			}
+			if strings.HasPrefix(scenario, "metadata") {
+				collab := map[string]any{"id": "lookup-spawn", "type": "collabAgentToolCall", "tool": "spawnAgent", "status": "inProgress", "senderThreadId": thread, "receiverThreadIds": []string{}}
+				notify("item/started", scoped("item", collab))
+				for _, foreign := range []string{"agent-child", "grandchild", "unrelated"} {
+					notify("turn/started", map[string]any{"threadId": foreign, "turn": map[string]any{"id": "foreign-turn", "status": "inProgress"}})
+					notify("item/completed", map[string]any{"threadId": foreign, "turnId": "foreign-turn", "item": map[string]any{"id": "foreign-item", "type": "future-opaque", "text": "must-not-publish"}})
+				}
+				receiver := "lookup-child-" + strconv.Itoa(turnN)
+				if scenario == "metadata-block-write" {
+					receiver = strings.Repeat("x", 1024*1024)
+				}
+				collab["status"] = "completed"
+				collab["receiverThreadIds"] = []string{receiver}
+				notify("item/completed", scoped("item", collab))
+			}
 			// Exercise notification-before-response ordering on the real RPC path.
 			notify("turn/plan/updated", scoped("plan", []any{map[string]any{"step": "中文 plan", "status": "pending"}}))
 			reply(map[string]any{"turn": map[string]any{"id": turn, "status": "inProgress"}})
@@ -242,7 +280,21 @@ func main() {
 			if turnN > 1 {
 				notify("thread/tokenUsage/updated", map[string]any{"threadId": thread, "turnId": "turn-1", "tokenUsage": map[string]any{"total": map[string]any{"inputTokens": 999, "outputTokens": 999, "cachedInputTokens": 0, "reasoningOutputTokens": 0, "totalTokens": 1998}, "last": map[string]any{"inputTokens": 999, "outputTokens": 999, "cachedInputTokens": 0, "reasoningOutputTokens": 0, "totalTokens": 1998}}})
 			}
-			notify("turn/completed", map[string]any{"threadId": thread, "turn": map[string]any{"id": turn, "status": "completed", "usage": map[string]any{"inputTokens": 0, "outputTokens": 2}}})
+			terminal := map[string]any{"id": turn, "status": "completed", "usage": map[string]any{"inputTokens": 0, "outputTokens": 2}}
+			if scenario == "metadata-provider-failure" {
+				terminal["status"] = "failed"
+				terminal["error"] = map[string]any{"message": "parent provider failure"}
+			}
+			notify("turn/completed", map[string]any{"threadId": thread, "turn": terminal})
+			if strings.HasPrefix(scenario, "metadata") {
+				notify("turn/completed", map[string]any{"threadId": "grandchild", "turn": map[string]any{"id": "foreign-turn", "status": "completed"}})
+				// Late announcements must not become capability facts after the
+				// parent terminal; admitted thread/read is the only new proof path.
+				notify("thread/started", metadata("late-announcement", "reviewer"))
+			}
+			if scenario == "metadata-block-write" {
+				time.Sleep(time.Hour)
+			}
 			if admission != nil {
 				// The future idle write cannot occur until after the test has inspected
 				// the published result and explicitly releases it.
