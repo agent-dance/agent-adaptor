@@ -420,6 +420,8 @@ R041：单次CodeBuddy cold诊断已回忆marker且真实调用新gateway，只�
 
 R042：Luna 原 T29 的 cold/observation/subagent 三项真实失败分别保留。Codex 系统 skills 仅在完整官方0.153.4 bundle的路径/内容/平台默认mode闭集证明后从compatibility归一化；未知内容、版本、附件、权限、managed来源及父目录保持，旧已含bundle记录保守拒绝且不改健康状态。句末skill引用须精确catalog优先且歧义不回退；仅正式直接child的有效status允许Raw-only，其他foreign scope与subagent双证明不放宽。MCP absent/null error不误标Transcript失败，真实error/failed仍保留。缺少正式plan不能猜测或降断言。窄域修复独立复验后在新S重跑G05及全部B06，历史通过不继承，G06和PR完成条件不变。
 
+R043：官方 Codex 0.153.4 自动挂接会把新线程的 status/turn/item 发到同一连接，且该路径不发 thread/started。更新 R042 的连接分类假设：合法 foreign scope 仅 Raw，不进入父 Text/Transcript/Usage/Todo/终局，不因未能证明直属 parent 而失败，不登记身份或触发查询；malformed scope/status、当前父 wrong-turn/duplicate terminal 与已知身份冲突仍严格。正式 thread/started 身份证据保留；仅当前父/当前 turn 的正式 spawn receiver 可用有界只读 thread/read 补齐 metadata，id/direct parent/role/catalog 必须一致。未知或不可用只报 capability_unresolved，不伪造完成；首次无效 metadata 拒绝事实并粘滞 notice，已接受身份遭矛盾在合并处立即记 protocol failure，均不得后到 heal。RPC 不得在唯一 reader 内等待；公开终局前结算已准入查询，取消/Close 后有界回收并 join，Raw/Result 冻结后和下一轮不可迟到改写；同步写阻塞须由 owner 关闭 transport 解阻、保留主因且无健康 checkpoint。无需等待 child 工作完成。官方 tools.update_plan.enabled 缺省 false，仅原 Observation live 夹具显式启用，原 prompt/断言/两轮单 spawn/时限不变。原失败/诊断/静态来源分开留存；新 S 全部原 G05/B06 重验，CodeBuddy 失败不被 Codex 修复关闭。
+
 ## 15. 发布门禁
 
 发布前必须全部满足：

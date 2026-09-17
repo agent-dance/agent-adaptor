@@ -545,18 +545,41 @@ that the skill was read or its work finished. Subagent spawn completion likewise
 does not certify the child's final work. Conflicting formal child roles prevent
 pending spawn completion, including when the 128-identity table is full. The
 limit applies only to new identities; matching role replays remain idempotent.
-Valid `thread/status/changed` notifications from a formally declared, direct
-child with matching parent and no identity conflict remain Raw-only control
-data. They do not publish parent semantics, complete its turn, or establish a
-subagent outcome; unknown children and other foreign-scoped notifications still
-fail the scope fence. A successful MCP item with absent or JSON `null` error does
+Codex 0.153.4 automatically subscribes the connection to new threads, including
+their turn/item events, without necessarily sending a `thread/started`
+announcement. Valid foreign-thread notifications stay in Raw; they never enter
+the parent's Text, Transcript, Usage, Todo or terminal. This applies to unrelated
+threads and deeper descendants too, without registering them as direct children.
+Malformed scopes, invalid status controls and current-parent turn/terminal
+violations remain errors.
+
+Formal `thread/started` metadata can establish a direct child's role. When that
+metadata is absent, only a current-parent/current-turn spawn receiver can trigger
+a bounded, read-only `thread/read` with `includeTurns=false`. The returned ID,
+direct parent and role must agree with the formal spawn and resolved catalog;
+conflicts cannot be repaired by later replays. Missing or unavailable metadata
+produces an observable unresolved capability, never a fabricated completion.
+After an unanswered lookup is abandoned, that resident process stops issuing
+further optional metadata reads until it retires; formal thread announcements
+can still provide evidence. This bounds outstanding requests across turns.
+Lookups finish or are canceled and joined before the public terminal and Result
+freeze; they do not wait for the child's work to finish. A blocked transport
+write retires the process through bounded cleanup and cannot certify a healthy
+checkpoint. Late replies cannot alter a returned Result or a later turn's facts.
+
+A successful MCP item with absent or JSON `null` error does
 not mark its Transcript tool result as failed; an actual error or failed status
 still does, with complete provider data retained.
 Plan steps have synthetic turn/position
 IDs, preserve order and text, and include first-empty/clear snapshots. Plan deltas
-do not become Todo or PlanReview. Current thread/turn and terminal fences remain;
-only formally valid same-thread historical token usage may be retained in Raw
-without altering current state. Missing/null/invalid usage fields never become
+do not become Todo or PlanReview. CLI 0.153.4 disables the native `update_plan`
+tool by default. Enable it explicitly with `-c tools.update_plan.enabled=true`
+in Codex `Config.ExtraArgs` when the workflow requires that tool; the SDK does
+not override this provider setting. The live plan fixture enables it and still
+requires real `turn/plan/updated` evidence.
+Current-parent thread/turn and terminal fences remain; formally valid
+same-thread historical token usage also stays in Raw without altering current
+state. Missing/null/invalid usage fields never become
 observed zero; complete explicit zero remains valid.
 
 Resource materialization, native input acceptance and observed invocation are

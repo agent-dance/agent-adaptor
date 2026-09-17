@@ -53,9 +53,16 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
-- Keep proven child-thread status notifications from aborting the parent Codex
-  turn, without relaxing foreign turn/item/error/terminal checks or inventing
-  subagent completion. Preserve their complete Raw audit.
+- Isolate Codex app-server notifications from other threads in Raw audit data.
+  Automatic child subscriptions can send turn/item events without a prior
+  thread announcement; these events cannot alter the parent result or terminal.
+  Resolve missing subagent roles with bounded, read-only metadata requests only
+  for formally observed parent spawn receivers. Capability facts still require
+  consistent parent/role evidence and a unique resolved catalog match. Metadata
+  shutdown also preserves the original protocol and process exit error causes.
+- Explicitly enable the official `tools.update_plan.enabled` setting in the
+  Codex live plan scenario; CLI 0.153.4 disables that tool by default. Original
+  plan assertions and production configuration defaults are unchanged.
 - Treat Codex MCP `error: null` as absent in Transcript error flags while keeping
   real errors and failed statuses visible.
 - Recognize only the complete official Codex 0.153.4 system-skills bundle in
