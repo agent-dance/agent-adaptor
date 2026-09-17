@@ -222,6 +222,9 @@ func (a *Agent) claimHostedToolProfile(ctx context.Context, identity driver.Agen
 		if err != nil {
 			return fmt.Errorf("resolve hosted Tool profile: %w", err)
 		}
+		if p.Error != "" {
+			return fmt.Errorf("resolve hosted Tool profile: %s", p.Error)
+		}
 		if !p.Supported || strings.TrimSpace(p.Dir) == "" {
 			return fmt.Errorf("driver %q did not report usable hosted profile", driverType)
 		}
@@ -404,7 +407,10 @@ func (a *Agent) preparePersistentHostedProfile(ctx context.Context, eff *RunSett
 		if err != nil {
 			return err
 		}
-		if !p.Supported || filepath.Clean(p.Dir) != dst || p.Error != "" {
+		if p.Error != "" {
+			return fmt.Errorf("%w: resolve hosted Tool seed: %s", profile.ErrUnsafe, p.Error)
+		}
+		if !p.Supported || filepath.Clean(p.Dir) != dst {
 			return fmt.Errorf("%w: driver returned an unexpected seed directory", profile.ErrUnsafe)
 		}
 		return nil

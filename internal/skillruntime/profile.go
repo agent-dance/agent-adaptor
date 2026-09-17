@@ -165,7 +165,7 @@ func reconcileCloneProfile(source, target string, opts ProfileResolveOptions, cl
 		}
 	}
 	if cloneOpts.IncludeSkills {
-		if err := copyNamedEntriesIfMissing(source, target, opts.SkillsDirs); err != nil {
+		if err := copyProfileSkills(source, target, opts.SkillsDirs); err != nil {
 			return err
 		}
 	}

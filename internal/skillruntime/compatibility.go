@@ -88,6 +88,9 @@ func CompatibilityTargets(dir string, manifest profilestate.Manifest, payload *d
 			} else if info.Mode()&os.ModeSymlink != 0 {
 				return CompatibilityView{}, fmt.Errorf("%w: unowned linked skill", profile.ErrUnsafe)
 			} else {
+				if err := validateCopiedSkillSource(target, entry.SourcePath); err != nil {
+					return CompatibilityView{}, err
+				}
 				continue
 			}
 		}

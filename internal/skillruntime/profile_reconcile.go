@@ -100,6 +100,9 @@ func ReconcileProfileSkills(ctx context.Context, opts ProfileSkillReconcileOptio
 		if strings.TrimSpace(entry.SourcePath) == "" {
 			continue
 		}
+		if err := validateCopiedSkillSource(target, entry.SourcePath); err != nil {
+			return ProfileSkillReconcileResult{}, err
+		}
 		installedEntry, hasInstalled := installed[entry.RuntimeName]
 		if hasInstalled && !profileSkillTargetCanBeManaged(target, installedEntry, entry.SourcePath, opts.ManagedRoots) {
 			if prior, ok := previousByKey[entry.Key]; ok && filepath.Clean(prior.Path) == filepath.Clean(target) {
