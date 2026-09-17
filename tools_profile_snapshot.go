@@ -252,7 +252,56 @@ func hostedToolProfileFingerprint(driverType, dir string, req *driver.Request, r
 		}
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Path < entries[j].Path })
+	if driverType == "codex" {
+		if _, managed := targets["skills/.system"]; !managed {
+			entries = canonicalCodexSystemSkills(entries, runtime.GOOS)
+		}
+	}
 	return engine.StableHash("adaptor/hosted-tool-materialized-profile/v2", driverType, entries), nil
+}
+
+// canonicalCodexSystemSkills recognizes the complete embedded bundle shipped by
+// Codex 0.153.4 (openai/codex commit 3d2ee51ca2d5db578f328aa75e20aa22c0197c9a).
+// Its installer materializes this cache after the pre-Driver snapshot. Proof
+// uses every bounded, regular resource already read above, including the marker;
+// neither the directory name nor the marker alone authorizes normalization.
+// Unknown bundles, attachments and any changed bytes or modes remain hashed.
+// Only default observed modes are recognized; a different Unix umask is not
+// inferred. The skills parent and every resource outside .system stay unchanged.
+func canonicalCodexSystemSkills(entries []hostedToolProfileFingerprintEntry, goos string) []hostedToolProfileFingerprintEntry {
+	const prefix = "skills/.system"
+	fileMode, dirMode := fs.FileMode(0644), fs.ModeDir|0755
+	if goos == "windows" {
+		fileMode, dirMode = 0666, fs.ModeDir|0777
+	}
+	var bundle []hostedToolProfileFingerprintEntry
+	for _, entry := range entries {
+		if entry.Path != prefix && !strings.HasPrefix(entry.Path, prefix+"/") {
+			continue
+		}
+		if entry.Fingerprint == "directory" {
+			if entry.Mode != dirMode {
+				return entries
+			}
+			entry.Mode = fs.ModeDir | 0755
+		} else {
+			if entry.Mode != fileMode {
+				return entries
+			}
+			entry.Mode = 0644
+		}
+		bundle = append(bundle, entry)
+	}
+	if engine.StableHash("adaptor/codex-system-skills/v1", bundle) != "a4c85facc17bf0bfb83e3575239ab2a83c1242cfb76421b22ef30f46a51e7e9d" {
+		return entries
+	}
+	view := make([]hostedToolProfileFingerprintEntry, 0, len(entries)-len(bundle))
+	for _, entry := range entries {
+		if entry.Path != prefix && !strings.HasPrefix(entry.Path, prefix+"/") {
+			view = append(view, entry)
+		}
+	}
+	return view
 }
 
 // canonicalClaudeBootstrapConfig recognizes only the complete bootstrap state
