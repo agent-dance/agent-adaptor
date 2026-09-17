@@ -32,7 +32,7 @@ func managedCloneFixture(t *testing.T) (string, string, string, driver.ResolvedS
 		t.Fatal(err)
 	}
 	if info.Mode()&os.ModeSymlink == 0 {
-		t.Skip("platform cannot create managed symlinks; copied-tree behavior is covered separately")
+		t.Fatal("managed-link regression requires symlink creation; copied-tree protection is also tested independently")
 	}
 	return source, target, cache, payload
 }
@@ -226,7 +226,13 @@ func TestManagedCloneRetainsDeletedAndChangedDestination(t *testing.T) {
 }
 
 func TestManagedCloneBoundsAndSpecialNodes(t *testing.T) {
-	for _, kind := range []string{"oversize", "aggregate_bytes", "aggregate_entries", "socket"} {
+	cases := []string{"oversize", "aggregate_bytes", "aggregate_entries"}
+	// A live AF_UNIX filesystem node is a POSIX fixture. Windows has different
+	// socket sharing/rename rules; its regular/link/limit tests still run.
+	if runtime.GOOS != "windows" {
+		cases = append(cases, "socket")
+	}
+	for _, kind := range cases {
 		t.Run(kind, func(t *testing.T) {
 			source, target, _, payload := managedCloneFixture(t)
 			path := filepath.Join(payload.Entries[0].SourcePath, "oversized")
@@ -241,8 +247,6 @@ func TestManagedCloneBoundsAndSpecialNodes(t *testing.T) {
 				}
 				f.Close()
 			case "socket":
-				// Unix domain sockets are synthetic nonregular resources; platforms that
-				// cannot create them still run every regular/link/limit protection above.
 				socketDir, err := os.MkdirTemp("", "clone-socket-")
 				if err != nil {
 					t.Fatal(err)
@@ -250,9 +254,6 @@ func TestManagedCloneBoundsAndSpecialNodes(t *testing.T) {
 				defer os.RemoveAll(socketDir)
 				socket := filepath.Join(socketDir, "s")
 				listener, err := net.Listen("unix", socket)
-				if err != nil && runtime.GOOS == "windows" {
-					t.Skip("native Unix-domain socket unavailable")
-				}
 				if err != nil {
 					t.Fatal(err)
 				}
