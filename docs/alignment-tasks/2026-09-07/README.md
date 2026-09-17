@@ -156,3 +156,5 @@ R038/R039 实现已由原负责人交付并独立复核：保留累计预算反�
 [R040](amendments/R040.md)：dab原生Windows/full-CI与CodeBuddy失败保留；原T06/T15/T20精确返修，原门禁与持续授权保持。
 
 [R041](amendments/R041.md)：仅明确冷续接fixture最终输出格式，原严格oracle及完整门禁不变。
+
+R040/R041 的三项实施已完成独立复核并合流：目录别名双身份证明、CodeBuddy 正式 deferred MCP 观测及最终输出格式澄清、两个生命周期场景的逐操作预算。源码与中央文档同步完成；原 dab 的全量 Windows 与 live 失败仍保留。此处只记录实施验收，新的精确 S 仍须通过原 G05、全部 B06 和 G06。

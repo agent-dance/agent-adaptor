@@ -81,6 +81,13 @@
 // evidence: canonical Subagent and Skill facts still require formal tool use
 // and a successful matching result.
 //
+// MCP observation also recognizes CodeBuddy 2.151.0's formal, single-level
+// DeferExecuteTool envelope with a toolName string and params object. Its exact
+// MCP target must resolve uniquely in the current catalog; a matching successful
+// result is required for Completed. Tool events and Transcript retain the
+// original wrapper and arguments. Unknown, nested or malformed envelopes do
+// not establish capability execution, and host callbacks are not protocol proof.
+//
 // CodeBuddy 2.137.1 TodoWrite confirms newTodos only after its official success
 // result. TaskCreate/TaskUpdate/TaskList prefer tool_result._meta.rawResponse's
 // full todos list and real task IDs. Without task/todos, TaskUpdate requires

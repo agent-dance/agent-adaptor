@@ -664,7 +664,9 @@ Clone options include `CopySettings`, `CopyMCP`, `CopySkills`, `CopyAuth`, `Link
 Shared skill cloning copies SDK-managed links only after proving their exact
 ownership and target, and delivers ordinary trees. Existing copied bytes and
 permissions remain authoritative; a source marker alone cannot authorize
-replacement or pruning. See the [profile copy and fingerprint contract](./tools.md#threads-and-semantic-revisions).
+replacement or pruning. Alternate ancestor spellings require identity proofs
+for both the source profile and its direct skills directory; they do not rewrite
+the source manifest. See the [profile copy and fingerprint contract](./tools.md#threads-and-semantic-revisions).
 
 `profile.Resources` can declare `Skills`, `MCP`, `Agents`, `Hooks`, `Instructions`, and `Config`, and enters the unified resolution pipeline through `WithProfileResources`.
 

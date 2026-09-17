@@ -191,7 +191,10 @@ generation. See [profile lifetime and recovery](./tools.md#persistent-dedicated-
 
 Shared skill cloning and materialization also return `profile.ErrUnsafe` for
 unproved links or destructive replacement of a copied skill whose marker proves
-only its origin. CodeBuddy profile reporting returns the underlying Go error,
+only its origin. A different ancestor spelling is accepted only when both the
+profile and direct skills directory identities are proved; failed identity or
+replacement checks also return `profile.ErrUnsafe`.
+CodeBuddy profile reporting returns the underlying Go error,
 so callers can use `errors.Is` and `errors.As` for filesystem causes through
 profile inspection, synchronization and execution. An explicit `AgentProfile.Error`
 from a Driver remains observable when no Go error is available.

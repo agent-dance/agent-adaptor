@@ -59,6 +59,13 @@ All notable changes to this project are documented in this file.
   special nodes and conflicting markers. Reject same-name source replacement
   before it can delete a copied skill's user attachments; cache membership alone
   is insufficient proof. Keep the existing conservative copied-prune contract.
+- Accept different ancestor spellings of the same managed profile only after
+  proving both the profile and its direct skills directory have the held file
+  identities. Rebase only the clone's private manifest view; preserve source
+  bytes, target checks, copied-tree safeguards and read budgets.
+- Observe CodeBuddy's formal one-level `DeferExecuteTool` MCP calls against the
+  resolved catalog, completing them only on a matching successful result. Keep
+  the original wrapper, arguments and IDs in Tool events and Transcript.
 - Preserve CodeBuddy profile resolution's Go error chain through its reporter
   and public profile/execution paths. Read the typed terminal envelope correctly
   in the cold-resume fixture, and clarify Cursor's resource nonces as synthetic

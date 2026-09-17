@@ -46,6 +46,8 @@
 // use WithMCP. Configured profile resources remain the source of isolated
 // execution profiles; copying a managed skill preserves its actual contents
 // and permissions, and unproved replacement fails instead of deleting them.
+// Alternate ancestor spellings require proof of both profile and skills
+// directory identity; the configured source is never rewritten for copying.
 //
 // An Agent is stateless unless constructed with a ThreadStore. Agent.Thread
 // continues or creates the host key, while Thread.Fork creates an independent

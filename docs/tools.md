@@ -178,6 +178,12 @@ after checking the reconciler's exact ownership record and actual target. It
 copies regular files and directories, retaining their bytes and observable
 modes; unknown links, nested links, special files and conflicting source markers
 fail explicitly. The configured source remains unchanged.
+If the manifest and execution profile spell an ancestor differently, the cloner
+must prove that both the profile directory and its direct `skills` directory
+are the same held filesystem objects. Only the private manifest view is rebased;
+source bytes, the declared skill source and the actual link target are unchanged.
+Matching leaf targets under a different profile are insufficient. Replaced
+directories or unproved identities fail before copying.
 Each source snapshot is bounded to 64 MiB of file content and 20,000 visited
 entries; its ownership manifest is limited to 4 MiB. Validation of already
 copied managed skills shares a separate 64 MiB / 20,000-entry budget across all
