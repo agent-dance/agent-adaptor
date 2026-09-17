@@ -248,12 +248,11 @@ func TestManagedCloneBoundsAndSpecialNodes(t *testing.T) {
 				}
 				f.Close()
 			case "socket":
-				socketDir, err := os.MkdirTemp("", "clone-socket-")
-				if err != nil {
-					t.Fatal(err)
-				}
-				defer os.RemoveAll(socketDir)
-				socket := filepath.Join(socketDir, "s")
+				// AF_UNIX limits the address, not the filesystem path. Keep the
+				// bind name short even when the runner supplies a long TMPDIR.
+				// This test and its ancestors are intentionally not parallel.
+				t.Chdir(t.TempDir())
+				socket := "s"
 				listener, err := net.Listen("unix", socket)
 				if err != nil {
 					t.Fatal(err)
@@ -261,6 +260,9 @@ func TestManagedCloneBoundsAndSpecialNodes(t *testing.T) {
 				defer listener.Close()
 				if err := os.Rename(socket, path); err != nil {
 					t.Fatal(err)
+				}
+				if info, err := os.Lstat(path); err != nil || info.Mode()&os.ModeSocket == 0 {
+					t.Fatalf("fixture did not create a real socket: %v", err)
 				}
 			default:
 				root, err := os.OpenRoot(payload.Entries[0].SourcePath)
