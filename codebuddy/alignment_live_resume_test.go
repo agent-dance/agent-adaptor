@@ -240,7 +240,7 @@ func TestAlignmentLiveCodeBuddyDedicatedToolsResumeAfterClose(t *testing.T) {
 	generation = 2
 	mu.Unlock()
 	second, secondProbe := makeAgent()
-	prompt := "Call alignment_history_probe with phase verify to check the new tool connection. Then recall the random acceptance nonce returned in the first turn of this conversation. Reply with exactly that nonce. Do not read files or ask any tool to reproduce it."
+	prompt := "Call alignment_history_probe with phase verify to check the new tool connection. Then recall the random acceptance nonce returned in the first turn of this conversation. For the final response, output exactly that nonce as one plain line, with no quotes, code fences, punctuation, labels, or explanation. Do not read files or ask any tool to reproduce it."
 	if strings.Contains(prompt, remembered) {
 		t.Fatal("recall prompt accidentally reinjected the nonce")
 	}
