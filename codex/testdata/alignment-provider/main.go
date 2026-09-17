@@ -179,13 +179,22 @@ func main() {
 				}
 				os.Exit(9)
 			}
-			if scenario == "child-status" || scenario == "unknown-child-status" {
+			if scenario == "unrelated-status" || scenario == "unrelated-status-cancel" {
+				notify("thread/status/changed", map[string]any{"threadId": "agent-child", "status": map[string]any{"type": "active", "activeFlags": []string{}}})
+			}
+			if scenario == "child-status" || scenario == "unknown-child-status" || scenario == "early-child-status" {
 				collab := map[string]any{"id": "spawn-child-status", "type": "collabAgentToolCall", "tool": "spawnAgent", "status": "inProgress", "senderThreadId": thread, "receiverThreadIds": []string{}}
 				notify("item/started", scoped("item", collab))
-				if scenario == "child-status" {
+				announce := func() {
 					notify("thread/started", map[string]any{"thread": map[string]any{"id": "agent-child", "agentRole": "reviewer", "source": map[string]any{"subAgent": map[string]any{"thread_spawn": map[string]any{"parent_thread_id": thread, "agent_role": "reviewer", "depth": 1}}}}})
 				}
+				if scenario == "child-status" {
+					announce()
+				}
 				notify("thread/status/changed", map[string]any{"threadId": "agent-child", "status": map[string]any{"type": "active", "activeFlags": []string{}}})
+				if scenario == "early-child-status" {
+					announce()
+				}
 				collab["status"] = "completed"
 				collab["receiverThreadIds"] = []string{"agent-child"}
 				notify("item/completed", scoped("item", collab))
@@ -227,7 +236,7 @@ func main() {
 			if scenario == "nonzero" {
 				os.Exit(9)
 			}
-			if scenario == "cancel" {
+			if scenario == "cancel" || scenario == "unrelated-status-cancel" {
 				continue
 			}
 			if turnN > 1 {

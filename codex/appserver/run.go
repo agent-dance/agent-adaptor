@@ -573,13 +573,13 @@ func (s *runState) bindNotificationScopeLocked(method string, params json.RawMes
 		return true, nil
 	}
 	if threadID != s.threadID {
-		// A formally announced child shares this app-server's control stream.
-		// Its status is audit-only: it cannot advance the parent's turn or
-		// establish a capability outcome. Every other foreign scope stays strict.
+		// Codex 0.153.4 broadcasts status before attaching a new thread's
+		// listener. This control frame needs no child identity and stays Raw-only;
+		// it cannot authorize later foreign semantics or repair a known conflict.
 		if method == NotifyThreadStatusChanged {
-			if child, known := s.observation.children[threadID]; known && !child.conflict {
-				if err := validateChildThreadStatus(params); err != nil {
-					return false, fmt.Errorf("decode child thread/status/changed: %w", err)
+			if child, known := s.observation.children[threadID]; !known || !child.conflict {
+				if err := validateThreadStatus(params); err != nil {
+					return false, fmt.Errorf("decode thread/status/changed: %w", err)
 				}
 				return true, nil
 			}

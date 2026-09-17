@@ -313,8 +313,8 @@ func (s *runState) observeChildThread(params json.RawMessage) bool {
 
 // The checked-in ThreadStatusChangedNotification schema defines a control
 // notification, not a turn result. Validate only its official status union;
-// bindNotificationScopeLocked separately requires a previously proven child.
-func validateChildThreadStatus(params json.RawMessage) error {
+// this does not establish the thread's identity or relationship to this run.
+func validateThreadStatus(params json.RawMessage) error {
 	var body struct {
 		Status struct {
 			Type        string          `json:"type"`

@@ -47,13 +47,15 @@
 // thread/turn fence. Cancellation keeps its original cause and cannot create
 // a healthy checkpoint or trigger prompt replay. No additional wait is added.
 //
-// A child thread announced by thread/started with this run's parent_thread_id
-// may also send thread/status/changed on the same connection. Valid statuses
-// for that known, non-conflicting child remain Raw audit data; they never bind
-// the parent's identity, publish parent semantics or complete its turn. Unknown
-// children and every other foreign thread/turn notification retain the strict
-// scope fence. Subagent capability facts still require both the formal child
-// role and the current parent spawn's receiver, resolved to a unique catalog key.
+// Codex may broadcast thread/status/changed before that thread's listener is
+// attached or its parent relationship is known. Valid foreign status controls
+// remain Raw audit data, even without a child announcement or parent spawn.
+// They never register a child, bind the parent's identity, publish parent
+// semantics or complete its turn. Malformed controls and known child conflicts
+// remain errors; every other foreign thread/turn notification retains the
+// strict scope fence. Subagent capability facts still require both the formal
+// child role and the current parent spawn's receiver, resolved to a unique
+// catalog key. A status alone cannot satisfy either proof.
 //
 // MCP tool-result transcripts treat an absent or JSON-null error as no error.
 // A non-null formal error or failed tool status remains a tool failure, matching

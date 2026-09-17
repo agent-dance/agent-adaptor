@@ -3,6 +3,7 @@ package appserver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -22,55 +23,62 @@ func alignmentChildStatus(id, status string) json.RawMessage {
 
 func TestAlignmentChildStatusIsolation(t *testing.T) {
 	for _, queued := range []bool{false, true} {
-		for _, status := range []string{`{"type":"notLoaded"}`, `{"type":"idle"}`, `{"type":"systemError"}`, `{"type":"active","activeFlags":[]}`, `{"type":"active","activeFlags":["waitingOnApproval","waitingOnUserInput"]}`} {
-			t.Run(fmt.Sprintf("queued-%v/%s", queued, status), func(t *testing.T) {
-				sink := &recordingSink{}
-				s := newRunState("run", sink, Options{ResolvedAgents: []driver.AgentSpec{{Key: "canonical", RuntimeName: "reviewer"}}})
-				s.setThread("parent")
-				if !queued {
-					s.setTurn("turn")
-				}
-				s.onNotification(NotifyThreadStarted, alignmentChildMetadata("child", "parent", "reviewer"))
-				s.onNotification(NotifyThreadStatusChanged, alignmentChildStatus("child", status))
-				if queued {
-					s.setTurn("turn")
-				}
-				if s.protocolError() != nil {
-					t.Fatalf("formally related child control rejected: %v", s.protocolError())
-				}
-				select {
-				case <-s.done:
-					t.Fatal("child status completed parent")
-				default:
-				}
-				if s.threadID != "parent" || s.turnID != "turn" || s.usage != nil || s.terminal != nil || s.finalAgentText != "" {
-					t.Fatal("child status mutated parent outcome")
-				}
-				caps, plans := alignmentFacts(sink)
-				if len(caps) != 0 || len(plans) != 0 || len(s.transcript) != 1 || len(sink.streams) != 1 || sink.streams[0].Kind != driver.StreamRunStarted || sink.streams[0].ThreadID != "parent" || sink.streams[0].TurnID != "turn" {
-					t.Fatalf("child status published parent semantics: caps=%+v plans=%+v streams=%+v transcript=%+v", caps, plans, sink.streams, s.transcript)
-				}
-				// The parent's actual terminal, not the child's idle/systemError status,
-				// remains the only source of a healthy parent checkpoint.
-				s.onNotification(NotifyTurnCompleted, json.RawMessage(`{"threadId":"parent","turn":{"id":"turn","status":"completed"}}`))
-				result := s.snapshot(Options{}, "parent", "raw", "", 0, "", false)
-				if s.protocolError() != nil || result.Checkpoint == nil || !result.Checkpoint.Valid || result.RawStreams.Terminal == nil {
-					t.Fatal("parent terminal no longer completes")
-				}
-			})
+		for _, order := range []string{"before", "after", "absent"} {
+			for _, status := range []string{`{"type":"notLoaded"}`, `{"type":"idle"}`, `{"type":"systemError"}`, `{"type":"active","activeFlags":[]}`, `{"type":"active","activeFlags":["waitingOnApproval","waitingOnUserInput"]}`} {
+				t.Run(fmt.Sprintf("queued-%v/%s/%s", queued, order, status), func(t *testing.T) {
+					sink := &recordingSink{}
+					s := newRunState("run", sink, Options{ResolvedAgents: []driver.AgentSpec{{Key: "canonical", RuntimeName: "reviewer"}}})
+					s.setThread("parent")
+					if !queued {
+						s.setTurn("turn")
+					}
+					if order == "before" {
+						s.onNotification(NotifyThreadStarted, alignmentChildMetadata("child", "parent", "reviewer"))
+					}
+					s.onNotification(NotifyThreadStatusChanged, alignmentChildStatus("child", status))
+					if order == "after" {
+						s.onNotification(NotifyThreadStarted, alignmentChildMetadata("child", "parent", "reviewer"))
+					}
+					if queued {
+						s.setTurn("turn")
+					}
+					if s.protocolError() != nil {
+						t.Fatalf("valid status control rejected: %v", s.protocolError())
+					}
+					select {
+					case <-s.done:
+						t.Fatal("child status completed parent")
+					default:
+					}
+					if s.threadID != "parent" || s.turnID != "turn" || s.usage != nil || s.terminal != nil || s.finalAgentText != "" {
+						t.Fatal("child status mutated parent outcome")
+					}
+					caps, plans := alignmentFacts(sink)
+					if len(caps) != 0 || len(plans) != 0 || len(s.transcript) != 1 || len(sink.streams) != 1 || sink.streams[0].Kind != driver.StreamRunStarted || sink.streams[0].ThreadID != "parent" || sink.streams[0].TurnID != "turn" {
+						t.Fatalf("child status published parent semantics: caps=%+v plans=%+v streams=%+v transcript=%+v", caps, plans, sink.streams, s.transcript)
+					}
+					// The parent's actual terminal, not the child's idle/systemError status,
+					// remains the only source of a healthy parent checkpoint.
+					s.onNotification(NotifyTurnCompleted, json.RawMessage(`{"threadId":"parent","turn":{"id":"turn","status":"completed"}}`))
+					result := s.snapshot(Options{}, "parent", "raw", "", 0, "", false)
+					if s.protocolError() != nil || result.Checkpoint == nil || !result.Checkpoint.Valid || result.RawStreams.Terminal == nil {
+						t.Fatal("parent terminal no longer completes")
+					}
+				})
+			}
 		}
 	}
 }
 
-func TestAlignmentChildStatusRequiresProvenIdentity(t *testing.T) {
-	for _, scenario := range []string{"unknown", "wrong-parent", "conflicting-role", "conflicting-source-role", "overflow", "malformed", "missing-status", "null-status", "unknown-status", "active-missing-flags", "active-null-flags", "active-unknown-flag"} {
+func TestAlignmentChildStatusValidation(t *testing.T) {
+	for _, scenario := range []string{"unknown", "wrong-parent", "conflicting-role", "conflicting-source-role", "overflow", "malformed", "missing-status", "null-status", "unknown-status", "active-missing-flags", "active-null-flags", "active-unknown-flag", "missing-id", "empty-id", "unknown-malformed", "whitespace-id", "active-wrong-typed-flags", "active-wrong-typed-flag"} {
 		t.Run(scenario, func(t *testing.T) {
 			s := newRunState("run", &recordingSink{})
 			s.setThread("parent")
 			s.setTurn("turn")
 			child := "child"
 			switch scenario {
-			case "unknown":
+			case "unknown", "unknown-malformed":
 			case "wrong-parent":
 				s.onNotification(NotifyThreadStarted, alignmentChildMetadata(child, "other", "reviewer"))
 			case "conflicting-role":
@@ -88,7 +96,13 @@ func TestAlignmentChildStatusRequiresProvenIdentity(t *testing.T) {
 			}
 			body := alignmentChildStatus(child, `{"type":"idle"}`)
 			switch scenario {
-			case "malformed":
+			case "missing-id":
+				body = json.RawMessage(`{"status":{"type":"idle"}}`)
+			case "whitespace-id":
+				body = alignmentChildStatus(" ", `{"type":"idle"}`)
+			case "empty-id":
+				body = alignmentChildStatus("", `{"type":"idle"}`)
+			case "malformed", "unknown-malformed":
 				body = json.RawMessage(`{"threadId":"child","status":[]}`)
 			case "missing-status":
 				body = json.RawMessage(`{"threadId":"child"}`)
@@ -100,12 +114,27 @@ func TestAlignmentChildStatusRequiresProvenIdentity(t *testing.T) {
 				body = alignmentChildStatus(child, `{"type":"active"}`)
 			case "active-null-flags":
 				body = alignmentChildStatus(child, `{"type":"active","activeFlags":null}`)
+			case "active-wrong-typed-flags":
+				body = alignmentChildStatus(child, `{"type":"active","activeFlags":"waitingOnApproval"}`)
+			case "active-wrong-typed-flag":
+				body = alignmentChildStatus(child, `{"type":"active","activeFlags":[1]}`)
 			case "active-unknown-flag":
 				body = alignmentChildStatus(child, `{"type":"active","activeFlags":["guess"]}`)
 			}
 			s.onNotification(NotifyThreadStatusChanged, body)
+			if scenario == "unknown" || scenario == "overflow" {
+				// Official 0.153.4 broadcasts status before attaching child
+				// listeners; Raw-only control is not proof of child identity.
+				if _, known := s.observation.children[child]; known || s.protocolError() != nil || len(s.observation.children) > 128 {
+					t.Fatal("control registered identity or breached capacity")
+				}
+				if result := s.snapshot(Options{}, "parent", string(body), "", 0, "", false); result.Checkpoint != nil || result.RawStreams.Stdout != string(body) {
+					t.Fatal("control changed checkpoint or Raw")
+				}
+				return
+			}
 			if s.protocolError() == nil {
-				t.Fatal("unproven or malformed child status accepted")
+				t.Fatal("conflicting identity or malformed status accepted")
 			}
 			if result := s.snapshot(Options{}, "parent", string(body), "", 0, "", false); result.Checkpoint != nil {
 				t.Fatal("invalid child status gained checkpoint")
@@ -115,17 +144,25 @@ func TestAlignmentChildStatusRequiresProvenIdentity(t *testing.T) {
 }
 
 func TestAlignmentChildStatusDoesNotRelaxOtherScope(t *testing.T) {
-	for _, method := range []string{NotifyTurnStarted, NotifyTurnCompleted, NotifyItemStarted, NotifyItemCompleted, NotifyItemAgentMessageDelta, NotifyTurnPlanUpdated, NotifyThreadTokenUsageUpdated, NotifyError} {
-		t.Run(method, func(t *testing.T) {
-			s := newRunState("run", &recordingSink{})
-			s.setThread("parent")
-			s.setTurn("turn")
-			s.onNotification(NotifyThreadStarted, alignmentChildMetadata("child", "parent", "reviewer"))
-			s.onNotification(method, json.RawMessage(`{"threadId":"child","turnId":"turn","turn":{"id":"turn","status":"completed"}}`))
-			if s.protocolError() == nil || !strings.Contains(s.protocolError().Error(), "belongs to thread") {
-				t.Fatal("child turn/item/error/usage bypassed parent fence")
-			}
-		})
+	for _, announced := range []bool{false, true} {
+		for _, method := range []string{NotifyTurnStarted, NotifyTurnCompleted, NotifyItemStarted, NotifyItemCompleted, NotifyItemAgentMessageDelta, NotifyTurnPlanUpdated, NotifyThreadTokenUsageUpdated, NotifyError} {
+			t.Run(fmt.Sprintf("announced-%v/%s", announced, method), func(t *testing.T) {
+				s := newRunState("run", &recordingSink{})
+				s.setThread("parent")
+				s.setTurn("turn")
+				if announced {
+					s.onNotification(NotifyThreadStarted, alignmentChildMetadata("child", "parent", "reviewer"))
+				}
+				s.onNotification(NotifyThreadStatusChanged, alignmentChildStatus("child", `{"type":"idle"}`))
+				if s.protocolError() != nil {
+					t.Fatal("valid control poisoned parent")
+				}
+				s.onNotification(method, json.RawMessage(`{"threadId":"child","turnId":"turn","turn":{"id":"turn","status":"completed"}}`))
+				if s.protocolError() == nil || !strings.Contains(s.protocolError().Error(), "belongs to thread") {
+					t.Fatal("child turn/item/error/usage bypassed parent fence")
+				}
+			})
+		}
 	}
 	// A status does not authorize a role, a spawn receiver, or a new turn.
 	sink := &recordingSink{}
@@ -144,22 +181,61 @@ func TestAlignmentChildStatusDoesNotRelaxOtherScope(t *testing.T) {
 	}
 }
 
+func TestAlignmentChildStatusLateConflictingEvidence(t *testing.T) {
+	for _, wrongParent := range []bool{false, true} {
+		t.Run(fmt.Sprint(wrongParent), func(t *testing.T) {
+			sink := &recordingSink{}
+			s := newRunState("run", sink, Options{ResolvedAgents: []driver.AgentSpec{{Key: "canonical", RuntimeName: "reviewer"}}})
+			s.setThread("parent")
+			s.setTurn("turn")
+			s.onNotification(NotifyThreadStatusChanged, alignmentChildStatus("child", `{"type":"active","activeFlags":[]}`))
+			if s.protocolError() != nil || len(s.observation.children) != 0 {
+				t.Fatal("early control assigned identity")
+			}
+			if wrongParent {
+				s.onNotification(NotifyThreadStarted, alignmentChildMetadata("child", "other", "reviewer"))
+			} else {
+				s.onNotification(NotifyThreadStarted, alignmentChildMetadata("child", "parent", "reviewer"))
+				s.onNotification(NotifyThreadStarted, alignmentChildMetadata("child", "parent", "writer"))
+				s.onNotification(NotifyThreadStatusChanged, alignmentChildStatus("child", `{"type":"idle"}`))
+			}
+			if s.protocolError() == nil {
+				t.Fatal("late wrong-parent/conflict escaped")
+			}
+			s.onNotification(NotifyTurnCompleted, json.RawMessage(`{"threadId":"parent","turn":{"id":"turn","status":"completed"}}`))
+			result := s.snapshot(Options{}, "parent", "raw", "", 0, "", false)
+			facts, _ := alignmentFacts(sink)
+			if result.Checkpoint != nil || len(facts) != 0 {
+				t.Fatal("later evidence erased failure or invented fact")
+			}
+		})
+	}
+}
+
 func TestAlignmentChildStatusWire(t *testing.T) {
 	command := alignmentFixture(t)
 	for _, resident := range []bool{false, true} {
-		for _, unknown := range []bool{false, true} {
-			t.Run(fmt.Sprintf("resident-%v/unknown-%v", resident, unknown), func(t *testing.T) {
+		for _, scenario := range []string{"child-status", "unknown-child-status", "early-child-status", "unrelated-status", "unrelated-status-cancel"} {
+			name := fmt.Sprintf("resident-%v/%s", resident, scenario)
+			if scenario == "child-status" || scenario == "unknown-child-status" {
+				name = fmt.Sprintf("resident-%v/unknown-%v", resident, scenario == "unknown-child-status")
+			}
+			t.Run(name, func(t *testing.T) {
 				opts := alignmentOptions(command, filepath.Join(t.TempDir(), "capture.jsonl"))
 				opts.CWD = t.TempDir()
 				opts.ResolvedAgents = []driver.AgentSpec{{Key: "canonical-reviewer", RuntimeName: "reviewer"}}
-				scenario := "child-status"
-				if unknown {
-					scenario = "unknown-child-status"
-				}
 				opts.Env = append(opts.Env, driver.EnvBinding{Name: "ALIGNMENT_SCENARIO", Value: scenario}, driver.EnvBinding{Name: "CODEX_HOME", Value: t.TempDir()})
 				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 				defer cancel()
 				sink := &recordingSink{}
+				cancelled := scenario == "unrelated-status-cancel"
+				if cancelled {
+					sink.onStream = func(p driver.StreamPayload) {
+						if p.Kind == driver.StreamTextContent {
+							cancel()
+						}
+					}
+				}
 				var result driver.Response
 				var err error
 				if resident {
@@ -172,28 +248,84 @@ func TestAlignmentChildStatusWire(t *testing.T) {
 				} else {
 					result, err = Run(ctx, opts, sink)
 				}
-				if result.RawStreams == nil || !strings.Contains(result.RawStreams.Stdout, `"method":"thread/status/changed"`) {
-					t.Fatal("child control Raw lost")
+				if result.RawStreams == nil || !strings.Contains(result.RawStreams.Stdout, `"method":"thread/status/changed"`) || !strings.Contains(result.RawStreams.Stdout, `"threadId":"agent-child"`) {
+					t.Fatal("control Raw lost")
 				}
-				if unknown {
-					if err == nil || !strings.Contains(err.Error(), "belongs to thread") || result.Checkpoint != nil {
-						t.Fatalf("unproven identity admitted: err=%v cp=%+v", err, result.Checkpoint)
+				if cancelled {
+					if !errors.Is(err, context.Canceled) || result.Checkpoint != nil || result.RawStreams.Terminal != nil || result.Usage == nil || result.Usage.OutputTokens != 2 || result.RawStreams.Stderr != "fixture-stderr" {
+						t.Fatalf("control cancellation lost cause/audit or gained checkpoint: %v %+v", err, result)
 					}
-					return
-				}
-				if err != nil || result.Failure != nil || result.Checkpoint == nil || !result.Checkpoint.Valid || result.Output != "answer" || result.RawStreams.Terminal == nil || result.RawStreams.Terminal.Event != NotifyTurnCompleted || result.Usage == nil || result.Usage.OutputTokens != 2 {
-					t.Fatalf("related child poisoned parent: err=%v response=%+v", err, result)
+				} else if err != nil || result.Failure != nil || result.Checkpoint == nil || !result.Checkpoint.Valid || result.Output != "answer" || result.RawStreams.Terminal == nil || result.RawStreams.Terminal.Event != NotifyTurnCompleted || result.Usage == nil || result.Usage.OutputTokens != 2 {
+					t.Fatalf("control poisoned parent: err=%v response=%+v", err, result)
 				}
 				caps, _ := alignmentFacts(sink)
-				if len(caps) != 2 || caps[0].Phase != capability.Started || caps[1].Phase != capability.Completed || caps[1].Ref.Key != "canonical-reviewer" {
-					t.Fatalf("formal child/receiver fact lost: %+v", caps)
+				if scenario == "child-status" || scenario == "early-child-status" {
+					if len(caps) != 2 || caps[0].Phase != capability.Started || caps[1].Phase != capability.Completed || caps[1].Ref.Key != "canonical-reviewer" {
+						t.Fatalf("formal child/receiver fact lost: %+v", caps)
+					}
+				} else if len(caps) != 0 {
+					t.Fatalf("Raw control became subagent evidence: %+v", caps)
 				}
 				for _, item := range result.Transcript {
 					if item.SessionID == "agent-child" || item.Text == "child control" {
-						t.Fatal("child control became parent transcript")
+						t.Fatal("control became parent transcript")
 					}
 				}
 			})
 		}
 	}
+}
+
+func TestAlignmentChildStatusBoundaries(t *testing.T) {
+	t.Run("unassociated-controls-do-not-fill-children", func(t *testing.T) {
+		sink := &recordingSink{}
+		s := newRunState("run", sink)
+		s.setThread("parent")
+		s.setTurn("turn")
+		for i := 0; i < 256; i++ {
+			s.onNotification(NotifyThreadStatusChanged, alignmentChildStatus(fmt.Sprint(i), `{"type":"idle"}`))
+		}
+		facts, plans := alignmentFacts(sink)
+		if s.protocolError() != nil || len(s.observation.children) != 0 || len(facts) != 0 || len(plans) != 0 || s.terminal != nil || len(s.transcript) != 1 || len(sink.streams) != 1 {
+			t.Fatal("controls allocated identity or semantics")
+		}
+		s.onNotification(NotifyThreadStarted, alignmentChildMetadata("actual", "parent", "reviewer"))
+		if len(s.observation.children) != 1 {
+			t.Fatal("control flood consumed child capacity")
+		}
+		s.onNotification(NotifyThreadStarted, alignmentChildMetadata("actual", "parent", "writer"))
+		s.onNotification(NotifyThreadStatusChanged, alignmentChildStatus("actual", `{"type":"idle"}`))
+		if s.protocolError() == nil {
+			t.Fatal("control flood repaired later proven conflict")
+		}
+	})
+	t.Run("prior-error-not-cleared", func(t *testing.T) {
+		s := newRunState("run", &recordingSink{})
+		s.setThread("parent")
+		s.setTurn("turn")
+		s.onNotification(NotifyTurnCompleted, json.RawMessage(`{"threadId":"foreign","turn":{"id":"turn","status":"completed"}}`))
+		prior := s.protocolError()
+		s.onNotification(NotifyThreadStatusChanged, alignmentChildStatus("foreign", `{"type":"idle"}`))
+		s.onNotification(NotifyTurnCompleted, json.RawMessage(`{"threadId":"parent","turn":{"id":"turn","status":"completed"}}`))
+		if prior == nil || s.protocolError() != prior || s.snapshot(Options{}, "parent", "raw", "", 0, "", false).Checkpoint != nil {
+			t.Fatal("control erased an established protocol failure")
+		}
+	})
+	t.Run("terminal-remains-final", func(t *testing.T) {
+		sink := &recordingSink{}
+		s := newRunState("run", sink)
+		s.setThread("parent")
+		s.setTurn("turn")
+		s.onNotification(NotifyTurnCompleted, json.RawMessage(`{"threadId":"parent","turn":{"id":"turn","status":"completed"}}`))
+		count := len(s.transcript)
+		terminal := string(s.terminal.JSON)
+		s.onNotification(NotifyThreadStatusChanged, alignmentChildStatus("unknown", `{"type":"active","activeFlags":[]}`))
+		if s.protocolError() != nil || len(s.transcript) != count || string(s.terminal.JSON) != terminal || len(s.observation.children) != 0 {
+			t.Fatal("trailing control changed completed result")
+		}
+		s.onNotification(NotifyTurnCompleted, json.RawMessage(`{"threadId":"parent","turn":{"id":"turn","status":"completed"}}`))
+		if s.protocolError() == nil || s.snapshot(Options{}, "parent", "raw", "", 0, "", false).Checkpoint != nil {
+			t.Fatal("control relaxed duplicate terminal guard")
+		}
+	})
 }
