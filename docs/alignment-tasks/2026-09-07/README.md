@@ -148,3 +148,5 @@ python3 docs/alignment-tasks/2026-09-07/validate.py \
 [R037](amendments/R037.md)：原生Windows首次暴露的Native checkpoint失败返原T17；外部Cursor CLI运行标记审计单独修订，原失败与全量门禁保留。
 
 [R038](amendments/R038.md)：完整授权live后的精确返修；终局envelope、受证明managed技能克隆/错误链、合成marker与429环境边界分别处理，旧证据及所有门禁保持。
+
+[R039](amendments/R039.md)：来源marker不能授权copied技能同名异源覆盖；真实ManagedRoots反例及精确共享层返修。

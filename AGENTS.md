@@ -412,6 +412,8 @@ R035：f7aa53c首轮完整G05未通过，重新打开G05-F01（Cursor旧fixture�
 
 R038：授权四provider完整live后，Claude在8db通过；CodeBuddy TerminalPayload fixture读错envelope、SDK managed skill clone及profile原cause丢失分别由原T15/T06精确返修。只凭正式manifest/内容/target证明安全复制已管理技能为普通树，任意链接/越界/替换/特殊节点继续拒绝，原SyncProfile→WithTools与fingerprint语义保持。Cursor合成marker措辞可澄清、全部原断言不减，原失败缺失字段不倒填；Codex后续诊断429不构成代码缺陷或通过依据。原8条live结果保留，全新S重验G05/B06/G06；通过后发PR，未授权merge/tag。
 
+R039：copied skill的来源marker不证明内容或权限；真实ManagedRoots下同名异源覆盖也须在compatibility和正式reconcile破坏前明确ErrUnsafe，不能用marker授权RemoveAll吞用户附件。same-source实际bytes/modes继续入hash，正式已证明symlink替换保持。原T06仅追加compatibility/profile_reconcile闭集修复，原反例与所有新S门禁保持。
+
 ## 15. 发布门禁
 
 发布前必须全部满足：

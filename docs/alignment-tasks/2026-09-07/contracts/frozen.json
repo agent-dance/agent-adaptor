@@ -1,10 +1,10 @@
 {
   "schema_version": "1.0",
   "gate": "G05",
-  "manifest_revision": 37,
+  "manifest_revision": 38,
   "code_baseline": "919f140f64f89c80933802840c8878681a85a4d9",
   "source_head": "e2f0620bdd6477e6fe16f6db5648093589342ca2",
-  "status": "R038_live_repairs_pending_implementation_and_new_exact_S",
+  "status": "R039_live_repairs_pending_implementation_and_new_exact_S",
   "contracts": [
     {
       "producer": "C01",
@@ -447,7 +447,8 @@
     "R035: exact f7aa53c full G05 failed with three inherited-XDG Cursor fixture assumptions and temporary-profile cross-Agent resume assertion; retain all failed logs. Original T17 fixes isolation, original T04 proves temporary ResumeOnly rejection/preserved record plus one safe fresh fallback while Dedicated retains real resume. MERGE-F03 original T16 must check existing child-role conflict even at128-entry limit. Same new-S G05/all B06/G06 remain required; original coverage/graph unchanged.",
     "R036: preserve failed f7aa53c attempt11; original T17 isolates only old fallback fixtures, T04 proves temporary missing-profile refusal and atomic one-fresh replacement while Dedicated resumes, T16 applies child capacity only to new identities without dropping conflicts. Exact new test paths enter G05 scope; root API/dependencies/generated stay unchanged. All original same-S platform/live commands and Windows32 mandatory cases remain required.",
     "R037: nativeWindows29e569c lacks Native checkpoint with nil error; original T17 must diagnose actual exit/protocol/fixture, preserving all assertions and32mandatory. External Cursor V01 passed but runtime PID markers changed broad CLI hash; preserve stoppedV02 and repair external provenance only with formal marker evidence. Original same-new-S gates and full coverage remain.",
-    "R038: preserve complete8db four-provider matrix facts. T06 alone repairs strictly proven managed skill cloning and root profile error preservation; T15 owns TerminalPayload fixture and CodeBuddy GetProfile Go error; T17 changes synthetic public marker wording/diagnostic only. No writer overlap, arbitrary symlink widening, assertion weakening or retroactive historical causes. Later Codex429 diagnostic is an environment fact, not product repair. Same-new-S G05/all B06/G06 required; user authorized PR after completion only."
+    "R038: preserve complete8db four-provider matrix facts. T06 alone repairs strictly proven managed skill cloning and root profile error preservation; T15 owns TerminalPayload fixture and CodeBuddy GetProfile Go error; T17 changes synthetic public marker wording/diagnostic only. No writer overlap, arbitrary symlink widening, assertion weakening or retroactive historical causes. Later Codex429 diagnostic is an environment fact, not product repair. Same-new-S G05/all B06/G06 required; user authorized PR after completion only.",
+    "R039 T28-F05安全边界：真实ManagedRoots下，同key/runtimeName从A切到B不得仅凭copied目录来源marker删除实际内容/权限/用户附件；compatibility与正式reconcile均在破坏前ErrUnsafe。same-source保留实际复制树与hash，正式已证明symlink替换不受影响。marker-only clone不迁移含绝对Path的源manifest，目标manifest由正式reconcile建立；无新公共API/复制框架。"
   ],
   "unmerged_related_branches": [
     {

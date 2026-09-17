@@ -79,7 +79,8 @@
       "docs/merge-readiness-plan-2026-09-16.md",
       "docs/alignment-tasks/2026-09-07/rework.json",
       "docs/alignment-tasks/2026-09-07/amendments/R031.md",
-      "docs/alignment-tasks/2026-09-07/amendments/R038.md"
+      "docs/alignment-tasks/2026-09-07/amendments/R038.md",
+      "docs/alignment-tasks/2026-09-07/amendments/R039.md"
     ],
     "dependency_artifacts": [
       {
@@ -147,7 +148,9 @@
       "internal/hostedprofile/seed_test.go",
       "alignment_profile_assets_test.go",
       "alignment_resume_fallback_test.go",
-      "alignment_managed_clone_test.go"
+      "alignment_managed_clone_test.go",
+      "internal/skillruntime/compatibility.go",
+      "internal/skillruntime/profile_reconcile.go"
     ],
     "scope_match": "仅精确仓库相对文件或目录/**；任何未列路径不可写。",
     "exclusive_resources": [],
@@ -193,7 +196,8 @@
     "R011：MCP JSON/TOML writer保留existing regular mode，新文件仍默认，非regular/IO稳定拒绝；Thread fingerprint不无条件哈希单轮Request.Streaming，保留真实配置/codec/环境/资源维度和Driver进程兼容检查。以G02原Codex/CodeBuddy失败测试不改期望复验。",
     "R030 T27-F02：W02-R06/W02-R08；确定变更分量，修复同配置冷续接，保留所有真实配置漂移拒绝与健康 checkpoint 保护。",
     "R031 MERGE-F01：同一公开 Thread 在安全 resume-reject 后最多一次 fresh fallback，必须建立新的 Driver attempt 生命周期边界，清除旧 terminal/source/坐标而保留完整累计审计；fresh 文本/工具/typed事实可交付，最终唯一公共终局来自最后结果和资源清理，同 attempt terminal 后迟到payload继续禁止。完整验证有/无RunServices、Run/Stream、fresh成功/失败、ResumeOnly和checkpoint原子性。",
-    "R038 T28-F05：SyncProfile产生的合法SDK managed skill link须以正式manifest/source_hash/fingerprint与实际target证明后安全复制为普通树，使Native+WithTools可执行；任意用户链接、越界、替换、嵌套链接、特殊文件和冲突仍拒绝。不得删除IncludeSkills、换Dedicated迁就fixture或放宽托管所有权。core保留ProfileReporter返回的Go error和AgentProfile.Error事实；源不污染、真实配置fingerprint、完整审计与原单writer合同保持。"
+    "R038 T28-F05：SyncProfile产生的合法SDK managed skill link须以正式manifest/source_hash/fingerprint与实际target证明后安全复制为普通树，使Native+WithTools可执行；任意用户链接、越界、替换、嵌套链接、特殊文件和冲突仍拒绝。不得删除IncludeSkills、换Dedicated迁就fixture或放宽托管所有权。core保留ProfileReporter返回的Go error和AgentProfile.Error事实；源不污染、真实配置fingerprint、完整审计与原单writer合同保持。",
+    "R039 T28-F05安全边界：真实ManagedRoots下，同key/runtimeName从A切到B不得仅凭copied目录来源marker删除实际内容/权限/用户附件；compatibility与正式reconcile均在破坏前ErrUnsafe。same-source保留实际复制树与hash，正式已证明symlink替换不受影响。marker-only clone不迁移含绝对Path的源manifest，目标manifest由正式reconcile建立；无新公共API/复制框架。"
   ],
   "acceptance_criteria": [
     {
@@ -243,7 +247,7 @@
     },
     {
       "id": "T06-AC10",
-      "requirement": "R038 T28-F05：SyncProfile产生的合法SDK managed skill link须以正式manifest/source_hash/fingerprint与实际target证明后安全复制为普通树，使Native+WithTools可执行；任意用户链接、越界、替换、嵌套链接、特殊文件和冲突仍拒绝。不得删除IncludeSkills、换Dedicated迁就fixture或放宽托管所有权。core保留ProfileReporter返回的Go error和AgentProfile.Error事实；源不污染、真实配置fingerprint、完整审计与原单writer合同保持。",
+      "requirement": "R038 T28-F05：SyncProfile产生的合法SDK managed skill link须以正式manifest/source_hash/fingerprint与实际target证明后安全复制为普通树，使Native+WithTools可执行；任意用户链接、越界、替换、嵌套链接、特殊文件和冲突仍拒绝。不得删除IncludeSkills、换Dedicated迁就fixture或放宽托管所有权。core保留ProfileReporter返回的Go error和AgentProfile.Error事实；源不污染、真实配置fingerprint、完整审计与原单writer合同保持。 R039 T28-F05安全边界：真实ManagedRoots下，同key/runtimeName从A切到B不得仅凭copied目录来源marker删除实际内容/权限/用户附件；compatibility与正式reconcile均在破坏前ErrUnsafe。same-source保留实际复制树与hash，正式已证明symlink替换不受影响。marker-only clone不迁移含绝对Path的源manifest，目标manifest由正式reconcile建立；无新公共API/复制框架。",
       "required": true
     }
   ],

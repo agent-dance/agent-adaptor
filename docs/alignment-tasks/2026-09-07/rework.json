@@ -1,5 +1,5 @@
 {
-  "revision": "R038",
+  "revision": "R039",
   "source_base": "1c49823fafd2a057be4b0fc6dd96a563e957e2e9",
   "prepared_base": "external_dispatch_prepared_head",
   "max_parallelism": 6,
@@ -37,7 +37,9 @@
         "internal/skillruntime/profile.go",
         "internal/skillruntime/profile_clone.go",
         "internal/skillruntime/profile_clone_test.go",
-        "alignment_managed_clone_test.go"
+        "alignment_managed_clone_test.go",
+        "internal/skillruntime/compatibility.go",
+        "internal/skillruntime/profile_reconcile.go"
       ],
       "findings": [
         {
@@ -53,7 +55,7 @@
         {
           "id": "T28-F05",
           "check": "T28-V01",
-          "contract": "SyncProfile产生的合法SDK managed skill link须以正式manifest/source_hash/fingerprint与实际target证明后安全复制为普通树，使Native+WithTools可执行；任意用户链接、越界、替换、嵌套链接、特殊文件和冲突仍拒绝。不得删除IncludeSkills、换Dedicated迁就fixture或放宽托管所有权。core保留ProfileReporter返回的Go error和AgentProfile.Error事实；源不污染、真实配置fingerprint、完整审计与原单writer合同保持。"
+          "contract": "SyncProfile产生的合法SDK managed skill link须以正式manifest/source_hash/fingerprint与实际target证明后安全复制为普通树，使Native+WithTools可执行；任意用户链接、越界、替换、嵌套链接、特殊文件和冲突仍拒绝。不得删除IncludeSkills、换Dedicated迁就fixture或放宽托管所有权。core保留ProfileReporter返回的Go error和AgentProfile.Error事实；源不污染、真实配置fingerprint、完整审计与原单writer合同保持。 R039 T28-F05安全边界：真实ManagedRoots下，同key/runtimeName从A切到B不得仅凭copied目录来源marker删除实际内容/权限/用户附件；compatibility与正式reconcile均在破坏前ErrUnsafe。same-source保留实际复制树与hash，正式已证明symlink替换不受影响。marker-only clone不迁移含绝对Path的源manifest，目标manifest由正式reconcile建立；无新公共API/复制框架。"
         }
       ]
     },
