@@ -16,6 +16,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	adaptor "github.com/agent-dance/agent-adaptor"
@@ -223,16 +224,25 @@ func alignmentContender() int {
 }
 func TestAlignmentLifecycleProfileOwnership(t *testing.T) {
 	f := newAlignmentFixture(t, "cursor")
-	ctx, c := alignmentContext(t)
+	// Seven synchronous operations each retain the original 8s allowance. This
+	// parent is cooperative cancellation, not a hard stop for a blocked SDK;
+	// go test's process timeout and the CI supervisor remain the hard boundary.
+	ctx, c := context.WithTimeout(context.Background(), 7*alignmentWaitLimit)
 	defer c()
 	opts := []adaptor.Option{adaptor.WithTools(alignmentTool("one"))}
 	a := f.agent(t, opts...)
-	if _, e := a.Run(ctx, "owner"); e != nil {
+	if e := alignmentProfileStage(t, ctx, "owner", func(ctx context.Context) error {
+		_, err := a.Run(ctx, "owner")
+		return err
+	}); e != nil {
 		t.Fatal(e)
 	}
 	entry := f.wait(t, "prompt", 1)[0]
 	b := f.agent(t, opts...)
-	if _, e := b.Run(ctx, "collision"); !errors.Is(e, profile.ErrInUse) {
+	if e := alignmentProfileStage(t, ctx, "same-process-conflict", func(ctx context.Context) error {
+		_, err := b.Run(ctx, "collision")
+		return err
+	}); !errors.Is(e, profile.ErrInUse) {
 		t.Errorf("same-process conflict: %v", e)
 	}
 	exe, e := os.Executable()
@@ -240,10 +250,15 @@ func TestAlignmentLifecycleProfileOwnership(t *testing.T) {
 		t.Fatal(e)
 	}
 	in, _ := json.Marshal(alignmentContenderInput{Common: f.common, Source: f.profile})
-	cmd := exec.CommandContext(ctx, exe)
-	cmd.Env = []string{alignmentFixtureEnv + "=contender", "HOME=" + filepath.Join(f.root, "home"), "USERPROFILE=" + filepath.Join(f.root, "home"), "XDG_CONFIG_HOME=" + filepath.Join(f.root, "home"), "AGENT_ADAPTOR_LIVE_CONFORMANCE=0", "AGENT_ADAPTOR_E2E=0", "AGENT_ADAPTOR_UPDATE_API_GOLDEN=0", "GORACE=atexit_sleep_ms=0 halt_on_error=1"}
-	cmd.Stdin = bytes.NewReader(in)
-	output, e := cmd.CombinedOutput()
+	var output []byte
+	e = alignmentProfileStage(t, ctx, "cross-process-conflict", func(ctx context.Context) error {
+		cmd := exec.CommandContext(ctx, exe)
+		cmd.Env = []string{alignmentFixtureEnv + "=contender", "HOME=" + filepath.Join(f.root, "home"), "USERPROFILE=" + filepath.Join(f.root, "home"), "XDG_CONFIG_HOME=" + filepath.Join(f.root, "home"), "AGENT_ADAPTOR_LIVE_CONFORMANCE=0", "AGENT_ADAPTOR_E2E=0", "AGENT_ADAPTOR_UPDATE_API_GOLDEN=0", "GORACE=atexit_sleep_ms=0 halt_on_error=1"}
+		cmd.Stdin = bytes.NewReader(in)
+		var err error
+		output, err = cmd.CombinedOutput()
+		return err
+	})
 	if e != nil || string(output) != "in-use\n" {
 		t.Fatalf("cross-process conflict: %s %v", output, e)
 	}
@@ -252,7 +267,10 @@ func TestAlignmentLifecycleProfileOwnership(t *testing.T) {
 	}
 	// An actually independent complete identity receives a different directory.
 	other := f.agent(t, adaptor.WithTools(alignmentTool("one")), adaptor.WithIdentity(adaptor.Identity{Name: "different"}))
-	if _, e := other.Run(ctx, "identity"); e != nil {
+	if e := alignmentProfileStage(t, ctx, "different-identity", func(ctx context.Context) error {
+		_, err := other.Run(ctx, "identity")
+		return err
+	}); e != nil {
 		t.Fatal(e)
 	}
 	if f.wait(t, "prompt", 2)[1].Profile == entry.Profile {
@@ -272,10 +290,15 @@ func TestAlignmentLifecycleProfileOwnership(t *testing.T) {
 			}
 		}
 	}
-	if e := alignmentClose(t, a, ctx); e != nil {
+	if e := alignmentProfileStage(t, ctx, "owner-close", func(ctx context.Context) error {
+		return alignmentClose(t, a, ctx)
+	}); e != nil {
 		t.Fatal(e)
 	}
-	if _, e := b.Run(ctx, "successor"); e != nil {
+	if e := alignmentProfileStage(t, ctx, "successor", func(ctx context.Context) error {
+		_, err := b.Run(ctx, "successor")
+		return err
+	}); e != nil {
 		t.Fatal(e)
 	}
 	state := filepath.Join(filepath.Dir(entry.Profile), "state.json")
@@ -283,7 +306,9 @@ func TestAlignmentLifecycleProfileOwnership(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if e = alignmentClose(t, a, ctx); e != nil {
+	if e = alignmentProfileStage(t, ctx, "predecessor-close", func(ctx context.Context) error {
+		return alignmentClose(t, a, ctx)
+	}); e != nil {
 		t.Fatal(e)
 	}
 	after, _ := os.ReadFile(state)
@@ -556,13 +581,19 @@ func TestAlignmentLifecycleProfileMCPModePreserved(t *testing.T) {
 
 func TestAlignmentLifecycleProfileIdentityEncoding(t *testing.T) {
 	f := newAlignmentFixture(t, "cursor")
-	ctx, c := alignmentContext(t)
-	defer c()
 	identities := []adaptor.Identity{{}, {ID: "a", Tenant: "bc"}, {ID: "ab", Tenant: "c"}, {ID: "a\x00b"}, {Profile: "a\x00b"}, {Name: "中:/"}, {Tenant: "中:/"}}
+	// As above, the total budget only requests cancellation. Each Run gets at
+	// most 8s; all seven Agents retain their claims until test cleanup.
+	ctx, c := context.WithTimeout(context.Background(), time.Duration(len(identities)+1)*alignmentWaitLimit)
+	defer c()
 	dirs := map[string]bool{}
 	for i, id := range identities {
 		a := f.agent(t, adaptor.WithIdentity(id), adaptor.WithTools(alignmentTool("one")))
-		if _, e := a.Run(ctx, fmt.Sprintf("identity-%d", i)); e != nil {
+		stage := fmt.Sprintf("identity-%d", i)
+		if e := alignmentProfileStage(t, ctx, stage, func(ctx context.Context) error {
+			_, err := a.Run(ctx, stage)
+			return err
+		}); e != nil {
 			t.Fatal(e)
 		}
 		entry := f.wait(t, "prompt", i+1)[i]
@@ -576,8 +607,109 @@ func TestAlignmentLifecycleProfileIdentityEncoding(t *testing.T) {
 		t.Fatal(e)
 	}
 	a := f.agent(t, adaptor.WithProfile(profile.Dedicated(alias)), adaptor.WithTools(alignmentTool("one")))
-	if _, e := a.Run(ctx, "canonical-collision"); !errors.Is(e, profile.ErrInUse) {
+	if e := alignmentProfileStage(t, ctx, "canonical-alias-conflict", func(ctx context.Context) error {
+		_, err := a.Run(ctx, "canonical-collision")
+		return err
+	}); !errors.Is(e, profile.ErrInUse) {
 		t.Errorf("canonical source alias bypassed claim: %v", e)
+	}
+}
+
+// This wrapper is synchronous: cancellation never abandons an operation in a
+// new watchdog goroutine. The scenario parent can shorten, but not extend, 8s.
+func alignmentProfileStage(t *testing.T, parent context.Context, name string, run func(context.Context) error) error {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(parent, alignmentWaitLimit)
+	defer cancel()
+	started := time.Now()
+	deadline, _ := ctx.Deadline()
+	t.Logf("profile stage=%s begin budget=%s", name, deadline.Sub(started))
+	err := run(ctx)
+	var re *adaptor.RunError
+	var reason adaptor.FailureReason
+	if errors.As(err, &re) {
+		reason = re.Reason
+	}
+	t.Logf("profile stage=%s end elapsed=%s context=%v error_type=%T reason=%s", name, time.Since(started), ctx.Err(), err, reason)
+	if ctx.Err() != nil {
+		// A conflict returned after cancellation must not satisfy ErrInUse.
+		return fmt.Errorf("profile stage %s: %w", name, ctx.Err())
+	}
+	return err
+}
+
+type alignmentProfileStageDriver struct {
+	alignmentAuditDriver
+	delay time.Duration
+}
+
+func (d *alignmentProfileStageDriver) Run(ctx context.Context, req driver.Request, sink driver.EventSink) (driver.Response, error) {
+	timer := time.NewTimer(d.delay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return d.alignmentAuditDriver.Run(ctx, req, sink)
+	case <-ctx.Done():
+		return driver.Response{}, ctx.Err()
+	}
+}
+
+func TestAlignmentLifecycleProfileStageBudgets(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		shared    bool
+		delay     time.Duration
+		calls     int
+		completed int32
+		elapsed   time.Duration
+	}{
+		{"old-shared-budget", true, 5 * time.Second, 2, 1, 8 * time.Second},
+		{"independent-stages", false, 5 * time.Second, 2, 2, 10 * time.Second},
+		{"single-stage-timeout", false, 9 * time.Second, 1, 0, 8 * time.Second},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// Only virtual time and the public Agent/Driver boundary are involved;
+			// this counterexample neither sleeps in real time nor emulates Windows.
+			synctest.Test(t, func(t *testing.T) {
+				d := &alignmentProfileStageDriver{delay: tc.delay}
+				a := adaptor.New(d)
+				defer alignmentCleanupAgent(t, a)
+				budget := 16 * time.Second
+				if tc.shared {
+					budget = 8 * time.Second
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), budget)
+				defer cancel()
+				started := time.Now()
+				for i := 0; i < tc.calls; i++ {
+					var result *adaptor.Result
+					var runErr error
+					run := func(ctx context.Context) error {
+						result, runErr = a.Run(ctx, "stage")
+						return runErr
+					}
+					var err error
+					if tc.shared {
+						err = run(ctx)
+					} else {
+						err = alignmentProfileStage(t, ctx, fmt.Sprintf("stage-%d", i), run)
+					}
+					if int32(i) < tc.completed {
+						if err != nil || result == nil || result.Text != "audit-text" {
+							t.Fatalf("stage %d did not complete: result=%v err=%v", i, result, err)
+						}
+					} else {
+						var re *adaptor.RunError
+						if !errors.Is(err, context.DeadlineExceeded) || !errors.As(runErr, &re) || re.Reason != adaptor.ReasonDeadlineExceeded {
+							t.Fatalf("stage %d did not fail at its deadline: err=%v run_error=%v", i, err, runErr)
+						}
+					}
+				}
+				if elapsed := time.Since(started); elapsed != tc.elapsed || d.calls.Load() != tc.completed {
+					t.Fatalf("elapsed=%s completed=%d, want %s/%d", elapsed, d.calls.Load(), tc.elapsed, tc.completed)
+				}
+			})
+		})
 	}
 }
 
