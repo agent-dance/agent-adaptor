@@ -55,5 +55,9 @@
 // scope fence. Subagent capability facts still require both the formal child
 // role and the current parent spawn's receiver, resolved to a unique catalog key.
 //
+// MCP tool-result transcripts treat an absent or JSON-null error as no error.
+// A non-null formal error or failed tool status remains a tool failure, matching
+// the capability observation without rewriting its result, Raw or turn terminal.
+//
 // Protocol upgrades follow the generation procedure in generate.go.
 package appserver

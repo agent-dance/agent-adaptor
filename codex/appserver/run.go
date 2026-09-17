@@ -1,6 +1,7 @@
 package appserver
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -922,10 +923,11 @@ func transcriptForCompletedItem(item *ThreadItem) *driver.TranscriptItem {
 		}
 	case ThreadItemMcpToolCall:
 		if item.McpToolCall != nil {
+			hasError := len(item.McpToolCall.Error) > 0 && !bytes.Equal(bytes.TrimSpace(item.McpToolCall.Error), []byte("null"))
 			return &driver.TranscriptItem{
 				Kind:      driver.TranscriptToolResult,
 				ToolUseID: item.ID,
-				IsError:   len(item.McpToolCall.Error) > 0 || item.McpToolCall.Status == "failed",
+				IsError:   hasError || item.McpToolCall.Status == "failed",
 				Data:      map[string]any{"result": decodeJSONValue(item.McpToolCall.Result), "error": decodeJSONValue(item.McpToolCall.Error)},
 			}
 		}
