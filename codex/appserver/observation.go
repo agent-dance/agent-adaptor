@@ -311,6 +311,38 @@ func (s *runState) observeChildThread(params json.RawMessage) bool {
 	return true
 }
 
+// The checked-in ThreadStatusChangedNotification schema defines a control
+// notification, not a turn result. Validate only its official status union;
+// bindNotificationScopeLocked separately requires a previously proven child.
+func validateChildThreadStatus(params json.RawMessage) error {
+	var body struct {
+		Status struct {
+			Type        string          `json:"type"`
+			ActiveFlags json.RawMessage `json:"activeFlags"`
+		} `json:"status"`
+	}
+	if !validObservationJSON(params) || json.Unmarshal(params, &body) != nil {
+		return errors.New("invalid status notification")
+	}
+	switch body.Status.Type {
+	case "notLoaded", "idle", "systemError":
+		return nil
+	case "active":
+		var flags []string
+		if json.Unmarshal(body.Status.ActiveFlags, &flags) != nil || flags == nil {
+			return errors.New("active status requires activeFlags")
+		}
+		for _, flag := range flags {
+			if flag != "waitingOnApproval" && flag != "waitingOnUserInput" {
+				return errors.New("invalid active status flag")
+			}
+		}
+		return nil
+	default:
+		return errors.New("invalid thread status")
+	}
+}
+
 // Plan has no provider IDs: tuple-encoded turn and position identify only a
 // slot in each complete snapshot. They are explicitly synthetic, never task IDs.
 func observationID(parts ...string) string {

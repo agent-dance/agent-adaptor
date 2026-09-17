@@ -179,6 +179,18 @@ func main() {
 				}
 				os.Exit(9)
 			}
+			if scenario == "child-status" || scenario == "unknown-child-status" {
+				collab := map[string]any{"id": "spawn-child-status", "type": "collabAgentToolCall", "tool": "spawnAgent", "status": "inProgress", "senderThreadId": thread, "receiverThreadIds": []string{}}
+				notify("item/started", scoped("item", collab))
+				if scenario == "child-status" {
+					notify("thread/started", map[string]any{"thread": map[string]any{"id": "agent-child", "agentRole": "reviewer", "source": map[string]any{"subAgent": map[string]any{"thread_spawn": map[string]any{"parent_thread_id": thread, "agent_role": "reviewer", "depth": 1}}}}})
+				}
+				notify("thread/status/changed", map[string]any{"threadId": "agent-child", "status": map[string]any{"type": "active", "activeFlags": []string{}}})
+				collab["status"] = "completed"
+				collab["receiverThreadIds"] = []string{"agent-child"}
+				notify("item/completed", scoped("item", collab))
+				notify("thread/status/changed", map[string]any{"threadId": "agent-child", "status": map[string]any{"type": "idle"}})
+			}
 			// Exercise notification-before-response ordering on the real RPC path.
 			notify("turn/plan/updated", scoped("plan", []any{map[string]any{"step": "中文 plan", "status": "pending"}}))
 			reply(map[string]any{"turn": map[string]any{"id": turn, "status": "inProgress"}})

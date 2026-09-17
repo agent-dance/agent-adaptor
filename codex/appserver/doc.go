@@ -47,5 +47,13 @@
 // thread/turn fence. Cancellation keeps its original cause and cannot create
 // a healthy checkpoint or trigger prompt replay. No additional wait is added.
 //
+// A child thread announced by thread/started with this run's parent_thread_id
+// may also send thread/status/changed on the same connection. Valid statuses
+// for that known, non-conflicting child remain Raw audit data; they never bind
+// the parent's identity, publish parent semantics or complete its turn. Unknown
+// children and every other foreign thread/turn notification retain the strict
+// scope fence. Subagent capability facts still require both the formal child
+// role and the current parent spawn's receiver, resolved to a unique catalog key.
+//
 // Protocol upgrades follow the generation procedure in generate.go.
 package appserver
