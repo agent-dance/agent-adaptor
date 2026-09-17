@@ -114,13 +114,16 @@ func alignmentReadRequest(t *testing.T, ctx context.Context, stream *alignmentRP
 	return req.ID
 }
 func TestAlignmentChildMetadataRPC(t *testing.T) {
-	for _, kind := range []string{"valid", "unavailable", "wrong-id", "wrong-parent", "conflicting-role", "unknown-role", "missing-role", "unsupported", "established-conflict"} {
+	for _, kind := range []string{"valid", "unavailable", "wrong-id", "wrong-parent", "conflicting-role", "unknown-role", "missing-role", "unsupported", "established-conflict", "known-missing-parent"} {
 		t.Run(kind, func(t *testing.T) {
 			ctx, client, wire := alignmentRPCSetup(t, nil)
 			s, sink := alignmentMetadataState(t, ctx, client)
 			alignmentSpawn(s, NotifyItemStarted, "inProgress", "child")
 			alignmentSpawn(s, NotifyItemStarted, "inProgress", "child")
 			id := alignmentReadRequest(t, ctx, wire)
+			if kind == "known-missing-parent" {
+				s.onNotification(NotifyThreadStarted, alignmentChildMetadata("child", "parent", ""))
+			}
 			if kind == "established-conflict" {
 				s.onNotification(NotifyThreadStarted, alignmentChildMetadata("child", "parent", "reviewer"))
 			}
@@ -131,6 +134,8 @@ func TestAlignmentChildMetadataRPC(t *testing.T) {
 				raw = json.RawMessage(`null`)
 			case "wrong-id":
 				raw = alignmentChildMetadata("other", "parent", "reviewer")
+			case "known-missing-parent":
+				raw = alignmentChildMetadata("child", "", "reviewer")
 			case "wrong-parent":
 				raw = alignmentChildMetadata("child", "other", "reviewer")
 			case "unknown-role":
@@ -163,6 +168,12 @@ func TestAlignmentChildMetadataRPC(t *testing.T) {
 			}
 			if kind != "valid" && len(facts) != 0 {
 				t.Fatalf("invalid fact: %+v", facts)
+			}
+			if kind == "known-missing-parent" {
+				child := s.observation.children["child"]
+				if child.role != "" || child.rejected || child.conflict || !s.observation.notices["capability_unresolved"] {
+					t.Fatal("incomplete metadata became contradiction or combined role proof")
+				}
 			}
 			if kind == "wrong-id" || kind == "wrong-parent" || kind == "conflicting-role" {
 				// Direct merge also proves a second successful lookup cannot heal the
@@ -259,7 +270,7 @@ func TestAlignmentChildMetadataLateAnnouncements(t *testing.T) {
 			if len(facts) != 0 || len(s.observation.children) != 0 || s.protocolError() != nil {
 				t.Fatal("late announcement crossed terminal/FIFO boundary")
 			}
-			s.freezeChildMetadata()
+			s.freezeNotifications()
 			s.onNotification(NotifyThreadStarted, alignmentChildMetadata("child", "parent", "writer"))
 			if len(s.observation.children) != 0 || s.protocolError() != nil {
 				t.Fatal("frozen result changed")
@@ -583,4 +594,59 @@ func TestAlignmentChildMetadataKnownIdentityNeedsNoRead(t *testing.T) {
 	if len(facts) != 2 || facts[1].Phase != capability.Completed {
 		t.Fatal("existing double-proof path changed")
 	}
+}
+
+func TestAlignmentChildMetadataFreezeWaitsForHandler(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	entered, release, handled, frozen := make(chan struct{}), make(chan struct{}), make(chan struct{}), make(chan struct{})
+	sink := &alignmentMetadataFreezeSink{recordingSink: &recordingSink{}, ctx: ctx, entered: entered, release: release}
+	s := newRunState("run", sink)
+	s.setThread("parent")
+	s.setTurn("turn")
+	go func() {
+		s.onNotification(NotifyTurnCompleted, json.RawMessage(`{"threadId":"parent","turn":{"id":"turn","status":"completed"}}`))
+		close(handled)
+	}()
+	alignmentRPCWait(t, ctx, entered)
+	go func() { s.freezeNotifications(); close(frozen) }()
+	select {
+	case <-frozen:
+		t.Fatal("freeze bypassed in-flight handler")
+	default:
+	}
+	close(release)
+	alignmentRPCWait(t, ctx, handled)
+	alignmentRPCWait(t, ctx, frozen)
+	before := s.snapshot(Options{}, "parent", "raw", "", 0, "", false)
+	s.onNotification(NotifyError, json.RawMessage(`{"willRetry":false}`))
+	s.onNotification(NotifyTurnCompleted, json.RawMessage(`{"threadId":"parent","turn":{"id":"turn","status":"completed"}}`))
+	s.onNotification(NotifyThreadStarted, alignmentChildMetadata("child", "parent", "reviewer"))
+	after := s.snapshot(Options{}, "parent", "raw", "", 0, "", false)
+	if !reflect.DeepEqual(before, after) || s.protocolError() != nil || len(s.observation.children) != 0 {
+		t.Fatal("notification crossed frozen snapshot boundary")
+	}
+	s.finishPublicResult(after, nil)
+	assertTerminalLifecycle(t, sink.streams, 1, 0)
+}
+
+type alignmentMetadataFreezeSink struct {
+	*recordingSink
+	ctx     context.Context
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (s *alignmentMetadataFreezeSink) Emit(e driver.RunEvent) error {
+	if err := s.recordingSink.Emit(e); err != nil {
+		return err
+	}
+	if e.Item != nil && e.Item.Kind == driver.TranscriptResult {
+		close(s.entered)
+		select {
+		case <-s.release:
+		case <-s.ctx.Done():
+		}
+	}
+	return nil
 }

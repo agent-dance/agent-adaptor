@@ -216,8 +216,8 @@ type childMetadata struct {
 	} `json:"thread"`
 }
 
-func (s *runState) freezeChildMetadata() {
+func (s *runState) freezeNotifications() {
 	s.notifyMu.Lock()
-	s.metadataFrozen = true
+	s.notificationsFrozen = true
 	s.notifyMu.Unlock()
 }

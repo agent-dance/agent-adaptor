@@ -338,7 +338,7 @@ func (p *Process) RunTurn(ctx context.Context, opts Options, sink driver.EventSi
 		default:
 		}
 	}
-	state.freezeChildMetadata()
+	state.freezeNotifications()
 	if protocolErr := state.protocolError(); protocolErr != nil && !errors.Is(err, protocolErr) {
 		err = errors.Join(err, protocolErr)
 	}

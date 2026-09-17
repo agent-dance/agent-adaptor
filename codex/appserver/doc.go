@@ -64,10 +64,13 @@
 // includeTurns=false. Per turn it admits at most 128 distinct receivers, with a
 // one-second call deadline and a two-second total terminal settlement budget.
 // Missing/unsupported metadata produces an unresolved notice; first invalid
-// evidence rejects that receiver for the turn. The bounded identity table keeps
+// evidence rejects that receiver for the turn. A missing parent is unavailable,
+// not a contradictory parent; incomplete frames are not combined into role proof.
+// The bounded identity table keeps
 // rejections sticky, including at saturation. No arbitrary foreign ID is queried.
-// Admitted reads settle before the public terminal and Result freeze; late
-// announcements cannot cross that boundary. Child work completion is not inferred.
+// Admitted reads settle before the public terminal and Result freeze. A single
+// notification barrier joins any in-flight handler before the owner snapshot;
+// all later notifications remain Raw only. Child work completion is not inferred.
 //
 // An abandoned metadata response permanently pauses further optional reads on
 // that resident process. The original request ID still owns a late wire reply;

@@ -325,15 +325,17 @@ func (s *runState) mergeChildMetadata(params json.RawMessage, expected string) b
 	}
 	parent := body.Thread.Source.SubAgent.Spawn.Parent
 	if parent != s.threadID {
-		old, known := s.observation.children[id]
-		if known && !old.rejected {
-			s.rejectChildMetadata(id, "parent")
-		} else if expected != "" {
-			if parent == "" {
+		// Missing evidence is not a positive contradiction. Do not combine
+		// this reply's role with a parent seen in a different incomplete frame.
+		if parent == "" {
+			if expected != "" {
 				s.observationNotice("capability_unresolved")
-			} else {
-				s.rejectChildMetadata(id, "parent")
 			}
+			return false
+		}
+		old, known := s.observation.children[id]
+		if (known && !old.rejected) || expected != "" {
+			s.rejectChildMetadata(id, "parent")
 		}
 		return false
 	}

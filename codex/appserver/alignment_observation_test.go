@@ -246,8 +246,8 @@ func TestAlignmentPlanFenceAndAtomicSnapshots(t *testing.T) {
 			s.setTurn("turn")
 			s.onNotification(NotifyTurnPlanUpdated, json.RawMessage(`{"threadId":"`+coordinates[0]+`","turnId":"`+coordinates[1]+`","plan":[]}`))
 			_, got := alignmentFacts(sink)
-			if len(got) != 0 || s.protocolError() == nil {
-				t.Fatal("scope accepted")
+			if len(got) != 0 || (s.protocolError() != nil) != (coordinates[0] != "other") {
+				t.Fatal("foreign plan polluted parent or parent scope was accepted")
 			}
 		})
 	}
@@ -326,13 +326,13 @@ func TestAlignmentHistoricalUsageIsTheOnlyTurnException(t *testing.T) {
 	if s.protocolError() != nil || s.usage != nil {
 		t.Fatal("history polluted current usage")
 	}
-	for _, bad := range []string{strings.Replace(usage, `"threadId":"thread"`, `"threadId":"other"`, 1), strings.Replace(usage, `"inputTokens":999`, `"inputTokens":"bad"`, 1)} {
+	for i, bad := range []string{strings.Replace(usage, `"threadId":"thread"`, `"threadId":"other"`, 1), strings.Replace(usage, `"inputTokens":999`, `"inputTokens":"bad"`, 1)} {
 		s := newRunState("run", &recordingSink{})
 		s.setThread("thread")
 		s.setTurn("turn")
 		s.onNotification(NotifyThreadTokenUsageUpdated, json.RawMessage(bad))
-		if s.protocolError() == nil {
-			t.Fatal("loosened scope/schema")
+		if (s.protocolError() != nil) != (i != 0) || s.usage != nil {
+			t.Fatal("foreign usage polluted parent or parent schema was accepted")
 		}
 	}
 	s.onNotification(NotifyItemStarted, json.RawMessage(`{"threadId":"thread","turnId":"old","item":{"id":"x","type":"mcpToolCall","server":"mcp","tool":"read","status":"inProgress"}}`))

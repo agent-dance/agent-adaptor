@@ -206,7 +206,7 @@ func Run(ctx context.Context, opts Options, sink driver.EventSink) (driver.Respo
 			primary = errors.Join(primary, callerContextError(ctx), state.applyChildMetadataResults())
 		}
 		state.bindReceivedTurn()
-		state.freezeChildMetadata()
+		state.freezeNotifications()
 		if readErr := stream.ReadError(); readErr != nil {
 			state.recordProtocolError(fmt.Errorf("decode JSON-RPC stdout: %w", readErr))
 		}
@@ -327,12 +327,12 @@ func Run(ctx context.Context, opts Options, sink driver.EventSink) (driver.Respo
 // ---------------------------------------------------------------------------
 
 type runState struct {
-	translator     *Translator
-	observation    *observations
-	metadataReads  *childMetadataReads
-	metadataFrozen bool // protected by notifyMu; no late metadata may alter the snapshot
-	sink           driver.EventSink
-	notifyMu       sync.Mutex
+	translator          *Translator
+	observation         *observations
+	metadataReads       *childMetadataReads
+	notificationsFrozen bool // protected by notifyMu; no late notification may alter the snapshot
+	sink                driver.EventSink
+	notifyMu            sync.Mutex
 
 	mu             sync.Mutex
 	finalAgentText string
@@ -455,6 +455,9 @@ func (s *runState) onNotification(method string, params json.RawMessage) {
 }
 
 func (s *runState) handleNotificationLocked(method string, params json.RawMessage) {
+	if s.notificationsFrozen {
+		return
+	}
 	// This connection is subscribed to multiple threads. Demultiplex before
 	// checking the selected parent's terminal; a child terminal is not a
 	// duplicate parent terminal. Foreign payload contents stay opaque Raw.
@@ -474,7 +477,7 @@ func (s *runState) handleNotificationLocked(method string, params json.RawMessag
 				closed := s.publicClosed
 				deferMetadata = !closed && (s.turnID == "" || len(s.pending) != 0)
 				s.mu.Unlock()
-				if !closed && !deferMetadata && !s.metadataFrozen {
+				if !closed && !deferMetadata && !s.notificationsFrozen {
 					s.observeChildThread(params)
 				}
 			}
@@ -803,6 +806,7 @@ func (s *runState) handleTurnCompleted(params json.RawMessage) {
 
 func (s *runState) finishPublicResult(result driver.Response, runErr error) {
 	s.notifyMu.Lock()
+	s.notificationsFrozen = true
 	s.startPublic()
 	observationErr := runErr
 	if result.Failure != nil && result.Failure.Code == driver.FailureCancelled {
