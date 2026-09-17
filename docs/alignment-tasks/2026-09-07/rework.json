@@ -1,5 +1,5 @@
 {
-  "revision": "R040",
+  "revision": "R041",
   "source_base": "1c49823fafd2a057be4b0fc6dd96a563e957e2e9",
   "prepared_base": "external_dispatch_prepared_head",
   "max_parallelism": 6,
@@ -118,7 +118,7 @@
         {
           "id": "T28-F07",
           "check": "T28-V01",
-          "contract": "cold A已通过证据保留，B联合失败未打印分量保持unknown；只加安全布尔/计数诊断及必要一次独立诊断，不放宽nonce不注入、精确Text、实际新callback、phase/Terminal、同session和资源轮换。cold生产修复须另以已证原因扩展精确范围。"
+          "contract": "cold A已通过证据保留，B联合失败未打印分量保持unknown；只加安全布尔/计数诊断及必要一次独立诊断，不放宽nonce不注入、精确Text、实际新callback、phase/Terminal、同session和资源轮换。cold生产修复须另以已证原因扩展精确范围。 R041 T28-F07：单独诊断证明B已实际回忆marker并调用新gateway，正式同session成功，只有trim后Text不等于nonce；具体多余文本内容未保存，原dab分量仍unknown。SDK继续逐字返回正式result，不剥格式、不改equals、不重放。仅在原B prompt明确final response是一行原始nonce、无引号/代码块/标点/标签/解释，原verify工具、历史召回、nonce不注入和禁读文件/禁工具再现保持。固定新SHA原完整T28矩阵是唯一验收，后续不得重复调prompt刷绿。"
         },
         {
           "id": "T28-F08",

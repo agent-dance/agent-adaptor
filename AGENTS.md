@@ -416,6 +416,8 @@ R039：copied skill的来源marker不证明内容或权限；真实ManagedRoots�
 
 R040：Windows managed-clone alias误拒绝须以held profile/skills双目录SameFile证明修复，仅改clone只读manifest视图；错误父目录/替换/链接仍拒绝。CodeBuddy正式DeferExecuteTool MCP包装只由provider observer精确投影，不猜JSON或以callback代替正式Completed；cold失败分量未观察不倒填。两生命周期fixture按同步操作维护原8s上界、七身份持claim不变；专门Windows绿不能覆盖全量失败，新S全部原门禁重验。
 
+R041：单次CodeBuddy cold诊断已回忆marker且真实调用新gateway，只有最终Text非精确nonce。只明确fixture最终一行输出格式，SDK正式Text逐字保留、原equals与全部cold谓词不变；不猜多余文本内容或倒填旧原因，不以诊断/重复刷绿替代新S原完整矩阵。
+
 ## 15. 发布门禁
 
 发布前必须全部满足：
