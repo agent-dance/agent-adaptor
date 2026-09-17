@@ -53,6 +53,8 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- Recognize sentence-final periods after explicit Codex skill references, while
+  preserving exact dotted catalog names and rejecting ambiguous activation.
 - Allow shared profile cloning to copy skills already installed by `SyncProfile`
   after proving their managed ownership and target. Deliver ordinary trees,
   preserve source files and copied content/modes, and reject unknown links,

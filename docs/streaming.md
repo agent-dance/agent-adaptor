@@ -538,7 +538,9 @@ metadata proves nothing. Invalid snapshots leave the old table unchanged;
 replayed snapshots do not increment revision. A new run has no invented task cache.
 
 Codex explicit $skill inputs produce NativeInputAccepted only after turn/start
-accepts the typed input. Completed means that input acceptance completed, not
+accepts the typed input. A sentence-ending period in `Use $review.` is accepted;
+exact catalog names containing periods take precedence, and ambiguous names
+never activate a different shorter name. Completed means that input acceptance completed, not
 that the skill was read or its work finished. Subagent spawn completion likewise
 does not certify the child's final work. Conflicting formal child roles prevent
 pending spawn completion, including when the 128-identity table is full. The

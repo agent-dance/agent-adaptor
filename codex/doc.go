@@ -28,6 +28,8 @@
 // when an official child role and current-turn collab receiver match. Skill
 // NativeInputAccepted completion proves acceptance of the input, not execution
 // or reading of its contents. Declarations and ordinary text are not evidence.
+// Explicit skill references accept sentence-final periods; an exact catalog
+// name containing periods takes precedence, and ambiguous names never activate.
 // Subagent spawn completion proves the spawn operation, not the child task's
 // eventual success. Unknown/ambiguous identities stay unobserved. No parent tool
 // association is fabricated when the official protocol has none. For pending

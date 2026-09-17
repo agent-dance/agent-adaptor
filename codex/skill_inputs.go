@@ -34,6 +34,13 @@ func codexExplicitSkillInputs(prompt string, skills []driver.ResolvedSkill) []ap
 		}
 		name := prompt[i+1 : end]
 		s, ok := byName[name]
+		// A period can belong to a runtime name or end a sentence. Prefer the
+		// exact catalog name, then remove only trailing periods. Never shorten
+		// an unknown dotted suffix or fall back from an ambiguous exact name.
+		for !ok && strings.HasSuffix(name, ".") {
+			name = strings.TrimSuffix(name, ".")
+			s, ok = byName[name]
+		}
 		if !ok || ambiguous[name] || seen[name] {
 			continue
 		}
