@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -649,4 +650,37 @@ func (s *alignmentMetadataFreezeSink) Emit(e driver.RunEvent) error {
 		}
 	}
 	return nil
+}
+
+func TestAlignmentChildMetadataWaitCauses(t *testing.T) {
+	command := alignmentFixture(t)
+	for _, scenario := range []string{"metadata-wait-exit", "metadata-wait-protocol-exit", "metadata-wait-decode-exit"} {
+		t.Run(scenario, func(t *testing.T) {
+			opts := alignmentOptions(command, filepath.Join(t.TempDir(), "capture.jsonl"))
+			opts.CWD = t.TempDir()
+			opts.ResolvedAgents = []driver.AgentSpec{{Key: "canonical", RuntimeName: "reviewer"}}
+			opts.Env = append(opts.Env, driver.EnvBinding{Name: "ALIGNMENT_SCENARIO", Value: scenario}, driver.EnvBinding{Name: "CODEX_HOME", Value: t.TempDir()})
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			sink := &recordingSink{}
+			result, err := Run(ctx, opts, sink)
+			var exitErr *exec.ExitError
+			if err == nil || !errors.As(err, &exitErr) || exitErr.ExitCode() != 17 || result.ExitCode != 17 || result.Checkpoint != nil {
+				t.Errorf("actual Wait cause lost: %v; exit=%d", err, result.ExitCode)
+			}
+			if scenario == "metadata-wait-protocol-exit" && !strings.Contains(err.Error(), "belongs to turn") {
+				t.Errorf("parent protocol cause lost: %v", err)
+			}
+			if scenario == "metadata-wait-decode-exit" && !errors.Is(err, io.ErrUnexpectedEOF) {
+				t.Errorf("decoder cause lost: %v", err)
+			}
+			if result.Output != "answer" || result.Usage == nil || result.Usage.OutputTokens != 2 || result.RawStreams == nil || result.RawStreams.Stderr != "fixture-stderr" || !strings.Contains(result.RawStreams.Stdout, "turn/completed") {
+				t.Fatal("partial output/usage/Raw lost")
+			}
+			if scenario != "metadata-wait-protocol-exit" && result.RawStreams.Terminal == nil {
+				t.Fatal("formal terminal lost")
+			}
+			assertTerminalLifecycle(t, sink.streams, 0, 1)
+		})
+	}
 }

@@ -144,6 +144,17 @@ func main() {
 			thread = "child-" + strconv.Itoa(os.Getpid())
 			reply(map[string]any{"thread": map[string]any{"id": thread}})
 		case "thread/read":
+			if strings.HasPrefix(scenario, "metadata-wait-") {
+				turn := "turn-" + strconv.Itoa(turnN)
+				if scenario == "metadata-wait-protocol-exit" {
+					notify("item/agentMessage/delta", map[string]any{"threadId": thread, "turnId": "wrong", "itemId": "x", "delta": "must-not-publish"})
+				}
+				notify("turn/completed", map[string]any{"threadId": thread, "turn": map[string]any{"id": turn, "status": "completed", "usage": map[string]any{"inputTokens": 0, "outputTokens": 2}}})
+				if scenario == "metadata-wait-decode-exit" {
+					fmt.Print(`{"method":`)
+				}
+				os.Exit(17)
+			}
 			var id string
 			_ = json.Unmarshal(req.Params["threadId"], &id)
 			if scenario == "metadata-late" {
@@ -274,7 +285,7 @@ func main() {
 			if scenario == "nonzero" {
 				os.Exit(9)
 			}
-			if scenario == "cancel" || scenario == "unrelated-status-cancel" {
+			if scenario == "cancel" || scenario == "unrelated-status-cancel" || strings.HasPrefix(scenario, "metadata-wait-") {
 				continue
 			}
 			if turnN > 1 {

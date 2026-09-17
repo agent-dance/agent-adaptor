@@ -202,9 +202,11 @@ func Run(ctx context.Context, opts Options, sink driver.EventSink) (driver.Respo
 			primary = errors.Join(primary, joinErr)
 			joined = joinErr == nil
 		}
+		var metadataErr error
 		if joined {
-			primary = errors.Join(primary, callerContextError(ctx), state.applyChildMetadataResults())
+			metadataErr = state.applyChildMetadataResults()
 		}
+		primary = errors.Join(primary, callerContextError(ctx))
 		state.bindReceivedTurn()
 		state.freezeNotifications()
 		if readErr := stream.ReadError(); readErr != nil {
@@ -215,16 +217,21 @@ func Run(ctx context.Context, opts Options, sink driver.EventSink) (driver.Respo
 			cancellation = ctx.Err()
 		}
 		exitCode, signal, timedOut, waitFatal := processOutcome(waitErr, cancellation)
-		var finalErr error
-		if primary != nil {
-			finalErr = primary
-		} else if protocolErr := state.protocolError(); protocolErr != nil {
-			finalErr = protocolErr
-		} else if !state.hasTerminal() {
+		// Draining can discover a protocol/decoder cause after the optional RPC
+		// has returned ErrClosed. Keep that cause ahead of the metadata error.
+		if protocolErr := state.protocolError(); protocolErr != nil && !errors.Is(primary, protocolErr) {
+			primary = errors.Join(primary, protocolErr)
+		}
+		finalErr := errors.Join(primary, metadataErr)
+		if finalErr == nil && !state.hasTerminal() {
 			finalErr = fmt.Errorf("codex app-server protocol ended without turn/completed")
 		}
 		if waitFatal != nil {
 			finalErr = errors.Join(finalErr, fmt.Errorf("codex app-server wait: %w", waitFatal))
+		} else if finalErr != nil && waitErr != nil {
+			// Ordinary nonzero exits remain provider failures in Response. Once
+			// another error exists, also retain the actual Wait error identity.
+			finalErr = errors.Join(finalErr, fmt.Errorf("codex app-server wait: %w", waitErr))
 		}
 		result := state.snapshot(opts, threadID, stdoutBuf.String(), stderrBuf.String(), exitCode, signal, timedOut)
 		if finalErr != nil {
