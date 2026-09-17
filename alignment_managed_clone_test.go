@@ -310,3 +310,63 @@ func TestAlignmentProfileManagedCloneErrors(t *testing.T) {
 		}
 	}
 }
+
+func TestAlignmentProfileManagedCloneAncestorAlias(t *testing.T) {
+	for _, dedicated := range []bool{false, true} {
+		for _, stream := range []bool{false, true} {
+			t.Run(fmt.Sprintf("dedicated=%v/stream=%v", dedicated, stream), func(t *testing.T) {
+				ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+				defer cancel()
+				physical, cache := t.TempDir(), t.TempDir()
+				home := filepath.Join(t.TempDir(), "ancestor-alias")
+				if err := os.Symlink(physical, home); err != nil {
+					t.Fatal(err)
+				}
+				source := filepath.Join(home, ".codebuddy")
+				t.Setenv(skill.SkillCacheRootEnv, cache)
+				store := memory.NewStore()
+				materializer := &managedCloneMaterializer{inner: skill.NewDefaultSkillMaterializer(skill.WithSkillCacheRoot(cache))}
+				opts := []adaptor.Option{adaptor.WithThreadStore(store), adaptor.WithWorkspace(t.TempDir()), adaptor.WithTools(hostedToolDefinition("echo", tool.Revision("alias/v1"))), adaptor.WithSkills(skill.Inline("fixture", "---\nname: fixture\n---\nSynthetic alias fixture")), adaptor.WithSkillMaterializer(materializer)}
+				if dedicated {
+					opts = append(opts, adaptor.WithProfile(profile.Dedicated(source)))
+				}
+				d := newManagedCloneProfileDriver(home, source)
+				a := adaptor.New(d, opts...)
+				t.Cleanup(func() { _ = a.Close(context.Background()) })
+				if _, err := a.SyncProfile(ctx); err != nil {
+					t.Fatal(err)
+				}
+				digest := managedCloneSourceDigest(t, source)
+				calls := materializer.calls.Load()
+				if _, err := managedCloneRun(t, ctx, a.Thread("alias"), stream); err != nil {
+					t.Fatal(err)
+				}
+				if d.entered.Load() != 1 || d.injected.Load() != 1 || materializer.calls.Load() != calls+1 {
+					t.Fatal("alias run did not use one resolution and dispatch")
+				}
+				if managedCloneSourceDigest(t, source) != digest {
+					t.Fatal("source changed")
+				}
+				req := d.request()
+				if err := a.Close(ctx); err != nil {
+					t.Fatal(err)
+				}
+				if dedicated {
+					next := newManagedCloneProfileDriver(home, source)
+					cold := adaptor.New(next, opts...)
+					t.Cleanup(func() { _ = cold.Close(context.Background()) })
+					if _, err := managedCloneRun(t, ctx, cold.Thread("alias", adaptor.ResumeOnly()), stream); err != nil {
+						t.Fatal(err)
+					}
+					resumed := next.request()
+					if next.entered.Load() != 1 || resumed.Session == nil || resumed.Session.State == nil || resumed.Session.State.ResumeID != "fixture-session" || resumed.Profile.Dir != req.Profile.Dir {
+						t.Fatal("alias changed persistent identity or cold resume")
+					}
+					if managedCloneSourceDigest(t, source) != digest {
+						t.Fatal("cold resume modified source")
+					}
+				}
+			})
+		}
+	}
+}

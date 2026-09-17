@@ -1,6 +1,7 @@
 package skillruntime
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -408,6 +409,222 @@ func TestManagedCloneRetainedForestBudget(t *testing.T) {
 					if err != nil || info.Size() != 33<<20 {
 						t.Fatalf("rejection changed retained bytes: %v", err)
 					}
+				}
+			}
+		})
+	}
+}
+
+func aliasedManagedCloneFixture(t *testing.T) (source, alias, target, link string, payload driver.ResolvedSkills) {
+	t.Helper()
+	source, target, cache := t.TempDir(), t.TempDir(), t.TempDir()
+	resolved := filepath.Join(cache, "materialized")
+	writeFile(t, filepath.Join(resolved, "SKILL.md"), "---\nname: fixture\n---\nfixture")
+	writeFile(t, filepath.Join(resolved, "extra.txt"), "unknown regular attachment")
+	payload = driver.ResolvedSkills{Entries: []driver.ResolvedSkill{{Key: "fixture", RuntimeName: "fixture", SourcePath: resolved}}}
+	link = filepath.Join(t.TempDir(), "ancestor-alias")
+	if err := os.Symlink(filepath.Dir(source), link); err != nil {
+		t.Fatal(err)
+	}
+	alias = filepath.Join(link, filepath.Base(source))
+	// The formal reconciler, not this test, records the original alias spelling.
+	if _, err := ReconcileProfileSkills(context.Background(), ProfileSkillReconcileOptions{ProfileDir: alias, SkillsHome: filepath.Join(alias, "skills"), Payload: payload, ManagedRoots: []string{cache}, ConflictMode: ProfileSkillConflictError, PruneMode: ProfileSkillPruneNone}); err != nil {
+		t.Fatal(err)
+	}
+	return source, alias, target, link, payload
+}
+
+func TestManagedCloneAncestorAlias(t *testing.T) {
+	source, alias, target, _, _ := aliasedManagedCloneFixture(t)
+	before, err := os.ReadFile(filepath.Join(source, profilestate.ManifestName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := profilestate.LoadManifest(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := manifest.KindEntries(profileSkillManifestKind)[0]
+	rel, err := filepath.Rel(filepath.Join(source, "skills"), entry.Path)
+	if err != nil || filepath.IsLocal(rel) {
+		t.Fatal("fixture must have nonlocal lexical alias", rel, err)
+	}
+	for _, suffix := range []string{"", "skills"} {
+		a, err := os.Stat(filepath.Join(source, suffix))
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, err := os.Stat(filepath.Join(alias, suffix))
+		if err != nil || !os.SameFile(a, b) {
+			t.Fatal("alias changed physical identity", err)
+		}
+	}
+	if err := copyProfileSkills(source, target, []string{"skills"}); err != nil {
+		t.Fatal(err)
+	}
+	assertFileContains(t, filepath.Join(target, "skills", "fixture", "extra.txt"), "unknown regular attachment")
+	info, err := os.Lstat(filepath.Join(target, "skills", "fixture"))
+	if err != nil || !info.IsDir() {
+		t.Fatal("alias clone did not produce ordinary tree", err)
+	}
+	after, err := os.ReadFile(filepath.Join(source, profilestate.ManifestName))
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatal("source manifest mutated", err)
+	}
+	if manifest.KindEntries(profileSkillManifestKind)[0].Path != entry.Path {
+		t.Fatal("caller manifest mutated")
+	}
+}
+
+func TestManagedCloneAliasProofRejectsForeignAndAmbiguousParents(t *testing.T) {
+	for _, kind := range []string{"wrong_profile_same_target", "skills_only_identity", "duplicate_alias", "wrong_parent", "nested", "relative", "hash", "relative_link_hash"} {
+		t.Run(kind, func(t *testing.T) {
+			source, alias, target, _, payload := aliasedManagedCloneFixture(t)
+			manifest, err := profilestate.LoadManifest(source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			entry := manifest.KindEntries(profileSkillManifestKind)[0]
+			switch kind {
+			case "wrong_profile_same_target", "skills_only_identity":
+				foreign := t.TempDir()
+				if kind == "skills_only_identity" {
+					if err := os.Symlink(filepath.Join(source, "skills"), filepath.Join(foreign, "skills")); err != nil {
+						t.Fatal(err)
+					}
+					a, _ := os.Stat(filepath.Join(foreign, "skills"))
+					b, _ := os.Stat(filepath.Join(source, "skills"))
+					if !os.SameFile(a, b) {
+						t.Fatal("fixture did not share skills target")
+					}
+				} else {
+					if err := os.Mkdir(filepath.Join(foreign, "skills"), 0755); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.Symlink(payload.Entries[0].SourcePath, filepath.Join(foreign, "skills", "fixture")); err != nil {
+						t.Fatal(err)
+					}
+					a, _ := os.Stat(filepath.Join(foreign, "skills", "fixture"))
+					b, _ := os.Stat(filepath.Join(source, "skills", "fixture"))
+					if !os.SameFile(a, b) {
+						t.Fatal("fixture leaf targets differ")
+					}
+				}
+				entry.Path = filepath.Join(foreign, "skills", "fixture")
+				manifest.Set(entry)
+			case "duplicate_alias":
+				second := payload.Entries[0]
+				second.Key = "second-owner"
+				manifest.Set(profileSkillManifestEntry(second, filepath.Join(source, "skills", "fixture")))
+			case "wrong_parent":
+				entry.Path = filepath.Join(alias, "other", "fixture")
+				manifest.Set(entry)
+			case "nested":
+				entry.Path = filepath.Join(alias, "skills", "nested", "fixture")
+				manifest.Set(entry)
+			case "relative":
+				entry.Path = filepath.Join("skills", "fixture")
+				manifest.Set(entry)
+			case "hash":
+				entry.Metadata[manifestSourceHashKey] = "unproved"
+				manifest.Set(entry)
+			case "relative_link_hash":
+				path := filepath.Join(alias, "skills", "fixture")
+				if err := os.Remove(path); err != nil {
+					t.Fatal(err)
+				}
+				writeFile(t, filepath.Join(source, "cache", "SKILL.md"), "relative source")
+				if err := os.Symlink(filepath.Join("..", "cache"), path); err != nil {
+					t.Fatal(err)
+				}
+				proof := payload.Entries[0]
+				proof.SourcePath = filepath.Join(alias, "cache")
+				manifest.Set(profileSkillManifestEntry(proof, path))
+			}
+			if err := profilestate.SaveManifest(source, manifest); err != nil {
+				t.Fatal(err)
+			}
+			before, err := os.ReadFile(filepath.Join(source, profilestate.ManifestName))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := copyProfileSkills(source, target, []string{"skills"}); !errors.Is(err, profile.ErrUnsafe) {
+				t.Fatalf("unsafe alias accepted or lost safety error: %v", err)
+			}
+			after, err := os.ReadFile(filepath.Join(source, profilestate.ManifestName))
+			if err != nil || !bytes.Equal(before, after) {
+				t.Fatal("rejection changed manifest", err)
+			}
+			if _, err := os.Lstat(filepath.Join(target, "skills", "fixture")); !os.IsNotExist(err) {
+				t.Fatal("rejection published a copied tree", err)
+			}
+		})
+	}
+}
+
+func TestManagedCloneAliasProofPinsSubsequentReads(t *testing.T) {
+	for _, replace := range []string{"ancestor_alias", "skills_child"} {
+		t.Run(replace, func(t *testing.T) {
+			source, _, _, link, payload := aliasedManagedCloneFixture(t)
+			src, err := os.OpenRoot(source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer src.Close()
+			skills, err := cloneSkillRoot(src, "skills")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer skills.Close()
+			manifest, err := profilestate.LoadManifest(source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			originalPath := manifest.KindEntries(profileSkillManifestKind)[0].Path
+			local, err := cloneSkillManifestView(src, skills, manifest)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if manifest.KindEntries(profileSkillManifestKind)[0].Path != originalPath {
+				t.Fatal("private view modified caller map")
+			}
+			view, err := CompatibilityTargets(source, local, nil, ProfileSkillPruneNone)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if replace == "ancestor_alias" {
+				foreignParent := t.TempDir()
+				foreign := filepath.Join(foreignParent, filepath.Base(source))
+				writeFile(t, filepath.Join(foreign, "skills", "fixture", "sentinel"), "foreign untouched")
+				if err := os.Remove(link); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(foreignParent, link); err != nil {
+					t.Fatal(err)
+				}
+				tree, err := readCloneSkillSnapshot(src, skills, view.Targets)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(tree.children) != 1 || tree.children[0].source != payload.Entries[0].SourcePath {
+					t.Fatal("snapshot left proved held tree")
+				}
+				assertFileContains(t, filepath.Join(foreign, "skills", "fixture", "sentinel"), "foreign untouched")
+				if _, err := cloneSkillManifestView(src, skills, manifest); !errors.Is(err, profile.ErrUnsafe) {
+					t.Fatalf("retargeted alias accepted as original parent: %v", err)
+				}
+			} else {
+				if err := os.Rename(filepath.Join(source, "skills"), filepath.Join(source, "previous-skills")); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Mkdir(filepath.Join(source, "skills"), 0755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(payload.Entries[0].SourcePath, filepath.Join(source, "skills", "fixture")); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := readCloneSkillSnapshot(src, skills, view.Targets); !errors.Is(err, profile.ErrUnsafe) {
+					t.Fatalf("same-target replacement lost pinned skills identity: %v", err)
 				}
 			}
 		})

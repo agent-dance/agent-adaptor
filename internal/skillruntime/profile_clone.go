@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"sort"
@@ -129,6 +130,15 @@ func cloneProfileSkillsTree(source, target string) error {
 			return err
 		}
 	}
+	skills, err := cloneSkillRoot(src, "skills")
+	if err != nil {
+		return err
+	}
+	defer skills.Close()
+	manifest, err = cloneSkillManifestView(src, skills, manifest)
+	if err != nil {
+		return err
+	}
 	view, err := CompatibilityTargets(source, manifest, nil, ProfileSkillPruneNone)
 	if err != nil {
 		return err
@@ -161,14 +171,13 @@ func cloneProfileSkillsTree(source, target string) error {
 		}
 		ownedObjects = append(ownedObjects, info)
 	}
-	budget := &cloneSkillBudget{}
-	tree, err := readCloneSkillNode(src, "skills", view.Targets, "skills", budget, false)
+	tree, err := readCloneSkillSnapshot(src, skills, view.Targets)
 	if err != nil {
 		return err
 	}
 	// A second bounded read detects replacement, byte/mode drift and changed
 	// directory membership before any destination resource is created.
-	again, err := readCloneSkillNode(src, "skills", view.Targets, "skills", &cloneSkillBudget{}, false)
+	again, err := readCloneSkillSnapshot(src, skills, view.Targets)
 	if err != nil {
 		return err
 	}
@@ -210,6 +219,100 @@ func cloneProfileSkillsTree(source, target string) error {
 		return cloneSkillUnsafe("destination replaced")
 	}
 	return nil
+}
+
+// cloneSkillManifestView changes only the private Path view after proving both
+// directory identities. CanonicalSource may expand an ancestor alias (including
+// Windows short names); a matching leaf target cannot prove profile ownership.
+func cloneSkillManifestView(src, skills *os.Root, manifest profilestate.Manifest) (profilestate.Manifest, error) {
+	profileInfo, err := src.Stat(".")
+	if err != nil {
+		return profilestate.Manifest{}, err
+	}
+	skillsInfo, err := skills.Stat(".")
+	if err != nil {
+		return profilestate.Manifest{}, err
+	}
+	if err := cloneSkillUnchanged(src, "skills", skillsInfo); err != nil {
+		return profilestate.Manifest{}, err
+	}
+	view := manifest
+	view.Entries = maps.Clone(manifest.Entries)
+	for id, entry := range manifest.Entries {
+		if entry.Kind != profileSkillManifestKind {
+			continue
+		}
+		path := filepath.Clean(entry.Path)
+		home := filepath.Dir(path)
+		name := filepath.Base(path)
+		if !filepath.IsAbs(entry.Path) || filepath.Base(home) != "skills" || !filepath.IsLocal(name) || name == "." {
+			return profilestate.Manifest{}, cloneSkillUnsafe("invalid managed skill path")
+		}
+		if err := proveCloneSkillParents(filepath.Dir(home), profileInfo, skillsInfo); err != nil {
+			return profilestate.Manifest{}, err
+		}
+		entry.Path = filepath.Join(src.Name(), "skills", name)
+		view.Entries[id] = entry
+	}
+	if err := cloneSkillUnchanged(src, "skills", skillsInfo); err != nil {
+		return profilestate.Manifest{}, err
+	}
+	return view, nil
+}
+
+func proveCloneSkillParents(profilePath string, profileInfo, skillsInfo os.FileInfo) error {
+	oldProfile, parent, err := cloneSkillAbsoluteRoot(profilePath)
+	if err != nil {
+		return err
+	}
+	defer oldProfile.Close()
+	defer parent.Close()
+	actualProfile, err := oldProfile.Stat(".")
+	if err != nil {
+		return err
+	}
+	if !os.SameFile(profileInfo, actualProfile) {
+		return cloneSkillUnsafe("managed profile identity mismatch")
+	}
+	oldSkills, err := cloneSkillRoot(oldProfile, "skills")
+	if err != nil {
+		return err
+	}
+	defer oldSkills.Close()
+	actualSkills, err := oldSkills.Stat(".")
+	if err != nil {
+		return err
+	}
+	if !os.SameFile(skillsInfo, actualSkills) {
+		return cloneSkillUnsafe("managed skills identity mismatch")
+	}
+	if err := cloneSkillUnchanged(oldProfile, "skills", actualSkills); err != nil {
+		return err
+	}
+	return cloneSkillUnchanged(parent, filepath.Base(profilePath), actualProfile)
+}
+
+// Bind each snapshot to the skills directory held during manifest proof, even
+// if its pathname is replaced between proof and the later tree walk.
+func readCloneSkillSnapshot(src, skills *os.Root, targets map[string]string) (*cloneSkillNode, error) {
+	info, err := skills.Stat(".")
+	if err != nil {
+		return nil, err
+	}
+	if err := cloneSkillUnchanged(src, "skills", info); err != nil {
+		return nil, err
+	}
+	tree, err := readCloneSkillNode(src, "skills", targets, "skills", &cloneSkillBudget{}, false)
+	if err != nil {
+		return nil, err
+	}
+	if !os.SameFile(info, tree.info) {
+		return nil, cloneSkillUnsafe("skills directory replaced")
+	}
+	if err := cloneSkillUnchanged(src, "skills", info); err != nil {
+		return nil, err
+	}
+	return tree, nil
 }
 
 func readCloneSkillNode(parent *os.Root, name string, proved map[string]string, rel string, budget *cloneSkillBudget, reserved bool) (*cloneSkillNode, error) {
