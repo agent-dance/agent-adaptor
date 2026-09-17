@@ -43,7 +43,9 @@
 // construction-only WithTools option. The Agent owns their runtime for its
 // full lifetime; MCP delivery, authentication, and endpoint lifecycle remain
 // internal implementation details. Existing external MCP servers continue to
-// use WithMCP.
+// use WithMCP. Configured profile resources remain the source of isolated
+// execution profiles; copying a managed skill preserves its actual contents
+// and permissions, and unproved replacement fails instead of deleting them.
 //
 // An Agent is stateless unless constructed with a ThreadStore. Agent.Thread
 // continues or creates the host key, while Thread.Fork creates an independent

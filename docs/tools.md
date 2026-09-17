@@ -172,6 +172,27 @@ by that resolver. The final snapshot includes actual contents and modes, resolve
 skill source contents, ordinary MCP and unknown settings. Unproven links and
 unsafe or unreadable final resources fail explicitly.
 
+Skills already installed by `SyncProfile` can be the source of this execution
+clone. The shared profile cloner accepts a managed top-level skill link only
+after checking the reconciler's exact ownership record and actual target. It
+copies regular files and directories, retaining their bytes and observable
+modes; unknown links, nested links, special files and conflicting source markers
+fail explicitly. The configured source remains unchanged.
+Each source snapshot is bounded to 64 MiB of file content and 20,000 visited
+entries; its ownership manifest is limited to 4 MiB. Validation of already
+copied managed skills shares a separate 64 MiB / 20,000-entry budget across all
+retained skill trees in that clone operation. Exceeding either bound fails the
+copy. These bounds describe those reads, not the total size of every existing
+resource in the destination profile.
+
+A copied skill's source marker records its origin. It does not authorize
+refreshing or deleting its current contents. Same-source reconciliation retains
+the copied tree, including user attachments and changed permissions, and the
+compatibility snapshot includes that actual state. Changing the source of an
+existing copied skill fails with `profile.ErrUnsafe` when its contents cannot
+be proved safe to replace, including when both sources are in the SDK cache.
+The same conservative rule already applies to copied-tree pruning.
+
 Only the provider's known configuration files are normalized as JSON/TOML
 objects. Skill attachments and other manifest resources are fingerprinted as
 exact bytes, regardless of extension: JSON arrays/scalars and intentionally

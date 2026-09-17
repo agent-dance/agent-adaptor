@@ -661,6 +661,11 @@ profile.CloneFrom(src, dst, profile.CopySettings(), profile.CopyMCP())
 
 Clone options include `CopySettings`, `CopyMCP`, `CopySkills`, `CopyAuth`, `LinkAuth`, and `WithOptions`. An OAuth CLI should normally use `LinkAuth` to avoid copying refresh-token state that rotates.
 
+Shared skill cloning copies SDK-managed links only after proving their exact
+ownership and target, and delivers ordinary trees. Existing copied bytes and
+permissions remain authoritative; a source marker alone cannot authorize
+replacement or pruning. See the [profile copy and fingerprint contract](./tools.md#threads-and-semantic-revisions).
+
 `profile.Resources` can declare `Skills`, `MCP`, `Agents`, `Hooks`, `Instructions`, and `Config`, and enters the unified resolution pipeline through `WithProfileResources`.
 
 ## 12. Workspace and runtime services

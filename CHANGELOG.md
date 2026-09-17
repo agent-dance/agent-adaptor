@@ -53,6 +53,17 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- Allow shared profile cloning to copy skills already installed by `SyncProfile`
+  after proving their managed ownership and target. Deliver ordinary trees,
+  preserve source files and copied content/modes, and reject unknown links,
+  special nodes and conflicting markers. Reject same-name source replacement
+  before it can delete a copied skill's user attachments; cache membership alone
+  is insufficient proof. Keep the existing conservative copied-prune contract.
+- Preserve CodeBuddy profile resolution's Go error chain through its reporter
+  and public profile/execution paths. Read the typed terminal envelope correctly
+  in the cold-resume fixture, and clarify Cursor's resource nonces as synthetic
+  public test markers while retaining every original live assertion.
+
 - Continue checking formal Codex child-role evidence for known identities when
   the 128-entry tracking table is full. Matching replays remain idempotent;
   conflicting roles prevent pending spawn completion. New identities beyond

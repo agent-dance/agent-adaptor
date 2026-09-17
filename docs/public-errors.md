@@ -189,6 +189,13 @@ Package `profile` owns these categories for explicit Dedicated profiles with Too
 An OS lock released by process exit does not authorize takeover of an active
 generation. See [profile lifetime and recovery](./tools.md#persistent-dedicated-profiles).
 
+Shared skill cloning and materialization also return `profile.ErrUnsafe` for
+unproved links or destructive replacement of a copied skill whose marker proves
+only its origin. CodeBuddy profile reporting returns the underlying Go error,
+so callers can use `errors.Is` and `errors.As` for filesystem causes through
+profile inspection, synchronization and execution. An explicit `AgentProfile.Error`
+from a Driver remains observable when no Go error is available.
+
 ## Root Thread errors
 
 The root Thread API translates store/coordinator failures into application
