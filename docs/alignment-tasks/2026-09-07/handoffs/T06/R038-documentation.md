@@ -33,9 +33,13 @@ replacement. Same-source reconciliation and proved symlink replacement remain
 supported. Existing conservative copied-tree prune rejection remains in force.
 This behavior also applies to the SDK's prior copied fallback materializations.
 
-Skill clone reads are bounded to 64 MiB of regular bytes and 20,000 entries per
-skills tree (and a 4 MiB profile manifest), including all copied attachments.
-These are explicit failures, not truncated or silently omitted resources. A
+Each source snapshot is bounded to 64 MiB of regular bytes and 20,000 entries
+across the skills tree (and a 4 MiB profile manifest). The two source snapshots
+use independent budgets. Validation of all retained managed subtrees shares one
+additional 64 MiB / 20,000-entry budget, including their roots and attachments;
+fresh siblings never reset it. These scopes do not claim a combined final-profile
+budget or a new full audit of unrelated ordinary destination directories.
+Budget failures are explicit, not truncated or silently omitted resources. A
 failed copy does not delete unknown destination contents or adopt an unmarked
 partial tree on retry. Non-skill resource/auth copy behavior is unchanged.
 
@@ -53,3 +57,9 @@ materialization/injection per call, runtime environment, rebased manifest paths,
 copied content/mode/attachment drift, real ManagedRoots rejection, original
 errors, and safety limits. This local delivery does not close T28 live, G05/B06,
 Windows/Linux native gates, or merge/release readiness.
+
+Independent review found that the first R038 implementation incorrectly reset
+the retained budget for each managed subtree. Revision 2 preserves that failed
+SHA and report, adds two 33 MiB retained-tree and 20,000-entry regressions, and
+shares the retained budget across the whole clone operation, including a fresh
+sibling between retained trees. Source snapshot budgets and limits are unchanged.

@@ -3,6 +3,7 @@ package skillruntime
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -340,5 +341,73 @@ func TestManagedCloneSymlinkSourceReplacementStillAllowed(t *testing.T) {
 	got, err := os.Readlink(filepath.Join(source, "skills", "fixture"))
 	if err != nil || got != replacement {
 		t.Fatalf("link not replaced: %s %v", got, err)
+	}
+}
+
+func TestManagedCloneRetainedForestBudget(t *testing.T) {
+	for _, kind := range []string{"bytes", "bytes_with_fresh", "entries"} {
+		t.Run(kind, func(t *testing.T) {
+			source, target, cache, payload := managedCloneFixture(t)
+			add := func(name string) {
+				t.Helper()
+				dir := filepath.Join(cache, name)
+				writeFile(t, filepath.Join(dir, "SKILL.md"), "tiny source")
+				payload.Entries = append(payload.Entries, driver.ResolvedSkill{Key: name, RuntimeName: name, SourcePath: dir})
+				if _, err := ReconcileProfileSkills(context.Background(), ProfileSkillReconcileOptions{ProfileDir: source, SkillsHome: filepath.Join(source, "skills"), Payload: payload, ManagedRoots: []string{cache}, ConflictMode: ProfileSkillConflictError, PruneMode: ProfileSkillPruneNone}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			add("z-two")
+			if err := copyProfileSkills(source, target, []string{"skills"}); err != nil {
+				t.Fatal(err)
+			}
+			for _, name := range []string{"fixture", "z-two"} {
+				dir := filepath.Join(target, "skills", name)
+				if kind == "entries" {
+					for i := 0; i < cloneSkillEntryLimit/2; i++ {
+						f, err := os.OpenFile(filepath.Join(dir, fmt.Sprintf("retained-%05d", i)), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+						if err != nil {
+							t.Fatal(err)
+						}
+						if err := f.Close(); err != nil {
+							t.Fatal(err)
+						}
+					}
+				} else {
+					f, err := os.Create(filepath.Join(dir, "retained.bin"))
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err := f.Truncate(33 << 20); err != nil {
+						f.Close()
+						t.Fatal(err)
+					}
+					if err := f.Close(); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			// Sorts between the two retained trees; copying it must not reset the
+			// single retained-forest budget or hide either existing tree.
+			if kind == "bytes_with_fresh" {
+				add("m-new")
+			}
+			if err := copyProfileSkills(source, target, []string{"skills"}); !errors.Is(err, profile.ErrUnsafe) {
+				t.Fatalf("retained forest exceeded shared %s budget: %v", kind, err)
+			}
+			for _, name := range []string{"fixture", "z-two"} {
+				if kind == "entries" {
+					entries, err := os.ReadDir(filepath.Join(target, "skills", name))
+					if err != nil || len(entries) < cloneSkillEntryLimit/2 {
+						t.Fatalf("rejection removed retained entries: %d %v", len(entries), err)
+					}
+				} else {
+					info, err := os.Stat(filepath.Join(target, "skills", name, "retained.bin"))
+					if err != nil || info.Size() != 33<<20 {
+						t.Fatalf("rejection changed retained bytes: %v", err)
+					}
+				}
+			}
+		})
 	}
 }

@@ -198,7 +198,7 @@ func cloneProfileSkillsTree(source, target string) error {
 	if err != nil {
 		return err
 	}
-	if err := writeCloneSkillNode(dst, tree); err != nil {
+	if err := writeCloneSkillNode(dst, tree, &cloneSkillBudget{}); err != nil {
 		return err
 	}
 	// Directory mtime/size changes are ours; identity and mode must still agree.
@@ -326,7 +326,7 @@ func sameCloneSkillNode(a, b *cloneSkillNode) bool {
 	return true
 }
 
-func writeCloneSkillNode(parent *os.Root, node *cloneSkillNode) (returnErr error) {
+func writeCloneSkillNode(parent *os.Root, node *cloneSkillNode, retainedBudget *cloneSkillBudget) (returnErr error) {
 	existing, err := parent.Lstat(node.name)
 	fresh := os.IsNotExist(err)
 	if err != nil && !fresh {
@@ -363,13 +363,18 @@ func writeCloneSkillNode(parent *os.Root, node *cloneSkillNode) (returnErr error
 		if string(marker) != node.source {
 			return cloneSkillUnsafe("destination source conflict")
 		}
-		// Validate the entire retained tree, but never overwrite changed contents.
-		if _, err := readCloneSkillChildren(root, nil, "", &cloneSkillBudget{}, false); err != nil {
+		// All retained managed subtrees share one validation budget, including
+		// their roots. Fresh siblings must not reset this independent budget.
+		retainedBudget.entries++
+		if retainedBudget.entries > cloneSkillEntryLimit {
+			return cloneSkillUnsafe("entry limit exceeded")
+		}
+		if _, err := readCloneSkillChildren(root, nil, "", retainedBudget, false); err != nil {
 			return err
 		}
 	} else {
 		for _, child := range node.children {
-			if err := writeCloneSkillNode(root, child); err != nil {
+			if err := writeCloneSkillNode(root, child, retainedBudget); err != nil {
 				return err
 			}
 		}
