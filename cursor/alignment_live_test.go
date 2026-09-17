@@ -143,7 +143,27 @@ func TestAlignmentLiveCursorCancelPartial(t *testing.T) {
 	defer cancel()
 	th := a.Thread("cursor-live-cancel")
 	if _, err := th.Run(ctx, "Remember this word: arithmetic. Reply only READY. Do not call tools."); err != nil {
-		t.Fatalf("healthy warmup failed (%T)", err)
+		reason := "unobserved"
+		textBytes, stdoutBytes, stderrBytes, transcriptItems := -1, -1, -1, -1
+		resultPresent, terminalPresent := false, false
+		var warmup *adaptor.RunError
+		runErrorObserved := errors.As(err, &warmup) && warmup != nil
+		if runErrorObserved {
+			reason = "other"
+			switch warmup.Reason {
+			case adaptor.ReasonApprovalDenied, adaptor.ReasonApprovalTimeout, adaptor.ReasonAgentError, adaptor.ReasonCancelled, adaptor.ReasonPolicyViolation, adaptor.ReasonInfrastructure, adaptor.ReasonDeadlineExceeded, adaptor.ReasonActiveExecutionTimeout:
+				reason = string(warmup.Reason)
+			}
+			if partial := warmup.Result; partial != nil {
+				resultPresent = true
+				raw := partial.Raw()
+				textBytes, stdoutBytes, stderrBytes = len(partial.Text), len(raw.Stdout), len(raw.Stderr)
+				transcriptItems, terminalPresent = len(partial.Transcript()), raw.Terminal != nil
+			}
+		}
+		// Raw availability means the public audit is accessible; absent observations
+		// stay -1/false. Never print provider text, error messages or credentials.
+		t.Fatalf("healthy warmup failed (%T): run_error_observed=%t reason=%s cancelled=%t deadline=%t result_present=%t raw_available=%t text_bytes=%d stdout_bytes=%d stderr_bytes=%d transcript_items=%d terminal_observed=%t terminal_present=%t", err, runErrorObserved, reason, errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded), resultPresent, resultPresent, textBytes, stdoutBytes, stderrBytes, transcriptItems, resultPresent, terminalPresent)
 	}
 	healthy, err := th.Checkpoint(ctx)
 	if err != nil {
