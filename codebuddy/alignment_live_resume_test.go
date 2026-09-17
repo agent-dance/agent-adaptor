@@ -152,15 +152,8 @@ func alignmentLiveMCPProjection(t *testing.T, resources alignmentLiveRunResource
 
 func alignmentLiveSessionID(t *testing.T, result *adaptor.Result, want string) {
 	t.Helper()
-	raw, err := json.Marshal(result.Raw().Terminal)
-	var terminal struct {
-		SessionID string `json:"session_id"`
-		Type      string `json:"type"`
-		Subtype   string `json:"subtype"`
-		IsError   *bool  `json:"is_error"`
-	}
-	if err != nil || json.Unmarshal(raw, &terminal) != nil || terminal.SessionID != want || terminal.Type != "result" || terminal.Subtype != "success" || terminal.IsError == nil || *terminal.IsError {
-		t.Fatal("formal healthy terminal does not identify the original provider session")
+	if failure := alignmentLiveTerminalFailure(result.Raw().Terminal, want); failure != "" {
+		t.Fatalf("formal healthy terminal does not identify the original provider session: failed_field=%s", failure)
 	}
 }
 

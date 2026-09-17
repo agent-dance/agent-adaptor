@@ -83,3 +83,12 @@ T28-F03 的真实 stdout 已包含合法 native `structured_output: {"ok":true}`
 修复仅在明确选择的 native JSON transport 收齐 stdout 后解析完整顶层 document/array。普通 stream-json 按原行 framing，既有 native 单结果对象和严格逐行对象兼容保留。顶层数组只处理其直接记录，不递归寻找 session、terminal 或 structured_output；嵌套值/文本不能提供终局。第一正式 terminal 的原始 JSON 保留，任何后续对象、第二 result/error、标量或未知记录都使协议失败，不能再次恢复健康。截断、非法 UTF-8、额外 document、非对象项、缺字段、provider refusal、非零退出、schema 无效均不得产生有效 native 值或健康 checkpoint。完整 stdout/stderr 保留，未支持的 history 格式保留为带原 payload 的 TranscriptSystem，不猜测 capability/Todo；正式 Result/Usage 由原 parser 统一处理。应合并到 structured-output、CodeBuddy 使用文档及 CHANGELOG。
 
 本轮没有新增公共字段、依赖或 golden 变动。普通验证始终关闭 live/E2E/golden-update；有限诊断使用私有 HOME/profile、只读 access token 的内存投影、匹配的官方认证 route，清除失效 API key，认证源前后只在内存比较且未修改。原失败证据保留。返修分支的有限真实调用与普通检查不替代最终合流 SHA 上 T28 原完整 11 项 live/conformance 或 B06 原生平台验收；实际结果由外部 R030 rework_attempt 报告记录，不能沿用旧 handoff 的未运行声明或通过结论。
+
+
+## R038 / 2026-09-17 精确返修
+
+T28-F04 是 cold-resume 测试读取层次错误：`Result.Raw().Terminal` 为带 Event/JSON 的 SDK envelope，不是正式 provider result 本体。原 helper 序列化外层后读取顶层 session_id，连确定健康的公开 Result 都会失败。现从 `Terminal.JSON` 读取 CodeBuddy 正式字段，并独立要求 `Terminal.Event == "result"`；原 session 逐字匹配、type=result、subtype=success、显式 is_error=false 全保留。nil/envelope/JSON/type/subtype/session_match/is_error 的固定失败字段分类不包含 ID、原 JSON 或模型正文。校验 helper 和正负回归不加 live tag，普通 G05 即可执行；真实 Dedicated 两 Agent、nonce、文件、store、网关撤销和资源轮换断言不改。
+
+T28-F06 将 CodeBuddy `ProfileReporter.GetProfile` 改为直接返回已有 profile resolver 的 Go error，保留底层文件系统 `errors.Is/As` 身份，不再只写入 AgentProfile.Error 字符串后返回 nil error。配置捕获、成功 Supported/Dir/DriverType、Clone/Dedicated 选择与既有内部 Error 视图不变；公开 Run 可通过既有包装链观察原 cause，ProfileState/SyncProfile/Inspect.Skills 的错误合同保留。回归用普通文件占据目录的确定性反例及零 CLI canary，兼容平台实际文件系统 cause，不读取登录文件。应由中央 owner 合并到错误处理文档与 CHANGELOG 的 CodeBuddy profile cause 修复说明；无公共声明、golden 或依赖变更。
+
+共享层 T28-F05 的 managed skill Clone 安全复制由 T06 独立交付，本次不修改该实现。确定性 fixture 通过不证明先前 live 未输出的每个终局字段，也不证明真实跨 Agent 冷续接或 Skill/Subagent 执行已经通过；保留原失败，待全部修复合流后的新 S 完整重验 T28/G05/B06/G06。本次所有模型门关闭，无真实 CLI、凭据或付费调用。

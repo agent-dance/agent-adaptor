@@ -160,7 +160,7 @@ func (adapter) DetectModel(_ context.Context, cfg any, _ *driver.ProfileSelectio
 }
 
 func (adapter) GetProfile(_ context.Context, cfg any, _ driver.AgentIdentity, profile *driver.ProfileSelection) (driver.AgentProfile, error) {
-	return resolveProfile(readConfig(cfg).CommonConfig, profile), nil
+	return resolveProfileWithOptions(readConfig(cfg).CommonConfig, profile, false)
 }
 
 func (adapter) ConfigSchema(_ context.Context, _ any) (*driver.ConfigSchema, error) {
