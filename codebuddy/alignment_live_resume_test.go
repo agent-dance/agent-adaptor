@@ -244,7 +244,34 @@ func TestAlignmentLiveCodeBuddyDedicatedToolsResumeAfterClose(t *testing.T) {
 	if strings.Contains(prompt, remembered) {
 		t.Fatal("recall prompt accidentally reinjected the nonce")
 	}
-	secondResult, _, err := collectLiveStream(ctx, second.Thread(key, adaptor.ResumeOnly()), prompt)
+	secondResult, secondEvents, err := collectLiveStream(ctx, second.Thread(key, adaptor.ResumeOnly()), prompt)
+	mu.Lock()
+	diagnosticCalls, diagnosticWrong := secondCalls, wrongCalls
+	mu.Unlock()
+	alignmentLiveDiagnosticResult(t, "cold_B", secondResult, secondEvents, remembered, before.State.ResumeID, diagnosticCalls, diagnosticWrong, err)
+	secondProbe.mu.Lock()
+	diagnosticResources := append([]alignmentLiveRunResources(nil), secondProbe.runs...)
+	secondProbe.mu.Unlock()
+	diagnosticState := map[string]any{"stage": "cold_B", "kind": "resume_resources", "driver_dispatch_count": len(diagnosticResources)}
+	if len(diagnosticResources) == 1 {
+		observed := diagnosticResources[0]
+		diagnosticState["request_continue_only"] = observed.mode == driver.SessionContinueOnly
+		diagnosticState["request_resume_match"] = observed.resumeID == before.State.ResumeID
+		diagnosticState["profile_matches_A"] = observed.profileDir == firstResources.profileDir
+		diagnosticState["gateway_url_rotated"] = observed.server.URL != firstResources.server.URL
+		diagnosticState["gateway_env_rotated"] = observed.server.BearerTokenEnvVar != firstResources.server.BearerTokenEnvVar
+		diagnosticState["gateway_token_rotated"] = observed.token != firstResources.token
+	}
+	diagnosticRecord, diagnosticStoreError := store.Resolve(ctx, threadstore.Query{Key: key})
+	diagnosticState["store_error_present"] = diagnosticStoreError != nil
+	diagnosticState["store_record_present"] = diagnosticRecord != nil && diagnosticRecord.State != nil
+	if diagnosticRecord != nil && diagnosticRecord.State != nil {
+		diagnosticState["store_record_matches_A"] = diagnosticRecord.ID == before.ID
+		diagnosticState["store_resume_matches_A"] = diagnosticRecord.State.ResumeID == before.State.ResumeID
+		diagnosticState["store_fingerprint_matches_A"] = diagnosticRecord.CompatibilityFingerprint == before.CompatibilityFingerprint
+	}
+	alignmentLiveDiagnosticLog(t, diagnosticState)
+
 	if err != nil {
 		t.Fatalf("new Agent ResumeOnly: %v", err)
 	}

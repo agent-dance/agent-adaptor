@@ -103,7 +103,7 @@ func (p *parser) observeToolUse(name, id string, input map[string]any) {
 		return
 	}
 	// Retain input only for tools that can contribute a formal observed fact.
-	if name != "Skill" && name != "Task" && name != "Agent" && !strings.HasPrefix(name, "mcp__") && !todoTool(name) {
+	if name != "Skill" && name != "Task" && name != "Agent" && name != "DeferExecuteTool" && !strings.HasPrefix(name, "mcp__") && !todoTool(name) {
 		return
 	}
 	call := &observedCall{name: name, input: input}
@@ -119,6 +119,19 @@ func (p *parser) observeToolUse(name, id string, input map[string]any) {
 	p.emitCapability(o.tracker.Start(capability.Invocation{InvocationID: id, Ref: ref, Phase: capability.Started, Evidence: capability.ProviderProtocol, Source: capability.Provider, OccurredAt: time.Now().UTC()}))
 }
 func (o *observationState) resolveCapability(name string, input map[string]any) (capability.Ref, error) {
+	if name == "DeferExecuteTool" {
+		// CodeBuddy 2.151.0 formally wraps deferred MCP calls in exactly one
+		// toolName:string / params:object envelope. Resolve only its exact MCP
+		// target against this run's catalog. Keep the original wrapper and ID
+		// for replay/conflict checks, Tool/Transcript audit and result matching;
+		// the wrapper alone never certifies successful execution.
+		target, ok := input["toolName"].(string)
+		params, object := input["params"].(map[string]any)
+		if !ok || !strings.HasPrefix(target, "mcp__") || !object || params == nil {
+			return capability.Ref{}, capabilityobs.ErrInvalid
+		}
+		name = target
+	}
 	var kind capability.Kind
 	var runtimeName, operation string
 	switch name {

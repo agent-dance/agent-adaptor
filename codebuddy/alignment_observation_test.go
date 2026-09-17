@@ -64,6 +64,113 @@ func alignmentNotice(rec *testutil.EventRecorder, code string) bool {
 	return false
 }
 
+// CodeBuddy 2.151.0's formal deferred tool schema is toolName:string plus
+// params:object. The original wrapper ID remains the invocation identity.
+func TestAlignmentObservationDeferredMCP(t *testing.T) {
+	const target = "mcp__知识_库___search"
+	const good = `{"toolName":"` + target + `","params":{"query":"PRIVATE_ARGUMENT"}}`
+	for _, tc := range []struct {
+		name, input, result, parent string
+		want                        capability.Phase
+	}{
+		{"success", good, `"PRIVATE_RESULT"`, "", capability.Completed},
+		{"empty_params", `{"toolName":"` + target + `","params":{}}`, `"ok"`, "", capability.Completed},
+		{"additive", `{"toolName":"` + target + `","params":{},"future":"PRIVATE"}`, `"ok"`, "", capability.Completed},
+		{"missing_name", `{"params":{}}`, `"ok"`, "", ""},
+		{"null_name", `{"toolName":null,"params":{}}`, `"ok"`, "", ""},
+		{"number_name", `{"toolName":17,"params":{}}`, `"ok"`, "", ""},
+		{"empty_name", `{"toolName":"","params":{}}`, `"ok"`, "", ""},
+		{"unknown_catalog", `{"toolName":"mcp__other__search","params":{}}`, `"ok"`, "", ""},
+		{"empty_operation", `{"toolName":"mcp__知识_库__","params":{}}`, `"ok"`, "", ""},
+		{"builtin_target", `{"toolName":"Skill","params":{"command":" review "}}`, `"ok"`, "", ""},
+		{"nested_wrapper", `{"toolName":"DeferExecuteTool","params":` + good + `}`, `"ok"`, "", ""},
+		{"nested_target", `{"payload":` + good + `}`, `"ok"`, "", ""},
+		{"missing_params", `{"toolName":"` + target + `"}`, `"ok"`, "", ""},
+		{"null_params", `{"toolName":"` + target + `","params":null}`, `"ok"`, "", ""},
+		{"array_params", `{"toolName":"` + target + `","params":[]}`, `"ok"`, "", ""},
+		{"number_params", `{"toolName":"` + target + `","params":17}`, `"ok"`, "", ""},
+		{"string_params", `{"toolName":"` + target + `","params":"{}"}`, `"ok"`, "", ""},
+		{"invalid_result", good, `{"nested":"ok"}`, "", capability.Interrupted},
+		{"foreign_result_parent", good, `"ok"`, "unproved-parent", capability.Interrupted},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := &testutil.EventRecorder{}
+			p := newParser(rec)
+			p.configureObservations(context.Background(), alignmentObservationRequest())
+			p.enableStreaming(p.runID)
+			call := alignmentCall("DeferExecuteTool", "deferred-id", tc.input)
+			result := fmt.Sprintf(`{"type":"user","parent_tool_use_id":%q,"message":{"content":[{"type":"tool_result","tool_use_id":"deferred-id","content":%s,"is_error":false}]}}`, tc.parent, tc.result)
+			alignmentFeed(t, p, call, call, result, result)
+			p.completeStream(nil, 0, "", false)
+			facts := alignmentCapabilities(rec)
+			if tc.want == "" {
+				if len(facts) != 0 {
+					t.Fatal("invalid or unproved wrapper invented a fact")
+				}
+				return
+			}
+			ref := capability.Ref{Kind: capability.MCP, Key: "知识_库", Operation: "_search"}
+			if len(facts) != 2 || facts[0].Phase != capability.Started || facts[1].Phase != tc.want {
+				t.Fatalf("wrapper lifecycle phases=%v", facts)
+			}
+			for _, fact := range facts {
+				if fact.Ref != ref || fact.InvocationID != "deferred-id" || fact.Evidence != capability.ProviderProtocol || fact.Source != capability.Provider || fact.ScopeID != "" || fact.ParentToolCallID != "" {
+					t.Fatal("wrapper identity or exact catalog changed")
+				}
+			}
+			encoded, _ := json.Marshal(facts)
+			if strings.Contains(string(encoded), "PRIVATE") {
+				t.Fatal("deferred arguments/result leaked into capability")
+			}
+		})
+	}
+	for _, mode := range []string{"failed", "missing", "wrong_id", "malformed_flag", "conflict", "foreign_call", "ambiguous"} {
+		t.Run(mode, func(t *testing.T) {
+			rec := &testutil.EventRecorder{}
+			p := newParser(rec)
+			req := alignmentObservationRequest()
+			input := good
+			if mode == "ambiguous" {
+				req.MCP.Servers = []driver.MCPServerSpec{{Key: "a"}, {Key: "a__b"}}
+				input = `{"toolName":"mcp__a__b__c","params":{}}`
+			}
+			p.configureObservations(context.Background(), req)
+			call := alignmentCall("DeferExecuteTool", "deferred-id", input)
+			if mode == "foreign_call" {
+				call = strings.Replace(call, `"parent_tool_use_id":null`, `"parent_tool_use_id":"unproved-parent"`, 1)
+			}
+			alignmentFeed(t, p, call)
+			result := alignmentResult("deferred-id", `"PRIVATE_RESULT"`, mode == "failed", "")
+			switch mode {
+			case "conflict":
+				alignmentFeed(t, p, alignmentCall("DeferExecuteTool", "deferred-id", `{"toolName":"`+target+`","params":{"query":"changed"}}`))
+			case "wrong_id":
+				result = alignmentResult("other-id", `"ok"`, false, "")
+			case "malformed_flag":
+				result = strings.Replace(result, `"is_error":false`, `"is_error":"false"`, 1)
+			}
+			if mode != "missing" {
+				alignmentFeed(t, p, result)
+			}
+			p.completeStream(nil, 0, "", false)
+			facts := alignmentCapabilities(rec)
+			if mode == "foreign_call" || mode == "ambiguous" {
+				if len(facts) != 0 {
+					t.Fatal("unproved scope/catalog produced deferred fact")
+				}
+				return
+			}
+			want, code := capability.Interrupted, capability.RunInterrupted
+			if mode == "failed" {
+				want, code = capability.Failed, capability.ToolFailed
+			}
+			if len(facts) != 2 || facts[1].Phase != want || facts[1].ErrorCode != code {
+				t.Fatalf("unconfirmed/failed wrapper lifecycle=%v", facts)
+			}
+		})
+	}
+}
+
 func TestAlignmentObservationOfficialLifecycle(t *testing.T) {
 	for _, stream := range []bool{false, true} {
 		t.Run(fmt.Sprint(stream), func(t *testing.T) {

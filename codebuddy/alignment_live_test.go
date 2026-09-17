@@ -106,6 +106,7 @@ func TestAlignmentLiveCodeBuddyCapabilityAndTodoResults(t *testing.T) {
 	}
 	observer := &alignmentObservationService{events: map[string][]adaptor.Event{}}
 	result, events, err := collectLiveStream(ctx, agent, "Use the Skill tool to activate "+alignmentCatalogSkillName+". Then use Task or Agent with subagent_type "+alignmentCatalogAgentName+" and wait for its completed result. Call alignment_echo with text VERIFY. Then use TaskCreate to create a task named acceptance check, TaskUpdate to complete that exact task ID, and TaskList to confirm the full list. Finish by clearing the todo list using TodoWrite with oldTodos containing the observed list and newTodos=[]. Do not merely describe these operations.", adaptor.WithRunServices(observer), adaptor.WithPolicy(livePolicyHeadless))
+	alignmentLiveDiagnosticResult(t, "catalog", result, events, "", "", int(actualEcho.Load()), 0, err)
 	if err != nil {
 		t.Fatal(err)
 	}
