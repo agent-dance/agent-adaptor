@@ -27,7 +27,7 @@ func TestAlignmentMCPResultErrorPresence(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			const resultJSON = `{"content":[{"type":"text","text":"tool output"}]}`
-			itemJSON := json.RawMessage(fmt.Sprintf(`{"id":"tool","type":"mcpToolCall","server":"mcp","tool":"read","status":%q,"result":%s%s}`, tc.status, resultJSON, tc.errorField))
+			itemJSON := json.RawMessage(fmt.Sprintf(`{"id":"tool","type":"mcpToolCall","server":"mcp","tool":"read","arguments":{},"status":%q,"result":%s%s}`, tc.status, resultJSON, tc.errorField))
 			item, err := DecodeThreadItem(itemJSON)
 			if err != nil || !bytes.Equal(item.Raw, itemJSON) {
 				t.Fatalf("formal item Raw changed: %v", err)
