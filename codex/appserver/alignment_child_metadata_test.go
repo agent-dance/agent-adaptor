@@ -154,7 +154,7 @@ func TestAlignmentChildMetadataRPC(t *testing.T) {
 			}
 			wire.frames <- alignmentRPCFrame{raw: frame}
 			s.onNotification(NotifyTurnCompleted, json.RawMessage(`{"threadId":"parent","turn":{"id":"turn","status":"completed"}}`))
-			if !s.metadataReads.settle(true) {
+			if !s.metadataReads.settle(true, nil) {
 				t.Fatal("reader/worker deadlock")
 			}
 			if err := s.applyChildMetadataResults(); err != nil {
@@ -214,7 +214,7 @@ func TestAlignmentChildMetadataLimitsAndCancel(t *testing.T) {
 			} else {
 				r.cancel()
 			}
-			if !r.settle(false) || !r.abandoned {
+			if !r.settle(false, nil) || !r.abandoned {
 				t.Fatal("cancelled dispatched call not joined/suspended")
 			}
 			select {
@@ -234,7 +234,7 @@ func TestAlignmentChildMetadataBlockedSend(t *testing.T) {
 	r.admit("child")
 	alignmentRPCWait(t, ctx, wire.writeEntered)
 	start := time.Now()
-	if r.settle(false) {
+	if r.settle(false, nil) {
 		t.Fatal("context cancellation pretended to unblock synchronous write")
 	}
 	if time.Since(start) > time.Second {
@@ -554,7 +554,7 @@ func TestAlignmentChildMetadataTotalSettlement(t *testing.T) {
 		}
 	}()
 	start := time.Now()
-	if !r.settle(true) {
+	if !r.settle(true, nil) {
 		t.Fatal("response waiter failed to join")
 	}
 	<-peerDone
@@ -583,7 +583,7 @@ func TestAlignmentChildMetadataKnownIdentityNeedsNoRead(t *testing.T) {
 	s.onNotification(NotifyThreadStarted, alignmentChildMetadata("child", "parent", "reviewer"))
 	alignmentSpawn(s, NotifyItemStarted, "inProgress", "child")
 	alignmentSpawn(s, NotifyItemCompleted, "completed", "child")
-	if !s.metadataReads.settle(true) {
+	if !s.metadataReads.settle(true, nil) {
 		t.Fatal("idle worker not joined")
 	}
 	select {

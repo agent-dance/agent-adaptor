@@ -114,6 +114,7 @@ func main() {
 	decoder := json.NewDecoder(bufio.NewReader(os.Stdin))
 	thread := ""
 	turnN := 0
+	availabilityReads := make(map[string]int)
 	var lateMetadataID json.RawMessage
 	lateMetadataThread := ""
 	metadata := func(id, role string) map[string]any {
@@ -144,6 +145,21 @@ func main() {
 			thread = "child-" + strconv.Itoa(os.Getpid())
 			reply(map[string]any{"thread": map[string]any{"id": thread}})
 		case "thread/read":
+			if strings.HasPrefix(scenario, "metadata-availability") {
+				var id string
+				_ = json.Unmarshal(req.Params["threadId"], &id)
+				availabilityReads[id]++
+				if availabilityReads[id] == 1 {
+					output(map[string]any{"id": req.ID, "error": map[string]any{"code": -32603, "message": "failed to read thread: thread-store internal error: failed to read session metadata /private/fixture: rollout at /private/fixture is empty"}})
+					notify("turn/completed", map[string]any{"threadId": thread, "turn": map[string]any{"id": "turn-" + strconv.Itoa(turnN), "status": "completed", "usage": map[string]any{"inputTokens": 0, "outputTokens": 2}}})
+				} else if scenario == "metadata-availability-late" {
+					lateMetadataID = append(json.RawMessage(nil), req.ID...)
+					lateMetadataThread = id
+				} else {
+					reply(metadata(id, "reviewer"))
+				}
+				continue
+			}
 			if strings.HasPrefix(scenario, "metadata-wait-") {
 				turn := "turn-" + strconv.Itoa(turnN)
 				if scenario == "metadata-wait-protocol-exit" {
@@ -172,6 +188,25 @@ func main() {
 			return
 		case "turn/start":
 			turnN++
+			if strings.HasPrefix(scenario, "metadata-availability") {
+				if len(lateMetadataID) != 0 {
+					output(map[string]any{"id": lateMetadataID, "result": metadata(lateMetadataThread, "late-wrong-role")})
+					lateMetadataID = nil
+				}
+				turn := "turn-" + strconv.Itoa(turnN)
+				reply(map[string]any{"turn": map[string]any{"id": turn, "status": "inProgress"}})
+				scoped := func(item any) map[string]any { return map[string]any{"threadId": thread, "turnId": turn, "item": item} }
+				notify("item/completed", scoped(map[string]any{"id": "answer", "type": "agentMessage", "text": "answer"}))
+				collab := map[string]any{"id": "spawn", "type": "collabAgentToolCall", "tool": "spawnAgent", "status": "inProgress", "senderThreadId": thread, "receiverThreadIds": []string{}}
+				notify("item/started", scoped(collab))
+				collab["status"] = "completed"
+				collab["receiverThreadIds"] = []string{"agent-child"}
+				notify("item/completed", scoped(collab))
+				if turnN > 1 {
+					notify("turn/completed", map[string]any{"threadId": thread, "turn": map[string]any{"id": turn, "status": "completed", "usage": map[string]any{"inputTokens": 0, "outputTokens": 2}}})
+				}
+				continue
+			}
 			if len(lateMetadataID) != 0 {
 				output(map[string]any{"id": lateMetadataID, "result": metadata(lateMetadataThread, "late-wrong-role")})
 				lateMetadataID = nil

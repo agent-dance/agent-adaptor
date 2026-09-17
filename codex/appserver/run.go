@@ -189,7 +189,8 @@ func Run(ctx context.Context, opts Options, sink driver.EventSink) (driver.Respo
 		if protocolErr := state.protocolError(); protocolErr != nil && !errors.Is(primary, protocolErr) {
 			primary = errors.Join(primary, protocolErr)
 		}
-		joined := state.metadataReads.settle(primary == nil && ctx.Err() == nil && state.protocolError() == nil)
+		metadataHealthy := primary == nil && ctx.Err() == nil && state.protocolError() == nil
+		joined := state.metadataReads.settle(metadataHealthy, state.childMetadataRecovery(metadataHealthy, client, stream))
 		if !joined {
 			primary = errors.Join(primary, errors.New("codex child metadata worker did not settle; closing transport"))
 			_ = client.Close()

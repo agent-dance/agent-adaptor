@@ -273,7 +273,8 @@ func (p *Process) RunTurn(ctx context.Context, opts Options, sink driver.EventSi
 	if protocolErr := state.protocolError(); protocolErr != nil && !errors.Is(err, protocolErr) {
 		err = errors.Join(err, protocolErr)
 	}
-	metadataJoined := state.metadataReads.settle(err == nil && ctx.Err() == nil && state.protocolError() == nil)
+	metadataHealthy := err == nil && ctx.Err() == nil && state.protocolError() == nil
+	metadataJoined := state.metadataReads.settle(metadataHealthy, state.childMetadataRecovery(metadataHealthy && !p.IsClosed(), p.client, p.stream))
 	if !metadataJoined {
 		err = errors.Join(err, errors.New("codex child metadata worker did not settle; closing transport"))
 	} else if state.metadataReads != nil {

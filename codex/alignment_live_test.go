@@ -137,7 +137,24 @@ func TestAlignmentLiveSubagentCatalog(t *testing.T) {
 	}
 	result, err := stream.Result()
 	if err != nil || !completed || !strings.Contains(result.Text, nonce) || result.Raw().Terminal == nil {
-		t.Fatal("required collab and formally associated child-role evidence missing")
+		nonceContains, terminal := false, false
+		if result != nil {
+			nonceContains = strings.Contains(result.Text, nonce)
+			terminal = result.Raw().Terminal != nil
+		}
+		reason := "none"
+		if err != nil {
+			reason = "non-run-error"
+		}
+		var runErr *adaptor.RunError
+		if errors.As(err, &runErr) {
+			reason = "unclassified"
+			switch runErr.Reason {
+			case adaptor.ReasonApprovalDenied, adaptor.ReasonApprovalTimeout, adaptor.ReasonAgentError, adaptor.ReasonCancelled, adaptor.ReasonPolicyViolation, adaptor.ReasonInfrastructure, adaptor.ReasonDeadlineExceeded, adaptor.ReasonActiveExecutionTimeout:
+				reason = string(runErr.Reason)
+			}
+		}
+		t.Fatalf("required collab and formally associated child-role evidence missing: err_nil=%t result=%t completed=%t nonce=%t terminal=%t reason=%s", err == nil, result != nil, completed, nonceContains, terminal, reason)
 	}
 }
 

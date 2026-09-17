@@ -63,6 +63,13 @@
 // that receiver lacks metadata, one private worker requests thread/read with
 // includeTurns=false. Per turn it admits at most 128 distinct receivers, with a
 // one-second call deadline and a two-second total terminal settlement budget.
+// A formal read-store SessionMeta "is empty" error may recover once after the
+// owner has confirmed a healthy parent Completed terminal and an open transport.
+// seal alone does not authorize recovery. Only the same admitted receiver still
+// missing valid metadata is eligible; the same worker and original total budget
+// apply. There are at most two metadata-only reads and one final worker result
+// per receiver. This error literal does not prove a physically empty file, and
+// unavailable metadata need not recover within the bounded opportunity.
 // Missing/unsupported metadata produces an unresolved notice; first invalid
 // evidence rejects that receiver for the turn. A missing parent is unavailable,
 // not a contradictory parent; incomplete frames are not combined into role proof.
