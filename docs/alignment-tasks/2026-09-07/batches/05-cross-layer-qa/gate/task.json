@@ -86,7 +86,8 @@
       "docs/alignment-tasks/2026-09-07/amendments/R038.md",
       "docs/alignment-tasks/2026-09-07/amendments/R039.md",
       "docs/alignment-tasks/2026-09-07/amendments/R040.md",
-      "docs/alignment-tasks/2026-09-07/amendments/R041.md"
+      "docs/alignment-tasks/2026-09-07/amendments/R041.md",
+      "docs/alignment-tasks/2026-09-07/amendments/R042.md"
     ],
     "dependency_artifacts": [
       {
@@ -298,7 +299,20 @@
       "codebuddy/alignment_public_observation_test.go",
       "codebuddy/alignment_live_test.go",
       "codebuddy/alignment_live_diagnostic_test.go",
-      "e2e/alignment_profile_test.go"
+      "e2e/alignment_profile_test.go",
+      "alignment_codex_bootstrap_test.go",
+      "codex/appserver/alignment_child_status_test.go",
+      "codex/appserver/alignment_mcp_result_test.go",
+      "codex/appserver/doc.go",
+      "codex/doc.go",
+      "codex/skill_inputs.go",
+      "codex/skill_inputs_test.go",
+      "codex/testdata/alignment-provider/main.go",
+      "docs/alignment-tasks/2026-09-07/amendments/R042.md",
+      "docs/alignment-tasks/2026-09-07/handoffs/T06/Codex-cold-bootstrap-documentation.md",
+      "docs/alignment-tasks/2026-09-07/manifest.json",
+      "driver/profile.go",
+      "driver/session_codec.go"
     ],
     "scope_match": "精确文件或目录/**；gate可合并worker已审阅commit，但不直接越权编辑其生产代码。",
     "exclusive_resources": [
@@ -333,7 +347,8 @@
     "只有拥有对应文件的任务可改 root/Driver AST golden；先审阅新增声明再精确更新，禁止全局设置 golden 更新环境掩盖漂移。",
     "只写 ownership.allow 指定路径，不顺手重构其他子系统；需要扩大范围时向批次协调者提交具体变更理由和路径，先消除同批冲突再重派本任务。",
     "不写 TODO、空实现、未来才有的兼容 shim；先用失败可复现的 fixture 验证问题，再实现并验证；不得只满足实现本身的镜像测试。",
-    "普通验证显式关闭付费门，不访问真实 provider；live 任务须同时满足授权记录、build tag 和环境变量门。所有任务都不创建 tag、不发布 release、不自动推送/发送外部消息。"
+    "普通验证显式关闭付费门，不访问真实 provider；live 任务须同时满足授权记录、build tag 和环境变量门。所有任务都不创建 tag、不发布 release、不自动推送/发送外部消息。",
+    "R042：Luna定向诊断和四项窄域修复独立保存；完整bundle证明、skill歧义、child/parent scope与MCP真实错误边界不能降级。正式plan仍需新S原live实证；47/96/45及九依赖、所有原命令保持。"
   ],
   "implementation_steps": [
     "收集全部worker result/文档片段/契约与真实commit，验证基于本批统一base、完整acceptance、源码路径边界和日志；未完成、越界或未消除冲突不能接受。",

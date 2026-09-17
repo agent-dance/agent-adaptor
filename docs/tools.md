@@ -222,6 +222,18 @@ The SDK retains its healthy record and session files; the existing
 continue-or-start policy may atomically replace the record after a new healthy
 checkpoint. There is no alternate legacy hash or automatic store rewrite.
 
+Codex 0.153.4 installs bundled skills on first execution. Hosted-Tool compatibility
+recognizes only the complete official `skills/.system` bundle after checking all
+87 paths, file contents, marker and observed permissions. A marker or directory
+name alone proves nothing. The parent `skills` directory, managed skill sources,
+unknown versions, extra or missing files, changed content and permissions remain
+part of compatibility. Expected bundle modes are directories 0755/files 0644 on
+POSIX and 0777/0666 on Windows; other Unix umasks are conservatively retained and
+can reject cold continuation. No extra initialization process or file rewrite is
+performed. As with the Claude exception, historical records which already hashed
+the complete bundle can conservatively reject `ResumeOnly` while retaining the
+healthy checkpoint and native session files.
+
 A Driver may defer physical profile reconciliation until Run. Its compatibility
 view projects only proven managed replacements/prunes from the resolved sources,
 without resolving or writing resources again; unrelated resources remain included.

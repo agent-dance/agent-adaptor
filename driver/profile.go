@@ -108,9 +108,10 @@ const (
 // ProfilePayload is the driver-facing normalized profile desired state for a
 // single resolved invocation. Fingerprint covers the exact provider-visible
 // resources in this request. SessionCompatibilityFingerprint is the separate
-// resume/persistent-process guard; core may normalize only Agent-owned,
-// ephemeral transport allocations there while retaining the exact payload and
-// Fingerprint for materialization.
+// resume/persistent-process guard; core may normalize Agent-owned ephemeral
+// transport allocations and documented, fully proven provider bootstrap states.
+// Other resource bytes and modes remain significant. The exact payload and
+// Fingerprint remain authoritative for materialization.
 type ProfilePayload struct {
 	Skills       ResolvedSkills
 	MCP          MCPPayload

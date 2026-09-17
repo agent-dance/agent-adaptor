@@ -287,8 +287,10 @@ An init/session announcement, partial output, a nested or guessed ID, a malforme
 
 `ProfilePayload.Fingerprint` always identifies the exact resolved profile desired
 state passed to the Driver. Resume and persistent-process guards use
-`ProfilePayload.SessionFingerprint()` instead. Core may normalize only its own
-ephemeral transport allocations in the session value; the Driver must still
+`ProfilePayload.SessionFingerprint()` instead. Core may normalize its own
+ephemeral transport allocations and the documented, fully proven provider
+bootstrap states in the session value. Unknown states and real resource drift
+remain significant; the Driver must still
 materialize the exact current MCP/profile payload on every resumed turn.
 
 There is no checkpoint exception for a failed run. Without a healthy checkpoint, core keeps the Thread's previous active record and does not allow a failed run to pollute resumable state.

@@ -53,6 +53,15 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- Keep proven child-thread status notifications from aborting the parent Codex
+  turn, without relaxing foreign turn/item/error/terminal checks or inventing
+  subagent completion. Preserve their complete Raw audit.
+- Treat Codex MCP `error: null` as absent in Transcript error flags while keeping
+  real errors and failed statuses visible.
+- Recognize only the complete official Codex 0.153.4 system-skills bundle in
+  hosted-profile compatibility so first-run installation does not prevent cold
+  resume. Changed bytes, paths, permissions and unknown bundles still count;
+  older records that hashed the complete bundle may conservatively reject resume.
 - Recognize sentence-final periods after explicit Codex skill references, while
   preserving exact dotted catalog names and rejecting ambiguous activation.
 - Allow shared profile cloning to copy skills already installed by `SyncProfile`

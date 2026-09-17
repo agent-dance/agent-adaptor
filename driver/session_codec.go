@@ -45,8 +45,9 @@ type SessionParams struct {
 //
 // Built-in drivers store ProfilePayload.SessionFingerprint() in the session
 // params so that GuardFingerprint changes whenever MCP, skills, agents,
-// hooks, instructions, or structured config changes. Core may normalize only
-// Agent-owned ephemeral transport allocation details in that value;
+// hooks, instructions, or structured config changes. Core may normalize
+// Agent-owned ephemeral transport allocations and documented, fully proven
+// provider bootstrap states; unknown states and real resource drift still count.
 // ProfilePayload.Fingerprint remains the exact provider-visible materialization
 // fingerprint. A Run invocation that supplies a resume ID whose
 // GuardFingerprint no longer matches the current session fingerprint MUST be

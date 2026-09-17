@@ -545,6 +545,13 @@ that the skill was read or its work finished. Subagent spawn completion likewise
 does not certify the child's final work. Conflicting formal child roles prevent
 pending spawn completion, including when the 128-identity table is full. The
 limit applies only to new identities; matching role replays remain idempotent.
+Valid `thread/status/changed` notifications from a formally declared, direct
+child with matching parent and no identity conflict remain Raw-only control
+data. They do not publish parent semantics, complete its turn, or establish a
+subagent outcome; unknown children and other foreign-scoped notifications still
+fail the scope fence. A successful MCP item with absent or JSON `null` error does
+not mark its Transcript tool result as failed; an actual error or failed status
+still does, with complete provider data retained.
 Plan steps have synthetic turn/position
 IDs, preserve order and text, and include first-empty/clear snapshots. Plan deltas
 do not become Todo or PlanReview. Current thread/turn and terminal fences remain;

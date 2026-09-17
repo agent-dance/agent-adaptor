@@ -418,6 +418,8 @@ R040：Windows managed-clone alias误拒绝须以held profile/skills双目录Sam
 
 R041：单次CodeBuddy cold诊断已回忆marker且真实调用新gateway，只有最终Text非精确nonce。只明确fixture最终一行输出格式，SDK正式Text逐字保留、原equals与全部cold谓词不变；不猜多余文本内容或倒填旧原因，不以诊断/重复刷绿替代新S原完整矩阵。
 
+R042：Luna 原 T29 的 cold/observation/subagent 三项真实失败分别保留。Codex 系统 skills 仅在完整官方0.153.4 bundle的路径/内容/平台默认mode闭集证明后从compatibility归一化；未知内容、版本、附件、权限、managed来源及父目录保持，旧已含bundle记录保守拒绝且不改健康状态。句末skill引用须精确catalog优先且歧义不回退；仅正式直接child的有效status允许Raw-only，其他foreign scope与subagent双证明不放宽。MCP absent/null error不误标Transcript失败，真实error/failed仍保留。缺少正式plan不能猜测或降断言。窄域修复独立复验后在新S重跑G05及全部B06，历史通过不继承，G06和PR完成条件不变。
+
 ## 15. 发布门禁
 
 发布前必须全部满足：

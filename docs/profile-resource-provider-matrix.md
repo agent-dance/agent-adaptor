@@ -51,6 +51,12 @@ conservatively reject `ResumeOnly`; see the precise
 [fingerprint and migration boundary](./tools.md#threads-and-semantic-revisions).
 Actual resource and configuration drift remains incompatible.
 
+Codex hosted-Tool compatibility similarly recognizes only the complete official
+0.153.4 system-skills bundle with verified bytes and permissions. Unknown bundles,
+modified assets and nonstandard modes remain significant; prior records which
+hashed the bundle can conservatively reject `ResumeOnly`. The same linked
+fingerprint contract describes the exact proof and migration boundary.
+
 ## Cursor roots and selected resources
 
 Cursor `2026.07.23-e383d2b` separates config, project data and native HOME
