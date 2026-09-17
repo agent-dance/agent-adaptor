@@ -75,6 +75,8 @@ func TestAlignmentLiveNativeAppend(t *testing.T) {
 
 func TestAlignmentLiveObservationAndPersistent(t *testing.T) {
 	cfg := alignmentLiveGate(t)
+	// Codex 0.153.4 registers this native checklist tool only when enabled.
+	cfg.ExtraArgs = append(cfg.ExtraArgs, "-c", "tools.update_plan.enabled=true")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	nonce := alignmentNonce(t)
