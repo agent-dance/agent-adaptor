@@ -65,7 +65,8 @@
       "docs/alignment-tasks/2026-09-07/rework.json",
       "docs/alignment-tasks/2026-09-07/amendments/R031.md",
       "docs/alignment-tasks/2026-09-07/amendments/R035.md",
-      "docs/alignment-tasks/2026-09-07/amendments/R037.md"
+      "docs/alignment-tasks/2026-09-07/amendments/R037.md",
+      "docs/alignment-tasks/2026-09-07/amendments/R038.md"
     ],
     "dependency_artifacts": [
       {
@@ -141,7 +142,8 @@
     "R031 T30-F03：Cursor print 取消由本轮实际非空 assistant NoticeTranscriptItem 触发，不把不存在的 rich TextDelta 当前提；context.Canceled/ReasonCancelled、部分 Raw/Transcript、旧健康 checkpoint 和有界退出断言保持。",
     "R031 T30-F04：正式 opaque call ID 的控制字符形态采用无碰撞、稳定的 capability 身份编码，start/result/parent 一致，安全原名不能与编码名碰撞；Raw/Transcript 原文不改。",
     "R035 G05-F01：原Cursor HOME fallback/Native AuthLink三个fixture必须独立隔离CURSOR_CONFIG_DIR、CURSOR_DATA_DIR、XDG_CONFIG_HOME等宿主变量；保留官方XDG优先级的独立正反矩阵，不删除检测model/config/AuthLink断言，不改production以迁就旧fixture。",
-    "R037 T26-F01：原生Windows Native_runtime_override没有checkpoint的真实失败必须定位到可观察exit/协议/cause；保留健康Native路径、禁止Runtime Env重定向、Dedicated清理失败的完整部分Response和失败无checkpoint。只能依据正式诊断修复fixture或生产原因，不得放宽成功checkpoint断言、删场景或扩大skip；全部Windows32项仍须实际PASS。"
+    "R037 T26-F01：原生Windows Native_runtime_override没有checkpoint的真实失败必须定位到可观察exit/协议/cause；保留健康Native路径、禁止Runtime Env重定向、Dedicated清理失败的完整部分Response和失败无checkpoint。只能依据正式诊断修复fixture或生产原因，不得放宽成功checkpoint断言、删场景或扩大skip；全部Windows32项仍须实际PASS。",
+    "R038 T30-F05：资源隔离fixture声明值为公开可回显、无认证权限的合成验收marker，nonce仍只在资源中而不进入prompt，精确输出/真实callback/Native请求计数/源不变/typed事实/无泄漏全部保持。分解安全布尔诊断；原失败缺失字段保持unknown，新单次诊断PASS只证明其自身。"
   ],
   "acceptance_criteria": [
     {
@@ -187,6 +189,11 @@
     {
       "id": "T17-AC09",
       "requirement": "R037 T26-F01：原生Windows Native_runtime_override没有checkpoint的真实失败必须定位到可观察exit/协议/cause；保留健康Native路径、禁止Runtime Env重定向、Dedicated清理失败的完整部分Response和失败无checkpoint。只能依据正式诊断修复fixture或生产原因，不得放宽成功checkpoint断言、删场景或扩大skip；全部Windows32项仍须实际PASS。",
+      "required": true
+    },
+    {
+      "id": "T17-AC10",
+      "requirement": "R038 T30-F05：资源隔离fixture声明值为公开可回显、无认证权限的合成验收marker，nonce仍只在资源中而不进入prompt，精确输出/真实callback/Native请求计数/源不变/typed事实/无泄漏全部保持。分解安全布尔诊断；原失败缺失字段保持unknown，新单次诊断PASS只证明其自身。",
       "required": true
     }
   ],

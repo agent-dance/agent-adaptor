@@ -410,6 +410,8 @@ R034：R030六路返修及MERGE-F01/F02已在各自精确worker SHA接受实施�
 
 R035：f7aa53c首轮完整G05未通过，重新打开G05-F01（Cursor旧fixture隔离真实XDG变量）、G05-F02（已删除临时profile只能安全拒绝/回退，Dedicated才证明保留文件跨Agentresume）及MERGE-F03（Codex child表容量不能跳过既存ID角色冲突）。原T17/T04/T16窄域返修，非作者复验；禁止改生产迁就fixture、删场景/断言或skip。全部同新S门禁重新验收，旧失败保留。
 
+R038：授权四provider完整live后，Claude在8db通过；CodeBuddy TerminalPayload fixture读错envelope、SDK managed skill clone及profile原cause丢失分别由原T15/T06精确返修。只凭正式manifest/内容/target证明安全复制已管理技能为普通树，任意链接/越界/替换/特殊节点继续拒绝，原SyncProfile→WithTools与fingerprint语义保持。Cursor合成marker措辞可澄清、全部原断言不减，原失败缺失字段不倒填；Codex后续诊断429不构成代码缺陷或通过依据。原8条live结果保留，全新S重验G05/B06/G06；通过后发PR，未授权merge/tag。
+
 ## 15. 发布门禁
 
 发布前必须全部满足：

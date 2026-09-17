@@ -82,7 +82,8 @@
       "docs/alignment-tasks/2026-09-07/amendments/R032.md",
       "docs/alignment-tasks/2026-09-07/amendments/R033.md",
       "docs/alignment-tasks/2026-09-07/amendments/R034.md",
-      "docs/alignment-tasks/2026-09-07/amendments/R035.md"
+      "docs/alignment-tasks/2026-09-07/amendments/R035.md",
+      "docs/alignment-tasks/2026-09-07/amendments/R038.md"
     ],
     "dependency_artifacts": [
       {
@@ -280,7 +281,14 @@
       "cursor/testdata/live-20260723-capabilities.jsonl",
       "cursor/driver_test.go",
       "e2e/tools_test.go",
-      "codex/appserver/alignment_child_capacity_test.go"
+      "codex/appserver/alignment_child_capacity_test.go",
+      "internal/skillruntime/profile.go",
+      "internal/skillruntime/profile_clone.go",
+      "internal/skillruntime/profile_clone_test.go",
+      "alignment_managed_clone_test.go",
+      "codebuddy/alignment_live_resume_test.go",
+      "codebuddy/alignment_live_resume_terminal_test.go",
+      "codebuddy/profile_error_test.go"
     ],
     "scope_match": "精确文件或目录/**；gate可合并worker已审阅commit，但不直接越权编辑其生产代码。",
     "exclusive_resources": [
@@ -334,7 +342,8 @@
     "R033：新增Cursor私有目录/ACL原生测试必须实际PASS且纳入collector覆盖；T30-V01包预算35m，原选择器和逐场景时限保持。",
     "R034：整合所有原六路+MERGE-F01/F02和T23补充Windows gate实施，核Cursor最终同次复制/配置特殊文件/环境边界，记录真实第三方审阅范围；中央docs/godoc/CHANGELOG完成后冻结S，原G05命令、九依赖和G04全diff保持。所有B06证据须来自S，当前文档及implementation接受不作发布通过。",
     "R035：f7aa53c首次全G05 V02失败（5008pass/14允许skip，三Cursor fixture和temporary profile E2E），原完整日志/source快照保持；追加MERGE-F03独立反例。等待T17/T04/T16原owner修复及非作者验收，所有源码/测试/文档形成新S后原G05和全部B06重新完整执行。",
-    "R036：三项原owner返修非作者接受后合流，完整source+中央文档冻结新S；重跑全部原G05，不沿用f7aa53c失败或只跑窄selector。原G04 base/九依赖/全部实际diff保留。"
+    "R036：三项原owner返修非作者接受后合流，完整source+中央文档冻结新S；重跑全部原G05，不沿用f7aa53c失败或只跑窄selector。原G04 base/九依赖/全部实际diff保留。",
+    "R038：原T06/T15/T17精确共享profile/终局fixture/合成marker返修及非作者反例入最终S；保留8db全量G05/平台通过和四live真实成败、独立429诊断。原47任务96要求45处置、9依赖、G04基线、全部原命令/次数/skip和Windows32不变；所有新S门禁重验，G06通过后按用户授权发PR。"
   ],
   "acceptance_criteria": [
     {
