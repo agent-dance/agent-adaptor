@@ -424,6 +424,8 @@ R042：Luna 原 T29 的 cold/observation/subagent 三项真实失败分别保留
 
 R043：官方 Codex 0.153.4 自动挂接会把新线程的 status/turn/item 发到同一连接，且该路径不发 thread/started。更新 R042 的连接分类假设：合法 foreign scope 仅 Raw，不进入父 Text/Transcript/Usage/Todo/终局，不因未能证明直属 parent 而失败，不登记身份或触发查询；malformed scope/status、当前父 wrong-turn/duplicate terminal 与已知身份冲突仍严格。正式 thread/started 身份证据保留；仅当前父/当前 turn 的正式 spawn receiver 可用有界只读 thread/read 补齐 metadata，id/direct parent/role/catalog 必须一致。未知或不可用只报 capability_unresolved，不伪造完成；首次无效 metadata 拒绝事实并粘滞 notice，已接受身份遭矛盾在合并处立即记 protocol failure，均不得后到 heal。RPC 不得在唯一 reader 内等待；公开终局前结算已准入查询，取消/Close 后有界回收并 join，Raw/Result 冻结后和下一轮不可迟到改写；同步写阻塞须由 owner 关闭 transport 解阻、保留主因且无健康 checkpoint。无需等待 child 工作完成。官方 tools.update_plan.enabled 缺省 false，仅原 Observation live 夹具显式启用，原 prompt/断言/两轮单 spawn/时限不变。原失败/诊断/静态来源分开留存；新 S 全部原 G05/B06 重验，CodeBuddy 失败不被 Codex 修复关闭。
 
+R045：f9a129b CodeBuddy catalog真实callback成功但正式Raw无DeferExecuteTool/hosted echo，typed MCP完成未观察；不能据此猜未知调用路径或判生产observer遗漏。仅原catalog提示明确要求父agent使用官方ToolSearch精确tool_names及DeferExecuteTool/toolName/params取得正式成功结果，禁止委托或shell/HTTP替代；其余原prompt、所有oracle、模型/次数/8min预算及生产路径不变。旧失败保留，新S全部原G05/B06重验，不凭callback伪造能力或重试刷绿。
+
 ## 15. 发布门禁
 
 发布前必须全部满足：

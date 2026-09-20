@@ -53,6 +53,10 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- Make the CodeBuddy live catalog check explicitly request native MCP discovery
+  and execution in the parent turn. Preserve all capability, callback and todo
+  assertions while excluding alternate shell or HTTP execution from the fixture.
+
 - Recover one optional Codex child-metadata read when the official store reports
   that no readable session metadata exists. The additional read runs only after
   a healthy parent terminal, within the existing metadata settlement budget; cancellation,
