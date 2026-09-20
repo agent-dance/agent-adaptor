@@ -426,6 +426,8 @@ R043：官方 Codex 0.153.4 自动挂接会把新线程的 status/turn/item 发�
 
 R045：f9a129b CodeBuddy catalog真实callback成功但正式Raw无DeferExecuteTool/hosted echo，typed MCP完成未观察；不能据此猜未知调用路径或判生产observer遗漏。仅原catalog提示明确要求父agent使用官方ToolSearch精确tool_names及DeferExecuteTool/toolName/params取得正式成功结果，禁止委托或shell/HTTP替代；其余原prompt、所有oracle、模型/次数/8min预算及生产路径不变。旧失败保留，新S全部原G05/B06重验，不凭callback伪造能力或重试刷绿。
 
+R046：5d普通Windows的IdentityEncoding完整8s耗尽与Crash prompt未观察分开保留，专门T26绿不覆盖全量红/后继未执行。仅Crash测试启用有界ready→input→held屏障，父总8s/子Run4s/观察4s不延长，Start成功即登记stdin关闭/取消/唯一Wait清理；其余contender协议不变。Identity仅补安全失败观测，七claim和完整Run8s起点不改，未知阶段不倒填根因。生产/CI并发及全部原命令/skip保持，新S全量重验；CodeBuddy401与Cursorstatus本地凭据存在不能冒充live成功。
+
 ## 15. 发布门禁
 
 发布前必须全部满足：

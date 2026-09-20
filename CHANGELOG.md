@@ -53,6 +53,10 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- Synchronize the crash-recovery test fixture with child readiness and ensure
+  bounded cleanup on early failure, preserving its original timeout budgets.
+  Add safe failure diagnostics to the profile identity regression.
+
 - Make the CodeBuddy live catalog check explicitly request native MCP discovery
   and execution in the parent turn. Preserve all capability, callback and todo
   assertions while excluding alternate shell or HTTP execution from the fixture.
