@@ -1,6 +1,7 @@
 package e2e_test
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -22,6 +23,8 @@ import (
 	adaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/cursor"
 	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/internal/processx"
+	"github.com/agent-dance/agent-adaptor/internal/testutil"
 	"github.com/agent-dance/agent-adaptor/memory"
 	"github.com/agent-dance/agent-adaptor/profile"
 	"github.com/agent-dance/agent-adaptor/threadstore"
@@ -196,6 +199,9 @@ type alignmentContenderInput struct {
 }
 
 func alignmentContender() int {
+	if alignmentHas("--t20-profile-ready") {
+		fmt.Println("ready")
+	}
 	var in alignmentContenderInput
 	if json.NewDecoder(os.Stdin).Decode(&in) != nil {
 		return 80
@@ -592,6 +598,9 @@ func TestAlignmentLifecycleProfileIdentityEncoding(t *testing.T) {
 		stage := fmt.Sprintf("identity-%d", i)
 		if e := alignmentProfileStage(t, ctx, stage, func(ctx context.Context) error {
 			_, err := a.Run(ctx, stage)
+			if err != nil {
+				alignmentProfileFailure(t, f, err)
+			}
 			return err
 		}); e != nil {
 			t.Fatal(e)
@@ -613,6 +622,46 @@ func TestAlignmentLifecycleProfileIdentityEncoding(t *testing.T) {
 	}); !errors.Is(e, profile.ErrInUse) {
 		t.Errorf("canonical source alias bypassed claim: %v", e)
 	}
+}
+
+// Failure diagnostics only expose counts and typed kinds, never ledger values,
+// credentials, paths, prompts, or raw provider output. Keep the original error.
+func alignmentProfileFailure(t *testing.T, f *alignmentFixture, err error) {
+	t.Helper()
+	counts := map[string]int{}
+	raw, readErr := os.ReadFile(f.log)
+	invalid := 0
+	if readErr == nil {
+		for _, line := range bytes.Split(bytes.TrimSpace(raw), []byte{'\n'}) {
+			if len(line) == 0 {
+				continue
+			}
+			var entry struct{ Kind string }
+			if json.Unmarshal(line, &entry) != nil {
+				invalid++
+				continue
+			}
+			switch entry.Kind {
+			case "start", "prompt", "exit", "eof", "barrier", "partial-input":
+				counts[entry.Kind]++
+			default:
+				counts["other"]++
+			}
+		}
+	}
+	t.Logf("profile failure ledger_counts=%v invalid_records=%d ledger_missing=%t ledger_error_type=%T", counts, invalid, os.IsNotExist(readErr), readErr)
+	var re *adaptor.RunError
+	if !errors.As(err, &re) || re.Result == nil {
+		t.Logf("profile failure result_present=false error_type=%T", err)
+		return
+	}
+	r := re.Result
+	streams := r.Raw()
+	transcript := map[string]int{}
+	for _, item := range r.Transcript() {
+		transcript[string(item.Kind)]++
+	}
+	t.Logf("profile failure result_present=true reason=%s text_bytes=%d stdout_bytes=%d stderr_bytes=%d terminal_present=%t transcript_kinds=%v service_count=%d usage_present=%t", re.Reason, len(r.Text), len(streams.Stdout), len(streams.Stderr), streams.Terminal != nil, transcript, len(r.Services()), r.Usage != nil)
 }
 
 // This wrapper is synchronous: cancellation never abandons an operation in a
@@ -717,23 +766,10 @@ func TestAlignmentLifecycleProfileCrashRequiresRecovery(t *testing.T) {
 	f := newAlignmentFixture(t, "cursor")
 	ctx, c := alignmentContext(t)
 	defer c()
-	exe, e := os.Executable()
-	if e != nil {
-		t.Fatal(e)
-	}
-	cmd := exec.CommandContext(ctx, exe)
-	cmd.Env = []string{alignmentFixtureEnv + "=contender", "HOME=" + filepath.Join(f.root, "home"), "USERPROFILE=" + filepath.Join(f.root, "home"), "XDG_CONFIG_HOME=" + filepath.Join(f.root, "home"), "AGENT_ADAPTOR_LIVE_CONFORMANCE=0", "AGENT_ADAPTOR_E2E=0", "AGENT_ADAPTOR_UPDATE_API_GOLDEN=0", "GORACE=atexit_sleep_ms=0 halt_on_error=1"}
-	stdin, e := cmd.StdinPipe()
-	if e != nil {
-		t.Fatal(e)
-	}
-	var stdout bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stdout
-	if e = cmd.Start(); e != nil {
-		t.Fatal(e)
-	}
-	if e = json.NewEncoder(stdin).Encode(alignmentContenderInput{Common: f.common, Source: f.profile, Hold: true}); e != nil {
+	child := alignmentStartHeldContender(t, ctx, f)
+	if e := alignmentContenderHandshake(ctx, child.lines, func() error {
+		return json.NewEncoder(child.stdin).Encode(alignmentContenderInput{Common: f.common, Source: f.profile, Hold: true})
+	}); e != nil {
 		t.Fatal(e)
 	}
 	f.wait(t, "prompt", 1)
@@ -743,12 +779,12 @@ func TestAlignmentLifecycleProfileCrashRequiresRecovery(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	stdin.Close()
-	if e = cmd.Wait(); e != nil {
-		t.Fatalf("child crash fixture: %v %s", e, stdout.String())
+	child.stdin.Close()
+	if e = child.wait(ctx); e != nil {
+		t.Fatalf("child crash fixture: %v", e)
 	}
-	if stdout.String() != "held\n" {
-		t.Fatalf("child did not hold claim: %q", stdout.String())
+	if child.stdout.String() != "ready\nheld\n" || child.stderr.Len() != 0 {
+		t.Fatalf("child did not hold claim: stdout_bytes=%d stderr_bytes=%d", child.stdout.Len(), child.stderr.Len())
 	}
 	a := f.agent(t, adaptor.WithTools(alignmentTool("one")))
 	if _, e = a.Run(ctx, "must-not-replay"); !errors.Is(e, profile.ErrRecoveryRequired) {
@@ -760,5 +796,249 @@ func TestAlignmentLifecycleProfileCrashRequiresRecovery(t *testing.T) {
 	}
 	if len(f.wait(t, "prompt", 1)) != 1 {
 		t.Error("crash recovery automatically delivered prompt")
+	}
+}
+
+// Only the crash fixture uses this handshake; other contenders retain their
+// original input/output. Each observation retains 4s within the original 8s
+// parent, and the child still starts its own 4s Run after receiving the input.
+func alignmentContenderHandshake(ctx context.Context, lines <-chan string, input func() error) error {
+	if err := alignmentContenderReply(ctx, lines, "ready"); err != nil {
+		return err
+	}
+	if err := input(); err != nil {
+		return err
+	}
+	return alignmentContenderReply(ctx, lines, "held")
+}
+
+func alignmentContenderReply(parent context.Context, lines <-chan string, want string) error {
+	ctx, cancel := context.WithTimeout(parent, 4*time.Second)
+	defer cancel()
+	select {
+	case line, open := <-lines:
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("contender %s: %w", want, err)
+		}
+		if !open {
+			return fmt.Errorf("contender %s: %w", want, io.EOF)
+		}
+		if line != want {
+			return fmt.Errorf("contender %s: unexpected response (%d bytes)", want, len(line))
+		}
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("contender %s: %w", want, ctx.Err())
+	}
+}
+
+type alignmentHeldContender struct {
+	cmd            *exec.Cmd
+	stdin          io.WriteCloser
+	lines          chan string
+	done           chan struct{}
+	cancel         context.CancelFunc
+	stdout, stderr bytes.Buffer // read only after done, which joins all writes
+	err            error
+}
+
+func alignmentStartHeldContender(t *testing.T, parent context.Context, f *alignmentFixture) *alignmentHeldContender {
+	t.Helper()
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(parent)
+	cmd := exec.CommandContext(ctx, exe, "--t20-profile-ready")
+	processx.ConfigureCancellation(cmd)
+	cmd.Env = []string{alignmentFixtureEnv + "=contender", "HOME=" + filepath.Join(f.root, "home"), "USERPROFILE=" + filepath.Join(f.root, "home"), "XDG_CONFIG_HOME=" + filepath.Join(f.root, "home"), "AGENT_ADAPTOR_LIVE_CONFORMANCE=0", "AGENT_ADAPTOR_E2E=0", "AGENT_ADAPTOR_UPDATE_API_GOLDEN=0", "GORACE=atexit_sleep_ms=0 halt_on_error=1"}
+	child := &alignmentHeldContender{cmd: cmd, cancel: cancel, lines: make(chan string, 2), done: make(chan struct{})}
+	child.stdin, err = cmd.StdinPipe()
+	if err != nil {
+		cancel()
+		t.Fatal(err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		child.stdin.Close()
+		cancel()
+		t.Fatal(err)
+	}
+	cmd.Stderr = &child.stderr
+	if err := cmd.Start(); err != nil {
+		child.stdin.Close()
+		stdout.Close()
+		cancel()
+		t.Fatal(err)
+	}
+	// Register before any readiness/ledger assertion can fail. There is exactly
+	// one Wait owner, which first drains stdout. Cleanup must observe its join.
+	t.Cleanup(func() {
+		if err := child.cleanup(); err != nil {
+			t.Error(err)
+			return
+		}
+		t.Logf("contender cleanup joined=true exit_code=%d wait_error_type=%T stdout_bytes=%d stderr_bytes=%d", cmd.ProcessState.ExitCode(), child.err, child.stdout.Len(), child.stderr.Len())
+	})
+	go func() {
+		defer close(child.done)
+		scanner := bufio.NewScanner(io.TeeReader(stdout, &child.stdout))
+		for scanner.Scan() {
+			select {
+			case child.lines <- scanner.Text():
+			case <-ctx.Done():
+			}
+		}
+		close(child.lines)
+		child.err = errors.Join(scanner.Err(), cmd.Wait())
+	}()
+	return child
+}
+
+func (c *alignmentHeldContender) cleanup() error {
+	c.stdin.Close()
+	c.cancel()
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+	select {
+	case <-c.done:
+		return nil // a killed child's exit status is expected during failure cleanup
+	case <-ctx.Done():
+		return errors.New("contender cleanup: child Wait did not finish within 4s")
+	}
+}
+
+func (c *alignmentHeldContender) wait(ctx context.Context) error {
+	select {
+	case <-c.done:
+		return c.err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func TestAlignmentLifecycleProfileCrashBarriers(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		ready, held  time.Duration
+		shared, exit bool
+		want         error
+		elapsed      time.Duration
+	}{
+		{"old-observation-before-ready", 2 * time.Second, 3 * time.Second, true, false, context.DeadlineExceeded, 4 * time.Second},
+		{"ready-before-observation", 2 * time.Second, 3 * time.Second, false, false, nil, 5 * time.Second},
+		{"ready-timeout", 5 * time.Second, 0, false, false, context.DeadlineExceeded, 4 * time.Second},
+		{"held-timeout", 0, 5 * time.Second, false, false, context.DeadlineExceeded, 4 * time.Second},
+		{"held-missing-on-exit", 0, 0, false, true, io.EOF, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+				defer cancel()
+				reader, writer := io.Pipe()
+				defer reader.Close()
+				lines := make(chan string, 2)
+				readDone := make(chan struct{})
+				go func() {
+					defer close(readDone)
+					defer close(lines)
+					scan := bufio.NewScanner(reader)
+					for scan.Scan() {
+						lines <- scan.Text()
+					}
+				}()
+				input := make(chan struct{}, 1)
+				childDone := make(chan struct{})
+				go func() {
+					defer close(childDone)
+					defer writer.Close()
+					wait := func(delay time.Duration) bool {
+						timer := time.NewTimer(delay)
+						defer timer.Stop()
+						select {
+						case <-timer.C:
+							return true
+						case <-ctx.Done():
+							return false
+						}
+					}
+					if !wait(tc.ready) {
+						return
+					}
+					fmt.Fprintln(writer, "ready")
+					select {
+					case <-input:
+					case <-ctx.Done():
+						return
+					}
+					if tc.exit || !wait(tc.held) {
+						return
+					}
+					fmt.Fprintln(writer, "held")
+				}()
+				parent := ctx
+				if tc.shared {
+					// Old f.wait began observing before contender initialization.
+					// Model its same 4s window without guessing real OS scheduling.
+					var stop context.CancelFunc
+					parent, stop = context.WithTimeout(ctx, 4*time.Second)
+					defer stop()
+				}
+				started := time.Now()
+				err := alignmentContenderHandshake(parent, lines, func() error { input <- struct{}{}; return nil })
+				elapsed := time.Since(started)
+				cancel()
+				<-childDone
+				<-readDone
+				if !errors.Is(err, tc.want) || elapsed != tc.elapsed {
+					t.Fatalf("handshake err=%v elapsed=%s; want %v/%s", err, elapsed, tc.want, tc.elapsed)
+				}
+			})
+		})
+	}
+}
+
+func TestAlignmentLifecycleProfileCrashChildCleanup(t *testing.T) {
+	for _, phase := range []string{"input-eof", "pending-input", "held-owner"} {
+		t.Run(phase, func(t *testing.T) {
+			f := newAlignmentFixture(t, "cursor")
+			ctx, cancel := alignmentContext(t)
+			defer cancel()
+			child := alignmentStartHeldContender(t, ctx, f)
+			if phase == "held-owner" {
+				if err := alignmentContenderHandshake(ctx, child.lines, func() error {
+					return json.NewEncoder(child.stdin).Encode(alignmentContenderInput{Common: f.common, Source: f.profile, Hold: true})
+				}); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := alignmentContenderReply(ctx, child.lines, "ready"); err != nil {
+				t.Fatal(err)
+			}
+			if phase == "input-eof" {
+				child.stdin.Close()
+				if err := alignmentContenderReply(ctx, child.lines, "held"); !errors.Is(err, io.EOF) {
+					t.Fatalf("missing held accepted: %v", err)
+				}
+			}
+			if err := child.cleanup(); err != nil {
+				t.Fatal(err)
+			}
+			join, release := context.WithTimeout(context.Background(), 4*time.Second)
+			defer release()
+			if err := child.wait(join); errors.Is(err, context.DeadlineExceeded) || (phase != "held-owner" && err == nil) {
+				t.Fatalf("failed child was not reaped: %v", err)
+			}
+			if child.cmd.ProcessState == nil || testutil.ProcessAlive(child.cmd.Process.Pid) {
+				t.Fatal("child remained live after Wait")
+			}
+			for _, entry := range f.logs(t) {
+				if entry.Kind == "start" && testutil.ProcessAlive(entry.PID) {
+					t.Fatal("provider remained live after contender cleanup")
+				}
+			}
+			if phase == "held-owner" && len(f.wait(t, "prompt", 1)) != 1 {
+				t.Fatal("held-owner fixture did not run exactly once")
+			}
+		})
 	}
 }
