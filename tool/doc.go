@@ -18,6 +18,17 @@
 // schemas maintained outside Go. Transport, endpoint authentication, and
 // runtime lifecycle are deliberately not part of this package's vocabulary.
 //
+// Output values may be any JSON type. Definition.Invoke returns the original
+// validated JSON. Hosted MCP catalogs retain explicit root object outputs.
+// Other output schemas use an object with a required result
+// property, and hosted structuredContent contains the complete original value
+// under result. This includes object values under union or unrestricted schemas.
+// The text content remains the original validated JSON in either case. The
+// transport applies no defaults and does not change local output validation.
+// At input/output wire schema roots, direct boolean property schemas use the
+// equivalent allOf form required by older clients; deeper schemas and data are
+// unchanged. Catalog fingerprints include the effective wire schemas.
+//
 // Invalid JSON, input schema mismatches, and Go input decoding failures stop
 // before the handler and match ErrInvalidInput. AsRejection also recognizes
 // their invalid_input code and safe correction: syntax failures ask for valid

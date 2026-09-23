@@ -214,7 +214,11 @@ func TestGatewayPreservesAllJSONOutputShapes(t *testing.T) {
 				t.Fatalf("result = %+v, %v", result, err)
 			}
 			want, _ := json.Marshal(tc.value)
-			got, err := json.Marshal(result.StructuredContent)
+			envelope, ok := result.StructuredContent.(map[string]any)
+			if !ok || len(envelope) != 1 {
+				t.Fatalf("unrestricted output has no result envelope: %#v", result.StructuredContent)
+			}
+			got, err := json.Marshal(envelope["result"])
 			if err != nil || string(got) != string(want) {
 				t.Fatalf("structured content = %s, %v; want %s", got, err, want)
 			}

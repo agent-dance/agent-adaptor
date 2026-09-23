@@ -276,14 +276,16 @@ func (r *Runtime) beginClose() {
 }
 
 type runtimeCatalog struct {
-	server *mcp.Server
-	byName map[string]tool.Definition
-	config gatewayConfig
+	server  *mcp.Server
+	byName  map[string]tool.Definition
+	outputs map[string]outputProjection
+	config  gatewayConfig
 }
 
 func newRuntimeCatalog(definitions []tool.Definition, config gatewayConfig) (catalog *runtimeCatalog, fingerprint string, err error) {
 	descriptors := make([]tool.Descriptor, 0, len(definitions))
 	byName := make(map[string]tool.Definition, len(definitions))
+	outputs := make(map[string]outputProjection, len(definitions))
 	for index, definition := range definitions {
 		if definition == nil {
 			return nil, "", fmt.Errorf("%w: nil definition at index %d", ErrInvalidCatalog, index)
@@ -295,6 +297,19 @@ func newRuntimeCatalog(definitions []tool.Definition, config gatewayConfig) (cat
 		if _, exists := byName[descriptor.Name]; exists {
 			return nil, "", fmt.Errorf("%w: duplicate tool name %q", ErrInvalidCatalog, descriptor.Name)
 		}
+		input, inputErr := projectObjectProperties(descriptor.InputSchemaJSON)
+		if inputErr != nil {
+			return nil, "", inputErr
+		}
+		projection, projectionErr := projectOutput(descriptor.OutputSchemaJSON)
+		if projectionErr != nil {
+			return nil, "", projectionErr
+		}
+		outputs[descriptor.Name] = projection
+		// The resolved catalog fingerprint covers the schema actually exposed
+		// to clients. Definition.Descriptor remains the original public schema.
+		descriptor.InputSchemaJSON = input
+		descriptor.OutputSchemaJSON = projection.schema
 		descriptors = append(descriptors, descriptor)
 		byName[descriptor.Name] = definition
 	}
@@ -319,7 +334,7 @@ func newRuntimeCatalog(definitions []tool.Definition, config gatewayConfig) (cat
 			Capabilities: &mcp.ServerCapabilities{Tools: &mcp.ToolCapabilities{}},
 		},
 	)
-	catalog = &runtimeCatalog{server: server, byName: byName, config: config}
+	catalog = &runtimeCatalog{server: server, byName: byName, outputs: outputs, config: config}
 	for _, descriptor := range descriptors {
 		definition := &mcp.Tool{
 			Name:         descriptor.Name,
@@ -437,7 +452,7 @@ func (c *runtimeCatalog) handler(name string) mcp.ToolHandler {
 		}
 		return &mcp.CallToolResult{
 			Content:           []mcp.Content{&mcp.TextContent{Text: string(out)}},
-			StructuredContent: json.RawMessage(slices.Clone(out)),
+			StructuredContent: c.outputs[name].structured(out),
 		}, nil
 	}
 }
