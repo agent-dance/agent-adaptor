@@ -157,11 +157,18 @@ func alignmentLiveSessionID(t *testing.T, result *adaptor.Result, want string) {
 	}
 }
 
+func alignmentLiveCodeBuddyColdConfig(t *testing.T, workspace string) (Config, string) {
+	t.Helper()
+	auth := isolatedLiveAuth(t)
+	return Config{CommonConfig: CommonConfig{Command: codebuddyCLIName(), CWD: workspace, Env: auth.bindings()}, Model: liveModel()}, auth.profile
+}
+
 func TestAlignmentLiveCodeBuddyDedicatedToolsResumeAfterClose(t *testing.T) {
 	requireCodeBuddyCLI(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
-	source, workspace, home := isolatedConfigDir(t), t.TempDir(), t.TempDir()
+	workspace := t.TempDir()
+	cfg, source := alignmentLiveCodeBuddyColdConfig(t, workspace)
 	store := memory.NewStore()
 	identity := adaptor.Identity{ID: "alignment-codebuddy", Tenant: "r017", Profile: "cold-resume", Name: "acceptance"}
 	key := "alignment/live/dedicated-after-close"
@@ -191,9 +198,6 @@ func TestAlignmentLiveCodeBuddyDedicatedToolsResumeAfterClose(t *testing.T) {
 		wrongCalls++
 		return "UNEXPECTED_PHASE", nil
 	}, tool.ReadOnly(), tool.Revision("alignment-cold-resume/v1"))
-	cfg := Config{CommonConfig: CommonConfig{Command: codebuddyCLIName(), CWD: workspace, Env: []driver.EnvBinding{
-		{Name: "HOME", Value: home}, {Name: "USERPROFILE", Value: home}, {Name: "XDG_CONFIG_HOME", Value: filepath.Join(home, "xdg")},
-	}}, Model: liveModel()}
 	makeAgent := func() (*adaptor.Agent, *alignmentLiveDriverProbe) {
 		probe := &alignmentLiveDriverProbe{configuredDriver: Driver(cfg).(configuredDriver)}
 		a := adaptor.New(probe, adaptor.WithWorkspace(workspace), adaptor.WithThreadStore(store), adaptor.WithIdentity(identity), adaptor.WithProfile(profile.Dedicated(source)), adaptor.WithTools(definition), adaptor.WithPolicy(livePolicyHeadless), adaptor.WithBlockingEvents())

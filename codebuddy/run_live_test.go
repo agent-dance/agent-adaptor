@@ -17,7 +17,6 @@ import (
 	"time"
 
 	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/memory"
 )
 
@@ -28,15 +27,26 @@ func requireCodeBuddyCLI(t *testing.T) {
 	if os.Getenv("AGENT_ADAPTOR_LIVE_CONFORMANCE") != "1" {
 		t.Skip("set AGENT_ADAPTOR_LIVE_CONFORMANCE=1 in addition to -tags codebuddy_live")
 	}
+	seed, err := codeBuddyLiveSeedFromEnv(os.Getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := codeBuddyLiveAuthFiles(seed); err != nil {
+		t.Fatalf("validate explicit live authentication before CLI: %v", err)
+	}
 	if _, err := exec.LookPath(codebuddyCLIName()); err != nil {
 		t.Fatalf("required live CLI %s unavailable", codebuddyCLIName())
 	}
-	root := t.TempDir()
+	home := newCodeBuddyLiveHome(t)
+	root := home.home
 	for _, flag := range []string{"--version", "--help"} {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		cmd := exec.CommandContext(ctx, codebuddyCLIName(), flag)
 		cmd.Dir = root
-		cmd.Env = append(os.Environ(), "HOME="+root, "USERPROFILE="+root, "CODEBUDDY_CONFIG_DIR="+filepath.Join(root, "profile"))
+		cmd.Env = os.Environ()
+		for _, binding := range home.bindings() {
+			cmd.Env = append(cmd.Env, binding.Name+"="+binding.Value)
+		}
 		output, err := cmd.Output()
 		cancel()
 		if err != nil {
@@ -52,38 +62,29 @@ func requireCodeBuddyCLI(t *testing.T) {
 
 func liveModel() string { return "glm-5.2-ioa" }
 
-// isolatedConfigDir copies only login material. In particular it omits
-// mcp.json so live conformance never depends on an operator's MCP servers.
-func isolatedConfigDir(t *testing.T) string {
+// isolatedLiveAuth copies only explicitly supplied login material. Native
+// storage belongs to the same private HOME actually passed to the provider.
+func isolatedLiveAuth(t *testing.T) *codeBuddyLiveHome {
 	t.Helper()
-	dir := t.TempDir()
-	source := os.Getenv("CODEBUDDY_CONFIG_DIR_SOURCE")
-	if !filepath.IsAbs(source) {
-		t.Fatal("live tests require an explicit absolute CODEBUDDY_CONFIG_DIR_SOURCE authentication fixture")
+	seed, err := codeBuddyLiveSeedFromEnv(os.Getenv)
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	for _, name := range []string{".credentials.json", "credentials.json"} {
-		payload, readErr := os.ReadFile(filepath.Join(source, name))
-		if readErr != nil {
-			continue
-		}
-		if writeErr := os.WriteFile(filepath.Join(dir, name), payload, 0o600); writeErr != nil {
-			t.Fatalf("copy explicit live authentication fixture: %v", writeErr)
-		}
+	home := newCodeBuddyLiveHome(t)
+	if err := home.seed(seed); err != nil {
+		t.Fatalf("prepare explicit live authentication fixture: %v", err)
 	}
-	return dir
+	return home
 }
 
 func newLiveAgent(t *testing.T, cwd string, planMode bool, opts ...adaptor.Option) *adaptor.Agent {
 	t.Helper()
+	home := isolatedLiveAuth(t)
 	cfg := Config{
 		CommonConfig: CommonConfig{
 			Command: codebuddyCLIName(),
 			CWD:     cwd,
-			Env: []driver.EnvBinding{
-				{Name: "CODEBUDDY_CONFIG_DIR", Value: isolatedConfigDir(t)},
-				{Name: "HOME", Value: t.TempDir()}, {Name: "USERPROFILE", Value: t.TempDir()},
-			},
+			Env:     home.bindings(),
 		},
 		Model: liveModel(),
 	}

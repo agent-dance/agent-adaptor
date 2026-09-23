@@ -75,6 +75,17 @@ func profileResourceByKind(snapshot engine.ProfileSnapshot, kind engine.ProfileR
 	return engine.ResourceSnapshot{}, false
 }
 
+func codebuddyConformanceConfig(t *testing.T, live bool, home, workspace string) Config {
+	t.Helper()
+	cfg := Config{Model: "claude-sonnet-5"}
+	cfg.CWD = workspace
+	cfg.Env = []driver.EnvBinding{{Name: "HOME", Value: home}, {Name: "USERPROFILE", Value: home}, {Name: "CODEBUDDY_CONFIG_DIR", Value: filepath.Join(home, "profile")}}
+	if live {
+		cfg.Env = codebuddyConformanceAuth(t).bindings()
+	}
+	return cfg
+}
+
 // TestCodeBuddyDriverConformance runs the SPI conformance suite against the
 // codebuddy.Driver constructor. Hermetic clauses always run against an
 // isolated temp HOME; live clauses are gated by codebuddyLiveGate.
@@ -86,15 +97,9 @@ func TestCodeBuddyDriverConformance(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cfg := Config{Model: "claude-sonnet-5"}
-	cfg.CWD = workspace
 	// Both branches execute against private profile/workspace roots. The live
 	// tag helper copies only explicitly supplied authentication material.
-	profileDir := filepath.Join(home, "profile")
-	if live {
-		profileDir = codebuddyConformanceProfile(t)
-	}
-	cfg.Env = []driver.EnvBinding{{Name: "HOME", Value: home}, {Name: "USERPROFILE", Value: home}, {Name: "CODEBUDDY_CONFIG_DIR", Value: profileDir}}
+	cfg := codebuddyConformanceConfig(t, live, home, workspace)
 
 	opts := []adaptertest.Option{
 		adaptertest.WithConfig(cfg),

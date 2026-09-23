@@ -16,4 +16,7 @@ func codebuddyLiveGate(t *testing.T) (bool, adaptertest.Option) {
 	requireCodeBuddyCLI(t)
 	return true, adaptertest.WithLiveRun("")
 }
-func codebuddyConformanceProfile(t *testing.T) string { t.Helper(); return isolatedConfigDir(t) }
+func codebuddyConformanceAuth(t *testing.T) *codeBuddyLiveHome {
+	t.Helper()
+	return isolatedLiveAuth(t)
+}

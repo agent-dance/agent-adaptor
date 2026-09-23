@@ -11,4 +11,7 @@ func codebuddyLiveGate(t *testing.T) (bool, adaptertest.Option) {
 	t.Helper()
 	return false, adaptertest.SkipLiveRun("requires codebuddy_live build tag and AGENT_ADAPTOR_LIVE_CONFORMANCE=1")
 }
-func codebuddyConformanceProfile(t *testing.T) string { t.Helper(); return t.TempDir() }
+func codebuddyConformanceAuth(t *testing.T) *codeBuddyLiveHome {
+	t.Helper()
+	return newCodeBuddyLiveHome(t)
+}
