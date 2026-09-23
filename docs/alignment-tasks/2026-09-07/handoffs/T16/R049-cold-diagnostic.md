@@ -32,6 +32,13 @@ missing/ambiguous IDs, identical-call replay, error item counts, and sensitive
 sentinels excluded from bounded output. These counterexamples establish the
 diagnostic's discrimination, not the cause of the historical live failure.
 
+Independent review of `03a7fbb` found that a trailing empty tool name incorrectly
+classified an already ambiguous ID as unmatched. The follow-up preserves the
+sticky conflict before checking an empty last name. Regression cases retain
+both name orders, conflict followed by empty/probe, and repeated empty names;
+none attributes an ambiguous result to the probe. The original review and
+author reproduction failures remain archived alongside the new checks.
+
 Validation uses Go 1.27.1, private HOME, offline dependencies, all three live/E2E/
 golden gates zero, and an external watchdog: original T16 package count1 and
 Alignment race5, tagged diagnostic race1, tagged vet, and the original cold

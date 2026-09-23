@@ -190,10 +190,10 @@ func alignmentColdFirstTurnDiagnostic(callbacks int32, text, nonce string, trans
 		id := key(item)
 		name, known := names[id]
 		switch {
+		case item.ToolUseID != "" && known && ambiguous[id]:
+			facts.AmbiguousResults++
 		case item.ToolUseID == "" || !known || name == "":
 			facts.UnmatchedResults++
-		case ambiguous[id]:
-			facts.AmbiguousResults++
 		case name == probe:
 			facts.ProbeResults++
 			if item.IsError {

@@ -107,3 +107,34 @@ func TestAlignmentColdFirstTurnDiagnosticClosedOutput(t *testing.T) {
 		}
 	}
 }
+
+func TestAlignmentColdFirstTurnDiagnosticStickyAmbiguity(t *testing.T) {
+	probe := toolidentity.ServerKey + "/alignment_cold_probe"
+	for _, tc := range []struct {
+		name      string
+		names     []string
+		ambiguous bool
+	}{
+		{"empty-last", []string{probe, ""}, true},
+		{"empty-first", []string{"", probe}, true},
+		{"conflict-then-empty", []string{probe, "other", ""}, true},
+		{"conflict-then-probe", []string{probe, "other", probe}, true},
+		{"only-empty", []string{"", ""}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var items []adaptor.TranscriptItem
+			for _, name := range tc.names {
+				items = append(items, adaptor.TranscriptItem{Kind: driver.TranscriptToolCall, ToolUseID: "fixed-id", ToolName: name})
+			}
+			items = append(items, adaptor.TranscriptItem{Kind: driver.TranscriptToolResult, ToolUseID: "fixed-id"})
+			got := alignmentColdFirstTurnDiagnostic(1, "marker", "marker", items)
+			wantAmbiguous, wantUnmatched := 0, 1
+			if tc.ambiguous {
+				wantAmbiguous, wantUnmatched = 1, 0
+			}
+			if got.ProbeResults != 0 || got.AmbiguousResults != wantAmbiguous || got.UnmatchedResults != wantUnmatched {
+				t.Fatalf("name replay changed association classification: %+v", got)
+			}
+		})
+	}
+}
