@@ -321,10 +321,7 @@ func (p *parser) handleUserMessage(message, wrapper map[string]any) {
 			p.observeToolResult(block, wrapper)
 			id := topString(block, "tool_use_id")
 			text := resultText(block["content"])
-			isError := false
-			if v, ok := block["is_error"].(bool); ok {
-				isError = v
-			}
+			isError, _ := codeBuddyToolResultError(block)
 			if p.stream != nil {
 				p.stream.handleUserToolResult(block, wrapper)
 			}

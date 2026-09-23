@@ -210,16 +210,10 @@ func (p *parser) observeToolResult(block, wrapper map[string]any) {
 		}
 		return
 	}
-	// A malformed success flag cannot certify execution. Absence is the
-	// ToolResultBlock protocol's default false; explicit wrong types are invalid.
-	failed := false
-	if value, exists := block["is_error"]; exists {
-		var ok bool
-		failed, ok = value.(bool)
-		if !ok {
-			p.observationNotice("observation_result_invalid")
-			return
-		}
+	failed, valid := codeBuddyToolResultError(block)
+	if !valid {
+		p.observationNotice("observation_result_invalid")
+		return
 	}
 	if !validObservedToolContent(block["content"]) {
 		p.observationNotice("observation_result_invalid")
@@ -239,6 +233,29 @@ func (p *parser) observeToolResult(block, wrapper map[string]any) {
 		p.confirmTodo(id, call, block)
 	}
 }
+
+// codeBuddyToolResultError reads the two explicit stream-json error flags.
+// CodeBuddy's DeferExecuteTool preserves MCP isError in _meta.rawResponse even
+// when its completed function-call wrapper has is_error=false. Either true
+// flag signals a tool error; it does not determine the enclosing run outcome.
+// Absent flags default false. Opaque metadata stays opaque, while an explicitly
+// present non-boolean flag cannot certify an observed capability result.
+func codeBuddyToolResultError(block map[string]any) (failed, valid bool) {
+	valid = true
+	if value, exists := block["is_error"]; exists {
+		flag, ok := value.(bool)
+		failed, valid = flag, ok
+	}
+	meta, _ := block["_meta"].(map[string]any)
+	raw, _ := meta["rawResponse"].(map[string]any)
+	if value, exists := raw["is_error"]; exists {
+		flag, ok := value.(bool)
+		failed = failed || flag
+		valid = valid && ok
+	}
+	return failed, valid
+}
+
 func (p *parser) closeObservations() {
 	o := p.observation
 	if o == nil {

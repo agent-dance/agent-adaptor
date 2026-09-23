@@ -464,10 +464,7 @@ func (s *streamingState) handleUserToolResult(block, wrapper map[string]any) {
 	}
 	id := topString(block, "tool_use_id")
 	text := resultText(block["content"])
-	isError := false
-	if v, ok := block["is_error"].(bool); ok {
-		isError = v
-	}
+	isError, _ := codeBuddyToolResultError(block)
 	pl := s.basePayload()
 	pl.Kind = driver.StreamToolCallResult
 	pl.ToolCallID = id
