@@ -18,6 +18,7 @@ import (
 
 	adaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/capability"
+	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/internal/toolidentity"
 	"github.com/agent-dance/agent-adaptor/memory"
 	"github.com/agent-dance/agent-adaptor/profile"
@@ -67,6 +68,7 @@ func TestAlignmentLiveDedicatedToolResumeAfterClose(t *testing.T) {
 	nonce := alignmentNonce(t)
 	first := alignmentColdTurn(t, ctx, a.Thread(key), "Call alignment_cold_probe exactly once. Remember this conversation marker: "+nonce+". Do not write it to any file or use shell tools. Reply only with the marker.")
 	if calls.Load() != 1 || strings.TrimSpace(first.Text) != nonce {
+		t.Logf(alignmentColdFirstTurnDiagnosticFormat, alignmentColdFirstTurnDiagnostic(calls.Load(), first.Text, nonce, first.Transcript()))
 		t.Fatal("first turn did not actually call the tool and acknowledge the nonce")
 	}
 	checkpoint, err := a.Thread(key).Checkpoint(ctx)
@@ -133,6 +135,73 @@ func TestAlignmentLiveDedicatedToolResumeAfterClose(t *testing.T) {
 		t.Fatal("resumed provider did not append to the original native session")
 	}
 	t.Log("real cold-resume oracle: two tool calls, retained native rollout, same session, closed old listener and rotated endpoint/credential carrier")
+}
+
+const alignmentColdFirstTurnDiagnosticFormat = "cold first-turn diagnostic: %+v"
+
+// This failure-only projection contains no provider text, IDs, or tool payloads.
+// Counts describe transcript items, not deduplicated executions or callbacks.
+type alignmentColdFirstTurnFacts struct {
+	Callbacks                                                                 int32
+	TextExact, TrimmedExact, NonceContained                                   bool
+	TextBytes, TrimmedBytes                                                   int
+	ToolCalls, ProbeCalls, ToolResults, ToolErrors, ProbeResults, ProbeErrors int
+	UnmatchedResults, AmbiguousResults                                        int
+}
+
+func alignmentColdFirstTurnDiagnostic(callbacks int32, text, nonce string, transcript []adaptor.TranscriptItem) alignmentColdFirstTurnFacts {
+	trimmed := strings.TrimSpace(text)
+	facts := alignmentColdFirstTurnFacts{
+		Callbacks: callbacks, TextExact: text == nonce, TrimmedExact: trimmed == nonce,
+		NonceContained: strings.Contains(text, nonce), TextBytes: len(text), TrimmedBytes: len(trimmed),
+	}
+	probe := toolidentity.ServerKey + "/alignment_cold_probe"
+	// Use all formal scope coordinates. A missing ID or conflicting name cannot
+	// attribute a result to the probe; no content or Raw parsing is involved.
+	key := func(item adaptor.TranscriptItem) [4]string {
+		return [4]string{item.ScopeID, item.ParentScopeID, item.ParentToolCallID, item.ToolUseID}
+	}
+	names := make(map[[4]string]string)
+	ambiguous := make(map[[4]string]bool)
+	for _, item := range transcript {
+		if item.Kind != driver.TranscriptToolCall {
+			continue
+		}
+		facts.ToolCalls++
+		if item.ToolName == probe {
+			facts.ProbeCalls++
+		}
+		if item.ToolUseID != "" {
+			id := key(item)
+			if old, ok := names[id]; ok && old != item.ToolName {
+				ambiguous[id] = true
+			}
+			names[id] = item.ToolName
+		}
+	}
+	for _, item := range transcript {
+		if item.Kind != driver.TranscriptToolResult {
+			continue
+		}
+		facts.ToolResults++
+		if item.IsError {
+			facts.ToolErrors++
+		}
+		id := key(item)
+		name, known := names[id]
+		switch {
+		case item.ToolUseID == "" || !known || name == "":
+			facts.UnmatchedResults++
+		case ambiguous[id]:
+			facts.AmbiguousResults++
+		case name == probe:
+			facts.ProbeResults++
+			if item.IsError {
+				facts.ProbeErrors++
+			}
+		}
+	}
+	return facts
 }
 
 func alignmentColdTurn(t *testing.T, ctx context.Context, thread *adaptor.Thread, prompt string) *adaptor.Result {
