@@ -145,3 +145,52 @@ closed-field support and source pin are reviewed separately; rejected historical
 values cannot be recovered or fabricated. Implementation acceptance does not
 replace the original full G05, all same-source B06 checks or G06. No merge or
 tag is authorized by this handoff.
+
+## R050: CodeBuddy formal tool-result errors
+
+T15 implementation c48b0455954f0cfdd20986e093f4f79a4b2dcfa8 passed all four
+original commands and scoped vet. The first full package invocation hit the
+sandbox's loopback-listener restriction; its log is retained separately from
+the unchanged command's successful run with local loopback permitted.
+Independent review reproduced the defect on 42b1127 and passed eight controls
+on the candidate, including all three result projections, confirmed Todo
+preservation, scope and replay boundaries, terminal data and checkpoint health.
+The review also checked the central godoc against the final implementation.
+
+The private reader combines the two exact boolean error fields. Unknown
+metadata stays opaque; malformed recognized flags cannot certify capability
+completion. Neither tool-body text nor error-code strings become production
+failure signals, and a tool failure does not replace the enclosing run outcome.
+There is no new public API or dependency. Original author and independent
+fixture failures remain archived with their corrections distinguished.
+
+This implementation acceptance does not establish the cause of the live
+catalog's zero callbacks. The separately reviewed single catalog diagnostic
+retains the original fixture and is not an original T28 matrix or G06 result.
+Revision49 adds only the new test and amendment to the G05 acceptance scope;
+all original tasks, requirements, dependencies and commands remain. The final
+integrated source still requires complete G05 and all B06 checks at one SHA.
+
+## R051: hosted MCP output compatibility
+
+T02 implementation ac49a369490f1f3ab50dc19a05655df0afb15930 passed the
+three original commands (168 package, 168 race and 1,385 root tests), with
+no failures or skips, plus scoped vet. Independent review passed 13 tests,
+verified the six changed paths and 68 author artifacts, and accepted all
+42 actual HTTP responses using the pinned official CodeBuddy parser.
+Both historical scalar response failures remain reproducible controls.
+
+The private MCP projection preserves public Tool values, descriptors and local
+validation. Explicit object values remain unwrapped; direct boolean property
+schemas use equivalent object applicators only at the input/output declaration
+boundary. Other outputs use a fixed result envelope with their original JSON
+text and byte budget. Schema resource boundaries preserve references, anchors
+and exact numbers, and the effective wire schemas enter the existing catalog
+fingerprint. There is no new public API or dependency.
+
+Revision50 adds the exact implementation, test, godoc, handoff and amendment
+paths to G05 ownership. The supplemental report does not claim the original
+T02/G00 predecessor check; that canonical report remains unchanged. Controlled
+protocol evidence establishes compatibility defects, not a recorded live
+handshake version or successful recovery. The final integrated source still
+requires all original G05 and B06 checks at one SHA before G06 can pass.

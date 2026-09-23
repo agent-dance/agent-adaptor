@@ -434,6 +434,10 @@ R048：CodeBuddy live 必须区分显式 env 认证和原生登录副本。原�
 
 R049：原生认证夹具的 Windows 目录 pin 不应申请多余 DELETE access，从而保留普通 provider ReadDir 与 pin 共存；禁止 delete-sharing、创建时 owner/DACL、原字节和凭据刷新仍保持。两原生版本以有/无 DELETE 受控实验验机制，旧复合断言未打印 err/entries 不倒填。Codex 首轮 nonce/tool-count 及 CodeBuddy catalog exact VERIFY 失败只补闭集 bool/int 诊断，不改 prompt/model/oracle/预算，不把 exact-match counter 当全部 callback。外部收集器精确支持既有 resume_resources 与新增安全诊断，非法字段仍拒绝，旧 rejected 日志不改写。原失败、全部原命令及新 S G05/B06/G06 保持。
 
+R050：CodeBuddy 正式 tool_result 的 _meta.rawResponse.is_error=true 是外层 is_error 之外的明确工具失败信号，Capability、Transcript、typed ToolResult 必须一致；内层 false 不覆盖外层 true。不从正文、errorcode 或任意递归猜失败，未知元数据不升级整轮失败，单工具失败不改写独立 terminal/checkpoint 判定。原畸形标记、scope、exactly-once 和 Todo 成功确认保护保持。官方内部拒绝在 stdout 可能缺失结构错误标记，定向诊断的正文模板分类不能进入生产 parser；inline/deferred 机制与实际 live 归因须以本轮证据区分。42b1127 旧失败和全部原同 SHA 门禁保留，修复后新 S 完整重验。
+
+R051：WithTools 的 MCP wire 必须兼容要求对象输出的正式客户端。旧客户端可接受的显式根 type=object 保留原 schema、structuredContent、Text 与既有指纹；input/output schema 根的直接 properties 若含 boolean 子 schema，只在该已知 schema 位置等价封装为对象，原对象结果不变；其余合法 JSON 输出在私有 transport 中使用固定 result 对象封装，原 Definition/Descriptor、输出校验、MCP TextContent 的原 JSON 字节和原值大小预算保持。Boolean schema、union、local refs、$defs、$id 和 anchors 不能因嵌套丢失语义，也不能递归改写 const/default/examples 中的用户数据；实际 wire input/output schema 进入兼容 fingerprint。失败、取消、callback、生命周期与健康 checkpoint 不变。原 T02 窄域修复，非作者用实际 HTTP wire 和官方 CodeBuddy parser 复验；受控旧协议反例不倒填 live 握手版本或未记录的内部异常。旧 catalog deadline、单次诊断和全部同 SHA 门禁保持，修复后的新 S 完整 G05/B06/G06 才可支持合入。
+
 ## 15. 发布门禁
 
 发布前必须全部满足：

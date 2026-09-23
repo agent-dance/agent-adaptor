@@ -53,6 +53,16 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- Make hosted Tool output schemas and structured results compatible with MCP
+  clients that require objects. Non-object outputs use a private `result`
+  envelope while retaining their original text, local validation and supported
+  JSON values; existing object result values stay unwrapped. Boolean property
+  schemas are adapted at the MCP input/output declaration boundary as well.
+
+- Preserve CodeBuddy MCP tool failures reported in formal result metadata across
+  capability events, transcripts and typed tool results, without changing the
+  independent final run or checkpoint outcome.
+
 - Keep Windows native-auth fixture directory pins compatible with ordinary
   provider directory reads while preserving protected creation, rename
   protection and credential-file refresh. Split live failure diagnostics into

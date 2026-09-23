@@ -618,6 +618,13 @@ agent := adaptor.New(driver, adaptor.WithTools(lookup))
 
 Input and output schemas are inferred from the Go types and their tags by default; `tool.InputSchemaJSON` and `tool.OutputSchemaJSON` are the standard JSON Schema escape hatch. `tool.Reject(code, message)` reports an expected failure that is safe to show the model; `tool.AsRejection` recognizes only those package-minted errors, while ordinary or lookalike errors and panics are sanitized. `WithTools` is construction-only, and the last option replaces the previous set as a whole. Every Tool used with a Thread must provide a stable `Revision` that is updated whenever its behavioral semantics change. The Agent delivers these Tools internally through an authenticated loopback MCP runtime with a per-Agent token and unpredictable credential env name; aliasing that env name from another MCP declaration fails before Driver launch. Built-in Drivers use an SDK-owned isolated execution profile so that concurrent host processes never rewrite the same native profile. None of these mechanisms enter the caller-facing API. For the complete contract see [`tools.md`](./tools.md).
 
+Hosted MCP tools keep explicit object result values unchanged. Other output
+schemas use a `result` object envelope in MCP structured
+content, preserving their original JSON in text content. `Definition.Invoke`,
+the public descriptor and local validation continue to describe the original
+value. Boolean property schemas use equivalent objects at the MCP declaration
+boundary; effective wire input/output schemas participate in Thread compatibility.
+
 ### 11.2 skill
 
 Common constructors:

@@ -95,6 +95,16 @@
 // original wrapper and arguments. Unknown, nested or malformed envelopes do
 // not establish capability execution, and host callbacks are not protocol proof.
 //
+// Tool result errors also include CodeBuddy's formal
+// tool_result._meta.rawResponse.is_error boolean. With well-typed flags, a true
+// outer or nested flag consistently marks the capability, transcript and typed
+// tool result as failed; a nested false cannot clear an outer error. A malformed
+// recognized flag leaves capability observation unresolved and emits a notice;
+// transcript and tool events retain any independently observed true flag.
+// Unknown metadata, text and error-code lookalikes do not establish failure.
+// A failed tool alone does not replace the independent final result or
+// checkpoint health decision.
+//
 // CodeBuddy 2.137.1 TodoWrite confirms newTodos only after its official success
 // result. TaskCreate/TaskUpdate/TaskList prefer tool_result._meta.rawResponse's
 // full todos list and real task IDs. Without task/todos, TaskUpdate requires

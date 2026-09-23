@@ -66,7 +66,22 @@ Inputs are validated before the handler runs, and outputs are validated before
 they cross the provider boundary.
 
 Direct `Definition.Invoke` and hosted MCP calls share the same Tool validation.
-The transport preserves validated JSON and does not apply schema defaults.
+`Definition.Invoke` returns the original validated JSON. Hosted MCP calls preserve
+that JSON in their text content and do not apply schema defaults. When the output
+schema explicitly declares a root `type: "object"`, structured content also
+retains the original value. Other output schemas use an
+MCP object envelope: `structuredContent` contains `{"result": <original value>}`,
+and its advertised output schema describes that envelope. This keeps scalar,
+array, nullable and unrestricted outputs usable by clients that require object
+results, without changing the handler or its local validation. At the MCP declaration boundary, boolean schemas
+in an input or output schema
+root's direct `properties` map use equivalent `allOf` object schemas for older
+clients. Other compatible declarations retain their original bytes. Schema
+references retain their original resource scope; the effective wire schemas
+participate in
+Thread compatibility checks. The output size limit still applies to the original
+validated JSON, with a fixed, bounded envelope overhead.
+
 A schema `default` is descriptive; omitted fields follow the Go input type.
 Omitted MCP arguments behave like `{}`; explicit `null` is invalid for an
 object input.
