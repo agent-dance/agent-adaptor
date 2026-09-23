@@ -108,3 +108,40 @@ creation, owner/DACL, directory pins and refresh replacement must pass on both
 native Windows versions. The root's separate native diagnostic passed, but the
 old full-matrix failures remain historical. This committed source still needs
 all original G05 and B06 checks at its new exact SHA, followed by G06, before PR.
+
+## R049: native fixture reads and bounded live diagnostics
+
+T15 Windows fixture implementation d8cc4dff81e7e89d02c316012828f79709bf4f73
+passed its four original checks, scoped vet, tagged fixture race and Windows
+compilation. Independent review accepted the directory-access correction:
+ordinary directory reads can coexist with the held pin, while delete sharing
+remains prohibited. Protected creation, owner/DACL, source isolation, private
+credential refresh and cleanup remain required. The two original native Windows
+failures did not print their ReadDir error or entries; this mechanism evidence
+does not reconstruct either historical run. Both Windows versions still need
+the original complete native jobs at the final source.
+
+T15 catalog diagnostics 24f9e8d3e4f397210ae4111726b7ac8f497b6ded passed all four
+original checks, scoped vet and tagged diagnostic race, and independent review
+verified the original fixture after undoing only diagnostic additions. Total
+callback entries and exact VERIFY matches remain distinct. Formal deferred-tool
+parameters yield only closed type/equality booleans for the exact hosted tool;
+raw parameters, text and identifiers are not printed. The old catalog failure
+still has no established cause.
+
+T16 diagnostics 03a7fbbe409f71be871174f53c2e571bc74dcbfb initially failed an
+independent ambiguity counterexample. Descendant 5d110610d170366ca9438d1a1f8f4f8146aad9fb
+keeps conflicting formal tool associations ambiguous even when a later name is
+empty. The unchanged independent cases now pass (seven named tests); original
+package/race checks pass (722/2390 named tests), with 16 diagnostic race passes
+and successful tagged vet. Historical disabled-live skips remain disabled-gate
+evidence only. The original compound guard, failure, prompt, model and timeout
+are unchanged, and the former live failure is not attributed retrospectively.
+
+Revision48 adds the two exact Codex diagnostic paths and this amendment to the
+G05 scope, retaining all 47 tasks, 96 requirements, 45 history dispositions,
+nine direct dependencies and original commands. The external v6 collector's
+closed-field support and source pin are reviewed separately; rejected historical
+values cannot be recovered or fabricated. Implementation acceptance does not
+replace the original full G05, all same-source B06 checks or G06. No merge or
+tag is authorized by this handoff.

@@ -432,6 +432,8 @@ R047：CodeBuddy 2.155.0 官方 loader 会跳过不安全 native agent name；�
 
 R048：CodeBuddy live 必须区分显式 env 认证和原生登录副本。原生会话位于实际 HOME 的平台 auth 路径，不能用 CONFIG_DIR 中的 legacy 文件或 access-token 投影冒充完整登录态；保留完整 opaque bytes 和官方刷新语义，拒绝竞争认证覆盖，不复制业务 profile。三个实际执行分支使用同一私有准备合同，缺失/不安全输入在 CLI 前失败，禁用门不读凭据。副本写入前受保护，Windows owner/DACL 与合法凭据刷新须有原生证据，源文件不动、Agent 退出后清理。单次 native 诊断成功与原矩阵分开，旧401/cold/catalog失败不倒填根因；新S仍须全部原G05/B06/G06。
 
+R049：原生认证夹具的 Windows 目录 pin 不应申请多余 DELETE access，从而保留普通 provider ReadDir 与 pin 共存；禁止 delete-sharing、创建时 owner/DACL、原字节和凭据刷新仍保持。两原生版本以有/无 DELETE 受控实验验机制，旧复合断言未打印 err/entries 不倒填。Codex 首轮 nonce/tool-count 及 CodeBuddy catalog exact VERIFY 失败只补闭集 bool/int 诊断，不改 prompt/model/oracle/预算，不把 exact-match counter 当全部 callback。外部收集器精确支持既有 resume_resources 与新增安全诊断，非法字段仍拒绝，旧 rejected 日志不改写。原失败、全部原命令及新 S G05/B06/G06 保持。
+
 ## 15. 发布门禁
 
 发布前必须全部满足：

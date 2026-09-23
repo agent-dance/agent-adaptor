@@ -53,6 +53,11 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- Keep Windows native-auth fixture directory pins compatible with ordinary
+  provider directory reads while preserving protected creation, rename
+  protection and credential-file refresh. Split live failure diagnostics into
+  safe counts and predicates without changing their acceptance criteria.
+
 - Preserve the complete native CodeBuddy login record in the actual private
   HOME used by live Agent, cold-resume and conformance fixtures. Explicit
   authentication inputs fail clearly when missing or conflicting; native
