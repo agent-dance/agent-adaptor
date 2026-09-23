@@ -89,3 +89,22 @@ exact-text or catalog deadline failures. The subsequent cold diagnostic failed
 in the first request with literal authentication/401 mentions before resume.
 Original failures and all prior S evidence remain immutable. This new source
 still requires its own G05, all platform/live checks and G06 before PR delivery.
+
+## R048: CodeBuddy native login fixtures
+
+T15 implementation at cf4ac972ecb5b6bf3a1fe5ac8b635b455735712b passed all four
+original commands, scoped vet and the tagged fake fixture race suite. Independent
+review accepted the actual Agent, cold-successor and conformance call sites,
+with 12 named passes and two expected disabled-gate skips. Native login bytes
+are copied intact into the private HOME used by execution; active conflicting
+authentication overrides and unsafe or missing sources fail before CLI preflight.
+Source credentials remain read-only, provider refresh can replace its private
+file, and cleanup follows Agent lifetime. No production authentication, public
+API, model, prompt, live oracle or budget changed.
+
+Central revision47 includes the exact new test paths and amendment in G05 scope
+and required reads. Windows compilation remains compilation only: protected
+creation, owner/DACL, directory pins and refresh replacement must pass on both
+native Windows versions. The root's separate native diagnostic passed, but the
+old full-matrix failures remain historical. This committed source still needs
+all original G05 and B06 checks at its new exact SHA, followed by G06, before PR.

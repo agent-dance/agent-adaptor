@@ -430,6 +430,8 @@ R046：5d普通Windows的IdentityEncoding完整8s耗尽与Crash prompt未观察�
 
 R047：CodeBuddy 2.155.0 官方 loader 会跳过不安全 native agent name；安全编码 .md 文件名不能使 frontmatter 名称可加载。原 T15 在 provider 物化边界拒绝 resolved 名称中的 slash/backslash/colon、单独点/双点和首尾 U+FEFF，保留空值/UTF-8/NUL 原校验、合法 Unicode/大小写/设备名及 opaque Key 加合法 RuntimeName。整组名称先验证再 reconcile，非法项不得部分替换健康 agent/manifest；SourcePath 原字节与 native frontmatter 一致性仍由调用方负责。SyncProfile 明确报错，已进入 Driver.Run 的物化失败保留 Infrastructure RunError、非 nil Result 与 Cause，不得冒充启动前普通错误。该独立缺陷不是原 cold exact-text/catalog deadline 失败的已证原因；全部旧失败保留，原命令/47任务/96要求/45历史/九依赖不变，新 S 必须重验 G05 与全部 B06/G06。
 
+R048：CodeBuddy live 必须区分显式 env 认证和原生登录副本。原生会话位于实际 HOME 的平台 auth 路径，不能用 CONFIG_DIR 中的 legacy 文件或 access-token 投影冒充完整登录态；保留完整 opaque bytes 和官方刷新语义，拒绝竞争认证覆盖，不复制业务 profile。三个实际执行分支使用同一私有准备合同，缺失/不安全输入在 CLI 前失败，禁用门不读凭据。副本写入前受保护，Windows owner/DACL 与合法凭据刷新须有原生证据，源文件不动、Agent 退出后清理。单次 native 诊断成功与原矩阵分开，旧401/cold/catalog失败不倒填根因；新S仍须全部原G05/B06/G06。
+
 ## 15. 发布门禁
 
 发布前必须全部满足：

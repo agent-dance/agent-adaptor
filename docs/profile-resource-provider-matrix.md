@@ -83,6 +83,39 @@ AuthLink behavior and CLI evidence are in the
 These implementation and diagnostic records do not certify final native or live
 acceptance for an untested source SHA.
 
+## CodeBuddy live authentication
+
+CodeBuddy 2.157.0 reads its native login record from a platform-specific path
+under its actual HOME, independently of `CODEBUDDY_CONFIG_DIR`:
+
+| Platform | Native authentication path under HOME |
+|---|---|
+| macOS | `Library/Application Support/CodeBuddyExtension/Data/Public/auth/Tencent-Cloud.coding-copilot.info` |
+| Windows | `AppData/Local/CodeBuddyExtension/Data/Public/auth/Tencent-Cloud.coding-copilot.info` |
+| Linux | `.local/share/CodeBuddyExtension/Data/Public/auth/Tencent-Cloud.coding-copilot.info` |
+
+The opt-in live fixtures accept `CODEBUDDY_NATIVE_AUTH_FILE_SOURCE` as an
+explicit absolute, clean path to an authorized complete record. Its parent
+chain and file must not contain links, and an adjacent `.logged-out` marker
+causes an explicit failure. They copy its bytes
+into each execution's private HOME and keep the provider's native session and
+refresh behavior. The Agent, cold-resume and conformance paths share this
+preparation contract. Business settings, MCP servers, skills and conversation
+history are excluded from the authentication seed.
+
+An explicit native seed must not compete with an active inherited API key or
+custom token. CodeBuddy disables its API key when `CODEBUDDY_API_KEY_DISABLED`
+is any nonempty string; the fixture preserves that value and supplies `1` for
+native mode when no value was provided. These select different official authentication storage; projecting a
+native access token into `CODEBUDDY_AUTH_TOKEN` also loses its refresh metadata.
+Choose the native record or an explicit environment-based authentication source
+for a run. The test-only seed variable does not add a public SDK authentication
+option. Both the build tag and live environment gate remain required.
+
+A single successful native-session diagnostic establishes authentication for
+that invocation. Acceptance still requires the complete original live matrix
+at its recorded source SHA, CLI version, model and platform.
+
 ## CodeBuddy declared agents
 
 CodeBuddy 2.137.1's inspected loader reads `<profile>/agents/*.md` using YAML

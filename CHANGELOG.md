@@ -53,6 +53,12 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- Preserve the complete native CodeBuddy login record in the actual private
+  HOME used by live Agent, cold-resume and conformance fixtures. Explicit
+  authentication inputs fail clearly when missing or conflicting; native
+  records retain provider-managed refresh behavior without copying business
+  configuration or changing the public SDK authentication surface.
+
 - Reject CodeBuddy SubAgent names that its native loader would silently skip,
   before changing managed agent files or starting the CLI. An opaque business
   Key can still contain separators when paired with a valid RuntimeName; valid
