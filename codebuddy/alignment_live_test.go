@@ -16,7 +16,6 @@ import (
 
 	adaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/capability"
-	"github.com/agent-dance/agent-adaptor/tool"
 )
 
 // These are paid, real-provider checks. The tag and explicit environment gate
@@ -83,14 +82,8 @@ func TestAlignmentLiveCodeBuddyCapabilityAndTodoResults(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
 	var actualEcho atomic.Int32
-	definition := tool.Define("alignment_echo", "Return the supplied text for the acceptance check.", func(_ context.Context, input struct {
-		Text string `json:"text"`
-	}) (string, error) {
-		if input.Text == "VERIFY" {
-			actualEcho.Add(1)
-		}
-		return input.Text, nil
-	}, tool.ReadOnly(), tool.Revision("alignment-t15/v1"))
+	var totalEcho atomic.Int32
+	definition := alignmentCatalogEchoDefinition(&totalEcho, &actualEcho)
 	agent := newLiveAgent(t, t.TempDir(), false, adaptor.WithTools(definition), adaptor.WithProfileResources(alignmentCatalogResources()), adaptor.WithBlockingEvents())
 	// Public SyncProfile materializes the declared catalog. This alone cannot
 	// satisfy the execution assertions below.
@@ -107,6 +100,7 @@ func TestAlignmentLiveCodeBuddyCapabilityAndTodoResults(t *testing.T) {
 	observer := &alignmentObservationService{events: map[string][]adaptor.Event{}}
 	result, events, err := collectLiveStream(ctx, agent, "Use the Skill tool to activate "+alignmentCatalogSkillName+". Then use Task or Agent with subagent_type "+alignmentCatalogAgentName+" and wait for its completed result. As the parent agent, use the native ToolSearch tool with {\"tool_names\":[\"mcp__agent-adaptor-tools__alignment_echo\"]} to obtain its schema. Then, in this parent agent's own turn, call the native DeferExecuteTool with {\"toolName\":\"mcp__agent-adaptor-tools__alignment_echo\",\"params\":{\"text\":\"VERIFY\"}} and wait for its successful tool result. Do not delegate this MCP call or substitute shell commands, scripts, or manual HTTP requests. Then use TaskCreate to create a task named acceptance check, TaskUpdate to complete that exact task ID, and TaskList to confirm the full list. Finish by clearing the todo list using TodoWrite with oldTodos containing the observed list and newTodos=[]. Do not merely describe these operations.", adaptor.WithRunServices(observer), adaptor.WithPolicy(livePolicyHeadless))
 	alignmentLiveDiagnosticResult(t, "catalog", result, events, "", "", int(actualEcho.Load()), 0, err)
+	alignmentLiveDiagnosticLog(t, alignmentCatalogCallbackDiagnostic(int(totalEcho.Load()), int(actualEcho.Load())))
 	if err != nil {
 		t.Fatal(err)
 	}
