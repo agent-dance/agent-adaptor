@@ -428,6 +428,8 @@ R045：f9a129b CodeBuddy catalog真实callback成功但正式Raw无DeferExecuteT
 
 R046：5d普通Windows的IdentityEncoding完整8s耗尽与Crash prompt未观察分开保留，专门T26绿不覆盖全量红/后继未执行。仅Crash测试启用有界ready→input→held屏障，父总8s/子Run4s/观察4s不延长，Start成功即登记stdin关闭/取消/唯一Wait清理；其余contender协议不变。Identity仅补安全失败观测，七claim和完整Run8s起点不改，未知阶段不倒填根因。生产/CI并发及全部原命令/skip保持，新S全量重验；CodeBuddy401与Cursorstatus本地凭据存在不能冒充live成功。
 
+R047：CodeBuddy 2.155.0 官方 loader 会跳过不安全 native agent name；安全编码 .md 文件名不能使 frontmatter 名称可加载。原 T15 在 provider 物化边界拒绝 resolved 名称中的 slash/backslash/colon、单独点/双点和首尾 U+FEFF，保留空值/UTF-8/NUL 原校验、合法 Unicode/大小写/设备名及 opaque Key 加合法 RuntimeName。整组名称先验证再 reconcile，非法项不得部分替换健康 agent/manifest；SourcePath 原字节与 native frontmatter 一致性仍由调用方负责。SyncProfile 明确报错，已进入 Driver.Run 的物化失败保留 Infrastructure RunError、非 nil Result 与 Cause，不得冒充启动前普通错误。该独立缺陷不是原 cold exact-text/catalog deadline 失败的已证原因；全部旧失败保留，原命令/47任务/96要求/45历史/九依赖不变，新 S 必须重验 G05 与全部 B06/G06。
+
 ## 15. 发布门禁
 
 发布前必须全部满足：

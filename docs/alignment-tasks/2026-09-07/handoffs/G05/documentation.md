@@ -75,3 +75,17 @@ Dedicated retains cross-Agent session files and identity. Codex identity capacit
 limits new children without suppressing known-child role conflicts. All original
 checks and independent red evidence remain. Implementation review does not
 replace complete G05 and all same-S platform/live gates.
+
+## R047: CodeBuddy native loader names
+
+T15 implementation at 2d1b4e27bc3d7992fbd478311f5b25d1d66f666f passed all four
+original commands and scoped vet. Independent review verified the official
+2.155.0 loader, focused public contracts and 32 additional name boundaries.
+The provider-private check rejects invalid native names before agent reconcile
+or CLI launch; opaque Key with safe RuntimeName and caller-owned SourcePath
+bytes remain. Central godoc/usage/CHANGELOG and revision46 scope are aligned.
+This accepted implementation does not explain or close the original T28 cold
+exact-text or catalog deadline failures. The subsequent cold diagnostic failed
+in the first request with literal authentication/401 mentions before resume.
+Original failures and all prior S evidence remain immutable. This new source
+still requires its own G05, all platform/live checks and G06 before PR delivery.

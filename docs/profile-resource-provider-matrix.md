@@ -92,11 +92,22 @@ Effort accepts minimal, low, medium, high, xhigh and max. Unmapped inline sandbo
 agent-local hooks, Native data and invalid effort fail SyncProfile/Run explicitly.
 
 The native name matches the resolved RuntimeName (or default Key) exactly.
-Filesystem naming is separate: Unicode, case, separators, reserved names and
-extensions use an encoded filename with a `.md` suffix. SourcePath keeps its
+CodeBuddy 2.155.0's loader requires a single safe path segment: slash, backslash,
+colon, standalone `.` or `..`, NUL, invalid UTF-8 and leading/trailing U+FEFF are
+rejected before managed agent files change or the CLI starts. Names are never
+rewritten to pass this check. An opaque business Key containing separators
+remains valid with an explicit RuntimeName, for example
+`profile.SubAgent{Key: "catalog/reviewer", RuntimeName: "reviewer"}`.
+
+Filesystem naming is separate: valid Unicode, case, device names and extensions
+use an encoded filename with a `.md` suffix. The native loader does not impose
+the new-agent UI's lowercase or reserved-name rules. SourcePath keeps its
 original bytes under a safe `.md` target; callers must supply native frontmatter
 whose name matches the resolved RuntimeName when the filename is encoded.
-SyncProfile does not rewrite native source contents.
+SyncProfile does not rewrite native source contents. SyncProfile reports an
+invalid-name error directly; Run reports an infrastructure RunError with the
+original cause and an audit Result because materialization occurs after Driver
+entry, even though the CLI has not started.
 
 The [fixed loader evidence](./alignment-tasks/2026-09-07/handoffs/T15/agent-loader-evidence.md)
 records the installed distribution hash and exact field readers. Public

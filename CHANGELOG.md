@@ -53,6 +53,11 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- Reject CodeBuddy SubAgent names that its native loader would silently skip,
+  before changing managed agent files or starting the CLI. An opaque business
+  Key can still contain separators when paired with a valid RuntimeName; valid
+  Unicode, case, device names and native SourcePath bytes remain unchanged.
+
 - Synchronize the crash-recovery test fixture with child readiness and ensure
   bounded cleanup on early failure, preserving its original timeout budgets.
   Add safe failure diagnostics to the profile identity regression.
