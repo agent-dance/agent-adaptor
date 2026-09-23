@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/internal/engine"
+	"github.com/agent-dance/agent-adaptor/internal/profilestate"
 )
 
 func TestAlignmentCodeBuddyAgentNativeMarkdown(t *testing.T) {
@@ -106,7 +108,7 @@ func TestAlignmentCodeBuddyAgentSourceAndConflict(t *testing.T) {
 
 func TestAlignmentCodeBuddyAgentNameAndFileSeparation(t *testing.T) {
 	root := t.TempDir()
-	names := []string{"reviewer", "ReviewAgent", "reviewagent", "审查Agent", "catalog/default", "reviewer.json", "../escape", "con", strings.Repeat("a", 300), fmt.Sprintf("agent~%x", sha256.Sum256([]byte("ReviewAgent")))}
+	names := []string{"reviewer", "ReviewAgent", "reviewagent", "审查Agent", "reviewer.json", "reviewer..json", ".reviewer", "review agent", "con", "CON", "default", strings.Repeat("a", 300), fmt.Sprintf("agent~%x", sha256.Sum256([]byte("ReviewAgent")))}
 	specs := make([]driver.AgentSpec, 0, len(names))
 	for _, name := range names {
 		specs = append(specs, driver.AgentSpec{Key: name, RuntimeName: name, Instructions: "exact role"})
@@ -145,4 +147,57 @@ func TestAlignmentCodeBuddyAgentNameAndFileSeparation(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, "agents", "reviewer.md")); err != nil {
 		t.Fatal("simple native filename changed")
 	}
+}
+
+func TestAlignmentCodeBuddyUnsafeNativeNamePreservesResources(t *testing.T) {
+	for _, name := range []string{"catalog/default", `catalog\default`, "catalog:default", ".", "..", "../escape", "/absolute", "\ufeffreviewer", "reviewer\ufeff", "invalid\x00name", string([]byte{0xff})} {
+		t.Run(fmt.Sprintf("%q", name), func(t *testing.T) {
+			for _, source := range []bool{false, true} {
+				t.Run(fmt.Sprintf("source=%t", source), func(t *testing.T) {
+					root := t.TempDir()
+					original := driver.AgentPayload{Agents: []driver.AgentSpec{{Key: "healthy", Instructions: "preserve this agent"}}}
+					if _, err := Sync(context.Background(), "codebuddy", root, original); err != nil {
+						t.Fatal(err)
+					}
+					before := codeBuddyResourceFiles(t, root)
+					spec := driver.AgentSpec{Key: "catalog/invalid", RuntimeName: name, Instructions: "must never be written"}
+					if source {
+						spec.SourcePath = filepath.Join(t.TempDir(), "source.md")
+						spec.Instructions = ""
+						if err := os.WriteFile(spec.SourcePath, []byte("---\nname: source-agent\n---\nNative bytes remain caller-owned\n"), 0600); err != nil {
+							t.Fatal(err)
+						}
+					}
+					// A valid update is encountered first, but no write or prune may
+					// occur until the complete set of native names is accepted.
+					payload := driver.AgentPayload{Agents: []driver.AgentSpec{{Key: "new-agent", Instructions: "must not replace healthy"}, spec}}
+					_, err := Sync(context.Background(), "codebuddy", root, payload)
+					if err == nil || !strings.Contains(err.Error(), "invalid runtime name") {
+						t.Errorf("official loader cannot accept native name %q: got %v", name, err)
+					}
+					if after := codeBuddyResourceFiles(t, root); !reflect.DeepEqual(after, before) {
+						t.Error("rejected native name changed healthy agent files or manifest")
+					}
+				})
+			}
+		})
+	}
+}
+
+func codeBuddyResourceFiles(t *testing.T, root string) map[string]string {
+	t.Helper()
+	files := map[string]string{}
+	paths, err := filepath.Glob(filepath.Join(root, "agents", "*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths = append(paths, filepath.Join(root, profilestate.ManifestName))
+	for _, path := range paths {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		files[path] = string(raw)
+	}
+	return files
 }

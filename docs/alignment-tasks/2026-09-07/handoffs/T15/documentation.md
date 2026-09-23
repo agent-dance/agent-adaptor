@@ -1,5 +1,7 @@
 # T15 CodeBuddy provider adoption
 
+当前名称准入以 [R047 补充合同](R047-native-agent-name.md) 为准：旧 R018 的“路径名也能成功物化”预期已修正为 CLI 启动前明确拒绝；合法名称编码、opaque Key + safe RuntimeName 和 SourcePath 原字节合同保持。以下旧执行记录保留其原始时间边界。
+
 本任务基于已接受 G03 `926dbbf90a98d35416cdbbc6e376c7bbdc5da084`，修改 `codebuddy/` 与本 handoff；R018 另精确授权 `internal/profileagents/agents.go`、`codebuddy.go`、`codebuddy_test.go`。承担 W09-R07、W11-R06、W12-R05；不宣称 W09/W11/W12、G04 或发布门禁整体完成。
 
 ## 使用语义与示例

@@ -70,9 +70,16 @@
 // Declared profile SubAgents materialize as agents/*.md using CodeBuddy's
 // YAML frontmatter and Markdown instructions. The native name exactly matches
 // the resolved catalog; nonportable filenames are encoded separately, including
-// Unicode, case, separators, reserved names and extension-bearing names. Native
-// SourcePath bytes are retained under a .md target; callers must supply a
-// native name matching the resolved RuntimeName when the filename is encoded.
+// Unicode, case, device names and extension-bearing names. SyncProfile and Run
+// reject resolved native names the CodeBuddy loader cannot load: empty or
+// invalid UTF-8 names, NUL, slash, backslash, colon, the single segments . and
+// .., and leading or trailing U+FEFF. This validation happens before agent files
+// are changed or the CLI is started. An opaque Key containing separators remains
+// valid with an explicit safe RuntimeName. Names are never rewritten to pass
+// the loader check; the new-agent UI's lowercase/reserved-name rules do not
+// constrain the native loader. Native SourcePath bytes are retained under a
+// .md target; callers must supply a native name matching the resolved RuntimeName
+// when the filename is encoded.
 // SyncProfile does not rewrite native frontmatter. Core fields plus
 // model, effort, permissionMode, tools/disallowedTools, skills and named
 // mcpServers use the confirmed native loader format. Unmapped inline sandbox,

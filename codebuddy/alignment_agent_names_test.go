@@ -3,15 +3,18 @@ package codebuddy
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"testing"
+	"time"
+
 	adaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/capability"
 	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/profile"
-	"os"
-	"path/filepath"
-	"strings"
-	"testing"
-	"time"
 )
 
 // Independent R018 public boundary fixture. Source 53dbc0d; no SPI payload injection.
@@ -21,8 +24,11 @@ func TestAlignmentCodeBuddyPublicNativeCatalogNames(t *testing.T) {
 		{"ascii_control", "catalog/ascii", "reviewer", ""},
 		{"case", "catalog/case", "ReviewAgent", ""},
 		{"unicode", "catalog/unicode", "审查Agent", ""},
-		{"default_key", "catalog/default", "", ""},
+		{"default_key", "catalog-default", "", ""},
 		{"runtime_extension", "catalog/extension", "reviewer.json", ""},
+		{"runtime_inner_dots", "catalog/dots", "reviewer..json", ""},
+		{"runtime_device_name", "catalog/device", "CON", ""},
+		{"runtime_ui_reserved", "catalog/reserved", "default", ""},
 		{"source_md_control", "catalog/source-md", "source-agent", ".md"},
 		{"source_other_extension", "catalog/source-txt", "source-agent", ".txt"},
 	} {
@@ -100,6 +106,92 @@ func TestAlignmentCodeBuddyPublicNativeCatalogNames(t *testing.T) {
 			}
 			if completed != 1 {
 				t.Fatalf("actual native name %q cannot map to public catalog runtime %q: completed=%d", actualName, expected, completed)
+			}
+		})
+	}
+}
+
+func TestAlignmentCodeBuddyPublicRejectsUnsafeNativeNamesBeforeCLI(t *testing.T) {
+	for _, tc := range []struct{ label, key, runtime string }{
+		{"default_key_slash", "catalog/default", ""},
+		{"runtime_slash", "catalog/invalid", "review/agent"},
+		{"runtime_backslash", "catalog/invalid", `review\agent`},
+		{"runtime_colon", "catalog/invalid", "review:agent"},
+		{"runtime_dot", "catalog/invalid", "."},
+		{"runtime_dotdot", "catalog/invalid", ".."},
+		{"runtime_traversal", "catalog/invalid", "../escape"},
+		{"runtime_leading_bom", "catalog/invalid", "\ufeffreviewer"},
+		{"runtime_trailing_bom", "catalog/invalid", "reviewer\ufeff"},
+		{"source_runtime_slash", "catalog/source", "source/agent"},
+	} {
+		t.Run(tc.label, func(t *testing.T) {
+			root := t.TempDir()
+			cfg := alignmentProfileErrorConfig(t)
+			healthy := adaptor.New(Driver(cfg), adaptor.WithProfile(profile.Dedicated(root)), adaptor.WithProfileResources(profile.Resources{Agents: []profile.SubAgent{{Key: "healthy", Instructions: "Keep this agent"}}}))
+			defer healthy.Close(context.Background())
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if _, err := healthy.SyncProfile(ctx); err != nil {
+				t.Fatal(err)
+			}
+			snapshot := func() map[string]string {
+				t.Helper()
+				entries, err := os.ReadDir(filepath.Join(root, "agents"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				files := map[string]string{}
+				for _, entry := range entries {
+					raw, err := os.ReadFile(filepath.Join(root, "agents", entry.Name()))
+					if err != nil {
+						t.Fatal(err)
+					}
+					files[entry.Name()] = string(raw)
+				}
+				return files
+			}
+			before := snapshot()
+			spec := profile.SubAgent{Key: tc.key, RuntimeName: tc.runtime, Instructions: "Must fail before CLI"}
+			if tc.label == "source_runtime_slash" {
+				spec.SourcePath = filepath.Join(t.TempDir(), "source.md")
+				spec.Instructions = ""
+				if err := os.WriteFile(spec.SourcePath, []byte("---\nname: source-agent\n---\nNative bytes remain caller-owned\n"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			a := adaptor.New(Driver(cfg), adaptor.WithProfile(profile.Dedicated(root)), adaptor.WithProfileResources(profile.Resources{Agents: []profile.SubAgent{
+				{Key: "a-new-agent", Instructions: "Must not replace healthy"},
+				spec,
+			}}))
+			defer a.Close(context.Background())
+			for _, operation := range []string{"SyncProfile", "Run"} {
+				t.Run(operation, func(t *testing.T) {
+					var err error
+					if operation == "SyncProfile" {
+						_, err = a.SyncProfile(ctx)
+					} else {
+						var result *adaptor.Result
+						result, err = a.Run(ctx, "Must not launch the CLI canary")
+						if result != nil {
+							t.Error("rejected native name returned a Result")
+						}
+					}
+					var runErr *adaptor.RunError
+					if operation == "Run" {
+						// Resource materialization is in the entered Driver.Run's
+						// prepareRun, so the existing failure contract is RunError.
+						if !errors.As(err, &runErr) || runErr.Reason != adaptor.ReasonInfrastructure || runErr.Result == nil || runErr.Cause == nil || !strings.Contains(runErr.Cause.Error(), "invalid runtime name") {
+							t.Errorf("expected infrastructure RunError preserving native-name cause, got %v", err)
+						} else if raw := runErr.Result.Raw(); raw.Stdout != "" || raw.Stderr != "" || raw.Terminal != nil || len(runErr.Result.Transcript()) != 0 || runErr.Result.Text != "" {
+							t.Error("before-CLI rejection fabricated provider output")
+						}
+					} else if err == nil || errors.As(err, &runErr) || !strings.Contains(err.Error(), "invalid runtime name") {
+						t.Errorf("expected explicit SyncProfile invalid runtime name, got %v", err)
+					}
+					if after := snapshot(); !reflect.DeepEqual(after, before) {
+						t.Error("invalid native name partially changed healthy agent files")
+					}
+				})
 			}
 		})
 	}

@@ -19,6 +19,13 @@ func codeBuddyAgentNames(spec driver.AgentSpec) (string, string, error) {
 	if name == "" || !utf8.ValidString(name) || strings.ContainsRune(name, 0) {
 		return "", "", fmt.Errorf("CodeBuddy agent %q: invalid runtime name", spec.Key)
 	}
+	// CodeBuddy 2.155.0 parseAgentFile applies isSafeCustomAgentPathSegment
+	// to frontmatter name, independently of the .md filename. Reject names
+	// its loader skips; encoding the filename cannot make those names usable.
+	// ECMAScript trim also removes U+FEFF, which Go's TrimSpace leaves intact.
+	if name == "." || name == ".." || strings.ContainsAny(name, `/\:`) || strings.Trim(name, "\ufeff") != name {
+		return "", "", fmt.Errorf("CodeBuddy agent %q: invalid runtime name: native loader requires a safe path segment", spec.Key)
+	}
 	portable := len(name) <= 120
 	for _, ch := range name {
 		if !(ch >= 'a' && ch <= 'z' || ch >= '0' && ch <= '9' || ch == '-' || ch == '_') {

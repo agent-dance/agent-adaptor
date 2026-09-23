@@ -1,5 +1,7 @@
 # CodeBuddy Agent loader 来源与物化边界
 
+下文记录原 2.137.1 的物化来源。2.155.0 的 native name loader 准入及原错误成功预期修正在 [R047 补充合同](R047-native-agent-name.md)；safe path segment 检查独立于安全文件名编码，不能从“写出 .md”推断名称能被 loader 接受。
+
 只读本地正式 npm 包 `@tencent-ai/codebuddy-code@2.137.1`。文件 `/opt/homebrew/lib/node_modules/@tencent-ai/codebuddy-code/dist/codebuddy.js`，22852323 bytes，SHA-256 `7fa1c542cca9eebe9db1f6e70fe50c759bdd87aa2fcacda3b7007ec408b4958f`。未执行 CLI，未读认证文件或用户 profile。此静态来源证明格式；实际 CLI 采用由禁用的 live 用例留给 B06。
 
 以下位置均为零基偏移；字符偏移按 UTF-8 解码后的 Unicode 字符计数，byte offset 对原文件计数，二者不可混用。完整短片段及来源 hash 在 `evidence/attempt-3/official-loader-extract.json`。
