@@ -104,8 +104,8 @@ func TestCodeBuddyNativeAuthFixtureWrapper(t *testing.T) {
 				if err != nil || json.Unmarshal(raw, &capture) != nil {
 					t.Fatal("private test executable was not reached")
 				}
-				if !capture.NativeExact || !capture.HomeMatches || runErr != nil || result == nil || result.Text != "NATIVE_SEED_EXACT" {
-					t.Fatalf("native seed wrapper: exact=%t shared_home=%t run_error=%v", capture.NativeExact, capture.HomeMatches, runErr)
+				if !capture.NativeExact || !capture.HomeMatches || !capture.ProfileReadable || !capture.AuthDirectoryReadable || runErr != nil || result == nil || result.Text != "NATIVE_SEED_EXACT" {
+					t.Fatalf("native seed wrapper: exact=%t shared_home=%t profile_readable=%t auth_directory_readable=%t run_error=%v", capture.NativeExact, capture.HomeMatches, capture.ProfileReadable, capture.AuthDirectoryReadable, runErr)
 				}
 				if capturedHome != "" && capturedHome != capture.Home {
 					t.Fatal("cold successor changed private authentication HOME")

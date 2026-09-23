@@ -17,8 +17,9 @@ import (
 const codeBuddySyntheticNativeSession = "{\n  \"auth\": {\"domain\": \"synthetic.invalid\", \"token\": \"not-a-credential\"},\n  \"unknown\": [1, {\"keep\": \"原字节\\n\"}]\n}\n"
 
 type codeBuddyAuthCapture struct {
-	Home, Profile            string
-	NativeExact, HomeMatches bool
+	Home, Profile                          string
+	NativeExact, HomeMatches               bool
+	ProfileReadable, AuthDirectoryReadable bool
 }
 
 // This test binary only sees generated fixture bytes, never the real CLI or
@@ -32,13 +33,17 @@ func runCodeBuddyLiveAuthFixture() int {
 		parts = []string{"AppData", "Local", "CodeBuddyExtension"}
 	}
 	parts = append([]string{home}, append(parts, "Data", "Public", "auth", "Tencent-Cloud.coding-copilot.info")...)
-	raw, err := os.ReadFile(filepath.Join(parts...))
-	capture := codeBuddyAuthCapture{Home: home, Profile: os.Getenv("CODEBUDDY_CONFIG_DIR"), NativeExact: err == nil && string(raw) == codeBuddySyntheticNativeSession, HomeMatches: home == os.Getenv("USERPROFILE")}
+	nativePath := filepath.Join(parts...)
+	raw, err := os.ReadFile(nativePath)
+	profile := os.Getenv("CODEBUDDY_CONFIG_DIR")
+	_, profileErr := os.ReadDir(profile)
+	_, authErr := os.ReadDir(filepath.Dir(nativePath))
+	capture := codeBuddyAuthCapture{Home: home, Profile: profile, NativeExact: err == nil && string(raw) == codeBuddySyntheticNativeSession, HomeMatches: home == os.Getenv("USERPROFILE"), ProfileReadable: profileErr == nil, AuthDirectoryReadable: authErr == nil}
 	data, _ := json.Marshal(capture)
 	if os.WriteFile(os.Getenv("CODEBUDDY_AUTH_FIXTURE_CAPTURE"), data, 0600) != nil {
 		return 84
 	}
-	if !capture.NativeExact || !capture.HomeMatches {
+	if !capture.NativeExact || !capture.HomeMatches || !capture.ProfileReadable || !capture.AuthDirectoryReadable {
 		return 83
 	}
 	fmt.Println(`{"type":"result","subtype":"success","is_error":false,"session_id":"auth-fixture-session","result":"NATIVE_SEED_EXACT"}`)

@@ -73,10 +73,10 @@ func TestCodeBuddyNativeAuthFixtureBytesIsolationAndCleanup(t *testing.T) {
 			t.Fatal("credential copy aliases source")
 		}
 		if entries, err := os.ReadDir(f.profile); err != nil || len(entries) != 0 {
-			t.Fatal("native mode copied business profile or legacy auth")
+			t.Fatalf("native profile isolation: read_error=%v entry_count=%d want=0", err, len(entries))
 		}
 		if entries, err := os.ReadDir(filepath.Dir(target)); err != nil || len(entries) != 1 {
-			t.Fatal("native mode copied unrelated auth files")
+			t.Fatalf("native auth isolation: read_error=%v entry_count=%d want=1", err, len(entries))
 		}
 		bindings := map[string]string{}
 		for _, binding := range f.bindings() {
@@ -236,7 +236,7 @@ func TestCodeBuddyNativeAuthFixtureLegacyMissingAndIO(t *testing.T) {
 	}
 	entries, err := os.ReadDir(f.profile)
 	if err != nil || len(entries) != 1 {
-		t.Fatal("legacy mode copied business profile")
+		t.Fatalf("legacy profile isolation: read_error=%v entry_count=%d want=1", err, len(entries))
 	}
 	if err := f.Close(); err != nil {
 		t.Fatal(err)

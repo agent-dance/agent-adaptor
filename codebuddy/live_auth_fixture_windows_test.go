@@ -69,7 +69,10 @@ func createCodeBuddyLiveWindowsObject(parent *os.File, name string, dir bool) (*
 	if dir {
 		options &^= windows.FILE_NON_DIRECTORY_FILE
 		options |= windows.FILE_DIRECTORY_FILE
-		access = windows.FILE_GENERIC_READ | windows.DELETE
+		// A lifetime pin needs to withhold FILE_SHARE_DELETE, not request
+		// DELETE itself. Holding DELETE would block ordinary directory readers
+		// whose own sharing mode does not include FILE_SHARE_DELETE.
+		access = windows.FILE_GENERIC_READ
 	}
 	var handle windows.Handle
 	err = windows.NtCreateFile(&handle, access, &attributes, &windows.IO_STATUS_BLOCK{}, nil,
@@ -262,6 +265,89 @@ func TestCodeBuddyNativeAuthFixtureWindowsRejectsDescriptorDrift(t *testing.T) {
 		}
 		if err := validateCodeBuddyLiveWindowsDescriptor(sd, false); err == nil {
 			t.Fatal("unsafe descriptor accepted")
+		}
+	}
+}
+
+// Isolate the Windows sharing rule from the fixture implementation: an open
+// handle's DELETE access requires every later opener to share delete access.
+// Ordinary os.ReadDir does not share delete; omitting DELETE from desired access
+// still pins rename because the held handle itself does not share delete.
+func TestCodeBuddyNativeAuthFixtureWindowsDirectorySharingControl(t *testing.T) {
+	for _, deleteAccess := range []bool{true, false} {
+		t.Run(fmt.Sprintf("delete_access=%t", deleteAccess), func(t *testing.T) {
+			path := t.TempDir()
+			t.Cleanup(func() {
+				if err := os.RemoveAll(path + ".moved"); err != nil {
+					t.Error(err)
+				}
+			})
+			name, err := windows.UTF16PtrFromString(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			access := uint32(windows.GENERIC_READ)
+			if deleteAccess {
+				access |= windows.DELETE
+			}
+			handle, err := windows.CreateFile(name, access, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, nil, windows.OPEN_EXISTING, windows.FILE_FLAG_BACKUP_SEMANTICS, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			file := os.NewFile(uintptr(handle), path)
+			t.Cleanup(func() {
+				if file != nil {
+					if err := file.Close(); err != nil {
+						t.Error(err)
+					}
+				}
+			})
+			entries, readErr := os.ReadDir(path)
+			var readCode syscall.Errno
+			errors.As(readErr, &readCode)
+			t.Logf("desired_delete=%t read_errno=%d read_error=%v entry_count=%d", deleteAccess, readCode, readErr, len(entries))
+			if deleteAccess {
+				if !errors.Is(readErr, windows.ERROR_SHARING_VIOLATION) {
+					t.Fatalf("DELETE access control: read_error=%v want=%v", readErr, windows.ERROR_SHARING_VIOLATION)
+				}
+			} else if readErr != nil || len(entries) != 0 {
+				t.Fatalf("read-only access control: read_error=%v entry_count=%d want=0", readErr, len(entries))
+			}
+			renameErr := os.Rename(path, path+".moved")
+			var renameCode syscall.Errno
+			errors.As(renameErr, &renameCode)
+			t.Logf("desired_delete=%t rename_errno=%d", deleteAccess, renameCode)
+			if !errors.Is(renameErr, windows.ERROR_SHARING_VIOLATION) {
+				t.Fatalf("held directory rename: error=%v want=%v", renameErr, windows.ERROR_SHARING_VIOLATION)
+			}
+			closeErr := file.Close()
+			file = nil
+			if closeErr != nil {
+				t.Fatal(closeErr)
+			}
+			if entries, err := os.ReadDir(path); err != nil || len(entries) != 0 {
+				t.Fatalf("closed control: read_error=%v entry_count=%d want=0", err, len(entries))
+			}
+		})
+	}
+}
+
+func TestCodeBuddyNativeAuthFixtureWindowsPinnedDirectoriesReadable(t *testing.T) {
+	f := newCodeBuddyLiveHome(t)
+	if err := f.seed(codeBuddyLiveAuthSeed{nativeFile: codeBuddySyntheticSeed(t)}); err != nil {
+		t.Fatal(err)
+	}
+	relative, err := codeBuddyNativeAuthPath("windows")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{f.home, f.profile, filepath.Dir(filepath.Join(f.home, relative))} {
+		entries, err := os.ReadDir(path)
+		if err != nil {
+			t.Fatalf("pinned fixture ordinary ReadDir: error=%v entry_count=%d", err, len(entries))
+		}
+		if err := os.Rename(path, path+".moved"); !errors.Is(err, windows.ERROR_SHARING_VIOLATION) {
+			t.Fatalf("readable fixture lifetime pin: error=%v want=%v", err, windows.ERROR_SHARING_VIOLATION)
 		}
 	}
 }
