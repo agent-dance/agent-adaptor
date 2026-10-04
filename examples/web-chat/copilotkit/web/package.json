@@ -11,9 +11,9 @@
   },
   "dependencies": {
     "@ag-ui/client": "0.0.57",
-    "@copilotkit/react-core": "1.63.2",
-    "@copilotkit/react-ui": "1.63.2",
-    "@copilotkit/runtime": "1.63.2",
+    "@copilotkit/react-core": "1.66.0",
+    "@copilotkit/react-ui": "1.66.0",
+    "@copilotkit/runtime": "1.66.0",
     "next": "16.3.0-preview.8",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
@@ -27,6 +27,7 @@
     "typescript": "^5.6.0"
   },
   "overrides": {
+    "@fastify/busboy": "3.2.1",
     "@modelcontextprotocol/sdk": "1.30.0",
     "dompurify": "3.4.15",
     "fast-uri": "3.1.7",
@@ -42,8 +43,8 @@
     "phoenix": "1.8.13",
     "body-parser@^2.0.0": "2.3.0",
     "sharp@^0.35.0": "0.35.4",
-    "brace-expansion@^1.0.0": "1.1.18",
-    "brace-expansion@^5.0.0": "5.0.9",
+    "brace-expansion@^1.0.0": "1.1.21",
+    "brace-expansion@^5.0.0": "5.0.12",
     "js-yaml@^4.0.0": "4.3.2"
   },
   "engines": {
