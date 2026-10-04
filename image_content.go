@@ -8,15 +8,24 @@ import (
 )
 
 // Validate checks the shape of a host image reference without accessing the
-// resource. Type must be a nonempty UTF-8 host discriminator, MessageID and URL must
-// be nonempty, and
-// MIMEType must name a concrete image media type. Only assistant and user roles
-// are supported. This does not establish resource safety or user authenticity.
+// resource. Type, MessageID and URL must be nonempty; MIMEType must name a
+// concrete image media type. All image strings must be valid UTF-8. UserID is
+// checked only for RoleUser, since assistant attribution is ignored. Only
+// assistant and user roles are supported. Validation does not establish
+// resource safety or user authenticity.
 func (e ImageContent) Validate() error {
+	for _, value := range []string{e.MessageID, e.Type, e.MIMEType, e.URL, e.Filename} {
+		if !utf8.ValidString(value) {
+			return errors.New("adaptor: image content requires valid UTF-8")
+		}
+	}
+	if e.Role == RoleUser && !utf8.ValidString(e.UserID) {
+		return errors.New("adaptor: image user identity requires valid UTF-8")
+	}
 	if e.MessageID == "" {
 		return errors.New("adaptor: image content requires a message ID")
 	}
-	if e.Type == "" || !utf8.ValidString(e.Type) {
+	if e.Type == "" {
 		return errors.New("adaptor: image content requires a UTF-8 type")
 	}
 	if e.URL == "" {

@@ -65,3 +65,31 @@ func TestMessageIdentitySnapshotsAndImageMetadata(t *testing.T) {
 		}
 	}
 }
+
+func TestImageContentRejectsNonUTF8ReferencesAndUserIdentity(t *testing.T) {
+	valid := ImageContent{MessageID: "m", Type: "binary", MIMEType: "image/png", URL: "/x", Filename: "甲.png", Role: RoleUser, UserID: "host"}
+	for _, tc := range []struct {
+		name string
+		edit func(*ImageContent)
+	}{
+		{"message", func(e *ImageContent) { e.MessageID += "\xff" }},
+		{"type", func(e *ImageContent) { e.Type += "\xff" }},
+		{"mime", func(e *ImageContent) { e.MIMEType += "\xff" }},
+		{"url", func(e *ImageContent) { e.URL += "\xff" }},
+		{"filename", func(e *ImageContent) { e.Filename += "\xff" }},
+		{"user", func(e *ImageContent) { e.UserID += "\xff" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := valid
+			tc.edit(&e)
+			if e.Validate() == nil || validHostEvent(e) {
+				t.Fatal("nonrepresentable image admitted")
+			}
+		})
+	}
+	valid.Role = RoleAssistant
+	valid.UserID = "ignored\xff"
+	if err := valid.Validate(); err != nil || !validHostEvent(valid) {
+		t.Fatalf("ignored assistant attribution changed admissibility: %v", err)
+	}
+}

@@ -28,3 +28,35 @@ func TestRawImageAndUserAttribution(t *testing.T) {
 		t.Fatalf("invalid image silently lost: %v", body)
 	}
 }
+
+func TestRawMessageUTF8FailureIsObservableWithoutIdentityRewrite(t *testing.T) {
+	for _, event := range []adaptor.Event{
+		adaptor.TextDelta{MessageID: "m", Role: adaptor.RoleUser, UserID: "host\xff"},
+		adaptor.ImageContent{MessageID: "m", Type: "binary", MIMEType: "image/png", URL: "/x\xff", Role: adaptor.RoleUser, UserID: "host"},
+	} {
+		name, raw := rawFrameFor(adaptor.WithEventMeta(event, adaptor.EventMeta{RunID: "run", Sequence: 17}))
+		body := raw.(map[string]any)
+		if name != "stream.dropped" || body["dropped_count"] != 1 || body["first_sequence"] != uint64(17) || body["last_sequence"] != uint64(17) {
+			t.Fatalf("invalid bytes lacked a bounded drop: %s %+v", name, body)
+		}
+		if body["reason"] != "invalid_message_user_id" && body["reason"] != "invalid_image_content" {
+			t.Fatalf("unexpected drop: %v", body)
+		}
+		if _, exists := body["user_id"]; exists {
+			t.Fatal("invalid identity emitted on wire")
+		}
+		if _, exists := body["image"]; exists {
+			t.Fatal("invalid reference emitted on wire")
+		}
+		if body["meta"].(map[string]any)["sequence"] != uint64(17) {
+			t.Fatal("drop lost original envelope")
+		}
+	}
+	name, raw := rawFrameFor(adaptor.TextDelta{MessageID: "m", Text: "answer", UserID: "ignored\xff"})
+	if name != "text.delta" {
+		t.Fatalf("ignored assistant identity rejected: %s", name)
+	}
+	if _, exists := raw.(map[string]any)["user_id"]; exists {
+		t.Fatal("assistant identity leaked")
+	}
+}

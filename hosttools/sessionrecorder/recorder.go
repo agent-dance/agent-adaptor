@@ -239,7 +239,7 @@ type eventSessionState struct {
 }
 
 func (r *eventRecorder) Record(ctx context.Context, sessionKey string, ev adaptor.Event) (EventRecord, error) {
-	if err := validateRecordedImage(ev); err != nil {
+	if err := validateRecordedMessage(ev); err != nil {
 		return EventRecord{}, err
 	}
 	if err := r.checkKey(sessionKey); err != nil {
@@ -405,6 +405,9 @@ func (b *memoryEventBackend) Load(_ context.Context, key string) ([]EventRecord,
 }
 
 func (b *memoryEventBackend) Append(_ context.Context, key string, r EventRecord) error {
+	if err := validateRecordedMessage(r.Event); err != nil {
+		return err
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.sessions[key] = append(b.sessions[key], cloneRecord(r))
@@ -491,6 +494,9 @@ func encodeEvent(ev adaptor.Event) (string, json.RawMessage, error) {
 		ev = adaptor.WithEventMeta(typed, typed.Meta())
 		kind = eventKindImageContent
 	case adaptor.TextDelta:
+		if err := validateRecordedUserID(typed); err != nil {
+			return "", nil, err
+		}
 		ev = adaptor.WithEventMeta(typed, typed.Meta())
 		kind = eventKindTextDelta
 	case adaptor.Thinking:

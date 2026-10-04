@@ -41,6 +41,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	aguisse "github.com/ag-ui-protocol/ag-ui/sdks/community/go/pkg/encoding/sse"
 
@@ -427,6 +428,13 @@ func rawFrameBody(ev adaptor.Event) (string, any) {
 		}
 		return "image.content", imageContentValue(e)
 	case adaptor.TextDelta:
+		if e.Role == adaptor.RoleUser && !utf8.ValidString(e.UserID) {
+			return rawFrameBody(adaptor.Dropped{
+				Count: 1, ByKind: map[string]int{"text.delta": 1},
+				FirstSequence: e.Meta().Sequence, LastSequence: e.Meta().Sequence,
+				Reason: "invalid_message_user_id", Source: "sse",
+			})
+		}
 		body := map[string]any{
 			"message_id": e.MessageID,
 			"text":       e.Text,
