@@ -7,11 +7,14 @@ import (
 
 func imageContentEvent(e adaptor.ImageContent) aguievents.Event {
 	if err := e.Validate(); err != nil {
-		return customEvent("stream.dropped", map[string]any{
-			"count": 1, "by_kind": map[string]int{"image.content": 1},
-			"reason": "invalid_image_content", "source": "agui",
-			"meta": observationMeta(e.Meta()),
+		meta := e.Meta()
+		value := droppedValue(adaptor.Dropped{
+			Count: 1, ByKind: map[string]int{"image.content": 1},
+			FirstSequence: meta.Sequence, LastSequence: meta.Sequence,
+			Reason: "invalid_image_content", Source: "agui",
 		})
+		value["meta"] = observationMeta(meta)
+		return customEvent("stream.dropped", value)
 	}
 	image := map[string]any{"type": e.Type, "mime_type": e.MIMEType, "url": e.URL}
 	if e.Filename != "" {

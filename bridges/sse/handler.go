@@ -419,10 +419,11 @@ func rawFrameBody(ev adaptor.Event) (string, any) {
 		return "run.finished", body
 	case adaptor.ImageContent:
 		if err := e.Validate(); err != nil {
-			return "stream.dropped", map[string]any{
-				"count": 1, "by_kind": map[string]int{"image.content": 1},
-				"reason": "invalid_image_content", "source": "sse",
-			}
+			return rawFrameBody(adaptor.Dropped{
+				Count: 1, ByKind: map[string]int{"image.content": 1},
+				FirstSequence: e.Meta().Sequence, LastSequence: e.Meta().Sequence,
+				Reason: "invalid_image_content", Source: "sse",
+			})
 		}
 		return "image.content", imageContentValue(e)
 	case adaptor.TextDelta:

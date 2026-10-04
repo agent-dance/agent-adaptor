@@ -24,7 +24,7 @@ func TestRawImageAndUserAttribution(t *testing.T) {
 	}
 	name, raw := rawFrameFor(adaptor.WithEventMeta(adaptor.ImageContent{}, adaptor.EventMeta{Sequence: 10}))
 	body := raw.(map[string]any)
-	if name != "stream.dropped" || body["reason"] != "invalid_image_content" || body["meta"].(map[string]any)["sequence"] != uint64(10) {
+	if name != "stream.dropped" || body["reason"] != "invalid_image_content" || body["dropped_count"] != 1 || body["first_sequence"] != uint64(10) || body["last_sequence"] != uint64(10) || body["meta"].(map[string]any)["sequence"] != uint64(10) {
 		t.Fatalf("invalid image silently lost: %v", body)
 	}
 }

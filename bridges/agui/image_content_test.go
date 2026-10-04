@@ -71,7 +71,7 @@ func TestImageContentBufferedWholeReferencesAndInvalidDegradation(t *testing.T) 
 	bad := tr.Translate(adaptor.ImageContent{MessageID: "m", Type: "binary", MIMEType: "image/png"})
 	wire := frameMap(t, bad[0])
 	value := wire["value"].(map[string]any)
-	if wire["name"] != "stream.dropped" || value["reason"] != "invalid_image_content" {
+	if wire["name"] != "stream.dropped" || value["reason"] != "invalid_image_content" || value["dropped_count"] != float64(1) {
 		t.Fatalf("no degradation: %v", wire)
 	}
 	if _, ok := value["image"]; ok {
