@@ -2458,16 +2458,16 @@ func TestAlignmentProtocolDelegationBudgets(t *testing.T) {
 	for _, mode := range []string{"active", "wall", "recovery", "new-rounds"} {
 		t.Run(mode, func(t *testing.T) {
 			p := &apWirePeer{streaming: true, cancelErr: true, frames: [][]any{{apArtifact([]any{map[string]any{"text": "partial before timeout"}}, false, true)}}}
-			var recoveryEntered chan struct{}
+			var recoveryEntered chan error
 			switch mode {
 			case "active", "wall":
 				p.streamEnd = func(ctx context.Context) { <-ctx.Done() }
 			case "recovery":
 				p.broken = true
-				recoveryEntered = make(chan struct{})
+				recoveryEntered = make(chan error, 1)
 				p.methodHook = func(ctx context.Context, method string) {
 					if method == "GetTask" {
-						close(recoveryEntered)
+						recoveryEntered <- ctx.Err()
 						// Recovery stays pending until the same Delegate budget
 						// cancels its real HTTP request; no sleep guesses admission.
 						<-ctx.Done()
@@ -2523,7 +2523,10 @@ func TestAlignmentProtocolDelegationBudgets(t *testing.T) {
 				out, e := svc.Delegate(ctx, req)
 				if recoveryEntered != nil {
 					select {
-					case <-recoveryEntered:
+					case entryErr := <-recoveryEntered:
+						if entryErr != nil {
+							t.Fatalf("GetTask HTTP recovery entered with a cancelled request: %v", entryErr)
+						}
 					case <-ctx.Done():
 						t.Fatal("GetTask HTTP recovery was not observed before the fixture watchdog")
 					}
