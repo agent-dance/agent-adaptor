@@ -41,6 +41,10 @@ type claudeParser struct {
 	terminalSeen      bool
 	terminalSuccess   bool
 	protocolMalformed bool
+	// The provider can publish a successful foreground result while its
+	// background tasks still own this invocation. Only an explicit root task
+	// snapshot changes this state; task descriptions and tool input do not.
+	backgroundTasksPending bool
 
 	stream *streamingState
 	tools  *toolObservation
@@ -99,7 +103,7 @@ type claudeParser struct {
 type interactiveStdin interface {
 	Write(frame []byte) error
 	// Close ends this turn's host input. One-shot transports deliver EOF so
-	// the child can finish after a terminal assistant message or result.
+	// the child can finish after the invocation's final result.
 	// The resident transport keeps the underlying process input open.
 	Close() error
 }
@@ -271,6 +275,9 @@ func (p *claudeParser) handlePayload(raw string, payload map[string]any) {
 		}
 		if p.stream != nil && subtype == "api_retry" {
 			p.stream.handleAPIRetry(payload)
+		}
+		if subtype == "background_tasks_changed" {
+			p.noteBackgroundTasks(payload)
 		}
 		p.emit(driver.TranscriptItem{
 			Kind:    driver.TranscriptSystem,
@@ -541,6 +548,15 @@ func claudeResultText(raw any) string {
 
 func (p *claudeParser) handleResult(raw string, payload map[string]any, subtype string) {
 	p.terminalSeen = true
+	if parent, valid := claudeParentID(payload); !valid || parent != "" {
+		p.protocolMalformed = true
+	}
+	// Each result owns its optional fields. A later final result must not
+	// inherit schema or usage from an earlier foreground result.
+	p.terminalResult = ""
+	p.structuredOutput = nil
+	p.usage = nil
+	p.cost = nil
 	isErrorFlag, isErrorOK := payload["is_error"].(bool)
 	p.terminalSuccess = subtype == "success" && !isErrorFlag
 	if subtype == "success" && (!isErrorOK || isErrorFlag) {
@@ -611,6 +627,9 @@ func (p *claudeParser) handleResult(raw string, payload map[string]any, subtype 
 			p.errorMessage = "claude terminal result did not report success"
 		}
 	}
+	if p.terminalSuccess && !p.protocolMalformed && p.backgroundTasksPending {
+		p.terminalSeen = false
+	}
 
 	p.emit(driver.TranscriptItem{
 		Kind:    driver.TranscriptResult,
@@ -621,13 +640,58 @@ func (p *claudeParser) handleResult(raw string, payload map[string]any, subtype 
 		Text:    p.terminalResult,
 		Data:    map[string]any{"payload": payload},
 	})
-	if p.stream != nil {
+	if p.stream != nil && p.terminalSeen {
 		p.stream.handleResultTerminal(payload)
 	}
 	// A formal result (including native structured output) can arrive without
 	// message_stop. Release one-shot stdin while the helper drains all output
 	// and waits for the actual process outcome before finalizing the run.
-	p.closeInteractiveStdin()
+	if p.terminalSeen {
+		p.closeInteractiveStdin()
+	}
+}
+
+// noteBackgroundTasks accepts only the provider's explicit root snapshot.
+// An invalid snapshot cannot clear pending work or make a checkpoint healthy.
+func (p *claudeParser) noteBackgroundTasks(payload map[string]any) {
+	parent, valid := claudeParentID(payload)
+	if !valid {
+		p.protocolMalformed = true
+		return
+	}
+	if parent != "" {
+		return
+	}
+	session := claudeTopLevelString(payload, "session_id")
+	tasks, valid := payload["tasks"].([]any)
+	if session == "" || session != p.sessionID || !valid {
+		p.protocolMalformed = true
+		return
+	}
+	ids := make(map[string]struct{}, len(tasks))
+	for _, value := range tasks {
+		task, ok := value.(map[string]any)
+		id := claudeTopLevelString(task, "task_id")
+		if !ok || strings.TrimSpace(id) == "" || claudeTopLevelString(task, "task_type") == "" {
+			p.protocolMalformed = true
+			return
+		}
+		if _, duplicate := ids[id]; duplicate {
+			p.protocolMalformed = true
+			return
+		}
+		ids[id] = struct{}{}
+	}
+	p.backgroundTasksPending = len(tasks) != 0
+}
+
+// hasTerminalResult is the resident reader's turn boundary. The parser, not a
+// second JSON discriminator in the transport, decides whether a result ended
+// the invocation. Formal failures still end the turn even with pending tasks.
+func (p *claudeParser) hasTerminalResult() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.terminalSeen && p.terminal != nil && p.terminal.Event == "result"
 }
 
 func claudeFormalEvent(eventType string) bool {
@@ -897,20 +961,6 @@ func (p *claudeParser) enableInteractive(ctx context.Context, sink driver.Decisi
 	p.stdin = stdin
 	p.interactiveTools = map[int]*interactiveToolUse{}
 	p.interactiveControl = map[string]struct{}{}
-}
-
-// onAssistantMessageStop is invoked from the streaming state when the
-// Anthropic stream_event sequence emits message_stop, after the last
-// message_delta (which set stop_reason). In interactive mode the
-// CLI may otherwise block reading stdin. A terminal root message lets a
-// one-shot process flush type:result and exit.
-func (p *claudeParser) onAssistantMessageStop(stopReason string) {
-	// A tool_use stop means the model is waiting for a control_request
-	// response; keep stdin open.
-	if stopReason == "" || stopReason == "tool_use" {
-		return
-	}
-	p.closeInteractiveStdin()
 }
 
 // closeInteractiveStdin consumes the turn's input handle exactly once. Callers

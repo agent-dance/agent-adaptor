@@ -837,10 +837,9 @@ func TestWantsInteractiveClaude(t *testing.T) {
 	}
 }
 
-// TestInteractive_OnAssistantMessageStop_Stdin closes the interactive stdin on
-// end_turn (and similar) so the host run can finish; tool_use turns must not
-// close before the model has received the injected tool_result.
-func TestInteractive_OnAssistantMessageStop_Stdin(t *testing.T) {
+// Every model message may be followed by another control request. Only a
+// final result releases input, and repeated terminal frames remain invalid.
+func TestInteractive_MessageStopBeforeResult_Stdin(t *testing.T) {
 	sink := newFakeInteractiveSink(func(req agentadaptor.DecisionRequest) (agentadaptor.DecisionResponse, error) {
 		return agentadaptor.DecisionResponse{RequestID: req.RequestID, Result: agentadaptor.DecisionApproved}, nil
 	})
@@ -850,17 +849,21 @@ func TestInteractive_OnAssistantMessageStop_Stdin(t *testing.T) {
 	p.enableStreaming("r1")
 	p.enableInteractive(context.Background(), sink, stdin)
 
-	p.onAssistantMessageStop("tool_use")
-	if stdin.closed != 0 {
-		t.Fatalf("tool_use: should not close stdin, closed=%d", stdin.closed)
+	for _, reason := range []string{"tool_use", "end_turn"} {
+		alignmentStdinFeed(t, p,
+			`{"type":"stream_event","event":{"type":"message_delta","delta":{"stop_reason":"`+reason+`"}}}`,
+			`{"type":"stream_event","event":{"type":"message_stop"}}`)
+		if stdin.closed != 0 {
+			t.Fatalf("%s: stdin closed before result, closed=%d", reason, stdin.closed)
+		}
 	}
-	p.onAssistantMessageStop("end_turn")
+	alignmentStdinFeed(t, p, alignmentStdinSuccess)
 	if stdin.closed != 1 {
-		t.Fatalf("end_turn: want 1 Close, got %d", stdin.closed)
+		t.Fatalf("result: want 1 Close, got %d", stdin.closed)
 	}
-	p.onAssistantMessageStop("end_turn")
-	if stdin.closed != 1 {
-		t.Fatalf("duplicate end_turn: idempotent, want still 1 Close, got %d", stdin.closed)
+	alignmentStdinFeed(t, p, alignmentStdinSuccess)
+	if stdin.closed != 1 || !p.protocolMalformed {
+		t.Fatalf("duplicate result: closes=%d malformed=%t", stdin.closed, p.protocolMalformed)
 	}
 }
 

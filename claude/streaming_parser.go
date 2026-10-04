@@ -31,7 +31,6 @@ type streamingState struct {
 	messageUsage    map[claudeUsageKey]*driver.Usage
 	activeUsage     map[string]claudeUsageKey
 	anonymousUsage  uint64
-	stopReason      string
 	terminalPayload map[string]any
 }
 
@@ -130,8 +129,8 @@ func (s *streamingState) handleStreamEvent(rawLine string, outer map[string]any)
 		return
 	}
 
-	// Nested subagent messages can end while the root is awaiting a tool
-	// response. Only root message state may close the run's stdin.
+	// Message boundaries never terminate the invocation or its control input.
+	// A later root message can still request permission after any stop reason.
 	parent, validParent := claudeParentID(outer)
 	if !validParent {
 		s.parser.observationNotice("parent_unresolved")
@@ -140,13 +139,9 @@ func (s *streamingState) handleStreamEvent(rawLine string, outer map[string]any)
 	scope, resolved := s.parser.wrapperScope(outer)
 	s.scope = scope
 	s.messageID = s.messageIDs[scope.id]
-	rootMessage := parent == ""
 	evType := strings.ToLower(asString(eventObj["type"]))
 	switch evType {
 	case "message_start":
-		if rootMessage {
-			s.stopReason = ""
-		}
 		s.handleMessageStart(eventObj, parent, resolved)
 	case "content_block_start":
 		if !resolved {
@@ -164,20 +159,9 @@ func (s *streamingState) handleStreamEvent(rawLine string, outer map[string]any)
 		}
 		s.handleContentBlockStop(eventObj)
 	case "message_delta":
-		if rootMessage {
-			if delta := claudeTopLevelObject(eventObj, "delta"); delta != nil {
-				if reason := claudeTopLevelString(delta, "stop_reason"); reason != "" {
-					s.stopReason = reason
-				}
-			}
-		}
 		s.handleMessageDelta(eventObj, parent)
 	case "message_stop":
-		// See onAssistantMessageStop: close interactive stdin after a
-		// terminal model turn so the CLI can exit and unblock the host.
-		if rootMessage && s.parser != nil {
-			s.parser.onAssistantMessageStop(s.stopReason)
-		}
+		// Only the final provider result closes interactive stdin.
 	default:
 		cp := cloneMapShallow(outer)
 		cp["_stream_raw_line"] = rawLine

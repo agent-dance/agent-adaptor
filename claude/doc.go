@@ -29,9 +29,13 @@
 // empty, unknown, fractional, negative or out-of-range counters do not imply zero.
 // Incomplete or failed runs cannot produce a healthy checkpoint.
 //
-// In bidirectional one-shot runs, a formal result or a terminal root assistant
-// message closes host input exactly once, allowing the CLI to finish even if
-// it omits message_stop. Tool-use and nested message stops keep input available.
+// In bidirectional one-shot runs, the final formal result closes host input
+// exactly once. Every message_stop, including max_tokens and end_turn, keeps
+// input available for later control requests. A valid root
+// background_tasks_changed snapshot with pending tasks defers a successful
+// result; the final result after tasks=[] ends the invocation. Failed results
+// still end it immediately. Incomplete background work cannot yield a healthy
+// checkpoint. All intermediate results remain in Raw and Transcript.
 // Resident Thread turns release only their per-turn input handle; the process
 // remains available for the next turn. Output is drained and checkpoint health
 // is checked against the process outcome before the final event is emitted.

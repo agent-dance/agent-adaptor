@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -605,7 +604,12 @@ func (lp *liveProcess) turn(ctx context.Context, prompt string, sink driver.Even
 						lp.signalTerminate()
 					}
 				}
-				if isResultLine(line) && abortErr == nil {
+				if readErr != nil {
+					// ReadString can return a complete final JSON record without
+					// its trailing newline. Give that record to the same parser.
+					parser.finalize()
+				}
+				if parser.hasTerminalResult() && abortErr == nil {
 					done <- readResult{stdout: raw.String(), result: true}
 					return
 				}
@@ -832,17 +836,6 @@ func emitPersistentChunk(sink driver.EventSink, stream string, chunk []byte, ts 
 		Stream:    stream,
 		Bytes:     append([]byte(nil), chunk...),
 	})
-}
-
-func isResultLine(line string) bool {
-	trimmed := strings.TrimSpace(line)
-	if !strings.HasPrefix(trimmed, "{") {
-		return false
-	}
-	var probe struct {
-		Type string `json:"type"`
-	}
-	return json.Unmarshal([]byte(trimmed), &probe) == nil && strings.EqualFold(probe.Type, "result")
 }
 
 func persistentEnv(bindings []driver.EnvBinding) []string {

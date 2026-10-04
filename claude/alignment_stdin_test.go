@@ -209,6 +209,9 @@ func TestAlignmentStdinCloseExactlyOnce(t *testing.T) {
 				alignmentStdinFeed(t, p,
 					`{"type":"stream_event","event":{"type":"message_delta","delta":{"stop_reason":"end_turn"}}}`,
 					`{"type":"stream_event","event":{"type":"message_stop"}}`)
+				if stdin.closed != 0 {
+					t.Fatal("message stop closed input before the result")
+				}
 			}
 			if order == "decision-error-first" {
 				sink.respond = func(driver.DecisionRequest) (driver.DecisionResponse, error) {

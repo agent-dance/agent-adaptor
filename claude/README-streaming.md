@@ -57,13 +57,19 @@ resident writer stops before this turn starts; a healthy checkpoint may then be
 prewarmed. `WithSpawn` suppresses registering or prewarming a resident writer.
 A Thread key alone does not imply that native schema rounds reuse one PID.
 
-A one-shot bidirectional run closes stdin exactly once when the parser sees a
-formal `type:result`, even if no `message_stop(end_turn)` preceded it. A terminal
-root message can also close stdin. Empty or `tool_use` stop reasons and nested
-subagent messages keep input open for control responses. Resident Thread turns
-release only their per-turn handle; the underlying stdin remains open for the
-next turn. A result does not bypass draining stdout/stderr or the final process
-and checkpoint checks.
+A one-shot bidirectional run closes stdin exactly once when the parser sees the
+final formal `type:result`, even if no `message_stop` preceded it. All message
+stops, including `max_tokens`, `end_turn`, and `stop_sequence`, keep input open
+for later control responses. An explicit root `background_tasks_changed`
+snapshot for the same session can report pending tasks. While they remain,
+successful results are intermediate; after `tasks=[]`, the next result ends the
+invocation. A failed result ends it immediately. Malformed task snapshots never
+clear pending work or authorize a healthy checkpoint. Intermediate results stay
+in Raw and Transcript; the final result owns Text, structured output, and its
+optional usage report. The resident reader uses this same parser boundary, so
+background frames cannot leak into the next Thread turn. Resident turns release
+only their per-turn handle; the underlying stdin remains open for the next turn.
+A result does not bypass draining stdout/stderr or process and checkpoint checks.
 
 ## Event and result contract
 
