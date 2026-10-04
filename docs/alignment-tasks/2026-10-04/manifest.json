@@ -8,13 +8,17 @@
     "M01",
     "M02",
     "M03",
-    "M04"
+    "M04",
+    "CI01",
+    "CI02"
   ],
   "integration_order": [
     "M02",
     "M04",
     "M03",
-    "M01"
+    "M01",
+    "CI02",
+    "CI01"
   ],
   "overlap_resolution": "各worker隔离worktree；M01/M03不写相同Claude文件；M02仅新增query文件与doc，M04写recorder事件codec；中央文档由root统一。",
   "independent_review": true,
@@ -42,6 +46,42 @@
       "bdbed2c6f6667c37bac66332a73e61ade8a19bcc",
       "6cacc98a019165e7e4490112d7bc74d85191a8f0",
       "5362e4b57724978f59026218ced3b8a28aba62cb"
+    ],
+    "CI02": [
+      "84ef0417ea3403418910d61d1f1ef5887e6dff7c",
+      "09d4967a6e8dbb3b68ce7a60a859c31495336f5e"
+    ],
+    "CI01": [
+      "39105dde07d03aa260712ac3cd7bf4a4f06e2e11"
     ]
+  },
+  "stages": [
+    {
+      "id": "migration",
+      "base_head": "969514bf34d267a20681419c197c1858cf20cef6",
+      "tasks": [
+        "M01",
+        "M02",
+        "M03",
+        "M04"
+      ]
+    },
+    {
+      "id": "ci_repair",
+      "base_head": "06322d519e1d9cbe1b8dfb7b71e11704e9470c17",
+      "tasks": [
+        "CI01",
+        "CI02"
+      ],
+      "depends_on_stage": "migration"
+    }
+  ],
+  "remaining_ci_blocker": {
+    "task": "CI01",
+    "advisory": "GHSA-vfj7-8cjw-p6xm",
+    "package": "braces@3.0.3",
+    "status": "no-official-patched-version",
+    "gate": "npm audit --audit-level=high",
+    "policy": "保留原规则与阈值；安全子集接受不表示完整任务/门禁通过。"
   }
 }

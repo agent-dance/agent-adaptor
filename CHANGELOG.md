@@ -70,6 +70,15 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- Upgrade the CopilotKit example's three direct packages together to 1.66.0,
+  with its native fixed A2UI dependency, and update compatible busboy to 3.2.1
+  and brace-expansion to 1.1.21/5.0.12.
+  Keep rendering functionality and both production/full-tree high audit gates.
+- Make the delegation recovery-budget fixture prove actual HTTP request
+  admission before waiting for cancellation, instead of inferring it from a
+  delayed response counter. Keep the original 500ms limit and error, partial
+  result, cleanup and independent-round assertions.
+
 - Keep Claude control input open after assistant message stops and intermediate
   results while formally reported background tasks remain active. Only the
   final root result completes the turn; audit records and observed usage remain

@@ -99,7 +99,8 @@
       "docs/alignment-tasks/2026-09-07/amendments/R051.md",
       "docs/alignment-tasks/2026-09-07/amendments/R052.md",
       "docs/alignment-tasks/2026-10-04/manifest.json",
-      "docs/internal-history-alignment-2026-10-04.md"
+      "docs/internal-history-alignment-2026-10-04.md",
+      "docs/alignment-tasks/2026-09-07/amendments/R053.md"
     ],
     "dependency_artifacts": [
       {
@@ -409,7 +410,13 @@
       "image_content.go",
       "image_content_test.go",
       "image_publication_test.go",
-      "testdata/root_api.golden"
+      "testdata/root_api.golden",
+      "docs/alignment-tasks/2026-09-07/amendments/R053.md",
+      "docs/alignment-tasks/2026-10-04/CI01/task.json",
+      "docs/alignment-tasks/2026-10-04/CI02/task.json",
+      "alignment_protocol_integration_test.go",
+      "examples/web-chat/copilotkit/web/package.json",
+      "examples/web-chat/copilotkit/web/package-lock.json"
     ],
     "scope_match": "精确文件或目录/**；gate可合并worker已审阅commit，但不直接越权编辑其生产代码。",
     "exclusive_resources": [
@@ -469,7 +476,8 @@
     "R039 T28-F05安全边界：真实ManagedRoots下，同key/runtimeName从A切到B不得仅凭copied目录来源marker删除实际内容/权限/用户附件；compatibility与正式reconcile均在破坏前ErrUnsafe。same-source保留实际复制树与hash，正式已证明symlink替换不受影响。marker-only clone不迁移含绝对Path的源manifest，目标manifest由正式reconcile建立；无新公共API/复制框架。",
     "R040：原T06/T15/T20精确互斥返修、非作者复验后合流。dab G05/10绿1失败CI/两过两失败live分别归档，专门T26绿不能替代完整Windows。原47/96/45/9、G04、全部命令/skip/Windows32不变，新S全门禁重验。",
     "R041：T15仅B prompt明确最终输出格式，字节级equals及原cold全部断言不变；单次诊断不等于live验收，新S全G05/B06/G06不变。",
-    "R052：按用户2026-10-04继续迁移internal有效增量的授权，整合独立任务包M01–M04及其非作者返修，核对69条历史、1921636精确排除和N08未采纳裁决。仅承接精确路径；原47/96/45/9、G04完整diff、原命令和live门保持。Claude Usage/EOF、Windows env casing、图片用户消息起点和新增字段UTF-8必须有反例与修复证据；新SHA全量test/vet/CI独立验收，旧G06不继承。"
+    "R052：按用户2026-10-04继续迁移internal有效增量的授权，整合独立任务包M01–M04及其非作者返修，核对69条历史、1921636精确排除和N08未采纳裁决。仅承接精确路径；原47/96/45/9、G04完整diff、原命令和live门保持。Claude Usage/EOF、Windows env casing、图片用户消息起点和新增字段UTF-8必须有反例与修复证据；新SHA全量test/vet/CI独立验收，旧G06不继承。",
+    "R053：保留06322d5首轮全部证据；整合CI01已独立审查的兼容依赖安全修复及CI02真实HTTP准入/取消夹具。旧500ms和全部原断言、lint规则、双high审计阈值保持。braces未发布补丁仍是全树审计阻塞，不能降级丢规则、冒名shim或宣称已绿。新SHA重跑原G05和全部CI，旧47/96/45/9及G06保持。"
   ],
   "acceptance_criteria": [
     {

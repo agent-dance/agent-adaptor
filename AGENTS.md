@@ -440,6 +440,8 @@ R051：WithTools 的 MCP wire 必须兼容要求对象输出的正式客户端�
 
 R052：2026-10-04 internal 增量对齐以目标969514b和源2e57139为固定基线；完整69条可达提交去重，排除1921636本次新增迁移而不删除既有观测能力。Claude只由正式parser判定最终result关闭stdin，明确后台任务中的中间结果不能提前形成终局或污染常驻下一轮。历史Range/Tail及完整Run下界查询留在sessionrecorder，保留原接口兼容并只按typed事实确定边界。上下文与自动压缩配置属于provider真实Config，校验/Inspect/指纹/原生执行一致，显式冲突失败。ImageContent及宿主UserID沿唯一typed Event与桥/recorder交付，不伪造provider图像输入或认证身份；本次公共增量须精确更新AST golden。未合主线的A2A跨HTTP运行托管分支不直接移植，其取消/超时/资源合同须先重新设计。新任务包见docs/alignment-tasks/2026-10-04；旧门禁与Cursor未知失败保持，新源码必须独立验证，不能继承旧G05/G06通过结论。
 
+R053：06322d5合流CI的前端安全审计与T25 recovery夹具失败分别保留。CopilotKit三直接包统一采用原生依赖安全A2UI的稳定版本，busboy在兼容range内修补；不强制跨0.x覆盖旧API，不删除功能或降低生产/全树high审计阈值。GetTask计数必须表示实际已解码HTTP请求接收，不能以阻塞hook后的完成计数推断准入；recovery用接收屏障及同请求context取消验证500ms主动预算，原cause/limit/partial/cancel/new-rounds断言保持。旧失败无内部调度轨迹，受控反例不倒填原run原因。CI01/CI02仅窄域补充任务，精确路径和非作者验证后形成新SHA重跑完整门禁；无官方修复版本的braces开发依赖继续阻断全树审计，不能通过丢失Next规则/flat config的降级、本地shim或冒名包刷绿。旧47/96/45/9和G06未通过保持。
+
 ## 15. 发布门禁
 
 发布前必须全部满足：

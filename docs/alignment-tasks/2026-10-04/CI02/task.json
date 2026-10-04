@@ -1,0 +1,42 @@
+{
+  "id": "CI02",
+  "title": "Linux恢复预算夹具准入证明",
+  "kind": "post_integration_ci_repair",
+  "base_head": "06322d519e1d9cbe1b8dfb7b71e11704e9470c17",
+  "source_head": "2e57139e31891e359c4fe74b9186d6c146eca143",
+  "source_groups": [],
+  "depends_on": [
+    "M01",
+    "M02",
+    "M03",
+    "M04"
+  ],
+  "required_reads": [
+    "AGENTS.md",
+    "docs/alignment-tasks/2026-09-07/amendments/R053.md"
+  ],
+  "owned_paths": [
+    "alignment_protocol_integration_test.go"
+  ],
+  "acceptance": [
+    "GetTask计数证明实际接收，不能用阻塞hook完成后的计数推断准入",
+    "恢复等待中主动预算耗尽：500ms不变，原主因/cause/limit/partial/cancel及new-rounds断言保留",
+    "原失败日志保留，受控测量竞态不得倒填旧run轨迹；不修改生产"
+  ],
+  "validation": [
+    "定向HTTP准入反例",
+    "受影响protocol夹具race重复验证",
+    "非作者检查",
+    "新SHA原T25/全量CI"
+  ],
+  "constraints": [
+    "保留原失败证据，不重试刷绿或降低检查阈值",
+    "不访问真实provider/auth，不创建tag或合并main",
+    "中央文档和任务包由协调者负责"
+  ],
+  "delivery": [
+    "独立提交SHA",
+    "原红与修复证据",
+    "非作者审阅结果"
+  ]
+}

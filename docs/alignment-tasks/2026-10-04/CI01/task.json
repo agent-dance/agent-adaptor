@@ -1,0 +1,45 @@
+{
+  "id": "CI01",
+  "title": "前端生产依赖安全审计修复",
+  "kind": "post_integration_ci_repair",
+  "base_head": "06322d519e1d9cbe1b8dfb7b71e11704e9470c17",
+  "source_head": "2e57139e31891e359c4fe74b9186d6c146eca143",
+  "source_groups": [],
+  "depends_on": [
+    "M01",
+    "M02",
+    "M03",
+    "M04"
+  ],
+  "required_reads": [
+    "AGENTS.md",
+    "docs/alignment-tasks/2026-09-07/amendments/R053.md"
+  ],
+  "owned_paths": [
+    "examples/web-chat/copilotkit/web/package.json",
+    "examples/web-chat/copilotkit/web/package-lock.json"
+  ],
+  "acceptance": [
+    "CopilotKit三直接包保持一致版本，采用原生支持安全A2UI的稳定版本",
+    "生产与全依赖树high阈值不变；保留实际渲染、交互及runtime能力",
+    "保持其它直接依赖版本；只做必要传递依赖安全升级"
+  ],
+  "validation": [
+    "npm ci",
+    "npm run lint",
+    "npm run build",
+    "npm audit --omit=dev --audit-level=high",
+    "npm audit --audit-level=high",
+    "非作者依赖图/API兼容复核"
+  ],
+  "constraints": [
+    "保留原失败证据，不重试刷绿或降低检查阈值",
+    "不访问真实provider/auth，不创建tag或合并main",
+    "中央文档和任务包由协调者负责"
+  ],
+  "delivery": [
+    "独立提交SHA",
+    "原红与修复证据",
+    "非作者审阅结果"
+  ]
+}
