@@ -47,6 +47,19 @@
 //
 // works across arbitrary run boundaries.
 //
+// Range and Tail provide bounded cursor windows and the latest n records.
+// RangeFromRunStart and TailFromRunStart also restore a known lower boundary
+// for replay: the owning run's RunStarted, or a user message's PhaseStart.
+// These are package functions accepting the existing EventRecorder interface,
+// so custom recorders and storage backends need no additional methods. The
+// built-in recorder copies only the selected window; custom recorders provide
+// one Since(ctx, sessionKey, 0) snapshot. All queries return independent event
+// values, preserve dropped-event markers and never wait for future records.
+// Run alignment uses authoritative EventMeta.RunID, does not guess ownership
+// for unidentified events, and keeps the original lower bound when a start is
+// missing. Only the lower bound expands: results need not contain a completed
+// run and may contain interleaved events from other runs.
+//
 // # Choosing a sessionKey
 //
 // sessionKey is intentionally a neutral aggregation key. There are two
