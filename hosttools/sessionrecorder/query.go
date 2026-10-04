@@ -35,9 +35,11 @@ func Tail(ctx context.Context, recorder EventRecorder, sessionKey string, n int)
 //
 // Ordinary events, including approvals, align to RunStarted with the same
 // authoritative EventMeta.RunID. A RunStarted is already its own boundary.
-// User TextDelta events align to PhaseStart with the same MessageID and RunID.
-// Empty run IDs never imply ownership by a nearby run. User text without a run
-// ID can align within its message, but never across a run boundary. If the
+// User text and images align to the nearest user TextDelta PhaseStart with the
+// same MessageID and RunID. An image may follow its message's text PhaseEnd;
+// ordinary text deltas cannot reconnect to an already completed message.
+// Empty run IDs never imply ownership by a nearby run. User content without a
+// run ID can align within its message, but never across a run boundary. If the
 // relevant start is absent, the original lower bound is retained. Provider
 // IDs, source metadata and event bodies are not used to infer ownership.
 // Replay remains observational: recorded approvals have no live responder.
@@ -137,8 +139,18 @@ func (w historyWindow) bounds(history []EventRecord) (lo, hi int) {
 
 func historyStart(history []EventRecord, index int) int {
 	ev := history[index].Event
-	if text, ok := ev.(adaptor.TextDelta); ok && text.Role == adaptor.RoleUser {
-		return userMessageStart(history, index, text)
+	switch e := ev.(type) {
+	case adaptor.TextDelta:
+		if e.Role == adaptor.RoleUser {
+			if e.Phase == adaptor.PhaseStart {
+				return index
+			}
+			return userMessageStart(history, index, e.MessageID, e.Meta().RunID, false)
+		}
+	case adaptor.ImageContent:
+		if e.Role == adaptor.RoleUser {
+			return userMessageStart(history, index, e.MessageID, e.Meta().RunID, true)
+		}
 	}
 	if _, ok := ev.(adaptor.RunStarted); ok {
 		return index
@@ -155,11 +167,10 @@ func historyStart(history []EventRecord, index int) int {
 	return index
 }
 
-func userMessageStart(history []EventRecord, index int, target adaptor.TextDelta) int {
-	if target.MessageID == "" || target.Phase == adaptor.PhaseStart {
+func userMessageStart(history []EventRecord, index int, messageID, runID string, image bool) int {
+	if messageID == "" {
 		return index
 	}
-	runID := target.Meta().RunID
 	for i := index - 1; i >= 0; i-- {
 		ev := history[i].Event
 		switch ev.(type) {
@@ -169,15 +180,18 @@ func userMessageStart(history []EventRecord, index int, target adaptor.TextDelta
 			}
 		}
 		text, ok := ev.(adaptor.TextDelta)
-		if !ok || text.Role != adaptor.RoleUser || text.MessageID != target.MessageID || text.Meta().RunID != runID {
+		if !ok || text.Role != adaptor.RoleUser || text.MessageID != messageID || text.Meta().RunID != runID {
 			continue
 		}
 		switch text.Phase {
 		case adaptor.PhaseStart:
 			return i
 		case adaptor.PhaseEnd:
-			// Reusing a message ID cannot connect to a completed message.
-			return index
+			// Images can follow the closed text of their explicit message.
+			// Text deltas still cannot reconnect to a completed message.
+			if !image {
+				return index
+			}
 		}
 	}
 	return index

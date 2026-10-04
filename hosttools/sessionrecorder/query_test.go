@@ -235,6 +235,43 @@ func TestHistoryQueryUserMessageBoundaries(t *testing.T) {
 	}
 }
 
+func TestHistoryQueryUserImagesRestoreMessageStart(t *testing.T) {
+	user := func(run, id string, phase adaptor.Phase) adaptor.Event {
+		return queryEvent(adaptor.TextDelta{MessageID: id, Role: adaptor.RoleUser, Phase: phase}, run)
+	}
+	image := func(run, id string, role adaptor.Role) adaptor.Event {
+		return queryEvent(adaptor.ImageContent{MessageID: id, Type: "binary", MIMEType: "image/png", URL: "/image", Role: role}, run)
+	}
+	for _, storage := range []string{"memory", "jsonl-reopened"} {
+		t.Run(storage, func(t *testing.T) {
+			for _, tc := range []struct {
+				name   string
+				events []adaptor.Event
+				want   []uint64
+			}{
+				{"closed-user-text", []adaptor.Event{queryEvent(adaptor.RunStarted{}, "a"), user("a", "m", adaptor.PhaseStart), user("a", "m", adaptor.PhaseContent), user("a", "m", adaptor.PhaseEnd), image("a", "m", adaptor.RoleUser)}, []uint64{2, 3, 4, 5}},
+				{"user-message-without-run-start", []adaptor.Event{user("a", "m", adaptor.PhaseStart), user("a", "m", adaptor.PhaseEnd), image("a", "m", adaptor.RoleUser)}, []uint64{1, 2, 3}},
+				{"empty-run-known-message", []adaptor.Event{user("", "m", adaptor.PhaseStart), user("", "m", adaptor.PhaseEnd), image("", "m", adaptor.RoleUser)}, []uint64{1, 2, 3}},
+				{"latest-same-message-start", []adaptor.Event{user("a", "m", adaptor.PhaseStart), user("a", "m", adaptor.PhaseEnd), user("a", "m", adaptor.PhaseStart), user("a", "m", adaptor.PhaseEnd), image("a", "m", adaptor.RoleUser)}, []uint64{3, 4, 5}},
+				{"interleaved-other-run", []adaptor.Event{user("a", "m", adaptor.PhaseStart), user("a", "m", adaptor.PhaseEnd), user("b", "m", adaptor.PhaseStart), image("a", "m", adaptor.RoleUser)}, []uint64{1, 2, 3, 4}},
+				{"different-message", []adaptor.Event{user("a", "other", adaptor.PhaseStart), user("a", "other", adaptor.PhaseEnd), image("a", "m", adaptor.RoleUser)}, []uint64{3}},
+				{"different-run", []adaptor.Event{user("a", "m", adaptor.PhaseStart), user("a", "m", adaptor.PhaseEnd), image("b", "m", adaptor.RoleUser)}, []uint64{3}},
+				{"missing-start", []adaptor.Event{user("a", "m", adaptor.PhaseContent), user("a", "m", adaptor.PhaseEnd), image("a", "m", adaptor.RoleUser)}, []uint64{3}},
+				{"empty-run-boundary", []adaptor.Event{user("", "m", adaptor.PhaseStart), user("", "m", adaptor.PhaseEnd), queryEvent(adaptor.RunStarted{}, "a"), image("", "m", adaptor.RoleUser)}, []uint64{4}},
+				{"assistant-keeps-run-boundary", []adaptor.Event{queryEvent(adaptor.RunStarted{}, "a"), user("a", "m", adaptor.PhaseStart), user("a", "m", adaptor.PhaseEnd), image("a", "m", adaptor.RoleAssistant)}, []uint64{1, 2, 3, 4}},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					r := queryRecorder(t, storage, tc.events)
+					for _, q := range []historyQuery{{after: uint64(len(tc.events) - 1), to: uint64(len(tc.events)), align: true}, {tail: true, n: 1, align: true}} {
+						records, err := q.run(context.Background(), r, "history")
+						requireQuerySeqs(t, records, err, tc.want...)
+					}
+				})
+			}
+		})
+	}
+}
+
 func TestHistoryQueryLegacyRecorderSnapshotAndUint64(t *testing.T) {
 	calls := 0
 	r := &queryLegacyRecorder{read: func(_ context.Context, key string, after uint64) ([]sessionrecorder.EventRecord, error) {
