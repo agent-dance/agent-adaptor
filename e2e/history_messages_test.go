@@ -95,13 +95,13 @@ func TestHistoryMessagesSurviveRestartAndBoundedReplay(t *testing.T) {
 	assertHistoryMessageRole(t, pageWire, "question", "user")
 	assertHistoryImageFrame(t, pageWire, "question", "user", userID, "/attachments/question.png", "image/png")
 
-	// Only the lower bound may expand: an image alone needs its current run's
-	// recorded start, while the page still ends at the requested HostSeq 8.
+	// Only the lower bound may expand: a user image restores its own message's
+	// text start, after the run start. The page still ends at HostSeq 8.
 	alignedPage, err := sessionrecorder.RangeFromRunStart(ctx, recorder, session, 7, 8)
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertHistoryMessageCursors(t, alignedPage, 4, 8)
+	assertHistoryMessageCursors(t, alignedPage, 5, 8)
 
 	// A reconnect asks for the latest two rows (assistant image + terminal).
 	// Run alignment must restore exactly this run, including the user triple
@@ -206,4 +206,69 @@ func assertHistoryImageFrame(t *testing.T, frames []map[string]any, messageID, r
 	if count != 1 {
 		t.Fatalf("message %s has %d image frames", messageID, count)
 	}
+}
+
+func TestHistoryUserImageReplayWithoutRunStarted(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	open := func() sessionrecorder.EventRecorder {
+		t.Helper()
+		backend, err := sessionrecorder.NewJSONLEventBackend(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sessionrecorder.NewEventRecorder(backend)
+	}
+	recorder := open()
+	const session = "host-message-history"
+	// A host can record user messages before execution starts, so these two
+	// durable turns deliberately have no RunStarted. Reusing a client message
+	// ID in a later run must not recover the previous user's attribution.
+	input := agui.RunAgentInput{Messages: []agui.Message{{ID: "reused", Role: "user", Content: json.RawMessage(`"Describe my attachment"`)}}}
+	for _, run := range []string{"earlier", "latest"} {
+		events := input.UserTurnEventsWithUserID(run, "user-"+run)
+		events = append(events, adaptor.WithEventMeta(adaptor.ImageContent{
+			MessageID: "reused", Type: "binary", MIMEType: "image/png", URL: "/" + run + ".png",
+			Role: adaptor.RoleUser, UserID: "user-" + run,
+		}, adaptor.EventMeta{RunID: run}))
+		for _, event := range events {
+			if _, err := recorder.Record(ctx, session, event); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err := recorder.Close(); err != nil {
+		t.Fatal(err)
+	}
+	recorder = open()
+	t.Cleanup(func() {
+		if err := recorder.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	page, err := sessionrecorder.TailFromRunStart(ctx, recorder, session, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertHistoryMessageCursors(t, page, 5, 8)
+	for _, record := range page {
+		if record.Event.Meta().RunID != "latest" {
+			t.Fatal("image replay crossed to an earlier run")
+		}
+		switch event := record.Event.(type) {
+		case adaptor.TextDelta:
+			if event.UserID != "user-latest" {
+				t.Fatal("recovered text belongs to the wrong asking user")
+			}
+		case adaptor.ImageContent:
+			if event.UserID != "user-latest" {
+				t.Fatal("image lost asking-user attribution")
+			}
+		default:
+			t.Fatalf("replay synthesized an unrecorded %T", event)
+		}
+	}
+	wire := replayHistoryMessageFrames(t, page)
+	assertHistoryMessageRole(t, wire, "reused", "user")
+	assertHistoryImageFrame(t, wire, "reused", "user", "user-latest", "/latest.png", "image/png")
 }
