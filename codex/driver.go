@@ -47,6 +47,10 @@ func (adapter) Descriptor() driver.Descriptor {
 		{Name: "extra_args", Label: "Extra Args", Type: "textarea", Description: "Additional CLI args appended after SDK-managed flags.", Group: "command"},
 	}
 	fields = append(fields, profileconfig.CapabilityFields(DriverType)...)
+	fields = append(fields,
+		driver.ConfigField{Name: "context_window_tokens", Label: "Context Window Tokens", Type: "number", Description: "Native model_context_window override. Zero leaves native defaults unchanged.", Default: int64(0), Group: "model"},
+		driver.ConfigField{Name: "auto_compact_token_limit", Label: "Auto-compact Token Limit", Type: "number", Description: "Native model_auto_compact_token_limit override. Zero leaves native defaults unchanged.", Default: int64(0), Group: "model"},
+	)
 	return driver.Descriptor{
 		Type:         DriverType,
 		DisplayName:  "Codex",
@@ -89,7 +93,11 @@ func codexModels() []driver.ModelInfo {
 func (adapter) ValidateConfig(cfg any) error {
 	switch cfg.(type) {
 	case Config, *Config:
-		return validateCodexPromptArgs(readConfig(cfg).ExtraArgs)
+		config := readConfig(cfg)
+		if err := validateCodexPromptArgs(config.ExtraArgs); err != nil {
+			return err
+		}
+		return validateCodexContextConfig(config)
 	default:
 		return errors.New("codex driver requires codex.Config")
 	}
@@ -98,6 +106,9 @@ func (adapter) ValidateConfig(cfg any) error {
 func (adapter) CheckEnvironment(_ context.Context, cfg any) (driver.EnvironmentReport, error) {
 	config := readConfig(cfg)
 	if err := validateCodexPromptArgs(config.ExtraArgs); err != nil {
+		return driver.EnvironmentReport{}, err
+	}
+	if err := validateCodexContextConfig(config); err != nil {
 		return driver.EnvironmentReport{}, err
 	}
 	command := config.Command
@@ -218,7 +229,10 @@ func modelOptions(models []driver.ModelInfo) []driver.ConfigOption {
 	return options
 }
 
-func (adapter) ConfigSchema(_ context.Context, _ any) (*driver.ConfigSchema, error) {
+func (adapter) ConfigSchema(_ context.Context, cfg any) (*driver.ConfigSchema, error) {
+	if err := validateCodexContextConfig(readConfig(cfg)); err != nil {
+		return nil, err
+	}
 	return adapter{}.Descriptor().ConfigSchema, nil
 }
 
@@ -355,6 +369,9 @@ func (adapter) StreamCapability() driver.StreamCapability {
 func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSink) (driver.Response, error) {
 	cfg := readConfig(req.Config)
 	if err := validateCodexAppend(req, cfg); err != nil {
+		return driver.Response{}, err
+	}
+	if err := validateCodexContextConfig(cfg); err != nil {
 		return driver.Response{}, err
 	}
 	// Per-run WithModel overrides the configured model for this invocation only.

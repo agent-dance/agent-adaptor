@@ -63,10 +63,15 @@ func buildAppServerOptions(
 	if err := validateCodexForkRequest(req); err != nil {
 		return appserver.Options{}, err
 	}
+	contextArgs, err := codexContextArgs(cfg)
+	if err != nil {
+		return appserver.Options{}, err
+	}
 	extraArgs, err := codexAppServerExtraArgs(cfg.ExtraArgs, req.Policy)
 	if err != nil {
 		return appserver.Options{}, err
 	}
+	extraArgs = append(extraArgs, contextArgs...)
 	model, effort, serviceTier := codexAppServerConfigProjection(cfg)
 
 	opts := appserver.Options{

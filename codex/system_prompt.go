@@ -17,6 +17,18 @@ const appendSystemPromptFingerprintKey = "append_system_prompt_fingerprint"
 // the SDK append is empty. Normalize only the key: Codex accepts any RHS by
 // falling back to a literal string when its TOML value parser rejects it.
 func validateCodexPromptArgs(args []string) error {
+	return visitCodexConfigKeys(args, func(key string) error {
+		switch key {
+		case "developer_instructions", "instructions", "base_instructions", "model_instructions_file", "experimental_instructions_file":
+			return &driver.SystemPromptUnsupportedError{Driver: DriverType, Reason: "conflicting_extra_args"}
+		}
+		return nil
+	})
+}
+
+// visitCodexConfigKeys is shared by native prompt and context controls so all
+// override spellings have one key parser. Values deliberately remain opaque.
+func visitCodexConfigKeys(args []string, visit func(string) error) error {
 	for i := 0; i < len(args); i++ {
 		base, value, inline := splitCodexArg(args[i])
 		if base != "-c" && base != "--config" {
@@ -38,9 +50,8 @@ func validateCodexPromptArgs(args []string) error {
 			return invalidCodexConfigOverride()
 		}
 		for key := range decoded {
-			switch key {
-			case "developer_instructions", "instructions", "base_instructions", "model_instructions_file", "experimental_instructions_file":
-				return &driver.SystemPromptUnsupportedError{Driver: DriverType, Reason: "conflicting_extra_args"}
+			if err := visit(key); err != nil {
+				return err
 			}
 		}
 	}
@@ -109,6 +120,10 @@ func (s codexPromptDiagnosticSink) Emit(e driver.RunEvent) error {
 
 // The early and final command checks use the same resolved argv construction.
 func codexExecArgs(req driver.Request, cfg Config, schemaPath string) ([]string, error) {
+	contextArgs, err := codexContextArgs(cfg)
+	if err != nil {
+		return nil, err
+	}
 	appendArgs, err := codexAppendArgs(req.AppendSystemPrompt)
 	if err != nil {
 		return nil, err
@@ -128,6 +143,7 @@ func codexExecArgs(req driver.Request, cfg Config, schemaPath string) ([]string,
 		args = append(args, "-c", `service_tier="fast"`, "-c", "features.fast_mode=true")
 	}
 	args = append(args, filterCodexPolicyExtraArgs(cfg.ExtraArgs, req.Policy)...)
+	args = append(args, contextArgs...)
 	if req.Session != nil && req.Session.State != nil && req.Session.State.ResumeID != "" {
 		args = append(args, "resume", req.Session.State.ResumeID, "-")
 	} else {

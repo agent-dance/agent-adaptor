@@ -70,6 +70,10 @@ func (adapter) Descriptor() driver.Descriptor {
 		{Name: "extra_args", Label: "Extra Args", Type: "textarea", Description: "Additional CLI args appended after SDK-managed flags.", Group: "command"},
 	}
 	fields = append(fields, profileconfig.CapabilityFields(DriverType)...)
+	fields = append(fields,
+		driver.ConfigField{Name: "context_window_tokens", Label: "Context Window Tokens", Type: "number", Description: "Native model-window hint; Claude applies its model-specific support rules. Zero leaves native defaults unchanged.", Default: int64(0), Group: "model"},
+		driver.ConfigField{Name: "auto_compact_window_tokens", Label: "Auto-compact Window Tokens", Type: "number", Description: "Native compaction window (100000–1000000), capped by model capacity and reduced by the summary buffer. Zero leaves native defaults unchanged.", Default: int64(0), Group: "model"},
+	)
 	return driver.Descriptor{
 		Type:         DriverType,
 		DisplayName:  "Claude Code",
@@ -115,7 +119,11 @@ func (adapter) Descriptor() driver.Descriptor {
 func (adapter) ValidateConfig(cfg any) error {
 	switch cfg.(type) {
 	case Config, *Config:
-		return validateClaudeAppend(readConfig(cfg), "")
+		config := readConfig(cfg)
+		if err := validateClaudeAppend(config, ""); err != nil {
+			return err
+		}
+		return validateClaudeContextConfig(config, nil)
 	default:
 		return errors.New("claude driver requires claude.Config")
 	}
@@ -124,6 +132,9 @@ func (adapter) ValidateConfig(cfg any) error {
 func (adapter) CheckEnvironment(_ context.Context, cfg any) (driver.EnvironmentReport, error) {
 	config := readConfig(cfg)
 	if err := validateClaudeAppend(config, ""); err != nil {
+		return driver.EnvironmentReport{}, err
+	}
+	if err := validateClaudeContextConfig(config, nil); err != nil {
 		return driver.EnvironmentReport{}, err
 	}
 	command := config.Command
@@ -219,6 +230,9 @@ func modelOptions(models []driver.ModelInfo) []driver.ConfigOption {
 }
 
 func (adapter) ConfigSchema(_ context.Context, cfg any) (*driver.ConfigSchema, error) {
+	if err := validateClaudeContextConfig(readConfig(cfg), nil); err != nil {
+		return nil, err
+	}
 	return hydrateClaudeConfigSchema(readConfig(cfg)), nil
 }
 
@@ -343,6 +357,9 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 	if err := validateClaudeAppend(cfg, req.AppendSystemPrompt); err != nil {
 		return driver.Response{}, err
 	}
+	if err := validateClaudeContextConfig(cfg, req.Runtime.SecretEnv); err != nil {
+		return driver.Response{}, err
+	}
 	if err := validateClaudeSessionRequest(req); err != nil {
 		return driver.Response{}, err
 	}
@@ -401,6 +418,7 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 	if err != nil {
 		return driver.Response{}, err
 	}
+	effectiveEnv = appendClaudeContextEnv(effectiveEnv, cfg)
 
 	modelFlag := claudeRequestedModelFlag(cfg)
 	reportedModel := modelFlag

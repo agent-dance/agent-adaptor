@@ -28,6 +28,15 @@ type Config struct {
 	ReasoningEffort ReasoningEffort
 	// FastMode requests Codex's fast service tier defaults.
 	FastMode bool
+	// ContextWindowTokens overrides Codex's model_context_window config key.
+	// Zero leaves native defaults unchanged; negative values are invalid.
+	ContextWindowTokens int64
+	// AutoCompactTokenLimit overrides model_auto_compact_token_limit. Zero
+	// leaves the native default unchanged; negative values are invalid. This
+	// is Codex's native token limit, not Claude's compaction-window setting.
+	// Both controls use per-process -c overrides in exec and app-server, without
+	// writing config.toml. A nonzero typed control cannot also appear in ExtraArgs.
+	AutoCompactTokenLimit int64
 }
 
 // Driver returns the Codex driver with cfg captured at construction. Pass the

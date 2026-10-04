@@ -27,6 +27,18 @@ type Config struct {
 	Effort ThinkingEffort
 	// MaxTurnsPerRun limits agent turns within one invocation. Zero uses the CLI default.
 	MaxTurnsPerRun int
+	// ContextWindowTokens supplies CLAUDE_CODE_MAX_CONTEXT_TOKENS as a native
+	// model-window hint. Claude applies its model-specific support rules; this
+	// does not enlarge the model's actual API limit. Zero leaves the CLI default
+	// or ambient environment unchanged. Negative or inexact JS integers fail.
+	ContextWindowTokens int64
+	// AutoCompactWindowTokens supplies CLAUDE_CODE_AUTO_COMPACT_WINDOW. Zero
+	// leaves the native default unchanged; explicit values must be 100000–1000000.
+	// Claude may further cap this window to the model's capacity and reserves
+	// space for its summary, so this is not an exact compaction trigger count.
+	// Nonzero typed controls cannot also be supplied through CommonConfig.Env
+	// or runtime service environment bindings. They override ambient defaults.
+	AutoCompactWindowTokens int64
 }
 
 // engineConfig converts the package-owned Config into the engine config the
