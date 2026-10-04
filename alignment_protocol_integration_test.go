@@ -1799,6 +1799,11 @@ func apPeer(t *testing.T, p *apWirePeer) string {
 			w.Header().Set("Content-Type", "application/json")
 			fmt.Fprint(w, apJSON(map[string]any{"jsonrpc": "2.0", "id": req["id"], "result": result}))
 		}
+		// Count received recovery requests before a hook can wait for their
+		// cancellation. Completion can race with the client's timeout return.
+		if req["method"] == "GetTask" {
+			p.getCalls.Add(1)
+		}
 		if p.methodHook != nil {
 			p.methodHook(r.Context(), req["method"].(string))
 		}
@@ -1821,7 +1826,6 @@ func apPeer(t *testing.T, p *apWirePeer) string {
 				w.(http.Flusher).Flush()
 			}
 		case "GetTask":
-			p.getCalls.Add(1)
 			send(p.task)
 		case "SendMessage":
 			p.sendCalls.Add(1)
@@ -2454,23 +2458,19 @@ func TestAlignmentProtocolDelegationBudgets(t *testing.T) {
 	for _, mode := range []string{"active", "wall", "recovery", "new-rounds"} {
 		t.Run(mode, func(t *testing.T) {
 			p := &apWirePeer{streaming: true, cancelErr: true, frames: [][]any{{apArtifact([]any{map[string]any{"text": "partial before timeout"}}, false, true)}}}
+			var recoveryEntered chan struct{}
 			switch mode {
 			case "active", "wall":
 				p.streamEnd = func(ctx context.Context) { <-ctx.Done() }
 			case "recovery":
 				p.broken = true
-				p.streamEnd = func(ctx context.Context) {
-					select {
-					case <-ctx.Done():
-					case <-time.After(250 * time.Millisecond):
-					}
-				}
+				recoveryEntered = make(chan struct{})
 				p.methodHook = func(ctx context.Context, method string) {
 					if method == "GetTask" {
-						select {
-						case <-ctx.Done():
-						case <-time.After(350 * time.Millisecond):
-						}
+						close(recoveryEntered)
+						// Recovery stays pending until the same Delegate budget
+						// cancels its real HTTP request; no sleep guesses admission.
+						<-ctx.Done()
 					}
 				}
 				p.task = apWireTask("TASK_STATE_COMPLETED", "done", "too late", nil)
@@ -2519,7 +2519,15 @@ func TestAlignmentProtocolDelegationBudgets(t *testing.T) {
 				if mode == "recovery" || mode == "new-rounds" {
 					req.ActiveExecutionTimeout = 500 * time.Millisecond
 				}
-				out, e := svc.Delegate(apContext(t), req)
+				ctx := apContext(t)
+				out, e := svc.Delegate(ctx, req)
+				if recoveryEntered != nil {
+					select {
+					case <-recoveryEntered:
+					case <-ctx.Done():
+						t.Fatal("GetTask HTTP recovery was not observed before the fixture watchdog")
+					}
+				}
 				if mode == "new-rounds" {
 					if e != nil || out.Error != nil {
 						t.Fatalf("fresh budget round %d failed: %v", round, e)
