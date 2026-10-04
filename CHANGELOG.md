@@ -6,6 +6,23 @@ All notable changes to this project are documented in this file.
 
 ### Added
 
+- Provider-native context controls in Claude and Codex Config, consistently
+  validated and delivered to one-shot and resident transports. Zero leaves the
+  native setting alone; explicit conflicting overrides fail before execution.
+  The added Config fields conservatively invalidate older Thread fingerprints,
+  including when the new fields are zero.
+- Bounded `sessionrecorder.Range` / `Tail` history queries and their
+  `FromRunStart` variants, without adding methods to existing recorder or
+  backend interfaces. Replay boundaries use typed run/message ownership,
+  including user images and custom recorders returning pointer events.
+- Host-published `ImageContent` events through the same Event pipeline, AG-UI,
+  SSE and durable recorder, plus optional trusted user attribution on user text
+  and images. `UserTurnEvents(string)` keeps its exact signature; the new
+  `UserTurnEventsWithUserID` helper accepts explicit attribution. These features
+  do not add provider image input or authentication;
+  the A2A bridge does not forward these images or user identifiers. SDK JSON
+  projections reject invalid UTF-8 in the retained new fields without rewriting them.
+
 - An executable offline consumer example covers native append override/clear,
   same-stream approval, confirmed Todo snapshots, scoped capability recording
   and active-timeout partial Results. All five READMEs and usage references
@@ -52,6 +69,11 @@ All notable changes to this project are documented in this file.
   primary limit_ms, retaining allowed partial artifacts before terminal status.
 
 ### Fixed
+
+- Keep Claude control input open after assistant message stops and intermediate
+  results while formally reported background tasks remain active. Only the
+  final root result completes the turn; audit records and observed usage remain
+  available, and a known stdout EOF still requires process-exit validation.
 
 - Make hosted Tool output schemas and structured results compatible with MCP
   clients that require objects. Non-object outputs use a private `result`

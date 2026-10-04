@@ -1,0 +1,2572 @@
+{
+  "schema": "internal-history-inventory.v1",
+  "date": "2026-10-04",
+  "source_repository": "/Users/blurooo/project/agent-adaptor-internal",
+  "source_master": "2e57139e31891e359c4fe74b9186d6c146eca143",
+  "source_local_head": "2c8b594802a2b5a60c425f4dfe5ded4ec8eb75d9",
+  "target_repository": "/Users/blurooo/project/agent-adaptor/.worktrees/internal-sync-20261004",
+  "target_head": "969514bf34d267a20681419c197c1858cf20cef6",
+  "source_scope": "all reachable commits from all local and remote refs and peeled tags; uncommitted files excluded",
+  "old_plan": "docs/internal-history-alignment-plan-2026-09-07.md",
+  "counts": {
+    "all_commits": 69,
+    "master_ancestors": 39,
+    "off_master": 30,
+    "old_plan_commits": 45,
+    "new_commits": 24,
+    "new_master_ancestors": 9,
+    "new_off_master": 15,
+    "old_plan_omissions": 0,
+    "new_semantic_groups": 8,
+    "new_gap_groups": 6,
+    "prerequisite_only_groups": 1,
+    "unmerged_optional_feature_not_adopted": 1
+  },
+  "exclusion": {
+    "commit": "1921636510ced4c830c0287fe68d41218f1ed185",
+    "exact_patch_duplicate_commits": [],
+    "direct_ref": "refs/remotes/origin/flowx/1069990761136960355/flowx_agent_2_0",
+    "already_integrated": true,
+    "policy": "本轮不新增移植该提交；保留目标已有观测功能。不得把其后独立修复或全部后代当作排除对象。"
+  },
+  "groups": [
+    {
+      "id": "O01",
+      "commits": [
+        "e36c59b2b980bf45d0d5b2a262f2a3b7c5b7741f"
+      ],
+      "canonical": "e36c59b2b980bf45d0d5b2a262f2a3b7c5b7741f",
+      "status": "already-covered",
+      "title": "Claude 默认 Thread 常驻",
+      "target_evidence": [
+        "claude/persistent.go",
+        "claude/persistent_test.go:38"
+      ],
+      "judgement": "已有默认 Thread 复用及 WithSpawn；不迁移旧 opt-in 配置和宽松兼容逻辑。"
+    },
+    {
+      "id": "O02",
+      "commits": [
+        "bcaeec18f3e68905eb5a32d3e4762ed3df9595b8"
+      ],
+      "canonical": "bcaeec18f3e68905eb5a32d3e4762ed3df9595b8",
+      "status": "already-covered",
+      "title": "Close 与准入关闭",
+      "target_evidence": [
+        "agent.go:125",
+        "agent_close_test.go:229"
+      ],
+      "judgement": "Agent.Close 幂等有界回收并拒绝新运行，旧 SDK.Close 不适用。"
+    },
+    {
+      "id": "O03",
+      "commits": [
+        "456e03eb23cc3a5ff3aeabcb98eba09267c1368e"
+      ],
+      "canonical": "456e03eb23cc3a5ff3aeabcb98eba09267c1368e",
+      "status": "already-covered",
+      "title": "CodeBuddy 常驻",
+      "target_evidence": [
+        "codebuddy/persistent.go",
+        "codebuddy/persistent_test.go:42"
+      ],
+      "judgement": "已具备默认复用、进程签名、启动前单次回退和 WithSpawn。"
+    },
+    {
+      "id": "O04",
+      "commits": [
+        "0985324984c1e91ff0bdb7db7613acf5f680cdd0"
+      ],
+      "canonical": "0985324984c1e91ff0bdb7db7613acf5f680cdd0",
+      "status": "already-covered",
+      "title": "Codex app-server 常驻",
+      "target_evidence": [
+        "codex/persistent.go",
+        "codex/persistent_test.go:33"
+      ],
+      "judgement": "已复用 app-server；保留当前 Raw/terminal、单 writer 和 Close 合同。"
+    },
+    {
+      "id": "O05",
+      "commits": [
+        "1b2de5bb015c8f011fbddbb6df5cbc5a0d3f94ec"
+      ],
+      "canonical": "1b2de5bb015c8f011fbddbb6df5cbc5a0d3f94ec",
+      "status": "already-covered",
+      "title": "Codex 每轮 output schema",
+      "target_evidence": [
+        "codex/persistent_test.go:308",
+        "codex/appserver/run.go"
+      ],
+      "judgement": "原生 schema 已为每轮字段；不引入新的 OutputMode。"
+    },
+    {
+      "id": "O06",
+      "commits": [
+        "6a1e51577a8633382c3a20ae171fa245055b89cf",
+        "6bfa5ed8e6031d786eb484b9ea1345ed34dae6f6"
+      ],
+      "canonical": "6bfa5ed8e6031d786eb484b9ea1345ed34dae6f6",
+      "status": "already-covered",
+      "title": "真实 CLI BDD 结构及执行器",
+      "target_evidence": [
+        "e2e/bdd_test.go",
+        "e2e/features"
+      ],
+      "judgement": "15个feature与runner/steps已存在；本次只读盘点不等于重新执行真实CLI。"
+    },
+    {
+      "id": "O07",
+      "commits": [
+        "75ce05da0bbb40a5bf3c3f8089e45f275175c8f6"
+      ],
+      "canonical": "75ce05da0bbb40a5bf3c3f8089e45f275175c8f6",
+      "status": "already-covered",
+      "title": "CodeBuddy partial-message 重建",
+      "target_evidence": [
+        "codebuddy/parser.go",
+        "codebuddy/streaming_parser_test.go:113"
+      ],
+      "judgement": "重建已有，当前终局 Text/Summary 权威规则更严格。"
+    },
+    {
+      "id": "O08",
+      "commits": [
+        "803abc127ffe149e69889984a3829492be848dbe"
+      ],
+      "canonical": "803abc127ffe149e69889984a3829492be848dbe",
+      "status": "already-covered",
+      "title": "宿主 Tools",
+      "target_evidence": [
+        "tools.go",
+        "tools_contract_test.go:47",
+        "internal/toolruntime/output.go"
+      ],
+      "judgement": "WithTools 与唯一runtime管线已有；R051 MCP对象兼容后续修复保留。"
+    },
+    {
+      "id": "O09",
+      "commits": [
+        "1921636510ced4c830c0287fe68d41218f1ed185"
+      ],
+      "canonical": "1921636510ced4c830c0287fe68d41218f1ed185",
+      "status": "excluded",
+      "title": "skill/MCP/agent 调用观测",
+      "target_evidence": [
+        "events.go",
+        "capability",
+        "hosttools/capabilityrecorder"
+      ],
+      "judgement": "按用户本轮范围精确排除增量迁移；既有 typed Capability/recorder/保护测试原样保留，不删除。"
+    },
+    {
+      "id": "O10",
+      "commits": [
+        "51d12bd143ae3be553673bca2d16db08e3bffb9f"
+      ],
+      "canonical": "51d12bd143ae3be553673bca2d16db08e3bffb9f",
+      "status": "already-covered",
+      "title": "嵌套 capability relay",
+      "target_evidence": [
+        "hosttools/a2adelegation/relay.go:85",
+        "hosttools/a2adelegation/alignment_relay_test.go:211"
+      ],
+      "judgement": "后续独立提交不因祖先1921636而整条排除；无碰撞域和typed relay已覆盖。"
+    },
+    {
+      "id": "O11",
+      "commits": [
+        "7438d2633ef7063a02c9208c96fdd2dab3d2f01a"
+      ],
+      "canonical": "7438d2633ef7063a02c9208c96fdd2dab3d2f01a",
+      "status": "already-covered",
+      "title": "成功生命周期后才观察开始",
+      "target_evidence": [
+        "hosttools/a2adelegation/delegator.go:123",
+        "hosttools/a2adelegation/alignment_relay_test.go"
+      ],
+      "judgement": "BeforeDelegate成功后发事实，独立开始/终局规则已有。"
+    },
+    {
+      "id": "O12",
+      "commits": [
+        "9b1ce27faa4e46ba6a213210eaffc8748b327bdb",
+        "dab6933b9159894c36fa78b8367c6bc572227621"
+      ],
+      "canonical": "dab6933b9159894c36fa78b8367c6bc572227621",
+      "status": "already-covered",
+      "title": "Claude MCP normalized/Unicode 名称",
+      "target_evidence": [
+        "claude/capability_observation.go:39",
+        "claude/capability_observation.go:54",
+        "claude/alignment_adoption_test.go:208"
+      ],
+      "judgement": "原名、逐rune归一化和歧义拒绝已有；这两个后续修复仍核查，不被祖先排除误伤。"
+    },
+    {
+      "id": "O13",
+      "commits": [
+        "126d610dfb6afd2cca19661ab0a7c0b6f626b490",
+        "f972c102dce2d2de370d44bb13190d453a219b34"
+      ],
+      "canonical": "126d610dfb6afd2cca19661ab0a7c0b6f626b490",
+      "status": "already-covered",
+      "title": "中断部分结果",
+      "target_evidence": [
+        "alignment_partial_result_test.go",
+        "claude/alignment_claude_test.go:417",
+        "codebuddy/alignment_partial_test.go"
+      ],
+      "judgement": "已有完整cause/部分Result；internal取消即Valid checkpoint违反目标健康合同，不迁移。"
+    },
+    {
+      "id": "O14",
+      "commits": [
+        "426191444582f9fbbe951dbd8b54c1004464262c"
+      ],
+      "canonical": "426191444582f9fbbe951dbd8b54c1004464262c",
+      "status": "already-covered",
+      "title": "Claude schema/HITL",
+      "target_evidence": [
+        "claude/alignment_claude_test.go:270",
+        "alignment_structured_hitl_test.go"
+      ],
+      "judgement": "原生Question/PlanReview与Permission回退按唯一协商已有。"
+    },
+    {
+      "id": "O15",
+      "commits": [
+        "3ea225acea572830100381a5c180dd86f295a70d",
+        "5d2b5de8af1a336f43a9e0f34f91965c0e6b5f0b",
+        "98f41c7949ccac5ddfe61c93a0d336ee39a76244"
+      ],
+      "canonical": "3ea225acea572830100381a5c180dd86f295a70d",
+      "status": "already-covered",
+      "title": "Claude nested tool 事件",
+      "target_evidence": [
+        "claude/tool_observation.go:115",
+        "claude/alignment_adoption_test.go:35"
+      ],
+      "judgement": "typed工具事件、父域、重复和歧义防护已覆盖。"
+    },
+    {
+      "id": "O16",
+      "commits": [
+        "ca571fbed8454e482560b481a3aa6853e9d174df",
+        "0c0f32fe6eb6b27c87441ef896c0e0b78b5ddb56"
+      ],
+      "canonical": "ca571fbed8454e482560b481a3aa6853e9d174df",
+      "status": "already-covered",
+      "title": "Dedicated hosted profile",
+      "target_evidence": [
+        "tools.go",
+        "alignment_profile_test.go:88",
+        "alignment_profile_test.go:845"
+      ],
+      "judgement": "持久profile、跨进程owner与冷续接已有；不复制较弱旧实现。"
+    },
+    {
+      "id": "O17",
+      "commits": [
+        "eefcaef35621e6bbfb3e2e859edf4aadc4e38a5d",
+        "a88eacdb4818c75df44caeec39bbb74062e58c53",
+        "d01a086e5145566b7313b83ca88bb525f1d3675b"
+      ],
+      "canonical": "eefcaef35621e6bbfb3e2e859edf4aadc4e38a5d",
+      "status": "already-covered",
+      "title": "Claude root result 关闭 stdin",
+      "target_evidence": [
+        "claude/parser.go",
+        "claude/alignment_stdin_test.go:70",
+        "claude/alignment_stdin_test.go:200"
+      ],
+      "judgement": "旧W01 result-only/一次关闭已交付；较新的message_stop过早关闭缺陷另列N02。"
+    },
+    {
+      "id": "O18",
+      "commits": [
+        "3253009054681a499fd693329486d0fe3279d843",
+        "b11e05235ca94e6fd02f2ffa71b18ea97373dc46",
+        "f16fb20aaf8df3455b5bef7a8e0681d93cbc3167"
+      ],
+      "canonical": "3253009054681a499fd693329486d0fe3279d843",
+      "status": "already-covered",
+      "title": "A2A 多次 artifact Parts",
+      "target_evidence": [
+        "hosttools/a2adelegation/alignment_artifact_parts_test.go:77",
+        "hosttools/a2adelegation/alignment_artifact_parts_test.go:32"
+      ],
+      "judgement": "Parts、Append、LastChunk、深复制及大小界限已有。"
+    },
+    {
+      "id": "O19",
+      "commits": [
+        "8ffe22a2a29c0b72e6c993d7774ffb54ac15c010",
+        "954aa68cd91108ca644bb044e808d3061d880daa",
+        "6943d2adddfee68164ad3cf37b499acf4615ebc2",
+        "38e0e8c2d055a6e90f940d7dd1ac2bcafa485d04"
+      ],
+      "canonical": "8ffe22a2a29c0b72e6c993d7774ffb54ac15c010",
+      "status": "already-covered",
+      "title": "append system prompt",
+      "target_evidence": [
+        "options.go:456",
+        "driver/run.go:80",
+        "claude/alignment_append_test.go",
+        "codex/alignment_prompt_test.go"
+      ],
+      "judgement": "单一SharedOption及原字节hash已有，Cursor明确unsupported保持。"
+    },
+    {
+      "id": "O20",
+      "commits": [
+        "64163ab67ecf109d196da10a4cbac8943d8e6eff",
+        "89231087ddb33070a7b0bee116012a5470cef785",
+        "f5fbb147847356c46e83aa74caad584da283ac86"
+      ],
+      "canonical": "64163ab67ecf109d196da10a4cbac8943d8e6eff",
+      "status": "already-covered",
+      "title": "工具非法输入安全纠错",
+      "target_evidence": [
+        "internal/toolruntime/input_errors_test.go:18",
+        "tool/tool.go"
+      ],
+      "judgement": "schema/解码错误有安全提示，系统/callback错误不泄漏。"
+    },
+    {
+      "id": "O21",
+      "commits": [
+        "eb82ed36eaf6339b00860b5506a683e6dbd74765",
+        "a2f2b0b7e5c89ffeb47bd328f6a88f25c378c453",
+        "2e5f411673be31431554fb3fd5c8447196df2124",
+        "8ea34b47089d85052fa7cb54ab97156dbf5eaa4c"
+      ],
+      "canonical": "eb82ed36eaf6339b00860b5506a683e6dbd74765",
+      "status": "already-covered",
+      "title": "Todo/plan 快照",
+      "target_evidence": [
+        "todo",
+        "claude/todo_observation.go",
+        "codebuddy/todo_observation.go",
+        "alignment_protocol_integration_test.go:2809"
+      ],
+      "judgement": "正式协议生成typed快照，空清单与作用域已覆盖。"
+    },
+    {
+      "id": "O22",
+      "commits": [
+        "8e35b123af693b1a922d9d53b879692d04e00795",
+        "ac62c1921a367366ccfae3b82e7761980a7bc38a"
+      ],
+      "canonical": "8e35b123af693b1a922d9d53b879692d04e00795",
+      "status": "already-covered",
+      "title": "A2A 历史问卷不截断续答",
+      "target_evidence": [
+        "clients/a2a/execution_state.go:28",
+        "hosttools/a2adelegation/delegator.go:507",
+        "alignment_protocol_integration_test.go:2316"
+      ],
+      "judgement": "历史Task快照和本轮live状态分离，含恢复与制品收敛。"
+    },
+    {
+      "id": "O23",
+      "commits": [
+        "e2f0620bdd6477e6fe16f6db5648093589342ca2"
+      ],
+      "canonical": "e2f0620bdd6477e6fe16f6db5648093589342ca2",
+      "status": "already-covered",
+      "title": "可暂停主动预算",
+      "target_evidence": [
+        "policy.go:48",
+        "alignment_budget_error_test.go:166",
+        "alignment_budget_error_test.go:418"
+      ],
+      "judgement": "唯一主动预算、重叠Ask暂停、原子提交前封账已有。"
+    },
+    {
+      "id": "N01",
+      "commits": [
+        "674a9b3eac857ae00b61297fbf6c1d4d4b6a3638",
+        "e97b74fd69b0409d85b7c564a7637e6a3851fc12",
+        "dddce056ff7407accbd5b86aa28931d557f5843a"
+      ],
+      "canonical": "674a9b3eac857ae00b61297fbf6c1d4d4b6a3638",
+      "status": "new-gap",
+      "title": "模型 context window / auto-compact 下发",
+      "target_evidence": [
+        "claude/configured.go:22",
+        "codex/configured.go:23",
+        "codex/appserver/generated.go:164"
+      ],
+      "judgement": "目标无typed配置，generated ModelContextWindow只是用量反馈。按Claude/Codex真实Config迁移，0不注入，拒绝非法/冲突；不恢复CommonConfig/WithContextWindow，不搬Cursor/CodeBuddy静默warning，不照搬Codex落盘patch。"
+    },
+    {
+      "id": "N02",
+      "commits": [
+        "70ebfbde6725827f62c9d984a07c8dd633e5379c",
+        "7a37cc540a9cc0472b4dd48122bc623de72094de",
+        "b77b102ec8f7f320d9c4b75f00f75db3d09c743f",
+        "5eb3bc8be20890b7381dbfbc704a98e83e86c437",
+        "b7fe1fc3090be371d072b53cb5fb8a8eeed84709",
+        "91963d3c8f5fe037c7f3b33e0d272b3f14c5eebf",
+        "abdaa497214e23a801721cf18c3625e1ae524273"
+      ],
+      "canonical": "abdaa497214e23a801721cf18c3625e1ae524273",
+      "status": "new-gap",
+      "title": "Claude 仅正式 result 终止 stdin",
+      "target_evidence": [
+        "claude/parser.go:907",
+        "claude/alignment_stdin_test.go:240"
+      ],
+      "judgement": "目标非空且非tool_use的message_stop仍关闭stdin，max_tokens/end_turn后正式控制请求可失败。旧nested/empty/tool_use测试不足覆盖该场景；按最终branch修复思想迁移并保留目标checkpoint/后台工具边界。"
+    },
+    {
+      "id": "N03",
+      "commits": [
+        "67c21832de59a3ea083ead863f4ecf3a1a61c76c",
+        "607a8154d85bc9d099eb4d66479b7b97d315be42"
+      ],
+      "canonical": "607a8154d85bc9d099eb4d66479b7b97d315be42",
+      "status": "new-gap",
+      "title": "recorder HostSeq 区间与尾部",
+      "target_evidence": [
+        "hosttools/sessionrecorder/recorder.go:127",
+        "hosttools/sessionrecorder/recorder.go:268"
+      ],
+      "judgement": "目标只有Since，缺上下界与tail查询；在可选hosttool提供，不扩张core执行概念。"
+    },
+    {
+      "id": "N04",
+      "commits": [
+        "70d0f78e5f117a040a8507d7508c0aa05850db23",
+        "aaf95bdfdddae42c24f8be81fa27314ed6b216fb",
+        "8b2b9baabc6fd92862646e1584ee58a4ff37e5b9",
+        "a0f75f909e67802feda8c12ef999bcf0c47e1d67",
+        "0373d1656120f5257da5615bbb62e444653eef27"
+      ],
+      "canonical": "0373d1656120f5257da5615bbb62e444653eef27",
+      "status": "new-gap",
+      "title": "recorder 按完整 Run 对齐回放下界",
+      "target_evidence": [
+        "hosttools/sessionrecorder/recorder.go:127",
+        "hosttools/sessionrecorder/recorder.go:268"
+      ],
+      "judgement": "目标无run-start对齐，须基于typed RunID/生命周期而非旧StreamPayload字符串猜测；包含首记录run.started短路与最终精简fixture。"
+    },
+    {
+      "id": "N05",
+      "commits": [
+        "09cd0d3fcb0312c92a80c765cbeb0f73e4616e43"
+      ],
+      "canonical": "09cd0d3fcb0312c92a80c765cbeb0f73e4616e43",
+      "status": "new-gap",
+      "title": "图片内容记录/回放",
+      "target_evidence": [
+        "events.go:131",
+        "bridges/agui/events.go:350",
+        "hosttools/sessionrecorder/recorder.go:456"
+      ],
+      "judgement": "目标只有TextDelta及通用HostEvent，没有显式图片内容合同；作为typed Event与bridge/recorder映射迁移，不扩张provider图像输入或读未提交vision文档。"
+    },
+    {
+      "id": "N06",
+      "commits": [
+        "cb25c0b7b86a6d446c99fe66c6d9191b7ec4959a",
+        "2c8b594802a2b5a60c425f4dfe5ded4ec8eb75d9"
+      ],
+      "canonical": "2c8b594802a2b5a60c425f4dfe5ded4ec8eb75d9",
+      "status": "not-applicable",
+      "title": "新增图片分支的 role 字面量修复",
+      "target_evidence": [
+        "bridges/agui/events.go:679"
+      ],
+      "judgement": "目标尚无image分支，所以当前不会触发这项bug；N05新增图片时必须复用既有textRoleOpt映射，空值RoleAssistant输出assistant，不能把数字枚举直接写入CUSTOM。"
+    },
+    {
+      "id": "N07",
+      "commits": [
+        "2e69bd9ea2d8e4a13c195b70b84dbfc7757ba3d9",
+        "2e57139e31891e359c4fe74b9186d6c146eca143"
+      ],
+      "canonical": "2e57139e31891e359c4fe74b9186d6c146eca143",
+      "status": "new-gap",
+      "title": "记录可信提问者 UserID",
+      "target_evidence": [
+        "events.go:131",
+        "bridges/agui/input.go:179",
+        "hosttools/sessionrecorder/recorder.go:456"
+      ],
+      "judgement": "目标TextDelta和UserTurnEvents无提问者字段。仅宿主显式注入可信身份并保留typed事件/录制/bridge；不从用户body/Name/Raw猜身份，不让SDK负责鉴权。"
+    },
+    {
+      "id": "N08",
+      "commits": [
+        "2f935a6244e02ae1f30ae8d5b19817ab95bd766c",
+        "b0dba48099952139a75f42df9becee852fe7ac03"
+      ],
+      "canonical": "2f935a6244e02ae1f30ae8d5b19817ab95bd766c",
+      "status": "not-applicable",
+      "title": "未合并 A2A input-required 跨HTTP托管 feature",
+      "target_evidence": [
+        "bridges/a2a/server.go:93",
+        "options.go:501",
+        "approval.go:149",
+        "bridges/a2a/mapping.go:132"
+      ],
+      "judgement": "唯一真正独立未合并增量，但不是目标已合修复漏移植。宿主可经OnApproval和live ApprovalRequest应答，尚缺A2A内置跨HTTP托管/同task回应便利。该新feature存在价值，但上游park/cancel/expiry破坏目标生命周期，本轮不搬；不宣称便利功能已覆盖。重新启动须先定义持续drain/终局归档、宿主生命周期、容量、取消、审批fallback与并发应答合同，仍只使用同一Stream/responder。",
+      "adoption_decision": "reviewed-not-adopted-this-round",
+      "source_merge_status": "not-merged-into-origin-master",
+      "builtin_a2a_convenience_gap_remains": true,
+      "source_lifecycle_review": [
+        "context.WithoutCancel severs active request cancellation",
+        "park returns before draining remaining stream and archiving terminal outcome",
+        "separate expiry cancellation replaces Policy.Approvals fallback",
+        "no bounded live-run capacity or server Close ownership",
+        "takeParked/delete paths require concurrent resume/cancel ownership fencing"
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "commit": "15b620a9a531d72f3791042aa240a990defcd82b",
+      "parents": [],
+      "subject": "feat: agent-adaptor Go SDK",
+      "date": "2026-07-23T16:54:04+08:00",
+      "reachable_from_master": true,
+      "old_plan": {
+        "old_id": "A01",
+        "old_disposition": "共同内容快照；与 c9a0bb8 tree 相等，不作为增量移植。"
+      },
+      "status": "not-applicable",
+      "judgement": "共同内容快照，与目标保留c9a0bb8 tree相同。",
+      "group": null
+    },
+    {
+      "commit": "e36c59b2b980bf45d0d5b2a262f2a3b7c5b7741f",
+      "parents": [
+        "15b620a9a531d72f3791042aa240a990defcd82b"
+      ],
+      "subject": "feat: add opt-in Claude persistent processes",
+      "date": "2026-07-28T16:40:49+08:00",
+      "reachable_from_master": true,
+      "old_plan": {
+        "old_id": "A02",
+        "old_disposition": "常驻主能力已覆盖；保留当前默认 Thread 常驻和完整兼容 fingerprint，不搬入 opt-in/宽松资源兼容。"
+      },
+      "status": "already-covered",
+      "group": "O01",
+      "canonical": "e36c59b2b980bf45d0d5b2a262f2a3b7c5b7741f",
+      "independent_work_item": true,
+      "target_evidence": [
+        "claude/persistent.go",
+        "claude/persistent_test.go:38"
+      ],
+      "judgement": "已有默认 Thread 复用及 WithSpawn；不迁移旧 opt-in 配置和宽松兼容逻辑。"
+    },
+    {
+      "commit": "bcaeec18f3e68905eb5a32d3e4762ed3df9595b8",
+      "parents": [
+        "e36c59b2b980bf45d0d5b2a262f2a3b7c5b7741f"
+      ],
+      "subject": "feat: close SDK persistent process pools",
+      "date": "2026-07-28T16:49:52+08:00",
+      "reachable_from_master": true,
+      "old_plan": {
+        "old_id": "A03",
+        "old_disposition": "已覆盖于 Agent.Close 及准入、取消/drain、重试清理；不恢复 SDK.Close。"
+      },
+      "status": "already-covered",
+      "group": "O02",
+      "canonical": "bcaeec18f3e68905eb5a32d3e4762ed3df9595b8",
+      "independent_work_item": true,
+      "target_evidence": [
+        "agent.go:125",
+        "agent_close_test.go:229"
+      ],
+      "judgement": "Agent.Close 幂等有界回收并拒绝新运行，旧 SDK.Close 不适用。"
+    },
+    {
+      "commit": "456e03eb23cc3a5ff3aeabcb98eba09267c1368e",
+      "parents": [
+        "bcaeec18f3e68905eb5a32d3e4762ed3df9595b8"
+      ],
+      "subject": "feat: add opt-in CodeBuddy persistent processes",
+      "date": "2026-07-28T17:16:31+08:00",
+      "reachable_from_master": true,
+      "old_plan": {
+        "old_id": "A04",
+        "old_disposition": "CodeBuddy 常驻/control 已覆盖；当前 persistent/control 测试验证默认复用和 WithSpawn。"
+      },
+      "status": "already-covered",
+      "group": "O03",
+      "canonical": "456e03eb23cc3a5ff3aeabcb98eba09267c1368e",
+      "independent_work_item": true,
+      "target_evidence": [
+        "codebuddy/persistent.go",
+        "codebuddy/persistent_test.go:42"
+      ],
+      "judgement": "已具备默认复用、进程签名、启动前单次回退和 WithSpawn。"
+    },
+    {
+      "commit": "0985324984c1e91ff0bdb7db7613acf5f680cdd0",
+      "parents": [
+        "456e03eb23cc3a5ff3aeabcb98eba09267c1368e"
+      ],
+      "subject": "feat: reuse Codex app-server across streaming turns",
+      "date": "2026-07-28T17:39:01+08:00",
+      "reachable_from_master": true,
+      "old_plan": {
+        "old_id": "A05",
+        "old_disposition": "Codex app-server 常驻、接力与 idle/Close 已覆盖；保持当前 Raw/terminal 协议合同。"
+      },
+      "status": "already-covered",
+      "group": "O04",
+      "canonical": "0985324984c1e91ff0bdb7db7613acf5f680cdd0",
+      "independent_work_item": true,
+      "target_evidence": [
+        "codex/persistent.go",
+        "codex/persistent_test.go:33"
+      ],
+      "judgement": "已复用 app-server；保留当前 Raw/terminal、单 writer 和 Close 合同。"
+    },
+    {
+      "commit": "1b2de5bb015c8f011fbddbb6df5cbc5a0d3f94ec",
+      "parents": [
+        "0985324984c1e91ff0bdb7db7613acf5f680cdd0"
+      ],
+      "subject": "feat: pass Codex output schemas through app-server turns",
+      "date": "2026-07-28T17:42:11+08:00",
+      "reachable_from_master": true,
+      "old_plan": {
+        "old_id": "A06",
+        "old_disposition": "已覆盖：每轮 OutputSchema 与 TestPersistentCodexNativeSchemaUsesPerTurnFieldWithoutHandoff。"
+      },
+      "status": "already-covered",
+      "group": "O05",
+      "canonical": "1b2de5bb015c8f011fbddbb6df5cbc5a0d3f94ec",
+      "independent_work_item": true,
+      "target_evidence": [
+        "codex/persistent_test.go:308",
+        "codex/appserver/run.go"
+      ],
+      "judgement": "原生 schema 已为每轮字段；不引入新的 OutputMode。"
+    },
+    {
+      "commit": "6a1e51577a8633382c3a20ae171fa245055b89cf",
+      "parents": [
+        "1b2de5bb015c8f011fbddbb6df5cbc5a0d3f94ec"
+      ],
+      "subject": "test: define real CLI persistent-process BDD features",
+      "date": "2026-07-28T18:52:26+08:00",
+      "reachable_from_master": true,
+      "old_plan": {
+        "old_id": "A07",
+        "old_disposition": "15 个真实 CLI feature 基础已在当前 e2e；保留最终 Thread 语义，新增用例按各 W 项补齐。"
+      },
+      "status": "already-covered",
+      "group": "O06",
+      "canonical": "6bfa5ed8e6031d786eb484b9ea1345ed34dae6f6",
+      "independent_work_item": false,
+      "target_evidence": [
+        "e2e/bdd_test.go",
+        "e2e/features"
+      ],
+      "judgement": "15个feature与runner/steps已存在；本次只读盘点不等于重新执行真实CLI。",
+      "dedup_note": "同组互补提交，仍逐条核查，不是精确重复patch。"
+    },
+    {
+      "commit": "75ce05da0bbb40a5bf3c3f8089e45f275175c8f6",
+      "parents": [
+        "6a1e51577a8633382c3a20ae171fa245055b89cf"
+      ],
+      "subject": "fix: reconstruct CodeBuddy control output from partial events",
+      "date": "2026-07-28T20:48:05+08:00",
+      "reachable_from_master": true,
+      "old_plan": {
+        "old_id": "A08",
+        "old_disposition": "已覆盖：enableOutputReconstruction 与对应测试；当前终局 Text/Summary 规则优先。"
+      },
+      "status": "already-covered",
+      "group": "O07",
+      "canonical": "75ce05da0bbb40a5bf3c3f8089e45f275175c8f6",
+      "independent_work_item": true,
+      "target_evidence": [
+        "codebuddy/parser.go",
+        "codebuddy/streaming_parser_test.go:113"
+      ],
+      "judgement": "重建已有，当前终局 Text/Summary 权威规则更严格。"
+    },
+    {
+      "commit": "6bfa5ed8e6031d786eb484b9ea1345ed34dae6f6",
+      "parents": [
+        "75ce05da0bbb40a5bf3c3f8089e45f275175c8f6"
+      ],
+      "subject": "test: execute persistent-process BDD against real CLIs",
+      "date": "2026-07-28T20:48:43+08:00",
+      "reachable_from_master": true,
+      "old_plan": {
+        "old_id": "A09",
+        "old_disposition": "BDD runner/steps/world/Godog 已覆盖，双门保留；不是仅有 feature 文本。"
+      },
+      "status": "already-covered",
+      "group": "O06",
+      "canonical": "6bfa5ed8e6031d786eb484b9ea1345ed34dae6f6",
+      "independent_work_item": true,
+      "target_evidence": [
+        "e2e/bdd_test.go",
+        "e2e/features"
+      ],
+      "judgement": "15个feature与runner/steps已存在；本次只读盘点不等于重新执行真实CLI。"
+    },
+    {
+      "commit": "803abc127ffe149e69889984a3829492be848dbe",
+      "parents": [
+        "6bfa5ed8e6031d786eb484b9ea1345ed34dae6f6"
+      ],
+      "subject": "feat: support host-defined tools",
+      "date": "2026-08-04T13:07:02+08:00",
+      "reachable_from_master": true,
+      "old_plan": {
+        "old_id": "A10",
+        "old_disposition": "WithTools、schema、profile 隔离与依赖已覆盖；后续实际缺口分别 W02/W07，不整包替换。"
+      },
+      "status": "already-covered",
+      "group": "O08",
+      "canonical": "803abc127ffe149e69889984a3829492be848dbe",
+      "independent_work_item": true,
+      "target_evidence": [
+        "tools.go",
+        "tools_contract_test.go:47",
+        "internal/toolruntime/output.go"
+      ],
+      "judgement": "WithTools 与唯一runtime管线已有；R051 MCP对象兼容后续修复保留。"
+    },
+    {
+      "commit": "1921636510ced4c830c0287fe68d41218f1ed185",
+      "parents": [
+        "803abc127ffe149e69889984a3829492be848dbe"
+      ],
+      "subject": "feat: add capability invocation observability",
+      "date": "2026-08-04T21:28:34+08:00",
+      "reachable_from_master": true,
+      "old_plan": {
+        "old_id": "A11",
+        "old_disposition": "新增 capability 观测，当前缺失 → W09；其 Admin/store 根 API 不移植。"
+      },
+      "status": "excluded",
+      "group": "O09",
+      "canonical": "1921636510ced4c830c0287fe68d41218f1ed185",
+      "independent_work_item": true,
+      "target_evidence": [
+        "events.go",
+        "capability",
+        "hosttools/capabilityrecorder"
+      ],
+      "judgement": "按用户本轮范围精确排除增量迁移；既有 typed Capability/recorder/保护测试原样保留，不删除。"
+    },
+    {
+      "commit": "51d12bd143ae3be553673bca2d16db08e3bffb9f",
+      "parents": [
+        "1921636510ced4c830c0287fe68d41218f1ed185"
+      ],
+      "subject": "feat(a2a): relay nested capability invocations",
+      "date": "2026-08-05T19:37:37+08:00",
+      "reachable_from_master": true,
+      "old_plan": {
+        "old_id": "A12",
+        "old_disposition": "新增嵌套 A2A capability relay，当前缺失 → W10，依赖 W09。"
+      },
+      "status": "already-covered",
+      "group": "O10",
+      "canonical": "51d12bd143ae3be553673bca2d16db08e3bffb9f",
+      "independent_work_item": true,
+      "target_evidence": [
+        "hosttools/a2adelegation/relay.go:85",
+        "hosttools/a2adelegation/alignment_relay_test.go:211"
+      ],
+      "judgement": "后续独立提交不因祖先1921636而整条排除；无碰撞域和typed relay已覆盖。"
+    },
+    {
+      "commit": "7438d2633ef7063a02c9208c96fdd2dab3d2f01a",
+      "parents": [
+        "51d12bd143ae3be553673bca2d16db08e3bffb9f"
+      ],
+      "subject": "fix(a2a): observe delegation after lifecycle begin",
+      "date": "2026-08-14T17:50:41+08:00",
+      "reachable_from_master": true,
+      "old_plan": {
+        "old_id": "A13",
+        "old_disposition": "before lifecycle hook 成功后再观察 started → W10 的必需顺序测试。"
+      },
+      "status": "already-covered",
+      "group": "O11",
+      "canonical": "7438d2633ef7063a02c9208c96fdd2dab3d2f01a",
+      "independent_work_item": true,
+      "target_evidence": [
+        "hosttools/a2adelegation/delegator.go:123",
+        "hosttools/a2adelegation/alignment_relay_test.go"
+      ],
+      "judgement": "BeforeDelegate成功后发事实，独立开始/终局规则已有。"
+    },
+    {
+      "commit": "9b1ce27faa4e46ba6a213210eaffc8748b327bdb",
+      "parents": [
+        "7438d2633ef7063a02c9208c96fdd2dab3d2f01a"
+      ],
+      "subject": "fix(claude): resolve normalized MCP server names",
+      "date": "2026-08-17T14:28:23+08:00",
+      "reachable_from_master": true,
+      "old_plan": {
+        "old_id": "A14",
+        "old_disposition": "Claude 标准化 MCP server 映射修复 → W09；不是通用 MCP transport 连接修复。"
+      },
+      "status": "already-covered",
+      "group": "O12",
+      "canonical": "dab6933b9159894c36fa78b8367c6bc572227621",
+      "independent_work_item": false,
+      "target_evidence": [
+        "claude/capability_observation.go:39",
+        "claude/capability_observation.go:54",
+        "claude/alignment_adoption_test.go:208"
+      ],
+      "judgement": "原名、逐rune归一化和歧义拒绝已有；这两个后续修复仍核查，不被祖先排除误伤。",
+      "dedup_note": "同组互补提交，仍逐条核查，不是精确重复patch。"
+    },
+    {
+      "commit": "dab6933b9159894c36fa78b8367c6bc572227621",
+      "parents": [
+        "9b1ce27faa4e46ba6a213210eaffc8748b327bdb"
+      ],
+      "subject": "fix(claude): normalize Unicode MCP server names",
+      "date": "2026-08-17T14:47:53+08:00",
+      "reachable_from_master": true,
+      "old_plan": {
+        "old_id": "A15",
+        "old_disposition": "Unicode/下划线 MCP alias 与分隔歧义修复 → W09，必须与上一提交成组。"
+      },
+      "status": "already-covered",
+      "group": "O12",
+      "canonical": "dab6933b9159894c36fa78b8367c6bc572227621",
+      "independent_work_item": true,
+      "target_evidence": [
+        "claude/capability_observation.go:39",
+        "claude/capability_observation.go:54",
+        "claude/alignment_adoption_test.go:208"
+      ],
+      "judgement": "原名、逐rune归一化和歧义拒绝已有；这两个后续修复仍核查，不被祖先排除误伤。"
+    },
+    {
+      "commit": "f972c102dce2d2de370d44bb13190d453a219b34",
+      "parents": [
+        "dab6933b9159894c36fa78b8367c6bc572227621"
+      ],
+      "subject": "fix: 持久进程取消后保留可恢复会话",
+      "date": "2026-08-17T17:19:28+08:00",
+      "reachable_from_master": false,
+      "old_plan": {
+        "old_id": "B01",
+        "old_disposition": "126d610 / W04; 取消 checkpoint/部分结果原始实现，最终改动文件内容相同。"
+      },
+      "status": "already-covered",
+      "group": "O13",
+      "canonical": "126d610dfb6afd2cca19661ab0a7c0b6f626b490",
+      "independent_work_item": false,
+      "target_evidence": [
+        "alignment_partial_result_test.go",
+        "claude/alignment_claude_test.go:417",
+        "codebuddy/alignment_partial_test.go"
+      ],
+      "judgement": "已有完整cause/部分Result；internal取消即Valid checkpoint违反目标健康合同，不迁移。",
+      "dedup_note": "同一语义组的原分支/修订/集成，按最终差异实施一次，不是额外工作项。"
+    },
+    {
+      "commit": "126d610dfb6afd2cca19661ab0a7c0b6f626b490",
+      "parents": [
+        "dab6933b9159894c36fa78b8367c6bc572227621"
+      ],
+      "subject": "fix: 持久进程取消后保留可恢复会话 (merge request !1)",
+      "date": "2026-08-17T11:05:25Z",
+      "reachable_from_master": true,
+      "old_plan": {
+        "old_id": "A16",
+        "old_disposition": "中断部分结果应移植，首次取消直接 Valid checkpoint 不移植 → W04。"
+      },
+      "status": "already-covered",
+      "group": "O13",
+      "canonical": "126d610dfb6afd2cca19661ab0a7c0b6f626b490",
+      "independent_work_item": true,
+      "target_evidence": [
+        "alignment_partial_result_test.go",
+        "claude/alignment_claude_test.go:417",
+        "codebuddy/alignment_partial_test.go"
+      ],
+      "judgement": "已有完整cause/部分Result；internal取消即Valid checkpoint违反目标健康合同，不迁移。"
+    },
+    {
+      "commit": "5d2b5de8af1a336f43a9e0f34f91965c0e6b5f0b",
+      "parents": [
+        "126d610dfb6afd2cca19661ab0a7c0b6f626b490"
+      ],
+      "subject": "refine",
+      "date": "2026-08-17T20:32:41+08:00",
+      "reachable_from_master": false,
+      "old_plan": {
+        "old_id": "B02",
+        "old_disposition": "3ea225a / W05; 嵌套工具补发原实现，含 fixture/streaming 测试。"
+      },
+      "status": "already-covered",
+      "group": "O15",
+      "canonical": "3ea225acea572830100381a5c180dd86f295a70d",
+      "independent_work_item": false,
+      "target_evidence": [
+        "claude/tool_observation.go:115",
+        "claude/alignment_adoption_test.go:35"
+      ],
+      "judgement": "typed工具事件、父域、重复和歧义防护已覆盖。",
+      "dedup_note": "同一语义组的原分支/修订/集成，按最终差异实施一次，不是额外工作项。"
+    },
+    {
+      "commit": "426191444582f9fbbe951dbd8b54c1004464262c",
+      "parents": [
+        "1921636510ced4c830c0287fe68d41218f1ed185"
+      ],
+      "subject": "feat(claude): allow AskUserQuestion with native structured output",
+      "date": "2026-08-17T19:57:19+08:00",
+      "reachable_from_master": true,
+      "old_plan": {
+        "old_id": "A17",
+        "old_disposition": "Claude 原生 schema + Question/PlanReview Ask → W06；native schema+Permission Ask 不随之开放，普通 Permission Ask 保持。"
+      },
+      "status": "already-covered",
+      "group": "O14",
+      "canonical": "426191444582f9fbbe951dbd8b54c1004464262c",
+      "independent_work_item": true,
+      "target_evidence": [
+        "claude/alignment_claude_test.go:270",
+        "alignment_structured_hitl_test.go"
+      ],
+      "judgement": "原生Question/PlanReview与Permission回退按唯一协商已有。"
+    },
+    {
+      "commit": "97b2c85c36fc5740b2bd5c018984b5e2dd1d6d05",
+      "parents": [
+        "426191444582f9fbbe951dbd8b54c1004464262c",
+        "126d610dfb6afd2cca19661ab0a7c0b6f626b490"
+      ],
+      "subject": "Merge tag 'v0.14.4' into release/v0.14.6",
+      "date": "2026-08-17T20:20:37+08:00",
+      "reachable_from_master": true,
+      "old_plan": {
+        "old_id": "A18",
+        "old_disposition": "双父 merge：把 126d610 分支（含 relay/MCP 修复）并入 4261914；按父链去重，无独立新工作项。"
+      },
+      "status": "not-applicable",
+      "judgement": "双父集成126d610和4261914，无独立修复。",
+      "group": null
+    },
+    {
+      "commit": "a68d907d1d125f6009fe4937542bba46a5338ad9",
+      "parents": [
+        "426191444582f9fbbe951dbd8b54c1004464262c",
+        "97b2c85c36fc5740b2bd5c018984b5e2dd1d6d05"
+      ],
+      "subject": "Merge branch 'release/v0.14.6' into 'master' (merge request !2)",
+      "date": "2026-08-17T12:28:24Z",
+      "reachable_from_master": true,
+      "old_plan": {
+        "old_id": "A19",
+        "old_disposition": "release/v0.14.6 集成 merge；承接上行集成，不把第一父增量再当一份独立修复。"
+      },
+      "status": "not-applicable",
+      "judgement": "release集成，父链变更逐项核对，不能重复搬迁。",
+      "group": null
+    },
+    {
+      "commit": "98f41c7949ccac5ddfe61c93a0d336ee39a76244",
+      "parents": [
+        "5d2b5de8af1a336f43a9e0f34f91965c0e6b5f0b",
+        "a68d907d1d125f6009fe4937542bba46a5338ad9"
+      ],
+      "subject": "Merge branch 'master' into fix/claude-nested-subagent-tool-stream",
+      "date": "2026-08-17T20:33:39+08:00",
+      "reachable_from_master": false,
+      "old_plan": {
+        "old_id": "B03",
+        "old_disposition": "3ea225a / W05; 把 master 合入嵌套工具分支；该 tip 的 5 个变更文件与集成提交一致。"
+      },
+      "status": "already-covered",
+      "group": "O15",
+      "canonical": "3ea225acea572830100381a5c180dd86f295a70d",
+      "independent_work_item": false,
+      "target_evidence": [
+        "claude/tool_observation.go:115",
+        "claude/alignment_adoption_test.go:35"
+      ],
+      "judgement": "typed工具事件、父域、重复和歧义防护已覆盖。",
+      "dedup_note": "同一语义组的原分支/修订/集成，按最终差异实施一次，不是额外工作项。"
+    },
+    {
+      "commit": "0c0f32fe6eb6b27c87441ef896c0e0b78b5ddb56",
+      "parents": [
+        "a68d907d1d125f6009fe4937542bba46a5338ad9"
+      ],
+      "subject": "fix: 持久化 dedicated hosted tool profile",
+      "date": "2026-08-17T21:48:12+08:00",
+      "reachable_from_master": false,
+      "old_plan": {
+        "old_id": "B04",
+        "old_disposition": "ca571fb / W02; 持久 hosted-tool profile 原实现和跨重建回归。"
+      },
+      "status": "already-covered",
+      "group": "O16",
+      "canonical": "ca571fbed8454e482560b481a3aa6853e9d174df",
+      "independent_work_item": false,
+      "target_evidence": [
+        "tools.go",
+        "alignment_profile_test.go:88",
+        "alignment_profile_test.go:845"
+      ],
+      "judgement": "持久profile、跨进程owner与冷续接已有；不复制较弱旧实现。",
+      "dedup_note": "同一语义组的原分支/修订/集成，按最终差异实施一次，不是额外工作项。"
+    },
+    {
+      "commit": "3ea225acea572830100381a5c180dd86f295a70d",
+      "parents": [
+        "a68d907d1d125f6009fe4937542bba46a5338ad9"
+      ],
+      "subject": "补发 claude 嵌套子代理（如 Explore）中 tool_use 的 Stream 事件 (merge request !3)",
+      "date": "2026-08-18T02:05:26Z",
+      "reachable_from_master": true,
+      "old_plan": {
+        "old_id": "A20",
+        "old_disposition": "嵌套 assistant wrapper 的工具事件补发 → W05；另补真实父关联与去重。"
+      },
+      "status": "already-covered",
+      "group": "O15",
+      "canonical": "3ea225acea572830100381a5c180dd86f295a70d",
+      "independent_work_item": true,
+      "target_evidence": [
+        "claude/tool_observation.go:115",
+        "claude/alignment_adoption_test.go:35"
+      ],
+      "judgement": "typed工具事件、父域、重复和歧义防护已覆盖。"
+    },
+    {
+      "commit": "ca571fbed8454e482560b481a3aa6853e9d174df",
+      "parents": [
+        "3ea225acea572830100381a5c180dd86f295a70d"
+      ],
+      "subject": "fix: 持久化 dedicated hosted tool profile (merge request !4)",
+      "date": "2026-08-18T02:21:04Z",
+      "reachable_from_master": true,
+      "old_plan": {
+        "old_id": "A21",
+        "old_disposition": "Dedicated hosted-tool clone 持久化 → W02；强化 identity、跨进程所有权和清理边界。"
+      },
+      "status": "already-covered",
+      "group": "O16",
+      "canonical": "ca571fbed8454e482560b481a3aa6853e9d174df",
+      "independent_work_item": true,
+      "target_evidence": [
+        "tools.go",
+        "alignment_profile_test.go:88",
+        "alignment_profile_test.go:845"
+      ],
+      "judgement": "持久profile、跨进程owner与冷续接已有；不复制较弱旧实现。"
+    },
+    {
+      "commit": "eefcaef35621e6bbfb3e2e859edf4aadc4e38a5d",
+      "parents": [
+        "ca571fbed8454e482560b481a3aa6853e9d174df"
+      ],
+      "subject": "refine",
+      "date": "2026-08-21T20:58:13+08:00",
+      "reachable_from_master": true,
+      "old_plan": {
+        "old_id": "A22",
+        "old_disposition": "Claude result 关闭 interactive stdin 的主实现与 Phase3 测试 → W01。"
+      },
+      "status": "already-covered",
+      "group": "O17",
+      "canonical": "eefcaef35621e6bbfb3e2e859edf4aadc4e38a5d",
+      "independent_work_item": true,
+      "target_evidence": [
+        "claude/parser.go",
+        "claude/alignment_stdin_test.go:70",
+        "claude/alignment_stdin_test.go:200"
+      ],
+      "judgement": "旧W01 result-only/一次关闭已交付；较新的message_stop过早关闭缺陷另列N02。"
+    },
+    {
+      "commit": "a88eacdb4818c75df44caeec39bbb74062e58c53",
+      "parents": [
+        "eefcaef35621e6bbfb3e2e859edf4aadc4e38a5d"
+      ],
+      "subject": "refine",
+      "date": "2026-08-21T21:05:11+08:00",
+      "reachable_from_master": true,
+      "old_plan": {
+        "old_id": "A23",
+        "old_disposition": "移除提取函数后的重复 guard；W01 采用最终差异。"
+      },
+      "status": "already-covered",
+      "group": "O17",
+      "canonical": "eefcaef35621e6bbfb3e2e859edf4aadc4e38a5d",
+      "independent_work_item": false,
+      "target_evidence": [
+        "claude/parser.go",
+        "claude/alignment_stdin_test.go:70",
+        "claude/alignment_stdin_test.go:200"
+      ],
+      "judgement": "旧W01 result-only/一次关闭已交付；较新的message_stop过早关闭缺陷另列N02。",
+      "dedup_note": "同一语义组的原分支/修订/集成，按最终差异实施一次，不是额外工作项。"
+    },
+    {
+      "commit": "d01a086e5145566b7313b83ca88bb525f1d3675b",
+      "parents": [
+        "ca571fbed8454e482560b481a3aa6853e9d174df",
+        "a88eacdb4818c75df44caeec39bbb74062e58c53"
+      ],
+      "subject": "Merge branch 'fix/claude-stdin-on-type-result' into 'master' (merge request !5)",
+      "date": "2026-08-24T02:37:00Z",
+      "reachable_from_master": true,
+      "old_plan": {
+        "old_id": "A24",
+        "old_disposition": "合入 eefcaef/a88eacd 的 merge；已逐父核对，W01 不重复实施。"
+      },
+      "status": "already-covered",
+      "group": "O17",
+      "canonical": "eefcaef35621e6bbfb3e2e859edf4aadc4e38a5d",
+      "independent_work_item": false,
+      "target_evidence": [
+        "claude/parser.go",
+        "claude/alignment_stdin_test.go:70",
+        "claude/alignment_stdin_test.go:200"
+      ],
+      "judgement": "旧W01 result-only/一次关闭已交付；较新的message_stop过早关闭缺陷另列N02。",
+      "dedup_note": "同一语义组的原分支/修订/集成，按最终差异实施一次，不是额外工作项。"
+    },
+    {
+      "commit": "b11e05235ca94e6fd02f2ffa71b18ea97373dc46",
+      "parents": [
+        "d01a086e5145566b7313b83ca88bb525f1d3675b"
+      ],
+      "subject": "test",
+      "date": "2026-08-24T19:35:29+08:00",
+      "reachable_from_master": false,
+      "old_plan": {
+        "old_id": "B05",
+        "old_disposition": "3253009 / W08; 虽题为 test，实际增加 Parts 字段、映射、测试与设计文档。"
+      },
+      "status": "already-covered",
+      "group": "O18",
+      "canonical": "3253009054681a499fd693329486d0fe3279d843",
+      "independent_work_item": false,
+      "target_evidence": [
+        "hosttools/a2adelegation/alignment_artifact_parts_test.go:77",
+        "hosttools/a2adelegation/alignment_artifact_parts_test.go:32"
+      ],
+      "judgement": "Parts、Append、LastChunk、深复制及大小界限已有。",
+      "dedup_note": "同一语义组的原分支/修订/集成，按最终差异实施一次，不是额外工作项。"
+    },
+    {
+      "commit": "f16fb20aaf8df3455b5bef7a8e0681d93cbc3167",
+      "parents": [
+        "b11e05235ca94e6fd02f2ffa71b18ea97373dc46"
+      ],
+      "subject": "test",
+      "date": "2026-08-24T19:39:03+08:00",
+      "reachable_from_master": false,
+      "old_plan": {
+        "old_id": "B06",
+        "old_disposition": "3253009 / W08; 修订 artifact 文档；该分支最终 4 文件与集成提交一致。"
+      },
+      "status": "already-covered",
+      "group": "O18",
+      "canonical": "3253009054681a499fd693329486d0fe3279d843",
+      "independent_work_item": false,
+      "target_evidence": [
+        "hosttools/a2adelegation/alignment_artifact_parts_test.go:77",
+        "hosttools/a2adelegation/alignment_artifact_parts_test.go:32"
+      ],
+      "judgement": "Parts、Append、LastChunk、深复制及大小界限已有。",
+      "dedup_note": "同一语义组的原分支/修订/集成，按最终差异实施一次，不是额外工作项。"
+    },
+    {
+      "commit": "954aa68cd91108ca644bb044e808d3061d880daa",
+      "parents": [
+        "d01a086e5145566b7313b83ca88bb525f1d3675b"
+      ],
+      "subject": "feat: 支持宿主定义系统提示词",
+      "date": "2026-08-25T11:13:31+08:00",
+      "reachable_from_master": false,
+      "old_plan": {
+        "old_id": "B07",
+        "old_disposition": "8ffe22a / W11; 系统提示词初版，多 Driver 参数/协议/测试/文档。"
+      },
+      "status": "already-covered",
+      "group": "O19",
+      "canonical": "8ffe22a2a29c0b72e6c993d7774ffb54ac15c010",
+      "independent_work_item": false,
+      "target_evidence": [
+        "options.go:456",
+        "driver/run.go:80",
+        "claude/alignment_append_test.go",
+        "codex/alignment_prompt_test.go"
+      ],
+      "judgement": "单一SharedOption及原字节hash已有，Cursor明确unsupported保持。",
+      "dedup_note": "同一语义组的原分支/修订/集成，按最终差异实施一次，不是额外工作项。"
+    },
+    {
+      "commit": "6943d2adddfee68164ad3cf37b499acf4615ebc2",
+      "parents": [
+        "954aa68cd91108ca644bb044e808d3061d880daa"
+      ],
+      "subject": "refactor(system-prompt): 把 append 语义写进公共 API 的名字",
+      "date": "2026-08-25T11:24:26+08:00",
+      "reachable_from_master": false,
+      "old_plan": {
+        "old_id": "B08",
+        "old_disposition": "8ffe22a / W11; 重命名为 Append；不能移植初版覆盖含义不清的名字。"
+      },
+      "status": "already-covered",
+      "group": "O19",
+      "canonical": "8ffe22a2a29c0b72e6c993d7774ffb54ac15c010",
+      "independent_work_item": false,
+      "target_evidence": [
+        "options.go:456",
+        "driver/run.go:80",
+        "claude/alignment_append_test.go",
+        "codex/alignment_prompt_test.go"
+      ],
+      "judgement": "单一SharedOption及原字节hash已有，Cursor明确unsupported保持。",
+      "dedup_note": "同一语义组的原分支/修订/集成，按最终差异实施一次，不是额外工作项。"
+    },
+    {
+      "commit": "38e0e8c2d055a6e90f940d7dd1ac2bcafa485d04",
+      "parents": [
+        "6943d2adddfee68164ad3cf37b499acf4615ebc2"
+      ],
+      "subject": "fix(claude): buildClaudeExecArgs 拆分以满足函数长度规范",
+      "date": "2026-08-25T11:31:52+08:00",
+      "reachable_from_master": false,
+      "old_plan": {
+        "old_id": "B09",
+        "old_disposition": "8ffe22a / W11; 拆分 Claude 输出参数构建并调整测试；最终 30 文件一致。"
+      },
+      "status": "already-covered",
+      "group": "O19",
+      "canonical": "8ffe22a2a29c0b72e6c993d7774ffb54ac15c010",
+      "independent_work_item": false,
+      "target_evidence": [
+        "options.go:456",
+        "driver/run.go:80",
+        "claude/alignment_append_test.go",
+        "codex/alignment_prompt_test.go"
+      ],
+      "judgement": "单一SharedOption及原字节hash已有，Cursor明确unsupported保持。",
+      "dedup_note": "同一语义组的原分支/修订/集成，按最终差异实施一次，不是额外工作项。"
+    },
+    {
+      "commit": "3253009054681a499fd693329486d0fe3279d843",
+      "parents": [
+        "d01a086e5145566b7313b83ca88bb525f1d3675b"
+      ],
+      "subject": "一次 a2a 调用流程中支持多次上报制品 (merge request !6)",
+      "date": "2026-08-25T02:10:24Z",
+      "reachable_from_master": true,
+      "old_plan": {
+        "old_id": "A25",
+        "old_disposition": "实时 DelegationArtifact.Parts → W08；最终 full remote artifact 已存在，不误报全部缺失。"
+      },
+      "status": "already-covered",
+      "group": "O18",
+      "canonical": "3253009054681a499fd693329486d0fe3279d843",
+      "independent_work_item": true,
+      "target_evidence": [
+        "hosttools/a2adelegation/alignment_artifact_parts_test.go:77",
+        "hosttools/a2adelegation/alignment_artifact_parts_test.go:32"
+      ],
+      "judgement": "Parts、Append、LastChunk、深复制及大小界限已有。"
+    },
+    {
+      "commit": "8ffe22a2a29c0b72e6c993d7774ffb54ac15c010",
+      "parents": [
+        "3253009054681a499fd693329486d0fe3279d843"
+      ],
+      "subject": "feat: 支持宿主定义系统提示词 (merge request !7)",
+      "date": "2026-08-25T03:35:04Z",
+      "reachable_from_master": true,
+      "old_plan": {
+        "old_id": "A26",
+        "old_disposition": "append system prompt 多 Driver 支持 → W11；采用单一 SharedOption 和当前 fingerprint 规则。"
+      },
+      "status": "already-covered",
+      "group": "O19",
+      "canonical": "8ffe22a2a29c0b72e6c993d7774ffb54ac15c010",
+      "independent_work_item": true,
+      "target_evidence": [
+        "options.go:456",
+        "driver/run.go:80",
+        "claude/alignment_append_test.go",
+        "codex/alignment_prompt_test.go"
+      ],
+      "judgement": "单一SharedOption及原字节hash已有，Cursor明确unsupported保持。"
+    },
+    {
+      "commit": "89231087ddb33070a7b0bee116012a5470cef785",
+      "parents": [
+        "8ffe22a2a29c0b72e6c993d7774ffb54ac15c010"
+      ],
+      "subject": "test",
+      "date": "2026-08-28T11:06:53+08:00",
+      "reachable_from_master": false,
+      "old_plan": {
+        "old_id": "B10",
+        "old_disposition": "64163ab / W07; 虽题为 test，实际实现 invalidInputRejection 与 runtime 测试。"
+      },
+      "status": "already-covered",
+      "group": "O20",
+      "canonical": "64163ab67ecf109d196da10a4cbac8943d8e6eff",
+      "independent_work_item": false,
+      "target_evidence": [
+        "internal/toolruntime/input_errors_test.go:18",
+        "tool/tool.go"
+      ],
+      "judgement": "schema/解码错误有安全提示，系统/callback错误不泄漏。",
+      "dedup_note": "同一语义组的原分支/修订/集成，按最终差异实施一次，不是额外工作项。"
+    },
+    {
+      "commit": "f5fbb147847356c46e83aa74caad584da283ac86",
+      "parents": [
+        "89231087ddb33070a7b0bee116012a5470cef785"
+      ],
+      "subject": "test",
+      "date": "2026-08-28T11:12:25+08:00",
+      "reachable_from_master": false,
+      "old_plan": {
+        "old_id": "B11",
+        "old_disposition": "64163ab / W07; 补 runtime 边界测试并微调错误文本；最终 2 文件一致。"
+      },
+      "status": "already-covered",
+      "group": "O20",
+      "canonical": "64163ab67ecf109d196da10a4cbac8943d8e6eff",
+      "independent_work_item": false,
+      "target_evidence": [
+        "internal/toolruntime/input_errors_test.go:18",
+        "tool/tool.go"
+      ],
+      "judgement": "schema/解码错误有安全提示，系统/callback错误不泄漏。",
+      "dedup_note": "同一语义组的原分支/修订/集成，按最终差异实施一次，不是额外工作项。"
+    },
+    {
+      "commit": "64163ab67ecf109d196da10a4cbac8943d8e6eff",
+      "parents": [
+        "8ffe22a2a29c0b72e6c993d7774ffb54ac15c010"
+      ],
+      "subject": "当工具调用 json 传入某个不支持的 key 时，可返回具体原因 (merge request !8)",
+      "date": "2026-08-28T03:16:49Z",
+      "reachable_from_master": true,
+      "old_plan": {
+        "old_id": "A27",
+        "old_disposition": "工具输入错误的 safe rejection → W07；补字段名边界与正确 Go 解码提示。"
+      },
+      "status": "already-covered",
+      "group": "O20",
+      "canonical": "64163ab67ecf109d196da10a4cbac8943d8e6eff",
+      "independent_work_item": true,
+      "target_evidence": [
+        "internal/toolruntime/input_errors_test.go:18",
+        "tool/tool.go"
+      ],
+      "judgement": "schema/解码错误有安全提示，系统/callback错误不泄漏。"
+    },
+    {
+      "commit": "a2f2b0b7e5c89ffeb47bd328f6a88f25c378c453",
+      "parents": [
+        "64163ab67ecf109d196da10a4cbac8943d8e6eff"
+      ],
+      "subject": "refine",
+      "date": "2026-08-31T13:34:14+08:00",
+      "reachable_from_master": false,
+      "old_plan": {
+        "old_id": "B12",
+        "old_disposition": "eb82ed3 / W12; todo 初始实现：三个 Driver、快照表、A2A DTO/decoder 和文档。"
+      },
+      "status": "already-covered",
+      "group": "O21",
+      "canonical": "eb82ed36eaf6339b00860b5506a683e6dbd74765",
+      "independent_work_item": false,
+      "target_evidence": [
+        "todo",
+        "claude/todo_observation.go",
+        "codebuddy/todo_observation.go",
+        "alignment_protocol_integration_test.go:2809"
+      ],
+      "judgement": "正式协议生成typed快照，空清单与作用域已覆盖。",
+      "dedup_note": "同一语义组的原分支/修订/集成，按最终差异实施一次，不是额外工作项。"
+    },
+    {
+      "commit": "2e5f411673be31431554fb3fd5c8447196df2124",
+      "parents": [
+        "a2f2b0b7e5c89ffeb47bd328f6a88f25c378c453"
+      ],
+      "subject": "refine",
+      "date": "2026-08-31T15:24:49+08:00",
+      "reachable_from_master": false,
+      "old_plan": {
+        "old_id": "B13",
+        "old_disposition": "eb82ed3 / W12; 补 CodeBuddy 非 partial wrapper/去重路径、A2A 往返测试及合同说明。"
+      },
+      "status": "already-covered",
+      "group": "O21",
+      "canonical": "eb82ed36eaf6339b00860b5506a683e6dbd74765",
+      "independent_work_item": false,
+      "target_evidence": [
+        "todo",
+        "claude/todo_observation.go",
+        "codebuddy/todo_observation.go",
+        "alignment_protocol_integration_test.go:2809"
+      ],
+      "judgement": "正式协议生成typed快照，空清单与作用域已覆盖。",
+      "dedup_note": "同一语义组的原分支/修订/集成，按最终差异实施一次，不是额外工作项。"
+    },
+    {
+      "commit": "8ea34b47089d85052fa7cb54ab97156dbf5eaa4c",
+      "parents": [
+        "2e5f411673be31431554fb3fd5c8447196df2124"
+      ],
+      "subject": "refine",
+      "date": "2026-08-31T16:46:58+08:00",
+      "reachable_from_master": false,
+      "old_plan": {
+        "old_id": "B14",
+        "old_disposition": "eb82ed3 / W12; Codex plan snapshot 初始化微调；最终 23 文件一致。"
+      },
+      "status": "already-covered",
+      "group": "O21",
+      "canonical": "eb82ed36eaf6339b00860b5506a683e6dbd74765",
+      "independent_work_item": false,
+      "target_evidence": [
+        "todo",
+        "claude/todo_observation.go",
+        "codebuddy/todo_observation.go",
+        "alignment_protocol_integration_test.go:2809"
+      ],
+      "judgement": "正式协议生成typed快照，空清单与作用域已覆盖。",
+      "dedup_note": "同一语义组的原分支/修订/集成，按最终差异实施一次，不是额外工作项。"
+    },
+    {
+      "commit": "eb82ed36eaf6339b00860b5506a683e6dbd74765",
+      "parents": [
+        "64163ab67ecf109d196da10a4cbac8943d8e6eff"
+      ],
+      "subject": "归一化 plan/todo 为 todo.updated 事件 (merge request !9)",
+      "date": "2026-08-31T08:53:05Z",
+      "reachable_from_master": true,
+      "old_plan": {
+        "old_id": "A28",
+        "old_disposition": "todo/plan 标准化与 A2A DTO → W12；修正 ID 猜测、空快照和 helper 协议职责。"
+      },
+      "status": "already-covered",
+      "group": "O21",
+      "canonical": "eb82ed36eaf6339b00860b5506a683e6dbd74765",
+      "independent_work_item": true,
+      "target_evidence": [
+        "todo",
+        "claude/todo_observation.go",
+        "codebuddy/todo_observation.go",
+        "alignment_protocol_integration_test.go:2809"
+      ],
+      "judgement": "正式协议生成typed快照，空清单与作用域已覆盖。"
+    },
+    {
+      "commit": "ac62c1921a367366ccfae3b82e7761980a7bc38a",
+      "parents": [
+        "eb82ed36eaf6339b00860b5506a683e6dbd74765"
+      ],
+      "subject": "fix: 续轮流忽略存盘 Task 快照，只认 live Status 终态",
+      "date": "2026-09-03T19:13:07+08:00",
+      "reachable_from_master": false,
+      "old_plan": {
+        "old_id": "B15",
+        "old_disposition": "8e35b12 / W03; 续答 Task snapshot 修复原提交；最终 7 文件一致。"
+      },
+      "status": "already-covered",
+      "group": "O22",
+      "canonical": "8e35b123af693b1a922d9d53b879692d04e00795",
+      "independent_work_item": false,
+      "target_evidence": [
+        "clients/a2a/execution_state.go:28",
+        "hosttools/a2adelegation/delegator.go:507",
+        "alignment_protocol_integration_test.go:2316"
+      ],
+      "judgement": "历史Task快照和本轮live状态分离，含恢复与制品收敛。",
+      "dedup_note": "同一语义组的原分支/修订/集成，按最终差异实施一次，不是额外工作项。"
+    },
+    {
+      "commit": "8e35b123af693b1a922d9d53b879692d04e00795",
+      "parents": [
+        "eb82ed36eaf6339b00860b5506a683e6dbd74765"
+      ],
+      "subject": "修复 A2A 续答时将历史问卷回放误判为本轮结束 (merge request !10)",
+      "date": "2026-09-03T11:18:32Z",
+      "reachable_from_master": true,
+      "old_plan": {
+        "old_id": "A29",
+        "old_disposition": "A2A 续答不受历史问卷 Task 快照截断 → W03。"
+      },
+      "status": "already-covered",
+      "group": "O22",
+      "canonical": "8e35b123af693b1a922d9d53b879692d04e00795",
+      "independent_work_item": true,
+      "target_evidence": [
+        "clients/a2a/execution_state.go:28",
+        "hosttools/a2adelegation/delegator.go:507",
+        "alignment_protocol_integration_test.go:2316"
+      ],
+      "judgement": "历史Task快照和本轮live状态分离，含恢复与制品收敛。"
+    },
+    {
+      "commit": "e2f0620bdd6477e6fe16f6db5648093589342ca2",
+      "parents": [
+        "8e35b123af693b1a922d9d53b879692d04e00795"
+      ],
+      "subject": "feat: 新增 Run 级可暂停主动执行超时预算 (merge request !11)",
+      "date": "2026-09-04T10:36:02Z",
+      "reachable_from_master": true,
+      "old_plan": {
+        "old_id": "A30",
+        "old_disposition": "主动执行预算、Ask 暂停、A2A 错误映射 → W13；不搬逐字段 policy 合并或改义旧 Timeout。"
+      },
+      "status": "already-covered",
+      "group": "O23",
+      "canonical": "e2f0620bdd6477e6fe16f6db5648093589342ca2",
+      "independent_work_item": true,
+      "target_evidence": [
+        "policy.go:48",
+        "alignment_budget_error_test.go:166",
+        "alignment_budget_error_test.go:418"
+      ],
+      "judgement": "唯一主动预算、重叠Ask暂停、原子提交前封账已有。"
+    },
+    {
+      "commit": "70ebfbde6725827f62c9d984a07c8dd633e5379c",
+      "parents": [
+        "e2f0620bdd6477e6fe16f6db5648093589342ca2"
+      ],
+      "subject": "refine",
+      "date": "2026-09-08T22:07:06+08:00",
+      "reachable_from_master": false,
+      "old_plan": null,
+      "status": "new-gap",
+      "group": "N02",
+      "canonical": "abdaa497214e23a801721cf18c3625e1ae524273",
+      "independent_work_item": false,
+      "target_evidence": [
+        "claude/parser.go:907",
+        "claude/alignment_stdin_test.go:240"
+      ],
+      "judgement": "目标非空且非tool_use的message_stop仍关闭stdin，max_tokens/end_turn后正式控制请求可失败。旧nested/empty/tool_use测试不足覆盖该场景；按最终branch修复思想迁移并保留目标checkpoint/后台工具边界。",
+      "dedup_note": "同一语义组的原分支/修订/集成，按最终差异实施一次，不是额外工作项。"
+    },
+    {
+      "commit": "7a37cc540a9cc0472b4dd48122bc623de72094de",
+      "parents": [
+        "70ebfbde6725827f62c9d984a07c8dd633e5379c"
+      ],
+      "subject": "refine",
+      "date": "2026-09-09T14:29:05+08:00",
+      "reachable_from_master": false,
+      "old_plan": null,
+      "status": "new-gap",
+      "group": "N02",
+      "canonical": "abdaa497214e23a801721cf18c3625e1ae524273",
+      "independent_work_item": false,
+      "target_evidence": [
+        "claude/parser.go:907",
+        "claude/alignment_stdin_test.go:240"
+      ],
+      "judgement": "目标非空且非tool_use的message_stop仍关闭stdin，max_tokens/end_turn后正式控制请求可失败。旧nested/empty/tool_use测试不足覆盖该场景；按最终branch修复思想迁移并保留目标checkpoint/后台工具边界。",
+      "dedup_note": "同一语义组的原分支/修订/集成，按最终差异实施一次，不是额外工作项。"
+    },
+    {
+      "commit": "b77b102ec8f7f320d9c4b75f00f75db3d09c743f",
+      "parents": [
+        "7a37cc540a9cc0472b4dd48122bc623de72094de"
+      ],
+      "subject": "refine",
+      "date": "2026-09-09T16:09:59+08:00",
+      "reachable_from_master": false,
+      "old_plan": null,
+      "status": "new-gap",
+      "group": "N02",
+      "canonical": "abdaa497214e23a801721cf18c3625e1ae524273",
+      "independent_work_item": false,
+      "target_evidence": [
+        "claude/parser.go:907",
+        "claude/alignment_stdin_test.go:240"
+      ],
+      "judgement": "目标非空且非tool_use的message_stop仍关闭stdin，max_tokens/end_turn后正式控制请求可失败。旧nested/empty/tool_use测试不足覆盖该场景；按最终branch修复思想迁移并保留目标checkpoint/后台工具边界。",
+      "dedup_note": "同一语义组的原分支/修订/集成，按最终差异实施一次，不是额外工作项。"
+    },
+    {
+      "commit": "5eb3bc8be20890b7381dbfbc704a98e83e86c437",
+      "parents": [
+        "b77b102ec8f7f320d9c4b75f00f75db3d09c743f"
+      ],
+      "subject": "refine",
+      "date": "2026-09-09T16:35:36+08:00",
+      "reachable_from_master": false,
+      "old_plan": null,
+      "status": "new-gap",
+      "group": "N02",
+      "canonical": "abdaa497214e23a801721cf18c3625e1ae524273",
+      "independent_work_item": false,
+      "target_evidence": [
+        "claude/parser.go:907",
+        "claude/alignment_stdin_test.go:240"
+      ],
+      "judgement": "目标非空且非tool_use的message_stop仍关闭stdin，max_tokens/end_turn后正式控制请求可失败。旧nested/empty/tool_use测试不足覆盖该场景；按最终branch修复思想迁移并保留目标checkpoint/后台工具边界。",
+      "dedup_note": "同一语义组的原分支/修订/集成，按最终差异实施一次，不是额外工作项。"
+    },
+    {
+      "commit": "b7fe1fc3090be371d072b53cb5fb8a8eeed84709",
+      "parents": [
+        "5eb3bc8be20890b7381dbfbc704a98e83e86c437"
+      ],
+      "subject": "refine",
+      "date": "2026-09-10T00:22:21+08:00",
+      "reachable_from_master": false,
+      "old_plan": null,
+      "status": "new-gap",
+      "group": "N02",
+      "canonical": "abdaa497214e23a801721cf18c3625e1ae524273",
+      "independent_work_item": false,
+      "target_evidence": [
+        "claude/parser.go:907",
+        "claude/alignment_stdin_test.go:240"
+      ],
+      "judgement": "目标非空且非tool_use的message_stop仍关闭stdin，max_tokens/end_turn后正式控制请求可失败。旧nested/empty/tool_use测试不足覆盖该场景；按最终branch修复思想迁移并保留目标checkpoint/后台工具边界。",
+      "dedup_note": "同一语义组的原分支/修订/集成，按最终差异实施一次，不是额外工作项。"
+    },
+    {
+      "commit": "91963d3c8f5fe037c7f3b33e0d272b3f14c5eebf",
+      "parents": [
+        "b7fe1fc3090be371d072b53cb5fb8a8eeed84709"
+      ],
+      "subject": "refine",
+      "date": "2026-09-10T00:26:30+08:00",
+      "reachable_from_master": false,
+      "old_plan": null,
+      "status": "new-gap",
+      "group": "N02",
+      "canonical": "abdaa497214e23a801721cf18c3625e1ae524273",
+      "independent_work_item": false,
+      "target_evidence": [
+        "claude/parser.go:907",
+        "claude/alignment_stdin_test.go:240"
+      ],
+      "judgement": "目标非空且非tool_use的message_stop仍关闭stdin，max_tokens/end_turn后正式控制请求可失败。旧nested/empty/tool_use测试不足覆盖该场景；按最终branch修复思想迁移并保留目标checkpoint/后台工具边界。",
+      "dedup_note": "同一语义组的原分支/修订/集成，按最终差异实施一次，不是额外工作项。"
+    },
+    {
+      "commit": "674a9b3eac857ae00b61297fbf6c1d4d4b6a3638",
+      "parents": [
+        "e2f0620bdd6477e6fe16f6db5648093589342ca2"
+      ],
+      "subject": "feat: 支持模型级上下文窗口与自动压缩阈值翻译下发",
+      "date": "2026-09-08T19:23:24+08:00",
+      "reachable_from_master": true,
+      "old_plan": null,
+      "status": "new-gap",
+      "group": "N01",
+      "canonical": "674a9b3eac857ae00b61297fbf6c1d4d4b6a3638",
+      "independent_work_item": true,
+      "target_evidence": [
+        "claude/configured.go:22",
+        "codex/configured.go:23",
+        "codex/appserver/generated.go:164"
+      ],
+      "judgement": "目标无typed配置，generated ModelContextWindow只是用量反馈。按Claude/Codex真实Config迁移，0不注入，拒绝非法/冲突；不恢复CommonConfig/WithContextWindow，不搬Cursor/CodeBuddy静默warning，不照搬Codex落盘patch。"
+    },
+    {
+      "commit": "e97b74fd69b0409d85b7c564a7637e6a3851fc12",
+      "parents": [
+        "674a9b3eac857ae00b61297fbf6c1d4d4b6a3638"
+      ],
+      "subject": "fix: 拆分超长行修复 CI 代码规范中风险问题",
+      "date": "2026-09-09T09:48:17+08:00",
+      "reachable_from_master": true,
+      "old_plan": null,
+      "status": "new-gap",
+      "group": "N01",
+      "canonical": "674a9b3eac857ae00b61297fbf6c1d4d4b6a3638",
+      "independent_work_item": false,
+      "target_evidence": [
+        "claude/configured.go:22",
+        "codex/configured.go:23",
+        "codex/appserver/generated.go:164"
+      ],
+      "judgement": "目标无typed配置，generated ModelContextWindow只是用量反馈。按Claude/Codex真实Config迁移，0不注入，拒绝非法/冲突；不恢复CommonConfig/WithContextWindow，不搬Cursor/CodeBuddy静默warning，不照搬Codex落盘patch。",
+      "dedup_note": "同一语义组的原分支/修订/集成，按最终差异实施一次，不是额外工作项。"
+    },
+    {
+      "commit": "dddce056ff7407accbd5b86aa28931d557f5843a",
+      "parents": [
+        "e2f0620bdd6477e6fe16f6db5648093589342ca2",
+        "e97b74fd69b0409d85b7c564a7637e6a3851fc12"
+      ],
+      "subject": "Merge branch 'feature/flowx/137864965_ovryqy3o' into 'master' (merge request !12)",
+      "date": "2026-09-09T01:52:55Z",
+      "reachable_from_master": true,
+      "old_plan": null,
+      "status": "new-gap",
+      "group": "N01",
+      "canonical": "674a9b3eac857ae00b61297fbf6c1d4d4b6a3638",
+      "independent_work_item": false,
+      "target_evidence": [
+        "claude/configured.go:22",
+        "codex/configured.go:23",
+        "codex/appserver/generated.go:164"
+      ],
+      "judgement": "目标无typed配置，generated ModelContextWindow只是用量反馈。按Claude/Codex真实Config迁移，0不注入，拒绝非法/冲突；不恢复CommonConfig/WithContextWindow，不搬Cursor/CodeBuddy静默warning，不照搬Codex落盘patch。",
+      "dedup_note": "同一语义组的原分支/修订/集成，按最终差异实施一次，不是额外工作项。"
+    },
+    {
+      "commit": "abdaa497214e23a801721cf18c3625e1ae524273",
+      "parents": [
+        "dddce056ff7407accbd5b86aa28931d557f5843a"
+      ],
+      "subject": "fix(claude):  interactive 仅在 type:result 关闭 stdin，修复 max_tokens 等其他 message stop 场景误关 stdin 导致 Stream closed (merge request !13)",
+      "date": "2026-09-10T02:54:15Z",
+      "reachable_from_master": true,
+      "old_plan": null,
+      "status": "new-gap",
+      "group": "N02",
+      "canonical": "abdaa497214e23a801721cf18c3625e1ae524273",
+      "independent_work_item": true,
+      "target_evidence": [
+        "claude/parser.go:907",
+        "claude/alignment_stdin_test.go:240"
+      ],
+      "judgement": "目标非空且非tool_use的message_stop仍关闭stdin，max_tokens/end_turn后正式控制请求可失败。旧nested/empty/tool_use测试不足覆盖该场景；按最终branch修复思想迁移并保留目标checkpoint/后台工具边界。"
+    },
+    {
+      "commit": "67c21832de59a3ea083ead863f4ecf3a1a61c76c",
+      "parents": [
+        "abdaa497214e23a801721cf18c3625e1ae524273"
+      ],
+      "subject": "feat: sessionrecorder 支持按 HostSeq 的区间与尾部查询",
+      "date": "2026-09-14T12:14:06+08:00",
+      "reachable_from_master": false,
+      "old_plan": null,
+      "status": "new-gap",
+      "group": "N03",
+      "canonical": "607a8154d85bc9d099eb4d66479b7b97d315be42",
+      "independent_work_item": false,
+      "target_evidence": [
+        "hosttools/sessionrecorder/recorder.go:127",
+        "hosttools/sessionrecorder/recorder.go:268"
+      ],
+      "judgement": "目标只有Since，缺上下界与tail查询；在可选hosttool提供，不扩张core执行概念。",
+      "dedup_note": "同一语义组的原分支/修订/集成，按最终差异实施一次，不是额外工作项。"
+    },
+    {
+      "commit": "607a8154d85bc9d099eb4d66479b7b97d315be42",
+      "parents": [
+        "abdaa497214e23a801721cf18c3625e1ae524273"
+      ],
+      "subject": "feat: sessionrecorder 支持按 HostSeq 的会话历史区间与尾部查询 (merge request !14)",
+      "date": "2026-09-14T05:18:29Z",
+      "reachable_from_master": true,
+      "old_plan": null,
+      "status": "new-gap",
+      "group": "N03",
+      "canonical": "607a8154d85bc9d099eb4d66479b7b97d315be42",
+      "independent_work_item": true,
+      "target_evidence": [
+        "hosttools/sessionrecorder/recorder.go:127",
+        "hosttools/sessionrecorder/recorder.go:268"
+      ],
+      "judgement": "目标只有Since，缺上下界与tail查询；在可选hosttool提供，不扩张core执行概念。"
+    },
+    {
+      "commit": "70d0f78e5f117a040a8507d7508c0aa05850db23",
+      "parents": [
+        "607a8154d85bc9d099eb4d66479b7b97d315be42"
+      ],
+      "subject": "feat: sessionrecorder 支持按完整 Run 对齐历史回放下界的查询",
+      "date": "2026-09-16T21:18:55+08:00",
+      "reachable_from_master": false,
+      "old_plan": null,
+      "status": "new-gap",
+      "group": "N04",
+      "canonical": "0373d1656120f5257da5615bbb62e444653eef27",
+      "independent_work_item": false,
+      "target_evidence": [
+        "hosttools/sessionrecorder/recorder.go:127",
+        "hosttools/sessionrecorder/recorder.go:268"
+      ],
+      "judgement": "目标无run-start对齐，须基于typed RunID/生命周期而非旧StreamPayload字符串猜测；包含首记录run.started短路与最终精简fixture。",
+      "dedup_note": "同一语义组的原分支/修订/集成，按最终差异实施一次，不是额外工作项。"
+    },
+    {
+      "commit": "aaf95bdfdddae42c24f8be81fa27314ed6b216fb",
+      "parents": [
+        "70d0f78e5f117a040a8507d7508c0aa05850db23"
+      ],
+      "subject": "fix: runStartIndex 对首条原始记录即 run.started 时短路返回自身",
+      "date": "2026-09-16T21:20:43+08:00",
+      "reachable_from_master": false,
+      "old_plan": null,
+      "status": "new-gap",
+      "group": "N04",
+      "canonical": "0373d1656120f5257da5615bbb62e444653eef27",
+      "independent_work_item": false,
+      "target_evidence": [
+        "hosttools/sessionrecorder/recorder.go:127",
+        "hosttools/sessionrecorder/recorder.go:268"
+      ],
+      "judgement": "目标无run-start对齐，须基于typed RunID/生命周期而非旧StreamPayload字符串猜测；包含首记录run.started短路与最终精简fixture。",
+      "dedup_note": "同一语义组的原分支/修订/集成，按最终差异实施一次，不是额外工作项。"
+    },
+    {
+      "commit": "8b2b9baabc6fd92862646e1584ee58a4ff37e5b9",
+      "parents": [
+        "aaf95bdfdddae42c24f8be81fa27314ed6b216fb"
+      ],
+      "subject": "refine",
+      "date": "2026-09-17T10:17:06+08:00",
+      "reachable_from_master": false,
+      "old_plan": null,
+      "status": "new-gap",
+      "group": "N04",
+      "canonical": "0373d1656120f5257da5615bbb62e444653eef27",
+      "independent_work_item": false,
+      "target_evidence": [
+        "hosttools/sessionrecorder/recorder.go:127",
+        "hosttools/sessionrecorder/recorder.go:268"
+      ],
+      "judgement": "目标无run-start对齐，须基于typed RunID/生命周期而非旧StreamPayload字符串猜测；包含首记录run.started短路与最终精简fixture。",
+      "dedup_note": "同一语义组的原分支/修订/集成，按最终差异实施一次，不是额外工作项。"
+    },
+    {
+      "commit": "a0f75f909e67802feda8c12ef999bcf0c47e1d67",
+      "parents": [
+        "8b2b9baabc6fd92862646e1584ee58a4ff37e5b9"
+      ],
+      "subject": "refine",
+      "date": "2026-09-17T10:20:55+08:00",
+      "reachable_from_master": false,
+      "old_plan": null,
+      "status": "new-gap",
+      "group": "N04",
+      "canonical": "0373d1656120f5257da5615bbb62e444653eef27",
+      "independent_work_item": false,
+      "target_evidence": [
+        "hosttools/sessionrecorder/recorder.go:127",
+        "hosttools/sessionrecorder/recorder.go:268"
+      ],
+      "judgement": "目标无run-start对齐，须基于typed RunID/生命周期而非旧StreamPayload字符串猜测；包含首记录run.started短路与最终精简fixture。",
+      "dedup_note": "同一语义组的原分支/修订/集成，按最终差异实施一次，不是额外工作项。"
+    },
+    {
+      "commit": "0373d1656120f5257da5615bbb62e444653eef27",
+      "parents": [
+        "607a8154d85bc9d099eb4d66479b7b97d315be42"
+      ],
+      "subject": "feat: sessionrecorder 支持按完整 Run 对齐历史回放下界的查询 (merge request !15)",
+      "date": "2026-09-17T02:23:56Z",
+      "reachable_from_master": true,
+      "old_plan": null,
+      "status": "new-gap",
+      "group": "N04",
+      "canonical": "0373d1656120f5257da5615bbb62e444653eef27",
+      "independent_work_item": true,
+      "target_evidence": [
+        "hosttools/sessionrecorder/recorder.go:127",
+        "hosttools/sessionrecorder/recorder.go:268"
+      ],
+      "judgement": "目标无run-start对齐，须基于typed RunID/生命周期而非旧StreamPayload字符串猜测；包含首记录run.started短路与最终精简fixture。"
+    },
+    {
+      "commit": "09cd0d3fcb0312c92a80c765cbeb0f73e4616e43",
+      "parents": [
+        "0373d1656120f5257da5615bbb62e444653eef27"
+      ],
+      "subject": "Merge branch 'feature/flowx/138424162_sux4qrcy' into 'master' (merge request !16)",
+      "date": "2026-09-18T12:38:39Z",
+      "reachable_from_master": true,
+      "old_plan": null,
+      "status": "new-gap",
+      "group": "N05",
+      "canonical": "09cd0d3fcb0312c92a80c765cbeb0f73e4616e43",
+      "independent_work_item": true,
+      "target_evidence": [
+        "events.go:131",
+        "bridges/agui/events.go:350",
+        "hosttools/sessionrecorder/recorder.go:456"
+      ],
+      "judgement": "目标只有TextDelta及通用HostEvent，没有显式图片内容合同；作为typed Event与bridge/recorder映射迁移，不扩张provider图像输入或读未提交vision文档。"
+    },
+    {
+      "commit": "cb25c0b7b86a6d446c99fe66c6d9191b7ec4959a",
+      "parents": [
+        "09cd0d3fcb0312c92a80c765cbeb0f73e4616e43"
+      ],
+      "subject": "fix(agui): image.content 的 CUSTOM role 对齐 text.* 字面量映射",
+      "date": "2026-09-20T10:30:08+08:00",
+      "reachable_from_master": false,
+      "old_plan": null,
+      "status": "not-applicable",
+      "group": "N06",
+      "canonical": "2c8b594802a2b5a60c425f4dfe5ded4ec8eb75d9",
+      "independent_work_item": false,
+      "target_evidence": [
+        "bridges/agui/events.go:679"
+      ],
+      "judgement": "目标尚无image分支，所以当前不会触发这项bug；N05新增图片时必须复用既有textRoleOpt映射，空值RoleAssistant输出assistant，不能把数字枚举直接写入CUSTOM。",
+      "dedup_note": "同一语义组的原分支/修订/集成，按最终差异实施一次，不是额外工作项。"
+    },
+    {
+      "commit": "2c8b594802a2b5a60c425f4dfe5ded4ec8eb75d9",
+      "parents": [
+        "09cd0d3fcb0312c92a80c765cbeb0f73e4616e43"
+      ],
+      "subject": "fix(agui): image.content 的 CUSTOM role 对齐 text.* 字面量映射 (merge request !17)",
+      "date": "2026-09-20T02:54:46Z",
+      "reachable_from_master": true,
+      "old_plan": null,
+      "status": "not-applicable",
+      "group": "N06",
+      "canonical": "2c8b594802a2b5a60c425f4dfe5ded4ec8eb75d9",
+      "independent_work_item": true,
+      "target_evidence": [
+        "bridges/agui/events.go:679"
+      ],
+      "judgement": "目标尚无image分支，所以当前不会触发这项bug；N05新增图片时必须复用既有textRoleOpt映射，空值RoleAssistant输出assistant，不能把数字枚举直接写入CUSTOM。"
+    },
+    {
+      "commit": "2e69bd9ea2d8e4a13c195b70b84dbfc7757ba3d9",
+      "parents": [
+        "2c8b594802a2b5a60c425f4dfe5ded4ec8eb75d9"
+      ],
+      "subject": "feat: StreamPayload 支持记录提问用户（UserID）",
+      "date": "2026-09-24T14:44:03+08:00",
+      "reachable_from_master": false,
+      "old_plan": null,
+      "status": "new-gap",
+      "group": "N07",
+      "canonical": "2e57139e31891e359c4fe74b9186d6c146eca143",
+      "independent_work_item": false,
+      "target_evidence": [
+        "events.go:131",
+        "bridges/agui/input.go:179",
+        "hosttools/sessionrecorder/recorder.go:456"
+      ],
+      "judgement": "目标TextDelta和UserTurnEvents无提问者字段。仅宿主显式注入可信身份并保留typed事件/录制/bridge；不从用户body/Name/Raw猜身份，不让SDK负责鉴权。",
+      "dedup_note": "同一语义组的原分支/修订/集成，按最终差异实施一次，不是额外工作项。"
+    },
+    {
+      "commit": "2f935a6244e02ae1f30ae8d5b19817ab95bd766c",
+      "parents": [
+        "09cd0d3fcb0312c92a80c765cbeb0f73e4616e43"
+      ],
+      "subject": "feat(a2a): resume input-required decisions in place",
+      "date": "2026-09-18T22:56:08+08:00",
+      "reachable_from_master": false,
+      "old_plan": null,
+      "status": "not-applicable",
+      "group": "N08",
+      "canonical": "2f935a6244e02ae1f30ae8d5b19817ab95bd766c",
+      "independent_work_item": true,
+      "target_evidence": [
+        "bridges/a2a/server.go:93",
+        "options.go:501",
+        "approval.go:149",
+        "bridges/a2a/mapping.go:132"
+      ],
+      "judgement": "唯一真正独立未合并增量，但不是目标已合修复漏移植。宿主可经OnApproval和live ApprovalRequest应答，尚缺A2A内置跨HTTP托管/同task回应便利。该新feature存在价值，但上游park/cancel/expiry破坏目标生命周期，本轮不搬；不宣称便利功能已覆盖。重新启动须先定义持续drain/终局归档、宿主生命周期、容量、取消、审批fallback与并发应答合同，仍只使用同一Stream/responder。"
+    },
+    {
+      "commit": "2e57139e31891e359c4fe74b9186d6c146eca143",
+      "parents": [
+        "2c8b594802a2b5a60c425f4dfe5ded4ec8eb75d9"
+      ],
+      "subject": "feat: StreamPayload 支持记录提问用户（UserID） (merge request !18)",
+      "date": "2026-09-24T06:56:14Z",
+      "reachable_from_master": true,
+      "old_plan": null,
+      "status": "new-gap",
+      "group": "N07",
+      "canonical": "2e57139e31891e359c4fe74b9186d6c146eca143",
+      "independent_work_item": true,
+      "target_evidence": [
+        "events.go:131",
+        "bridges/agui/input.go:179",
+        "hosttools/sessionrecorder/recorder.go:456"
+      ],
+      "judgement": "目标TextDelta和UserTurnEvents无提问者字段。仅宿主显式注入可信身份并保留typed事件/录制/bridge；不从用户body/Name/Raw猜身份，不让SDK负责鉴权。"
+    },
+    {
+      "commit": "b0dba48099952139a75f42df9becee852fe7ac03",
+      "parents": [
+        "2f935a6244e02ae1f30ae8d5b19817ab95bd766c",
+        "2e57139e31891e359c4fe74b9186d6c146eca143"
+      ],
+      "subject": "Merge branch 'master' into feature/a2a-input-required-decision-bridge",
+      "date": "2026-09-26T14:05:46+08:00",
+      "reachable_from_master": false,
+      "old_plan": null,
+      "status": "not-applicable",
+      "group": "N08",
+      "canonical": "2f935a6244e02ae1f30ae8d5b19817ab95bd766c",
+      "independent_work_item": false,
+      "target_evidence": [
+        "bridges/a2a/server.go:93",
+        "options.go:501",
+        "approval.go:149",
+        "bridges/a2a/mapping.go:132"
+      ],
+      "judgement": "唯一真正独立未合并增量，但不是目标已合修复漏移植。宿主可经OnApproval和live ApprovalRequest应答，尚缺A2A内置跨HTTP托管/同task回应便利。该新feature存在价值，但上游park/cancel/expiry破坏目标生命周期，本轮不搬；不宣称便利功能已覆盖。重新启动须先定义持续drain/终局归档、宿主生命周期、容量、取消、审批fallback与并发应答合同，仍只使用同一Stream/responder。",
+      "dedup_note": "同一语义组的原分支/修订/集成，按最终差异实施一次，不是额外工作项。"
+    }
+  ],
+  "branch_tip_equivalence": [
+    {
+      "branch_tip": "f972c102dce2d2de370d44bb13190d453a219b34",
+      "integration": "126d610dfb6afd2cca19661ab0a7c0b6f626b490",
+      "base": "dab6933b9159894c36fa78b8367c6bc572227621",
+      "paths": [
+        "claude/driver.go",
+        "claude/persistent_test.go",
+        "codebuddy/driver.go",
+        "codebuddy/persistent_test.go",
+        "codex/driver.go",
+        "codex/persistent.go",
+        "codex/persistent_test.go",
+        "docs/usage-guide.md",
+        "runner.go",
+        "sdk_session_test.go"
+      ],
+      "identical": true
+    },
+    {
+      "branch_tip": "98f41c7949ccac5ddfe61c93a0d336ee39a76244",
+      "integration": "3ea225acea572830100381a5c180dd86f295a70d",
+      "base": "a68d907d1d125f6009fe4937542bba46a5338ad9",
+      "paths": [
+        "claude/README-streaming.md",
+        "claude/parser.go",
+        "claude/streaming_parser.go",
+        "claude/streaming_parser_test.go",
+        "claude/testdata/streaming-nested-tool-use.jsonl"
+      ],
+      "identical": true
+    },
+    {
+      "branch_tip": "0c0f32fe6eb6b27c87441ef896c0e0b78b5ddb56",
+      "integration": "ca571fbed8454e482560b481a3aa6853e9d174df",
+      "base": "a68d907d1d125f6009fe4937542bba46a5338ad9",
+      "paths": [
+        "e2e/tools_test.go",
+        "tools.go",
+        "tools_contract_test.go"
+      ],
+      "identical": true
+    },
+    {
+      "branch_tip": "f16fb20aaf8df3455b5bef7a8e0681d93cbc3167",
+      "integration": "3253009054681a499fd693329486d0fe3279d843",
+      "base": "d01a086e5145566b7313b83ca88bb525f1d3675b",
+      "paths": [
+        "docs/workstream-a2a-streaming-artifact-parts.md",
+        "pkg/hosttools/a2adelegation/mapping.go",
+        "pkg/hosttools/a2adelegation/mapping_test.go",
+        "pkg/hosttools/a2adelegation/types.go"
+      ],
+      "identical": true
+    },
+    {
+      "branch_tip": "38e0e8c2d055a6e90f940d7dd1ac2bcafa485d04",
+      "integration": "8ffe22a2a29c0b72e6c993d7774ffb54ac15c010",
+      "base": "d01a086e5145566b7313b83ca88bb525f1d3675b",
+      "paths": [
+        "AGENTS.md",
+        "README.md",
+        "api.go",
+        "binding.go",
+        "claude/driver.go",
+        "claude/driver_test.go",
+        "claude/persistent.go",
+        "claude/system_prompt_test.go",
+        "codebuddy/driver.go",
+        "codebuddy/exec_args.go",
+        "codebuddy/persistent.go",
+        "codebuddy/system_prompt_test.go",
+        "codex/appserver/run.go",
+        "codex/appserver/union.go",
+        "codex/driver.go",
+        "codex/persistent.go",
+        "codex/run_streaming.go",
+        "codex/system_prompt_test.go",
+        "cursor/driver.go",
+        "cursor/system_prompt_test.go",
+        "docs/usage-guide.md",
+        "docs/workstream-system-prompt.md",
+        "errors.go",
+        "internal/systemprompt/systemprompt.go",
+        "internal/systemprompt/systemprompt_test.go",
+        "options.go",
+        "run_types.go",
+        "runner.go",
+        "system_prompt_contract_test.go",
+        "systempromptlive/system_prompt_live_test.go"
+      ],
+      "identical": true
+    },
+    {
+      "branch_tip": "f5fbb147847356c46e83aa74caad584da283ac86",
+      "integration": "64163ab67ecf109d196da10a4cbac8943d8e6eff",
+      "base": "8ffe22a2a29c0b72e6c993d7774ffb54ac15c010",
+      "paths": [
+        "internal/toolruntime/runtime_test.go",
+        "tool/tool.go"
+      ],
+      "identical": true
+    },
+    {
+      "branch_tip": "8ea34b47089d85052fa7cb54ab97156dbf5eaa4c",
+      "integration": "eb82ed36eaf6339b00860b5506a683e6dbd74765",
+      "base": "64163ab67ecf109d196da10a4cbac8943d8e6eff",
+      "paths": [
+        "api.go",
+        "claude/driver.go",
+        "claude/streaming_parser.go",
+        "claude/todo_normalization_test.go",
+        "codebuddy/driver.go",
+        "codebuddy/parser.go",
+        "codebuddy/streaming_parser.go",
+        "codebuddy/todo_normalization_test.go",
+        "codex/appserver/client.go",
+        "codex/appserver/todo_normalization_test.go",
+        "codex/appserver/translate.go",
+        "codex/driver.go",
+        "docs/workstream-plan-todo-normalization.md",
+        "internal/todoobs/normalize.go",
+        "internal/todoobs/table.go",
+        "internal/todoobs/table_test.go",
+        "pkg/bridges/a2a/convert_internal_test.go",
+        "pkg/bridges/a2a/mapping.go",
+        "pkg/bridges/a2a/stream_status.go",
+        "pkg/hosttools/a2adelegation/status_decoder.go",
+        "pkg/hosttools/a2adelegation/status_decoder_todo_test.go",
+        "pkg/hosttools/a2adelegation/types.go",
+        "run_types.go"
+      ],
+      "identical": true
+    },
+    {
+      "branch_tip": "ac62c1921a367366ccfae3b82e7761980a7bc38a",
+      "integration": "8e35b123af693b1a922d9d53b879692d04e00795",
+      "base": "eb82ed36eaf6339b00860b5506a683e6dbd74765",
+      "paths": [
+        "pkg/clients/a2a/client.go",
+        "pkg/clients/a2a/client_test.go",
+        "pkg/clients/a2a/execution_state.go",
+        "pkg/hosttools/a2adelegation/delegator.go",
+        "pkg/hosttools/a2adelegation/delegator_test.go",
+        "pkg/hosttools/a2adelegation/mapping.go",
+        "pkg/hosttools/a2adelegation/mapping_test.go"
+      ],
+      "identical": true
+    },
+    {
+      "branch_tip": "e97b74fd69b0409d85b7c564a7637e6a3851fc12",
+      "integration": "dddce056ff7407accbd5b86aa28931d557f5843a",
+      "base": "e2f0620bdd6477e6fe16f6db5648093589342ca2",
+      "paths": [
+        "claude/context_window_test.go",
+        "claude/driver.go",
+        "codebuddy/driver.go",
+        "codex/context_window_test.go",
+        "codex/driver.go",
+        "config_types.go",
+        "cursor/driver.go",
+        "options.go",
+        "run_context_window_test.go",
+        "run_types.go",
+        "runner.go"
+      ],
+      "identical": true
+    },
+    {
+      "branch_tip": "91963d3c8f5fe037c7f3b33e0d272b3f14c5eebf",
+      "integration": "abdaa497214e23a801721cf18c3625e1ae524273",
+      "base": "e2f0620bdd6477e6fe16f6db5648093589342ca2",
+      "paths": [
+        "claude/background_agent_stdin_test.go",
+        "claude/parser.go",
+        "claude/phase3_test.go",
+        "claude/streaming_parser.go",
+        "claude/testdata/streaming-phase3-async-agent-dual-result.jsonl",
+        "claude/testdata/streaming-phase3-async-explore-live.jsonl",
+        "claude/testdata/streaming-phase3-max-tokens-continue.jsonl",
+        "docs/workstream-phase3-stdin-close-on-result-only.md"
+      ],
+      "identical": true
+    },
+    {
+      "branch_tip": "67c21832de59a3ea083ead863f4ecf3a1a61c76c",
+      "integration": "607a8154d85bc9d099eb4d66479b7b97d315be42",
+      "base": "abdaa497214e23a801721cf18c3625e1ae524273",
+      "paths": [
+        "pkg/hosttools/sessionrecorder/doc.go",
+        "pkg/hosttools/sessionrecorder/recorder.go",
+        "pkg/hosttools/sessionrecorder/recorder_test.go"
+      ],
+      "identical": true
+    },
+    {
+      "branch_tip": "a0f75f909e67802feda8c12ef999bcf0c47e1d67",
+      "integration": "0373d1656120f5257da5615bbb62e444653eef27",
+      "base": "607a8154d85bc9d099eb4d66479b7b97d315be42",
+      "paths": [
+        "pkg/hosttools/sessionrecorder/doc.go",
+        "pkg/hosttools/sessionrecorder/recorder.go",
+        "pkg/hosttools/sessionrecorder/recorder_test.go",
+        "pkg/hosttools/sessionrecorder/testdata/chat_example.jsonl"
+      ],
+      "identical": true
+    },
+    {
+      "branch_tip": "cb25c0b7b86a6d446c99fe66c6d9191b7ec4959a",
+      "integration": "2c8b594802a2b5a60c425f4dfe5ded4ec8eb75d9",
+      "base": "09cd0d3fcb0312c92a80c765cbeb0f73e4616e43",
+      "paths": [
+        "pkg/bridges/agui/bridge.go",
+        "pkg/bridges/agui/bridge_test.go"
+      ],
+      "identical": true
+    },
+    {
+      "branch_tip": "2e69bd9ea2d8e4a13c195b70b84dbfc7757ba3d9",
+      "integration": "2e57139e31891e359c4fe74b9186d6c146eca143",
+      "base": "2c8b594802a2b5a60c425f4dfe5ded4ec8eb75d9",
+      "paths": [
+        "examples/streaming-chat-copilotkit/agui_run_session_test.go",
+        "examples/streaming-chat-copilotkit/server.go",
+        "pkg/bridges/agui/bridge.go",
+        "pkg/bridges/agui/bridge_test.go",
+        "pkg/bridges/agui/input.go",
+        "pkg/bridges/agui/input_test.go",
+        "pkg/hosttools/sessionrecorder/recorder_test.go",
+        "run_types.go",
+        "stream_payload_userid_internal_test.go"
+      ],
+      "identical": true
+    }
+  ],
+  "exact_patch_duplicate_groups": [
+    {
+      "patch_id": "7b8db63fb25a2d64d0f79d3aa8d019b37b257104",
+      "commits": [
+        "f972c102dce2d2de370d44bb13190d453a219b34",
+        "126d610dfb6afd2cca19661ab0a7c0b6f626b490"
+      ]
+    },
+    {
+      "patch_id": "1bb1db51e2fd18b8f76f7ee192189458edbf1323",
+      "commits": [
+        "5d2b5de8af1a336f43a9e0f34f91965c0e6b5f0b",
+        "3ea225acea572830100381a5c180dd86f295a70d"
+      ]
+    },
+    {
+      "patch_id": "f40105d650e1d54fede3d4286545ffeeed12fb79",
+      "commits": [
+        "0c0f32fe6eb6b27c87441ef896c0e0b78b5ddb56",
+        "ca571fbed8454e482560b481a3aa6853e9d174df"
+      ]
+    },
+    {
+      "patch_id": "796c152d848b2849447ccfe22a6e855f4a269f62",
+      "commits": [
+        "ac62c1921a367366ccfae3b82e7761980a7bc38a",
+        "8e35b123af693b1a922d9d53b879692d04e00795"
+      ]
+    },
+    {
+      "patch_id": "5d4fa206df1d6e7b7ea895ef23da1b863bdd4039",
+      "commits": [
+        "67c21832de59a3ea083ead863f4ecf3a1a61c76c",
+        "607a8154d85bc9d099eb4d66479b7b97d315be42"
+      ]
+    },
+    {
+      "patch_id": "a161668549c43267abc8303eb9d006d2cd2aa7e5",
+      "commits": [
+        "cb25c0b7b86a6d446c99fe66c6d9191b7ec4959a",
+        "2c8b594802a2b5a60c425f4dfe5ded4ec8eb75d9"
+      ]
+    },
+    {
+      "patch_id": "6437dae69a8a0434561e6287ad2a35ddc2f26ddf",
+      "commits": [
+        "2e69bd9ea2d8e4a13c195b70b84dbfc7757ba3d9",
+        "2e57139e31891e359c4fe74b9186d6c146eca143"
+      ]
+    }
+  ],
+  "independent_unmerged": {
+    "commit": "2f935a6244e02ae1f30ae8d5b19817ab95bd766c",
+    "tip": "b0dba48099952139a75f42df9becee852fe7ac03",
+    "relative_to_master_paths": [
+      "pkg/bridges/a2a/convert.go",
+      "pkg/bridges/a2a/server.go",
+      "pkg/bridges/a2a/server_test.go",
+      "pkg/bridges/a2a/types.go"
+    ],
+    "branch_change_paths_identical_to_originating_commit": true
+  },
+  "refs": [
+    {
+      "ref": "refs/heads/feat/a2a-capability-relay",
+      "object": "dab6933b9159894c36fa78b8367c6bc572227621"
+    },
+    {
+      "ref": "refs/heads/feat/system-prompt",
+      "object": "38e0e8c2d055a6e90f940d7dd1ac2bcafa485d04"
+    },
+    {
+      "ref": "refs/heads/master",
+      "object": "2c8b594802a2b5a60c425f4dfe5ded4ec8eb75d9"
+    },
+    {
+      "ref": "refs/remotes/origin/HEAD",
+      "object": "2e57139e31891e359c4fe74b9186d6c146eca143"
+    },
+    {
+      "ref": "refs/remotes/origin/add-tool-call-invalid-tips",
+      "object": "f5fbb147847356c46e83aa74caad584da283ac86"
+    },
+    {
+      "ref": "refs/remotes/origin/artifact-multi-report",
+      "object": "f16fb20aaf8df3455b5bef7a8e0681d93cbc3167"
+    },
+    {
+      "ref": "refs/remotes/origin/feat/a2a-capability-relay",
+      "object": "126d610dfb6afd2cca19661ab0a7c0b6f626b490"
+    },
+    {
+      "ref": "refs/remotes/origin/feat/system-prompt",
+      "object": "38e0e8c2d055a6e90f940d7dd1ac2bcafa485d04"
+    },
+    {
+      "ref": "refs/remotes/origin/feat/todo-normalization",
+      "object": "8ea34b47089d85052fa7cb54ab97156dbf5eaa4c"
+    },
+    {
+      "ref": "refs/remotes/origin/feature/1138345647-agent-adaptor-run-replay_vnczm325",
+      "object": "a0f75f909e67802feda8c12ef999bcf0c47e1d67"
+    },
+    {
+      "ref": "refs/remotes/origin/feature/1138616338-agent-adaptor-streampayload-support-record-user_atujfz6g",
+      "object": "2e69bd9ea2d8e4a13c195b70b84dbfc7757ba3d9"
+    },
+    {
+      "ref": "refs/remotes/origin/feature/138222321-agent-adaptor-session-history-range-tail-query_cefnvv55",
+      "object": "67c21832de59a3ea083ead863f4ecf3a1a61c76c"
+    },
+    {
+      "ref": "refs/remotes/origin/feature/a2a-input-required-decision-bridge",
+      "object": "b0dba48099952139a75f42df9becee852fe7ac03"
+    },
+    {
+      "ref": "refs/remotes/origin/feature/flowx/137794931_jwfb4dfs",
+      "object": "eb82ed36eaf6339b00860b5506a683e6dbd74765"
+    },
+    {
+      "ref": "refs/remotes/origin/feature/flowx/137860758_j45yvsin",
+      "object": "eb82ed36eaf6339b00860b5506a683e6dbd74765"
+    },
+    {
+      "ref": "refs/remotes/origin/feature/flowx/137864950_s4tcm7q6",
+      "object": "abdaa497214e23a801721cf18c3625e1ae524273"
+    },
+    {
+      "ref": "refs/remotes/origin/feature/flowx/137864965_ovryqy3o",
+      "object": "e97b74fd69b0409d85b7c564a7637e6a3851fc12"
+    },
+    {
+      "ref": "refs/remotes/origin/fix/agui-image-content-role-literal",
+      "object": "cb25c0b7b86a6d446c99fe66c6d9191b7ec4959a"
+    },
+    {
+      "ref": "refs/remotes/origin/fix/claude-nested-subagent-tool-stream",
+      "object": "98f41c7949ccac5ddfe61c93a0d336ee39a76244"
+    },
+    {
+      "ref": "refs/remotes/origin/fix/claude-phase3-stdin-close-on-result-only",
+      "object": "91963d3c8f5fe037c7f3b33e0d272b3f14c5eebf"
+    },
+    {
+      "ref": "refs/remotes/origin/fix/claude-stdin-on-type-result",
+      "object": "a88eacdb4818c75df44caeec39bbb74062e58c53"
+    },
+    {
+      "ref": "refs/remotes/origin/fix/ignore-continuation-task-snapshot",
+      "object": "ac62c1921a367366ccfae3b82e7761980a7bc38a"
+    },
+    {
+      "ref": "refs/remotes/origin/fix/persist-hosted-tool-profile",
+      "object": "0c0f32fe6eb6b27c87441ef896c0e0b78b5ddb56"
+    },
+    {
+      "ref": "refs/remotes/origin/fix/persistent-session-checkpoint-v014",
+      "object": "f972c102dce2d2de370d44bb13190d453a219b34"
+    },
+    {
+      "ref": "refs/remotes/origin/flowx/1069990761136960355/flowx_agent_2_0",
+      "object": "1921636510ced4c830c0287fe68d41218f1ed185"
+    },
+    {
+      "ref": "refs/remotes/origin/flowx/1069990761138179040/flowx_agent_0",
+      "object": "abdaa497214e23a801721cf18c3625e1ae524273"
+    },
+    {
+      "ref": "refs/remotes/origin/master",
+      "object": "2e57139e31891e359c4fe74b9186d6c146eca143"
+    },
+    {
+      "ref": "refs/remotes/origin/release/v0.14.6",
+      "object": "97b2c85c36fc5740b2bd5c018984b5e2dd1d6d05"
+    },
+    {
+      "ref": "refs/tags/v0.0.1",
+      "object": "f6c0e047d8192438a28333603dc697fb52191cc0"
+    },
+    {
+      "ref": "refs/tags/v0.12.0",
+      "object": "c7d2ad1f7224cc3b5e642a5703076750e84d61d3"
+    },
+    {
+      "ref": "refs/tags/v0.12.1",
+      "object": "4bfd2359ccd86cd7c20b3347beed28b10bcdfc1c"
+    },
+    {
+      "ref": "refs/tags/v0.12.2",
+      "object": "927f0c85e8bfb78cbe3fe29b05effb4f9744f949"
+    },
+    {
+      "ref": "refs/tags/v0.13.0",
+      "object": "0dae6031180a50968d16eb37da0175857648a851"
+    },
+    {
+      "ref": "refs/tags/v0.14.0",
+      "object": "5a6ac35065a790d6da758ee945d15b4a81b39ba5"
+    },
+    {
+      "ref": "refs/tags/v0.14.1",
+      "object": "f2d6e1682de1c564e84775794ddc8e8c89c10d16"
+    },
+    {
+      "ref": "refs/tags/v0.14.10",
+      "object": "18f7eb522004e811c93fe82266337f848219eb14"
+    },
+    {
+      "ref": "refs/tags/v0.14.11",
+      "object": "053d9afe8a65f399f12fa3a47ad3aa2ba4246e34"
+    },
+    {
+      "ref": "refs/tags/v0.14.12",
+      "object": "a05d34307bcf33a103e079929bb5671d8f236f44"
+    },
+    {
+      "ref": "refs/tags/v0.14.13",
+      "object": "c16c44e980f6563596d405f8c2f465575a6eba9e"
+    },
+    {
+      "ref": "refs/tags/v0.14.14",
+      "object": "69db1f5e093eff9595646b3de2b32f555a748a47"
+    },
+    {
+      "ref": "refs/tags/v0.14.15",
+      "object": "d2898a9e1f8363c94bf286dbe7d3b824499afa12"
+    },
+    {
+      "ref": "refs/tags/v0.14.16",
+      "object": "1bb61ae3465dbb746e387c8581664462a8cc1ebc"
+    },
+    {
+      "ref": "refs/tags/v0.14.17",
+      "object": "f22b0f5b8347d8557546c4d27408c82fcdab78f5"
+    },
+    {
+      "ref": "refs/tags/v0.14.18",
+      "object": "04e1b9a0d3bb8998fc75c2a0b23a4ad1cdccc545"
+    },
+    {
+      "ref": "refs/tags/v0.14.19",
+      "object": "82760b12c50a38de4df783d43a6574d4b892ae38"
+    },
+    {
+      "ref": "refs/tags/v0.14.2",
+      "object": "a7db67515a62c17d106c14be2874d7351dd78f3e"
+    },
+    {
+      "ref": "refs/tags/v0.14.20",
+      "object": "36f3b5c9d3a928f757179aaabdbc9973a58aee0c"
+    },
+    {
+      "ref": "refs/tags/v0.14.21",
+      "object": "1a71294c919c3f272b807c4b6529873faa0e2381"
+    },
+    {
+      "ref": "refs/tags/v0.14.22",
+      "object": "951b5ac50768ec1286d6d5f25898ef90023ed1d7"
+    },
+    {
+      "ref": "refs/tags/v0.14.3",
+      "object": "c3a6578bd04fd8c576687870e3bc4abc13f54943"
+    },
+    {
+      "ref": "refs/tags/v0.14.4",
+      "object": "7fc9e6514141c4906eba6a7ca996b8017ec6c264"
+    },
+    {
+      "ref": "refs/tags/v0.14.5",
+      "object": "aa1915a7a0f8a14233dc6d3c4d61491d2fa41816"
+    },
+    {
+      "ref": "refs/tags/v0.14.6",
+      "object": "aa1ee705b1a0d4d2d9bc9984086152288c9a330c"
+    },
+    {
+      "ref": "refs/tags/v0.14.7",
+      "object": "82a3f6fc80b53fc98c90f075f91b0d7750559792"
+    },
+    {
+      "ref": "refs/tags/v0.14.8",
+      "object": "620c99c485f79cfc15e24c573a2d85f37be0c5b0"
+    },
+    {
+      "ref": "refs/tags/v0.14.9",
+      "object": "b97dfd080e9908ceb310448e472e1e58341b217d"
+    }
+  ],
+  "validation": {
+    "production_edits": false,
+    "live_or_auth_calls": false,
+    "tests_run": false,
+    "method": [
+      "parse 45 old plan rows and resolve every hash",
+      "rev-list --all and origin/master ancestry",
+      "read commit deltas, root/scoped instruction applicability, target code and tests",
+      "14 branch-tip modified-path byte comparisons",
+      "stable patch-id comparison for all single-parent commits",
+      "assert exact coverage of 69 unique hashes and referenced target paths"
+    ]
+  }
+}

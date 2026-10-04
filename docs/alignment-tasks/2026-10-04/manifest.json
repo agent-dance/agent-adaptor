@@ -1,0 +1,47 @@
+{
+  "id": "internal-alignment-2026-10-04",
+  "source_head": "2e57139e31891e359c4fe74b9186d6c146eca143",
+  "target_base": "969514bf34d267a20681419c197c1858cf20cef6",
+  "excluded_commit": "1921636510ced4c830c0287fe68d41218f1ed185",
+  "max_parallelism": 6,
+  "tasks": [
+    "M01",
+    "M02",
+    "M03",
+    "M04"
+  ],
+  "integration_order": [
+    "M02",
+    "M04",
+    "M03",
+    "M01"
+  ],
+  "overlap_resolution": "各worker隔离worktree；M01/M03不写相同Claude文件；M02仅新增query文件与doc，M04写recorder事件codec；中央文档由root统一。",
+  "independent_review": true,
+  "legacy_gate_state": "旧47任务/96要求/45处置与G06失败记录保持，不能将969514b验收继承到新源码。",
+  "not_adopted": [
+    "N08：未合主线的跨HTTP A2A运行托管feature；现有OnApproval支持宿主应答，上游生命周期不满足当前合同。"
+  ],
+  "integration_followups": "独立审查返修与图片/历史窗口交叉验收在各自owner窄域文件完成后合入，最终统一验证。",
+  "integrated_commits": {
+    "M01": [
+      "26de9f7ba022fd91621210311a79150caa0b8cc1",
+      "8345c80956baa2e9062acf98475c8f6f5081a7f0"
+    ],
+    "M02": [
+      "091eebf6f8234683b84db6f6f10e429583e7165e",
+      "d6e666a75a7f0b3980921bc1fce9db7138e9f27a",
+      "1a2cf20c7edacc61bd68d2ad666ffb1ded0cfb5f"
+    ],
+    "M03": [
+      "7eda14a7ba654808e3d09b0b1e6f7d9d382dcae1"
+    ],
+    "M04": [
+      "37f0cb4828442b5064afec0f0f16e7f0d0e18088",
+      "b3ad4e5aa1e73a3b99a5023b1fc86a314706ce23",
+      "bdbed2c6f6667c37bac66332a73e61ade8a19bcc",
+      "6cacc98a019165e7e4490112d7bc74d85191a8f0",
+      "5362e4b57724978f59026218ced3b8a28aba62cb"
+    ]
+  }
+}

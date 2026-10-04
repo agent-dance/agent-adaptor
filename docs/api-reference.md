@@ -370,7 +370,8 @@ Event families:
 
 | Type | Meaning |
 |---|---|
-| `TextDelta` | assistant text; `PhaseStart` / `PhaseContent` / `PhaseEnd` |
+| `TextDelta` | assistant or host user text; `PhaseStart` / `PhaseContent` / `PhaseEnd`; optional trusted user attribution |
+| `ImageContent` | validated host image reference; does not request provider image input |
 | `Thinking` | reasoning text lifecycle |
 | `ToolCall` | tool start, argument deltas, and end lifecycle |
 | `ToolResult` | complete tool result |
@@ -393,6 +394,21 @@ Activity snapshot/delta independent tool lists and nested JSON values. Later
 translation and CloseResult cannot modify an event already delivered to a
 consumer, and consumer edits cannot modify the translator's state. Typed
 containers, numbers and nil/empty values retain their existing wire semantics.
+
+### 6.1 Host content and user attribution
+
+`ImageContent` carries `MessageID`, a nonempty UTF-8 host `Type`, a concrete image
+`MIMEType`, `URL`, optional `Filename`, `Role` and optional `UserID`. Publish it
+through the existing host event publisher or record it directly. Validation
+checks the reference shape and valid UTF-8 without fetching the image; the host
+owns access and rendering policy. New image fields and retained user attribution
+are rejected at SDK JSON boundaries when invalid UTF-8 would silently change
+their bytes. The zero role is assistant; user attribution is retained only
+for `RoleUser`. `TextDelta.UserID` follows the same rule. Use
+`agui.RunAgentInput.UserTurnEventsWithUserID(runID, authenticatedUserID)` when
+the host has already established identity; no identity is inferred from request
+content, message names or provider output. See [streaming](streaming.md) for
+wire projection boundaries.
 
 ## 7. Approval
 
@@ -826,6 +842,27 @@ This is best-effort observation. Resource materialization and native input
 acceptance do not establish actual resource execution. For a complete runnable
 consumer, use `go run ./examples/offline`; its facts are explicitly synthetic.
 
+### 12.2 Session history
+
+`hosttools/sessionrecorder` adds package functions accepting the existing
+`EventRecorder`, so custom implementations need no new methods:
+
+```go
+window, err := sessionrecorder.Range(ctx, recorder, key, after, to)
+tail, err := sessionrecorder.Tail(ctx, recorder, key, 50)
+replay, err := sessionrecorder.TailFromRunStart(ctx, recorder, key, 50)
+```
+
+Range selects `after < HostSeq <= to`; Tail returns the latest n records in
+ascending order. `RangeFromRunStart` and `TailFromRunStart` extend only the lower
+bound to a known owning `RunStarted`, or to the same user message's `PhaseStart`
+for user text and images. An attached image can follow its text's `PhaseEnd`.
+They preserve interleaved events, never invent a missing boundary and do not
+promise a completed run. Queries never wait for future records. Returned values
+are independent snapshots and recorded approvals cannot answer live requests.
+Custom recorders supply one `Since(ctx, key, 0)` snapshot; the built-in recorder
+copies only the selected window.
+
 ## 13. threadstore and memory
 
 ```go
@@ -859,14 +896,46 @@ func Driver(cfg Config) driver.Driver
 
 | Package | Main Config fields |
 |---|---|
-| `codex` | `CommonConfig`, `Model`, `ReasoningEffort`, `FastMode` |
-| `claude` | `CommonConfig`, `Model`, `Effort`, `MaxTurnsPerRun` |
+| `codex` | `CommonConfig`, `Model`, `ReasoningEffort`, `FastMode`, `ContextWindowTokens`, `AutoCompactTokenLimit` |
+| `claude` | `CommonConfig`, `Model`, `Effort`, `MaxTurnsPerRun`, `ContextWindowTokens`, `AutoCompactWindowTokens` |
 | `cursor` | `CommonConfig`, `Model`, `Mode` |
 | `codebuddy` | `CommonConfig`, `Model`, `Effort`, `PermissionMode`, `MaxTurnsPerRun` |
 
 The `CommonConfig` in each package is an alias of `driver.CommonConfig` and contains `Command`, `CWD`, `Env`, instructions, prompt templates, workspace defaults, timeouts, grace period, and extra args. A Driver constructor takes a deep-copied snapshot of the configuration, so later modification of the original slices or maps does not affect the Agent.
 
 A provider-specific Config expresses CLI and transport configuration; call-level overrides such as `WithModel` are resolved uniformly by the root package.
+
+Context controls are construction settings, not new execution options. For example:
+
+```go
+coder := adaptor.New(codex.Driver(codex.Config{
+	ContextWindowTokens:  200000,
+	AutoCompactTokenLimit: 150000,
+}))
+```
+
+Each field is `int64`; zero does not inject a native override. Negative values
+fail validation. Claude's context hint must also fit an exact JavaScript integer
+(at most 2^53−1), and its nonzero auto-compact window must be 100000–1000000.
+Claude maps these fields to `CLAUDE_CODE_MAX_CONTEXT_TOKENS` and
+`CLAUDE_CODE_AUTO_COMPACT_WINDOW`; its model recognition rules still determine
+whether the context hint applies. The compaction window is capped to model
+capacity and reduced by the native summary buffer, so it is not an exact token
+trigger. Codex uses `model_context_window` and `model_auto_compact_token_limit`
+via `-c` for both exec and app-server, without editing a user config file.
+
+A nonzero typed field conflicts with an explicit override of the same setting
+in Claude Env/runtime bindings or Codex ExtraArgs, even if the values agree.
+Ambient Claude environment values are overridden, including alternate Windows
+key casing. Inspect, validation, process reuse and Thread fingerprints observe
+the same configured values. `WithModel` does not recompute these windows; use a
+separately configured Agent when the host needs a different window policy.
+CodeBuddy and Cursor do not expose equivalent fields.
+
+The new Config fields conservatively change the canonical configuration
+fingerprint even when zero. A persisted Thread created by an older SDK can
+therefore be incompatible after upgrading; zero preserves native execution
+defaults, not the old fingerprint. Existing resume/fallback rules still apply.
 
 ## 15. Driver SPI and adaptertest
 

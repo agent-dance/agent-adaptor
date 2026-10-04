@@ -438,6 +438,8 @@ R050：CodeBuddy 正式 tool_result 的 _meta.rawResponse.is_error=true 是外�
 
 R051：WithTools 的 MCP wire 必须兼容要求对象输出的正式客户端。旧客户端可接受的显式根 type=object 保留原 schema、structuredContent、Text 与既有指纹；input/output schema 根的直接 properties 若含 boolean 子 schema，只在该已知 schema 位置等价封装为对象，原对象结果不变；其余合法 JSON 输出在私有 transport 中使用固定 result 对象封装，原 Definition/Descriptor、输出校验、MCP TextContent 的原 JSON 字节和原值大小预算保持。Boolean schema、union、local refs、$defs、$id 和 anchors 不能因嵌套丢失语义，也不能递归改写 const/default/examples 中的用户数据；实际 wire input/output schema 进入兼容 fingerprint。失败、取消、callback、生命周期与健康 checkpoint 不变。原 T02 窄域修复，非作者用实际 HTTP wire 和官方 CodeBuddy parser 复验；受控旧协议反例不倒填 live 握手版本或未记录的内部异常。旧 catalog deadline、单次诊断和全部同 SHA 门禁保持，修复后的新 S 完整 G05/B06/G06 才可支持合入。
 
+R052：2026-10-04 internal 增量对齐以目标969514b和源2e57139为固定基线；完整69条可达提交去重，排除1921636本次新增迁移而不删除既有观测能力。Claude只由正式parser判定最终result关闭stdin，明确后台任务中的中间结果不能提前形成终局或污染常驻下一轮。历史Range/Tail及完整Run下界查询留在sessionrecorder，保留原接口兼容并只按typed事实确定边界。上下文与自动压缩配置属于provider真实Config，校验/Inspect/指纹/原生执行一致，显式冲突失败。ImageContent及宿主UserID沿唯一typed Event与桥/recorder交付，不伪造provider图像输入或认证身份；本次公共增量须精确更新AST golden。未合主线的A2A跨HTTP运行托管分支不直接移植，其取消/超时/资源合同须先重新设计。新任务包见docs/alignment-tasks/2026-10-04；旧门禁与Cursor未知失败保持，新源码必须独立验证，不能继承旧G05/G06通过结论。
+
 ## 15. 发布门禁
 
 发布前必须全部满足：

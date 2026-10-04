@@ -1,0 +1,47 @@
+{
+  "id": "M01",
+  "title": "Claude 正式终局与 stdin 生命周期",
+  "source_groups": [
+    "N02"
+  ],
+  "base_head": "969514bf34d267a20681419c197c1858cf20cef6",
+  "source_head": "2e57139e31891e359c4fe74b9186d6c146eca143",
+  "required_reads": [
+    "AGENTS.md",
+    "docs/alignment-tasks/2026-10-04/history-inventory.md"
+  ],
+  "owned_paths": [
+    "claude/README-streaming.md",
+    "claude/alignment_stdin_test.go",
+    "claude/background_result_test.go",
+    "claude/doc.go",
+    "claude/interactive_test.go",
+    "claude/parser.go",
+    "claude/persistent.go",
+    "claude/persistent_test.go",
+    "claude/streaming_parser.go"
+  ],
+  "acceptance": [
+    "max_tokens/end_turn 后继续交互",
+    "后台中间 result 不结束运行；最终 result 唯一形成checkpoint",
+    "常驻下一轮隔离、取消/cause/Raw/晚到协议保护",
+    "最终有效Usage优先，缺失不抹去已观察Usage；已知EOF等待真实退出并保留失败cause"
+  ],
+  "validation": [
+    "所属包普通测试",
+    "受影响并发路径race",
+    "所属包go vet",
+    "非作者审阅；合流后全量test/vet及CI"
+  ],
+  "constraints": [
+    "不读登录凭据或运行provider live",
+    "不删除既有测试、skip规则、公共能力或旧失败证据",
+    "不机械cherry-pick旧API实现",
+    "中央文档与AGENTS由协调者统一维护"
+  ],
+  "delivery": [
+    "提交SHA",
+    "来源映射和设计取舍",
+    "测试结果和未关闭限制"
+  ]
+}

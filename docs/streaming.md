@@ -97,7 +97,8 @@ Every semantic and operational signal of a run arrives on the same `<-chan adapt
 | Event | Purpose |
 |---|---|
 | `RunStarted` / `RunFinished` | Run lifecycle; the final success or failure is still decided by `Stream.Result()` |
-| `TextDelta` | Assistant text, with `PhaseStart` / `PhaseContent` / `PhaseEnd` |
+| `TextDelta` | Assistant or host user text, with `PhaseStart` / `PhaseContent` / `PhaseEnd` |
+| `ImageContent` | Host image reference, carried as a typed event |
 | `Thinking` | Reasoning lifecycle |
 | `ToolCall` / `ToolResult` | Tool call arguments, boundaries, and results |
 | `ProcessInfo` | Subprocess spawn and raw stdout/stderr chunks |
@@ -184,11 +185,14 @@ the primary outcome even if `Cause` also matches cancellation or cleanup.
 After Events closes, repeated concurrent `Result()` calls observe the same
 immutable result/error pair.
 
-Claude one-shot bidirectional transport closes stdin once on a formal
-`type:result`, even without a preceding terminal `message_stop`. Root assistant
-completion may also release input; `tool_use` and nested subagent completion
-keep it available for control responses. Resident Thread turns release only
-the turn handle. Output draining and process/checkpoint validation still finish
+Claude one-shot bidirectional transport closes stdin once on the final formal
+root `type:result`, even without a preceding `message_stop`. Assistant stops,
+including `end_turn` and `max_tokens`, keep input available for control
+responses. A successful result while formally reported root background tasks
+remain active is intermediate: it remains in Raw and Transcript without
+completing the turn. Only same-session, root-scoped background task snapshots
+can update that state. Resident Thread turns release only the turn handle.
+Output draining and process/checkpoint validation still finish
 before the Driver completes. Compatible per-turn rich/batch choices do not
 independently change Thread identity. A native schema temporary process may
 stop the old writer and prewarm its replacement using the same healthy checkpoint;
@@ -382,6 +386,30 @@ intact; translation and CloseResult keep the existing wire order and terminal
 semantics.
 
 The AG-UI input helper `RunAgentInput` extracts the last non-empty user text; `UserTurnEvents` builds the canonical user `TextDelta` triple. Drivers only produce assistant text, and `RoleUser` is synthesized solely by a bridge or a host.
+
+`UserTurnEventsWithUserID(runID, userID)` builds the same triple with identity
+already established by the host on all three events. The original
+`UserTurnEvents(string)` signature remains unchanged. `TextDelta.UserID` and
+`ImageContent.UserID` are optional and SDK snapshots remove attribution from
+non-user events. This is attribution, not authentication: the helpers never
+derive an identity from message text, names or forwarded request properties.
+The recorder and raw SSE preserve user text attribution; AG-UI's native text
+events have no identity field and retain their existing wire shape.
+
+Publish host image references as `adaptor.ImageContent` through the existing
+event publisher. Valid images are critical events under backpressure, and the
+recorder persists their full reference. AG-UI maps them to CUSTOM
+`image.content` with `message_id`, a canonical `assistant` or `user` role, an
+`image` object (`type`, `mime_type`, `url`, optional `filename`) and optional
+`user_id` for user images. Raw SSE retains the typed image fields. Invalid image
+shapes and invalid UTF-8 in their retained fields are rejected on
+publication/recording; bridge-only invalid input produces
+an observable existing `Dropped` event without exposing the rejected URL.
+The recorder also rejects invalid UTF-8 in a retained TextDelta.UserID, and
+raw SSE reports it as Dropped rather than rewriting the identity.
+The SDK does not fetch these URLs or add provider image input/generation. Hosts
+own resource authorization and rendering. The A2A `adapter.stream.v1` bridge
+does not relay images or user identifiers under any ExposurePolicy.
 
 Capability and Todo become CUSTOM `adapter.capability.invocation` and
 `adapter.todo.updated`, with `kind`, `meta` and their closed payload. Empty Items

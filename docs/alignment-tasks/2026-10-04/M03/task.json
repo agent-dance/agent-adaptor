@@ -1,0 +1,47 @@
+{
+  "id": "M03",
+  "title": "Provider 原生上下文配置",
+  "source_groups": [
+    "N01"
+  ],
+  "base_head": "969514bf34d267a20681419c197c1858cf20cef6",
+  "source_head": "2e57139e31891e359c4fe74b9186d6c146eca143",
+  "required_reads": [
+    "AGENTS.md",
+    "docs/alignment-tasks/2026-10-04/history-inventory.md"
+  ],
+  "owned_paths": [
+    "claude/configured.go",
+    "claude/context_window.go",
+    "claude/context_window_test.go",
+    "claude/driver.go",
+    "codex/configured.go",
+    "codex/context_window.go",
+    "codex/context_window_test.go",
+    "codex/driver.go",
+    "codex/run_streaming.go",
+    "codex/system_prompt.go"
+  ],
+  "acceptance": [
+    "只扩provider真实Config，不新增统一执行模式",
+    "typed与显式原生override冲突明确拒绝",
+    "Inspect/validation/fingerprint/exec/app-server保持一致"
+  ],
+  "validation": [
+    "所属包普通测试",
+    "受影响并发路径race",
+    "所属包go vet",
+    "非作者审阅；合流后全量test/vet及CI"
+  ],
+  "constraints": [
+    "不读登录凭据或运行provider live",
+    "不删除既有测试、skip规则、公共能力或旧失败证据",
+    "不机械cherry-pick旧API实现",
+    "中央文档与AGENTS由协调者统一维护"
+  ],
+  "delivery": [
+    "提交SHA",
+    "来源映射和设计取舍",
+    "测试结果和未关闭限制"
+  ]
+}

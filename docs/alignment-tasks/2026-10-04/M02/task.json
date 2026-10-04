@@ -1,0 +1,43 @@
+{
+  "id": "M02",
+  "title": "Recorder 历史窗口与完整 Run 下界",
+  "source_groups": [
+    "N03",
+    "N04"
+  ],
+  "base_head": "969514bf34d267a20681419c197c1858cf20cef6",
+  "source_head": "2e57139e31891e359c4fe74b9186d6c146eca143",
+  "required_reads": [
+    "AGENTS.md",
+    "docs/alignment-tasks/2026-10-04/history-inventory.md"
+  ],
+  "owned_paths": [
+    "hosttools/sessionrecorder/doc.go",
+    "hosttools/sessionrecorder/query.go",
+    "hosttools/sessionrecorder/query_test.go"
+  ],
+  "acceptance": [
+    "既有 EventRecorder 与 Backend 实现保持源码兼容",
+    "区间/尾部、uint64边界、未知Run边界不猜测",
+    "多Run交错、用户消息起点、快照深复制、失败/取消",
+    "用户附图按同RunID/MessageID恢复文本起点，保持上界与文本防复用规则",
+    "自定义Since返回合法值型/指针Event时具有相同边界与结果，仍只读取一次快照"
+  ],
+  "validation": [
+    "所属包普通测试",
+    "受影响并发路径race",
+    "所属包go vet",
+    "非作者审阅；合流后全量test/vet及CI"
+  ],
+  "constraints": [
+    "不读登录凭据或运行provider live",
+    "不删除既有测试、skip规则、公共能力或旧失败证据",
+    "不机械cherry-pick旧API实现",
+    "中央文档与AGENTS由协调者统一维护"
+  ],
+  "delivery": [
+    "提交SHA",
+    "来源映射和设计取舍",
+    "测试结果和未关闭限制"
+  ]
+}
