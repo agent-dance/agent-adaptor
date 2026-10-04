@@ -484,13 +484,7 @@ func (s *streamingState) complete(failure *driver.RunFailure, exitCode int, sign
 
 	pl := s.basePayload()
 	pl.Kind = driver.StreamRunFinished
-	if s.parser.usage != nil {
-		u := *s.parser.usage
-		pl.Usage = &u
-	} else if s.streamUsage != nil {
-		u := *s.streamUsage
-		pl.Usage = &u
-	}
+	pl.Usage = s.parser.observedUsage()
 	pl.Raw = s.terminalPayload
 	s.emitStream(pl)
 }

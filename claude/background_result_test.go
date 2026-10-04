@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -186,7 +187,55 @@ func TestBackgroundFinalitySafety(t *testing.T) {
 		if p.checkpoint(0) == nil || p.structuredOutput != nil || p.usage != nil || p.cost != nil {
 			t.Fatal("final result inherited intermediate optional fields")
 		}
+		if usage := p.observedUsage(); usage == nil || usage.InputTokens != 3 || usage.OutputTokens != 1 {
+			t.Fatalf("run-level observed usage disappeared: %#v", usage)
+		}
 	})
+	t.Run("final-zero-remains-authoritative", func(t *testing.T) {
+		p := newClaudeParser(nil)
+		alignmentStdinFeed(t, p, backgroundInit, backgroundActive, backgroundInterim, backgroundIdle,
+			`{"type":"result","subtype":"success","is_error":false,"session_id":"background-session","result":"done","usage":{"input_tokens":0,"output_tokens":0}}`)
+		if usage := p.observedUsage(); usage == nil || usage.InputTokens != 0 || usage.OutputTokens != 0 {
+			t.Fatalf("observed intermediate usage overrode final zero: %#v", usage)
+		}
+	})
+}
+
+func TestBackgroundUsageFallbackMatchesTerminalEvent(t *testing.T) {
+	for _, messages := range []bool{false, true} {
+		t.Run(fmt.Sprintf("messages_%t", messages), func(t *testing.T) {
+			sink := alignmentStdinSink()
+			p := newClaudeParser(sink)
+			p.enableStreaming("background-usage")
+			alignmentStdinFeed(t, p, backgroundInit)
+			if messages {
+				alignmentStdinFeed(t, p, `{"type":"assistant","session_id":"background-session","message":{"id":"before","content":[],"usage":{"input_tokens":3,"output_tokens":1}}}`)
+			}
+			alignmentStdinFeed(t, p, backgroundActive, backgroundInterim)
+			if messages {
+				alignmentStdinFeed(t, p, `{"type":"assistant","session_id":"background-session","message":{"id":"after","content":[],"usage":{"input_tokens":6,"output_tokens":2}}}`)
+			}
+			alignmentStdinFeed(t, p, backgroundIdle, `{"type":"result","subtype":"success","is_error":false,"session_id":"background-session","result":"done"}`)
+			p.completeStream(nil, 0, "", false)
+			wantInput, wantOutput := 3, 1
+			if messages {
+				wantInput, wantOutput = 9, 3
+			}
+			got := p.observedUsage()
+			if got == nil || got.InputTokens != wantInput || got.OutputTokens != wantOutput {
+				t.Fatalf("observed usage=%#v", got)
+			}
+			var terminal *driver.Usage
+			for _, event := range sink.events {
+				if event.Kind == driver.StreamRunFinished {
+					terminal = event.Usage
+				}
+			}
+			if terminal == nil || *terminal != *got {
+				t.Fatalf("terminal and response usage diverged: %#v %#v", terminal, got)
+			}
+		})
+	}
 }
 
 const backgroundHelperEnv = "GO_WANT_CLAUDE_BACKGROUND_HELPER"
@@ -241,6 +290,14 @@ func runBackgroundHelper() int {
 			}
 		}
 		fmt.Fprintln(os.Stdout, backgroundIdle)
+		if mode == "final-zero" || mode == "final-exit" {
+			fmt.Fprint(os.Stdout, backgroundFinal)
+			fmt.Fprint(os.Stderr, "after known EOF")
+			if mode == "final-exit" {
+				return 17
+			}
+			return 0
+		}
 		fmt.Fprintln(os.Stdout, backgroundFinal)
 		if mode == "one-shot" {
 			if _, err := io.Copy(io.Discard, reader); err != nil {
@@ -253,16 +310,102 @@ func runBackgroundHelper() int {
 }
 
 func backgroundAgent(t *testing.T, mode string, approve adaptor.ApprovalHandler) *adaptor.Agent {
+	a, _ := backgroundAgentAndPool(t, mode, approve)
+	return a
+}
+
+func backgroundAgentAndPool(t *testing.T, mode string, approve adaptor.ApprovalHandler) (*adaptor.Agent, *persistentPool) {
 	t.Helper()
 	command, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
 	home := t.TempDir()
-	return adaptor.New(Driver(Config{CommonConfig: CommonConfig{Command: command, CWD: home, GracePeriod: 50 * time.Millisecond, Env: []driver.EnvBinding{
+	pool := newPersistentPool()
+	d := configuredDriver{adapter: adapter{persistent: pool}, cfg: Config{CommonConfig: CommonConfig{Command: command, CWD: home, GracePeriod: 50 * time.Millisecond, Env: []driver.EnvBinding{
 		{Name: backgroundHelperEnv, Value: mode}, {Name: "HOME", Value: home}, {Name: "CLAUDE_CONFIG_DIR", Value: home},
-	}}}), adaptor.WithThreadStore(memory.NewStore()),
-		adaptor.WithPolicy(adaptor.Policy{Approvals: adaptor.ApprovalPolicy{Permission: adaptor.ApprovalAsk}}), adaptor.OnApproval(approve))
+	}}}}
+	return adaptor.New(d, adaptor.WithThreadStore(memory.NewStore()),
+		adaptor.WithPolicy(adaptor.Policy{Approvals: adaptor.ApprovalPolicy{Permission: adaptor.ApprovalAsk}}), adaptor.OnApproval(approve)), pool
+}
+
+func TestBackgroundKnownEOFProcessOutcome(t *testing.T) {
+	for _, mode := range []string{"final-zero", "final-exit"} {
+		t.Run(mode, func(t *testing.T) {
+			a, pool := backgroundAgentAndPool(t, mode, func(ctx context.Context, r *adaptor.ApprovalRequest) error { return r.Approve(ctx) })
+			defer a.Close(context.Background())
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			thread := a.Thread("known-eof")
+			result, err := thread.Run(ctx, "finish and exit")
+			if mode == "final-exit" {
+				var failure *adaptor.RunError
+				var exitErr *exec.ExitError
+				if result != nil || !errors.As(err, &failure) || failure.Result == nil || !errors.As(err, &exitErr) || exitErr.ExitCode() != 17 {
+					t.Fatalf("known EOF hid exit status: result=%#v err=%v", result, err)
+				}
+				result = failure.Result
+				if checkpoint, err := thread.Checkpoint(ctx); checkpoint != nil || !errors.Is(err, adaptor.ErrThreadNotFound) {
+					t.Fatalf("nonzero exit saved checkpoint: %#v %v", checkpoint, err)
+				}
+			} else {
+				if err != nil || result == nil {
+					t.Fatalf("clean EOF failed: %v", err)
+				}
+				if checkpoint, err := thread.Checkpoint(ctx); err != nil || checkpoint == nil || !checkpoint.Valid {
+					t.Fatalf("clean EOF lost checkpoint: %#v %v", checkpoint, err)
+				}
+			}
+			if result.Text != "all done" || result.Raw().Stderr != "after known EOF" || !strings.Contains(result.Raw().Stdout, backgroundInterim) || result.Raw().Terminal == nil || string(result.Raw().Terminal.JSON) != backgroundFinal {
+				t.Fatalf("Wait/drain lost audit: %#v", result.Raw())
+			}
+			if process := pool.lookup("background-session"); process != nil {
+				t.Fatal("dead process registered as resident writer")
+			}
+		})
+	}
+}
+
+type backgroundFinalReadError struct {
+	data []byte
+	err  error
+}
+
+func (r *backgroundFinalReadError) Read(p []byte) (int, error) {
+	if len(r.data) == 0 {
+		return 0, r.err
+	}
+	n := copy(p, r.data)
+	r.data = r.data[n:]
+	if len(r.data) == 0 {
+		return n, r.err
+	}
+	return n, nil
+}
+
+func TestBackgroundFinalReadErrorsRemainCauses(t *testing.T) {
+	wantErr := errors.New("stdout transport failed")
+	lp := &liveProcess{stdin: backgroundDiscardInput{io.Discard}, stdout: bufio.NewReader(&backgroundFinalReadError{data: []byte(backgroundFinal), err: wantErr}), stderr: &lockedBuffer{}}
+	p := newClaudeParser(nil)
+	raw, _, err := lp.turn(context.Background(), "prompt", nil, p, nil)
+	if !errors.Is(err, wantErr) || raw.Stdout != backgroundFinal {
+		t.Fatalf("final record swallowed transport error/audit: %v %#v", err, raw)
+	}
+	response, err := buildClaudeResponse(driver.Request{}, p, raw, 0, "", false, "", "", "", err)
+	if !errors.Is(err, wantErr) || response.Checkpoint != nil {
+		t.Fatalf("transport failure became healthy: %#v %v", response, err)
+	}
+
+	sink := newFakeInteractiveSink(func(driver.DecisionRequest) (driver.DecisionResponse, error) {
+		return driver.DecisionResponse{}, wantErr
+	})
+	p = newClaudeParser(sink)
+	p.setHITLContext("trailing-control", driver.HumanDecisionPolicy{Permission: driver.HumanDecisionAsk})
+	lp = &liveProcess{stdin: backgroundDiscardInput{io.Discard}, stdout: bufio.NewReader(strings.NewReader(alignmentStdinControl)), stderr: &lockedBuffer{}}
+	_, _, err = lp.turn(context.Background(), "prompt", sink, p, func(stdin interactiveStdin) { p.enableInteractive(context.Background(), sink, stdin) })
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("finalize lost trailing control error: %v", err)
+	}
 }
 
 func TestBackgroundPublicProcessBoundary(t *testing.T) {

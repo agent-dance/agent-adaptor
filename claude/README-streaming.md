@@ -66,10 +66,15 @@ successful results are intermediate; after `tasks=[]`, the next result ends the
 invocation. A failed result ends it immediately. Malformed task snapshots never
 clear pending work or authorize a healthy checkpoint. Intermediate results stay
 in Raw and Transcript; the final result owns Text, structured output, and its
-optional usage report. The resident reader uses this same parser boundary, so
+optional usage report. If the final result omits usage, the run retains cumulative
+message usage, falling back to the last valid intermediate result usage when no
+message observed it; a final valid zero remains authoritative. The resident
+reader uses this same parser boundary, so
 background frames cannot leak into the next Thread turn. Resident turns release
 only their per-turn handle; the underlying stdin remains open for the next turn.
 A result does not bypass draining stdout/stderr or process and checkpoint checks.
+When the final record arrives with a known stdout EOF, bounded process wait and
+stderr drain determine health; an exited process is not registered for reuse.
 
 ## Event and result contract
 

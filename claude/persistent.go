@@ -234,6 +234,12 @@ func (w *persistentWriter) run(ctx context.Context, spec persistentSpec, sink dr
 		}
 		return raw, err
 	}
+	if lp.isClosed() {
+		// A final record delivered together with EOF is healthy only after
+		// Wait. Its exited process cannot become the next resident writer.
+		w.pool.detach(lp)
+		return raw, nil
+	}
 
 	if parser.sessionID == "" {
 		w.pool.detach(lp)
@@ -594,6 +600,11 @@ func (lp *liveProcess) turn(ctx context.Context, prompt string, sink driver.Even
 				ts := time.Now().UTC()
 				emitPersistentChunk(sink, "stdout", []byte(line), ts)
 				parseErr := parser.onChunk("stdout", []byte(line), ts)
+				if readErr != nil {
+					// ReadString can return a complete final JSON record without
+					// its trailing newline, including a final control request.
+					parser.finalize()
+				}
 				if abortErr == nil {
 					abortErr = errors.Join(parseErr, parser.interactiveFailure())
 					if abortErr != nil {
@@ -604,13 +615,12 @@ func (lp *liveProcess) turn(ctx context.Context, prompt string, sink driver.Even
 						lp.signalTerminate()
 					}
 				}
-				if readErr != nil {
-					// ReadString can return a complete final JSON record without
-					// its trailing newline. Give that record to the same parser.
-					parser.finalize()
-				}
 				if parser.hasTerminalResult() && abortErr == nil {
-					done <- readResult{stdout: raw.String(), result: true}
+					cleanEOF := readErr == io.EOF
+					if cleanEOF {
+						readErr = nil
+					}
+					done <- readResult{stdout: raw.String(), result: true, err: readErr, cleanEOF: cleanEOF}
 					return
 				}
 			}
@@ -629,7 +639,7 @@ func (lp *liveProcess) turn(ctx context.Context, prompt string, sink driver.Even
 		rr = <-done
 		rr.err = errors.Join(rr.err, ctx.Err())
 	}
-	if rr.err != nil || !rr.result {
+	if rr.err != nil || !rr.result || rr.cleanEOF {
 		// Stop and drain the failed process before freezing this turn's Raw
 		// and parser state, including stderr already in flight. EOF may be
 		// the child's own exit: let Wait observe it before forcing a kill.
@@ -639,14 +649,22 @@ func (lp *liveProcess) turn(ctx context.Context, prompt string, sink driver.Even
 			lp.stateMu.Lock()
 			terminated := lp.terminated
 			lp.stateMu.Unlock()
-			if lp.waitErr != nil {
+			var waitErr error
+			select {
+			case <-lp.waitCh:
+				waitErr = lp.waitErr
+			default:
+				// A bounded cleanup error is already retained. Do not read
+				// Wait's result before its completion synchronization.
+			}
+			if waitErr != nil {
 				var exitErr *exec.ExitError
 				exitCode := -1
-				if errors.As(lp.waitErr, &exitErr) {
+				if errors.As(waitErr, &exitErr) {
 					exitCode = exitErr.ExitCode()
 				}
 				rr.err = &persistentRunError{
-					cause: errors.Join(rr.err, lp.waitErr), exitCode: exitCode,
+					cause: errors.Join(rr.err, waitErr), exitCode: exitCode,
 					providerExit: exitErr != nil && rr.cleanEOF && !terminated && ctx.Err() == nil,
 				}
 			}

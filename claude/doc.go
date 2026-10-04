@@ -25,6 +25,8 @@
 // errors remain inspectable without treating private cleanup as caller cancel.
 // Usage sums distinct formal messages and deduplicates their cumulative
 // reports; a terminal usage report, including zero, remains authoritative.
+// If the final result omits usage, cumulative message usage takes precedence;
+// the most recent valid intermediate result is the fallback without messages.
 // Usage is observed only when a formal counter is a nonnegative integer;
 // empty, unknown, fractional, negative or out-of-range counters do not imply zero.
 // Incomplete or failed runs cannot produce a healthy checkpoint.
@@ -39,6 +41,8 @@
 // Resident Thread turns release only their per-turn input handle; the process
 // remains available for the next turn. Output is drained and checkpoint health
 // is checked against the process outcome before the final event is emitted.
+// A known stdout EOF requires bounded Wait and stderr drain even when its last
+// record reports success; the exited process cannot be reused.
 //
 // Stream-json emits formal scoped tool lifecycles, exact-catalog capability
 // facts, and confirmed Todo snapshots. A tool description End is not execution

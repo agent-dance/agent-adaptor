@@ -34,6 +34,7 @@ type claudeParser struct {
 	displayID         string
 	terminalResult    string
 	usage             *driver.Usage
+	lastResultUsage   *driver.Usage
 	cost              *float64
 	terminal          *driver.TerminalPayload
 	structuredOutput  *driver.StructuredOutput
@@ -618,6 +619,9 @@ func (p *claudeParser) handleResult(raw string, payload map[string]any, subtype 
 		c := cost
 		p.cost = &c
 	}
+	if p.usage != nil {
+		p.lastResultUsage = p.usage
+	}
 
 	isError := !p.terminalSuccess
 	if isError {
@@ -767,6 +771,12 @@ func (p *claudeParser) observedUsage() *driver.Usage {
 	usage := p.usage
 	if usage == nil && p.stream != nil {
 		usage = p.stream.streamUsage
+	}
+	if usage == nil {
+		// The final result can omit usage even though an earlier foreground
+		// result observed it. Keep that evidence without attributing it to the
+		// final Transcript item. A final valid zero still wins above.
+		usage = p.lastResultUsage
 	}
 	if usage == nil {
 		return nil
