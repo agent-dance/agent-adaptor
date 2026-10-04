@@ -3,6 +3,7 @@ package sessionrecorder
 import (
 	"context"
 	"errors"
+	"reflect"
 	"sort"
 
 	adaptor "github.com/agent-dance/agent-adaptor"
@@ -111,6 +112,7 @@ func (w historyWindow) records(ctx context.Context, history []EventRecord) ([]Ev
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
+		record.Event = historyEventValue(record.Event)
 		out[i] = cloneRecord(record)
 	}
 	if err := ctx.Err(); err != nil {
@@ -138,7 +140,7 @@ func (w historyWindow) bounds(history []EventRecord) (lo, hi int) {
 }
 
 func historyStart(history []EventRecord, index int) int {
-	ev := history[index].Event
+	ev := historyEventValue(history[index].Event)
 	switch e := ev.(type) {
 	case adaptor.TextDelta:
 		if e.Role == adaptor.RoleUser {
@@ -160,7 +162,7 @@ func historyStart(history []EventRecord, index int) int {
 		return index
 	}
 	for i := index - 1; i >= 0; i-- {
-		if start, ok := history[i].Event.(adaptor.RunStarted); ok && start.Meta().RunID == runID {
+		if start, ok := historyEventValue(history[i].Event).(adaptor.RunStarted); ok && start.Meta().RunID == runID {
 			return i
 		}
 	}
@@ -172,7 +174,7 @@ func userMessageStart(history []EventRecord, index int, messageID, runID string,
 		return index
 	}
 	for i := index - 1; i >= 0; i-- {
-		ev := history[i].Event
+		ev := historyEventValue(history[i].Event)
 		switch ev.(type) {
 		case adaptor.RunStarted, adaptor.RunFinished:
 			if runID == "" || recordedRunID(ev) == runID {
@@ -198,11 +200,29 @@ func userMessageStart(history []EventRecord, index int, messageID, runID string,
 }
 
 func recordedRunID(ev adaptor.Event) string {
+	ev = historyEventValue(ev)
 	if ev == nil {
 		return ""
 	}
-	if request, ok := ev.(*adaptor.ApprovalRequest); ok && request == nil {
-		return ""
-	}
 	return ev.Meta().RunID
+}
+
+// Custom recorders may return pointers to value events. Inspect the same
+// boundary regardless of representation, without cloning an entire snapshot
+// merely to select a window. The selected records are cloned separately above.
+// ApprovalRequest is pointer-only and keeps its normal descriptive-copy path.
+func historyEventValue(ev adaptor.Event) adaptor.Event {
+	if ev == nil {
+		return nil
+	}
+	value := reflect.ValueOf(ev)
+	if value.Kind() == reflect.Pointer {
+		if value.IsNil() {
+			return nil
+		}
+		if event, ok := value.Elem().Interface().(adaptor.Event); ok {
+			return event
+		}
+	}
+	return ev
 }

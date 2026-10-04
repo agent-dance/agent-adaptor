@@ -297,6 +297,53 @@ func TestHistoryQueryLegacyRecorderSnapshotAndUint64(t *testing.T) {
 	}
 }
 
+func TestHistoryQueryCustomPointerBoundariesAndNilValues(t *testing.T) {
+	start := queryEvent(adaptor.RunStarted{}, "run").(adaptor.RunStarted)
+	textStart := queryEvent(adaptor.TextDelta{Role: adaptor.RoleUser, MessageID: "m", Phase: adaptor.PhaseStart}, "run").(adaptor.TextDelta)
+	text := queryEvent(adaptor.TextDelta{Role: adaptor.RoleUser, MessageID: "m"}, "run").(adaptor.TextDelta)
+	textEnd := queryEvent(adaptor.TextDelta{Role: adaptor.RoleUser, MessageID: "m", Phase: adaptor.PhaseEnd}, "run").(adaptor.TextDelta)
+	image := queryEvent(adaptor.ImageContent{Role: adaptor.RoleUser, MessageID: "m", Type: "binary", MIMEType: "image/png", URL: "/image"}, "run").(adaptor.ImageContent)
+	finish := queryEvent(adaptor.RunFinished{}, "run").(adaptor.RunFinished)
+	for _, tc := range []struct {
+		name   string
+		events []adaptor.Event
+		want   []uint64
+	}{
+		{"run-pointer", []adaptor.Event{&start, queryEvent(adaptor.Notice{}, "run")}, []uint64{1, 2}},
+		{"user-pointers", []adaptor.Event{&start, &textStart, &text}, []uint64{2, 3}},
+		{"image-pointers", []adaptor.Event{&start, &textStart, &textEnd, &image}, []uint64{2, 3, 4}},
+		{"terminal-pointer-blocks", []adaptor.Event{textStart, &finish, text}, []uint64{3}},
+		{"text-end-pointer-blocks", []adaptor.Event{textStart, &textEnd, text}, []uint64{3}},
+		{"nil-boundary", []adaptor.Event{(*adaptor.RunStarted)(nil), text}, []uint64{2}},
+		{"nil-target", []adaptor.Event{start, (*adaptor.ImageContent)(nil)}, []uint64{2}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			history := make([]sessionrecorder.EventRecord, len(tc.events))
+			for i, event := range tc.events {
+				history[i] = sessionrecorder.EventRecord{HostSeq: uint64(i + 1), Event: event}
+			}
+			calls := 0
+			r := &queryLegacyRecorder{read: func(_ context.Context, key string, after uint64) ([]sessionrecorder.EventRecord, error) {
+				calls++
+				if key != "custom/key" || after != 0 {
+					t.Fatal("custom snapshot scope changed")
+				}
+				return history, nil
+			}}
+			for i, q := range []historyQuery{{after: uint64(len(history) - 1), to: uint64(len(history)), align: true}, {tail: true, n: 1, align: true}} {
+				records, err := q.run(context.Background(), r, "custom/key")
+				requireQuerySeqs(t, records, err, tc.want...)
+				if calls != i+1 {
+					t.Fatal("query read more than one snapshot")
+				}
+				if tc.name == "nil-target" && records[0].Event != nil {
+					t.Fatal("typed nil event did not normalize to nil")
+				}
+			}
+		})
+	}
+}
+
 func TestHistoryQueryOwnsReturnedValues(t *testing.T) {
 	for _, storage := range []string{"memory", "jsonl-reopened", "legacy"} {
 		t.Run(storage, func(t *testing.T) {
