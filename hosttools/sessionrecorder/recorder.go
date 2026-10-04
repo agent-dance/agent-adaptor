@@ -239,6 +239,9 @@ type eventSessionState struct {
 }
 
 func (r *eventRecorder) Record(ctx context.Context, sessionKey string, ev adaptor.Event) (EventRecord, error) {
+	if err := validateRecordedImage(ev); err != nil {
+		return EventRecord{}, err
+	}
 	if err := r.checkKey(sessionKey); err != nil {
 		return EventRecord{}, err
 	}
@@ -439,6 +442,7 @@ func (b *memoryEventBackend) Close() error { return nil }
 // these strings.
 const (
 	eventKindTextDelta       = "text.delta"
+	eventKindImageContent    = "image.content"
 	eventKindThinking        = "thinking"
 	eventKindToolCall        = "tool.call"
 	eventKindToolResult      = "tool.result"
@@ -480,7 +484,14 @@ func encodeEvent(ev adaptor.Event) (string, json.RawMessage, error) {
 			return "", nil, err
 		}
 		kind = eventKindToolResult
+	case adaptor.ImageContent:
+		if err := typed.Validate(); err != nil {
+			return "", nil, err
+		}
+		ev = adaptor.WithEventMeta(typed, typed.Meta())
+		kind = eventKindImageContent
 	case adaptor.TextDelta:
+		ev = adaptor.WithEventMeta(typed, typed.Meta())
 		kind = eventKindTextDelta
 	case adaptor.Thinking:
 		kind = eventKindThinking
@@ -562,6 +573,12 @@ func decodeEvent(kind string, payload json.RawMessage) (adaptor.Event, error) {
 			}
 		}
 		return ev, validateTodo(ev.Snapshot)
+	case eventKindImageContent:
+		var ev adaptor.ImageContent
+		if err := unmarshal(&ev); err != nil {
+			return nil, err
+		}
+		return ev, ev.Validate()
 	case eventKindTextDelta:
 		var ev adaptor.TextDelta
 		return ev, unmarshal(&ev)

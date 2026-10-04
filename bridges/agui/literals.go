@@ -24,7 +24,7 @@ package agui
 const (
 	// RoleAssistant is the role for plain assistant messages. AG-UI
 	// TEXT_MESSAGE_START accepts any role listed here, but our bridge
-	// does not pass a role today (the Go SDK defaults it appropriately).
+	// explicitly emits the same role literal for text and image messages.
 	RoleAssistant = "assistant"
 	// RoleUser is the role echoed when surfacing user messages to the UI.
 	RoleUser = "user"

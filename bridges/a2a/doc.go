@@ -68,4 +68,11 @@
 // legacy payloads. Thread keys, including JSON-escaped controls, remain opaque;
 // only the whole envelope limits their encoded length. OccurredAt values from
 // valid offset timestamps normalize to UTC without changing the instant.
+//
+// Host message images and asking-user attribution are local presentation and
+// history data. adapter.stream.v1 does not support ImageContent or UserID and
+// never relays them, even with all ExposurePolicy options enabled. Text content
+// and speaker role retain their existing projection. Use AG-UI/raw SSE and the
+// session recorder for image references and host identity; crossing an A2A
+// authentication domain requires a separate explicit host protocol decision.
 package a2a

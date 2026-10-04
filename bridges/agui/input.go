@@ -162,8 +162,21 @@ func (in *RunAgentInput) LastUserMessageID() string {
 // EventMeta carries the caller-provided run id and the collision-free AG-UI
 // thread tuple. The three events share one observation time; their sequence
 // remains zero because only a live Agent sink may assign authoritative run
-// ordering.
+// ordering. Use UserTurnEventsWithUserID to attach a host-authenticated identity.
 func (in *RunAgentInput) UserTurnEvents(runID string) []adaptor.Event {
+	return in.userTurnEvents(runID, "")
+}
+
+// UserTurnEventsWithUserID is UserTurnEvents with an asking-user identity already
+// established by the host. It stamps the same identity on all three events, so
+// a trimmed replay window retains attribution. An empty userID is equivalent to
+// UserTurnEvents. This helper does not authenticate a user or read identity from
+// the AG-UI request, provider output or the message's Name field.
+func (in *RunAgentInput) UserTurnEventsWithUserID(runID, userID string) []adaptor.Event {
+	return in.userTurnEvents(runID, userID)
+}
+
+func (in *RunAgentInput) userTurnEvents(runID, userID string) []adaptor.Event {
 	idx, messageID, text := lastUserMessageWithID(in)
 	if text == "" {
 		return nil
@@ -176,9 +189,9 @@ func (in *RunAgentInput) UserTurnEvents(runID string) []adaptor.Event {
 		meta.ThreadKey = bridgekey.Encode("agui", in.ThreadID)
 	}
 	return []adaptor.Event{
-		adaptor.WithEventMeta(adaptor.TextDelta{MessageID: messageID, Role: adaptor.RoleUser, Phase: adaptor.PhaseStart}, meta),
-		adaptor.WithEventMeta(adaptor.TextDelta{MessageID: messageID, Text: text, Role: adaptor.RoleUser, Phase: adaptor.PhaseContent}, meta),
-		adaptor.WithEventMeta(adaptor.TextDelta{MessageID: messageID, Role: adaptor.RoleUser, Phase: adaptor.PhaseEnd}, meta),
+		adaptor.WithEventMeta(adaptor.TextDelta{MessageID: messageID, Role: adaptor.RoleUser, UserID: userID, Phase: adaptor.PhaseStart}, meta),
+		adaptor.WithEventMeta(adaptor.TextDelta{MessageID: messageID, Text: text, Role: adaptor.RoleUser, UserID: userID, Phase: adaptor.PhaseContent}, meta),
+		adaptor.WithEventMeta(adaptor.TextDelta{MessageID: messageID, Role: adaptor.RoleUser, UserID: userID, Phase: adaptor.PhaseEnd}, meta),
 	}
 }
 

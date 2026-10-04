@@ -57,6 +57,8 @@ func validHostEvent(ev Event) bool {
 	switch e := ev.(type) {
 	case CapabilityInvocation:
 		return e.Invocation.Source == capability.Host || e.Invocation.Source == capability.Relay
+	case ImageContent:
+		return e.Validate() == nil
 	case TodoUpdated, SubagentUpdate, Notice, Dropped:
 		return true
 	default:

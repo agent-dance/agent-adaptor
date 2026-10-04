@@ -417,13 +417,25 @@ func rawFrameBody(ev adaptor.Event) (string, any) {
 			body["message"] = e.Message
 		}
 		return "run.finished", body
+	case adaptor.ImageContent:
+		if err := e.Validate(); err != nil {
+			return "stream.dropped", map[string]any{
+				"count": 1, "by_kind": map[string]int{"image.content": 1},
+				"reason": "invalid_image_content", "source": "sse",
+			}
+		}
+		return "image.content", imageContentValue(e)
 	case adaptor.TextDelta:
-		return "text.delta", map[string]any{
+		body := map[string]any{
 			"message_id": e.MessageID,
 			"text":       e.Text,
 			"role":       string(e.Role),
 			"phase":      string(e.Phase),
 		}
+		if e.Role == adaptor.RoleUser && e.UserID != "" {
+			body["user_id"] = e.UserID
+		}
+		return "text.delta", body
 	case adaptor.Thinking:
 		return "thinking.delta", map[string]any{
 			"message_id": e.MessageID,

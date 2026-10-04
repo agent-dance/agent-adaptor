@@ -22,4 +22,14 @@
 // Approval CUSTOM events own independent choice and nested detail snapshots;
 // retaining or editing a translated event does not alter the live request.
 // RunError.Reason remains authoritative when Cause includes cancellation.
+//
+// Host ImageContent references become CUSTOM image.content events. They carry
+// image {type, mime_type, url, filename?}, message_id and role; the role literal
+// matches text starts (zero = "assistant"). A host-supplied user identity is
+// included as user_id only for user images. Invalid images yield stream.dropped
+// with reason invalid_image_content and no image content. Text events keep the
+// standard TEXT_MESSAGE_* wire shape: user identity remains in the typed Event
+// and recorder history, because AG-UI text events have no identity field.
+// UserTurnEventsWithUserID never reads identity from an inbound request. Image references
+// do not enable provider image input or cause the bridge to download resources.
 package agui

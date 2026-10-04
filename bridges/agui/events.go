@@ -310,6 +310,8 @@ func (t *EventTranslator) fillRunID(runID string) {
 // markers. The caller holds t.mu.
 func (t *EventTranslator) translateNonTerminalLocked(ev adaptor.Event) []aguievents.Event {
 	switch e := ev.(type) {
+	case adaptor.ImageContent:
+		return []aguievents.Event{imageContentEvent(e)}
 	case adaptor.TextDelta:
 		return t.textDeltaLocked(e)
 	case adaptor.Thinking:
@@ -678,10 +680,14 @@ func sortedActiveIDs(active map[string]bool) []string {
 
 // textRoleOpt maps the public Role onto the AG-UI role option.
 func textRoleOpt(r adaptor.Role) aguievents.TextMessageStartOption {
+	return aguievents.WithRole(messageRole(r))
+}
+
+func messageRole(r adaptor.Role) string {
 	if r == adaptor.RoleUser {
-		return aguievents.WithRole("user")
+		return "user"
 	}
-	return aguievents.WithRole("assistant")
+	return "assistant"
 }
 
 // toolResultContent inlines common tool-result payload shapes using a

@@ -92,14 +92,14 @@ func (c eventMetaCarrier) Meta() EventMeta {
 	return out
 }
 
-// Role identifies the speaker of a text event. It aliases the driver SPI
+// Role identifies the speaker of a text or image event. It aliases the driver SPI
 // type; the zero value is RoleAssistant.
 type Role = driver.Role
 
 const (
-	// RoleAssistant is the default speaker for text events.
+	// RoleAssistant is the default speaker for text and image events.
 	RoleAssistant Role = driver.RoleAssistant
-	// RoleUser marks a text lifecycle synthesized above the driver layer
+	// RoleUser marks message content synthesized above the driver layer
 	// (bridges replaying the human turn). Drivers never emit it.
 	RoleUser Role = driver.RoleUser
 )
@@ -132,6 +132,38 @@ type TextDelta struct {
 	Role Role
 	// Phase discriminates lifecycle boundary events from content.
 	Phase Phase
+	// UserID is an optional host-supplied asking-user identity. The SDK does
+	// not authenticate it or derive it from provider output or request bodies.
+	// Event snapshots ignore it unless Role is RoleUser. Empty means unknown.
+	UserID string `json:",omitempty"`
+}
+
+// ImageContent carries one complete host-supplied image reference attached to a
+// message. It is not a delta: consumers retain each image in event order instead
+// of concatenating its URL. MessageID correlates it with text from the same
+// message; EventMeta.Sequence orders images within a live run.
+//
+// This event supports host publication, bridges and history replay. It does not
+// enable image inputs or image generation in a Driver. The host owns MIME/URL
+// validation, access control and rendering; the SDK never fetches the URL.
+// Like TextDelta, its strings are preserved without normalization or truncation.
+// An empty MessageID or URL is incomplete and bridges surface a degradation.
+type ImageContent struct {
+	eventMetaCarrier
+	MessageID string
+	// Type is a nonempty host content discriminator, for example "binary".
+	// The SDK preserves it without interpreting provider capabilities.
+	Type string
+	// MIMEType is the host-validated image media type, for example "image/png".
+	MIMEType string
+	// URL is an opaque image reference, including host-relative paths.
+	URL string
+	// Filename is an optional display name.
+	Filename string
+	// Role is the speaker; zero value RoleAssistant.
+	Role Role
+	// UserID has the same host-only semantics as TextDelta.UserID.
+	UserID string `json:",omitempty"`
 }
 
 // Thinking is one reasoning/thinking text event. Translated from
@@ -370,6 +402,7 @@ func (TodoUpdated) isEvent()          {}
 
 // isEvent implementations seal the Event interface.
 func (TextDelta) isEvent()        {}
+func (ImageContent) isEvent()     {}
 func (Thinking) isEvent()         {}
 func (ToolCall) isEvent()         {}
 func (ToolResult) isEvent()       {}
@@ -405,6 +438,9 @@ func stampEvent(ev Event, meta EventMeta) Event {
 		e.eventMetaCarrier = c
 		return e
 	case TodoUpdated:
+		e.eventMetaCarrier = c
+		return e
+	case ImageContent:
 		e.eventMetaCarrier = c
 		return e
 	case TextDelta:
@@ -457,6 +493,8 @@ func eventKind(ev Event) string {
 		return "capability.invocation"
 	case TodoUpdated:
 		return "todo.updated"
+	case ImageContent:
+		return "image.content"
 	case TextDelta:
 		return "text." + phaseKind(e.Phase)
 	case Thinking:
@@ -734,6 +772,16 @@ func cloneEventValue(ev Event) Event {
 		return cloneJSONValue(m).(map[string]any)
 	}
 	switch e := ev.(type) {
+	case TextDelta:
+		if e.Role != RoleUser {
+			e.UserID = ""
+		}
+		return e
+	case ImageContent:
+		if e.Role != RoleUser {
+			e.UserID = ""
+		}
+		return e
 	case *ApprovalRequest:
 		out := *e
 		out.Choices = append([]Choice(nil), e.Choices...)

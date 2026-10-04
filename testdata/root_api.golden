@@ -306,6 +306,23 @@ type Identity struct {
 
 func IdentityFromContext(ctx context.Context) (Identity, bool)
 
+type ImageContent struct {
+	MessageID string
+	Type string
+	MIMEType string
+	URL string
+	Filename string
+	Role Role
+	UserID string `json:",omitempty"`
+}
+
+methodset ImageContent {
+	value Meta() EventMeta
+	value Validate() error
+	pointer Meta() EventMeta
+	pointer Validate() error
+}
+
 type Inspector struct {
 	// no exported fields
 }
@@ -817,6 +834,7 @@ type TextDelta struct {
 	Text string
 	Role Role
 	Phase Phase
+	UserID string `json:",omitempty"`
 }
 
 methodset TextDelta {
@@ -1029,6 +1047,8 @@ func (*ApprovalRequest).Answer(_ context.Context, option string) error
 func (*ApprovalRequest).Approve(_ context.Context) error
 
 func (*ApprovalRequest).Deny(_ context.Context, reason string) error
+
+func (ImageContent).Validate() error
 
 func (Inspector).ConfigSchema(ctx context.Context) (*ConfigSchema, error)
 
