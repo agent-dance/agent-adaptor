@@ -184,6 +184,25 @@ func privateDirectoryInfo(path string) (os.FileInfo, error) {
 	return info, nil
 }
 
+// Cleanup must reject the same owner, ACL and link-count changes as Verify.
+// Check the opened object's identity as well, keeping the directory pin intact
+// on any failure so the owner can repair the file and retry Close.
+func (f *File) verifyRemovalIdentity() error {
+	if err := f.verifyIdentity(); err != nil {
+		return err
+	}
+	file, err := f.root.Open(f.name)
+	if err != nil {
+		return err
+	}
+	info, statErr := file.Stat()
+	permissionErr := verifyPrivateObject(file, false)
+	if statErr == nil && (unsafeInfo(info) || !info.Mode().IsRegular() || !os.SameFile(f.fileInfo, info)) {
+		statErr = fmt.Errorf("append file identity changed: %w", os.ErrPermission)
+	}
+	return errors.Join(statErr, permissionErr, file.Close())
+}
+
 // Only the current owner and the Windows system administrators may have access.
 // Reject inherited/unprotected, NULL, unfamiliar or restricted-owner ACLs;
 // chmod's synthetic mode bits cannot establish any of these properties.

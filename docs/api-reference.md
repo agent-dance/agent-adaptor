@@ -158,6 +158,9 @@ access permissions as well as file identity and content. Shared temporary
 directory ACLs are not inherited as access grants to other users. A directory
 handle prevents replacement until the actual provider exits; cleanup deletes
 that same owned directory through its handle and retains protection on failure.
+Before deleting the Windows file, cleanup also verifies its handle identity,
+owner, DACL and single-link status. A rejected check retains both the file and
+directory pin so cleanup can be retried after the unsafe state is corrected.
 
 Content hashes participate in both checkpoint guards and resident process
 signatures; all existing configuration/environment dimensions remain. Equal

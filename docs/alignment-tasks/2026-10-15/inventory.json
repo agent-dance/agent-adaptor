@@ -1,0 +1,2388 @@
+{
+  "date": "2026-10-15",
+  "branch": "codex/internal-history-consolidated-20261015",
+  "base": "07f92fb7983b050904c7654aa58f716a8533c617",
+  "remote": "origin",
+  "remote_refreshed": true,
+  "scope": "Existing accepted internal-history alignment implementation and its follow-up fixes, preserving the frozen exclusions.",
+  "original_ref_count": 139,
+  "scope_counts": {
+    "prior-independent-work": 31,
+    "internal-alignment": 106,
+    "explicit-separate-branch-in-frozen-contract": 2
+  },
+  "alignment_coverage_counts": {
+    "ancestor-of-base": 48,
+    "all-patches-equivalent-in-base": 42,
+    "windows-security-squash-integrated-and-evolved": 16
+  },
+  "refs": [
+    {
+      "ref": "refs/heads/cl/allow_codebuddy_opencode",
+      "head": "e8683f3d411f26c35fc451078616009d9eea697e",
+      "scope": "prior-independent-work",
+      "coverage": "separate-work-not-covered-by-alignment-base"
+    },
+    {
+      "ref": "refs/heads/cl/examples_refactor",
+      "head": "273c548d760ee2975d5e76b831766dea0ecfa054",
+      "scope": "prior-independent-work",
+      "coverage": "separate-work-not-covered-by-alignment-base"
+    },
+    {
+      "ref": "refs/heads/cl/new_issue",
+      "head": "979c5861e50b1330fee4e2c2ef53ec6dada0ad5f",
+      "scope": "prior-independent-work",
+      "coverage": "separate-work-not-covered-by-alignment-base"
+    },
+    {
+      "ref": "refs/heads/cl/opt_examples",
+      "head": "ca87b82b069724e63f6077486b724938068ef511",
+      "scope": "prior-independent-work",
+      "coverage": "separate-work-not-covered-by-alignment-base"
+    },
+    {
+      "ref": "refs/heads/cl/refactor_profile",
+      "head": "016c700cc4f0eded620d95ab59835c6151ce1165",
+      "scope": "prior-independent-work",
+      "coverage": "separate-work-not-covered-by-alignment-base"
+    },
+    {
+      "ref": "refs/heads/codex/alignment-c01",
+      "head": "97b91d11640c279b77aacdbde52210bb3f89644a",
+      "scope": "internal-alignment",
+      "coverage": "ancestor-of-base"
+    },
+    {
+      "ref": "refs/heads/codex/alignment-c02",
+      "head": "8a2c1ede7f191dd9a6d6d36bea0c6ecee34f9610",
+      "scope": "internal-alignment",
+      "coverage": "ancestor-of-base"
+    },
+    {
+      "ref": "refs/heads/codex/alignment-c03",
+      "head": "2d4179a49898a780b86590f2457f469bbf6f850c",
+      "scope": "internal-alignment",
+      "coverage": "ancestor-of-base"
+    },
+    {
+      "ref": "refs/heads/codex/alignment-c04",
+      "head": "dce55d1b51c436bc2af56a4e732dd4b0112457f5",
+      "scope": "internal-alignment",
+      "coverage": "ancestor-of-base"
+    },
+    {
+      "ref": "refs/heads/codex/alignment-integration",
+      "head": "a2d92b2bfa31ff847e4d0cc534cefac7610ff468",
+      "scope": "internal-alignment",
+      "coverage": "ancestor-of-base"
+    },
+    {
+      "ref": "refs/heads/codex/alignment-t01",
+      "head": "54bd3308ca16b8caea732391cf7637288f98eaea",
+      "scope": "internal-alignment",
+      "coverage": "ancestor-of-base"
+    },
+    {
+      "ref": "refs/heads/codex/alignment-t02",
+      "head": "7feceed0be9e71448a18772abc00b436ebe33dad",
+      "scope": "internal-alignment",
+      "coverage": "ancestor-of-base"
+    },
+    {
+      "ref": "refs/heads/codex/alignment-t03",
+      "head": "d37e9e16615fd393bcb0166373bb92d92e2e66ad",
+      "scope": "internal-alignment",
+      "coverage": "ancestor-of-base"
+    },
+    {
+      "ref": "refs/heads/codex/alignment-t04",
+      "head": "7d5be1c4969e4a79e7b46608d65220e5a4077173",
+      "scope": "internal-alignment",
+      "coverage": "ancestor-of-base"
+    },
+    {
+      "ref": "refs/heads/codex/alignment-t05",
+      "head": "77d22f0258997f9316968f70da1b5be644e33304",
+      "scope": "internal-alignment",
+      "coverage": "ancestor-of-base"
+    },
+    {
+      "ref": "refs/heads/codex/alignment-t06",
+      "head": "913673a422cd3cc14d100715f2d75e7cba7faa0c",
+      "scope": "internal-alignment",
+      "coverage": "ancestor-of-base"
+    },
+    {
+      "ref": "refs/heads/codex/alignment-t07",
+      "head": "94579007621e2ccafe2d18f912ac2ce3ab9d08eb",
+      "scope": "internal-alignment",
+      "coverage": "ancestor-of-base"
+    },
+    {
+      "ref": "refs/heads/codex/alignment-t08",
+      "head": "9cdbc3b40819a06dbf7de2fee7c619db4239c4d1",
+      "scope": "internal-alignment",
+      "coverage": "ancestor-of-base"
+    },
+    {
+      "ref": "refs/heads/codex/alignment-t09",
+      "head": "f0b990ed63e82d2272a6eafdd1f5f2d9a2ab74ec",
+      "scope": "internal-alignment",
+      "coverage": "ancestor-of-base"
+    },
+    {
+      "ref": "refs/heads/codex/alignment-t10",
+      "head": "fcb3abb091ac24a5494153e3af92d85437f975ba",
+      "scope": "internal-alignment",
+      "coverage": "ancestor-of-base"
+    },
+    {
+      "ref": "refs/heads/codex/alignment-t11",
+      "head": "6bc3a3e14cea19b0f51470d2e91d43d26a921069",
+      "scope": "internal-alignment",
+      "coverage": "ancestor-of-base"
+    },
+    {
+      "ref": "refs/heads/codex/alignment-t12",
+      "head": "e327be37adf57e253f3fa3f7135956786403868b",
+      "scope": "internal-alignment",
+      "coverage": "ancestor-of-base"
+    },
+    {
+      "ref": "refs/heads/codex/alignment-t13",
+      "head": "930869611aade6c79c168b8bb89aa2f8233b7828",
+      "scope": "internal-alignment",
+      "coverage": "ancestor-of-base"
+    },
+    {
+      "ref": "refs/heads/codex/alignment-t14",
+      "head": "e35680aed202a768430ae24f40f60fac35574a8b",
+      "scope": "internal-alignment",
+      "coverage": "ancestor-of-base"
+    },
+    {
+      "ref": "refs/heads/codex/alignment-t15",
+      "head": "9ef1ca39a3033700574e4b08cdccccd538d91283",
+      "scope": "internal-alignment",
+      "coverage": "ancestor-of-base"
+    },
+    {
+      "ref": "refs/heads/codex/alignment-t16",
+      "head": "4512e1e89ab88a9cd5260bc457d1defe59e415cc",
+      "scope": "internal-alignment",
+      "coverage": "ancestor-of-base"
+    },
+    {
+      "ref": "refs/heads/codex/alignment-t17",
+      "head": "eb374fe3fe15229a003117fc255f238dec862584",
+      "scope": "internal-alignment",
+      "coverage": "ancestor-of-base"
+    },
+    {
+      "ref": "refs/heads/codex/alignment-t18",
+      "head": "ca1330627a731078f7e913f5a5115bd54fd1c1e9",
+      "scope": "internal-alignment",
+      "coverage": "ancestor-of-base"
+    },
+    {
+      "ref": "refs/heads/codex/alignment-t19",
+      "head": "075887499a1966ed4d08681bd837a4fcbfa1c650",
+      "scope": "internal-alignment",
+      "coverage": "ancestor-of-base"
+    },
+    {
+      "ref": "refs/heads/codex/alignment-t20",
+      "head": "2d50f024c5c51d7c8c8d55dce11c92988748cf37",
+      "scope": "internal-alignment",
+      "coverage": "ancestor-of-base"
+    },
+    {
+      "ref": "refs/heads/codex/alignment-t21",
+      "head": "5096368c1188b537f1f1c25d4c9ee2cd42cb0a26",
+      "scope": "internal-alignment",
+      "coverage": "ancestor-of-base"
+    },
+    {
+      "ref": "refs/heads/codex/alignment-t22",
+      "head": "3dcd8626a1342ce7b548440db8bf2780a954589c",
+      "scope": "internal-alignment",
+      "coverage": "ancestor-of-base"
+    },
+    {
+      "ref": "refs/heads/codex/alignment-t23",
+      "head": "1d92e2673e3f17ad674b3b074e565727a8befaf1",
+      "scope": "internal-alignment",
+      "coverage": "ancestor-of-base"
+    },
+    {
+      "ref": "refs/heads/codex/alignment-t24",
+      "head": "849f8334e376d4719167afa31706b4dea22b8cce",
+      "scope": "internal-alignment",
+      "coverage": "ancestor-of-base"
+    },
+    {
+      "ref": "refs/heads/codex/alignment-t25",
+      "head": "a2d92b2bfa31ff847e4d0cc534cefac7610ff468",
+      "scope": "internal-alignment",
+      "coverage": "ancestor-of-base"
+    },
+    {
+      "ref": "refs/heads/codex/alignment-t26",
+      "head": "a2d92b2bfa31ff847e4d0cc534cefac7610ff468",
+      "scope": "internal-alignment",
+      "coverage": "ancestor-of-base"
+    },
+    {
+      "ref": "refs/heads/codex/alignment-t27",
+      "head": "a2d92b2bfa31ff847e4d0cc534cefac7610ff468",
+      "scope": "internal-alignment",
+      "coverage": "ancestor-of-base"
+    },
+    {
+      "ref": "refs/heads/codex/alignment-t28",
+      "head": "a2d92b2bfa31ff847e4d0cc534cefac7610ff468",
+      "scope": "internal-alignment",
+      "coverage": "ancestor-of-base"
+    },
+    {
+      "ref": "refs/heads/codex/alignment-t29",
+      "head": "a2d92b2bfa31ff847e4d0cc534cefac7610ff468",
+      "scope": "internal-alignment",
+      "coverage": "ancestor-of-base"
+    },
+    {
+      "ref": "refs/heads/codex/alignment-t30",
+      "head": "a2d92b2bfa31ff847e4d0cc534cefac7610ff468",
+      "scope": "internal-alignment",
+      "coverage": "ancestor-of-base"
+    },
+    {
+      "ref": "refs/heads/codex/alignment-t31",
+      "head": "d75de19cb876a102a68641bd12c36d7dfa88c851",
+      "scope": "internal-alignment",
+      "coverage": "ancestor-of-base"
+    },
+    {
+      "ref": "refs/heads/codex/alignment-t32",
+      "head": "9fd655c553551e8a0103743de99d37ba81ce0652",
+      "scope": "internal-alignment",
+      "coverage": "ancestor-of-base"
+    },
+    {
+      "ref": "refs/heads/codex/alignment-t33",
+      "head": "8bf830acd006a83b765b5eab2dc2e027427f2870",
+      "scope": "internal-alignment",
+      "coverage": "ancestor-of-base"
+    },
+    {
+      "ref": "refs/heads/codex/alignment-t34",
+      "head": "e61058d5eec14803b92efda644e4ff1b081e7f1f",
+      "scope": "internal-alignment",
+      "coverage": "ancestor-of-base"
+    },
+    {
+      "ref": "refs/heads/codex/alignment-t35",
+      "head": "c2db9c5a16325095f8550fbfd03d50d55ace162c",
+      "scope": "internal-alignment",
+      "coverage": "ancestor-of-base"
+    },
+    {
+      "ref": "refs/heads/codex/alignment-t36",
+      "head": "d09398d0b11d602b3e64c09ec6ce7a411c10c47f",
+      "scope": "internal-alignment",
+      "coverage": "ancestor-of-base"
+    },
+    {
+      "ref": "refs/heads/codex/fix-hosted-tools-v1.1.1",
+      "head": "77df7b6dbbf301a89ba3749f24e9f128c646b02a",
+      "scope": "prior-independent-work",
+      "coverage": "all-patches-equivalent-in-base"
+    },
+    {
+      "ref": "refs/heads/codex/fix-tool-runtime-close-v1.1.1",
+      "head": "bacfcddb1d3c4f0638e3d1c1076d1610345fdfcf",
+      "scope": "prior-independent-work",
+      "coverage": "all-patches-equivalent-in-base"
+    },
+    {
+      "ref": "refs/heads/codex/internal-sync-20261004",
+      "head": "07f92fb7983b050904c7654aa58f716a8533c617",
+      "scope": "internal-alignment",
+      "coverage": "ancestor-of-base"
+    },
+    {
+      "ref": "refs/heads/codex/internal-sync-budget-fixture-20261004",
+      "head": "0b1342fbc25573c5d1e2c7797f044b824d14e509",
+      "scope": "internal-alignment",
+      "coverage": "all-patches-equivalent-in-base",
+      "patches": [
+        {
+          "sha": "2d9826d924ef1569136faa2244a7977ede3eeb85",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "84ef0417ea3403418910d61d1f1ef5887e6dff7c"
+        },
+        {
+          "sha": "0b1342fbc25573c5d1e2c7797f044b824d14e509",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "09d4967a6e8dbb3b68ce7a60a859c31495336f5e"
+        }
+      ]
+    },
+    {
+      "ref": "refs/heads/codex/internal-sync-frontend-20261004",
+      "head": "c1a1d0f7a628875a5e1f88f2232653eafcec7dd6",
+      "scope": "internal-alignment",
+      "coverage": "all-patches-equivalent-in-base",
+      "patches": [
+        {
+          "sha": "c1a1d0f7a628875a5e1f88f2232653eafcec7dd6",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "39105dde07d03aa260712ac3cd7bf4a4f06e2e11"
+        }
+      ]
+    },
+    {
+      "ref": "refs/heads/codex/live-repair-r040-20260917",
+      "head": "0c45255c96904847a52ff5baa3ff3854f91f74f6",
+      "scope": "internal-alignment",
+      "coverage": "ancestor-of-base"
+    },
+    {
+      "ref": "refs/heads/codex/live-repair-r040-t06-20260917",
+      "head": "2a41ee49f7415df0e39a747ecc19a50f2871a9d2",
+      "scope": "internal-alignment",
+      "coverage": "all-patches-equivalent-in-base",
+      "patches": [
+        {
+          "sha": "2a41ee49f7415df0e39a747ecc19a50f2871a9d2",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "82ff7d333a2f52acc73b487cb3b3ab6c6a00b3de"
+        }
+      ]
+    },
+    {
+      "ref": "refs/heads/codex/live-repair-r040-t15-20260917",
+      "head": "9732837fb042010a9436c087c244e78ef8d21780",
+      "scope": "internal-alignment",
+      "coverage": "all-patches-equivalent-in-base",
+      "patches": [
+        {
+          "sha": "ce202812e74c76bd5105ffb3bf43cc8ca2189773",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "79dbfcf6bd3942df3020c4d660b28d4895bbcf41"
+        },
+        {
+          "sha": "9732837fb042010a9436c087c244e78ef8d21780",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "6f76751d253831eb2d3a8165518cf6a224d1eae7"
+        }
+      ]
+    },
+    {
+      "ref": "refs/heads/codex/live-repair-r040-t20-20260917",
+      "head": "15a5e8106f88027b5ca4befb1fb0c74830075073",
+      "scope": "internal-alignment",
+      "coverage": "all-patches-equivalent-in-base",
+      "patches": [
+        {
+          "sha": "15a5e8106f88027b5ca4befb1fb0c74830075073",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "cc2d17c5b04ded611de84440157e45f3f3f2bfce"
+        }
+      ]
+    },
+    {
+      "ref": "refs/heads/codex/live-repair-r045-t15-20260920",
+      "head": "5ac053e510b0aaabdbe805594bda2fd0f2bd0de6",
+      "scope": "internal-alignment",
+      "coverage": "all-patches-equivalent-in-base",
+      "patches": [
+        {
+          "sha": "5ac053e510b0aaabdbe805594bda2fd0f2bd0de6",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "9474cd90e20b5c913e359c66b4441dde47df2f73"
+        }
+      ]
+    },
+    {
+      "ref": "refs/heads/codex/live-repair-r046-t20-20260920",
+      "head": "50dcd1fa726840158e198edd61a7f04c865b9c8d",
+      "scope": "internal-alignment",
+      "coverage": "all-patches-equivalent-in-base",
+      "patches": [
+        {
+          "sha": "50dcd1fa726840158e198edd61a7f04c865b9c8d",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "4a147693b5a7291f1ad6a6ff1f501b8030687266"
+        }
+      ]
+    },
+    {
+      "ref": "refs/heads/codex/live-repair-t04-g05-20260916",
+      "head": "d57ac1c537b31492b1fe1070fa3d8bd1cb5f967a",
+      "scope": "internal-alignment",
+      "coverage": "all-patches-equivalent-in-base",
+      "patches": [
+        {
+          "sha": "d57ac1c537b31492b1fe1070fa3d8bd1cb5f967a",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "5ec3b2ffb59e8bf9889ec66584f249548255ba3e"
+        }
+      ]
+    },
+    {
+      "ref": "refs/heads/codex/live-repair-t06-20260916",
+      "head": "a886e2f8707280faa5e193173500c50bb544ff65",
+      "scope": "internal-alignment",
+      "coverage": "all-patches-equivalent-in-base",
+      "patches": [
+        {
+          "sha": "5d5a311ca89688a3b30ea8f1764c5cce6ffa2c4b",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "1fcf2dc0515d7b2def2ed04f7f0928607628a687"
+        },
+        {
+          "sha": "0aaaf03a5d77c150fa6da78fe5ed32a056683ca3",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "64f812d92ffaa973e35751a39b5091904ce96abb"
+        },
+        {
+          "sha": "a886e2f8707280faa5e193173500c50bb544ff65",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "2eaeb8937507b12889beecd67d893ed960b0db5b"
+        }
+      ]
+    },
+    {
+      "ref": "refs/heads/codex/live-repair-t06-codex-cold-20260917",
+      "head": "10f3227a7f16847b1214714a51b65f9df432182c",
+      "scope": "internal-alignment",
+      "coverage": "all-patches-equivalent-in-base",
+      "patches": [
+        {
+          "sha": "10f3227a7f16847b1214714a51b65f9df432182c",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "eef138d65ec75a84a2776b58a740819d0a6e64fe"
+        }
+      ]
+    },
+    {
+      "ref": "refs/heads/codex/live-repair-t06-profile-20260917",
+      "head": "c7756a167f28d3180f34a24f7372fa346fbf83c9",
+      "scope": "internal-alignment",
+      "coverage": "all-patches-equivalent-in-base",
+      "patches": [
+        {
+          "sha": "eef863af8c51ba01dbff0b64ec0dc25c6a195426",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "a9f25e5091717bc2a2b0dc76a03003ca1d88e51e"
+        },
+        {
+          "sha": "5a2642556bccc9cc8abea59673369fed6bd53863",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "d12245c1d026993bdcebf5305cc26585af7fe734"
+        },
+        {
+          "sha": "a4460a0007bb1a2aac1475752938989c6947607a",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "52e82022b99d250799a4868f39d1354bfe38fe1b"
+        },
+        {
+          "sha": "c7756a167f28d3180f34a24f7372fa346fbf83c9",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "dab1a24da262a938f4527cd24d19d6483ad0fc2b"
+        }
+      ]
+    },
+    {
+      "ref": "refs/heads/codex/live-repair-t14-20260916",
+      "head": "f2a21db7d9e4bd77eb03c5c6ff60614d459bafa8",
+      "scope": "internal-alignment",
+      "coverage": "all-patches-equivalent-in-base",
+      "patches": [
+        {
+          "sha": "f2a21db7d9e4bd77eb03c5c6ff60614d459bafa8",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "83ea3a161767cc87c64a379cd24832a5dddae151"
+        }
+      ]
+    },
+    {
+      "ref": "refs/heads/codex/live-repair-t15-20260916",
+      "head": "57e7aa450ea6a2198459ce1f5f328b6e4c2141a3",
+      "scope": "internal-alignment",
+      "coverage": "all-patches-equivalent-in-base",
+      "patches": [
+        {
+          "sha": "57e7aa450ea6a2198459ce1f5f328b6e4c2141a3",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "e04825838d76b64ae686423900c0a10cce9449e2"
+        }
+      ]
+    },
+    {
+      "ref": "refs/heads/codex/live-repair-t15-terminal-20260917",
+      "head": "3431bd0d290c886acb043d0d4ef7c23bfc4bcd46",
+      "scope": "internal-alignment",
+      "coverage": "all-patches-equivalent-in-base",
+      "patches": [
+        {
+          "sha": "3431bd0d290c886acb043d0d4ef7c23bfc4bcd46",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "cd509f9b3ff74f5c2985f649ef4eea38714e8e35"
+        }
+      ]
+    },
+    {
+      "ref": "refs/heads/codex/live-repair-t16-20260916",
+      "head": "cd387788f265fbb403262691e266f961e8c22393",
+      "scope": "internal-alignment",
+      "coverage": "all-patches-equivalent-in-base",
+      "patches": [
+        {
+          "sha": "cd387788f265fbb403262691e266f961e8c22393",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "646a26dfe0eaa0dd5ccb6924b459cbfea3214e50"
+        }
+      ]
+    },
+    {
+      "ref": "refs/heads/codex/live-repair-t16-capacity-20260916",
+      "head": "b2a907a43e780bf49f96ea341fe07b24eded0700",
+      "scope": "internal-alignment",
+      "coverage": "all-patches-equivalent-in-base",
+      "patches": [
+        {
+          "sha": "b2a907a43e780bf49f96ea341fe07b24eded0700",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "dcb267c15775ea749bab053a0d0249e25df9a031"
+        }
+      ]
+    },
+    {
+      "ref": "refs/heads/codex/live-repair-t17-20260916",
+      "head": "49ee11e3ebcfea997fd915581cd05dd4b870dfb5",
+      "scope": "internal-alignment",
+      "coverage": "all-patches-equivalent-in-base",
+      "patches": [
+        {
+          "sha": "6ab927319cbfbce8f4e2c08d77f74c32e1aa3dc4",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "5941700a385169ca661eae9111a8038e40e5d1af"
+        },
+        {
+          "sha": "49ee11e3ebcfea997fd915581cd05dd4b870dfb5",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "9e25ed980efbfba20ea1998713fe374a06def069"
+        }
+      ]
+    },
+    {
+      "ref": "refs/heads/codex/live-repair-t17-g05-20260916",
+      "head": "1a7332f0b36aa266d98237c9691a98fef942b58a",
+      "scope": "internal-alignment",
+      "coverage": "all-patches-equivalent-in-base",
+      "patches": [
+        {
+          "sha": "1a7332f0b36aa266d98237c9691a98fef942b58a",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "f051f18cf236005507a1af3de853b28689e67a6c"
+        }
+      ]
+    },
+    {
+      "ref": "refs/heads/codex/live-repair-t17-marker-20260917",
+      "head": "20ed9e043610855d096edf71ccd2a91daec61aaa",
+      "scope": "internal-alignment",
+      "coverage": "all-patches-equivalent-in-base",
+      "patches": [
+        {
+          "sha": "20ed9e043610855d096edf71ccd2a91daec61aaa",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "1d28dac3976112f4e650672ccb757697fc5597b2"
+        }
+      ]
+    },
+    {
+      "ref": "refs/heads/codex/live-repair-t17-warmup-message-20260917",
+      "head": "b7586bdf6e4cf34877908dd61a99a011d4ac8a93",
+      "scope": "internal-alignment",
+      "coverage": "all-patches-equivalent-in-base",
+      "patches": [
+        {
+          "sha": "b7586bdf6e4cf34877908dd61a99a011d4ac8a93",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "5ca75952bc353c807844ea016c61b1a5a9e72054"
+        }
+      ]
+    },
+    {
+      "ref": "refs/heads/codex/live-repair-t17-windows-20260916",
+      "head": "9e2af2a4743ceac7cf247c826c73212f22951650",
+      "scope": "internal-alignment",
+      "coverage": "all-patches-equivalent-in-base",
+      "patches": [
+        {
+          "sha": "9e2af2a4743ceac7cf247c826c73212f22951650",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "8db5dbf497be0428d6cfb89e0b6b0790a535b1c2"
+        }
+      ]
+    },
+    {
+      "ref": "refs/heads/codex/live-repair-t18-20260916",
+      "head": "d2789a5f43e9e8c3c52215267c7b76e4f9f5ea55",
+      "scope": "internal-alignment",
+      "coverage": "all-patches-equivalent-in-base",
+      "patches": [
+        {
+          "sha": "d2789a5f43e9e8c3c52215267c7b76e4f9f5ea55",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "cca895f6b20b242f193067576e2c8142d925e32c"
+        }
+      ]
+    },
+    {
+      "ref": "refs/heads/codex/live-repair-t23-20260916",
+      "head": "cba70305cc6e3e2c646857e42495452171494f92",
+      "scope": "internal-alignment",
+      "coverage": "all-patches-equivalent-in-base",
+      "patches": [
+        {
+          "sha": "27ad4faa7f9cc5953e543442755be08ebc617ef8",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "7a5bc1e62d5c4a34378bdc9b68ff5129f5a65333"
+        },
+        {
+          "sha": "cba70305cc6e3e2c646857e42495452171494f92",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "59b9b93b2b73af9a114b5bb3a6b4186fe19ae4e5"
+        }
+      ]
+    },
+    {
+      "ref": "refs/heads/codex/live-repair-t23-windows-20260916",
+      "head": "1174500f9fee896b6ee56a871c7eaa993a59f694",
+      "scope": "internal-alignment",
+      "coverage": "all-patches-equivalent-in-base",
+      "patches": [
+        {
+          "sha": "16d66b1ad8b72bde2b2c9abe670a3765d0d68d94",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "6ee0c8ef3b1b564fb478fadd38289c544594234f"
+        },
+        {
+          "sha": "1174500f9fee896b6ee56a871c7eaa993a59f694",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "5bbcd6d1492e338cf3ce35889e5c515d7aa8e112"
+        }
+      ]
+    },
+    {
+      "ref": "refs/heads/codex/luna-child-status-20260917",
+      "head": "c23a9dba59d9cee538b3244ae646239962a774ce",
+      "scope": "internal-alignment",
+      "coverage": "all-patches-equivalent-in-base",
+      "patches": [
+        {
+          "sha": "40832db203fb1afa5be884cefec070bb2e60eded",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "a0fedca3ad6b75c5a1db11fa66d9bba24450e89b"
+        },
+        {
+          "sha": "4d81c53fa7c2ad8bb309424d3b41ed892cd49f6d",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "2af3bff7b1c58881f6a7e79a6f229b4a0a4bd14d"
+        },
+        {
+          "sha": "c23a9dba59d9cee538b3244ae646239962a774ce",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "7c134d6cb022a1b3764e71caa0c9e72dadae94a8"
+        }
+      ]
+    },
+    {
+      "ref": "refs/heads/codex/luna-control-order-20260917",
+      "head": "948de5bfbd08d1bbd0420b811c89ee780df803c9",
+      "scope": "internal-alignment",
+      "coverage": "all-patches-equivalent-in-base",
+      "patches": [
+        {
+          "sha": "3dbabb34ae818578c4c4d33a514ae24c498102e7",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "f83f28eb659bc02d6d3225de7e60319812748b4c"
+        },
+        {
+          "sha": "948de5bfbd08d1bbd0420b811c89ee780df803c9",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "1c7bcc9771dd15d07efb5fcd1ea43923ee3ad409"
+        }
+      ]
+    },
+    {
+      "ref": "refs/heads/codex/luna-metadata-20260917",
+      "head": "cbf896239c9e5bc227f682b29b98ed825074b7f8",
+      "scope": "internal-alignment",
+      "coverage": "all-patches-equivalent-in-base",
+      "patches": [
+        {
+          "sha": "cbf896239c9e5bc227f682b29b98ed825074b7f8",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "b036cf3f87237ee3ab3127289a3a0d6a3504d2bd"
+        }
+      ]
+    },
+    {
+      "ref": "refs/heads/codex/luna-multiplex-20260917",
+      "head": "0314e57be2d4e03a45b85b086710588d10b0f605",
+      "scope": "internal-alignment",
+      "coverage": "all-patches-equivalent-in-base",
+      "patches": [
+        {
+          "sha": "3dbabb34ae818578c4c4d33a514ae24c498102e7",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "f83f28eb659bc02d6d3225de7e60319812748b4c"
+        },
+        {
+          "sha": "948de5bfbd08d1bbd0420b811c89ee780df803c9",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "1c7bcc9771dd15d07efb5fcd1ea43923ee3ad409"
+        },
+        {
+          "sha": "8e1a355610a172856fe7cb33bdf0c95dea04c392",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "5cdadff4eb2e5dea6e621c88c0c145b65507a61a"
+        },
+        {
+          "sha": "c693a7b771c52d2b6443a5f8ec253ab282ea94b4",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "466c3e252d05671a997c5fd7b6de849789837f23"
+        },
+        {
+          "sha": "0314e57be2d4e03a45b85b086710588d10b0f605",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "086ea76b8fc362cfb012ff7f0301f6b1678bdbc0"
+        }
+      ]
+    },
+    {
+      "ref": "refs/heads/codex/luna-skill-reference-20260917",
+      "head": "dade69c320d0b95725c1e7b7beb2db63cfee5c21",
+      "scope": "internal-alignment",
+      "coverage": "all-patches-equivalent-in-base",
+      "patches": [
+        {
+          "sha": "dade69c320d0b95725c1e7b7beb2db63cfee5c21",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "c16da650fd04ff42fb52db2cc13c3af12c34952d"
+        }
+      ]
+    },
+    {
+      "ref": "refs/heads/codex/mcp-profile-materialization",
+      "head": "0b7608ed78c5ef6147e109caeabda970c772a140",
+      "scope": "prior-independent-work",
+      "coverage": "ancestor-of-base"
+    },
+    {
+      "ref": "refs/heads/codex/r047-codebuddy-agent-names",
+      "head": "2d1b4e27bc3d7992fbd478311f5b25d1d66f666f",
+      "scope": "internal-alignment",
+      "coverage": "all-patches-equivalent-in-base",
+      "patches": [
+        {
+          "sha": "2d1b4e27bc3d7992fbd478311f5b25d1d66f666f",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "f061e6148318513d0e597a5bcf86ee106b0f83e5"
+        }
+      ]
+    },
+    {
+      "ref": "refs/heads/codex/r048-codebuddy-native-auth-fixture",
+      "head": "cf4ac972ecb5b6bf3a1fe5ac8b635b455735712b",
+      "scope": "internal-alignment",
+      "coverage": "all-patches-equivalent-in-base",
+      "patches": [
+        {
+          "sha": "cf4ac972ecb5b6bf3a1fe5ac8b635b455735712b",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "3bcace08f0117b95acd0e99a9c41c380ab3f4ee1"
+        }
+      ]
+    },
+    {
+      "ref": "refs/heads/codex/r049-central-docs",
+      "head": "c9b5ed5a3c1a617fff1cf54ba43cb9bb0ca104e3",
+      "scope": "internal-alignment",
+      "coverage": "all-patches-equivalent-in-base",
+      "patches": [
+        {
+          "sha": "c9b5ed5a3c1a617fff1cf54ba43cb9bb0ca104e3",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "42b112740233a0e9f35b8a265345043770b61e3f"
+        }
+      ]
+    },
+    {
+      "ref": "refs/heads/codex/r049-codebuddy-catalog-diagnostics",
+      "head": "24f9e8d3e4f397210ae4111726b7ac8f497b6ded",
+      "scope": "internal-alignment",
+      "coverage": "all-patches-equivalent-in-base",
+      "patches": [
+        {
+          "sha": "24f9e8d3e4f397210ae4111726b7ac8f497b6ded",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "3ffee522ab347027cd0b37bbc3b53d4b28f0d3aa"
+        }
+      ]
+    },
+    {
+      "ref": "refs/heads/codex/r049-codebuddy-windows-auth-fixture",
+      "head": "d8cc4dff81e7e89d02c316012828f79709bf4f73",
+      "scope": "internal-alignment",
+      "coverage": "all-patches-equivalent-in-base",
+      "patches": [
+        {
+          "sha": "d8cc4dff81e7e89d02c316012828f79709bf4f73",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "d3fe7813102b9e05054401e4640bdd2e80bb21b2"
+        }
+      ]
+    },
+    {
+      "ref": "refs/heads/codex/r049-codex-cold-diagnostics",
+      "head": "5d110610d170366ca9438d1a1f8f4f8146aad9fb",
+      "scope": "internal-alignment",
+      "coverage": "all-patches-equivalent-in-base",
+      "patches": [
+        {
+          "sha": "03a7fbbe409f71be871174f53c2e571bc74dcbfb",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "1fc85aa96470596ef176b55faa93bc37cae8df66"
+        },
+        {
+          "sha": "5d110610d170366ca9438d1a1f8f4f8146aad9fb",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "4fb24b8ae7ff05676b8d69cf72349ac4d4c4bc2d"
+        }
+      ]
+    },
+    {
+      "ref": "refs/heads/codex/r050-central-docs",
+      "head": "f512268cb1e382950645718f0a0bf4a572d58547",
+      "scope": "internal-alignment",
+      "coverage": "all-patches-equivalent-in-base",
+      "patches": [
+        {
+          "sha": "f512268cb1e382950645718f0a0bf4a572d58547",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "969514bf34d267a20681419c197c1858cf20cef6"
+        }
+      ]
+    },
+    {
+      "ref": "refs/heads/codex/r050-codebuddy-tool-result-error",
+      "head": "c48b0455954f0cfdd20986e093f4f79a4b2dcfa8",
+      "scope": "internal-alignment",
+      "coverage": "all-patches-equivalent-in-base",
+      "patches": [
+        {
+          "sha": "c48b0455954f0cfdd20986e093f4f79a4b2dcfa8",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "5d9c4bae1160c2b214fb4199dd67710ade5ec3da"
+        }
+      ]
+    },
+    {
+      "ref": "refs/heads/codex/r051-tool-output",
+      "head": "ac49a369490f1f3ab50dc19a05655df0afb15930",
+      "scope": "internal-alignment",
+      "coverage": "all-patches-equivalent-in-base",
+      "patches": [
+        {
+          "sha": "ac49a369490f1f3ab50dc19a05655df0afb15930",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "359f891bb0dd76de70af90af0970c19477cf40fb"
+        }
+      ]
+    },
+    {
+      "ref": "refs/heads/codex/review-fixes-20260910",
+      "head": "1c49823fafd2a057be4b0fc6dd96a563e957e2e9",
+      "scope": "internal-alignment",
+      "coverage": "ancestor-of-base"
+    },
+    {
+      "ref": "refs/heads/codex/review-fixes-live-20260916",
+      "head": "969514bf34d267a20681419c197c1858cf20cef6",
+      "scope": "internal-alignment",
+      "coverage": "ancestor-of-base"
+    },
+    {
+      "ref": "refs/heads/codex/sdk-api-v1-complete",
+      "head": "df71a1eb00fa07ed526374bdca983306b992de99",
+      "scope": "prior-independent-work",
+      "coverage": "ancestor-of-base"
+    },
+    {
+      "ref": "refs/heads/codex/security-delegation-concurrency",
+      "head": "a7f8830881980cb1c64b1de181dc92ea0a3141f4",
+      "scope": "internal-alignment",
+      "coverage": "windows-security-squash-integrated-and-evolved",
+      "patches": [
+        {
+          "sha": "75922f90b338de8730083b75b1e34e31ea9dabd9",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "ba2ab766f9b32d416fb8d79a4a60a6c77233f02d",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "40ef34d6a38ef5b0eb89483cc363dbedfcd6f742",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "d0f2c4f858a398960fa9c5e33d13389cfb9e721d",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "ff30d8c73571670cf7cbfaf18e919e1766bfd60f",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "80a3ed689a27d460d1361a0015ef98214b463a14",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "3380cc7b397f7fd4a019ee02a0070bee85cea52f",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "76d634151ddbaab27b251f147e50103a43419d3f",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "d2c1199ca88a67323f896140613f50294990fa0e",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "7ea48fc24e4dbf2bc36a05338ee8007d7abfc315",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "bf1037eb60285c48565d6c1ba6eb9d6f79b03d90",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "d84746c7cde8856c95fb93e620b6cc5b8ec223b8",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "612843f5b06d6aaf7342df5bb6387e5c76833891",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "4eb782c861db352ee5c5f236f991f3accd702bff",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "8e89105bedee492b95074bccda0766b9d053768e",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "ad8591ce348ef03ba476eb5b6819444d96da36fd",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "ec329a6c3fc0b31b4d2e9dfc76077d193d6075d9",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "b255f66b0c9034b648a8351b8ecd1a5c36fb4fb7",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "4a1e4c9bf6edfd8d9c21ce8c8a0e905706927803",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "2209e1d9bc6d92685e61815a1bd95ad66fcfe765",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "1425914fdfc45bec740734557a35c90d8a786c97",
+          "status": "patch-equivalent-in-windows-aggregate",
+          "equivalent": "5f8026d001062a35355f09cfd3537caab79dc996"
+        },
+        {
+          "sha": "a7f8830881980cb1c64b1de181dc92ea0a3141f4",
+          "status": "patch-equivalent-in-windows-aggregate",
+          "equivalent": "c723581cf9b1deaff2e8112b8ab9d1d6109296a8"
+        }
+      ]
+    },
+    {
+      "ref": "refs/heads/codex/security-go-patch",
+      "head": "135bc0d4ce32aaf8b81bbdb5482576708236416f",
+      "scope": "internal-alignment",
+      "coverage": "windows-security-squash-integrated-and-evolved",
+      "patches": [
+        {
+          "sha": "75922f90b338de8730083b75b1e34e31ea9dabd9",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "ba2ab766f9b32d416fb8d79a4a60a6c77233f02d",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "40ef34d6a38ef5b0eb89483cc363dbedfcd6f742",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "d0f2c4f858a398960fa9c5e33d13389cfb9e721d",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "ff30d8c73571670cf7cbfaf18e919e1766bfd60f",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "80a3ed689a27d460d1361a0015ef98214b463a14",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "3380cc7b397f7fd4a019ee02a0070bee85cea52f",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "76d634151ddbaab27b251f147e50103a43419d3f",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "d2c1199ca88a67323f896140613f50294990fa0e",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "7ea48fc24e4dbf2bc36a05338ee8007d7abfc315",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "bf1037eb60285c48565d6c1ba6eb9d6f79b03d90",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "d84746c7cde8856c95fb93e620b6cc5b8ec223b8",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "612843f5b06d6aaf7342df5bb6387e5c76833891",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "4eb782c861db352ee5c5f236f991f3accd702bff",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "8e89105bedee492b95074bccda0766b9d053768e",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "ad8591ce348ef03ba476eb5b6819444d96da36fd",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "ec329a6c3fc0b31b4d2e9dfc76077d193d6075d9",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "135bc0d4ce32aaf8b81bbdb5482576708236416f",
+          "status": "patch-equivalent-in-windows-aggregate",
+          "equivalent": "b255f66b0c9034b648a8351b8ecd1a5c36fb4fb7"
+        }
+      ]
+    },
+    {
+      "ref": "refs/heads/codex/security-http-isolation",
+      "head": "15fbecf570593958f48db141f09a2fbbe0d0b745",
+      "scope": "internal-alignment",
+      "coverage": "windows-security-squash-integrated-and-evolved",
+      "patches": [
+        {
+          "sha": "75922f90b338de8730083b75b1e34e31ea9dabd9",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "ba2ab766f9b32d416fb8d79a4a60a6c77233f02d",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "40ef34d6a38ef5b0eb89483cc363dbedfcd6f742",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "d0f2c4f858a398960fa9c5e33d13389cfb9e721d",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "ff30d8c73571670cf7cbfaf18e919e1766bfd60f",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "80a3ed689a27d460d1361a0015ef98214b463a14",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "3380cc7b397f7fd4a019ee02a0070bee85cea52f",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "76d634151ddbaab27b251f147e50103a43419d3f",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "d2c1199ca88a67323f896140613f50294990fa0e",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "7ea48fc24e4dbf2bc36a05338ee8007d7abfc315",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "bf1037eb60285c48565d6c1ba6eb9d6f79b03d90",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "d84746c7cde8856c95fb93e620b6cc5b8ec223b8",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "612843f5b06d6aaf7342df5bb6387e5c76833891",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "4eb782c861db352ee5c5f236f991f3accd702bff",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "8e89105bedee492b95074bccda0766b9d053768e",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "ad8591ce348ef03ba476eb5b6819444d96da36fd",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "ec329a6c3fc0b31b4d2e9dfc76077d193d6075d9",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "b255f66b0c9034b648a8351b8ecd1a5c36fb4fb7",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "4a1e4c9bf6edfd8d9c21ce8c8a0e905706927803",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "2209e1d9bc6d92685e61815a1bd95ad66fcfe765",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "8a0ef6cac09f8095d219d6d4060b0cbe27b3b8c1",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "fd1fd739e3acdc278d3db8216c43b233f3bb4fdb",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "5f8026d001062a35355f09cfd3537caab79dc996",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "c723581cf9b1deaff2e8112b8ab9d1d6109296a8",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "3ebd88b850f735d9f9605e7188cdf39a1d216536",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "08d0c45833969d106712e905af47e11f3befb02d",
+          "status": "patch-equivalent-in-windows-aggregate",
+          "equivalent": "e64fbe35a11038f12e9b731b95ec26fcec4b63be"
+        },
+        {
+          "sha": "15fbecf570593958f48db141f09a2fbbe0d0b745",
+          "status": "patch-equivalent-in-windows-aggregate",
+          "equivalent": "e8f3799bdbafa29c465a39a2e180bbe7149ca1d9"
+        }
+      ]
+    },
+    {
+      "ref": "refs/heads/codex/security-profile-concurrency",
+      "head": "3f48dbe0c106201c539e8cc1a70e6404d79449f2",
+      "scope": "internal-alignment",
+      "coverage": "windows-security-squash-integrated-and-evolved",
+      "patches": [
+        {
+          "sha": "75922f90b338de8730083b75b1e34e31ea9dabd9",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "ba2ab766f9b32d416fb8d79a4a60a6c77233f02d",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "40ef34d6a38ef5b0eb89483cc363dbedfcd6f742",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "d0f2c4f858a398960fa9c5e33d13389cfb9e721d",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "ff30d8c73571670cf7cbfaf18e919e1766bfd60f",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "80a3ed689a27d460d1361a0015ef98214b463a14",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "3380cc7b397f7fd4a019ee02a0070bee85cea52f",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "76d634151ddbaab27b251f147e50103a43419d3f",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "d2c1199ca88a67323f896140613f50294990fa0e",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "7ea48fc24e4dbf2bc36a05338ee8007d7abfc315",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "bf1037eb60285c48565d6c1ba6eb9d6f79b03d90",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "d84746c7cde8856c95fb93e620b6cc5b8ec223b8",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "612843f5b06d6aaf7342df5bb6387e5c76833891",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "4eb782c861db352ee5c5f236f991f3accd702bff",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "8e89105bedee492b95074bccda0766b9d053768e",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "ad8591ce348ef03ba476eb5b6819444d96da36fd",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "ec329a6c3fc0b31b4d2e9dfc76077d193d6075d9",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "b255f66b0c9034b648a8351b8ecd1a5c36fb4fb7",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "4a1e4c9bf6edfd8d9c21ce8c8a0e905706927803",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "2209e1d9bc6d92685e61815a1bd95ad66fcfe765",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "3f48dbe0c106201c539e8cc1a70e6404d79449f2",
+          "status": "patch-equivalent-in-windows-aggregate",
+          "equivalent": "8a0ef6cac09f8095d219d6d4060b0cbe27b3b8c1"
+        }
+      ]
+    },
+    {
+      "ref": "refs/heads/codex/sync-claude-20261004",
+      "head": "ff67dacaabc709c499a3af99a4326dec6ebba127",
+      "scope": "internal-alignment",
+      "coverage": "all-patches-equivalent-in-base",
+      "patches": [
+        {
+          "sha": "f9efbf0ce3577974a12b239d96f32c63d993747d",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "26de9f7ba022fd91621210311a79150caa0b8cc1"
+        },
+        {
+          "sha": "ff67dacaabc709c499a3af99a4326dec6ebba127",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "8345c80956baa2e9062acf98475c8f6f5081a7f0"
+        }
+      ]
+    },
+    {
+      "ref": "refs/heads/codex/sync-context-20261004",
+      "head": "153d8addfa77e82da809583fbb0cee81cb698164",
+      "scope": "internal-alignment",
+      "coverage": "all-patches-equivalent-in-base",
+      "patches": [
+        {
+          "sha": "153d8addfa77e82da809583fbb0cee81cb698164",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "7eda14a7ba654808e3d09b0b1e6f7d9d382dcae1"
+        }
+      ]
+    },
+    {
+      "ref": "refs/heads/codex/sync-messages-20261004",
+      "head": "515434c68e534d849b434b415b4a1314041e793b",
+      "scope": "internal-alignment",
+      "coverage": "all-patches-equivalent-in-base",
+      "patches": [
+        {
+          "sha": "5fc4fecd5febecf13ba02b7558edcc98677d502d",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "37f0cb4828442b5064afec0f0f16e7f0d0e18088"
+        },
+        {
+          "sha": "51bf484ff88a91be4ef934538106bac5ef3e455c",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "b3ad4e5aa1e73a3b99a5023b1fc86a314706ce23"
+        },
+        {
+          "sha": "5fa0da18944c4f35ea61a8d1a42ecbd7b63b01ce",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "091eebf6f8234683b84db6f6f10e429583e7165e"
+        },
+        {
+          "sha": "76b0d9b265c16489f6e9c2a45e42d1a373d3198b",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "bdbed2c6f6667c37bac66332a73e61ade8a19bcc"
+        },
+        {
+          "sha": "9dc33880f6a264be596a4ebf71fa7d44aa07434f",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "6cacc98a019165e7e4490112d7bc74d85191a8f0"
+        },
+        {
+          "sha": "58a422ac8745466d02271c15abac37b8e7b9b239",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "d6e666a75a7f0b3980921bc1fce9db7138e9f27a"
+        },
+        {
+          "sha": "515434c68e534d849b434b415b4a1314041e793b",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "5362e4b57724978f59026218ced3b8a28aba62cb"
+        }
+      ]
+    },
+    {
+      "ref": "refs/heads/codex/sync-recorder-20261004",
+      "head": "3b2713937287be3256101294f5201afadba0a6b8",
+      "scope": "internal-alignment",
+      "coverage": "all-patches-equivalent-in-base",
+      "patches": [
+        {
+          "sha": "4adce5752c69d130d94bbe5e8336f39cd213a21b",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "091eebf6f8234683b84db6f6f10e429583e7165e"
+        },
+        {
+          "sha": "4da60948840ac39fd6f6704e8b429a917616ea26",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "37f0cb4828442b5064afec0f0f16e7f0d0e18088"
+        },
+        {
+          "sha": "456a2e333e20e84d70100666227ea7be56dbe805",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "b3ad4e5aa1e73a3b99a5023b1fc86a314706ce23"
+        },
+        {
+          "sha": "e3c8fdc03e4d1ec19206f09c6e2896adaca874af",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "d6e666a75a7f0b3980921bc1fce9db7138e9f27a"
+        },
+        {
+          "sha": "3b2713937287be3256101294f5201afadba0a6b8",
+          "status": "patch-equivalent-in-base",
+          "equivalent": "1a2cf20c7edacc61bd68d2ad666ffb1ded0cfb5f"
+        }
+      ]
+    },
+    {
+      "ref": "refs/heads/codex/windows-repair-a2a-cancel",
+      "head": "72f18ba06ad0ab9a622221e386d16bffd9b26841",
+      "scope": "internal-alignment",
+      "coverage": "windows-security-squash-integrated-and-evolved",
+      "patches": [
+        {
+          "sha": "75922f90b338de8730083b75b1e34e31ea9dabd9",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "ba2ab766f9b32d416fb8d79a4a60a6c77233f02d",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "40ef34d6a38ef5b0eb89483cc363dbedfcd6f742",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "d0f2c4f858a398960fa9c5e33d13389cfb9e721d",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "ff30d8c73571670cf7cbfaf18e919e1766bfd60f",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "80a3ed689a27d460d1361a0015ef98214b463a14",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "3380cc7b397f7fd4a019ee02a0070bee85cea52f",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "76d634151ddbaab27b251f147e50103a43419d3f",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "d2c1199ca88a67323f896140613f50294990fa0e",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "7ea48fc24e4dbf2bc36a05338ee8007d7abfc315",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "72f18ba06ad0ab9a622221e386d16bffd9b26841",
+          "status": "patch-equivalent-in-windows-aggregate",
+          "equivalent": "d84746c7cde8856c95fb93e620b6cc5b8ec223b8"
+        }
+      ]
+    },
+    {
+      "ref": "refs/heads/codex/windows-repair-codex-cancel",
+      "head": "5e0607947d570eb7c1046c6a261d9c2b0a52ebdc",
+      "scope": "internal-alignment",
+      "coverage": "windows-security-squash-integrated-and-evolved",
+      "patches": [
+        {
+          "sha": "75922f90b338de8730083b75b1e34e31ea9dabd9",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "ba2ab766f9b32d416fb8d79a4a60a6c77233f02d",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "40ef34d6a38ef5b0eb89483cc363dbedfcd6f742",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "d0f2c4f858a398960fa9c5e33d13389cfb9e721d",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "ff30d8c73571670cf7cbfaf18e919e1766bfd60f",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "80a3ed689a27d460d1361a0015ef98214b463a14",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "3380cc7b397f7fd4a019ee02a0070bee85cea52f",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "76d634151ddbaab27b251f147e50103a43419d3f",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "d2c1199ca88a67323f896140613f50294990fa0e",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "7ea48fc24e4dbf2bc36a05338ee8007d7abfc315",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "5e0607947d570eb7c1046c6a261d9c2b0a52ebdc",
+          "status": "patch-equivalent-in-windows-aggregate",
+          "equivalent": "612843f5b06d6aaf7342df5bb6387e5c76833891"
+        }
+      ]
+    },
+    {
+      "ref": "refs/heads/codex/windows-repair-codex-fixtures",
+      "head": "0a13c39019e8bb7c8c47e4f115f9e8923da068c3",
+      "scope": "internal-alignment",
+      "coverage": "windows-security-squash-integrated-and-evolved",
+      "patches": [
+        {
+          "sha": "75922f90b338de8730083b75b1e34e31ea9dabd9",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "0a13c39019e8bb7c8c47e4f115f9e8923da068c3",
+          "status": "patch-equivalent-in-windows-aggregate",
+          "equivalent": "40ef34d6a38ef5b0eb89483cc363dbedfcd6f742"
+        }
+      ]
+    },
+    {
+      "ref": "refs/heads/codex/windows-repair-cursor-equivalence",
+      "head": "f71deb2547a5da6c443f81abd3914ab659bad0a5",
+      "scope": "internal-alignment",
+      "coverage": "windows-security-squash-integrated-and-evolved",
+      "patches": [
+        {
+          "sha": "75922f90b338de8730083b75b1e34e31ea9dabd9",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "ba2ab766f9b32d416fb8d79a4a60a6c77233f02d",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "40ef34d6a38ef5b0eb89483cc363dbedfcd6f742",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "d0f2c4f858a398960fa9c5e33d13389cfb9e721d",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "ff30d8c73571670cf7cbfaf18e919e1766bfd60f",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "80a3ed689a27d460d1361a0015ef98214b463a14",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "3380cc7b397f7fd4a019ee02a0070bee85cea52f",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "76d634151ddbaab27b251f147e50103a43419d3f",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "d2c1199ca88a67323f896140613f50294990fa0e",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "7ea48fc24e4dbf2bc36a05338ee8007d7abfc315",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "bf1037eb60285c48565d6c1ba6eb9d6f79b03d90",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "d84746c7cde8856c95fb93e620b6cc5b8ec223b8",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "612843f5b06d6aaf7342df5bb6387e5c76833891",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "4eb782c861db352ee5c5f236f991f3accd702bff",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "8e89105bedee492b95074bccda0766b9d053768e",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "f71deb2547a5da6c443f81abd3914ab659bad0a5",
+          "status": "patch-equivalent-in-windows-aggregate",
+          "equivalent": "ec329a6c3fc0b31b4d2e9dfc76077d193d6075d9"
+        }
+      ]
+    },
+    {
+      "ref": "refs/heads/codex/windows-repair-deadline-audit",
+      "head": "32dd88746c0f82f6c89e037b1df4b3e9f9b51ce1",
+      "scope": "internal-alignment",
+      "coverage": "windows-security-squash-integrated-and-evolved",
+      "patches": [
+        {
+          "sha": "75922f90b338de8730083b75b1e34e31ea9dabd9",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "ba2ab766f9b32d416fb8d79a4a60a6c77233f02d",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "40ef34d6a38ef5b0eb89483cc363dbedfcd6f742",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "d0f2c4f858a398960fa9c5e33d13389cfb9e721d",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "ff30d8c73571670cf7cbfaf18e919e1766bfd60f",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "80a3ed689a27d460d1361a0015ef98214b463a14",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "3380cc7b397f7fd4a019ee02a0070bee85cea52f",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "76d634151ddbaab27b251f147e50103a43419d3f",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "d2c1199ca88a67323f896140613f50294990fa0e",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "7ea48fc24e4dbf2bc36a05338ee8007d7abfc315",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "bf1037eb60285c48565d6c1ba6eb9d6f79b03d90",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "d84746c7cde8856c95fb93e620b6cc5b8ec223b8",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "612843f5b06d6aaf7342df5bb6387e5c76833891",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "4eb782c861db352ee5c5f236f991f3accd702bff",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "32dd88746c0f82f6c89e037b1df4b3e9f9b51ce1",
+          "status": "patch-equivalent-in-windows-aggregate",
+          "equivalent": "8e89105bedee492b95074bccda0766b9d053768e"
+        }
+      ]
+    },
+    {
+      "ref": "refs/heads/codex/windows-repair-fixture-timing",
+      "head": "b269ccac9dec1847ecdba59b22c5f32ae7554646",
+      "scope": "internal-alignment",
+      "coverage": "windows-security-squash-integrated-and-evolved",
+      "patches": [
+        {
+          "sha": "75922f90b338de8730083b75b1e34e31ea9dabd9",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "ba2ab766f9b32d416fb8d79a4a60a6c77233f02d",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "40ef34d6a38ef5b0eb89483cc363dbedfcd6f742",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "d0f2c4f858a398960fa9c5e33d13389cfb9e721d",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "ff30d8c73571670cf7cbfaf18e919e1766bfd60f",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "80a3ed689a27d460d1361a0015ef98214b463a14",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "3380cc7b397f7fd4a019ee02a0070bee85cea52f",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "76d634151ddbaab27b251f147e50103a43419d3f",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "d2c1199ca88a67323f896140613f50294990fa0e",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "7ea48fc24e4dbf2bc36a05338ee8007d7abfc315",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "b269ccac9dec1847ecdba59b22c5f32ae7554646",
+          "status": "patch-equivalent-in-windows-aggregate",
+          "equivalent": "bf1037eb60285c48565d6c1ba6eb9d6f79b03d90"
+        }
+      ]
+    },
+    {
+      "ref": "refs/heads/codex/windows-repair-misc-tests",
+      "head": "0f865271b3b3b8623a79912c7e46a621a78dd8ec",
+      "scope": "internal-alignment",
+      "coverage": "windows-security-squash-integrated-and-evolved",
+      "patches": [
+        {
+          "sha": "75922f90b338de8730083b75b1e34e31ea9dabd9",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "1ced3b6ee1d9dc22b57a51746e285e81f8668da5",
+          "status": "patch-equivalent-in-windows-aggregate",
+          "equivalent": "3380cc7b397f7fd4a019ee02a0070bee85cea52f"
+        },
+        {
+          "sha": "529aa1338cbac37c8b2c8c9991cbd1be1b7c5723",
+          "status": "patch-equivalent-in-windows-aggregate",
+          "equivalent": "76d634151ddbaab27b251f147e50103a43419d3f"
+        },
+        {
+          "sha": "0f865271b3b3b8623a79912c7e46a621a78dd8ec",
+          "status": "patch-equivalent-in-windows-aggregate",
+          "equivalent": "7ea48fc24e4dbf2bc36a05338ee8007d7abfc315"
+        }
+      ]
+    },
+    {
+      "ref": "refs/heads/codex/windows-repair-profiles",
+      "head": "5dfe11eb8da80791c0958bd92eb032797e2780c8",
+      "scope": "internal-alignment",
+      "coverage": "windows-security-squash-integrated-and-evolved",
+      "patches": [
+        {
+          "sha": "75922f90b338de8730083b75b1e34e31ea9dabd9",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "5dfe11eb8da80791c0958bd92eb032797e2780c8",
+          "status": "patch-equivalent-in-windows-aggregate",
+          "equivalent": "80a3ed689a27d460d1361a0015ef98214b463a14"
+        }
+      ]
+    },
+    {
+      "ref": "refs/heads/codex/windows-repair-prompt",
+      "head": "f2b858d8cf5c2862f08993005bc35467f395ae8a",
+      "scope": "internal-alignment",
+      "coverage": "windows-security-squash-integrated-and-evolved",
+      "patches": [
+        {
+          "sha": "75922f90b338de8730083b75b1e34e31ea9dabd9",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "f2b858d8cf5c2862f08993005bc35467f395ae8a",
+          "status": "patch-equivalent-in-windows-aggregate",
+          "equivalent": "ff30d8c73571670cf7cbfaf18e919e1766bfd60f"
+        }
+      ]
+    },
+    {
+      "ref": "refs/heads/codex/windows-repair-protocol-fixtures",
+      "head": "50316657de19519adc9546092d939e88c2b2e64b",
+      "scope": "internal-alignment",
+      "coverage": "windows-security-squash-integrated-and-evolved",
+      "patches": [
+        {
+          "sha": "75922f90b338de8730083b75b1e34e31ea9dabd9",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "50316657de19519adc9546092d939e88c2b2e64b",
+          "status": "patch-equivalent-in-windows-aggregate",
+          "equivalent": "d0f2c4f858a398960fa9c5e33d13389cfb9e721d"
+        }
+      ]
+    },
+    {
+      "ref": "refs/heads/codex/windows-validation-20260908",
+      "head": "7fe550a994327384a7dbb377dc5b5726c4b02c92",
+      "scope": "internal-alignment",
+      "coverage": "windows-security-squash-integrated-and-evolved",
+      "patches": [
+        {
+          "sha": "75922f90b338de8730083b75b1e34e31ea9dabd9",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "ba2ab766f9b32d416fb8d79a4a60a6c77233f02d",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "40ef34d6a38ef5b0eb89483cc363dbedfcd6f742",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "d0f2c4f858a398960fa9c5e33d13389cfb9e721d",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "ff30d8c73571670cf7cbfaf18e919e1766bfd60f",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "80a3ed689a27d460d1361a0015ef98214b463a14",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "3380cc7b397f7fd4a019ee02a0070bee85cea52f",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "76d634151ddbaab27b251f147e50103a43419d3f",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "d2c1199ca88a67323f896140613f50294990fa0e",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "7ea48fc24e4dbf2bc36a05338ee8007d7abfc315",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "bf1037eb60285c48565d6c1ba6eb9d6f79b03d90",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "d84746c7cde8856c95fb93e620b6cc5b8ec223b8",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "612843f5b06d6aaf7342df5bb6387e5c76833891",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "4eb782c861db352ee5c5f236f991f3accd702bff",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "8e89105bedee492b95074bccda0766b9d053768e",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "ad8591ce348ef03ba476eb5b6819444d96da36fd",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "ec329a6c3fc0b31b4d2e9dfc76077d193d6075d9",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "b255f66b0c9034b648a8351b8ecd1a5c36fb4fb7",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "4a1e4c9bf6edfd8d9c21ce8c8a0e905706927803",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "2209e1d9bc6d92685e61815a1bd95ad66fcfe765",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "8a0ef6cac09f8095d219d6d4060b0cbe27b3b8c1",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "fd1fd739e3acdc278d3db8216c43b233f3bb4fdb",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "5f8026d001062a35355f09cfd3537caab79dc996",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "c723581cf9b1deaff2e8112b8ab9d1d6109296a8",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "3ebd88b850f735d9f9605e7188cdf39a1d216536",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "e64fbe35a11038f12e9b731b95ec26fcec4b63be",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "e8f3799bdbafa29c465a39a2e180bbe7149ca1d9",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "7fe550a994327384a7dbb377dc5b5726c4b02c92",
+          "status": "in-windows-aggregate"
+        }
+      ]
+    },
+    {
+      "ref": "refs/heads/feat/issue-5-delegation-subagents",
+      "head": "11f5196ca894f1271704b38edcc90f109967a4e2",
+      "scope": "prior-independent-work",
+      "coverage": "separate-work-not-covered-by-alignment-base"
+    },
+    {
+      "ref": "refs/heads/feat/per-run-model-override",
+      "head": "6d5ac503758612c30288692308a2fafac500fd70",
+      "scope": "prior-independent-work",
+      "coverage": "separate-work-not-covered-by-alignment-base"
+    },
+    {
+      "ref": "refs/heads/fix/cancel-kills-process-group",
+      "head": "da79e46b0ef04cf60539ee1666ef76835223069f",
+      "scope": "prior-independent-work",
+      "coverage": "ancestor-of-base"
+    },
+    {
+      "ref": "refs/heads/fix/claude-checkpoint-on-abnormal-exit",
+      "head": "d1fff32957f0b8774966f73e3e3237d4d44a8dfe",
+      "scope": "prior-independent-work",
+      "coverage": "ancestor-of-base"
+    },
+    {
+      "ref": "refs/heads/main",
+      "head": "a2d92b2bfa31ff847e4d0cc534cefac7610ff468",
+      "scope": "prior-independent-work",
+      "coverage": "ancestor-of-base"
+    },
+    {
+      "ref": "refs/heads/squash_master",
+      "head": "c9a0bb82cb03a7573da16b4d7782302c1e6c3dde",
+      "scope": "prior-independent-work",
+      "coverage": "separate-work-not-covered-by-alignment-base"
+    },
+    {
+      "ref": "refs/remotes/origin/HEAD",
+      "head": "919f140f64f89c80933802840c8878681a85a4d9",
+      "scope": "prior-independent-work",
+      "coverage": "ancestor-of-base"
+    },
+    {
+      "ref": "refs/remotes/origin/cl/examples_refactor",
+      "head": "6122bda8aebe679ea20258ff7e1d50adf3bdce89",
+      "scope": "prior-independent-work",
+      "coverage": "separate-work-not-covered-by-alignment-base"
+    },
+    {
+      "ref": "refs/remotes/origin/cl/opt_examples",
+      "head": "ca87b82b069724e63f6077486b724938068ef511",
+      "scope": "prior-independent-work",
+      "coverage": "separate-work-not-covered-by-alignment-base"
+    },
+    {
+      "ref": "refs/remotes/origin/cl/refactor_profile",
+      "head": "016c700cc4f0eded620d95ab59835c6151ce1165",
+      "scope": "prior-independent-work",
+      "coverage": "separate-work-not-covered-by-alignment-base"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/fix-hosted-tools-v1.1.1",
+      "head": "77df7b6dbbf301a89ba3749f24e9f128c646b02a",
+      "scope": "prior-independent-work",
+      "coverage": "all-patches-equivalent-in-base"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/fix-resume-stale-token-usage",
+      "head": "6432e5e4f727bb27c08f55ebd75c5b1707d8569a",
+      "scope": "explicit-separate-branch-in-frozen-contract",
+      "coverage": "separate-work-not-covered-by-alignment-base"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/fix-tool-runtime-close-v1.1.1",
+      "head": "bacfcddb1d3c4f0638e3d1c1076d1610345fdfcf",
+      "scope": "prior-independent-work",
+      "coverage": "all-patches-equivalent-in-base"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/internal-sync-20261004",
+      "head": "07f92fb7983b050904c7654aa58f716a8533c617",
+      "scope": "internal-alignment",
+      "coverage": "ancestor-of-base"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/issue-4-a2a",
+      "head": "8d3a5d9eecce5873d29e036861322f6c5944ff16",
+      "scope": "prior-independent-work",
+      "coverage": "separate-work-not-covered-by-alignment-base"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/issue-7-structured-output",
+      "head": "9e4fc03fdda65d667cabaf2f8f43807ca455810c",
+      "scope": "prior-independent-work",
+      "coverage": "all-patches-equivalent-in-base"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/review-fixes-20260910",
+      "head": "1c49823fafd2a057be4b0fc6dd96a563e957e2e9",
+      "scope": "internal-alignment",
+      "coverage": "ancestor-of-base"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/review-fixes-live-20260916",
+      "head": "969514bf34d267a20681419c197c1858cf20cef6",
+      "scope": "internal-alignment",
+      "coverage": "ancestor-of-base"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/run-scoped-mcp-tool-approval",
+      "head": "12a1ad12be4a2cf882e0db8b5b2ddb37b841d3f3",
+      "scope": "explicit-separate-branch-in-frozen-contract",
+      "coverage": "separate-work-not-covered-by-alignment-base"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/sdk-api-v1-complete",
+      "head": "764dd043d2532e9311c3836601b3f72999757a53",
+      "scope": "prior-independent-work",
+      "coverage": "ancestor-of-base"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/windows-validation-20260908",
+      "head": "7fe550a994327384a7dbb377dc5b5726c4b02c92",
+      "scope": "internal-alignment",
+      "coverage": "windows-security-squash-integrated-and-evolved",
+      "patches": [
+        {
+          "sha": "75922f90b338de8730083b75b1e34e31ea9dabd9",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "ba2ab766f9b32d416fb8d79a4a60a6c77233f02d",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "40ef34d6a38ef5b0eb89483cc363dbedfcd6f742",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "d0f2c4f858a398960fa9c5e33d13389cfb9e721d",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "ff30d8c73571670cf7cbfaf18e919e1766bfd60f",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "80a3ed689a27d460d1361a0015ef98214b463a14",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "3380cc7b397f7fd4a019ee02a0070bee85cea52f",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "76d634151ddbaab27b251f147e50103a43419d3f",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "d2c1199ca88a67323f896140613f50294990fa0e",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "7ea48fc24e4dbf2bc36a05338ee8007d7abfc315",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "bf1037eb60285c48565d6c1ba6eb9d6f79b03d90",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "d84746c7cde8856c95fb93e620b6cc5b8ec223b8",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "612843f5b06d6aaf7342df5bb6387e5c76833891",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "4eb782c861db352ee5c5f236f991f3accd702bff",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "8e89105bedee492b95074bccda0766b9d053768e",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "ad8591ce348ef03ba476eb5b6819444d96da36fd",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "ec329a6c3fc0b31b4d2e9dfc76077d193d6075d9",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "b255f66b0c9034b648a8351b8ecd1a5c36fb4fb7",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "4a1e4c9bf6edfd8d9c21ce8c8a0e905706927803",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "2209e1d9bc6d92685e61815a1bd95ad66fcfe765",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "8a0ef6cac09f8095d219d6d4060b0cbe27b3b8c1",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "fd1fd739e3acdc278d3db8216c43b233f3bb4fdb",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "5f8026d001062a35355f09cfd3537caab79dc996",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "c723581cf9b1deaff2e8112b8ab9d1d6109296a8",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "3ebd88b850f735d9f9605e7188cdf39a1d216536",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "e64fbe35a11038f12e9b731b95ec26fcec4b63be",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "e8f3799bdbafa29c465a39a2e180bbe7149ca1d9",
+          "status": "in-windows-aggregate"
+        },
+        {
+          "sha": "7fe550a994327384a7dbb377dc5b5726c4b02c92",
+          "status": "in-windows-aggregate"
+        }
+      ]
+    },
+    {
+      "ref": "refs/remotes/origin/feat/issue-5-delegation-subagents",
+      "head": "11f5196ca894f1271704b38edcc90f109967a4e2",
+      "scope": "prior-independent-work",
+      "coverage": "separate-work-not-covered-by-alignment-base"
+    },
+    {
+      "ref": "refs/remotes/origin/feat/per-run-model-override",
+      "head": "6d5ac503758612c30288692308a2fafac500fd70",
+      "scope": "prior-independent-work",
+      "coverage": "separate-work-not-covered-by-alignment-base"
+    },
+    {
+      "ref": "refs/remotes/origin/feat/team-mode-a2a-default-agents",
+      "head": "4b6c0a84a65d382549e7352decc143a6d19094f7",
+      "scope": "prior-independent-work",
+      "coverage": "separate-work-not-covered-by-alignment-base"
+    },
+    {
+      "ref": "refs/remotes/origin/feature/flowx-status-cards",
+      "head": "3c145e10a6c3574dba604786d9c7d4cd921d8ae0",
+      "scope": "prior-independent-work",
+      "coverage": "separate-work-not-covered-by-alignment-base"
+    },
+    {
+      "ref": "refs/remotes/origin/fix/cancel-kills-process-group",
+      "head": "da79e46b0ef04cf60539ee1666ef76835223069f",
+      "scope": "prior-independent-work",
+      "coverage": "ancestor-of-base"
+    },
+    {
+      "ref": "refs/remotes/origin/main",
+      "head": "919f140f64f89c80933802840c8878681a85a4d9",
+      "scope": "prior-independent-work",
+      "coverage": "ancestor-of-base"
+    },
+    {
+      "ref": "refs/remotes/origin/wip/fix-claude-tool-call-streaming",
+      "head": "f9e0d3fd145e877d218afb63f70123fb88ea5fad",
+      "scope": "prior-independent-work",
+      "coverage": "separate-work-not-covered-by-alignment-base"
+    }
+  ],
+  "reflog_only": [
+    {
+      "sha": "e4f4cefba33f45502da6412a1813732f73b84016",
+      "subject": "test: close independent lifecycle QA oracle gaps",
+      "equivalent": null,
+      "status": "superseded-rebase-with-test-source-equivalence-and-updated-handoff-docs",
+      "successor": "2d50f024c5c51d7c8c8d55dce11c92988748cf37"
+    },
+    {
+      "sha": "4888f21701afd3d5d7f7405082996dae14cae7e7",
+      "subject": "test: close independent lifecycle QA oracle gaps",
+      "equivalent": null,
+      "status": "superseded-rebase-with-test-source-equivalence-and-updated-handoff-docs",
+      "successor": "2d50f024c5c51d7c8c8d55dce11c92988748cf37"
+    },
+    {
+      "sha": "52d5f4c4ea689096046774f5fe31865d6f7ca8d9",
+      "subject": "test: enforce observation parents and envelope authority",
+      "equivalent": "29cb3f494fd9c850f3f70f9ec49730931bb12255",
+      "status": "patch-equivalent-in-base"
+    },
+    {
+      "sha": "66a86f345495f96109b52627f217989c115c9294",
+      "subject": "test: require consumed drain tail and synchronize Result completion",
+      "equivalent": "ba9dec4f2e54691e0232eeb3296f03d7af757bf0",
+      "status": "patch-equivalent-in-base"
+    },
+    {
+      "sha": "1810fbdb386d9ab86d45332802e72b8905111835",
+      "subject": "test: reproduce T22 unread-tail drain oracle gap",
+      "equivalent": "0176e80b688e1deec91ffd84d49f8096b107055d",
+      "status": "patch-equivalent-in-base"
+    },
+    {
+      "sha": "b8d9ce6b763739854bffe3226e560006061a8376",
+      "subject": "test: retain AG-UI output snapshots in cross-layer QA",
+      "equivalent": "7cef55a09a50ca86925f376229b5b5cfcea17102",
+      "status": "patch-equivalent-in-base"
+    },
+    {
+      "sha": "6e8644a1c4d90b29b24147b4f7e15956aeb656d2",
+      "subject": "test: guard every provider package subtree",
+      "equivalent": "7833e7436216e14955f24b2be86d3ef86d8a2894",
+      "status": "patch-equivalent-in-base"
+    },
+    {
+      "sha": "8b52ce06bdd34eeff1315cc3e897db950ed000a5",
+      "subject": "test: finish protocol boundary and independent QA handoff coverage",
+      "equivalent": "e0e3bddeb469473293ef6f96d49d5a4bcf00c381",
+      "status": "patch-equivalent-in-base"
+    },
+    {
+      "sha": "cb4f44ef723eb30128cf4ed2235305e7acf12a87",
+      "subject": "test: assert nonempty partial service and transcript audit",
+      "equivalent": "1895853c2101bb217cfe12a57c01d990baad0740",
+      "status": "patch-equivalent-in-base"
+    },
+    {
+      "sha": "7da5821d6601a0e3d1e06686981ef7462e2b3efe",
+      "subject": "Close offline driver lifecycles on every return path",
+      "equivalent": "e2a2c0a2593082bc8484c1f7f582366ac3903168",
+      "status": "patch-equivalent-in-base"
+    },
+    {
+      "sha": "446959147a149fe33d61ca942224826e1eac782a",
+      "subject": "test: complete T22 policy oracles and document public HTTP boundaries",
+      "equivalent": "394aca84c76568f9d0696522fa3c0d19c71f2c21",
+      "status": "patch-equivalent-in-base"
+    },
+    {
+      "sha": "d3294085be18508a29bae75d37896a36c809605a",
+      "subject": "test: add independent cross-layer policy QA fixtures",
+      "equivalent": "59b2e535a363b8c88d20365423ccd471c59272b5",
+      "status": "patch-equivalent-in-base"
+    },
+    {
+      "sha": "b2f7b9293906b9feca27806b61fb0ebabc89eb13",
+      "subject": "test: add independent cross-layer protocol QA fixtures",
+      "equivalent": "ef510784f40995ab7daa2ab62ea8dbdae1938d61",
+      "status": "patch-equivalent-in-base"
+    },
+    {
+      "sha": "4be1f09dbed3551387b71cf183aadd311bdcdeec",
+      "subject": "test(e2e): make partial prompt failure deterministic",
+      "equivalent": "64c502d64020384dcfdc930a4dab17777ffb5a39",
+      "status": "patch-equivalent-in-base"
+    },
+    {
+      "sha": "81ec4bc22b5e932dce44e3af13853092f8f0411a",
+      "subject": "test(e2e): independently verify cross-layer lifecycle contracts",
+      "equivalent": "4360ab72117d3ae9662046b40ee3ff3ac10c402c",
+      "status": "patch-equivalent-in-base"
+    },
+    {
+      "sha": "45111c97b4087647b6cdaddfdc27d4a70defd158",
+      "subject": "test: verify observations independently of rich stream support",
+      "equivalent": "3f2fb5066fd0e6d900f262b14c1ec00f745a9d5e",
+      "status": "patch-equivalent-in-base"
+    },
+    {
+      "sha": "0bf137f703502dc8734867f0a934ff4c680eb499",
+      "subject": "Clarify canonical validation command preservation for T24",
+      "equivalent": "f096faef6d68b4d7c6ce63a51cd047e51a401473",
+      "status": "patch-equivalent-in-base"
+    },
+    {
+      "sha": "ca6fa15aa92ab7b7e774f6bbd007368daead384e",
+      "subject": "test: strengthen alignment conformance and platform gates",
+      "equivalent": "dc43a41c0f5d4a8d383386f0c463e17384fc1d9f",
+      "status": "patch-equivalent-in-base"
+    },
+    {
+      "sha": "c225a9be9f777446356686a613dac23067c5e662",
+      "subject": "Document final consumer contracts and add offline execution example",
+      "equivalent": null,
+      "status": "superseded-rebase-context-only-difference",
+      "successor": "2d0445ef8f8a816b7beb1d4ec2ffbe003859c562"
+    },
+    {
+      "sha": "26e7b41710f5804f84e11bcc8c7582a3c31450d6",
+      "subject": "Merge remote-tracking branch 'woa/master'",
+      "equivalent": null,
+      "status": "prior-July-merge-outside-internal-alignment-scope"
+    }
+  ],
+  "worktrees": {
+    "registered_before_consolidation": 158,
+    "existing": 33,
+    "missing": 125,
+    "stash_count": 0,
+    "missing_admin_indexes_clean": 125,
+    "unregistered_worktrees": 0,
+    "uncommitted_disposition": [
+      {
+        "source": "repository root",
+        "changes": 56602,
+        "execution_artifacts": 56585,
+        "other_docs_and_dsh_probes": 17,
+        "action": "Retained unchanged in the original index; no alignment SDK implementation omitted."
+      },
+      {
+        "source": "Cursor mlc",
+        "changes": 4,
+        "equivalent_ancestor": "3cd4149",
+        "action": "Historical design documents already incorporated; original files retained unchanged."
+      }
+    ],
+    "alignment_detached_heads": "All are ancestors of the integration base."
+  },
+  "windows_aggregate": {
+    "source": "7fe550a994327384a7dbb377dc5b5726c4b02c92",
+    "integration": "06a1828d9a744351796cf158076431dccd52aebd",
+    "restored_history": "ff30d8c73571670cf7cbfaf18e919e1766bfd60f",
+    "equivalent_worker": "f2b858d8cf5c2862f08993005bc35467f395ae8a",
+    "finding": "The aggregate retained pre-use validation but dropped Windows Close file owner/DACL/link-count rejection. R054 restores that guard without reverting R024/R026 creation, publication or lifetime pins.",
+    "validation": "Native Windows acceptance must use the new exact source SHA; cross-compilation is not acceptance."
+  },
+  "frozen_scope_decisions": {
+    "6432e5e": "No automatic merge; stale-turn Usage semantics were reimplemented and tested by T16.",
+    "12a1ad12": "No automatic merge; preserve the current stronger tool authorization boundary.",
+    "1921636510ced4c830c0287fe68d41218f1ed185": "Preserve the explicit incremental migration exclusion recorded in R052.",
+    "N08": "Preserve the recorded decision not to adopt the separate A2A cross-HTTP hosted-run feature."
+  },
+  "release_readiness": "Not asserted. This branch consolidates code; prior CI/live failures and G05/G06 requirements remain."
+}

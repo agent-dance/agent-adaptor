@@ -442,6 +442,8 @@ R052：2026-10-04 internal 增量对齐以目标969514b和源2e57139为固定基
 
 R053：06322d5合流CI的前端安全审计与T25 recovery夹具失败分别保留。CopilotKit三直接包统一采用原生依赖安全A2UI的稳定版本，busboy在兼容range内修补；不强制跨0.x覆盖旧API，不删除功能或降低生产/全树high审计阈值。GetTask计数必须表示实际已解码HTTP请求接收，不能以阻塞hook后的完成计数推断准入；recovery用接收屏障及同请求context取消验证500ms主动预算，原cause/limit/partial/cancel/new-rounds断言保持。旧失败无内部调度轨迹，受控反例不倒填原run原因。CI01/CI02仅窄域补充任务，精确路径和非作者验证后形成新SHA重跑完整门禁；无官方修复版本的braces开发依赖继续阻断全树审计，不能通过丢失Next规则/flat config的降级、本地shim或冒名包刷绿。旧47/96/45/9和G06未通过保持。
 
+R054：跨全部分支/worktree汇总时发现Windows File.Close的文件owner/DACL/link-count拒绝保护在历史重写中遗漏。清理前必须在同一文件句柄核对身份和安全状态，失败不删除文件、不释放目录pin，修正后可重试，Stat/校验/Close原因保留。R024/R026发布与lifetime pin、既有管理员ACL规则及POSIX清理不变；新增原生Close拒绝/恢复断言必须在两个Windows版本验证，旧证据不得转标新SHA通过。汇总清单保留所有来源和既有非自动合并裁决，不恢复旧API，不改变47/96/45/9及发布门禁。
+
 ## 15. 发布门禁
 
 发布前必须全部满足：

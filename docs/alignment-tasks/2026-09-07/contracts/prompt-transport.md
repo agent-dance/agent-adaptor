@@ -282,3 +282,11 @@ R024 常驻终局澄清：已知 stdout EOF 先触发有界 drain/Wait，再用�
 依据 [Microsoft FILE_RENAME_INFORMATION](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_rename_information) 的 RootDirectory 与同目录 simple-name 合同；旧 OS 内部实现差异不作为免测理由。Review contracts 同时覆盖 windows-latest 和 windows-2022，T26 必测包含新增成功及目标冲突负例。
 
 R026 夹具复验：Windows File.Stat 已关闭时返回 ERROR_INVALID_HANDLE；应核对该精确 native 错误。替换/恢复原文件的攻击夹具使用独立同目录 NT rename（不得调用生产 publish helper），不释放 directory pin；硬链接放在另一个测试目录并核对实际 NumberOfLinks=2 与原字节后再验证拒绝。目标父目录共享冲突不构成完成攻击注入的证据。
+
+## R054：恢复 Windows Close 的历史安全检查
+
+Close 在删除文件前核对同一打开句柄的文件身份、owner、受保护DACL和单链接状态；
+校验或句柄关闭失败保持文件、目录pin与未完成清理状态，修正后允许重试。
+保留Stat/校验/Close原因，不改变既有私有ACL允许集及POSIX清理行为。
+原生DACL/owner/hardlink反例必须同时覆盖Verify与Close，证明拒绝未删除文件、
+pin仍阻止目录替换、恢复后清理成功。R024/R026创建和发布路径不变。

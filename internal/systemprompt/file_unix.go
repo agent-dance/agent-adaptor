@@ -42,4 +42,7 @@ func removePrivateDirectory(f *File) error {
 func privateDirectoryInfo(path string) (os.FileInfo, error) { return os.Lstat(path) }
 func verifyPrivateObject(*os.File, bool) error              { return nil }
 
+// Removing an owned POSIX file does not require reading its contents.
+func (f *File) verifyRemovalIdentity() error { return f.verifyIdentity() }
+
 func unsafeInfo(info os.FileInfo) bool { return info.Mode()&(os.ModeSymlink|os.ModeIrregular) != 0 }

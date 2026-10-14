@@ -70,6 +70,10 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- Restored the historical Windows append-file cleanup guard: owner, DACL,
+  hard-link count and handle identity are checked before deletion. Rejected
+  cleanup retains the file and directory pin for a safe retry after repair.
+
 - Upgrade the CopilotKit example's three direct packages together to 1.66.0,
   with its native fixed A2UI dependency, and update compatible busboy to 3.2.1
   and brace-expansion to 1.1.21/5.0.12.

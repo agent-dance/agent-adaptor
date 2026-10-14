@@ -221,7 +221,7 @@ func (f *File) Close() error {
 			return err
 		}
 		if !f.fileRemoved && f.root != nil {
-			if err := f.verifyIdentity(); err != nil {
+			if err := f.verifyRemovalIdentity(); err != nil {
 				if !errors.Is(err, os.ErrNotExist) {
 					return err
 				}

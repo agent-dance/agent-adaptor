@@ -82,6 +82,37 @@ func windowsTestAssertPrivate(t *testing.T, object *os.File) {
 	}
 }
 
+func windowsTestAssertCloseRejected(t *testing.T, f *File) {
+	t.Helper()
+	if err := f.Close(); !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("Close accepted an unsafe append object: %v", err)
+	}
+	if f.fileRemoved || f.dirRemoved || f.closed || f.directory == nil || f.root == nil {
+		t.Fatal("rejected Close changed owned-object cleanup state")
+	}
+	if data, err := os.ReadFile(f.Path()); err != nil || string(data) != f.text {
+		t.Fatalf("rejected Close changed private bytes: %q, %v", data, err)
+	}
+	if err := os.Rename(f.dir, f.dir+"-taken"); !errors.Is(err, windows.ERROR_SHARING_VIOLATION) {
+		t.Fatalf("rejected Close lost the directory pin: %v", err)
+	}
+}
+
+func windowsTestAssertCleanupRetry(t *testing.T, f *File) {
+	t.Helper()
+	if err := f.Verify(context.Background()); err != nil {
+		t.Fatal("repaired append object failed verification", err)
+	}
+	for range 2 {
+		if err := f.Close(); err != nil {
+			t.Fatal("Close after repair failed", err)
+		}
+	}
+	if _, err := os.Lstat(f.dir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("repaired append directory survived cleanup: %v", err)
+	}
+}
+
 func TestWindowsAppendPrivateCreationUnderSharedTemp(t *testing.T) {
 	shared := t.TempDir()
 	windowsTestSetDACL(t, shared, "D:P(A;OICI;FA;;;WD)", true)
@@ -237,7 +268,12 @@ func TestWindowsAppendDACLChangesRejected(t *testing.T) {
 					path = filepath.Dir(path)
 				}
 				original := windowsTestDescriptor(t, path).String()
-				defer windowsTestSetDACL(t, path, original, true)
+				restored := false
+				defer func() {
+					if !restored {
+						windowsTestSetDACL(t, path, original, true)
+					}
+				}()
 				switch change {
 				case "world-read":
 					windowsTestSetDACL(t, path, "D:P(A;;FA;;;"+windowsTestOwner(t)+")(A;;FR;;;WD)", true)
@@ -251,6 +287,10 @@ func TestWindowsAppendDACLChangesRejected(t *testing.T) {
 				if err := f.Verify(context.Background()); !errors.Is(err, os.ErrPermission) {
 					t.Fatalf("%s DACL change accepted: %v", object, err)
 				}
+				windowsTestAssertCloseRejected(t, f)
+				windowsTestSetDACL(t, path, original, true)
+				restored = true
+				windowsTestAssertCleanupRetry(t, f)
 			})
 		}
 	}
@@ -320,6 +360,9 @@ func TestWindowsAppendOwnerAndTrustedAdministrators(t *testing.T) {
 	if err := f.Verify(context.Background()); err != nil {
 		t.Fatal("private current-owner/SYSTEM/Administrators descriptor rejected", err)
 	}
+	if err := f.Close(); err != nil {
+		t.Fatal("Close rejected private current-owner/SYSTEM/Administrators descriptor", err)
+	}
 	// Validate owner rejection even on hosts that cannot assign another owner.
 	foreign, err := windows.SecurityDescriptorFromString("O:BAD:P(A;;FA;;;" + owner + ")")
 	if err != nil {
@@ -330,6 +373,11 @@ func TestWindowsAppendOwnerAndTrustedAdministrators(t *testing.T) {
 	}
 	for _, object := range []string{"directory", "file"} {
 		t.Run("owner-change/"+object, func(t *testing.T) {
+			f, err := Materialize(context.Background(), "private text")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer f.Close()
 			path := f.Path()
 			if object == "directory" {
 				path = filepath.Dir(path)
@@ -344,7 +392,7 @@ func TestWindowsAppendOwnerAndTrustedAdministrators(t *testing.T) {
 				}
 				t.Fatal(err)
 			}
-			defer func() {
+			restoreOwner := func() {
 				original, err := windows.StringToSid(owner)
 				if err != nil {
 					t.Fatal(err)
@@ -352,10 +400,20 @@ func TestWindowsAppendOwnerAndTrustedAdministrators(t *testing.T) {
 				if err := windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION, original, nil, nil, nil); err != nil {
 					t.Fatal(err)
 				}
+			}
+			restored := false
+			defer func() {
+				if !restored {
+					restoreOwner()
+				}
 			}()
 			if err := f.Verify(context.Background()); !errors.Is(err, os.ErrPermission) {
 				t.Fatalf("changed native owner accepted: %v", err)
 			}
+			windowsTestAssertCloseRejected(t, f)
+			restoreOwner()
+			restored = true
+			windowsTestAssertCleanupRetry(t, f)
 		})
 	}
 }
@@ -389,4 +447,12 @@ func TestWindowsAppendHardLinkRejected(t *testing.T) {
 	if err := f.Verify(context.Background()); !errors.Is(err, os.ErrPermission) {
 		t.Fatalf("multiply-linked append file accepted: %v", err)
 	}
+	windowsTestAssertCloseRejected(t, f)
+	if data, err := os.ReadFile(link); err != nil || string(data) != "private text" {
+		t.Fatalf("rejected Close changed external link bytes: %q, %v", data, err)
+	}
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	windowsTestAssertCleanupRetry(t, f)
 }
