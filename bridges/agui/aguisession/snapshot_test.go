@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"reflect"
 	"strings"
 	"sync"
@@ -110,14 +112,27 @@ func withoutObserverSeq(t *testing.T, messages []Message) any {
 }
 
 func TestSnapshotJoinsActiveRun(t *testing.T) {
+	for _, exitCode := range []int{0, 1} {
+		t.Run(fmt.Sprint(exitCode), func(t *testing.T) { testSnapshotJoinsActiveRun(t, exitCode) })
+	}
+}
+
+func testSnapshotJoinsActiveRun(t *testing.T, exitCode int) {
 	s, input, started := unattended(t, 1)
+	at := time.Date(2026, 10, 31, 12, 0, 0, 0, time.UTC)
+	s.opts.Recorder = sessionrecorder.NewEventRecorder(sessionrecorder.NewMemoryEventBackend(),
+		sessionrecorder.WithEventClock(func() time.Time { return at }))
+	t.Cleanup(func() { _ = s.opts.Recorder.Close() })
 	s.opts.Input.HistoryFallback = true
 	key := ThreadKey("t")
 	recordCompletedTurn(t, s.opts.Recorder, key)
 	completed := checkedMessages(t, s, key)
 	body, err := json.Marshal(map[string]any{
 		"threadId": "t", "runId": "active", "protocolVersion": "1.0",
-		"messages": append(append([]Message{}, completed...), user("u1", "continue")),
+		"messages": append(append([]Message{}, completed...), Message{
+			"id": "u1", "role": "user", "name": "Ada", "content": []map[string]any{{"type": "text", "text": "continue"}},
+			"metadata": map[string]any{"client": map[string]any{"ticket": "ticket-27"}},
+		}),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -182,7 +197,7 @@ func TestSnapshotJoinsActiveRun(t *testing.T) {
 	}()
 	await(t, first)
 	input <- adaptor.ToolCall{ID: "tool", Phase: adaptor.PhaseEnd, Result: map[string]any{
-		"exitCode": 1, "output": "command failed",
+		"exitCode": exitCode, "output": "command output",
 	}}
 	input <- adaptor.TextDelta{MessageID: "a1", Phase: adaptor.PhaseContent, Text: "answer"}
 	input <- adaptor.TextDelta{MessageID: "a1", Phase: adaptor.PhaseEnd}
@@ -222,6 +237,35 @@ func TestSnapshotJoinsActiveRun(t *testing.T) {
 		t.Fatalf("snapshot + follow differs from final history:\n%v\n%v", folded, final)
 	}
 	validateMessages(t, folded)
+	if exitCode == 0 {
+		fixture := struct {
+			Snapshot Snapshot          `json:"snapshot"`
+			Records  []ProjectedRecord `json:"records"`
+			History  []Message         `json:"history"`
+		}{snapshot, result.records, final}
+		// Snapshot was taken after the tool opener was durable and before its
+		// result existed. This is an actual in-flight join, not a split static trace.
+		raw, err := json.MarshalIndent(fixture, "", "  ")
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw = append(raw, '\n')
+		const fixturePath = "testdata/client-observe.json"
+		if os.Getenv("UPDATE_GOLDEN") == "1" {
+			if err := os.WriteFile(fixturePath, raw, 0644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		want, err := os.ReadFile(fixturePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(want) != string(raw) {
+			t.Fatal("reviewed client-observe fixture changed")
+		}
+
+	}
+
 	if err := s.Shutdown(ctx); err != nil {
 		t.Fatal(err)
 	}

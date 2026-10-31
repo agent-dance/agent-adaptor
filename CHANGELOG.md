@@ -41,6 +41,17 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- AG-UI observation pairs recorder reads with stable admission/completion cuts,
+  preserving suffixes across consecutive runs and avoiding false incomplete-run
+  terminals. Snapshot boundary waits are notification-driven and validated.
+- Fixed-Thread AG-UI sessions use their actual host key for default history,
+  observation and cancellation, matching execution admission.
+- Unattended cancellation reaches pending admission; shutdown interrupts
+  preparation and shares bounded cleanup waiting across repeated callers.
+- Recorder Close releases change subscriptions and rejects coordinated reads and
+  writes. Observer cursor stamping preserves opaque metadata; revoked observers
+  close cleanly through error delivery, and established SSE errors stay SSE.
+
 - Recorded AG-UI history now matches the official client reducer's metadata,
   activity replacement and corrected tool-result rules, including JSON patches.
 - Recorded sessions reserve actual resolved Thread keys, recheck fresh branch

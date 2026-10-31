@@ -19,16 +19,23 @@ import (
 )
 
 type pacedStream struct {
-	ctx  context.Context
-	ch   chan adaptor.Event
-	once sync.Once
+	ctx    context.Context
+	ch     chan adaptor.Event
+	cancel context.CancelFunc
+	once   sync.Once
 }
 
 func (s *pacedStream) Events() <-chan adaptor.Event { return s.ch }
 
 func (s *pacedStream) RunID() string { return "paced" }
 
-func (s *pacedStream) Cancel() { s.once.Do(func() {}) }
+func (s *pacedStream) Cancel() {
+	s.once.Do(func() {
+		if s.cancel != nil {
+			s.cancel()
+		}
+	})
+}
 
 func (s *pacedStream) Result() (*adaptor.Result, error) {
 	if err := s.ctx.Err(); err != nil {
@@ -43,6 +50,7 @@ func unattended(t *testing.T, max int) (*Session, chan adaptor.Event, <-chan str
 	started := make(chan struct{})
 	var once sync.Once
 	s := New(fakeRunner{func(ctx context.Context, _ string) adaptor.Stream {
+		ctx, cancel := context.WithCancel(ctx)
 		ch := make(chan adaptor.Event)
 		once.Do(func() { close(started) })
 		go func() {
@@ -63,7 +71,7 @@ func unattended(t *testing.T, max int) (*Session, chan adaptor.Event, <-chan str
 				}
 			}
 		}()
-		return &pacedStream{ctx: ctx, ch: ch}
+		return &pacedStream{ctx: ctx, ch: ch, cancel: cancel}
 	}}, Options{Recorder: recorder(t), Unattended: true, BaseContext: context.Background(), MaxConcurrentRuns: max})
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -317,7 +325,20 @@ func TestUnattendedHTTPDisconnect(t *testing.T) {
 	if !s.Active(ThreadKey("t")) {
 		t.Fatal("disconnect ended run")
 	}
+	// Produce content after the connection is gone and require successful
+	// completion; merely checking Active immediately after cancel is too weak.
+	input <- adaptor.TextDelta{MessageID: "after-disconnect", Text: "survived"}
 	close(input)
+	waitForRecord(t, s.opts.Recorder, ThreadKey("t"), func(rec sessionrecorder.EventRecord) bool {
+		n, ok := rec.Event.(adaptor.Notice)
+		if !ok || n.Kind != TerminalKind {
+			return false
+		}
+		if str(n.Data, "code") != "" {
+			t.Fatalf("disconnect cancelled run: %v", n.Data)
+		}
+		return true
+	})
 	if err := s.Shutdown(context.Background()); err != nil {
 		t.Fatal(err)
 	}

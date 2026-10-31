@@ -1,0 +1,316 @@
+{
+  "snapshot": {
+    "messages": [
+      {
+        "content": "earlier",
+        "id": "agent-adaptor:bridge-key:v1:3:12:agui-message9:completed2:u0",
+        "role": "user"
+      },
+      {
+        "content": "earlier answer",
+        "id": "agent-adaptor:bridge-key:v1:3:12:agui-message9:completed2:a0",
+        "role": "assistant"
+      }
+    ],
+    "cursor": 8,
+    "activeRun": {
+      "threadId": "t",
+      "runId": "active",
+      "boundaryHostSeq": 9
+    }
+  },
+  "records": [
+    {
+      "host_seq": 9,
+      "events": [
+        {
+          "type": "RUN_STARTED",
+          "timestamp": 1793448000000,
+          "metadata": {
+            "agentAdaptor": {
+              "sdkRunId": "",
+              "seq": 9
+            }
+          },
+          "threadId": "t",
+          "runId": "active",
+          "protocolVersion": "1.0",
+          "input": {
+            "threadId": "t",
+            "runId": "active",
+            "messages": [
+              {
+                "metadata": {
+                  "client": {
+                    "ticket": "ticket-27"
+                  }
+                },
+                "id": "u1",
+                "role": "user",
+                "content": [
+                  {
+                    "text": "continue",
+                    "type": "text"
+                  }
+                ],
+                "name": "Ada"
+              }
+            ]
+          }
+        },
+        {
+          "type": "CUSTOM",
+          "timestamp": 1793448000000,
+          "metadata": {
+            "agentAdaptor": {
+              "seq": 9
+            }
+          },
+          "name": "agentAdaptor.input.warning",
+          "value": {
+            "code": "agui.history_rehydrated",
+            "message": "prior text and tool call summaries rehydrated",
+            "path": "/messages"
+          }
+        }
+      ]
+    },
+    {
+      "host_seq": 10,
+      "events": null
+    },
+    {
+      "host_seq": 11,
+      "events": null
+    },
+    {
+      "host_seq": 12,
+      "events": null
+    },
+    {
+      "host_seq": 13,
+      "events": [
+        {
+          "type": "REASONING_MESSAGE_START",
+          "timestamp": 1793448000000,
+          "metadata": {
+            "agentAdaptor": {
+              "seq": 13
+            }
+          },
+          "messageId": "agent-adaptor:bridge-key:v1:3:12:agui-message6:active6:reason",
+          "role": "reasoning"
+        },
+        {
+          "type": "REASONING_MESSAGE_CONTENT",
+          "timestamp": 1793448000000,
+          "metadata": {
+            "agentAdaptor": {
+              "seq": 13
+            }
+          },
+          "messageId": "agent-adaptor:bridge-key:v1:3:12:agui-message6:active6:reason",
+          "delta": "considering"
+        }
+      ]
+    },
+    {
+      "host_seq": 14,
+      "events": [
+        {
+          "type": "TEXT_MESSAGE_START",
+          "timestamp": 1793448000000,
+          "metadata": {
+            "agentAdaptor": {
+              "seq": 14
+            }
+          },
+          "messageId": "agent-adaptor:bridge-key:v1:3:12:agui-message6:active2:a1",
+          "role": "assistant"
+        }
+      ]
+    },
+    {
+      "host_seq": 15,
+      "events": [
+        {
+          "type": "TEXT_MESSAGE_CONTENT",
+          "timestamp": 1793448000000,
+          "metadata": {
+            "agentAdaptor": {
+              "seq": 15
+            }
+          },
+          "messageId": "agent-adaptor:bridge-key:v1:3:12:agui-message6:active2:a1",
+          "delta": "partial "
+        }
+      ]
+    },
+    {
+      "host_seq": 16,
+      "events": [
+        {
+          "type": "TOOL_CALL_START",
+          "timestamp": 1793448000000,
+          "metadata": {
+            "agentAdaptor": {
+              "seq": 16
+            }
+          },
+          "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool6:active4:tool",
+          "toolCallName": "shell",
+          "parentMessageId": "agent-adaptor:bridge-key:v1:3:12:agui-message6:active2:a1"
+        }
+      ]
+    },
+    {
+      "host_seq": 17,
+      "events": [
+        {
+          "type": "TOOL_CALL_END",
+          "timestamp": 1793448000000,
+          "metadata": {
+            "agentAdaptor": {
+              "seq": 17
+            }
+          },
+          "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool6:active4:tool"
+        },
+        {
+          "type": "TOOL_CALL_RESULT",
+          "timestamp": 1793448000000,
+          "metadata": {
+            "agentAdaptor": {
+              "exitCode": 0,
+              "seq": 17,
+              "status": "succeeded"
+            }
+          },
+          "messageId": "agent-adaptor:bridge-key:v1:3:9:agui-tool6:active4:tool:result",
+          "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool6:active4:tool",
+          "content": "command output\n[exit=0]",
+          "role": "tool"
+        }
+      ]
+    },
+    {
+      "host_seq": 18,
+      "events": [
+        {
+          "type": "TEXT_MESSAGE_CONTENT",
+          "timestamp": 1793448000000,
+          "metadata": {
+            "agentAdaptor": {
+              "seq": 18
+            }
+          },
+          "messageId": "agent-adaptor:bridge-key:v1:3:12:agui-message6:active2:a1",
+          "delta": "answer"
+        }
+      ]
+    },
+    {
+      "host_seq": 19,
+      "events": [
+        {
+          "type": "TEXT_MESSAGE_END",
+          "timestamp": 1793448000000,
+          "metadata": {
+            "agentAdaptor": {
+              "seq": 19
+            }
+          },
+          "messageId": "agent-adaptor:bridge-key:v1:3:12:agui-message6:active2:a1"
+        }
+      ]
+    },
+    {
+      "host_seq": 20,
+      "events": [
+        {
+          "type": "REASONING_MESSAGE_END",
+          "timestamp": 1793448000000,
+          "metadata": {
+            "agentAdaptor": {
+              "seq": 20
+            }
+          },
+          "messageId": "agent-adaptor:bridge-key:v1:3:12:agui-message6:active6:reason"
+        },
+        {
+          "type": "RUN_FINISHED",
+          "timestamp": 1793448000000,
+          "metadata": {
+            "agentAdaptor": {
+              "sdkRunId": "paced",
+              "seq": 20,
+              "threadKey": "agent-adaptor:bridge-key:v1:2:4:agui1:t"
+            }
+          },
+          "threadId": "t",
+          "runId": "active"
+        }
+      ]
+    }
+  ],
+  "history": [
+    {
+      "content": "earlier",
+      "id": "agent-adaptor:bridge-key:v1:3:12:agui-message9:completed2:u0",
+      "role": "user"
+    },
+    {
+      "content": "earlier answer",
+      "id": "agent-adaptor:bridge-key:v1:3:12:agui-message9:completed2:a0",
+      "role": "assistant"
+    },
+    {
+      "content": [
+        {
+          "text": "continue",
+          "type": "text"
+        }
+      ],
+      "id": "u1",
+      "metadata": {
+        "client": {
+          "ticket": "ticket-27"
+        }
+      },
+      "name": "Ada",
+      "role": "user"
+    },
+    {
+      "content": "considering",
+      "id": "agent-adaptor:bridge-key:v1:3:12:agui-message6:active6:reason",
+      "role": "reasoning"
+    },
+    {
+      "content": "partial answer",
+      "id": "agent-adaptor:bridge-key:v1:3:12:agui-message6:active2:a1",
+      "role": "assistant",
+      "toolCalls": [
+        {
+          "function": {
+            "arguments": "",
+            "name": "shell"
+          },
+          "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool6:active4:tool",
+          "type": "function"
+        }
+      ]
+    },
+    {
+      "content": "command output\n[exit=0]",
+      "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool6:active4:tool:result",
+      "metadata": {
+        "agentAdaptor": {
+          "exitCode": 0,
+          "status": "succeeded"
+        }
+      },
+      "role": "tool",
+      "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool6:active4:tool"
+    }
+  ]
+}

@@ -128,3 +128,80 @@ for (const fixture of sessions) {
   }
 }
 console.log(`PASS: ${sessions.length} recorded-session turns: real HttpAgent live/history, next-turn input and assistant-ui failed tools`);
+
+// A fresh page loads only completed runs, then resumes the in-flight run from
+// its real boundary. This fixture is captured from a paced Go Session after
+// reasoning/text/tool openers were already durable, before the result arrived.
+const join = JSON.parse(readFileSync(new URL("../aguisession/testdata/client-observe.json", import.meta.url)));
+assert.ok(join.snapshot.activeRun);
+assert.equal(join.snapshot.cursor + 1, join.snapshot.activeRun.boundaryHostSeq);
+assert.equal(join.snapshot.messages.length, 2);
+assert.ok(!join.snapshot.messages.some((m) => m.id === "u1"));
+let cursor = join.snapshot.cursor;
+for (const record of join.records) {
+  assert.equal(record.host_seq, ++cursor, "whole-record delivery has a gap or duplicate");
+  for (const event of record.events ?? []) {
+    assert.ok(validate(event), JSON.stringify(validate.errors));
+    assert.equal(event.metadata?.agentAdaptor?.seq, record.host_seq);
+  }
+}
+const observed = join.records.flatMap((record) => record.events ?? []);
+assert.equal(observed[0].type, "RUN_STARTED");
+assert.equal(observed[0].runId, join.snapshot.activeRun.runId);
+assert.equal(observed[0].threadId, join.snapshot.activeRun.threadId);
+assert.equal(observed[0].protocolVersion, "1.0");
+assert.equal(observed[0].input.messages[0].id, "u1");
+assert.equal(observed[0].input.messages[0].name, "Ada");
+assert.deepEqual(observed[0].input.messages[0].content, [{ type: "text", text: "continue" }]);
+assert.equal(observed.at(-1).type, "RUN_FINISHED");
+assert.equal(observed.at(-1).runId, join.snapshot.activeRun.runId);
+assert.equal(observed.at(-1).threadId, join.snapshot.activeRun.threadId);
+const verify = (events) => new Promise((resolve, reject) => {
+  from(events).pipe(verifyEvents(), toArray()).subscribe({ next: resolve, error: reject });
+});
+await verify(observed);
+// Arbitrary mid-run cursors deliberately do not receive synthetic RUN_STARTED.
+// They require retained protocol state and cannot start a fresh client verifier.
+const midRun = observed.findIndex((event) => event.type === "TEXT_MESSAGE_CONTENT");
+assert.ok(midRun > 0);
+await assert.rejects(verify(observed.slice(midRun)));
+const normalizeObserverSeq = (messages) => {
+  const result = structuredClone(messages);
+  const visit = (value) => {
+    if (Array.isArray(value)) { value.forEach(visit); return; }
+    if (!value || typeof value !== "object") return;
+    const ns = value.metadata?.agentAdaptor;
+    if (ns && Object.hasOwn(ns, "seq")) {
+      delete ns.seq;
+      if (!Object.keys(ns).length) delete value.metadata.agentAdaptor;
+      if (!Object.keys(value.metadata).length) delete value.metadata;
+    }
+    Object.values(value).forEach(visit);
+  };
+  visit(result);
+  return result;
+};
+const applied = await new Promise((resolve, reject) => {
+  defaultApplyEvents({ state: {} }, from(observed), { messages: structuredClone(join.snapshot.messages) }, [])
+    .pipe(toArray()).subscribe({ next: resolve, error: reject });
+});
+const joinedMessages = applied.filter((update) => update.messages !== undefined).at(-1).messages;
+// Only observer seq is normalized: preserve every ID, user field, tool result,
+// status, association and all other metadata in this strict equality check.
+assert.deepEqual(normalizeObserverSeq(joinedMessages), join.history);
+const resumed = new HttpAgent({
+  url: "http://unused.invalid",
+  threadId: join.snapshot.activeRun.threadId,
+  initialMessages: structuredClone(join.snapshot.messages),
+  fetch: async () => new Response(observed.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""), {
+    headers: { "content-type": "text/event-stream" },
+  }),
+});
+await resumed.runAgent({ runId: join.snapshot.activeRun.runId });
+assert.deepEqual(normalizeObserverSeq(resumed.messages), join.history);
+for (const message of join.history) assert.ok(validateMessage(message), JSON.stringify(validateMessage.errors));
+assert.deepEqual(
+  fromAgUiMessages(normalizeObserverSeq(resumed.messages), { showThinking: true }),
+  fromAgUiMessages(join.history, { showThinking: true }),
+);
+console.log("PASS: mid-run Snapshot + gap-free observed suffix: official verifier/apply, HttpAgent and assistant-ui equal final history (only seq normalized)");

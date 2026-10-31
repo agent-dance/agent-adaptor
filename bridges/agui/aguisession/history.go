@@ -241,37 +241,15 @@ func (p *projector) closeIncomplete(
 	return out
 }
 
-func (s *Session) incompleteCode(key string) string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.opts.Unattended && s.recordingFailures[key] {
-		return "agui.recording_failed"
-	}
-	return "run.incomplete"
-}
-
 // Events reads the entire projection state, returning only records after cursor.
 // Inactive unterminated runs receive run.incomplete at their last record cursor.
 func (s *Session) Events(ctx context.Context, key string, after sessionrecorder.HostSeq) ([]ProjectedRecord, error) {
-	for {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		active, boundary := s.runBoundary(key)
-		// A changing admission/completion invalidates the read's cut. Comparing
-		// the boundary also detects a complete run between the two snapshots.
-		// Recorder I/O never holds the Session mutex.
-		records, err := s.opts.Recorder.Since(ctx, RecorderKey(key), 0)
-		if err != nil {
-			return nil, err
-		}
-		currentActive, currentBoundary := s.runBoundary(key)
-		if active != currentActive || boundary != currentBoundary {
-			continue
-		}
-		p := newProjector(s.opts.Events)
-		return p.project(records, after, !active, s.incompleteCode(key)), nil
+	records, state, err := s.readRecords(ctx, key, 0, false)
+	if err != nil {
+		return nil, err
 	}
+	p := newProjector(s.opts.Events)
+	return p.project(records, after, !state.active, s.incompleteCodeFor(state)), nil
 }
 
 // Messages folds the recorded projection into AG-UI Message objects. Reasoning

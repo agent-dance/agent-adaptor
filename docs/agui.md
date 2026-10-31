@@ -148,7 +148,9 @@ and diagnostics. `RUN_STARTED`, `RUN_FINISHED` and `RUN_ERROR` bypass the hook;
 a hook that drops every content event still preserves the run boundaries. A host can redact/drop reasoning or
 expand events into host-supplied cards/activities. Hooks must preserve valid
 lifecycles, must not call back into their translator, and should be deterministic
-so the same policy can be reused when projecting recorded history.
+so the same policy can be reused when projecting recorded history. Session reads
+and different runs can invoke hooks concurrently; hooks must be concurrency-safe
+and return independently owned event values. Shared metadata maps may be immutable.
 
 Tool attribution is frozen by its opener. A known child tool carries
 subagentRunId without claiming a parent-agent message; later tracker discovery
@@ -182,7 +184,10 @@ The read handlers accept `thread_id`; events additionally accepts `after`.
 an authorization decision.** This single hook authorizes and maps both starts
 and reads. It receives `Access{Op: OpStart|OpRead, ThreadID, Input}`; Input is
 set only for starts. Nil permits all access and uses the default mapping.
-The default Thread key remains `bridgekey.Encode("agui", threadId)`.
+The default Thread key remains `bridgekey.Encode("agui", threadId)` for an Agent
+or other Runner. A Session constructed with an already-bound Thread defaults all
+operations to that Thread's actual host key, matching execution admission. A
+custom Resolve for such a Session must authorize and return that same host key.
 `RecorderKey(key)` is the stable version-1 storage mapping: `"agui-"` plus
 64 lowercase hexadecimal characters of SHA-256 over the exact UTF-8 key bytes.
 This storage-key mapping remains version 1 independently of projection versions;
@@ -269,7 +274,7 @@ Duplicate recorded run IDs return 409 `agui.duplicate_run`; active threads retur
 One Session must own admission for its keys. Memory and JSONL backends are
 single-process facilities. A multi-worker backend needs atomic per-key HostSeq
 allocation and append, durable ordered reads, and an external admission lease
-covering duplicate detection and execution. Future follow notifications must be
+covering duplicate detection and execution. Follow notifications must be
 published after commit; subscribe-before-read with cursor deduplication must
 prevent gaps. Storage alone does not provide cross-worker run ownership.
 Opt-in observation and unattended lifetime are described below. The host
@@ -302,15 +307,25 @@ Disconnecting it, a later observer, or a slow/broken observer never cancels that
 run. Recorder writes remain fail-closed and independent of observer backpressure.
 `Shutdown(ctx)` rejects new starts with HTTP 503 `agui.session_closed`, cancels
 unattended runs and waits for drain cleanup within the caller's deadline.
+Repeated and concurrent Shutdown calls share one completion signal; a timed-out
+caller leaves no waiting goroutine behind and may call again. The limit includes
+pending admissions. Preparation retains request values for authorization, while
+host cancellation and shutdown own its lifetime. Disconnecting the requester
+cannot cancel admission or execution. The run uses BaseContext, including its
+host values; failed request-body reads still fail before a run is accepted.
 The host must call Shutdown before closing its recorder or other runtime services.
-Runners must honor cancellation for bounded shutdown to finish successfully.
+Runners, recorders and host hooks must honor their context/return promptly for
+drain cleanup to finish. In default request-scoped mode, Shutdown rejects new
+starts and waits for existing requests; request cancellation still owns those runs.
 
 `Observe(ctx, key, after, yield)` is a trusted host Go API. `ObserveHandler()`
 provides GET SSE at `?thread_id=T&after=N`; `CancelHandler()` provides POST at
 `?thread_id=T`. The HTTP paths use the same `Resolve` authorization/mapping hook
 with `OpFollow` and `OpCancel`. Direct Go APIs accept already-authorized opaque
-keys. `Cancel(ctx, key)` cancels the active unattended run and waits for recording
-cleanup; observers receive its authoritative cancelled terminal.
+keys. `Cancel(ctx, key)` cancels unattended admission or execution and waits for
+cleanup within the caller's deadline. Admission is registered as soon as its key
+is reserved. If the boundary was committed, observers receive the recorded
+cancelled terminal; a rejected pre-boundary admission has no invented run events.
 
 Observers subscribe before reading committed storage. Each observer reconstructs
 its projector once from a full catch-up read, discarding projected records through
@@ -318,18 +333,26 @@ the requested cursor. It then retains that projector and reads only raw records
 after its last raw HostSeq on notifications and idle ticks. Previously consumed
 records are neither reread nor reprojected. Notifications are coalesced wakeups,
 never the source of event data. HostSeq deduplication prevents overlap between
-catch-up and notification reads. A completion re-read prevents the last append
-from racing the active-state check. Inactive threads catch up and close. The
+catch-up and notification reads. Every read pairs the committed prefix with the same admission/completion state
+before and after I/O, including a monotonically changing per-key revision. On a
+transition it extends that prefix from its last raw cursor before projecting or
+synthesizing incomplete-run failure. This catches whole runs that start and finish
+during an idle read, and prevents a stale prefix from diagnosing a healthy run
+as incomplete. It also rechecks state after delivery before closing, so a later
+admission cannot be hidden by the previous run's terminal. Inactive threads catch up and close. The
 observer processes the full catch-up batch, including earlier completed runs,
-before stopping at its final run terminal. It polls at 100ms as a completion and
+before stopping at its final run terminal. It polls at most every 100ms as a completion and
 recorder-decorator fallback, also allowing authorization checks during idle runs.
+A shorter KeepAlivePing interval also shortens this wakeup interval.
 
 Each observer event carries `metadata.agentAdaptor.seq`, the originating record's
 HostSeq. One record can project several events with the same seq. Advance a cursor
 only after applying the entire record; the Go API exposes these record boundaries
-explicitly. The SSE reader must retain a record's events until the next seq or
-clean terminal/connection close establishes completion; a broken connection can
-leave the final record partial, so retain the previous fully applied cursor.
+explicitly. The SSE reader must buffer a record's events until the next seq or a sequenced
+RUN_FINISHED/RUN_ERROR establishes completion. EOF alone, including a clean
+revocation close, cannot prove the last record was complete; neither can an
+unsequenced transport error. Retain the previous fully applied cursor and discard
+that uncommitted buffer. The Go API exposes whole records directly.
 Sequence metadata is observational; materialized Message[] remains the same
 conversation projection and does not acquire observer cursors.
 
@@ -344,9 +367,10 @@ uses `Resolve(OpRead)` and the Go API accepts an already-authorized opaque key.
 When a run is active, messages contain only the recorded history strictly before
 its boundary. `activeRun` contains its public `threadId`, `runId`, and
 `boundaryHostSeq`; `cursor` is `boundaryHostSeq - 1`. During admission the snapshot
-waits, cancellation-safely, for boundary publication or release. If admission or
-completion changes during the recorder read, it retries without holding the
-Session lock. Idle snapshots contain all history, the last recorded HostSeq
+waits, cancellation-safely, for boundary publication or release. If admission or completion changes during the recorder read, it extends the
+committed prefix until paired with a stable state, without holding the Session
+lock. Boundary publication wakes pending snapshot reads without polling. A
+missing, malformed or unsupported active boundary fails explicitly. Idle snapshots contain all history, the last recorded HostSeq
 (or zero), and `activeRun: null`. Abandoned inactive runs retain their recorded
 partial content under the normal incomplete-run diagnosis.
 
@@ -360,6 +384,19 @@ between snapshot and connection, catch-up still supplies that complete sequence
 and closes. When idle, observation catches up after the cursor and closes if no
 run is active; the host decides when to refresh or reconnect. Route snapshot and
 follow to the owning Session in a multi-worker deployment.
+
+With `@assistant-ui/react-ag-ui` 0.1.1, `history.load()` returns an
+ExportedMessageRepository with `unstable_resume: true` when activeRun is present.
+Its `history.resume(options)` consumes an async iterable of assistant-ui
+content/status updates for one assistant message; it does not consume raw AG-UI
+events. The adapter opens observation using snapshot.cursor and
+options.abortSignal, folds the full run, converts the active assistant/tool
+messages through fromAgUiMessages, and yields those updates. To retain the
+in-flight user in the UI, load can first read and buffer RUN_STARTED, fold its
+input seed into snapshot.messages, then return that repository. Resume continues
+from the same buffered stream. No user-text triple is needed. This small typed
+adapter and any failure-status rendering remain frontend glue; bare HttpAgent
+does not implement assistant-ui's history.resume contract.
 
 `MessagesHandler()` continues returning a bare AG-UI Message[] for simple
 `history.load`. It includes the active partial turn and provides no cursor; use
@@ -391,11 +428,17 @@ cancellation to the owning worker.
 `sessionrecorder.Follower.Subscribe(ctx, key)` is an optional additive recorder
 interface, implemented by the built-in recorder. It installs a subscription before
 returning and provides coalesced, nonblocking notifications after successful append.
-Cancel the subscription when done. Recorder decorators should forward Follower;
+Cancel the subscription when done. Cancellation closes its channel and releases
+resources; recorder Close also releases all outstanding subscriptions. Operations
+begun after Close fail for both local and coordinated backends. Idle subscriptions
+use cancellation callbacks rather than a dedicated waiting goroutine. Recorder decorators should forward Follower;
 without it observers still use committed reads and periodic polling.
 `CoordinatedEventBackend` adds atomic `AppendNext` allocation/append plus Follower.
-Its notifications must follow durable commit and cover writes from all workers;
-Load must return fresh committed records in increasing HostSeq order. The recorder
+AppendNext must return the committed event and RecordedAt unchanged with a
+nonzero, strictly increasing per-key HostSeq. A failed append publishes neither
+a record nor a notification. Notifications must follow durable commit and cover
+writes from all workers; Load must return fresh committed records in increasing
+HostSeq order. The recorder
 bypasses its local sequence/cache for this interface. Memory and JSONL behavior
 remain single-process; they do not acquire distributed ownership from notifications.
 A multi-worker host still supplies shared storage, per-thread admission/leases,
@@ -407,8 +450,15 @@ If a storage failure occurs after an observer has consumed the last durable
 record, no new HostSeq can truthfully be allocated. The Go observer returns an
 `agui.recording_failed` InputError; the HTTP observer emits an unsequenced
 RUN_ERROR as a transport-failure exception and closes. It never advances the
-storage cursor or claims the missing terminal was persisted. A replay from an
-earlier cursor may instead contain the synthesized failure at the last record;
+storage cursor or claims the missing terminal was persisted. A read/subscription failure before streaming returns JSON HTTP 500; one after
+streaming begins emits an unsequenced RUN_ERROR `agui.observation_failed`. Write
+and flush failures detach the observer within WriteTimeout. Keep-alives start
+after event delivery and use the configured interval and write deadline. Revoke
+and authorization denial/remapping close cleanly throughout error delivery too.
+Observer cursor stamping preserves other metadata fields and numeric values,
+without mutating maps shared by deterministic hooks. The agentAdaptor namespace
+must be a JSON object to carry seq; incompatible hook metadata fails explicitly.
+A replay from an earlier cursor may instead contain the synthesized failure at the last record;
 that synthesis is history diagnosis, not a successful append.
 
 If an observer has already acknowledged the last record of a run that later
@@ -439,6 +489,12 @@ the fixture; regenerate only after reviewing protocol changes. The same script
 independently checks the hand-derived Node-free reducer table and ten recorded
 session turns against real HttpAgent folding/next-turn requests, frozen event and
 Message schemas, and assistant-ui history conversion (including failed tool 13).
+The paced `aguisession/testdata/client-observe.json` fixture additionally checks a
+mid-run snapshot plus complete observed suffix through the real verifier,
+defaultApplyEvents, HttpAgent and fromAgUiMessages, comparing final history with
+only observer seq normalized. Go covers successful and failed tool joins; the
+Node join fixture uses a successful result for exact equality, retaining the
+separately documented ToolMessage.error distinction.
 These fixtures cover repeated provider IDs, reasoning, activities, full user
 messages, Result.Text fallback, business errors, cancellation and infrastructure
 errors. Expected reducer states are not generated by the Go implementation.

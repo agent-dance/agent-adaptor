@@ -131,7 +131,8 @@ func (wire eventMetaWire) eventMeta() adaptor.EventMeta {
 }
 
 // EventRecorder is the host-facing typed Event recording API.
-// Implementations MUST be safe for concurrent use.
+// Implementations MUST be safe for concurrent use. Close releases subscriptions
+// as well as storage; operations begun after Close must fail.
 type EventRecorder interface {
 	// Record appends an event under sessionKey and returns the record
 	// with the HostSeq it was assigned. HostSeq values strictly increase
@@ -202,7 +203,9 @@ func NewEventRecorder(backend EventBackend, opts ...EventOption) EventRecorder {
 	if backend == nil {
 		panic("sessionrecorder: NewEventRecorder requires a non-nil EventBackend")
 	}
+	followCtx, stopFollow := context.WithCancel(context.Background())
 	r := &eventRecorder{
+		followCtx: followCtx, stopFollow: stopFollow,
 		backend:  backend,
 		clock:    defaultClock,
 		validate: DefaultKeyValidator,
@@ -218,6 +221,8 @@ func NewEventRecorder(backend EventBackend, opts ...EventOption) EventRecorder {
 
 type eventRecorder struct {
 	notifications notifications
+	followCtx     context.Context
+	stopFollow    context.CancelFunc
 	backend       EventBackend
 	clock         func() time.Time
 	validate      KeyValidator
@@ -240,6 +245,9 @@ type eventSessionState struct {
 }
 
 func (r *eventRecorder) Record(ctx context.Context, sessionKey string, ev adaptor.Event) (EventRecord, error) {
+	if err := r.checkOpen(ctx); err != nil {
+		return EventRecord{}, err
+	}
 	if err := r.checkKey(sessionKey); err != nil {
 		return EventRecord{}, err
 	}
@@ -271,6 +279,9 @@ func (r *eventRecorder) Record(ctx context.Context, sessionKey string, ev adapto
 }
 
 func (r *eventRecorder) Since(ctx context.Context, sessionKey string, afterHostSeq HostSeq) ([]EventRecord, error) {
+	if err := r.checkOpen(ctx); err != nil {
+		return nil, err
+	}
 	if err := r.checkKey(sessionKey); err != nil {
 		return nil, err
 	}
@@ -309,6 +320,9 @@ func (r *eventRecorder) Since(ctx context.Context, sessionKey string, afterHostS
 }
 
 func (r *eventRecorder) Sessions(ctx context.Context) ([]SessionInfo, error) {
+	if err := r.checkOpen(ctx); err != nil {
+		return nil, err
+	}
 	list, err := r.backend.Sessions(ctx)
 	if err != nil {
 		return nil, err
@@ -343,9 +357,25 @@ func (r *eventRecorder) Close() error {
 		r.mu.Lock()
 		r.closed = true
 		r.mu.Unlock()
+		r.stopFollow()
 		r.closeErr = r.backend.Close()
 	})
 	return r.closeErr
+}
+
+// checkOpen also covers coordinated paths, which do not use loadedSession.
+// Operations admitted before Close may finish; subsequent calls fail closed.
+func (r *eventRecorder) checkOpen(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	r.mu.Lock()
+	closed := r.closed
+	r.mu.Unlock()
+	if closed {
+		return errors.New("sessionrecorder: recorder closed")
+	}
+	return nil
 }
 
 func (r *eventRecorder) checkKey(sessionKey string) error {

@@ -1,6 +1,7 @@
 package aguisession
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -8,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	events "github.com/ag-ui-protocol/ag-ui/sdks/community/go/pkg/core/events"
@@ -31,10 +31,17 @@ func (s *Session) Observe(
 
 func (s *Session) observe(
 	ctx context.Context, key string, after sessionrecorder.HostSeq,
-	check func() error, yield func(ProjectedRecord) error,
+	check func(context.Context) error, yield func(ProjectedRecord) error,
 ) error {
+	ctx, detach := s.observerContext(ctx, key)
+	defer detach()
+	return s.follow(ctx, key, after, check, yield)
+}
+
+// Registration covers all deliveries, including an HTTP transport error after
+// follow returns. Revoke can therefore close every delivery path cleanly.
+func (s *Session) observerContext(ctx context.Context, key string) (context.Context, func()) {
 	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
 	s.mu.Lock()
 	s.observerID++
 	id := s.observerID
@@ -43,18 +50,28 @@ func (s *Session) observe(
 	}
 	s.observers[key][id] = cancel
 	s.mu.Unlock()
-	defer func() {
+	return ctx, func() {
+		cancel()
 		s.mu.Lock()
 		delete(s.observers[key], id)
 		if len(s.observers[key]) == 0 {
 			delete(s.observers, key)
 		}
 		s.mu.Unlock()
-	}()
+	}
+}
+
+func (s *Session) follow(
+	ctx context.Context, key string, after sessionrecorder.HostSeq,
+	check func(context.Context) error, yield func(ProjectedRecord) error,
+) error {
 	var changes <-chan struct{}
 	if follower, ok := s.opts.Recorder.(sessionrecorder.Follower); ok {
 		ch, stop, err := follower.Subscribe(ctx, RecorderKey(key))
 		if err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
 			return err
 		}
 		defer stop()
@@ -62,7 +79,11 @@ func (s *Session) observe(
 	}
 	// Polling also observes completion without a terminal (recording failure),
 	// and provides periodic authorization rechecks while a run is idle.
-	ticker := time.NewTicker(100 * time.Millisecond)
+	interval := 100 * time.Millisecond
+	if s.opts.KeepAlivePing > 0 && s.opts.KeepAlivePing < interval {
+		interval = s.opts.KeepAlivePing
+	}
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	// Reconstruct the prefix once, then retain translator state and read only
 	// after the last raw record. Delivery cursors may be ahead of or behind it.
@@ -72,22 +93,28 @@ func (s *Session) observe(
 			return nil
 		}
 		if check != nil {
-			if check() != nil {
+			if check(ctx) != nil {
 				return nil
 			}
 		}
 		// Subscribe precedes this read; notifications are hints, storage is authority.
-		wasActive := s.Active(key)
 		hadPrefix := p.last.HostSeq != 0
-		raw, err := s.opts.Recorder.Since(ctx, RecorderKey(key), p.last.HostSeq)
+		raw, state, err := s.readRecords(ctx, key, p.last.HostSeq, false)
 		if err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
 			return err
 		}
-		records := p.project(raw, after, !wasActive && !s.Active(key), s.incompleteCode(key))
+		code := s.incompleteCodeFor(state)
+		if state.failed {
+			code = "agui.recording_failed"
+		}
+		records := p.project(raw, after, !state.active, code)
 		if hadPrefix && p.lateIncomplete {
 			// A late diagnosis cannot amend an acknowledged record. Report it
 			// before sending a later boundary with an unmatched prior lifecycle.
-			return &agui.InputError{Code: s.incompleteCode(key), Message: "run has no recorded terminal"}
+			return &agui.InputError{Code: code, Message: "run has no recorded terminal"}
 		}
 		terminal := false
 		for _, rec := range records {
@@ -95,14 +122,16 @@ func (s *Session) observe(
 				return nil
 			}
 			if check != nil {
-				if check() != nil {
+				if check(ctx) != nil {
 					return nil
 				}
 			}
 			if rec.HostSeq <= after {
 				continue
 			}
-			stampRecord(rec)
+			if err := stampRecord(rec); err != nil {
+				return err
+			}
 			if err := yield(rec); err != nil {
 				return err
 			}
@@ -117,29 +146,17 @@ func (s *Session) observe(
 				}
 			}
 		}
-		if terminal {
-			s.mu.Lock()
-			boundary := s.boundaries[key]
-			active := s.active[key]
-			s.mu.Unlock()
-			// A prior terminal must not close an observer while admission is
-			// preparing a new boundary on the same key.
-			if !active || boundary > 0 && after >= boundary {
-				return nil
-			}
+		// A run may start/finish during delivery (including inside yield). Re-read
+		// its suffix before deciding whether this observation is complete.
+		if s.state(key) != state {
+			continue
 		}
-		if !s.Active(key) {
-			s.mu.Lock()
-			failed := s.recordingFailures[key]
-			s.mu.Unlock()
-			if failed && !terminal {
-				return &agui.InputError{Code: "agui.recording_failed", Message: "event recording failed"}
-			}
+		if terminal && (!state.active || state.boundary > 0 && after >= state.boundary) {
+			return nil
+		}
+		if !state.active {
 			if !terminal && p.t != nil && p.incomplete {
-				return &agui.InputError{Code: "run.incomplete", Message: "run has no recorded terminal"}
-			}
-			if wasActive {
-				continue
+				return &agui.InputError{Code: code, Message: "run has no recorded terminal"}
 			}
 			return nil
 		}
@@ -155,27 +172,41 @@ func (s *Session) observe(
 	}
 }
 
-func stampRecord(rec ProjectedRecord) {
+func stampRecord(rec ProjectedRecord) error {
 	for _, ev := range rec.Events {
 		base := ev.GetBaseEvent()
 		if base.Metadata == nil {
 			base.Metadata = map[string]any{}
 		}
-		// Detach nested metadata: projection hooks may share maps across events.
-		raw, _ := json.Marshal(base.Metadata)
-		var metadata map[string]any
-		_ = json.Unmarshal(raw, &metadata)
-		if metadata == nil {
-			metadata = map[string]any{}
+		// Only the metadata envelope and our namespace are modified. Copy those
+		// maps without serializing opaque JSON values or losing numeric precision.
+		metadata := make(map[string]any, len(base.Metadata))
+		for k, v := range base.Metadata {
+			metadata[k] = v
+		}
+		ns := make(map[string]any)
+		if original, ok := metadata["agentAdaptor"].(map[string]any); ok {
+			for k, v := range original {
+				ns[k] = v
+			}
+		} else if original := metadata["agentAdaptor"]; original != nil {
+			// Hooks may use another JSON-object representation, e.g. a typed map
+			// or RawMessage. Preserve its fields and exact JSON numbers as well.
+			raw, err := json.Marshal(original)
+			if err != nil {
+				return fmt.Errorf("aguisession: observer metadata: %w", err)
+			}
+			decoder := json.NewDecoder(bytes.NewReader(raw))
+			decoder.UseNumber()
+			if err := decoder.Decode(&ns); err != nil || ns == nil {
+				return fmt.Errorf("aguisession: agentAdaptor observer metadata must be a JSON object")
+			}
 		}
 		base.Metadata = metadata
-		ns, _ := metadata["agentAdaptor"].(map[string]any)
-		if ns == nil {
-			ns = map[string]any{}
-			metadata["agentAdaptor"] = ns
-		}
+		metadata["agentAdaptor"] = ns
 		ns["seq"] = rec.HostSeq
 	}
+	return nil
 }
 
 // ObserveHandler authorizes OpFollow for ?thread_id=T&after=N and emits SSE.
@@ -206,8 +237,8 @@ func (s *Session) ObserveHandler() http.Handler {
 			writeError(w, err)
 			return
 		}
-		check := func() error {
-			next, err := s.resolve(r, Access{Op: OpFollow, ThreadID: id})
+		check := func(ctx context.Context) error {
+			next, err := s.resolve(r.WithContext(ctx), Access{Op: OpFollow, ThreadID: id})
 			if err != nil {
 				return err
 			}
@@ -216,14 +247,17 @@ func (s *Session) ObserveHandler() http.Handler {
 			}
 			return nil
 		}
-		s.writeObservation(w, r, key, after, check, 0)
+		s.writeObservation(w, r, key, after, check)
 	})
 }
 
 func (s *Session) writeObservation(
 	w http.ResponseWriter, r *http.Request, key string, after uint64,
-	check func() error, omitUserAfter uint64,
+	check func(context.Context) error,
 ) {
+	ctx, detach := s.observerContext(r.Context(), key)
+	defer detach()
+	r = r.WithContext(ctx)
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("X-Accel-Buffering", "no")
@@ -236,13 +270,14 @@ func (s *Session) writeObservation(
 	defer writer.ClearDeadline()
 	encoder := wire.NewSSEWriter()
 	lastWrite := time.Now()
-	deliveryCheck := func() error {
+	sent := false
+	deliveryCheck := func(ctx context.Context) error {
 		if check != nil {
-			if err := check(); err != nil {
+			if err := check(ctx); err != nil {
 				return err
 			}
 		}
-		if s.opts.KeepAlivePing > 0 && time.Since(lastWrite) >= s.opts.KeepAlivePing {
+		if sent && s.opts.KeepAlivePing > 0 && time.Since(lastWrite) >= s.opts.KeepAlivePing {
 			if _, err := io.WriteString(writer, ":keep-alive\n\n"); err != nil {
 				return err
 			}
@@ -254,14 +289,11 @@ func (s *Session) writeObservation(
 		}
 		return nil
 	}
-	sent := false
-	err := s.observe(r.Context(), key, after, deliveryCheck, func(rec ProjectedRecord) error {
+	err := s.follow(r.Context(), key, after, deliveryCheck, func(rec ProjectedRecord) error {
+		if len(rec.Events) == 0 {
+			return nil
+		}
 		for _, ev := range rec.Events {
-			isSubmittedUser := omitUserAfter > 0 && rec.HostSeq > omitUserAfter &&
-				rec.HostSeq <= omitUserAfter+3
-			if isSubmittedUser && strings.HasPrefix(string(ev.GetBaseEvent().Type()), "TEXT_MESSAGE_") {
-				continue
-			}
 			sent = true
 			if err := encoder.WriteEvent(r.Context(), writer, ev); err != nil {
 				return err
@@ -271,48 +303,49 @@ func (s *Session) writeObservation(
 		lastWrite = time.Now()
 		return writer.Err()
 	})
-	if err != nil && r.Context().Err() == nil {
-		var inputErr *agui.InputError
-		if errors.As(err, &inputErr) &&
-			(inputErr.Code == "agui.recording_failed" || inputErr.Code == "run.incomplete") {
-			// Storage failure cannot allocate a new durable cursor. This is a
-			// transport failure terminal, deliberately without a sequence claim.
-			ev := events.NewRunErrorEvent(inputErr.Message)
-			ev.Code = &inputErr.Code
-			_ = encoder.WriteEvent(r.Context(), writer, ev)
-			writer.Flush()
-		} else if !sent {
-			writeError(w, err)
-		}
+	if err == nil || r.Context().Err() != nil || writer.Err() != nil {
+		return
 	}
+	var inputErr *agui.InputError
+	isDiagnosis := errors.As(err, &inputErr) &&
+		(inputErr.Code == "agui.recording_failed" || inputErr.Code == "run.incomplete")
+	if !sent && !isDiagnosis {
+		writeError(w, err)
+		return
+	}
+	// Storage/read failure cannot allocate a durable cursor. An established
+	// SSE response receives an unsequenced transport error, never appended JSON.
+	code, message := "agui.observation_failed", "event observation failed"
+	if isDiagnosis {
+		code, message = inputErr.Code, inputErr.Message
+	}
+	ev := events.NewRunErrorEvent(message)
+	ev.Code = &code
+	_ = encoder.WriteEvent(r.Context(), writer, ev)
+	writer.Flush()
 }
 
 func (s *Session) unattendedResponse(
 	w http.ResponseWriter, r *http.Request, key string,
-	prepared *agui.PreparedRequest, boundary sessionrecorder.EventRecord,
+	prepared *agui.PreparedRequest, boundary sessionrecorder.EventRecord, run *ownedRun,
 ) {
-	ctx, cancel := context.WithCancel(s.lifetime)
-	run := &ownedRun{cancel: cancel, done: make(chan struct{})}
-	s.mu.Lock()
-	s.runs[key] = run
-	s.mu.Unlock()
 	go func() {
+		defer close(run.done)
 		defer s.finishAdmission()
-		defer cancel()
-		defer func() {
-			s.mu.Lock()
-			delete(s.runs, key)
-			delete(s.active, key)
-			close(run.done)
-			s.mu.Unlock()
-		}()
-		stream := prepared.Target.Stream(ctx, prepared.Prompt, s.opts.CallOptions...)
+		defer run.cancel()
+		defer s.release(key)
+		stream := prepared.Target.Stream(run.ctx, prepared.Prompt, s.opts.CallOptions...)
 		defer stream.Cancel()
-		s.drain(ctx, key, prepared.Input, stream, boundary, nil)
+		s.drain(run.ctx, key, prepared.Input, stream, boundary, nil)
 	}()
 	// The POST is merely the first observer; its disconnect never owns execution.
-	check := func() error {
-		next, err := s.resolve(r, Access{Op: OpFollow, ThreadID: prepared.Input.ThreadID})
+	check := func(ctx context.Context) error {
+		// Nil Resolve permits all access, including a fresh key selected by the
+		// authorized divergence hook. The POST already owns that resolved key.
+		if s.opts.Resolve == nil {
+			return nil
+		}
+		next, err := s.resolve(r.WithContext(ctx), Access{Op: OpFollow, ThreadID: prepared.Input.ThreadID})
 		if err != nil {
 			return err
 		}
@@ -321,5 +354,5 @@ func (s *Session) unattendedResponse(
 		}
 		return nil
 	}
-	s.writeObservation(w, r, key, boundary.HostSeq-1, check, boundary.HostSeq)
+	s.writeObservation(w, r, key, boundary.HostSeq-1, check)
 }

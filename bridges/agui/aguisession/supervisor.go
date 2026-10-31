@@ -8,6 +8,7 @@ import (
 )
 
 type ownedRun struct {
+	ctx    context.Context
 	cancel context.CancelFunc
 	done   chan struct{}
 }
@@ -25,39 +26,47 @@ func (s *Session) admit() error {
 		}
 	}
 	s.running++
-	s.work.Add(1)
 	return nil
 }
 
 func (s *Session) finishAdmission() {
 	s.mu.Lock()
 	s.running--
+	if s.closed && s.running == 0 {
+		close(s.shutdownDone)
+	}
 	s.mu.Unlock()
-	s.work.Done()
 }
 
 // Shutdown rejects new runs, cancels unattended runs and waits for their drains.
 // A deadline bounds waiting; subsequent calls can continue waiting for cleanup.
 func (s *Session) Shutdown(ctx context.Context) error {
 	s.mu.Lock()
-	s.closed = true
-	s.stop()
+	if !s.closed {
+		s.closed = true
+		s.stop()
+		if s.running == 0 {
+			close(s.shutdownDone)
+		}
+	}
 	s.mu.Unlock()
-	done := make(chan struct{})
-	go func() {
-		s.work.Wait()
-		close(done)
-	}()
+	// Completed cleanup is stable even when a repeated caller has an expired context.
 	select {
-	case <-done:
+	case <-s.shutdownDone:
+		return nil
+	default:
+	}
+	select {
+	case <-s.shutdownDone:
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
 	}
 }
 
-// Cancel cancels the active unattended run at an already-authorized opaque key
-// and waits for terminal recording. HTTP callers should use CancelHandler.
+// Cancel cancels unattended admission or execution at an authorized opaque key
+// and waits for cleanup (and terminal recording if its boundary was committed).
+// HTTP callers should use CancelHandler.
 func (s *Session) Cancel(ctx context.Context, key string) error {
 	s.mu.Lock()
 	run := s.runs[key]

@@ -70,8 +70,9 @@ type Options struct {
 
 	// Recorder is required; Session never substitutes ephemeral storage.
 	Recorder sessionrecorder.EventRecorder
-	// Resolve authorizes and maps starts and reads. Production hosts must install
-	// it: a client thread ID is not authorization. Nil permits all access.
+	// Resolve authorizes and maps starts, reads, follows and cancellations.
+	// Production hosts must install it: a client thread ID is not authorization.
+	// Nil permits all access.
 	Resolve func(*http.Request, Access) (string, error)
 	// WriteTimeout bounds each SSE write; the default is 30 seconds.
 	WriteTimeout time.Duration
@@ -89,7 +90,8 @@ type Options struct {
 	// CallOptions are passed to Runner.Stream.
 	CallOptions []adaptor.CallOption
 	// Observe receives successfully recorded source events, including live approvals.
-	// It runs synchronously in the sole drain loop and must return promptly.
+	// It runs synchronously in each run's sole drain and must return promptly.
+	// Different keys may invoke it concurrently.
 	Observe func(key string, event adaptor.Event)
 	// OnRunEnd releases host runtime state after draining, including recording failure.
 	OnRunEnd func(key string)
@@ -105,12 +107,14 @@ type Session struct {
 	stop              context.CancelFunc
 	closed            bool
 	running           int
-	work              sync.WaitGroup
+	shutdownDone      chan struct{}
 	runs              map[string]*ownedRun
 	observers         map[string]map[uint64]context.CancelFunc
 	observerID        uint64
 	recordingFailures map[string]bool
 	boundaries        map[string]sessionrecorder.HostSeq
+	revisions         map[string]uint64
+	changed           chan struct{}
 }
 
 // New creates a session. Nil runner/recorder, or unattended mode without a
@@ -137,6 +141,7 @@ func New(runner adaptor.Runner, opts Options) *Session {
 		lifetime: lifetime, stop: stop, runs: map[string]*ownedRun{},
 		observers:         map[string]map[uint64]context.CancelFunc{},
 		recordingFailures: map[string]bool{}, boundaries: map[string]sessionrecorder.HostSeq{},
+		revisions: map[string]uint64{}, shutdownDone: make(chan struct{}), changed: make(chan struct{}),
 	}
 }
 
@@ -262,6 +267,11 @@ func (s *Session) resolve(r *http.Request, access Access) (string, error) {
 	if s.opts.Resolve != nil {
 		return s.opts.Resolve(r, access)
 	}
+	// A fixed Thread is already host-bound. Reads, first-observer authorization
+	// and cancellation must address the same key used by execution admission.
+	if fixed, ok := s.runner.(*adaptor.Thread); ok {
+		return fixed.Key(), nil
+	}
 	if access.ThreadID == "" {
 		return "", nil
 	}
@@ -271,10 +281,12 @@ func (s *Session) resolve(r *http.Request, access Access) (string, error) {
 func (s *Session) release(key string) {
 	s.mu.Lock()
 	delete(s.active, key)
+	delete(s.runs, key)
+	s.changeLocked(key)
 	s.mu.Unlock()
 }
 
-func (s *Session) reserve(ctx context.Context, key, runID string) error {
+func (s *Session) reserve(ctx context.Context, key, runID string, run *ownedRun) error {
 	s.mu.Lock()
 	if s.active[key] {
 		s.mu.Unlock()
@@ -282,6 +294,10 @@ func (s *Session) reserve(ctx context.Context, key, runID string) error {
 	}
 	s.active[key] = true
 	s.boundaries[key] = 0
+	s.changeLocked(key)
+	if run != nil {
+		s.runs[key] = run
+	}
 	s.mu.Unlock()
 	records, err := s.opts.Recorder.Since(ctx, RecorderKey(key), 0)
 	if err == nil {
@@ -314,24 +330,40 @@ func (s *Session) serveRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	handedOff := false
-	defer func() {
-		if !handedOff {
-			s.finishAdmission()
-		}
-	}()
 	reservation := runReservation{}
 	defer func() {
+		if handedOff {
+			return
+		}
 		if reservation.held {
 			s.release(reservation.key)
 		}
+		if reservation.run != nil {
+			reservation.run.cancel()
+		}
+		s.finishAdmission()
+		if reservation.run != nil {
+			close(reservation.run.done)
+		}
 	}()
-	prepared, err := s.prepareRun(r, &reservation)
+	prepareRequest := r
+	if s.opts.Unattended {
+		runCtx, cancel := context.WithCancel(s.lifetime)
+		reservation.run = &ownedRun{ctx: runCtx, cancel: cancel, done: make(chan struct{})}
+		// Preserve authorization/request values while binding admission, including
+		// preparation, to the worker. Disconnect owns only the first observer.
+		prepareCtx, prepareCancel := context.WithCancel(context.WithoutCancel(r.Context()))
+		stop := context.AfterFunc(runCtx, prepareCancel)
+		defer func() { stop(); prepareCancel() }()
+		prepareRequest = r.WithContext(prepareCtx)
+	}
+	prepared, err := s.prepareRun(prepareRequest, &reservation)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
 	key := reservation.key
-	boundary, err := s.recordBoundary(r.Context(), key, prepared)
+	boundary, err := s.recordBoundary(prepareRequest.Context(), key, prepared)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -339,7 +371,7 @@ func (s *Session) serveRun(w http.ResponseWriter, r *http.Request) {
 	if s.opts.Unattended {
 		handedOff = true
 		reservation.held = false
-		s.unattendedResponse(w, r, key, prepared, boundary)
+		s.unattendedResponse(w, r, key, prepared, boundary, reservation.run)
 		return
 	}
 	s.streamResponse(w, r, key, prepared, boundary)
@@ -348,6 +380,7 @@ func (s *Session) serveRun(w http.ResponseWriter, r *http.Request) {
 type runReservation struct {
 	key  string
 	held bool
+	run  *ownedRun
 }
 
 // prepareRun uses the shared preparation path while retaining admission ownership
@@ -364,7 +397,7 @@ func (s *Session) prepareRun(r *http.Request, reservation *runReservation) (*agu
 				key = fixed.Key()
 			}
 			if key != "" {
-				if err := s.reserve(r.Context(), key, in.RunID); err != nil {
+				if err := s.reserve(r.Context(), key, in.RunID, reservation.run); err != nil {
 					return "", err
 				}
 				reservation.key, reservation.held = key, true
@@ -380,7 +413,7 @@ func (s *Session) prepareRun(r *http.Request, reservation *runReservation) (*agu
 				if _, fixed := s.runner.(*adaptor.Thread); fixed {
 					return key, false, conflict("agui.history_diverged", "a fixed Thread cannot switch keys; supply an Agent")
 				}
-				if err := s.reserve(ctx, next, in.RunID); err != nil {
+				if err := s.reserve(ctx, next, in.RunID, reservation.run); err != nil {
 					return key, false, err
 				}
 				if err := s.requireFresh(ctx, next); err != nil {
@@ -404,7 +437,7 @@ func (s *Session) prepareRun(r *http.Request, reservation *runReservation) (*agu
 		if key == "" {
 			key = ThreadKey(prepared.Input.ThreadID)
 		}
-		if err := s.reserve(r.Context(), key, prepared.Input.RunID); err != nil {
+		if err := s.reserve(r.Context(), key, prepared.Input.RunID, reservation.run); err != nil {
 			return nil, err
 		}
 		reservation.key, reservation.held = key, true
@@ -439,6 +472,7 @@ func (s *Session) recordBoundary(ctx context.Context, key string, prepared *agui
 	}
 	s.mu.Lock()
 	s.boundaries[key] = rec.HostSeq
+	s.changeLocked(key)
 	s.mu.Unlock()
 	return rec, nil
 }
@@ -542,6 +576,7 @@ func (s *Session) drain(ctx context.Context, key string, in *agui.RunAgentInput,
 			failed = true
 			s.mu.Lock()
 			s.recordingFailures[key] = true
+			s.changeLocked(key)
 			s.mu.Unlock()
 			stream.Cancel()
 			send(p.fail("agui.recording_failed", "event recording failed"))
