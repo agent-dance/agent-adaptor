@@ -46,6 +46,7 @@ type subagentToolCall struct {
 }
 
 type subagentTracker struct {
+	clock  func() time.Time
 	states map[string]*subagentActivityState
 	order  []string
 }
@@ -58,7 +59,7 @@ type subagentActivityState struct {
 }
 
 func newSubagentTracker() *subagentTracker {
-	return &subagentTracker{states: map[string]*subagentActivityState{}}
+	return &subagentTracker{clock: time.Now, states: map[string]*subagentActivityState{}}
 }
 
 func (t *subagentTracker) translate(update adaptor.SubagentUpdate) []aguievents.Event {
@@ -228,7 +229,7 @@ func (t *subagentTracker) flush(err error) []aguievents.Event {
 		} else if err != nil {
 			message = err.Error()
 		}
-		now := time.Now().UTC()
+		now := t.clock().UTC()
 		state.terminal = true
 		state.content.Status = status
 		state.content.Error = map[string]any{"code": code, "message": message}

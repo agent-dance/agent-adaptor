@@ -1,22 +1,21 @@
 package main
 
 import (
-	"errors"
-	"log/slog"
 	"net/http"
 	"strconv"
-	"time"
 
 	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/bridges/agui"
+	"github.com/agent-dance/agent-adaptor/bridges/agui/aguisession"
+
 	"github.com/agent-dance/agent-adaptor/examples/internal/exampleutil"
 )
 
 type appServer struct {
-	agent  *adaptor.Agent
-	driver string
-	cors   string
-	store  *threadStore
+	agent   *adaptor.Agent
+	driver  string
+	cors    string
+	store   *threadStore
+	session *aguisession.Session
 }
 
 func newAppServer(agent *adaptor.Agent, driver, cors string) (*appServer, error) {
@@ -24,12 +23,14 @@ func newAppServer(agent *adaptor.Agent, driver, cors string) (*appServer, error)
 	if err != nil {
 		return nil, err
 	}
-	return &appServer{
-		agent:  agent,
-		driver: driver,
-		cors:   cors,
-		store:  store,
-	}, nil
+	server := &appServer{agent: agent, driver: driver, cors: cors, store: store}
+	server.session = aguisession.New(agent, aguisession.Options{
+		Recorder:    store.recorder,
+		OnRunEnd:    store.clearPending,
+		CallOptions: []adaptor.CallOption{exampleutil.AGUIExamplePolicy()},
+		Observe:     server.observe,
+	})
+	return server, nil
 }
 
 func (s *appServer) routes() http.Handler {
@@ -43,32 +44,7 @@ func (s *appServer) routes() http.Handler {
 }
 
 func (s *appServer) handleAgent(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	input, err := agui.DecodeHTTPRequest(r)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	invocation, err := s.buildInvocation(input)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	// The browser's threadId is the host-owned conversation key; Thread turns
-	// it into continue-or-start semantics against the agent's thread store.
-	// Stream is the verb — there is no WithStreaming option to remember.
-	stream := s.agent.Thread(invocation.threadKey).Stream(r.Context(), invocation.prompt, invocation.opts...)
-	defer stream.Cancel()
-
-	session := newAGUIRunSession(r.Context(), stream, s.store, invocation.threadID, invocation.userTurn, w)
-	if err := session.Serve(); err != nil && !errors.Is(err, r.Context().Err()) {
-		slog.Warn("agui stream ended with error", "err", err, "thread_id", invocation.threadID)
-	}
+	s.session.Handler().ServeHTTP(w, r)
 }
 
 func (s *appServer) handleSessionEvents(w http.ResponseWriter, r *http.Request) {
@@ -85,13 +61,13 @@ func (s *appServer) handleSessionEvents(w http.ResponseWriter, r *http.Request) 
 	// events carry no cross-run sequence number of their own, so this cursor
 	// is the only thing that stays monotonic when a thread spans several runs.
 	afterHostSeq, _ := strconv.ParseUint(r.URL.Query().Get("after"), 10, 64)
-	records := s.store.historyAfter(threadID, afterHostSeq)
+	records := s.store.historyAfter(aguisession.RecorderKey(recordingKey(threadID)), afterHostSeq)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"thread_id":  threadID,
 		"after":      afterHostSeq,
 		"events":     records,
 		"last_seq":   lastHostSeq(records),
-		"run_active": s.store.hasActiveRun(threadID),
+		"run_active": s.session.Active(recordingKey(threadID)),
 	})
 }
 
@@ -107,7 +83,7 @@ func (s *appServer) handleDecisionPending(w http.ResponseWriter, r *http.Request
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"thread_id": threadID,
-		"pending":   s.store.pendingRequests(threadID),
+		"pending":   s.store.pendingRequests(recordingKey(threadID)),
 	})
 }
 
@@ -133,7 +109,7 @@ func (s *appServer) handleDecisionResolve(w http.ResponseWriter, r *http.Request
 		http.Error(w, "thread_id (RunID in body or ?thread_id=) required", http.StatusBadRequest)
 		return
 	}
-	if writeApprovalError(w, s.store.resolveDecision(r.Context(), threadID, *body)) {
+	if writeApprovalError(w, s.store.resolveDecision(r.Context(), recordingKey(threadID), *body)) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -144,51 +120,19 @@ func (s *appServer) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	_, _ = w.Write([]byte("ok"))
 }
 
-type agentInvocation struct {
-	threadID  string
-	threadKey string
-	prompt    string
-	opts      []adaptor.CallOption
-	userTurn  []adaptor.Event
-}
+// recordingKey uses the same collision-free mapping as the session bridge.
+func recordingKey(id string) string { return aguisession.ThreadKey(id) }
 
-func (s *appServer) buildInvocation(input *agui.RunAgentInput) (agentInvocation, error) {
-	prompt := input.LastUserText()
-	if prompt == "" {
-		return agentInvocation{}, errors.New("agui: no user message in RunAgentInput")
-	}
-
-	threadID := input.ThreadID
-	if threadID == "" {
-		threadID = "anon-" + strconv.FormatInt(time.Now().UnixNano(), 36)
-	}
-
-	// Two ID layers only: the host-owned thread key and the SDK-assigned run ID.
-	namespace, key := input.SessionKey()
-	threadKey := namespace + "/" + key
-	if namespace == "" || key == "" {
-		threadKey = "agui/" + threadID
-	}
-
-	return agentInvocation{
-		threadID:  threadID,
-		threadKey: threadKey,
-		prompt:    prompt,
-		// Call scope: overrides for this invocation only. The agent-level
-		// default policy was already installed by NewAGUIStreamingAgent;
-		// repeating it here shows the "nearer scope wins" merge rule.
-		opts:     []adaptor.CallOption{exampleutil.AGUIExamplePolicy()},
-		userTurn: userTurnEvents(lastUserMessageID(input), prompt),
-	}, nil
-}
-
-// lastUserMessageID returns the AG-UI message id of the latest user-role
-// message so the recorded user turn keeps the browser's own id.
-func lastUserMessageID(input *agui.RunAgentInput) string {
-	for i := len(input.Messages) - 1; i >= 0; i-- {
-		if input.Messages[i].Role == agui.RoleUser {
-			return input.Messages[i].ID
+// observe maintains live responders from the sole recorded event drain.
+func (s *appServer) observe(key string, ev adaptor.Event) {
+	switch e := ev.(type) {
+	case *adaptor.ApprovalRequest:
+		s.store.addPending(key, e)
+	case adaptor.Notice:
+		if e.Kind == adaptor.NoticeApprovalResolved {
+			if id, ok := e.Data["request_id"].(string); ok {
+				s.store.removePending(key, id)
+			}
 		}
 	}
-	return ""
 }

@@ -35,6 +35,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/agent-dance/agent-adaptor/bridges/internal/ssewire"
 	"io"
 	"net/http"
 	"strconv"
@@ -42,12 +43,10 @@ import (
 	"sync"
 	"time"
 
-	aguievents "github.com/ag-ui-protocol/ag-ui/sdks/community/go/pkg/core/events"
 	aguisse "github.com/ag-ui-protocol/ag-ui/sdks/community/go/pkg/encoding/sse"
 
 	adaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/bridges/agui"
-	"github.com/agent-dance/agent-adaptor/bridges/internal/bridgekey"
 )
 
 // Options configures a Handler. Zero values select AG-UI protocol, no
@@ -151,8 +150,8 @@ func Handler(runner adaptor.Runner, opts Options) http.Handler {
 		w.Header().Set("X-Accel-Buffering", "no")
 		w.WriteHeader(http.StatusOK)
 
-		deadlineWriter := newDeadlineResponseWriter(w, opts.WriteTimeout)
-		defer deadlineWriter.clearDeadline()
+		deadlineWriter := ssewire.NewDeadlineWriter(w, opts.WriteTimeout)
+		defer deadlineWriter.ClearDeadline()
 		flusher, _ := any(deadlineWriter).(http.Flusher)
 		writeMu := &sync.Mutex{}
 		if flusher != nil {
@@ -193,54 +192,6 @@ func Handler(runner adaptor.Runner, opts Options) http.Handler {
 	})
 }
 
-// deadlineResponseWriter applies a fresh deadline to every low-level write.
-// This covers multi-write AG-UI frames, Raw frames, flushes, and keep-alives
-// without starting an unbounded goroutine per frame. Response writers that do
-// not support write deadlines (notably httptest.ResponseRecorder) keep their
-// normal behavior.
-type deadlineResponseWriter struct {
-	http.ResponseWriter
-	controller *http.ResponseController
-	timeout    time.Duration
-}
-
-func newDeadlineResponseWriter(w http.ResponseWriter, timeout time.Duration) *deadlineResponseWriter {
-	return &deadlineResponseWriter{
-		ResponseWriter: w,
-		controller:     http.NewResponseController(w),
-		timeout:        timeout,
-	}
-}
-
-func (w *deadlineResponseWriter) Write(p []byte) (int, error) {
-	if err := w.armDeadline(); err != nil {
-		return 0, err
-	}
-	return w.ResponseWriter.Write(p)
-}
-
-func (w *deadlineResponseWriter) Flush() {
-	if w.armDeadline() != nil {
-		return
-	}
-	_ = w.controller.Flush()
-}
-
-func (w *deadlineResponseWriter) armDeadline() error {
-	err := w.controller.SetWriteDeadline(time.Now().Add(w.timeout))
-	if errors.Is(err, http.ErrNotSupported) {
-		return nil
-	}
-	return err
-}
-
-func (w *deadlineResponseWriter) clearDeadline() {
-	err := w.controller.SetWriteDeadline(time.Time{})
-	if err != nil && !errors.Is(err, http.ErrNotSupported) {
-		return
-	}
-}
-
 // preparedRequest retains protocol input alongside the resolved execution target.
 // threadKey is independent of wire identity: generated legacy IDs stay stateless.
 type preparedRequest struct {
@@ -278,87 +229,15 @@ func prepareRawRequest(r *http.Request, runner adaptor.Runner) (*preparedRequest
 }
 
 func prepareAGUIRequest(r *http.Request, runner adaptor.Runner, opts Options) (*preparedRequest, error) {
-	input, err := agui.DecodeHTTPRequest(r)
+	prepared, err := agui.PrepareHTTPRequest(r, runner, agui.RequestOptions{
+		Input: opts.AGUIInput, ResolveThreadKey: opts.ResolveThreadKey,
+		OnAGUIRequest: opts.OnAGUIRequest, VerifyHistory: opts.VerifyHistory,
+	})
 	if err != nil {
 		return nil, err
 	}
-	if input.RunID == "" {
-		input.RunID = aguievents.GenerateRunID()
-	}
-	request := &preparedRequest{input: input}
-	if input.ThreadID != "" {
-		request.threadKey = bridgekey.Encode("agui", input.ThreadID)
-	}
-	if opts.ResolveThreadKey != nil {
-		request.threadKey, err = opts.ResolveThreadKey(r, input)
-		if err != nil {
-			return nil, err
-		}
-	}
-	if opts.OnAGUIRequest != nil {
-		if err := opts.OnAGUIRequest(r, input); err != nil {
-			return nil, err
-		}
-	}
-	request.target = runnerForKey(runner, request.threadKey)
-	state := agui.InputState{}
-	if len(input.Messages) > 1 {
-		if opts.VerifyHistory != nil {
-			request.threadKey, state.CheckpointUsable, err = opts.VerifyHistory(
-				r.Context(), input, request.target, request.threadKey,
-			)
-			request.target = runnerForKey(runner, request.threadKey)
-		} else if thread, ok := request.target.(*adaptor.Thread); ok {
-			state.CheckpointUsable, err = readCheckpoint(r.Context(), thread)
-		}
-		if err != nil {
-			return nil, err
-		}
-		// Compatibility is fully checked inside the sole execution pipeline.
-		// ResumeOnly prevents that later check from silently dropping history.
-		if state.CheckpointUsable && request.threadKey != "" {
-			if agent, ok := runner.(*adaptor.Agent); ok {
-				request.target = agent.Thread(request.threadKey, adaptor.ResumeOnly())
-			}
-		}
-	}
-	request.prompt, request.diagnostics, err = agui.PrepareInput(input, opts.AGUIInput, state)
-	if err != nil {
-		return nil, err
-	}
-	// Mint the public wire identity after resolving the execution target. An
-	// absent client threadId must never turn into a generated checkpoint key.
-	if input.ThreadID == "" {
-		input.ThreadID = aguievents.GenerateThreadID()
-	}
-	return request, nil
-}
-
-func runnerForKey(runner adaptor.Runner, key string) adaptor.Runner {
-	if key != "" {
-		if agent, ok := runner.(*adaptor.Agent); ok {
-			return agent.Thread(key)
-		}
-	}
-	return runner
-}
-
-func readCheckpoint(ctx context.Context, thread *adaptor.Thread) (bool, error) {
-	_, err := thread.Checkpoint(ctx)
-	if err == nil {
-		return true, nil
-	}
-	for _, missing := range []error{
-		adaptor.ErrThreadNotFound,
-		adaptor.ErrThreadCheckpointMissing,
-		adaptor.ErrThreadIncompatible,
-		adaptor.ErrThreadStoreRequired,
-	} {
-		if errors.Is(err, missing) {
-			return false, nil
-		}
-	}
-	return false, err
+	return &preparedRequest{input: prepared.Input, threadKey: prepared.ThreadKey,
+		target: prepared.Target, prompt: prepared.Prompt, diagnostics: prepared.Diagnostics}, nil
 }
 
 // streamEvents drains the stream into SSE frames according to the chosen
@@ -668,4 +547,13 @@ func nonEmpty(value, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func runnerForKey(runner adaptor.Runner, key string) adaptor.Runner {
+	if key != "" {
+		if agent, ok := runner.(*adaptor.Agent); ok {
+			return agent.Thread(key)
+		}
+	}
+	return runner
 }

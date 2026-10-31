@@ -6,11 +6,17 @@ All notable changes to this project are documented in this file.
 
 ### Added
 
+- Optional `bridges/agui/aguisession` recorded execution, deterministic history
+  projection, Message folding, history verification and HTTP helpers.
+
 - AG-UI 1.0 input validation, structured transport errors, input diagnostics,
   context projection, history fallback and host verification/request hooks.
 - Configurable tool-result truncation and live projection redaction/extension hooks.
 
 ### Changed
+
+- Recorded AG-UI sessions use one operation-aware authorization/key resolver,
+  shared request preparation and bounded SSE writes with optional keep-alives.
 
 - AG-UI run boundaries echo public identities and advertise protocol 1.0.
   SDK/provider identities are namespaced metadata. Versioned requests require

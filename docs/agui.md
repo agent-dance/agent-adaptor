@@ -145,3 +145,75 @@ provides neither durable UI history nor background execution/observation.
 
 The deterministic handler fixture is `bridges/agui/testdata/handler-agui-1.0.sse`.
 Regenerate with `UPDATE_GOLDEN=1` with `go test ./bridges/sse -run TestAGUIHandlerGolden`.
+
+## Recorded execution and history
+
+`bridges/agui/aguisession` is optional. Construct
+`New(runner adaptor.Runner, opts Options) *Session` with an injected
+`sessionrecorder.EventRecorder`. Mount `Handler()` for POST/SSE,
+`EventsHandler()` for JSON records, and `MessagesHandler()` for AG-UI Message[].
+The read handlers accept `thread_id`; events additionally accepts `after`.
+**Production hosts must install `Options.Resolve`: a client threadId is not
+an authorization decision.** This single hook authorizes and maps both starts
+and reads. It receives `Access{Op: OpStart|OpRead, ThreadID, Input}`; Input is
+set only for starts. Nil permits all access and uses the default mapping.
+The default Thread key remains `bridgekey.Encode("agui", threadId)`.
+`RecorderKey(key)` is the stable version-1 storage mapping: `"agui-"` plus
+64 lowercase hexadecimal characters of SHA-256 over the exact UTF-8 key bytes.
+This mapping is part of projection version `agui-session/1`; changing it requires
+an explicit storage migration. It derives a portable name for recorder backends;
+all recorder access must use that mapping. This introduces the usual SHA-256
+collision assumption, rather than changing the opaque Thread identity.
+
+Projection version `agui-session/1` records typed Notices with reserved kinds
+`agentAdaptor.agui.boundary` (public identity, input protocol version,
+projection version, diagnostics) and `agentAdaptor.agui.terminal` (authoritative
+code/message). Between them are the input user turn, source events including
+approvals, and any Result.Text fallback. Stream.Result is the terminal authority.
+Only successfully recorded events are projected. Recording failure cancels and
+drains execution, reports `agui.recording_failed` on the live connection, and
+leaves incomplete history. Inactive runs without terminal records project
+`run.incomplete`, never success. Disconnect cancels this request-scoped run.
+The drain owns execution independently of the HTTP subscriber.
+
+`Events(ctx, key, after)` returns ordered `[]ProjectedRecord` with HostSeq per
+source record; consume all events in a record before advancing its cursor.
+`Messages(ctx, key)` folds that same projection. `Fold` ports the official
+@ag-ui/client 1.0.3 `defaultApplyEvents` (`Se`), tool-parent helper `xe`, and
+metadata helper `L`. START reuses existing message IDs and CONTENT appends text.
+Consequently the POST omits its recorded user triple: echoing it would duplicate
+text already present in the client's input messages. History includes the triple.
+Reasoning remains role=reasoning, as consumed by assistant-ui
+`fromAgUiMessages` under showThinking. Tool failure metadata additionally becomes
+ToolMessage.error. Activity snapshots and RFC 6902 deltas are folded.
+Projection options, including deterministic redaction hooks, apply to both paths.
+
+`VerifyHistory(ctx, input, runner, key) (string, bool, error)` also fits the generic
+SSE handler extension. It compares IDs and roles in order, excluding activities
+and the trailing input user turn; content is not compared. Divergence returns
+409 `agui.history_diverged`; `ResolveDivergence` may choose a fresh key.
+A match plus a readable checkpoint executes only the trailing user prompt.
+Checkpoint compatibility still has the execution-time limits described above.
+Duplicate recorded run IDs return 409 `agui.duplicate_run`; active threads return
+409 `agui.run_active` before streaming. `Observe` sees recorded live approvals;
+`OnRunEnd` lets hosts clear pending responders after drain completion.
+
+One Session must own admission for its keys. Memory and JSONL backends are
+single-process facilities. A multi-worker backend needs atomic per-key HostSeq
+allocation and append, durable ordered reads, and an external admission lease
+covering duplicate detection and execution. Future follow notifications must be
+published after commit; subscribe-before-read with cursor deduplication must
+prevent gaps. Storage alone does not provide cross-worker run ownership.
+No background execution, database, or follow endpoint is supplied here.
+
+The official live client fold does **not** set ToolMessage.error from result
+metadata. History folding adds it for assistant-ui history loading; live UIs
+read metadata.agentAdaptor for tool status. Verification compares only IDs and
+roles, ignoring both content and error. HttpAgent.prepareRunAgentInput in
+@ag-ui/client 1.0.3 clones messages and strips only role=activity: reasoning,
+tool results and tool-only assistants remain in the next request.
+
+Session SSE writes use the same deadline writer as the generic handler.
+Options.WriteTimeout defaults to 30 seconds per write; KeepAlivePing optionally
+sends comment frames. Write failures cancel request-scoped execution and the
+single drain finishes recording and cleanup.

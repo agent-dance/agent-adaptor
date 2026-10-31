@@ -5,6 +5,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	events "github.com/ag-ui-protocol/ag-ui/sdks/community/go/pkg/core/events"
@@ -246,4 +247,14 @@ func (t *EventTranslator) toolSubagent(id string) string {
 		}
 	}
 	return ""
+}
+
+// WithEventClock supplies the time used to close unfinished subagent activities.
+// Recorded projections should use the terminal record time for stable replay.
+func WithEventClock(clock func() time.Time) EventTranslatorOption {
+	return func(t *EventTranslator) {
+		if clock != nil {
+			t.subagents.clock = clock
+		}
+	}
 }

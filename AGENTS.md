@@ -56,6 +56,7 @@ github.com/agent-dance/agent-adaptor          package adaptor
 ├── mcp/                                       MCP 声明
 ├── profile/                                   profile 与资源声明
 ├── threadstore/ memory/                       Thread 持久化合同与内存实现
+├── bridges/agui/aguisession/                  可选记录与历史投影
 ├── bridges/{sse,agui,a2a,subagentstream}/     协议桥
 ├── hosttools/{a2adelegation,sessionrecorder}/ 宿主可选组件
 ├── clients/a2a/                               A2A 客户端

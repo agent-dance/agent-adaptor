@@ -284,3 +284,11 @@ func envOr(name, fallback string) string {
 	}
 	return fallback
 }
+
+func (s *threadStore) clearPending(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if st := s.threads[key]; st != nil {
+		clear(st.pending)
+	}
+}
