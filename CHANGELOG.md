@@ -6,6 +6,14 @@ All notable changes to this project are documented in this file.
 
 ### Added
 
+- AG-UI snapshots with completed-history messages, an active-run boundary and
+  a join cursor for fresh clients attaching to an unattended run.
+
+- Opt-in unattended AG-UI sessions with bounded concurrency, host-owned lifetime,
+  shutdown, cursor catch-up/follow, cancellation and observer revocation.
+- Additive recorder change subscriptions and coordinated-backend contracts for
+  atomic sequence allocation and post-commit multi-worker notifications.
+
 - Optional `bridges/agui/aguisession` recorded execution, deterministic history
   projection, Message folding, history verification and HTTP helpers.
 
@@ -14,6 +22,9 @@ All notable changes to this project are documented in this file.
 - Configurable tool-result truncation and live projection redaction/extension hooks.
 
 ### Changed
+
+- AG-UI observers retain incremental projection state after one catch-up read,
+  avoiding full-thread rereads and reprojection on follow notifications.
 
 - Recorded AG-UI sessions use one operation-aware authorization/key resolver,
   shared request preparation and bounded SSE writes with optional keep-alives.

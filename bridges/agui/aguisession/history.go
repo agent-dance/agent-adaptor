@@ -24,10 +24,13 @@ type ProjectedRecord struct {
 }
 
 type projector struct {
-	opts     []agui.EventTranslatorOption
-	t        *agui.EventTranslator
-	terminal bool
-	now      time.Time
+	opts           []agui.EventTranslatorOption
+	t              *agui.EventTranslator
+	terminal       bool
+	incomplete     bool
+	lateIncomplete bool
+	now            time.Time
+	last           sessionrecorder.EventRecord
 }
 
 func newProjector(opts []agui.EventTranslatorOption) *projector {
@@ -48,6 +51,7 @@ func (p *projector) fail(code, message string) []events.Event {
 }
 
 func (p *projector) apply(rec sessionrecorder.EventRecord) []events.Event {
+	p.last = rec
 	p.now = rec.RecordedAt
 	var out []events.Event
 	if n, ok := rec.Event.(adaptor.Notice); ok && n.Kind == BoundaryKind {
@@ -62,6 +66,7 @@ func (p *projector) apply(rec sessionrecorder.EventRecord) []events.Event {
 		)
 		p.t = agui.NewEventTranslator(opts...)
 		p.terminal = false
+		p.incomplete = false
 		out = p.t.Translate(adaptor.RunStarted{})
 	} else if p.t != nil {
 		if n, ok := rec.Event.(adaptor.Notice); ok && n.Kind == TerminalKind {
@@ -86,48 +91,79 @@ func (p *projector) apply(rec sessionrecorder.EventRecord) []events.Event {
 	return out
 }
 
+// project advances the same state for full-history reads and incremental follow.
+// after is a delivery cursor; last is a separate raw-record cursor so an observer
+// can reconstruct the prefix once without emitting it or reading it again.
+func (p *projector) project(
+	records []sessionrecorder.EventRecord, after sessionrecorder.HostSeq,
+	finish bool, incompleteCode string,
+) []ProjectedRecord {
+	p.lateIncomplete = false
+	out := []ProjectedRecord{}
+	for _, rec := range records {
+		if rec.HostSeq <= p.last.HostSeq {
+			continue
+		}
+		if n, ok := rec.Event.(adaptor.Notice); ok && n.Kind == BoundaryKind {
+			// A new boundary proves the previous run ended, even without a terminal.
+			out = p.closeIncomplete(out, after, incompleteCode)
+		}
+		es := p.apply(rec)
+		if rec.HostSeq > after {
+			out = append(out, ProjectedRecord{HostSeq: rec.HostSeq, Events: es})
+		}
+	}
+	if finish {
+		out = p.closeIncomplete(out, after, incompleteCode)
+	}
+	return out
+}
+
+func (p *projector) closeIncomplete(
+	out []ProjectedRecord, after sessionrecorder.HostSeq, code string,
+) []ProjectedRecord {
+	if p.t == nil || p.terminal {
+		return out
+	}
+	p.incomplete = true
+	es := p.fail(code, "run has no recorded terminal")
+	if p.last.HostSeq <= after {
+		// Already delivered records cannot acquire new events at an acknowledged
+		// cursor. The observer reports a transport error instead of inventing a seq.
+		p.lateIncomplete = true
+		return out
+	}
+	for _, ev := range es {
+		ev.GetBaseEvent().SetTimestamp(p.last.RecordedAt.UnixMilli())
+	}
+	if len(out) > 0 && out[len(out)-1].HostSeq == p.last.HostSeq {
+		out[len(out)-1].Events = append(out[len(out)-1].Events, es...)
+	} else {
+		out = append(out, ProjectedRecord{HostSeq: p.last.HostSeq, Events: es})
+	}
+	return out
+}
+
+func (s *Session) incompleteCode(key string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.opts.Unattended && s.recordingFailures[key] {
+		return "agui.recording_failed"
+	}
+	return "run.incomplete"
+}
+
 // Events reads the entire projection state, returning only records after cursor.
 // Inactive unterminated runs receive run.incomplete at their last record cursor.
 func (s *Session) Events(ctx context.Context, key string, after sessionrecorder.HostSeq) ([]ProjectedRecord, error) {
-	s.mu.Lock()
-	active := s.active[key]
-	s.mu.Unlock()
-	// Admission can change between this snapshot and the read. Recheck activity
-	// below before synthesizing an incomplete terminal for a newly started run.
+	active := s.Active(key)
+	// Admission can change during I/O. Recheck before diagnosing an incomplete run.
 	records, err := s.opts.Recorder.Since(ctx, RecorderKey(key), 0)
 	if err != nil {
 		return nil, err
 	}
 	p := newProjector(s.opts.Events)
-	out := []ProjectedRecord{}
-	for i, rec := range records {
-		// A later run boundary also proves that an earlier run is no longer active.
-		if n, ok := rec.Event.(adaptor.Notice); ok && n.Kind == BoundaryKind && p.t != nil && !p.terminal && i > 0 {
-			previous := records[i-1]
-			if previous.HostSeq > after {
-				es := p.fail("run.incomplete", "run has no recorded terminal")
-				for _, e := range es {
-					e.GetBaseEvent().SetTimestamp(previous.RecordedAt.UnixMilli())
-				}
-				out = append(out, ProjectedRecord{previous.HostSeq, es})
-			}
-		}
-		es := p.apply(rec)
-		if rec.HostSeq > after {
-			out = append(out, ProjectedRecord{rec.HostSeq, es})
-		}
-	}
-	if !active && !s.Active(key) && p.t != nil && !p.terminal && len(records) > 0 {
-		last := records[len(records)-1]
-		if last.HostSeq > after {
-			es := p.fail("run.incomplete", "run has no recorded terminal")
-			for _, e := range es {
-				e.GetBaseEvent().SetTimestamp(last.RecordedAt.UnixMilli())
-			}
-			out = append(out, ProjectedRecord{last.HostSeq, es})
-		}
-	}
-	return out, nil
+	return p.project(records, after, !active && !s.Active(key), s.incompleteCode(key)), nil
 }
 
 // Messages folds the recorded projection into AG-UI Message objects. Reasoning
@@ -137,23 +173,35 @@ func (s *Session) Messages(ctx context.Context, key string) ([]Message, error) {
 	if err != nil {
 		return nil, err
 	}
+	return foldRecords(records), nil
+}
+
+func foldRecords(records []ProjectedRecord) []Message {
 	f := []Message{}
 	for _, r := range records {
 		for _, e := range r.Events {
 			f = Fold(f, e)
 		}
 	}
-	return f, nil
+	return f
 }
 
 // EventsHandler returns JSON projected records for ?thread_id=T&after=N.
 // Authorization runs before reading; resolver mapping is shared with POST.
-func (s *Session) EventsHandler() http.Handler { return s.historyHandler(false) }
+func (s *Session) EventsHandler() http.Handler { return s.historyHandler(historyEvents) }
 
 // MessagesHandler returns a JSON Message[] for ?thread_id=T.
-func (s *Session) MessagesHandler() http.Handler { return s.historyHandler(true) }
+func (s *Session) MessagesHandler() http.Handler { return s.historyHandler(historyMessages) }
 
-func (s *Session) historyHandler(messages bool) http.Handler {
+type historyView uint8
+
+const (
+	historyEvents historyView = iota
+	historyMessages
+	historySnapshot
+)
+
+func (s *Session) historyHandler(view historyView) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "GET" {
 			methodError(w, http.MethodGet)
@@ -178,9 +226,12 @@ func (s *Session) historyHandler(messages bool) http.Handler {
 			}
 		}
 		var value any
-		if messages {
+		switch view {
+		case historyMessages:
 			value, err = s.Messages(r.Context(), key)
-		} else {
+		case historySnapshot:
+			value, err = s.Snapshot(r.Context(), key)
+		default:
 			value, err = s.Events(r.Context(), key, after)
 		}
 		if err != nil {

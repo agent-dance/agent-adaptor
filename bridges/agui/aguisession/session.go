@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/agent-dance/agent-adaptor/bridges/internal/ssewire"
 	"io"
 	"net/http"
 	"strings"
@@ -21,6 +20,7 @@ import (
 	adaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/bridges/agui"
 	"github.com/agent-dance/agent-adaptor/bridges/internal/bridgekey"
+	"github.com/agent-dance/agent-adaptor/bridges/internal/ssewire"
 	"github.com/agent-dance/agent-adaptor/hosttools/sessionrecorder"
 )
 
@@ -41,6 +41,10 @@ const (
 	OpStart Op = "start"
 	// OpRead authorizes history access.
 	OpRead Op = "read"
+	// OpFollow authorizes catch-up and active observation.
+	OpFollow Op = "follow"
+	// OpCancel authorizes cancellation.
+	OpCancel Op = "cancel"
 )
 
 // Access describes the public resource being accessed.
@@ -55,6 +59,13 @@ type Access struct {
 
 // Options configures recording, projection, and host policy.
 type Options struct {
+	// Unattended binds runs to BaseContext instead of the POST request.
+	Unattended bool
+	// BaseContext is required in unattended mode and owns worker lifetime.
+	BaseContext context.Context
+	// MaxConcurrentRuns bounds admitted unattended runs; default is 8.
+	MaxConcurrentRuns int
+
 	// Recorder is required; Session never substitutes ephemeral storage.
 	Recorder sessionrecorder.EventRecorder
 	// Resolve authorizes and maps starts and reads. Production hosts must install
@@ -80,22 +91,49 @@ type Options struct {
 	OnRunEnd func(key string)
 }
 
-// Session owns request-scoped runs and their recorded presentation.
+// Session owns recorded runs and optional host-lifetime unattended execution.
 type Session struct {
-	runner adaptor.Runner
-	opts   Options
-	mu     sync.Mutex
-	active map[string]bool
+	runner            adaptor.Runner
+	opts              Options
+	mu                sync.Mutex
+	active            map[string]bool
+	lifetime          context.Context
+	stop              context.CancelFunc
+	closed            bool
+	running           int
+	work              sync.WaitGroup
+	runs              map[string]*ownedRun
+	observers         map[string]map[uint64]context.CancelFunc
+	observerID        uint64
+	recordingFailures map[string]bool
+	boundaries        map[string]sessionrecorder.HostSeq
 }
 
-// New creates a session. Nil runner or recorder is a programming error.
+// New creates a session. Nil runner/recorder, or unattended mode without a
+// BaseContext, is a programming error.
 func New(runner adaptor.Runner, opts Options) *Session {
 	if runner == nil || opts.Recorder == nil {
 		panic("aguisession: runner and recorder required")
 	}
 	opts.Events = append([]agui.EventTranslatorOption(nil), opts.Events...)
 	opts.CallOptions = append([]adaptor.CallOption(nil), opts.CallOptions...)
-	return &Session{runner: runner, opts: opts, active: map[string]bool{}}
+	if opts.Unattended && opts.BaseContext == nil {
+		panic("aguisession: unattended mode requires BaseContext")
+	}
+	if opts.MaxConcurrentRuns <= 0 {
+		opts.MaxConcurrentRuns = 8
+	}
+	base := opts.BaseContext
+	if base == nil {
+		base = context.Background()
+	}
+	lifetime, stop := context.WithCancel(base)
+	return &Session{
+		runner: runner, opts: opts, active: map[string]bool{},
+		lifetime: lifetime, stop: stop, runs: map[string]*ownedRun{},
+		observers:         map[string]map[uint64]context.CancelFunc{},
+		recordingFailures: map[string]bool{}, boundaries: map[string]sessionrecorder.HostSeq{},
+	}
 }
 
 func conflict(code, message string) error {
@@ -155,7 +193,8 @@ func (s *Session) VerifyHistory(ctx context.Context, in *agui.RunAgentInput, run
 	return key, usable, err
 }
 
-// Handler returns the POST RunAgentInput endpoint. Disconnect cancels execution.
+// Handler returns the POST RunAgentInput endpoint. Disconnect cancels execution
+// unless Unattended is enabled; then it detaches only this observer.
 func (s *Session) Handler() http.Handler { return http.HandlerFunc(s.serveRun) }
 
 func writeError(w http.ResponseWriter, err error) {
@@ -197,6 +236,7 @@ func (s *Session) reserve(ctx context.Context, key, runID string) error {
 		return conflict("agui.run_active", "thread already has an active run")
 	}
 	s.active[key] = true
+	s.boundaries[key] = 0
 	s.mu.Unlock()
 	records, err := s.opts.Recorder.Since(ctx, RecorderKey(key), 0)
 	if err == nil {
@@ -224,6 +264,16 @@ func (s *Session) serveRun(w http.ResponseWriter, r *http.Request) {
 		methodError(w, http.MethodPost)
 		return
 	}
+	if err := s.admit(); err != nil {
+		writeError(w, err)
+		return
+	}
+	handedOff := false
+	defer func() {
+		if !handedOff {
+			s.finishAdmission()
+		}
+	}()
 	reserved := ""
 	defer func() {
 		if reserved != "" {
@@ -279,17 +329,32 @@ func (s *Session) serveRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
+	if s.opts.Unattended {
+		handedOff = true
+		reserved = ""
+		s.unattendedResponse(w, r, key, prepared, boundary)
+		return
+	}
 	s.streamResponse(w, r, key, prepared, boundary)
 }
 
 func (s *Session) recordBoundary(ctx context.Context, key string, prepared *agui.PreparedRequest) (sessionrecorder.EventRecord, error) {
 	in := prepared.Input
+	s.mu.Lock()
+	delete(s.recordingFailures, key)
+	s.mu.Unlock()
 	boundary := adaptor.Notice{Kind: BoundaryKind, Data: map[string]any{
 		"threadId": in.ThreadID, "runId": in.RunID,
 		"parentRunId": in.ParentRunID, "protocolVersion": in.ProtocolVersion,
 		"projectionVersion": ProjectionVersion, "diagnostics": prepared.Diagnostics,
 	}}
-	return s.opts.Recorder.Record(ctx, RecorderKey(key), boundary)
+	rec, err := s.opts.Recorder.Record(ctx, RecorderKey(key), boundary)
+	if err == nil {
+		s.mu.Lock()
+		s.boundaries[key] = rec.HostSeq
+		s.mu.Unlock()
+	}
+	return rec, err
 }
 
 func (s *Session) streamResponse(w http.ResponseWriter, r *http.Request, key string, prepared *agui.PreparedRequest, boundary sessionrecorder.EventRecord) {
@@ -345,12 +410,17 @@ func (s *Session) streamResponse(w http.ResponseWriter, r *http.Request, key str
 }
 
 func (s *Session) drain(ctx context.Context, key string, in *agui.RunAgentInput, stream adaptor.Stream, boundary sessionrecorder.EventRecord, out chan<- events.Event) {
-	defer close(out)
+	if out != nil {
+		defer close(out)
+	}
 	if s.opts.OnRunEnd != nil {
 		defer s.opts.OnRunEnd(key)
 	}
 	p := newProjector(s.opts.Events)
 	send := func(es []events.Event) {
+		if out == nil {
+			return
+		}
 		for _, e := range es {
 			select {
 			case out <- e:
@@ -371,6 +441,9 @@ func (s *Session) drain(ctx context.Context, key string, in *agui.RunAgentInput,
 		rec, err := s.opts.Recorder.Record(writeCtx, RecorderKey(key), ev)
 		if err != nil {
 			failed = true
+			s.mu.Lock()
+			s.recordingFailures[key] = true
+			s.mu.Unlock()
 			stream.Cancel()
 			send(p.fail("agui.recording_failed", "event recording failed"))
 			return

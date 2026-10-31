@@ -217,9 +217,10 @@ func NewEventRecorder(backend EventBackend, opts ...EventOption) EventRecorder {
 }
 
 type eventRecorder struct {
-	backend  EventBackend
-	clock    func() time.Time
-	validate KeyValidator
+	notifications notifications
+	backend       EventBackend
+	clock         func() time.Time
+	validate      KeyValidator
 
 	mu       sync.Mutex
 	sessions map[string]*eventSessionState
@@ -242,6 +243,9 @@ func (r *eventRecorder) Record(ctx context.Context, sessionKey string, ev adapto
 	if err := r.checkKey(sessionKey); err != nil {
 		return EventRecord{}, err
 	}
+	if backend, ok := r.backend.(CoordinatedEventBackend); ok {
+		return backend.AppendNext(ctx, sessionKey, EventRecord{RecordedAt: r.clock(), Event: ev})
+	}
 	st, err := r.loadedSession(ctx, sessionKey)
 	if err != nil {
 		return EventRecord{}, err
@@ -262,12 +266,26 @@ func (r *eventRecorder) Record(ctx context.Context, sessionKey string, ev adapto
 	st.lastSeq = next
 	st.history = append(st.history, rec)
 	st.updatedAt = rec.RecordedAt
+	r.notifications.notify(sessionKey)
 	return rec, nil
 }
 
 func (r *eventRecorder) Since(ctx context.Context, sessionKey string, afterHostSeq HostSeq) ([]EventRecord, error) {
 	if err := r.checkKey(sessionKey); err != nil {
 		return nil, err
+	}
+	if backend, ok := r.backend.(CoordinatedEventBackend); ok {
+		records, err := backend.Load(ctx, sessionKey)
+		if err != nil {
+			return nil, err
+		}
+		out := []EventRecord{}
+		for _, rec := range records {
+			if rec.HostSeq > afterHostSeq {
+				out = append(out, rec)
+			}
+		}
+		return out, nil
 	}
 	st, err := r.loadedSession(ctx, sessionKey)
 	if err != nil {
