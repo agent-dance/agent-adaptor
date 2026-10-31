@@ -41,7 +41,10 @@ type interactiveBinder func(stdin interactiveStdin)
 type nonClosingStdin struct{ w io.Writer }
 
 func (s nonClosingStdin) Write(frame []byte) error {
-	_, err := s.w.Write(frame)
+	n, err := s.w.Write(frame)
+	if err == nil && n != len(frame) {
+		err = io.ErrShortWrite
+	}
 	return err
 }
 
@@ -60,10 +63,14 @@ type persistentSpec struct {
 	browser     bool
 	streaming   bool
 	interactive bool
-	resumeID    string
-	engineID    string
-	previousID  string
-	prompt      string
+	messages    bool
+	// runArgs preserves the per-run CLI flags when using this process
+	// machinery without registering a resident writer.
+	runArgs    []string
+	resumeID   string
+	engineID   string
+	previousID string
+	prompt     string
 
 	profileFingerprint  string
 	settingsFingerprint string
@@ -72,6 +79,9 @@ type persistentSpec struct {
 }
 
 func (s persistentSpec) spawnArgs() []string {
+	if s.runArgs != nil {
+		return append([]string(nil), s.runArgs...)
+	}
 	args := []string{"--print", "--output-format", "stream-json", "--verbose", "--input-format", "stream-json"}
 	if s.streaming || s.interactive {
 		args = append(args, "--include-partial-messages")
@@ -114,6 +124,7 @@ func (s persistentSpec) sig() string {
 		strconv.FormatBool(s.browser),
 		strconv.FormatBool(s.streaming),
 		strconv.FormatBool(s.interactive),
+		strconv.FormatBool(s.messages),
 		s.cwd,
 		strings.Join(s.extraArgs, "\x00"),
 		hashStrings(env...),
@@ -225,7 +236,8 @@ func (w *persistentWriter) run(ctx context.Context, spec persistentSpec, sink dr
 		return raw, err
 	}
 
-	if parser.sessionID == "" {
+	if parser.sessionID == "" || (parser.messages != nil &&
+		(!parser.terminalSuccess || parser.protocolMalformed || parser.interactiveErr != nil || parser.pendingFailure != nil)) {
 		w.pool.detach(lp)
 		_ = lp.terminateAndWait(context.Background())
 		return raw, nil
@@ -449,11 +461,11 @@ func (p *persistentPool) spawn(spec persistentSpec, sink driver.EventSink) (*liv
 	}
 	_ = sink.Emit(driver.RunEvent{
 		Type:      driver.RunEventSpawn,
-		Text:      "persistent claude spawned",
+		Text:      "claude control process spawned",
 		Timestamp: time.Now().UTC(),
 		Data: map[string]any{
 			"pid":        cmd.Process.Pid,
-			"persistent": true,
+			"persistent": spec.runArgs == nil,
 		},
 	})
 	return lp, nil
@@ -465,11 +477,13 @@ type liveProcess struct {
 	key       string
 	engineKey string
 
-	cmd    *exec.Cmd
-	cancel context.CancelFunc
-	stdin  io.WriteCloser
-	stdout *bufio.Reader
-	stderr *lockedBuffer
+	cmd              *exec.Cmd
+	cancel           context.CancelFunc
+	stdin            io.WriteCloser
+	writeMu          sync.Mutex
+	hooksInitialized bool
+	stdout           *bufio.Reader
+	stderr           *lockedBuffer
 
 	activeMu sync.RWMutex
 	active   *persistentTurnObserver
@@ -496,8 +510,8 @@ func (s persistentStderr) Write(chunk []byte) (int, error) {
 	}
 	n, err := s.lp.stderr.Write(chunk)
 	s.lp.activeMu.RLock()
+	defer s.lp.activeMu.RUnlock()
 	active := s.lp.active
-	s.lp.activeMu.RUnlock()
 	if active != nil && n > 0 {
 		ts := time.Now().UTC()
 		emitPersistentChunk(active.sink, "stderr", chunk[:n], ts)
@@ -507,6 +521,9 @@ func (s persistentStderr) Write(chunk []byte) (int, error) {
 }
 
 func (lp *liveProcess) turn(ctx context.Context, prompt string, sink driver.EventSink, parser *claudeParser, bind interactiveBinder) (driver.RawStreams, bool, error) {
+	if parser.messages != nil {
+		return lp.messageTurn(ctx, prompt, sink, parser, bind, false)
+	}
 	if err := ctx.Err(); err != nil {
 		return driver.RawStreams{}, false, err
 	}
@@ -706,14 +723,14 @@ func emitPersistentInvocation(sink driver.EventSink, spec persistentSpec) {
 	}
 	_ = sink.Emit(driver.RunEvent{
 		Type:      driver.RunEventInvocation,
-		Text:      "starting persistent command turn",
+		Text:      "starting Claude control process turn",
 		Timestamp: time.Now().UTC(),
 		Data: map[string]any{
 			"command":    spec.command,
 			"args":       append([]string(nil), spec.spawnArgs()...),
 			"cwd":        spec.cwd,
 			"env_keys":   persistentEnvKeys(spec.env),
-			"persistent": true,
+			"persistent": spec.runArgs == nil,
 		},
 	})
 }

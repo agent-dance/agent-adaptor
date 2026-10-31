@@ -2,9 +2,8 @@
 
 Claude implements `driver.StreamSupport` and advertises native, token-level,
 reasoning, tool-argument, and HITL event fidelity. Applications still use the
-same public `Runner.Run` or `Runner.Stream` API: both execute through one Event
-pipeline, and the resolved invocation—not the public verb—selects the Claude
-provider transport.
+public `Runner.Send` API and consume one Event pipeline. The resolved
+invocation selects the Claude provider transport.
 
 ## Provider transport
 
@@ -23,6 +22,43 @@ approved tool.
 Native structured output uses Claude's `--json-schema`. Interactive HITL plus
 native schema output is rejected explicitly; prompt validation remains the
 portable combination.
+
+## In-run messages
+
+`Descriptor.Messages` declares the `tool` and `stop` boundaries, continuation
+inside `Driver.Run`, and a minimum Claude Code version of **2.1.110**. Interrupt
+and persistence of delivered hook context across resume are unverified and are
+both reported as false. The driver does not currently probe the installed CLI
+version; `MinVersion` is a requirement, not evidence of a successful probe.
+
+`ResolveMessageCapability` reports these capabilities only for stream-json
+input. A non-nil `Request.Messages` negotiates that input for ordinary calls
+and native schema calls already using stream-json output. Batch native schema
+calls keep JSON output and report the zero capability (`ContinueResume`).
+Message-only negotiation leaves permission policy and partial-message selection
+intact. Explicit HITL retains `--permission-prompt-tool stdio` and its normal
+`can_use_tool` responses.
+
+When messages are enabled, an acknowledged SDK `initialize` request registers
+`UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, and `Stop`.
+Only the registered main-agent callbacks open the delivery window; callbacks
+with an `agent_id` or `parent_tool_use_id` receive an empty success response.
+Tool callbacks inject claimed text as `additionalContext`. Stop claims both
+`stop` and `turn_end` messages and returns `decision: block` with the combined
+reason when input remains. An empty Stop closes the window.
+
+Claims occur synchronously while parsing; a separate writer serializes actual
+pipe writes and acknowledges each item afterwards. Failed writes requeue items;
+cancellation fails them without requeueing. A write already in progress decides
+its own outcome. Both per-run and resident processes use this same mechanism.
+Residents initialize hooks once per process and bind a fresh MessagePort for
+each call; changing whether messages are enabled replaces the resident process.
+
+Every continued Stop segment and the final provider result emits one
+`RunEventTurnCompleted` with an increasing index. The final response retains
+the whole call's Raw and Transcript, the final segment's result text, and the
+provider result's Usage. Interim Stop events have no Usage because that hook
+does not report per-segment token accounting.
 
 ## Event and result contract
 
