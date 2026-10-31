@@ -130,6 +130,7 @@ func runTurns(ctx context.Context, client turnRPC, state *runState, opts Options
 		}
 		next = nil
 		var restart []driver.MessageItem
+		var interruptErr error
 		for {
 			if err := ctx.Err(); err != nil {
 				return err
@@ -202,17 +203,15 @@ func runTurns(ctx context.Context, client turnRPC, state *runState, opts Options
 					state.interrupted = true
 					state.mu.Unlock()
 					rpcCtx, cancel := context.WithTimeout(ctx, messageRPCTimeout)
-					err := client.TurnInterrupt(rpcCtx, TurnInterruptParams{ThreadID: threadID, TurnID: turn.Turn.ID})
+					interruptErr = client.TurnInterrupt(rpcCtx, TurnInterruptParams{ThreadID: threadID, TurnID: turn.Turn.ID})
 					cancel()
 					if ctx.Err() != nil {
 						return ctx.Err()
 					}
-					if err != nil {
-						// Interrupt items cannot be claimed at turn end. Failing
-						// this run returns every claimed item without stranding it
-						// in a queue or replaying an ambiguous interrupt.
-						return err
-					}
+					// Even an RPC error can race with turn completion or follow
+					// an accepted interrupt. Keep the claims until completion;
+					// restart also disables Signal while waiting, avoiding retries
+					// or a busy loop on a ready message port.
 				}
 			}
 		}
@@ -232,10 +231,22 @@ func runTurns(ctx context.Context, client turnRPC, state *runState, opts Options
 		status := state.terminalStatus
 		state.mu.Unlock()
 		if status != TurnStatusCompleted && !(status == TurnStatusInterrupted && len(restart) != 0) {
+			if len(restart) != 0 {
+				cause := interruptErr
+				if cause == nil {
+					cause = fmt.Errorf("codex app-server turn %q ended with status %q before interrupt restart", turn.Turn.ID, status)
+				}
+				for _, item := range restart {
+					ack(item, driver.MessageAck{Err: cause, Requeue: true})
+				}
+			}
 			return nil
 		}
 		next = restart
-		mechanism = "codex.turn_interrupt"
+		mechanism = "codex.turn_start"
+		if status == TurnStatusInterrupted {
+			mechanism = "codex.turn_interrupt"
+		}
 		if len(next) == 0 {
 			next = claim(driver.BoundaryTurnEnd)
 			mechanism = "codex.turn_start"

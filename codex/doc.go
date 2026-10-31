@@ -15,6 +15,9 @@
 // interrupt and restart in the same thread, and consume turn-end continuations
 // inside one driver Run. Exec invocations expose continuation through resume
 // only. The driver declares the minimum version but does not probe CLI versions.
+// Interrupt RPC errors retain messages until the active turn completes: a
+// natural completion delivers them in a normal continuation, and a failed turn
+// requeues them for core to continue delivery.
 // Native output schemas are sent on every turn/start, including continuation
 // and interrupt restarts, and the final turn is validated before completion.
 // Responses retain all turns' raw streams and transcript, sum their observed

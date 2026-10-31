@@ -491,23 +491,114 @@ func TestMessageInterruptRacesNaturalCompletion(t *testing.T) {
 	if len(turns) != 2 || turns[0].Interrupted {
 		t.Fatalf("natural completion marked interrupted: %+v", turns)
 	}
-	if ack := singleAck(t, p, "i"); !ack.Delivered || ack.Mechanism != "codex.turn_interrupt" {
+	if ack := singleAck(t, p, "i"); !ack.Delivered || ack.Mechanism != "codex.turn_start" {
 		t.Fatalf("Ack=%+v", ack)
 	}
 }
 
-func TestMessageInterruptFailureAcknowledgesClaims(t *testing.T) {
-	p := newMessageTestPort(driver.MessageItem{ID: "i", Text: "restart", Timing: driver.TimingInterrupt})
-	state, rpc, _ := setupMessageLoop(p)
-	providerErr := &jsonrpc2.Error{Code: -32600, Message: "interrupt rejected"}
-	rpc.interrupt = func(context.Context, TurnInterruptParams) error { return providerErr }
-	if err := runTurns(context.Background(), rpc, state, Options{Messages: p}, "thread"); !errors.Is(err, providerErr) {
-		t.Fatalf("err=%v", err)
-	}
-	if ack := singleAck(t, p, "i"); !errors.Is(ack.Err, providerErr) || ack.Requeue || ack.Delivered {
-		t.Fatalf("Ack=%+v", ack)
-	}
-	if result := state.snapshot(Options{}, "thread", "", "", 0, "", false); result.Checkpoint != nil {
-		t.Fatal("checkpoint after failed interrupt")
+func TestMessageInterruptRPCErrorWaitsForCompletion(t *testing.T) {
+	for _, rpcOutcome := range []struct {
+		name string
+		err  error
+	}{
+		{name: "provider-error", err: &jsonrpc2.Error{Code: -32600, Message: "no active turn to interrupt"}},
+		{name: "transport-error", err: errors.New("interrupt response lost")},
+		{name: "timeout", err: context.DeadlineExceeded},
+		{name: "accepted"},
+	} {
+		for _, status := range []string{"completed", "interrupted", "failed"} {
+			t.Run(rpcOutcome.name+"/"+status, func(t *testing.T) {
+				synctest.Test(t, func(t *testing.T) {
+					p := newMessageTestPort(
+						driver.MessageItem{ID: "i1", Text: "first", Timing: driver.TimingInterrupt},
+						driver.MessageItem{ID: "i2", Text: "second", Timing: driver.TimingInterrupt},
+					)
+					state, rpc, sink := setupMessageLoop(p)
+					rpc.start = func(n int) {
+						if n > 1 {
+							rpc.complete(n, "completed")
+						}
+					}
+					interrupts := 0
+					rpc.interrupt = func(_ context.Context, params TurnInterruptParams) error {
+						interrupts++
+						if params.ThreadID != "thread" || params.TurnID != "turn-1" {
+							t.Errorf("interrupt params: %+v", params)
+						}
+						// Leave Signal ready while completion is delayed. The run
+						// must keep waiting without consuming it or retrying.
+						if interrupts == 1 {
+							p.signal <- struct{}{}
+						}
+						return rpcOutcome.err
+					}
+					ctx, cancel := context.WithCancel(context.Background())
+					defer cancel()
+					done := make(chan error, 1)
+					go func() {
+						done <- runTurns(ctx, rpc, state, Options{Messages: p}, "thread")
+					}()
+					synctest.Wait()
+					select {
+					case err := <-done:
+						t.Fatalf("run returned before turn completion: %v", err)
+					default:
+					}
+					if len(rpc.starts) != 1 || interrupts != 1 || len(p.acks) != 0 {
+						t.Fatalf("before completion: starts=%d interrupts=%d acks=%+v", len(rpc.starts), interrupts, p.acks)
+					}
+					if len(p.signal) != 1 || !reflect.DeepEqual(p.claims, []driver.Boundary{driver.BoundaryImmediate}) {
+						t.Fatalf("message signal consumed while awaiting completion: signal=%d claims=%v", len(p.signal), p.claims)
+					}
+					rpc.complete(1, status)
+					synctest.Wait()
+					select {
+					case err := <-done:
+						if err != nil {
+							t.Fatalf("runTurns: %v", err)
+						}
+					default:
+						t.Fatal("run did not finish after turn completion")
+					}
+					result := state.snapshot(Options{}, "thread", "", "", 0, "", false)
+					turns := completedTurns(sink)
+					if status == "failed" {
+						if len(rpc.starts) != 1 || len(turns) != 1 || result.Checkpoint != nil || result.Failure == nil {
+							t.Fatalf("turn failure: starts=%d turns=%d result=%+v", len(rpc.starts), len(turns), result)
+						}
+						for _, id := range []string{"i1", "i2"} {
+							ack := singleAck(t, p, id)
+							if ack.Err == nil || !ack.Requeue || ack.Delivered || ack.MaybeDelivered {
+								t.Fatalf("Ack(%s)=%+v", id, ack)
+							}
+							if rpcOutcome.err != nil && !errors.Is(ack.Err, rpcOutcome.err) {
+								t.Fatalf("Ack(%s) lost interrupt error: %v", id, ack.Err)
+							}
+						}
+						if len(p.ends) != 2 {
+							t.Fatalf("requeued items=%+v", p.ends)
+						}
+						return
+					}
+					if len(rpc.starts) != 2 || !reflect.DeepEqual(rpc.starts[1].Input, []UserInput{TextInput("first"), TextInput("second")}) {
+						t.Fatalf("continuation starts=%+v", rpc.starts)
+					}
+					interrupted := status == "interrupted"
+					if len(turns) != 2 || turns[0].Interrupted != interrupted || result.Failure != nil || result.Checkpoint == nil || !result.Checkpoint.Valid {
+						t.Fatalf("continuation: turns=%+v result=%+v", turns, result)
+					}
+					mechanism := "codex.turn_start"
+					if interrupted {
+						mechanism = "codex.turn_interrupt"
+					}
+					for _, id := range []string{"i1", "i2"} {
+						ack := singleAck(t, p, id)
+						if !ack.Delivered || ack.Mechanism != mechanism || ack.Err != nil || ack.Requeue {
+							t.Fatalf("Ack(%s)=%+v", id, ack)
+						}
+					}
+				})
+			})
+		}
 	}
 }
