@@ -1,0 +1,125 @@
+data: {"metadata":{"agentAdaptor":{"providerThreadId":"provider-thread","sdkRunId":"sdk-run","threadKey":"bridge-key"}},"parentRunId":"public-parent","protocolVersion":"1.0","runId":"public-run","threadId":"public-thread","type":"RUN_STARTED"}
+
+data: {"name":"agentAdaptor.input.warning","type":"CUSTOM","value":{"code":"agui.unknown_member","message":"unrecognised member stripped","path":"/extension"}}
+
+data: {"name":"agentAdaptor.input.warning","type":"CUSTOM","value":{"code":"agui.newer_minor","message":"serving newer 1.x input as 1.0","path":"/protocolVersion"}}
+
+data: {"name":"agentAdaptor.input.warning","type":"CUSTOM","value":{"code":"agui.content_part_skipped","message":"non-text content part skipped","path":"/messages/0/content/1"}}
+
+data: {"name":"agentAdaptor.input.warning","type":"CUSTOM","value":{"code":"agui.tools_unsupported","message":"frontend tools stripped","path":"/tools"}}
+
+data: {"name":"agentAdaptor.input.warning","type":"CUSTOM","value":{"code":"agui.state_unsupported","message":"shared state stripped","path":"/state"}}
+
+data: {"messageId":"assistant-1","role":"assistant","type":"TEXT_MESSAGE_START"}
+
+data: {"delta":"Running thirteen commands.","messageId":"assistant-1","type":"TEXT_MESSAGE_CONTENT"}
+
+data: {"parentMessageId":"assistant-1","toolCallId":"tool-01","toolCallName":"command","type":"TOOL_CALL_START"}
+
+data: {"delta":"{\"command\":\"command 1\"}","toolCallId":"tool-01","type":"TOOL_CALL_ARGS"}
+
+data: {"toolCallId":"tool-01","type":"TOOL_CALL_END"}
+
+data: {"content":"ok\n[exit=0]","messageId":"tool-01:result","metadata":{"agentAdaptor":{"exitCode":0,"status":"succeeded"}},"role":"tool","toolCallId":"tool-01","type":"TOOL_CALL_RESULT"}
+
+data: {"parentMessageId":"assistant-1","toolCallId":"tool-02","toolCallName":"command","type":"TOOL_CALL_START"}
+
+data: {"delta":"{\"command\":\"command 2\"}","toolCallId":"tool-02","type":"TOOL_CALL_ARGS"}
+
+data: {"toolCallId":"tool-02","type":"TOOL_CALL_END"}
+
+data: {"content":"ok\n[exit=0]","messageId":"tool-02:result","metadata":{"agentAdaptor":{"exitCode":0,"status":"succeeded"}},"role":"tool","toolCallId":"tool-02","type":"TOOL_CALL_RESULT"}
+
+data: {"parentMessageId":"assistant-1","toolCallId":"tool-03","toolCallName":"command","type":"TOOL_CALL_START"}
+
+data: {"delta":"{\"command\":\"command 3\"}","toolCallId":"tool-03","type":"TOOL_CALL_ARGS"}
+
+data: {"toolCallId":"tool-03","type":"TOOL_CALL_END"}
+
+data: {"content":"ok\n[exit=0]","messageId":"tool-03:result","metadata":{"agentAdaptor":{"exitCode":0,"status":"succeeded"}},"role":"tool","toolCallId":"tool-03","type":"TOOL_CALL_RESULT"}
+
+data: {"parentMessageId":"assistant-1","toolCallId":"tool-04","toolCallName":"command","type":"TOOL_CALL_START"}
+
+data: {"delta":"{\"command\":\"command 4\"}","toolCallId":"tool-04","type":"TOOL_CALL_ARGS"}
+
+data: {"toolCallId":"tool-04","type":"TOOL_CALL_END"}
+
+data: {"content":"ok\n[exit=0]","messageId":"tool-04:result","metadata":{"agentAdaptor":{"exitCode":0,"status":"succeeded"}},"role":"tool","toolCallId":"tool-04","type":"TOOL_CALL_RESULT"}
+
+data: {"parentMessageId":"assistant-1","toolCallId":"tool-05","toolCallName":"command","type":"TOOL_CALL_START"}
+
+data: {"delta":"{\"command\":\"command 5\"}","toolCallId":"tool-05","type":"TOOL_CALL_ARGS"}
+
+data: {"toolCallId":"tool-05","type":"TOOL_CALL_END"}
+
+data: {"content":"ok\n[exit=0]","messageId":"tool-05:result","metadata":{"agentAdaptor":{"exitCode":0,"status":"succeeded"}},"role":"tool","toolCallId":"tool-05","type":"TOOL_CALL_RESULT"}
+
+data: {"parentMessageId":"assistant-1","toolCallId":"tool-06","toolCallName":"command","type":"TOOL_CALL_START"}
+
+data: {"delta":"{\"command\":\"command 6\"}","toolCallId":"tool-06","type":"TOOL_CALL_ARGS"}
+
+data: {"toolCallId":"tool-06","type":"TOOL_CALL_END"}
+
+data: {"content":"ok\n[exit=0]","messageId":"tool-06:result","metadata":{"agentAdaptor":{"exitCode":0,"status":"succeeded"}},"role":"tool","toolCallId":"tool-06","type":"TOOL_CALL_RESULT"}
+
+data: {"parentMessageId":"assistant-1","toolCallId":"tool-07","toolCallName":"command","type":"TOOL_CALL_START"}
+
+data: {"delta":"{\"command\":\"command 7\"}","toolCallId":"tool-07","type":"TOOL_CALL_ARGS"}
+
+data: {"toolCallId":"tool-07","type":"TOOL_CALL_END"}
+
+data: {"content":"ok\n[exit=0]","messageId":"tool-07:result","metadata":{"agentAdaptor":{"exitCode":0,"status":"succeeded"}},"role":"tool","toolCallId":"tool-07","type":"TOOL_CALL_RESULT"}
+
+data: {"parentMessageId":"assistant-1","toolCallId":"tool-08","toolCallName":"command","type":"TOOL_CALL_START"}
+
+data: {"delta":"{\"command\":\"command 8\"}","toolCallId":"tool-08","type":"TOOL_CALL_ARGS"}
+
+data: {"toolCallId":"tool-08","type":"TOOL_CALL_END"}
+
+data: {"content":"ok\n[exit=0]","messageId":"tool-08:result","metadata":{"agentAdaptor":{"exitCode":0,"status":"succeeded"}},"role":"tool","toolCallId":"tool-08","type":"TOOL_CALL_RESULT"}
+
+data: {"parentMessageId":"assistant-1","toolCallId":"tool-09","toolCallName":"command","type":"TOOL_CALL_START"}
+
+data: {"delta":"{\"command\":\"command 9\"}","toolCallId":"tool-09","type":"TOOL_CALL_ARGS"}
+
+data: {"toolCallId":"tool-09","type":"TOOL_CALL_END"}
+
+data: {"content":"ok\n[exit=0]","messageId":"tool-09:result","metadata":{"agentAdaptor":{"exitCode":0,"status":"succeeded"}},"role":"tool","toolCallId":"tool-09","type":"TOOL_CALL_RESULT"}
+
+data: {"parentMessageId":"assistant-1","toolCallId":"tool-10","toolCallName":"command","type":"TOOL_CALL_START"}
+
+data: {"delta":"{\"command\":\"command 10\"}","toolCallId":"tool-10","type":"TOOL_CALL_ARGS"}
+
+data: {"toolCallId":"tool-10","type":"TOOL_CALL_END"}
+
+data: {"content":"ok\n[exit=0]","messageId":"tool-10:result","metadata":{"agentAdaptor":{"exitCode":0,"status":"succeeded"}},"role":"tool","toolCallId":"tool-10","type":"TOOL_CALL_RESULT"}
+
+data: {"parentMessageId":"assistant-1","toolCallId":"tool-11","toolCallName":"command","type":"TOOL_CALL_START"}
+
+data: {"delta":"{\"command\":\"command 11\"}","toolCallId":"tool-11","type":"TOOL_CALL_ARGS"}
+
+data: {"toolCallId":"tool-11","type":"TOOL_CALL_END"}
+
+data: {"content":"ok\n[exit=0]","messageId":"tool-11:result","metadata":{"agentAdaptor":{"exitCode":0,"status":"succeeded"}},"role":"tool","toolCallId":"tool-11","type":"TOOL_CALL_RESULT"}
+
+data: {"parentMessageId":"assistant-1","toolCallId":"tool-12","toolCallName":"command","type":"TOOL_CALL_START"}
+
+data: {"delta":"{\"command\":\"command 12\"}","toolCallId":"tool-12","type":"TOOL_CALL_ARGS"}
+
+data: {"toolCallId":"tool-12","type":"TOOL_CALL_END"}
+
+data: {"content":"ok\n[exit=0]","messageId":"tool-12:result","metadata":{"agentAdaptor":{"exitCode":0,"status":"succeeded"}},"role":"tool","toolCallId":"tool-12","type":"TOOL_CALL_RESULT"}
+
+data: {"parentMessageId":"assistant-1","toolCallId":"tool-13","toolCallName":"command","type":"TOOL_CALL_START"}
+
+data: {"delta":"{\"command\":\"command 13\"}","toolCallId":"tool-13","type":"TOOL_CALL_ARGS"}
+
+data: {"toolCallId":"tool-13","type":"TOOL_CALL_END"}
+
+data: {"content":"command failed\n[exit=1]","messageId":"tool-13:result","metadata":{"agentAdaptor":{"error":"exit status 1","exitCode":1,"status":"failed"}},"role":"tool","toolCallId":"tool-13","type":"TOOL_CALL_RESULT"}
+
+data: {"messageId":"assistant-1","type":"TEXT_MESSAGE_END"}
+
+data: {"metadata":{"agentAdaptor":{"providerThreadId":"provider-thread","sdkRunId":"sdk-run","threadKey":"bridge-key"}},"runId":"public-run","threadId":"public-thread","type":"RUN_FINISHED"}
+
+

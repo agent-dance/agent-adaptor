@@ -389,6 +389,8 @@ In `Text` mischt sich kein rohes stdout, und es wird auch nicht automatisch die 
 
 ## Anbindung an übergeordnete Anwendungen
 
+[AG-UI-1.0-Protokollvertrag](./docs/agui.md)
+
 **Web-Frontend**: eine Zeile verpackt den Agent in einen `http.Handler`, der das AG-UI-Protokoll spricht, sodass AG-UI-kompatible Clients (etwa CopilotKit) sich direkt anbinden können:
 
 ```go

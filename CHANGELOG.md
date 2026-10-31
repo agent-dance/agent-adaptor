@@ -4,6 +4,29 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- AG-UI 1.0 input validation, structured transport errors, input diagnostics,
+  context projection, history fallback and host verification/request hooks.
+- Configurable tool-result truncation and live projection redaction/extension hooks.
+
+### Changed
+
+- AG-UI run boundaries echo public identities and advertise protocol 1.0.
+  SDK/provider identities are namespaced metadata. Versioned requests require
+  public identities; legacy requests retain identity-only leniency.
+- AG-UI execution requires a trailing user message and rejects interrupt resume;
+  missing prior checkpoints reject unless history rehydration is enabled.
+  Migration: stateless hosts receiving full client history must configure a
+  ThreadStore with resumable Threads or explicitly enable
+  `sse.Options.AGUIInput.HistoryFallback`; otherwise subsequent turns return
+  HTTP 409 `agui.history_unrecoverable`. The bundled SSE examples enable fallback.
+
+### Fixed
+
+- Tool result failure/exit status survives recorded numeric representations,
+  with explicit metadata and assistant-message parent attribution.
+
 ## [1.1.2] - 2026-08-07
 
 ### Added

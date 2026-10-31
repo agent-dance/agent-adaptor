@@ -389,6 +389,8 @@ if err != nil {
 
 ## 상위 애플리케이션 연동
 
+[AG-UI 1.0 브리지 계약](./docs/agui.md)
+
 **Web 프런트엔드**, 한 줄로 Agent를 `http.Handler`로 감싸 AG-UI 프로토콜을 태우면, AG-UI 호환 클라이언트(예: CopilotKit)가 바로 연결할 수 있다:
 
 ```go

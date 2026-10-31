@@ -39,6 +39,7 @@ import (
 	"os"
 
 	adaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/bridges/agui"
 	"github.com/agent-dance/agent-adaptor/bridges/sse"
 	"github.com/agent-dance/agent-adaptor/examples/internal/exampleutil"
 )
@@ -56,12 +57,7 @@ func main() {
 	ai, agentName := exampleutil.NewAGUIStreamingAgent(cwd)
 
 	mux := http.NewServeMux()
-	mux.Handle("/agent", sse.Handler(ai, sse.Options{
-		Protocol:          sse.AGUI,
-		CORSAllowedOrigin: envOr("CORS_ORIGIN", defaultCORSOrigin),
-		// Call-scope overrides appended to every Stream the handler starts.
-		Options: []adaptor.CallOption{exampleutil.AGUIExamplePolicy()},
-	}))
+	mux.Handle("/agent", newDirectAgentHandler(ai, envOr("CORS_ORIGIN", defaultCORSOrigin)))
 
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -84,4 +80,15 @@ func envOr(name, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// newDirectAgentHandler opts into text rehydration when the demo's in-memory
+// checkpoint is unavailable, including after a server restart.
+func newDirectAgentHandler(runner adaptor.Runner, corsOrigin string) http.Handler {
+	return sse.Handler(runner, sse.Options{
+		Protocol:          sse.AGUI,
+		CORSAllowedOrigin: corsOrigin,
+		AGUIInput:         agui.InputOptions{HistoryFallback: true},
+		Options:           []adaptor.CallOption{exampleutil.AGUIExamplePolicy()},
+	})
 }

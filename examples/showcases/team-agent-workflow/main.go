@@ -51,6 +51,7 @@ import (
 	"time"
 
 	adaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/bridges/agui"
 	"github.com/agent-dance/agent-adaptor/bridges/sse"
 	"github.com/agent-dance/agent-adaptor/examples/internal/exampleutil"
 	delegation "github.com/agent-dance/agent-adaptor/hosttools/a2adelegation"
@@ -296,6 +297,9 @@ func newTeamWebHandler(leader adaptor.Runner, corsOrigin string) http.Handler {
 	mux.Handle("/agent", sse.Handler(leader, sse.Options{
 		Protocol:          sse.AGUI,
 		CORSAllowedOrigin: corsOrigin,
+		// The showcase accepts arbitrary Runners, including stateless decorators.
+		// Rehydrate the client's prior text when no checkpoint can be inspected.
+		AGUIInput: agui.InputOptions{HistoryFallback: true},
 	}))
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")

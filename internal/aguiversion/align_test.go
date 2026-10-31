@@ -20,7 +20,7 @@ const expectedAGUICoreNPM = "0.0.57"
 
 // expectedGoAGUIModuleSubstr is a stable substring of the go.mod require line for
 // github.com/ag-ui-protocol/ag-ui/sdks/community/go — update when the pin changes.
-const expectedGoAGUIModuleSubstr = "github.com/ag-ui-protocol/ag-ui/sdks/community/go v0.0.0-20260420210844-ad3c22477b34"
+const expectedGoAGUIModuleSubstr = "github.com/ag-ui-protocol/ag-ui/sdks/community/go v0.0.0-20261030214150-b2f4a1c1ea63"
 
 func TestGoModPinsAGUIGoSDK(t *testing.T) {
 	t.Parallel()

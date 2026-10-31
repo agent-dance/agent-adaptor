@@ -165,8 +165,8 @@ func TestEventTranslatorCloseRunCodes(t *testing.T) {
 				if re.Message != tc.wantMessage {
 					t.Errorf("message = %q, want %q", re.Message, tc.wantMessage)
 				}
-				if re.RunIDValue != "r1" {
-					t.Errorf("runId = %q, want %q", re.RunIDValue, "r1")
+				if re.GetBaseEvent().Metadata["agentAdaptor"].(map[string]any)["runId"] != "r1" {
+					t.Errorf("public run identity missing from metadata: %v", re.GetBaseEvent().Metadata)
 				}
 			}
 

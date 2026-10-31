@@ -39,7 +39,15 @@ func VerifySequence(events []aguievents.Event) error {
 // ValidateStructure is a thin wrapper around events.ValidateSequence so
 // callers do not have to depend on the ag-ui import directly.
 func ValidateStructure(events []aguievents.Event) error {
-	return aguievents.ValidateSequence(events)
+	normalized := make([]aguievents.Event, len(events))
+	for i, e := range events {
+		if start, ok := e.(*RunStartedEvent); ok {
+			normalized[i] = start.RunStartedEvent
+		} else {
+			normalized[i] = e
+		}
+	}
+	return aguievents.ValidateSequence(normalized)
 }
 
 // verifyCopilotKitRules implements the three checks CopilotKit performs

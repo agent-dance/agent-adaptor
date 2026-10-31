@@ -389,6 +389,8 @@ Each output layer of `Result` stays free of the others:
 
 ## Integrating into applications
 
+[AG-UI 1.0 bridge contract](./docs/agui.md)
+
 **Web front ends**: one line wraps an Agent into an `http.Handler` speaking the AG-UI protocol, so AG-UI compatible clients (such as CopilotKit) can connect directly:
 
 ```go

@@ -389,6 +389,8 @@ if err != nil {
 
 ## 接入上层应用
 
+[AG-UI 1.0 桥接合同](./docs/agui.md)
+
 **Web 前端**，一行把 Agent 包装成 `http.Handler`，走 AG-UI 协议，兼容 AG-UI 的客户端（比如 CopilotKit）可以直接接入：
 
 ```go

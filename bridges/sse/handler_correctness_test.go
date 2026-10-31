@@ -24,24 +24,26 @@ func (s *terminalTestStream) Result() (*adaptor.Result, error) { return s.result
 func (s *terminalTestStream) RunID() string                    { return "run-authoritative" }
 func (s *terminalTestStream) Cancel()                          {}
 
-func TestDecodeRequestPreservesRawThreadKeyAndSeparatesAGUITuple(t *testing.T) {
+func TestPrepareRequestPreservesRawThreadKeyAndSeparatesAGUITuple(t *testing.T) {
 	rawKey := "tenant/a/b:c\x00d"
 	rawReq := httptest.NewRequest("GET", "/?prompt=hello&sessionKey="+url.QueryEscape(rawKey), nil)
-	_, gotRaw, err := decodeRequest(rawReq, Options{Protocol: Raw})
+	raw, err := prepareRequest(rawReq, &conformanceRunner{}, Options{Protocol: Raw})
 	if err != nil {
 		t.Fatal(err)
 	}
+	gotRaw := raw.threadKey
 	if gotRaw != rawKey {
 		t.Fatalf("raw thread key = %q, want exact %q", gotRaw, rawKey)
 	}
 
 	aguiReq := httptest.NewRequest("POST", "/", strings.NewReader(`{
-		"threadId":"a/b:c","runId":"run","messages":[{"role":"user","content":"hello"}]
+		"threadId":"a/b:c","runId":"run","messages":[{"id":"m","role":"user","content":"hello"}]
 	}`))
-	_, gotAGUI, err := decodeRequest(aguiReq, Options{Protocol: AGUI})
+	agui, err := prepareRequest(aguiReq, &conformanceRunner{}, Options{Protocol: AGUI})
 	if err != nil {
 		t.Fatal(err)
 	}
+	gotAGUI := agui.threadKey
 	if gotAGUI == "agui/a/b:c" || gotAGUI == gotRaw {
 		t.Fatalf("AG-UI tuple used a collision-prone/raw encoding: %q", gotAGUI)
 	}

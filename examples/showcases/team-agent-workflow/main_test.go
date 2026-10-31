@@ -15,8 +15,8 @@ import (
 	"github.com/agent-dance/agent-adaptor/examples/internal/exampleutil"
 )
 
-// This package's tests are deliberately configuration-only: they must never
-// execute any of the four live CLI calls made by the showcase.
+// These tests use configuration and fake Runners; they must never execute
+// any of the four live CLI calls made by the showcase.
 func TestPaidWebModeDefaultsAreLoopbackAndCORSDisabled(t *testing.T) {
 	if defaultWebListenAddr != "127.0.0.1:8080" {
 		t.Fatalf("default web address = %q, want loopback", defaultWebListenAddr)
@@ -152,3 +152,45 @@ func (optionApplyingRunner) Run(_ context.Context, _ string, opts ...adaptor.Cal
 func (optionApplyingRunner) Stream(context.Context, string, ...adaptor.CallOption) adaptor.Stream {
 	panic("unexpected Stream")
 }
+
+func TestWebHandlerRehydratesSecondTurnWithoutCheckpoint(t *testing.T) {
+	runner := &historyRunner{}
+	handler := newTeamWebHandler(runner, "")
+	for _, body := range []string{
+		`{"messages":[{"id":"u1","role":"user","content":"first"}]}`,
+		`{"messages":[{"id":"u1","role":"user","content":"first"},{"id":"a1","role":"assistant","content":"answer"},{"id":"u2","role":"user","content":"second"}]}`,
+	} {
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest("POST", "/agent", strings.NewReader(body)))
+		if response.Code != 200 {
+			t.Fatalf("status=%d body=%s", response.Code, response.Body)
+		}
+	}
+	if len(runner.prompts) != 2 || !strings.Contains(runner.prompts[1], "<agent-adaptor-history>") ||
+		!strings.Contains(runner.prompts[1], `"text":"first"`) || !strings.HasSuffix(runner.prompts[1], "second") {
+		t.Fatalf("second turn lost history: %v", runner.prompts)
+	}
+}
+
+type historyRunner struct{ prompts []string }
+
+func (r *historyRunner) Run(context.Context, string, ...adaptor.CallOption) (*adaptor.Result, error) {
+	panic("handler must use Stream")
+}
+
+func (r *historyRunner) Stream(_ context.Context, prompt string, _ ...adaptor.CallOption) adaptor.Stream {
+	r.prompts = append(r.prompts, prompt)
+	events := make(chan adaptor.Event)
+	close(events)
+	return historyStream{events: events}
+}
+
+type historyStream struct{ events <-chan adaptor.Event }
+
+func (s historyStream) Events() <-chan adaptor.Event { return s.events }
+
+func (historyStream) Result() (*adaptor.Result, error) { return &adaptor.Result{Text: "answer"}, nil }
+
+func (historyStream) RunID() string { return "example-run" }
+
+func (historyStream) Cancel() {}

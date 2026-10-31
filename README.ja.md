@@ -389,6 +389,8 @@ if err != nil {
 
 ## 上位アプリケーションとの統合
 
+[AG-UI 1.0 ブリッジの仕様](./docs/agui.md)
+
 **Web フロントエンド**：1 行で Agent を `http.Handler` にラップし、AG-UI プロトコルで通信する。AG-UI 互換のクライアント（たとえば CopilotKit）はそのまま接続できる：
 
 ```go
