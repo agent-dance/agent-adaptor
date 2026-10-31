@@ -1,15 +1,19 @@
 # Examples
 
-这些示例只使用 v1 的最终根包 API。除 `threads/codec` 和部分 profile 同步模式外，它们都会调用本机真实的 Codex、Claude、Cursor 或 CodeBuddy CLI；请先安装并登录对应 CLI。
+这些示例只使用 v1 的最终根包 API。除 `threads/codec` 和部分 profile 同步模式外，它们都会调用本机真实的 Codex、Claude、Cursor、CodeBuddy、Pi 或 OpenCode CLI；请先安装并登录对应 CLI。
 
 通用选择参数：
 
 ```bash
 go run ./examples/quickstart -agent=claude
 go run ./examples/quickstart -agent=cursor -command=/absolute/path/to/agent
+go run ./examples/quickstart -agent=pi -model=provider/model
+go run ./examples/quickstart -agent=opencode -model=provider/model
 ```
 
-也可通过 `AGENT_ADAPTOR_EXAMPLE_AGENT`、`CODEX_COMMAND`、`CLAUDE_COMMAND`、`CURSOR_COMMAND`、`CODEBUDDY_COMMAND` 及对应的 `*_MODEL` 环境变量选择 provider。
+也可通过 `AGENT_ADAPTOR_EXAMPLE_AGENT`、`CODEX_COMMAND`、`CLAUDE_COMMAND`、`CURSOR_COMMAND`、`CODEBUDDY_COMMAND`、`PI_COMMAND`、`OPENCODE_COMMAND` 及对应的 `*_MODEL` 环境变量选择 provider。Pi 还可用 `PI_PROVIDER` 指定 provider。
+
+Pi/OpenCode 支持 quickstart、structured-output、streaming、threads、skills 和协议桥示例；两者不支持持久化 profile resource 示例。OpenCode 不支持 inspect 示例所用的 auth clone。smoke runner 会明确跳过这些能力不匹配的示例，详见 [Pi/OpenCode 接入说明](../docs/pi-opencode.md)。
 
 ## Core
 

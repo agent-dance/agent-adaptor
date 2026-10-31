@@ -1,17 +1,9 @@
 package engine
 
 import (
-	"context"
 	"fmt"
 	"strings"
 )
-
-// profileResourceDriver is the optional driver extension for reporting and
-// synchronizing the complete provider profile resource set.
-type profileResourceDriver interface {
-	SnapshotProfileResources(ctx context.Context, cfg any, identity AgentIdentity, profile *ProfileSelection, payload ProfilePayload, selected []string, resolved []Skill) (ProfileSnapshot, error)
-	SyncProfileResources(ctx context.Context, cfg any, identity AgentIdentity, profile *ProfileSelection, payload ProfilePayload, selected []string, resolved []Skill) (ProfileSnapshot, error)
-}
 
 func snapshotFromPayload(driverType string, profile AgentProfile, selection *ProfileSelection, payload ProfilePayload, synced bool) ProfileSnapshot {
 	return ProfileSnapshot{

@@ -64,7 +64,7 @@ func SummarizeEnvironment(driverType string, checks []EnvironmentCheck) Environm
 
 // SnapshotProfilePayload converts a computed ProfilePayload into the
 // ProfileSnapshot shape ProfileState/SyncProfile return
-// return for Drivers without profileResourceDriver: a PortableCore skills row
+// for Drivers without driver.ProfileResourceDriver: a PortableCore skills row
 // plus honest unsupported rows (desired-but-not-observed warnings when
 // synced is false, not-materialized warnings + Error when synced is true).
 func SnapshotProfilePayload(driverType string, profile AgentProfile, selection *ProfileSelection, payload ProfilePayload, synced bool) ProfileSnapshot {
@@ -76,10 +76,6 @@ func SnapshotProfilePayload(driverType string, profile AgentProfile, selection *
 func CloneProfileSelection(sel *ProfileSelection) *ProfileSelection {
 	return cloneProfileSelection(sel)
 }
-
-// ProfileResourceDriver is the optional Driver capability ProfileState and
-// SyncProfile probe before falling back to payload-derived snapshots.
-type ProfileResourceDriver = profileResourceDriver
 
 // FinalizeStructuredOutput applies the post-run structured output
 // contract to a driver response: suppress unrequested structured output,

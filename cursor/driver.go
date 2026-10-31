@@ -211,7 +211,7 @@ func (adapter) GetQuota(_ context.Context, _ any, _ *driver.ProfileSelection) (d
 
 func (adapter) ListSkills(_ context.Context, cfg any, payload driver.ResolvedSkills, selected []string, resolved []driver.Skill, profile *driver.ProfileSelection) (driver.SkillSnapshot, error) {
 	config := readConfig(cfg)
-	bindings, err := effectiveCursorBindings(config.CommonConfig, profile)
+	bindings, err := effectiveCursorBindingsNoInitialize(config.CommonConfig, profile)
 	if err != nil {
 		return driver.SkillSnapshot{}, err
 	}
@@ -236,9 +236,9 @@ func (adapter) SyncSkills(ctx context.Context, cfg any, payload driver.ResolvedS
 	return syncCursorSkills(ctx, payload, selected, resolved, bindings, noopCursorSink{})
 }
 
-func (adapter) SnapshotProfileResources(_ context.Context, cfg any, _ driver.AgentIdentity, profile *driver.ProfileSelection, payload driver.ProfilePayload, selected []string, resolved []driver.Skill) (engine.ProfileSnapshot, error) {
+func (adapter) SnapshotProfileResources(_ context.Context, cfg any, _ driver.AgentIdentity, profile *driver.ProfileSelection, payload driver.ProfilePayload, selected []string, resolved []driver.Skill) (driver.ProfileSnapshot, error) {
 	config := readConfig(cfg)
-	bindings, err := effectiveCursorBindings(config.CommonConfig, profile)
+	bindings, err := effectiveCursorBindingsNoInitialize(config.CommonConfig, profile)
 	if err != nil {
 		return engine.ProfileSnapshot{}, err
 	}
@@ -268,7 +268,7 @@ func (adapter) SnapshotProfileResources(_ context.Context, cfg any, _ driver.Age
 	return snapshot, nil
 }
 
-func (adapter) SyncProfileResources(ctx context.Context, cfg any, _ driver.AgentIdentity, profile *driver.ProfileSelection, payload driver.ProfilePayload, selected []string, resolved []driver.Skill) (engine.ProfileSnapshot, error) {
+func (adapter) SyncProfileResources(ctx context.Context, cfg any, _ driver.AgentIdentity, profile *driver.ProfileSelection, payload driver.ProfilePayload, selected []string, resolved []driver.Skill) (driver.ProfileSnapshot, error) {
 	config := readConfig(cfg)
 	bindings, err := effectiveCursorBindings(config.CommonConfig, profile)
 	if err != nil {
@@ -279,7 +279,7 @@ func (adapter) SyncProfileResources(ctx context.Context, cfg any, _ driver.Agent
 		return engine.ProfileSnapshot{}, err
 	}
 	effectiveProfile, kind := cursorProfileAndKind(config.CommonConfig, profile)
-	mcpSnapshot, err := mcpruntime.SyncResource(ctx, DriverType, effectiveProfile.Dir, kind, payload.MCP)
+	mcpSnapshot, err := mcpruntime.SyncDeclaredResource(ctx, DriverType, effectiveProfile.Dir, kind, payload.MCP, payload.Declared.MCP)
 	if err != nil {
 		return engine.ProfileSnapshot{}, err
 	}

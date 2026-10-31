@@ -2,7 +2,7 @@
 
 [English](./README.md) | [简体中文](./README.zh-CN.md) | [한국어](./README.ko.md) | [Deutsch](./README.de.md)
 
-`agent-adaptor` は SDK であり、シンプルで直感的な API を通じて `Codex`、`Claude Code`、`Cursor`、`CodeBuddy` といった異なる形態の Agent を統一的に駆動し、基本的な呼び出しを超える多くの拡張機能を提供する。
+`agent-adaptor` は SDK であり、シンプルで直感的な API を通じて `Codex`、`Claude Code`、`Cursor`、`CodeBuddy`, `Pi`, `OpenCode` といった異なる形態の Agent を統一的に駆動し、基本的な呼び出しを超える多くの拡張機能を提供する。
 
 ```go
 agent := adaptor.New(codex.Driver(codex.Config{Model: "gpt-5.6-sol"}))
@@ -63,13 +63,15 @@ func main() {
 }
 ```
 
-4 つの組み込み Driver は構築方法が同じで、それぞれ独自の `Config` を持つ：
+6 つの組み込み Driver は構築方法が同じで、それぞれ独自の `Config` を持つ：
 
 ```go
 codexAgent := adaptor.New(codex.Driver(codex.Config{}))
 claudeAgent := adaptor.New(claude.Driver(claude.Config{}))
 cursorAgent := adaptor.New(cursor.Driver(cursor.Config{}))
 codeBuddyAgent := adaptor.New(codebuddy.Driver(codebuddy.Config{}))
+piAgent := adaptor.New(pi.Driver(pi.Config{}))
+openCodeAgent := adaptor.New(opencode.Driver(opencode.Config{}))
 ```
 
 ## ストリーミング実行
@@ -318,7 +320,7 @@ defer agent.Close(context.Background())
 
 `WithTools` は構築時にのみ使用でき、Tool の集合をまとめて置き換える。schema は既定で handler の Go の型から推論されるが、標準の JSON Schema を明示的に与えることもできる。`tool.Reject(code, message)` はモデルへ安全に提示できる業務的な失敗を表し、通常の error や panic はサニタイズされる。ステートフルな Thread で使う Tool にはそれぞれ `tool.Revision` を設定し、handler の挙動の変化が継続の互換性判定に入るようにする。
 
-MCP はここでは内部的な配送機構にすぎない：既存またはリモートの MCP server は従来どおり `WithMCP` を通す。組み込み Driver は Tools を SDK 自身の分離された profile へ実体化し、あなたが設定したネイティブの profile には手を加えない。ライフサイクル、schema、エラー、セキュリティと Thread のセマンティクスは[ホスト定義 Tools の契約](./docs/tools.md)を参照。
+MCP はここでは内部的な配送機構にすぎない：既存またはリモートの MCP server は従来どおり `WithMCP` を通す。組み込み Driver は SDK 自身の分離された profile または呼び出しごとの設定で Tools を提供し、あなたが設定したネイティブの profile には手を加えない。ライフサイクル、schema、エラー、セキュリティと Thread のセマンティクスは[ホスト定義 Tools の契約](./docs/tools.md)を参照。
 
 ## Agent の分離
 
@@ -502,7 +504,7 @@ synced, err := agent.SyncProfile(ctx)                // 設定リソースを明
 | パッケージ | 用途 |
 |---|---|
 | [`driver`](./driver) | Driver SPI。新しい Agent を接続するときに使う |
-| [`codex`](./codex)、[`claude`](./claude)、[`cursor`](./cursor)、[`codebuddy`](./codebuddy) | 組み込み Driver とそれぞれの Config |
+| [`codex`](./codex)、[`claude`](./claude)、[`cursor`](./cursor)、[`codebuddy`](./codebuddy), [`pi`](./pi), [`opencode`](./opencode) | 組み込み Driver とそれぞれの Config |
 | [`tool`](./tool)、[`skill`](./skill)、[`mcp`](./mcp)、[`profile`](./profile) | 呼び出し側に向けた能力とリソースの語彙 |
 | [`threadstore`](./threadstore)、[`memory`](./memory) | Thread 永続化のインタフェースとメモリ実装 |
 | [`bridges`](./bridges) | SSE、AG-UI、A2A、subagent-stream のプロトコルブリッジ |

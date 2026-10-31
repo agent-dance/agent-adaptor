@@ -16,6 +16,8 @@ func TestNonInteractivePolicyMatchesProviderCapabilities(t *testing.T) {
 		{agent: AgentCodebuddy, wantPlanReview: adaptor.ApprovalAutoApprove, wantSandbox: adaptor.SandboxInherit},
 		{agent: AgentCodex, wantPlanReview: adaptor.ApprovalInherit, wantSandbox: adaptor.WorkspaceWrite},
 		{agent: AgentCursor, wantPlanReview: adaptor.ApprovalInherit, wantSandbox: adaptor.SandboxInherit},
+		{agent: AgentPi, wantPlanReview: adaptor.ApprovalInherit, wantSandbox: adaptor.SandboxInherit},
+		{agent: AgentOpenCode, wantPlanReview: adaptor.ApprovalInherit, wantSandbox: adaptor.SandboxInherit},
 	}
 
 	for _, test := range tests {

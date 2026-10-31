@@ -67,7 +67,7 @@ func resolveProfileWithOptions(config CommonConfig, selection *driver.ProfileSel
 }
 
 func resolveProfile(config CommonConfig, selection *driver.ProfileSelection) driver.AgentProfile {
-	profile, err := resolveProfileWithOptions(config, selection, false)
+	profile, err := resolveProfileWithOptions(config, selection, true)
 	if err != nil {
 		return driver.AgentProfile{DriverType: DriverType, Supported: true, EnvVar: configEnvVar, Error: err.Error()}
 	}

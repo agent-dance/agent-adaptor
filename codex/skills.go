@@ -93,7 +93,7 @@ func resolveCodexProfileWithOptions(config driver.CommonConfig, selection *drive
 }
 
 func codexProfile(config driver.CommonConfig, selection *driver.ProfileSelection, agent driver.AgentIdentity) driver.AgentProfile {
-	profile, err := resolveCodexProfile(config, selection, agent)
+	profile, err := resolveCodexProfileWithOptions(config, selection, agent, true)
 	if err != nil {
 		return driver.AgentProfile{DriverType: DriverType, Supported: true, EnvVar: "CODEX_HOME", Error: err.Error()}
 	}

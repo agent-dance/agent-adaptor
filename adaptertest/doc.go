@@ -37,6 +37,17 @@
 //	CFG-03  (opt-in, ExpectRejectForeignConfig) ValidateConfig rejects a
 //	        config value of an unknown type.
 //
+// Profile resources (driver/profile_snapshot.go: ProfileResourceDriver):
+//
+//	PRO-01  SnapshotProfileResources and ListSkills do not initialize a missing
+//	        dedicated or cloned profile. Inspection never materializes resources.
+//	PRO-02  Snapshot identity and desired fingerprint are preserved; all six
+//	        resource families occur once; an absent profile has no observed entries.
+//
+// SyncProfileResources must validate declarations, serialize writes, preserve
+// external resources and return failures. Provider tests must exercise actual
+// file ownership, clearing and delivery; this suite never mutates live profiles.
+//
 // Capability-declaration truthfulness (driver/driver.go capability
 // interfaces; driver/environment.go report types):
 //
@@ -138,6 +149,9 @@
 //
 //	RSP-01  Checkpoint.Valid=true requires State with a ResumeID and a clean
 //	        outcome (Driver.Run error nil, exit 0, no signal/timeout/Failure).
+//	        Owned-server teardown after verified healthy protocol completion
+//	        is lifecycle cleanup, recorded in Metadata; unexpected exit before
+//	        managed teardown MUST invalidate the checkpoint (Response docs).
 //	RSP-02  Failure.HumanDecision is non-nil exactly when Code is
 //	        decision_rejected or decision_timeout.
 //	RSP-03  Output is never the raw protocol-shaped stdout dump.

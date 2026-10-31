@@ -7,33 +7,36 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/agent-dance/agent-adaptor/driver"
 )
 
-// ProfileKind is the SDK's internal effective-profile classification.
-// It separates where the provider profile lives from the public
-// ProfileSelection option that requested it.
-type ProfileKind string
+type ProfileKind = driver.ProfileKind
+type ProfileResourceKind = driver.ProfileResourceKind
+type ResourceSnapshot = driver.ResourceSnapshot
+type ProfileResourceSupport = driver.ProfileResourceSupport
+type ProfileResourceMaterialization = driver.ProfileResourceMaterialization
+type ProfileSnapshot = driver.ProfileSnapshot
 
 const (
-	// ProfileKindShared means the effective profile is the provider-native
-	// shared profile such as ~/.claude, ~/.codex, or ~/.cursor.
-	ProfileKindShared ProfileKind = "shared"
-	// ProfileKindHostManaged means the effective profile is isolated or
-	// managed by the host/adapter, such as a dedicated, cloned, or managed home.
-	ProfileKindHostManaged ProfileKind = "host_managed"
-)
-
-// ProfileResourceKind names one provider-visible resource family managed as
-// part of the effective profile desired state.
-type ProfileResourceKind string
-
-const (
-	ProfileResourceSkills       ProfileResourceKind = "skills"
-	ProfileResourceMCP          ProfileResourceKind = "mcp"
-	ProfileResourceAgents       ProfileResourceKind = "agents"
-	ProfileResourceHooks        ProfileResourceKind = "hooks"
-	ProfileResourceInstructions ProfileResourceKind = "instructions"
-	ProfileResourceConfig       ProfileResourceKind = "config"
+	ProfileKindShared                             = driver.ProfileKindShared
+	ProfileKindHostManaged                        = driver.ProfileKindHostManaged
+	ProfileResourceSkills                         = driver.ProfileResourceSkills
+	ProfileResourceMCP                            = driver.ProfileResourceMCP
+	ProfileResourceAgents                         = driver.ProfileResourceAgents
+	ProfileResourceHooks                          = driver.ProfileResourceHooks
+	ProfileResourceInstructions                   = driver.ProfileResourceInstructions
+	ProfileResourceConfig                         = driver.ProfileResourceConfig
+	ProfileResourceSupportPortableCore            = driver.ProfileResourceSupportPortableCore
+	ProfileResourceSupportPortableExtended        = driver.ProfileResourceSupportPortableExtended
+	ProfileResourceSupportNativeEscape            = driver.ProfileResourceSupportNativeEscape
+	ProfileResourceSupportFallback                = driver.ProfileResourceSupportFallback
+	ProfileResourceSupportUnsupported             = driver.ProfileResourceSupportUnsupported
+	ProfileResourceMaterializationNativeManaged   = driver.ProfileResourceMaterializationNativeManaged
+	ProfileResourceMaterializationFileManaged     = driver.ProfileResourceMaterializationFileManaged
+	ProfileResourceMaterializationPromptInjected  = driver.ProfileResourceMaterializationPromptInjected
+	ProfileResourceMaterializationFallback        = driver.ProfileResourceMaterializationFallback
+	ProfileResourceMaterializationNotMaterialized = driver.ProfileResourceMaterializationNotMaterialized
 )
 
 // ProfileResources is the host-facing desired-state bundle accepted by
@@ -47,48 +50,6 @@ type ProfileResources struct {
 	Hooks        []HookSpec
 	Instructions *InstructionsBundleRef
 	Config       []ProfileConfigPatch
-}
-
-// ResourceSnapshot reports the observed state for one profile resource kind.
-type ResourceSnapshot struct {
-	Kind            ProfileResourceKind
-	Fingerprint     string
-	Managed         []string
-	External        []string
-	Support         ProfileResourceSupport
-	Materialization ProfileResourceMaterialization
-	Warnings        []string
-	Error           string
-}
-
-type ProfileResourceSupport string
-
-const (
-	ProfileResourceSupportPortableCore     ProfileResourceSupport = "portable_core"
-	ProfileResourceSupportPortableExtended ProfileResourceSupport = "portable_extended"
-	ProfileResourceSupportNativeEscape     ProfileResourceSupport = "native_escape"
-	ProfileResourceSupportFallback         ProfileResourceSupport = "fallback"
-	ProfileResourceSupportUnsupported      ProfileResourceSupport = "unsupported"
-)
-
-type ProfileResourceMaterialization string
-
-const (
-	ProfileResourceMaterializationNativeManaged   ProfileResourceMaterialization = "native_managed"
-	ProfileResourceMaterializationFileManaged     ProfileResourceMaterialization = "file_managed"
-	ProfileResourceMaterializationPromptInjected  ProfileResourceMaterialization = "prompt_injected"
-	ProfileResourceMaterializationFallback        ProfileResourceMaterialization = "fallback"
-	ProfileResourceMaterializationNotMaterialized ProfileResourceMaterialization = "not_materialized"
-)
-
-// ProfileSnapshot reports the control-plane view of an effective profile.
-type ProfileSnapshot struct {
-	DriverType  string
-	Profile     AgentProfile
-	Kind        ProfileKind
-	Fingerprint string
-	Resources   []ResourceSnapshot
-	Warnings    []string
 }
 
 func cloneProfileResources(resources ProfileResources) ProfileResources {

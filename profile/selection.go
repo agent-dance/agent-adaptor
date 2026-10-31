@@ -80,12 +80,19 @@ type CloneOption func(*CloneOptions)
 
 // CopySettings copies the provider settings files into the cloned profile
 // when they are missing there (CloneOptions.IncludeSettings).
+// OpenCode excludes the MCP field unless CopyMCP is also selected. Its two
+// native config files form one seed group: either existing file preserves the
+// entire destination group, so cloning cannot change config-layer precedence.
+// Verified SDK agent entries retain ownership in the destination.
 func CopySettings() CloneOption {
 	return func(opts *CloneOptions) { opts.IncludeSettings = true }
 }
 
 // CopyMCP copies the provider MCP configuration files into the cloned
 // profile when they are missing there (CloneOptions.IncludeMCP).
+// OpenCode selects only the MCP field unless CopySettings is also selected,
+// and retains verified SDK ownership and required-connection policy. Its native
+// config group is seeded only when neither destination config file exists.
 func CopyMCP() CloneOption {
 	return func(opts *CloneOptions) { opts.IncludeMCP = true }
 }

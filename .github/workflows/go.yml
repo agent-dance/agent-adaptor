@@ -79,6 +79,9 @@ jobs:
         go test ./cursor -run='^$' -fuzz='^FuzzCursorBatchParser$' -fuzztime=30s
         go test ./codebuddy -run='^$' -fuzz='^FuzzCodeBuddyBatchParser$' -fuzztime=30s
         go test ./codex -run='^$' -fuzz='^FuzzCodexBatchParser$' -fuzztime=30s
+        go test ./pi -run='^$' -fuzz='^FuzzParser$' -fuzztime=30s
+        go test ./opencode -run='^$' -fuzz='^FuzzParser$' -fuzztime=30s
+        go test ./opencode -run='^$' -fuzz='^FuzzServerParser$' -fuzztime=30s
 
     - name: Fuzz Codex app-server decoders
       run: |

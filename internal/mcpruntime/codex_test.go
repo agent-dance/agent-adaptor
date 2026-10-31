@@ -27,9 +27,10 @@ command = "stale"
 	}
 	manifest := profilestate.Manifest{}
 	manifest.Set(profilestate.ManifestEntry{
-		Kind: resourceKind,
-		Key:  "stale",
-		Path: configPath,
+		Kind:     resourceKind,
+		Key:      "stale",
+		Path:     configPath,
+		Metadata: map[string]string{"provider": "codex", "rendered_fingerprint": renderedServerFingerprint(map[string]any{"command": "stale"})},
 	})
 	if err := profilestate.SaveManifest(codexHome, manifest); err != nil {
 		t.Fatalf("save manifest: %v", err)

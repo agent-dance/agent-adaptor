@@ -31,6 +31,8 @@ import (
 	"github.com/agent-dance/agent-adaptor/cursor"
 	"github.com/agent-dance/agent-adaptor/driver"
 	"github.com/agent-dance/agent-adaptor/examples/internal/exampleutil"
+	"github.com/agent-dance/agent-adaptor/opencode"
+	"github.com/agent-dance/agent-adaptor/pi"
 )
 
 // Session parameter keys the built-in drivers agree on. They are part of the
@@ -109,6 +111,10 @@ func driverFor(agent string) driver.Driver {
 		return cursor.Driver(cursor.Config{})
 	case exampleutil.AgentCodebuddy:
 		return codebuddy.Driver(codebuddy.Config{})
+	case exampleutil.AgentPi:
+		return pi.Driver(pi.Config{})
+	case exampleutil.AgentOpenCode:
+		return opencode.Driver(opencode.Config{})
 	default:
 		return codex.Driver(codex.Config{})
 	}

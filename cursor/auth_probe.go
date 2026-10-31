@@ -72,7 +72,7 @@ func resolveCursorProfileWithOptions(config driver.CommonConfig, selection *driv
 }
 
 func cursorProfile(config driver.CommonConfig, selection *driver.ProfileSelection) driver.AgentProfile {
-	profile, err := resolveCursorProfile(config, selection)
+	profile, err := resolveCursorProfileWithOptions(config, selection, true)
 	if err != nil {
 		return driver.AgentProfile{DriverType: DriverType, Supported: true, EnvVar: "CURSOR_HOME", Error: err.Error()}
 	}

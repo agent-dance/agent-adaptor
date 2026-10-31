@@ -86,11 +86,14 @@ func main() {
 	baseURL := publicBaseURL(listener.Addr())
 	jsonRPCURL := baseURL + jsonRPCPath
 	agentCardURL := baseURL + agentCardPath
+	cloneOptions := []agentprofile.CloneOption{agentprofile.CopySettings()}
+	if agentCfg.Agent != exampleutil.AgentOpenCode {
+		cloneOptions = append(cloneOptions, agentprofile.LinkAuth())
+	}
 
 	ai := adaptor.New(
 		exampleutil.NewLiveDriver(agentCfg),
-		adaptor.WithProfile(agentprofile.CloneNative(isolation.ProfileDir,
-			agentprofile.CopySettings(), agentprofile.LinkAuth())),
+		adaptor.WithProfile(agentprofile.CloneNative(isolation.ProfileDir, cloneOptions...)),
 		adaptor.WithWorkspaceSpec(adaptor.SharedWorkspace{}),
 		adaptor.WithIdentity(adaptor.Identity{
 			ID:      "a2a-server-demo",

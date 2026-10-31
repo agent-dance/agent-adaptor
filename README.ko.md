@@ -2,7 +2,7 @@
 
 [English](./README.md) | [简体中文](./README.zh-CN.md) | [日本語](./README.ja.md) | [Deutsch](./README.de.md)
 
-`agent-adaptor`는 단순하고 직관적인 API 한 세트를 제공하는 SDK로, `Codex`, `Claude Code`, `Cursor`, `CodeBuddy` 등 서로 다른 형태의 Agent를 통일된 방식으로 구동하고, 기본 호출을 넘어서는 여러 강화 기능을 제공한다.
+`agent-adaptor`는 단순하고 직관적인 API 한 세트를 제공하는 SDK로, `Codex`, `Claude Code`, `Cursor`, `CodeBuddy`, `Pi`, `OpenCode` 등 서로 다른 형태의 Agent를 통일된 방식으로 구동하고, 기본 호출을 넘어서는 여러 강화 기능을 제공한다.
 
 ```go
 agent := adaptor.New(codex.Driver(codex.Config{Model: "gpt-5.6-sol"}))
@@ -63,13 +63,15 @@ func main() {
 }
 ```
 
-네 개의 내장 Driver는 생성 방식이 동일하며, 각자 자신의 `Config`를 가진다:
+여섯 개의 내장 Driver는 생성 방식이 동일하며, 각자 자신의 `Config`를 가진다:
 
 ```go
 codexAgent := adaptor.New(codex.Driver(codex.Config{}))
 claudeAgent := adaptor.New(claude.Driver(claude.Config{}))
 cursorAgent := adaptor.New(cursor.Driver(cursor.Config{}))
 codeBuddyAgent := adaptor.New(codebuddy.Driver(codebuddy.Config{}))
+piAgent := adaptor.New(pi.Driver(pi.Config{}))
+openCodeAgent := adaptor.New(opencode.Driver(opencode.Config{}))
 ```
 
 ## 스트리밍 실행
@@ -318,7 +320,7 @@ defer agent.Close(context.Background())
 
 `WithTools`는 생성 시점에만 쓸 수 있고, Tool 집합을 통째로 교체한다. schema는 기본적으로 handler의 Go 타입에서 추론하며, 표준 JSON Schema를 명시적으로 줄 수도 있다. `tool.Reject(code, message)`는 모델에 안전하게 보여 줄 수 있는 업무 실패를 뜻하고, 일반 error와 panic은 정제된다. 상태가 있는 Thread에서 쓰는 모든 Tool에는 `tool.Revision`을 설정해, handler의 동작 변화가 이어가기 호환성 판정에 들어가게 해야 한다.
 
-여기서 MCP는 내부 전달 메커니즘일 뿐이다. 이미 있는 MCP server나 원격 MCP server는 여전히 `WithMCP`를 쓰고, 내장 Driver는 Tools를 SDK 자체의 격리된 profile에 물화하며, 설정해 둔 네이티브 profile은 건드리지 않는다. 생명주기, schema, 오류, 보안과 Thread 의미는 [호스트 정의 Tools 계약](./docs/tools.md)을 참고한다.
+여기서 MCP는 내부 전달 메커니즘일 뿐이다. 이미 있는 MCP server나 원격 MCP server는 여전히 `WithMCP`를 쓰고, 내장 Driver는 SDK 자체의 격리된 profile 또는 호출별 설정을 통해 Tools를 제공하며, 설정해 둔 네이티브 profile은 건드리지 않는다. 생명주기, schema, 오류, 보안과 Thread 의미는 [호스트 정의 Tools 계약](./docs/tools.md)을 참고한다.
 
 ## Agent 격리
 
@@ -502,7 +504,7 @@ synced, err := agent.SyncProfile(ctx)                // 설정 리소스를 명�
 | 패키지 | 용도 |
 |---|---|
 | [`driver`](./driver) | Driver SPI, 새 Agent를 접속할 때 사용 |
-| [`codex`](./codex), [`claude`](./claude), [`cursor`](./cursor), [`codebuddy`](./codebuddy) | 내장 Driver와 각자의 Config |
+| [`codex`](./codex), [`claude`](./claude), [`cursor`](./cursor), [`codebuddy`](./codebuddy), [`pi`](./pi), [`opencode`](./opencode) | 내장 Driver와 각자의 Config |
 | [`tool`](./tool), [`skill`](./skill), [`mcp`](./mcp), [`profile`](./profile) | 호출자를 향한 능력과 리소스 어휘 |
 | [`threadstore`](./threadstore), [`memory`](./memory) | Thread 영속화 인터페이스와 메모리 구현 |
 | [`bridges`](./bridges) | SSE, AG-UI, A2A, subagent-stream 프로토콜 브리지 |

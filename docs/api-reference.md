@@ -450,7 +450,11 @@ func (a *Agent) SyncProfile(ctx context.Context) (ProfileSnapshot, error)
 func (a *Agent) SelectSkills(ctx context.Context, keys []string) (SkillSnapshot, error)
 ```
 
-- `ProfileState` only reads the desired and observed state.
+- `ProfileState` only reads the desired and observed state; it never initializes or clones a profile.
+- Driver authors implement `driver.ProfileResourceDriver` using the public `driver.ProfileSnapshot` vocabulary. All six resource families appear once; snapshots distinguish desired fingerprints from observed managed/external entries. `SyncProfileResources` owns materialization and returns validation/I/O failures.
+- Pi and OpenCode support durable MCP, skills and default/user instruction synchronization. Pi MCP uses a file-managed declaration and its SDK extension bridge; OpenCode uses native JSONC. Undeclared MCP is preserved, while explicit empty MCP clears owned entries. Fresh Agents discover installed resources; Pi supports additive/replacement files and OpenCode supports additive AGENTS.md. OpenCode Run/Stream also supports replacement through verified native agent prompts, including pure mode and custom defaults; this remains invocation-local. Durable project/local/run scope and durable OpenCode replacement are rejected before initialization. Runtime-service and hosted Tool MCP bindings remain invocation-local. OpenCode uses private server transport and exact native MCP API installation, preventing inherited headers when replacing a connection. Its clone options separate MCP from settings, retain verified MCP policy/ownership, and seed the native config pair only when neither destination file exists.
+- Pi profile agents support key/runtime name, description/instructions, model/thinking, exact built-in tool policies, skill preloading, MCP server selection and captured Markdown source imports. Preloads resolve selected/installed skills and capture full contents before prompting; nonempty MCP lists select exact resolved server keys, while empty inherits the parent set. They use file-managed declarations and the official extension API, with isolated child sessions, shared core approval responders and complete child audit. Nondefault permission modes, sandbox, hooks and native agent fields remain unsupported. See the [Pi field mapping](./pi-opencode.md#pi-profile-agents).
+- OpenCode profile agents support key/runtime name, description/instructions, explicit model or inheritance, model-bound reasoning variants, exact tool policies, documented permission modes, selected native options and captured Markdown source imports with ordered native permissions. They use owned JSONC plus verified per-call overlays; explicit clear and settings cloning retain ownership rules. Skill preloading, agent MCP scope, sandbox and agent-local hooks are unsupported. Removed fields that survive native deep merging fail before prompting. Native child approvals share core policy. Session permission changes use the native append semantics and verify delivery; resumed-child allows and nonempty saved project grants are rejected under explicit Ask/auto-deny pending full mediation support. See the [OpenCode field mapping](./pi-opencode.md#opencode-profile-agents) and [strict source import contract](./pi-opencode.md#agent-source-imports).
 - `SyncProfile` materializes the resources the Driver supports, and reports unsupported resources truthfully.
 - `SelectSkills` installs an in-process selection override; it does not persist user preferences on the host's behalf.
 
@@ -588,7 +592,7 @@ type Store interface {
 
 ## 14. Built-in provider Drivers
 
-All four providers use the same shape:
+All six providers use the same shape:
 
 ```go
 func Driver(cfg Config) driver.Driver
@@ -600,8 +604,10 @@ func Driver(cfg Config) driver.Driver
 | `claude` | `CommonConfig`, `Model`, `Effort`, `MaxTurnsPerRun` |
 | `cursor` | `CommonConfig`, `Model`, `Mode` |
 | `codebuddy` | `CommonConfig`, `Model`, `Effort`, `PermissionMode`, `MaxTurnsPerRun` |
+| `pi` | `Command`, `CWD`, `Env`, `Provider`, `Model`, `Thinking`, `Tools`, `NoTools`, `Extensions`, `NoExtensions`, `NoSkills`, `SessionDir` |
+| `opencode` | `Command`, `CWD`, `Env`, `Model`, `Agent`, `Variant`, `Pure` |
 
-The `CommonConfig` in each package is an alias of `driver.CommonConfig` and contains `Command`, `CWD`, `Env`, instructions, prompt templates, workspace defaults, timeouts, grace period, and extra args. A Driver constructor takes a deep-copied snapshot of the configuration, so later modification of the original slices or maps does not affect the Agent.
+The `CommonConfig` in Codex, Claude, Cursor and CodeBuddy is an alias of `driver.CommonConfig` and contains `Command`, `CWD`, `Env`, instructions, prompt templates, workspace defaults, timeouts, grace period, and extra args. Pi and OpenCode expose their process fields directly and use the normal adaptor options for execution defaults. Every Driver constructor takes a deep-copied snapshot, so later modification of the original slices or maps does not affect the Agent. See [Pi and OpenCode](./pi-opencode.md) for their exact capability and profile contracts.
 
 A provider-specific Config expresses CLI and transport configuration; call-level overrides such as `WithModel` are resolved uniformly by the root package.
 

@@ -136,6 +136,7 @@ func (a *Agent) resolveRun(ctx context.Context, runID, prompt string, eff *RunSe
 		return resolvedRun{}, err
 	}
 	declared := driver.ProfileResourceDeclarations{
+		MCP:          eff.mcpServers != nil,
 		Agents:       eff.agents != nil,
 		Hooks:        eff.hooks != nil,
 		Config:       eff.configPatches != nil,

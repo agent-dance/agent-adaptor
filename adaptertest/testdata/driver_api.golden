@@ -713,6 +713,12 @@ type ProfileConfigPayload struct {
 	Warnings []string
 }
 
+type ProfileKind string
+
+const ProfileKindHostManaged ProfileKind = "host_managed"
+
+const ProfileKindShared ProfileKind = "shared"
+
 type ProfileMode string
 
 const ProfileModeClone ProfileMode = "clone"
@@ -749,18 +755,76 @@ methodset ProfileReporter {
 	value GetProfile(ctx context.Context, cfg any, agent AgentIdentity, profile *ProfileSelection) (AgentProfile, error)
 }
 
+const ProfileResourceAgents ProfileResourceKind = "agents"
+
+const ProfileResourceConfig ProfileResourceKind = "config"
+
 type ProfileResourceDeclarations struct {
+	MCP bool
 	Agents bool
 	Hooks bool
 	Instructions bool
 	Config bool
 }
 
+type ProfileResourceDriver interface {
+	SnapshotProfileResources(ctx context.Context, cfg any, identity AgentIdentity, profile *ProfileSelection, payload ProfilePayload, selected []string, resolved []Skill) (ProfileSnapshot, error)
+	SyncProfileResources(ctx context.Context, cfg any, identity AgentIdentity, profile *ProfileSelection, payload ProfilePayload, selected []string, resolved []Skill) (ProfileSnapshot, error)
+}
+
+methodset ProfileResourceDriver {
+	value SnapshotProfileResources(ctx context.Context, cfg any, identity AgentIdentity, profile *ProfileSelection, payload ProfilePayload, selected []string, resolved []Skill) (ProfileSnapshot, error)
+	value SyncProfileResources(ctx context.Context, cfg any, identity AgentIdentity, profile *ProfileSelection, payload ProfilePayload, selected []string, resolved []Skill) (ProfileSnapshot, error)
+}
+
+const ProfileResourceHooks ProfileResourceKind = "hooks"
+
+const ProfileResourceInstructions ProfileResourceKind = "instructions"
+
+type ProfileResourceKind string
+
+const ProfileResourceMCP ProfileResourceKind = "mcp"
+
+type ProfileResourceMaterialization string
+
+const ProfileResourceMaterializationFallback ProfileResourceMaterialization = "fallback"
+
+const ProfileResourceMaterializationFileManaged ProfileResourceMaterialization = "file_managed"
+
+const ProfileResourceMaterializationNativeManaged ProfileResourceMaterialization = "native_managed"
+
+const ProfileResourceMaterializationNotMaterialized ProfileResourceMaterialization = "not_materialized"
+
+const ProfileResourceMaterializationPromptInjected ProfileResourceMaterialization = "prompt_injected"
+
+const ProfileResourceSkills ProfileResourceKind = "skills"
+
+type ProfileResourceSupport string
+
+const ProfileResourceSupportFallback ProfileResourceSupport = "fallback"
+
+const ProfileResourceSupportNativeEscape ProfileResourceSupport = "native_escape"
+
+const ProfileResourceSupportPortableCore ProfileResourceSupport = "portable_core"
+
+const ProfileResourceSupportPortableExtended ProfileResourceSupport = "portable_extended"
+
+const ProfileResourceSupportUnsupported ProfileResourceSupport = "unsupported"
+
 type ProfileSelection struct {
 	Mode ProfileMode
 	Dir string
 	From string
 	Clone *CloneProfileOptions
+}
+
+type ProfileSnapshot struct {
+	DriverType string
+	Profile AgentProfile
+	Kind ProfileKind
+	Fingerprint string
+	Resources []ResourceSnapshot
+	Warnings []string
 }
 
 const QuestionAsk QuestionMode = "ask"
@@ -849,6 +913,17 @@ type ResolvedSkills struct {
 methodset ResolvedSkills {
 	value Keys() []string
 	pointer Keys() []string
+}
+
+type ResourceSnapshot struct {
+	Kind ProfileResourceKind
+	Fingerprint string
+	Managed []string
+	External []string
+	Support ProfileResourceSupport
+	Materialization ProfileResourceMaterialization
+	Warnings []string
+	Error string
 }
 
 type Response struct {

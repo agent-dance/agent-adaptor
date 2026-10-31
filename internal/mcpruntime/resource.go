@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
@@ -68,6 +69,19 @@ func SnapshotResource(driverType, profileDir string, payload driver.MCPPayload, 
 }
 
 func SyncResource(ctx context.Context, driverType, profileDir string, kind ProfileKind, payload driver.MCPPayload) (engine.ResourceSnapshot, error) {
+	return syncResource(ctx, driverType, profileDir, payload, kind == ProfileKindHostManaged, false)
+}
+
+// SyncDeclaredResource preserves undeclared MCP and honors explicit replacement
+// or clear even in a shared profile. Nonempty legacy SPI payloads remain valid.
+func SyncDeclaredResource(ctx context.Context, driverType, profileDir string, kind ProfileKind, payload driver.MCPPayload, declared bool) (engine.ResourceSnapshot, error) {
+	if !declared && len(payload.Servers) == 0 {
+		return SnapshotResource(driverType, profileDir, payload, true)
+	}
+	return syncResource(ctx, driverType, profileDir, payload, declared || kind == ProfileKindHostManaged, true)
+}
+
+func syncResource(ctx context.Context, driverType, profileDir string, payload driver.MCPPayload, prune, protectExternal bool) (engine.ResourceSnapshot, error) {
 	layout, err := layoutFor(driverType, profileDir)
 	if err != nil {
 		return engine.ResourceSnapshot{}, err
@@ -101,6 +115,28 @@ func SyncResource(ctx context.Context, driverType, profileDir string, kind Profi
 	if err != nil {
 		return engine.ResourceSnapshot{}, err
 	}
+	if protectExternal {
+		for _, entry := range manifest.KindEntries(resourceKind) {
+			if entry.Metadata["provider"] != driverType {
+				continue
+			}
+			if filepath.Clean(entry.Path) != filepath.Clean(layout.path) {
+				return engine.ResourceSnapshot{}, fmt.Errorf("MCP manifest path is outside the native provider config")
+			}
+			if value, exists := current[entry.Key]; exists && entry.Metadata["rendered_fingerprint"] != renderedServerFingerprint(value) {
+				return engine.ResourceSnapshot{}, fmt.Errorf("MCP entry %q was externally modified or has unverifiable legacy ownership", entry.Key)
+			}
+		}
+		for key, value := range current {
+			if _, requested := desired[key]; !requested {
+				continue
+			}
+			entry, owned := manifest.Entry(resourceKind, key)
+			if !owned || entry.Metadata["provider"] != driverType || filepath.Clean(entry.Path) != filepath.Clean(layout.path) || entry.Metadata["rendered_fingerprint"] != renderedServerFingerprint(value) {
+				return engine.ResourceSnapshot{}, fmt.Errorf("MCP entry %q is external; refusing to overwrite it", key)
+			}
+		}
+	}
 	if err := rejectHostedToolCollisions(layout, payload.Servers, current, manifest); err != nil {
 		return engine.ResourceSnapshot{}, err
 	}
@@ -110,12 +146,12 @@ func SyncResource(ctx context.Context, driverType, profileDir string, kind Profi
 	}
 	for _, server := range payload.Servers {
 		metadata := map[string]string{
-			"provider":  layout.driverType,
-			"transport": string(server.Transport),
+			"provider":             layout.driverType,
+			"transport":            string(server.Transport),
+			"rendered_fingerprint": renderedServerFingerprint(desired[server.Key]),
 		}
 		if isHostedToolServer(server) {
 			metadata["owner"] = toolidentity.ManifestOwner
-			metadata["rendered_fingerprint"] = renderedServerFingerprint(desired[server.Key])
 		}
 		manifest.Set(profilestate.ManifestEntry{
 			Kind:        resourceKind,
@@ -125,12 +161,14 @@ func SyncResource(ctx context.Context, driverType, profileDir string, kind Profi
 			Metadata:    metadata,
 		})
 	}
-	if kind == ProfileKindHostManaged {
+	if prune {
 		pruneManagedServers(layout.path, desired, &manifest, next)
 	}
 
-	if err := writeSection(layout, root, next); err != nil {
-		return engine.ResourceSnapshot{}, err
+	if !reflect.DeepEqual(current, next) {
+		if err := writeSection(layout, root, next); err != nil {
+			return engine.ResourceSnapshot{}, err
+		}
 	}
 	if err := profilestate.SaveManifest(profileDir, manifest); err != nil {
 		return engine.ResourceSnapshot{}, err
@@ -358,6 +396,9 @@ func pruneManagedServers(path string, desired map[string]any, manifest *profiles
 		if _, keep := desired[entry.Key]; keep {
 			continue
 		}
+		if value, exists := section[entry.Key]; exists && entry.Metadata["rendered_fingerprint"] != renderedServerFingerprint(value) {
+			continue
+		}
 		delete(section, entry.Key)
 		manifest.Remove(resourceKind, entry.Key)
 	}
@@ -373,7 +414,7 @@ func snapshotState(layout providerLayout, manifest profilestate.Manifest, root m
 		if filepath.Clean(entry.Path) != filepath.Clean(layout.path) {
 			continue
 		}
-		if _, exists := section[entry.Key]; exists {
+		if value, exists := section[entry.Key]; exists && entry.Metadata["provider"] == layout.driverType && entry.Metadata["rendered_fingerprint"] == renderedServerFingerprint(value) {
 			managedSet[entry.Key] = struct{}{}
 		}
 	}

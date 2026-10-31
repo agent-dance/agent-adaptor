@@ -270,7 +270,7 @@ func (a *Agent) ProfileState(ctx context.Context) (ProfileSnapshot, error) {
 	if err != nil {
 		return ProfileSnapshot{}, err
 	}
-	if prd, ok := a.driver.(engine.ProfileResourceDriver); ok {
+	if prd, ok := a.driver.(driver.ProfileResourceDriver); ok {
 		snapshot, err := prd.SnapshotProfileResources(ctx, nil, a.inspectIdentity(), a.defaults.profile, state.payload, state.selected, state.resolved)
 		return profileSnapshotFromEngine(snapshot), err
 	}
@@ -291,7 +291,7 @@ func (a *Agent) SyncProfile(ctx context.Context) (ProfileSnapshot, error) {
 	if err != nil {
 		return ProfileSnapshot{}, err
 	}
-	if prd, ok := a.driver.(engine.ProfileResourceDriver); ok {
+	if prd, ok := a.driver.(driver.ProfileResourceDriver); ok {
 		snapshot, err := prd.SyncProfileResources(ctx, nil, a.inspectIdentity(), a.defaults.profile, state.payload, state.selected, state.resolved)
 		return profileSnapshotFromEngine(snapshot), err
 	}
@@ -399,6 +399,7 @@ func (a *Agent) profileState(ctx context.Context) (profileState, error) {
 		return profileState{}, err
 	}
 	declared := driver.ProfileResourceDeclarations{
+		MCP:          a.defaults.mcpServers != nil,
 		Agents:       a.defaults.agents != nil,
 		Hooks:        a.defaults.hooks != nil,
 		Config:       a.defaults.configPatches != nil,

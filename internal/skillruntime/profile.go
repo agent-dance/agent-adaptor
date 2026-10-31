@@ -27,6 +27,9 @@ type ProfileResolveOptions struct {
 type ProfileResolution struct {
 	Bindings []driver.EnvBinding
 	Profile  driver.AgentProfile
+	// CloneSource is the same normalized source used for generic clone parts.
+	// Drivers with structured config cloning must not resolve it a second time.
+	CloneSource string
 }
 
 func ResolveProfile(opts ProfileResolveOptions) (ProfileResolution, error) {
@@ -69,7 +72,7 @@ func ResolveProfile(opts ProfileResolveOptions) (ProfileResolution, error) {
 					return ProfileResolution{}, err
 				}
 			}
-			return ProfileResolution{Bindings: WithBinding(bindings, opts.EnvVar, dir), Profile: driver.AgentProfile{Supported: true, Dir: dir, EnvVar: opts.EnvVar, Source: driver.AgentProfileSourceProfileOption}}, nil
+			return ProfileResolution{Bindings: WithBinding(bindings, opts.EnvVar, dir), Profile: driver.AgentProfile{Supported: true, Dir: dir, EnvVar: opts.EnvVar, Source: driver.AgentProfileSourceProfileOption}, CloneSource: from}, nil
 		case driver.ProfileModeUnset:
 		default:
 			return ProfileResolution{}, fmt.Errorf("unsupported profile mode %q", selection.Mode)

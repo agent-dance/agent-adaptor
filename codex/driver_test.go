@@ -364,7 +364,7 @@ func TestGetProfileUsesExplicitCodexHomeOverProfileOption(t *testing.T) {
 	}
 }
 
-func TestGetProfileCloneCanShareNativeCodexAuth(t *testing.T) {
+func TestSyncProfileCloneCanShareNativeCodexAuth(t *testing.T) {
 	t.Setenv("CODEX_HOME", "")
 	home := t.TempDir()
 	nativeProfile := filepath.Join(home, ".codex")
@@ -396,6 +396,18 @@ func TestGetProfileCloneCanShareNativeCodexAuth(t *testing.T) {
 	}
 	if profile.Dir != target || profile.Source != driver.AgentProfileSourceProfileOption {
 		t.Fatalf("unexpected profile: %#v", profile)
+	}
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Fatalf("GetProfile must not clone: %v", err)
+	}
+	_, err = (adapter{}).SyncProfileResources(context.Background(), Config{
+		CommonConfig: CommonConfig{Env: []driver.EnvBinding{{Name: "HOME", Value: home}, {Name: "USERPROFILE", Value: home}}},
+	}, driver.AgentIdentity{}, &driver.ProfileSelection{
+		Mode: driver.ProfileModeClone, Dir: target,
+		Clone: &driver.CloneProfileOptions{IncludeSettings: true, AuthMode: driver.CloneProfileAuthLink},
+	}, driver.ProfilePayload{}, nil, nil)
+	if err != nil {
+		t.Fatalf("sync profile: %v", err)
 	}
 	rawConfig, err := os.ReadFile(filepath.Join(target, "config.toml"))
 	if err != nil {

@@ -50,7 +50,7 @@ v1 的消费者心智只能由以下六个核心名词组成：
 ```text
 github.com/agent-dance/agent-adaptor          package adaptor
 ├── driver/                                    Driver SPI
-├── codex/ claude/ cursor/ codebuddy/          各驱动 Config 与 Driver(Config)
+├── codex/ claude/ cursor/ codebuddy/ pi/ opencode/  各驱动 Config 与 Driver(Config)
 ├── tool/                                      宿主定义 Tool 词汇
 ├── skill/                                     skill 词汇与来源
 ├── mcp/                                       MCP 声明
@@ -128,7 +128,7 @@ func New(d driver.Driver, opts ...Option) *Agent
 
 进程生命周期合同：
 
-- Claude、CodeBuddy 与 Codex 对显式 Thread 默认允许复用常驻进程；Cursor 与无状态 Agent 调用仍逐轮启动。
+- Claude、CodeBuddy、Codex、Pi 与 OpenCode 对显式 Thread 默认允许复用常驻进程；Cursor 与无状态 Agent 调用仍逐轮启动。
 - `WithSpawn()` 是双作用域选项，显式强制使用本轮新进程；该进程不得注册为后续轮次的常驻 writer。
 - 常驻只是 Driver 内部 transport 生命周期选择，不得形成平行执行入口、事件流或结果合同。
 - `Agent.Close(ctx)` 必须幂等回收 Driver 管理的全部常驻进程；Close 开始后所有 Agent/Thread 新运行稳定返回 `ErrAgentClosed`。
@@ -272,7 +272,7 @@ checkpoint 安全合同：
 - 非零退出、取消、协议错误、业务失败默认不得产生有效 checkpoint。
 - 只有 Driver 能证明 provider 明确交付了健康可续状态，且合同明确允许时，失败路径才可例外持久化。
 - 没有有效 checkpoint 时，Thread Store 必须保持之前的健康 active record 不变。
-- Claude、Cursor、CodeBuddy、Codex CLI 与 Codex app-server 都必须分别有成功、非零退出、畸形协议、缺失 checkpoint 的合同测试。
+- Claude、Cursor、CodeBuddy、Codex CLI、Codex app-server、Pi 与 OpenCode 都必须分别有成功、非零退出、畸形协议、缺失 checkpoint 的合同测试。
 - Codex app-server 必须完整保留 stdout、Transcript 与 provider 终局 payload，不得因 JSON-RPC 路径而降低输出合同。
 
 Driver SPI 的所有 MUST/SHOULD、事件生命周期、Sequence/Seq 权威性、SessionCodec nil/零值映射及 capability 蕴含关系，必须在 `driver/` godoc 与 `adaptertest` 条款中一致表达。
@@ -359,7 +359,7 @@ Hosttools：
 - `go vet ./...`
 - Linux CI 下 `go test -race ./...`
 - archive fuzz 与关键 parser fuzz 通过约定时长
-- 四个内置 Driver 全部通过最终 `adaptertest`
+- 六个内置 Driver 全部通过最终 `adaptertest`
 - live conformance 保持显式环境变量双门，普通 CI 不产生付费调用
 - Thread mode、lease、resume reject、fork、checkpoint 污染测试重复运行稳定
 - Event 顺序、关闭、Cancel、blocking/drop 背压与 Approval exactly-once race 测试通过

@@ -102,9 +102,10 @@ func TestSnapshotResourceReportsManagedAndExternalCursorServers(t *testing.T) {
 	}
 	manifest := profilestate.Manifest{}
 	manifest.Set(profilestate.ManifestEntry{
-		Kind: resourceKind,
-		Key:  "managed",
-		Path: path,
+		Kind:     resourceKind,
+		Key:      "managed",
+		Path:     path,
+		Metadata: map[string]string{"provider": "cursor", "rendered_fingerprint": renderedServerFingerprint(map[string]any{"type": "stdio", "command": "npx"})},
 	})
 	if err := profilestate.SaveManifest(cursorHome, manifest); err != nil {
 		t.Fatalf("save manifest: %v", err)

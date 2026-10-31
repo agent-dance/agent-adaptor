@@ -5,6 +5,11 @@ assistant business value. It is independent of provider protocol envelopes,
 `Result.Raw()`, `Result.Transcript()`, `Result.Summary`, and the provider
 terminal payload.
 
+Pi and OpenCode use the same schema negotiation and local validator. Pi uses
+prompt validation; OpenCode uses its private server's native `format.json_schema`
+contract, including when approvals are enabled. Both `Run` and `Stream` observe
+the same negotiation; there is no consumer mode switch.
+
 ## Public API
 
 The shortest path accepts any `adaptor.Runner`, so an `Agent` and a `Thread`

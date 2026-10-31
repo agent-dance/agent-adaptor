@@ -1,0 +1,11 @@
+{"type":"session.status","properties":{"sessionID":"ses_child","status":{"type":"busy"}}}
+{"type":"message.updated","properties":{"sessionID":"ses_child","info":{"id":"user","sessionID":"ses_child","role":"user","summary":{"title":"Test"}}}}
+{"type":"message.updated","properties":{"sessionID":"ses_child","info":{"id":"message","sessionID":"ses_child","role":"assistant","parentID":"user","modelID":"model","providerID":"test"}}}
+{"type":"message.part.updated","properties":{"sessionID":"ses_child","part":{"id":"start","sessionID":"ses_child","messageID":"message","type":"step-start"}}}
+{"type":"message.part.updated","properties":{"sessionID":"ses_child","part":{"id":"text","sessionID":"ses_child","messageID":"message","type":"text","text":"","time":{"start":1}}}}
+{"type":"message.part.delta","properties":{"sessionID":"ses_child","messageID":"message","partID":"text","field":"text","delta":"O"}}
+{"type":"message.part.delta","properties":{"sessionID":"ses_child","messageID":"message","partID":"text","field":"text","delta":"K"}}
+{"type":"message.part.updated","properties":{"sessionID":"ses_child","part":{"id":"text","sessionID":"ses_child","messageID":"message","type":"text","text":"OK","time":{"start":1,"end":2}}}}
+{"type":"message.part.updated","properties":{"sessionID":"ses_child","part":{"id":"finish","sessionID":"ses_child","messageID":"message","type":"step-finish","reason":"stop","tokens":{"input":3,"output":1,"reasoning":0,"cache":{"read":2,"write":0}},"cost":0.003}}}
+{"type":"message.updated","properties":{"sessionID":"ses_child","info":{"id":"message","sessionID":"ses_child","role":"assistant","parentID":"user","modelID":"model","providerID":"test","finish":"stop","time":{"completed":2}}}}
+{"type":"session.status","properties":{"sessionID":"ses_child","status":{"type":"idle"}}}

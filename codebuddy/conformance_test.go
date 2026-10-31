@@ -54,7 +54,7 @@ func TestCodeBuddyProfileInstructionMaterialization(t *testing.T) {
 				{Name: "HOME", Value: home},
 				{Name: "USERPROFILE", Value: home},
 			}}})
-			profileDriver, ok := configured.(engine.ProfileResourceDriver)
+			profileDriver, ok := configured.(driver.ProfileResourceDriver)
 			if !ok {
 				t.Fatal("configured driver lost profile resource capability")
 			}

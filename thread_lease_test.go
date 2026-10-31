@@ -15,6 +15,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	adaptor "github.com/agent-dance/agent-adaptor"
@@ -189,53 +190,77 @@ func TestThreadPrelaunchCleanupErrorSurvivesPublicClassification(t *testing.T) {
 }
 
 func TestThreadLeaseRenewalKeepsLongRunExclusive(t *testing.T) {
-	// TTL 250ms, renewal every 10ms. The run below outlives many TTL
-	// windows; only renewal keeps it exclusive.
-	shortLeases(t, 250*time.Millisecond, 10*time.Millisecond)
+	synctest.Test(t, func(t *testing.T) {
+		// TTL 250ms, renewal every 10ms. The run below outlives many TTL
+		// windows; only renewal keeps it exclusive.
+		shortLeases(t, 250*time.Millisecond, 10*time.Millisecond)
 
-	renewed := make(chan struct{})
-	store := &renewCountingStore{
-		Store: memory.NewStore(),
-		// Two leases (key + session) renew per tick: 60 renewals ≈ 30
-		// ticks ≥ 300ms of held run time — past the point where the
-		// original 250ms acquisition would have expired without renewal.
-		threshold: 60,
-		reached:   renewed,
-	}
-
-	fake := newFakeDriver()
-	started := make(chan struct{})
-	release := make(chan struct{})
-	fake.runFunc = func(ctx context.Context, _ driver.Request, _ driver.EventSink) (driver.Response, error) {
-		close(started)
-		select {
-		case <-release:
-		case <-ctx.Done():
-			return driver.Response{}, ctx.Err()
+		renewed := make(chan struct{})
+		store := &renewCountingStore{
+			Store: memory.NewStore(),
+			// Two leases (key + session) renew per tick: 60 renewals ≈ 30
+			// ticks ≥ 300ms of held run time — past the point where the
+			// original 250ms acquisition would have expired without renewal.
+			threshold: 60,
+			reached:   renewed,
 		}
-		state := &driver.SessionState{ResumeID: "long-resume-1"}
-		return driver.Response{Output: "long done", Checkpoint: &driver.Checkpoint{State: state, Valid: true}}, nil
-	}
 
-	agent := adaptor.New(fake, adaptor.WithThreadStore(store))
-	stream := agent.Thread("jobs/long-1").Stream(context.Background(), "long job")
-	<-started
-	<-renewed
+		fake := newFakeDriver()
+		started := make(chan struct{})
+		release := make(chan struct{})
+		fake.runFunc = func(ctx context.Context, _ driver.Request, _ driver.EventSink) (driver.Response, error) {
+			close(started)
+			select {
+			case <-release:
+			case <-ctx.Done():
+				return driver.Response{}, ctx.Err()
+			}
+			state := &driver.SessionState{ResumeID: "long-resume-1"}
+			return driver.Response{Output: "long done", Checkpoint: &driver.Checkpoint{State: state, Valid: true}}, nil
+		}
 
-	// Well past the original TTL, the thread is still exclusively held.
-	if _, err := agent.Thread("jobs/long-1").Run(context.Background(), "concurrent"); !errors.Is(err, adaptor.ErrThreadBusy) {
-		t.Fatalf("concurrent run after TTL: err = %v, want ErrThreadBusy", err)
-	}
+		// Use the standard-library fake clock so scheduler pauses cannot expire
+		// the deliberately short lease. Observe early termination as well as the
+		// renewal signal: a lost lease must fail the test, never strand its waiter.
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		agent := adaptor.New(fake, adaptor.WithThreadStore(store))
+		startedAt := time.Now()
+		stream := agent.Thread("jobs/long-1").Stream(ctx, "long job")
+		defer stream.Cancel()
+		done := make(chan error, 1)
+		go func() {
+			for range stream.Events() {
+			}
+			_, err := stream.Result()
+			done <- err
+		}()
+		for _, signal := range []<-chan struct{}{started, renewed} {
+			select {
+			case <-signal:
+			case err := <-done:
+				t.Fatalf("run ended before observed renewal: %v", err)
+			case <-ctx.Done():
+				t.Fatal("timed out waiting for lease renewal")
+			}
+		}
+		if time.Since(startedAt) < 250*time.Millisecond {
+			t.Fatal("renewal evidence did not outlive the original lease")
+		}
 
-	close(release)
-	for range stream.Events() {
-	}
-	if _, err := stream.Result(); err != nil {
-		t.Fatalf("long run: %v", err)
-	}
-	if rec := activeRecord(t, store, "jobs/long-1"); rec.State == nil || rec.State.ResumeID != "long-resume-1" {
-		t.Fatalf("long run state = %+v, want long-resume-1", rec.State)
-	}
+		// Well past the original TTL, the thread is still exclusively held.
+		if _, err := agent.Thread("jobs/long-1").Run(context.Background(), "concurrent"); !errors.Is(err, adaptor.ErrThreadBusy) {
+			t.Fatalf("concurrent run after TTL: err = %v, want ErrThreadBusy", err)
+		}
+
+		close(release)
+		if err := <-done; err != nil {
+			t.Fatalf("long run: %v", err)
+		}
+		if rec := activeRecord(t, store, "jobs/long-1"); rec.State == nil || rec.State.ResumeID != "long-resume-1" {
+			t.Fatalf("long run state = %+v, want long-resume-1", rec.State)
+		}
+	})
 }
 
 func TestThreadLeaseRenewalFailureAbortsRunAndSkipsPersist(t *testing.T) {

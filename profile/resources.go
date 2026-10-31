@@ -25,6 +25,13 @@ type Resources struct {
 }
 
 // SubAgent describes one host-declared sub-agent/profile agent entry.
+// SourcePath selects a provider-format source; supported fields and import
+// semantics are Driver-specific. Pi and OpenCode capture Markdown and require
+// all inline role/configuration fields to be unset when SourcePath is present.
+// Key, RuntimeName, SourceFingerprint and Metadata may accompany the source.
+// Their SyncProfile copies resolved content, so fresh Agents using the profile
+// do not require the original source. A supplied fingerprint does not suppress
+// their checks of actual resolved source content for Thread compatibility.
 type SubAgent struct {
 	Key               string
 	RuntimeName       string

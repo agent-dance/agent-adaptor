@@ -2,7 +2,7 @@
 
 [English](./README.md) | [简体中文](./README.zh-CN.md) | [日本語](./README.ja.md) | [한국어](./README.ko.md)
 
-`agent-adaptor` ist ein SDK, das eine einfache, intuitive API bereitstellt, um unterschiedliche Agent-Formen wie `Codex`, `Claude Code`, `Cursor` und `CodeBuddy` einheitlich anzusteuern, und darüber hinaus zahlreiche Fähigkeiten jenseits des reinen Aufrufs bietet.
+`agent-adaptor` ist ein SDK, das eine einfache, intuitive API bereitstellt, um unterschiedliche Agent-Formen wie `Codex`, `Claude Code`, `Cursor` und `CodeBuddy`, `Pi`, `OpenCode` einheitlich anzusteuern, und darüber hinaus zahlreiche Fähigkeiten jenseits des reinen Aufrufs bietet.
 
 ```go
 agent := adaptor.New(codex.Driver(codex.Config{Model: "gpt-5.6-sol"}))
@@ -63,13 +63,15 @@ func main() {
 }
 ```
 
-Die vier eingebauten Driver werden auf dieselbe Weise konstruiert und bringen jeweils ihre eigene `Config` mit:
+Die sechs eingebauten Driver werden auf dieselbe Weise konstruiert und bringen jeweils ihre eigene `Config` mit:
 
 ```go
 codexAgent := adaptor.New(codex.Driver(codex.Config{}))
 claudeAgent := adaptor.New(claude.Driver(claude.Config{}))
 cursorAgent := adaptor.New(cursor.Driver(cursor.Config{}))
 codeBuddyAgent := adaptor.New(codebuddy.Driver(codebuddy.Config{}))
+piAgent := adaptor.New(pi.Driver(pi.Config{}))
+openCodeAgent := adaptor.New(opencode.Driver(opencode.Config{}))
 ```
 
 ## Streaming-Ausführung
@@ -318,7 +320,7 @@ defer agent.Close(context.Background())
 
 `WithTools` ist nur in der Konstruktion verwendbar und ersetzt das Tool-Set als Ganzes. Das schema wird standardmäßig aus den Go-Typen des handler abgeleitet, kann aber auch ausdrücklich als standardisiertes JSON Schema angegeben werden. `tool.Reject(code, message)` steht für einen fachlichen Fehlschlag, der dem Modell gefahrlos gezeigt werden kann, während gewöhnliche error-Werte und panics bereinigt werden. Für jedes Tool, das ein zustandsbehafteter Thread nutzt, ist `tool.Revision` zu setzen, damit Verhaltensänderungen des handler in die Kompatibilitätsprüfung beim Fortsetzen eingehen.
 
-MCP ist hier nur der interne Auslieferungsmechanismus: bestehende oder entfernte MCP-Server laufen weiterhin über `WithMCP`, und die eingebauten Driver materialisieren Tools in ein SDK-eigenes, isoliertes profile, ohne das von Ihnen konfigurierte native profile anzufassen. Lebenszyklus, schema, Fehler, Sicherheit und Thread-Semantik beschreibt der [Vertrag für Host-definierte Tools](./docs/tools.md).
+MCP ist hier nur der interne Auslieferungsmechanismus: bestehende oder entfernte MCP-Server laufen weiterhin über `WithMCP`. Die eingebauten Driver liefern Tools über ein SDK-eigenes, isoliertes profile oder eine Konfiguration pro Aufruf aus, ohne das von Ihnen konfigurierte native profile anzufassen. Lebenszyklus, schema, Fehler, Sicherheit und Thread-Semantik beschreibt der [Vertrag für Host-definierte Tools](./docs/tools.md).
 
 ## Agent-Isolation
 
@@ -502,7 +504,7 @@ Die begleitenden Beschränkungen sind: ein Konstruktionseinstieg, ein Regelwerk 
 | Paket | Zweck |
 |---|---|
 | [`driver`](./driver) | Driver SPI, für die Anbindung eines neuen Agent |
-| [`codex`](./codex), [`claude`](./claude), [`cursor`](./cursor), [`codebuddy`](./codebuddy) | eingebaute Driver und ihre jeweilige Config |
+| [`codex`](./codex), [`claude`](./claude), [`cursor`](./cursor), [`codebuddy`](./codebuddy), [`pi`](./pi), [`opencode`](./opencode) | eingebaute Driver und ihre jeweilige Config |
 | [`tool`](./tool), [`skill`](./skill), [`mcp`](./mcp), [`profile`](./profile) | Fähigkeits- und Ressourcenvokabular für Aufrufer |
 | [`threadstore`](./threadstore), [`memory`](./memory) | Schnittstelle zur Thread-Persistenz und Implementierung im Speicher |
 | [`bridges`](./bridges) | Protokollbrücken für SSE, AG-UI, A2A und subagent-stream |

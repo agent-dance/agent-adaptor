@@ -69,7 +69,7 @@ func resolveClaudeProfileWithOptions(config driver.CommonConfig, selection *driv
 }
 
 func claudeProfile(config driver.CommonConfig, selection *driver.ProfileSelection) driver.AgentProfile {
-	profile, err := resolveClaudeProfile(config, selection)
+	profile, err := resolveClaudeProfileWithOptions(config, selection, true)
 	if err != nil {
 		return driver.AgentProfile{DriverType: DriverType, Supported: true, EnvVar: "CLAUDE_CONFIG_DIR", Error: err.Error()}
 	}

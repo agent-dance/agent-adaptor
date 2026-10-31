@@ -158,7 +158,7 @@ func (adapter) ConfigSchema(_ context.Context, _ any) (*driver.ConfigSchema, err
 }
 
 func (adapter) ListSkills(_ context.Context, cfg any, payload driver.ResolvedSkills, selected []string, resolved []driver.Skill, profile *driver.ProfileSelection) (driver.SkillSnapshot, error) {
-	bindings, err := effectiveBindings(readConfig(cfg).CommonConfig, profile)
+	bindings, err := effectiveBindingsNoInitialize(readConfig(cfg).CommonConfig, profile)
 	if err != nil {
 		return driver.SkillSnapshot{}, err
 	}
@@ -179,9 +179,9 @@ func (adapter) SyncSkills(ctx context.Context, cfg any, payload driver.ResolvedS
 	return syncSkills(ctx, payload, selected, resolved, bindings, kind)
 }
 
-func (adapter) SnapshotProfileResources(_ context.Context, cfg any, _ driver.AgentIdentity, profile *driver.ProfileSelection, payload driver.ProfilePayload, selected []string, resolved []driver.Skill) (engine.ProfileSnapshot, error) {
+func (adapter) SnapshotProfileResources(_ context.Context, cfg any, _ driver.AgentIdentity, profile *driver.ProfileSelection, payload driver.ProfilePayload, selected []string, resolved []driver.Skill) (driver.ProfileSnapshot, error) {
 	config := readConfig(cfg)
-	bindings, err := effectiveBindings(config.CommonConfig, profile)
+	bindings, err := effectiveBindingsNoInitialize(config.CommonConfig, profile)
 	if err != nil {
 		return engine.ProfileSnapshot{}, err
 	}
@@ -211,7 +211,7 @@ func (adapter) SnapshotProfileResources(_ context.Context, cfg any, _ driver.Age
 	return snapshot, nil
 }
 
-func (adapter) SyncProfileResources(ctx context.Context, cfg any, _ driver.AgentIdentity, profile *driver.ProfileSelection, payload driver.ProfilePayload, selected []string, resolved []driver.Skill) (engine.ProfileSnapshot, error) {
+func (adapter) SyncProfileResources(ctx context.Context, cfg any, _ driver.AgentIdentity, profile *driver.ProfileSelection, payload driver.ProfilePayload, selected []string, resolved []driver.Skill) (driver.ProfileSnapshot, error) {
 	config := readConfig(cfg)
 	bindings, err := effectiveBindings(config.CommonConfig, profile)
 	if err != nil {
@@ -222,7 +222,7 @@ func (adapter) SyncProfileResources(ctx context.Context, cfg any, _ driver.Agent
 	if err != nil {
 		return engine.ProfileSnapshot{}, err
 	}
-	mcpSnapshot, err := mcpruntime.SyncResource(ctx, DriverType, effectiveProfile.Dir, kind, payload.MCP)
+	mcpSnapshot, err := mcpruntime.SyncDeclaredResource(ctx, DriverType, effectiveProfile.Dir, kind, payload.MCP, payload.Declared.MCP)
 	if err != nil {
 		return engine.ProfileSnapshot{}, err
 	}

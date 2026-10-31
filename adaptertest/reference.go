@@ -26,7 +26,7 @@ type ReferenceConfig struct {
 
 // NewReferenceDriver returns the suite's reference driver.Driver: a fully
 // in-memory implementation that satisfies every clause TestDriver enforces
-// and implements all optional capability interfaces. It is both the suite's
+// and implements common optional capability interfaces. It is both the suite's
 // self-proof (see the package tests) and a template for third-party driver
 // authors — every emission below is annotated with the clause it upholds.
 func NewReferenceDriver(cfg ReferenceConfig) driver.Driver {

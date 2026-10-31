@@ -66,11 +66,14 @@ func main() {
 	clonedProfileDir := filepath.Join(workspaceDir, agentCfg.Agent+"-profile")
 
 	gate := &approvalGate{}
+	cloneOptions := []profile.CloneOption{profile.CopySettings(), profile.CopyMCP(), profile.CopySkills()}
+	if agentCfg.Agent != exampleutil.AgentOpenCode {
+		cloneOptions = append(cloneOptions, profile.LinkAuth())
+	}
 
 	ai := adaptor.New(
 		exampleutil.NewLiveDriver(agentCfg),
-		adaptor.WithProfile(profile.CloneNative(clonedProfileDir,
-			profile.CopySettings(), profile.CopyMCP(), profile.CopySkills(), profile.LinkAuth())),
+		adaptor.WithProfile(profile.CloneNative(clonedProfileDir, cloneOptions...)),
 		adaptor.WithIdentity(adaptor.Identity{ID: "skills-agent", Tenant: "examples", Name: "skills-live"}),
 		// Agent-level default skills. skill.Dir takes the directory at face
 		// value — no catalogue, no provider, no registration step.

@@ -1,5 +1,40 @@
 # Profile Resource Provider Matrix
 
+Pi 0.86.1 also supports file-managed profile agents in
+`agent-adaptor-agents.json`: key/runtime name, description/instructions,
+model/thinking, exact built-in tool policies, skill preload, resolved MCP server
+selection and strict Markdown source imports. Settings clones retain ownership
+and captured source contents. Preloads capture selected/installed
+SKILL.md bytes before prompting; MCP selection cannot reload excluded durable
+servers. Missing references fail before prompting.
+The official extension API exposes `adaptor_subagent` with isolated native child
+sessions, current core approvals and complete child audit. Advanced fields remain
+explicitly unsupported; see [Pi profile agents](./pi-opencode.md#pi-profile-agents).
+
+Pi and OpenCode support invocation-local delivery and explicit durable MCP,
+skills and default/user instructions through `SyncProfile`. Pi MCP declarations
+are file-managed inputs to its SDK extension bridge; OpenCode uses native JSONC.
+Pi supports additive/replacement native instruction files; OpenCode supports
+additive AGENTS.md. OpenCode Run/Stream replacement uses verified native
+`agent.prompt` in the private server. Persistent project/local scope and
+durable OpenCode replacement remain open. Their read-only profile selection,
+inspection and explicit unsupported resource kinds are
+documented in [Pi and OpenCode](./pi-opencode.md). The historical research below
+covers the providers named in each table; it does not imply identical native
+resource support across all six Drivers.
+
+OpenCode 1.14.30 also supports JSONC profile agents: portable key/runtime name,
+description and instructions; extended model, model-bound reasoning variant,
+exact tool policy and documented permission modes; and native temperature,
+top-p, steps, visibility, color and options. Durable ownership, clone settings,
+explicit clear, invocation overlays and startup verification are implemented.
+Strict Markdown source imports capture native fields and preserve permission
+ordering through sync, clone and startup verification. Broader native source
+syntax/fields, skill preloading and MCP scope remain open. Native child
+approvals are forwarded through core; saved grants and resumed-child permission
+overrides remain audit items. Field-level details and config-merge limits are in
+[OpenCode profile agents](./pi-opencode.md#opencode-profile-agents).
+
 > Status: v1 contract and provider-capability reference. This file records the research evidence behind the final public profile-resource surface for Codex, Claude Code, and Cursor. The contract uses portable host intent where possible, typed extended capabilities where providers expose a stable native surface, explicit fallback or unsupported states where they do not, and provider-native escape hatches for the long tail.
 
 ## Research Scope
@@ -96,6 +131,7 @@ Rules:
 
 - `Instructions` is the only inline sub-agent instruction body.
 - `SourcePath` and `Instructions` are mutually exclusive. A source path is provider-native material and is not translated across providers.
+- Pi and OpenCode additionally reject all inline role/configuration fields alongside SourcePath; only Key, RuntimeName, SourceFingerprint and Metadata may accompany it. Their [strict imports](./pi-opencode.md#agent-source-imports) capture resolved values, use host identity and remain usable from a fresh profile after source deletion. OpenCode permissions retain native insertion order.
 - `SourceFingerprint` is supplied by an advanced host or computed from the source content before execution. It participates in profile and Thread compatibility fingerprints.
 - Extended fields are accepted only where the bound Driver can materialize them; unsupported intent is reported rather than silently presented as managed.
 

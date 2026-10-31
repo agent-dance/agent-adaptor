@@ -1,0 +1,9 @@
+{"type":"session","version":3,"id":"pi-session"}
+{"type":"agent_start"}
+{"type":"message_start","message":{"role":"assistant","content":[]}}
+{"type":"message_update","assistantMessageEvent":{"type":"text_start","contentIndex":0}}
+{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"OK"}}
+{"type":"message_update","assistantMessageEvent":{"type":"text_end","contentIndex":0}}
+{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"OK"}],"provider":"test","model":"test-model","usage":{"input":3,"output":1,"cacheRead":2,"cost":{"total":0.003}},"stopReason":"stop"}}
+{"type":"agent_end","messages":[{"role":"assistant","content":[{"type":"text","text":"OK"}],"stopReason":"stop"}],"willRetry":false}
+{"type":"agent_settled"}

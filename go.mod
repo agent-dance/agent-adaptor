@@ -11,6 +11,8 @@ require (
 	github.com/pelletier/go-toml/v2 v2.3.0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
 	github.com/sourcegraph/jsonrpc2 v0.2.1
+	github.com/tailscale/hujson v0.0.0-20260727124030-b80ff77dac4f
+	go.yaml.in/yaml/v4 v4.0.0-rc.2
 )
 
 require (
@@ -30,7 +32,6 @@ require (
 	github.com/sirupsen/logrus v1.9.3 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
-	go.yaml.in/yaml/v4 v4.0.0-rc.2 // indirect
 	golang.org/x/mod v0.33.0 // indirect
 	golang.org/x/oauth2 v0.35.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect

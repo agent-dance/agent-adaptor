@@ -10,33 +10,32 @@ import (
 	"strings"
 
 	"github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/internal/engine"
 )
 
-func Build(driverType string, profile driver.AgentProfile, kind engine.ProfileKind, payload driver.ProfilePayload, skills driver.SkillSnapshot, synced bool) engine.ProfileSnapshot {
-	return engine.ProfileSnapshot{
+func Build(driverType string, profile driver.AgentProfile, kind driver.ProfileKind, payload driver.ProfilePayload, skills driver.SkillSnapshot, synced bool) driver.ProfileSnapshot {
+	return driver.ProfileSnapshot{
 		DriverType:  driverType,
 		Profile:     profile,
 		Kind:        kind,
 		Fingerprint: payload.Fingerprint,
 		Warnings:    cloneStrings(payload.Warnings),
-		Resources: []engine.ResourceSnapshot{
+		Resources: []driver.ResourceSnapshot{
 			skillResource(payload.Skills.Fingerprint, skills),
 			mcpResource(payload.MCP, synced),
-			unsupportedResource(engine.ProfileResourceAgents, payload.Agents.Fingerprint, agentKeys(payload.Agents), nil, synced),
-			unsupportedResource(engine.ProfileResourceHooks, payload.Hooks.Fingerprint, hookKeys(payload.Hooks), nil, synced),
-			unsupportedResource(engine.ProfileResourceInstructions, instructionFingerprint(payload.Instructions), instructionKeys(payload.Instructions), nil, synced),
-			unsupportedResource(engine.ProfileResourceConfig, payload.Config.Fingerprint, configPatchKeys(payload.Config), cloneStrings(payload.Config.Warnings), synced),
+			unsupportedResource(driver.ProfileResourceAgents, payload.Agents.Fingerprint, agentKeys(payload.Agents), nil, synced),
+			unsupportedResource(driver.ProfileResourceHooks, payload.Hooks.Fingerprint, hookKeys(payload.Hooks), nil, synced),
+			unsupportedResource(driver.ProfileResourceInstructions, instructionFingerprint(payload.Instructions), instructionKeys(payload.Instructions), nil, synced),
+			unsupportedResource(driver.ProfileResourceConfig, payload.Config.Fingerprint, configPatchKeys(payload.Config), cloneStrings(payload.Config.Warnings), synced),
 		},
 	}
 }
 
-func skillResource(fingerprint string, snapshot driver.SkillSnapshot) engine.ResourceSnapshot {
-	out := engine.ResourceSnapshot{
-		Kind:            engine.ProfileResourceSkills,
+func skillResource(fingerprint string, snapshot driver.SkillSnapshot) driver.ResourceSnapshot {
+	out := driver.ResourceSnapshot{
+		Kind:            driver.ProfileResourceSkills,
 		Fingerprint:     fingerprint,
-		Support:         engine.ProfileResourceSupportPortableCore,
-		Materialization: engine.ProfileResourceMaterializationFileManaged,
+		Support:         driver.ProfileResourceSupportPortableCore,
+		Materialization: driver.ProfileResourceMaterializationFileManaged,
 		Warnings:        cloneStrings(snapshot.Warnings),
 	}
 	for _, entry := range snapshot.Entries {
@@ -52,13 +51,13 @@ func skillResource(fingerprint string, snapshot driver.SkillSnapshot) engine.Res
 	return out
 }
 
-func mcpResource(payload driver.MCPPayload, synced bool) engine.ResourceSnapshot {
+func mcpResource(payload driver.MCPPayload, synced bool) driver.ResourceSnapshot {
 	keys := mcpKeys(payload)
-	out := engine.ResourceSnapshot{
-		Kind:            engine.ProfileResourceMCP,
+	out := driver.ResourceSnapshot{
+		Kind:            driver.ProfileResourceMCP,
 		Fingerprint:     payload.Fingerprint,
-		Support:         engine.ProfileResourceSupportPortableCore,
-		Materialization: engine.ProfileResourceMaterializationNotMaterialized,
+		Support:         driver.ProfileResourceSupportPortableCore,
+		Materialization: driver.ProfileResourceMaterializationNotMaterialized,
 		Warnings:        cloneStrings(payload.Warnings),
 	}
 	if len(keys) == 0 {
@@ -66,19 +65,19 @@ func mcpResource(payload driver.MCPPayload, synced bool) engine.ResourceSnapshot
 	}
 	if synced {
 		out.Managed = keys
-		out.Materialization = engine.ProfileResourceMaterializationNativeManaged
+		out.Materialization = driver.ProfileResourceMaterializationNativeManaged
 		return out
 	}
 	out.Warnings = append(out.Warnings, "mcp resources are desired but not observed by ProfileSnapshot; call SyncProfile to materialize them")
 	return out
 }
 
-func unsupportedResource(kind engine.ProfileResourceKind, fingerprint string, desired []string, warnings []string, synced bool) engine.ResourceSnapshot {
-	out := engine.ResourceSnapshot{
+func unsupportedResource(kind driver.ProfileResourceKind, fingerprint string, desired []string, warnings []string, synced bool) driver.ResourceSnapshot {
+	out := driver.ResourceSnapshot{
 		Kind:            kind,
 		Fingerprint:     fingerprint,
-		Support:         engine.ProfileResourceSupportUnsupported,
-		Materialization: engine.ProfileResourceMaterializationNotMaterialized,
+		Support:         driver.ProfileResourceSupportUnsupported,
+		Materialization: driver.ProfileResourceMaterializationNotMaterialized,
 		Warnings:        cloneStrings(warnings),
 	}
 	if len(desired) == 0 {

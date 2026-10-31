@@ -4,6 +4,139 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Pi and OpenCode Markdown profile-agent imports through `SourcePath`, with
+  immutable capture before profile initialization, durable loading after source
+  deletion, settings cloning and invocation overrides. Resolved source changes
+  invalidate Thread compatibility even with a caller-supplied fingerprint.
+  OpenCode ordered permissions survive JSONC reconciliation/clone and are
+  verified before prompting; reordered external rules lose SDK ownership.
+  Imports use strict YAML and explicit supported fields; ambiguous combinations
+  with inline declarations fail before initialization. GPT 5.6 luna live checks
+  proved actual child reads for both cloned and invocation-local imports.
+
+- Verified OpenCode per-turn permission restoration using the native append-only
+  session API. Repeated Ask/auto-approve changes retain the original baseline,
+  native deny precedence and conversation, including WithSpawn; unchanged
+  effective policies do not grow session rules. Saved project grants are checked
+  through OpenCode's read-only database command before gated prompts. Nonempty
+  grants or unverifiable state fail explicitly instead of bypassing host policy;
+  grant mediation remains unsupported and the native entries are not modified.
+
+- Pi profile agents with durable file ownership, fresh-Agent loading, settings
+  cloning and invocation replacement/clear. The official extension registers
+  `adaptor_subagent`; isolated native children use existing Pi transports and
+  parsers. Child events, approvals, transcript, raw terminal data and token usage
+  remain in the parent's run, with bounded cancellation/process teardown.
+  Instructions, model/thinking and exact built-in tool policies are supported.
+  Child skills preload captured selected/installed SKILL.md content through the
+  native startup extension, with content-based Thread compatibility. Per-agent
+  MCP key selection uses the resolved parent set without rediscovering excluded
+  durable servers; missing resource references fail before prompting.
+  GPT 5.6 luna proved durable/overridden instructions and child read/question/
+  denied-write/cancellation behavior; advanced profile-agent fields remain open.
+
+- OpenCode native child-session approvals, questions and plan review through
+  the same core Event/Result pipeline. Verified task/session ownership scopes
+  routing; child identifiers, transcript and usage survive parallel/nested
+  tasks. Live GPT 5.6 luna checks cover child read, question, denied write and
+  cancellation. Resumed children with session-specific allows are rejected
+  under explicit Ask/auto-deny until those rules can be safely gated.
+
+- OpenCode profile agents through owned native JSONC and invocation overlays,
+  with instructions, model, reasoning variants, tool permissions and selected
+  native options. Fresh-Agent delegation and per-call instructions passed
+  GPT 5.6 luna tests through the native task tool. Settings clones preserve
+  ownership; native overrides and residual merged fields fail before prompting.
+
+- Pi file-managed and OpenCode native JSONC durable MCP synchronization, fresh
+  Agent discovery, explicit per-call clear, bearer environment references and
+  required-connection checks. All stdio/HTTP/SSE delivery cases passed GPT 5.6
+  luna live tests. JSONC ownership/reconciliation uses pinned Tailscale HuJSON
+  and preserves external edits, comments and unrelated configuration.
+
+- Pi Coding Agent and OpenCode Drivers with captured package-owned Config,
+  native JSON protocol parsing, Run/Stream audit parity, Thread resume/fork,
+  cancellation, skills, instructions, profile probes and validated structured output.
+- Pi MCP tools through its official extension API and the existing Go MCP SDK;
+  OpenCode native per-run MCP configuration. Both support host-defined `WithTools`
+  without rewriting shared provider profiles or retaining per-run endpoints.
+- Hermetic protocol/checkpoint/transport tests, parser fuzz targets, and explicit
+  double-gated live conformance covering native tools, hosted tools and fork isolation.
+  Unsupported sandbox and browser policies are rejected before launch.
+- OpenCode private authenticated server transport with native text/thinking deltas,
+  permission/question replies and correlated `plan_exit` review through core HITL,
+  native JSON Schema output, complete server audit data and safe session checkpoints.
+  Native tool arguments remain snapshots because OpenCode 1.14.30 does not publish
+  argument deltas. Controlled server teardown is distinct from invocation failure.
+- OpenCode Thread server reuse with bounded single-writer replacement, isolated
+  forks, idle reaping, WithSpawn and Agent.Close. Per-turn instructions, hosted
+  tools and native schema output work on the same process; current approval
+  policy replaces the previous turn's gates using the native permission baseline.
+- Pi tool argument streaming and Permission/PlanReview/Question through an
+  official extension with invocation-owned responders. Callback and Event responses share core
+  approval policy; denial blocks actual tool execution and cancellation retains
+  its Go error identity. Full Claude parity is tracked in docs/claude-parity.md.
+- Pi RPC transport and persistent Thread processes with current-turn MCP and
+  approval bindings, single-writer replacement, WithSpawn and Close. Native
+  select/confirm/input/editor dialogs use Question events, including stateless
+  calls with native extensions enabled. RPC checkpoints require an accepted
+  prompt, settled agent, idle session state and successful schema validation.
+
+- Pi and OpenCode durable profile skill synchronization, external ownership
+  protection, observed snapshots and native-content compatibility guards.
+  Fresh-Agent delivery is covered by double-gated GPT 5.6 luna live tests.
+- Public `driver.ProfileResourceDriver` and profile snapshot vocabulary, so
+  external integrations can implement ProfileState/SyncProfile without internal
+  package signatures. The root consumer API is unchanged.
+
+- Pi native additive/replacement and OpenCode native additive instruction
+  synchronization for default/user scope, with observed ownership, external-edit
+  protection, explicit clear, rollback on filesystem failure, and compatibility
+  guards for changed native files. Fresh-Agent delivery passed GPT 5.6 luna tests.
+  Invalid instruction bundles fail before profile initialization; file-backed
+  invocation instructions are captured once before acquiring resources.
+- OpenCode invocation-local replacement instructions through native agent
+  prompts, including pure mode and custom default agents. Native settings are
+  verified before prompt delivery, persistent execution processes are reused,
+  and discovery/execution raw output is retained. GPT 5.6 luna live tests cover
+  Run/Stream replacement and reuse without changing shared profile files.
+
+### Fixed
+
+- The Thread lease-renewal regression uses a controlled clock and observes
+  early run termination, preventing an infinite test wait after a short lease
+  expires under load. Production lease timing and semantics are unchanged.
+
+- OpenCode gates native agent permissions before prompting under explicit Ask
+  or auto-deny, retaining deny precedence. Switching gated/ungated policies
+  replaces the persistent writer; compatible turns reuse it. Child task failure
+  closes descendant lifecycles. Native tool argument snapshots are delivered
+  on tool-call start, consistent with the declared absence of argument deltas.
+
+- OpenCode rejects MCP server names that collide under its native sanitizer
+  and verifies that higher-priority managed config cannot re-enable startup
+  connections. The managed-config live test observes no premature MCP request.
+
+- OpenCode MCP/settings clone selection no longer copies the other family.
+  Verified MCP ownership and required policy survive cloning; existing native
+  config groups preserve their precedence and failed commits roll back copies.
+- OpenCode invocation MCP uses exact native API installation after disabling
+  startup slots, preventing old headers/environment values from being inherited
+  through deep config merging. Literal template text remains literal, changed
+  connections replace persistent writers, and optional failures are observable.
+
+
+- Explicit MCP declaration tracking in Driver profile payloads: undeclared
+  resources survive synchronization, and explicit clear removes only verified
+  owned entries, including shared profiles. Legacy ownership without content
+  evidence is preserved as external. Driver SPI adds the `MCP` declaration bit.
+
+- Profile and skill inspection no longer initializes or clones profiles in the
+  Claude, Codex, Cursor and CodeBuddy Drivers. Explicit synchronization performs
+  cloning; all six Drivers now run read-only profile conformance clauses.
+
 ## [1.1.2] - 2026-08-07
 
 ### Added

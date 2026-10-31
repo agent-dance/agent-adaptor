@@ -14,6 +14,8 @@ import (
 	"github.com/agent-dance/agent-adaptor/codex"
 	"github.com/agent-dance/agent-adaptor/cursor"
 	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/opencode"
+	"github.com/agent-dance/agent-adaptor/pi"
 )
 
 const (
@@ -21,6 +23,8 @@ const (
 	AgentClaude    = "claude"
 	AgentCursor    = "cursor"
 	AgentCodebuddy = "codebuddy"
+	AgentPi        = "pi"
+	AgentOpenCode  = "opencode"
 )
 
 // LiveAgentConfig is the resolved local-CLI agent configuration shared by the
@@ -38,7 +42,7 @@ type LiveAgentConfig struct {
 }
 
 func SupportedAgents() string {
-	return "codex, claude, cursor, codebuddy"
+	return "codex, claude, cursor, codebuddy, pi, opencode"
 }
 
 func ResolveLiveAgent(raw string) string {
@@ -69,13 +73,17 @@ func DriverTypeForAgent(agent string) string {
 		return cursor.DriverType
 	case AgentCodebuddy:
 		return codebuddy.DriverType
+	case AgentPi:
+		return pi.DriverType
+	case AgentOpenCode:
+		return opencode.DriverType
 	default:
 		return codex.DriverType
 	}
 }
 
 // NewLiveDriver builds a driver value for the resolved local CLI. The
-// four built-in packages all expose the same one-line shape —
+// six built-in packages all expose the same one-line shape —
 // codex.Driver(codex.Config{...}) — so the example helper is just a switch
 // over which Config type to fill.
 func NewLiveDriver(cfg LiveAgentConfig) driver.Driver {
@@ -83,6 +91,16 @@ func NewLiveDriver(cfg LiveAgentConfig) driver.Driver {
 	model := ResolveAgentModel(agent, cfg.Model)
 
 	switch agent {
+	case AgentPi:
+		if len(cfg.ExtraArgs) > 0 {
+			Fatalf("Pi examples use typed Config fields, not ExtraArgs")
+		}
+		return pi.Driver(pi.Config{Command: cfg.Command, CWD: cfg.CWD, Env: cfg.Env, Model: model, Provider: os.Getenv("PI_PROVIDER")})
+	case AgentOpenCode:
+		if len(cfg.ExtraArgs) > 0 {
+			Fatalf("OpenCode examples use typed Config fields, not ExtraArgs")
+		}
+		return opencode.Driver(opencode.Config{Command: cfg.Command, CWD: cfg.CWD, Env: cfg.Env, Model: model})
 	case AgentClaude:
 		c := claude.Config{Model: model}
 		c.Command, c.CWD, c.Env, c.ExtraArgs = cfg.Command, cfg.CWD, cfg.Env, cfg.ExtraArgs
@@ -118,7 +136,7 @@ func DefaultModelForAgent(agent string) string {
 		return "claude-sonnet-4"
 	case AgentCursor:
 		return "gpt-5"
-	case AgentCodebuddy:
+	case AgentCodebuddy, AgentPi, AgentOpenCode:
 		return ""
 	default:
 		return "gpt-5.4"
@@ -133,6 +151,10 @@ func ModelEnvForAgent(agent string) string {
 		return "CURSOR_MODEL"
 	case AgentCodebuddy:
 		return "CODEBUDDY_MODEL"
+	case AgentPi:
+		return "PI_MODEL"
+	case AgentOpenCode:
+		return "OPENCODE_MODEL"
 	default:
 		return "CODEX_MODEL"
 	}
@@ -146,6 +168,10 @@ func CommandEnvForAgent(agent string) string {
 		return "CURSOR_COMMAND"
 	case AgentCodebuddy:
 		return "CODEBUDDY_COMMAND"
+	case AgentPi:
+		return "PI_COMMAND"
+	case AgentOpenCode:
+		return "OPENCODE_COMMAND"
 	default:
 		return "CODEX_COMMAND"
 	}
@@ -159,6 +185,10 @@ func DefaultCommandForAgent(agent string) string {
 		return "agent"
 	case AgentCodebuddy:
 		return "codebuddy"
+	case AgentPi:
+		return "pi"
+	case AgentOpenCode:
+		return "opencode"
 	default:
 		return "codex"
 	}
@@ -266,7 +296,7 @@ func normalizeAgent(raw, field string) string {
 		return AgentCodex
 	}
 	switch value {
-	case AgentCodex, AgentClaude, AgentCursor, AgentCodebuddy:
+	case AgentCodex, AgentClaude, AgentCursor, AgentCodebuddy, AgentPi, AgentOpenCode:
 		return value
 	default:
 		Fatalf("%s must be one of %s, got %q", field, SupportedAgents(), raw)
@@ -285,6 +315,10 @@ func commandCandidatesForAgent(agent string) []string {
 		names = []string{"agent.ps1", "agent.cmd", "agent", "cursor-agent.ps1", "cursor-agent.cmd", "cursor-agent"}
 	case AgentCodebuddy:
 		names = []string{"codebuddy.ps1", "codebuddy.cmd", "codebuddy"}
+	case AgentPi:
+		names = []string{"pi.ps1", "pi.cmd", "pi"}
+	case AgentOpenCode:
+		names = []string{"opencode.ps1", "opencode.cmd", "opencode"}
 	}
 
 	candidates := make([]string, 0, len(names))

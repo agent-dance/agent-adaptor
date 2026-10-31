@@ -2,7 +2,7 @@
 
 [简体中文](./README.zh-CN.md) | [日本語](./README.ja.md) | [한국어](./README.ko.md) | [Deutsch](./README.de.md)
 
-`agent-adaptor` is an SDK that offers a small, intuitive API for driving different agent flavors — `Codex`, `Claude Code`, `Cursor`, `CodeBuddy` — through one interface, plus a range of capabilities beyond plain invocation.
+`agent-adaptor` is an SDK that offers a small, intuitive API for driving different agent flavors — `Codex`, `Claude Code`, `Cursor`, `CodeBuddy`, `Pi`, `OpenCode` — through one interface, plus a range of capabilities beyond plain invocation.
 
 ```go
 agent := adaptor.New(codex.Driver(codex.Config{Model: "gpt-5.6-sol"}))
@@ -63,14 +63,19 @@ func main() {
 }
 ```
 
-The four built-in Drivers are constructed the same way, each with its own `Config`:
+The six built-in Drivers are constructed the same way, each with its own `Config`:
 
 ```go
 codexAgent := adaptor.New(codex.Driver(codex.Config{}))
 claudeAgent := adaptor.New(claude.Driver(claude.Config{}))
 cursorAgent := adaptor.New(cursor.Driver(cursor.Config{}))
 codeBuddyAgent := adaptor.New(codebuddy.Driver(codebuddy.Config{}))
+piAgent := adaptor.New(pi.Driver(pi.Config{}))
+openCodeAgent := adaptor.New(opencode.Driver(opencode.Config{}))
 ```
+
+See [Pi and OpenCode](./docs/pi-opencode.md) for setup, native MCP/Tools delivery,
+persistent sessions, native interactions, and current capability limits.
 
 ## Streaming execution
 
@@ -318,7 +323,7 @@ defer agent.Close(context.Background())
 
 `WithTools` is construction-only and replaces the Tool set as a whole. Schemas are inferred from the handler's Go types by default, and an explicit standard JSON Schema can be supplied instead. `tool.Reject(code, message)` reports a business failure that is safe to show the model; only package-minted rejections pass that boundary, while ordinary errors, lookalikes, and panics are sanitized. Every Tool used by a stateful Thread needs a `tool.Revision` so that changes in handler behavior participate in resume compatibility.
 
-MCP is only the internal delivery mechanism here: existing or remote MCP servers still go through `WithMCP`, and built-in Drivers materialize Tools into an SDK-owned isolated profile, leaving the native profile you configured untouched. Each Agent receives an unpredictable bearer-token environment-variable name, and another MCP server cannot alias that credential carrier. For lifecycle, schema, error, security, and Thread semantics see the [host-defined Tools contract](./docs/tools.md).
+MCP is only the internal delivery mechanism here: existing or remote MCP servers still go through `WithMCP`. Drivers deliver Tools using an SDK-owned isolated profile or per-invocation configuration, leaving the native profile you configured untouched. Each Agent receives an unpredictable bearer-token environment-variable name, and another MCP server cannot alias that credential carrier. For lifecycle, schema, error, security, and Thread semantics see the [host-defined Tools contract](./docs/tools.md).
 
 ## Agent isolation
 
@@ -502,7 +507,7 @@ The accompanying constraints are: one constructor, one option merge rule, one ex
 | Package | Purpose |
 |---|---|
 | [`driver`](./driver) | The Driver SPI, used when integrating a new agent |
-| [`codex`](./codex), [`claude`](./claude), [`cursor`](./cursor), [`codebuddy`](./codebuddy) | Built-in Drivers and their Config types |
+| [`codex`](./codex), [`claude`](./claude), [`cursor`](./cursor), [`codebuddy`](./codebuddy), [`pi`](./pi), [`opencode`](./opencode) | Built-in Drivers and their Config types |
 | [`tool`](./tool), [`skill`](./skill), [`mcp`](./mcp), [`profile`](./profile) | Consumer-facing capability and resource vocabularies |
 | [`threadstore`](./threadstore), [`memory`](./memory) | The Thread persistence contract and its in-memory implementation |
 | [`bridges`](./bridges) | SSE, AG-UI, A2A, and subagent-stream protocol bridges |

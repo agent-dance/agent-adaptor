@@ -29,8 +29,8 @@ if (-not $env:TMP) {
 
 function Assert-AgentName {
     param([string]$Name)
-    if ($Name -notin @("codex", "claude", "cursor", "codebuddy")) {
-        throw "Agent must be codex, claude, cursor, or codebuddy; got '$Name'"
+    if ($Name -notin @("codex", "claude", "cursor", "codebuddy", "pi", "opencode")) {
+        throw "Agent must be codex, claude, cursor, codebuddy, pi, or opencode; got '$Name'"
     }
 }
 
@@ -40,6 +40,8 @@ function Default-AgentCommands {
 		"claude" { return @("claude", "trpc-claudecode") }
 		"cursor" { return @("agent", "cursor-agent") }
 		"codebuddy" { return @("codebuddy") }
+		"pi" { return @("pi") }
+		"opencode" { return @("opencode") }
 		default { return @("codex") }
 	}
 }
@@ -50,6 +52,8 @@ function Agent-CommandEnv {
         "claude" { return $env:CLAUDE_COMMAND }
         "cursor" { return $env:CURSOR_COMMAND }
         "codebuddy" { return $env:CODEBUDDY_COMMAND }
+        "pi" { return $env:PI_COMMAND }
+        "opencode" { return $env:OPENCODE_COMMAND }
         default { return $env:CODEX_COMMAND }
     }
 }
@@ -124,10 +128,18 @@ Run-Example -Name "quickstart" -Arguments (@("./examples/quickstart") + $common)
 Run-Example -Name "structured-output" -Arguments (@("./examples/structured-output") + $common)
 Run-Example -Name "streaming" -Arguments (@("./examples/streaming") + $common)
 Run-Example -Name "threads" -Arguments (@("./examples/threads") + $common)
-Run-Example -Name "inspect" -Arguments (@("./examples/inspect") + $common)
+if ($Agent -ne "opencode") {
+    Run-Example -Name "inspect" -Arguments (@("./examples/inspect") + $common)
+} else {
+    Write-Host "SKIP: inspect example requires native auth cloning; OpenCode stores auth separately" -ForegroundColor Yellow
+}
 Run-Example -Name "skills" -Arguments (@("./examples/skills") + $common)
-Run-Example -Name "profiles/resources" -Arguments (@("./examples/profiles/resources") + $common)
-# -run=false keeps this one free: it materializes the profile and reports the
-# on-disk evidence without ever invoking the paid model.
-Run-Example -Name "profiles (sync only)" -Arguments (@("./examples/profiles", "-run=false", "-probe=false") + $common)
+if ($Agent -notin @("pi", "opencode")) {
+    Run-Example -Name "profiles/resources" -Arguments (@("./examples/profiles/resources") + $common)
+    # -run=false keeps this one free: it materializes the profile and reports the
+    # on-disk evidence without ever invoking the paid model.
+    Run-Example -Name "profiles (sync only)" -Arguments (@("./examples/profiles", "-run=false", "-probe=false") + $common)
+} else {
+    Write-Host "SKIP: persistent profile resource examples; Pi/OpenCode inject resources per invocation" -ForegroundColor Yellow
+}
 Run-Example -Name "a2a-server" -Arguments (@("./examples/a2a-server") + $common)

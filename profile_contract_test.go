@@ -117,6 +117,7 @@ func TestExplicitEmptyResourceKindsAreDeclared(t *testing.T) {
 
 	if _, err := agent.Run(context.Background(), "hello",
 		adaptor.WithProfileResources(profile.Resources{
+			MCP:    []mcp.Server{},
 			Agents: []profile.SubAgent{},
 			Hooks:  []profile.Hook{},
 			Config: []profile.ConfigPatch{},
@@ -127,6 +128,9 @@ func TestExplicitEmptyResourceKindsAreDeclared(t *testing.T) {
 	}
 	req := fake.lastRequest(t)
 	payload := req.ProfilePayload
+	if !payload.Declared.MCP || len(payload.MCP.Servers) != 0 {
+		t.Error("MCP explicit clear declaration was lost")
+	}
 	if !payload.Declared.Agents || len(payload.Agents.Agents) != 0 {
 		t.Errorf("agents: declared=%v entries=%#v, want explicit empty declaration", payload.Declared.Agents, payload.Agents.Agents)
 	}

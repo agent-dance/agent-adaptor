@@ -147,6 +147,39 @@ Current built-in approval declarations are:
 | Claude | auto-approve, auto-deny | ask, auto-approve, auto-deny | ask, auto-deny | no |
 | Cursor | auto-approve | none | none | no |
 | CodeBuddy | ask, auto-approve, auto-deny | ask, auto-approve, auto-deny | ask, auto-deny | no |
+| Pi | ask, auto-approve, auto-deny | ask, auto-approve, auto-deny | ask, auto-deny | no |
+| OpenCode | ask, auto-approve, auto-deny | ask, auto-approve, auto-deny | ask, auto-deny | no |
+
+Pi uses an official extension to route its pre-tool events and explicit
+plan/question tools through the core approval sink. Native Pi extension dialogs
+use RPC Question requests on both Agent and Thread calls. OpenCode uses its private
+server permission/question APIs and the native `plan_exit` gate. Both reject unsupported
+sandbox, web-search and browser policies before launch.
+OpenCode auto-approve preserves native explicit deny rules;
+Explicit Ask/auto-deny promotes allowed operations to native session and agent
+approval gates while preserving resolved denies, then delegates settlement to
+core. Agent gates cover native task descendants; both official task metadata
+and the session API must establish ownership before their requests are routed.
+Permission, Question and correlated PlanReview use the same callback/Event
+responders. Switching between gated and ungated permission policies replaces
+the persistent server so previous agent gates cannot leak into the next turn.
+The native session PATCH appends rules. The Driver appends a complete current
+permission segment with last-match reset semantics, preserving original native
+denies and the checkpoint's original session baseline. It verifies the returned
+session state; unchanged effective policies do not append more rules.
+OpenCode's saved project grants take precedence over session gates. Before a
+gated process receives a prompt, its native read-only `db` command checks the
+current project's saved rules around permission-cache initialization. Nonempty
+saved rules, malformed output or unavailable probes fail before prompting.
+Grant entries are never changed. Native-default/auto-approve retains native
+saved-grant behavior; safely mediating saved grants under Ask/auto-deny remains
+an unsupported case. Compatible turns reuse the initialized permission cache;
+SDK approval replies always use `once` and cannot add persistent grants.
+OpenCode's internal cached-tool-output directory keeps its native directory
+access allow; actual read/edit/bash operations still pass their own gates.
+Resumed children with session-specific allow rules are rejected under explicit
+Ask/auto-deny before native task approval, as are uncorrelated task approvals.
+See [provider details](./pi-opencode.md).
 
 These are descriptor declarations, not promises that every future provider
 version has the same matrix. Validate against the Driver value used to build

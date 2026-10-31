@@ -747,7 +747,7 @@ func TestGetProfileUsesProcessEnvForClaudeWhenUnset(t *testing.T) {
 	}
 }
 
-func TestGetProfileCloneCanShareNativeClaudeAuth(t *testing.T) {
+func TestSyncProfileCloneCanShareNativeClaudeAuth(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", "")
 	home := t.TempDir()
 	nativeProfile := filepath.Join(home, ".claude")
@@ -781,6 +781,18 @@ func TestGetProfileCloneCanShareNativeClaudeAuth(t *testing.T) {
 	}
 	if profile.Dir != target || profile.Source != agentadaptor.AgentProfileSourceProfileOption {
 		t.Fatalf("unexpected profile: %#v", profile)
+	}
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Fatalf("GetProfile must not clone: %v", err)
+	}
+	_, err = (adapter{}).SyncProfileResources(context.Background(), Config{
+		CommonConfig: CommonConfig{Env: []agentadaptor.EnvBinding{{Name: "HOME", Value: home}, {Name: "USERPROFILE", Value: home}}},
+	}, agentadaptor.AgentIdentity{}, &agentadaptor.ProfileSelection{
+		Mode: agentadaptor.ProfileModeClone, Dir: target,
+		Clone: &agentadaptor.CloneProfileOptions{IncludeSettings: true, AuthMode: agentadaptor.CloneProfileAuthLink},
+	}, agentadaptor.ProfilePayload{}, nil, nil)
+	if err != nil {
+		t.Fatalf("sync profile: %v", err)
 	}
 	rawSettings, err := os.ReadFile(filepath.Join(target, "settings.json"))
 	if err != nil {

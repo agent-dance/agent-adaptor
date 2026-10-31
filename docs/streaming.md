@@ -294,8 +294,29 @@ The declarations of the current built-in Drivers are:
 | Claude | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Cursor | — | — | — | — | — |
 | CodeBuddy | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Pi | ✓ | ✓ | ✓ | ✓ | ✓ |
+| OpenCode | ✓ | ✓ | ✓ | — | ✓ |
 
 When a capability is false, the host still uses the same `Stream`. The events may only carry coarser lifecycle, process, transcript, and final result information; a host should not create another call path because fidelity is lower.
+
+OpenCode task descendants share the parent's Event stream and single run
+lifecycle. Child `Event.Meta().Source.ThreadID` identifies the native session;
+message/tool IDs use collision-free `opencode-child:` tuple encoding. Transcript
+items retain the native `SessionID` and parent session/tool metadata. Observed
+child step usage contributes to total Usage; `Result.Text` contains only the
+main assistant's final answer. Completed/failed tasks stop child routing, and
+cancellation closes all started child lifecycles before the run terminates.
+Because OpenCode exposes argument snapshots, tool-call start is emitted when
+the complete arguments are available, followed by tool-call end; no synthetic
+argument delta is emitted for a native pending tool.
+
+Pi's `adaptor_subagent` also shares the main Event stream and terminal run.
+`pi-child:` identifiers correlate child tools and approvals; native session IDs
+are retained in source/transcript once observed. Children execute through the
+existing Pi protocol parsers. Parent cancellation joins child process teardown
+before termination. Total Usage includes children; Result.Text remains the main
+answer. `Metadata["pi.child_runs"]` retains separate child stdout/stderr and
+official terminal payloads in addition to the complete combined Raw streams.
 
 When a structured-output schema is incompatible with a rich-event provider transport, core may select a compatible batch provider transport while still exposing the run through the unified `Event` channel. This decision does not change the public semantics of `Run` and `Stream`.
 

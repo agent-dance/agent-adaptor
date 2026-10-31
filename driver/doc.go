@@ -10,6 +10,11 @@
 // for [Driver] so an Agent can expose its required construction dependency,
 // while the canonical SPI and every optional capability contract remain here.
 //
+// [ProfileResourceDriver] is the optional profile observation/synchronization
+// contract. Its [ProfileSnapshot] and resource vocabulary are public SPI;
+// implementations never need internal engine types. Inspection is read-only,
+// while explicit synchronization owns materialization and external ownership.
+//
 // The dependency direction is one-way: the root package imports driver,
 // never the reverse. Provider packages may import driver to implement this
 // SPI; driver must not import the root package, provider packages, bridges, or

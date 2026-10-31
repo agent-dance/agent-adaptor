@@ -129,6 +129,10 @@ type Response struct {
 	// context.Canceled/context.DeadlineExceeded error identity. An abnormal
 	// process outcome can therefore never become a successful Result merely
 	// because the provider emitted no terminal error event.
+	// For an owned server transport, these fields describe execution failure,
+	// not intentional teardown after a verified healthy protocol completion.
+	// Drivers MUST preserve teardown exit/signal evidence in Metadata and MUST
+	// treat any unexpected exit before managed teardown as execution failure.
 	ExitCode         int
 	Signal           string
 	TimedOut         bool
@@ -188,8 +192,8 @@ type SessionState struct {
 
 // Checkpoint is returned by drivers only when the run produced session state
 // that is proven safe to persist. A driver MUST set Valid=true only when all
-// of the following hold: the provider process exited successfully, no signal
-// or timeout occurred, Response.Failure is nil, the driver's official parser
+// of the following hold: provider execution completed successfully, no signal
+// or timeout interrupted execution, Response.Failure is nil, the driver's official parser
 // observed its successful terminal event, and that protocol supplied an
 // explicit top-level resume/session identifier accepted by SessionCodec.
 // Init/session announcements, partial output, guessed/nested identifiers and
@@ -197,6 +201,9 @@ type SessionState struct {
 // non-zero exit, cancellation, malformed protocol, missing
 // terminal, or business failure MUST return nil or Valid=false. This prevents
 // a failed run from replacing a previously healthy Thread checkpoint.
+// An owned server may still be running at healthy protocol completion. Its
+// intentional teardown is separate from execution, as documented on Response;
+// this does not permit checkpoints after unexpected server exit or cancellation.
 // Structurally, Valid=true also requires State != nil and a non-empty
 // State.ResumeID that round-trips through the codec exposed by the same
 // resume-capable Driver.

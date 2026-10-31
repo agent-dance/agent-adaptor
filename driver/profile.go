@@ -140,6 +140,9 @@ func (p ProfilePayload) SessionFingerprint() string {
 // were explicitly declared by the host. Empty declared resources mean "clear
 // managed entries"; undeclared resources must not be reconciled as empty.
 type ProfileResourceDeclarations struct {
+	// MCP distinguishes an explicit replacement/clear from native profile
+	// discovery. Runtime-service and hosted-tool injection alone does not set it.
+	MCP          bool
 	Agents       bool
 	Hooks        bool
 	Instructions bool
@@ -177,6 +180,9 @@ type AgentToolPolicy struct {
 }
 
 // AgentPayload is the normalized driver-facing agent resource state.
+// Source files remain owned by the corresponding Driver's format parser.
+// Drivers must capture and validate their contents before delivery, and include
+// actual resolved state in session compatibility even with SourceFingerprint.
 type AgentPayload struct {
 	Agents      []AgentSpec
 	Fingerprint string

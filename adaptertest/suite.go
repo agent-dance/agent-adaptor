@@ -162,6 +162,7 @@ func TestDriver(t *testing.T, newDriver func() driver.Driver, opts ...Option) {
 	t.Run("models", func(t *testing.T) { checkModelLister(t, d, c) })
 	t.Run("detect_model", func(t *testing.T) { checkModelDetector(t, d, c) })
 	t.Run("profile", func(t *testing.T) { checkProfileReporter(t, d, desc, c) })
+	t.Run("profile_resources", func(t *testing.T) { checkProfileResources(t, d, desc, c) })
 	t.Run("quota", func(t *testing.T) { checkQuotaProbe(t, d, desc, c) })
 	t.Run("config_schema", func(t *testing.T) { checkConfigSchemaProvider(t, d, c) })
 	t.Run("skills", func(t *testing.T) { checkSkillSupport(t, d, desc, c) })

@@ -227,7 +227,7 @@ func (adapter) GetQuota(ctx context.Context, cfg any, profile *driver.ProfileSel
 
 func (adapter) ListSkills(_ context.Context, cfg any, payload driver.ResolvedSkills, selected []string, resolved []driver.Skill, profile *driver.ProfileSelection) (driver.SkillSnapshot, error) {
 	config := readConfig(cfg)
-	bindings, err := effectiveCodexBindings(config.CommonConfig, profile, driver.AgentIdentity{})
+	bindings, err := effectiveCodexBindingsNoInitialize(config.CommonConfig, profile, driver.AgentIdentity{})
 	if err != nil {
 		return driver.SkillSnapshot{}, err
 	}
@@ -252,9 +252,9 @@ func (adapter) SyncSkills(ctx context.Context, cfg any, payload driver.ResolvedS
 	return syncCodexSkills(ctx, payload, selected, resolved, codexHomeFromBindings(bindings), nil)
 }
 
-func (adapter) SnapshotProfileResources(_ context.Context, cfg any, agent driver.AgentIdentity, profile *driver.ProfileSelection, payload driver.ProfilePayload, selected []string, resolved []driver.Skill) (engine.ProfileSnapshot, error) {
+func (adapter) SnapshotProfileResources(_ context.Context, cfg any, agent driver.AgentIdentity, profile *driver.ProfileSelection, payload driver.ProfilePayload, selected []string, resolved []driver.Skill) (driver.ProfileSnapshot, error) {
 	config := readConfig(cfg)
-	bindings, err := effectiveCodexBindings(config.CommonConfig, profile, agent)
+	bindings, err := effectiveCodexBindingsNoInitialize(config.CommonConfig, profile, agent)
 	if err != nil {
 		return engine.ProfileSnapshot{}, err
 	}
@@ -284,7 +284,7 @@ func (adapter) SnapshotProfileResources(_ context.Context, cfg any, agent driver
 	return snapshot, nil
 }
 
-func (adapter) SyncProfileResources(ctx context.Context, cfg any, agent driver.AgentIdentity, profile *driver.ProfileSelection, payload driver.ProfilePayload, selected []string, resolved []driver.Skill) (engine.ProfileSnapshot, error) {
+func (adapter) SyncProfileResources(ctx context.Context, cfg any, agent driver.AgentIdentity, profile *driver.ProfileSelection, payload driver.ProfilePayload, selected []string, resolved []driver.Skill) (driver.ProfileSnapshot, error) {
 	config := readConfig(cfg)
 	bindings, err := effectiveCodexBindings(config.CommonConfig, profile, agent)
 	if err != nil {
@@ -296,7 +296,7 @@ func (adapter) SyncProfileResources(ctx context.Context, cfg any, agent driver.A
 		return engine.ProfileSnapshot{}, err
 	}
 	effectiveProfile, kind := codexProfileAndKind(config.CommonConfig, profile, agent)
-	mcpSnapshot, err := mcpruntime.SyncResource(ctx, DriverType, codexHome, kind, payload.MCP)
+	mcpSnapshot, err := mcpruntime.SyncDeclaredResource(ctx, DriverType, codexHome, kind, payload.MCP, payload.Declared.MCP)
 	if err != nil {
 		return engine.ProfileSnapshot{}, err
 	}

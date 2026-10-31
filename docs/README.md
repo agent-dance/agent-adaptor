@@ -9,6 +9,8 @@ The public v1 model is Agent, Thread, Stream, Event, Result, and Driver. Start w
 | [`../README.md`](../README.md), and its [`zh-CN`](../README.zh-CN.md), [`ja`](../README.ja.md), [`ko`](../README.ko.md), [`de`](../README.de.md) translations | Product overview, quick start, packages, and examples. |
 | [`../AGENTS.md`](../AGENTS.md) | Final architecture boundaries, invariants, and release gates. |
 | [`api-reference.md`](./api-reference.md) | Complete public API and option scopes. |
+| [`pi-opencode.md`](./pi-opencode.md) | Pi and OpenCode setup, capability limits, protocol contracts, and live tests. |
+| [`claude-parity.md`](./claude-parity.md) | Active Pi/OpenCode parity inventory, evidence, remaining gaps and completion gates. |
 | [`tools.md`](./tools.md) | Provider-neutral host-defined Tools, schemas, errors, lifecycle, security, and Thread compatibility. |
 | [`streaming.md`](./streaming.md) | Unified Event consumption, cancellation, backpressure, AG-UI, and SSE. |
 | [`streaming-adapter-contract.md`](./streaming-adapter-contract.md) | Streaming and event obligations for Driver authors. |

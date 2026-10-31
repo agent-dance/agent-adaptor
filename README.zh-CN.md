@@ -2,7 +2,7 @@
 
 [English](./README.md) | [日本語](./README.ja.md) | [한국어](./README.ko.md) | [Deutsch](./README.de.md)
 
-`agent-adaptor` 是一个 SDK，它提供了一套简单、符合直觉的 API，统一驱动如 `Codex`、`Claude Code`、`Cursor`、`CodeBuddy` 在内的不同 Agent 形态，并提供基础调用之外的诸多增强能力。
+`agent-adaptor` 是一个 SDK，它提供了一套简单、符合直觉的 API，统一驱动如 `Codex`、`Claude Code`、`Cursor`、`CodeBuddy`、`Pi`、`OpenCode` 在内的不同 Agent 形态，并提供基础调用之外的诸多增强能力。
 
 ```go
 agent := adaptor.New(codex.Driver(codex.Config{Model: "gpt-5.6-sol"}))
@@ -63,14 +63,19 @@ func main() {
 }
 ```
 
-四个内置 Driver 构造方式一致，各自带自己的 `Config`：
+六个内置 Driver 构造方式一致，各自带自己的 `Config`：
 
 ```go
 codexAgent := adaptor.New(codex.Driver(codex.Config{}))
 claudeAgent := adaptor.New(claude.Driver(claude.Config{}))
 cursorAgent := adaptor.New(cursor.Driver(cursor.Config{}))
 codeBuddyAgent := adaptor.New(codebuddy.Driver(codebuddy.Config{}))
+piAgent := adaptor.New(pi.Driver(pi.Config{}))
+openCodeAgent := adaptor.New(opencode.Driver(opencode.Config{}))
 ```
+
+Pi 与 OpenCode 的配置、MCP/Tools 交付、常驻会话和交互能力见
+[接入说明](./docs/pi-opencode.md)。
 
 ## 流式执行
 
@@ -318,7 +323,7 @@ defer agent.Close(context.Background())
 
 `WithTools` 只能用于构造期，整组替换 Tool 集合。schema 默认从 handler 的 Go 类型推导，也可以显式给标准 JSON Schema。`tool.Reject(code, message)` 表示可以安全展示给模型的业务失败，普通 error 和 panic 会被净化。有状态 Thread 用到的每个 Tool 都要设 `tool.Revision`，让 handler 的行为变化进入续接兼容性判断。
 
-MCP 在这里只是内部交付机制：已有的或远程的 MCP server 仍然走 `WithMCP`；内置 Driver 会把 Tools 物化到 SDK 自有的隔离 profile，不动你配置的原生 profile。生命周期、schema、错误、安全与 Thread 语义见[宿主自定义 Tools 合同](./docs/tools.md)。
+MCP 在这里只是内部交付机制：已有的或远程的 MCP server 仍然走 `WithMCP`；内置 Driver 通过 SDK 自有的隔离 profile 或单次调用配置交付 Tools，不动你配置的原生 profile。生命周期、schema、错误、安全与 Thread 语义见[宿主自定义 Tools 合同](./docs/tools.md)。
 
 ## Agent 隔离
 
@@ -502,7 +507,7 @@ synced, err := agent.SyncProfile(ctx)                // 显式物化配置资源
 | 包 | 用途 |
 |---|---|
 | [`driver`](./driver) | Driver SPI，接入新 Agent 时用 |
-| [`codex`](./codex)、[`claude`](./claude)、[`cursor`](./cursor)、[`codebuddy`](./codebuddy) | 内置 Driver 与各自的 Config |
+| [`codex`](./codex)、[`claude`](./claude)、[`cursor`](./cursor)、[`codebuddy`](./codebuddy), [`pi`](./pi), [`opencode`](./opencode) | 内置 Driver 与各自的 Config |
 | [`tool`](./tool)、[`skill`](./skill)、[`mcp`](./mcp)、[`profile`](./profile) | 面向调用方的能力与资源词汇 |
 | [`threadstore`](./threadstore)、[`memory`](./memory) | Thread 持久化接口与内存实现 |
 | [`bridges`](./bridges) | SSE、AG-UI、A2A、subagent-stream 协议桥 |

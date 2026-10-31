@@ -186,7 +186,7 @@ func TestDriverPreservesOptionalCapabilityInterfaces(t *testing.T) {
 	if _, ok := d.(driver.StreamSupport); !ok {
 		t.Error("driver.StreamSupport lost on configured driver")
 	}
-	if _, ok := d.(engine.ProfileResourceDriver); !ok {
+	if _, ok := d.(driver.ProfileResourceDriver); !ok {
 		t.Error("profile resource capability lost on configured driver")
 	}
 }

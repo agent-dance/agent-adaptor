@@ -178,7 +178,7 @@ func TestGetProfileUsesProcessEnvForCursorWhenUnset(t *testing.T) {
 	}
 }
 
-func TestGetProfileCloneCanShareNativeCursorAuth(t *testing.T) {
+func TestSyncProfileCloneCanShareNativeCursorAuth(t *testing.T) {
 	t.Setenv("CURSOR_HOME", "")
 	home := t.TempDir()
 	nativeProfile := filepath.Join(home, ".cursor")
@@ -212,6 +212,18 @@ func TestGetProfileCloneCanShareNativeCursorAuth(t *testing.T) {
 	}
 	if profile.Dir != target || profile.Source != agentadaptor.AgentProfileSourceProfileOption {
 		t.Fatalf("unexpected profile: %#v", profile)
+	}
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Fatalf("GetProfile must not clone: %v", err)
+	}
+	_, err = (adapter{}).SyncProfileResources(context.Background(), Config{
+		CommonConfig: CommonConfig{Env: []agentadaptor.EnvBinding{{Name: "HOME", Value: home}, {Name: "USERPROFILE", Value: home}}},
+	}, agentadaptor.AgentIdentity{}, &agentadaptor.ProfileSelection{
+		Mode: agentadaptor.ProfileModeClone, Dir: target,
+		Clone: &agentadaptor.CloneProfileOptions{IncludeSettings: true, AuthMode: agentadaptor.CloneProfileAuthLink},
+	}, agentadaptor.ProfilePayload{}, nil, nil)
+	if err != nil {
+		t.Fatalf("sync profile: %v", err)
 	}
 	rawConfig, err := os.ReadFile(filepath.Join(target, "config.json"))
 	if err != nil {

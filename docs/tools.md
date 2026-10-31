@@ -136,7 +136,7 @@ and credential carrier. The Driver SPI requires resumed invocations to refresh
 the complete current request rather than rely on cached MCP or profile
 bindings.
 
-For the four built-in Drivers, the provider-native MCP file is written to an
+For Codex, Claude, Cursor and CodeBuddy, the provider-native MCP file is written to an
 SDK-owned, Agent/identity-specific clone profile. The configured/native profile
 is only the source for settings, skills, existing MCP declarations, and linked
 authentication files; it is never modified by `WithTools`. Explicit profile
@@ -151,6 +151,13 @@ linked authentication rotation remains outside the durable fingerprint.
 
 `WithSpawn` replaces only the provider process. It does not restart the
 Agent-owned Tool runtime.
+
+Pi and OpenCode deliver the same Agent-owned Tool runtime through ephemeral
+invocation configuration. Pi uses its official extension API backed by the Go
+MCP client; OpenCode disables startup slots with `OPENCODE_CONFIG_CONTENT`
+and installs exact connections through its private native MCP API. They do not write a
+provider-native MCP file or need an execution clone for tool delivery. See
+[Pi and OpenCode](./pi-opencode.md) for transport and cleanup details.
 
 ## Lifecycle and security
 
