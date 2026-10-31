@@ -57,6 +57,7 @@ func (adapter) Descriptor() driver.Descriptor {
 		Instructions: driver.InstructionsCapability{Supported: true},
 		Workspace:    driver.WorkspaceCapability{Supported: true},
 		Process:      driver.ProcessCapability{Persistent: true},
+		Messages:     codexMessageCapability(),
 		RunPolicyCaps: driver.RunPolicyCapabilities{
 			Isolation: true, WebSearch: true, Browser: false,
 			Permission: driver.HumanDecisionSupport{Ask: false, AutoApprove: true, AutoReject: false, Retry: false},
@@ -441,7 +442,7 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 			extraArgs: append([]string(nil), appOpts.ExtraArgs...),
 			resumeID:  resumeID, engineID: persistentSessionKey(req), previousID: persistentPreviousSessionKey(req),
 			prompt: appOpts.Prompt, runID: req.RunID,
-			approval: appOpts.Approval, sandbox: appOpts.Sandbox, outputSchema: outputSchema,
+			approval: appOpts.Approval, sandbox: appOpts.Sandbox, outputSchema: outputSchema, messages: req.Messages,
 			profileFingerprint:  profileFingerprint,
 			settingsFingerprint: codexSettingsFingerprint(effectiveCodexHome, effectiveCWD),
 			commandFingerprint:  commandFileFingerprint(command),

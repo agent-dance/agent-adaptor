@@ -561,14 +561,40 @@ func runCodexHelper() int {
 			}
 			writeHelperJSON(writer, helperResponse{ID: req.ID, Result: map[string]any{"turn": map[string]any{"id": turnID, "status": "inProgress"}}})
 			writeHelperNotification(writer, "turn/started", map[string]any{"threadId": "thread-1", "turn": map[string]any{"id": turnID, "status": "inProgress"}})
+			if turn == 1 && (mode == "messages_steer" || mode == "messages_interrupt") {
+				continue
+			}
 			writeHelperNotification(writer, "item/agentMessage/delta", map[string]any{"threadId": "thread-1", "turnId": turnID, "itemId": itemID, "delta": text})
 			writeHelperNotification(writer, "item/completed", map[string]any{"threadId": "thread-1", "turnId": turnID, "item": map[string]any{"id": itemID, "type": "agentMessage", "text": text}})
 			writeHelperNotification(writer, "turn/completed", map[string]any{"threadId": "thread-1", "turn": map[string]any{"id": turnID, "status": "completed", "usage": map[string]any{"inputTokens": 2, "outputTokens": 1, "cachedInputTokens": 0}}})
+		case "turn/steer":
+			var params struct {
+				ThreadID       string `json:"threadId"`
+				ExpectedTurnID string `json:"expectedTurnId"`
+				Input          []struct {
+					Text string `json:"text"`
+				} `json:"input"`
+			}
+			if err := json.Unmarshal(req.Params, &params); err != nil || params.ThreadID != "thread-1" || params.ExpectedTurnID != fmt.Sprintf("turn-%d", turn) || len(params.Input) != 1 {
+				return 23
+			}
+			writeHelperJSON(writer, helperResponse{ID: req.ID, Result: map[string]any{"turnId": params.ExpectedTurnID}})
+			writeHelperMessageCompletion(writer, turn, "completed", params.Input[0].Text)
 		case "turn/interrupt":
 			writeHelperJSON(writer, helperResponse{ID: req.ID, Result: map[string]any{}})
+			if mode == "messages_interrupt" {
+				writeHelperMessageCompletion(writer, turn, "interrupted", "partial")
+			}
 		}
 	}
 	return 0
+}
+
+func writeHelperMessageCompletion(writer *bufio.Writer, turn int, status, text string) {
+	turnID := fmt.Sprintf("turn-%d", turn)
+	itemID := fmt.Sprintf("item-%d", turn)
+	writeHelperNotification(writer, "item/completed", map[string]any{"threadId": "thread-1", "turnId": turnID, "item": map[string]any{"id": itemID, "type": "agentMessage", "text": text}})
+	writeHelperNotification(writer, "turn/completed", map[string]any{"threadId": "thread-1", "turn": map[string]any{"id": turnID, "status": status, "usage": map[string]any{"inputTokens": 2, "outputTokens": 1}}})
 }
 
 func hasProcessArg(want string) bool {

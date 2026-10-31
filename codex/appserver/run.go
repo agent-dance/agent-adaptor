@@ -36,8 +36,10 @@ type Options struct {
 	ClientName    string
 	ClientVersion string
 
-	// Prompt is the user input for the single turn.
+	// Prompt is the user input for the initial turn.
 	Prompt string
+	// Messages supplies run-scoped in-run delivery and continuation messages.
+	Messages driver.MessagePort
 
 	// Thread controls whether this run starts, resumes, or forks a thread.
 	// ResumeThreadID and ForkThreadID are mutually exclusive. A fork returns a
@@ -54,7 +56,7 @@ type Options struct {
 	// ServiceTier is the official app-server service tier override (for
 	// example, "fast").
 	ServiceTier string
-	// OutputSchema is forwarded to turn/start and validated before the final
+	// OutputSchema is forwarded to every turn/start and validated before the final
 	// public lifecycle event when native structured output is selected.
 	OutputSchema *driver.OutputSchema
 
@@ -65,7 +67,7 @@ type Options struct {
 // Run spawns a codex app-server subprocess, completes the initialize /
 // thread / turn handshake, forwards every relevant notification into the
 // supplied sink as a StreamPayload, and returns the accumulated
-// [driver.Response] once the turn completes.
+// [driver.Response] once the last turn completes with no continuation pending.
 //
 // The returned [driver.Response] satisfies the Driver SPI output contract:
 // codex/driver.go (Output, Transcript, ExitCode, Usage, Checkpoint, and
@@ -141,6 +143,7 @@ func Run(ctx context.Context, opts Options, sink driver.EventSink) (driver.Respo
 	client := NewClient(context.Background(), stream)
 
 	state := newRunState(opts.RunID, sink)
+	state.messages = opts.Messages
 	// runState.onNotification forwards to the translator (so bridges see
 	// every payload) and then accumulates run-level state needed to shape
 	// the driver.Response.
@@ -165,7 +168,6 @@ func Run(ctx context.Context, opts Options, sink driver.EventSink) (driver.Respo
 	}
 
 	threadID := ""
-	turnID := ""
 	finish := func(primary error) (driver.Response, error) {
 		waitErr := shutdown()
 		if readErr := stream.ReadError(); readErr != nil {
@@ -247,14 +249,17 @@ func Run(ctx context.Context, opts Options, sink driver.EventSink) (driver.Respo
 		return finish(err)
 	}
 
-	// 3. turn/start.
+	return finish(runTurns(ctx, client, state, opts, threadID))
+}
+
+func turnStartParams(opts Options, threadID string, input []UserInput) TurnStartParams {
 	var outputSchema json.RawMessage
 	if opts.OutputSchema != nil {
 		outputSchema = append(json.RawMessage(nil), opts.OutputSchema.SchemaJSON...)
 	}
 	turnParams := TurnStartParams{
 		ThreadID:     threadID,
-		Input:        []UserInput{TextInput(opts.Prompt)},
+		Input:        input,
 		CWD:          opts.CWD,
 		Model:        opts.Model,
 		Effort:       opts.Effort,
@@ -267,32 +272,7 @@ func Run(ctx context.Context, opts Options, sink driver.EventSink) (driver.Respo
 	if opts.Sandbox != "" {
 		turnParams.SandboxPolicy = sandboxPolicyFor(opts.Sandbox)
 	}
-	turn, err := client.TurnStart(ctx, turnParams)
-	if err != nil {
-		return finish(fmt.Errorf("codex app-server turn/start: %w", err))
-	}
-	turnID = turn.Turn.ID
-	state.setTurn(turnID)
-	if err := state.protocolError(); err != nil {
-		return finish(err)
-	}
-
-	// 4. wait for the turn to complete or the context to expire.
-	select {
-	case <-state.done:
-	case <-ctx.Done():
-		// Best-effort interrupt uses a cancellation-detached, bounded context;
-		// the process may already be terminating through CommandContext.
-		interruptCtx, cancelInterrupt := context.WithTimeout(context.WithoutCancel(ctx), 500*time.Millisecond)
-		_ = client.TurnInterrupt(interruptCtx, TurnInterruptParams{ThreadID: threadID, TurnID: turnID})
-		cancelInterrupt()
-		return finish(ctx.Err())
-	case <-client.DisconnectNotify():
-		// The state check after the reader/process join distinguishes a clean
-		// terminal EOF from malformed JSON or a missing terminal notification.
-	}
-
-	return finish(nil)
+	return turnParams
 }
 
 // ---------------------------------------------------------------------------
@@ -304,22 +284,29 @@ type runState struct {
 	sink       driver.EventSink
 	notifyMu   sync.Mutex
 
-	mu             sync.Mutex
-	finalAgentText string
-	transcript     []driver.TranscriptItem
-	usage          *driver.Usage
-	turnFailure    *driver.RunFailure
-	terminal       *driver.TerminalPayload
-	terminalStatus TurnStatus
-	protocolErr    error
-	threadID       string
-	turnID         string
-	pending        []pendingNotification
-	publicClosed   bool
-	publicStarted  bool
-	itemsEmitted   int
-	done           chan struct{}
-	doneOnce       sync.Once
+	mu                 sync.Mutex
+	finalAgentText     string
+	transcript         []driver.TranscriptItem
+	usage              *driver.Usage
+	totalUsage         *driver.Usage
+	providerUsageTotal *driver.Usage
+	turnIndex          int
+	interrupted        bool
+	active             bool
+	messages           driver.MessagePort
+	wake               chan struct{}
+	turnFailure        *driver.RunFailure
+	terminal           *driver.TerminalPayload
+	terminalStatus     TurnStatus
+	protocolErr        error
+	threadID           string
+	turnID             string
+	pending            []pendingNotification
+	publicClosed       bool
+	publicStarted      bool
+	itemsEmitted       int
+	done               chan struct{}
+	doneOnce           sync.Once
 }
 
 type pendingNotification struct {
@@ -376,6 +363,7 @@ func newRunState(runID string, sink driver.EventSink) *runState {
 		translator: NewTranslator(sink, runID),
 		sink:       sink,
 		done:       make(chan struct{}),
+		wake:       make(chan struct{}, 1),
 	}
 }
 
@@ -447,6 +435,16 @@ func (s *runState) handleNotificationLocked(method string, params json.RawMessag
 		// then release any init transcript accumulated during the handshake.
 		s.translator.Dispatch(method, params)
 		s.markPublicStarted()
+		s.mu.Lock()
+		s.active = true
+		if s.messages != nil {
+			s.messages.Window(true)
+		}
+		s.mu.Unlock()
+		select {
+		case s.wake <- struct{}{}:
+		default:
+		}
 	} else if method == NotifyThreadStarted {
 		// thread/started only contributes the pending init transcript; the
 		// public lifecycle starts at the first turn-scoped notification.
@@ -467,21 +465,38 @@ func (s *runState) handleNotificationLocked(method string, params json.RawMessag
 	case NotifyItemCompleted:
 		s.absorbItem(params, false)
 	case NotifyThreadTokenUsageUpdated:
-		// Codex 0.120.0 reports the authoritative token tally via
-		// thread/tokenUsage/updated notifications that arrive right before
-		// turn/completed. We keep the latest snapshot so driver.Response
-		// reflects it even when turn/completed omits the usage field.
+		// Total is cumulative for the provider thread; Last is the latest
+		// inference. Seed this call with Last (excluding prior resumed history)
+		// and accumulate subsequent Total deltas across all of this call's turns.
+		// Repeated snapshots therefore cannot double-count usage.
 		var body ThreadTokenUsageUpdatedNotification
 		if err := json.Unmarshal(params, &body); err != nil {
 			s.recordProtocolError(fmt.Errorf("decode thread/tokenUsage/updated: %w", err))
 			return
 		}
 		s.mu.Lock()
-		s.usage = &driver.Usage{
+		delta := &driver.Usage{
+			InputTokens:       body.TokenUsage.Last.InputTokens,
+			OutputTokens:      body.TokenUsage.Last.OutputTokens,
+			CachedInputTokens: body.TokenUsage.Last.CachedInputTokens,
+		}
+		total := &driver.Usage{
 			InputTokens:       body.TokenUsage.Total.InputTokens,
 			OutputTokens:      body.TokenUsage.Total.OutputTokens,
 			CachedInputTokens: body.TokenUsage.Total.CachedInputTokens,
 		}
+		if previous := s.providerUsageTotal; previous != nil {
+			delta = &driver.Usage{InputTokens: total.InputTokens - previous.InputTokens,
+				OutputTokens:      total.OutputTokens - previous.OutputTokens,
+				CachedInputTokens: total.CachedInputTokens - previous.CachedInputTokens}
+			if delta.InputTokens < 0 || delta.OutputTokens < 0 || delta.CachedInputTokens < 0 {
+				s.mu.Unlock()
+				s.recordProtocolError(errors.New("thread token usage totals decreased during execution"))
+				return
+			}
+		}
+		s.providerUsageTotal = total
+		s.usage = addUsage(s.usage, delta)
 		s.mu.Unlock()
 	case NotifyError:
 		var body ErrorNotification
@@ -635,6 +650,7 @@ func validateAppServerNotification(method string, params json.RawMessage) error 
 }
 
 func (s *runState) handleTurnCompleted(params json.RawMessage) {
+	completedAt := time.Now().UTC()
 	s.startPublic()
 	var body TurnCompletedNotificationBody
 	if err := json.Unmarshal(params, &body); err != nil {
@@ -685,6 +701,16 @@ func (s *runState) handleTurnCompleted(params json.RawMessage) {
 	// before run.finished/run.error, because the lifecycle terminal is strict
 	// last across all provider-originated public events.
 	s.appendTranscriptLocked(item)
+	s.totalUsage = addUsage(s.totalUsage, s.usage)
+	if s.sink != nil {
+		_ = s.sink.Emit(driver.RunEvent{Type: driver.RunEventTurnCompleted, Timestamp: completedAt,
+			Turn: &driver.TurnCompleted{Index: s.turnIndex, Text: s.finalAgentText,
+				Usage: cloneUsage(s.usage), Interrupted: s.interrupted && body.Turn.Status == TurnStatusInterrupted, CompletedAt: completedAt}})
+	}
+	s.active = false
+	if s.messages != nil {
+		s.messages.Window(false)
+	}
 	s.mu.Unlock()
 
 	s.signalDone()
@@ -704,7 +730,7 @@ func (s *runState) finishPublicResult(result driver.Response, runErr error) {
 		s.translator.FinishError(errors.New("codex app-server protocol ended without a usable terminal"))
 		return
 	}
-	s.translator.Dispatch(result.RawStreams.Terminal.Event, result.RawStreams.Terminal.JSON)
+	s.translator.finishSuccess(result.RawStreams.Terminal, result.Usage)
 }
 
 func (s *runState) signalDone() {
@@ -930,6 +956,10 @@ func (s *runState) snapshot(opts Options, threadID, stdout, stderr string, exitC
 			Valid: true,
 		}
 	}
+	usage := s.totalUsage
+	if s.terminal == nil {
+		usage = addUsage(usage, s.usage)
+	}
 	return driver.Response{
 		Output:     s.assembleOutputLocked(),
 		RawStreams: &driver.RawStreams{Stdout: stdout, Stderr: stderr, Terminal: cloneTerminal(s.terminal)},
@@ -937,7 +967,7 @@ func (s *runState) snapshot(opts Options, threadID, stdout, stderr string, exitC
 		ExitCode:   exitCode,
 		Signal:     signal,
 		TimedOut:   timedOut,
-		Usage:      cloneUsage(s.usage),
+		Usage:      cloneUsage(usage),
 		Checkpoint: checkpoint,
 		Provider:   "openai",
 		Model:      opts.Model,

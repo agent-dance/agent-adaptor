@@ -49,6 +49,7 @@ type persistentSpec struct {
 	approval     string
 	sandbox      string
 	outputSchema *driver.OutputSchema
+	messages     driver.MessagePort
 
 	profileFingerprint  string
 	settingsFingerprint string
@@ -79,6 +80,7 @@ func (s persistentSpec) turnOptions() appserver.Options {
 	opts.Approval = s.approval
 	opts.Effort = s.effort
 	opts.OutputSchema = s.outputSchema
+	opts.Messages = s.messages
 	return opts
 }
 

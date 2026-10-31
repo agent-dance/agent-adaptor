@@ -299,6 +299,23 @@ func (t *Translator) FinishFailure(failure *driver.RunFailure, raw *driver.RawSt
 	t.emit(payload)
 }
 
+func (t *Translator) finishSuccess(terminal *driver.TerminalPayload, usage *driver.Usage) {
+	t.start()
+	t.mu.Lock()
+	if t.terminal {
+		t.mu.Unlock()
+		return
+	}
+	t.terminal = true
+	t.mu.Unlock()
+	payload := t.basePayload()
+	payload.Kind = driver.StreamRunFinished
+	payload.Usage = cloneUsage(usage)
+	// Keep the exact provider terminal available on the final lifecycle event.
+	payload.Raw = rawToMap(terminal.JSON, terminal.Event)
+	t.emit(payload)
+}
+
 func (t *Translator) handleItemStarted(params json.RawMessage) {
 	var body ItemStartedNotificationBody
 	if err := json.Unmarshal(params, &body); err != nil {
