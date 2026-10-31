@@ -11,9 +11,9 @@ import (
 	"strings"
 	"testing"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	agentadaptor "github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/internal/testutil"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	agentadaptor "github.com/agent-dance/agent-adaptor/v2/driver"
+	"github.com/agent-dance/agent-adaptor/v2/internal/testutil"
 )
 
 func TestBuildClaudeExecArgsIncludesPartialMessagesWhenStreaming(t *testing.T) {

@@ -10,11 +10,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/agent-dance/agent-adaptor/memory"
-	"github.com/agent-dance/agent-adaptor/threadstore"
+	"github.com/agent-dance/agent-adaptor/v2/memory"
+	"github.com/agent-dance/agent-adaptor/v2/threadstore"
 )
 
-const rootAPIImport = "github.com/agent-dance/agent-adaptor"
+const rootAPIImport = "github.com/agent-dance/agent-adaptor/v2"
 
 // TestProductionImportBoundary keeps the leaf implementation independent of
 // the consumer-facing root API.

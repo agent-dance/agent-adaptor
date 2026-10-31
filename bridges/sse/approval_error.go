@@ -6,7 +6,7 @@ import (
 	"errors"
 	"net/http"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
 )
 
 // ApprovalErrorResponse is the stable JSON error body for companion HTTP

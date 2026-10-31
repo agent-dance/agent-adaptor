@@ -1,6 +1,6 @@
 package mcp
 
-import "github.com/agent-dance/agent-adaptor/driver"
+import "github.com/agent-dance/agent-adaptor/v2/driver"
 
 // Server declares one MCP server for the run. It is the consumer-facing name
 // for [driver.MCPServerSpec], so values built here are accepted anywhere the

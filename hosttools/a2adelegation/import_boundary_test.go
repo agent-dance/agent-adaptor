@@ -19,10 +19,10 @@ func TestDelegationPackagesDoNotImportConcreteAdapters(t *testing.T) {
 		filepath.Join(repoRoot, "bridges", "subagentstream"),
 	}
 	forbidden := []string{
-		"github.com/agent-dance/agent-adaptor/claude",
-		"github.com/agent-dance/agent-adaptor/codebuddy",
-		"github.com/agent-dance/agent-adaptor/codex",
-		"github.com/agent-dance/agent-adaptor/cursor",
+		"github.com/agent-dance/agent-adaptor/v2/claude",
+		"github.com/agent-dance/agent-adaptor/v2/codebuddy",
+		"github.com/agent-dance/agent-adaptor/v2/codex",
+		"github.com/agent-dance/agent-adaptor/v2/cursor",
 	}
 	forEachProductionImport(t, packages, func(path, importPath string) {
 		for _, forbiddenImport := range forbidden {

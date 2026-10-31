@@ -6,7 +6,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
 )
 
 // Translator converts codex app-server notifications into StreamPayload

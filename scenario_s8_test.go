@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/profile"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/profile"
 )
 
 func TestScenarioS8TenantIsolatedProfile(t *testing.T) {

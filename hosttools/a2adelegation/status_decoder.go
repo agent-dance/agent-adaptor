@@ -1,8 +1,8 @@
 package a2adelegation
 
 import (
-	adaptor "github.com/agent-dance/agent-adaptor"
-	bridgea2a "github.com/agent-dance/agent-adaptor/bridges/a2a"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	bridgea2a "github.com/agent-dance/agent-adaptor/v2/bridges/a2a"
 )
 
 type adapterStreamStatusDecoder struct{}

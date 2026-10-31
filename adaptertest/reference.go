@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
 )
 
 // ReferenceConfig configures the in-memory reference driver returned by

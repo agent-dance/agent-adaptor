@@ -105,6 +105,11 @@ type Request struct {
 	// this field. The public Event stream remains available, but it will not
 	// contain provider-native normalized deltas from that capability.
 	Streaming bool
+
+	// Messages is the run-scoped message port. It is non-nil only when core
+	// enabled in-run message delivery for this invocation; Drivers that
+	// declare no MessageCapability may ignore it. See MessagePort.
+	Messages MessagePort
 }
 
 // Response is the driver-facing execution result.

@@ -17,8 +17,8 @@ import (
 	"fmt"
 	"testing"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/driver"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
 )
 
 // numberedPayload is a trackable text delta ("e1", "e2", ...) so drop tests

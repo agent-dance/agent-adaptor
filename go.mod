@@ -1,4 +1,4 @@
-module github.com/agent-dance/agent-adaptor
+module github.com/agent-dance/agent-adaptor/v2
 
 go 1.26.5
 

@@ -23,11 +23,11 @@ import (
 	"context"
 	"testing"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/mcp"
-	"github.com/agent-dance/agent-adaptor/profile"
-	"github.com/agent-dance/agent-adaptor/skill"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
+	"github.com/agent-dance/agent-adaptor/v2/mcp"
+	"github.com/agent-dance/agent-adaptor/v2/profile"
+	"github.com/agent-dance/agent-adaptor/v2/skill"
 )
 
 // capsFake returns a fakeDriver whose descriptor advertises every MCP

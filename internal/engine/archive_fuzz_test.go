@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/agent-dance/agent-adaptor/internal/skillmaterializer"
-	"github.com/agent-dance/agent-adaptor/skill"
+	"github.com/agent-dance/agent-adaptor/v2/internal/skillmaterializer"
+	"github.com/agent-dance/agent-adaptor/v2/skill"
 )
 
 func FuzzExtractZip(f *testing.F) {

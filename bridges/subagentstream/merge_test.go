@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/bridges/subagentstream"
-	"github.com/agent-dance/agent-adaptor/hosttools/a2adelegation"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/bridges/subagentstream"
+	"github.com/agent-dance/agent-adaptor/v2/hosttools/a2adelegation"
 )
 
 // fakeStream is a minimal chan-backed adaptor.Stream.

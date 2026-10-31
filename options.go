@@ -6,13 +6,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/internal/engine"
-	"github.com/agent-dance/agent-adaptor/mcp"
-	"github.com/agent-dance/agent-adaptor/profile"
-	"github.com/agent-dance/agent-adaptor/skill"
-	"github.com/agent-dance/agent-adaptor/threadstore"
-	"github.com/agent-dance/agent-adaptor/tool"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
+	"github.com/agent-dance/agent-adaptor/v2/internal/engine"
+	"github.com/agent-dance/agent-adaptor/v2/mcp"
+	"github.com/agent-dance/agent-adaptor/v2/profile"
+	"github.com/agent-dance/agent-adaptor/v2/skill"
+	"github.com/agent-dance/agent-adaptor/v2/threadstore"
+	"github.com/agent-dance/agent-adaptor/v2/tool"
 )
 
 // One option vocabulary, two scopes: the same WithX used in New(...) is the

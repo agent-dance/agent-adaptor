@@ -15,7 +15,7 @@ import (
 // own private types; they never depend back on the application-facing root.
 func TestInternalProductionDoesNotImportRoot(t *testing.T) {
 	t.Parallel()
-	const rootImport = "github.com/agent-dance/agent-adaptor"
+	const rootImport = "github.com/agent-dance/agent-adaptor/v2"
 	internalRoot := filepath.Clean("..")
 
 	err := filepath.WalkDir(internalRoot, func(path string, entry fs.DirEntry, walkErr error) error {

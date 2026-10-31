@@ -12,8 +12,8 @@ import (
 	a2aproto "github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/bridges/internal/bridgekey"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/bridges/internal/bridgekey"
 )
 
 // SessionBinding decides which Runner executes an inbound A2A request. The

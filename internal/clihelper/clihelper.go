@@ -13,8 +13,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/internal/processx"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
+	"github.com/agent-dance/agent-adaptor/v2/internal/processx"
 )
 
 // ChunkObserver is the adapter-supplied callback invoked once per raw chunk

@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/internal/skillruntime"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
+	"github.com/agent-dance/agent-adaptor/v2/internal/skillruntime"
 )
 
 func listCodexSkills(payload driver.ResolvedSkills, selected []string, resolved []driver.Skill, codexHome string) (driver.SkillSnapshot, error) {

@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
 	"github.com/cucumber/godog"
 )
 

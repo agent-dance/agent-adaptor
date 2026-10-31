@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/agent-dance/agent-adaptor/adaptertest"
-	agentadaptor "github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/v2/adaptertest"
+	agentadaptor "github.com/agent-dance/agent-adaptor/v2/driver"
 )
 
 // TestHITLPlanApproved_EmitsRequestedAndResolved covers §8.4.7: the parser

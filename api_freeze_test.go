@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/agent-dance/agent-adaptor/internal/testutil/apifreeze"
+	"github.com/agent-dance/agent-adaptor/v2/internal/testutil/apifreeze"
 )
 
 const updateAPIGoldenEnv = "AGENT_ADAPTOR_UPDATE_API_GOLDEN"

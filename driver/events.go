@@ -25,6 +25,10 @@ const (
 	RunEventRuntime RunEventType = "runtime"
 	// RunEventLifecycle reports high-level run lifecycle markers.
 	RunEventLifecycle RunEventType = "lifecycle"
+	// RunEventTurnCompleted marks the end of one provider turn. Turn carries
+	// the payload. A Driver emits exactly one per provider turn, including the
+	// last turn of the call.
+	RunEventTurnCompleted RunEventType = "turn.completed"
 )
 
 // RunEvent is the operational event envelope emitted into EventSink.
@@ -33,6 +37,7 @@ const (
 //   - chunk: Stream ("stdout"|"stderr"), Bytes (raw chunk bytes, may be partial).
 //   - item:  Item (*TranscriptItem).
 //   - invocation/spawn/runtime/lifecycle: Text, Metadata, Data.
+//   - turn.completed: Turn (*TurnCompleted).
 //
 // Drivers MUST leave Seq zero. Core assigns it monotonically in Event sink
 // receiver order. Collecting every RunEventItem in that order MUST reproduce
@@ -47,6 +52,8 @@ type RunEvent struct {
 	Bytes  []byte
 
 	Item *TranscriptItem
+
+	Turn *TurnCompleted
 
 	Text     string
 	Metadata map[string]string

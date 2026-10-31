@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/memory"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/memory"
 )
 
 // ResolveAGUIAgent returns the driver name for AG-UI streaming examples.

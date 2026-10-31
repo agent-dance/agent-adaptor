@@ -7,7 +7,7 @@ import (
 	"maps"
 	"strings"
 
-	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
 )
 
 // Consumer-facing aliases for audit types that already live in the driver

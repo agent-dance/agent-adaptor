@@ -5,8 +5,8 @@ import (
 	"errors"
 	"time"
 
-	"github.com/agent-dance/agent-adaptor/internal/engine"
-	"github.com/agent-dance/agent-adaptor/threadstore"
+	"github.com/agent-dance/agent-adaptor/v2/internal/engine"
+	"github.com/agent-dance/agent-adaptor/v2/threadstore"
 )
 
 // threadNamespace is the fixed engine namespace under which the Thread path

@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
 )
 
 // cursorParser consumes the official Cursor Agent CLI stream-json protocol.

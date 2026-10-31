@@ -19,7 +19,7 @@ import (
 	"sync"
 	"time"
 
-	clienta2a "github.com/agent-dance/agent-adaptor/clients/a2a"
+	clienta2a "github.com/agent-dance/agent-adaptor/v2/clients/a2a"
 )
 
 // defaultReplayLimit is the per-run EventBus replay depth when Config leaves

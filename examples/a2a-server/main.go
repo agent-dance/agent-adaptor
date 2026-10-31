@@ -37,12 +37,12 @@ import (
 	"strings"
 	"time"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	bridgea2a "github.com/agent-dance/agent-adaptor/bridges/a2a"
-	clienta2a "github.com/agent-dance/agent-adaptor/clients/a2a"
-	"github.com/agent-dance/agent-adaptor/examples/internal/exampleutil"
-	"github.com/agent-dance/agent-adaptor/memory"
-	agentprofile "github.com/agent-dance/agent-adaptor/profile"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	bridgea2a "github.com/agent-dance/agent-adaptor/v2/bridges/a2a"
+	clienta2a "github.com/agent-dance/agent-adaptor/v2/clients/a2a"
+	"github.com/agent-dance/agent-adaptor/v2/examples/internal/exampleutil"
+	"github.com/agent-dance/agent-adaptor/v2/memory"
+	agentprofile "github.com/agent-dance/agent-adaptor/v2/profile"
 )
 
 const (
@@ -112,7 +112,7 @@ func main() {
 			URL:         jsonRPCURL,
 			Provider: &bridgea2a.Provider{
 				Organization: "agent-dance",
-				URL:          "https://github.com/agent-dance/agent-adaptor",
+				URL:          "https://github.com/agent-dance/agent-adaptor/v2",
 			},
 			Skills: []bridgea2a.Skill{{
 				ID:          "local-agent",

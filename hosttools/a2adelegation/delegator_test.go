@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	bridgea2a "github.com/agent-dance/agent-adaptor/bridges/a2a"
-	clienta2a "github.com/agent-dance/agent-adaptor/clients/a2a"
+	bridgea2a "github.com/agent-dance/agent-adaptor/v2/bridges/a2a"
+	clienta2a "github.com/agent-dance/agent-adaptor/v2/clients/a2a"
 )
 
 func TestRegistryRejectsDuplicateKeys(t *testing.T) {

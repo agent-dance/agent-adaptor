@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
 )
 
 // FuzzCodexBatchParser keeps the official Codex JSONL parser total over

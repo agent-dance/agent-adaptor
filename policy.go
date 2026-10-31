@@ -3,7 +3,7 @@ package adaptor
 import (
 	"strconv"
 
-	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
 )
 
 // SandboxLevel controls filesystem and process boundary strength. It aliases

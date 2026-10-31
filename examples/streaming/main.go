@@ -23,8 +23,8 @@ import (
 	"strings"
 	"time"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/examples/internal/exampleutil"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/examples/internal/exampleutil"
 )
 
 func main() {

@@ -31,8 +31,8 @@ import (
 	"strings"
 	"time"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/bridges/internal/bridgekey"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/bridges/internal/bridgekey"
 )
 
 // maxHTTPRequestBytes bounds the canonical AG-UI request before it is held in

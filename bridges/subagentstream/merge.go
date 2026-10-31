@@ -22,8 +22,8 @@ import (
 	"sync"
 	"time"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/hosttools/a2adelegation"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/hosttools/a2adelegation"
 )
 
 // Merge returns a Stream that carries every event of stream plus one

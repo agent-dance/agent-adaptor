@@ -4,10 +4,10 @@ import (
 	"context"
 	"strings"
 
-	"github.com/agent-dance/agent-adaptor/codex/appserver"
-	"github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/internal/driverutil"
-	"github.com/agent-dance/agent-adaptor/internal/profileinstructions"
+	"github.com/agent-dance/agent-adaptor/v2/codex/appserver"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
+	"github.com/agent-dance/agent-adaptor/v2/internal/driverutil"
+	"github.com/agent-dance/agent-adaptor/v2/internal/profileinstructions"
 )
 
 // runAppServer handles provider-streaming invocations and SessionFork. Forks

@@ -8,7 +8,7 @@ import (
 	"sync"
 	"testing"
 
-	driver "github.com/agent-dance/agent-adaptor/driver"
+	driver "github.com/agent-dance/agent-adaptor/v2/driver"
 )
 
 type controlTestSink struct {

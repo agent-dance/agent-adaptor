@@ -17,8 +17,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/agent-dance/agent-adaptor/codex/appserver"
-	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/v2/codex/appserver"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
 )
 
 // errPersistentFallback is returned only while no user prompt has been sent

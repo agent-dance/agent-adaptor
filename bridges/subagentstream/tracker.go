@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/agent-dance/agent-adaptor/hosttools/a2adelegation"
+	"github.com/agent-dance/agent-adaptor/v2/hosttools/a2adelegation"
 )
 
 // EventBus is the minimal host-side subscription contract Merge consumes.

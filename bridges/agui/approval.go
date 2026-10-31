@@ -3,7 +3,7 @@ package agui
 import (
 	"strings"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
 )
 
 // DecisionMode selects how adaptor approval events are represented on the

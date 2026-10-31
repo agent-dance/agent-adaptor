@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	adaptertest "github.com/agent-dance/agent-adaptor/adaptertest"
-	"github.com/agent-dance/agent-adaptor/driver"
+	adaptertest "github.com/agent-dance/agent-adaptor/v2/adaptertest"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
 )
 
 // claudeLiveGate decides whether the live conformance probes (EVT-*,

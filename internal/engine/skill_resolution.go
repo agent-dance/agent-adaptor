@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/agent-dance/agent-adaptor/skill"
+	"github.com/agent-dance/agent-adaptor/v2/skill"
 )
 
 // resolveSkillsWith merges all skill candidates for one run or inspection,

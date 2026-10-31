@@ -25,12 +25,12 @@ import (
 	"flag"
 	"path/filepath"
 
-	"github.com/agent-dance/agent-adaptor/claude"
-	"github.com/agent-dance/agent-adaptor/codebuddy"
-	"github.com/agent-dance/agent-adaptor/codex"
-	"github.com/agent-dance/agent-adaptor/cursor"
-	"github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/examples/internal/exampleutil"
+	"github.com/agent-dance/agent-adaptor/v2/claude"
+	"github.com/agent-dance/agent-adaptor/v2/codebuddy"
+	"github.com/agent-dance/agent-adaptor/v2/codex"
+	"github.com/agent-dance/agent-adaptor/v2/cursor"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
+	"github.com/agent-dance/agent-adaptor/v2/examples/internal/exampleutil"
 )
 
 // Session parameter keys the built-in drivers agree on. They are part of the

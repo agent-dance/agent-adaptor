@@ -25,7 +25,7 @@ import (
 	"testing"
 	"time"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
 )
 
 func TestScenarioS4BatchWorkerDualScope(t *testing.T) {

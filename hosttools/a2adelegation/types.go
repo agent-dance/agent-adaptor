@@ -24,7 +24,7 @@ import (
 	"strings"
 	"time"
 
-	clienta2a "github.com/agent-dance/agent-adaptor/clients/a2a"
+	clienta2a "github.com/agent-dance/agent-adaptor/v2/clients/a2a"
 )
 
 // ProtocolA2A identifies the A2A transport used by remote and local-loopback

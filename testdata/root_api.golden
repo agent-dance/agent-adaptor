@@ -10,29 +10,29 @@ type AgentSettings struct {
 
 methodset AgentSettings {
 	pointer AddRunServiceProvider(p RunServiceProvider)
-	pointer AddSkills(refs ...github.com/agent-dance/agent-adaptor/skill.Ref)
-	pointer SetAgents(specs []github.com/agent-dance/agent-adaptor/driver.AgentSpec)
+	pointer AddSkills(refs ...github.com/agent-dance/agent-adaptor/v2/skill.Ref)
+	pointer SetAgents(specs []github.com/agent-dance/agent-adaptor/v2/driver.AgentSpec)
 	pointer SetApprovalHandler(h ApprovalHandler)
 	pointer SetBlockingEvents()
-	pointer SetConfigPatches(patches []github.com/agent-dance/agent-adaptor/driver.ProfileConfigPatch)
+	pointer SetConfigPatches(patches []github.com/agent-dance/agent-adaptor/v2/driver.ProfileConfigPatch)
 	pointer SetEventBuffer(n int)
-	pointer SetHooks(specs []github.com/agent-dance/agent-adaptor/driver.HookSpec)
+	pointer SetHooks(specs []github.com/agent-dance/agent-adaptor/v2/driver.HookSpec)
 	pointer SetIdentity(id Identity)
 	pointer SetInstructions(text string)
-	pointer SetInstructionsBundle(ref *github.com/agent-dance/agent-adaptor/driver.InstructionsBundleRef)
-	pointer SetMCPServers(servers []github.com/agent-dance/agent-adaptor/mcp.Server)
+	pointer SetInstructionsBundle(ref *github.com/agent-dance/agent-adaptor/v2/driver.InstructionsBundleRef)
+	pointer SetMCPServers(servers []github.com/agent-dance/agent-adaptor/v2/mcp.Server)
 	pointer SetMetadata(k string, v string)
 	pointer SetModel(m string)
-	pointer SetOutputSchema(schema github.com/agent-dance/agent-adaptor/driver.OutputSchema)
+	pointer SetOutputSchema(schema github.com/agent-dance/agent-adaptor/v2/driver.OutputSchema)
 	pointer SetOutputSchemaError(err error)
 	pointer SetPolicy(p Policy)
-	pointer SetProfile(sel github.com/agent-dance/agent-adaptor/profile.Selection)
+	pointer SetProfile(sel github.com/agent-dance/agent-adaptor/v2/profile.Selection)
 	pointer SetServiceManager(m ServiceManager)
 	pointer SetServices(specs []ServiceSpec)
 	pointer SetSkillMaterializer(m SkillMaterializer)
 	pointer SetSkillProvider(p SkillProvider)
 	pointer SetSpawn()
-	pointer SetThreadStore(store github.com/agent-dance/agent-adaptor/threadstore.Store)
+	pointer SetThreadStore(store github.com/agent-dance/agent-adaptor/v2/threadstore.Store)
 	pointer SetTimeout(d time.Duration)
 	pointer SetWorkspace(dir string)
 	pointer SetWorkspaceManager(m WorkspaceManager)
@@ -121,8 +121,8 @@ type DriverManagedWorkspace struct {
 }
 
 methodset Driver {
-	value Descriptor() github.com/agent-dance/agent-adaptor/driver.Descriptor
-	value Run(ctx context.Context, req github.com/agent-dance/agent-adaptor/driver.Request, sink github.com/agent-dance/agent-adaptor/driver.EventSink) (github.com/agent-dance/agent-adaptor/driver.Response, error)
+	value Descriptor() github.com/agent-dance/agent-adaptor/v2/driver.Descriptor
+	value Run(ctx context.Context, req github.com/agent-dance/agent-adaptor/v2/driver.Request, sink github.com/agent-dance/agent-adaptor/v2/driver.EventSink) (github.com/agent-dance/agent-adaptor/v2/driver.Response, error)
 	value ValidateConfig(cfg any) error
 }
 
@@ -568,18 +568,18 @@ type RunSettings struct {
 
 methodset RunSettings {
 	pointer AddRunServiceProvider(p RunServiceProvider)
-	pointer AddSkills(refs ...github.com/agent-dance/agent-adaptor/skill.Ref)
-	pointer SetAgents(specs []github.com/agent-dance/agent-adaptor/driver.AgentSpec)
+	pointer AddSkills(refs ...github.com/agent-dance/agent-adaptor/v2/skill.Ref)
+	pointer SetAgents(specs []github.com/agent-dance/agent-adaptor/v2/driver.AgentSpec)
 	pointer SetApprovalHandler(h ApprovalHandler)
-	pointer SetConfigPatches(patches []github.com/agent-dance/agent-adaptor/driver.ProfileConfigPatch)
-	pointer SetHooks(specs []github.com/agent-dance/agent-adaptor/driver.HookSpec)
+	pointer SetConfigPatches(patches []github.com/agent-dance/agent-adaptor/v2/driver.ProfileConfigPatch)
+	pointer SetHooks(specs []github.com/agent-dance/agent-adaptor/v2/driver.HookSpec)
 	pointer SetIdentity(id Identity)
 	pointer SetInstructions(text string)
-	pointer SetInstructionsBundle(ref *github.com/agent-dance/agent-adaptor/driver.InstructionsBundleRef)
-	pointer SetMCPServers(servers []github.com/agent-dance/agent-adaptor/mcp.Server)
+	pointer SetInstructionsBundle(ref *github.com/agent-dance/agent-adaptor/v2/driver.InstructionsBundleRef)
+	pointer SetMCPServers(servers []github.com/agent-dance/agent-adaptor/v2/mcp.Server)
 	pointer SetMetadata(k string, v string)
 	pointer SetModel(m string)
-	pointer SetOutputSchema(schema github.com/agent-dance/agent-adaptor/driver.OutputSchema)
+	pointer SetOutputSchema(schema github.com/agent-dance/agent-adaptor/v2/driver.OutputSchema)
 	pointer SetOutputSchemaError(err error)
 	pointer SetPolicy(p Policy)
 	pointer SetServices(specs []ServiceSpec)
@@ -689,19 +689,19 @@ methodset SkillMaterializationError {
 type SkillMaterializer = skill.Materializer
 
 methodset SkillMaterializer {
-	value Materialize(ctx context.Context, s github.com/agent-dance/agent-adaptor/skill.Skill) (sourcePath string, err error)
+	value Materialize(ctx context.Context, s github.com/agent-dance/agent-adaptor/v2/skill.Skill) (sourcePath string, err error)
 }
 
 type SkillProvider = skill.Provider
 
 methodset SkillProvider {
-	value GetSkills(ctx context.Context, keys []string) (map[string]github.com/agent-dance/agent-adaptor/skill.Skill, error)
+	value GetSkills(ctx context.Context, keys []string) (map[string]github.com/agent-dance/agent-adaptor/v2/skill.Skill, error)
 }
 
 type SkillRef = skill.Ref
 
 methodset SkillRef {
-	value private github.com/agent-dance/agent-adaptor/driver.isSkillRef()
+	value private github.com/agent-dance/agent-adaptor/v2/driver.isSkillRef()
 }
 
 type SkillSnapshot = driver.SkillSnapshot

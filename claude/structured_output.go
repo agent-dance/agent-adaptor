@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/agent-dance/agent-adaptor/internal/engine"
+	"github.com/agent-dance/agent-adaptor/v2/internal/engine"
 )
 
 func prepareClaudeJSONSchema(raw json.RawMessage) (json.RawMessage, error) {

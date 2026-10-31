@@ -50,12 +50,12 @@ import (
 	"strings"
 	"time"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/bridges/sse"
-	"github.com/agent-dance/agent-adaptor/examples/internal/exampleutil"
-	delegation "github.com/agent-dance/agent-adaptor/hosttools/a2adelegation"
-	"github.com/agent-dance/agent-adaptor/memory"
-	"github.com/agent-dance/agent-adaptor/profile"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/bridges/sse"
+	"github.com/agent-dance/agent-adaptor/v2/examples/internal/exampleutil"
+	delegation "github.com/agent-dance/agent-adaptor/v2/hosttools/a2adelegation"
+	"github.com/agent-dance/agent-adaptor/v2/memory"
+	"github.com/agent-dance/agent-adaptor/v2/profile"
 )
 
 const (

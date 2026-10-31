@@ -38,9 +38,9 @@ import (
 	"net/http"
 	"os"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/bridges/sse"
-	"github.com/agent-dance/agent-adaptor/examples/internal/exampleutil"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/bridges/sse"
+	"github.com/agent-dance/agent-adaptor/v2/examples/internal/exampleutil"
 )
 
 const (

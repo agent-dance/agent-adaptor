@@ -220,6 +220,8 @@ type Descriptor struct {
 	Runtime RuntimeCapability
 	// StructuredOutput declares supported structured-output mechanisms.
 	StructuredOutput StructuredOutputCapability
+	// Messages declares in-run message delivery support.
+	Messages MessageCapability
 }
 
 // SessionCapability declares whether a driver can resume provider sessions.

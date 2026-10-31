@@ -63,11 +63,11 @@ func TestClientPackageDoesNotImportCoreOrConcreteAdapters(t *testing.T) {
 
 	root := filepath.Join(repositoryRoot(t), "clients", "a2a")
 	forbidden := []string{
-		"github.com/agent-dance/agent-adaptor",
-		"github.com/agent-dance/agent-adaptor/claude",
-		"github.com/agent-dance/agent-adaptor/codebuddy",
-		"github.com/agent-dance/agent-adaptor/codex",
-		"github.com/agent-dance/agent-adaptor/cursor",
+		"github.com/agent-dance/agent-adaptor/v2",
+		"github.com/agent-dance/agent-adaptor/v2/claude",
+		"github.com/agent-dance/agent-adaptor/v2/codebuddy",
+		"github.com/agent-dance/agent-adaptor/v2/codex",
+		"github.com/agent-dance/agent-adaptor/v2/cursor",
 	}
 	fset := token.NewFileSet()
 	entries, err := os.ReadDir(root)

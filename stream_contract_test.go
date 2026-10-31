@@ -15,8 +15,8 @@ import (
 	"errors"
 	"testing"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/driver"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
 )
 
 // collect drains the stream and returns all events plus the final outcome.

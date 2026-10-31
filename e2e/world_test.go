@@ -18,13 +18,13 @@ import (
 	"syscall"
 	"time"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/claude"
-	"github.com/agent-dance/agent-adaptor/codebuddy"
-	"github.com/agent-dance/agent-adaptor/codex"
-	"github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/memory"
-	"github.com/agent-dance/agent-adaptor/profile"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/claude"
+	"github.com/agent-dance/agent-adaptor/v2/codebuddy"
+	"github.com/agent-dance/agent-adaptor/v2/codex"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
+	"github.com/agent-dance/agent-adaptor/v2/memory"
+	"github.com/agent-dance/agent-adaptor/v2/profile"
 	"github.com/cucumber/godog"
 )
 

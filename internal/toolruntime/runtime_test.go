@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/agent-dance/agent-adaptor/internal/toolidentity"
-	"github.com/agent-dance/agent-adaptor/tool"
+	"github.com/agent-dance/agent-adaptor/v2/internal/toolidentity"
+	"github.com/agent-dance/agent-adaptor/v2/tool"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 

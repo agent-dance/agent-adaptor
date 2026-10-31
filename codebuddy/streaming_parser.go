@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
 )
 
 // streamingState maps CodeBuddy stream-json stream_event frames (Anthropic

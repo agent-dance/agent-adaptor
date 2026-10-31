@@ -22,9 +22,9 @@ func TestProductionPackageDoesNotImportAdaptorImplementationLayers(t *testing.T)
 		}
 		content := string(raw)
 		for _, forbidden := range []string{
-			`github.com/agent-dance/agent-adaptor/driver`,
-			`github.com/agent-dance/agent-adaptor/internal`,
-			`github.com/agent-dance/agent-adaptor/mcp`,
+			`github.com/agent-dance/agent-adaptor/v2/driver`,
+			`github.com/agent-dance/agent-adaptor/v2/internal`,
+			`github.com/agent-dance/agent-adaptor/v2/mcp`,
 		} {
 			if strings.Contains(content, forbidden) {
 				t.Errorf("%s imports forbidden implementation vocabulary %q", entry.Name(), forbidden)

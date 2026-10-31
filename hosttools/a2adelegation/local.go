@@ -21,10 +21,10 @@ import (
 	"sync"
 	"sync/atomic"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	bridgea2a "github.com/agent-dance/agent-adaptor/bridges/a2a"
-	clienta2a "github.com/agent-dance/agent-adaptor/clients/a2a"
-	"github.com/agent-dance/agent-adaptor/driver"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	bridgea2a "github.com/agent-dance/agent-adaptor/v2/bridges/a2a"
+	clienta2a "github.com/agent-dance/agent-adaptor/v2/clients/a2a"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
 )
 
 // localRoleAgent mirrors the wire spelling of the A2A agent role so local

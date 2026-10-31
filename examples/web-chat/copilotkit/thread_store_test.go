@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/hosttools/sessionrecorder"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/hosttools/sessionrecorder"
 )
 
 // TestThreadStoreHistoryAfterUsesHostSeqCursor checks the cross-run recovery

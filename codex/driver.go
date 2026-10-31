@@ -9,17 +9,17 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/internal/clihelper"
-	"github.com/agent-dance/agent-adaptor/internal/configprobe"
-	"github.com/agent-dance/agent-adaptor/internal/driverutil"
-	"github.com/agent-dance/agent-adaptor/internal/engine"
-	"github.com/agent-dance/agent-adaptor/internal/mcpruntime"
-	"github.com/agent-dance/agent-adaptor/internal/profileagents"
-	"github.com/agent-dance/agent-adaptor/internal/profileconfig"
-	"github.com/agent-dance/agent-adaptor/internal/profilehooks"
-	"github.com/agent-dance/agent-adaptor/internal/profileinstructions"
-	"github.com/agent-dance/agent-adaptor/internal/profilesnapshot"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
+	"github.com/agent-dance/agent-adaptor/v2/internal/clihelper"
+	"github.com/agent-dance/agent-adaptor/v2/internal/configprobe"
+	"github.com/agent-dance/agent-adaptor/v2/internal/driverutil"
+	"github.com/agent-dance/agent-adaptor/v2/internal/engine"
+	"github.com/agent-dance/agent-adaptor/v2/internal/mcpruntime"
+	"github.com/agent-dance/agent-adaptor/v2/internal/profileagents"
+	"github.com/agent-dance/agent-adaptor/v2/internal/profileconfig"
+	"github.com/agent-dance/agent-adaptor/v2/internal/profilehooks"
+	"github.com/agent-dance/agent-adaptor/v2/internal/profileinstructions"
+	"github.com/agent-dance/agent-adaptor/v2/internal/profilesnapshot"
 )
 
 // DriverType is the stable descriptor type for the built-in Codex driver.

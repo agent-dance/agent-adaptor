@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/examples/internal/exampleutil"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/examples/internal/exampleutil"
 )
 
 // This package's tests are deliberately configuration-only: they must never

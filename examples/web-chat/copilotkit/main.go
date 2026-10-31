@@ -40,7 +40,7 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/agent-dance/agent-adaptor/examples/internal/exampleutil"
+	"github.com/agent-dance/agent-adaptor/v2/examples/internal/exampleutil"
 )
 
 const (

@@ -12,9 +12,9 @@ import (
 	"strings"
 	"sync"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/bridges/sse"
-	"github.com/agent-dance/agent-adaptor/hosttools/sessionrecorder"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/bridges/sse"
+	"github.com/agent-dance/agent-adaptor/v2/hosttools/sessionrecorder"
 )
 
 // threadStore is the example's host-owned recovery state. It persists the

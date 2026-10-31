@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
 )
 
 func TestModelOverrideNormalization(t *testing.T) {

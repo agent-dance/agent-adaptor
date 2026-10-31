@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
 )
 
 // parser consumes raw stdout/stderr chunks from a CodeBuddy CLI stream-json

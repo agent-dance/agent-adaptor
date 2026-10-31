@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
 )
 
 // Violation is one contract breach detected by a verifier. Clause is the

@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
 )
 
 // Stream is the small interface representing one running invocation. One

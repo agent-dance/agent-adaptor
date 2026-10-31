@@ -4,7 +4,7 @@ import (
 	"maps"
 	"time"
 
-	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
 )
 
 // One run produces one ordered stream of typed events. Semantic streaming

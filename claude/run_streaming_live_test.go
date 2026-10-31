@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/claude"
-	"github.com/agent-dance/agent-adaptor/memory"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/claude"
+	"github.com/agent-dance/agent-adaptor/v2/memory"
 )
 
 func requireClaudeCLI(t *testing.T) {

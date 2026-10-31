@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/agent-dance/agent-adaptor/skill"
+	"github.com/agent-dance/agent-adaptor/v2/skill"
 )
 
 func TestSkillErrorIdentityAndCause(t *testing.T) {

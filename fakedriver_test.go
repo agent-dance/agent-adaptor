@@ -9,7 +9,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
 )
 
 // fakeDriver is a programmable driver.Driver. Configure either a canned

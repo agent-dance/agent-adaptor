@@ -3,7 +3,7 @@ package codebuddy
 import (
 	"strings"
 
-	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
 )
 
 const defaultModel = "claude-sonnet-5"

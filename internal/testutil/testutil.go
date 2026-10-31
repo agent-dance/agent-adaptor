@@ -7,7 +7,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
 )
 
 func WriteCommand(t testing.TB, dir, name, posixBody, windowsBody string) string {

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	driver "github.com/agent-dance/agent-adaptor/driver"
+	driver "github.com/agent-dance/agent-adaptor/v2/driver"
 )
 
 func timeNow() time.Time { return time.Now().UTC() }

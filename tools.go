@@ -11,12 +11,12 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/internal/engine"
-	"github.com/agent-dance/agent-adaptor/internal/mcpruntime"
-	"github.com/agent-dance/agent-adaptor/internal/toolidentity"
-	"github.com/agent-dance/agent-adaptor/internal/toolruntime"
-	"github.com/agent-dance/agent-adaptor/tool"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
+	"github.com/agent-dance/agent-adaptor/v2/internal/engine"
+	"github.com/agent-dance/agent-adaptor/v2/internal/mcpruntime"
+	"github.com/agent-dance/agent-adaptor/v2/internal/toolidentity"
+	"github.com/agent-dance/agent-adaptor/v2/internal/toolruntime"
+	"github.com/agent-dance/agent-adaptor/v2/tool"
 )
 
 // configureTools validates the final construction-scope Tool declaration and

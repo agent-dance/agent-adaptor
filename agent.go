@@ -8,7 +8,7 @@ import (
 	"maps"
 	"sync"
 
-	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
 )
 
 // Driver is the provider integration SPI implemented by built-in and

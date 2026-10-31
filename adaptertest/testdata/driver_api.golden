@@ -59,6 +59,16 @@ type AgentToolPolicy struct {
 	Deny []string
 }
 
+type Boundary string
+
+const BoundaryImmediate Boundary = "immediate"
+
+const BoundaryStop Boundary = "stop"
+
+const BoundaryTool Boundary = "tool"
+
+const BoundaryTurnEnd Boundary = "turn_end"
+
 func CanonicalSessionConfigFingerprint(domain string, value any) (string, error)
 
 type Checkpoint struct {
@@ -131,6 +141,12 @@ methodset ConfigSchemaProvider {
 	value ConfigSchema(ctx context.Context, cfg any) (*ConfigSchema, error)
 }
 
+const ContinueInRun ContinueMode = 1
+
+type ContinueMode uint8
+
+const ContinueResume ContinueMode = 0
+
 const DecisionAborted DecisionResult = "aborted"
 
 const DecisionAnswered DecisionResult = "answered"
@@ -202,6 +218,7 @@ type Descriptor struct {
 	RunPolicyCaps RunPolicyCapabilities
 	Runtime RuntimeCapability
 	StructuredOutput StructuredOutputCapability
+	Messages MessageCapability
 }
 
 type DetectedModel struct {
@@ -630,6 +647,60 @@ const MCPTransportSSE MCPTransport = "sse"
 
 const MCPTransportStdio MCPTransport = "stdio"
 
+type MessageAck struct {
+	Delivered bool
+	Mechanism string
+	Err error
+	Requeue bool
+	MaybeDelivered bool
+}
+
+type MessageCapability struct {
+	Boundaries []Boundary
+	Interrupt bool
+	Continue ContinueMode
+	MaxUnits int
+	Unit MessageUnit
+	ConfirmedDelivery bool
+	PersistsDelivered bool
+	MinVersion string
+}
+
+type MessageCapabilityResolver interface {
+	ResolveMessageCapability(req Request) MessageCapability
+}
+
+methodset MessageCapabilityResolver {
+	value ResolveMessageCapability(req Request) MessageCapability
+}
+
+type MessageItem struct {
+	ID string
+	Text string
+	Timing Timing
+	MaybeDuplicate bool
+}
+
+type MessagePort interface {
+	Ack(id string, ack MessageAck)
+	Claim(b Boundary) []MessageItem
+	Signal() <-chan struct{}
+	Window(open bool)
+}
+
+methodset MessagePort {
+	value Ack(id string, ack MessageAck)
+	value Claim(b Boundary) []MessageItem
+	value Signal() <-chan struct{}
+	value Window(open bool)
+}
+
+type MessageUnit string
+
+const MessageUnitBytes MessageUnit = "bytes"
+
+const MessageUnitUTF16 MessageUnit = "utf16"
+
 type ModelDetector interface {
 	DetectModel(ctx context.Context, cfg any, profile *ProfileSelection) (*DetectedModel, error)
 }
@@ -828,6 +899,7 @@ type Request struct {
 	Spawn bool
 	ModelOverride string
 	Streaming bool
+	Messages MessagePort
 }
 
 type ResolvedSkill struct {
@@ -882,6 +954,7 @@ type RunEvent struct {
 	Stream string
 	Bytes []byte
 	Item *TranscriptItem
+	Turn *TurnCompleted
 	Text string
 	Metadata map[string]string
 	Data map[string]any
@@ -898,6 +971,8 @@ const RunEventLifecycle RunEventType = "lifecycle"
 const RunEventRuntime RunEventType = "runtime"
 
 const RunEventSpawn RunEventType = "spawn"
+
+const RunEventTurnCompleted RunEventType = "turn.completed"
 
 type RunEventType string
 
@@ -1319,6 +1394,14 @@ type TerminalPayload struct {
 	JSON json.RawMessage
 }
 
+type Timing uint8
+
+const TimingAfterTurn Timing = 2
+
+const TimingInterrupt Timing = 1
+
+const TimingSoon Timing = 0
+
 const TranscriptAssistant TranscriptKind = "assistant"
 
 const TranscriptFailure TranscriptKind = "failure"
@@ -1364,6 +1447,14 @@ const TranscriptToolCall TranscriptKind = "tool_call"
 const TranscriptToolResult TranscriptKind = "tool_result"
 
 const TranscriptUser TranscriptKind = "user"
+
+type TurnCompleted struct {
+	Index int
+	Text string
+	Usage *Usage
+	Interrupted bool
+	CompletedAt time.Time
+}
 
 type Usage struct {
 	InputTokens int

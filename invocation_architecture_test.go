@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/driver"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
 )
 
 // TestInvocationCoordinatorOwnsDriverDispatchAndPersistence is a source-level

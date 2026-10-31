@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/agent-dance/agent-adaptor/internal/testutil"
+	"github.com/agent-dance/agent-adaptor/v2/internal/testutil"
 )
 
 const processWindowsHelperEnv = "GO_WANT_AGENT_ADAPTOR_PROCESS_WINDOWS_HELPER"

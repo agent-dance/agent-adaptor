@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/agent-dance/agent-adaptor/internal/keycodec"
+	"github.com/agent-dance/agent-adaptor/v2/internal/keycodec"
 )
 
 // LeaseTTL and LeaseRenewInterval report the session lease timing knobs.

@@ -21,10 +21,10 @@ import (
 	"sync"
 	"testing"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	a2a "github.com/agent-dance/agent-adaptor/bridges/a2a"
-	"github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/memory"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	a2a "github.com/agent-dance/agent-adaptor/v2/bridges/a2a"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
+	"github.com/agent-dance/agent-adaptor/v2/memory"
 )
 
 // scriptedDriver is a minimal driver.Driver for bridge

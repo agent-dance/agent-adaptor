@@ -7,7 +7,7 @@ package a2adelegation
 import (
 	"strings"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
 )
 
 // Runner is adaptor.Runner. Agent, Thread, and host decorators can all be Local
