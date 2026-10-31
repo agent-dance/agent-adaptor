@@ -59,11 +59,13 @@ func (adapter) runControl(ctx context.Context, cfg Config, command string, req d
 		if reason == "" {
 			reason = "codebuddy resume session is unavailable"
 		}
-		p.completeStream(&driver.RunFailure{Code: driver.FailureAgentError, Message: reason}, result.ExitCode, result.Signal, result.TimedOut)
-		return driver.Response{}, &engine.ResumeRejectedError{Reason: reason}
+		emitErr := p.completeStream(&driver.RunFailure{Code: driver.FailureAgentError, Message: reason}, result.ExitCode, result.Signal, result.TimedOut)
+		return driver.Response{}, errors.Join(&engine.ResumeRejectedError{Reason: reason}, emitErr)
 	}
 	failure := p.failureForOutcome(result.ExitCode)
-	p.completeStream(failure, result.ExitCode, result.Signal, result.TimedOut)
+	if err := p.completeStream(failure, result.ExitCode, result.Signal, result.TimedOut); err != nil {
+		return driver.Response{}, err
+	}
 	checkpoint := p.checkpointForOutcome(result.ExitCode, result.Signal, result.TimedOut, failure)
 	if checkpoint != nil && checkpoint.State != nil {
 		checkpoint.State.Data = map[string]string{

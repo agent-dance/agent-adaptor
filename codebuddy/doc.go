@@ -10,4 +10,9 @@
 // Driver snapshots its configuration without performing environment I/O.
 // Configuration validation and CLI availability checks occur when the agent
 // runs or is inspected.
+//
+// In-run messages continue through core-managed resume after each provider turn.
+// Native hook boundaries and interrupt support remain unverified and are not
+// advertised. Both one-shot and resident transports emit one turn-completed
+// event per provider turn through the same EventSink.
 package codebuddy

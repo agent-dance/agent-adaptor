@@ -43,6 +43,8 @@ type parser struct {
 	reconstructedTranscript bool
 
 	pendingFailure *driver.RunFailure
+	turnCompleted  bool
+	completedAt    time.Time
 
 	runID string
 }
@@ -123,12 +125,26 @@ func (p *parser) finalize() {
 	p.emitReconstructedAssistant()
 }
 
-func (p *parser) completeStream(failure *driver.RunFailure, exitCode int, signal string, timedOut bool) {
+func (p *parser) completeStream(failure *driver.RunFailure, exitCode int, signal string, timedOut bool) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.stream != nil {
 		p.stream.complete(failure, exitCode, signal, timedOut)
 	}
+	if p.turnCompleted {
+		return nil
+	}
+	p.turnCompleted = true
+	completedAt := p.completedAt
+	if completedAt.IsZero() {
+		completedAt = time.Now().UTC()
+	}
+	if p.sink != nil {
+		return p.sink.Emit(driver.RunEvent{Type: driver.RunEventTurnCompleted, Turn: &driver.TurnCompleted{
+			Text: p.buildOutput(), Usage: p.usage, CompletedAt: completedAt,
+		}})
+	}
+	return nil
 }
 
 func (p *parser) processLine(stream string, line []byte, _ time.Time) {
@@ -332,6 +348,7 @@ func resultText(raw any) string {
 }
 
 func (p *parser) handleResult(raw string, payload map[string]any, subtype string) {
+	p.completedAt = time.Now().UTC()
 	p.terminalSeen = true
 	isErrorFlag, hasErrorFlag := payload["is_error"].(bool)
 	result, hasResult := payload["result"].(string)

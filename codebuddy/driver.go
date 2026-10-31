@@ -82,6 +82,7 @@ func (adapter) Descriptor() driver.Descriptor {
 		Instructions: driver.InstructionsCapability{Supported: true},
 		Workspace:    driver.WorkspaceCapability{Supported: true},
 		Process:      driver.ProcessCapability{Persistent: true},
+		Messages:     driver.MessageCapability{Continue: driver.ContinueResume},
 		RunPolicyCaps: driver.RunPolicyCapabilities{
 			// CodeBuddy CLI has no controllable flag for web search or
 			// browser tooling (browser lives in the agent-browser plugin),
@@ -315,10 +316,11 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 			raw, persistentErr := writer.run(ctx, spec, sink, p)
 			if persistentErr == nil {
 				raw.Terminal = p.terminal
-				return buildPersistentCodeBuddyResponse(req, p, raw, prep), nil
+				return buildPersistentCodeBuddyResponse(req, p, raw, prep)
 			}
 			if !errors.Is(persistentErr, errPersistentFallback) {
-				return driver.Response{}, persistentErr
+				emitErr := p.completeStream(p.failureForOutcome(-1), -1, "", false)
+				return driver.Response{}, errors.Join(persistentErr, emitErr)
 			}
 		} else if controlRequested {
 			return driver.Response{}, errControlSinkRequired
@@ -436,9 +438,11 @@ func (a adapter) prepareRun(ctx context.Context, cfg Config, req driver.Request)
 	}, nil
 }
 
-func buildPersistentCodeBuddyResponse(req driver.Request, p *parser, raw driver.RawStreams, prep runPrep) driver.Response {
+func buildPersistentCodeBuddyResponse(req driver.Request, p *parser, raw driver.RawStreams, prep runPrep) (driver.Response, error) {
 	failure := p.failureForOutcome(0)
-	p.completeStream(failure, 0, "", false)
+	if err := p.completeStream(failure, 0, "", false); err != nil {
+		return driver.Response{}, err
+	}
 	checkpoint := p.checkpointForOutcome(0, "", false, failure)
 	if checkpoint != nil && checkpoint.State != nil {
 		checkpoint.State.Data = map[string]string{
@@ -454,7 +458,7 @@ func buildPersistentCodeBuddyResponse(req driver.Request, p *parser, raw driver.
 		Summary:         p.finalSummary(),
 		RuntimeServices: driverutil.RuntimeReportsFromRefs(req.Runtime.Ensured, req.Agent),
 		Failure:         failure,
-	}
+	}, nil
 }
 
 func (adapter) runHeadless(ctx context.Context, cfg Config, command string, req driver.Request, sink driver.EventSink, prep runPrep) (driver.Response, error) {
@@ -487,8 +491,8 @@ func (adapter) runHeadless(ctx context.Context, cfg Config, command string, req 
 		if reason == "" {
 			reason = fmt.Sprintf("codebuddy resume session %q is unavailable", req.Session.State.ResumeID)
 		}
-		p.completeStream(&driver.RunFailure{Code: driver.FailureAgentError, Message: reason}, result.ExitCode, result.Signal, result.TimedOut)
-		return driver.Response{}, &engine.ResumeRejectedError{Reason: reason}
+		emitErr := p.completeStream(&driver.RunFailure{Code: driver.FailureAgentError, Message: reason}, result.ExitCode, result.Signal, result.TimedOut)
+		return driver.Response{}, errors.Join(&engine.ResumeRejectedError{Reason: reason}, emitErr)
 	}
 	failure := p.failureForOutcome(result.ExitCode)
 
@@ -503,7 +507,9 @@ func (adapter) runHeadless(ctx context.Context, cfg Config, command string, req 
 			failure,
 		)
 	}
-	p.completeStream(failure, result.ExitCode, result.Signal, result.TimedOut)
+	if err := p.completeStream(failure, result.ExitCode, result.Signal, result.TimedOut); err != nil {
+		return driver.Response{}, err
+	}
 
 	checkpoint := p.checkpointForOutcome(result.ExitCode, result.Signal, result.TimedOut, failure)
 	if checkpoint != nil && checkpoint.State != nil {
