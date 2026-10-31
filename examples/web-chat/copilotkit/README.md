@@ -152,4 +152,28 @@ concise final delegation result only.
 
 The local example permits session access by default. Production hosts must supply
 `aguisession.Options.Resolve` to authorize and map `OpStart` and `OpRead` using
-the authenticated principal; browser thread IDs do not grant access.
+the authenticated principal; browser thread IDs do not grant access. Protect
+`/session/events` and `/decision/*` with the same authorization and key mapping:
+these example-specific companion handlers use the local default mapping and do
+not pass through the Session handlers or its Resolve hook.
+
+
+The backend uses `bridges/agui/aguisession` for the sole drain, record-before-wire
+projection, user capture, Result.Text fallback and authoritative termination.
+It enables `InputOptions.HistoryFallback`: subsequent turns rehydrate recorded
+text/call summaries into the prompt. `THREAD_STORE_DIR` persists UI audit records,
+not provider checkpoints. A host requiring provider-native continuation must
+inject a persistent ThreadStore separately.
+
+`/session/events` retains `{thread_id, after, events, last_seq, run_active}`.
+Each event is the recorder envelope `{host_seq, recorded_at, kind, meta, event}`;
+the panel reads that typed envelope. Invalid cursors return 400, storage read
+failures return 500, and an empty suffix retains the supplied cursor. Pending
+cards use live ApprovalRequest fields (`ID`, `Title`, `Details`, `Attempt`), and
+`Observe`/`OnRunEnd` maintain and clear the original responders. Invalid answers
+do not discard a still-pending request. Questions accept `choice` or free `text`;
+a structured `answer` without either is rejected explicitly.
+
+Projection version 2 uses a RUN_STARTED input seed for the submitted user and
+run-scoped provider message/tool IDs. Existing draft version-1 records require
+an explicit migration; see [the AG-UI contract](../../../docs/agui.md).

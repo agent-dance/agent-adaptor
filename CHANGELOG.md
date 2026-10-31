@@ -41,6 +41,20 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- Recorded AG-UI history now matches the official client reducer's metadata,
+  activity replacement and corrected tool-result rules, including JSON patches.
+- Recorded sessions reserve actual resolved Thread keys, recheck fresh branch
+  destinations, reject forged control Notices and never report terminal-write
+  failure or an empty-reason business error as successful completion. A checkpoint
+  predating a failed recorded turn cannot silently attest that turn's history.
+- Session projection version 2 scopes provider IDs by run, preserves complete
+  submitted user messages through an idempotent input seed, and stamps events
+  before redaction hooks. Draft version-1 recordings require explicit migration;
+  the SHA-256 recorder-key mapping remains unchanged.
+- SSE flush errors cancel recorded execution; cancellation still records cleanup.
+  CopilotKit second turns explicitly rehydrate history, and its recovery panel
+  consumes typed recorder envelopes and live approval fields.
+
 - AG-UI run identities stay fixed after the opening boundary; step lifecycles
   close before terminal events and empty custom notices include their payload.
 - AG-UI child tool ownership stays consistent with its opener, and subagent

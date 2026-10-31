@@ -6,9 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 
@@ -17,10 +17,9 @@ import (
 	"github.com/agent-dance/agent-adaptor/hosttools/sessionrecorder"
 )
 
-// threadStore is the example's host-owned recovery state. It persists the
-// unified adaptor.Event history and the unresolved approvals per browser
-// thread, so a page refresh can reconstruct the session without replay
-// support from the SDK.
+// threadStore supplies the host's history backend and live approval responders.
+// aguisession owns draining, recording, projection and active-run admission.
+// Pending responders exist only during a run; provider checkpoints are separate.
 //
 // History storage is delegated to sessionrecorder.EventRecorder, which
 // assigns a session-scoped monotonic HostSeq to every event. That cursor is
@@ -40,7 +39,6 @@ type threadStore struct {
 // while a stream is alive. It is not persisted.
 type threadRuntime struct {
 	pending map[string]*adaptor.ApprovalRequest
-	runs    map[adaptor.Stream]struct{}
 }
 
 // newThreadStore returns a durable typed-Event recorder when
@@ -62,59 +60,6 @@ func newThreadStore() (*threadStore, error) {
 		recorder: sessionrecorder.NewEventRecorder(backend),
 		threads:  map[string]*threadRuntime{},
 	}, nil
-}
-
-// ---- history (delegated to sessionrecorder) ----
-
-// appendHistory persists one event under threadID. A configured durable
-// recorder's write/sync failure is part of request success and is therefore
-// returned to the serving loop, never downgraded to a log-only warning.
-func (s *threadStore) appendHistory(threadID string, ev adaptor.Event) error {
-	if _, err := s.recorder.Record(context.Background(), threadID, ev); err != nil {
-		return fmt.Errorf("thread_store: record event for %q: %w", threadID, err)
-	}
-	return nil
-}
-
-// historyAfter returns the records with HostSeq strictly greater than
-// afterHostSeq. afterHostSeq == 0 means "give me everything you have".
-func (s *threadStore) historyAfter(threadID string, afterHostSeq uint64) []sessionrecorder.EventRecord {
-	recs, err := s.recorder.Since(context.Background(), threadID, afterHostSeq)
-	if err != nil {
-		slog.Error("thread_store: read history", "err", err, "thread_id", threadID)
-		return nil
-	}
-	return recs
-}
-
-// ---- pending approvals and live streams (in-memory only) ----
-
-func (s *threadStore) registerRun(threadID string, stream adaptor.Stream) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.thread(threadID).runs[stream] = struct{}{}
-}
-
-func (s *threadStore) unregisterRun(threadID string, stream adaptor.Stream) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	st := s.thread(threadID)
-	delete(st.runs, stream)
-	// Best-effort: once the run is gone, any request it owns can no longer
-	// be answered — the responder's reply channel is abandoned.
-	for id, req := range st.pending {
-		if req.RunID == stream.RunID() {
-			delete(st.pending, id)
-		}
-	}
-}
-
-func (s *threadStore) hasActiveRun(threadID string) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	st, ok := s.threads[threadID]
-	return ok && len(st.runs) > 0
 }
 
 func (s *threadStore) addPending(threadID string, req *adaptor.ApprovalRequest) {
@@ -146,6 +91,7 @@ func (s *threadStore) pendingRequests(threadID string) []*adaptor.ApprovalReques
 	for _, req := range st.pending {
 		out = append(out, req)
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
 }
 
@@ -166,22 +112,29 @@ func (s *threadStore) resolveDecision(ctx context.Context, threadID string, body
 		// Unknown request id: either never seen or already settled.
 		return adaptor.ErrApprovalResolved
 	}
-	defer s.removePending(threadID, body.RequestID)
 
+	var err error
 	switch strings.ToLower(strings.TrimSpace(body.Result)) {
 	case "approved", "approve":
-		return req.Approve(ctx)
+		err = req.Approve(ctx)
 	case "rejected", "reject", "denied", "deny":
-		return req.Deny(ctx, body.Text)
+		err = req.Deny(ctx, body.Text)
 	case "answered", "answer":
 		option := body.Choice
 		if option == "" {
 			option = body.Text
 		}
-		return req.Answer(ctx, option)
+		if option == "" && body.Answer != nil {
+			return fmt.Errorf("%w: structured answers are unsupported; provide choice or text", adaptor.ErrApprovalKindMismatch)
+		}
+		err = req.Answer(ctx, option)
 	default:
-		return fmt.Errorf("unsupported decision result %q", body.Result)
+		return fmt.Errorf("%w: unsupported decision result %q", adaptor.ErrApprovalKindMismatch, body.Result)
 	}
+	if err == nil || errors.Is(err, adaptor.ErrApprovalResolved) || errors.Is(err, adaptor.ErrApprovalExpired) || errors.Is(err, adaptor.ErrApprovalUnavailable) {
+		s.removePending(threadID, body.RequestID)
+	}
+	return err
 }
 
 func (s *threadStore) thread(threadID string) *threadRuntime {
@@ -189,7 +142,6 @@ func (s *threadStore) thread(threadID string) *threadRuntime {
 	if st == nil {
 		st = &threadRuntime{
 			pending: map[string]*adaptor.ApprovalRequest{},
-			runs:    map[adaptor.Stream]struct{}{},
 		}
 		s.threads[threadID] = st
 	}
@@ -230,6 +182,9 @@ func decodeApprovalResolveRequest(r *http.Request) (*approvalResolveRequest, err
 	if body.Result == "" {
 		return nil, fmt.Errorf("result is required")
 	}
+	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
+		return nil, fmt.Errorf("approval response must contain exactly one JSON value")
+	}
 	return &body, nil
 }
 
@@ -268,16 +223,6 @@ func writeJSON(w http.ResponseWriter, code int, body any) {
 	_ = json.NewEncoder(w).Encode(body)
 }
 
-// lastHostSeq returns the HostSeq of the last record, or 0 if records is
-// empty. Callers send it back as the `last_seq` field so the browser can
-// pass it as `after` on the next pull for incremental recovery.
-func lastHostSeq(records []sessionrecorder.EventRecord) uint64 {
-	if n := len(records); n > 0 {
-		return records[n-1].HostSeq
-	}
-	return 0
-}
-
 func envOr(name, fallback string) string {
 	if v := os.Getenv(name); v != "" {
 		return v
@@ -288,7 +233,5 @@ func envOr(name, fallback string) string {
 func (s *threadStore) clearPending(key string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if st := s.threads[key]; st != nil {
-		clear(st.pending)
-	}
+	delete(s.threads, key)
 }

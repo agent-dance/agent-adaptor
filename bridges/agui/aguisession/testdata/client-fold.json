@@ -1,0 +1,1463 @@
+[
+  {
+    "name": "text lifecycle and shallow metadata",
+    "initial": [],
+    "events": [
+      {
+        "type": "TEXT_MESSAGE_START",
+        "messageId": "a",
+        "role": "assistant",
+        "name": "helper",
+        "subagentRunId": "child",
+        "metadata": {
+          "ns": {
+            "old": 1
+          },
+          "keep": true
+        }
+      },
+      {
+        "type": "TEXT_MESSAGE_CONTENT",
+        "messageId": "a",
+        "delta": "hi",
+        "metadata": {
+          "ns": {
+            "new": 2
+          }
+        }
+      },
+      {
+        "type": "TEXT_MESSAGE_END",
+        "messageId": "a",
+        "metadata": {
+          "done": true
+        }
+      }
+    ],
+    "expected": [
+      {
+        "id": "a",
+        "role": "assistant",
+        "content": "hi",
+        "name": "helper",
+        "subagentRunId": "child",
+        "metadata": {
+          "ns": {
+            "new": 2
+          },
+          "keep": true,
+          "done": true
+        }
+      }
+    ]
+  },
+  {
+    "name": "start reuses existing user without reattributing",
+    "initial": [
+      {
+        "id": "u",
+        "role": "user",
+        "content": "before",
+        "name": "original"
+      }
+    ],
+    "events": [
+      {
+        "type": "TEXT_MESSAGE_START",
+        "messageId": "u",
+        "role": "user",
+        "name": "ignored",
+        "subagentRunId": "child"
+      },
+      {
+        "type": "TEXT_MESSAGE_CONTENT",
+        "messageId": "u",
+        "delta": "after"
+      }
+    ],
+    "expected": [
+      {
+        "id": "u",
+        "role": "user",
+        "content": "beforeafter",
+        "name": "original"
+      }
+    ]
+  },
+  {
+    "name": "text skips activity collision",
+    "initial": [
+      {
+        "id": "card",
+        "role": "activity",
+        "activityType": "card",
+        "content": {
+          "n": 1
+        }
+      }
+    ],
+    "events": [
+      {
+        "type": "TEXT_MESSAGE_START",
+        "messageId": "card",
+        "role": "assistant",
+        "metadata": {
+          "bad": 1
+        }
+      },
+      {
+        "type": "TEXT_MESSAGE_CONTENT",
+        "messageId": "card",
+        "delta": "bad"
+      },
+      {
+        "type": "TEXT_MESSAGE_END",
+        "messageId": "card",
+        "metadata": {
+          "bad": 2
+        }
+      }
+    ],
+    "expected": [
+      {
+        "id": "card",
+        "role": "activity",
+        "activityType": "card",
+        "content": {
+          "n": 1
+        }
+      }
+    ]
+  },
+  {
+    "name": "missing text and reasoning targets ignored",
+    "initial": [],
+    "events": [
+      {
+        "type": "TEXT_MESSAGE_CONTENT",
+        "messageId": "none",
+        "delta": "x"
+      },
+      {
+        "type": "TEXT_MESSAGE_END",
+        "messageId": "none"
+      },
+      {
+        "type": "REASONING_MESSAGE_CONTENT",
+        "messageId": "none",
+        "delta": "x"
+      },
+      {
+        "type": "REASONING_MESSAGE_END",
+        "messageId": "none"
+      }
+    ],
+    "expected": []
+  },
+  {
+    "name": "reasoning lifecycle and encryption",
+    "initial": [],
+    "events": [
+      {
+        "type": "REASONING_START"
+      },
+      {
+        "type": "REASONING_MESSAGE_START",
+        "messageId": "r",
+        "subagentRunId": "child",
+        "metadata": {
+          "ns": {
+            "old": 1
+          }
+        }
+      },
+      {
+        "type": "REASONING_MESSAGE_CONTENT",
+        "messageId": "r",
+        "delta": "think",
+        "metadata": {
+          "ns": {
+            "new": 2
+          }
+        }
+      },
+      {
+        "type": "REASONING_MESSAGE_END",
+        "messageId": "r",
+        "metadata": {
+          "done": 1
+        }
+      },
+      {
+        "type": "REASONING_ENCRYPTED_VALUE",
+        "subtype": "message",
+        "entityId": "r",
+        "encryptedValue": "opaque",
+        "metadata": {
+          "ignored": 1
+        }
+      },
+      {
+        "type": "REASONING_END"
+      }
+    ],
+    "expected": [
+      {
+        "id": "r",
+        "role": "reasoning",
+        "content": "think",
+        "subagentRunId": "child",
+        "encryptedValue": "opaque",
+        "metadata": {
+          "ns": {
+            "new": 2
+          },
+          "done": 1
+        }
+      }
+    ]
+  },
+  {
+    "name": "reasoning reuses text and skips activity",
+    "initial": [
+      {
+        "id": "a",
+        "role": "assistant",
+        "content": "text"
+      },
+      {
+        "id": "card",
+        "role": "activity",
+        "activityType": "card",
+        "content": {
+          "n": 1
+        }
+      }
+    ],
+    "events": [
+      {
+        "type": "REASONING_MESSAGE_START",
+        "messageId": "a"
+      },
+      {
+        "type": "REASONING_MESSAGE_CONTENT",
+        "messageId": "a",
+        "delta": "thought"
+      },
+      {
+        "type": "REASONING_MESSAGE_START",
+        "messageId": "card",
+        "metadata": {
+          "bad": 1
+        }
+      },
+      {
+        "type": "REASONING_MESSAGE_CONTENT",
+        "messageId": "card",
+        "delta": "x"
+      },
+      {
+        "type": "REASONING_MESSAGE_END",
+        "messageId": "card",
+        "metadata": {
+          "bad": 1
+        }
+      },
+      {
+        "type": "REASONING_ENCRYPTED_VALUE",
+        "subtype": "message",
+        "entityId": "card",
+        "encryptedValue": "bad"
+      }
+    ],
+    "expected": [
+      {
+        "id": "a",
+        "role": "assistant",
+        "content": "textthought"
+      },
+      {
+        "id": "card",
+        "role": "activity",
+        "activityType": "card",
+        "content": {
+          "n": 1
+        }
+      }
+    ]
+  },
+  {
+    "name": "tool args rename end encryption",
+    "initial": [],
+    "events": [
+      {
+        "type": "TOOL_CALL_START",
+        "toolCallId": "t",
+        "toolCallName": "initial",
+        "parentMessageId": "a",
+        "subagentRunId": "child",
+        "metadata": {
+          "ns": {
+            "start": 1
+          },
+          "keep": 1
+        }
+      },
+      {
+        "type": "TOOL_CALL_ARGS",
+        "toolCallId": "t",
+        "delta": "{",
+        "metadata": {
+          "ns": {
+            "args": 1
+          }
+        }
+      },
+      {
+        "type": "TOOL_CALL_START",
+        "toolCallId": "t",
+        "toolCallName": "shell",
+        "parentMessageId": "unused"
+      },
+      {
+        "type": "TOOL_CALL_ARGS",
+        "toolCallId": "t",
+        "delta": "}"
+      },
+      {
+        "type": "TOOL_CALL_END",
+        "toolCallId": "t",
+        "metadata": {
+          "ns": {
+            "end": 1
+          }
+        }
+      },
+      {
+        "type": "REASONING_ENCRYPTED_VALUE",
+        "subtype": "tool-call",
+        "entityId": "t",
+        "encryptedValue": "secret",
+        "metadata": {
+          "ignored": 1
+        }
+      }
+    ],
+    "expected": [
+      {
+        "id": "a",
+        "role": "assistant",
+        "toolCalls": [
+          {
+            "id": "t",
+            "type": "function",
+            "function": {
+              "name": "shell",
+              "arguments": "{}"
+            },
+            "metadata": {
+              "ns": {
+                "end": 1
+              },
+              "keep": 1
+            },
+            "encryptedValue": "secret"
+          }
+        ],
+        "subagentRunId": "child"
+      }
+    ]
+  },
+  {
+    "name": "tool missing continuation and encryption ignored",
+    "initial": [],
+    "events": [
+      {
+        "type": "TOOL_CALL_ARGS",
+        "toolCallId": "t",
+        "delta": "{}"
+      },
+      {
+        "type": "TOOL_CALL_END",
+        "toolCallId": "t"
+      },
+      {
+        "type": "REASONING_ENCRYPTED_VALUE",
+        "subtype": "tool-call",
+        "entityId": "t",
+        "encryptedValue": "x"
+      }
+    ],
+    "expected": []
+  },
+  {
+    "name": "tool parent existing assistant not reattributed",
+    "initial": [
+      {
+        "id": "a",
+        "role": "assistant",
+        "content": "hi"
+      }
+    ],
+    "events": [
+      {
+        "type": "TOOL_CALL_START",
+        "toolCallId": "t",
+        "toolCallName": "shell",
+        "parentMessageId": "a",
+        "subagentRunId": "child",
+        "metadata": {
+          "tool": 1
+        }
+      }
+    ],
+    "expected": [
+      {
+        "id": "a",
+        "role": "assistant",
+        "content": "hi",
+        "toolCalls": [
+          {
+            "id": "t",
+            "type": "function",
+            "function": {
+              "name": "shell",
+              "arguments": ""
+            },
+            "metadata": {
+              "tool": 1
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "tool parent collision falls back to call id",
+    "initial": [
+      {
+        "id": "u",
+        "role": "user",
+        "content": "go"
+      }
+    ],
+    "events": [
+      {
+        "type": "TOOL_CALL_START",
+        "toolCallId": "t",
+        "toolCallName": "shell",
+        "parentMessageId": "u"
+      }
+    ],
+    "expected": [
+      {
+        "id": "u",
+        "role": "user",
+        "content": "go"
+      },
+      {
+        "id": "t",
+        "role": "assistant",
+        "toolCalls": [
+          {
+            "id": "t",
+            "type": "function",
+            "function": {
+              "name": "shell",
+              "arguments": ""
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "tool no parent creates container",
+    "initial": [],
+    "events": [
+      {
+        "type": "TOOL_CALL_START",
+        "toolCallId": "t",
+        "toolCallName": "shell"
+      }
+    ],
+    "expected": [
+      {
+        "id": "t",
+        "role": "assistant",
+        "toolCalls": [
+          {
+            "id": "t",
+            "type": "function",
+            "function": {
+              "name": "shell",
+              "arguments": ""
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "results insert after tool owner and correct in place",
+    "initial": [
+      {
+        "id": "a",
+        "role": "assistant",
+        "toolCalls": [
+          {
+            "id": "t",
+            "type": "function",
+            "function": {
+              "name": "shell",
+              "arguments": ""
+            }
+          }
+        ]
+      },
+      {
+        "id": "tail",
+        "role": "assistant",
+        "content": "later"
+      }
+    ],
+    "events": [
+      {
+        "type": "TOOL_CALL_RESULT",
+        "messageId": "out",
+        "toolCallId": "t",
+        "content": "bad",
+        "subagentRunId": "child",
+        "metadata": {
+          "ns": {
+            "old": 1
+          },
+          "keep": 1
+        }
+      },
+      {
+        "type": "TOOL_CALL_RESULT",
+        "messageId": "out",
+        "toolCallId": "t",
+        "content": "good",
+        "metadata": {
+          "ns": {
+            "new": 2
+          }
+        }
+      }
+    ],
+    "expected": [
+      {
+        "id": "a",
+        "role": "assistant",
+        "toolCalls": [
+          {
+            "id": "t",
+            "type": "function",
+            "function": {
+              "name": "shell",
+              "arguments": ""
+            }
+          }
+        ]
+      },
+      {
+        "id": "out",
+        "role": "tool",
+        "toolCallId": "t",
+        "content": "good",
+        "metadata": {
+          "ns": {
+            "new": 2
+          },
+          "keep": 1
+        }
+      },
+      {
+        "id": "tail",
+        "role": "assistant",
+        "content": "later"
+      }
+    ]
+  },
+  {
+    "name": "result correction retains other fields",
+    "initial": [
+      {
+        "id": "out",
+        "role": "tool",
+        "toolCallId": "t",
+        "content": "before",
+        "encryptedValue": "sig",
+        "metadata": {
+          "keep": 1
+        }
+      }
+    ],
+    "events": [
+      {
+        "type": "TOOL_CALL_RESULT",
+        "messageId": "out",
+        "toolCallId": "t",
+        "content": "after"
+      }
+    ],
+    "expected": [
+      {
+        "id": "out",
+        "role": "tool",
+        "toolCallId": "t",
+        "content": "after",
+        "encryptedValue": "sig",
+        "metadata": {
+          "keep": 1
+        }
+      }
+    ]
+  },
+  {
+    "name": "orphan result appends",
+    "initial": [
+      {
+        "id": "a",
+        "role": "assistant",
+        "content": "hi"
+      }
+    ],
+    "events": [
+      {
+        "type": "TOOL_CALL_RESULT",
+        "messageId": "out",
+        "toolCallId": "t",
+        "content": "ok"
+      }
+    ],
+    "expected": [
+      {
+        "id": "a",
+        "role": "assistant",
+        "content": "hi"
+      },
+      {
+        "id": "out",
+        "role": "tool",
+        "toolCallId": "t",
+        "content": "ok"
+      }
+    ]
+  },
+  {
+    "name": "activity snapshot accumulates metadata and clears attribution",
+    "initial": [
+      {
+        "id": "card",
+        "role": "activity",
+        "activityType": "card",
+        "content": {
+          "n": 1
+        },
+        "subagentRunId": "child",
+        "metadata": {
+          "ns": {
+            "old": 1
+          },
+          "keep": 1
+        }
+      }
+    ],
+    "events": [
+      {
+        "type": "ACTIVITY_SNAPSHOT",
+        "messageId": "card",
+        "activityType": "changed",
+        "content": {
+          "n": 2
+        },
+        "metadata": {
+          "ns": {
+            "new": 2
+          }
+        }
+      }
+    ],
+    "expected": [
+      {
+        "id": "card",
+        "role": "activity",
+        "activityType": "changed",
+        "content": {
+          "n": 2
+        },
+        "metadata": {
+          "ns": {
+            "new": 2
+          },
+          "keep": 1
+        }
+      }
+    ]
+  },
+  {
+    "name": "activity no replace only metadata",
+    "initial": [
+      {
+        "id": "card",
+        "role": "activity",
+        "activityType": "card",
+        "content": {
+          "n": 1
+        },
+        "metadata": {
+          "ns": {
+            "old": 1
+          }
+        }
+      }
+    ],
+    "events": [
+      {
+        "type": "ACTIVITY_SNAPSHOT",
+        "messageId": "card",
+        "activityType": "ignored",
+        "content": {
+          "n": 2
+        },
+        "replace": false,
+        "subagentRunId": "ignored",
+        "metadata": {
+          "ns": {
+            "new": 2
+          }
+        }
+      }
+    ],
+    "expected": [
+      {
+        "id": "card",
+        "role": "activity",
+        "activityType": "card",
+        "content": {
+          "n": 1
+        },
+        "metadata": {
+          "ns": {
+            "new": 2
+          }
+        }
+      }
+    ]
+  },
+  {
+    "name": "activity no replace ignores text collision",
+    "initial": [
+      {
+        "id": "card",
+        "role": "assistant",
+        "content": "hi"
+      }
+    ],
+    "events": [
+      {
+        "type": "ACTIVITY_SNAPSHOT",
+        "messageId": "card",
+        "activityType": "ignored",
+        "content": {},
+        "replace": false,
+        "metadata": {
+          "ignored": 1
+        }
+      }
+    ],
+    "expected": [
+      {
+        "id": "card",
+        "role": "assistant",
+        "content": "hi"
+      }
+    ]
+  },
+  {
+    "name": "activity replace text collision",
+    "initial": [
+      {
+        "id": "card",
+        "role": "assistant",
+        "content": "hi",
+        "metadata": {
+          "discard": 1
+        }
+      }
+    ],
+    "events": [
+      {
+        "type": "ACTIVITY_SNAPSHOT",
+        "messageId": "card",
+        "activityType": "card",
+        "content": {
+          "n": 1
+        },
+        "subagentRunId": "child"
+      }
+    ],
+    "expected": [
+      {
+        "id": "card",
+        "role": "activity",
+        "activityType": "card",
+        "content": {
+          "n": 1
+        },
+        "subagentRunId": "child"
+      }
+    ]
+  },
+  {
+    "name": "activity create and delta",
+    "initial": [],
+    "events": [
+      {
+        "type": "ACTIVITY_SNAPSHOT",
+        "messageId": "card",
+        "activityType": "old",
+        "content": {
+          "n": 0
+        }
+      },
+      {
+        "type": "ACTIVITY_DELTA",
+        "messageId": "card",
+        "activityType": "card",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/n",
+            "value": 1
+          }
+        ],
+        "metadata": {
+          "done": 1
+        }
+      }
+    ],
+    "expected": [
+      {
+        "id": "card",
+        "role": "activity",
+        "activityType": "card",
+        "content": {
+          "n": 1
+        },
+        "metadata": {
+          "done": 1
+        }
+      }
+    ]
+  },
+  {
+    "name": "activity failed patch retains content type and merges metadata",
+    "initial": [
+      {
+        "id": "card",
+        "role": "activity",
+        "activityType": "card",
+        "content": {
+          "n": 1
+        },
+        "metadata": {
+          "ns": {
+            "old": 1
+          }
+        }
+      }
+    ],
+    "events": [
+      {
+        "type": "ACTIVITY_DELTA",
+        "messageId": "card",
+        "activityType": "ignored",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/first",
+            "value": true
+          },
+          {
+            "op": "replace",
+            "path": "/missing",
+            "value": 0
+          }
+        ],
+        "metadata": {
+          "ns": {
+            "new": 2
+          }
+        }
+      }
+    ],
+    "expected": [
+      {
+        "id": "card",
+        "role": "activity",
+        "activityType": "card",
+        "content": {
+          "n": 1
+        },
+        "metadata": {
+          "ns": {
+            "new": 2
+          }
+        }
+      }
+    ]
+  },
+  {
+    "name": "activity copy is by value",
+    "initial": [
+      {
+        "id": "card",
+        "role": "activity",
+        "activityType": "card",
+        "content": {
+          "a": {
+            "v": 1
+          }
+        }
+      }
+    ],
+    "events": [
+      {
+        "type": "ACTIVITY_DELTA",
+        "messageId": "card",
+        "activityType": "card",
+        "patch": [
+          {
+            "op": "copy",
+            "from": "/a",
+            "path": "/b"
+          },
+          {
+            "op": "replace",
+            "path": "/b/v",
+            "value": 2
+          }
+        ]
+      }
+    ],
+    "expected": [
+      {
+        "id": "card",
+        "role": "activity",
+        "activityType": "card",
+        "content": {
+          "a": {
+            "v": 1
+          },
+          "b": {
+            "v": 2
+          }
+        }
+      }
+    ]
+  },
+  {
+    "name": "activity move remove append escaped path test",
+    "initial": [
+      {
+        "id": "card",
+        "role": "activity",
+        "activityType": "card",
+        "content": {
+          "a": [
+            1,
+            2,
+            3
+          ],
+          "a/b": {
+            "~": 1
+          }
+        }
+      }
+    ],
+    "events": [
+      {
+        "type": "ACTIVITY_DELTA",
+        "messageId": "card",
+        "activityType": "card",
+        "patch": [
+          {
+            "op": "move",
+            "from": "/a/0",
+            "path": "/a/1"
+          },
+          {
+            "op": "remove",
+            "path": "/a/2"
+          },
+          {
+            "op": "add",
+            "path": "/a/-",
+            "value": 4
+          },
+          {
+            "op": "test",
+            "path": "/a~1b/~0",
+            "value": 1
+          }
+        ]
+      }
+    ],
+    "expected": [
+      {
+        "id": "card",
+        "role": "activity",
+        "activityType": "card",
+        "content": {
+          "a": [
+            2,
+            1,
+            4
+          ],
+          "a/b": {
+            "~": 1
+          }
+        }
+      }
+    ]
+  },
+  {
+    "name": "activity root remove then add",
+    "initial": [
+      {
+        "id": "card",
+        "role": "activity",
+        "activityType": "card",
+        "content": {
+          "n": 1
+        }
+      }
+    ],
+    "events": [
+      {
+        "type": "ACTIVITY_DELTA",
+        "messageId": "card",
+        "activityType": "card",
+        "patch": [
+          {
+            "op": "remove",
+            "path": ""
+          },
+          {
+            "op": "add",
+            "path": "",
+            "value": {
+              "n": 2
+            }
+          }
+        ]
+      }
+    ],
+    "expected": [
+      {
+        "id": "card",
+        "role": "activity",
+        "activityType": "card",
+        "content": {
+          "n": 2
+        }
+      }
+    ]
+  },
+  {
+    "name": "activity rejects test failure",
+    "initial": [
+      {
+        "id": "card",
+        "role": "activity",
+        "activityType": "card",
+        "content": {
+          "n": 1
+        }
+      }
+    ],
+    "events": [
+      {
+        "type": "ACTIVITY_DELTA",
+        "messageId": "card",
+        "activityType": "ignored",
+        "patch": [
+          {
+            "op": "test",
+            "path": "/n",
+            "value": 2
+          }
+        ]
+      }
+    ],
+    "expected": [
+      {
+        "id": "card",
+        "role": "activity",
+        "activityType": "card",
+        "content": {
+          "n": 1
+        }
+      }
+    ]
+  },
+  {
+    "name": "activity rejects missing value",
+    "initial": [
+      {
+        "id": "card",
+        "role": "activity",
+        "activityType": "card",
+        "content": {
+          "n": 1
+        }
+      }
+    ],
+    "events": [
+      {
+        "type": "ACTIVITY_DELTA",
+        "messageId": "card",
+        "activityType": "ignored",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/x"
+          }
+        ]
+      }
+    ],
+    "expected": [
+      {
+        "id": "card",
+        "role": "activity",
+        "activityType": "card",
+        "content": {
+          "n": 1
+        }
+      }
+    ]
+  },
+  {
+    "name": "activity rejects missing from",
+    "initial": [
+      {
+        "id": "card",
+        "role": "activity",
+        "activityType": "card",
+        "content": {
+          "n": 1
+        }
+      }
+    ],
+    "events": [
+      {
+        "type": "ACTIVITY_DELTA",
+        "messageId": "card",
+        "activityType": "ignored",
+        "patch": [
+          {
+            "op": "copy",
+            "path": "/x"
+          }
+        ]
+      }
+    ],
+    "expected": [
+      {
+        "id": "card",
+        "role": "activity",
+        "activityType": "card",
+        "content": {
+          "n": 1
+        }
+      }
+    ]
+  },
+  {
+    "name": "activity rejects unsafe prototype",
+    "initial": [
+      {
+        "id": "card",
+        "role": "activity",
+        "activityType": "card",
+        "content": {
+          "n": 1
+        }
+      }
+    ],
+    "events": [
+      {
+        "type": "ACTIVITY_DELTA",
+        "messageId": "card",
+        "activityType": "ignored",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/__proto__/polluted",
+            "value": true
+          }
+        ]
+      }
+    ],
+    "expected": [
+      {
+        "id": "card",
+        "role": "activity",
+        "activityType": "card",
+        "content": {
+          "n": 1
+        }
+      }
+    ]
+  },
+  {
+    "name": "activity rejects unknown op",
+    "initial": [
+      {
+        "id": "card",
+        "role": "activity",
+        "activityType": "card",
+        "content": {
+          "n": 1
+        }
+      }
+    ],
+    "events": [
+      {
+        "type": "ACTIVITY_DELTA",
+        "messageId": "card",
+        "activityType": "ignored",
+        "patch": [
+          {
+            "op": "invalid",
+            "path": "/n"
+          }
+        ]
+      }
+    ],
+    "expected": [
+      {
+        "id": "card",
+        "role": "activity",
+        "activityType": "card",
+        "content": {
+          "n": 1
+        }
+      }
+    ]
+  },
+  {
+    "name": "nonmessage events do not fold metadata",
+    "initial": [
+      {
+        "id": "a",
+        "role": "assistant",
+        "content": "hi"
+      }
+    ],
+    "events": [
+      {
+        "type": "RUN_STARTED",
+        "threadId": "t",
+        "runId": "r",
+        "metadata": {
+          "ignored": 1
+        }
+      },
+      {
+        "type": "STEP_STARTED",
+        "stepName": "step",
+        "metadata": {
+          "ignored": 1
+        }
+      },
+      {
+        "type": "STEP_FINISHED",
+        "stepName": "step"
+      },
+      {
+        "type": "CUSTOM",
+        "name": "notice",
+        "value": {},
+        "metadata": {
+          "ignored": 1
+        }
+      },
+      {
+        "type": "RAW",
+        "event": {
+          "x": 1
+        }
+      },
+      {
+        "type": "SUBAGENT_STARTED",
+        "subagentRunId": "child"
+      },
+      {
+        "type": "SUBAGENT_FINISHED",
+        "subagentRunId": "child"
+      },
+      {
+        "type": "SUBAGENT_ERROR",
+        "subagentRunId": "child",
+        "message": "bad"
+      },
+      {
+        "type": "RUN_FINISHED",
+        "threadId": "t",
+        "runId": "r"
+      }
+    ],
+    "expected": [
+      {
+        "id": "a",
+        "role": "assistant",
+        "content": "hi"
+      }
+    ]
+  },
+  {
+    "name": "run input seeds exact user shape idempotently",
+    "initial": [
+      {
+        "id": "u",
+        "role": "user",
+        "content": "original"
+      }
+    ],
+    "events": [
+      {
+        "type": "RUN_STARTED",
+        "threadId": "t",
+        "runId": "r",
+        "input": {
+          "threadId": "t",
+          "runId": "r",
+          "messages": [
+            {
+              "id": "u",
+              "role": "user",
+              "content": "ignored"
+            },
+            {
+              "id": "new",
+              "role": "user",
+              "name": "human",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "go"
+                }
+              ],
+              "metadata": {
+                "userTag": true
+              }
+            }
+          ]
+        }
+      }
+    ],
+    "expected": [
+      {
+        "id": "u",
+        "role": "user",
+        "content": "original"
+      },
+      {
+        "id": "new",
+        "role": "user",
+        "name": "human",
+        "content": [
+          {
+            "type": "text",
+            "text": "go"
+          }
+        ],
+        "metadata": {
+          "userTag": true
+        }
+      }
+    ]
+  },
+  {
+    "name": "tool correction retains preexisting error without status evidence",
+    "initial": [
+      {
+        "id": "out",
+        "role": "tool",
+        "toolCallId": "t",
+        "content": "before",
+        "error": "existing"
+      }
+    ],
+    "events": [
+      {
+        "type": "TOOL_CALL_RESULT",
+        "messageId": "out",
+        "toolCallId": "t",
+        "content": "after"
+      }
+    ],
+    "expected": [
+      {
+        "id": "out",
+        "role": "tool",
+        "toolCallId": "t",
+        "content": "after",
+        "error": "existing"
+      }
+    ]
+  },
+  {
+    "name": "activity null content uses empty object on next delta",
+    "initial": [
+      {
+        "id": "card",
+        "role": "activity",
+        "activityType": "card",
+        "content": {
+          "n": 1
+        }
+      }
+    ],
+    "events": [
+      {
+        "type": "ACTIVITY_DELTA",
+        "messageId": "card",
+        "activityType": "card",
+        "patch": [
+          {
+            "op": "remove",
+            "path": ""
+          }
+        ]
+      },
+      {
+        "type": "ACTIVITY_DELTA",
+        "messageId": "card",
+        "activityType": "card",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/n",
+            "value": 2
+          }
+        ]
+      }
+    ],
+    "expected": [
+      {
+        "id": "card",
+        "role": "activity",
+        "activityType": "card",
+        "content": {
+          "n": 2
+        }
+      }
+    ]
+  }
+]

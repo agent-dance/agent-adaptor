@@ -189,7 +189,7 @@ func (s *Session) ObserveHandler() http.Handler {
 		}
 		id := r.URL.Query().Get("thread_id")
 		if id == "" {
-			writeError(w, fmt.Errorf("thread_id required"))
+			writeError(w, &agui.InputError{Code: "agui.identity_required", Message: "thread_id required"})
 			return
 		}
 		after := uint64(0)
@@ -198,7 +198,7 @@ func (s *Session) ObserveHandler() http.Handler {
 			after, err = strconv.ParseUint(raw, 10, 64)
 		}
 		if err != nil {
-			writeError(w, err)
+			writeError(w, &agui.InputError{Code: "agui.invalid_cursor", Message: "after must be an unsigned integer"})
 			return
 		}
 		key, err := s.resolve(r, Access{Op: OpFollow, ThreadID: id})
@@ -247,6 +247,9 @@ func (s *Session) writeObservation(
 				return err
 			}
 			writer.Flush()
+			if err := writer.Err(); err != nil {
+				return err
+			}
 			lastWrite = time.Now()
 		}
 		return nil
@@ -266,7 +269,7 @@ func (s *Session) writeObservation(
 		}
 		writer.Flush()
 		lastWrite = time.Now()
-		return nil
+		return writer.Err()
 	})
 	if err != nil && r.Context().Err() == nil {
 		var inputErr *agui.InputError

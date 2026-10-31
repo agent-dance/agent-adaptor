@@ -1,6 +1,8 @@
 package main
 
 import (
+	"github.com/agent-dance/agent-adaptor/bridges/agui"
+	"github.com/agent-dance/agent-adaptor/hosttools/sessionrecorder"
 	"net/http"
 	"strconv"
 
@@ -26,6 +28,7 @@ func newAppServer(agent *adaptor.Agent, driver, cors string) (*appServer, error)
 	server := &appServer{agent: agent, driver: driver, cors: cors, store: store}
 	server.session = aguisession.New(agent, aguisession.Options{
 		Recorder:    store.recorder,
+		Input:       agui.InputOptions{HistoryFallback: true},
 		OnRunEnd:    store.clearPending,
 		CallOptions: []adaptor.CallOption{exampleutil.AGUIExamplePolicy()},
 		Observe:     server.observe,
@@ -60,13 +63,32 @@ func (s *appServer) handleSessionEvents(w http.ResponseWriter, r *http.Request) 
 	// `after` is a host-scoped cursor (sessionrecorder.HostSeq). Unified
 	// events carry no cross-run sequence number of their own, so this cursor
 	// is the only thing that stays monotonic when a thread spans several runs.
-	afterHostSeq, _ := strconv.ParseUint(r.URL.Query().Get("after"), 10, 64)
-	records := s.store.historyAfter(aguisession.RecorderKey(recordingKey(threadID)), afterHostSeq)
+	var afterHostSeq uint64
+	var err error
+	if raw := r.URL.Query().Get("after"); raw != "" {
+		afterHostSeq, err = strconv.ParseUint(raw, 10, 64)
+		if err != nil {
+			http.Error(w, "after must be an unsigned integer", http.StatusBadRequest)
+			return
+		}
+	}
+	records, err := s.store.recorder.Since(r.Context(), aguisession.RecorderKey(recordingKey(threadID)), afterHostSeq)
+	if err != nil {
+		http.Error(w, "history read failed", http.StatusInternalServerError)
+		return
+	}
+	if records == nil {
+		records = []sessionrecorder.EventRecord{}
+	}
+	last := afterHostSeq
+	if len(records) > 0 {
+		last = records[len(records)-1].HostSeq
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"thread_id":  threadID,
 		"after":      afterHostSeq,
 		"events":     records,
-		"last_seq":   lastHostSeq(records),
+		"last_seq":   last,
 		"run_active": s.session.Active(recordingKey(threadID)),
 	})
 }

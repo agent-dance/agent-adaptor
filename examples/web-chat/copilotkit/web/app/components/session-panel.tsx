@@ -6,7 +6,6 @@ import {
   fetchSessionEvents,
   type PendingDecision,
   type SessionRecord,
-  type StreamEvent,
 } from "../lib/backend";
 import { renderDecisionCard } from "./cards";
 
@@ -153,19 +152,19 @@ function SessionPanelForThread({ threadId }: { threadId: string }) {
     const card = renderDecisionCard({
       threadId,
       name: `dec.${p.Kind}.${p.Source}`,
-      requestId: p.RequestID,
+      requestId: p.ID,
       args: {
         kind: p.Kind,
         source: p.Source,
-        prompt: p.Prompt,
-        payload: p.Payload,
-        choices: p.Choices ?? undefined,
+        prompt: p.Title,
+        payload: p.Details,
+        choices: p.Choices?.map((c) => ({ key: c.Key, label: c.Label, description: c.Description })),
         tool_call_id: p.ToolCallID,
-        retry_attempt: p.RetryAttempt,
+        retry_attempt: p.Attempt,
       },
       onResolved: requestRefresh,
     });
-    return <div key={p.RequestID}>{card}</div>;
+    return <div key={p.ID}>{card}</div>;
   });
 
   const historyCount = records.length;
@@ -340,15 +339,15 @@ function HistoryList({ records }: { records: SessionRecord[] }) {
               gap: "0.5rem",
             }}
           >
-            <code style={{ color: "#1e3a8a" }}>{r.payload.Kind}</code>
+            <code style={{ color: "#1e3a8a" }}>{r.kind}</code>
             <span
               style={{ color: "#9ca3af" }}
-              title={`run ${r.payload.RunID} / seq ${r.payload.Seq}`}
+              title={`run ${r.meta.run_id ?? ""} / seq ${r.meta.sequence ?? 0}`}
             >
               #{r.host_seq}
             </span>
           </div>
-          {renderEventSummary(r.payload)}
+          {renderEventSummary(r)}
         </li>
       )),
     [records],
@@ -374,43 +373,22 @@ function HistoryList({ records }: { records: SessionRecord[] }) {
   );
 }
 
-function renderEventSummary(ev: StreamEvent): React.ReactNode {
-  if (ev.HITLRequested) {
-    return (
-      <div>
-        <span style={{ color: "#6b21a8", fontWeight: 600 }}>
-          {ev.HITLRequested.Kind}
-        </span>{" "}
-        request <code>{ev.HITLRequested.Source}</code>
-      </div>
-    );
+function renderEventSummary(record: SessionRecord): React.ReactNode {
+  const ev = record.event;
+  if (record.kind === "approval.request") {
+    return <div>{ev.Kind} request <code>{ev.Source}</code>: {ev.Title}</div>;
   }
-  if (ev.HITLResolved) {
-    return (
-      <div>
-        <span style={{ color: "#065f46", fontWeight: 600 }}>
-          {ev.HITLResolved.Result}
-        </span>{" "}
-        {ev.HITLResolved.Kind} / <code>{ev.HITLResolved.Source}</code>
-      </div>
-    );
+  if (record.kind === "notice" && ev.Kind === "approval.resolved") {
+    return <div>resolved <code>{String(ev.Data?.request_id ?? "")}</code></div>;
   }
-  if (ev.Kind === "text.content" && ev.Delta) {
-    return (
-      <span style={{ color: "#374151" }}>
-        “{truncate(ev.Delta, 60)}”
-      </span>
-    );
+  if ((record.kind === "text.delta" || record.kind === "thinking") && ev.Text) {
+    return <span>“{truncate(ev.Text, 60)}”</span>;
   }
-  if (ev.Kind === "tool_call.start" && ev.Name) {
-    return (
-      <span>
-        tool <code>{ev.Name}</code> <span style={{ color: "#9ca3af" }}>({ev.ToolCallID})</span>
-      </span>
-    );
+  if (record.kind === "tool.call" && ev.Phase === "start") {
+    return <span>tool <code>{ev.Name}</code> ({ev.ID})</span>;
   }
-  if (ev.Kind === "tool_call.args" && ev.Delta) {
-    return <code style={{ color: "#4b5563" }}>{truncate(ev.Delta, 80)}</code>;
+  if (record.kind === "tool.call" && ev.ArgsDelta) {
+    return <code>{truncate(ev.ArgsDelta, 80)}</code>;
   }
   return null;
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 
 	adaptor "github.com/agent-dance/agent-adaptor"
@@ -61,22 +62,13 @@ func TestThreadStoreHistoryAfterUsesHostSeqCursor(t *testing.T) {
 	}
 }
 
-func TestThreadStoreUnregisterRunDropsOwnedPendingRequests(t *testing.T) {
+func TestThreadStoreClearPending(t *testing.T) {
 	store := mustNewThreadStore(t)
-	stream := &fakeStream{runID: "run-1"}
-
-	store.registerRun("thread-1", stream)
-	store.addPending("thread-1", &adaptor.ApprovalRequest{ID: "req-owned", RunID: "run-1"})
-	store.addPending("thread-1", &adaptor.ApprovalRequest{ID: "req-other", RunID: "run-2"})
-
-	store.unregisterRun("thread-1", stream)
-
-	pending := store.pendingRequests("thread-1")
-	if got := len(pending); got != 1 {
-		t.Fatalf("pending len = %d, want 1", got)
-	}
-	if pending[0].ID != "req-other" {
-		t.Fatalf("remaining pending = %q, want req-other", pending[0].ID)
+	store.addPending("thread-1", &adaptor.ApprovalRequest{ID: "owned"})
+	store.addPending("thread-2", &adaptor.ApprovalRequest{ID: "other"})
+	store.clearPending("thread-1")
+	if len(store.pendingRequests("thread-1")) != 0 || len(store.pendingRequests("thread-2")) != 1 {
+		t.Fatal("incorrect cleanup scope")
 	}
 }
 
@@ -204,7 +196,7 @@ type fakeStream struct {
 	result *adaptor.Result
 	err    error
 
-	cancelled bool
+	cancelled atomic.Bool
 }
 
 func (f *fakeStream) Events() <-chan adaptor.Event { return f.events }
@@ -213,4 +205,17 @@ func (f *fakeStream) Result() (*adaptor.Result, error) { return f.result, f.err 
 
 func (f *fakeStream) RunID() string { return f.runID }
 
-func (f *fakeStream) Cancel() { f.cancelled = true }
+func (f *fakeStream) Cancel() { f.cancelled.Store(true) }
+
+func (s *threadStore) appendHistory(key string, ev adaptor.Event) error {
+	_, err := s.recorder.Record(context.Background(), key, ev)
+	return err
+}
+
+func (s *threadStore) historyAfter(key string, after uint64) []sessionrecorder.EventRecord {
+	records, err := s.recorder.Since(context.Background(), key, after)
+	if err != nil {
+		panic(err)
+	}
+	return records
+}

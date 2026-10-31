@@ -185,19 +185,29 @@ set only for starts. Nil permits all access and uses the default mapping.
 The default Thread key remains `bridgekey.Encode("agui", threadId)`.
 `RecorderKey(key)` is the stable version-1 storage mapping: `"agui-"` plus
 64 lowercase hexadecimal characters of SHA-256 over the exact UTF-8 key bytes.
-This mapping is part of projection version `agui-session/1`; changing it requires
-an explicit storage migration. It derives a portable name for recorder backends;
+This storage-key mapping remains version 1 independently of projection versions;
+changing it requires an explicit storage migration. It derives a portable name for recorder backends;
 all recorder access must use that mapping. This introduces the usual SHA-256
 collision assumption, rather than changing the opaque Thread identity.
 
-Projection version `agui-session/1` records typed Notices with reserved kinds
+Projection version `agui-session/2` records typed Notices with reserved kinds
 `agentAdaptor.agui.boundary` (public identity, input protocol version,
-projection version, diagnostics) and `agentAdaptor.agui.terminal` (authoritative
-code/message). Between them are the input user turn, source events including
+projection version, diagnostics, submitted user message and its ID) and
+`agentAdaptor.agui.terminal` (authoritative code/message and SDK run/key metadata).
+Older, missing or unknown projection versions produce
+`agui.projection_version_unsupported`, never successful replay. Draft version-1
+recordings require an explicit host migration; they are not silently reinterpreted.
+Source events cannot use either reserved Notice kind: the session cancels/drains
+and records `agui.reserved_notice` instead of accepting a forged boundary/terminal. Between them are the input user turn, source events including
 approvals, and any Result.Text fallback. Stream.Result is the terminal authority.
 Only successfully recorded events are projected. Recording failure cancels and
 drains execution, reports `agui.recording_failed` on the live connection, and
-leaves incomplete history. Inactive runs without terminal records project
+leaves incomplete history. That emergency RUN_ERROR is the explicit unrecorded
+transport-failure exception; its timestamp uses the last durable record. Failure
+to record the boundary returns JSON HTTP 500 before execution. A failed terminal
+append never becomes RUN_FINISHED. Cleanup writes use a cancellation-detached
+context with a five-second timeout per write, so request cancellation can still
+persist its authoritative outcome. Recorder implementations must honor contexts. Inactive runs without terminal records project
 `run.incomplete`, never success. Disconnect cancels this request-scoped run.
 The drain owns execution independently of the HTTP subscriber.
 
@@ -205,19 +215,52 @@ The drain owns execution independently of the HTTP subscriber.
 source record; consume all events in a record before advancing its cursor.
 `Messages(ctx, key)` folds that same projection. `Fold` ports the official
 @ag-ui/client 1.0.3 `defaultApplyEvents` (`Se`), tool-parent helper `xe`, and
-metadata helper `L`. START reuses existing message IDs and CONTENT appends text.
-Consequently the POST omits its recorded user triple: echoing it would duplicate
-text already present in the client's input messages. History includes the triple.
+metadata helper `L`. Metadata merges by top-level key: a namespace object is
+replaced wholesale. Activity replacements retain prior metadata, and tool-result
+corrections retain their position and metadata while updating attribution.
+START reuses existing message IDs and CONTENT appends text. Consequently the
+submitted user triple is recorded for source auditing but projects no text events.
+Instead RUN_STARTED.input.messages contains just that recorded user message:
+`defaultApplyEvents` adds it only if its ID is absent. A live client already owns
+it; a fresh history/observer fold receives its exact name, metadata and content
+parts. This avoids duplicate text and preserves representations TextDelta cannot
+carry. It does not echo prior history, state, tools or forwarded properties. As part of
+RUN_STARTED it follows the boundary's hook bypass; hosts needing submitted-input
+redaction apply it before recording.
+Live and history use the same event projection, including this input seed.
 Reasoning remains role=reasoning, as consumed by assistant-ui
 `fromAgUiMessages` under showThinking. Tool failure metadata additionally becomes
 ToolMessage.error. Activity snapshots and RFC 6902 deltas are folded.
 Projection options, including deterministic redaction hooks, apply to both paths.
+Recorded timestamps reach the hook before it runs; emitted timestamps and
+unfinished subagent closure times use the current record time. The drain freezes
+the typed recorder JSON representation before invoking Observe with the original
+live event/responder, keeping memory and JSONL replay equivalent.
+
+Provider IDs are run-local. Projected source message IDs use the collision-free
+length-prefixed tuple `bridgekey.Encode("agui-message", publicRunID, sourceID)`;
+tool-call IDs use `bridgekey.Encode("agui-tool", publicRunID, sourceID)`. Activity
+and correlated child-tool IDs follow the same mapping. The source records keep
+original IDs. Submitted user IDs and approval request IDs retain their client/host
+identity. This prevents repeated IDs such as Claude's `thinking-0` from combining
+later turns with earlier messages. Host-added projection-hook events must also
+use stable, conversation-unique IDs.
 
 `VerifyHistory(ctx, input, runner, key) (string, bool, error)` also fits the generic
 SSE handler extension. It compares IDs and roles in order, excluding activities
 and the trailing input user turn; content is not compared. Divergence returns
-409 `agui.history_diverged`; `ResolveDivergence` may choose a fresh key.
-A match plus a readable checkpoint executes only the trailing user prompt.
+409 `agui.history_diverged`; `ResolveDivergence` may choose a fresh key with no
+recorded history. The destination is reserved and checked again before releasing
+the original reservation. Fixed Threads always reserve their actual host key and
+cannot switch keys. Resolver-bound legacy requests use the resolved key; an
+unbound legacy request stays stateless and gets a private generated recording key.
+Retries without a client thread ID therefore do not name the same conversation.
+A match plus a readable checkpoint executes only the trailing user prompt when
+the latest recorded run completed successfully. After a failed/incomplete turn,
+a previous healthy checkpoint cannot attest that turn's provider context:
+stateful continuation returns `agui.history_unrecoverable`, even with fallback.
+`ResolveDivergence` can select a fresh key so explicit HistoryFallback rehydrates
+without resuming the stale checkpoint. Stateless fallback remains available.
 Checkpoint compatibility still has the execution-time limits described above.
 Duplicate recorded run IDs return 409 `agui.duplicate_run`; active threads return
 409 `agui.run_active` before streaming. `Observe` sees recorded live approvals;
@@ -229,7 +272,8 @@ allocation and append, durable ordered reads, and an external admission lease
 covering duplicate detection and execution. Future follow notifications must be
 published after commit; subscribe-before-read with cursor deduplication must
 prevent gaps. Storage alone does not provide cross-worker run ownership.
-No background execution, database, or follow endpoint is supplied here.
+Opt-in observation and unattended lifetime are described below. The host
+supplies storage and worker routing.
 
 The official live client fold does **not** set ToolMessage.error from result
 metadata. History folding adds it for assistant-ui history loading; live UIs
@@ -241,7 +285,11 @@ tool results and tool-only assistants remain in the next request.
 Session SSE writes use the same deadline writer as the generic handler.
 Options.WriteTimeout defaults to 30 seconds per write; KeepAlivePing optionally
 sends comment frames. Write failures cancel request-scoped execution and the
-single drain finishes recording and cleanup.
+single drain finishes recording and cleanup. Flush-only failures also cancel.
+History I/O never holds the admission mutex; reads retry if admission/completion
+changes the active boundary during the read. HTTP errors use the same JSON error
+envelope; host/storage failures are 500, explicit InputError statuses are retained,
+missing identities and invalid cursors are 400, and 405 includes Allow.
 
 ## Active observation and unattended lifetime
 
@@ -304,7 +352,7 @@ partial content under the normal incomplete-run diagnosis.
 
 Load snapshot.messages into the fresh client, then connect to ObserveHandler
 with `after=snapshot.cursor`. The first event is the active run's real RUN_STARTED,
-followed by its recorded user turn and the full run suffix. This satisfies the
+whose input seed contains its recorded user turn, followed by the full run suffix. This satisfies the
 initial RUN_STARTED check in @ag-ui/client 1.0.3's `verifyEvents` and reconstructs
 all message/tool openers before their continuations. Do not separately seed that
 active user turn: the observation endpoint includes it. If the run finishes
@@ -328,8 +376,8 @@ For an application that already applied and retained a prefix, an arbitrary
 a run/message: the consumer must retain protocol state, including RUN_STARTED and
 open message/tool lifecycles. It is not a standalone stream for a fresh HttpAgent
 verifier. We do not synthesize RUN_STARTED, which would duplicate the lifecycle
-boundary without reconstructing missing openers. The first POST still suppresses
-its submitted user turn because that client already owns the input message.
+boundary without reconstructing missing openers. The first POST projects no user text append because that client already owns
+the input message; the idempotent RUN_STARTED input seed is shared with replay.
 
 `Revoke(key)` cancels all currently registered observers for that key without
 cancelling execution or inventing a terminal. A callback already in progress may
@@ -387,4 +435,10 @@ The script registers the standard `$anchor` annotation with Ajv and disables its
 `strictRequired` schema lint for allOf-inherited properties; instance validation
 retains every schema constraint. No package install or frontend change is needed.
 The Go handler golden test independently compares the live normalized trace to
-the fixture; regenerate only after reviewing protocol changes.
+the fixture; regenerate only after reviewing protocol changes. The same script
+independently checks the hand-derived Node-free reducer table and ten recorded
+session turns against real HttpAgent folding/next-turn requests, frozen event and
+Message schemas, and assistant-ui history conversion (including failed tool 13).
+These fixtures cover repeated provider IDs, reasoning, activities, full user
+messages, Result.Text fallback, business errors, cancellation and infrastructure
+errors. Expected reducer states are not generated by the Go implementation.

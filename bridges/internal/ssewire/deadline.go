@@ -15,6 +15,7 @@ type DeadlineWriter struct {
 	http.ResponseWriter
 	controller *http.ResponseController
 	timeout    time.Duration
+	err        error
 }
 
 // NewDeadlineWriter wraps w with a fresh timeout for each write.
@@ -28,19 +29,34 @@ func NewDeadlineWriter(w http.ResponseWriter, timeout time.Duration) *DeadlineWr
 
 // Write arms the deadline before delivering bytes.
 func (w *DeadlineWriter) Write(p []byte) (int, error) {
-	if err := w.armDeadline(); err != nil {
-		return 0, err
+	if w.err != nil {
+		return 0, w.err
 	}
-	return w.ResponseWriter.Write(p)
+	w.err = w.armDeadline()
+	if w.err != nil {
+		return 0, w.err
+	}
+	n, err := w.ResponseWriter.Write(p)
+	w.err = err
+	return n, err
 }
 
 // Flush arms the deadline before flushing buffered bytes.
 func (w *DeadlineWriter) Flush() {
-	if w.armDeadline() != nil {
+	if w.err != nil {
 		return
 	}
-	_ = w.controller.Flush()
+	w.err = w.armDeadline()
+	if w.err == nil {
+		w.err = w.controller.Flush()
+		if errors.Is(w.err, http.ErrNotSupported) {
+			w.err = nil
+		}
+	}
 }
+
+// Err reports a failed flush; http.Flusher cannot return it directly.
+func (w *DeadlineWriter) Err() error { return w.err }
 
 func (w *DeadlineWriter) armDeadline() error {
 	err := w.controller.SetWriteDeadline(time.Now().Add(w.timeout))

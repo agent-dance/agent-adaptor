@@ -3,7 +3,6 @@ package aguisession
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -11,6 +10,7 @@ import (
 	events "github.com/ag-ui-protocol/ag-ui/sdks/community/go/pkg/core/events"
 	adaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/bridges/agui"
+	"github.com/agent-dance/agent-adaptor/bridges/internal/bridgekey"
 	"github.com/agent-dance/agent-adaptor/hosttools/sessionrecorder"
 )
 
@@ -31,7 +31,16 @@ type projector struct {
 	lateIncomplete bool
 	now            time.Time
 	last           sessionrecorder.EventRecord
+	runID          string
+	userMessageID  string
+	hasUserMessage bool
 }
+
+type cancelledTerminal string
+
+func (e cancelledTerminal) Error() string { return string(e) }
+
+func (e cancelledTerminal) Unwrap() error { return context.Canceled }
 
 func newProjector(opts []agui.EventTranslatorOption) *projector {
 	return &projector{opts: opts}
@@ -47,7 +56,15 @@ func (p *projector) fail(code, message string) []events.Event {
 		return nil
 	}
 	p.terminal = true
-	return p.t.CloseRun(&adaptor.RunError{Reason: adaptor.FailureReason(code), Message: message})
+	var err error = &adaptor.RunError{Reason: adaptor.FailureReason(code), Message: message}
+	if code == "run.cancelled" {
+		err = cancelledTerminal(message)
+	}
+	out := p.t.CloseRun(err)
+	for _, ev := range out {
+		ev.GetBaseEvent().SetTimestamp(p.now.UnixMilli())
+	}
+	return out
 }
 
 func (p *projector) apply(rec sessionrecorder.EventRecord) []events.Event {
@@ -55,6 +72,9 @@ func (p *projector) apply(rec sessionrecorder.EventRecord) []events.Event {
 	p.now = rec.RecordedAt
 	var out []events.Event
 	if n, ok := rec.Event.(adaptor.Notice); ok && n.Kind == BoundaryKind {
+		p.runID = str(n.Data, "runId")
+		p.userMessageID = str(n.Data, "userMessageId")
+		p.hasUserMessage = n.Data["userMessage"] != nil
 		opts := append([]agui.EventTranslatorOption(nil), p.opts...)
 		var diagnostics []agui.Diagnostic
 		raw, _ := json.Marshal(n.Data["diagnostics"])
@@ -68,8 +88,27 @@ func (p *projector) apply(rec sessionrecorder.EventRecord) []events.Event {
 		p.terminal = false
 		p.incomplete = false
 		out = p.t.Translate(adaptor.RunStarted{})
+		if p.hasUserMessage {
+			// defaultApplyEvents RUN_STARTED adds missing input messages by ID. A
+			// live client retains its existing user; cold replay receives its exact
+			// name, metadata and content-part representation without a text append.
+			raw, _ := json.Marshal(n.Data["userMessage"])
+			var submitted agui.Message
+			_ = json.Unmarshal(raw, &submitted)
+			out[0].(*agui.RunStartedEvent).Input = &agui.RunAgentInput{
+				ThreadID: str(n.Data, "threadId"), RunID: p.runID,
+				Messages: []agui.Message{submitted},
+			}
+		}
+		if str(n.Data, "projectionVersion") != ProjectionVersion {
+			out = append(out, p.fail("agui.projection_version_unsupported", "unsupported or missing recording projection version")...)
+		}
 	} else if p.t != nil {
 		if n, ok := rec.Event.(adaptor.Notice); ok && n.Kind == TerminalKind {
+			// Stream.RunID and the resolved key are recorded even when the
+			// provider emitted no source events. Update audit metadata without
+			// letting its informational lifecycle select the outcome.
+			p.t.Translate(adaptor.WithEventMeta(adaptor.RunFinished{}, n.Meta()))
 			if code := str(n.Data, "code"); code != "" {
 				out = p.fail(code, str(n.Data, "message"))
 			} else {
@@ -77,11 +116,15 @@ func (p *projector) apply(rec sessionrecorder.EventRecord) []events.Event {
 				out = p.t.CloseRun(nil)
 			}
 		} else {
+			if e, ok := rec.Event.(adaptor.TextDelta); ok && p.hasUserMessage &&
+				e.Role == adaptor.RoleUser && e.MessageID == p.userMessageID {
+				return nil
+			}
 			meta := rec.Event.Meta()
 			if meta.Time.IsZero() {
 				meta.Time = rec.RecordedAt
 			}
-			out = p.t.Translate(adaptor.WithEventMeta(rec.Event, meta))
+			out = p.t.Translate(adaptor.WithEventMeta(p.scopeSource(rec.Event), meta))
 		}
 	}
 	// Constructors use wall-clock timestamps; recorded time is the replay authority.
@@ -89,6 +132,60 @@ func (p *projector) apply(rec sessionrecorder.EventRecord) []events.Event {
 		ev.GetBaseEvent().SetTimestamp(rec.RecordedAt.UnixMilli())
 	}
 	return out
+}
+
+// Provider message and tool IDs are run-local (Claude reasoning IDs, for
+// example, use thinking-0). Scope them before translation so the client cannot
+// append a new turn to an earlier turn with the same provider ID. Submitted user
+// IDs and approval request IDs remain client/host identities respectively.
+func (p *projector) scopeSource(ev adaptor.Event) adaptor.Event {
+	messageID := func(id string) string {
+		if id == "" {
+			return ""
+		}
+		return bridgekey.Encode("agui-message", p.runID, id)
+	}
+	toolID := func(id string) string {
+		if id == "" {
+			return ""
+		}
+		return bridgekey.Encode("agui-tool", p.runID, id)
+	}
+	switch e := ev.(type) {
+	case adaptor.TextDelta:
+		if e.Role != adaptor.RoleUser || e.MessageID != p.userMessageID {
+			e.MessageID = messageID(e.MessageID)
+		}
+		return e
+	case adaptor.Thinking:
+		e.MessageID = messageID(e.MessageID)
+		return e
+	case adaptor.ToolCall:
+		e.ID = toolID(e.ID)
+		return e
+	case adaptor.ToolResult:
+		e.ID = toolID(e.ID)
+		return e
+	case adaptor.SubagentUpdate:
+		data := make(map[string]any, len(e.Data)+1)
+		for k, v := range e.Data {
+			data[k] = v
+		}
+		id := str(data, "delegation_id")
+		if id == "" {
+			id = e.Agent
+		}
+		data["delegation_id"] = messageID(id)
+		for _, field := range []string{"parent_tool_call_id", "remote_tool_call_id"} {
+			if id := str(data, field); id != "" {
+				data[field] = toolID(id)
+			}
+		}
+		e.Data = data
+		return e
+	default:
+		return ev
+	}
 }
 
 // project advances the same state for full-history reads and incremental follow.
@@ -156,14 +253,25 @@ func (s *Session) incompleteCode(key string) string {
 // Events reads the entire projection state, returning only records after cursor.
 // Inactive unterminated runs receive run.incomplete at their last record cursor.
 func (s *Session) Events(ctx context.Context, key string, after sessionrecorder.HostSeq) ([]ProjectedRecord, error) {
-	active := s.Active(key)
-	// Admission can change during I/O. Recheck before diagnosing an incomplete run.
-	records, err := s.opts.Recorder.Since(ctx, RecorderKey(key), 0)
-	if err != nil {
-		return nil, err
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		active, boundary := s.runBoundary(key)
+		// A changing admission/completion invalidates the read's cut. Comparing
+		// the boundary also detects a complete run between the two snapshots.
+		// Recorder I/O never holds the Session mutex.
+		records, err := s.opts.Recorder.Since(ctx, RecorderKey(key), 0)
+		if err != nil {
+			return nil, err
+		}
+		currentActive, currentBoundary := s.runBoundary(key)
+		if active != currentActive || boundary != currentBoundary {
+			continue
+		}
+		p := newProjector(s.opts.Events)
+		return p.project(records, after, !active, s.incompleteCode(key)), nil
 	}
-	p := newProjector(s.opts.Events)
-	return p.project(records, after, !active && !s.Active(key), s.incompleteCode(key)), nil
 }
 
 // Messages folds the recorded projection into AG-UI Message objects. Reasoning
@@ -209,7 +317,7 @@ func (s *Session) historyHandler(view historyView) http.Handler {
 		}
 		id := r.URL.Query().Get("thread_id")
 		if id == "" {
-			writeError(w, fmt.Errorf("thread_id required"))
+			writeError(w, &agui.InputError{Code: "agui.identity_required", Message: "thread_id required"})
 			return
 		}
 		key, err := s.resolve(r, Access{Op: OpRead, ThreadID: id})
@@ -221,7 +329,7 @@ func (s *Session) historyHandler(view historyView) http.Handler {
 		if raw := r.URL.Query().Get("after"); raw != "" {
 			after, err = strconv.ParseUint(raw, 10, 64)
 			if err != nil {
-				writeError(w, err)
+				writeError(w, &agui.InputError{Code: "agui.invalid_cursor", Message: "after must be an unsigned integer"})
 				return
 			}
 		}

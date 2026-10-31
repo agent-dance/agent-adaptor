@@ -25,70 +25,38 @@ export type DecisionChoice = {
   description?: string;
 };
 
+// These fields mirror adaptor.ApprovalRequest's public JSON representation.
 export type PendingDecision = {
-  RequestID: string;
+  ID: string;
   RunID: string;
-  ThreadID: string;
   Kind: DecisionKind;
+  Title: string;
   Source: string;
   ToolCallID?: string;
-  Prompt: string;
-  Payload?: Record<string, unknown>;
-  Choices?: DecisionChoice[] | null;
+  Details?: Record<string, unknown>;
+  Choices?: { Key: string; Label: string; Description?: string }[] | null;
   CreatedAt: string;
   Deadline: string;
-  RetryAttempt?: number;
+  Attempt: number;
 };
 
-export type HITLRequestedPayload = {
-  RequestID: string;
-  Kind: DecisionKind;
-  Source: string;
-  ToolCallID?: string;
-  Prompt: string;
-  Payload?: Record<string, unknown>;
-  Choices?: DecisionChoice[] | null;
-  CreatedAt: string;
-  Deadline: string;
-  RetryAttempt?: number;
-};
-
-export type HITLResolvedPayload = {
-  RequestID: string;
-  Kind: DecisionKind;
-  Source: string;
-  RetryAttempt?: number;
-  Result: "approved" | "rejected" | "answered" | "timed_out" | "aborted";
-  Choice?: string;
-  Answer?: Record<string, unknown>;
-  ResolvedAt: string;
-  Latency: number;
-};
-
-export type StreamEvent = {
-  Kind: string;
-  Seq: number;
-  RunID: string;
-  ThreadID: string;
-  MessageID?: string;
-  ToolCallID?: string;
-  Name?: string;
-  Delta?: string;
-  Args?: Record<string, unknown>;
-  Result?: Record<string, unknown>;
-  HITLRequested?: HITLRequestedPayload | null;
-  HITLResolved?: HITLResolvedPayload | null;
-  Timestamp?: string;
-};
-
-// SessionRecord is one entry returned by the backend recorder. host_seq is
-// the host-scoped monotonic cursor: unlike StreamEvent.Seq it does not reset
-// across runs sharing the same thread_id, so it is the cursor for the next
-// /session/events request.
+// sessionrecorder.EventRecord's stable typed envelope, not a StreamPayload.
 export type SessionRecord = {
   host_seq: number;
   recorded_at: string;
-  payload: StreamEvent;
+  kind: string;
+  meta: { run_id?: string; sequence?: number };
+  event: {
+    ID?: string;
+    Kind?: string;
+    Phase?: string;
+    Name?: string;
+    Text?: string;
+    Title?: string;
+    Source?: string;
+    ArgsDelta?: string;
+    Data?: Record<string, unknown>;
+  };
 };
 
 export type SessionSnapshot = {

@@ -63,6 +63,19 @@ func Fold(messages []Message, event events.Event) []Message {
 		}
 	}
 	switch str(e, "type") {
+	case "RUN_STARTED":
+		input, _ := e["input"].(map[string]any)
+		ms, _ := input["messages"].([]any)
+		for _, value := range ms {
+			m, ok := value.(map[string]any)
+			if !ok || index(str(m, "id")) >= 0 {
+				continue
+			}
+			if m["subagentRunId"] == nil {
+				delete(m, "subagentRunId")
+			}
+			messages = append(messages, Message(m))
+		}
 	case "TEXT_MESSAGE_START", "REASONING_MESSAGE_START":
 		i := index(id)
 		if i >= 0 && str(messages[i], "role") == "activity" {
@@ -77,7 +90,7 @@ func Fold(messages []Message, event events.Event) []Message {
 				role = "assistant"
 			}
 			m := Message{"id": id, "role": role, "content": ""}
-			if name, ok := e["name"]; ok {
+			if name, ok := e["name"]; ok && str(e, "type") == "TEXT_MESSAGE_START" {
 				m["name"] = name
 			}
 			attribution(m)
@@ -129,11 +142,30 @@ func Fold(messages []Message, event events.Event) []Message {
 		}
 	case "TOOL_CALL_RESULT":
 		toolID := str(e, "toolCallId")
-		m := Message{"id": id, "role": "tool", "toolCallId": toolID, "content": str(e, "content")}
+		// Corrections retain the old fields and accumulated metadata, but an
+		// absent attribution explicitly returns ownership to the parent.
+		i := -1
+		m := Message{}
+		for j, old := range messages {
+			if str(old, "id") == id && str(old, "role") == "tool" && str(old, "toolCallId") == toolID {
+				i = j
+				for k, v := range old {
+					m[k] = v
+				}
+				break
+			}
+		}
+		m["id"], m["role"], m["toolCallId"], m["content"] = id, "tool", toolID, str(e, "content")
+		delete(m, "subagentRunId")
 		attribution(m)
 		merge(m)
-		metadata, _ := e["metadata"].(map[string]any)
+		// This is the sole deliberate addition to the client reducer. A result
+		// correction also clears a previously derived failure when it succeeds.
+		metadata, _ := m["metadata"].(map[string]any)
 		status, _ := metadata["agentAdaptor"].(map[string]any)
+		if _, observed := status["status"]; observed {
+			delete(m, "error")
+		}
 		if str(status, "status") == "failed" || str(status, "status") == "cancelled" {
 			message := str(status, "error")
 			if message == "" {
@@ -144,15 +176,8 @@ func Fold(messages []Message, event events.Event) []Message {
 			}
 			m["error"] = message
 		}
-		replaced := false
-		for i, old := range messages {
-			if str(old, "id") == id && str(old, "role") == "tool" && str(old, "toolCallId") == toolID {
-				messages[i] = m
-				replaced = true
-				break
-			}
-		}
-		if replaced {
+		if i >= 0 {
+			messages[i] = m
 			break
 		}
 		parent, _ := findTool(toolID)
@@ -173,10 +198,21 @@ func Fold(messages []Message, event events.Event) []Message {
 			replace = true
 		}
 		if i >= 0 && !replace {
-			merge(messages[i])
+			// The client merges metadata only into existing activities. A
+			// collision with a text message is ignored entirely when !replace.
+			if str(messages[i], "role") == "activity" {
+				merge(messages[i])
+			}
 			break
 		}
-		m := Message{"id": id, "role": "activity", "activityType": str(e, "activityType"), "content": e["content"]}
+		m := Message{}
+		if i >= 0 && str(messages[i], "role") == "activity" {
+			for k, v := range messages[i] {
+				m[k] = v
+			}
+		}
+		m["id"], m["role"], m["activityType"], m["content"] = id, "activity", str(e, "activityType"), e["content"]
+		delete(m, "subagentRunId")
 		attribution(m)
 		merge(m)
 		if i < 0 {
@@ -191,7 +227,11 @@ func Fold(messages []Message, event events.Event) []Message {
 		}
 		merge(messages[i])
 		if patch, ok := e["patch"].([]any); ok {
-			content, err := applyPatch(messages[i]["content"], patch)
+			base := messages[i]["content"]
+			if base == nil {
+				base = map[string]any{}
+			}
+			content, err := applyPatch(base, patch)
 			if err == nil {
 				messages[i]["content"] = content
 				messages[i]["activityType"] = str(e, "activityType")
@@ -214,13 +254,10 @@ func mergeMetadata(a, b map[string]any) map[string]any {
 	if a == nil {
 		a = map[string]any{}
 	}
+	// @ag-ui/core mergeMetadata is a shallow object spread. A namespace is
+	// one value: a later object replaces it wholesale, including nested keys.
 	for k, v := range b {
-		if child, ok := v.(map[string]any); ok {
-			old, _ := a[k].(map[string]any)
-			a[k] = mergeMetadata(old, child)
-		} else {
-			a[k] = v
-		}
+		a[k] = v
 	}
 	return a
 }
@@ -241,8 +278,17 @@ func applyPatch(value any, patch []any) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		v := p["value"]
+		v, hasValue := p["value"]
+		if _, ok := p["path"].(string); !ok {
+			return nil, fmt.Errorf("patch path required")
+		}
+		if (op == "add" || op == "replace" || op == "test") && !hasValue {
+			return nil, fmt.Errorf("patch value required")
+		}
 		if op == "copy" || op == "move" {
+			if _, ok := p["from"].(string); !ok {
+				return nil, fmt.Errorf("patch from required")
+			}
 			from, e := pointer(str(p, "from"))
 			if e != nil {
 				return nil, e
@@ -252,10 +298,17 @@ func applyPatch(value any, patch []any) (any, error) {
 				return nil, e
 			}
 			if op == "move" {
+				if len(path) > len(from) && reflect.DeepEqual(path[:len(from)], from) {
+					return nil, fmt.Errorf("cannot move into descendant")
+				}
 				doc, e = patchSet(doc, from, nil, "remove")
 				if e != nil {
 					return nil, e
 				}
+			} else {
+				// fast-json-patch copies JSON values, not references.
+				raw, _ := json.Marshal(v)
+				_ = json.Unmarshal(raw, &v)
 			}
 		}
 		if op == "test" {
@@ -286,6 +339,9 @@ func pointer(s string) ([]string, error) {
 	parts := strings.Split(s[1:], "/")
 	for i, p := range parts {
 		parts[i] = strings.ReplaceAll(strings.ReplaceAll(p, "~1", "/"), "~0", "~")
+		if parts[i] == "__proto__" || i > 0 && parts[i-1] == "constructor" && parts[i] == "prototype" {
+			return nil, fmt.Errorf("unsafe patch path")
+		}
 	}
 	return parts, nil
 }
@@ -301,7 +357,7 @@ func patchGet(doc any, path []string) (any, error) {
 			return patchGet(v, path[1:])
 		}
 	case []any:
-		i, e := strconv.Atoi(path[0])
+		i, e := patchIndex(path[0])
 		if e == nil && i >= 0 && i < len(d) {
 			return patchGet(d[i], path[1:])
 		}
@@ -311,10 +367,14 @@ func patchGet(doc any, path []string) (any, error) {
 
 func patchSet(doc any, path []string, v any, op string) (any, error) {
 	if len(path) == 0 {
-		if op == "add" || op == "replace" {
+		switch op {
+		case "add", "replace":
 			return v, nil
+		case "remove":
+			return nil, nil
+		default:
+			return nil, fmt.Errorf("invalid root operation")
 		}
-		return nil, fmt.Errorf("invalid root operation")
 	}
 	key := path[0]
 	switch d := doc.(type) {
@@ -347,7 +407,7 @@ func patchSet(doc any, path []string, v any, op string) (any, error) {
 			}
 		}
 	case []any:
-		i, err := strconv.Atoi(key)
+		i, err := patchIndex(key)
 		if key == "-" && op == "add" {
 			i = len(d)
 			err = nil
@@ -384,4 +444,13 @@ func patchSet(doc any, path []string, v any, op string) (any, error) {
 		}
 	}
 	return nil, fmt.Errorf("invalid patch operation")
+}
+
+// fast-json-patch accepts decimal array indices (including leading zeros),
+// but not signed integers or whitespace accepted by strconv.Atoi.
+func patchIndex(key string) (int, error) {
+	if key == "" || strings.IndexFunc(key, func(r rune) bool { return r < '0' || r > '9' }) >= 0 {
+		return 0, fmt.Errorf("invalid array index")
+	}
+	return strconv.Atoi(key)
 }

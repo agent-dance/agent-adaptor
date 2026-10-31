@@ -60,6 +60,9 @@ type RunStartedEvent struct {
 	ProtocolVersion string `json:"protocolVersion"`
 	// ParentRunID identifies the public parent run when provided by the caller.
 	ParentRunID string `json:"parentRunId,omitempty"`
+	// Input optionally echoes recorded input messages. Clients add only IDs they
+	// do not already own; this seeds faithful history without duplicating text.
+	Input *RunAgentInput `json:"input,omitempty"`
 }
 
 // ToJSON serializes the standard fields together with version and parent identity.
@@ -109,6 +112,9 @@ func (t *EventTranslator) warningEvents() []events.Event {
 
 func (t *EventTranslator) project(in []events.Event) []events.Event {
 	for _, e := range in {
+		if t.eventClock != nil {
+			e.GetBaseEvent().SetTimestamp(t.eventClock().UnixMilli())
+		}
 		switch tool := e.(type) {
 		case *events.ToolCallArgsEvent:
 			tool.SubagentRunID = t.toolSubagent(tool.ToolCallID)
@@ -276,11 +282,13 @@ func (t *EventTranslator) toolSubagent(id string) string {
 	return ""
 }
 
-// WithEventClock supplies the time used to close unfinished subagent activities.
-// Recorded projections should use the terminal record time for stable replay.
+// WithEventClock supplies event timestamps before the projection hook, and the
+// time used to close unfinished subagent activities. Recorded projections use
+// the current record time so hooks and activity content replay deterministically.
 func WithEventClock(clock func() time.Time) EventTranslatorOption {
 	return func(t *EventTranslator) {
 		if clock != nil {
+			t.eventClock = clock
 			t.subagents.clock = clock
 		}
 	}

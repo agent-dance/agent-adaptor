@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -25,9 +26,10 @@ import (
 )
 
 // ProjectionVersion identifies the persisted boundary and projection contract.
-const ProjectionVersion = "agui-session/1"
+// Unknown and older versions fail closed; recorded history requires migration.
+const ProjectionVersion = "agui-session/2"
 
-// BoundaryKind is the reserved Notice kind carrying run identity and diagnostics.
+// BoundaryKind is the reserved Notice kind carrying identity, diagnostics and user input.
 const BoundaryKind = "agentAdaptor.agui.boundary"
 
 // TerminalKind is the reserved Notice kind carrying the authoritative outcome.
@@ -75,8 +77,10 @@ type Options struct {
 	WriteTimeout time.Duration
 	// KeepAlivePing sends periodic SSE comments when positive.
 	KeepAlivePing time.Duration
-	// ResolveDivergence may select a different key after history mismatches.
-	// Returning the same key does not waive verification.
+	// ResolveDivergence may select a different key after history mismatches or
+	// a checkpoint cannot attest the latest recorded turn.
+	// The destination must have no recorded history. Returning the same key
+	// does not waive verification.
 	ResolveDivergence func(context.Context, *agui.RunAgentInput, string) (string, error)
 	// Input configures prompt preparation, including explicit history rehydration.
 	Input agui.InputOptions
@@ -146,19 +150,34 @@ func conflict(code, message string) error {
 // reasoning, tool results and tool-only assistants retain their IDs and roles.
 // Content and error are intentionally not compared. The trailing user turn is excluded.
 func (s *Session) VerifyHistory(ctx context.Context, in *agui.RunAgentInput, runner adaptor.Runner, key string) (string, bool, error) {
-	messages, err := s.Messages(ctx, key)
+	records, err := s.Events(ctx, key, 0)
 	if err != nil {
 		return key, false, err
+	}
+	messages := foldRecords(records)
+	seenRun, healthy := false, false
+	for _, record := range records {
+		for _, event := range record.Events {
+			switch event.Type() {
+			case events.EventTypeRunStarted:
+				seenRun, healthy = true, false
+			case events.EventTypeRunFinished:
+				healthy = true
+			case events.EventTypeRunError:
+				healthy = false
+			}
+		}
 	}
 	prior := in.Messages
 	if len(prior) > 0 {
 		prior = prior[:len(prior)-1]
 	}
-	pairs := func(ms []agui.Message) []string {
-		out := []string{}
+	type identity struct{ id, role string }
+	pairs := func(ms []agui.Message) []identity {
+		out := []identity{}
 		for _, m := range ms {
 			if m.Role != "activity" {
-				out = append(out, m.ID+"\x00"+m.Role)
+				out = append(out, identity{m.ID, m.Role})
 			}
 		}
 		return out
@@ -167,30 +186,50 @@ func (s *Session) VerifyHistory(ctx context.Context, in *agui.RunAgentInput, run
 	for _, m := range messages {
 		recorded = append(recorded, agui.Message{ID: str(m, "id"), Role: str(m, "role")})
 	}
-	a, b := pairs(prior), pairs(recorded)
-	equal := len(a) == len(b)
+	equal := slices.Equal(pairs(prior), pairs(recorded))
+	usable := false
 	if equal {
-		for i := range a {
-			if a[i] != b[i] {
-				equal = false
-				break
-			}
+		usable, err = agui.CheckpointUsable(ctx, runner)
+		if err != nil {
+			return key, false, err
 		}
 	}
-	if !equal {
+	if !equal || usable && seenRun && !healthy {
 		if s.opts.ResolveDivergence != nil {
 			newKey, e := s.opts.ResolveDivergence(ctx, in, key)
 			if e != nil {
 				return key, false, e
 			}
 			if newKey != key {
+				// A branch must not append onto a different conversation. Admission
+				// reserves this destination before checking it again in serveRun.
+				if err := s.requireFresh(ctx, newKey); err != nil {
+					return key, false, err
+				}
 				return newKey, false, nil
 			}
 		}
+		if equal {
+			// Failed executions normally preserve the previous healthy checkpoint.
+			// It cannot attest that the newly recorded failed/partial turn is in
+			// provider context. Rehydrating on that same checkpoint is also unsafe.
+			return key, false, conflict("agui.history_unrecoverable",
+				"checkpoint cannot attest the latest failed or incomplete turn; resolve to a fresh key")
+		}
 		return key, false, conflict("agui.history_diverged", "client message IDs/roles differ from recorded history")
 	}
-	usable, err := agui.CheckpointUsable(ctx, runner)
-	return key, usable, err
+	return key, usable, nil
+}
+
+func (s *Session) requireFresh(ctx context.Context, key string) error {
+	records, err := s.opts.Recorder.Since(ctx, RecorderKey(key), 0)
+	if err != nil {
+		return err
+	}
+	if len(records) != 0 {
+		return conflict("agui.history_diverged", "history branch requires a fresh destination key")
+	}
+	return nil
 }
 
 // Handler returns the POST RunAgentInput endpoint. Disconnect cancels execution
@@ -198,9 +237,10 @@ func (s *Session) VerifyHistory(ctx context.Context, in *agui.RunAgentInput, run
 func (s *Session) Handler() http.Handler { return http.HandlerFunc(s.serveRun) }
 
 func writeError(w http.ResponseWriter, err error) {
-	status := 400
+	status := http.StatusInternalServerError
 	var in *agui.InputError
 	if errors.As(err, &in) {
+		status = http.StatusBadRequest
 		if in.Status != 0 {
 			status = in.Status
 		}
@@ -212,6 +252,8 @@ func writeError(w http.ResponseWriter, err error) {
 		status = 413
 	}
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Del("Connection")
+	w.Header().Del("X-Accel-Buffering")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]any{"error": in})
 }
@@ -219,6 +261,9 @@ func writeError(w http.ResponseWriter, err error) {
 func (s *Session) resolve(r *http.Request, access Access) (string, error) {
 	if s.opts.Resolve != nil {
 		return s.opts.Resolve(r, access)
+	}
+	if access.ThreadID == "" {
+		return "", nil
 	}
 	return ThreadKey(access.ThreadID), nil
 }
@@ -274,12 +319,40 @@ func (s *Session) serveRun(w http.ResponseWriter, r *http.Request) {
 			s.finishAdmission()
 		}
 	}()
-	reserved := ""
+	reservation := runReservation{}
 	defer func() {
-		if reserved != "" {
-			s.release(reserved)
+		if reservation.held {
+			s.release(reservation.key)
 		}
 	}()
+	prepared, err := s.prepareRun(r, &reservation)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	key := reservation.key
+	boundary, err := s.recordBoundary(r.Context(), key, prepared)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if s.opts.Unattended {
+		handedOff = true
+		reservation.held = false
+		s.unattendedResponse(w, r, key, prepared, boundary)
+		return
+	}
+	s.streamResponse(w, r, key, prepared, boundary)
+}
+
+type runReservation struct {
+	key  string
+	held bool
+}
+
+// prepareRun uses the shared preparation path while retaining admission ownership
+// through history verification and any authorized switch to a fresh key.
+func (s *Session) prepareRun(r *http.Request, reservation *runReservation) (*agui.PreparedRequest, error) {
 	prepared, err := agui.PrepareHTTPRequest(r, s.runner, agui.RequestOptions{
 		Input: s.opts.Input,
 		ResolveThreadKey: func(r *http.Request, in *agui.RunAgentInput) (string, error) {
@@ -287,13 +360,15 @@ func (s *Session) serveRun(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				return "", err
 			}
-			if in.ThreadID == "" {
-				return "", nil
+			if fixed, ok := s.runner.(*adaptor.Thread); ok {
+				key = fixed.Key()
 			}
-			if err := s.reserve(r.Context(), key, in.RunID); err != nil {
-				return "", err
+			if key != "" {
+				if err := s.reserve(r.Context(), key, in.RunID); err != nil {
+					return "", err
+				}
+				reservation.key, reservation.held = key, true
 			}
-			reserved = key
 			return key, nil
 		},
 		VerifyHistory: func(ctx context.Context, in *agui.RunAgentInput, runner adaptor.Runner, key string) (string, bool, error) {
@@ -302,40 +377,39 @@ func (s *Session) serveRun(w http.ResponseWriter, r *http.Request) {
 				return key, false, err
 			}
 			if next != key {
+				if _, fixed := s.runner.(*adaptor.Thread); fixed {
+					return key, false, conflict("agui.history_diverged", "a fixed Thread cannot switch keys; supply an Agent")
+				}
 				if err := s.reserve(ctx, next, in.RunID); err != nil {
 					return key, false, err
 				}
-				s.release(reserved)
-				reserved = next
+				if err := s.requireFresh(ctx, next); err != nil {
+					s.release(next)
+					return key, false, err
+				}
+				s.release(reservation.key)
+				reservation.key, reservation.held = next, true
 			}
 			return next, usable, nil
 		},
 	})
+
 	if err != nil {
-		writeError(w, err)
-		return
+		return nil, err
 	}
-	key := prepared.ThreadKey
-	if key == "" {
-		key = ThreadKey(prepared.Input.ThreadID)
-		if err := s.reserve(r.Context(), key, prepared.Input.RunID); err != nil {
-			writeError(w, err)
-			return
+	if !reservation.held {
+		// Missing public identity stays stateless. Its generated wire ID supplies
+		// only a private recorder/admission key, never a provider checkpoint key.
+		key := prepared.ThreadKey
+		if key == "" {
+			key = ThreadKey(prepared.Input.ThreadID)
 		}
-		reserved = key
+		if err := s.reserve(r.Context(), key, prepared.Input.RunID); err != nil {
+			return nil, err
+		}
+		reservation.key, reservation.held = key, true
 	}
-	boundary, err := s.recordBoundary(r.Context(), key, prepared)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	if s.opts.Unattended {
-		handedOff = true
-		reserved = ""
-		s.unattendedResponse(w, r, key, prepared, boundary)
-		return
-	}
-	s.streamResponse(w, r, key, prepared, boundary)
+	return prepared, nil
 }
 
 func (s *Session) recordBoundary(ctx context.Context, key string, prepared *agui.PreparedRequest) (sessionrecorder.EventRecord, error) {
@@ -348,13 +422,25 @@ func (s *Session) recordBoundary(ctx context.Context, key string, prepared *agui
 		"parentRunId": in.ParentRunID, "protocolVersion": in.ProtocolVersion,
 		"projectionVersion": ProjectionVersion, "diagnostics": prepared.Diagnostics,
 	}}
-	rec, err := s.opts.Recorder.Record(ctx, RecorderKey(key), boundary)
-	if err == nil {
-		s.mu.Lock()
-		s.boundaries[key] = rec.HostSeq
-		s.mu.Unlock()
+	if user := in.UserTurnEvents(in.RunID); len(user) > 0 {
+		boundary.Data["userMessageId"] = user[0].(adaptor.TextDelta).MessageID
+		submitted := in.Messages[len(in.Messages)-1]
+		submitted.ID = str(boundary.Data, "userMessageId")
+		boundary.Data["userMessage"] = submitted
 	}
-	return rec, err
+	frozen, err := freezeEvent(boundary)
+	var rec sessionrecorder.EventRecord
+	if err == nil {
+		rec, err = s.opts.Recorder.Record(ctx, RecorderKey(key), frozen)
+	}
+	if err != nil {
+		return rec, &agui.InputError{Status: http.StatusInternalServerError,
+			Code: "agui.recording_failed", Message: "run boundary recording failed"}
+	}
+	s.mu.Lock()
+	s.boundaries[key] = rec.HostSeq
+	s.mu.Unlock()
+	return rec, nil
 }
 
 func (s *Session) streamResponse(w http.ResponseWriter, r *http.Request, key string, prepared *agui.PreparedRequest, boundary sessionrecorder.EventRecord) {
@@ -397,6 +483,9 @@ func (s *Session) streamResponse(w http.ResponseWriter, r *http.Request, key str
 				return
 			}
 			deadline.Flush()
+			if deadline.Err() != nil {
+				return
+			}
 		case ev, ok := <-output:
 			if !ok {
 				return
@@ -405,6 +494,9 @@ func (s *Session) streamResponse(w http.ResponseWriter, r *http.Request, key str
 				return
 			}
 			deadline.Flush()
+			if deadline.Err() != nil {
+				return
+			}
 		}
 	}
 }
@@ -431,14 +523,21 @@ func (s *Session) drain(ctx context.Context, key string, in *agui.RunAgentInput,
 	}
 	send(p.apply(boundary))
 	failed := false
-	record := func(ev adaptor.Event) {
+	record := func(ev adaptor.Event, submittedUser bool) {
 		if failed {
 			return
 		}
 		// Persist terminal state even after request cancellation, with bounded I/O.
 		writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
-		rec, err := s.opts.Recorder.Record(writeCtx, RecorderKey(key), ev)
+		// Freeze the recorder's typed JSON representation before giving the host
+		// the live approval responder. In-memory and reopened JSONL projections
+		// must see the same values, and Observe must not mutate stored history.
+		frozen, err := freezeEvent(ev)
+		var rec sessionrecorder.EventRecord
+		if err == nil {
+			rec, err = s.opts.Recorder.Record(writeCtx, RecorderKey(key), frozen)
+		}
 		if err != nil {
 			failed = true
 			s.mu.Lock()
@@ -455,22 +554,38 @@ func (s *Session) drain(ctx context.Context, key string, in *agui.RunAgentInput,
 		// @ag-ui/client 1.0.3 default apply (Se): START reuses an existing ID;
 		// CONTENT appends to its content. The POST client already owns this user
 		// message, so echoing the recorded triple would double its text.
-		if t, ok := ev.(adaptor.TextDelta); ok && t.Role == adaptor.RoleUser {
+		if submittedUser {
 			return
 		}
 		send(es)
 	}
 	for _, ev := range in.UserTurnEvents(in.RunID) {
-		record(ev)
+		ev = adaptor.WithEventMeta(ev, adaptor.EventMeta{
+			RunID: stream.RunID(), ThreadKey: key, Time: boundary.RecordedAt,
+		})
+		record(ev, true)
 	}
 	text := false
+	var sourceErr error
 	for ev := range stream.Events() {
-		if t, ok := ev.(adaptor.TextDelta); ok && t.Role != adaptor.RoleUser && strings.TrimSpace(t.Text) != "" {
+		if n, ok := ev.(adaptor.Notice); ok && (n.Kind == BoundaryKind || n.Kind == TerminalKind) {
+			sourceErr = errors.New("source event used a reserved AG-UI session Notice kind")
+			stream.Cancel()
+		}
+		if sourceErr != nil {
+			continue
+		}
+		if t, ok := ev.(adaptor.TextDelta); ok && t.Role != adaptor.RoleUser &&
+			t.MessageID != "" && t.Phase != adaptor.PhaseStart && t.Phase != adaptor.PhaseEnd &&
+			strings.TrimSpace(t.Text) != "" {
 			text = true
 		}
-		record(ev)
+		record(ev, false)
 	}
 	result, runErr := stream.Result()
+	if sourceErr != nil {
+		runErr = &adaptor.RunError{Reason: "agui.reserved_notice", Message: sourceErr.Error()}
+	}
 	var business *adaptor.RunError
 	if result == nil && errors.As(runErr, &business) {
 		result = business.Result
@@ -482,7 +597,7 @@ func (s *Session) drain(ctx context.Context, key string, in *agui.RunAgentInput,
 			adaptor.TextDelta{MessageID: id, Phase: adaptor.PhaseContent, Text: result.Text},
 			adaptor.TextDelta{MessageID: id, Phase: adaptor.PhaseEnd},
 		} {
-			record(ev)
+			record(ev, false)
 		}
 	}
 	code, message := "", ""
@@ -493,14 +608,36 @@ func (s *Session) drain(ctx context.Context, key string, in *agui.RunAgentInput,
 			code = "run.cancelled"
 		} else if errors.As(runErr, &business) {
 			code = string(business.Reason)
-			message = business.Message
+			if code == "" {
+				code = "run.error"
+			}
+			if business.Message != "" {
+				message = business.Message
+			}
 		}
 	}
-	record(adaptor.Notice{Kind: TerminalKind, Data: map[string]any{"code": code, "message": message}})
+	record(adaptor.WithEventMeta(
+		adaptor.Notice{Kind: TerminalKind, Data: map[string]any{"code": code, "message": message}},
+		adaptor.EventMeta{RunID: stream.RunID(), ThreadKey: key},
+	), false)
+}
+
+func freezeEvent(ev adaptor.Event) (adaptor.Event, error) {
+	raw, err := json.Marshal(sessionrecorder.EventRecord{Event: ev})
+	if err != nil {
+		return nil, err
+	}
+	var frozen sessionrecorder.EventRecord
+	if err := json.Unmarshal(raw, &frozen); err != nil {
+		return nil, err
+	}
+	return frozen.Event, nil
 }
 
 // ThreadKey returns the default collision-free public-thread mapping.
-func ThreadKey(threadID string) string { return bridgekey.Encode("agui", threadID) }
+func ThreadKey(threadID string) string {
+	return bridgekey.Encode("agui", threadID)
+}
 
 // Active reports whether this Session currently owns a run for key.
 func (s *Session) Active(key string) bool {
@@ -510,5 +647,6 @@ func (s *Session) Active(key string) bool {
 }
 
 // RecorderKey maps an opaque Thread key to a portable recorder storage key.
-// SHA-256 keeps the key within the recorder backend filename contract.
+// This stable version-1 mapping is independent of ProjectionVersion. SHA-256
+// keeps the key within the recorder backend filename contract.
 func RecorderKey(key string) string { return fmt.Sprintf("agui-%x", sha256.Sum256([]byte(key))) }

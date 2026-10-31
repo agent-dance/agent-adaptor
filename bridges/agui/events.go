@@ -44,7 +44,8 @@ import (
 // events. Create one per run via NewEventTranslator (or let Events do it) so
 // state never leaks between runs.
 type EventTranslator struct {
-	mu sync.Mutex
+	eventClock func() time.Time
+	mu         sync.Mutex
 
 	threadID  string
 	runID     string

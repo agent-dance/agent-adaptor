@@ -52,6 +52,13 @@ func recordEvent(
 	t *testing.T, r sessionrecorder.EventRecorder, key string, ev adaptor.Event,
 ) sessionrecorder.EventRecord {
 	t.Helper()
+	if n, ok := ev.(adaptor.Notice); ok && n.Kind == BoundaryKind {
+		if n.Data == nil {
+			n.Data = map[string]any{}
+		}
+		n.Data["projectionVersion"] = ProjectionVersion
+		ev = n
+	}
 	rec, err := r.Record(context.Background(), RecorderKey(key), ev)
 	if err != nil {
 		t.Fatal(err)

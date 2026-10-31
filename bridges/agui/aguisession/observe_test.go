@@ -333,7 +333,7 @@ func TestCompletedHTTPObservationAndAuthorization(t *testing.T) {
 	}
 	read := httptest.NewRecorder()
 	s.ObserveHandler().ServeHTTP(read, httptest.NewRequest("GET", "/observe?thread_id=t&after=0", nil))
-	if !strings.Contains(read.Body.String(), "RUN_FINISHED") || !strings.Contains(read.Body.String(), `"messageId":"u"`) {
+	if !strings.Contains(read.Body.String(), "RUN_FINISHED") || !strings.Contains(read.Body.String(), `"id":"u","role":"user"`) {
 		t.Fatal(read.Body)
 	}
 	for _, ev := range wireEvents(t, read) {
@@ -365,7 +365,7 @@ func TestRecordingFailureAfterConsumedCursor(t *testing.T) {
 	}}, Options{Recorder: recorder(t)})
 	key := ThreadKey("t")
 	rec, err := s.opts.Recorder.Record(context.Background(), RecorderKey(key), adaptor.Notice{
-		Kind: BoundaryKind, Data: map[string]any{"threadId": "t", "runId": "r"},
+		Kind: BoundaryKind, Data: map[string]any{"threadId": "t", "runId": "r", "projectionVersion": ProjectionVersion},
 	})
 	if err != nil {
 		t.Fatal(err)

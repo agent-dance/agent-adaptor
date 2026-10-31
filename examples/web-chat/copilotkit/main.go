@@ -16,15 +16,15 @@
 //     - POST /decision/resolve                   → host-side resolve
 //
 // One *adaptor.Agent serves one Thread per browser threadId and one Stream per
-// request. A single range over stream.Events(), followed by stream.Result(),
-// handles operational events, approvals, and the terminal result.
+// request. The aguisession bridge owns the single drain, recording,
+// projection, approvals and terminal result. HistoryFallback rehydrates later
+// prompts explicitly; this example does not persist provider checkpoints.
 //
 // Layout:
 //
 //	examples/web-chat/copilotkit/
 //	├── main.go                 # bootstrap
 //	├── server.go               # HTTP host wiring
-//	├── agui_run_session.go     # AG-UI stream forwarder + tee
 //	├── thread_store.go         # memory / JSONL recovery store
 //	└── web/                    # Next.js + CopilotKit frontend, port 3000
 //
