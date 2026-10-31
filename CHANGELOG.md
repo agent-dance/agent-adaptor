@@ -41,6 +41,16 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- AG-UI run identities stay fixed after the opening boundary; step lifecycles
+  close before terminal events and empty custom notices include their payload.
+- AG-UI child tool ownership stays consistent with its opener, and subagent
+  activity patches no longer change after subsequent tracker updates.
+- Stateless AG-UI Agents accept public thread IDs without requiring a store;
+  opt-in history fallback now executes on those Agents. Host/storage preparation
+  failures report HTTP 500 instead of being misclassified as malformed input.
+- Opaque AG-UI metadata preserves JSON number precision and large values.
+  Fractional exit codes are not rounded into integers, and empty command output
+  retains its exit-code suffix.
 - Tool result failure/exit status survives recorded numeric representations,
   with explicit metadata and assistant-message parent attribution.
 

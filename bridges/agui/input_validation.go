@@ -22,7 +22,7 @@ type Tool struct {
 	Description string `json:"description"`
 	// Parameters preserves the optional, opaque parameter schema.
 	Parameters json.RawMessage `json:"parameters,omitempty"`
-	// Metadata carries application-defined tool information.
+	// Metadata carries application-defined tool information; decoded numbers use json.Number.
 	Metadata map[string]any `json:"metadata,omitempty"`
 }
 
@@ -52,7 +52,7 @@ type ToolCall struct {
 	Function FunctionCall `json:"function"`
 	// EncryptedValue preserves an opaque provider artefact.
 	EncryptedValue string `json:"encryptedValue,omitempty"`
-	// Metadata carries application-defined call information.
+	// Metadata carries application-defined call information; decoded numbers use json.Number.
 	Metadata map[string]any `json:"metadata,omitempty"`
 }
 
@@ -64,7 +64,7 @@ type ResumeEntry struct {
 	Status string `json:"status"`
 	// Payload preserves the opaque answer value.
 	Payload json.RawMessage `json:"payload,omitempty"`
-	// Metadata carries application-defined response information.
+	// Metadata carries application-defined response information; decoded numbers use json.Number.
 	Metadata map[string]any `json:"metadata,omitempty"`
 }
 
@@ -153,7 +153,9 @@ func decodeInput(body []byte, in *RunAgentInput) error {
 	cleaned, _ := json.Marshal(value)
 	type plain RunAgentInput
 	var decoded plain
-	if err := json.Unmarshal(cleaned, &decoded); err != nil {
+	cleanDecoder := json.NewDecoder(bytes.NewReader(cleaned))
+	cleanDecoder.UseNumber() // Opaque metadata must not round or overflow JSON numbers.
+	if err := cleanDecoder.Decode(&decoded); err != nil {
 		return inputError("agui.invalid_input", "", err.Error())
 	}
 	decoded.UnknownMembers = in.UnknownMembers
@@ -374,21 +376,11 @@ type InputState struct {
 // PrepareInput selects only the trailing user text. The host/session layer
 // verifies history and supplies checkpoint availability through state.
 func PrepareInput(in *RunAgentInput, opts InputOptions, state InputState) (string, []Diagnostic, error) {
-	if in == nil {
-		return "", nil, inputError("agui.invalid_input", "", "nil input")
-	}
-	if len(in.Resume) > 0 {
-		return "", nil, inputError("agui.resume_unsupported", "/resume", "interrupt resume is unsupported")
+	prompt, err := executableText(in)
+	if err != nil {
+		return "", nil, err
 	}
 	count := len(in.Messages)
-	if count == 0 || in.Messages[count-1].Role != "user" {
-		return "", nil, inputError("agui.trailing_user_required", "/messages",
-			"the trailing message must be user; frontend tool results are unsupported")
-	}
-	prompt := contentAsString(in.Messages[count-1].Content)
-	if strings.TrimSpace(prompt) == "" {
-		return "", nil, inputError("agui.no_executable_text", "/messages", "trailing user has no executable text")
-	}
 
 	warnings := append([]Diagnostic(nil), in.Diagnostics...)
 	warn := func(code, path, message string) {
@@ -495,4 +487,25 @@ func emptyState(raw json.RawMessage) bool {
 	default:
 		return false
 	}
+}
+
+// executableText checks execution policy before host callbacks or checkpoint I/O.
+func executableText(in *RunAgentInput) (string, error) {
+	if in == nil {
+		return "", inputError("agui.invalid_input", "", "nil input")
+	}
+	if len(in.Resume) > 0 {
+		return "", inputError("agui.resume_unsupported", "/resume", "interrupt resume is unsupported")
+	}
+	count := len(in.Messages)
+	if count == 0 || in.Messages[count-1].Role != "user" {
+		return "", inputError("agui.trailing_user_required", "/messages",
+			"the trailing message must be user; frontend tool results are unsupported")
+	}
+	prompt := contentAsString(in.Messages[count-1].Content)
+	if strings.TrimSpace(prompt) == "" {
+		return "", inputError("agui.no_executable_text", "/messages", "trailing user has no executable text")
+	}
+
+	return prompt, nil
 }

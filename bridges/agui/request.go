@@ -19,6 +19,7 @@ type RequestOptions struct {
 	// OnAGUIRequest observes input before execution preparation.
 	OnAGUIRequest func(*http.Request, *RunAgentInput) error
 	// VerifyHistory attests history compatibility and checkpoint usability.
+	// It receives the actual key for a fixed Thread, which cannot be rebound.
 	VerifyHistory func(context.Context, *RunAgentInput, adaptor.Runner, string) (string, bool, error)
 }
 
@@ -37,9 +38,17 @@ type PreparedRequest struct {
 }
 
 // PrepareHTTPRequest decodes, resolves and prepares one AG-UI invocation.
+// Agents without a ThreadStore execute statelessly; accepting prior history
+// still requires HistoryFallback or a host verifier. Fixed Thread runners remain
+// host-bound. Execution-policy errors are rejected before callbacks or store I/O.
+// Hooks can return InputError to choose an HTTP status; other host/storage
+// failures return a wrapping InputError with status 500 and code agui.request_failed.
 func PrepareHTTPRequest(r *http.Request, runner adaptor.Runner, opts RequestOptions) (*PreparedRequest, error) {
 	input, err := DecodeHTTPRequest(r)
 	if err != nil {
+		return nil, err
+	}
+	if _, err := executableText(input); err != nil {
 		return nil, err
 	}
 	if input.RunID == "" {
@@ -52,39 +61,58 @@ func PrepareHTTPRequest(r *http.Request, runner adaptor.Runner, opts RequestOpti
 	if opts.ResolveThreadKey != nil {
 		request.ThreadKey, err = opts.ResolveThreadKey(r, input)
 		if err != nil {
-			return nil, err
+			return nil, requestPreparationError(err)
 		}
 	}
 	if opts.OnAGUIRequest != nil {
 		if err := opts.OnAGUIRequest(r, input); err != nil {
-			return nil, err
+			return nil, requestPreparationError(err)
 		}
 	}
 	request.Target = runnerForKey(runner, request.ThreadKey)
+	// A fixed Thread's key comes from the host, regardless of wire identity.
+	if thread, ok := runner.(*adaptor.Thread); ok {
+		request.ThreadKey = thread.Key()
+	}
 	state := InputState{}
-	// A verifier sees every threaded request, because an empty prior history
-	// can itself diverge from recorded history. Checkpoint reads and ResumeOnly
-	// apply only when the client supplied prior messages: a lone user turn keeps
-	// the Thread's continue-or-start semantics.
 	hasPrior := len(input.Messages) > 1
-	if input.ThreadID != "" && (opts.VerifyHistory != nil || hasPrior) {
-		if opts.VerifyHistory != nil {
-			request.ThreadKey, state.CheckpointUsable, err = opts.VerifyHistory(
-				r.Context(), input, request.Target, request.ThreadKey,
-			)
-			request.Target = runnerForKey(runner, request.ThreadKey)
-		} else if thread, ok := request.Target.(*adaptor.Thread); ok {
-			state.CheckpointUsable, err = CheckpointUsable(r.Context(), thread)
+	stateless := false
+	var checkpointErr error
+	if thread, ok := request.Target.(*adaptor.Thread); ok {
+		_, checkpointErr = thread.Checkpoint(r.Context())
+		state.CheckpointUsable = checkpointErr == nil
+		if _, isAgent := runner.(*adaptor.Agent); isAgent &&
+			errors.Is(checkpointErr, adaptor.ErrThreadStoreRequired) {
+			// A public threadId does not require stateful execution when the
+			// Agent has no store. History still needs explicit fallback.
+			stateless = true
+			request.Target = runner
 		}
+	}
+	// The verifier sees every threaded request, including an empty history
+	// that could diverge from recorded history. A resolver may bind a legacy
+	// request even when its public threadId was absent.
+	if request.ThreadKey != "" && opts.VerifyHistory != nil {
+		key, usable, err := opts.VerifyHistory(r.Context(), input, request.Target, request.ThreadKey)
 		if err != nil {
-			return nil, err
+			return nil, requestPreparationError(err)
 		}
-		// Compatibility is fully checked inside the sole execution pipeline.
-		// ResumeOnly prevents that later check from silently dropping history.
-		if hasPrior && state.CheckpointUsable && request.ThreadKey != "" {
-			if agent, ok := runner.(*adaptor.Agent); ok {
-				request.Target = agent.Thread(request.ThreadKey, adaptor.ResumeOnly())
-			}
+		if fixed, ok := runner.(*adaptor.Thread); ok && key != fixed.Key() {
+			return nil, &InputError{Code: "agui.history_diverged", Status: http.StatusConflict,
+				Message: "a fixed Thread cannot switch keys; supply an Agent to resolve history branches"}
+		}
+		request.ThreadKey, state.CheckpointUsable = key, usable
+		if !stateless {
+			request.Target = runnerForKey(runner, key)
+		}
+	} else if hasPrior && checkpointErr != nil && !checkpointUnavailable(checkpointErr) {
+		return nil, requestPreparationError(checkpointErr)
+	}
+	// Compatibility is fully checked inside the sole execution pipeline.
+	// ResumeOnly prevents that later check from silently dropping history.
+	if hasPrior && state.CheckpointUsable && request.ThreadKey != "" && !stateless {
+		if agent, ok := runner.(*adaptor.Agent); ok {
+			request.Target = agent.Thread(request.ThreadKey, adaptor.ResumeOnly())
 		}
 	}
 	request.Prompt, request.Diagnostics, err = PrepareInput(input, opts.Input, state)
@@ -118,6 +146,13 @@ func CheckpointUsable(ctx context.Context, runner adaptor.Runner) (bool, error) 
 	if err == nil {
 		return true, nil
 	}
+	if checkpointUnavailable(err) {
+		return false, nil
+	}
+	return false, err
+}
+
+func checkpointUnavailable(err error) bool {
 	for _, missing := range []error{
 		adaptor.ErrThreadNotFound,
 		adaptor.ErrThreadCheckpointMissing,
@@ -125,8 +160,20 @@ func CheckpointUsable(ctx context.Context, runner adaptor.Runner) (bool, error) 
 		adaptor.ErrThreadStoreRequired,
 	} {
 		if errors.Is(err, missing) {
-			return false, nil
+			return true
 		}
 	}
-	return false, err
+	return false
+}
+
+// Hooks can return InputError to choose a transport status. Other preparation
+// failures are host/storage failures, not malformed client input.
+func requestPreparationError(err error) error {
+	var input *InputError
+	if errors.As(err, &input) {
+		return err
+	}
+	return errors.Join(&InputError{
+		Code: "agui.request_failed", Message: err.Error(), Status: http.StatusInternalServerError,
+	}, err)
 }

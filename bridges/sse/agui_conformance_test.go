@@ -3,6 +3,7 @@ package sse
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -260,5 +261,28 @@ func TestAGUIHandlerGeneratesLegacyWireIdentityWithoutThreadBinding(t *testing.T
 			t.Fatalf("legacy IDs were not generated: %v", start)
 		}
 		previousRun, previousThread = runID, threadID
+	}
+}
+
+func TestAGUIHandlerHostPreparationErrorStatus(t *testing.T) {
+	for _, tc := range []struct {
+		err    error
+		status int
+		code   string
+	}{
+		{errors.New("storage offline"), 500, "agui.request_failed"},
+		{&agui.InputError{Code: "host.forbidden", Message: "denied", Status: 403}, 403, "host.forbidden"},
+	} {
+		runner := &conformanceRunner{}
+		w := httptest.NewRecorder()
+		Handler(runner, Options{OnAGUIRequest: func(*http.Request, *agui.RunAgentInput) error {
+			return tc.err
+		}}).ServeHTTP(w, httptest.NewRequest("POST", "/", strings.NewReader(
+			`{"threadId":"t","messages":[{"id":"u","role":"user","content":"go"}]}`)))
+		if w.Code != tc.status || runner.calls != 0 ||
+			!strings.Contains(w.Body.String(), tc.code) ||
+			w.Header().Get("Content-Type") != "application/json" {
+			t.Fatalf("status=%d calls=%d body=%s", w.Code, runner.calls, w.Body)
+		}
 	}
 }

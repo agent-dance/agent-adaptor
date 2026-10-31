@@ -3,6 +3,7 @@ package agui
 import (
 	"encoding/json"
 	"math"
+	"math/big"
 	"strconv"
 	"strings"
 	"time"
@@ -43,6 +44,7 @@ func WithInputDiagnostics(d []Diagnostic) EventTranslatorOption {
 // select the default 64 KiB limit. Truncation never splits a UTF-8 code point.
 func WithToolContentLimit(n int) EventTranslatorOption {
 	return func(t *EventTranslator) {
+		t.toolContentLimit = 64 << 10
 		if n > 0 {
 			t.toolContentLimit = n
 		}
@@ -66,6 +68,10 @@ func (e *RunStartedEvent) ToJSON() ([]byte, error) {
 }
 
 func (t *EventTranslator) startedEvent() events.Event {
+	// Freeze even fallback identities: later metadata is audit information,
+	// never a reason to change the already-published run envelope.
+	t.threadID = t.threadOrDefault()
+	t.runID = t.runOrDefault()
 	e := &RunStartedEvent{
 		RunStartedEvent: events.NewRunStartedEvent(t.threadOrDefault(), t.runOrDefault()),
 		ProtocolVersion: "1.0",
@@ -144,21 +150,35 @@ func exitCode(m map[string]any) (int64, bool) {
 			return int64(n), true
 		}
 	case json.Number:
+		if !json.Valid([]byte(n)) {
+			return 0, false
+		}
 		i, err := n.Int64()
 		if err == nil {
 			return i, true
 		}
-		f, err := n.Float64()
-		if err == nil {
-			return exitCode(map[string]any{"exitCode": f})
+		// Parse decimal/exponent forms exactly. Float64 would round a
+		// fractional exit code such as 1.00000000000000000001 to 1.
+		// Bound exponent expansion before constructing an exact rational.
+		// Outside this range a nonzero value cannot be an int64 integer.
+		mantissa, exponent, hasExponent := strings.Cut(strings.ToLower(string(n)), "e")
+		if hasExponent {
+			e, err := strconv.ParseInt(exponent, 10, 64)
+			if err != nil || e > int64(len(mantissa)+19) || e < -int64(len(mantissa)) {
+				return 0, false
+			}
+		}
+		if exact, ok := new(big.Rat).SetString(string(n)); ok && exact.IsInt() && exact.Num().IsInt64() {
+			return exact.Num().Int64(), true
 		}
 	}
 	return 0, false
 }
 
+// toolResultContent inlines known text payloads in a stable preference order.
 func toolResultContent(m map[string]any) string {
 	for _, k := range []string{"text", "content", "output"} {
-		if text, ok := m[k].(string); ok && text != "" {
+		if text, ok := m[k].(string); ok && (text != "" || k == "output") {
 			if k == "output" {
 				if n, ok := exitCode(m); ok {
 					text += "\n[exit=" + strconv.FormatInt(n, 10) + "]"
@@ -231,15 +251,22 @@ func (t *EventTranslator) toolResultEvent(id string, m map[string]any) events.Ev
 
 func (t *EventTranslator) toolStartEvent(id, name string) events.Event {
 	e := events.NewToolCallStartEvent(id, name)
-	if t.lastAssistant != "" {
+	subagent := t.toolSubagent(id)
+	t.toolOwners[id] = subagent
+	// TextDelta belongs to the parent agent. A child tool cannot claim that
+	// message as its parent: the client enforces matching subagent ownership.
+	if t.lastAssistant != "" && subagent == "" {
 		parent := t.lastAssistant
 		e.ParentMessageID = &parent
 	}
-	e.SubagentRunID = t.toolSubagent(id)
+	e.SubagentRunID = subagent
 	return e
 }
 
 func (t *EventTranslator) toolSubagent(id string) string {
+	if owner, started := t.toolOwners[id]; started {
+		return owner
+	}
 	for _, key := range t.subagents.order {
 		s := t.subagents.states[key]
 		if _, ok := s.toolIndex[id]; ok {

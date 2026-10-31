@@ -3,6 +3,7 @@ package agui
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"time"
 
@@ -144,7 +145,8 @@ func (s *subagentActivityState) apply(update adaptor.SubagentUpdate) []aguievent
 			}
 			s.toolIndex[id] = len(s.content.ToolCalls)
 			s.content.ToolCalls = append(s.content.ToolCalls, call)
-			add("/toolCalls", s.content.ToolCalls)
+			// A previously returned patch must not share the mutable tracker slice.
+			add("/toolCalls", slices.Clone(s.content.ToolCalls))
 		}
 	case "subagent.tool_call.args":
 		if call := s.toolCall(update); call != nil {
@@ -152,18 +154,18 @@ func (s *subagentActivityState) apply(update adaptor.SubagentUpdate) []aguievent
 			if call.Args == nil && update.Delta != "" {
 				call.Args = map[string]any{"delta": update.Delta}
 			}
-			add("/toolCalls", s.content.ToolCalls)
+			add("/toolCalls", slices.Clone(s.content.ToolCalls))
 		}
 	case "subagent.tool_call.result":
 		if call := s.toolCall(update); call != nil {
 			call.Result = update.Data["result"]
 			call.Status = "completed"
-			add("/toolCalls", s.content.ToolCalls)
+			add("/toolCalls", slices.Clone(s.content.ToolCalls))
 		}
 	case "subagent.tool_call.end":
 		if call := s.toolCall(update); call != nil {
 			call.Status = "completed"
-			add("/toolCalls", s.content.ToolCalls)
+			add("/toolCalls", slices.Clone(s.content.ToolCalls))
 		}
 	case "subagent.status", "subagent.custom", "subagent.stream.dropped", "subagent.artifact":
 		if update.Delta != "" {

@@ -39,7 +39,9 @@ root API or internal-engine dependency is introduced. Missing, corrupt, or
 codec-incompatible checkpoints default to HTTP 409 `agui.history_unrecoverable`.
 Stateless hosts must explicitly enable `InputOptions.HistoryFallback` to accept
 complete multi-turn client history, or configure a ThreadStore and resumable
-Thread. The bundled SSE examples opt into fallback for unavailable checkpoints.
+Thread. An Agent without a ThreadStore runs statelessly even when the request supplies
+a public threadId. A fixed Thread still requires its host-configured store.
+The bundled SSE examples opt into fallback for unavailable checkpoints.
 `HistoryFallback` prepends compact JSON of prior user/assistant text and assistant
 tool-call summaries between `<agent-adaptor-history>` and
 `</agent-adaptor-history>`. This is text rehydration, not faithful provider state;
@@ -66,7 +68,7 @@ started. The frozen schema does not permit top-level identity fields on
 `RUN_ERROR`; its public identity is in `metadata.agentAdaptor.threadId/runId`.
 SDK run ID, provider thread ID and bridge key appear as `sdkRunId`,
 `providerThreadId`, `threadKey` in the same metadata namespace on boundaries
-when observed. Public IDs never become provider resume IDs.
+when observed. Public IDs never become provider resume IDs. Fallback identities also remain fixed after RUN_STARTED.
 
 The default mapping is `bridgekey.Encode("agui", threadId)`.
 `ResolveThreadKey` lets the host authorize/map identity before execution. A client
@@ -103,6 +105,17 @@ Malformed input returns HTTP 400 JSON `{error: {code, message, path}}` before
 `agui.trailing_user_required`, `agui.no_executable_text`,
 `agui.resume_unsupported`. History rejection uses HTTP 409. Oversized requests
 retain the handler's HTTP 413 response and 4 MiB limit.
+Execution-policy errors (including resume and trailing-message rejection) are
+checked before host callbacks or checkpoint I/O. Hooks may return an InputError
+with a chosen HTTP status, for example 403 for denied access. Other host-hook or
+checkpoint-storage failures return 500 `agui.request_failed`, preserving the
+original Go error chain. VerifyHistory sees resolver-bound legacy requests and
+the actual key of an already-bound Thread; it cannot rebind that fixed Thread.
+
+Decoded metadata preserves opaque JSON numbers as `json.Number`, avoiding
+float64 rounding and overflow. The forwardedProps value retains its original
+bytes; unknown members are captured by JSON Pointer and stripped only from
+schema-defined closed objects, including nested unions and composed messages.
 
 ## Tool output and projection hooks
 
@@ -136,6 +149,18 @@ a hook that drops every content event still preserves the run boundaries. A host
 expand events into host-supplied cards/activities. Hooks must preserve valid
 lifecycles, must not call back into their translator, and should be deterministic
 so the same policy can be reused when projecting recorded history.
+
+Tool attribution is frozen by its opener. A known child tool carries
+subagentRunId without claiming a parent-agent message; later tracker discovery
+cannot change an open call's owner. Closing an older assistant message does not
+replace the most recent assistant parent. Step notices synthesize missing
+openers, deduplicate active starts, and close unfinished steps before the run
+terminal. Empty CUSTOM notices carry `value: {}`.
+
+Command output keeps `[exit=N]` even when stdout is empty. Decimal and exponent
+exit-code numbers are checked exactly; fractional, non-finite and out-of-range
+values are not coerced to integer exit codes. Truncation metadata counts the
+content bytes before truncation, including any exit suffix.
 
 ## What the host still implements
 
@@ -350,3 +375,16 @@ The same late-diagnosis rule applies if a later boundary proves an already
 acknowledged run was abandoned: the observer reports the unsequenced failure
 and closes before delivering a new RUN_STARTED with an unmatched old lifecycle.
 A new snapshot can then join the replacement run at its complete boundary.
+
+
+## Offline protocol fixture check
+
+Run `node bridges/agui/testdata/verify-client.mjs` to validate the golden handler
+trace against the frozen schema, `@ag-ui/client` 1.0.3's verifier and HttpAgent
+message folding. It uses the existing assistant-ui node_modules read-only and
+never opens a socket. `AGUI_NODE_MODULES` can point to another existing install.
+The script registers the standard `$anchor` annotation with Ajv and disables its
+`strictRequired` schema lint for allOf-inherited properties; instance validation
+retains every schema constraint. No package install or frontend change is needed.
+The Go handler golden test independently compares the live normalized trace to
+the fixture; regenerate only after reviewing protocol changes.

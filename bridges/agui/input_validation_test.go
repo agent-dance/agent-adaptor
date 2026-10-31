@@ -3,6 +3,7 @@ package agui
 import (
 	"encoding/json"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -247,4 +248,93 @@ func TestContentPartDiagnosticsFollowExecutionProjection(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestNestedUnknownMembersAndOpaqueValues(t *testing.T) {
+	body := `{"protocolVersion":"1.0","threadId":"t","runId":"r","messages":[
+		{"id":"assistant","role":"assistant","extra":1,"metadata":{"opaque":{"extra":true}},
+		 "toolCalls":[{"id":"call","type":"function","extra":2,
+		  "function":{"name":"f","arguments":"{}","extra":3}}]},
+		{"id":"user","role":"user","extra":4,"content":[
+		 {"type":"image","extra":5,"source":{"type":"url","value":"x","extra":6}},
+		 {"type":"text","text":"go","extra":7,"metadata":{"extra":8}}
+		]}],
+		"tools":[{"name":"f","description":"f","extra":9,"parameters":{"extra":10}}],
+		"context":[{"description":"c","value":"v","extra":11}],
+		"forwardedProps":{"extra":12},"state":{"extra":13},
+		"resume":[{"interruptId":"i","status":"resolved","extra":14,"payload":{"extra":15}}]
+	}`
+	in, err := decodeInputForTest(t, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{
+		"/messages/0/extra", "/messages/0/toolCalls/0/extra",
+		"/messages/0/toolCalls/0/function/extra", "/messages/1/extra",
+		"/messages/1/content/0/extra", "/messages/1/content/0/source/extra",
+		"/messages/1/content/1/extra", "/tools/0/extra", "/context/0/extra", "/resume/0/extra",
+	} {
+		if _, found := in.UnknownMembers[path]; !found {
+			t.Errorf("missing nested unknown %s: %v", path, in.UnknownMembers)
+		}
+	}
+	if len(in.UnknownMembers) != 10 {
+		t.Fatalf("stripped opaque data: %v", in.UnknownMembers)
+	}
+}
+
+func TestKnownInvalidMembersAreNotStripped(t *testing.T) {
+	for _, message := range []string{
+		`{"id":"u","role":[],"content":"go"}`,
+		`{"id":"u","role":"user","content":[{"type":"image","source":{"type":"url","value":1}}]}`,
+		`{"id":"u","role":"user","content":[{"type":"text"}]}`,
+		`{"id":"u","role":"user","content":[{"text":"missing type"}]}`,
+		`{"id":"u","role":"user","content":[{"type":null,"text":"go"}]}`,
+		`{"id":"a","role":"assistant","content":[{"type":"text","text":"not allowed"}]}`,
+	} {
+		if _, err := decodeInputForTest(t, `{"messages":[`+message+`]}`); err == nil {
+			t.Errorf("accepted known schema violation: %s", message)
+		}
+	}
+}
+
+func TestOpaqueNumbersDoNotLosePrecisionOrRejectValidJSON(t *testing.T) {
+	in, err := decodeInputForTest(t, `{"messages":[{"id":"u","role":"user","content":"go",
+		"metadata":{"large":1e1000,"exact":9007199254740993}}]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := in.Messages[0].Metadata["exact"]; got != json.Number("9007199254740993") {
+		t.Fatalf("opaque number changed: %v (%T)", got, got)
+	}
+}
+
+// FuzzDecodeInput guards the schema-directed stripping pass against arbitrary
+// JSON shapes and verifies deterministic warnings and unknown-member capture.
+func FuzzDecodeInput(f *testing.F) {
+	for _, body := range []string{
+		`{"messages":[{"id":"u","role":"user","content":"go"}]}`,
+		`{"messages":[{"id":"u","role":"user","content":[{"type":"future"},{"type":"text","text":"go"}]}]}`,
+		`{"messages":[{"id":"u","role":{},"content":null}]}`,
+		`{"messages":[],"forwardedProps":{"keep":[1,null]},"unknown":true}`,
+	} {
+		f.Add(body)
+	}
+	f.Fuzz(func(t *testing.T, body string) {
+		var first, second RunAgentInput
+		err := decodeInput([]byte(body), &first)
+		again := decodeInput([]byte(body), &second)
+		if (err == nil) != (again == nil) {
+			t.Fatalf("nondeterministic validation: %v / %v", err, again)
+		}
+		if err != nil {
+			return
+		}
+		a, _ := json.Marshal(first)
+		b, _ := json.Marshal(second)
+		if string(a) != string(b) || !reflect.DeepEqual(first.Diagnostics, second.Diagnostics) ||
+			!reflect.DeepEqual(first.UnknownMembers, second.UnknownMembers) {
+			t.Fatal("nondeterministic decoding")
+		}
+	})
 }

@@ -58,7 +58,9 @@ type EventTranslator struct {
 	activeText      map[string]bool
 	activeReason    map[string]bool
 	activeToolStart map[string]bool
-	assistantText   bool // non-empty assistant TEXT_MESSAGE_CONTENT was emitted
+	activeSteps     map[string]bool
+	toolOwners      map[string]string // attribution is fixed by each tool opener
+	assistantText   bool              // non-empty assistant TEXT_MESSAGE_CONTENT was emitted
 	subagents       *subagentTracker
 
 	decisionMode     DecisionMode
@@ -90,6 +92,8 @@ func NewEventTranslator(opts ...EventTranslatorOption) *EventTranslator {
 		activeText:       map[string]bool{},
 		activeReason:     map[string]bool{},
 		activeToolStart:  map[string]bool{},
+		activeSteps:      map[string]bool{},
+		toolOwners:       map[string]string{},
 		subagents:        newSubagentTracker(),
 		decisionMode:     DecisionAsToolCall,
 		toolContentLimit: 64 << 10,
@@ -197,7 +201,7 @@ func (t *EventTranslator) Translate(ev adaptor.Event) (out []aguievents.Event) {
 	if meta.Source != nil && meta.Source.ThreadID != "" {
 		t.providerThreadID = meta.Source.ThreadID
 	}
-	if !t.publicIdentity && t.threadID == "" && meta.ThreadKey != "" {
+	if !t.publicIdentity && !t.runStart && t.threadID == "" && meta.ThreadKey != "" {
 		t.threadID = meta.ThreadKey
 	}
 
@@ -362,7 +366,7 @@ func (t *EventTranslator) translateNonTerminalLocked(ev adaptor.Event) []aguieve
 }
 
 func (t *EventTranslator) textDeltaLocked(e adaptor.TextDelta) []aguievents.Event {
-	if e.Role != adaptor.RoleUser && e.MessageID != "" {
+	if e.Role != adaptor.RoleUser && e.MessageID != "" && e.Phase != adaptor.PhaseEnd {
 		t.lastAssistant = e.MessageID
 	}
 	if e.MessageID == "" {
@@ -499,9 +503,24 @@ func (t *EventTranslator) noticeLocked(e adaptor.Notice) []aguievents.Event {
 		phase, _ := e.Data["phase"].(string)
 		switch phase {
 		case "started":
+			if t.activeSteps[e.Text] {
+				return nil
+			}
+			t.activeSteps[e.Text] = true
 			return []aguievents.Event{aguievents.NewStepStartedEvent(e.Text)}
 		case "finished":
-			return []aguievents.Event{aguievents.NewStepFinishedEvent(e.Text)}
+			active, seen := t.activeSteps[e.Text]
+			if seen && !active {
+				return nil
+			}
+			var out []aguievents.Event
+			if !seen {
+				out = append(out, aguievents.NewStepStartedEvent(e.Text))
+			}
+			// Retain a closed entry to distinguish duplicate ends from
+			// an end-only step that needs a synthesized opener.
+			t.activeSteps[e.Text] = false
+			return append(out, aguievents.NewStepFinishedEvent(e.Text))
 		}
 		return []aguievents.Event{customEvent(e.Kind, noticeValue(e))}
 
@@ -683,13 +702,19 @@ func (t *EventTranslator) closeAllOpenLifecyclesLocked() []aguievents.Event {
 		out = append(out, aguievents.NewToolCallEndEvent(id))
 	}
 	t.activeToolStart = map[string]bool{}
+	for _, name := range sortedActiveIDs(t.activeSteps) {
+		out = append(out, aguievents.NewStepFinishedEvent(name))
+	}
+	t.activeSteps = map[string]bool{}
 	return out
 }
 
 func sortedActiveIDs(active map[string]bool) []string {
 	ids := make([]string, 0, len(active))
-	for id := range active {
-		ids = append(ids, id)
+	for id, open := range active {
+		if open {
+			ids = append(ids, id)
+		}
 	}
 	sort.Strings(ids)
 	return ids
@@ -702,9 +727,6 @@ func textRoleOpt(r adaptor.Role) aguievents.TextMessageStartOption {
 	}
 	return aguievents.WithRole("assistant")
 }
-
-// toolResultContent inlines common tool-result payload shapes using a
-// stable preference order.
 
 func droppedValue(e adaptor.Dropped) map[string]any {
 	value := map[string]any{"dropped_count": e.Count}
@@ -746,11 +768,11 @@ func customEvent(name string, value map[string]any) aguievents.Event {
 	if name == "" {
 		name = "codex.event"
 	}
-	opts := []aguievents.CustomEventOption{}
-	if len(value) > 0 {
-		opts = append(opts, aguievents.WithValue(value))
+	// CUSTOM.value is required even when the notice has no payload.
+	if value == nil {
+		value = map[string]any{}
 	}
-	return aguievents.NewCustomEvent(name, opts...)
+	return aguievents.NewCustomEvent(name, aguievents.WithValue(value))
 }
 
 func intFromAny(v any) int {

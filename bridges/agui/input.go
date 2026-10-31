@@ -78,7 +78,8 @@ type Message struct {
 	ActivityType string `json:"activityType,omitempty"`
 	// SubagentRunID attributes the message to a delegated invocation.
 	SubagentRunID string `json:"subagentRunId,omitempty"`
-	// Metadata carries application-defined message information.
+	// Metadata carries application-defined message information. DecodeHTTPRequest
+	// preserves JSON numbers as json.Number, including values outside float64 range.
 	Metadata map[string]any `json:"metadata,omitempty"`
 	// ID is the client-supplied message identifier.
 	ID string `json:"id"`

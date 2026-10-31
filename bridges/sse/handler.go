@@ -35,7 +35,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/agent-dance/agent-adaptor/bridges/internal/ssewire"
 	"io"
 	"net/http"
 	"strconv"
@@ -47,6 +46,7 @@ import (
 
 	adaptor "github.com/agent-dance/agent-adaptor"
 	"github.com/agent-dance/agent-adaptor/bridges/agui"
+	"github.com/agent-dance/agent-adaptor/bridges/internal/ssewire"
 )
 
 // Options configures a Handler. Zero values select AG-UI protocol, no
