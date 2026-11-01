@@ -81,6 +81,11 @@ All notable changes to this project are documented in this file.
 - Native structured output uses app-server `turn/start.outputSchema`, including
   non-streaming Driver requests, with normal Thread process reuse and WithSpawn
   behavior. Every continuation and interrupt restart receives the schema.
+- Without an explicit profile, CODEX_HOME or tenant identity, the Driver uses
+  the CLI's own home (`~/.codex`), so the user's login and provider
+  configuration apply as when running `codex` directly. Previously it fell back
+  to an empty managed home unless HOME was bound explicitly, and requests failed
+  authentication. Tenants keep per-tenant managed homes.
 - Fix MCP invocation overrides so SDK Tool and Team servers start correctly;
   preserve literal server names, native servers, and explicit exact-tool policy.
 - Preserve MCP and dynamic tool argument objects as complete ToolCall.Args
