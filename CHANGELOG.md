@@ -114,8 +114,6 @@ All notable changes to this project are documented in this file.
 CLI minimum versions are declarations, not automatic installed-version checks.
 Pi and OpenCode remain outside the supported v2 Driver set.
 
-## v2
-
 ### Teams and A2A
 
 - Replace `hosttools/a2adelegation` with `hosttools/team`: a delegation-first
