@@ -1,0 +1,26 @@
+{
+  "observed_at_utc": "2026-11-01T18:53:15.365616+00:00",
+  "database_name": "multica_multica_934",
+  "agent_task_queue_status_counts": [
+    {
+      "status": "cancelled",
+      "count": 7
+    },
+    {
+      "status": "completed",
+      "count": 11
+    },
+    {
+      "status": "failed",
+      "count": 2
+    }
+  ],
+  "task_supplement_status_counts": [
+    {
+      "status": "delivered",
+      "count": 3
+    }
+  ],
+  "unfinished_tasks": [],
+  "pending_supplements": []
+}

@@ -1,0 +1,132 @@
+{
+  "original_files": [
+    {
+      "bytes": 3168,
+      "sha256": "ddaa9829015c30c794d449ea6937e17279b5c11577fd1376b5dc09e66b54afee",
+      "path": "actual-timeline-receipt-diagnostic.json"
+    },
+    {
+      "bytes": 6645,
+      "sha256": "09a7b37858d034fed9f32c3017cbc3b61dca0b6917c03ae95c7fec0e4ba52ef6",
+      "path": "case3-filled-reply-ui.json"
+    },
+    {
+      "bytes": 128569,
+      "sha256": "5b2210bf83fc0362714ac5fe004cc270d774f66ee2494b18d4219fb54d225c2b",
+      "path": "case3-filled-reply-ui.png"
+    },
+    {
+      "bytes": 2645,
+      "sha256": "7b0d8752beb26b08190c83c761a08b4f054bd6c3732c96afcc59f612e6b6ac7a",
+      "path": "case3-live-diagnostic.json"
+    },
+    {
+      "bytes": 3430,
+      "sha256": "7d636ccc297364fc445d84f10527236c5a25835e55a847bcd0cd5d3fa63aa7d6",
+      "path": "case3-open-reply-ui.json"
+    },
+    {
+      "bytes": 122904,
+      "sha256": "9c2db3339ce6791ea30f6b5990ff1ee3dc450000d7f66ed4f82796480535bbea",
+      "path": "case3-open-reply-ui.png"
+    },
+    {
+      "bytes": 2443,
+      "sha256": "358cb914189952ac2f4c9fbecea9ef4c4f05508c24f8f2687fbe90c5c6ce11c9",
+      "path": "case3-readonly-ui.json"
+    },
+    {
+      "bytes": 121738,
+      "sha256": "a9a9638fa73b90127fece9038c272af1d2c378ea5792cd21dee0bdf28fe70fad",
+      "path": "case3-readonly-ui.png"
+    },
+    {
+      "bytes": 587,
+      "sha256": "c2df42ca2a9030b4ca8a36214419b73cb8970e9d9a7e64f69b0730d7e99b8fed",
+      "path": "execution-snapshot.json"
+    },
+    {
+      "bytes": 70515,
+      "sha256": "49a5d08328b7857d6f4fa855041c8d1e66b4aefefe3af83a1a34a99811f8d78f",
+      "path": "interrupted-cleanup.json"
+    },
+    {
+      "bytes": 2339,
+      "sha256": "9e6885524e2f210ce3df5308a687809c9822fa0cfa76a14df4495b8a44543ba6",
+      "path": "live-receipt-diagnostic.json"
+    },
+    {
+      "bytes": 1613,
+      "sha256": "b398114e9b9ae3a329bbe3d2f0bedb72911b28f5f83f48e275cfa51771fe25e6",
+      "path": "mc009-011-source-freeze.json"
+    },
+    {
+      "bytes": 1829,
+      "sha256": "431b1adc297a66fdc5d4b605ed361d8c0af47a82dba42cab42476a2f4f0f4d62",
+      "path": "mc009-existing-receipt-confirmed.json"
+    },
+    {
+      "bytes": 163720,
+      "sha256": "7b8f9902015108c0e4fa99b6399cffa9dcb6243aa86a41ae066c5e234c71dceb",
+      "path": "mc009-existing-receipt-visible.png"
+    },
+    {
+      "bytes": 4426,
+      "sha256": "866f3b48c71c80ede52476e765fb02473baf05202ff532095658a4ed109514e3",
+      "path": "playwright.log"
+    },
+    {
+      "bytes": 58,
+      "sha256": "5199bb69a6dfdb9e4f2b26c1d87479bb152bc3e9db7c5d26e640bdb3099b71b4",
+      "path": "process-result.json"
+    },
+    {
+      "bytes": 281614,
+      "sha256": "049857724c9b1ca3d007a0ecbc17a60dd66a26bc724fff57798cb8906c63c911",
+      "path": "report.json"
+    },
+    {
+      "bytes": 1191,
+      "sha256": "8f29a92b3692598a221b31838fc01e98172a26f04c17caf4deb2d5e84a38a960",
+      "path": "source-freeze.json"
+    },
+    {
+      "bytes": 101,
+      "sha256": "701d5282e48419fe3f19e519d8fc9778372502e5aaeae3306425cbfb5fccaeb2",
+      "path": "test-results/.last-run.json"
+    },
+    {
+      "bytes": 59211,
+      "sha256": "ea3a14fbf25e9e1e1532f46fe5a4ff44ffbd4f8f24ed2c21178724aa21f58783",
+      "path": "test-results/agent-adaptor-shadow-actua-47129-ary-reply-queued-after-Done-chromium/actual-shadow-evidence.json"
+    },
+    {
+      "bytes": 20540,
+      "sha256": "fd3bd08996c579e58db0ebfd616ead2ba15c0441afe1489b51025850e9170518",
+      "path": "test-results/agent-adaptor-shadow-actua-47129-ary-reply-queued-after-Done-chromium/error-context.md"
+    },
+    {
+      "bytes": 158394,
+      "sha256": "e5b543e53986b82f09df2ac61cf0dbbdf01dbe8b0688b47e03e81c0e4186adee",
+      "path": "test-results/agent-adaptor-shadow-actua-47129-ary-reply-queued-after-Done-chromium/failure.png"
+    },
+    {
+      "bytes": 211194,
+      "sha256": "da38ab79916a8e5a8564744948277385ac16cfcae9f59762abe0ad09f27a5267",
+      "path": "test-results/agent-adaptor-shadow-actua-cc132-to-daemon-to-provider-to-UI-chromium/actual-shadow-evidence.json"
+    },
+    {
+      "bytes": 151357,
+      "sha256": "0b81e4ab48eee1345aaeea3ed4554a0ab14de4d5d90a2f868be09a5d0d7fbe70",
+      "path": "test-results/agent-adaptor-shadow-actua-cc132-to-daemon-to-provider-to-UI-chromium/development-result-visible.png"
+    },
+    {
+      "bytes": 45399,
+      "sha256": "12f1ba39927f204d9a72214e231e76691a1dcf9b6fe15c47212d58e78f7e1a10",
+      "path": "test-results/agent-adaptor-shadow-actua-f49bf-elled-task-and-a-fresh-task-chromium/actual-shadow-evidence.json"
+    }
+  ],
+  "note": "Original aggregate remains failed/incomplete: one passed, one failed, one interrupted, one not run; runner exit 2. Separate read-only timeline diagnosis confirms the delivered receipt despite the wrong comments query. Browser diagnostics identify the disabled Send selector; the actual task had already failed at the provider timeout and SDK cleanup was confirmed. No successful cancellation or original-run pass is inferred.",
+  "original_directory": "C:\\Users\\buthim\\.codex\\worktrees\\multica-pr30-shadow\\multica\\output\\playwright\\agent-adaptor-shadow\\multica-sdk-20261101T180411Z",
+  "accepted": false
+}

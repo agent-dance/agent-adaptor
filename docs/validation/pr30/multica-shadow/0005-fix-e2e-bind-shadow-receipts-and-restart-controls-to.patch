@@ -1,0 +1,326 @@
+From 0250bea3da997fd47fb71549231ae67812229871 Mon Sep 17 00:00:00 2001
+From: buthim <me@blurooo.com>
+Date: Mon, 2 Nov 2026 02:32:07 +0800
+Subject: [PATCH] fix(e2e): bind shadow receipts and restart controls to real
+ UI contracts
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+由 Codex 接续补做（审查标识：便便）。
+
+Read delivered receipts from the hydrated timeline, use the formal Stop and send control, preserve exact text and artifact checks, and bound browser operations with reviewed diagnostics.
+---
+ e2e/agent-adaptor-shadow.browser.spec.ts  | 26 ++++++++++
+ e2e/agent-adaptor-shadow.browser.ts       | 12 +++++
+ e2e/agent-adaptor-shadow.evidence.spec.ts | 18 +++++++
+ e2e/agent-adaptor-shadow.evidence.ts      | 11 ++++
+ e2e/agent-adaptor-shadow.md               | 10 ++--
+ e2e/agent-adaptor-shadow.spec.ts          | 63 +++++++++++++++++------
+ 6 files changed, 119 insertions(+), 21 deletions(-)
+ create mode 100644 e2e/agent-adaptor-shadow.browser.spec.ts
+ create mode 100644 e2e/agent-adaptor-shadow.browser.ts
+
+diff --git a/e2e/agent-adaptor-shadow.browser.spec.ts b/e2e/agent-adaptor-shadow.browser.spec.ts
+new file mode 100644
+index 000000000..462b1dd5f
+--- /dev/null
++++ b/e2e/agent-adaptor-shadow.browser.spec.ts
+@@ -0,0 +1,26 @@
++import { expect, test } from "@playwright/test";
++import { browserTimeout, submitReply, type ReplyAction } from "./agent-adaptor-shadow.browser";
++
++test("reply submission selects the formal restart button despite another disabled Send", async ({ page }) => {
++  await page.route("http://127.0.0.1/api/issues/fixture/comments", (route) => route.fulfill({ status: 201, contentType: "application/json", body: '{"id":"created-comment"}', headers: { "Access-Control-Allow-Origin": "*" } }));
++  await page.setContent(`<button disabled>Send</button><button onclick="fetch('http://127.0.0.1/api/issues/fixture/comments',{method:'POST'})">Stop and send</button>`);
++  const response = await submitReply(page, "fixture", "Stop and start over", 2_000);
++  expect(response.status()).toBe(201);
++  expect(await response.json()).toEqual({ id: "created-comment" });
++});
++
++for (const action of ["Add to current run", "Start after this run"] satisfies ReplyAction[]) {
++  test(`ordinary ${action} uses Send and the exact issue endpoint`, async ({ page }) => {
++    await page.route("http://127.0.0.1/api/issues/fixture/comments", (route) => route.fulfill({ status: 201, headers: { "Access-Control-Allow-Origin": "*" } }));
++    await page.setContent(`<button onclick="fetch('http://127.0.0.1/api/issues/fixture/comments',{method:'POST'})">Send</button><button disabled>Stop and send</button>`);
++    expect((await submitReply(page, "fixture", action, 2_000)).status()).toBe(201);
++  });
++}
++
++test("missing enabled submission fails within its action and response deadline", async ({ page }) => {
++  expect(browserTimeout).toBe(45_000);
++  await page.setContent("<button disabled>Stop and send</button>");
++  const started = Date.now();
++  await expect(submitReply(page, "fixture", "Stop and start over", 100)).rejects.toThrow(/Timeout/);
++  expect(Date.now() - started).toBeLessThan(2_000);
++});
+diff --git a/e2e/agent-adaptor-shadow.browser.ts b/e2e/agent-adaptor-shadow.browser.ts
+new file mode 100644
+index 000000000..779db78db
+--- /dev/null
++++ b/e2e/agent-adaptor-shadow.browser.ts
+@@ -0,0 +1,12 @@
++import type { Page } from "@playwright/test";
++
++export type ReplyAction = "Add to current run" | "Start after this run" | "Stop and start over";
++export const browserTimeout = 45_000;
++
++export async function submitReply(page: Page, issueID: string, action: ReplyAction, timeout = browserTimeout) {
++  const [response] = await Promise.all([
++    page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === `/api/issues/${issueID}/comments`, { timeout }),
++    page.getByRole("button", { name: action === "Stop and start over" ? "Stop and send" : "Send", exact: true }).first().click({ timeout }),
++  ]);
++  return response;
++}
+diff --git a/e2e/agent-adaptor-shadow.evidence.spec.ts b/e2e/agent-adaptor-shadow.evidence.spec.ts
+index 8ac2fc22c..b889df07d 100644
+--- a/e2e/agent-adaptor-shadow.evidence.spec.ts
++++ b/e2e/agent-adaptor-shadow.evidence.spec.ts
+@@ -1,6 +1,7 @@
+ import { expect, test } from "@playwright/test";
+ import {
+   deliveredReceipt,
++  readDeliveredComment,
+   requireAfterDone,
+   requireExactTaskIDs,
+   requireSDKCleanupBeforeNext,
+@@ -83,6 +84,23 @@ function receipt(overrides: Record<string, unknown> = {}): Record<string, unknow
+   };
+ }
+ 
++test("formal receipt reads the UI timeline rather than the unhydrated comment list", async () => {
++  const paths: string[] = [];
++  const flat = { id: "comment-1", author_type: "member", author_id: "human-1", content: "Original text" };
++  const hydrated = { ...flat, type: "comment", actor_type: "member", actor_id: "human-1", supplements: [receipt()] };
++  const request = async (path: string) => { paths.push(path); return path.endsWith("/timeline") ? [hydrated] : [flat]; };
++  expect(await readDeliveredComment(request, "issue-1", "comment-1", "task-1", "agent-1")).toEqual(hydrated);
++  expect(paths).toEqual(["/api/issues/issue-1/timeline"]);
++  expect(() => deliveredReceipt(flat, "task-1", "agent-1")).toThrow();
++});
++
++test("timeline coverage, a foreign comment, pending, or failed receipts never establish delivery", async () => {
++  const delivered = { type: "comment", id: "comment-1", supplements: [receipt()] };
++  for (const timeline of [null, [], [delivered, delivered], [{ ...delivered, id: "other" }], [{ ...delivered, type: "activity" }], [{ type: "comment", id: "comment-1", supplement_comment_ids: ["comment-1"] }], ...["pending", "delivering", "failed"].map((status) => [{ ...delivered, supplements: [receipt({ status })] }])]) {
++    await expect(readDeliveredComment(async () => timeline, "issue-1", "comment-1", "task-1", "agent-1")).rejects.toThrow();
++  }
++});
++
+ test("delivery evidence is the sole exact task and agent receipt", () => {
+   const delivered = receipt();
+   expect(deliveredReceipt({ supplements: [delivered] }, "task-1", "agent-1")).toBe(delivered);
+diff --git a/e2e/agent-adaptor-shadow.evidence.ts b/e2e/agent-adaptor-shadow.evidence.ts
+index b32e39b28..2ef1dcc9d 100644
+--- a/e2e/agent-adaptor-shadow.evidence.ts
++++ b/e2e/agent-adaptor-shadow.evidence.ts
+@@ -87,6 +87,17 @@ export function deliveredReceipt(comment: unknown, taskID: string, agentID: stri
+   return receipt;
+ }
+ 
++export async function readDeliveredComment(request: (path: string) => Promise<unknown>, issueID: string, commentID: string, taskID: string, agentID: string): Promise<Record<string, unknown>> {
++  // The UI timeline hydrates receipts; the flat comments endpoint does not.
++  const timeline = await request(`/api/issues/${issueID}/timeline`);
++  if (!Array.isArray(timeline)) throw new Error("Timeline must be an array");
++  const matches = timeline.filter((entry) => isRecord(entry) && entry.type === "comment" && entry.id === commentID);
++  if (matches.length !== 1) throw new Error(`Timeline must contain exactly one comment ${commentID}`);
++  const comment = matches[0] as Record<string, unknown>;
++  deliveredReceipt(comment, taskID, agentID);
++  return comment;
++}
++
+ const shadowStarted = "agent-adaptor shadow execution started";
+ const shadowFinished = "agent-adaptor shadow execution finished";
+ 
+diff --git a/e2e/agent-adaptor-shadow.md b/e2e/agent-adaptor-shadow.md
+index dd22effa7..41d4249cf 100644
+--- a/e2e/agent-adaptor-shadow.md
++++ b/e2e/agent-adaptor-shadow.md
+@@ -46,20 +46,22 @@ The development gate runs fixed host Python commands against the actual task wor
+ Safe offline checks do not set the opt-in flag:
+ 
+ ```sh
+-pnpm exec playwright test e2e/agent-adaptor-shadow.evidence.spec.ts e2e/agent-adaptor-shadow.report.spec.ts e2e/agent-adaptor-shadow.acceptance.spec.ts --workers=1 --reporter=line
++pnpm exec playwright test e2e/agent-adaptor-shadow.evidence.spec.ts e2e/agent-adaptor-shadow.report.spec.ts e2e/agent-adaptor-shadow.acceptance.spec.ts e2e/agent-adaptor-shadow.browser.spec.ts --workers=1 --reporter=line
+ pnpm exec playwright test e2e/agent-adaptor-shadow.spec.ts --list
+ pnpm exec playwright test e2e/agent-adaptor-shadow.spec.ts --workers=1 --reporter=line
+ ```
+ 
+-The last command must report four skips. Discovery and offline helper tests do not log in, start a browser, resolve a user CLI, or call a model.
++The last command must report four skips. Discovery and helper tests do not log in, resolve a user CLI, or call a model. The browser helper tests use a real local Chromium page with intercepted fixture requests; they are offline regressions, not live receipt evidence.
++
++Browser actions, navigation, and comment-response waits have independent 45-second deadlines. Failure evidence retains the current step, console/page errors, and API request/response origins, paths, and status codes; query strings, request headers, and auth values are not recorded by network diagnostics.
+ 
+ ## Assertions and evidence
+ 
+ | Case | Actual path and required evidence |
+ | --- | --- |
+ | Development comparison | API structured explicit `mention://agent/<id>` → addressed actual runtime → source and unittest files → independent host arithmetic and generated-unittest receipts → completed task visible in browser. Shadow requires actual SDK RunID in daemon slog; native rejects SDK logs for that task. |
+-| Current comment and next run | Foreground shell reaches host gate before browser input. Browser selects **Add to current run**; original member identity/comment ID, one exact delivered supplement receipt, matching SDK delivery log, and visible **Read by** are required. Retrying the strict supplement endpoint with the same client request ID must return the same historical comment. A foreign issue cannot retarget the task. An unknown explicit target cannot create an extra task. Browser **Start after this run** creates a distinct queued task; actual SDK cleanup of the old run precedes startup of the new SDK RunID. |
+-| Stop and start over | Shell gate proves the old provider ran. Browser action must retain its cancelled task, partial tool log, and `stopped.txt`, then create a different completed task with `restarted.txt=NEW_GOAL`. SDK Done/cleanup must precede the new startup. |
++| Current comment and next run | Foreground shell reaches host gate before browser input. Browser selects **Add to current run**; original member identity/comment ID, one exact delivered supplement receipt from the UI's hydrated timeline, matching SDK delivery log, and visible **Read by** are required. The flat comments list does not hydrate receipts, and task coverage IDs do not prove delivery. Retrying the strict supplement endpoint with the same client request ID must return the same historical comment. A foreign issue cannot retarget the task. An unknown explicit target cannot create an extra task. Browser **Start after this run** creates a distinct queued task; original author/text, its requested output, and actual SDK cleanup before the new SDK RunID are checked. |
++| Stop and start over | Shell gate proves the old provider ran. Browser selects **Stop and start over** and clicks its formal **Stop and send** button. It must retain the cancelled task, partial tool log, and `stopped.txt`, then create a different completed task with the explicitly requested exact bytes `restarted.txt=NEWGOAL` and no trailing newline. SDK Done/cleanup must precede the new startup. |
+ | Chat | Actual API creates the initial and queued messages; browser removes a queued message and selects **Steer** for another. The active task is cancelled, priority runs before ordinary FIFO input, the withdrawn task never starts, and a separate actual chat session remains empty. SDK cleanup/start ordering and real assistant task IDs prove the sequence. |
+ 
+ Each case writes `actual-shadow-evidence.json` and screenshots in Playwright's output directory. The aggregate report contains all task API results/messages, final comments and receipts, selected actual artifact contents/hashes, relevant SDK slog lines, configuration IDs, timestamps, and assertion outcomes. Failure paths collect available partial task/messages before requesting cancellation of any remaining active test task. A cancellation request is recorded as a request; it is not proof of provider cleanup.
+diff --git a/e2e/agent-adaptor-shadow.spec.ts b/e2e/agent-adaptor-shadow.spec.ts
+index d8960645a..b612b611c 100644
+--- a/e2e/agent-adaptor-shadow.spec.ts
++++ b/e2e/agent-adaptor-shadow.spec.ts
+@@ -7,11 +7,12 @@ import { join } from "node:path";
+ import { expect, test, type Page, type TestInfo } from "@playwright/test";
+ import { TestApiClient } from "./fixtures";
+ import {
+-  deliveredReceipt, requireAfterDone, requireExactTaskIDs, requireSuccess,
++  deliveredReceipt, readDeliveredComment, requireAfterDone, requireExactTaskIDs, requireSuccess,
+   sdkAuditRunIDs, requireSDKCleanupBeforeNext, type ShadowTask,
+ } from "./agent-adaptor-shadow.evidence";
+ import { appendShadowReport } from "./agent-adaptor-shadow.report";
+ import { inspectDevelopmentWorkspace } from "./agent-adaptor-shadow.acceptance";
++import { browserTimeout, submitReply, type ReplyAction } from "./agent-adaptor-shadow.browser";
+ 
+ // Discovery and the ordinary suite never authenticate or resolve a user CLI.
+ const enabled = process.env.MULTICA_RUN_AGENT_ADAPTOR_SHADOW === "1";
+@@ -80,7 +81,28 @@ class Harness {
+   secrets: string[] = [];
+   userID = "";
+   daemonStart = 0;
+-  constructor(readonly page: Page, readonly info: TestInfo) {}
++  constructor(readonly page: Page, readonly info: TestInfo) {
++    page.setDefaultTimeout(browserTimeout);
++    page.setDefaultNavigationTimeout(browserTimeout);
++    this.evidence.browser = { console: [], errors: [], network: [] };
++    const safeURL = (value: string) => { const url = new URL(value); return url.origin + url.pathname; };
++    const network = (entry: Json) => {
++      if (this.evidence.browser.network.length < 200) this.evidence.browser.network.push({ at: new Date().toISOString(), ...entry });
++    };
++    page.on("console", (message) => {
++      if (["error", "warning"].includes(message.type()) && this.evidence.browser.console.length < 100) {
++        this.evidence.browser.console.push({ type: message.type(), text: message.text(), at: new Date().toISOString() });
++      }
++    });
++    page.on("pageerror", (error) => { if (this.evidence.browser.errors.length < 100) this.evidence.browser.errors.push(String(error)); });
++    page.on("request", (request) => { if (new URL(request.url()).pathname.startsWith("/api/")) network({ kind: "request", method: request.method(), url: safeURL(request.url()) }); });
++    page.on("requestfailed", (request) => network({ kind: "failed", method: request.method(), url: safeURL(request.url()), reason: request.failure()?.errorText }));
++    page.on("response", (response) => { if (response.status() >= 400 || new URL(response.url()).pathname.startsWith("/api/")) network({ kind: "response", method: response.request().method(), url: safeURL(response.url()), status: response.status() }); });
++  }
++  step(name: string) {
++    this.evidence.currentStep = name;
++    (this.evidence.steps ||= []).push({ name, at: new Date().toISOString() });
++  }
+   async init() {
+     if (phase !== "native" && phase !== "agent-adaptor") throw new Error("MULTICA_SHADOW_BACKEND must explicitly name native or agent-adaptor");
+     this.base = localURL(required("NEXT_PUBLIC_API_URL"));
+@@ -151,6 +173,7 @@ class Harness {
+     return messages as Json[];
+   }
+   async showIssue(issue: Json, task?: ShadowTask) {
++    this.step("navigate to actual issue");
+     await this.page.goto(`/${this.workspace.slug}/issues/${issue.id}`, { waitUntil: "domcontentloaded" });
+     await expect(this.page.getByText(issue.title, { exact: true }).first()).toBeVisible({ timeout: 45_000 });
+     if (task) await expect(this.page.locator(`[data-run-id="${task.id}"]`)).toBeVisible({ timeout: 45_000 });
+@@ -160,17 +183,19 @@ class Harness {
+     await this.page.screenshot({ path, fullPage: true });
+     this.evidence.uiScreenshots.push({ name, path, url: this.page.url(), at: new Date().toISOString() });
+   }
+-  async reply(issue: Json, text: string, action: "Add to current run" | "Start after this run" | "Stop and start over"): Promise<Json> {
++  async reply(issue: Json, text: string, action: ReplyAction): Promise<Json> {
++    this.step(`open reply for ${action}`);
+     const shell = this.page.getByTestId("reply-composer-shell").first();
+     if (await shell.isVisible()) await shell.click();
+     const editor = this.page.locator('.ProseMirror[data-placeholder="Leave a reply..."], .ProseMirror:has([data-placeholder="Leave a reply..."])').first();
+     await expect(editor).toBeVisible(); await editor.fill(text);
++    this.step(`choose ${action}`);
+     const chip = this.page.getByRole("button", { name: new RegExp(`^${this.agent.name} trigger:`) });
+     await expect(chip).toBeVisible({ timeout: 20_000 }); await chip.click();
+     await this.page.getByRole("menuitemradio", { name: new RegExp(`^${action}`) }).click();
+-    const posted = this.page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === `/api/issues/${issue.id}/comments`);
+-    await this.page.getByRole("button", { name: "Send", exact: true }).first().click();
+-    const response = await posted; expect(response.status()).toBe(201);
++    this.step(`submit ${action}`);
++    const response = await submitReply(this.page, issue.id, action);
++    expect(response.status()).toBe(201);
+     const comment = await response.json();
+     this.evidence.apiSnapshots.push({ kind: "actual-UI-comment-post", action, comment });
+     return comment;
+@@ -293,17 +318,18 @@ test.describe("actual local Multica agent-adaptor shadow (explicit paid opt-in)"
+         const issue = await h.issue("comment routing");
+         const root = await h.comment(issue, h.mention(`Create route-base.txt containing BASE. ${hold(g)} After release apply additional human guidance before finishing.`));
+         const task = await h.taskForComment(issue, root);
++        h.step("wait for real comment-run provider gate");
+         await g.wait(); h.evidence.gates.push({ kind: "actual-provider-shell", taskID: task.id, arrival: g.arrival });
+         await h.showIssue(issue, task);
+-        const marker = `COMMENT_${randomUUID()}`;
+-        const comment = await h.reply(issue, `Write route-comment.txt with exact bytes ${marker}.`, "Add to current run");
++        const marker = `COMMENT${randomUUID()}`;
++        const comment = await h.reply(issue, `Write route-comment.txt with exact bytes ${marker} and no trailing newline.`, "Add to current run");
+         expect(comment.author_type).toBe("member"); expect(comment.author_id).toBe(h.userID);
+         let delivered: Json | undefined;
++        h.step("wait for formal delivered comment in UI timeline");
+         await expect.poll(async () => {
+-          const comments = await h.request(`/api/issues/${issue.id}/comments`);
+-          delivered = comments.find((entry: Json) => entry.id === comment.id);
+-          try { deliveredReceipt(delivered, task.id, h.agent.id); return true; } catch { return false; }
++          try { delivered = await readDeliveredComment((path) => h.request(path), issue.id, comment.id, task.id, h.agent.id); return true; } catch { return false; }
+         }, { timeout }).toBe(true);
++        expect(delivered).toEqual(expect.objectContaining({ actor_type: "member", actor_id: h.userID, content: comment.content }));
+         thisIsActualReceipt(h, delivered!);
+         await expect(page.getByText(`Read by ${h.agent.name}`, { exact: true })).toBeVisible({ timeout: 45_000 });
+         await h.shot("real-receipt-visible");
+@@ -319,7 +345,7 @@ test.describe("actual local Multica agent-adaptor shadow (explicit paid opt-in)"
+         expect(await h.tasks(isolated)).toEqual([]);
+         expect(await h.request(`/api/issues/${isolated.id}/comments`)).toEqual([]);
+         h.evidence.checks.push("foreign issue cannot retarget a live task supplement");
+-        const queuedText = "Reply with exact text AFTER_CURRENT_DONE. Do not modify files.";
++        const queuedText = "Reply with exact text AFTERCURRENTDONE. Do not modify files.";
+         const queued = await h.reply(issue, queuedText, "Start after this run");
+         expect(queued.content).toBe(queuedText);
+         expect(queued.author_type).toBe("member"); expect(queued.author_id).toBe(h.userID);
+@@ -333,13 +359,15 @@ test.describe("actual local Multica agent-adaptor shadow (explicit paid opt-in)"
+         g.release();
+         const originalDone = await h.terminal(issue, task.id); requireSuccess(originalDone);
+         const nextDone = await h.terminal(issue, next.id); requireSuccess(nextDone); requireAfterDone(originalDone, nextDone);
+-        expect((nextDone.result as Json | null)?.output).toContain("AFTER_CURRENT_DONE");
++        expect((nextDone.result as Json | null)?.output).toContain("AFTERCURRENTDONE");
+         await h.cleanupBefore(originalDone, nextDone);
+         await h.sdkEvidence(originalDone, comment.id); await h.sdkEvidence(nextDone);
+         const finalComments = await h.request(`/api/issues/${issue.id}/comments`);
+         expect(finalComments.find((entry: Json) => entry.id === queued.id)).toEqual(expect.objectContaining({ content: queuedText, author_type: "member", author_id: h.userID }));
+         expect(finalComments.filter((entry: Json) => entry.id === first.id)).toHaveLength(1);
+-        deliveredReceipt(finalComments.find((entry: Json) => entry.id === first.id), task.id, h.agent.id);
++        const finalTimeline = await h.request(`/api/issues/${issue.id}/timeline`);
++        h.evidence.apiSnapshots.push({ kind: "actual-final-timeline", issueID: issue.id, timeline: finalTimeline });
++        deliveredReceipt(finalTimeline.find((entry: Json) => entry.id === first.id), task.id, h.agent.id);
+         const files = await h.artifacts(originalDone, ["route-base.txt", "route-comment.txt"]);
+         expect(files.find((entry) => entry.name === "route-base.txt")?.text.trim()).toBe("BASE");
+         expect(files.find((entry) => entry.name === "route-comment.txt")?.text).toBe(marker);
+@@ -357,10 +385,10 @@ test.describe("actual local Multica agent-adaptor shadow (explicit paid opt-in)"
+       try {
+         const issue = await h.issue("stop restart");
+         const root = await h.comment(issue, h.mention(`Create stopped.txt containing STARTED. ${hold(g)}`));
+-        const task = await h.taskForComment(issue, root); await g.wait();
++        const task = await h.taskForComment(issue, root); h.step("wait for real restart-run provider gate"); await g.wait();
+         h.evidence.gates.push({ kind: "actual-provider-shell", taskID: task.id, arrival: g.arrival });
+         await h.showIssue(issue, task);
+-        const restarted = await h.reply(issue, "New objective: create restarted.txt containing NEW_GOAL. Do not continue the cancelled objective. Report the actual write.", "Stop and start over");
++        const restarted = await h.reply(issue, "New objective: create restarted.txt with exact bytes NEWGOAL and no trailing newline. Do not continue the cancelled objective. Report the actual write.", "Stop and start over");
+         const oldDone = await h.terminal(issue, task.id); expect(oldDone.status).toBe("cancelled");
+         expect((await h.saveTask(oldDone)).some((message) => message.type === "tool_use" && JSON.stringify(message.input ?? null).includes(g.url))).toBe(true);
+         const next = await h.taskForComment(issue, restarted);
+@@ -369,7 +397,7 @@ test.describe("actual local Multica agent-adaptor shadow (explicit paid opt-in)"
+         requireExactTaskIDs(await h.tasks(issue), [task.id, next.id]);
+         await h.sdkEvidence(oldDone); await h.sdkEvidence(done);
+         expect((await h.artifacts(oldDone, ["stopped.txt"]))[0]?.text.trim()).toBe("STARTED");
+-        expect((await h.artifacts(done, ["restarted.txt"]))[0]?.text).toBe("NEW_GOAL");
++        expect((await h.artifacts(done, ["restarted.txt"]))[0]?.text).toBe("NEWGOAL");
+         await h.shot("cancelled-and-restarted-visible");
+         h.evidence.checks.push("gate proves old provider actually ran", "actual UI Stop and start over", "cancelled audit retained", "distinct successful new task", "new artifact");
+       } finally { await g.close(); }
+@@ -385,6 +413,7 @@ test.describe("actual local Multica agent-adaptor shadow (explicit paid opt-in)"
+         const isolated = await h.request("/api/chat/sessions", { method: "POST", body: { agent_id: h.agent.id, title: "PR30 isolated empty thread" } });
+         h.createdChats.push(session.id, isolated.id);
+         const active = await h.request(`/api/chat/sessions/${session.id}/messages`, { method: "POST", body: { content: `Create chat-started.txt containing STARTED. ${hold(g)}` } });
++        h.step("wait for real Chat provider gate");
+         await g.wait(); h.evidence.gates.push({ kind: "actual-provider-shell", taskID: active.task_id, arrival: g.arrival });
+         const send = (content: string) => h.request(`/api/chat/sessions/${session.id}/messages`, { method: "POST", body: { content } });
+         const ordinary = await send("ORDINARY_LAST: reply ORDINARY_LAST, no tools.");
+-- 
+2.45.1.windows.1
+

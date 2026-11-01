@@ -1,0 +1,53 @@
+{
+  "note": "Only the selected restart case passed with process exit zero. The report retains expectedCases=4 and complete=false/passed=false. Final four-case coverage is explicitly composed with run03 cases 1, 2 and 4; neither original aggregate is rewritten.",
+  "original_files": [
+    {
+      "bytes": 773,
+      "path": "execution-snapshot.json",
+      "sha256": "59a99f3c0aff4c796a72c44c672997f430f657978dab382e7ec99cf1a00cf093"
+    },
+    {
+      "bytes": 70406,
+      "path": "new-task-progress.json",
+      "sha256": "b7c24f741cd691473420ce5aa2e726fa61e18f54c16f59199bcfd3068f0fa43e"
+    },
+    {
+      "bytes": 440,
+      "path": "playwright.log",
+      "sha256": "8275206eb7808380aca53b715ab583b36aa0a830baf6137aeff2d0142ee68276"
+    },
+    {
+      "bytes": 58,
+      "path": "process-result.json",
+      "sha256": "7eed3011c8e5d0d70e31b6a6817f4c77aa059caa286f1d6f58012fd2575e4bd9"
+    },
+    {
+      "bytes": 298113,
+      "path": "report.json",
+      "sha256": "a54f5c2aca9ee69416190044b16f875d4102b638e7949e1b4a9b736ebb987c73"
+    },
+    {
+      "bytes": 1486,
+      "path": "source-freeze.json",
+      "sha256": "3cba05a50c9b0f76e49220d90780a2750c29fb39f0be61348ae781f2d300c9a4"
+    },
+    {
+      "bytes": 45,
+      "path": "test-results/.last-run.json",
+      "sha256": "91d1c43004802cd49950d78eb11c8fa7d05da8ffffe219a8b13b2f561bc00903"
+    },
+    {
+      "bytes": 280756,
+      "path": "test-results/agent-adaptor-shadow-actua-f49bf-elled-task-and-a-fresh-task-chromium/actual-shadow-evidence.json",
+      "sha256": "fb5d9c25f2929cb182252f2508474d812b266788a26dbf0455c21b2b20e9bc84"
+    },
+    {
+      "bytes": 156294,
+      "path": "test-results/agent-adaptor-shadow-actua-f49bf-elled-task-and-a-fresh-task-chromium/cancelled-and-restarted-visible.png",
+      "sha256": "c6e8121e598be78c584ab74e07b1e5e5eaf60fc4a6a77e759ac49ae4a35a52c8"
+    }
+  ],
+  "accepted_case": "UI stop and start over uses a cancelled task and a fresh task",
+  "original_directory": "C:\\Users\\buthim\\.codex\\worktrees\\multica-pr30-shadow\\multica\\output\\playwright\\agent-adaptor-shadow\\multica-sdk-case3-20261101T184626Z",
+  "accepted_as_full_run": false
+}

@@ -1,0 +1,45 @@
+{
+  "windows_go_version": "go1.26.10 windows/amd64",
+  "note": "Checks cover the integrated production Go tree. The actual Multica daemon build uses its separately recorded SDK source snapshot; documentation-only evidence commits follow these code checks.",
+  "source_commit": "e72c4aaeb5651c593469876a144810865ae5c6e5",
+  "files": [
+    {
+      "bytes": 120,
+      "name": "windows-test-result.json",
+      "sha256": "7d2dbce4db6f2f17e7199bfb13f3d2fd34210533180acfb8ed3fe4576be3a7c4"
+    },
+    {
+      "bytes": 5341,
+      "name": "windows-test.log",
+      "sha256": "806027e3738973663831e6488dd869feb1a0c89110d31b46fbc542900f7401cc"
+    },
+    {
+      "bytes": 98,
+      "name": "windows-vet-result.json",
+      "sha256": "745b48a7a1b8bbe3f7c3a364ae15284534911fbc9a0858023ee8e346b32f4e67"
+    }
+  ],
+  "ci": {
+    "status": "completed",
+    "jobs": [
+      {
+        "conclusion": "success",
+        "name": "fuzz"
+      },
+      {
+        "conclusion": "success",
+        "name": "frontend"
+      },
+      {
+        "conclusion": "success",
+        "name": "validate"
+      },
+      {
+        "conclusion": "success",
+        "name": "race"
+      }
+    ],
+    "conclusion": "success",
+    "url": "https://github.com/agent-dance/agent-adaptor/actions/runs/41336949931"
+  }
+}

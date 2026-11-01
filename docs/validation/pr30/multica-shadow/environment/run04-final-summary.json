@@ -1,0 +1,27 @@
+{
+  "phase": "run04-final",
+  "observed_at_utc": "2026-11-01T18:53:15.451147+00:00",
+  "read_only": true,
+  "checks": {
+    "managed_api_running": true,
+    "managed_web_running": true,
+    "api_health_ok": true,
+    "web_http_200": true,
+    "expected_daemon_running": true,
+    "expected_binary": true,
+    "expected_backend": true,
+    "all_daemon_task_and_report_counts_zero": true,
+    "database_has_no_unfinished_tasks": true,
+    "database_has_no_pending_supplements": true,
+    "daemon_has_no_live_descendants": true
+  },
+  "all_checks_passed": true,
+  "files": [
+    "/home/buthim/.local/share/multica-pr30-shadow-tools/run04-final-managed-status.json",
+    "/home/buthim/.local/share/multica-pr30-shadow-tools/run04-final-http-health.json",
+    "/home/buthim/.local/share/multica-pr30-shadow-tools/run04-final-daemon-health.json",
+    "/home/buthim/.local/share/multica-pr30-shadow-tools/run04-final-daemon-process.json",
+    "/home/buthim/.local/share/multica-pr30-shadow-tools/run04-final-database-queues.json",
+    "/home/buthim/.local/share/multica-pr30-shadow-tools/run04-final-summary.json"
+  ]
+}

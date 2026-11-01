@@ -1,0 +1,29 @@
+{
+  "observed_at_utc": "2026-11-01T18:53:15.339213+00:00",
+  "health": {
+    "status": "running",
+    "pid": 44396,
+    "os": "linux",
+    "profile": "pr30-shadow-sdk",
+    "daemon_id": "1075b8f8-988f-4143-a8dd-b0c739715386",
+    "cli_commit": "4f4a0b285fe93782a594e92d4dd612bb7ae1807a",
+    "active_task_count": 0,
+    "running_task_count": 0,
+    "resource_wait_task_count": 0,
+    "pending_terminal_report_count": 0,
+    "failed_terminal_report_count": 0,
+    "pending_terminal_report_bytes": 0,
+    "failed_terminal_report_bytes": 0,
+    "agents": [
+      "codex"
+    ],
+    "workspaces": [
+      {
+        "id": "a25b1ca8-15be-4485-9ab2-0abf04a09ad8",
+        "runtimes": [
+          "8e39cfb9-0068-4d8a-9e41-b42caf20f0dd"
+        ]
+      }
+    ]
+  }
+}

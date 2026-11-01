@@ -9,3 +9,5 @@ multica-shadow/*.patch -text
 multica-shadow/native-run*/** -text
 multica-shadow/shadow-run*/** -text
 multica-shadow/environment/* -text
+multica-shadow/acceptance.json -text
+sdk-checks/* -text

@@ -1,0 +1,65 @@
+{
+  "at": "2026-11-01T18:19:04.118Z",
+  "comment": [
+    {
+      "id": "01a19853-82ab-7eb2-a944-f95e862bc4d5",
+      "issue_id": "01a19853-82a0-737e-8b73-4aff6d973f77",
+      "author_type": "member",
+      "author_id": "2bab9cff-9b7a-4cd1-82eb-63e629aea38d",
+      "content": "[@PR30 agent-adaptor 6171d17f](mention://agent/540c69df-88d6-4dfa-ac15-68928d398dc1) Create stopped.txt containing STARTED. Before final response, execute this exact foreground shell command and wait for its response (do not background it): python3 -c 'import urllib.request; print(urllib.request.urlopen(\"http://127.0.0.1:41423/74209bee-7a94-4659-81c7-20b9fc5cb1dd\", timeout=420).read().decode())'. Do not run sleep, inspect environment/auth, or bypass the host gate.",
+      "type": "comment",
+      "parent_id": null,
+      "created_at": "2026-11-02T02:16:12+08:00",
+      "updated_at": "2026-11-02T02:16:12+08:00",
+      "revision": 1,
+      "resolved_at": null,
+      "resolved_by_type": null,
+      "resolved_by_id": null,
+      "reactions": [],
+      "attachments": []
+    }
+  ],
+  "task": {
+    "id": "01a19853-82b6-7b47-a26f-e9e14a84663f",
+    "agent_id": "540c69df-88d6-4dfa-ac15-68928d398dc1",
+    "runtime_id": "8e39cfb9-0068-4d8a-9e41-b42caf20f0dd",
+    "issue_id": "01a19853-82a0-737e-8b73-4aff6d973f77",
+    "workspace_id": "a25b1ca8-15be-4485-9ab2-0abf04a09ad8",
+    "status": "running",
+    "priority": 0,
+    "dispatched_at": "2026-11-02T02:16:12+08:00",
+    "started_at": "2026-11-02T02:16:12+08:00",
+    "completed_at": null,
+    "result": null,
+    "error": null,
+    "attempt": 1,
+    "max_attempts": 2,
+    "created_at": "2026-11-02T02:16:12+08:00",
+    "trigger_comment_id": "01a19853-82ab-7eb2-a944-f95e862bc4d5",
+    "delivered_comment_ids": [
+      "01a19853-82ab-7eb2-a944-f95e862bc4d5"
+    ],
+    "supplement_capability": "task-supplement-v1",
+    "can_supplement": true,
+    "trigger_summary": "[@PR30 agent-adaptor 6171d17f](mention://agent/540c69df-88d6-4dfa-ac15-68928d398dc1) Create stopped.txt containing STARTED. Before final response, execute this exact foreground shell command and wait …",
+    "kind": "comment",
+    "attribution": {
+      "source": "direct_human",
+      "precise": true,
+      "initiator": {
+        "id": "2bab9cff-9b7a-4cd1-82eb-63e629aea38d",
+        "name": "PR30 Shadow",
+        "email": "pr30-shadow@localhost"
+      },
+      "originator": {
+        "id": "2bab9cff-9b7a-4cd1-82eb-63e629aea38d",
+        "name": "PR30 Shadow",
+        "email": "pr30-shadow@localhost"
+      },
+      "evidence": {
+        "kind": "comment",
+        "ref_id": "01a19853-82ab-7eb2-a944-f95e862bc4d5"
+      }
+    }
+  }
+}

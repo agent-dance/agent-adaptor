@@ -1,0 +1,75 @@
+{
+  "note": "All four actual host scenarios have a passed individual case and independent physical audit. Three unchanged scenarios come from run03; only its cancelled-task artifact collector changed before a successful targeted restart execution. Original run03 remains failed; run04 remains an incomplete four-case aggregate. No original verdict was rewritten.",
+  "effort_configured": "xhigh",
+  "single_full_suite_pass": false,
+  "accepted": true,
+  "production_multica_commit": "4f4a0b285fe93782a594e92d4dd612bb7ae1807a",
+  "mode": "explicit_case_composition",
+  "sdk_build_commit": "395047325c882fc90bcc08ae08c3a91f5390965a",
+  "binary_sha256": "65f27dc7094ac36491453a6fac2c7ce02eca203eeabf63871c01953b6b184c34",
+  "model_configured": "gpt-6.1-sol",
+  "independent_review": "independent-review.md",
+  "cases": [
+    {
+      "source_aggregate_passed": false,
+      "task_ids": [
+        "01a19863-35aa-7f31-8a6e-332d053a1cac"
+      ],
+      "case_passed": true,
+      "e2e_source_commit": "0250bea3da997fd47fb71549231ae67812229871",
+      "source_process_exit_code": 2,
+      "source_aggregate_complete": true,
+      "source_case_index": 0,
+      "name": "same development task: real server to daemon to provider to UI",
+      "source_report": "shadow-run03-failed/report.json",
+      "source_report_sha256": "c23f17dfe3d7f9610f877561c7f72d359637f1954164469746b34e54f50782c1"
+    },
+    {
+      "source_aggregate_passed": false,
+      "task_ids": [
+        "01a19865-7a87-75ff-adff-adb0440d72cd",
+        "01a19866-8eb7-7775-a2ee-bddee4e256f3"
+      ],
+      "case_passed": true,
+      "e2e_source_commit": "0250bea3da997fd47fb71549231ae67812229871",
+      "source_process_exit_code": 2,
+      "source_aggregate_complete": true,
+      "source_case_index": 1,
+      "name": "current comment receipt, retry identity, ordinary reply queued after Done",
+      "source_report": "shadow-run03-failed/report.json",
+      "source_report_sha256": "c23f17dfe3d7f9610f877561c7f72d359637f1954164469746b34e54f50782c1"
+    },
+    {
+      "source_aggregate_passed": false,
+      "task_ids": [
+        "01a1986f-9741-729b-9ba2-c8b04ab9e3c0",
+        "01a19871-3fb5-724c-b4bd-e567da51af8f"
+      ],
+      "case_passed": true,
+      "e2e_source_commit": "25c0ff1b27702f0b5f25b62d67bb0f56b8452699",
+      "source_process_exit_code": 0,
+      "source_aggregate_complete": false,
+      "source_case_index": 0,
+      "name": "UI stop and start over uses a cancelled task and a fresh task",
+      "source_report": "shadow-run04-targeted/report.json",
+      "source_report_sha256": "a54f5c2aca9ee69416190044b16f875d4102b638e7949e1b4a9b736ebb987c73"
+    },
+    {
+      "source_aggregate_passed": false,
+      "task_ids": [
+        "01a1986a-063a-70bc-87b2-602b471e4d4c",
+        "01a1986a-1c2f-7a12-91c6-42a741391cc7",
+        "01a1986a-1c3b-7bea-a5b8-d5623ec09661",
+        "01a1986a-1c45-7f09-a282-5cd9a19845f9"
+      ],
+      "case_passed": true,
+      "e2e_source_commit": "0250bea3da997fd47fb71549231ae67812229871",
+      "source_process_exit_code": 2,
+      "source_aggregate_complete": true,
+      "source_case_index": 3,
+      "name": "real Chat Steer, withdrawal and independent session isolation",
+      "source_report": "shadow-run03-failed/report.json",
+      "source_report_sha256": "c23f17dfe3d7f9610f877561c7f72d359637f1954164469746b34e54f50782c1"
+    }
+  ]
+}

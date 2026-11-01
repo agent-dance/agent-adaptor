@@ -1,0 +1,66 @@
+{
+  "at": "2026-11-01T18:13:52.130Z",
+  "comment": {
+    "id": "01a1984b-fc94-78d4-ba31-222bbe5d5284",
+    "issue_id": "01a1984b-0a81-716c-a611-e9a81c5a650c",
+    "author_type": "member",
+    "author_id": "2bab9cff-9b7a-4cd1-82eb-63e629aea38d",
+    "content": "Write route-comment.txt with exact bytes COMMENT\\_da16fba4-30f8-4da5-93ae-5cd91915ebe6.",
+    "type": "comment",
+    "parent_id": "01a1984b-0a8c-72cd-98ac-9297d30a8929",
+    "created_at": "2026-11-02T02:07:59+08:00",
+    "updated_at": "2026-11-02T02:07:59+08:00",
+    "revision": 1,
+    "resolved_at": null,
+    "resolved_by_type": null,
+    "resolved_by_id": null,
+    "reactions": [],
+    "attachments": []
+  },
+  "task": {
+    "id": "01a1984b-0a96-7d1f-a10c-b0847eed18cd",
+    "agent_id": "2baf1a0a-4480-4d5f-b5e8-d9e330871978",
+    "runtime_id": "8e39cfb9-0068-4d8a-9e41-b42caf20f0dd",
+    "issue_id": "01a1984b-0a81-716c-a611-e9a81c5a650c",
+    "workspace_id": "a25b1ca8-15be-4485-9ab2-0abf04a09ad8",
+    "status": "running",
+    "priority": 0,
+    "dispatched_at": "2026-11-02T02:06:57+08:00",
+    "started_at": "2026-11-02T02:06:57+08:00",
+    "completed_at": null,
+    "result": null,
+    "error": null,
+    "attempt": 1,
+    "max_attempts": 2,
+    "created_at": "2026-11-02T02:06:57+08:00",
+    "trigger_comment_id": "01a1984b-0a8c-72cd-98ac-9297d30a8929",
+    "delivered_comment_ids": [
+      "01a1984b-0a8c-72cd-98ac-9297d30a8929"
+    ],
+    "supplement_capability": "task-supplement-v1",
+    "supplement_comment_ids": [
+      "01a1984b-fc94-78d4-ba31-222bbe5d5284"
+    ],
+    "can_supplement": true,
+    "trigger_summary": "[@PR30 agent-adaptor a3e2da75](mention://agent/2baf1a0a-4480-4d5f-b5e8-d9e330871978) Create route-base.txt containing BASE. Before final response, execute this exact foreground shell command and wait …",
+    "kind": "comment",
+    "attribution": {
+      "source": "direct_human",
+      "precise": true,
+      "initiator": {
+        "id": "2bab9cff-9b7a-4cd1-82eb-63e629aea38d",
+        "name": "PR30 Shadow",
+        "email": "pr30-shadow@localhost"
+      },
+      "originator": {
+        "id": "2bab9cff-9b7a-4cd1-82eb-63e629aea38d",
+        "name": "PR30 Shadow",
+        "email": "pr30-shadow@localhost"
+      },
+      "evidence": {
+        "kind": "comment",
+        "ref_id": "01a1984b-0a8c-72cd-98ac-9297d30a8929"
+      }
+    }
+  }
+}

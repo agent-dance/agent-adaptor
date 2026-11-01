@@ -1,0 +1,5 @@
+{
+  "command": "go test -count=1 -timeout=5m ./...",
+  "ended": "2026-11-01T18:30:17.5091273Z",
+  "exit_code": 0
+}
