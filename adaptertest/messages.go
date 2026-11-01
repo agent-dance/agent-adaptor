@@ -217,12 +217,17 @@ func (p *ScriptedMessagePort) Signal() <-chan struct{} {
 func (p *ScriptedMessagePort) Claim(b driver.Boundary) []driver.MessageItem {
 	p.mu.Lock()
 	var items []driver.MessageItem
+	// Stop closes the active turn, so for an in-run Driver that declares the
+	// Stop boundary it is also the turn-end delivery point (core's hub uses the
+	// same eligibility): Stop and turn-end batches are interchangeable, and
+	// AfterTurn input is eligible at either.
+	stopIsTurnEnd := p.capability.Continue == driver.ContinueInRun && hasBoundary(p.capability.Boundaries, driver.BoundaryStop)
+	atEnd := b == driver.BoundaryTurnEnd || b == driver.BoundaryStop
 	if len(p.batches) > 0 && (p.batches[0].Boundary == b ||
-		b == driver.BoundaryTurnEnd && p.batches[0].Boundary == driver.BoundaryStop &&
-			p.capability.Continue == driver.ContinueInRun && hasBoundary(p.capability.Boundaries, driver.BoundaryStop)) {
+		stopIsTurnEnd && atEnd && (p.batches[0].Boundary == driver.BoundaryStop || p.batches[0].Boundary == driver.BoundaryTurnEnd)) {
 		var remaining []driver.MessageItem
 		for _, item := range p.batches[0].Items {
-			if item.Timing == driver.TimingAfterTurn && b != driver.BoundaryTurnEnd || item.Timing == driver.TimingInterrupt && b != driver.BoundaryImmediate {
+			if item.Timing == driver.TimingAfterTurn && !atEnd || item.Timing == driver.TimingInterrupt && b != driver.BoundaryImmediate {
 				remaining = append(remaining, item)
 			} else {
 				items = append(items, item)

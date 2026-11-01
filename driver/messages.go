@@ -155,9 +155,13 @@ type MessagePort interface {
 	// Signal returns a channel that becomes ready when new items are queued.
 	// Push-style Drivers (BoundaryImmediate, Interrupt) watch it.
 	Signal() <-chan struct{}
-	// Claim atomically takes every item deliverable at boundary b. TimingSoon
-	// items are claimable at any boundary; TimingAfterTurn items only at
-	// BoundaryTurnEnd; TimingInterrupt items only at BoundaryImmediate. Every
+	// Claim atomically takes every item deliverable at boundary b, in
+	// admission order. TimingSoon items are claimable at any boundary;
+	// TimingAfterTurn items only when the turn ends (BoundaryTurnEnd, or a
+	// BoundaryStop that closes the turn); TimingInterrupt items only at
+	// BoundaryImmediate. A Stop claim, and an immediate claim containing an
+	// Interrupt item, reserves the successor turn: when the execution has no
+	// turn left the claim returns nothing and the input stays pending. Every
 	// claimed item MUST later be passed to Ack exactly once.
 	Claim(b Boundary) []MessageItem
 	// Ack reports the outcome of one claimed item.

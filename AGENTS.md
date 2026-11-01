@@ -210,7 +210,7 @@ HITL 只通过 ApprovalRequest 表达：
 - MessageCapability 只声明已验证的 immediate/tool/stop 边界、Interrupt、ContinueMode、framed MaxUnits/MessageUnit、ConfirmedDelivery、PersistsDelivered、MinVersion。turn_end 对可续跑 Driver 隐含，不要求列入 Boundaries；零值表示无中途边界、无打断、支持 resume 时由 core 续接。
 - MessageCapabilityResolver 每 invocation 按最终解析 Request 协商，与实际 transport 一致，不能超出 Descriptor。core 在派发前原子修正能力与预排队消息；不支持 Interrupt 必须拒绝，不得降成 Soon。内置 Driver 必须探测本机 CLI 版本：已知版本低于 MinVersion 时裁掉中途边界、Interrupt 与确认交付并发布 Notice，保留可用的 core resume；版本未知或探测失败时保留声明能力，在 Inspect.Environment 以 warn 检查如实报告“未验证”，运行时仍依赖各 Driver 已验证的降级路径（注册拒绝、RPC 拒绝、relay 不可用时 Requeue 到 turn_end），不得因解析失败关闭较新 CLI 的能力。Inspect.Environment 报告同一版本与有效能力。
 - Window(true) 只能来自 provider 确认的活跃窗口，结束时必须 Window(false)；不得把本地进程启动等同于可投递。push Driver 监听 Signal，hook Driver 在真实回调中 Claim。
-- Claim 原子领取边界可交付项，保持接纳顺序；Soon 可在任意允许边界、AfterTurn 只在 turn_end、Interrupt 只在 immediate。Text 已包装，必须逐字交付。
+- Claim 原子领取边界可交付项，保持接纳顺序；Soon 可在任意允许边界、AfterTurn 只在轮次结束（turn_end，或结束本轮的 stop）、Interrupt 只在 immediate。Stop 领取与含 Interrupt 的 immediate 领取必须原子预留后继轮；轮次预算耗尽时不领取，输入保持待处理并在执行结束时以 limit_exceeded 交还原文。Text 已包装，必须逐字交付。
 - Claim 后每项必须恰好一次 Ack，且发生在 Run 返回前。调用方 ctx/Cancel 不得抢先结算已 Claim 项；Driver 仍必须响应运行取消并停止 I/O、结算所有 claim。
 - MessageAck.Delivered 仅表示 provider 在该边界接受；Mechanism 必须真实。ConfirmedDelivery=true 必须等待正式 provider echo，HTTP/pipe 写入成功不能替代。
 - 未交付 Ack 必须带 Err。边界故障可 Requeue=true，core 使其仅在 turn_end 重试；可能已经交付时同时 MaybeDelivered=true，重试项标记 MaybeDuplicate 并附防重复说明。取消不得启动重投；不得在相同失败边界忙循环。

@@ -155,7 +155,7 @@ func verifyMessageCalls(caps driver.MessageCapability, calls []MessageCall, evid
 				attempt := &messageAttempt{item: item, number: number}
 				latest[item.ID] = attempt
 				attempts = append(attempts, attempt)
-				if item.Timing == driver.TimingInterrupt && (!caps.Interrupt || c.Boundary != driver.BoundaryImmediate) || item.Timing == driver.TimingAfterTurn && c.Boundary != driver.BoundaryTurnEnd {
+				if item.Timing == driver.TimingInterrupt && (!caps.Interrupt || c.Boundary != driver.BoundaryImmediate) || item.Timing == driver.TimingAfterTurn && c.Boundary != driver.BoundaryTurnEnd && c.Boundary != driver.BoundaryStop {
 					out = append(out, violationf("MSG-02", "%q claimed at a timing-incompatible boundary", item.ID))
 				}
 			}

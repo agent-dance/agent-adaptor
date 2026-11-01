@@ -155,7 +155,7 @@ confirmation or proof that the model followed the guidance.
 
 For a boundary-specific failure such as an ended-turn precondition, RPC timeout,
 or absent hook echo, Ack with Err and Requeue=true. Core keeps the message
-accepted and makes it eligible **only at turn_end**, avoiding a busy retry loop
+accepted and makes it eligible **only at turn end** (`turn_end`, or a `stop` that closes the turn), avoiding a busy retry loop
 at the failed boundary. If submission was ambiguous, also set
 MaybeDelivered=true; core supplies MaybeDuplicate and a duplicate warning on
 retry. It cannot guarantee exactly-once model effects after ambiguous delivery.

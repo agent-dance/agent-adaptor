@@ -102,10 +102,11 @@ func (d referenceMessageDriver) Run(ctx context.Context, req driver.Request, sin
 			if b == driver.BoundaryTurnEnd {
 				continue
 			}
-			if b == driver.BoundaryStop && s.scenario.Boundary == driver.BoundaryStop {
-				// A Stop callback can deliver both timings at once. Claim them
-				// atomically so an earlier AfterTurn stays ahead of later Soon.
-				b = driver.BoundaryTurnEnd
+			if b == driver.BoundaryStop && s.scenario.Boundary != driver.BoundaryStop {
+				// Stop closes the turn and is also its turn-end delivery point;
+				// only the Stop scenario's callback claims here. One Stop claim
+				// returns Soon and AfterTurn input together in admission order.
+				continue
 			}
 			if err := deliver(port.Claim(b)); err != nil {
 				return driver.Response{}, err
