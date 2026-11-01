@@ -443,25 +443,25 @@ Driver를 넘나드는 협업의 가치는 모델과 그 네이티브 `Harness` 
 핵심 코드 예시는 다음과 같다:
 
 ```go
-team, err := a2adelegation.NewService(a2adelegation.Config{
-	Agents: []a2adelegation.AgentRef{
-		a2adelegation.LocalNamed("plan", "Codex Planner", planner, a2adelegation.Policy{}),
-		a2adelegation.LocalNamed("impl", "Claude Code Implementer", implementer, a2adelegation.Policy{}),
-		a2adelegation.LocalNamed("review", "Codex Reviewer", reviewer, a2adelegation.Policy{}),
-	},
+leader := adaptor.New(leaderDriver)
+workers, err := team.New(team.Config{
+    Leader: leader,
+    Members: []team.Member{
+        {Key: "plan", Name: "Codex Planner", Runner: planner},
+        {Key: "impl", Name: "Claude Code Implementer", Runner: implementer},
+        {Key: "review", Name: "Codex Reviewer", Runner: reviewer},
+    },
 })
-if err != nil {
-	return err
-}
-defer team.Close()
+if err != nil { return err }
+defer workers.Close(ctx)
 
-leader := adaptor.New(leaderDriver, team.Option())
-stream := leader.Stream(ctx, "Plan, implement, and review TASK.md")
+stream := workers.Send(ctx, "Plan, implement, and review TASK.md")
 for event := range stream.Events() {
-	if update, ok := event.(adaptor.SubagentUpdate); ok {
-		fmt.Printf("[%s] %s: %s\n", update.Agent, update.Kind, update.Delta)
-	}
+    if update, ok := event.(adaptor.SubagentUpdate); ok {
+        fmt.Printf("[%s] %s: %s\n", update.Member, update.Kind, update.Delta)
+    }
 }
+result, err := stream.Result()
 ```
 
 완전한 [`team-agent-workflow`](./examples/showcases/team-agent-workflow)에는 역할 단위 sandbox, 구조화된 `PLAN.md` 산출물, workspace 감사, 그리고 실시간 하위 Agent 카드가 있는 CopilotKit 페이지가 들어 있고, 명령 하나로 시작한다:

@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
 	"maps"
 	"sync"
 	"time"
@@ -21,6 +22,7 @@ type MemoryStore struct {
 }
 
 type memoryScope struct {
+	parent       string
 	lease        ScopeLease
 	tasks        []Task
 	messages     []InboxMessage
@@ -111,6 +113,7 @@ func (store *MemoryStore) AcquireScope(ctx context.Context, key, owner string, t
 	scope.lease = ScopeLease{Scope: key, Owner: owner, Token: randomID(), ExpiresAt: time.Now().Add(ttl)}
 	for index := range scope.messages {
 		message := &scope.messages[index]
+		message.Deferred = message.Host && message.RequiresOptions && message.State != Delivered && message.State != DeliveryFailed
 		if message.State == Delivering {
 			message.State = Pending
 			message.ClaimToken = ""
@@ -137,7 +140,7 @@ func (store *MemoryStore) RenewScope(ctx context.Context, lease ScopeLease, ttl 
 	}
 	scope.lease.ExpiresAt = time.Now().Add(ttl)
 	for index := range scope.messages {
-		if scope.messages[index].State == Delivering {
+		if scope.messages[index].State == Delivering && scope.messages[index].ClaimUntil.After(time.Now()) {
 			scope.messages[index].ClaimUntil = scope.lease.ExpiresAt
 		}
 	}
@@ -177,6 +180,11 @@ func (store *MemoryStore) Tasks(ctx context.Context, key string) ([]Task, error)
 func (store *MemoryStore) SaveTask(ctx context.Context, lease ScopeLease, task Task, notifications ...InboxMessage) (Task, error) {
 	if err := ctx.Err(); err != nil {
 		return Task{}, err
+	}
+	if task.RemoteSnapshot != nil {
+		if _, err := json.Marshal(task.RemoteSnapshot); err != nil {
+			return Task{}, fmt.Errorf("team: remote task is not JSON: %w", err)
+		}
 	}
 	if task.Input != nil {
 		if _, err := json.Marshal(task.Input); err != nil {
@@ -229,7 +237,9 @@ func validTransition(from, to TaskState) bool {
 	return from == to || from == Queued && to == Running || from == Running && to == WaitingApproval || from == WaitingApproval && to == Running
 }
 
-// PutMessage durably admits a notification; repeated identical IDs deduplicate.
+// PutMessage durably admits a notification. Delivered IDs deduplicate; an
+// identical failed ID can be explicitly resubmitted. Clearing Deferred on
+// re-admission activates a queued message without changing its identity.
 func (store *MemoryStore) PutMessage(ctx context.Context, lease ScopeLease, message InboxMessage) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -259,7 +269,7 @@ func withMessages(existing []InboxMessage, indexes map[string]int, scope string,
 	if len(added) == 0 {
 		return existing, nil
 	}
-	messages := existing
+	messages := append([]InboxMessage(nil), existing...)
 	registered := make(map[string]InboxMessage, len(added))
 	for _, message := range added {
 		if message.Scope != scope || message.ID == "" {
@@ -271,8 +281,22 @@ func withMessages(existing []InboxMessage, indexes map[string]int, scope string,
 			duplicate = true
 		}
 		if duplicate {
-			if current.Text != message.Text || current.Task != message.Task || current.From != message.From || current.Wake != message.Wake {
+			if current.Text != message.Text || current.Task != message.Task || current.From != message.From || current.Wake != message.Wake || current.Host != message.Host || current.Timing != message.Timing {
 				return nil, ErrConflict
+			}
+			if current.State == DeliveryFailed {
+				if index, found := indexes[message.ID]; found {
+					messages[index].State = Pending
+					messages[index].RequiresOptions = message.RequiresOptions
+					messages[index].Reason = ""
+					messages[index].ClaimToken = ""
+					messages[index].ClaimUntil = time.Time{}
+				}
+			}
+			if current.Deferred && !message.Deferred {
+				if index, found := indexes[message.ID]; found {
+					messages[index].Deferred = false
+				}
 			}
 			continue
 		}
@@ -312,11 +336,14 @@ func (store *MemoryStore) ClaimMessages(ctx context.Context, lease ScopeLease, i
 	var claimed []InboxMessage
 	for index := range scope.messages {
 		message := &scope.messages[index]
-		if !message.Wake && !includeNotes {
+		if message.Deferred || !message.Wake && !includeNotes {
 			continue
 		}
 		if message.State != Pending && !(message.State == Delivering && !message.ClaimUntil.After(time.Now())) {
 			continue
+		}
+		if message.State == Delivering {
+			message.MaybeDuplicate = true
 		}
 		message.State = Delivering
 		message.ClaimToken = randomID()
@@ -379,6 +406,7 @@ func (store *MemoryStore) FinishMessage(ctx context.Context, lease ScopeLease, i
 }
 
 func cloneTask(task Task) Task {
+	task.RemoteSnapshot = cloneRemoteTask(task.RemoteSnapshot)
 	task.Input = cloneMap(task.Input)
 	task.Unread = append([]string(nil), task.Unread...)
 	if task.Usage != nil {
@@ -386,7 +414,7 @@ func cloneTask(task Task) Task {
 		task.Usage = &usage
 	}
 	if task.Result != nil {
-		copied := *task.Result
+		copied := *adaptor.ComposeResults(task.Result.RunID, task.Result)
 		copied.Metadata = maps.Clone(task.Result.Metadata)
 		copied.Usage = sumUsage(nil, task.Result.Usage)
 		task.Result = &copied
@@ -409,4 +437,55 @@ func cloneMap(input map[string]any) map[string]any {
 		return nil
 	}
 	return output
+}
+
+// ForkParent returns the durable parent scope, if any.
+func (store *MemoryStore) ForkParent(ctx context.Context, key string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	return store.scope(key).parent, nil
+}
+
+// ForkScope atomically copies terminal history and records lazy fork lineage.
+func (store *MemoryStore) ForkScope(ctx context.Context, parent, child ScopeLease) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	source, err := store.check(parent)
+	if err != nil {
+		return err
+	}
+	target, err := store.check(child)
+	if err != nil {
+		return err
+	}
+	if parent.Scope == child.Scope || target.parent != "" || len(target.tasks) > 0 || len(target.messages) > 0 || len(target.artifacts) > 0 {
+		return ErrConflict
+	}
+	for _, task := range source.tasks {
+		if !terminal(task.State) {
+			return ErrThreadBusy
+		}
+	}
+	for _, task := range source.tasks {
+		task = cloneTask(task)
+		task.Scope = child.Scope
+		if task.Conversation == EncodeKey(parent.Scope, "member", task.Member) {
+			task.Conversation = EncodeKey(child.Scope, "member", task.Member)
+		} else {
+			task.Conversation = ""
+		}
+		target.tasks = append(target.tasks, task)
+	}
+	for _, artifact := range source.artifacts {
+		artifact.Scope = child.Scope
+		target.artifacts = append(target.artifacts, artifact)
+	}
+	target.parent = parent.Scope
+	return nil
 }

@@ -27,6 +27,8 @@ import (
 type FailureReason string
 
 const (
+	// ReasonLimitExceeded means unfinished work was aborted by an execution limit.
+	ReasonLimitExceeded FailureReason = "limit_exceeded"
 	// ReasonApprovalDenied means an approval was denied, including an
 	// automatically denied request.
 	ReasonApprovalDenied FailureReason = "approval_denied"

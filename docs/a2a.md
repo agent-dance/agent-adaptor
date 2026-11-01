@@ -4,7 +4,7 @@
 
 - `bridges/a2a` publishes any `adaptor.Runner` as an A2A agent.
 - `clients/a2a` calls remote A2A agents through stable, protocol-shaped DTOs.
-- `hosttools/a2adelegation` optionally gives a leader Agent a curated Local/Remote delegation service.
+- `hosttools/team` composes a leader with curated local and remote members.
 
 Core execution remains protocol-independent. There is no A2A Driver, automatic remote-agent routing, built-in production server, or A2A-specific execution entry point.
 
@@ -162,65 +162,44 @@ Credentials are origin-pinned. Auth is sent to the Agent Card origin by default;
 
 See [`examples/a2a-server`](../examples/a2a-server) for an end-to-end server and client using the final API.
 
-## Curated Local/Remote delegation
+## Curated Local/Remote teams
 
-`hosttools/a2adelegation` is an optional host component for a leader Agent. A `Service` combines:
-
-- a host-curated registry of Local and Remote targets;
-- the authenticated per-run `delegate_to_agent` MCP sidecar;
-- A2A transport and event mapping;
-- ordered delegation events and final result recording;
-- runtime-service attachment and teardown.
-
-Local targets execute any `adaptor.Runner` in-process. Remote targets use `clients/a2a`. Both paths pass through the same A2A-shaped mapper and emit the same `DelegationEvent` vocabulary.
+`hosttools/team` implements `adaptor.Runner` and owns one authenticated loopback
+MCP listener. A leader gets four tools (`team_delegate`, `team_send`,
+`team_status`, `team_cancel`); workers get messaging and status tools. The
+leader wakes when a task finishes or a member asks a question. See [Teams](team.md)
+for durability, limits, recovery, Fork and protocol limitations.
 
 ```go
-team, err := a2adelegation.NewService(a2adelegation.Config{
-	Agents: []a2adelegation.AgentRef{
-		a2adelegation.LocalNamed("plan", "Codex Planner", planner, a2adelegation.Policy{}),
-		a2adelegation.Remote("review", reviewCardURL, a2adelegation.Policy{
-			MaxTimeout: 2 * time.Minute,
-		}),
-	},
-	ToolTimeout: 3 * time.Minute,
+workers, err := team.New(team.Config{
+    Leader: leader,
+    Members: []team.Member{
+        {Key: "plan", Runner: planner},
+        {Key: "review", Remote: &team.RemoteSpec{
+            AgentCardURL: reviewCardURL,
+            Auth: a2aclient.BearerTokenFromEnv("REVIEW_TOKEN"),
+            Policy: team.RemotePolicy{MaxTimeout: 2 * time.Minute},
+        }},
+    },
 })
-if err != nil {
-	return err
-}
-defer team.Close()
-
-leader := adaptor.New(leaderDriver, team.Option())
-stream := leader.Stream(ctx, "coordinate the change")
-for event := range stream.Events() {
-	switch event := event.(type) {
-	case adaptor.TextDelta:
-		_ = event.Text
-	case adaptor.SubagentUpdate:
-		_ = event.Agent
-	}
-}
+if err != nil { return err }
+defer workers.Close(ctx)
+stream := workers.Thread("issue-123").Send(ctx, "coordinate the change")
+for event := range stream.Events() { /* leader and typed SubagentUpdate */ }
 result, err := stream.Result()
 ```
 
-Use `Local` when the registry key is also the only display label needed. Use
-`LocalNamed` to keep the model-facing key stable while carrying a separate
-human-facing name in `DelegationEvent.AgentName`; visual hosts can use names
-such as `Claude Code Implementer` to show the provider base independently from
-the workflow role.
+Remote members use `clients/a2a`, including its credential origin restrictions.
+`team_send` sends another A2A message to the same task ID. Rejections return a
+clear tool error. Disconnected tasks become failed with `unknown_state` after
+two minutes without successful observation; the original request is never
+replayed. The client negotiates the remote A2A protocol binding and wire method
+names; hosts do not hard-code them.
 
-`team.Option()` is a `SharedOption`: pass it to `adaptor.New` for every run or to one `Run`/`Stream` call for a single invocation. It is equivalent to the generic extension point:
-
-```go
-leader := adaptor.New(leaderDriver, adaptor.WithRunServices(team))
-```
-
-`Service` implements `adaptor.RunServiceProvider`. For each run it publishes a typed `ServiceRef.MCP` declaration, carries the bearer token only through `SecretEnv`, injects `SubagentUpdate` into the leader's existing Event channel, and tears the sidecar down during normal run cleanup. There is no separate subagent bus in the Runner API, and MCP declarations are never inferred from stringly metadata.
-
-The leader sees only registry keys, objectives, optional input, and bounded constraints. It never receives endpoint URLs or credentials. Unknown tool fields and attempts to provide `endpoint_url` are rejected.
-
-`Service.Result(runID, key)` returns the latest result for an Agent key. `Service.Results(runID)` is the latest-by-key map. `Service.Delegations(runID)` preserves every delegation in `DelegationStarted` acceptance order, including repeated calls to the same Agent. Recorded results remain readable after per-run sidecar teardown and after `Service.Close`.
-
-For lower-level integrations, `Registry`, `Delegator`, `EventBus`, and `MCPServer` remain independently usable. `StatusPartDecoder` can decode a host-owned A2A Status DataPart schema. The built-in `adapter.stream.v1` decoder remains the lossless path for adaptor events.
+The portable A2A contract exposes input-required state but no actionable
+approval response schema. Such requests remain governed by the remote's own
+policy, and the local task reports `waiting_approval`. Lifecycle-only HITL
+payloads are not fabricated into locally answerable ApprovalRequests.
 
 ## Security boundaries
 

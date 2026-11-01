@@ -432,9 +432,35 @@ func (run *execution) handleTool(command toolCommand) {
 			}
 			key = previous.record.Conversation
 		}
-		thread, err := conversation(member.Runner, key)
-		if err == nil {
+		var thread adaptor.Runner
+		var err error
+		if member.Remote != nil {
+			remote := *member.Runner.(*remoteRunner)
 			if input.Continue != "" {
+				remote.contextID = run.tasks[input.Continue].record.RemoteContext
+			} else if member.Continuity == PerScope {
+				records, loadErr := run.store.Tasks(command.ctx, run.scope)
+				if loadErr != nil {
+					run.abort(loadErr)
+					command.reply <- toolFailure("store_failed", "Cannot load remote context.", nil)
+					return
+				}
+				for _, record := range records {
+					if record.Member == member.Key && record.RemoteContext != "" {
+						remote.contextID = record.RemoteContext
+					}
+				}
+			}
+			if input.Continue != "" && remote.contextID == "" {
+				command.reply <- toolFailure("invalid_continue", "Remote task has no observed continuation context.", nil)
+				return
+			}
+			thread = &remote
+		} else {
+			thread, err = run.memberConversation(member, key)
+		}
+		if err == nil {
+			if input.Continue != "" && member.Remote == nil {
 				reader, supported := thread.(interface {
 					Checkpoint(context.Context) (*adaptor.Checkpoint, error)
 				})

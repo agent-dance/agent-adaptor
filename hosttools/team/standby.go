@@ -169,6 +169,9 @@ func (waiting *standby) Send(ctx context.Context, text string, options ...adapto
 	if err := ctx.Err(); err != nil {
 		return &adaptor.MessageError{Text: text, Reason: adaptor.MessageCancelled, Err: err}
 	}
+	if adaptor.MessageAttributes(options...).ID == "" {
+		options = append(append([]adaptor.CallOption(nil), options...), adaptor.MessageID(randomID()))
+	}
 	messageOptions, onlyMessages := asMessageOptions(options)
 	waiting.mu.Lock()
 	if waiting.ctx.Err() != nil {
@@ -177,6 +180,10 @@ func (waiting *standby) Send(ctx context.Context, text string, options ...adapto
 	}
 	current := waiting.current
 	if current == nil || waiting.cancelling || !onlyMessages || len(waiting.queue) > 0 {
+		if err := waiting.persistQueued(ctx, text, options); err != nil {
+			waiting.mu.Unlock()
+			return err
+		}
 		waiting.queue = append(waiting.queue, standbyMessage{text: text, options: append([]adaptor.CallOption(nil), options...)})
 		waiting.mu.Unlock()
 		waiting.signal()
@@ -189,6 +196,10 @@ func (waiting *standby) Send(ctx context.Context, text string, options ...adapto
 		if waiting.ctx.Err() != nil {
 			waiting.mu.Unlock()
 			return &adaptor.MessageError{Text: text, Reason: adaptor.MessageCancelled, Err: waiting.ctx.Err()}
+		}
+		if err := waiting.persistQueued(ctx, text, options); err != nil {
+			waiting.mu.Unlock()
+			return err
 		}
 		waiting.queue = append(waiting.queue, standbyMessage{text: text, options: append([]adaptor.CallOption(nil), options...)})
 		waiting.mu.Unlock()
@@ -215,8 +226,31 @@ func (waiting *standby) Cancel() {
 }
 
 func (waiting *standby) failQueued(messages []standbyMessage) {
+	waiting.mu.Lock()
+	lease := waiting.lease
+	waiting.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	ids := make(map[string]bool)
 	for _, message := range messages {
-		waiting.log.push(adaptor.MessageUpdate{ID: randomID(), State: adaptor.MessageFailed, Text: message.text, Reason: adaptor.MessageCancelled})
+		ids[adaptor.MessageAttributes(message.options...).ID] = true
+		if e := waiting.thread.team.config.Store.PutMessage(ctx, lease, hostRecord(waiting.thread.scope, message.text, message.options)); e != nil {
+			waiting.log.push(adaptor.Notice{Kind: "team.inbox_failed", Text: "Cannot activate cancelled message."})
+		}
+	}
+	claimed, err := waiting.thread.team.config.Store.ClaimMessages(ctx, lease, true, scopeTTL)
+	for _, item := range claimed {
+		if ids[item.ID] {
+			err = errors.Join(err, waiting.thread.team.config.Store.FinishMessage(ctx, lease, item.ID, item.ClaimToken, DeliveryFailed, "cancelled"))
+		} else {
+			err = errors.Join(err, waiting.thread.team.config.Store.RequeueMessage(ctx, lease, item.ID, item.ClaimToken))
+		}
+	}
+	if err != nil {
+		waiting.log.push(adaptor.Notice{Kind: "team.inbox_failed", Text: "Could not persist queued message cancellation."})
+	}
+	for _, message := range messages {
+		waiting.log.push(adaptor.MessageUpdate{ID: adaptor.MessageAttributes(message.options...).ID, State: adaptor.MessageFailed, Text: message.text, Reason: adaptor.MessageCancelled})
 	}
 }
 
@@ -254,7 +288,7 @@ func (waiting *standby) loop() {
 			message := waiting.queue[0]
 			waiting.queue = waiting.queue[1:]
 			waiting.mu.Unlock()
-			stream := waiting.thread.Send(waiting.ctx, message.text, message.options...)
+			stream := waiting.thread.team.startOwned(waiting.ctx, waiting.thread.scope, true, message.text, message.options, waiting)
 			waiting.attach(stream)
 			continue
 		}
@@ -363,15 +397,23 @@ func (waiting *standby) supplement(stream adaptor.Stream, messages []standbyMess
 		err := stream.Send(waiting.ctx, message.text, options...)
 		if errors.Is(err, adaptor.ErrRunFinished) && waiting.ctx.Err() == nil {
 			waiting.mu.Lock()
-			if waiting.generation == generation {
+			valid := waiting.generation == generation
+			if valid {
 				waiting.queue = append(waiting.queue, message)
-			} else {
-				waiting.failQueued([]standbyMessage{message})
 			}
 			waiting.mu.Unlock()
+			if !valid {
+				waiting.failQueued([]standbyMessage{message})
+			}
 			waiting.signal()
 		} else if err != nil {
-			waiting.log.push(adaptor.MessageUpdate{ID: randomID(), State: adaptor.MessageFailed, Text: message.text, Reason: adaptor.MessageCancelled})
+			waiting.log.push(adaptor.MessageUpdate{ID: adaptor.MessageAttributes(message.options...).ID, State: adaptor.MessageFailed, Text: message.text, Reason: adaptor.MessageCancelled})
 		}
 	}
+}
+
+func (waiting *standby) persistQueued(ctx context.Context, text string, options []adaptor.CallOption) error {
+	message := hostRecord(waiting.thread.scope, text, options)
+	message.Deferred = true
+	return waiting.thread.team.config.Store.PutMessage(ctx, waiting.lease, message)
 }

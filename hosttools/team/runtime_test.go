@@ -132,14 +132,14 @@ func TestWakeCoalescingAndNotesInvariant(t *testing.T) {
 		}
 		return answer("leader", 1), nil
 	}}
-	team = fixture(t, Config{Leader: adaptor.New(leader), Members: []Member{{Key: "worker", Runner: adaptor.New(worker), MaxActive: 2}}})
+	team = fixture(t, Config{Leader: adaptor.New(leader), Store: &idleObservedStore{MemoryStore: NewMemoryStore(), idle: idle}, Members: []Member{{Key: "worker", Runner: adaptor.New(worker), MaxActive: 2}}})
 	timers := make(chan chan time.Time, 2)
 	team.newTimer = func(time.Duration) *wakeTimer {
 		channel := make(chan time.Time, 1)
 		timers <- channel
 		return &wakeTimer{channel: channel, stop: func() bool { return true }}
 	}
-	stream := team.Send(ctx, "start")
+	stream := team.Thread("coalescing").Send(ctx, "start")
 	terminal := make(chan struct{}, 2)
 	notes := make(chan struct{}, 2)
 	drained := make(chan struct{})
@@ -147,10 +147,6 @@ func TestWakeCoalescingAndNotesInvariant(t *testing.T) {
 		defer close(drained)
 		for event := range stream.Events() {
 			switch typed := event.(type) {
-			case adaptor.TurnEnd:
-				if typed.Turn == 1 {
-					close(idle)
-				}
 			case adaptor.SubagentUpdate:
 				if typed.Kind == adaptor.SubagentFinished {
 					terminal <- struct{}{}
@@ -294,30 +290,81 @@ func TestLeaderCancelledNotesAreUnread(t *testing.T) {
 	}
 }
 
-func TestStandbyRoutesDirectThreadSend(t *testing.T) {
+func TestTaskSendRejectsLiveStandby(t *testing.T) {
 	ctx := testContext(t)
 	leader := &fakeDriver{run: func(_ context.Context, _ driver.Request, _ driver.EventSink) (driver.Response, error) {
-		return answer("direct", 1), nil
+		return answer("standby still works", 1), nil
 	}}
 	team := fixture(t, Config{Leader: adaptor.New(leader)})
-	thread := team.Thread("direct")
 	lifetime, cancel := context.WithCancel(ctx)
 	defer cancel()
-	waiting, err := thread.Standby(lifetime)
+	waiting, err := team.Thread("scope").Standby(lifetime)
 	if err != nil {
 		t.Fatal(err)
 	}
 	events := waiting.Events()
-	stream := thread.Send(ctx, "direct send")
+	rejected := team.Thread("scope").Send(ctx, "task", adaptor.MessageID("exact"))
+	if _, err := rejected.Result(); !errors.Is(err, adaptor.ErrThreadBusy) {
+		t.Fatalf("Result error=%v", err)
+	}
+	for event := range rejected.Events() {
+		if done, ok := event.(adaptor.Done); ok && !errors.Is(done.Err, adaptor.ErrThreadBusy) {
+			t.Fatalf("Done=%+v", done)
+		}
+	}
+	if err := waiting.Send(ctx, "standby message"); err != nil {
+		t.Fatal(err)
+	}
 	for event := range events {
 		if done, ok := event.(adaptor.Done); ok {
-			if done.Result.RunID != stream.RunID() {
-				t.Fatal("wrong execution routed")
+			if done.Err != nil || done.Result.Text != "standby still works" {
+				t.Fatalf("Done=%+v", done)
 			}
 			break
 		}
 	}
 	cancel()
 	for range events {
+	}
+}
+
+func TestTaskSendRejectsBusyScope(t *testing.T) {
+	ctx := testContext(t)
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	leader := &fakeDriver{run: func(ctx context.Context, _ driver.Request, _ driver.EventSink) (driver.Response, error) {
+		close(entered)
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return driver.Response{}, ctx.Err()
+		}
+		return answer("first", 1), nil
+	}}
+	team := fixture(t, Config{Leader: adaptor.New(leader)})
+	first := team.Thread("scope").Send(ctx, "first")
+	<-entered
+	if _, err := team.Thread("scope").Fork("branch"); !errors.Is(err, adaptor.ErrThreadBusy) {
+		t.Fatalf("active Fork=%v", err)
+	}
+	for _, opts := range [][]adaptor.CallOption{nil, {adaptor.MessageID("id"), adaptor.From(adaptor.Author{Kind: adaptor.AuthorHuman})}, {adaptor.WithModel("other")}} {
+		second := team.Thread("scope").Send(ctx, "second", opts...)
+		if second == first {
+			t.Fatal("task joined active execution")
+		}
+		if _, err := second.Result(); !errors.Is(err, adaptor.ErrThreadBusy) {
+			t.Fatalf("Result error=%v", err)
+		}
+		events, _, err := collect(t, second)
+		if !errors.Is(err, adaptor.ErrThreadBusy) {
+			t.Fatal(err)
+		}
+		if len(events) != 1 {
+			t.Fatalf("events=%v", events)
+		}
+	}
+	close(release)
+	if _, _, err := collect(t, first); err != nil {
+		t.Fatal(err)
 	}
 }
