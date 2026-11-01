@@ -62,7 +62,7 @@ func (s *appServer) handleAgent(w http.ResponseWriter, r *http.Request) {
 	// The browser's threadId is the host-owned conversation key; Thread turns
 	// it into continue-or-start semantics against the agent's thread store.
 	// Stream is the verb — there is no WithStreaming option to remember.
-	stream := s.agent.Thread(invocation.threadKey).Stream(r.Context(), invocation.prompt, invocation.opts...)
+	stream := s.agent.Thread(invocation.threadKey).Send(r.Context(), invocation.prompt, invocation.opts...)
 	defer stream.Cancel()
 
 	session := newAGUIRunSession(r.Context(), stream, s.store, invocation.threadID, invocation.userTurn, w)

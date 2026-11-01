@@ -190,14 +190,14 @@ func TestWithSkillsAppendsEverythingElseReplaces(t *testing.T) {
 		t.Run(row.name, func(t *testing.T) {
 			fake := capsFake()
 			agent := adaptor.New(fake, row.newOpts...)
-			if _, err := agent.Run(ctx, "merge probe", row.runOpts...); err != nil {
+			if _, err := agent.Send(ctx, "merge probe", row.runOpts...).Result(); err != nil {
 				t.Fatalf("Run: %v", err)
 			}
 			row.check(t, fake.lastRequest(t))
 
 			// A second bare run proves the per-call value did not leak
 			// into the agent defaults (clone-on-run isolation).
-			if _, err := agent.Run(ctx, "isolation probe"); err != nil {
+			if _, err := agent.Send(ctx, "isolation probe").Result(); err != nil {
 				t.Fatalf("isolation run: %v", err)
 			}
 		})

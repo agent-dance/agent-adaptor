@@ -29,7 +29,7 @@ func TestClaudeInteractive_PlanApproved(t *testing.T) {
 
 	var mu sync.Mutex
 	var requests []adaptor.ApprovalRequest
-	result, err := agent.Run(ctx,
+	result, err := agent.Send(ctx,
 		"Enter plan mode, design a two-step plan for refactoring the file `main.go` (do not actually edit). "+
 			"Call ExitPlanMode with the plan. Do not use any other tools.",
 		interactivePolicy(adaptor.ApprovalAsk, adaptor.QuestionAutoDeny),
@@ -39,7 +39,7 @@ func TestClaudeInteractive_PlanApproved(t *testing.T) {
 			mu.Unlock()
 			return req.Approve(ctx)
 		}),
-	)
+	).Result()
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -60,14 +60,14 @@ func TestClaudeInteractive_PlanRejected(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
 
-	result, err := agent.Run(ctx,
+	result, err := agent.Send(ctx,
 		"Enter plan mode, design a two-step plan for refactoring the file `main.go` (do not actually edit). "+
 			"Call ExitPlanMode with the plan. Do not ask questions or use other tools.",
 		interactivePolicy(adaptor.ApprovalAsk, adaptor.QuestionAutoDeny),
 		adaptor.OnApproval(func(ctx context.Context, req *adaptor.ApprovalRequest) error {
 			return req.Deny(ctx, "plan rejected by live conformance host")
 		}),
-	)
+	).Result()
 	if result != nil {
 		t.Fatalf("rejected plan returned successful Result: %#v", result)
 	}
@@ -85,7 +85,7 @@ func TestClaudeInteractive_QuestionAnswered(t *testing.T) {
 
 	var mu sync.Mutex
 	var requests []adaptor.ApprovalRequest
-	result, err := agent.Run(ctx,
+	result, err := agent.Send(ctx,
 		"Call AskUserQuestion exactly once with one multiple-choice question: "+
 			`"Which option should I use?" and exactly these option labels: "male", "female", "prefer not to say". `+
 			"Do not use any other tools. After the user answers, reply with exactly `ANSWER=<chosen option>` and nothing else.",
@@ -96,7 +96,7 @@ func TestClaudeInteractive_QuestionAnswered(t *testing.T) {
 			mu.Unlock()
 			return req.Answer(ctx, "male")
 		}),
-	)
+	).Result()
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -117,7 +117,7 @@ func TestClaudeInteractive_PermissionAsk(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	var seen adaptor.ApprovalKind
-	result, err := agent.Run(ctx,
+	result, err := agent.Send(ctx,
 		"Use the Bash tool exactly once to run `echo permission-ok`. Then reply with exactly PERMISSION_OK and nothing else.",
 		adaptor.WithPolicy(adaptor.Policy{Approvals: adaptor.ApprovalPolicy{
 			Permission: adaptor.ApprovalAsk,
@@ -127,7 +127,7 @@ func TestClaudeInteractive_PermissionAsk(t *testing.T) {
 			seen = req.Kind
 			return req.Approve(ctx)
 		}),
-	)
+	).Result()
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}

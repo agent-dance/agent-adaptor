@@ -104,10 +104,10 @@ func main() {
 	// Per-call WithSkills appends to the agent defaults; skill.Require marks
 	// the skill mandatory, so a materialization failure aborts the run with
 	// ErrSkillMaterialization instead of silently producing a skill-less agent.
-	res, err := ai.Run(ctx, prompt,
+	res, err := ai.Send(ctx, prompt,
 		adaptor.WithSkills(skill.Require(skill.Dir(exampleSkillDir(proofSkillName)), "the proof depends on it")),
 		adaptor.WithWorkspace(workspaceDir),
-	)
+	).Result()
 	if err != nil {
 		var runErr *adaptor.RunError
 		if errors.As(err, &runErr) {

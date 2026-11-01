@@ -115,6 +115,7 @@ func (s *Store) Finalize(_ context.Context, req threadstore.FinalizeRequest) err
 
 func cloneThreadRecord(record threadstore.Record) threadstore.Record {
 	copyRecord := record
+	copyRecord.DeliveredMessages = append([]threadstore.DeliveredMessage(nil), record.DeliveredMessages...)
 	if record.State != nil {
 		state := *record.State
 		if record.State.Data != nil {

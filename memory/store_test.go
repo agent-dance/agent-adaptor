@@ -285,3 +285,22 @@ func TestStoreFinalizeRequireKeyAbsentIsAtomicAndPreservesRawKey(t *testing.T) {
 		t.Fatalf("rejected child was partially saved: record=%#v err=%v", leaked, err)
 	}
 }
+
+func TestDeliveredMessageReceiptsAreCopiedWithCheckpoint(t *testing.T) {
+	ctx := context.Background()
+	s := NewStore()
+	record := threadstore.Record{ID: "receipts", Key: "thread", Status: threadstore.StatusActive, DeliveredMessages: []threadstore.DeliveredMessage{{ID: "message", At: time.Now().UTC()}}}
+	if err := s.Finalize(ctx, threadstore.FinalizeRequest{Record: record, Key: record.Key, RebindActive: true}); err != nil {
+		t.Fatal(err)
+	}
+	record.DeliveredMessages[0].ID = "mutated input"
+	got, err := s.Resolve(ctx, threadstore.Query{Key: "thread"})
+	if err != nil || got.DeliveredMessages[0].ID != "message" {
+		t.Fatalf("record=%+v err=%v", got, err)
+	}
+	got.DeliveredMessages[0].ID = "mutated output"
+	again, err := s.Resolve(ctx, threadstore.Query{Key: "thread"})
+	if err != nil || again.DeliveredMessages[0].ID != "message" {
+		t.Fatalf("record=%+v err=%v", again, err)
+	}
+}

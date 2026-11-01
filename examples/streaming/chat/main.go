@@ -52,9 +52,9 @@ func main() {
 		exampleutil.NonInteractive(agentCfg.Agent, adaptor.ReadOnly),
 	)
 
-	// A Thread is a Runner too: Run/Stream on it behave identically to the
+	// A Thread is a Runner too: Send on it behave identically to the
 	// Agent's, only bound to the conversation under this key.
-	stream := ai.Thread(*threadKey).Stream(ctx, *prompt)
+	stream := ai.Thread(*threadKey).Send(ctx, *prompt)
 	defer stream.Cancel()
 
 	fmt.Fprintf(os.Stderr, "[run %s]\n", stream.RunID())

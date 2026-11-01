@@ -39,6 +39,10 @@ const (
 // unsafe resumes when important context (identity, model, workspace,
 // instructions, ...) changed between runs.
 type Record struct {
+	// DeliveredMessages contains the most recent 1000 delivered message IDs,
+	// no older than seven days. Stores must copy and atomically persist it
+	// together with the checkpoint under the same validated leases.
+	DeliveredMessages []DeliveredMessage
 	// ID is the SDK-assigned internal session identifier. Consumers use the
 	// thread key and run IDs; stores index by ID and keep it stable for the
 	// record's lifetime.
@@ -204,3 +208,11 @@ func (e *AlreadyExistsError) Unwrap() error { return ErrAlreadyExists }
 // conflict understood by the internal coordinator. The method deliberately
 // carries no data and keeps threadstore independent of internal/engine.
 func (e *AlreadyExistsError) ThreadAlreadyExists() bool { return true }
+
+// DeliveredMessage is a Thread-scoped delivery idempotency receipt.
+type DeliveredMessage struct {
+	// ID is the opaque host-supplied or core-generated message ID.
+	ID string
+	// At is the UTC time delivery was acknowledged.
+	At time.Time
+}

@@ -209,7 +209,7 @@ func TestServiceTeamCollaborationS9(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	stream := leader.Stream(ctx, "coordinate the team")
+	stream := leader.Send(ctx, "coordinate the team")
 	merged := subagentstream.Merge(ctx, stream, team.Bus())
 	if merged.RunID() != stream.RunID() {
 		t.Fatalf("merged.RunID() = %q, want %q", merged.RunID(), stream.RunID())
@@ -224,16 +224,16 @@ func TestServiceTeamCollaborationS9(t *testing.T) {
 		case adaptor.TextDelta:
 			leaderText.WriteString(e.Text)
 		case adaptor.SubagentUpdate:
-			if len(perAgent[e.Agent]) == 0 {
-				agentOrder = append(agentOrder, e.Agent)
+			if len(perAgent[e.Member]) == 0 {
+				agentOrder = append(agentOrder, e.Member)
 			}
-			perAgent[e.Agent] = append(perAgent[e.Agent], e)
+			perAgent[e.Member] = append(perAgent[e.Member], e)
 			if e.Kind == adaptor.SubagentFinished {
 				// The Service records the result in its lifecycle hook
 				// before the Delegator flushes the buffered terminal
 				// event, so at this point Result must already answer.
-				if _, ok := team.Result(runID, e.Agent); !ok {
-					t.Errorf("team.Result(%q, %q) not recorded before terminal SubagentUpdate", runID, e.Agent)
+				if _, ok := team.Result(runID, e.Member); !ok {
+					t.Errorf("team.Result(%q, %q) not recorded before terminal SubagentUpdate", runID, e.Member)
 				}
 			}
 		}

@@ -71,7 +71,7 @@ func testParserFixtureToAGUI(t *testing.T, filename string) []aguievents.Event {
 	}
 
 	agent := adaptor.New(claudeFixtureDriver{stdout: data})
-	stream := agent.Stream(context.Background(), "fixture")
+	stream := agent.Send(context.Background(), "fixture")
 	events := make([]aguievents.Event, 0, 16)
 	for event := range agui.Events(stream) {
 		events = append(events, event)

@@ -258,7 +258,7 @@ func (e *executor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext)
 
 		// Stream never fails to start: startup problems close the event
 		// channel immediately and surface through Result() below.
-		stream := target.Stream(runCtx, prompt, callOpts...)
+		stream := target.Send(runCtx, prompt, callOpts...)
 		defer stream.Cancel()
 		e.store(execCtx.TaskID, stream)
 		defer e.delete(execCtx.TaskID)

@@ -203,7 +203,7 @@ func run(opts options) error {
 	//    drain obligation, no hand-rolled goroutines, no bus subscribe/clear
 	//    bookkeeping: the delegated roles' progress is interleaved with the
 	//    leader's own output, in order, on this very channel.
-	stream := leader.Stream(ctx, leaderProtocol(opts.roleTimeout))
+	stream := leader.Send(ctx, leaderProtocol(opts.roleTimeout))
 
 	trace := &workflowTrace{}
 	for ev := range stream.Events() {
@@ -217,7 +217,7 @@ func run(opts options) error {
 				term.Tool(e.Name, e.Args)
 			}
 		case adaptor.SubagentUpdate:
-			term.Live(e.Agent, string(e.Kind), e.Delta)
+			term.Live(e.Member, string(e.Kind), e.Delta)
 			trace.Add(e)
 		case adaptor.Dropped:
 			term.Warnf("dropped %d events", e.Count)
@@ -411,12 +411,8 @@ func withCallOptions(next adaptor.Runner, opts ...adaptor.CallOption) adaptor.Ru
 	return callOptionRunner{Runner: next, opts: append([]adaptor.CallOption(nil), opts...)}
 }
 
-func (r callOptionRunner) Run(ctx context.Context, prompt string, opts ...adaptor.CallOption) (*adaptor.Result, error) {
-	return r.Runner.Run(ctx, prompt, appendCallOptions(opts, r.opts)...)
-}
-
-func (r callOptionRunner) Stream(ctx context.Context, prompt string, opts ...adaptor.CallOption) adaptor.Stream {
-	return r.Runner.Stream(ctx, prompt, appendCallOptions(opts, r.opts)...)
+func (r callOptionRunner) Send(ctx context.Context, prompt string, opts ...adaptor.CallOption) adaptor.Stream {
+	return r.Runner.Send(ctx, prompt, appendCallOptions(opts, r.opts)...)
 }
 
 func appendCallOptions(first, last []adaptor.CallOption) []adaptor.CallOption {
@@ -462,18 +458,11 @@ func observe(role string, next adaptor.Runner, term *console, record func(string
 	return observed{Runner: next, role: role, term: term, record: record}
 }
 
-func (o observed) Run(ctx context.Context, prompt string, opts ...adaptor.CallOption) (*adaptor.Result, error) {
-	started := time.Now()
-	res, err := o.Runner.Run(ctx, prompt, opts...)
-	o.done(started, res, err)
-	return res, err
+func (o observed) Send(ctx context.Context, prompt string, opts ...adaptor.CallOption) adaptor.Stream {
+	return observedStream{Stream: o.Runner.Send(ctx, prompt, opts...), o: o, started: time.Now()}
 }
 
-func (o observed) Stream(ctx context.Context, prompt string, opts ...adaptor.CallOption) adaptor.Stream {
-	return observedStream{Stream: o.Runner.Stream(ctx, prompt, opts...), o: o, started: time.Now()}
-}
-
-// done is the single logging point for both verbs: one err decides the
+// done is the single logging point for an execution: one err decides the
 // outcome, and the business detail lives in *adaptor.RunError.Result.
 func (o observed) done(started time.Time, res *adaptor.Result, err error) {
 	elapsed := time.Since(started).Round(time.Millisecond)
@@ -505,7 +494,7 @@ type workflowTrace struct{ order []string }
 
 func (t *workflowTrace) Add(e adaptor.SubagentUpdate) {
 	if e.Kind == adaptor.SubagentStarted {
-		t.order = append(t.order, e.Agent)
+		t.order = append(t.order, e.Member)
 	}
 }
 

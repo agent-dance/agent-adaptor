@@ -18,7 +18,7 @@ import (
 //
 //	review, _, err := adaptor.RunAs[Review](ctx, reviewer, "review the diff")
 //
-//	stream := agent.Stream(ctx, p, adaptor.WithSchema[Review]())
+//	stream := agent.Send(ctx, p, adaptor.WithSchema[Review]())
 //	...
 //	res, err := stream.Result()
 //	var review Review
@@ -154,7 +154,7 @@ func WithSchemaJSON(schemaJSON []byte, opts ...SchemaOption) CallOption {
 func RunAs[T any](ctx context.Context, r Runner, prompt string, opts ...CallOption) (T, *Result, error) {
 	var out T
 	callOpts := append([]CallOption{WithSchema[T]()}, opts...)
-	res, err := r.Run(ctx, prompt, callOpts...)
+	res, err := r.Send(ctx, prompt, callOpts...).Result()
 	if err != nil {
 		return out, res, err
 	}

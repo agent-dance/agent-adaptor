@@ -11,7 +11,7 @@ package adaptor_test
 //	)
 //
 //	for job := range jobs {
-//	    res, err := agent.Run(ctx, job.Prompt,
+//	    res, err := agent.Send(ctx, job.Prompt,.Result()
 //	        adaptor.WithWorkspace(job.RepoDir),
 //	        adaptor.WithModel(job.Model),              // 便宜任务用小模型
 //	        adaptor.WithTimeout(10*time.Minute),
@@ -46,12 +46,12 @@ func TestScenarioS4BatchWorkerDualScope(t *testing.T) {
 	}
 
 	// --- job-1: call-site overrides, same With* vocabulary ---
-	if _, err := agent.Run(ctx, jobs[0].Prompt,
+	if _, err := agent.Send(ctx, jobs[0].Prompt,
 		adaptor.WithWorkspace(jobs[0].RepoDir),
 		adaptor.WithModel(jobs[0].Model), // 便宜任务用小模型
 		adaptor.WithTimeout(10*time.Minute),
 		adaptor.WithMetadata("job", jobs[0].ID),
-	); err != nil {
+	).Result(); err != nil {
 		t.Fatalf("Run(job-1): %v", err)
 	}
 
@@ -70,7 +70,7 @@ func TestScenarioS4BatchWorkerDualScope(t *testing.T) {
 	}
 
 	// --- job-2: no overrides ---
-	if _, err := agent.Run(ctx, jobs[1].Prompt); err != nil {
+	if _, err := agent.Send(ctx, jobs[1].Prompt).Result(); err != nil {
 		t.Fatalf("Run(job-2): %v", err)
 	}
 

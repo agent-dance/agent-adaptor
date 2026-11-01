@@ -37,7 +37,7 @@ type fakeDriver struct {
 	descriptor *driver.Descriptor
 
 	// streamCaps selects the provider-native transport independently of the
-	// consumer-facing Run/Stream method.
+	// consumer-facing Send method.
 	streamCaps driver.StreamCapability
 }
 

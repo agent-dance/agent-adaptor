@@ -77,9 +77,9 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
 
-	writerRes, err := writer.Run(ctx, "Reply with 'writer agent ok' and one short sentence.")
+	writerRes, err := writer.Send(ctx, "Reply with 'writer agent ok' and one short sentence.").Result()
 	exampleutil.Must(err, "run writer agent")
-	reviewRes, err := reviewer.Run(ctx, "Reply with 'review agent ok' and one short sentence.")
+	reviewRes, err := reviewer.Send(ctx, "Reply with 'review agent ok' and one short sentence.").Result()
 	exampleutil.Must(err, "run reviewer agent")
 
 	// Inspect() is the read-only panel: it never mutates and it degrades

@@ -6,7 +6,7 @@ package adaptor_test
 //
 //	agent := adaptor.New(codex.Driver(codex.Config{Model: "gpt-5.4"}))
 //
-//	res, err := agent.Run(ctx, "fix the failing tests")
+//	res, err := agent.Send(ctx, "fix the failing tests").Result()
 //	if err != nil { ... }                    // 唯一判断点
 //	fmt.Println(res.Text)
 //
@@ -31,7 +31,7 @@ func TestScenarioS1OneShotTask(t *testing.T) {
 
 	agent := adaptor.New(fake)
 
-	res, err := agent.Run(context.Background(), "fix the failing tests")
+	res, err := agent.Send(context.Background(), "fix the failing tests").Result()
 	if err != nil { // the single verdict point — no second-layer Failure check exists
 		t.Fatalf("Run: %v", err)
 	}

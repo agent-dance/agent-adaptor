@@ -14,7 +14,7 @@ import (
 
 func translateAppserverToAGUI(t *testing.T, payloads []driver.StreamPayload) []aguievents.Event {
 	t.Helper()
-	stream := adaptor.New(payloadDriver{payloads: payloads}).Stream(context.Background(), "AG-UI conformance")
+	stream := adaptor.New(payloadDriver{payloads: payloads}).Send(context.Background(), "AG-UI conformance")
 	var out []aguievents.Event
 	for event := range agui.Events(stream) {
 		out = append(out, event)

@@ -83,10 +83,10 @@ func TestPersistentCodexReusesAppServerWithHostDefinedTools(t *testing.T) {
 		}
 	}()
 	thread := agent.Thread("codex-tools-persistent")
-	if _, err := thread.Run(context.Background(), "one"); err != nil {
+	if _, err := thread.Send(context.Background(), "one").Result(); err != nil {
 		t.Fatalf("first turn: %v", err)
 	}
-	if _, err := thread.Run(context.Background(), "two"); err != nil {
+	if _, err := thread.Send(context.Background(), "two").Result(); err != nil {
 		t.Fatalf("second turn: %v", err)
 	}
 	if got := helperSpawnCount(t, spawnFile); got != 1 {

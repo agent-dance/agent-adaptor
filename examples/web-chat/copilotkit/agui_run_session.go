@@ -32,7 +32,7 @@ type runStateStore interface {
 //
 // # User-turn recording (canonical pattern)
 //
-// Thread.Stream(ctx, prompt) takes the user prompt as an argument and never
+// Thread.Send(ctx, prompt) takes the user prompt as an argument and never
 // persists it anywhere SDK-side: the thread store keeps only resume metadata,
 // and drivers emit assistant / tool / thinking events only. For the browser to
 // recover its full transcript on refresh, the host MUST land the user turn

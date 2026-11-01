@@ -29,8 +29,10 @@ var errApprovalAbort = errors.New("adaptor: approval aborted the run")
 // backpressure strategy, and implements driver.DecisionCapableSink so
 // approval requests route through the unified stream / OnApproval callback.
 type eventSink struct {
-	events <-chan Event
-	broker *eventBroker
+	hub          *messageHub
+	eventsCalled atomic.Bool
+	events       <-chan Event
+	broker       *eventBroker
 
 	runID   string
 	policy  ApprovalPolicy // effective (defaults materialized)
@@ -127,6 +129,11 @@ func effectiveApprovalPolicy(p ApprovalPolicy) ApprovalPolicy {
 // ---------------------------------------------------------------------------
 
 func (s *eventSink) Emit(ev driver.RunEvent) error {
+	if ev.Type == driver.RunEventTurnCompleted && ev.Turn != nil && s.hub != nil {
+		s.hub.ackPrompt(true, nil)
+		s.hub.completeTurn(&Result{RunID: s.runID, Text: ev.Turn.Text, Usage: cloneUsage(ev.Turn.Usage)}, nil)
+		return nil
+	}
 	var source *EventSourceMeta
 	if ev.Seq != 0 || !ev.Timestamp.IsZero() {
 		source = &EventSourceMeta{Sequence: ev.Seq, Timestamp: ev.Timestamp}
@@ -141,7 +148,7 @@ func (s *eventSink) EmitStream(p driver.StreamPayload) error {
 		return nil
 	}
 	event := eventFromStreamPayload(p)
-	if p.Kind == driver.StreamRunFinished || p.Kind == driver.StreamRunError {
+	if !s.broker.spool && (p.Kind == driver.StreamRunFinished || p.Kind == driver.StreamRunError) {
 		// In a Driver-only stream the provider owns the lifecycle envelope.
 		// Its terminal is still a hard public boundary: use the broker's
 		// reserved terminal slot and atomically seal out any later payloads.
@@ -168,7 +175,7 @@ func sourceMetaFromStreamPayload(p driver.StreamPayload) *EventSourceMeta {
 
 // enableAuthoritativeLifecycle switches on the core-owned public run
 // envelope before the first host event source is subscribed. Driver-only
-// streams retain their provider lifecycle unchanged.
+// sinks used outside an execution retain their provider lifecycle unchanged.
 func (s *eventSink) enableAuthoritativeLifecycle() {
 	if s == nil || s.broker == nil {
 		return
@@ -206,7 +213,7 @@ func (s *eventSink) captureDriverLifecycle(p driver.StreamPayload, source *Event
 		}
 		return true
 	case driver.StreamRunFinished, driver.StreamRunError:
-		if s.driverTerminal == nil {
+		{
 			terminal, _ := eventFromStreamPayload(p).(RunFinished)
 			if terminal.Usage != nil {
 				usage := *terminal.Usage
@@ -251,7 +258,7 @@ func (s *eventSink) completeAuthoritativeLifecycle(res *Result, runErr error) {
 	source := cloneEventSourceMeta(s.terminalSource)
 	s.lifecycleMu.Unlock()
 
-	if terminal.Usage == nil && res != nil && res.Usage != nil {
+	if res != nil && res.Usage != nil {
 		usage := *res.Usage
 		terminal.Usage = &usage
 	}
@@ -272,19 +279,18 @@ func (s *eventSink) completeAuthoritativeLifecycle(res *Result, runErr error) {
 			terminal.Message = runErr.Error()
 		}
 	}
-	s.broker.publishTerminal(terminal, source)
+	if s.broker.spool {
+		s.broker.publish(terminal, source)
+	} else {
+		s.broker.publishTerminal(terminal, source)
+	}
 }
 
-// push delivers one event under the configured backpressure strategy.
-//
-// Drop mode (default): non-blocking send; overflow increments a counter
-// that is flushed as one aggregated Dropped{Count} marker before the next
-// event that fits. The marker is delivered before that event and is never
-// duplicated.
-//
-// Blocking mode (WithBlockingEvents): the send waits for the consumer;
-// close() releases pending senders. Emitting on a closed sink is a no-op,
-// never a panic.
+// push publishes through the single ordered broker. Critical execution events
+// never wait for capacity. Ordinary blocking-mode producers release the broker
+// lock while waiting; default mode aggregates discarded deltas into Dropped.
+// Result-only consumption discards ordinary events. Publication after close is
+// a silent no-op.
 func (s *eventSink) push(ev Event) {
 	s.pushWithSource(ev, sourceMetaFromEvent(ev))
 }
@@ -483,6 +489,11 @@ func (s *eventSink) dispatchOnce(ctx context.Context, req driver.DecisionRequest
 	defer cancel()
 	if s.handler != nil {
 		return s.runHandler(dctx, req)
+	}
+	if s.broker.spool && !s.eventsCalled.Load() {
+		s.pushRequestedNotice(req)
+		s.push(Notice{Kind: NoticeLifecycle, Text: "Approval resolved immediately using the timeout fallback because Events was never called and no OnApproval handler is configured."})
+		return driver.DecisionResponse{RequestID: req.RequestID, Result: driver.DecisionTimedOut}, driver.DecisionTimedOut, nil
 	}
 	return s.runEventDispatch(dctx, req)
 }

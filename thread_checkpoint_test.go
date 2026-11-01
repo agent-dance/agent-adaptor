@@ -169,7 +169,7 @@ func TestThreadCheckpointRejectsInvalidDurableState(t *testing.T) {
 			store := memory.NewStore()
 			agent := adaptor.New(fake, adaptor.WithThreadStore(store))
 			thread := agent.Thread("invalid-checkpoint")
-			if _, err := thread.Run(ctx, "seed"); err != nil {
+			if _, err := thread.Send(ctx, "seed").Result(); err != nil {
 				t.Fatalf("seed: %v", err)
 			}
 			record := *activeRecord(t, store, thread.Key())
@@ -193,7 +193,7 @@ func TestThreadCheckpointRejectsStateCodecCannotNormalize(t *testing.T) {
 	seedFake := newFakeDriver()
 	seedFake.runFunc = checkpointing(driver.SessionState{ResumeID: "resume-1"})
 	seedDriver := &codecFake{fakeDriver: seedFake, codec: allowlistCodec{}}
-	if _, err := adaptor.New(seedDriver, adaptor.WithThreadStore(store)).Thread("codec-reject").Run(ctx, "seed"); err != nil {
+	if _, err := adaptor.New(seedDriver, adaptor.WithThreadStore(store)).Thread("codec-reject").Send(ctx, "seed").Result(); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 
@@ -232,7 +232,7 @@ func TestThreadSessionCapabilityPrelaunchMatrix(t *testing.T) {
 			fake.runFunc = checkpointing(driver.SessionState{ResumeID: "resume-1", Data: map[string]string{"cwd": "/repo"}})
 			store := newObservingStore()
 			agent := adaptor.New(tc.driver(fake), adaptor.WithThreadStore(store))
-			_, err := agent.Thread("capability-matrix").Run(context.Background(), "go")
+			_, err := agent.Thread("capability-matrix").Send(context.Background(), "go").Result()
 			if tc.wantErr {
 				if !errors.Is(err, adaptor.ErrThreadIncompatible) {
 					t.Fatalf("error = %v, want ErrThreadIncompatible", err)
@@ -268,7 +268,7 @@ func TestThreadCheckpointExplicitCodecRoundTrip(t *testing.T) {
 	})
 	agent := adaptor.New(fake, adaptor.WithThreadStore(memory.NewStore()))
 	th := agent.Thread("k")
-	if _, err := th.Run(ctx, "seed"); err != nil {
+	if _, err := th.Send(ctx, "seed").Result(); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 
@@ -319,7 +319,7 @@ func TestThreadCodecNormalizesPersistedAndExposedState(t *testing.T) {
 	store := memory.NewStore()
 	agent := adaptor.New(cd, adaptor.WithThreadStore(store))
 	th := agent.Thread("k")
-	if _, err := th.Run(ctx, "seed"); err != nil {
+	if _, err := th.Send(ctx, "seed").Result(); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 

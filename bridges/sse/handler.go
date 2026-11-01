@@ -125,7 +125,7 @@ func Handler(runner adaptor.Runner, opts Options) http.Handler {
 		// The run rides the request context: client disconnect → ctx cancel
 		// → run cancel. Stream never fails to start; startup problems close
 		// the event channel and surface through Result().
-		stream := target.Stream(r.Context(), prompt, opts.Options...)
+		stream := target.Send(r.Context(), prompt, opts.Options...)
 		defer stream.Cancel()
 
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -462,11 +462,18 @@ func rawFrameBody(ev adaptor.Event) (string, any) {
 			"source":         e.Source,
 			"details":        e.Details,
 		}
+	case adaptor.MessageUpdate:
+		return "message.update", e
+	case adaptor.TurnEnd:
+		return "turn.end", map[string]any{"turn": e.Turn, "result": e.Result, "message_ids": e.MessageIDs, "error": eventErrorText(e.Err)}
 	case adaptor.SubagentUpdate:
 		return "subagent." + string(e.Kind), map[string]any{
-			"agent": e.Agent,
-			"delta": e.Delta,
-			"data":  e.Data,
+			"member":  e.Member,
+			"task":    e.Task,
+			"state":   e.State,
+			"summary": e.Summary,
+			"delta":   e.Delta,
+			"data":    e.Data,
 		}
 	case *adaptor.ApprovalRequest:
 		if e == nil {
@@ -560,4 +567,11 @@ func nonEmpty(value, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func eventErrorText(err error) string {
+	if err != nil {
+		return err.Error()
+	}
+	return ""
 }

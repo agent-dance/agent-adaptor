@@ -479,7 +479,7 @@ printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"session_id
 		},
 		Model: "claude-sonnet-4",
 	}))
-	stream := agent.Stream(
+	stream := agent.Send(
 		context.Background(),
 		"extract project metadata",
 		adaptor.WithSchemaJSON([]byte(`{"type":"object","properties":{"project_name":{"type":"string"}},"required":["project_name"],"additionalProperties":false}`)),
@@ -513,11 +513,11 @@ printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"session_id
 		t.Fatalf("events = %#v", events)
 	}
 
-	runResult, err := agent.Run(
+	runResult, err := agent.Send(
 		context.Background(),
 		"extract project metadata",
 		adaptor.WithSchemaJSON([]byte(`{"type":"object","properties":{"project_name":{"type":"string"}},"required":["project_name"],"additionalProperties":false}`)),
-	)
+	).Result()
 	if err != nil {
 		t.Fatalf("Run result: %v", err)
 	}

@@ -102,7 +102,7 @@ func TestPersistentClaudePreDeliveryFallbackAndPostDeliveryNoReplay(t *testing.T
 
 	failing := newPersistentClaudeFixture(t, []driver.EnvBinding{{Name: "FAIL_AFTER_PERSISTENT_READ", Value: "1"}})
 	defer failing.close()
-	_, err := failing.thread.Run(context.Background(), "unknown outcome")
+	_, err := failing.thread.Send(context.Background(), "unknown outcome").Result()
 	if err == nil {
 		t.Fatal("post-delivery disconnect must surface an infrastructure error")
 	}
@@ -122,7 +122,7 @@ func TestPersistentClaudeCloseAndIdleLifecycle(t *testing.T) {
 	if err := fx.agent.Close(ctx); err != nil {
 		t.Fatalf("second Close: %v", err)
 	}
-	if _, err := fx.thread.Run(context.Background(), "closed"); !errors.Is(err, adaptor.ErrAgentClosed) {
+	if _, err := fx.thread.Send(context.Background(), "closed").Result(); !errors.Is(err, adaptor.ErrAgentClosed) {
 		t.Fatalf("run after close=%v, want ErrAgentClosed", err)
 	}
 
@@ -194,7 +194,7 @@ func (f *persistentClaudeFixture) run(t *testing.T, prompt string, opts ...adapt
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
-	result, err := f.thread.Run(ctx, prompt, opts...)
+	result, err := f.thread.Send(ctx, prompt, opts...).Result()
 	if err != nil {
 		t.Fatalf("run %q: %v", prompt, err)
 	}

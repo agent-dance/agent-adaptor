@@ -14,7 +14,7 @@ import (
 // breakage) travel the same err path as plain wrapped errors. Hosts have one
 // verdict point:
 //
-//	res, err := agent.Run(ctx, prompt)
+//	res, err := agent.Send(ctx, prompt).Result()
 //	if err != nil {
 //	    var runErr *adaptor.RunError
 //	    if errors.As(err, &runErr) {

@@ -21,8 +21,6 @@ type (
 	// TerminalPayload preserves the exact provider terminal JSON recognized
 	// by the driver parser and its provider-native event name.
 	TerminalPayload = driver.TerminalPayload
-	// TranscriptItem is the normalized semantic transcript unit.
-	TranscriptItem = driver.TranscriptItem
 	// ServiceReport is the execution report for one ensured runtime
 	// service.
 	ServiceReport = driver.RuntimeServiceReport
@@ -36,6 +34,10 @@ type (
 // Result directly — it returns a *RunError whose Result field carries this
 // same value (see RunError).
 type Result struct {
+	// Turns is the number of provider turns in this execution.
+	Turns     int
+	messages  []MessageOutcome
+	subagents []SubagentResult
 	// RunID is the SDK-assigned execution identifier.
 	RunID string
 	// Model is the effective model reported by the driver.
@@ -67,13 +69,14 @@ type Result struct {
 func resultFromResponse(runID string, resp driver.Response) *Result {
 	res := &Result{
 		RunID:      runID,
+		Turns:      1,
 		Model:      resp.Model,
 		Provider:   resp.Provider,
 		Text:       resp.Output,
 		Summary:    resp.Summary,
 		Usage:      cloneUsage(resp.Usage),
 		Metadata:   maps.Clone(resp.Metadata),
-		transcript: cloneTranscript(resp.Transcript),
+		transcript: publicTranscript(resp.Transcript),
 		structured: cloneStructuredOutput(resp.StructuredOutput),
 		services:   cloneServiceReports(resp.RuntimeServices),
 	}
@@ -163,6 +166,10 @@ func cloneTranscript(items []TranscriptItem) []TranscriptItem {
 	cloned := make([]TranscriptItem, len(items))
 	for i := range items {
 		cloned[i] = items[i]
+		if items[i].Message != nil {
+			message := *items[i].Message
+			cloned[i].Message = &message
+		}
 		cloned[i].Errors = append([]string(nil), items[i].Errors...)
 		cloned[i].Metadata = maps.Clone(items[i].Metadata)
 		cloned[i].Input = cloneJSONValue(items[i].Input)
@@ -255,4 +262,141 @@ func (r *Result) Decode(v any) error {
 		return errors.New("adaptor: no structured output to decode")
 	}
 	return json.Unmarshal([]byte(text), v)
+}
+
+// TranscriptMessage records actual supplemental delivery without asserting a
+// provider-specific user role. Text is the original, unframed message.
+type TranscriptMessage struct {
+	// ID is the opaque message identifier.
+	ID string
+	// From identifies the message author.
+	From Author
+	// Mechanism names the provider or core delivery mechanism.
+	Mechanism string
+	// Boundary is immediate, tool, stop, or turn_end when delivery was attempted.
+	Boundary string
+	// Text is the original unframed message, unless documented otherwise.
+	Text string
+}
+
+// TranscriptItem is a parsed provider item or a core-recorded message delivery.
+// Kind "message" has Message populated and does not imply a user role.
+type TranscriptItem struct {
+	// Kind identifies the author authority or transcript item type.
+	Kind driver.TranscriptKind
+	// Text is the original unframed message, unless documented otherwise.
+	Text string
+	// Delta marks incremental transcript content.
+	Delta bool
+	// ToolUseID correlates a tool call and its result.
+	ToolUseID string
+	// ToolName identifies the tool.
+	ToolName string
+	// Input is the parsed tool input.
+	Input any
+	// IsError marks a provider-reported error item.
+	IsError bool
+	// Model is the provider-reported model.
+	Model string
+	// SessionID is the provider-reported session identifier.
+	SessionID string
+	// Usage is observed token and cost accounting, or nil when unobserved.
+	Usage *Usage
+	// CostUSD is provider-reported cost when available.
+	CostUSD *float64
+	// Subtype preserves the provider result subtype.
+	Subtype string
+	// Errors preserves provider error descriptions.
+	Errors []string
+	// Metadata preserves short provider tags.
+	Metadata map[string]string
+	// Data preserves structured provider extensions.
+	Data map[string]any
+	// Message is populated only for Kind "message" and describes actual core-observed delivery.
+	Message *TranscriptMessage
+}
+
+func publicTranscriptItem(item *driver.TranscriptItem) *TranscriptItem {
+	if item == nil {
+		return nil
+	}
+	items := publicTranscript([]driver.TranscriptItem{*item})
+	return &items[0]
+}
+func publicTranscript(items []driver.TranscriptItem) []TranscriptItem {
+	if items == nil {
+		return nil
+	}
+	out := make([]TranscriptItem, len(items))
+	for i, v := range items {
+		out[i] = TranscriptItem{Kind: v.Kind, Text: v.Text, Delta: v.Delta, ToolUseID: v.ToolUseID, ToolName: v.ToolName, Input: v.Input, IsError: v.IsError, Model: v.Model, SessionID: v.SessionID, Usage: v.Usage, CostUSD: v.CostUSD, Subtype: v.Subtype, Errors: v.Errors, Metadata: v.Metadata, Data: v.Data}
+	}
+	return cloneTranscript(out)
+}
+
+// Messages returns the final message outcomes in admission order.
+func (r *Result) Messages() []MessageOutcome {
+	if r == nil {
+		return nil
+	}
+	return append([]MessageOutcome(nil), r.messages...)
+}
+
+// Undelivered returns failed messages with their original text.
+func (r *Result) Undelivered() []MessageOutcome {
+	var out []MessageOutcome
+	for _, m := range r.Messages() {
+		if m.State == MessageFailed {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// SubagentResult is a delegated task's summary and observed usage.
+type SubagentResult struct {
+	// Member is the delegated agent key.
+	Member string
+	// Task is the delegation identifier.
+	Task string
+	// State is the message or delegated task lifecycle state.
+	State string
+	// Summary is the task result summary.
+	Summary string
+	// Usage is observed token and cost accounting, or nil when unobserved.
+	Usage *Usage
+	// Unread contains peer messages not yet consumed by the task.
+	Unread []string
+}
+
+// Subagents returns copies of the delegated task summaries.
+func (r *Result) Subagents() []SubagentResult {
+	if r == nil {
+		return nil
+	}
+	return cloneSubagents(r.subagents)
+}
+func cloneSubagents(in []SubagentResult) []SubagentResult {
+	if in == nil {
+		return nil
+	}
+	out := append([]SubagentResult(nil), in...)
+	for i := range out {
+		out[i].Usage = cloneUsage(out[i].Usage)
+		out[i].Unread = append([]string(nil), out[i].Unread...)
+	}
+	return out
+}
+func addUsage(a, b *Usage) *Usage {
+	if b == nil {
+		return a
+	}
+	if a == nil {
+		return cloneUsage(b)
+	}
+	a.InputTokens += b.InputTokens
+	a.OutputTokens += b.OutputTokens
+	a.CachedInputTokens += b.CachedInputTokens
+	a.EstimatedCostMilli += b.EstimatedCostMilli
+	return a
 }

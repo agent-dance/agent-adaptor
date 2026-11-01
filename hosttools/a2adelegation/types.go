@@ -4,7 +4,7 @@
 // A Service owns a curated target registry, an authenticated per-run MCP
 // sidecar, ordered DelegationEvent publication, and final result recording.
 // Service.Option or adaptor.WithRunServices attaches that lifecycle to a
-// leader's ordinary Run/Stream pipeline, where delegation progress appears as
+// leader's ordinary Send pipeline, where delegation progress appears as
 // adaptor.SubagentUpdate on the existing Event channel.
 //
 // Local targets consume adaptor.Runner directly. Remote targets use

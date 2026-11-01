@@ -122,8 +122,8 @@ func TestMergeInterleavesParentAndBus(t *testing.T) {
 		if subs[i].Kind != want {
 			t.Errorf("subs[%d].Kind = %v, want %v", i, subs[i].Kind, want)
 		}
-		if subs[i].Agent != "impl" {
-			t.Errorf("subs[%d].Agent = %q, want impl", i, subs[i].Agent)
+		if subs[i].Member != "impl" {
+			t.Errorf("subs[%d].Member = %q, want impl", i, subs[i].Member)
 		}
 	}
 	if subs[1].Delta != "sub says hi" {
@@ -288,7 +288,7 @@ func TestSubagentEventProjection(t *testing.T) {
 		Kind:         a2adelegation.DelegationStarted,
 	}
 	up := subagentstream.SubagentEvent(started)
-	if up.Kind != adaptor.SubagentStarted || up.Agent != "impl" {
+	if up.Kind != adaptor.SubagentStarted || up.Member != "impl" {
 		t.Errorf("started projection = %+v", up)
 	}
 	if up.Data["kind"] != string(a2adelegation.DelegationStarted) || up.Data["agent_name"] != "Implementer" {
@@ -333,4 +333,8 @@ func TestSubagentEventProjection(t *testing.T) {
 	}).Kind; got != adaptor.SubagentDelta {
 		t.Errorf("status projected to %v, want delta", got)
 	}
+}
+
+func (f *fakeStream) Send(context.Context, string, ...adaptor.MessageOption) error {
+	return adaptor.ErrMessageUnsupported
 }

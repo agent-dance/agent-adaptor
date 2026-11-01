@@ -209,7 +209,7 @@ func main() {
 }
 
 func mustRun(ai *adaptor.Agent, ctx context.Context, prompt string, opts ...adaptor.CallOption) *adaptor.Result {
-	res, err := ai.Run(ctx, prompt, opts...)
+	res, err := ai.Send(ctx, prompt, opts...).Result()
 	if err != nil {
 		var runErr *adaptor.RunError
 		if errors.As(err, &runErr) {

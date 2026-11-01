@@ -6,7 +6,7 @@ package adaptor_test
 // Acceptance shape:
 //
 //	th := agent.Thread(threadKeyFrom(r))        // 续聊：key 复用 / 自动新建
-//	stream := th.Stream(r.Context(), promptFrom(r))
+//	stream := th.Send(r.Context(), promptFrom(r))
 //	for ev := range stream.Events() {
 //	    switch e := ev.(type) {
 //	    case adaptor.TextDelta:
@@ -114,7 +114,7 @@ func TestScenarioS3WebChatApprovalCard(t *testing.T) {
 	// Request 1 — the chat handler, in the doc's exact consumption shape:
 	// bind the thread from the request, stream, park approval cards.
 	th := agent.Thread("tenant-1/chat-42")
-	stream := th.Stream(context.Background(), "deploy release 1.4")
+	stream := th.Send(context.Background(), "deploy release 1.4")
 	for ev := range stream.Events() {
 		switch e := ev.(type) {
 		case adaptor.TextDelta:
@@ -162,7 +162,7 @@ func TestScenarioS3WebChatApprovalCard(t *testing.T) {
 	// Request 2 — a later HTTP request builds a fresh handle from the same
 	// thread key and continues the conversation (state lives in the store,
 	// not in the handle).
-	res2, err := agent.Thread("tenant-1/chat-42").Run(context.Background(), "and roll the docs site too")
+	res2, err := agent.Thread("tenant-1/chat-42").Send(context.Background(), "and roll the docs site too").Result()
 	if err != nil {
 		t.Fatalf("continuation run: %v", err)
 	}
@@ -176,7 +176,7 @@ func TestScenarioS3WebChatApprovalCard(t *testing.T) {
 
 	// "Regenerate" — fork the thread; the alternative takes its own key,
 	// the original chat stays intact.
-	res3, err := th.Fork("tenant-1/chat-42/alt-1").Run(context.Background(), "try a bolder wording")
+	res3, err := th.Fork("tenant-1/chat-42/alt-1").Send(context.Background(), "try a bolder wording").Result()
 	if err != nil {
 		t.Fatalf("fork run: %v", err)
 	}

@@ -90,14 +90,14 @@ func (t *subagentTracker) start(id string, update adaptor.SubagentUpdate) *subag
 	now := subagentEventTime(update)
 	agentName := subagentString(update.Data, "agent_name")
 	if agentName == "" {
-		agentName = update.Agent
+		agentName = update.Member
 	}
 	state := &subagentActivityState{
 		content: subagentActivity{
 			SubagentID:       id,
 			RunID:            update.Meta().RunID,
 			ParentToolCallID: subagentString(update.Data, "parent_tool_call_id"),
-			AgentKey:         update.Agent,
+			AgentKey:         update.Member,
 			AgentName:        agentName,
 			Kind:             "delegated",
 			Protocol:         subagentString(update.Data, "remote_protocol"),
@@ -118,6 +118,10 @@ func (t *subagentTracker) start(id string, update adaptor.SubagentUpdate) *subag
 func (s *subagentActivityState) apply(update adaptor.SubagentUpdate) []aguievents.JSONPatchOperation {
 	now := subagentEventTime(update)
 	kind := subagentString(update.Data, "kind")
+	status := update.State
+	if status == "" {
+		status = subagentString(update.Data, "status")
+	}
 	var ops []aguievents.JSONPatchOperation
 	add := func(path string, value any) {
 		ops = append(ops, aguievents.JSONPatchOperation{Op: "add", Path: path, Value: value})
@@ -172,7 +176,7 @@ func (s *subagentActivityState) apply(update adaptor.SubagentUpdate) []aguievent
 	}
 
 	if update.Kind == adaptor.SubagentFinished {
-		s.content.Status = terminalSubagentStatus(kind, subagentString(update.Data, "status"))
+		s.content.Status = terminalSubagentStatus(kind, status)
 		s.terminal = true
 		add("/status", s.content.Status)
 		if text := subagentString(update.Data, "text"); text != "" {
@@ -189,7 +193,7 @@ func (s *subagentActivityState) apply(update adaptor.SubagentUpdate) []aguievent
 		}
 		s.content.DurationMS = max(now.Sub(s.started).Milliseconds(), 0)
 		add("/durationMs", s.content.DurationMS)
-	} else if status := runningSubagentStatus(subagentString(update.Data, "status")); status != "" && status != s.content.Status {
+	} else if status := runningSubagentStatus(status); status != "" && status != s.content.Status {
 		s.content.Status = status
 		add("/status", status)
 	} else if s.content.Status == "started" {
@@ -245,16 +249,19 @@ func (t *subagentTracker) flush(err error) []aguievents.Event {
 }
 
 func subagentID(update adaptor.SubagentUpdate) string {
+	if update.Task != "" {
+		return update.Task
+	}
 	if id := subagentString(update.Data, "delegation_id"); id != "" {
 		return id
 	}
-	if update.Agent == "" {
+	if update.Member == "" {
 		return ""
 	}
 	if runID := update.Meta().RunID; runID != "" {
-		return runID + ":subagent:" + update.Agent
+		return runID + ":subagent:" + update.Member
 	}
-	return "subagent:" + update.Agent
+	return "subagent:" + update.Member
 }
 
 func subagentEventTime(update adaptor.SubagentUpdate) time.Time {

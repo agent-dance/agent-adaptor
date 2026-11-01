@@ -4,7 +4,7 @@ package subagentstream
 // adaptor.SubagentUpdate events, so a leader's consumer sees team progress on
 // the unified event channel:
 //
-//	stream := leader.Stream(ctx, prompt)
+//	stream := leader.Send(ctx, prompt)
 //	merged := subagentstream.Merge(ctx, stream, team.Bus())
 //	for ev := range merged.Events() {
 //	    switch e := ev.(type) {
@@ -59,7 +59,7 @@ func Merge(ctx context.Context, stream adaptor.Stream, bus EventBus) adaptor.Str
 		tracker := newDelegationTracker()
 		var sequence uint64
 		var threadKey string
-		var parentTerminal adaptor.Event
+		var parentTerminals []adaptor.Event
 		stamp := func(ev adaptor.Event, source *adaptor.EventSourceMeta, observed time.Time) adaptor.Event {
 			sequence++
 			meta := ev.Meta()
@@ -160,13 +160,16 @@ func Merge(ctx context.Context, stream adaptor.Stream, bus EventBus) adaptor.Str
 						return
 					}
 					stopSubagents()
-					if parentTerminal != nil && !send(stamp(parentTerminal, nil, time.Time{})) {
-						return
+					for _, terminal := range parentTerminals {
+						if !send(stamp(terminal, nil, time.Time{})) {
+							return
+						}
 					}
 					continue
 				}
-				if _, terminal := ev.(adaptor.RunFinished); terminal {
-					parentTerminal = ev
+				switch ev.(type) {
+				case adaptor.RunFinished, adaptor.Done:
+					parentTerminals = append(parentTerminals, ev)
 					continue
 				}
 				if !send(stamp(ev, nil, time.Time{})) {
@@ -220,4 +223,9 @@ func (s *mergedStream) Cancel() {
 // delegation service injection produce identical SubagentUpdate values.
 func SubagentEvent(ev a2adelegation.DelegationEvent) adaptor.SubagentUpdate {
 	return a2adelegation.SubagentEvent(ev)
+}
+
+// Send forwards supplemental input to the parent execution.
+func (s *mergedStream) Send(ctx context.Context, text string, opts ...adaptor.MessageOption) error {
+	return s.parent.Send(ctx, text, opts...)
 }

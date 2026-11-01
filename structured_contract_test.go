@@ -4,7 +4,7 @@ package adaptor_test
 // the desired schema. Core then selects provider-native enforcement when it is
 // compatible and otherwise falls back to exact-JSON prompting plus local
 // validation. Provider transport selection remains independent from whether
-// the consumer called Run or Stream.
+// the consumer awaits Result or drains Events.
 
 import (
 	"context"
@@ -177,11 +177,11 @@ func TestWithSchemaGeneratesDeterministicSchema(t *testing.T) {
 	fake := &structuredFake{caps: fullStructuredCaps(), output: `{"project_name":"agent-adaptor","programming_languages":["go"]}`}
 	agent := adaptor.New(fake)
 
-	res, err := agent.Run(ctx, "extract", adaptor.WithSchema[projectMetadata]())
+	res, err := agent.Send(ctx, "extract", adaptor.WithSchema[projectMetadata]()).Result()
 	if err != nil {
 		t.Fatalf("run 1: %v", err)
 	}
-	if _, err := agent.Run(ctx, "extract again", adaptor.WithSchema[projectMetadata]()); err != nil {
+	if _, err := agent.Send(ctx, "extract again", adaptor.WithSchema[projectMetadata]()).Result(); err != nil {
 		t.Fatalf("run 2: %v", err)
 	}
 	firstReq := fake.request(t, 0)
@@ -220,7 +220,7 @@ func TestWithSchemaSupportsRecursiveTypes(t *testing.T) {
 	fake := &structuredFake{caps: fullStructuredCaps(), output: `{"project_name":"root","children":[]}`}
 	agent := adaptor.New(fake)
 
-	res, err := agent.Run(context.Background(), "extract tree", adaptor.WithSchema[recursiveProjectMetadata]())
+	res, err := agent.Send(context.Background(), "extract tree", adaptor.WithSchema[recursiveProjectMetadata]()).Result()
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -241,7 +241,7 @@ func TestWithSchemaRejectsInliningRecursiveTypes(t *testing.T) {
 	fake := &structuredFake{caps: fullStructuredCaps(), output: `{}`}
 	agent := adaptor.New(fake)
 
-	_, err := agent.Run(context.Background(), "extract", adaptor.WithSchema[recursiveProjectMetadata](adaptor.SchemaInlineReferences()))
+	_, err := agent.Send(context.Background(), "extract", adaptor.WithSchema[recursiveProjectMetadata](adaptor.SchemaInlineReferences())).Result()
 	if !errors.Is(err, adaptor.ErrInvalidOutputSchema) || !strings.Contains(err.Error(), "cannot inline recursive Go type") {
 		t.Fatalf("error = %v, want recursive ErrInvalidOutputSchema", err)
 	}
@@ -260,14 +260,14 @@ func TestWithSchemaSupportsRecursiveCollections(t *testing.T) {
 			name:   "slice",
 			output: `[]`,
 			run: func(agent *adaptor.Agent) (*adaptor.Result, error) {
-				return agent.Run(context.Background(), "extract list", adaptor.WithSchema[recursiveList]())
+				return agent.Send(context.Background(), "extract list", adaptor.WithSchema[recursiveList]()).Result()
 			},
 		},
 		{
 			name:   "map",
 			output: `{}`,
 			run: func(agent *adaptor.Agent) (*adaptor.Result, error) {
-				return agent.Run(context.Background(), "extract map", adaptor.WithSchema[recursiveMap]())
+				return agent.Send(context.Background(), "extract map", adaptor.WithSchema[recursiveMap]()).Result()
 			},
 		},
 	}
@@ -287,7 +287,7 @@ func TestWithSchemaSupportsRecursiveCollections(t *testing.T) {
 
 func TestWithSchemaRejectsSelfReferentialPointer(t *testing.T) {
 	fake := &structuredFake{caps: fullStructuredCaps()}
-	_, err := adaptor.New(fake).Run(context.Background(), "extract", adaptor.WithSchema[recursivePointer]())
+	_, err := adaptor.New(fake).Send(context.Background(), "extract", adaptor.WithSchema[recursivePointer]()).Result()
 	if !errors.Is(err, adaptor.ErrInvalidOutputSchema) || !strings.Contains(err.Error(), "self-referential pointer") {
 		t.Fatalf("error = %v, want self-referential pointer ErrInvalidOutputSchema", err)
 	}
@@ -298,7 +298,7 @@ func TestWithSchemaRejectsSelfReferentialPointer(t *testing.T) {
 
 func TestWithSchemaRejectsSelfReferentialMapKeyPointer(t *testing.T) {
 	fake := &structuredFake{caps: fullStructuredCaps()}
-	_, err := adaptor.New(fake).Run(context.Background(), "extract", adaptor.WithSchema[recursivePointerMap]())
+	_, err := adaptor.New(fake).Send(context.Background(), "extract", adaptor.WithSchema[recursivePointerMap]()).Result()
 	if !errors.Is(err, adaptor.ErrInvalidOutputSchema) || !strings.Contains(err.Error(), "self-referential map key") {
 		t.Fatalf("error = %v, want self-referential map key ErrInvalidOutputSchema", err)
 	}
@@ -312,7 +312,7 @@ func TestWithSchemaRejectsUnsupportedTypes(t *testing.T) {
 		Done chan struct{} `json:"done"`
 	}
 	fake := &structuredFake{caps: fullStructuredCaps()}
-	_, err := adaptor.New(fake).Run(context.Background(), "extract", adaptor.WithSchema[invalid]())
+	_, err := adaptor.New(fake).Send(context.Background(), "extract", adaptor.WithSchema[invalid]()).Result()
 	if !errors.Is(err, adaptor.ErrInvalidOutputSchema) {
 		t.Fatalf("expected ErrInvalidOutputSchema, got %v", err)
 	}
@@ -333,8 +333,8 @@ func TestWithSchemaPreservesLargeConstraintNumbers(t *testing.T) {
 	caps := fullStructuredCaps()
 	caps.JSONSchemaNative = false
 	fake := &structuredFake{caps: caps, output: `{"id":9007199254740993}`}
-	_, err := adaptor.New(fake).Run(context.Background(), "extract",
-		adaptor.WithSchema[largeSchemaNumber](adaptor.SchemaReturnInvalid()))
+	_, err := adaptor.New(fake).Send(context.Background(), "extract",
+		adaptor.WithSchema[largeSchemaNumber](adaptor.SchemaReturnInvalid())).Result()
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -348,7 +348,7 @@ func TestStructuredOutputRejectsInvalidSchemaBeforeLaunch(t *testing.T) {
 	fake := &structuredFake{caps: fullStructuredCaps(), output: `{"project_name":"agent-adaptor"}`}
 	agent := adaptor.New(fake)
 
-	_, err := agent.Run(context.Background(), "extract", adaptor.WithSchemaJSON([]byte(`{`)))
+	_, err := agent.Send(context.Background(), "extract", adaptor.WithSchemaJSON([]byte(`{`))).Result()
 	if !errors.Is(err, adaptor.ErrInvalidOutputSchema) {
 		t.Fatalf("expected ErrInvalidOutputSchema, got %v", err)
 	}
@@ -364,7 +364,7 @@ func TestStructuredOutputRejectsUnsupportedBeforeLaunch(t *testing.T) {
 	fake := &structuredFake{caps: caps, output: `{"project_name":"agent-adaptor"}`}
 	agent := adaptor.New(fake)
 
-	_, err := agent.Run(context.Background(), "extract", adaptor.WithSchema[projectMetadata]())
+	_, err := agent.Send(context.Background(), "extract", adaptor.WithSchema[projectMetadata]()).Result()
 	if !errors.Is(err, adaptor.ErrStructuredOutputUnsupported) {
 		t.Fatalf("expected ErrStructuredOutputUnsupported, got %v", err)
 	}
@@ -379,7 +379,7 @@ func TestStructuredSchemaFallsBackToCompatibleProviderTransport(t *testing.T) {
 	fake := &structuredFake{caps: caps, output: `{"project_name":"agent-adaptor"}`}
 	agent := adaptor.New(fake)
 
-	res, err := agent.Stream(context.Background(), "extract", adaptor.WithSchema[projectMetadata]()).Result()
+	res, err := agent.Send(context.Background(), "extract", adaptor.WithSchema[projectMetadata]()).Result()
 	if err != nil {
 		t.Fatalf("Stream.Result: %v", err)
 	}
@@ -401,7 +401,7 @@ func TestStructuredOutputFallsBackToPromptValidation(t *testing.T) {
 	opt := adaptor.WithSchemaJSON(schema, adaptor.SchemaName("project_metadata"))
 	schema[0] = '[' // prove WithSchemaJSON made its own copy.
 
-	res, err := agent.Run(context.Background(), "extract metadata", opt)
+	res, err := agent.Send(context.Background(), "extract metadata", opt).Result()
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -441,7 +441,7 @@ func TestStructuredOutputFallbackFailurePolicies(t *testing.T) {
 		fake := &structuredFake{caps: caps, output: "```json\n{\"project_name\":\"agent-adaptor\"}\n```"}
 		agent := adaptor.New(fake)
 
-		_, err := agent.Run(context.Background(), "extract", adaptor.WithSchemaJSON(schema))
+		_, err := agent.Send(context.Background(), "extract", adaptor.WithSchemaJSON(schema)).Result()
 		if !errors.Is(err, adaptor.ErrPolicyViolation) {
 			t.Fatalf("error = %v, want ErrPolicyViolation", err)
 		}
@@ -470,8 +470,8 @@ func TestStructuredOutputFallbackFailurePolicies(t *testing.T) {
 		fake := &structuredFake{caps: caps, output: `{"project_name":42}`}
 		agent := adaptor.New(fake)
 
-		res, err := agent.Run(context.Background(), "extract",
-			adaptor.WithSchemaJSON(schema, adaptor.SchemaReturnInvalid()))
+		res, err := agent.Send(context.Background(), "extract",
+			adaptor.WithSchemaJSON(schema, adaptor.SchemaReturnInvalid())).Result()
 		if err != nil {
 			t.Fatalf("run: %v", err)
 		}
@@ -494,7 +494,7 @@ func TestStructuredOutputIgnoredWithoutSchemaRequest(t *testing.T) {
 	}
 	agent := adaptor.New(fake)
 
-	res, err := agent.Run(context.Background(), "ordinary run")
+	res, err := agent.Send(context.Background(), "ordinary run").Result()
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -514,7 +514,7 @@ func TestStructuredOutputFallbackPreservesLargeNumbers(t *testing.T) {
 	agent := adaptor.New(fake)
 	schema := []byte(`{"type":"object","properties":{"id":{"type":"integer","const":9007199254740993}},"required":["id"],"additionalProperties":false}`)
 
-	res, err := agent.Run(context.Background(), "extract", adaptor.WithSchemaJSON(schema))
+	res, err := agent.Send(context.Background(), "extract", adaptor.WithSchemaJSON(schema)).Result()
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -537,11 +537,11 @@ func TestRunAndStreamReturnEquivalentStructuredOutput(t *testing.T) {
 	agent := adaptor.New(fake)
 	opt := adaptor.WithSchema[projectMetadata]()
 
-	runRes, err := agent.Run(ctx, "extract", opt)
+	runRes, err := agent.Send(ctx, "extract", opt).Result()
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	stream := agent.Stream(ctx, "extract", opt)
+	stream := agent.Send(ctx, "extract", opt)
 	for range stream.Events() {
 		// drain
 	}
@@ -573,7 +573,7 @@ func TestSchemaChangeDoesNotAffectThreadSessionFingerprint(t *testing.T) {
 	agent := adaptor.New(fake, adaptor.WithThreadStore(store))
 
 	const key = "company/issue-structured-output"
-	if _, err := agent.Thread(key).Run(ctx, "extract metadata", adaptor.WithSchema[projectMetadata]()); err != nil {
+	if _, err := agent.Thread(key).Send(ctx, "extract metadata", adaptor.WithSchema[projectMetadata]()).Result(); err != nil {
 		t.Fatalf("first run: %v", err)
 	}
 	req1 := fake.request(t, 0)
@@ -582,7 +582,7 @@ func TestSchemaChangeDoesNotAffectThreadSessionFingerprint(t *testing.T) {
 	}
 	rec1 := activeRecord(t, store, key)
 
-	if _, err := agent.Thread(key).Run(ctx, "extract metadata again", adaptor.WithSchema[projectMetadata](adaptor.SchemaName("renamed_schema"))); err != nil {
+	if _, err := agent.Thread(key).Send(ctx, "extract metadata again", adaptor.WithSchema[projectMetadata](adaptor.SchemaName("renamed_schema"))).Result(); err != nil {
 		t.Fatalf("second run: %v", err)
 	}
 	req2 := fake.request(t, 1)

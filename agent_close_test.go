@@ -91,7 +91,7 @@ func TestAgentCloseBoundsAdmittedHostedToolProfileResolutionAndCleansAllocation(
 		tool.Revision("echo/v1"),
 	)))
 
-	stream := agent.Stream(context.Background(), "use echo")
+	stream := agent.Send(context.Background(), "use echo")
 	run := stream.(*runStream)
 	select {
 	case <-d.firstEntered:
@@ -235,7 +235,7 @@ func TestAgentCloseIsBoundedIdempotentAndRejectsNewRuns(t *testing.T) {
 	go func() { firstDone <- agent.Close(context.Background()) }()
 	<-d.started
 
-	stream := agent.Stream(context.Background(), "must not run")
+	stream := agent.Send(context.Background(), "must not run")
 	if _, err := stream.Result(); !errors.Is(err, ErrAgentClosed) {
 		t.Fatalf("run after Close started = %v, want ErrAgentClosed", err)
 	}
@@ -352,7 +352,7 @@ func TestAgentCloseCancelsAndDrainsAcceptedRunsBeforeToolRuntime(t *testing.T) {
 	agent := New(d)
 	agent.toolRuntime = runtime
 
-	stream := agent.Stream(context.Background(), "block")
+	stream := agent.Send(context.Background(), "block")
 	<-d.runStarted
 	if err := agent.Close(context.Background()); err != nil {
 		t.Fatalf("Close: %v", err)

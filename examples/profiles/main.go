@@ -149,7 +149,7 @@ func main() {
 	}
 	output := map[string]any{
 		"demo":              "profiles",
-		"run_call_contract": "When -run=true this example calls ai.Run(ctx, prompt) with no CallOption arguments: everything the run sees comes from the agent-level defaults above.",
+		"run_call_contract": "When -run=true this example calls ai.Send(ctx, prompt).Result() with no CallOption arguments: everything the run sees comes from the agent-level defaults above.",
 		"profile_mode":      profileDescription,
 		"agent":             exampleutil.LiveAgentSummary(agentCfg),
 		"paths":             paths,
@@ -165,7 +165,7 @@ func main() {
 	}
 
 	if *runAgent {
-		result, runErr := ai.Run(ctx, *prompt)
+		result, runErr := ai.Send(ctx, *prompt).Result()
 		// One err, one verdict. A run that completed but failed at the business
 		// level arrives as a *RunError that still carries the full Result, so
 		// the evidence below is collected on both paths.

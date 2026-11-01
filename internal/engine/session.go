@@ -765,7 +765,7 @@ func persistSessionPlan(
 		}
 	}
 
-	return &SessionRef{
+	ref := &SessionRef{
 		ID:            plan.engineID,
 		Namespace:     plan.request.Namespace,
 		Key:           plan.request.Key,
@@ -774,5 +774,13 @@ func persistSessionPlan(
 		Created:       plan.created,
 		PreviousID:    plan.previousID,
 		Compatibility: plan.compatibility,
-	}, nil
+	}
+	// Later turns in this execution continue under the same held leases.
+	// Advance only after atomic persistence succeeded, retaining the saved
+	// creation timestamp and clearing one-shot fork/rebind preconditions.
+	plan.record = &record
+	plan.reused = true
+	plan.previousID = ""
+	plan.requireKeyAbsent = false
+	return ref, nil
 }

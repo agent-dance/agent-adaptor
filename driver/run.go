@@ -96,8 +96,8 @@ type Request struct {
 
 	// Streaming selects a provider-native streaming transport after the core
 	// has resolved the invocation. It is not derived from whether the consumer
-	// called Agent.Run or Agent.Stream: both consumer methods share one Event
-	// pipeline, and either may use a batch or streaming provider transport.
+	// calls Result or consumes Events: both use one Send execution pipeline,
+	// which may use a batch or streaming provider transport.
 	// Drivers that implement StreamSupport should use their declared native
 	// transport when this field is true.
 	//
@@ -237,7 +237,7 @@ func (f *RunFailure) IsRejected() bool {
 
 // IsTimedOut reports whether the failure is a HITL decision timeout
 // (OnTimeout=FailureAbort path). It is distinct from context.DeadlineExceeded
-// on the outer context, which is returned by Run or Stream.Result. nil-safe.
+// on the outer context, which is returned by Driver.Run and Stream.Result. nil-safe.
 func (f *RunFailure) IsTimedOut() bool {
 	return f != nil && f.Code == FailureTimeout
 }

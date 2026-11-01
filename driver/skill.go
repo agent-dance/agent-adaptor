@@ -13,7 +13,7 @@ type Skill struct {
 	Key string
 	// Source describes how the SDK should locate / materialize the SKILL.md
 	// content. Source == nil is invalid; the SDK reports ErrSkillSourceMissing
-	// while resolving Agent defaults or a Run/Stream invocation.
+	// while resolving Agent defaults or a Send invocation.
 	Source SkillSource
 	// Required marks the skill as must-install. Required skills are added to
 	// the Selected set for every run regardless of what the caller passed in

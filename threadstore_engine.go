@@ -23,7 +23,9 @@ const threadNamespace = "thread"
 // Keeping the adapter in the root package preserves the dependency direction:
 // neither the internal engine nor threadstore imports adaptor.
 type engineStore struct {
-	store threadstore.Store
+	store      threadstore.Store
+	messages   *messageHub
+	messageKey string
 }
 
 var _ engine.SessionStore = engineStore{}
@@ -37,6 +39,9 @@ func (s engineStore) Resolve(ctx context.Context, q engine.SessionQuery) (*engin
 	if err != nil || rec == nil {
 		return nil, err
 	}
+	if s.messages != nil && rec.Key == s.messageKey {
+		s.messages.load(rec.DeliveredMessages)
+	}
 	out := engineRecord(*rec)
 	return &out, nil
 }
@@ -46,8 +51,12 @@ func (s engineStore) Finalize(ctx context.Context, req engine.SessionFinalizeReq
 	for _, lease := range req.HeldLeases {
 		leases = append(leases, threadstore.Lease{Target: lease.Target, Owner: lease.Owner, Token: lease.Token})
 	}
+	record := storeRecord(req.Record)
+	if s.messages != nil {
+		record.DeliveredMessages = s.messages.deliveryReceipts()
+	}
 	return s.store.Finalize(ctx, threadstore.FinalizeRequest{
-		Record:           storeRecord(req.Record),
+		Record:           record,
 		PreviousID:       req.PreviousID,
 		Key:              req.Key,
 		HeldLeases:       leases,

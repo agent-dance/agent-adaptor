@@ -62,7 +62,7 @@ func main() {
 
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
-	res, err := ai.Run(ctx, `Call the host_echo tool exactly once with {"message":"hello"}, then report its returned message.`)
+	res, err := ai.Send(ctx, `Call the host_echo tool exactly once with {"message":"hello"}, then report its returned message.`).Result()
 	if err != nil {
 		var runErr *adaptor.RunError
 		if errors.As(err, &runErr) {

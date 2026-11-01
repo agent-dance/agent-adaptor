@@ -29,7 +29,7 @@ import (
 // store lease — the loser fails fast with ErrThreadBusy.
 // The configured Driver must declare Sessions.SupportsResume and implement
 // both driver.SessionCodecProvider and driver.SessionConfigFingerprinter;
-// Run/Stream reject an incomplete contract before acquiring resources or
+// Send reject an incomplete contract before acquiring resources or
 // touching the store.
 type Thread struct {
 	agent      *Agent
@@ -74,8 +74,8 @@ func ResumeOnly() ThreadOption {
 // (continue-or-start). key is the host's own opaque business string and is
 // stored and compared verbatim.
 //
-// Runs require a store injected via WithThreadStore; without one they fail
-// with ErrThreadStoreRequired. Thread panics on an empty key (programmer
+// Without WithThreadStore, the Agent uses its own in-memory store.
+// Thread panics on an empty key (programmer
 // error, symmetric with New's nil-driver panic).
 func (a *Agent) Thread(key string, opts ...ThreadOption) *Thread {
 	if key == "" {
@@ -113,26 +113,10 @@ func (t *Thread) Fork(newKey string) *Thread {
 // Key returns the thread key the handle is bound to.
 func (t *Thread) Key() string { return t.key }
 
-// Run executes one prompt on the thread to completion: resume the stored
-// conversation per the thread's mode, run the driver, persist the new
-// checkpoint. It has the same drain-the-stream and error contracts as
-// Agent.Run, plus the thread error vocabulary (ErrThreadBusy,
-// ErrThreadNotFound, ErrThreadIncompatible, ...).
-func (t *Thread) Run(ctx context.Context, prompt string, opts ...CallOption) (*Result, error) {
-	st := t.Stream(ctx, prompt, opts...)
-	for range st.Events() {
-		// Drain, exactly like Agent.Run: the unified pipeline is the only
-		// execution path; Run just has no event consumer.
-	}
-	return st.Result()
-}
-
-// Stream starts one prompt on the thread and returns the live Stream
-// immediately — the same consumption contract as Agent.Stream carrying the
-// session context per turn. Startup and session-coordination failures
-// surface through the normal contract (closed Events channel + Result()
-// error), never as a second return value.
-func (t *Thread) Stream(ctx context.Context, prompt string, opts ...CallOption) Stream {
+// Send starts one execution under this Thread's exclusive lease.
+// Supplemental messages belong on the returned Stream. A concurrent Send on
+// the same Thread fails with ErrThreadBusy through Result and Done.
+func (t *Thread) Send(ctx context.Context, prompt string, opts ...CallOption) Stream {
 	mode, forkFromKey := t.planMode()
 	return t.agent.startInvocation(ctx, prompt, opts, &invocationTarget{
 		thread:      t,
@@ -144,15 +128,11 @@ func (t *Thread) Stream(ctx context.Context, prompt string, opts ...CallOption) 
 // Checkpoint returns the driver resume handle currently stored under the
 // thread key, normalized through the driver's session codec (audit /
 // debugging use — the SDK resumes threads by itself). It fails with
-// ErrThreadNotFound when the key has no active conversation and with
-// ErrThreadStoreRequired when the agent has no store. Corrupt or unusable
+// ErrThreadNotFound when the key has no active conversation. Corrupt or unusable
 // durable state returns ErrThreadCheckpointMissing or ErrThreadIncompatible;
 // Checkpoint never returns an invalid checkpoint with a nil error.
 func (t *Thread) Checkpoint(ctx context.Context) (*Checkpoint, error) {
 	store := t.agent.defaults.threadStore
-	if store == nil {
-		return nil, fmt.Errorf("%w (thread %q)", ErrThreadStoreRequired, t.key)
-	}
 	contract, err := validateThreadDriverContract(t.agent.driver)
 	if err != nil {
 		return nil, t.threadError(err)
@@ -199,9 +179,6 @@ func (t *Thread) markEstablished() {
 // errors without a Result, classified by sentinel so hosts can branch
 // with errors.Is.
 var (
-	// ErrThreadStoreRequired: the agent has no threadstore.Store
-	// (WithThreadStore) but a Thread run or Checkpoint was requested.
-	ErrThreadStoreRequired = errors.New("adaptor: thread store required (use WithThreadStore)")
 	// ErrThreadNotFound: a resume-only thread (or a fork parent) has no
 	// stored conversation under its key.
 	ErrThreadNotFound = errors.New("adaptor: thread not found")
@@ -247,8 +224,6 @@ func (t *Thread) threadError(err error) error {
 	}
 	var incompatible *engine.SessionIncompatibleError
 	switch {
-	case errors.Is(primary, engine.ErrSessionStoreRequired):
-		return errors.Join(fmt.Errorf("%w (thread %q)", ErrThreadStoreRequired, t.key), err)
 	case errors.Is(primary, engine.ErrSessionNotFound):
 		return errors.Join(fmt.Errorf("%w (thread %q)", ErrThreadNotFound, t.key), err)
 	case errors.Is(primary, engine.ErrSessionBusy), errors.Is(primary, threadstore.ErrBusy):

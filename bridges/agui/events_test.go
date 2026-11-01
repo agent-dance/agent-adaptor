@@ -188,9 +188,9 @@ func TestEventTranslatorSubagentActivityLifecycle(t *testing.T) {
 	events := tr.Translate(adaptor.RunStarted{RunID: "leader-run", ThreadID: "thread"})
 
 	started := adaptor.WithEventMeta(adaptor.SubagentUpdate{
-		Agent: "plan",
-		Kind:  adaptor.SubagentStarted,
-		Delta: "Create an implementation plan",
+		Member: "plan",
+		Kind:   adaptor.SubagentStarted,
+		Delta:  "Create an implementation plan",
 		Data: map[string]any{
 			"kind":                "subagent.started",
 			"delegation_id":       "delegation-1",
@@ -221,7 +221,7 @@ func TestEventTranslatorSubagentActivityLifecycle(t *testing.T) {
 	}
 
 	delta := adaptor.WithEventMeta(adaptor.SubagentUpdate{
-		Agent: "plan", Kind: adaptor.SubagentDelta, Delta: "Inspect the API. ",
+		Member: "plan", Kind: adaptor.SubagentDelta, Delta: "Inspect the API. ",
 		Data: map[string]any{
 			"kind": "subagent.text.delta", "delegation_id": "delegation-1",
 			"time": "2026-07-30T09:00:01Z",
@@ -240,7 +240,7 @@ func TestEventTranslatorSubagentActivityLifecycle(t *testing.T) {
 	events = append(events, translated...)
 
 	finished := adaptor.WithEventMeta(adaptor.SubagentUpdate{
-		Agent: "plan", Kind: adaptor.SubagentFinished,
+		Member: "plan", Kind: adaptor.SubagentFinished,
 		Data: map[string]any{
 			"kind": "subagent.finished", "delegation_id": "delegation-1",
 			"status": "completed", "text": "Final plan", "result": map[string]any{"approved": true},
@@ -271,7 +271,7 @@ func TestEventTranslatorClosesUnfinishedSubagentActivity(t *testing.T) {
 	tr := agui.NewEventTranslator()
 	_ = tr.Translate(adaptor.RunStarted{RunID: "leader-run", ThreadID: "thread"})
 	_ = tr.Translate(adaptor.WithEventMeta(adaptor.SubagentUpdate{
-		Agent: "impl", Kind: adaptor.SubagentStarted,
+		Member: "impl", Kind: adaptor.SubagentStarted,
 		Data: map[string]any{"kind": "subagent.started", "delegation_id": "delegation-2"},
 	}, adaptor.EventMeta{RunID: "leader-run"}))
 
@@ -483,7 +483,7 @@ func TestEventsStreamEndToEnd(t *testing.T) {
 		response: driver.Response{Output: "hello"},
 	}
 	agent := adaptor.New(fake)
-	stream := agent.Stream(context.Background(), "hi")
+	stream := agent.Send(context.Background(), "hi")
 
 	var events []aguievents.Event
 	for ev := range agui.Events(stream) {
@@ -516,7 +516,7 @@ func TestEventsStreamSynthesizesNonStreamingResultText(t *testing.T) {
 		payloads: []driver.StreamPayload{{Kind: driver.StreamRunStarted, ThreadID: "t", RunID: "cursor-run"}},
 		response: driver.Response{Output: "cursor final answer"},
 	}
-	stream := adaptor.New(fake).Stream(context.Background(), "hi")
+	stream := adaptor.New(fake).Send(context.Background(), "hi")
 
 	var events []aguievents.Event
 	for event := range agui.Events(stream) {
@@ -542,7 +542,7 @@ func TestEventsStreamEndToEndBusinessFailure(t *testing.T) {
 		},
 	}
 	agent := adaptor.New(fake)
-	stream := agent.Stream(context.Background(), "hi")
+	stream := agent.Send(context.Background(), "hi")
 
 	var events []aguievents.Event
 	for ev := range agui.Events(stream) {
@@ -617,7 +617,7 @@ func TestEventTranslatorResultOverridesInformationalRunFinished(t *testing.T) {
 		payloads: []driver.StreamPayload{{Kind: driver.StreamRunFinished, RunID: "driver-run", ThreadID: "thread"}},
 		response: driver.Response{Failure: &driver.RunFailure{Code: driver.FailureAgentError, Message: "authoritative failure"}},
 	}
-	stream := adaptor.New(fake).Stream(context.Background(), "prompt")
+	stream := adaptor.New(fake).Send(context.Background(), "prompt")
 	var events []aguievents.Event
 	for event := range agui.Events(stream) {
 		events = append(events, event)
@@ -690,4 +690,8 @@ func TestEventTranslatorClosesLifecyclesDeterministically(t *testing.T) {
 			t.Fatalf("iteration %d lifecycle close order differs\nfirst=%v\ngot=%v", iteration, baseline, wire)
 		}
 	}
+}
+
+func (s *cancellationStream) Send(context.Context, string, ...adaptor.MessageOption) error {
+	return adaptor.ErrMessageUnsupported
 }

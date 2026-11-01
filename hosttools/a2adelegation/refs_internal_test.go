@@ -9,11 +9,7 @@ import (
 
 type inertLocalRunner struct{}
 
-func (inertLocalRunner) Run(context.Context, string, ...adaptor.CallOption) (*adaptor.Result, error) {
-	panic("unexpected Run")
-}
-
-func (inertLocalRunner) Stream(context.Context, string, ...adaptor.CallOption) adaptor.Stream {
+func (inertLocalRunner) Send(context.Context, string, ...adaptor.CallOption) adaptor.Stream {
 	panic("unexpected Stream")
 }
 

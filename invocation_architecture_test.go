@@ -184,11 +184,11 @@ func TestRunAndStreamHaveFullResultParity(t *testing.T) {
 	agent := adaptor.New(fake)
 	option := adaptor.WithSchemaJSON([]byte(`{"type":"object","properties":{"answer":{"type":"integer"}},"required":["answer"],"additionalProperties":false}`))
 
-	runResult, err := agent.Run(context.Background(), "answer", option)
+	runResult, err := agent.Send(context.Background(), "answer", option).Result()
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	stream := agent.Stream(context.Background(), "answer", option)
+	stream := agent.Send(context.Background(), "answer", option)
 	for range stream.Events() {
 	}
 	streamResult, err := stream.Result()

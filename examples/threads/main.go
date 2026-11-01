@@ -91,7 +91,7 @@ func main() {
 func runOnce(r adaptor.Runner, timeout time.Duration, prompt string) (*adaptor.Result, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	return r.Run(ctx, prompt)
+	return r.Send(ctx, prompt).Result()
 }
 
 func runStep(r adaptor.Runner, timeout time.Duration, prompt, label string) {

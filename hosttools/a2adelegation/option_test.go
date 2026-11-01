@@ -162,7 +162,7 @@ func TestServiceOptionEndToEnd(t *testing.T) {
 	}
 	leader := adaptor.New(drv, team.Option())
 
-	stream := leader.Stream(context.Background(), "coordinate the team")
+	stream := leader.Send(context.Background(), "coordinate the team")
 	runID := stream.RunID()
 
 	var leaderText strings.Builder
@@ -173,10 +173,10 @@ func TestServiceOptionEndToEnd(t *testing.T) {
 		case adaptor.TextDelta:
 			leaderText.WriteString(e.Text)
 		case adaptor.SubagentUpdate:
-			if len(perAgent[e.Agent]) == 0 {
-				agentOrder = append(agentOrder, e.Agent)
+			if len(perAgent[e.Member]) == 0 {
+				agentOrder = append(agentOrder, e.Member)
 			}
-			perAgent[e.Agent] = append(perAgent[e.Agent], e)
+			perAgent[e.Member] = append(perAgent[e.Member], e)
 		}
 	}
 
@@ -313,13 +313,13 @@ func TestServiceOptionOnRunScope(t *testing.T) {
 
 	// Call scope only.
 	bare := adaptor.New(drv)
-	if _, err := bare.Run(context.Background(), "go", team.Option()); err != nil {
+	if _, err := bare.Send(context.Background(), "go", team.Option()).Result(); err != nil {
 		t.Fatalf("Run with a call-scoped team option: %v", err)
 	}
 
 	// Both scopes: idempotent, not doubled.
 	both := adaptor.New(drv, team.Option())
-	res, err := both.Run(context.Background(), "go", team.Option())
+	res, err := both.Send(context.Background(), "go", team.Option()).Result()
 	if err != nil {
 		t.Fatalf("Run with the option in both scopes: %v", err)
 	}
@@ -342,7 +342,7 @@ func TestServiceOptionOnRunScope(t *testing.T) {
 
 	// Agents that never received the option are untouched by it.
 	plain := adaptor.New(&requestDrivenLeader{output: "solo"})
-	if _, err := plain.Run(context.Background(), "go"); err == nil {
+	if _, err := plain.Send(context.Background(), "go").Result(); err == nil {
 		t.Error("a leader without the team option must not find a delegation endpoint")
 	}
 }
@@ -358,7 +358,7 @@ func TestServiceOptionAttachFailureIsPreLaunch(t *testing.T) {
 	drv := &requestDrivenLeader{calls: []leaderCall{{agent: "plan", objective: "draft"}}, output: "ok"}
 	leader := adaptor.New(drv, team.Option())
 
-	res, err := leader.Run(context.Background(), "go")
+	res, err := leader.Send(context.Background(), "go").Result()
 	if err == nil {
 		t.Fatal("a closed Service must fail the run at attach time")
 	}
@@ -395,7 +395,7 @@ func TestServiceOptionEventsShareLeaderStreamInSourceOrder(t *testing.T) {
 	}
 	leader := adaptor.New(drv, team.Option())
 
-	stream := leader.Stream(context.Background(), "go")
+	stream := leader.Send(context.Background(), "go")
 	<-started
 
 	var leaderOrder, subagentOrder []string
@@ -407,7 +407,7 @@ func TestServiceOptionEventsShareLeaderStreamInSourceOrder(t *testing.T) {
 			}
 		case adaptor.SubagentUpdate:
 			if e.Kind != adaptor.SubagentDelta {
-				subagentOrder = append(subagentOrder, string(e.Kind)+":"+e.Agent)
+				subagentOrder = append(subagentOrder, string(e.Kind)+":"+e.Member)
 			}
 		}
 	}

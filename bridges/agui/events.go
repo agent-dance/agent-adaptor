@@ -5,7 +5,7 @@ package agui
 //
 // Typical host use:
 //
-//	stream := agent.Stream(ctx, prompt)
+//	stream := agent.Send(ctx, prompt)
 //	for ev := range agui.Events(stream) {
 //	    // ev is an AG-UI events.Event; forward it via SSE / WebSocket.
 //	}
@@ -315,6 +315,14 @@ func (t *EventTranslator) translateNonTerminalLocked(ev adaptor.Event) []aguieve
 		return []aguievents.Event{aguievents.NewToolCallResultEvent(e.ID+":result", e.ID, content)}
 	case adaptor.Notice:
 		return t.noticeLocked(e)
+	case adaptor.MessageUpdate:
+		return []aguievents.Event{customEvent("message.update", map[string]any{"id": e.ID, "state": e.State, "turn": e.Turn, "boundary": e.Boundary, "mechanism": e.Mechanism, "reason": e.Reason, "text": e.Text})}
+	case adaptor.TurnEnd:
+		value := map[string]any{"turn": e.Turn, "result": e.Result, "message_ids": e.MessageIDs}
+		if e.Err != nil {
+			value["error"] = e.Err.Error()
+		}
+		return []aguievents.Event{customEvent("turn.end", value)}
 	case adaptor.Dropped:
 		return []aguievents.Event{customEvent("stream.dropped", droppedValue(e))}
 	case adaptor.SubagentUpdate:
@@ -493,6 +501,7 @@ func (t *EventTranslator) approvalRequestLocked(req *adaptor.ApprovalRequest) []
 		return nil
 	}
 	payload := map[string]any{
+		"origin":        req.Origin(),
 		"request_id":    req.ID,
 		"kind":          string(req.Kind),
 		"source":        req.Source,

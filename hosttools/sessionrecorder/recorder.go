@@ -437,6 +437,9 @@ const (
 	eventKindToolResult      = "tool.result"
 	eventKindRunStarted      = "run.started"
 	eventKindRunFinished     = "run.finished"
+	eventKindDone            = "done"
+	eventKindTurnEnd         = "turn.end"
+	eventKindMessageUpdate   = "message.update"
 	eventKindProcessInfo     = "process.info"
 	eventKindNotice          = "notice"
 	eventKindDropped         = "dropped"
@@ -447,6 +450,14 @@ const (
 func encodeEvent(ev adaptor.Event) (string, json.RawMessage, error) {
 	var kind string
 	switch typed := ev.(type) {
+	case adaptor.Done:
+		payload, err := json.Marshal(terminalEventRecord{Result: typed.Result, Err: recordTerminalError(typed.Err)})
+		return eventKindDone, payload, err
+	case adaptor.TurnEnd:
+		payload, err := json.Marshal(terminalEventRecord{Result: typed.Result, Err: recordTerminalError(typed.Err), Turn: typed.Turn, MessageIDs: typed.MessageIDs})
+		return eventKindTurnEnd, payload, err
+	case adaptor.MessageUpdate:
+		kind = eventKindMessageUpdate
 	case adaptor.TextDelta:
 		kind = eventKindTextDelta
 	case adaptor.Thinking:
@@ -471,7 +482,11 @@ func encodeEvent(ev adaptor.Event) (string, json.RawMessage, error) {
 		if typed == nil {
 			return "", nil, errors.New("sessionrecorder: cannot record a nil approval request")
 		}
-		kind = eventKindApprovalRequest
+		payload, err := json.Marshal(struct {
+			*adaptor.ApprovalRequest
+			Origin adaptor.Origin
+		}{typed, typed.Origin()})
+		return eventKindApprovalRequest, payload, err
 	case nil:
 		return "", nil, errors.New("sessionrecorder: cannot record a nil event")
 	default:
@@ -493,6 +508,19 @@ func decodeEvent(kind string, payload json.RawMessage) (adaptor.Event, error) {
 		return json.Unmarshal(trimmed, v)
 	}
 	switch kind {
+	case eventKindDone, eventKindTurnEnd:
+		var wire terminalEventRecord
+		if err := unmarshal(&wire); err != nil {
+			return nil, err
+		}
+		runErr := wire.Err.restore()
+		if kind == eventKindDone {
+			return adaptor.Done{Result: wire.Result, Err: runErr}, nil
+		}
+		return adaptor.TurnEnd{Turn: wire.Turn, Result: wire.Result, Err: runErr, MessageIDs: wire.MessageIDs}, nil
+	case eventKindMessageUpdate:
+		var ev adaptor.MessageUpdate
+		return ev, unmarshal(&ev)
 	case eventKindTextDelta:
 		var ev adaptor.TextDelta
 		return ev, unmarshal(&ev)
@@ -526,9 +554,68 @@ func decodeEvent(kind string, payload json.RawMessage) (adaptor.Event, error) {
 	case eventKindApprovalRequest:
 		// Descriptive fields only: a replayed request has no live
 		// responder (Approve/Deny/Answer are meaningless after the fact).
-		ev := &adaptor.ApprovalRequest{}
-		return ev, unmarshal(ev)
+		wire := struct {
+			*adaptor.ApprovalRequest
+			Origin adaptor.Origin
+		}{ApprovalRequest: &adaptor.ApprovalRequest{}}
+		if err := unmarshal(&wire); err != nil {
+			return nil, err
+		}
+		return wire.ApprovalRequest.Forward(wire.Origin), nil
 	default:
 		return nil, fmt.Errorf("sessionrecorder: unknown event kind %q", kind)
+	}
+}
+
+// Terminal records retain the safe Result projection and a descriptive error.
+// Live responders, private audit payloads, and arbitrary Go error implementations
+// cannot be serialized. Business errors and context sentinels retain identity.
+type terminalEventRecord struct {
+	Result     *adaptor.Result
+	Err        *terminalErrorRecord
+	Turn       int      `json:",omitempty"`
+	MessageIDs []string `json:",omitempty"`
+}
+type terminalErrorRecord struct {
+	Message string
+	Kind    string
+	Reason  adaptor.FailureReason `json:",omitempty"`
+	Details map[string]any        `json:",omitempty"`
+	Result  *adaptor.Result       `json:",omitempty"`
+}
+
+func recordTerminalError(err error) *terminalErrorRecord {
+	if err == nil {
+		return nil
+	}
+	out := &terminalErrorRecord{Message: err.Error()}
+	var business *adaptor.RunError
+	switch {
+	case errors.As(err, &business):
+		out.Kind = "business"
+		out.Message = business.Message
+		out.Reason = business.Reason
+		out.Details = business.Details
+		out.Result = business.Result
+	case errors.Is(err, context.Canceled):
+		out.Kind = "cancelled"
+	case errors.Is(err, context.DeadlineExceeded):
+		out.Kind = "timeout"
+	}
+	return out
+}
+func (e *terminalErrorRecord) restore() error {
+	if e == nil {
+		return nil
+	}
+	switch e.Kind {
+	case "business":
+		return &adaptor.RunError{Message: e.Message, Reason: e.Reason, Details: e.Details, Result: e.Result}
+	case "cancelled":
+		return fmt.Errorf("%s: %w", e.Message, context.Canceled)
+	case "timeout":
+		return fmt.Errorf("%s: %w", e.Message, context.DeadlineExceeded)
+	default:
+		return errors.New(e.Message)
 	}
 }

@@ -50,7 +50,7 @@ func TestAppServerHaiku(t *testing.T) {
 	defer cancel()
 
 	thread := agent.Thread("codex_live_test/haiku")
-	stream := thread.Stream(ctx, "Write a haiku about streaming text. Reply with only the haiku.")
+	stream := thread.Send(ctx, "Write a haiku about streaming text. Reply with only the haiku.")
 	defer stream.Cancel()
 
 	if stream.RunID() == "" {
@@ -198,7 +198,7 @@ func TestAppServerPersistentTwoTurns(t *testing.T) {
 		"Remember the exact token PERSISTENT-CODEX. Reply only ACK.",
 		"Reply only with the exact token from the previous turn.",
 	} {
-		stream := thread.Stream(ctx, prompt)
+		stream := thread.Send(ctx, prompt)
 		for event := range stream.Events() {
 			if process, ok := event.(adaptor.ProcessInfo); ok && process.Kind == adaptor.ProcessSpawn {
 				spawns++

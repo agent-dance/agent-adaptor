@@ -6,7 +6,7 @@ package a2adelegation
 //	defer team.Close()
 //	leader := adaptor.New(claude.Driver(cfg), team.Option())
 //
-//	stream := leader.Stream(ctx, objective)
+//	stream := leader.Send(ctx, objective)
 //	for ev := range stream.Events() {
 //	    switch e := ev.(type) {
 //	    case adaptor.TextDelta:      // the leader's own output
@@ -46,7 +46,7 @@ const (
 
 // Option returns the adaptor option that binds this Service to every run of
 // the agent it is passed to. It is a dual-scope option: in adaptor.New it is
-// the agent's team for every run, in Run/Stream it equips a single
+// the agent's team for every run, in Send it equips a single
 // invocation. Passing the same Service's option in both places attaches it
 // once, not twice.
 //
@@ -184,9 +184,11 @@ func (s *Service) runEvents(ctx context.Context, runID string) <-chan adaptor.Ev
 // not enter the leader's core Event stream.
 func SubagentEvent(ev DelegationEvent) adaptor.SubagentUpdate {
 	update := adaptor.SubagentUpdate{
-		Agent: ev.AgentKey,
-		Kind:  adaptor.SubagentDelta,
-		Delta: ev.Delta,
+		Member: ev.AgentKey,
+		Task:   ev.DelegationID,
+		State:  string(ev.Status),
+		Kind:   adaptor.SubagentDelta,
+		Delta:  ev.Delta,
 	}
 	switch {
 	case ev.Kind == DelegationStarted:

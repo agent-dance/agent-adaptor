@@ -255,7 +255,7 @@ func NonInteractivePolicy(agent string, sandbox adaptor.SandboxLevel) adaptor.Po
 }
 
 // NonInteractive returns the policy as a SharedOption, so the same value works
-// as an adaptor.New default and as a per-call Run/Stream override.
+// as an adaptor.New default and as a per-call Send override.
 func NonInteractive(agent string, sandbox adaptor.SandboxLevel) adaptor.SharedOption {
 	return adaptor.WithPolicy(NonInteractivePolicy(agent, sandbox))
 }

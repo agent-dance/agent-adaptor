@@ -48,7 +48,7 @@ func main() {
 	// Stream never returns an error: startup failures close Events() and
 	// surface through Result(). The verb is the switch — Run for batch,
 	// Stream for live.
-	stream := ai.Stream(ctx, *prompt)
+	stream := ai.Send(ctx, *prompt)
 	defer stream.Cancel()
 
 	if *cancelAfter > 0 {

@@ -25,9 +25,8 @@ type invocationTarget struct {
 	forkFromKey string
 }
 
-// startInvocation is the only asynchronous execution entry. Agent.Stream and
-// Thread.Stream differ solely in whether they supply a Thread target; both Run
-// methods are literally Stream + drain + Result.
+// startInvocation is the only asynchronous execution entry. Agent.Send and
+// Thread.Send differ solely in whether they supply a Thread target.
 func (a *Agent) startInvocation(ctx context.Context, prompt string, opts []CallOption, target *invocationTarget) Stream {
 	threadKey := ""
 	if target != nil && target.thread != nil {
@@ -37,6 +36,10 @@ func (a *Agent) startInvocation(ctx context.Context, prompt string, opts []CallO
 	if !ok {
 		return st
 	}
+	st.sink.enableAuthoritativeLifecycle()
+	st.hub.startMessage(eff.message, prompt)
+	// The descriptor governs prelaunch admission. Resolution atomically trims
+	// capabilities and reconciles queued messages before Driver.Run can claim.
 	go a.executeInvocation(runCtx, st, prompt, &eff, target)
 	return st
 }
@@ -84,18 +87,37 @@ func (a *Agent) executeInvocation(ctx context.Context, st *runStream, prompt str
 				resultErr = errors.Join(resultErr, teardownErr)
 			}
 		}
+		reason := MessageRunFailed
+		if ctx.Err() != nil {
+			reason = MessageCancelled
+		}
+		st.hub.finish(reason)
+		actual := result
+		var business *RunError
+		if actual == nil && errors.As(resultErr, &business) {
+			actual = business.Result
+		}
+		if actual != nil {
+			actual.messages = st.hub.outcomes()
+			actual.transcript = append(actual.transcript, st.hub.messageTranscript()...)
+		}
+		summaries := resources.collectSubagents()
+		if actual != nil {
+			actual.subagents = cloneSubagents(summaries)
+			for _, v := range summaries {
+				actual.Usage = addUsage(actual.Usage, v.Usage)
+			}
+		}
+
 		st.res, st.err = result, resultErr
 		st.sink.completeAuthoritativeLifecycle(result, resultErr)
+		st.sink.broker.publishTerminal(Done{Result: result, Err: resultErr}, nil)
 		st.sink.close()
 		close(st.done)
 		st.cancel()
 	}()
 
 	if target != nil {
-		if a.defaults.threadStore == nil {
-			resultErr = fmt.Errorf("%w (thread %q)", ErrThreadStoreRequired, target.thread.key)
-			return
-		}
 		var contractErr error
 		threadContract, contractErr = validateThreadDriverContract(a.driver)
 		if contractErr != nil {
@@ -148,7 +170,7 @@ func (a *Agent) executeInvocation(ctx context.Context, st *runStream, prompt str
 			req.ForkFromKey = target.forkFromKey
 		}
 		plan, err = engine.PrepareThreadSessionForDriver(
-			ctx, engineStore{store: a.defaults.threadStore}, req, identity, a.driver, fingerprint,
+			ctx, engineStore{store: a.defaults.threadStore, messages: st.hub, messageKey: target.thread.key}, req, identity, a.driver, fingerprint,
 		)
 		if err != nil {
 			resultErr = target.thread.threadError(err)
@@ -162,73 +184,151 @@ func (a *Agent) executeInvocation(ctx context.Context, st *runStream, prompt str
 	}
 
 	request := resolved.req
+	if plan != nil {
+		request.Session = plan.DriverSession(a.driver)
+	}
+	if !st.hub.policy.Disabled {
+		request.Messages = st.hub
+	}
+	if resources != nil {
+		request.Prompt = resources.preamble + request.Prompt
+	}
+	// Resolve against the final request, including the enabled MessagePort,
+	// resolved session and attachment preamble. This is the same request passed
+	// to the first Driver.Run, so transport negotiation sees the actual inputs.
+	if resolver, ok := a.driver.(driver.MessageCapabilityResolver); ok {
+		st.hub.setCapability(resolver.ResolveMessageCapability(request))
+	}
+	if st.hub.startWasDeduped() {
+		result = &Result{RunID: st.runID}
+		return
+	}
+	var aggregate *Result
+	var continuation []driver.MessageItem
+	first := true
 	for {
-		if plan != nil {
-			request.Session = plan.DriverSession(a.driver)
-		}
-		// Architectural invariant: this is the only Driver.Run call in the
-		// root execution pipeline. Retry changes only the prepared session
-		// context.
+		st.hub.setPrompt(continuation)
+		before := st.hub.turnCount()
 		response, runErr := a.driver.Run(ctx, request, st.sink)
-
 		if plan != nil && runErr != nil {
 			var rejected *engine.ResumeRejectedError
 			if errors.As(runErr, &rejected) {
-				if plan.Reused() && plan.Mode() == driver.SessionContinueOrStart {
+				if first && plan.Reused() && plan.Mode() == driver.SessionContinueOrStart {
 					if freshErr := plan.PrepareFresh(ctx, a.driver.Descriptor().Type, fingerprint); freshErr != nil {
 						resultErr = target.thread.threadError(freshErr)
 						return
 					}
+					request.Session = plan.DriverSession(a.driver)
 					continue
 				}
 				runErr = fmt.Errorf("%w: %w", ErrResumeRejected, runErr)
 			}
 		}
-
+		response, runErr = classifyInvocationOutcome(ctx, response, runErr, st.sink.pendingFailure())
+		if runErr == nil {
+			response.StructuredOutput, response.Failure = engine.FinalizeStructuredOutput(resolved.schema, resolved.source, response.Output, response.StructuredOutput, response.Failure)
+		}
+		success := runErr == nil && response.Failure == nil && st.sink.pendingFailure() == nil
+		st.hub.ackPrompt(success, runErr)
+		turnRes, turnErr := finalizeRun(st.runID, st.sink, response, runErr)
+		actual := turnRes
+		var business *RunError
+		if actual == nil && errors.As(turnErr, &business) {
+			actual = business.Result
+		}
+		if actual == nil {
+			actual = resultFromResponse(st.runID, response)
+		}
+		if st.hub.turnCount() == before {
+			st.hub.completeTurn(actual, turnErr)
+		}
+		aggregate = mergeExecutionResult(aggregate, actual, st.hub, before)
 		if plan != nil {
 			plan.StopLeaseRenewal()
 			if renewErr := plan.RenewalError(); renewErr != nil {
 				resultErr = target.thread.threadError(renewErr)
 				return
 			}
-		}
-
-		// A process helper reports an executed command's outcome as Response
-		// data so the Driver can first apply its provider-specific protocol
-		// classification. Close the remaining gap exactly once, here at the
-		// common invocation boundary: an unclassified abnormal process outcome
-		// must never become a successful stateless run or a persisted Thread.
-		// Provider and approval failures remain authoritative; bare outer-context
-		// cancellation keeps the public infrastructure-error identity.
-		response, runErr = classifyInvocationOutcome(ctx, response, runErr, st.sink.pendingFailure())
-
-		if runErr == nil {
-			response.StructuredOutput, response.Failure = engine.FinalizeStructuredOutput(
-				resolved.schema, resolved.source, response.Output, response.StructuredOutput, response.Failure,
-			)
-		}
-
-		if plan != nil && invocationCanPersist(ctx, a.driver, response, runErr, st.sink.pendingFailure()) {
-			// Architectural invariant: this is the only Thread persistence point.
-			if _, persistErr := plan.Persist(ctx, identity, a.driver, fingerprint, response.Checkpoint); persistErr != nil {
-				resultErr = target.thread.threadError(persistErr)
+			if invocationCanPersist(ctx, a.driver, response, runErr, st.sink.pendingFailure()) {
+				if _, persistErr := plan.Persist(ctx, identity, a.driver, fingerprint, response.Checkpoint); persistErr != nil {
+					resultErr = target.thread.threadError(persistErr)
+					return
+				}
+				target.thread.markEstablished()
+			} else if success {
+				if ctx.Err() != nil {
+					resultErr = ctx.Err()
+				} else {
+					resultErr = target.thread.threadError(engine.ErrSessionCheckpointMissing)
+				}
 				return
 			}
-			target.thread.markEstablished()
-		} else if plan != nil && runErr == nil && response.Failure == nil && st.sink.pendingFailure() == nil {
-			// A nominally successful Thread run must prove it is both healthy
-			// and resumable. Failed/cancelled/business-failure runs simply skip
-			// persistence, preserving the previous healthy active record.
-			if cancelErr := ctx.Err(); cancelErr != nil {
-				resultErr = fmt.Errorf("adaptor: run %s: %w", st.runID, cancelErr)
-				return
+		}
+		if turnErr != nil {
+			if business != nil {
+				finalError := *business
+				finalError.Result = aggregate
+				turnErr = &finalError
 			}
-			resultErr = target.thread.threadError(engine.ErrSessionCheckpointMissing)
+			resultErr = turnErr
 			return
 		}
-
-		result, resultErr = finalizeRun(st.runID, st.sink, response, runErr)
-		return
+		if st.hub.turnCount() >= st.hub.policy.MaxTurns {
+			st.hub.finish(MessageLimitExceeded)
+			result = aggregate
+			return
+		}
+		if st.hub.closeIfIdle() {
+			result = aggregate
+			return
+		}
+		// Driver.Run has returned. A final in-run empty claim is not an atomic
+		// execution seal: messages admitted afterwards must be resumed by core.
+		if !a.driver.Descriptor().Sessions.SupportsResume || !invocationCanPersist(ctx, a.driver, response, runErr, st.sink.pendingFailure()) {
+			st.hub.finish(MessageProviderRejected)
+			result = aggregate
+			return
+		}
+		continuation = st.hub.Claim(driver.BoundaryTurnEnd)
+		if len(continuation) == 0 {
+			st.hub.finish(MessageProviderRejected)
+			result = aggregate
+			return
+		}
+		var texts []string
+		for _, item := range continuation {
+			texts = append(texts, item.Text)
+		}
+		request.Prompt = strings.Join(texts, "\n\n")
+		if !st.hub.cap.PersistsDelivered {
+			// Replay provider-ephemeral boundary input when changing transport turns.
+			var replay []string
+			for _, m := range st.hub.outcomes() {
+				if m.State == MessageDelivered && m.Mechanism != "core.prompt" && m.Mechanism != "core.resume" && m.Mechanism != "core.dedupe" {
+					mc := MessageContext{ID: m.ID, Text: m.Text, From: m.From, Timing: m.Timing}
+					text := frameMessage(mc)
+					if st.hub.policy.Format != nil {
+						text = st.hub.policy.Format(mc)
+					}
+					replay = append(replay, text)
+				}
+			}
+			if len(replay) > 0 {
+				request.Prompt = strings.Join(replay, "\n\n") + "\n\n" + request.Prompt
+			}
+		}
+		sessionID := st.runID
+		if request.Session != nil {
+			sessionID = request.Session.EngineSessionID
+		}
+		request.Session = &driver.SessionContext{EngineSessionID: sessionID, Mode: driver.SessionContinueOnly, State: engine.NormalizeSessionState(a.driver, response.Checkpoint.State)}
+		if target == nil {
+			request.Spawn = true
+		}
+		if plan != nil {
+			plan.StartLeaseRenewal(ctx, st.cancel)
+		}
+		first = false
 	}
 }
 
@@ -501,4 +601,40 @@ func runErrorFromFailure(f *driver.RunFailure, res *Result) *RunError {
 		Details: maps.Clone(f.Metadata),
 		Result:  res,
 	}
+}
+
+// mergeExecutionResult retains every call's audit data, the last turn's text,
+// and the provider-reported usage for each individual turn exactly once.
+func mergeExecutionResult(total, call *Result, h *messageHub, before int) *Result {
+	if total == nil {
+		total = &Result{RunID: call.RunID}
+	}
+	total.Text = call.Text
+	total.Summary = call.Summary
+	total.Model = call.Model
+	total.Provider = call.Provider
+	total.Metadata = maps.Clone(call.Metadata)
+	total.structured = cloneStructuredOutput(call.structured)
+	total.raw.Stdout += call.raw.Stdout
+	total.raw.Stderr += call.raw.Stderr
+	if call.raw.Terminal != nil {
+		total.raw.Terminal = cloneTerminalPayload(call.raw.Terminal)
+	}
+	total.transcript = append(total.transcript, cloneTranscript(call.transcript)...)
+	total.services = append(total.services, cloneServiceReports(call.services)...)
+	h.mu.Lock()
+	var usage *Usage
+	for _, t := range h.turns[before:] {
+		usage = addUsage(usage, t.Usage)
+	}
+	total.Turns = len(h.turns)
+	if len(h.turns) > before {
+		total.Text = h.turns[len(h.turns)-1].Text
+	}
+	h.mu.Unlock()
+	if usage == nil {
+		usage = call.Usage
+	}
+	total.Usage = addUsage(total.Usage, usage)
+	return total
 }

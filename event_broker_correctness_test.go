@@ -282,12 +282,12 @@ func TestEventBrokerNormalTerminalFlushesDroppedBeforeReservedTerminal(t *testin
 
 func TestWithEventMetaSupportsEveryEventKind(t *testing.T) {
 	approval := newApprovalRequest(testDecisionRequest("meta", ApprovalPermission))
-	events := []Event{
+	events := []Event{Done{}, TurnEnd{}, MessageUpdate{},
 		TextDelta{Text: "text"}, Thinking{Text: "thinking"},
 		ToolCall{ID: "call"}, ToolResult{ID: "call"},
 		RunStarted{RunID: "provider-run"}, RunFinished{RunID: "provider-run"},
 		ProcessInfo{Kind: ProcessStdout}, Notice{Kind: NoticeLifecycle},
-		Dropped{Count: 1}, SubagentUpdate{Agent: "worker"}, approval,
+		Dropped{Count: 1}, SubagentUpdate{Member: "worker"}, approval,
 	}
 	want := EventMeta{RunID: "run-meta", ThreadKey: "opaque/key", Sequence: 42, Time: time.Now().UTC(), TurnID: "turn-1", Source: &EventSourceMeta{RunID: "provider-run", Sequence: 9}}
 	for _, ev := range events {
@@ -359,7 +359,7 @@ func TestStreamParentCancelUnblocksBlockingSink(t *testing.T) {
 		return driver.Response{}, ctx.Err()
 	}}
 	ctx, cancel := context.WithCancel(context.Background())
-	stream := New(d, WithEventBuffer(1), WithBlockingEvents()).Stream(ctx, "cancel")
+	stream := New(d, WithEventBuffer(1), WithBlockingEvents()).Send(ctx, "cancel")
 	cancel()
 	select {
 	case <-driverDone:
@@ -378,7 +378,7 @@ func TestStreamConcurrentCancelIsIdempotent(t *testing.T) {
 		<-ctx.Done()
 		return driver.Response{}, ctx.Err()
 	}}
-	stream := New(d).Stream(context.Background(), "cancel")
+	stream := New(d).Send(context.Background(), "cancel")
 	var wg sync.WaitGroup
 	for i := 0; i < 32; i++ {
 		wg.Add(1)
@@ -404,7 +404,7 @@ func TestStreamImmediateCancelWithFullMergedLifecycleDeliversTerminalWithoutCons
 		<-ctx.Done()
 		return driver.Response{}, ctx.Err()
 	}}
-	stream := New(d, WithEventBuffer(1), WithRunServices(provider)).Stream(context.Background(), "cancel")
+	stream := New(d, WithEventBuffer(1), WithRunServices(provider)).Send(context.Background(), "cancel")
 	select {
 	case <-subscribed:
 	case <-time.After(time.Second):
@@ -431,10 +431,14 @@ func TestStreamImmediateCancelWithFullMergedLifecycleDeliversTerminalWithoutCons
 
 	var events []Event
 	for event := range stream.Events() {
+		switch event.(type) {
+		case TurnEnd, MessageUpdate, Dropped:
+			continue
+		}
 		events = append(events, event)
 	}
-	if len(events) != 2 {
-		t.Fatalf("events = %+v, want RunStarted and RunFinished", events)
+	if len(events) != 3 {
+		t.Fatalf("events = %+v, want RunStarted, RunFinished, Done", events)
 	}
 	if _, ok := events[0].(RunStarted); !ok {
 		t.Fatalf("first event = %T, want RunStarted", events[0])
@@ -463,7 +467,7 @@ func TestDriverOnlyTerminalUsesReserveAndSealsAfterFullBufferCancel(t *testing.T
 		_ = sink.EmitStream(driver.StreamPayload{Kind: driver.StreamTextContent, Delta: "late"})
 		return driver.Response{}, ctx.Err()
 	}}
-	stream := New(d, WithEventBuffer(1)).Stream(context.Background(), "cancel")
+	stream := New(d, WithEventBuffer(1)).Send(context.Background(), "cancel")
 	select {
 	case <-started:
 	case <-time.After(time.Second):
@@ -487,10 +491,14 @@ func TestDriverOnlyTerminalUsesReserveAndSealsAfterFullBufferCancel(t *testing.T
 
 	var events []Event
 	for event := range stream.Events() {
+		switch event.(type) {
+		case TurnEnd, MessageUpdate, Dropped:
+			continue
+		}
 		events = append(events, event)
 	}
-	if len(events) != 2 {
-		t.Fatalf("events = %+v, want RunStarted and RunFinished only", events)
+	if len(events) != 3 {
+		t.Fatalf("events = %+v, want RunStarted, RunFinished, Done", events)
 	}
 	if _, ok := events[0].(RunStarted); !ok {
 		t.Fatalf("first event = %T, want RunStarted", events[0])

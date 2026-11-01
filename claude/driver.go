@@ -472,7 +472,7 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 		// to reconstruct tool_use inputs), even when the resolved invocation
 		// did not otherwise select the rich provider transport. HITL requests
 		// and resolutions still travel through the same decision-capable Event
-		// sink used by every Agent.Run and Agent.Stream invocation.
+		// sink used by every Agent.Send invocation.
 		parser.enableStreaming(req.RunID)
 	}
 

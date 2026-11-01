@@ -42,7 +42,7 @@ func main() {
 	// them in.
 	ai := adaptor.New(exampleutil.NewLiveDriver(agentCfg))
 
-	res, err := ai.Run(ctx, *prompt)
+	res, err := ai.Send(ctx, *prompt).Result()
 	checkRun(err, "run quickstart example")
 	exampleutil.Check(strings.TrimSpace(res.Text) != "", "expected non-empty text from %s", agentCfg.Agent)
 

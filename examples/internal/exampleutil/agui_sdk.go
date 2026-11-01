@@ -47,7 +47,7 @@ func NewAGUIStreamingAgent(cwd string) (*adaptor.Agent, string) {
 //     demo can run end-to-end on the local CLI.
 //
 // It is a SharedOption, so it can seed adaptor.New (as here) or override a
-// single Run/Stream call.
+// single Send call.
 func AGUIExamplePolicy() adaptor.SharedOption {
 	switch ResolveAGUIAgent() {
 	case AgentClaude:

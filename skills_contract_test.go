@@ -168,7 +168,7 @@ func TestSkillsFSMaterializationCanonicalizesSelectedRefs(t *testing.T) {
 			"system/core": skill.Require(skill.Inline("system/core", "# core\n"), "tenant mandate"),
 		}),
 	)
-	if _, err := agent.Run(context.Background(), "go"); err != nil {
+	if _, err := agent.Send(context.Background(), "go").Result(); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 
@@ -228,7 +228,7 @@ func TestSelectSkillsUpdatesProcessLocalSelection(t *testing.T) {
 		t.Errorf("snapshot.Selected = %v, want [team/review]", snap.Selected)
 	}
 
-	if _, err := agent.Run(ctx, "go"); err != nil {
+	if _, err := agent.Send(ctx, "go").Result(); err != nil {
 		t.Fatalf("Run after SelectSkills: %v", err)
 	}
 	if keys := fake.lastRequest(t).Skills.Keys(); !equalUnordered(keys, []string{"team/review"}) {
@@ -260,7 +260,7 @@ func TestSelectSkillsUnknownKeyDoesNotInstallOverride(t *testing.T) {
 	}
 	// The failed override must not have been installed: the default still
 	// resolves.
-	if _, err := agent.Run(ctx, "go"); err != nil {
+	if _, err := agent.Send(ctx, "go").Result(); err != nil {
 		t.Fatalf("Run after failed SelectSkills: %v", err)
 	}
 	if keys := fake.lastRequest(t).Skills.Keys(); !equalUnordered(keys, []string{"team/default"}) {
@@ -280,7 +280,7 @@ func TestSkillsAdditiveMergingWithRequired(t *testing.T) {
 			"system/required": skill.Require(skill.Inline("system/required", "# required\n"), "compliance"),
 		}),
 	)
-	if _, err := agent.Run(context.Background(), "go", adaptor.WithSkills(skill.Key("team/optional"))); err != nil {
+	if _, err := agent.Send(context.Background(), "go", adaptor.WithSkills(skill.Key("team/optional"))).Result(); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	keys := fake.lastRequest(t).Skills.Keys()
@@ -293,7 +293,7 @@ func TestSkillsAdditiveMergingWithRequired(t *testing.T) {
 	agent2 := adaptor.New(fake2, adaptor.WithSkillProvider(skill.Set{
 		"system/required": skill.Require(skill.Inline("system/required", "# required\n"), "compliance"),
 	}))
-	if _, err := agent2.Run(context.Background(), "go"); err != nil {
+	if _, err := agent2.Send(context.Background(), "go").Result(); err != nil {
 		t.Fatalf("Run without refs: %v", err)
 	}
 	if keys := fake2.lastRequest(t).Skills.Keys(); !equalUnordered(keys, []string{"system/required"}) {
@@ -307,7 +307,7 @@ func TestSkillSameKeySameValueMerges(t *testing.T) {
 	setSkillCache(t)
 	fake := newFakeDriver()
 	agent := adaptor.New(fake, adaptor.WithSkills(skill.Inline("team/shared", "# shared\n")))
-	if _, err := agent.Run(context.Background(), "go", adaptor.WithSkills(skill.Inline("team/shared", "# shared\n"))); err != nil {
+	if _, err := agent.Send(context.Background(), "go", adaptor.WithSkills(skill.Inline("team/shared", "# shared\n"))).Result(); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	if keys := fake.lastRequest(t).Skills.Keys(); !equalUnordered(keys, []string{"team/shared"}) {
@@ -325,7 +325,7 @@ func TestSkillSameKeyDifferentValueConflicts(t *testing.T) {
 	t.Run("run path", func(t *testing.T) {
 		fake := newFakeDriver()
 		agent := adaptor.New(fake, adaptor.WithSkills(skill.Inline("team/shared", "# version A\n")))
-		_, err := agent.Run(ctx, "go", adaptor.WithSkills(skill.Inline("team/shared", "# version B\n")))
+		_, err := agent.Send(ctx, "go", adaptor.WithSkills(skill.Inline("team/shared", "# version B\n"))).Result()
 		if !errors.Is(err, adaptor.ErrSkillKeyConflict) {
 			t.Fatalf("err = %v, want ErrSkillKeyConflict", err)
 		}
@@ -364,7 +364,7 @@ func TestSkillBareKeyNotFound(t *testing.T) {
 	t.Run("no provider", func(t *testing.T) {
 		fake := newFakeDriver()
 		agent := adaptor.New(fake)
-		_, err := agent.Run(ctx, "go", adaptor.WithSkills(skill.Key("team/missing")))
+		_, err := agent.Send(ctx, "go", adaptor.WithSkills(skill.Key("team/missing"))).Result()
 		if !errors.Is(err, adaptor.ErrSkillNotFound) {
 			t.Fatalf("err = %v, want ErrSkillNotFound", err)
 		}
@@ -379,7 +379,7 @@ func TestSkillBareKeyNotFound(t *testing.T) {
 	t.Run("provider resolves nothing", func(t *testing.T) {
 		fake := newFakeDriver()
 		agent := adaptor.New(fake, adaptor.WithSkillProvider(emptyResolveProvider{}))
-		_, err := agent.Run(ctx, "go", adaptor.WithSkills(skill.Key("team/missing")))
+		_, err := agent.Send(ctx, "go", adaptor.WithSkills(skill.Key("team/missing"))).Result()
 		if !errors.Is(err, adaptor.ErrSkillNotFound) {
 			t.Fatalf("err = %v, want ErrSkillNotFound", err)
 		}
@@ -395,7 +395,7 @@ func TestSkillNilSourceFails(t *testing.T) {
 	setSkillCache(t)
 	fake := newFakeDriver()
 	agent := adaptor.New(fake, adaptor.WithSkills(skill.Skill{Key: "team/empty"}))
-	if _, err := agent.Run(context.Background(), "go"); !errors.Is(err, adaptor.ErrSkillSourceMissing) {
+	if _, err := agent.Send(context.Background(), "go").Result(); !errors.Is(err, adaptor.ErrSkillSourceMissing) {
 		t.Fatalf("err = %v, want ErrSkillSourceMissing", err)
 	}
 	if fake.runCount() != 0 {
@@ -435,7 +435,7 @@ func TestSkillMaterializationFailureIsPreLaunch(t *testing.T) {
 	t.Run("Agent default Run", func(t *testing.T) {
 		fake := newFakeDriver()
 		agent := adaptor.New(fake, adaptor.WithSkills(badSkill))
-		_, err := agent.Run(ctx, "go")
+		_, err := agent.Send(ctx, "go").Result()
 		assertMatErr(t, err)
 		if fake.runCount() != 0 {
 			t.Errorf("driver ran %d time(s), want pre-launch failure", fake.runCount())
@@ -445,7 +445,7 @@ func TestSkillMaterializationFailureIsPreLaunch(t *testing.T) {
 	t.Run("Run", func(t *testing.T) {
 		fake := newFakeDriver()
 		agent := adaptor.New(fake)
-		_, err := agent.Run(ctx, "go", adaptor.WithSkills(badSkill))
+		_, err := agent.Send(ctx, "go", adaptor.WithSkills(badSkill)).Result()
 		assertMatErr(t, err)
 		if fake.runCount() != 0 {
 			t.Errorf("driver ran %d time(s), want pre-launch failure", fake.runCount())
@@ -455,7 +455,7 @@ func TestSkillMaterializationFailureIsPreLaunch(t *testing.T) {
 	t.Run("Stream", func(t *testing.T) {
 		fake := newFakeDriver()
 		agent := adaptor.New(fake)
-		stream := agent.Stream(ctx, "go", adaptor.WithSkills(badSkill))
+		stream := agent.Send(ctx, "go", adaptor.WithSkills(badSkill))
 		for range stream.Events() {
 		}
 		_, err := stream.Result()
@@ -472,7 +472,7 @@ func TestSkillCacheRootHonoursEnv(t *testing.T) {
 	root := setSkillCache(t)
 	fake := newFakeDriver()
 	agent := adaptor.New(fake, adaptor.WithSkills(skill.Inline("team/cached", "# cached\n")))
-	if _, err := agent.Run(context.Background(), "go"); err != nil {
+	if _, err := agent.Send(context.Background(), "go").Result(); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	entries := fake.lastRequest(t).Skills.Entries
@@ -504,7 +504,7 @@ func TestSkillCachesIdenticalAcrossRuns(t *testing.T) {
 	fake := newFakeDriver()
 	agent := adaptor.New(fake, adaptor.WithSkills(skill.Inline("team/stable", "# stable\n")))
 
-	if _, err := agent.Run(ctx, "first"); err != nil {
+	if _, err := agent.Send(ctx, "first").Result(); err != nil {
 		t.Fatalf("run 1: %v", err)
 	}
 	firstPath := fake.request(t, 0).Skills.Entries[0].SourcePath
@@ -514,7 +514,7 @@ func TestSkillCachesIdenticalAcrossRuns(t *testing.T) {
 		t.Fatalf("ready marker after run 1: %v", err)
 	}
 
-	if _, err := agent.Run(ctx, "second"); err != nil {
+	if _, err := agent.Send(ctx, "second").Result(); err != nil {
 		t.Fatalf("run 2: %v", err)
 	}
 	secondPath := fake.request(t, 1).Skills.Entries[0].SourcePath
@@ -545,7 +545,7 @@ func TestSkillResolutionConcurrentSafe(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if _, err := agent.Run(context.Background(), "go"); err != nil {
+			if _, err := agent.Send(context.Background(), "go").Result(); err != nil {
 				errs <- err
 			}
 		}()
@@ -569,10 +569,10 @@ func TestSkillFingerprintStableAndSelectionSensitive(t *testing.T) {
 	fake := newFakeDriver()
 	agent := adaptor.New(fake, adaptor.WithSkills(skill.Inline("team/fp", "# fp\n")))
 
-	if _, err := agent.Run(ctx, "one"); err != nil {
+	if _, err := agent.Send(ctx, "one").Result(); err != nil {
 		t.Fatalf("run 1: %v", err)
 	}
-	if _, err := agent.Run(ctx, "two"); err != nil {
+	if _, err := agent.Send(ctx, "two").Result(); err != nil {
 		t.Fatalf("run 2: %v", err)
 	}
 	fp1 := fake.request(t, 0).Skills.Fingerprint
@@ -581,7 +581,7 @@ func TestSkillFingerprintStableAndSelectionSensitive(t *testing.T) {
 		t.Errorf("fingerprints %q / %q, want identical non-empty values", fp1, fp2)
 	}
 
-	if _, err := agent.Run(ctx, "three", adaptor.WithSkills(skill.Inline("team/other", "# other\n"))); err != nil {
+	if _, err := agent.Send(ctx, "three", adaptor.WithSkills(skill.Inline("team/other", "# other\n"))).Result(); err != nil {
 		t.Fatalf("run 3: %v", err)
 	}
 	if fp3 := fake.request(t, 2).Skills.Fingerprint; fp3 == fp1 {

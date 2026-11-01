@@ -322,3 +322,7 @@ func rawJSONString(s string) []byte {
 // _ keeps the AG-UI events import live for future assertions that need the
 // typed event helpers (currently the test inspects the raw SSE body).
 var _ = aguievents.EventTypeTextMessageStart
+
+func (s *fakeStream) Send(context.Context, string, ...adaptor.MessageOption) error {
+	return adaptor.ErrMessageUnsupported
+}

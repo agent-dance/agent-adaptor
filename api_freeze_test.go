@@ -27,6 +27,9 @@ func TestRejectedRootVocabularyCannotReappear(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, declaration := range surface.Declarations {
+		if (declaration.Receiver == "Agent" || declaration.Receiver == "Thread") && (declaration.Name == "Run" || declaration.Name == "Stream") {
+			t.Fatalf("v2 execution entry must be Send: %s", declaration.Text)
+		}
 		assertApprovedRootName(t, declaration.Name, declaration.Text)
 		if declaration.Receiver != "" {
 			assertApprovedRootName(t, declaration.Receiver, declaration.Text)
@@ -56,11 +59,11 @@ func assertAPIGolden(t *testing.T, dir, goldenPath string) {
 	}
 	want, err := os.ReadFile(goldenPath)
 	if err != nil {
-		t.Fatalf("read API golden %s: %v (set %s=1 only when approving an intentional v1 API decision)", goldenPath, err, updateAPIGoldenEnv)
+		t.Fatalf("read API golden %s: %v (set %s=1 only when approving an intentional v2 API decision)", goldenPath, err, updateAPIGoldenEnv)
 	}
 	wantText := strings.ReplaceAll(string(want), "\r\n", "\n")
 	if wantText != got {
-		t.Fatalf("root public API changed; review the v1 contract and update the approved snapshot only for an intentional API decision:\n%s", apifreeze.Diff(wantText, got))
+		t.Fatalf("root public API changed; review the v2 contract and update the approved snapshot only for an intentional API decision:\n%s", apifreeze.Diff(wantText, got))
 	}
 }
 

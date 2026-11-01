@@ -71,7 +71,7 @@ func (c *localClient) AgentCard(ctx context.Context) (clienta2a.AgentCard, error
 // Send executes the runner to completion (non-streaming path).
 func (c *localClient) Send(ctx context.Context, req clienta2a.SendRequest) (clienta2a.Task, error) {
 	taskID, contextID := c.newTaskIdentity(req)
-	res, runErr := c.runner.Run(ctx, promptFromMessage(req.Message))
+	res, runErr := c.runner.Send(ctx, promptFromMessage(req.Message)).Result()
 	task := c.finalTask(taskID, contextID, res, runErr)
 	c.storeTask(task)
 	return task, nil
@@ -86,7 +86,7 @@ func (c *localClient) SendStream(ctx context.Context, req clienta2a.SendRequest)
 	// receiveA2AStream cancels via stream close + ctx, and the Delegator's
 	// timeout context is the ctx we get here.
 	runCtx, cancel := context.WithCancel(ctx)
-	stream := c.runner.Stream(runCtx, promptFromMessage(req.Message))
+	stream := c.runner.Send(runCtx, promptFromMessage(req.Message))
 	ls := &localA2AStream{
 		client:    c,
 		taskID:    taskID,

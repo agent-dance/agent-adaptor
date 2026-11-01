@@ -44,8 +44,10 @@ func TestDropModeAggregatesAndOrders(t *testing.T) {
 	emitted := make(chan struct{})
 	drained := make(chan struct{})
 
+	begin := make(chan struct{})
 	fake := newFakeDriver()
 	fake.runFunc = func(ctx context.Context, _ driver.Request, sink driver.EventSink) (driver.Response, error) {
+		<-begin
 		for n := 1; n <= 5; n++ {
 			_ = sink.EmitStream(numberedPayload(n))
 		}
@@ -56,8 +58,15 @@ func TestDropModeAggregatesAndOrders(t *testing.T) {
 	}
 
 	agent := adaptor.New(fake, adaptor.WithEventBuffer(2))
-	st := agent.Stream(context.Background(), "overflow")
+	st := agent.Send(context.Background(), "overflow")
 
+	if _, ok := (<-st.Events()).(adaptor.RunStarted); !ok {
+		t.Fatal("missing execution start")
+	}
+	if _, ok := (<-st.Events()).(adaptor.MessageUpdate); !ok {
+		t.Fatal("missing initial admission")
+	}
+	close(begin)
 	<-emitted
 	ev1 := <-st.Events()
 	ev2 := <-st.Events()
@@ -68,7 +77,9 @@ func TestDropModeAggregatesAndOrders(t *testing.T) {
 
 	var rest []adaptor.Event
 	for ev := range st.Events() {
-		rest = append(rest, ev)
+		if !executionEvent(ev) && !lifecycleEvent(ev) {
+			rest = append(rest, ev)
+		}
 	}
 	if _, err := st.Result(); err != nil {
 		t.Fatalf("Result: %v", err)
@@ -95,8 +106,10 @@ func TestDropModeAggregatesAndOrders(t *testing.T) {
 func TestDropModeFlushesMarkerAtClose(t *testing.T) {
 	emitted := make(chan struct{})
 	freed := make(chan struct{})
+	begin := make(chan struct{})
 	fake := newFakeDriver()
 	fake.runFunc = func(ctx context.Context, _ driver.Request, sink driver.EventSink) (driver.Response, error) {
+		<-begin
 		for n := 1; n <= 6; n++ {
 			_ = sink.EmitStream(numberedPayload(n))
 		}
@@ -106,7 +119,14 @@ func TestDropModeFlushesMarkerAtClose(t *testing.T) {
 	}
 
 	agent := adaptor.New(fake, adaptor.WithEventBuffer(4))
-	st := agent.Stream(context.Background(), "overflow-then-end")
+	st := agent.Send(context.Background(), "overflow-then-end")
+	if _, ok := (<-st.Events()).(adaptor.RunStarted); !ok {
+		t.Fatal("missing execution start")
+	}
+	if _, ok := (<-st.Events()).(adaptor.MessageUpdate); !ok {
+		t.Fatal("missing initial admission")
+	}
+	close(begin)
 	<-emitted
 	first := deltaOf(t, <-st.Events())
 	if first != "e1" {
@@ -114,7 +134,7 @@ func TestDropModeFlushesMarkerAtClose(t *testing.T) {
 	}
 	close(freed)
 
-	events, _, err := collect(st)
+	events, _, err := collectActivity(st)
 	if err != nil {
 		t.Fatalf("Result: %v", err)
 	}
@@ -134,16 +154,21 @@ func TestDropModeFlushesMarkerAtClose(t *testing.T) {
 
 // TestWithEventBufferSizes: a buffer big enough for the burst drops nothing.
 func TestWithEventBufferSizes(t *testing.T) {
+	begin := make(chan struct{})
 	fake := newFakeDriver()
 	fake.runFunc = func(ctx context.Context, _ driver.Request, sink driver.EventSink) (driver.Response, error) {
+		<-begin
 		for n := 1; n <= 6; n++ {
 			_ = sink.EmitStream(numberedPayload(n))
 		}
 		return driver.Response{Output: "ok"}, nil
 	}
-	agent := adaptor.New(fake, adaptor.WithEventBuffer(8))
+	agent := adaptor.New(fake, adaptor.WithEventBuffer(9))
 
-	events, _, err := collect(agent.Stream(context.Background(), "fits"))
+	stream := agent.Send(context.Background(), "fits")
+	stream.Events()
+	close(begin)
+	events, _, err := collectActivity(stream)
 	if err != nil {
 		t.Fatalf("Result: %v", err)
 	}
@@ -171,7 +196,7 @@ func TestBlockingEventsNeverDrop(t *testing.T) {
 	}
 	agent := adaptor.New(fake, adaptor.WithEventBuffer(1), adaptor.WithBlockingEvents())
 
-	events, _, err := collect(agent.Stream(context.Background(), "no-drop"))
+	events, _, err := collectActivity(agent.Send(context.Background(), "no-drop"))
 	if err != nil {
 		t.Fatalf("Result: %v", err)
 	}
@@ -196,7 +221,7 @@ func TestEmitAfterRunEndIsNoop(t *testing.T) {
 	}
 	agent := adaptor.New(fake)
 
-	events, res, err := collect(agent.Stream(context.Background(), "retain"))
+	events, res, err := collectActivity(agent.Send(context.Background(), "retain"))
 	if err != nil || res.Text != "ok" {
 		t.Fatalf("run: res=%v err=%v", res, err)
 	}
@@ -211,4 +236,12 @@ func TestEmitAfterRunEndIsNoop(t *testing.T) {
 	if err := captured.EmitStream(numberedPayload(99)); err != nil {
 		t.Errorf("late EmitStream: %v", err)
 	}
+}
+
+func lifecycleEvent(ev adaptor.Event) bool {
+	switch ev.(type) {
+	case adaptor.RunStarted, adaptor.RunFinished:
+		return true
+	}
+	return false
 }

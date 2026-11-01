@@ -212,7 +212,7 @@ func (d rawResultDriver) Run(context.Context, driver.Request, driver.EventSink) 
 
 func resultWithRawForTest(t *testing.T, raw adaptor.RawStreams) *adaptor.Result {
 	t.Helper()
-	result, err := adaptor.New(rawResultDriver{raw: raw}).Run(context.Background(), "prompt")
+	result, err := adaptor.New(rawResultDriver{raw: raw}).Send(context.Background(), "prompt").Result()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +231,7 @@ func (d usageResultDriver) Run(context.Context, driver.Request, driver.EventSink
 
 func resultWithUsageForTest(t *testing.T, usage *driver.Usage) *adaptor.Result {
 	t.Helper()
-	result, err := adaptor.New(usageResultDriver{usage: usage}).Run(context.Background(), "prompt")
+	result, err := adaptor.New(usageResultDriver{usage: usage}).Send(context.Background(), "prompt").Result()
 	if err != nil {
 		t.Fatal(err)
 	}

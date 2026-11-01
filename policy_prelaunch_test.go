@@ -20,19 +20,19 @@ func runPath(t *testing.T, agent *adaptor.Agent, path string, opts ...adaptor.Ca
 	t.Helper()
 	switch path {
 	case "run":
-		_, err := agent.Run(context.Background(), "hello", opts...)
+		_, err := agent.Send(context.Background(), "hello", opts...).Result()
 		return err
 	case "stream":
-		stream := agent.Stream(context.Background(), "hello", opts...)
+		stream := agent.Send(context.Background(), "hello", opts...)
 		for range stream.Events() {
 		}
 		_, err := stream.Result()
 		return err
 	case "thread_run":
-		_, err := agent.Thread("customer-thread").Run(context.Background(), "hello", opts...)
+		_, err := agent.Thread("customer-thread").Send(context.Background(), "hello", opts...).Result()
 		return err
 	case "thread_stream":
-		stream := agent.Thread("customer-thread").Stream(context.Background(), "hello", opts...)
+		stream := agent.Thread("customer-thread").Send(context.Background(), "hello", opts...)
 		for range stream.Events() {
 		}
 		_, err := stream.Result()
@@ -123,7 +123,7 @@ func TestApprovalCapabilityMatrixChecksEveryExplicitMode(t *testing.T) {
 			fake := newFakeDriver()
 			fake.descriptor = &driver.Descriptor{Type: "none"}
 			agent := adaptor.New(fake)
-			_, err := agent.Run(context.Background(), "hello", adaptor.WithPolicy(adaptor.Policy{Approvals: test.policy}))
+			_, err := agent.Send(context.Background(), "hello", adaptor.WithPolicy(adaptor.Policy{Approvals: test.policy})).Result()
 
 			var typed *adaptor.HumanDecisionModeUnsupportedError
 			if !errors.Is(err, adaptor.ErrHumanDecisionModeUnsupported) || !errors.As(err, &typed) {
@@ -159,7 +159,7 @@ func TestExplicitPolicyDimensionsRequireDriverCapabilities(t *testing.T) {
 			fake.descriptor = &driver.Descriptor{Type: "minimal"}
 			agent := adaptor.New(fake)
 
-			_, err := agent.Run(context.Background(), "hello", adaptor.WithPolicy(test.policy))
+			_, err := agent.Send(context.Background(), "hello", adaptor.WithPolicy(test.policy)).Result()
 			if !errors.Is(err, adaptor.ErrPolicyCapabilityUnsupported) {
 				t.Fatalf("error = %v, want ErrPolicyCapabilityUnsupported", err)
 			}
@@ -182,7 +182,7 @@ func TestZeroPolicyDoesNotRequireAdvertisedCapabilities(t *testing.T) {
 	fake.descriptor = &driver.Descriptor{Type: "no-hitl"}
 	agent := adaptor.New(fake, adaptor.WithPolicy(adaptor.Policy{}))
 
-	result, err := agent.Run(context.Background(), "hello")
+	result, err := agent.Send(context.Background(), "hello").Result()
 	if err != nil {
 		t.Fatalf("zero policy rejected: %v", err)
 	}
@@ -201,7 +201,7 @@ func TestAgentDefaultExplicitApprovalModeIsCapabilityChecked(t *testing.T) {
 		Approvals: adaptor.ApprovalPolicy{PlanReview: adaptor.ApprovalAsk},
 	}))
 
-	_, err := agent.Run(context.Background(), "hello")
+	_, err := agent.Send(context.Background(), "hello").Result()
 	var typed *adaptor.HumanDecisionModeUnsupportedError
 	if !errors.Is(err, adaptor.ErrHumanDecisionModeUnsupported) || !errors.As(err, &typed) {
 		t.Fatalf("error = %T %v", err, err)
@@ -234,7 +234,7 @@ func TestInvalidPolicyValuesHaveStableTypedError(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			fake := newFakeDriver()
 			agent := adaptor.New(fake)
-			_, err := agent.Run(context.Background(), "hello", adaptor.WithPolicy(test.policy))
+			_, err := agent.Send(context.Background(), "hello", adaptor.WithPolicy(test.policy)).Result()
 
 			if !errors.Is(err, adaptor.ErrInvalidPolicy) {
 				t.Fatalf("error = %v, want ErrInvalidPolicy", err)

@@ -212,7 +212,7 @@ func TestRunServiceAttachFailureIsPreLaunch(t *testing.T) {
 	fake := newFakeDriver()
 	agent := adaptor.New(fake, adaptor.WithRunServices(first, failing, never))
 
-	res, err := agent.Run(context.Background(), "hi")
+	res, err := agent.Send(context.Background(), "hi").Result()
 	if res != nil {
 		t.Fatalf("Result = %+v, want nil on pre-launch failure", res)
 	}
@@ -253,7 +253,7 @@ func TestRunServiceAttachFailureJoinsUnwindFailure(t *testing.T) {
 	failing := &fakeProvider{name: "failing", log: &callLog{}, attachErr: attachErr}
 	fake := newFakeDriver()
 
-	res, err := adaptor.New(fake, adaptor.WithRunServices(first, failing)).Run(context.Background(), "go")
+	res, err := adaptor.New(fake, adaptor.WithRunServices(first, failing)).Send(context.Background(), "go").Result()
 	if res != nil || !errors.Is(err, attachErr) || !errors.Is(err, detachErr) {
 		t.Fatalf("Run = (%+v, %v), want both attach and unwind errors", res, err)
 	}
@@ -281,7 +281,7 @@ func TestRunServiceMCPMergesWithHostMCP(t *testing.T) {
 		adaptor.WithMCP(mcp.HTTP("docs", "https://example.com/mcp")),
 		adaptor.WithRunServices(provider),
 	)
-	if _, err := agent.Run(context.Background(), "hi"); err != nil {
+	if _, err := agent.Send(context.Background(), "hi").Result(); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 
@@ -339,11 +339,11 @@ func TestRuntimeFingerprintCoversAttachmentMCPSemantics(t *testing.T) {
 	}
 
 	firstDriver := httpCapableDriver()
-	if _, err := adaptor.New(firstDriver, adaptor.WithRunServices(makeProvider("TOKEN_A", true))).Run(context.Background(), "first"); err != nil {
+	if _, err := adaptor.New(firstDriver, adaptor.WithRunServices(makeProvider("TOKEN_A", true))).Send(context.Background(), "first").Result(); err != nil {
 		t.Fatal(err)
 	}
 	secondDriver := httpCapableDriver()
-	if _, err := adaptor.New(secondDriver, adaptor.WithRunServices(makeProvider("TOKEN_B", false))).Run(context.Background(), "second"); err != nil {
+	if _, err := adaptor.New(secondDriver, adaptor.WithRunServices(makeProvider("TOKEN_B", false))).Send(context.Background(), "second").Result(); err != nil {
 		t.Fatal(err)
 	}
 	first := firstDriver.lastRequest(t).Runtime.Fingerprint
@@ -366,7 +366,7 @@ func TestRunServiceMCPKeyCollisionFailsBeforeLaunch(t *testing.T) {
 		adaptor.WithMCP(mcp.HTTP("docs", "https://example.com/mcp")),
 		adaptor.WithRunServices(provider),
 	)
-	if _, err := agent.Run(context.Background(), "hi"); err == nil {
+	if _, err := agent.Send(context.Background(), "hi").Result(); err == nil {
 		t.Fatal("a duplicate MCP key must fail the run, not silently pick one")
 	}
 	if fake.runCount() != 0 {
@@ -394,13 +394,13 @@ func TestRunServiceEventsInterleaveWithDriverEvents(t *testing.T) {
 		_ = sink.EmitStream(driver.StreamPayload{Kind: driver.StreamTextContent, RunID: req.RunID, MessageID: "m1", Delta: "B"})
 		// Published while the driver is still running, exactly like a
 		// delegation terminal emitted from inside a tool call.
-		feed <- adaptor.SubagentUpdate{Agent: "review", Kind: adaptor.SubagentFinished}
+		feed <- adaptor.SubagentUpdate{Member: "review", Kind: adaptor.SubagentFinished}
 		_ = sink.EmitStream(driver.StreamPayload{Kind: driver.StreamRunFinished, RunID: req.RunID})
 		return driver.Response{Output: "done"}, nil
 	}
 
 	agent := adaptor.New(fake, adaptor.WithRunServices(provider))
-	stream := agent.Stream(context.Background(), "go")
+	stream := agent.Send(context.Background(), "go")
 	events := stream.Events()
 
 	// 1. The core-owned envelope is always first, even though the Driver also
@@ -410,20 +410,22 @@ func TestRunServiceEventsInterleaveWithDriverEvents(t *testing.T) {
 		t.Fatalf("first event = %T, want RunStarted", ev)
 	}
 	// 2. The driver's first delta.
-	assertTextDelta(t, <-events, "A")
+	assertTextDelta(t, nextActivityEvent(events), "A")
 	// 3. A provider event published while the driver is parked: it is the
 	// only thing that can arrive next, so its position is deterministic.
-	feed <- adaptor.SubagentUpdate{Agent: "review", Kind: adaptor.SubagentStarted}
-	assertSubagent(t, <-events, adaptor.SubagentStarted)
+	feed <- adaptor.SubagentUpdate{Member: "review", Kind: adaptor.SubagentStarted}
+	assertSubagent(t, nextActivityEvent(events), adaptor.SubagentStarted)
 	// 4. The driver's second delta, after the provider event.
 	close(resume)
-	assertTextDelta(t, <-events, "B")
+	assertTextDelta(t, nextActivityEvent(events), "B")
 
 	// 5. The terminal provider event published in the driver's last breath
 	// must survive teardown and precede the unique public run.finished.
 	var tail []adaptor.Event
 	for ev := range events {
-		tail = append(tail, ev)
+		if !executionEvent(ev) {
+			tail = append(tail, ev)
+		}
 	}
 	if len(tail) != 2 {
 		t.Fatalf("tail events = %+v, want SubagentUpdate then RunFinished", tail)
@@ -453,27 +455,33 @@ func TestMergedLifecycleStartsBeforeImmediateProviderEventAndFinishesAfterFlush(
 		log:  &callLog{},
 		attachment: adaptor.RunAttachment{Events: func(ctx context.Context, _ string) <-chan adaptor.Event {
 			out := make(chan adaptor.Event, 2)
-			out <- adaptor.SubagentUpdate{Agent: "review", Kind: adaptor.SubagentStarted}
+			out <- adaptor.SubagentUpdate{Member: "review", Kind: adaptor.SubagentStarted}
 			go func() {
 				<-ctx.Done()
-				out <- adaptor.SubagentUpdate{Agent: "review", Kind: adaptor.SubagentFinished}
+				out <- adaptor.SubagentUpdate{Member: "review", Kind: adaptor.SubagentFinished}
 				close(out)
 			}()
 			return out
 		}},
 	}
 
+	begin := make(chan struct{})
 	fake := newFakeDriver()
 	fake.runFunc = func(_ context.Context, req driver.Request, sink driver.EventSink) (driver.Response, error) {
+		<-begin
 		_ = sink.EmitStream(driver.StreamPayload{Kind: driver.StreamRunStarted, RunID: req.RunID, ThreadID: "provider-thread", Sequence: 10})
 		_ = sink.EmitStream(driver.StreamPayload{Kind: driver.StreamRunFinished, RunID: req.RunID, ThreadID: "provider-thread", Sequence: 11})
 		return driver.Response{Output: "done"}, nil
 	}
 
-	stream := adaptor.New(fake, adaptor.WithRunServices(provider)).Stream(context.Background(), "go")
+	stream := adaptor.New(fake, adaptor.WithRunServices(provider)).Send(context.Background(), "go")
+	observed := stream.Events()
+	close(begin)
 	var events []adaptor.Event
-	for ev := range stream.Events() {
-		events = append(events, ev)
+	for ev := range observed {
+		if !executionEvent(ev) {
+			events = append(events, ev)
+		}
 	}
 	if _, err := stream.Result(); err != nil {
 		t.Fatalf("Result: %v", err)
@@ -490,7 +498,7 @@ func TestMergedLifecycleStartsBeforeImmediateProviderEventAndFinishesAfterFlush(
 		t.Fatalf("last event = %T, want RunFinished", events[3])
 	}
 	for i, ev := range events {
-		if got, want := ev.Meta().Sequence, uint64(i+1); got != want {
+		if got, want := ev.Meta().Sequence, uint64(i+1); got < want {
 			t.Fatalf("events[%d] sequence = %d, want %d", i, got, want)
 		}
 	}
@@ -523,7 +531,7 @@ func TestRunEventSourceCannotPublishRunLifecycle(t *testing.T) {
 		return driver.Response{Output: "done"}, nil
 	}
 
-	events, res, err := collect(adaptor.New(fake, adaptor.WithRunServices(provider)).Stream(context.Background(), "go"))
+	events, res, err := collect(adaptor.New(fake, adaptor.WithRunServices(provider)).Send(context.Background(), "go"))
 	if err != nil || res == nil || res.Text != "done" {
 		t.Fatalf("run = (%+v, %v)", res, err)
 	}
@@ -540,7 +548,7 @@ func TestRunEventSourceCannotPublishRunLifecycle(t *testing.T) {
 		t.Fatalf("last event = %#v, want successful core-owned RunFinished", events[2])
 	}
 	for i, event := range events {
-		if got, want := event.Meta().Sequence, uint64(i+1); got != want {
+		if got, want := event.Meta().Sequence, uint64(i+1); got < want {
 			t.Fatalf("events[%d] sequence = %d, want %d", i, got, want)
 		}
 	}
@@ -557,16 +565,17 @@ func TestRunServiceTerminalEventSurvivesCancellation(t *testing.T) {
 	fake := newFakeDriver()
 	fake.runFunc = func(ctx context.Context, _ driver.Request, _ driver.EventSink) (driver.Response, error) {
 		<-ctx.Done()
-		feed <- adaptor.SubagentUpdate{Agent: "review", Kind: adaptor.SubagentFinished}
+		feed <- adaptor.SubagentUpdate{Member: "review", Kind: adaptor.SubagentFinished}
 		return driver.Response{}, ctx.Err()
 	}
 
 	agent := adaptor.New(fake, adaptor.WithRunServices(provider))
-	stream := agent.Stream(context.Background(), "go")
+	stream := agent.Send(context.Background(), "go")
+	events := stream.Events()
 	stream.Cancel()
 
 	var seen []adaptor.SubagentEventKind
-	for ev := range stream.Events() {
+	for ev := range events {
 		if update, ok := ev.(adaptor.SubagentUpdate); ok {
 			seen = append(seen, update.Kind)
 		}
@@ -598,7 +607,7 @@ func TestEventsCloseOnlyAfterRunServicesAreReleased(t *testing.T) {
 
 	fake := newFakeDriver()
 	fake.response = driver.Response{Output: "done"}
-	stream := adaptor.New(fake, adaptor.WithRunServices(provider)).Stream(context.Background(), "go")
+	stream := adaptor.New(fake, adaptor.WithRunServices(provider)).Send(context.Background(), "go")
 
 	select {
 	case <-detachStarted:
@@ -611,7 +620,7 @@ func TestEventsCloseOnlyAfterRunServicesAreReleased(t *testing.T) {
 		if !ok {
 			t.Fatal("Events closed before the run service was released")
 		}
-		t.Fatal("unexpected event while waiting for run service release")
+		// A TurnEnd may precede teardown; Done and channel closure must wait.
 	default:
 	}
 
@@ -653,7 +662,7 @@ func TestRunScopedReleaseFailuresAreObservable(t *testing.T) {
 			},
 		}
 		fake := newFakeDriver()
-		res, err := adaptor.New(fake, adaptor.WithRunServices(provider)).Run(context.Background(), "go")
+		res, err := adaptor.New(fake, adaptor.WithRunServices(provider)).Send(context.Background(), "go").Result()
 		if res != nil || !errors.Is(err, want) {
 			t.Fatalf("Run = (%+v, %v), want nil Result and wrapped DetachRun error", res, err)
 		}
@@ -674,7 +683,7 @@ func TestRunScopedReleaseFailuresAreObservable(t *testing.T) {
 		res, err := adaptor.New(fake,
 			adaptor.WithServiceManager(manager),
 			adaptor.WithServices(adaptor.ServiceSpec{ID: "db"}),
-		).Run(context.Background(), "go")
+		).Send(context.Background(), "go").Result()
 		if res != nil || !errors.Is(err, want) {
 			t.Fatalf("Run = (%+v, %v), want nil Result and wrapped ReleaseByRun error", res, err)
 		}
@@ -696,7 +705,7 @@ func TestRunScopedReleaseFailuresAreObservable(t *testing.T) {
 		res, err := adaptor.New(fake,
 			adaptor.WithWorkspaceManager(manager),
 			adaptor.WithWorkspaceSpec(adaptor.SharedWorkspace{}),
-		).Run(context.Background(), "go")
+		).Send(context.Background(), "go").Result()
 		if res != nil || !errors.Is(err, want) {
 			t.Fatalf("Run = (%+v, %v), want nil Result and wrapped WorkspaceManager.Release error", res, err)
 		}
@@ -725,7 +734,7 @@ func TestRunScopedTeardownIsBoundedWhenHookIgnoresCancellation(t *testing.T) {
 	}
 	done := make(chan outcome, 1)
 	go func() {
-		res, err := adaptor.New(newFakeDriver(), adaptor.WithRunServices(provider)).Run(ctx, "go")
+		res, err := adaptor.New(newFakeDriver(), adaptor.WithRunServices(provider)).Send(ctx, "go").Result()
 		done <- outcome{res: res, err: err}
 	}()
 
@@ -794,7 +803,7 @@ func TestRunScopedTeardownAttemptsEverythingAfterPumpAndHookTimeouts(t *testing.
 		adaptor.WithServices(adaptor.ServiceSpec{ID: "runtime"}),
 		adaptor.WithWorkspaceManager(workspaceManager),
 		adaptor.WithWorkspaceSpec(adaptor.SharedWorkspace{}),
-	).Stream(ctx, "go")
+	).Send(ctx, "go")
 
 	type outcome struct {
 		events []adaptor.Event
@@ -842,8 +851,8 @@ func TestRunScopedTeardownAttemptsEverythingAfterPumpAndHookTimeouts(t *testing.
 	if _, ok := got.events[0].(adaptor.RunStarted); !ok {
 		t.Fatalf("first event = %T, want RunStarted", got.events[0])
 	}
-	if _, ok := got.events[len(got.events)-1].(adaptor.RunFinished); !ok {
-		t.Fatalf("last event = %T, want RunFinished", got.events[len(got.events)-1])
+	if _, ok := got.events[len(got.events)-1].(adaptor.Done); !ok {
+		t.Fatalf("last event = %T, want Done", got.events[len(got.events)-1])
 	}
 }
 
@@ -885,7 +894,7 @@ func TestWithServicesEnsuresThroughManagerAndReleases(t *testing.T) {
 		adaptor.WithServiceManager(manager),
 		adaptor.WithServices(adaptor.ServiceSpec{ID: "db", Name: "db", Description: "test database"}),
 	)
-	res, err := agent.Run(context.Background(), "hi")
+	res, err := agent.Send(context.Background(), "hi").Result()
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -952,7 +961,7 @@ func TestServiceReportsMergeByStableIDWithDriverPrecedence(t *testing.T) {
 		adaptor.WithServiceManager(manager),
 		adaptor.WithServices(adaptor.ServiceSpec{ID: "db"}, adaptor.ServiceSpec{ID: "cache"}),
 	)
-	res, err := agent.Run(context.Background(), "inspect services")
+	res, err := agent.Send(context.Background(), "inspect services").Result()
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -977,7 +986,7 @@ func TestServiceReportsMergeByStableIDWithDriverPrecedence(t *testing.T) {
 func TestWithServicesWithoutManagerStaysInert(t *testing.T) {
 	fake := newFakeDriver()
 	agent := adaptor.New(fake, adaptor.WithServices(adaptor.ServiceSpec{ID: "db", Name: "db"}))
-	if _, err := agent.Run(context.Background(), "hi"); err != nil {
+	if _, err := agent.Send(context.Background(), "hi").Result(); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	req := fake.lastRequest(t)
@@ -993,7 +1002,7 @@ func TestWithServicesReplacesPerCall(t *testing.T) {
 	fake := newFakeDriver()
 	agent := adaptor.New(fake, adaptor.WithServices(adaptor.ServiceSpec{ID: "default"}))
 
-	if _, err := agent.Run(context.Background(), "hi", adaptor.WithServices(adaptor.ServiceSpec{ID: "override"})); err != nil {
+	if _, err := agent.Send(context.Background(), "hi", adaptor.WithServices(adaptor.ServiceSpec{ID: "override"})).Result(); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	req := fake.request(t, 0)
@@ -1002,7 +1011,7 @@ func TestWithServicesReplacesPerCall(t *testing.T) {
 	}
 
 	// An empty declaration is an explicit clear, not an inherit.
-	if _, err := agent.Run(context.Background(), "hi", adaptor.WithServices()); err != nil {
+	if _, err := agent.Send(context.Background(), "hi", adaptor.WithServices()).Result(); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	if got := fake.request(t, 1).Runtime.Requested; len(got) != 0 {
@@ -1010,7 +1019,7 @@ func TestWithServicesReplacesPerCall(t *testing.T) {
 	}
 
 	// The agent default is never mutated by a per-call override.
-	if _, err := agent.Run(context.Background(), "hi"); err != nil {
+	if _, err := agent.Send(context.Background(), "hi").Result(); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	if got := fake.request(t, 2).Runtime.Requested; len(got) != 1 || got[0].ID != "default" {
@@ -1038,7 +1047,7 @@ func TestWithWorkspaceManagerLeasesAndReleases(t *testing.T) {
 		adaptor.WithWorkspaceSpec(adaptor.GitWorktreeWorkspace{BaseRef: "main"}),
 		adaptor.WithMetadata("example", "p47"),
 	)
-	if _, err := agent.Run(context.Background(), "hi"); err != nil {
+	if _, err := agent.Send(context.Background(), "hi").Result(); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 
@@ -1076,7 +1085,7 @@ func TestWithWorkspaceSpecWithoutManagerUsesPassthrough(t *testing.T) {
 		adaptor.WithWorkspace(base),
 		adaptor.WithWorkspaceSpec(adaptor.DriverManagedWorkspace{}),
 	)
-	if _, err := agent.Run(context.Background(), "hi"); err != nil {
+	if _, err := agent.Send(context.Background(), "hi").Result(); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	ws := fake.lastRequest(t).Workspace
@@ -1097,7 +1106,7 @@ func TestWithWorkspaceSpecWithoutManagerUsesPassthrough(t *testing.T) {
 func TestWorkspaceUnmanagedRunKeepsDirectLease(t *testing.T) {
 	fake := newFakeDriver()
 	agent := adaptor.New(fake, adaptor.WithWorkspace("/plain"))
-	if _, err := agent.Run(context.Background(), "hi"); err != nil {
+	if _, err := agent.Send(context.Background(), "hi").Result(); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	ws := fake.lastRequest(t).Workspace
@@ -1112,7 +1121,7 @@ func TestWorkspaceUnmanagedRunKeepsDirectLease(t *testing.T) {
 	// zero-cost path must not route through the passthrough manager and
 	// synthesize a working directory nobody asked for.
 	bare := newFakeDriver()
-	if _, err := adaptor.New(bare).Run(context.Background(), "hi"); err != nil {
+	if _, err := adaptor.New(bare).Send(context.Background(), "hi").Result(); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	if got := bare.lastRequest(t).Workspace; got.CWD != "" || got.StrategyType != "" {
@@ -1126,7 +1135,7 @@ func TestWorkspaceManagerFailureIsPreLaunch(t *testing.T) {
 	fake := newFakeDriver()
 	agent := adaptor.New(fake, adaptor.WithWorkspaceManager(manager), adaptor.WithWorkspaceSpec(adaptor.SharedWorkspace{}))
 
-	if _, err := agent.Run(context.Background(), "hi"); !errors.Is(err, boom) {
+	if _, err := agent.Send(context.Background(), "hi").Result(); !errors.Is(err, boom) {
 		t.Fatalf("err = %v, want it to wrap %v", err, boom)
 	}
 	if fake.runCount() != 0 {
@@ -1163,7 +1172,7 @@ func TestRunServiceProvidersAppendAndDeduplicate(t *testing.T) {
 
 	// The same provider in both scopes attaches once (a second attach would
 	// duplicate its MCP key and fail the run).
-	res, err := agent.Run(context.Background(), "hi", adaptor.WithRunServices(shared, extra))
+	res, err := agent.Send(context.Background(), "hi", adaptor.WithRunServices(shared, extra)).Result()
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -1215,7 +1224,7 @@ func TestRunServiceProviderReachesThreadRuns(t *testing.T) {
 		adaptor.WithRunServices(provider),
 	)
 	thread := agent.Thread("tenant/issue-1")
-	if _, err := thread.Run(context.Background(), "hi"); err != nil {
+	if _, err := thread.Send(context.Background(), "hi").Result(); err != nil {
 		t.Fatalf("Thread.Run: %v", err)
 	}
 	req := sf.lastRequest(t)

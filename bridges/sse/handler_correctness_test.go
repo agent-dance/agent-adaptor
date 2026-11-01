@@ -129,3 +129,7 @@ func TestRawTerminalInfrastructureFailureIsStructured(t *testing.T) {
 		t.Fatalf("terminal = %s %#v", name, body)
 	}
 }
+
+func (s *terminalTestStream) Send(context.Context, string, ...adaptor.MessageOption) error {
+	return adaptor.ErrMessageUnsupported
+}
