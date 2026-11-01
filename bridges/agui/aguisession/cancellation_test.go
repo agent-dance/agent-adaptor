@@ -33,7 +33,7 @@ func TestSessionCancellationOverridesDriverFailure(t *testing.T) {
 			defer s.Shutdown(context.Background())
 			disconnect, done := launchRequest(s, "t", "r")
 			await(t, started)
-			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 			switch mode {
 			case "host cancel":

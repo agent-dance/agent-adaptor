@@ -28,6 +28,7 @@ type config struct {
 	addr, dataDir, cors, agent string
 	unattended, observation    bool
 	pace                       time.Duration
+	resolve                    func(*http.Request, aguisession.Access) (string, error)
 }
 type application struct {
 	handler  http.Handler
@@ -71,7 +72,15 @@ func newApplication(ctx context.Context, c config) (*application, error) {
 		health.Mode, health.Agent = "real", cfg.Agent
 		ai = adaptor.New(exampleutil.NewLiveDriver(cfg), adaptor.WithThreadStore(store), exampleutil.NonInteractive(cfg.Agent, adaptor.WorkspaceWrite))
 	}
-	session := aguisession.New(ai, aguisession.Options{Recorder: rec, Resolve: demoResolve, Unattended: c.unattended, BaseContext: ctx, KeepAlivePing: 10 * time.Second})
+	resolve := c.resolve
+	if resolve == nil {
+		resolve = demoResolve
+	}
+	var projection []agui.EventTranslatorOption
+	if health.Mode == "fake" {
+		projection = []agui.EventTranslatorOption{agui.WithProjectionHook(scriptedActivity)}
+	}
+	session := aguisession.New(ai, aguisession.Options{Recorder: rec, Resolve: resolve, Events: projection, Unattended: c.unattended, BaseContext: ctx, KeepAlivePing: 10 * time.Second})
 	mux := http.NewServeMux()
 	mux.Handle("/agent", session.Handler())
 	mux.Handle("/history", session.MessagesHandler())

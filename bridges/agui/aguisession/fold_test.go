@@ -30,7 +30,7 @@ func TestFoldClientReducerTable(t *testing.T) {
 		Events   []json.RawMessage
 		Expected []Message
 	}
-	if err := json.Unmarshal(raw, &cases); err != nil {
+	if err := decodeOpaque(raw, &cases); err != nil {
 		t.Fatal(err)
 	}
 	// Expectations were derived by reading @ag-ui/client 1.0.3 src/apply/default.ts

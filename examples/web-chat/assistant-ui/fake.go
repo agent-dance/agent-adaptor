@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"time"
 
+	events "github.com/ag-ui-protocol/ag-ui/sdks/community/go/pkg/core/events"
 	"github.com/agent-dance/agent-adaptor/driver"
 )
 
@@ -15,6 +16,27 @@ type scriptedDriver struct{ pace time.Duration }
 
 func (d scriptedDriver) Descriptor() driver.Descriptor {
 	return driver.Descriptor{Type: "assistant-ui-script", DisplayName: "Scripted demo", Sessions: driver.SessionCapability{SupportsResume: true}}
+}
+
+// scriptedActivity adds a simulated host review to turn one's failed command.
+// Derive identity and attribution from the projected tool, so both live and
+// replay use the same scoped IDs. No delegated work or extra model call occurs.
+func scriptedActivity(event events.Event) []events.Event {
+	tool, ok := event.(*events.ToolCallResultEvent)
+	if !ok || tool.Content != "command 13 failed\n[exit=1]" {
+		return []events.Event{event}
+	}
+	id := tool.ToolCallID + ":review"
+	snapshot := events.NewActivitySnapshotEvent(id, "command-review", map[string]any{
+		"title": "Command review", "status": "running", "parentToolCallId": tool.ToolCallID,
+	})
+	delta := events.NewActivityDeltaEvent(id, "command-review", []events.JSONPatchOperation{
+		{Op: "add", Path: "/text", Value: "Checked 13 commands; command 13 needs attention."},
+		{Op: "replace", Path: "/status", Value: "completed"},
+	})
+	snapshot.TimestampMs = event.GetBaseEvent().TimestampMs
+	delta.TimestampMs = event.GetBaseEvent().TimestampMs
+	return []events.Event{event, snapshot, delta}
 }
 func (d scriptedDriver) ValidateConfig(any) error { return nil }
 func (d scriptedDriver) SessionConfigFingerprint() (string, error) {

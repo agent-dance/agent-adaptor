@@ -21,7 +21,7 @@ forwarded properties, activity payloads, and tool parameter schemas stays opaque
 | User/tool content parts | Text joined by newline; image, audio, video, document parts skipped with warnings. Unknown part types are removed and retained in `UnknownMembers`. Warnings refer to original part positions, only for the trailing user message or prior text actually rehydrated by `HistoryFallback`. No executable trailing text rejects. |
 | Prior messages | Require a usable checkpoint or explicit `HistoryFallback`; never silently discarded on a missing checkpoint. |
 | `tools` | Frontend declarations stripped with warning; the bridge never answers or emits calls to these declarations. SDK backend tools still project normally. |
-| `state` | No shared-state execution or `STATE_*` projection; non-empty state warns. Absent/null state and empty JSON objects (regardless of whitespace), arrays and strings are treated as empty. |
+| `state` | No shared-state execution or `STATE_*` projection; non-empty state warns. Absent state and empty JSON objects (regardless of whitespace), arrays and strings are treated as empty. Explicit `null` violates the frozen schema and returns 400 `agui.invalid_input` at `/state`, including for legacy requests. |
 | `context` | Appended in input order as compact JSON between `<agent-adaptor-context>` and `</agent-adaptor-context>`, separated from prompt text by two newlines. `InputOptions.DisableContext` strips with warning. |
 | `forwardedProps` | Original JSON value bytes, including internal whitespace, exposed through `sse.Options.OnAGUIRequest`; never interpreted. |
 | `resume` | Empty allowed; non-empty rejects before streaming. |
@@ -79,7 +79,9 @@ thread ID alone grants no authority. A fixed Thread Runner remains host-bound.
 Legacy requests without a version may omit public identity: missing run ID is
 generated. A missing thread ID also receives a generated public wire ID while
 execution remains stateless; it is never used as a checkpoint key. Missing
-identity warns. Other known schema violations are not granted legacy leniency.
+identity warns. Only identity presence is relaxed for legacy input; versioned
+input restores the frozen identity requirements. Other known schema constraints,
+including non-null state and forwardedProps, are never relaxed.
 
 Low-level `Events`/`EventTranslator` callers supply
 `WithRunIdentity(threadID, runID, parentRunID)` to obtain the same public mapping.
@@ -116,7 +118,11 @@ original Go error chain. VerifyHistory sees resolver-bound legacy requests and
 the actual key of an already-bound Thread; it cannot rebind that fixed Thread.
 
 Decoded metadata preserves opaque JSON numbers as `json.Number`, avoiding
-float64 rounding and overflow. The forwardedProps value retains its original
+float64 rounding and overflow. The typed sessionrecorder payload codec, event
+freezing, ordered projection, Message[] folding and reopened JSONL reads retain
+these values without changing the stable recording envelope or existing files.
+JavaScript clients retain their native JSON number limits; the server wire bytes
+remain lossless. The forwardedProps value retains its original
 bytes; unknown members are captured by JSON Pointer and stripped only from
 schema-defined closed objects, including nested unions and composed messages.
 
@@ -324,6 +330,12 @@ stateful continuation returns `agui.history_unrecoverable`, even with fallback.
 `ResolveDivergence` can select a fresh key so explicit HistoryFallback rehydrates
 without resuming the stale checkpoint. Stateless fallback remains available.
 Checkpoint compatibility still has the execution-time limits described above.
+Request message IDs must be unique: duplicates return HTTP 409
+`agui.duplicate_message` at the repeated `/messages/N/id` before execution,
+including on the generic SSE handler without a recorder. Session also rejects
+a trailing user ID matching **any** recorded message (including omitted activity
+or reasoning) before writing a boundary or calling Stream. The reducer keeps
+its official idempotent input-seed semantics.
 Duplicate recorded run IDs return 409 `agui.duplicate_run`; active threads return
 409 `agui.run_active` before streaming. `Observe` sees recorded live approvals;
 `OnRunEnd` lets hosts clear pending responders after drain completion.
@@ -343,7 +355,10 @@ read metadata.agentAdaptor for tool status. Verification compares only IDs and
 roles, ignoring both content and error. HttpAgent.prepareRunAgentInput in
 @ag-ui/client 1.0.3 clones messages and strips only role=activity. Its raw
 messages can contain reasoning, while an assistant-ui round-trip may omit it;
-the verifier therefore ignores both activities and reasoning. Tool results and
+the verifier therefore ignores both activities and reasoning. The pinned
+assistant-ui converter renders activity as a data part, but its export drops
+the raw activity message; it remains in server history and is not execution
+input. Tool results and
 tool-only assistant identities remain required.
 
 Session SSE writes use the same deadline writer as the generic handler.

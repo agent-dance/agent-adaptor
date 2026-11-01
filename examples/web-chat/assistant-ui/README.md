@@ -164,8 +164,15 @@ operational payloads cannot become arbitrary top-level blocks. Default bridge
 projection also filters invocation/runtime/transcript/provider pass-through
 notices; explicit `WithNoticePassthrough` is available to a host that needs
 reviewed/redacted extras. Protocol diagnostics remain available in ordered event
-history. The fake trace has no custom activity; domain-specific Activity/card
-renderers still belong to a product. assistant-ui may combine adjacent reasoning
+history. Turn 1 also projects a simulated command-review activity as an
+ACTIVITY_SNAPSHOT plus ACTIVITY_DELTA. `Activity` renders the allowlisted
+`agui-activity/command-review` data part, including its completion and text;
+content.parentToolCallId retains the scoped command-13 tool ID. The pinned
+converter attaches it to the preceding assistant/tool owner, identically live
+and after reload. This card reports scripted demo content, not delegated model
+work. Other Activity/card renderers still belong to a product. Its export omits
+raw activity messages from the next-turn input; server history keeps them.
+assistant-ui may combine adjacent reasoning
 and assistant/tool records into one visible bubble; wire IDs, tool associations
 and ordered process history remain available. The page reads /health for
 mode-appropriate copy; real CLI mode does not describe the fake 13-command scenario.
@@ -175,7 +182,12 @@ mode-appropriate copy; real CLI mode does not describe the fake 13-command scena
 `demoResolve` **permits everyone** and maps IDs with `aguisession.ThreadKey`.
 Replace it with authenticated principal and per-operation grants for start,
 read, follow and cancel; encode tenant/user/business dimensions without collisions.
-This is deliberately not an authentication example. Production also owns:
+The demo default remains permissive. `TestAuthenticatedScopedThreadSurvivesReconstruction`
+injects a test-only resolver using a verified-principal stand-in header, an
+allowlist for every operation and an opaque hash of a JSON tenant/principal/Thread
+tuple. It reconstructs the persistent store between authenticated turns and
+checks 403 for other principals on start, read, follow and cancel. The test header
+is not a production authentication mechanism. Production also owns:
 
 - Durable backends, secrets, retention, redaction, backup and migration.
 - Worker lifetime, concurrency limits, routing, revocation and cancellation.
@@ -185,8 +197,13 @@ This is deliberately not an authentication example. Production also owns:
 
 The injected JSONL recorder (`events/`) syncs each append. The injected Store
 (`checkpoints/threads.json`) persists records via fsync + atomic rename and
-process-local fenced leases. Both are **single-process**. Stop the old process
-before opening the same directory; there is no cross-process writer lock.
+process-local fenced leases. On POSIX the store also fsyncs the directory after
+replacement and fails closed on sync errors. On native Windows it skips directory
+fsync: a read-only directory handle cannot portably FlushFileBuffers. File data
+is still synced before replacement, but directory-entry persistence across power
+loss is not guaranteed by this example. The Windows-tagged replacement/reopen
+test exercises successive saves without poisoning the store. Both backends are
+**single-process**. Stop the old process before opening the same directory; there is no cross-process writer lock.
 A storage failure is returned, never replaced by memory. After an abrupt crash,
 a run lacking a durable terminal is diagnosed incomplete; checkpoint and event
 storage are separate, so an uncertain/failed recorded turn fails closed on

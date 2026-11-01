@@ -154,13 +154,24 @@ func conflict(code, message string) error {
 // Reasoning is optional presentation state: assistant-ui 0.1.1 drops empty
 // reasoning on round-trip and all plain reasoning when showThinking is false.
 // User/assistant/tool identities still match strictly, including tool-only assistants.
-// Content and error are intentionally not compared. The trailing user turn is excluded.
+// Content and error are intentionally not compared. The trailing user turn is
+// excluded from comparison, but its ID must be absent from all recorded messages.
 func (s *Session) VerifyHistory(ctx context.Context, in *agui.RunAgentInput, runner adaptor.Runner, key string) (string, bool, error) {
 	records, err := s.Events(ctx, key, 0)
 	if err != nil {
 		return key, false, err
 	}
 	messages := foldRecords(records)
+	if len(in.Messages) > 0 {
+		submitted := in.Messages[len(in.Messages)-1]
+		for _, message := range messages {
+			if submitted.ID == str(message, "id") {
+				return key, false, &agui.InputError{Code: "agui.duplicate_message", Status: 409,
+					Path:    fmt.Sprintf("/messages/%d/id", len(in.Messages)-1),
+					Message: "submitted message ID already appears in recorded history"}
+			}
+		}
+	}
 	seenRun, healthy := false, false
 	for _, record := range records {
 		for _, event := range record.Events {

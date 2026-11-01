@@ -115,9 +115,6 @@ func compileInputSchema() (*schema.Schema, map[string]any) {
 	// Relax only identity presence for legacy requests. Versioned requests
 	// restore that requirement after schema validation in validateInputVersion.
 	defs["RunAgentInput"].(map[string]any)["required"] = []any{"messages"}
-	// Null state has no shared-state payload, like an absent state.
-	inputProperties := defs["RunAgentInput"].(map[string]any)["properties"].(map[string]any)
-	delete(inputProperties["state"].(map[string]any), "not")
 
 	doc["$ref"] = "#/$defs/RunAgentInput"
 	compiler := schema.NewCompiler()
@@ -501,6 +498,14 @@ func executableText(in *RunAgentInput) (string, error) {
 	if count == 0 || in.Messages[count-1].Role != "user" {
 		return "", inputError("agui.trailing_user_required", "/messages",
 			"the trailing message must be user; frontend tool results are unsupported")
+	}
+	seen := make(map[string]bool, count)
+	for i, message := range in.Messages {
+		if seen[message.ID] {
+			return "", &InputError{Code: "agui.duplicate_message", Status: 409,
+				Path: fmt.Sprintf("/messages/%d/id", i), Message: "message ID already appears in this request"}
+		}
+		seen[message.ID] = true
 	}
 	prompt := contentAsString(in.Messages[count-1].Content)
 	if strings.TrimSpace(prompt) == "" {

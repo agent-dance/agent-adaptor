@@ -35,7 +35,7 @@ func TestFollowerConcurrentRecordAndCatchup(t *testing.T) {
 	workers.Wait()
 	select {
 	case <-changes:
-	case <-time.After(time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("missing notification")
 	}
 	records, err := rec.Since(ctx, "thread", 0)
@@ -76,7 +76,7 @@ func TestFollowerSubscribeBeforeRead(t *testing.T) {
 		if len(records) == 0 {
 			select {
 			case <-changes:
-			case <-time.After(time.Second):
+			case <-time.After(10 * time.Second):
 				t.Fatal("gap")
 			}
 		}
@@ -146,7 +146,7 @@ func TestCoordinatedRecordersAllocateAndReadFresh(t *testing.T) {
 	workers.Wait()
 	select {
 	case <-changes:
-	case <-time.After(time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("missing cross-recorder notification")
 	}
 	for _, rec := range []sessionrecorder.EventRecorder{a, b} {

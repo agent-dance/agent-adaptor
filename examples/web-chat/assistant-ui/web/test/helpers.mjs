@@ -68,3 +68,28 @@ export function validatingFetch(events, fetchImpl = fetch) {
     })), { status: response.status, headers: response.headers });
   };
 }
+
+// Check the content and owner chosen by the pinned assistant-ui conversion,
+// as well as the explicit tool association carried by the activity itself.
+export function assertActivityParity(live, stored, events, fromAgUiMessages) {
+  const activity = (ms) => ms.filter((m) => m.role === "activity");
+  assert.equal(activity(stored).length, 1);
+  assert.deepEqual(activity(live), activity(stored));
+  const card = activity(stored)[0];
+  assert.equal(card.activityType, "command-review");
+  assert.equal(card.content.text, "Checked 13 commands; command 13 needs attention.");
+  assert.equal(card.content.status, "completed");
+  const parent = card.content.parentToolCallId;
+  assert.ok(stored.some((m) => m.role === "tool" && m.toolCallId === parent));
+  const converted = (ms) => fromAgUiMessages(ms).flatMap((m) => (Array.isArray(m.content) ? m.content : []).filter((p) => p.type === "data" && p.name === "agui-activity/command-review").map((p) => ({ owner: m.id, part: p })));
+  const visible = converted(stored);
+  assert.equal(visible.length, 1);
+  assert.deepEqual(converted(live), visible);
+  assert.ok(stored.some((m) => m.id === visible[0].owner && m.toolCalls?.some((c) => c.id === parent)));
+  if (events) {
+    assert.equal(events.filter((e) => e.type === "ACTIVITY_SNAPSHOT").length, 1);
+    assert.equal(events.filter((e) => e.type === "ACTIVITY_DELTA").length, 1);
+    assert.equal(events.find((e) => e.type === "ACTIVITY_SNAPSHOT").messageId, card.id);
+  }
+  return visible[0].part;
+}

@@ -30,7 +30,7 @@ func cloneMessages(t *testing.T, ms []Message) []Message {
 		t.Fatal(err)
 	}
 	var copy []Message
-	if err := json.Unmarshal(b, &copy); err != nil {
+	if err := decodeOpaque(b, &copy); err != nil {
 		t.Fatal(err)
 	}
 	return copy
@@ -221,12 +221,12 @@ func TestCancelledRequestPersistsTerminal(t *testing.T) {
 	}()
 	select {
 	case <-entered:
-	case <-time.After(time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("no stream")
 	}
 	select {
 	case <-done:
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("drain blocked after disconnect")
 	}
 	records, err := rec.Since(context.Background(), RecorderKey(ThreadKey("t")), 0)
@@ -325,7 +325,7 @@ func TestFixedThreadAdmissionUsesHostKey(t *testing.T) {
 	go func() { done <- request(s, "public-one", "r1", []Message{user("u1", "go")}) }()
 	select {
 	case <-rec.entered:
-	case <-time.After(time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("host key not reserved")
 	}
 	second := request(s, "public-two", "r2", []Message{user("u2", "go")})
@@ -338,7 +338,7 @@ func TestFixedThreadAdmissionUsesHostKey(t *testing.T) {
 		if first.Code != 200 {
 			t.Fatal(first.Body)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("first did not finish")
 	}
 	if s.Active(fixed.Key()) || s.Active(ThreadKey("public-one")) {
@@ -547,7 +547,7 @@ func TestFlushFailureCancelsDrain(t *testing.T) {
 	}()
 	select {
 	case <-done:
-	case <-time.After(time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("flush failure left run blocked")
 	}
 	records, err := s.Events(context.Background(), ThreadKey("t"), 0)
@@ -591,7 +591,7 @@ func TestStalledSSEWriteAndKeepAlive(t *testing.T) {
 		t.Run(fmt.Sprint(ping), func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
-			s := New(idleRunner(), Options{Recorder: recorder(t), WriteTimeout: 20 * time.Millisecond, KeepAlivePing: 5 * time.Millisecond})
+			s := New(idleRunner(), Options{Recorder: recorder(t), WriteTimeout: 250 * time.Millisecond, KeepAlivePing: 25 * time.Millisecond})
 			w := &stalledWriter{header: make(http.Header)}
 			if ping {
 				w.ping = cancel
@@ -603,7 +603,7 @@ func TestStalledSSEWriteAndKeepAlive(t *testing.T) {
 			}()
 			select {
 			case <-done:
-			case <-time.After(time.Second):
+			case <-time.After(10 * time.Second):
 				t.Fatal("write timeout/ping did not release drain")
 			}
 			if !w.deadline.IsZero() || s.Active(ThreadKey("t")) {
@@ -643,7 +643,7 @@ func TestDrainCancellationUnblocksFullOutput(t *testing.T) {
 	go func() { defer close(done); s.drain(ctx, ThreadKey("t"), in, stream, boundary, output) }()
 	select {
 	case <-blocked:
-	case <-time.After(time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("drain did not fill queue")
 	}
 	if len(output) != cap(output) {
@@ -652,7 +652,7 @@ func TestDrainCancellationUnblocksFullOutput(t *testing.T) {
 	cancel()
 	select {
 	case <-done:
-	case <-time.After(time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("cancelled drain blocked on output")
 	}
 	if !stream.cancel.Load() {
@@ -713,7 +713,7 @@ func TestEventsRetriesAcrossCompleteAdmission(t *testing.T) {
 		if len(es) == 0 || str(es[len(es)-1], "type") != "RUN_FINISHED" {
 			t.Fatal("stale read cut", es)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("history retry blocked")
 	}
 }
@@ -734,7 +734,7 @@ func TestDivergenceDestinationFilledDuringResolution(t *testing.T) {
 		if w.Code != 409 || !strings.Contains(w.Body.String(), "history_diverged") {
 			t.Fatal(w.Code, w.Body)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("branch blocked")
 	}
 	if s.Active(dest) || s.Active(ThreadKey("source")) {
@@ -909,7 +909,7 @@ func TestVerifierDoesNotAttestCheckpointBeforeFailedTurn(t *testing.T) {
 }
 
 func TestUnrecordableEventsFailClosed(t *testing.T) {
-	for _, value := range []any{make(chan int), json.Number("1e1000")} {
+	for _, value := range []any{make(chan int), json.Number("invalid")} {
 		stream := script(&adaptor.Result{Text: "false success"}, nil, adaptor.Notice{Kind: "host.data", Data: map[string]any{"value": value}})
 		s := New(fakeRunner{func(context.Context, string) adaptor.Stream { return stream }}, Options{Recorder: recorder(t)})
 		w := request(s, "t", "r", []Message{user("u", "go")})

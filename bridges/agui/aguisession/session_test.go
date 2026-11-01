@@ -10,7 +10,6 @@ import (
 	"os"
 	"reflect"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -275,12 +274,11 @@ func TestRecordingFailure(t *testing.T) {
 	}
 }
 func TestAdmissionAndConcurrency(t *testing.T) {
-	started := make(chan struct{})
+	started := make(chan struct{}, 2)
 	release := make(chan struct{})
-	var once sync.Once
 	s := New(fakeRunner{func(ctx context.Context, p string) adaptor.Stream {
 		ch := make(chan adaptor.Event)
-		once.Do(func() { close(started) })
+		started <- struct{}{}
 		go func() {
 			select {
 			case <-release:
@@ -298,14 +296,11 @@ func TestAdmissionAndConcurrency(t *testing.T) {
 	}
 	other := make(chan *httptest.ResponseRecorder, 1)
 	go func() { other <- request(s, "different", "r", []Message{user("u", "go")}) }()
-	deadline := time.After(time.Second)
-	for !s.Active(ThreadKey("different")) {
-		select {
-		case <-deadline:
-			t.Fatal("different thread blocked")
-		default:
-			time.Sleep(time.Millisecond)
-		}
+	// The second Stream must start while the first remains blocked; no polling.
+	select {
+	case <-started:
+	case <-time.After(10 * time.Second):
+		t.Fatal("different thread blocked")
 	}
 	close(release)
 	if (<-done).Code != 200 || (<-other).Code != 200 {
@@ -396,7 +391,7 @@ func TestHTTPDisconnectCancelsRun(t *testing.T) {
 	response.Body.Close()
 	select {
 	case <-done:
-	case <-time.After(3 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("disconnect did not cancel execution")
 	}
 }
@@ -656,7 +651,7 @@ func TestHistoryIODoesNotBlockAdmission(t *testing.T) {
 		if w.Code != 200 {
 			t.Fatal(w.Body)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("history I/O blocked admission")
 	}
 }

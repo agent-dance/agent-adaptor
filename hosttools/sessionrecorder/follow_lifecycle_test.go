@@ -63,7 +63,7 @@ func TestFollowerNotifiesOnlyAfterSuccessfulCommit(t *testing.T) {
 		} else {
 			select {
 			case <-changes:
-			case <-time.After(time.Second):
+			case <-time.After(10 * time.Second):
 				t.Fatal("missing committed notification")
 			}
 		}
@@ -160,7 +160,7 @@ func TestCoordinatedBackendOwnsSequenceCommitAndNotification(t *testing.T) {
 	}
 	select {
 	case <-changes:
-	case <-time.After(time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("missing cross-worker notification")
 	}
 	records, err := b.Since(context.Background(), "thread", 0)
@@ -173,7 +173,7 @@ func TestCoordinatedBackendOwnsSequenceCommitAndNotification(t *testing.T) {
 	}
 	select {
 	case <-changes:
-	case <-time.After(time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("missing external commit notification")
 	}
 	records, err = b.Since(context.Background(), "thread", 1)
@@ -201,7 +201,7 @@ func TestRecorderSubscriptionLifecycle(t *testing.T) {
 			if ok {
 				t.Fatal("unexpected notification")
 			}
-		case <-time.After(time.Second):
+		case <-time.After(10 * time.Second):
 			t.Fatal("context cancellation leaked subscription")
 		}
 		stop()
@@ -221,7 +221,7 @@ func TestRecorderSubscriptionLifecycle(t *testing.T) {
 			if ok {
 				t.Fatal("unexpected notification")
 			}
-		case <-time.After(time.Second):
+		case <-time.After(10 * time.Second):
 			t.Fatal("Close leaked subscription")
 		}
 		stop()

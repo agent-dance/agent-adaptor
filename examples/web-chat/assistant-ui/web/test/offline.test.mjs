@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { fromAgUiMessages, toAgUiMessages } from "@assistant-ui/react-ag-ui";
-import { root, sourceModules, wire, withoutSeq } from "./helpers.mjs";
+import { root, sourceModules, wire, withoutSeq, assertActivityParity } from "./helpers.mjs";
 
 let glue;
 before(async () => { glue = await sourceModules(); });
@@ -86,8 +86,15 @@ test("actual Go example trace: official client, strict schema, three checkpointe
       assert.notEqual(terminal.metadata.agentAdaptor.sdkRunId, trace.runId); assert.notEqual(terminal.metadata.agentAdaptor.providerThreadId, "scoped/thread");
       assert.deepEqual(client.messages, withoutHistoryErrors(trace.history));
       assert.deepEqual(fromAgUiMessages(client.messages), fromAgUiMessages(withoutHistoryErrors(trace.history)));
+      const part = assertActivityParity(client.messages, withoutHistoryErrors(trace.history), trace.runId === "1" ? events : undefined, fromAgUiMessages);
+      const render = (p) => renderToStaticMarkup(createElement(glue.ProtocolData, p));
+      const livePart = fromAgUiMessages(client.messages).flatMap((m) => m.content).find((p) => p.type === "data" && p.name === part.name);
+      assert.equal(render(livePart), render(part));
+      assert.match(render(part), /Command review.*completed/);
+      assert.match(render(part), /Checked 13 commands; command 13 needs attention/);
+      assert.ok(render(part).includes(`data-tool-call-id="${part.data.parentToolCallId}"`));
       for (const m of trace.history) assert.ok(validateMessage(m), JSON.stringify(validateMessage.errors));
-      assert.deepEqual(toAgUiMessages(fromAgUiMessages(trace.history)).map((m) => [m.id, m.role]), trace.history.map((m) => [m.id, m.role]));
+      assert.deepEqual(toAgUiMessages(fromAgUiMessages(trace.history)).filter((m) => m.role !== "activity").map((m) => [m.id, m.role]), trace.history.filter((m) => m.role !== "activity").map((m) => [m.id, m.role]));
       for (const showThinking of [true, false]) {
         const required = (ms) => ms.filter((m) => m.role !== "reasoning" && m.role !== "activity").map((m) => [m.id, m.role]);
         assert.deepEqual(required(toAgUiMessages(fromAgUiMessages(trace.history, { showThinking }))), required(trace.history));

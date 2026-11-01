@@ -15,7 +15,15 @@ export function Shell({ toolCallId, toolName, argsText, result, isError, status 
     <pre>{argsText}</pre>{result !== undefined && <pre>{typeof result === "string" ? result : JSON.stringify(result, null, 2)}</pre>}
   </section>;
 }
+export function Activity({ data }: { data: unknown }) {
+  const value = data && typeof data === "object" ? data as Record<string, unknown> : {};
+  return <aside className="activity" role="status" data-tool-call-id={typeof value.parentToolCallId === "string" ? value.parentToolCallId : undefined}>
+    <strong>{typeof value.title === "string" ? value.title : "Command review"} · {typeof value.status === "string" ? value.status : "running"}</strong>
+    {typeof value.text === "string" && <p>{value.text}</p>}
+  </aside>;
+}
 export function ProtocolData({ name, data }: { name: string; data: unknown }) {
+  if (name === "agui-activity/command-review") return <Activity data={data} />;
   if (!["agentAdaptor.input.warning", "lifecycle", "stream.dropped", "hitl.requested", "hitl.resolved"].includes(name)) return null;
   const value = data && typeof data === "object" ? data as Record<string, unknown> : {};
   const text = typeof value.message === "string" ? value.message : typeof value.text === "string" ? value.text : name;

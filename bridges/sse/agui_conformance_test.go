@@ -58,6 +58,8 @@ func TestAGUIHandlerRejectsBeforeStream(t *testing.T) {
 		status     int
 	}{
 		{`{`, "agui.invalid_json", 400},
+		{`{"protocolVersion":"1.0","threadId":"t","runId":"r","messages":[{"id":"u","role":"user","content":"go"}],"state":null}`, "agui.invalid_input", 400},
+		{`{"messages":[{"id":"a","role":"assistant","content":"old"},{"id":"a","role":"user","content":"new"}]}`, "agui.duplicate_message", 409},
 		{`{"protocolVersion":"1.0","messages":[]}`, "agui.identity_required", 400},
 		{`{"protocolVersion":"2.0","messages":[]}`, "agui.unsupported_version", 400},
 		{`{"messages":[{"id":"u","role":"user","content":"old"},{"id":"a","role":"assistant","content":"answer"}]}`, "agui.trailing_user_required", 400},

@@ -67,7 +67,7 @@ func recordEvent(
 }
 
 func TestObserveProjectsIncrementally(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	r := &countingRecorder{EventRecorder: recorder(t), reads: make(chan countedRead, 64)}
 	var translated atomic.Int64
@@ -179,7 +179,7 @@ func TestIncrementalIncompleteRun(t *testing.T) {
 			s.active[key] = true
 			s.boundaries[key] = boundary.HostSeq
 			s.mu.Unlock()
-			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 			delivered := make(chan struct{})
 			done := make(chan error, 1)

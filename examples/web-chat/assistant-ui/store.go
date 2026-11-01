@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"time"
 
@@ -156,20 +157,28 @@ func (s *diskStore) Finalize(ctx context.Context, req threadstore.FinalizeReques
 	}
 	// A post-rename directory sync failure leaves uncertain durability. Fail
 	// closed for the rest of this process instead of serving stale memory.
-	dir, err := os.Open(filepath.Dir(s.path))
-	if err == nil {
-		err = dir.Sync()
-		e := dir.Close()
-		if err == nil {
-			err = e
-		}
-	}
+	err = syncCheckpointDirectory(filepath.Dir(s.path))
 	if err != nil {
 		s.poisoned = fmt.Errorf("checkpoint store directory sync: %w", err)
 		return s.poisoned
 	}
 	s.records = next
 	return nil
+}
+
+// Windows cannot FlushFileBuffers on a read-only directory handle. File data
+// is still synced before replacement there, but directory-entry crash durability
+// is not guaranteed by this example. POSIX retains directory fsync failures.
+func syncCheckpointDirectory(path string) error {
+	if runtime.GOOS == "windows" {
+		return nil
+	}
+	dir, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	err = dir.Sync()
+	return errors.Join(err, dir.Close())
 }
 func (s *diskStore) AcquireLease(ctx context.Context, target, owner string, ttl time.Duration) (threadstore.Lease, error) {
 	s.mu.Lock()

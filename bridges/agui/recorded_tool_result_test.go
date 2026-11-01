@@ -22,7 +22,7 @@ func TestRecordedToolResultPreservesExitFailure(t *testing.T) {
 		},
 	}
 	// EventRecord's public JSON methods are the same typed-envelope codec
-	// used by durable backends; replay restores map numbers as float64.
+	// used by durable backends; replay restores opaque numbers as json.Number.
 	wire, err := json.Marshal(original)
 	if err != nil {
 		t.Fatal(err)
@@ -35,7 +35,7 @@ func TestRecordedToolResultPreservesExitFailure(t *testing.T) {
 	if !ok {
 		t.Fatalf("replayed event = %T", replayed.Event)
 	}
-	if _, ok := result.Result["exitCode"].(float64); !ok {
+	if _, ok := result.Result["exitCode"].(json.Number); !ok {
 		t.Fatalf("round trip did not exercise replayed numbers: %T", result.Result["exitCode"])
 	}
 

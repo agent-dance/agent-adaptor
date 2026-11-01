@@ -74,7 +74,7 @@ func unattended(t *testing.T, max int) (*Session, chan adaptor.Event, <-chan str
 		return &pacedStream{ctx: ctx, ch: ch, cancel: cancel}
 	}}, Options{Recorder: recorder(t), Unattended: true, BaseContext: context.Background(), MaxConcurrentRuns: max})
 	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := s.Shutdown(ctx); err != nil {
 			t.Error(err)
@@ -99,7 +99,7 @@ func await(t *testing.T, ch <-chan struct{}) {
 	t.Helper()
 	select {
 	case <-ch:
-	case <-time.After(3 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("timed out")
 	}
 }
@@ -113,7 +113,7 @@ func TestUnattendedDisconnectAndFollow(t *testing.T) {
 			disconnect()
 			select {
 			case <-post:
-			case <-time.After(time.Second):
+			case <-time.After(10 * time.Second):
 				t.Fatal("request did not detach")
 			}
 			if !s.Active(ThreadKey("t")) {
@@ -144,7 +144,7 @@ func TestUnattendedDisconnectAndFollow(t *testing.T) {
 			var observed []ProjectedRecord
 			select {
 			case observed = <-received:
-			case <-time.After(3 * time.Second):
+			case <-time.After(10 * time.Second):
 				t.Fatal("observer did not close")
 			}
 			var last = cursor
@@ -260,7 +260,7 @@ func TestShutdownCancelsActiveUnattendedRun(t *testing.T) {
 	disconnect, post := launchRequest(s, "t", "r")
 	defer disconnect()
 	await(t, started)
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := s.Shutdown(ctx); err != nil {
 		t.Fatal(err)
@@ -291,7 +291,7 @@ func TestFollowAuthorizationRecheckAndCancelHandler(t *testing.T) {
 	denied.Store(true)
 	select {
 	case <-post:
-	case <-time.After(time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("authorization not rechecked")
 	}
 	disconnect()

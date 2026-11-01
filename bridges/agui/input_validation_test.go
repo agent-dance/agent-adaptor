@@ -2,6 +2,7 @@ package agui
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http/httptest"
 	"reflect"
 	"strings"
@@ -72,7 +73,7 @@ func TestPromptPolicy(t *testing.T) {
 			t.Fatalf("accepted trailing %s", role)
 		}
 	}
-	in := &RunAgentInput{Messages: []Message{{Role: "user", Content: json.RawMessage(`"old"`)}, {Role: "user", Content: json.RawMessage(`"new"`)}}}
+	in := &RunAgentInput{Messages: []Message{{ID: "old", Role: "user", Content: json.RawMessage(`"old"`)}, {ID: "new", Role: "user", Content: json.RawMessage(`"new"`)}}}
 	if _, _, err := PrepareInput(in, InputOptions{}, InputState{}); err == nil {
 		t.Fatal("dropped history")
 	}
@@ -160,7 +161,6 @@ func TestStateEmptiness(t *testing.T) {
 		warn  bool
 	}{
 		{name: "absent"},
-		{name: "null", state: "null"},
 		{name: "empty object", state: "{ \n\t }"},
 		{name: "empty array", state: "[ ]"},
 		{name: "empty string", state: `""`},
@@ -317,6 +317,8 @@ func FuzzDecodeInput(f *testing.F) {
 		`{"messages":[{"id":"u","role":"user","content":[{"type":"future"},{"type":"text","text":"go"}]}]}`,
 		`{"messages":[{"id":"u","role":{},"content":null}]}`,
 		`{"messages":[],"forwardedProps":{"keep":[1,null]},"unknown":true}`,
+		`{"protocolVersion":"1.0","threadId":"t","runId":"r","messages":[{"id":"u","role":"user","content":"go"}],"state":null}`,
+		`{"messages":[{"id":"u","role":"user","content":"go","metadata":{"exact":9007199254740993,"large":1e1000}}]}`,
 	} {
 		f.Add(body)
 	}
@@ -337,4 +339,15 @@ func FuzzDecodeInput(f *testing.F) {
 			t.Fatal("nondeterministic decoding")
 		}
 	})
+}
+
+func TestNullStateViolatesFrozenSchema(t *testing.T) {
+	for _, version := range []string{"", `"protocolVersion":"1.0","threadId":"t","runId":"r",`, `"protocolVersion":"1.12","threadId":"t","runId":"r",`} {
+		_, err := decodeInputForTest(t, `{`+version+`"messages":[{"id":"u","role":"user","content":"go"}],"state":null}`)
+		var e *InputError
+		ok := errors.As(err, &e)
+		if !ok || e.Code != "agui.invalid_input" || e.Path != "/state" || e.Status != 400 {
+			t.Fatalf("%q: %v", version, err)
+		}
+	}
 }

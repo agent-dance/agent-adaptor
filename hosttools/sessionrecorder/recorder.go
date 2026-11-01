@@ -74,7 +74,8 @@ func (r EventRecord) MarshalJSON() ([]byte, error) {
 	})
 }
 
-// UnmarshalJSON restores the typed event from the envelope.
+// UnmarshalJSON restores the typed event from the stable envelope. Numbers in
+// opaque event payloads decode as json.Number, preserving their exact JSON value.
 func (r *EventRecord) UnmarshalJSON(data []byte) error {
 	var wire eventRecordWire
 	if err := json.Unmarshal(data, &wire); err != nil {
@@ -538,7 +539,9 @@ func decodeEvent(kind string, payload json.RawMessage) (adaptor.Event, error) {
 		if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
 			return fmt.Errorf("sessionrecorder: %s record has no event payload", kind)
 		}
-		return json.Unmarshal(trimmed, v)
+		decoder := json.NewDecoder(bytes.NewReader(trimmed))
+		decoder.UseNumber()
+		return decoder.Decode(v)
 	}
 	switch kind {
 	case eventKindTextDelta:

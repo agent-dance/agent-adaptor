@@ -9,7 +9,7 @@ import { createServer } from "node:net";
 import { setTimeout as delay } from "node:timers/promises";
 import { HttpAgent } from "@ag-ui/client";
 import { fromAgUiMessages, toAgUiMessages } from "@assistant-ui/react-ag-ui";
-import { root, validatingFetch, validate, validateMessage, withoutHistoryErrors, withoutSeq } from "./helpers.mjs";
+import { assertActivityParity, root, validatingFetch, validate, validateMessage, withoutHistoryErrors, withoutSeq } from "./helpers.mjs";
 
 async function freePort() {
   const server = createServer(); server.listen(0, "127.0.0.1"); await once(server, "listening");
@@ -83,6 +83,7 @@ test("HTTP official client: turns, durable restart, validation, observation and 
     const live = withoutSeq(client.messages);
     assert.deepEqual(live, withoutHistoryErrors(stored));
     assert.deepEqual(fromAgUiMessages(live), fromAgUiMessages(withoutHistoryErrors(stored)));
+    assertActivityParity(live, withoutHistoryErrors(stored), turn === 1 ? events : undefined, fromAgUiMessages);
     const liveCalls = fromAgUiMessages(live).flatMap((m) => m.content).filter((p) => p.type === "tool-call");
     const storedCalls = fromAgUiMessages(stored).flatMap((m) => m.content).filter((p) => p.type === "tool-call");
     assert.deepEqual(liveCalls.map(({ isError, ...p }) => p), storedCalls.map(({ isError, ...p }) => p));
@@ -95,6 +96,7 @@ test("HTTP official client: turns, durable restart, validation, observation and 
   const before = await history("public-thread");
   await stop(child); child = undefined; await start();
   assert.deepEqual(await history("public-thread"), before);
+  assertActivityParity(withoutSeq(client.messages), withoutHistoryErrors(await history("public-thread")), undefined, fromAgUiMessages);
   const thirdEvents = [];
   const fresh = new HttpAgent({ url: `${base}/agent`, threadId: "public-thread", initialMessages: before, fetch: validatingFetch(thirdEvents) });
   fresh.addMessage({ id: "user-3", role: "user", content: "continue after restart" });
@@ -102,6 +104,9 @@ test("HTTP official client: turns, durable restart, validation, observation and 
   assert.match(fresh.messages.filter((m) => m.role === "assistant").at(-1).content, /Turn 3.*same Thread using checkpoint 2/);
   const input = { protocolVersion: "1.0", threadId: "public-thread", runId: "invalid", messages: [...fresh.messages, { id: "u4", role: "user", content: "next" }] };
   await reject("{", 400);
+  await reject({ ...input, state: null }, 400, "agui.invalid_input");
+  const collision = structuredClone(input); collision.messages.at(-1).id = collision.messages[1].id;
+  await reject(collision, 409, "agui.duplicate_message");
   await reject({ ...input, messages: [{ id: "result", role: "tool", toolCallId: "tc", content: "done" }] }, 400);
   const edited = structuredClone(input); edited.messages[0].id = "edited-branch";
   await reject(edited, 409, "agui.history_diverged");
@@ -155,7 +160,7 @@ test("HTTP official client: turns, durable restart, validation, observation and 
   // several frames. Exact equality proves no duplicates or gaps in the suffix.
   assert.deepEqual(suffix, projected);
   let last = cut.cursor; for (const e of suffix) { assert.ok(e.metadata.agentAdaptor.seq >= last); last = e.metadata.agentAdaptor.seq; }
-  assert.deepEqual(toAgUiMessages(fromAgUiMessages(final)).map((m) => [m.id, m.role]), final.map((m) => [m.id, m.role]));
+  assert.deepEqual(toAgUiMessages(fromAgUiMessages(final)).filter((m) => m.role !== "activity").map((m) => [m.id, m.role]), final.filter((m) => m.role !== "activity").map((m) => [m.id, m.role]));
   const cancelEvents = [];
   const cancelled = new HttpAgent({ url: `${base}/agent`, threadId: "cancelled", fetch: validatingFetch(cancelEvents) });
   cancelled.addMessage({ id: "cancel-user", role: "user", content: "cancel me" });

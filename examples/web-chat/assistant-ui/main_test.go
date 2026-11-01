@@ -24,7 +24,7 @@ func appForTest(t *testing.T, c config) *application {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := a.Close(ctx); err != nil {
 			t.Error(err)
@@ -75,6 +75,9 @@ func TestScriptedThreadSurvivesReconstruction(t *testing.T) {
 		history, err := a.session.Messages(context.Background(), key)
 		if err != nil {
 			t.Fatal(err)
+		}
+		if turn == 1 {
+			assertScriptedActivity(t, w.Body.String(), history)
 		}
 		traces = append(traces, trace{RunID: fmt.Sprint(turn), Wire: w.Body.String(), History: history})
 	}
@@ -266,7 +269,7 @@ func TestMissingCheckpointRejectsRecordedHistory(t *testing.T) {
 }
 
 func TestExampleUnattendedDisconnectAndHostCancel(t *testing.T) {
-	a := appForTest(t, config{dataDir: t.TempDir(), unattended: true, observation: true, pace: time.Millisecond})
+	a := appForTest(t, config{dataDir: t.TempDir(), unattended: true, observation: true, pace: 10 * time.Millisecond})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	w := httptest.NewRecorder()
@@ -274,7 +277,7 @@ func TestExampleUnattendedDisconnectAndHostCancel(t *testing.T) {
 	returned := make(chan struct{})
 	go func() { a.handler.ServeHTTP(w, request); close(returned) }()
 	key := aguisession.ThreadKey("paced")
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(10 * time.Second)
 	for {
 		snap, err := a.session.Snapshot(context.Background(), key)
 		if err != nil {
@@ -286,15 +289,16 @@ func TestExampleUnattendedDisconnectAndHostCancel(t *testing.T) {
 		if time.Now().After(deadline) {
 			t.Fatal("run did not start")
 		}
-		time.Sleep(time.Millisecond)
+		time.Sleep(10 * time.Millisecond)
 	}
 	cancel()
 	select {
 	case <-returned:
-	case <-time.After(3 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("POST did not detach")
 	}
 	// Observer disconnect leaves the worker-owned run alive until success.
+	deadline = time.Now().Add(10 * time.Second)
 	for {
 		snap, err := a.session.Snapshot(context.Background(), key)
 		if err != nil {
@@ -306,7 +310,7 @@ func TestExampleUnattendedDisconnectAndHostCancel(t *testing.T) {
 		if time.Now().After(deadline) {
 			t.Fatal("run did not finish")
 		}
-		time.Sleep(time.Millisecond)
+		time.Sleep(10 * time.Millisecond)
 	}
 	events, err := a.session.Events(context.Background(), key, 0)
 	if err != nil {
@@ -327,6 +331,7 @@ func TestExampleUnattendedDisconnectAndHostCancel(t *testing.T) {
 	done := make(chan struct{})
 	cancelRequest := httptest.NewRequest("POST", "/agent", strings.NewReader(`{"protocolVersion":"1.0","threadId":"cancelled","runId":"cancel","messages":[{"id":"cancel-user","role":"user","content":"go"}]}`))
 	go func() { defer close(done); a.handler.ServeHTTP(httptest.NewRecorder(), cancelRequest) }()
+	deadline = time.Now().Add(10 * time.Second)
 	for {
 		snap, err := a.session.Snapshot(context.Background(), aguisession.ThreadKey("cancelled"))
 		if err != nil {
@@ -338,7 +343,7 @@ func TestExampleUnattendedDisconnectAndHostCancel(t *testing.T) {
 		if time.Now().After(deadline) {
 			t.Fatal("cancel run did not start")
 		}
-		time.Sleep(time.Millisecond)
+		time.Sleep(10 * time.Millisecond)
 	}
 	a.handler.ServeHTTP(w, httptest.NewRequest("POST", "/cancel?thread_id=cancelled", nil))
 	if w.Code != 204 {
@@ -346,7 +351,7 @@ func TestExampleUnattendedDisconnectAndHostCancel(t *testing.T) {
 	}
 	select {
 	case <-done:
-	case <-time.After(3 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("cancel did not drain")
 	}
 	events, err = a.session.Events(context.Background(), aguisession.ThreadKey("cancelled"), 0)

@@ -29,5 +29,6 @@ textarea { font: inherit; width: 100%; resize: vertical; min-height: 90px; paddi
 footer { margin-top: 1rem; text-align: center; }
 @media (max-width: 600px) { main { padding: 1rem; } header { flex-direction: column; } h1 { font-size: 1.8rem; } .message.user { margin-left: 4%; } }
 .protocol-notice { margin: .6rem 0; padding: .6rem .8rem; border-left: 3px solid #a7802e; color: #6b511c; font-size: .85rem; }
+.activity { margin: .8rem 0; padding: .8rem; background: #edf4f1; border-left: 3px solid #408977; font-size: .9rem; }
 
 .cancelled { padding: .8rem 1rem; color: #305e57; background: #e6efea; border-radius: .5rem; }

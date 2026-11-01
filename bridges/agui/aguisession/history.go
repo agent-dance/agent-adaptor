@@ -104,7 +104,7 @@ func (p *projector) apply(rec sessionrecorder.EventRecord) []events.Event {
 			// name, metadata and content-part representation without a text append.
 			raw, _ := json.Marshal(n.Data["userMessage"])
 			var submitted agui.Message
-			_ = json.Unmarshal(raw, &submitted)
+			_ = decodeOpaque(raw, &submitted)
 			out[0].(*agui.RunStartedEvent).Input = &agui.RunAgentInput{
 				ThreadID: str(n.Data, "threadId"), RunID: p.runID,
 				Messages: []agui.Message{submitted},

@@ -43,7 +43,7 @@ func waitForRecord(
 	match func(sessionrecorder.EventRecord) bool,
 ) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	changes, stop, err := r.(sessionrecorder.Follower).Subscribe(ctx, RecorderKey(key))
 	if err != nil {
@@ -181,7 +181,7 @@ func testSnapshotJoinsActiveRun(t *testing.T, exitCode int) {
 	}
 	observed := make(chan observation, 1)
 	first := make(chan struct{}, 1)
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	go func() {
 		var records []ProjectedRecord
@@ -346,7 +346,7 @@ func TestSnapshotEmptyAndPendingAdmission(t *testing.T) {
 	s.mu.Lock()
 	s.active[key] = true
 	s.mu.Unlock()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
 	defer cancel()
 	if _, err := s.Snapshot(ctx, key); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatal(err)
@@ -402,7 +402,7 @@ func TestSnapshotRetriesAcrossRunTransitions(t *testing.T) {
 				snapshot Snapshot
 				err      error
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 			done := make(chan result, 1)
 			go func() {

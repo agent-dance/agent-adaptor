@@ -1,8 +1,10 @@
 package aguisession
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"math/big"
 	"reflect"
 	"strconv"
 	"strings"
@@ -24,7 +26,7 @@ func Fold(messages []Message, event events.Event) []Message {
 		return messages
 	}
 	var e map[string]any
-	if json.Unmarshal(raw, &e) != nil {
+	if decodeOpaque(raw, &e) != nil {
 		return messages
 	}
 	id := str(e, "messageId")
@@ -267,7 +269,7 @@ func mergeMetadata(a, b map[string]any) map[string]any {
 func applyPatch(value any, patch []any) (any, error) {
 	raw, _ := json.Marshal(value)
 	var doc any
-	_ = json.Unmarshal(raw, &doc)
+	_ = decodeOpaque(raw, &doc)
 	for _, item := range patch {
 		p, ok := item.(map[string]any)
 		if !ok {
@@ -308,12 +310,12 @@ func applyPatch(value any, patch []any) (any, error) {
 			} else {
 				// fast-json-patch copies JSON values, not references.
 				raw, _ := json.Marshal(v)
-				_ = json.Unmarshal(raw, &v)
+				_ = decodeOpaque(raw, &v)
 			}
 		}
 		if op == "test" {
 			old, e := patchGet(doc, path)
-			if e != nil || !reflect.DeepEqual(old, v) {
+			if e != nil || !equalJSON(old, v) {
 				return nil, fmt.Errorf("patch test failed")
 			}
 			continue
@@ -327,6 +329,52 @@ func applyPatch(value any, patch []any) (any, error) {
 		}
 	}
 	return doc, nil
+}
+
+// Preserve arbitrary JSON numbers through projection, seeds and activity copies.
+func decodeOpaque(raw []byte, value any) error {
+	d := json.NewDecoder(bytes.NewReader(raw))
+	d.UseNumber()
+	return d.Decode(value)
+}
+
+// RFC 6902 test compares numeric values, rather than their JSON spellings.
+func equalJSON(a, b any) bool {
+	switch a := a.(type) {
+	case json.Number:
+		b, ok := b.(json.Number)
+		if !ok {
+			return false
+		}
+		x, xok := new(big.Rat).SetString(string(a))
+		y, yok := new(big.Rat).SetString(string(b))
+		return xok && yok && x.Cmp(y) == 0
+	case map[string]any:
+		b, ok := b.(map[string]any)
+		if !ok || len(a) != len(b) {
+			return false
+		}
+		for k, v := range a {
+			other, exists := b[k]
+			if !exists || !equalJSON(v, other) {
+				return false
+			}
+		}
+		return true
+	case []any:
+		b, ok := b.([]any)
+		if !ok || len(a) != len(b) {
+			return false
+		}
+		for i, v := range a {
+			if !equalJSON(v, b[i]) {
+				return false
+			}
+		}
+		return true
+	default:
+		return reflect.DeepEqual(a, b)
+	}
 }
 
 func pointer(s string) ([]string, error) {

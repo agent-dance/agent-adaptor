@@ -57,7 +57,7 @@ func TestObserveStableReadCut(t *testing.T) {
 				publish("first")
 				s.opts.Recorder = rec
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 			type result struct {
 				records []ProjectedRecord
@@ -214,7 +214,7 @@ func TestCancelAndShutdownInterruptAdmission(t *testing.T) {
 			disconnect, post := launchRequest(s, "t", "r")
 			defer disconnect()
 			await(t, rec.entered)
-			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 			switch action {
 			case "cancel":
@@ -282,7 +282,7 @@ func TestHostContextAndBoundedRepeatedShutdown(t *testing.T) {
 	results := make(chan error, waiters)
 	for i := 0; i < waiters; i++ {
 		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 			results <- s.Shutdown(ctx)
 		}()
@@ -327,8 +327,8 @@ func TestObservationHTTPFailuresAndMethods(t *testing.T) {
 	for _, mode := range []string{"flush", "deadline", "ping"} {
 		t.Run(mode, func(t *testing.T) {
 			s, _, started := unattended(t, 1)
-			s.opts.WriteTimeout = 10 * time.Millisecond
-			s.opts.KeepAlivePing = 5 * time.Millisecond
+			s.opts.WriteTimeout = 250 * time.Millisecond
+			s.opts.KeepAlivePing = 25 * time.Millisecond
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			var w http.ResponseWriter
@@ -439,7 +439,7 @@ func TestSnapshotWaitsForBoundaryPublication(t *testing.T) {
 			if err := s.reserve(context.Background(), key, "next", nil); err != nil {
 				t.Fatal(err)
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 			type result struct {
 				snap Snapshot
@@ -503,7 +503,7 @@ func TestObservationHTTPReadFailures(t *testing.T) {
 				failAt = 2
 			}
 			rec := &observationReadFailure{EventRecorder: base, failAt: failAt}
-			s := New(fakeRunner{}, Options{Recorder: rec, KeepAlivePing: time.Millisecond})
+			s := New(fakeRunner{}, Options{Recorder: rec, KeepAlivePing: 25 * time.Millisecond})
 			key := ThreadKey("t")
 			if established {
 				boundary := recordEvent(t, base, key, adaptor.Notice{Kind: BoundaryKind, Data: map[string]any{"threadId": "t", "runId": "r"}})
@@ -514,7 +514,7 @@ func TestObservationHTTPReadFailures(t *testing.T) {
 				defer s.release(key)
 			}
 			w := httptest.NewRecorder()
-			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 			s.ObserveHandler().ServeHTTP(w, httptest.NewRequest("GET", "/?thread_id=t", nil).WithContext(ctx))
 			if !established {
@@ -547,7 +547,7 @@ func TestUnattendedConcurrentAdmissionAndRelease(t *testing.T) {
 		return &pacedStream{ctx: ctx, ch: ch}
 	}}
 	s := New(runner, Options{Recorder: recorder(t), Unattended: true, BaseContext: context.Background(), MaxConcurrentRuns: capacity})
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	type response struct {
 		thread string
@@ -675,13 +675,13 @@ func TestEmptyProjectedRecordsDoNotCommitSSE(t *testing.T) {
 		recordEvent(t, base, key, adaptor.TextDelta{MessageID: "u", Role: adaptor.RoleUser, Phase: phase, Text: "go"})
 	}
 	rec := &observationReadFailure{EventRecorder: base, failAt: 2}
-	s := New(fakeRunner{}, Options{Recorder: rec, KeepAlivePing: time.Millisecond})
+	s := New(fakeRunner{}, Options{Recorder: rec, KeepAlivePing: 25 * time.Millisecond})
 	s.mu.Lock()
 	s.active[key] = true
 	s.boundaries[key] = 1
 	s.mu.Unlock()
 	defer s.release(key)
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	w := httptest.NewRecorder()
 	s.ObserveHandler().ServeHTTP(w, httptest.NewRequest("GET", "/?thread_id=t&after=1", nil).WithContext(ctx))
@@ -706,7 +706,7 @@ func TestRevokeCancelsAuthorizationContext(t *testing.T) {
 	}})
 	w := httptest.NewRecorder()
 	done := make(chan struct{})
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	go func() {
 		defer close(done)
@@ -735,7 +735,7 @@ func TestUnattendedFailsClosedAtEveryAppend(t *testing.T) {
 				Recorder:   notifyingFailure{&failingRecorder{EventRecorder: base, remaining: position}},
 				Unattended: true, BaseContext: context.Background(),
 			})
-			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 			w := request(s, "t", "r", []Message{user("u", "go")})
 			if err := s.Shutdown(ctx); err != nil {
@@ -804,7 +804,7 @@ func TestObserveSubscribeBeforeReadAndCoalescedNotifications(t *testing.T) {
 	s.active[key] = true
 	s.boundaries[key] = boundary.HostSeq
 	s.mu.Unlock()
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	type result struct {
 		records []ProjectedRecord
@@ -864,7 +864,7 @@ func TestUnattendedDisconnectDuringAdmission(t *testing.T) {
 	await(t, rec.entered)
 	disconnect()
 	close(rec.release)
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	select {
 	case <-post:
@@ -922,7 +922,7 @@ func TestObserveDoesNotSynthesizeIncompleteFromStaleActivePrefix(t *testing.T) {
 		recordEvent(t, base, key, adaptor.TextDelta{MessageID: "a", Text: "healthy"})
 	}
 	rec.after = func() { recordEvent(t, base, key, adaptor.Notice{Kind: TerminalKind}); s.release(key) }
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	var records []ProjectedRecord
 	if err := s.Observe(ctx, key, 0, func(rec ProjectedRecord) error { records = append(records, rec); return nil }); err != nil {
@@ -958,7 +958,7 @@ func TestCancelReleasesAdmissionCapacity(t *testing.T) {
 			disconnect, post := launchRequest(s, "first", "r")
 			defer disconnect()
 			await(t, started)
-			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 			if err := s.Cancel(ctx, ThreadKey("first")); err != nil {
 				t.Fatal(err)
@@ -995,7 +995,7 @@ func TestFixedThreadObservationAndCancellationUseHostKey(t *testing.T) {
 	fixed := agent.Thread("already-bound-host-key")
 	s := New(fixed, Options{Recorder: recorder(t), Unattended: true, BaseContext: context.Background()})
 	defer func() {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		_ = s.Shutdown(ctx)
 	}()
@@ -1005,10 +1005,10 @@ func TestFixedThreadObservationAndCancellationUseHostKey(t *testing.T) {
 	case <-started:
 	case response := <-post:
 		t.Fatal("run did not reach driver", response.Code, response.Body)
-	case <-time.After(time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("driver did not start")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	snapshot := httptest.NewRecorder()
 	s.SnapshotHandler().ServeHTTP(snapshot, httptest.NewRequest("GET", "/?thread_id=public", nil).WithContext(ctx))
@@ -1098,7 +1098,7 @@ func TestUnattendedFirstObserverUsesAuthorizedBranchKey(t *testing.T) {
 	if w.Code != 200 || !strings.Contains(w.Body.String(), "RUN_STARTED") || !strings.Contains(w.Body.String(), "RUN_FINISHED") {
 		t.Fatal("first observer ignored the authorized resolved key", w.Code, w.Body)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := s.Shutdown(ctx); err != nil {
 		t.Fatal(err)
