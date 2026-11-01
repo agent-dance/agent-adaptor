@@ -54,6 +54,16 @@ its own outcome. Both per-run and resident processes use this same mechanism.
 Residents initialize hooks once per process and bind a fresh MessagePort for
 each call; changing whether messages are enabled replaces the resident process.
 
+Initialization waits at most **10 seconds** for the control response. A rejected
+or unanswered registration disables hooks for that process and emits a
+`RunEventLifecycle` notice with code `claude_hooks_unavailable` and the reason.
+The ordinary prompt and HITL control transport continue, the message window
+stays closed, and core delivers queued messages at turn end through checkpoint
+resume. Late success responses or callbacks cannot re-enable hooks. Resident
+calls retain this outcome instead of retrying registration on every turn.
+Cancellation interrupts the handshake; process exit and pipe failures remain
+run failures.
+
 Every continued Stop segment and the final provider result emits one
 `RunEventTurnCompleted` with an increasing index. The final response retains
 the whole call's Raw and Transcript, the final segment's result text, and the

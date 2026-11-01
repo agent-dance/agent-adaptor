@@ -13,7 +13,6 @@ import (
 
 	adaptor "github.com/agent-dance/agent-adaptor/v2"
 	agentadaptor "github.com/agent-dance/agent-adaptor/v2/driver"
-	"github.com/agent-dance/agent-adaptor/v2/internal/testutil"
 )
 
 func TestBuildClaudeExecArgsIncludesPartialMessagesWhenStreaming(t *testing.T) {
@@ -454,7 +453,7 @@ func TestClaudeStreamingStructuredOutputEndToEnd(t *testing.T) {
 	if err := os.MkdirAll(workspace, 0o755); err != nil {
 		t.Fatalf("mkdir workspace: %v", err)
 	}
-	command := testutil.WriteCommand(t, home, "fake-claude-structured",
+	command := writeClaudeCommand(t, home, "fake-claude-structured",
 		`#!/bin/sh
 set -eu
 cat >/dev/null
@@ -536,7 +535,7 @@ printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"session_id
 func TestClaudeNativeStructuredOutputValidationPrecedesCheckpoint(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", "")
 	home := t.TempDir()
-	command := testutil.WriteCommand(t, home, "fake-claude-invalid-structured",
+	command := writeClaudeCommand(t, home, "fake-claude-invalid-structured",
 		"#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"session_id\":\"structured-invalid\",\"result\":\"done\",\"structured_output\":{\"project_name\":42}}'\n",
 		"@echo off\r\nmore > nul\r\necho {\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"session_id\":\"structured-invalid\",\"result\":\"done\",\"structured_output\":{\"project_name\":42}}\r\n",
 	)
@@ -601,7 +600,7 @@ func TestClaudeDirectStreamTerminalMatchesFrozenProtocolOutcome(t *testing.T) {
 				batch.WriteString(line)
 				batch.WriteString("\r\n")
 			}
-			command := testutil.WriteCommand(t, home, "fake-claude-frozen-outcome", shell.String(), batch.String())
+			command := writeClaudeCommand(t, home, "fake-claude-frozen-outcome", shell.String(), batch.String())
 			sink := &streamSink{}
 			resp, err := (adapter{}).Run(context.Background(), agentadaptor.Request{
 				RunID:     "run-frozen-outcome",
