@@ -104,6 +104,11 @@ type MessagePolicy struct {
 	// MaxPending bounds unclaimed messages; zero means 32. Full queues block Send until space or context cancellation.
 	MaxPending int
 	// MaxTurns bounds provider turns in one execution; zero means 20.
+	// With at least two turns, a limit.approaching notice is emitted after
+	// min(ceil(0.8*MaxTurns), MaxTurns-1) turns. Its AuthorSystem wrap-up
+	// instruction accompanies the next nonempty message claim, before host
+	// messages; it never starts a turn by itself. Only successfully acknowledged
+	// delivery of this instruction appears in outcomes, transcripts and receipts.
 	MaxTurns int
 }
 
@@ -299,6 +304,8 @@ type messageHub struct {
 	turn      int
 	turns     []*Result
 	warned    bool
+	wrapUp    *hubItem // Deferred policy input; joins items only after delivery.
+	stopClaim bool     // Stop may claim its successor before reporting completion.
 	promptIDs []string
 	start     messageSettings
 }
@@ -465,6 +472,11 @@ func (h *messageHub) validateMessageLocked(timing Timing, framed string) (Messag
 }
 
 func (h *messageHub) updateLocked(i *hubItem) {
+	// Automatic policy input is not an admitted host message. Unattempted or
+	// unsuccessful wrap-up delivery must not become host work to retry.
+	if i == h.wrapUp && i.out.State != MessageDelivered {
+		return
+	}
 	text := ""
 	if i.out.State == MessageFailed {
 		text = i.out.Text
@@ -518,6 +530,19 @@ func (h *messageHub) claimLocked(b driver.Boundary) []driver.MessageItem {
 	if !allowed {
 		return nil
 	}
+	if b == driver.BoundaryStop {
+		h.stopClaim = true
+	}
+	turn := h.turn
+	if h.stopClaim && (b == driver.BoundaryStop || b == driver.BoundaryTurnEnd) {
+		// Claude's Stop hook claims Stop and TurnEnd, then emits completion
+		// only if the combined claim blocks stopping. These messages belong
+		// to the successor, which must still fit within the turn budget.
+		if turn >= h.policy.MaxTurns {
+			return nil
+		}
+		turn++
+	}
 	var out []driver.MessageItem
 	for _, i := range h.items {
 		if i.out.State != MessageAccepted || i.claimed {
@@ -538,7 +563,7 @@ func (h *messageHub) claimLocked(b driver.Boundary) []driver.MessageItem {
 		}
 		i.claimed = true
 		i.boundary = b
-		i.out.Turn = h.turn
+		i.out.Turn = turn
 		if i.stop != nil {
 			i.stop()
 		}
@@ -548,9 +573,45 @@ func (h *messageHub) claimLocked(b driver.Boundary) []driver.MessageItem {
 		}
 		out = append(out, driver.MessageItem{ID: i.out.ID, Text: i.framed, Timing: timing, MaybeDuplicate: i.duplicate})
 	}
+	if len(out) > 0 && !h.policy.Disabled && h.policy.MaxTurns > 1 && (h.warned || turn > h.wrapUpThreshold()) {
+		out = h.prependWrapUpLocked(b, turn, out)
+	}
 	h.notifyLocked()
 	return out
 }
+
+// prependWrapUpLocked attaches policy input only to a real message claim,
+// including retries. Keeping it outside items until Ack confirms delivery
+// means closeIfIdle, queue capacity and finalization cannot turn it into work.
+func (h *messageHub) prependWrapUpLocked(b driver.Boundary, turn int, items []driver.MessageItem) []driver.MessageItem {
+	i := h.wrapUp
+	if i == nil {
+		id := h.sink.runID + "-limit"
+		for h.byID[id] != nil || h.delivered[id] {
+			id += "-wrap"
+		}
+		// Match the first host item's mechanism, including interrupt/restart,
+		// so the instruction reaches the same model request before that input.
+		m := MessageContext{ID: id, Text: "The execution is approaching its turn limit. Finish the original objective and provide your final answer now.", From: Author{Kind: AuthorSystem}, Timing: Timing(items[0].Timing)}
+		framed := frameMessage(m)
+		if h.policy.Format != nil {
+			framed = h.policy.Format(m)
+		}
+		i = &hubItem{out: MessageOutcome{ID: m.ID, Text: m.Text, From: m.From, Timing: m.Timing, State: MessageAccepted}, framed: framed, ctx: h.ctx}
+		h.wrapUp = i
+		h.byID[id] = i
+	}
+	if i.out.State != MessageAccepted || i.claimed || (i.turnEndOnly && b != driver.BoundaryTurnEnd) {
+		return items
+	}
+	i.claimed, i.boundary, i.out.Turn = true, b, turn
+	timing := driver.Timing(i.out.Timing)
+	if i.turnEndOnly {
+		timing = driver.TimingAfterTurn
+	}
+	return append([]driver.MessageItem{{ID: i.out.ID, Text: i.framed, Timing: timing, MaybeDuplicate: i.duplicate}}, items...)
+}
+
 func (h *messageHub) Ack(id string, ack driver.MessageAck) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -563,6 +624,9 @@ func (h *messageHub) Ack(id string, ack driver.MessageAck) {
 	i.out.Mechanism = ack.Mechanism
 	if ack.Delivered {
 		i.out.State = MessageDelivered
+		if i == h.wrapUp {
+			h.items = append(h.items, i)
+		}
 		h.delivered[id] = true
 		h.receipts = append(h.receipts, threadstore.DeliveredMessage{ID: id, At: time.Now().UTC()})
 		h.updateLocked(i)
@@ -572,9 +636,11 @@ func (h *messageHub) Ack(id string, ack driver.MessageAck) {
 			i.duplicate = true
 			i.framed += "\n\nIf you already received this, ignore the duplicate."
 		}
-		h.updateLocked(i)
-		i.stop = context.AfterFunc(i.ctx, func() { h.withdraw(i) })
-		h.signalLocked()
+		if i != h.wrapUp {
+			h.updateLocked(i)
+			i.stop = context.AfterFunc(i.ctx, func() { h.withdraw(i) })
+			h.signalLocked()
+		}
 	} else {
 		r := MessageProviderRejected
 		if h.cancelled || i.ctx.Err() != nil || h.ctx.Err() != nil {
@@ -741,27 +807,19 @@ func (h *messageHub) completeTurn(res *Result, err error) {
 	}
 	h.sink.push(TurnEnd{Turn: turn, Result: res, Err: err, MessageIDs: ids})
 	h.turn = turn + 1
-	threshold := (h.policy.MaxTurns*4 + 4) / 5
+	h.stopClaim = false
+	threshold := h.wrapUpThreshold()
 	if !h.policy.Disabled && !h.warned && turn >= threshold && turn < h.policy.MaxTurns && err == nil && (h.resume || h.cap.Continue == driver.ContinueInRun) {
 		h.warned = true
 		h.sink.push(Notice{Kind: "limit.approaching", Text: "The execution is approaching its turn limit; begin wrapping up."})
-		id := h.sink.runID + "-limit"
-		for h.byID[id] != nil || h.delivered[id] {
-			id += "-wrap"
-		}
-		m := MessageContext{ID: id, Text: "The execution is approaching its turn limit. Finish the original objective and provide your final answer now.", From: Author{Kind: AuthorSystem}, Timing: AfterTurn}
-		framed := frameMessage(m)
-		if h.policy.Format != nil {
-			framed = h.policy.Format(m)
-		}
-		i := &hubItem{out: MessageOutcome{ID: m.ID, Text: m.Text, From: m.From, Timing: AfterTurn, State: MessageAccepted}, framed: framed, ctx: h.ctx}
-		h.items = append(h.items, i)
-		h.byID[m.ID] = i
-		h.updateLocked(i)
-		h.notifyLocked()
-		h.signalLocked()
 	}
 }
+
+func (h *messageHub) wrapUpThreshold() int {
+	// n - floor(n/5) is ceil(0.8*n), without overflowing large int limits.
+	return min(h.policy.MaxTurns-h.policy.MaxTurns/5, h.policy.MaxTurns-1)
+}
+
 func (h *messageHub) turnCount() int { h.mu.Lock(); defer h.mu.Unlock(); return len(h.turns) }
 func (h *messageHub) messageTranscript() []TranscriptItem {
 	var out []TranscriptItem

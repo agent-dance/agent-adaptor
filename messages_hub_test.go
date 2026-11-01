@@ -3,6 +3,8 @@ package adaptor
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -142,14 +144,71 @@ func TestV2HubInterruptCapabilityImpliesImmediateClaimAndResumeFallback(t *testi
 
 func TestV2HubWrapUpIDDoesNotCollideWithHostID(t *testing.T) {
 	h := testMessageHub(t, MessagePolicy{MaxTurns: 5})
+	h.load([]threadstore.DeliveredMessage{{ID: "hub-limit-wrap", At: time.Now().UTC()}})
 	if err := h.send(context.Background(), "host input", MessageID("hub-limit")); err != nil {
 		t.Fatal(err)
 	}
 	for n := 0; n < 4; n++ {
 		h.completeTurn(&Result{Text: "turn"}, nil)
 	}
+	if outcomes := h.outcomes(); len(outcomes) != 1 {
+		t.Fatalf("unclaimed policy input became a message: %+v", outcomes)
+	}
+	items := h.Claim(driver.BoundaryTurnEnd)
+	if len(items) != 2 || items[0].ID != "hub-limit-wrap-wrap" || items[1].ID != "hub-limit" {
+		t.Fatalf("claim=%+v", items)
+	}
+	for _, item := range items {
+		h.Ack(item.ID, driver.MessageAck{Delivered: true, Mechanism: "fake.next"})
+	}
 	outcomes := h.outcomes()
 	if len(outcomes) != 2 || outcomes[0].ID == outcomes[1].ID {
 		t.Fatalf("outcomes=%+v", outcomes)
+	}
+}
+
+func TestV2HubWrapUpRetryRequiresHostInput(t *testing.T) {
+	for _, retryHost := range []bool{false, true} {
+		t.Run(fmt.Sprint(retryHost), func(t *testing.T) {
+			h := testMessageHub(t, MessagePolicy{MaxTurns: 3, MaxPending: 1})
+			for n := 0; n < 2; n++ {
+				h.completeTurn(&Result{}, nil)
+			}
+			if err := h.send(context.Background(), "host", MessageID("host")); err != nil {
+				t.Fatal(err)
+			}
+			items := h.Claim(driver.BoundaryTool)
+			if len(items) != 2 || items[1].ID != "host" {
+				t.Fatalf("claim=%v", items)
+			}
+			h.Ack(items[0].ID, driver.MessageAck{Requeue: true, MaybeDelivered: true, Err: context.DeadlineExceeded})
+			h.Ack("host", driver.MessageAck{Delivered: !retryHost, Requeue: retryHost, Err: context.DeadlineExceeded})
+			if retryHost {
+				if h.closeIfIdle() {
+					t.Fatal("host retry was ignored")
+				}
+				retry := h.Claim(driver.BoundaryTurnEnd)
+				if len(retry) != 2 || retry[0].ID != items[0].ID || !retry[0].MaybeDuplicate || !strings.Contains(retry[0].Text, "ignore the duplicate") || retry[1].ID != "host" {
+					t.Fatalf("retry=%v", retry)
+				}
+				for _, item := range retry {
+					h.Ack(item.ID, driver.MessageAck{Delivered: true, Mechanism: "fake.resume"})
+					h.Ack(item.ID, driver.MessageAck{Delivered: true, Mechanism: "duplicate"})
+				}
+			} else if items := h.Claim(driver.BoundaryTurnEnd); len(items) != 0 {
+				t.Fatalf("policy retry claimed without host input: %v", items)
+			}
+			if !h.closeIfIdle() {
+				t.Fatal("policy retry prevented execution from finishing")
+			}
+			h.finish(MessageRunFailed)
+			want := 1
+			if retryHost {
+				want = 2
+			}
+			if outcomes, receipts := h.outcomes(), h.deliveryReceipts(); len(outcomes) != want || len(receipts) != want {
+				t.Fatalf("outcomes=%v receipts=%v", outcomes, receipts)
+			}
+		})
 	}
 }
