@@ -694,7 +694,14 @@ func finalizeRun(runID string, sink *eventSink, resp driver.Response, err error)
 	pending := sink.pendingFailure()
 	res := resultFromResponse(runID, resp)
 	failure := resp.Failure
-	if pending != nil && (!(errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) || sink.pendingFailureBeforeCancel() != nil) {
+	// Same precedence as classifyInvocationOutcome: an SDK decision settled
+	// while the invocation was live, then a provider failure observed while it
+	// was live, then cancellation. A decision settled only after cancellation
+	// (for example a host denying its pending approval while cancelling) never
+	// replaces a provider verdict that was already observed.
+	early := sink.pendingFailureBeforeCancel()
+	providerFirst := early == nil && sink.observedProviderFailure().failure != nil
+	if pending != nil && !providerFirst && (!(errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) || early != nil) {
 		failure = pending
 	}
 	// A protocol-classified provider failure or SDK approval failure is more

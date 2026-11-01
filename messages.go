@@ -305,7 +305,7 @@ type messageHub struct {
 	turn      int
 	turns     []*Result
 	warned    bool
-	wrapUp    *hubItem // Deferred policy input; joins items only after delivery.
+	wrapUp    *hubItem // Policy input registered once it joins a claim; joins items only after delivery.
 	stopClaim bool     // Stop may claim its successor before reporting completion.
 	promptIDs []string
 	start     messageSettings
@@ -611,7 +611,11 @@ func (h *messageHub) claimLocked(b driver.Boundary) []driver.MessageItem {
 // means closeIfIdle, queue capacity and finalization cannot turn it into work.
 func (h *messageHub) prependWrapUpLocked(b driver.Boundary, turn int, items []driver.MessageItem) []driver.MessageItem {
 	i := h.wrapUp
-	if i == nil {
+	registered := i != nil
+	if !registered {
+		// The instruction owns no MessageID until it actually joins a claim:
+		// a host message admitted meanwhile may use the default ID and must
+		// keep it. Collisions are therefore resolved at join time.
 		id := h.sink.runID + "-limit"
 		for h.byID[id] != nil || h.delivered[id] {
 			id += "-wrap"
@@ -624,8 +628,6 @@ func (h *messageHub) prependWrapUpLocked(b driver.Boundary, turn int, items []dr
 			framed = h.policy.Format(m)
 		}
 		i = &hubItem{out: MessageOutcome{ID: m.ID, Text: m.Text, From: m.From, Timing: m.Timing, State: MessageAccepted}, framed: framed, ctx: h.ctx}
-		h.wrapUp = i
-		h.byID[id] = i
 	}
 	if i.out.State != MessageAccepted || i.claimed || (i.turnEndOnly && b != driver.BoundaryTurnEnd) {
 		return items
@@ -644,6 +646,10 @@ func (h *messageHub) prependWrapUpLocked(b driver.Boundary, turn int, items []dr
 			}
 			units += itemUnits + 2
 		}
+	}
+	if !registered {
+		h.wrapUp = i
+		h.byID[i.out.ID] = i
 	}
 	i.claimed, i.boundary, i.out.Turn = true, b, turn
 	timing := driver.Timing(i.out.Timing)
