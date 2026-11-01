@@ -114,7 +114,12 @@ Result/error; lifecycle snapshots expose only safe fields unless diagnostics
 are enabled. Process output, ordinary notices and SubagentUpdate remain local,
 so a published Team does not expose its complete worker event stream over this
 wire schema. Use the local Event stream or AG-UI for task/member updates.
-Oversized or unencodable supported frames produce explicit dropped markers.
+Required `message.update`, `turn.end` and `done` envelopes have no bridge size
+cap, on either encoding or decoding. Their complete text remains inline in the
+same DataPart, subject to the usual exposure policy and secret redaction. Hosts
+needing input size limits must reject before admission; a wire limit must not
+discard an already-admitted outcome. Optional frames retain the 64 KiB cap and
+produce explicit dropped markers when oversized or unencodable.
 Unknown DataPart schemas
 remain protocol data; the bridge does not guess provider semantics.
 

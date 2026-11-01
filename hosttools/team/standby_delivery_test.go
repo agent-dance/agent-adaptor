@@ -116,7 +116,13 @@ func TestStandbyQueuedExecutionOutlivesAdmissionContext(t *testing.T) {
 
 func TestStandbyBusySupplementOutlivesAdmissionContext(t *testing.T) {
 	for _, when := range []string{"after_return", "at_commit"} {
-		t.Run(when, func(t *testing.T) { testStandbyBusySupplement(t, when == "at_commit") })
+		t.Run(when, func(t *testing.T) {
+			for _, destination := range []string{"current", "next"} {
+				t.Run(destination, func(t *testing.T) {
+					testStandbyBusySupplement(t, when == "at_commit", destination == "next")
+				})
+			}
+		})
 	}
 }
 
@@ -133,7 +139,7 @@ func (store *commitAdmissionStore) PutMessage(ctx context.Context, lease ScopeLe
 	return err
 }
 
-func testStandbyBusySupplement(t *testing.T, cancelAtCommit bool) {
+func testStandbyBusySupplement(t *testing.T, cancelAtCommit, forwardToNext bool) {
 	t.Helper()
 	ctx := testContext(t)
 	lifetime, stop := context.WithCancel(ctx)
@@ -164,41 +170,129 @@ func testStandbyBusySupplement(t *testing.T, cancelAtCommit bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	drained, completed := make(chan struct{}), make(chan adaptor.Done, 1)
+	drained, completed := make(chan struct{}), make(chan adaptor.Done, 2)
+	accepted := make(chan struct{}, 1)
+	var updates []adaptor.MessageUpdate
 	go func() {
 		defer close(drained)
 		for event := range waiting.Events() {
-			if done, ok := event.(adaptor.Done); ok {
-				completed <- done
+			switch event := event.(type) {
+			case adaptor.MessageUpdate:
+				updates = append(updates, event)
+				if event.ID == "supplement" && event.State == adaptor.MessageAccepted {
+					accepted <- struct{}{}
+				}
+			case adaptor.Done:
+				completed <- event
 			}
 		}
 	}()
 	defer func() { stop(); <-drained }()
-	if err := waiting.Send(ctx, "first"); err != nil {
+	if err := waiting.Send(ctx, "first", adaptor.MessageID("initial")); err != nil {
 		t.Fatal(err)
 	}
 	<-entered
+	// Force either side of the final-admission race. Persistence accepts the
+	// supplement, but forwarding is asynchronous and may reach a closed run.
+	var forwardGate chan struct{}
+	if forwardToNext {
+		forwardGate = make(chan struct{})
+		owner := waiting.(*standby)
+		owner.mu.Lock()
+		owner.forwardTail = forwardGate
+		owner.mu.Unlock()
+		defer func() {
+			if forwardGate != nil {
+				close(forwardGate)
+			}
+		}()
+	}
 	if err := waiting.Send(admission, "admitted supplement", adaptor.MessageID("supplement")); err != nil {
 		t.Fatal(err)
 	}
 	cancel()
-	close(release)
-	select {
-	case done := <-completed:
-		if done.Err != nil {
-			t.Fatal(done.Err)
+	if !forwardToNext {
+		select {
+		case <-accepted: // Proves the current execution accepted it before finishing.
+		case <-ctx.Done():
+			t.Fatal("current execution did not accept the persisted supplement")
 		}
-		var delivered bool
-		for _, outcome := range done.Result.Messages() {
-			if outcome.ID == "supplement" {
-				delivered = outcome.State == adaptor.MessageDelivered
+	}
+	close(release)
+	executions := 1
+	if forwardToNext {
+		executions = 2
+	}
+	seen := make(map[string]int)
+	for index := 0; index < executions; index++ {
+		select {
+		case done := <-completed:
+			if done.Err != nil {
+				t.Fatal(done.Err)
+			}
+			outcomes := done.Result.Messages()
+			expected := 2
+			if forwardToNext {
+				expected = 1
+			}
+			if len(outcomes) != expected {
+				t.Fatalf("execution %d outcomes=%+v", index+1, outcomes)
+			}
+			for _, outcome := range outcomes {
+				seen[outcome.ID]++
+				text := "first"
+				if outcome.ID == "supplement" {
+					text = "admitted supplement"
+				} else if outcome.ID != "initial" {
+					t.Fatalf("unexpected outcome: %+v", outcome)
+				}
+				if outcome.State != adaptor.MessageDelivered || outcome.Text != text || outcome.Reason != "" {
+					t.Fatalf("untruthful outcome: %+v", outcome)
+				}
+			}
+			if forwardToNext && index == 0 {
+				if seen["supplement"] != 0 || seen["initial"] != 1 || calls.Load() != 1 {
+					t.Fatalf("closed execution claimed a not-yet-forwarded input: calls=%d outcomes=%+v", calls.Load(), outcomes)
+				}
+				close(forwardGate)
+				forwardGate = nil
+			}
+		case <-ctx.Done():
+			t.Fatal("busy admitted supplement did not complete")
+		}
+	}
+	stop()
+	<-drained
+	<-waiting.(*standby).done
+	if seen["initial"] != 1 || seen["supplement"] != 1 || calls.Load() != 2 {
+		t.Fatalf("accepted input lost or repeated: calls=%d outcomes=%v", calls.Load(), seen)
+	}
+	delivered := 0
+	for _, update := range updates {
+		if update.ID == "supplement" {
+			if update.State == adaptor.MessageFailed {
+				t.Fatalf("admitted input falsely failed: %+v", update)
+			}
+			if update.State == adaptor.MessageDelivered {
+				delivered++
 			}
 		}
-		if !delivered || calls.Load() != 2 {
-			t.Fatalf("busy admitted supplement was withdrawn: calls=%d outcomes=%+v", calls.Load(), done.Result.Messages())
+	}
+	if delivered != 1 {
+		t.Fatalf("supplement delivered receipts=%d, want 1", delivered)
+	}
+	records, err := store.Messages(ctx, "busy-context")
+	if err != nil {
+		t.Fatal(err)
+	}
+	persisted := false
+	for _, record := range records {
+		if record.ID == "supplement" {
+			persisted = record.State == Delivered && record.Reason == "" && record.Text == "admitted supplement"
 		}
-	case <-ctx.Done():
-		t.Fatal("busy admitted supplement did not complete")
+	}
+	if !persisted {
+		t.Fatalf("admitted supplement lost its durable outcome: %+v", records)
 	}
 }
 

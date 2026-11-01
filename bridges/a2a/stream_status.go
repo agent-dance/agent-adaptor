@@ -121,14 +121,14 @@ func decodeAdapterStreamEventWire(data any) (event AdapterStreamEventV1, matched
 	if err := json.Unmarshal(raw, &header); err != nil || header.Schema != AdapterStreamSchemaV1 {
 		return event, false, nil
 	}
-	if len(raw) > adapterStreamMaxBytes {
-		return event, true, fmt.Errorf("adapter stream status exceeds %d bytes", adapterStreamMaxBytes)
-	}
 	var envelope AdapterStreamEnvelopeV1
 	if err := json.Unmarshal(raw, &envelope); err != nil {
 		return event, true, fmt.Errorf("decode adapter stream status: %w", err)
 	}
 	event = envelope.Event
+	if len(raw) > adapterStreamMaxBytes && !requiredLifecycleKind(event.Kind) {
+		return event, true, fmt.Errorf("adapter stream status exceeds %d bytes", adapterStreamMaxBytes)
+	}
 	if strings.TrimSpace(event.Kind) == "" {
 		return event, true, errors.New("adapter stream status kind is empty")
 	}
@@ -160,6 +160,8 @@ func decodeAdapterStreamEventWire(data any) (event AdapterStreamEventV1, matched
 // request fields, and detailed Dropped markers. A false matched result means
 // the value belongs to another DataPart schema. Its V1 suffix is intentional
 // because it selects the versioned wire schema.
+// Required message.update, turn.end and done payloads have no bridge size cap;
+// other envelopes are limited to 64 KiB.
 func DecodeAdapterEventV1(data any) (decoded adaptor.Event, matched bool, err error) {
 	event, matched, err := decodeAdapterStreamEventWire(data)
 	if err != nil || !matched {

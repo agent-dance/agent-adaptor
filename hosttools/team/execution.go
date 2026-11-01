@@ -661,7 +661,7 @@ func (run *execution) onEnd(end childEnd) {
 		usage := sumUsage(nil, end.result.Usage)
 		if end.task == "" && usage != nil {
 			for _, subagent := range end.result.Subagents() {
-				if _, own := run.tasks[subagent.Task]; own && subagent.Usage != nil {
+				if run.ownsSubagent(subagent) && subagent.Usage != nil {
 					usage.InputTokens -= subagent.Usage.InputTokens
 					usage.OutputTokens -= subagent.Usage.OutputTokens
 					usage.CachedInputTokens -= subagent.Usage.CachedInputTokens
@@ -1252,11 +1252,25 @@ func (run *execution) subagents() []adaptor.SubagentResult {
 	return results
 }
 
+func (run *execution) ownsSubagent(summary adaptor.SubagentResult) bool {
+	task := run.tasks[summary.Task]
+	return task != nil && task.record.Member == summary.Member
+}
+
 func (run *execution) finish(err error) {
 	if run.wake != nil {
 		run.wake.stop()
 	}
-	result := adaptor.ComposeResults(run.id, run.parts...).WithSubagents(run.subagents())
+	result := adaptor.ComposeResults(run.id, run.parts...)
+	var summaries []adaptor.SubagentResult
+	for _, summary := range result.Subagents() {
+		if !run.ownsSubagent(summary) {
+			summaries = append(summaries, summary)
+		}
+	}
+	// Replace only this Team's collected snapshots. Other attachments' audit
+	// summaries and their already-observed usage belong to the leader result.
+	result = result.WithSubagents(append(summaries, run.subagents()...))
 	result.RunID = run.id
 	result.Turns = run.turns
 	result.Usage = sumUsage(nil, run.total)

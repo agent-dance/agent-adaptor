@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	adaptor "github.com/agent-dance/agent-adaptor/v2"
@@ -21,6 +22,13 @@ type appServer struct {
 	cors   string
 	store  *threadStore
 	runs   agui.RunRegistry
+	// Entries share the lifetime of the host's per-thread recovery state.
+	historyBarriers sync.Map // thread ID -> *historyBarrier
+}
+
+func (s *appServer) historyBarrier(threadID string) *historyBarrier {
+	barrier, _ := s.historyBarriers.LoadOrStore(threadID, new(historyBarrier))
+	return barrier.(*historyBarrier)
 }
 
 func newAppServer(agent *adaptor.Agent, driver, cors string) (*appServer, error) {
@@ -76,23 +84,28 @@ func (s *appServer) handleAgent(w http.ResponseWriter, r *http.Request) {
 	// HTTP request. Once dispatch begins, even a full admission queue waits
 	// for space or the original execution's end. New executions are bound
 	// back to their original SSE request immediately after registration.
+	barrier := s.historyBarrier(invocation.threadID)
+	barrier.begin()
 	stream, supplement, err := s.runs.Send(context.WithoutCancel(r.Context()), s.agent.Thread(invocation.threadKey), input, invocation.opts...)
 	if err != nil {
+		barrier.end()
 		writeMessageAdmissionError(w, err)
 		return
 	}
 	if supplement {
 		// Delivery receipts flow on the original run's SSE connection and
 		// recorder. This response acknowledges admission only.
-		s.acknowledgeSupplement(w, invocation.threadID, stream, input)
+		s.acknowledgeSupplement(w, invocation.threadID, stream, input, barrier)
 		return
 	}
+	barrier.end()
 	stop := context.AfterFunc(r.Context(), stream.Cancel)
 	defer stop()
 	defer s.runs.Forget(invocation.threadKey, stream)
 	defer stream.Cancel()
 
 	session := newAGUIRunSession(r.Context(), stream, s.store, invocation.threadID, invocation.userTurn, w)
+	session.admissions = barrier
 	if err := session.Serve(); err != nil && !errors.Is(err, r.Context().Err()) {
 		slog.Warn("agui stream ended with error", "err", err, "thread_id", invocation.threadID)
 	}
@@ -146,12 +159,15 @@ func (s *appServer) handleMessage(w http.ResponseWriter, r *http.Request) {
 		writeMessageAdmissionError(w, err)
 		return
 	}
+	barrier := s.historyBarrier(request.ThreadID)
+	barrier.begin()
 	stream, err := s.runs.SendActive(context.WithoutCancel(r.Context()), agui.ThreadKey(request.ThreadID), input)
 	if err != nil {
+		barrier.end()
 		writeMessageAdmissionError(w, err)
 		return
 	}
-	s.acknowledgeSupplement(w, request.ThreadID, stream, input)
+	s.acknowledgeSupplement(w, request.ThreadID, stream, input, barrier)
 }
 
 func writeMessageAdmissionError(w http.ResponseWriter, err error) {
@@ -168,18 +184,21 @@ func writeMessageAdmissionError(w http.ResponseWriter, err error) {
 	http.Error(w, err.Error(), status)
 }
 
-func (s *appServer) acknowledgeSupplement(w http.ResponseWriter, threadID string, stream adaptor.Stream, input *agui.RunAgentInput) {
+func (s *appServer) acknowledgeSupplement(w http.ResponseWriter, threadID string, stream adaptor.Stream, input *agui.RunAgentInput, barrier *historyBarrier) {
 	response := map[string]any{"runId": stream.RunID(), "messageId": input.LastUserMessageID(), "state": "accepted"}
+	status := http.StatusAccepted
 	for _, event := range userTurnEvents(input.LastUserMessageID(), input.LastUserText()) {
 		if err := s.store.appendHistory(threadID, event); err != nil {
 			// Admission has already succeeded. Keep it explicit even when the
 			// configured history backend fails, so retries can use the same ID.
 			response["error"] = err.Error()
-			writeJSON(w, http.StatusInternalServerError, response)
-			return
+			status = http.StatusInternalServerError
+			break
 		}
 	}
-	writeJSON(w, http.StatusAccepted, response)
+	// Terminal recording waits for history, never for the companion's network.
+	barrier.end()
+	writeJSON(w, status, response)
 }
 
 func (s *appServer) handleSessionEvents(w http.ResponseWriter, r *http.Request) {

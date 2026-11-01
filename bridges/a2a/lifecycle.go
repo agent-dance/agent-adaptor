@@ -10,6 +10,15 @@ import (
 	adaptor "github.com/agent-dance/agent-adaptor/v2"
 )
 
+func requiredLifecycleKind(kind string) bool {
+	switch kind {
+	case "message.update", "turn.end", "done":
+		return true
+	default:
+		return false
+	}
+}
+
 // safeResult keeps the final answer and bounded summary public. Diagnostics
 // use the same explicit opt-ins as the terminal artifact.
 func safeResult(result *adaptor.Result, exposure ExposurePolicy) map[string]any {

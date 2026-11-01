@@ -49,10 +49,11 @@ type runStateStore interface {
 //     monotonic per session key; the order is guaranteed by program order
 //     in Serve().
 type aguiRunSession struct {
-	ctx      context.Context
-	threadID string
-	stream   adaptor.Stream
-	store    runStateStore
+	ctx        context.Context
+	threadID   string
+	stream     adaptor.Stream
+	store      runStateStore
+	admissions *historyBarrier
 
 	// userTurn is the synthesized user-side text triple (start/content/end
 	// TextDeltas with Role=RoleUser) the host wants to land in the recorder
@@ -126,6 +127,13 @@ func (s *aguiRunSession) Serve() error {
 	// streamed, send one complete message through the normal fan-out so both
 	// realtime SSE and refresh history remain truthful. CloseResult then emits
 	// the sole authoritative terminal and never duplicates the fallback.
+	// Admission may block on a full message queue, so keep draining ordinary
+	// events before waiting for accepted user-history writes. Once Events is
+	// closed, no new supplement can succeed; all accepted triples must finish
+	// before the answer fallback and terminal events are recorded.
+	if s.admissions != nil {
+		s.admissions.wait()
+	}
 	result, err := s.stream.Result()
 	if !s.assistantText {
 		if text := assistantResultText(result, err); strings.TrimSpace(text) != "" {

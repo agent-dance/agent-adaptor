@@ -182,6 +182,10 @@ in admission order under that lifetime. A provider that subsequently rejects
 admission produces a failed `MessageUpdate` with the original ID and text;
 successful Standby admission does not promise provider delivery. Invalid author
 or timing values are rejected before persistence.
+If the current execution closes admission before an asynchronous handoff reaches
+it, the accepted input starts the next execution instead. The first `Done` need
+not contain that input; its delivery receipt and outcome belong to the execution
+that actually accepts it. It remains owned by the Standby lifetime throughout.
 `Standby.Cancel()` cancels current processing and queued messages while keeping
 the Standby usable. End the lifetime context to leave Standby.
 
@@ -345,7 +349,10 @@ because RawStreams has one terminal slot. `Turns` counts leader provider turns.
 `Usage` includes observed leader and worker usage without counting worker usage
 twice. Unobserved usage stays absent; Remote protocol data does not fabricate
 local CLI accounting. `Subagents()` returns detached task summaries with
-`Member`, `Task`, `State`, `Summary`, `Usage` and `Unread`. Full worker results
+`Member`, `Task`, `State`, `Summary`, `Usage` and `Unread`. Final task snapshots
+from this Team replace earlier snapshots with the same member/task identity;
+summaries collected by other leader runtime-service attachments are preserved.
+Refreshing snapshots does not add their usage again. Full worker results
 are retained in `TaskStore.Tasks(ctx, scope)` as `Task.Result`; Remote task IDs,
 context IDs and normalized non-text artifacts are retained in
 `RemoteTask`, `RemoteContext`, and `RemoteSnapshot`. They are not appended to

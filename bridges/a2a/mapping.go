@@ -174,7 +174,7 @@ func (t *streamTranslator) Translate(ev adaptor.Event) []a2aproto.Event {
 }
 
 // emit stamps identity + sequence onto the wire DTO, encodes the envelope
-// (redaction + 64KiB cap + JSON normalization), and wraps it in a
+// (redaction + optional-event cap + JSON normalization), and wraps it in a
 // working-status DataPart message.
 func (t *streamTranslator) emit(source adaptor.Event, event AdapterStreamEventV1) []a2aproto.Event {
 	meta := source.Meta()
@@ -237,8 +237,9 @@ func adapterEventMeta(meta adaptor.EventMeta, includeSource bool) *AdapterEventM
 
 // encodeAdapterStreamEvent applies the shared redaction pipeline to a
 // pre-built wire DTO: inline-secret redaction on the delta, remote-map
-// sanitization on args/result/hitl/raw, the 64KiB envelope cap, and the
-// marshal→unmarshal JSON normalization.
+// sanitization on args/result/hitl/raw, the 64KiB optional-event envelope cap,
+// and the marshal→unmarshal JSON normalization. Required lifecycle events are
+// uncapped so admitted outcomes and final answers remain recoverable.
 func encodeAdapterStreamEvent(event AdapterStreamEventV1) (map[string]any, error) {
 	event.Delta = redactInlineSecrets(event.Delta)
 	if len(event.Args) > 0 {
@@ -258,7 +259,7 @@ func encodeAdapterStreamEvent(event AdapterStreamEventV1) (map[string]any, error
 	if err != nil {
 		return nil, fmt.Errorf("marshal adapter stream status: %w", err)
 	}
-	if len(raw) > adapterStreamMaxBytes {
+	if len(raw) > adapterStreamMaxBytes && !requiredLifecycleKind(event.Kind) {
 		return nil, fmt.Errorf("adapter stream status exceeds %d bytes", adapterStreamMaxBytes)
 	}
 	var data map[string]any
