@@ -100,7 +100,40 @@ type EventSink interface {
 
 Both end up on the same public `Event` channel; they are not two host streams. A Driver must not retain the sink, and must not call it after `Run` returns.
 
-Before `Run` returns it must wait for every parser, reader, stderr collector, and notification goroutine to exit. On context cancellation it should stop the provider, unblock stdin/reader waits, and reclaim goroutines as quickly as possible. Any goroutine that keeps emitting after `Run` returns violates the lifecycle contract.
+Before `Run` returns, all parsing and event delivery for that invocation must
+finish. A stopped subprocess's Raw streams must be captured after both process
+exit and the stdout/stderr reader joins. In particular, `exec.Cmd.Wait` closes
+`StdoutPipe`/`StderrPipe`; waiting for a collector after calling `Wait` does not
+recover bytes that this closure discarded. Own pipe descriptors independently
+of `exec.Cmd` when observing process exit concurrently with draining; waiting
+for EOF before `Wait` can hang indefinitely if a descendant retains a writer.
+
+Codex app-server (one-shot and persistent) and batch `clihelper` use independently
+owned pipes. Process exit is observed separately from reader completion and
+starts a five-second drain deadline, even without host cancellation. At the
+deadline they close retained read ends and join readers, including when a
+descendant retains inherited stdout/stderr handles on Windows. Readers reaching
+EOF within the bound preserve complete output; the cutoff preserves bytes
+observed before closure. Codex app-server also retains raw stdout after a JSON
+decoding error without interpreting the corrupt tail. Host cancellation retains
+its cancellation classification and cannot create a valid checkpoint; an
+independent nonzero exit remains an exit failure.
+
+Each parent pipe end has one owning `os.File`, closed once through the process
+helper. Assign the underlying `*os.File` to `exec.Cmd` standard streams as a
+borrow; do not wrap its descriptor in another `os.File`. Cleanup also owns stdin,
+including setup/start failures and persistent shutdown. Closure tests require
+`os.ErrClosed` from the owned file's `Read`: Windows `File.Stat` bypasses the
+closed-file check and can return `ERROR_INVALID_HANDLE` even after a correct
+`File.Close`. Close observers verify that every owning `File.Close` succeeds
+exactly once, including when drain cutoff and deferred cleanup both run.
+
+A healthy persistent process stays alive across turns, so process exit and pipe
+EOF are not turn boundaries. Its Raw streams contain bytes observed during the
+turn; its readers may remain alive but must not emit into an earlier turn's
+sink. Failed, cancelled, or disconnected Codex turns shut down and join readers
+before attaching Raw streams. Any goroutine that keeps emitting after its
+invocation returns violates the lifecycle contract.
 
 ## 5. `StreamPayload` lifecycle
 

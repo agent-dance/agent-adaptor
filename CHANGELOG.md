@@ -47,6 +47,17 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- Codex app-server and batch output collection join process exit and both raw readers
+  before returning a stopped process's stdout/stderr. Reaping no longer closes
+  unread output pipes; malformed protocol tails remain available in Raw, and
+  process exit independently wakes app-server turns and starts a five-second
+  drain bound even without cancellation or EOF from inherited writers on any OS.
+  Healthy persistent turns retain their live writer and return the bytes observed
+  during the turn.
+- App-server and batch pipe cleanup closes each owning file once, including
+  stdin on start failure and persistent shutdown. Closure regressions check
+  `os.ErrClosed` through `Read` on Windows and Unix; Windows `Stat` does not
+  check the file's closed state.
 - Codex one-shot/persistent app-server and batch execution classify cancellation
   as cancelled rather than agent failure, including explicit process shutdown.
   They retain available raw output and never persist a cancelled checkpoint.

@@ -128,8 +128,8 @@ func (c *Client) Close() error {
 }
 
 // DisconnectNotify is closed after the JSON-RPC reader reaches EOF or a
-// protocol/transport error. Waiting for it before snapshotting captured stdout
-// guarantees the reader has consumed every available inbound byte.
+// protocol/transport error, or when Close is called. It is a connection signal,
+// not a pipe-reader join; process owners must separately join raw capture.
 func (c *Client) DisconnectNotify() <-chan struct{} {
 	return c.conn.DisconnectNotify()
 }

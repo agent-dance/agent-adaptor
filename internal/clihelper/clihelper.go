@@ -218,6 +218,9 @@ const interruptedExitCode = -1
 // Run executes the requested command and streams raw stdout/stderr chunks to
 // sink and (optionally) the Observe callback. The returned CommandResult
 // always contains the full captured RawStreams, regardless of exit status.
+// After process exit, readers have five seconds to reach EOF. If inherited
+// writers remain open, Run closes its read ends, joins the readers, and returns
+// the bytes observed before that cutoff.
 // Once a process starts, a non-zero exit, signal, or context-driven process
 // termination is represented in CommandResult rather than returned as an
 // error. This lets the Driver parse the complete provider protocol first;
@@ -225,6 +228,15 @@ const interruptedExitCode = -1
 // provider protocol offers no more specific failure. Returned errors are
 // reserved for launch, pipe, observation, and other helper failures.
 func Run(ctx context.Context, req CommandRequest, sink driver.EventSink) (CommandResult, error) {
+	return run(ctx, req, sink, nil)
+}
+
+func run(ctx context.Context, req CommandRequest, sink driver.EventSink, hooks *outputHooks) (CommandResult, error) {
+	if req.Stdin != nil {
+		if _, ok := req.Stdin.(*stdinController); !ok {
+			return CommandResult{}, errors.New("clihelper: Stdin must be constructed via NewStdinController()")
+		}
+	}
 	command, args, err := prepareCommand(req.Command, req.Args)
 	if err != nil {
 		return CommandResult{}, err
@@ -249,29 +261,35 @@ func Run(ctx context.Context, req CommandRequest, sink driver.EventSink) (Comman
 		},
 	})
 
-	stdoutPipe, err := cmd.StdoutPipe()
+	output, err := newCommandOutput(cmd, hooks)
 	if err != nil {
 		return CommandResult{}, err
 	}
-	stderrPipe, err := cmd.StderrPipe()
-	if err != nil {
-		return CommandResult{}, err
-	}
+	defer output.close()
 	// Leave cmd.Stdin nil when there is no stdin payload or controller. In
 	// that case os/exec connects the child to the null device, which provides
 	// the same immediate EOF as an empty pipe without creating a writer that
 	// can race cmd.Wait when a short-lived provider exits immediately.
-	var stdinPipe io.WriteCloser
+	var stdinRead, stdinPipe *processx.PipeFile
 	if req.Prompt != "" || req.Stdin != nil {
-		stdinPipe, err = cmd.StdinPipe()
+		stdinRead, stdinPipe, err = processx.NewPipe(hooks.closed)
 		if err != nil {
 			return CommandResult{}, err
 		}
+		defer stdinRead.Close()
+		defer stdinPipe.Close()
+		cmd.Stdin = stdinRead.File
 	}
 
 	if err := cmd.Start(); err != nil {
 		return CommandResult{}, err
 	}
+	if stdinPipe != nil {
+		// The child owns its inherited copy; exec.Cmd only borrowed this File.
+		_ = stdinRead.Close()
+	}
+	hooks.started(output)
+	output.closeWriters()
 
 	_ = sink.Emit(driver.RunEvent{
 		Type:      driver.RunEventSpawn,
@@ -300,10 +318,7 @@ func Run(ctx context.Context, req CommandRequest, sink driver.EventSink) (Comman
 		// first frame, then forwards frames arriving on req.Stdin.Write
 		// until the controller is closed, the subprocess exits, or ctx
 		// fires.
-		ctrl, ok := req.Stdin.(*stdinController)
-		if !ok {
-			return CommandResult{}, errors.New("clihelper: Stdin must be constructed via NewStdinController()")
-		}
+		ctrl := req.Stdin.(*stdinController)
 		go func() {
 			defer func() {
 				_ = stdinPipe.Close()
@@ -384,6 +399,7 @@ func Run(ctx context.Context, req CommandRequest, sink driver.EventSink) (Comman
 	}
 
 	readPump := func(pipe io.Reader, stream string, buf *bytes.Buffer) {
+		defer hooks.readerFinished()
 		readBuf := make([]byte, 32*1024)
 		for {
 			n, readErr := pipe.Read(readBuf)
@@ -415,7 +431,7 @@ func Run(ctx context.Context, req CommandRequest, sink driver.EventSink) (Comman
 				}
 			}
 			if readErr != nil {
-				if !errors.Is(readErr, io.EOF) {
+				if !errors.Is(readErr, io.EOF) && !errors.Is(readErr, os.ErrClosed) {
 					recordErr(readErr)
 				}
 				return
@@ -427,25 +443,28 @@ func Run(ctx context.Context, req CommandRequest, sink driver.EventSink) (Comman
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		readPump(stdoutPipe, "stdout", &stdoutBuf)
+		readPump(output.stdout, "stdout", &stdoutBuf)
 	}()
 	go func() {
 		defer wg.Done()
-		readPump(stderrPipe, "stderr", &stderrBuf)
+		readPump(output.stderr, "stderr", &stderrBuf)
 	}()
 
-	// Drain the output pipes completely before Wait() so that cmd.Wait()
-	// does not close the pipe out from under a reader. This matches the
-	// contract described in os/exec.Cmd.StdoutPipe.
-	wg.Wait()
-	waitErr := cmd.Wait()
-
-	// Long-lived stdin: force the writer goroutine to exit (otherwise it
-	// may block on an empty ctrl.ch indefinitely now that the subprocess
-	// is gone).
-	if ctrl, ok := req.Stdin.(*stdinController); ok {
-		ctrl.markDone()
-	}
+	readersDone := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(readersDone)
+	}()
+	// Reap independently of EOF: descendants can retain writers on any OS.
+	// The drain starts its own five-second deadline as soon as Wait returns.
+	waitErr := output.wait(cmd, readersDone, func() {
+		if stdinPipe != nil {
+			_ = stdinPipe.Close()
+		}
+		if ctrl, ok := req.Stdin.(*stdinController); ok {
+			ctrl.markDone()
+		}
+	}, hooks)
 
 	if err := <-writeErr; err != nil {
 		// ctx.Canceled / ctx.DeadlineExceeded are expected when the caller

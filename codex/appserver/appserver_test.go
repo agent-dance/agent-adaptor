@@ -1016,6 +1016,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 )
 
 type request struct {
@@ -1030,7 +1031,9 @@ func main() {
 	writer := bufio.NewWriter(os.Stdout)
 	defer func() {
 		_ = writer.Flush()
-		_, _ = fmt.Fprint(os.Stderr, "stderr-after-terminal")
+		if scenario != "cancel" {
+			_, _ = fmt.Fprint(os.Stderr, "stderr-after-terminal")
+		}
 	}()
 	write := func(frame string) {
 		_, _ = fmt.Fprintln(writer, frame)
@@ -1077,10 +1080,17 @@ func main() {
 				respond(req.ID, "{\"turn\":{\"id\":\" \",\"status\":\"inProgress\"}}")
 				continue
 			}
+			if scenario == "exit-before-reply" {
+				_, _ = fmt.Fprint(os.Stderr, "stderr-before-exit")
+				os.Exit(17)
+			}
 			respond(req.ID, "{\"turn\":{\"id\":\"turn-fake\",\"status\":\"inProgress\"}}")
 			eventThread := currentThread
 			if scenario == "scope-mismatch" {
 				eventThread = "wrong-thread"
+			}
+			if scenario == "cancel" {
+				_, _ = fmt.Fprint(os.Stderr, "stderr-before-cancel")
 			}
 			write(fmt.Sprintf("{\"method\":\"turn/started\",\"params\":{\"threadId\":%q,\"turn\":{\"id\":\"turn-fake\",\"status\":\"inProgress\"}}}", eventThread))
 			if scenario == "cancel" {
@@ -1096,7 +1106,16 @@ func main() {
 			write(fmt.Sprintf("{\"method\":\"item/started\",\"params\":{\"threadId\":%q,\"turnId\":\"turn-fake\",\"item\":{\"id\":\"msg-fake\",\"type\":\"agentMessage\",\"text\":\"\"}}}", eventThread))
 			write(fmt.Sprintf("{\"method\":\"item/agentMessage/delta\",\"params\":{\"delta\":%q,\"itemId\":\"msg-fake\",\"threadId\":%q,\"turnId\":\"turn-fake\"}}", message, eventThread))
 			write(fmt.Sprintf("{\"method\":\"item/completed\",\"params\":{\"threadId\":%q,\"turnId\":\"turn-fake\",\"item\":{\"id\":\"msg-fake\",\"type\":\"agentMessage\",\"text\":%q}}}", eventThread, message))
+			if scenario == "exit-before-terminal" {
+				_, _ = fmt.Fprint(os.Stderr, "stderr-before-exit")
+				os.Exit(17)
+			}
 			if scenario == "missing" {
+				return
+			}
+			if scenario == "malformed-tail" {
+				write("!")
+				write(strings.Repeat("raw-tail-", 16384) + "end-of-raw-tail")
 				return
 			}
 			if scenario == "malformed" {
