@@ -343,6 +343,9 @@ func (s *cursorHooks) receipt(callID string, envelope map[string]any) {
 		if !delivered {
 			ack.Err = errors.New("Cursor completed tool event did not echo hook context")
 			ack.Requeue = true
+			// The hook response may already have reached the model even when
+			// the completed tool event omits its confirmation echo (MSG-05).
+			ack.MaybeDelivered = true
 		}
 		s.port.Ack(item.ID, ack)
 	}

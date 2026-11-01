@@ -143,11 +143,19 @@ func Run(ctx context.Context, opts Options, sink driver.EventSink) (driver.Respo
 	client := NewClient(context.Background(), stream)
 
 	state := newRunState(opts.RunID, sink)
+	state.ctx = ctx
 	state.messages = opts.Messages
+	if opts.ResumeThreadID == "" && opts.ForkThreadID == "" {
+		state.freshThread = true
+		state.usageBaseline = &driver.Usage{}
+		state.historicalUsage = &driver.Usage{}
+	}
 	// runState.onNotification forwards to the translator (so bridges see
 	// every payload) and then accumulates run-level state needed to shape
 	// the driver.Response.
 	client.SetNotificationHandler(state.onNotification)
+	stopRequests := client.handleRunRequests(ctx, opts.RunID, sink, state)
+	defer stopRequests()
 
 	// shutdown closes only the child's stdin first, allowing the JSON-RPC
 	// reader to drain stdout to EOF. cmd.Wait runs only after that reader has
@@ -169,13 +177,28 @@ func Run(ctx context.Context, opts Options, sink driver.EventSink) (driver.Respo
 
 	threadID := ""
 	finish := func(primary error) (driver.Response, error) {
+		stopRequests()
+		if primary == nil {
+			primary = state.executionError()
+		}
+		// Sample before shutdown: cancelling after an observed provider failure
+		// must not reclassify that failure as teardown cancellation.
+		cancellation := ctx.Err()
+		if state.failedBeforeCancel() {
+			cancellation = nil
+			if errors.Is(primary, context.Canceled) || errors.Is(primary, context.DeadlineExceeded) {
+				primary = nil
+			}
+		}
+		if cancellation != nil {
+			primary = errors.Join(cancellation, primary)
+		}
 		waitErr := shutdown()
+		if cancellation != nil {
+			primary = errors.Join(primary, waitErr)
+		}
 		if readErr := stream.ReadError(); readErr != nil {
 			state.recordProtocolError(fmt.Errorf("decode JSON-RPC stdout: %w", readErr))
-		}
-		var cancellation error
-		if errors.Is(primary, context.Canceled) || errors.Is(primary, context.DeadlineExceeded) {
-			cancellation = ctx.Err()
 		}
 		exitCode, signal, timedOut, waitFatal := processOutcome(waitErr, cancellation)
 		var finalErr error
@@ -280,33 +303,40 @@ func turnStartParams(opts Options, threadID string, input []UserInput) TurnStart
 // ---------------------------------------------------------------------------
 
 type runState struct {
-	translator *Translator
-	sink       driver.EventSink
-	notifyMu   sync.Mutex
+	ctx                 context.Context
+	failureBeforeCancel bool
+	freshThread         bool
+	translator          *Translator
+	sink                driver.EventSink
+	notifyMu            sync.Mutex
 
-	mu                 sync.Mutex
-	finalAgentText     string
-	transcript         []driver.TranscriptItem
-	usage              *driver.Usage
-	totalUsage         *driver.Usage
-	providerUsageTotal *driver.Usage
-	turnIndex          int
-	interrupted        bool
-	active             bool
-	messages           driver.MessagePort
-	wake               chan struct{}
-	turnFailure        *driver.RunFailure
-	terminal           *driver.TerminalPayload
-	terminalStatus     TurnStatus
-	protocolErr        error
-	threadID           string
-	turnID             string
-	pending            []pendingNotification
-	publicClosed       bool
-	publicStarted      bool
-	itemsEmitted       int
-	done               chan struct{}
-	doneOnce           sync.Once
+	mu              sync.Mutex
+	finalAgentText  string
+	transcript      []driver.TranscriptItem
+	usage           *driver.Usage
+	totalUsage      *driver.Usage
+	usageBaseline   *driver.Usage
+	historicalUsage *driver.Usage
+	usageTurns      map[string]*turnUsage
+	usageOrder      []string
+	turnIndex       int
+	interrupted     bool
+	active          bool
+	messages        driver.MessagePort
+	wake            chan struct{}
+	turnFailure     *driver.RunFailure
+	terminal        *driver.TerminalPayload
+	terminalStatus  TurnStatus
+	protocolErr     error
+	requestErr      error
+	threadID        string
+	turnID          string
+	pending         []pendingNotification
+	publicClosed    bool
+	publicStarted   bool
+	itemsEmitted    int
+	done            chan struct{}
+	doneOnce        sync.Once
 }
 
 type pendingNotification struct {
@@ -353,6 +383,13 @@ func (s *runState) setTurn(turnID string) {
 		return
 	}
 	s.turnID = turnID
+	if s.usageTurns == nil {
+		s.usageTurns = make(map[string]*turnUsage)
+	}
+	if s.usageTurns[turnID] == nil {
+		s.usageTurns[turnID] = &turnUsage{}
+		s.usageOrder = append(s.usageOrder, turnID)
+	}
 	s.mu.Unlock()
 	s.translator.SetTurn(turnID)
 	s.flushPendingNotificationsLocked()
@@ -377,6 +414,40 @@ func (s *runState) onNotification(method string, params json.RawMessage) {
 }
 
 func (s *runState) handleNotificationLocked(method string, params json.RawMessage) {
+	// Scope is routing, not protocol validity. Connections can replay resumed
+	// history or deliver late frames from a completed turn/another thread.
+	threadID, turnID, scoped, turnScoped, scopeErr := appServerNotificationScope(method, params)
+	s.mu.Lock()
+	foreignThread := scoped && threadID != "" && s.threadID != "" && threadID != s.threadID
+	foreignTurn := turnScoped && s.turnID != "" && turnID != s.turnID
+	knownTurn := s.usageTurns[turnID] != nil
+	closed := s.publicClosed
+	s.mu.Unlock()
+	if foreignThread {
+		return
+	}
+	if scopeErr != nil {
+		if !closed || method == NotifyTurnCompleted {
+			s.recordProtocolError(scopeErr)
+		}
+		return
+	}
+	if foreignTurn && !knownTurn {
+		if method == NotifyThreadTokenUsageUpdated && !s.freshThread {
+			s.absorbHistoricalUsage(params)
+		}
+		return
+	}
+	if method == NotifyThreadTokenUsageUpdated && knownTurn && (foreignTurn || closed) {
+		s.absorbUsage(params)
+		return
+	}
+	if foreignTurn {
+		return
+	}
+	if closed && method == NotifyThreadTokenUsageUpdated {
+		return
+	}
 	// Once the official terminal has closed normalized semantics, trailing
 	// frames remain audit-only Raw stdout. A duplicate official terminal is a
 	// protocol violation; every other trailing frame is ignored here.
@@ -465,39 +536,7 @@ func (s *runState) handleNotificationLocked(method string, params json.RawMessag
 	case NotifyItemCompleted:
 		s.absorbItem(params, false)
 	case NotifyThreadTokenUsageUpdated:
-		// Total is cumulative for the provider thread; Last is the latest
-		// inference. Seed this call with Last (excluding prior resumed history)
-		// and accumulate subsequent Total deltas across all of this call's turns.
-		// Repeated snapshots therefore cannot double-count usage.
-		var body ThreadTokenUsageUpdatedNotification
-		if err := json.Unmarshal(params, &body); err != nil {
-			s.recordProtocolError(fmt.Errorf("decode thread/tokenUsage/updated: %w", err))
-			return
-		}
-		s.mu.Lock()
-		delta := &driver.Usage{
-			InputTokens:       body.TokenUsage.Last.InputTokens,
-			OutputTokens:      body.TokenUsage.Last.OutputTokens,
-			CachedInputTokens: body.TokenUsage.Last.CachedInputTokens,
-		}
-		total := &driver.Usage{
-			InputTokens:       body.TokenUsage.Total.InputTokens,
-			OutputTokens:      body.TokenUsage.Total.OutputTokens,
-			CachedInputTokens: body.TokenUsage.Total.CachedInputTokens,
-		}
-		if previous := s.providerUsageTotal; previous != nil {
-			delta = &driver.Usage{InputTokens: total.InputTokens - previous.InputTokens,
-				OutputTokens:      total.OutputTokens - previous.OutputTokens,
-				CachedInputTokens: total.CachedInputTokens - previous.CachedInputTokens}
-			if delta.InputTokens < 0 || delta.OutputTokens < 0 || delta.CachedInputTokens < 0 {
-				s.mu.Unlock()
-				s.recordProtocolError(errors.New("thread token usage totals decreased during execution"))
-				return
-			}
-		}
-		s.providerUsageTotal = total
-		s.usage = addUsage(s.usage, delta)
-		s.mu.Unlock()
+		s.absorbUsage(params)
 	case NotifyError:
 		var body ErrorNotification
 		if err := json.Unmarshal(params, &body); err != nil {
@@ -546,10 +585,10 @@ func (s *runState) bindNotificationScopeLocked(method string, params json.RawMes
 		return true, nil
 	}
 	if threadID != s.threadID {
-		return false, fmt.Errorf("codex app-server notification %s belongs to thread %q, want %q", method, threadID, s.threadID)
+		return true, nil
 	}
 	if turnScoped && turnID != s.turnID {
-		return false, fmt.Errorf("codex app-server notification %s belongs to turn %q, want %q", method, turnID, s.turnID)
+		return true, nil
 	}
 	return false, nil
 }
@@ -580,9 +619,7 @@ func appServerNotificationScope(method string, params json.RawMessage) (threadID
 	default:
 		return "", "", false, false, nil
 	}
-	if err := json.Unmarshal(params, &envelope); err != nil {
-		return "", "", true, turnScoped, fmt.Errorf("decode %s scope: %w", method, err)
-	}
+	decodeErr := json.Unmarshal(params, &envelope)
 	threadID = envelope.ThreadID
 	if method == NotifyThreadStarted {
 		threadID = envelope.Thread.ID
@@ -591,11 +628,14 @@ func appServerNotificationScope(method string, params json.RawMessage) (threadID
 	if method == NotifyTurnStarted || method == NotifyTurnCompleted {
 		turnID = envelope.Turn.ID
 	}
+	if decodeErr != nil {
+		return threadID, turnID, true, turnScoped, fmt.Errorf("decode %s scope: %w", method, decodeErr)
+	}
 	if strings.TrimSpace(threadID) == "" {
 		return "", "", true, turnScoped, fmt.Errorf("codex app-server notification %s has no thread id", method)
 	}
 	if turnScoped && strings.TrimSpace(turnID) == "" {
-		return "", "", true, true, fmt.Errorf("codex app-server notification %s has no turn id", method)
+		return threadID, "", true, true, fmt.Errorf("codex app-server notification %s has no turn id", method)
 	}
 	return threadID, turnID, true, turnScoped, nil
 }
@@ -667,11 +707,18 @@ func (s *runState) handleTurnCompleted(params json.RawMessage) {
 		JSON:  append(json.RawMessage(nil), params...),
 	}
 	s.terminalStatus = body.Turn.Status
+	terminalUsageValid := true
 	if body.Turn.Usage != nil {
-		s.usage = &driver.Usage{
+		usage := &driver.Usage{
 			InputTokens:       body.Turn.Usage.InputTokens,
 			OutputTokens:      body.Turn.Usage.OutputTokens,
 			CachedInputTokens: body.Turn.Usage.CachedInputTokens,
+		}
+		if !nonnegativeUsage(usage) {
+			terminalUsageValid = false
+			s.recordProtocolErrorLocked(errors.New("invalid terminal token usage counters"))
+		} else {
+			s.usage = usage
 		}
 	}
 	switch body.Turn.Status {
@@ -681,8 +728,16 @@ func (s *runState) handleTurnCompleted(params json.RawMessage) {
 		}
 	case TurnStatusFailed, TurnStatusInterrupted:
 		s.turnFailure = failureFromCompletedTurn(body.Turn)
+		s.failureBeforeCancel = s.ctx == nil || s.ctx.Err() == nil
 	default:
 		s.recordProtocolErrorLocked(fmt.Errorf("turn/completed reported invalid status %q", body.Turn.Status))
+	}
+	if record := s.usageTurns[s.turnID]; record != nil {
+		record.completed = true
+		if body.Turn.Usage != nil && terminalUsageValid {
+			record.fixed = cloneUsage(s.usage)
+		}
+		s.recomputeUsageLocked()
 	}
 	usage := cloneUsage(s.usage)
 	terminalData := map[string]any{}
@@ -701,7 +756,6 @@ func (s *runState) handleTurnCompleted(params json.RawMessage) {
 	// before run.finished/run.error, because the lifecycle terminal is strict
 	// last across all provider-originated public events.
 	s.appendTranscriptLocked(item)
-	s.totalUsage = addUsage(s.totalUsage, s.usage)
 	if s.sink != nil {
 		_ = s.sink.Emit(driver.RunEvent{Type: driver.RunEventTurnCompleted, Timestamp: completedAt,
 			Turn: &driver.TurnCompleted{Index: s.turnIndex, Text: s.finalAgentText,
@@ -949,6 +1003,9 @@ func (s *runState) snapshot(opts Options, threadID, stdout, stderr string, exitC
 			Code:    driver.FailureAgentError,
 		}
 	}
+	if s.ctx != nil && s.ctx.Err() != nil && !s.failureBeforeCancel {
+		failure = &driver.RunFailure{Code: driver.FailureCancelled, Message: s.ctx.Err().Error()}
+	}
 	var checkpoint *driver.Checkpoint
 	if threadID != "" && exitCode == 0 && signal == "" && !timedOut && s.protocolErr == nil && s.terminalStatus == TurnStatusCompleted && failure == nil {
 		checkpoint = &driver.Checkpoint{
@@ -1137,4 +1194,31 @@ func (s *syncBuffer) Since(offset int) string {
 		offset = 0
 	}
 	return value[offset:]
+}
+
+func (s *runState) failedBeforeCancel() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.failureBeforeCancel
+}
+
+func (s *runState) executionError() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.protocolErr != nil {
+		return s.protocolErr
+	}
+	return s.requestErr
+}
+
+func (s *runState) abortRequest(err error) {
+	if err == nil {
+		return
+	}
+	s.mu.Lock()
+	if s.requestErr == nil {
+		s.requestErr = err
+	}
+	s.mu.Unlock()
+	s.signalDone()
 }

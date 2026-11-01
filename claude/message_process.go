@@ -19,12 +19,25 @@ type processStdin struct {
 	lp *liveProcess
 }
 
+// messageWriteError preserves how much of a failed frame reached the pipe.
+// A partial write cannot be reported as definitely undelivered.
+type messageWriteError struct {
+	err     error
+	written int
+}
+
+func (e *messageWriteError) Error() string { return e.err.Error() }
+func (e *messageWriteError) Unwrap() error { return e.err }
+
 func (w processStdin) Write(frame []byte) error {
 	w.lp.writeMu.Lock()
 	defer w.lp.writeMu.Unlock()
 	n, err := w.lp.stdin.Write(frame)
 	if err == nil && n != len(frame) {
 		err = io.ErrShortWrite
+	}
+	if err != nil {
+		return &messageWriteError{err: err, written: n}
 	}
 	return err
 }
@@ -55,11 +68,15 @@ func (lp *liveProcess) messageTurn(ctx context.Context, prompt string, sink driv
 		return driver.RawStreams{}, false, err
 	}
 	s := parser.messages
+	s.resident = !once
 	if lp.hooksInitialized {
 		s.resolveInitialization(lp.hooksErr)
 	}
 	stdin := processStdin{lp: lp}
 	s.start(stdin, lp.signalTerminate)
+	// Even without HITL, a degraded streaming transport needs the normal
+	// per-run EOF at message_stop. All writes still use the same FIFO.
+	parser.stdin = messageControlStdin{session: s}
 	if bind != nil {
 		bind(messageControlStdin{session: s})
 	}
@@ -109,7 +126,9 @@ func (lp *liveProcess) messageTurn(ctx context.Context, prompt string, sink driv
 					if !once {
 						return
 					}
-					s.enqueue(messageWrite{close: true})
+					// A terminal result needs no further input. Close directly:
+					// a blocked hook write must not hold EOF behind itself.
+					lp.beginClose()
 				}
 			}
 			if err != nil {
@@ -170,6 +189,11 @@ func (lp *liveProcess) messageTurn(ctx context.Context, prompt string, sink driv
 		runErr = ctx.Err()
 	}
 	s.finish(runErr)
+	if runErr == nil {
+		// Settlement may have retired a resident with a blocked write.
+		// Surface that failure so the pool cannot register it for reuse.
+		runErr = s.failure()
+	}
 	parser.finalize()
 	if parser.interactiveErr != nil {
 		runErr = parser.interactiveErr
@@ -202,7 +226,11 @@ func runMessageProcess(ctx context.Context, spec persistentSpec, args []string, 
 	if err != nil {
 		if ctx.Err() == nil {
 			parser.completeStream(&driver.RunFailure{Code: driver.FailureAgentError, Message: err.Error()}, 0, "", false)
-			return driver.Response{}, err
+			exitCode := 0
+			if state := lp.cmd.ProcessState; state != nil {
+				exitCode = state.ExitCode()
+			}
+			return claudeErrorResponse(req, parser, raw, model, exitCode, "", false), err
 		}
 		// Cancellation may have won immediately after Start, before the
 		// turn installed its reader and cancellation watcher.

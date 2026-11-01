@@ -60,7 +60,7 @@ func (adapter) Descriptor() driver.Descriptor {
 		Messages:     codexMessageCapability(),
 		RunPolicyCaps: driver.RunPolicyCapabilities{
 			Isolation: true, WebSearch: true, Browser: false,
-			Permission: driver.HumanDecisionSupport{Ask: false, AutoApprove: true, AutoReject: false, Retry: false},
+			Permission: driver.HumanDecisionSupport{Ask: true, AutoApprove: true, AutoReject: true, Retry: false},
 			PlanReview: driver.HumanDecisionSupport{},
 			Question:   driver.QuestionSupport{Ask: false, AutoReject: false, Retry: false},
 		},
@@ -70,7 +70,7 @@ func (adapter) Descriptor() driver.Descriptor {
 			JSONSchemaPromptValidate: true,
 			WorksWithRun:             true,
 			WorksWithStreaming:       true,
-			WorksWithHITL:            false,
+			WorksWithHITL:            true,
 			Notes:                    "Native JSON Schema output is supported by codex exec --output-schema and app-server turn/start.",
 		},
 	}
@@ -336,14 +336,14 @@ func (adapter) SyncProfileResources(ctx context.Context, cfg any, agent driver.A
 
 // StreamCapability advertises the Codex app-server transport's fidelity.
 // Core selects that provider transport from the resolved invocation; the
-// public choice between Runner.Run and Runner.Stream does not select it.
+// choosing Result or Events on the returned Stream does not select it.
 func (adapter) StreamCapability() driver.StreamCapability {
 	return driver.StreamCapability{
 		Native:       true,
 		TokenLevel:   true,
 		Reasoning:    true,
 		ToolCallArgs: true,
-		HITL:         false, // The app-server transport does not expose host decision requests.
+		HITL:         true, // App-server permission requests use the core decision sink.
 	}
 }
 
@@ -394,7 +394,7 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 	if err := injectCodexSkills(ctx, req.Skills, effectiveCodexHome, sink); err != nil {
 		return driver.Response{}, err
 	}
-	if _, err := mcpruntime.SyncResource(ctx, DriverType, effectiveCodexHome, profileKind, req.MCP); err != nil {
+	if _, err := mcpruntime.SyncResource(ctx, DriverType, effectiveCodexHome, profileKind, req.MCP, req.Policy); err != nil {
 		return driver.Response{}, err
 	}
 	if req.ProfilePayload.Declared.Config {
@@ -514,6 +514,11 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 		args = append(args, "-c", `service_tier="fast"`, "-c", "features.fast_mode=true")
 	}
 	args = append(args, filterCodexPolicyExtraArgs(cfg.ExtraArgs, req.Policy)...)
+	mcpArgs, err := codexMCPPolicyArgs(req.MCP, req.Policy)
+	if err != nil {
+		return driver.Response{}, err
+	}
+	args = append(args, mcpArgs...)
 	if req.Session != nil && req.Session.State != nil && req.Session.State.ResumeID != "" {
 		args = append(args, "resume", req.Session.State.ResumeID, "-")
 	} else {
@@ -644,7 +649,9 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 // Fork is implemented only by the official app-server thread/fork method;
 // routing it through `codex exec resume` would continue and mutate the parent.
 func usesCodexAppServer(req driver.Request) bool {
-	return req.Streaming || (req.Session != nil && req.Session.Mode == driver.SessionFork)
+	return req.Streaming || req.Policy.HumanDecision.Permission == driver.HumanDecisionAsk ||
+		req.Policy.HumanDecision.Permission == driver.HumanDecisionAutoReject ||
+		(req.Session != nil && req.Session.Mode == driver.SessionFork)
 }
 
 func validateCodexForkRequest(req driver.Request) error {

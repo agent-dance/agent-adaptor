@@ -121,21 +121,24 @@ func runTurns(ctx context.Context, client turnRPC, state *runState, opts Options
 		if err != nil {
 			return fmt.Errorf("codex app-server turn/start: %w", err)
 		}
-		state.setTurn(turn.Turn.ID)
-		if err := ctx.Err(); err != nil {
-			return err
-		}
+		// The successful RPC confirms acceptance even if cancellation became
+		// visible while the response was in flight. Settle claims before
+		// flushing turn notifications, which may already include completion.
 		for _, item := range next {
 			ack(item, driver.MessageAck{Delivered: true, Mechanism: mechanism})
 		}
 		next = nil
+		state.setTurn(turn.Turn.ID)
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		var restart []driver.MessageItem
 		var interruptErr error
 		for {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			if err := state.protocolError(); err != nil {
+			if err := state.executionError(); err != nil {
 				return err
 			}
 			select {
@@ -164,38 +167,52 @@ func runTurns(ctx context.Context, client turnRPC, state *runState, opts Options
 				}
 				return errors.New("codex app-server disconnected before turn completion")
 			case <-signal:
-				for _, item := range claim(driver.BoundaryImmediate) {
-					if err := ctx.Err(); err != nil {
-						return err
-					}
+				items := claim(driver.BoundaryImmediate)
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+				// An interrupt restarts the whole claimed batch in claim order.
+				// Otherwise deliver the batch atomically in one steer request.
+				for _, item := range items {
 					if item.Timing == driver.TimingInterrupt {
-						restart = append(restart, item)
-						continue
+						restart = items
+						break
 					}
+				}
+				if len(items) != 0 && len(restart) == 0 {
 					state.mu.Lock()
 					active := state.active
 					state.mu.Unlock()
-					if !active {
-						deferredIDs = append(deferredIDs, item.ID)
-						deferredAcks[item.ID] = driver.MessageAck{Err: errors.New("codex app-server turn is no longer active"), Requeue: true}
-						continue
+					outcome := driver.MessageAck{Err: errors.New("codex app-server turn is no longer active"), Requeue: true}
+					if active {
+						input := make([]UserInput, 0, len(items))
+						for _, item := range items {
+							input = append(input, TextInput(item.Text))
+						}
+						rpcCtx, cancel := context.WithTimeout(ctx, messageRPCTimeout)
+						_, err := client.TurnSteer(rpcCtx, TurnSteerParams{ThreadID: threadID, ExpectedTurnID: turn.Turn.ID, Input: input})
+						cancel()
+						if err == nil {
+							for _, item := range items {
+								ack(item, driver.MessageAck{Delivered: true, Mechanism: "codex.turn_steer"})
+							}
+						} else {
+							var providerErr *jsonrpc2.Error
+							outcome = driver.MessageAck{Err: err, Requeue: true, MaybeDelivered: !errors.As(err, &providerErr)}
+						}
+						// Confirmed success owns the receipt; cancel owns the run.
+						if ctx.Err() != nil {
+							return ctx.Err()
+						}
+						if err == nil {
+							continue
+						}
 					}
-					rpcCtx, cancel := context.WithTimeout(ctx, messageRPCTimeout)
-					_, err := client.TurnSteer(rpcCtx, TurnSteerParams{ThreadID: threadID, ExpectedTurnID: turn.Turn.ID, Input: []UserInput{TextInput(item.Text)}})
-					cancel()
-					if ctx.Err() != nil {
-						return ctx.Err()
-					}
-					if err == nil {
-						ack(item, driver.MessageAck{Delivered: true, Mechanism: "codex.turn_steer"})
-					} else {
-						var providerErr *jsonrpc2.Error
-						ambiguous := !errors.As(err, &providerErr)
-						// Keep this claim until turn end so a level-triggered port
-						// cannot immediately reclaim a failed steer in a busy loop.
-						// New messages (including interrupts) remain deliverable.
+					// Keep failed claims until turn end, preventing an immediate
+					// retry loop while newer messages remain deliverable.
+					for _, item := range items {
 						deferredIDs = append(deferredIDs, item.ID)
-						deferredAcks[item.ID] = driver.MessageAck{Err: err, Requeue: true, MaybeDelivered: ambiguous}
+						deferredAcks[item.ID] = outcome
 					}
 				}
 				if len(restart) != 0 {
@@ -219,7 +236,7 @@ func runTurns(ctx context.Context, client turnRPC, state *runState, opts Options
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if err := state.protocolError(); err != nil {
+		if err := state.executionError(); err != nil {
 			return err
 		}
 		for _, id := range deferredIDs {
@@ -276,6 +293,7 @@ func (s *runState) nextTurn() {
 	s.terminalStatus = ""
 	s.publicClosed = false
 	s.interrupted = false
+	s.failureBeforeCancel = false
 	s.done = make(chan struct{})
 	s.doneOnce = sync.Once{}
 }

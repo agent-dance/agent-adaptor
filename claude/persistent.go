@@ -236,7 +236,7 @@ func (w *persistentWriter) run(ctx context.Context, spec persistentSpec, sink dr
 		return raw, err
 	}
 
-	if parser.sessionID == "" || (parser.messages != nil &&
+	if lp.isClosed() || parser.sessionID == "" || (parser.messages != nil &&
 		(!parser.terminalSuccess || parser.protocolMalformed || parser.interactiveErr != nil || parser.pendingFailure != nil)) {
 		w.pool.detach(lp)
 		_ = lp.terminateAndWait(context.Background())

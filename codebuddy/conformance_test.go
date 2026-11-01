@@ -139,6 +139,9 @@ func TestCodeBuddyDriverConformance(t *testing.T) {
 		adaptertest.WithExpectedDetectedModel("claude-sonnet-5"),
 		adaptertest.WithRequiredConfigFields("command", "cwd", "model"),
 		adaptertest.ExpectRejectForeignConfig(),
+		adaptertest.WithMessageFixture("headless", codeBuddyMessageFixture("headless")),
+		adaptertest.WithMessageFixture("control", codeBuddyMessageFixture("control")),
+		adaptertest.WithMessageFixture("resident", codeBuddyMessageFixture("resident")),
 		liveOpt,
 	}
 	if live {

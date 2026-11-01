@@ -29,7 +29,7 @@ func TestDescriptorAdvertisesTruthfulRunPolicyCapabilities(t *testing.T) {
 	if !caps.Isolation || !caps.WebSearch || caps.Browser {
 		t.Fatalf("unexpected Codex feature policy capabilities: %#v", caps)
 	}
-	if !caps.Permission.AutoApprove || caps.Permission.Ask || caps.Permission.AutoReject || caps.Permission.Retry {
+	if !caps.Permission.AutoApprove || !caps.Permission.Ask || !caps.Permission.AutoReject || caps.Permission.Retry {
 		t.Fatalf("unexpected Codex permission capabilities: %#v", caps.Permission)
 	}
 	if caps.PlanReview.Ask || caps.PlanReview.AutoApprove || caps.PlanReview.AutoReject || caps.PlanReview.Retry {

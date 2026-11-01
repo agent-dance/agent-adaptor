@@ -473,7 +473,7 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 			if messages {
 				pparser.completeStream(&driver.RunFailure{Code: driver.FailureAgentError, Message: persistentErr.Error()}, 0, "", false)
 			}
-			return driver.Response{}, persistentErr
+			return claudeErrorResponse(req, pparser, praw, reportedModel, 0, "", errors.Is(ctx.Err(), context.DeadlineExceeded)), persistentErr
 		}
 	} else if writer != nil {
 		if err := writer.suspendAndWait(resumeID, persistentSessionKey(req), persistentPreviousSessionKey(req)); err != nil {
@@ -533,15 +533,20 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 		}
 
 		result, runErr := clihelper.Run(ctx, runReq, sink)
-		if runErr != nil {
-			return driver.Response{}, runErr
-		}
 		parser.finalize()
 		raw := driver.RawStreams{Stdout: result.RawStreams.Stdout, Stderr: result.RawStreams.Stderr, Terminal: parser.terminal}
+		if runErr != nil {
+			code := driver.FailureAgentError
+			if errors.Is(runErr, context.Canceled) || errors.Is(runErr, context.DeadlineExceeded) {
+				code = driver.FailureCancelled
+			}
+			parser.completeStream(&driver.RunFailure{Code: code, Message: runErr.Error()}, result.ExitCode, result.Signal, result.TimedOut)
+			return claudeErrorResponse(req, parser, raw, reportedModel, result.ExitCode, result.Signal, result.TimedOut), runErr
+		}
 		driverResult, err = buildClaudeResponse(req, parser, raw, result.ExitCode, result.Signal, result.TimedOut, reportedModel, effectiveCWD, profileFingerprint)
 	}
 	if err != nil {
-		return driver.Response{}, err
+		return driverResult, err
 	}
 	if writer != nil && !req.Spawn && persistentPreWarmEligible(cfg, req) &&
 		driverResult.ExitCode == 0 && driverResult.Failure == nil &&
@@ -568,11 +573,11 @@ func buildClaudeResponse(
 	if parser.interactiveErr != nil {
 		failure := &driver.RunFailure{Code: driver.FailureAgentError, Message: parser.interactiveErr.Error()}
 		parser.completeStream(failure, exitCode, signal, timedOut)
-		return driver.Response{}, parser.interactiveErr
+		return claudeErrorResponse(req, parser, raw, reportedModel, exitCode, signal, timedOut), parser.interactiveErr
 	}
 	if err := validateClaudeForkOutcome(req, parser); err != nil {
 		parser.completeStream(&driver.RunFailure{Code: driver.FailureAgentError, Message: err.Error()}, exitCode, signal, timedOut)
-		return driver.Response{}, err
+		return claudeErrorResponse(req, parser, raw, reportedModel, exitCode, signal, timedOut), err
 	}
 	if req.Session != nil && req.Session.State != nil && strings.TrimSpace(req.Session.State.ResumeID) != "" &&
 		!parser.terminalSuccess && isClaudeResumeRejected(raw.Stdout, raw.Stderr, parser.errorMessage) {
@@ -582,7 +587,7 @@ func buildClaudeResponse(
 		}
 		err := &engine.ResumeRejectedError{Reason: reason}
 		parser.completeStream(&driver.RunFailure{Code: driver.FailureAgentError, Message: err.Error()}, exitCode, signal, timedOut)
-		return driver.Response{}, err
+		return claudeErrorResponse(req, parser, raw, reportedModel, exitCode, signal, timedOut), err
 	}
 	failure := parser.failureForOutcome(exitCode, signal, timedOut)
 	var structuredOutput *driver.StructuredOutput
@@ -624,6 +629,26 @@ func buildClaudeResponse(
 		RuntimeServices:  driverutil.RuntimeReportsFromRefs(req.Runtime.Ensured, req.Agent),
 		Failure:          failure,
 	}, nil
+}
+
+// claudeErrorResponse retains observations when transport or validation fails.
+// The error remains authoritative, and no unhealthy checkpoint is returned.
+func claudeErrorResponse(req driver.Request, parser *claudeParser, raw driver.RawStreams, model string, exitCode int, signal string, timedOut bool) driver.Response {
+	parser.ensureAggregateUsage()
+	raw.Terminal = parser.terminal
+	return driver.Response{
+		Output:          parser.buildOutput(),
+		RawStreams:      &raw,
+		Transcript:      parser.transcript,
+		ExitCode:        exitCode,
+		Signal:          signal,
+		TimedOut:        timedOut,
+		Usage:           parser.usage,
+		Provider:        "anthropic",
+		Model:           model,
+		Summary:         parser.finalSummary(),
+		RuntimeServices: driverutil.RuntimeReportsFromRefs(req.Runtime.Ensured, req.Agent),
+	}
 }
 
 func persistentSessionKey(req driver.Request) string {

@@ -18,6 +18,39 @@ func SyncCodexProfile(codexHome string, kind ProfileKind, payload driver.MCPPayl
 }
 
 func codexServerConfig(server driver.MCPServerSpec) (map[string]any, error) {
+	// Profile synchronization has no execution policy. Materialize the safe
+	// prompt default; every invocation applies its resolved policy again.
+	return CodexServerConfig(server, driver.RunPolicy{})
+}
+
+// CodexServerConfig renders an SDK-declared server for both materialization and
+// invocation-local overrides. Explicit server defaults and exact tools policies
+// belong in this rendering path, before the derived default is filled in.
+func CodexServerConfig(server driver.MCPServerSpec, policy driver.RunPolicy) (map[string]any, error) {
+	entry, err := codexServerTransportConfig(server)
+	if err != nil {
+		return nil, err
+	}
+	applyCodexMCPApprovalDefault(entry, policy)
+	return entry, nil
+}
+
+// applyCodexMCPApprovalDefault supplies a fallback, never an exact-tool policy.
+// A server's explicit default wins; tools.<exact name>.approval_mode is left
+// intact and takes precedence in Codex. Filesystem isolation does not restrict
+// host-owned tools, so SDK-declared servers always remain available.
+func applyCodexMCPApprovalDefault(entry map[string]any, policy driver.RunPolicy) {
+	if _, explicit := entry["default_tools_approval_mode"]; !explicit {
+		mode := "prompt"
+		if driver.EffectiveHumanDecisionPolicy(policy.HumanDecision).Permission == driver.HumanDecisionAutoApprove {
+			mode = "approve"
+		}
+		entry["default_tools_approval_mode"] = mode
+	}
+	entry["enabled"] = true
+}
+
+func codexServerTransportConfig(server driver.MCPServerSpec) (map[string]any, error) {
 	switch server.Transport {
 	case driver.MCPTransportStdio:
 		entry := map[string]any{

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/agent-dance/agent-adaptor/v2/driver"
 )
@@ -26,7 +27,7 @@ type ReferenceConfig struct {
 
 // NewReferenceDriver returns the suite's reference driver.Driver: a fully
 // in-memory implementation that satisfies every clause TestDriver enforces
-// and implements all optional capability interfaces. It is both the suite's
+// and implements the optional probe interfaces. It is both the suite's
 // self-proof (see the package tests) and a template for third-party driver
 // authors — every emission below is annotated with the clause it upholds.
 func NewReferenceDriver(cfg ReferenceConfig) driver.Driver {
@@ -62,7 +63,7 @@ func (d referenceDriver) model() string {
 
 // Descriptor declares exactly what the implementation delivers (CAP-01,
 // CAP-02, SO-01): resume + codec, ephemeral skills, native and
-// prompt-validate structured output working in the v1 execution pipeline and
+// prompt-validate structured output working in the v2 execution pipeline and
 // with the provider-native streaming transport.
 func (d referenceDriver) Descriptor() driver.Descriptor {
 	return driver.Descriptor{
@@ -185,6 +186,7 @@ func (d referenceDriver) Run(ctx context.Context, req driver.Request, sink drive
 		})
 		// EVT-02: run.error is the terminal frame and carries Error.
 		stream(driver.StreamPayload{Kind: driver.StreamRunError, Error: failure})
+		_ = sink.Emit(driver.RunEvent{Type: driver.RunEventTurnCompleted, Turn: &driver.TurnCompleted{CompletedAt: time.Now().UTC()}})
 		_ = sink.Emit(driver.RunEvent{Type: driver.RunEventLifecycle, Text: "run failed"})
 		return driver.Response{
 			RawStreams: &driver.RawStreams{},
@@ -254,6 +256,8 @@ func (d referenceDriver) Run(ctx context.Context, req driver.Request, sink drive
 
 	usage := &driver.Usage{InputTokens: 12, OutputTokens: 34}
 	addItem(driver.TranscriptItem{Kind: driver.TranscriptResult, Text: "success", Subtype: "success", Usage: usage})
+
+	_ = sink.Emit(driver.RunEvent{Type: driver.RunEventTurnCompleted, Turn: &driver.TurnCompleted{Text: output, Usage: usage, CompletedAt: time.Now().UTC()}})
 
 	// EVT-11: every lifecycle above is closed before the terminal frame.
 	// EVT-02: exactly one run.finished, nothing but closers may follow.

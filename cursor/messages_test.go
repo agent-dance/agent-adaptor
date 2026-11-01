@@ -40,6 +40,9 @@ func TestMain(m *testing.M) {
 // The gate blocks on the parent's observed init event, so the helper exercises
 // the real process, HTTP relay and parser without relying on scheduling sleeps.
 func runCursorMessageHelper(mode string) int {
+	if mode == "conformance" {
+		return runCursorMessageConformanceHelper()
+	}
 	if _, err := io.ReadAll(os.Stdin); err != nil {
 		return 2
 	}

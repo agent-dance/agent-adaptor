@@ -332,6 +332,9 @@ func (f *persistentCodeBuddyFixture) close() {
 }
 
 func runCodeBuddyPersistentHelper() int {
+	if os.Getenv("CODEBUDDY_MSG_EVIDENCE") != "" {
+		return runCodeBuddyMessageConformanceHelper()
+	}
 	recordCodeBuddyPersistentHelperSpawn(
 		os.Getenv("SPAWN_FILE"),
 		os.Getenv("PID_FILE"),

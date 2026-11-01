@@ -10,9 +10,9 @@ import (
 	"github.com/agent-dance/agent-adaptor/v2/internal/profileinstructions"
 )
 
-// runAppServer handles provider-streaming invocations and SessionFork. Forks
-// use the official app-server thread/fork method even when the public caller
-// selected Run; the unified event pipeline drains the provider stream.
+// runAppServer handles invocations resolved to the app-server transport and
+// SessionFork. Forks use the official app-server thread/fork method; the
+// unified event pipeline preserves the provider stream for either result reader.
 //
 // The function mirrors the existing exec --json path for session resume
 // validation (CWD / workspace-id consistency) and checkpoint construction so
@@ -66,6 +66,11 @@ func buildAppServerOptions(
 	if err != nil {
 		return appserver.Options{}, err
 	}
+	mcpArgs, err := codexMCPPolicyArgs(req.MCP, req.Policy)
+	if err != nil {
+		return appserver.Options{}, err
+	}
+	extraArgs = append(extraArgs, mcpArgs...)
 	model, effort, serviceTier := codexAppServerConfigProjection(cfg)
 
 	opts := appserver.Options{

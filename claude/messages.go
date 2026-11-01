@@ -70,9 +70,11 @@ type messageWrite struct {
 type messageSession struct {
 	ctx         context.Context
 	port        driver.MessagePort
+	resident    bool // set before the parser reader starts
 	mu          sync.Mutex
 	jobs        []messageWrite
 	ended       bool
+	writing     bool // guarded by mu; stdin I/O is in progress
 	err         error
 	writeErr    error
 	open        bool // accessed only by the parser and after its reader has joined
@@ -81,6 +83,7 @@ type messageSession struct {
 	initialized chan struct{}
 	hooksErr    error // guarded by mu; immutable after initialized closes
 	hooksReady  bool  // guarded by mu
+	abort       func()
 }
 
 func newMessageSession(ctx context.Context, port driver.MessagePort) *messageSession {
@@ -119,7 +122,7 @@ func (s *messageSession) enqueue(job messageWrite) error {
 	if s.ended {
 		err := s.err
 		s.mu.Unlock()
-		s.complete(job, err)
+		s.complete(job, err, false)
 		return err
 	}
 	s.jobs = append(s.jobs, job)
@@ -137,11 +140,12 @@ func (s *messageSession) write(frame []byte) error {
 	return <-done
 }
 
-func (s *messageSession) complete(job messageWrite, err error) {
+func (s *messageSession) complete(job messageWrite, err error, maybeDelivered bool) {
 	for _, item := range job.items {
 		ack := driver.MessageAck{Delivered: err == nil, Mechanism: job.mechanism, Err: err}
 		if err != nil {
 			ack.Requeue = s.ctx.Err() == nil
+			ack.MaybeDelivered = maybeDelivered
 			if !ack.Requeue {
 				ack.Err = errors.Join(err, s.ctx.Err())
 			}
@@ -154,6 +158,7 @@ func (s *messageSession) complete(job messageWrite, err error) {
 }
 
 func (s *messageSession) start(stdin interactiveStdin, abort func()) {
+	s.abort = abort
 	go func() {
 		defer close(s.done)
 		var writeErr error
@@ -172,8 +177,10 @@ func (s *messageSession) start(stdin interactiveStdin, abort func()) {
 			s.jobs[0] = messageWrite{}
 			s.jobs = s.jobs[1:]
 			ended, endErr := s.ended, s.err
+			s.writing = !ended && writeErr == nil
 			s.mu.Unlock()
 			err := writeErr
+			maybeDelivered := false
 			if err == nil && ended {
 				err = endErr
 			}
@@ -185,11 +192,16 @@ func (s *messageSession) start(stdin interactiveStdin, abort func()) {
 					err = stdin.Close()
 				} else {
 					err = stdin.Write(job.frame)
+					var pipeErr *messageWriteError
+					maybeDelivered = errors.As(err, &pipeErr) && pipeErr.written > 0
 				}
 				// Once writing starts, its result decides delivery even if ctx
 				// was cancelled while the write was in flight.
 			}
-			s.complete(job, err)
+			s.mu.Lock()
+			s.writing = false
+			s.mu.Unlock()
+			s.complete(job, err, maybeDelivered)
 			if err != nil && writeErr == nil {
 				writeErr = err
 				s.mu.Lock()
@@ -213,7 +225,15 @@ func (s *messageSession) finish(err error) {
 	}
 	s.mu.Lock()
 	s.ended, s.err = true, err
+	writing := s.writing
 	s.mu.Unlock()
+	// The provider has finished: an in-flight hook response no longer has
+	// a live callback guaranteed to read it. Retire immediately rather than
+	// wait on a pipe that the resident may leave open indefinitely. Closing
+	// stdin interrupts I/O; the writer still owns every claim's actual Ack.
+	if writing {
+		s.abort()
+	}
 	select {
 	case s.wake <- struct{}{}:
 	default:
@@ -275,8 +295,9 @@ func (p *claudeParser) prepareMessageHook(payload map[string]any) bool {
 		p.turnComplete = false
 		s.window(true)
 		if event == "Stop" {
-			items = append(items, s.port.Claim(driver.BoundaryStop)...)
-			items = append(items, s.port.Claim(driver.BoundaryTurnEnd)...)
+			// Stop is also the turn-end boundary. One atomic claim includes
+			// Soon and AfterTurn in their original admission order.
+			items = s.port.Claim(driver.BoundaryTurnEnd)
 		} else {
 			items = s.port.Claim(driver.BoundaryTool)
 		}
@@ -288,7 +309,7 @@ func (p *claudeParser) prepareMessageHook(payload map[string]any) bool {
 			text := strings.Join(texts, "\n\n")
 			if event == "Stop" {
 				output = map[string]any{"decision": "block", "reason": text}
-				p.emitTurnCompleted(p.turnText, nil)
+				p.emitTurnCompleted(p.turnText, p.turnUsage)
 				p.turnText = ""
 			} else {
 				output["hookSpecificOutput"] = map[string]any{"hookEventName": event, "additionalContext": text}
@@ -321,6 +342,9 @@ func (p *claudeParser) emitTurnCompleted(text string, usage *driver.Usage) {
 			Turn: &driver.TurnCompleted{Index: p.turnIndex, Text: text, Usage: copyUsage, CompletedAt: now}})
 	}
 	p.turnIndex++
+	p.completedUsage = addClaudeUsage(p.completedUsage, usage)
+	p.turnUsage = nil
+	p.turnMessageUsage = nil
 }
 
 // initialize returns an optional hook-unavailability reason separately from

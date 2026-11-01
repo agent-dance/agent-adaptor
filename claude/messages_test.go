@@ -274,7 +274,7 @@ func TestMessageWindowAndSubagents(t *testing.T) {
 	if !reflect.DeepEqual(port.windows, []bool{true, false}) {
 		t.Fatalf("windows=%v", port.windows)
 	}
-	if !reflect.DeepEqual(port.claims, []driver.Boundary{driver.BoundaryTool, driver.BoundaryTool, driver.BoundaryStop, driver.BoundaryTurnEnd}) {
+	if !reflect.DeepEqual(port.claims, []driver.Boundary{driver.BoundaryTool, driver.BoundaryTool, driver.BoundaryTurnEnd}) {
 		t.Fatalf("claims=%v", port.claims)
 	}
 }
@@ -382,6 +382,12 @@ func TestMessageResolverTransport(t *testing.T) {
 const messageHelperEnv = "AGENT_ADAPTOR_CLAUDE_MESSAGE_HELPER"
 
 func messageHelper() int {
+	if os.Getenv("CLAUDE_MSG_SCENARIO") != "" {
+		return runClaudeMessageConformanceHelper()
+	}
+	if os.Getenv("MESSAGE_MODE") == "eof" {
+		return runMessageEOFHelper()
+	}
 	if os.Getenv("MESSAGE_MODE") == "empty" && !claudePersistentInputMode(os.Args[1:]) {
 		_, _ = io.Copy(io.Discard, os.Stdin)
 		emitEmptyMessageTurn(json.NewEncoder(os.Stdout))
@@ -734,9 +740,15 @@ func TestMessageHITLDecisionErrorPreserved(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 			sink := &messageTestSink{decisionErr: wantErr}
-			_, err = d.Run(ctx, req, sink)
+			response, err := d.Run(ctx, req, sink)
 			if !errors.Is(err, wantErr) {
 				t.Fatalf("error=%v want %v", err, wantErr)
+			}
+			if response.RawStreams == nil || !strings.Contains(response.RawStreams.Stdout, `"can_use_tool"`) {
+				t.Fatalf("approval failure lost observed protocol: %+v", response)
+			}
+			if response.Checkpoint != nil && response.Checkpoint.Valid {
+				t.Fatalf("approval failure produced a healthy checkpoint: %+v", response.Checkpoint)
 			}
 			var terminals int
 			for _, ev := range sink.streams {
@@ -817,7 +829,7 @@ func TestMessageStopCombinesBoundariesAndCompletesOnce(t *testing.T) {
 	if len(turns) != 2 || turns[0].Text != "first" || turns[1].Text != "final" {
 		t.Fatalf("turns=%+v", turns)
 	}
-	if !reflect.DeepEqual(port.claims, []driver.Boundary{driver.BoundaryStop, driver.BoundaryTurnEnd}) {
+	if !reflect.DeepEqual(port.claims, []driver.Boundary{driver.BoundaryTurnEnd}) {
 		t.Fatalf("claims=%v", port.claims)
 	}
 }
@@ -838,5 +850,26 @@ func TestMessageTransportNegotiationPreservesPolicy(t *testing.T) {
 				t.Fatalf("args=%v", args)
 			}
 		}
+	}
+}
+
+func TestMessageStopPreservesAdmissionOrderAcrossTimings(t *testing.T) {
+	port := newMessageTestPort(
+		driver.MessageItem{ID: "earlier", Text: "earlier after-turn guidance", Timing: driver.TimingAfterTurn},
+		driver.MessageItem{ID: "later", Text: "later soon guidance", Timing: driver.TimingSoon},
+	)
+	p := newClaudeParser(&messageTestSink{})
+	s := newInitializedMessageTestSession(context.Background(), port)
+	p.messages = s
+	writes := make(chan []byte, 1)
+	s.start(messageTestStdin{writes: writes}, func() {})
+	defer s.finish(nil)
+	p.handlePayload("", messageHook("Stop", "", ""))
+	out := messageHookOutput(t, <-writes)
+	<-port.acked
+	<-port.acked
+	want := "earlier after-turn guidance\n\nlater soon guidance"
+	if out["reason"] != want {
+		t.Fatalf("Stop reason = %q, want admission order %q", out["reason"], want)
 	}
 }

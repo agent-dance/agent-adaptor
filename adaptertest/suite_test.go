@@ -9,10 +9,9 @@ import (
 	"github.com/agent-dance/agent-adaptor/v2/driver"
 )
 
-// TestReferenceDriverConformance is the suite's self-proof: the shipped
-// reference driver must pass every clause with every opt-in probe enabled,
-// including the "live" probes (which are in-memory for this driver, so
-// they run in CI without any CLI).
+// TestReferenceDriverConformance proves the baseline and optional probes,
+// including in-memory "live" execution. TestReferenceMessageDriverConformance
+// separately proves the MSG matrix with its scripted provider fixture.
 func TestReferenceDriverConformance(t *testing.T) {
 	cwd := t.TempDir()
 	cfg := ReferenceConfig{Model: "reference-1", CWD: cwd}
@@ -53,6 +52,9 @@ func TestReferenceDriverFailurePath(t *testing.T) {
 	}
 	if vs := VerifyRunEvents(sink.Events()); len(vs) != 0 {
 		t.Errorf("failure-path run events violate the contract: %v", vs)
+	}
+	if vs := VerifyMessageTurns(sink.Events(), []driver.TurnCompleted{{}}); len(vs) != 0 {
+		t.Errorf("failure-path turn reporting violates the contract: %v", vs)
 	}
 	if vs := VerifyTranscriptMirror(sink.Events(), resp.Transcript); len(vs) != 0 {
 		t.Errorf("failure-path transcript mirror violates the contract: %v", vs)
@@ -135,5 +137,27 @@ func TestReferenceDriverStructuredPromptSource(t *testing.T) {
 	}
 	if !json.Valid([]byte(resp.Output)) {
 		t.Errorf("Output %q is not exact JSON text", resp.Output)
+	}
+}
+
+// Message fixtures exercise the complete capability matrix independently from
+// the lifecycle reference driver, whose conservative declaration is resume-only.
+func TestReferenceMessageDriverConformance(t *testing.T) {
+	for _, unit := range []driver.MessageUnit{driver.MessageUnitUTF16, driver.MessageUnitBytes, ""} {
+		t.Run(string(unit), func(t *testing.T) {
+			factory := func(t *testing.T, s MessageScenario) MessageFixture {
+				f := NewReferenceMessageFixture(t, s)
+				d := f.Driver.(referenceMessageDriver)
+				d.capability.Unit = unit
+				if unit == driver.MessageUnitBytes {
+					// Explicit turn_end is legal, but must still obey Continue:
+					// it is not another mid-turn boundary for the suite to probe.
+					d.capability.Boundaries = append(d.capability.Boundaries, driver.BoundaryTurnEnd)
+				}
+				f.Driver = d
+				return f
+			}
+			TestDriver(t, func() driver.Driver { return factory(t, MessageScenario{Name: "probe"}).Driver }, WithMessageFixture("reference", factory))
+		})
 	}
 }

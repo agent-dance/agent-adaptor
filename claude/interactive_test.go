@@ -78,7 +78,7 @@ func TestInteractiveDecisionErrorAbortsDriverUnchanged(t *testing.T) {
 	sink := newFakeInteractiveSink(func(agentadaptor.DecisionRequest) (agentadaptor.DecisionResponse, error) {
 		return agentadaptor.DecisionResponse{}, wantErr
 	})
-	_, err := (adapter{}).Run(context.Background(), agentadaptor.Request{
+	response, err := (adapter{}).Run(context.Background(), agentadaptor.Request{
 		RunID:     "run-decision-abort",
 		Streaming: true,
 		Prompt:    "run pwd",
@@ -90,6 +90,13 @@ func TestInteractiveDecisionErrorAbortsDriverUnchanged(t *testing.T) {
 	}, sink)
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("Run error = %v, want original RequestDecision error %v", err, wantErr)
+	}
+	if response.RawStreams == nil || !strings.Contains(response.RawStreams.Stdout, terminal) ||
+		response.RawStreams.Terminal == nil || string(response.RawStreams.Terminal.JSON) != terminal || len(response.Transcript) == 0 {
+		t.Fatalf("approval failure lost its terminal protocol observations: %+v", response)
+	}
+	if response.Checkpoint != nil && response.Checkpoint.Valid {
+		t.Fatalf("approval failure produced a healthy checkpoint: %+v", response.Checkpoint)
 	}
 	assertClaudeStreamTerminal(t, sink.events, agentadaptor.StreamRunError)
 }

@@ -73,6 +73,9 @@ func TestClaudeDriverConformance(t *testing.T) {
 		adaptertest.WithExpectedDetectedModel("claude-sonnet-4"),
 		adaptertest.WithRequiredConfigFields("command", "cwd", "model"),
 		adaptertest.ExpectRejectForeignConfig(),
+		adaptertest.WithMessageFixture("hooks", claudeMessageFixture("hooks")),
+		adaptertest.WithMessageFixture("resident", claudeMessageFixture("resident")),
+		adaptertest.WithMessageFixture("native", claudeMessageFixture("native")),
 		liveOpt,
 	}
 	if live {

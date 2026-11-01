@@ -154,7 +154,7 @@ func VerifyStructuredOutputCapability(capability driver.StructuredOutputCapabili
 	}
 	if declared && !capability.WorksWithRun {
 		out = append(out, violationf("SO-01",
-			"a structured-output mechanism is declared with WorksWithRun=false; structured output uses v1's single execution pipeline"))
+			"a structured-output mechanism is declared with WorksWithRun=false; structured output uses v2's single Send execution pipeline"))
 	}
 	return out
 }

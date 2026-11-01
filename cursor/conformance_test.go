@@ -73,6 +73,8 @@ func TestCursorDriverConformance(t *testing.T) {
 		adaptertest.WithExpectedDetectedModel("gpt-5"),
 		adaptertest.WithRequiredConfigFields("command", "cwd", "model"),
 		adaptertest.ExpectRejectForeignConfig(),
+		adaptertest.WithMessageFixture("relay", cursorMessageFixture(true)),
+		adaptertest.WithMessageFixture("unmanaged", cursorMessageFixture(false)),
 		liveOpt,
 	}
 	if live {

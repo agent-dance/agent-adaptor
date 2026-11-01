@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -98,8 +99,13 @@ func TestVersionEnvironment(t *testing.T) {
 			}
 			req := driver.Request{Streaming: true, Messages: &versionUnusedPort{}, Workspace: driver.WorkspaceLease{CWD: cfg.CWD, StrategyType: driver.WorkspaceStrategyGitWorktree}}
 			got := d.(driver.MessageCapabilityResolver).ResolveMessageCapability(req)
-			if !reflect.DeepEqual(got, want) {
-				t.Fatalf("runtime=%+v want=%+v", got, want)
+			runtimeWant := want
+			if runtime.GOOS == "windows" {
+				// Version support does not enable the unverified Windows relay.
+				runtimeWant.Boundaries = nil
+			}
+			if !reflect.DeepEqual(got, runtimeWant) {
+				t.Fatalf("runtime=%+v want=%+v", got, runtimeWant)
 			}
 		})
 	}

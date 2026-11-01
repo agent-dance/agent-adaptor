@@ -70,6 +70,8 @@ func TestCodexDriverConformance(t *testing.T) {
 		adaptertest.WithExpectedDetectedModel("gpt-5.4"),
 		adaptertest.WithRequiredConfigFields("command", "cwd", "model"),
 		adaptertest.ExpectRejectForeignConfig(),
+		adaptertest.WithMessageFixture("app-server", codexMessageFixture(true)),
+		adaptertest.WithMessageFixture("exec", codexMessageFixture(false)),
 		liveOpt,
 	}
 	if live {

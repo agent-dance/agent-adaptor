@@ -28,8 +28,11 @@ portable combination.
 `Descriptor.Messages` declares the `tool` and `stop` boundaries, continuation
 inside `Driver.Run`, and a minimum Claude Code version of **2.1.110**. Interrupt,
 echo-confirmed delivery, and persistence of delivered hook context across resume
-are unverified and are all reported as false. The driver does not currently probe the installed CLI
-version; `MinVersion` is a requirement, not evidence of a successful probe.
+are unverified and are all reported as false. The driver probes the configured
+CLI version and removes the hook boundaries and in-run continuation below this
+minimum. Those calls use checkpoint resume and report the downgrade through a
+Notice; Inspect reports the effective capability. An unknown version is reported
+as a diagnostic and retains the declared capability and runtime hook fallback.
 
 `ResolveMessageCapability` reports these capabilities only for stream-json
 input. A non-nil `Request.Messages` negotiates that input for ordinary calls
@@ -44,16 +47,21 @@ When messages are enabled, an acknowledged SDK `initialize` request registers
 Only the registered main-agent callbacks open the delivery window; callbacks
 with an `agent_id` or `parent_tool_use_id` receive an empty success response.
 UserPromptSubmit and tool callbacks claim at the `tool` boundary and inject
-claimed text as `additionalContext`. Stop claims both `stop` and `turn_end`
-messages and returns `decision: block` with the combined
-reason when input remains. An empty Stop closes the window.
+claimed text as `additionalContext`. Stop makes one `turn_end` claim, which
+includes both Soon and AfterTurn messages in admission order, and returns
+`decision: block` with the combined reason when input remains. An empty Stop
+closes the window.
 
 Core buffers input before hook registration or a delivery window opens; a
 closed window is not an admission error. Claims occur synchronously while
 parsing; a separate writer serializes pipe writes and acknowledges each item
 afterwards. This is write acceptance, not provider echo confirmation. Failed
-writes requeue items for turn-end continuation; cancellation fails them without
-requeueing. A write already in progress decides its own outcome. Both per-run and resident processes use this same mechanism.
+writes requeue items for turn-end continuation; a partial failed write marks
+the item as possibly delivered. Cancellation fails items without requeueing.
+A write already in progress decides its own outcome. Both per-run and resident
+processes use this same mechanism. If a resident finishes while a hook write
+is still blocked, the driver closes its input and retires the process before
+returning, settling every claimed message from the actual write outcome.
 Residents initialize hooks once per process and bind a fresh MessagePort for
 each call; changing whether messages are enabled replaces the resident process.
 
@@ -64,14 +72,19 @@ The ordinary prompt and HITL control transport continue, the message window
 stays closed, and core delivers queued messages at turn end through checkpoint
 resume. Late success responses or callbacks cannot re-enable hooks. Resident
 calls retain this outcome instead of retrying registration on every turn.
+After degradation, a terminal assistant `message_stop` closes per-run stdin
+so providers waiting for EOF can flush their result; resident stdin stays open
+for the next turn, matching the ordinary resident transport.
 Cancellation interrupts the handshake; process exit and pipe failures remain
 run failures.
 
 Every continued Stop segment and the final provider result emits one
 `RunEventTurnCompleted` with an increasing index. The final response retains
 the whole call's Raw and Transcript, the final segment's result text, and the
-provider result's Usage. Interim Stop events have no Usage because that hook
-does not report per-segment token accounting. Core publishes `TurnEnd` for these
+provider result's aggregate Usage. Every segment uses the observed main-agent
+assistant-message Usage, with repeated snapshots of one message counted once.
+The final segment reconciles the terminal aggregate against prior segments.
+Missing Usage stays nil, and observed zero Usage remains distinct. Core publishes `TurnEnd` for these
 turns and the authoritative `Done` only after execution finalization. A message
 that arrives after the last empty Stop claim is resumed by core from the healthy
 checkpoint. With `PersistsDelivered=false`, core retains bounded earlier
@@ -84,6 +97,8 @@ The protocol parser maps official Claude stream-json frames to
 `driver.StreamPayload` values for text, thinking, tool calls, tool results,
 lifecycle, and HITL. The same parse pass builds the final Text, Summary, Raw
 streams and terminal payload, Transcript, Usage, failure, and checkpoint.
+Transport, approval, and hook-settlement errors retain the protocol observations
+already collected in the partial response and cannot produce a healthy checkpoint.
 Provider user frames are acknowledgements for the control transport; they are
 not replayed as assistant output. `ResultMessage.result` is the sole authority
 for final Text; intermediate assistant frames and deltas remain in the Event

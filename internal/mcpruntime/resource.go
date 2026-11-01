@@ -67,10 +67,15 @@ func SnapshotResource(driverType, profileDir string, payload driver.MCPPayload, 
 	return out, nil
 }
 
-func SyncResource(ctx context.Context, driverType, profileDir string, kind ProfileKind, payload driver.MCPPayload) (engine.ResourceSnapshot, error) {
+func SyncResource(ctx context.Context, driverType, profileDir string, kind ProfileKind, payload driver.MCPPayload, policies ...driver.RunPolicy) (engine.ResourceSnapshot, error) {
 	layout, err := layoutFor(driverType, profileDir)
 	if err != nil {
 		return engine.ResourceSnapshot{}, err
+	}
+	if driverType == "codex" && len(policies) != 0 {
+		layout.render = func(server driver.MCPServerSpec) (map[string]any, error) {
+			return CodexServerConfig(server, policies[0])
+		}
 	}
 	lock, err := profilestate.AcquireLock(ctx, profileDir, profilestate.LockOptions{StaleAfter: 10 * time.Minute})
 	if err != nil {
