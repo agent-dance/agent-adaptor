@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/agent-dance/agent-adaptor/v2/adaptertest"
 	"github.com/agent-dance/agent-adaptor/v2/driver"
@@ -109,7 +110,8 @@ func (d cursorConformanceDriver) Run(ctx context.Context, req driver.Request, si
 			return nil
 		}
 		// O_RDWR avoids a blocking open when the child has already exited. The
-		// bounded reply is read concurrently by the fake CLI, before terminal JSON.
+		// helper holds its own FIFO descriptor before publishing init, so the
+		// reply survives this writer closing before the helper begins reading.
 		fifo, err := os.OpenFile(d.path, os.O_RDWR, 0)
 		if err != nil {
 			return err
@@ -243,16 +245,19 @@ func runCursorMessageConformanceHelper() int {
 		e.Turns = []driver.TurnCompleted{{}}
 	}
 	save()
-	enc := json.NewEncoder(os.Stdout)
-	_ = enc.Encode(map[string]any{"type": "system", "subtype": "init", "session_id": "conversation"})
+	replyPath := ""
 	if endpoint != "" {
-		fifo, err := os.Open(path)
-		if err != nil {
-			return 83
-		}
+		replyPath = path
+	}
+	fifo, err := cursorConformanceInit(os.Stdout, replyPath)
+	if err != nil {
+		return 83
+	}
+	enc := json.NewEncoder(os.Stdout)
+	if fifo != nil {
+		defer fifo.Close()
 		var reply map[string]string
 		err = json.NewDecoder(fifo).Decode(&reply)
-		fifo.Close()
 		if err != nil {
 			return 84
 		}
@@ -278,6 +283,79 @@ func runCursorMessageConformanceHelper() int {
 	save()
 	_ = enc.Encode(map[string]any{"type": "result", "subtype": "success", "is_error": false, "result": "done", "session_id": "conversation"})
 	return 0
+}
+
+func cursorConformanceInit(output io.Writer, replyPath string) (*os.File, error) {
+	var fifo *os.File
+	if replyPath != "" {
+		var err error
+		// Keep a reader alive before init lets the parent write. O_RDWR opens
+		// without waiting for that writer and retains its reply until Decode.
+		fifo, err = os.OpenFile(replyPath, os.O_RDWR, 0)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if err := json.NewEncoder(output).Encode(map[string]any{"type": "system", "subtype": "init", "session_id": "conversation"}); err != nil {
+		if fifo != nil {
+			_ = fifo.Close()
+		}
+		return nil, err
+	}
+	return fifo, nil
+}
+
+type cursorConformanceInitWriter func([]byte) (int, error)
+
+func (write cursorConformanceInitWriter) Write(data []byte) (int, error) { return write(data) }
+
+func TestCursorConformanceReplySurvivesWriterCloseBeforeRead(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("named-pipe fake and Cursor relay are unverified on Windows")
+	}
+	path := filepath.Join(t.TempDir(), "hook-reply")
+	if output, err := exec.Command("mkfifo", path).CombinedOutput(); err != nil {
+		t.Fatalf("create fake relay FIFO: %v: %s", err, output)
+	}
+	const reply = `{"additional_context":"delivered before helper read"}`
+	writerClosed := false
+	initWriter := cursorConformanceInitWriter(func(data []byte) (int, error) {
+		var init map[string]string
+		if err := json.Unmarshal(data, &init); err != nil {
+			return 0, err
+		}
+		if init["subtype"] != "init" {
+			t.Fatalf("unexpected helper output: %s", data)
+		}
+		// Publishing init synchronously writes and closes the parent's reply.
+		// The helper cannot begin decoding until this callback returns.
+		writer, err := os.OpenFile(path, os.O_RDWR, 0)
+		if err != nil {
+			return 0, err
+		}
+		_, writeErr := io.WriteString(writer, reply+"\n")
+		closeErr := writer.Close()
+		writerClosed = true
+		return len(data), errors.Join(writeErr, closeErr)
+	})
+	fifo, err := cursorConformanceInit(initWriter, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fifo.Close()
+	if !writerClosed {
+		t.Fatal("reply writer was not closed before the helper began reading")
+	}
+	if err := fifo.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]string
+	if err := json.NewDecoder(fifo).Decode(&got); err != nil {
+		t.Fatalf("reply disappeared after its writer closed: %v", err)
+	}
+	if got["additional_context"] != "delivered before helper read" {
+		t.Fatalf("helper reply = %+v", got)
+	}
 }
 
 var _ driver.Driver = cursorConformanceDriver{}
