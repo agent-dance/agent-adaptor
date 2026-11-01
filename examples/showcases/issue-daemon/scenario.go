@@ -147,7 +147,9 @@ func (f *fixture) cleanup(s *step) {
 		s.equal("Agent.Close succeeded", "none", errorClass(err))
 	}
 	if !f.host.cfg.keep {
-		err := os.RemoveAll(f.dir)
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		err := removeWorkspace(ctx, f.dir)
+		cancel()
 		s.call("os.RemoveAll", f.dir, "", err)
 		s.equal("workspace cleanup", nil, err)
 	}

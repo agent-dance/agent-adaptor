@@ -3,10 +3,13 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
 	"time"
+
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
 )
 
 // TestFakeScenario executes the same fifteen-step host scenario as live mode.
@@ -60,6 +63,27 @@ func TestFakeScenario(t *testing.T) {
 				t.Fatal("incomplete host call", call)
 			}
 		}
+	}
+}
+
+func TestTeamChatReplyRequiresActualAnswer(t *testing.T) {
+	for _, tc := range []struct {
+		name, turn, final string
+		err               error
+		want              bool
+	}{
+		{name: "message turn answered", turn: "CHAT_ONE", final: "CHAT_TWO", want: true},
+		{name: "worker completion answered", turn: "I will reply CHAT_ONE when it finishes.", final: "CHAT_ONE\nCHAT_TWO", want: true},
+		{name: "progress only", turn: "I will reply CHAT_ONE when it finishes.", final: "CHAT_TWO"},
+		{name: "final mention only", final: "I will reply CHAT_ONE later."},
+		{name: "failed execution", turn: "CHAT_ONE", final: "CHAT_ONE", err: errors.New("worker failed")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			done := adaptor.Done{Result: &adaptor.Result{Text: tc.final}, Err: tc.err}
+			if got := chatReplyComplete(tc.turn, done, "CHAT_ONE"); got != tc.want {
+				t.Fatalf("reply complete=%v; want %v", got, tc.want)
+			}
+		})
 	}
 }
 

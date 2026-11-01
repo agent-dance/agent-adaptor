@@ -30,6 +30,10 @@ Codex auth/config files into a private profile in each workspace; retained
 workspaces therefore contain credentials. Reports never include capability
 tokens or profile contents.
 
+Cleanup retries Windows sharing violations for at most two seconds after
+closing the Agents. A persistent lock or any other filesystem error still
+fails the cleanup check.
+
 The host releases bounded shell waits through `.release-*` files after it has
 sent the required inputs. The scripted Driver uses channels for those same
 tool-completion points; tests use no sleeps for synchronization. Interrupt uses
@@ -65,6 +69,11 @@ a model's assertion. The offline leader delegates through that same handler.
 The live leader Driver forwards Codex's session, message, profile and streaming
 contracts unchanged while performing this audit.
 
+In step 15 a leader's message-associated turn can report delegation progress.
+Each reply must appear exactly in that turn or as a complete line in the
+successful final answer after the workers finish. The report retains both
+texts and still checks message IDs, turn order and shared RunID independently.
+
 `started`/`ended` are UTC wall-clock timestamps. Every host call records exact
 text, IDs, authors and timing; checks retain expected and observed values.
 The compact event timeline records receive order, provider-independent event
@@ -97,12 +106,6 @@ test subtests explicitly skip. No Team acceptance is claimed in that case.
 Other failed contracts fail the test normally, even if library fixes are pending.
 No live Codex call is made by the tests.
 
-Observed library issues during implementation:
-
-- Task-mode Team Thread.Send joined an active execution rather than rejecting
-  it (proposal §4.10). The supervisor confirmed this outside the sandbox and
-  assigned the library fix separately; step 14 retains the contract check.
-- With MaxTurns=2, `messages.go` computes the warning threshold as 2 and also
-  requires the completed turn to be less than MaxTurns. `limit.approaching`
-  therefore never appears. Step 12 records this failure while still verifying
-  the two failed messages in Result.Undelivered().
+Steps 12 and 14 retain regressions for the corrected turn-limit warning and
+task-mode Team busy behavior. A two-turn budget must emit `limit.approaching`
+before the final turn; a second task-mode send must return `ErrThreadBusy`.

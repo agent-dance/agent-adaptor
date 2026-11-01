@@ -238,7 +238,7 @@ func (h *scenario) chat(parent context.Context, teamMode bool) {
 	// separate response turn whose MessageIDs can be checked deterministically.
 	sendChat("Reply CHAT_TWO.", "m2", adaptor.AfterTurn)
 	f.release(s, "chat1")
-	o.until(ctx, s, isDone)
+	firstDone, _ := o.until(ctx, s, isDone).(adaptor.Done)
 	firstRun := ""
 	ids := map[string]int{}
 	replies := map[string]string{}
@@ -256,8 +256,19 @@ func (h *scenario) chat(parent context.Context, teamMode bool) {
 			s.equal("joined chat turns share RunID", firstRun, te.Meta().RunID)
 		}
 	}
-	s.equal("m1 reply", "CHAT_ONE", replies["m1"])
-	s.equal("m2 reply", "CHAT_TWO", replies["m2"])
+	s.equal("chat execution completed", nil, firstDone.Err)
+	for _, reply := range []struct{ id, token string }{{"m1", "CHAT_ONE"}, {"m2", "CHAT_TWO"}} {
+		if teamMode {
+			// A leader may first report delegation progress, then answer after
+			// a worker notification. Keep the actual message turn and final text
+			// in the report rather than attributing that final turn to this ID.
+			s.expect(reply.id+" reply", reply.token, map[string]string{
+				"message_turn": replies[reply.id], "final": text(firstDone.Result),
+			}, chatReplyComplete(replies[reply.id], firstDone, reply.token))
+		} else {
+			s.equal(reply.id+" reply", reply.token, replies[reply.id])
+		}
+	}
 	s.expect("m1 then m2 TurnEnd ordering", "m1 before m2", ids, ids["m1"] > 0 && ids["m2"] > ids["m1"])
 	busy := th.Send(ctx, "Task mode must be rejected.", adaptor.MessageID("chat-busy"))
 	s.call("Thread.Send", map[string]string{"key": th.Key(), "text": "Task mode must be rejected.", "MessageID": "chat-busy"}, busy.RunID(), nil)
@@ -297,4 +308,22 @@ func (h *scenario) chat(parent context.Context, teamMode bool) {
 	s.call("serverCtx.cancel", nil, "", nil)
 	o.drain(ctx, s)
 	s.equal("server cancellation closes event stream", true, o.closed)
+}
+
+// chatReplyComplete accepts an exact reply in the message's own turn or a
+// complete line in the successful final answer. Mentioning the token in a
+// progress sentence does not satisfy the reply check.
+func chatReplyComplete(messageTurn string, done adaptor.Done, token string) bool {
+	if done.Err != nil || done.Result == nil {
+		return false
+	}
+	if strings.TrimSpace(messageTurn) == token {
+		return true
+	}
+	for _, line := range strings.Split(done.Result.Text, "\n") {
+		if strings.TrimSpace(line) == token {
+			return true
+		}
+	}
+	return false
 }
