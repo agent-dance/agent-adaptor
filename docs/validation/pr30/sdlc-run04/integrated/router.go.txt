@@ -1,0 +1,202 @@
+package mentionroute
+
+import (
+	"strings"
+	"unicode"
+	"unicode/utf8"
+)
+
+type State string
+
+const (
+	Pending  State = "pending"
+	Busy     State = "busy"
+	Finished State = "finished"
+)
+
+type Author string
+
+const (
+	Human Author = "human"
+	Agent Author = "agent"
+)
+
+type Delivery struct {
+	Key  string
+	When string
+}
+
+// Extract returns the eligible literal mentions in source order.
+func Extract(text string, keys []string) []string {
+	if !utf8.ValidString(text) {
+		return nil
+	}
+
+	known := make([]string, 0, len(keys))
+	registered := make(map[string]bool, len(keys))
+	for _, key := range keys {
+		if !registered[key] && validKey(key) {
+			known = append(known, key)
+			registered[key] = true
+		}
+	}
+	if len(known) == 0 {
+		return nil
+	}
+
+	var mentions []string
+	seen := make(map[string]bool, len(known))
+	var fence byte
+	fenceLength := 0
+	for len(text) > 0 {
+		line, rest, newline := strings.Cut(text, "\n")
+		text = rest
+		if newline {
+			line = strings.TrimSuffix(line, "\r")
+		}
+		if strings.HasPrefix(strings.TrimLeft(line, " \t"), ">") {
+			continue
+		}
+
+		marker, length, tail := fenceStart(line)
+		if fenceLength > 0 {
+			if marker == fence && length >= fenceLength && strings.Trim(tail, " \t") == "" {
+				fenceLength = 0
+			}
+			continue
+		}
+		if length >= 3 {
+			fence, fenceLength = marker, length
+			continue
+		}
+
+		codeLength := 0
+		for i := 0; i < len(line); {
+			if line[i] == '`' {
+				end := i + 1
+				for end < len(line) && line[end] == '`' {
+					end++
+				}
+				length := end - i
+				if codeLength == 0 {
+					codeLength = length
+				} else if length == codeLength {
+					codeLength = 0
+				}
+				i = end
+				continue
+			}
+			if codeLength > 0 || line[i] != '@' || !mentionStart(line, i) {
+				i++
+				continue
+			}
+
+			best := ""
+			for _, key := range known {
+				if len(key) <= len(best) || !strings.HasPrefix(line[i+1:], key) {
+					continue
+				}
+				end := i + 1 + len(key)
+				if end < len(line) {
+					r, _ := utf8.DecodeRuneInString(line[end:])
+					if identifierRune(r) {
+						continue
+					}
+				}
+				best = key
+			}
+			if best == "" {
+				i++
+				continue
+			}
+			if !seen[best] {
+				mentions = append(mentions, best)
+				seen[best] = true
+			}
+			i += 1 + len(best)
+		}
+	}
+	return mentions
+}
+
+func validKey(key string) bool {
+	if key == "" || !utf8.ValidString(key) {
+		return false
+	}
+	for _, r := range key {
+		if unicode.IsSpace(r) || unicode.IsControl(r) || r == '@' || r == '\\' || r == '`' {
+			return false
+		}
+	}
+	return true
+}
+
+// fenceStart recognizes the indentation and marker run, leaving the tail for
+// the stricter closing-fence check. Opening fences allow any tail.
+func fenceStart(line string) (marker byte, length int, tail string) {
+	i := 0
+	for i < len(line) && line[i] == ' ' {
+		i++
+	}
+	if i > 3 || i == len(line) || (line[i] != '`' && line[i] != '~') {
+		return 0, 0, ""
+	}
+	marker = line[i]
+	end := i + 1
+	for end < len(line) && line[end] == marker {
+		end++
+	}
+	return marker, end - i, line[end:]
+}
+
+func identifierRune(r rune) bool {
+	return unicode.IsLetter(r) || unicode.IsNumber(r) || unicode.IsMark(r) || r == '_' || r == '-'
+}
+
+func mentionStart(line string, i int) bool {
+	// Escape parity is evaluated before the ordinary preceding-rune boundary.
+	backslashes := 0
+	for j := i - 1; j >= 0 && line[j] == '\\'; j-- {
+		backslashes++
+	}
+	if backslashes%2 != 0 {
+		return false
+	}
+	if i == 0 {
+		return true
+	}
+	r, _ := utf8.DecodeLastRuneInString(line[:i])
+	return !identifierRune(r) && r != '.' && r != '+' && r != '@'
+}
+
+// Route applies the state and author permissions to eligible mentions.
+func Route(state State, author Author, text string, keys []string) []Delivery {
+	var when string
+	switch author {
+	case Human:
+		switch state {
+		case Pending:
+			when = "start"
+		case Busy:
+			when = "soon"
+		case Finished:
+			when = "new"
+		default:
+			return nil
+		}
+	case Agent:
+		if state != Busy {
+			return nil
+		}
+		when = "soon"
+	default:
+		return nil
+	}
+
+	mentions := Extract(text, keys)
+	deliveries := make([]Delivery, len(mentions))
+	for i, key := range mentions {
+		deliveries[i] = Delivery{Key: key, When: when}
+	}
+	return deliveries
+}

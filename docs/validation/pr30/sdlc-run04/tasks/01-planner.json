@@ -1,0 +1,808 @@
+{
+  "id": "cb8dc880c425af5c9db6c21408d2d69ceb0a6195e1bb3b4e10408964f40f9287",
+  "member": "planner",
+  "state": "succeeded",
+  "created_at": "2026-11-01T16:50:29.6828882Z",
+  "updated_at": "2026-11-01T16:53:51.5611884Z",
+  "conversation": "",
+  "objective": "Plan the scope and acceptance coverage for the host specification with spec_hash 2b8c630fccf8720b1cb3e0dd12b6f691031ec9873371f033dd4b5fdeff70c7e0. Authoritative workflow facts: stage=plan, round=1, candidate_hash is empty, violations=[]. Use your host workflow tools to read the specification and begin your role; produce the required structured plan and acceptance coverage as task evidence. Do not implement or approve code. This is an independent task.",
+  "summary": "",
+  "reason": "",
+  "usage": {
+    "CachedInputTokens": 129152,
+    "EstimatedCostMilli": 0,
+    "InputTokens": 149093,
+    "OutputTokens": 5542
+  },
+  "result": {
+    "Metadata": {
+      "transport": "app-server"
+    },
+    "Model": "gpt-6.1-sol",
+    "Provider": "openai",
+    "RunID": "run_b1bdec2006f27b2d",
+    "Summary": "",
+    "Text": "{\n  \"candidate_hash\": \"\",\n  \"check_receipts\": [],\n  \"findings\": [\n    {\n      \"message\": \"Scope: validate UTF-8 and keys, then match literal strings using local data. Risks: normalization, over-filtering punctuation, and mutating caller keys. Acceptance covers malformed bytes, forbidden runes, emoji, case differences, and unchanged input.\",\n      \"requirement\": \"R1\",\n      \"severity\": \"info\"\n    },\n    {\n      \"message\": \"Scope: check rune boundaries and choose the longest boundary-valid match at each @. Risks: byte-based classification, unknown identifier prefixes, and rejecting valid shorter fallbacks. Acceptance covers Unicode boundary classes, dot/plus punctuation, overlapping keys, and cursor advancement.\",\n      \"requirement\": \"R2\",\n      \"severity\": \"info\"\n    },\n    {\n      \"message\": \"Scope: scan in source order and append each key only on its first eligible occurrence. Risk: candidate sorting or duplicate registration affecting output order. Acceptance permutes registrations and repeats mentions, including inputs with no eligible matches.\",\n      \"requirement\": \"R3\",\n      \"severity\": \"info\"\n    },\n    {\n      \"message\": \"Scope: track backtick-run length within each eligible line. Risks: mismatched runs closing spans or unmatched spans leaking across lines. Acceptance covers equal and unequal run lengths, mentions around closed spans, and unmatched spans followed by another line.\",\n      \"requirement\": \"R4\",\n      \"severity\": \"info\"\n    },\n    {\n      \"message\": \"Scope: maintain fence character and opening length across LF/CRLF lines. Risks: accepting invalid indentation, shorter closers, or trailing info on closers. Acceptance covers both fence characters, opening info strings, strict closing syntax, and unclosed fences.\",\n      \"requirement\": \"R5\",\n      \"severity\": \"info\"\n    },\n    {\n      \"message\": \"Scope: ignore quoted lines before fence processing and check backslash parity before ordinary left boundaries. Risks: quoted markers changing fence state or even backslash runs suppressing mentions. Acceptance covers indentation, email forms, odd/even runs, and ordinary quote marks.\",\n      \"requirement\": \"R6\",\n      \"severity\": \"info\"\n    },\n    {\n      \"message\": \"Scope: Route uses Extract and maps Human Pending/Busy/Finished to start/soon/new. Risks: implicit broadcasts, reordered deliveries, or finished comments failing to request new execution. Acceptance checks all three mappings and empty or excluded mentions.\",\n      \"requirement\": \"R7\",\n      \"severity\": \"info\"\n    },\n    {\n      \"message\": \"Scope: allow Agent only in Busy and fail closed on unknown values. Keep router.go self-contained with permitted imports and call-local state. Acceptance covers the routing matrix, concurrent calls, exact API, and host restrictions on files, initialization, directives, and imports.\",\n      \"requirement\": \"R8\",\n      \"severity\": \"info\"\n    }\n  ],\n  \"manifest\": [],\n  \"requirement_evidence\": [\n    {\n      \"assessment\": \"Plan exact UTF-8 validation and literal identity while preserving caller-owned keys.\",\n      \"evidence\": \"Reject invalid UTF-8 text before scanning. Ignore empty or invalid UTF-8 keys and keys containing Unicode whitespace/control, @, backslash or backtick. Build a private deduplicated candidate slice. Acceptance should exercise malformed bytes, valid replacement runes, punctuation, emoji, forbidden runes, distinct case/normalization forms, and unchanged key input.\"\n      ,\n      \"id\": \"R1\"\n    },\n    {\n      \"assessment\": \"Plan rune-aware boundaries and longest matching candidate selection at each eligible @.\",\n      \"evidence\": \"Use exact prefix comparisons and decode adjacent runes. Reject left letters/numbers/marks or underscore, hyphen, dot, plus, @; reject right letters/numbers/marks or underscore/hyphen. Examine candidates longest-first, checking each candidate's right boundary before choosing. Acceptance covers unknown identifier suffixes, dot/plus punctuation, longer known keys, a longer boundary-invalid candidate with a valid shorter fallback, and advancement past the chosen mention.\",\n      \"id\": \"R2\"\n    },\n    {\n      \"assessment\": \"Plan source-order output with per-call duplicate suppression.\",\n      \"evidence\": \"Traverse eligible source positions from left to right. Maintain a local seen set and append a chosen key only once; still advance past repeated mentions. Acceptance should compare results across registration permutations, duplicated registrations, repeated mentions separated by excluded content, and zero-match inputs. An empty result may be nil.\",\n      \"id\": \"R3\"\n    },\n    {\n      \"assessment\": \"Plan independent per-line inline-code state using exact backtick-run lengths.\",\n      \"evidence\": \"Outside fences and quoted lines, count each complete backtick run. An opening run hides content until an exactly equal run; other lengths remain inside the span. Reset inline state at each newline. Acceptance covers single/multiple backticks, mismatched runs, adjacent eligible mentions, unmatched runs, and eligibility on the next line. Other inline Markdown syntax receives no special treatment.\",\n      \"id\": \"R4\"\n    },\n    {\n      \"assessment\": \"Plan persistent fence state with strict opener/closer recognition and LF/CRLF handling.\",\n      \"evidence\": \"Recognize openers after zero to three ASCII spaces with at least three identical backticks or tildes; ignore arbitrary opening info. Close only with the same character, sufficient run length, and ASCII space/tab suffix. Ignore all fence lines/content. Acceptance covers indentation limits, tabs, both characters, longer/shorter runs, trailing junk, unclosed fences, LF/CRLF equivalence, and preservation of standalone CR characters.\",\n      \"id\": \"R5\"\n    },\n    {\n      \"assessment\": \"Plan quotation precedence and escape parity before ordinary mention boundary checks.\",\n      \"evidence\": \"First ignore any line whose first non-space/tab character is >, including while fenced; such lines never change fence state. For each @ outside excluded content, count consecutive preceding backslashes: odd suppresses it, even continues to ordinary boundary checks. Acceptance covers quoted fence openers/closers, varied indentation, zero through several backslashes, alice@example, alice+tag@example, and mentions inside ordinary quote marks.\",\n      \"id\": \"R6\"\n    },\n    {\n      \"assessment\": \"Plan one ordered delivery per extracted mention for each valid Human state.\",\n      \"evidence\": \"For permitted Human calls, invoke Extract and map Pending to start, Busy to soon, and Finished to new. Preserve Extract order and uniqueness. Acceptance should verify exact Key/When values for all three states, multiple targets, duplicate mentions, and no deliveries for absent, invalid, quoted, fenced, inline-code, or escaped mentions. Finished must explicitly produce new for eligible mentions.\",\n      \"id\": \"R7\"\n    },\n    {\n      \"assessment\": \"Plan fail-closed Agent routing, exact API, restricted scope, and concurrency-safe local state.\",\n      \"evidence\": \"Allow Agent only in Busy with soon; reject unknown State or Author values. Acceptance should cover every defined author/state pair, unknown and empty values, literal justification for every delivery, and concurrent calls. Host inspection must confirm only router.go changes, package mentionroute and exact API/constants, permitted imports, no init/TestMain/directives/dot or blank imports, no initializer calls, and no subprocess/network work.\",\n      \"id\": \"R8\"\n    }\n  ],\n  \"requirements\": [\n    \"R1\",\n    \"R2\",\n    \"R3\",\n    \"R4\",\n    \"R5\",\n    \"R6\",\n    \"R7\",\n    \"R8\"\n  ],\n  \"review_receipt\": \"\",\n  \"role\": \"planner\",\n  \"spec_hash\": \"2b8c630fccf8720b1cb3e0dd12b6f691031ec9873371f033dd4b5fdeff70c7e0\",\n  \"summary\": \"Plan router.go with local UTF-8/key validation, a line/fence/inline scanner, literal rune-aware matching, source-order deduplication, and fail-closed routing. Host confirms plan stage, round 1, matching specification hash, empty candidate, and no violations. Coverage is prospective acceptance guidance from the supplied fixed specification. No files changed, implementation approved, or checks run; host verification must establish acceptance.\",\n  \"verdict\": \"plan\"\n}",
+    "Turns": 1,
+    "Usage": {
+      "CachedInputTokens": 129152,
+      "EstimatedCostMilli": 0,
+      "InputTokens": 149093,
+      "OutputTokens": 5542
+    }
+  },
+  "spec_hash": "2b8c630fccf8720b1cb3e0dd12b6f691031ec9873371f033dd4b5fdeff70c7e0",
+  "decoded": {
+    "candidate_hash": "",
+    "check_receipts": [],
+    "findings": [
+      {
+        "message": "Scope: validate UTF-8 and keys, then match literal strings using local data. Risks: normalization, over-filtering punctuation, and mutating caller keys. Acceptance covers malformed bytes, forbidden runes, emoji, case differences, and unchanged input.",
+        "requirement": "R1",
+        "severity": "info"
+      },
+      {
+        "message": "Scope: check rune boundaries and choose the longest boundary-valid match at each @. Risks: byte-based classification, unknown identifier prefixes, and rejecting valid shorter fallbacks. Acceptance covers Unicode boundary classes, dot/plus punctuation, overlapping keys, and cursor advancement.",
+        "requirement": "R2",
+        "severity": "info"
+      },
+      {
+        "message": "Scope: scan in source order and append each key only on its first eligible occurrence. Risk: candidate sorting or duplicate registration affecting output order. Acceptance permutes registrations and repeats mentions, including inputs with no eligible matches.",
+        "requirement": "R3",
+        "severity": "info"
+      },
+      {
+        "message": "Scope: track backtick-run length within each eligible line. Risks: mismatched runs closing spans or unmatched spans leaking across lines. Acceptance covers equal and unequal run lengths, mentions around closed spans, and unmatched spans followed by another line.",
+        "requirement": "R4",
+        "severity": "info"
+      },
+      {
+        "message": "Scope: maintain fence character and opening length across LF/CRLF lines. Risks: accepting invalid indentation, shorter closers, or trailing info on closers. Acceptance covers both fence characters, opening info strings, strict closing syntax, and unclosed fences.",
+        "requirement": "R5",
+        "severity": "info"
+      },
+      {
+        "message": "Scope: ignore quoted lines before fence processing and check backslash parity before ordinary left boundaries. Risks: quoted markers changing fence state or even backslash runs suppressing mentions. Acceptance covers indentation, email forms, odd/even runs, and ordinary quote marks.",
+        "requirement": "R6",
+        "severity": "info"
+      },
+      {
+        "message": "Scope: Route uses Extract and maps Human Pending/Busy/Finished to start/soon/new. Risks: implicit broadcasts, reordered deliveries, or finished comments failing to request new execution. Acceptance checks all three mappings and empty or excluded mentions.",
+        "requirement": "R7",
+        "severity": "info"
+      },
+      {
+        "message": "Scope: allow Agent only in Busy and fail closed on unknown values. Keep router.go self-contained with permitted imports and call-local state. Acceptance covers the routing matrix, concurrent calls, exact API, and host restrictions on files, initialization, directives, and imports.",
+        "requirement": "R8",
+        "severity": "info"
+      }
+    ],
+    "manifest": [],
+    "requirement_evidence": [
+      {
+        "assessment": "Plan exact UTF-8 validation and literal identity while preserving caller-owned keys.",
+        "evidence": "Reject invalid UTF-8 text before scanning. Ignore empty or invalid UTF-8 keys and keys containing Unicode whitespace/control, @, backslash or backtick. Build a private deduplicated candidate slice. Acceptance should exercise malformed bytes, valid replacement runes, punctuation, emoji, forbidden runes, distinct case/normalization forms, and unchanged key input.",
+        "id": "R1"
+      },
+      {
+        "assessment": "Plan rune-aware boundaries and longest matching candidate selection at each eligible @.",
+        "evidence": "Use exact prefix comparisons and decode adjacent runes. Reject left letters/numbers/marks or underscore, hyphen, dot, plus, @; reject right letters/numbers/marks or underscore/hyphen. Examine candidates longest-first, checking each candidate's right boundary before choosing. Acceptance covers unknown identifier suffixes, dot/plus punctuation, longer known keys, a longer boundary-invalid candidate with a valid shorter fallback, and advancement past the chosen mention.",
+        "id": "R2"
+      },
+      {
+        "assessment": "Plan source-order output with per-call duplicate suppression.",
+        "evidence": "Traverse eligible source positions from left to right. Maintain a local seen set and append a chosen key only once; still advance past repeated mentions. Acceptance should compare results across registration permutations, duplicated registrations, repeated mentions separated by excluded content, and zero-match inputs. An empty result may be nil.",
+        "id": "R3"
+      },
+      {
+        "assessment": "Plan independent per-line inline-code state using exact backtick-run lengths.",
+        "evidence": "Outside fences and quoted lines, count each complete backtick run. An opening run hides content until an exactly equal run; other lengths remain inside the span. Reset inline state at each newline. Acceptance covers single/multiple backticks, mismatched runs, adjacent eligible mentions, unmatched runs, and eligibility on the next line. Other inline Markdown syntax receives no special treatment.",
+        "id": "R4"
+      },
+      {
+        "assessment": "Plan persistent fence state with strict opener/closer recognition and LF/CRLF handling.",
+        "evidence": "Recognize openers after zero to three ASCII spaces with at least three identical backticks or tildes; ignore arbitrary opening info. Close only with the same character, sufficient run length, and ASCII space/tab suffix. Ignore all fence lines/content. Acceptance covers indentation limits, tabs, both characters, longer/shorter runs, trailing junk, unclosed fences, LF/CRLF equivalence, and preservation of standalone CR characters.",
+        "id": "R5"
+      },
+      {
+        "assessment": "Plan quotation precedence and escape parity before ordinary mention boundary checks.",
+        "evidence": "First ignore any line whose first non-space/tab character is >, including while fenced; such lines never change fence state. For each @ outside excluded content, count consecutive preceding backslashes: odd suppresses it, even continues to ordinary boundary checks. Acceptance covers quoted fence openers/closers, varied indentation, zero through several backslashes, alice@example, alice+tag@example, and mentions inside ordinary quote marks.",
+        "id": "R6"
+      },
+      {
+        "assessment": "Plan one ordered delivery per extracted mention for each valid Human state.",
+        "evidence": "For permitted Human calls, invoke Extract and map Pending to start, Busy to soon, and Finished to new. Preserve Extract order and uniqueness. Acceptance should verify exact Key/When values for all three states, multiple targets, duplicate mentions, and no deliveries for absent, invalid, quoted, fenced, inline-code, or escaped mentions. Finished must explicitly produce new for eligible mentions.",
+        "id": "R7"
+      },
+      {
+        "assessment": "Plan fail-closed Agent routing, exact API, restricted scope, and concurrency-safe local state.",
+        "evidence": "Allow Agent only in Busy with soon; reject unknown State or Author values. Acceptance should cover every defined author/state pair, unknown and empty values, literal justification for every delivery, and concurrent calls. Host inspection must confirm only router.go changes, package mentionroute and exact API/constants, permitted imports, no init/TestMain/directives/dot or blank imports, no initializer calls, and no subprocess/network work.",
+        "id": "R8"
+      }
+    ],
+    "requirements": [
+      "R1",
+      "R2",
+      "R3",
+      "R4",
+      "R5",
+      "R6",
+      "R7",
+      "R8"
+    ],
+    "review_receipt": "",
+    "role": "planner",
+    "spec_hash": "2b8c630fccf8720b1cb3e0dd12b6f691031ec9873371f033dd4b5fdeff70c7e0",
+    "summary": "Plan router.go with local UTF-8/key validation, a line/fence/inline scanner, literal rune-aware matching, source-order deduplication, and fail-closed routing. Host confirms plan stage, round 1, matching specification hash, empty candidate, and no violations. Coverage is prospective acceptance guidance from the supplied fixed specification. No files changed, implementation approved, or checks run; host verification must establish acceptance.",
+    "verdict": "plan"
+  },
+  "decode_error": "",
+  "transcript": [
+    {
+      "CostUSD": null,
+      "Data": null,
+      "Delta": false,
+      "Errors": null,
+      "Input": null,
+      "IsError": false,
+      "Kind": "init",
+      "Message": null,
+      "Metadata": null,
+      "Model": "",
+      "SessionID": "01a19805-0ce9-7c90-819f-490a143b95e0",
+      "Subtype": "",
+      "Text": "",
+      "ToolName": "",
+      "ToolUseID": "",
+      "Usage": null
+    },
+    {
+      "CostUSD": null,
+      "Data": null,
+      "Delta": false,
+      "Errors": null,
+      "Input": null,
+      "IsError": false,
+      "Kind": "thinking",
+      "Message": null,
+      "Metadata": null,
+      "Model": "",
+      "SessionID": "",
+      "Subtype": "",
+      "Text": "",
+      "ToolName": "",
+      "ToolUseID": "",
+      "Usage": null
+    },
+    {
+      "CostUSD": null,
+      "Data": null,
+      "Delta": false,
+      "Errors": null,
+      "Input": {},
+      "IsError": false,
+      "Kind": "tool_call",
+      "Message": null,
+      "Metadata": null,
+      "Model": "",
+      "SessionID": "",
+      "Subtype": "",
+      "Text": "",
+      "ToolName": "agent-adaptor-tools/workflow_begin",
+      "ToolUseID": "exec-adab5b9f-3447-4fe5-85b8-df55ce5948d6",
+      "Usage": null
+    },
+    {
+      "CostUSD": null,
+      "Data": {
+        "error": null,
+        "result": {
+          "_meta": null,
+          "content": [
+            {
+              "text": "{\"candidate_hash\":\"\",\"check_receipts\":[],\"manifest\":[],\"project\":\"C:\\\\Users\\\\buthim\\\\AppData\\\\Local\\\\Temp\\\\adaptor-sdlc-work-1004057782\\\\planner\",\"round\":1,\"spec_hash\":\"2b8c630fccf8720b1cb3e0dd12b6f691031ec9873371f033dd4b5fdeff70c7e0\",\"stage\":\"plan\",\"task\":\"cb8dc880c425af5c9db6c21408d2d69ceb0a6195e1bb3b4e10408964f40f9287\",\"violations\":[]}",
+              "type": "text"
+            }
+          ],
+          "structuredContent": {
+            "candidate_hash": "",
+            "check_receipts": [],
+            "manifest": [],
+            "project": "C:\\Users\\buthim\\AppData\\Local\\Temp\\adaptor-sdlc-work-1004057782\\planner",
+            "round": 1,
+            "spec_hash": "2b8c630fccf8720b1cb3e0dd12b6f691031ec9873371f033dd4b5fdeff70c7e0",
+            "stage": "plan",
+            "task": "cb8dc880c425af5c9db6c21408d2d69ceb0a6195e1bb3b4e10408964f40f9287",
+            "violations": []
+          }
+        }
+      },
+      "Delta": false,
+      "Errors": null,
+      "Input": null,
+      "IsError": true,
+      "Kind": "tool_result",
+      "Message": null,
+      "Metadata": null,
+      "Model": "",
+      "SessionID": "",
+      "Subtype": "",
+      "Text": "",
+      "ToolName": "",
+      "ToolUseID": "exec-adab5b9f-3447-4fe5-85b8-df55ce5948d6",
+      "Usage": null
+    },
+    {
+      "CostUSD": null,
+      "Data": null,
+      "Delta": false,
+      "Errors": null,
+      "Input": null,
+      "IsError": false,
+      "Kind": "thinking",
+      "Message": null,
+      "Metadata": null,
+      "Model": "",
+      "SessionID": "",
+      "Subtype": "",
+      "Text": "",
+      "ToolName": "",
+      "ToolUseID": "",
+      "Usage": null
+    },
+    {
+      "CostUSD": null,
+      "Data": null,
+      "Delta": false,
+      "Errors": null,
+      "Input": null,
+      "IsError": false,
+      "Kind": "assistant",
+      "Message": null,
+      "Metadata": null,
+      "Model": "",
+      "SessionID": "",
+      "Subtype": "",
+      "Text": "The host confirms this is the planning stage with no candidate or workflow violations. I’ll read the host specification and map R1–R8 to implementation scope, risks, and acceptance coverage.\n",
+      "ToolName": "",
+      "ToolUseID": "",
+      "Usage": null
+    },
+    {
+      "CostUSD": null,
+      "Data": null,
+      "Delta": false,
+      "Errors": null,
+      "Input": null,
+      "IsError": false,
+      "Kind": "thinking",
+      "Message": null,
+      "Metadata": null,
+      "Model": "",
+      "SessionID": "",
+      "Subtype": "",
+      "Text": "",
+      "ToolName": "",
+      "ToolUseID": "",
+      "Usage": null
+    },
+    {
+      "CostUSD": null,
+      "Data": null,
+      "Delta": false,
+      "Errors": null,
+      "Input": null,
+      "IsError": false,
+      "Kind": "thinking",
+      "Message": null,
+      "Metadata": null,
+      "Model": "",
+      "SessionID": "",
+      "Subtype": "",
+      "Text": "",
+      "ToolName": "",
+      "ToolUseID": "",
+      "Usage": null
+    },
+    {
+      "CostUSD": null,
+      "Data": null,
+      "Delta": false,
+      "Errors": null,
+      "Input": null,
+      "IsError": false,
+      "Kind": "thinking",
+      "Message": null,
+      "Metadata": null,
+      "Model": "",
+      "SessionID": "",
+      "Subtype": "",
+      "Text": "",
+      "ToolName": "",
+      "ToolUseID": "",
+      "Usage": null
+    },
+    {
+      "CostUSD": null,
+      "Data": null,
+      "Delta": false,
+      "Errors": null,
+      "Input": {
+        "server": "agent-adaptor-tools"
+      },
+      "IsError": false,
+      "Kind": "tool_call",
+      "Message": null,
+      "Metadata": null,
+      "Model": "",
+      "SessionID": "",
+      "Subtype": "",
+      "Text": "",
+      "ToolName": "agent-adaptor-tools/list_mcp_resources",
+      "ToolUseID": "exec-86913618-2248-45f1-a511-375b2421a41e",
+      "Usage": null
+    },
+    {
+      "CostUSD": null,
+      "Data": {
+        "error": null,
+        "result": {
+          "_meta": null,
+          "content": [
+            {
+              "text": "{\"server\":\"agent-adaptor-tools\",\"resources\":[]}",
+              "type": "text"
+            }
+          ],
+          "structuredContent": null
+        }
+      },
+      "Delta": false,
+      "Errors": null,
+      "Input": null,
+      "IsError": true,
+      "Kind": "tool_result",
+      "Message": null,
+      "Metadata": null,
+      "Model": "",
+      "SessionID": "",
+      "Subtype": "",
+      "Text": "",
+      "ToolName": "",
+      "ToolUseID": "exec-86913618-2248-45f1-a511-375b2421a41e",
+      "Usage": null
+    },
+    {
+      "CostUSD": null,
+      "Data": null,
+      "Delta": false,
+      "Errors": null,
+      "Input": {},
+      "IsError": false,
+      "Kind": "tool_call",
+      "Message": null,
+      "Metadata": null,
+      "Model": "",
+      "SessionID": "",
+      "Subtype": "",
+      "Text": "",
+      "ToolName": "team-6cc55df359fabbe4/team_status",
+      "ToolUseID": "exec-7d3390f2-5856-40a7-a9dc-ba5e34a63575",
+      "Usage": null
+    },
+    {
+      "CostUSD": null,
+      "Data": {
+        "error": null,
+        "result": {
+          "_meta": null,
+          "content": [
+            {
+              "text": "{\"members\":[{\"active\":1,\"description\":\"Plan scope and acceptance coverage; cannot implement or approve code.\",\"input\":null,\"key\":\"planner\",\"max_active\":1,\"name\":\"planner\",\"skills\":null},{\"active\":0,\"description\":\"Implement router.go in your isolated project; can revise rejected candidates.\",\"input\":null,\"key\":\"engineer\",\"max_active\":1,\"name\":\"engineer\",\"skills\":null},{\"active\":0,\"description\":\"Independently review the current frozen candidate; cannot edit or execute verification for the verifier.\",\"input\":null,\"key\":\"reviewer\",\"max_active\":1,\"name\":\"reviewer\",\"skills\":null},{\"active\":0,\"description\":\"Independently verify the current frozen candidate using the host's actual fixed checks; cannot edit.\",\"input\":null,\"key\":\"verifier\",\"max_active\":1,\"name\":\"verifier\",\"skills\":null}],\"tasks\":[{\"member\":\"planner\",\"reason\":\"\",\"state\":\"running\",\"summary\":\".\\n\",\"task\":\"cb8dc880c425af5c9db6c21408d2d69ceb0a6195e1bb3b4e10408964f40f9287\"}]}",
+              "type": "text"
+            }
+          ],
+          "structuredContent": {
+            "members": [
+              {
+                "active": 1,
+                "description": "Plan scope and acceptance coverage; cannot implement or approve code.",
+                "input": null,
+                "key": "planner",
+                "max_active": 1,
+                "name": "planner",
+                "skills": null
+              },
+              {
+                "active": 0,
+                "description": "Implement router.go in your isolated project; can revise rejected candidates.",
+                "input": null,
+                "key": "engineer",
+                "max_active": 1,
+                "name": "engineer",
+                "skills": null
+              },
+              {
+                "active": 0,
+                "description": "Independently review the current frozen candidate; cannot edit or execute verification for the verifier.",
+                "input": null,
+                "key": "reviewer",
+                "max_active": 1,
+                "name": "reviewer",
+                "skills": null
+              },
+              {
+                "active": 0,
+                "description": "Independently verify the current frozen candidate using the host's actual fixed checks; cannot edit.",
+                "input": null,
+                "key": "verifier",
+                "max_active": 1,
+                "name": "verifier",
+                "skills": null
+              }
+            ],
+            "tasks": [
+              {
+                "member": "planner",
+                "reason": "",
+                "state": "running",
+                "summary": ".\n",
+                "task": "cb8dc880c425af5c9db6c21408d2d69ceb0a6195e1bb3b4e10408964f40f9287"
+              }
+            ]
+          }
+        }
+      },
+      "Delta": false,
+      "Errors": null,
+      "Input": null,
+      "IsError": true,
+      "Kind": "tool_result",
+      "Message": null,
+      "Metadata": null,
+      "Model": "",
+      "SessionID": "",
+      "Subtype": "",
+      "Text": "",
+      "ToolName": "",
+      "ToolUseID": "exec-7d3390f2-5856-40a7-a9dc-ba5e34a63575",
+      "Usage": null
+    },
+    {
+      "CostUSD": null,
+      "Data": null,
+      "Delta": false,
+      "Errors": null,
+      "Input": null,
+      "IsError": false,
+      "Kind": "thinking",
+      "Message": null,
+      "Metadata": null,
+      "Model": "",
+      "SessionID": "",
+      "Subtype": "",
+      "Text": "",
+      "ToolName": "",
+      "ToolUseID": "",
+      "Usage": null
+    },
+    {
+      "CostUSD": null,
+      "Data": null,
+      "Delta": false,
+      "Errors": null,
+      "Input": {
+        "server": "agent-adaptor-tools"
+      },
+      "IsError": false,
+      "Kind": "tool_call",
+      "Message": null,
+      "Metadata": null,
+      "Model": "",
+      "SessionID": "",
+      "Subtype": "",
+      "Text": "",
+      "ToolName": "agent-adaptor-tools/list_mcp_resource_templates",
+      "ToolUseID": "exec-a08d6292-ce3c-4ed9-9566-7a218f93b80b",
+      "Usage": null
+    },
+    {
+      "CostUSD": null,
+      "Data": {
+        "error": null,
+        "result": {
+          "_meta": null,
+          "content": [
+            {
+              "text": "{\"server\":\"agent-adaptor-tools\",\"resourceTemplates\":[]}",
+              "type": "text"
+            }
+          ],
+          "structuredContent": null
+        }
+      },
+      "Delta": false,
+      "Errors": null,
+      "Input": null,
+      "IsError": true,
+      "Kind": "tool_result",
+      "Message": null,
+      "Metadata": null,
+      "Model": "",
+      "SessionID": "",
+      "Subtype": "",
+      "Text": "",
+      "ToolName": "",
+      "ToolUseID": "exec-a08d6292-ce3c-4ed9-9566-7a218f93b80b",
+      "Usage": null
+    },
+    {
+      "CostUSD": null,
+      "Data": null,
+      "Delta": false,
+      "Errors": null,
+      "Input": null,
+      "IsError": false,
+      "Kind": "thinking",
+      "Message": null,
+      "Metadata": null,
+      "Model": "",
+      "SessionID": "",
+      "Subtype": "",
+      "Text": "",
+      "ToolName": "",
+      "ToolUseID": "",
+      "Usage": null
+    },
+    {
+      "CostUSD": null,
+      "Data": null,
+      "Delta": false,
+      "Errors": null,
+      "Input": null,
+      "IsError": false,
+      "Kind": "thinking",
+      "Message": null,
+      "Metadata": null,
+      "Model": "",
+      "SessionID": "",
+      "Subtype": "",
+      "Text": "",
+      "ToolName": "",
+      "ToolUseID": "",
+      "Usage": null
+    },
+    {
+      "CostUSD": null,
+      "Data": null,
+      "Delta": false,
+      "Errors": null,
+      "Input": null,
+      "IsError": false,
+      "Kind": "thinking",
+      "Message": null,
+      "Metadata": null,
+      "Model": "",
+      "SessionID": "",
+      "Subtype": "",
+      "Text": "",
+      "ToolName": "",
+      "ToolUseID": "",
+      "Usage": null
+    },
+    {
+      "CostUSD": null,
+      "Data": null,
+      "Delta": false,
+      "Errors": null,
+      "Input": null,
+      "IsError": false,
+      "Kind": "thinking",
+      "Message": null,
+      "Metadata": null,
+      "Model": "",
+      "SessionID": "",
+      "Subtype": "",
+      "Text": "",
+      "ToolName": "",
+      "ToolUseID": "",
+      "Usage": null
+    },
+    {
+      "CostUSD": null,
+      "Data": null,
+      "Delta": false,
+      "Errors": null,
+      "Input": {
+        "expect_reply": false,
+        "text": "workflow_begin confirms plan, round 1, the specified hash, an empty candidate and no violations. The host exposes only workflow_begin and no specification resources/templates, so I am planning from the complete fixed specification in the task. Coverage includes R1–R8, Markdown state interactions, routing fail-closure and router.go-only constraints; no files or checks are needed."
+      },
+      "IsError": false,
+      "Kind": "tool_call",
+      "Message": null,
+      "Metadata": null,
+      "Model": "",
+      "SessionID": "",
+      "Subtype": "",
+      "Text": "",
+      "ToolName": "team-6cc55df359fabbe4/team_send",
+      "ToolUseID": "exec-56d5e877-701e-47fe-8107-1b9556976044",
+      "Usage": null
+    },
+    {
+      "CostUSD": null,
+      "Data": {
+        "error": null,
+        "result": {
+          "_meta": null,
+          "content": [
+            {
+              "text": "{\"accepted\":true}",
+              "type": "text"
+            }
+          ],
+          "structuredContent": {
+            "accepted": true
+          }
+        }
+      },
+      "Delta": false,
+      "Errors": null,
+      "Input": null,
+      "IsError": true,
+      "Kind": "tool_result",
+      "Message": null,
+      "Metadata": null,
+      "Model": "",
+      "SessionID": "",
+      "Subtype": "",
+      "Text": "",
+      "ToolName": "",
+      "ToolUseID": "exec-56d5e877-701e-47fe-8107-1b9556976044",
+      "Usage": null
+    },
+    {
+      "CostUSD": null,
+      "Data": null,
+      "Delta": false,
+      "Errors": null,
+      "Input": null,
+      "IsError": false,
+      "Kind": "thinking",
+      "Message": null,
+      "Metadata": null,
+      "Model": "",
+      "SessionID": "",
+      "Subtype": "",
+      "Text": "",
+      "ToolName": "",
+      "ToolUseID": "",
+      "Usage": null
+    },
+    {
+      "CostUSD": null,
+      "Data": null,
+      "Delta": false,
+      "Errors": null,
+      "Input": null,
+      "IsError": false,
+      "Kind": "thinking",
+      "Message": null,
+      "Metadata": null,
+      "Model": "",
+      "SessionID": "",
+      "Subtype": "",
+      "Text": "",
+      "ToolName": "",
+      "ToolUseID": "",
+      "Usage": null
+    },
+    {
+      "CostUSD": null,
+      "Data": null,
+      "Delta": false,
+      "Errors": null,
+      "Input": null,
+      "IsError": false,
+      "Kind": "assistant",
+      "Message": null,
+      "Metadata": null,
+      "Model": "",
+      "SessionID": "",
+      "Subtype": "",
+      "Text": "{\n  \"candidate_hash\": \"\",\n  \"check_receipts\": [],\n  \"findings\": [\n    {\n      \"message\": \"Scope: validate UTF-8 and keys, then match literal strings using local data. Risks: normalization, over-filtering punctuation, and mutating caller keys. Acceptance covers malformed bytes, forbidden runes, emoji, case differences, and unchanged input.\",\n      \"requirement\": \"R1\",\n      \"severity\": \"info\"\n    },\n    {\n      \"message\": \"Scope: check rune boundaries and choose the longest boundary-valid match at each @. Risks: byte-based classification, unknown identifier prefixes, and rejecting valid shorter fallbacks. Acceptance covers Unicode boundary classes, dot/plus punctuation, overlapping keys, and cursor advancement.\",\n      \"requirement\": \"R2\",\n      \"severity\": \"info\"\n    },\n    {\n      \"message\": \"Scope: scan in source order and append each key only on its first eligible occurrence. Risk: candidate sorting or duplicate registration affecting output order. Acceptance permutes registrations and repeats mentions, including inputs with no eligible matches.\",\n      \"requirement\": \"R3\",\n      \"severity\": \"info\"\n    },\n    {\n      \"message\": \"Scope: track backtick-run length within each eligible line. Risks: mismatched runs closing spans or unmatched spans leaking across lines. Acceptance covers equal and unequal run lengths, mentions around closed spans, and unmatched spans followed by another line.\",\n      \"requirement\": \"R4\",\n      \"severity\": \"info\"\n    },\n    {\n      \"message\": \"Scope: maintain fence character and opening length across LF/CRLF lines. Risks: accepting invalid indentation, shorter closers, or trailing info on closers. Acceptance covers both fence characters, opening info strings, strict closing syntax, and unclosed fences.\",\n      \"requirement\": \"R5\",\n      \"severity\": \"info\"\n    },\n    {\n      \"message\": \"Scope: ignore quoted lines before fence processing and check backslash parity before ordinary left boundaries. Risks: quoted markers changing fence state or even backslash runs suppressing mentions. Acceptance covers indentation, email forms, odd/even runs, and ordinary quote marks.\",\n      \"requirement\": \"R6\",\n      \"severity\": \"info\"\n    },\n    {\n      \"message\": \"Scope: Route uses Extract and maps Human Pending/Busy/Finished to start/soon/new. Risks: implicit broadcasts, reordered deliveries, or finished comments failing to request new execution. Acceptance checks all three mappings and empty or excluded mentions.\",\n      \"requirement\": \"R7\",\n      \"severity\": \"info\"\n    },\n    {\n      \"message\": \"Scope: allow Agent only in Busy and fail closed on unknown values. Keep router.go self-contained with permitted imports and call-local state. Acceptance covers the routing matrix, concurrent calls, exact API, and host restrictions on files, initialization, directives, and imports.\",\n      \"requirement\": \"R8\",\n      \"severity\": \"info\"\n    }\n  ],\n  \"manifest\": [],\n  \"requirement_evidence\": [\n    {\n      \"assessment\": \"Plan exact UTF-8 validation and literal identity while preserving caller-owned keys.\",\n      \"evidence\": \"Reject invalid UTF-8 text before scanning. Ignore empty or invalid UTF-8 keys and keys containing Unicode whitespace/control, @, backslash or backtick. Build a private deduplicated candidate slice. Acceptance should exercise malformed bytes, valid replacement runes, punctuation, emoji, forbidden runes, distinct case/normalization forms, and unchanged key input.\"\n      ,\n      \"id\": \"R1\"\n    },\n    {\n      \"assessment\": \"Plan rune-aware boundaries and longest matching candidate selection at each eligible @.\",\n      \"evidence\": \"Use exact prefix comparisons and decode adjacent runes. Reject left letters/numbers/marks or underscore, hyphen, dot, plus, @; reject right letters/numbers/marks or underscore/hyphen. Examine candidates longest-first, checking each candidate's right boundary before choosing. Acceptance covers unknown identifier suffixes, dot/plus punctuation, longer known keys, a longer boundary-invalid candidate with a valid shorter fallback, and advancement past the chosen mention.\",\n      \"id\": \"R2\"\n    },\n    {\n      \"assessment\": \"Plan source-order output with per-call duplicate suppression.\",\n      \"evidence\": \"Traverse eligible source positions from left to right. Maintain a local seen set and append a chosen key only once; still advance past repeated mentions. Acceptance should compare results across registration permutations, duplicated registrations, repeated mentions separated by excluded content, and zero-match inputs. An empty result may be nil.\",\n      \"id\": \"R3\"\n    },\n    {\n      \"assessment\": \"Plan independent per-line inline-code state using exact backtick-run lengths.\",\n      \"evidence\": \"Outside fences and quoted lines, count each complete backtick run. An opening run hides content until an exactly equal run; other lengths remain inside the span. Reset inline state at each newline. Acceptance covers single/multiple backticks, mismatched runs, adjacent eligible mentions, unmatched runs, and eligibility on the next line. Other inline Markdown syntax receives no special treatment.\",\n      \"id\": \"R4\"\n    },\n    {\n      \"assessment\": \"Plan persistent fence state with strict opener/closer recognition and LF/CRLF handling.\",\n      \"evidence\": \"Recognize openers after zero to three ASCII spaces with at least three identical backticks or tildes; ignore arbitrary opening info. Close only with the same character, sufficient run length, and ASCII space/tab suffix. Ignore all fence lines/content. Acceptance covers indentation limits, tabs, both characters, longer/shorter runs, trailing junk, unclosed fences, LF/CRLF equivalence, and preservation of standalone CR characters.\",\n      \"id\": \"R5\"\n    },\n    {\n      \"assessment\": \"Plan quotation precedence and escape parity before ordinary mention boundary checks.\",\n      \"evidence\": \"First ignore any line whose first non-space/tab character is >, including while fenced; such lines never change fence state. For each @ outside excluded content, count consecutive preceding backslashes: odd suppresses it, even continues to ordinary boundary checks. Acceptance covers quoted fence openers/closers, varied indentation, zero through several backslashes, alice@example, alice+tag@example, and mentions inside ordinary quote marks.\",\n      \"id\": \"R6\"\n    },\n    {\n      \"assessment\": \"Plan one ordered delivery per extracted mention for each valid Human state.\",\n      \"evidence\": \"For permitted Human calls, invoke Extract and map Pending to start, Busy to soon, and Finished to new. Preserve Extract order and uniqueness. Acceptance should verify exact Key/When values for all three states, multiple targets, duplicate mentions, and no deliveries for absent, invalid, quoted, fenced, inline-code, or escaped mentions. Finished must explicitly produce new for eligible mentions.\",\n      \"id\": \"R7\"\n    },\n    {\n      \"assessment\": \"Plan fail-closed Agent routing, exact API, restricted scope, and concurrency-safe local state.\",\n      \"evidence\": \"Allow Agent only in Busy with soon; reject unknown State or Author values. Acceptance should cover every defined author/state pair, unknown and empty values, literal justification for every delivery, and concurrent calls. Host inspection must confirm only router.go changes, package mentionroute and exact API/constants, permitted imports, no init/TestMain/directives/dot or blank imports, no initializer calls, and no subprocess/network work.\",\n      \"id\": \"R8\"\n    }\n  ],\n  \"requirements\": [\n    \"R1\",\n    \"R2\",\n    \"R3\",\n    \"R4\",\n    \"R5\",\n    \"R6\",\n    \"R7\",\n    \"R8\"\n  ],\n  \"review_receipt\": \"\",\n  \"role\": \"planner\",\n  \"spec_hash\": \"2b8c630fccf8720b1cb3e0dd12b6f691031ec9873371f033dd4b5fdeff70c7e0\",\n  \"summary\": \"Plan router.go with local UTF-8/key validation, a line/fence/inline scanner, literal rune-aware matching, source-order deduplication, and fail-closed routing. Host confirms plan stage, round 1, matching specification hash, empty candidate, and no violations. Coverage is prospective acceptance guidance from the supplied fixed specification. No files changed, implementation approved, or checks run; host verification must establish acceptance.\",\n  \"verdict\": \"plan\"\n}",
+      "ToolName": "",
+      "ToolUseID": "",
+      "Usage": null
+    },
+    {
+      "CostUSD": null,
+      "Data": {
+        "payload": {
+          "threadId": "01a19805-0ce9-7c90-819f-490a143b95e0",
+          "turn": {
+            "completedAt": 1793552031,
+            "durationMs": 201217,
+            "error": null,
+            "id": "01a19805-0d1f-7010-918e-1fd2b7449982",
+            "items": [
+              {
+                "completedAtMs": 1793552031389,
+                "delivery": null,
+                "id": "msg_02a9073bb7c3ad6e016ae76e79659481919edf48ca26e70559",
+                "memoryCitation": null,
+                "phase": "final_answer",
+                "questions": null,
+                "startedAtMs": 1793551993615,
+                "text": "{\n  \"candidate_hash\": \"\",\n  \"check_receipts\": [],\n  \"findings\": [\n    {\n      \"message\": \"Scope: validate UTF-8 and keys, then match literal strings using local data. Risks: normalization, over-filtering punctuation, and mutating caller keys. Acceptance covers malformed bytes, forbidden runes, emoji, case differences, and unchanged input.\",\n      \"requirement\": \"R1\",\n      \"severity\": \"info\"\n    },\n    {\n      \"message\": \"Scope: check rune boundaries and choose the longest boundary-valid match at each @. Risks: byte-based classification, unknown identifier prefixes, and rejecting valid shorter fallbacks. Acceptance covers Unicode boundary classes, dot/plus punctuation, overlapping keys, and cursor advancement.\",\n      \"requirement\": \"R2\",\n      \"severity\": \"info\"\n    },\n    {\n      \"message\": \"Scope: scan in source order and append each key only on its first eligible occurrence. Risk: candidate sorting or duplicate registration affecting output order. Acceptance permutes registrations and repeats mentions, including inputs with no eligible matches.\",\n      \"requirement\": \"R3\",\n      \"severity\": \"info\"\n    },\n    {\n      \"message\": \"Scope: track backtick-run length within each eligible line. Risks: mismatched runs closing spans or unmatched spans leaking across lines. Acceptance covers equal and unequal run lengths, mentions around closed spans, and unmatched spans followed by another line.\",\n      \"requirement\": \"R4\",\n      \"severity\": \"info\"\n    },\n    {\n      \"message\": \"Scope: maintain fence character and opening length across LF/CRLF lines. Risks: accepting invalid indentation, shorter closers, or trailing info on closers. Acceptance covers both fence characters, opening info strings, strict closing syntax, and unclosed fences.\",\n      \"requirement\": \"R5\",\n      \"severity\": \"info\"\n    },\n    {\n      \"message\": \"Scope: ignore quoted lines before fence processing and check backslash parity before ordinary left boundaries. Risks: quoted markers changing fence state or even backslash runs suppressing mentions. Acceptance covers indentation, email forms, odd/even runs, and ordinary quote marks.\",\n      \"requirement\": \"R6\",\n      \"severity\": \"info\"\n    },\n    {\n      \"message\": \"Scope: Route uses Extract and maps Human Pending/Busy/Finished to start/soon/new. Risks: implicit broadcasts, reordered deliveries, or finished comments failing to request new execution. Acceptance checks all three mappings and empty or excluded mentions.\",\n      \"requirement\": \"R7\",\n      \"severity\": \"info\"\n    },\n    {\n      \"message\": \"Scope: allow Agent only in Busy and fail closed on unknown values. Keep router.go self-contained with permitted imports and call-local state. Acceptance covers the routing matrix, concurrent calls, exact API, and host restrictions on files, initialization, directives, and imports.\",\n      \"requirement\": \"R8\",\n      \"severity\": \"info\"\n    }\n  ],\n  \"manifest\": [],\n  \"requirement_evidence\": [\n    {\n      \"assessment\": \"Plan exact UTF-8 validation and literal identity while preserving caller-owned keys.\",\n      \"evidence\": \"Reject invalid UTF-8 text before scanning. Ignore empty or invalid UTF-8 keys and keys containing Unicode whitespace/control, @, backslash or backtick. Build a private deduplicated candidate slice. Acceptance should exercise malformed bytes, valid replacement runes, punctuation, emoji, forbidden runes, distinct case/normalization forms, and unchanged key input.\"\n      ,\n      \"id\": \"R1\"\n    },\n    {\n      \"assessment\": \"Plan rune-aware boundaries and longest matching candidate selection at each eligible @.\",\n      \"evidence\": \"Use exact prefix comparisons and decode adjacent runes. Reject left letters/numbers/marks or underscore, hyphen, dot, plus, @; reject right letters/numbers/marks or underscore/hyphen. Examine candidates longest-first, checking each candidate's right boundary before choosing. Acceptance covers unknown identifier suffixes, dot/plus punctuation, longer known keys, a longer boundary-invalid candidate with a valid shorter fallback, and advancement past the chosen mention.\",\n      \"id\": \"R2\"\n    },\n    {\n      \"assessment\": \"Plan source-order output with per-call duplicate suppression.\",\n      \"evidence\": \"Traverse eligible source positions from left to right. Maintain a local seen set and append a chosen key only once; still advance past repeated mentions. Acceptance should compare results across registration permutations, duplicated registrations, repeated mentions separated by excluded content, and zero-match inputs. An empty result may be nil.\",\n      \"id\": \"R3\"\n    },\n    {\n      \"assessment\": \"Plan independent per-line inline-code state using exact backtick-run lengths.\",\n      \"evidence\": \"Outside fences and quoted lines, count each complete backtick run. An opening run hides content until an exactly equal run; other lengths remain inside the span. Reset inline state at each newline. Acceptance covers single/multiple backticks, mismatched runs, adjacent eligible mentions, unmatched runs, and eligibility on the next line. Other inline Markdown syntax receives no special treatment.\",\n      \"id\": \"R4\"\n    },\n    {\n      \"assessment\": \"Plan persistent fence state with strict opener/closer recognition and LF/CRLF handling.\",\n      \"evidence\": \"Recognize openers after zero to three ASCII spaces with at least three identical backticks or tildes; ignore arbitrary opening info. Close only with the same character, sufficient run length, and ASCII space/tab suffix. Ignore all fence lines/content. Acceptance covers indentation limits, tabs, both characters, longer/shorter runs, trailing junk, unclosed fences, LF/CRLF equivalence, and preservation of standalone CR characters.\",\n      \"id\": \"R5\"\n    },\n    {\n      \"assessment\": \"Plan quotation precedence and escape parity before ordinary mention boundary checks.\",\n      \"evidence\": \"First ignore any line whose first non-space/tab character is >, including while fenced; such lines never change fence state. For each @ outside excluded content, count consecutive preceding backslashes: odd suppresses it, even continues to ordinary boundary checks. Acceptance covers quoted fence openers/closers, varied indentation, zero through several backslashes, alice@example, alice+tag@example, and mentions inside ordinary quote marks.\",\n      \"id\": \"R6\"\n    },\n    {\n      \"assessment\": \"Plan one ordered delivery per extracted mention for each valid Human state.\",\n      \"evidence\": \"For permitted Human calls, invoke Extract and map Pending to start, Busy to soon, and Finished to new. Preserve Extract order and uniqueness. Acceptance should verify exact Key/When values for all three states, multiple targets, duplicate mentions, and no deliveries for absent, invalid, quoted, fenced, inline-code, or escaped mentions. Finished must explicitly produce new for eligible mentions.\",\n      \"id\": \"R7\"\n    },\n    {\n      \"assessment\": \"Plan fail-closed Agent routing, exact API, restricted scope, and concurrency-safe local state.\",\n      \"evidence\": \"Allow Agent only in Busy with soon; reject unknown State or Author values. Acceptance should cover every defined author/state pair, unknown and empty values, literal justification for every delivery, and concurrent calls. Host inspection must confirm only router.go changes, package mentionroute and exact API/constants, permitted imports, no init/TestMain/directives/dot or blank imports, no initializer calls, and no subprocess/network work.\",\n      \"id\": \"R8\"\n    }\n  ],\n  \"requirements\": [\n    \"R1\",\n    \"R2\",\n    \"R3\",\n    \"R4\",\n    \"R5\",\n    \"R6\",\n    \"R7\",\n    \"R8\"\n  ],\n  \"review_receipt\": \"\",\n  \"role\": \"planner\",\n  \"spec_hash\": \"2b8c630fccf8720b1cb3e0dd12b6f691031ec9873371f033dd4b5fdeff70c7e0\",\n  \"summary\": \"Plan router.go with local UTF-8/key validation, a line/fence/inline scanner, literal rune-aware matching, source-order deduplication, and fail-closed routing. Host confirms plan stage, round 1, matching specification hash, empty candidate, and no violations. Coverage is prospective acceptance guidance from the supplied fixed specification. No files changed, implementation approved, or checks run; host verification must establish acceptance.\",\n  \"verdict\": \"plan\"\n}",
+                "type": "agentMessage"
+              }
+            ],
+            "itemsView": "summary",
+            "rootTurnId": "01a19805-0d1f-7010-918e-1fd2b7449982",
+            "startedAt": 1793551830,
+            "status": "completed"
+          }
+        }
+      },
+      "Delta": false,
+      "Errors": null,
+      "Input": null,
+      "IsError": false,
+      "Kind": "result",
+      "Message": null,
+      "Metadata": null,
+      "Model": "",
+      "SessionID": "",
+      "Subtype": "completed",
+      "Text": "",
+      "ToolName": "",
+      "ToolUseID": "",
+      "Usage": {
+        "CachedInputTokens": 129152,
+        "EstimatedCostMilli": 0,
+        "InputTokens": 149093,
+        "OutputTokens": 5542
+      }
+    }
+  ],
+  "original_audit": {
+    "sha256": "9842836ebb7ace77211cbb26a31c309b1973da29938d48ec1326f8d601c56c87",
+    "bytes": 629499,
+    "path": "C:\\Users\\buthim\\AppData\\Local\\Temp\\agent-adaptor-pr30-sdlc-run04\\tasks\\01-planner.json"
+  },
+  "raw": {
+    "terminal": {
+      "Event": "turn/completed",
+      "JSON": {
+        "threadId": "01a19805-0ce9-7c90-819f-490a143b95e0",
+        "turn": {
+          "completedAt": 1793552031,
+          "durationMs": 201217,
+          "error": null,
+          "id": "01a19805-0d1f-7010-918e-1fd2b7449982",
+          "items": [
+            {
+              "completedAtMs": 1793552031389,
+              "delivery": null,
+              "id": "msg_02a9073bb7c3ad6e016ae76e79659481919edf48ca26e70559",
+              "memoryCitation": null,
+              "phase": "final_answer",
+              "questions": null,
+              "startedAtMs": 1793551993615,
+              "text": "{\n  \"candidate_hash\": \"\",\n  \"check_receipts\": [],\n  \"findings\": [\n    {\n      \"message\": \"Scope: validate UTF-8 and keys, then match literal strings using local data. Risks: normalization, over-filtering punctuation, and mutating caller keys. Acceptance covers malformed bytes, forbidden runes, emoji, case differences, and unchanged input.\",\n      \"requirement\": \"R1\",\n      \"severity\": \"info\"\n    },\n    {\n      \"message\": \"Scope: check rune boundaries and choose the longest boundary-valid match at each @. Risks: byte-based classification, unknown identifier prefixes, and rejecting valid shorter fallbacks. Acceptance covers Unicode boundary classes, dot/plus punctuation, overlapping keys, and cursor advancement.\",\n      \"requirement\": \"R2\",\n      \"severity\": \"info\"\n    },\n    {\n      \"message\": \"Scope: scan in source order and append each key only on its first eligible occurrence. Risk: candidate sorting or duplicate registration affecting output order. Acceptance permutes registrations and repeats mentions, including inputs with no eligible matches.\",\n      \"requirement\": \"R3\",\n      \"severity\": \"info\"\n    },\n    {\n      \"message\": \"Scope: track backtick-run length within each eligible line. Risks: mismatched runs closing spans or unmatched spans leaking across lines. Acceptance covers equal and unequal run lengths, mentions around closed spans, and unmatched spans followed by another line.\",\n      \"requirement\": \"R4\",\n      \"severity\": \"info\"\n    },\n    {\n      \"message\": \"Scope: maintain fence character and opening length across LF/CRLF lines. Risks: accepting invalid indentation, shorter closers, or trailing info on closers. Acceptance covers both fence characters, opening info strings, strict closing syntax, and unclosed fences.\",\n      \"requirement\": \"R5\",\n      \"severity\": \"info\"\n    },\n    {\n      \"message\": \"Scope: ignore quoted lines before fence processing and check backslash parity before ordinary left boundaries. Risks: quoted markers changing fence state or even backslash runs suppressing mentions. Acceptance covers indentation, email forms, odd/even runs, and ordinary quote marks.\",\n      \"requirement\": \"R6\",\n      \"severity\": \"info\"\n    },\n    {\n      \"message\": \"Scope: Route uses Extract and maps Human Pending/Busy/Finished to start/soon/new. Risks: implicit broadcasts, reordered deliveries, or finished comments failing to request new execution. Acceptance checks all three mappings and empty or excluded mentions.\",\n      \"requirement\": \"R7\",\n      \"severity\": \"info\"\n    },\n    {\n      \"message\": \"Scope: allow Agent only in Busy and fail closed on unknown values. Keep router.go self-contained with permitted imports and call-local state. Acceptance covers the routing matrix, concurrent calls, exact API, and host restrictions on files, initialization, directives, and imports.\",\n      \"requirement\": \"R8\",\n      \"severity\": \"info\"\n    }\n  ],\n  \"manifest\": [],\n  \"requirement_evidence\": [\n    {\n      \"assessment\": \"Plan exact UTF-8 validation and literal identity while preserving caller-owned keys.\",\n      \"evidence\": \"Reject invalid UTF-8 text before scanning. Ignore empty or invalid UTF-8 keys and keys containing Unicode whitespace/control, @, backslash or backtick. Build a private deduplicated candidate slice. Acceptance should exercise malformed bytes, valid replacement runes, punctuation, emoji, forbidden runes, distinct case/normalization forms, and unchanged key input.\"\n      ,\n      \"id\": \"R1\"\n    },\n    {\n      \"assessment\": \"Plan rune-aware boundaries and longest matching candidate selection at each eligible @.\",\n      \"evidence\": \"Use exact prefix comparisons and decode adjacent runes. Reject left letters/numbers/marks or underscore, hyphen, dot, plus, @; reject right letters/numbers/marks or underscore/hyphen. Examine candidates longest-first, checking each candidate's right boundary before choosing. Acceptance covers unknown identifier suffixes, dot/plus punctuation, longer known keys, a longer boundary-invalid candidate with a valid shorter fallback, and advancement past the chosen mention.\",\n      \"id\": \"R2\"\n    },\n    {\n      \"assessment\": \"Plan source-order output with per-call duplicate suppression.\",\n      \"evidence\": \"Traverse eligible source positions from left to right. Maintain a local seen set and append a chosen key only once; still advance past repeated mentions. Acceptance should compare results across registration permutations, duplicated registrations, repeated mentions separated by excluded content, and zero-match inputs. An empty result may be nil.\",\n      \"id\": \"R3\"\n    },\n    {\n      \"assessment\": \"Plan independent per-line inline-code state using exact backtick-run lengths.\",\n      \"evidence\": \"Outside fences and quoted lines, count each complete backtick run. An opening run hides content until an exactly equal run; other lengths remain inside the span. Reset inline state at each newline. Acceptance covers single/multiple backticks, mismatched runs, adjacent eligible mentions, unmatched runs, and eligibility on the next line. Other inline Markdown syntax receives no special treatment.\",\n      \"id\": \"R4\"\n    },\n    {\n      \"assessment\": \"Plan persistent fence state with strict opener/closer recognition and LF/CRLF handling.\",\n      \"evidence\": \"Recognize openers after zero to three ASCII spaces with at least three identical backticks or tildes; ignore arbitrary opening info. Close only with the same character, sufficient run length, and ASCII space/tab suffix. Ignore all fence lines/content. Acceptance covers indentation limits, tabs, both characters, longer/shorter runs, trailing junk, unclosed fences, LF/CRLF equivalence, and preservation of standalone CR characters.\",\n      \"id\": \"R5\"\n    },\n    {\n      \"assessment\": \"Plan quotation precedence and escape parity before ordinary mention boundary checks.\",\n      \"evidence\": \"First ignore any line whose first non-space/tab character is >, including while fenced; such lines never change fence state. For each @ outside excluded content, count consecutive preceding backslashes: odd suppresses it, even continues to ordinary boundary checks. Acceptance covers quoted fence openers/closers, varied indentation, zero through several backslashes, alice@example, alice+tag@example, and mentions inside ordinary quote marks.\",\n      \"id\": \"R6\"\n    },\n    {\n      \"assessment\": \"Plan one ordered delivery per extracted mention for each valid Human state.\",\n      \"evidence\": \"For permitted Human calls, invoke Extract and map Pending to start, Busy to soon, and Finished to new. Preserve Extract order and uniqueness. Acceptance should verify exact Key/When values for all three states, multiple targets, duplicate mentions, and no deliveries for absent, invalid, quoted, fenced, inline-code, or escaped mentions. Finished must explicitly produce new for eligible mentions.\",\n      \"id\": \"R7\"\n    },\n    {\n      \"assessment\": \"Plan fail-closed Agent routing, exact API, restricted scope, and concurrency-safe local state.\",\n      \"evidence\": \"Allow Agent only in Busy with soon; reject unknown State or Author values. Acceptance should cover every defined author/state pair, unknown and empty values, literal justification for every delivery, and concurrent calls. Host inspection must confirm only router.go changes, package mentionroute and exact API/constants, permitted imports, no init/TestMain/directives/dot or blank imports, no initializer calls, and no subprocess/network work.\",\n      \"id\": \"R8\"\n    }\n  ],\n  \"requirements\": [\n    \"R1\",\n    \"R2\",\n    \"R3\",\n    \"R4\",\n    \"R5\",\n    \"R6\",\n    \"R7\",\n    \"R8\"\n  ],\n  \"review_receipt\": \"\",\n  \"role\": \"planner\",\n  \"spec_hash\": \"2b8c630fccf8720b1cb3e0dd12b6f691031ec9873371f033dd4b5fdeff70c7e0\",\n  \"summary\": \"Plan router.go with local UTF-8/key validation, a line/fence/inline scanner, literal rune-aware matching, source-order deduplication, and fail-closed routing. Host confirms plan stage, round 1, matching specification hash, empty candidate, and no violations. Coverage is prospective acceptance guidance from the supplied fixed specification. No files changed, implementation approved, or checks run; host verification must establish acceptance.\",\n  \"verdict\": \"plan\"\n}",
+              "type": "agentMessage"
+            }
+          ],
+          "itemsView": "summary",
+          "rootTurnId": "01a19805-0d1f-7010-918e-1fd2b7449982",
+          "startedAt": 1793551830,
+          "status": "completed"
+        }
+      }
+    },
+    "stderr_bytes": 2353,
+    "stdout_bytes": 513962
+  },
+  "audit_caveat": "Original run predates SDLC-012: successful MCP error:null items are incorrectly IsError=true in this unmodified transcript. Raw protocol records all 13 successful calls accurately."
+}

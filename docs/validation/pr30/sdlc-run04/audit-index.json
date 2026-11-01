@@ -1,0 +1,159 @@
+{
+  "source_manifest": [
+    {
+      "sha256": "7717b93fb86f021a5ad48be792cdceb56ea61d4045c89ecc04cb686bc65c36fa",
+      "path": "examples/showcases/sdlc-team/evidence.go"
+    },
+    {
+      "sha256": "7e7e1d8b3cebc14441f31d28a0f23244dd2e0ae660f32ec8ff1d84be1b53d2cf",
+      "path": "examples/showcases/sdlc-team/fixture.go"
+    },
+    {
+      "sha256": "07e1c876aa1adad252d1f87960f1f9ad9b3a29aeb38d5c4aeb21aa78d5af4754",
+      "path": "examples/showcases/sdlc-team/main.go"
+    },
+    {
+      "sha256": "b8d0a50db90c28e5fb5194532380ccdaa1abd038a2e4628a33800b1baff9f5b9",
+      "path": "examples/showcases/sdlc-team/workflow.go"
+    }
+  ],
+  "source_commit": "e08245c2e08453c06816052172b758fd48739da0",
+  "original_directory": "C:\\Users\\buthim\\AppData\\Local\\Temp\\agent-adaptor-pr30-sdlc-run04",
+  "independent_review": {
+    "task_lifecycle_overlap_seconds": 87.098,
+    "limitations": [
+      "Incoming-only Raw cannot independently attest per-turn effort.",
+      "Absence of the temporary work directory does not independently prove that every operating-system process has exited.",
+      "The fixture is the documented mention/routing subset, not the full Multica parser."
+    ],
+    "skipped_or_failed_tests": 0,
+    "reviewer_read_receipt_matches": true,
+    "joined_work_overlap_seconds": 77.972,
+    "test_package_passes": 1,
+    "tasks_succeeded": 4,
+    "check_receipt_log_hashes_match": true,
+    "work_directory_absent": true,
+    "errors_in_successful_mcp_transcript": 13,
+    "expected_tests_run_and_passed": 9,
+    "candidate_manifest_recomputed": true,
+    "integrated_identical": true
+  },
+  "note": "Curated review copy. Complete Raw, Transcript and typed events remain in the original local directory. Original artifacts have not been rewritten after discovery of SDLC-012. Candidate source is stored with .txt suffix to avoid making the audit fixture an SDK package.",
+  "original_files": [
+    {
+      "sha256": "3ed3c7aaa646b08d8d3ddfd37ccbbf5a2f3276dd6c521dd1df0f4de8969810a1",
+      "bytes": 5138,
+      "path": "acceptance_test.go.txt"
+    },
+    {
+      "sha256": "729fbdfc07f1b1f203af38e7f9fe4c5443a7df9e74e7e1a800325d17adea36d6",
+      "bytes": 8684906,
+      "path": "events.json"
+    },
+    {
+      "sha256": "1f08d69fea171d3f0bdd9a3448b2c6ac24f7a6e653bc89b489c665fddbf16382",
+      "bytes": 2888786,
+      "path": "leader-result.json"
+    },
+    {
+      "sha256": "13d22fdeb67070adbec2d06054eb0e5d0b8c505c420100f6cde2aebcfcb95fa7",
+      "bytes": 6864,
+      "path": "report.json"
+    },
+    {
+      "sha256": "2b8c630fccf8720b1cb3e0dd12b6f691031ec9873371f033dd4b5fdeff70c7e0",
+      "bytes": 5219,
+      "path": "spec.md"
+    },
+    {
+      "sha256": "3dd38690b543c601f68e8ae9d566e5b61fcc0dd2121b5081cf264bec82478db7",
+      "bytes": 354,
+      "path": "candidates/01.manifest.json"
+    },
+    {
+      "sha256": "3ed3c7aaa646b08d8d3ddfd37ccbbf5a2f3276dd6c521dd1df0f4de8969810a1",
+      "bytes": 5138,
+      "path": "candidates/01/acceptance_test.go"
+    },
+    {
+      "sha256": "8e7cb46679d52fc477d4f99d40c8bb88706ab0a2ce9cff5ed5eccd46dd29671d",
+      "bytes": 42,
+      "path": "candidates/01/go.mod"
+    },
+    {
+      "sha256": "b241f898b73b5ec16a82edddb66008369b21a35cd6c59499a4da033debfe28e5",
+      "bytes": 4112,
+      "path": "candidates/01/router.go"
+    },
+    {
+      "sha256": "473693e5cc09304f207606f72b01aab478d13f4be81c140f4c12a38bf7714270",
+      "bytes": 8892,
+      "path": "checks/check-001.log"
+    },
+    {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0,
+      "path": "checks/check-002.log"
+    },
+    {
+      "sha256": "3ed3c7aaa646b08d8d3ddfd37ccbbf5a2f3276dd6c521dd1df0f4de8969810a1",
+      "bytes": 5138,
+      "path": "integrated/acceptance_test.go"
+    },
+    {
+      "sha256": "8e7cb46679d52fc477d4f99d40c8bb88706ab0a2ce9cff5ed5eccd46dd29671d",
+      "bytes": 42,
+      "path": "integrated/go.mod"
+    },
+    {
+      "sha256": "b241f898b73b5ec16a82edddb66008369b21a35cd6c59499a4da033debfe28e5",
+      "bytes": 4112,
+      "path": "integrated/router.go"
+    },
+    {
+      "sha256": "26cdd53a5784879e3868e77eb5632c265523d7476e357cb18b68b6c8d1407157",
+      "bytes": 7863,
+      "path": "prompts/engineer.txt"
+    },
+    {
+      "sha256": "34046ee70dabfdf9086ab94343a2ae7c6b6dd36c0e8abd19e41b08c4f2afa8b9",
+      "bytes": 3343,
+      "path": "prompts/leader.txt"
+    },
+    {
+      "sha256": "bf140536003ad07a8b0b6c5293e83643e91338c61271d0816bb703e7ba02c241",
+      "bytes": 7365,
+      "path": "prompts/planner.txt"
+    },
+    {
+      "sha256": "c1e1226d89c73eda8d547f8c9583d4ebab877e6656db54626ccf23ef6cb242ee",
+      "bytes": 7772,
+      "path": "prompts/reviewer.txt"
+    },
+    {
+      "sha256": "df0522190e387bc8562873ea5273a36e7a05c2efcf9be08e3ee8762b0b64d3c8",
+      "bytes": 7684,
+      "path": "prompts/verifier.txt"
+    },
+    {
+      "sha256": "9842836ebb7ace77211cbb26a31c309b1973da29938d48ec1326f8d601c56c87",
+      "bytes": 629499,
+      "path": "tasks/01-planner.json"
+    },
+    {
+      "sha256": "72b193a1158c268af6a0558a5ab66767fa067aac6c16c9c4f666b1c509190251",
+      "bytes": 688095,
+      "path": "tasks/02-engineer.json"
+    },
+    {
+      "sha256": "39d7c0463d153a8d4bcee85be0fff89309ee8e0798f50f90dfa64207850fe7d8",
+      "bytes": 385956,
+      "path": "tasks/03-reviewer.json"
+    },
+    {
+      "sha256": "995eedbd5022bc5dcec7638fa1aeb349d35f1df99b159731f35d1e7d37a13eb4",
+      "bytes": 352128,
+      "path": "tasks/04-verifier.json"
+    }
+  ]
+}
