@@ -733,11 +733,11 @@ func customEvent(name string, value map[string]any) aguievents.Event {
 	if name == "" {
 		name = "codex.event"
 	}
-	opts := []aguievents.CustomEventOption{}
-	if len(value) > 0 {
-		opts = append(opts, aguievents.WithValue(value))
+	// CUSTOM.value is required even when the notice has no payload.
+	if value == nil {
+		value = map[string]any{}
 	}
-	return aguievents.NewCustomEvent(name, opts...)
+	return aguievents.NewCustomEvent(name, aguievents.WithValue(value))
 }
 
 func intFromAny(v any) int {

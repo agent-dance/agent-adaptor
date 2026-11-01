@@ -4,6 +4,18 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- AG-UI `CUSTOM` events now always carry `value` (an empty object for
+  payload-free notices), as the AG-UI 1.0 schema requires; `@ag-ui/client` 1.x
+  otherwise rejects the whole stream.
+- Upgraded the CopilotKit example to CopilotKit 1.83.0, `@ag-ui/client` 1.0.2
+  and stable Next.js 16.4.3, with `zod` 4.6.7, `undici` 6.29.1 and
+  `graphql-scalars` 2.0.1 overrides for advisories that have no upstream fix in
+  the required ranges, so `npm audit --omit=dev --audit-level=high` passes
+  again. The remaining moderate `@hono/node-server` and low `katex` findings are
+  documented in the example README.
+
 ## [1.1.2] - 2026-08-07
 
 ### Added
