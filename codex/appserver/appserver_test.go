@@ -995,6 +995,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -1056,6 +1058,20 @@ func main() {
 			respond(req.ID, "{\"thread\":{\"id\":\"thread-child\"}}")
 		case "turn/start":
 			turnCount++
+			if scenario == "stderr-barrier" {
+				_, _ = fmt.Fprintf(os.Stderr, "stderr-turn-%d\n", turnCount)
+				// The parent releases this barrier only after its stderr reader
+				// captured the marker; stdout must not imply cross-pipe ordering.
+				release := filepath.Join(os.Getenv("FAKE_APPSERVER_STDERR_BARRIER_DIR"), fmt.Sprintf("release-%d", turnCount))
+				for {
+					if _, err := os.Stat(release); err == nil {
+						break
+					} else if !os.IsNotExist(err) {
+						os.Exit(19)
+					}
+					runtime.Gosched()
+				}
+			}
 			var params struct { ThreadID string ` + "`json:\"threadId\"`" + ` }
 			if err := json.Unmarshal(req.Params, &params); err != nil || params.ThreadID != currentThread {
 				write(fmt.Sprintf("{\"id\":%s,\"error\":{\"code\":-32602,\"message\":\"turn started on wrong thread\"}}", req.ID))
@@ -1128,7 +1144,7 @@ func main() {
 			if status == "scope-mismatch" {
 				status = "completed"
 			}
-			if status == "success" || status == "" || status == "structured-valid" || status == "nonzero-after-terminal" || status == "malformed-item-live" {
+			if status == "success" || status == "" || status == "structured-valid" || status == "nonzero-after-terminal" || status == "malformed-item-live" || status == "stderr-barrier" {
 				status = "completed"
 			}
 			errorField := ""

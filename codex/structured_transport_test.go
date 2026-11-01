@@ -146,8 +146,14 @@ func TestCodexNativeResultAndEventsPreserveThreadAndSpawn(t *testing.T) {
 					t.Fatalf("Decode=%+v err=%v", decoded, err)
 				}
 				raw := result.Raw()
-				if result.Text != `{"answer":42}` || result.Summary != "" || result.Metadata["transport"] != "app-server" || result.Usage == nil || result.Usage.InputTokens != 2 || result.Usage.OutputTokens != 1 || raw.Terminal == nil || raw.Terminal.Event != "turn/completed" || !strings.Contains(raw.Stdout, `"method":"item/completed"`) || !strings.Contains(raw.Stderr, "structured diagnostic") {
+				if result.Text != `{"answer":42}` || result.Summary != "" || result.Metadata["transport"] != "app-server" || result.Usage == nil || result.Usage.InputTokens != 2 || result.Usage.OutputTokens != 1 || raw.Terminal == nil || raw.Terminal.Event != "turn/completed" || !strings.Contains(raw.Stdout, `"method":"item/completed"`) {
 					t.Fatalf("turn %d audit: %+v raw=%+v", i, result, raw)
+				}
+				// One-shot teardown drains stderr through EOF. A resident process
+				// has no ordering guarantee between its stdout and stderr readers;
+				// deterministic resident capture is covered with a fixture barrier.
+				if spawn && !strings.Contains(raw.Stderr, "structured diagnostic") {
+					t.Fatalf("turn %d one-shot stderr=%q", i, raw.Stderr)
 				}
 				transcript := result.Transcript()
 				if len(transcript) < 3 || transcript[len(transcript)-2].Text != result.Text || transcript[len(transcript)-1].Kind != driver.TranscriptResult {
@@ -180,8 +186,11 @@ func TestCodexNativeNonStreamingInvalidOutputRetainsAudit(t *testing.T) {
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
 				result, err := a.Run(ctx, req, &testutil.EventRecorder{})
-				if result.Checkpoint != nil || result.Metadata["transport"] != "app-server" || len(result.RuntimeServices) != 1 || result.RawStreams == nil || !strings.Contains(result.RawStreams.Stderr, "structured diagnostic") {
+				if result.Checkpoint != nil || result.Metadata["transport"] != "app-server" || len(result.RuntimeServices) != 1 || result.RawStreams == nil {
 					t.Fatalf("partial audit: result=%+v err=%v", result, err)
+				}
+				if !resident && !strings.Contains(result.RawStreams.Stderr, "structured diagnostic") {
+					t.Fatalf("one-shot stderr=%q", result.RawStreams.Stderr)
 				}
 				if mode == "structured_malformed" {
 					if err == nil || !strings.Contains(result.RawStreams.Stdout, "{broken") {
@@ -271,8 +280,11 @@ func assertCodexNativeResponse(t *testing.T, result driver.Response, req driver.
 	if result.Usage == nil || result.Usage.InputTokens != 2*turns || result.Usage.OutputTokens != turns || result.Metadata["transport"] != "app-server" || result.Model != "gpt-test" {
 		t.Fatalf("accounting=%+v", result)
 	}
-	if result.RawStreams == nil || result.RawStreams.Terminal == nil || result.RawStreams.Terminal.Event != "turn/completed" || strings.Count(result.RawStreams.Stdout, `"method":"turn/completed"`) != turns || !strings.Contains(result.RawStreams.Stderr, "structured diagnostic") {
+	if result.RawStreams == nil || result.RawStreams.Terminal == nil || result.RawStreams.Terminal.Event != "turn/completed" || strings.Count(result.RawStreams.Stdout, `"method":"turn/completed"`) != turns {
 		t.Fatalf("raw=%+v", result.RawStreams)
+	}
+	if req.Spawn && !strings.Contains(result.RawStreams.Stderr, "structured diagnostic") {
+		t.Fatalf("one-shot stderr=%q", result.RawStreams.Stderr)
 	}
 	if len(result.Transcript) < 3*turns || result.Transcript[len(result.Transcript)-2].Text != result.Output || result.Transcript[len(result.Transcript)-1].Kind != driver.TranscriptResult {
 		t.Fatalf("transcript=%+v", result.Transcript)
