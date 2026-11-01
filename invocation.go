@@ -101,7 +101,7 @@ func (a *Agent) executeInvocation(ctx context.Context, st *runStream, prompt str
 					result = nil
 					resultErr = releaseErr
 				} else {
-					resultErr = errors.Join(resultErr, releaseErr)
+					resultErr = joinDistinct(resultErr, releaseErr)
 				}
 			}
 		}
@@ -112,12 +112,12 @@ func (a *Agent) executeInvocation(ctx context.Context, st *runStream, prompt str
 				result = nil
 				resultErr = teardownErr
 			} else {
-				resultErr = errors.Join(resultErr, teardownErr)
+				resultErr = joinDistinct(resultErr, teardownErr)
 			}
 		}
 		if !failedBeforeCleanup && ctx.Err() != nil {
 			result = nil
-			resultErr = errors.Join(ctx.Err(), resultErr)
+			resultErr = joinDistinct(ctx.Err(), resultErr)
 		}
 		reason := MessageRunFailed
 		// Before any Driver dispatch, failed preparation must return inputs
@@ -148,7 +148,7 @@ func (a *Agent) executeInvocation(ctx context.Context, st *runStream, prompt str
 		}
 		if target != nil && target.admissionErr == nil {
 			if endErr := target.runtime.end(!target.standby); endErr != nil {
-				resultErr = errors.Join(resultErr, target.thread.threadError(endErr))
+				resultErr = joinDistinct(resultErr, target.thread.threadError(endErr))
 				result = nil
 			}
 		}
@@ -339,7 +339,7 @@ func (a *Agent) executeInvocation(ctx context.Context, st *runStream, prompt str
 			if joined, ok := turnErr.(interface{ Unwrap() []error }); ok {
 				parts := slices.Clone(joined.Unwrap())
 				parts[0] = &finalError
-				turnErr = errors.Join(parts...)
+				turnErr = joinDistinct(parts...)
 			} else {
 				turnErr = &finalError
 			}
@@ -347,11 +347,11 @@ func (a *Agent) executeInvocation(ctx context.Context, st *runStream, prompt str
 		if plan != nil {
 			plan.StopLeaseRenewal()
 			if renewErr := plan.RenewalError(); renewErr != nil {
-				resultErr = errors.Join(turnErr, ctx.Err(), target.thread.threadError(renewErr))
+				resultErr = joinDistinct(turnErr, ctx.Err(), target.thread.threadError(renewErr))
 				return
 			}
 			if ownerErr := target.runtime.verifyOwnership(); ownerErr != nil {
-				resultErr = errors.Join(turnErr, ctx.Err(), target.thread.threadError(ownerErr))
+				resultErr = joinDistinct(turnErr, ctx.Err(), target.thread.threadError(ownerErr))
 				return
 			}
 			var checkpoint *driver.Checkpoint
@@ -362,7 +362,7 @@ func (a *Agent) executeInvocation(ctx context.Context, st *runStream, prompt str
 			}
 			if checkpoint != nil {
 				if _, persistErr := plan.Persist(ctx, identity, a.driver, fingerprint, checkpoint); persistErr != nil {
-					resultErr = errors.Join(turnErr, target.thread.threadError(persistErr))
+					resultErr = joinDistinct(turnErr, target.thread.threadError(persistErr))
 					return
 				}
 				target.thread.markEstablished()
@@ -653,11 +653,13 @@ func classifyInvocationOutcome(ctx context.Context, resp driver.Response, runErr
 	if err := ctx.Err(); err != nil {
 		// Drivers may report the exit/transport error from the process we just
 		// cancelled. Keep that diagnostic, but classify the outcome as cancel.
+		if resp.Failure != nil && resp.Failure.Code != driver.FailureCancelled {
+			runErr = joinDistinct(runErr, fmt.Errorf("driver failure %s: %s", resp.Failure.Code, resp.Failure.Message))
+		}
 		if resp.Failure != nil {
-			runErr = errors.Join(runErr, fmt.Errorf("driver failure %s: %s", resp.Failure.Code, resp.Failure.Message))
 			resp.Failure = &driver.RunFailure{Code: driver.FailureCancelled, Message: err.Error()}
 		}
-		return resp, errors.Join(err, runErr)
+		return resp, joinDistinct(err, runErr)
 	}
 	if resp.Failure != nil || runErr != nil {
 		return resp, runErr
@@ -701,7 +703,7 @@ func finalizeRun(runID string, sink *eventSink, resp driver.Response, err error)
 	if failure != nil {
 		business := runErrorFromFailure(failure, res)
 		if failure.Code == driver.FailureCancelled && err != nil {
-			return nil, errors.Join(business, err)
+			return nil, joinDistinct(business, err)
 		}
 		return nil, business
 	}
@@ -755,4 +757,39 @@ func mergeExecutionResult(total, call *Result, h *messageHub, before int) *Resul
 	part.Usage = usage
 	appendResult(total, &part)
 	return total
+}
+
+// joinDistinct joins errors like errors.Join, flattening nested joins and
+// dropping nil and textually identical errors. Cancellation is observed at
+// several layers (classification, finalization, cleanup); hosts must see one
+// readable error while errors.Is/As still match every distinct cause.
+func joinDistinct(errs ...error) error {
+	var out []error
+	seen := make(map[string]bool)
+	var add func(error)
+	add = func(err error) {
+		if err == nil {
+			return
+		}
+		if joined, ok := err.(interface{ Unwrap() []error }); ok {
+			for _, part := range joined.Unwrap() {
+				add(part)
+			}
+			return
+		}
+		if text := err.Error(); !seen[text] {
+			seen[text] = true
+			out = append(out, err)
+		}
+	}
+	for _, err := range errs {
+		add(err)
+	}
+	switch len(out) {
+	case 0:
+		return nil
+	case 1:
+		return out[0]
+	}
+	return errors.Join(out...)
 }

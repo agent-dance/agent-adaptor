@@ -3,6 +3,7 @@ package adaptor_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -52,6 +53,12 @@ func TestF2CoreCancelPriority(t *testing.T) {
 				if business.Result.Raw().Stdout != "raw before cancel" {
 					t.Fatal("partial audit lost")
 				}
+				// Cancellation is observed at several layers; the host sees each
+				// distinct cause once, not a stack of repeated context errors.
+				text := err.Error()
+				if strings.Count(text, want.Error()) > 2 || strings.Count(text, diagnostic.Error()) != 1 || strings.Count(text, "process exited with status -1") != 1 {
+					t.Fatalf("unreadable cancellation error: %q", text)
+				}
 				var done *adaptor.Done
 				for event := range stream.Events() {
 					if value, ok := event.(adaptor.Done); ok {
@@ -86,4 +93,28 @@ func TestF2ResultIncludesUsageObservedAfterTurnEnd(t *testing.T) {
 	if err != nil || result.Usage.InputTokens != 5 {
 		t.Fatalf("late usage lost: %+v / %v", result, err)
 	}
+}
+
+func TestCancelledDriverFailureIsNotRepeatedAsDiagnostic(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		started := make(chan struct{})
+		fake := newFakeDriver()
+		fake.runFunc = func(ctx context.Context, _ driver.Request, _ driver.EventSink) (driver.Response, error) {
+			close(started)
+			<-ctx.Done()
+			// A Driver that already classifies its own teardown as cancellation.
+			return driver.Response{Failure: &driver.RunFailure{Code: driver.FailureCancelled, Message: ctx.Err().Error()}}, ctx.Err()
+		}
+		stream := adaptor.New(fake).Send(context.Background(), "original")
+		<-started
+		stream.Cancel()
+		_, err := stream.Result()
+		var business *adaptor.RunError
+		if !errors.Is(err, context.Canceled) || !errors.As(err, &business) || business.Reason != adaptor.ReasonCancelled {
+			t.Fatalf("cancellation class lost: %v", err)
+		}
+		if text := err.Error(); strings.Contains(text, "driver failure") || strings.Count(text, context.Canceled.Error()) > 2 {
+			t.Fatalf("redundant cancellation diagnostics: %q", text)
+		}
+	})
 }
