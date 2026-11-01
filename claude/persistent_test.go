@@ -3,6 +3,7 @@ package claude
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -23,6 +24,9 @@ import (
 const claudePersistentHelperEnv = "GO_WANT_AGENT_ADAPTOR_CLAUDE_PERSISTENT_HELPER"
 
 func TestMain(m *testing.M) {
+	if len(os.Args) > 1 && os.Args[1] == claudeScriptedHelperArg {
+		os.Exit(runClaudeScriptedHelper())
+	}
 	if os.Getenv(messageHelperEnv) == "1" {
 		os.Exit(messageHelper())
 	}
@@ -258,6 +262,19 @@ func runClaudePersistentHelper() int {
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Buffer(make([]byte, 4096), 4<<20)
 	for scanner.Scan() {
+		var frame map[string]any
+		if err := json.Unmarshal(scanner.Bytes(), &frame); err != nil {
+			return 20
+		}
+		if handled, err := acknowledgeClaudeInitialize(frame, json.NewEncoder(writer)); handled {
+			if err != nil || writer.Flush() != nil {
+				return 21
+			}
+			continue
+		}
+		if claudeTopLevelString(frame, "type") != "user" {
+			return 22
+		}
 		if os.Getenv("FAIL_AFTER_PERSISTENT_READ") == "1" {
 			return 23
 		}
