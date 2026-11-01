@@ -1,0 +1,60 @@
+{
+  "original_files": [
+    {
+      "sha256": "45355986bace60b5c6be55e4caa30fc14bbf9ed7ffe8fc8f7408c30c943e58f7",
+      "path": "playwright.log",
+      "bytes": 1094
+    },
+    {
+      "sha256": "300f2314914d8b25785740f7d0baaf80d66947852e050543ccf7e9df3f78510e",
+      "path": "process-result.json",
+      "bytes": 58
+    },
+    {
+      "sha256": "21519b2e20f17e1cc8bec6af9e1cb6c3c6386d7ecb385a6dafb0b3c042a3553b",
+      "path": "report.json",
+      "bytes": 114020
+    },
+    {
+      "sha256": "37656c496bf3f799f7b7626e8d42cd90a338e3bcbe0d6418d92b6fd8f221bc24",
+      "path": "source-freeze.json",
+      "bytes": 1191
+    },
+    {
+      "sha256": "91d1c43004802cd49950d78eb11c8fa7d05da8ffffe219a8b13b2f561bc00903",
+      "path": "test-results/.last-run.json",
+      "bytes": 45
+    },
+    {
+      "sha256": "6c5f96e57c7ebac749bf9aed9cd1e60f3f3751d6155527849a73c7fe1ac2ddb5",
+      "path": "test-results/agent-adaptor-shadow-actua-cc132-to-daemon-to-provider-to-UI-chromium/actual-shadow-evidence.json",
+      "bytes": 108355
+    },
+    {
+      "sha256": "73944c3f8e78ece7963a0259223b05117d457d86da8de3e3eeadf868d116d3ae",
+      "path": "test-results/agent-adaptor-shadow-actua-cc132-to-daemon-to-provider-to-UI-chromium/development-result-visible.png",
+      "bytes": 151528
+    }
+  ],
+  "note": "Selected exact original redacted report, process result, source freeze, test output and screenshots. Original files remain local. The first failed run remains failed; subsequent read-only UI diagnosis is separate.",
+  "original_directory": "C:\\Users\\buthim\\.codex\\worktrees\\multica-pr30-shadow\\multica\\output\\playwright\\agent-adaptor-shadow\\multica-native-20261101T173823Z",
+  "independent_review": {
+    "native_daemon_sdk_mentions": 0,
+    "actual_task_count": 1,
+    "frozen_sources_match": "1bab70fa1",
+    "generated_tests_run": 3,
+    "limitations": [
+      "One native development comparison only; other product routes are tested separately on shadow.",
+      "Configured xhigh is not independently attested by incoming provider audit."
+    ],
+    "receipt_and_source_hashes_recomputed": true,
+    "command_programs_match_source": true,
+    "passed": true,
+    "task_id": "01a19831-6641-79c2-8c63-9d2a43188d8f",
+    "skipped_tests": 0,
+    "expected_failures": 0,
+    "ui_task_id_and_result_visible": true,
+    "actual_files_match_saved_artifacts": true,
+    "fixed_cases_passed": 6
+  }
+}

@@ -1,0 +1,42 @@
+◇ injected env (1) from .env.worktree // tip: ◈ encrypted .env [www.dotenvx.com]
+
+Running 4 tests using 1 worker
+
+[1A[2K◇ injected env (0) from .env.worktree // tip: ◈ encrypted .env [www.dotenvx.com]
+
+[1A[2K[1/4] [chromium] › e2e/agent-adaptor-shadow.spec.ts:271:3 › actual local Multica agent-adaptor shadow (explicit paid opt-in) › same development task: real server to daemon to provider to UI
+[1A[2K  1) [chromium] › e2e/agent-adaptor-shadow.spec.ts:271:3 › actual local Multica agent-adaptor shadow (explicit paid opt-in) › same development task: real server to daemon to provider to UI 
+
+    Error: Actual daemon log must prove SDK execution, not just a requested feature flag
+
+    [2mexpect([22m[31mreceived[39m[2m).[22mtoBeGreaterThan[2m([22m[32mexpected[39m[2m)[22m
+
+    Expected: > [32m0[39m
+    Received:   [31m0[39m
+
+      182 |     if (phase === "agent-adaptor") {
+      183 |       const runIDs = sdkAuditRunIDs(lines.join("\n"));
+    > 184 |       expect(runIDs.length, "Actual daemon log must prove SDK execution, not just a requested feature flag").toBeGreaterThan(0);
+          |                                                                                                              ^
+      185 |       expect(runIDs).not.toContain(task.id);
+      186 |       if (commentID) expect(lines.some((line) => line.includes("message receipt") && line.includes(commentID) && /state[=": ]+delivered/.test(line))).toBe(true);
+      187 |     } else expect(lines.filter((line) => line.includes(task.id))).toHaveLength(0);
+        at Harness.sdkEvidence (/mnt/c/Users/buthim/.codex/worktrees/multica-pr30-shadow/multica/e2e/agent-adaptor-shadow.spec.ts:184:110)
+        at /mnt/c/Users/buthim/.codex/worktrees/multica-pr30-shadow/multica/e2e/agent-adaptor-shadow.spec.ts:277:5
+        at run (/mnt/c/Users/buthim/.codex/worktrees/multica-pr30-shadow/multica/e2e/agent-adaptor-shadow.spec.ts:251:25)
+
+
+[1A[2K◇ injected env (0) from .env.worktree // tip: ⌘ override existing { override: true }
+
+[1A[2K[2/4] [chromium] › e2e/agent-adaptor-shadow.spec.ts:288:3 › actual local Multica agent-adaptor shadow (explicit paid opt-in) › current comment receipt, retry identity, ordinary reply queued after Done
+[1A[2K  2) [chromium] › e2e/agent-adaptor-shadow.spec.ts:288:3 › actual local Multica agent-adaptor shadow (explicit paid opt-in) › current comment receipt, retry identity, ordinary reply queued after Done 
+
+    Test was interrupted.
+
+
+[1A[2K  1 failed
+    [chromium] › e2e/agent-adaptor-shadow.spec.ts:271:3 › actual local Multica agent-adaptor shadow (explicit paid opt-in) › same development task: real server to daemon to provider to UI 
+  1 interrupted
+    [chromium] › e2e/agent-adaptor-shadow.spec.ts:288:3 › actual local Multica agent-adaptor shadow (explicit paid opt-in) › current comment receipt, retry identity, ordinary reply queued after Done 
+  2 did not run
+make: *** [Makefile:176: env-exec] Error 130

@@ -1,0 +1,496 @@
+From 4f4a0b285fe93782a594e92d4dd612bb7ae1807a Mon Sep 17 00:00:00 2001
+From: buthim <me@blurooo.com>
+Date: Mon, 2 Nov 2026 01:59:04 +0800
+Subject: [PATCH] fix(agent): bind shadow readiness and audits to real provider
+ events
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+由 Codex 接续补做 agent-adaptor PR #30 的真实影子验证修复（审查标识：便便）。
+
+MC-006: recognize captured formal tint logs without weakening run identity or cleanup assertions. MC-007: observe typed active provider coordinates through the authoritative SDK lifecycle rather than expecting provider metadata on core RunStarted; close readiness at turn and execution termination. Cover the real public SDK app-server pipeline and retain failed run01 evidence.
+---
+ docs/engineering/agent-adaptor-shadow.md      | 10 ++-
+ e2e/agent-adaptor-shadow.evidence.spec.ts     | 41 ++++++++--
+ e2e/agent-adaptor-shadow.evidence.ts          |  6 ++
+ server/pkg/agent/adaptor_backend.go           | 74 ++++++++++++++----
+ .../agent/adaptor_backend_appserver_test.go   | 63 +++++++++++++++
+ server/pkg/agent/adaptor_backend_test.go      | 27 +++++--
+ .../agent/testdata/shadow-appserver/main.go   | 77 +++++++++++++++++++
+ 7 files changed, 267 insertions(+), 31 deletions(-)
+ create mode 100644 server/pkg/agent/adaptor_backend_appserver_test.go
+ create mode 100644 server/pkg/agent/testdata/shadow-appserver/main.go
+
+diff --git a/docs/engineering/agent-adaptor-shadow.md b/docs/engineering/agent-adaptor-shadow.md
+index e7bd6a481..1a5187509 100644
+--- a/docs/engineering/agent-adaptor-shadow.md
++++ b/docs/engineering/agent-adaptor-shadow.md
+@@ -35,9 +35,13 @@ The existing server and daemon retain responsibility for comment routing,
+ authorization, busy/pending decisions, task cancellation, and chat lifecycle.
+ This integration does not replace those paths with a synthetic SDK-only test.
+ 
+-For an active issue task, the daemon first waits for a real SDK `RunStarted`
+-carrying an official provider turn ID and an inspected, version-gated message
+-capability. A process launch or provider thread-ID announcement is insufficient.
++For an active issue task, the daemon waits for a typed active provider semantic
++event (for example, a tool-call start) whose `Meta.Source` carries official
++provider thread and turn IDs, plus an inspected, version-gated message
++capability. SDK `RunStarted` is core-owned and does not reproduce the provider's
++start envelope. A process launch or provider thread-ID announcement is
++insufficient. `TurnEnd` closes the claim gate; a late event from an ended turn
++cannot reopen it. The SDK alone owns its actual provider delivery window.
+ The durable supplement claim supplies its original comment ID, raw text, author
+ kind, and display name to `Stream.Send` using `MessageID` and `From`. Older claim
+ responses do not expose the actor's database ID; it is left empty rather than
+diff --git a/e2e/agent-adaptor-shadow.evidence.spec.ts b/e2e/agent-adaptor-shadow.evidence.spec.ts
+index 2376b0aa8..8ac2fc22c 100644
+--- a/e2e/agent-adaptor-shadow.evidence.spec.ts
++++ b/e2e/agent-adaptor-shadow.evidence.spec.ts
+@@ -141,10 +141,13 @@ function lifecycle(msg: string, taskID: string, runID: string, extra: Record<str
+   return { msg: `agent-adaptor shadow execution ${msg}`, task_id: taskID, run_id: runID, ...extra };
+ }
+ 
+-function lifecycleLog(entries: Record<string, unknown>[], format: "json" | "text"): string {
+-  return entries.map((entry) => format === "json" ? JSON.stringify(entry) : Object.entries(entry)
+-    .map(([key, value]) => `${key}=${typeof value === "string" && /\s|^$/.test(value) ? JSON.stringify(value) : String(value)}`)
+-    .join(" ")).join("\n");
++function lifecycleLog(entries: Record<string, unknown>[], format: "json" | "text" | "tint"): string {
++  return entries.map((entry, index) => {
++    if (format === "json") return JSON.stringify(entry);
++    const fields = Object.entries(entry).filter(([key]) => format !== "tint" || key !== "msg")
++      .map(([key, value]) => `${key}=${typeof value === "string" && /\s|^$/.test(value) ? JSON.stringify(value) : String(value)}`).join(" ");
++    return format === "tint" ? `01:42:47.${String(index).padStart(3, "0")} INF ${entry.msg} ${fields}` : fields;
++  }).join("\n");
+ }
+ 
+ function cleanupEntries(): Record<string, unknown>[] {
+@@ -155,8 +158,8 @@ function cleanupEntries(): Record<string, unknown>[] {
+   ];
+ }
+ 
+-test("SDK cleanup must precede the next startup in JSON and slog text", () => {
+-  for (const format of ["json", "text"] as const) {
++test("SDK cleanup must precede the next startup in JSON, slog text, and Multica tint", () => {
++  for (const format of ["json", "text", "tint"] as const) {
+     for (const status of ["completed", "cancelled", "failed", "timeout"]) {
+       const entries = cleanupEntries();
+       entries[1]!.status = status;
+@@ -168,7 +171,7 @@ test("SDK cleanup must precede the next startup in JSON and slog text", () => {
+ });
+ 
+ test("cleanup rejects missing, wrong-task, unconfirmed, and nonterminal finish evidence", () => {
+-  for (const format of ["json", "text"] as const) {
++  for (const format of ["json", "text", "tint"] as const) {
+     const missing = cleanupEntries();
+     missing.splice(1, 1);
+     expect(() => requireSDKCleanupBeforeNext(lifecycleLog(missing, format), "old-task", "next-task")).toThrow();
+@@ -185,7 +188,7 @@ test("cleanup rejects missing, wrong-task, unconfirmed, and nonterminal finish e
+ });
+ 
+ test("cleanup rejects inverted order, reused run IDs, missing IDs, and ambiguous records", () => {
+-  for (const format of ["json", "text"] as const) {
++  for (const format of ["json", "text", "tint"] as const) {
+     const entries = cleanupEntries();
+     expect(() => requireSDKCleanupBeforeNext(lifecycleLog([entries[0]!, entries[2]!, entries[1]!], format), "old-task", "next-task")).toThrow();
+     expect(() => requireSDKCleanupBeforeNext(lifecycleLog([entries[1]!, entries[0]!, entries[2]!], format), "old-task", "next-task")).toThrow();
+@@ -202,6 +205,28 @@ test("cleanup rejects inverted order, reused run IDs, missing IDs, and ambiguous
+   }
+ });
+ 
++test("actual Multica tint lifecycle lines carry SDK identity and confirmed cleanup", () => {
++  const log = [
++    '01:42:47.817 INF agent-adaptor shadow execution started component=daemon task_id=01a19834-ec67-7d67-a0ad-2c94e3bfdc96 run_id=run_f17fcb412be57944 version=0.166.0 resume=false',
++    '01:44:33.097 INF agent-adaptor shadow execution finished component=daemon task_id=01a19834-ec67-7d67-a0ad-2c94e3bfdc96 run_id=run_f17fcb412be57944 status=completed cleanup_confirmed=true prior_provider_session_id="" observed_provider_session_id="" checkpoint_provider_session_id=01a19834-ee61-7d72-ae4d-12cb7bde1b33 fresh_fallback=false',
++    '01:44:46.590 INF agent-adaptor shadow execution started component=daemon task_id=01a19836-bc83-7c58-b74c-d42068139611 run_id=run_c2b9dd6f85aac349 version=0.166.0 resume=false',
++  ].join("\n");
++  expect(sdkAuditRunIDs(log)).toEqual(["run_f17fcb412be57944", "run_c2b9dd6f85aac349"]);
++  expect(() => requireSDKCleanupBeforeNext(log, "01a19834-ec67-7d67-a0ad-2c94e3bfdc96", "01a19836-bc83-7c58-b74c-d42068139611")).not.toThrow();
++});
++
++test("tint lifecycle recognition rejects embedded, malformed, conflicting, and duplicate identities", () => {
++  for (const line of [
++    'agent-adaptor shadow execution started task_id=old-task run_id=sdk-old',
++    '01:42:47.817 INF unrelated details="agent-adaptor shadow execution started" task_id=old-task run_id=sdk-old',
++    '01:42:47.817 INF agent-adaptor shadow execution started later task_id=old-task run_id=sdk-old',
++    '25:42:47.817 INF agent-adaptor shadow execution started task_id=old-task run_id=sdk-old',
++    '01:42:47.817 INF agent-adaptor shadow execution started task_id=old-task run_id=sdk-old msg="unrelated"',
++    '01:42:47.817 INF agent-adaptor shadow execution started task_id=old-task run_id=sdk-old run_id=sdk-fake',
++    '01:42:47.817 INF agent-adaptor shadow execution started task_id=old-task',
++  ]) expect(sdkAuditRunIDs(line)).toEqual([]);
++});
++
+ test("DB cancellation, quoted booleans, and embedded messages cannot prove SDK cleanup", () => {
+   const entries = cleanupEntries();
+   const prefix = JSON.stringify(entries[0]);
+diff --git a/e2e/agent-adaptor-shadow.evidence.ts b/e2e/agent-adaptor-shadow.evidence.ts
+index 77816e5a8..b32e39b28 100644
+--- a/e2e/agent-adaptor-shadow.evidence.ts
++++ b/e2e/agent-adaptor-shadow.evidence.ts
+@@ -99,6 +99,8 @@ function logRecord(line: string): Record<string, unknown> | undefined {
+       return undefined;
+     }
+   }
++  // Multica's configured tint handler puts the formal message before its attrs.
++  const tint = line.match(/^(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d\.\d{3}\s+(?:DBG|INF|WRN|ERR)\s+(agent-adaptor shadow execution (?:started|finished))(?=\s+[A-Za-z_][A-Za-z0-9_]*=)/);
+   const entry: Record<string, unknown> = {};
+   const fields = /(?:^|\s)([A-Za-z_][A-Za-z0-9_]*)=("(?:\\.|[^"\\])*"|[^\s"]+)(?=\s|$)/g;
+   for (const match of line.matchAll(fields)) {
+@@ -115,6 +117,10 @@ function logRecord(line: string): Record<string, unknown> | undefined {
+       entry[name] = value === "true" ? true : value === "false" ? false : value;
+     }
+   }
++  if (tint) {
++    if (Object.hasOwn(entry, "msg")) return undefined;
++    entry.msg = tint[1];
++  }
+   return entry;
+ }
+ 
+diff --git a/server/pkg/agent/adaptor_backend.go b/server/pkg/agent/adaptor_backend.go
+index 9fa2626e3..8ef14f81a 100644
+--- a/server/pkg/agent/adaptor_backend.go
++++ b/server/pkg/agent/adaptor_backend.go
+@@ -162,11 +162,7 @@ func (b *adaptorBackend) consume(runCtx context.Context, cancel context.CancelFu
+ 		}
+ 	}
+ 	emit(Message{Type: MessageLog, Level: "info", Content: "agent-adaptor run_id=" + stream.RunID() + " backend=shadow"})
+-	var observedSession string
+ 	for event := range stream.Events() {
+-		if startedEvent, ok := event.(adaptor.RunStarted); ok && startedEvent.ThreadID != "" {
+-			observedSession = startedEvent.ThreadID
+-		}
+ 		bridge.observe(event, emit)
+ 	}
+ 	result, runErr := stream.Result()
+@@ -197,7 +193,7 @@ func (b *adaptorBackend) consume(runCtx context.Context, cancel context.CancelFu
+ 		mapped.Error = "agent-adaptor process cleanup is unconfirmed: " + closeErr.Error()
+ 	}
+ 	bridge.terminal.Store(true)
+-	b.cfg.Logger.Info("agent-adaptor shadow execution finished", "task_id", b.cfg.TaskID, "run_id", stream.RunID(), "status", mapped.Status, "cleanup_confirmed", closeErr == nil, "prior_provider_session_id", opts.ResumeSessionID, "observed_provider_session_id", observedSession, "checkpoint_provider_session_id", healthySession, "fresh_fallback", bridge.continuity.Load())
++	b.cfg.Logger.Info("agent-adaptor shadow execution finished", "task_id", b.cfg.TaskID, "run_id", stream.RunID(), "status", mapped.Status, "cleanup_confirmed", closeErr == nil, "prior_provider_session_id", opts.ResumeSessionID, "observed_provider_session_id", bridge.observedSession, "checkpoint_provider_session_id", healthySession, "fresh_fallback", bridge.continuity.Load())
+ 	close(messages)
+ 	results <- mapped
+ }
+@@ -208,6 +204,9 @@ type adaptorReceipt struct {
+ 	err      error
+ 	finished bool
+ }
++
++type adaptorProviderTurn struct{ thread, turn string }
++
+ type adaptorSession struct {
+ 	stream           adaptor.Stream
+ 	mu               sync.Mutex
+@@ -220,6 +219,12 @@ type adaptorSession struct {
+ 	priorSession     string
+ 	continuityNotice string
+ 	canSupplement    bool
++	// The event consumer alone owns these provider observations. RunStarted is
++	// core-owned and need not contain the suppressed provider start envelope.
++	observedSession string
++	activeTurn      adaptorProviderTurn
++	endedTurns      map[adaptorProviderTurn]struct{}
++	providerEnded   bool
+ }
+ 
+ func (s *adaptorSession) supplement(ctx context.Context, input SupplementInput) error {
+@@ -310,23 +315,22 @@ func (s *adaptorSession) finish() {
+ }
+ 
+ func (s *adaptorSession) observe(event adaptor.Event, emit func(Message)) {
++	s.observeProviderTurn(event, emit)
+ 	switch e := event.(type) {
+ 	case adaptor.RunStarted:
+-		meta := e.Meta()
+-		liveTurn := meta.TurnID != "" || (meta.Source != nil && meta.Source.TurnID != "")
+-		s.ready.Store(s.canSupplement && liveTurn)
+ 		// Do not pin an announced provider ID before the SDK validates and saves
+ 		// a healthy checkpoint. Result is the authoritative continuation handle.
+ 		emit(Message{Type: MessageStatus, Status: "task_started"})
+-		if s.ready.Load() {
+-			turnID := meta.TurnID
+-			if turnID == "" && meta.Source != nil {
+-				turnID = meta.Source.TurnID
++	case adaptor.TurnEnd, adaptor.RunFinished:
++		if _, final := event.(adaptor.RunFinished); final {
++			s.providerEnded = true
++		}
++		if s.activeTurn.turn != "" {
++			if s.endedTurns == nil {
++				s.endedTurns = make(map[adaptorProviderTurn]struct{})
+ 			}
+-			s.logger.Info("agent-adaptor live turn", "task_id", s.task, "run_id", s.stream.RunID(), "turn_id", turnID, "provider_session_id", e.ThreadID, "prior_provider_session_id", s.priorSession)
+-			emit(Message{Type: MessageLog, Level: "info", Content: "agent-adaptor live_turn run_id=" + s.stream.RunID()})
++			s.endedTurns[s.activeTurn] = struct{}{}
+ 		}
+-	case adaptor.RunFinished:
+ 		s.ready.Store(false)
+ 	case adaptor.TextDelta:
+ 		if e.Phase == adaptor.PhaseContent && e.Text != "" {
+@@ -373,10 +377,50 @@ func (s *adaptorSession) observe(event adaptor.Event, emit func(Message)) {
+ 	case adaptor.Dropped:
+ 		emit(Message{Type: MessageLog, Level: "warn", Content: fmt.Sprintf("agent-adaptor dropped=%d reason=%s", e.Count, e.Reason)})
+ 	case adaptor.Done:
++		s.providerEnded = true
+ 		s.ready.Store(false)
+ 	}
+ }
+ 
++func (s *adaptorSession) observeProviderTurn(event adaptor.Event, emit func(Message)) {
++	source := event.Meta().Source
++	if source == nil {
++		return
++	}
++	if source.ThreadID != "" {
++		s.observedSession = source.ThreadID
++	}
++	// Only a formal, turn-scoped active semantic event establishes observed
++	// provider execution. Process start, init, transcript notices and terminals
++	// cannot open the host claim gate. The SDK still owns the delivery window
++	// and its actual MessageUpdate decides the eventual HTTP ACK.
++	active := false
++	switch e := event.(type) {
++	case adaptor.ToolCall:
++		active = e.Phase == adaptor.PhaseStart || e.Phase == adaptor.PhaseContent
++	case adaptor.TextDelta:
++		active = e.Phase == adaptor.PhaseStart || e.Phase == adaptor.PhaseContent
++	case adaptor.Thinking:
++		active = e.Phase == adaptor.PhaseStart || e.Phase == adaptor.PhaseContent
++	case *adaptor.ApprovalRequest:
++		active = true
++	}
++	turn := adaptorProviderTurn{thread: source.ThreadID, turn: source.TurnID}
++	if !active || !s.canSupplement || turn.thread == "" || turn.turn == "" || s.providerEnded {
++		return
++	}
++	if _, ended := s.endedTurns[turn]; ended {
++		return
++	}
++	if s.activeTurn == turn && s.ready.Load() {
++		return
++	}
++	s.activeTurn = turn
++	s.ready.Store(true)
++	s.logger.Info("agent-adaptor live turn", "task_id", s.task, "run_id", s.stream.RunID(), "turn_id", turn.turn, "provider_session_id", turn.thread, "prior_provider_session_id", s.priorSession)
++	emit(Message{Type: MessageLog, Level: "info", Content: "agent-adaptor live_turn run_id=" + s.stream.RunID()})
++}
++
+ func mapAdaptorResult(result *adaptor.Result, err error, session string, duration time.Duration) Result {
+ 	mapped := Result{Status: "completed", SessionID: session, DurationMs: duration.Milliseconds()}
+ 	if result != nil {
+diff --git a/server/pkg/agent/adaptor_backend_appserver_test.go b/server/pkg/agent/adaptor_backend_appserver_test.go
+new file mode 100644
+index 000000000..9689be746
+--- /dev/null
++++ b/server/pkg/agent/adaptor_backend_appserver_test.go
+@@ -0,0 +1,63 @@
++package agent
++
++import (
++	"bytes"
++	"context"
++	"log/slog"
++	"os/exec"
++	"path/filepath"
++	"runtime"
++	"strings"
++	"testing"
++	"time"
++)
++
++// This uses the real captured Codex driver, app-server parser and public
++// Thread.Send/Event pipeline. A fake Driver emitting a RunStarted directly
++// would miss that core suppresses the provider's duplicate lifecycle event.
++func TestAdaptorShadowRealAppServerSemanticEventOpensSupplementGate(t *testing.T) {
++	base := t.TempDir()
++	command := filepath.Join(base, "offline-app-server")
++	if runtime.GOOS == "windows" {
++		command += ".exe"
++	}
++	build := exec.CommandContext(t.Context(), "go", "build", "-o", command, "./testdata/shadow-appserver")
++	if output, err := build.CombinedOutput(); err != nil {
++		t.Fatalf("build private offline protocol peer: %v\n%s", err, output)
++	}
++	var logs bytes.Buffer
++	b := newAdaptorBackend(Config{ExecutablePath: command, AdaptorThreadKey: "real-sdk/offline-business-key", TaskID: "fixture-task", Env: map[string]string{"CODEX_HOME": filepath.Join(base, "private-empty-profile")}, Logger: slog.New(slog.NewTextHandler(&logs, nil))})
++	b.conversations = &adaptorConversations{byKey: map[string]*adaptorConversation{}}
++	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
++	defer cancel()
++	session, err := b.Execute(ctx, "wait for guidance", ExecOptions{Cwd: base, EnableTaskSupplement: true})
++	if err != nil {
++		t.Fatal(err)
++	}
++	if session.SupplementInput == nil {
++		t.Fatal("real version-gated app-server capability was unavailable")
++	}
++	started := false
++	for message := range session.Messages {
++		if message.Type == MessageStatus && message.Status == "task_started" {
++			started = true
++		}
++		if message.Type == MessageLog && strings.Contains(message.Content, "live_turn") {
++			if !started || !session.SupplementReady() {
++				t.Fatal("official tool-call source did not open the gate after core start")
++			}
++			if err := session.SupplementInput(ctx, SupplementInput{ID: "original-comment", Text: "original guidance 😀", AuthorType: "member", AuthorName: "offline human"}); err != nil {
++				t.Fatal(err)
++			}
++		}
++	}
++	result := awaitShadow(t, session.Result)
++	if result.Status != "completed" || result.SessionID != "fixture-thread" || result.Output != "fixture complete" || session.SupplementReady() || !session.TerminalObserved() {
++		t.Fatalf("actual public SDK completion=%+v ready=%v terminal=%v\n%s", result, session.SupplementReady(), session.TerminalObserved(), logs.String())
++	}
++	for _, evidence := range []string{"agent-adaptor live turn", "turn_id=fixture-turn", "provider_session_id=fixture-thread", "message_id=original-comment state=delivered", "boundary=immediate", "observed_provider_session_id=fixture-thread", "cleanup_confirmed=true"} {
++		if !strings.Contains(logs.String(), evidence) {
++			t.Fatalf("missing actual protocol evidence %q:\n%s", evidence, logs.String())
++		}
++	}
++}
+diff --git a/server/pkg/agent/adaptor_backend_test.go b/server/pkg/agent/adaptor_backend_test.go
+index 54979894f..9724fdb12 100644
+--- a/server/pkg/agent/adaptor_backend_test.go
++++ b/server/pkg/agent/adaptor_backend_test.go
+@@ -433,33 +433,50 @@ func TestAdaptorShadowRealCodexValidatesNormalizedLaunchConfiguration(t *testing
+ 
+ func TestAdaptorShadowReadinessRequiresInspectedCapabilityAndOfficialTurn(t *testing.T) {
+ 	bridge := &adaptorSession{canSupplement: true, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+-	// No code path below can call the stream: these are only provider lifecycle
+-	// announcements, not delivery or a completed execution.
++	// Core RunStarted has no provider source; it cannot prove a live turn.
+ 	emit := func(message Message) {
+ 		if message.SessionID != "" {
+ 			t.Error("provider announcement was exposed as a healthy checkpoint")
+ 		}
+ 	}
+ 	bridge.observe(adaptor.RunStarted{ThreadID: "announced-only"}, emit)
++	bridge.observe(adaptor.WithEventMeta(adaptor.RunStarted{ThreadID: "announced-with-coordinates"}, adaptor.EventMeta{Source: &adaptor.EventSourceMeta{ThreadID: "thread", TurnID: "turn"}}), emit)
+ 	if bridge.ready.Load() {
+ 		t.Fatal("provider thread announcement opened the durable claim gate")
+ 	}
+ 	bridge.canSupplement = false
+-	bridge.observe(adaptor.WithEventMeta(adaptor.RunStarted{ThreadID: "thread"}, adaptor.EventMeta{TurnID: "turn"}), emit)
++	active := func(turn string) adaptor.Event {
++		return adaptor.WithEventMeta(adaptor.ToolCall{Phase: adaptor.PhaseStart, ID: "shell", Name: "shell"}, adaptor.EventMeta{Source: &adaptor.EventSourceMeta{ThreadID: "thread", TurnID: turn}})
++	}
++	bridge.observe(active("official-turn"), emit)
+ 	if bridge.ready.Load() {
+ 		t.Fatal("unavailable inspected message capability opened the claim gate")
+ 	}
+ 	bridge.canSupplement = true
+ 	// A stream is needed solely to identify the log entry for this actual turn.
+ 	bridge.stream = &shadowReadinessStream{}
+-	bridge.observe(adaptor.WithEventMeta(adaptor.RunStarted{ThreadID: "thread"}, adaptor.EventMeta{Source: &adaptor.EventSourceMeta{TurnID: "official-turn"}}), emit)
++	bridge.observe(active("official-turn"), emit)
+ 	if !bridge.ready.Load() {
+ 		t.Fatal("confirmed provider turn did not open negotiated delivery")
+ 	}
+-	bridge.observe(adaptor.RunFinished{}, emit)
++	bridge.observe(adaptor.TurnEnd{}, emit)
+ 	if bridge.ready.Load() || bridge.terminal.Load() {
+ 		t.Fatal("provider turn end was treated as SDK cleanup completion")
+ 	}
++	bridge.observe(active("official-turn"), emit)
++	if bridge.ready.Load() {
++		t.Fatal("late event reopened an ended provider turn")
++	}
++	bridge.observe(active("next-turn"), emit)
++	if !bridge.ready.Load() {
++		t.Fatal("next official provider turn did not reopen negotiated delivery")
++	}
++	bridge.observe(adaptor.RunFinished{}, emit)
++	bridge.observe(active("next-turn"), emit)
++	bridge.observe(active("unknown-after-terminal"), emit)
++	if bridge.ready.Load() {
++		t.Fatal("late event reopened a finished provider turn")
++	}
+ }
+ 
+ type shadowReadinessStream struct{ adaptor.Stream }
+diff --git a/server/pkg/agent/testdata/shadow-appserver/main.go b/server/pkg/agent/testdata/shadow-appserver/main.go
+new file mode 100644
+index 000000000..f671f2087
+--- /dev/null
++++ b/server/pkg/agent/testdata/shadow-appserver/main.go
+@@ -0,0 +1,77 @@
++// This offline peer implements only the official protocol frames used by the
++// shadow regression. It never resolves Codex, reads auth, or calls a model.
++package main
++
++import (
++	"bufio"
++	"encoding/json"
++	"fmt"
++	"os"
++	"strings"
++)
++
++func main() {
++	for _, arg := range os.Args[1:] {
++		if arg == "--version" {
++			fmt.Println("codex-cli 0.166.0")
++			return
++		}
++	}
++	if len(os.Args) < 2 || os.Args[1] != "app-server" {
++		os.Exit(71) // An accidental exec transport must fail this regression.
++	}
++	writer := bufio.NewWriter(os.Stdout)
++	write := func(value any) {
++		if json.NewEncoder(writer).Encode(value) != nil || writer.Flush() != nil {
++			os.Exit(72)
++		}
++	}
++	notify := func(method string, params any) {
++		write(map[string]any{"method": method, "params": params})
++	}
++	decoder := json.NewDecoder(os.Stdin)
++	for {
++		var request struct {
++			ID     json.RawMessage `json:"id"`
++			Method string          `json:"method"`
++			Params json.RawMessage `json:"params"`
++		}
++		if decoder.Decode(&request) != nil {
++			return
++		}
++		respond := func(result any) {
++			write(map[string]any{"id": request.ID, "result": result})
++		}
++		switch request.Method {
++		case "initialize":
++			respond(map[string]any{"userAgent": "offline-shadow-regression"})
++		case "initialized":
++		case "thread/start":
++			respond(map[string]any{"thread": map[string]any{"id": "fixture-thread"}})
++		case "turn/start":
++			respond(map[string]any{"turn": map[string]any{"id": "fixture-turn", "status": "inProgress"}})
++			notify("turn/started", map[string]any{"threadId": "fixture-thread", "turn": map[string]any{"id": "fixture-turn", "status": "inProgress"}})
++			notify("item/started", map[string]any{"threadId": "fixture-thread", "turnId": "fixture-turn", "item": map[string]any{"id": "fixture-shell", "type": "commandExecution", "command": "offline barrier", "cwd": "/tmp", "status": "inProgress"}})
++			// Remain active until the host observes the semantic tool event and
++			// sends real guidance. No timer or model self-report opens this gate.
++		case "turn/steer":
++			var params struct {
++				ExpectedTurnID string `json:"expectedTurnId"`
++				Input          []struct {
++					Text string `json:"text"`
++				} `json:"input"`
++			}
++			if json.Unmarshal(request.Params, &params) != nil || params.ExpectedTurnID != "fixture-turn" || len(params.Input) != 1 || !strings.Contains(params.Input[0].Text, "original guidance 😀") {
++				os.Exit(73)
++			}
++			respond(map[string]any{"turnId": "fixture-turn"})
++			notify("item/completed", map[string]any{"threadId": "fixture-thread", "turnId": "fixture-turn", "item": map[string]any{"id": "fixture-answer", "type": "agentMessage", "text": "fixture complete"}})
++			notify("turn/completed", map[string]any{"threadId": "fixture-thread", "turn": map[string]any{"id": "fixture-turn", "status": "completed"}})
++		case "turn/interrupt":
++			respond(map[string]any{})
++			notify("turn/completed", map[string]any{"threadId": "fixture-thread", "turn": map[string]any{"id": "fixture-turn", "status": "interrupted"}})
++		default:
++			os.Exit(74)
++		}
++	}
++}
+-- 
+2.45.1.windows.1
+

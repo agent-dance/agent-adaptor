@@ -1,0 +1,12 @@
+[
+  {
+    "id": "a09c4a0e-a260-4a33-a12d-335c570ab8db",
+    "name": "Codex (PR30 WSL native)",
+    "provider": "codex",
+    "status": "online",
+    "daemon_id": "9dbfd6d3-f75a-456e-9c07-386a981c38c5",
+    "owner_id": "2bab9cff-9b7a-4cd1-82eb-63e629aea38d",
+    "workspace_id": "a25b1ca8-15be-4485-9ab2-0abf04a09ad8",
+    "last_seen_at": "2026-11-02T01:15:24+08:00"
+  }
+]

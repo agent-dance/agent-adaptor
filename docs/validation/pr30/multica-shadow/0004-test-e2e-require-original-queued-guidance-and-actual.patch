@@ -1,0 +1,51 @@
+From 61daadbae4cdefb03890dbe69f311b741e83e71c Mon Sep 17 00:00:00 2001
+From: buthim <me@blurooo.com>
+Date: Mon, 2 Nov 2026 02:03:41 +0800
+Subject: [PATCH] test(e2e): require original queued guidance and actual task
+ output
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+由 Codex 接续补做 agent-adaptor PR #30 的影子验收约束（审查标识：便便）。
+
+MC-008: preserve the queued human comment's exact text and author at admission and final snapshot; require the next task to produce the requested output and verify the original BASE artifact. A distinct completed run alone is insufficient acceptance.
+---
+ e2e/agent-adaptor-shadow.spec.ts | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/e2e/agent-adaptor-shadow.spec.ts b/e2e/agent-adaptor-shadow.spec.ts
+index f163ef317..d8960645a 100644
+--- a/e2e/agent-adaptor-shadow.spec.ts
++++ b/e2e/agent-adaptor-shadow.spec.ts
+@@ -319,7 +319,10 @@ test.describe("actual local Multica agent-adaptor shadow (explicit paid opt-in)"
+         expect(await h.tasks(isolated)).toEqual([]);
+         expect(await h.request(`/api/issues/${isolated.id}/comments`)).toEqual([]);
+         h.evidence.checks.push("foreign issue cannot retarget a live task supplement");
+-        const queued = await h.reply(issue, "Reply with exact text AFTER_CURRENT_DONE. Do not modify files.", "Start after this run");
++        const queuedText = "Reply with exact text AFTER_CURRENT_DONE. Do not modify files.";
++        const queued = await h.reply(issue, queuedText, "Start after this run");
++        expect(queued.content).toBe(queuedText);
++        expect(queued.author_type).toBe("member"); expect(queued.author_id).toBe(h.userID);
+         const next = await h.taskForComment(issue, queued);
+         expect(next.id).not.toBe(task.id); expect(next.status).toBe("queued");
+         requireExactTaskIDs(await h.tasks(issue), [task.id, next.id]);
+@@ -330,12 +333,15 @@ test.describe("actual local Multica agent-adaptor shadow (explicit paid opt-in)"
+         g.release();
+         const originalDone = await h.terminal(issue, task.id); requireSuccess(originalDone);
+         const nextDone = await h.terminal(issue, next.id); requireSuccess(nextDone); requireAfterDone(originalDone, nextDone);
++        expect((nextDone.result as Json | null)?.output).toContain("AFTER_CURRENT_DONE");
+         await h.cleanupBefore(originalDone, nextDone);
+         await h.sdkEvidence(originalDone, comment.id); await h.sdkEvidence(nextDone);
+         const finalComments = await h.request(`/api/issues/${issue.id}/comments`);
++        expect(finalComments.find((entry: Json) => entry.id === queued.id)).toEqual(expect.objectContaining({ content: queuedText, author_type: "member", author_id: h.userID }));
+         expect(finalComments.filter((entry: Json) => entry.id === first.id)).toHaveLength(1);
+         deliveredReceipt(finalComments.find((entry: Json) => entry.id === first.id), task.id, h.agent.id);
+         const files = await h.artifacts(originalDone, ["route-base.txt", "route-comment.txt"]);
++        expect(files.find((entry) => entry.name === "route-base.txt")?.text.trim()).toBe("BASE");
+         expect(files.find((entry) => entry.name === "route-comment.txt")?.text).toBe(marker);
+         requireExactTaskIDs(await h.tasks(issue), [task.id, next.id]);
+         await h.shot("queued-run-completed");
+-- 
+2.45.1.windows.1
+

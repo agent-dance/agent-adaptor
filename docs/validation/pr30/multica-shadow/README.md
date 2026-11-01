@@ -9,8 +9,12 @@ requested for PR #30. It is not evidence of a production Multica rollout.
 - Separate local branch: `codex/pr30-shadow`; the original Multica checkout is unchanged.
 - Backend source commit: `dfdb8023ecfda28a30a2e3155ee09510c2f2180a`.
 - E2E source commit: `1bab70fa1` (source and offline regressions; application acceptance is separate).
+- Live-discovered integration/log fix: `4f4a0b285fe93782a594e92d4dd612bb7ae1807a`.
+- Final queued-product assertions: `61daadbae4cdefb03890dbe69f311b741e83e71c`.
 - [Backend patch](0001-feat-agent-add-opt-in-Codex-SDK-shadow-backend.patch), SHA256 `5c83623f9a05a105e33c58a518a386508675783743f75fd0567ef39c092b5ce2`.
 - [E2E patch](0002-test-e2e-verify-real-Codex-SDK-shadow-routes-and-hos.patch), SHA256 `e27233495f9ce68ded014c4891dea1533ff390042865f1c4558962cf3e79addc`.
+- [Live-discovered fixes](0003-fix-agent-bind-shadow-readiness-and-audits-to-real-p.patch), SHA256 `11417ff24939b7d26856030978be4f3e62d9badac5ddfc50da3d3de24224442b`.
+- [Queued-product assertions](0004-test-e2e-require-original-queued-guidance-and-actual.patch), SHA256 `5bd9f8ab3e71432203cebd673e41706d37ed48204bc0568663c8bbe95a298351`.
 
 The patch contains real daemon integration and offline regressions. It keeps
 the native backend as default and selects the SDK only with
@@ -18,7 +22,7 @@ the native backend as default and selects the SDK only with
 The real model acceptance is tracked separately from construction and fixture
 tests; the patch alone does not establish a passed application run.
 
-To review in another isolated Multica checkout, apply the patch with `git am`,
+To review in another isolated Multica checkout, apply all four patches in order with `git am`,
 then use an external Go workspace that replaces
 `github.com/agent-dance/agent-adaptor/v2` with this PR's SDK checkout. See the
 included `docs/engineering/agent-adaptor-shadow.md`. Its `v2.0.0` requirement is
@@ -45,12 +49,35 @@ reset or pruned, and the managed process identity checks remain intact.
 
 ## Acceptance status
 
-The first native task completed and passed the host's six fixed arithmetic
-cases and three generated unittests. Its complete run remains **failed** because
-the browser did not display the issue. Diagnosis reused the completed issue:
-the managed localhost URLs loaded its actual data and title, while the
-noncanonical 127.0.0.1 page stalled before API requests. The temporary launcher
-has been corrected and a fresh full native run is pending (MC-005).
+The [fresh native comparison](native-run02-passed/report.json) passed the full
+development/UI case and independent audit: six fixed arithmetic cases and three
+generated tests actually ran successfully, all source/log hashes matched, and
+the screenshot shows the actual task result. The other three cases are
+shadow-only and explicitly skipped in this native phase.
+
+The [first native run](native-run01-failed/report.json) remains failed for
+MC-005. Diagnosis reused its completed issue without another model call; the
+managed localhost URLs loaded actual data and title, while the noncanonical
+127.0.0.1 page stalled before API requests. The temporary launcher was corrected.
+
+The [first shadow run](shadow-run01-failed/report.json) remains incomplete and
+failed. MC-006/007 exposed the formal tint-log parsing gap and the incorrect
+assumption about public RunStarted coordinates. Its completed development task,
+read-only diagnostic UI/host recheck, and actual cancellation/cleanup of the
+interrupted second task are preserved separately. Neither diagnostic converts
+the original verdict to success.
+
+The fixes passed targeted Windows/WSL tests, independent log-parser review and
+twenty Linux race repetitions through the real public SDK app-server pipeline
+with an offline protocol peer. A rebuilt daemon runs the four-case
+acceptance, using SDK `3950473`, production source `4f4a0b285`, E2E
+`61daadbae` and actual binary SHA256
+`65f27dc7094ac36491453a6fac2c7ce02eca203eeabf63871c01953b6b184c34`.
+Run 02's development/UI case passed. Its current-comment case then exposed
+MC-009: the helper polled comments instead of the UI timeline for hydrated
+receipts. A separate read-only timeline query confirmed the actual delivered
+receipt, matching the SDK acknowledgement. Run 02 remains failed while the
+remaining cases complete; corrected full acceptance is still required.
 
 MC-001/004 passed twelve Windows and twelve WSL real-Python regressions and
 independent review before execution. Actual UI/API results, independent host

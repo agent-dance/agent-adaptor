@@ -1,0 +1,71 @@
+{
+  "original_files": [
+    {
+      "sha256": "6c1b2df1ad86e86eea6ed510d07344ee1195c226bdf8a2331b597f6ab7af75d4",
+      "path": "playwright.log",
+      "bytes": 3200
+    },
+    {
+      "sha256": "eaa9e7bc7b4e00907d346243dccdd6ce714b80bc6cbc5e21bd3ace8e9a12801b",
+      "path": "process-result.json",
+      "bytes": 58
+    },
+    {
+      "sha256": "0a8ebe9fd7a274c72f201e2392ae057751ad9387c6458ed94e827d15c7ce67b3",
+      "path": "report.json",
+      "bytes": 121554
+    },
+    {
+      "sha256": "37656c496bf3f799f7b7626e8d42cd90a338e3bcbe0d6418d92b6fd8f221bc24",
+      "path": "source-freeze.json",
+      "bytes": 1191
+    },
+    {
+      "sha256": "9d5bd840ccc7b9b22fbbb3335dc7e9558573346d84e1d69c680e2ce3f422b7bb",
+      "path": "test-results/.last-run.json",
+      "bytes": 96
+    },
+    {
+      "sha256": "9687e479946a28d2d1f6ba2ebe7ec05793b639c6cf8b6de3b913b50aedbab8a1",
+      "path": "test-results/agent-adaptor-shadow-actua-cc132-to-daemon-to-provider-to-UI-chromium/actual-shadow-evidence.json",
+      "bytes": 115728
+    },
+    {
+      "sha256": "8bfc4fd74d61c3dd0f58baea7108a41ae6ecae07ae4af9336d457132f4f9a904",
+      "path": "test-results/agent-adaptor-shadow-actua-cc132-to-daemon-to-provider-to-UI-chromium/error-context.md",
+      "bytes": 90
+    },
+    {
+      "sha256": "4d798e4f166a9c231a81a077a556fc5b4de0780e044f0c3fc941ae7a6e14fad0",
+      "path": "test-results/agent-adaptor-shadow-actua-cc132-to-daemon-to-provider-to-UI-chromium/failure.png",
+      "bytes": 7251
+    },
+    {
+      "sha256": "a94bf8bda4cb3d05af58c4172710d875435b7944b42e8ee4a23b7929f2bf014c",
+      "path": "ui-diagnostics/127.0.0.1.png",
+      "bytes": 7279
+    },
+    {
+      "sha256": "ea3d4651d9f57c0ae3a869569b432618dc3cd7b8f2c688ed605b1d8d1a238589",
+      "path": "ui-diagnostics/diagnostic.json",
+      "bytes": 38003
+    },
+    {
+      "sha256": "e53c7775e9f3ab4291392380dad839e6f93e69f3d5442e2bf84c7203cb7ad21e",
+      "path": "ui-diagnostics/existing-issue-ui-confirmed.json",
+      "bytes": 291
+    },
+    {
+      "sha256": "cf9adc37d5e5a4109845d3fc43af3c4da5bc94a9acce0adc350a12e10a7cde1b",
+      "path": "ui-diagnostics/existing-issue-ui-confirmed.png",
+      "bytes": 152203
+    },
+    {
+      "sha256": "a15b8e2c718f1a2585eb6096b5a1b39bb138c292b1b8c353665250bd52140fdf",
+      "path": "ui-diagnostics/localhost.png",
+      "bytes": 152213
+    }
+  ],
+  "note": "Selected exact original redacted report, process result, source freeze, test output and screenshots. Original files remain local. The first failed run remains failed; subsequent read-only UI diagnosis is separate.",
+  "original_directory": "C:\\Users\\buthim\\.codex\\worktrees\\multica-pr30-shadow\\multica\\output\\playwright\\agent-adaptor-shadow\\multica-native-20261101T172919Z"
+}
