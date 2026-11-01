@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/agent-dance/agent-adaptor/v2/driver"
 	"github.com/agent-dance/agent-adaptor/v2/internal/clihelper"
@@ -46,6 +47,7 @@ func (adapter) Descriptor() driver.Descriptor {
 		Instructions: driver.InstructionsCapability{Supported: true},
 		Workspace:    driver.WorkspaceCapability{Supported: true},
 		Process:      driver.ProcessCapability{Persistent: false},
+		Messages:     cursorMessageCapability(),
 		RunPolicyCaps: driver.RunPolicyCapabilities{
 			Isolation: false, WebSearch: false, Browser: false,
 			Permission: driver.HumanDecisionSupport{Ask: false, AutoApprove: true, AutoReject: false, Retry: false},
@@ -316,7 +318,7 @@ func (adapter) SyncProfileResources(ctx context.Context, cfg any, _ driver.Agent
 	return snapshot, nil
 }
 
-func (adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSink) (driver.Response, error) {
+func (adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSink) (response driver.Response, runErr error) {
 	if req.OutputSchema != nil && req.StructuredOutputSource == driver.StructuredOutputSourceNative {
 		return driver.Response{}, &driver.StructuredOutputUnsupportedError{Driver: DriverType, Reason: "Cursor CLI does not expose native JSON Schema output"}
 	}
@@ -406,7 +408,17 @@ func (adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSin
 		prompt = prefix + "\n\n" + prompt
 	}
 
+	hooks, err := prepareCursorHooks(ctx, req, cfg, effectiveCWD, effectiveEnv, sink)
+	if err != nil {
+		return driver.Response{}, err
+	}
+	if hooks != nil {
+		defer func() { runErr = errors.Join(runErr, hooks.close()) }()
+		effectiveEnv = append(effectiveEnv, hooks.env()...)
+		prompt += hooks.promptNote()
+	}
 	parser := newCursorParser(sink)
+	parser.hooks = hooks
 	result, err := clihelper.Run(ctx, clihelper.CommandRequest{
 		Command: command,
 		Args:    args,
@@ -419,6 +431,20 @@ func (adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSin
 		return driver.Response{}, err
 	}
 	parser.finalize()
+	if hooks != nil {
+		hooks.end()
+	}
+	completedAt := parser.completedAt
+	if completedAt.IsZero() {
+		completedAt = time.Now().UTC()
+	}
+	if sink != nil {
+		if err := sink.Emit(driver.RunEvent{Type: driver.RunEventTurnCompleted, Turn: &driver.TurnCompleted{
+			Text: parser.buildOutput(), Usage: parser.usage, CompletedAt: completedAt,
+		}}); err != nil {
+			return driver.Response{}, err
+		}
+	}
 	raw := driver.RawStreams{Stdout: result.RawStreams.Stdout, Stderr: result.RawStreams.Stderr, Terminal: parser.terminal}
 	if req.Session != nil && req.Session.State != nil && req.Session.State.ResumeID != "" &&
 		result.ExitCode != 0 && isCursorUnknownSessionError(raw.Stdout, raw.Stderr) {
