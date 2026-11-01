@@ -2,11 +2,11 @@
 
 [简体中文](./README.zh-CN.md) | [日本語](./README.ja.md) | [한국어](./README.ko.md) | [Deutsch](./README.de.md)
 
-`agent-adaptor` is an SDK that offers a small, intuitive API for driving different agent flavors — `Codex`, `Claude Code`, `Cursor`, `CodeBuddy` — through one interface, plus a range of capabilities beyond plain invocation.
+`agent-adaptor` v2 is an SDK that offers a small, intuitive API for driving different agent flavors — `Codex`, `Claude Code`, `Cursor`, `CodeBuddy` — through one interface, plus a range of capabilities beyond plain invocation.
 
 ```go
-agent := adaptor.New(codex.Driver(codex.Config{Model: "gpt-5.6-sol"}))
-result, err := agent.Run(ctx, "Fix the failing tests")
+agent := adaptor.New(codex.Driver(codex.Config{Model: "gpt-5.4"}))
+result, err := agent.Send(ctx, "Fix the failing tests").Result()
 ```
 
 Switching to Claude Code only means swapping the Driver in the constructor; the rest of your code stays untouched.
@@ -16,19 +16,19 @@ Switching to Claude Code only means swapping the Driver in the constructor; the 
 - **Unified configuration**: one API controls skills, MCP, system prompts, models, sandboxing, tools, and approvals across agents.
 - **Streaming responses**: optional streaming output that distinguishes reasoning, text output, tool calls, and decision requests as the scenario requires.
 - **Conversation management**: seamless continuation and forking. Use your own business ID (a ticket number, a user ID) as the conversation key without dealing with the underlying session bookkeeping.
-- **Human decisions**: answer questions, intercept dangerous commands, and confirm plans through callbacks or events. A built-in decision write-back mechanism lets decisions be persisted in the cloud rather than only in the local process.
+- **Human decisions**: answer questions, intercept dangerous commands, and confirm plans through callbacks or events. The live responder can be retained by the host and answered from another HTTP request; approval audit storage belongs to the host.
 
 ## Advanced features
 
 - **Structured output**: define a Go struct, call `RunAs[T]`, and the agent runs under a constraint that returns a populated object.
 - **Multi-protocol decoration**: built-in A2A/AGUI decoration turns an Agent into a standard agent with SSE + AGUI streaming in one line, so a custom front end or client is all you need for a complete agent service (a runnable CopilotKit front end is included).
 - **Multi Agent**: cross-Driver team agents — for example Codex as the leader agent autonomously coordinating a Plan Agent (Codex), a Coding Agent (Claude), and a Reviewer Agent (Cursor), with all progress and output aggregated into the leader's event stream (see the examples/showcases/team-agent-workflow showcase).
-- **Agent isolation**: copy the machine's agent configuration and login state into a dedicated directory so changes never affect the agent you use locally. Running several Codex/Claude Code instances in parallel for concurrent development or different roles becomes trivial.
+- **Agent isolation**: clone the machine's agent configuration into a dedicated directory and link its login state, keeping configuration changes isolated. Running several Codex/Claude Code instances in parallel for concurrent development or different roles becomes trivial.
 
 ## Install
 
 ```bash
-go get github.com/agent-dance/agent-adaptor
+go get github.com/agent-dance/agent-adaptor/v2
 ```
 
 Requires Go 1.26.5 or later.
@@ -45,8 +45,8 @@ import (
 	"fmt"
 	"log"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/codex"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/codex"
 )
 
 func main() {
@@ -55,7 +55,7 @@ func main() {
 		adaptor.WithWorkspace("/path/to/repository"),
 	)
 
-	result, err := agent.Run(context.Background(), "Fix the failing tests")
+	result, err := agent.Send(context.Background(), "Fix the failing tests").Result()
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -74,10 +74,10 @@ codeBuddyAgent := adaptor.New(codebuddy.Driver(codebuddy.Config{}))
 
 ## Streaming execution
 
-`Stream` unfolds one invocation into a single strongly typed event stream and yields a `Result` at the end:
+`Send` starts one execution and returns a `Stream`. Read `Events()` for live progress or call `Result()` to wait synchronously:
 
 ```go
-stream := agent.Stream(ctx, "Explain the patch that is about to be committed")
+stream := agent.Send(ctx, "Explain the patch that is about to be committed")
 defer stream.Cancel()
 
 for event := range stream.Events() {
@@ -100,27 +100,78 @@ for event := range stream.Events() {
 result, err := stream.Result()
 ```
 
-Text, reasoning, tool calls and their results, process information, lifecycle, subagent progress, and approval requests all travel on this one stream. There is no second channel.
+Text, reasoning, tool calls and their results, process information, lifecycle, message outcomes, and approval requests all travel on this one stream. Each provider turn emits `TurnEnd`. The last event is `Done{Result, Err}`, published after validation, checkpoint handling, and cleanup; it contains the same result pointer and error as `stream.Result()`. `RunFinished` is informational.
 
 Call `Cancel()` when you stop consuming early; it is idempotent.
 
+## Messages during a run
+
+Send extra guidance to the returned Stream, using a stable host ID for deduplication:
+
+```go
+stream := agent.Send(ctx, "Fix the failing tests")
+err := stream.Send(ctx, "Keep the public API unchanged",
+	adaptor.MessageID("review-comment-42"),
+	adaptor.From(adaptor.Author{Kind: adaptor.AuthorHuman, ID: "reviewer"}),
+	adaptor.When(adaptor.Soon),
+)
+```
+
+`Soon` is the default: deliver at the earliest supported boundary, or continue at turn end. `AfterTurn` waits for a continuation turn. `Interrupt` aborts the active turn and continues within the same execution; unsupported Drivers reject it with `ErrMessageUnsupported`. See the [Driver matrix](./docs/streaming.md#12-message-delivery-capabilities).
+
+A nil send error means admitted. `MessageUpdate` reports accepted, delivered, or failed; failure includes the original text. `Result.Messages()` records final outcomes, and `Undelivered()` returns failures. Admission errors are `*MessageError` with ID, text, reason, and a wrapped cause; a finished execution matches `ErrRunFinished`. A Stream send context can withdraw an unclaimed message; after a Driver claims it, the delivery acknowledgement decides its outcome.
+
+`MessageID` deduplicates within the Thread, retaining up to 1000 delivered IDs for seven days. Recovery needs a durable Thread store. A crash after provider acceptance but before receipt persistence can replay a message; deduplication does not close that crash window.
+
+## Standby
+
+Use task mode (`Thread.Send`) when each request needs one bounded execution result. Use Standby for chat or an IM bot that keeps receiving messages and producing replies:
+
+```go
+func openChat(serverCtx context.Context, agent *adaptor.Agent) (adaptor.Standby, error) {
+	sb, err := agent.Thread("chat-42").Standby(serverCtx)
+	if err != nil {
+		return nil, err
+	}
+	events := sb.Events() // subscribe before accepting input
+	go func() {
+		for event := range events {
+			switch e := event.(type) {
+			case adaptor.TurnEnd:
+				if e.Err == nil && e.Result != nil {
+					fmt.Println(e.Result.Text)
+				}
+			case adaptor.Done:
+				if e.Err != nil {
+					log.Print(e.Err)
+				}
+			}
+		}
+	}()
+	return sb, nil
+}
+```
+
+Open the Standby with a server-lifetime context. An HTTP handler can then call `sb.Send(r.Context(), text, adaptor.MessageID(id))`: that context bounds admission only, and accepted work lives under `serverCtx`. Input joins an active execution, or starts one when idle. Execution options such as `WithModel` queue a separate execution after current work.
+
+Standby has `Send`, `Events`, and `Cancel`, with no overall `Result()`. Each provider turn emits `TurnEnd`; each execution emits `Done`. `sb.Cancel()` stops current processing and fails queued messages with `MessageCancelled`, then keeps accepting messages. Cancel `serverCtx` to end Standby and close its events. Before the first `Events()` call its events are discarded.
+
+A live Standby owns the Thread even when idle; task-mode sends return `ErrThreadBusy`. Reopening the same key on the same Agent returns the existing live handle, whose lifetime still belongs to the first context.
+
+Failed executions leave Standby alive. Only classified rate-limit, network, or provider-server failures retry, at most once. Undelivered `run_failed` messages carry into the next execution under the same IDs: observers can see failed, then delivered. Without a retry, carried input waits for the next host message. See [streaming](./docs/streaming.md) for delivery and recovery limits.
+
 ## Human approval and sandboxing
 
-Sandbox strength, network and browser tools, and approval modes live in the same `Policy`. The constructor sets defaults, and `Run` / `Stream` can override the whole policy per call:
+Sandbox strength, search and browser controls, approval modes, and message limits live in the same `Policy`. The constructor sets defaults, and `Send` can override the whole policy per execution:
 
 ```go
 reviewer := adaptor.New(
-	claude.Driver(claude.Config{}),
+	codex.Driver(codex.Config{}),
 	adaptor.WithPolicy(adaptor.Policy{
-		Sandbox:   adaptor.ReadOnly,    // read-only workspace, suited to review and planning roles
-		WebSearch: adaptor.FeatureDeny, // explicitly disable web search
-		Browser:   adaptor.FeatureDeny,
+		Sandbox:   adaptor.ReadOnly,
+		WebSearch: adaptor.FeatureDeny,
 		Approvals: adaptor.ApprovalPolicy{
-			Permission: adaptor.ApprovalAsk, // hand dangerous commands to a human
-			PlanReview: adaptor.ApprovalAsk,
-			Question:   adaptor.QuestionAsk, // questions are auto-denied by default
-			Timeout:    2 * time.Minute,
-			OnTimeout:  adaptor.FallbackAbort,
+			Permission: adaptor.ApprovalAutoApprove,
 		},
 	}),
 )
@@ -133,6 +184,9 @@ Approvals have two consumption shapes; pick one. Attaching a callback gives you 
 ```go
 agent := adaptor.New(
 	claude.Driver(claude.Config{}),
+	adaptor.WithPolicy(adaptor.Policy{
+		Approvals: adaptor.ApprovalPolicy{Question: adaptor.QuestionAsk},
+	}),
 	adaptor.OnApproval(func(ctx context.Context, req *adaptor.ApprovalRequest) error {
 		switch req.Kind {
 		case adaptor.ApprovalPermission:
@@ -146,47 +200,31 @@ agent := adaptor.New(
 )
 ```
 
-For unattended runs, `adaptor.ApproveAll()` and `adaptor.DenyAll(reason)` are ready to use.
+For callback-based policies, `adaptor.ApproveAll()` and `adaptor.DenyAll(reason)` are ready to use. They handle requests already routed to the callback; they do not enable unsupported approval modes. Claude and CodeBuddy support interactive requests; Codex and Cursor do not advertise `Ask`.
 
 Without a callback you get the event shape: the request arrives on the event stream as an `*adaptor.ApprovalRequest` carrying its own responder, so it can be parked and later resolved by any goroutine or by another HTTP request — exactly what web scenarios need:
 
 ```go
-for event := range stream.Events() {
-	switch event := event.(type) {
-	case *adaptor.ApprovalRequest:
-		pending.Add(threadKey, event) // park the request and push it to the front end
-	case adaptor.Notice:
-		// The SDK broadcasts every settled decision, including policy auto-approvals
-		// and timeout fallbacks, so the host never has to reconcile its pending list.
-		if event.Kind == adaptor.NoticeApprovalResolved {
-			if id, ok := event.Data["request_id"].(string); ok {
-				pending.Remove(threadKey, id)
-			}
+func consumeApprovals(ctx context.Context, stream adaptor.Stream,
+	publish func(*adaptor.ApprovalRequest)) (*adaptor.Result, error) {
+	for event := range stream.Events() {
+		if req, ok := event.(*adaptor.ApprovalRequest); ok {
+			publish(req) // the host retains the live responder for its UI
 		}
 	}
+	return stream.Result()
 }
 ```
 
-`pending` is the host's own storage; once the front end has the request, it resolves the decision in a separate HTTP request:
+The host can later call `req.Approve(r.Context())`, `req.Deny(r.Context(), reason)`, or `req.Answer(r.Context(), text)` from a companion endpoint. `NoticeApprovalResolved` carries `Data["request_id"]` so the UI can retire a pending card. Storing an audit record does not serialize the live responder.
 
-```go
-func (h *host) resolveDecision(w http.ResponseWriter, r *http.Request) {
-	req := h.pending.Take(threadKey, requestID)
-	if err := req.Approve(r.Context()); err != nil {
-		sse.WriteApprovalError(w, err) // already resolved or expired → 410, Kind mismatch → 400
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-```
-
-Responses are exactly-once: duplicate responses, Kind mismatches, and finished runs all return stable errors (`ErrApprovalResolved`, `ErrApprovalKindMismatch`, `ErrApprovalExpired`), and a zero-value request never blocks forever. When nobody answers, `OnTimeout` from `Policy.Approvals` takes over; a rejection follows `OnReject`. Where parked requests live is up to the host and is not limited to process memory.
+Responses are exactly-once: duplicate responses, Kind mismatches, and finished runs all return stable errors (`ErrApprovalResolved`, `ErrApprovalKindMismatch`, `ErrApprovalExpired`), and a zero-value request never blocks forever. If neither `Events()` nor an `OnApproval` handler has been installed when a request arrives, the timeout fallback applies immediately with a lifecycle notice. Otherwise, when nobody answers before the deadline, `OnTimeout` from `Policy.Approvals` takes over; a rejection follows `OnReject`. Where parked requests live is up to the host and is not limited to process memory.
 
 A complete, runnable web HITL path is in [`web-chat/copilotkit`](./examples/web-chat/copilotkit): two endpoints, `/decision/pending` and `/decision/resolve`, with pending decisions surviving a page refresh.
 
 ## Multi-turn conversations
 
-Agents are stateless by default. When you need conversation continuity, inject a store:
+Direct `Agent.Send` calls are independent, like sending on a new anonymous Thread each time. Named Threads use an Agent-local in-memory store by default. Inject `WithThreadStore` to share a store or provide durable storage:
 
 ```go
 agent := adaptor.New(
@@ -196,7 +234,7 @@ agent := adaptor.New(
 defer agent.Close(context.Background())
 
 thread := agent.Thread("tenant-42/issue-123")        // continue the mapped conversation if it exists, otherwise create it
-result, err := thread.Run(ctx, "Keep investigating this problem")
+result, err := thread.Send(ctx, "Keep investigating this problem").Result()
 
 only := agent.Thread("tenant-42/issue-123", adaptor.ResumeOnly()) // resume only, never create
 branch := thread.Fork("tenant-42/issue-123/plan-b")               // fork from the current progress
@@ -205,10 +243,10 @@ branch := thread.Fork("tenant-42/issue-123/plan-b")               // fork from t
 A few conventions:
 
 - **The conversation key is the host's own string**; the SDK stores and compares it verbatim. Start a brand-new conversation with a new key — the SDK offers no entry point for rebinding an old key to a new conversation.
-- **One Thread runs at most one invocation at a time**, guaranteed by a lease, so an expired run never overwrites newer state.
+- **One Thread has one writer**, guaranteed by a lease. Task-mode `thread.Send` fails through its Stream with `ErrThreadBusy` during another execution or a live Standby. Add input to the existing Stream or Standby instead.
 - **Compatibility is checked before resuming**: the Driver, model, resolved workspace, configuration, skills, and MCP all feed the fingerprint, and drift in any one of them prevents an incorrect conversation reuse.
 - **Failures do not pollute state**: non-zero exits, protocol errors, and cancellations produce no valid checkpoint, so the previously healthy conversation record stays as it was.
-- **Persistent processes are reused by default**: on Windows, macOS, and Linux, Claude, CodeBuddy, and Codex reuse one process across turns of an explicit Thread. Add `adaptor.WithSpawn()` when one turn or every turn needs a fresh process. Cursor and stateless calls always start a new process per turn. Runs after `Close` return `ErrAgentClosed`.
+- **Persistent processes are reused by default**: on Windows, macOS, and Linux, Claude, CodeBuddy, and Codex reuse one process across turns of an explicit Thread. Add `adaptor.WithSpawn()` when one turn or every turn needs a fresh process. Cursor and stateless calls always start a new process per turn. New sends after `Agent.Close` begins return `ErrAgentClosed`.
 
 Use `memory.NewStore()` for single-process scenarios; implement `threadstore.Store` when you need durability.
 
@@ -241,8 +279,9 @@ Options share one vocabulary, and their scope is separated by type at compile ti
 | Type | Where it applies |
 |---|---|
 | `Option` | `adaptor.New` only |
-| `CallOption` | `Run` / `Stream` only |
-| `SharedOption` | Both; the call site overrides the constructor |
+| `CallOption` | `Agent.Send`, `Thread.Send`, or `Standby.Send` |
+| `SharedOption` | Construction and execution defaults; the call site overrides the constructor |
+| `MessageOption` | `From`, `MessageID`, `When`; also accepted as `CallOption`, and the only options `Stream.Send` accepts |
 
 There is a single merge rule: the nearer value wins, skills append, and everything else replaces or merges according to its own contract.
 
@@ -255,7 +294,7 @@ The same set of options covers the main configuration surface of every agent:
 | Working directory | `WithWorkspace`, or `WithWorkspaceSpec` for isolated work trees |
 | skills | `WithSkills` with `skill.Dir` / `skill.FS` / `skill.Inline` / `skill.Key` / `skill.Require` |
 | MCP | `WithMCP` with `mcp.Stdio` / `mcp.HTTP` / `mcp.SSE` |
-| Sandbox, network, browser tools, approvals | `WithPolicy`, plus `OnApproval` when interactive |
+| Sandbox, search, browser tools, approvals, message limits | `WithPolicy`, plus `OnApproval` when interactive |
 | Configuration directory and resources | `WithProfile`, `WithProfileResources` |
 | Timeout, audit metadata, caller identity | `WithTimeout`, `WithMetadata`, `WithIdentity` |
 | Conversation persistence | `WithThreadStore` |
@@ -271,11 +310,11 @@ agent := adaptor.New(
 	adaptor.WithTimeout(10*time.Minute),
 )
 
-result, err := agent.Run(ctx, "Review this change",
+result, err := agent.Send(ctx, "Review this change",
 	adaptor.WithModel("gpt-5.4-mini"),
 	adaptor.WithSkills(skill.Require(skill.Dir("./skills/security"), "this run must pass the security review")), // appends, does not displace the default skills
-	adaptor.WithMetadata("request_id", requestID),
-)
+	adaptor.WithMetadata("request_id", "review-42"),
+).Result()
 ```
 
 The same configuration with a different Driver is a different Agent; when a Driver does not support one of the capabilities, you get an explicit error before startup rather than a silent omission.
@@ -300,9 +339,10 @@ type SearchOutput struct {
 
 searchRepo := tool.Define(
 	"search_repo",
-	"Search files in the current repository.",
+	"Match files using a repository-relative glob.",
 	func(ctx context.Context, in SearchInput) (SearchOutput, error) {
-		return search(ctx, in.Query)
+		files, err := filepath.Glob(in.Query)
+		return SearchOutput{Files: files}, err
 	},
 	tool.ReadOnly(),
 	tool.Idempotent(),
@@ -356,14 +396,14 @@ implementer := adaptor.New(claude.Driver(claude.Config{}),
 
 Three other choices exist: `profile.Native()` uses the machine's native configuration directly; `profile.Dedicated(dir)` pins a directory you manage yourself; `profile.CloneFrom(src, dst, ...)` derives from a template directory. A profile participates in the conversation fingerprint, so it can only be a construction option and cannot be switched per call.
 
-To see what declared resources actually materialized and whether the Driver truly accepts them, read with `agent.ProfileState(ctx)` and materialize with `agent.SyncProfile(ctx)`; both report only what was actually observed. See the [`profiles` example](./examples/profiles) for a full walkthrough.
+To see what declared resources actually materialized and whether the Driver truly accepts them, read with `agent.ProfileState(ctx)` and materialize with `agent.SyncProfile(ctx)`; both distinguish desired resources from observed materialization. See the [`profiles` example](./examples/profiles) for a full walkthrough.
 
 ## Results and errors
 
 Success returns `*Result, nil`. Failure travels only through Go's `error`: a run that completed but failed on the business level returns a `*RunError` carrying whatever `Result` is available, while infrastructure failures are ordinary wrappable errors.
 
 ```go
-result, err := agent.Run(ctx, prompt)
+result, err := agent.Send(ctx, prompt).Result()
 if err != nil {
 	var runErr *adaptor.RunError
 	if errors.As(err, &runErr) {
@@ -377,15 +417,17 @@ Each output layer of `Result` stays free of the others:
 
 | Field | Contents |
 |---|---|
-| `Text` | The final user-facing answer text |
+| `Text` | The last provider turn’s user-facing answer text |
 | `Summary` | A short summary suited to lists, logs, and issue comments |
-| `Raw()` | Complete stdout and stderr, plus each provider's official terminal payload |
-| `Transcript()` | Normalized entries the Driver parsed from the official protocol |
+| `Raw()` | Complete stdout and stderr, plus the last recognized official terminal payload |
+| `Transcript()` | Provider-parsed entries across all turns, plus core-recorded supplemental deliveries |
 | `Services()` | Runtime services actually observed during this run |
 | `Decode()` | Validated structured output |
-| `Usage` / `Model` / `Provider` / `Metadata` | Usage and audit information |
+| `Turns` / `Usage` | Provider turn count and summed observed usage |
+| `Messages()` / `Undelivered()` | Final message outcomes in admission order / failed messages with original text |
+| `Model` / `Provider` / `Metadata` | Provider and audit information |
 
-`Text` never mixes in raw stdout, and it never automatically appends the summary or a provider's terminal payload. What you get from `Run` and from `Stream.Result()` is field-for-field equivalent.
+`Text` never mixes in raw stdout, and it never automatically appends the summary or a provider's terminal payload. `Done` and `Stream.Result()` expose the same outcome. Business failures put the available result in `RunError.Result`; their direct result value is nil.
 
 ## Integrating into applications
 
@@ -404,7 +446,7 @@ server := bridgea2a.NewServer(agent, bridgea2a.ServerOptions{
 	AgentCard: bridgea2a.AgentCard{
 		Name:        "Local coding agent",
 		Description: "Runs coding tasks through agent-adaptor",
-		Version:     "1.0.0",
+		Version:     "2.0.0",
 		URL:         "https://host.example/a2a",
 	},
 	Session: bridgea2a.ThreadByContextID(), // the remote contextID maps stably to a local Thread key
@@ -515,12 +557,12 @@ To integrate your own agent CLI: implement `driver.Driver`, get `adaptertest` pa
 ## Examples
 
 - [`quickstart`](./examples/quickstart): construct an Agent and run one prompt.
-- [`streaming`](./examples/streaming): event consumption and cancellation.
+- [`streaming`](./examples/streaming): event consumption, optional timed cancellation, and final-text fallback; [`streaming/chat`](./examples/streaming/chat) streams one task on a named Thread.
 - [`threads`](./examples/threads): continuation, resume-only, forking, and checkpoint auditing.
 - [`structured-output`](./examples/structured-output): typed JSON output.
 - [`tools`](./examples/tools): expose a typed Go function to a real local provider without managing MCP yourself.
-- [`skills`](./examples/skills) / [`profiles`](./examples/profiles): skill resolution and materialization, configuration resources, and synchronization.
-- [`inspect`](./examples/inspect): environment, models, quota, schema, skills, and profile state.
+- [`skills`](./examples/skills): select a skill and verify its proof file; [`profiles`](./examples/profiles): sync profile resources, optionally probe locally or send a task.
+- [`inspect`](./examples/inspect): two live calls followed by probes and a skill-selection attempt; see the example index for its current selection error.
 - [`web-chat`](./examples/web-chat): an SSE/AG-UI server with two front ends, [`aguiclient`](./examples/web-chat/aguiclient) and [`copilotkit`](./examples/web-chat/copilotkit).
 - [`a2a-server`](./examples/a2a-server): publish and call an Agent through A2A.
 - [`showcases/team-agent-workflow`](./examples/showcases/team-agent-workflow): planning, implementation, and review joined into one pipeline.
@@ -529,7 +571,7 @@ Examples that make real calls depend on the corresponding CLI and its login stat
 
 ## Boundaries
 
-The core library does not provide an HTTP/gRPC server, queue, scheduler, multi-tenancy, authorization, or database, and it does not decide which agent a task should be dispatched to. Protocol serving belongs to bridges and host applications; team roles and workflow policy belong to the host.
+The core library does not provide a general HTTP/gRPC server, host task queue, scheduler, multi-tenancy, authorization, or database, and it does not decide which agent a task should be dispatched to. Protocol serving belongs to bridges and host applications; team roles and workflow policy belong to the host.
 
 ## Documentation
 
@@ -541,6 +583,21 @@ The core library does not provide an HTTP/gRPC server, queue, scheduler, multi-t
 - [Run policy: sandbox, approvals, timeouts](./docs/run-policy.md)
 - [A2A integration](./docs/a2a.md)
 - [Public errors](./docs/public-errors.md)
+
+## Migrating from v1 to v2
+
+Use the `/v2` module path for every SDK import and dependency.
+
+| v1 | v2 |
+|---|---|
+| `agent.Run(ctx, prompt, opts...)` | `agent.Send(ctx, prompt, opts...).Result()` |
+| `agent.Stream(ctx, prompt, opts...)` | `agent.Send(ctx, prompt, opts...)` |
+| `thread.Run` / `thread.Stream` | `thread.Send`, then `Result()` or `Events()` |
+| `Runner` with two execution methods | `Runner` with `Send` only |
+| Treat `RunFinished` as completion | Read the authoritative final `Done` or call `Result()` |
+| Explicit store required for Threads | Agent-local memory by default; inject a durable store for restart recovery |
+
+`RunAs[T]` remains the synchronous typed helper and uses `Send` internally. Subscribe to `Events()` before consuming ordinary progress; a Result-only call retains critical events and a drop summary for later reading. Supplemental input belongs on `Stream.Send`; continuous chat belongs on `Thread.Standby(serverCtx)`. `Agent.Close(ctx)` still releases Agent-owned resources at shutdown.
 
 ## License
 

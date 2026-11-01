@@ -1,20 +1,25 @@
 # Documentation map
 
-The public model is Agent, Thread, Stream, Event, Result, and Driver. Start with the current integration documents below; design and implementation records are background material rather than usage references.
+The v2 public model is **Agent, Thread, Stream, Event, Result, and Driver**. `Send` starts a task; `Stream.Send` adds input; `Thread.Standby` keeps a conversation accepting messages. SDK imports use `github.com/agent-dance/agent-adaptor/v2`.
+
+Start with the integration documents below. Design and implementation records explain rationale; current code, godoc, and the frozen root API define behavior.
 
 ## Current integration documents
 
 | Document | Purpose |
 |---|---|
-| [`../README.md`](../README.md), and its [`zh-CN`](../README.zh-CN.md), [`ja`](../README.ja.md), [`ko`](../README.ko.md), [`de`](../README.de.md) translations | Product overview, quick start, packages, and examples. |
-| [`../AGENTS.md`](../AGENTS.md) | Final architecture boundaries, invariants, and release gates. |
-| [`api-reference.md`](./api-reference.md) | Complete public API and option scopes. |
-| [`tools.md`](./tools.md) | Provider-neutral host-defined Tools, schemas, errors, lifecycle, security, and Thread compatibility. |
-| [`streaming.md`](./streaming.md) | Unified Event consumption, cancellation, backpressure, AG-UI, and SSE. |
-| [`streaming-adapter-contract.md`](./streaming-adapter-contract.md) | Streaming and event obligations for Driver authors. |
-| [`structured-output.md`](./structured-output.md) | Typed and JSON-schema output. |
-| [`team.md`](./team.md) | v2 teams, local/remote members, message routing, limits, durable recovery and Fork. |
-| [`a2a.md`](./a2a.md) | A2A bridge, client, delegation, and exposure policy. |
-| [`run-policy.md`](./run-policy.md) | Sandbox, feature, approval, timeout, fallback, and retry policy. |
-| [`public-errors.md`](./public-errors.md) | Public sentinels, typed errors, and `errors.Is` / `errors.As` guidance. |
-| [`profile-resource-provider-matrix.md`](./profile-resource-provider-matrix.md) | Provider support and materialization behavior for profile resources. |
+| [English README](../README.md) | Overview, quick start, messages, Standby, packages, examples, and v1 → v2 migration. |
+| [API reference](./api-reference.md) | Root API, Send/Stream/Standby/ThreadRunner, option scopes, events, results, approvals, errors, and extension hooks. |
+| [Streaming guide](./streaming.md) | Events/Done, backpressure, message delivery and Driver matrix, Cursor relay, Standby, AG-UI, and SSE. |
+| [Run policy](./run-policy.md) | Sandbox/features, Policy.Messages, approval modes, immediate fallback, timeout, rejection, and retry. |
+| [Structured output](./structured-output.md) | RunAs, Send with a schema, automatic native/prompt negotiation, validation, and Decode. |
+| [Host-defined Tools](./tools.md) | Typed handlers, schemas, error sanitization, lifecycle, cancellation, and named-Thread revision compatibility. |
+| [Public errors](./public-errors.md) | RunError, MessageError, busy/finished/unsupported categories, delivery failure reasons, and errors.Is/As. |
+| [Examples](../examples/README.md) | What each executable currently does, live-call requirements, and smoke commands. |
+| [Driver streaming contract](./streaming-adapter-contract.md) | Driver event obligations; read alongside the current Driver godoc and frozen [message SPI](../driver/messages.go). |
+| [Teams](./team.md) | Teams, local/remote members, message routing, limits, durable recovery and Fork. |
+| [A2A integration](./a2a.md) | A2A bridge, client, Remote members, and exposure policy. |
+| [Profile resource matrix](./profile-resource-provider-matrix.md) | Provider support and resource materialization. |
+| [Architecture contract](../AGENTS.md), [approved v2 proposal](./v2-steer-team-proposal.md) | Architecture boundaries, release gates and design rationale. When a document and the code differ, current code and [root API golden](../testdata/root_api.golden) are authoritative. |
+
+Translations: [简体中文](../README.zh-CN.md), [日本語](../README.ja.md), [한국어](../README.ko.md), [Deutsch](../README.de.md).
