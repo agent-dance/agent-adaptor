@@ -94,6 +94,10 @@ of a production database. A real daemon must supply a durable store and resend
 unacknowledged comments using their original IDs. This scenario does not claim
 to implement that host database.
 
+These SDK host scenarios do not exercise Multica's comment routing, server,
+daemon claim/ack protocol or UI, and do not establish acceptance of a Multica
+integration. Fork is not exercised by this showcase.
+
 Run the offline contract test:
 
 ```sh

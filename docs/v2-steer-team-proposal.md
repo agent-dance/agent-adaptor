@@ -1147,9 +1147,9 @@ supplement 实现；SDK 文档不把未完成的 multica 迁移视为已验收�
 | V2-M0（代码与通用消息一致性已实现） | Send/Stream/Done/TurnEnd/MessageUpdate、hub、冻结 SPI、ContinueResume、fake driver 与专项测试 | §5.2、Done/Result、选项作用域与 MSG-01–MSG-10 均有测试；发布须记录 Linux race/关键竞态 1000 次结果 |
 | V2-M1（功能与版本探测已落地） | Codex immediate/Interrupt/InRun、Claude tool/stop、Cursor relay/Resume、Standby、上限与审批兜底 | §6.4 保守裁决已有专项测试；故障注入覆盖 requeue、携带、连续性与 store 恢复；各 Driver 自动探测 CLI 版本。授权 live/race/fuzz 需单独记录，不能用 fixture 冒充 live |
 | V2-M2 | `hosttools/team`：事件驱动 leader、4 个工具、单 listener、worker 审批、Preamble 名册、强类型事件、showcase 改写 | 并行委派、纠偏、worker 提问唤醒 leader、worker 审批、待命中途用户发话五条路径全部通过；任意成员数下 leader 的 `tools/list` 恒为 4 |
-| V2-M3 | TaskStore、`teamstoretest`、恢复与 Fork、issue-daemon 示例 | 模拟 multica 的 M1–M8 全部通过；kill 进程后消息无丢失、无重复（宿主用原 `MessageID` 重发），任务被标记为 `interrupted`；leader 某一轮失败后任务不受影响并成功重新唤醒 |
+| V2-M3 | TaskStore、`teamstoretest`、恢复与 Fork、issue-daemon 示例 | SDK 可验证的 §9 路径分别记录结果；issue-daemon step 10 仅在同进程复用内存 store 重建 Agent，不覆盖进程 crash 或宿主持久化。真实 kill/restart 恢复须另验原 `MessageID` 重发、未确认消息可追踪与任务 `interrupted`；provider 接收至回执落盘间仍可能重放，不承诺无重复。Fork 与 leader 失败后 worker 保活、重新唤醒须各自验证 |
 | V2-M4（Driver 部分有结论） | CodeBuddy 已实现保守 Resume；ACP（Kiro/Grok）不在当前树内；bridges 状态由团队文档任务核对 | CodeBuddy 三种 transport 每轮完成与 Resume 通过专项合同；不能声称 ACP 或全部 live 已验证 |
-| V2-M5 | multica 影子接入 | 投递成功率与失败原因分布不低于 multica 原实现；`claude_supplement.go`、`cursor_supplement.go` 可以删除 |
+| V2-M5（尚未验收） | multica 影子接入 | 实际宿主接入后，投递成功率与失败原因分布不低于 multica 原实现，方可删除对应的 `claude_supplement.go`、`cursor_supplement.go`；SDK 场景模拟或 Driver live 不能代替这项验收 |
 
 每个里程碑合入前满足 v2 `AGENTS.md` 的全部发布门禁，并同步更新 godoc、专题文档、五种语言 README 与 CHANGELOG。
 
