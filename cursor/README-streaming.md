@@ -73,6 +73,12 @@ workspace strategy and does not enable hooks. The Driver creates
 SDK-marked one), and refuses a symlink/non-directory `.cursor`. It installs
 `postToolUse` and `postToolUseFailure`, and removes only the exact file it owns;
 a replaced or edited file is preserved and cleanup errors remain observable.
+Installation and cleanup use pinned Unix directory descriptors, so replacing
+`.cursor` cannot redirect writes or cleanup through a symlink. Cleanup captures
+the candidate in a private directory before verifying its identity and contents.
+If a replacement races that capture, it is restored without overwriting another
+file; a conflicting replacement is retained in the cleanup directory, with its
+location reported in the cleanup error. No recursive cleanup is performed.
 **Windows relay is unavailable**, so Windows uses turn-end resume too.
 
 The relay sends only hook event, conversation ID, tool-use ID and parent-tool ID

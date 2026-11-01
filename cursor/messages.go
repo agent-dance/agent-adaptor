@@ -1,7 +1,6 @@
 package cursor
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
@@ -101,7 +100,7 @@ type cursorHooks struct {
 	serverDone             chan error
 	path                   string
 	data                   []byte
-	fileInfo               os.FileInfo
+	file                   *cursorHookFile
 	mu                     sync.Mutex
 	sessionID              string
 	window, ended          bool
@@ -180,8 +179,9 @@ func startCursorHooks(ctx context.Context, req driver.Request, cfg Config, cwd s
 	if err != nil {
 		return nil, fmt.Errorf("listen for Cursor relay: %w", err)
 	}
-	if err := s.install(); err != nil {
-		return nil, errors.Join(err, listener.Close())
+	s.file, err = installCursorHook(cwd, s.data)
+	if err != nil {
+		return nil, errors.Join(fmt.Errorf("install Cursor hooks at %s: %w", s.path, err), listener.Close())
 	}
 	s.endpoint = "http://" + listener.Addr().String() + "/hook"
 	s.server = &http.Server{
@@ -229,41 +229,8 @@ func probeHookRelay(ctx context.Context, argv []string, cwd string, bindings []d
 	return nil
 }
 
-func (s *cursorHooks) install() error {
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
-		return fmt.Errorf("create Cursor hook directory: %w", err)
-	}
-	f, err := os.OpenFile(s.path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		return fmt.Errorf("acquire exclusive Cursor hooks.json: %w", err)
-	}
-	_, writeErr := f.Write(s.data)
-	s.fileInfo, err = f.Stat()
-	if err = errors.Join(writeErr, err, f.Close()); err != nil {
-		return errors.Join(fmt.Errorf("write Cursor hooks.json: %w", err), s.remove())
-	}
-	return nil
-}
-
 func (s *cursorHooks) remove() error {
-	info, err := os.Lstat(s.path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if s.fileInfo == nil || !os.SameFile(s.fileInfo, info) {
-		return errors.New("Cursor hooks.json was replaced during the run; leaving it untouched")
-	}
-	current, err := os.ReadFile(s.path)
-	if err != nil {
-		return err
-	}
-	if !bytes.Equal(current, s.data) {
-		return errors.New("Cursor hooks.json was modified during the run; leaving it untouched")
-	}
-	return os.Remove(s.path)
+	return s.file.remove()
 }
 
 func (s *cursorHooks) env() []driver.EnvBinding {
