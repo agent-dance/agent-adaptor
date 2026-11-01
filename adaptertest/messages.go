@@ -45,13 +45,16 @@ type MessageFixture struct {
 }
 
 // MessageEvidence is independently observed fake-provider evidence, cumulative
-// across invocations. Received contains exact provider input payloads (a batch
-// may contain several framed items). Confirmed contains payloads echoed through
+// across invocations. Received contains exact provider input payloads in order
+// (a batch may contain several framed items). Confirmed contains payloads echoed through
 // the official confirmation protocol. Ambiguous contains IDs whose delivery may
 // have happened without confirmation; Rejected contains explicitly rejected IDs.
 // Retained contains text observed in provider history after checkpoint resume.
 // Turns describes the provider turns in the most recent Run, including text,
 // observed usage and interruption; Index and CompletedAt are checked on events.
+// For repeated claims of an ID, Attempts distinguishes observations belonging to
+// earlier attempts. Without it, observations belong to the ID's final attempt;
+// preceding attempts must not have reached the provider.
 type MessageEvidence struct {
 	// Received preserves provider inputs exactly, including framing.
 	Received []string
@@ -61,12 +64,33 @@ type MessageEvidence struct {
 	Ambiguous []string
 	// Rejected names attempts explicitly rejected before provider acceptance.
 	Rejected []string
+	// Attempts scopes observations in the latest Run when an ID is claimed
+	// again after Requeue. Include every attempt of that ID, even attempts with no receipt.
+	// Received and Confirmed above still record the complete ordered wire input.
+	Attempts []MessageAttemptEvidence
 	// Retained preserves guidance found in the provider's resumed history.
 	Retained []string
 	// Resumed reports an observed provider resume command or reused conversation.
 	Resumed bool
 	// Turns records the latest invocation's observed provider turn completions.
 	Turns []driver.TurnCompleted
+}
+
+// MessageAttemptEvidence records independent provider observations for one
+// claim of an ID. It must come from the fake provider, never from Driver Acks.
+type MessageAttemptEvidence struct {
+	// ID identifies the claimed message.
+	ID string
+	// Attempt is the one-based claim number for this ID within Driver.Run.
+	Attempt int
+	// Received contains exact input payloads observed during this attempt.
+	Received []string
+	// Confirmed contains official provider echoes observed during this attempt.
+	Confirmed []string
+	// Ambiguous reports unknown acceptance for this attempt.
+	Ambiguous bool
+	// Rejected reports explicit rejection before acceptance for this attempt.
+	Rejected bool
 }
 
 type namedMessageFixture struct {
@@ -342,6 +366,20 @@ func checkMessages(t *testing.T, d driver.Driver, c *suiteConfig) {
 					scenario := MessageScenario{Name: name, Boundary: b, Items: []driver.MessageItem{{ID: "msg-1", Text: "[human msg-1]\nKeep the original goal; include café 😀 in the final answer.\nDo not acknowledge separately."}}}
 					t.Run(name+"_"+string(b), func(t *testing.T) { runMessageScenario(t, f, caps, scenario) })
 				}
+				t.Run("success_batch_"+string(b), func(t *testing.T) {
+					runMessageScenario(t, f, caps, MessageScenario{Name: "success", Boundary: b, Items: []driver.MessageItem{
+						{ID: "msg-1", Text: "[human msg-1] first café 😀"},
+						{ID: "msg-2", Text: "[human msg-2] second guidance"},
+					}})
+				})
+				if b == driver.BoundaryStop {
+					t.Run("success_mixed_batch_stop", func(t *testing.T) {
+						runMessageScenario(t, f, caps, MessageScenario{Name: "success", Boundary: b, Items: []driver.MessageItem{
+							{ID: "msg-1", Text: "[human msg-1] first after-turn guidance", Timing: driver.TimingAfterTurn},
+							{ID: "msg-2", Text: "[human msg-2] later soon guidance"},
+						}})
+					})
+				}
 				if b != "" && caps.ConfirmedDelivery {
 					t.Run("missing_echo_"+string(b), func(t *testing.T) {
 						runMessageScenario(t, f, caps, MessageScenario{Name: "missing_echo", Boundary: b, Items: []driver.MessageItem{{ID: "msg-1", Text: "[human msg-1] verbatim 😀"}}})
@@ -488,6 +526,17 @@ func runMessageScenario(t *testing.T, f namedMessageFixture, caps driver.Message
 	if success && scenario.Boundary != "" && !(scenario.Name == "continuation" && caps.Continue == driver.ContinueResume) && len(delivered) != len(scenario.Items) {
 		t.Errorf("MSG-05: successful boundary delivered %d of %d items", len(delivered), len(scenario.Items))
 	}
+	if success && len(delivered) > 0 {
+		// A Stop hook makes Soon and AfterTurn available together. Comparing
+		// with the scripted batch also catches two timing-filtered Claims that
+		// each preserve their own order but invert admission order together.
+		var received payloadCursor
+		for _, item := range scenario.Items {
+			if !received.take(evidence.Received, item.Text) {
+				t.Errorf("MSG-04: provider input %q is missing or out of scripted batch order", item.ID)
+			}
+		}
+	}
 	if scenario.Name == "interrupt" {
 		interrupted := false
 		for _, turn := range evidence.Turns {
@@ -548,9 +597,13 @@ func resumeMessageFixture(t *testing.T, f MessageFixture, req driver.Request, re
 	port := NewScriptedMessagePort(caps)
 	req.Messages = port
 	sink := &messageRecordingSink{NewRecordingSink()}
+	before := f.Evidence()
 	next, err := f.Driver.Run(probeContext(t), req, sink)
 	port.Finish()
 	e := f.Evidence()
+	if len(e.Received) < len(before.Received) {
+		t.Fatal("MSG-08: fake provider discarded cumulative input evidence during resume")
+	}
 	if !e.Resumed {
 		t.Error("MSG-08: fake provider did not observe checkpoint resume or a reused conversation")
 	}
@@ -561,9 +614,10 @@ func resumeMessageFixture(t *testing.T, f MessageFixture, req driver.Request, re
 	if err != nil || next.Failure != nil || next.ExitCode != 0 {
 		t.Fatalf("MSG-08: checkpoint resume failed: %v %+v", err, next)
 	}
+	var received payloadCursor
 	for _, item := range items {
-		if !containsPayload(e.Received, item.Text) {
-			t.Errorf("MSG-08: resumed provider did not receive %q verbatim", item.ID)
+		if !received.take(e.Received[len(before.Received):], item.Text) {
+			t.Errorf("MSG-08: resumed provider did not receive %q verbatim in pending input order", item.ID)
 		}
 	}
 	return next

@@ -97,12 +97,18 @@
 // MSG-04  Each claim is acked exactly once before Run returns, on success,
 //
 //	delivery-write failure, process exit, cancellation and timeout; no
-//	unknown Ack, double claim or use of a finished port.
+//	unknown Ack, double claim or use of a finished port. Requeue settles an
+//	attempt and permits another claim of that ID at turn_end; each attempt
+//	needs its own Ack. Provider receipts preserve claim order, within and
+//	across batches, independently of Ack order.
 //
 // MSG-05  Delivered requires verbatim provider input and a concrete mechanism;
 //
 //	failed requires Err. Requeue of possibly received input requires
 //	MaybeDelivered; only proven rejection/non-receipt permits plain retry.
+//	The next attempt after MaybeDelivered carries MaybeDuplicate. Provider
+//	evidence is scoped per attempt so a later receipt cannot prove an
+//	earlier delivery or turn a safe rejection into ambiguous acceptance.
 //
 // MSG-06  ConfirmedDelivery requires an official echo; the missing-echo script
 //
