@@ -1,41 +1,5 @@
-// Command team-agent-workflow is the v1 team-collaboration showcase (design
-// doc §9.7 / §9.8): one leader Agent drives three delegated roles —
-// plan (read-only) -> impl (workspace-write) -> review (read-only) — through
-// the host-injected delegate_to_agent MCP tool, and the whole team's progress
-// arrives on the leader's single event stream.
-//
-// What the SDK contributes here, in three lines of construction:
-//
-//   - delegation.NewService(...) is the entire delegation runtime: registry,
-//     event bus, delegator, per-run MCP sidecar (loopback listener, random
-//     bearer token, http.Server lifecycle) and result recording. The pre-v1
-//     version of this showcase hand-wrote 323 lines for exactly this.
-//   - delegation.Local(key, runner, policy) registers an in-process Runner as
-//     a delegatable role, so each role is one *adaptor.Agent value wrapped in
-//     an ordinary host decorator — no per-role SDK instance, no A2A server,
-//     no port to manage.
-//   - team.Option() attaches the service to the leader in one option: the
-//     sidecar is declared as a runtime service with a typed MCP endpoint, its
-//     lifecycle is bound to the run, and every delegation event is folded into
-//     the leader's own Events() channel as adaptor.SubagentUpdate.
-//
-// Everything else — the temporary workspace fixture, the terminal renderer,
-// the workspace stage audit, and the protocol text handed to the leader — is
-// plain host logic and lives in host.go.
-//
-// LIVE ONLY, and it costs real money: one leader run plus three role runs
-// against the selected local CLIs. There is therefore no default agent
-// (-leader is required), no fallback that picks one for you, and no test ever
-// invokes main or a local CLI. It is not part of examples/run_examples.ps1.
-//
-// Usage:
-//
-//	./examples/showcases/team-agent-workflow/start-all.sh claude
-//	go run ./examples/showcases/team-agent-workflow -leader=claude
-//	go run ./examples/showcases/team-agent-workflow -leader=claude -plan=codex -review=codex
-//	go run ./examples/showcases/team-agent-workflow -leader=claude -keep-workspace
-//	go run ./examples/showcases/team-agent-workflow -leader=claude -web-mode
-//	go run ./examples/showcases/team-agent-workflow -leader=claude -web-mode -web-addr=0.0.0.0:8080 -web-cors=https://chat.example.com
+// Command team-agent-workflow demonstrates event-driven plan → impl → review
+// delegation with hosttools/team, one event stream and host-owned assertions.
 package main
 
 import (
@@ -53,7 +17,7 @@ import (
 	adaptor "github.com/agent-dance/agent-adaptor/v2"
 	"github.com/agent-dance/agent-adaptor/v2/bridges/sse"
 	"github.com/agent-dance/agent-adaptor/v2/examples/internal/exampleutil"
-	delegation "github.com/agent-dance/agent-adaptor/v2/hosttools/a2adelegation"
+	teamruntime "github.com/agent-dance/agent-adaptor/v2/hosttools/team"
 	"github.com/agent-dance/agent-adaptor/v2/memory"
 	"github.com/agent-dance/agent-adaptor/v2/profile"
 )
@@ -68,7 +32,7 @@ const (
 	// workflowSentinel is the leader's own completion marker.
 	workflowSentinel = "TEAM_AGENT_WORKFLOW_OK"
 	// reviewApprovalSentinel / reviewRejectSentinel gate the workflow on the
-	// review role's verdict, read back with delegation.Result.HasLine.
+	// review role's verdict, read back with the persisted task Result.
 	reviewApprovalSentinel = "TEAM_REVIEW_APPROVED"
 	reviewRejectSentinel   = "TEAM_REVIEW_REJECTED"
 	planArtifactFilename   = "PLAN.md"
@@ -76,7 +40,7 @@ const (
 	// delegateToolLiteral is the tool name the leader calls. It comes from
 	// the delegation package rather than a string literal in the protocol
 	// text, so prompt and sidecar can never drift apart.
-	delegateToolLiteral = delegation.DelegateToolName
+	delegateToolLiteral = "team_delegate"
 )
 
 type options struct {
@@ -103,8 +67,8 @@ func main() {
 	flag.StringVar(&opts.webCORS, "web-cors", defaultWebCORSOrigin, "Optional Access-Control-Allow-Origin (-web-mode; disabled by default)")
 	flag.Parse()
 
-	// No default agent on purpose: every run of this showcase makes four paid
-	// CLI invocations, so it never picks one for you.
+	// No default agent on purpose: every run of this showcase makes paid
+	// leader and worker CLI invocations, so it never picks one for you.
 	if strings.TrimSpace(opts.leader) == "" {
 		exampleutil.Fatalf("-leader is required (try -leader=claude): this showcase makes real, paid CLI calls and never picks an agent for you")
 	}
@@ -132,10 +96,10 @@ func run(opts options) error {
 	// 1. The roles. Each one is a single *adaptor.Agent value: its sandbox,
 	//    instructions and profile are construction-scope properties of what
 	//    the role *is*, not per-call decoration. observe(...) wraps it in an
-	//    ordinary host decorator, and delegation.Local takes any Runner — an
+	//    ordinary host decorator, and team.Member takes any Runner — an
 	//    Agent, a Thread, or a decorator over either.
 	roles := buildRoles(opts, fixture.WorkspaceDir)
-	refs := make([]delegation.AgentRef, 0, len(roles))
+	refs := make([]teamruntime.Member, 0, len(roles))
 	for _, def := range roles {
 		role := adaptor.New(def.Driver, append([]adaptor.Option{
 			adaptor.WithProfile(profile.CloneNative(fixture.ProfileDir(def.Key),
@@ -151,31 +115,14 @@ func run(opts options) error {
 		if len(def.CallOptions) > 0 {
 			roleRunner = withCallOptions(roleRunner, def.CallOptions...)
 		}
-		refs = append(refs, delegation.LocalNamed(def.Key, def.DelegationDisplayName(),
-			observe(def.Key, roleRunner, term, audit.Record),
-			delegation.Policy{MaxTimeout: opts.roleTimeout, RequireStreaming: true, MaxArtifactBytes: 1 << 20}))
+		refs = append(refs, teamruntime.Member{Key: def.Key, Name: def.DelegationDisplayName(), Description: def.Instructions,
+			Runner: observe(def.Key, roleRunner, term, audit.Record), Timeout: opts.roleTimeout})
+		defer role.Close(context.Background())
+
 		term.Logf("[role] %s = %s (%s, sandbox=%s)", def.Key, def.Agent, def.Model, def.Sandbox)
 	}
 
-	// 2. The delegation service: one configuration call replaces the registry,
-	//    event bus, per-run MCP sidecar and result bookkeeping a host used to
-	//    write by hand. Config.Observe is available as an out-of-band tap, but
-	//    this example does not need it: the same events reach the leader's own
-	//    stream below.
-	team, err := delegation.NewService(delegation.Config{
-		Agents:      refs,
-		ToolTimeout: opts.roleTimeout + 30*time.Second, // replaces the old MCP_TOOL_TIMEOUT env side channel
-		Tenant:      "example",
-	})
-	if err != nil {
-		return err
-	}
-	defer team.Close()
-
-	// 3. The leader: one Agent value again, with team.Option() as the single
-	//    line that gives it a team. The leader is read-only for its whole
-	//    life — it delegates instead of editing — so the sandbox belongs on
-	//    the constructor, not on every call.
+	// The leader owns its sandbox; Team adds its four scoped tools.
 	leaderCfg := liveConfig(opts.leader, opts.model, opts.command, fixture.WorkspaceDir)
 	leaderOpts := []adaptor.Option{
 		adaptor.WithProfile(profile.CloneNative(fixture.ProfileDir("leader"),
@@ -185,7 +132,6 @@ func run(opts options) error {
 		adaptor.WithIdentity(adaptor.Identity{ID: "team-leader", Tenant: "example", Name: "Team leader"}),
 		adaptor.WithMetadata("example", "team-agent-workflow"),
 		adaptor.WithMetadata("workflow_role", "leader"),
-		team.Option(), // sidecar declaration + run-scoped lifecycle + SubagentUpdate confluence
 	}
 	if opts.webMode {
 		leaderOpts = append(leaderOpts,
@@ -195,15 +141,24 @@ func run(opts options) error {
 	}
 	leader := adaptor.New(exampleutil.NewLiveDriver(leaderCfg), leaderOpts...)
 
+	defer leader.Close(context.Background())
+	store := teamruntime.NewMemoryStore()
+	team, err := teamruntime.New(teamruntime.Config{Leader: leader, Members: refs, Store: store})
+	if err != nil {
+		return err
+	}
+	defer team.Close(context.Background())
+
 	if opts.webMode {
-		return serveAGUI(ctx, leader, opts, term)
+		return serveAGUI(ctx, team, opts, term)
 	}
 
 	// 4. One prompt, one event stream, one for-range. No second channel with a
 	//    drain obligation, no hand-rolled goroutines, no bus subscribe/clear
 	//    bookkeeping: the delegated roles' progress is interleaved with the
 	//    leader's own output, in order, on this very channel.
-	stream := leader.Send(ctx, leaderProtocol(opts.roleTimeout))
+	scope := "workflow"
+	stream := team.Thread(scope).Send(ctx, leaderProtocol(opts.roleTimeout))
 
 	trace := &workflowTrace{}
 	for ev := range stream.Events() {
@@ -245,12 +200,18 @@ func run(opts options) error {
 	if err := audit.ValidateStageBoundaries(); err != nil {
 		return err
 	}
-	review, ok := team.Result(stream.RunID(), "review")
-	if !ok {
-		return fmt.Errorf("no delegation result recorded for review in run %s", stream.RunID())
+	tasks, err := store.Tasks(ctx, scope)
+	if err != nil {
+		return err
 	}
-	if !review.HasLine(reviewApprovalSentinel) {
-		return fmt.Errorf("review did not approve (status=%s); leader_output=%q", review.Status, preview(res.Text, 800))
+	var review *adaptor.Result
+	for _, task := range tasks {
+		if task.Member == "review" && task.State == teamruntime.Succeeded {
+			review = task.Result
+		}
+	}
+	if review == nil || !slices.Contains(strings.Split(strings.TrimSpace(review.Text), "\n"), reviewApprovalSentinel) {
+		return fmt.Errorf("review did not approve; leader_output=%q", preview(res.Text, 800))
 	}
 	if err := fixture.Validate(); err != nil {
 		return err
@@ -262,9 +223,9 @@ func run(opts options) error {
 		"leader":           exampleutil.LiveAgentSummary(leaderCfg),
 		"roles":            roleSummaries(roles),
 		"delegation_order": trace.Order(),
-		"delegation_tool":  delegation.DelegateToolName,
-		"recorded_results": len(team.Results(stream.RunID())),
-		"review_status":    review.Status,
+		"delegation_tool":  "team_delegate",
+		"recorded_results": len(res.Subagents()),
+		"review_status":    "succeeded",
 		"leader_sentinel":  strings.Contains(res.Text, workflowSentinel),
 		"workspace":        fixture.WorkspaceDir,
 		"stages":           audit.Stages(),

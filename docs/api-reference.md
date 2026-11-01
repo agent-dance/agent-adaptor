@@ -659,3 +659,31 @@ func TestMyDriver(t *testing.T) {
 - [Streaming](./streaming.md)
 - [A2A bridge](./a2a.md)
 - [Architecture and release contract](../AGENTS.md)
+
+## v2 composite execution hooks
+
+The v2 import path is `github.com/agent-dance/agent-adaptor/v2` and the execution
+verb is `Send`. See [Teams](team.md) for the optional composite Runner.
+
+```go
+func ComposeResults(runID string, parts ...*Result) *Result
+func MessageAttributes(opts ...CallOption) MessageContext
+func (s *RunSettings) CapMessageTurns(remaining int)
+```
+
+ComposeResults uses the same aggregation as core continuation executions:
+last text/summary/model/provider/metadata/structured output, summed usage and
+turns, ordered audit/message/subagent slices, concatenated raw streams and the
+last observed terminal payload. Returned data is detached from children.
+Message turn numbers are rebased onto the composite sequence.
+MessageAttributes reads only message options, with later values overriding
+earlier ones, AuthorHuman/Soon defaults and no generated ID. Execution options
+are ignored without applying them. A composite call option can use
+CapMessageTurns after caller options to lower the inherited message turn
+budget while preserving every other policy field. Nonpositive budgets panic.
+
+ReasonLimitExceeded classifies work aborted by a team limit. The single-Agent
+turn-cap path completes normally and returns pending messages with
+MessageLimitExceeded. Named task-mode Team.Thread.Send rejects an active
+execution or live standby with adaptor.ErrThreadBusy; Standby.Send performs
+ongoing routing. Stream.Result and Done carry the same authoritative result.

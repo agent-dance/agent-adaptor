@@ -224,9 +224,12 @@ recovery cause; it has no dedicated sentinel.
 | `sessionrecorder.ErrJSONLEventBackendClosed` | An operation was attempted after the durable event backend closed. |
 | `sessionrecorder.ErrJSONLEventLogCorrupt` | A malformed, truncated, or inconsistent JSONL audit log could not be replayed faithfully. |
 
-`hosttools/a2adelegation.DelegationError` is a typed remote/business failure
-with `Code`, `Message`, `Retryable`, `RemoteStatus`, and `Metadata`. It
-implements `error` but has no sentinel and no unwrap contract.
+`hosttools/team.ErrThreadBusy` matches `adaptor.ErrThreadBusy` for task/standby
+mode conflicts. `team.ErrConflict` identifies stale scope leases, revisions or
+message claims. Work aborted by a team budget returns `*adaptor.RunError` with
+`ReasonLimitExceeded` and matches `team.ErrLimitExceeded`. A single Agent that
+reaches its turn cap ends normally and returns pending messages as failed
+`MessageLimitExceeded` outcomes.
 
 The `profile`, `memory`, and bridge packages currently define no additional
 SDK-owned stable error sentinels. They return documented standard errors,

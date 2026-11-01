@@ -443,25 +443,25 @@ task, err := client.Send(ctx, clienta2a.SendRequest{
 核心代码示例如下：
 
 ```go
-team, err := a2adelegation.NewService(a2adelegation.Config{
-	Agents: []a2adelegation.AgentRef{
-		a2adelegation.LocalNamed("plan", "Codex Planner", planner, a2adelegation.Policy{}),
-		a2adelegation.LocalNamed("impl", "Claude Code Implementer", implementer, a2adelegation.Policy{}),
-		a2adelegation.LocalNamed("review", "Codex Reviewer", reviewer, a2adelegation.Policy{}),
-	},
+leader := adaptor.New(leaderDriver)
+workers, err := team.New(team.Config{
+    Leader: leader,
+    Members: []team.Member{
+        {Key: "plan", Name: "Codex Planner", Runner: planner},
+        {Key: "impl", Name: "Claude Code Implementer", Runner: implementer},
+        {Key: "review", Name: "Codex Reviewer", Runner: reviewer},
+    },
 })
-if err != nil {
-	return err
-}
-defer team.Close()
+if err != nil { return err }
+defer workers.Close(ctx)
 
-leader := adaptor.New(leaderDriver, team.Option())
-stream := leader.Stream(ctx, "Plan, implement, and review TASK.md")
+stream := workers.Send(ctx, "Plan, implement, and review TASK.md")
 for event := range stream.Events() {
-	if update, ok := event.(adaptor.SubagentUpdate); ok {
-		fmt.Printf("[%s] %s: %s\n", update.Agent, update.Kind, update.Delta)
-	}
+    if update, ok := event.(adaptor.SubagentUpdate); ok {
+        fmt.Printf("[%s] %s: %s\n", update.Member, update.Kind, update.Delta)
+    }
 }
+result, err := stream.Result()
 ```
 
 完整的 [`team-agent-workflow`](./examples/showcases/team-agent-workflow) 里有角色级沙箱、结构化 `PLAN.md` 产物、workspace 审计，以及带实时子 Agent 卡片的 CopilotKit 页面，一条命令启动：

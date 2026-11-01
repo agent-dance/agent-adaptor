@@ -13,6 +13,7 @@ type AgentSettings struct {
 methodset AgentSettings {
 	pointer AddRunServiceProvider(p RunServiceProvider)
 	pointer AddSkills(refs ...github.com/agent-dance/agent-adaptor/v2/skill.Ref)
+	pointer CapMessageTurns(remaining int)
 	pointer SetAgents(specs []github.com/agent-dance/agent-adaptor/v2/driver.AgentSpec)
 	pointer SetApprovalHandler(h ApprovalHandler)
 	pointer SetBlockingEvents()
@@ -126,6 +127,8 @@ methodset CallOption {
 type Checkpoint = driver.Checkpoint
 
 type Choice = driver.DecisionChoice
+
+func ComposeResults(runID string, parts ...*Result) *Result
 
 type ConfigSchema = driver.ConfigSchema
 
@@ -350,6 +353,8 @@ methodset InvalidPolicyError {
 }
 
 const MessageAccepted MessageState = 1
+
+func MessageAttributes(opts ...CallOption) MessageContext
 
 const MessageCancelled MessageFailure = "cancelled"
 
@@ -603,6 +608,8 @@ const ReasonApprovalTimeout FailureReason = "approval_timeout"
 
 const ReasonCancelled FailureReason = "cancelled"
 
+const ReasonLimitExceeded FailureReason = "limit_exceeded"
+
 const ReasonPolicyViolation FailureReason = "policy_violation"
 
 type ResourceSnapshot struct {
@@ -699,6 +706,7 @@ type RunSettings struct {
 methodset RunSettings {
 	pointer AddRunServiceProvider(p RunServiceProvider)
 	pointer AddSkills(refs ...github.com/agent-dance/agent-adaptor/v2/skill.Ref)
+	pointer CapMessageTurns(remaining int)
 	pointer SetAgents(specs []github.com/agent-dance/agent-adaptor/v2/driver.AgentSpec)
 	pointer SetApprovalHandler(h ApprovalHandler)
 	pointer SetConfigPatches(patches []github.com/agent-dance/agent-adaptor/v2/driver.ProfileConfigPatch)
@@ -1198,6 +1206,8 @@ func (*RunError).Unwrap() error
 func (*RunSettings).AddRunServiceProvider(p RunServiceProvider)
 
 func (*RunSettings).AddSkills(refs ...skill.Ref)
+
+func (*RunSettings).CapMessageTurns(remaining int)
 
 func (*RunSettings).SetAgents(specs []driver.AgentSpec)
 

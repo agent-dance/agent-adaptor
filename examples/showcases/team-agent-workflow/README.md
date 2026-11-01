@@ -6,8 +6,8 @@ This live showcase runs one leader with three delegated local roles:
 leader -> plan (read-only) -> impl (workspace-write) -> review (read-only)
 ```
 
-The leader receives one `delegate_to_agent` MCP tool from
-`hosttools/a2adelegation`. Role progress rejoins the leader's single typed
+The leader receives four scoped `team_*` tools from `hosttools/team`.
+Delegation returns a task immediately; each task completion wakes the leader. Role progress rejoins the leader's single typed
 event stream as `SubagentUpdate`, and the AG-UI bridge exposes that same stream
 to a browser as live `activityType="subagent"` messages. The CopilotKit page
 keeps the leader chat on the left and renders plan, implementation, and review
