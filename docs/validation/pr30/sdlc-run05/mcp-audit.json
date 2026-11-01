@@ -1,0 +1,222 @@
+[
+  {
+    "task": "c96a37d0ee5e3e034e218fab378c6b8b6fc5a432761e9822b95bd285b0898c2c",
+    "explicit_error_null": true,
+    "status": "completed",
+    "server": "agent-adaptor-tools",
+    "role": "planner",
+    "transcript_is_error": false,
+    "tool": "workflow_begin",
+    "provider_item_id": "exec-d10d20fe-0c03-4bc8-98ff-7a6f22e3f9cc"
+  },
+  {
+    "task": "c96a37d0ee5e3e034e218fab378c6b8b6fc5a432761e9822b95bd285b0898c2c",
+    "explicit_error_null": true,
+    "status": "completed",
+    "server": "team-5f28acf5b7dd3751",
+    "role": "planner",
+    "transcript_is_error": false,
+    "tool": "team_status",
+    "provider_item_id": "exec-c8d0fb82-b64e-4302-9d73-e2d49c9a2695"
+  },
+  {
+    "task": "dbe5da1eb924593149c7e1527d29e213b51d166b9d7edde13760980bfbc18f26",
+    "explicit_error_null": true,
+    "status": "completed",
+    "server": "agent-adaptor-tools",
+    "role": "engineer",
+    "transcript_is_error": false,
+    "tool": "workflow_begin",
+    "provider_item_id": "exec-5dccb8a1-bca4-43c7-990a-2a124ff10ffe"
+  },
+  {
+    "task": "dbe5da1eb924593149c7e1527d29e213b51d166b9d7edde13760980bfbc18f26",
+    "explicit_error_null": true,
+    "status": "completed",
+    "server": "team-5f28acf5b7dd3751",
+    "role": "engineer",
+    "transcript_is_error": false,
+    "tool": "team_status",
+    "provider_item_id": "exec-b8541106-fc16-4c68-9f69-024927bd0275"
+  },
+  {
+    "task": "dbe5da1eb924593149c7e1527d29e213b51d166b9d7edde13760980bfbc18f26",
+    "explicit_error_null": true,
+    "status": "completed",
+    "server": "agent-adaptor-tools",
+    "role": "engineer",
+    "transcript_is_error": false,
+    "tool": "workflow_manifest",
+    "provider_item_id": "exec-28dfafae-0f0a-4011-9566-838ade9ee739"
+  },
+  {
+    "task": "4243f583ac656a15db6d061016c6dae8f5ce6a7ddd63bddfc226f96253a224e5",
+    "explicit_error_null": true,
+    "status": "completed",
+    "server": "agent-adaptor-tools",
+    "role": "reviewer",
+    "transcript_is_error": false,
+    "tool": "workflow_begin",
+    "provider_item_id": "exec-e1a35c48-b1c5-424c-a45d-a71a24311e25"
+  },
+  {
+    "task": "4243f583ac656a15db6d061016c6dae8f5ce6a7ddd63bddfc226f96253a224e5",
+    "explicit_error_null": true,
+    "status": "completed",
+    "server": "agent-adaptor-tools",
+    "role": "reviewer",
+    "transcript_is_error": false,
+    "tool": "workflow_read_candidate",
+    "provider_item_id": "exec-63d713b6-e002-4eb3-8a6f-fed85d0ace58"
+  },
+  {
+    "task": "fb320dea8e631534cdf06ec7c864544301fb83f05c0f082a2451c31e4f468f62",
+    "explicit_error_null": true,
+    "status": "completed",
+    "server": "agent-adaptor-tools",
+    "role": "verifier",
+    "transcript_is_error": false,
+    "tool": "workflow_begin",
+    "provider_item_id": "exec-d1c7f5c6-9951-486b-9891-eca0bb935b47"
+  },
+  {
+    "task": "fb320dea8e631534cdf06ec7c864544301fb83f05c0f082a2451c31e4f468f62",
+    "explicit_error_null": true,
+    "status": "completed",
+    "server": "agent-adaptor-tools",
+    "role": "verifier",
+    "transcript_is_error": false,
+    "tool": "workflow_run_checks",
+    "provider_item_id": "exec-df526efe-bd19-48b3-9cc0-e606506b0e02"
+  },
+  {
+    "task": "fb320dea8e631534cdf06ec7c864544301fb83f05c0f082a2451c31e4f468f62",
+    "explicit_error_null": true,
+    "status": "completed",
+    "server": "agent-adaptor-tools",
+    "role": "verifier",
+    "transcript_is_error": false,
+    "tool": "workflow_run_checks",
+    "provider_item_id": "exec-b497d055-add0-48c3-927c-3457eebf860f"
+  },
+  {
+    "task": null,
+    "explicit_error_null": true,
+    "status": "completed",
+    "server": "agent-adaptor-tools",
+    "role": "leader",
+    "transcript_is_error": false,
+    "tool": "workflow_inspect",
+    "provider_item_id": "exec-732a3b3c-4c05-43a1-bc37-cb914e81c44d"
+  },
+  {
+    "task": null,
+    "explicit_error_null": true,
+    "status": "completed",
+    "server": "team-5f28acf5b7dd3751",
+    "role": "leader",
+    "transcript_is_error": false,
+    "tool": "team_delegate",
+    "provider_item_id": "exec-2a86e62f-de0c-4c8c-b157-55c07d915365"
+  },
+  {
+    "task": null,
+    "explicit_error_null": true,
+    "status": "completed",
+    "server": "agent-adaptor-tools",
+    "role": "leader",
+    "transcript_is_error": false,
+    "tool": "workflow_inspect",
+    "provider_item_id": "exec-d4317983-a046-4730-9ff5-2d1d147436d4"
+  },
+  {
+    "task": null,
+    "explicit_error_null": true,
+    "status": "completed",
+    "server": "agent-adaptor-tools",
+    "role": "leader",
+    "transcript_is_error": false,
+    "tool": "workflow_checkpoint",
+    "provider_item_id": "exec-c56ab842-f462-4f11-9d9d-eb5eddb2d754"
+  },
+  {
+    "task": null,
+    "explicit_error_null": true,
+    "status": "completed",
+    "server": "team-5f28acf5b7dd3751",
+    "role": "leader",
+    "transcript_is_error": false,
+    "tool": "team_delegate",
+    "provider_item_id": "exec-1c0ed8e0-7dcf-4701-9baf-874120016d9a"
+  },
+  {
+    "task": null,
+    "explicit_error_null": true,
+    "status": "completed",
+    "server": "agent-adaptor-tools",
+    "role": "leader",
+    "transcript_is_error": false,
+    "tool": "workflow_inspect",
+    "provider_item_id": "exec-f6f9bfb2-b3a8-470a-8741-927f10a80baf"
+  },
+  {
+    "task": null,
+    "explicit_error_null": true,
+    "status": "completed",
+    "server": "agent-adaptor-tools",
+    "role": "leader",
+    "transcript_is_error": false,
+    "tool": "workflow_checkpoint",
+    "provider_item_id": "exec-de138261-dfea-47e0-b06d-792363770f41"
+  },
+  {
+    "task": null,
+    "explicit_error_null": true,
+    "status": "completed",
+    "server": "team-5f28acf5b7dd3751",
+    "role": "leader",
+    "transcript_is_error": false,
+    "tool": "team_delegate",
+    "provider_item_id": "exec-0990a58a-9645-4df6-8956-fc362a15aafe"
+  },
+  {
+    "task": null,
+    "explicit_error_null": true,
+    "status": "completed",
+    "server": "team-5f28acf5b7dd3751",
+    "role": "leader",
+    "transcript_is_error": false,
+    "tool": "team_delegate",
+    "provider_item_id": "exec-793fe27c-881e-4d3d-ac41-0dce4095e1f7"
+  },
+  {
+    "task": null,
+    "explicit_error_null": true,
+    "status": "completed",
+    "server": "agent-adaptor-tools",
+    "role": "leader",
+    "transcript_is_error": false,
+    "tool": "workflow_inspect",
+    "provider_item_id": "exec-2e0748e0-8951-4d28-a245-f470372ecaa4"
+  },
+  {
+    "task": null,
+    "explicit_error_null": true,
+    "status": "completed",
+    "server": "agent-adaptor-tools",
+    "role": "leader",
+    "transcript_is_error": false,
+    "tool": "workflow_gate",
+    "provider_item_id": "exec-1d2bdd9c-0781-4afa-9bbb-d8a914a748a0"
+  },
+  {
+    "task": null,
+    "explicit_error_null": true,
+    "status": "completed",
+    "server": "agent-adaptor-tools",
+    "role": "leader",
+    "transcript_is_error": false,
+    "tool": "workflow_integrate",
+    "provider_item_id": "exec-d28ae4d1-7b07-4ba3-b189-7f0222fcc767"
+  }
+]

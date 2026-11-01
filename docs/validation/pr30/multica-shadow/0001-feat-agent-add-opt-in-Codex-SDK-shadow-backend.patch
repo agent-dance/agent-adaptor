@@ -1,0 +1,1904 @@
+From dfdb8023ecfda28a30a2e3155ee09510c2f2180a Mon Sep 17 00:00:00 2001
+From: buthim <me@blurooo.com>
+Date: Mon, 2 Nov 2026 01:17:24 +0800
+Subject: [PATCH] feat(agent): add opt-in Codex SDK shadow backend
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+由 Codex 接续补做 agent-adaptor PR #30 的本机影子接入（审查标识：便便）。
+
+Route the existing daemon claim/UI path through the public SDK, bind comments to actual delivery receipts, retain business Thread identity and healthy checkpoints, and wait for cleanup before continuation. Keep native default behavior and disclose bounded config-drift fallback, in-memory continuity and timeout limits. Actual application acceptance is tracked separately.
+---
+ docs/engineering/agent-adaptor-shadow.md      | 111 ++++
+ server/go.mod                                 |   1 +
+ server/internal/daemon/adaptor_shadow_test.go | 257 +++++++++
+ server/internal/daemon/config.go              |  19 +
+ server/internal/daemon/daemon.go              |  91 +++-
+ server/internal/daemon/task_supplement.go     |  13 +-
+ .../daemon/task_supplement_adaptor_test.go    | 219 ++++++++
+ server/pkg/agent/adaptor_backend.go           | 409 ++++++++++++++
+ server/pkg/agent/adaptor_backend_test.go      | 499 ++++++++++++++++++
+ server/pkg/agent/agent.go                     |  34 +-
+ server/pkg/agent/builtin_runtimes.go          |   9 +
+ 11 files changed, 1632 insertions(+), 30 deletions(-)
+ create mode 100644 docs/engineering/agent-adaptor-shadow.md
+ create mode 100644 server/internal/daemon/adaptor_shadow_test.go
+ create mode 100644 server/internal/daemon/task_supplement_adaptor_test.go
+ create mode 100644 server/pkg/agent/adaptor_backend.go
+ create mode 100644 server/pkg/agent/adaptor_backend_test.go
+
+diff --git a/docs/engineering/agent-adaptor-shadow.md b/docs/engineering/agent-adaptor-shadow.md
+new file mode 100644
+index 000000000..e7bd6a481
+--- /dev/null
++++ b/docs/engineering/agent-adaptor-shadow.md
+@@ -0,0 +1,111 @@
++# Experimental Codex SDK backend
++
++This opt-in pilot routes the real Multica daemon through `agent-adaptor/v2`.
++The native backend remains the default. It is a local integration experiment,
++not a replacement for Multica's other provider backends or a production rollout.
++
++Set `MULTICA_CODEX_BACKEND=agent-adaptor` for the daemon. Empty or `native` uses
++the existing implementation; unknown values fail configuration loading. Only
++Codex changes backend. Use separate native and shadow daemon profiles/runtimes
++for a comparison, with the same model, reasoning effort, prepared sandbox
++configuration, workspace permissions, and bounded run budget. This pilot uses
++Codex CLI 0.166.0, `gpt-6.1-sol`, and `xhigh` when explicitly selected by the host.
++
++The unreleased local SDK requires an external Go workspace. Do not commit an
++absolute local replacement or credentials into either repository. For example:
++
++```sh
++export GOWORK=/absolute/private/path/shadow.go.work
++go work init /absolute/path/multica/server /absolute/path/agent-adaptor
++go work edit -replace=github.com/agent-dance/agent-adaptor/v2@v2.0.0=/absolute/path/agent-adaptor
++```
++
++The `v2.0.0` requirement is the local experiment's workspace identity, not a
++claim that this revision has been published. Default tests use fake drivers
++and missing executables; they never discover the user's Codex installation or
++invoke a model. A real daemon run uses the existing external Codex profile and
++Multica's per-task profile materialization. Auth contents are never logged.
++
++## Actual route and receipts
++
++The normal UI/API/claim path remains in use: a comment or `@mention` creates or
++queues the host task, the daemon claims it, `ResolveBackend` chooses this
++backend, and the backend constructs a real public SDK Agent and business Thread.
++The existing server and daemon retain responsibility for comment routing,
++authorization, busy/pending decisions, task cancellation, and chat lifecycle.
++This integration does not replace those paths with a synthetic SDK-only test.
++
++For an active issue task, the daemon first waits for a real SDK `RunStarted`
++carrying an official provider turn ID and an inspected, version-gated message
++capability. A process launch or provider thread-ID announcement is insufficient.
++The durable supplement claim supplies its original comment ID, raw text, author
++kind, and display name to `Stream.Send` using `MessageID` and `From`. Older claim
++responses do not expose the actor's database ID; it is left empty rather than
++invented. SDK framing preserves human/peer authority.
++
++`Stream.Send` returning nil means admission. The typed supplement callback waits
++for actual `MessageDelivered` or `MessageFailed`, including cancellation races,
++before the existing HTTP claim/ACK flow reports delivered or a stable failure
++reason. The native string callback and its existing framing remain available.
++Chat keeps its existing cancel/new-task route; this pilot does not advertise
++mid-turn chat supplementation where the host did not negotiate it.
++
++SDK text, thinking, tool events, and results feed the existing daemon transcript
++and result paths. Only a healthy SDK checkpoint becomes the subsequent provider
++session handle; an initialization announcement cannot establish continuity.
++Cancel propagates through the run context. Result is published after the SDK
++event stream ends and `Agent.Close` confirms cleanup; unconfirmed cleanup is an
++explicit failure that prevents automatic continuation.
++
++## Continuity and evidence boundaries
++
++The business Thread key is a collision-free tuple of workspace, runtime, agent,
++issue/chat identity, or standalone-task identity. Checkpoints live in this
++daemon's memory and are shared across backend instances for that key. A missing
++provider handle never resets an existing key. A new host conversation needs a
++new business identity. Legacy or unknown provider handles are explicitly
++unsupported; this pilot does not import native provider sessions or prove
++recovery after killing/restarting the daemon.
++
++All task environment values remain in the real SDK configuration. Per-task
++tokens, task IDs, temporary directories, config roots, and `CODEX_HOME` commonly
++change. The SDK may consequently start a fresh provider conversation instead of
++resuming an incompatible checkpoint. Standard `Thread(key)` owns that one safe
++fallback, carries its bounded recent context, and emits `thread.continuity`.
++That actual notice becomes a visible `[Host continuity warning]` and a warning
++in the daemon log. It does not claim full-history recovery. The shadow prompt
++and runtime brief conservatively request cold-context behavior; the daemon's
++native preflight file heuristics and outer fresh-session retry are bypassed for
++shadow, leaving fallback ownership with the SDK. Healthy unchanged configuration
++still resumes the actual checkpoint. A failed replacement preserves the older
++healthy checkpoint and is not automatically replayed by the host.
++
++Keep the real daemon log alongside UI/API evidence. Structured records correlate
++`task_id`, actual SDK `run_id`, official live `turn_id`, comment `message_id`,
++receipt state/boundary, old/observed/healthy provider IDs, `fresh_fallback`, and
++the final `cleanup_confirmed` value. `MessageLog` alone is not persisted by
++Multica's task-message API. API cancellation timestamps are not evidence that a
++provider process exited: use the actual shadow execution-finished record before
++the next execution-started record. No token or raw auth/config file belongs in
++the report.
++
++## Remaining pilot limits
++
++- Custom launch prefixes and non-Codex providers are explicitly unsupported.
++- Native Codex's separate handshake, first-progress, semantic inactivity, thread
++  handshake, and interrupt timeout options are not mapped individually. Set an
++  explicit short total execution timeout and daemon idle budget for real tests;
++  an SDK execution still obeys its run context and bounded close.
++- The sandbox inherits the same daemon-prepared `CODEX_HOME`; permission approval
++  is SDK `AutoApprove`, matching the native daemon's automatic approval behavior.
++  This is not an additional sandbox. Verify the materialized sandbox mode and
++  actual workspace/network access for the native/shadow comparison.
++- No persistent process pool is shared across tasks: each configured Agent is
++  closed after its execution, so new task environment reaches a new process.
++- SDK Usage total input includes cached input. The adapter subtracts cache reads
++  to match Multica's exclusive accounting buckets; unobserved usage stays absent
++  and estimated SDK costs are not reported as billed provider cost.
++
++The new dependency is isolated to `pkg/agent` and this opt-in route. Using the
++reviewed SDK avoids duplicating its Thread, receipt, cancellation, and checkpoint
++contracts; the local unreleased revision remains an explicit rollout risk.
+diff --git a/server/go.mod b/server/go.mod
+index 199b6289d..1961b925d 100644
+--- a/server/go.mod
++++ b/server/go.mod
+@@ -3,6 +3,7 @@ module github.com/multica-ai/multica/server
+ go 1.26.9
+ 
+ require (
++	github.com/agent-dance/agent-adaptor/v2 v2.0.0
+ 	github.com/aws/aws-sdk-go-v2 v1.47.0
+ 	github.com/aws/aws-sdk-go-v2/config v1.33.4
+ 	github.com/aws/aws-sdk-go-v2/credentials v1.20.4
+diff --git a/server/internal/daemon/adaptor_shadow_test.go b/server/internal/daemon/adaptor_shadow_test.go
+new file mode 100644
+index 000000000..3fbe53ee8
+--- /dev/null
++++ b/server/internal/daemon/adaptor_shadow_test.go
+@@ -0,0 +1,257 @@
++package daemon
++
++import (
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++
++	"github.com/multica-ai/multica/server/pkg/agent"
++)
++
++func TestCodexBackendSelectionRequiresExplicitOptIn(t *testing.T) {
++	for _, test := range []struct {
++		input string
++		want  string
++	}{
++		{"", "native"},
++		{"native", "native"},
++		{"agent-adaptor", "agent-adaptor"},
++		{" agent-adaptor \n", "agent-adaptor"},
++	} {
++		t.Run(test.input, func(t *testing.T) {
++			got, err := parseCodexBackend(test.input)
++			if err != nil || got != test.want {
++				t.Fatalf("backend %q = %q, %v; want %q", test.input, got, err, test.want)
++			}
++		})
++	}
++	for _, input := range []string{"adaptor", "Agent-Adaptor", "agent-adaptor,codex", "true"} {
++		if _, err := parseCodexBackend(input); err == nil {
++			t.Fatalf("unknown backend %q was accepted", input)
++		}
++	}
++}
++
++func TestLoadConfigRejectsUnknownCodexBackendBeforeAnyProbes(t *testing.T) {
++	t.Setenv("MULTICA_CODEX_BACKEND", "not-a-backend")
++	_, err := LoadConfig(Overrides{ServerURL: "://invalid"})
++	if err == nil || !strings.Contains(err.Error(), "MULTICA_CODEX_BACKEND") {
++		t.Fatalf("invalid selector was not rejected at configuration entry: %v", err)
++	}
++}
++
++func TestLoadConfigCarriesCodexBackendSelection(t *testing.T) {
++	stageFakeAgent(t)
++	redirectTestHome(t, t.TempDir())
++	for _, pair := range os.Environ() {
++		key, _, _ := strings.Cut(pair, "=")
++		if strings.HasPrefix(key, "MULTICA_") && strings.HasSuffix(key, "_PATH") {
++			t.Setenv(key, "")
++		}
++	}
++	t.Setenv("SHELL", filepath.Join(t.TempDir(), "missing-shell"))
++	for _, test := range []struct{ env, want string }{{"", "native"}, {"agent-adaptor", "agent-adaptor"}} {
++		t.Run(test.want, func(t *testing.T) {
++			t.Setenv("MULTICA_CODEX_BACKEND", test.env)
++			cfg, err := LoadConfig(Overrides{ServerURL: "http://localhost:0", WorkspacesRoot: t.TempDir()})
++			if err != nil {
++				t.Fatal(err)
++			}
++			if cfg.CodexBackend != test.want {
++				t.Fatalf("CodexBackend = %q, want %q", cfg.CodexBackend, test.want)
++			}
++		})
++	}
++}
++
++func TestAdaptorThreadKeyTracksBusinessConversation(t *testing.T) {
++	issue := Task{ID: "task-1", WorkspaceID: "workspace", RuntimeID: "runtime", AgentID: "agent", IssueID: "issue"}
++	next := issue
++	next.ID, next.PriorSessionID = "task-2", "different-provider-session"
++	if adaptorThreadKey(issue) != adaptorThreadKey(next) {
++		t.Fatal("task or provider session changed a stable issue conversation key")
++	}
++	chat := issue
++	chat.IssueID, chat.ChatSessionID = "", "chat"
++	nextChat := chat
++	nextChat.ID = "another-task"
++	if adaptorThreadKey(chat) != adaptorThreadKey(nextChat) {
++		t.Fatal("task ID changed a stable chat conversation key")
++	}
++	for _, mutate := range []func(*Task){
++		func(task *Task) { task.WorkspaceID = "other-workspace" },
++		func(task *Task) { task.RuntimeID = "other-runtime" },
++		func(task *Task) { task.AgentID = "other-agent" },
++		func(task *Task) { task.IssueID = "other-issue" },
++		func(task *Task) { task.IssueID, task.ChatSessionID = "", "issue" },
++	} {
++		other := issue
++		mutate(&other)
++		if adaptorThreadKey(other) == adaptorThreadKey(issue) {
++			t.Fatalf("different host conversation collided: %+v", other)
++		}
++	}
++	standalone := Task{ID: "task-1", WorkspaceID: "workspace", RuntimeID: "runtime", AgentID: "agent"}
++	other := standalone
++	other.ID = "task-2"
++	if adaptorThreadKey(standalone) == adaptorThreadKey(other) {
++		t.Fatal("unrelated standalone tasks shared a conversation")
++	}
++}
++
++func TestAdaptorThreadKeyDoesNotCollideAtSeparatorsOrUnicode(t *testing.T) {
++	seen := map[string]Task{}
++	for _, task := range []Task{
++		{WorkspaceID: "a/b", RuntimeID: "c", AgentID: "agent", IssueID: "issue"},
++		{WorkspaceID: "a", RuntimeID: "b/c", AgentID: "agent", IssueID: "issue"},
++		{WorkspaceID: "a:b", RuntimeID: "c", AgentID: "agent", IssueID: "issue"},
++		{WorkspaceID: "a", RuntimeID: "b:c", AgentID: "agent", IssueID: "issue"},
++		{WorkspaceID: "工作区\x00", RuntimeID: "运行时", AgentID: "智能体", IssueID: "议题"},
++		{WorkspaceID: "工作区", RuntimeID: "\x00运行时", AgentID: "智能体", IssueID: "议题"},
++		{WorkspaceID: `a\"b`, RuntimeID: "c", AgentID: "agent", IssueID: "issue"},
++		{WorkspaceID: "a", RuntimeID: `\"bc`, AgentID: "agent", IssueID: "issue"},
++	} {
++		key := adaptorThreadKey(task)
++		if previous, ok := seen[key]; ok {
++			t.Fatalf("host tuples collided: %+v and %+v", previous, task)
++		}
++		seen[key] = task
++	}
++}
++
++func TestAdaptorShadowDoesNotRetryTheSDKInvocation(t *testing.T) {
++	for _, test := range []struct {
++		name   string
++		result agent.Result
++	}{
++		{"resume rejected", agent.Result{Status: "failed", ResumeRejected: true}},
++		{"resume temporarily rejected", agent.Result{Status: "failed", ResumeRejectedTransient: true}},
++		{"invalid history", agent.Result{Status: "failed", Error: "invalid conversation history received"}},
++		{"empty history message", agent.Result{Status: "failed", Error: "messages.3.content must not be empty"}},
++		{"unresolved auth", agent.Result{Status: "failed", Error: "Could not resolve authentication method"}},
++	} {
++		t.Run(test.name, func(t *testing.T) {
++			if shouldRetryBackendWithFreshSession(test.result, "prior-session", 0, "codex", "agent-adaptor") {
++				t.Fatal("daemon would execute a second shadow invocation after the SDK settled it")
++			}
++			for _, native := range []struct{ provider, backend string }{
++				{"codex", ""}, {"codex", "native"}, {"claude", "agent-adaptor"},
++			} {
++				if !shouldRetryBackendWithFreshSession(test.result, "prior-session", 0, native.provider, native.backend) {
++					t.Fatalf("native retry changed for provider=%q backend=%q", native.provider, native.backend)
++				}
++				if shouldRetryBackendWithFreshSession(test.result, "prior-session", 1, native.provider, native.backend) {
++					t.Fatal("native retry ignored a tool side effect")
++				}
++				if shouldRetryBackendWithFreshSession(test.result, "", 0, native.provider, native.backend) {
++					t.Fatal("native cold invocation acquired a resume retry")
++				}
++			}
++		})
++	}
++}
++
++func TestAdaptorShadowPromptReconstructsWithoutDiscardingTheRealResumeID(t *testing.T) {
++	task := Task{
++		ID: "task", WorkspaceID: "workspace", RuntimeID: "runtime", AgentID: "agent",
++		IssueID: "issue", TriggerCommentID: "comment", TriggerThreadID: "thread",
++		TriggerCommentContent: "Please inspect the new candidate.",
++		PriorSessionID:        "healthy-or-unsupported-legacy-id", NewCommentsDeltaKnown: true,
++		IssueStateDeltaKnown: true,
++	}
++	semanticTask := taskForBackendPrompt(task, "codex", "agent-adaptor")
++	if semanticTask.PriorSessionID != "" {
++		t.Fatal("shadow prompt still assumes provider memory will be resumed")
++	}
++	if task.PriorSessionID != "healthy-or-unsupported-legacy-id" {
++		t.Fatal("prompt projection discarded the original ID needed by SDK resume validation")
++	}
++	if semanticTask.PriorSessionResumeUnavailable || task.PriorSessionResumeUnavailable {
++		t.Fatal("unknown resume outcome was reported as a known continuity loss")
++	}
++	if adaptorThreadKey(semanticTask) != adaptorThreadKey(task) {
++		t.Fatal("prompt projection changed the SDK business thread identity")
++	}
++	prompt := BuildPrompt(semanticTask, "codex")
++	for _, want := range []string{
++		"multica issue get issue --output json",
++		"multica issue comment list issue --thread thread --tail 30",
++		"--roots-only --summary",
++		task.TriggerCommentContent,
++	} {
++		if !strings.Contains(prompt, want) {
++			t.Fatalf("cold shadow prompt lost %q:\n%s", want, prompt)
++		}
++	}
++	for _, forbidden := range []string{"You're resuming the prior session", "this turn's issue-wide delta is empty", "Session Continuity Notice"} {
++		if strings.Contains(prompt, forbidden) {
++			t.Fatalf("shadow prompt asserted unobserved continuity %q:\n%s", forbidden, prompt)
++		}
++	}
++	for _, native := range []struct{ provider, backend string }{
++		{"codex", ""}, {"codex", "native"}, {"claude", "agent-adaptor"},
++	} {
++		nativeTask := taskForBackendPrompt(task, native.provider, native.backend)
++		if nativeTask.PriorSessionID != task.PriorSessionID || BuildPrompt(nativeTask, native.provider) != BuildPrompt(task, native.provider) {
++			t.Fatalf("native prompt changed for provider=%q backend=%q", native.provider, native.backend)
++		}
++	}
++	if !strings.Contains(BuildPrompt(task, "codex"), "You're resuming the prior session") {
++		t.Fatal("fixture did not exercise the warm native branch")
++	}
++
++	task.ChatSessionID, task.ChatMessage = "chat", "Explain the latest candidate."
++	chatPrompt := BuildPrompt(taskForBackendPrompt(task, "codex", "agent-adaptor"), "codex")
++	if !strings.Contains(chatPrompt, task.ChatMessage) || strings.Contains(chatPrompt, "Session Continuity Notice") {
++		t.Fatalf("chat projection lost the message or fabricated a loss:\n%s", chatPrompt)
++	}
++	task.PriorSessionResumeUnavailable = true
++	if !taskForBackendPrompt(task, "codex", "agent-adaptor").PriorSessionResumeUnavailable {
++		t.Fatal("prompt projection hid a continuity loss already reported by the server")
++	}
++}
++
++func TestAdaptorShadowCheckpointSkipsNativeRolloutProbe(t *testing.T) {
++	probes := 0
++	probe := func() bool {
++		probes++
++		return false
++	}
++	if shouldWithholdMissingNativeRollout("codex", "agent-adaptor", "sdk-healthy-session", probe) {
++		t.Fatal("native rollout lookup overruled a healthy SDK checkpoint")
++	}
++	if probes != 0 {
++		t.Fatal("shadow execution probed the unrelated native rollout store")
++	}
++	if shouldWithholdMissingNativeRollout("codex", "native", "", probe) || probes != 0 {
++		t.Fatal("a result without a session ID triggered a native rollout probe")
++	}
++}
++
++func TestAdaptorNativeMissingRolloutStillWithholdsSession(t *testing.T) {
++	home := t.TempDir()
++	for _, backend := range []string{"", "native"} {
++		probes := 0
++		if !shouldWithholdMissingNativeRollout("codex", backend, "missing-native-session", func() bool {
++			probes++
++			return codexSessionResumable(home, "missing-native-session", 0)
++		}) {
++			t.Fatalf("native backend %q retained a session whose rollout is missing", backend)
++		}
++		if probes != 1 {
++			t.Fatalf("native probes = %d, want 1", probes)
++		}
++	}
++	for _, native := range []struct{ provider, backend string }{
++		{"codex", "native"}, {"claude", "agent-adaptor"},
++	} {
++		probes := 0
++		if shouldWithholdMissingNativeRollout(native.provider, native.backend, "healthy-session", func() bool {
++			probes++
++			return true
++		}) || probes != 1 {
++			t.Fatalf("healthy native checkpoint handling changed for provider=%q backend=%q", native.provider, native.backend)
++		}
++	}
++}
+diff --git a/server/internal/daemon/config.go b/server/internal/daemon/config.go
+index c185ae75a..afdd11cae 100644
+--- a/server/internal/daemon/config.go
++++ b/server/internal/daemon/config.go
+@@ -136,6 +136,9 @@ type Config struct {
+ 	HeartbeatInterval              time.Duration
+ 	AgentTimeout                   time.Duration
+ 	CodexSemanticInactivityTimeout time.Duration
++	// CodexBackend selects the opt-in agent-adaptor shadow backend. The native
++	// backend remains the default; other providers do not read this setting.
++	CodexBackend string
+ 	// CodexFirstTurnNoProgressTimeout is an explicit override for the Codex
+ 	// first-turn no-progress ceiling (MULTICA_CODEX_FIRST_TURN_TIMEOUT). 0 means
+ 	// unset: the backend keeps its default ceiling, which CodexSemanticInactivityTimeout
+@@ -203,6 +206,10 @@ type Overrides struct {
+ // LoadConfig builds the daemon configuration from environment variables
+ // and optional CLI flag overrides.
+ func LoadConfig(overrides Overrides) (Config, error) {
++	codexBackend, err := parseCodexBackend(os.Getenv("MULTICA_CODEX_BACKEND"))
++	if err != nil {
++		return Config{}, err
++	}
+ 	// Server URL: override > env > default
+ 	rawServerURL := envOrDefault("MULTICA_SERVER_URL", DefaultServerURL)
+ 	if overrides.ServerURL != "" {
+@@ -651,6 +658,7 @@ func LoadConfig(overrides Overrides) (Config, error) {
+ 		HeartbeatInterval:               heartbeatInterval,
+ 		AgentTimeout:                    agentTimeout,
+ 		CodexSemanticInactivityTimeout:  codexSemanticInactivityTimeout,
++		CodexBackend:                    codexBackend,
+ 		CodexFirstTurnNoProgressTimeout: codexFirstTurnNoProgressTimeout,
+ 		CodexHandshakeTimeout:           codexHandshakeTimeout,
+ 		CodexTurnInterruptTimeout:       codexTurnInterruptTimeout,
+@@ -667,6 +675,17 @@ func LoadConfig(overrides Overrides) (Config, error) {
+ 	}, nil
+ }
+ 
++func parseCodexBackend(raw string) (string, error) {
++	switch strings.TrimSpace(raw) {
++	case "", "native":
++		return "native", nil
++	case "agent-adaptor":
++		return "agent-adaptor", nil
++	default:
++		return "", fmt.Errorf("MULTICA_CODEX_BACKEND must be native or agent-adaptor")
++	}
++}
++
+ // officialCloudHost is the hostname of Multica's hosted cloud. It's the only
+ // origin we treat as "official" for the auto-update default — staging,
+ // preview, and any future *.multica.ai subdomains are deliberately excluded
+diff --git a/server/internal/daemon/daemon.go b/server/internal/daemon/daemon.go
+index 37c5d125c..fd0af031d 100644
+--- a/server/internal/daemon/daemon.go
++++ b/server/internal/daemon/daemon.go
+@@ -7814,6 +7814,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
+ 	// Prepare isolated execution environment.
+ 	// Repos are passed as metadata only — the agent checks them out on demand
+ 	// via `multica repo checkout <url>`.
++	promptTask := taskForBackendPrompt(task, provider, d.cfg.CodexBackend)
+ 	taskCtx := execenv.TaskContextForEnv{
+ 		IssueID:             task.IssueID,
+ 		TriggerCommentID:    task.TriggerCommentID,
+@@ -7821,7 +7822,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
+ 		CommentReplyTargets: commentReplyThreads(task),
+ 		NewCommentCount:     task.NewCommentCount,
+ 		NewCommentsSince:    task.NewCommentsSince,
+-		PriorSessionResumed: task.PriorSessionID != "",
++		PriorSessionResumed: promptTask.PriorSessionID != "",
+ 		// MUL-5305: the server sets this when a more recent Codex session was
+ 		// withheld (rollout missing) and PriorSessionID is an older fallback (or
+ 		// absent). Seed the brief's continuity disclosure from it; the local
+@@ -8509,21 +8510,24 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
+ 	// agent.Config.BuiltinRuntime: it separates the provider's own discovered
+ 	// binary from an arbitrary command speaking its protocol. Reused here so
+ 	// the gate and the backend cannot disagree about which one is running.
+-	resumeReachable := gateResumeToReachableSession(
+-		&task, &taskCtx, provider, env.WorkDir,
+-		sessionHomeReachable(provider, env, envReused),
+-		providerRefusesMissingSessionCwd(provider, !usesCustomProfileCommand),
+-		provider == "codex" && codexWorktreeResumeEligible(env, execenv.CodexSessionStorePath(d.cfg.Profile, taskCtx)),
+-		taskLog,
+-	)
+-	// A reachable workdir or continued local worktree is not sufficient for a
+-	// Codex resume: the prior thread's rollout must be in this task's CODEX_HOME
+-	// sessions (MUL-4424 isolates them). Drop the resume before the brief is
+-	// generated below if it isn't, so we never tell the agent it is continuing a
+-	// conversation Codex will silently restart from scratch.
+-	if resumeReachable {
+-		gateCodexResumeToRolloutPresence(&task, &taskCtx, provider, env.CodexHome, taskLog)
++	var resumeReachable bool
++	if !isCodexAdaptorShadow(provider, d.cfg.CodexBackend) {
++		resumeReachable = gateResumeToReachableSession(
++			&task, &taskCtx, provider, env.WorkDir,
++			sessionHomeReachable(provider, env, envReused),
++			providerRefusesMissingSessionCwd(provider, !usesCustomProfileCommand),
++			provider == "codex" && codexWorktreeResumeEligible(env, execenv.CodexSessionStorePath(d.cfg.Profile, taskCtx)),
++			taskLog,
++		)
++		// A reachable workdir or continued local worktree is not sufficient for a
++		// native Codex resume: its rollout must be in this task's CODEX_HOME.
++		if resumeReachable {
++			gateCodexResumeToRolloutPresence(&task, &taskCtx, provider, env.CodexHome, taskLog)
++		}
+ 	}
++	// The shadow backend validates the original ID against its SDK checkpoint.
++	// Native filesystem guesses must not clear an unknown legacy ID and turn
++	// the required unsupported-resume error into a silently fresh execution.
+ 
+ 	// Inject runtime-specific config (meta skill) so the agent discovers .agent_context/.
+ 	runtimeBrief, err := execenv.InjectRuntimeConfig(env.WorkDir, provider, taskCtx)
+@@ -8552,7 +8556,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
+ 	if env.LocalWorktree != nil {
+ 		promptOptions = append(promptOptions, WithWorktreeBranch(env.LocalWorktree.Branch, env.LocalWorktree.BaseCommit))
+ 	}
+-	prompt := BuildPrompt(task, provider, promptOptions...)
++	prompt := BuildPrompt(taskForBackendPrompt(task, provider, d.cfg.CodexBackend), provider, promptOptions...)
+ 
+ 	// Pass task-scoped auth credentials and context so the spawned agent CLI
+ 	// can call the Multica API and the local daemon (e.g. `multica repo checkout`).
+@@ -8695,6 +8699,10 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
+ 		CodexVersion:   codexVersion,
+ 		BuiltinRuntime: !usesCustomProfileCommand,
+ 	}
++	if provider == "codex" {
++		backendConfig.ExecutionBackend = d.cfg.CodexBackend
++		backendConfig.AdaptorThreadKey = adaptorThreadKey(task)
++	}
+ 	if hermesOverlayActive {
+ 		// Retire an owner left by a crashed/interrupted daemon before it can
+ 		// execute tools with the preceding task's frozen environment.
+@@ -8724,7 +8732,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
+ 		} else {
+ 			runtimeBrief = freshBrief
+ 		}
+-		prompt = BuildPrompt(task, provider, promptOptions...)
++		prompt = BuildPrompt(taskForBackendPrompt(task, provider, d.cfg.CodexBackend), provider, promptOptions...)
+ 	}
+ 	backend, err := agent.ResolveBackend(provider, backendConfig)
+ 	if err != nil {
+@@ -8917,7 +8925,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
+ 		}
+ 	}
+ 
+-	if shouldRetryWithFreshSession(result, task.PriorSessionID, tools, provider) {
++	if shouldRetryBackendWithFreshSession(result, task.PriorSessionID, tools, provider, d.cfg.CodexBackend) {
+ 		firstResult := result
+ 		firstUsage := result.Usage
+ 		firstTools := tools
+@@ -9046,7 +9054,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
+ 	// resuming that older good session. No-op for non-Codex providers
+ 	// (env.CodexHome == "") and when there is no session.
+ 	var sessionRolloutMissing bool
+-	if result.SessionID != "" && !codexSessionResumable(env.CodexHome, result.SessionID, codexRolloutFlushWait) {
++	if shouldWithholdMissingNativeRollout(provider, d.cfg.CodexBackend, result.SessionID, func() bool {
++		return codexSessionResumable(env.CodexHome, result.SessionID, codexRolloutFlushWait)
++	}) {
+ 		taskLog.Warn("codex session rollout not present in task CODEX_HOME; withholding resume pointer and flagging continuity gap",
+ 			"session_id", result.SessionID, "codex_home", env.CodexHome, "status", result.Status)
+ 		result.SessionID = ""
+@@ -9269,6 +9279,47 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
+ 	}
+ }
+ 
++// The tuple preserves the host conversation across task IDs without turning a
++// provider resume handle into the SDK's business identity. Standalone tasks
++// have no conversation to share and therefore include their own task ID.
++func adaptorThreadKey(task Task) string {
++	standalone := ""
++	if task.IssueID == "" && task.ChatSessionID == "" {
++		standalone = task.ID
++	}
++	encoded, _ := json.Marshal([]string{
++		task.WorkspaceID, task.RuntimeID, task.AgentID,
++		task.IssueID, task.ChatSessionID, standalone,
++	})
++	return "multica-adaptor:v1:" + string(encoded)
++}
++
++func isCodexAdaptorShadow(provider, codexBackend string) bool {
++	return provider == "codex" && codexBackend == "agent-adaptor"
++}
++
++func shouldWithholdMissingNativeRollout(provider, codexBackend, sessionID string, nativeProbe func() bool) bool {
++	// The SDK's healthy checkpoint is authoritative for shadow sessions. Its
++	// profile may differ from the native rollout store inspected by the daemon.
++	return sessionID != "" && !isCodexAdaptorShadow(provider, codexBackend) && !nativeProbe()
++}
++
++// A healthy SDK checkpoint may still require a fresh provider session after
++// task-environment drift. Keep the prompt safe for that case without changing
++// the original ID that the backend must validate, or asserting a known loss.
++func taskForBackendPrompt(task Task, provider, codexBackend string) Task {
++	if isCodexAdaptorShadow(provider, codexBackend) {
++		task.PriorSessionID = ""
++	}
++	return task
++}
++
++func shouldRetryBackendWithFreshSession(result agent.Result, priorSessionID string, tools int32, provider, codexBackend string) bool {
++	// The SDK owns the shadow invocation's bounded resume fallback and message
++	// receipts. A daemon retry would open a second execution of the same input.
++	return !isCodexAdaptorShadow(provider, codexBackend) && shouldRetryWithFreshSession(result, priorSessionID, tools, provider)
++}
++
+ // shouldRetryWithFreshSession reports whether a failed run that requested
+ // --resume should be retried once from a fresh session.
+ //
+@@ -9556,7 +9607,7 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
+ 
+ 	// Only negotiated sessions may claim additions. Stop and join delivery
+ 	// before the caller reports the task's terminal state to the server.
+-	if opts.EnableTaskSupplement && session.Supplement != nil && session.SupplementReady != nil {
++	if opts.EnableTaskSupplement && (session.Supplement != nil || session.SupplementInput != nil) && session.SupplementReady != nil {
+ 		supplementCtx, cancelSupplements := context.WithCancel(agentCtx)
+ 		supplementsDone := make(chan struct{})
+ 		wakeup, unsubscribe := d.taskSupplementSignals.subscribe(taskID)
+diff --git a/server/internal/daemon/task_supplement.go b/server/internal/daemon/task_supplement.go
+index b680e6b1f..9b87df48d 100644
+--- a/server/internal/daemon/task_supplement.go
++++ b/server/internal/daemon/task_supplement.go
+@@ -128,6 +128,10 @@ func taskSupplementFailureReason(ctx context.Context, err error) string {
+ 	if err == nil {
+ 		return ""
+ 	}
++	var receiptErr *agent.AdaptorSupplementError
++	if errors.As(err, &receiptErr) {
++		return receiptErr.Reason
++	}
+ 	if errors.Is(err, context.DeadlineExceeded) {
+ 		return protocol.TaskSupplementFailureTimeout
+ 	}
+@@ -145,7 +149,7 @@ func taskSupplementFailureReason(ctx context.Context, err error) string {
+ // turn, wakes immediately on a content-free WebSocket hint, and otherwise uses
+ // the same five-second cadence as task cancellation polling.
+ func (d *Daemon) runTaskSupplementLoop(ctx context.Context, session *agent.Session, taskID string, wakeup <-chan struct{}, taskLog *slog.Logger) {
+-	if session == nil || session.Supplement == nil || session.SupplementReady == nil {
++	if session == nil || (session.Supplement == nil && session.SupplementInput == nil) || session.SupplementReady == nil {
+ 		return
+ 	}
+ 	for {
+@@ -178,7 +182,12 @@ func (d *Daemon) runTaskSupplementLoop(ctx context.Context, session *agent.Sessi
+ 		// The adapter owns transport deadlines. Hook-based providers wait for a
+ 		// safe boundary, which can follow a long-running tool; run cancellation
+ 		// still aborts that wait and prevents late delivery.
+-		injectErr := session.Supplement(ctx, formatTaskSupplementInstruction(supplement.AuthorType, supplement.AuthorName, supplement.Content))
++		var injectErr error
++		if session.SupplementInput != nil {
++			injectErr = session.SupplementInput(ctx, agent.SupplementInput{ID: supplement.CommentID, Text: supplement.Content, AuthorType: supplement.AuthorType, AuthorName: supplement.AuthorName})
++		} else {
++			injectErr = session.Supplement(ctx, formatTaskSupplementInstruction(supplement.AuthorType, supplement.AuthorName, supplement.Content))
++		}
+ 		reason := taskSupplementFailureReason(ctx, injectErr)
+ 		if injectErr != nil {
+ 			// Raw provider/Go diagnostics remain local. Workspace-visible state is
+diff --git a/server/internal/daemon/task_supplement_adaptor_test.go b/server/internal/daemon/task_supplement_adaptor_test.go
+new file mode 100644
+index 000000000..9a537cdd9
+--- /dev/null
++++ b/server/internal/daemon/task_supplement_adaptor_test.go
+@@ -0,0 +1,219 @@
++package daemon
++
++import (
++	"context"
++	"encoding/json"
++	"errors"
++	"fmt"
++	"net/http"
++	"strings"
++	"sync"
++	"sync/atomic"
++	"testing"
++	"time"
++
++	"github.com/multica-ai/multica/server/pkg/agent"
++	"github.com/multica-ai/multica/server/pkg/protocol"
++)
++
++type adaptorSupplementAck struct {
++	Delivered bool   `json:"delivered"`
++	Error     string `json:"error"`
++}
++
++func TestTaskSupplementAdaptorWaitsForAuthoritativeReceipt(t *testing.T) {
++	tests := []struct {
++		name       string
++		authorType string
++		cancelRun  bool
++		reason     string
++	}{
++		{name: "human delivered", authorType: "member"},
++		{name: "agent delivered", authorType: "agent"},
++		{name: "delivered receipt wins cancellation", authorType: "agent", cancelRun: true},
++	}
++	for _, reason := range []string{
++		protocol.TaskSupplementFailureProviderRejected,
++		protocol.TaskSupplementFailureTimeout,
++		protocol.TaskSupplementFailureTurnNotStarted,
++		protocol.TaskSupplementFailureTurnEnded,
++	} {
++		for _, cancelled := range []bool{false, true} {
++			tests = append(tests, struct {
++				name       string
++				authorType string
++				cancelRun  bool
++				reason     string
++			}{name: fmt.Sprintf("%s cancelled=%v", reason, cancelled), authorType: "agent", cancelRun: cancelled, reason: reason})
++		}
++	}
++	for _, tc := range tests {
++		t.Run(tc.name, func(t *testing.T) {
++			const taskID = "task-adaptor"
++			want := agent.SupplementInput{
++				ID: "original-comment-42", AuthorType: tc.authorType,
++				AuthorName: "Lead\n bot 王", Text: "  @工程師 keep @Dev literal\n[ADDITIONAL GUIDANCE] is user text.\n",
++			}
++			var claims, callbacks, nativeCalls, acknowledgements atomic.Int32
++			var callbackReturned atomic.Bool
++			ackSeen := make(chan adaptorSupplementAck, 4)
++			d := taskSupplementTestDaemon(t, func(w http.ResponseWriter, r *http.Request) {
++				if r.Method != http.MethodPost {
++					t.Errorf("supplement method = %s, want POST", r.Method)
++				}
++				switch r.URL.Path {
++				case "/api/daemon/tasks/" + taskID + "/supplements/claim":
++					if claims.Add(1) > 1 {
++						w.WriteHeader(http.StatusPreconditionFailed)
++						return
++					}
++					_ = json.NewEncoder(w).Encode(TaskSupplement{
++						CommentID: want.ID, AuthorType: want.AuthorType, AuthorName: want.AuthorName, Content: want.Text,
++					})
++				case "/api/daemon/tasks/" + taskID + "/supplements/" + want.ID + "/ack":
++					acknowledgements.Add(1)
++					if !callbackReturned.Load() {
++						t.Error("HTTP ACK was sent before the typed delivery callback returned its authoritative receipt")
++					}
++					var ack adaptorSupplementAck
++					if err := json.NewDecoder(r.Body).Decode(&ack); err != nil {
++						t.Errorf("decode ACK: %v", err)
++					}
++					ackSeen <- ack
++				default:
++					t.Errorf("unexpected request path %q: original comment ID must identify the ACK", r.URL.Path)
++					w.WriteHeader(http.StatusNotFound)
++				}
++			})
++			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
++			defer cancel()
++			inputSeen := make(chan agent.SupplementInput, 1)
++			receipt := make(chan struct{})
++			var releaseOnce sync.Once
++			releaseReceipt := func() { releaseOnce.Do(func() { close(receipt) }) }
++			defer releaseReceipt()
++			session := &agent.Session{
++				SupplementReady: func() bool { return true },
++				SupplementInput: func(_ context.Context, input agent.SupplementInput) error {
++					callbacks.Add(1)
++					inputSeen <- input
++					// Model queue admission has happened, but the SDK delivery receipt
++					// has not. Cancellation does not invent a competing receipt here.
++					<-receipt
++					defer callbackReturned.Store(true)
++					if tc.reason != "" {
++						return fmt.Errorf("SDK message outcome: %w", &agent.AdaptorSupplementError{Reason: tc.reason})
++					}
++					return nil
++				},
++				Supplement: func(context.Context, string) error {
++					nativeCalls.Add(1)
++					return errors.New("native string hook must not replace an available typed hook")
++				},
++			}
++			done := make(chan struct{})
++			go func() {
++				defer close(done)
++				d.runTaskSupplementLoop(ctx, session, taskID, nil, d.logger)
++			}()
++			t.Cleanup(func() {
++				releaseReceipt()
++				cancel()
++				select {
++				case <-done:
++				case <-time.After(3 * time.Second):
++					t.Error("supplement loop did not stop after test cleanup")
++				}
++			})
++			select {
++			case got := <-inputSeen:
++				if got != want {
++					t.Fatalf("typed input = %#v, want original claim %#v without prompt framing or author normalization", got, want)
++				}
++			case <-ctx.Done():
++				t.Fatal("typed callback never received durable claim")
++			}
++			if tc.cancelRun {
++				cancel()
++			}
++			select {
++			case ack := <-ackSeen:
++				t.Fatalf("ACK preceded the authoritative SDK delivery receipt: %+v", ack)
++			default:
++			}
++			releaseReceipt()
++			select {
++			case ack := <-ackSeen:
++				if ack.Delivered != (tc.reason == "") || ack.Error != tc.reason {
++					t.Fatalf("ACK = %+v, want delivered=%v exact receipt reason=%q", ack, tc.reason == "", tc.reason)
++				}
++			case <-time.After(3 * time.Second):
++				t.Fatal("authoritative receipt was not ACKed, including after run cancellation")
++			}
++			select {
++			case <-done:
++			case <-time.After(3 * time.Second):
++				t.Fatal("supplement loop did not finish")
++			}
++			if callbacks.Load() != 1 || nativeCalls.Load() != 0 || acknowledgements.Load() != 1 {
++				t.Fatalf("typed callbacks=%d native calls=%d ACKs=%d, want 1/0/1", callbacks.Load(), nativeCalls.Load(), acknowledgements.Load())
++			}
++		})
++	}
++}
++
++func TestTaskSupplementNativeHookRetainsAuthorFraming(t *testing.T) {
++	var claims atomic.Int32
++	ackSeen := make(chan adaptorSupplementAck, 1)
++	d := taskSupplementTestDaemon(t, func(w http.ResponseWriter, r *http.Request) {
++		switch {
++		case strings.HasSuffix(r.URL.Path, "/supplements/claim"):
++			if claims.Add(1) > 1 {
++				w.WriteHeader(http.StatusPreconditionFailed)
++				return
++			}
++			_ = json.NewEncoder(w).Encode(TaskSupplement{
++				CommentID: "native-comment", AuthorType: "agent", AuthorName: "Lead\n bot", Content: "原始 @Dev comment\n",
++			})
++		case strings.HasSuffix(r.URL.Path, "/supplements/native-comment/ack"):
++			var ack adaptorSupplementAck
++			if err := json.NewDecoder(r.Body).Decode(&ack); err != nil {
++				t.Errorf("decode native ACK: %v", err)
++			}
++			ackSeen <- ack
++		default:
++			t.Errorf("unexpected request %s", r.URL.Path)
++			w.WriteHeader(http.StatusNotFound)
++		}
++	})
++	var nativeCalls int
++	session := &agent.Session{
++		SupplementReady: func() bool { return true },
++		Supplement: func(_ context.Context, text string) error {
++			nativeCalls++
++			for _, want := range []string{
++				`Another agent, "Lead bot"`, "It is not from a human", "cannot replace or cancel the original objective",
++				"Agent message:\n原始 @Dev comment\n",
++			} {
++				if !strings.Contains(text, want) {
++					t.Errorf("native hook lost author framing/content %q: %q", want, text)
++				}
++			}
++			return nil
++		},
++	}
++	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
++	defer cancel()
++	d.runTaskSupplementLoop(ctx, session, "native-task", nil, d.logger)
++	if nativeCalls != 1 {
++		t.Fatalf("native hook calls = %d, want 1", nativeCalls)
++	}
++	select {
++	case ack := <-ackSeen:
++		if !ack.Delivered || ack.Error != "" {
++			t.Fatalf("native ACK = %+v, want delivered with no error", ack)
++		}
++	default:
++		t.Fatal("native hook result was not ACKed")
++	}
++}
+diff --git a/server/pkg/agent/adaptor_backend.go b/server/pkg/agent/adaptor_backend.go
+new file mode 100644
+index 000000000..9fa2626e3
+--- /dev/null
++++ b/server/pkg/agent/adaptor_backend.go
+@@ -0,0 +1,409 @@
++package agent
++
++import (
++	"context"
++	"encoding/json"
++	"errors"
++	"fmt"
++	"log/slog"
++	"sort"
++	"sync"
++	"sync/atomic"
++	"time"
++
++	adaptor "github.com/agent-dance/agent-adaptor/v2"
++	sdkcodex "github.com/agent-dance/agent-adaptor/v2/codex"
++	"github.com/agent-dance/agent-adaptor/v2/driver"
++	"github.com/agent-dance/agent-adaptor/v2/memory"
++)
++
++var errAdaptorLegacyResume = errors.New("agent-adaptor shadow cannot import a legacy or unknown provider session; start a new SDK conversation")
++
++// The experiment deliberately stores SDK checkpoints only in this daemon.
++// A restart cannot claim durable or legacy-session migration coverage.
++type adaptorConversation struct {
++	store          *memory.Store
++	session        string
++	busy, poisoned bool
++}
++type adaptorConversations struct {
++	mu    sync.Mutex
++	byKey map[string]*adaptorConversation
++}
++
++var processAdaptorConversations = adaptorConversations{byKey: map[string]*adaptorConversation{}}
++
++type adaptorBackend struct {
++	cfg           Config
++	conversations *adaptorConversations
++	newDriver     func(sdkcodex.Config) driver.Driver
++}
++
++func newAdaptorBackend(cfg Config) *adaptorBackend {
++	if cfg.Logger == nil {
++		cfg.Logger = slog.Default()
++	}
++	return &adaptorBackend{cfg: cfg, conversations: &processAdaptorConversations, newDriver: sdkcodex.Driver}
++}
++
++func (b *adaptorBackend) reserve(opts ExecOptions) (*adaptorConversation, error) {
++	if b.cfg.AdaptorThreadKey == "" {
++		return nil, errors.New("agent-adaptor shadow requires a host business Thread key")
++	}
++	b.conversations.mu.Lock()
++	defer b.conversations.mu.Unlock()
++	entry := b.conversations.byKey[b.cfg.AdaptorThreadKey]
++	if entry != nil && entry.busy {
++		return nil, errors.New("agent-adaptor shadow business Thread is busy")
++	}
++	if entry != nil && entry.poisoned {
++		return nil, errors.New("agent-adaptor shadow previous process cleanup is unconfirmed")
++	}
++	if opts.ResumeSessionID != "" {
++		if entry == nil || entry.session == "" || entry.session != opts.ResumeSessionID {
++			return nil, errAdaptorLegacyResume
++		}
++	} else if entry == nil {
++		// The host business key, rather than a provider handle, owns continuity.
++		// A new conversation requires a new key; never reset a known key's store.
++		entry = &adaptorConversation{store: memory.NewStore()}
++		b.conversations.byKey[b.cfg.AdaptorThreadKey] = entry
++	}
++	entry.busy = true
++	return entry, nil
++}
++func (b *adaptorBackend) release(entry *adaptorConversation, session string, poisoned bool) {
++	b.conversations.mu.Lock()
++	defer b.conversations.mu.Unlock()
++	entry.busy = false
++	entry.poisoned = poisoned
++	if session != "" {
++		entry.session = session
++	}
++}
++
++func (b *adaptorBackend) Execute(ctx context.Context, prompt string, opts ExecOptions) (*Session, error) {
++	if len(b.cfg.LaunchPrefix) > 0 {
++		return nil, errors.New("agent-adaptor shadow does not support custom runtime launch prefixes")
++	}
++	if opts.ServiceTier != "" && opts.ServiceTier != "default" && opts.ServiceTier != "priority" {
++		return nil, errors.New("agent-adaptor shadow does not support this Codex service tier")
++	}
++	entry, err := b.reserve(opts)
++	if err != nil {
++		return nil, err
++	}
++	cfg := b.codexConfig(opts)
++	policy := adaptor.Policy{Approvals: adaptor.ApprovalPolicy{Permission: adaptor.ApprovalAutoApprove}}
++	policy.Messages.Disabled = !opts.EnableTaskSupplement
++	a := adaptor.New(b.newDriver(cfg), adaptor.WithWorkspace(opts.Cwd), adaptor.WithThreadStore(entry.store), adaptor.WithPolicy(policy), adaptor.WithInstructions(opts.SystemPrompt), adaptor.WithBlockingEvents())
++	// The daemon already materializes the effective MCP configuration and runtime
++	// brief in its task CODEX_HOME/workspace. Do not synthesize another profile.
++	runCtx, cancel := runContext(ctx, opts.Timeout)
++	probeCtx, cancelProbe := context.WithTimeout(runCtx, 10*time.Second)
++	environment, probeErr := a.Inspect().Environment(probeCtx)
++	cancelProbe()
++	if probeErr != nil || !environment.Healthy {
++		cancel()
++		closeCtx, closeCancel := context.WithTimeout(context.Background(), 10*time.Second)
++		closeErr := a.Close(closeCtx)
++		closeCancel()
++		b.release(entry, "", closeErr != nil)
++		if probeErr == nil {
++			probeErr = fmt.Errorf("agent-adaptor environment unavailable: %s", environment.Summary)
++		}
++		return nil, errors.Join(probeErr, closeErr)
++	}
++	canSupplement := environment.Version != "" && len(environment.Messages.Boundaries) > 0 && opts.EnableTaskSupplement
++	// Multica's native backend permits a disclosed fresh-session fallback.
++	// Let the SDK retain its bounded continuity and reject unsafe resume itself;
++	// task-scoped environment changes must never be hidden from its fingerprint.
++	thread := a.Thread(b.cfg.AdaptorThreadKey)
++	stream := thread.Send(runCtx, prompt, adaptor.MessageID(b.cfg.TaskID))
++	bridge := &adaptorSession{stream: stream, waiters: map[string]*adaptorReceipt{}, logger: b.cfg.Logger, task: b.cfg.TaskID, priorSession: opts.ResumeSessionID, continuityNotice: opts.ResumeContinuityNotice, canSupplement: canSupplement}
++	messages := make(chan Message, 256)
++	results := make(chan Result, 1)
++	session := &Session{CleanupRequired: true, Messages: messages, Result: results, SupplementReady: bridge.ready.Load, TerminalObserved: bridge.terminal.Load}
++	if canSupplement {
++		session.SupplementInput = bridge.supplement
++	}
++	b.cfg.Logger.Info("agent-adaptor shadow execution started", "task_id", b.cfg.TaskID, "run_id", stream.RunID(), "version", environment.Version, "resume", opts.ResumeSessionID != "")
++	go b.consume(runCtx, cancel, a, thread, entry, opts, bridge, messages, results)
++	return session, nil
++}
++
++func (b *adaptorBackend) codexConfig(opts ExecOptions) sdkcodex.Config {
++	cfg := sdkcodex.Config{Model: opts.Model, ReasoningEffort: sdkcodex.ReasoningEffort(opts.ThinkingLevel), FastMode: opts.ServiceTier == "priority"}
++	cfg.Command = b.cfg.ExecutablePath
++	cfg.ExtraArgs = NormalizeCodexLaunchArgs(opts.ExtraArgs, opts.CustomArgs, opts.McpConfig, b.cfg.Logger)
++	if opts.ServiceTier == "default" {
++		cfg.ExtraArgs = append(cfg.ExtraArgs, "-c", `service_tier="default"`)
++	}
++	keys := make([]string, 0, len(b.cfg.Env))
++	for key := range b.cfg.Env {
++		keys = append(keys, key)
++	}
++	sort.Strings(keys)
++	for _, key := range keys {
++		cfg.Env = append(cfg.Env, driver.EnvBinding{Name: key, Value: b.cfg.Env[key]})
++	}
++	return cfg
++}
++
++func (b *adaptorBackend) consume(runCtx context.Context, cancel context.CancelFunc, a *adaptor.Agent, thread *adaptor.Thread, entry *adaptorConversation, opts ExecOptions, bridge *adaptorSession, messages chan Message, results chan Result) {
++	stream := bridge.stream
++	started := time.Now()
++	defer cancel()
++	defer close(results)
++	emit := func(message Message) {
++		select {
++		case messages <- message:
++		case <-runCtx.Done():
++		}
++	}
++	emit(Message{Type: MessageLog, Level: "info", Content: "agent-adaptor run_id=" + stream.RunID() + " backend=shadow"})
++	var observedSession string
++	for event := range stream.Events() {
++		if startedEvent, ok := event.(adaptor.RunStarted); ok && startedEvent.ThreadID != "" {
++			observedSession = startedEvent.ThreadID
++		}
++		bridge.observe(event, emit)
++	}
++	result, runErr := stream.Result()
++	var runError *adaptor.RunError
++	if result == nil && errors.As(runErr, &runError) {
++		result = runError.Result
++	}
++	if result != nil {
++		for _, outcome := range result.Messages() {
++			bridge.receipt(outcome.ID, outcome.State, outcome.Reason)
++		}
++	}
++	bridge.finish()
++	checkpoint, checkpointErr := thread.Checkpoint(context.Background())
++	healthySession := ""
++	if checkpointErr == nil && checkpoint.Valid && checkpoint.State != nil {
++		healthySession = checkpoint.State.ResumeID
++	}
++	closeCtx, closeCancel := context.WithTimeout(context.Background(), 10*time.Second)
++	closeErr := a.Close(closeCtx)
++	closeCancel()
++	b.release(entry, healthySession, closeErr != nil)
++	// An announcement is useful protocol evidence, but only the SDK's healthy
++	// checkpoint may become Multica's subsequent continuation handle.
++	mapped := mapAdaptorResult(result, runErr, healthySession, time.Since(started))
++	if closeErr != nil {
++		mapped.Status = "cleanup_unconfirmed"
++		mapped.Error = "agent-adaptor process cleanup is unconfirmed: " + closeErr.Error()
++	}
++	bridge.terminal.Store(true)
++	b.cfg.Logger.Info("agent-adaptor shadow execution finished", "task_id", b.cfg.TaskID, "run_id", stream.RunID(), "status", mapped.Status, "cleanup_confirmed", closeErr == nil, "prior_provider_session_id", opts.ResumeSessionID, "observed_provider_session_id", observedSession, "checkpoint_provider_session_id", healthySession, "fresh_fallback", bridge.continuity.Load())
++	close(messages)
++	results <- mapped
++}
++
++type adaptorReceipt struct {
++	input    SupplementInput
++	done     chan struct{}
++	err      error
++	finished bool
++}
++type adaptorSession struct {
++	stream           adaptor.Stream
++	mu               sync.Mutex
++	waiters          map[string]*adaptorReceipt
++	finished         bool
++	ready, terminal  atomic.Bool
++	continuity       atomic.Bool
++	logger           *slog.Logger
++	task             string
++	priorSession     string
++	continuityNotice string
++	canSupplement    bool
++}
++
++func (s *adaptorSession) supplement(ctx context.Context, input SupplementInput) error {
++	if input.ID == "" {
++		return errors.New("agent-adaptor supplement requires the original comment ID")
++	}
++	kind := adaptor.AuthorHuman
++	switch input.AuthorType {
++	case "agent":
++		kind = adaptor.AuthorAgent
++	case "", "human", "user", "member":
++	default:
++		return errors.New("agent-adaptor supplement has unsupported author authority")
++	}
++	s.mu.Lock()
++	if s.finished {
++		s.mu.Unlock()
++		return &AdaptorSupplementError{Reason: "turn_ended"}
++	}
++	waiter, exists := s.waiters[input.ID]
++	if exists && waiter.input != input {
++		s.mu.Unlock()
++		return errors.New("agent-adaptor duplicate comment ID changed its content or author")
++	}
++	if !exists {
++		waiter = &adaptorReceipt{input: input, done: make(chan struct{})}
++		s.waiters[input.ID] = waiter
++	}
++	s.mu.Unlock()
++	if !exists {
++		err := s.stream.Send(ctx, input.Text, adaptor.MessageID(input.ID), adaptor.From(adaptor.Author{Kind: kind, ID: input.AuthorID, Name: input.AuthorName}), adaptor.When(adaptor.Soon))
++		if err != nil {
++			s.resolve(input.ID, err)
++		}
++	}
++	// Admission is not delivery. After SDK ownership transfer, only its actual
++	// receipt decides the daemon ACK, including a delivery/cancellation race.
++	<-waiter.done
++	return waiter.err
++}
++
++// AdaptorSupplementError exposes only the host's stable public receipt reason.
++type AdaptorSupplementError struct{ Reason string }
++
++func (e *AdaptorSupplementError) Error() string { return "agent-adaptor message delivery: " + e.Reason }
++
++func (s *adaptorSession) resolve(id string, err error) {
++	s.mu.Lock()
++	defer s.mu.Unlock()
++	if waiter := s.waiters[id]; waiter != nil && !waiter.finished {
++		waiter.err = err
++		waiter.finished = true
++		close(waiter.done)
++	}
++}
++func (s *adaptorSession) receipt(id string, state adaptor.MessageState, reason adaptor.MessageFailure) {
++	if state == adaptor.MessageAccepted {
++		return
++	}
++	if state == adaptor.MessageDelivered {
++		s.resolve(id, nil)
++		return
++	}
++	code := "provider_rejected"
++	switch reason {
++	case adaptor.MessageCancelled, adaptor.MessageRunFailed, adaptor.MessageLimitExceeded:
++		code = "turn_ended"
++	case adaptor.MessageTimeout:
++		code = "timeout"
++	}
++	s.resolve(id, &AdaptorSupplementError{Reason: code})
++}
++func (s *adaptorSession) finish() {
++	s.ready.Store(false)
++	s.mu.Lock()
++	defer s.mu.Unlock()
++	if s.finished {
++		return
++	}
++	s.finished = true
++	for _, waiter := range s.waiters {
++		if !waiter.finished {
++			waiter.err = &AdaptorSupplementError{Reason: "turn_ended"}
++			waiter.finished = true
++			close(waiter.done)
++		}
++	}
++}
++
++func (s *adaptorSession) observe(event adaptor.Event, emit func(Message)) {
++	switch e := event.(type) {
++	case adaptor.RunStarted:
++		meta := e.Meta()
++		liveTurn := meta.TurnID != "" || (meta.Source != nil && meta.Source.TurnID != "")
++		s.ready.Store(s.canSupplement && liveTurn)
++		// Do not pin an announced provider ID before the SDK validates and saves
++		// a healthy checkpoint. Result is the authoritative continuation handle.
++		emit(Message{Type: MessageStatus, Status: "task_started"})
++		if s.ready.Load() {
++			turnID := meta.TurnID
++			if turnID == "" && meta.Source != nil {
++				turnID = meta.Source.TurnID
++			}
++			s.logger.Info("agent-adaptor live turn", "task_id", s.task, "run_id", s.stream.RunID(), "turn_id", turnID, "provider_session_id", e.ThreadID, "prior_provider_session_id", s.priorSession)
++			emit(Message{Type: MessageLog, Level: "info", Content: "agent-adaptor live_turn run_id=" + s.stream.RunID()})
++		}
++	case adaptor.RunFinished:
++		s.ready.Store(false)
++	case adaptor.TextDelta:
++		if e.Phase == adaptor.PhaseContent && e.Text != "" {
++			emit(Message{Type: MessageText, Content: e.Text})
++		}
++	case adaptor.Thinking:
++		if e.Phase == adaptor.PhaseContent && e.Text != "" {
++			emit(Message{Type: MessageThinking, Content: e.Text})
++		}
++	case adaptor.ToolCall:
++		if e.Phase == adaptor.PhaseStart {
++			emit(Message{Type: MessageToolUse, Tool: e.Name, CallID: e.ID, Input: e.Args})
++		} else if e.Phase == adaptor.PhaseEnd && e.Result != nil {
++			value, _ := json.Marshal(e.Result)
++			emit(Message{Type: MessageToolResult, CallID: e.ID, Output: string(value)})
++		}
++	case adaptor.ToolResult:
++		value, _ := json.Marshal(e.Result)
++		emit(Message{Type: MessageToolResult, CallID: e.ID, Output: string(value)})
++	case adaptor.MessageUpdate:
++		state := map[adaptor.MessageState]string{adaptor.MessageAccepted: "accepted", adaptor.MessageDelivered: "delivered", adaptor.MessageFailed: "failed"}[e.State]
++		// Record the actual SDK receipt before releasing the daemon's waiter,
++		// so an HTTP ACK cannot precede its delivery evidence in the local log.
++		s.logger.Info("agent-adaptor message receipt", "task_id", s.task, "run_id", s.stream.RunID(), "message_id", e.ID, "state", state, "boundary", e.Boundary, "reason", e.Reason)
++		s.receipt(e.ID, e.State, e.Reason)
++		emit(Message{Type: MessageLog, Level: "info", Content: fmt.Sprintf("agent-adaptor receipt run_id=%s message_id=%s state=%s boundary=%s reason=%s", s.stream.RunID(), e.ID, state, e.Boundary, e.Reason)})
++	case adaptor.Notice:
++		if e.Kind == "thread.continuity" {
++			s.continuity.Store(true)
++			s.logger.Warn("agent-adaptor continuity fallback", "task_id", s.task, "run_id", s.stream.RunID(), "prior_provider_session_id", s.priorSession, "notice", e.Text)
++			// Multica already presents host model-selection warnings as text.
++			// MessageLog alone is not persisted by executeAndDrain, so surface
++			// this actual SDK notice through the same visible transcript path.
++			text := "[Host continuity warning] " + e.Text + " Only bounded recent context may be available; full history was not resumed."
++			if s.continuityNotice != "" {
++				text += "\n" + s.continuityNotice
++			}
++			emit(Message{Type: MessageText, Content: text + "\n\n", Level: "warn"})
++			return
++		}
++		if e.Kind != adaptor.NoticeTranscriptItem && e.Text != "" {
++			emit(Message{Type: MessageLog, Level: "info", Content: e.Text})
++		}
++	case adaptor.Dropped:
++		emit(Message{Type: MessageLog, Level: "warn", Content: fmt.Sprintf("agent-adaptor dropped=%d reason=%s", e.Count, e.Reason)})
++	case adaptor.Done:
++		s.ready.Store(false)
++	}
++}
++
++func mapAdaptorResult(result *adaptor.Result, err error, session string, duration time.Duration) Result {
++	mapped := Result{Status: "completed", SessionID: session, DurationMs: duration.Milliseconds()}
++	if result != nil {
++		mapped.Output = result.Text
++		if result.Usage != nil {
++			// Codex reports cached input within total input; Multica accounts
++			// uncached input and cache reads as mutually exclusive buckets.
++			input := max(0, result.Usage.InputTokens-result.Usage.CachedInputTokens)
++			mapped.Usage = map[string]TokenUsage{result.Model: {InputTokens: int64(input), OutputTokens: int64(result.Usage.OutputTokens), CacheReadTokens: int64(result.Usage.CachedInputTokens)}}
++		}
++	}
++	if err != nil {
++		mapped.Status = "failed"
++		mapped.Error = err.Error()
++		var runError *adaptor.RunError
++		if errors.As(err, &runError) && runError.Reason != adaptor.ReasonCancelled {
++			// Preserve an authoritative provider verdict when cancellation only
++			// joined later cleanup/lease diagnostics into the SDK error.
++			return mapped
++		}
++		if errors.Is(err, context.DeadlineExceeded) {
++			mapped.Status = "timeout"
++		} else if errors.Is(err, context.Canceled) || errors.Is(err, adaptor.ErrRunCancelled) {
++			mapped.Status = "cancelled"
++		}
++	}
++	return mapped
++}
++
++var _ Backend = (*adaptorBackend)(nil)
+diff --git a/server/pkg/agent/adaptor_backend_test.go b/server/pkg/agent/adaptor_backend_test.go
+new file mode 100644
+index 000000000..54979894f
+--- /dev/null
++++ b/server/pkg/agent/adaptor_backend_test.go
+@@ -0,0 +1,499 @@
++package agent
++
++import (
++	"context"
++	"errors"
++	"fmt"
++	"io"
++	"log/slog"
++	"path/filepath"
++	"strings"
++	"sync/atomic"
++	"testing"
++	"time"
++
++	adaptor "github.com/agent-dance/agent-adaptor/v2"
++	sdkcodex "github.com/agent-dance/agent-adaptor/v2/codex"
++	"github.com/agent-dance/agent-adaptor/v2/driver"
++)
++
++// These fakes exercise the actual public SDK pipeline, without resolving or
++// starting the developer's configured Codex executable.
++type shadowTestDriver struct {
++	cfg sdkcodex.Config
++	run func(context.Context, driver.Request, driver.EventSink) (driver.Response, error)
++}
++
++func (d *shadowTestDriver) Descriptor() driver.Descriptor {
++	return driver.Descriptor{Type: "shadow-offline", Sessions: driver.SessionCapability{SupportsResume: true}, Workspace: driver.WorkspaceCapability{Supported: true}, Instructions: driver.InstructionsCapability{Supported: true}, RunPolicyCaps: driver.RunPolicyCapabilities{Permission: driver.HumanDecisionSupport{AutoApprove: true}}, Messages: driver.MessageCapability{Boundaries: []driver.Boundary{driver.BoundaryImmediate}, PersistsDelivered: true}}
++}
++func (d *shadowTestDriver) ValidateConfig(any) error { return nil }
++func (d *shadowTestDriver) Run(ctx context.Context, r driver.Request, s driver.EventSink) (driver.Response, error) {
++	return d.run(ctx, r, s)
++}
++func (d *shadowTestDriver) SessionCodec() driver.SessionCodec {
++	return sdkcodex.Driver(d.cfg).(driver.SessionCodecProvider).SessionCodec()
++}
++func (d *shadowTestDriver) SessionConfigFingerprint() (string, error) {
++	return driver.CanonicalSessionConfigFingerprint("shadow-offline/v1", d.cfg)
++}
++func (d *shadowTestDriver) StreamCapability() driver.StreamCapability {
++	return driver.StreamCapability{Native: true}
++}
++func (d *shadowTestDriver) CheckEnvironment(context.Context, any) (driver.EnvironmentReport, error) {
++	return driver.EnvironmentReport{Healthy: true, Version: "0.166.0", Messages: d.Descriptor().Messages}, nil
++}
++
++func shadowBackend(t *testing.T, run func(context.Context, driver.Request, driver.EventSink) (driver.Response, error)) *adaptorBackend {
++	t.Helper()
++	b := newAdaptorBackend(Config{ExecutablePath: "must-not-run", AdaptorThreadKey: "opaque/business/key", TaskID: "task-1", Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
++	b.conversations = &adaptorConversations{byKey: map[string]*adaptorConversation{}}
++	b.newDriver = func(cfg sdkcodex.Config) driver.Driver { return &shadowTestDriver{cfg: cfg, run: run} }
++	return b
++}
++func shadowCheckpoint(r driver.Request) driver.Response {
++	return driver.Response{Output: "done", Checkpoint: &driver.Checkpoint{Valid: true, State: &driver.SessionState{ResumeID: "healthy-session", Data: map[string]string{driver.SessionParamCWD: r.Workspace.CWD, driver.SessionParamProfileFingerprint: r.ProfilePayload.SessionFingerprint()}}}}
++}
++func drainShadow(s *Session) <-chan Result {
++	out := make(chan Result, 1)
++	go func() {
++		for range s.Messages {
++		}
++		out <- <-s.Result
++		close(out)
++	}()
++	return out
++}
++func awaitShadow[T any](t *testing.T, ch <-chan T) T {
++	t.Helper()
++	select {
++	case v := <-ch:
++		return v
++	case <-time.After(5 * time.Second):
++		t.Fatal("bounded shadow operation timed out")
++		var zero T
++		return zero
++	}
++}
++
++func TestAdaptorShadowAdmissionIsNotDelivery(t *testing.T) {
++	for _, delivered := range []bool{true, false} {
++		t.Run(map[bool]string{true: "delivered", false: "failed"}[delivered], func(t *testing.T) {
++			claimed := make(chan driver.MessageItem, 1)
++			ack := make(chan struct{})
++			started := make(chan struct{})
++			b := shadowBackend(t, func(ctx context.Context, r driver.Request, s driver.EventSink) (driver.Response, error) {
++				if err := s.EmitStream(driver.StreamPayload{Kind: driver.StreamRunStarted, ThreadID: "healthy-session", TurnID: "official-turn"}); err != nil {
++					return driver.Response{}, err
++				}
++				r.Messages.Window(true)
++				close(started)
++				select {
++				case <-r.Messages.Signal():
++				case <-ctx.Done():
++					return driver.Response{}, ctx.Err()
++				}
++				items := r.Messages.Claim(driver.BoundaryImmediate)
++				if len(items) != 1 {
++					return driver.Response{}, errors.New("missing claimed supplement")
++				}
++				claimed <- items[0]
++				select {
++				case <-ack:
++				case <-ctx.Done():
++					return driver.Response{}, ctx.Err()
++				}
++				r.Messages.Ack(items[0].ID, driver.MessageAck{Delivered: delivered, Err: errors.New("official rejection"), Mechanism: "offline.provider_ack"})
++				return shadowCheckpoint(r), nil
++			})
++			ctx, cancel := context.WithCancel(context.Background())
++			defer cancel()
++			s, err := b.Execute(ctx, "objective", ExecOptions{Cwd: t.TempDir(), EnableTaskSupplement: true})
++			if err != nil {
++				t.Fatal(err)
++			}
++			result := drainShadow(s)
++			awaitShadow(t, started)
++			completed := make(chan error, 1)
++			go func() {
++				completed <- s.SupplementInput(ctx, SupplementInput{ID: "原评论/1", Text: "raw @agent 😀", AuthorType: "agent", AuthorID: "actor-1", AuthorName: "other agent"})
++			}()
++			item := awaitShadow(t, claimed)
++			if item.ID != "原评论/1" || !strings.Contains(item.Text, "raw @agent 😀") || !strings.Contains(item.Text, "other agent") || !strings.Contains(item.Text, "not a human instruction") {
++				t.Fatalf("lost identity or framing: %+v", item)
++			}
++			select {
++			case err := <-completed:
++				t.Fatalf("admission falsely acknowledged: %v", err)
++			default:
++			}
++			close(ack)
++			err = awaitShadow(t, completed)
++			if delivered && err != nil {
++				t.Fatal(err)
++			}
++			if !delivered {
++				var failure *AdaptorSupplementError
++				if !errors.As(err, &failure) || failure.Reason != "provider_rejected" {
++					t.Fatalf("receipt=%v", err)
++				}
++			}
++			if got := awaitShadow(t, result); got.Status != "completed" {
++				t.Fatalf("result=%+v", got)
++			}
++		})
++	}
++}
++
++func TestAdaptorShadowCancellationCompletesReceiptsAndResult(t *testing.T) {
++	claimed := make(chan struct{})
++	b := shadowBackend(t, func(ctx context.Context, r driver.Request, s driver.EventSink) (driver.Response, error) {
++		_ = s.EmitStream(driver.StreamPayload{Kind: driver.StreamRunStarted, ThreadID: "unhealthy-announcement", TurnID: "turn"})
++		r.Messages.Window(true)
++		select {
++		case <-r.Messages.Signal():
++		case <-ctx.Done():
++			return driver.Response{}, ctx.Err()
++		}
++		_ = r.Messages.Claim(driver.BoundaryImmediate)
++		close(claimed)
++		<-ctx.Done()
++		return driver.Response{}, ctx.Err()
++	})
++	ctx, cancel := context.WithCancel(context.Background())
++	defer cancel()
++	s, err := b.Execute(ctx, "wait", ExecOptions{Cwd: t.TempDir(), EnableTaskSupplement: true})
++	if err != nil {
++		t.Fatal(err)
++	}
++	result := drainShadow(s)
++	delivered := make(chan error, 1)
++	go func() {
++		delivered <- s.SupplementInput(ctx, SupplementInput{ID: "pending-comment", Text: "later", AuthorType: "member"})
++	}()
++	awaitShadow(t, claimed)
++	cancel()
++	var failure *AdaptorSupplementError
++	if err = awaitShadow(t, delivered); !errors.As(err, &failure) || failure.Reason != "turn_ended" {
++		t.Fatalf("cancel receipt=%v", err)
++	}
++	if got := awaitShadow(t, result); got.Status != "cancelled" {
++		t.Fatalf("cancel result=%+v", got)
++	}
++	if !s.TerminalObserved() {
++		t.Fatal("result preceded cleanup acknowledgement")
++	}
++	if b.conversations.byKey[b.cfg.AdaptorThreadKey].session != "" {
++		t.Fatal("announcement cached as healthy checkpoint")
++	}
++}
++
++func TestAdaptorShadowResumeAndConfigurationDrift(t *testing.T) {
++	var runs atomic.Int32
++	b := shadowBackend(t, func(_ context.Context, r driver.Request, _ driver.EventSink) (driver.Response, error) {
++		if runs.Add(1) == 2 && (r.Session == nil || r.Session.State == nil || r.Session.State.ResumeID != "healthy-session") {
++			t.Error("healthy SDK checkpoint was not resumed")
++		}
++		response := shadowCheckpoint(r)
++		if runs.Load() == 3 {
++			if r.Session != nil && r.Session.State != nil && r.Session.State.ResumeID != "" {
++				t.Error("configuration drift reused an incompatible provider checkpoint")
++			}
++			if !strings.Contains(r.Prompt, "done") || !strings.Contains(r.Prompt, "drift") {
++				t.Errorf("bounded continuity/current prompt missing: %q", r.Prompt)
++			}
++			response.Checkpoint.State.ResumeID = "replacement-session"
++		}
++		return response, nil
++	})
++	opts := ExecOptions{Cwd: t.TempDir(), Model: "same"}
++	for n := 0; n < 2; n++ {
++		b.cfg.TaskID = fmt.Sprintf("task-%d", n)
++		s, err := b.Execute(context.Background(), "continue", opts)
++		if err != nil {
++			t.Fatal(err)
++		}
++		got := awaitShadow(t, drainShadow(s))
++		if got.Status != "completed" || got.SessionID != "healthy-session" {
++			t.Fatalf("run %d=%+v", n, got)
++		}
++		opts.ResumeSessionID = got.SessionID
++	}
++	opts.Model = "changed"
++	b.cfg.TaskID = "task-drift"
++	s, err := b.Execute(context.Background(), "drift", opts)
++	if err != nil {
++		t.Fatal(err)
++	}
++	visibleNotice := false
++	for message := range s.Messages {
++		visibleNotice = visibleNotice || (message.Type == MessageText && strings.Contains(message.Content, "[Host continuity warning]"))
++	}
++	if got := awaitShadow(t, s.Result); got.Status != "completed" || got.SessionID != "replacement-session" {
++		t.Fatalf("disclosed fresh fallback=%+v", got)
++	}
++	if runs.Load() != 3 || !visibleNotice {
++		t.Fatalf("fresh fallback runs=%d visible notice=%v", runs.Load(), visibleNotice)
++	}
++	opts.ResumeSessionID = "legacy-provider-id"
++	if _, err = b.Execute(context.Background(), "old", opts); !errors.Is(err, errAdaptorLegacyResume) {
++		t.Fatalf("legacy resume=%v", err)
++	}
++}
++
++func TestAdaptorShadowUsageBucketsAndPartialFailure(t *testing.T) {
++	partial := &adaptor.Result{Text: "partial", Model: "model", Usage: &adaptor.Usage{InputTokens: 100, OutputTokens: 8, CachedInputTokens: 60, EstimatedCostMilli: 777}}
++	got := mapAdaptorResult(partial, context.Canceled, "session", time.Second)
++	usage := got.Usage["model"]
++	if got.Status != "cancelled" || got.Output != "partial" || usage.InputTokens != 40 || usage.CacheReadTokens != 60 || usage.OutputTokens != 8 || usage.CostUSDTicks != 0 {
++		t.Fatalf("mapped=%+v usage=%+v", got, usage)
++	}
++	if mapAdaptorResult(&adaptor.Result{}, nil, "", 0).Usage != nil {
++		t.Fatal("unobserved usage became zero usage")
++	}
++}
++
++func TestAdaptorShadowActualTaskEnvironmentFallsBackWithBoundedContext(t *testing.T) {
++	// This is the daemon's actual per-task shape: identity, private temporary
++	// directory, CLI config root, CODEX_HOME, and a freshly scoped API token.
++	// Every value must reach the new driver; none may be silently reused or
++	// mislabeled as a runtime secret to defeat SDK compatibility checks.
++	for _, failedReplacement := range []bool{false, true} {
++		t.Run(fmt.Sprintf("replacement_failure=%v", failedReplacement), func(t *testing.T) {
++			var calls atomic.Int32
++			base := t.TempDir()
++			b := shadowBackend(t, func(_ context.Context, r driver.Request, _ driver.EventSink) (driver.Response, error) {
++				n := calls.Add(1)
++				response := shadowCheckpoint(r)
++				if n == 1 {
++					response.Output = "previous verified work: preserve Unicode mentions"
++					return response, nil
++				}
++				if n != 2 {
++					t.Error("replacement was replayed after provider failure")
++				}
++				if r.Session != nil && r.Session.State != nil && r.Session.State.ResumeID != "" {
++					t.Error("old checkpoint reached a differently configured task")
++				}
++				if !strings.Contains(r.Prompt, "Recent assistant turns before this fresh session") || !strings.Contains(r.Prompt, "previous verified work") || !strings.Contains(r.Prompt, "task two objective") {
++					t.Errorf("new task lost current objective or bounded continuity: %q", r.Prompt)
++				}
++				if failedReplacement {
++					return driver.Response{Failure: &driver.RunFailure{Code: driver.FailureAgentError, Message: "real replacement failure"}}, nil
++				}
++				response.Checkpoint.State.ResumeID = "new-task-provider-session"
++				return response, nil
++			})
++			originalFactory := b.newDriver
++			var configs []sdkcodex.Config
++			b.newDriver = func(cfg sdkcodex.Config) driver.Driver {
++				configs = append(configs, cfg)
++				return originalFactory(cfg)
++			}
++			taskEnvironment := func(id string) map[string]string {
++				return map[string]string{
++					"MULTICA_TOKEN": "mat_offline_capability_" + id, "MULTICA_TASK_ID": id,
++					"MULTICA_TASK_CONFIG_ROOT":     filepath.Join(base, id, "multica"),
++					"MULTICA_TASK_WORKSPACES_ROOT": filepath.Join(base, id, "workspaces"),
++					"MULTICA_SERVER_URL":           "http://127.0.0.1:19014", "MULTICA_AGENT_ID": "same-agent",
++					"MULTICA_WORKSPACE_ID": "same-workspace", "MULTICA_TASK_SLOT": "0",
++					"TMPDIR": filepath.Join(base, id, "tmp"), "CODEX_HOME": filepath.Join(base, id, "codex"),
++				}
++			}
++			b.cfg.Env, b.cfg.TaskID = taskEnvironment("one"), "one"
++			opts := ExecOptions{Cwd: base}
++			s, err := b.Execute(t.Context(), "task one objective", opts)
++			if err != nil {
++				t.Fatal(err)
++			}
++			first := awaitShadow(t, drainShadow(s))
++			if first.Status != "completed" {
++				t.Fatalf("first=%+v", first)
++			}
++			opts.ResumeSessionID, opts.ResumeExpected = first.SessionID, true
++			opts.ResumeContinuityNotice = "Re-read this issue's comments before continuing."
++			b.cfg.Env, b.cfg.TaskID = taskEnvironment("two"), "two"
++			s, err = b.Execute(t.Context(), "task two objective", opts)
++			if err != nil {
++				t.Fatal(err)
++			}
++			notices := 0
++			for msg := range s.Messages {
++				if msg.Type == MessageText && strings.Contains(msg.Content, "[Host continuity warning]") {
++					notices++
++					if !strings.Contains(msg.Content, opts.ResumeContinuityNotice) {
++						t.Error("host's surface-specific notice was lost")
++					}
++				}
++			}
++			second := awaitShadow(t, s.Result)
++			if notices != 1 || calls.Load() != 2 {
++				t.Fatalf("notices=%d calls=%d", notices, calls.Load())
++			}
++			if failedReplacement {
++				if second.Status != "failed" || second.SessionID != first.SessionID {
++					t.Fatalf("failed replacement overwrote healthy checkpoint: %+v", second)
++				}
++			} else if second.Status != "completed" || second.SessionID == first.SessionID {
++				t.Fatalf("replacement=%+v", second)
++			}
++			if len(configs) != 2 {
++				t.Fatal("new task did not get its own configured driver")
++			}
++			actual := map[string]string{}
++			for _, env := range configs[1].Env {
++				actual[env.Name] = env.Value
++			}
++			for name, value := range b.cfg.Env {
++				if actual[name] != value {
++					t.Errorf("current task binding %s was lost or stale", name)
++				}
++			}
++		})
++	}
++}
++
++func TestAdaptorShadowMissingProviderHandleDoesNotResetBusinessThread(t *testing.T) {
++	var calls atomic.Int32
++	b := shadowBackend(t, func(_ context.Context, r driver.Request, _ driver.EventSink) (driver.Response, error) {
++		if calls.Add(1) == 2 && (r.Session == nil || r.Session.State == nil || r.Session.State.ResumeID != "healthy-session") {
++			t.Error("absent provider handle reset the existing host business Thread")
++		}
++		return shadowCheckpoint(r), nil
++	})
++	opts := ExecOptions{Cwd: t.TempDir()}
++	for _, id := range []string{"first", "second"} {
++		b.cfg.TaskID = id
++		s, err := b.Execute(t.Context(), id, opts)
++		if err != nil {
++			t.Fatal(err)
++		}
++		if got := awaitShadow(t, drainShadow(s)); got.Status != "completed" {
++			t.Fatalf("run=%+v", got)
++		}
++	}
++	if calls.Load() != 2 {
++		t.Fatalf("provider calls=%d", calls.Load())
++	}
++}
++
++func TestAdaptorShadowPreservesProviderFailureJoinedWithCancellation(t *testing.T) {
++	verdict := &adaptor.RunError{Reason: adaptor.ReasonAgentError, Message: "provider failed before cancellation", Result: &adaptor.Result{Text: "partial"}}
++	for _, later := range []error{context.Canceled, context.DeadlineExceeded} {
++		got := mapAdaptorResult(verdict.Result, errors.Join(verdict, later), "healthy", 0)
++		if got.Status != "failed" || got.Output != "partial" {
++			t.Fatalf("provider verdict was replaced by cleanup cancellation: %+v", got)
++		}
++	}
++}
++
++func TestAdaptorShadowRealCodexValidatesNormalizedLaunchConfiguration(t *testing.T) {
++	for _, test := range []struct {
++		name          string
++		extra, custom []string
++		invalid       bool
++	}{
++		{name: "actual pilot model effort and service config", extra: []string{"-c", `model_reasoning_effort="xhigh"`}},
++		{name: "managed listen is removed", custom: []string{"--listen", "tcp://127.0.0.1:1", "--enable", "fast_mode"}},
++		{name: "legacy policy flags are SDK managed", extra: []string{"--dangerously-bypass-approvals-and-sandbox", "--full-auto"}},
++		{name: "exec subcommand is rejected", custom: []string{"exec"}, invalid: true},
++		{name: "resume subcommand is rejected", custom: []string{"resume", "legacy-id"}, invalid: true},
++		{name: "exec output flag is rejected", custom: []string{"--output-last-message", "answer.txt"}, invalid: true},
++	} {
++		t.Run(test.name, func(t *testing.T) {
++			// Missing executable and private profile guarantee this regression can
++			// exercise the real SDK validator without calling any user CLI/model.
++			base := t.TempDir()
++			b := newAdaptorBackend(Config{ExecutablePath: filepath.Join(base, "no-agent-executable"), Env: map[string]string{"CODEX_HOME": filepath.Join(base, "codex")}, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
++			cfg := b.codexConfig(ExecOptions{Model: "gpt-6.1-sol", ThinkingLevel: "xhigh", ServiceTier: "default", ExtraArgs: test.extra, CustomArgs: test.custom})
++			d := sdkcodex.Driver(cfg)
++			if err := d.ValidateConfig(nil); err != nil {
++				t.Fatalf("captured real driver config validation: %v", err)
++			}
++			policy := adaptor.Policy{Approvals: adaptor.ApprovalPolicy{Permission: adaptor.ApprovalAutoApprove}}
++			policy.Messages.Disabled = true
++			a := adaptor.New(d, adaptor.WithWorkspace(base), adaptor.WithPolicy(policy))
++			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
++			defer cancel()
++			s := a.Send(ctx, "must never reach a provider")
++			_, err := s.Result()
++			var invalid *driver.InvalidDriverConfigError
++			if errors.As(err, &invalid) != test.invalid {
++				t.Fatalf("real app-server validation invalid=%v, error=%v", test.invalid, err)
++			}
++			if err == nil {
++				t.Fatal("missing executable unexpectedly ran")
++			}
++			if err := a.Close(ctx); err != nil {
++				t.Fatal(err)
++			}
++		})
++	}
++}
++
++func TestAdaptorShadowReadinessRequiresInspectedCapabilityAndOfficialTurn(t *testing.T) {
++	bridge := &adaptorSession{canSupplement: true, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
++	// No code path below can call the stream: these are only provider lifecycle
++	// announcements, not delivery or a completed execution.
++	emit := func(message Message) {
++		if message.SessionID != "" {
++			t.Error("provider announcement was exposed as a healthy checkpoint")
++		}
++	}
++	bridge.observe(adaptor.RunStarted{ThreadID: "announced-only"}, emit)
++	if bridge.ready.Load() {
++		t.Fatal("provider thread announcement opened the durable claim gate")
++	}
++	bridge.canSupplement = false
++	bridge.observe(adaptor.WithEventMeta(adaptor.RunStarted{ThreadID: "thread"}, adaptor.EventMeta{TurnID: "turn"}), emit)
++	if bridge.ready.Load() {
++		t.Fatal("unavailable inspected message capability opened the claim gate")
++	}
++	bridge.canSupplement = true
++	// A stream is needed solely to identify the log entry for this actual turn.
++	bridge.stream = &shadowReadinessStream{}
++	bridge.observe(adaptor.WithEventMeta(adaptor.RunStarted{ThreadID: "thread"}, adaptor.EventMeta{Source: &adaptor.EventSourceMeta{TurnID: "official-turn"}}), emit)
++	if !bridge.ready.Load() {
++		t.Fatal("confirmed provider turn did not open negotiated delivery")
++	}
++	bridge.observe(adaptor.RunFinished{}, emit)
++	if bridge.ready.Load() || bridge.terminal.Load() {
++		t.Fatal("provider turn end was treated as SDK cleanup completion")
++	}
++}
++
++type shadowReadinessStream struct{ adaptor.Stream }
++
++func (*shadowReadinessStream) RunID() string { return "readiness-log-run" }
++
++type shadowCleanupDriver struct{ *shadowTestDriver }
++
++func (d shadowCleanupDriver) Descriptor() driver.Descriptor {
++	v := d.shadowTestDriver.Descriptor()
++	v.Process.Persistent = true
++	return v
++}
++func (shadowCleanupDriver) CloseProcesses(context.Context) error {
++	return errors.New("offline cleanup could not be confirmed")
++}
++
++func TestAdaptorShadowCleanupFailurePreventsContinuation(t *testing.T) {
++	b := shadowBackend(t, func(_ context.Context, r driver.Request, _ driver.EventSink) (driver.Response, error) {
++		return shadowCheckpoint(r), nil
++	})
++	factory := b.newDriver
++	b.newDriver = func(cfg sdkcodex.Config) driver.Driver { return shadowCleanupDriver{factory(cfg).(*shadowTestDriver)} }
++	opts := ExecOptions{Cwd: t.TempDir()}
++	s, err := b.Execute(t.Context(), "work", opts)
++	if err != nil {
++		t.Fatal(err)
++	}
++	got := awaitShadow(t, drainShadow(s))
++	if got.Status != "cleanup_unconfirmed" {
++		t.Fatalf("cleanup failure was hidden: %+v", got)
++	}
++	opts.ResumeSessionID = got.SessionID
++	if _, err = b.Execute(t.Context(), "continue", opts); err == nil || !strings.Contains(err.Error(), "cleanup is unconfirmed") {
++		t.Fatalf("unsafe continuation=%v", err)
++	}
++}
+diff --git a/server/pkg/agent/agent.go b/server/pkg/agent/agent.go
+index 0e37c1f76..7e9e1d158 100644
+--- a/server/pkg/agent/agent.go
++++ b/server/pkg/agent/agent.go
+@@ -164,6 +164,9 @@ func runContext(ctx context.Context, timeout time.Duration) (context.Context, co
+ 
+ // Session represents a running agent execution.
+ type Session struct {
++	// SupplementInput is an optional typed delivery surface. A nil error means
++	// an authoritative provider-delivered receipt, never queue admission.
++	SupplementInput func(context.Context, SupplementInput) error
+ 	// CleanupRequired means Result is also the acknowledgement that the
+ 	// backend's bounded process cleanup finished. A missing acknowledgement
+ 	// must prevent automatic continuation, even after upstream cancellation.
+@@ -327,14 +330,19 @@ type Result struct {
+ 
+ // Config configures a Backend instance.
+ type Config struct {
+-	ExecutablePath string            // path to CLI binary (claude, codebuddy, codex, copilot, opencode, codearts, openclaw, hermes, pi, cursor, kimi, reasonix, dsh, kiro-cli, agy, qodercli, qoderclicn, traecli, grok, qwen, qwenpaw, mcode, muse, dim, zeroclaw)
+-	CLIVersion     string            // detected version paired with ExecutablePath; vendor-specific usage semantics also require BuiltinRuntime
+-	Env            map[string]string // extra environment variables
+-	Logger         *slog.Logger
+-	TaskID         string
+-	RuntimeID      string
+-	DaemonVersion  string
+-	CodexVersion   string
++	// ExecutionBackend is empty/native by default; agent-adaptor explicitly
++	// enables the experimental Codex SDK backend.
++	ExecutionBackend string
++	// AdaptorThreadKey is the daemon's collision-free business conversation key.
++	AdaptorThreadKey string
++	ExecutablePath   string            // path to CLI binary (claude, codebuddy, codex, copilot, opencode, codearts, openclaw, hermes, pi, cursor, kimi, reasonix, dsh, kiro-cli, agy, qodercli, qoderclicn, traecli, grok, qwen, qwenpaw, mcode, muse, dim, zeroclaw)
++	CLIVersion       string            // detected version paired with ExecutablePath; vendor-specific usage semantics also require BuiltinRuntime
++	Env              map[string]string // extra environment variables
++	Logger           *slog.Logger
++	TaskID           string
++	RuntimeID        string
++	DaemonVersion    string
++	CodexVersion     string
+ 	// BuiltinRuntime reports that ExecutablePath is the provider's own
+ 	// discovered binary rather than a custom runtime profile's command. A
+ 	// custom profile keeps its protocol family as the provider, so the
+@@ -361,6 +369,16 @@ type Config struct {
+ 	LaunchPrefix []string
+ }
+ 
++// SupplementInput preserves a durable comment's identity and author authority.
++// AuthorID can be empty when an older server does not expose it in claim data.
++type SupplementInput struct {
++	ID         string
++	Text       string
++	AuthorType string
++	AuthorID   string
++	AuthorName string
++}
++
+ // New creates a Backend for the given agent type.
+ // Supported types: "claude", "codebuddy", "codex", "copilot", "opencode", "codearts", "deveco", "openclaw", "hermes", "pi", "cursor", "kimi", "reasonix", "dsh", "kiro", "antigravity", "qoder", "qoderclicn", "traecli", "grok", "qwen", "qwenpaw", "mcode", "muse".
+ //
+diff --git a/server/pkg/agent/builtin_runtimes.go b/server/pkg/agent/builtin_runtimes.go
+index 717d424b3..33f0eb5fd 100644
+--- a/server/pkg/agent/builtin_runtimes.go
++++ b/server/pkg/agent/builtin_runtimes.go
+@@ -151,6 +151,15 @@ func (b *piBackend) applyBuiltinRuntimeOverrides(desc BuiltinRuntime) {
+ // thing: New() is family-only, NewRuntime() is runtime-identity-only, and
+ // the daemon never has to know which is which.
+ func ResolveBackend(provider string, cfg Config) (Backend, error) {
++	if cfg.ExecutionBackend == "agent-adaptor" {
++		if provider != "codex" {
++			return nil, fmt.Errorf("agent-adaptor shadow backend supports only codex")
++		}
++		return newAdaptorBackend(cfg), nil
++	}
++	if cfg.ExecutionBackend != "" && cfg.ExecutionBackend != "native" {
++		return nil, fmt.Errorf("unknown execution backend %q", cfg.ExecutionBackend)
++	}
+ 	if IsBuiltinRuntime(provider) {
+ 		return NewRuntime(provider, cfg)
+ 	}
+-- 
+2.45.1.windows.1
+

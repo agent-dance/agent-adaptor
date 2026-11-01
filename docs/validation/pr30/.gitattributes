@@ -1,8 +1,8 @@
 # Captured artifacts must retain their original bytes for manifest/receipt hashes.
-sdlc-run04/integrated/* -text
-sdlc-run04/checks/* -text
-sdlc-run04/prompts/* -text
-sdlc-run04/spec.md -text
-sdlc-run04/report.json -text
+sdlc-run*/integrated/* -text
+sdlc-run*/checks/* -text
+sdlc-run*/prompts/* -text
+sdlc-run*/spec.md -text
+sdlc-run*/report.json -text
 sdlc-attempts/* -text
 multica-shadow/*.patch -text
