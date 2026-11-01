@@ -229,16 +229,22 @@ func (e *MessageError) Error() string {
 // Unwrap exposes the admission error for errors.Is and errors.As.
 func (e *MessageError) Unwrap() error { return e.Err }
 
+// Defaults applied when MessagePolicy leaves MaxPending or MaxTurns zero.
+const (
+	defaultMaxPending = 32
+	defaultMaxTurns   = 20
+)
+
 func effectiveMessagePolicy(p *Policy) MessagePolicy {
 	var m MessagePolicy
 	if p != nil {
 		m = p.Messages
 	}
 	if m.MaxPending == 0 {
-		m.MaxPending = 32
+		m.MaxPending = defaultMaxPending
 	}
 	if m.MaxTurns == 0 {
-		m.MaxTurns = 20
+		m.MaxTurns = defaultMaxTurns
 	}
 	return m
 }

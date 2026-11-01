@@ -703,7 +703,7 @@ func (s *RunSettings) CapMessageTurns(remaining int) {
 		p = *s.policy
 	}
 	if p.Messages.MaxTurns == 0 {
-		p.Messages.MaxTurns = 20
+		p.Messages.MaxTurns = defaultMaxTurns
 	}
 	p.Messages.MaxTurns = min(p.Messages.MaxTurns, remaining)
 	s.policy = &p
