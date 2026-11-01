@@ -2,7 +2,117 @@
 
 All notable changes to this project are documented in this file.
 
-## [Unreleased]
+## [2.0.0] - Unreleased
+
+### Breaking changes and migration
+
+- The Go module is now `github.com/agent-dance/agent-adaptor/v2`; update root
+  and subpackage imports together.
+- Replace consumer `agent.Run(ctx, p)` with `agent.Send(ctx, p).Result()`,
+  `agent.Stream(ctx, p)` with `agent.Send(ctx, p)`, and Thread execution with
+  `th.Send`. Runner now requires Send; Stream wrappers must also forward its
+  new message Send method. Driver.Run remains the extension SPI.
+- Done is the authoritative last event and carries the same Result pointer and
+  error as Stream.Result. RunFinished remains informational. Subscribe to Events
+  before execution traffic when ordinary events are needed; Result-only use
+  retains critical events and a Dropped summary instead of blocking producers.
+- Named Threads use a per-Agent memory store by default. Inject a shared or
+  durable WithThreadStore for continuity across Agents or restarts. Custom
+  stores must atomically persist delivered-message receipts and bounded recovery
+  history with checkpoint state under validated leases.
+- Stream and Standby expose Cancel, with no Close. Agent.Close remains the
+  idempotent owner-level process and Tool runtime cleanup operation.
+
+### Core and results
+
+- Added ThreadRunner and Thread.Standby while keeping the six-noun public model
+  and a single Send execution pipeline. Anonymous Agent sends remain independent.
+- Added Stream.Send with From, MessageID, and When(Soon/Interrupt/AfterTurn).
+  Message options also apply at execution start; execution options cannot be
+  passed to Stream.Send. Policy.Messages controls framing, pending capacity
+  (default 32), turn budget (default 20), and delivery enablement.
+- Added reliable MessageUpdate, per-provider-turn TurnEnd, final Done,
+  Result.Turns, Messages(), Undelivered(), and Subagents(). Multi-turn executions
+  retain complete raw streams/transcript, the last turn's text and terminal
+  payload, and summed observed usage. Core delivery transcript entries preserve
+  author authority without fabricating a provider user role.
+- Added MessageError carrying rejected input and a wrapped cause; accepted input
+  finishes delivered or failed with original text. MessageID dedupes within an
+  execution and against bounded Thread receipts (1000 IDs, seven days).
+- Added ApprovalRequest.Origin/Forward with one shared exactly-once responder.
+  Requests with no OnApproval handler and no prior Events call immediately use
+  the approval timeout fallback with a Notice.
+
+### Standby and Thread recovery
+
+- Standby accepts input until its creation context ends, has no overall Result,
+  and forwards each execution's TurnEnd and Done events. Its Send context bounds
+  admission only. Cancel stops current processing and queued input while keeping
+  the conversation on standby. Execution options queue a separate execution.
+- Repeated Standby calls for one key within an Agent return the live handle.
+  A renewed ownership lease excludes other writers even while idle; task-mode
+  Thread.Send fails with ErrThreadBusy for an active execution or live Standby.
+- Failed run_failed input carries into the next execution under the same IDs.
+  Only classified rate-limit/network/provider-server failures retry once;
+  otherwise input waits for the next host message. A carried item can report
+  failed/run_failed and later delivered; it is not silently marked successful.
+- Store outages retain the latest checkpoint in process, publish a Notice, and
+  retry persistence. Ownership is revalidated before recovery writes. Fresh
+  session fallback preserves bounded earlier guidance and three recent turns.
+
+### Message delivery SPI
+
+- Added MessageCapability and per-invocation resolution, MessagePort Window/
+  Signal/Claim/Ack, typed boundaries and size units, ContinueResume/InRun, and
+  per-turn TurnCompleted events. Core owns ordering and accounting; every Driver
+  claim must receive exactly one MessageAck before Run returns.
+- Boundary failures requeue for turn-end continuation; ambiguous attempts carry
+  a duplicate warning. Core resumes late messages admitted after an InRun
+  Driver's last empty claim; without resume those messages explicitly fail.
+- Delivery receipts persist atomically with healthy checkpoints. A crash after
+  provider acceptance but before receipt persistence can replay input after
+  recovery; MessageID dedupe does not guarantee exactly-once across that window.
+
+### Codex
+
+- App-server supports immediate turn/steer guarded by expectedTurnId, interrupt
+  followed by turn/start, and multiple turns within one Driver call, for one-shot
+  and resident transports. Declares minimum version 0.100.0 and persisted input.
+- Exec resolves to core checkpoint continuation. Per-turn usage and output remain
+  separate from execution aggregation. Message live conformance requires both
+  the codex_live build tag and AGENT_ADAPTOR_LIVE_CONFORMANCE=1.
+
+### Claude
+
+- Stream-json input registers SDK main-agent prompt/tool/Stop hooks; tool context
+  and Stop continuation share a serialized writer and claim ownership.
+- Rejected or unanswered hook registration degrades after at most ten seconds
+  waiting for a response to core checkpoint resume, with a Notice; ordinary
+  prompt and HITL processing continue. Resident processes retain that outcome.
+- Declares minimum version 2.1.110, tool/stop boundaries and InRun continuation;
+  interrupt, echo confirmation and persistence of hook context remain false.
+  Batch native-schema JSON transport uses core resume.
+
+### Cursor
+
+- Added authenticated loopback hook relay, per-run nonce framing, exact ownership
+  checks and official hookAdditionalContexts echo confirmation. Hosts call
+  RunHookRelayIfRequested first in main or configure a compatible HookRelay.
+- Tool delivery requires an explicitly managed workspace and an unused hooks.json;
+  setup/probe failure, user workspaces and Windows use core resume with a Notice.
+  The total hook context is limited to 10000 UTF-16 units, with tag overhead
+  reserved at admission. Declares minimum version 2026.10.14, no interrupt and
+  no persistence of hook input across resume.
+
+### CodeBuddy
+
+- Added exactly one TurnCompleted for headless, control and resident turns,
+  preserving existing Raw/Transcript/checkpoint behavior and propagating sink
+  failures. Declares no verified mid-turn or interrupt capability; supplemental
+  messages continue through core resume.
+
+CLI minimum versions are declarations, not automatic installed-version checks.
+Pi and OpenCode remain outside the supported v2 Driver set.
 
 ### Breaking changes (v2)
 
