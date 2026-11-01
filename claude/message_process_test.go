@@ -8,6 +8,7 @@ import (
 	"sync"
 	"testing"
 	"testing/synctest"
+	"time"
 
 	"github.com/agent-dance/agent-adaptor/v2/driver"
 )
@@ -73,11 +74,10 @@ func TestMessageResidentResultSettlesBlockedHookWriter(t *testing.T) {
 				if _, err := io.WriteString(provider, "{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"session_id\":\"session\",\"result\":\"done\"}\n"); err != nil {
 					t.Fatal(err)
 				}
-				synctest.Wait()
 				hung := false
 				select {
 				case <-done:
-				default:
+				case <-time.After(150 * time.Millisecond):
 					hung = true
 				}
 				// Unblock for cleanup if the regression leaves the writer stuck.
@@ -100,6 +100,85 @@ func TestMessageResidentResultSettlesBlockedHookWriter(t *testing.T) {
 				}
 				if stdin.writes != 2 {
 					t.Fatalf("writes=%d, want prompt and one hook attempt", stdin.writes)
+				}
+			})
+		})
+	}
+}
+
+type settlementTestStdin struct {
+	started, release, closed chan struct{}
+	once                     sync.Once
+	writeErr                 error
+}
+
+func (s *settlementTestStdin) Write([]byte) error {
+	close(s.started)
+	select {
+	case <-s.release:
+		return s.writeErr
+	case <-s.closed:
+		return &messageWriteError{err: io.ErrClosedPipe, written: 16}
+	}
+}
+func (s *settlementTestStdin) Close() error { s.once.Do(func() { close(s.closed) }); return nil }
+func TestMessageResultSettlesWriterWithinBudget(t *testing.T) {
+	for _, mode := range []string{"settles", "blocked", "cancelled", "failure"} {
+		t.Run(mode, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				port := newMessageTestPort()
+				session := newInitializedMessageTestSession(ctx, port)
+				stdin := &settlementTestStdin{started: make(chan struct{}), release: make(chan struct{}), closed: make(chan struct{})}
+				writeFailure := errors.New("provider stdin write failed")
+				if mode == "failure" {
+					stdin.writeErr = writeFailure
+				}
+				session.start(stdin, func() { _ = stdin.Close() })
+				if err := session.enqueue(messageWrite{frame: []byte("final response"), items: []driver.MessageItem{{ID: "guidance"}}, mechanism: "claude.hook.stop"}); err != nil {
+					t.Fatal(err)
+				}
+				<-stdin.started
+				if mode == "settles" || mode == "failure" {
+					time.AfterFunc(10*time.Millisecond, func() { close(stdin.release) })
+				}
+				if mode == "cancelled" {
+					cancel()
+				}
+				started := time.Now()
+				session.finish(nil)
+				elapsed := time.Since(started)
+				select {
+				case <-stdin.closed:
+					if mode == "settles" {
+						t.Fatal("healthy response retired its reusable resident before writer settlement")
+					}
+				default:
+					if mode != "settles" {
+						t.Fatal("blocked/cancelled writer was not interrupted")
+					}
+				}
+				if mode == "cancelled" && elapsed != 0 {
+					t.Fatalf("cancellation waited for settlement grace: %s", elapsed)
+				}
+				if mode == "blocked" && elapsed > 150*time.Millisecond {
+					t.Fatalf("blocked settlement was unbounded: %s", elapsed)
+				}
+				acks := port.acks["guidance"]
+				if len(acks) != 1 {
+					t.Fatalf("receipts=%+v", acks)
+				}
+				if mode == "settles" {
+					if !acks[0].Delivered || session.failure() != nil {
+						t.Fatalf("settled receipt=%+v error=%v", acks, session.failure())
+					}
+				} else if mode == "failure" {
+					if acks[0].Delivered || acks[0].MaybeDelivered || !acks[0].Requeue || !errors.Is(acks[0].Err, writeFailure) || !errors.Is(session.failure(), writeFailure) {
+						t.Fatalf("writer failure receipt=%+v error=%v", acks, session.failure())
+					}
+				} else if acks[0].Delivered || !errors.Is(acks[0].Err, io.ErrClosedPipe) || !acks[0].MaybeDelivered || acks[0].Requeue != (mode != "cancelled") {
+					t.Fatalf("interrupted receipt=%+v", acks)
 				}
 			})
 		})

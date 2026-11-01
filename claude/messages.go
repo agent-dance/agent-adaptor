@@ -19,6 +19,10 @@ const messageInitializeID = "agent-adaptor-messages-initialize"
 // transport and let core deliver pending messages through checkpoint resume.
 const messageInitializeTimeout = 10 * time.Second
 
+// Healthy terminal settlement gives the writer bounded time to record an
+// already accepted response before retiring the resident process.
+const messageWriteSettlementTimeout = 100 * time.Millisecond
+
 var messageHooks = []struct{ event, mechanism string }{
 	{"UserPromptSubmit", "user_prompt_submit"},
 	{"PreToolUse", "pre_tool_use"},
@@ -220,6 +224,7 @@ func (s *messageSession) failure() error {
 }
 
 func (s *messageSession) finish(err error) {
+	healthy := err == nil && s.ctx.Err() == nil
 	if err == nil {
 		err = io.ErrClosedPipe
 	}
@@ -227,16 +232,26 @@ func (s *messageSession) finish(err error) {
 	s.ended, s.err = true, err
 	writing := s.writing
 	s.mu.Unlock()
-	// The provider has finished: an in-flight hook response no longer has
-	// a live callback guaranteed to read it. Retire immediately rather than
-	// wait on a pipe that the resident may leave open indefinitely. Closing
-	// stdin interrupts I/O; the writer still owns every claim's actual Ack.
-	if writing {
-		s.abort()
-	}
 	select {
 	case s.wake <- struct{}{}:
 	default:
+	}
+	// The peer can consume a response and emit its terminal before the writer
+	// records completion. Allow that writer to settle before retiring a healthy
+	// resident. A genuinely blocked response still has a bounded lifetime;
+	// cancellation and failed turns interrupt it immediately.
+	if writing && healthy {
+		timer := time.NewTimer(messageWriteSettlementTimeout)
+		select {
+		case <-s.done:
+			writing = false
+		case <-s.ctx.Done():
+		case <-timer.C:
+		}
+		timer.Stop()
+	}
+	if writing {
+		s.abort()
 	}
 	<-s.done
 	s.window(false)

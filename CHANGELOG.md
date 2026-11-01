@@ -183,6 +183,9 @@ Pi and OpenCode remain outside the supported v2 Driver set.
 - Bound Claude hook writer settlement, retire unusable resident processes and
   report ambiguous delivery truthfully. Hook degradation restores ordinary stdin
   lifecycle; Stop delivery preserves admission order and per-turn usage.
+- Give a healthy Claude terminal up to 100ms for its hook writer to finish
+  bookkeeping before retiring the resident. Cancellation and failed runs still
+  interrupt writes immediately; blocked writes retain bounded cleanup.
 - Fix team rejected-message replay, retry continuity, final task snapshots on
   every completion path, unread notes and Remote approval-state recovery.
   Add Result.WithSubagents for detached task-snapshot replacement without
