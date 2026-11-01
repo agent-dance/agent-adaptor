@@ -83,6 +83,8 @@ All notable changes to this project are documented in this file.
   behavior. Every continuation and interrupt restart receives the schema.
 - Fix MCP invocation overrides so SDK Tool and Team servers start correctly;
   preserve literal server names, native servers, and explicit exact-tool policy.
+- Preserve MCP and dynamic tool argument objects as complete ToolCall.Args
+  snapshots, including nested values; non-object values keep an explicit wrapper.
 - Avoid false Windows termination errors for processes proven already exited.
   Genuine process or transport errors invalidate checkpoints while preserving
   partial audit data.

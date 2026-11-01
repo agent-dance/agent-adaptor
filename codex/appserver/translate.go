@@ -381,8 +381,8 @@ func (t *Translator) handleItemStarted(params json.RawMessage) {
 		payload.Kind = driver.StreamToolCallStart
 		payload.ToolCallID = item.ID
 		payload.Name = toolName
-		if item.McpToolCall != nil && len(item.McpToolCall.Arguments) > 0 {
-			payload.Args = map[string]any{"arguments": string(item.McpToolCall.Arguments)}
+		if item.McpToolCall != nil {
+			payload.Args = toolArguments(item.McpToolCall.Arguments)
 		}
 		t.emit(payload)
 	case ThreadItemWebSearch:
@@ -409,8 +409,8 @@ func (t *Translator) handleItemStarted(params json.RawMessage) {
 		payload.Kind = driver.StreamToolCallStart
 		payload.ToolCallID = item.ID
 		payload.Name = toolName
-		if item.DynamicToolCall != nil && len(item.DynamicToolCall.Arguments) > 0 {
-			payload.Args = map[string]any{"arguments": string(item.DynamicToolCall.Arguments)}
+		if item.DynamicToolCall != nil {
+			payload.Args = toolArguments(item.DynamicToolCall.Arguments)
 		}
 		t.emit(payload)
 	default:
@@ -678,6 +678,20 @@ func rawToMap(raw json.RawMessage, name string) map[string]any {
 		return map[string]any{"payload": generic, "notification": name}
 	}
 	return out
+}
+
+// toolArguments decodes only the official arguments field. Object arguments
+// already are the complete initial snapshot. Other JSON values retain an
+// explicit wrapper; JSON-looking strings remain strings.
+func toolArguments(raw json.RawMessage) map[string]any {
+	if len(raw) == 0 {
+		return nil
+	}
+	value := decodeJSONValue(raw)
+	if args, ok := value.(map[string]any); ok {
+		return args
+	}
+	return map[string]any{"arguments": value}
 }
 
 func toolResultFromCommand(body *ThreadItemCommandExecutionBody) map[string]any {
