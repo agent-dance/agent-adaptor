@@ -11,6 +11,7 @@ import (
 	"time"
 
 	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	clienta2a "github.com/agent-dance/agent-adaptor/v2/clients/a2a"
 )
 
 const scopeTTL = 30 * time.Second
@@ -34,6 +35,7 @@ type execution struct {
 	leader        adaptor.Stream
 	leaderOptions []adaptor.CallOption
 	leaderBase    int
+	leaderParts   []*adaptor.Result
 	turns         int
 	taskCount     int
 	active        int
@@ -59,6 +61,7 @@ type execution struct {
 	wakeAt        time.Time
 	retryAt       time.Time
 	retries       int
+	objective     string
 }
 
 type taskRun struct {
@@ -68,6 +71,7 @@ type taskRun struct {
 	cancel          context.CancelFunc
 	leaderCancelled bool
 	active          bool
+	parts           []*adaptor.Result
 }
 
 type wakeTimer struct {
@@ -81,6 +85,7 @@ type hostMessage struct {
 	opts      []adaptor.MessageOption
 	reply     chan error
 	admission *messageAdmission
+	claimed   *InboxMessage
 }
 
 type messageAdmission struct {
@@ -240,6 +245,7 @@ func (run *execution) execute(text string, options []adaptor.CallOption) {
 		return
 	}
 	if message != nil {
+		run.objective = text
 		options = append(options, adaptor.MessageID(message.ID))
 		run.inflight[message.ID] = *message
 		run.startLeader(text, options)
@@ -336,36 +342,47 @@ func (run *execution) handle(command any) {
 	switch typed := command.(type) {
 	case hostMessage:
 		typed.admission.mu.Lock()
+		reject := func(err error) {
+			typed.admission.completeLocked(err)
+			if typed.claimed != nil && err != nil {
+				run.rejectHostClaim(*typed.claimed, err)
+			}
+			typed.admission.mu.Unlock()
+		}
 		if typed.admission.finished {
+			if typed.claimed != nil && typed.admission.err != nil {
+				run.rejectHostClaim(*typed.claimed, typed.admission.err)
+			}
 			typed.admission.mu.Unlock()
 			return
 		}
 		if err := run.ctx.Err(); err != nil {
-			typed.admission.completeLocked(&adaptor.MessageError{Text: typed.text, Reason: adaptor.MessageCancelled, Err: err})
-			typed.admission.mu.Unlock()
+			reject(&adaptor.MessageError{Text: typed.text, Reason: adaptor.MessageCancelled, Err: err})
 			run.abort(err)
 			return
 		}
 		if run.stopping || run.hard {
-			typed.admission.completeLocked(&adaptor.MessageError{Text: typed.text, Reason: adaptor.MessageLimitExceeded, Err: adaptor.ErrRunFinished})
-			typed.admission.mu.Unlock()
+			reject(&adaptor.MessageError{Text: typed.text, Reason: adaptor.MessageLimitExceeded, Err: adaptor.ErrRunFinished})
 			return
 		}
 		if err := typed.ctx.Err(); err != nil {
-			typed.admission.completeLocked(&adaptor.MessageError{Text: typed.text, Reason: adaptor.MessageCancelled, Err: err})
-			typed.admission.mu.Unlock()
+			reject(&adaptor.MessageError{Text: typed.text, Reason: adaptor.MessageCancelled, Err: err})
 			return
 		}
 		calls := make([]adaptor.CallOption, 0, len(typed.opts))
 		for _, opt := range typed.opts {
 			calls = append(calls, opt)
 		}
-		message, err := run.admitHost(typed.ctx, typed.text, calls)
+		message := typed.claimed
+		var err error
+		if message == nil {
+			message, err = run.admitHost(typed.ctx, typed.text, calls)
+		}
 		if err != nil || message == nil {
-			typed.admission.completeLocked(err)
-			typed.admission.mu.Unlock()
+			reject(err)
 			return
 		}
+		typed.claimed = message
 		typed.opts = append(typed.opts, adaptor.MessageID(message.ID))
 		run.inflight[message.ID] = *message
 		if run.leader == nil {
@@ -423,12 +440,9 @@ func (run *execution) handle(command any) {
 	case sendEnd:
 		run.deliveries--
 		if typed.host != nil && errors.Is(typed.err, adaptor.ErrRunFinished) && !run.stopping && !run.hard {
-			for _, message := range typed.inbox {
-				if err := run.store.RequeueMessage(run.ctx, run.lease, message.ID, message.ClaimToken); err != nil {
-					run.abort(err)
-				}
-				delete(run.inflight, message.ID)
-			}
+			// The host is still waiting for admission. Retain the exact claim
+			// while routing to the next leader, so cancellation cannot leave a
+			// rejected host message pending in the durable inbox.
 			run.handle(*typed.host)
 			return
 		}
@@ -437,7 +451,7 @@ func (run *execution) handle(command any) {
 			delete(run.batches, typed.batchID)
 			for _, message := range typed.inbox {
 				delete(run.inflight, message.ID)
-				if !run.stopping && !run.hard && run.ctx.Err() == nil {
+				if !message.Host && !run.stopping && !run.hard && run.ctx.Err() == nil {
 					if err := run.store.RequeueMessage(run.ctx, run.lease, message.ID, message.ClaimToken); err != nil {
 						run.abort(err)
 					}
@@ -445,10 +459,10 @@ func (run *execution) handle(command any) {
 						run.scheduleWake(time.Now().Add(run.team.config.Limits.WakeWindow))
 					}
 				} else {
-					run.finishMessage(message, DeliveryFailed, "provider_rejected")
+					run.rejectHostClaim(message, typed.err)
 				}
 			}
-			if len(typed.inbox) > 0 && !run.stopping && !run.hard && run.ctx.Err() == nil {
+			if len(typed.inbox) > 0 && !typed.inbox[0].Host && !run.stopping && !run.hard && run.ctx.Err() == nil {
 				run.log.push(adaptor.Notice{Kind: "team.notification_retry", Text: "A notification could not join the current leader execution; it remains in the durable inbox for the next leader execution."})
 			}
 		}
@@ -475,6 +489,7 @@ func (run *execution) startLeader(text string, options []adaptor.CallOption) {
 		return
 	}
 	run.leaderBase = run.turns
+	run.leaderParts = nil
 	run.leaderErr = nil
 	attachment := &runAttachment{run: run, leader: true, marker: randomID(), finalizing: make(chan struct{}), barrier: make(chan struct{})}
 	if run.barriers == nil {
@@ -482,7 +497,11 @@ func (run *execution) startLeader(text string, options []adaptor.CallOption) {
 	}
 	run.barriers[attachment.marker] = attachment
 	opts := append([]adaptor.CallOption(nil), options...)
-	opts = append(opts, adaptor.WithRunServices(attachment), turnBudget(run.team.config.Limits.MaxLeaderTurns-run.turns))
+	var services adaptor.RunServiceProvider = attachment
+	if run.retries > 0 {
+		services = leaderRetryAttachment{runAttachment: attachment, objective: run.objective}
+	}
+	opts = append(opts, adaptor.WithRunServices(services), turnBudget(run.team.config.Limits.MaxLeaderTurns-run.turns))
 	thread, err := run.leaderThread()
 	if err != nil {
 		run.abort(err)
@@ -533,6 +552,7 @@ func (run *execution) onEvent(event childEvent) {
 		case adaptor.Done, adaptor.RunStarted, adaptor.RunFinished:
 			return
 		case adaptor.TurnEnd:
+			run.leaderParts = append(run.leaderParts, typed.Result)
 			if typed.Err != nil {
 				run.leaderErr = typed.Err
 			}
@@ -558,14 +578,17 @@ func (run *execution) onEvent(event childEvent) {
 				if len(messages) == 0 {
 					messages = []InboxMessage{message}
 				}
+				requeued := false
 				for _, item := range messages {
 					if typed.State == adaptor.MessageDelivered {
 						run.finishMessage(item, Delivered, "")
-					} else if item.Host && typed.Mechanism == "" {
+					} else if item.Host && typed.Reason != adaptor.MessageRunFailed {
 						run.finishMessage(item, DeliveryFailed, string(typed.Reason))
 					} else if !run.stopping && !run.hard && run.ctx.Err() == nil {
 						if err := run.store.RequeueMessage(run.ctx, run.lease, item.ID, item.ClaimToken); err != nil {
 							run.abort(err)
+						} else {
+							requeued = true
 						}
 					} else {
 						run.finishMessage(item, DeliveryFailed, string(typed.Reason))
@@ -574,7 +597,7 @@ func (run *execution) onEvent(event childEvent) {
 				}
 				delete(run.batches, typed.ID)
 				delete(run.inflight, typed.ID)
-				if typed.State == adaptor.MessageFailed && !run.stopping && !run.hard {
+				if requeued {
 					run.log.push(adaptor.Notice{Kind: "team.notification_retry", Text: "The leader execution ended before a notification was delivered; it remains in the durable inbox for the next leader execution."})
 				}
 			}
@@ -599,13 +622,25 @@ func (run *execution) onEvent(event childEvent) {
 			run.updateTask(task, Running)
 		}
 		run.progress(task, typed.Text)
-	case adaptor.ToolResult, adaptor.TurnEnd:
+	case adaptor.TurnEnd:
+		task.parts = append(task.parts, typed.Result)
+		if task.record.State == WaitingApproval {
+			run.updateTask(task, Running)
+		}
+	case adaptor.ToolResult:
 		if task.record.State == WaitingApproval {
 			run.updateTask(task, Running)
 		}
 	case adaptor.SubagentUpdate:
-		if typed.State == string(WaitingApproval) {
-			run.updateTask(task, WaitingApproval)
+		switch typed.State {
+		case string(WaitingApproval), string(clienta2a.TaskStateInputRequired):
+			if task.record.State != WaitingApproval {
+				run.updateTask(task, WaitingApproval)
+			}
+		case string(clienta2a.TaskStateWorking):
+			if task.record.State == WaitingApproval {
+				run.updateTask(task, Running)
+			}
 		}
 		run.log.push(adaptor.SubagentUpdate{Member: task.record.Member, Task: task.record.ID, State: string(task.record.State), Kind: typed.Kind, Delta: typed.Delta, Summary: typed.Summary, Data: map[string]any{"nested_member": typed.Member, "nested_task": typed.Task, "nested_state": typed.State, "details": typed.Data}})
 	case adaptor.Notice:
@@ -614,6 +649,14 @@ func (run *execution) onEvent(event childEvent) {
 }
 
 func (run *execution) onEnd(end childEnd) {
+	if end.task == "" && end.result == nil && len(run.leaderParts) > 0 {
+		// Infrastructure failures may return no Result, even though provider
+		// turns and their audit data have already been observed.
+		end.result = adaptor.ComposeResults(end.stream.RunID(), run.leaderParts...)
+	}
+	if task := run.tasks[end.task]; task != nil && end.result == nil && len(task.parts) > 0 {
+		end.result = adaptor.ComposeResults(end.stream.RunID(), task.parts...)
+	}
 	if end.result != nil {
 		usage := sumUsage(nil, end.result.Usage)
 		if end.task == "" && usage != nil {
@@ -649,7 +692,21 @@ func (run *execution) onEnd(end childEnd) {
 				run.retries++
 				delay := max(retry.RetryAfter(), run.team.config.Limits.RetryBackoff)
 				run.retryAt = time.Now().Add(delay)
-				run.queueNotification("", "The previous leader execution failed transiently. Resume coordination using the current task status; do not repeat completed work.", adaptor.Author{Kind: adaptor.AuthorSystem}, true)
+				messages, err := run.store.Messages(run.ctx, run.scope)
+				if err != nil {
+					run.abort(err)
+					return
+				}
+				pending := false
+				for _, message := range messages {
+					if !message.Deferred && message.Wake && message.State == Pending {
+						pending = true
+						break
+					}
+				}
+				if !pending {
+					run.queueNotification("", "The previous leader execution failed transiently. Resume coordination using the current task status; do not repeat completed work.", adaptor.Author{Kind: adaptor.AuthorSystem}, true)
+				}
 				run.scheduleWake(run.retryAt)
 			} else {
 				run.abort(end.err)
@@ -780,7 +837,7 @@ func (run *execution) updateTask(task *taskRun, state TaskState, notifications .
 	if terminal(state) {
 		kind = adaptor.SubagentFinished
 	}
-	run.log.push(adaptor.SubagentUpdate{Member: task.record.Member, Task: task.record.ID, State: string(state), Kind: kind, Summary: task.record.Summary, Data: map[string]any{"reason": task.record.Reason}})
+	run.log.push(run.taskUpdate(task, kind))
 }
 
 func (run *execution) hasQueued() bool {
@@ -869,7 +926,9 @@ func (run *execution) scheduleTasks() {
 }
 
 func (run *execution) progress(task *taskRun, text string) {
-	run.log.push(adaptor.SubagentUpdate{Member: task.record.Member, Task: task.record.ID, State: string(task.record.State), Kind: adaptor.SubagentDelta, Delta: text})
+	update := run.taskUpdate(task, adaptor.SubagentDelta)
+	update.Delta = text
+	run.log.push(update)
 	if strings.TrimSpace(text) == "" {
 		return
 	}
@@ -952,12 +1011,18 @@ func (run *execution) flushNotifications() {
 		return
 	}
 	var eligible []InboxMessage
+	unread := make(map[string]*taskRun)
 	for _, message := range messages {
 		if task := run.tasks[message.Task]; task != nil && task.leaderCancelled {
+			unread[task.record.ID] = task
 			run.finishMessage(message, DeliveryFailed, "leader_cancelled")
 		} else {
 			eligible = append(eligible, message)
 		}
+	}
+	for _, task := range unread {
+		run.collectUnread(task)
+		run.updateTask(task, task.record.State)
 	}
 	messages = eligible
 	if len(messages) == 0 {
@@ -1073,6 +1138,16 @@ func (run *execution) finishMessage(message InboxMessage, state InboxState, reas
 	}
 }
 
+func (run *execution) rejectHostClaim(message InboxMessage, err error) {
+	reason := adaptor.MessageProviderRejected
+	var rejected *adaptor.MessageError
+	if errors.As(err, &rejected) && rejected.Reason != "" {
+		reason = rejected.Reason
+	}
+	run.finishMessage(message, DeliveryFailed, string(reason))
+	delete(run.inflight, message.ID)
+}
+
 func (run *execution) collectUnread(task *taskRun) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -1081,11 +1156,29 @@ func (run *execution) collectUnread(task *taskRun) {
 		run.abort(err)
 		return
 	}
+	var unread []string
 	for _, message := range messages {
-		if message.Task == task.record.ID && !message.Wake && message.State != Delivered && message.State != DeliveryFailed {
-			task.record.Unread = append(task.record.Unread, message.Text)
+		if message.Task == task.record.ID && !message.Wake && message.State != Delivered && (message.State != DeliveryFailed || message.Reason == "leader_cancelled") {
+			unread = append(unread, message.Text)
 		}
 	}
+	task.record.Unread = unread
+}
+
+// leaderRetryAttachment retains the objective even when a failed invocation
+// left no resumable checkpoint. The original host messages are retried with
+// their own IDs; this preamble supplies context without inventing delivery.
+type leaderRetryAttachment struct {
+	*runAttachment
+	objective string
+}
+
+func (attachment leaderRetryAttachment) AttachRun(ctx context.Context, runID string) (adaptor.RunAttachment, error) {
+	result, err := attachment.runAttachment.AttachRun(ctx, runID)
+	if err == nil {
+		result.Preamble += "\nOriginal team objective (retain while coordinating; do not repeat completed work):\n" + attachment.objective
+	}
+	return result, err
 }
 
 func (run *execution) checkLimit(name string, used, limit int) {
@@ -1163,7 +1256,7 @@ func (run *execution) finish(err error) {
 	if run.wake != nil {
 		run.wake.stop()
 	}
-	result := adaptor.ComposeResults(run.id, run.parts...)
+	result := adaptor.ComposeResults(run.id, run.parts...).WithSubagents(run.subagents())
 	result.RunID = run.id
 	result.Turns = run.turns
 	result.Usage = sumUsage(nil, run.total)

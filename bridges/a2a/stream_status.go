@@ -56,7 +56,8 @@ type AdapterStreamEventV1 struct {
 	Delta string `json:"delta,omitempty"`
 	// Args contains a complete structured tool argument snapshot when available.
 	Args map[string]any `json:"args,omitempty"`
-	// Result contains a structured tool result snapshot when available.
+	// Result contains a structured tool result or message.update, turn.end,
+	// or done lifecycle payload. Lifecycle Result fields use safe projections.
 	Result map[string]any `json:"result,omitempty"`
 	// Role identifies the text message role.
 	Role string `json:"role,omitempty"`
@@ -186,6 +187,8 @@ func DecodeAdapterEventV1(data any) (decoded adaptor.Event, matched bool, err er
 		decoded = decodeApprovalResolved(event)
 	case "stream.dropped":
 		decoded = decodeDropped(event.Raw)
+	case "message.update", "turn.end", "done":
+		decoded, err = decodeLifecycle(event)
 	default:
 		return nil, true, fmt.Errorf("unsupported adapter event kind %q", event.Kind)
 	}
@@ -341,7 +344,7 @@ func supportedAdapterStreamKind(kind string) bool {
 	case "text.start", "text.content", "text.end",
 		"tool_call.start", "tool_call.args", "tool_call.end", "tool_call.result",
 		"reasoning.start", "reasoning.content", "reasoning.end",
-		"hitl.requested", "hitl.resolved", "stream.dropped":
+		"hitl.requested", "hitl.resolved", "stream.dropped", "message.update", "turn.end", "done":
 		return true
 	default:
 		return false

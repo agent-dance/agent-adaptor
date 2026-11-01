@@ -35,6 +35,9 @@
 // includes observed worker usage; Subagents returns task summaries. Full local
 // results and normalized RemoteSnapshot artifacts remain in TaskStore. The
 // remaining MaxLeaderTurns caps core continuation without replacing policy.
+// Worker activity also carries roster display names, live text, final text and
+// decoded output for presentation bridges. Its result projection excludes raw
+// streams, transcripts, service reports and runtime metadata.
 //
 // Durable TaskStore implementations must pass teamstoretest and preserve
 // fenced scope leases, CAS tasks, atomic terminal/wake commits, inbox claims

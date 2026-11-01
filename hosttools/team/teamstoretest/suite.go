@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -17,8 +18,8 @@ import (
 
 // Run checks fencing, exclusive claims, idempotency, CAS, atomic task/wake
 // commits, crash reclaim, detached round trips and fork lineage. Expiry uses
-// nanosecond TTLs, never sleeps or scheduling assumptions. Store timestamps
-// must have sufficient precision to honor the public time.Duration contract.
+// nanosecond TTLs and waits for the returned expiry timestamp, without fixed
+// sleeps or assumptions about the operating system's clock resolution.
 func Run(t *testing.T, newStore func(*testing.T) team.TaskStore) {
 	t.Helper()
 	ctx := context.Background()
@@ -122,6 +123,7 @@ func Run(t *testing.T, newStore func(*testing.T) team.TaskStore) {
 		if len(first) != 1 {
 			t.Fatal(first)
 		}
+		waitExpired(t, first[0].ClaimUntil)
 		next, e := s.ClaimMessages(ctx, l, true, time.Hour)
 		must(t, e)
 		if len(next) != 1 || next[0].ClaimToken == first[0].ClaimToken {
@@ -131,6 +133,7 @@ func Run(t *testing.T, newStore func(*testing.T) team.TaskStore) {
 		must(t, s.ReleaseScope(ctx, l))
 		expired, e := s.AcquireScope(ctx, l.Scope, "crashed", time.Nanosecond)
 		must(t, e)
+		waitExpired(t, expired.ExpiresAt)
 		recovered := lease(t, s, l.Scope)
 		conflict(t, s.ReleaseScope(ctx, expired))
 		claims, e := s.ClaimMessages(ctx, recovered, true, time.Hour)
@@ -205,4 +208,18 @@ func Run(t *testing.T, newStore func(*testing.T) team.TaskStore) {
 		}
 		conflict(t, s.ForkScope(ctx, l, child))
 	})
+}
+
+func waitExpired(t *testing.T, expires time.Time) {
+	t.Helper()
+	timeout := time.NewTimer(time.Second)
+	defer timeout.Stop()
+	for expires.After(time.Now()) {
+		select {
+		case <-timeout.C:
+			t.Fatalf("store expiry did not elapse: %s", expires)
+		default:
+			runtime.Gosched()
+		}
+	}
 }

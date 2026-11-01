@@ -75,7 +75,7 @@ func (t *subagentTracker) translate(update adaptor.SubagentUpdate) []aguievents.
 			return out
 		}
 	}
-	if state.terminal || update.Kind == adaptor.SubagentStarted {
+	if state.terminal {
 		return out
 	}
 
@@ -92,6 +92,10 @@ func (t *subagentTracker) start(id string, update adaptor.SubagentUpdate) *subag
 	if agentName == "" {
 		agentName = update.Member
 	}
+	description := subagentString(update.Data, "description")
+	if description == "" && update.Kind == adaptor.SubagentStarted {
+		description = update.Delta
+	}
 	state := &subagentActivityState{
 		content: subagentActivity{
 			SubagentID:       id,
@@ -102,7 +106,7 @@ func (t *subagentTracker) start(id string, update adaptor.SubagentUpdate) *subag
 			Kind:             "delegated",
 			Protocol:         subagentString(update.Data, "remote_protocol"),
 			Status:           "started",
-			Description:      update.Delta,
+			Description:      description,
 			ToolCalls:        []subagentToolCall{},
 			StartedAt:        now.Format(time.RFC3339Nano),
 			UpdatedAt:        now.Format(time.RFC3339Nano),
@@ -118,6 +122,9 @@ func (t *subagentTracker) start(id string, update adaptor.SubagentUpdate) *subag
 func (s *subagentActivityState) apply(update adaptor.SubagentUpdate) []aguievents.JSONPatchOperation {
 	now := subagentEventTime(update)
 	kind := subagentString(update.Data, "kind")
+	if kind == "" && update.Kind == adaptor.SubagentDelta {
+		kind = "subagent.text.delta"
+	}
 	status := update.State
 	if status == "" {
 		status = subagentString(update.Data, "status")
@@ -303,9 +310,11 @@ func subagentMap(value any) map[string]any {
 
 func runningSubagentStatus(status string) string {
 	switch strings.ToLower(status) {
+	case "queued":
+		return "queued"
 	case "started", "submitted", "working", "running":
 		return "running"
-	case "input-required", "input_required":
+	case "input-required", "input_required", "waiting_approval":
 		return "input_required"
 	}
 	return ""
@@ -321,7 +330,7 @@ func terminalSubagentStatus(kind, status string) string {
 		return "input_required"
 	}
 	switch strings.ToLower(status) {
-	case "failed", "error":
+	case "failed", "error", "interrupted":
 		return "failed"
 	case "cancelled", "canceled":
 		return "cancelled"

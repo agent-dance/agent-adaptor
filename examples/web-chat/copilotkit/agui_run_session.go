@@ -67,6 +67,8 @@ type aguiRunSession struct {
 	// start/end lifecycle. It lets a non-streaming Driver's final Result.Text
 	// take the same recorder + SSE path without duplicating streamed output.
 	assistantText bool
+	outputErr     error // disconnected output; keep recording the terminal drain
+	recordErr     error // failed persistence; do not repeatedly append to a broken backend
 }
 
 func newAGUIRunSession(ctx context.Context, stream adaptor.Stream, store runStateStore, threadID string, userTurn []adaptor.Event, w http.ResponseWriter) *aguiRunSession {
@@ -84,35 +86,39 @@ func newAGUIRunSession(ctx context.Context, stream adaptor.Stream, store runStat
 func (s *aguiRunSession) Serve() error {
 	s.store.registerRun(s.threadID, s.stream)
 	defer s.store.unregisterRun(s.threadID, s.stream)
+	var firstErr error
+	observeFailure := func(err error) {
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			s.stream.Cancel()
+		}
+	}
 
 	// Stage 1 — land the user turn into recorder + SSE BEFORE draining
 	// driver output. See the type docstring for the rationale. The
 	// translator buffers anything produced before RunStarted and flushes it
 	// straight after, so the user turn keeps its place at the front.
-	if err := s.recordUserTurn(); err != nil {
-		return err
-	}
+	observeFailure(s.recordUserTurn())
 
 	// Stage 2 — one channel, one drain. Every event kind the demo does not
 	// care about falls through the type switch untouched. The SDK's
-	// RunFinished is informational, but it is still the terminal typed Event
-	// in recovery history. Hold it until any Result.Text fallback has passed
+	// RunFinished is informational; Done is authoritative and last
+	// in recovery history. Hold both until any Result.Text fallback has passed
 	// through the recorder so history and AG-UI wire both remain terminal-last.
 	var terminalEvents []adaptor.Event
 	for ev := range s.stream.Events() {
-		if _, terminal := ev.(adaptor.RunFinished); terminal {
+		_, finished := ev.(adaptor.RunFinished)
+		_, done := ev.(adaptor.Done)
+		if finished || done {
 			terminalEvents = append(terminalEvents, ev)
 			continue
 		}
-		if err := s.forwardEvent(ev); err != nil {
-			// The client hung up mid-run. Cancel, then keep draining: the
-			// consumer owes the stream a full drain even when it stops
-			// caring about the content.
-			s.stream.Cancel()
-			for range s.stream.Events() {
-			}
-			return err
-		}
+		// A disconnected browser must not discard the cancellation receipts
+		// or final Done from recovery history. Output errors latch while the
+		// same event loop finishes recording the execution.
+		observeFailure(s.forwardEvent(ev))
 	}
 
 	// Stage 3 — the single verdict. A Driver such as Cursor may expose its
@@ -124,34 +130,44 @@ func (s *aguiRunSession) Serve() error {
 	if !s.assistantText {
 		if text := assistantResultText(result, err); strings.TrimSpace(text) != "" {
 			for _, event := range assistantResultEvents(s.stream.RunID(), text) {
-				if forwardErr := s.forwardEvent(event); forwardErr != nil {
-					return forwardErr
-				}
+				observeFailure(s.forwardEvent(event))
 			}
 		}
 	}
 	for _, event := range terminalEvents {
-		if forwardErr := s.forwardEvent(event); forwardErr != nil {
-			return forwardErr
-		}
+		observeFailure(s.forwardEvent(event))
 	}
-	return s.writer.Write(s.translator.CloseResult(result, err)...)
+	terminal := s.translator.CloseResult(result, err)
+	if s.outputErr == nil && s.recordErr == nil {
+		observeFailure(s.writer.Write(terminal...))
+	}
+	return firstErr
 }
 
 // recordUserTurn replays the synthesised user-side text triple through the
 // same fan-out as driver events. It is a no-op when the AG-UI input had no
 // user-text turn (e.g. tool-result-only requests).
 func (s *aguiRunSession) recordUserTurn() error {
+	var firstErr error
 	for _, ev := range s.userTurn {
 		if err := s.forwardEvent(ev); err != nil {
-			return err
+			if firstErr == nil {
+				firstErr = err
+			}
+			if s.recordErr != nil {
+				break
+			}
 		}
 	}
-	return nil
+	return firstErr
 }
 
 func (s *aguiRunSession) forwardEvent(ev adaptor.Event) error {
+	if s.recordErr != nil {
+		return s.recordErr
+	}
 	if err := s.store.appendHistory(s.threadID, ev); err != nil {
+		s.recordErr = err
 		return err
 	}
 
@@ -176,7 +192,12 @@ func (s *aguiRunSession) forwardEvent(ev adaptor.Event) error {
 		}
 	}
 
-	return s.writer.Write(s.translator.Translate(ev)...)
+	translated := s.translator.Translate(ev)
+	if s.outputErr != nil {
+		return nil
+	}
+	s.outputErr = s.writer.Write(translated...)
+	return s.outputErr
 }
 
 func assistantResultText(result *adaptor.Result, err error) string {

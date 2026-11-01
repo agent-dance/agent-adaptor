@@ -60,7 +60,9 @@ func (log *eventLog) events() <-chan adaptor.Event {
 	log.mu.Lock()
 	if !log.subscribed {
 		log.subscribed = true
-		go log.pump()
+		if !log.finished {
+			go log.pump()
+		}
 	}
 	log.mu.Unlock()
 	return log.out
@@ -107,7 +109,21 @@ func incrementalKind(event adaptor.Event) string {
 
 func (log *eventLog) finish() {
 	log.mu.Lock()
+	if log.finished {
+		log.mu.Unlock()
+		return
+	}
 	log.finished = true
+	if !log.subscribed {
+		// Match core's Result-only path: retain the unread tail in a closed
+		// channel without leaving a forwarding goroutine behind.
+		log.out = make(chan adaptor.Event, len(log.queue))
+		for _, event := range log.queue {
+			log.out <- event
+		}
+		log.queue = nil
+		close(log.out)
+	}
 	log.mu.Unlock()
 	select {
 	case log.notify <- struct{}{}:

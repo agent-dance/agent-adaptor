@@ -350,3 +350,237 @@ func TestRecoveryDoesNotReplaceQueuedExecutionOptions(t *testing.T) {
 		t.Fatal(claimed, err)
 	}
 }
+
+func TestCancelWhileLeaderIdleKeepsTaskInPartialResult(t *testing.T) {
+	ctx := testContext(t)
+	idle := make(chan struct{})
+	workerReady := make(chan struct{})
+	store := &idleObservedStore{MemoryStore: NewMemoryStore(), idle: idle}
+	var team *Team
+	worker := adaptor.New(&fakeDriver{run: func(ctx context.Context, _ driver.Request, sink driver.EventSink) (driver.Response, error) {
+		if err := sink.Emit(driver.RunEvent{Type: driver.RunEventTurnCompleted, Turn: &driver.TurnCompleted{Index: 0, Text: "partial worker", Usage: &driver.Usage{InputTokens: 7}}}); err != nil {
+			return driver.Response{}, err
+		}
+		close(workerReady)
+		<-ctx.Done()
+		return driver.Response{}, ctx.Err()
+	}})
+	leader := adaptor.New(&fakeDriver{run: func(_ context.Context, req driver.Request, _ driver.EventSink) (driver.Response, error) {
+		_, err := call(team, req, "delegate", map[string]any{"member": "worker", "objective": "wait"})
+		return answer("delegated", 1), err
+	}})
+	team = fixture(t, Config{Leader: leader, Store: store, Members: []Member{{Key: "worker", Runner: worker}}})
+	stream := team.Thread("cancel-result").Send(ctx, "start")
+	drained := make(chan struct{})
+	go func() {
+		defer close(drained)
+		for range stream.Events() {
+		}
+	}()
+	select {
+	case <-idle:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	select {
+	case <-workerReady:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	stream.Cancel()
+	<-drained
+	result, err := stream.Result()
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Cancel error=%v", err)
+	}
+	tasks, err := store.Tasks(ctx, "cancel-result")
+	if err != nil || len(tasks) != 1 || tasks[0].State != Cancelled {
+		t.Fatalf("tasks=%+v err=%v", tasks, err)
+	}
+	if got := result.Subagents(); len(got) != 1 || got[0].State != string(Cancelled) {
+		t.Fatalf("partial Result lost cancelled task: Subagents=%+v; persisted task=%s", got, tasks[0].State)
+	}
+	if got := result.Subagents()[0].Usage; got == nil || got.InputTokens != 7 {
+		t.Fatalf("cancelled task lost observed usage: %+v", got)
+	}
+	if result.Usage == nil || result.Usage.InputTokens != 8 {
+		t.Fatalf("partial result must count leader and worker usage once: %+v", result.Usage)
+	}
+}
+
+func TestLeaderRetryRetainsOriginalObjective(t *testing.T) {
+	ctx := testContext(t)
+	const objective = "Implement the payment reconciliation endpoint for account 48217"
+	var calls atomic.Int32
+	var retryPrompt string
+	leader := adaptor.New(&fakeDriver{run: func(_ context.Context, req driver.Request, _ driver.EventSink) (driver.Response, error) {
+		if calls.Add(1) == 1 {
+			return driver.Response{}, temporaryFailure{}
+		}
+		retryPrompt = req.Prompt
+		return answer("recovered", 1), nil
+	}})
+	team := fixture(t, Config{Leader: leader})
+	events, result, err := collect(t, team.Thread("retry-objective").Send(ctx, objective, adaptor.MessageID("original-objective")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalReceipt := false
+	for _, message := range result.Messages() {
+		if message.ID == "original-objective" {
+			originalReceipt = message.State == adaptor.MessageDelivered && message.Text == objective && message.Turn == 2
+		}
+	}
+	if !strings.Contains(retryPrompt, objective) || !originalReceipt {
+		t.Fatalf("leader retry has no checkpoint and lost original objective; provider calls=%d, original ID in Result.Messages=%v", calls.Load(), originalReceipt)
+	}
+	var states []adaptor.MessageState
+	for _, event := range events {
+		if update, ok := event.(adaptor.MessageUpdate); ok && update.ID == "original-objective" && update.State != adaptor.MessageAccepted {
+			states = append(states, update.State)
+			if update.State == adaptor.MessageFailed && (update.Reason != adaptor.MessageRunFailed || update.Text != objective) {
+				t.Fatalf("untruthful failure receipt: %+v", update)
+			}
+		}
+	}
+	if len(states) != 2 || states[0] != adaptor.MessageFailed || states[1] != adaptor.MessageDelivered {
+		t.Fatalf("retry receipts=%v", states)
+	}
+	if calls.Load() != 2 || result.Turns != 2 || result.Usage.InputTokens != 1 {
+		t.Fatalf("unexpected retry accounting: calls=%d result=%+v", calls.Load(), result)
+	}
+}
+
+func TestLeaderRetryRetainsUndeliveredHostInputs(t *testing.T) {
+	ctx := testContext(t)
+	entered, release := make(chan struct{}), make(chan struct{})
+	var calls atomic.Int32
+	leader := adaptor.New(&fakeDriver{run: func(ctx context.Context, req driver.Request, _ driver.EventSink) (driver.Response, error) {
+		if calls.Add(1) == 1 {
+			close(entered)
+			select {
+			case <-release:
+			case <-ctx.Done():
+				return driver.Response{}, ctx.Err()
+			}
+			return driver.Response{}, temporaryFailure{}
+		}
+		return answer("recovered", 1), nil
+	}})
+	store := NewMemoryStore()
+	team := fixture(t, Config{Leader: leader, Store: store})
+	stream := team.Thread("retry-inputs").Send(ctx, "original objective", adaptor.MessageID("objective"))
+	select {
+	case <-entered:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	if err := stream.Send(ctx, "additional constraint", adaptor.MessageID("constraint")); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	events, result, err := collect(t, stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for id, text := range map[string]string{"objective": "original objective", "constraint": "additional constraint"} {
+		failed, delivered := false, false
+		for _, event := range events {
+			if update, ok := event.(adaptor.MessageUpdate); ok && update.ID == id {
+				if update.State == adaptor.MessageFailed {
+					failed = update.Reason == adaptor.MessageRunFailed && update.Text == text
+				}
+				if update.State == adaptor.MessageDelivered {
+					delivered = failed
+				}
+			}
+		}
+		if !failed || !delivered {
+			t.Fatalf("input %s lost its truthful retry receipts: failed=%v delivered=%v", id, failed, delivered)
+		}
+		found := false
+		for _, outcome := range result.Messages() {
+			if outcome.ID == id {
+				found = outcome.State == adaptor.MessageDelivered && outcome.Text == text
+			}
+		}
+		if !found {
+			t.Fatalf("input %s missing from final outcomes: %+v", id, result.Messages())
+		}
+	}
+	if len(result.Undelivered()) != 0 {
+		t.Fatalf("recovered inputs still reported undelivered: %+v", result.Undelivered())
+	}
+	messages, err := store.Messages(ctx, "retry-inputs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, message := range messages {
+		if message.Host && message.State != Delivered {
+			t.Fatalf("recovered input not persisted as delivered: %+v", message)
+		}
+	}
+}
+
+func TestFailureAndLimitKeepFinalTaskSnapshot(t *testing.T) {
+	leaderFailure := errors.New("leader unavailable")
+	for _, limit := range []bool{false, true} {
+		name := "leader_failure"
+		if limit {
+			name = "leader_turn_limit"
+		}
+		t.Run(name, func(t *testing.T) {
+			ctx := testContext(t)
+			workerReady := make(chan struct{})
+			worker := adaptor.New(&fakeDriver{run: func(ctx context.Context, _ driver.Request, sink driver.EventSink) (driver.Response, error) {
+				if err := sink.Emit(driver.RunEvent{Type: driver.RunEventTurnCompleted, Turn: &driver.TurnCompleted{Index: 0, Text: "partial worker", Usage: &driver.Usage{InputTokens: 7}}}); err != nil {
+					return driver.Response{}, err
+				}
+				close(workerReady)
+				<-ctx.Done()
+				return driver.Response{}, ctx.Err()
+			}})
+			var team *Team
+			leader := adaptor.New(&fakeDriver{run: func(ctx context.Context, request driver.Request, sink driver.EventSink) (driver.Response, error) {
+				if _, err := call(team, request, "delegate", map[string]any{"member": "worker", "objective": "work until cancelled"}); err != nil {
+					return driver.Response{}, err
+				}
+				select {
+				case <-workerReady:
+				case <-ctx.Done():
+					return driver.Response{}, ctx.Err()
+				}
+				if limit {
+					return answer("leader reached limit", 1), nil
+				}
+				if err := sink.Emit(driver.RunEvent{Type: driver.RunEventTurnCompleted, Turn: &driver.TurnCompleted{Index: 0, Text: "partial leader", Usage: &driver.Usage{InputTokens: 1}}}); err != nil {
+					return driver.Response{}, err
+				}
+				return driver.Response{}, leaderFailure
+			}})
+			limits := Limits{}
+			wantErr := leaderFailure
+			if limit {
+				limits.MaxLeaderTurns = 1
+				wantErr = ErrLimitExceeded
+			}
+			team = fixture(t, Config{Leader: leader, Members: []Member{{Key: "worker", Runner: worker}}, Limits: limits})
+			stream := team.Thread("snapshot").Send(ctx, "start")
+			events, result, err := collect(t, stream)
+			if !errors.Is(err, wantErr) || result == nil {
+				t.Fatalf("result=%+v error=%v, want %v", result, err, wantErr)
+			}
+			tasks := result.Subagents()
+			if len(tasks) != 1 || tasks[0].State != string(Cancelled) || tasks[0].Usage == nil || tasks[0].Usage.InputTokens != 7 {
+				t.Fatalf("final task snapshot=%+v", tasks)
+			}
+			if result.Usage == nil || result.Usage.InputTokens != 8 {
+				t.Fatalf("observed leader/worker usage must be counted once: %+v", result.Usage)
+			}
+			final, ok := events[len(events)-1].(adaptor.Done)
+			if !ok || final.Result != result || final.Err != err {
+				t.Fatalf("Done did not preserve final result/error: %+v", final)
+			}
+		})
+	}
+}

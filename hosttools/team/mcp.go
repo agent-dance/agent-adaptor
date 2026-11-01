@@ -493,7 +493,7 @@ func (run *execution) handleTool(command toolCommand) {
 		run.tasks[id] = &taskRun{record: saved, runner: runner}
 		run.order = append(run.order, id)
 		run.taskCount++
-		run.log.push(adaptor.SubagentUpdate{Member: member.Key, Task: id, State: string(Queued), Kind: adaptor.SubagentState})
+		run.log.push(run.taskUpdate(run.tasks[id], adaptor.SubagentState))
 		command.reply <- toolSuccess(map[string]any{"task": id, "state": Queued})
 		run.checkLimit("tasks", run.taskCount, run.team.config.Limits.MaxTasks)
 	case "send":

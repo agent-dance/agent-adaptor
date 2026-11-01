@@ -3,7 +3,7 @@
 // Scope:
 //   - converts a host-supplied Agent Card to the official A2A model
 //   - exposes HTTP handlers that hosts can mount wherever they serve A2A
-//   - maps SendMessage and SendStreamingMessage onto Runner.Stream
+//   - maps new-task messages onto Runner.Send and same-task input onto Stream.Send
 //   - maps Event, Result, and Cancel onto Task status/artifact updates
 //
 // The bridge is intentionally Driver-agnostic: it depends only on the core

@@ -18,7 +18,8 @@ import (
 
 // SessionBinding decides which Runner executes an inbound A2A request. The
 // package seals this interface so callers select either [Stateless] or
-// [ThreadByContextID]. A nil binding is equivalent to [Stateless].
+// [ThreadByContextID]. A nil binding uses context-based Threads for an Agent
+// and invokes other Runners as supplied.
 type SessionBinding interface {
 	bindRunner(base adaptor.Runner, req InboundRequest) (adaptor.Runner, error)
 }
@@ -30,8 +31,8 @@ func (fn sessionBindingFunc) bindRunner(base adaptor.Runner, req InboundRequest)
 }
 
 // Stateless runs every inbound request on the configured Runner as-is, without
-// creating Thread state or carrying conversation state between requests. It is
-// the default [SessionBinding].
+// creating Thread state or carrying conversation state between requests.
+// Use it explicitly to opt an Agent out of context-based Thread binding.
 func Stateless() SessionBinding {
 	return sessionBindingFunc(func(base adaptor.Runner, _ InboundRequest) (adaptor.Runner, error) {
 		return base, nil
@@ -42,8 +43,8 @@ func Stateless() SessionBinding {
 // namespace-encoded Thread key. Follow-up messages in the same A2A context
 // therefore continue the same conversation.
 //
-// The configured Runner must be an *adaptor.Agent carrying a thread store
-// (adaptor.WithThreadStore) — only an Agent can mint threads. A request
+// The configured Runner must be an *adaptor.Agent, using its default memory
+// store or an explicitly shared store. A request
 // without a contextID runs stateless.
 func ThreadByContextID() SessionBinding {
 	return sessionBindingFunc(func(base adaptor.Runner, req InboundRequest) (adaptor.Runner, error) {
@@ -70,13 +71,15 @@ type PromptBuilder func(ctx context.Context, req InboundRequest) (prompt string,
 type ResultBuilder func(ctx context.Context, req InboundRequest, result *adaptor.Result) (BuiltResult, error)
 
 // ServerOptions configures [NewServer]. AgentCard is required. The zero values
-// select stateless execution, the last non-blank text part as prompt, the
-// bounded in-memory task store, and conservative exposure.
+// select context-based Threads for an Agent, the last non-blank text part as
+// prompt, the bounded in-memory task store, and conservative exposure. A Runner
+// that cannot mint Threads is invoked as supplied.
 type ServerOptions struct {
 	// AgentCard is the public A2A identity of this server.
 	AgentCard AgentCard
 
-	// Session decides thread binding per inbound request. Nil uses Stateless.
+	// Session decides thread binding per inbound request. Nil uses
+	// ThreadByContextID for an *adaptor.Agent and Stateless for other Runners.
 	Session SessionBinding
 
 	// Prompt, when set, replaces the default prompt extraction (the last
@@ -146,6 +149,9 @@ func NewServer(runner adaptor.Runner, opts ServerOptions) *Server {
 	}
 	if opts.Session == nil {
 		opts.Session = Stateless()
+		if _, ok := runner.(*adaptor.Agent); ok {
+			opts.Session = ThreadByContextID()
+		}
 	}
 	prompt := opts.Prompt
 	if prompt == nil {
@@ -160,6 +166,7 @@ func NewServer(runner adaptor.Runner, opts ServerOptions) *Server {
 		resultBuilder: opts.ResultBuilder,
 		exposure:      opts.Exposure,
 		active:        map[a2aproto.TaskID]adaptor.Stream{},
+		contexts:      map[string]a2aproto.TaskID{},
 		pending:       map[a2aproto.TaskID]context.CancelFunc{},
 	}
 	handlerOpts := []a2asrv.RequestHandlerOption{a2asrv.WithTaskStore(taskStore)}
@@ -170,7 +177,7 @@ func NewServer(runner adaptor.Runner, opts ServerOptions) *Server {
 	handlerOpts = append(handlerOpts, capabilityOpts...)
 	handlerOpts = append(handlerOpts, a2asrv.WithCapabilityChecks(&card.Capabilities))
 
-	requestHandler := a2asrv.NewHandler(exec, handlerOpts...)
+	requestHandler := &messageRouter{RequestHandler: a2asrv.NewHandler(exec, handlerOpts...), executor: exec, streaming: card.Capabilities.Streaming}
 	return &Server{
 		runner:      runner,
 		card:        card,
@@ -205,9 +212,10 @@ type executor struct {
 	resultBuilder ResultBuilder
 	exposure      ExposurePolicy
 
-	mu      sync.Mutex
-	active  map[a2aproto.TaskID]adaptor.Stream
-	pending map[a2aproto.TaskID]context.CancelFunc
+	mu       sync.Mutex
+	active   map[a2aproto.TaskID]adaptor.Stream
+	pending  map[a2aproto.TaskID]context.CancelFunc
+	contexts map[string]a2aproto.TaskID
 }
 
 func (e *executor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2aproto.Event, error] {
@@ -234,6 +242,33 @@ func (e *executor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext)
 		}
 		callOpts := append([]adaptor.CallOption(nil), e.options...)
 		callOpts = append(callOpts, promptOpts...)
+		author, err := messageAuthor(req.Message)
+		if err != nil {
+			yield(nil, err)
+			return
+		}
+		callOpts = append(callOpts, adaptor.MessageID(req.Message.ID), adaptor.From(author))
+		e.mu.Lock()
+		busy := e.contexts[req.ContextID]
+		if busy == "" {
+			e.contexts[req.ContextID] = execCtx.TaskID
+		}
+		e.mu.Unlock()
+		if busy != "" {
+			// Two requests may both pass the router's early check before
+			// either execution reserves the context. Return an explicit
+			// rejected task for that race: yielding an executor error here
+			// lets the upstream manager replace it with a generic failure.
+			if execCtx.StoredTask == nil && execCtx.Message != nil {
+				if !yield(a2aproto.NewSubmittedTask(execCtx, execCtx.Message), nil) {
+					return
+				}
+			}
+			msg := failureMessage(execCtx, fmt.Sprintf("task in progress: %s", busy), map[string]any{"code": "task_in_progress", "activeTaskId": string(busy)})
+			yield(a2aproto.NewStatusUpdateEvent(execCtx, a2aproto.TaskStateRejected, msg), nil)
+			return
+		}
+		defer e.releaseContext(req.ContextID, execCtx.TaskID)
 
 		// 2. Register cancellation before starting the run.
 		runCtx, cancelRunCtx := context.WithCancel(ctx)
@@ -243,6 +278,13 @@ func (e *executor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext)
 			cancelRunCtx()
 		}()
 
+		// Stream never fails to start: startup problems close the event
+		// channel immediately and surface through Result() below.
+		stream := target.Send(runCtx, prompt, callOpts...)
+		defer stream.Cancel()
+		e.store(execCtx.TaskID, stream)
+		defer e.delete(execCtx.TaskID)
+
 		if execCtx.StoredTask == nil && execCtx.Message != nil {
 			if !yield(a2aproto.NewSubmittedTask(execCtx, execCtx.Message), nil) {
 				return
@@ -251,51 +293,31 @@ func (e *executor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext)
 		if !yield(a2aproto.NewStatusUpdateEvent(execCtx, a2aproto.TaskStateWorking, nil), nil) {
 			return
 		}
-		if runCtx.Err() != nil {
-			yield(canceledStatus(execCtx, runCtx.Err()), nil)
-			return
-		}
-
-		// Stream never fails to start: startup problems close the event
-		// channel immediately and surface through Result() below.
-		stream := target.Send(runCtx, prompt, callOpts...)
-		defer stream.Cancel()
-		e.store(execCtx.TaskID, stream)
-		defer e.delete(execCtx.TaskID)
-
-		// 3. Forward unified events as working-status DataParts.
+		// 3. Consume the one Event stream even during cancellation: failure
+		// receipts and Done must precede the final protocol status.
 		translator := newStreamTranslator(execCtx, e.exposure)
-		for {
-			select {
-			case <-runCtx.Done():
-				stream.Cancel()
-				// Cancellation is a request to stop, not a second terminal
-				// authority. Drain the now-cancelled stream and let Result()
-				// classify the one terminal status below.
-				for range stream.Events() {
-				}
-				goto drained
-			case ev, ok := <-stream.Events():
-				if !ok {
-					goto drained
-				}
-				for _, out := range translator.Translate(ev) {
-					if !yield(out, nil) {
-						stream.Cancel()
-						return
-					}
+		finish := func(status *a2aproto.TaskStatusUpdateEvent) {
+			// Release before the final status can reach the client, so its
+			// next context-only task does not observe a stale active task.
+			e.releaseContext(req.ContextID, execCtx.TaskID)
+			yield(status, nil)
+		}
+		for ev := range stream.Events() {
+			for _, out := range translator.Translate(ev) {
+				if !yield(out, nil) {
+					stream.Cancel()
+					return
 				}
 			}
 		}
 
-	drained:
 		// 4. Project exactly one terminal outcome. Business failures carry
 		// their Result in *RunError; cancellation and infrastructure failures
 		// are plain wrapped errors.
 		res, runErr := stream.Result()
 		if runErr != nil {
 			if errors.Is(runErr, context.Canceled) {
-				yield(canceledStatus(execCtx, runErr), nil)
+				finish(translator.terminal(canceledStatus(execCtx, runErr), res, runErr))
 				return
 			}
 			var re *adaptor.RunError
@@ -306,23 +328,23 @@ func (e *executor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext)
 					}
 				}
 				msg := failureMessage(execCtx, defaultString(re.Message, re.Error()), failureDetails(re, e.exposure))
-				yield(a2aproto.NewStatusUpdateEvent(execCtx, a2aproto.TaskStateFailed, msg), nil)
+				finish(translator.terminal(a2aproto.NewStatusUpdateEvent(execCtx, a2aproto.TaskStateFailed, msg), res, runErr))
 				return
 			}
 			msg := failureMessage(execCtx, runErr.Error(), map[string]any{"layer": "wait"})
-			yield(a2aproto.NewStatusUpdateEvent(execCtx, a2aproto.TaskStateFailed, msg), nil)
+			finish(translator.terminal(a2aproto.NewStatusUpdateEvent(execCtx, a2aproto.TaskStateFailed, msg), res, runErr))
 			return
 		}
 		built, err := e.buildResult(ctx, req, res)
 		if err != nil {
 			msg := failureMessage(execCtx, err.Error(), map[string]any{"layer": "result_builder"})
-			yield(a2aproto.NewStatusUpdateEvent(execCtx, a2aproto.TaskStateFailed, msg), nil)
+			finish(translator.terminal(a2aproto.NewStatusUpdateEvent(execCtx, a2aproto.TaskStateFailed, msg), nil, err))
 			return
 		}
 		artifacts, err := terminalArtifacts(execCtx, res, e.exposure, built)
 		if err != nil {
 			msg := failureMessage(execCtx, err.Error(), map[string]any{"layer": "result_builder"})
-			yield(a2aproto.NewStatusUpdateEvent(execCtx, a2aproto.TaskStateFailed, msg), nil)
+			finish(translator.terminal(a2aproto.NewStatusUpdateEvent(execCtx, a2aproto.TaskStateFailed, msg), nil, err))
 			return
 		}
 		for _, ev := range artifacts {
@@ -330,7 +352,7 @@ func (e *executor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext)
 				return
 			}
 		}
-		yield(a2aproto.NewStatusUpdateEvent(execCtx, a2aproto.TaskStateCompleted, agentMessage(execCtx, completedStatusText(res, built))), nil)
+		finish(translator.terminal(a2aproto.NewStatusUpdateEvent(execCtx, a2aproto.TaskStateCompleted, agentMessage(execCtx, completedStatusText(res, built))), res, nil))
 	}
 }
 
@@ -343,12 +365,30 @@ func (e *executor) buildResult(ctx context.Context, req InboundRequest, result *
 
 func (e *executor) Cancel(ctx context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2aproto.Event, error] {
 	return func(yield func(a2aproto.Event, error) bool) {
-		e.cancelPending(execCtx.TaskID)
-		if stream := e.load(execCtx.TaskID); stream != nil {
+		e.mu.Lock()
+		cancel := e.pending[execCtx.TaskID]
+		stream := e.active[execCtx.TaskID]
+		e.mu.Unlock()
+		if cancel == nil && stream == nil {
+			yield(nil, a2aproto.ErrTaskNotCancelable)
+			return
+		}
+		if cancel != nil {
+			cancel()
+		}
+		if stream != nil {
 			stream.Cancel()
 		}
-		msg := agentMessage(execCtx, "task cancelled")
-		yield(a2aproto.NewStatusUpdateEvent(execCtx, a2aproto.TaskStateCanceled, msg), nil)
+		// The upstream manager waits for Execute's terminal result. Publishing
+		// a canceled status here would preempt failed message receipts and Done.
+	}
+}
+
+func (e *executor) releaseContext(contextID string, taskID a2aproto.TaskID) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.contexts[contextID] == taskID {
+		delete(e.contexts, contextID)
 	}
 }
 
@@ -374,15 +414,6 @@ func (e *executor) storePending(id a2aproto.TaskID, cancel context.CancelFunc) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.pending[id] = cancel
-}
-
-func (e *executor) cancelPending(id a2aproto.TaskID) {
-	e.mu.Lock()
-	cancel := e.pending[id]
-	e.mu.Unlock()
-	if cancel != nil {
-		cancel()
-	}
 }
 
 func (e *executor) deletePending(id a2aproto.TaskID) {

@@ -126,20 +126,50 @@ func (run *execution) memberConversation(member Member, key string) (adaptor.Run
 	parentKey := EncodeKey(parent, "member", member.Key)
 	switch runner := member.Runner.(type) {
 	case *adaptor.Agent:
-		if _, err := runner.Thread(parentKey).Checkpoint(run.ctx); errors.Is(err, adaptor.ErrThreadNotFound) {
+		parent := runner.Thread(parentKey)
+		checkpoint, err := parent.Checkpoint(run.ctx)
+		if errors.Is(err, adaptor.ErrThreadNotFound) {
 			return child, nil
 		} else if err != nil {
 			return nil, err
 		}
-		return runner.Thread(parentKey).Fork(key), nil
+		if checkpoint == nil || !checkpoint.Valid {
+			return child, nil
+		}
+		return &forkedMemberConversation{ThreadRunner: parent.Fork(key), parent: parent}, nil
 	case *Team:
-		if _, err := runner.Thread(parentKey).Checkpoint(run.ctx); errors.Is(err, adaptor.ErrThreadNotFound) {
+		parent := runner.Thread(parentKey)
+		checkpoint, err := parent.Checkpoint(run.ctx)
+		if errors.Is(err, adaptor.ErrThreadNotFound) {
 			return child, nil
 		} else if err != nil {
 			return nil, err
 		}
-		return runner.Thread(parentKey).Fork(key)
+		if checkpoint == nil || !checkpoint.Valid {
+			return child, nil
+		}
+		branch, err := parent.Fork(key)
+		if err != nil {
+			return nil, err
+		}
+		return &forkedMemberConversation{ThreadRunner: branch, parent: parent}, nil
 	default:
 		return nil, errors.New("team: PerScope member does not support Fork")
 	}
+}
+
+// A lazy fork has no child checkpoint until its first healthy execution. Only
+// a conversation actually branched from a healthy parent can use that parent's
+// checkpoint to validate continue. Core still validates the fork at dispatch.
+type forkedMemberConversation struct {
+	adaptor.ThreadRunner
+	parent adaptor.ThreadRunner
+}
+
+func (conversation *forkedMemberConversation) Checkpoint(ctx context.Context) (*adaptor.Checkpoint, error) {
+	checkpoint, err := conversation.ThreadRunner.Checkpoint(ctx)
+	if errors.Is(err, adaptor.ErrThreadNotFound) {
+		return conversation.parent.Checkpoint(ctx)
+	}
+	return checkpoint, err
 }

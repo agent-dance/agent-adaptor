@@ -27,7 +27,7 @@ func TestBuildInvocationUsesLatestUserTextAndThreadKey(t *testing.T) {
 	}
 	// v1: the session namespace + key pair collapses into one host-owned
 	// thread key handed to agent.Thread(...).
-	if inv.threadKey != "agui/thread-1" {
+	if inv.threadKey != agui.ThreadKey("thread-1") {
 		t.Fatalf("threadKey = %q, want agui/thread-1", inv.threadKey)
 	}
 	if inv.prompt != "latest" {
@@ -64,7 +64,7 @@ func TestBuildInvocationAssignsAnonymousThreadWhenMissing(t *testing.T) {
 	if !strings.HasPrefix(inv.threadID, "anon-") {
 		t.Fatalf("threadID = %q, want anon-*", inv.threadID)
 	}
-	if !strings.HasPrefix(inv.threadKey, "agui/anon-") {
+	if inv.threadKey != agui.ThreadKey(inv.threadID) {
 		t.Fatalf("threadKey = %q, want agui/anon-*", inv.threadKey)
 	}
 	if inv.prompt != "hello" {

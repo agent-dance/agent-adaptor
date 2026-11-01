@@ -26,6 +26,7 @@ type streamTranslator struct {
 	runID    string
 	threadID string
 	seq      uint64
+	done     adaptor.Event
 }
 
 func newStreamTranslator(info a2aproto.TaskInfoProvider, exposure ExposurePolicy) *streamTranslator {
@@ -55,6 +56,16 @@ func (t *streamTranslator) Translate(ev adaptor.Event) []a2aproto.Event {
 		// exactly one terminal from Stream.Result().
 		return nil
 
+	case adaptor.Done:
+		t.done = ev
+		return nil
+	case adaptor.MessageUpdate:
+		return t.emit(ev, AdapterStreamEventV1{Kind: "message.update", Result: rawMap(e)})
+	case adaptor.TurnEnd:
+		payload := lifecyclePayload(e.Result, e.Err, t.exposure)
+		payload["Turn"] = e.Turn
+		payload["MessageIDs"] = e.MessageIDs
+		return t.emit(ev, AdapterStreamEventV1{Kind: "turn.end", Result: payload})
 	case adaptor.TextDelta:
 		kind := "text.content"
 		switch e.Phase {

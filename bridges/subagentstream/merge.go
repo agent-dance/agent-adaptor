@@ -13,7 +13,9 @@ import (
 // last. No task lifecycle or synthetic failures are inferred by this bridge.
 // Per-source order is preserved and provider coordinates survive in Source.
 // Nil updates returns stream unchanged. Cancel cancels the parent and detaches
-// the update source. Result remains identical to the parent's result.
+// the update source; unread critical events, including the parent's Done, remain
+// available to subscribers. Unsubscribed completed streams retain their events
+// without a forwarding goroutine. Result remains identical to the parent's result.
 func Merge(ctx context.Context, stream adaptor.Stream, updates <-chan adaptor.SubagentUpdate) adaptor.Stream {
 	if stream == nil || updates == nil {
 		return stream
@@ -22,21 +24,32 @@ func Merge(ctx context.Context, stream adaptor.Stream, updates <-chan adaptor.Su
 		ctx = context.Background()
 	}
 	ctx, cancel := context.WithCancel(ctx)
-	merged := &mergedStream{parent: stream, cancel: cancel, events: make(chan adaptor.Event), ready: make(chan struct{})}
+	merged := &mergedStream{parent: stream, cancel: cancel, events: make(chan adaptor.Event), ready: make(chan struct{}), subscribe: make(chan struct{})}
 	go merged.pump(ctx, updates)
 	return merged
 }
 
 type mergedStream struct {
-	parent adaptor.Stream
-	cancel context.CancelFunc
-	once   sync.Once
-	events chan adaptor.Event
-	ready  chan struct{}
+	parent     adaptor.Stream
+	cancel     context.CancelFunc
+	once       sync.Once
+	events     chan adaptor.Event
+	ready      chan struct{}
+	mu         sync.Mutex
+	subscribed bool
+	subscribe  chan struct{}
 }
 
-func (s *mergedStream) Events() <-chan adaptor.Event { return s.events }
-func (s *mergedStream) RunID() string                { return s.parent.RunID() }
+func (s *mergedStream) Events() <-chan adaptor.Event {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.subscribed {
+		s.subscribed = true
+		close(s.subscribe)
+	}
+	return s.events
+}
+func (s *mergedStream) RunID() string { return s.parent.RunID() }
 func (s *mergedStream) Send(ctx context.Context, text string, opts ...adaptor.MessageOption) error {
 	return s.parent.Send(ctx, text, opts...)
 }
@@ -44,13 +57,15 @@ func (s *mergedStream) Cancel()                          { s.once.Do(func() { s.
 func (s *mergedStream) Result() (*adaptor.Result, error) { <-s.ready; return s.parent.Result() }
 
 func (s *mergedStream) pump(ctx context.Context, updates <-chan adaptor.SubagentUpdate) {
-	defer close(s.events)
+	defer func() { close(s.events) }()
 	defer s.cancel()
 	parent := s.parent.Events()
 	var queue, terminals []adaptor.Event
 	var seq uint64
 	var ready bool
 	cancelled := ctx.Done()
+	subscribe := s.subscribe
+	var subscribed bool
 	stamp := func(event adaptor.Event) adaptor.Event {
 		meta := event.Meta()
 		if meta.Source == nil && meta.RunID != "" {
@@ -82,7 +97,21 @@ func (s *mergedStream) pump(ctx context.Context, updates <-chan adaptor.Subagent
 			for _, e := range terminals {
 				enqueue(e)
 			}
+			s.mu.Lock()
+			subscribed = s.subscribed
+			if !subscribed {
+				// No public channel has escaped. Preserve the complete tail in
+				// a closed buffer, as core does for an unsubscribed stream.
+				s.events = make(chan adaptor.Event, len(queue))
+				for _, event := range queue {
+					s.events <- event
+				}
+			}
+			s.mu.Unlock()
 			close(s.ready)
+			if !subscribed {
+				return
+			}
 			ready = true
 		}
 		if ready && len(queue) == 0 {
@@ -90,11 +119,14 @@ func (s *mergedStream) pump(ctx context.Context, updates <-chan adaptor.Subagent
 		}
 		var out chan adaptor.Event
 		var next adaptor.Event
-		if len(queue) > 0 {
+		if subscribed && len(queue) > 0 {
 			out = s.events
 			next = queue[0]
 		}
 		select {
+		case <-subscribe:
+			subscribe = nil
+			subscribed = true
 		case <-cancelled:
 			s.Cancel()
 			cancelled = nil

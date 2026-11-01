@@ -368,3 +368,46 @@ func TestTaskSendRejectsBusyScope(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestCancelledTaskNotesSurviveAnotherTasksWake(t *testing.T) {
+	ctx := testContext(t)
+	leader := adaptor.New(&fakeDriver{run: func(context.Context, driver.Request, driver.EventSink) (driver.Response, error) {
+		return answer("leader", 1), nil
+	}})
+	team := fixture(t, Config{Leader: leader})
+	store := NewMemoryStore()
+	lease, err := store.AcquireScope(ctx, "notes", "owner", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := store.SaveTask(ctx, lease, Task{Scope: lease.Scope, ID: "a", Member: "worker", State: Queued})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record.State = Running
+	record, err = store.SaveTask(ctx, lease, record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := &taskRun{record: record, leaderCancelled: true, active: true}
+	run := &execution{team: team, store: store, ctx: ctx, lease: lease, scope: "notes", log: newEventLog("run", lease.Scope, false), tasks: map[string]*taskRun{"a": task}}
+	note := InboxMessage{Scope: "notes", ID: "note", Task: "a", Text: "unread progress", From: adaptor.Author{Kind: adaptor.AuthorAgent, ID: "worker"}}
+	if err := store.PutMessage(ctx, lease, note); err != nil {
+		t.Fatal(err)
+	}
+	// A is shutting down after team_cancel. Another task's completion invokes
+	// this same flush before A's childEnd has collected its unread notes.
+	run.flushNotifications()
+	if run.fatal != nil {
+		t.Fatal(run.fatal)
+	}
+	tasks, err := store.Tasks(ctx, lease.Scope)
+	if err != nil || len(tasks) != 1 || len(tasks[0].Unread) != 1 || tasks[0].Unread[0] != note.Text {
+		t.Fatalf("suppressed note was not durably retained: tasks=%+v err=%v", tasks, err)
+	}
+	run.collectUnread(task)
+	run.collectUnread(task)
+	if len(task.record.Unread) != 1 || task.record.Unread[0] != note.Text {
+		t.Fatalf("leader-cancelled task's undelivered note vanished: Unread=%q", task.record.Unread)
+	}
+}

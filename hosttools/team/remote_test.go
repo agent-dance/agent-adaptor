@@ -326,3 +326,69 @@ func TestRemoteInputRequiredUsesRemotePolicy(t *testing.T) {
 		})
 	}
 }
+
+func TestRemoteWorkingClearsWaitingApproval(t *testing.T) {
+	ctx := testContext(t)
+	leader := adaptor.New(&fakeDriver{run: func(context.Context, driver.Request, driver.EventSink) (driver.Response, error) {
+		return answer("leader", 1), nil
+	}})
+	team := fixture(t, Config{Leader: leader})
+	store := NewMemoryStore()
+	lease, err := store.AcquireScope(ctx, "remote-state", "owner", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := store.SaveTask(ctx, lease, Task{Scope: lease.Scope, ID: "remote", Member: "remote", State: Queued})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record.State = Running
+	record, err = store.SaveTask(ctx, lease, record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := &execution{team: team, store: store, ctx: ctx, lease: lease, scope: lease.Scope, log: newEventLog("run", lease.Scope, false), tasks: map[string]*taskRun{"remote": {record: record, active: true}}}
+	// remoteRun.execute reports normalized waiting_approval for input-required,
+	// then reports the observed A2A working state once remote input is supplied.
+	run.onEvent(childEvent{task: "remote", event: adaptor.SubagentUpdate{Kind: adaptor.SubagentState, State: string(WaitingApproval)}})
+	if got := run.tasks["remote"].record.State; got != WaitingApproval {
+		t.Fatalf("remote input requirement was not recorded: %s", got)
+	}
+	run.onEvent(childEvent{task: "remote", event: adaptor.SubagentUpdate{Kind: adaptor.SubagentState, State: string(clienta2a.TaskStateWorking)}})
+	if got := run.tasks["remote"].record.State; got != Running {
+		t.Fatalf("remote resumed working but team_status and TaskStore remain %s", got)
+	}
+	if run.fatal != nil {
+		t.Fatal(run.fatal)
+	}
+	tasks, err := store.Tasks(ctx, lease.Scope)
+	if err != nil || len(tasks) != 1 || tasks[0].State != Running {
+		t.Fatalf("resumed remote state was not persisted: tasks=%+v err=%v", tasks, err)
+	}
+	reply := make(chan toolResponse, 1)
+	grant := capability{Actor: "leader", token: "remote-state-status", run: run}
+	team.grantsMu.Lock()
+	team.grants[grant.token] = grant
+	team.grantsMu.Unlock()
+	run.handleTool(toolCommand{ctx: ctx, grant: grant, name: "status", arguments: json.RawMessage(`{}`), reply: reply})
+	status := <-reply
+	if status.code != "" {
+		t.Fatalf("team_status failed: %+v", status)
+	}
+	if tasks := status.value.(map[string]any)["tasks"].([]map[string]any); len(tasks) != 1 || tasks[0]["state"] != Running {
+		t.Fatalf("team_status retained stale remote state: %+v", tasks)
+	}
+	run.log.finish()
+	resumed := false
+	for event := range run.log.events() {
+		if update, ok := event.(adaptor.SubagentUpdate); ok && update.Data["nested_state"] == string(clienta2a.TaskStateWorking) {
+			resumed = true
+			if update.State != string(Running) || update.Task != "remote" || update.Member != "remote" {
+				t.Fatalf("forwarded remote event retained stale state: %+v", update)
+			}
+		}
+	}
+	if !resumed {
+		t.Fatal("missing forwarded remote working event")
+	}
+}

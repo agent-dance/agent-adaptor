@@ -12,6 +12,7 @@ import (
 type standbyMessage struct {
 	text    string
 	options []adaptor.CallOption
+	order   uint64
 }
 
 type standby struct {
@@ -33,6 +34,9 @@ type standby struct {
 	subscribed    chan struct{}
 	subscribeOnce sync.Once
 	senders       sync.WaitGroup
+	forwardTail   <-chan struct{}
+	admissions    uint64
+	admission     chan struct{}
 	generation    uint64
 	cancelling    bool
 	ready         chan struct{}
@@ -42,7 +46,10 @@ type standby struct {
 // Standby gets or creates the process-local standby for this scope. Its first
 // context owns the lifetime. Cancel affects only the current execution and
 // pending messages; subsequent Send calls remain usable. Events are not
-// buffered until Events is first called.
+// buffered until Events is first called. Send contexts bound admission only;
+// successful inbox persistence admits an input, including supplements to a busy
+// execution. Admitted inputs belong to the standby lifetime. Later provider
+// admission failures are reported through MessageUpdate, not the Send return.
 func (thread *Thread) Standby(ctx context.Context) (adaptor.Standby, error) {
 	team := thread.team
 	team.mu.Lock()
@@ -90,6 +97,7 @@ func (thread *Thread) Standby(ctx context.Context) (adaptor.Standby, error) {
 	}
 	lifetime, cancel := context.WithCancel(ctx)
 	waiting := &standby{thread: thread, ctx: lifetime, cancel: cancel, wake: make(chan struct{}, 1), done: make(chan struct{}), log: newEventLog("", thread.scope, true), observed: make(map[string]bool), ready: make(chan struct{})}
+	waiting.admission = make(chan struct{}, 1)
 	team.standbys[thread.scope] = waiting
 	waiting.subscribed = make(chan struct{})
 	team.mu.Unlock()
@@ -166,47 +174,66 @@ func (waiting *standby) signal() {
 }
 
 func (waiting *standby) Send(ctx context.Context, text string, options ...adaptor.CallOption) error {
-	if err := ctx.Err(); err != nil {
-		return &adaptor.MessageError{Text: text, Reason: adaptor.MessageCancelled, Err: err}
-	}
 	if adaptor.MessageAttributes(options...).ID == "" {
 		options = append(append([]adaptor.CallOption(nil), options...), adaptor.MessageID(randomID()))
 	}
-	messageOptions, onlyMessages := asMessageOptions(options)
+	attributes := adaptor.MessageAttributes(options...)
+	reject := func(err error) error {
+		reason := adaptor.MessageRunFailed
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			reason = adaptor.MessageCancelled
+		}
+		return &adaptor.MessageError{ID: adaptor.MessageAttributes(options...).ID, Text: text, Reason: reason, Err: err}
+	}
+	if err := ctx.Err(); err != nil {
+		return reject(err)
+	}
+	if attributes.Timing > adaptor.AfterTurn || attributes.From.Kind > adaptor.AuthorSystem {
+		return &adaptor.MessageError{ID: attributes.ID, Text: text, Reason: adaptor.MessageProviderRejected, Err: errors.New("team: invalid author or timing")}
+	}
+	// PutMessage may block while holding mu. Bound waiting for another
+	// admission by the caller's context before acquiring that mutex.
+	select {
+	case waiting.admission <- struct{}{}:
+		defer func() { <-waiting.admission }()
+	case <-ctx.Done():
+		return reject(ctx.Err())
+	case <-waiting.ctx.Done():
+		return reject(waiting.ctx.Err())
+	}
+	_, onlyMessages := asMessageOptions(options)
 	waiting.mu.Lock()
+	if err := ctx.Err(); err != nil {
+		waiting.mu.Unlock()
+		return reject(err)
+	}
 	if waiting.ctx.Err() != nil {
 		waiting.mu.Unlock()
-		return &adaptor.MessageError{Text: text, Reason: adaptor.MessageCancelled, Err: waiting.ctx.Err()}
+		return reject(waiting.ctx.Err())
 	}
 	current := waiting.current
 	if current == nil || waiting.cancelling || !onlyMessages || len(waiting.queue) > 0 {
 		if err := waiting.persistQueued(ctx, text, options); err != nil {
 			waiting.mu.Unlock()
-			return err
+			return reject(err)
 		}
-		waiting.queue = append(waiting.queue, standbyMessage{text: text, options: append([]adaptor.CallOption(nil), options...)})
+		waiting.admissions++
+		waiting.queue = append(waiting.queue, standbyMessage{text: text, options: append([]adaptor.CallOption(nil), options...), order: waiting.admissions})
 		waiting.mu.Unlock()
 		waiting.signal()
 		return nil
 	}
+	if err := waiting.persistQueued(ctx, text, options); err != nil {
+		waiting.mu.Unlock()
+		return reject(err)
+	}
+	// Persistence is the Standby's acceptance boundary. Forward under its
+	// lifetime so the request context cannot retract an already accepted input.
+	waiting.admissions++
+	message := standbyMessage{text: text, options: append([]adaptor.CallOption(nil), options...), order: waiting.admissions}
+	waiting.forwardLocked(current, []standbyMessage{message}, waiting.generation)
 	waiting.mu.Unlock()
-	err := current.Send(ctx, text, messageOptions...)
-	if errors.Is(err, adaptor.ErrRunFinished) {
-		waiting.mu.Lock()
-		if waiting.ctx.Err() != nil {
-			waiting.mu.Unlock()
-			return &adaptor.MessageError{Text: text, Reason: adaptor.MessageCancelled, Err: waiting.ctx.Err()}
-		}
-		if err := waiting.persistQueued(ctx, text, options); err != nil {
-			waiting.mu.Unlock()
-			return err
-		}
-		waiting.queue = append(waiting.queue, standbyMessage{text: text, options: append([]adaptor.CallOption(nil), options...)})
-		waiting.mu.Unlock()
-		waiting.signal()
-		return nil
-	}
-	return err
+	return nil
 }
 
 func (waiting *standby) Cancel() {
@@ -226,6 +253,10 @@ func (waiting *standby) Cancel() {
 }
 
 func (waiting *standby) failQueued(messages []standbyMessage) {
+	waiting.failQueuedWithReason(messages, adaptor.MessageCancelled)
+}
+
+func (waiting *standby) failQueuedWithReason(messages []standbyMessage, reason adaptor.MessageFailure) {
 	waiting.mu.Lock()
 	lease := waiting.lease
 	waiting.mu.Unlock()
@@ -235,28 +266,33 @@ func (waiting *standby) failQueued(messages []standbyMessage) {
 	for _, message := range messages {
 		ids[adaptor.MessageAttributes(message.options...).ID] = true
 		if e := waiting.thread.team.config.Store.PutMessage(ctx, lease, hostRecord(waiting.thread.scope, message.text, message.options)); e != nil {
-			waiting.log.push(adaptor.Notice{Kind: "team.inbox_failed", Text: "Cannot activate cancelled message."})
+			waiting.log.push(adaptor.Notice{Kind: "team.inbox_failed", Text: "Cannot activate queued message for settlement."})
 		}
 	}
 	claimed, err := waiting.thread.team.config.Store.ClaimMessages(ctx, lease, true, scopeTTL)
 	for _, item := range claimed {
 		if ids[item.ID] {
-			err = errors.Join(err, waiting.thread.team.config.Store.FinishMessage(ctx, lease, item.ID, item.ClaimToken, DeliveryFailed, "cancelled"))
+			err = errors.Join(err, waiting.thread.team.config.Store.FinishMessage(ctx, lease, item.ID, item.ClaimToken, DeliveryFailed, string(reason)))
 		} else {
 			err = errors.Join(err, waiting.thread.team.config.Store.RequeueMessage(ctx, lease, item.ID, item.ClaimToken))
 		}
 	}
 	if err != nil {
-		waiting.log.push(adaptor.Notice{Kind: "team.inbox_failed", Text: "Could not persist queued message cancellation."})
+		waiting.log.push(adaptor.Notice{Kind: "team.inbox_failed", Text: "Could not persist queued message failure."})
 	}
 	for _, message := range messages {
-		waiting.log.push(adaptor.MessageUpdate{ID: adaptor.MessageAttributes(message.options...).ID, State: adaptor.MessageFailed, Text: message.text, Reason: adaptor.MessageCancelled})
+		attributes := adaptor.MessageAttributes(message.options...)
+		waiting.log.push(adaptor.MessageUpdate{ID: attributes.ID, State: adaptor.MessageFailed, Text: message.text, Reason: reason})
 	}
 }
 
 func (waiting *standby) loop() {
 	defer func() {
 		waiting.cancel()
+		// Admissions register forwarding work while holding mu. Fence them
+		// before Wait; later Send calls observe the cancelled lifetime.
+		waiting.mu.Lock()
+		waiting.mu.Unlock()
 		waiting.senders.Wait()
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		waiting.mu.Lock()
@@ -306,6 +342,9 @@ func (waiting *standby) loop() {
 				waiting.queue = waiting.queue[1:]
 			}
 		}
+		if len(supplements) > 0 {
+			waiting.forwardLocked(current, supplements, generation)
+		}
 		waiting.mu.Unlock()
 		if current == nil {
 			if waiting.ctx.Err() != nil {
@@ -319,9 +358,6 @@ func (waiting *standby) loop() {
 			case <-waiting.wake:
 			}
 			continue
-		}
-		if len(supplements) > 0 {
-			waiting.senders.Go(func() { waiting.supplement(current, supplements, generation) })
 		}
 		stopCancellation := context.AfterFunc(waiting.ctx, current.Cancel)
 		ready := make(chan struct{})
@@ -366,7 +402,14 @@ func (waiting *standby) loop() {
 		} else if runErr == nil {
 			waiting.retries = 0
 		}
+		// No later Send can target this completed stream after current was
+		// cleared under mu. Let all earlier transfers requeue before starting
+		// a later execution-option input.
+		transferred := waiting.forwardTail
 		waiting.mu.Unlock()
+		if transferred != nil {
+			<-transferred
+		}
 		if waiting.ctx.Err() != nil {
 			waiting.Cancel()
 			return
@@ -384,6 +427,23 @@ func (waiting *standby) loop() {
 	}
 }
 
+// forwardLocked preserves admission order across asynchronous transfers. The
+// caller holds mu, which also fences sender registration against shutdown.
+func (waiting *standby) forwardLocked(stream adaptor.Stream, messages []standbyMessage, generation uint64) {
+	previous := waiting.forwardTail
+	finished := make(chan struct{})
+	waiting.forwardTail = finished
+	waiting.senders.Add(1)
+	go func() {
+		defer waiting.senders.Done()
+		defer close(finished)
+		if previous != nil {
+			<-previous
+		}
+		waiting.supplement(stream, messages, generation)
+	}()
+}
+
 func (waiting *standby) supplement(stream adaptor.Stream, messages []standbyMessage, generation uint64) {
 	for index, message := range messages {
 		waiting.mu.Lock()
@@ -399,7 +459,13 @@ func (waiting *standby) supplement(stream adaptor.Stream, messages []standbyMess
 			waiting.mu.Lock()
 			valid := waiting.generation == generation
 			if valid {
-				waiting.queue = append(waiting.queue, message)
+				index := len(waiting.queue)
+				for index > 0 && waiting.queue[index-1].order > message.order {
+					index--
+				}
+				waiting.queue = append(waiting.queue, standbyMessage{})
+				copy(waiting.queue[index+1:], waiting.queue[index:])
+				waiting.queue[index] = message
 			}
 			waiting.mu.Unlock()
 			if !valid {
@@ -407,7 +473,14 @@ func (waiting *standby) supplement(stream adaptor.Stream, messages []standbyMess
 			}
 			waiting.signal()
 		} else if err != nil {
-			waiting.log.push(adaptor.MessageUpdate{ID: adaptor.MessageAttributes(message.options...).ID, State: adaptor.MessageFailed, Text: message.text, Reason: adaptor.MessageCancelled})
+			reason := adaptor.MessageProviderRejected
+			var rejected *adaptor.MessageError
+			if errors.As(err, &rejected) && rejected.Reason != "" {
+				reason = rejected.Reason
+			} else if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				reason = adaptor.MessageCancelled
+			}
+			waiting.failQueuedWithReason([]standbyMessage{message}, reason)
 		}
 	}
 }
@@ -415,5 +488,9 @@ func (waiting *standby) supplement(stream adaptor.Stream, messages []standbyMess
 func (waiting *standby) persistQueued(ctx context.Context, text string, options []adaptor.CallOption) error {
 	message := hostRecord(waiting.thread.scope, text, options)
 	message.Deferred = true
-	return waiting.thread.team.config.Store.PutMessage(ctx, waiting.lease, message)
+	admission, cancel := context.WithCancel(ctx)
+	stop := context.AfterFunc(waiting.ctx, cancel)
+	defer stop()
+	defer cancel()
+	return waiting.thread.team.config.Store.PutMessage(admission, waiting.lease, message)
 }
