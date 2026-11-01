@@ -445,7 +445,7 @@ type MessagePolicy struct {
 上限按统一规则处理：
 
 - 达到 80% 时：发出 `Notice{limit.approaching}`，并以 `AuthorSystem` 向 agent 注入一条"即将达到上限，请开始收尾"。
-- 达到 100% 时：不再开始新的轮次，当前轮完成后执行结束。待处理的消息以 `limit_exceeded` 失败并交还原文。单 Agent 正常结束并将未处理输入列在 Undelivered；当前根 API 没有 ReasonLimitExceeded。团队上限由 §7.9 单独核对，不能把设计中的错误常量写成已导出 API。
+- 达到 100% 时：不再开始新的轮次，当前轮完成后执行结束。待处理的消息以 `limit_exceeded` 失败并交还原文。单 Agent 正常结束并将未处理输入列在 Undelivered。根 API 的 `ReasonLimitExceeded` 用于团队上限中止未完成工作（§7.9），单 Agent 达到 MaxTurns 不以错误结束。
 
 单 Agent 适用 `MessagePolicy.MaxTurns`；团队适用 §7.9 的上限。
 
@@ -1124,8 +1124,8 @@ for ev := range s.Events() {
 - Claude/CodeBuddy 的未验证能力、Cursor Windows 均已保守裁决，不是悬而未决的
   成功承诺。Claude 注册拒绝/超时明确降级；Cursor dynamic relay 失败在 Run 内
   Notice，不伪称 resolver/Inspect 完成了 probe。
-- MinVersion 没有自动版本裁剪；Retention、OnRestart、ResumeTolerant、
-  ReasonLimitExceeded 均不在根 API golden。单 Agent 达 MaxTurns 正常结束并在
+- MinVersion 没有自动版本裁剪；Retention、OnRestart、ResumeTolerant
+  均不在根 API golden（ReasonLimitExceeded 已随团队上限导出）。单 Agent 达 MaxTurns 正常结束并在
   Undelivered 返回剩余消息；不能把其他规划文档的 API 写成已落地。
 - Raw 完整保留，不默认截断；未读关键事件会持有结果。持久回执不保证关闭
   provider 接受与 receipt 落盘之间的崩溃窗口，§5.2 的去重承诺据此收窄。
