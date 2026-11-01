@@ -935,11 +935,12 @@ func transcriptForCompletedItem(item *ThreadItem) *driver.TranscriptItem {
 		}
 	case ThreadItemMcpToolCall:
 		if item.McpToolCall != nil {
+			toolError := decodeJSONValue(item.McpToolCall.Error)
 			return &driver.TranscriptItem{
 				Kind:      driver.TranscriptToolResult,
 				ToolUseID: item.ID,
-				IsError:   len(item.McpToolCall.Error) > 0 || item.McpToolCall.Status == "failed",
-				Data:      map[string]any{"result": decodeJSONValue(item.McpToolCall.Result), "error": decodeJSONValue(item.McpToolCall.Error)},
+				IsError:   toolError != nil || item.McpToolCall.Status == "failed",
+				Data:      map[string]any{"result": decodeJSONValue(item.McpToolCall.Result), "error": toolError},
 			}
 		}
 	case ThreadItemWebSearch, ThreadItemDynamicToolCall:

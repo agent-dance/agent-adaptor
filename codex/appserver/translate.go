@@ -742,7 +742,7 @@ func toolResultFromMcp(body *ThreadItemMcpToolCallBody) map[string]any {
 	if len(body.Result) > 0 {
 		out["result"] = string(body.Result)
 	}
-	if len(body.Error) > 0 {
+	if decodeJSONValue(body.Error) != nil {
 		out["error"] = string(body.Error)
 	}
 	if body.DurationMs != nil {
