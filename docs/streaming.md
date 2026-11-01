@@ -224,7 +224,7 @@ Raw mode accepts:
 {"prompt":"Write a haiku","sessionKey":"conversation-42"}
 ```
 
-An Agent binds incoming session identities to named Threads automatically: AG-UI IDs use collision-free tuple encoding; Raw sessionKey remains verbatim. A host-pinned Thread stays pinned. The handler is a task-mode endpoint; it does not automatically open Standby or accept supplemental messages for a running Stream. Hosts implement those routes and retain the live handle.
+An Agent binds incoming session identities to named Threads automatically: AG-UI IDs use collision-free tuple encoding; Raw sessionKey remains verbatim. A host-pinned Thread stays pinned. The handler is a task-mode endpoint; it does not automatically open Standby or accept supplemental messages for a running Stream. Hosts add those routes themselves — `agui.RunRegistry` (below) routes AG-UI input that arrives during a run to that run's `Stream.Send`.
 
 Client disconnection cancels request-bound work. Raw message/turn frames are `message.update` and `turn.end`; its final run frame is derived from Result after draining rather than a literal Go Done event. Raw sequence cursors/Last-Event-ID do not provide persistent replay. SSE carries approval information outward; a callback or authenticated companion route must hold and answer the live responder.
 

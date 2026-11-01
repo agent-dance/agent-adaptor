@@ -534,7 +534,8 @@ type MessageCapability struct {
 	MinVersion        string
 }
 
-// Descriptor.Messages 是静态声明；当前 Environment 不探测最低 CLI 版本。
+// Descriptor.Messages 是静态上限；内置 Driver 探测本机 CLI 版本，Inspect().Environment.Messages
+// 报告裁剪后的有效能力（已知低于 MinVersion 时去掉中途边界，未知时保留并给出 warn 检查）。
 // 可选 MessageCapabilityResolver.ResolveMessageCapability(Request) MessageCapability
 // 在最终 Request 解析后调用一次；结果不得超出 Descriptor，且必须与实际 transport 一致。
 
