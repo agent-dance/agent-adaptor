@@ -681,32 +681,21 @@ func mergeExecutionResult(total, call *Result, h *messageHub, before int) *Resul
 	if total == nil {
 		total = &Result{RunID: call.RunID}
 	}
-	total.Text = call.Text
-	total.Summary = call.Summary
-	total.Model = call.Model
-	total.Provider = call.Provider
-	total.Metadata = maps.Clone(call.Metadata)
-	total.structured = cloneStructuredOutput(call.structured)
-	total.raw.Stdout += call.raw.Stdout
-	total.raw.Stderr += call.raw.Stderr
-	if call.raw.Terminal != nil {
-		total.raw.Terminal = cloneTerminalPayload(call.raw.Terminal)
-	}
-	total.transcript = append(total.transcript, cloneTranscript(call.transcript)...)
-	total.services = append(total.services, cloneServiceReports(call.services)...)
 	h.mu.Lock()
 	var usage *Usage
 	for _, t := range h.turns[before:] {
 		usage = addUsage(usage, t.Usage)
 	}
-	total.Turns = len(h.turns)
+	part := *call
+	part.Turns = len(h.turns) - before
 	if len(h.turns) > before {
-		total.Text = h.turns[len(h.turns)-1].Text
+		part.Text = h.turns[len(h.turns)-1].Text
 	}
 	h.mu.Unlock()
 	if usage == nil {
 		usage = call.Usage
 	}
-	total.Usage = addUsage(total.Usage, usage)
+	part.Usage = usage
+	appendResult(total, &part)
 	return total
 }

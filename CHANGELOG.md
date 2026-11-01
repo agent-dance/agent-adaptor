@@ -4,6 +4,27 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Breaking changes (v2)
+
+- Replace `hosttools/a2adelegation` with `hosttools/team`: asynchronous tasks,
+  four fixed tools, local/remote members, one listener and one Event stream.
+- `team.Thread.Send` rejects an active task or live standby with
+  `adaptor.ErrThreadBusy`; supplements use Stream.Send or Standby.Send.
+- `bridges/subagentstream.Merge` accepts typed SubagentUpdate values instead
+  of a delegation bus. Project provides the typed wire envelope.
+
+### Added
+
+- ComposeResults shares core aggregation with composite Runners; message
+  attributes can be inspected without losing caller IDs. CapMessageTurns
+  enforces remaining budgets without replacing other execution policy.
+- ReasonLimitExceeded classifies unfinished work aborted by a team limit.
+- TaskStore fencing, crash recovery, durable fork lineage and teamstoretest
+  conformance; terminal history and PerScope conversations branch with Fork.
+- Remote A2A tasks retain authentication policy, same-task message delivery,
+  input-required state and a two-minute disconnected observation deadline.
+
+
 ## [1.1.2] - 2026-08-07
 
 ### Added

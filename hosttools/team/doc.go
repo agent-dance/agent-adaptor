@@ -13,9 +13,7 @@
 // conversations serialize writers even when MaxActive is greater than one.
 // Durable task storage does not replace the host's Agent Thread stores.
 //
-// Text, Usage, Turns and Subagents describe the complete composite execution.
-// The root Result API does not expose an audit/message composition hook:
-// opaque Raw, Transcript, Services and Messages layers retain the final leader
-// execution's values. Preserve TurnEnd results and TaskStore task results for
-// the other audits. A team.audit_scope notice makes this boundary explicit.
+// Results include every leader execution's audit layers in order. Usage also
+// includes all workers; Subagents contains their task summaries. Worker full
+// results remain available in TaskStore.
 package team

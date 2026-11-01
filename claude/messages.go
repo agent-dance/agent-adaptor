@@ -15,6 +15,10 @@ import (
 
 const messageInitializeID = "agent-adaptor-messages-initialize"
 
+// Hooks are optional: after ten seconds, keep stdin's ordinary user/HITL
+// transport and let core deliver pending messages through checkpoint resume.
+const messageInitializeTimeout = 10 * time.Second
+
 var messageHooks = []struct{ event, mechanism string }{
 	{"UserPromptSubmit", "user_prompt_submit"},
 	{"PreToolUse", "pre_tool_use"},
@@ -74,11 +78,13 @@ type messageSession struct {
 	open        bool // accessed only by the parser and after its reader has joined
 	wake        chan struct{}
 	done        chan struct{}
-	initialized chan error
+	initialized chan struct{}
+	hooksErr    error // guarded by mu; immutable after initialized closes
+	hooksReady  bool  // guarded by mu
 }
 
 func newMessageSession(ctx context.Context, port driver.MessagePort) *messageSession {
-	return &messageSession{ctx: ctx, port: port, wake: make(chan struct{}, 1), done: make(chan struct{}), initialized: make(chan error, 1)}
+	return &messageSession{ctx: ctx, port: port, wake: make(chan struct{}, 1), done: make(chan struct{}), initialized: make(chan struct{})}
 }
 
 func messageFrame(v any) []byte {
@@ -225,11 +231,26 @@ func (s *messageSession) handleResponse(payload map[string]any) bool {
 	if claudeTopLevelString(response, "subtype") != "success" {
 		err = fmt.Errorf("claude hooks initialization rejected: %s", claudeTopLevelString(response, "error"))
 	}
-	select {
-	case s.initialized <- err:
-	default:
-	}
+	s.resolveInitialization(err)
 	return true
+}
+
+// The parser resolves successful registration before it can see any callbacks.
+// Timeout and late responses race under mu; the first resolution is final for
+// this process, so a late success cannot reopen a degraded delivery window.
+func (s *messageSession) resolveInitialization(err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.hooksReady {
+		s.hooksReady, s.hooksErr = true, err
+		close(s.initialized)
+	}
+}
+
+func (s *messageSession) hooksEnabled() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.hooksReady && s.hooksErr == nil
 }
 
 func (p *claudeParser) prepareMessageHook(payload map[string]any) bool {
@@ -249,7 +270,7 @@ func (p *claudeParser) prepareMessageHook(payload map[string]any) bool {
 	}
 	output := map[string]any{}
 	var items []driver.MessageItem
-	if mechanism != "" && claudeExactString(input, "agent_id") == "" &&
+	if mechanism != "" && s.hooksEnabled() && claudeExactString(input, "agent_id") == "" &&
 		claudeExactString(payload, "parent_tool_use_id") == "" && s.ctx.Err() == nil {
 		p.turnComplete = false
 		s.window(true)
@@ -302,20 +323,32 @@ func (p *claudeParser) emitTurnCompleted(text string, usage *driver.Usage) {
 	p.turnIndex++
 }
 
-func (s *messageSession) initialize(readerDone <-chan struct{}) error {
+// initialize returns an optional hook-unavailability reason separately from
+// fatal transport/cancellation errors. Only the latter may fail the run.
+func (s *messageSession) initialize(readerDone <-chan struct{}) (unavailable, fatal error) {
 	if err := s.write(messageInitializeFrame()); err != nil {
-		return err
+		return nil, err
 	}
-	timer := time.NewTimer(60 * time.Second)
+	timer := time.NewTimer(messageInitializeTimeout)
 	defer timer.Stop()
 	select {
-	case err := <-s.initialized:
-		return err
+	case <-s.initialized:
 	case <-readerDone:
-		return errors.New("claude process exited during hooks initialization")
+		return nil, errors.New("claude process exited during hooks initialization")
 	case <-s.ctx.Done():
-		return s.ctx.Err()
+		return nil, s.ctx.Err()
 	case <-timer.C:
-		return errors.New("claude hooks initialization timed out")
+		s.resolveInitialization(fmt.Errorf("claude hooks initialization timed out after %s", messageInitializeTimeout))
 	}
+	if err := s.ctx.Err(); err != nil {
+		return nil, err
+	}
+	select {
+	case <-readerDone:
+		return nil, errors.New("claude process exited during hooks initialization")
+	default:
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.hooksErr, nil
 }

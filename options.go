@@ -690,3 +690,21 @@ func WithRunServices(providers ...RunServiceProvider) SharedOption {
 		}
 	})
 }
+
+// CapMessageTurns lowers the resolved turn budget without replacing other
+// policy fields. Composite runners apply this after caller options to enforce
+// their remaining budget. Nonpositive values panic as a programming error.
+func (s *RunSettings) CapMessageTurns(remaining int) {
+	if remaining <= 0 {
+		panic("adaptor: turn budget must be positive")
+	}
+	p := Policy{}
+	if s.policy != nil {
+		p = *s.policy
+	}
+	if p.Messages.MaxTurns == 0 {
+		p.Messages.MaxTurns = 20
+	}
+	p.Messages.MaxTurns = min(p.Messages.MaxTurns, remaining)
+	s.policy = &p
+}

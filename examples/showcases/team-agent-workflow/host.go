@@ -3,8 +3,7 @@
 // protocol text handed to the leader.
 //
 // None of this touches the SDK on purpose. It is here to keep main.go about
-// the three SDK constructions that matter (Agent, delegation.Service,
-// team.Option) and to make the point that everything below is host business
+// the SDK constructions that matter (Agent and team.Team) and to make the point that everything below is host business
 // the SDK deliberately does not model.
 package main
 
@@ -201,18 +200,18 @@ func diffKeys(before, after map[string]string) []string {
 
 // leaderProtocol is the whole orchestration instruction. Note what it does not
 // contain: no endpoint, no token, no tool schema, no timeout plumbing. The
-// leader discovers delegate_to_agent through the MCP sidecar that team.Option()
+// leader discovers team_delegate through the MCP sidecar that team.New
 // declared, and the Service enforces the budget on its side.
 func leaderProtocol(roleTimeout time.Duration) string {
 	return fmt.Sprintf(`You lead a three-agent team through one task. You must not create, modify or
 delete any file yourself: your only way to change the workspace is the %s tool.
 
 Read %s in your working directory, then delegate three times, in this order,
-waiting for each result before the next:
+ending your turn after each delegation; the task completion wakes you for the next stage:
 
-1. %s(agent="plan", objective="<the task, restated, plus: return the structured %s file artifact>")
-2. %s(agent="impl", objective="<the complete %s artifact from step 1, verbatim, plus the task>")
-3. %s(agent="review", objective="<the task plus what impl reported>")
+1. %s(member="plan", objective="<the task, restated, plus: return the structured %s file artifact>")
+2. %s(member="impl", objective="<the complete %s artifact from step 1, verbatim, plus the task>")
+3. %s(member="review", objective="<the task plus what impl reported>")
 
 Each delegation may take up to %s. Do not delegate to the same agent twice and
 do not invent other agent names.

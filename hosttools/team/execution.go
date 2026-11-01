@@ -16,49 +16,49 @@ import (
 const scopeTTL = 30 * time.Second
 
 type execution struct {
-	team             *Team
-	scope            string
-	id               string
-	ctx              context.Context
-	cancel           context.CancelFunc
-	commands         chan any
-	done             chan struct{}
-	subscribed       chan struct{}
-	subscribeOnce    sync.Once
-	log              *eventLog
-	store            TaskStore
-	lease            ScopeLease
-	sharedLease      bool
-	tasks            map[string]*taskRun
-	order            []string
-	leader           adaptor.Stream
-	leaderOptions    []adaptor.CallOption
-	leaderBase       int
-	leaderExecutions int
-	turns            int
-	taskCount        int
-	active           int
-	total            *adaptor.Usage
-	last             *adaptor.Result
-	result           *adaptor.Result
-	err              error
-	fatal            error
-	hard             bool
-	stopping         bool
-	warned           map[string]bool
-	senders          map[string]int
-	agentMessages    int
-	inflight         map[string]InboxMessage
-	batches          map[string][]InboxMessage
-	sendTails        map[string]<-chan struct{}
-	snapshots        []chan []adaptor.SubagentResult
-	leaderErr        error
-	barriers         map[string]*runAttachment
-	deliveries       int
-	wake             *wakeTimer
-	wakeAt           time.Time
-	retryAt          time.Time
-	retries          int
+	team          *Team
+	scope         string
+	id            string
+	ctx           context.Context
+	cancel        context.CancelFunc
+	commands      chan any
+	done          chan struct{}
+	subscribed    chan struct{}
+	subscribeOnce sync.Once
+	log           *eventLog
+	store         TaskStore
+	lease         ScopeLease
+	sharedLease   bool
+	tasks         map[string]*taskRun
+	order         []string
+	leader        adaptor.Stream
+	leaderOptions []adaptor.CallOption
+	leaderBase    int
+	turns         int
+	taskCount     int
+	active        int
+	total         *adaptor.Usage
+	parts         []*adaptor.Result
+	reported      map[string]bool
+	result        *adaptor.Result
+	err           error
+	fatal         error
+	hard          bool
+	stopping      bool
+	warned        map[string]bool
+	senders       map[string]int
+	agentMessages int
+	inflight      map[string]InboxMessage
+	batches       map[string][]InboxMessage
+	sendTails     map[string]<-chan struct{}
+	snapshots     []chan []adaptor.SubagentResult
+	leaderErr     error
+	barriers      map[string]*runAttachment
+	deliveries    int
+	wake          *wakeTimer
+	wakeAt        time.Time
+	retryAt       time.Time
+	retries       int
 }
 
 type taskRun struct {
@@ -137,23 +137,28 @@ func (run *execution) RunID() string                    { return run.id }
 func (run *execution) Cancel()                          { run.cancel() }
 func (run *execution) Result() (*adaptor.Result, error) { <-run.done; return run.result, run.err }
 func (run *execution) Send(ctx context.Context, text string, opts ...adaptor.MessageOption) error {
+	attributes := messageAttributes(opts)
+	if attributes.ID == "" {
+		attributes.ID = randomID()
+		opts = append(append([]adaptor.MessageOption(nil), opts...), adaptor.MessageID(attributes.ID))
+	}
 	if err := ctx.Err(); err != nil {
-		return &adaptor.MessageError{Text: text, Reason: adaptor.MessageCancelled, Err: err}
+		return &adaptor.MessageError{ID: attributes.ID, Text: text, Reason: adaptor.MessageCancelled, Err: err}
 	}
 	reply := make(chan error, 1)
 	admission := &messageAdmission{reply: reply}
 	stop := context.AfterFunc(ctx, func() {
 		admission.mu.Lock()
-		admission.completeLocked(&adaptor.MessageError{Text: text, Reason: adaptor.MessageCancelled, Err: ctx.Err()})
+		admission.completeLocked(&adaptor.MessageError{ID: attributes.ID, Text: text, Reason: adaptor.MessageCancelled, Err: ctx.Err()})
 		admission.mu.Unlock()
 	})
 	defer stop()
 	message := hostMessage{ctx: ctx, text: text, opts: append([]adaptor.MessageOption(nil), opts...), reply: reply, admission: admission}
 	select {
 	case <-run.done:
-		return &adaptor.MessageError{Text: text, Reason: adaptor.MessageRunFailed, Err: adaptor.ErrRunFinished}
+		return &adaptor.MessageError{ID: attributes.ID, Text: text, Reason: adaptor.MessageRunFailed, Err: adaptor.ErrRunFinished}
 	case <-ctx.Done():
-		return &adaptor.MessageError{Text: text, Reason: adaptor.MessageCancelled, Err: ctx.Err()}
+		return &adaptor.MessageError{ID: attributes.ID, Text: text, Reason: adaptor.MessageCancelled, Err: ctx.Err()}
 	case run.commands <- message:
 	}
 	select {
@@ -164,7 +169,7 @@ func (run *execution) Send(ctx context.Context, text string, opts ...adaptor.Mes
 		case err := <-reply:
 			return err
 		default:
-			return &adaptor.MessageError{Text: text, Reason: adaptor.MessageRunFailed, Err: adaptor.ErrRunFinished}
+			return &adaptor.MessageError{ID: attributes.ID, Text: text, Reason: adaptor.MessageRunFailed, Err: adaptor.ErrRunFinished}
 		}
 	}
 }
@@ -229,7 +234,16 @@ func (run *execution) execute(text string, options []adaptor.CallOption) {
 		}
 	}
 	run.batches = make(map[string][]InboxMessage)
-	run.startLeader(text, options)
+	message, err := run.admitHost(run.ctx, text, options)
+	if err != nil {
+		run.finish(err)
+		return
+	}
+	if message != nil {
+		options = append(options, adaptor.MessageID(message.ID))
+		run.inflight[message.ID] = *message
+		run.startLeader(text, options)
+	}
 	renew := time.NewTicker(scopeTTL / 3)
 	defer renew.Stop()
 	contextDone := run.ctx.Done()
@@ -246,7 +260,7 @@ func (run *execution) execute(text string, options []adaptor.CallOption) {
 			}
 			pending := false
 			for _, message := range messages {
-				if message.Wake && (message.State == Pending || message.State == Delivering) {
+				if !message.Deferred && message.Wake && (message.State == Pending || message.State == Delivering) {
 					pending = true
 					break
 				}
@@ -342,6 +356,18 @@ func (run *execution) handle(command any) {
 			typed.admission.mu.Unlock()
 			return
 		}
+		calls := make([]adaptor.CallOption, 0, len(typed.opts))
+		for _, opt := range typed.opts {
+			calls = append(calls, opt)
+		}
+		message, err := run.admitHost(typed.ctx, typed.text, calls)
+		if err != nil || message == nil {
+			typed.admission.completeLocked(err)
+			typed.admission.mu.Unlock()
+			return
+		}
+		typed.opts = append(typed.opts, adaptor.MessageID(message.ID))
+		run.inflight[message.ID] = *message
 		if run.leader == nil {
 			var options []adaptor.CallOption
 			options = append(options, run.leaderOptions...)
@@ -351,7 +377,7 @@ func (run *execution) handle(command any) {
 			run.startLeader(typed.text, options)
 			typed.admission.completeLocked(nil)
 		} else {
-			run.deliver(run.leader, typed.ctx, typed.text, typed.opts, sendEnd{reply: typed.reply, host: &typed})
+			run.deliver(run.leader, typed.ctx, typed.text, typed.opts, sendEnd{reply: typed.reply, host: &typed, inbox: []InboxMessage{*message}, batchID: message.ID})
 		}
 		typed.admission.mu.Unlock()
 	case childEvent:
@@ -389,10 +415,20 @@ func (run *execution) handle(command any) {
 				return
 			}
 		}
-		typed.reply <- run.subagents()
+		if typed.final {
+			typed.reply <- run.completedSubagents()
+		} else {
+			typed.reply <- run.subagents()
+		}
 	case sendEnd:
 		run.deliveries--
 		if typed.host != nil && errors.Is(typed.err, adaptor.ErrRunFinished) && !run.stopping && !run.hard {
+			for _, message := range typed.inbox {
+				if err := run.store.RequeueMessage(run.ctx, run.lease, message.ID, message.ClaimToken); err != nil {
+					run.abort(err)
+				}
+				delete(run.inflight, message.ID)
+			}
 			run.handle(*typed.host)
 			return
 		}
@@ -439,10 +475,6 @@ func (run *execution) startLeader(text string, options []adaptor.CallOption) {
 		return
 	}
 	run.leaderBase = run.turns
-	run.leaderExecutions++
-	if run.leaderExecutions == 2 {
-		run.log.push(adaptor.Notice{Kind: "team.audit_scope", Text: "Opaque Result audit and message layers describe the final leader execution. Retain TurnEnd results for earlier leader executions and TaskStore task results for worker audits."})
-	}
 	run.leaderErr = nil
 	attachment := &runAttachment{run: run, leader: true, marker: randomID(), finalizing: make(chan struct{}), barrier: make(chan struct{})}
 	if run.barriers == nil {
@@ -450,8 +482,13 @@ func (run *execution) startLeader(text string, options []adaptor.CallOption) {
 	}
 	run.barriers[attachment.marker] = attachment
 	opts := append([]adaptor.CallOption(nil), options...)
-	opts = append(opts, adaptor.WithRunServices(attachment))
-	stream := run.team.config.Leader.Thread(EncodeKey(run.scope, "leader")).Send(run.ctx, text, opts...)
+	opts = append(opts, adaptor.WithRunServices(attachment), turnBudget(run.team.config.Limits.MaxLeaderTurns-run.turns))
+	thread, err := run.leaderThread()
+	if err != nil {
+		run.abort(err)
+		return
+	}
+	stream := thread.Send(run.ctx, text, opts...)
 	run.leader = stream
 	go run.consume("", stream, attachment.finalizing)
 }
@@ -509,9 +546,6 @@ func (run *execution) onEvent(event childEvent) {
 					delete(run.warned, name)
 				}
 			}
-			if typed.Result != nil {
-				run.last = typed.Result
-			}
 			run.log.push(typed)
 			run.checkLimit("leader_turns", run.turns, run.team.config.Limits.MaxLeaderTurns)
 			return
@@ -527,6 +561,8 @@ func (run *execution) onEvent(event childEvent) {
 				for _, item := range messages {
 					if typed.State == adaptor.MessageDelivered {
 						run.finishMessage(item, Delivered, "")
+					} else if item.Host && typed.Mechanism == "" {
+						run.finishMessage(item, DeliveryFailed, string(typed.Reason))
 					} else if !run.stopping && !run.hard && run.ctx.Err() == nil {
 						if err := run.store.RequeueMessage(run.ctx, run.lease, item.ID, item.ClaimToken); err != nil {
 							run.abort(err)
@@ -568,6 +604,9 @@ func (run *execution) onEvent(event childEvent) {
 			run.updateTask(task, Running)
 		}
 	case adaptor.SubagentUpdate:
+		if typed.State == string(WaitingApproval) {
+			run.updateTask(task, WaitingApproval)
+		}
 		run.log.push(adaptor.SubagentUpdate{Member: task.record.Member, Task: task.record.ID, State: string(task.record.State), Kind: typed.Kind, Delta: typed.Delta, Summary: typed.Summary, Data: map[string]any{"nested_member": typed.Member, "nested_task": typed.Task, "nested_state": typed.State, "details": typed.Data}})
 	case adaptor.Notice:
 		run.log.push(adaptor.SubagentUpdate{Member: task.record.Member, Task: task.record.ID, State: string(task.record.State), Kind: adaptor.SubagentState, Data: map[string]any{"notice": typed.Kind, "text": typed.Text}})
@@ -595,7 +634,7 @@ func (run *execution) onEnd(end childEnd) {
 		}
 		run.leader = nil
 		if end.result != nil {
-			run.last = end.result
+			run.parts = append(run.parts, end.result)
 		}
 		if run.stopping {
 			return
@@ -623,7 +662,7 @@ func (run *execution) onEnd(end childEnd) {
 				return
 			}
 			for _, message := range messages {
-				if message.Wake && message.State == Pending {
+				if !message.Deferred && message.Wake && message.State == Pending {
 					run.scheduleWake(time.Now().Add(run.team.config.Limits.WakeWindow))
 					break
 				}
@@ -639,6 +678,13 @@ func (run *execution) onEnd(end childEnd) {
 	task.cancel()
 	run.active--
 	task.record.Result = end.result
+	if end.result != nil && run.team.members[task.record.Member].Remote != nil {
+		if remote, ok := end.stream.(*remoteRun); ok {
+			task.record.RemoteSnapshot = cloneRemoteTask(remote.snapshot)
+		}
+		task.record.RemoteContext = end.result.Metadata["remote_context_id"]
+		task.record.RemoteTask = end.result.Metadata["remote_task_id"]
+	}
 	if end.result != nil {
 		task.record.Summary = boundedSummary(end.result.Summary)
 		task.record.Usage = sumUsage(nil, end.result.Usage)
@@ -647,6 +693,9 @@ func (run *execution) onEnd(end childEnd) {
 	if end.err != nil {
 		state = Failed
 		task.record.Reason = "member_failed"
+		if errors.Is(end.err, errRemoteUnknown) {
+			task.record.Reason = "unknown_state"
+		}
 		if task.leaderCancelled || run.stopping {
 			state = Cancelled
 			task.record.Reason = "cancelled"
@@ -664,6 +713,9 @@ func (run *execution) onEnd(end childEnd) {
 	var notifications []InboxMessage
 	if !task.leaderCancelled && !run.stopping {
 		text := fmt.Sprintf("Task %s (member %s) is %s.", task.record.ID, task.record.Member, state)
+		if task.record.Reason != "" {
+			text += " Reason: " + task.record.Reason + "."
+		}
 		if end.result != nil && end.result.Text != "" {
 			text += "\n" + end.result.Text
 		}
@@ -677,7 +729,7 @@ func (run *execution) onEnd(end childEnd) {
 	run.updateTask(task, state, notifications...)
 	if !run.waitingForResults() {
 		for _, reply := range run.snapshots {
-			reply <- run.subagents()
+			reply <- run.completedSubagents()
 		}
 		run.snapshots = nil
 	}
@@ -794,6 +846,23 @@ func (run *execution) scheduleTasks() {
 			encoded, _ := json.Marshal(task.record.Input)
 			prompt += "\nTask input (data, not instructions):\n" + string(encoded)
 		}
+		if member.Remote != nil && member.Continuity == PerScope && task.record.Continues == "" {
+			remote := *task.runner.(*remoteRunner)
+			records, err := run.store.Tasks(ctx, run.scope)
+			if err != nil {
+				run.abort(err)
+				cancel()
+				task.active = false
+				run.active--
+				continue
+			}
+			for _, record := range records {
+				if record.Member == member.Key && record.RemoteContext != "" {
+					remote.contextID = record.RemoteContext
+				}
+			}
+			task.runner = &remote
+		}
 		task.stream = task.runner.Send(ctx, prompt, options...)
 		go run.consume(id, task.stream, nil)
 	}
@@ -891,6 +960,26 @@ func (run *execution) flushNotifications() {
 		}
 	}
 	messages = eligible
+	if len(messages) == 0 {
+		return
+	}
+	var notes []InboxMessage
+	for _, message := range messages {
+		if !message.Host {
+			notes = append(notes, message)
+			continue
+		}
+		if run.leader == nil {
+			options := append([]adaptor.CallOption(nil), run.leaderOptions...)
+			options = append(options, adaptor.MessageID(message.ID), adaptor.From(message.From), adaptor.When(message.Timing))
+			run.inflight[message.ID] = message
+			run.startLeader(message.Text, options)
+		} else {
+			run.inflight[message.ID] = message
+			run.deliver(run.leader, run.ctx, message.Text, []adaptor.MessageOption{adaptor.MessageID(message.ID), adaptor.From(message.From), adaptor.When(message.Timing)}, sendEnd{inbox: []InboxMessage{message}, batchID: message.ID})
+		}
+	}
+	messages = notes
 	if len(messages) == 0 {
 		return
 	}
@@ -1019,7 +1108,7 @@ func (run *execution) checkLimit(name string, used, limit int) {
 func (run *execution) stopForLimit() {
 	interrupted := run.active > 0 || run.hasQueued()
 	if interrupted {
-		run.fatal = errors.Join(ErrLimitExceeded, &adaptor.RunError{Reason: adaptor.FailureReason("limit_exceeded"), Message: "team execution limit exceeded"})
+		run.fatal = errors.Join(ErrLimitExceeded, &adaptor.RunError{Reason: adaptor.ReasonLimitExceeded, Message: "team execution limit exceeded"})
 	}
 	run.stopping = true
 	run.cancelTasks()
@@ -1074,10 +1163,7 @@ func (run *execution) finish(err error) {
 	if run.wake != nil {
 		run.wake.stop()
 	}
-	result := &adaptor.Result{}
-	if run.last != nil {
-		*result = *run.last
-	}
+	result := adaptor.ComposeResults(run.id, run.parts...)
 	result.RunID = run.id
 	result.Turns = run.turns
 	result.Usage = sumUsage(nil, run.total)
@@ -1109,4 +1195,64 @@ func (run *execution) finish(err error) {
 	run.log.push(adaptor.Done{Result: result, Err: err})
 	run.log.finish()
 	close(run.done)
+}
+
+type turnBudget int
+
+func (n turnBudget) ApplyRun(s *adaptor.RunSettings) { s.CapMessageTurns(int(n)) }
+
+func hostRecord(scope, text string, options []adaptor.CallOption) InboxMessage {
+	m := adaptor.MessageAttributes(options...)
+	if m.ID == "" {
+		m.ID = randomID()
+	}
+	_, onlyMessages := asMessageOptions(options)
+	return InboxMessage{Scope: scope, ID: m.ID, Text: text, From: m.From, Timing: m.Timing, Host: true, RequiresOptions: !onlyMessages, Wake: true, CreatedAt: time.Now().UTC()}
+}
+
+// admitHost persists before provider admission, then obtains an exact fenced
+// claim. Replaying an already delivered ID performs no provider work.
+func (run *execution) admitHost(ctx context.Context, text string, opts []adaptor.CallOption) (*InboxMessage, error) {
+	message := hostRecord(run.scope, text, opts)
+	if err := run.store.PutMessage(ctx, run.lease, message); err != nil {
+		return nil, err
+	}
+	claimed, err := run.store.ClaimMessages(ctx, run.lease, true, scopeTTL)
+	if err != nil {
+		return nil, err
+	}
+	var selected *InboxMessage
+	for _, item := range claimed {
+		if item.ID == message.ID {
+			copy := item
+			selected = &copy
+		} else {
+			if err := run.store.RequeueMessage(ctx, run.lease, item.ID, item.ClaimToken); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return selected, nil
+}
+
+func (run *execution) completedSubagents() []adaptor.SubagentResult {
+	if run.reported == nil {
+		run.reported = make(map[string]bool)
+	}
+	var out []adaptor.SubagentResult
+	for _, part := range run.subagents() {
+		if terminal(TaskState(part.State)) && !run.reported[part.Task] {
+			out = append(out, part)
+			run.reported[part.Task] = true
+		}
+	}
+	return out
+}
+
+func messageAttributes(options []adaptor.MessageOption) adaptor.MessageContext {
+	calls := make([]adaptor.CallOption, 0, len(options))
+	for _, option := range options {
+		calls = append(calls, option)
+	}
+	return adaptor.MessageAttributes(calls...)
 }

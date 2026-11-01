@@ -70,6 +70,24 @@ func newTeam(config Config, listen bool) (*Team, error) {
 		return &wakeTimer{channel: timer.C, stop: timer.Stop}
 	}
 	for index, member := range config.Members {
+		if member.Remote != nil {
+			if !nilRunner(member.Runner) {
+				return nil, fmt.Errorf("team: member %q has both Runner and Remote", member.Key)
+			}
+			remote, err := prepareRemote(*member.Remote)
+			if err != nil {
+				return nil, err
+			}
+			if member.Output != nil {
+				return nil, fmt.Errorf("team: remote %q cannot negotiate an output schema", member.Key)
+			}
+			member.Runner = remote
+			spec := remote.spec
+			member.Remote = &spec
+			if spec.Policy.MaxTimeout > 0 && (member.Timeout == 0 || spec.Policy.MaxTimeout < member.Timeout) {
+				member.Timeout = min(spec.Policy.MaxTimeout, 30*time.Minute)
+			}
+		}
 		if member.Key == "" || !utf8.ValidString(member.Key) || nilRunner(member.Runner) {
 			return nil, fmt.Errorf("team: member %q requires a key and local Runner", member.Key)
 		}
@@ -85,7 +103,7 @@ func newTeam(config Config, listen bool) (*Team, error) {
 		if member.Timeout == 0 {
 			member.Timeout = 30 * time.Minute
 		}
-		if member.Continuity == PerScope {
+		if member.Continuity == PerScope && member.Remote == nil {
 			if _, err := conversation(member.Runner, EncodeKey("probe", "member", member.Key)); err != nil {
 				return nil, err
 			}
@@ -236,6 +254,10 @@ func (team *Team) Close(ctx context.Context) error {
 }
 
 func (team *Team) start(ctx context.Context, scope string, named bool, text string, opts []adaptor.CallOption) adaptor.Stream {
+	return team.startOwned(ctx, scope, named, text, opts, nil)
+}
+
+func (team *Team) startOwned(ctx context.Context, scope string, named bool, text string, opts []adaptor.CallOption, owner *standby) adaptor.Stream {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -255,6 +277,10 @@ func (team *Team) start(ctx context.Context, scope string, named bool, text stri
 			}
 		}
 		if waiting := team.standbys[scope]; waiting != nil {
+			if owner != waiting {
+				team.mu.Unlock()
+				return failedStream(scope, adaptor.ErrThreadBusy)
+			}
 			select {
 			case <-waiting.ready:
 			default:
@@ -276,6 +302,9 @@ func (team *Team) start(ctx context.Context, scope string, named bool, text stri
 			default:
 			}
 			team.mu.Unlock()
+			if owner == nil {
+				return failedStream(scope, adaptor.ErrThreadBusy)
+			}
 			messageOpts, allMessages := asMessageOptions(opts)
 			if !allMessages {
 				return failedStream(scope, ErrThreadBusy)
@@ -347,8 +376,9 @@ var _ adaptor.ThreadRunner = (*Thread)(nil)
 // Key returns the host's exact scope key.
 func (thread *Thread) Key() string { return thread.scope }
 
-// Send targets the leader, joining an active team execution for message-only
-// options. Execution-level options cannot alter an already active execution.
+// Send starts a task under the scope lease. An active execution or live
+// standby returns a failed Stream with adaptor.ErrThreadBusy. Supplements
+// belong on the returned Stream; standby messages belong on Standby.Send.
 func (thread *Thread) Send(ctx context.Context, text string, opts ...adaptor.CallOption) adaptor.Stream {
 	return thread.team.start(ctx, thread.scope, true, text, opts)
 }
@@ -376,6 +406,6 @@ func (run *failedRun) Events() <-chan adaptor.Event     { return run.log.events(
 func (run *failedRun) RunID() string                    { return run.id }
 func (run *failedRun) Cancel()                          {}
 func (run *failedRun) Result() (*adaptor.Result, error) { return run.result, run.err }
-func (run *failedRun) Send(_ context.Context, text string, _ ...adaptor.MessageOption) error {
-	return &adaptor.MessageError{Text: text, Reason: adaptor.MessageRunFailed, Err: adaptor.ErrRunFinished}
+func (run *failedRun) Send(_ context.Context, text string, opts ...adaptor.MessageOption) error {
+	return &adaptor.MessageError{ID: messageAttributes(opts).ID, Text: text, Reason: adaptor.MessageRunFailed, Err: adaptor.ErrRunFinished}
 }

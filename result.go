@@ -400,3 +400,43 @@ func addUsage(a, b *Usage) *Usage {
 	a.EstimatedCostMilli += b.EstimatedCostMilli
 	return a
 }
+
+// ComposeResults combines child executions in order using core's multi-turn
+// aggregation. Nil parts are ignored. Text, model, summary, metadata and
+// structured output come from the last part; usage and turns are summed;
+// audit slices, messages and subagents are concatenated. Raw stdout/stderr are
+// concatenated and the last observed terminal payload is retained (RawStreams
+// has one terminal slot). Message turn numbers are rebased onto the composite
+// turn sequence; zero (unassigned) stays zero. The result owns detached copies
+// and uses runID.
+func ComposeResults(runID string, parts ...*Result) *Result {
+	total := &Result{RunID: runID}
+	for _, part := range parts {
+		if part != nil {
+			appendResult(total, part)
+		}
+	}
+	return total
+}
+
+func appendResult(total, part *Result) {
+	total.Text, total.Summary, total.Model, total.Provider = part.Text, part.Summary, part.Model, part.Provider
+	total.Metadata = maps.Clone(part.Metadata)
+	total.structured = cloneStructuredOutput(part.structured)
+	total.raw.Stdout += part.raw.Stdout
+	total.raw.Stderr += part.raw.Stderr
+	if part.raw.Terminal != nil {
+		total.raw.Terminal = cloneTerminalPayload(part.raw.Terminal)
+	}
+	total.transcript = append(total.transcript, cloneTranscript(part.transcript)...)
+	total.services = append(total.services, cloneServiceReports(part.services)...)
+	for _, message := range part.Messages() {
+		if message.Turn > 0 {
+			message.Turn += total.Turns
+		}
+		total.messages = append(total.messages, message)
+	}
+	total.subagents = append(total.subagents, part.Subagents()...)
+	total.Usage = addUsage(total.Usage, part.Usage)
+	total.Turns += part.Turns
+}

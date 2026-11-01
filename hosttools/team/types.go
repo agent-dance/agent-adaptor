@@ -9,6 +9,7 @@ import (
 	"time"
 
 	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	clienta2a "github.com/agent-dance/agent-adaptor/v2/clients/a2a"
 )
 
 // Continuity selects the lifetime of a member conversation.
@@ -29,9 +30,7 @@ type ConversationProvider interface {
 	Conversation(key string) adaptor.ThreadRunner
 }
 
-// Member describes one host-selected local team participant. Remote members
-// can be supplied as Runners implementing the same conversation contract;
-// transport-specific Remote configuration is reserved for the remote workstream.
+// Member describes one host-selected local or remote team participant.
 type Member struct {
 	// Key is the exact host-selected roster identifier.
 	Key string
@@ -43,6 +42,8 @@ type Member struct {
 	Skills []string
 	// Runner executes local tasks; Team and Agent are supported directly.
 	Runner adaptor.Runner
+	// Remote configures an A2A member instead of Runner; exactly one is required.
+	Remote *RemoteSpec
 	// Continuity defaults to PerTask.
 	Continuity Continuity
 	// Input is the optional JSON Schema validated before task registration.
@@ -163,6 +164,13 @@ func terminal(state TaskState) bool {
 // Conversation identifies the member context used by explicit continue.
 // Result is the locally observed result and may be absent after recovery.
 type Task struct {
+	// RemoteContext is the last observed A2A context used for continuity.
+	RemoteContext string
+	// RemoteTask is the provider task ID retained for auditing.
+	RemoteTask string
+	// RemoteSnapshot preserves the last observed A2A task, including non-text
+	// artifacts and protocol payloads. It is absent for local members.
+	RemoteSnapshot *clienta2a.Task
 	// Scope is the opaque team conversation key.
 	Scope string
 	// ID is the team-issued task handle.
@@ -215,9 +223,21 @@ const (
 // notes. Wake distinguishes wake-worthy notifications from progress notes.
 // Claims are exclusive until ClaimUntil; an expired claim can be reclaimed.
 type InboxMessage struct {
+	// Host marks an original host message that must retain its ID and author.
+	Host bool
+	// Deferred holds a standby message with execution options until its own
+	// execution starts. Re-admission of the same ID with Deferred=false activates
+	// it; acquiring a new scope lease activates option-free records left by a crashed owner.
+	Deferred bool
+	// RequiresOptions records process-local execution options. After owner loss
+	// these messages remain deferred until an explicit host resubmission restores
+	// the options; recovery must never execute them with different defaults.
+	RequiresOptions bool
+	// Timing preserves the host requested delivery timing.
+	Timing adaptor.Timing
 	// Scope is the exact team conversation key.
 	Scope string
-	// ID is the stable, team-issued notification identifier.
+	// ID is the exact caller ID for host messages, otherwise team-issued.
 	ID string
 	// Task associates progress and completion messages with a task handle.
 	Task string
@@ -277,6 +297,12 @@ type Artifact struct {
 // notes only when includeNotes is true. Durable implementations must preserve
 // these contracts transactionally across processes.
 type TaskStore interface {
+	// ForkScope atomically copies terminal tasks and immutable artifacts to an
+	// empty target, recording parent lineage. Both live leases must be validated.
+	// Target history or existing lineage yields ErrConflict. Inbox is not copied.
+	ForkScope(context.Context, ScopeLease, ScopeLease) error
+	// ForkParent returns durable fork lineage, or empty for an ordinary scope.
+	ForkParent(context.Context, string) (string, error)
 	// AcquireScope obtains a lease and reclaims the expired owner's inbox claims.
 	AcquireScope(context.Context, string, string, time.Duration) (ScopeLease, error)
 	// RenewScope extends the scope lease and its live inbox claims together.
@@ -289,7 +315,9 @@ type TaskStore interface {
 	// admits any supplied notifications in the same transaction. A terminal
 	// task and its leader wake must never be separated by a crash window.
 	SaveTask(context.Context, ScopeLease, Task, ...InboxMessage) (Task, error)
-	// PutMessage idempotently registers one pending inbox message.
+	// PutMessage registers a pending message, deduplicates a delivered ID and
+	// re-admits an identical failed ID. A duplicate Deferred=false activates a
+	// held record; process-local execution options must be restored by the host.
 	PutMessage(context.Context, ScopeLease, InboxMessage) error
 	// Messages lists detached inbox records in admission order.
 	Messages(context.Context, string) ([]InboxMessage, error)
@@ -309,7 +337,7 @@ var (
 	// ErrConflict means a record revision, lease, or message claim is stale.
 	ErrConflict = errors.New("team: stale lease, revision, or claim")
 	// ErrThreadBusy means the scope is owned by another execution.
-	ErrThreadBusy = errors.New("team: thread busy")
+	ErrThreadBusy = adaptor.ErrThreadBusy
 	// ErrLimitExceeded means a team execution exhausted a configured limit.
 	ErrLimitExceeded = errors.New("team: limit exceeded")
 )

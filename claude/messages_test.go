@@ -120,12 +120,18 @@ func messageHookOutput(t *testing.T, b []byte) map[string]any {
 	return claudeTopLevelObject(response, "response")
 }
 
+func newInitializedMessageTestSession(ctx context.Context, port driver.MessagePort) *messageSession {
+	s := newMessageSession(ctx, port)
+	s.resolveInitialization(nil)
+	return s
+}
+
 func TestMessageToolHooks(t *testing.T) {
 	for _, hook := range messageHooks[:4] {
 		t.Run(hook.event, func(t *testing.T) {
 			port := newMessageTestPort(driver.MessageItem{ID: "a", Text: " first\n"}, driver.MessageItem{ID: "b", Text: "second"})
 			p := newClaudeParser(&messageTestSink{})
-			s := newMessageSession(context.Background(), port)
+			s := newInitializedMessageTestSession(context.Background(), port)
 			p.messages = s
 			writes := make(chan []byte, 1)
 			s.start(messageTestStdin{writes: writes}, func() {})
@@ -182,7 +188,7 @@ func TestMessageQueuedClaimsDoNotBlockStdoutAndAllFail(t *testing.T) {
 			defer cancel()
 			port := newMessageTestPort(driver.MessageItem{ID: "first", Text: "first"})
 			p := newClaudeParser(&messageTestSink{})
-			p.messages = newMessageSession(ctx, port)
+			p.messages = newInitializedMessageTestSession(ctx, port)
 			entered, release := make(chan struct{}), make(chan struct{})
 			writes := 0
 			p.messages.start(messageTestStdin{write: func([]byte) error { writes++; close(entered); <-release; return io.ErrClosedPipe }}, func() {})
@@ -227,7 +233,7 @@ func TestMessageQueuedClaimsDoNotBlockStdoutAndAllFail(t *testing.T) {
 func TestMessageUnregisteredCallbackClaimsNothing(t *testing.T) {
 	port := newMessageTestPort(driver.MessageItem{ID: "pending", Text: "pending"})
 	p := newClaudeParser(&messageTestSink{})
-	p.messages = newMessageSession(context.Background(), port)
+	p.messages = newInitializedMessageTestSession(context.Background(), port)
 	writes := make(chan []byte, 1)
 	p.messages.start(messageTestStdin{writes: writes}, func() {})
 	defer p.messages.finish(nil)
@@ -245,7 +251,7 @@ func TestMessageUnregisteredCallbackClaimsNothing(t *testing.T) {
 func TestMessageWindowAndSubagents(t *testing.T) {
 	port := newMessageTestPort()
 	p := newClaudeParser(&messageTestSink{})
-	s := newMessageSession(context.Background(), port)
+	s := newInitializedMessageTestSession(context.Background(), port)
 	p.messages = s
 	writes := make(chan []byte, 8)
 	s.start(messageTestStdin{writes: writes}, func() {})
@@ -280,7 +286,7 @@ func TestMessageClaimsAwaitWriteAndFailExactlyOnce(t *testing.T) {
 			defer cancel()
 			port := newMessageTestPort(driver.MessageItem{ID: "a", Text: "first"})
 			p := newClaudeParser(&messageTestSink{})
-			s := newMessageSession(ctx, port)
+			s := newInitializedMessageTestSession(ctx, port)
 			p.messages = s
 			entered, release := make(chan struct{}), make(chan struct{})
 			want := errors.New("pipe write failed")
@@ -374,6 +380,11 @@ func TestMessageResolverTransport(t *testing.T) {
 const messageHelperEnv = "AGENT_ADAPTOR_CLAUDE_MESSAGE_HELPER"
 
 func messageHelper() int {
+	if os.Getenv("MESSAGE_MODE") == "empty" && !claudePersistentInputMode(os.Args[1:]) {
+		_, _ = io.Copy(io.Discard, os.Stdin)
+		emitEmptyMessageTurn(json.NewEncoder(os.Stdout))
+		return 0
+	}
 	dec := json.NewDecoder(os.Stdin)
 	enc := json.NewEncoder(os.Stdout)
 	read := func() (map[string]any, bool) { var v map[string]any; err := dec.Decode(&v); return v, err == nil }
@@ -396,11 +407,12 @@ func messageHelper() int {
 			}
 			if os.Getenv("MESSAGE_MODE") == "reject-init" {
 				_ = enc.Encode(map[string]any{"type": "control_response", "response": map[string]any{"subtype": "error", "request_id": messageInitializeID, "error": "hooks disabled"}})
-				_, _ = io.Copy(io.Discard, os.Stdin)
+			} else if os.Getenv("MESSAGE_MODE") == "exit-init" {
 				return 29
-			}
-			if err := enc.Encode(map[string]any{"type": "control_response", "response": map[string]any{"subtype": "success", "request_id": messageInitializeID, "response": map[string]any{}}}); err != nil {
-				return 22
+			} else if os.Getenv("MESSAGE_MODE") != "ignore-init" {
+				if _, err := acknowledgeClaudeInitialize(frame, enc); err != nil {
+					return 22
+				}
 			}
 			initialized = true
 			continue
@@ -408,12 +420,35 @@ func messageHelper() int {
 		if claudeTopLevelString(frame, "type") != "user" {
 			return 23
 		}
-		if !initialized {
+		if !initialized && os.Getenv("MESSAGE_MODE") != "empty" {
 			_ = enc.Encode(map[string]any{"type": "result", "subtype": "success", "is_error": false, "session_id": "messages-session", "result": "disabled"})
 			return 0
 		}
 		mode := os.Getenv("MESSAGE_MODE")
 		switch mode {
+		case "reject-init", "ignore-init", "empty":
+			if initialized {
+				// An unanswered registration may still respond after timeout.
+				// Neither that success nor a stale callback may claim messages
+				// once the driver has chosen its fallback for this process.
+				if mode == "ignore-init" {
+					_ = enc.Encode(map[string]any{"type": "control_response", "response": map[string]any{"subtype": "success", "request_id": messageInitializeID, "response": map[string]any{}}})
+				}
+				_ = enc.Encode(messageHook("PreToolUse", "", ""))
+				v, ok := read()
+				if !ok || len(claudeTopLevelObject(claudeTopLevelObject(v, "response"), "response")) != 0 {
+					return 30
+				}
+			}
+			if os.Getenv("MESSAGE_HITL") == "1" {
+				_ = enc.Encode(map[string]any{"type": "control_request", "request_id": "permission", "request": map[string]any{"subtype": "can_use_tool", "tool_name": "Bash", "tool_use_id": "tool", "input": map[string]any{"command": "pwd"}}})
+				v, ok := read()
+				if !ok || claudeTopLevelObject(claudeTopLevelObject(v, "response"), "response")["behavior"] != "allow" {
+					return 26
+				}
+			}
+			emitEmptyMessageTurn(enc)
+			continue
 		case "cancel":
 			_ = enc.Encode(messageHook("PreToolUse", "", ""))
 			_, _ = io.Copy(io.Discard, os.Stdin)
@@ -483,6 +518,14 @@ func messageHelper() int {
 		}
 		_ = enc.Encode(terminal)
 	}
+}
+
+func emitEmptyMessageTurn(enc *json.Encoder) {
+	_ = enc.Encode(map[string]any{"type": "system", "subtype": "init", "session_id": "messages-session", "model": "fake"})
+	_ = enc.Encode(map[string]any{"type": "assistant", "message": map[string]any{"content": []any{map[string]any{"type": "text", "text": "unchanged"}}}})
+	_ = enc.Encode(map[string]any{"type": "stream_event", "event": map[string]any{"type": "message_delta", "delta": map[string]any{"stop_reason": "end_turn"}}})
+	_ = enc.Encode(map[string]any{"type": "stream_event", "event": map[string]any{"type": "message_stop"}})
+	_ = enc.Encode(map[string]any{"type": "result", "subtype": "success", "is_error": false, "session_id": "messages-session", "result": "unchanged", "usage": map[string]any{"input_tokens": 7, "output_tokens": 9}})
 }
 
 func TestMessageProcessLifecycleEquivalence(t *testing.T) {
@@ -607,7 +650,7 @@ func TestMessageDisabledDoesNotInitialize(t *testing.T) {
 }
 
 func TestMessageProcessFailureOutputAndCheckpoint(t *testing.T) {
-	for _, mode := range []string{"exit", "malformed", "missing", "no-checkpoint", "late-exit", "error", "reject-init"} {
+	for _, mode := range []string{"exit", "malformed", "missing", "no-checkpoint", "late-exit", "error", "exit-init"} {
 		t.Run(mode, func(t *testing.T) {
 			home := t.TempDir()
 			command, err := os.Executable()
@@ -618,8 +661,8 @@ func TestMessageProcessFailureOutputAndCheckpoint(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 			response, err := (adapter{}).Run(ctx, req, &messageTestSink{})
-			if mode == "reject-init" {
-				if err == nil || !strings.Contains(err.Error(), "hooks disabled") {
+			if mode == "exit-init" {
+				if err == nil || !strings.Contains(err.Error(), "process exited during hooks initialization") {
 					t.Fatalf("error=%v", err)
 				}
 				return
@@ -749,7 +792,7 @@ func TestMessageStopCombinesBoundariesAndCompletesOnce(t *testing.T) {
 	port := newMessageTestPort(driver.MessageItem{ID: "soon", Text: "soon"}, driver.MessageItem{ID: "after", Text: "after", Timing: driver.TimingAfterTurn})
 	sink := &messageTestSink{}
 	p := newClaudeParser(sink)
-	p.messages = newMessageSession(context.Background(), port)
+	p.messages = newInitializedMessageTestSession(context.Background(), port)
 	writes := make(chan []byte, 1)
 	p.messages.start(messageTestStdin{writes: writes}, func() {})
 	defer p.messages.finish(nil)

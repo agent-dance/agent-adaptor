@@ -821,3 +821,21 @@ func (h *messageHub) ackPrompt(success bool, err error) {
 		h.Ack(id, driver.MessageAck{Delivered: success, Mechanism: "core.resume", Err: err})
 	}
 }
+
+// MessageAttributes reads message options from a call without generating an ID.
+// Defaults are AuthorHuman and Soon; later options override earlier ones.
+// Execution options are ignored, so inspecting attributes has no execution or
+// resource side effects. Text is empty in the returned context.
+func MessageAttributes(opts ...CallOption) MessageContext {
+	var s RunSettings
+	for _, opt := range opts {
+		if m, ok := opt.(MessageOption); ok && m != nil {
+			m.ApplyRun(&s)
+		}
+	}
+	from := s.message.from
+	if from.Kind == 0 {
+		from.Kind = AuthorHuman
+	}
+	return MessageContext{ID: s.message.id, From: from, Timing: s.message.timing}
+}

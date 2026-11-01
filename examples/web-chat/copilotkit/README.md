@@ -115,11 +115,9 @@ lint、build 与 `npm audit --omit=dev --audit-level=high`。冻结时 productio
 ## Visual subagent delegation hook
 
 The backend can render remote A2A delegation progress in the same CopilotKit
-AG-UI stream. Create an `a2adelegation.Service` from the remote Agent Cards and
-pass `team.Option()` to `adaptor.New` (or pass the service through
-`adaptor.WithRunServices(team)`). The service creates an authenticated,
-run-scoped `delegate_to_agent` MCP sidecar, exposes it through the typed MCP
-contract, binds its cleanup to the run, and folds progress into the Agent's
+AG-UI stream. Construct a `hosttools/team.Team` with local `Member.Runner` or
+remote `Member.Remote` values and pass the Team as the bridge's Runner. The
+Team owns one authenticated MCP listener and emits worker progress on its
 single event stream as `adaptor.SubagentUpdate`. The AG-UI bridge projects those
 updates into one incrementally patched AG-UI Activity message per delegation
 (`activityType="subagent"`, `messageId=delegationId`); Claude/Codex/Cursor

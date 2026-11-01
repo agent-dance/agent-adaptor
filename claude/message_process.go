@@ -55,6 +55,9 @@ func (lp *liveProcess) messageTurn(ctx context.Context, prompt string, sink driv
 		return driver.RawStreams{}, false, err
 	}
 	s := parser.messages
+	if lp.hooksInitialized {
+		s.resolveInitialization(lp.hooksErr)
+	}
 	stdin := processStdin{lp: lp}
 	s.start(stdin, lp.signalTerminate)
 	if bind != nil {
@@ -117,10 +120,18 @@ func (lp *liveProcess) messageTurn(ctx context.Context, prompt string, sink driv
 	}()
 	var runErr error
 	if !lp.hooksInitialized {
-		runErr = s.initialize(readDone)
+		lp.hooksErr, runErr = s.initialize(readDone)
 		if runErr == nil {
 			lp.hooksInitialized = true
 		}
+	}
+	if runErr == nil && lp.hooksErr != nil && sink != nil {
+		runErr = sink.Emit(driver.RunEvent{
+			Type:      driver.RunEventLifecycle,
+			Timestamp: time.Now().UTC(),
+			Text:      "Claude message hooks unavailable; pending messages continue at turn end via resume: " + lp.hooksErr.Error(),
+			Metadata:  map[string]string{"code": "claude_hooks_unavailable"},
+		})
 	}
 	sent := false
 	if runErr == nil {

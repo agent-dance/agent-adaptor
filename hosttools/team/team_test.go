@@ -571,7 +571,7 @@ func TestLeaderRetryAndLimitPartialResult(t *testing.T) {
 		team = fixture(t, Config{Leader: adaptor.New(leader), Members: []Member{{Key: "worker", Runner: adaptor.New(worker)}}, Limits: Limits{MaxLeaderTurns: 1}})
 		events, result, err := collect(t, team.Send(ctx, "start"))
 		var failure *adaptor.RunError
-		if !errors.Is(err, ErrLimitExceeded) || !errors.As(err, &failure) || failure.Result != result || failure.Reason != "limit_exceeded" {
+		if !errors.Is(err, ErrLimitExceeded) || !errors.As(err, &failure) || failure.Result != result || failure.Reason != adaptor.ReasonLimitExceeded {
 			t.Fatalf("result=%+v err=%v", result, err)
 		}
 		noticed := false

@@ -482,6 +482,7 @@ type liveProcess struct {
 	stdin            io.WriteCloser
 	writeMu          sync.Mutex
 	hooksInitialized bool
+	hooksErr         error
 	stdout           *bufio.Reader
 	stderr           *lockedBuffer
 

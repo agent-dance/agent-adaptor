@@ -1,6 +1,6 @@
 # Documentation map
 
-The public v1 model is Agent, Thread, Stream, Event, Result, and Driver. Start with the current integration documents below; design and implementation records are background material rather than usage references.
+The public model is Agent, Thread, Stream, Event, Result, and Driver. Start with the current integration documents below; design and implementation records are background material rather than usage references.
 
 ## Current integration documents
 
@@ -13,6 +13,7 @@ The public v1 model is Agent, Thread, Stream, Event, Result, and Driver. Start w
 | [`streaming.md`](./streaming.md) | Unified Event consumption, cancellation, backpressure, AG-UI, and SSE. |
 | [`streaming-adapter-contract.md`](./streaming-adapter-contract.md) | Streaming and event obligations for Driver authors. |
 | [`structured-output.md`](./structured-output.md) | Typed and JSON-schema output. |
+| [`team.md`](./team.md) | v2 teams, local/remote members, message routing, limits, durable recovery and Fork. |
 | [`a2a.md`](./a2a.md) | A2A bridge, client, delegation, and exposure policy. |
 | [`run-policy.md`](./run-policy.md) | Sandbox, feature, approval, timeout, fallback, and retry policy. |
 | [`public-errors.md`](./public-errors.md) | Public sentinels, typed errors, and `errors.Is` / `errors.As` guidance. |
