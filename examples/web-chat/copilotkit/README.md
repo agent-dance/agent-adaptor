@@ -71,15 +71,41 @@ Browser
 - Node.js 20+ + npm
 - 选用的 `codex` / `claude` / `cursor` CLI 已安装、已登录，并且 `--help` 可运行
 
-前端依赖固定使用 CopilotKit 1.63.2 与 `next@16.3.0-preview.8`。选择该
-Next preview 是因为截至冻结日最新 stable 16.2.12 仍落在已公开的 high
-advisory 范围内；同时以局部 `overrides` 将 Hono、PostCSS、fast-uri 提升到
-兼容的安全补丁版本，并更新 MCP SDK、DOMPurify、Mermaid 等仍在兼容范围内的
-传递依赖。lockfile 只保存 npm 官方 registry URL，CI 会执行 fresh `npm ci`、
-lint、build 与 `npm audit --omit=dev --audit-level=high`。冻结时 production tree
-没有 high/critical；剩余 moderate/low 来自 CopilotKit Runtime 尚未接受的
-`@hono/node-server`/`uuid` major 以及暂无已发布修复的上游链路，因此没有用
-`npm audit fix --force` 或不兼容的全局 override 掩盖风险。
+前端依赖固定使用 CopilotKit 1.83.0、`@ag-ui/client` 1.0.2（与 CopilotKit
+内部精确依赖的版本一致，避免出现两份 `HttpAgent`/`AbstractAgent`）以及
+stable `next@16.4.3`。CopilotKit 1.83 自带 AG-UI 1.0 客户端，会按 1.0 schema
+校验事件流（例如 `CUSTOM.value` 必填），因此后端必须使用发送完整 1.0 事件的
+`bridges/agui`。
+
+上游仍未修复的链路通过 `overrides` 提升，并都验证过运行时兼容：
+
+- `zod` → 4.6.7（GHSA-mrhx-c7xc-m3w5 没有 3.x 修复）。`@ag-ui/client` 已改用
+  `zod/v4` 子路径，`@ag-ui/core` 声明支持 `^4`，CopilotKit 的
+  `schemaToJsonSchema` 优先走 zod 4 原生 `toJSONSchema()`；默认解析下顶层
+  zod 本来就是 4.x。override 只影响 `@ag-ui/proto`（运行时不 import zod）、
+  `@copilotkit/shared`（`describe`/`any` 等 zod 4 仍保留的 API）以及 A2UI
+  链路 `@a2ui/web_core`/`@copilotkit/a2ui-renderer` 的嵌套副本；本示例的
+  Runtime 未启用 A2UI（`/info` 返回 `a2uiEnabled: false`）。
+- `undici` → 6.29.1：`@ai-sdk/provider-utils@3`（经 `@ai-sdk/google-vertex@3`）
+  声明 `^5.29.0`，5.x 没有修复；它只用 `Agent` + `fetch({ dispatcher })`，与
+  `provider-utils@4` 搭配 undici 6 的用法相同。同时移除了 undici 5 带入的
+  `@fastify/busboy` 2.x。
+- `graphql-scalars` → 2.0.1（GHSA-x8rm-f576-gq67）：Runtime 与 `type-graphql`
+  只使用 `GraphQLJSON`、`GraphQLJSONObject`、`GraphQLTimestamp`、
+  `GraphQLDateTimeISO`，2.0.1 仍导出这四个 scalar。
+
+lockfile 只保存 npm 官方 registry URL，CI 会执行 fresh `npm ci`、lint、build 与
+`npm audit --omit=dev --audit-level=high`。冻结时 production tree 没有
+high/critical；剩余项低于 CI 阈值：
+
+- `@hono/node-server` 1.19.17（moderate，GHSA-rmxm-3fg6-px4f）：修复只在 2.x，
+  CopilotKit Runtime 与 MCP SDK 仍要求 1.x；该漏洞位于 `serveStatic`，本示例
+  只通过 Next.js route handler 使用 Runtime，不走这条路径。
+- `katex` 0.16.x（low，GHSA-238p-pmpm-9mq7）及其 `streamdown`/`mermaid`/
+  `remark-math` 依赖链：修复在 0.18.2，`@copilotkit/react-core` 仍锁 `^0.16`；
+  它只在浏览器中渲染本地 agent 输出的数学公式。
+
+因此没有用 `npm audit fix --force`（它会把 CopilotKit 降到 1.54）掩盖风险。
 
 ## 后端 HTTP 端点
 

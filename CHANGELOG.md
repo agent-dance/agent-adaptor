@@ -40,8 +40,8 @@ All notable changes to this project are documented in this file.
 - The assistant-ui real-driver example explicitly binds the operator CLI profile
   (HOME and Codex CODEX_HOME) for existing login/custom-provider configuration.
   Driver defaults are unchanged; changing bindings requires a compatible Thread.
-- Direct clients pin `@ag-ui/client` 1.0.3. CopilotKit retains its independently
-  bundled 0.0.57 client/core. Session projection format `agui-session/2` uses
+- Direct clients pin `@ag-ui/client` 1.0.3. The CopilotKit example uses
+  CopilotKit 1.83.0's bundled `@ag-ui/client` 1.0.2. Session projection format `agui-session/2` uses
   run-scoped provider IDs and an idempotent submitted-user seed; older recording
   formats require migration. Recorder-key encoding remains version 1.
 
@@ -92,6 +92,12 @@ All notable changes to this project are documented in this file.
 - Make assistant-ui checkpoint directory durability platform-aware on Windows;
   add scoped authenticated restart and visible activity parity fixtures, and
   enforce the example's build, Node suite and input fuzz target in CI.
+- Upgraded the CopilotKit example to CopilotKit 1.83.0, `@ag-ui/client` 1.0.2
+  and stable Next.js 16.4.3, with `zod` 4.6.7, `undici` 6.29.1 and
+  `graphql-scalars` 2.0.1 overrides for advisories that have no upstream fix in
+  the required ranges, so `npm audit --omit=dev --audit-level=high` passes
+  again. The remaining moderate `@hono/node-server` and low `katex` findings are
+  documented in the example README.
 
 ## [1.1.2] - 2026-08-07
 

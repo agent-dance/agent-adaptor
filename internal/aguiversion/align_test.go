@@ -16,7 +16,7 @@ import (
 // expectedAGUICoreNPM is the @ag-ui/core version used by
 // examples/web-chat/copilotkit (see package-lock.json "node_modules/@ag-ui/core").
 // Bump this when you upgrade frontend AG-UI packages.
-const expectedAGUICoreNPM = "0.0.57"
+const expectedAGUICoreNPM = "1.0.2"
 
 // expectedGoAGUIModuleSubstr is a stable substring of the go.mod require line for
 // github.com/ag-ui-protocol/ag-ui/sdks/community/go — update when the pin changes.
