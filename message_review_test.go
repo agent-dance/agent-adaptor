@@ -282,7 +282,7 @@ func TestT1ReviewResultOnlyKeepsCriticalLog(t *testing.T) {
 	}
 }
 
-func TestT1ReviewNeverObservedCompletionPrunesOrdinary(t *testing.T) {
+func TestT1ReviewNeverObservedCompletionBoundsOrdinary(t *testing.T) {
 	b := newEventBroker("unobserved", "", 2, false)
 	b.spool = true
 	b.publish(RunStarted{}, nil)
@@ -293,20 +293,41 @@ func TestT1ReviewNeverObservedCompletionPrunesOrdinary(t *testing.T) {
 	b.publish(RunFinished{}, nil)
 	b.publishTerminal(Done{}, nil)
 	b.close()
-	summary := 0
+	// A completion nobody observed keeps every critical event and at most the
+	// event buffer of ordinary ones; everything else is reported once.
+	ordinary, critical, dropped, summaries := 0, 0, 0, 0
 	for ev := range b.subscribe() {
-		if !eventCritical(ev) {
-			t.Fatalf("ordinary retained: %T", ev)
-		}
-		if d, ok := ev.(Dropped); ok {
-			summary++
-			if d.Count != 5 {
-				t.Fatalf("count=%d", d.Count)
-			}
+		switch e := ev.(type) {
+		case TextDelta:
+			ordinary++
+		case Dropped:
+			summaries++
+			dropped += e.Count
+		case Notice:
+			critical++
 		}
 	}
-	if summary != 1 {
-		t.Fatalf("summaries=%d", summary)
+	if ordinary == 0 || ordinary > 2 {
+		t.Fatalf("ordinary retained=%d, want 1..2 (event buffer)", ordinary)
+	}
+	if critical != 5 || summaries != 1 || ordinary+dropped != 5 {
+		t.Fatalf("critical=%d summaries=%d dropped=%d ordinary=%d", critical, summaries, dropped, ordinary)
+	}
+}
+
+func TestT1ReviewResultOnlyCompletionKeepsCriticalOnly(t *testing.T) {
+	b := newEventBroker("result-only", "", 8, false)
+	b.spool = true
+	b.publish(RunStarted{}, nil)
+	b.publish(TextDelta{Text: "before"}, nil)
+	b.awaitResult()
+	b.publish(TextDelta{Text: "after"}, nil)
+	b.publishTerminal(Done{}, nil)
+	b.close()
+	for ev := range b.subscribe() {
+		if !eventCritical(ev) {
+			t.Fatalf("Result-only consumption retained ordinary %T", ev)
+		}
 	}
 }
 

@@ -103,7 +103,7 @@ func (b *eventBroker) publishTerminal(ev Event, source *EventSourceMeta) bool {
 	}
 	if b.spool {
 		if !b.subscribed {
-			b.pruneUnobservedLocked()
+			b.pruneUnobservedLocked(!b.discardOrdinary)
 		}
 		if b.dropped.count > 0 {
 			b.spoolDroppedLocked()
@@ -365,7 +365,7 @@ func (b *eventBroker) close() {
 	}
 	if b.spool {
 		if !b.terminal && !b.subscribed {
-			b.pruneUnobservedLocked()
+			b.pruneUnobservedLocked(!b.discardOrdinary)
 		}
 		if !b.terminal && b.dropped.count > 0 {
 			b.spoolDroppedLocked()
@@ -426,8 +426,10 @@ func cloneEventSourceMeta(in *EventSourceMeta) *EventSourceMeta {
 }
 
 // subscribe freezes the public channel identity before returning it. Executions
-// with no subscriber retain a critical-only closed log after finalization.
-// Result-only callers release ordinary producers without an event reader.
+// finalized before any subscriber retain their critical events plus up to the
+// event buffer of ordinary events, so a late subscriber still observes a fast
+// execution; Result-only callers keep critical events only and release ordinary
+// producers without an event reader.
 func (b *eventBroker) subscribe() <-chan Event {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -503,25 +505,32 @@ func (b *eventBroker) awaitResult() {
 		return
 	}
 	b.discardOrdinary = true
-	b.pruneUnobservedLocked()
+	b.pruneUnobservedLocked(false)
 	b.notifyCapacityLocked()
 }
 
 // pruneUnobservedLocked runs only before the public channel is exposed.
 // Preserve critical-event order and merge SDK loss reports into one aggregate
 // stamped before Done; provider loss reports keep their original identity.
-func (b *eventBroker) pruneUnobservedLocked() {
+// keepOrdinary retains up to normalCapacity ordinary events, in order, for a
+// consumer that subscribes after a fast execution finished; only the overflow
+// is reported as unobserved. Result-only consumption keeps none.
+func (b *eventBroker) pruneUnobservedLocked(keepOrdinary bool) {
 	pending := make([]Event, 0, len(b.events)+len(b.queue))
 	for len(b.events) > 0 {
 		pending = append(pending, <-b.events)
 	}
 	pending = append(pending, b.queue...)
 	b.queue = nil
+	kept := 0
 	for _, ev := range pending {
 		if d, ok := ev.(Dropped); ok && d.Source == "sdk.event_broker" {
 			b.mergeDropsLocked(d.Count, d.ByKind, d.FirstSequence, d.LastSequence, true)
 		} else if eventCritical(ev) {
 			b.queue = append(b.queue, ev)
+		} else if keepOrdinary && kept < b.normalCapacity {
+			b.queue = append(b.queue, ev)
+			kept++
 		} else {
 			b.recordDropLocked(ev)
 			b.dropped.unobserved = true
