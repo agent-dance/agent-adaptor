@@ -311,6 +311,10 @@ func (h *messageHub) signalLocked() {
 	}
 }
 func (h *messageHub) send(ctx context.Context, text string, opts ...MessageOption) error {
+	return h.sendWithLifetime(ctx, ctx, text, opts...)
+}
+
+func (h *messageHub) sendWithLifetime(ctx, lifetime context.Context, text string, opts ...MessageOption) error {
 	var s RunSettings
 	for _, o := range opts {
 		if o != nil {
@@ -401,11 +405,11 @@ func (h *messageHub) send(ctx context.Context, text string, opts ...MessageOptio
 		}
 		h.mu.Lock()
 	}
-	i := &hubItem{out: MessageOutcome{ID: m.id, Text: text, From: m.from, Timing: m.timing, State: MessageAccepted}, framed: framed, ctx: ctx}
+	i := &hubItem{out: MessageOutcome{ID: m.id, Text: text, From: m.from, Timing: m.timing, State: MessageAccepted}, framed: framed, ctx: lifetime}
 	h.items = append(h.items, i)
 	h.byID[m.id] = i
 	h.updateLocked(i)
-	i.stop = context.AfterFunc(ctx, func() { h.withdraw(i) })
+	i.stop = context.AfterFunc(lifetime, func() { h.withdraw(i) })
 	h.notifyLocked()
 	h.signalLocked()
 	return nil
@@ -772,6 +776,25 @@ func (h *messageHub) setPrompt(items []driver.MessageItem) {
 	}
 }
 
+func (h *messageHub) carryPrompt(out MessageOutcome) (driver.MessageItem, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.delivered[out.ID] || h.byID[out.ID] != nil {
+		return driver.MessageItem{}, false
+	}
+	message := MessageContext{ID: out.ID, Text: out.Text, From: out.From, Timing: out.Timing}
+	framed := frameMessage(message)
+	if h.policy.Format != nil {
+		framed = h.policy.Format(message)
+	}
+	out.State, out.Reason, out.Turn = MessageAccepted, "", 1
+	item := &hubItem{out: out, framed: framed, ctx: h.ctx, claimed: true, boundary: driver.BoundaryTurnEnd}
+	h.items = append(h.items, item)
+	h.byID[out.ID] = item
+	h.updateLocked(item)
+	return driver.MessageItem{ID: out.ID, Text: framed, Timing: driver.Timing(out.Timing)}, true
+}
+
 // A provider turn completion proves that its starting prompt was processed.
 // This records resume delivery before publishing that turn's MessageIDs.
 func (h *messageHub) ackPrompt(success bool, err error) {
@@ -780,6 +803,21 @@ func (h *messageHub) ackPrompt(success bool, err error) {
 	ids := append([]string(nil), h.promptIDs...)
 	h.mu.Unlock()
 	for _, id := range ids {
+		if !success {
+			h.mu.Lock()
+			if item := h.byID[id]; item != nil && item.out.State == MessageAccepted {
+				item.claimed = false
+				item.out.Boundary, item.out.Mechanism = string(item.boundary), "core.resume"
+				reason := MessageRunFailed
+				if h.cancelled || h.ctx.Err() != nil {
+					reason = MessageCancelled
+				}
+				h.failLocked(item, reason)
+				h.notifyLocked()
+			}
+			h.mu.Unlock()
+			continue
+		}
 		h.Ack(id, driver.MessageAck{Delivered: success, Mechanism: "core.resume", Err: err})
 	}
 }

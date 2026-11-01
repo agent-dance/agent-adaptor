@@ -8,7 +8,8 @@
 // encoding when several dimensions must share that key.
 //
 // A Store holds resume tokens, compatibility fingerprints, and lease
-// coordination. It is not a chat-history store, an HITL pending queue,
+// coordination, plus bounded guidance and recent turns for session recovery.
+// It is not a chat-history store, an HITL pending queue,
 // and not "the conversation a user sees in a chat UI" — hosts that need
 // those compose their own recording on top (see hosttools/sessionrecorder).
 //
@@ -39,6 +40,13 @@ const (
 // unsafe resumes when important context (identity, model, workspace,
 // instructions, ...) changed between runs.
 type Record struct {
+	// EarlierGuidance is bounded, author-framed supplemental input that the
+	// provider does not retain across resumes. Replay it before the next prompt.
+	EarlierGuidance []string
+	// RecentTurns contains the latest three assistant turn texts for recovery
+	// after a fresh-session fallback. Together with EarlierGuidance it occupies
+	// at most 8 KiB; SDK writers retain the newest text when trimming.
+	RecentTurns []string
 	// DeliveredMessages contains the most recent 1000 delivered message IDs,
 	// no older than seven days. Stores must copy and atomically persist it
 	// together with the checkpoint under the same validated leases.

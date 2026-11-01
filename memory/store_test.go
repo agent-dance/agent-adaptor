@@ -58,6 +58,41 @@ func TestStoreAcquireLeaseFailsClosedWhenEntropyUnavailable(t *testing.T) {
 	}
 }
 
+func TestStoreCopiesContinuityHistoryAtomically(t *testing.T) {
+	store := NewStore()
+	ctx := context.Background()
+	lease, err := store.AcquireLease(ctx, "history", "writer", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := threadstore.Record{ID: "history", Key: "key", Status: threadstore.StatusActive, EarlierGuidance: []string{"guidance"}, RecentTurns: []string{"turn"}}
+	request := threadstore.FinalizeRequest{Record: record, Key: "key", RebindActive: true, HeldLeases: []threadstore.Lease{lease}}
+	if err := store.Finalize(ctx, request); err != nil {
+		t.Fatal(err)
+	}
+	record.EarlierGuidance[0], record.RecentTurns[0] = "mutated", "mutated"
+	resolved, err := store.Resolve(ctx, threadstore.Query{Key: "key"})
+	if err != nil || resolved.EarlierGuidance[0] != "guidance" || resolved.RecentTurns[0] != "turn" {
+		t.Fatalf("Finalize retained caller-owned history: %+v / %v", resolved, err)
+	}
+	resolved.EarlierGuidance[0], resolved.RecentTurns[0] = "changed", "changed"
+	again, err := store.Resolve(ctx, threadstore.Query{Key: "key"})
+	if err != nil || again.EarlierGuidance[0] != "guidance" || again.RecentTurns[0] != "turn" {
+		t.Fatalf("Resolve leaked stored history: %+v / %v", again, err)
+	}
+	if err := store.ReleaseLease(ctx, lease); err != nil {
+		t.Fatal(err)
+	}
+	request.Record.EarlierGuidance = []string{"stale"}
+	if err := store.Finalize(ctx, request); !errors.Is(err, threadstore.ErrLeaseLost) {
+		t.Fatalf("stale history write=%v", err)
+	}
+	final, err := store.Resolve(ctx, threadstore.Query{Key: "key"})
+	if err != nil || final.EarlierGuidance[0] != "guidance" {
+		t.Fatalf("stale writer changed continuity: %+v / %v", final, err)
+	}
+}
+
 func TestStoreAcquireLeaseHonorsCanceledContextWithoutMutation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

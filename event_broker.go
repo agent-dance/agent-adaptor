@@ -12,14 +12,16 @@ import (
 // mutex while waiting, so publication from inside the message-hub lock cannot
 // deadlock a consumer that sends a message. Abort wakes blocked producers.
 type eventBroker struct {
-	events          chan Event
-	spool           bool
-	subscribed      bool
-	queue           []Event
-	wake            chan struct{}
-	pumping         bool
-	discardOrdinary bool
-	capacityChanged chan struct{}
+	events              chan Event
+	spool               bool
+	subscribed          bool
+	queue               []Event
+	wake                chan struct{}
+	pumping             bool
+	discardOrdinary     bool
+	discardUnsubscribed bool
+	multipleRuns        bool
+	capacityChanged     chan struct{}
 
 	runID     string
 	threadKey string
@@ -46,6 +48,7 @@ type dropAggregate struct {
 	first      uint64
 	last       uint64
 	unobserved bool
+	runID      string
 }
 
 func newEventBroker(runID, threadKey string, buffer int, blocking bool) *eventBroker {
@@ -141,6 +144,9 @@ func (b *eventBroker) publishTerminal(ev Event, source *EventSourceMeta) bool {
 
 // publishLocked performs one publication while b.mu is held.
 func (b *eventBroker) publishLocked(ctx context.Context, ev Event, source *EventSourceMeta) bool {
+	if b.discardUnsubscribed && !b.subscribed {
+		return true
+	}
 	if b.spool {
 		critical := eventCritical(ev)
 		if !critical {
@@ -225,6 +231,12 @@ func (b *eventBroker) stampNextLocked(ev Event, source *EventSourceMeta) Event {
 	if source != nil {
 		meta.TurnID = source.TurnID
 	}
+	if b.multipleRuns {
+		original := ev.Meta()
+		meta.RunID = original.RunID
+		meta.TurnID = original.TurnID
+		meta.Source = cloneEventSourceMeta(original.Source)
+	}
 	return stampEvent(ev, meta)
 }
 
@@ -269,6 +281,7 @@ func (b *eventBroker) recordDropLocked(ev Event) {
 	if b.dropped.count == 0 {
 		b.dropped.byKind = make(map[string]int)
 		b.dropped.first = seq
+		b.dropped.runID = ev.Meta().RunID
 	}
 	if seq < b.dropped.first {
 		b.dropped.first = seq
@@ -451,7 +464,8 @@ func (b *eventBroker) spoolDroppedLocked() {
 	if d.unobserved {
 		reason, strategy = "events_unobserved", "retain_critical"
 	}
-	b.enqueueLocked(b.stampNextLocked(Dropped{Count: d.count, ByKind: d.byKind, FirstSequence: d.first, LastSequence: d.last, Reason: reason, Source: "sdk.event_broker", Details: map[string]any{"buffer": b.normalCapacity, "strategy": strategy}}, nil))
+	marker := stampEvent(Dropped{Count: d.count, ByKind: d.byKind, FirstSequence: d.first, LastSequence: d.last, Reason: reason, Source: "sdk.event_broker", Details: map[string]any{"buffer": b.normalCapacity, "strategy": strategy}}, EventMeta{RunID: d.runID})
+	b.enqueueLocked(b.stampNextLocked(marker, nil))
 }
 
 // waitCapacityLocked returns with mu held. A receive-only channel has no

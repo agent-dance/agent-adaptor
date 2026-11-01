@@ -20,9 +20,14 @@ const invocationCleanupTimeout = 5 * time.Second
 // snapshotted before the goroutine starts, so a successful first Thread run
 // cannot race a second call's mode selection.
 type invocationTarget struct {
-	thread      *Thread
-	mode        driver.SessionMode
-	forkFromKey string
+	thread       *Thread
+	mode         driver.SessionMode
+	forkFromKey  string
+	runtime      *threadRuntime
+	standby      bool
+	admissionErr error
+	carried      []MessageOutcome
+	carriedItems []driver.MessageItem
 }
 
 // startInvocation is the only asynchronous execution entry. Agent.Send and
@@ -34,10 +39,20 @@ func (a *Agent) startInvocation(ctx context.Context, prompt string, opts []CallO
 	}
 	st, eff, runCtx, ok := a.openStream(ctx, opts, threadKey)
 	if !ok {
+		if target != nil && !target.standby && target.admissionErr == nil {
+			_ = target.runtime.end(true)
+		}
 		return st
 	}
 	st.sink.enableAuthoritativeLifecycle()
 	st.hub.startMessage(eff.message, prompt)
+	if target != nil {
+		for _, outcome := range target.carried {
+			if item, admitted := st.hub.carryPrompt(outcome); admitted {
+				target.carriedItems = append(target.carriedItems, item)
+			}
+		}
+	}
 	// The descriptor governs prelaunch admission. Resolution atomically trims
 	// capabilities and reconciles queued messages before Driver.Run can claim.
 	go a.executeInvocation(runCtx, st, prompt, &eff, target)
@@ -76,7 +91,6 @@ func (a *Agent) executeInvocation(ctx context.Context, st *runStream, prompt str
 				}
 			}
 		}
-
 		backfillRunServices(resources, result, resultErr)
 		if teardownErr := resources.finish(ctx); teardownErr != nil {
 			teardownErr = fmt.Errorf("adaptor: run %s teardown: %w", st.runID, teardownErr)
@@ -108,6 +122,12 @@ func (a *Agent) executeInvocation(ctx context.Context, st *runStream, prompt str
 				actual.Usage = addUsage(actual.Usage, v.Usage)
 			}
 		}
+		if target != nil && target.admissionErr == nil {
+			if endErr := target.runtime.end(!target.standby); endErr != nil {
+				resultErr = errors.Join(resultErr, target.thread.threadError(endErr))
+				result = nil
+			}
+		}
 
 		st.res, st.err = result, resultErr
 		st.sink.completeAuthoritativeLifecycle(result, resultErr)
@@ -118,6 +138,10 @@ func (a *Agent) executeInvocation(ctx context.Context, st *runStream, prompt str
 	}()
 
 	if target != nil {
+		if target.admissionErr != nil {
+			resultErr = target.thread.threadError(target.admissionErr)
+			return
+		}
 		var contractErr error
 		threadContract, contractErr = validateThreadDriverContract(a.driver)
 		if contractErr != nil {
@@ -126,6 +150,10 @@ func (a *Agent) executeInvocation(ctx context.Context, st *runStream, prompt str
 		}
 		if a.toolThreadErr != nil {
 			resultErr = target.thread.threadError(a.toolThreadErr)
+			return
+		}
+		if err := target.runtime.begin(ctx, st); err != nil {
+			resultErr = target.thread.threadError(err)
 			return
 		}
 	}
@@ -156,6 +184,7 @@ func (a *Agent) executeInvocation(ctx context.Context, st *runStream, prompt str
 		identity = eff.identity.driverIdentity()
 	}
 	fingerprint := ""
+	threadState := &threadRunState{}
 	if target != nil {
 		mcpCompatibilityFingerprint := a.stabilizeHostedToolCompatibility(&resolved.req)
 		fingerprint = a.threadInvocationFingerprint(identity, resolved.req, threadContract, mcpCompatibilityFingerprint)
@@ -170,7 +199,7 @@ func (a *Agent) executeInvocation(ctx context.Context, st *runStream, prompt str
 			req.ForkFromKey = target.forkFromKey
 		}
 		plan, err = engine.PrepareThreadSessionForDriver(
-			ctx, engineStore{store: a.defaults.threadStore, messages: st.hub, messageKey: target.thread.key}, req, identity, a.driver, fingerprint,
+			ctx, engineStore{store: a.defaults.threadStore, messages: st.hub, messageKey: target.thread.key, runtime: target.runtime, state: threadState, sink: st.sink}, req, identity, a.driver, fingerprint,
 		)
 		if err != nil {
 			resultErr = target.thread.threadError(err)
@@ -193,18 +222,48 @@ func (a *Agent) executeInvocation(ctx context.Context, st *runStream, prompt str
 	if resources != nil {
 		request.Prompt = resources.preamble + request.Prompt
 	}
-	// Resolve against the final request, including the enabled MessagePort,
-	// resolved session and attachment preamble. This is the same request passed
-	// to the first Driver.Run, so transport negotiation sees the actual inputs.
+	basePrompt := request.Prompt
+	if plan != nil {
+		fresh := threadState.record != nil && !plan.Reused() && target.mode != driver.SessionFork
+		if fresh {
+			st.sink.push(Notice{Kind: "thread.continuity", Text: "Starting a fresh session because the Thread configuration changed."})
+		}
+		request.Prompt = threadContinuityPreamble(threadState.record, fresh) + basePrompt
+	}
+	var continuation []driver.MessageItem
+	if target != nil {
+		st.hub.mu.Lock()
+		for _, item := range target.carriedItems {
+			if pending := st.hub.byID[item.ID]; pending != nil && pending.out.State == MessageAccepted {
+				continuation = append(continuation, item)
+			}
+		}
+		st.hub.mu.Unlock()
+	}
+	deduped := st.hub.startWasDeduped()
+	if deduped && len(continuation) > 0 {
+		basePrompt = ""
+		if resources != nil {
+			basePrompt = resources.preamble
+		}
+		request.Prompt = threadContinuityPreamble(threadState.record, !plan.Reused()) + basePrompt
+	}
+	var aggregate *Result
+	var carriedTexts []string
+	for _, item := range continuation {
+		carriedTexts = append(carriedTexts, item.Text)
+	}
+	if len(carriedTexts) > 0 {
+		basePrompt = strings.Join(carriedTexts, "\n\n") + "\n\n" + basePrompt
+		request.Prompt = strings.Join(carriedTexts, "\n\n") + "\n\n" + request.Prompt
+	}
 	if resolver, ok := a.driver.(driver.MessageCapabilityResolver); ok {
 		st.hub.setCapability(resolver.ResolveMessageCapability(request))
 	}
-	if st.hub.startWasDeduped() {
+	if deduped && len(continuation) == 0 {
 		result = &Result{RunID: st.runID}
 		return
 	}
-	var aggregate *Result
-	var continuation []driver.MessageItem
 	first := true
 	for {
 		st.hub.setPrompt(continuation)
@@ -214,11 +273,14 @@ func (a *Agent) executeInvocation(ctx context.Context, st *runStream, prompt str
 			var rejected *engine.ResumeRejectedError
 			if errors.As(runErr, &rejected) {
 				if first && plan.Reused() && plan.Mode() == driver.SessionContinueOrStart {
+					aggregate = mergeExecutionResult(aggregate, resultFromResponse(st.runID, response), st.hub, before)
 					if freshErr := plan.PrepareFresh(ctx, a.driver.Descriptor().Type, fingerprint); freshErr != nil {
 						resultErr = target.thread.threadError(freshErr)
 						return
 					}
 					request.Session = plan.DriverSession(a.driver)
+					st.sink.push(Notice{Kind: "thread.continuity", Text: "Starting a fresh session because the provider rejected resume: " + rejected.Error()})
+					request.Prompt = threadContinuityPreamble(threadState.record, true) + basePrompt
 					continue
 				}
 				runErr = fmt.Errorf("%w: %w", ErrResumeRejected, runErr)
@@ -249,8 +311,18 @@ func (a *Agent) executeInvocation(ctx context.Context, st *runStream, prompt str
 				resultErr = target.thread.threadError(renewErr)
 				return
 			}
+			if ownerErr := target.runtime.verifyOwnership(); ownerErr != nil {
+				resultErr = errors.Join(ctx.Err(), target.thread.threadError(ownerErr))
+				return
+			}
+			var checkpoint *driver.Checkpoint
 			if invocationCanPersist(ctx, a.driver, response, runErr, st.sink.pendingFailure()) {
-				if _, persistErr := plan.Persist(ctx, identity, a.driver, fingerprint, response.Checkpoint); persistErr != nil {
+				checkpoint = response.Checkpoint
+			} else if !success && ctx.Err() == nil && plan.Reused() && threadState.record != nil && hasUnstoredThreadGuidance(st.hub, threadState) {
+				checkpoint = &driver.Checkpoint{Valid: true, State: threadState.record.State}
+			}
+			if checkpoint != nil {
+				if _, persistErr := plan.Persist(ctx, identity, a.driver, fingerprint, checkpoint); persistErr != nil {
 					resultErr = target.thread.threadError(persistErr)
 					return
 				}

@@ -60,6 +60,8 @@ type Agent struct {
 	// every subsequent resolution.
 	mu             sync.Mutex
 	skillSelection []string
+	threadMu       sync.Mutex
+	threads        map[string]*threadRuntime
 }
 
 var _ Runner = (*Agent)(nil)

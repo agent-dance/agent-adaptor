@@ -963,6 +963,7 @@ methodset Thread {
 	pointer Fork(newKey string) *Thread
 	pointer Key() string
 	pointer Send(ctx context.Context, prompt string, opts ...CallOption) Stream
+	pointer Standby(ctx context.Context) (Standby, error)
 }
 
 type Timing uint8
@@ -1241,3 +1242,5 @@ func (*Thread).Fork(newKey string) *Thread
 func (*Thread).Key() string
 
 func (*Thread).Send(ctx context.Context, prompt string, opts ...CallOption) Stream
+
+func (*Thread).Standby(ctx context.Context) (Standby, error)
