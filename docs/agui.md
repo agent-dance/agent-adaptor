@@ -134,7 +134,7 @@ schema-defined closed objects, including nested unions and composed messages.
 | Field | Meaning |
 | --- | --- |
 | `status` | `succeeded`, `failed`, `cancelled`, or `unknown`. |
-| `exitCode` | Observed integral `exitCode` or `exit_code`; accepts int, int64, float64 and json.Number. |
+| `exitCode` | Observed integral `exitCode` or `exit_code`; accepts Go integer types, exact integral floats and json.Number. |
 | `error` | Observed string error, when present. |
 | `truncated` | True when content exceeded the byte limit. |
 | `originalBytes` | Byte size of the formatted content before truncation. |
@@ -204,6 +204,12 @@ Command output keeps `[exit=N]` even when stdout is empty. Decimal and exponent
 exit-code numbers are checked exactly; fractional, non-finite and out-of-range
 values are not coerced to integer exit codes. Truncation metadata counts the
 content bytes before truncation, including any exit suffix.
+
+Approval Notice `attempt` and `latency` (nanoseconds) follow the same exact
+integer rules, including `json.Number` decimal/exponent forms after session
+freezing or JSONL replay. Tool-call `retry_attempt` and `latency_ms` retain their
+live values in ordered events and Message[]; invalid or overflowing inputs use
+zero. Recorded `time.Duration` values remain nanoseconds until projection.
 
 ## What the host still implements
 

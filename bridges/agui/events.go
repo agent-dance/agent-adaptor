@@ -39,6 +39,7 @@ import (
 	aguievents "github.com/ag-ui-protocol/ag-ui/sdks/community/go/pkg/core/events"
 
 	adaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/internal/jsonnumber"
 )
 
 // EventTranslator is the stateful mapper from adaptor.Event to AG-UI
@@ -650,8 +651,8 @@ func (t *EventTranslator) hitlResolvedTail(toolCallID string, data map[string]an
 	result, _ := data["result"].(string)
 	choice, _ := data["choice"].(string)
 	var latencyMs int64
-	if d, ok := data["latency"].(time.Duration); ok {
-		latencyMs = d.Milliseconds()
+	if ns, ok := jsonnumber.Int64(data["latency"]); ok {
+		latencyMs = time.Duration(ns).Milliseconds()
 	}
 	payload := map[string]any{
 		"result": result,
@@ -795,17 +796,6 @@ func customEvent(name string, value map[string]any) aguievents.Event {
 }
 
 func intFromAny(v any) int {
-	switch n := v.(type) {
-	case int:
-		return n
-	case int32:
-		return int(n)
-	case int64:
-		return int(n)
-	case uint64:
-		return int(n)
-	case float64:
-		return int(n)
-	}
-	return 0
+	n, _ := jsonnumber.Int(v)
+	return n
 }

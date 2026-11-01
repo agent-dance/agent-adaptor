@@ -86,6 +86,13 @@ Intermediate typed events use DataParts with schema `adapter.stream.v1`. The exp
 
 The wire envelope preserves adaptor `EventMeta` plus provider source coordinates, complete tool snapshots, approval fields, and detailed dropped-event markers. Unknown DataPart schemas remain protocol data; the bridge does not guess provider semantics.
 
+`DecodeAdapterEventV1` preserves opaque payload numbers as `json.Number`.
+Approval attempts and dropped-event counts/sequences accept exact integral
+decimal/exponent forms and ignore fractions or overflow. Latency conversion
+accepts recorded nanoseconds and decoded milliseconds with range checks before
+multiplication. Outbound DataParts retain the interoperable JSON safe-integer
+limit, checked exactly before converting integer decimal/exponent forms.
+
 ### Result and exposure
 
 Successful `Stream.Result()` values produce the completed status and terminal artifacts. `*adaptor.RunError` produces a failed A2A task with the available partial Result; cancellation produces a canceled task. Infrastructure errors are mapped to failed terminal status. The bridge never treats a non-nil execution error as success.

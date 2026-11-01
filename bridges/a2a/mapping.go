@@ -12,6 +12,7 @@ import (
 	a2aproto "github.com/a2aproject/a2a-go/v2/a2a"
 
 	adaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/internal/jsonnumber"
 )
 
 // streamTranslator maps unified events onto A2A working-status DataParts.
@@ -332,7 +333,7 @@ func hitlNoticeArtifact(kind string, e adaptor.Notice, exposure ExposurePolicy) 
 		out["source"] = v
 	}
 	if v, ok := e.Data["attempt"]; ok {
-		out["retry_attempt"] = v
+		out["retry_attempt"] = intValue(v)
 	}
 	if kind == "hitl.resolved" {
 		if v, ok := e.Data["result"].(string); ok {
@@ -341,8 +342,8 @@ func hitlNoticeArtifact(kind string, e adaptor.Notice, exposure ExposurePolicy) 
 		if v, ok := e.Data["choice"].(string); ok && v != "" {
 			out["choice"] = v
 		}
-		if d, ok := e.Data["latency"].(time.Duration); ok {
-			out["latency_ms"] = d.Milliseconds()
+		if ns, ok := jsonnumber.Int64(e.Data["latency"]); ok {
+			out["latency_ms"] = time.Duration(ns).Milliseconds()
 		}
 	}
 	if exposure.Diagnostics.IncludeHITLRaw && len(e.Data) > 0 {

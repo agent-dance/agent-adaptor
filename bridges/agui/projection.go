@@ -2,14 +2,13 @@ package agui
 
 import (
 	"encoding/json"
-	"math"
-	"math/big"
 	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	events "github.com/ag-ui-protocol/ag-ui/sdks/community/go/pkg/core/events"
+	"github.com/agent-dance/agent-adaptor/internal/jsonnumber"
 )
 
 // ProjectionHook redacts, drops, or expands projected content and diagnostics.
@@ -162,43 +161,7 @@ func exitCode(m map[string]any) (int64, bool) {
 	if !ok {
 		v = m["exit_code"]
 	}
-	switch n := v.(type) {
-	case int:
-		return int64(n), true
-	case int64:
-		return n, true
-	case float64:
-		if math.IsNaN(n) || math.IsInf(n, 0) || math.Trunc(n) != n {
-			return 0, false
-		}
-		// Stay within JSON's exact integer range for replayed floating-point values.
-		if n >= -9007199254740991 && n <= 9007199254740991 {
-			return int64(n), true
-		}
-	case json.Number:
-		if !json.Valid([]byte(n)) {
-			return 0, false
-		}
-		i, err := n.Int64()
-		if err == nil {
-			return i, true
-		}
-		// Parse decimal/exponent forms exactly. Float64 would round a
-		// fractional exit code such as 1.00000000000000000001 to 1.
-		// Bound exponent expansion before constructing an exact rational.
-		// Outside this range a nonzero value cannot be an int64 integer.
-		mantissa, exponent, hasExponent := strings.Cut(strings.ToLower(string(n)), "e")
-		if hasExponent {
-			e, err := strconv.ParseInt(exponent, 10, 64)
-			if err != nil || e > int64(len(mantissa)+19) || e < -int64(len(mantissa)) {
-				return 0, false
-			}
-		}
-		if exact, ok := new(big.Rat).SetString(string(n)); ok && exact.IsInt() && exact.Num().IsInt64() {
-			return exact.Num().Int64(), true
-		}
-	}
-	return 0, false
+	return jsonnumber.Int64(v)
 }
 
 // toolResultContent inlines known text payloads in a stable preference order.

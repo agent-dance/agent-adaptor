@@ -11,4 +11,7 @@
 // Operational/provider Notices are excluded from public projection by default;
 // protocol warnings, steps, approvals, drops and subagent activity are retained.
 // WithNoticePassthrough opts exact additional Notice kinds into projection.
+// Numeric projections accept json.Number after recording/replay. Approval retry
+// attempts, latency nanoseconds and exit codes require exact, in-range integers;
+// fractional or overflowing values are ignored (retry/latency default to zero).
 package agui

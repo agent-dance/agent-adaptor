@@ -1,13 +1,16 @@
 package a2a
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
 	adaptor "github.com/agent-dance/agent-adaptor"
+	"github.com/agent-dance/agent-adaptor/internal/jsonnumber"
 )
 
 const (
@@ -124,7 +127,9 @@ func decodeAdapterStreamEventWire(data any) (event AdapterStreamEventV1, matched
 		return event, true, fmt.Errorf("adapter stream status exceeds %d bytes", adapterStreamMaxBytes)
 	}
 	var envelope AdapterStreamEnvelopeV1
-	if err := json.Unmarshal(raw, &envelope); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if err := decoder.Decode(&envelope); err != nil {
 		return event, true, fmt.Errorf("decode adapter stream status: %w", err)
 	}
 	event = envelope.Event
@@ -158,7 +163,8 @@ func decodeAdapterStreamEventWire(data any) (event AdapterStreamEventV1, matched
 // Event vocabulary, including EventMeta, complete tool snapshots, approval
 // request fields, and detailed Dropped markers. A false matched result means
 // the value belongs to another DataPart schema. Its V1 suffix is intentional
-// because it selects the versioned wire schema.
+// because it selects the versioned wire schema. Opaque payload numbers decode
+// as json.Number. Integer fields reject fractions and overflow.
 func DecodeAdapterEventV1(data any) (decoded adaptor.Event, matched bool, err error) {
 	event, matched, err := decodeAdapterStreamEventWire(data)
 	if err != nil || !matched {
@@ -286,10 +292,11 @@ func decodeApprovalRequest(event AdapterStreamEventV1) (adaptor.Event, error) {
 func decodeApprovalResolved(event AdapterStreamEventV1) adaptor.Event {
 	data := map[string]any{
 		"request_id": event.HITL["request_id"], "kind": event.HITL["decision_kind"],
-		"source": event.HITL["source"], "attempt": event.HITL["retry_attempt"],
+		"source": event.HITL["source"], "attempt": intValue(event.HITL["retry_attempt"]),
 		"result": event.HITL["result"], "choice": event.HITL["choice"],
 	}
-	if latency, ok := event.HITL["latency_ms"].(float64); ok {
+	if latency, ok := jsonnumber.Int64(event.HITL["latency_ms"]); ok &&
+		latency >= math.MinInt64/int64(time.Millisecond) && latency <= math.MaxInt64/int64(time.Millisecond) {
 		data["latency"] = time.Duration(latency) * time.Millisecond
 	}
 	return adaptor.Notice{Kind: adaptor.NoticeApprovalResolved, Data: data}
@@ -318,22 +325,17 @@ func stringValue(value any) string {
 	return text
 }
 
-func intValue(value any) int { return int(uint64Value(value)) }
+func intValue(value any) int {
+	n, ok := jsonnumber.Int(value)
+	if !ok || n < 0 {
+		return 0
+	}
+	return n
+}
 
 func uint64Value(value any) uint64 {
-	switch number := value.(type) {
-	case uint64:
-		return number
-	case int:
-		if number > 0 {
-			return uint64(number)
-		}
-	case float64:
-		if number > 0 {
-			return uint64(number)
-		}
-	}
-	return 0
+	n, _ := jsonnumber.Uint64(value)
+	return n
 }
 
 func supportedAdapterStreamKind(kind string) bool {

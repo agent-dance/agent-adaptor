@@ -6,6 +6,9 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- Preserve recorded approval retry attempts and latency in AG-UI live/history
+  projections. Share exact integer conversion with A2A approval/drop consumers,
+  preserve decoded A2A payload numbers, and accept JSON numbers in task metadata.
 - Reject colliding submitted AG-UI message IDs before recording or execution
   with HTTP 409 `agui.duplicate_message`, preserving idempotent history seeds.
 - Preserve opaque JSON numbers through typed recorder payloads, live/replayed
