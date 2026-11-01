@@ -70,7 +70,9 @@ func buildAppServerOptions(
 	if err != nil {
 		return appserver.Options{}, err
 	}
-	extraArgs = append(extraArgs, mcpArgs...)
+	// Codex applies config overrides in order. Establish the complete server
+	// table before constructor overrides for exact server/tool settings.
+	extraArgs = append(mcpArgs, extraArgs...)
 	model, effort, serviceTier := codexAppServerConfigProjection(cfg)
 
 	opts := appserver.Options{
@@ -95,7 +97,7 @@ func buildAppServerOptions(
 		RunID:       req.RunID,
 		Messages:    req.Messages,
 	}
-	if req.OutputSchema != nil && req.StructuredOutputSource == driver.StructuredOutputSourceNative {
+	if codexNativeSchema(req) {
 		opts.OutputSchema = req.OutputSchema
 	}
 

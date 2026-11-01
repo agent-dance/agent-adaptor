@@ -149,7 +149,7 @@ Current built-in declarations are:
 
 | Driver | Native schema | Prompt validation | Rich provider transport | Explicit HITL `Ask` |
 |---|---:|---:|---:|---:|
-| Codex | yes | yes | yes, including app-server schema output | no |
+| Codex | yes | yes | yes, including app-server schema output | yes |
 | Claude | yes | yes | yes | no |
 | Cursor | no | yes | yes | no |
 | CodeBuddy | yes | yes | no; batch is negotiated | no |
@@ -160,14 +160,17 @@ value; it does not strip Markdown fences, search raw stdout, or guess through
 provider envelopes. Provider-native output is also revalidated by the SDK
 before its raw JSON is made available to `Result.Decode`.
 
-Codex normally uses app-server, including native schema requests. Its `turn/start` receives the schema and preserves the native JSON candidate. For Codex batch runs, `codex exec --json --output-schema` carries the native
-JSON value in the `text` field of the last completed `agent_message` item. The
-Driver keeps the final assistant-facing output in `Result.Text`, keeps
-`turn.completed` as the provider terminal payload in `Result.Raw()`, and gives
-only that last assistant value to the shared schema validator. A top-level
-`result` envelope is not part of this wire contract and is never treated as
-structured output. Missing or failed terminals, malformed protocols, nonzero
-exits, signals, timeouts, and business failures cannot yield a native
+Codex native schema requests use app-server, including Driver requests with
+`Streaming=false`. Every `turn/start` receives `outputSchema`, including
+continuations and interrupt restarts. Named Threads can reuse their resident
+process; `WithSpawn()` requests a fresh process. Reading only `Result()` or
+consuming `Events()` does not change this selection.
+
+The Driver validates the last turn's final assistant JSON value, preserves its
+assistant-facing text in `Result.Text`, and retains `turn/completed` as the
+provider terminal payload in `Result.Raw()`. The terminal envelope is not the
+structured business value. Missing or failed terminals, malformed protocols,
+nonzero exits, signals, timeouts, and business failures cannot yield a native
 structured-output candidate.
 
 A message can extend the execution into more provider turns. The final Result keeps the last turn's structured value and Text, sums Usage, and retains audit output across all turns. `TurnEnd` is a per-turn observation; use `Done` or `Result()` for final schema and cleanup errors. A Standby has no overall Result. Decode each execution's `Done.Result` after checking `Done.Err`; TurnEnd snapshots do not necessarily contain the finalized structured payload.

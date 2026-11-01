@@ -315,6 +315,7 @@ func TestPersistentCodexNativeSchemaUsesPerTurnFieldWithoutHandoff(t *testing.T)
 	first := runCodexTurn(t, a, req)
 
 	structuredReq := resumedCodexRequest(req, first)
+	structuredReq.Streaming = false
 	structuredReq.StructuredOutputSource = driver.StructuredOutputSourceNative
 	structuredReq.OutputSchema = &driver.OutputSchema{
 		Format:     driver.OutputFormatJSONSchema,
@@ -555,6 +556,14 @@ func runCodexHelper() int {
 			writeHelperMessageCompletion(writer, turn, "completed", "mcp-action:"+response.Action)
 			continue
 		}
+		if path := os.Getenv("CODEX_HELPER_RPC_FILE"); path != "" && req.Method != "" {
+			file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+			if err != nil {
+				return 61
+			}
+			_ = json.NewEncoder(file).Encode(req)
+			_ = file.Close()
+		}
 		switch req.Method {
 		case "initialize":
 			writeHelperJSON(writer, helperResponse{ID: req.ID, Result: map[string]any{"userAgent": "fake-codex"}})
@@ -594,6 +603,18 @@ func runCodexHelper() int {
 			if len(turnParams.OutputSchema) > 0 {
 				text = `{"answer":42}`
 			}
+			if strings.HasPrefix(mode, "structured") {
+				_, _ = fmt.Fprintln(os.Stderr, "structured diagnostic")
+				if hasProcessArg("--output-schema") || len(turnParams.OutputSchema) == 0 {
+					return 62
+				}
+				if mode == "structured_invalid" {
+					text = "not json"
+				}
+				if mode == "structured_mismatch" {
+					text = `{"answer":"wrong"}`
+				}
+			}
 			if mode == "f2_stale" {
 				// Resume replay and frames already on the wire before turn/start's
 				// response are deliberately routed after the new run is installed.
@@ -605,12 +626,24 @@ func runCodexHelper() int {
 			}
 			writeHelperJSON(writer, helperResponse{ID: req.ID, Result: map[string]any{"turn": map[string]any{"id": turnID, "status": "inProgress"}}})
 			writeHelperNotification(writer, "turn/started", map[string]any{"threadId": "thread-1", "turn": map[string]any{"id": turnID, "status": "inProgress"}})
+			if mode == "structured_malformed" {
+				_, _ = writer.WriteString("{broken\n")
+				_ = writer.Flush()
+				continue
+			}
+			if mode == "structured_missing" {
+				writeHelperNotification(writer, "turn/completed", map[string]any{"threadId": "thread-1", "turn": map[string]any{"id": turnID, "status": "completed"}})
+				continue
+			}
+			if strings.HasPrefix(mode, "structured") {
+				writeHelperNotification(writer, "item/completed", map[string]any{"threadId": "thread-1", "turnId": turnID, "item": map[string]any{"id": itemID + "-draft", "type": "agentMessage", "text": `{"answer":1}`}})
+			}
 			if mode == "f2_cancel" {
 				writeHelperNotification(writer, "item/started", map[string]any{"threadId": "thread-1", "turnId": turnID, "item": map[string]any{"id": "shell-running", "type": "commandExecution", "command": "long shell command", "cwd": "/tmp", "status": "inProgress"}})
 				continue
 			}
 			if mode == "f2_policy_deny" || mode == "f2_policy_never" {
-				if turnParams.SandboxPolicy.Type != "readOnly" || !hasProcessArg(`mcp_servers."agent-adaptor-tools".default_tools_approval_mode="prompt"`) || !hasProcessArg(`mcp_servers."agent-adaptor-tools".enabled=true`) {
+				if turnParams.SandboxPolicy.Type != "readOnly" || !processHasMCPApproval("agent-adaptor-tools", "prompt") {
 					return 58
 				}
 				item := map[string]any{"id": "delegate-call", "type": "mcpToolCall", "server": "agent-adaptor-tools", "tool": "team_delegate", "arguments": map[string]any{"member": "worker"}, "status": "inProgress"}

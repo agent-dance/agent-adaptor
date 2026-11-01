@@ -539,27 +539,6 @@ func (p *codexParser) checkpointForOutcome(exitCode int, signal string, timedOut
 	return p.checkpoint(exitCode)
 }
 
-// nativeStructuredOutputForOutcome returns the last officially completed
-// agent_message as the Codex native structured-output candidate. The parser
-// deliberately does not claim schema validity: the core invocation pipeline
-// canonicalizes and validates RawJSON against the host's requested schema.
-// A candidate is exposed only after the official turn.completed terminal and
-// a clean process/business outcome.
-func (p *codexParser) nativeStructuredOutputForOutcome(exitCode int, signal string, timedOut bool, failure *driver.RunFailure) *driver.StructuredOutput {
-	if exitCode != 0 || signal != "" || timedOut || failure != nil || p.protocolMalformed || p.terminalFailed || !p.turnCompleted || p.terminal == nil || p.terminal.Event != "turn.completed" || len(p.assistantText) == 0 {
-		return nil
-	}
-	text := p.assistantText[len(p.assistantText)-1]
-	if strings.TrimSpace(text) == "" {
-		return nil
-	}
-	return &driver.StructuredOutput{
-		Format:  driver.OutputFormatJSONSchema,
-		Source:  driver.StructuredOutputSourceNative,
-		RawJSON: append(json.RawMessage(nil), text...),
-	}
-}
-
 // snapshotCodexStdout feeds a complete stdout string through the parser and
 // returns its final state. It lets batch consumers and unit tests operate on a
 // complete stdout dump without giving up the streaming parser as the single

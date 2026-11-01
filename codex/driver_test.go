@@ -87,36 +87,6 @@ func TestParseCodexJSONLUsesThreadStartedAssistantOutputAndUsage(t *testing.T) {
 	}
 }
 
-func TestCodexNativeStructuredOutputUsesLastCompletedAgentMessageAndCoreValidation(t *testing.T) {
-	parsed := snapshotCodexStdout(`{"type":"thread.started","thread_id":"thread-structured"}
-{"type":"item.completed","item":{"id":"msg-1","type":"agent_message","text":"{\"project_name\":\"draft\"}"}}
-{"type":"item.completed","item":{"id":"msg-2","type":"agent_message","text":"{\"project_name\":\"agent-adaptor\"}"}}
-{"type":"turn.completed","usage":{"input_tokens":4,"output_tokens":2}}`)
-
-	candidate := parsed.nativeStructuredOutputForOutcome(0, "", false, nil)
-	if candidate == nil || string(candidate.RawJSON) != `{"project_name":"agent-adaptor"}` {
-		t.Fatalf("expected last completed agent_message, got %#v", candidate)
-	}
-	if candidate.Valid {
-		t.Fatal("Driver parser must not claim schema validity before core validation")
-	}
-	schema := &driver.OutputSchema{
-		Format:     driver.OutputFormatJSONSchema,
-		SchemaJSON: json.RawMessage(`{"type":"object","properties":{"project_name":{"const":"agent-adaptor"}},"required":["project_name"],"additionalProperties":false}`),
-		OnInvalid:  driver.StructuredOutputFailRun,
-	}
-	validated, failure := engine.FinalizeStructuredOutput(schema, driver.StructuredOutputSourceNative, parsed.buildOutput(), candidate, nil)
-	if failure != nil || validated == nil || !validated.Valid || string(validated.RawJSON) != `{"project_name":"agent-adaptor"}` {
-		t.Fatalf("expected core-validated native output, value=%#v failure=%#v", validated, failure)
-	}
-	if got := parsed.buildOutput(); got != `{"project_name":"agent-adaptor"}` {
-		t.Fatalf("assistant Output must use only the final completed message, got %q", got)
-	}
-	if parsed.terminal == nil || parsed.terminal.Event != "turn.completed" || strings.Contains(string(parsed.terminal.JSON), "project_name") {
-		t.Fatalf("terminal Result must remain the official turn.completed envelope, got %#v", parsed.terminal)
-	}
-}
-
 func TestCodexForkAlwaysSelectsAppServerTransport(t *testing.T) {
 	if usesCodexAppServer(driver.Request{}) {
 		t.Fatal("stateless batch run unexpectedly selected app-server")
@@ -175,89 +145,6 @@ func TestCodexForkRejectsMissingParentBeforeProcessLaunch(t *testing.T) {
 	}, &testutil.EventRecorder{})
 	if !errors.Is(err, engine.ErrResumeRejected) {
 		t.Fatalf("error = %v, want ErrResumeRejected", err)
-	}
-}
-
-func TestCodexRunAddsOutputSchemaArgAndParsesStructuredResult(t *testing.T) {
-	home := t.TempDir()
-	workspace := filepath.Join(home, "workspace")
-	if err := os.MkdirAll(workspace, 0o755); err != nil {
-		t.Fatalf("mkdir workspace: %v", err)
-	}
-	argFile := filepath.Join(home, "args.txt")
-	command := testutil.WriteCommand(t, home, "fake-codex-structured",
-		"#!/bin/sh\nset -eu\nprintf '%s\\n' \"$@\" > \"$ARG_FILE\"\nschema=''\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = '--output-schema' ]; then shift; schema=\"$1\"; break; fi\n  shift\ndone\n[ -s \"$schema\" ]\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"thread.started\",\"thread_id\":\"codex-session\"}'\nprintf '%s\\n' '{\"type\":\"item.completed\",\"item\":{\"id\":\"msg-1\",\"type\":\"agent_message\",\"text\":\"{\\\"project_name\\\":\\\"agent-adaptor\\\"}\"}}'\nprintf '%s\\n' '{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":4,\"output_tokens\":2}}'\n",
-		"@echo off\r\nsetlocal enabledelayedexpansion\r\n> \"%ARG_FILE%\" echo %*\r\nset \"NEXT=\"\r\nset \"SCHEMA=\"\r\nfor %%A in (%*) do (\r\n  if defined NEXT (\r\n    set \"SCHEMA=%%~A\"\r\n    set \"NEXT=\"\r\n  )\r\n  if \"%%~A\"==\"--output-schema\" set \"NEXT=1\"\r\n)\r\nif not exist \"!SCHEMA!\" exit /b 3\r\nfor %%S in (\"!SCHEMA!\") do if %%~zS LEQ 0 exit /b 4\r\necho {\"type\":\"thread.started\",\"thread_id\":\"codex-session\"}\r\necho {\"type\":\"item.completed\",\"item\":{\"id\":\"msg-1\",\"type\":\"agent_message\",\"text\":\"{\\\"project_name\\\":\\\"agent-adaptor\\\"}\"}}\r\necho {\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":4,\"output_tokens\":2}}\r\n",
-	)
-
-	result, err := (adapter{}).Run(context.Background(), driver.Request{
-		Prompt:                 "extract",
-		Config:                 Config{CommonConfig: CommonConfig{Command: command, CWD: workspace, Env: []driver.EnvBinding{{Name: "HOME", Value: home}, {Name: "USERPROFILE", Value: home}, {Name: "CODEX_HOME", Value: filepath.Join(home, ".codex")}, {Name: "ARG_FILE", Value: argFile}}}},
-		Workspace:              driver.WorkspaceLease{ID: "workspace-a", CWD: workspace},
-		StructuredOutputSource: driver.StructuredOutputSourceNative,
-		OutputSchema: &driver.OutputSchema{
-			Format:     driver.OutputFormatJSONSchema,
-			SchemaJSON: []byte(`{"type":"object","properties":{"project_name":{"type":"string"}},"required":["project_name"]}`),
-		},
-	}, &testutil.EventRecorder{})
-	if err != nil {
-		t.Fatalf("run: %v", err)
-	}
-	rawArgs, err := os.ReadFile(argFile)
-	if err != nil {
-		t.Fatalf("read args: %v", err)
-	}
-	if !strings.Contains(string(rawArgs), "--output-schema") {
-		t.Fatalf("expected --output-schema in args, got %s", string(rawArgs))
-	}
-	if result.StructuredOutput == nil || string(result.StructuredOutput.RawJSON) != `{"project_name":"agent-adaptor"}` {
-		t.Fatalf("expected native structured output, got %#v (output=%q raw=%#v transcript=%#v failure=%#v)", result.StructuredOutput, result.Output, result.RawStreams, result.Transcript, result.Failure)
-	}
-	if !result.StructuredOutput.Valid || len(result.StructuredOutput.ValidationErrors) != 0 || result.StructuredOutput.SchemaHash == "" {
-		t.Fatalf("expected direct Driver response to use core schema validation, got %#v", result.StructuredOutput)
-	}
-	if result.Output != `{"project_name":"agent-adaptor"}` {
-		t.Fatalf("expected assistant Text to remain distinct, got %q", result.Output)
-	}
-	if result.RawStreams == nil || result.RawStreams.Terminal == nil || result.RawStreams.Terminal.Event != "turn.completed" {
-		t.Fatalf("expected official terminal payload, got %#v", result.RawStreams)
-	}
-	if len(result.Transcript) < 2 || result.Transcript[len(result.Transcript)-2].Kind != driver.TranscriptAssistant || result.Transcript[len(result.Transcript)-1].Kind != driver.TranscriptResult {
-		t.Fatalf("expected assistant/result transcript layers, got %#v", result.Transcript)
-	}
-}
-
-func TestCodexRunMissingNativeOutputFailsAndDoesNotCheckpoint(t *testing.T) {
-	home := t.TempDir()
-	command := testutil.WriteCommand(t, home, "fake-codex-missing-structured",
-		"#!/bin/sh\nset -eu\ncat >/dev/null\nprintf '{\"type\":\"thread.started\",\"thread_id\":\"codex-missing-output\"}\\n'\nprintf '{\"type\":\"turn.completed\"}\\n'\n",
-		"@echo off\r\nsetlocal\r\nset /p PROMPT=\r\necho {\"type\":\"thread.started\",\"thread_id\":\"codex-missing-output\"}\r\necho {\"type\":\"turn.completed\"}\r\n",
-	)
-	result, err := (adapter{}).Run(context.Background(), driver.Request{
-		Prompt:                 "extract",
-		Config:                 Config{CommonConfig: CommonConfig{Command: command, CWD: home}},
-		Workspace:              driver.WorkspaceLease{CWD: home},
-		StructuredOutputSource: driver.StructuredOutputSourceNative,
-		OutputSchema: &driver.OutputSchema{
-			Format:     driver.OutputFormatJSONSchema,
-			SchemaJSON: json.RawMessage(`{"type":"object"}`),
-			OnInvalid:  driver.StructuredOutputFailRun,
-		},
-	}, &testutil.EventRecorder{})
-	if err != nil {
-		t.Fatalf("Driver.Run error = %v", err)
-	}
-	if result.StructuredOutput == nil || result.StructuredOutput.Valid || len(result.StructuredOutput.ValidationErrors) == 0 {
-		t.Fatalf("missing native value = %#v", result.StructuredOutput)
-	}
-	if result.Failure == nil || result.Failure.Code != driver.FailurePolicyError {
-		t.Fatalf("Failure = %#v, want policy error", result.Failure)
-	}
-	if result.Checkpoint != nil {
-		t.Fatalf("missing native output polluted checkpoint: %#v", result.Checkpoint)
-	}
-	if result.RawStreams == nil || result.RawStreams.Terminal == nil || result.RawStreams.Terminal.Event != "turn.completed" {
-		t.Fatalf("raw terminal lost: %#v", result.RawStreams)
 	}
 }
 

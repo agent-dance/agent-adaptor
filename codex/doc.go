@@ -44,8 +44,12 @@
 // idle usage snapshots so the next run excludes historical usage. Returned
 // results are immutable and are not revised by notifications arriving later.
 //
-// Native output schemas are sent on every turn/start, including continuation
-// and interrupt restarts, and the final turn is validated before completion.
+// Native structured output always selects app-server, independently of whether
+// the consumer reads Events or Result and whether provider streaming was
+// requested. The resolved mechanism remains core-owned: prompt validation does
+// not send a native schema. Native output schemas are sent on every turn/start,
+// including continuation and interrupt restarts, and the final turn is validated
+// before completion.
 // Responses retain all turns' raw streams and transcript, sum their observed
 // usage, and expose the last turn's assistant text and terminal payload.
 package codex

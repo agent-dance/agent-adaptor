@@ -78,6 +78,14 @@ All notable changes to this project are documented in this file.
 - App-server supports immediate turn/steer guarded by expectedTurnId, interrupt
   followed by turn/start, and multiple turns within one Driver call, for one-shot
   and resident transports. Declares minimum version 0.100.0 and persisted input.
+- Native structured output uses app-server `turn/start.outputSchema`, including
+  non-streaming Driver requests, with normal Thread process reuse and WithSpawn
+  behavior. Every continuation and interrupt restart receives the schema.
+- Fix MCP invocation overrides so SDK Tool and Team servers start correctly;
+  preserve literal server names, native servers, and explicit exact-tool policy.
+- Avoid false Windows termination errors for processes proven already exited.
+  Genuine process or transport errors invalidate checkpoints while preserving
+  partial audit data.
 - Exec resolves to core checkpoint continuation. Per-turn usage and output remain
   separate from execution aggregation. Message live conformance requires both
   the codex_live build tag and AGENT_ADAPTOR_LIVE_CONFORMANCE=1.

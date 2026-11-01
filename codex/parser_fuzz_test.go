@@ -24,9 +24,6 @@ func FuzzCodexBatchParser(f *testing.F) {
 		if checkpoint := parsed.checkpointForOutcome(exitCode, "", false, nil); checkpoint != nil {
 			t.Fatalf("non-zero exit %d produced checkpoint %#v", exitCode, checkpoint)
 		}
-		if structured := parsed.nativeStructuredOutputForOutcome(exitCode, "", false, nil); structured != nil {
-			t.Fatalf("non-zero exit %d produced native structured output %#v", exitCode, structured)
-		}
 		poisoned := snapshotCodexStdout("{broken\n" + string(stdout))
 		if checkpoint := poisoned.checkpointForOutcome(0, "", false, nil); checkpoint != nil {
 			t.Fatalf("malformed protocol produced checkpoint %#v", checkpoint)

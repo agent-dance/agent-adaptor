@@ -189,8 +189,13 @@ func TestF2CodexMCPInvocationOverrides(t *testing.T) {
 				t.Fatalf("missing override %q in %v", arg, opts.ExtraArgs)
 			}
 		}
-		if !strings.Contains(strings.Join(args, "\n"), `mcp_servers."host.server".default_tools_approval_mode=`) {
-			t.Fatalf("key was not quoted: %v", args)
+		entry := decodeCodexMCPOverride(t, args)["host.server"]
+		want := "prompt"
+		if mode == driver.HumanDecisionAutoApprove {
+			want = "approve"
+		}
+		if entry["command"] != "server" || entry["default_tools_approval_mode"] != want || entry["enabled"] != true {
+			t.Fatal("literal server key lost its transport or policy")
 		}
 	}
 }
@@ -284,9 +289,13 @@ func TestF2CodexNeverPromptPublishesRejectedTool(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	recorder := &testutil.EventRecorder{}
+	mcpArgs, err := codexMCPPolicyArgs(driver.MCPPayload{Servers: []driver.MCPServerSpec{{Key: "agent-adaptor-tools", Transport: driver.MCPTransportHTTP, URL: "http://127.0.0.1/mcp"}}}, driver.RunPolicy{HumanDecision: driver.HumanDecisionPolicy{Permission: driver.HumanDecisionAutoReject}})
+	if err != nil {
+		t.Fatal(err)
+	}
 	response, err := appserver.Run(ctx, appserver.Options{
 		Command: cfg.Command, Env: cfg.Env, CWD: cfg.CWD, Prompt: "delegate", Sandbox: "read-only", Approval: "never",
-		ExtraArgs: []string{"-c", `mcp_servers."agent-adaptor-tools".default_tools_approval_mode="prompt"`, "-c", `mcp_servers."agent-adaptor-tools".enabled=true`},
+		ExtraArgs: mcpArgs,
 	}, recorder)
 	if err != nil || response.Failure != nil || response.Output != "delegation rejected" || !hasRejectedDelegation(response.Transcript) {
 		t.Fatalf("never+prompt rejection: err=%v response=%+v", err, response)

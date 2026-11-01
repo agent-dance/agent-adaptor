@@ -212,7 +212,7 @@ func Run(ctx context.Context, opts Options, sink driver.EventSink) (driver.Respo
 			finalErr = fmt.Errorf("codex app-server wait: %w", waitFatal)
 		}
 		result := state.snapshot(opts, threadID, stdoutBuf.String(), stderrBuf.String(), exitCode, signal, timedOut)
-		result = finalizeAppServerStructuredOutput(opts.OutputSchema, result)
+		result = finalizeAppServerResult(opts.OutputSchema, result, finalErr)
 		// The official terminal is staged until the process outcome and native
 		// structured-output validation are known. This makes the final public
 		// lifecycle agree with the returned Response on every exit path.
@@ -1032,7 +1032,10 @@ func (s *runState) snapshot(opts Options, threadID, stdout, stderr string, exitC
 	}
 }
 
-func finalizeAppServerStructuredOutput(schema *driver.OutputSchema, result driver.Response) driver.Response {
+func finalizeAppServerResult(schema *driver.OutputSchema, result driver.Response, runErr error) driver.Response {
+	if runErr != nil {
+		result.Checkpoint = nil
+	}
 	if schema == nil {
 		return result
 	}

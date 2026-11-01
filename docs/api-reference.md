@@ -99,6 +99,8 @@ Passing these to Send fails to compile.
 
 `WithSchema[T any](...SchemaOption)` and `WithSchemaJSON([]byte, ...SchemaOption)` return `CallOption`. They configure one execution's output, and cannot be passed to `New` or `Stream.Send`.
 
+Codex native schema requests use app-server `turn/start.outputSchema`, including when only `Result()` is read. Named Threads retain normal process reuse; `WithSpawn()` forces a fresh process.
+
 `From(Author)`, `MessageID(string)`, and `When(Timing)` return `MessageOption`. They can describe a starting prompt as well as supplemental input. Starting prompts always start immediately, irrespective of `When`. See §6.1 for delivery semantics.
 
 ### 3.4 Ecosystem options

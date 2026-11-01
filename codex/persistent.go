@@ -493,7 +493,7 @@ func codexResumeID(req driver.Request) string {
 }
 
 func persistentEligible(cfg Config, req driver.Request) bool {
-	if !req.Streaming || persistentSessionKey(req) == "" ||
+	if !usesCodexAppServer(req) || persistentSessionKey(req) == "" ||
 		(req.Session != nil && req.Session.Mode == driver.SessionFork) {
 		return false
 	}

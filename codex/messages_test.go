@@ -61,7 +61,9 @@ func TestMessageCapabilityTransportResolver(t *testing.T) {
 	if !reflect.DeepEqual(d.Descriptor().Messages, want) {
 		t.Fatalf("descriptor=%+v", d.Descriptor().Messages)
 	}
-	for _, req := range []driver.Request{{Streaming: true}, {Session: &driver.SessionContext{Mode: driver.SessionFork}}} {
+	for _, req := range []driver.Request{{Streaming: true}, {Session: &driver.SessionContext{Mode: driver.SessionFork}}, {
+		OutputSchema: &driver.OutputSchema{SchemaJSON: []byte(`{"type":"object"}`)}, StructuredOutputSource: driver.StructuredOutputSourceNative,
+	}} {
 		if got := resolver.ResolveMessageCapability(req); !reflect.DeepEqual(got, want) {
 			t.Fatalf("app-server capability=%+v", got)
 		}

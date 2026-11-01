@@ -240,6 +240,10 @@ recovery. MessageID dedupe does not close that window.
 | Cursor, minimum 2026.10.14 | tool when relay is eligible; no interrupt | Resume; confirms full hook context through official hookAdditionalContexts; PersistsDelivered=false |
 | CodeBuddy | No verified mid-turn boundary or interrupt | Resume; must not consume MessagePort at an undeclared boundary |
 
+Codex native schema requests select app-server even when `Request.Streaming`
+is false. The resolved schema is sent on every `turn/start`; message capability
+resolution and resident-process eligibility follow that same transport.
+
 Claude registers UserPromptSubmit, PreToolUse, PostToolUse, PostToolUseFailure,
 and Stop through an acknowledged SDK initialize request. Only registered
 main-agent callbacks can claim. Rejection or no response within ten seconds

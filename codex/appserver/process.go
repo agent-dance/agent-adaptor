@@ -299,7 +299,7 @@ func (p *Process) RunTurn(ctx context.Context, opts Options, sink driver.EventSi
 	p.usageTotal = baseline
 	p.freshThread = false
 	p.notificationMu.Unlock()
-	result = finalizeAppServerStructuredOutput(opts.OutputSchema, result)
+	result = finalizeAppServerResult(opts.OutputSchema, result, err)
 	state.finishPublicResult(result, err)
 	return result, promptSent, err
 }
